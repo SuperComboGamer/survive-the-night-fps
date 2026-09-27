@@ -1,0 +1,85 @@
+// Inventory helpers (server authoritative). Inventory = Array(INVENTORY_SIZE) of {item, count} | null
+import { INVENTORY_SIZE } from '../shared/constants.js';
+import { ITEM_DEFS } from '../shared/defs.js';
+
+export function createInventory() {
+  return new Array(INVENTORY_SIZE).fill(null);
+}
+
+export function countItem(inv, item) {
+  let n = 0;
+  for (const s of inv) if (s && s.item === item) n += s.count;
+  return n;
+}
+
+export function countsMap(inv) {
+  const m = {};
+  for (const s of inv) if (s) m[s.item] = (m[s.item] || 0) + s.count;
+  return m;
+}
+
+// Adds as many as fit. Returns leftover count.
+export function addItem(inv, item, count) {
+  const def = ITEM_DEFS[item];
+  const max = def ? def.stack : 1;
+  let left = count;
+  for (let i = 0; i < inv.length && left > 0; i++) {
+    const s = inv[i];
+    if (s && s.item === item && s.count < max) {
+      const take = Math.min(max - s.count, left);
+      s.count += take;
+      left -= take;
+    }
+  }
+  for (let i = 0; i < inv.length && left > 0; i++) {
+    if (!inv[i]) {
+      const take = Math.min(max, left);
+      inv[i] = { item, count: take };
+      left -= take;
+    }
+  }
+  return left;
+}
+
+export function removeItem(inv, item, count) {
+  let left = count;
+  for (let i = inv.length - 1; i >= 0 && left > 0; i--) {
+    const s = inv[i];
+    if (s && s.item === item) {
+      const take = Math.min(s.count, left);
+      s.count -= take;
+      left -= take;
+      if (s.count <= 0) inv[i] = null;
+    }
+  }
+  return count - left;
+}
+
+export function hasCost(inv, cost) {
+  for (const k in cost) if (countItem(inv, +k) < cost[k]) return false;
+  return true;
+}
+
+export function payCost(inv, cost) {
+  for (const k in cost) removeItem(inv, +k, cost[k]);
+}
+
+export function freeSlots(inv) {
+  let n = 0;
+  for (const s of inv) if (!s) n++;
+  return n;
+}
+
+export function canFit(inv, item, count) {
+  const def = ITEM_DEFS[item];
+  const max = def ? def.stack : 1;
+  let room = 0;
+  for (const s of inv) {
+    if (!s) room += max;
+    else if (s.item === item) room += Math.max(0, max - s.count);
+    if (room >= count) return true;
+  }
+  return room >= count;
+}
+
+export { INVENTORY_SIZE };

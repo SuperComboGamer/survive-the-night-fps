@@ -1,0 +1,457 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Audio Engine Sandbox</title>
+<link rel="icon" href="data:," />
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d0f0e; color: #c9cfc9; font: 13px/1.35 system-ui, sans-serif; }
+  header { padding: 10px 16px; background: #151917; border-bottom: 1px solid #262c29; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0; color: #e5ebe5; font-weight: 600; }
+  #status { color: #8fa38f; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section { background: #141816; border: 1px solid #242a27; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #7f9a86; margin: 0 0 8px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 5px; }
+  button { background: #1f2622; color: #d3dbd3; border: 1px solid #333d37; border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { background: #2a342e; }
+  button.on { background: #4b2a24; border-color: #8a4a3c; }
+  button.big { padding: 8px 16px; font-weight: 600; background: #3b2a1c; border-color: #6b4b2c; }
+  label.row { display: grid; grid-template-columns: 90px 1fr 40px; gap: 8px; align-items: center; margin: 4px 0; }
+  label.chk { display: inline-flex; gap: 5px; align-items: center; margin-right: 12px; }
+  canvas { background: #0a0c0b; border: 1px solid #262c29; border-radius: 4px; touch-action: none; width: 100%; max-width: 320px; aspect-ratio: 1; display: block; }
+  .hint { color: #6f7f73; font-size: 12px; margin-top: 6px; }
+  #log { font: 11px/1.4 ui-monospace, monospace; color: #8a9a8e; max-height: 140px; overflow: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Survive the Night: audio sandbox</h1>
+  <button id="start" class="big">Start audio</button>
+  <span id="status">not initialised</span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Source position (top-down)</h2>
+      <canvas id="map" width="320" height="320"></canvas>
+      <div class="hint">Listener at centre facing up (-Z). Drag the red dot; grid = 10 m, ring = 40 m. Positional sounds and loops use this position.</div>
+      <label class="row">range (m) <input id="range" type="range" min="20" max="300" value="60" /><span id="rangeV">60</span></label>
+      <label class="row">listener yaw <input id="yaw" type="range" min="-180" max="180" value="0" /><span id="yawV">0</span></label>
+      <label class="chk"><input id="pos2d" type="checkbox" /> play SOUND ids as 2D</label>
+    </section>
+    <section>
+      <h2>Ambience state</h2>
+      <div id="amb"></div>
+    </section>
+    <section>
+      <h2>Volumes</h2>
+      <div id="vols"></div>
+    </section>
+    <section>
+      <h2>Log</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+  <div>
+    <section><h2>SOUND ids (positional)</h2><div class="btns" id="sounds"></div></section>
+    <section><h2>playLocal</h2><div class="btns" id="locals"></div></section>
+    <section><h2>Footsteps</h2><div class="btns" id="steps"></div></section>
+    <section><h2>Loops (toggle; follow the dot)</h2><div class="btns" id="loops"></div></section>
+    <section><h2>Stingers</h2><div class="btns" id="stingers"></div></section>
+    <section><h2>Voice chat</h2><div class="btns"><button id="voice">test voice source (oscillator stream)</button><button id="mic">microphone as remote voice</button></div></section>
+  </div>
+</main>
+<script type="module">
+import { AudioEngine } from '../audio/audio.js';
+import { SOUND } from '../../shared/defs.js';
+
+const LOCAL_NAMES = ['pistol', 'shotgun', 'ak47', 'rifle', 'reload_start', 'reload_end', 'shell_insert', 'bolt', 'pump', 'dry', 'swing', 'swing_heavy', 'hit', 'hit_wood', 'switch', 'pickup', 'craft', 'build', 'build_fail', 'hitmarker', 'headshot', 'kill', 'hurt', 'heal', 'bandage', 'ui_click', 'ui_hover', 'heartbeat', 'jump', 'land', 'flashlight', 'breath', 'throw', 'claw', 'zombie_player_growl', 'death', 'notify', 'chat', 'install_part', 'campfire_add', 'eat'];
+const LOOP_NAMES = ['campfire', 'torch', 'fire', 'acid', 'zombie_idle', 'boss_breath', 'generator'];
+const STINGER_NAMES = ['night', 'dawn', 'death', 'boss', 'victory', 'gameover', 'supply', 'jumpscare', 'join', 'car_part'];
+const SURFACES = ['dirt', 'wood', 'grass', 'water', 'metal'];
+
+const audio = new AudioEngine();
+window.audio = audio;
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+const log = (...a) => {
+  logEl.textContent += a.join(' ') + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+};
+
+// ---------------------------------------------------------------- state
+const src = { x: 6, z: -8 };
+let range = 60;
+let yaw = 0;
+const amb = { night: 0, danger: 0, lowHealth: 0, nearFire: 0, horde: false, boss: false, dead: false, menu: false, underCover: false };
+const vols = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
+const loops = new Map();
+
+async function start() {
+  if (audio.ready) return;
+  $('status').textContent = 'initialising...';
+  const t0 = performance.now();
+  await audio.init();
+  $('status').textContent = audio.ready ? `ready (${(performance.now() - t0).toFixed(0)} ms, ${audio.context.sampleRate} Hz)` : 'failed';
+}
+$('start').onclick = start;
+
+// ---------------------------------------------------------------- UI
+function mkBtn(parent, label, fn) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.onclick = async () => {
+    await start();
+    fn(b);
+  };
+  parent.appendChild(b);
+  return b;
+}
+for (const [name, id] of Object.entries(SOUND)) {
+  if (!id) continue;
+  mkBtn($('sounds'), name, () => {
+    if ($('pos2d').checked) audio.play(id);
+    else audio.play(id, { x: src.x, y: 1.2, z: src.z });
+  });
+}
+for (const n of LOCAL_NAMES) mkBtn($('locals'), n, () => audio.playLocal(n));
+for (const s of SURFACES) {
+  mkBtn($('steps'), s + ' (pos)', () => audio.footstep(s, src.x, 0, src.z, 1));
+  mkBtn($('steps'), s + ' (local)', () => audio.footstep(s));
+}
+for (const n of LOOP_NAMES) {
+  mkBtn($('loops'), n, (b) => {
+    if (loops.has(n)) {
+      loops.get(n).stop();
+      loops.delete(n);
+      b.classList.remove('on');
+    } else {
+      loops.set(n, audio.createLoop(n, src.x, 0.5, src.z));
+      b.classList.add('on');
+    }
+  });
+}
+for (const n of STINGER_NAMES) mkBtn($('stingers'), n, () => audio.stinger(n));
+
+function slider(parent, key, obj, min, max, step, onChange) {
+  const l = document.createElement('label');
+  l.className = 'row';
+  l.innerHTML = `${key} <input type="range" min="${min}" max="${max}" step="${step}" value="${obj[key]}"/><span>${obj[key]}</span>`;
+  const inp = l.querySelector('input');
+  const out = l.querySelector('span');
+  inp.oninput = () => {
+    obj[key] = +inp.value;
+    out.textContent = inp.value;
+    onChange();
+  };
+  parent.appendChild(l);
+}
+function check(parent, key, obj, onChange) {
+  const l = document.createElement('label');
+  l.className = 'chk';
+  l.innerHTML = `<input type="checkbox"/> ${key}`;
+  const inp = l.querySelector('input');
+  inp.onchange = () => {
+    obj[key] = inp.checked;
+    onChange();
+  };
+  parent.appendChild(l);
+}
+for (const k of ['night', 'danger', 'lowHealth', 'nearFire']) slider($('amb'), k, amb, 0, 1, 0.01, () => {});
+for (const k of ['horde', 'boss', 'dead', 'menu', 'underCover']) check($('amb'), k, amb, () => {});
+for (const k of Object.keys(vols)) slider($('vols'), k, vols, 0, 1, 0.01, () => audio.setVolumes(vols));
+$('range').oninput = () => {
+  range = +$('range').value;
+  $('rangeV').textContent = range;
+};
+$('yaw').oninput = () => {
+  yaw = +$('yaw').value;
+  $('yawV').textContent = yaw;
+};
+
+// voice chat tests
+let voiceTest = null;
+$('voice').onclick = async () => {
+  await start();
+  if (voiceTest) {
+    voiceTest.stop();
+    voiceTest = null;
+    return;
+  }
+  voiceTest = makeOscVoice();
+};
+function makeOscVoice() {
+  const c = audio.context;
+  const o = c.createOscillator();
+  o.type = 'sawtooth';
+  o.frequency.value = 140;
+  const lfo = c.createOscillator();
+  lfo.frequency.value = 3;
+  const lg = c.createGain();
+  lg.gain.value = 40;
+  lfo.connect(lg);
+  lg.connect(o.frequency);
+  const g = c.createGain();
+  g.gain.value = 0.2;
+  const dst = c.createMediaStreamDestination();
+  o.connect(g);
+  g.connect(dst);
+  o.start();
+  lfo.start();
+  const v = audio.createVoiceSource(dst.stream);
+  v.setPosition(src.x, 1.6, src.z);
+  const t = { v, stop: () => { v.disconnect(); o.stop(); lfo.stop(); } };
+  return t;
+}
+$('mic').onclick = async () => {
+  await start();
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const v = audio.createVoiceSource(s);
+    voiceTest = { v, stop: () => { v.disconnect(); s.getTracks().forEach((t) => t.stop()); } };
+  } catch (e) {
+    log('mic failed', e.message);
+  }
+};
+
+// ---------------------------------------------------------------- map
+const cv = $('map');
+const g2 = cv.getContext('2d');
+function toPx(x, z) {
+  const s = cv.width / 2 / range;
+  return [cv.width / 2 + x * s, cv.height / 2 + z * s];
+}
+function fromPx(px, py) {
+  const s = cv.width / 2 / range;
+  return [(px - cv.width / 2) / s, (py - cv.height / 2) / s];
+}
+function draw() {
+  const W = cv.width;
+  g2.clearRect(0, 0, W, W);
+  g2.strokeStyle = '#18201b';
+  const s = W / 2 / range;
+  for (let m = -range; m <= range; m += 10) {
+    const p = W / 2 + m * s;
+    g2.beginPath();
+    g2.moveTo(p, 0);
+    g2.lineTo(p, W);
+    g2.moveTo(0, p);
+    g2.lineTo(W, p);
+    g2.stroke();
+  }
+  g2.strokeStyle = '#3a4a3f';
+  g2.beginPath();
+  g2.arc(W / 2, W / 2, 40 * s, 0, Math.PI * 2);
+  g2.stroke();
+  // listener
+  const yr = (yaw * Math.PI) / 180;
+  g2.save();
+  g2.translate(W / 2, W / 2);
+  g2.rotate(-yr);
+  g2.fillStyle = '#9fc7a8';
+  g2.beginPath();
+  g2.moveTo(0, -10);
+  g2.lineTo(6, 6);
+  g2.lineTo(-6, 6);
+  g2.closePath();
+  g2.fill();
+  g2.restore();
+  const [px, py] = toPx(src.x, src.z);
+  g2.fillStyle = '#d0503c';
+  g2.beginPath();
+  g2.arc(px, py, 6, 0, Math.PI * 2);
+  g2.fill();
+  g2.fillStyle = '#8a9a8e';
+  g2.fillText(`${Math.hypot(src.x, src.z).toFixed(1)} m`, px + 9, py + 4);
+}
+let dragging = false;
+function onPtr(e) {
+  const r = cv.getBoundingClientRect();
+  const [x, z] = fromPx(((e.clientX - r.left) / r.width) * cv.width, ((e.clientY - r.top) / r.height) * cv.height);
+  src.x = x;
+  src.z = z;
+}
+cv.addEventListener('pointerdown', (e) => {
+  dragging = true;
+  cv.setPointerCapture(e.pointerId);
+  onPtr(e);
+});
+cv.addEventListener('pointermove', (e) => dragging && onPtr(e));
+cv.addEventListener('pointerup', () => (dragging = false));
+
+// window.__externalDrive = true lets the autotest / external scripts own listener + ambience state
+function frame() {
+  if (!window.__externalDrive) {
+    audio.setListener(0, 1.6, 0, (yaw * Math.PI) / 180, 0);
+    audio.setAmbience(amb);
+  }
+  for (const l of loops.values()) l.setPosition(src.x, 0.5, src.z);
+  if (voiceTest) voiceTest.v.setPosition(src.x, 1.6, src.z);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------------------------------------------------------------- automated smoke test (?autotest)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function autotest() {
+  window.__externalDrive = true;
+  let maxTask = 0;
+  let longTasks = 0;
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        longTasks++;
+        maxTask = Math.max(maxTask, e.duration);
+      }
+    }).observe({ entryTypes: ['longtask'] });
+  } catch {}
+  // calls before init must be ignored gracefully
+  audio.play(SOUND.PISTOL, { x: 1, y: 0, z: 1 });
+  audio.playLocal('pistol');
+  audio.stinger('night');
+  audio.setAmbience({ night: 0.5 });
+  audio.setListener(0, 1.6, 0, 0, 0);
+  const early = audio.createLoop('campfire', 3, 0, 3);
+
+  const t0 = performance.now();
+  await audio.init();
+  const initMs = performance.now() - t0;
+  if (!audio.ready) throw new Error('engine not ready after init()');
+  log('init', initMs.toFixed(0), 'ms');
+  await audio.init(); // second call must be a no-op
+
+  // ---- output level checks (analyser tapped after the master limiter)
+  const an = audio.context.createAnalyser();
+  an.fftSize = 2048;
+  audio._limit.connect(an);
+  const tbuf = new Float32Array(2048);
+  const peakOver = async (ms) => {
+    let p = 0;
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      an.getFloatTimeDomainData(tbuf);
+      for (let k = 0; k < tbuf.length; k++) p = Math.max(p, Math.abs(tbuf[k]));
+      await sleep(15);
+    }
+    return p;
+  };
+  const lv = {};
+  await sleep(300);
+  if (!early.active) throw new Error('loop created before init did not activate');
+  early.stop();
+  audio.setVolumes({ master: 1, music: 0, sfx: 1, ambience: 0, voice: 1 });
+  await sleep(400);
+  lv.silence = await peakOver(150);
+  audio.playLocal('pistol');
+  lv.fpPistol = await peakOver(250);
+  await sleep(1200);
+  audio.play(SOUND.PISTOL, { x: 0, y: 1.6, z: -5 });
+  lv.pistol5m = await peakOver(300);
+  await sleep(1200);
+  audio.play(SOUND.PISTOL, { x: 0, y: 1.6, z: -180 });
+  lv.pistol180m = await peakOver(1200);
+  await sleep(600);
+  audio.setVolumes({ sfx: 0, music: 1 });
+  lv.music = await peakOver(2200);
+  audio.setVolumes({ music: 0, ambience: 1 });
+  lv.ambience = await peakOver(2000);
+  console.log('[autotest] levels ' + Object.entries(lv).map(([k, v]) => `${k}=${v.toFixed(4)}`).join(' '));
+  if (!(lv.fpPistol > 0.1)) throw new Error('first-person pistol too quiet');
+  if (!(lv.pistol5m > 0.02 && lv.pistol180m > 0.0003 && lv.pistol180m < lv.pistol5m * 0.5)) throw new Error('distance attenuation looks wrong');
+  if (!(lv.music > 0.003)) throw new Error('music bus silent');
+  if (!(lv.ambience > 0.003)) throw new Error('ambience bus silent');
+
+  audio.setVolumes({ master: 0.9, music: 0.8, sfx: 1, ambience: 0.8, voice: 1 });
+  let i = 0;
+  for (const [name, id] of Object.entries(SOUND)) {
+    if (!id) continue;
+    const a = i * 0.7;
+    audio.play(id, { x: Math.sin(a) * (5 + i), y: 1, z: Math.cos(a) * (5 + i), volume: 0.8 });
+    if (i % 3 === 0) audio.play(id);
+    if (i % 5 === 0) audio.play(id, { x: 150, y: 0, z: 150, variant: i });
+    i++;
+    await sleep(8);
+  }
+  for (const n of LOCAL_NAMES) {
+    audio.playLocal(n, { volume: 0.7, rate: 1.02 });
+    await sleep(4);
+  }
+  for (const s of SURFACES) {
+    audio.footstep(s, 3, 0, -2, 0.8);
+    audio.footstep(s);
+  }
+  // spam gunfire to exercise the voice pool limiter
+  for (let k = 0; k < 120; k++) audio.play(SOUND.AK47, { x: Math.random() * 400 - 200, y: 0, z: Math.random() * 400 - 200 });
+  for (let k = 0; k < 60; k++) audio.footstep('dirt', Math.random() * 30 - 15, 0, Math.random() * 30 - 15, 1);
+
+  const ls = LOOP_NAMES.map((n, k) => audio.createLoop(n, Math.sin(k) * 6, 0.5, Math.cos(k) * 6));
+  for (let k = 0; k < 40; k++) ls.push(audio.createLoop('zombie_idle', Math.random() * 40 - 20, 0, Math.random() * 40 - 20));
+  ls[0].setPosition(4, 0, 4);
+  ls[1].setVolume(0.4);
+
+  const states = [
+    { menu: true },
+    { night: 0 },
+    { night: 0.5, danger: 0.4, nearFire: 0.5 },
+    { night: 1, horde: true, danger: 1, lowHealth: 0.9 },
+    { night: 1, horde: true, boss: true, danger: 1, underCover: true },
+    { night: 1, dead: true },
+    { night: 0.2 },
+  ];
+  for (const st of states) {
+    const tEnd = performance.now() + 260;
+    while (performance.now() < tEnd) {
+      const t = performance.now() / 1000;
+      audio.setListener(Math.sin(t) * 3, 1.6, Math.cos(t) * 3, t, Math.sin(t * 2) * 1.5);
+      audio.setAmbience(st);
+      await sleep(16);
+    }
+  }
+  for (const s of STINGER_NAMES) {
+    audio.stinger(s);
+    await sleep(20);
+  }
+  // voice chat path
+  const vt = makeOscVoice();
+  vt.v.setVolume(0.8);
+  vt.v.setMuffled(true);
+  vt.v.setPosition(30, 1.6, 0);
+  await sleep(150);
+  vt.stop();
+  vt.v.disconnect(); // double disconnect is safe
+  // unknown ids / names are ignored
+  audio.play(9999, { x: 0, y: 0, z: 0 });
+  audio.play(undefined);
+  audio.playLocal('does_not_exist');
+  audio.stinger('does_not_exist');
+  audio.footstep('lava', 1, 0, 1, 1);
+  audio.createLoop('does_not_exist', 0, 0, 0).stop();
+  audio.setVolumes({ music: 'x' });
+  for (const l of ls) l.stop();
+  early.stop(); // double stop is safe
+
+  // wait for background rendering, then make sure every referenced bank exists
+  for (let k = 0; k < 60 && !audio._queue.finished; k++) await sleep(100);
+  const missing = audio._selfCheck();
+  if (missing.length) throw new Error('missing banks: ' + missing.join(', '));
+  log('long tasks during test:', longTasks, 'max', maxTask.toFixed(0), 'ms');
+  console.log(`[autotest] init ${initMs.toFixed(0)}ms, banks ${audio._pools.size}, background done: ${!!audio._queue.finished}, longtasks ${longTasks} (max ${maxTask.toFixed(0)}ms), ctx ${audio.context.state}`);
+  if (maxTask > 300) throw new Error('main thread blocked for ' + maxTask.toFixed(0) + 'ms');
+  window.__externalDrive = false;
+  $('status').textContent = 'AUDIO_TEST_OK';
+  console.log('AUDIO_TEST_OK');
+}
+if (new URLSearchParams(location.search).has('autotest')) {
+  autotest().catch((e) => {
+    console.error('AUDIO_TEST_FAIL', e && e.stack ? e.stack : e);
+    $('status').textContent = 'AUDIO_TEST_FAIL';
+  });
+}
+</script>
+</body>
+</html>

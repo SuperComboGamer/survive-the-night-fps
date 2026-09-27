@@ -1,0 +1,27 @@
+{
+  "name": "survive-the-night-fps",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Co-op horror survival FPS - scavenge by day, board up wherever you stand by night, fix the car and escape. three.js client, authoritative Node uWebSockets.js server",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:server": "node --watch-path=server --watch-path=shared server/index.js",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "NODE_ENV=production node server/index.js",
+    "check": "node scripts/check.js",
+    "test": "node scripts/check.js && node scripts/test-protocol.js && node scripts/sim-smoke.js",
+    "test:bots": "node scripts/bot.js 4 20",
+    "test:e2e": "node scripts/e2e-gameplay.js",
+    "test:sim": "node scripts/sim-smoke.js"
+  },
+  "dependencies": {
+    "three": "^0.186.1",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.12.0",
+    "vite": "^8.3.1"
+  }
+}

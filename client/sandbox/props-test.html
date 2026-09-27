@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Props gallery</title>
+    <link rel="icon" href="data:," />
+    <style>
+      html, body { margin: 0; height: 100%; background: #111; overflow: hidden; font-family: system-ui, sans-serif; }
+      #labels { position: absolute; inset: 0; pointer-events: none; }
+      .lbl { position: absolute; transform: translate(-50%, -100%); color: #e8e2d0; font-size: 11px; background: rgba(0,0,0,0.55); padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+      #hud { position: absolute; left: 8px; top: 8px; color: #ccc; font-size: 12px; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px; }
+      #hud a { color: #9cf; margin-right: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="labels"></div>
+    <div id="hud"></div>
+    <script type="module" src="./props-test.js"></script>
+  </body>
+</html>

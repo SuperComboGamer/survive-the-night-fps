@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Icon sheet</title>
+    <link rel="icon" href="data:," />
+    <style>
+      body { margin: 0; padding: 14px; background: #0d0f0e; color: #d8d2c0; font: 12px system-ui, sans-serif; }
+      h2 { font-size: 13px; margin: 14px 0 6px; color: #a89f86; letter-spacing: 0.08em; text-transform: uppercase; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--cell, 132px), 1fr)); gap: 8px; }
+      .cell { background: #171a18; border: 1px solid #262a27; border-radius: 6px; padding: 8px 6px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .cell.new { border-color: #7a5a22; background: #1d1a14; }
+      .cell .ico { height: var(--h, 48px); width: auto; max-width: 100%; color: #e6dcc2; }
+      .cell .small .ico { height: 22px; color: #b9ae92; }
+      .cell span { font-size: 11px; color: #9c957f; text-align: center; }
+      .row { display: flex; gap: 10px; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <div id="out"></div>
+    <script type="module" src="./icons-test.js"></script>
+  </body>
+</html>

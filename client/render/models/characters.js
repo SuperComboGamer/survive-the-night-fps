@@ -1,0 +1,2657 @@
+// Procedural zombie + survivor characters.
+// Every character is ONE SkinnedMesh (one draw call) with rigid skinning. Geometry/material are shared
+// per type+variant; each instance owns only its Skeleton + bones. Animation is fully procedural and
+// writes bone rotations; state changes crossfade from a pose snapshot.
+import * as THREE from 'three';
+import { ZTYPE, ZOMBIE_DEFS, ZANIM, ITEM, WEAPONS } from '../../../shared/defs.js';
+import {
+  MeshBuilder, instantiateRig, setFx, getCharacterMaterial, ikTwoBone, mulberry32, fbm3, noise3,
+  clamp, lerp, smooth, color,
+} from './skinning.js';
+import { CR } from './charTextures.js';
+import { createWorldWeapon } from './weapons.js';
+
+const PI = Math.PI;
+const TAU = PI * 2;
+const HALF = PI / 2;
+
+// ------------------------------------------------------------------ humanoid bone layout
+const ROOT = 1, HIPS = 2, SPINE = 3, CHEST = 4, NECK = 5, HEAD = 6, JAW = 7;
+const CLAV_L = 8, UARM_L = 9, FARM_L = 10, HAND_L = 11;
+const CLAV_R = 12, UARM_R = 13, FARM_R = 14, HAND_R = 15;
+const THIGH_L = 16, SHIN_L = 17, FOOT_L = 18, THIGH_R = 19, SHIN_R = 20, FOOT_R = 21;
+
+const C_SOCKET = color(0x0c0605);
+const C_BLOOD = color(0x3a0303);
+const C_MOUTH = color(0x1a0303);
+const C_NAIL = color(0x2a2016);
+const C_TEETH = color(0xb8ab84);
+
+function humanP(o) {
+  const P = Object.assign(
+    {
+      hipY: 0.93, hipW: 0.095, thighLen: 0.43, shinLen: 0.42,
+      spineLen: 0.13, chestLen: 0.2, neckOff: 0.2, neckLen: 0.09, headR: 0.11,
+      shoulderW: 0.185, shoulderDrop: 0.05, uarmLen: 0.29, farmLen: 0.26, handLen: 0.17,
+      depth: 0.13, neckZ: 0, headZ: 0,
+    },
+    o
+  );
+  P.thighY = P.hipY - 0.03;
+  P.kneeY = P.thighY - P.thighLen;
+  P.ankleY = P.kneeY - P.shinLen;
+  P.spineY = P.hipY + P.spineLen;
+  P.chestY = P.spineY + P.chestLen;
+  P.neckY = P.chestY + P.neckOff;
+  P.headY = P.neckY + P.neckLen;
+  P.shoulderY = P.neckY - P.shoulderDrop;
+  P.elbowY = P.shoulderY - P.uarmLen;
+  P.wristY = P.elbowY - P.farmLen;
+  return P;
+}
+
+function addHumanoidBones(mb, P) {
+  mb.addBone('root', null, 0, 0, 0);
+  mb.addBone('hips', 'root', 0, P.hipY, 0);
+  mb.addBone('spine', 'hips', 0, P.spineY, 0);
+  mb.addBone('chest', 'spine', 0, P.chestY, 0);
+  mb.addBone('neck', 'chest', 0, P.neckY, P.neckZ);
+  mb.addBone('head', 'neck', 0, P.headY, P.headZ);
+  mb.addBone('jaw', 'head', 0, P.headY + P.headR * 0.42, P.headZ - P.headR * 0.12);
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    mb.addBone('clav' + n, 'chest', s * 0.04, P.shoulderY + 0.01, 0);
+    mb.addBone('uarm' + n, 'clav' + n, s * P.shoulderW, P.shoulderY, 0);
+    mb.addBone('farm' + n, 'uarm' + n, s * P.shoulderW, P.elbowY, 0);
+    mb.addBone('hand' + n, 'farm' + n, s * P.shoulderW, P.wristY, 0);
+  }
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    mb.addBone('thigh' + n, 'hips', s * P.hipW, P.thighY, 0);
+    mb.addBone('shin' + n, 'thigh' + n, s * P.hipW, P.kneeY, 0);
+    mb.addBone('foot' + n, 'shin' + n, s * P.hipW, P.ankleY, 0);
+  }
+}
+
+/** Resample control profile [[r,y],...] into n rows (linear). */
+function resample(ctrl, n, rmul = 1) {
+  const out = [];
+  const y0 = ctrl[0][1], y1 = ctrl[ctrl.length - 1][1];
+  for (let i = 0; i < n; i++) {
+    const y = y0 + ((y1 - y0) * i) / (n - 1);
+    let k = 0;
+    while (k < ctrl.length - 2 && ctrl[k + 1][1] < y) k++;
+    const a = ctrl[k], b = ctrl[k + 1];
+    const t = clamp((y - a[1]) / (b[1] - a[1] || 1), 0, 1);
+    out.push([(a[0] + (b[0] - a[0]) * t) * rmul, y]);
+  }
+  return out;
+}
+
+function mulColor(hex, k) {
+  return color(hex).multiplyScalar(k);
+}
+
+// ------------------------------------------------------------------ body part builders
+/** Zombie / survivor head on 'head' bone, jaw on 'jaw'. Features are explicit primitives so they read at distance. */
+function buildHead(mb, P, L) {
+  const hr = P.headR;
+  const hb = mb.bonePos('head');
+  const jb = mb.bonePos('jaw');
+  const cy = hr * 0.9;
+  const sx = hr * (L.headSX || 0.84), sy = hr * (L.headSY || 1.0), sz = hr * (L.headSZ || 1.06);
+  const human = !!L.human;
+  const skinReg = L.headRegion ?? L.skinRegion ?? CR.SKIN;
+  const skin = color(L.skin);
+  const skinD = skin.clone().multiplyScalar(0.8);
+  const gaunt = L.gaunt || 0;
+  // cranium
+  mb.ellip('head', [0, cy, 0], [sx, sy, sz], {
+    ws: L.headWS || 12, hs: L.headHS || 9, color: L.skin, region: skinReg, mottle: human ? 0.08 : 0.3, mf: 20,
+    shape(v) {
+      const ny = v.y / sy, nz = v.z / sz;
+      if (ny < -0.1) v.x *= 1 - (-0.1 - ny) * (human ? 0.28 : 0.4 + gaunt * 0.15); // narrow lower face
+      if (nz < -0.4) v.z *= 0.93; // flatter face
+      if (nz > 0.3 && ny < -0.3) v.z *= 0.86; // skull base
+      if (ny < -0.55 && nz < 0) v.z *= 0.9; // recessed mouth area
+    },
+    tint(p, n, c) {
+      const ly = (p.y - hb[1] - cy) / sy, lz = (p.z - hb[2]) / sz;
+      if (!human) {
+        if (ly < -0.35 && lz < -0.45) c.lerp(C_BLOOD, 0.6);
+        if (n.y < -0.5 && lz < -0.2) c.lerp(C_MOUTH, 0.85);
+      } else {
+        if (ly < -0.42 && ly > -0.58 && lz < -0.7) c.lerp(color(0x7a4038), 0.35);
+        if (L.stubble && ly < -0.3 && lz < -0.1) c.multiplyScalar(0.8);
+      }
+      if (L.hair && L.hair.patchy && ly > 0.25 - (lz > 0 ? 0.5 : 0) && lz > -0.75) {
+        const m = fbm3(p.x * 60, p.y * 60, p.z * 60, 2, 7);
+        if (m > L.hair.patchy * 0.8) c.copy(color(L.hair.color)).multiplyScalar(0.7 + m * 0.6);
+      }
+      if (L.headTint) L.headTint((p.x - hb[0]) / sx, ly, lz, c);
+    },
+  });
+  const fz = -sz * 0.9; // face plane
+  // brow ridge
+  mb.ellip('head', [0, cy + hr * 0.27, fz + hr * 0.2], [sx * 0.78, hr * (human ? 0.1 : 0.13), hr * 0.2], {
+    ws: 7, hs: 3, color: human ? skin : skinD, region: skinReg, mottle: 0.2,
+    tint(p, n, c) {
+      if (human && n.y > 0.2 && n.z < -0.3) c.multiplyScalar(0.5); // eyebrows
+    },
+  });
+  // nose
+  if (human) {
+    mb.ellip('head', [0, cy - hr * 0.1, fz - hr * 0.02], [hr * 0.075, hr * 0.17, hr * 0.09], { ws: 6, hs: 4, color: skin, region: skinReg, rot: [-0.3, 0, 0] });
+  } else if ((L.nose ?? 1) > 0.3) {
+    mb.ellip('head', [0, cy - hr * 0.08, fz - hr * 0.07], [hr * 0.09, hr * 0.2, hr * 0.1], { ws: 5, hs: 3, color: skinD, region: skinReg, rot: [-0.25, 0, 0] });
+  }
+  if (!human) {
+    // rotted nasal cavity
+    mb.ellip('head', [0, cy - hr * 0.2, fz - hr * 0.08], [hr * 0.08, hr * 0.09, hr * 0.05], { ws: 5, hs: 3, color: C_SOCKET, region: CR.FLESH, ao: false, blood: false, mottle: 0 });
+  }
+  // eye sockets + eyes
+  const eyeX = sx * (human ? 0.36 : 0.4), eyeY = cy + hr * (human ? 0.08 : 0.1);
+  for (const s of [-1, 1]) {
+    if (!human) {
+      mb.ellip('head', [s * eyeX, eyeY, fz + hr * 0.08], [hr * 0.2, hr * 0.15, hr * 0.12], {
+        ws: 6, hs: 4, color: C_SOCKET, region: CR.FLESH, rot: [0, 0, s * -0.2], ao: false, blood: false, mottle: 0,
+      });
+      mb.ellip('head', [s * eyeX * 0.97, eyeY - hr * 0.035, fz - hr * 0.025], [hr * 0.055, hr * 0.045, hr * 0.035], {
+        ws: 5, hs: 3, color: L.eye ?? 0x8a8460, glow: L.eyeGlow ?? 0.08, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
+      });
+    } else {
+      mb.ellip('head', [s * eyeX, eyeY, fz + hr * 0.01], [hr * 0.1, hr * 0.06, hr * 0.06], {
+        ws: 6, hs: 4, color: L.eye ?? 0xd8d4cc, glow: L.eyeGlow || 0, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
+      });
+      if (!L.eyeGlow) mb.ellip('head', [s * eyeX, eyeY, fz - hr * 0.045], [hr * 0.045, hr * 0.045, hr * 0.015], { ws: 5, hs: 3, color: 0x20140c, mottle: 0, ao: false, region: CR.PLAIN });
+    }
+  }
+  // ears
+  for (const s of [-1, 1]) {
+    mb.ellip('head', [s * sx * 0.97, cy - hr * 0.05, hr * 0.05], [hr * 0.09, hr * 0.24, hr * 0.16], {
+      ws: 4, hs: 3, color: skinD, region: skinReg, rot: [0, s * 0.3, 0],
+    });
+  }
+  // jaw (lower mandible) relative to jaw bone
+  const jy = hb[1] + cy - jb[1];
+  const jz = hb[2] - jb[2];
+  const jawS = L.jawScale || 1;
+  mb.ellip('jaw', [0, jy - hr * 0.62, jz - sz * 0.38 * jawS], [sx * 0.7 * jawS, hr * 0.26, sz * 0.58 * jawS], {
+    ws: 9, hs: 5, color: L.skin, region: skinReg, mottle: human ? 0.08 : 0.3,
+    shape(v) {
+      if (v.z < 0) v.x *= 1 + v.z / (sz * 2.0 * jawS); // narrower chin
+    },
+    tint(p, n, c) {
+      if (!human && n.y > 0.3) c.lerp(C_MOUTH, 0.95);
+      else if (!human) c.lerp(C_BLOOD, 0.35);
+      else if (L.stubble) c.multiplyScalar(0.78);
+    },
+  });
+  if (!human) {
+    // teeth rows (upper on head, lower on jaw)
+    const nT = 8;
+    const trnd = mulberry32((L.missingTeeth || 0) + 17);
+    for (let i = 0; i < nT; i++) {
+      const a = ((i + 0.5) / nT - 0.5) * 2.0;
+      const tx = Math.sin(a) * sx * 0.44 * jawS, tzU = fz * 0.93 + (1 - Math.cos(a)) * hr * 0.4;
+      const fang = L.fang && (i === 1 || i === 6) ? 1.8 : 1;
+      const tc = C_TEETH.clone().multiplyScalar(0.7 + trnd() * 0.4);
+      if (!((L.missingTeeth || 0) & (1 << i))) {
+        const h = hr * (0.1 + trnd() * 0.06) * fang;
+        mb.box('jaw', [tx, jy - hr * 0.46 + h * 0.5, jz + tzU * jawS + hr * 0.05], [hr * 0.075, h, hr * 0.06], { color: tc, region: CR.BONE, ao: false, blood: false, rot: [0.1, a, (trnd() - 0.5) * 0.4], mottle: 0.3 });
+      }
+      if (!((L.missingTeeth || 0) & (1 << ((i + 3) % 8)))) {
+        const h = hr * (0.1 + trnd() * 0.07) * fang;
+        mb.box('head', [tx, cy - hr * 0.44 - h * 0.5, tzU], [hr * 0.075, h, hr * 0.06], { color: tc, region: CR.BONE, ao: false, blood: false, rot: [-0.1, a, (trnd() - 0.5) * 0.4], mottle: 0.3 });
+      }
+    }
+  }
+}
+
+function hair(mb, P, L) {
+  if (!L.hair || L.hair.patchy) return; // patchy zombie hair is painted onto the scalp (see buildHead)
+  const hr = P.headR;
+  const cy = hr * 0.9;
+  const h = L.hair;
+  const sx = hr * (L.headSX || 0.84), sy = hr * (L.headSY || 1.0), sz = hr * (L.headSZ || 1.06);
+  mb.ellip('head', [0, cy + hr * 0.02, hr * 0.03], [sx * 1.07, sy * 1.06, sz * 1.07], {
+    ws: 12, hs: 8, t0: 0, tl: PI * (h.cover || 0.52), color: h.color, region: CR.HAIR, mottle: 0.3,
+    tear: h.patchy ? { amt: h.patchy, f: 30, seed: h.seed || 3 } : null,
+    shape(v) {
+      if (v.z < -sz * 0.5 && v.y < sy * 0.55) v.y += sy * 0.08; // hairline
+    },
+    blood: false,
+  });
+  if (h.long) {
+    mb.ellip('head', [0, cy - hr * 0.35, hr * 0.45], [sx * 0.95, sy * 0.8, sz * 0.55], { ws: 8, hs: 6, color: h.color, region: CR.HAIR, tear: h.patchy ? { amt: h.patchy * 0.7, f: 30, seed: 9 } : null });
+  }
+}
+
+const C_WOUND = color(0x4a0806);
+const C_WOUND2 = color(0x8a2a20);
+function woundTint(L, p, c) {
+  if (!L.wounds) return;
+  for (const w of L.wounds) {
+    const d = Math.hypot(p.x - w[0], p.y - w[1], p.z - w[2]) / w[3];
+    if (d < 1.4) {
+      const nn = fbm3(p.x * 30, p.y * 30, p.z * 30, 2, 13);
+      const t = clamp((1.1 - d - (nn - 0.5) * 0.7) * 3, 0, 1);
+      if (t > 0) c.lerp(nn > 0.5 ? C_WOUND2 : C_WOUND, t);
+      if (t >= 1 && nn < 0.4) c.lerp(C_SOCKET, 0.6);
+    }
+  }
+}
+
+/** Torso: pelvis (hips), abdomen (spine), ribcage/chest (chest), neck. */
+function buildTorso(mb, P, L) {
+  const w = L.wide || 1;
+  const g = L.gaunt ?? 0.4;
+  const chestY = P.chestY;
+  const sxC = 1.22 * w * (L.chestW || 1), szC = 0.78 * (L.chestD || 1);
+  const sxA = 1.18 * w * (L.waistW || 1), szA = 0.8 * (L.bellyD || 1) * (1 - g * 0.12);
+  const top = P.neckY - P.chestY + 0.02;
+  const cr = L.chestR || 0.158;
+  const chestCtrl = [
+    [cr * 0.8, -0.11], [cr * 0.9, -0.04], [cr * 0.97, 0.03], [cr, top * 0.45], [cr * 0.96, top * 0.66],
+    [cr * 0.82, top * 0.84], [cr * 0.52, top * 0.97], [cr * 0.3, top + 0.01],
+  ];
+  const ribs = L.ribs ?? g;
+  const chestProf = resample(chestCtrl, 11);
+  mb.lathe('chest', [0, 0, 0], chestProf, {
+    rs: 12, sx: sxC, sz: szC, color: L.skin, region: L.skinRegion ?? CR.SKIN, mottle: 0.25,
+    shape(v) {
+      // ribs: horizontal ridges on front & sides, lower half of ribcage
+      if (ribs > 0 && v.y > -0.08 && v.y < top * 0.6) {
+        const fr = clamp((-v.z / (Math.hypot(v.x, v.z) + 1e-5)) * 0.5 + 0.6, 0, 1);
+        const sternum = Math.abs(v.x) < 0.025 ? 0.3 : 1;
+        const r = Math.abs(Math.sin(((v.y + 0.08) * PI) / 0.034));
+        const k = 1 + ribs * 0.045 * r * r * fr * sternum - ribs * 0.02;
+        v.x *= k;
+        v.z *= k;
+      }
+      // shoulder blades / flatter back
+      if (v.z > 0) v.z *= 0.92;
+      // pecs / sunken chest
+      if (v.z < 0 && v.y > top * 0.45 && v.y < top * 0.75) v.z *= 1 + (L.pecs || 0) * 0.08;
+    },
+    tint(p, n, c) {
+      woundTint(L, p, c);
+      if (ribs > 0) {
+        const y = p.y - chestY;
+        if (y > -0.08 && y < top * 0.6) {
+          const r = Math.abs(Math.sin(((y + 0.08) * PI) / 0.034));
+          c.multiplyScalar(1 - ribs * 0.35 * (1 - r));
+        }
+      }
+      if (L.torsoTint) L.torsoTint(p, n, c);
+    },
+  });
+  const abCtrl = [
+    [0.128, -P.spineLen - 0.03], [0.126, -P.spineLen * 0.5], [0.12 - 0.012 * g, 0], [0.12 - 0.008 * g, 0.06],
+    [cr * 0.85, 0.13], [cr * 0.88, P.chestLen - 0.02],
+  ];
+  mb.lathe('spine', [0, 0, 0], resample(abCtrl, 7), {
+    rs: 12, sx: sxA, sz: szA, color: L.skin, region: L.skinRegion ?? CR.SKIN, mottle: 0.25,
+    shape(v) {
+      if (v.z < 0 && g > 0.3) v.z *= 1 - g * 0.1 * clamp(1 - Math.abs(v.y - 0.02) / 0.1, 0, 1); // sunken belly
+    },
+    tint(p, n, c) {
+      woundTint(L, p, c);
+      if (L.torsoTint) L.torsoTint(p, n, c);
+    },
+  });
+  // pelvis (pants)
+  const pc = L.pants ? L.pants.color : L.skin;
+  const pr = L.pants ? L.pants.region ?? CR.DENIM : L.skinRegion ?? CR.SKIN;
+  mb.lathe('hips', [0, 0, 0], resample([[0.05, -0.125], [0.1, -0.11], [0.122, -0.07], [0.13, -0.01], [0.128, 0.05], [0.124, 0.1]], 6), {
+    rs: 12, sx: 1.14 * w * (L.hipsW || 1), sz: 0.82 * (L.hipsD || 1), color: pc, region: pr,
+  });
+  if (L.pants && L.belt !== false) {
+    mb.lathe('hips', [0, 0, 0], [[0.131, 0.06], [0.131, 0.09]], { rs: 10, sx: 1.15 * w * (L.hipsW || 1), sz: 0.83 * (L.hipsD || 1), color: 0x2a2018, region: CR.LEATHER });
+  }
+  // neck
+  const nl = P.neckLen + 0.05;
+  mb.seg('neck', [0, -0.05, 0.005], [0, nl, P.headZ - P.neckZ + 0.005], L.neckR || 0.047, (L.neckR || 0.047) * 0.88, {
+    rs: 8, hs: 2, caps: 1, capScale: 0.4, color: L.skin, region: L.skinRegion ?? CR.SKIN, sz: 0.92,
+    tint(p, n, c) {
+      if (n.y > 0.6 && p.y > P.neckY + nl * 0.6) c.lerp(color(0x5a0505), 0.9); // stump when headless
+    },
+  });
+  // collarbones / trapezius
+  for (const s of [-1, 1]) {
+    const dm = (L.deltoid || 1) * (L.shirt && L.shirt.sleeves ? 0.92 : 1);
+    if (!L.noDeltoid) mb.ellip('chest', [s * (P.shoulderW - 0.012), P.shoulderY - chestY + 0.005, 0.005], [0.062 * dm, 0.058 * dm, 0.064 * dm], {
+      ws: 7, hs: 5,
+      color: L.shoulderCol ?? (L.shirt && L.shirt.sleeves && L.shirt.type !== 'tank' ? L.shirt.color : L.skin),
+      region: L.shoulderReg ?? (L.shirt && L.shirt.sleeves && L.shirt.type !== 'tank' ? L.shirt.region ?? CR.CLOTH : L.skinRegion ?? CR.SKIN),
+    });
+    if (g > 0.2 && !L.shirt) {
+      mb.tube('chest', [[s * 0.025, top - 0.035, -0.075 * szC / 0.78], [s * 0.09, top - 0.03, -0.07 * szC / 0.78], [s * 0.15, top - 0.05, -0.05]], 0.011, 0.009, { rs: 4, ts: 3, color: L.skin, region: L.skinRegion ?? CR.SKIN, cap: false });
+    }
+  }
+  return { chestProf, sxC, szC, abCtrl, sxA, szA, top };
+}
+
+/** Shirt / jacket shells over the torso. */
+function buildShirt(mb, P, L, T) {
+  const sh = L.shirt;
+  if (!sh) return;
+  const g = sh.thick || 1.07;
+  const tear = sh.tear ?? 0.28;
+  const reg = sh.region ?? CR.CLOTH;
+  const chestY = P.chestY, spineY = P.spineY;
+  const hemY = spineY - P.spineLen - (sh.hem ?? 0.04);
+  const tank = sh.type === 'tank';
+  const fnC = (x, y, z) => {
+    if (tank && Math.abs(x) > 0.1 && y > chestY + 0.02) return true;
+    if (sh.open && z < -0.05 && Math.abs(x) < 0.05 + (y - spineY) * 0.1) return true;
+    return false;
+  };
+  const shellProf = T.chestProf.map(([r, y]) => [r * g + 0.004, y]);
+  mb.lathe('chest', [0, 0, 0], shellProf.slice(0, 10), {
+    rs: 12, sx: T.sxC, sz: T.szC, color: sh.color, region: reg, mottle: 0.2,
+    tear: { amt: tear, f: 11, seed: sh.seed || 1, fn: fnC },
+    tint: sh.tint,
+  });
+  const ab = T.abCtrl.map(([r, y]) => [r * g + 0.008, y]);
+  ab[0] = [ab[0][0] * 1.05, hemY - spineY];
+  mb.lathe('spine', [0, 0, 0], resample(ab, 7), {
+    rs: 12, sx: T.sxA * (sh.loose || 1.02), sz: T.szA * (sh.loose || 1.04), color: sh.color, region: reg, mottle: 0.2,
+    tear: {
+      amt: tear, f: 11, seed: (sh.seed || 1) + 5,
+      fn: (x, y, z) => fnC(x, y, z) || y < hemY + 0.06 * fbm3(x * 20, 0, z * 20, 2, 4),
+    },
+    tint: sh.tint,
+  });
+  // sleeves
+  if (sh.sleeves && !tank) {
+    for (const s of [-1, 1]) {
+      const n = s < 0 ? 'L' : 'R';
+      const len = sh.sleeves === 2 ? P.uarmLen + 0.02 : P.uarmLen * 0.45;
+      const r = (L.armR || 0.045) * 1.22 + 0.006;
+      mb.seg('uarm' + n, [0, 0.02, 0], [0, -len, 0], r * 1.08, r * 0.95, {
+        rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true,
+        tear: { amt: tear * 0.8, f: 14, seed: (sh.seed || 1) + s * 3, fn: (x, y) => y < P.shoulderY - len + 0.05 * fbm3(x * 30, y, 0, 1, 6) },
+      });
+      if (sh.sleeves === 2) {
+        mb.seg('farm' + n, [0, 0.03, 0], [0, -P.farmLen * 0.85, 0], r * 0.9, r * 0.78, {
+          rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true,
+          tear: { amt: tear * 0.9, f: 14, seed: (sh.seed || 1) + s * 5, fn: (x, y) => y < P.elbowY - P.farmLen * 0.85 + 0.06 * fbm3(x * 30, y * 3, 0, 1, 8) },
+        });
+      }
+    }
+  }
+  // hanging rags
+  if (sh.rags) {
+    const rnd = mulberry32(sh.seed || 5);
+    for (let i = 0; i < sh.rags; i++) {
+      const a = rnd() * TAU;
+      const x = Math.sin(a) * 0.15 * T.sxA, z = Math.cos(a) * 0.13 * T.szA;
+      const len = 0.08 + rnd() * 0.12;
+      mb.box('spine', [x, hemY - spineY - len * 0.4, z], [0.03 + rnd() * 0.03, len, 0.006], { rot: [rnd() * 0.3 - 0.15, a, rnd() * 0.3 - 0.15], color: sh.color, region: reg, mottle: 0.2 });
+    }
+  }
+}
+
+/** Arms + hands. */
+function buildArms(mb, P, L) {
+  const r1 = L.armR || 0.045;
+  const reg = L.skinRegion ?? CR.SKIN;
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    mb.seg('uarm' + n, [0, 0.01, 0], [0, -P.uarmLen, 0], r1, r1 * 0.78, { rs: 7, hs: 2, color: L.armCol ?? L.skin, region: reg, sz: 0.92, noise: L.lumpy ? 0.006 : 0, nf: 30 });
+    mb.seg('farm' + n, [0, 0.015, 0], [0, -P.farmLen, 0], r1 * (L.farmMul || 0.84), r1 * (L.wristMul || 0.6), {
+      rs: 7, hs: 2, color: L.skin, region: reg, sz: 0.82, noise: L.lumpy ? 0.005 : 0, nf: 30,
+      tint: L.armTint,
+    });
+    // elbow knob
+    mb.ellip('farm' + n, [0, 0.0, 0.012], [r1 * 0.75, r1 * 0.75, r1 * 0.75], { ws: 6, hs: 4, color: L.skin, region: reg });
+    buildHand(mb, 'hand' + n, s, P, L);
+  }
+}
+
+function buildHand(mb, bone, s, P, L) {
+  const hl = P.handLen;
+  const pl = hl * 0.48;
+  const hs = L.handScale || 1;
+  const reg = L.handRegion ?? L.skinRegion ?? CR.SKIN;
+  const col = L.handCol ?? L.skin;
+  if (L.fist) {
+    mb.box(bone, [-s * 0.008 * hs, -pl * 0.62 * hs, 0], [0.042 * hs, pl * 1.35 * hs, 0.08 * hs], { round: 0.55, color: col, region: reg });
+    mb.ellip(bone, [-s * 0.012 * hs, -pl * 0.35 * hs, -0.045 * hs], [0.014 * hs, 0.03 * hs, 0.014 * hs], { ws: 5, hs: 4, color: col, region: reg, rot: [0.4, 0, 0] });
+    return;
+  }
+  mb.box(bone, [0, -pl * 0.5 - 0.004, 0], [0.026 * hs, pl * hs, 0.068 * hs], { round: 0.5, color: col, region: reg });
+  const curl = L.curl ?? 0.45;
+  const fm = (L.fingerMul || 1) * hs;
+  const lens = [0.95, 1.0, 0.95, 0.78];
+  for (let i = 0; i < 4; i++) {
+    const z = (-0.025 + i * 0.0167) * hs;
+    const len = hl * 0.5 * lens[i] * fm;
+    const y0 = -pl * hs;
+    const pts = [
+      [0, y0 + 0.005, z],
+      [-s * len * 0.18 * curl, y0 - len * 0.5, z * 1.02],
+      [-s * len * 0.62 * curl, y0 - len * 0.88, z * 1.05],
+    ];
+    mb.tube(bone, pts, 0.0085 * hs, 0.0055 * hs, { rs: 4, ts: 2, color: col, region: reg, cap: false });
+    if (L.claws) {
+      const tip = pts[2];
+      const cl = L.claws * hs;
+      mb.spike(bone, tip, [tip[0] - s * cl * 0.7 * curl, tip[1] - cl * 0.8, tip[2] - cl * 0.1], 0.0055 * hs, { rs: 4, color: C_NAIL, region: CR.BONE, mottle: 0.2 });
+    }
+  }
+  const tp = [[-s * 0.008, -0.02 * hs, -0.03 * hs], [-s * 0.022 * hs, -0.055 * hs, -0.046 * hs], [-s * 0.035 * hs, -0.08 * hs, -0.047 * hs]];
+  mb.tube(bone, tp, 0.01 * hs, 0.007 * hs, { rs: 4, ts: 2, color: col, region: reg, cap: false });
+}
+
+/** Legs, knees, feet. */
+function buildLegs(mb, P, L) {
+  const pants = L.pants;
+  const tr = L.thighR || 0.078;
+  const skinReg = L.skinRegion ?? CR.SKIN;
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    const pc = pants ? pants.color : L.skin;
+    const preg = pants ? pants.region ?? CR.DENIM : skinReg;
+    const shorts = pants && pants.shorts;
+    const tearY = pants ? (pants.tearY ?? 0) : 99;
+    mb.seg('thigh' + n, [0, 0.05, 0], [0, -P.thighLen, 0], tr, tr * 0.68, {
+      rs: 8, hs: 3, color: shorts ? L.skin : pc, region: shorts ? skinReg : preg, sz: 0.95, noise: L.lumpy ? 0.008 : 0, nf: 25,
+      tint: shorts
+        ? (p, nn, c) => {
+            if (p.y > P.thighY - P.thighLen * 0.45 + 0.05 * fbm3(p.x * 30, 0, p.z * 30, 1, 2)) c.copy(color(pc)).multiplyScalar(0.9);
+          }
+        : pants && pants.tint,
+    });
+    const pantsLeg = pants && !shorts;
+    mb.seg('shin' + n, [0, 0.03, 0], [0, -P.shinLen + 0.03, 0], tr * (pantsLeg ? 0.72 : 0.62), tr * (pantsLeg ? 0.6 : 0.44), {
+      rs: 8, hs: 3, color: pants && !shorts ? pc : L.skin, region: pants && !shorts ? preg : skinReg, sz: 0.95,
+      shape(v) {
+        if (v.z > 0 && v.y > -P.shinLen * 0.5) v.z *= 1.15; // calf
+      },
+      tint(p, nn, c) {
+        if (pants && !shorts && p.y < tearY + 0.07 * fbm3(p.x * 25, p.y * 4, p.z * 25, 2, 11 + s)) c.copy(color(L.skin)).multiplyScalar(0.62).lerp(C_BLOOD, 0.25 * fbm3(p.x * 40, p.y * 40, p.z * 40, 1, 3));
+        if (pants && pants.tint) pants.tint(p, nn, c);
+      },
+    });
+    // knee cap (bare legs only)
+    if (!pantsLeg) mb.ellip('shin' + n, [0, 0.0, -0.02], [tr * 0.55, tr * 0.55, tr * 0.5], { ws: 6, hs: 4, color: L.skin, region: skinReg });
+    // foot
+    if (L.shoes) {
+      mb.box('foot' + n, [0, -P.ankleY * 0.45, -0.045], [0.1 * (L.footW || 1), P.ankleY * 1.1 + 0.015, 0.26 * (L.footL || 1)], {
+        round: 0.45, seg: 2, color: L.shoes.color, region: L.shoes.region ?? CR.LEATHER,
+        tint(p, nn, c) {
+          if (p.y < 0.025) c.multiplyScalar(0.35);
+        },
+      });
+    } else {
+      const fh = Math.max(0.05, P.ankleY * 0.95);
+      mb.box('foot' + n, [0, -P.ankleY + fh * 0.5, -0.05], [0.085 * (L.footW || 1), fh, 0.23 * (L.footL || 1)], { round: 0.45, seg: 2, color: L.skin, region: skinReg });
+      for (let i = 0; i < 3; i++) {
+        mb.ellip('foot' + n, [(i - 1) * 0.022 * (L.footW || 1), -P.ankleY * 0.75, -0.16 * (L.footL || 1)], [0.012, 0.012, 0.022], { ws: 5, hs: 3, color: L.skin, region: skinReg });
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------------ zombie looks
+const SKINS = [0x7d8a6e, 0x93968a, 0x7a7488, 0x9c9870, 0x66725c, 0x8a8f86];
+const SHIRTS = [0xa8a290, 0x7a2a22, 0x3d4f6b, 0x4f5a3a, 0x6b6b66, 0x8a7440, 0x5a4632, 0x2a2a2a, 0x5b3a5e];
+const PANTS = [0x3b4a63, 0x7d7055, 0x262626, 0x4a3a2a, 0x55555a, 0x2f3d52];
+const HAIRC = [0x1d1510, 0x3a2a1a, 0x6a6258, 0x2a2420, 0x8a7a60];
+
+function pick(rnd, arr) {
+  return arr[(rnd() * arr.length) | 0];
+}
+
+function walkerLook(v) {
+  const rnd = mulberry32(1000 + v * 7919);
+  const skin = SKINS[v % SKINS.length];
+  const sleeveT = [1, 2, 0, 1, 2, 1, 2, 1][v % 8];
+  return {
+    skin, skinRegion: v % 3 === 1 ? CR.GORE : CR.SKIN, gaunt: 0.45 + rnd() * 0.35,
+    shirt: v === 6 ? null : {
+      color: SHIRTS[(v * 5 + 2) % SHIRTS.length], region: v % 4 === 3 ? CR.CANVAS : CR.CLOTH,
+      sleeves: sleeveT, tear: 0.22 + rnd() * 0.18, seed: v * 13 + 1, rags: 3 + ((rnd() * 4) | 0),
+      open: v === 4, type: v === 2 ? 'tank' : 'tee', hem: 0.02 + rnd() * 0.06,
+    },
+    pants: { color: PANTS[v % PANTS.length], region: v % 2 ? CR.DENIM : CR.CLOTH, tearY: v % 3 === 0 ? 0.3 : 0.02 + rnd() * 0.12 },
+    shoes: v % 5 === 4 ? null : { color: v % 2 ? 0x2a2420 : 0x4a3a2c },
+    hair: v % 4 === 2 ? null : { color: HAIRC[v % HAIRC.length], patchy: 0.35 + rnd() * 0.25, long: v === 5, cover: 0.5 },
+    eye: v % 3 === 0 ? 0xd8d4b0 : 0xa8a078, eyeGlow: 0,
+    ribs: v === 6 || v === 2 ? 0.9 : 0.4,
+    missingTeeth: (rnd() * 64) | 0,
+    blood: [
+      [[0, 1.52, -0.1], 0.1, 1],
+      [[(rnd() - 0.5) * 0.2, 1.25 + rnd() * 0.1, -0.14], 0.1 + rnd() * 0.06, 0.9],
+      [[(rnd() - 0.5) * 0.3, 1.0, -0.12], 0.07, 0.8],
+    ],
+    wound: v % 3 === 0,
+    dirt: { y0: 0.5, k: 0.9 },
+  };
+}
+
+// ------------------------------------------------------------------ type builders
+function addBlood(mb, L) {
+  if (L.blood) for (const b of L.blood) mb.blood(b[0], b[1], b[2]);
+  mb.dirt = L.dirt || { y0: 0.4, k: 0.5 };
+}
+
+function standardHumanoid(mb, P, L) {
+  addHumanoidBones(mb, P);
+  addBlood(mb, L);
+  const T = buildTorso(mb, P, L);
+  buildShirt(mb, P, L, T);
+  buildHead(mb, P, L);
+  hair(mb, P, L);
+  buildArms(mb, P, L);
+  buildLegs(mb, P, L);
+  return T;
+}
+
+function exposedRibs(mb, P, side, y0, n, L, T) {
+  // flesh cavity + bone ribs on one flank
+  const chestY = P.chestY;
+  for (let i = 0; i < n; i++) {
+    const y = y0 + i * 0.034;
+    const pts = [];
+    for (let k = 0; k <= 4; k++) {
+      const a = side * (0.5 + k * 0.28);
+      const r = 0.155 * 1.03;
+      pts.push([Math.sin(a) * r * T.sxC, y - k * 0.006, -Math.cos(a) * r * T.szC]);
+    }
+    mb.tube('chest', pts, 0.0085, 0.007, { rs: 4, ts: 4, color: 0xd8ccb0, region: CR.BONE, blood: false, cap: false });
+  }
+  (L.wounds || (L.wounds = [])).push([side * 0.14, chestY + y0 + n * 0.017, -0.07, 0.1]);
+}
+
+function buildWalker(v) {
+  const P = humanP({ headR: 0.102, neckLen: 0.1 });
+  const L = walkerLook(v);
+  const mb = new MeshBuilder();
+  const T = standardHumanoid(mb, P, L);
+  if (L.ribs > 0.8) exposedRibs(mb, P, v % 2 ? 1 : -1, -0.06, 4, L, T);
+  if (L.wound) (L.wounds || (L.wounds = [])).push([0.07, P.spineY + 0.03, -0.1, 0.06]);
+  return { mb, P };
+}
+
+function buildRunner(v) {
+  const P = humanP({ hipY: 0.94, thighLen: 0.44, shinLen: 0.43, spineLen: 0.12, chestLen: 0.19, neckOff: 0.19, headR: 0.104, shoulderW: 0.17, uarmLen: 0.31, farmLen: 0.28, handLen: 0.18 });
+  const rnd = mulberry32(2000 + v * 31);
+  const L = {
+    skin: [0x8a8a7e, 0x7a8470, 0x8c8078][v % 3], skinRegion: CR.GORE, gaunt: 0.95, ribs: 1, armR: 0.038, thighR: 0.068, neckR: 0.04, chestR: 0.148,
+    shirt: v % 2 === 0 ? { color: v === 0 ? 0x8a8472 : 0x5a2a24, type: 'tank', tear: 0.4, seed: 71 + v, rags: 4, hem: 0.0 } : null,
+    pants: { color: PANTS[(v + 2) % PANTS.length], region: CR.DENIM, tearY: 0.35 + rnd() * 0.1 },
+    shoes: null, hair: { color: 0x1a1410, patchy: 0.55, cover: 0.5 },
+    eye: 0xe0d890, eyeGlow: 0.3, socket: 0.22, fingerMul: 1.15, claws: 0.02, curl: 0.7,
+    blood: [[[0, 1.5, -0.1], 0.12, 1], [[0.05, 1.2, -0.13], 0.15, 1], [[-0.1, 0.95, -0.1], 0.1, 1], [[0.17, 0.8, 0], 0.08, 1]],
+    missingTeeth: 0x12, fang: true,
+  };
+  const mb = new MeshBuilder();
+  const T = standardHumanoid(mb, P, L);
+  exposedRibs(mb, P, -1, -0.07, 4, L, T);
+  return { mb, P };
+}
+
+function buildSpitter() {
+  const P = humanP({ hipY: 1.0, thighLen: 0.47, shinLen: 0.46, spineLen: 0.14, chestLen: 0.2, neckOff: 0.17, neckLen: 0.24, headR: 0.1, shoulderW: 0.165, uarmLen: 0.34, farmLen: 0.31, handLen: 0.19, neckZ: 0.0, headZ: -0.02 });
+  const L = {
+    skin: 0x7e8a70, skinRegion: CR.SKIN, gaunt: 1, ribs: 1, armR: 0.036, thighR: 0.064, neckR: 0.036, chestR: 0.145,
+    shirt: { color: 0x5a5a4c, type: 'tee', sleeves: 0, tear: 0.45, seed: 91, rags: 5, hem: -0.05 },
+    pants: { color: 0x3a3a34, region: CR.CLOTH, tearY: 0.4 },
+    shoes: null, hair: { color: 0x151210, patchy: 0.7, cover: 0.45 },
+    eye: 0xb8ff60, eyeGlow: 0.9, socket: 0.22, fingerMul: 1.25, claws: 0.018, headSY: 1.12, jawScale: 1.1,
+    blood: [[[0, 1.62, -0.12], 0.1, 0.6]],
+    torsoTint(p, n, c) {
+      // acid burns
+      if (fbm3(p.x * 12, p.y * 12, p.z * 12, 2, 3) > 0.62) c.lerp(color(0x9ab040), 0.5);
+    },
+  };
+  const mb = new MeshBuilder();
+  standardHumanoid(mb, P, L);
+  // swollen glowing throat sac on the neck (own bone for pulsing)
+  mb.addBone('sac', 'neck', 0, P.neckY + P.neckLen * 0.5, -0.03);
+  const sacTint = (p, n, c) => {
+    const m = fbm3(p.x * 40, p.y * 40, p.z * 40, 2, 5);
+    if (m < 0.4) c.lerp(color(0x3a5a18), 0.6);
+  };
+  mb.ellip('sac', [0, 0.0, -0.03], [0.056, 0.088, 0.056], {
+    ws: 10, hs: 8, color: 0x9cff48, region: CR.GLOW, glow: 0.75, mottle: 0.2, blood: false, ao: false, noise: 0.007, nf: 40, tint: sacTint,
+  });
+  for (const s2 of [-1, 1]) {
+    mb.ellip('sac', [s2 * 0.036, -0.025, -0.018], [0.036, 0.05, 0.04], { ws: 8, hs: 6, color: 0x8cf040, region: CR.GLOW, glow: 0.6, blood: false, ao: false, tint: sacTint });
+  }
+  // acid drool strands from the jaw
+  const jb = mb.bonePos('jaw');
+  const hb = mb.bonePos('head');
+  const jy = hb[1] + P.headR * 0.9 - jb[1];
+  for (let i = 0; i < 2; i++) {
+    const x = (i - 0.5) * 0.03;
+    const y0 = jy - P.headR * 0.75, z0 = hb[2] - jb[2] - P.headR * 0.8;
+    mb.tube('jaw', [[x, y0, z0], [x * 1.2, y0 - 0.05 - i * 0.03, z0 - 0.005], [x * 1.3, y0 - 0.09 - i * 0.05, z0 + 0.005]], 0.004, 0.0015, { rs: 4, ts: 3, color: 0x9ae040, glow: 0.45, region: CR.GLOW, blood: false, ao: false });
+    mb.ellip('jaw', [x * 1.3, y0 - 0.095 - i * 0.05, z0 + 0.005], [0.006, 0.009, 0.006], { ws: 5, hs: 3, color: 0xa8f048, glow: 0.5, region: CR.GLOW, blood: false, ao: false });
+  }
+  return { mb, P };
+}
+
+function buildLeaper() {
+  const P = humanP({ hipY: 0.98, hipW: 0.1, thighLen: 0.46, shinLen: 0.46, spineLen: 0.13, chestLen: 0.19, neckOff: 0.18, neckLen: 0.1, headR: 0.1, shoulderW: 0.17, uarmLen: 0.36, farmLen: 0.35, handLen: 0.2 });
+  const L = {
+    skin: 0x8a8a80, skinRegion: CR.SKIN, gaunt: 0.9, ribs: 0.5, armR: 0.037, thighR: 0.066, neckR: 0.04, chestR: 0.145,
+    shirt: { color: 0x2c3a2e, region: CR.CANVAS, sleeves: 2, tear: 0.2, seed: 131, rags: 6, hem: 0.1, loose: 1.05 },
+    pants: { color: 0x2a2a2c, region: CR.CLOTH, tearY: 0.3 },
+    shoes: null, eye: 0xffe070, eyeGlow: 0.8, socket: 0.2, fingerMul: 1.3, claws: 0.035, curl: 1.1,
+    blood: [[[0, 1.5, -0.1], 0.1, 1], [[0.2, 0.7, -0.05], 0.1, 0.8]],
+  };
+  const mb = new MeshBuilder();
+  standardHumanoid(mb, P, L);
+  // hood (on head bone) + hood drape on chest
+  const hr = P.headR;
+  mb.ellip('head', [0, hr * 0.95, hr * 0.08], [hr * 1.18, hr * 1.2, hr * 1.25], {
+    ws: 12, hs: 9, color: 0x2c3a2e, region: CR.CANVAS, double: true, mottle: 0.25,
+    tear: { amt: 0.08, f: 20, seed: 5, fn: (x, y, z) => z < -0.05 + 0.02 && y < P.headY + hr * 1.5 && y > P.headY - 0.1 && Math.abs(x) < hr * 0.85 },
+    shape(v) {
+      if (v.z < 0 && v.y > hr * 0.6) v.z -= hr * 0.25 * ((v.y - hr * 0.6) / (hr * 0.6)); // pointed brim
+    },
+  });
+  mb.lathe('neck', [0, 0, 0.01], [[0.09, -0.06], [0.1, 0.0], [0.085, 0.08]], { rs: 10, sx: 1.4, sz: 1.2, color: 0x2c3a2e, region: CR.CANVAS, double: true });
+  return { mb, P };
+}
+
+function buildRoper() {
+  const P = humanP({ hipY: 1.0, thighLen: 0.46, shinLen: 0.46, spineLen: 0.14, chestLen: 0.22, neckOff: 0.2, neckLen: 0.1, headR: 0.12, shoulderW: 0.2, uarmLen: 0.33, farmLen: 0.3, handLen: 0.19 });
+  const L = {
+    skin: 0x86806c, skinRegion: CR.GORE, gaunt: 0.4, ribs: 0.3, armR: 0.048, thighR: 0.08, lumpy: true,
+    shirt: { color: 0x4a3f36, region: CR.CANVAS, sleeves: 1, tear: 0.35, seed: 151, rags: 4 },
+    pants: { color: 0x2f3440, region: CR.DENIM, tearY: 0.25 },
+    shoes: { color: 0x30261c },
+    eye: 0xe0e0c0, eyeGlow: 0.2, socket: 0.18, jawScale: 1.45, fang: true, nose: 0.4,
+    blood: [[[0, 1.6, -0.14], 0.14, 1], [[0, 1.4, -0.16], 0.12, 0.9]],
+  };
+  const mb = new MeshBuilder();
+  standardHumanoid(mb, P, L);
+  // tumor growths on the left side (shoulder, neck, arm, flank)
+  const rnd = mulberry32(777);
+  const tum = [
+    ['chest', [-0.16, P.shoulderY - P.chestY + 0.06, 0.02], 0.1],
+    ['chest', [-0.1, P.shoulderY - P.chestY + 0.1, 0.05], 0.08],
+    ['neck', [-0.06, 0.05, 0.02], 0.065],
+    ['head', [-0.08, P.headR * 0.6, 0.05], 0.06],
+    ['uarmL', [-0.03, -0.1, 0.01], 0.07],
+    ['uarmL', [-0.02, -0.22, -0.02], 0.055],
+    ['spine', [-0.13, 0.05, -0.02], 0.08],
+    ['chest', [-0.12, -0.02, -0.1], 0.07],
+    ['farmL', [-0.02, -0.1, 0.0], 0.05],
+    ['thighL', [-0.05, -0.1, 0.0], 0.06],
+  ];
+  for (const [b, c, r] of tum) {
+    mb.ellip(b, c, [r * (0.9 + rnd() * 0.3), r * (0.8 + rnd() * 0.3), r * (0.9 + rnd() * 0.3)], { ws: 8, hs: 6, color: rnd() < 0.5 ? 0x7a5a5c : 0x6e5660, region: CR.TUMOR, noise: r * 0.15, nf: 30, mottle: 0.3 });
+  }
+  // mouth anchor: tongue tip inside oversized mouth
+  mb.box('jaw', [0, -0.02, -P.headR * 0.8], [0.035, 0.015, 0.05], { color: 0x8a2030, region: CR.FLESH, blood: false });
+  return { mb, P };
+}
+
+function buildBoomer() {
+  const P = humanP({ hipY: 0.88, hipW: 0.13, thighLen: 0.4, shinLen: 0.4, spineLen: 0.14, chestLen: 0.22, neckOff: 0.2, neckLen: 0.06, headR: 0.12, shoulderW: 0.27, uarmLen: 0.28, farmLen: 0.26, handLen: 0.17 });
+  const L = {
+    skin: 0xa8a468, skinRegion: CR.SKIN, gaunt: 0, ribs: 0, wide: 1.35, chestR: 0.2, chestD: 1.25, armR: 0.07, thighR: 0.12, neckR: 0.09, deltoid: 1.5, farmMul: 0.9, wristMul: 0.65,
+    hipsW: 1.25, hipsD: 1.3, handScale: 1.15, footW: 1.3,
+    shirt: { color: 0x8a8870, region: CR.CLOTH, sleeves: 0, tear: 0.5, seed: 171, type: 'tank', hem: -0.1, thick: 1.05 },
+    pants: { color: 0x3b3a30, region: CR.CLOTH, tearY: 0.2 },
+    shoes: null, eye: 0xd8d880, eyeGlow: 0.15, socket: 0.14, headSX: 0.92, jawScale: 1.1,
+    blood: [[[0, 1.5, -0.2], 0.15, 0.7]],
+    lumpy: true,
+    torsoTint(p, n, c) {
+      const m = fbm3(p.x * 8, p.y * 8, p.z * 8, 2, 21);
+      if (m > 0.6) c.lerp(color(0x6a7a30), 0.5);
+      if (m < 0.3) c.lerp(color(0x7a4a50), 0.3);
+    },
+  };
+  const mb = new MeshBuilder();
+  standardHumanoid(mb, P, L);
+  // bloated belly (own bone for pulsing)
+  mb.addBone('belly', 'spine', 0, P.spineY + 0.02, -0.08);
+  mb.ellip('belly', [0, 0, -0.06], [0.36, 0.34, 0.33], {
+    ws: 14, hs: 10, color: 0xb0a860, region: CR.SKIN, noise: 0.018, nf: 12, mottle: 0.3,
+    tint(p, n, c) {
+      const m = fbm3(p.x * 9, p.y * 9, p.z * 9, 2, 8);
+      if (m > 0.58) c.lerp(color(0x5a7a28), 0.55);
+      c.lerp(color(0x6a3a3a), clamp(0.2 - n.y * 0.25, 0, 0.35));
+    },
+  });
+  mb.ellip('chest', [0, 0.02, 0.04], [0.3, 0.26, 0.26], { ws: 12, hs: 8, color: 0xa8a468, region: CR.SKIN, noise: 0.015, nf: 12, torso: true });
+  // neck fat roll
+  mb.lathe('neck', [0, 0, 0], [[0.1, -0.06], [0.14, 0.0], [0.13, 0.05], [0.09, 0.08]], { rs: 10, sx: 1.2, color: 0xa8a468, region: CR.SKIN });
+  // pustules
+  const rnd = mulberry32(99);
+  for (let i = 0; i < 7; i++) {
+    const a = (rnd() - 0.5) * 2.8, y = (rnd() - 0.5) * 0.5;
+    const r = 0.025 + rnd() * 0.04;
+    const x = Math.sin(a) * 0.36 * Math.sqrt(1 - (y / 0.36) ** 2 * 0.5), z = -Math.cos(a) * 0.33 * Math.sqrt(1 - (y / 0.36) ** 2 * 0.5) - 0.06;
+    mb.ellip('belly', [x, y, z], [r, r, r * 0.7], {
+      ws: 6, hs: 5, color: rnd() < 0.5 ? 0x9a9050 : 0x8a7a48, region: CR.TUMOR, glow: 0.05, mottle: 0.2, blood: false,
+      tint(p, n, c) {
+        c.lerp(color(0x7a2a20), clamp(0.5 - Math.abs(n.z) * 0.6, 0, 0.5));
+      },
+    });
+  }
+  for (let i = 0; i < 5; i++) {
+    const a = (rnd() - 0.5) * 3.5, y = 0.05 + rnd() * 0.2, r = 0.02 + rnd() * 0.025;
+    mb.ellip('chest', [Math.sin(a) * 0.3, y, -Math.cos(a) * 0.25], [r, r, r * 0.7], { ws: 6, hs: 4, color: 0x8a8048, region: CR.TUMOR, glow: 0.04, blood: false });
+  }
+  return { mb, P };
+}
+
+/** Heavy muscular arm (tank/boss): deltoid, bulging bicep, huge forearm. */
+function bruteArm(mb, P, s, o) {
+  const n = s < 0 ? 'L' : 'R';
+  const sy = P.shoulderY - P.chestY;
+  const col = o.skin, reg = o.region ?? CR.GORE;
+  mb.ellip('chest', [s * (P.shoulderW - o.ur * 0.2), sy + o.ur * 0.15, 0], [o.ur * 1.25, o.ur * 1.15, o.ur * 1.25], { ws: 10, hs: 8, color: col, region: reg, noise: o.ur * 0.06, nf: 6, tint: o.tint });
+  mb.seg('uarm' + n, [0, 0.0, 0], [0, -P.uarmLen, 0], o.ur, o.ur * 0.8, {
+    rs: 10, hs: 6, color: col, region: reg, noise: o.ur * 0.05, nf: 7, tint: o.tint,
+    prof: (t) => 1 + 0.2 * Math.sin(Math.min(1, t * 1.3) * PI),
+  });
+  mb.seg('farm' + n, [0, 0.03, 0], [0, -P.farmLen + 0.02, 0], o.fr, o.fr * 0.72, {
+    rs: 10, hs: 6, color: col, region: reg, noise: o.fr * 0.05, nf: 7, tint: o.tint,
+    prof: (t) => 1 + 0.32 * Math.exp(-(((t - 0.3) / 0.25) ** 2)),
+  });
+}
+
+function buildTank() {
+  const P = humanP({
+    hipY: 1.0, hipW: 0.22, thighLen: 0.46, shinLen: 0.45, spineLen: 0.3, chestLen: 0.45, neckOff: 0.5, neckLen: 0.08,
+    headR: 0.15, shoulderW: 0.62, shoulderDrop: 0.06, uarmLen: 0.8, farmLen: 0.78, handLen: 0.3, headZ: -0.3, neckZ: -0.18, depth: 0.42,
+  });
+  const skin = 0x8a7c76;
+  const torsoTint = (p, n, c) => {
+    const m = fbm3(p.x * 5, p.y * 5, p.z * 5, 2, 31);
+    if (m > 0.62) c.lerp(color(0x5a1a14), 0.55);
+    if (m < 0.33) c.lerp(color(0x5a5a6a), 0.35);
+  };
+  const L = {
+    skin, skinRegion: CR.GORE, gaunt: 0, ribs: 0, wide: 2.1, chestR: 0.31, chestD: 1.35, waistW: 0.82, bellyD: 1.3,
+    thighR: 0.24, neckR: 0.2, noDeltoid: true, hipsW: 1.6, hipsD: 1.5, footW: 1.9, footL: 1.5,
+    pants: { color: 0x2a303a, region: CR.DENIM, tearY: 0.55 }, belt: false,
+    shoes: null, eye: 0xff6020, eyeGlow: 0.8, jawScale: 1.35, fang: true, headSX: 1.05, nose: 0.3,
+    blood: [[[0, 2.2, -0.35], 0.3, 0.8], [[0.45, 1.8, -0.3], 0.25, 0.6]],
+    wounds: [[-0.35, 1.45, -0.3, 0.14], [0.3, 1.9, 0.35, 0.16]],
+    torsoTint, dirt: { y0: 0.6, k: 0.6 },
+  };
+  const mb = new MeshBuilder();
+  addHumanoidBones(mb, P);
+  addBlood(mb, L);
+  buildTorso(mb, P, L);
+  buildHead(mb, P, L);
+  buildLegs(mb, P, L);
+  const sy = P.shoulderY - P.chestY;
+  // hump + trapezius mass rising behind the sunken head
+  mb.ellip('chest', [0, sy + 0.05, 0.2], [0.62, 0.5, 0.46], { ws: 14, hs: 10, color: skin, region: CR.GORE, noise: 0.05, nf: 4, mottle: 0.3, tint: torsoTint });
+  mb.ellip('chest', [0, sy - 0.28, -0.16], [0.52, 0.3, 0.26], { ws: 12, hs: 8, color: skin, region: CR.GORE, noise: 0.025, nf: 6, tint: torsoTint }); // pecs
+  mb.ellip('spine', [0, 0.1, -0.1], [0.46, 0.34, 0.36], { ws: 12, hs: 8, color: skin, region: CR.GORE, noise: 0.03, nf: 6, tint: torsoTint }); // gut
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    bruteArm(mb, P, s, { skin, ur: 0.22, fr: 0.25, tint: torsoTint });
+    // fist + knuckles
+    mb.box('hand' + n, [0, -0.14, 0], [0.3, 0.28, 0.32], { round: 0.6, seg: 2, color: mulColor(skin, 0.9), region: CR.GORE });
+    for (let k = 0; k < 4; k++) mb.ellip('hand' + n, [-s * 0.02, -0.27, -0.12 + k * 0.08], [0.07, 0.05, 0.045], { ws: 6, hs: 4, color: mulColor(skin, 0.75), region: CR.GORE });
+    // bone shards
+    mb.spike('farm' + n, [s * 0.18, -0.25, 0.12], [s * 0.36, -0.12, 0.3], 0.055, { color: 0xd8ccb0, region: CR.BONE });
+    mb.spike('farm' + n, [s * 0.16, -0.45, 0.14], [s * 0.3, -0.36, 0.34], 0.045, { color: 0xd8ccb0, region: CR.BONE });
+    mb.spike('chest', [s * 0.5, sy + 0.25, 0.25], [s * 0.7, sy + 0.55, 0.45], 0.06, { color: 0xd8ccb0, region: CR.BONE });
+  }
+  // spine ridge spikes on hump
+  for (let i = 0; i < 5; i++) {
+    const y = sy - 0.25 + i * 0.13;
+    mb.spike('chest', [0, y, 0.5 - i * 0.02], [0, y + 0.12, 0.75 - i * 0.02], 0.05, { color: 0xd8ccb0, region: CR.BONE });
+  }
+  return { mb, P };
+}
+
+function buildAbomination() {
+  const P = humanP({
+    hipY: 1.5, hipW: 0.32, thighLen: 0.72, shinLen: 0.68, spineLen: 0.42, chestLen: 0.6, neckOff: 0.72, neckLen: 0.14,
+    headR: 0.3, shoulderW: 0.9, shoulderDrop: 0.08, uarmLen: 1.05, farmLen: 1.0, handLen: 0.5, headZ: -0.42, neckZ: -0.22, depth: 0.6,
+  });
+  const skin = 0x8e6c64;
+  const torsoTint = (p, n, c) => {
+    const m = fbm3(p.x * 2.5, p.y * 2.5, p.z * 2.5, 3, 41);
+    if (m > 0.6) c.lerp(color(0x8a1a18), 0.6);
+    if (m < 0.34) c.lerp(color(0x5a5268), 0.4);
+  };
+  const L = {
+    skin, skinRegion: CR.GORE, gaunt: 0.3, ribs: 0, wide: 2.9, chestR: 0.36, chestD: 1.55, waistW: 0.78, bellyD: 1.35,
+    thighR: 0.32, neckR: 0.28, noDeltoid: true, hipsW: 2.3, hipsD: 2.0, footW: 2.8, footL: 2.3, shoes: null,
+    eye: 0xff3010, eyeGlow: 1, jawScale: 1.55, fang: true, headSX: 0.95, nose: 0.2,
+    handScale: 3.0, fingerMul: 1.5, claws: 0.13, curl: 0.55, lumpy: true,
+    blood: [[[0, 3.4, -0.6], 0.5, 0.9], [[0.5, 2.6, -0.6], 0.45, 0.8], [[-0.6, 2.1, -0.5], 0.4, 0.8]],
+    wounds: [[0.75, 2.45, -0.3, 0.35], [-0.3, 2.0, -0.55, 0.25], [0.2, 2.9, 0.6, 0.3]],
+    torsoTint, dirt: { y0: 0.9, k: 0.6 },
+  };
+  const mb = new MeshBuilder();
+  addHumanoidBones(mb, P);
+  addBlood(mb, L);
+  buildTorso(mb, P, L);
+  buildHead(mb, P, L);
+  buildLegs(mb, P, L);
+  const sy = P.shoulderY - P.chestY;
+  const hr = P.headR;
+  // extra glowing eyes
+  for (const [x, y] of [[-0.12, 1.3], [0.14, 1.28], [0.0, 1.45]]) {
+    mb.ellip('head', [x * hr * 3, hr * y, -hr * 0.82], [hr * 0.07, hr * 0.06, hr * 0.05], { ws: 5, hs: 3, color: 0xff4020, glow: 1, region: CR.PLAIN, ao: false, blood: false, mottle: 0 });
+  }
+  // colossal hunched back mass
+  mb.ellip('chest', [0.05, sy - 0.05, 0.32], [0.95, 0.72, 0.62], { ws: 16, hs: 12, color: skin, region: CR.GORE, noise: 0.08, nf: 2.5, mottle: 0.3, tint: torsoTint });
+  mb.ellip('chest', [0, sy - 0.42, -0.22], [0.72, 0.42, 0.38], { ws: 12, hs: 8, color: skin, region: CR.GORE, noise: 0.04, nf: 4, tint: torsoTint });
+  mb.ellip('spine', [0, 0.1, -0.12], [0.66, 0.5, 0.52], { ws: 12, hs: 9, color: mulColor(skin, 1.05), region: CR.GORE, noise: 0.05, nf: 3, tint: torsoTint });
+  // exposed ribcage on the right flank
+  for (let i = 0; i < 5; i++) {
+    const y = -0.45 + i * 0.11;
+    const pts = [];
+    for (let k = 0; k <= 5; k++) {
+      const a = 0.35 + k * 0.28;
+      pts.push([Math.sin(a) * 0.72, y - k * 0.02, -Math.cos(a) * 0.58]);
+    }
+    mb.tube('chest', pts, 0.035, 0.026, { rs: 5, ts: 6, color: 0xd6c8a8, region: CR.BONE, blood: false, cap: false });
+  }
+  // flesh growth cluster on the left shoulder
+  const rnd = mulberry32(4242);
+  for (let i = 0; i < 7; i++) {
+    const a = rnd() * PI - PI * 0.2;
+    const r = 0.18 + rnd() * 0.16;
+    mb.ellip('chest', [-0.75 + Math.cos(a) * 0.25, sy + 0.15 + rnd() * 0.35, Math.sin(a) * 0.3 + 0.1], [r, r * 0.9, r], { ws: 8, hs: 6, color: 0xb08878, region: CR.TUMOR, noise: r * 0.12, nf: 10 });
+  }
+  // glowing weak spots on the back and the growth
+  for (let i = 0; i < 6; i++) {
+    const a = (rnd() - 0.5) * 2.4, y = sy - 0.3 + rnd() * 0.6;
+    mb.ellip('chest', [Math.sin(a) * 0.9, y, Math.cos(a) * 0.6 + 0.3], [0.08, 0.08, 0.06], { ws: 7, hs: 5, color: 0xffa040, glow: 1, region: CR.GLOW, blood: false, ao: false });
+  }
+  // bone spikes along the back (two rows)
+  for (let i = 0; i < 8; i++) {
+    const sd = i % 2 ? 1 : -1;
+    const x = sd * (0.2 + rnd() * 0.25), y = sy - 0.5 + i * 0.12;
+    mb.spike('chest', [x, y, 0.75], [x * 1.4, y + 0.35 + rnd() * 0.2, 1.25 + rnd() * 0.25], 0.08, { color: 0xd6c8a8, region: CR.BONE, rs: 5 });
+  }
+  // massive arms with clawed hands
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    bruteArm(mb, P, s, { skin, ur: s > 0 ? 0.28 : 0.24, fr: s > 0 ? 0.3 : 0.25, tint: torsoTint });
+    buildHand(mb, 'hand' + n, s, P, { ...L, skin: mulColor(skin, 0.85), handScale: s > 0 ? 3.4 : 2.8 });
+    mb.spike('uarm' + n, [s * 0.2, -0.1, 0.12], [s * 0.4, 0.15, 0.35], 0.06, { color: 0xd6c8a8, region: CR.BONE });
+  }
+  // withered extra arms from the lower chest: xarm -> xfarm
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    const sy2 = P.chestY - 0.3;
+    mb.addBone('xarm' + n, 'chest', s * 0.55, sy2, -0.35);
+    mb.addBone('xfarm' + n, 'xarm' + n, s * 0.55, sy2 - 0.55, -0.35);
+    mb.seg('xarm' + n, [0, 0.05, 0], [0, -0.55, 0], 0.08, 0.06, { rs: 7, color: 0x9a7a70, region: CR.GORE });
+    mb.seg('xfarm' + n, [0, 0.02, 0], [0, -0.5, 0], 0.06, 0.045, { rs: 7, color: 0x9a7a70, region: CR.GORE });
+    for (let f = 0; f < 3; f++) {
+      mb.spike('xfarm' + n, [0, -0.48, (f - 1) * 0.04], [-s * 0.05, -0.72, (f - 1) * 0.07 - 0.05], 0.022, { rs: 4, color: 0x2a2016, region: CR.BONE });
+    }
+  }
+  // belly mouth with teeth
+  mb.ellip('spine', [0, 0.05, -0.62], [0.3, 0.1, 0.1], { ws: 8, hs: 5, color: C_MOUTH, region: CR.FLESH, blood: false });
+  for (let i = 0; i < 7; i++) {
+    const x = (i - 3) * 0.075;
+    mb.spike('spine', [x, 0.13, -0.66], [x, 0.03, -0.69], 0.022, { rs: 4, color: C_TEETH, region: CR.BONE, blood: false });
+    mb.spike('spine', [x + 0.035, -0.03, -0.66], [x + 0.035, 0.07, -0.69], 0.02, { rs: 4, color: C_TEETH, region: CR.BONE, blood: false });
+  }
+  return { mb, P };
+}
+
+function buildHiveQueen() {
+  const P = humanP({
+    hipY: 1.4, hipW: 0.16, thighLen: 0.68, shinLen: 0.64, spineLen: 0.34, chestLen: 0.42, neckOff: 0.4, neckLen: 0.26,
+    headR: 0.24, shoulderW: 0.4, shoulderDrop: 0.08, uarmLen: 0.82, farmLen: 0.86, handLen: 0.34, headZ: -0.06, depth: 0.3,
+  });
+  const chit = 0x3a4030;
+  const L = {
+    skin: 0x56604a, skinRegion: CR.SKIN, gaunt: 0.8, ribs: 0.8, wide: 1.5, chestR: 0.2, chestD: 1.1, waistW: 0.6,
+    armR: 0.06, farmMul: 0.9, wristMul: 0.55, thighR: 0.1, neckR: 0.07, deltoid: 1.3, handScale: 1.8, fingerMul: 1.8, claws: 0.12, curl: 0.35,
+    hipsW: 1.1, footW: 1.2, footL: 1.4, shoes: null,
+    eye: 0x80ff40, eyeGlow: 1, socket: 0.28, headSX: 0.8, headSY: 0.95, headSZ: 1.6, jawScale: 1.2, fang: true, nose: 0,
+    headTint(lx, ly, lz, c) {
+      if (lz > 0.2) c.lerp(color(chit), 0.6);
+    },
+    blood: [[[0, 3.0, -0.3], 0.2, 0.5]],
+    dirt: { y0: 0.5, k: 0.5 },
+  };
+  const mb = new MeshBuilder();
+  mb.bloodColor = color(0x2a4a08);
+  addHumanoidBones(mb, P);
+  addBlood(mb, L);
+  buildTorso(mb, P, L);
+  buildHead(mb, P, L);
+  buildArms(mb, P, L);
+  buildLegs(mb, P, L);
+  const hr = P.headR;
+  // elongated crest on the head
+  mb.ellip('head', [0, hr * 1.25, hr * 0.9], [hr * 0.5, hr * 0.55, hr * 1.4], { ws: 10, hs: 7, color: chit, region: CR.CHITIN, rot: [0.45, 0, 0] });
+  for (const s of [-1, 1]) mb.spike('head', [s * hr * 0.5, hr * 1.2, hr * 0.6], [s * hr * 1.2, hr * 1.9, hr * 1.9], 0.03, { color: chit, region: CR.CHITIN });
+  // mandibles
+  for (const s of [-1, 1]) mb.tube('jaw', [[s * hr * 0.4, 0, -hr * 0.5], [s * hr * 0.6, -hr * 0.3, -hr * 1.0], [s * hr * 0.25, -hr * 0.35, -hr * 1.35]], 0.025, 0.006, { rs: 5, ts: 4, color: 0x2a2a20, region: CR.CHITIN });
+  // chitin shoulder plates
+  for (const s of [-1, 1]) mb.ellip('chest', [s * 0.36, P.shoulderY - P.chestY + 0.08, 0.02], [0.2, 0.1, 0.18], { ws: 8, hs: 6, color: chit, region: CR.CHITIN, rot: [0, 0, s * 0.4] });
+  mb.ellip('chest', [0, 0.1, 0.12], [0.32, 0.4, 0.2], { ws: 10, hs: 8, color: chit, region: CR.CHITIN });
+  // blade forearms
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    mb.spike('farm' + n, [0, -0.1, 0.05], [s * 0.02, 0.35, 0.2], 0.05, { color: chit, region: CR.CHITIN });
+  }
+  // abdomen egg sac (own bone, child of hips): bulbous, tilted up behind the queen
+  mb.addBone('abdomen', 'hips', 0, P.hipY + 0.08, 0.22);
+  const ab = mb.bonePos('abdomen');
+  const tilt = -0.35, ac = [0, 0.18, 0.78];
+  const ca = Math.cos(-tilt), sa = Math.sin(-tilt);
+  mb.ellip('abdomen', ac, [0.58, 0.52, 0.9], {
+    ws: 16, hs: 12, color: 0x8aff58, region: CR.GLOW, glow: 0.6, noise: 0.035, nf: 5, mottle: 0.3, rot: [tilt, 0, 0],
+    tint(p, n, c) {
+      // local coords along the sac axis -> dark chitin bands + mottled patches
+      const y = p.y - ab[1] - ac[1], z = p.z - ab[2] - ac[2];
+      const lz = z * ca - y * sa;
+      const band = Math.abs(Math.sin(lz * 5.2 + 0.4));
+      if (band < 0.22) c.lerp(color(0x1e2418), 0.9);
+      const m = fbm3(p.x * 6, p.y * 6, p.z * 6, 2, 3);
+      c.lerp(color(0x2a3a1a), clamp((m - 0.5) * 2.5, 0, 0.7));
+      if (n.y > 0.5) c.lerp(color(0x2e3424), 0.5); // armored top
+    },
+  });
+  mb.ellip('abdomen', [0, 0.0, 0.08], [0.24, 0.24, 0.3], { ws: 8, hs: 6, color: chit, region: CR.CHITIN });
+  // egg nodules
+  const ern = mulberry32(606);
+  for (let i = 0; i < 9; i++) {
+    const a = (ern() - 0.5) * 2.4, lz = 0.3 + ern() * 0.9;
+    const x = Math.sin(a) * 0.5, y = -Math.cos(a) * 0.3 + 0.1;
+    mb.ellip('abdomen', [x, y + (lz - 0.3) * 0.35, lz + 0.3], [0.08, 0.08, 0.08], { ws: 6, hs: 4, color: 0xc8ff90, glow: 0.8, region: CR.GLOW, ao: false, blood: false });
+  }
+  // 4 spindly spider legs from the back: sleg{i} (upper) -> slegb{i} (lower)
+  const legs = [
+    [-1, 0.0], [1, 0.0], [-1, 0.25], [1, 0.25],
+  ];
+  for (let i = 0; i < 4; i++) {
+    const [s, zo] = legs[i];
+    const by = P.chestY - 0.05 - zo * 0.8, bz = 0.2 + zo;
+    mb.addBone('sleg' + i, 'chest', s * 0.2, by, bz);
+    const kx = s * 0.95, ky = by + 0.75, kz = bz + 0.35 + zo;
+    mb.addBone('slegb' + i, 'sleg' + i, kx, ky, kz);
+    mb.seg('sleg' + i, [0, 0, 0], [kx - s * 0.2, ky - by, kz - bz], 0.06, 0.04, { rs: 6, hs: 2, color: chit, region: CR.CHITIN });
+    mb.ellip('slegb' + i, [0, 0, 0], [0.065, 0.065, 0.065], { ws: 6, hs: 4, color: chit, region: CR.CHITIN });
+    const fx = s * 0.55, fy = -ky + 0.02, fz = 0.25 + zo * 1.5;
+    mb.seg('slegb' + i, [0, 0, 0], [fx, fy, fz], 0.045, 0.012, { rs: 6, hs: 2, color: 0x2a3020, region: CR.CHITIN });
+  }
+  return { mb, P };
+}
+
+// ------------------------------------------------------------------ bat
+function buildBat() {
+  const mb = new MeshBuilder();
+  mb.addBone('root', null, 0, 0, 0);
+  mb.addBone('body', 'root', 0, 0, 0);
+  mb.addBone('head', 'body', 0, 0.03, -0.13);
+  mb.addBone('jaw', 'head', 0, -0.01, -0.03);
+  const fur = 0x2a2220, skin = 0x3a2a2a, mem = 0x5a3a36;
+  mb.ellip('body', [0, 0, 0.02], [0.07, 0.065, 0.14], { ws: 7, hs: 5, color: fur, region: CR.HAIR, noise: 0.006, nf: 40 });
+  mb.ellip('body', [0, -0.01, 0.15], [0.045, 0.04, 0.075], { ws: 5, hs: 4, color: fur, region: CR.HAIR });
+  // head: snout, ears, glowing eyes, fangs
+  mb.ellip('head', [0, 0.01, -0.02], [0.058, 0.052, 0.062], { ws: 7, hs: 5, color: fur, region: CR.HAIR });
+  mb.ellip('head', [0, -0.005, -0.075], [0.03, 0.025, 0.04], { ws: 5, hs: 3, color: skin, region: CR.MEMBRANE });
+  for (const s of [-1, 1]) {
+    mb.spike('head', [s * 0.03, 0.04, -0.01], [s * 0.07, 0.14, 0.02], 0.025, { rs: 4, color: skin, region: CR.MEMBRANE });
+    mb.ellip('head', [s * 0.025, 0.02, -0.065], [0.011, 0.011, 0.008], { ws: 4, hs: 3, color: 0xff2010, glow: 1, region: CR.PLAIN, ao: false, mottle: 0 });
+    mb.spike('jaw', [s * 0.012, 0.0, -0.06], [s * 0.012, -0.03, -0.062], 0.005, { rs: 4, color: 0xe8e0c8, region: CR.BONE });
+  }
+  mb.ellip('jaw', [0, -0.012, -0.04], [0.024, 0.01, 0.035], { ws: 5, hs: 3, color: 0x3a0a0a, region: CR.FLESH });
+  // wings: w1 (arm) -> w2 (forearm) -> w3 (fingers); membranes attached per bone
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    mb.addBone('w1' + n, 'body', s * 0.06, 0.02, -0.04);
+    mb.addBone('w2' + n, 'w1' + n, s * 0.24, 0.03, -0.02);
+    mb.addBone('w3' + n, 'w2' + n, s * 0.44, 0.02, 0.02);
+    mb.seg('w1' + n, [0, 0, 0], [s * 0.18, 0.01, 0.02], 0.016, 0.012, { rs: 4, hs: 1, color: skin, region: CR.MEMBRANE });
+    mb.seg('w2' + n, [0, 0, 0], [s * 0.2, -0.01, 0.04], 0.012, 0.008, { rs: 4, hs: 1, color: skin, region: CR.MEMBRANE });
+    // claw thumb
+    mb.spike('w2' + n, [s * 0.2, 0, 0.04], [s * 0.23, 0.02, -0.02], 0.006, { rs: 4, color: 0x1a1410, region: CR.BONE });
+    const fingers = [[0.18, -0.02, -0.02], [0.16, -0.01, 0.14], [0.06, 0.0, 0.24]];
+    for (const f of fingers) mb.seg('w3' + n, [0, 0, 0], [s * f[0], f[1], f[2]], 0.007, 0.003, { rs: 4, hs: 1, color: skin, region: CR.MEMBRANE });
+    // membranes (double sided flat meshes)
+    const memb = (bone, poly) => {
+      const shape = new THREE.Shape(poly.map((p) => new THREE.Vector2(p[0], p[1])));
+      const g = new THREE.ShapeGeometry(shape, 2);
+      g.rotateX(HALF); // XY -> XZ plane (y -> z)
+      mb.geom(bone, g, { color: mem, region: CR.MEMBRANE, double: true, mottle: 0.25, keepNormals: false });
+    };
+    // coords: [x, z] in bone-relative space
+    memb('w1' + n, orient(s, [[-0.02, -0.02], [0.2, -0.01], [0.21, 0.22], [0.12, 0.2], [0.03, 0.25], [-0.05, 0.2]]));
+    memb('w2' + n, orient(s, [[-0.01, -0.01], [0.2, 0.02], [0.22, 0.26], [0.13, 0.19], [0.05, 0.27], [-0.01, 0.22]]));
+    memb('w3' + n, orient(s, [[-0.01, 0.0], [0.18, -0.02], [0.16, 0.14], [0.1, 0.1], [0.06, 0.24], [0.02, 0.15], [-0.01, 0.22]]));
+  }
+  // legs + tail
+  for (const s of [-1, 1]) {
+    mb.seg('body', [s * 0.03, -0.03, 0.12], [s * 0.05, -0.05, 0.24], 0.012, 0.008, { rs: 4, color: skin, region: CR.MEMBRANE });
+    mb.spike('body', [s * 0.05, -0.05, 0.24], [s * 0.05, -0.08, 0.26], 0.008, { rs: 4, color: 0x1a1410, region: CR.BONE });
+  }
+  mb.dirt = null;
+  mb.aoStrength = 0.15;
+  return { mb, P: null };
+}
+
+function orient(s, poly) {
+  // ShapeGeometry lies in XY; rotateX(+90deg) maps y -> z. Mirror x for the left wing (keep CCW winding).
+  const pts = poly.map(([x, z]) => [s * x, z]);
+  if (s < 0) pts.reverse();
+  return pts;
+}
+
+// ------------------------------------------------------------------ rig cache + calibration
+const BUILDERS = {
+  [ZTYPE.WALKER]: buildWalker,
+  [ZTYPE.RUNNER]: buildRunner,
+  [ZTYPE.TANK]: buildTank,
+  [ZTYPE.SPITTER]: buildSpitter,
+  [ZTYPE.LEAPER]: buildLeaper,
+  [ZTYPE.ROPER]: buildRoper,
+  [ZTYPE.BOOMER]: buildBoomer,
+  [ZTYPE.BAT]: buildBat,
+  [ZTYPE.BOSS_ABOMINATION]: buildAbomination,
+  [ZTYPE.BOSS_HIVEQUEEN]: buildHiveQueen,
+};
+const VARIANTS = { [ZTYPE.WALKER]: 8, [ZTYPE.RUNNER]: 3 };
+
+const rigCache = new Map();
+function getRig(type, variant) {
+  const key = type + ':' + variant;
+  let r = rigCache.get(key);
+  if (!r) {
+    const { mb, P } = BUILDERS[type](variant);
+    r = mb.build();
+    r.P = P;
+    r.type = type;
+    rigCache.set(key, r);
+  }
+  return r;
+}
+
+// ------------------------------------------------------------------ animation styles
+const ZS = {
+  [ZTYPE.WALKER]: {
+    walkLean: -0.42, runLean: -0.45, cycleWalk: 1.25, cycleRun: 2.0, walkStride: 0.4, walkKnee: 0.7, runStride: 0.55, runKnee: 1.1,
+    limp: 0.65, sway: 1, armWalk: 0.95, armDroop: 0.18, armSwing: 0.18, armRun: 1.3, elbow: 0.35, headPitch: -0.15, headTilt: 0.28, jaw: 0.22,
+    idleLean: -0.45,
+  },
+  [ZTYPE.RUNNER]: {
+    walkLean: -0.35, runLean: -0.72, cycleWalk: 1.3, cycleRun: 2.9, walkStride: 0.45, walkKnee: 0.8, runStride: 0.95, runKnee: 1.6,
+    limp: 0, sway: 0.6, armWalk: 0.5, armDroop: 0.2, armSwing: 0.4, armRun: 0.35, runArmSwing: 1.25, flail: 1, elbow: 0.8, headPitch: 0.25, headTilt: 0.15, jaw: 0.35,
+    idleLean: -0.6, twitchy: 1,
+  },
+  [ZTYPE.SPITTER]: {
+    walkLean: -0.35, runLean: -0.5, cycleWalk: 1.45, cycleRun: 2.3, walkStride: 0.38, walkKnee: 0.6, runStride: 0.65, runKnee: 1.1,
+    limp: 0.25, sway: 1.2, armWalk: 0.3, armDroop: 0.12, armSwing: 0.25, armRun: 0.6, elbow: 0.5, headPitch: 0.05, headTilt: 0.2, jaw: 0.3, neckFwd: 0.55,
+    idleLean: -0.35,
+  },
+  [ZTYPE.LEAPER]: {
+    walkLean: -1.0, runLean: -1.05, cycleWalk: 1.2, cycleRun: 2.6, walkStride: 0.45, walkKnee: 0.7, runStride: 0.7, runKnee: 0.9,
+    baseT: 1.05, baseK: 1.75, limp: 0, sway: 0.4, elbow: 0.4, headPitch: 0.2, headTilt: 0.1, jaw: 0.25, quad: true,
+    idleLean: -1.05,
+  },
+  [ZTYPE.ROPER]: {
+    walkLean: -0.18, runLean: -0.26, cycleWalk: 1.5, cycleRun: 2.1, walkStride: 0.38, walkKnee: 0.55, runStride: 0.5, runKnee: 0.9,
+    limp: 0.35, sway: 0.8, armWalk: 0.25, armDroop: 0.1, armSwing: 0.22, armRun: 0.7, elbow: 0.3, headPitch: -0.1, headTilt: 0.35, jaw: 0.35,
+    idleLean: -0.15,
+  },
+  [ZTYPE.BOOMER]: {
+    walkLean: 0.08, runLean: -0.02, cycleWalk: 1.0, cycleRun: 1.5, walkStride: 0.3, walkKnee: 0.45, runStride: 0.38, runKnee: 0.6,
+    limp: 0, sway: 2.2, waddle: 1, armWalk: 0.15, armDroop: 0.1, armSwing: 0.2, armRun: 0.4, armOut: 0.35, elbow: 0.25, headPitch: 0.0, headTilt: 0.1, jaw: 0.25,
+    legSplay: 0.1, idleLean: 0.05,
+  },
+  [ZTYPE.TANK]: {
+    walkLean: -0.5, runLean: -0.58, cycleWalk: 2.0, cycleRun: 3.2, walkStride: 0.38, walkKnee: 0.5, runStride: 0.45, runKnee: 0.7,
+    limp: 0, sway: 0.6, knuckle: true, elbow: 0.3, headPitch: 0.35, headTilt: 0.05, jaw: 0.2, legSplay: 0.12, idleLean: -0.45,
+  },
+  [ZTYPE.BOSS_ABOMINATION]: {
+    walkLean: -0.3, runLean: -0.45, cycleWalk: 3.0, cycleRun: 4.2, walkStride: 0.35, walkKnee: 0.5, runStride: 0.5, runKnee: 0.75,
+    limp: 0.3, sway: 0.7, armWalk: 0.35, armDroop: 0.15, armSwing: 0.25, armRun: 0.6, elbow: 0.4, headPitch: 0.2, headTilt: 0.1, jaw: 0.3, legSplay: 0.1,
+    idleLean: -0.3, roar: true,
+  },
+  [ZTYPE.BOSS_HIVEQUEEN]: {
+    walkLean: -0.25, runLean: -0.4, cycleWalk: 2.6, cycleRun: 3.6, walkStride: 0.4, walkKnee: 0.7, runStride: 0.55, runKnee: 0.9,
+    limp: 0, sway: 0.5, armWalk: 0.7, armDroop: 0.7, armSwing: 0.12, armRun: 0.9, elbow: 1.9, headPitch: 0.25, headTilt: 0.1, jaw: 0.3, legSplay: 0.08,
+    idleLean: -0.25, mantis: true,
+  },
+};
+
+// ------------------------------------------------------------------ pose helpers (pose = Float32Array[nb*4 + 3])
+function clearPose(p, nb) {
+  for (let i = 0; i < nb; i++) {
+    const k = i * 4;
+    p[k] = 0;
+    p[k + 1] = 0;
+    p[k + 2] = 0;
+    p[k + 3] = 1;
+  }
+  p[nb * 4] = 0;
+  p[nb * 4 + 1] = 0;
+  p[nb * 4 + 2] = 0;
+}
+function R(p, b, x, y, z) {
+  const k = b * 4;
+  p[k] = x;
+  p[k + 1] = y;
+  p[k + 2] = z;
+}
+function A(p, b, x, y, z) {
+  const k = b * 4;
+  p[k] += x;
+  p[k + 1] += y;
+  p[k + 2] += z;
+}
+const chestPitch = (p) => p[HIPS * 4] + p[SPINE * 4] + p[CHEST * 4];
+
+/** Arm with WORLD-ish pitch (compensating torso lean). side 0 = left, 1 = right. */
+function arm(p, side, pitch, abd, twist, elbow, wrist = 0) {
+  const ua = side ? UARM_R : UARM_L;
+  const sg = side ? 1 : -1;
+  const k = ua * 4;
+  p[k] = pitch - chestPitch(p);
+  p[k + 1] = twist * sg;
+  p[k + 2] = abd * sg;
+  p[(ua + 1) * 4] = elbow;
+  p[(ua + 2) * 4] = wrist;
+}
+function headLook(p, pitch, yaw, roll, neckShare = 0.45) {
+  const need = pitch - chestPitch(p) - p[NECK * 4] - p[HEAD * 4];
+  p[NECK * 4] += need * neckShare;
+  p[HEAD * 4] += need * (1 - neckShare);
+  p[NECK * 4 + 1] += yaw * 0.4;
+  p[HEAD * 4 + 1] += yaw * 0.6;
+  p[HEAD * 4 + 2] += roll;
+}
+/** Leg cycle; grounds the body via root y. */
+function legCycle(z, p, ph, amp, knee, baseT, baseK, limp, splay = 0) {
+  const P = z.P;
+  let ext = -1;
+  for (let side = 0; side < 2; side++) {
+    const th = side ? THIGH_R : THIGH_L;
+    const phi = ph + side * PI;
+    const s = Math.sin(phi), c = Math.cos(phi);
+    let a = amp, k = knee;
+    if (limp && side === z.limpSide) {
+      a *= 1 - 0.4 * limp;
+      k *= 1 - 0.8 * limp;
+    }
+    const t = baseT + a * s;
+    const kn = -(baseK + k * Math.max(0, c) * (0.6 + 0.4 * Math.max(0, s + 0.3)));
+    const ft = -(t + kn) * 0.9 + (c > 0 ? 0.25 * c * (amp > 0.05 ? 1 : 0) : 0);
+    const sg = side ? 1 : -1;
+    R(p, th, t, limp && side === z.limpSide ? sg * 0.25 * limp : 0, sg * splay);
+    R(p, th + 1, kn, 0, 0);
+    R(p, th + 2, ft, 0, 0);
+    const e = P.thighLen * Math.cos(t) * Math.cos(splay) + P.shinLen * Math.cos(t + kn);
+    if (e > ext) ext = e;
+  }
+  p[z.nb * 4 + 1] += ext - (P.thighLen + P.shinLen);
+}
+/** Static leg pose (both legs), grounded. */
+function legsStatic(z, p, tL, kL, tR, kR, splay = 0) {
+  const P = z.P;
+  R(p, THIGH_L, tL, 0, -splay);
+  R(p, SHIN_L, kL, 0, 0);
+  R(p, FOOT_L, -(tL + kL) * 0.9, 0, 0);
+  R(p, THIGH_R, tR, 0, splay);
+  R(p, SHIN_R, kR, 0, 0);
+  R(p, FOOT_R, -(tR + kR) * 0.9, 0, 0);
+  const eL = P.thighLen * Math.cos(tL) * Math.cos(splay) + P.shinLen * Math.cos(tL + kL);
+  const eR = P.thighLen * Math.cos(tR) * Math.cos(splay) + P.shinLen * Math.cos(tR + kR);
+  p[z.nb * 4 + 1] += Math.max(eL, eR) - (P.thighLen + P.shinLen);
+}
+
+/** Zombie posture: neck thrust forward, shoulders rolled forward/uneven. */
+function posture(z, p) {
+  const st = z.st;
+  const nf = st.neckFwd ?? 0.3;
+  A(p, NECK, -nf, 0, 0);
+  const r = st.shoulderRoll ?? 0.12;
+  const u = (z.limpSide ? 1 : -1) * 0.06;
+  A(p, CLAV_L, 0, -r, -u);
+  A(p, CLAV_R, 0, r, -u);
+}
+
+// deterministic per-instance noise helpers
+const n1 = (t, seed) => noise3(t, seed * 1.7, 0.5, 11) * 2 - 1;
+
+// ------------------------------------------------------------------ humanoid states
+function poseIdle(z, p) {
+  const st = z.st, t = z.time + z.off;
+  const br = Math.sin(t * 1.3 * z.rate);
+  if (st.quad) return poseQuad(z, p, false, true);
+  if (st.knuckle) return poseTankLoco(z, p, false, true);
+  const sway = n1(t * 0.35, z.seed) * 0.07;
+  const ws = z.limpSide ? 1 : -1; // weight shifted onto the straight leg
+  R(p, HIPS, 0, 0.08 * ws, -0.06 * ws - sway * 0.5);
+  R(p, SPINE, st.idleLean * 0.45 + br * 0.025, sway * 0.5, 0.06 * ws + sway);
+  R(p, CHEST, st.idleLean * 0.55 + br * 0.02, n1(t * 0.3, z.seed + 3) * 0.12, 0.04 * ws + sway * 0.6);
+  p[z.nb * 4] = sway * 0.3 - ws * 0.02;
+  posture(z, p);
+  // twitch
+  const tw = twitch(z, t, st.twitchy ? 2.6 : 0.7);
+  headLook(p, st.headPitch + tw * 0.25 + n1(t * 0.5, z.seed + 5) * 0.1, n1(t * 0.25, z.seed + 7) * 0.5 + tw * 0.4, z.tilt * st.headTilt + tw * 0.3, 0.2);
+  const jaw = st.jaw * (0.6 + 0.4 * Math.max(0, Math.sin(t * 2.2)));
+  R(p, JAW, -jaw - tw * 0.2, 0, 0);
+  const splay = st.legSplay || 0.05;
+  if (z.limpSide) legsStatic(z, p, 0.24, -0.5, -0.02, -0.06, splay);
+  else legsStatic(z, p, -0.02, -0.06, 0.24, -0.5, splay);
+  // arms dangle
+  const aw = n1(t * 0.6, z.seed + 11) * 0.12;
+  if (st.mantis) {
+    arm(p, 0, 0.9 + aw, 0.3, 0.3, 2.2, 0.4);
+    arm(p, 1, 0.9 - aw, 0.3, 0.3, 2.2, 0.4);
+  } else {
+    arm(p, 0, 0.18 + aw, 0.1 + (st.armOut || 0), 0.3, 0.35 + aw, 0.35);
+    arm(p, 1, 0.14 - aw, 0.1 + (st.armOut || 0), 0.3, 0.45 - aw, 0.35);
+  }
+  if (st.twitchy) {
+    A(p, UARM_L, tw * 0.5, 0, tw * 0.3);
+    A(p, CHEST, br * 0.05, 0, 0);
+    A(p, CLAV_L, 0, 0, -Math.abs(br) * 0.1);
+    A(p, CLAV_R, 0, 0, Math.abs(br) * 0.1);
+  }
+  if (st.roar) roar(z, p, t);
+}
+
+function twitch(z, t, rate) {
+  // occasional sharp twitch: returns -1..1 impulses
+  const cell = Math.floor(t * rate);
+  const h = noise3(cell * 7.13, z.seed, 1.3, 77);
+  if (h < 0.62) return 0;
+  const f = t * rate - cell;
+  const env = f < 0.15 ? f / 0.15 : Math.max(0, 1 - (f - 0.15) / 0.3);
+  return (noise3(cell * 3.1, z.seed, 2.7, 78) * 2 - 1) * env;
+}
+
+function roar(z, p, t) {
+  const per = 7;
+  const u = ((t + z.seed * 3) % per) / per;
+  if (u > 0.3) return;
+  const k = Math.sin((u / 0.3) * PI);
+  A(p, SPINE, 0.25 * k, 0, 0);
+  A(p, CHEST, 0.2 * k, 0, 0);
+  A(p, NECK, 0.3 * k, 0, 0);
+  A(p, HEAD, 0.35 * k + Math.sin(t * 40) * 0.03 * k, 0, 0);
+  A(p, JAW, -0.8 * k, 0, 0);
+  A(p, UARM_L, 0.4 * k, 0, -0.9 * k);
+  A(p, UARM_R, 0.4 * k, 0, 0.9 * k);
+}
+
+function poseLoco(z, p, run) {
+  const st = z.st;
+  if (st.quad) return poseQuad(z, p, run, false);
+  if (st.knuckle) return poseTankLoco(z, p, run, false);
+  const t = z.time + z.off;
+  const ph = z.phase;
+  const lean = run ? st.runLean : st.walkLean;
+  const s1 = Math.sin(ph), c2 = Math.cos(ph * 2);
+  const sw = st.sway || 1;
+  R(p, HIPS, 0, -0.12 * s1, 0.05 * Math.cos(ph) * sw);
+  R(p, SPINE, lean * 0.5 + 0.03 * c2, 0.1 * s1, -0.04 * s1 * sw);
+  R(p, CHEST, lean * 0.5 + 0.02 * c2, 0.08 * s1, -0.03 * s1 * sw);
+  if (st.waddle) {
+    A(p, HIPS, 0, 0, 0.12 * Math.sin(ph));
+    A(p, SPINE, 0, 0, -0.1 * Math.sin(ph));
+    p[z.nb * 4] += 0.05 * Math.sin(ph);
+  }
+  legCycle(z, p, ph, run ? st.runStride : st.walkStride, run ? st.runKnee : st.walkKnee, st.baseT || 0, st.baseK || 0.06, run ? 0 : st.limp, st.legSplay || 0);
+  posture(z, p);
+  // limp hitch: shoulder dips on the limp side
+  if (st.limp && !run) {
+    const hitch = Math.max(0, Math.sin(ph + (z.limpSide ? PI : 0)));
+    A(p, SPINE, 0, 0, (z.limpSide ? 1 : -1) * 0.08 * hitch * st.limp);
+    p[z.nb * 4 + 1] -= 0.025 * hitch * st.limp;
+  }
+  // arms
+  if (st.flail && run) {
+    const f = st.runArmSwing;
+    const ns = n1(t * 3, z.seed) * 0.3;
+    arm(p, 0, st.armRun + f * Math.sin(ph) + ns, 0.35 + 0.2 * Math.cos(ph * 2), 0.3, st.elbow + 0.5 * Math.max(0, Math.cos(ph)), 0.3);
+    arm(p, 1, st.armRun - f * Math.sin(ph) - ns, 0.35 + 0.2 * Math.sin(ph * 2), 0.3, st.elbow + 0.5 * Math.max(0, -Math.cos(ph)), 0.3);
+  } else if (st.mantis) {
+    arm(p, 0, 0.9 + 0.1 * Math.sin(ph), 0.3, 0.3, 2.2, 0.4);
+    arm(p, 1, 0.9 - 0.1 * Math.sin(ph), 0.3, 0.3, 2.2, 0.4);
+  } else {
+    const sw2 = st.armSwing * Math.sin(ph);
+    const reach = run ? st.armRun : st.armWalk;
+    const n = n1(t * 0.8, z.seed + 2) * 0.1;
+    const hi = z.armSide; // which arm is raised
+    const out = st.armOut || 0;
+    const up0 = hi === 0 ? reach : st.armDroop;
+    const up1 = hi === 1 ? reach : st.armDroop;
+    const a0 = (run ? reach : up0) + sw2 + n, a1 = (run ? reach : up1) - sw2 - n;
+    const k0 = clamp(a0 - 0.3, 0, 1), k1 = clamp(a1 - 0.3, 0, 1);
+    arm(p, 0, a0, 0.14 + out, 0.25 * k0 - 0.1 * (1 - k0), st.elbow * (1 - 0.6 * k0) * (0.5 + 0.5 * k0) + 0.1, 0.3);
+    arm(p, 1, a1, 0.14 + out, 0.25 * k1 - 0.1 * (1 - k1), st.elbow * (1 - 0.6 * k1) * (0.5 + 0.5 * k1) + 0.1, 0.3);
+  }
+  // head
+  const bob = Math.cos(ph * 2) * 0.04;
+  const tw = twitch(z, t, st.twitchy ? 2 : 0.5);
+  headLook(p, st.headPitch + bob + tw * 0.2 + (run ? 0.1 : 0), n1(t * 0.4, z.seed + 4) * 0.25 + tw * 0.3, z.tilt * st.headTilt + 0.05 * s1, 0.2);
+  R(p, JAW, -st.jaw * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.7))), 0, 0);
+}
+
+/** Quadruped-ish crawl (leaper). */
+function poseQuad(z, p, run, idle) {
+  const st = z.st;
+  const t = z.time + z.off;
+  const ph = idle ? 0 : z.phase;
+  const lean = run ? st.runLean : st.walkLean;
+  const breathe = Math.sin(t * 3) * 0.03;
+  R(p, SPINE, lean * 0.55 + breathe, 0, 0);
+  R(p, CHEST, lean * 0.45 + (run ? 0.12 * Math.sin(ph * 2) : 0), 0.06 * Math.sin(ph), 0);
+  const amp = idle ? 0 : run ? st.runStride : st.walkStride;
+  if (run) {
+    // bounding gallop: legs in phase
+    const s = Math.sin(ph);
+    const k = -(st.baseK + 0.5 * Math.max(0, Math.cos(ph)));
+    legsStatic(z, p, st.baseT + amp * s, k, st.baseT + amp * Math.sin(ph + 0.4), k, 0.12);
+    p[z.nb * 4 + 1] += 0.08 * Math.max(0, Math.sin(ph * 2));
+  } else {
+    legCycle(z, p, ph, amp, idle ? 0 : st.walkKnee, st.baseT, st.baseK, 0, 0.14);
+  }
+  // arms reach down to the ground, alternating with legs
+  const aPh = run ? ph + PI * 0.5 : ph + PI;
+  const aa = idle ? 0 : run ? 0.7 : 0.4;
+  for (let side = 0; side < 2; side++) {
+    const s = Math.sin(aPh + (run ? side * 0.4 : side * PI));
+    const c = Math.cos(aPh + (run ? side * 0.4 : side * PI));
+    arm(p, side, 0.3 + aa * s + (idle ? n1(t * 0.7, z.seed + side) * 0.08 : 0), 0.18, 0.2, 0.35 + 0.5 * Math.max(0, -c) * (idle ? 0 : 1), 0.45);
+  }
+  const tw = twitch(z, t, 1.6);
+  headLook(p, 0.35 + tw * 0.2, (idle ? n1(t * 0.6, z.seed) * 0.7 : 0) + tw * 0.4, tw * 0.3, 0.5);
+  R(p, JAW, -0.2 - 0.15 * Math.abs(Math.sin(t * 2)), 0, 0);
+}
+
+/** Tank knuckle walk / heavy run. */
+function poseTankLoco(z, p, run, idle) {
+  const st = z.st;
+  const t = z.time + z.off;
+  const ph = idle ? 0 : z.phase;
+  const lean = idle ? st.idleLean : run ? st.runLean : st.walkLean;
+  const br = Math.sin(t * 1.1) * 0.04;
+  R(p, HIPS, 0, -0.08 * Math.sin(ph), 0.05 * Math.cos(ph));
+  R(p, SPINE, lean * 0.5 + br * 0.5 + (run ? 0.05 * Math.cos(ph * 2) : 0), 0.1 * Math.sin(ph), 0.04 * Math.sin(ph));
+  R(p, CHEST, lean * 0.5 + br, 0.12 * Math.sin(ph), 0.04 * Math.sin(ph));
+  A(p, CLAV_L, 0, 0, -br);
+  A(p, CLAV_R, 0, 0, br);
+  if (idle) legsStatic(z, p, 0.15, -0.3, 0.1, -0.25, st.legSplay);
+  else legCycle(z, p, ph, run ? st.runStride : st.walkStride, run ? st.runKnee : st.walkKnee, 0.12, 0.25, 0, st.legSplay);
+  // arms: knuckles planted, swinging opposite to legs
+  const amp = idle ? 0 : run ? 0.55 : 0.35;
+  for (let side = 0; side < 2; side++) {
+    const s = Math.sin(ph + (side ? 0 : PI));
+    const c = Math.cos(ph + (side ? 0 : PI));
+    arm(p, side, 0.28 + amp * s, 0.22, 0.25, 0.25 + (idle ? 0 : 0.35 * Math.max(0, c)), 0.3);
+  }
+  headLook(p, st.headPitch + (idle ? n1(t * 0.3, z.seed) * 0.15 : 0), idle ? n1(t * 0.2, z.seed + 4) * 0.5 : 0, 0, 0.3);
+  R(p, JAW, -0.15 - 0.1 * Math.abs(Math.sin(t * 1.3)), 0, 0);
+}
+
+function poseAttack(z, p) {
+  const st = z.st, type = z.type;
+  const t = z.stateT;
+  const per = (z.def.rate || 1) / z.rate;
+  const u = (t % per) / per;
+  // lower body: keep walking if moving, else braced
+  if (z.speed > 0.4) poseLoco(z, p, false);
+  else {
+    clearPose(p, z.nb);
+    if (st.quad) legsStatic(z, p, st.baseT + 0.1, -st.baseK, st.baseT - 0.1, -st.baseK + 0.1, 0.14);
+    else legsStatic(z, p, 0.35, -0.35, -0.15, -0.1, st.legSplay || 0.05);
+  }
+  if (type === ZTYPE.TANK) return tankSmash(z, p, u);
+  if (type === ZTYPE.BOSS_ABOMINATION) return abomSweep(z, p, u);
+  if (type === ZTYPE.BOSS_HIVEQUEEN) return queenSlash(z, p, u);
+  if (type === ZTYPE.BOOMER) {
+    // belly bump / lurch
+    const k = Math.sin(u * TAU);
+    R(p, SPINE, 0.1 + 0.2 * k, 0, 0);
+    R(p, CHEST, -0.1 - 0.25 * Math.max(0, -k), 0, 0);
+    arm(p, 0, 0.9 + 0.3 * k, 0.4, 0, 0.5);
+    arm(p, 1, 0.9 - 0.3 * k, 0.4, 0, 0.5);
+    headLook(p, 0.1, 0, 0);
+    R(p, JAW, -0.4 - 0.3 * Math.max(0, k), 0, 0);
+    return;
+  }
+  // two-arm grab + claw swipes, lunge with the head (walker, runner, spitter, leaper, roper)
+  const lean = st.quad ? -0.75 : -0.42;
+  const lunge = Math.max(0, Math.sin(u * TAU));
+  R(p, SPINE, lean * 0.5 - 0.12 * lunge, 0.15 * Math.sin(u * TAU), 0);
+  A(p, CHEST, lean * 0.5 - 0.1 * lunge, 0.2 * Math.sin(u * TAU), 0);
+  for (let side = 0; side < 2; side++) {
+    const ui = (u + side * 0.5) % 1;
+    const raise = ui < 0.4 ? smooth(ui / 0.4) : ui < 0.55 ? 1 - smooth((ui - 0.4) / 0.15) * 1.35 : -0.35 * (1 - smooth((ui - 0.55) / 0.45));
+    arm(p, side, 1.25 + 0.75 * raise, 0.26 - 0.12 * raise, 0.3, 0.2 + 0.25 * Math.max(0, raise), 0.7);
+  }
+  const sw = Math.sin(u * TAU);
+  headLook(p, 0.05 - 0.25 * lunge, 0, z.tilt * 0.15);
+  R(p, JAW, -0.25 - 0.5 * Math.max(0, Math.sin(u * TAU * 2 + 1)), 0, 0);
+}
+
+function tankSmash(z, p, u) {
+  // raise both arms overhead (0..0.45), smash down (0.45..0.6), recover
+  let up;
+  if (u < 0.45) up = smooth(u / 0.45);
+  else if (u < 0.58) up = 1 - smooth((u - 0.45) / 0.13) * 1.35;
+  else up = -0.35 * (1 - smooth((u - 0.58) / 0.42));
+  const pitch = 0.4 + up * 2.6;
+  R(p, SPINE, -0.2 + up * 0.35, 0, 0);
+  R(p, CHEST, -0.2 + up * 0.25, 0, 0);
+  arm(p, 0, pitch, 0.1 + 0.15 * up, 0.2, 0.3 + 0.4 * Math.max(0, up), 0.2);
+  arm(p, 1, pitch, 0.1 + 0.15 * up, 0.2, 0.3 + 0.4 * Math.max(0, up), 0.2);
+  headLook(p, 0.3 + up * 0.2, 0, 0, 0.3);
+  R(p, JAW, -0.3 - 0.4 * Math.max(0, up), 0, 0);
+}
+
+function abomSweep(z, p, u) {
+  // sweeping right claw from right to left
+  const w = u < 0.4 ? smooth(u / 0.4) : u < 0.6 ? 1 - smooth((u - 0.4) / 0.2) * 2 : -1 + smooth((u - 0.6) / 0.4);
+  R(p, SPINE, -0.2, w * 0.35, 0);
+  R(p, CHEST, -0.15, w * 0.35, 0);
+  arm(p, 1, 1.4, 0.6 + 0.8 * w, 0.2, 0.4, 0.3);
+  arm(p, 0, 0.6, 0.4, 0, 0.6, 0.2);
+  headLook(p, 0.15, -w * 0.3, 0, 0.3);
+  R(p, JAW, -0.35 - 0.25 * Math.abs(w), 0, 0);
+}
+
+function queenSlash(z, p, u) {
+  const k = Math.sin(u * TAU);
+  R(p, SPINE, -0.2, 0.2 * k, 0);
+  R(p, CHEST, -0.2, 0.2 * k, 0);
+  arm(p, 0, 1.2 + 0.8 * k, 0.4, 0.3, 0.6 + 1.0 * Math.max(0, -k), 0.4);
+  arm(p, 1, 1.2 - 0.8 * k, 0.4, 0.3, 0.6 + 1.0 * Math.max(0, k), 0.4);
+  headLook(p, 0.15, 0, 0);
+  R(p, JAW, -0.3, 0, 0);
+}
+
+function poseSpecial(z, p) {
+  const type = z.type, t = z.stateT, st = z.st;
+  switch (type) {
+    case ZTYPE.TANK: {
+      // ground slam windup: rear back with arms high, trembling, then slam and hold
+      clearPose(p, z.nb);
+      const wind = smooth(t / 0.7);
+      const slam = smooth((t - 0.75) / 0.15);
+      const shake = t < 0.75 ? Math.sin(t * 60) * 0.03 * wind : 0;
+      const up = wind * (1 - slam) - slam * 0.4;
+      legsStatic(z, p, 0.35 * (1 - slam) + 0.6 * slam, -0.5 - 0.6 * slam, -0.2 + 0.4 * slam, -0.2 - 0.6 * slam, 0.15);
+      R(p, SPINE, -0.25 + up * 0.5 + shake, 0, 0);
+      R(p, CHEST, -0.25 + up * 0.35 - slam * 0.35, 0, 0);
+      arm(p, 0, 0.4 + up * 2.8 + shake, 0.15, 0.2, 0.25 + 0.3 * up, 0.1);
+      arm(p, 1, 0.4 + up * 2.8 - shake, 0.15, 0.2, 0.25 + 0.3 * up, 0.1);
+      headLook(p, 0.4 + 0.3 * wind * (1 - slam), 0, 0, 0.3);
+      R(p, JAW, -0.2 - 0.6 * wind, 0, 0);
+      return;
+    }
+    case ZTYPE.SPITTER: {
+      // rear head back, then lunge forward spitting (loops ~1.2s)
+      const u = (t % 1.2) / 1.2;
+      clearPose(p, z.nb);
+      legsStatic(z, p, 0.3, -0.3, -0.1, -0.1, 0.05);
+      const back = u < 0.45 ? smooth(u / 0.45) : 1 - smooth((u - 0.45) / 0.12);
+      const fwd = u < 0.45 ? 0 : u < 0.62 ? smooth((u - 0.45) / 0.17) : 1 - smooth((u - 0.62) / 0.38);
+      R(p, SPINE, -0.2 + back * 0.35 - fwd * 0.35, 0, 0);
+      R(p, CHEST, -0.2 + back * 0.3 - fwd * 0.3, 0, 0);
+      R(p, NECK, back * 0.5 - fwd * 0.6, 0, 0);
+      R(p, HEAD, back * 0.4 - fwd * 0.15, 0, 0);
+      R(p, JAW, -0.2 - back * 0.3 - fwd * 0.75, 0, 0);
+      arm(p, 0, 0.3 + back * 0.4, 0.5 * back, 0, 0.6, 0.3);
+      arm(p, 1, 0.3 + back * 0.4, 0.5 * back, 0, 0.6, 0.3);
+      z.sacPulse = 0.18 * back + 0.1 * fwd;
+      return;
+    }
+    case ZTYPE.LEAPER: {
+      // deep crouch windup, trembling
+      clearPose(p, z.nb);
+      const k = smooth(t / 0.35);
+      const tr = Math.sin(t * 50) * 0.02 * k;
+      legsStatic(z, p, st.baseT + 0.35 * k, -st.baseK - 0.45 * k, st.baseT + 0.35 * k, -st.baseK - 0.45 * k, 0.2);
+      R(p, SPINE, -0.6 - 0.15 * k + tr, 0, 0);
+      R(p, CHEST, -0.5 - 0.1 * k, 0, 0);
+      arm(p, 0, 0.15 + tr, 0.35, 0.2, 0.9 + 0.3 * k, 1.0);
+      arm(p, 1, 0.15 - tr, 0.35, 0.2, 0.9 + 0.3 * k, 1.0);
+      headLook(p, 0.45, 0, 0, 0.5);
+      R(p, JAW, -0.45 * k, 0, 0);
+      return;
+    }
+    case ZTYPE.ROPER: {
+      // mouth wide open, head forward, right arm extended
+      clearPose(p, z.nb);
+      const k = smooth(t / 0.3);
+      const q = Math.sin(t * 30) * 0.02 * k;
+      legsStatic(z, p, 0.3 * k, -0.25 * k, -0.2 * k, -0.08, 0.06);
+      R(p, SPINE, -0.15 - 0.15 * k, 0.1 * k, 0);
+      R(p, CHEST, -0.1 - 0.1 * k, 0.15 * k, 0);
+      A(p, NECK, -0.35 * k, 0, 0);
+      headLook(p, 0.15 * k + q, 0, 0, 0);
+      A(p, NECK, -0.3 * k, 0, 0);
+      R(p, JAW, -1.1 * k, 0, 0);
+      arm(p, 1, 1.5 * k + 0.1, 0.05, -0.2, 0.05, 0.1);
+      arm(p, 0, 0.3, 0.3, 0, 0.8 * k, 0.3);
+      return;
+    }
+    case ZTYPE.BOOMER: {
+      poseIdle(z, p);
+      z.bellyPulse = 0.12;
+      A(p, SPINE, 0.12, 0, 0);
+      A(p, HEAD, 0.25, 0, 0);
+      R(p, JAW, -0.6, 0, 0);
+      arm(p, 0, 0.4, 0.7, 0, 0.3);
+      arm(p, 1, 0.4, 0.7, 0, 0.3);
+      return;
+    }
+    case ZTYPE.BOSS_ABOMINATION: {
+      // two-arm ground slam, loops
+      const u = (t % 1.6) / 1.6;
+      clearPose(p, z.nb);
+      legsStatic(z, p, 0.35, -0.45, -0.1, -0.2, 0.12);
+      const up = u < 0.5 ? smooth(u / 0.5) : u < 0.62 ? 1 - smooth((u - 0.5) / 0.12) * 1.4 : -0.4 * (1 - smooth((u - 0.62) / 0.38));
+      R(p, SPINE, -0.25 + up * 0.35, 0, 0);
+      R(p, CHEST, -0.2 + up * 0.3, 0, 0);
+      arm(p, 0, 0.5 + up * 2.3, 0.2, 0.2, 0.3 + 0.3 * Math.max(0, up), 0.2);
+      arm(p, 1, 0.5 + up * 2.3, 0.2, 0.2, 0.3 + 0.3 * Math.max(0, up), 0.2);
+      headLook(p, 0.3 + up * 0.3, 0, 0, 0.3);
+      R(p, JAW, -0.3 - 0.6 * Math.max(0, up), 0, 0);
+      return;
+    }
+    case ZTYPE.BOSS_HIVEQUEEN: {
+      // spit barrage: rapid head recoils
+      clearPose(p, z.nb);
+      legsStatic(z, p, 0.2, -0.3, -0.05, -0.2, 0.1);
+      const u = (t % 0.32) / 0.32;
+      const rec = u < 0.15 ? smooth(u / 0.15) : 1 - smooth((u - 0.15) / 0.85);
+      R(p, SPINE, -0.2 + rec * 0.08, 0, 0);
+      R(p, CHEST, -0.15 + rec * 0.1, 0, 0);
+      headLook(p, 0.25 + rec * 0.45, Math.sin(t * 3) * 0.3, 0, 0.4);
+      R(p, JAW, -0.2 - 0.5 * rec, 0, 0);
+      arm(p, 0, 0.9, 0.5, 0.3, 2.0, 0.4);
+      arm(p, 1, 0.9, 0.5, 0.3, 2.0, 0.4);
+      z.abdPulse = 0.08 * rec;
+      return;
+    }
+    default:
+      // walker/runner: lunge bite
+      return poseAttack(z, p);
+  }
+}
+
+function poseAir(z, p) {
+  const t = z.stateT, st = z.st, type = z.type;
+  if (type === ZTYPE.LEAPER || st.quad) {
+    // pounce: limbs spread forward
+    const k = smooth(t / 0.2);
+    legsStatic(z, p, 0.2 - 0.6 * k, -0.4 - 0.6 * k, 0.1 - 0.5 * k, -0.5 - 0.5 * k, 0.25);
+    p[z.nb * 4 + 1] = 0;
+    R(p, SPINE, -0.55, 0, 0);
+    R(p, CHEST, -0.3, 0, 0);
+    arm(p, 0, 1.7 + Math.sin(t * 20) * 0.08, 0.7, 0.2, 0.3, 0.5);
+    arm(p, 1, 1.7 - Math.sin(t * 20) * 0.08, 0.7, 0.2, 0.3, 0.5);
+    headLook(p, 0.1, 0, 0, 0.4);
+    R(p, JAW, -0.8, 0, 0);
+    return;
+  }
+  const f = Math.sin(t * 9);
+  R(p, SPINE, -0.1, 0, 0);
+  R(p, CHEST, 0.05, 0, 0);
+  R(p, THIGH_L, 0.7 + 0.2 * f, 0, -0.1);
+  R(p, SHIN_L, -1.0, 0, 0);
+  R(p, THIGH_R, 0.3 - 0.2 * f, 0, 0.1);
+  R(p, SHIN_R, -0.6, 0, 0);
+  arm(p, 0, 1.9 + 0.3 * f, 0.7, 0, 0.4, 0.3);
+  arm(p, 1, 1.9 - 0.3 * f, 0.7, 0, 0.4, 0.3);
+  headLook(p, 0.2, 0, 0);
+  R(p, JAW, -0.6, 0, 0);
+}
+
+function poseStagger(z, p) {
+  const t = z.stateT, st = z.st;
+  const e = Math.exp(-t * 4.5);
+  const w = Math.sin(t * 9) * Math.exp(-t * 3);
+  const lean = st.quad ? -0.8 : st.knuckle ? -0.3 : -0.1;
+  legsStatic(z, p, -0.25 * e + (st.baseT || 0) * 0.7, -0.35 - (st.baseK || 0) * 0.7, 0.3 * e + (st.baseT || 0) * 0.7, -0.3 * e - (st.baseK || 0) * 0.7, 0.1);
+  R(p, SPINE, lean * 0.5 + 0.35 * e + 0.05 * w, 0.2 * w, 0.1 * w);
+  R(p, CHEST, lean * 0.5 + 0.3 * e, 0.1 * w, 0);
+  arm(p, 0, 0.8 * e + 0.2, 0.6 * e + 0.15, 0, 0.5, 0.3);
+  arm(p, 1, 0.9 * e + 0.2, 0.7 * e + 0.15, 0, 0.6, 0.3);
+  headLook(p, 0.6 * e + 0.1 + 0.1 * w, 0.2 * w, 0.3 * w);
+  R(p, JAW, -0.5 * e - 0.1, 0, 0);
+  p[z.nb * 4 + 2] += 0.12 * (1 - e);
+}
+
+function poseDead(z, p) {
+  const t = z.stateT;
+  const dir = z.deadDir; // 1 = fall forward (face down), -1 = backward (face up)
+  const P = z.P;
+  const buckle = smooth(t / 0.28);
+  const k = clamp((t - 0.08) / 0.55, 0, 1);
+  const fall = k * k;
+  const settle = t > 0.63 ? Math.exp(-(t - 0.63) * 10) * Math.sin((t - 0.63) * 25) * 0.04 : 0;
+  const up = 1 - fall;
+  // legs: knees buckle, then lie flat (face-up: one knee raised)
+  const bentL = z.seed & 2 ? 1 : 0;
+  if (dir > 0) {
+    R(p, THIGH_L, 0.55 * buckle * up, 0, -0.1 * fall);
+    R(p, SHIN_L, -0.9 * buckle * up - (bentL ? 0.9 : 0.15) * fall, 0, 0);
+    R(p, FOOT_L, 0.6 * fall, 0, 0);
+    R(p, THIGH_R, 0.4 * buckle * up, 0, 0.18 * fall);
+    R(p, SHIN_R, -0.7 * buckle * up - 0.1 * fall, 0, 0);
+    R(p, FOOT_R, 0.7 * fall, 0, 0);
+  } else {
+    R(p, THIGH_L, 0.55 * buckle * up + (bentL ? 0.7 : 0.05) * fall, 0, -0.12 * fall);
+    R(p, SHIN_L, -0.9 * buckle * up - (bentL ? 1.2 : 0.05) * fall, 0, 0);
+    R(p, FOOT_L, -0.3 * fall, 0, 0);
+    R(p, THIGH_R, 0.4 * buckle * up + 0.05 * fall, 0, 0.2 * fall);
+    R(p, SHIN_R, -0.7 * buckle * up - 0.05 * fall, 0, 0);
+    R(p, FOOT_R, -0.4 * fall, 0, 0);
+  }
+  // straighten the spine as the body lands
+  const sp = (z.st.idleLean || 0) * up;
+  R(p, SPINE, sp * 0.5, 0.12 * fall * dir, 0.05 * fall);
+  R(p, CHEST, sp * 0.5, 0.1 * fall * dir, 0);
+  R(p, NECK, 0, 0, 0);
+  R(p, HEAD, 0, (z.seed & 4 ? 1 : -1) * 1.2 * fall, 0);
+  R(p, JAW, -0.35, 0, 0);
+  // arms flop out in the ground plane (abduction, not pitch, so they rest on the ground)
+  const as = z.seed & 8 ? 1 : 0;
+  R(p, UARM_L, 0.4 * up, 0, -(0.25 * up + (as ? 2.6 : 0.6) * fall));
+  R(p, FARM_L, 0.35 * up + 0.12 * fall, 0, 0);
+  R(p, HAND_L, 0, 0, 0);
+  R(p, UARM_R, 0.4 * up, 0, 0.25 * up + (as ? 0.5 : 2.3) * fall);
+  R(p, FARM_R, 0.3 * up + 0.12 * fall, 0, 0);
+  R(p, HAND_R, 0, 0, 0);
+  // topple the whole body around the feet
+  R(p, ROOT, -dir * (HALF * fall + settle), 0, 0);
+  const n = z.nb * 4;
+  const drop = (P.thighLen + P.shinLen) * (1 - Math.cos(0.55)) * buckle * up * 0.6;
+  p[n + 1] = -drop + (P.depth || 0.12) * 1.15 * fall;
+  p[n + 2] = dir * 0.45 * fall * (P.hipY / 0.93);
+}
+
+function poseEat(z, p) {
+  const t = z.time + z.off;
+  const P = z.P;
+  // kneel
+  const th = 0.3;
+  R(p, THIGH_L, th, 0, -0.15);
+  R(p, SHIN_L, -(HALF + th) - 0.05, 0, 0);
+  R(p, FOOT_L, 0.5, 0, 0);
+  R(p, THIGH_R, th + 0.25, 0, 0.12);
+  R(p, SHIN_R, -(HALF + th + 0.25) - 0.05, 0, 0);
+  R(p, FOOT_R, 0.5, 0, 0);
+  const hipH = P.thighLen * Math.cos(th) + (z.st.knuckle ? 0.12 : 0.06);
+  p[z.nb * 4 + 1] = hipH - P.thighY;
+  const tear = Math.max(0, Math.sin(t * 2.4));
+  const chew = Math.sin(t * 9);
+  R(p, SPINE, -0.55 + 0.1 * tear, 0, 0);
+  R(p, CHEST, -0.5 + 0.12 * tear, 0.1 * Math.sin(t * 1.2), 0);
+  headLook(p, -0.45 + 0.35 * tear, 0.25 * Math.sin(t * 5) * tear, 0.2 * tear);
+  R(p, JAW, -0.25 - 0.2 * chew, 0, 0);
+  const pl = Math.sin(t * 2.4 + 1);
+  arm(p, 0, 0.45 + 0.25 * pl, 0.3, 0.3, 0.7 + 0.5 * Math.max(0, pl), 0.6);
+  arm(p, 1, 0.45 - 0.25 * pl, 0.3, 0.3, 0.7 + 0.5 * Math.max(0, -pl), 0.6);
+}
+
+function poseHumanoid(z) {
+  const p = z.pose;
+  clearPose(p, z.nb);
+  z.sacPulse = 0;
+  z.bellyPulse = 0;
+  z.abdPulse = 0;
+  switch (z.state) {
+    case ZANIM.WALK: poseLoco(z, p, false); break;
+    case ZANIM.RUN: poseLoco(z, p, true); break;
+    case ZANIM.ATTACK: poseAttack(z, p); break;
+    case ZANIM.SPECIAL: poseSpecial(z, p); break;
+    case ZANIM.AIRBORNE: poseAir(z, p); break;
+    case ZANIM.STAGGER: poseStagger(z, p); break;
+    case ZANIM.DEAD: poseDead(z, p); break;
+    case ZANIM.EAT: poseEat(z, p); break;
+    default: poseIdle(z, p); break;
+  }
+  poseExtras(z, p);
+  if (z.state !== ZANIM.DEAD && z.state !== ZANIM.EAT) {
+    // keep the head over the object origin (server head hitbox is centered on the entity axis)
+    p[z.nb * 4 + 2] -= headForward(z, p);
+  }
+}
+
+/** 2D forward kinematics of the spine chain: head-center Z offset relative to the hips. */
+function headForward(z, p) {
+  const P = z.P;
+  let th = p[HIPS * 4];
+  let zz = Math.sin(th) * P.spineLen;
+  th += p[SPINE * 4];
+  zz += Math.sin(th) * P.chestLen;
+  th += p[CHEST * 4];
+  zz += Math.sin(th) * P.neckOff + Math.cos(th) * P.neckZ;
+  th += p[NECK * 4];
+  zz += Math.sin(th) * P.neckLen + Math.cos(th) * (P.headZ - P.neckZ);
+  th += p[HEAD * 4];
+  zz += Math.sin(th) * P.headR * 0.9;
+  return zz;
+}
+
+function poseExtras(z, p) {
+  const t = z.time + z.off;
+  const X = z.X;
+  const dead = z.state === ZANIM.DEAD;
+  if (X.sac !== undefined) {
+    const s = 1 + (dead ? -0.2 : 0.06 * Math.sin(t * 3.1) + z.sacPulse);
+    p[X.sac * 4 + 3] = s;
+  }
+  if (X.belly !== undefined) {
+    const idle = z.state === ZANIM.IDLE || z.state === ZANIM.SPECIAL;
+    const s = 1 + (dead ? 0 : (idle ? 0.05 : 0.025) * Math.sin(t * (z.state === ZANIM.SPECIAL ? 9 : 2.6)) + z.bellyPulse * Math.max(0, Math.sin(t * 9)));
+    p[X.belly * 4 + 3] = s;
+  }
+  if (X.abdomen !== undefined) {
+    const walk = z.state === ZANIM.WALK || z.state === ZANIM.RUN;
+    R(p, X.abdomen, 0.1 + (walk ? 0.06 * Math.sin(z.phase * 2) : 0.03 * Math.sin(t)), walk ? 0.08 * Math.sin(z.phase) : 0, 0);
+    p[X.abdomen * 4 + 3] = 1 + 0.03 * Math.sin(t * 2.2) + z.abdPulse;
+  }
+  if (X.sleg0 !== undefined) {
+    // spider legs: gait synced with phase, alternate pairs
+    const walk = z.state === ZANIM.WALK || z.state === ZANIM.RUN || z.speed > 0.3;
+    for (let i = 0; i < 4; i++) {
+      const s = i % 2 ? 1 : -1;
+      const ph = z.phase + (i === 0 || i === 3 ? 0 : PI) + i * 0.3;
+      const lift = walk ? Math.max(0, Math.sin(ph)) * 0.35 : 0.05 * Math.sin(t * 1.5 + i);
+      const swing = walk ? Math.cos(ph) * 0.35 : 0;
+      const u = X['sleg' + i], l = X['slegb' + i];
+      R(p, u, -chestPitch(p) * 0.8 + swing * 0.3 - lift * 0.2, swing, s * lift);
+      R(p, l, lift * 0.6, 0, -s * lift * 0.5);
+      if (dead) R(p, u, 0.6, 0, -s * 0.8);
+    }
+  }
+  if (X.xarmL !== undefined) {
+    for (let side = 0; side < 2; side++) {
+      const u = side ? X.xarmR : X.xarmL, f = side ? X.xfarmR : X.xfarmL;
+      const tw = n1(t * 1.3, z.seed + side * 5);
+      R(p, u, 0.9 + 0.35 * tw - chestPitch(p), 0, (side ? 1 : -1) * (0.35 + 0.2 * n1(t * 0.9, side)));
+      R(p, f, 0.9 + 0.5 * n1(t * 1.7, z.seed + side), 0, 0);
+    }
+  }
+}
+
+// ------------------------------------------------------------------ bat animation
+function poseBat(z) {
+  const p = z.pose;
+  clearPose(p, z.nb);
+  const t = z.time + z.off;
+  const X = z.X;
+  const st = z.state;
+  const dead = st === ZANIM.DEAD;
+  const dive = st === ZANIM.ATTACK;
+  const f = 7 + clamp(z.speed, 0, 10) * 0.5;
+  const ph = z.flapPh;
+  const s = Math.sin(ph), c = Math.cos(ph);
+  if (dead) {
+    const k = smooth(z.stateT / 0.5);
+    R(p, X.body, 0.3 * k, 0, 2.6 * k * (z.seed & 1 ? 1 : -1));
+    for (let side = 0; side < 2; side++) {
+      const sg = side ? 1 : -1;
+      R(p, side ? X.w1R : X.w1L, 0, 0, sg * (0.2 + 0.4 * k));
+      R(p, side ? X.w2R : X.w2L, 0, sg * 1.2 * k, 0);
+      R(p, side ? X.w3R : X.w3L, 0, sg * 1.0 * k, 0);
+    }
+    p[z.nb * 4 + 1] = 0;
+    return f;
+  }
+  const bob = dive ? 0 : -s * 0.035;
+  p[z.nb * 4 + 1] = bob;
+  R(p, X.body, dive ? -0.7 : -0.1 + 0.08 * c + (st === ZANIM.STAGGER ? 0.5 * Math.exp(-z.stateT * 5) : 0), 0, 0.05 * Math.sin(t * 1.3));
+  R(p, X.head, dive ? 0.5 : 0.1 - 0.08 * c + 0.15 * n1(t * 1.5, z.seed), n1(t, z.seed) * 0.3, 0);
+  R(p, X.jaw, dive ? -0.6 : -0.15 - 0.15 * Math.max(0, Math.sin(t * 5)), 0, 0);
+  for (let side = 0; side < 2; side++) {
+    const sg = side ? 1 : -1;
+    const w1 = side ? X.w1R : X.w1L, w2 = side ? X.w2R : X.w2L, w3 = side ? X.w3R : X.w3L;
+    if (dive) {
+      // wings swept back
+      const tr = Math.sin(t * 30) * 0.05;
+      R(p, w1, 0, sg * -0.9, sg * (0.25 + tr));
+      R(p, w2, 0, sg * -1.3, 0);
+      R(p, w3, 0, sg * -0.6, sg * 0.1);
+    } else {
+      const flap = s * 0.95 + 0.1;
+      const fold = Math.max(0, -c) * 0.5; // fold on the upstroke
+      R(p, w1, 0.1 * c, sg * -fold * 0.4, sg * flap);
+      R(p, w2, 0, sg * -fold * 0.9, sg * Math.sin(ph - 0.5) * 0.4);
+      R(p, w3, 0, sg * -fold * 0.7, sg * Math.sin(ph - 1.0) * 0.35);
+    }
+  }
+  return f;
+}
+
+// ------------------------------------------------------------------ calibration (head height)
+const calib = new Map();
+const _hv = new THREE.Vector3();
+function calibrate(type, rig) {
+  let c = calib.get(type);
+  if (c) return c;
+  const def = ZOMBIE_DEFS[type];
+  if (type === ZTYPE.BAT) {
+    c = { k: 1, dz: 0 };
+    calib.set(type, c);
+    return c;
+  }
+  const inst = new ZombieInstance(type, 12345, rig, { k: 1, dz: 0 });
+  inst.body.scale.set(1, 1, 1);
+  let sumY = 0, sumZ = 0;
+  const N = 8;
+  // calibrate on each type's dominant locomotion state
+  const states = type === ZTYPE.RUNNER || type === ZTYPE.LEAPER ? [ZANIM.RUN, ZANIM.RUN] : [ZANIM.WALK, ZANIM.IDLE];
+  for (let i = 0; i < N; i++) {
+    inst.state = states[i & 1];
+    inst.time = 0;
+    inst.off = 0;
+    inst.phase = (i / N) * TAU;
+    inst.speed = def.speed;
+    inst.tilt = 0;
+    poseHumanoid(inst);
+    inst.applyPose(inst.pose);
+    inst.object.updateMatrixWorld(true);
+    inst.headCenter.getWorldPosition(_hv);
+    sumY += _hv.y;
+    sumZ += _hv.z;
+  }
+  const hy = sumY / N, hz = sumZ / N;
+  c = { k: def.headY / hy, dz: 0, hz };
+  inst.dispose();
+  calib.set(type, c);
+  return c;
+}
+
+// ------------------------------------------------------------------ zombie instance
+
+class ZombieInstance {
+  constructor(type, seed, rig, cal) {
+    this.type = type;
+    this.def = ZOMBIE_DEFS[type];
+    this.seed = seed >>> 0;
+    this.rig = rig;
+    this.P = rig.P;
+    this.st = ZS[type] || ZS[ZTYPE.WALKER];
+    this.isBat = type === ZTYPE.BAT;
+    const rnd = mulberry32(this.seed * 2654435761 + type);
+    this.off = rnd() * 100;
+    this.rate = 0.9 + rnd() * 0.2;
+    this.limpSide = rnd() < 0.5 ? 0 : 1;
+    this.armSide = rnd() < 0.5 ? 0 : 1;
+    this.deadDir = rnd() < 0.5 ? 1 : -1;
+    this.tilt = rnd() < 0.5 ? -1 : 1;
+    this.cal = cal;
+    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.4);
+    this.mesh = inst.mesh;
+    this.bones = inst.bones;
+    this.skeleton = inst.skeleton;
+    this.fx = inst.fx;
+    this.nb = this.bones.length;
+    this.X = {};
+    for (const [name, idx] of rig.names) this.X[name] = idx;
+    this.pose = new Float32Array(this.nb * 4 + 3);
+    this.snap = new Float32Array(this.nb * 4 + 3);
+    this.out = new Float32Array(this.nb * 4 + 3);
+    this.object = new THREE.Group();
+    this.object.name = 'zombie';
+    this.body = new THREE.Group();
+    const sw = 1 + (rnd() - 0.5) * 0.12, sh = 1 + (rnd() - 0.5) * 0.05;
+    this.baseScale = cal.k;
+    this.body.scale.set(cal.k * sw, cal.k * sh, cal.k * sw);
+    this.body.add(this.mesh);
+    this.object.add(this.body);
+    this.state = ZANIM.IDLE;
+    this.stateT = 0;
+    this.fadeT = 1;
+    this.fadeDur = 0.2;
+    this.phase = rnd() * TAU;
+    this.flapPh = rnd() * TAU;
+    this.time = 0;
+    this.speed = 0;
+    this.hit = 0;
+    this.headless = false;
+    this.sacPulse = 0;
+    this.bellyPulse = 0;
+    this.abdPulse = 0;
+    this._seen = true;
+    this.mesh.onBeforeRender = () => {
+      this._seen = true;
+    };
+    // head center marker (for calibration/debug) + mouth anchor
+    const headBone = this.bones[this.X.head];
+    this.headCenter = new THREE.Object3D();
+    if (!this.isBat) this.headCenter.position.set(0, this.P.headR * 0.9, 0);
+    headBone.add(this.headCenter);
+    this.mouth = new THREE.Object3D();
+    const jawBone = this.bones[this.X.jaw];
+    if (this.isBat) this.mouth.position.set(0, 0, -0.06);
+    else this.mouth.position.set(0, -this.P.headR * 0.35, -this.P.headR * 0.85);
+    jawBone.add(this.mouth);
+    this.object.userData.mouth = this.mouth;
+    this.object.userData.head = this.headCenter;
+    this.object.userData.ztype = type;
+    // initial pose
+    this.computePose();
+    this.out.set(this.pose);
+    this.applyPose(this.out);
+  }
+
+  computePose() {
+    if (this.isBat) {
+      poseBat(this);
+    } else {
+      poseHumanoid(this);
+    }
+  }
+
+  applyPose(p) {
+    const b = this.bones;
+    const nb = this.nb;
+    for (let i = 1; i < nb; i++) {
+      const k = i * 4;
+      b[i].rotation.set(p[k], p[k + 1], p[k + 2]);
+      const s = p[k + 3];
+      b[i].scale.set(s, s, s);
+    }
+    const r = b[1];
+    r.position.set(p[nb * 4], p[nb * 4 + 1], p[nb * 4 + 2] + this.cal.dz);
+    if (this.headless && !this.isBat) {
+      b[this.X.head].scale.set(0.001, 0.001, 0.001);
+    }
+  }
+
+  update(dt, anim, speed, time) {
+    if (dt > 0.1) dt = 0.1;
+    if (anim !== this.state) {
+      this.snap.set(this.out);
+      this.state = anim;
+      this.stateT = 0;
+      this.fadeT = 0;
+      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER ? 0.1 : 0.22;
+    }
+    this.stateT += dt;
+    this.fadeT += dt;
+    this.time = time;
+    this.speed = speed;
+    if (this.isBat) {
+      this.flapPh += dt * (7 + clamp(speed, 0, 10) * 0.5) * this.rate * (this.state === ZANIM.ATTACK ? 0 : 1);
+    } else if (anim !== ZANIM.DEAD) {
+      const run = anim === ZANIM.RUN;
+      const cyc = run ? this.st.cycleRun : this.st.cycleWalk;
+      this.phase += (dt * speed * TAU * this.rate) / cyc;
+      if (this.phase > 1e4) this.phase -= TAU * 1000;
+    }
+    if (this.hit > 0) {
+      this.hit = Math.max(0, this.hit - dt * 5);
+    }
+    let glow = 1;
+    if (this.type === ZTYPE.SPITTER || this.type === ZTYPE.BOSS_HIVEQUEEN) glow = 0.8 + 0.25 * Math.sin(time * 3.1 + this.off);
+    if (anim === ZANIM.DEAD) glow = Math.max(0.15, 1 - this.stateT * 0.6);
+    setFx(this.fx, this.hit, glow);
+    // skip posing when not rendered last frame (culled); crossfades still time out correctly
+    const seen = this._seen;
+    this._seen = false;
+    if (!seen && this.fadeT > this.fadeDur) return;
+    this.computePose();
+    const p = this.pose, o = this.out;
+    if (this.fadeT < this.fadeDur) {
+      const w = smooth(this.fadeT / this.fadeDur);
+      const s = this.snap;
+      for (let i = 0, n = o.length; i < n; i++) o[i] = s[i] + (p[i] - s[i]) * w;
+    } else {
+      o.set(p);
+    }
+    this.applyPose(o);
+  }
+
+  flash(a) {
+    this.hit = Math.max(this.hit, clamp(a, 0, 1));
+    setFx(this.fx, this.hit, 1);
+  }
+
+  setHeadless(v) {
+    this.headless = !!v;
+    if (!v && !this.isBat) this.bones[this.X.head].scale.set(1, 1, 1);
+    this.applyPose(this.out);
+  }
+
+  dispose() {
+    this.skeleton.dispose();
+    if (this.object.parent) this.object.parent.remove(this.object);
+  }
+}
+
+/**
+ * Create a zombie of the given ZTYPE. seed picks the variant + per-instance randomness.
+ */
+export function createZombie(ztype, seed = 0) {
+  const type = BUILDERS[ztype] ? ztype : ZTYPE.WALKER;
+  const nv = VARIANTS[type] || 1;
+  const variant = nv > 1 ? ((seed >>> 0) * 2654435761 >>> 0) % nv : 0;
+  const rig = getRig(type, variant);
+  const cal = calibrate(type, getRig(type, 0));
+  const z = new ZombieInstance(type, seed, rig, cal);
+  return {
+    object: z.object,
+    update: (dt, anim, speed, time) => z.update(dt, anim, speed, time),
+    flash: (a) => z.flash(a),
+    setHeadless: (v) => z.setHeadless(v),
+    dispose: () => z.dispose(),
+    _inst: z,
+  };
+}
+
+/** Debug info for the sandbox: triangle counts + calibration per type/variant. */
+export function modelStats() {
+  const out = [];
+  for (const t of Object.values(ZTYPE)) {
+    const nv = VARIANTS[t] || 1;
+    for (let v = 0; v < nv; v++) {
+      const r = getRig(t, v);
+      out.push({ type: t, variant: v, tris: r.tris, bones: r.bones.length, cal: calibrate(t, getRig(t, 0)) });
+    }
+  }
+  for (let v = 0; v < SURVIVOR_LOOKS; v++) {
+    out.push({ type: 'survivor', variant: v, tris: getSurvivorRig(v, false).tris });
+    out.push({ type: 'survivor-z', variant: v, tris: getSurvivorRig(v, true).tris });
+  }
+  return out;
+}
+
+// ======================================================================= SURVIVOR
+const SURVIVOR_LOOKS = 10;
+const JACKETS = [0x4a5236, 0x5a4330, 0x283246, 0x55585a, 0x3d4a3a, 0x6a5238, 0x2a2e36, 0x5a2a26, 0x4a4a3e, 0x33413f];
+const SPANTS = [0x2f3d55, 0x4a4234, 0x262626, 0x3e4a3a, 0x3a3f4a];
+const SKIN_TONES = [0xd8b090, 0xc09070, 0x8a5a3e, 0x5a3a28, 0xe0bca0, 0xb08060];
+
+function survivorLook(v, zombie) {
+  const rnd = mulberry32(5000 + v * 131);
+  const skinH = SKIN_TONES[v % SKIN_TONES.length];
+  const zskin = color(skinH).lerp(color(0x8a9a80), 0.75).getHex();
+  const jacket = JACKETS[v % JACKETS.length];
+  const headwear = ['beanie', 'cap', 'hair', 'hood', 'bald', 'hair', 'beanie', 'cap', 'hair', 'long'][v % 10];
+  return {
+    human: !zombie,
+    skin: zombie ? zskin : skinH,
+    skinRegion: zombie ? CR.GORE : CR.PLAIN,
+    headRegion: zombie ? CR.SKIN : CR.PLAIN,
+    gaunt: zombie ? 0.4 : 0,
+    ribs: 0,
+    socket: zombie ? 0.14 : 0.05,
+    eye: zombie ? 0xff2a10 : 0xe8e4dc,
+    eyeGlow: zombie ? 0.9 : 0,
+    stubble: v % 3 === 0,
+    chestR: 0.162,
+    armR: 0.05,
+    thighR: 0.082,
+    shirt: {
+      color: jacket, region: CR.CANVAS, sleeves: 2, tear: zombie ? 0.25 : 0, seed: 300 + v, thick: 1.1, hem: 0.0,
+      open: false, rags: zombie ? 3 : 0, loose: 1.06,
+      tint(p, n, c) {
+        // zipper line + pockets
+        if (Math.abs(p.x) < 0.012 && p.z < -0.08) c.multiplyScalar(0.55);
+        if (zombie && fbm3(p.x * 9, p.y * 9, p.z * 9, 2, v) > 0.6) c.lerp(C_BLOOD, 0.7);
+      },
+    },
+    pants: {
+      color: SPANTS[v % SPANTS.length], region: v % 2 ? CR.DENIM : CR.CANVAS, tearY: zombie ? 0.3 : -1,
+      tint: zombie ? (p, n, c) => { if (fbm3(p.x * 10, p.y * 10, p.z * 10, 2, v + 3) > 0.62) c.lerp(C_BLOOD, 0.6); } : null,
+    },
+    shoes: { color: v % 2 ? 0x2a2018 : 0x3a2c20 },
+    hair: headwear === 'hair' || headwear === 'long' ? { color: HAIRC[(v + 1) % HAIRC.length], cover: 0.5, long: headwear === 'long', patchy: zombie ? 0.3 : 0 } : headwear === 'cap' ? { color: HAIRC[v % HAIRC.length], cover: 0.45 } : null,
+    headwear,
+    backpack: v % 3 !== 1,
+    hands: zombie ? null : v % 2 ? 0x2a2622 : null, // gloves
+    handCol: zombie ? zskin : v % 2 ? 0x2a2622 : skinH,
+    handRegion: zombie ? CR.GORE : v % 2 ? CR.LEATHER : CR.PLAIN,
+    claws: zombie ? 0.035 : 0,
+    curl: zombie ? 0.8 : 0.9,
+    fist: !zombie,
+    blood: zombie ? [[[0, 1.52, -0.12], 0.12, 1], [[0.05, 1.3, -0.16], 0.16, 0.9], [[0.2, 0.85, 0.0], 0.12, 0.8]] : null,
+    dirt: { y0: 0.35, k: zombie ? 0.6 : 0.35 },
+    rnd,
+  };
+}
+
+const survivorRigs = new Map();
+function getSurvivorRig(v, zombie) {
+  const key = v + (zombie ? 'z' : 'h');
+  let r = survivorRigs.get(key);
+  if (r) return r;
+  const P = humanP({ hipY: 0.96, thighLen: 0.45, shinLen: 0.43, spineLen: 0.13, chestLen: 0.2, neckOff: 0.2, neckLen: 0.08, headR: 0.105, shoulderW: 0.19, uarmLen: 0.29, farmLen: 0.26, handLen: 0.17, depth: 0.13 });
+  const L = survivorLook(v, zombie);
+  const mb = new MeshBuilder();
+  addHumanoidBones(mb, P);
+  addBlood(mb, L);
+  const T = buildTorso(mb, P, L);
+  buildShirt(mb, P, L, T);
+  buildHead(mb, P, L);
+  hair(mb, P, L);
+  buildArms(mb, P, L);
+  buildLegs(mb, P, L);
+  const hr = P.headR;
+  const hw = L.headwear;
+  const jc = L.shirt.color;
+  // jacket collar
+  mb.lathe('chest', [0, T.top - 0.03, 0.005], [[0.075, 0], [0.085, 0.03], [0.082, 0.06]], { rs: 10, sx: 1.25, sz: 1.1, color: mulColor(jc, 0.85), region: CR.CANVAS, double: true });
+  // chest pockets
+  for (const s of [-1, 1]) mb.box('chest', [s * 0.09, 0.04, -0.125], [0.08, 0.07, 0.02], { color: mulColor(jc, 0.9), region: CR.CANVAS, rot: [0.15, 0, 0] });
+  if (hw === 'beanie') {
+    mb.ellip('head', [0, hr * 1.0, 0.005], [hr * 0.93, hr * 0.9, hr * 1.0], { ws: 10, hs: 6, t0: 0, tl: PI * 0.52, color: [0x3a2a24, 0x2a3a4a, 0x4a4a4a][v % 3], region: CR.KNIT });
+    mb.lathe('head', [0, hr * 0.92, 0.005], [[hr * 0.94, 0], [hr * 0.97, hr * 0.12], [hr * 0.93, hr * 0.24]], { rs: 10, sx: 0.9, sz: 1.08, color: [0x3a2a24, 0x2a3a4a, 0x4a4a4a][v % 3], region: CR.KNIT });
+  } else if (hw === 'cap') {
+    mb.ellip('head', [0, hr * 1.02, 0.01], [hr * 0.9, hr * 0.78, hr * 0.98], { ws: 10, hs: 6, t0: 0, tl: PI * 0.5, color: [0x3a4a30, 0x6a2a24, 0x2a2a2a][v % 3], region: CR.CANVAS });
+    mb.box('head', [0, hr * 1.12, -hr * 1.1], [hr * 1.25, 0.01, hr * 0.62], { color: [0x3a4a30, 0x6a2a24, 0x2a2a2a][v % 3], region: CR.CANVAS, rot: [0.18, 0, 0] });
+  } else if (hw === 'hood') {
+    mb.ellip('head', [0, hr * 0.92, hr * 0.12], [hr * 1.15, hr * 1.18, hr * 1.22], {
+      ws: 12, hs: 8, color: mulColor(jc, 0.9), region: CR.CANVAS, double: true,
+      tear: { amt: 0, fn: (x, y, z) => z < -0.02 && y < P.headY + hr * 1.55 && y > P.headY - 0.08 && Math.abs(x) < hr * 0.8 },
+    });
+  }
+  if (L.backpack) {
+    const bc = [0x3a3a2a, 0x2a3040, 0x4a3a28][v % 3];
+    mb.box('chest', [0, 0.02, 0.17], [0.3, 0.4, 0.15], { round: 0.3, seg: 2, color: bc, region: CR.CANVAS });
+    mb.box('chest', [0, -0.06, 0.26], [0.22, 0.16, 0.06], { round: 0.3, seg: 2, color: mulColor(bc, 0.85), region: CR.CANVAS });
+    mb.seg('chest', [-0.16, 0.25, 0.17], [0.16, 0.25, 0.17], 0.06, 0.06, { rs: 8, color: 0x5a4a30, region: CR.CANVAS, caps: 1 }); // bedroll
+    for (const s of [-1, 1]) {
+      mb.box('chest', [s * 0.11, 0.1, -0.12], [0.035, 0.26, 0.012], { color: 0x1e1e1a, region: CR.LEATHER, rot: [0.25, 0, 0] });
+      mb.box('chest', [s * 0.12, 0.2, 0.0], [0.035, 0.012, 0.24], { color: 0x1e1e1a, region: CR.LEATHER });
+    }
+  }
+  // belt pouch / holster
+  mb.box('hips', [0.16, -0.02, 0.02], [0.05, 0.12, 0.09], { color: 0x2a2018, region: CR.LEATHER });
+  r = mb.build();
+  r.P = P;
+  survivorRigs.set(key, r);
+  return r;
+}
+
+// weapon holding categories
+const HOLD_NONE = 0, HOLD_RIFLE = 1, HOLD_PISTOL = 2, HOLD_MELEE = 3, HOLD_THROW = 4;
+function holdFor(item) {
+  if (!item) return HOLD_NONE;
+  if (item === ITEM.PISTOL) return HOLD_PISTOL;
+  if (item === ITEM.AK47 || item === ITEM.SHOTGUN || item === ITEM.HUNTING_RIFLE) return HOLD_RIFLE;
+  if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB) return HOLD_THROW;
+  if (WEAPONS[item] && WEAPONS[item].melee) return HOLD_MELEE;
+  return HOLD_THROW; // generic held item
+}
+
+// preallocated temps for survivor IK
+const _S = new THREE.Vector3();
+const _T = new THREE.Vector3();
+const _T2 = new THREE.Vector3();
+const _pole = new THREE.Vector3();
+const _qW = new THREE.Quaternion();
+const _qH = new THREE.Quaternion();
+const _qU = new THREE.Quaternion();
+const _qL = new THREE.Quaternion();
+const _qTmp = new THREE.Quaternion();
+// weapon mount under the right hand: guns/throwables Rx(-90deg) (barrel along the forearm),
+// melee identity (handle through the fist, blade out of the thumb side) - see weapons.js conventions
+const _qMountInvGun = new THREE.Quaternion().setFromEuler(new THREE.Euler(HALF, 0, 0));
+const _qMountInvMelee = new THREE.Quaternion();
+const _e = new THREE.Euler();
+const _grip = new THREE.Vector3();
+const _lh = new THREE.Vector3();
+const _off = new THREE.Vector3();
+const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
+const _mountW = new THREE.Vector3();
+
+class SurvivorInstance {
+  constructor(seed) {
+    this.seed = seed >>> 0;
+    this.look = this.seed % SURVIVOR_LOOKS;
+    const rnd = mulberry32(this.seed * 7 + 3);
+    this.rigH = getSurvivorRig(this.look, false);
+    this.rigZ = null;
+    this.P = this.rigH.P;
+    const inst = instantiateRig(this.rigH, getCharacterMaterial(), 1.6);
+    this.mesh = inst.mesh;
+    this.bones = inst.bones;
+    this.skeleton = inst.skeleton;
+    this.fx = inst.fx;
+    this.nb = this.bones.length;
+    this.X = {};
+    for (const [n, i] of this.rigH.names) this.X[n] = i;
+    this.object = new THREE.Group();
+    this.object.name = 'survivor';
+    this.body = new THREE.Group();
+    this.body.add(this.mesh);
+    this.object.add(this.body);
+    this.pose = new Float32Array(this.nb * 4 + 3);
+    this.snap = new Float32Array(this.nb * 4 + 3);
+    this.out = new Float32Array(this.nb * 4 + 3);
+    this.zombie = false;
+    this.item = 0;
+    this.hold = HOLD_NONE;
+    this.weapon = null;
+    this.mount = new THREE.Object3D();
+    this.mount.position.copy(MOUNT_POS);
+    this.mount.rotation.set(-HALF, 0, 0);
+    this.bones[HAND_R].add(this.mount);
+    this.flashlightAnchor = new THREE.Object3D();
+    this.flashlightAnchor.position.set(0.16, this.P.shoulderY - this.P.chestY + 0.02, -0.16);
+    this.bones[CHEST].add(this.flashlightAnchor);
+    this.headCenter = new THREE.Object3D();
+    this.headCenter.position.set(0, this.P.headR * 0.9, 0);
+    this.bones[HEAD].add(this.headCenter);
+    this.object.userData.head = this.headCenter;
+    this.phase = rnd() * TAU;
+    this.time = 0;
+    this.off = rnd() * 50;
+    this.hit = 0;
+    this.stateKey = -1;
+    this.stateT = 0;
+    this.fadeT = 1;
+    this.fadeDur = 0.2;
+    this.pulseFire = 9;
+    this.pulseMelee = 9;
+    this.pulseThrow = 9;
+    this.meleeSide = 0;
+    this.deadT = 0;
+    this.crouchW = 0;
+    this.airW = 0;
+    this.runW = 0;
+    this.reloadW = 0;
+    this.s = null;
+    // zombie-mode animation shim (reuses humanoid zombie pose code)
+    this.z = {
+      type: ZTYPE.WALKER, def: ZOMBIE_DEFS[ZTYPE.WALKER], st: ZS[ZTYPE.RUNNER], P: this.P, nb: this.nb, pose: this.pose,
+      X: this.X, seed: this.seed, off: this.off, rate: 1, limpSide: 0, armSide: 1, deadDir: this.seed & 1 ? 1 : -1, tilt: 1,
+      state: ZANIM.IDLE, stateT: 0, time: 0, phase: 0, speed: 0, sacPulse: 0, bellyPulse: 0, abdPulse: 0,
+    };
+    this.deadDir = this.seed & 1 ? 1 : -1;
+    this._seen = true;
+    this.mesh.onBeforeRender = () => {
+      this._seen = true;
+    };
+  }
+
+  setWeapon(item) {
+    item = item | 0;
+    if (item === this.item && (this.weapon || !item)) return;
+    this.item = item;
+    this.hold = holdFor(item);
+    if (this.weapon) {
+      this.mount.remove(this.weapon);
+      this.weapon = null;
+    }
+    this.mount.rotation.set(this.hold === HOLD_MELEE ? 0 : -HALF, 0, 0);
+    if (item && !this.zombie) {
+      const w = createWorldWeapon(item);
+      if (w) {
+        this.weapon = w;
+        this.mount.add(w);
+        this.muzzle = w.getObjectByName('muzzle') || null;
+        this.leftGrip = w.userData && w.userData.leftHand ? w.userData.leftHand : null;
+      }
+    }
+  }
+
+  setZombie(v) {
+    v = !!v;
+    if (v === this.zombie) return;
+    this.zombie = v;
+    if (v && !this.rigZ) this.rigZ = getSurvivorRig(this.look, true);
+    this.mesh.geometry = v ? this.rigZ.geometry : this.rigH.geometry;
+    if (this.weapon) this.weapon.visible = !v;
+    if (!v && this.item && !this.weapon) this.setWeapon(this.item);
+    this.z.state = -1;
+  }
+
+  fire() {
+    this.pulseFire = 0;
+  }
+  melee() {
+    this.pulseMelee = 0;
+    this.meleeSide ^= 1;
+  }
+  throwAnim() {
+    this.pulseThrow = 0;
+  }
+  flash(a) {
+    this.hit = Math.max(this.hit, clamp(a, 0, 1));
+    setFx(this.fx, this.hit, 1);
+  }
+
+  getMuzzleWorld(out) {
+    if (this.weapon && this.muzzle && this.weapon.visible) return this.muzzle.getWorldPosition(out);
+    return this.bones[HAND_R].getWorldPosition(out);
+  }
+
+  update(dt, s) {
+    if (dt > 0.1) dt = 0.1;
+    this.s = s;
+    const time = s.time ?? this.time + dt;
+    this.time = time;
+    this.pulseFire += dt;
+    this.pulseMelee += dt;
+    this.pulseThrow += dt;
+    if (this.hit > 0) this.hit = Math.max(0, this.hit - dt * 5);
+    setFx(this.fx, this.hit, 1);
+    const speed = s.speed || 0;
+    // state key for crossfades (major pose changes only)
+    const key = s.dead ? 3 : this.zombie ? 2 : 1;
+    if (key !== this.stateKey) {
+      this.captureSnap();
+      this.stateKey = key;
+      this.stateT = 0;
+      this.fadeT = 0;
+      this.fadeDur = s.dead ? 0.1 : 0.25;
+    }
+    this.stateT += dt;
+    this.fadeT += dt;
+    const k = 1 - Math.exp(-dt * 10);
+    this.crouchW += ((s.crouch ? 1 : 0) - this.crouchW) * k;
+    this.airW += ((s.onGround === false ? 1 : 0) - this.airW) * (1 - Math.exp(-dt * 12));
+    this.runW += ((s.sprint && speed > 4 ? 1 : 0) - this.runW) * k;
+    this.reloadW += ((s.reloading ? 1 : 0) - this.reloadW) * k;
+    const cyc = lerp(lerp(1.7, 2.5, clamp(speed / 7, 0, 1)), 1.1, this.crouchW);
+    this.phase += (dt * speed * TAU) / cyc;
+    // zombie-mode / death state machine (advances even when culled)
+    const z = this.z;
+    if (this.zombie || s.dead) {
+      const anim = s.dead ? ZANIM.DEAD : s.onGround === false ? ZANIM.AIRBORNE : this.pulseMelee < 0.5 ? ZANIM.ATTACK : speed > 3 ? ZANIM.RUN : speed > 0.3 ? ZANIM.WALK : ZANIM.IDLE;
+      if (anim !== z.state) {
+        if (z.state >= 0 && this.fadeT > 0) {
+          // crossfade between zombie-mode states too
+          this.captureSnap();
+          this.fadeT = 0;
+          this.fadeDur = anim === ZANIM.DEAD ? 0.12 : 0.2;
+        }
+        z.state = anim;
+        z.stateT = 0;
+      }
+      z.stateT += dt;
+    }
+    const seen = this._seen;
+    this._seen = false;
+    if (!seen && this.fadeT > this.fadeDur) return;
+
+    const p = this.pose;
+    let ik = false;
+    if (this.zombie || s.dead) {
+      const anim = z.state;
+      z.time = time;
+      z.speed = speed;
+      z.phase = this.phase;
+      z.st = this.zombie ? ZS[ZTYPE.RUNNER] : SURV_STYLE;
+      z.deadDir = this.deadDir;
+      poseHumanoid(z);
+      if (anim === ZANIM.ATTACK && this.zombie) {
+        const u = clamp(this.pulseMelee / 0.45, 0, 1);
+        const sw = Math.sin(u * PI);
+        arm(p, this.meleeSide, 1.2 + 0.9 * sw, 0.5 - 0.9 * sw, 0.2, 0.3, 0.4);
+      }
+    } else {
+      this.poseHuman(p, s, speed, time);
+      ik = this.hold !== HOLD_NONE;
+    }
+    const o = this.out;
+    if (this.fadeT < this.fadeDur) {
+      const w = smooth(this.fadeT / this.fadeDur);
+      const sn = this.snap;
+      for (let i = 0, n = o.length; i < n; i++) o[i] = sn[i] + (p[i] - sn[i]) * w;
+    } else o.set(p);
+    this.applyPose(o);
+    if (ik) this.solveArms(s, time);
+    // flashlight follows the full aim pitch (chest only carries part of it)
+    const fl = this.flashlightAnchor;
+    if (this.zombie || s.dead) fl.rotation.set(0, 0, 0);
+    else fl.rotation.set(clamp(s.pitch || 0, -1.4, 1.4) - (o[HIPS * 4] + o[SPINE * 4] + o[CHEST * 4]), 0, 0);
+  }
+
+  /** Snapshot the CURRENT bone pose (including IK-driven arms) for crossfading. */
+  captureSnap() {
+    const b = this.bones, sn = this.snap, nb = this.nb;
+    for (let i = 1; i < nb; i++) {
+      const k = i * 4, r = b[i].rotation;
+      sn[k] = r.x;
+      sn[k + 1] = r.y;
+      sn[k + 2] = r.z;
+      sn[k + 3] = b[i].scale.x;
+    }
+    sn[nb * 4] = b[1].position.x;
+    sn[nb * 4 + 1] = b[1].position.y;
+    sn[nb * 4 + 2] = b[1].position.z;
+  }
+
+  applyPose(p) {
+    const b = this.bones;
+    const nb = this.nb;
+    for (let i = 1; i < nb; i++) {
+      const k = i * 4;
+      b[i].rotation.set(p[k], p[k + 1], p[k + 2]);
+      const sc = p[k + 3];
+      b[i].scale.set(sc, sc, sc);
+    }
+    b[1].position.set(p[nb * 4], p[nb * 4 + 1], p[nb * 4 + 2]);
+  }
+
+  /** Human locomotion + torso aim (arms solved by IK afterwards). */
+  poseHuman(p, s, speed, time) {
+    clearPose(p, this.nb);
+    const z = this.z;
+    z.phase = this.phase;
+    const ph = this.phase;
+    const mv = clamp(speed / 1.2, 0, 1);
+    const run = this.runW;
+    const cr = this.crouchW;
+    const air = this.airW;
+    const t = time + this.off;
+    // legs
+    const amp = mv * lerp(lerp(0.45, 0.75, run), 0.4, cr);
+    const knee = mv * lerp(lerp(0.75, 1.3, run), 0.6, cr);
+    const baseT = cr * 0.95;
+    const baseK = 0.06 + cr * 1.5;
+    legCycle(z, p, ph, amp, knee, baseT, baseK, 0, 0.03);
+    // air: tuck legs
+    if (air > 0.01) {
+      for (let side = 0; side < 2; side++) {
+        const th = side ? THIGH_R : THIGH_L;
+        p[th * 4] = lerp(p[th * 4], side ? 0.3 : 0.75, air);
+        p[(th + 1) * 4] = lerp(p[(th + 1) * 4], side ? -0.5 : -1.0, air);
+      }
+      p[this.nb * 4 + 1] *= 1 - air;
+    }
+    const bob = mv * 0.025 * Math.cos(ph * 2);
+    p[this.nb * 4 + 1] += -Math.abs(bob) * 0.5;
+    // torso: lean with speed, aim pitch split spine/chest
+    const pitch = clamp(s.pitch || 0, -1.4, 1.4);
+    const lean = -0.08 * mv - 0.22 * run - 0.25 * cr;
+    R(p, HIPS, 0, -0.1 * Math.sin(ph) * mv, 0);
+    R(p, SPINE, lean * 0.6 + pitch * 0.25, 0.1 * Math.sin(ph) * mv * (1 - (this.hold ? 0.7 : 0)), 0);
+    R(p, CHEST, lean * 0.4 + pitch * 0.3 + (1 - mv) * 0.012 * Math.sin(t * 1.6), 0.06 * Math.sin(ph) * mv * (this.hold ? 0.2 : 1), 0);
+    // head: rest of the pitch
+    const cp = chestPitch(p);
+    R(p, NECK, (pitch - cp) * 0.4, 0, 0);
+    R(p, HEAD, (pitch - cp) * 0.6, 0, 0);
+    // arms (FK baseline; IK overrides for held items)
+    const aSw = mv * lerp(0.35, 0.8, run) * Math.sin(ph);
+    arm(p, 0, 0.05 - aSw, 0.1, 0, 0.25 + run * 1.0 + 0.1 * mv, 0);
+    arm(p, 1, 0.05 + aSw, 0.1, 0, 0.25 + run * 1.0 + 0.1 * mv, 0);
+    if (air > 0.01) {
+      A(p, UARM_L, 0.4 * air, 0, -0.3 * air);
+      A(p, UARM_R, 0.4 * air, 0, 0.3 * air);
+    }
+    // throw pulse without IK hold
+    if (this.hold === HOLD_NONE && this.pulseMelee < 0.4) {
+      const u = this.pulseMelee / 0.4;
+      arm(p, 1, 1.4 * Math.sin(u * PI), 0.2, 0, 0.4, 0);
+    }
+  }
+
+  /** Two-bone IK for weapon holds, in chest space. */
+  solveArms(s, time) {
+    const P = this.P;
+    const b = this.bones;
+    const hold = this.hold;
+    const pitch = clamp(s.pitch || 0, -1.4, 1.4);
+    const cp = b[HIPS].rotation.x + b[SPINE].rotation.x + b[CHEST].rotation.x;
+    const aimRel = pitch - cp; // weapon pitch relative to the chest
+    const cy = P.shoulderY - P.chestY; // shoulder height in chest space
+    const run = this.runW * (hold === HOLD_RIFLE || hold === HOLD_PISTOL ? 1 : 0.5);
+    const rl = this.reloadW;
+    // fire pulse
+    const fu = this.pulseFire;
+    const kick = fu < 0.25 ? Math.exp(-fu * 18) * (1 - Math.exp(-fu * 80)) : 0;
+    // weapon orientation (chest space)
+    let wx = aimRel, wy = 0, wz = 0;
+    _grip.set(0, 0, 0);
+    if (hold === HOLD_RIFLE) {
+      _grip.set(0.1, cy - 0.12, -0.24);
+      if (run > 0.01) {
+        // low-ready while sprinting
+        wx = lerp(wx, -0.7, run);
+        wy = lerp(0, 0.6, run);
+        _grip.x += 0.03 * run;
+        _grip.y -= 0.1 * run;
+        _grip.z += 0.1 * run;
+      }
+      wx += rl * -0.35;
+      wz += rl * 0.5;
+      _grip.z += kick * 0.05;
+      wx += kick * 0.12;
+    } else if (hold === HOLD_PISTOL) {
+      _grip.set(0.04, cy - 0.06, -0.44);
+      if (run > 0.01) {
+        wx = lerp(wx, -0.9, run);
+        _grip.y -= 0.22 * run;
+        _grip.z += 0.2 * run;
+      }
+      wx += rl * -0.5;
+      _grip.z += kick * 0.06;
+      wx += kick * 0.3;
+    } else if (hold === HOLD_MELEE) {
+      // ready stance: weapon raised over the right shoulder, pointing up/back
+      _grip.set(0.2, cy - 0.2, -0.2);
+      wx = 1.2;
+      wy = -0.2;
+      wz = -0.3;
+      const mu = this.pulseMelee;
+      if (mu < 0.5) {
+        const u = mu / 0.5;
+        const sw = u < 0.3 ? -smooth(u / 0.3) * 0.4 : -0.4 + smooth((u - 0.3) / 0.25) * 1.4 - smooth((u - 0.55) / 0.45);
+        // big diagonal swing from right-high to left-low
+        _grip.x = lerp(0.2, -0.15, clamp(sw, 0, 1));
+        _grip.y = cy - 0.2 - 0.25 * clamp(sw, 0, 1) + 0.12 * clamp(-sw, 0, 1);
+        _grip.z = -0.2 - 0.25 * Math.sin(clamp(sw, 0, 1) * PI);
+        wx = lerp(1.2, 0.1, clamp(sw, 0, 1)) + 0.4 * clamp(-sw, 0, 1);
+        wy = lerp(-0.2, 1.2, clamp(sw, 0, 1));
+        wz = lerp(-0.3, -1.4, clamp(sw, 0, 1));
+      }
+    } else if (hold === HOLD_THROW) {
+      _grip.set(0.2, cy - 0.12, -0.2);
+      wx = 0.4;
+      const tu = this.pulseThrow;
+      if (tu < 0.6) {
+        const u = tu / 0.6;
+        const wind = u < 0.4 ? smooth(u / 0.4) : 1 - smooth((u - 0.4) / 0.2);
+        const rel = u < 0.4 ? 0 : u < 0.6 ? smooth((u - 0.4) / 0.2) : 1 - smooth((u - 0.6) / 0.4);
+        _grip.y += 0.25 * wind - 0.05 * rel;
+        _grip.z += 0.3 * wind - 0.35 * rel;
+        wx += 1.2 * wind - 0.6 * rel;
+      }
+    }
+    // gun melee (bash)
+    if ((hold === HOLD_RIFLE || hold === HOLD_PISTOL) && this.pulseMelee < 0.4) {
+      const u = Math.sin((this.pulseMelee / 0.4) * PI);
+      _grip.z -= 0.18 * u;
+      _grip.x -= 0.08 * u;
+      wy += 0.5 * u;
+    }
+    _e.set(wx, wy, wz, 'YXZ');
+    _qW.setFromEuler(_e);
+    // hand orientation = weapon * mount^-1 ; wrist target = grip - Qh * mountPos
+    _qH.copy(_qW).multiply(hold === HOLD_MELEE ? _qMountInvMelee : _qMountInvGun);
+    _mountW.copy(MOUNT_POS).applyQuaternion(_qH);
+    _T.copy(_grip).sub(_mountW);
+    // right arm
+    _S.set(P.shoulderW, cy, 0);
+    _pole.set(0.7, -1, 0.35);
+    ikTwoBone(_S, _T, P.uarmLen, P.farmLen, _pole, _qU, _qL);
+    const clavR = b[CLAV_R].quaternion;
+    _qTmp.copy(clavR).invert().multiply(_qU);
+    b[UARM_R].quaternion.copy(_qTmp);
+    b[FARM_R].quaternion.copy(_qL);
+    // hand local = (clav * upper * lower)^-1 * Qh
+    _qTmp.copy(clavR).multiply(b[UARM_R].quaternion).multiply(_qL).invert().multiply(_qH);
+    b[HAND_R].quaternion.copy(_qTmp);
+    // left arm: support grip on two-handed weapons
+    let twoHand = false;
+    if (hold === HOLD_RIFLE || hold === HOLD_PISTOL) {
+      twoHand = true;
+      if (this.leftGrip) _lh.copy(this.leftGrip);
+      else if (hold === HOLD_RIFLE) _lh.set(0, -0.03, -0.3);
+      else _lh.set(0, -0.05, 0.02);
+      if (rl > 0.01) {
+        // reach for the magazine / ammo
+        _lh.lerp(_off.set(0, -0.12, -0.12), rl * (0.5 + 0.5 * Math.sin(time * 6)));
+      }
+      _lh.applyQuaternion(_qW).add(_grip);
+      _T2.copy(_lh);
+      // offset from palm to wrist for the left hand (palm faces up/right)
+      _T2.x -= 0.03;
+      _T2.y -= 0.05;
+      _T2.z += 0.05;
+    } else if (hold === HOLD_THROW && this.pulseThrow < 0.6) {
+      twoHand = true;
+      _T2.set(-0.1, cy - 0.15, -0.35);
+    }
+    if (twoHand) {
+      _S.set(-P.shoulderW, cy, 0);
+      _pole.set(-0.8, -1, 0.1);
+      ikTwoBone(_S, _T2, P.uarmLen, P.farmLen, _pole, _qU, _qL);
+      const clavL = b[CLAV_L].quaternion;
+      _qTmp.copy(clavL).invert().multiply(_qU);
+      b[UARM_L].quaternion.copy(_qTmp);
+      b[FARM_L].quaternion.copy(_qL);
+      // left hand: palm up under the handguard
+      _e.set(wx + HALF * 0.9, wy, wz - 1.2, 'YXZ');
+      _qH.setFromEuler(_e);
+      _qTmp.copy(clavL).multiply(b[UARM_L].quaternion).multiply(_qL).invert().multiply(_qH);
+      b[HAND_L].quaternion.copy(_qTmp);
+    } else if (hold === HOLD_MELEE) {
+      // guard: left fist up near the chest
+      b[UARM_L].rotation.set(0.5 - b[SPINE].rotation.x - b[CHEST].rotation.x, 0, -0.25);
+      b[FARM_L].rotation.set(1.6, 0, 0);
+    }
+  }
+
+  dispose() {
+    this.skeleton.dispose();
+    if (this.object.parent) this.object.parent.remove(this.object);
+  }
+}
+
+const SURV_STYLE = Object.assign({}, ZS[ZTYPE.WALKER], { idleLean: 0, walkLean: -0.05, runLean: -0.2, limp: 0, headTilt: 0, jaw: 0 });
+
+/** Create a survivor (player avatar). */
+export function createSurvivor(seed = 0) {
+  const sv = new SurvivorInstance(seed);
+  return {
+    object: sv.object,
+    update: (dt, s) => sv.update(dt, s),
+    setWeapon: (id) => sv.setWeapon(id),
+    fire: () => sv.fire(),
+    melee: () => sv.melee(),
+    throwAnim: () => sv.throwAnim(),
+    setZombie: (v) => sv.setZombie(v),
+    getMuzzleWorld: (out) => sv.getMuzzleWorld(out),
+    flashlightAnchor: sv.flashlightAnchor,
+    flash: (a) => sv.flash(a),
+    dispose: () => sv.dispose(),
+    _inst: sv,
+  };
+}
+
+export { SURVIVOR_LOOKS };
