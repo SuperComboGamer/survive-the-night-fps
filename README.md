@@ -49,7 +49,8 @@ Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress
 started with `GODMODE=1 DEBUG_COMMANDS=1`. Art/audio/UI modules also have standalone sandbox pages
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
-`/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server).
+`/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
+`/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per
