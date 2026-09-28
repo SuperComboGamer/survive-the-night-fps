@@ -80,10 +80,11 @@ const KEYS = [
 
 // Twilight pacing (seconds). The sun lingers near the horizon so dusk and dawn each play out over about a
 // minute, and every phase ends on the sun position the next one starts from (no jump at the phase change).
-const SUNRISE_SECS = 40; // start of the day: the sun climbs off the horizon
+// Sunrise happens at the end of the night, so each day opens in light morning rather than red dawn.
+const MORNING = 0.04; // cycle position where every day starts: the sun is up and the sky is light
 const DUSK_SECS = 75; // end of the day: golden hour into blood-red dusk (the horde horn lands mid-way)
 const NIGHTFALL_SECS = 30; // start of the night: the last light drains away
-const PREDAWN_SECS = 40; // end of the night: the sky greys before sunrise
+const DAWN_SECS = 60; // end of the night: the sky greys and the sun rises (the last wave lands at the start)
 
 // piecewise-linear sun path through one phase: c0 at the start, c1 after the lead-in, c2 when the
 // lead-out begins, c3 at the end. Short (test) phases shrink the twilight windows to fit.
@@ -168,12 +169,12 @@ export class Environment {
   static cycleFor(phase, timeLeft, day, phaseLen) {
     if (phase === PHASE.DAY) {
       const len = phaseLen || (day <= 1 ? FIRST_DAY_LENGTH : DAY_LENGTH);
-      return phaseCycle(timeLeft, len, 0, 0.04, 0.45, 0.5, SUNRISE_SECS, DUSK_SECS);
+      return phaseCycle(timeLeft, len, MORNING, MORNING, 0.45, 0.5, 0, DUSK_SECS);
     }
     if (phase === PHASE.NIGHT) {
-      return phaseCycle(timeLeft, phaseLen || NIGHT_LENGTH, 0.5, 0.52, 0.975, 1, NIGHTFALL_SECS, PREDAWN_SECS) % 1;
+      return phaseCycle(timeLeft, phaseLen || NIGHT_LENGTH, 0.5, 0.52, 0.975, 1 + MORNING, NIGHTFALL_SECS, DAWN_SECS) % 1;
     }
-    if (phase === PHASE.VICTORY) return 0.04;
+    if (phase === PHASE.VICTORY) return MORNING;
     if (phase === PHASE.GAMEOVER) return 0.75;
     return 0.47; // menu / waiting: dusk
   }
