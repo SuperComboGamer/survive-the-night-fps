@@ -78,6 +78,25 @@ const KEYS = [
   { s: 1.0, zenith: C(0x5a6778), horizon: C(0x8e9594), glow: C(0xbcb3a2), hemiSky: C(0xadb6ba), hemiGround: C(0x33302a), hemi: 1.16, dir: C(0xf4e8d6), dirI: 1.35, fog: C(0x7e8584), fogD: 0.0072, exposure: 0.98 },
 ];
 
+// Twilight pacing (seconds). The sun lingers near the horizon so dusk and dawn each play out over about a
+// minute, and every phase ends on the sun position the next one starts from (no jump at the phase change).
+const SUNRISE_SECS = 40; // start of the day: the sun climbs off the horizon
+const DUSK_SECS = 75; // end of the day: golden hour into blood-red dusk (the horde horn lands mid-way)
+const NIGHTFALL_SECS = 30; // start of the night: the last light drains away
+const PREDAWN_SECS = 40; // end of the night: the sky greys before sunrise
+
+// piecewise-linear sun path through one phase: c0 at the start, c1 after the lead-in, c2 when the
+// lead-out begins, c3 at the end. Short (test) phases shrink the twilight windows to fit.
+function phaseCycle(timeLeft, len, c0, c1, c2, c3, inSecs, outSecs) {
+  const left = Math.max(0, Math.min(len, timeLeft));
+  const elapsed = len - left;
+  const tin = Math.min(inSecs, len * 0.25);
+  const tout = Math.min(outSecs, len * 0.35);
+  if (elapsed < tin) return c0 + (c1 - c0) * (elapsed / tin);
+  if (left < tout) return c3 - (c3 - c2) * (left / tout);
+  return c1 + (c2 - c1) * ((elapsed - tin) / (len - tin - tout));
+}
+
 export class Environment {
   constructor(scene) {
     this.scene = scene;
@@ -149,12 +168,10 @@ export class Environment {
   static cycleFor(phase, timeLeft, day, phaseLen) {
     if (phase === PHASE.DAY) {
       const len = phaseLen || (day <= 1 ? FIRST_DAY_LENGTH : DAY_LENGTH);
-      const p = 1 - Math.max(0, Math.min(1, timeLeft / len));
-      return 0.055 + p * 0.43;
+      return phaseCycle(timeLeft, len, 0, 0.04, 0.45, 0.5, SUNRISE_SECS, DUSK_SECS);
     }
     if (phase === PHASE.NIGHT) {
-      const p = 1 - Math.max(0, Math.min(1, timeLeft / (phaseLen || NIGHT_LENGTH)));
-      return 0.5 + p * 0.49;
+      return phaseCycle(timeLeft, phaseLen || NIGHT_LENGTH, 0.5, 0.52, 0.975, 1, NIGHTFALL_SECS, PREDAWN_SECS) % 1;
     }
     if (phase === PHASE.VICTORY) return 0.04;
     if (phase === PHASE.GAMEOVER) return 0.75;
