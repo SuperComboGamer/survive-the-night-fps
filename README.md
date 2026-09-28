@@ -55,6 +55,23 @@ Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 m
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per
 client and 0.00 cm prediction error.
 
+## Deploying (Railway)
+
+Production runs on [Railway](https://railway.com) as one service (project "Survive the Night FPS") that
+auto-deploys every push to `main` and is served at https://survivethenightgame.com and
+https://www.survivethenightgame.com.
+
+- `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
+  `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Game state lives in
+  memory, so never scale it past one replica, and expect every deploy to start a fresh world.
+- Node 24 is pinned with `engines.node` in `package.json`. uWebSockets.js only ships prebuilt binaries
+  for Node 20/22/23/24 on glibc Linux, so don't move to an Alpine/musl image.
+- One process serves the client, the WebSocket (`/ws`) and `/status` on `PORT` (set to `3000` on the
+  service) on all interfaces, so a single domain is enough.
+- The custom domains are attached to the service in Railway (Settings -> Networking). Their DNS
+  records (a CNAME to the Railway target plus a `_railway-verify` TXT record per host) are managed
+  at the domain's DNS host.
+
 ## Controls
 
 | Key | Action |
