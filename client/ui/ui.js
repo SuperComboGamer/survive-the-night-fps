@@ -63,8 +63,9 @@ export class UI {
     const modalL = el('div', 'layer layer-modal', rootEl);
     const tipL = el('div', 'layer layer-tip', rootEl);
     const topCenter = el('div', 'top-center', topL);
+    const topRight = el('div', 'top-right', topL);
 
-    this.hud = new Hud(this, hudL, topCenter);
+    this.hud = new Hud(this, hudL, topCenter, topRight);
     this.voiceList = new VoiceList(hudL);
     this.kf = new Killfeed(hudL);
     this.pickups = new Pickups(hudL);

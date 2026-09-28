@@ -41,7 +41,7 @@ function stars() {
 }
 
 export class Hud {
-  constructor(ui, layer, topLayer) {
+  constructor(ui, layer, topLayer, clockLayer) {
     this.ui = ui;
     this.c = Object.create(null); // diff cache
     this.root = layer;
@@ -67,9 +67,10 @@ export class Hud {
 
     // ---- objective tracker (left)
     this.objective = new Objective(layer);
-    // ---- top-centre compass + clock
+    // ---- top-centre compass
     this.compass = new Compass(topLayer);
-    const clock = (this.clock = el('div', 'clock is-day', topLayer));
+    // ---- top-right day / night clock
+    const clock = (this.clock = el('div', 'clock is-day', clockLayer));
     const svgWrap = svgEl(
       'div',
       'clk-dial',

@@ -152,10 +152,13 @@ body {
 .stn-ui.paused .toasts,
 .stn-ui.splash-on .layer-hud,
 .stn-ui.splash-on .top-center,
+.stn-ui.splash-on .top-right,
 .stn-ui.end-on .layer-hud,
 .stn-ui.end-on .top-center,
+.stn-ui.end-on .top-right,
 .stn-ui.hud-hidden .layer-hud,
-.stn-ui.hud-hidden .top-center {
+.stn-ui.hud-hidden .top-center,
+.stn-ui.hud-hidden .top-right {
   visibility: hidden;
 }
 
@@ -489,7 +492,7 @@ body {
   min-height: 11px;
   color: var(--good);
   animation: stn-talk 0.7s ease-in-out infinite alternate;
-}/* ---------- top-centre stack: clock + boss */
+}/* ---------- top-centre stack: compass + boss, top-right: clock */
 
 
 .stn-ui .top-center {
@@ -505,6 +508,12 @@ body {
 
 .stn-ui.conn-on .top-center {
   top: calc(44 * var(--u));
+}
+
+.stn-ui .top-right {
+  position: absolute;
+  top: calc(6 * var(--u));
+  right: calc(20 * var(--u));
 }
 
 .stn-ui .clock {
@@ -523,7 +532,7 @@ body {
 }
 
 .stn-ui.inv-open .clock {
-  padding-top: calc(14 * var(--u));
+  padding: calc(14 * var(--u)) calc(4 * var(--u)) 0 0;
 }
 
 .stn-ui.inv-open .clock::before {
@@ -533,7 +542,7 @@ body {
 .stn-ui.inv-open .clk-text {
   display: flex;
   align-items: baseline;
-  justify-content: center;
+  justify-content: flex-end;
   gap: calc(14 * var(--u));
   margin: 0;
 }
@@ -1886,7 +1895,7 @@ body {
 
 .stn-ui .killfeed {
   position: absolute;
-  top: calc(18 * var(--u));
+  top: calc(236 * var(--u));
   right: calc(24 * var(--u));
   display: flex;
   flex-direction: column;
