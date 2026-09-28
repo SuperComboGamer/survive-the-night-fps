@@ -15,6 +15,7 @@ import {
   WATER_LEVEL,
   MAX_PLAYERS,
   DUSK_WARNING,
+  EYE_HEIGHT,
 } from '../../shared/constants.js';
 import {
   ITEM,
@@ -1154,7 +1155,7 @@ export class Game {
     const ox = cam.position.x;
     const oy = cam.position.y;
     const oz = cam.position.z;
-    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, 3.3);
+    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, 3.3, this.renderPos.y + EYE_HEIGHT);
     const counts = this.invCounts();
     const g = this.global;
     if (e) {

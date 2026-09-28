@@ -44,6 +44,7 @@ import {
   REVIVE_HP,
   SEARCH_TIME,
   ENGINE_START_TIME,
+  EYE_HEIGHT,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -79,7 +80,7 @@ import {
 import { C2S, S2C, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, qpos, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
 import { createPlayerState, simulatePlayer, eyeHeight } from '../shared/playersim.js';
-import { makeBox, COL, footprintContains, groundAt, overlapBoxes } from '../shared/collision.js';
+import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities } from './snapshot.js';
@@ -1199,6 +1200,7 @@ export class Game {
     const dy = e.y - ey;
     const d = Math.hypot(dx, dz);
     if (d > (e.kind === ENT.CRATE ? 4.8 : 3.6) || Math.abs(dy) > 3) return;
+    if (!this.canReachEnt(p, e)) return;
     if (e.kind === ENT.ITEM) {
       const taken = this.giveItem(p, e.item, e.count, e.mag);
       if (taken <= 0) {
@@ -1249,6 +1251,17 @@ export class Game {
     }
   }
 
+  // eye -> the entity's interaction point (as the client picks it) isn't cut off by a wall
+  canReachEnt(p, e) {
+    const s = p.state;
+    let y = e.y;
+    if (e.kind === ENT.ITEM) y += 0.15;
+    else if (e.kind === ENT.CRATE) y += 0.6;
+    else if (e.kind === ENT.STRUCTURE) y += Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
+    else if (e.kind === ENT.PLAYER) y += 0.3;
+    return canReach(this.world, s.x, s.y + eyeHeight(s), s.z, e.x, y, e.z, s.y + EYE_HEIGHT);
+  }
+
   feedFire(p, e) {
     if (e.burnLeft >= CAMPFIRE_MAX_FUEL - 5) return;
     let item = 0;
@@ -1276,7 +1289,7 @@ export class Game {
       return;
     }
     const e = this.ents[id];
-    if (!e || e.removed) return;
+    if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
       if (d > 2.8 || e.state !== 0) {
@@ -1309,6 +1322,7 @@ export class Game {
           const d = Math.hypot(tgt.x - s.x, tgt.z - s.z);
           if (h.kind === HOLD.SEARCH) ok = d < 3.2 && tgt.state === 0;
           else if (h.kind === HOLD.REVIVE) ok = d < 3 && tgt.alive && tgt.downed && !tgt.zombie;
+          ok = ok && this.canReachEnt(p, tgt);
         }
       }
     }
@@ -2171,7 +2185,7 @@ export class Game {
           if (dx * dx + dz * dz > 1.9 * 1.9 || Math.abs(e.y - s.y) > 1.6) continue;
           if (this.time < e.noAutoUntil) continue;
           const cat = ITEM_DEFS[e.item]?.cat;
-          if (!AUTO_PICKUP[cat]) continue;
+          if (!AUTO_PICKUP[cat] || !this.canReachEnt(p, e)) continue;
           const taken = this.giveItem(p, e.item, e.count, e.mag);
           if (taken <= 0) {
             e.noAutoUntil = this.time + 3;

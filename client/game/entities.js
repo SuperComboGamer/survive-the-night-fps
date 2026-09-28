@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { ENT, PFLAG, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS } from '../../shared/defs.js';
-import { makeBox, COL } from '../../shared/collision.js';
+import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { createZombie, createSurvivor } from '../render/models/characters.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createStructure, setStructureDamage } from '../render/models/structures.js';
@@ -779,8 +779,8 @@ export class Entities {
     this.drawRopeTo(z, x, y, zz);
   }
 
-  // closest interactable along the view ray
-  pick(ox, oy, oz, dx, dy, dz, maxDist) {
+  // closest interactable along the view ray; with reachTop, only ones not behind a wall (see canReach)
+  pick(ox, oy, oz, dx, dy, dz, maxDist, reachTop) {
     let best = null;
     let bestT = maxDist;
     for (const e of this.ents.values()) {
@@ -824,7 +824,7 @@ export class Entities {
       const pz = rz - dz * t;
       if (px * px + py * py + pz * pz > r * r) continue;
       const adj = e.kind === ENT.STRUCTURE ? t + 0.6 : e.kind === ENT.CACHE ? t + 0.15 : t; // prefer items over containers over structures
-      if (adj < bestT) {
+      if (adj < bestT && (reachTop === undefined || canReach(this.g.world, ox, oy, oz, cx, cy, cz, reachTop))) {
         bestT = adj;
         best = e;
       }
