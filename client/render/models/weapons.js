@@ -805,12 +805,180 @@ const HAND_POSES = {
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
   claw: { curl: [[0.45, 0.55, 0.45], [0.4, 0.55, 0.45], [0.45, 0.6, 0.45], [0.55, 0.65, 0.5]], spread: 0.2, thumb: [[-0.55, -0.5, -0.67], [-0.35, -0.85, -0.3]], center: [-0.035, -0.11, 0] },
 };
+// Knuckles sit on an arc (middle finger furthest out, pinky set back). r = proximal phalanx radius.
 const FINGERS = [
-  { z: -0.0285, L: [0.043, 0.026, 0.021], r: 0.0094 },
-  { z: -0.0095, L: [0.047, 0.029, 0.022], r: 0.0097 },
-  { z: 0.0095, L: [0.044, 0.027, 0.021], r: 0.0092 },
-  { z: 0.0275, L: [0.035, 0.021, 0.018], r: 0.0081 },
+  { z: -0.0285, y: -0.0875, L: [0.043, 0.026, 0.021], r: 0.0094 },
+  { z: -0.0095, y: -0.089, L: [0.047, 0.029, 0.022], r: 0.0097 },
+  { z: 0.0095, y: -0.0875, L: [0.044, 0.027, 0.021], r: 0.0092 },
+  { z: 0.0275, y: -0.0845, L: [0.035, 0.021, 0.018], r: 0.0081 },
 ];
+const PHALANX_R = [1.0, 0.9, 0.82];
+const HAND_MAT = {
+  skin: { region: WR.SKIN, color: [0.74, 0.56, 0.46], mottle: 0.12 },
+  glove: { region: WR.GLOVE, color: [1.05, 1.0, 0.9], mottle: 0.08 },
+  trim: { region: WR.GLOVE, color: [0.5, 0.49, 0.46], mottle: 0.05 }, // hems, strap, knuckle guard
+  nail: { region: WR.SKIN, color: [0.98, 0.84, 0.76], mottle: 0.05 },
+};
+const THUMB_MCP = [-0.012, -0.03, -0.034]; // thumb poses rotate about this joint
+
+const sstep = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+const _hx = new THREE.Vector3();
+const _hy = new THREE.Vector3();
+const _hz = new THREE.Vector3();
+const _hm = new THREE.Matrix4();
+const _hq = new THREE.Quaternion();
+
+/**
+ * Capsule from a to b (radius r0 -> r1) with smooth hemispherical caps and analytic normals.
+ * The cross-section X axis (scaled by o.sx) is aligned with n, e.g. the back of a finger.
+ * o.cap0 / o.cap1: rings in the start / end cap (0 = open end). o.prof(t): radius multiplier along the length.
+ */
+function limb(mb, a, b, r0, r1, n, o = {}) {
+  _hy.set(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const len = _hy.length();
+  _hy.divideScalar(len);
+  _hx.set(n[0], n[1], n[2]);
+  _hx.addScaledVector(_hy, -_hx.dot(_hy)).normalize();
+  _hz.crossVectors(_hx, _hy);
+  const cr0 = o.cap0 ?? 2, cr1 = o.cap1 ?? 2, cs = o.capScale ?? 1, hs = o.hs ?? 2;
+  const pts = [];
+  if (cr0 > 0) {
+    for (let i = 0; i < cr0; i++) {
+      const f = (i / cr0 - 1) * (PI / 2);
+      pts.push(new THREE.Vector2(Math.cos(f) * r0, Math.sin(f) * r0 * cs));
+    }
+  }
+  for (let i = 0; i <= hs; i++) {
+    const t = i / hs;
+    pts.push(new THREE.Vector2((r0 + (r1 - r0) * t) * (o.prof ? o.prof(t) : 1), len * t));
+  }
+  if (cr1 > 0) {
+    for (let i = 1; i <= cr1; i++) {
+      const f = (i / cr1) * (PI / 2);
+      pts.push(new THREE.Vector2(Math.cos(f) * r1, len + Math.sin(f) * r1 * cs));
+    }
+  }
+  const geo = new THREE.LatheGeometry(pts, o.rs || 10);
+  if (o.sx || o.sz) geo.scale(o.sx || 1, 1, o.sz || 1);
+  geo.applyMatrix4(_hm.makeBasis(_hx, _hy, _hz).setPosition(a[0], a[1], a[2]));
+  return mb.geom(0, geo, { ...o, keepNormals: true });
+}
+
+/** Closed tube: fn(v, u, out) gives the surface point for v in [0,1] (along) and u in [0,1) (around). Ends should pinch to a point. */
+function loft(mb, nv, nu, fn, o = {}) {
+  const row = nu + 1;
+  const pos = new Float32Array((nv + 1) * row * 3), uv = new Float32Array((nv + 1) * row * 2), idx = [];
+  const P = new THREE.Vector3();
+  for (let i = 0, k = 0; i <= nv; i++) {
+    for (let j = 0; j <= nu; j++, k++) {
+      fn(i / nv, (j % nu) / nu, P);
+      pos[k * 3] = P.x;
+      pos[k * 3 + 1] = P.y;
+      pos[k * 3 + 2] = P.z;
+      uv[k * 2] = j / nu;
+      uv[k * 2 + 1] = i / nv;
+    }
+  }
+  for (let i = 0; i < nv; i++) {
+    for (let j = 0; j < nu; j++) {
+      const a = i * row + j, c = a + row;
+      idx.push(a, a + 1, c, a + 1, c + 1, c);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  // weld the u seam, and give each pinched end ring one averaged normal
+  const nr = geo.attributes.normal;
+  for (let i = 0; i <= nv; i++) {
+    const a = i * row, b = a + nu;
+    _hx.fromBufferAttribute(nr, a).add(_hy.fromBufferAttribute(nr, b)).normalize();
+    nr.setXYZ(a, _hx.x, _hx.y, _hx.z);
+    nr.setXYZ(b, _hx.x, _hx.y, _hx.z);
+  }
+  for (const i of [0, nv]) {
+    _hx.set(0, 0, 0);
+    for (let j = 0; j < nu; j++) _hx.add(_hy.fromBufferAttribute(nr, i * row + j));
+    _hx.normalize();
+    for (let j = 0; j <= nu; j++) nr.setXYZ(i * row + j, _hx.x, _hx.y, _hx.z);
+  }
+  return mb.geom(0, geo, { ...o, keepNormals: true });
+}
+
+/**
+ * Palm/back of the hand as a loft along -Y (wrist -> knuckles). Superellipse cross-sections: rounder
+ * across the back, flatter on the palm, with thenar/hypothenar pads near the heel. Both ends are domed.
+ */
+function palmSurface(S) {
+  return (v, u, out) => {
+    let e = 1;
+    if (v < S.d0) e = Math.sqrt(Math.max(0, 1 - ((S.d0 - v) / S.d0) ** 2));
+    else if (v > 1 - S.d1) e = Math.sqrt(Math.max(0, 1 - ((v - 1 + S.d1) / S.d1) ** 2));
+    const hz = S.hz0 + (S.hz1 - S.hz0) * sstep(0, 0.75, v);
+    const th = u * 2 * PI, c = Math.cos(th), s = Math.sin(th);
+    const back = c >= 0;
+    const k = back ? 2 / 2.3 : 2 / 3.4;
+    const ux = Math.sign(c) * Math.abs(c) ** k, uz = Math.sign(s) * Math.abs(s) ** k;
+    let depth;
+    if (back) depth = S.xd0 + (S.xd1 - S.xd0) * v;
+    else depth = S.xp0 + (S.xp1 - S.xp0) * v + (Math.max(0, -uz) * S.thenar + Math.max(0, uz) * S.hypo) * (1 - v) ** 0.7;
+    out.set(S.cx + ux * depth * e, S.y0 + (S.y1 - S.y0) * v, S.cz + uz * hz * e);
+  };
+}
+
+// cheap baked shading for hand parts: darker on the side facing away from n (palm side), creases near the joints
+function handShade(n, joints) {
+  return (P, N, C) => {
+    const back = N.x * n[0] + N.y * n[1] + N.z * n[2];
+    C.multiplyScalar(1 - 0.2 * Math.max(0, -back));
+    if (joints) {
+      const [a, d, len] = joints;
+      const t = ((P.x - a[0]) * d[0] + (P.y - a[1]) * d[1] + (P.z - a[2]) * d[2]) / len;
+      const k = Math.max(1 - sstep(-0.05, 0.2, t), sstep(0.8, 1.05, t)) * Math.max(0, back);
+      C.multiplyScalar(1 - 0.14 * k);
+      C.r *= 1 + 0.06 * k;
+    }
+  };
+}
+
+/** Fingernail on the back of a distal phalanx a -> a + d * len (radius r); gently curved across the finger. */
+function nail(mb, a, d, n, len, r, mat) {
+  _hy.set(d[0], d[1], d[2]);
+  _hx.set(n[0], n[1], n[2]);
+  _hx.addScaledVector(_hy, -_hx.dot(_hy)).normalize();
+  _hz.crossVectors(_hx, _hy);
+  _hq.setFromRotationMatrix(_hm.makeBasis(_hx, _hy, _hz));
+  const ry = len * 0.36, rz = r * 0.62;
+  const c = [a[0] + d[0] * len * 0.64 + _hx.x * r * 0.6, a[1] + d[1] * len * 0.64 + _hx.y * r * 0.6, a[2] + d[2] * len * 0.64 + _hx.z * r * 0.6];
+  const cx = c[0], cy = c[1], cz = c[2], dx = d[0], dy = d[1], dz = d[2];
+  mb.ellip(0, c, [r * 0.26, ry, rz], {
+    ...mat,
+    ws: 8,
+    hs: 4,
+    q: _hq,
+    shape: (p) => {
+      p.x -= (p.z / rz) ** 2 * r * 0.22;
+    },
+    // grime under the free edge
+    tint: (P, N, C) => {
+      const s = ((P.x - cx) * dx + (P.y - cy) * dy + (P.z - cz) * dz) / ry;
+      C.lerp(_nailDirt, sstep(0.45, 1.0, s) * 0.55);
+    },
+  });
+}
+const _nailDirt = new THREE.Color(0.32, 0.24, 0.18);
+
+/** Fingerless-glove sleeve over the base of a digit (a -> along d, radius r), ending in a rolled hem. */
+function gloveBand(mb, a, d, n, len, r, glove, trim) {
+  const at = (s) => [a[0] + d[0] * s, a[1] + d[1] * s, a[2] + d[2] * s];
+  limb(mb, a, at(len), r * 1.12, r * 1.09, n, { ...glove, rs: 8, hs: 1, sx: 0.92, cap0: 1, cap1: 0, capScale: 0.6, tint: handShade(n) });
+  limb(mb, at(len - 0.004), at(len + 0.0015), r * 1.17, r * 1.15, n, { ...trim, rs: 8, hs: 1, sx: 0.92, cap0: 1, cap1: 1, capScale: 0.4, tint: handShade(n) });
+}
 
 const handGeoCache = new Map();
 function getHandGeo(poseName, style, side) {
@@ -820,54 +988,124 @@ function getHandGeo(poseName, style, side) {
   const pose = HAND_POSES[poseName];
   const claw = style === 'claw';
   const mb = new MeshBuilder({ skinned: false, atlas: claw ? 'char' : 'weapon' });
-  mb.aoStrength = 0.25;
-  const skin = claw ? { region: CR.SKIN, color: [0.46, 0.5, 0.4], mottle: 0.25 } : { region: WR.SKIN, color: [0.74, 0.55, 0.44], mottle: 0.14 };
-  const glove = { region: WR.GLOVE, color: [1.05, 1.0, 0.9], mottle: 0.08 };
+  mb.aoStrength = 0; // handShade bakes hand-space shading instead
+  const skin = claw ? { region: CR.SKIN, color: [0.46, 0.5, 0.4], mottle: 0.25 } : HAND_MAT.skin;
+  const { glove, trim, nail: nailMat } = HAND_MAT;
+  const bone = { region: CR.BONE, color: [0.12, 0.1, 0.09] };
   const palmMat = claw ? skin : glove;
-  // palm + back of hand
-  mb.box(0, [-0.003, -0.052, 0.0], [0.027, 0.08, 0.08], { ...palmMat, round: 0.85, seg: 3 });
-  mb.seg(0, [0.0, 0.004, 0], [0.0, -0.03, 0], 0.024, 0.03, { ...palmMat, rs: 10, hs: 1, caps: 1, capScale: 0.3, sx: 0.8, sz: 1.2 }); // wrist
+  const BACK = [1, 0, 0];
+  const shade = handShade(BACK);
+
+  // palm + back of the hand (a zombie's is thinner, with the tendons showing)
+  loft(
+    mb,
+    12,
+    20,
+    palmSurface({
+      y0: 0.004, y1: -0.097, d0: 0.12, d1: 0.16, cx: -0.002, cz: -0.001,
+      hz0: 0.026, hz1: claw ? 0.038 : 0.0405,
+      xd0: claw ? 0.011 : 0.0135, xd1: claw ? 0.0085 : 0.0105,
+      xp0: claw ? 0.013 : 0.016, xp1: claw ? 0.011 : 0.0135,
+      thenar: claw ? 0.003 : 0.006, hypo: claw ? 0.0015 : 0.0035,
+    }),
+    { ...palmMat, tint: shade }
+  );
+  // knuckles (metacarpal heads)
+  for (const F of FINGERS) {
+    if (claw) mb.ellip(0, [0.001, F.y + 0.001, F.z], [0.0086, 0.0086, 0.009], { ...skin, color: [0.54, 0.57, 0.47], ws: 8, hs: 6, tint: shade });
+    else mb.ellip(0, [0.003, F.y + 0.001, F.z], [0.0098, 0.0092, 0.0094], { ...palmMat, ws: 8, hs: 5, tint: shade });
+  }
+  // wrist: a rounded mass around the joint that keeps it filled however far the hand bends
+  // (the sleeve / glove cuff belongs to the forearm, see getArmGeos)
+  mb.ellip(0, [-0.001, -0.003, 0], claw ? [0.0185, 0.02, 0.0235] : [0.021, 0.021, 0.0275], { ...palmMat, ws: 14, hs: 8, tint: shade });
+  if (claw) {
+    // tendons fanning out to the knuckles
+    for (const F of FINGERS) {
+      mb.seg(0, [0.009, -0.012, F.z * 0.45], [0.0105, F.y + 0.008, F.z * 0.95], 0.0026, 0.0022, { ...skin, color: [0.52, 0.56, 0.46], rs: 5, hs: 1, caps: 1, capScale: 0.5, tint: shade });
+    }
+  } else {
+    // padded knuckle guard
+    mb.box(0, [0.0135, -0.0835, -0.001], [0.0062, 0.015, 0.071], {
+      ...trim,
+      round: 0.65,
+      seg: 3,
+      shape: (p) => {
+        const w = p.z / 0.0355;
+        p.x -= w * w * 0.0035;
+        p.y += w * w * (w > 0 ? 0.004 : 0.0015);
+      },
+      tint: shade,
+    });
+  }
+
+  // fingers: three phalanges each, curled toward the palm (-X) by the pose
   const rnd = mulberry32(side > 0 ? 11 : 12);
   for (let i = 0; i < 4; i++) {
     const F = FINGERS[i];
     const cz = pose.curl[i];
-    let p = [0.0, -0.088, F.z];
-    let ang = 0;
     const spread = (i - 1.5) * pose.spread;
-    // knuckle bump
-    mb.ellip(0, [0.004, -0.086, F.z], [0.0095, 0.009, 0.0095], { ...palmMat, ws: 6, hs: 4 });
     const L = claw ? F.L.map((l) => l * 1.22) : F.L;
+    let p = [0.0, F.y, F.z];
+    let ang = 0;
     for (let j = 0; j < 3; j++) {
       ang += cz[j] + (claw ? (rnd() - 0.5) * 0.15 : 0);
-      const d = [-Math.sin(ang), -Math.cos(ang), spread];
-      const len = Math.hypot(d[0], d[1], d[2]);
-      const q = [p[0] + (d[0] / len) * L[j], p[1] + (d[1] / len) * L[j], p[2] + (d[2] / len) * L[j]];
-      const r0 = F.r * (1 - j * 0.1) * (claw ? 0.82 : 1), r1 = r0 * 0.9;
-      const mat = !claw && j === 0 ? glove : skin;
-      mb.seg(0, p, q, r0, r1, { ...mat, rs: 6, hs: 1, caps: 2, capScale: 1.0 });
-      p = q;
-      if (j === 2 && claw) {
-        // hooked claw: two cones, curling toward the palm
-        const nx = d[0] / len, ny = d[1] / len, nz = d[2] / len;
-        const mid = [q[0] + nx * 0.032 - 0.006, q[1] + ny * 0.032, q[2] + nz * 0.032];
-        const tip = [mid[0] + nx * 0.026 - 0.02, mid[1] + ny * 0.026 + 0.008, mid[2] + nz * 0.026];
-        mb.seg(0, [q[0] - nx * 0.008, q[1] - ny * 0.008, q[2] - nz * 0.008], mid, 0.0072, 0.005, { region: CR.BONE, color: [0.12, 0.1, 0.09], rs: 5, hs: 1, caps: 1 });
-        mb.spike(0, mid, tip, 0.005, { region: CR.BONE, color: [0.1, 0.085, 0.075], rs: 5 });
+      const dl = Math.sqrt(1 + spread * spread);
+      const d = [-Math.sin(ang) / dl, -Math.cos(ang) / dl, spread / dl];
+      const n = [Math.cos(ang), -Math.sin(ang), 0]; // back of this phalanx
+      const q = [p[0] + d[0] * L[j], p[1] + d[1] * L[j], p[2] + d[2] * L[j]];
+      const r0 = F.r * PHALANX_R[j] * (claw ? 0.8 : 1);
+      const r1 = r0 * (j === 2 ? 0.88 : 0.93);
+      limb(mb, p, q, r0, r1, n, {
+        ...skin,
+        rs: 8,
+        hs: 2,
+        cap1: j === 2 ? 3 : 2,
+        sx: j === 2 ? 0.84 : 0.9,
+        prof: (t) => 1 - (claw ? 0.16 : 0.07) * Math.sin(PI * t), // joints stand out
+        tint: handShade(n, [p, d, L[j]]),
+      });
+      if (j === 0 && !claw) gloveBand(mb, p, d, n, L[0] * 0.56, r0, glove, trim);
+      if (j === 2) {
+        if (claw) {
+          // hooked claw growing out of the nail bed, curling toward the palm side
+          const b0 = [p[0] + d[0] * L[2] * 0.45 + n[0] * r0 * 0.45, p[1] + d[1] * L[2] * 0.45 + n[1] * r0 * 0.45, p[2] + d[2] * L[2] * 0.45];
+          const mid = [q[0] + d[0] * 0.03 + n[0] * 0.001, q[1] + d[1] * 0.03 + n[1] * 0.001, q[2] + d[2] * 0.03];
+          const tip = [mid[0] + d[0] * 0.024 - n[0] * 0.016, mid[1] + d[1] * 0.024 - n[1] * 0.016, mid[2] + d[2] * 0.024];
+          limb(mb, b0, mid, 0.0062, 0.0046, n, { ...bone, rs: 6, hs: 1, sx: 0.6, capScale: 0.4 });
+          mb.spike(0, mid, tip, 0.0045, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
+        } else {
+          nail(mb, p, d, n, L[2], r0, nailMat);
+        }
       }
+      p = q;
     }
   }
-  // thumb
+
+  // thumb: metacarpal (with the thenar pad) from the heel of the hand to THUMB_MCP, then two phalanges
   {
-    let p = [-0.012, -0.03, -0.034];
+    const c0 = [-0.004, -0.004, -0.019];
+    const tb = [0.5, 0, -0.85];
+    limb(mb, c0, THUMB_MCP, 0.0145, 0.0124, tb, { ...palmMat, rs: 10, hs: 1, sx: 0.85, tint: shade });
+    mb.ellip(0, [-0.0145, -0.029, -0.017], [0.0095, 0.021, 0.0125], { ...palmMat, ws: 10, hs: 6, rot: [0.52, 0, 0], tint: shade });
     const L = claw ? [0.04, 0.034] : [0.036, 0.03];
-    mb.ellip(0, [-0.01, -0.03, -0.03], [0.014, 0.022, 0.014], { ...palmMat, ws: 6, hs: 4 });
+    const R = [
+      [0.0118, 0.0108],
+      [0.0112, 0.0096],
+    ];
+    let p = THUMB_MCP;
     for (let j = 0; j < 2; j++) {
-      const d = pose.thumb[j];
-      const l = Math.hypot(d[0], d[1], d[2]);
-      const q = [p[0] + (d[0] / l) * L[j], p[1] + (d[1] / l) * L[j], p[2] + (d[2] / l) * L[j]];
-      mb.seg(0, p, q, 0.0115 - j * 0.0015, 0.0095 - j * 0.001, { ...(j === 0 && !claw ? glove : skin), rs: 6, hs: 1, caps: 2, capScale: 0.85 });
+      const t = pose.thumb[j];
+      const l = Math.hypot(t[0], t[1], t[2]);
+      const d = [t[0] / l, t[1] / l, t[2] / l];
+      const q = [p[0] + d[0] * L[j], p[1] + d[1] * L[j], p[2] + d[2] * L[j]];
+      const r0 = R[j][0] * (claw ? 0.82 : 1), r1 = R[j][1] * (claw ? 0.82 : 1);
+      limb(mb, p, q, r0, r1, tb, { ...skin, rs: 8, hs: 2, cap1: j === 1 ? 3 : 2, sx: j === 1 ? 0.84 : 0.9, prof: (s) => 1 - (claw ? 0.14 : 0.06) * Math.sin(PI * s), tint: handShade(tb, [p, d, L[j]]) });
+      if (j === 0 && !claw) gloveBand(mb, p, d, tb, L[0] * 0.55, r0, glove, trim);
+      if (j === 1) {
+        if (claw) mb.spike(0, q, [q[0] + d[0] * 0.03, q[1] + d[1] * 0.03, q[2] + d[2] * 0.03], 0.0065, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
+        else nail(mb, p, d, tb, L[1], r0, nailMat);
+      }
       p = q;
-      if (j === 1 && claw) mb.spike(0, q, [q[0] + (d[0] / l) * 0.03, q[1] + (d[1] / l) * 0.03, q[2] + (d[2] / l) * 0.03], 0.0065, { region: CR.BONE, color: [0.1, 0.085, 0.075], rs: 5 });
     }
   }
   if (claw) {
@@ -889,7 +1127,7 @@ function getArmGeos(style, side) {
   const claw = style === 'claw';
   const sleeve = claw ? { region: CR.CLOTH, color: [0.24, 0.23, 0.2], mottle: 0.2 } : { region: WR.SLEEVE, color: [0.2, 0.2, 0.16], mottle: 0.12 };
   const cuff = { region: WR.GLOVE, color: [0.2, 0.2, 0.19], mottle: 0.05 };
-  const skin = claw ? { region: CR.SKIN, color: [0.5, 0.54, 0.44], mottle: 0.25 } : { region: WR.SKIN, color: [0.74, 0.55, 0.44], mottle: 0.12 };
+  const skin = claw ? { region: CR.SKIN, color: [0.5, 0.54, 0.44], mottle: 0.25 } : HAND_MAT.skin;
   // upper arm (shoulder local, along -Y)
   const up = new MeshBuilder({ skinned: false, atlas: claw ? 'char' : 'weapon' });
   up.seg(0, [0, 0.05, 0], [0, -ARM_L1 - 0.02, 0], 0.06, 0.05, { ...sleeve, rs: 10, hs: 3, caps: 2, noise: 0.004, nf: 25, tear: claw ? { amt: 0.36, f: 30, seed: 3 } : null });
@@ -899,11 +1137,27 @@ function getArmGeos(style, side) {
   if (!claw) {
     fo.seg(0, [0, 0.03, 0], [0, -ARM_L2 + 0.075, 0], 0.05, 0.046, { ...sleeve, rs: 10, hs: 4, caps: 2, noise: 0.004, nf: 30 });
     fo.seg(0, [0, -ARM_L2 + 0.1, 0], [0, -ARM_L2 + 0.048, 0], 0.0475, 0.045, { ...cuff, rs: 10, hs: 1, caps: 1, capScale: 0.05 });
-    fo.seg(0, [0, -ARM_L2 + 0.07, 0], [0, -ARM_L2 + 0.004, 0], 0.029, 0.025, { ...skin, rs: 8, hs: 1, caps: 1, sx: 1.25 });
+    // bare lower forearm, flattening into the wrist (X = back of the hand, see VMArm.orient)
+    limb(fo, [0, -ARM_L2 + 0.075, 0], [0, -ARM_L2 + 0.008, 0], 0.029, 0.025, [1, 0, 0], { ...skin, rs: 14, hs: 3, sx: 0.82, sz: 1.12, capScale: 0.4, prof: (t) => 1 + 0.03 * Math.sin(PI * t * 0.8) });
+    // glove cuff over the wrist with a strap and tab; its rounded end tucks around the hand's wrist
+    const shade = handShade([1, 0, 0]);
+    const W = -ARM_L2;
+    limb(fo, [0, W + 0.03, 0], [0, W - 0.002, 0], 0.0278, 0.0282, [1, 0, 0], { ...HAND_MAT.glove, rs: 14, hs: 2, sx: 0.86, sz: 1.12, capScale: 0.25, cap1: 3, ao: false, tint: shade });
+    limb(fo, [0, W + 0.021, 0], [0, W + 0.005, 0], 0.029, 0.0293, [1, 0, 0], { ...HAND_MAT.trim, rs: 14, hs: 1, sx: 0.86, sz: 1.12, cap0: 1, cap1: 1, capScale: 0.25, ao: false, tint: shade });
+    fo.box(0, [0.0262, W + 0.013, 0.002], [0.004, 0.018, 0.026], {
+      ...HAND_MAT.trim,
+      round: 0.5,
+      seg: 2,
+      shape: (p) => {
+        p.x -= (p.z / 0.013) ** 2 * 0.0024;
+      },
+      ao: false,
+      tint: shade,
+    });
   } else {
     // torn sleeve near the elbow, gaunt pale forearm with tendons
     fo.seg(0, [0, 0.03, 0], [0, -0.13, 0], 0.05, 0.046, { ...sleeve, rs: 10, hs: 3, caps: 0, noise: 0.006, nf: 30, tear: { amt: 0.42, f: 40, seed: 5, fn: (x, y) => y < -0.09 && fbm3(x * 80, 0, 0, 1, 3) > 0.5 } });
-    fo.seg(0, [0, 0.03, 0], [0, -ARM_L2 + 0.004, 0], 0.036, 0.024, { ...skin, rs: 8, hs: 4, caps: 1, sx: 1.2, noise: 0.003, nf: 60 });
+    fo.seg(0, [0, 0.03, 0], [0, -ARM_L2 + 0.004, 0], 0.036, 0.023, { ...skin, rs: 8, hs: 4, caps: 1, sx: 0.88, sz: 1.1, noise: 0.003, nf: 60 });
     for (const s of [-1, 1]) fo.seg(0, [s * 0.012, -0.05, -0.02], [s * 0.01, -ARM_L2 + 0.03, -0.012], 0.005, 0.004, { ...skin, color: [0.5, 0.55, 0.45], rs: 4, hs: 1 });
     fo.blood([0, -0.2, -0.03], 0.06, 1);
     fo.blood([0.03, -0.08, 0], 0.04, 0.8);
@@ -987,7 +1241,23 @@ class VMArm {
     const pose = HAND_POSES[this.style === 'claw' ? (this.pose === 'open' ? 'open' : 'claw') : this.pose] || HAND_POSES.grip;
     return out.set(pose.center[0] * this.side, pose.center[1], pose.center[2]);
   }
+  /**
+   * Apply solved upper-arm (qU, in shoulder-parent space) and elbow (qL) rotations plus the hand orientation.
+   * The forearm rolls about its own axis with the hand (pronation), so the wrist only bends and the oval
+   * wrist, glove cuff and forearm stay lined up.
+   */
+  orient(qU, qL, handQ) {
+    this.shoulder.quaternion.copy(qU);
+    _armW.copy(qU).multiply(qL).invert().multiply(handQ); // wrist relative to the unrolled forearm
+    const l = Math.hypot(_armW.y, _armW.w);
+    if (l > 1e-6) _armT.set(0, _armW.y / l, 0, _armW.w / l);
+    else _armT.identity();
+    this.elbow.quaternion.copy(qL).multiply(_armT);
+    this.wrist.quaternion.copy(_armT.invert().multiply(_armW));
+  }
 }
+const _armW = new THREE.Quaternion();
+const _armT = new THREE.Quaternion();
 
 // ================================================================== viewmodel configuration
 const Q = (x, y, z, order = 'YXZ') => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, order));
@@ -1649,11 +1919,7 @@ export class ViewModel {
     arm.gripCenter(_v3).applyQuaternion(handQ);
     _v1.copy(gripPos).sub(_v3);
     ikTwoBone(shoulderPos, _v1, ARM_L1, ARM_L2, pole, _qU, _qL);
-    arm.shoulder.quaternion.copy(_qU);
-    arm.elbow.quaternion.copy(_qL);
-    // wrist local = (qU*qL)^-1 * handQ
-    _q3.copy(_qU).multiply(_qL).invert().multiply(handQ);
-    arm.wrist.quaternion.copy(_q3);
+    arm.orient(_qU, _qL, handQ);
   }
 
   _animReload(cur, u, P6, parts, meta) {
@@ -1847,10 +2113,7 @@ export class ViewModel {
       arm.setVisible(true);
       arm.setPose('claw');
       ikTwoBone(side > 0 ? SHOULDER_R : SHOULDER_L, _v1, ARM_L1, ARM_L2, side > 0 ? POLE_R : POLE_L, _qU, _qL);
-      arm.shoulder.quaternion.copy(_qU);
-      arm.elbow.quaternion.copy(_qL);
-      _q2.copy(_qU).multiply(_qL).invert();
-      arm.wrist.quaternion.copy(_q2.multiply(_q3));
+      arm.orient(_qU, _qL, _q3);
     }
   }
 }
