@@ -36,6 +36,76 @@ function craftTab(item) {
 const CAT_RANK = { weapon: 0, cons: 1 };
 const craftRank = (r) => CAT_RANK[ITEM_DEFS[r.out]?.cat] ?? 2;
 
+// ---------------------------------------------------------------- recipe search
+// An item answers to its display name and its ITEM key, so "wood" finds Planks and "pipebomb" finds Pipe Bomb.
+const ITEM_KEY = Object.fromEntries(Object.entries(ITEM).map(([k, v]) => [v, k]));
+const norm = (s) => String(s).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+
+// 5 exact · 4 whole word · 3 prefix · 2 word prefix · 1 substring (or every word somewhere) · 0 none
+function termScore(text, q) {
+  const t = norm(text);
+  if (t === q) return 5;
+  const padded = ' ' + t + ' ';
+  if (padded.includes(' ' + q + ' ')) return 4;
+  if (t.startsWith(q)) return 3;
+  if (padded.includes(' ' + q)) return 2;
+  if (t.includes(q) || (q.includes(' ') && q.split(' ').every((w) => t.includes(w)))) return 1;
+  return 0;
+}
+
+const itemScore = (id, q) => Math.max(termScore(ITEM_DEFS[id]?.name || '', q), termScore(ITEM_KEY[id] || '', q));
+
+// Recipes relevant to a search across every tab, as titled sections: recipes whose output matches by name
+// (ranked above tab-label / station matches), the recipes for their craftable ingredients all the way down,
+// ammo for matching guns, then recipes that consume (or are unlocked by) a matching item.
+// recs = the screen's recipe entries ({ r, tab }) in 'All' order; sections hold those same entries.
+function searchRecipes(query, recs) {
+  const q = norm(query);
+  if (!q) return [];
+  const items = new Map(); // matching item id -> score
+  for (const id of Object.keys(ITEM_DEFS)) {
+    const s = itemScore(+id, q);
+    if (s) items.set(+id, s);
+  }
+  const score = new Map();
+  for (const rec of recs) {
+    const { r } = rec;
+    const n = items.get(r.out) || 0;
+    const s = n ? 5 + n : Math.max(termScore(rec.tab.label, q), r.station ? termScore(STATION_NAMES[r.station], q) : 0);
+    if (s) score.set(rec, s);
+  }
+  const results = recs.filter((rec) => score.has(rec)).sort((a, b) => score.get(b) - score.get(a));
+  const shown = new Set(results);
+  const take = (pred) => recs.filter((rec) => !shown.has(rec) && pred(rec.r)).map((rec) => (shown.add(rec), rec));
+
+  const parts = [];
+  const queue = results.filter((rec) => items.has(rec.r.out));
+  while (queue.length) {
+    const need = Object.keys(queue.shift().r.cost).map(Number);
+    const more = take((r) => need.includes(r.out));
+    parts.push(...more);
+    queue.push(...more);
+  }
+
+  const calibers = new Set([...items.keys()].map((id) => WEAPONS[id]).filter((w) => w && !w.melee && w.ammo != null).map((w) => w.ammo));
+  const ammo = take((r) => calibers.has(ITEM_DEFS[r.out].ammo));
+
+  const via = new Set();
+  const uses = take((r) => {
+    const hit = [...Object.keys(r.cost).map(Number), r.schem].filter((id) => items.has(id));
+    hit.forEach((id) => via.add(id));
+    return hit.length > 0;
+  });
+  const names = [...via].map((id) => ITEM_DEFS[id].name);
+
+  return [
+    { title: 'Results', recs: results },
+    { title: 'Ingredients', recs: parts },
+    { title: 'Ammunition', recs: ammo },
+    { title: names.length <= 2 ? 'Uses ' + names.join(' & ') : 'Uses matching items', recs: uses },
+  ].filter((s) => s.recs.length);
+}
+
 function statLines(id) {
   const d = ITEM_DEFS[id];
   const out = [];
@@ -252,6 +322,21 @@ export class Inventory {
     this.stationEl = el('span', 'station', ch);
     this.stationIco = svgEl('i', 'st-ico', this.stationEl, glyph('campfire'));
     this.stationTxt = el('span', '', this.stationEl, '');
+    // search sits above the tabs: while it holds a query it covers every tab, and the tabs step back
+    const find = (this.findEl = el('label', 'craft-find', right));
+    svgEl('i', 'cf-ico', find, glyph('search'));
+    const field = (this.findInput = el('input', 'cf-field', find));
+    field.type = 'text';
+    field.maxLength = 40;
+    field.autocomplete = 'off';
+    field.spellcheck = false;
+    field.placeholder = 'Search all recipes';
+    field.setAttribute('aria-label', 'Search recipes');
+    const clr = (this.findClear = svgEl('button', 'cf-clear', find, glyph('xmark')));
+    clr.type = 'button';
+    clr.hidden = true;
+    clr.title = 'Clear search (Esc)';
+    clr.setAttribute('aria-label', 'Clear search');
     const tabBar = (this.tabBar = el('div', 'craft-tabs', right));
     el('span', 'kbd sm ct-key', tabBar, 'Q');
     const list = (this.craftList = el('div', 'craft-list', right));
@@ -265,7 +350,7 @@ export class Inventory {
       tb.dataset.tab = t.id;
       svgEl('i', 'ct-ico', tb, t.icon ? itemIcon(t.icon) : glyph('grid'));
       el('span', 'ct-lab', tb, t.label);
-      const tab = { id: t.id, b: tb, n: el('span', 'ct-n', tb), ready: -1, head: null, grid: null };
+      const tab = { id: t.id, label: t.label, b: tb, n: el('span', 'ct-n', tb), ready: -1, head: null, grid: null, recs: [] };
       this.tabs.push(tab);
       if (!recs) continue;
       tab.head = el('div', 'craft-group', list, t.label);
@@ -296,10 +381,15 @@ export class Inventory {
           lock = svgEl('i', 'rc-lock', b, glyph('lock'));
           lock.title = `Needs the ${ITEM_DEFS[r.schem].name}`;
         }
-        this.recipeEls.push({ r, tab, b, ings, st, lock, key: '' });
+        const rec = { r, tab, b, ings, st, lock, key: '' };
+        this.recipeEls.push(rec);
+        tab.recs.push(rec);
       }
     }
     el('span', 'kbd sm ct-key', tabBar, 'E');
+    // search results: the same recipe buttons, moved into relevance sections while a search is active
+    this.findView = el('div', 'craft-found', list);
+    this.findView.hidden = true;
 
     this._bind(root, wrap);
     this._setTab(lsGet(TAB_KEY, 'all'));
@@ -419,13 +509,15 @@ export class Inventory {
       }
     });
 
-    // crafting tabs: click, or Q / E to step through them while the screen is open
+    // crafting tabs: click, or Q / E to step through them while the screen is open. While a search is
+    // active the tabs are dimmed; picking one (or stepping with Q / E) clears the search and opens it.
     this.tabBar.addEventListener('click', (e) => {
       const b = e.target.closest('.ct');
-      if (!b || b.dataset.tab === this.tab) return;
+      if (!b || (b.dataset.tab === this.tab && !this.searching)) return;
       this.ui.sound('ui_click');
       this._setTab(b.dataset.tab);
     });
+    // never fires from the search field: it stops its own keydowns, and isTyping() counts it as well
     this._key = (e) => {
       if (!this.open || e.repeat || e.ctrlKey || e.metaKey || e.altKey || this.ui.isTyping()) return;
       const dir = e.code === 'KeyQ' ? -1 : e.code === 'KeyE' ? 1 : 0;
@@ -437,6 +529,31 @@ export class Inventory {
       this._setTab(this.tabs[(i + dir + n) % n].id);
     };
     window.addEventListener('keydown', this._key);
+
+    // crafting search. Keydown is consumed so the game (and Q / E above) never sees keys typed here -
+    // except Tab, which drops focus and falls through so it still closes the inventory.
+    const field = this.findInput;
+    field.addEventListener('input', () => this._showRecipes());
+    field.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        return field.blur();
+      }
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (field.value) this.clearSearch();
+        else field.blur();
+      }
+    });
+    this.findClear.addEventListener('click', () => {
+      this.ui.sound('ui_click');
+      this.clearSearch();
+      field.focus({ preventScroll: true });
+    });
+    this.findView.addEventListener('click', (e) => {
+      if (e.target.closest('.cf-reset')) this.clearSearch();
+    });
 
     // crafting
     this.craftList.addEventListener('click', (e) => {
@@ -671,22 +788,61 @@ export class Inventory {
     cell.n.textContent = s && s.count > 1 ? String(s.count) : '';
   }
 
+  // Open a crafting tab. The search covers every tab, so picking one also ends it.
   _setTab(id) {
     const tab = this.tabs.find((t) => t.id === id) || this.tabs[0];
     this.tab = tab.id;
     lsSet(TAB_KEY, tab.id);
-    const all = tab.id === 'all';
+    for (const t of this.tabs) t.b.classList.toggle('on', t === tab);
+    this.findInput.value = '';
+    this._showRecipes();
+  }
+
+  // Lay out the recipe list: the selected tab, or - while the search field holds a query - every recipe
+  // relevant to it, in relevance sections, with the tabs dimmed. The same buttons move between the two,
+  // so their craft state, clicks and tooltips carry over. The list's height comes from the flex column,
+  // not its contents, so neither filtering nor switching tabs moves the screen.
+  _showRecipes() {
+    const text = this.findInput.value;
+    const on = (this.searching = !!norm(text));
+    const all = this.tab === 'all';
+    this.findClear.hidden = !text;
+    this.findEl.classList.toggle('on', on);
+    this.tabBar.classList.toggle('searching', on);
     for (const t of this.tabs) {
-      t.b.classList.toggle('on', t === tab);
       if (!t.grid) continue;
-      t.head.hidden = !all;
-      t.grid.hidden = !all && t !== tab;
+      for (const rec of t.recs) t.grid.appendChild(rec.b); // back from the search view, in tab order
+      t.head.hidden = on || !all;
+      t.grid.hidden = on || (!all && t.id !== this.tab);
+    }
+    const view = this.findView;
+    view.textContent = '';
+    view.hidden = !on;
+    if (on) {
+      const sections = searchRecipes(text, this.recipeEls);
+      for (const s of sections) {
+        el('div', 'craft-group', view, s.title);
+        const grid = el('div', 'craft-grid', view);
+        for (const rec of s.recs) grid.appendChild(rec.b);
+      }
+      if (!sections.length) {
+        const none = el('div', 'craft-none', view);
+        el('span', '', none, `Nothing craftable matches "${text.trim()}"`);
+        const b = el('button', 'btn cf-reset', none, 'Clear search');
+        b.type = 'button';
+      }
     }
     this.craftList.scrollTop = 0;
     if (this.tipTarget?.classList.contains('rc')) {
       this.tipTarget = null;
       this.tip.hide();
     }
+  }
+
+  clearSearch() {
+    if (!this.findInput.value) return;
+    this.findInput.value = '';
+    this._showRecipes();
   }
 
   _schemOk(item) {
@@ -819,6 +975,8 @@ export class Inventory {
       void this.root.offsetWidth;
       this.root.classList.add('in');
     } else {
+      // a focused search field would keep ui.isTyping() true and swallow gameplay keys
+      if (document.activeElement === this.findInput) this.findInput.blur();
       this.tip.hide();
       this.tipTarget = null;
       if (this.drag) {
