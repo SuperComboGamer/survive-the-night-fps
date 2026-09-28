@@ -37,6 +37,7 @@ import {
   ZONE,
   ZONE_NAMES,
   AMMO_NAMES,
+  AMMO_ITEMS,
   CONSUMABLES,
 } from '../../shared/defs.js';
 import { ACT, ENT, HOLD, CAR_ID, PING_KIND, PFLAG, dqpos } from '../../shared/protocol.js';
@@ -61,8 +62,22 @@ import { createGhost } from '../render/models/structures.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
 
-const SHOT_SOUND = { [ITEM.PISTOL]: SOUND.PISTOL, [ITEM.SHOTGUN]: SOUND.SHOTGUN, [ITEM.AK47]: SOUND.AK47, [ITEM.HUNTING_RIFLE]: SOUND.RIFLE };
-const LOCAL_SHOT = { [ITEM.PISTOL]: 'pistol', [ITEM.SHOTGUN]: 'shotgun', [ITEM.AK47]: 'ak47', [ITEM.HUNTING_RIFLE]: 'rifle' };
+const SHOT_SOUND = {
+  [ITEM.PISTOL]: SOUND.PISTOL,
+  [ITEM.SHOTGUN]: SOUND.SHOTGUN,
+  [ITEM.AK47]: SOUND.AK47,
+  [ITEM.HUNTING_RIFLE]: SOUND.RIFLE,
+  [ITEM.M4A1]: SOUND.M4A1,
+  [ITEM.MP5]: SOUND.MP5,
+  [ITEM.DB_SHOTGUN]: SOUND.DB_SHOTGUN,
+};
+// first-person muzzle flash scale + camera shake per shot (default [1, 0.06])
+const SHOT_KICK = {
+  [ITEM.SHOTGUN]: [1.4, 0.25],
+  [ITEM.DB_SHOTGUN]: [1.6, 0.3],
+  [ITEM.HUNTING_RIFLE]: [1.3, 0.3],
+  [ITEM.MP5]: [0.8, 0.04],
+};
 const PING_LIFE = 12;
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
@@ -85,7 +100,7 @@ export class Game {
     this.time = 0;
     this.myId = 0;
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0 };
-    this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: [0, 0, 0, 0] };
+    this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
     this.players = new Map(); // id -> {name, status, kills, ping}
     this.renderPos = new THREE.Vector3();
@@ -523,7 +538,7 @@ export class Game {
       mz = _v.z;
       _v.set(mx, my, mz);
     } else _v.set(mx, my, mz);
-    this.effects.worldMuzzle(_v, ev.weapon === ITEM.SHOTGUN ? 1.3 : 1);
+    this.effects.worldMuzzle(_v, def.pellets > 1 ? 1.3 : 1);
     this.lights.flashMuzzle(_v, 0.8);
     this.audio.play(SHOT_SOUND[ev.weapon] || SOUND.PISTOL, { x: mx, y: my, z: mz });
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
@@ -546,9 +561,10 @@ export class Game {
         case 'fire': {
           const def = WEAPONS[ev.weapon];
           this.vm.fire();
-          a.playLocal(LOCAL_SHOT[ev.weapon] || 'pistol');
+          a.playLocal(def.sound || 'pistol');
           this.vm.getMuzzle(_v);
-          this.effects.vmMuzzle(_v, ev.weapon === ITEM.SHOTGUN ? 1.4 : ev.weapon === ITEM.HUNTING_RIFLE ? 1.3 : 1);
+          const kick = SHOT_KICK[ev.weapon];
+          this.effects.vmMuzzle(_v, kick ? kick[0] : 1);
           this.renderer.vmMuzzle.intensity = 6;
           this.vmMuzzleT = 0.05;
           // world muzzle light at the camera
@@ -571,7 +587,7 @@ export class Game {
             if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
           }
           this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
-          this.camShake = Math.min(1, (this.camShake || 0) + (ev.weapon === ITEM.SHOTGUN ? 0.25 : ev.weapon === ITEM.HUNTING_RIFLE ? 0.3 : 0.06));
+          this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
           break;
         }
         case 'dry':

@@ -2178,10 +2178,10 @@ function getSurvivorRig(v, zombie) {
 const HOLD_NONE = 0, HOLD_RIFLE = 1, HOLD_PISTOL = 2, HOLD_MELEE = 3, HOLD_THROW = 4;
 function holdFor(item) {
   if (!item) return HOLD_NONE;
-  if (item === ITEM.PISTOL) return HOLD_PISTOL;
-  if (item === ITEM.AK47 || item === ITEM.SHOTGUN || item === ITEM.HUNTING_RIFLE) return HOLD_RIFLE;
+  const w = WEAPONS[item];
+  if (w && !w.melee) return w.slot === 1 ? HOLD_PISTOL : HOLD_RIFLE;
   if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB) return HOLD_THROW;
-  if (WEAPONS[item] && WEAPONS[item].melee) return HOLD_MELEE;
+  if (w && w.melee) return HOLD_MELEE;
   return HOLD_THROW; // generic held item
 }
 

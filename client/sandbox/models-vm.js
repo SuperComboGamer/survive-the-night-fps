@@ -6,12 +6,17 @@
 import * as THREE from 'three';
 import { ITEM, ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
 import { ViewModel, createWorldWeapon, worldWeaponTris, viewModelTris, handTris, VM_DEBUG } from '../render/models/weapons.js';
-// tuning overrides: &hip=x,y,z,rx,ry,rz (current item hip pose) / &claw=x,y,z,rx,ry,rz
+// tuning overrides: &hip=x,y,z,rx,ry,rz (current item hip pose) / &claw=x,y,z,rx,ry,rz / &cq=rx,ry,rz
 const params = new URLSearchParams(location.search);
 if (params.has('hip')) {
   const v = params.get('hip').split(',').map(Number);
   const id = parseInt(params.get('vm'), 10);
   if (VM_DEBUG.VM[id]) VM_DEBUG.VM[id].hip = v;
+}
+if (params.has('cq')) {
+  // &cq=rx,ry,rz: left-hand Euler on the charging handle during the reload
+  const id = parseInt(params.get('vm'), 10);
+  if (VM_DEBUG.VM[id]) VM_DEBUG.VM[id].chargeQ = params.get('cq').split(',').map(Number);
 }
 if (params.has('claw')) {
   const v = params.get('claw').split(',').map(Number);
@@ -95,7 +100,7 @@ if (params.get('vm') === 'hands') {
   table.position.y = -0.025;
   scene.add(table);
   const only = params.has('item') ? parseInt(params.get('item'), 10) : 0;
-  const longIds = [ITEM.AK47, ITEM.SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.BAT, ITEM.SPIKED_BAT];
+  const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.BAT, ITEM.SPIKED_BAT];
   const shortIds = [ITEM.PISTOL, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE];
   const lines = [];
   const place = (id, x, z) => {
@@ -125,7 +130,7 @@ if (params.get('vm') === 'hands') {
     cam.position.set(0, 0.75, 0.02 * s);
     cam.lookAt(0, 0, 0);
   } else {
-    longIds.forEach((id, i) => place(id, -0.7, -0.5 + i * 0.24));
+    longIds.forEach((id, i) => place(id, -0.7, -0.6 + i * 0.17));
     shortIds.forEach((id, i) => place(id, 0.55, -0.55 + i * 0.17));
     cam.position.set(0, 2.1, 0.12);
     cam.lookAt(0, 0, 0.0);
@@ -148,7 +153,7 @@ if (params.get('vm') === 'hands') {
   const all = vmParam === 'all';
   const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
   const list = all
-    ? [ITEM.AK47, ITEM.SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
+    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
     : times
       ? times.map(() => single)
       : [single];
@@ -186,7 +191,7 @@ if (params.get('vm') === 'hands') {
         v.vm.fire();
         break;
       case 'reload':
-        if (id === ITEM.SHOTGUN) v.vm.reload(w.reload, true);
+        if (w && w.reloadEach) v.vm.reload(w.reload, true);
         else v.vm.reload(w ? w.reload : 2, false);
         break;
       case 'melee':

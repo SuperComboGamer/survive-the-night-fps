@@ -68,7 +68,9 @@ import {
   CONT_DEFS,
   CONT_TABLES,
   CONSUMABLES,
+  AMMO,
   AMMO_MAX,
+  AMMO_ITEMS,
   SOUND,
   EVT,
   NOTIFY,
@@ -92,6 +94,7 @@ const MAX_ZOMBIES_ALIVE = 120;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
 const CRATE_TABLE = [
   [ITEM.AMMO_762, 5, 30, 60],
+  [ITEM.AMMO_556, 5, 30, 60],
   [ITEM.AMMO_SHELLS, 5, 8, 16],
   [ITEM.AMMO_9MM, 4, 20, 40],
   [ITEM.MEDKIT, 4, 1, 2],
@@ -101,7 +104,10 @@ const CRATE_TABLE = [
   [ITEM.PLATE, 2, 1, 1],
   [ITEM.GUNPARTS, 3, 1, 2],
   [ITEM.AK47, 1, 1, 1],
+  [ITEM.M4A1, 1, 1, 1],
+  [ITEM.MP5, 1, 1, 1],
   [ITEM.SHOTGUN, 1, 1, 1],
+  [ITEM.DB_SHOTGUN, 1, 1, 1],
   [ITEM.KEVLAR, 1, 1, 1],
   [ITEM.NAILS, 3, 10, 20],
   [ITEM.BATTERY, 2, 1, 2],
@@ -570,7 +576,7 @@ export class Game {
     Object.assign(s, fresh);
     s.weapons = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER];
     s.mags = [0, 12];
-    s.ammo = [36, 0, 0, 0];
+    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? 36 : 0));
     const sp = this.world.spawnPoints[Math.floor(this.rng() * this.world.spawnPoints.length)];
     s.x = sp.x + (this.rng() - 0.5) * 1.5;
     s.z = sp.z + (this.rng() - 0.5) * 1.5;
@@ -867,11 +873,10 @@ export class Game {
         if (!wpn || slot === SLOT_THROW) continue;
         this.dropItem(wpn, 1, x, y, z, { spread: 1.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
       }
-      const ammoItems = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308];
-      for (let i = 0; i < 4; i++) if (s.ammo[i] > 0) this.dropItem(ammoItems[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
+      for (let i = 0; i < AMMO_ITEMS.length; i++) if (s.ammo[i] > 0) this.dropItem(AMMO_ITEMS[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
       if (p.armorItem && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
     }
-    s.ammo = [0, 0, 0, 0];
+    s.ammo = AMMO_ITEMS.map(() => 0);
     p.invDirty = true;
   }
 
@@ -2309,7 +2314,7 @@ export class Game {
           for (let i = 0; i < 5; i++) c.u8(s.weapons[i]);
           c.u8(s.mags[0]);
           c.u8(s.mags[1]);
-          for (let i = 0; i < 4; i++) c.u16(s.ammo[i]);
+          for (let i = 0; i < AMMO_ITEMS.length; i++) c.u16(s.ammo[i]);
           c.u8(s.throwCount);
           break;
         case 4:

@@ -240,6 +240,30 @@ export const GUNS = {
     tail: 0.08, tailLP: 1500, tailDecay: 0.4,
     mech: [], echoes: [[0.33, 0.18], [0.72, 0.11], [1.25, 0.06], [1.86, 0.03]], drive: 1.7,
   },
+  // 5.56 carbine: snappier and brighter than the AK, supersonic crack, short buffer spring twang
+  m4a1: {
+    dur: 1.15, crack: 1.0, crackHP: 3200, crackDecay: 0.001, nwave: 0.45,
+    bodyHP: 340, bodyLP0: 7000, bodyLP1: 850, lpSweep: 0.03, bodyDecay: 0.034, bark: [1150, 1.3, 6],
+    thump: 0.7, thumpF0: 160, thumpF1: 50, thumpSweep: 0.018, thumpDecay: 0.05,
+    tail: 0.08, tailLP: 1100, tailDecay: 0.2,
+    mech: [[0.03, 2100, 0.09], [0.05, 3400, 0.04]], echoes: [[0.23, 0.07], [0.51, 0.035], [0.86, 0.016]], drive: 2.1,
+  },
+  // 9mm SMG: pistol-calibre pop with a busy roller-delayed bolt, little low end
+  mp5: {
+    dur: 0.85, crack: 0.7, crackHP: 2800, crackDecay: 0.0012, nwave: 0,
+    bodyHP: 520, bodyLP0: 6800, bodyLP1: 1000, lpSweep: 0.025, bodyDecay: 0.026, bark: [1600, 1.2, 5],
+    thump: 0.55, thumpF0: 200, thumpF1: 60, thumpSweep: 0.016, thumpDecay: 0.04,
+    tail: 0.05, tailLP: 1400, tailDecay: 0.13,
+    mech: [[0.024, 2900, 0.12], [0.046, 2200, 0.08]], echoes: [[0.19, 0.05], [0.43, 0.025]], drive: 1.7,
+  },
+  // double-barrel 12 gauge: bigger, rounder boom than the pump, long rolling tail
+  dbshotgun: {
+    dur: 1.9, crack: 0.65, crackHP: 1300, crackDecay: 0.002, nwave: 0,
+    bodyHP: 80, bodyLP0: 3300, bodyLP1: 340, lpSweep: 0.055, bodyDecay: 0.085, bark: [260, 1, 6],
+    thump: 1.25, thumpF0: 95, thumpF1: 30, thumpSweep: 0.04, thumpDecay: 0.13,
+    tail: 0.16, tailLP: 600, tailDecay: 0.4,
+    mech: [], echoes: [[0.28, 0.11], [0.63, 0.055], [1.06, 0.028]], drive: 2.1,
+  },
 };
 
 // Layered gunshot: transient crack (+ supersonic N-wave), band-shaped noise body, pitch-dropping thump,
@@ -1407,11 +1431,17 @@ export const SFX_DEFS = [
   { bank: 'gun_ak47', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, false) },
   { bank: 'gun_shotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.shotgun, false) },
   { bank: 'gun_rifle', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.rifle, false) },
+  { bank: 'gun_m4a1', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.m4a1, false) },
+  { bank: 'gun_mp5', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, false) },
+  { bank: 'gun_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, false) },
   // first-person (stereo)
   { bank: 'fp_pistol', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.pistol, true) },
   { bank: 'fp_ak47', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, true) },
   { bank: 'fp_shotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.shotgun, true) },
   { bank: 'fp_rifle', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.rifle, true) },
+  { bank: 'fp_m4a1', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.m4a1, true) },
+  { bank: 'fp_mp5', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, true) },
+  { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
   // zombies
   { bank: 'z_growl', n: 6, sr: MID, gen: zGrowl },
   { bank: 'z_attack', n: 3, sr: MID, gen: zAttack },

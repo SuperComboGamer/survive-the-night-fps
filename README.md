@@ -124,10 +124,14 @@ https://www.survivethenightgame.com.
   and new specials: spitters & boomers (night 2), leapers & bats (3), ropers & tanks (4), and a boss every
   third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages and
   bat swarms). Stragglers far from the team are brought back into the fight.
+- **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
+  MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
+  knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
+  in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
-  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotgun, hunting
+  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you

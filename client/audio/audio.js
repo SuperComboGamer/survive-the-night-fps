@@ -34,6 +34,9 @@ def(S.PISTOL, 'gun_pistol', 'gun', 0.85, 0.04);
 def(S.SHOTGUN, 'gun_shotgun', 'gun', 0.9, 0.03);
 def(S.AK47, 'gun_ak47', 'gun', 0.8, 0.035);
 def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03);
+def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035);
+def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04);
+def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03);
 def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08);
 def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08);
 def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1);
@@ -93,6 +96,9 @@ const LOCAL = {
   shotgun: { bank: 'fp_shotgun', vol: 1, jit: 0.025, send: 0.18 },
   ak47: { bank: 'fp_ak47', vol: 0.88, jit: 0.03, send: 0.13 },
   rifle: { bank: 'fp_rifle', vol: 1, jit: 0.02, send: 0.2 },
+  m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13 },
+  mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1 },
+  dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2 },
   reload_start: { bank: 'reload_start', vol: 0.55 },
   reload_end: { bank: 'reload_end', vol: 0.6 },
   shell_insert: { bank: 'shell_insert', vol: 0.55 },

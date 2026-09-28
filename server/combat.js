@@ -120,7 +120,7 @@ export class Combat {
       { except: p.id, x: ox, z: oz, r: 320 },
     );
     // alert nearby zombies to the noise
-    const noise = ev.weapon === ITEM.PISTOL ? 45 : 70;
+    const noise = def.noise || 70;
     g.zm.forNear(ox, oz, noise, (z) => {
       if (!z.target && !z.dead) {
         z.alertX = ox;

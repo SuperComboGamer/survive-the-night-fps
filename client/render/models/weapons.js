@@ -513,6 +513,229 @@ function buildRifle(P) {
   P.meta.port = sh(0.0, 0.1, -0.06);
 }
 
+// ------------------------------------------------------------------ M4A1 carbine (flat-top, collapsible stock)
+function buildM4(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  // lower receiver + flared magwell
+  boxR(B, -0.019, 0.019, 0.02, 0.053, 0.062, -0.14, M.gun);
+  profile(B, [[0.064, 0.021], [0.066, -0.014], [0.138, -0.014], [0.142, -0.004], [0.142, 0.021]], 0.034, { ...M.gun, bevel: 0.002 });
+  // upper receiver + picatinny rail
+  boxR(B, -0.0185, 0.0185, 0.053, 0.094, 0.07, -0.142, M.gun);
+  boxR(B, -0.0105, 0.0105, 0.094, 0.1, 0.066, -0.142, M.gunDark);
+  if (hi) {
+    for (let i = 0; i < 11; i++) boxR(B, -0.0107, 0.0107, 0.0985, 0.1005, 0.056 - i * 0.018, 0.05 - i * 0.018, M.black); // rail slots
+    boxR(B, 0.0184, 0.0192, 0.059, 0.082, -0.005, -0.075, M.black); // ejection port
+    boxR(B, 0.0185, 0.024, 0.074, 0.086, 0.012, -0.004, M.gun); // brass deflector
+    cylZ(B, 0.021, 0.081, 0.052, 0.012, 0.0075, { ...M.gunDark, rs: 8 }); // forward assist
+    cylZ(B, 0.0195, 0.034, -0.09, -0.098, 0.0045, { ...M.gunDark, rs: 6 }); // mag release
+    boxR(B, -0.0215, -0.0185, 0.03, 0.05, -0.1, -0.124, M.gun); // bolt catch
+    // selector (left)
+    B.seg(0, [-0.02, 0.041, 0.018], [-0.024, 0.041, 0.018], 0.0045, 0.0045, { ...M.gun, rs: 6, hs: 1 });
+    boxR(B, -0.0255, -0.0215, 0.038, 0.044, 0.018, 0.034, M.gun);
+    // takedown pins
+    for (const z of [0.052, -0.13]) B.seg(0, [-0.02, 0.048, z], [0.02, 0.048, z], 0.0028, 0.0028, { ...M.gunDark, rs: 6, hs: 1 });
+  }
+  // flip-up rear sight (aperture centre at y 0.127)
+  profile(B, [[-0.058, 0.1], [-0.026, 0.1], [-0.03, 0.112], [-0.042, 0.118], [-0.058, 0.114]], 0.028, { ...M.gunDark, bevel: 0.001 });
+  boxR(B, -0.004, 0.004, 0.112, 0.121, 0.047, 0.043, M.gunDark);
+  latheZ(B, [[0.0033, -0.047], [0.0065, -0.047], [0.0065, -0.043], [0.0033, -0.043], [0.0033, -0.047]], 0, 0.127, { ...M.gunDark, rs: R(hi, 12, 6), sharp: true });
+  for (const s of [-1, 1]) boxR(B, s * 0.0078, s * 0.0108, 0.112, 0.136, 0.049, 0.041, M.gunDark);
+  // barrel, delta ring, ribbed handguard, front sight base, birdcage
+  barrelZ(B, 0, 0.072, -0.142, -0.5, 0.0092, 0.0035, { ...M.gunDark, rs: R(hi, 12, 7) });
+  latheZ(B, [[0, 0.142], [0.031, 0.142], [0.031, 0.154], [0, 0.154]], 0, 0.072, { ...M.gun, rs: R(hi, 14, 8), sharp: true });
+  const hg = [[0, 0.152], [0.0245, 0.152], [0.027, 0.16]];
+  if (hi) {
+    for (let i = 0; i < 8; i++) {
+      const f = 0.17 + i * 0.018;
+      hg.push([0.027, f], [0.0248, f + 0.004], [0.0248, f + 0.01], [0.027, f + 0.014]);
+    }
+  }
+  hg.push([0.027, 0.316], [0.024, 0.322], [0, 0.322]);
+  latheZ(B, hg, 0, 0.072, { ...M.polyDark, rs: R(hi, 14, 8), sx: 0.94, sharp: hi });
+  latheZ(B, [[0, 0.32], [0.026, 0.32], [0.026, 0.328], [0, 0.328]], 0, 0.072, { ...M.gun, rs: R(hi, 12, 7), sharp: true });
+  profile(B, [[0.338, 0.06], [0.374, 0.06], [0.374, 0.082], [0.36, 0.118], [0.35, 0.118], [0.338, 0.082]], 0.022, { ...M.gun, bevel: 0.001 });
+  boxR(B, -0.005, 0.005, 0.046, 0.06, -0.34, -0.37, M.gun); // bayonet lug
+  for (const s of [-1, 1]) boxR(B, s * 0.0072, s * 0.0102, 0.114, 0.132, -0.349, -0.359, M.gun); // sight ears
+  B.seg(0, [0, 0.114, -0.354], [0, 0.127, -0.354], 0.0018, 0.0014, { ...M.gunDark, rs: 5, hs: 1 }); // post
+  barrelZ(B, 0, 0.072, -0.498, -0.548, 0.0108, 0.0056, { ...M.black, rs: R(hi, 10, 6) });
+  if (hi) for (const s of [-1, 1]) boxR(B, s * 0.004 - 0.0012, s * 0.004 + 0.0012, 0.08, 0.0832, -0.51, -0.538, M.black);
+  // A2 pistol grip + squared trigger guard + trigger
+  profile(B, [[0.03, 0.022], [0.022, -0.012], [0.012, -0.03], [0.016, -0.04], [0.006, -0.074], [-0.028, -0.08], [-0.036, -0.066], [-0.024, -0.024], [-0.016, 0.022]], 0.028, { ...M.poly, bevel: 0.004 });
+  B.tube(0, [[0, 0.021, -0.012], [0, 0.0, -0.016], [0, -0.004, -0.04], [0, -0.004, -0.064], [0, 0.021, -0.068]], 0.003, 0.003, { ...M.gun, rs: 5, ts: R(hi, 12, 6), cap: false });
+  B.tube(0, [[0, 0.022, -0.036], [0, 0.009, -0.039], [0, 0.002, -0.034]], 0.0025, 0.002, { ...M.gunDark, rs: 5, ts: 4 });
+  // buffer tube + collapsible stock
+  cylZ(B, 0, 0.074, 0.062, 0.27, 0.0155, { ...M.gunDark, rs: R(hi, 12, 7) });
+  cylZ(B, 0, 0.074, 0.062, 0.074, 0.0185, { ...M.gun, rs: R(hi, 10, 6) });
+  profile(B, [[-0.19, 0.095], [-0.31, 0.098], [-0.325, 0.09], [-0.325, -0.045], [-0.305, -0.05], [-0.255, 0.03], [-0.2, 0.052], [-0.19, 0.062]], 0.042, { ...M.polyDark, bevel: 0.004, curveSegs: 4 });
+  profile(B, [[-0.325, 0.092], [-0.335, 0.092], [-0.335, -0.048], [-0.325, -0.048]], 0.044, { ...M.polyDark, color: [0.7, 0.7, 0.7], bevel: 0.002 });
+  if (hi) boxR(B, -0.005, 0.005, 0.048, 0.056, 0.2, 0.235, M.polyDark); // adjustment lever
+  // STANAG magazine
+  const MG = P.get('mag');
+  const magPts = [];
+  const N = hi ? 8 : 4;
+  const cf = (t) => [0.103 + 0.028 * t * t + 0.012 * t, 0.02 - 0.19 * t];
+  for (let i = 0; i <= N; i++) {
+    const c = cf(i / N);
+    magPts.push([c[0] + 0.03, c[1]]);
+  }
+  for (let i = N; i >= 0; i--) {
+    const c = cf(i / N);
+    magPts.push([c[0] - 0.03, c[1]]);
+  }
+  profile(MG, magPts, 0.022, { ...M.gun, color: [0.9, 0.88, 0.84], bevel: 0.002 });
+  if (hi) {
+    const c = cf(1);
+    boxR(MG, -0.0125, 0.0125, c[1] - 0.004, c[1] + 0.006, -(c[0] - 0.032), -(c[0] + 0.033), M.polyDark); // floor plate
+    for (const t of [0.35, 0.6]) {
+      const q = cf(t);
+      boxR(MG, -0.0115, 0.0115, q[1] - 0.012, q[1] + 0.012, -(q[0] - 0.012), -(q[0] + 0.012), { ...M.gunDark, color: [0.8, 0.78, 0.75] });
+    }
+  }
+  P.pivot('mag', new THREE.Vector3(0, 0.02, -0.103));
+  // T charging handle (rear of the upper; the shaft shows when pulled)
+  const CH = P.get('charge');
+  boxR(CH, -0.006, 0.006, 0.086, 0.093, 0.068, -0.02, M.gunDark);
+  boxR(CH, -0.021, 0.021, 0.085, 0.095, 0.068, 0.082, M.gunDark);
+  if (hi) boxR(CH, -0.024, -0.017, 0.083, 0.097, 0.074, 0.084, M.gunDark); // latch
+
+  P.meta.muzzle = new THREE.Vector3(0, 0.072, -0.55);
+  P.meta.leftHand = new THREE.Vector3(0, 0.068, -0.25);
+  P.meta.sight = new THREE.Vector3(0, 0.127, 0.045);
+  P.meta.chargeKnob = new THREE.Vector3(-0.026, 0.04, -0.112); // reload ends with a slap on the bolt catch
+  P.meta.magGrab = new THREE.Vector3(0, -0.06, -0.113);
+}
+
+// ------------------------------------------------------------------ MP5 (fixed polymer stock)
+function buildMP5(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  // stamped receiver (round top), end cap
+  boxR(B, -0.019, 0.019, 0.03, 0.068, 0.055, -0.2, M.gun);
+  cylZ(B, 0, 0.068, 0.055, -0.2, 0.019, { ...M.gun, rs: R(hi, 14, 8) });
+  boxR(B, -0.02, 0.02, 0.03, 0.084, 0.055, 0.068, M.gunDark);
+  if (hi) {
+    boxR(B, 0.0185, 0.0194, 0.058, 0.078, -0.05, -0.1, M.black); // ejection port
+    for (const s of [-1, 1]) boxR(B, s * 0.0192 - 0.0006, s * 0.0192 + 0.0006, 0.036, 0.04, 0.05, -0.195, M.gunDark); // stamping seam
+    for (const z of [0.02, -0.15]) B.seg(0, [-0.02, 0.04, z], [0.02, 0.04, z], 0.0026, 0.0026, { ...M.gunDark, rs: 6, hs: 1 }); // pins
+  }
+  // cocking tube over the barrel
+  cylZ(B, 0, 0.078, -0.19, -0.345, 0.0125, { ...M.gun, rs: R(hi, 12, 7) });
+  if (hi) boxR(B, -0.0128, -0.0118, 0.073, 0.083, -0.2, -0.31, M.black); // cocking slot (left)
+  // slim polymer handguard
+  profile(B, [[0.198, 0.066], [0.198, 0.03], [0.212, 0.021], [0.326, 0.023], [0.338, 0.033], [0.338, 0.066]], 0.044, { ...M.polyDark, bevel: 0.006, curveSegs: 4 });
+  if (hi) for (const s of [-1, 1]) for (let i = 0; i < 4; i++) boxR(B, s * 0.0222 - 0.0006, s * 0.0222 + 0.0006, 0.035, 0.055, -0.226 - i * 0.026, -0.238 - i * 0.026, M.black); // grip grooves
+  // barrel + locking lugs
+  barrelZ(B, 0, 0.05, -0.335, -0.405, 0.0085, 0.0035, { ...M.gun, rs: R(hi, 12, 7) });
+  if (hi) for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * PI * 2;
+    boxR(B, Math.sin(a) * 0.0095 - 0.002, Math.sin(a) * 0.0095 + 0.002, 0.05 + Math.cos(a) * 0.0095 - 0.002, 0.05 + Math.cos(a) * 0.0095 + 0.002, -0.37, -0.382, M.gun);
+  }
+  // hooded front sight (post tip at y 0.114) + drum rear sight (aperture at y 0.114)
+  boxR(B, -0.008, 0.008, 0.086, 0.103, -0.325, -0.345, M.gun);
+  latheZ(B, [[0.0095, 0.325], [0.0118, 0.325], [0.0118, 0.345], [0.0095, 0.345], [0.0095, 0.325]], 0, 0.114, { ...M.gun, rs: R(hi, 12, 7), sharp: true });
+  B.seg(0, [0, 0.102, -0.335], [0, 0.114, -0.335], 0.0017, 0.0013, { ...M.gunDark, rs: 5, hs: 1 });
+  boxR(B, -0.012, 0.012, 0.082, 0.096, 0.03, 0.06, M.gun);
+  B.seg(0, [-0.0125, 0.1, 0.045], [0.0125, 0.1, 0.045], 0.0085, 0.0085, { ...M.gun, rs: R(hi, 12, 7), hs: 1 });
+  latheZ(B, [[0.0042, -0.048], [0.0072, -0.048], [0.0072, -0.043], [0.0042, -0.043], [0.0042, -0.048]], 0, 0.114, { ...M.gunDark, rs: R(hi, 14, 6), sharp: true });
+  // polymer trigger group, pistol grip, trigger guard + trigger, selector
+  profile(B, [[0.066, 0.031], [0.066, 0.012], [0.04, 0.004], [-0.026, 0.004], [-0.046, 0.018], [-0.05, 0.031]], 0.034, { ...M.poly, bevel: 0.003 });
+  profile(B, [[0.03, 0.01], [0.022, -0.012], [0.012, -0.03], [0.017, -0.042], [0.007, -0.074], [-0.027, -0.08], [-0.035, -0.066], [-0.026, -0.024], [-0.02, 0.01]], 0.029, { ...M.poly, bevel: 0.004 });
+  B.tube(0, [[0, 0.006, -0.012], [0, -0.008, -0.016], [0, -0.012, -0.04], [0, -0.008, -0.062], [0, 0.006, -0.066]], 0.003, 0.003, { ...M.poly, rs: 5, ts: R(hi, 12, 6), cap: false });
+  B.tube(0, [[0, 0.008, -0.034], [0, -0.002, -0.037], [0, -0.008, -0.032]], 0.0025, 0.002, { ...M.gunDark, rs: 5, ts: 4 });
+  if (hi) {
+    boxR(B, -0.0195, -0.0175, 0.016, 0.026, 0.02, -0.012, M.gunDark); // selector lever
+    boxR(B, -0.006, 0.006, 0.0, 0.01, -0.07, -0.086, M.gunDark); // paddle release
+  }
+  // magwell
+  boxR(B, -0.017, 0.017, 0.008, 0.032, -0.098, -0.148, M.gun);
+  // fixed A2 stock + butt plate
+  profile(B, [[-0.055, 0.082], [-0.33, 0.072], [-0.34, 0.062], [-0.34, -0.062], [-0.3, -0.058], [-0.2, -0.022], [-0.11, 0.008], [-0.055, 0.03]], 0.036, { ...M.polyDark, bevel: 0.005, curveSegs: 4 });
+  profile(B, [[-0.34, 0.066], [-0.35, 0.066], [-0.35, -0.066], [-0.34, -0.066]], 0.04, { ...M.polyDark, color: [0.7, 0.7, 0.7], bevel: 0.002 });
+  // curved 9mm magazine
+  const MG = P.get('mag');
+  const magPts = [];
+  const N = hi ? 8 : 4;
+  const cf = (t) => [0.123 + 0.05 * t * t + 0.018 * t, 0.024 - 0.2 * t];
+  for (let i = 0; i <= N; i++) {
+    const c = cf(i / N);
+    magPts.push([c[0] + 0.021, c[1]]);
+  }
+  for (let i = N; i >= 0; i--) {
+    const c = cf(i / N);
+    magPts.push([c[0] - 0.021, c[1]]);
+  }
+  profile(MG, magPts, 0.02, { ...M.gun, color: [0.92, 0.9, 0.86], bevel: 0.002 });
+  if (hi) {
+    const c = cf(1);
+    boxR(MG, -0.0115, 0.0115, c[1] - 0.004, c[1] + 0.005, -(c[0] - 0.023), -(c[0] + 0.024), M.gunDark);
+  }
+  P.pivot('mag', new THREE.Vector3(0, 0.024, -0.123));
+  // cocking handle (front left of the tube)
+  const CH = P.get('charge');
+  CH.seg(0, [-0.011, 0.079, -0.3], [-0.033, 0.082, -0.296], 0.0034, 0.003, { ...M.gun, rs: 6, hs: 1 });
+  CH.ellip(0, [-0.036, 0.082, -0.296], [0.0055, 0.0055, 0.0065], { ...M.gunDark, ws: 8, hs: 6 });
+
+  P.meta.muzzle = new THREE.Vector3(0, 0.05, -0.408);
+  P.meta.leftHand = new THREE.Vector3(0, 0.044, -0.27);
+  P.meta.sight = new THREE.Vector3(0, 0.114, 0.045);
+  P.meta.chargeKnob = new THREE.Vector3(-0.037, 0.082, -0.296);
+  P.meta.magGrab = new THREE.Vector3(0, -0.065, -0.14);
+}
+
+// ------------------------------------------------------------------ Side-by-side double-barrel shotgun
+function buildDoubleBarrel(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const O = [0, -0.035, -0.058]; // authored like the pump: stock wrist -> grip origin
+  // action (frame) + top lever
+  boxR(B, -0.0235, 0.0235, 0.016, 0.066, 0.03, -0.075, M.gun);
+  profile(B, [[0.03, 0.066], [0.062, 0.066], [0.075, 0.058], [0.075, 0.016], [0.03, 0.016]], 0.047, { ...M.gun, bevel: 0.003 });
+  boxR(B, -0.004, 0.004, 0.066, 0.072, 0.03, -0.004, M.gunDark);
+  B.seg(0, [0.0, 0.07, 0.022], [0.016, 0.071, 0.03], 0.0035, 0.003, { ...M.gunDark, rs: 6, hs: 1 });
+  if (hi) {
+    for (const s of [-1, 1]) profile(B, [[-0.02, 0.058], [0.06, 0.058], [0.07, 0.03], [-0.02, 0.022]], 0.001, { ...M.steel, color: [0.8, 0.78, 0.72], bevel: 0, x: s * 0.0238 }); // side plates
+    B.seg(0, [-0.024, 0.03, -0.075], [0.024, 0.03, -0.075], 0.004, 0.004, { ...M.gunDark, rs: 8, hs: 1 }); // hinge pin
+    boxR(B, -0.003, 0.003, 0.0705, 0.074, 0.005, -0.004, M.steel); // safety
+  }
+  // twin triggers + guard
+  boxR(B, -0.009, 0.009, 0.004, 0.017, 0.02, -0.06, M.gun);
+  B.tube(0, [[0, 0.006, 0.012], [0, -0.014, 0.004], [0, -0.018, -0.03], [0, -0.008, -0.062], [0, 0.006, -0.07]], 0.0032, 0.0032, { ...M.gun, rs: 5, ts: R(hi, 12, 6), cap: false });
+  for (const z of [-0.024, -0.04]) B.tube(0, [[0, 0.006, z], [0, -0.006, z - 0.004], [0, -0.012, z + 0.002]], 0.0024, 0.002, { ...M.gunDark, rs: 5, ts: 4 });
+  // walnut stock + pad
+  profile(B, [[-0.03, 0.068], [-0.085, 0.056], [-0.38, 0.03], [-0.38, -0.108], [-0.3, -0.085], [-0.2, -0.062], [-0.12, -0.035], [-0.075, -0.012], [-0.045, 0.006], [-0.03, 0.016]], 0.038, { ...M.walnut, bevel: 0.005, curveSegs: 4 });
+  if (hi) for (const s of [-1, 1]) profile(B, [[-0.05, 0.05], [-0.1, 0.04], [-0.1, -0.02], [-0.06, 0.0]], 0.001, { ...M.walnut, color: [0.55, 0.5, 0.5], bevel: 0, x: s * 0.0191 });
+  profile(B, [[-0.38, 0.032], [-0.398, 0.032], [-0.398, -0.111], [-0.38, -0.111]], 0.04, { ...M.leather, bevel: 0.003 });
+  // barrels, rib, bead, lug and splinter forend: one part that breaks open around the hinge pin
+  const BR = P.get('barrels');
+  for (const s of [-1, 1]) barrelZ(BR, s * 0.0118, 0.052, -0.075, -0.64, 0.0122, 0.0094, { ...M.gun, r1: 0.0112, rs: R(hi, 14, 8) });
+  boxR(BR, -0.0045, 0.0045, 0.058, 0.067, -0.078, -0.636, M.gunDark);
+  BR.ellip(0, [0, 0.0695, -0.628], [0.0023, 0.0023, 0.0023], { region: WR.PLAIN, color: 0xd8d0b0, ws: 6, hs: 4 });
+  boxR(BR, -0.009, 0.009, 0.022, 0.046, -0.075, -0.12, M.gun); // under-lug
+  profile(BR, [[0.105, 0.046], [0.105, 0.026], [0.12, 0.016], [0.3, 0.02], [0.33, 0.03], [0.34, 0.046]], 0.05, { ...M.walnut, bevel: 0.006, curveSegs: 4 });
+  if (hi) boxR(BR, -0.0035, 0.0035, 0.018, 0.02, -0.28, -0.3, M.steel); // forend latch
+  // two spare shells (loading animation only)
+  if (P.split) {
+    const SH = P.get('shell');
+    for (const s of [-1, 1]) {
+      cylZ(SH, s * 0.0118, 0, 0.0, -0.052, 0.009, { region: WR.PLAIN, color: 0xa01810, rs: 10 });
+      cylZ(SH, s * 0.0118, 0, 0.012, 0.0, 0.0102, { ...M.brass, rs: 10 });
+    }
+  }
+  const hinge = new THREE.Vector3(0, 0.03, -0.075);
+  P.pivot('barrels', hinge);
+  for (const [name, mb] of P.map) {
+    if (name === 'shell') continue;
+    for (const part of mb.parts) part.geo.translate(O[0], O[1], O[2]);
+  }
+  for (const k in P.pivots) P.pivots[k].add(new THREE.Vector3(O[0], O[1], O[2]));
+  const sh = (x, y, z) => new THREE.Vector3(x + O[0], y + O[1], z + O[2]);
+  P.meta.muzzle = sh(0, 0.052, -0.642);
+  P.meta.leftHand = sh(0, 0.034, -0.23);
+  P.meta.sight = sh(0, 0.072, -0.628); // front bead
+  P.meta.chamber = sh(0, 0.052, -0.075);
+}
+
 // ------------------------------------------------------------------ Melee
 function buildKnife(P) {
   const hi = P.hi;
@@ -696,6 +919,9 @@ const BUILDERS = {
   [ITEM.PISTOL]: buildPistol,
   [ITEM.SHOTGUN]: buildShotgun,
   [ITEM.HUNTING_RIFLE]: buildRifle,
+  [ITEM.M4A1]: buildM4,
+  [ITEM.MP5]: buildMP5,
+  [ITEM.DB_SHOTGUN]: buildDoubleBarrel,
   [ITEM.KNIFE]: buildKnife,
   [ITEM.BAT]: buildBat,
   [ITEM.SPIKED_BAT]: buildSpikedBat,
@@ -1272,6 +1498,9 @@ const supportGrip = (roll, yaw, pitch = 0) => {
 };
 
 // kinds: rifle | shotgun | pistol | melee | throw
+// chargeFire: false = the charging handle stays put while firing; chargeQ: left-hand Euler on the charging handle;
+// chargeTravel: how far the handle is pulled on reload (0 = the hand just slaps meta.chargeKnob, e.g. a bolt catch);
+// breakAction: break-open shotgun (barrels part hinges down to reload)
 const VM = {
   [ITEM.AK47]: {
     kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2,
@@ -1287,6 +1516,21 @@ const VM = {
     kind: 'rifle', bolt: true, scope: true, hip: [0.19, -0.205, -0.3, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.085,
     rGrip: { p: [0, 0, 0], q: gunGrip(0.35) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.05, rx: 0.1, ry: 0.015 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+  },
+  [ITEM.M4A1]: {
+    kind: 'rifle', hip: [0.18, -0.185, -0.27, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.16, chargeFire: false, chargeTravel: 0, chargeQ: [1.3, 0.1, 0],
+    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    recoil: { z: 0.022, rx: 0.035, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+  },
+  [ITEM.MP5]: {
+    kind: 'rifle', hip: [0.17, -0.18, -0.3, 0.03, 0.15, 0.0], ads: 0.2, adsZ: -0.2, chargeFire: false, chargeQ: [1.6, -0.3, 0.4],
+    rGrip: { p: [0, 0, 0], q: gunGrip(0.2) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    recoil: { z: 0.016, rx: 0.026, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+  },
+  [ITEM.DB_SHOTGUN]: {
+    kind: 'shotgun', breakAction: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.9, adsPitch: 0.1,
+    rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    recoil: { z: 0.07, rx: 0.14, ry: 0.025 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.PISTOL]: {
     kind: 'pistol', hip: [0.1, -0.14, -0.46, 0.02, 0.12, 0.0], ads: 0.2, adsZ: -0.46,
@@ -1750,7 +1994,7 @@ export class ViewModel {
       parts.slide.position.z = parts.slide.userData.base.z + s1 * 0.026;
     }
     if (parts.charge) {
-      const s1 = this.fireT < 0.07 ? Math.sin((this.fireT / 0.07) * PI) : 0;
+      const s1 = cfg.chargeFire !== false && this.fireT < 0.07 ? Math.sin((this.fireT / 0.07) * PI) : 0;
       parts.charge.position.z = parts.charge.userData.base.z + s1 * 0.07;
     }
     if (parts.pump) {
@@ -1791,6 +2035,7 @@ export class ViewModel {
         if (rOnBolt > 0.5) rPose = 'pinch';
       }
     }
+    if (parts.barrels) parts.barrels.rotation.x = 0; // closed unless the reload opens it
     if (parts.mag) {
       parts.mag.position.copy(parts.mag.userData.base);
       parts.mag.quaternion.identity();
@@ -1820,7 +2065,7 @@ export class ViewModel {
       if (rs.pose && rs.w > 0.3) lPose = rs.pose;
     }
     // shotgun: tilt hold between per-shell reload calls
-    if (cfg.kind === 'shotgun' && this.reloadHold > 0) {
+    if (cfg.kind === 'shotgun' && !cfg.breakAction && this.reloadHold > 0) {
       const h = smoothstep(0, 1, this.reloadHold);
       P6[5] -= 1.05 * h;
       P6[3] += 0.18 * h;
@@ -1885,6 +2130,7 @@ export class ViewModel {
       if (cur.lGrip) {
         lp.copy(cur.lGrip.p);
         if (parts.pump) lp.z += parts.pump.position.z - parts.pump.userData.base.z;
+        if (parts.barrels) lp.sub(parts.barrels.userData.base).applyQuaternion(parts.barrels.quaternion).add(parts.barrels.position);
         lp.applyQuaternion(wq).add(wp);
         lq.copy(wq).multiply(cur.lGrip.q);
       } else {
@@ -1951,19 +2197,21 @@ export class ViewModel {
       parts.mag.position.z = parts.mag.userData.base.z + away * 0.08;
       parts.mag.visible = u < 0.36 || u > 0.47;
       const pull = smoothstep(0.8, 0.84, u) * (1 - smoothstep(0.86, 0.88, u));
-      parts.charge.position.z = parts.charge.userData.base.z + pull * 0.1;
+      const travel = cur.cfg.chargeTravel ?? 0.1;
+      parts.charge.position.z = parts.charge.userData.base.z + pull * travel;
       // A: on the magazine (follows it), B: on the charging handle
       st.a.copy(meta.magGrab).sub(parts.mag.userData.base).applyQuaternion(parts.mag.quaternion).add(parts.mag.position);
       st.a.x -= 0.02;
       st.qa.setFromEuler(_e1.set(PI / 2 + 0.35 + parts.mag.rotation.x, 0.15, 0.0, 'YXZ'));
       st.b.copy(meta.chargeKnob);
-      st.b.z += pull * 0.1;
+      st.b.z += pull * travel;
       st.b.x += 0.004;
       st.b.y += 0.006;
-      st.qb.setFromEuler(_e1.set(0.35, PI, 0.1, 'YXZ'));
+      const cq = cur.cfg.chargeQ;
+      st.qb.setFromEuler(cq ? _e1.set(cq[0], cq[1], cq[2], 'YXZ') : _e1.set(0.35, PI, 0.1, 'YXZ'));
       st.w = win(u, 0.06, 0.16, 0.9, 0.98);
       st.m = smoothstep(0.7, 0.78, u);
-      st.pose = st.m > 0.5 ? 'pinch' : 'support';
+      st.pose = st.m > 0.5 ? (travel ? 'pinch' : 'open') : 'support';
     } else if (kind === 'pistol') {
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
       P6[5] += tilt * 0.3;
@@ -1998,6 +2246,35 @@ export class ViewModel {
         st.pose = st.m > 0.5 ? 'pinch' : 'support';
       }
       st.w = win(u, 0.08, 0.2, 0.88, 0.96);
+    } else if (cur.cfg.breakAction) {
+      // double-barrel: tilt, break open, fetch two shells from below, thumb them into the chambers, snap shut
+      const tilt = win(u, 0.0, 0.12, 0.84, 0.98);
+      P6[0] -= tilt * 0.1;
+      P6[1] += tilt * 0.06;
+      P6[2] -= tilt * 0.04;
+      P6[3] -= tilt * 0.05;
+      P6[4] += tilt * 0.25;
+      P6[5] -= tilt * 0.3;
+      const open = smoothstep(0.08, 0.2, u) * (1 - smoothstep(0.8, 0.87, u));
+      const br = parts.barrels;
+      br.rotation.x = -open * 0.62;
+      // chambers + barrel axis (toward the breech) in weapon space
+      const ch = _v1.copy(meta.chamber).sub(br.userData.base).applyQuaternion(br.quaternion).add(br.position);
+      const back = _v3.set(0, 0, 1).applyQuaternion(br.quaternion);
+      const push = smoothstep(0.54, 0.68, u);
+      const sh = parts.shell;
+      st.a.set(-0.02, -0.5, -0.32);
+      st.aCam = true;
+      st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
+      st.b.copy(ch).addScaledVector(back, 0.03 + (1 - push) * 0.07);
+      st.b.y += 0.02;
+      st.qb.setFromEuler(_e1.set(-0.2 - open * 0.62, 0.5, -PI / 2 - 0.4, 'YXZ'));
+      st.m = smoothstep(0.3, 0.48, u);
+      st.w = win(u, 0.12, 0.24, 0.7, 0.8);
+      st.pose = 'pinch';
+      sh.visible = st.m > 0.3 && push < 0.97 && st.w > 0.3;
+      sh.position.copy(ch).addScaledVector(back, (1 - push) * 0.07);
+      sh.quaternion.copy(br.quaternion);
     } else if (kind === 'shotgun') {
       // one shell: fetch from below the screen, push into the loading port, return to the pump
       const push = smoothstep(0.55, 0.72, u);

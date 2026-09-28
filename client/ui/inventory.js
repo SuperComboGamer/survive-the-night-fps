@@ -1,13 +1,12 @@
 // Inventory / crafting screen (Tab). Equipment on the left, backpack grid in the centre,
 // crafting on the right; survivors + car checklist + campfire under the grid.
-import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
-const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308];
 // Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
 // icon: item shown on the tab; cat: item category whose colour marks the tab (defaults to the id).
 const CRAFT_TABS = [
@@ -204,7 +203,7 @@ export class Inventory {
   constructor(ui, parent, tipParent) {
     this.ui = ui;
     this.open = false;
-    this.inv = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null, ammo: [0, 0, 0, 0], weapons: [0, 0, 0, 0, 0], throwCounts: {} };
+    this.inv = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null, ammo: AMMO_ITEMS.map(() => 0), weapons: [0, 0, 0, 0, 0], throwCounts: {} };
     this.counts = {};
     this.near = { fire: false, bench: false };
     this.unlocked = 0;
@@ -685,7 +684,7 @@ export class Inventory {
     this.inv = {
       slots: Array.from({ length: INVENTORY_SIZE }, (_, i) => (slots[i] && slots[i].item ? { item: slots[i].item, count: slots[i].count | 0 } : null)),
       armor: inv.armor && inv.armor.item ? inv.armor : null,
-      ammo: inv.ammo || [0, 0, 0, 0],
+      ammo: inv.ammo || AMMO_ITEMS.map(() => 0),
       weapons: inv.weapons || [0, 0, 0, 0, 0],
       throwCounts: inv.throwCounts || {},
     };
