@@ -26,6 +26,7 @@ const C_BLOOD = color(0x3a0303);
 const C_MOUTH = color(0x1a0303);
 const C_NAIL = color(0x2a2016);
 const C_TEETH = color(0xb8ab84);
+const C_BRUISE = color(0x3a1c22);
 
 function humanP(o) {
   const P = Object.assign(
@@ -105,21 +106,30 @@ function buildHead(mb, P, L) {
   const skin = color(L.skin);
   const skinD = skin.clone().multiplyScalar(0.8);
   const gaunt = L.gaunt || 0;
+  const craniumShape = (v) => {
+    const ny = v.y / sy, nz = v.z / sz;
+    if (ny < -0.1) v.x *= 1 - (-0.1 - ny) * (human ? 0.28 : 0.4 + gaunt * 0.15); // narrow lower face
+    if (nz < -0.4) v.z *= 0.93; // flatter face
+    if (nz > 0.3 && ny < -0.3) v.z *= 0.86; // skull base
+    if (ny < -0.55 && nz < 0) v.z *= 0.9; // recessed mouth area
+  };
   // cranium
   mb.ellip('head', [0, cy, 0], [sx, sy, sz], {
     ws: L.headWS || 12, hs: L.headHS || 9, color: L.skin, region: skinReg, mottle: human ? 0.08 : 0.3, mf: 20,
-    shape(v) {
-      const ny = v.y / sy, nz = v.z / sz;
-      if (ny < -0.1) v.x *= 1 - (-0.1 - ny) * (human ? 0.28 : 0.4 + gaunt * 0.15); // narrow lower face
-      if (nz < -0.4) v.z *= 0.93; // flatter face
-      if (nz > 0.3 && ny < -0.3) v.z *= 0.86; // skull base
-      if (ny < -0.55 && nz < 0) v.z *= 0.9; // recessed mouth area
-    },
+    shape: craniumShape,
     tint(p, n, c) {
       const ly = (p.y - hb[1] - cy) / sy, lz = (p.z - hb[2]) / sz;
       if (!human) {
+        const lx = (p.x - hb[0]) / sx;
         if (ly < -0.35 && lz < -0.45) c.lerp(C_BLOOD, 0.6);
         if (n.y < -0.5 && lz < -0.2) c.lerp(C_MOUTH, 0.85);
+        if (L.cheekTear) {
+          // raw flesh around the hole torn through the cheek
+          const d = Math.hypot(lx - L.cheekTear * 0.72, (ly + 0.4) * 1.1, (lz + 0.5) * 0.8);
+          if (d < 0.5) c.lerp(d < 0.36 ? C_WOUND : C_WOUND2, clamp((0.5 - d) * 6, 0, 0.9));
+        }
+        if (L.oneEye && Math.abs(lx - L.oneEye * 0.45) < 0.08 + 0.03 * ly && ly < 0.0 && ly > -0.75 && lz < -0.35) c.lerp(C_BLOOD, 0.85); // dried blood run from the empty socket
+        if (L.noEar && L.noEar * lx > 0.8 && Math.abs(ly + 0.05) < 0.32 && Math.abs(lz - 0.05) < 0.3) c.lerp(C_WOUND, 0.8);
       } else {
         if (ly < -0.42 && ly > -0.58 && lz < -0.7) c.lerp(color(0x7a4038), 0.35);
         if (L.stubble && ly < -0.3 && lz < -0.1) c.multiplyScalar(0.8);
@@ -153,12 +163,22 @@ function buildHead(mb, P, L) {
   const eyeX = sx * (human ? 0.36 : 0.4), eyeY = cy + hr * (human ? 0.08 : 0.1);
   for (const s of [-1, 1]) {
     if (!human) {
+      // sunken, bruised socket: near-black at the centre, fading to purple-brown at the rim
       mb.ellip('head', [s * eyeX, eyeY, fz + hr * 0.08], [hr * 0.2, hr * 0.15, hr * 0.12], {
-        ws: 6, hs: 4, color: C_SOCKET, region: CR.FLESH, rot: [0, 0, s * -0.2], ao: false, blood: false, mottle: 0,
+        ws: 7, hs: 5, color: C_SOCKET, region: CR.FLESH, rot: [0, 0, s * -0.2], ao: false, blood: false, mottle: 0,
+        tint(p, n, c) {
+          c.lerp(C_BRUISE, clamp((n.z + 0.55) * 2.2, 0, 0.8));
+        },
       });
-      mb.ellip('head', [s * eyeX * 0.97, eyeY - hr * 0.035, fz - hr * 0.025], [hr * 0.055, hr * 0.045, hr * 0.035], {
-        ws: 5, hs: 3, color: L.eye ?? 0x8a8460, glow: L.eyeGlow ?? 0.08, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
-      });
+      if (L.oneEye !== s) {
+        // clouded eyeball, half hidden under a drooping lid
+        mb.ellip('head', [s * eyeX * 0.97, eyeY - hr * 0.045, fz - hr * 0.005], [hr * 0.085, hr * 0.068, hr * 0.05], {
+          ws: 6, hs: 4, color: L.eye ?? 0x8a8460, glow: L.eyeGlow ?? 0.08, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
+          tint(p, n, c) {
+            if (n.y > 0.35) c.copy(C_BRUISE);
+          },
+        });
+      }
     } else {
       mb.ellip('head', [s * eyeX, eyeY, fz + hr * 0.01], [hr * 0.1, hr * 0.06, hr * 0.06], {
         ws: 6, hs: 4, color: L.eye ?? 0xd8d4cc, glow: L.eyeGlow || 0, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
@@ -166,11 +186,42 @@ function buildHead(mb, P, L) {
       if (!L.eyeGlow) mb.ellip('head', [s * eyeX, eyeY, fz - hr * 0.045], [hr * 0.045, hr * 0.045, hr * 0.015], { ws: 5, hs: 3, color: 0x20140c, mottle: 0, ao: false, region: CR.PLAIN });
     }
   }
-  // ears
+  // ears (one may be torn off)
   for (const s of [-1, 1]) {
+    if (L.noEar === s) continue;
     mb.ellip('head', [s * sx * 0.97, cy - hr * 0.05, hr * 0.05], [hr * 0.09, hr * 0.24, hr * 0.16], {
       ws: 4, hs: 3, color: skinD, region: skinReg, rot: [0, s * 0.3, 0],
     });
+  }
+  if (!human && L.skullPatch) {
+    // scalp torn away: bare, blood-rimmed skull showing through (bright at distance)
+    const sp = L.skullPatch;
+    const dl = Math.hypot(sp[0], sp[1], sp[2]);
+    const dx = sp[0] / dl, dy = sp[1] / dl, dz = sp[2] / dl, cosR = Math.cos(sp[3]), cosRim = Math.cos(sp[3] * 0.72);
+    const dot = (x, y, z) => {
+      const lx = (x - hb[0]) / sx, ly = (y - hb[1] - cy) / sy, lz = (z - hb[2]) / sz;
+      return (lx * dx + ly * dy + lz * dz) / (Math.hypot(lx, ly, lz) + 1e-6);
+    };
+    mb.ellip('head', [0, cy, 0], [sx * 1.03, sy * 1.03, sz * 1.03], {
+      ws: 14, hs: 10, color: 0xcfc2a0, region: CR.BONE, mottle: 0.25, mf: 30, blood: false, shape: craniumShape,
+      tear: { amt: 0, fn: (x, y, z) => dot(x, y, z) < cosR + 0.04 * fbm3(x * 80, y * 80, z * 80, 1, 5) },
+      tint(p, n, c) {
+        const d = dot(p.x, p.y, p.z);
+        if (d < cosRim) c.lerp(C_WOUND, clamp((cosRim - d) / (cosRim - cosR), 0, 1) * 0.9);
+      },
+    });
+  }
+  if (!human && L.cheekTear) {
+    // cheek torn open: dark cavity with the back teeth showing
+    const s = L.cheekTear;
+    mb.ellip('head', [s * sx * 0.66, cy - hr * 0.42, fz * 0.55], [hr * 0.13, hr * 0.14, hr * 0.26], {
+      ws: 6, hs: 4, color: C_MOUTH, region: CR.FLESH, ao: false, blood: false, mottle: 0.2,
+    });
+    for (let i = 0; i < 3; i++) {
+      mb.box('head', [s * sx * (0.7 - i * 0.03), cy - hr * 0.44, fz * (0.72 - i * 0.16)], [hr * 0.07, hr * 0.12, hr * 0.12], {
+        color: C_TEETH.clone().multiplyScalar(0.75 + i * 0.08), region: CR.BONE, ao: false, blood: false, mottle: 0.3, rot: [0, s * 0.3, 0],
+      });
+    }
   }
   // jaw (lower mandible) relative to jaw bone
   const jy = hb[1] + cy - jb[1];
@@ -216,14 +267,29 @@ function hair(mb, P, L) {
   const sx = hr * (L.headSX || 0.84), sy = hr * (L.headSY || 1.0), sz = hr * (L.headSZ || 1.06);
   mb.ellip('head', [0, cy + hr * 0.02, hr * 0.03], [sx * 1.07, sy * 1.06, sz * 1.07], {
     ws: 12, hs: 8, t0: 0, tl: PI * (h.cover || 0.52), color: h.color, region: CR.HAIR, mottle: 0.3,
-    tear: h.patchy ? { amt: h.patchy, f: 30, seed: h.seed || 3 } : null,
+    tear: h.ragged ? { amt: h.ragged, f: 30, seed: h.seed || 3 } : null,
     shape(v) {
       if (v.z < -sz * 0.5 && v.y < sy * 0.55) v.y += sy * 0.08; // hairline
     },
     blood: false,
   });
   if (h.long) {
-    mb.ellip('head', [0, cy - hr * 0.35, hr * 0.45], [sx * 0.95, sy * 0.8, sz * 0.55], { ws: 8, hs: 6, color: h.color, region: CR.HAIR, tear: h.patchy ? { amt: h.patchy * 0.7, f: 30, seed: 9 } : null });
+    mb.ellip('head', [0, cy - hr * 0.35, hr * 0.45], [sx * 0.95, sy * 0.8, sz * 0.55], { ws: 8, hs: 6, color: h.color, region: CR.HAIR, tear: h.ragged ? { amt: h.ragged * 0.7, f: 30, seed: 9 } : null });
+  }
+  if (h.strands) {
+    // lank, matted strands hanging from the back and sides of the scalp down to the shoulders
+    const rnd = mulberry32(h.seed || 21);
+    for (let i = 0; i < h.strands; i++) {
+      const a = ((i + 0.5) / h.strands - 0.5) * 4.2 + (rnd() - 0.5) * 0.3; // 0 = back of the head
+      const sa = Math.sin(a), ca = Math.cos(a);
+      const len = hr * (2.1 + rnd() * 0.7);
+      mb.tube('head', [
+        [sa * sx * 0.9, cy + hr * 0.25, ca * sz * 0.85],
+        [sa * sx * 1.08, cy - hr * 0.5, ca * sz * 1.02],
+        [sa * sx * 1.12, cy - len * 0.7, ca * sz * 0.98 + hr * 0.1],
+        [sa * sx * (1.05 + rnd() * 0.2), cy - len, ca * sz * 0.9 + hr * 0.18],
+      ], hr * (0.2 + rnd() * 0.08), hr * 0.05, { rs: 5, ts: 5, color: mulColor(h.color, 0.8 + rnd() * 0.4), region: CR.HAIR, blood: false });
+    }
   }
 }
 
@@ -305,6 +371,10 @@ function buildTorso(mb, P, L) {
   const pr = L.pants ? L.pants.region ?? CR.DENIM : L.skinRegion ?? CR.SKIN;
   mb.lathe('hips', [0, 0, 0], resample([[0.05, -0.125], [0.1, -0.11], [0.122, -0.07], [0.13, -0.01], [0.128, 0.05], [0.124, 0.1]], 6), {
     rs: 12, sx: 1.14 * w * (L.hipsW || 1), sz: 0.82 * (L.hipsD || 1), color: pc, region: pr,
+    shape(v) {
+      if (v.z > 0) v.z *= 1 + 0.16 * clamp(1 - Math.abs(v.y + 0.05) / 0.07, 0, 1) * (v.z / (Math.hypot(v.x, v.z) + 1e-6)); // glutes
+      else v.z *= 0.93; // flatter lower belly
+    },
   });
   if (L.pants && L.belt !== false) {
     mb.lathe('hips', [0, 0, 0], [[0.131, 0.06], [0.131, 0.09]], { rs: 10, sx: 1.15 * w * (L.hipsW || 1), sz: 0.83 * (L.hipsD || 1), color: 0x2a2018, region: CR.LEATHER });
@@ -320,8 +390,9 @@ function buildTorso(mb, P, L) {
   // collarbones / trapezius
   for (const s of [-1, 1]) {
     const dm = (L.deltoid || 1) * (L.shirt && L.shirt.sleeves ? 0.92 : 1);
-    if (!L.noDeltoid) mb.ellip('chest', [s * (P.shoulderW - 0.012), P.shoulderY - chestY + 0.005, 0.005], [0.062 * dm, 0.058 * dm, 0.064 * dm], {
-      ws: 7, hs: 5,
+    // deltoid cap: tapers down into the upper arm instead of sitting on it like a ball
+    if (!L.noDeltoid) mb.ellip('chest', [s * (P.shoulderW - 0.01), P.shoulderY - chestY - 0.004, 0.005], [0.057 * dm, 0.064 * dm, 0.06 * dm], {
+      ws: 7, hs: 5, rot: [0, 0, s * 0.25],
       color: L.shoulderCol ?? (L.shirt && L.shirt.sleeves && L.shirt.type !== 'tank' ? L.shirt.color : L.skin),
       region: L.shoulderReg ?? (L.shirt && L.shirt.sleeves && L.shirt.type !== 'tank' ? L.shirt.region ?? CR.CLOTH : L.skinRegion ?? CR.SKIN),
     });
@@ -345,6 +416,7 @@ function buildShirt(mb, P, L, T) {
   const fnC = (x, y, z) => {
     if (tank && Math.abs(x) > 0.1 && y > chestY + 0.02) return true;
     if (sh.open && z < -0.05 && Math.abs(x) < 0.05 + (y - spineY) * 0.1) return true;
+    if (sh.openBack && z > 0.04 && Math.abs(x) < 0.03 + (chestY + 0.1 - y) * 0.12) return true;
     return false;
   };
   const shellProf = T.chestProf.map(([r, y]) => [r * g + 0.004, y]);
@@ -367,15 +439,17 @@ function buildShirt(mb, P, L, T) {
   if (sh.sleeves && !tank) {
     for (const s of [-1, 1]) {
       const n = s < 0 ? 'L' : 'R';
-      const len = sh.sleeves === 2 ? P.uarmLen + 0.02 : P.uarmLen * 0.45;
-      const r = (L.armR || 0.045) * 1.22 + 0.006;
-      mb.seg('uarm' + n, [0, 0.02, 0], [0, -len, 0], r * 1.08, r * 0.95, {
-        rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true,
+      const long = sh.sleeves === 2;
+      const len = long ? P.uarmLen + 0.02 : P.uarmLen * 0.45;
+      // short sleeves hug the arm (a wide tube around a thin arm reads as a puffed sleeve)
+      const r = long ? (L.armR || 0.045) * 1.22 + 0.006 : (L.armR || 0.045) * 1.12 + 0.005;
+      mb.seg('uarm' + n, [0, 0.02, 0], [0, -len, 0], r * (long ? 1.08 : 1.03), r * (long ? 0.95 : 1.0), {
+        rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true, tint: sh.tint,
         tear: { amt: tear * 0.8, f: 14, seed: (sh.seed || 1) + s * 3, fn: (x, y) => y < P.shoulderY - len + 0.05 * fbm3(x * 30, y, 0, 1, 6) },
       });
-      if (sh.sleeves === 2) {
+      if (long && L.missingArm !== n) {
         mb.seg('farm' + n, [0, 0.03, 0], [0, -P.farmLen * 0.85, 0], r * 0.9, r * 0.78, {
-          rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true,
+          rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true, tint: sh.tint,
           tear: { amt: tear * 0.9, f: 14, seed: (sh.seed || 1) + s * 5, fn: (x, y) => y < P.elbowY - P.farmLen * 0.85 + 0.06 * fbm3(x * 30, y * 3, 0, 1, 8) },
         });
       }
@@ -393,21 +467,44 @@ function buildShirt(mb, P, L, T) {
   }
 }
 
-/** Arms + hands. */
+/** Arms + hands. L.missingArm ('L' | 'R') tears that arm off at the elbow. */
 function buildArms(mb, P, L) {
   const r1 = L.armR || 0.045;
   const reg = L.skinRegion ?? CR.SKIN;
+  const lean = clamp(L.gaunt ?? 0.4, 0, 1);
   for (const s of [-1, 1]) {
     const n = s < 0 ? 'L' : 'R';
-    mb.seg('uarm' + n, [0, 0.01, 0], [0, -P.uarmLen, 0], r1, r1 * 0.78, { rs: 7, hs: 2, color: L.armCol ?? L.skin, region: reg, sz: 0.92, noise: L.lumpy ? 0.006 : 0, nf: 30 });
+    // biceps/triceps belly mid upper arm; forearm muscle just below the elbow, thin wrist
+    mb.seg('uarm' + n, [0, 0.01, 0], [0, -P.uarmLen, 0], r1, r1 * 0.78, {
+      rs: 7, hs: 4, color: L.armCol ?? L.skin, region: reg, sz: 0.92, noise: L.lumpy ? 0.006 : 0, nf: 30,
+      prof: (t) => 1 + (0.12 - lean * 0.07) * Math.sin(clamp((t - 0.1) * 1.4, 0, 1) * PI),
+    });
+    if (L.missingArm === n) {
+      stump(mb, 'farm' + n, r1 * 0.8, 0.02);
+      continue;
+    }
     mb.seg('farm' + n, [0, 0.015, 0], [0, -P.farmLen, 0], r1 * (L.farmMul || 0.84), r1 * (L.wristMul || 0.6), {
-      rs: 7, hs: 2, color: L.skin, region: reg, sz: 0.82, noise: L.lumpy ? 0.005 : 0, nf: 30,
+      rs: 7, hs: 4, color: L.skin, region: reg, sz: 0.82, noise: L.lumpy ? 0.005 : 0, nf: 30,
+      prof: (t) => 1 + (0.14 - lean * 0.06) * Math.exp(-(((t - 0.22) / 0.22) ** 2)),
       tint: L.armTint,
     });
     // elbow knob
     mb.ellip('farm' + n, [0, 0.0, 0.012], [r1 * 0.75, r1 * 0.75, r1 * 0.75], { ws: 6, hs: 4, color: L.skin, region: reg });
+    if (L.wristband === n) {
+      mb.lathe('hand' + n, [0, 0.03, 0], [[r1 * 0.66, 0], [r1 * 0.68, 0.012], [r1 * 0.66, 0.024]], { rs: 8, sz: 0.85, color: 0xd8dcd4, region: CR.PLAIN, blood: false });
+    }
     buildHand(mb, 'hand' + n, s, P, L);
   }
+}
+
+/** Ragged, bloody limb stump with the bone poking out, at the joint of `bone` (hangs along -Y). */
+function stump(mb, bone, r, y) {
+  mb.ellip(bone, [0, y, 0], [r * 1.05, r * 0.9, r * 1.0], {
+    ws: 7, hs: 5, color: 0x5a1210, region: CR.FLESH, mottle: 0.3, noise: r * 0.12, nf: 60, blood: false,
+  });
+  mb.spike(bone, [0, y - r * 0.3, 0.003], [r * 0.12, y - r * 2.1, -0.004], r * 0.34, { rs: 5, color: 0xd8ccb0, region: CR.BONE, blood: false });
+  // dangling sinew
+  mb.tube(bone, [[-r * 0.4, y - r * 0.5, -r * 0.2], [-r * 0.5, y - r * 1.3, -r * 0.1], [-r * 0.3, y - r * 2.0, 0]], r * 0.13, r * 0.05, { rs: 4, ts: 3, color: 0x6a1a18, region: CR.FLESH, blood: false });
 }
 
 function buildHand(mb, bone, s, P, L) {
@@ -450,14 +547,17 @@ function buildLegs(mb, P, L) {
   const pants = L.pants;
   const tr = L.thighR || 0.078;
   const skinReg = L.skinRegion ?? CR.SKIN;
+  const lean = clamp(L.gaunt ?? 0.4, 0, 1); // wasted muscle on gaunt corpses
   for (const s of [-1, 1]) {
     const n = s < 0 ? 'L' : 'R';
     const pc = pants ? pants.color : L.skin;
     const preg = pants ? pants.region ?? CR.DENIM : skinReg;
     const shorts = pants && pants.shorts;
     const tearY = pants ? (pants.tearY ?? 0) : 99;
+    // quads bulge in the upper third, taper into the knee
     mb.seg('thigh' + n, [0, 0.05, 0], [0, -P.thighLen, 0], tr, tr * 0.68, {
-      rs: 8, hs: 3, color: shorts ? L.skin : pc, region: shorts ? skinReg : preg, sz: 0.95, noise: L.lumpy ? 0.008 : 0, nf: 25,
+      rs: 8, hs: 5, color: shorts ? L.skin : pc, region: shorts ? skinReg : preg, sz: 0.95, noise: L.lumpy ? 0.008 : 0, nf: 25,
+      prof: (t) => 1 + (0.1 - lean * 0.05) * Math.sin(Math.min(1, t * 1.5) * PI) - 0.06 * smooth((t - 0.8) / 0.2),
       tint: shorts
         ? (p, nn, c) => {
             if (p.y > P.thighY - P.thighLen * 0.45 + 0.05 * fbm3(p.x * 30, 0, p.z * 30, 1, 2)) c.copy(color(pc)).multiplyScalar(0.9);
@@ -465,18 +565,22 @@ function buildLegs(mb, P, L) {
         : pants && pants.tint,
     });
     const pantsLeg = pants && !shorts;
+    const shinTint = (p, nn, c) => {
+      if (pantsLeg && p.y < tearY + 0.07 * fbm3(p.x * 25, p.y * 4, p.z * 25, 2, 11 + s)) c.copy(color(L.skin)).multiplyScalar(0.62).lerp(C_BLOOD, 0.25 * fbm3(p.x * 40, p.y * 40, p.z * 40, 1, 3));
+      if (pants && pants.tint) pants.tint(p, nn, c);
+    };
+    // calf muscle high on the back of the shin, slim ankle
     mb.seg('shin' + n, [0, 0.03, 0], [0, -P.shinLen + 0.03, 0], tr * (pantsLeg ? 0.72 : 0.62), tr * (pantsLeg ? 0.6 : 0.44), {
-      rs: 8, hs: 3, color: pants && !shorts ? pc : L.skin, region: pants && !shorts ? preg : skinReg, sz: 0.95,
+      rs: 8, hs: 5, color: pantsLeg ? pc : L.skin, region: pantsLeg ? preg : skinReg, sz: 0.95,
+      prof: pantsLeg ? null : (t) => 1 + (0.1 - lean * 0.04) * Math.sin(Math.min(1, t * 2.2) * PI) - 0.08 * smooth((t - 0.75) / 0.25),
       shape(v) {
         if (v.z > 0 && v.y > -P.shinLen * 0.5) v.z *= 1.15; // calf
       },
-      tint(p, nn, c) {
-        if (pants && !shorts && p.y < tearY + 0.07 * fbm3(p.x * 25, p.y * 4, p.z * 25, 2, 11 + s)) c.copy(color(L.skin)).multiplyScalar(0.62).lerp(C_BLOOD, 0.25 * fbm3(p.x * 40, p.y * 40, p.z * 40, 1, 3));
-        if (pants && pants.tint) pants.tint(p, nn, c);
-      },
+      tint: shinTint,
     });
-    // knee cap (bare legs only)
+    // knee: kneecap on bare legs, a fabric knee on trousers (hides the thigh/shin seam when bent)
     if (!pantsLeg) mb.ellip('shin' + n, [0, 0.0, -0.02], [tr * 0.55, tr * 0.55, tr * 0.5], { ws: 6, hs: 4, color: L.skin, region: skinReg });
+    else mb.ellip('shin' + n, [0, 0.01, 0], [tr * 0.72, tr * 0.8, tr * 0.7], { ws: 7, hs: 5, color: pc, region: preg, tint: shinTint });
     // foot
     if (L.shoes) {
       mb.box('foot' + n, [0, -P.ankleY * 0.45, -0.045], [0.1 * (L.footW || 1), P.ankleY * 1.1 + 0.015, 0.26 * (L.footL || 1)], {
@@ -505,11 +609,30 @@ function pick(rnd, arr) {
   return arr[(rnd() * arr.length) | 0];
 }
 
+// Per-variant injuries (see buildHead / buildArms): they change the silhouette and the face, so a
+// horde of the same type still reads as individuals.
+const WALKER_HURTS = [
+  { cheekTear: -1 },
+  { skullPatch: [0.5, 0.75, 0.25, 0.62] },
+  { jawHang: 0.5, noEar: 1 },
+  { oneEye: 1 },
+  { missingArm: 'L' },
+  { skullPatch: [-0.55, 0.6, -0.15, 0.55], noEar: -1 },
+  { jawHang: 0.42, oneEye: -1 },
+  { cheekTear: 1, missingArm: 'R' },
+];
+
+// Who they were: outfits from the valley's farms, motels, hospital and roads (walker variants 8+).
+const WALKER_OUTFITS = ['farmer', 'hunter', 'patient', 'office', 'roadcrew', 'woman'];
+const WALKER_VARIANTS = 8 + WALKER_OUTFITS.length;
+
 function walkerLook(v) {
+  if (v >= 8) return outfitLook(v, WALKER_OUTFITS[(v - 8) % WALKER_OUTFITS.length]);
   const rnd = mulberry32(1000 + v * 7919);
   const skin = SKINS[v % SKINS.length];
   const sleeveT = [1, 2, 0, 1, 2, 1, 2, 1][v % 8];
   return {
+    ...WALKER_HURTS[v],
     skin, skinRegion: v % 3 === 1 ? CR.GORE : CR.SKIN, gaunt: 0.45 + rnd() * 0.35,
     shirt: v === 6 ? null : {
       color: SHIRTS[(v * 5 + 2) % SHIRTS.length], region: v % 4 === 3 ? CR.CANVAS : CR.CLOTH,
@@ -530,6 +653,92 @@ function walkerLook(v) {
     wound: v % 3 === 0,
     dirt: { y0: 0.5, k: 0.9 },
   };
+}
+
+function outfitLook(v, outfit) {
+  const rnd = mulberry32(1000 + v * 7919);
+  const L = {
+    skin: SKINS[(v * 5) % SKINS.length], skinRegion: v % 2 ? CR.GORE : CR.SKIN, gaunt: 0.45 + rnd() * 0.3,
+    pants: { color: 0x3b4a63, region: CR.DENIM, tearY: 0.05 + rnd() * 0.1 },
+    shoes: { color: 0x2e2218 },
+    hair: { color: HAIRC[v % HAIRC.length], patchy: 0.4 + rnd() * 0.2, cover: 0.5 },
+    eye: v % 2 ? 0xd8d4b0 : 0xa8a078, eyeGlow: 0,
+    ribs: 0.4,
+    missingTeeth: (rnd() * 64) | 0,
+    blood: [
+      [[0, 1.52, -0.1], 0.1, 1],
+      [[(rnd() - 0.5) * 0.2, 1.25 + rnd() * 0.1, -0.14], 0.1 + rnd() * 0.06, 0.9],
+      [[(rnd() - 0.5) * 0.3, 1.0, -0.12], 0.07, 0.8],
+    ],
+    dirt: { y0: 0.5, k: 0.9 },
+  };
+  switch (outfit) {
+    case 'farmer': // red flannel under denim bib overalls, feed cap
+      return Object.assign(L, {
+        shirt: { color: 0x8a2622, region: CR.PLAID, sleeves: 2, tear: 0.2, seed: 401, rags: 1, hem: 0.02 },
+        pants: { color: 0x34466a, region: CR.DENIM, tearY: 0.12 },
+        shoes: { color: 0x3a2a1c }, overalls: true, cap: { color: 0x3a5a2a, peak: 0xd8d0b8 },
+        hair: { color: 0x6a6258, patchy: 0.5, cover: 0.5 }, jawHang: 0.35,
+      });
+    case 'hunter': // olive shirt, blaze-orange vest + cap
+      return Object.assign(L, {
+        shirt: { color: 0x3e4430, region: CR.CANVAS, sleeves: 2, tear: 0.25, seed: 411, rags: 2, hem: 0.03 },
+        vest: { color: 0xd8561a, region: CR.CANVAS, sleeves: 0, thick: 1.15, tear: 0.12, seed: 413, hem: 0.0, loose: 1.08 },
+        pants: { color: 0x4a4434, region: CR.CANVAS, tearY: 0.2 }, shoes: { color: 0x3a2a1c },
+        cap: { color: 0xd8561a }, oneEye: -1, cheekTear: 1,
+      });
+    case 'patient': // hospital gown, bare legs and feet, ID wristband
+      return Object.assign(L, {
+        skin: 0x939a8c, skinRegion: CR.SKIN, gaunt: 0.8,
+        shirt: { color: 0x9ab8b4, region: CR.CLOTH, sleeves: 1, tear: 0.12, seed: 421, rags: 0, hem: -0.02, openBack: true },
+        gown: true, pants: null, shoes: null, wristband: 'L',
+        hair: { color: 0x2a2420, patchy: 0.75, cover: 0.45 }, eye: 0xe0e0d0,
+        skullPatch: [0.1, 0.8, 0.45, 0.5], ribs: 0.6,
+        blood: [[[0, 1.3, -0.14], 0.12, 0.9], [[0.05, 1.0, -0.13], 0.1, 0.8], [[-0.1, 0.55, -0.05], 0.08, 0.7]],
+      });
+    case 'office': // white shirt, tie, charcoal slacks, dress shoes
+      return Object.assign(L, {
+        shirt: {
+          color: 0xc8c4b8, region: CR.CLOTH, sleeves: 2, tear: 0.16, seed: 431, rags: 1, hem: 0.0,
+          tint(p, n, c) {
+            if (Math.abs(p.x) < 0.008 && p.z < -0.08) c.multiplyScalar(0.7); // button placket
+          },
+        },
+        tie: 0x5a1a24, collar: true,
+        pants: { color: 0x2a2c30, region: CR.CLOTH, tearY: 0.06 }, shoes: { color: 0x141210 },
+        hair: { color: 0x1d1510, patchy: 0.25, cover: 0.52 }, cheekTear: -1, noEar: 1,
+        blood: [[[0, 1.5, -0.12], 0.14, 1], [[0.06, 1.28, -0.15], 0.14, 1], [[-0.08, 1.12, -0.14], 0.1, 0.9]],
+      });
+    case 'roadcrew': // grey tee, hi-vis vest with reflective tape, hard hat
+      return Object.assign(L, {
+        shirt: { color: 0x5a5a58, region: CR.CLOTH, sleeves: 1, tear: 0.25, seed: 441, rags: 2, hem: 0.03 },
+        vest: { color: 0xb8d420, region: CR.CANVAS, sleeves: 0, thick: 1.15, tear: 0.1, seed: 443, hem: 0.0, loose: 1.08, stripes: true },
+        pants: { color: 0x3b4a63, region: CR.DENIM, tearY: 0.1 }, shoes: { color: 0x3a2a1c },
+        hardHat: 0xe0a818, hair: null, oneEye: 1,
+      });
+    case 'woman': // long lank hair, tank top, jeans, sneakers
+      return Object.assign(L, {
+        body: { shoulderW: 0.17, hipW: 0.1, headR: 0.098, uarmLen: 0.28, farmLen: 0.25 },
+        chestR: 0.15, hipsW: 1.1, armR: 0.041, thighR: 0.076, neckR: 0.043,
+        shirt: { color: 0x6a3a5a, region: CR.CLOTH, type: 'tank', tear: 0.2, seed: 451, rags: 2, hem: 0.0 },
+        pants: { color: 0x4a5a7a, region: CR.DENIM, tearY: 0.25 }, shoes: { color: 0x9a968c, region: CR.CANVAS },
+        hair: { color: 0x3a2418, cover: 0.56, long: true, ragged: 0.12, strands: 9, seed: 23 },
+        jawHang: 0.4,
+      });
+  }
+  return L;
+}
+
+/** Radius of a lathe profile [[r, y], ...] at height y (linear). */
+function profR(prof, y) {
+  if (y <= prof[0][1]) return prof[0][0];
+  for (let i = 1; i < prof.length; i++) {
+    if (y <= prof[i][1]) {
+      const a = prof[i - 1], b = prof[i];
+      return a[0] + ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1] || 1);
+    }
+  }
+  return prof[prof.length - 1][0];
 }
 
 // ------------------------------------------------------------------ type builders
@@ -567,13 +776,99 @@ function exposedRibs(mb, P, side, y0, n, L, T) {
 }
 
 function buildWalker(v) {
-  const P = humanP({ headR: 0.102, neckLen: 0.1 });
   const L = walkerLook(v);
+  const P = humanP({ headR: 0.102, neckLen: 0.1, ...L.body });
   const mb = new MeshBuilder();
   const T = standardHumanoid(mb, P, L);
   if (L.ribs > 0.8) exposedRibs(mb, P, v % 2 ? 1 : -1, -0.06, 4, L, T);
   if (L.wound) (L.wounds || (L.wounds = [])).push([0.07, P.spineY + 0.03, -0.1, 0.06]);
-  return { mb, P };
+  outfitParts(mb, P, L, T);
+  return { mb, P, A: L.jawHang ? { jawHang: L.jawHang } : null };
+}
+
+/** Outfit accessories layered over the standard body (walker outfits, see outfitLook). */
+function outfitParts(mb, P, L, T) {
+  const hr = P.headR;
+  const sx = hr * (L.headSX || 0.84), sz = hr * (L.headSZ || 1.06);
+  const chestY = P.chestY, spineY = P.spineY;
+  if (L.vest) {
+    buildShirt(mb, P, { ...L, shirt: L.vest }, T);
+    if (L.vest.stripes) {
+      // reflective tape: two bands around the vest, faintly self-lit so they catch the eye at night
+      const g = L.vest.thick;
+      const openFront = (x, y, z) => L.vest.open && z < -0.05 && Math.abs(x) < 0.05 + (y - spineY) * 0.1 + 0.012;
+      const band = (bone, prof, y, sxk, szk, grow) => {
+        const r = profR(prof, y) * g + grow;
+        mb.lathe(bone, [0, 0, 0], [[r, y - 0.018], [r + 0.001, y], [r, y + 0.018]], {
+          rs: 12, sx: sxk, sz: szk, color: 0xd8d8cc, region: CR.PLAIN, glow: 0.35, mottle: 0.1, blood: false, double: true,
+          tear: { amt: 0, fn: openFront },
+        });
+      };
+      band('chest', T.chestProf, 0.03, T.sxC, T.szC, 0.008);
+      band('spine', resample(T.abCtrl, 7), 0.0, T.sxA * (L.vest.loose || 1.02), T.szA * (L.vest.loose || 1.04), 0.013);
+    }
+  }
+  if (L.overalls) {
+    // denim bib + straps; the trousers carry the rest of the overalls
+    const col = L.pants.color, g = 1.13;
+    const bib = (x, y, z) => z < -0.02 && Math.abs(x) < 0.1 + 0.01 * fbm3(x * 40, y * 40, 0, 1, 2) && y < chestY + 0.075;
+    mb.lathe('chest', [0, 0, 0], T.chestProf.slice(0, 8).map(([r, y]) => [r * g + 0.006, y]), {
+      rs: 12, sx: T.sxC, sz: T.szC, color: col, region: CR.DENIM, double: true, tear: { amt: 0, fn: (x, y, z) => !bib(x, y, z) },
+    });
+    const ab = resample(T.abCtrl, 7).map(([r, y]) => [r * g + 0.012, y]);
+    mb.lathe('spine', [0, 0, 0], ab, {
+      rs: 12, sx: T.sxA * 1.04, sz: T.szA * 1.06, color: col, region: CR.DENIM,
+      tear: { amt: 0.12, f: 12, seed: 7, fn: (x, y, z) => y > spineY - 0.06 && !bib(x, y, z) },
+    });
+    const zf = -(profR(T.chestProf, 0.075) * g + 0.01) * T.szC;
+    const zb = (profR(T.chestProf, 0.0) * g + 0.01) * T.szC;
+    const top = T.top;
+    for (const s of [-1, 1]) {
+      mb.tube('chest', [
+        [s * 0.085, 0.07, zf], [s * 0.1, top - 0.05, zf * 0.7], [s * 0.105, top - 0.02, 0.0], [s * 0.095, top - 0.06, zb * 0.8], [s * 0.06, -0.02, zb],
+      ], 0.012, 0.012, { rs: 4, ts: 10, color: col, region: CR.DENIM, cap: false });
+      mb.ellip('chest', [s * 0.085, 0.07, zf - 0.006], [0.012, 0.012, 0.006], { ws: 5, hs: 3, color: 0x8a8a80, region: CR.PLAIN, blood: false });
+    }
+  }
+  if (L.collar) {
+    mb.lathe('chest', [0, T.top - 0.035, 0.0], [[0.072, 0], [0.08, 0.028], [0.078, 0.05]], {
+      rs: 10, sx: 1.2, sz: 1.08, color: L.shirt.color, region: CR.CLOTH, double: true,
+      tear: { amt: 0, fn: (x, y, z) => z < -0.06 && Math.abs(x) < 0.015 },
+    });
+  }
+  if (L.tie) {
+    // knot at the collar, blade lying on the shirt front down to the sternum
+    const g = L.shirt.thick || 1.07;
+    const pts = [T.top - 0.04, 0.12, 0.03, -0.06].map((y) => [0, y, -(profR(T.chestProf, y) * g + 0.01) * T.szC - (y > 0.15 ? 0.012 : 0)]);
+    mb.ellip('chest', [0, pts[0][1] - 0.004, pts[0][2] - 0.004], [0.012, 0.013, 0.01], { ws: 6, hs: 4, color: L.tie, region: CR.CLOTH });
+    for (let i = 0; i < 3; i++) {
+      mb.seg('chest', pts[i], pts[i + 1], 0.006 + i * 0.003, 0.008 + i * 0.003, { rs: 6, hs: 1, caps: i === 2 ? 1 : 0, capScale: 1.5, sx: 2.2, sz: 0.3, color: L.tie, region: CR.CLOTH });
+    }
+  }
+  if (L.gown) {
+    // gown skirt hangs from the pelvis, flared so striding thighs stay inside; open at the back
+    mb.lathe('hips', [0, 0, 0], [[0.2, -0.3], [0.18, -0.14], [0.162, -0.02], [0.158, 0.06]], {
+      rs: 12, sx: 1.14 * (L.hipsW || 1), sz: 0.98, color: L.shirt.color, region: CR.CLOTH, double: true, mottle: 0.2,
+      tear: { amt: 0.12, f: 11, seed: 427, fn: (x, y, z) => (z > 0.05 && Math.abs(x) < 0.03 + (P.hipY - y) * 0.2) || y < P.hipY - 0.3 + 0.06 * fbm3(x * 20, 0, z * 20, 2, 4) },
+    });
+  }
+  if (L.cap) {
+    const c = L.cap.color;
+    const front = L.cap.peak && color(L.cap.peak);
+    mb.ellip('head', [0, hr * 1.02, 0.01], [sx * 1.1, hr * 0.8, sz * 0.95], {
+      ws: 10, hs: 6, t0: 0, tl: PI * 0.5, color: c, region: CR.CANVAS, rot: [0.08, 0, 0.06],
+      tint: front && ((p, n, cc) => { if (n.z < -0.5 && n.y < 0.8) cc.copy(front); }), // feed cap: pale front panel
+    });
+    mb.box('head', [0, hr * 1.1, -hr * 1.1], [hr * 1.3, 0.01, hr * 0.66], { color: mulColor(c, 0.85), region: CR.CANVAS, rot: [0.16, 0, 0.06] });
+  }
+  if (L.hardHat) {
+    const c = L.hardHat;
+    mb.ellip('head', [0, hr * 1.12, 0.005], [sx * 1.18, hr * 0.86, sz * 1.1], { ws: 12, hs: 6, t0: 0, tl: PI * 0.5, color: c, region: CR.PLAIN, mottle: 0.15, rot: [0.1, 0, -0.08] });
+    mb.lathe('head', [0, hr * 1.1, -hr * 0.08], [[sx * 1.1, 0.0], [sx * 1.42, -0.008], [sx * 1.42, 0.0], [sx * 1.1, 0.012]], {
+      rs: 14, sz: 1.14, color: mulColor(c, 0.9), region: CR.PLAIN, rot: [0.1, 0, -0.08],
+    });
+    mb.box('head', [0, hr * 1.95, 0.0], [hr * 0.22, hr * 0.12, sz * 1.8], { round: 0.5, color: mulColor(c, 0.95), region: CR.PLAIN, rot: [0.1, 0, -0.08] });
+  }
 }
 
 function buildRunner(v) {
@@ -587,11 +882,12 @@ function buildRunner(v) {
     eye: 0xe0d890, eyeGlow: 0.3, socket: 0.22, fingerMul: 1.15, claws: 0.02, curl: 0.7,
     blood: [[[0, 1.5, -0.1], 0.12, 1], [[0.05, 1.2, -0.13], 0.15, 1], [[-0.1, 0.95, -0.1], 0.1, 1], [[0.17, 0.8, 0], 0.08, 1]],
     missingTeeth: 0x12, fang: true,
+    ...[{ cheekTear: 1 }, { skullPatch: [-0.3, 0.8, 0.35, 0.6] }, { oneEye: -1, noEar: 1, jawHang: 0.25 }][v % 3],
   };
   const mb = new MeshBuilder();
   const T = standardHumanoid(mb, P, L);
   exposedRibs(mb, P, -1, -0.07, 4, L, T);
-  return { mb, P };
+  return { mb, P, A: L.jawHang ? { jawHang: L.jawHang } : null };
 }
 
 function buildSpitter() {
@@ -724,22 +1020,30 @@ function buildBoomer() {
   mb.ellip('chest', [0, 0.02, 0.04], [0.3, 0.26, 0.26], { ws: 12, hs: 8, color: 0xa8a468, region: CR.SKIN, noise: 0.015, nf: 12, torso: true });
   // neck fat roll
   mb.lathe('neck', [0, 0, 0], [[0.1, -0.06], [0.14, 0.0], [0.13, 0.05], [0.09, 0.08]], { rs: 10, sx: 1.2, color: 0xa8a468, region: CR.SKIN });
-  // pustules
+  // pustules: swollen blisters facing out of the skin, pale shiny cap over an inflamed rim
   const rnd = mulberry32(99);
+  const C_RIM = color(0x8a3024);
+  const blister = (bone, c, nrm, r, cap) => {
+    const nv = new THREE.Vector3(nrm[0], nrm[1], nrm[2]).normalize();
+    mb.ellip(bone, c, [r, r, r * 0.62], {
+      ws: 7, hs: 5, color: cap, region: CR.GLOW, glow: 0.12, mottle: 0.15, blood: false,
+      q: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), nv),
+      tint(p, n, cc) {
+        cc.lerp(C_RIM, clamp((0.75 - (n.x * nv.x + n.y * nv.y + n.z * nv.z)) * 1.6, 0, 0.85));
+      },
+    });
+  };
   for (let i = 0; i < 7; i++) {
     const a = (rnd() - 0.5) * 2.8, y = (rnd() - 0.5) * 0.5;
     const r = 0.025 + rnd() * 0.04;
-    const x = Math.sin(a) * 0.36 * Math.sqrt(1 - (y / 0.36) ** 2 * 0.5), z = -Math.cos(a) * 0.33 * Math.sqrt(1 - (y / 0.36) ** 2 * 0.5) - 0.06;
-    mb.ellip('belly', [x, y, z], [r, r, r * 0.7], {
-      ws: 6, hs: 5, color: rnd() < 0.5 ? 0x9a9050 : 0x8a7a48, region: CR.TUMOR, glow: 0.05, mottle: 0.2, blood: false,
-      tint(p, n, c) {
-        c.lerp(color(0x7a2a20), clamp(0.5 - Math.abs(n.z) * 0.6, 0, 0.5));
-      },
-    });
+    const k = Math.sqrt(1 - (y / 0.36) ** 2 * 0.5);
+    const x = Math.sin(a) * 0.36 * k, z = -Math.cos(a) * 0.33 * k - 0.06;
+    blister('belly', [x, y, z], [x / 0.36, y / 0.34, (z + 0.06) / 0.33], r, rnd() < 0.5 ? 0xc8c070 : 0xb8b468);
   }
   for (let i = 0; i < 5; i++) {
     const a = (rnd() - 0.5) * 3.5, y = 0.05 + rnd() * 0.2, r = 0.02 + rnd() * 0.025;
-    mb.ellip('chest', [Math.sin(a) * 0.3, y, -Math.cos(a) * 0.25], [r, r, r * 0.7], { ws: 6, hs: 4, color: 0x8a8048, region: CR.TUMOR, glow: 0.04, blood: false });
+    const x = Math.sin(a) * 0.3, z = -Math.cos(a) * 0.25;
+    blister('chest', [x, y, z], [x / 0.3, 0.2, z / 0.25], r, 0xb8b060);
   }
   return { mb, P };
 }
@@ -1059,16 +1363,18 @@ const BUILDERS = {
   [ZTYPE.BOSS_ABOMINATION]: buildAbomination,
   [ZTYPE.BOSS_HIVEQUEEN]: buildHiveQueen,
 };
-const VARIANTS = { [ZTYPE.WALKER]: 8, [ZTYPE.RUNNER]: 3 };
+const VARIANTS = { [ZTYPE.WALKER]: WALKER_VARIANTS, [ZTYPE.RUNNER]: 3 };
+const NO_EXTRAS = {};
 
 const rigCache = new Map();
 function getRig(type, variant) {
   const key = type + ':' + variant;
   let r = rigCache.get(key);
   if (!r) {
-    const { mb, P } = BUILDERS[type](variant);
+    const { mb, P, A } = BUILDERS[type](variant);
     r = mb.build();
     r.P = P;
+    r.A = A || NO_EXTRAS; // per-variant animation quirks (e.g. dislocated jaw)
     r.type = type;
     rigCache.set(key, r);
   }
@@ -1718,6 +2024,8 @@ function poseHumanoid(z) {
     default: poseIdle(z, p); break;
   }
   poseExtras(z, p);
+  const jh = z.A ? z.A.jawHang : 0; // survivor zombie-mode state has no per-variant extras
+  if (jh) A(p, JAW, -jh, 0, z.tilt * jh * 0.35); // dislocated jaw hangs open and askew
   if (z.state !== ZANIM.DEAD && z.state !== ZANIM.EAT) {
     // keep the head over the object origin (server head hitbox is centered on the entity axis)
     p[z.nb * 4 + 2] -= headForward(z, p);
@@ -1879,6 +2187,7 @@ class ZombieInstance {
     this.seed = seed >>> 0;
     this.rig = rig;
     this.P = rig.P;
+    this.A = rig.A;
     this.st = ZS[type] || ZS[ZTYPE.WALKER];
     this.isBat = type === ZTYPE.BAT;
     const rnd = mulberry32(this.seed * 2654435761 + type);
@@ -2027,6 +2336,11 @@ class ZombieInstance {
     this.skeleton.dispose();
     if (this.object.parent) this.object.parent.remove(this.object);
   }
+}
+
+/** Number of cached model variants for a zombie type (the seed passed to createZombie picks one). */
+export function zombieVariants(ztype) {
+  return VARIANTS[ztype] || 1;
 }
 
 /**

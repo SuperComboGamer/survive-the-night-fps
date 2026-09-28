@@ -62,7 +62,7 @@ export const CR = {
   SKIN: 0, GORE: 1, CLOTH: 2, DENIM: 3,
   KNIT: 4, LEATHER: 5, FLESH: 6, BONE: 7,
   HAIR: 8, MEMBRANE: 9, CANVAS: 10, CHITIN: 11,
-  GLOW: 12, RUBBER: 13, TUMOR: 14, PLAIN: 15,
+  GLOW: 12, PLAID: 13, TUMOR: 14, PLAIN: 15,
 };
 /** Weapon atlas regions. */
 export const WR = {
@@ -441,16 +441,22 @@ const CHAR_PAINTERS = {
     veins(ctx, rnd, 16, 'rgba(20,30,10,0.8)', 3, 80);
     blotches(ctx, rnd, 10, '255,255,255', 0.5, 6, 20);
   },
-  [CR.RUBBER](ctx, rnd) {
+  [CR.PLAID](ctx, rnd) {
+    // grey flannel check (hue comes from the vertex color): 8 columns x 4 rows because lathe UVs wrap
+    // once around the torso but only span its height
     pixelFill(ctx, (x, y, o) => {
-      const n = n2(x, y, 0.08, 131, 3);
-      const tread = (y % 12 < 3 ? -20 : 0);
-      const v = 120 + tread + (n - 0.5) * 50;
-      o[0] = v + 5;
-      o[1] = v;
-      o[2] = v - 5;
+      const u = (x % 32) / 32, v = (y % 64) / 64;
+      const bu = u < 0.42 ? 1 : 0, bv = v < 0.42 ? 1 : 0;
+      const line = (Math.abs(u - 0.71) < 0.035 ? 1 : 0) + (Math.abs(v - 0.71) < 0.02 ? 1 : 0);
+      const weave = (x + y) % 3 === 0 ? -8 : 0;
+      const n = n2(x, y, 0.03, 131, 3);
+      const k = 215 - bu * 60 - bv * 60 - bu * bv * 25 + line * 25 + weave + (n - 0.5) * 36;
+      o[0] = k + 4;
+      o[1] = k;
+      o[2] = k - 4;
     });
-    blotches(ctx, rnd, 15, '60,45,25', 0.5, 10, 35); // mud
+    blotches(ctx, rnd, 10, '60,45,30', 0.35, 12, 40); // grime
+    for (let i = 0; i < 8; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 3 + rnd() * 8, `rgba(${60 + rnd() * 40 | 0},5,5,0.8)`, 3);
   },
   [CR.TUMOR](ctx, rnd) {
     // voronoi-ish bumps
@@ -463,18 +469,19 @@ const CHAR_PAINTERS = {
         if (d < d1) { d2 = d1; d1 = d; w = p[2]; } else if (d < d2) d2 = d;
       }
       const e = Math.sqrt(d2) - Math.sqrt(d1);
-      const bump = Math.min(1, e / 14);
+      const bump = Math.sqrt(Math.min(1, e / 16));
       const n = n2(x, y, 0.05, 141, 3);
-      o[0] = 120 + bump * 110 * w + (n - 0.5) * 30;
-      o[1] = 90 + bump * 100 * w + (n - 0.5) * 30;
-      o[2] = 60 + bump * 50 + (n - 0.5) * 20;
+      o[0] = 80 + bump * 150 * w + (n - 0.5) * 30;
+      o[1] = 22 + bump * 170 * w + (n - 0.5) * 26;
+      o[2] = 30 + bump * 160 * w + (n - 0.5) * 20;
     });
-    for (let i = 0; i < 10; i++) {
-      const x = rnd() * CELL, y = rnd() * CELL, r = 3 + rnd() * 5;
+    veins(ctx, rnd, 10, 'rgba(70,10,30,0.55)', 1.6, 50);
+    for (let i = 0; i < 6; i++) {
+      const x = rnd() * CELL, y = rnd() * CELL, r = 2 + rnd() * 4;
       const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
-      g.addColorStop(0, 'rgba(255,250,170,0.95)');
-      g.addColorStop(0.6, 'rgba(210,190,60,0.8)');
-      g.addColorStop(1, 'rgba(140,40,30,0)');
+      g.addColorStop(0, 'rgba(240,235,180,0.9)');
+      g.addColorStop(0.6, 'rgba(190,170,90,0.7)');
+      g.addColorStop(1, 'rgba(120,30,30,0)');
       ctx.fillStyle = g;
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }

@@ -7,7 +7,7 @@
 //   ?cam=side|back|top   camera angle;  ?t=SECONDS fixed clock;  ?zoom=F
 import * as THREE from 'three';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, ITEM } from '../../shared/defs.js';
-import { createZombie, createSurvivor, modelStats } from '../render/models/characters.js';
+import { createZombie, createSurvivor, modelStats, zombieVariants } from '../render/models/characters.js';
 import { MeshBuilder } from '../render/models/skinning.js';
 MeshBuilder.debugNaN = true;
 MeshBuilder.debugStats = new URLSearchParams(location.search).get('tstats') === '1';
@@ -123,16 +123,18 @@ if (q.get('surv') === '1' || only === 'surv') {
   target.set(0, 1.0, 0);
   dist = n <= 4 ? 5.5 : 12;
 } else if (q.has('variants')) {
-  // one instance per cached variant of a type (walker: 8, runner: 3)
+  // one instance per cached variant of a type (?from=A&to=B picks a range)
   const t = +q.get('variants');
-  const nv = t === ZTYPE.WALKER ? 8 : t === ZTYPE.RUNNER ? 3 : 1;
-  for (let v = 0; v < nv; v++) {
+  const nv = zombieVariants(t);
+  const v0 = q.has('from') ? +q.get('from') : 0, v1 = q.has('to') ? Math.min(nv - 1, +q.get('to')) : nv - 1;
+  const n = v1 - v0 + 1;
+  for (let v = v0; v <= v1; v++) {
     let seed = 1;
     while ((((seed >>> 0) * 2654435761) >>> 0) % nv !== v) seed++;
-    addZombie(t, seed, (v - (nv - 1) / 2) * 1.1, 0);
+    addZombie(t, seed, (v - v0 - (n - 1) / 2) * 1.1, 0);
   }
   target.set(0, 1.0, 0);
-  dist = nv * 1.25;
+  dist = Math.max(3, n * 1.25);
 } else if (q.has('stress')) {
   // performance: N mixed zombies in a grid, all animating
   const N = +q.get('stress') || 80;
