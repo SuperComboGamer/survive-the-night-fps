@@ -91,7 +91,7 @@ https://www.survivethenightgame.com.
 | F | Flashlight (battery drains, recharges when off) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / medkit; a medkit gets you up when downed) |
-| Tab | Inventory + crafting |
+| Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
 | Enter | Chat |
 | V | Push-to-talk proximity voice |
 | Build mode | LMB place · RMB rotate · R / wheel cycle · E repair · X demolish |

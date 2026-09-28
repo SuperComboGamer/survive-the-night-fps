@@ -3092,8 +3092,125 @@ body {
   animation: stn-flame 1.6s ease-in-out infinite alternate;
 }
 
+/* the crafting column takes the height of its neighbours (the recipe list scrolls inside it), so
+   switching tabs never resizes it and the screen doesn't jump */
+.stn-ui .inv-right {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+
+.stn-ui .craft-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: calc(4 * var(--u));
+  margin-bottom: calc(12 * var(--u));
+}
+
+.stn-ui .ct-key {
+  flex: none;
+  align-self: center;
+  opacity: 0.5;
+}
+
+.stn-ui .ct {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(5 * var(--u));
+  padding: calc(7 * var(--u)) calc(2 * var(--u)) calc(6 * var(--u));
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(230, 223, 207, 0.08);
+  color: var(--bone-dim);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+/* category colour strip, like the backpack cells */
+.stn-ui .ct::after {
+  content: '';
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: -1px;
+  height: 2px;
+  background: var(--cat, var(--bone));
+  opacity: 0.35;
+  transition: opacity 0.12s, left 0.12s, right 0.12s;
+}
+
+.stn-ui .ct:hover {
+  color: var(--bone);
+  border-color: rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .ct.on {
+  color: #f4eddd;
+  background: rgba(230, 223, 207, 0.08);
+  border-color: rgba(230, 223, 207, 0.35);
+}
+
+.stn-ui .ct.on::after {
+  left: -1px;
+  right: -1px;
+  opacity: 1;
+}
+
+.stn-ui .ct-ico {
+  width: calc(36 * var(--u));
+  height: calc(26 * var(--u));
+  min-width: 27px;
+  min-height: 20px;
+  opacity: 0.6;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+  transition: opacity 0.12s;
+}
+
+.stn-ui .ct-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .ct:hover .ct-ico,
+.stn-ui .ct.on .ct-ico {
+  opacity: 1;
+}
+
+.stn-ui .ct-lab {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: max(8px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* how many recipes in the tab can be crafted right now */
+.stn-ui .ct-n {
+  position: absolute;
+  top: calc(3 * var(--u));
+  right: calc(3 * var(--u));
+  min-width: calc(15 * var(--u));
+  padding: calc(2 * var(--u)) calc(3 * var(--u));
+  border-radius: 999px;
+  background: rgba(232, 163, 61, 0.16);
+  border: 1px solid rgba(232, 163, 61, 0.5);
+  font: max(8px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  text-align: center;
+  color: var(--amber);
+}
+
+.stn-ui .ct-n:empty {
+  display: none;
+}
+
 .stn-ui .craft-list {
-  max-height: calc(100vh - 170 * var(--u));
+  flex: 1 1 auto;
+  height: 0;
   overflow-y: auto;
   margin-right: calc(-8 * var(--u));
   padding-right: calc(8 * var(--u));

@@ -2,20 +2,39 @@
 // crafting on the right; survivors + car checklist + campfire under the grid.
 import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
-import { el, svgEl, clamp, fmtTime } from './dom.js';
+import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
 const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308];
-const GROUPS = [
-  { title: 'Survival', cats: ['cons', 'res'] },
-  { title: 'Weapons', cats: ['weapon'] },
-  { title: 'Throwables', cats: ['throw'] },
-  { title: 'Armor', cats: ['armor'] },
-  { title: 'Ammunition', cats: ['ammo'] },
+// Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
+// icon: item shown on the tab; cat: item category whose colour marks the tab (defaults to the id).
+const CRAFT_TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'weapon', label: 'Weapons', icon: ITEM.PISTOL },
+  { id: 'ammo', label: 'Ammo', icon: ITEM.AMMO_SHELLS },
+  { id: 'throw', label: 'Throwables', icon: ITEM.MOLOTOV },
+  { id: 'armor', label: 'Armor', icon: ITEM.KEVLAR },
+  { id: 'med', label: 'Medical', icon: ITEM.MEDKIT, cat: 'cons' },
+  { id: 'util', label: 'Utility', icon: ITEM.ROPE, cat: 'res' },
 ];
+const TAB_KEY = 'stn.craftTab';
 const STATION_GLYPH = { fire: 'campfire', bench: 'wrench' };
+
+// Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, and
+// consumables split into medicine (anything that heals) and utility (torches, batteries), which
+// shares a tab with the raw materials.
+function craftTab(item) {
+  const cat = ITEM_DEFS[item]?.cat;
+  if (item === ITEM.HAMMER) return 'util';
+  if (cat === 'cons') return CONSUMABLES[item]?.heal ? 'med' : 'util';
+  return CRAFT_TABS.some((t) => t.id === cat) ? cat : 'util';
+}
+
+// order inside a tab: tools, then consumables, then materials (stable, so recipe order breaks ties)
+const CAT_RANK = { weapon: 0, cons: 1 };
+const craftRank = (r) => CAT_RANK[ITEM_DEFS[r.out]?.cat] ?? 2;
 
 function statLines(id) {
   const d = ITEM_DEFS[id];
@@ -226,13 +245,24 @@ export class Inventory {
     this.stationEl = el('span', 'station', ch);
     this.stationIco = svgEl('i', 'st-ico', this.stationEl, glyph('campfire'));
     this.stationTxt = el('span', '', this.stationEl, '');
-    const list = el('div', 'craft-list', right);
+    const tabBar = (this.tabBar = el('div', 'craft-tabs', right));
+    el('span', 'kbd sm ct-key', tabBar, 'Q');
+    const list = (this.craftList = el('div', 'craft-list', right));
     this.recipeEls = [];
-    for (const g of GROUPS) {
-      const recs = RECIPES.filter((r) => g.cats.includes(ITEM_DEFS[r.out]?.cat));
-      if (!recs.length) continue;
-      el('div', 'craft-group', list, g.title);
-      const gg = el('div', 'craft-grid', list);
+    this.tabs = [];
+    for (const t of CRAFT_TABS) {
+      const recs = t.id === 'all' ? null : RECIPES.filter((r) => craftTab(r.out) === t.id).sort((a, b) => craftRank(a) - craftRank(b));
+      if (recs && !recs.length) continue;
+      const tb = el('button', 'ct c-' + (t.cat || t.id), tabBar);
+      tb.type = 'button';
+      tb.dataset.tab = t.id;
+      svgEl('i', 'ct-ico', tb, t.icon ? itemIcon(t.icon) : glyph('grid'));
+      el('span', 'ct-lab', tb, t.label);
+      const tab = { id: t.id, b: tb, n: el('span', 'ct-n', tb), ready: -1, head: null, grid: null };
+      this.tabs.push(tab);
+      if (!recs) continue;
+      tab.head = el('div', 'craft-group', list, t.label);
+      const gg = (tab.grid = el('div', 'craft-grid', list));
       for (const r of recs) {
         const b = el('button', 'rc', gg);
         b.type = 'button';
@@ -259,11 +289,13 @@ export class Inventory {
           lock = svgEl('i', 'rc-lock', b, glyph('lock'));
           lock.title = `Needs the ${ITEM_DEFS[r.schem].name}`;
         }
-        this.recipeEls.push({ r, b, ings, st, lock, key: '' });
+        this.recipeEls.push({ r, tab, b, ings, st, lock, key: '' });
       }
     }
+    el('span', 'kbd sm ct-key', tabBar, 'E');
 
     this._bind(root, wrap);
+    this._setTab(lsGet(TAB_KEY, 'all'));
     this._renderAll();
   }
 
@@ -380,8 +412,27 @@ export class Inventory {
       }
     });
 
+    // crafting tabs: click, or Q / E to step through them while the screen is open
+    this.tabBar.addEventListener('click', (e) => {
+      const b = e.target.closest('.ct');
+      if (!b || b.dataset.tab === this.tab) return;
+      this.ui.sound('ui_click');
+      this._setTab(b.dataset.tab);
+    });
+    this._key = (e) => {
+      if (!this.open || e.repeat || e.ctrlKey || e.metaKey || e.altKey || this.ui.isTyping()) return;
+      const dir = e.code === 'KeyQ' ? -1 : e.code === 'KeyE' ? 1 : 0;
+      if (!dir) return;
+      e.preventDefault();
+      const n = this.tabs.length;
+      const i = this.tabs.findIndex((t) => t.id === this.tab);
+      this.ui.sound('ui_click');
+      this._setTab(this.tabs[(i + dir + n) % n].id);
+    };
+    window.addEventListener('keydown', this._key);
+
     // crafting
-    root.querySelector('.craft-list').addEventListener('click', (e) => {
+    this.craftList.addEventListener('click', (e) => {
       const b = e.target.closest('.rc');
       if (!b) return;
       const rec = this.recipeEls.find((x) => x.b === b);
@@ -613,12 +664,31 @@ export class Inventory {
     cell.n.textContent = s && s.count > 1 ? String(s.count) : '';
   }
 
+  _setTab(id) {
+    const tab = this.tabs.find((t) => t.id === id) || this.tabs[0];
+    this.tab = tab.id;
+    lsSet(TAB_KEY, tab.id);
+    const all = tab.id === 'all';
+    for (const t of this.tabs) {
+      t.b.classList.toggle('on', t === tab);
+      if (!t.grid) continue;
+      t.head.hidden = !all;
+      t.grid.hidden = !all && t !== tab;
+    }
+    this.craftList.scrollTop = 0;
+    if (this.tipTarget?.classList.contains('rc')) {
+      this.tipTarget = null;
+      this.tip.hide();
+    }
+  }
+
   _schemOk(item) {
     return !!(this.unlocked & (1 << SCHEM_BIT[item]));
   }
 
   _renderRecipes() {
     let changed = false;
+    const ready = { all: 0 };
     for (const rec of this.recipeEls) {
       let afford = true;
       for (const ing of rec.ings) {
@@ -635,6 +705,10 @@ export class Inventory {
       }
       const stationOk = !rec.r.station || this.near[rec.r.station];
       const unlocked = !rec.r.schem || this._schemOk(rec.r.schem);
+      if (afford && stationOk && unlocked) {
+        ready.all++;
+        ready[rec.tab.id] = (ready[rec.tab.id] || 0) + 1;
+      }
       const key = (afford ? 'a' : '') + (stationOk ? 's' : '') + (unlocked ? 'u' : '');
       if (rec.key !== key) {
         rec.key = key;
@@ -650,6 +724,14 @@ export class Inventory {
     if (changed && this.tipTarget?.classList.contains('rc') && !this.tip.root.hidden) {
       const info = this._tipInfo(this.tipTarget);
       if (info) this.tip.show(info);
+    }
+    // badge each tab with how many of its recipes can be crafted right now
+    for (const t of this.tabs) {
+      const n = ready[t.id] || 0;
+      if (t.ready === n) continue;
+      t.ready = n;
+      t.n.textContent = n ? String(n) : '';
+      t.b.title = n ? `${n} ready to craft` : '';
     }
     const f = this.near.fire;
     const bn = this.near.bench;
