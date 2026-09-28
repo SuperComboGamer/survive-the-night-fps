@@ -28,14 +28,15 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (random world seed).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>`,
-`/spawn <ztype> <n>`, `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`, `/where`).
+`/spawn <ztype> <n>`, `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`, `/where`, `/cat` (brings the
+stray cat over)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
 | `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and runs `sim-smoke` |
-| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
+| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -50,7 +51,8 @@ started with `GODMODE=1 DEBUG_COMMANDS=1`. Art/audio/UI modules also have standa
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
-`/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating).
+`/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating;
+`/sandbox/models-test.html?cats=grid` shows the cat's poses).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per

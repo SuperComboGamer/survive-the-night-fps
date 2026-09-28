@@ -291,6 +291,14 @@ export const ZANIM = {
   EAT: 8, // idle feeding pose
 };
 
+// the stray cat's animation states (sent over the wire)
+export const CANIM = {
+  IDLE: 0,
+  WALK: 1,
+  RUN: 2,
+  SIT: 3,
+};
+
 // ---------------------------------------------------------------- projectiles / areas
 export const PROJ = {
   ACID: 1,
@@ -367,6 +375,7 @@ export const SOUND = {
   M4A1: 57,
   MP5: 58,
   DB_SHOTGUN: 59,
+  CAT_MEOW: 60,
 };
 
 export const EVT = {

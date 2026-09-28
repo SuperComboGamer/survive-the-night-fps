@@ -5,9 +5,11 @@
 //   ?only=T      show only zombie type T (number) close-up; ?only=surv for survivors
 //   ?surv=1      survivor row with every weapon;  ?zombie=1 -> zombified survivors
 //   ?cam=side|back|top   camera angle;  ?t=SECONDS fixed clock;  ?zoom=F
+//   ?cats=1      the stray cat in every coat (cycles CANIM states);  ?cats=grid -> one per CANIM state
 import * as THREE from 'three';
-import { ZTYPE, ZOMBIE_DEFS, ZANIM, ITEM } from '../../shared/defs.js';
+import { ZTYPE, ZOMBIE_DEFS, ZANIM, CANIM, ITEM } from '../../shared/defs.js';
 import { createZombie, createSurvivor, modelStats, zombieVariants } from '../render/models/characters.js';
+import { createCat, CAT_COATS } from '../render/models/cat.js';
 import { MeshBuilder } from '../render/models/skinning.js';
 MeshBuilder.debugNaN = true;
 MeshBuilder.debugStats = new URLSearchParams(location.search).get('tstats') === '1';
@@ -112,10 +114,32 @@ function addSurvivor(seed, item, x, z, zombie) {
   return s;
 }
 
+function addCat(coat, x, z, fixed) {
+  const c = createCat(coat, coat * 7 + 1);
+  c.object.position.set(x, 0, z);
+  c.object.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
+  scene.add(c.object);
+  actors.push({ kind: 'c', obj: c, x, z, fixed });
+  return c;
+}
+
 const zoom = q.has('zoom') ? +q.get('zoom') : 1;
 let target = new THREE.Vector3(0, 1.2, 0);
 let dist = 14;
-if (q.get('surv') === '1' || only === 'surv') {
+if (q.has('cats')) {
+  const grid = q.get('cats') === 'grid';
+  const n = grid ? 4 : CAT_COATS;
+  const coat = q.has('coat') ? +q.get('coat') : 0;
+  const col = q.get('cam') === 'side';
+  for (let i = 0; i < n; i++) {
+    const o = (i - (n - 1) / 2) * (col ? 0.9 : 0.7);
+    addCat(grid ? coat : i, col ? 0 : o, col ? o : 0, grid ? i : undefined);
+  }
+  target.set(0, 0.18, 0);
+  dist = n * 0.62;
+} else if (q.get('surv') === '1' || only === 'surv') {
   const zombie = q.get('zombie') === '1';
   const list = q.has('items') ? q.get('items').split(',').map(Number) : only === 'surv' ? survWeapons.slice(0, 4) : survWeapons;
   const n = list.length;
@@ -210,7 +234,17 @@ function frame() {
   const tu0 = performance.now();
   for (const a of actors) {
     const anim = a.fixed !== undefined ? a.fixed : q.has('stress') ? (a.x > 0 ? 1 : 2) : cycleIdx;
-    if (a.kind === 'z') {
+    if (a.kind === 'c') {
+      const ca = a.fixed !== undefined ? a.fixed : fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4;
+      const speed = ca === CANIM.WALK ? 0.8 : ca === CANIM.RUN ? 5.4 : 0;
+      if (fixedT >= 0) {
+        if (!a.warm) {
+          a.warm = true;
+          for (let i = 0; i < Math.round(fixedT * 60); i++) a.obj.update(1 / 60, ca, speed, i / 60);
+        }
+        a.obj.update(0, ca, speed, fixedT);
+      } else a.obj.update(dt, ca, speed, T);
+    } else if (a.kind === 'z') {
       const d = ZOMBIE_DEFS[a.type];
       const speed = anim === ZANIM.WALK ? Math.min(d.speed, 2.2) : anim === ZANIM.RUN ? d.speed * 1.4 : 0;
       if (fixedT >= 0) {
@@ -244,7 +278,7 @@ function frame() {
       } else s.update(dt, st);
     }
   }
-  info.textContent = (q.has('grid') ? 'IDLE WALK RUN ATTACK SPECIAL AIRBORNE STAGGER DEAD EAT (left to right)' : `anim: ${stateNames[cycleIdx]} (${cycleIdx})`) + `   t=${T.toFixed(2)}` + (q.get('stats') === '1' ? '\n' + statTxt : '');
+  info.textContent = q.has('cats') ? `cat: ${q.get('cats') === 'grid' ? 'IDLE WALK RUN SIT (left to right)' : Object.keys(CANIM)[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4]}   t=${T.toFixed(2)}` : (q.has('grid') ? 'IDLE WALK RUN ATTACK SPECIAL AIRBORNE STAGGER DEAD EAT (left to right)' : `anim: ${stateNames[cycleIdx]} (${cycleIdx})`) + `   t=${T.toFixed(2)}` + (q.get('stats') === '1' ? '\n' + statTxt : '');
   const tu1 = performance.now();
   renderer.render(scene, camera);
   if (q.has('stress')) {

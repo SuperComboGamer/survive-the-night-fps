@@ -88,6 +88,7 @@ import { Nav } from './nav.js';
 import { ClientView, writeEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
 import { Zombies } from './zombies.js';
+import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
@@ -148,6 +149,7 @@ export class Game {
     this.areas = [];
     this.crates = [];
     this.caches = []; // searchable containers
+    this.cats = [];
 
     this.tick = 0;
     this.time = 0;
@@ -177,6 +179,7 @@ export class Game {
     this.events = [];
 
     this.zm = new Zombies(this);
+    this.cm = new Cats(this);
     this.combat = new Combat(this);
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
   }
@@ -480,6 +483,7 @@ export class Game {
     this.areas.length = 0;
     this.crates.length = 0;
     this.caches.length = 0;
+    this.cats.length = 0;
     this.waves = [];
     this.wave = 0;
     this.bossPending = null;
@@ -522,6 +526,7 @@ export class Game {
     this.placeSupplies();
     // zone guards + roaming dead
     this.zm.spawnInitial();
+    this.cm.spawnInitial();
     for (const p of this.players.values()) this.spawnHuman(p);
     this.notify(NOTIFY.NEW_GAME, this.day);
     this.globalDirty = true;
@@ -1862,6 +1867,17 @@ export class Game {
         }
         break;
       }
+      case 'cat': {
+        // bring the cat over (2 m in front)
+        const c = this.cats[0];
+        if (c) {
+          c.x = s.x - Math.sin(s.yaw) * 2;
+          c.z = s.z - Math.cos(s.yaw) * 2;
+          c.y = groundAt(this.world, c.x, c.z, 200, 0.2);
+          c.vx = c.vz = c.vy = 0;
+        }
+        break;
+      }
       case 'where':
         this.systemChat(`pos ${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} zone ${this.world.zoneAt(s.x, s.z)}`);
         break;
@@ -1901,6 +1917,7 @@ export class Game {
     this.updatePhase(dt);
     this.updatePlayers(dt);
     this.zm.update(dt);
+    this.cm.update(dt);
     this.combat.updateProjectiles(dt);
     this.combat.updateAreas(dt);
     this.updateStructures(dt);

@@ -593,6 +593,20 @@ export function zpGrowl(sr, rng, i) {
   });
 }
 
+// the stray cat: "mi-a-ow" - small vocal tract (high formants), bright rising-falling pitch, no gurgle
+const MEOW_V = [['u', 'i', 'ae', 'a', 'o', 'u'], ['u', 'e', 'a', 'o', 'oo'], ['i', 'ae', 'a', 'u']];
+export function catMeow(sr, rng, i) {
+  const b = rrange(rng, 540, 720);
+  const short = i % 3 === 2; // a quick chirpy "mrrp"
+  return voice(sr, rng, {
+    dur: short ? rrange(rng, 0.28, 0.36) : rrange(rng, 0.55, 0.85),
+    pitch: short ? [[0, b * 0.8], [0.4, b * 1.2], [1, b * 1.1]] : [[0, b * 0.78], [0.25, b * 1.12], [0.55, b * 1.05], [0.85, b * 0.82], [1, b * 0.66]],
+    vowels: vowelPath(MEOW_V[i % MEOW_V.length], rng), fscale: rrange(rng, 1.45, 1.6), bw: 1.25, jitter: 0.015, jitterHz: 18,
+    shimmer: 0.08, breath: 0.12, rasp: short ? 0.35 : 0.08, raspHz: 38, vib: 0.012, vibHz: 6, drive: 1.3, chest: 0.04, a3: 0.55, a4: 0.3, hp: 320,
+    env: short ? [[0, 0], [0.12, 1], [0.6, 0.8], [1, 0]] : [[0, 0], [0.1, 0.45], [0.3, 1], [0.7, 0.8], [0.9, 0.35], [1, 0]],
+  });
+}
+
 // human (player) sounds
 export function humanHurt(sr, rng, i) {
   const b = rrange(rng, 125, 150);
@@ -1456,6 +1470,7 @@ export const SFX_DEFS = [
   { bank: 'z_bat', n: 2, sr: HI, gen: zBat },
   { bank: 'z_boss', n: 2, sr: MID, gen: zBoss },
   { bank: 'zp_growl', n: 3, sr: MID, gen: zpGrowl },
+  { bank: 'cat_meow', n: 3, sr: HI, gen: catMeow },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },

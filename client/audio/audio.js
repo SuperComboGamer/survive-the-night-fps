@@ -89,6 +89,7 @@ def(S.ENGINE_CRANK, 'car_start', 'big', 1, 0.02);
 def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05);
 def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02);
 def(S.FLARE_BURN, 'acid', 'fx', 0.45, 0.1);
+def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {

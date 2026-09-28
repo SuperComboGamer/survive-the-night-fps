@@ -2,7 +2,7 @@
 import { ENT, POS_DELTA_BIT, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { EVT, AMMO_ITEMS } from '../../shared/defs.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7]],
@@ -12,6 +12,7 @@ const BIT_SLOTS = {
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
+  [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
 };
 
 function readField(r, kind, s) {
@@ -169,6 +170,9 @@ export function readEntities(r, store, tick) {
         break;
       case ENT.CACHE:
         e.ctype = r.u8();
+        break;
+      case ENT.CAT:
+        e.variant = r.u8();
         break;
     }
     const n = FIELD_COUNT[kind];

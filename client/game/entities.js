@@ -1,10 +1,11 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
-// the three.js views (zombies, remote survivors, items, structures, projectiles, crates, areas).
+// the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
 import { ENT, PFLAG, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
-import { ZTYPE, ZANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS } from '../../shared/defs.js';
+import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { createZombie, createSurvivor } from '../render/models/characters.js';
+import { createCat } from '../render/models/cat.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createStructure, setStructureDamage } from '../render/models/structures.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
@@ -211,7 +212,7 @@ export class Entities {
     if (e.kind === ENT.PLAYER) {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
-    } else if (e.kind === ENT.ZOMBIE) yaw = dqangle8(q[3]);
+    } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT) yaw = dqangle8(q[3]);
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
 
@@ -257,6 +258,13 @@ export class Entities {
           this.scene.add(cone);
           e.cone = cone;
           e.stepT = 0;
+          break;
+        }
+        case ENT.CAT: {
+          const v = createCat(e.variant, e.id);
+          e.view = v;
+          this.scene.add(v.object);
+          e.meowT = 4 + Math.random() * 10;
           break;
         }
         case ENT.ITEM: {
@@ -374,6 +382,9 @@ export class Entities {
           }
         }
         break;
+      case ENT.CAT:
+        if (!initial && mask & 0b11) this.pushSample(e, t);
+        break;
       case ENT.ITEM:
         if (!initial && mask & 1) {
           this.pushSample(e, t);
@@ -466,7 +477,7 @@ export class Entities {
       this.zombieCount--;
       this.disposeZombieView(e.view);
       if (this.bossEnt === e) this.bossEnt = null;
-    } else if (e.kind === ENT.PLAYER) {
+    } else if (e.kind === ENT.PLAYER || e.kind === ENT.CAT) {
       if (e.view) {
         this.scene.remove(e.view.object);
         e.view.dispose?.();
@@ -608,6 +619,28 @@ export class Entities {
             }
           }
           g.voice?.setPeerPosition(e.id, e.rx, e.ry + 1.6, e.rz, zombie);
+          break;
+        }
+        case ENT.CAT: {
+          e.samples.sample(renderTick, tmp);
+          const sp = Math.hypot(tmp.x - e.rx, tmp.z - e.rz) / Math.max(dt, 1e-3);
+          e.speed += (Math.min(sp, 8) - e.speed) * Math.min(1, dt * 8);
+          e.rx = tmp.x;
+          e.ry = tmp.y;
+          e.rz = tmp.z;
+          e.ryaw = tmp.yaw;
+          const v = e.view;
+          if (!v) break;
+          v.object.position.set(e.rx, e.ry, e.rz);
+          v.object.rotation.y = e.ryaw;
+          const distC = (e.rx - camPos.x) ** 2 + (e.rz - camPos.z) ** 2;
+          if (distC < 60 * 60 || ((g.frame + e.id) & 1) === 0) v.update(distC < 60 * 60 ? dt : dt * 2, e.q[4], e.speed, time);
+          // meows now and then when someone is close enough to hear (client-side, no bandwidth)
+          e.meowT -= dt;
+          if (e.meowT <= 0) {
+            e.meowT = 9 + Math.random() * 16;
+            if (distC < 20 * 20 && e.q[4] !== CANIM.RUN) g.audio.play(SOUND.CAT_MEOW, { x: e.rx, y: e.ry + 0.3, z: e.rz });
+          }
           break;
         }
         case ENT.PROJECTILE: {
