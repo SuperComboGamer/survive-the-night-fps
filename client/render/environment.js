@@ -117,7 +117,9 @@ export class Environment {
       new THREE.ShaderMaterial({ vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, uniforms: this.uniforms, side: THREE.BackSide, depthWrite: false, fog: false }),
     );
     sky.frustumCulled = false;
-    sky.renderOrder = -10;
+    // drawn after the opaque world: the dome sits exactly on the far plane (xyww), so the depth test
+    // rejects every sky pixel already covered by terrain / trees / buildings before the cloud noise runs
+    sky.renderOrder = 1000;
     this.sky = sky;
     scene.add(sky);
 

@@ -743,10 +743,8 @@ export class Entities {
 
   mouthPos(z, out) {
     const m = z.view?.object.userData.mouth;
-    if (m) {
-      z.view.object.updateMatrixWorld(true);
-      m.getWorldPosition(out);
-    } else out.set(z.rx, z.ry + ZOMBIE_DEFS[z.ztype].headY - 0.1, z.rz);
+    if (m) z.view.anchorWorld(m, out);
+    else out.set(z.rx, z.ry + ZOMBIE_DEFS[z.ztype].headY - 0.1, z.rz);
     return out;
   }
 

@@ -2531,9 +2531,9 @@ function calibrate(type, rig) {
     inst.speed = def.speed;
     inst.tilt = 0;
     poseHumanoid(inst);
-    inst.applyPose(inst.pose);
+    inst.applyPose(inst.pose, true);
     inst.object.updateMatrixWorld(true);
-    inst.headCenter.getWorldPosition(_hv);
+    inst.anchorWorld(inst.headCenter, _hv);
     sumY += _hv.y;
     sumZ += _hv.z;
   }
@@ -2564,17 +2564,54 @@ class ZombieInstance {
     this.deadDir = rnd() < 0.5 ? 1 : -1;
     this.tilt = rnd() < 0.5 ? -1 : 1;
     this.cal = cal;
-    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.4);
+    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.4, true);
     this.mesh = inst.mesh;
     this.bones = inst.bones;
     this.skeleton = inst.skeleton;
     this.fx = inst.fx;
+    this.boneRoot = inst.root;
     this.nb = this.bones.length;
     this.X = {};
     for (const [name, idx] of rig.names) this.X[name] = idx;
     this.pose = new Float32Array(this.nb * 4 + 3);
     this.snap = new Float32Array(this.nb * 4 + 3);
     this.out = new Float32Array(this.nb * 4 + 3);
+    this.applied = new Float32Array(this.nb * 4 + 3);
+    // Bone matrices come from a flat forward-kinematics pass over the pose array (see _solve) instead of
+    // the Bone objects: the rig is rigid, bones are stored parents-first and bind poses are pure
+    // translations. The Bone objects only carry the anchors (headCenter, mouth) and size the skeleton.
+    const nb = this.nb;
+    this.parent = new Int16Array(nb);
+    this.bindPos = new Float64Array(nb * 3);
+    this.localPos = new Float64Array(nb * 3);
+    for (let i = 0; i < nb; i++) {
+      const d = rig.bones[i];
+      this.parent[i] = d.parent;
+      this.bindPos.set(d.pos, i * 3);
+      this.localPos[i * 3] = d.local.x;
+      this.localPos[i * 3 + 1] = d.local.y;
+      this.localPos[i * 3 + 2] = d.local.z;
+    }
+    this.world = new Float64Array(nb * 12); // per bone: 3x3 rotation*scale (column-major) + translation
+    // The renderer calls skeleton.update() for every drawn skinned mesh every frame, which re-uploads the
+    // bone texture. The bones are mesh-local (detached rig), so only a new pose or fx value changes them:
+    // solve + upload then, and only for zombies that are actually drawn.
+    this.poseDirty = true;
+    this.fxDirty = true;
+    const skeleton = this.skeleton;
+    skeleton.update = () => {
+      let changed = false;
+      if (this.poseDirty) {
+        this._solve();
+        changed = true;
+      }
+      if (this.fxDirty) {
+        skeleton.boneMatrices.set(this.fx.matrixWorld.elements, 0);
+        this.fxDirty = false;
+        changed = true;
+      }
+      if (changed && skeleton.boneTexture) skeleton.boneTexture.needsUpdate = true;
+    };
     this.object = new THREE.Group();
     this.object.name = 'zombie';
     this.body = new THREE.Group();
@@ -2617,7 +2654,7 @@ class ZombieInstance {
     // initial pose
     this.computePose();
     this.out.set(this.pose);
-    this.applyPose(this.out);
+    this.applyPose(this.out, true);
   }
 
   computePose() {
@@ -2628,20 +2665,103 @@ class ZombieInstance {
     }
   }
 
-  applyPose(p) {
-    const b = this.bones;
+  applyPose(p, force = false) {
+    const a = this.applied;
+    if (!force) {
+      // settled poses (corpses at rest) repeat exactly: keep the bones already uploaded
+      let same = true;
+      for (let i = 0, n = p.length; i < n; i++) {
+        if (a[i] !== p[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    a.set(p);
+    this.poseDirty = true;
+  }
+
+  /**
+   * Forward kinematics of the applied pose: bone i's local transform is T(offset) * R(euler XYZ) * S(scale)
+   * (the root's offset is the pose translation), world = parent world * local, and the skinning matrix
+   * is world * T(-bind position). Writes skeleton.boneMatrices[16..] (bone 0 is the fx bone).
+   */
+  _solve() {
+    this.poseDirty = false;
+    const p = this.applied;
     const nb = this.nb;
+    const W = this.world;
+    const par = this.parent;
+    const lp = this.localPos;
+    const bp = this.bindPos;
+    const bm = this.skeleton.boneMatrices;
+    const head = this.headless && !this.isBat ? this.X.head : -1;
     for (let i = 1; i < nb; i++) {
       const k = i * 4;
-      b[i].rotation.set(p[k], p[k + 1], p[k + 2]);
-      const s = p[k + 3];
-      b[i].scale.set(s, s, s);
+      const cx = Math.cos(p[k]), sx = Math.sin(p[k]);
+      const cy = Math.cos(p[k + 1]), sy = Math.sin(p[k + 1]);
+      const cz = Math.cos(p[k + 2]), sz = Math.sin(p[k + 2]);
+      const s = i === head ? 0.001 : p[k + 3];
+      // local rotation * scale, column-major (same as Matrix4.makeRotationFromEuler, order XYZ)
+      const l0 = cy * cz * s, l1 = (cx * sz + sx * cz * sy) * s, l2 = (sx * sz - cx * cz * sy) * s;
+      const l3 = -cy * sz * s, l4 = (cx * cz - sx * sz * sy) * s, l5 = (sx * cz + cx * sz * sy) * s;
+      const l6 = sy * s, l7 = -sx * cy * s, l8 = cx * cy * s;
+      let tx, ty, tz;
+      if (i === 1) {
+        tx = p[nb * 4];
+        ty = p[nb * 4 + 1];
+        tz = p[nb * 4 + 2] + this.cal.dz;
+      } else {
+        tx = lp[i * 3];
+        ty = lp[i * 3 + 1];
+        tz = lp[i * 3 + 2];
+      }
+      const o = i * 12;
+      const pi = par[i];
+      if (pi <= 0) {
+        W[o] = l0; W[o + 1] = l1; W[o + 2] = l2;
+        W[o + 3] = l3; W[o + 4] = l4; W[o + 5] = l5;
+        W[o + 6] = l6; W[o + 7] = l7; W[o + 8] = l8;
+        W[o + 9] = tx; W[o + 10] = ty; W[o + 11] = tz;
+      } else {
+        const q = pi * 12;
+        const a0 = W[q], a1 = W[q + 1], a2 = W[q + 2], a3 = W[q + 3], a4 = W[q + 4], a5 = W[q + 5], a6 = W[q + 6], a7 = W[q + 7], a8 = W[q + 8];
+        W[o] = a0 * l0 + a3 * l1 + a6 * l2;
+        W[o + 1] = a1 * l0 + a4 * l1 + a7 * l2;
+        W[o + 2] = a2 * l0 + a5 * l1 + a8 * l2;
+        W[o + 3] = a0 * l3 + a3 * l4 + a6 * l5;
+        W[o + 4] = a1 * l3 + a4 * l4 + a7 * l5;
+        W[o + 5] = a2 * l3 + a5 * l4 + a8 * l5;
+        W[o + 6] = a0 * l6 + a3 * l7 + a6 * l8;
+        W[o + 7] = a1 * l6 + a4 * l7 + a7 * l8;
+        W[o + 8] = a2 * l6 + a5 * l7 + a8 * l8;
+        W[o + 9] = a0 * tx + a3 * ty + a6 * tz + W[q + 9];
+        W[o + 10] = a1 * tx + a4 * ty + a7 * tz + W[q + 10];
+        W[o + 11] = a2 * tx + a5 * ty + a8 * tz + W[q + 11];
+      }
+      // skinning matrix = world * T(-bind)
+      const bx = bp[i * 3], by = bp[i * 3 + 1], bz = bp[i * 3 + 2];
+      const m = i * 16;
+      bm[m] = W[o]; bm[m + 1] = W[o + 1]; bm[m + 2] = W[o + 2]; bm[m + 3] = 0;
+      bm[m + 4] = W[o + 3]; bm[m + 5] = W[o + 4]; bm[m + 6] = W[o + 5]; bm[m + 7] = 0;
+      bm[m + 8] = W[o + 6]; bm[m + 9] = W[o + 7]; bm[m + 10] = W[o + 8]; bm[m + 11] = 0;
+      bm[m + 12] = W[o + 9] - (W[o] * bx + W[o + 3] * by + W[o + 6] * bz);
+      bm[m + 13] = W[o + 10] - (W[o + 1] * bx + W[o + 4] * by + W[o + 7] * bz);
+      bm[m + 14] = W[o + 11] - (W[o + 2] * bx + W[o + 5] * by + W[o + 8] * bz);
+      bm[m + 15] = 1;
     }
-    const r = b[1];
-    r.position.set(p[nb * 4], p[nb * 4 + 1], p[nb * 4 + 2] + this.cal.dz);
-    if (this.headless && !this.isBat) {
-      b[this.X.head].scale.set(0.001, 0.001, 0.001);
-    }
+  }
+
+  /** World position of an anchor object parented to one of the bones (headCenter, mouth). */
+  anchorWorld(anchor, out) {
+    if (this.poseDirty) this._solve();
+    const o = this.bones.indexOf(anchor.parent) * 12;
+    const W = this.world;
+    const { x, y, z } = anchor.position;
+    out.set(W[o] * x + W[o + 3] * y + W[o + 6] * z + W[o + 9], W[o + 1] * x + W[o + 4] * y + W[o + 7] * z + W[o + 10], W[o + 2] * x + W[o + 5] * y + W[o + 8] * z + W[o + 11]);
+    this.mesh.updateWorldMatrix(true, false);
+    return out.applyMatrix4(this.mesh.matrixWorld);
   }
 
   update(dt, anim, speed, time) {
@@ -2670,7 +2790,7 @@ class ZombieInstance {
     let glow = 1;
     if (this.type === ZTYPE.SPITTER || this.type === ZTYPE.BOSS_HIVEQUEEN) glow = 0.8 + 0.25 * Math.sin(time * 3.1 + this.off);
     if (anim === ZANIM.DEAD) glow = Math.max(0.15, 1 - this.stateT * 0.6);
-    setFx(this.fx, this.hit, glow);
+    if (setFx(this.fx, this.hit, glow)) this.fxDirty = true;
     // skip posing when not rendered last frame (culled); crossfades still time out correctly
     const seen = this._seen;
     this._seen = false;
@@ -2689,13 +2809,12 @@ class ZombieInstance {
 
   flash(a) {
     this.hit = Math.max(this.hit, clamp(a, 0, 1));
-    setFx(this.fx, this.hit, 1);
+    if (setFx(this.fx, this.hit, 1)) this.fxDirty = true;
   }
 
   setHeadless(v) {
     this.headless = !!v;
-    if (!v && !this.isBat) this.bones[this.X.head].scale.set(1, 1, 1);
-    this.applyPose(this.out);
+    this.applyPose(this.out, true);
   }
 
   dispose() {
@@ -2724,6 +2843,7 @@ export function createZombie(ztype, seed = 0) {
     update: (dt, anim, speed, time) => z.update(dt, anim, speed, time),
     flash: (a) => z.flash(a),
     setHeadless: (v) => z.setHeadless(v),
+    anchorWorld: (a, out) => z.anchorWorld(a, out),
     dispose: () => z.dispose(),
     _inst: z,
   };

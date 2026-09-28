@@ -6,6 +6,24 @@ import { createProp } from './models/props.js';
 
 const CHUNK = 80;
 const IDENTITY = new THREE.Matrix4();
+// A (chunk, material) mesh whose largest piece has bounding radius r is drawn out to r * DETAIL_DIST
+// (never closer than DETAIL_MIN): bottles, cans and tail lights stop costing a draw call once they are a
+// few pixels wide, while anything with a building, wall or car in it keeps the full view distance.
+const DETAIL_DIST = 280;
+const DETAIL_MIN = 60;
+
+function templateRadius(pos) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < pos.length; i += 3) {
+    x0 = Math.min(x0, pos[i]);
+    x1 = Math.max(x1, pos[i]);
+    y0 = Math.min(y0, pos[i + 1]);
+    y1 = Math.max(y1, pos[i + 1]);
+    z0 = Math.min(z0, pos[i + 2]);
+    z1 = Math.max(z1, pos[i + 2]);
+  }
+  return 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+}
 
 // transform of a mesh relative to the prop root (props are usually flat: identity)
 function localMatrix(o, root) {
@@ -136,9 +154,10 @@ export class StaticWorld {
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = new Map()));
       let list = b.get(mat);
-      if (!list) b.set(mat, (list = { entries: [], verts: 0 }));
+      if (!list) b.set(mat, (list = { entries: [], verts: 0, radius: 0 }));
       list.entries.push({ tpl, m });
       list.verts += tpl.count;
+      list.radius = Math.max(list.radius, tpl.radius * m.getMaxScaleOnAxis());
     };
     const templates = new Map();
     const makeTpl = (geo, needColor) => {
@@ -150,6 +169,7 @@ export class StaticWorld {
         uv: g.attributes.uv.array,
         col: needColor ? g.attributes.color.array : null,
       };
+      tpl.radius = templateRadius(tpl.pos);
       g.dispose();
       return tpl;
     };
@@ -268,6 +288,7 @@ export class StaticWorld {
         mesh.receiveShadow = true;
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
+        mesh.userData.maxDist = Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
         this.group.add(mesh);
         chunk.meshes.push(mesh);
       }
@@ -279,11 +300,19 @@ export class StaticWorld {
 
   update(camPos, maxDist) {
     const lim = (maxDist + CHUNK * 0.75) ** 2;
+    const half = CHUNK / 2;
     for (const c of this.chunks) {
       const dx = c.cx - camPos.x;
       const dz = c.cz - camPos.z;
-      const vis = dx * dx + dz * dz < lim;
-      for (const m of c.meshes) m.visible = vis;
+      if (dx * dx + dz * dz >= lim) {
+        for (const m of c.meshes) m.visible = false;
+        continue;
+      }
+      // distance to the nearest point of the chunk: every piece in it is at least this far away
+      const ex = Math.max(0, Math.abs(dx) - half);
+      const ez = Math.max(0, Math.abs(dz) - half);
+      const near = Math.sqrt(ex * ex + ez * ez);
+      for (const m of c.meshes) m.visible = near < m.userData.maxDist;
     }
   }
 

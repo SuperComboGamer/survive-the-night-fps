@@ -222,14 +222,49 @@ export class GameRenderer {
     this.resize();
   }
 
+  // Can the scene target use packed-float HDR (R11G11B10F) at this MSAA sample count? Probed once per
+  // count; renderers without float render targets or multisampled packed floats keep RGBA16F.
+  _packedHdr(samples) {
+    this._packed ??= new Map();
+    if (this._packed.has(samples)) return this._packed.get(samples);
+    const gl = this.renderer.getContext();
+    let ok = this.renderer.capabilities.isWebGL2 && this.renderer.extensions.has('EXT_color_buffer_float');
+    if (ok && samples > 0) {
+      const counts = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.R11F_G11F_B10F, gl.SAMPLES);
+      ok = !!counts && counts.length > 0 && Math.max(...counts) >= samples;
+    }
+    if (ok) {
+      const tex = gl.createTexture();
+      const fb = gl.createFramebuffer();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R11F_G11F_B10F, 4, 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.deleteFramebuffer(fb);
+      gl.deleteTexture(tex);
+      this.renderer.resetState(); // the probe bypassed three's GL state cache
+    }
+    this._packed.set(samples, ok);
+    return ok;
+  }
+
   _makeTarget() {
     if (this.rt) this.rt.dispose();
     const isWebGL2 = this.renderer.capabilities.isWebGL2;
+    const samples = isWebGL2 ? QUALITY[this.quality].samples : 0;
+    // The scene target never needs alpha, so it is packed-float HDR where supported: half the memory
+    // traffic of RGBA16F, which dominates the cost of the 4x MSAA target (identical to within 2/255
+    // after tone mapping).
+    const packed = this._packedHdr(samples);
     this.rt = new THREE.WebGLRenderTarget(4, 4, {
-      type: THREE.HalfFloatType,
-      samples: isWebGL2 ? QUALITY[this.quality].samples : 0,
+      type: packed ? THREE.UnsignedInt101111Type : THREE.HalfFloatType,
+      format: packed ? THREE.RGBFormat : THREE.RGBAFormat,
+      samples,
       depthBuffer: true,
       stencilBuffer: false,
+      // nothing samples scene depth: skip blitting the multisampled depth buffer on every resolve
+      resolveDepthBuffer: false,
     });
     this.rt.texture.colorSpace = THREE.LinearSRGBColorSpace;
     this.postMat.uniforms.tScene.value = this.rt.texture;

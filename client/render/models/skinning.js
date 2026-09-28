@@ -424,9 +424,14 @@ export class MeshBuilder {
 // ------------------------------------------------------------------ instances
 /**
  * Create a SkinnedMesh + per-instance skeleton for a built rig.
- * Returns { mesh, bones, skeleton, fx } where bones[i] matches rig.bones[i]; fx = bones[0].
+ * Returns { mesh, bones, skeleton, fx, root } where bones[i] matches rig.bones[i]; fx = bones[0].
+ *
+ * detached: the bones hang off `root`, an Object3D outside the scene graph, instead of the mesh, and the
+ * mesh uses DetachedBindMode. Bone matrices are then mesh-local: the scene's per-frame matrix pass never
+ * visits them and moving the mesh doesn't invalidate them, so the owner only has to recompute them
+ * (root.updateMatrixWorld) when the pose changes. Anchors under a bone report mesh-local world positions.
  */
-export function instantiateRig(rig, material, sphereRadius) {
+export function instantiateRig(rig, material, sphereRadius, detached = false) {
   const bones = new Array(rig.bones.length);
   bones[0] = new THREE.Bone();
   bones[0].name = '__fx';
@@ -445,19 +450,23 @@ export function instantiateRig(rig, material, sphereRadius) {
     if (d.parent > 0) bones[d.parent].add(b);
   }
   const mesh = new THREE.SkinnedMesh(rig.geometry, material);
-  for (let i = 1; i < bones.length; i++) if (rig.bones[i].parent <= 0) mesh.add(bones[i]);
+  const root = detached ? new THREE.Object3D() : mesh;
+  for (let i = 1; i < bones.length; i++) if (rig.bones[i].parent <= 0) root.add(bones[i]);
   const skeleton = new THREE.Skeleton(bones, rig.inverses);
+  if (detached) mesh.bindMode = THREE.DetachedBindMode;
   mesh.bind(skeleton, IDENTITY);
   mesh.boundingSphere = new THREE.Sphere(rig.sphere.center.clone(), sphereRadius || rig.sphere.radius * 1.35);
   mesh.frustumCulled = true;
-  return { mesh, bones, skeleton, fx: bones[0] };
+  return { mesh, bones, skeleton, fx: bones[0], root };
 }
 
-/** Write per-instance shader params into the fx bone. */
+/** Write per-instance shader params into the fx bone. Returns true if they changed. */
 export function setFx(fxBone, hit, glowMul) {
   const e = fxBone.matrixWorld.elements;
+  if (e[12] === hit && e[13] === glowMul) return false;
   e[12] = hit;
   e[13] = glowMul;
+  return true;
 }
 
 // ------------------------------------------------------------------ materials
