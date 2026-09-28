@@ -57,10 +57,14 @@ class Tooltip {
     this.cat = el('div', 'tip-cat', t);
     this.desc = el('div', 'tip-desc', this.root);
     this.stats = el('div', 'tip-stats', this.root);
+    this.reqs = el('div', 'tip-reqs', this.root);
     this.hint = el('div', 'tip-hint', this.root);
+    this.x = 0;
+    this.y = 0;
   }
 
-  show({ icon, name, cat, catCls, desc, stats, hint }, x, y) {
+  // reqs = [{ icon, name, val, ok }] - a have/need checklist (recipes)
+  show({ icon, name, cat, catCls, desc, stats, reqs, hint, hintCls }, x = this.x, y = this.y) {
     this.ico.innerHTML = icon || '';
     this.name.textContent = name || '';
     this.cat.textContent = cat || '';
@@ -70,13 +74,29 @@ class Tooltip {
     this.stats.textContent = '';
     for (const s of stats || []) el('div', 'tip-stat', this.stats, s);
     this.stats.hidden = !(stats && stats.length);
-    this.hint.textContent = hint || '';
+    this.reqs.textContent = '';
+    if (reqs && reqs.length) {
+      el('div', 'tip-reqs-h', this.reqs, 'Requires');
+      for (const q of reqs) {
+        const row = el('div', 'tip-req ' + (q.ok ? 'ok' : 'lack'), this.reqs);
+        svgEl('i', 'tip-req-ico', row, q.icon);
+        el('span', 'tip-req-name', row, q.name);
+        el('span', 'tip-req-val', row, q.val);
+        svgEl('i', 'tip-req-mark', row, glyph(q.ok ? 'check' : 'xmark'));
+      }
+    }
+    this.reqs.hidden = !(reqs && reqs.length);
+    this.hint.textContent = '';
+    for (const line of (hint || '').split('\n')) el('div', '', this.hint, line);
+    this.hint.className = 'tip-hint' + (hintCls ? ' ' + hintCls : '');
     this.hint.hidden = !hint;
     this.root.hidden = false;
     this.move(x, y);
   }
 
   move(x, y) {
+    this.x = x;
+    this.y = y;
     const r = this.root.getBoundingClientRect();
     let px = x + 18;
     let py = y + 18;
@@ -413,7 +433,9 @@ export class Inventory {
   _tipInfo(t) {
     let id = 0;
     let hint = '';
+    let hintCls = '';
     let extra = null;
+    let reqs = null;
     if (t.classList.contains('cell')) {
       const s = this.inv.slots[+t.dataset.i];
       if (!s) return null;
@@ -432,13 +454,28 @@ export class Inventory {
     } else if (t.classList.contains('rc')) {
       const rec = this.recipeEls.find((x) => x.b === t);
       if (!rec) return null;
-      id = rec.r.out;
-      const parts = Object.entries(rec.r.cost).map(([k, v]) => `${v} ${ITEM_DEFS[k].name}`);
-      extra = ['Needs ' + parts.join(', ')];
-      const st = rec.r.station;
-      if (st) extra.push(this.near[st] ? `At a ${STATION_NAMES[st].toLowerCase()}` : st === 'fire' ? 'Requires a lit campfire nearby - build one anywhere [5]' : 'Requires a workbench nearby - build one anywhere [5]');
-      if (rec.r.schem) extra.push(this._schemOk(rec.r.schem) ? 'Schematic found' : `Locked: find the ${ITEM_DEFS[rec.r.schem].name}`);
-      hint = rec.b.classList.contains('ok') ? 'Click to craft' : rec.b.classList.contains('locked') ? 'Search lockers, ammo crates and toolboxes' : rec.b.classList.contains('no-station') ? (st === 'fire' ? 'Build or find a campfire' : 'Build or find a workbench') : 'Missing materials';
+      const { r } = rec;
+      id = r.out;
+      reqs = [];
+      const missing = [];
+      for (const ing of rec.ings) {
+        const have = this.counts[ing.id] || 0;
+        const ok = have >= ing.need;
+        const nm = ITEM_DEFS[ing.id].name;
+        if (!ok) missing.push(`${ing.need - have} ${nm}`);
+        reqs.push({ icon: itemIcon(ing.id), name: nm, val: Math.min(have, 999) + ' / ' + ing.need, ok });
+      }
+      const st = r.station;
+      const stationOk = !st || this.near[st];
+      if (st) reqs.push({ icon: glyph(STATION_GLYPH[st]), name: st === 'fire' ? 'Lit campfire' : STATION_NAMES[st], val: stationOk ? 'nearby' : 'not nearby', ok: stationOk });
+      const unlocked = !r.schem || this._schemOk(r.schem);
+      if (r.schem) reqs.push({ icon: glyph(unlocked ? 'unlock' : 'lock'), name: ITEM_DEFS[r.schem].name, val: unlocked ? 'found' : 'not found', ok: unlocked });
+      const todo = [];
+      if (missing.length) todo.push('Missing ' + missing.join(', '));
+      if (!stationOk) todo.push(`Build a ${STATION_NAMES[st].toLowerCase()} [5] or find one`);
+      if (!unlocked) todo.push('Find the schematic in lockers, crates or toolboxes');
+      hint = todo.length ? todo.join('\n') : 'Click to craft';
+      if (todo.length) hintCls = 'bad';
     } else if (t.classList.contains('cp')) {
       const i = this.partEls.indexOf(t);
       id = SUPPLIES[i];
@@ -460,7 +497,9 @@ export class Inventory {
       catCls: 'c-' + d.cat,
       desc: d.desc,
       stats: [...statLines(id), ...(extra || [])],
+      reqs,
       hint,
+      hintCls,
     };
   }
 
@@ -579,6 +618,7 @@ export class Inventory {
   }
 
   _renderRecipes() {
+    let changed = false;
     for (const rec of this.recipeEls) {
       let afford = true;
       for (const ing of rec.ings) {
@@ -588,6 +628,7 @@ export class Inventory {
         const k = have + '/' + ing.need;
         if (ing.key !== k) {
           ing.key = k;
+          changed = true;
           ing.t.textContent = Math.min(have, 999) + '/' + ing.need;
           ing.chip.classList.toggle('lack', !ok);
         }
@@ -597,12 +638,18 @@ export class Inventory {
       const key = (afford ? 'a' : '') + (stationOk ? 's' : '') + (unlocked ? 'u' : '');
       if (rec.key !== key) {
         rec.key = key;
+        changed = true;
         rec.b.classList.toggle('ok', afford && stationOk && unlocked);
         rec.b.classList.toggle('no-mat', !afford);
         rec.b.classList.toggle('no-station', !stationOk);
         rec.b.classList.toggle('locked', !unlocked);
         if (rec.lock) rec.lock.hidden = unlocked;
       }
+    }
+    // keep an open recipe tooltip's have/need counts live (pickups, crafting, walking to a station)
+    if (changed && this.tipTarget?.classList.contains('rc') && !this.tip.root.hidden) {
+      const info = this._tipInfo(this.tipTarget);
+      if (info) this.tip.show(info);
     }
     const f = this.near.fire;
     const bn = this.near.bench;
