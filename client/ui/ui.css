@@ -455,12 +455,10 @@ body {
 }
 
 .stn-ui .hi-ping.bad,
-.stn-ui .hi-ping.bad b {
+.stn-ui .hi-ping.bad b,
+.stn-ui .hi-fps.bad,
+.stn-ui .hi-fps.bad b {
   color: var(--amber);
-}
-
-.stn-ui .hi-fps {
-  color: var(--good);
 }/* ---------- voice speakers */
 
 

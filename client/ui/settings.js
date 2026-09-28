@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   quality: 'medium',
   pushToTalk: true,
   invertY: false,
-  showFps: false,
+  showFps: true,
 });
 
 const NUM_RANGES = {

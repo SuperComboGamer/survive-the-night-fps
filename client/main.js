@@ -122,15 +122,22 @@ function frame(now) {
   requestAnimationFrame(frame);
   let dt = (now - last) / 1000;
   last = now;
-  if (dt > 0.1) dt = 0.1;
   if (dt <= 0) return;
-  fpsAcc += dt;
-  fpsFrames++;
-  if (fpsAcc >= 0.5) {
-    game.fps = Math.round(fpsFrames / fpsAcc);
+  // average fps over ~1s of real frame times (before the sim clamp); a >1s gap means
+  // the tab was hidden, so restart the window instead of reporting ~0 fps
+  if (dt > 1) {
     fpsAcc = 0;
     fpsFrames = 0;
+  } else {
+    fpsAcc += dt;
+    fpsFrames++;
+    if (fpsAcc >= 1) {
+      game.fps = Math.round(fpsFrames / fpsAcc);
+      fpsAcc = 0;
+      fpsFrames = 0;
+    }
   }
+  if (dt > 0.1) dt = 0.1;
   const t0 = performance.now();
   try {
     game.update(dt);
