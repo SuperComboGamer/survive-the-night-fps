@@ -3,7 +3,7 @@
 import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, EVT, IMPACT, STRUCT_DEFS } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
-import { resolveBody, groundAt, raycastWorld, COL } from '../shared/collision.js';
+import { resolveBody, groundAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 
 const GRAV = 16;
 const CELL = 4;
@@ -397,7 +397,8 @@ export class Zombies {
       chasing = true;
     } else if (target) {
       chasing = true;
-      if (dist < 3.5 || z.los && dist < 12) {
+      // steer straight at a visible survivor; otherwise follow the flow field (around walls to a way in)
+      if (z.los && dist < 12) {
         dx = tx - z.x;
         dz = tz - z.z;
       } else if (g.nav.flowDir(target.id, z.x, z.z, _dir)) {
@@ -447,7 +448,7 @@ export class Zombies {
 
     // stop to attack
     let attacking = false;
-    if (target && dist <= def.range + PLAYER_RADIUS && Math.abs(ty - z.y) < 2.3) {
+    if (target && dist <= def.range + PLAYER_RADIUS && Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) {
       attacking = true;
       dx = tx - z.x;
       dz = tz - z.z;
@@ -559,6 +560,26 @@ export class Zombies {
     return _ray.t < 0;
   }
 
+  // melee reach: a clear torso-to-torso line, so the dead can't swipe through walls, boarded doors
+  // or waist-high barricades. Terrain is ignored so a bump in the ground never shields a downed survivor.
+  canReach(z, p) {
+    const s = p.state;
+    const ox = z.x;
+    const oy = z.y + z.def.height * 0.55;
+    const oz = z.z;
+    let dx = s.x - ox;
+    let dy = s.y + (s.downed ? 0.3 : s.crouch ? 0.6 : 0.9) - oy;
+    let dz = s.z - oz;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx /= l;
+    dy /= l;
+    dz /= l;
+    raycastWorld(this.g.world, ox, oy, oz, dx, dy, dz, l, _ray);
+    const c = _ray.col;
+    // a survivor standing inside a gate / door boards they're squeezing through is still in reach
+    return !c || (c.flags & COL.HUMANPASS && footprintContains(c, s.x, s.z));
+  }
+
   integrate(z, dt, dvx, dvz, humans) {
     const g = this.g;
     const def = z.def;
@@ -630,7 +651,7 @@ export class Zombies {
       if (!p || !p.alive || p.zombie) return;
       const s = p.state;
       const d = Math.hypot(s.x - z.x, s.z - z.z);
-      if (d > def.range + PLAYER_RADIUS + 0.9 || Math.abs(s.y - z.y) > 2.5) return;
+      if (d > def.range + PLAYER_RADIUS + 0.9 || Math.abs(s.y - z.y) > 2.5 || !this.canReach(z, p)) return;
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
@@ -727,7 +748,7 @@ export class Zombies {
       if (t === ZTYPE.LEAPER && z.vy < 3) {
         for (const h of this.humansCache) {
           const s = h.state;
-          if (Math.hypot(s.x - z.x, s.z - z.z) < 1.5 && Math.abs(s.y + 0.8 - z.y) < 1.6 && !s.pinned && !s.pulled) {
+          if (Math.hypot(s.x - z.x, s.z - z.z) < 1.5 && Math.abs(s.y + 0.8 - z.y) < 1.6 && !s.pinned && !s.pulled && this.canReach(z, h)) {
             z.state = 3;
             z.link = h.id;
             z.linkDmg = 0;
@@ -802,7 +823,7 @@ export class Zombies {
       s.pullY = z.y;
       s.pullZ = z.z;
       const d = Math.hypot(s.x - z.x, s.z - z.z);
-      if (d < 2 && z.attackCd <= 0) {
+      if (d < 2 && z.attackCd <= 0 && this.canReach(z, p)) {
         z.attackCd = 0.5;
         g.damagePlayer(p, 6 * (1 + 0.05 * g.day), { kind: KILLER.ZOMBIE, ztype: t, x: z.x, z: z.z });
       }
@@ -836,7 +857,7 @@ export class Zombies {
       } else if (hit) end = true;
       for (const h of this.humansCache) {
         const s = h.state;
-        if (Math.hypot(s.x - z.x, s.z - z.z) < 1.8 && Math.abs(s.y - z.y) < 2) {
+        if (Math.hypot(s.x - z.x, s.z - z.z) < 1.8 && Math.abs(s.y - z.y) < 2 && this.canReach(z, h)) {
           g.damagePlayer(h, 32, { kind: KILLER.ZOMBIE, ztype: t, x: z.x, z: z.z });
           this.knock(h, z.x, z.z, 15, 6, 0.8);
           end = true;
@@ -1039,7 +1060,7 @@ export class Zombies {
       gx = tx + Math.sin(time * 2.1) * 1.5;
       gz = tz + Math.cos(time * 1.7) * 1.5;
       gy = d3 < 8 ? ty + 1.3 : Math.max(ty + 3, ground + 3.5);
-      if (d3 < 1.6 && z.attackCd <= 0) {
+      if (d3 < 1.6 && z.attackCd <= 0 && this.canReach(z, target)) {
         z.attackCd = def.rate + g.rng() * 0.5;
         z.anim = ZANIM.ATTACK;
         z.animT = 0.4;
