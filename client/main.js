@@ -35,6 +35,7 @@ const callbacks = {
   onDropWeapon: (s) => game?.uiCallbacks().onDropWeapon(s),
   onSelectStructure: (t) => game?.uiCallbacks().onSelectStructure(t),
   onSelectThrowable: (it) => game?.uiCallbacks().onSelectThrowable(it),
+  onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),
   onChatSend: (text) => {
     game?.uiCallbacks().onChatSend(text);
     if (game && game.state === 'playing') {

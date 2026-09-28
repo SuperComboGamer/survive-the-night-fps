@@ -98,6 +98,10 @@ const ui = new UI(document.getElementById('ui'), {
   onDropWeapon: (s) => log('dropWeapon', s),
   onSelectStructure: (t) => log('struct', t),
   onSelectThrowable: (t) => log('throwable', t),
+  onCloseInventory: () => {
+    log('closeInventory');
+    ui.setInventoryOpen(false);
+  },
   onChatSend: (t) => {
     log('chat', t);
     ui.addChat('You', t, { color: '#e8a33d' });

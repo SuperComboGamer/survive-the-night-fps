@@ -24,6 +24,7 @@ const CALLBACKS = [
   'onDropWeapon',
   'onSelectStructure',
   'onSelectThrowable',
+  'onCloseInventory',
   'onChatSend',
   'onSettings',
   'onResume',

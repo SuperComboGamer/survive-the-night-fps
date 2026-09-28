@@ -654,14 +654,7 @@ export class Game {
     const s = this.prediction.state;
     const ui = this.ui;
     if (code === 'Tab') {
-      if (ui.mapOpen) this.toggleMap(false);
-      const open = !ui.inventoryOpen;
-      ui.setCraftContext(this.craftContext());
-      ui.setInventoryOpen(open);
-      this.input.enabled = !open;
-      if (open) this.input.exitLock();
-      else this.input.requestLock();
-      this.audio.playLocal('ui_click', { volume: 0.5 });
+      this.toggleInventory(!ui.inventoryOpen);
       return;
     }
     if (code === 'KeyM') {
@@ -739,6 +732,18 @@ export class Game {
         else this.voice.setTransmit(!this.voice.transmitting);
         break;
     }
+  }
+
+  toggleInventory(open) {
+    const ui = this.ui;
+    if (open === ui.inventoryOpen) return;
+    if (ui.mapOpen) this.toggleMap(false);
+    ui.setCraftContext(this.craftContext());
+    ui.setInventoryOpen(open);
+    this.input.enabled = !open;
+    if (open) this.input.exitLock();
+    else this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
   toggleMap(open) {
@@ -868,6 +873,7 @@ export class Game {
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
+      onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
       onChatSend: (text) => this.conn.chat(text),
     };
   }

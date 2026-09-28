@@ -144,6 +144,13 @@ export class Inventory {
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
     el('div', 'inv-bg', root);
+    const close = el('button', 'inv-close', root);
+    close.type = 'button';
+    close.title = 'Close inventory (Tab)';
+    el('span', 'kbd sm', close, 'Tab');
+    el('span', 'inv-close-t', close, 'Close');
+    svgEl('i', 'inv-close-x', close, glyph('xmark'));
+    close.addEventListener('click', () => this.ui.cb.onCloseInventory());
     const wrap = el('div', 'inv-wrap', root);
 
     // ---- left: equipment

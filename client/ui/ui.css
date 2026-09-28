@@ -2396,6 +2396,48 @@ body {
   backdrop-filter: blur(7px) saturate(0.55);
 }
 
+.stn-ui .inv-close {
+  position: absolute;
+  top: calc(18 * var(--u));
+  right: calc(22 * var(--u));
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: calc(6 * var(--u)) calc(10 * var(--u)) calc(6 * var(--u)) calc(8 * var(--u));
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  color: var(--bone-dim);
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.stn-ui .inv-close:hover,
+.stn-ui .inv-close:focus-visible {
+  border-color: var(--bone);
+  color: var(--bone);
+}
+
+.stn-ui .inv-close-x {
+  display: inline-flex;
+  width: max(12px, calc(14 * var(--u)));
+  height: max(12px, calc(14 * var(--u)));
+}
+
+.stn-ui .inv-close-x svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .inv-close:hover .inv-close-x {
+  color: var(--blood-lite);
+}
+
 .stn-ui .inv.in .inv-bg {
   animation: stn-fadeIn 0.2s ease-out;
 }
