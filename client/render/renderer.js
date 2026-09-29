@@ -143,9 +143,9 @@ export class GameRenderer {
     this.vmCamera = new THREE.PerspectiveCamera(68, 1, 0.01, 20);
     this.vmHemi = new THREE.HemisphereLight(0xffffff, 0x333333, 1);
     this.vmDir = new THREE.DirectionalLight(0xffffff, 1);
-    this.vmDir.position.set(0.5, 1, 0.3);
+    this.vmDir.position.set(-0.4, 1, 0.6); // from above, behind the left shoulder: lights the sides the player sees
     this.vmFlash = new THREE.PointLight(0xfff1d6, 0, 3, 1.5);
-    this.vmFlash.position.set(0.2, -0.1, -0.6);
+    this.vmFlash.position.set(-0.05, 0.12, 0.15); // flashlight spill: from the player's side, so the hands in the beam light up
     this.vmMuzzle = new THREE.PointLight(0xffb060, 0, 3, 1.5);
     this.vmMuzzle.position.set(0.2, -0.1, -1.0);
     this.vmScene.add(this.vmHemi, this.vmDir, this.vmFlash, this.vmMuzzle);
