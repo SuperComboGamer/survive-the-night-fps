@@ -57,10 +57,19 @@ import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
 import { Lights } from '../render/lights.js';
 import { Atmosphere } from '../render/atmosphere.js';
+import { WeatherFX } from '../render/weatherfx.js';
+import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
 import { createGhost } from '../render/models/structures.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
+
+const WEATHER_TOAST = {
+  fog: 'Fog is rolling in',
+  gale: 'The wind is picking up',
+  rain: 'It starts to rain',
+  storm: 'A storm is breaking',
+};
 
 const SHOT_SOUND = {
   [ITEM.PISTOL]: SOUND.PISTOL,
@@ -154,6 +163,8 @@ export class Game {
     this.voice = new Voice(this.conn, audio);
     this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.talkPeers.map((id) => this.players.get(id)?.name || '?') });
     this.env = new Environment(this.scene);
+    this.weather = new Weather();
+    this.weather.onStrike = (s) => this.onLightning(s);
     this.lights = new Lights(this.scene, this.camera, renderer.q);
     this.vm = new ViewModel();
     renderer.vmScene.add(this.vm.group);
@@ -184,6 +195,9 @@ export class Game {
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
     if (!this.atmosphere) this.atmosphere = new Atmosphere(this.scene);
+    this.weather.setWorld(this.world);
+    if (!this.weatherFx) this.weatherFx = new WeatherFX(this.scene, this.renderer.quality);
+    this.weatherFx.setWorld(this.world, this.weather);
     this.staticFires = [];
     for (const l of this.world.lights) {
       if (l.kind === 'embers') {
@@ -911,8 +925,24 @@ export class Game {
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
-      onChatSend: (text) => this.conn.chat(text),
+      onChatSend: (text) => this.devCommand(text) || this.conn.chat(text),
     };
+  }
+
+  // dev builds only: preview the weather locally. /weather fog|gale|rain|storm|clear|auto, /lightning [meters]
+  devCommand(text) {
+    if (!import.meta.env?.DEV) return false;
+    const [cmd, arg] = text.trim().split(/\s+/);
+    if (cmd === '/weather') {
+      this.weather.force = !arg || arg === 'auto' ? null : arg === 'clear' ? { rain: 0, bolts: 0, cloud: 0, fog: 1, wind: 0.3 } : { kind: arg };
+      this.ui.notify(`Weather: ${arg || 'auto'}`, 'toast', 2);
+      return true;
+    }
+    if (cmd === '/lightning') {
+      this.weather.strikeNear(this.camera.position, +arg || 150, true, this.input.yaw + Math.PI);
+      return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------- frame
@@ -1055,9 +1085,18 @@ export class Game {
     const cycle = this.debugCycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
     if (!g.finale) this.global.timeLeft = Math.max(0, g.timeLeft - dt);
     else this.global.escapeT = Math.max(0, g.escapeT - dt);
-    this.env.update(dt, cycle, cam.position, time);
+    const weather = this.weather.update(dt, g, time, cam.position);
+    if (weather.kind !== this.weatherKind) {
+      this.weatherKind = weather.kind;
+      const say = WEATHER_TOAST[weather.kind];
+      if (say && time - (this.weatherToastT ?? -1e9) > 45 && self.alive) {
+        this.weatherToastT = time;
+        this.ui.notify(say, 'toast', 3.5);
+      }
+    }
+    this.env.update(dt, cycle, cam.position, time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage.update(cam.position, this.env.fogVisibility, time);
+    this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
     if (this.water) {
       const u = this.water.material.uniforms;
       u.uTime.value = time;
@@ -1085,7 +1124,9 @@ export class Game {
 
     this.effects.setAmbient(this.env.night);
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
-    this.atmosphere.update(time, cam, this.env.fog.color, this.env.night, this.localFlash && self.alive && !s.zombie, this.world.heightAt);
+    const flashOn = this.localFlash && self.alive && !s.zombie;
+    this.atmosphere.update(dt, time, cam, this.env, flashOn, this.world.heightAt, weather);
+    this.weatherFx.update(dt, time, cam, weather, this.env, flashOn, this.renderer.renderer.domElement.height);
 
     // audio
     const a = this.audio;
@@ -1105,6 +1146,9 @@ export class Game {
       danger: this.danger,
       lowHealth: self.alive && !self.zombie ? (s.downed ? 1 : Math.max(0, 1 - hpFrac / 0.35)) : 0,
       nearFire,
+      rain: weather.rain,
+      wind: weather.wind,
+      underCover: weather.cover,
       dead: !self.alive,
       menu: false,
     });
@@ -1145,18 +1189,26 @@ export class Game {
     const gy = this.world.heightAt(car.x, car.z);
     cam.position.set(car.x + Math.sin(this.menuAngle) * r, gy + 3.4, car.z + Math.cos(this.menuAngle) * r);
     cam.lookAt(car.x, gy + 1.2, car.z);
-    this.env.update(dt, 0.49, cam.position, this.time);
+    const weather = this.weather.update(dt, null, this.time, cam.position);
+    this.env.update(dt, 0.49, cam.position, this.time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage.update(cam.position, this.env.fogVisibility, this.time);
+    this.foliage.update(cam.position, this.env.fogVisibility, this.time, weather);
     this.lights.update(dt, this.time, cam.position, false, this.staticFires, [], this.env.night);
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
-    this.atmosphere.update(this.time, cam, this.env.fog.color, this.env.night, false, this.world.heightAt);
+    this.atmosphere.update(dt, this.time, cam, this.env, false, this.world.heightAt, weather);
+    this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
     this.vm.setVisible(false);
     if (this.audio.ready) {
       this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
       this.audio.setAmbience({ night: 0.6, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, dead: false, menu: true });
     }
     this.post = { time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure };
+  }
+
+  // a lightning strike's light reached us: the bolt now, its thunder when the sound gets here
+  onLightning(s) {
+    this.weatherFx?.strike(s, this.camera.position);
+    this.audio.thunder(s.x, s.z, s.dist, s.delay);
   }
 
   updateOverlays() {

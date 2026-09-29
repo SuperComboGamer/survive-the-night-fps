@@ -5,6 +5,12 @@ import * as THREE from 'three';
 import { MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
 import { hash2 } from '../../shared/rng.js';
 import { getTreeVariants, getBushVariants, getRockVariants, getGrassPatch, vegetationTime } from './models/vegetation.js';
+import { vegetationWind, trunkMaterial } from './materials.js';
+
+// trees bend in the wind as a whole: swap each variant's bark for its wind-bent copy (foliage already bends)
+function windBentTrees(variants) {
+  return variants.map((v) => ({ ...v, parts: v.parts.map((p) => (p.material.userData.sway ? p : { ...p, material: trunkMaterial(p.material) })) }));
+}
 
 const CELL = 32;
 
@@ -102,7 +108,7 @@ export class Foliage {
     this.world = world;
     this.scene = scene;
     this.quality = quality;
-    const trees = getTreeVariants();
+    const trees = windBentTrees(getTreeVariants());
     this.trees = new InstancedSet(scene, world.trees, trees, { radius: quality.treeDist, rebuildDist: 8, shadows: quality.shadows, stretch: true });
     this.bushes = new InstancedSet(scene, world.bushes, getBushVariants(), { radius: 85, rebuildDist: 6 });
     this.rocks = new InstancedSet(scene, world.rocks, getRockVariants(), { radius: quality.treeDist, rebuildDist: 10 });
@@ -186,8 +192,17 @@ export class Foliage {
     this.grass.instanceMatrix.needsUpdate = true;
   }
 
-  update(camPos, fogVisibility, time) {
+  // weather: { wind, windX, windZ } (optional)
+  update(camPos, fogVisibility, time, weather) {
+    const dt = Math.min(0.1, Math.max(0, time - (this.lastTime ?? time)));
+    this.lastTime = time;
     vegetationTime.value = time;
+    const w = vegetationWind.value;
+    const strength = weather ? weather.wind : 0.3;
+    w.x = weather ? weather.windX : 0;
+    w.y = weather ? weather.windZ : 1;
+    w.z = strength;
+    w.w = (w.w + dt * (0.75 + 1.25 * strength)) % 6283.1853; // sway clock speeds up with the wind (wraps on a whole cycle count)
     const treeR = Math.min(this.quality.treeDist, fogVisibility + 30);
     this.trees.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10);
     this.bushes.update(camPos.x, camPos.z, Math.min(85, fogVisibility + 10));
