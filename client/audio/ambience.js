@@ -1,7 +1,9 @@
-// Forest ambience: seamless looping beds (wind, pines, crickets, night drone, distant horde, 2D fire)
+// Forest ambience: seamless looping beds (wind, pines, crickets, night drone, distant horde, 2D fire, rain)
 // plus randomly scheduled one-shots (birds, crows, owls, wolves, creaks, twigs, screams, whispers,
-// a distant chapel bell, far-off zombie groans) placed at world positions around the listener.
-// All scheduling runs from the engine's 200 ms tick - nothing per frame.
+// a distant chapel bell, far-off zombie groans) placed at world positions around the listener, and thunder
+// placed at each lightning strike. The weather (s.wind, s.rain) swells the wind, sets the trees creaking and
+// quiets the birds; under a roof the rain turns to a muffled drumming. All scheduling runs from the engine's
+// 200 ms tick - nothing per frame.
 
 const rand = (a, b) => a + (b - a) * Math.random();
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -12,12 +14,14 @@ const smooth = (a, b, x) => {
 const POOL = 8;
 const MAX_HRTF = 3;
 
+// weather quiet: birds hide from rain and gales
+const shelter = (s) => (1 - 0.85 * (s.rain || 0)) * (1 - 0.8 * smooth(0.5, 1, s.wind || 0));
 // rate(s, day, night) -> events per minute
 const EVENTS = [
-  { bank: 'amb_bird', rate: (s, d) => 7 * d * (1 - 0.85 * s.danger) * (s.menu ? 0.15 : 1), dist: [12, 45], elev: [3, 12], vol: 0.3, ref: 8, gap: 1.5 },
-  { bank: 'amb_crow', rate: (s, d, n) => (1.3 * d + 2.2 * smooth(0.1, 0.35, n) * (1 - smooth(0.5, 0.8, n))) * (s.menu ? 0.4 : 1), dist: [30, 90], elev: [6, 16], vol: 0.45, ref: 16, gap: 9 },
-  { bank: 'amb_woodpecker', rate: (s, d) => 0.45 * d * (s.menu ? 0 : 1), dist: [40, 90], elev: [2, 8], vol: 0.35, ref: 20, gap: 30 },
-  { bank: 'amb_creak', rate: (s, d, n) => 2 + 2.2 * n, dist: [8, 35], elev: [3, 10], vol: 0.3, ref: 6, gap: 4 },
+  { bank: 'amb_bird', rate: (s, d) => 7 * d * (1 - 0.85 * s.danger) * (s.menu ? 0.15 : 1) * shelter(s), dist: [12, 45], elev: [3, 12], vol: 0.3, ref: 8, gap: 1.5 },
+  { bank: 'amb_crow', rate: (s, d, n) => (1.3 * d + 2.2 * smooth(0.1, 0.35, n) * (1 - smooth(0.5, 0.8, n))) * (s.menu ? 0.4 : 1) * shelter(s), dist: [30, 90], elev: [6, 16], vol: 0.45, ref: 16, gap: 9 },
+  { bank: 'amb_woodpecker', rate: (s, d) => 0.45 * d * (s.menu ? 0 : 1) * shelter(s), dist: [40, 90], elev: [2, 8], vol: 0.35, ref: 20, gap: 30 },
+  { bank: 'amb_creak', rate: (s, d, n) => 2 + 2.2 * n + 9 * smooth(0.4, 1.1, s.wind || 0), dist: [8, 35], elev: [3, 10], vol: 0.3, ref: 6, gap: 2 },
   { bank: 'amb_twig', rate: (s, d, n) => (1.1 * n + 0.6 * s.danger) * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], vol: 0.35, ref: 4, gap: 10, hrtf: true },
   { bank: 'amb_owl', rate: (s, d, n) => 1.9 * n * (s.horde ? 0.4 : 1), dist: [25, 70], elev: [6, 14], vol: 0.42, ref: 15, gap: 12 },
   { bank: 'amb_wolf', rate: (s, d, n) => 1.1 * smooth(0.4, 0.9, n) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [150, 260], elev: [0, 10], vol: 0.8, ref: 80, gap: 25 },
@@ -26,6 +30,9 @@ const EVENTS = [
   { bank: 'amb_bell', rate: (s, d, n) => 0.2 * smooth(0.5, 1, n), dist: [220, 320], elev: [10, 30], vol: 0.65, ref: 120, gap: 90, tolls: true },
   { bank: 'z_growl', rate: (s, d, n) => (2 * smooth(0.5, 1, n) + (s.horde ? 14 : 0)) * (s.menu ? 0 : 1), dist: [35, 80], elev: [0, 1], vol: 0.4, ref: 6, gap: 0.8, rateJit: 0.15 },
 ];
+
+const THUNDER = { bank: 'amb_thunder', dist: [0, 0], elev: [0, 0], vol: 1, ref: 160, gap: 0 };
+const THUNDER_NEAR = { bank: 'amb_thunder_near', dist: [0, 0], elev: [0, 0], vol: 1, ref: 60, gap: 0, rateJit: 0.08 };
 
 function setPos(p, x, y, z) {
   if (p.positionX) {
@@ -41,7 +48,7 @@ class Bed {
     this.bank = bank;
     this.gain = amb.ctx.createGain();
     this.gain.gain.value = 0;
-    this.gain.connect(dest);
+    if (dest) this.gain.connect(dest);
     this.src = null;
     this.target = 0;
     this.offAt = 0;
@@ -95,11 +102,19 @@ export class Ambience {
     this.beds = {
       wind: new Bed(this, 'bed_wind', this.windLP),
       pines: new Bed(this, 'bed_pines', this.windLP),
+      rain: new Bed(this, 'bed_rain', null),
       crickets: new Bed(this, 'bed_crickets', this.out),
       drone: new Bed(this, 'bed_drone', this.out),
       horde: new Bed(this, 'bed_horde', this.out),
       fire: new Bed(this, 'loop_campfire', this.out),
     };
+    // rain: open sky, or a muffled drumming under a roof
+    this.rainLP = c.createBiquadFilter();
+    this.rainLP.type = 'lowpass';
+    this.rainLP.frequency.value = 12000;
+    this.rainLP.Q.value = 0.4;
+    this.beds.rain.gain.connect(this.rainLP);
+    this.rainLP.connect(this.out);
     // horde chorus also feeds the reverb (distance)
     const hs = c.createGain();
     hs.gain.value = 0.4;
@@ -149,8 +164,8 @@ export class Ambience {
   }
 
   // play a one-shot at a random world position around the listener (or at `pos` [x,y,z]).
-  // Returns the position used (or null).
-  emit(ev, now, when = 0, pos = null) {
+  // `steal`: take the channel that ends soonest if all are busy. Returns the position used (or null).
+  emit(ev, now, when = 0, pos = null, steal = false) {
     const e = this.e;
     const buf = e._pick(ev.bank);
     if (!buf) {
@@ -169,6 +184,13 @@ export class Ambience {
         ch = c;
         break;
       }
+    }
+    if (!ch && steal) {
+      ch = this.chans.reduce((a, b) => (b.end < a.end ? b : a));
+      try {
+        ch.src.stop();
+      } catch {}
+      this._release(ch);
     }
     if (!ch) return null;
     let x;
@@ -213,6 +235,15 @@ export class Ambience {
     return [x, y, z];
   }
 
+  // thunder for a lightning strike at (x, z), `dist` m from the listener, arriving `delay` s after the flash
+  thunder(x, z, dist, delay) {
+    const now = this.ctx.currentTime;
+    const near = dist < 170;
+    const ev = near ? THUNDER_NEAR : THUNDER;
+    const y = this.e._ly + (near ? 25 : 80);
+    this.pending.push([now + delay, ev, [x, y, z], true]);
+  }
+
   burst(bank, count) {
     const ev = EVENTS.find((x) => x.bank === bank);
     if (!ev) return;
@@ -235,14 +266,24 @@ export class Ambience {
       this.gust = rand(0.65, 1.3);
     }
     const tc = 1.6;
-    this.beds.wind.set((0.22 + 0.2 * n) * this.gust * (1 - 0.4 * cover) * (s.menu ? 0.8 : 1), now, tc);
-    this.beds.pines.set((0.14 + 0.09 * n) * this.gust * this.gust * (1 - 0.6 * cover), now, tc);
-    const cr = s.menu ? 0.18 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1);
+    // weather wind: 0.3 is the everyday breeze, ~1.2 a gale (gusts included, in step with the trees)
+    const ww = Math.max(0, (s.wind ?? 0.3) - 0.3);
+    const wm = 1 + ww * 1.7;
+    const rain = s.rain || 0;
+    this.beds.wind.set(Math.min(0.95, (0.22 + 0.2 * n) * this.gust * wm * (1 - 0.4 * cover) * (s.menu ? 0.8 : 1)), now, tc);
+    this.beds.pines.set(Math.min(0.8, (0.14 + 0.09 * n) * this.gust * this.gust * (1 + ww * 2.2) * (1 - 0.6 * cover)), now, tc);
+    this.beds.rain.set(s.menu ? 0 : rain * (cover ? 0.42 : 0.55), now, 2);
+    const rl = cover ? 650 : 11000;
+    if (rl !== this._rl) {
+      this._rl = rl;
+      this.rainLP.frequency.setTargetAtTime(rl, now, 0.3);
+    }
+    const cr = s.menu ? 0.18 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1) * (1 - 0.8 * rain) * (1 - 0.6 * smooth(0.5, 1, s.wind || 0));
     this.beds.crickets.set(cr, now, 2.5);
     this.beds.drone.set(s.menu ? 0.16 : n * 0.28 + (s.horde ? 0.1 : 0) + (s.dead ? 0.25 : 0), now, 3);
     this.beds.horde.set(!s.menu && s.horde ? 0.32 : 0, now, 2.5);
     this.beds.fire.set(s.menu ? 0 : s.nearFire * 0.25, now, 1);
-    const wl = cover ? 900 : 1400 + 2600 * (this.gust - 0.6);
+    const wl = cover ? 900 : 1400 + 2600 * (this.gust - 0.6) + 1800 * Math.min(1, ww);
     if (Math.abs(wl - (this._wl || 0)) > 60) {
       this._wl = wl;
       this.windLP.frequency.setTargetAtTime(wl, now, 1.2);
@@ -269,7 +310,7 @@ export class Ambience {
       const p = this.pending[k];
       if (p[0] < now + 0.3) {
         this.pending.splice(k, 1);
-        this.emit(p[1], now, p[0], p[2] || null);
+        this.emit(p[1], now, p[0], p[2] || null, !!p[3]);
       }
     }
   }

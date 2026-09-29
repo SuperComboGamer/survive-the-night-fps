@@ -98,6 +98,7 @@ function applySettings(s) {
   game.input.rawInput = s.rawMouse !== false;
   game.voice.setVolume(s.voiceVolume ?? 1);
   game.foliage?.setQuality(renderer.q);
+  game.weatherFx?.setQuality(renderer.quality);
   game.lights.setShadows(renderer.q.shadows);
   game.env.setShadows(renderer.q.sunShadows);
   applyAudioSettings(s);

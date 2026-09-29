@@ -665,6 +665,7 @@ export function createWorld(seed) {
   const openings = []; // doorways structures snap into {x,y,z, ry, w, h}
   const extraTrees = []; // [x,z,variant,scale]
   const lights = []; // decorative static light spots (client may use): {x,y,z,kind}
+  const roofs = []; // roof footprints (client keeps rain out): {x,z, c,s (local->world like Builder), hx,hz, y (eaves), rise (+ ridge along local z, - along local x)}
   const clears = []; // [x, z, r] keep vegetation out
 
   const addPropColliders = (type, x, y, z, ry) => {
@@ -845,7 +846,13 @@ export function createWorld(seed) {
       this.roof(cx, cz, w, d, h, mat, o);
       this.clear(cx, cz, Math.hypot(w, d) / 2 + 1.5);
     }
+    roofSpan(cx, cz, hx, hz, h, rise = 0) {
+      roofs.push({ x: this.wx(cx, cz), z: this.wz(cx, cz), c: this.c, s: this.s, hx, hz, y: this.y0 + h, rise });
+    }
     roof(cx, cz, w, d, h, mat, o) {
+      if (o.roof === 'gable') this.roofSpan(cx, cz, w / 2 + 0.35, d / 2 + 0.45, h, o.roofH || w * 0.35);
+      else if (o.roof === 'gableZ') this.roofSpan(cx, cz, w / 2 + 0.45, d / 2 + 0.35, h, -(o.roofH || d * 0.35));
+      else if (o.roof === 'flat') this.roofSpan(cx, cz, w / 2 + 0.3, d / 2 + 0.3, h, 0.3);
       if (o.roof === 'gable') {
         const rh = o.roofH || w * 0.35;
         this.prism(cx, h, cz, w + 0.1, rh, d + 0.1, mat);
@@ -874,6 +881,7 @@ export function createWorld(seed) {
     shelter(cx, cz, w, d, h, roofMat = 'tin', postMat = 'planks') {
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) this.cyl(cx + sx * (w / 2 - 0.2), 0, cz + sz * (d / 2 - 0.2), 0.11, h, postMat, { sides: 6 });
       this.box(cx, h, cz, w + 0.5, 0.14, d + 0.5, roofMat, { collide: false });
+      this.roofSpan(cx, cz, w / 2 + 0.25, d / 2 + 0.25, h, 0.14);
     }
   }
 
@@ -1949,6 +1957,7 @@ export function createWorld(seed) {
     parts,
     props,
     lights,
+    roofs,
     staticGrid,
     structGrid,
     colliderGrids: [staticGrid, structGrid],
