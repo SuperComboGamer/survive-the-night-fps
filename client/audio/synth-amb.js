@@ -249,6 +249,36 @@ export function bedHorde(sr, rng) {
   return finishLoop(outs, sr, X, 0.8);
 }
 
+// rain: a hiss of pink noise under thousands of tiny droplet ticks, with a soft low wash of heavy rain
+export function bedRain(sr, rng) {
+  const Ls = 8;
+  const X = 1;
+  const n = Math.ceil((Ls + X) * sr);
+  const outs = [];
+  for (let ch = 0; ch < 2; ch++) {
+    const c = new Float32Array(n);
+    const pk = new Pink(rng);
+    const hp = new Biquad().hp(sr, 500, 0.7);
+    const lp = new Biquad().lp(sr, 7500, 0.6);
+    const br = new Brown(rng);
+    const lpb = new Biquad().lp(sr, 260, 0.7);
+    const sw = new Wander(rng, sr, 0.35);
+    for (let i = 0; i < n; i++) c[i] = lp.run(hp.run(pk.next())) * (0.85 + 0.15 * sw.next()) * 1.4 + lpb.run(br.next()) * 0.5;
+    // droplets: short decaying pings at random pitches, a few loud ones close by
+    const count = Math.floor(n / sr * 900);
+    for (let k = 0; k < count; k++) {
+      const i0 = Math.floor(rng() * n);
+      const f = rrange(rng, 1800, 6500);
+      const a = Math.pow(rng(), 4) * 0.9 + 0.05;
+      const len = Math.floor(sr * 0.006);
+      const w = (TAU * f) / sr;
+      for (let j = 0; j < len && i0 + j < n; j++) c[i0 + j] += Math.sin(w * j) * a * Math.exp(-j / (len * 0.25));
+    }
+    outs.push(c);
+  }
+  return finishLoop(outs, sr, X, 0.8);
+}
+
 // ------------------------------------------------------------------ ambient one-shots (mono; engine positions them)
 export function crow(sr, rng) {
   const caws = 2 + Math.floor(rng() * 3);
@@ -400,6 +430,45 @@ export function woodpecker(sr, rng) {
   }
   distant(out, sr, 3000, [[0.35, 0.15]]);
   return finish(out, sr);
+}
+
+// thunder, far: a long low roll that swells and rattles as the sound arrives from the length of the bolt
+export function thunder(sr, rng) {
+  const dur = rrange(rng, 6.5, 9);
+  const n = Math.floor(dur * sr);
+  const out = new Float32Array(n);
+  const br = new Brown(rng);
+  const lp = new Biquad().lp(sr, rrange(rng, 160, 260), 0.7);
+  const lp2 = new Biquad().lp(sr, 520, 0.6);
+  const pk = new Pink(rng);
+  const rattle = new Wander(rng, sr, 9);
+  // swells: [time, attack, decay, gain]
+  const swells = [];
+  let t = rrange(rng, 0.02, 0.3);
+  for (let k = 0; k < 3 + Math.floor(rng() * 3); k++) {
+    swells.push([t, rrange(rng, 0.08, 0.35), rrange(rng, 0.8, 2.2), k === 0 ? rrange(rng, 0.6, 1) : rrange(rng, 0.35, 1)]);
+    t += rrange(rng, 0.5, 1.8);
+  }
+  for (let i = 0; i < n; i++) {
+    const tt = i / sr;
+    let e = 0;
+    for (const [t0, a, d, g] of swells) if (tt > t0) e += g * (tt - t0 < a ? (tt - t0) / a : Math.exp(-(tt - t0 - a) / d));
+    const r = 0.65 + 0.35 * rattle.next();
+    out[i] = (lp.run(br.next()) * 2.2 + lp2.run(pk.next()) * 0.5) * e * r;
+  }
+  return finish(out, sr, 0.9, 0.05, 1.2);
+}
+// thunder, close: a ripping crack right overhead, a chest-thumping boom, then the roll
+export function thunderNear(sr, rng) {
+  const out = alloc(sr, 7.5);
+  // the tear: a burst of crackles over the first ~0.3 s on top of a white-hot snap
+  addNorm(out, noise(sr, rng, 0.25, { hp: 600, a: 0.0006, d: 0.04 }), sr, 0, 1);
+  addNorm(out, crackles(sr, rng, 0.45, 240, { hp: 700, bp: 1900, pow: 2, env: (u) => Math.exp(-u * 3) }), sr, 0.01, 0.8);
+  addNorm(out, noise(sr, rng, 1.4, { lp: 1600, a: 0.005, d: 0.35, pink: true }), sr, 0.02, 0.75);
+  addNorm(out, thump(sr, 70, 34, 0.25, 0.7, 2.2), sr, 0.03, 0.95);
+  const roll = thunder(sr, rng);
+  addNorm(out, roll, sr, 0.35, 0.8);
+  return finish(out, sr, 0.95, 0.0005, 1);
 }
 
 // ------------------------------------------------------------------ music instruments
@@ -733,6 +802,9 @@ export const AMB_DEFS = [
   { bank: 'bed_crickets', n: 1, sr: MID, gen: bedCrickets },
   { bank: 'bed_drone', n: 1, sr: LO, gen: bedDrone },
   { bank: 'bed_horde', n: 1, sr: LO, group: 'late', gen: bedHorde },
+  { bank: 'bed_rain', n: 1, sr: MID, group: 'late', gen: bedRain },
+  { bank: 'amb_thunder', n: 3, sr: LO, group: 'late', gen: thunder },
+  { bank: 'amb_thunder_near', n: 2, sr: LO, group: 'late', gen: thunderNear },
   { bank: 'amb_crow', n: 3, sr: LO, group: 'late', gen: crow },
   { bank: 'amb_bird', n: 4, sr: MID, group: 'late', gen: bird },
   { bank: 'amb_owl', n: 2, sr: LO, group: 'late', gen: owl },

@@ -64,8 +64,8 @@ ui.setControls([
   ['Ctrl / C', 'Crouch (stealth)'],
   ['LMB / RMB', 'Fire · Aim / heavy attack'],
   ['1 2 3 4 5', 'Primary · Pistol · Melee · Throwable · Build'],
-  ['Q / Wheel', 'Last weapon / cycle'],
-  ['R', 'Reload (build: cycle structure)'],
+  ['Q / Wheel', 'Last weapon / cycle (build: Q / E cycle structure)'],
+  ['R', 'Reload'],
   ['E', 'Interact · hold: search, revive, start the car'],
   ['Melee', 'Hit trees for wood, wrecks for scrap'],
   ['Z / MMB', 'Ping (go · danger · loot)'],
@@ -98,6 +98,7 @@ function applySettings(s) {
   game.input.rawInput = s.rawMouse !== false;
   game.voice.setVolume(s.voiceVolume ?? 1);
   game.foliage?.setQuality(renderer.q);
+  game.weatherFx?.setQuality(renderer.quality);
   game.lights.setShadows(renderer.q.shadows);
   game.env.setShadows(renderer.q.sunShadows);
   applyAudioSettings(s);

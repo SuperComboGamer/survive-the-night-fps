@@ -515,7 +515,7 @@ export class AudioEngine {
     this._lz = 0;
     this._lyaw = NaN;
     this._lpitch = NaN;
-    this._state = { night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, dead: false, menu: false };
+    this._state = { night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, rain: 0, wind: 0.3, dead: false, menu: false };
     this._vol = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
     this._rateMul = 1;
     this._hrtfCount = 0;
@@ -1122,9 +1122,17 @@ export class AudioEngine {
     s.lowHealth = clamp01(+state.lowHealth || 0);
     s.nearFire = clamp01(+state.nearFire || 0);
     s.underCover = !!state.underCover;
+    s.rain = clamp01(+state.rain || 0);
+    s.wind = Number.isFinite(state.wind) ? Math.max(0, Math.min(2, state.wind)) : 0.3;
     s.dead = dead;
     s.menu = menu;
     if (changed && this._ready) this._applyStateNow();
+  }
+
+  // thunder for a lightning strike at world (x, z), `dist` m away: it rolls in `delay` s after the flash
+  thunder(x, z, dist, delay) {
+    if (!this._ready) return;
+    this._ambience?.thunder(x, z, dist, delay);
   }
 
   _applyStateNow() {

@@ -612,6 +612,7 @@ export class Game {
     addItem(p.inv, ITEM.WOOD, 6);
     addItem(p.inv, ITEM.NAILS, 8);
     addItem(p.inv, ITEM.STICK, 4);
+    addItem(p.inv, ITEM.CLOTH, 1);
     p.invDirty = true;
     this.fillHistory(p);
     this.playersDirty = true;

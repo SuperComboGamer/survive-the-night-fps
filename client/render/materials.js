@@ -14,6 +14,11 @@ import { getTexture, TEXTURE_WORLD_SIZE, atlasUV } from './textures.js';
 
 /** Shared wind clock for all vegetation materials. The game updates `.value` (seconds) every frame. */
 export const vegetationTime = { value: 0 };
+/**
+ * Shared wind for all vegetation: x,y = world XZ direction the wind blows toward, z = strength
+ * (0 still, ~0.3 breeze, 1+ gale, gusts included), w = sway clock (integrated, runs faster in strong wind).
+ */
+export const vegetationWind = { value: new THREE.Vector4(0, 1, 0.3, 0) };
 
 export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds']);
 
@@ -67,33 +72,60 @@ function mossPatch(mat, amount = 1) {
   return mat;
 }
 
+// Wind bend shared by foliage cards and tree trunks, in the mesh's local frame (y up from the base):
+// the plant leans downwind by an amount that grows with height (uSway * h + uBend * h^2), sways
+// around that lean, and gust fronts roll across the forest along the wind. Trunks and their foliage
+// share uBend, so crowns stay on their trunks however hard it blows.
+const WIND_BEND = /* glsl */ `
+  {
+    vec3 ip = modelMatrix[3].xyz;
+    mat3 im = mat3( modelMatrix );
+    #ifdef USE_INSTANCING
+      ip += instanceMatrix[3].xyz;
+      im = im * mat3( instanceMatrix );
+    #endif
+    vec3 wl = transpose( im ) * vec3( uWind.x, 0.0, uWind.y );
+    vec2 wd = wl.xz / max( length( wl.xz ), 1e-5 );
+    vec2 wp = vec2( -wd.y, wd.x );
+    float W = uWind.z;
+    float t = uWind.w;
+    float ph = ip.x * 0.37 + ip.z * 0.23;
+    float front = sin( dot( ip.xz, uWind.xy ) * 0.08 - t * 0.5 ) * 0.6 + sin( dot( ip.xz, uWind.xy ) * 0.031 - t * 0.19 + ph * 0.05 ) * 0.4;
+    float gust = W * ( 0.72 + 0.42 * front );
+    float g = sin( t * 0.83 + ph ) + 0.45 * sin( t * 1.97 + ph * 1.7 ) + 0.2 * sin( t * 3.3 + ph * 0.6 );
+    float hh = max( transformed.y, 0.0 );
+    float amp = uSway * hh + uBend * hh * hh;
+    float push = gust * gust * 3.4 + g * ( 0.45 + 2.0 * gust );
+    vec2 d = ( wd * push + wp * sin( t * 0.71 + ph * 1.3 ) * ( 0.35 + 0.9 * gust ) ) * amp;
+    #ifdef WIND_FLUTTER
+      float f = sin( t * 4.6 + ph * 3.0 + transformed.x * 1.7 + transformed.z * 1.3 + transformed.y * 0.9 );
+      float fl = uFlutter * min( hh, 1.0 ) * ( 0.55 + 1.1 * W );
+      d += vec2( f, f * 0.7 ) * fl;
+    #endif
+    d *= min( 1.0, ( 0.75 * hh + 0.05 ) / max( length( d ), 1e-5 ) ); // grass lies flat, never through the ground
+    transformed.xz += d;
+    transformed.y -= 0.5 * dot( d, d ) / max( hh, 0.6 );
+  }
+`;
+
+function windUniforms(sh, mat) {
+  sh.uniforms.uTime = vegetationTime;
+  sh.uniforms.uWind = vegetationWind;
+  sh.uniforms.uSway = mat.userData.sway;
+  sh.uniforms.uBend = mat.userData.bend;
+  sh.uniforms.uFlutter = mat.userData.flutter;
+  return '#include <common>\nuniform float uTime;\nuniform vec4 uWind;\nuniform float uSway;\nuniform float uBend;\nuniform float uFlutter;';
+}
+
 // foliage: wind sway (height based, phase from instance/object position), no back-face normal flip,
 // alpha boost with mip level so distant cards don't dissolve.
-function foliagePatch(mat, sway, flutter) {
+function foliagePatch(mat, sway, flutter, bend = 0) {
   mat.userData.uTime = vegetationTime;
   mat.userData.sway = { value: sway };
   mat.userData.flutter = { value: flutter };
+  mat.userData.bend = { value: bend };
   mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uTime = vegetationTime;
-    sh.uniforms.uSway = mat.userData.sway;
-    sh.uniforms.uFlutter = mat.userData.flutter;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uSway;\nuniform float uFlutter;').replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-      {
-        vec3 ip = modelMatrix[3].xyz;
-        #ifdef USE_INSTANCING
-          ip += instanceMatrix[3].xyz;
-        #endif
-        float ph = ip.x * 0.37 + ip.z * 0.23;
-        float hh = max( transformed.y, 0.0 );
-        float g = sin( uTime * 0.83 + ph ) + 0.45 * sin( uTime * 1.97 + ph * 1.7 ) + 0.2 * sin( uTime * 3.3 + ph * 0.6 );
-        float f = sin( uTime * 4.1 + ph * 3.0 + transformed.x * 1.7 + transformed.z * 1.3 + transformed.y * 0.9 );
-        float amp = uSway * hh;
-        transformed.x += g * amp + f * uFlutter * min( hh, 1.0 );
-        transformed.z += ( 0.6 * sin( uTime * 0.71 + ph * 1.3 ) ) * amp + f * uFlutter * 0.7 * min( hh, 1.0 );
-      }`,
-    );
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', windUniforms(sh, mat)).replace('#include <begin_vertex>', '#include <begin_vertex>\n#define WIND_FLUTTER\n' + WIND_BEND);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
       .replace(
@@ -111,6 +143,24 @@ function foliagePatch(mat, sway, flutter) {
   };
   mat.customProgramCacheKey = () => 'foliage';
   return mat;
+}
+
+// Tree trunks + limbs bend with their crowns. The props (logs, stumps, fences) keep the plain bark
+// materials, so only the instanced trees get these (cached) wind-bent copies.
+export const TREE_BEND = 0.00055;
+const _trunks = new Map();
+export function trunkMaterial(base) {
+  let m = _trunks.get(base);
+  if (!m) {
+    m = base.clone();
+    m.userData = { sway: { value: 0 }, flutter: { value: 0 }, bend: { value: TREE_BEND } };
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', windUniforms(sh, m)).replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_BEND);
+    };
+    m.customProgramCacheKey = () => 'trunk';
+    _trunks.set(base, m);
+  }
+  return m;
 }
 
 function alphaCards(o) {
@@ -191,8 +241,8 @@ const DEFS = {
   bark: () => lambert({ map: tileTex('bark') }),
   bark_birch: () => lambert({ map: tileTex('bark_birch') }),
   bark_dead: () => lambert({ map: tileTex('bark_dead') }),
-  pine: () => foliagePatch(alphaCards({ map: getTexture('pine') }), 0.012, 0.05),
-  leaves: () => foliagePatch(alphaCards({ map: getTexture('leaves') }), 0.016, 0.06),
+  pine: () => foliagePatch(alphaCards({ map: getTexture('pine') }), 0.002, 0.05, TREE_BEND),
+  leaves: () => foliagePatch(alphaCards({ map: getTexture('leaves') }), 0.004, 0.06, TREE_BEND),
   bush: () => foliagePatch(alphaCards({ map: getTexture('bush') }), 0.05, 0.03),
   fern: () => foliagePatch(alphaCards({ map: getTexture('fern') }), 0.07, 0.03),
   grass: () => foliagePatch(alphaCards({ map: getTexture('grass_blade') }), 0.22, 0.02),
