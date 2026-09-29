@@ -137,6 +137,7 @@ export class Game {
     this.input = new Input(renderer.canvas);
     this.input.sensitivity = settings.sensitivity || 1;
     this.input.invertY = !!settings.invertY;
+    this.input.rawInput = settings.rawMouse !== false;
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
       inventory: (r) => this.onInventory(r),
@@ -982,7 +983,7 @@ export class Game {
     }
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.debugCam);
-    const lk = 0.0022 * inp.sensitivity;
+    const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time });
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;

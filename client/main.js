@@ -95,6 +95,7 @@ function applySettings(s) {
   renderer.setFov(s.fov || 75);
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;
+  game.input.rawInput = s.rawMouse !== false;
   game.voice.setVolume(s.voiceVolume ?? 1);
   game.foliage?.setQuality(renderer.q);
   game.lights.setShadows(renderer.q.shadows);
