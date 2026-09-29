@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   quality: 'medium',
   pushToTalk: true,
   invertY: false,
+  rawMouse: true,
+  weaponSway: true,
   showFps: true,
 });
 
@@ -34,7 +36,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high'].includes(s.quality)) out.quality = s.quality;
-    for (const k of ['pushToTalk', 'invertY', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -60,6 +62,8 @@ const SECTIONS = [
     rows: [
       { k: 'sensitivity', label: 'Mouse sensitivity', type: 'range', min: 0.1, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) + '×' },
       { k: 'invertY', label: 'Invert mouse Y', type: 'toggle' },
+      { k: 'rawMouse', label: 'Raw mouse input', type: 'toggle', hint: 'Off = OS mouse acceleration applies' },
+      { k: 'weaponSway', label: 'Weapon look sway', type: 'toggle', hint: 'Gun trails behind fast turns' },
       { k: 'fov', label: 'Field of view', type: 'range', min: 60, max: 100, step: 1, fmt: (v) => Math.round(v) + '°' },
     ],
   },
