@@ -744,8 +744,14 @@ export class Game {
       this.prediction.requestSlot(digit);
       return;
     }
+    // hammer out: Q / E step through the structures, but E still interacts whenever the prompt offers [E]
+    const building = s.slot === SLOT_BUILD && !s.zombie;
     switch (code) {
       case 'KeyQ': {
+        if (building) {
+          this.cycleBuild(-1);
+          break;
+        }
         const t = this.lastSlot;
         this.lastSlot = s.slot;
         this.prediction.requestSlot(t);
@@ -761,7 +767,8 @@ export class Game {
         break;
       }
       case 'KeyE':
-        this.interact();
+        if (building && !this.prompt?.startsWith('[E]')) this.cycleBuild(1);
+        else this.interact();
         break;
       case 'KeyZ':
         this.ping();

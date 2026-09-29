@@ -87,8 +87,8 @@ https://www.survivethenightgame.com.
 | Ctrl / C | Crouch (quieter - zombies notice you less) |
 | Mouse | Look · LMB fire / attack · RMB aim / heavy melee |
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
-| Q / wheel | Last weapon / cycle weapons |
-| R | Reload (build mode: cycle structure) |
+| Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
+| R | Reload |
 | E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
@@ -99,7 +99,7 @@ https://www.survivethenightgame.com.
 | Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
 | Enter | Chat |
 | V | Push-to-talk proximity voice |
-| Build mode | LMB place · RMB rotate · R / wheel cycle · E repair · X demolish |
+| Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
 | Zombie form | LMB claw · RMB leap |
 
 ## The game

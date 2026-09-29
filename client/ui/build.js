@@ -9,9 +9,11 @@ export class BuildMenu {
     this.root = el('div', 'build', parent);
     this.root.hidden = true;
     const head = el('div', 'build-head', this.root);
+    el('span', 'kbd sm bh-step', head, 'Q');
     el('span', 'bh-tag', head, 'Build');
     this.hName = el('span', 'bh-name', head, '');
     this.hRot = el('span', 'bh-rot', head, '');
+    el('span', 'kbd sm bh-step', head, 'E');
     this.hBad = el('span', 'bh-bad', head, "Can't place here");
     this.hDesc = el('div', 'build-desc', this.root, '');
     const cards = el('div', 'build-cards', this.root);
@@ -38,10 +40,9 @@ export class BuildMenu {
     });
     const hint = el('div', 'build-hint', this.root);
     for (const [k, t] of [
+      ['Q / E', 'select'],
       ['LMB', 'place'],
       ['RMB', 'rotate'],
-      ['R', 'cycle'],
-      ['E', 'repair'],
       ['X', 'demolish'],
     ]) {
       const s = el('span', 'bh', hint);
