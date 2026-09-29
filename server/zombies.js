@@ -823,6 +823,11 @@ export class Zombies {
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
+      if (def.lungeRange && z.state === 0 && g.rng() < 0.3) {
+        // dog hit-and-run: snap, peel away, come back in with a lunge
+        z.state = 7;
+        z.stateT = 0.6 + g.rng() * 0.5;
+      }
     } else if (z.pendingKind === 2) {
       const s = g.ents[z.pendingTarget];
       if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul);
@@ -1092,7 +1097,7 @@ export class Zombies {
         }
         break;
       case ZTYPE.DOG:
-        if (z.specialCd <= 0 && z.los && dist < def.lungeRange && dist > 2.4 && z.vy === 0 && Math.abs(ty - z.y) < 1.5) {
+        if (z.specialCd <= 0 && z.los && dist < def.lungeRange && dist > 2.4 && z.vy > -1 && Math.abs(ty - z.y) < 2.5) {
           windup(0.3, 8, SOUND.DOG_BARK);
           return true;
         }

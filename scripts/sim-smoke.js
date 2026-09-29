@@ -122,7 +122,19 @@ check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT
   let walked = 0;
   let lx = cat.x;
   let lz = cat.z;
-  run(20 * 90, () => {
+  run(20 * 90, (i) => {
+    // the cat roams at random: every 5 s, if it has wandered off, Alice goes and stands still 5 m from it
+    const p = A.p().state;
+    if (i % 100 === 99 && closest > 2.6 && Math.hypot(p.x - cat.x, p.z - cat.z) > 11) {
+      for (let k = 0; k < 8; k++) {
+        const x = cat.x + Math.sin(k * 0.785) * 5;
+        const z = cat.z + Math.cos(k * 0.785) * 5;
+        if (!game.nav.isBlocked(x, z)) {
+          A.tp(x, z);
+          break;
+        }
+      }
+    }
     for (const h of game.humans()) closest = Math.min(closest, Math.hypot(h.state.x - cat.x, h.state.z - cat.z));
     walked += Math.hypot(cat.x - lx, cat.z - lz);
     lx = cat.x;
@@ -174,8 +186,9 @@ check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT
   check('the pack hunts together (one howl)', hunted && howls === 1, `howls ${howls}`);
   check('dogs lunge and bite', lunged && bitten > 0, `${bitten.toFixed(0)} dmg`);
   check('dog replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.ZOMBIE && e.ztype === ZTYPE.DOG && e.id === d0.id));
-  // hitscan from the side: the head sphere is ahead of the body, not above it
+  // hitscan from the side: the head sphere is ahead of the body, not above it (packmates out of the line of fire)
   const p = A.p();
+  for (const d of pack) if (d !== d0) game.combat.damageZombie(d, 1e6, p, {});
   const shots = [];
   const damageZombie = game.combat.damageZombie;
   game.combat.damageZombie = (z, amount, attacker, opts) => shots.push(z === d0 && opts.headshot);
