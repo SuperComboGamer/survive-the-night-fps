@@ -2,6 +2,9 @@
 //   ?vm=ITEMID | ?vm=claws | ?vm=all (grid of every item)
 //   &act=fire|reload|melee|heavy|throw|use|ads|sprint|walk|crouch|jump
 //   &t=SECONDS   freeze the clock at this time after the action starts (deterministic screenshot)
+//   &orbit=yaw,pitch,dist[,tx,ty,tz]  view the viewmodel from an orbiting camera
+//   &hide=L|R|LR hide an arm (inspect the other hand's grip)
+//   &light=game  in-game viewmodel lighting (midday) instead of the bright studio lights
 //   ?ww=1        world weapon lineup
 import * as THREE from 'three';
 import { ITEM, ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
@@ -18,6 +21,41 @@ if (params.has('cq')) {
   const id = parseInt(params.get('vm'), 10);
   if (VM_DEBUG.VM[id]) VM_DEBUG.VM[id].chargeQ = params.get('cq').split(',').map(Number);
 }
+// &rg= / &lg=px,py,pz,fx,fy,fz,nx,ny,nz: right / left grip point, finger direction and palm normal (weapon space)
+// &pole=rx,ry,rz,lx,ly,lz: elbow pole vectors; &rpose= / &lpose=: hand pose names
+{
+  const id = parseInt(params.get('vm'), 10);
+  const cfg = VM_DEBUG.VM[id];
+  const nums = (k) => params.get(k).split(',').map(Number);
+  if (cfg && params.has('rg')) {
+    const v = nums('rg');
+    cfg.rGrip = { p: v.slice(0, 3), q: VM_DEBUG.handQ(1, v.slice(3, 6), v.slice(6, 9)) };
+  }
+  if (cfg && params.has('lg')) {
+    const v = nums('lg');
+    cfg.lGrip = { ...cfg.lGrip, p: v.slice(0, 3), q: VM_DEBUG.handQ(-1, v.slice(3, 6), v.slice(6, 9)) };
+  }
+  if (cfg && params.has('pole')) {
+    const v = nums('pole');
+    cfg.poleR = new THREE.Vector3(v[0], v[1], v[2]);
+    cfg.poleL = new THREE.Vector3(v[3], v[4], v[5]);
+  }
+  if (cfg && params.has('rpose')) cfg.rPose = params.get('rpose');
+  if (cfg && params.has('lpose')) cfg.lGrip = { ...cfg.lGrip, pose: params.get('lpose') };
+}
+// &thumb=pose:x1,y1,z1,x2,y2,z2 : thumb segment directions (hand space) of a hand pose
+if (params.has('thumb')) {
+  const [k, v] = params.get('thumb').split(':');
+  const n = v.split(',').map(Number);
+  VM_DEBUG.HAND_POSES[k].thumb = [n.slice(0, 3), n.slice(3, 6)];
+}
+// &mat=glove:r,g,b;trim:r,g,b;... : hand / sleeve material colors
+if (params.has('mat')) {
+  for (const kv of params.get('mat').split(';')) {
+    const [k, v] = kv.split(':');
+    if (VM_DEBUG.HAND_MAT[k]) VM_DEBUG.HAND_MAT[k].color = v.split(',').map(Number);
+  }
+}
 if (params.has('claw')) {
   const v = params.get('claw').split(',').map(Number);
   for (let i = 0; i < 6; i++) VM_DEBUG.CLAW_IDLE[i] = v[i];
@@ -31,6 +69,16 @@ document.body.appendChild(renderer.domElement);
 renderer.setScissorTest(true);
 
 function makeLights(scene, cam) {
+  if (params.get('light') === 'game') {
+    // approximates the in-game viewmodel lights at midday (renderer.vmHemi / vmDir) + ACES
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    scene.add(new THREE.HemisphereLight(0xadb6ba, 0x33302a, 0.96));
+    const dir = new THREE.DirectionalLight(0xf4e8d6, 1.08);
+    const ld = (params.get('ldir') || '-0.4,1,0.6').split(',').map(Number); // &ldir=x,y,z: light direction
+    dir.position.set(ld[0], ld[1], ld[2]);
+    cam.add(dir, dir.target);
+    return;
+  }
   scene.add(new THREE.HemisphereLight(0x9aa4b4, 0x1a140e, 0.8));
   const key = new THREE.DirectionalLight(0xffd2a0, 1.6);
   key.position.set(1.5, 2, 1);
@@ -146,6 +194,7 @@ if (params.get('vm') === 'hands') {
 } else {
   // ------------------------------------------------------------------ viewmodel(s)
   const vmParam = params.get('vm');
+  const hideArm = params.get('hide'); // &hide=L|R|LR: hide an arm to inspect the other hand's grip
   const act = params.get('act') || '';
   // &ts=a,b,c : grid of the same item frozen at several times
   const times = params.has('ts') ? params.get('ts').split(',').map(Number) : null;
@@ -166,6 +215,13 @@ if (params.get('vm') === 'hands') {
     backdrop(scene);
     const vm = new ViewModel();
     scene.add(vm.group);
+    if (params.has('orbit')) {
+      // &orbit=yaw,pitch,dist[,tx,ty,tz]: inspect the viewmodel from outside the player's eye
+      const [yaw, pitch, dist, tx = 0.08, ty = -0.12, tz = -0.32] = params.get('orbit').split(',').map(Number);
+      const tgt = new THREE.Vector3(tx, ty, tz);
+      cam.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(tgt);
+      cam.lookAt(tgt);
+    }
     if (id === 'claws') vm.setItem(0, { claws: true });
     else vm.setItem(id);
     return { id, scene, cam, vm, acted: false, stopAt: times ? times[vi] : null };
@@ -248,6 +304,8 @@ if (params.get('vm') === 'hands') {
       v.cam.updateProjectionMatrix();
       renderer.setViewport(x, y, tw, th);
       renderer.setScissor(x, y, tw, th);
+      if (hideArm === 'L' || hideArm === 'LR') v.vm.armL.setVisible(false);
+      if (hideArm === 'R' || hideArm === 'LR') v.vm.armR.setVisible(false);
       renderer.render(v.scene, v.cam);
     });
   }

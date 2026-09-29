@@ -651,32 +651,28 @@ const WEAPON_PAINTERS = {
     scratches(ctx, rnd, 30, 'rgba(90,70,60,0.18)', 8, 0.8); // creases
   },
   [WR.SLEEVE](ctx, rnd) {
+    // jacket twill: diagonal weave, soft creases across the arm (v = along it) and a seam down one side
     pixelFill(ctx, (x, y, o) => {
-      const weave = (x % 2 === 0 ? -5 : 0) + (y % 2 === 0 ? -5 : 0);
+      const twill = ((x + y) % 4 < 2 ? -5 : 3) + (x % 2 === 0 ? -2 : 0);
       const n = n2(x, y, 0.03, 331, 4);
-      const fold = Math.sin(y * 0.08 + n * 6) * 12;
-      const v = 180 + weave + fold + (n - 0.5) * 40;
+      const crease = Math.max(0, Math.sin(y * 0.11 + n * 5)) ** 3 * -16;
+      const seam = Math.abs(x - 200) < 2 ? -30 : Math.abs(x - 200) < 4 ? 10 : 0;
+      const v = 178 + twill + crease + seam + (n - 0.5) * 34;
       o[0] = v; o[1] = v; o[2] = v;
     });
-    ctx.strokeStyle = 'rgba(20,20,20,0.5)';
-    ctx.setLineDash([4, 3]);
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    ctx.moveTo(0, 128);
-    ctx.lineTo(CELL, 128);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    blotches(ctx, rnd, 10, '50,40,30', 0.35, 10, 30);
-    for (let i = 0; i < 3; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 2 + rnd() * 5, 'rgba(70,8,8,0.6)', 1);
+    blotches(ctx, rnd, 10, '50,40,30', 0.3, 10, 30);
+    for (let i = 0; i < 3; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 2 + rnd() * 5, 'rgba(70,8,8,0.55)', 1);
   },
   [WR.GLOVE](ctx, rnd) {
+    // synthetic tactical-glove fabric: fine cross weave, soft mottling, a few scuffs
     pixelFill(ctx, (x, y, o) => {
-      const n = n2(x, y, 0.12, 341, 3);
-      const rib = Math.sin(x * 0.9) * 8;
-      const v = 110 + rib + (n - 0.5) * 30;
-      o[0] = v; o[1] = v - 3; o[2] = v - 6;
+      const n = n2(x, y, 0.06, 341, 3);
+      const weave = ((x + y) & 3) === 0 ? -7 : ((x - y) & 3) === 0 ? -4 : 0;
+      const v = 120 + weave + (n - 0.5) * 26;
+      o[0] = v; o[1] = v - 2; o[2] = v - 5;
     });
-    scratches(ctx, rnd, 20, 'rgba(200,190,170,0.2)', 15, 0.8);
+    scratches(ctx, rnd, 14, 'rgba(210,200,180,0.14)', 12, 0.7);
+    blotches(ctx, rnd, 6, '40,32,24', 0.25, 8, 20);
   },
   [WR.PLAIN](ctx) {
     pixelFill(ctx, (x, y, o) => {

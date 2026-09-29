@@ -1026,6 +1026,10 @@ function getVMData(itemId) {
 // Grip tunnel (fist) axis = local Z. Left hand = mirror in X.
 const HAND_POSES = {
   grip: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.62, -0.52, -0.58], [-0.25, -0.95, -0.2]], center: [-0.034, -0.083, 0] },
+  // pistol grip with the index finger on the trigger
+  trigger: { curl: [[0.4, 1.0, 0.55], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.6, -0.79, -0.09], [-0.1, -0.93, -0.34]], center: [-0.034, -0.083, 0] },
+  // pistol support hand wrapped around the gun hand, thumb forward along the frame
+  cup: { curl: [[1.05, 1.2, 0.8], [1.1, 1.25, 0.8], [1.15, 1.25, 0.8], [1.2, 1.2, 0.8]], spread: 0.0, thumb: [[-0.22, -0.77, -0.6], [-0.16, -0.8, -0.57]], center: [-0.03, -0.085, 0] },
   support: { curl: [[0.95, 1.1, 0.7], [1.0, 1.15, 0.7], [1.05, 1.15, 0.7], [1.1, 1.1, 0.7]], spread: 0.02, thumb: [[-0.7, -0.45, -0.55], [-0.4, -0.9, 0.1]], center: [-0.042, -0.088, 0] },
   pinch: { curl: [[0.9, 1.2, 0.8], [1.1, 1.4, 0.9], [1.25, 1.45, 0.9], [1.35, 1.4, 0.9]], spread: 0.0, thumb: [[-0.55, -0.6, -0.55], [-0.2, -0.85, 0.45]], center: [-0.03, -0.1, -0.02] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
@@ -1039,11 +1043,13 @@ const FINGERS = [
   { z: 0.0275, y: -0.0845, L: [0.035, 0.021, 0.018], r: 0.0081 },
 ];
 const PHALANX_R = [1.0, 0.9, 0.82];
+// full-finger tactical gloves (tan synthetic, darker rubber knuckle guard / pads / strap) and an olive jacket
 const HAND_MAT = {
-  skin: { region: WR.SKIN, color: [0.74, 0.56, 0.46], mottle: 0.12 },
-  glove: { region: WR.GLOVE, color: [1.05, 1.0, 0.9], mottle: 0.08 },
-  trim: { region: WR.GLOVE, color: [0.5, 0.49, 0.46], mottle: 0.05 }, // hems, strap, knuckle guard
-  nail: { region: WR.SKIN, color: [0.98, 0.84, 0.76], mottle: 0.05 },
+  glove: { region: WR.GLOVE, color: [1.3, 1.12, 0.88], mottle: 0.06 },
+  finger: { region: WR.GLOVE, color: [1.25, 1.08, 0.85], mottle: 0.05 },
+  trim: { region: WR.GLOVE, color: [0.5, 0.45, 0.4], mottle: 0.04 },
+  sleeve: { region: WR.SLEEVE, color: [0.34, 0.36, 0.26], mottle: 0.1 },
+  hem: { region: WR.SLEEVE, color: [0.27, 0.29, 0.2], mottle: 0.06 },
 };
 const THUMB_MCP = [-0.012, -0.03, -0.034]; // thumb poses rotate about this joint
 
@@ -1055,7 +1061,6 @@ const _hx = new THREE.Vector3();
 const _hy = new THREE.Vector3();
 const _hz = new THREE.Vector3();
 const _hm = new THREE.Matrix4();
-const _hq = new THREE.Quaternion();
 
 /**
  * Capsule from a to b (radius r0 -> r1) with smooth hemispherical caps and analytic normals.
@@ -1157,11 +1162,12 @@ function palmSurface(S) {
   };
 }
 
-// cheap baked shading for hand parts: darker on the side facing away from n (palm side), creases near the joints
-function handShade(n, joints) {
+// cheap baked shading for hand parts: darker on the side facing away from n (palm side), creases near the joints,
+// and (digits) contact shadow on the flanks that face the neighbouring fingers
+function handShade(n, joints, flank = 0) {
   return (P, N, C) => {
     const back = N.x * n[0] + N.y * n[1] + N.z * n[2];
-    C.multiplyScalar(1 - 0.2 * Math.max(0, -back));
+    C.multiplyScalar(1 - 0.2 * Math.max(0, -back) - flank * N.z * N.z);
     if (joints) {
       const [a, d, len] = joints;
       const t = ((P.x - a[0]) * d[0] + (P.y - a[1]) * d[1] + (P.z - a[2]) * d[2]) / len;
@@ -1170,40 +1176,6 @@ function handShade(n, joints) {
       C.r *= 1 + 0.06 * k;
     }
   };
-}
-
-/** Fingernail on the back of a distal phalanx a -> a + d * len (radius r); gently curved across the finger. */
-function nail(mb, a, d, n, len, r, mat) {
-  _hy.set(d[0], d[1], d[2]);
-  _hx.set(n[0], n[1], n[2]);
-  _hx.addScaledVector(_hy, -_hx.dot(_hy)).normalize();
-  _hz.crossVectors(_hx, _hy);
-  _hq.setFromRotationMatrix(_hm.makeBasis(_hx, _hy, _hz));
-  const ry = len * 0.36, rz = r * 0.62;
-  const c = [a[0] + d[0] * len * 0.64 + _hx.x * r * 0.6, a[1] + d[1] * len * 0.64 + _hx.y * r * 0.6, a[2] + d[2] * len * 0.64 + _hx.z * r * 0.6];
-  const cx = c[0], cy = c[1], cz = c[2], dx = d[0], dy = d[1], dz = d[2];
-  mb.ellip(0, c, [r * 0.26, ry, rz], {
-    ...mat,
-    ws: 8,
-    hs: 4,
-    q: _hq,
-    shape: (p) => {
-      p.x -= (p.z / rz) ** 2 * r * 0.22;
-    },
-    // grime under the free edge
-    tint: (P, N, C) => {
-      const s = ((P.x - cx) * dx + (P.y - cy) * dy + (P.z - cz) * dz) / ry;
-      C.lerp(_nailDirt, sstep(0.45, 1.0, s) * 0.55);
-    },
-  });
-}
-const _nailDirt = new THREE.Color(0.32, 0.24, 0.18);
-
-/** Fingerless-glove sleeve over the base of a digit (a -> along d, radius r), ending in a rolled hem. */
-function gloveBand(mb, a, d, n, len, r, glove, trim) {
-  const at = (s) => [a[0] + d[0] * s, a[1] + d[1] * s, a[2] + d[2] * s];
-  limb(mb, a, at(len), r * 1.12, r * 1.09, n, { ...glove, rs: 8, hs: 1, sx: 0.92, cap0: 1, cap1: 0, capScale: 0.6, tint: handShade(n) });
-  limb(mb, at(len - 0.004), at(len + 0.0015), r * 1.17, r * 1.15, n, { ...trim, rs: 8, hs: 1, sx: 0.92, cap0: 1, cap1: 1, capScale: 0.4, tint: handShade(n) });
 }
 
 const handGeoCache = new Map();
@@ -1215,8 +1187,8 @@ function getHandGeo(poseName, style, side) {
   const claw = style === 'claw';
   const mb = new MeshBuilder({ skinned: false, atlas: claw ? 'char' : 'weapon' });
   mb.aoStrength = 0; // handShade bakes hand-space shading instead
-  const skin = claw ? { region: CR.SKIN, color: [0.46, 0.5, 0.4], mottle: 0.25 } : HAND_MAT.skin;
-  const { glove, trim, nail: nailMat } = HAND_MAT;
+  const skin = claw ? { region: CR.SKIN, color: [0.46, 0.5, 0.4], mottle: 0.25 } : HAND_MAT.finger; // digits
+  const { glove, trim } = HAND_MAT;
   const bone = { region: CR.BONE, color: [0.12, 0.1, 0.09] };
   const palmMat = claw ? skin : glove;
   const BACK = [1, 0, 0];
@@ -1279,7 +1251,7 @@ function getHandGeo(poseName, style, side) {
       const d = [-Math.sin(ang) / dl, -Math.cos(ang) / dl, spread / dl];
       const n = [Math.cos(ang), -Math.sin(ang), 0]; // back of this phalanx
       const q = [p[0] + d[0] * L[j], p[1] + d[1] * L[j], p[2] + d[2] * L[j]];
-      const r0 = F.r * PHALANX_R[j] * (claw ? 0.8 : 1);
+      const r0 = F.r * PHALANX_R[j] * (claw ? 0.8 : 1.06);
       const r1 = r0 * (j === 2 ? 0.88 : 0.93);
       limb(mb, p, q, r0, r1, n, {
         ...skin,
@@ -1287,10 +1259,14 @@ function getHandGeo(poseName, style, side) {
         hs: 2,
         cap1: j === 2 ? 3 : 2,
         sx: j === 2 ? 0.84 : 0.9,
-        prof: (t) => 1 - (claw ? 0.16 : 0.07) * Math.sin(PI * t), // joints stand out
-        tint: handShade(n, [p, d, L[j]]),
+        prof: (t) => 1 - (claw ? 0.16 : 0.04) * Math.sin(PI * t), // joints stand out
+        tint: handShade(n, [p, d, L[j]], claw ? 0 : 0.3),
       });
-      if (j === 0 && !claw) gloveBand(mb, p, d, n, L[0] * 0.56, r0, glove, trim);
+      if (j === 0 && !claw) {
+        // padded strip across the back of the first knuckle
+        const c = [p[0] + d[0] * L[0] * 0.55 + n[0] * r0 * 0.72, p[1] + d[1] * L[0] * 0.55 + n[1] * r0 * 0.72, p[2] + d[2] * L[0] * 0.55];
+        limb(mb, [c[0] - d[0] * 0.009, c[1] - d[1] * 0.009, c[2] - d[2] * 0.009], [c[0] + d[0] * 0.009, c[1] + d[1] * 0.009, c[2] + d[2] * 0.009], r0 * 0.62, r0 * 0.6, n, { ...trim, rs: 6, hs: 1, sx: 0.55, capScale: 0.6, tint: handShade(n) });
+      }
       if (j === 2) {
         if (claw) {
           // hooked claw growing out of the nail bed, curling toward the palm side
@@ -1299,8 +1275,6 @@ function getHandGeo(poseName, style, side) {
           const tip = [mid[0] + d[0] * 0.024 - n[0] * 0.016, mid[1] + d[1] * 0.024 - n[1] * 0.016, mid[2] + d[2] * 0.024];
           limb(mb, b0, mid, 0.0062, 0.0046, n, { ...bone, rs: 6, hs: 1, sx: 0.6, capScale: 0.4 });
           mb.spike(0, mid, tip, 0.0045, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
-        } else {
-          nail(mb, p, d, n, L[2], r0, nailMat);
         }
       }
       p = q;
@@ -1324,13 +1298,9 @@ function getHandGeo(poseName, style, side) {
       const l = Math.hypot(t[0], t[1], t[2]);
       const d = [t[0] / l, t[1] / l, t[2] / l];
       const q = [p[0] + d[0] * L[j], p[1] + d[1] * L[j], p[2] + d[2] * L[j]];
-      const r0 = R[j][0] * (claw ? 0.82 : 1), r1 = R[j][1] * (claw ? 0.82 : 1);
-      limb(mb, p, q, r0, r1, tb, { ...skin, rs: 8, hs: 2, cap1: j === 1 ? 3 : 2, sx: j === 1 ? 0.84 : 0.9, prof: (s) => 1 - (claw ? 0.14 : 0.06) * Math.sin(PI * s), tint: handShade(tb, [p, d, L[j]]) });
-      if (j === 0 && !claw) gloveBand(mb, p, d, tb, L[0] * 0.55, r0, glove, trim);
-      if (j === 1) {
-        if (claw) mb.spike(0, q, [q[0] + d[0] * 0.03, q[1] + d[1] * 0.03, q[2] + d[2] * 0.03], 0.0065, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
-        else nail(mb, p, d, tb, L[1], r0, nailMat);
-      }
+      const r0 = R[j][0] * (claw ? 0.82 : 1.05), r1 = R[j][1] * (claw ? 0.82 : 1.05);
+      limb(mb, p, q, r0, r1, tb, { ...skin, rs: 8, hs: 2, cap1: j === 1 ? 3 : 2, sx: j === 1 ? 0.84 : 0.9, prof: (s) => 1 - (claw ? 0.14 : 0.04) * Math.sin(PI * s), tint: handShade(tb, [p, d, L[j]]) });
+      if (j === 1 && claw) mb.spike(0, q, [q[0] + d[0] * 0.03, q[1] + d[1] * 0.03, q[2] + d[2] * 0.03], 0.0065, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
       p = q;
     }
   }
@@ -1351,9 +1321,9 @@ function getArmGeos(style, side) {
   let g = armGeoCache.get(key);
   if (g) return g;
   const claw = style === 'claw';
-  const sleeve = claw ? { region: CR.CLOTH, color: [0.24, 0.23, 0.2], mottle: 0.2 } : { region: WR.SLEEVE, color: [0.2, 0.2, 0.16], mottle: 0.12 };
-  const cuff = { region: WR.GLOVE, color: [0.2, 0.2, 0.19], mottle: 0.05 };
-  const skin = claw ? { region: CR.SKIN, color: [0.5, 0.54, 0.44], mottle: 0.25 } : HAND_MAT.skin;
+  const sleeve = claw ? { region: CR.CLOTH, color: [0.24, 0.23, 0.2], mottle: 0.2 } : HAND_MAT.sleeve;
+  const hem = HAND_MAT.hem;
+  const skin = { region: CR.SKIN, color: [0.5, 0.54, 0.44], mottle: 0.25 };
   // upper arm (shoulder local, along -Y)
   const up = new MeshBuilder({ skinned: false, atlas: claw ? 'char' : 'weapon' });
   up.seg(0, [0, 0.05, 0], [0, -ARM_L1 - 0.02, 0], 0.06, 0.05, { ...sleeve, rs: 10, hs: 3, caps: 2, noise: 0.004, nf: 25, tear: claw ? { amt: 0.36, f: 30, seed: 3 } : null });
@@ -1361,21 +1331,21 @@ function getArmGeos(style, side) {
   // forearm (elbow local)
   const fo = new MeshBuilder({ skinned: false, atlas: claw ? 'char' : 'weapon' });
   if (!claw) {
-    fo.seg(0, [0, 0.03, 0], [0, -ARM_L2 + 0.075, 0], 0.05, 0.046, { ...sleeve, rs: 10, hs: 4, caps: 2, noise: 0.004, nf: 30 });
-    fo.seg(0, [0, -ARM_L2 + 0.1, 0], [0, -ARM_L2 + 0.048, 0], 0.0475, 0.045, { ...cuff, rs: 10, hs: 1, caps: 1, capScale: 0.05 });
-    // bare lower forearm, flattening into the wrist (X = back of the hand, see VMArm.orient)
-    limb(fo, [0, -ARM_L2 + 0.075, 0], [0, -ARM_L2 + 0.008, 0], 0.029, 0.025, [1, 0, 0], { ...skin, rs: 14, hs: 3, sx: 0.82, sz: 1.12, capScale: 0.4, prof: (t) => 1 + 0.03 * Math.sin(PI * t * 0.8) });
-    // glove cuff over the wrist with a strap and tab; its rounded end tucks around the hand's wrist
-    const shade = handShade([1, 0, 0]);
+    // jacket sleeve tapering to a turned-back hem; the glove's gauntlet runs from under it to the wrist
     const W = -ARM_L2;
-    limb(fo, [0, W + 0.03, 0], [0, W - 0.002, 0], 0.0278, 0.0282, [1, 0, 0], { ...HAND_MAT.glove, rs: 14, hs: 2, sx: 0.86, sz: 1.12, capScale: 0.25, cap1: 3, ao: false, tint: shade });
-    limb(fo, [0, W + 0.021, 0], [0, W + 0.005, 0], 0.029, 0.0293, [1, 0, 0], { ...HAND_MAT.trim, rs: 14, hs: 1, sx: 0.86, sz: 1.12, cap0: 1, cap1: 1, capScale: 0.25, ao: false, tint: shade });
-    fo.box(0, [0.0262, W + 0.013, 0.002], [0.004, 0.018, 0.026], {
+    fo.seg(0, [0, 0.03, 0], [0, W + 0.1, 0], 0.047, 0.041, { ...sleeve, rs: 14, hs: 4, caps: 2, capScale: 0.3, noise: 0.0015, nf: 30 });
+    limb(fo, [0, W + 0.112, 0], [0, W + 0.094, 0], 0.0425, 0.0418, [1, 0, 0], { ...hem, rs: 14, hs: 1, cap0: 1, cap1: 2, capScale: 0.45 });
+    const shade = handShade([1, 0, 0]);
+    // gauntlet (X = back of the hand, see VMArm.orient); its rounded end tucks around the hand's wrist
+    limb(fo, [0, W + 0.1, 0], [0, W - 0.002, 0], 0.0335, 0.0282, [1, 0, 0], { ...HAND_MAT.glove, rs: 14, hs: 3, sx: 0.86, sz: 1.12, cap0: 0, cap1: 3, capScale: 0.25, ao: false, tint: shade, prof: (t) => 1 + 0.03 * Math.sin(PI * t) });
+    // velcro strap and tab around the cuff
+    limb(fo, [0, W + 0.047, 0], [0, W + 0.027, 0], 0.0322, 0.0305, [1, 0, 0], { ...HAND_MAT.trim, rs: 14, hs: 1, sx: 0.87, sz: 1.12, cap0: 1, cap1: 1, capScale: 0.25, ao: false, tint: shade });
+    fo.box(0, [0.0285, W + 0.037, 0.004], [0.0045, 0.02, 0.03], {
       ...HAND_MAT.trim,
       round: 0.5,
       seg: 2,
       shape: (p) => {
-        p.x -= (p.z / 0.013) ** 2 * 0.0024;
+        p.x -= (p.z / 0.015) ** 2 * 0.0028;
       },
       ao: false,
       tint: shade,
@@ -1417,7 +1387,7 @@ class VMArm {
       this.shoulder.add(upper);
       this.elbow.add(fore);
       const hands = {};
-      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'support', 'pinch', 'open'];
+      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open'];
       for (const p of poses) {
         const h = new THREE.Mesh(getHandGeo(p, style === 'claw' ? 'claw' : 'glove', side), mat);
         h.visible = false;
@@ -1489,6 +1459,17 @@ const _armT = new THREE.Quaternion();
 const Q = (x, y, z, order = 'YXZ') => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, order));
 // right-hand orientation (in weapon space) for gun grips: Rx(pi/2 - tilt)
 const gunGrip = (tilt, yaw = 0, roll = 0) => new THREE.Quaternion().setFromEuler(new THREE.Euler(PI / 2 - tilt, yaw, roll, 'YXZ'));
+/**
+ * Hand orientation (weapon space) from where the fingers point and which way the palm faces.
+ * side: 1 = right hand, -1 = left (mirrored geometry, palm = local +X).
+ */
+function handQ(side, finger, palm) {
+  const y = new THREE.Vector3(-finger[0], -finger[1], -finger[2]).normalize();
+  const x = new THREE.Vector3(palm[0], palm[1], palm[2]).multiplyScalar(-side);
+  x.addScaledVector(y, -x.dot(y)).normalize();
+  const z = new THREE.Vector3().crossVectors(x, y);
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+}
 // left support under a handguard: hand X -> weapon Y (palm up), fingers (-Y) -> weapon +X, tunnel Z along barrel
 const supportGrip = (roll, yaw, pitch = 0) => {
   // mirrored left hand (palm = +X_hand): X_hand -> weapon +Y (palm up), -Y_hand (fingers) -> weapon +X, Z_hand -> weapon +Z
@@ -1533,9 +1514,13 @@ const VM = {
     recoil: { z: 0.07, rx: 0.14, ry: 0.025 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.PISTOL]: {
-    kind: 'pistol', hip: [0.1, -0.14, -0.46, 0.02, 0.12, 0.0], ads: 0.2, adsZ: -0.46,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.2) }, lGrip: { q: gunGrip(0.2, -0.15, 0.25), pose: 'support' },
-    recoil: { z: 0.03, rx: 0.1, ry: 0.01 }, sprint: [0.02, -0.05, 0.04, -0.4, 0.3, 0.3],
+    // CS-style: low on the right, angled in toward the crosshair; index finger on the trigger, the left hand
+    // cupping the right from below with its fingers wrapped over the front of the grip
+    kind: 'pistol', hip: [0.11, -0.158, -0.29, 0.09, 0.18, -0.06], ads: 0.2, adsZ: -0.42,
+    rPose: 'trigger', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
+    lGrip: { p: [0, -0.028, -0.03], q: handQ(-1, [0.05, -0.55, -0.83], [0.92, 0.3, 0.15]), pose: 'cup' },
+    poleR: new THREE.Vector3(0.5, -1, 0.2), poleL: new THREE.Vector3(-0.6, -0.9, 0.2), // elbows down
+    recoil: { z: 0.03, rx: 0.1, ry: 0.01 }, sprint: [0.0, -0.015, 0.03, -0.3, 0.22, 0.28],
   },
   [ITEM.KNIFE]: { kind: 'melee', hip: [0.15, -0.16, -0.3, 0.55, 0.35, -0.35], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.02, -0.05, 0.05, -0.3, 0.1, 0] },
   [ITEM.BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'grip' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
@@ -1603,6 +1588,9 @@ const SHOULDER_L = new THREE.Vector3(-0.12, -0.31, -0.06);
 const POLE_R = new THREE.Vector3(0.75, -0.65, 0.15);
 const POLE_L = new THREE.Vector3(-0.75, -0.65, 0.15);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
+const SWAY_PIVOT = new THREE.Vector3(0.1, -0.14, -0.32); // roughly between the hands
+const IDLE_RATE = 1.35; // breathing, rad/s (~4.7 s per breath)
+const softClamp = (x, m) => m * Math.tanh(x / m);
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -1709,12 +1697,12 @@ export class ViewModel {
     this.moveT = 0;
     this.bobPhase = 0;
     this.wasOnGround = true;
-    this.land = new Spring(120, 14);
+    this.land = new Spring(120, 22);
     this.recZ = new Spring(260, 22);
     this.recX = new Spring(200, 18);
     this.recY = new Spring(150, 16);
-    this.swayX = new Spring(90, 13);
-    this.swayY = new Spring(90, 13);
+    this.swayX = new Spring(160, 25); // look lag, critically damped (no wobble)
+    this.swayY = new Spring(160, 25);
     this.act = null; // {type, t, dur, heavy, perShell}
     this.fireT = 9; // time since last shot
     this.cycleT = 9; // bolt/pump cycle timer
@@ -1760,7 +1748,8 @@ export class ViewModel {
     if (parts.shell) parts.shell.visible = false;
     if (parts.round) parts.round.visible = false;
     this.weaponRoot.add(root);
-    const lGrip = cfg.lGrip && d.meta.leftHand ? { p: d.meta.leftHand.clone(), q: cfg.lGrip.q, pose: cfg.lGrip.pose } : null;
+    const lp = cfg.lGrip && (cfg.lGrip.p ? new THREE.Vector3(...cfg.lGrip.p) : d.meta.leftHand && d.meta.leftHand.clone());
+    const lGrip = lp ? { p: lp, q: cfg.lGrip.q, pose: cfg.lGrip.pose } : null;
     v = { itemId, cfg, d, root, parts, meta: d.meta, lGrip, rGrip: { p: new THREE.Vector3(...cfg.rGrip.p), q: cfg.rGrip.q }, tris: d.tris };
     this.items.set(itemId, v);
     return v;
@@ -1897,12 +1886,13 @@ export class ViewModel {
     this.recZ.step(dt);
     this.recX.step(dt);
     this.recY.step(dt);
-    // look sway (lookDX/lookDY: camera rotation this frame, radians)
+    // look lag (lookDX/lookDY: camera rotation this frame, radians; +x = turning right, +y = looking down).
+    // Kept small: the weapon trails the view by about a degree at normal turn rates.
     const ldx = Math.max(-0.08, Math.min(0.08, s.lookDX || 0));
     const ldy = Math.max(-0.08, Math.min(0.08, s.lookDY || 0));
-    const swayGain = 1 - this.adsT * 0.8;
-    this.swayX.v += -ldx * 26 * swayGain;
-    this.swayY.v += ldy * 26 * swayGain;
+    const swayGain = 1 - this.adsT * 0.7;
+    this.swayX.v += ldx * 4.5 * swayGain;
+    this.swayY.v += ldy * 4.5 * swayGain;
     this.swayX.step(dt);
     this.swayY.step(dt);
     // action timer
@@ -1917,25 +1907,30 @@ export class ViewModel {
     }
     this.reloadHold = this.act && this.act.type === 'reload' ? Math.min(1, this.reloadHold + dt * 6) : Math.max(0, this.reloadHold - dt * 3);
 
-    // ---- bob / sway on the sway root
-    const bobAmp = this.moveT * (1 - this.adsT * 0.85) * (1 - this.crouchT * 0.4);
+    // ---- sway root: CS-style, the arms stay almost still. A slow breathing figure-8 while idle, a small
+    // smooth walk bob, a slight look lag and a landing dip. Rotations pivot about the hands (not the eye),
+    // so they read as the arms settling rather than the whole weapon swinging across the screen.
+    const bobAmp = this.moveT * (1 - this.adsT * 0.85) * (1 - this.crouchT * 0.4) * (1 + this.sprintT * 0.9);
     const bobRate = wantSprint ? 13.5 : 9.0 + speed * 0.4;
     this.bobPhase += dt * bobRate * (0.3 + this.moveT * 0.7);
     const bp = this.bobPhase;
-    const sprintMul = 1 + this.sprintT * 1.4;
-    const breathe = Math.sin(t * 1.7) * (1 - this.adsT * 0.7);
-    this.sway.position.set(
-      Math.sin(bp * 0.5) * 0.011 * bobAmp * sprintMul + this.swayX.x * 0.03,
-      -Math.abs(Math.cos(bp * 0.5)) * 0.009 * bobAmp * sprintMul + breathe * 0.0018 + this.land.x * 0.05 - this.crouchT * 0.006,
-      0
-    );
+    const bobX = Math.sin(bp * 0.5), bobY = (Math.cos(bp) - 1) * 0.5; // lateral sway per stride, dip per step
+    const idleW = (1 - this.adsT * 0.75) * (1 - this.moveT * 0.6);
+    const bt = t * IDLE_RATE;
+    const lagX = softClamp(this.swayX.x, 0.035), lagY = softClamp(this.swayY.x, 0.03);
     _e1.set(
-      this.swayY.x * 0.6 + Math.sin(bp) * 0.006 * bobAmp + breathe * 0.004 + this.land.x * 0.2,
-      this.swayX.x * 0.8 + Math.sin(bp * 0.5) * 0.012 * bobAmp,
-      Math.sin(bp * 0.5) * 0.02 * bobAmp * sprintMul + this.swayX.x * 0.5,
+      lagY * 0.9 + Math.sin(bt + 0.6) * 0.006 * idleW + Math.sin(bp) * 0.003 * bobAmp + this.land.x * 0.2,
+      lagX * 0.9 + Math.sin(bt * 0.5 + 0.4) * 0.005 * idleW + bobX * 0.003 * bobAmp,
+      lagX * 0.35 + Math.sin(bt * 0.5 + 1.3) * 0.011 * idleW + bobX * 0.008 * bobAmp,
       'YXZ'
     );
     this.sway.quaternion.setFromEuler(_e1);
+    _v1.copy(SWAY_PIVOT).applyQuaternion(this.sway.quaternion);
+    this.sway.position.set(
+      SWAY_PIVOT.x - _v1.x + Math.sin(bt * 0.5) * 0.0014 * idleW + bobX * 0.003 * bobAmp - lagX * 0.012,
+      SWAY_PIVOT.y - _v1.y + Math.sin(bt) * 0.0024 * idleW + bobY * 0.0035 * bobAmp + lagY * 0.01 + this.land.x * 0.06 - this.crouchT * 0.006,
+      SWAY_PIVOT.z - _v1.z
+    );
 
     if (this.claws) {
       this._updateClaws(dt, t);
@@ -2115,7 +2110,7 @@ export class ViewModel {
     if (cfg.kind === 'throw' && rPose === 'grip' && this.itemId === ITEM.MOLOTOV) rPose = 'support';
     this.armR.setPose(rPose);
     this.armR.setVisible(true);
-    this._solveArm(this.armR, rp, rq, SHOULDER_R, POLE_R);
+    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R);
 
     // left
     if (act && act.type === 'use') {
@@ -2154,7 +2149,7 @@ export class ViewModel {
       }
       this.armL.setPose(lPose);
       this.armL.setVisible(lVisible || altLw > 0.01);
-      this._solveArm(this.armL, lp, lq, SHOULDER_L, POLE_L);
+      this._solveArm(this.armL, lp, lq, SHOULDER_L, cfg.poleL || POLE_L);
     } else {
       this.armL.setVisible(false);
     }
@@ -2213,11 +2208,13 @@ export class ViewModel {
       st.m = smoothstep(0.7, 0.78, u);
       st.pose = st.m > 0.5 ? (travel ? 'pinch' : 'open') : 'support';
     } else if (kind === 'pistol') {
+      // tilt and lift the gun toward the middle so the magazine change stays on screen
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
       P6[5] += tilt * 0.3;
       P6[3] += tilt * 0.2;
-      P6[0] -= tilt * 0.02;
-      P6[1] += tilt * 0.015;
+      P6[0] -= tilt * 0.04;
+      P6[1] += tilt * 0.1;
+      P6[2] -= tilt * 0.07;
       const ax = meta.magAxis;
       const drop = smoothstep(0.1, 0.22, u) * (1 - smoothstep(0.58, 0.7, u));
       const fall = smoothstep(0.22, 0.34, u) * (1 - smoothstep(0.44, 0.58, u));
@@ -2396,7 +2393,7 @@ export class ViewModel {
 }
 
 /** Debug/tuning access to pose tables (sandbox only). */
-export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES };
+export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ };
 /** Debug: hand geometry. */
 export function getHandGeoForDebug(pose, side) {
   return getHandGeo(pose, pose === 'claw' ? 'claw' : 'glove', side);
