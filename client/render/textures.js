@@ -17,8 +17,8 @@ let maxAniso = 4;
 
 // world size (meters) covered by one repeat of each surface texture (used by materials.js)
 export const TEXTURE_WORLD_SIZE = {
-  planks: 2, barn: 2, clapboard: 2, logwall: 2, concrete: 3, brick: 1, shingles: 2, tin: 2, rust: 1.5,
-  metal: 1.5, stone: 2, dockwood: 2, glass: 1, door: [1, 2.1], hay: 1, canvas: 2, olive: 2, wood: 1,
+  planks: 2, barn: 2, clapboard: 2, logwall: 2, concrete: 3, brick: 1, shingles: 2, tin: 2, tin_rusty: 2, rust: 1.5,
+  metal: 1.5, stone: 2, dockwood: 2, glass: 1, sash: 1, door: [1, 2.1], hay: 1, canvas: 2, olive: 2, wood: 1,
   bark: [1, 2], bark_birch: [1, 2], bark_dead: [1, 2], rock: 2, tire: 1, paint: 1.5, carpaint: 2, cloth: 0.6,
   burlap: 0.6, bone: 0.3, charred: 1, skin: 0.6, mattress: 1, plastic: 1, pumpkin: 1, ash: 1, cardboard: 0.6,
   ground_grass: 4, ground_dirt: 4, ground_forest: 4, ground_road: 4, ground_asphalt: 4, ground_mud: 4, ground_sand: 4,
@@ -76,7 +76,7 @@ function finish(out, name) {
     t.unpackAlignment = 4;
   }
   t.name = name;
-  t.colorSpace = THREE.SRGBColorSpace;
+  t.colorSpace = out.linear ? THREE.NoColorSpace : THREE.SRGBColorSpace;
   const clampTex = out.clamp;
   t.wrapS = t.wrapT = clampTex ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
   if (out.wrapT === 'repeat') t.wrapT = THREE.RepeatWrapping;
@@ -540,84 +540,125 @@ GEN.planks = () => {
   return { canvas: c };
 };
 
+// barn red over vertical boards: the paint wears through along the grain and at the board edges, faded
+// and chalky where the weather hits hardest
 GEN.barn = () => {
   const W = 512;
   const r = rngf(31);
   const info = boardsImg({ W, H: W, n: 10, seed: 31, vertical: true, light: [128, 120, 110], dark: [66, 60, 54], tone: 0.1, joints: 2 });
   const img = info.img;
-  const pm = fbm(W, W, 4, 3, 6, 32, 0.55);
-  const vs = fbm(W, W, 30, 2, 3, 33);
-  const fade = fbm(W, W, 3, 3, 4, 34);
+  const streak = fbm(W, W, 30, 3, 4, 32, 0.6);
+  const fine = fbm(W, W, 48, 16, 3, 35, 0.6);
+  const region = fbm(W, W, 3, 3, 4, 34);
+  const fade = fbm(W, W, 4, 4, 4, 36);
+  const tone = [];
+  for (let b = 0; b < info.n; b++) tone.push(0.9 + r() * 0.18);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const m = pm[p] * 0.75 + vs[p] * 0.25;
     const lv = x % info.bw;
     if (lv < 2.2) return; // gaps stay dark
-    const k = sstep(0.36, 0.4, m);
-    if (k <= 0) return;
-    const f = fade[p];
-    let R = lerp(96, 138, f), G = lerp(30, 58, f), B = lerp(24, 48, f);
-    const lum = (d[i] + d[i + 1] + d[i + 2]) / 380; // let grain show through
-    R *= 0.75 + lum * 0.35;
-    G *= 0.75 + lum * 0.35;
-    B *= 0.75 + lum * 0.35;
-    const edge = 1 - sstep(0.4, 0.43, m);
-    R += edge * 30;
-    G += edge * 22;
-    B += edge * 18;
-    d[i] = lerp(d[i], R, k);
-    d[i + 1] = lerp(d[i + 1], G, k);
-    d[i + 2] = lerp(d[i + 2], B, k);
+    const worn = sstep(0.4, 0.85, region[p]);
+    const f = streak[p] * 0.58 + fine[p] * 0.3 + worn * 0.26 + (lv < 5 || lv > info.bw - 4 ? 0.1 : 0);
+    const peel = sstep(0.74, 0.77, f);
+    const fd = fade[p];
+    let R = lerp(104, 140, fd), G = lerp(32, 48, fd), B = lerp(26, 38, fd);
+    R = lerp(R, 150, worn * 0.3);
+    G = lerp(G, 92, worn * 0.3);
+    B = lerp(B, 80, worn * 0.3);
+    // the grain shows through thin paint
+    const lum = (d[i] + d[i + 1] + d[i + 2]) / 360;
+    const k = (0.7 + lum * 0.42) * tone[Math.floor(x / info.bw) % info.n] * (1 - sstep(0.7, 0.74, f) * 0.18);
+    d[i] = lerp(d[i], R * k, 1 - peel);
+    d[i + 1] = lerp(d[i + 1], G * k, 1 - peel);
+    d[i + 2] = lerp(d[i + 2], B * k, 1 - peel);
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  drips(ctx, W, W, r, 60, [22, 14, 10], [0.06, 0.2], [40, 260], [2, 12]);
+  drips(ctx, W, W, r, 50, [26, 16, 12], [0.05, 0.16], [40, 260], [2, 10]);
   nailsOnBoards(ctx, W, W, info, r, { studs: 2 });
   return { canvas: c };
 };
 
+// weathered paint over wood. RGB: paint (near white, the static world tints it per building) or bare
+// grey wood where it has peeled; A = paint mask. Peeling is small flakes that gather along the drip
+// edges and in a few worn regions, never big blobs.
 GEN.clapboard = () => {
   const W = 512, n = 8, bh = W / n;
   const r = rngf(41);
-  const grain = woodGrainImg(W, W, 41, [120, 114, 104], [70, 66, 60], { rings: 20 });
-  const pm = fbm(W, W, 5, 4, 6, 42, 0.55);
-  const dirt = fbm(W, W, 4, 4, 5, 43);
+  const grain = woodGrainImg(W, W, 41, [150, 144, 132], [104, 98, 90], { rings: 20, streak: 0.5 });
+  const fine = fbm(W, W, 40, 20, 4, 42, 0.6);
+  const region = fbm(W, W, 3, 3, 4, 43);
+  const flake = fbm(W, W, 16, 12, 4, 46, 0.55);
   const vs = fbm(W, W, 36, 2, 4, 44);
-  const mil = fbm(W, W, 12, 12, 4, 45);
+  const mil = fbm(W, W, 4, 4, 5, 45);
+  const tone = [];
+  for (let b = 0; b < n; b++) tone.push(0.95 + r() * 0.08);
   const img = newImg(W, W);
+  const mask = new Float32Array(W * W);
   const d = img.d, gd = grain.d;
   for (let y = 0, i = 0, p = 0; y < W; y++) {
-    const lv = y % bh;
+    const b = Math.floor(y / bh), lv = y % bh;
+    // lap profile: shadow cast by the board above, the face leaning out toward its lower edge, dark butt edge
     let shade;
-    if (lv < 3) shade = 0.35;
-    else if (lv < 8) shade = lerp(0.6, 0.86, (lv - 3) / 5);
-    else shade = lerp(0.86, 1.02, (lv - 8) / (bh - 8));
-    if (lv > bh - 2) shade = 1.08;
+    if (lv < 2) shade = 0.3;
+    else if (lv < 9) shade = lerp(0.52, 0.86, (lv - 2) / 7);
+    else shade = lerp(0.86, 1.03, (lv - 9) / (bh - 11));
+    if (lv >= bh - 2) shade = 0.7;
+    // water sits on the lower edge of each board: that is where paint lets go first
+    const edgeBias = sstep(bh * 0.6, bh - 2, lv) * 0.16 + (lv < 9 ? 0.06 : 0);
     for (let x = 0; x < W; x++, i += 4, p++) {
-      const paint = sstep(0.3, 0.34, pm[p] * 0.8 + vs[p] * 0.2);
-      const pr = lerp(150, 186, dirt[p]), pg = lerp(146, 180, dirt[p]), pb = lerp(134, 164, dirt[p]);
-      let R = lerp(gd[i], pr, paint), G = lerp(gd[i + 1], pg, paint), B = lerp(gd[i + 2], pb, paint);
-      const grime = 0.72 + 0.28 * vs[p];
-      const m = sstep(0.74, 0.86, mil[p]) * 0.6;
-      R = lerp(R * grime, 48, m);
-      G = lerp(G * grime, 54, m);
-      B = lerp(B * grime, 40, m);
-      d[i] = R * shade;
-      d[i + 1] = G * shade;
-      d[i + 2] = B * shade;
+      const worn = sstep(0.45, 0.85, region[p]);
+      const f = flake[p] * 0.62 + fine[p] * 0.38 + edgeBias + worn * 0.2;
+      const peel = sstep(0.77, 0.8, f);
+      const lip = sstep(0.73, 0.77, f) * (1 - peel);
+      const pv = tone[b] * (0.9 + fine[p] * 0.14);
+      let R = lerp(gd[i] * 0.95, 200 * pv, 1 - peel);
+      let G = lerp(gd[i + 1] * 0.95, 197 * pv, 1 - peel);
+      let B = lerp(gd[i + 2] * 0.92, 186 * pv, 1 - peel);
+      // chalky, yellowed paint in the worn regions; a lifted rim around each flake
+      R *= 1 - worn * 0.06 + lip * 0.06;
+      G *= 1 - worn * 0.08 + lip * 0.06;
+      B *= 1 - worn * 0.16 + lip * 0.05;
+      if (lip > 0 && peel < 0.5) {
+        const e = sstep(0.76, 0.77, f) * 0.25;
+        R *= 1 - e;
+        G *= 1 - e;
+        B *= 1 - e;
+      }
+      // soft mildew and dust, faint vertical weathering
+      const m = sstep(0.55, 0.95, mil[p]) * 0.3;
+      const g = 0.86 + 0.14 * vs[p];
+      d[i] = lerp(R, 92, m) * g * shade;
+      d[i + 1] = lerp(G, 98, m) * g * shade;
+      d[i + 2] = lerp(B, 80, m) * g * shade;
       d[i + 3] = 255;
+      mask[p] = 1 - peel;
     }
   }
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  drips(ctx, W, W, r, 70, [40, 34, 24], [0.06, 0.22], [40, 300], [2, 14]);
-  // vertical butt joints
+  drips(ctx, W, W, r, 40, [70, 62, 46], [0.04, 0.12], [40, 260], [2, 10]);
+  // butt joints and nail heads (with the odd rust run)
   for (let b = 0; b < n; b++) {
     const x = r() * W;
-    ctx.fillStyle = 'rgba(30,26,20,0.6)';
-    wrapDraw(W, W, x, b * bh + bh / 2, 4, (px) => ctx.fillRect(px, b * bh + 2, 1.5, bh - 2));
+    ctx.fillStyle = 'rgba(40,34,28,0.55)';
+    wrapDraw(W, W, x, b * bh + bh / 2, 4, (px) => ctx.fillRect(px, b * bh + 2, 1.4, bh - 3));
+    for (let s = 0; s < 5; s++) {
+      const nx = ((s + 0.5) / 5) * W + (r() - 0.5) * 8, ny = b * bh + bh - 7;
+      if (r() < 0.35) {
+        const gg = ctx.createLinearGradient(0, ny, 0, ny + 30);
+        gg.addColorStop(0, 'rgba(96,52,24,0.35)');
+        gg.addColorStop(1, 'rgba(96,52,24,0)');
+        ctx.fillStyle = gg;
+        ctx.fillRect(nx - 1.2, ny, 2.4, 30);
+      }
+      ctx.fillStyle = 'rgba(46,40,34,0.8)';
+      ctx.fillRect(nx - 1, ny - 1, 2, 2);
+    }
   }
-  return { canvas: c };
+  const out = canvasToImg(c);
+  for (let p = 0; p < W * W; p++) out.d[p * 4 + 3] = mask[p] * 255;
+  return out;
 };
 
 GEN.logwall = () => {
@@ -664,32 +705,33 @@ GEN.concrete = () => {
   const W = 512;
   const r = rngf(61);
   const a = fbm(W, W, 4, 4, 6, 61, 0.55), b = fbm(W, W, 16, 16, 3, 62);
-  const st = fbm(W, W, 26, 2, 4, 63), big = fbm(W, W, 2, 2, 3, 64);
+  const st = fbm(W, W, 26, 2, 4, 63), big = fbm(W, W, 2, 2, 3, 64), agg = fbm(W, W, 96, 96, 2, 66);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    let v = 0.45 + (a[p] - 0.5) * 0.5 + (b[p] - 0.5) * 0.18 + (r() - 0.5) * 0.08;
-    v *= 0.78 + 0.3 * st[p];
-    v *= 0.85 + 0.25 * big[p];
-    const R = lerp(52, 150, v), G = lerp(51, 147, v), B = lerp(48, 139, v);
-    d[i] = R;
-    d[i + 1] = G;
-    d[i + 2] = B;
+    // cement with a fine aggregate grain, broad stains and a little run-off streaking
+    let v = 0.46 + (a[p] - 0.5) * 0.34 + (b[p] - 0.5) * 0.14 + (agg[p] - 0.5) * 0.16 + (r() - 0.5) * 0.06;
+    v *= 0.9 + 0.12 * st[p];
+    v *= 0.86 + 0.2 * big[p];
+    d[i] = lerp(48, 132, v);
+    d[i + 1] = lerp(47, 129, v);
+    d[i + 2] = lerp(44, 121, v);
     d[i + 3] = 255;
   });
   const moss = fbm(W, W, 5, 5, 5, 65);
-  tintByNoise(img, moss, [40, 48, 30], 0.75, 0.9, 0.55);
+  tintByNoise(img, moss, [48, 54, 34], 0.72, 0.92, 0.45);
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  drips(ctx, W, W, r, 50, [20, 20, 16], [0.06, 0.2], [60, 300], [4, 18]);
-  for (let k = 0; k < 400; k++) {
-    const x = r() * W, y = r() * W, R = 0.6 + r() * 1.6;
-    ctx.fillStyle = `rgba(20,20,18,${0.3 + r() * 0.4})`;
+  blotches(ctx, W, W, r, 14, [30, 28, 24], [0.06, 0.16], [20, 60]);
+  drips(ctx, W, W, r, 24, [24, 24, 20], [0.04, 0.12], [60, 260], [4, 16]);
+  for (let k = 0; k < 160; k++) {
+    const x = r() * W, y = r() * W, R = 0.6 + r() * 1.3;
+    ctx.fillStyle = `rgba(30,30,28,${0.15 + r() * 0.3})`;
     ctx.beginPath();
     ctx.arc(x, y, R, 0, 7);
     ctx.fill();
   }
-  drawCracks(ctx, W, W, r, 7, { len: [80, 320], width: [0.9, 1.8], col: 'rgba(14,13,12,0.85)', light: 'rgba(170,165,155,0.25)', branch: 0.8, wander: 0.55, step: 6 });
+  drawCracks(ctx, W, W, r, 4, { len: [80, 260], width: [0.7, 1.4], col: 'rgba(22,21,20,0.6)', light: 'rgba(150,146,138,0.18)', branch: 0.5, wander: 0.5, step: 6 });
   return { canvas: c };
 };
 
@@ -703,7 +745,8 @@ GEN.brick = () => {
   const bc = [];
   for (let k = 0; k < rows * cols; k++) {
     const t = r();
-    const base = t < 0.12 ? [70, 40, 32] : t < 0.3 ? [140, 78, 52] : [lerp(98, 128, r()), lerp(46, 62, r()), lerp(34, 42, r())];
+    // mostly red-brown with a few dark clinkers and paler salmon bricks
+    const base = t < 0.08 ? [84, 48, 38] : t < 0.22 ? [150, 92, 68] : [lerp(116, 142, r()), lerp(56, 70, r()), lerp(40, 50, r())];
     bc.push(base);
   }
   const img = newImg(W, W);
@@ -715,39 +758,59 @@ GEN.brick = () => {
     const e = Math.min(lx, cw - lx, ly, rh - ly) - (chip[p] - 0.5) * 3;
     let R, G, B;
     if (e < mort * 0.5) {
-      const v = 108 + tex[p] * 30;
+      // recessed mortar, in the shadow of the brick above
+      const v = 118 + tex[p] * 26;
       R = v;
       G = v * 0.97;
-      B = v * 0.9;
+      B = v * 0.91;
       if (ly < mort * 0.5 + 1 && ly >= 0) {
-        R *= 0.8;
-        G *= 0.8;
-        B *= 0.8;
+        R *= 0.72;
+        G *= 0.72;
+        B *= 0.72;
       }
     } else {
       const c0 = bc[row * cols + col];
-      const k = 0.78 + tex[p] * 0.4 + (r() - 0.5) * 0.08;
+      const k = 0.82 + tex[p] * 0.34 + (r() - 0.5) * 0.08;
       R = c0[0] * k;
       G = c0[1] * k;
       B = c0[2] * k;
+      // the top arris catches the light, the bottom one is in shadow
       if (e < mort * 0.5 + 2) {
-        R *= 0.85;
-        G *= 0.85;
-        B *= 0.85;
+        const top = ly < rh / 2 ? 1.08 : 0.84;
+        R *= top;
+        G *= top;
+        B *= top;
       }
     }
-    const s = 0.6 + 0.45 * soot[p];
+    const s = 0.84 + 0.2 * soot[p];
     R *= s;
     G *= s;
     B *= s;
-    const ef = sstep(0.78, 0.95, efl[p]) * 0.35;
-    d[i] = lerp(R, 180, ef);
-    d[i + 1] = lerp(G, 176, ef);
-    d[i + 2] = lerp(B, 166, ef);
+    const ef = sstep(0.8, 0.95, efl[p]) * 0.3;
+    d[i] = lerp(R, 172, ef);
+    d[i + 1] = lerp(G, 168, ef);
+    d[i + 2] = lerp(B, 158, ef);
     d[i + 3] = 255;
   });
   const c = imgToCanvas(img);
-  drips(ctx2d(c), W, W, r, 30, [15, 12, 10], [0.06, 0.2], [40, 200], [3, 12]);
+  drips(ctx2d(c), W, W, r, 24, [30, 22, 18], [0.05, 0.14], [40, 200], [3, 12]);
+  return { canvas: c };
+};
+
+// weathered white-painted wood for window casings and sashes
+GEN.sash = () => {
+  const W = 256;
+  const r = rngf(151);
+  const img = woodGrainImg(W, W, 151, [184, 180, 170], [148, 142, 132], { rings: 12, streak: 0.4, lineDark: 0.14 });
+  const worn = fbm(W, W, 24, 12, 3, 152);
+  eachPx(img, (x, y, i, d) => {
+    const t = sstep(0.76, 0.8, worn[i >> 2]);
+    d[i] = lerp(d[i], 118, t);
+    d[i + 1] = lerp(d[i + 1], 110, t);
+    d[i + 2] = lerp(d[i + 2], 98, t);
+  });
+  const c = imgToCanvas(img);
+  drips(ctx2d(c), W, W, r, 12, [60, 54, 44], [0.06, 0.16], [20, 120], [2, 8]);
   return { canvas: c };
 };
 
@@ -811,35 +874,37 @@ GEN.shingles = () => {
   return { canvas: imgToCanvas(img) };
 };
 
-GEN.tin = () => {
+// corrugated galvanised sheet: mottled zinc, rust gathering in the valleys, running down from the
+// fastener rows and eating the sheets where they have been wet longest. `rusty` 0..1.
+function tinImg(seed, rusty) {
   const W = 512, period = 16;
-  const r = rngf(91);
-  const mot = fbm(W, W, 6, 6, 5, 92);
-  const rustN = fbm(W, W, 4, 3, 6, 93, 0.55);
-  const vs = fbm(W, W, 32, 3, 4, 94);
-  const ox = fbm(W, W, 20, 20, 3, 95);
-  const rr = colorRamp([[0, 44, 26, 16], [0.4, 92, 46, 22], [0.75, 132, 70, 32], [1, 150, 92, 50]]);
+  const r = rngf(seed);
+  const mot = fbm(W, W, 6, 6, 5, seed + 1);
+  const spang = fbm(W, W, 64, 64, 2, seed + 2);
+  const vs = fbm(W, W, 40, 3, 4, seed + 3);
+  const rustN = fbm(W, W, 12, 8, 4, seed + 4, 0.55);
+  const region = fbm(W, W, 3, 2, 4, seed + 5);
+  const rr = colorRamp([[0, 46, 26, 16], [0.4, 90, 46, 22], [0.75, 128, 68, 32], [1, 146, 90, 50]]);
   const tmp = [0, 0, 0];
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
     const ph = (x / period) * Math.PI * 2;
-    const sh = 0.74 + 0.2 * Math.sin(ph) + 0.1 * Math.max(0, Math.sin(ph - 0.6)) ** 8;
-    const g = 96 + mot[p] * 46;
-    let R = g, G = g * 1.01, B = g * 0.98;
-    const rk = sstep(0.42, 0.6, rustN[p] * 0.7 + vs[p] * 0.4 - 0.05);
-    rr(rustN[p] * 0.6 + vs[p] * 0.5 + (r() - 0.5) * 0.15, tmp);
-    R = lerp(R, tmp[0], rk);
-    G = lerp(G, tmp[1], rk);
-    B = lerp(B, tmp[2], rk);
-    const w = sstep(0.8, 0.95, ox[p]) * (1 - rk) * 0.4;
-    R = lerp(R, 170, w);
-    G = lerp(G, 170, w);
-    B = lerp(B, 162, w);
-    // sheet overlap seams every 256px horizontally (1m)
-    const sx = x % 256;
-    let k = sh * (0.85 + 0.2 * vs[p]);
-    if (sx < 2) k *= 0.45;
+    const s = Math.sin(ph);
+    const sh = 0.74 + 0.2 * s + 0.1 * Math.max(0, Math.sin(ph - 0.6)) ** 8;
+    const g = (112 + mot[p] * 34 + (spang[p] - 0.5) * 16) * (1 - sstep(0.55, 0.9, region[p]) * 0.22);
+    let R = g * 0.98, G = g, B = g * 0.99;
+    const valley = sstep(0.2, -0.8, s);
+    const t = rustN[p] * 0.5 + vs[p] * 0.34 + valley * 0.12 + region[p] * 0.3 * (0.4 + rusty);
+    const rk = sstep(0.86 - rusty * 0.45, 0.94 - rusty * 0.45, t);
+    rr(rustN[p] * 0.6 + vs[p] * 0.5 + (r() - 0.5) * 0.12, tmp);
+    // a faint orange bloom around the rust
+    const halo = sstep(0.72 - rusty * 0.45, 0.86 - rusty * 0.45, t) * (1 - rk) * 0.3;
+    R = lerp(lerp(R, 128, halo), tmp[0], rk);
+    G = lerp(lerp(G, 92, halo), tmp[1], rk);
+    B = lerp(lerp(B, 70, halo), tmp[2], rk);
+    let k = sh * (0.86 + 0.18 * vs[p]);
+    if (x % 256 < 2) k *= 0.45; // sheet overlap every 1 m
     d[i] = R * k;
     d[i + 1] = G * k;
     d[i + 2] = B * k;
@@ -847,22 +912,28 @@ GEN.tin = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  drips(ctx, W, W, r, 40, [90, 40, 16], [0.08, 0.28], [30, 220], [2, 8]);
+  drips(ctx, W, W, r, Math.round(20 + rusty * 40), [96, 44, 18], [0.06, 0.2 + rusty * 0.15], [30, 200], [2, 6]);
   for (const yy of [18, 274]) {
     for (let x = period / 2; x < W; x += period * 2) {
-      ctx.fillStyle = 'rgba(30,26,24,0.9)';
+      const fx = x + period / 4;
+      ctx.fillStyle = 'rgba(34,30,28,0.9)';
       ctx.beginPath();
-      ctx.arc(x + period / 4, yy, 2.4, 0, 7);
+      ctx.arc(fx, yy, 2.2, 0, 7);
       ctx.fill();
-      const g = ctx.createLinearGradient(0, yy, 0, yy + 40);
-      g.addColorStop(0, 'rgba(110,50,20,0.5)');
-      g.addColorStop(1, 'rgba(110,50,20,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x + period / 4 - 2, yy, 4, 40);
+      if (r() < 0.35 + rusty * 0.5) {
+        const L = 30 + r() * (80 + rusty * 120);
+        const gg = ctx.createLinearGradient(0, yy, 0, yy + L);
+        gg.addColorStop(0, `rgba(112,52,20,${0.45 + rusty * 0.3})`);
+        gg.addColorStop(1, 'rgba(112,52,20,0)');
+        ctx.fillStyle = gg;
+        ctx.fillRect(fx - 1.6, yy, 3.2, L);
+      }
     }
   }
   return { canvas: c };
-};
+}
+GEN.tin = () => tinImg(91, 0.12);
+GEN.tin_rusty = () => tinImg(97, 0.62);
 
 GEN.rust = () => {
   const W = 512;
@@ -1964,25 +2035,55 @@ function pebbles(ctx, W, H, r, n, cols, rad) {
   }
 }
 
+// meadow: dark shadowed underlayer, dead thatch, layered blades (deep / mid / sunlit tips), clover, bare soil
 GEN.ground_grass = () => {
   const W = 512;
   const r = rngf(501);
-  const a = fbm(W, W, 8, 8, 5, 501, 0.55), b = fbm(W, W, 16, 16, 3, 502), c2 = fbm(W, W, 6, 6, 3, 503);
+  const a = fbm(W, W, 8, 8, 5, 501, 0.55), b = fbm(W, W, 16, 16, 3, 502), c2 = fbm(W, W, 6, 6, 3, 503), soil = fbm(W, W, 12, 12, 4, 504);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const dirt = sstep(0.6, 0.8, a[p]) * 0.7;
-    const k = 0.8 + b[p] * 0.35 + (r() - 0.5) * 0.1;
-    const gr = [lerp(40, 58, c2[p]), lerp(50, 56, c2[p]), lerp(28, 30, c2[p])];
-    d[i] = lerp(gr[0], 62, dirt) * k;
-    d[i + 1] = lerp(gr[1], 50, dirt) * k;
-    d[i + 2] = lerp(gr[2], 36, dirt) * k;
+    const bare = sstep(0.68, 0.82, soil[p] * 0.7 + a[p] * 0.3) * 0.75;
+    const k = 0.8 + b[p] * 0.35 + (r() - 0.5) * 0.12;
+    const gr = [lerp(34, 48, c2[p]), lerp(42, 50, c2[p]), lerp(22, 26, c2[p])];
+    d[i] = lerp(gr[0], 64, bare) * k;
+    d[i + 1] = lerp(gr[1], 52, bare) * k;
+    d[i + 2] = lerp(gr[2], 38, bare) * k;
     d[i + 3] = 255;
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  strokesWrapped(ctx, W, W, r, 6000, [[46, 60, 30], [62, 72, 36], [78, 80, 42], [34, 44, 24], [96, 88, 52], [70, 58, 36]], [4, 12], 1.3, (rr) => -Math.PI / 2 + (rr() - 0.5) * 2.2, 0.85);
-  pebbles(ctx, W, W, r, 40, [[80, 74, 66], [66, 60, 52]], [1.5, 3.5]);
+  pebbles(ctx, W, W, r, 30, [[84, 78, 68], [68, 62, 54]], [1.2, 3]);
+  const ang = (rr) => -Math.PI / 2 + (rr() - 0.5) * 2.6;
+  strokesWrapped(ctx, W, W, r, 1400, [[88, 80, 50], [104, 92, 58], [76, 66, 42]], [6, 14], 1.2, null, 0.5);
+  strokesWrapped(ctx, W, W, r, 4200, [[36, 50, 24], [44, 58, 28], [30, 42, 20]], [5, 12], 1.5, ang, 0.9);
+  strokesWrapped(ctx, W, W, r, 3600, [[56, 70, 32], [64, 76, 36], [72, 80, 40], [60, 62, 34]], [4, 10], 1.2, ang, 0.85);
+  strokesWrapped(ctx, W, W, r, 1400, [[90, 94, 50], [102, 98, 56], [82, 88, 44], [110, 100, 62]], [3, 7], 1, ang, 0.8);
+  // clover patches and the odd pale flower
+  for (let k = 0; k < 26; k++) {
+    const cx = r() * W, cy = r() * W;
+    for (let j = 0; j < 7; j++) {
+      const x = cx + (r() - 0.5) * 22, y = cy + (r() - 0.5) * 22, R = 1.6 + r() * 1.4;
+      wrapDraw(W, W, x, y, 6, (px, py) => {
+        ctx.fillStyle = 'rgba(34,54,24,0.9)';
+        for (let l = 0; l < 3; l++) {
+          const an = (l / 3) * Math.PI * 2 + j;
+          ctx.beginPath();
+          ctx.arc(px + Math.cos(an) * R, py + Math.sin(an) * R, R, 0, 7);
+          ctx.fill();
+        }
+      });
+    }
+  }
+  for (let k = 0; k < 22; k++) {
+    const x = r() * W, y = r() * W;
+    ctx.fillStyle = r() < 0.5 ? 'rgba(170,160,120,0.7)' : 'rgba(150,140,70,0.7)';
+    wrapDraw(W, W, x, y, 3, (px, py) => {
+      ctx.beginPath();
+      ctx.arc(px, py, 1.2 + r() * 0.6, 0, 7);
+      ctx.fill();
+    });
+  }
   return { canvas: c };
 };
 
@@ -2053,48 +2154,36 @@ GEN.ground_forest = () => {
   return { canvas: imgToCanvas(img2, c) };
 };
 
+// compacted dirt road surface. Isotropic on purpose: ruts, the grassy crown and the verge are drawn by the
+// terrain shader along the road itself, so this tiles in any direction.
 GEN.ground_road = () => {
   const W = 512;
   const r = rngf(531);
-  const a = fbm(W, W, 4, 4, 6, 531, 0.55), b = fbm(W, W, 6, 3, 4, 532), gr = fbm(W, W, 10, 6, 4, 533);
+  const a = fbm(W, W, 4, 4, 6, 531, 0.55), b = fbm(W, W, 12, 12, 4, 532), gr = fbm(W, W, 64, 64, 2, 533);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const u = x / W;
-    const rw = 0.09 + (b[p] - 0.5) * 0.03;
-    const r1 = Math.abs(u - 0.28), r2 = Math.abs(u - 0.72);
-    const rut = Math.max(1 - sstep(rw * 0.5, rw, r1), 1 - sstep(rw * 0.5, rw, r2));
-    const ridge = Math.max(sstep(rw * 1.4, rw, r1) * sstep(rw * 0.8, rw, r1), 0);
-    const center = 1 - sstep(0.06, 0.12, Math.abs(u - 0.5));
-    const edge = sstep(0.1, 0.02, Math.min(u, 1 - u));
-    let k = 0.75 + a[p] * 0.4 + (r() - 0.5) * (0.16 - rut * 0.1);
-    k *= 1 - rut * 0.25;
-    k *= 1 + ridge * 0.12;
-    let R = 94 * k, G = 82 * k, B = 66 * k;
-    const grass = clamp((center + edge) * sstep(0.45, 0.7, gr[p]));
-    R = lerp(R, 54, grass * 0.8);
-    G = lerp(G, 60, grass * 0.8);
-    B = lerp(B, 34, grass * 0.8);
-    const puddle = rut * sstep(0.7, 0.8, 1 - a[p]) * 0.45;
-    R = lerp(R, 44, puddle);
-    G = lerp(G, 40, puddle);
-    B = lerp(B, 36, puddle);
-    d[i] = R;
-    d[i + 1] = G;
-    d[i + 2] = B;
+    // packed fines with a sandy grain, darker damp patches and paler dry, dusty ones
+    let k = 0.84 + (a[p] - 0.5) * 0.3 + (b[p] - 0.5) * 0.16 + (gr[p] - 0.5) * 0.3 + (r() - 0.5) * 0.16;
+    const dry = sstep(0.55, 0.8, a[p]) * 0.14;
+    const damp = sstep(0.62, 0.85, 1 - b[p]) * 0.12;
+    k *= 1 - damp;
+    d[i] = lerp(96, 112, dry) * k;
+    d[i + 1] = lerp(82, 100, dry) * k;
+    d[i + 2] = lerp(64, 82, dry) * k * (1 + damp * 0.1);
     d[i + 3] = 255;
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  pebbles(ctx, W, W, r, 1100, [[118, 112, 104], [96, 90, 82], [80, 74, 66], [134, 126, 114]], [0.8, 2.6]);
-  // tread marks in ruts
-  ctx.fillStyle = 'rgba(30,24,18,0.12)';
-  for (const cu of [0.28, 0.72])
-    for (let y = 0; y < W; y += 7) {
-      ctx.fillRect(cu * W - 16, y, 12, 2.5);
-      ctx.fillRect(cu * W + 4, y + 3, 12, 2.5);
-    }
-  strokesWrapped(ctx, W, W, r, 700, [[60, 70, 36], [80, 84, 44]], [4, 10], 1.2, (rr) => -Math.PI / 2 + (rr() - 0.5) * 1.8, 0.5);
+  // gravel pressed into the surface (each stone casts a small shadow): mostly the dirt's own tones, a
+  // share of paler grey stones, never white
+  pebbles(ctx, W, W, r, 700, [[92, 82, 68], [78, 68, 56], [104, 94, 80], [66, 58, 48]], [0.7, 1.8]);
+  pebbles(ctx, W, W, r, 260, [[124, 116, 104], [110, 106, 98], [132, 122, 106]], [0.8, 2.2]);
+  pebbles(ctx, W, W, r, 40, [[112, 104, 94], [96, 90, 82]], [2.2, 3.6]);
+  // clods and small ruts of loose dirt
+  blotches(ctx, W, W, r, 60, [58, 46, 34], [0.12, 0.28], [3, 9]);
+  strokesWrapped(ctx, W, W, r, 90, [[58, 46, 34], [70, 58, 42]], [8, 24], 1.2, null, 0.5);
+  drawCracks(ctx, W, W, r, 6, { len: [30, 110], width: [0.6, 1.1], col: 'rgba(40,30,22,0.5)', step: 4 });
   return { canvas: c };
 };
 
@@ -2137,22 +2226,26 @@ GEN.ground_asphalt = () => {
   return { canvas: c };
 };
 
+// wet soil: dark, glossy where it is wettest, a few smooth-edged puddles, clods, tracks and straw
 GEN.ground_mud = () => {
   const W = 512;
   const r = rngf(551);
-  const a = fbm(W, W, 6, 6, 5, 551, 0.55), b = fbm(W, W, 18, 18, 4, 552), w2 = fbm(W, W, 8, 8, 4, 553);
+  const a = fbm(W, W, 6, 6, 5, 551, 0.55), b = fbm(W, W, 40, 40, 3, 552), w2 = fbm(W, W, 5, 5, 5, 553), cl = fbm(W, W, 20, 20, 3, 554);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    let k = 0.75 + a[p] * 0.35 + (b[p] - 0.5) * 0.3 + (r() - 0.5) * 0.05;
-    const ridge = sstep(0.62, 0.72, b[p]) * 0.25;
-    k += ridge;
-    let R = 54 * k, G = 42 * k, B = 30 * k;
-    const pud = sstep(0.66, 0.72, w2[p]) * 0.8;
-    R = lerp(R, 30, pud);
-    G = lerp(G, 29, pud);
-    B = lerp(B, 28, pud);
-    const rim = sstep(0.6, 0.66, w2[p]) * (1 - pud) * 0.2;
+    const wet = sstep(0.45, 0.8, w2[p]);
+    let k = 0.86 + (a[p] - 0.5) * 0.3 + (b[p] - 0.5) * 0.18 + (r() - 0.5) * 0.05;
+    // clumpy texture where it is drier
+    k += (cl[p] - 0.5) * 0.24 * (1 - wet);
+    k *= 1 - wet * 0.22;
+    let R = 60 * k, G = 47 * k, B = 34 * k;
+    // puddles: rare, smooth rims, a dull grey sheen of sky
+    const pud = sstep(0.8, 0.84, w2[p] + (a[p] - 0.5) * 0.06);
+    R = lerp(R, 33, pud);
+    G = lerp(G, 31, pud);
+    B = lerp(B, 29, pud);
+    const rim = sstep(0.76, 0.8, w2[p]) * (1 - pud) * 0.18;
     d[i] = R * (1 - rim);
     d[i + 1] = G * (1 - rim);
     d[i + 2] = B * (1 - rim);
@@ -2160,8 +2253,9 @@ GEN.ground_mud = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  pebbles(ctx, W, W, r, 120, [[70, 62, 54], [56, 48, 40]], [1, 3.5]);
-  strokesWrapped(ctx, W, W, r, 200, [[70, 56, 40], [34, 26, 20]], [8, 20], 1.2);
+  pebbles(ctx, W, W, r, 160, [[72, 58, 44], [58, 46, 34], [80, 68, 54]], [1, 3.2]);
+  strokesWrapped(ctx, W, W, r, 110, [[96, 84, 52], [80, 68, 44]], [8, 20], 1.1, null, 0.55);
+  strokesWrapped(ctx, W, W, r, 80, [[30, 22, 16], [40, 30, 22]], [6, 16], 1.4, null, 0.5);
   return { canvas: c };
 };
 
@@ -2184,6 +2278,21 @@ GEN.ground_sand = () => {
   pebbles(ctx, W, W, r, 260, [[110, 104, 96], [88, 82, 74], [140, 132, 120], [70, 64, 58]], [1, 4]);
   strokesWrapped(ctx, W, W, r, 60, [[50, 40, 30], [70, 60, 44]], [6, 20], 1.4);
   return { canvas: c };
+};
+
+// independent tileable noise fields in R / G / B (linear data, sampled by the terrain at several scales)
+GEN.ground_noise = () => {
+  const W = 256;
+  const f = [fbm(W, W, 4, 4, 5, 571, 0.5), fbm(W, W, 4, 4, 5, 572, 0.5), fbm(W, W, 5, 5, 5, 573, 0.5)];
+  const img = newImg(W, W);
+  eachPx(img, (x, y, i, d) => {
+    const p = i >> 2;
+    d[i] = f[0][p] * 255;
+    d[i + 1] = f[1][p] * 255;
+    d[i + 2] = f[2][p] * 255;
+    d[i + 3] = 255;
+  });
+  return { ...img, linear: true };
 };
 
 // ---------------------------------------------------------------- fx sprites (grey on transparent)
