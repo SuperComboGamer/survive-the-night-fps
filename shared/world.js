@@ -1841,6 +1841,23 @@ export function createWorld(seed) {
     if (occupied(x, z, 0.8)) continue;
     resourceSpawns.push({ x, y: heightAt(x, z) + 0.02, z, zone: ZONE.FOREST });
   }
+  // day-one scavenging: floor loot (the breakdown's cloth / sticks / planks table) spread evenly by
+  // angle around the car, so whichever way a survivor heads out there is torch cloth before the first
+  // night. Own rng stream so the rest of the valley stays identical.
+  const ringRng = mulberry32(seed ^ 0x70c4);
+  const RING_SPOTS = 48;
+  for (let i = 0; i < RING_SPOTS; i++) {
+    for (let tries = 0; tries < 12; tries++) {
+      const a = ((i + ringRng()) / RING_SPOTS) * PI * 2;
+      const r = ringRng.range(30, 140);
+      const x = car.x + Math.sin(a) * r;
+      const z = car.z + Math.cos(a) * r;
+      if (Math.abs(x) > LIM - 20 || Math.abs(z) > LIM - 20) continue;
+      if (zoneClear(x, z) || inLake(x, z) || occupied(x, z, 0.8)) continue;
+      lootSpawns.push({ x, y: heightAt(x, z) + 0.02, z, zone: ZONE.CAMP });
+      break;
+    }
+  }
   // fallback horde spawn ring (the night horde normally spawns around wherever the survivors are)
   const hordeSpawns = [];
   for (let i = 0; i < 72; i++) {
