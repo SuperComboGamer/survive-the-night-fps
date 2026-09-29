@@ -90,6 +90,10 @@ def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05);
 def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02);
 def(S.FLARE_BURN, 'acid', 'fx', 0.45, 0.1);
 def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06);
+def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08);
+def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06);
+def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1);
+def(S.DOG_YELP, 'dog_yelp', 'zombie', 0.8, 0.08);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
