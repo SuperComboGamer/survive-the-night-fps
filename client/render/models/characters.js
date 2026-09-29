@@ -1566,6 +1566,7 @@ function poseIdle(z, p) {
   const splay = st.legSplay || 0.05;
   if (z.limpSide) legsStatic(z, p, 0.24, -0.5, -0.02, -0.06, splay);
   else legsStatic(z, p, -0.02, -0.06, 0.24, -0.5, splay);
+  z.standOn = true;
   // arms dangle
   const aw = n1(t * 0.6, z.seed + 11) * 0.12;
   if (st.mantis) {
@@ -1919,7 +1920,7 @@ function pivotAnkle(flat, ph, a) {
   }
   return _an;
 }
-const _foot = { f: 0, y: 0, ph: 0 };
+const _foot = { f: 0, y: 0, ph: 0, flat: 0 };
 /** Planned ankle (forward of the stance center, height) and world pitch of leg i this frame. */
 function planFoot(k, i, a) {
   const G = k.G, D = k.D[i], x = k.x[i], len = k.len;
@@ -1931,6 +1932,7 @@ function planFoot(k, i, a) {
     _foot.f = q.f;
     _foot.y = q.y;
     _foot.ph = ph;
+    _foot.flat = fL - x * len; // where the foot sits on the ground (the ankle rolls around it)
     return _foot;
   }
   const w = k.w[i];
@@ -1971,7 +1973,54 @@ function rotXYZ(ax, ay, az, inv) {
   return _v3;
 }
 
-const _ft = { x: [0, 0], y: [0, 0], f: [0, 0], ph: [0, 0] };
+const _ft = { x: [0, 0], y: [0, 0], f: [0, 0], z: [0, 0], ph: [0, 0], flat: [0, 0] };
+
+// How far (rig m) a pinned foot may end up from the gait plan before it gets dragged along: forward/back, sideways.
+const PIN_F = 0.22, PIN_X = 0.1;
+/**
+ * World-space foot pinning: a stance foot stays on the spot where it touched down, even when the body's actual
+ * motion (interpolated network movement, crowd shoves, turning, a speed estimate that lags) differs from what the
+ * gait planned. At lift-off the leftover offset fades out over the swing, so the next step lands on plan again.
+ * Needs the instance's world placement (wx, wz, wyaw, wScale); culled frames re-pin.
+ */
+function pinFeet(z, k) {
+  const L = z.pin || (z.pin = { on: [false, false], x: [0, 0], z: [0, 0], ex: [0, 0], ef: [0, 0], t: -1 });
+  const s = z.wScale, c = Math.cos(z.wyaw), sn = Math.sin(z.wyaw), cz = z.gcz;
+  const fresh = z.time - L.t < 0.12;
+  L.t = z.time;
+  for (let i = 0; i < 2; i++) {
+    if (!k.stance[i]) {
+      L.on[i] = false;
+      if (!fresh) L.ex[i] = L.ef[i] = 0;
+      const f = 1 - smooth(k.w[i]);
+      _ft.x[i] += L.ex[i] * f;
+      _ft.f[i] += L.ef[i] * f;
+      continue;
+    }
+    const px = _ft.x[i], pz = cz - _ft.flat[i]; // planned ground spot, rig space
+    if (!L.on[i] || !fresh) {
+      if (fresh) z.footfalls++;
+      L.on[i] = true;
+      L.x[i] = z.wx + (px * c + pz * sn) * s;
+      L.z[i] = z.wz + (pz * c - px * sn) * s;
+    }
+    const dx = L.x[i] - z.wx, dz = L.z[i] - z.wz;
+    let ex = (dx * c - dz * sn) / s - px, ez = (dx * sn + dz * c) / s - pz;
+    const e = Math.hypot(ex / PIN_X, ez / PIN_F);
+    if (e > 1) {
+      // shoved too far off plan: the foot slides (drag the pin along)
+      ex /= e;
+      ez /= e;
+      const lx = px + ex, lz = pz + ez;
+      L.x[i] = z.wx + (lx * c + lz * sn) * s;
+      L.z[i] = z.wz + (lz * c - lx * sn) * s;
+    }
+    L.ex[i] = ex;
+    L.ef[i] = -ez;
+    _ft.x[i] += ex;
+    _ft.f[i] -= ez;
+  }
+}
 /** Pelvis height + two-bone leg IK onto the planned feet. Runs after the upper body and the head shift are final. */
 function solveLegs(z, p) {
   const k = z.gk, G = k.G, P = z.P, n = z.nb * 4;
@@ -1986,8 +2035,10 @@ function solveLegs(z, p) {
     _ft.f[i] = q.f;
     _ft.y[i] = q.y;
     _ft.ph[i] = q.ph;
+    _ft.flat[i] = q.flat;
     _ft.x[i] = (i ? 1 : -1) * (P.hipW + G.width + (k.stance[i] ? 0 : k.circ[i] * Math.sin(PI * k.w[i])));
   }
+  if (z.wScale) pinFeet(z, k);
   // pelvis height: as high as the legs reach at touchdown / lift-off (they are longest-spread there), plus the
   // vault over a walking stance leg or the dip-and-bound of a running one
   const Lr = (L1 + L2) * G.ext, wd = G.width;
@@ -2027,29 +2078,54 @@ function solveLegs(z, p) {
     }
   }
   p[n + 1] += hy - P.hipY;
+  for (let i = 0; i < 2; i++) _ft.z[i] = cz - _ft.f[i];
+  keepReach(z, p, _ft, k.stance);
+  legsIK(z, p, _ft);
+}
+
+/**
+ * Lowers the pelvis until every planted ankle target T (rig x, y, z) is within reach. The drop is eased (quick to
+ * sink, slower to rise) so a foot landing out of reach or lifting off doesn't make the hips jump in one frame;
+ * meanwhile the IK leaves that foot a little short of its target.
+ */
+function keepReach(z, p, T, planted) {
+  const P = z.P, n = z.nb * 4, maxR = (P.thighLen + P.shinLen) * 0.999;
   const hx = p[HIPS * 4], hyw = p[HIPS * 4 + 1], hz = p[HIPS * 4 + 2];
-  // safety: a planted foot must stay reachable (lower the pelvis if not)
-  const maxR = (L1 + L2) * 0.999;
+  let need = 0;
   for (let i = 0; i < 2; i++) {
-    if (!k.stance[i]) continue;
+    if (!planted[i]) continue;
     _v3.x = (i ? 1 : -1) * P.hipW;
     _v3.y = -0.03;
     _v3.z = 0;
     const o = rotXYZ(hx, hyw, hz, false);
-    const dx = _ft.x[i] - (p[n] + o.x), dz = cz - _ft.f[i] - (p[n + 2] + o.z);
-    const top = _ft.y[i] + Math.sqrt(Math.max(0, maxR * maxR - dx * dx - dz * dz));
-    const jy = p[n + 1] + P.hipY + o.y;
-    if (jy > top) p[n + 1] -= jy - top;
+    const dx = T.x[i] - (p[n] + o.x), dz = T.z[i] - (p[n + 2] + o.z);
+    const top = T.y[i] + Math.sqrt(Math.max(0, maxR * maxR - dx * dx - dz * dz));
+    need = Math.max(need, p[n + 1] + P.hipY + o.y - top);
   }
+  if (!z.wScale) {
+    p[n + 1] -= need; // posed in place (calibration, treadmill): exact
+    return;
+  }
+  const dt = clamp(z.time - (z.dropT ?? z.time), 0, 0.1);
+  z.dropT = z.time;
+  const d0 = z.drop || 0;
+  z.drop = d0 + (need - d0) * Math.min(1, dt * (need > d0 ? 30 : 10));
+  p[n + 1] -= z.drop;
+}
+
+/** Two-bone IK of both legs onto ankle targets T (rig x, y, z) with the feet at world pitch T.ph. */
+function legsIK(z, p, T) {
+  const P = z.P, n = z.nb * 4, L1 = P.thighLen, L2 = P.shinLen;
+  const hx = p[HIPS * 4], hyw = p[HIPS * 4 + 1], hz = p[HIPS * 4 + 2];
   for (let i = 0; i < 2; i++) {
     const sg = i ? 1 : -1, th = i ? THIGH_R : THIGH_L;
     _v3.x = sg * P.hipW;
     _v3.y = -0.03;
     _v3.z = 0;
     const o = rotXYZ(hx, hyw, hz, false), ox = o.x, oy = o.y, oz = o.z; // o is the shared scratch vector
-    _v3.x = _ft.x[i] - (p[n] + ox);
-    _v3.y = _ft.y[i] - (p[n + 1] + P.hipY + oy);
-    _v3.z = cz - _ft.f[i] - (p[n + 2] + oz);
+    _v3.x = T.x[i] - (p[n] + ox);
+    _v3.y = T.y[i] - (p[n + 1] + P.hipY + oy);
+    _v3.z = T.z[i] - (p[n + 2] + oz);
     const v = rotXYZ(hx, hyw, hz, true); // hip -> ankle in the hips' frame
     let d = Math.hypot(v.x, v.y, v.z);
     d = clamp(d, Math.abs(L1 - L2) + 0.02, (L1 + L2) * 0.9995);
@@ -2062,8 +2138,74 @@ function solveLegs(z, p) {
     else if (pitch < -PI) pitch += TAU;
     R(p, th, pitch, 0, splay);
     R(p, th + 1, kn, 0, 0);
-    R(p, th + 2, _ft.ph[i] - (hx + pitch + kn), 0, -(splay + hz));
+    R(p, th + 2, T.ph[i] - (hx + pitch + kn), 0, -(splay + hz));
   }
+}
+
+// Standing still (idle, braced attack, menace): the feet stay planted in the world while the hips sway, and the legs
+// are re-solved onto them. Turning on the spot or being shoved off the stance makes it shuffle a foot back under it.
+const STEP_T = 0.3, STEP_LIFT = 0.07, STEP_X = 0.09, STEP_F = 0.14;
+const _st = { x: [0, 0], y: [0, 0], z: [0, 0], ph: [0, 0], planted: [true, true] };
+function plantStatic(z, p) {
+  const P = z.P, n = z.nb * 4, L1 = P.thighLen, L2 = P.shinLen;
+  const S = z.stand || (z.stand = { x: [0, 0], z: [0, 0], sx: [0, 0], sz: [0, 0], u: [-1, -1], t: -1 });
+  const s = z.wScale, c = Math.cos(z.wyaw), sn = Math.sin(z.wyaw);
+  const fresh = z.time - S.t < 0.12, dt = fresh ? z.time - S.t : 0;
+  S.t = z.time;
+  const rz = p[n + 2];
+  if (z.gcz === undefined || Math.abs(rz - z.gcz) > 0.3) z.gcz = rz;
+  else z.gcz += (rz - z.gcz) * 0.08;
+  for (let i = 0; i < 2; i++) {
+    // where the static pose puts this ankle under a still pelvis (thigh + shin FK), in the world
+    const th = i ? THIGH_R : THIGH_L, kn = p[(th + 1) * 4];
+    _v3.x = 0;
+    _v3.y = -L1 - L2 * Math.cos(kn);
+    _v3.z = -L2 * Math.sin(kn);
+    const q = rotXYZ(p[th * 4], p[th * 4 + 1], p[th * 4 + 2], false);
+    const rx = (i ? 1 : -1) * P.hipW + q.x, rzr = z.gcz + q.z;
+    const wx = z.wx + (rx * c + rzr * sn) * s, wz = z.wz + (rzr * c - rx * sn) * s;
+    if (!fresh) {
+      S.x[i] = wx;
+      S.z[i] = wz;
+      S.u[i] = -1;
+    }
+    let px = S.x[i], pz = S.z[i], lift = 0;
+    if (S.u[i] >= 0) {
+      S.u[i] = Math.min(1, S.u[i] + dt / STEP_T);
+      const e = smooth(S.u[i]);
+      px = S.sx[i] + (wx - S.sx[i]) * e;
+      pz = S.sz[i] + (wz - S.sz[i]) * e;
+      lift = STEP_LIFT * Math.sin(PI * S.u[i]);
+      if (S.u[i] >= 1) {
+        S.u[i] = -1;
+        S.x[i] = wx;
+        S.z[i] = wz;
+      }
+    } else {
+      const ex = ((px - wx) * c - (pz - wz) * sn) / s, ez = ((px - wx) * sn + (pz - wz) * c) / s;
+      const e = Math.hypot(ex / STEP_X, ez / STEP_F);
+      if (e > 2.5) {
+        // shoved well off it before a step could fix it: the foot slides
+        px = wx + (px - wx) * (2.5 / e);
+        pz = wz + (pz - wz) * (2.5 / e);
+        S.x[i] = px;
+        S.z[i] = pz;
+      }
+      if (e > 1 && S.u[1 - i] < 0) {
+        S.u[i] = 0;
+        S.sx[i] = px;
+        S.sz[i] = pz;
+      }
+    }
+    const dx = px - z.wx, dz = pz - z.wz;
+    _st.x[i] = (dx * c - dz * sn) / s;
+    _st.z[i] = (dx * sn + dz * c) / s;
+    _st.y[i] = P.ankleY + lift;
+    _st.ph[i] = 0;
+    _st.planted[i] = S.u[i] < 0;
+  }
+  keepReach(z, p, _st, _st.planted);
+  legsIK(z, p, _st);
 }
 
 function poseAttack(z, p) {
@@ -2071,12 +2213,14 @@ function poseAttack(z, p) {
   const t = z.stateT;
   const per = (z.def.rate || 1) / z.rate;
   const u = (t % per) / per;
-  // lower body: keep walking if moving, else braced
-  if (z.speed > 0.4) poseLoco(z, p, false);
+  // lower body: keep walking (or running) if moving, else braced
+  const mv = z.sub ?? (z.speed > 0.4 ? 1 : 0);
+  if (mv) poseLoco(z, p, mv === 2);
   else {
     clearPose(p, z.nb);
     if (st.quad) legsStatic(z, p, st.baseT + 0.1, -st.baseK, st.baseT - 0.1, -st.baseK + 0.1, 0.14);
     else legsStatic(z, p, 0.35, -0.35, -0.15, -0.1, st.legSplay || 0.05);
+    z.standOn = true;
   }
   if (type === ZTYPE.TANK) return tankSmash(z, p, u);
   if (type === ZTYPE.BOSS_ABOMINATION) return abomSweep(z, p, u);
@@ -2254,6 +2398,109 @@ function poseSpecial(z, p) {
   }
 }
 
+/** Standing over the prey between swipes: braced like the attack, arms up clutching at it, heaving, jaw snapping. */
+function poseMenace(z, p) {
+  const st = z.st;
+  if (st.quad || st.knuckle || st.mantis || st.waddle || z.def.boss) return poseIdle(z, p);
+  const t = z.time + z.off;
+  legsStatic(z, p, 0.35, -0.35, -0.15, -0.1, st.legSplay || 0.05);
+  z.standOn = true;
+  const heave = Math.sin(t * 3.4 * z.rate);
+  const tw = twitch(z, t, st.twitchy ? 2.2 : 1.1);
+  const sway = n1(t * 0.7, z.seed + 13);
+  R(p, SPINE, -0.21 + 0.035 * heave - 0.08 * Math.abs(tw), 0.12 * sway, 0.05 * sway);
+  R(p, CHEST, -0.21 + 0.03 * heave, 0.08 * sway + 0.1 * tw, 0);
+  p[z.nb * 4] = 0.03 * sway;
+  posture(z, p);
+  for (let s = 0; s < 2; s++) {
+    // each hand grabs on its own slow rhythm: reach out, clutch, pull back
+    const g = Math.sin(t * (2.1 + 0.4 * s) * z.rate + s * 2.3 + z.seed);
+    const n = n1(t * 1.3, z.seed + 20 + s);
+    arm(p, s, 1.3 + 0.18 * g + 0.1 * n + 0.2 * tw, 0.24 - 0.06 * g, 0.3, 0.25 + 0.35 * Math.max(0, -g), 0.55 + 0.25 * Math.max(0, g));
+  }
+  headLook(p, 0.05 + 0.04 * heave + tw * 0.25, n1(t * 0.9, z.seed + 6) * 0.2 + tw * 0.35, z.tilt * 0.2 + tw * 0.2, 0.5);
+  R(p, JAW, -0.3 - 0.35 * Math.max(0, Math.sin(t * 6.3 + 0.7 * n1(t, z.seed))) - 0.2 * Math.abs(tw), 0, 0);
+}
+
+/** Hit reaction: torso and head snap back, arms jerk out, then it recovers (additive, upper body only). */
+function poseFlinch(z, p) {
+  const t = z.flinchT, s = z.flinchSide;
+  const e = t < 0.05 ? t / 0.05 : Math.exp(-(t - 0.05) * 7);
+  A(p, SPINE, 0.12 * e, 0.12 * s * e, 0.06 * s * e);
+  A(p, CHEST, 0.1 * e, 0.1 * s * e, 0);
+  A(p, NECK, 0.1 * e, 0, 0);
+  A(p, HEAD, 0.3 * e, 0.25 * s * e, 0.22 * s * e);
+  A(p, JAW, -0.3 * e, 0, 0);
+  A(p, UARM_L, 0.25 * e, 0, -0.35 * e);
+  A(p, UARM_R, 0.25 * e, 0, 0.35 * e);
+  A(p, FARM_L, 0.3 * e, 0, 0);
+  A(p, FARM_R, 0.3 * e, 0, 0);
+}
+
+// growl / scream / roar: jaw gape, head lift or thrust, chest heave
+const VOX = [
+  { dur: 1.4, jaw: 0.5, head: 0.14, chest: 0.04 },
+  { dur: 1.0, jaw: 0.95, head: -0.2, chest: -0.08 },
+  { dur: 1.6, jaw: 0.85, head: 0.35, chest: 0.12 },
+];
+function poseVocal(z, p) {
+  const V = VOX[z.voxKind], u = z.voxT / V.dur, t = z.time + z.off;
+  const e = smooth(u / 0.12) * (1 - smooth((u - 0.75) / 0.25)) * (0.8 + 0.2 * Math.sin(u * 23 + z.seed));
+  A(p, JAW, -V.jaw * e - 0.05 * e * Math.sin(t * 37), 0, 0);
+  A(p, NECK, V.head * 0.4 * e, 0, 0);
+  A(p, HEAD, V.head * 0.6 * e, 0, z.tilt * 0.1 * e);
+  A(p, CHEST, V.chest * e, 0, 0);
+}
+
+// ------------------------------------------------------------------ gaze: nearby zombies turn their heads to stare at the viewer
+const viewer = { x: 0, y: 0, z: 0, on: false };
+/** Camera position the zombies may stare at this frame (call once per frame). */
+export function setZombieViewer(x, y, z) {
+  viewer.x = x;
+  viewer.y = y;
+  viewer.z = z;
+  viewer.on = true;
+}
+const GAZE_NEAR = 13, GAZE_FAR = 19;
+/** Updates the instance's smoothed gaze (yaw/pitch relative to its facing, weight). */
+function updateGaze(z, dt) {
+  const st = z.state;
+  let want = 0, yaw = z.gazeYaw, pitch = z.gazePitch;
+  if (viewer.on && st !== ZANIM.DEAD && st !== ZANIM.STAGGER && st !== ZANIM.AIRBORNE && st !== ZANIM.SPECIAL) {
+    const o = z.object.position;
+    const dx = viewer.x - o.x, dz = viewer.z - o.z;
+    const d = Math.hypot(dx, dz);
+    const c = Math.cos(z.wyaw), sn = Math.sin(z.wyaw);
+    const lx = dx * c - dz * sn, lz = dx * sn + dz * c; // viewer in the body's frame (front = -z)
+    const a = Math.atan2(-lx, -lz);
+    // feeding zombies only look up when someone gets close
+    const range = st === ZANIM.EAT ? 7 : GAZE_FAR;
+    if (d < range && Math.abs(a) < 1.9) {
+      want = clamp((range - d) / (range - (st === ZANIM.EAT ? 5 : GAZE_NEAR)), 0, 1) * (st === ZANIM.RUN ? 0.6 : 1);
+      yaw = clamp(a, -1.15, 1.15);
+      pitch = clamp(Math.atan2(viewer.y - (o.y + z.def.headY), Math.max(d, 0.5)), -0.75, 0.6);
+    }
+  }
+  // the head follows in quick jerks (fast when far off, settling slowly), not a smooth servo
+  const ky = Math.min(1, dt * (Math.abs(yaw - z.gazeYaw) > 0.35 ? 9 : 3));
+  z.gazeYaw += (yaw - z.gazeYaw) * ky;
+  z.gazePitch += (pitch - z.gazePitch) * Math.min(1, dt * 4);
+  z.gazeW += (want - z.gazeW) * Math.min(1, dt * (want > z.gazeW ? 2.5 : 1.5));
+}
+/** Turns neck + head (and a little chest) so the face points along the gaze. */
+function applyGaze(z, p) {
+  const w = z.gazeW;
+  const curYaw = p[HIPS * 4 + 1] + p[SPINE * 4 + 1] + p[CHEST * 4 + 1] + p[NECK * 4 + 1] + p[HEAD * 4 + 1];
+  const curPitch = chestPitch(p) + p[NECK * 4] + p[HEAD * 4];
+  const dy = (z.gazeYaw - curYaw) * w, dp = (z.gazePitch - curPitch) * w;
+  p[CHEST * 4 + 1] += dy * 0.15;
+  p[NECK * 4 + 1] += dy * 0.35;
+  p[HEAD * 4 + 1] += dy * 0.5;
+  p[NECK * 4] += dp * 0.4;
+  p[HEAD * 4] += dp * 0.6;
+  p[HEAD * 4 + 2] += z.tilt * 0.12 * w; // head cocked while it stares
+}
+
 function poseAir(z, p) {
   const t = z.stateT, st = z.st, type = z.type;
   if (type === ZTYPE.LEAPER || st.quad) {
@@ -2377,6 +2624,7 @@ function poseHumanoid(z) {
   z.bellyPulse = 0;
   z.abdPulse = 0;
   z.gOn = false;
+  z.standOn = false;
   switch (z.state) {
     case ZANIM.WALK: poseLoco(z, p, false); break;
     case ZANIM.RUN: poseLoco(z, p, true); break;
@@ -2386,16 +2634,21 @@ function poseHumanoid(z) {
     case ZANIM.STAGGER: poseStagger(z, p); break;
     case ZANIM.DEAD: poseDead(z, p); break;
     case ZANIM.EAT: poseEat(z, p); break;
-    default: poseIdle(z, p); break;
+    default: if (z.sub === 1) poseMenace(z, p); else poseIdle(z, p); break;
   }
   poseExtras(z, p);
   const jh = z.A ? z.A.jawHang : 0; // survivor zombie-mode state has no per-variant extras
   if (jh) A(p, JAW, -jh, 0, z.tilt * jh * 0.35); // dislocated jaw hangs open and askew
+  const alive = z.state !== ZANIM.DEAD;
+  if (alive && z.voxT < VOX[z.voxKind]?.dur) poseVocal(z, p);
+  if (alive && z.state !== ZANIM.STAGGER && z.flinchT < 0.6) poseFlinch(z, p);
+  if (z.gazeW > 0.01) applyGaze(z, p);
   if (z.state !== ZANIM.DEAD && z.state !== ZANIM.EAT) {
     // keep the head over the object origin (server head hitbox is centered on the entity axis)
     p[z.nb * 4 + 2] -= headForward(z, p);
   }
   if (z.gOn) solveLegs(z, p);
+  else if (z.standOn && z.wScale) plantStatic(z, p);
 }
 
 /** 2D forward kinematics of the spine chain: head-center Z offset relative to the hips. */
@@ -2618,10 +2871,23 @@ class ZombieInstance {
     const sw = 1 + (rnd() - 0.5) * 0.12, sh = 1 + (rnd() - 0.5) * 0.05;
     this.baseScale = cal.k;
     this.gScale = cal.k * sw; // ground distance per rig unit (planted-foot strides)
+    this.wScale = 0; // set once the instance is placed in the world (calibration poses in place)
+    this.wx = this.wz = this.wyaw = 0;
     this.body.scale.set(cal.k * sw, cal.k * sh, cal.k * sw);
     this.body.add(this.mesh);
     this.object.add(this.body);
     this.state = ZANIM.IDLE;
+    this.sub = 0;
+    this.lastAttack = -1e9;
+    this.gazeYaw = 0;
+    this.gazePitch = 0;
+    this.gazeW = 0;
+    this.flinchT = 9;
+    this.flinchSide = 1;
+    this.voxT = 9;
+    this.voxKind = 0;
+    this.footfalls = 0; // gait touchdowns so far (footstep sounds land with the feet)
+    this.posedAt = -1;
     this.stateT = 0;
     this.fadeT = 1;
     this.fadeDur = 0.2;
@@ -2764,23 +3030,36 @@ class ZombieInstance {
     return out.applyMatrix4(this.mesh.matrixWorld);
   }
 
-  update(dt, anim, speed, time) {
+  update(dt, anim, speed, time, inView = false) {
     if (dt > 0.1) dt = 0.1;
-    if (anim !== this.state) {
+    // client-side sub-state, with hysteresis so a noisy speed can't flicker it:
+    // ATTACK: 0 braced / 1 walking / 2 running; IDLE: 1 = menacing (it just attacked, the prey is still close)
+    // the server picks IDLE from the zombie's own velocity; when the crowd or a survivor shoves it along, walk
+    if (anim === ZANIM.IDLE && !this.isBat && speed > (this.state === ZANIM.WALK ? 0.35 : 0.8)) anim = ZANIM.WALK;
+    let sub = 0;
+    if (anim === ZANIM.ATTACK && !this.isBat) {
+      const m = this.state === ZANIM.ATTACK ? this.sub : 0;
+      sub = speed > (m === 2 ? 2.6 : 3.2) ? 2 : speed > (m ? 0.25 : 0.6) ? 1 : 0;
+      this.lastAttack = time;
+    } else if (anim === ZANIM.IDLE && time - this.lastAttack < 2.5) sub = 1;
+    if (anim !== this.state || sub !== this.sub) {
       this.snap.set(this.out);
+      if (anim !== this.state) this.stateT = 0; // a sub-state change keeps the attack's swing timing
       this.state = anim;
-      this.stateT = 0;
+      this.sub = sub;
       this.fadeT = 0;
-      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER ? 0.1 : 0.22;
+      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER ? 0.1 : 0.25;
     }
     this.stateT += dt;
     this.fadeT += dt;
+    this.flinchT += dt;
+    this.voxT += dt;
     this.time = time;
     this.speed = speed;
     if (this.isBat) {
       this.flapPh += dt * (7 + clamp(speed, 0, 10) * 0.5) * this.rate * (this.state === ZANIM.ATTACK ? 0 : 1);
     } else if (anim !== ZANIM.DEAD) {
-      const cyc = gaitLen(this, anim === ZANIM.RUN, speed);
+      const cyc = gaitLen(this, anim === ZANIM.RUN || (anim === ZANIM.ATTACK && sub === 2), speed);
       this.phase += (dt * speed * TAU * this.rate) / cyc;
       if (this.phase > 1e4) this.phase -= TAU * 1000;
     }
@@ -2791,10 +3070,16 @@ class ZombieInstance {
     if (this.type === ZTYPE.SPITTER || this.type === ZTYPE.BOSS_HIVEQUEEN) glow = 0.8 + 0.25 * Math.sin(time * 3.1 + this.off);
     if (anim === ZANIM.DEAD) glow = Math.max(0.15, 1 - this.stateT * 0.6);
     if (setFx(this.fx, this.hit, glow)) this.fxDirty = true;
-    // skip posing when not rendered last frame (culled); crossfades still time out correctly
+    // skip posing when culled (not rendered last frame, not in view now); crossfades still time out correctly
     const seen = this._seen;
     this._seen = false;
-    if (!seen && this.fadeT > this.fadeDur) return;
+    if (!seen && !inView && this.fadeT > this.fadeDur) return;
+    // world placement (the entity view sets it before update) for pinning planted feet and the gaze
+    this.wx = this.object.position.x;
+    this.wz = this.object.position.z;
+    this.wyaw = this.object.rotation.y;
+    if (!this.isBat && this.wScale) updateGaze(this, dt);
+    this.posedAt = time;
     this.computePose();
     const p = this.pose, o = this.out;
     if (this.fadeT < this.fadeDur) {
@@ -2810,6 +3095,23 @@ class ZombieInstance {
   flash(a) {
     this.hit = Math.max(this.hit, clamp(a, 0, 1));
     if (setFx(this.fx, this.hit, 1)) this.fxDirty = true;
+  }
+
+  /** Took a hit: flinch (a fresh hit restarts it, toward a random side). */
+  hurt() {
+    this.flinchT = 0;
+    this.flinchSide = Math.random() < 0.5 ? -1 : 1;
+  }
+
+  /** Vocalizing (0 growl, 1 scream, 2 roar): the jaw and head move with the sound. */
+  vocalize(kind) {
+    this.voxKind = kind;
+    this.voxT = 0;
+  }
+
+  /** Gait touchdowns so far, or -1 when this frame's pose had no planted-foot gait (culled, other states). */
+  footfallCount() {
+    return this.gOn && this.posedAt === this.time ? this.footfalls : -1;
   }
 
   setHeadless(v) {
@@ -2838,10 +3140,14 @@ export function createZombie(ztype, seed = 0) {
   const rig = getRig(type, variant);
   const cal = calibrate(type, getRig(type, 0));
   const z = new ZombieInstance(type, seed, rig, cal);
+  z.wScale = z.gScale;
   return {
     object: z.object,
-    update: (dt, anim, speed, time) => z.update(dt, anim, speed, time),
+    update: (dt, anim, speed, time, inView) => z.update(dt, anim, speed, time, inView),
     flash: (a) => z.flash(a),
+    hurt: () => z.hurt(),
+    vocalize: (kind) => z.vocalize(kind),
+    footfalls: () => z.footfallCount(),
     setHeadless: (v) => z.setHeadless(v),
     anchorWorld: (a, out) => z.anchorWorld(a, out),
     dispose: () => z.dispose(),
