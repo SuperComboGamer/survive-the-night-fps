@@ -517,8 +517,12 @@ export class Zombies {
     if (attacking || (target && dist < 4)) z.yaw = turn(z.yaw, Math.atan2(-(tx - z.x), -(tz - z.z)), dt * 8);
     else if (Math.hypot(z.vx, z.vz) > 0.2) z.yaw = turn(z.yaw, Math.atan2(-z.vx, -z.vz), dt * 5);
     if (z.animT <= 0) {
+      // hysteresis: a speed hovering at a threshold (crowd shoves, easing into an attack) must not flicker the gait
       const sp = Math.hypot(z.vx, z.vz);
-      z.anim = sp > 3.2 ? ZANIM.RUN : sp > 0.25 ? ZANIM.WALK : !chasing && z.idleEat ? ZANIM.EAT : ZANIM.IDLE;
+      const was = z.anim;
+      const run = sp > (was === ZANIM.RUN ? 2.7 : 3.2);
+      const walk = sp > (was === ZANIM.WALK || was === ZANIM.RUN ? 0.12 : 0.3);
+      z.anim = run ? ZANIM.RUN : walk ? ZANIM.WALK : !chasing && z.idleEat ? ZANIM.EAT : ZANIM.IDLE;
     }
   }
 

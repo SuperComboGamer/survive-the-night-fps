@@ -43,15 +43,17 @@ stray cat over)).
 | `node scripts/e2e-weapons.js` | fires + reloads every gun, swings melee weapons, throws a molotov and a pipe bomb |
 | `node scripts/e2e-showcase.js` | spawns every zombie type + boss, screenshots, death -> zombie mode, voice peers |
 | `node scripts/e2e-stress.js` | ~120 zombies around the player, reports frame CPU time |
+| `node scripts/e2e-motion.js [url] [s] [jitterMs] [latencyMs]` | a zombie pack chases the player; reports motion jitter (stalls, velocity kinks, wobble, planted-foot slip, hip pops), optionally over a simulated bumpy connection |
 | `node scripts/e2e-night.js` | night shelter scene (torches, walls, traps) + proximity voice between two clients |
 | `node scripts/shot.js <url> <out.png>` | headless Chrome screenshot |
 
-Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/night need a server
+Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night need a server
 started with `GODMODE=1 DEBUG_COMMANDS=1`. Art/audio/UI modules also have standalone sandbox pages
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
-`/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating;
+`/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
+`&hurt=1` a hit flinch, `&vox=0` a growl);
 `/sandbox/models-test.html?cats=grid` shows the cat's poses).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
@@ -185,4 +187,6 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
 - Hitscan and melee are lag compensated: each client reports the tick it was rendering, and the
   server rewinds zombie/player hitboxes (16-tick history) before tracing. Shotgun spread is seeded
   deterministically so the shooter's predicted tracers match the server's pellets.
-- Remote entities are interpolated 100 ms in the past from per-entity sample rings.
+- Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
+  when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a
+  late packet instead of freezing; their gaits pin planted feet to the ground in world space.

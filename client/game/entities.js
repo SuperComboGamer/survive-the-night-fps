@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import { ENT, PFLAG, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
-import { createZombie, createSurvivor } from '../render/models/characters.js';
+import { SERVER_TICK_RATE } from '../../shared/constants.js';
+import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createStructure, setStructureDamage } from '../render/models/structures.js';
@@ -128,10 +129,112 @@ class Samples {
     out.pitch = b[p + 5];
     return out;
   }
+  // Like sample(), but the position follows a cubic Hermite curve through the samples (Catmull-Rom
+  // tangents, clamped per axis so it never overshoots a sample), so velocity doesn't kink at every
+  // tick. Also writes that velocity (per tick) to out.vx/vy/vz. Past the newest sample it coasts along
+  // the last segment for up to `coast` ticks (a late packet), then holds there.
+  sampleSmooth(t, out, coast) {
+    const b = this.buf;
+    const n = this.n;
+    out.vx = out.vy = out.vz = 0;
+    if (!n) return out;
+    let k = -1;
+    for (let j = 0; j < n; j++) {
+      if (b[((this.head + j) % RING) * 6] <= t) k = j;
+      else break;
+    }
+    if (k < 0 || k === n - 1) {
+      const p = ((this.head + Math.max(k, 0)) % RING) * 6;
+      out.x = b[p + 1];
+      out.y = b[p + 2];
+      out.z = b[p + 3];
+      out.yaw = b[p + 4];
+      out.pitch = b[p + 5];
+      if (k > 0 && coast > 0) {
+        const q = ((this.head + k - 1) % RING) * 6;
+        const span = b[p] - b[q];
+        if (span <= 2) {
+          const dt = Math.min(t - b[p], coast);
+          const vx = (b[p + 1] - b[q + 1]) / span;
+          const vy = (b[p + 2] - b[q + 2]) / span;
+          const vz = (b[p + 3] - b[q + 3]) / span;
+          out.x += vx * dt;
+          out.y += vy * dt;
+          out.z += vz * dt;
+          if (t - b[p] < coast) {
+            out.vx = vx;
+            out.vy = vy;
+            out.vz = vz;
+          }
+        }
+      }
+      return out;
+    }
+    const p = ((this.head + k) % RING) * 6;
+    const q = ((this.head + k + 1) % RING) * 6;
+    const pp = k > 0 ? ((this.head + k - 1) % RING) * 6 : -1;
+    const qq = k + 2 < n ? ((this.head + k + 2) % RING) * 6 : -1;
+    const t0 = b[p];
+    const h = Math.max(1e-6, b[q] - t0);
+    const s = (t - t0) / h;
+    const s2 = s * s;
+    const s3 = s2 * s;
+    const h00 = 2 * s3 - 3 * s2 + 1;
+    const h10 = s3 - 2 * s2 + s;
+    const h01 = 3 * s2 - 2 * s3;
+    const h11 = s3 - s2;
+    for (let a = 1; a <= 3; a++) {
+      const P0 = b[p + a];
+      const P1 = b[q + a];
+      const d = (P1 - P0) / h;
+      let m0 = d;
+      let m1 = d;
+      if (Math.abs(d) < 1e-7) m0 = m1 = 0;
+      else {
+        if (pp >= 0) m0 = (P1 - b[pp + a]) / (b[q] - b[pp]);
+        if (qq >= 0) m1 = (b[qq + a] - P0) / (b[qq] - t0);
+        m0 = d > 0 ? clampRange(m0, 0, 3 * d) : clampRange(m0, 3 * d, 0);
+        m1 = d > 0 ? clampRange(m1, 0, 3 * d) : clampRange(m1, 3 * d, 0);
+      }
+      const v = h00 * P0 + h10 * h * m0 + h01 * P1 + h11 * h * m1;
+      const dv = ((6 * s2 - 6 * s) * (P0 - P1)) / h + (3 * s2 - 4 * s + 1) * m0 + (3 * s2 - 2 * s) * m1;
+      if (a === 1) {
+        out.x = v;
+        out.vx = dv;
+      } else if (a === 2) {
+        out.y = v;
+        out.vy = dv;
+      } else {
+        out.z = v;
+        out.vz = dv;
+      }
+    }
+    out.yaw = lerpAngle(b[p + 4], b[q + 4], s);
+    out.pitch = b[p + 5] + (b[q + 5] - b[p + 5]) * s;
+    return out;
+  }
+  lastTick() {
+    const li = this.last();
+    return li < 0 ? -Infinity : this.buf[li * 6];
+  }
+}
+
+function clampRange(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function wrapAngle(a) {
+  a %= TAU;
+  if (a > Math.PI) a -= TAU;
+  else if (a < -Math.PI) a += TAU;
+  return a;
 }
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _frustum = new THREE.Frustum();
+const _pv = new THREE.Matrix4();
+const _sph = new THREE.Sphere();
 const _up = new THREE.Vector3(0, 1, 0);
 
 export class Entities {
@@ -223,7 +326,7 @@ export class Entities {
     e.rx = dqpos(e.q[0]);
     e.ry = dqpos(e.q[1]);
     e.rz = dqpos(e.q[2]);
-    e.ryaw = 0;
+    e.ryaw = e.samples.sample(t, this.tmp).yaw; // spawn facing (zombies then ease toward new yaws)
     e.speed = 0;
     const g = this.g;
     if (!this.glints.parent) this.scene.add(this.glints);
@@ -233,6 +336,8 @@ export class Entities {
           this.caches.add(e);
           break;
         case ENT.ZOMBIE: {
+          e.vx = e.vy = e.vz = 0; // rendered velocity (m/s) and fading correction offset
+          e.ex = e.ey = e.ez = 0;
           const v = createZombie(e.ztype, e.variant * 7 + e.id);
           e.view = v;
           this.scene.add(v.object);
@@ -357,6 +462,7 @@ export class Entities {
         if (mask & 0b1000) {
           if (e.q[5] < e.lastHp) {
             e.view?.flash(1);
+            e.view?.hurt();
             e.hurtT = 0.2;
           }
           e.lastHp = e.q[5];
@@ -514,25 +620,55 @@ export class Entities {
     this.remoteFlash.length = 0;
     this.fireSources.length = 0;
     const flashCands = [];
+    const cam = g.camera;
+    setZombieViewer(cam.position.x, cam.position.y, cam.position.z);
+    // this frame's view frustum: a zombie turning into view is posed now, not one frame late (with a stale pose)
+    cam.updateMatrixWorld();
+    _frustum.setFromProjectionMatrix(_pv.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
     for (const e of this.ents.values()) {
       switch (e.kind) {
         case ENT.ZOMBIE: {
-          e.samples.sample(renderTick, tmp);
-          const dx = tmp.x - e.rx;
-          const dz = tmp.z - e.rz;
-          const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
-          e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 8);
-          e.rx = tmp.x;
-          e.ry = tmp.y;
-          e.rz = tmp.z;
-          e.ryaw = tmp.yaw;
+          // coast through a late packet only if this zombie was still moving in the newest snapshot
+          // (one that is missing from a snapshot that did arrive simply didn't move)
+          e.samples.sampleSmooth(renderTick, tmp, e.samples.lastTick() >= g.latestTick - 1 ? 2 : 0);
+          const sp = Math.hypot(tmp.vx, tmp.vz) * SERVER_TICK_RATE;
+          e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 6);
+          // when a late packet makes the sampled path jump, carry the jump as an offset that fades out: the body
+          // glides onto the corrected path instead of popping (a real teleport still snaps)
+          const fade = Math.exp(-dt * 8);
+          e.ex *= fade;
+          e.ey *= fade;
+          e.ez *= fade;
+          const jx = tmp.x + e.ex - (e.rx + e.vx * dt);
+          const jy = tmp.y + e.ey - (e.ry + e.vy * dt);
+          const jz = tmp.z + e.ez - (e.rz + e.vz * dt);
+          const jump = Math.hypot(jx, jy, jz);
+          if (jump > 3) e.ex = e.ey = e.ez = 0;
+          else if (jump > 0.02 + 40 * dt * dt) {
+            e.ex -= jx;
+            e.ey -= jy;
+            e.ez -= jz;
+          }
+          e.vx = tmp.vx * SERVER_TICK_RATE;
+          e.vy = tmp.vy * SERVER_TICK_RATE;
+          e.vz = tmp.vz * SERVER_TICK_RATE;
+          e.rx = tmp.x + e.ex;
+          e.ry = tmp.y + e.ey;
+          e.rz = tmp.z + e.ez;
+          // ease the facing toward the (8-bit, 20 Hz) server yaw so turns don't step
+          e.ryaw += wrapAngle(tmp.yaw - e.ryaw) * Math.min(1, dt * 12);
           const v = e.view;
           if (!v) break;
           const distC = (e.rx - camPos.x) ** 2 + (e.rz - camPos.z) ** 2;
           v.object.position.set(e.rx, e.ry, e.rz);
           v.object.rotation.y = e.ryaw;
           // skip animation work for far zombies on alternate frames
-          if (distC < 60 * 60 || ((g.frame + e.id) & 1) === 0) v.update(distC < 60 * 60 ? dt : dt * 2, e.q[4], e.speed, time);
+          if (distC < 60 * 60 || ((g.frame + e.id) & 1) === 0) {
+            const def = ZOMBIE_DEFS[e.ztype];
+            _sph.center.set(e.rx, e.ry + def.height * 0.5, e.rz);
+            _sph.radius = def.height * 0.75 + 0.4;
+            v.update(distC < 60 * 60 ? dt : dt * 2, e.q[4], e.speed, time, _frustum.intersectsSphere(_sph));
+          }
           if (e.burning > 0) {
             e.burning -= dt;
             if (Math.random() < dt * 20) g.effects.burnPuff(e.rx, e.ry, e.rz);
@@ -546,12 +682,23 @@ export class Entities {
               const snd = e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : e.ztype >= ZTYPE.BOSS_ABOMINATION ? SOUND.BOSS_ROAR : SOUND.ZOMBIE_GROWL;
               if (e.ztype === ZTYPE.TANK && Math.random() < 0.6) e.growlT += 4;
               g.audio.play(snd, { x: e.rx, y: e.ry + 1.5, z: e.rz, volume: e.ztype === ZTYPE.BAT ? 0.6 : 0.9 });
+              v.vocalize?.(snd === SOUND.RUNNER_SCREAM ? 1 : snd === SOUND.TANK_ROAR || snd === SOUND.BOSS_ROAR ? 2 : 0);
             }
             if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && distC < 22 * 22) {
-              e.stepT -= dt * (0.8 + e.speed * 0.45);
-              if (e.stepT <= 0) {
+              // a visible planted-foot gait sounds its steps as the feet land; otherwise keep a cadence timer
+              const heavy = e.ztype === ZTYPE.TANK || e.ztype >= ZTYPE.BOSS_ABOMINATION ? 1 : 0.45;
+              const falls = v.footfalls ? v.footfalls() : -1;
+              if (falls >= 0) {
+                if (e.falls !== undefined && falls !== e.falls) g.audio.footstep('dirt', e.rx, e.ry, e.rz, heavy);
+                e.falls = falls;
                 e.stepT = 1;
-                g.audio.footstep('dirt', e.rx, e.ry, e.rz, e.ztype === ZTYPE.TANK || e.ztype >= ZTYPE.BOSS_ABOMINATION ? 1 : 0.45);
+              } else {
+                e.falls = undefined;
+                e.stepT -= dt * (0.8 + e.speed * 0.45);
+                if (e.stepT <= 0) {
+                  e.stepT = 1;
+                  g.audio.footstep('dirt', e.rx, e.ry, e.rz, heavy);
+                }
               }
             }
           }

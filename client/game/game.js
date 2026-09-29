@@ -106,6 +106,11 @@ export class Game {
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
     this.clockInit = false;
+    this.clockAdj = 0; // pending clock correction, eased in over a few frames
+    this.latestTick = 0; // newest snapshot received
+    this.jitter2 = 0; // mean squared snapshot arrival error (ticks^2)
+    this.lateRun = 0; // consecutive snapshots far behind the clock
+    this.interpExtra = 0; // extra interpolation delay (ticks) on a jittery connection
     this.renderTick = 0;
     this.damageFx = 0;
     this.hitFx = 0;
@@ -207,6 +212,7 @@ export class Game {
     this.entities.clear();
     this.clientTick = info.tick;
     this.clockInit = false;
+    this.interpExtra = 0;
     this.state = 'playing';
     this.input.enabled = true;
     this.input.requestLock();
@@ -243,11 +249,25 @@ export class Game {
     // clock
     if (!this.clockInit) {
       this.clientTick = tick;
+      this.clockAdj = 0;
+      this.jitter2 = 0;
+      this.lateRun = 0;
+      this.latestTick = tick;
       this.clockInit = true;
     } else {
-      const err = tick - this.clientTick;
-      if (Math.abs(err) > 6) this.clientTick = tick;
-      else this.clientTick += err * 0.08;
+      const err = tick - (this.clientTick + this.clockAdj);
+      // way off: resync. A single very late snapshot is not that - it's the head of a burst after a
+      // server/network stall, and pulling the clock back for it would rewind every entity
+      this.lateRun = err < -6 ? this.lateRun + 1 : 0;
+      if (err > 6 || this.lateRun > 4) {
+        this.clientTick = tick;
+        this.clockAdj = 0;
+        this.lateRun = 0;
+      } else if (err >= -6) {
+        this.clockAdj += err * 0.08;
+        this.jitter2 += (Math.min(err * err, 9) - this.jitter2) * 0.02;
+      }
+      if (tick > this.latestTick || this.latestTick - tick > 1000) this.latestTick = tick;
     }
     this.prediction.reconcile(ack, this.self);
     readEvents(r, this.eventHandler);
@@ -931,9 +951,14 @@ export class Game {
       const rti = Math.floor(rt);
       this.conn.sendInput(rti, rt - rti, out);
     }
-    // interpolation clock
-    this.clientTick += dt * SERVER_TICK_RATE;
-    this.renderTick = this.clientTick - INTERP_DELAY * SERVER_TICK_RATE;
+    // interpolation clock: corrections are eased in (a step in the clock is a step in every remote entity),
+    // and the render delay widens a little when snapshots arrive unevenly so entities don't stall and lurch
+    const adj = this.clockAdj * Math.min(1, dt * 6);
+    this.clockAdj -= adj;
+    this.clientTick += dt * SERVER_TICK_RATE + adj;
+    const extra = Math.min(1.5, Math.max(0, 2.5 * Math.sqrt(this.jitter2) - 0.6));
+    this.interpExtra += Math.max(-dt * 0.5, Math.min(dt * 0.5, extra - this.interpExtra));
+    this.renderTick = this.clientTick - INTERP_DELAY * SERVER_TICK_RATE - this.interpExtra;
 
     // camera
     this.prediction.renderPos(dt, this.renderPos);

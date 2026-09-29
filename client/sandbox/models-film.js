@@ -6,6 +6,7 @@
 //   ?frames=N      frames in the strip (12);  ?fdt=S  seconds between frames (default: one gait cycle)
 //   ?cols=N        columns (6);  ?cam=side|front|q|back;  ?w=/?h= frame size in px;  ?t0=S start time
 //   ?fixed=1       keep the zombie in place (no ground translation)
+//   ?hurt=1        take a hit on the first frame (flinch);  ?vox=K  vocalize on the first frame (0 growl, 1 scream, 2 roar)
 import * as THREE from 'three';
 import { ZOMBIE_DEFS, ZANIM } from '../../shared/defs.js';
 import { createZombie } from '../render/models/characters.js';
@@ -48,10 +49,18 @@ zb.object.traverse((o) => {
   if (o.isMesh) o.castShadow = true;
 });
 scene.add(zb.object);
-const bones = {};
-zb.object.traverse((o) => {
-  if (o.isBone) bones[o.name] = o;
-});
+// the zombie rig is detached (bones aren't in the scene graph); feet are read from the solved skinning pose
+const inst = zb._inst;
+const FEET = { footL: inst.X.footL, footR: inst.X.footR };
+function footWorld(idx, out) {
+  if (inst.poseDirty) {
+    inst._solve();
+    inst.poseDirty = true; // still upload it at render time
+  }
+  const W = inst.world, o = idx * 12;
+  inst.mesh.updateWorldMatrix(true, false);
+  return out.set(W[o + 9], W[o + 10], W[o + 11]).applyMatrix4(inst.mesh.matrixWorld);
+}
 
 const camera = new THREE.PerspectiveCamera(30, W / H, 0.05, 100);
 const dir = cam === 'front' ? new THREE.Vector3(0.1, 0.12, -1) : cam === 'back' ? new THREE.Vector3(0.1, 0.15, 1) : cam === 'q' ? new THREE.Vector3(-0.8, 0.25, -0.7) : new THREE.Vector3(-1, 0.1, 0);
@@ -61,12 +70,13 @@ const camDist = def.height * 2.6;
 // step the zombie deterministically; it walks toward -z (its facing)
 const STEP = 1 / 120;
 let time = 0, pos = 0;
+if (!moving) zb._inst.wScale = 0; // treadmill: feet must slide back, so no world-space foot pinning
 function step(dt) {
   zb._inst._seen = true; // pose every substep (the instance skips posing when it was not rendered)
+  if (moving) pos -= speed * dt;
+  zb.object.position.set(0, 0, pos); // placed before update(), as the game does
   zb.update(dt, anim, speed, time);
   time += dt;
-  if (moving) pos -= speed * dt;
-  zb.object.position.set(0, 0, pos);
 }
 for (let i = 0; i < t0 / STEP; i++) step(STEP);
 
@@ -83,7 +93,7 @@ const track = { footL: [], footR: [] };
 function sampleFeet() {
   zb.object.updateMatrixWorld(true);
   for (const n of ['footL', 'footR']) {
-    bones[n].getWorldPosition(_v);
+    footWorld(FEET[n], _v);
     track[n].push([_v.x, _v.y, _v.z, time]);
   }
 }
@@ -98,6 +108,8 @@ ctx.fillStyle = '#000';
 ctx.fillRect(0, 0, out.width, out.height);
 ctx.font = '13px monospace';
 
+if (q.has('hurt')) zb.hurt();
+if (q.has('vox')) zb.vocalize(+q.get('vox'));
 for (let f = 0; f < frames; f++) {
   zb.object.updateMatrixWorld(true);
   const target = new THREE.Vector3(0, def.height * 0.5, pos);
@@ -144,4 +156,4 @@ const txt = `type ${def.name} anim ${anim} speed ${speed.toFixed(2)} cycle ${cyc
 ctx.fillStyle = '#dde';
 txt.split('\n').forEach((l, i) => ctx.fillText(l, 8, H * rows + 16 + i * 16));
 console.log(txt);
-window.__film = { done: true, txt, skateL: sL, skateR: sR, zb, bones };
+window.__film = { done: true, txt, skateL: sL, skateR: sR, zb };
