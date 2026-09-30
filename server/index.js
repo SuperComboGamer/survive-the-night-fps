@@ -33,6 +33,7 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.ogg': 'audio/ogg',
 };
 const files = new Map();
 function loadDir(dir, prefix = '') {

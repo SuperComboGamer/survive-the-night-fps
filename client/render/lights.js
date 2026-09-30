@@ -13,7 +13,7 @@ export class Lights {
     fl.target.position.set(0.15, -0.1, -10);
     camera.add(fl);
     camera.add(fl.target);
-    fl.castShadow = !!quality.shadows;
+    fl.castShadow = !!quality.flashShadows;
     fl.shadow.mapSize.set(1024, 1024);
     fl.shadow.camera.near = 0.3;
     fl.shadow.camera.far = 55;
@@ -65,7 +65,7 @@ export class Lights {
   // sources: [{x,y,z, intensity, color?, big?}] fire-ish point sources (campfires, torches, fires, flares)
   // remoteFlash: [{pos: Vector3, dir: Vector3}] remote players with flashlight on (sorted by distance)
   update(dt, time, camPos, localFlashOn, sources, remoteFlash, night) {
-    this.flashlight.intensity = localFlashOn ? 12 + night * 5 : 0;
+    this.flashlight.intensity = localFlashOn ? 16 + night * 8 : 0;
     // nearest (big fires count as closer) fire sources
     const tmp = this._tmp;
     tmp.length = 0;

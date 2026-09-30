@@ -1,13 +1,23 @@
 // WebGL renderer, cameras, world + viewmodel scenes and the post-process chain:
-// bloom (bright pass -> separable blur at 1/4 res) and the final pass (ACES tonemap, film grain,
-// vignette, horror color grade, damage / low-health / infected vision).
+// world -> [SSAO + sun shafts applied in place, see post.js] -> viewmodel -> bloom (bright pass ->
+// separable blur at 1/4 res) -> final pass (ACES tonemap, film grain, vignette, horror color grade,
+// damage / low-health / infected vision).
 import * as THREE from 'three';
+import { ScreenPasses } from './post.js';
 
+// Quality presets. Knobs read by other modules:
+//  shadows / shadowMapSize (per cascade, 2 cascades) / shadowDist (m): cascaded sun shadows
+//  foliageShadows: bushes & rocks cast · charShadows: zombies & players cast · flashShadows: flashlight shadow map
+//  grass: density multiplier · treeDist: tree/rock draw radius (m) · ao: 0 off, 1 SSAO, 2 SSAO 12 taps · godrays
+//  maxPixelRatio: cap on the device pixel ratio (the render-scale setting multiplies it)
 const QUALITY = {
-  low: { pixelRatio: 0.75, samples: 0, shadows: false, sunShadows: false, bloom: false, grass: 0.4, treeDist: 130 },
-  medium: { pixelRatio: 1, samples: 4, shadows: false, sunShadows: false, bloom: true, grass: 0.8, treeDist: 190 },
-  high: { pixelRatio: 1.5, samples: 4, shadows: true, sunShadows: true, bloom: true, grass: 1.2, treeDist: 240 },
+  low: { label: 'Low', maxPixelRatio: 0.75, samples: 0, shadows: false, shadowMapSize: 1024, shadowDist: 0, foliageShadows: false, charShadows: false, flashShadows: false, bloom: false, ao: 0, godrays: false, grass: 0.45, treeDist: 130 },
+  medium: { label: 'Medium', maxPixelRatio: 1, samples: 4, shadows: true, shadowMapSize: 1024, shadowDist: 65, foliageShadows: false, charShadows: false, flashShadows: false, bloom: true, ao: 0, godrays: true, grass: 0.8, treeDist: 180 },
+  high: { label: 'High', maxPixelRatio: 1.5, samples: 4, shadows: true, shadowMapSize: 2048, shadowDist: 120, foliageShadows: true, charShadows: true, flashShadows: true, bloom: true, ao: 1, godrays: true, grass: 1.2, treeDist: 240 },
+  ultra: { label: 'Ultra', maxPixelRatio: 2, samples: 4, shadows: true, shadowMapSize: 3072, shadowDist: 170, foliageShadows: true, charShadows: true, flashShadows: true, bloom: true, ao: 2, godrays: true, grass: 1.6, treeDist: 300 },
 };
+// legacy alias used by older call sites
+for (const q of Object.values(QUALITY)) q.sunShadows = q.shadows;
 
 const BLOOM_BRIGHT = /* glsl */ `
 precision highp float;
@@ -15,6 +25,7 @@ uniform sampler2D tScene;
 uniform vec2 uTexel;
 uniform float uExposure;
 uniform float uThreshold;
+uniform sampler2D tAdapt;
 varying vec2 vUv;
 void main() {
   // 4-tap box downsample, then a soft-knee threshold on luminance
@@ -22,7 +33,7 @@ void main() {
   c += texture2D(tScene, vUv + uTexel * vec2(1.0, -1.0)).rgb;
   c += texture2D(tScene, vUv + uTexel * vec2(-1.0, 1.0)).rgb;
   c += texture2D(tScene, vUv + uTexel * vec2(1.0, 1.0)).rgb;
-  c = c * 0.25 * uExposure;
+  c = c * 0.25 * uExposure * texture2D(tAdapt, vec2(0.5)).r;
   float l = max(max(c.r, c.g), c.b);
   float knee = uThreshold * 0.6;
   float soft = clamp(l - uThreshold + knee, 0.0, 2.0 * knee);
@@ -46,6 +57,38 @@ void main() {
 }
 `;
 
+// Eye adaptation: log-luminance of the scene (centre-weighted) into a 64x64 mip chain, then a 1x1
+// ping-pong target eases the exposure multiplier towards (reference / average)^0.4, clamped, so the
+// keyframed time-of-day exposure stays in charge and only dense forest / bright sky are compensated.
+const LUM_FRAG = /* glsl */ `
+precision highp float;
+uniform sampler2D tScene;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tScene, vUv).rgb;
+  float l = max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+  vec2 d = vUv - 0.5;
+  float w = exp(-dot(d, d) * 5.0);
+  gl_FragColor = vec4(log(l) * w, w, 0.0, 1.0);
+}
+`;
+const ADAPT_FRAG = /* glsl */ `
+precision highp float;
+uniform sampler2D tLum;
+uniform sampler2D tPrev;
+uniform float uRef;
+uniform float uBlend;
+uniform vec2 uRange;
+varying vec2 vUv;
+void main() {
+  vec2 s = textureLod(tLum, vec2(0.5), 6.0).rg;
+  float avg = exp(s.x / max(s.y, 1e-4));
+  float target = clamp(pow(uRef / avg, 0.4), uRange.x, uRange.y);
+  float prev = texture2D(tPrev, vec2(0.5)).r;
+  gl_FragColor = vec4(mix(prev, target, uBlend), avg, 0.0, 1.0);
+}
+`;
+
 const POST_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
@@ -62,6 +105,7 @@ uniform float uLowHealth;
 uniform float uInfected;
 uniform float uDead;
 uniform float uExposure;
+uniform sampler2D tAdapt;
 uniform vec2 uRes;
 varying vec2 vUv;
 
@@ -82,7 +126,7 @@ void main() {
   col.r = texture2D(tScene, uv + cc * ca).r;
   col.g = texture2D(tScene, uv).g;
   col.b = texture2D(tScene, uv - cc * ca).b;
-  col *= uExposure;
+  col *= uExposure * texture2D(tAdapt, vec2(0.5)).r;
   // bloom: fires, flares, muzzle flashes, lamps and the low sun glow
   col += texture2D(tBloom, uv).rgb * uBloom;
   col = aces(col);
@@ -126,7 +170,7 @@ export class GameRenderer {
     renderer.setClearColor(0x000000, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap; // r186: Vogel-disc PCF (PCFSoft was removed)
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
@@ -166,6 +210,7 @@ export class GameRenderer {
         uInfected: { value: 0 },
         uDead: { value: 0 },
         uExposure: { value: 1 },
+        tAdapt: { value: null },
         uRes: { value: new THREE.Vector2(1, 1) },
       },
       depthTest: false,
@@ -182,7 +227,7 @@ export class GameRenderer {
     this.brightMat = new THREE.ShaderMaterial({
       vertexShader: POST_VERT,
       fragmentShader: BLOOM_BRIGHT,
-      uniforms: { tScene: { value: null }, uTexel: { value: new THREE.Vector2() }, uExposure: { value: 1 }, uThreshold: { value: 0.9 } },
+      uniforms: { tScene: { value: null }, uTexel: { value: new THREE.Vector2() }, uExposure: { value: 1 }, uThreshold: { value: 0.9 }, tAdapt: { value: null } },
       depthTest: false,
       depthWrite: false,
     });
@@ -200,9 +245,28 @@ export class GameRenderer {
     this.black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
     this.black.needsUpdate = true;
     this.postMat.uniforms.tBloom.value = this.black;
+    // eye adaptation
+    this.lumRT = new THREE.WebGLRenderTarget(64, 64, { type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+    const aopt = { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
+    this.adapt = [new THREE.WebGLRenderTarget(1, 1, aopt), new THREE.WebGLRenderTarget(1, 1, aopt)];
+    this.adaptIdx = 0;
+    this.adaptReset = true;
+    this.lumMat = new THREE.ShaderMaterial({ vertexShader: POST_VERT, fragmentShader: LUM_FRAG, uniforms: { tScene: { value: null } }, depthTest: false, depthWrite: false });
+    this.adaptMat = new THREE.ShaderMaterial({
+      vertexShader: POST_VERT,
+      fragmentShader: ADAPT_FRAG,
+      uniforms: { tLum: { value: this.lumRT.texture }, tPrev: { value: null }, uRef: { value: 0.1 }, uBlend: { value: 1 }, uRange: { value: new THREE.Vector2(0.7, 1.6) } },
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.one = new THREE.DataTexture(new Float32Array([1, 1, 1, 1]), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+    this.one.needsUpdate = true;
+    this.adaptTex = this.one;
 
+    this.passes = new ScreenPasses(renderer, quad, this.postScene, this.postCamera);
     this.rt = null;
     this.quality = null;
+    this.renderScale = 1;
     this.setQuality(quality);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -222,14 +286,26 @@ export class GameRenderer {
     this.resize();
   }
 
+  // fraction of the preset's resolution (0.5..1)
+  setRenderScale(s) {
+    s = Math.max(0.5, Math.min(1, +s || 1));
+    if (s === this.renderScale) return;
+    this.renderScale = s;
+    this.resize();
+  }
+
   _makeTarget() {
     if (this.rt) this.rt.dispose();
     const isWebGL2 = this.renderer.capabilities.isWebGL2;
+    const samples = isWebGL2 ? QUALITY[this.quality].samples : 0;
     this.rt = new THREE.WebGLRenderTarget(4, 4, {
       type: THREE.HalfFloatType,
-      samples: isWebGL2 ? QUALITY[this.quality].samples : 0,
+      samples,
       depthBuffer: true,
       stencilBuffer: false,
+      // the resolved world depth feeds SSAO / sun shafts (only with MSAA: without it the depth texture
+      // is the live depth attachment and could not be sampled while applying them in place)
+      depthTexture: samples > 0 ? new THREE.DepthTexture(4, 4) : null,
     });
     this.rt.texture.colorSpace = THREE.LinearSRGBColorSpace;
     this.postMat.uniforms.tScene.value = this.rt.texture;
@@ -243,7 +319,7 @@ export class GameRenderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, 2) * QUALITY[this.quality].pixelRatio;
+    const pr = Math.min(window.devicePixelRatio || 1, QUALITY[this.quality].maxPixelRatio) * this.renderScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
@@ -253,6 +329,7 @@ export class GameRenderer {
     const pw = Math.floor(w * pr);
     const ph = Math.floor(h * pr);
     this.rt.setSize(pw, ph);
+    this.passes.setSize(pw, ph);
     this.postMat.uniforms.uRes.value.set(pw, ph);
     // bloom at half (bright pass) and quarter (blur) resolution of the CSS size
     const bw = Math.max(4, Math.floor(w / 2));
@@ -273,6 +350,7 @@ export class GameRenderer {
     const bm = this.brightMat.uniforms;
     bm.tScene.value = this.rt.texture;
     bm.uExposure.value = exposure;
+    bm.tAdapt.value = this.adaptTex;
     this._pass(this.brightMat, this.bloomA);
     const u = this.blurMat.uniforms;
     const bw = this.bloomB.width;
@@ -294,6 +372,38 @@ export class GameRenderer {
     this.postMat.uniforms.uBloom.value = strength;
   }
 
+  // eases the adapted exposure multiplier; ref = the average scene luminance the keyframed exposure
+  // was tuned for (the renderer's caller derives it from the light levels)
+  _adaptExposure(post) {
+    if (!(post.adaptRef > 0)) {
+      this.adaptTex = this.one;
+      this.adaptReset = true;
+      return;
+    }
+    this.lumMat.uniforms.tScene.value = this.rt.texture;
+    this._pass(this.lumMat, this.lumRT);
+    const prev = this.adapt[this.adaptIdx];
+    this.adaptIdx ^= 1;
+    const next = this.adapt[this.adaptIdx];
+    const u = this.adaptMat.uniforms;
+    u.tPrev.value = this.adaptReset ? this.one : prev.texture;
+    u.uRef.value = post.adaptRef;
+    // brighten slowly (eyes adjusting to the dark), darken faster
+    u.uBlend.value = this.adaptReset ? 1 : 1 - Math.exp(-(post.dt || 0.016) * 1.2);
+    this._pass(this.adaptMat, next);
+    this.adaptReset = false;
+    this.adaptTex = next.texture;
+  }
+
+  /** Debug: current adapted exposure multiplier (GPU readback, slow). */
+  readAdapt() {
+    if (this.adaptTex === this.one) return 1;
+    const buf = new Uint16Array(4);
+    this.renderer.readRenderTargetPixels(this.adapt[this.adaptIdx], 0, 0, 1, 1, buf);
+    this.debugAvgLum = THREE.DataUtils.fromHalfFloat(buf[1]);
+    return THREE.DataUtils.fromHalfFloat(buf[0]);
+  }
+
   render(post, drawViewmodel = true) {
     const r = this.renderer;
     const u = this.postMat.uniforms;
@@ -309,12 +419,19 @@ export class GameRenderer {
     r.render(this.scene, this.camera);
     this.stats.calls = r.info.render.calls;
     this.stats.tris = r.info.render.triangles;
+    const q = this.q;
+    if (this.rt.depthTexture) {
+      this.passes.run(this.rt, this.camera, { ao: post.dead ? 0 : q.ao, rays: q.godrays ? post.rays : null, beam: q.godrays ? post.beam : null, exposure: post.exposure ?? 1 });
+    }
+    this._adaptExposure(post); // before the viewmodel so the hands don't bias the metering
     if (drawViewmodel) {
+      r.setRenderTarget(this.rt);
       r.autoClear = false;
       r.clearDepth();
       r.render(this.vmScene, this.vmCamera);
       r.autoClear = true;
     }
+    u.tAdapt.value = this.adaptTex;
     if (this.q.bloom) this._bloom(post.exposure ?? 1, 0.32 + post.night * 0.18);
     else {
       u.tBloom.value = this.black;

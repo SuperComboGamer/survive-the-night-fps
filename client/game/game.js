@@ -14,6 +14,9 @@ import {
   INVENTORY_SIZE,
   WATER_LEVEL,
   MAX_PLAYERS,
+  MAP_HALF,
+  GRID_STEP,
+  GRID_N,
   DUSK_WARNING,
 } from '../../shared/constants.js';
 import {
@@ -49,6 +52,7 @@ import { Entities } from './entities.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
+import { G } from '../render/globals.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
@@ -68,6 +72,9 @@ const _dirs = new Float32Array(48);
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _p = new THREE.Vector3();
+const _qv = new THREE.Quaternion();
+const _sunRay = { t: -1, col: null, terrain: false };
+const _near = [];
 
 export class Game {
   constructor({ renderer, ui, audio, settings }) {
@@ -103,6 +110,8 @@ export class Game {
     this.lastSlot = SLOT_PISTOL;
     this.localFlash = false;
     this.localFlashT = 0;
+    this.openness = 0;
+    this.indoor = 0;
     this.stepAcc = 0;
     this.deathShown = false;
     this.overlay = null;
@@ -141,6 +150,73 @@ export class Game {
     this.setupInputHandlers();
   }
 
+  // How much sun/moon reaches the camera: blocked by buildings/terrain (ray cast towards the light)
+  // and partly by tree crowns along that ray. Keeps the hands dark in the shade and under the canopy.
+  lightVisibility(pos) {
+    const L = this.env.lightDir;
+    const w = this.world;
+    raycastWorld(w, pos.x, pos.y, pos.z, L.x, L.y, L.z, 45, _sunRay, COL.NOBULLET | COL.NOBLOCK | COL.TREE);
+    if (_sunRay.t >= 0) return 0;
+    let occ = 0;
+    for (let s = 1.5; s < 26 && occ < 1; s += 3) {
+      const px = pos.x + L.x * s;
+      const py = pos.y + L.y * s;
+      const pz = pos.z + L.z * s;
+      for (const c of w.staticGrid.query(px, pz, 3.5, _near)) {
+        if (!(c.flags & COL.TREE) || py < c.y0 + 2 || py > c.y1) continue;
+        // crowns taper towards the top; dead trees and birches let most light through
+        const h = (py - c.y0) / (c.y1 - c.y0);
+        const conifer = c.tv <= 2;
+        const cr = (conifer ? 3.2 : 2.2) * (c.r / 0.4) * (1 - h * 0.85);
+        const d2 = (px - c.x) ** 2 + (pz - c.z) ** 2;
+        if (d2 < cr * cr) occ += conifer ? 0.3 : 0.12;
+      }
+    }
+    return Math.max(0, 1 - occ);
+  }
+
+  // surroundings for the audio reverb: openness (few trees within 14 m) and a roof overhead
+  probeSurroundings(pos) {
+    const w = this.world;
+    let trees = 0;
+    for (const c of w.staticGrid.query(pos.x, pos.z, 14, _near)) if (c.flags & COL.TREE && (c.x - pos.x) ** 2 + (c.z - pos.z) ** 2 < 196) trees++;
+    this.openness = Math.max(0, 1 - trees / 7);
+    raycastWorld(w, pos.x, pos.y, pos.z, 0, 1, 0, 10, _sunRay, COL.NOBULLET | COL.NOBLOCK | COL.TREE);
+    this.indoor = _sunRay.t >= 0 && !_sunRay.terrain ? 1 : 0;
+  }
+
+  updateViewmodelLight(dt, cam, nearFire) {
+    this.vmLightT = (this.vmLightT || 0) - dt;
+    if (this.vmLightT <= 0) {
+      this.vmLightT = 0.2;
+      this.vmSunTarget = this.lightVisibility(cam.position);
+      this.probeSurroundings(cam.position);
+    }
+    this.vmSun = (this.vmSun ?? 1) + ((this.vmSunTarget ?? 1) - (this.vmSun ?? 1)) * Math.min(1, dt * 5);
+    const c = this.env.cur;
+    const vmh = this.renderer.vmHemi;
+    vmh.color.copy(c.hemiSky);
+    vmh.groundColor.copy(c.hemiGround);
+    vmh.intensity = (c.hemi * (0.75 + 0.15 * this.vmSun) + nearFire * 0.8) * 1.2;
+    // the viewmodel camera never moves: bring the world light direction into camera space
+    const d = this.renderer.vmDir;
+    d.position.copy(this.env.lightDir).applyQuaternion(_qv.copy(cam.quaternion).invert());
+    d.color.copy(c.dir);
+    d.intensity = c.dirI * 0.75 * this.vmSun * (this.env.sun.intensity / Math.max(1e-3, c.dirI * Math.PI));
+  }
+
+  // local flashlight scattering in the haze (post pass); denser at night and in the valley mist
+  beamState() {
+    const b = (this._beam ||= { light: this.lights.flashlight, density: 0 });
+    b.density = 0.00012 + this.env.night * 0.00022 + this.env.cur.mist * 0.008;
+    return b;
+  }
+
+  setShadowQuality(q) {
+    this.entities.setCharShadows(!!q.charShadows);
+    if (this.terrain) this.terrain.castShadow = !!q.shadows;
+  }
+
   // ---------------------------------------------------------------- world
   loadWorld(seed) {
     if (this.seed === seed && this.world) return;
@@ -151,6 +227,7 @@ export class Game {
     this.prediction.setWorld(this.world);
     const t1 = performance.now();
     this.terrain = buildTerrain(this.world);
+    this.terrain.castShadow = !!this.renderer.q.shadows; // hills shade the valleys at low sun
     this.scene.add(this.terrain);
     this.water = buildWater(this.world);
     this.scene.add(this.water);
@@ -972,7 +1049,7 @@ export class Game {
       const stride = s.sprinting ? 2.6 : s.crouch ? 1.4 : 2.1;
       if (this.stepAcc > stride) {
         this.stepAcc = 0;
-        this.audio.footstep(this.surfaceAt(rp.x, rp.y, rp.z), undefined, undefined, undefined, s.crouch ? 0.25 : s.sprinting ? 0.8 : 0.5);
+        this.audio.footstep(this.surfaceAt(rp.x, rp.y, rp.z), undefined, undefined, undefined, s.crouch ? 0.25 : s.sprinting ? 0.8 : 0.5, { crouch: !!s.crouch, run: !!s.sprinting });
       }
     }
 
@@ -1026,12 +1103,7 @@ export class Game {
       nearFire = Math.max(nearFire, Math.max(0, 1 - Math.hypot(rp.x - f.x, rp.z - f.z) / 14) * f.intensity);
     }
     // viewmodel lighting follows the world
-    const vmh = this.renderer.vmHemi;
-    vmh.color.copy(this.env.cur.hemiSky);
-    vmh.groundColor.copy(this.env.cur.hemiGround);
-    vmh.intensity = (this.env.cur.hemi * 0.75 + nearFire * 0.8) * 1.1;
-    this.renderer.vmDir.color.copy(this.env.cur.dir);
-    this.renderer.vmDir.intensity = this.env.cur.dirI * 0.8;
+    this.updateViewmodelLight(dt, cam, nearFire);
     this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
 
     this.effects.setAmbient(this.env.night);
@@ -1058,7 +1130,13 @@ export class Game {
       nearFire,
       dead: !self.alive,
       menu: false,
+      cycle: this.env.cycle,
+      open: this.openness,
+      indoor: this.indoor,
     });
+    // foliage sways with the same gusts the ambience plays
+    const wind = a.wind;
+    if (wind) G.uWind.value.y = 0.25 + 0.75 * Math.min(1, wind.strength ?? wind.gust ?? 0.4);
 
     // overlays by phase
     this.updateOverlays();
@@ -1084,6 +1162,10 @@ export class Game {
       infected: self.zombie ? 1 : 0,
       dead: self.alive ? (s.downed ? 0.35 : 0) : 1,
       exposure: this.env.exposure * (self.zombie ? 1.6 : 1),
+      rays: this.env.rays,
+      beam: this.beamState(),
+      adaptRef: self.alive ? this.env.adaptRef : 0,
+      dt,
     };
   }
 
@@ -1107,7 +1189,7 @@ export class Game {
       this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
       this.audio.setAmbience({ night: 0.6, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, dead: false, menu: true });
     }
-    this.post = { time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure };
+    this.post = { time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure, rays: this.env.rays };
   }
 
   updateOverlays() {
@@ -1140,7 +1222,16 @@ export class Game {
     const th = w.heightAt(x, z);
     if (y > th + 0.08) return 'wood';
     if (th < WATER_LEVEL + 0.3) return 'water';
-    if (w.roadDistAt(x, z) < 2.8) return 'dirt';
+    if (th < WATER_LEVEL + 1.1) return 'mud';
+    if (w.roadDistAt(x, z) < 2.8) {
+      const i = Math.round((x + MAP_HALF) / GRID_STEP);
+      const j = Math.round((z + MAP_HALF) / GRID_STEP);
+      return w.roadKind[j * GRID_N + i] === 2 ? 'road' : 'dirt';
+    }
+    // needle / leaf litter under a crown
+    for (const c of w.staticGrid.query(x, z, 3, _near)) {
+      if (c.flags & COL.TREE && (c.x - x) ** 2 + (c.z - z) ** 2 < 9) return c.tv === 5 ? 'leaves' : 'forest';
+    }
     return 'grass';
   }
 

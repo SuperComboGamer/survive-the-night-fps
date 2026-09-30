@@ -46,6 +46,12 @@
     <section>
       <h2>Ambience state</h2>
       <div id="amb"></div>
+      <div class="hint">cycle / wind / gust below 0 = not passed (engine infers dawn & dusk and wanders its own wind).</div>
+    </section>
+    <section>
+      <h2>Recordings</h2>
+      <div id="recs" class="hint">-</div>
+      <div class="hint">Add <code>?procedural</code> to the URL to hear the procedural-only fallback.</div>
     </section>
     <section>
       <h2>Volumes</h2>
@@ -67,14 +73,17 @@
 </main>
 <script type="module">
 import { AudioEngine } from '../audio/audio.js';
+import { REC } from '../audio/samples.js';
 import { SOUND } from '../../shared/defs.js';
 
 const LOCAL_NAMES = ['pistol', 'shotgun', 'ak47', 'rifle', 'reload_start', 'reload_end', 'shell_insert', 'bolt', 'pump', 'dry', 'swing', 'swing_heavy', 'hit', 'hit_wood', 'switch', 'pickup', 'craft', 'build', 'build_fail', 'hitmarker', 'headshot', 'kill', 'hurt', 'heal', 'bandage', 'ui_click', 'ui_hover', 'heartbeat', 'jump', 'land', 'flashlight', 'breath', 'throw', 'claw', 'zombie_player_growl', 'death', 'notify', 'chat', 'install_part', 'campfire_add', 'eat'];
 const LOOP_NAMES = ['campfire', 'torch', 'fire', 'acid', 'zombie_idle', 'boss_breath', 'generator'];
 const STINGER_NAMES = ['night', 'dawn', 'death', 'boss', 'victory', 'gameover', 'supply', 'jumpscare', 'join', 'car_part'];
-const SURFACES = ['dirt', 'wood', 'grass', 'water', 'metal'];
+const SURFACES = ['dirt', 'wood', 'grass', 'water', 'metal', 'forest', 'leaves', 'gravel', 'mud'];
+const params = new URLSearchParams(location.search);
+const procedural = params.has('procedural');
 
-const audio = new AudioEngine();
+const audio = new AudioEngine({ recordings: !procedural });
 window.audio = audio;
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
@@ -87,7 +96,13 @@ const log = (...a) => {
 const src = { x: 6, z: -8 };
 let range = 60;
 let yaw = 0;
-const amb = { night: 0, danger: 0, lowHealth: 0, nearFire: 0, horde: false, boss: false, dead: false, menu: false, underCover: false };
+const amb = { night: 0, danger: 0, lowHealth: 0, nearFire: 0, cycle: -0.05, wind: -0.05, gust: -0.05, open: 0, indoor: 0, horde: false, boss: false, dead: false, menu: false, underCover: false };
+const ambOut = {};
+function ambState() {
+  Object.assign(ambOut, amb);
+  for (const k of ['cycle', 'wind', 'gust']) if (amb[k] < 0) ambOut[k] = undefined;
+  return ambOut;
+}
 const vols = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
 const loops = new Map();
 
@@ -161,7 +176,15 @@ function check(parent, key, obj, onChange) {
   };
   parent.appendChild(l);
 }
-for (const k of ['night', 'danger', 'lowHealth', 'nearFire']) slider($('amb'), k, amb, 0, 1, 0.01, () => {});
+for (const k of ['night', 'danger', 'lowHealth', 'nearFire', 'open', 'indoor']) slider($('amb'), k, amb, 0, 1, 0.01, () => {});
+for (const k of ['cycle', 'wind', 'gust']) slider($('amb'), k, amb, -0.05, 0.999, 0.005, () => {});
+setInterval(() => {
+  if (!audio.ready) return;
+  const st = audio._rec.status();
+  const beds = Object.entries(audio._ambience.rbeds).filter(([, b]) => b.src).map(([k, b]) => `${k} ${b.target.toFixed(2)}`);
+  const w = audio.wind;
+  $('recs').textContent = `${procedural ? 'procedural only' : `${st.decoded.length}/${st.total} decoded, ${st.failed.length} failed`} · wind ${w.speed.toFixed(1)} m/s gust ${w.gust.toFixed(2)} · playing: ${beds.join(', ') || '-'}`;
+}, 500);
 for (const k of ['horde', 'boss', 'dead', 'menu', 'underCover']) check($('amb'), k, amb, () => {});
 for (const k of Object.keys(vols)) slider($('vols'), k, vols, 0, 1, 0.01, () => audio.setVolumes(vols));
 $('range').oninput = () => {
@@ -287,7 +310,7 @@ cv.addEventListener('pointerup', () => (dragging = false));
 function frame() {
   if (!window.__externalDrive) {
     audio.setListener(0, 1.6, 0, (yaw * Math.PI) / 180, 0);
-    audio.setAmbience(amb);
+    audio.setAmbience(ambState());
   }
   for (const l of loops.values()) l.setPosition(src.x, 0.5, src.z);
   if (voiceTest) voiceTest.v.setPosition(src.x, 1.6, src.z);
@@ -435,6 +458,9 @@ async function autotest() {
   for (const l of ls) l.stop();
   early.stop(); // double stop is safe
 
+  // (?expectfail: the harness breaks the recordings on purpose to test the procedural fallback)
+  if (!procedural && !params.has('expectfail')) await recordingChecks();
+
   // wait for background rendering, then make sure every referenced bank exists
   for (let k = 0; k < 60 && !audio._queue.finished; k++) await sleep(100);
   const missing = audio._selfCheck();
@@ -446,7 +472,68 @@ async function autotest() {
   $('status').textContent = 'AUDIO_TEST_OK';
   console.log('AUDIO_TEST_OK');
 }
-if (new URLSearchParams(location.search).has('autotest')) {
+// every recording fetched + decoded, loops seamless, beds follow the state, recorded paths exercised
+async function recordingChecks() {
+  const R = audio._rec;
+  for (let k = 0; k < 300 && !R.done; k++) await sleep(100);
+  for (const k of Object.keys(REC)) R.want(k);
+  for (let k = 0; k < 150 && R.decoding.size; k++) await sleep(100);
+  const st = R.status();
+  if (st.failed.length) throw new Error('recordings failed: ' + st.failed.join(', '));
+  if (st.decoded.length !== st.total) throw new Error(`only ${st.decoded.length}/${st.total} recordings decoded`);
+  for (const k of Object.keys(REC)) {
+    const b = R.buf.get(k);
+    if (!(b && b.duration > 0.5)) throw new Error('bad recording ' + k);
+    if (!REC[k].lazy || REC[k].slices) continue; // loops only
+    for (let c = 0; c < b.numberOfChannels; c++) {
+      const d = b.getChannelData(c);
+      let step = 0;
+      for (let i = 1; i < d.length; i++) step += Math.abs(d[i] - d[i - 1]);
+      step /= d.length - 1;
+      const jump = Math.abs(d[0] - d[d.length - 1]);
+      if (jump > step * 12 + 0.02) throw new Error(`${k}: loop seam jump ${jump.toFixed(4)} vs avg step ${step.toFixed(4)}`);
+    }
+  }
+  const A = audio._ambience;
+  const drive = async (st, ms) => {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      audio.setListener(0, 1.6, 0, 0, 0);
+      audio.setAmbience(st);
+      await sleep(40);
+    }
+  };
+  await drive({ night: 0, cycle: 0.25 }, 1500);
+  if (!(A.rbeds.amb_day.src && A.rbeds.amb_day.target > 0.05)) throw new Error('day bed not playing');
+  if (A.beds.wind.target > 0.001 || A.beds.pines.target > 0.001) throw new Error('procedural wind still up with recorded wind loaded');
+  await drive({ night: 1, cycle: 0.75 }, 1500);
+  if (!(A.rbeds.amb_night.src && A.rbeds.amb_crickets.target > 0.05)) throw new Error('night beds not playing');
+  if (A.rbeds.amb_day.target > 0.01) throw new Error('day bed still up at night');
+  const cr = A.rbeds.amb_crickets.target;
+  await drive({ night: 1, cycle: 0.75, danger: 1 }, 2500);
+  if (!(A.rbeds.amb_crickets.target < cr * 0.3)) throw new Error('crickets did not fall silent under threat');
+  for (let k = 0; k < 12; k++) A._dread(audio.context.currentTime);
+  A.burst('amb_bird', 5);
+  await drive({ night: 0.3, cycle: 0.45, nearFire: 0.8, open: 0.8 }, 600);
+  await drive({ night: 0, cycle: 0.08, indoor: 1 }, 600);
+  for (const s of SURFACES) {
+    audio.footstep(s, undefined, undefined, undefined, 0.25);
+    audio.footstep(s, undefined, undefined, undefined, 0.8);
+    audio.footstep(s, 2, 0, -3, 1, { heavy: true });
+  }
+  for (const id of [SOUND.CHOP, SOUND.WOOD_HIT, SOUND.BUILD, SOUND.CAMPFIRE_ADD, SOUND.FIRE_WHOOSH, SOUND.MELEE_SWING, SOUND.MELEE_HIT]) {
+    audio.play(id, { x: 3, y: 1, z: -4 });
+    audio.play(id);
+  }
+  for (const n of ['swing', 'swing_heavy', 'hit', 'hit_wood', 'build', 'campfire_add']) audio.playLocal(n);
+  const fl = ['campfire', 'torch', 'fire'].map((n, k) => audio.createLoop(n, k * 3, 0.5, -4));
+  await sleep(700);
+  if (fl.some((l) => !l.active || l.proc)) throw new Error('fire loops not using the recordings');
+  for (const l of fl) l.stop();
+  log('recordings OK:', st.decoded.length, 'decoded');
+}
+
+if (params.has('autotest')) {
   autotest().catch((e) => {
     console.error('AUDIO_TEST_FAIL', e && e.stack ? e.stack : e);
     $('status').textContent = 'AUDIO_TEST_FAIL';

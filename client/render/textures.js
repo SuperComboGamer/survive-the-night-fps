@@ -1694,46 +1694,62 @@ GEN.bark_dead = () => {
 GEN.pine = () => {
   // 512x512 atlas. Left half (u 0..0.5): drooping branch spray card, base at the bottom (v=0), tip at the top.
   // Right half (u 0.5..1): whole-conifer silhouette (layered drooping tiers) for crown cores / far billboards.
+  // Sprays are irregular bottlebrush branchlets (ragged envelope, gaps), needles drawn dark -> light so the
+  // lighter, newer needles sit on top; tips pale.
   const W = 512, H = 512;
   const r = rngf(431);
-  const R = new Rec();
-  const needleCols = ['rgb(20,32,23)', 'rgb(26,40,28)', 'rgb(32,48,32)', 'rgb(38,55,35)', 'rgb(45,62,39)'];
-  const tipCols = ['rgb(62,82,48)', 'rgb(70,90,52)', 'rgb(56,74,44)'];
+  const layers = [[], [], [], []];
+  const shades = [
+    ['rgb(16,26,19)', 'rgb(20,31,22)', 'rgb(24,35,24)'],
+    ['rgb(28,41,28)', 'rgb(33,47,31)', 'rgb(38,52,33)'],
+    ['rgb(44,59,37)', 'rgb(50,66,40)', 'rgb(46,62,36)'],
+    ['rgb(62,80,47)', 'rgb(70,86,50)', 'rgb(58,74,44)'],
+  ];
   const twig = 'rgb(44,33,24)';
-  const needlesAlong = (x0, y0, ang, len, nl, density, tipFrac = 0.78, spread = [0.5, 1.1]) => {
+  const R = new Rec();
+  const inX = (x, x0, x1) => Math.max(x0, Math.min(x1, x));
+  // one bottlebrush branchlet; `lit` 0..1 shifts its needles towards the lighter layers
+  const brush = (x0, y0, ang, len, nl, dens, lit, xr) => {
     const dx = Math.cos(ang), dy = Math.sin(ang);
-    R.line(x0, y0, x0 + dx * len, y0 + dy * len, 1.4, twig);
-    const steps = Math.max(2, Math.floor(len / density));
+    layers[0].push(['l', x0, y0, inX(x0 + dx * len, ...xr), y0 + dy * len, 1.3, twig]);
+    const steps = Math.max(2, Math.floor(len / dens));
     for (let k = 0; k <= steps; k++) {
       const u = k / steps;
       const px = x0 + dx * len * u, py = y0 + dy * len * u;
-      const l = nl * (1 - u * 0.3) * lerp(0.8, 1.2, r());
-      for (const sd of [-1, 1]) {
-        const na = ang + sd * lerp(spread[0], spread[1], r());
-        const c = u > tipFrac && r() < 0.75 ? tipCols[Math.floor(r() * tipCols.length)] : needleCols[Math.floor(r() * needleCols.length)];
-        R.line(px, py, px + Math.cos(na) * l, py + Math.sin(na) * l, 1.5, c);
+      for (let q = 0; q < 3; q++) {
+        const side = r() < 0.5 ? -1 : 1;
+        const na = ang + side * lerp(0.35, 1.35, r());
+        const l = nl * (1 - u * 0.35) * lerp(0.65, 1.25, r());
+        const v = clamp(lit * 1.6 + 0.35 + (r() - 0.5) * 1.4 + (u > 0.8 ? 0.9 : 0), 0, 3.49);
+        const L = Math.floor(v);
+        const c = shades[L][Math.floor(r() * 3)];
+        layers[L].push(['l', px, py, inX(px + Math.cos(na) * l, ...xr), py + Math.sin(na) * l, 1.5, c]);
       }
     }
   };
   // ---- spray (x 0..256)
   const SW = 256;
+  const xr = [5, SW - 5];
   const stem = (t) => [SW / 2 + Math.sin(t * 2.2) * 8, H - 4 - t * (H - 14)];
-  for (let t = 0.02; t < 0.99; t += 0.021) {
+  for (let t = 0.02; t < 0.99; t += 0.024) {
     for (const side of [-1, 1]) {
-      const tt = t + (side > 0 ? 0.01 : 0);
+      if (r() < 0.12) continue;
+      const tt = t + (side > 0 ? 0.012 : 0) + (r() - 0.5) * 0.01;
       const env = Math.pow(Math.sin(Math.PI * clamp(tt * 0.82 + 0.12)), 0.55) * (0.5 + 0.5 * tt);
-      const len = SW * 0.5 * env * lerp(0.8, 1.05, r());
+      const len = SW * 0.47 * env * lerp(0.55, 1.08, r());
       if (len < 8) continue;
       const [x0, y0] = stem(tt);
-      const ang = -Math.PI / 2 + side * lerp(0.7, 1.05, r());
-      needlesAlong(x0, y0, ang, len, 10, 3.2);
-      // secondary twigs
-      const n2 = Math.floor(len / 26);
+      const ang = -Math.PI / 2 + side * lerp(0.75, 1.15, r());
+      const lit = r() * 0.8 + tt * 0.3;
+      brush(x0, y0, ang, len, 11, 2.6, lit, xr);
+      // secondary branchlets
+      const n2 = Math.floor(len / 22);
       for (let k = 0; k < n2; k++) {
-        const u = (k + 0.6) / (n2 + 0.6);
+        if (r() < 0.25) continue;
+        const u = (k + 0.5 + r() * 0.4) / (n2 + 0.6);
         const px = x0 + Math.cos(ang) * len * u, py = y0 + Math.sin(ang) * len * u;
-        const a2 = ang + side * lerp(-0.2, 0.9, r()) * (r() < 0.5 ? -1 : 1);
-        needlesAlong(px, py, a2, len * 0.35 * (1 - u * 0.4), 8, 3.4);
+        const a2 = ang + (r() < 0.5 ? -1 : 1) * lerp(0.35, 0.9, r());
+        brush(px, py, a2, len * lerp(0.25, 0.45, r()) * (1 - u * 0.4), 9, 2.8, lit + 0.15, xr);
       }
     }
   }
@@ -1741,36 +1757,28 @@ GEN.pine = () => {
     const [x, y] = stem(t);
     for (const sd of [-1, 1]) {
       const na = -Math.PI / 2 + sd * lerp(0.4, 1.2, r());
-      R.line(x, y, x + Math.cos(na) * 11, y + Math.sin(na) * 11, 1.5, t > 0.9 ? tipCols[0] : needleCols[Math.floor(r() * 5)]);
+      layers[t > 0.9 ? 3 : 1].push(['l', x, y, x + Math.cos(na) * 11, y + Math.sin(na) * 11, 1.5, t > 0.9 ? shades[3][0] : shades[1][Math.floor(r() * 3)]]);
     }
   }
-  // ---- silhouette (x 256..512), apex at top, widest at the bottom
+  // ---- silhouette (x 256..512), apex at top, widest at the bottom: tiers of drooping brushes
   const cx = 384;
-  for (let y = 12; y < H - 6; y += 7) {
+  const xs = [SW + 4, W - 4];
+  for (let y = 12; y < H - 6; y += 6) {
     const t = (y - 12) / (H - 18);
-    const hw = 6 + t * 116 * lerp(0.85, 1.05, r());
+    const hw = 6 + t * 114 * lerp(0.8, 1.05, r());
     for (const side of [-1, 1]) {
-      const n = 1 + Math.floor(hw / 26);
+      const n = 1 + Math.floor(hw / 30);
       for (let k = 0; k < n; k++) {
-        const L = hw * lerp(0.55, 1, r());
-        const droop = L * lerp(0.25, 0.5, r());
-        const x1 = cx + side * L, y1 = y + droop;
-        const steps = Math.max(2, Math.floor(L / 4));
-        R.line(cx, y, x1, y1, 1.6, twig);
-        for (let s = 0; s <= steps; s++) {
-          const u = s / steps;
-          const px = lerp(cx, x1, u), py = y + droop * u * u;
-          for (let q = 0; q < 2; q++) {
-            const na = Math.PI / 2 + (r() - 0.5) * 2.6;
-            const c = u > 0.8 && r() < 0.5 ? tipCols[Math.floor(r() * 3)] : needleCols[Math.floor(r() * 5)];
-            R.line(px, py, px + Math.cos(na) * 9, py + Math.sin(na) * 9, 1.6, c);
-          }
-        }
+        const L = hw * lerp(0.5, 1, r());
+        const a = Math.PI / 2 - side * (Math.PI / 2 - lerp(0.25, 0.55, r()));
+        brush(cx, y, a, L, 8, 3.4, r() * 0.7, xs);
       }
     }
   }
-  R.line(cx, 6, cx, H - 2, 3, 'rgb(40,30,22)');
-  return R.toImg(W, H, [28, 42, 30]);
+  layers[0].unshift(['l', cx, 6, cx, H - 2, 3, 'rgb(40,30,22)']);
+  for (const layer of layers) for (const [, x0, y0, x1, y1, w, c] of layer) R.line(x0, y0, x1, y1, w, c);
+  // clamped: with repeat, card edges sample the opposite edge of the atlas (dotted spokes above crowns)
+  return { ...R.toImg(W, H, [26, 38, 27]), clamp: true };
 };
 
 GEN.leaves = () => {
@@ -1801,7 +1809,7 @@ GEN.leaves = () => {
   twig(W / 2, W - 4, -Math.PI / 2 + (r() - 0.5) * 0.3, W * 0.72, 0);
   twig(W / 2, W - 4, -Math.PI / 2 - 0.7, W * 0.45, 1);
   twig(W / 2, W - 4, -Math.PI / 2 + 0.7, W * 0.45, 1);
-  return R.toImg(W, W, [110, 84, 40]);
+  return { ...R.toImg(W, W, [110, 84, 40]), clamp: true };
 };
 
 GEN.bush = () => {
@@ -1826,7 +1834,7 @@ GEN.bush = () => {
     const c = low < 1 && r() < 0.6 ? cols[5] : cols[Math.floor(r() * 5)];
     R.ell(x, y, 3 + r() * 3.2, 1.6 + r() * 1.8, r() * 3.14, c);
   }
-  return R.toImg(W, W, [34, 44, 26]);
+  return { ...R.toImg(W, W, [34, 44, 26]), clamp: true };
 };
 
 GEN.fern = () => {
@@ -1857,23 +1865,23 @@ GEN.fern = () => {
       }
     }
   }
-  return R.toImg(W, H, [38, 60, 30]);
+  return { ...R.toImg(W, H, [38, 60, 30]), clamp: true };
 };
 
 GEN.grass_blade = () => {
+  // dense clump card: a low layer of short blades fills the base, taller blades and a few straw ones on top
+  // (base -> tip darkening and straw tips come from the vertex attributes)
   const W = 256;
   const r = rngf(471);
   const R = new Rec();
-  const cols = ['rgb(62,72,36)', 'rgb(82,86,44)', 'rgb(110,104,56)', 'rgb(46,56,30)', 'rgb(130,118,70)', 'rgb(94,80,46)'];
-  for (let k = 0; k < 46; k++) {
-    const x0 = 16 + r() * (W - 32);
-    const h = 90 + r() * 160;
-    const lean = (r() - 0.5) * 90;
-    const w = 2.2 + r() * 3.2;
-    const c = cols[Math.floor(r() * cols.length)];
+  const low = ['rgb(46,56,30)', 'rgb(54,64,33)', 'rgb(42,52,28)', 'rgb(60,68,36)'];
+  const mid = ['rgb(66,76,39)', 'rgb(76,84,43)', 'rgb(86,92,48)', 'rgb(70,76,40)', 'rgb(94,96,52)'];
+  const straw = ['rgb(124,114,72)', 'rgb(110,100,62)', 'rgb(138,124,80)'];
+  const blade = (x0, h, lean, w, c) => {
+    // keep every blade inside the card: clipped blades leave straight edges
+    lean = Math.max(8 - x0, Math.min(W - 8 - x0, lean));
     const cx = x0 + lean * 0.3, cy = W - h * 0.55;
     const tx = x0 + lean, ty = W - h;
-    // tapered blade as polygon along quadratic curve
     const pts = [];
     const N = 8;
     const P = (t) => [(1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * cx + t * t * tx, (1 - t) * (1 - t) * W + 2 * (1 - t) * t * cy + t * t * ty];
@@ -1886,11 +1894,16 @@ GEN.grass_blade = () => {
       pts.push(px + w * (1 - t) * 0.5, py);
     }
     R.poly(pts, c);
-    if (r() < 0.15) {
-      for (let s = 0; s < 7; s++) R.ell(tx + (r() - 0.5) * 6, ty + s * 4, 2, 3.5, 0.3, 'rgb(120,100,60)');
-    }
+  };
+  for (let k = 0; k < 80; k++) blade(6 + r() * (W - 12), 50 + r() * 90, (r() - 0.5) * 70, 2.2 + r() * 2.6, low[Math.floor(r() * low.length)]);
+  for (let k = 0; k < 64; k++) {
+    const dry = r() < 0.22;
+    const h = 110 + r() * 140;
+    const x0 = 10 + r() * (W - 20);
+    blade(x0, h, (r() - 0.5) * 100, 2.2 + r() * 3, dry ? straw[Math.floor(r() * straw.length)] : mid[Math.floor(r() * mid.length)]);
+    if (dry && r() < 0.35) for (let s = 0; s < 6; s++) R.ell(x0 + (r() - 0.5) * 6 + (r() - 0.5) * 20, W - h + s * 4, 1.8, 3.2, 0.3, 'rgb(128,110,70)');
   }
-  return R.toImg(W, W, [70, 76, 40]);
+  return { ...R.toImg(W, W, [62, 70, 38]), clamp: true };
 };
 
 GEN.rock = () => {
@@ -1965,25 +1978,29 @@ function pebbles(ctx, W, H, r, n, cols, rad) {
 }
 
 GEN.ground_grass = () => {
+  // meadow seen from above: dark olive thatch between layered blades, a little straw, soil in the gaps
   const W = 512;
   const r = rngf(501);
   const a = fbm(W, W, 8, 8, 5, 501, 0.55), b = fbm(W, W, 16, 16, 3, 502), c2 = fbm(W, W, 6, 6, 3, 503);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const dirt = sstep(0.6, 0.8, a[p]) * 0.7;
-    const k = 0.8 + b[p] * 0.35 + (r() - 0.5) * 0.1;
-    const gr = [lerp(40, 58, c2[p]), lerp(50, 56, c2[p]), lerp(28, 30, c2[p])];
-    d[i] = lerp(gr[0], 62, dirt) * k;
-    d[i + 1] = lerp(gr[1], 50, dirt) * k;
-    d[i + 2] = lerp(gr[2], 36, dirt) * k;
+    const soil = sstep(0.64, 0.84, a[p]) * 0.65;
+    const k = 0.78 + b[p] * 0.3 + (r() - 0.5) * 0.08;
+    d[i] = lerp(lerp(36, 46, c2[p]), 54, soil) * k;
+    d[i + 1] = lerp(lerp(44, 50, c2[p]), 44, soil) * k;
+    d[i + 2] = lerp(24, 31, soil) * k;
     d[i + 3] = 255;
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  strokesWrapped(ctx, W, W, r, 6000, [[46, 60, 30], [62, 72, 36], [78, 80, 42], [34, 44, 24], [96, 88, 52], [70, 58, 36]], [4, 12], 1.3, (rr) => -Math.PI / 2 + (rr() - 0.5) * 2.2, 0.85);
-  pebbles(ctx, W, W, r, 40, [[80, 74, 66], [66, 60, 52]], [1.5, 3.5]);
-  return { canvas: c };
+  strokesWrapped(ctx, W, W, r, 9000, [[42, 54, 29], [50, 60, 31], [38, 48, 27], [58, 64, 35]], [3, 7], 1.1, null, 0.8);
+  strokesWrapped(ctx, W, W, r, 7000, [[64, 74, 39], [72, 78, 41], [80, 82, 45], [60, 70, 35]], [3, 6], 1, null, 0.7);
+  strokesWrapped(ctx, W, W, r, 1200, [[98, 92, 58], [90, 84, 52], [108, 98, 64]], [3, 6], 0.9, null, 0.45);
+  pebbles(ctx, W, W, r, 14, [[80, 74, 66], [66, 60, 52]], [1.2, 2.6]);
+  const img2 = canvasToImg(c);
+  mulByNoise(img2, fbm(W, W, 5, 5, 4, 504), 0.82, 1.1);
+  return { canvas: imgToCanvas(img2, c) };
 };
 
 GEN.ground_dirt = () => {
@@ -2002,7 +2019,7 @@ GEN.ground_dirt = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  pebbles(ctx, W, W, r, 500, [[92, 84, 74], [74, 66, 56], [104, 96, 84], [60, 50, 42]], [1, 4.5]);
+  pebbles(ctx, W, W, r, 280, [[82, 74, 64], [70, 62, 52], [90, 82, 70], [58, 48, 40]], [1, 4]);
   strokesWrapped(ctx, W, W, r, 90, [[40, 30, 22], [60, 46, 32]], [10, 30], 1.6);
   drawCracks(ctx, W, W, r, 5, { len: [40, 140], width: [0.8, 1.4], col: 'rgba(30,22,16,0.6)', step: 5 });
   return { canvas: c };
@@ -2023,7 +2040,7 @@ GEN.ground_forest = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  strokesWrapped(ctx, W, W, r, 4500, [[70, 46, 28], [92, 60, 34], [56, 40, 26], [112, 76, 42], [40, 30, 22]], [6, 14], 1.2, null, 0.85);
+  strokesWrapped(ctx, W, W, r, 6000, [[66, 46, 30], [82, 58, 36], [54, 40, 28], [94, 66, 40], [42, 32, 24]], [4, 9], 1.1, null, 0.8);
   // dead leaves
   const lc = [[96, 64, 34], [120, 82, 40], [78, 56, 34], [104, 70, 30], [66, 50, 34]];
   for (let k = 0; k < 320; k++) {
@@ -2046,7 +2063,7 @@ GEN.ground_forest = () => {
       ctx.stroke();
     });
   }
-  strokesWrapped(ctx, W, W, r, 3000, [[62, 42, 26], [84, 56, 32], [48, 36, 24]], [5, 11], 1, null, 0.8);
+  strokesWrapped(ctx, W, W, r, 4000, [[58, 42, 28], [74, 52, 32], [46, 36, 26]], [3, 8], 1, null, 0.75);
   strokesWrapped(ctx, W, W, r, 60, [[34, 26, 20], [50, 38, 28]], [14, 40], 2.2);
   const img2 = canvasToImg(c);
   tintByNoise(img2, mo, [38, 44, 26], 0.66, 0.9, 0.4);

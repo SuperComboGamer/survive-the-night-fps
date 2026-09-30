@@ -23,11 +23,12 @@ client/      three.js client (Vite root)
   net/        connection, snapshot decode, interpolation, prediction
   game/       client game state, entity views, input
   render/     renderer, sky, terrain, vegetation, water, post, particles, textures, materials, models/
-  audio/      procedural WebAudio engine (no audio files)
+  audio/      WebAudio engine: procedural synthesis + CC0 recordings in audio/samples/ (samples.js loads
+              them after init; any sound whose file fails to load/decode falls back to its procedural version)
   ui/         DOM HUD (hud.js + hud2.js: compass, objective, world markers, downed, summary), field map
               (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat
   sandbox/    standalone dev pages for visually testing modules (not shipped)
-scripts/     dev runner, headless screenshot helper (scripts/shot.js)
+scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js)
 ```
 
 ## Conventions
@@ -39,10 +40,43 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js)
 - Camera: Euler order `'YXZ'`, `rotation.y = yaw`, `rotation.x = pitch` (pitch > 0 looks up).
 - Human player: capsule radius 0.35, height 1.8 m, eye height 1.62 m.
 - Materials: prefer `MeshLambertMaterial` (performance). Share geometries and materials; never allocate
-  in per-frame paths. The scene keeps a FIXED number of lights (light count changes force shader recompiles).
-- No external asset files: all textures are procedural canvas textures, all audio is synthesized.
+  in per-frame paths. The scene keeps a FIXED number of lights (light count changes force shader recompiles);
+  toggling a light's `castShadow` also recompiles, so only quality changes do it.
+- Textures are procedural canvas textures. Audio is synthesized, except the CC0 recordings in
+  `client/audio/samples/` (credited in its CREDITS.md; CC0 only) which always keep a procedural fallback.
 - Performance budget: 60 fps on a mid-range laptop GPU with ~80 zombies on screen. One draw call per zombie
   (single SkinnedMesh, rigid skinning), instanced vegetation, merged static geometry.
+
+## Rendering pipeline
+
+- **Frame:** world -> `ScreenPasses` (`render/post.js`: SSAO, sun shafts, flashlight beam, applied in place into
+  the MSAA scene target with one blended quad) -> eye-adaptation metering -> viewmodel -> bloom -> final pass
+  (ACES, horror grade, grain, damage/infected vision) in `render/renderer.js`.
+- **Quality presets** (`QUALITY` in `render/renderer.js`: low / medium / high / ultra) own every cost knob:
+  pixel-ratio cap, MSAA, sun shadows (map size per cascade, range), which objects cast (foliage, characters,
+  flashlight), SSAO, sun shafts, grass density, tree distance. Everything applies live on a settings change
+  (`main.js applySettings` -> renderer, Environment.setShadows, Foliage.setQuality, Game.setShadowQuality).
+  The render-scale setting multiplies the preset's pixel ratio.
+- **Shared shader state:** `render/globals.js` must be imported first (main.js does). Its `G` uniforms (mist,
+  key-light direction, fog sun colour, wind) are injected into every built-in material and every ShaderMaterial
+  that merges `UniformsLib.fog` / `.lights`, BY REFERENCE (values survive three's per-material uniform clone).
+  Update `.value` fields, never reassign them.
+- **Fog:** globals.js replaces three's fog chunks: `scene.fog` (FogExp2) is still the distance haze and still
+  bounds what must be drawn (`Environment.fogVisibility`); on top it adds a valley mist layer (analytic
+  exponential height integral) and forward in-scattering towards the sun/moon. Custom ShaderMaterials only need
+  `fog: true`, `UniformsLib.fog` merged and the fog chunks included. The sky shader inlines `FOG_FUNCS` so the
+  horizon matches the fog.
+- **Sun/moon:** three's cascaded `SunLight` (`three/addons/lights/SunLight.js`, 2 cascades in one atlas,
+  texel-snapped, Vogel PCF) - it lights every built-in material like a DirectionalLight. Casters: terrain,
+  static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The viewmodel scene has
+  its own lights; `Game.updateViewmodelLight` rotates the key light into camera space and dims it by a
+  ray/crown probe towards the light so hands are dark in shade.
+- **Time of day** is one palette table (`KEYS` in `render/environment.js`): colours, light levels, fog, mist,
+  haze scatter, shaft strength and base exposure per sun height. Eye adaptation only compensates relative to
+  `Environment.adaptRef` (the log-average luminance an open scene has at that light level), clamped 0.7-1.6x.
+- **Look-dev:** `node scripts/lookdev.js --url <vite url> name:x,z,yaw,pitch,cycle[,flash] ...` screenshots the
+  real game (server with `GODMODE=1 DEBUG_COMMANDS=1`) and prints uncapped fps, draw calls, triangles and the
+  adapted exposure; `--debug 1|2` shows only the sun shafts / only the SSAO.
 
 ## Gameplay systems (iteration 2)
 

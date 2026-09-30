@@ -1,4 +1,5 @@
 // Client bootstrap: wires the UI, audio engine, renderer and game together and runs the frame loop.
+import './render/globals.js'; // must run before any material is created (global fog + shared uniforms)
 import { GameRenderer } from './render/renderer.js';
 import { UI } from './ui/ui.js';
 import { AudioEngine } from './audio/audio.js';
@@ -91,13 +92,15 @@ function applyAudioSettings(s) {
 function applySettings(s) {
   game.settings = s;
   renderer.setQuality(s.quality || 'medium');
+  renderer.setRenderScale(s.renderScale ?? 1);
   renderer.setFov(s.fov || 75);
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;
   game.voice.setVolume(s.voiceVolume ?? 1);
   game.foliage?.setQuality(renderer.q);
-  game.lights.setShadows(renderer.q.shadows);
-  game.env.setShadows(renderer.q.sunShadows);
+  game.lights.setShadows(renderer.q.flashShadows);
+  game.env.setShadows(renderer.q);
+  game.setShadowQuality?.(renderer.q);
   applyAudioSettings(s);
 }
 

@@ -2,7 +2,7 @@
 // synthesis worker and the main-thread fallback.
 import { SFX_DEFS } from './synth.js';
 import { AMB_DEFS, MUSIC_DEFS, STINGER_DEFS } from './synth-amb.js';
-import { mulberry32, hashString, forestIR, hallIR, chans } from './dsp.js';
+import { mulberry32, hashString, forestIR, hallIR, openIR, roomIR, chans } from './dsp.js';
 
 export const ALL_DEFS = [...SFX_DEFS, ...AMB_DEFS, ...MUSIC_DEFS, ...STINGER_DEFS];
 export const DEF_BY_BANK = new Map(ALL_DEFS.map((d) => [d.bank, d]));
@@ -12,6 +12,8 @@ export const DEF_BY_BANK = new Map(ALL_DEFS.map((d) => [d.bank, d]));
 export function renderJob(bank, i, ctxRate) {
   if (bank === 'ir_forest') return { chans: forestIR(ctxRate, 3, 7), sr: ctxRate };
   if (bank === 'ir_hall') return { chans: hallIR(ctxRate, 5, 11), sr: ctxRate };
+  if (bank === 'ir_open') return { chans: openIR(ctxRate, 3, 13), sr: ctxRate };
+  if (bank === 'ir_room') return { chans: roomIR(ctxRate, 0.8, 17), sr: ctxRate };
   const d = DEF_BY_BANK.get(bank);
   if (!d) throw new Error('unknown sound bank ' + bank);
   const out = d.gen(d.sr, mulberry32(hashString(bank + ':' + i)), i);
@@ -21,7 +23,7 @@ export function renderJob(bank, i, ctxRate) {
 // Ordered job list: impulse responses + core sounds first, then late (background) sounds.
 export function jobList() {
   const core = [{ bank: 'ir_forest', i: 0 }, { bank: 'ir_hall', i: 0 }];
-  const late = [];
+  const late = [{ bank: 'ir_open', i: 0 }, { bank: 'ir_room', i: 0 }];
   for (const d of ALL_DEFS) {
     for (let i = 0; i < d.n; i++) (d.group === 'late' ? late : core).push({ bank: d.bank, i });
   }

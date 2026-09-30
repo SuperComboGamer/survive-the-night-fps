@@ -133,10 +133,19 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 
+function setShadowFlags(obj, cast, receive) {
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = cast;
+    o.receiveShadow = receive;
+  });
+}
+
 export class Entities {
   constructor(game) {
     this.g = game;
     this.ents = new Map();
+    this.charShadows = !!game.renderer?.q?.charShadows;
     this.corpses = [];
     this.zombieCount = 0;
     this.store = {
@@ -216,6 +225,12 @@ export class Entities {
   }
 
   // ---------------------------------------------------------------- lifecycle
+  setCharShadows(on) {
+    if (on === this.charShadows) return;
+    this.charShadows = on;
+    for (const e of this.ents.values()) if (e.view && (e.kind === ENT.ZOMBIE || e.kind === ENT.PLAYER)) setShadowFlags(e.view.object, on, false);
+  }
+
   onCreate(e, t) {
     e.samples = new Samples();
     this.pushSample(e, t);
@@ -234,6 +249,7 @@ export class Entities {
         case ENT.ZOMBIE: {
           const v = createZombie(e.ztype, e.variant * 7 + e.id);
           e.view = v;
+          setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
           e.growlT = 2 + Math.random() * 8;
           e.stepT = Math.random();
@@ -247,6 +263,7 @@ export class Entities {
         case ENT.PLAYER: {
           const v = createSurvivor(e.id * 31 + 7);
           e.view = v;
+          setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
           e.weapon = -1;
           e.zombieForm = null;
@@ -275,6 +292,7 @@ export class Entities {
           const v = createStructure(e.stype);
           v.position.set(e.rx, e.ry, e.rz);
           v.rotation.y = yaw;
+          setShadowFlags(v, true, true);
           this.scene.add(v);
           e.obj = v;
           e.hpFrac = e.q[3] / 255;
@@ -540,7 +558,8 @@ export class Entities {
               e.stepT -= dt * (0.8 + e.speed * 0.45);
               if (e.stepT <= 0) {
                 e.stepT = 1;
-                g.audio.footstep('dirt', e.rx, e.ry, e.rz, e.ztype === ZTYPE.TANK || e.ztype >= ZTYPE.BOSS_ABOMINATION ? 1 : 0.45);
+                const heavy = e.ztype === ZTYPE.TANK || e.ztype >= ZTYPE.BOSS_ABOMINATION;
+                g.audio.footstep(g.surfaceAt(e.rx, e.ry, e.rz), e.rx, e.ry, e.rz, heavy ? 1 : 0.45, { heavy });
               }
             }
           }
