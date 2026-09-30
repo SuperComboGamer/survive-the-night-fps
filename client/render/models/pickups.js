@@ -390,30 +390,44 @@ BUILD[ITEM.KEVLAR] = (b) => {
   labelOn(b, 'numbers', 0.26, 0.08, [0, 0.0625, 0.05], [-PI / 2, 0, PI], 'stencil');
 };
 
+// loose rounds scattered around a box of width w
+function looseRounds(b, r, w, rounds, roundR, roundL, shell = false) {
+  for (let k = 0; k < rounds; k++) {
+    const a = r() * PI * 2, dd = w * 0.6 + r() * 0.06;
+    const x = Math.cos(a) * dd, z = Math.sin(a) * dd;
+    b.group({ p: [x, roundR, z], r: [0, r() * PI, PI / 2] }, () => {
+      if (shell) {
+        b.cyl('paint', roundR, roundR, roundL * 0.75, 8, { p: [0, roundL * 0.12, 0], c: [0.6, 0.12, 0.1] });
+        b.cyl('paint', roundR * 1.05, roundR * 1.05, roundL * 0.25, 8, { p: [0, -roundL * 0.37, 0], c: brass });
+      } else {
+        b.cyl('paint', roundR, roundR, roundL, 6, { c: brass });
+        b.cyl('paint', roundR * 0.2, roundR * 0.95, roundL * 0.4, 6, { p: [0, roundL * 0.7, 0], c: [0.6, 0.4, 0.25] });
+      }
+    });
+  }
+}
 function ammoBox(cell, w, h, d, rounds, roundR, roundL, shell = false) {
   return (b, r) => {
     b.box('cardboard', w, h, d, { p: [0, h / 2, 0], r: [0, 0.2, 0] });
     labelOn(b, cell, w * 0.98, d * 0.96, [0, h + 0.001, 0], [-PI / 2, 0, PI + 0.2]);
     b.plane('labels', w * 0.98, h * 0.9, { atlas: cell, p: [Math.sin(0.2) * -d * 0.51, h / 2, -Math.cos(0.2) * d * 0.51], r: [0, PI + 0.2, 0] });
-    for (let k = 0; k < rounds; k++) {
-      const a = r() * PI * 2, dd = w * 0.6 + r() * 0.06;
-      const x = Math.cos(a) * dd, z = Math.sin(a) * dd;
-      b.group({ p: [x, roundR, z], r: [0, r() * PI, PI / 2] }, () => {
-        if (shell) {
-          b.cyl('paint', roundR, roundR, roundL * 0.75, 8, { p: [0, roundL * 0.12, 0], c: [0.6, 0.12, 0.1] });
-          b.cyl('paint', roundR * 1.05, roundR * 1.05, roundL * 0.25, 8, { p: [0, -roundL * 0.37, 0], c: brass });
-        } else {
-          b.cyl('paint', roundR, roundR, roundL, 6, { c: brass });
-          b.cyl('paint', roundR * 0.2, roundR * 0.95, roundL * 0.4, 6, { p: [0, roundL * 0.7, 0], c: [0.6, 0.4, 0.25] });
-        }
-      });
-    }
+    looseRounds(b, r, w, rounds, roundR, roundL, shell);
   };
 }
 BUILD[ITEM.AMMO_9MM] = ammoBox('ammo_9mm', 0.12, 0.045, 0.08, 3, 0.0048, 0.02);
 BUILD[ITEM.AMMO_SHELLS] = ammoBox('ammo_shells', 0.14, 0.07, 0.1, 3, 0.0105, 0.07, true);
 BUILD[ITEM.AMMO_762] = ammoBox('ammo_762', 0.16, 0.06, 0.1, 4, 0.0055, 0.045);
 BUILD[ITEM.AMMO_308] = ammoBox('ammo_308', 0.14, 0.05, 0.09, 3, 0.006, 0.06);
+BUILD[ITEM.AMMO_556] = (b, r) => {
+  // olive-drab steel ammo can: lid with a carry handle, lot-number plate on the side
+  const w = 0.17, h = 0.1, d = 0.07, ry = 0.2;
+  b.box('olive', w, h, d, { p: [0, h / 2, 0], r: [0, ry, 0] });
+  b.box('olive', w + 0.006, 0.014, d + 0.006, { p: [0, h + 0.004, 0], r: [0, ry, 0], c: [0.85, 0.85, 0.8] });
+  b.box('dark', 0.07, 0.008, 0.014, { p: [0, h + 0.015, 0], r: [0, ry, 0] });
+  b.box('steel', 0.02, 0.03, 0.012, { p: [Math.cos(ry) * (w / 2 + 0.006), h - 0.012, -Math.sin(ry) * (w / 2 + 0.006)], r: [0, ry, 0] }); // latch
+  labelOn(b, 'numbers', w * 0.7, h * 0.35, [Math.sin(ry) * -d * 0.51, h * 0.5, -Math.cos(ry) * d * 0.51], [0, PI + ry, 0]);
+  looseRounds(b, r, w, 4, 0.0045, 0.045);
+};
 
 BUILD[ITEM.CAR_BATTERY] = (b) => {
   b.box('plastic', 0.3, 0.2, 0.18, { p: [0, 0.1, 0] });

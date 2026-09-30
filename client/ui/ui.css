@@ -152,10 +152,13 @@ body {
 .stn-ui.paused .toasts,
 .stn-ui.splash-on .layer-hud,
 .stn-ui.splash-on .top-center,
+.stn-ui.splash-on .top-right,
 .stn-ui.end-on .layer-hud,
 .stn-ui.end-on .top-center,
+.stn-ui.end-on .top-right,
 .stn-ui.hud-hidden .layer-hud,
-.stn-ui.hud-hidden .top-center {
+.stn-ui.hud-hidden .top-center,
+.stn-ui.hud-hidden .top-right {
   visibility: hidden;
 }
 
@@ -452,12 +455,10 @@ body {
 }
 
 .stn-ui .hi-ping.bad,
-.stn-ui .hi-ping.bad b {
+.stn-ui .hi-ping.bad b,
+.stn-ui .hi-fps.bad,
+.stn-ui .hi-fps.bad b {
   color: var(--amber);
-}
-
-.stn-ui .hi-fps {
-  color: var(--good);
 }/* ---------- voice speakers */
 
 
@@ -489,7 +490,7 @@ body {
   min-height: 11px;
   color: var(--good);
   animation: stn-talk 0.7s ease-in-out infinite alternate;
-}/* ---------- top-centre stack: clock + boss */
+}/* ---------- top-centre stack: compass + boss, top-right: clock */
 
 
 .stn-ui .top-center {
@@ -505,6 +506,12 @@ body {
 
 .stn-ui.conn-on .top-center {
   top: calc(44 * var(--u));
+}
+
+.stn-ui .top-right {
+  position: absolute;
+  top: calc(6 * var(--u));
+  right: calc(20 * var(--u));
 }
 
 .stn-ui .clock {
@@ -523,7 +530,7 @@ body {
 }
 
 .stn-ui.inv-open .clock {
-  padding-top: calc(14 * var(--u));
+  padding: calc(14 * var(--u)) calc(4 * var(--u)) 0 0;
 }
 
 .stn-ui.inv-open .clock::before {
@@ -533,7 +540,7 @@ body {
 .stn-ui.inv-open .clk-text {
   display: flex;
   align-items: baseline;
-  justify-content: center;
+  justify-content: flex-end;
   gap: calc(14 * var(--u));
   margin: 0;
 }
@@ -1886,7 +1893,7 @@ body {
 
 .stn-ui .killfeed {
   position: absolute;
-  top: calc(18 * var(--u));
+  top: calc(236 * var(--u));
   right: calc(24 * var(--u));
   display: flex;
   flex-direction: column;
@@ -2246,6 +2253,10 @@ body {
   color: var(--bone-dim);
 }
 
+.stn-ui .bh-step {
+  opacity: 0.6;
+}
+
 .stn-ui .bh-bad {
   display: none;
   font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
@@ -2387,6 +2398,48 @@ body {
   background: radial-gradient(ellipse at 50% 55%, rgba(12, 10, 9, 0.62), rgba(4, 3, 3, 0.86) 80%);
   -webkit-backdrop-filter: blur(7px) saturate(0.55);
   backdrop-filter: blur(7px) saturate(0.55);
+}
+
+.stn-ui .inv-close {
+  position: absolute;
+  top: calc(18 * var(--u));
+  right: calc(22 * var(--u));
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: calc(6 * var(--u)) calc(10 * var(--u)) calc(6 * var(--u)) calc(8 * var(--u));
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  color: var(--bone-dim);
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.stn-ui .inv-close:hover,
+.stn-ui .inv-close:focus-visible {
+  border-color: var(--bone);
+  color: var(--bone);
+}
+
+.stn-ui .inv-close-x {
+  display: inline-flex;
+  width: max(12px, calc(14 * var(--u)));
+  height: max(12px, calc(14 * var(--u)));
+}
+
+.stn-ui .inv-close-x svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .inv-close:hover .inv-close-x {
+  color: var(--blood-lite);
 }
 
 .stn-ui .inv.in .inv-bg {
@@ -3085,8 +3138,254 @@ body {
   animation: stn-flame 1.6s ease-in-out infinite alternate;
 }
 
+/* the crafting column takes the height of its neighbours (the recipe list scrolls inside it), so
+   switching tabs never resizes it and the screen doesn't jump */
+.stn-ui .inv-right {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+
+.stn-ui .craft-find {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  height: calc(34 * var(--u));
+  min-height: 26px;
+  margin: 0 0 calc(10 * var(--u));
+  padding: 0 calc(4 * var(--u)) 0 calc(10 * var(--u));
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+  cursor: text;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stn-ui .craft-find:hover {
+  border-color: rgba(230, 223, 207, 0.28);
+}
+
+.stn-ui .craft-find:focus-within {
+  border-color: rgba(230, 223, 207, 0.6);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.stn-ui .craft-find.on {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+
+.stn-ui .cf-ico {
+  flex: none;
+  display: block;
+  width: calc(15 * var(--u));
+  height: calc(15 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+  color: var(--bone-dim);
+}
+
+.stn-ui .cf-ico svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .craft-find:focus-within .cf-ico,
+.stn-ui .craft-find.on .cf-ico {
+  color: var(--bone);
+}
+
+.stn-ui .cf-field {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font: 400 max(12px, calc(14.5 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.03em;
+  color: var(--bone);
+  caret-color: var(--blood-lite);
+}
+
+.stn-ui .cf-field::placeholder {
+  color: rgba(230, 223, 207, 0.36);
+}
+
+.stn-ui .cf-field:focus-visible {
+  outline: none;
+}
+
+.stn-ui .cf-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(26 * var(--u));
+  height: calc(26 * var(--u));
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--bone-dim);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+
+.stn-ui .cf-clear:hover {
+  color: var(--bone);
+  background: rgba(230, 223, 207, 0.1);
+}
+
+.stn-ui .cf-clear svg {
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
+}
+
+.stn-ui .craft-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: calc(4 * var(--u));
+  margin-bottom: calc(12 * var(--u));
+}
+
+.stn-ui .ct-key {
+  flex: none;
+  align-self: center;
+  opacity: 0.5;
+}
+
+.stn-ui .ct {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(5 * var(--u));
+  padding: calc(7 * var(--u)) calc(2 * var(--u)) calc(6 * var(--u));
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(230, 223, 207, 0.08);
+  color: var(--bone-dim);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s, opacity 0.12s;
+}
+
+/* category colour strip, like the backpack cells */
+.stn-ui .ct::after {
+  content: '';
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: -1px;
+  height: 2px;
+  background: var(--cat, var(--bone));
+  opacity: 0.35;
+  transition: opacity 0.12s, left 0.12s, right 0.12s;
+}
+
+.stn-ui .ct:hover {
+  color: var(--bone);
+  border-color: rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .ct.on {
+  color: #f4eddd;
+  background: rgba(230, 223, 207, 0.08);
+  border-color: rgba(230, 223, 207, 0.35);
+}
+
+.stn-ui .ct.on::after {
+  left: -1px;
+  right: -1px;
+  opacity: 1;
+}
+
+.stn-ui .ct-ico {
+  width: calc(36 * var(--u));
+  height: calc(26 * var(--u));
+  min-width: 27px;
+  min-height: 20px;
+  opacity: 0.6;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+  transition: opacity 0.12s;
+}
+
+.stn-ui .ct-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .ct:hover .ct-ico,
+.stn-ui .ct.on .ct-ico {
+  opacity: 1;
+}
+
+.stn-ui .ct-lab {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: max(8px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* how many recipes in the tab can be crafted right now */
+.stn-ui .ct-n {
+  position: absolute;
+  top: calc(3 * var(--u));
+  right: calc(3 * var(--u));
+  min-width: calc(15 * var(--u));
+  padding: calc(2 * var(--u)) calc(3 * var(--u));
+  border-radius: 999px;
+  background: rgba(232, 163, 61, 0.16);
+  border: 1px solid rgba(232, 163, 61, 0.5);
+  font: max(8px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  text-align: center;
+  color: var(--amber);
+}
+
+.stn-ui .ct-n:empty {
+  display: none;
+}
+
+/* a search covers every tab, so the tabs step back until it's cleared. They stay clickable: picking
+   one (or Q / E) clears the search and opens that tab. */
+.stn-ui .craft-tabs.searching .ct {
+  opacity: 0.42;
+}
+
+.stn-ui .craft-tabs.searching .ct:hover {
+  opacity: 0.85;
+}
+
+.stn-ui .craft-tabs.searching .ct.on {
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.stn-ui .craft-none {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(12 * var(--u));
+  padding: calc(14 * var(--u)) calc(2 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.3 var(--f-mono);
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+  overflow-wrap: anywhere;
+}
+
+.stn-ui .craft-none .cf-reset {
+  padding: calc(8 * var(--u)) calc(16 * var(--u));
+  font-size: max(10px, calc(12 * var(--u)));
+}
+
 .stn-ui .craft-list {
-  max-height: calc(100vh - 170 * var(--u));
+  flex: 1 1 auto;
+  height: 0;
   overflow-y: auto;
   margin-right: calc(-8 * var(--u));
   padding-right: calc(8 * var(--u));
@@ -3296,6 +3595,68 @@ body {
   opacity: 0.4;
 }
 
+.stn-ui .tip-reqs {
+  margin-top: calc(10 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--u));
+}
+
+.stn-ui .tip-reqs-h {
+  margin-bottom: calc(2 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .tip-req {
+  display: grid;
+  grid-template-columns: calc(24 * var(--u)) 1fr auto calc(13 * var(--u));
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: calc(4 * var(--u)) calc(7 * var(--u));
+  border-left: 2px solid transparent;
+  background: rgba(230, 223, 207, 0.04);
+  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
+  color: var(--bone-2);
+}
+
+.stn-ui .tip-req-ico {
+  display: flex;
+  justify-content: center;
+}
+
+.stn-ui .tip-req-ico svg {
+  display: block;
+  height: calc(14 * var(--u));
+  min-height: 10px;
+  width: auto;
+  max-width: calc(22 * var(--u));
+}
+
+.stn-ui .tip-req-val {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stn-ui .tip-req-mark svg {
+  display: block;
+  width: 100%;
+  min-width: 10px;
+  height: auto;
+}
+
+.stn-ui .tip-req.ok .tip-req-mark {
+  color: var(--good);
+}
+
+.stn-ui .tip-req.lack {
+  border-left-color: var(--blood-lite);
+  background: rgba(157, 17, 23, 0.26);
+  color: var(--blood-lite);
+}
+
 .stn-ui .tip-hint {
   margin-top: calc(10 * var(--u));
   padding-top: calc(8 * var(--u));
@@ -3303,6 +3664,14 @@ body {
   font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
   letter-spacing: 0.05em;
   color: var(--amber);
+}
+
+.stn-ui .tip-hint > div + div {
+  margin-top: calc(4 * var(--u));
+}
+
+.stn-ui .tip-hint.bad {
+  color: var(--blood-lite);
 }/* ==================================================================== MENUS *//* ---------- splash */
 
 

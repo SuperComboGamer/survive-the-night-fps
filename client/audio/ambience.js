@@ -9,19 +9,25 @@
 //    woodpecker, owls, creaks, twig snaps, wolves) when loaded, the original procedural events otherwise, plus the
 //    always-procedural horror events (screams, whispers, bell, distant groans). At night "dread" events - a branch
 //    snapping, a rustle, something padding past - are placed in a cone behind the listener.
+//  - weather (s.wind 0..1+, s.rain 0..1): wind swells the wind beds and sets the trees creaking, rain and gales
+//    quiet the birds and crickets, a rain bed plays (a muffled drumming under a roof) and thunder is placed at each
+//    lightning strike.
 import { clamp01, smooth, bell, rand, expWait, gustField, windField } from './curves.js';
 
 const TAU = Math.PI * 2;
 const POOL = 10;
 const MAX_HRTF = 3;
 
+// weather quiet: birds hide from rain and gales
+const shelter = (s) => (1 - 0.85 * (s.rain || 0)) * (1 - 0.8 * smooth(0.5, 1, s.wind || 0));
+
 // Original procedural events. rate(s, day, night) -> events per minute. `by`: recordings that replace the event
 // (it is skipped while any of them is available).
 const PROC_EVENTS = [
-  { bank: 'amb_bird', by: ['bird_chickadee', 'bird_robin'], rate: (s, d) => 7 * d * (1 - 0.85 * s.danger) * (s.menu ? 0.15 : 1), dist: [12, 45], elev: [3, 12], vol: 0.3, ref: 8, gap: 1.5 },
-  { bank: 'amb_crow', by: ['raven'], rate: (s, d, n) => (1.3 * d + 2.2 * smooth(0.1, 0.35, n) * (1 - smooth(0.5, 0.8, n))) * (s.menu ? 0.4 : 1), dist: [30, 90], elev: [6, 16], vol: 0.45, ref: 16, gap: 9 },
-  { bank: 'amb_woodpecker', by: ['woodpecker'], rate: (s, d) => 0.45 * d * (s.menu ? 0 : 1), dist: [40, 90], elev: [2, 8], vol: 0.35, ref: 20, gap: 30 },
-  { bank: 'amb_creak', by: ['tree_creak'], rate: (s, d, n) => 2 + 2.2 * n, dist: [8, 35], elev: [3, 10], vol: 0.3, ref: 6, gap: 4 },
+  { bank: 'amb_bird', by: ['bird_chickadee', 'bird_robin'], rate: (s, d) => 7 * d * (1 - 0.85 * s.danger) * (s.menu ? 0.15 : 1) * shelter(s), dist: [12, 45], elev: [3, 12], vol: 0.3, ref: 8, gap: 1.5 },
+  { bank: 'amb_crow', by: ['raven'], rate: (s, d, n) => (1.3 * d + 2.2 * smooth(0.1, 0.35, n) * (1 - smooth(0.5, 0.8, n))) * (s.menu ? 0.4 : 1) * shelter(s), dist: [30, 90], elev: [6, 16], vol: 0.45, ref: 16, gap: 9 },
+  { bank: 'amb_woodpecker', by: ['woodpecker'], rate: (s, d) => 0.45 * d * (s.menu ? 0 : 1) * shelter(s), dist: [40, 90], elev: [2, 8], vol: 0.35, ref: 20, gap: 30 },
+  { bank: 'amb_creak', by: ['tree_creak'], rate: (s, d, n) => 2 + 2.2 * n + 9 * smooth(0.4, 1.1, s.wind || 0), dist: [8, 35], elev: [3, 10], vol: 0.3, ref: 6, gap: 2 },
   { bank: 'amb_twig', by: ['branch_snap'], rate: (s, d, n) => (1.1 * n + 0.6 * s.danger) * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], vol: 0.35, ref: 4, gap: 10, hrtf: true },
   { bank: 'amb_owl', by: ['owl_barred', 'owl_horned'], rate: (s, d, n) => 1.9 * n * (s.horde ? 0.4 : 1), dist: [25, 70], elev: [6, 14], vol: 0.42, ref: 15, gap: 12 },
   { bank: 'amb_wolf', by: ['wolf_howl'], rate: (s, d, n) => 1.1 * smooth(0.4, 0.9, n) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [150, 260], elev: [0, 10], vol: 0.8, ref: 80, gap: 25 },
@@ -35,16 +41,19 @@ const PROC_EVENTS = [
 // bout: phrases sung from one perch, `gapIn` s apart; wet: reverb send at ref distance (falls off as (ref/d)^0.45);
 // ground: height relative to the ground under the listener instead of the ear.
 const REC_EVENTS = [
-  { key: 'bird_chickadee', rate: (s, t, q, w) => 0.8 * (0.9 * t.day + 0.4 * t.dawn) * q * (1 - 0.6 * smooth(9, 16, w)), dist: [12, 45], elev: [3, 14], vol: 0.55, ref: 5, gap: 8, bout: [3, 7], gapIn: [1, 4], wet: 0.45, rj: 0.04 },
-  { key: 'bird_robin', rate: (s, t, q, w) => 0.7 * (t.dawn + 0.8 * t.dusk + 0.12 * t.day) * q * (1 - 0.6 * smooth(9, 16, w)), dist: [25, 80], elev: [4, 14], vol: 0.6, ref: 8, gap: 10, bout: [2, 5], gapIn: [2.5, 6], wet: 0.5, rj: 0.03 },
-  { key: 'raven', rate: (s, t, q) => (0.5 * t.day + 0.3 * t.dawn + 1.4 * t.dusk + (s.menu ? 0.4 : 0)) * q, dist: [40, 140], elev: [10, 35], vol: 0.55, ref: 16, gap: 20, bout: [2, 5], gapIn: [1.5, 4.5], wet: 0.6, rj: 0.05 },
-  { key: 'woodpecker', rate: (s, t, q) => 0.45 * (t.day + 0.5 * t.dawn) * q, dist: [40, 110], elev: [3, 12], vol: 0.7, ref: 20, gap: 30, bout: [2, 4], gapIn: [4, 10], wet: 0.55, rj: 0.04 },
+  { key: 'bird_chickadee', rate: (s, t, q, w) => 0.8 * (0.9 * t.day + 0.4 * t.dawn) * q * (1 - 0.6 * smooth(9, 16, w)) * shelter(s), dist: [12, 45], elev: [3, 14], vol: 0.55, ref: 5, gap: 8, bout: [3, 7], gapIn: [1, 4], wet: 0.45, rj: 0.04 },
+  { key: 'bird_robin', rate: (s, t, q, w) => 0.7 * (t.dawn + 0.8 * t.dusk + 0.12 * t.day) * q * (1 - 0.6 * smooth(9, 16, w)) * shelter(s), dist: [25, 80], elev: [4, 14], vol: 0.6, ref: 8, gap: 10, bout: [2, 5], gapIn: [2.5, 6], wet: 0.5, rj: 0.03 },
+  { key: 'raven', rate: (s, t, q) => (0.5 * t.day + 0.3 * t.dawn + 1.4 * t.dusk + (s.menu ? 0.4 : 0)) * q * shelter(s), dist: [40, 140], elev: [10, 35], vol: 0.55, ref: 16, gap: 20, bout: [2, 5], gapIn: [1.5, 4.5], wet: 0.6, rj: 0.05 },
+  { key: 'woodpecker', rate: (s, t, q) => 0.45 * (t.day + 0.5 * t.dawn) * q * shelter(s), dist: [40, 110], elev: [3, 12], vol: 0.7, ref: 20, gap: 30, bout: [2, 4], gapIn: [4, 10], wet: 0.55, rj: 0.04 },
   { key: 'owl_barred', rate: (s, t, q) => 0.8 * (t.night + 0.3 * t.dusk) * q * (s.horde ? 0.4 : 1), dist: [45, 150], elev: [6, 18], vol: 0.8, ref: 15, gap: 15, bout: [1, 2], gapIn: [6, 14], wet: 0.75, rj: 0.03 },
   { key: 'owl_horned', rate: (s, t, q) => 0.7 * t.night * q * (s.horde ? 0.4 : 1), dist: [60, 180], elev: [8, 22], vol: 0.6, ref: 15, gap: 15, bout: [2, 4], gapIn: [3, 9], wet: 0.75, rj: 0.03 },
   { key: 'wolf_howl', rate: (s, t) => 0.45 * smooth(0.4, 0.9, t.night) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [200, 320], elev: [0, 8], vol: 0.6, ref: 80, gap: 40, wet: 0.9, rj: 0.04, answer: 0.45 },
   { key: 'tree_creak', rate: (s, t, q, w) => (1 + 1.4 * t.night + 3.5 * smooth(5, 14, w)) * (s.menu ? 0.6 : 1), dist: [8, 32], elev: [4, 14], vol: 1.2, ref: 6, gap: 4, wet: 0.5, rj: 0.15 },
   { key: 'branch_snap', rate: (s, t) => 0.9 * t.night * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], ground: true, vol: 0.7, ref: 4, gap: 10, hrtf: true, wet: 0.4, rj: 0.12 },
 ];
+
+const THUNDER = { bank: 'amb_thunder', dist: [0, 0], elev: [0, 0], vol: 1, ref: 160, gap: 0 };
+const THUNDER_NEAR = { bank: 'amb_thunder_near', dist: [0, 0], elev: [0, 0], vol: 1, ref: 60, gap: 0, rateJit: 0.08 };
 
 const REC_BY_KEY = Object.fromEntries(REC_EVENTS.map((e) => [e.key, e]));
 
@@ -78,7 +87,7 @@ class Bed {
     this.bank = bank;
     this.gain = amb.ctx.createGain();
     this.gain.gain.value = 0;
-    this.gain.connect(dest);
+    if (dest) this.gain.connect(dest);
     this.src = null;
     this.target = 0;
     this.offAt = 0;
@@ -201,7 +210,15 @@ export class Ambience {
       drone: new Bed(this, 'bed_drone', this.out),
       horde: new Bed(this, 'bed_horde', this.out),
       fire: new Bed(this, 'loop_campfire', this.out),
+      rain: new Bed(this, 'bed_rain', null),
     };
+    // rain: open sky, or a muffled drumming under a roof
+    this.rainLP = c.createBiquadFilter();
+    this.rainLP.type = 'lowpass';
+    this.rainLP.frequency.value = 12000;
+    this.rainLP.Q.value = 0.4;
+    this.beds.rain.gain.connect(this.rainLP);
+    this.rainLP.connect(this.out);
     // horde chorus also feeds the reverb (distance)
     const hs = c.createGain();
     hs.gain.value = 0.4;
@@ -279,24 +296,23 @@ export class Ambience {
     ch.hrtf = false;
   }
 
-  _chan(now) {
-    for (const c of this.chans) {
-      if (!c.src || c.end + 0.5 < now) {
-        if (c.src) {
-          try {
-            c.src.stop();
-          } catch {}
-          this._release(c);
-        }
-        return c;
-      }
+  // a free emitter; `steal`: when all are busy, take the one that ends soonest (thunder must not be dropped)
+  _chan(now, steal) {
+    let c = this.chans.find((ch) => !ch.src || ch.end + 0.5 < now);
+    if (!c && steal) c = this.chans.reduce((a, b) => (b.end < a.end ? b : a));
+    if (!c) return null;
+    if (c.src) {
+      try {
+        c.src.stop();
+      } catch {}
+      this._release(c);
     }
-    return null;
+    return c;
   }
 
   // start buf (or its [off, dur] slice) on a pooled emitter at x,y,z; send: reverb send gain
-  _voice(buf, off, dur, x, y, z, vol, ref, hrtf, rate, send, t, now) {
-    const ch = this._chan(now);
+  _voice(buf, off, dur, x, y, z, vol, ref, hrtf, rate, send, t, now, steal = false) {
+    const ch = this._chan(now, steal);
     if (!ch) return false;
     const e = this.e;
     const dx = x - e._lx;
@@ -345,7 +361,7 @@ export class Ambience {
   }
 
   // procedural one-shot at a random position around the listener (or at `pos`). Returns the position or null.
-  emit(ev, now, when = 0, pos = null) {
+  emit(ev, now, when = 0, pos = null, steal = false) {
     const e = this.e;
     const buf = e._pick(ev.bank);
     if (!buf) {
@@ -355,7 +371,7 @@ export class Ambience {
     const p = pos || this._ring(ev.dist, ev.elev, false);
     const rj = ev.rateJit ?? 0.05;
     const rate = (1 + (Math.random() - 0.5) * 2 * rj) * e._rateMul;
-    const ok = this._voice(buf, 0, 0, p[0], p[1], p[2], ev.vol * rand(0.75, 1.1), ev.ref, ev.hrtf, rate, -1, Math.max(now, when), now);
+    const ok = this._voice(buf, 0, 0, p[0], p[1], p[2], ev.vol * rand(0.75, 1.1), ev.ref, ev.hrtf, rate, -1, Math.max(now, when), now, steal);
     return ok ? p : null;
   }
 
@@ -405,6 +421,14 @@ export class Ambience {
       }
       if (Math.random() < 0.4 && this.rec.has('bush_rustle')) this.pending.push({ t, key: 'bush_rustle', o: { vol: 0.4 * v, ref: 3, hrtf: true, wet: 0.35 }, pos: p0, left: 0 });
     }
+  }
+
+  // thunder for a lightning strike at (x, z), `dist` m from the listener, arriving `delay` s after the flash
+  thunder(x, z, dist, delay) {
+    const now = this.ctx.currentTime;
+    const near = dist < 170;
+    const y = this.e._ly + (near ? 25 : 80);
+    this.pending.push({ t: now + delay, ev: near ? THUNDER_NEAR : THUNDER, pos: [x, y, z], steal: true });
   }
 
   burst(bank, count) {
@@ -483,13 +507,14 @@ export class Ambience {
     this.fear += (fearRaw - this.fear) * (1 - Math.exp(-dt / (fearRaw > this.fear ? 0.8 : 4)));
     const quiet = 1 - 0.92 * this.threat;
 
-    // wind: the game's (0..1) when given, otherwise a slow wander that picks up at night
-    const w = s.wind === s.wind ? 1 + 17 * s.wind : windField(now) + 2.5 * tf.night + (s.horde ? 1.5 : 0);
+    // wind (m/s): the weather's (0.3 everyday breeze .. ~1.2 gale, gusts included) when given, otherwise a slow
+    // wander that picks up at night
+    const w = s.wind === s.wind ? 1 + 13 * s.wind : windField(now) + 2.5 * tf.night + (s.horde ? 1.5 : 0);
     const own = gustField(now);
     const gust = s.gust === s.gust ? clamp01(0.5 * own + 0.6 * s.gust) : own;
     this.wind.speed = w;
     this.wind.gust = gust;
-    this.wind.strength = clamp01((w - 1) / 17);
+    this.wind.strength = clamp01((w - 1) / 13);
 
     // ---- procedural beds (original mix), faded out where a recording takes over
     if (now > this.nextGust) {
@@ -500,14 +525,24 @@ export class Ambience {
     const recCrickets = rec.covers('amb_crickets') ? 1 : 0;
     const recFire = rec.covers('fire_roar') ? 1 : 0;
     const tc = 1.6;
-    this.beds.wind.set((0.22 + 0.2 * n) * this.gust * (1 - 0.4 * cover) * (s.menu ? 0.8 : 1) * (1 - recWind), now, tc);
-    this.beds.pines.set((0.14 + 0.09 * n) * this.gust * this.gust * (1 - 0.6 * cover) * (1 - recWind), now, tc);
-    const cr = s.menu ? 0.18 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1);
+    // weather wind: 0.3 is the everyday breeze, ~1.2 a gale (gusts included, in step with the trees)
+    const ww = Math.max(0, (s.wind === s.wind ? s.wind : 0.3) - 0.3);
+    const rain = s.rain || 0;
+    const weatherQuiet = (1 - 0.8 * rain) * (1 - 0.6 * smooth(0.5, 1, s.wind || 0));
+    this.beds.wind.set(Math.min(0.95, (0.22 + 0.2 * n) * this.gust * (1 + ww * 1.7) * (1 - 0.4 * cover) * (s.menu ? 0.8 : 1)) * (1 - recWind), now, tc);
+    this.beds.pines.set(Math.min(0.8, (0.14 + 0.09 * n) * this.gust * this.gust * (1 + ww * 2.2) * (1 - 0.6 * cover)) * (1 - recWind), now, tc);
+    this.beds.rain.set(s.menu ? 0 : rain * (cover ? 0.42 : 0.55), now, 2);
+    const rl = cover ? 650 : 11000;
+    if (rl !== this._rl) {
+      this._rl = rl;
+      this.rainLP.frequency.setTargetAtTime(rl, now, 0.3);
+    }
+    const cr = s.menu ? 0.18 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1) * weatherQuiet;
     this.beds.crickets.set(cr * (1 - recCrickets), now, 2.5);
     this.beds.drone.set(s.menu ? 0.16 : n * 0.28 + (s.horde ? 0.1 : 0) + (s.dead ? 0.25 : 0), now, 3);
     this.beds.horde.set(!s.menu && s.horde ? 0.32 : 0, now, 2.5);
     this.beds.fire.set(s.menu ? 0 : s.nearFire * 0.25 * (1 - recFire), now, 1);
-    const wl = cover ? 900 : 1400 + 2600 * (this.gust - 0.6);
+    const wl = cover ? 900 : 1400 + 2600 * (this.gust - 0.6) + 1800 * Math.min(1, ww);
     if (Math.abs(wl - (this._wl || 0)) > 60) {
       this._wl = wl;
       this.windLP.frequency.setTargetAtTime(wl, now, 1.2);
@@ -515,14 +550,14 @@ export class Ambience {
 
     // ---- recorded beds
     const L = this.lvl;
-    const birds = (1 - 0.6 * smooth(9, 16, w)) * (1 - 0.85 * this.threat);
+    const birds = (1 - 0.6 * smooth(9, 16, w)) * (1 - 0.85 * this.threat) * (1 - 0.85 * rain);
     const nn = tf.night;
     L.amb_day = (0.3 + 0.7 * tf.day) * (1 - nn) * (1 - 0.5 * tf.dawn) * birds;
     L.amb_day_wind = (1 - nn) * smooth(2.5, 8, w) * (0.6 + 0.4 * gust);
     L.amb_dawn = tf.dawn * birds;
     L.amb_dusk = tf.dusk * (1 - 0.7 * this.threat);
     L.amb_night = smooth(0.2, 0.7, nn) * (1 - 0.5 * this.threat);
-    L.amb_crickets = (s.menu ? 0.45 : smooth(0.35, 0.85, nn)) * (1 - 0.95 * this.threat) * (s.horde ? 0.3 : 1) * (1 - 0.7 * smooth(8, 14, w));
+    L.amb_crickets = (s.menu ? 0.45 : smooth(0.35, 0.85, nn)) * (1 - 0.95 * this.threat) * (s.horde ? 0.3 : 1) * (1 - 0.7 * smooth(8, 14, w)) * (1 - 0.8 * rain);
     const gustAmp = 0.62 + 0.55 * gust;
     L.wind_light = bell(w, 3.5, 3.2) * gustAmp;
     L.wind_mid = bell(w, 8.5, 3.5) * gustAmp;
@@ -582,7 +617,7 @@ export class Ambience {
       const p = this.pending[k];
       if (p.t < now + 0.3) {
         this.pending.splice(k, 1);
-        if (!p.key) this.emit(p.ev, now, p.t, p.pos);
+        if (!p.key) this.emit(p.ev, now, p.t, p.pos, !!p.steal);
         else {
           const dur = this.emitRec(p.key, p.o, now, p.t, p.pos);
           if (dur && p.left > 0) {

@@ -39,6 +39,16 @@ export class Compass {
     el('i', 'cmp-center', this.root);
     this.pool = [];
     this.halfFov = 1.35; // radians shown on each side
+    // strip width, kept current by a ResizeObserver: reading clientWidth every frame, after the HUD's
+    // style writes, forced a synchronous style + layout pass per frame
+    this.width = 0;
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => (this.width = this.root.clientWidth)).observe(this.root);
+  }
+
+  // transforms are only rewritten when they change (standing still / not turning costs no style work)
+  _moveTo(o, x) {
+    const tx = `translateX(${x.toFixed(1)}px)`;
+    if (o.tx !== tx) o.e.style.transform = o.tx = tx;
   }
 
   _marker(i) {
@@ -56,7 +66,8 @@ export class Compass {
   // yaw: camera yaw (0 = facing -Z/north, positive = turning left/west). markers: [{bearing, kind, icon, label, cls}]
   update(yaw, markers) {
     const heading = -yaw; // clockwise from north
-    const W = this.root.clientWidth || 520;
+    if (!this.width) this.width = this.root.clientWidth;
+    const W = this.width || 520;
     const toX = (a) => {
       const d = wrapA(a - heading);
       if (Math.abs(d) > this.halfFov) return null;
@@ -75,7 +86,7 @@ export class Compass {
         t.e.style.visibility = '';
         t.hidden = false;
       }
-      t.e.style.transform = `translateX(${x.toFixed(1)}px)`;
+      this._moveTo(t, x);
     }
     let n = 0;
     for (const mk of markers) {
@@ -91,7 +102,7 @@ export class Compass {
       if (m.key !== mk.icon) m.ico.innerHTML = m.key = mk.icon;
       const lab = mk.label || '';
       if (m.lkey !== lab) m.lab.textContent = m.lkey = lab;
-      m.e.style.transform = `translateX(${x.toFixed(1)}px)`;
+      this._moveTo(m, x);
       if (m.e.hidden) m.e.hidden = false;
     }
     for (let i = n; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;
@@ -223,7 +234,8 @@ export class Markers {
         m.bar.hidden = bar < 0;
         if (bar >= 0) m.fill.style.transform = `scaleX(${clamp(bar, 0, 1).toFixed(3)})`;
       }
-      m.e.style.transform = `translate(${it.x.toFixed(1)}px,${it.y.toFixed(1)}px) translate(-50%,-100%) scale(${(it.scale ?? 1).toFixed(2)})`;
+      const tf = `translate(${it.x.toFixed(1)}px,${it.y.toFixed(1)}px) translate(-50%,-100%) scale(${(it.scale ?? 1).toFixed(2)})`;
+      if (k.tf !== tf) m.e.style.transform = k.tf = tf;
       if (m.e.hidden) m.e.hidden = false;
     }
     for (let i = n; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;

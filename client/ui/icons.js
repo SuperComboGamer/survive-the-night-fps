@@ -131,6 +131,55 @@ const ITEM_ICONS = {
       P(circ(60, 27.2, 2.2)) + // bolt
       S('M46 25.2Q46.6 30.4 52.2 29.8L53.2 25', 1.5),
   ],
+  [ITEM.M4A1]: [
+    128,
+    44,
+    P('M2 13H22L26 15V29L22 30L6 33L2 32Z') + // collapsible stock
+      P('M22 15.4H34V20H22Z') + // buffer tube
+      P('M33 11H70V22H33Z') + // upper receiver
+      P('M35 8.4H69V11H35Z') + // rail
+      P('M36 4.6H41V8.4H36Z') + // rear sight
+      P('M36 22H62V26H36Z') + // lower receiver
+      P('M38 22H46L43.4 35Q43 36.4 41.6 36.4H37Q35.6 36.4 36 35Z') + // grip
+      S('M46.4 25.8Q50.8 26 50.8 29.4', 1.6) + // trigger guard
+      P('M52 26H61Q61.4 32 63.4 38.4L55.6 40.4Q53 33 52 26Z') + // magazine
+      E(rct(70, 12, 25, 9.4) + [73.4, 77.6, 81.8, 86, 90.2].map((x) => rct(x, 14.4, 1.2, 4.6)).join('')) + // ribbed handguard
+      P('M94.6 17H101.4L99.6 6.8H96.4Z') + // front sight base
+      P(rct(97.4, 3.4, 1.2, 3.6)) +
+      P('M100 14.4H117V17.6H100Z') + // barrel
+      P('M116 12.8H124.6V19.2H116Z'), // flash hider
+  ],
+  [ITEM.MP5]: [
+    112,
+    44,
+    P('M2 11H37V19.4L8 31.6H2Z') + // fixed stock
+      P('M36 10H74V21.4H36Z') + // receiver
+      P(circ(41, 7.6, 2.6)) + // drum rear sight
+      P('M74 10H92V14.6H74Z') + // cocking tube
+      E(circ(90, 6.2, 3) + circ(90, 6.2, 1.5)) + // hooded front sight
+      P(rct(88.4, 8, 3.2, 2.4)) +
+      S('M84 11.6L80.4 7.4', 1.6) + // cocking handle
+      P('M74 14.6H92Q93 20 90 23H76Q74 20 74 14.6Z') + // handguard
+      P('M92 15.8H104V19H92Z') + // barrel
+      P('M42 21.4H60V24.6H42Z') + // trigger group
+      P('M44 23H52L49.6 35Q49.2 36.4 47.8 36.4H43.4Q42 36.4 42.4 35Z') + // grip
+      S('M52.4 24.8Q56.8 25 56.6 28.6', 1.6) + // trigger guard
+      P('M62 21.4H68.4Q69.4 30 74.4 37.6L68 40.8Q62.8 31 62 21.4Z'), // curved magazine
+  ],
+  [ITEM.DB_SHOTGUN]: [
+    132,
+    36,
+    P('M2 17.6L34 13V23.6L29 24.2L7 31.6L2 30.6Z') + // stock
+      P('M33 11H47V24H33Z') + // action
+      P('M40 8.2H46V11H40Z') + // top lever
+      P('M47 9.2H128V13.4H47Z') + // barrels
+      P('M47 14.2H128V18.4H47Z') +
+      P(circ(128.8, 8.4, 1.2)) + // bead
+      P('M50 18.4H84Q84 21.8 81 23.2H53Q50 21.8 50 18.4Z') + // forend
+      S('M36.6 24.2Q37.2 29.8 42.6 29.4L43.8 24.2', 1.5) + // trigger guard
+      S('M39 24.6Q39.6 26.2 38.6 27.6', 1.2) +
+      S('M41.4 24.6Q42 26.2 41 27.6', 1.2), // twin triggers
+  ],
   [ITEM.PISTOL]: [
     64,
     44,
@@ -391,6 +440,7 @@ const ITEM_ICONS = {
   [ITEM.AMMO_SHELLS]: [36, 34, shell(5) + shell(21)],
   [ITEM.AMMO_762]: [36, 36, rifleRound(5) + rifleRound(15) + rifleRound(25)],
   [ITEM.AMMO_308]: [36, 40, rifleRound(8, 8, 39) + rifleRound(20, 8, 39)],
+  [ITEM.AMMO_556]: [36, 36, [2.4, 10.6, 18.8, 27].map((x) => rifleRound(x, 5.4, 35)).join('')],
   // ---------------- car parts
   [ITEM.CAR_BATTERY]: [
     40,
@@ -616,6 +666,7 @@ const GLYPHS = {
     P('M18.06 8.06L21.58 4.54A5.2 5.2 0 1 1 19.46 2.42L15.94 5.94Z') +
     E('M16.03 10.23L13.77 7.97L2.87 18.87Q1.74 20 2.87 21.13Q4 22.26 5.13 21.13Z' + circ(4, 20, 0.7)),
   eyeOff: S('M2 12Q7 5.4 12 5.4Q17 5.4 22 12Q17 18.6 12 18.6Q7 18.6 2 12Z', 1.8) + P(circ(12, 12, 3.2)) + S('M4 3.4L20 20.6', 2.2),
+  grid: P(rct(3.4, 3.4, 7.8, 7.8) + rct(12.8, 3.4, 7.8, 7.8) + rct(3.4, 12.8, 7.8, 7.8) + rct(12.8, 12.8, 7.8, 7.8)),
 };
 
 // ---------------------------------------------------------------- public api

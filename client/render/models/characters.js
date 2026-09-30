@@ -26,6 +26,7 @@ const C_BLOOD = color(0x3a0303);
 const C_MOUTH = color(0x1a0303);
 const C_NAIL = color(0x2a2016);
 const C_TEETH = color(0xb8ab84);
+const C_BRUISE = color(0x3a1c22);
 
 function humanP(o) {
   const P = Object.assign(
@@ -105,21 +106,30 @@ function buildHead(mb, P, L) {
   const skin = color(L.skin);
   const skinD = skin.clone().multiplyScalar(0.8);
   const gaunt = L.gaunt || 0;
+  const craniumShape = (v) => {
+    const ny = v.y / sy, nz = v.z / sz;
+    if (ny < -0.1) v.x *= 1 - (-0.1 - ny) * (human ? 0.28 : 0.4 + gaunt * 0.15); // narrow lower face
+    if (nz < -0.4) v.z *= 0.93; // flatter face
+    if (nz > 0.3 && ny < -0.3) v.z *= 0.86; // skull base
+    if (ny < -0.55 && nz < 0) v.z *= 0.9; // recessed mouth area
+  };
   // cranium
   mb.ellip('head', [0, cy, 0], [sx, sy, sz], {
     ws: L.headWS || 12, hs: L.headHS || 9, color: L.skin, region: skinReg, mottle: human ? 0.08 : 0.3, mf: 20,
-    shape(v) {
-      const ny = v.y / sy, nz = v.z / sz;
-      if (ny < -0.1) v.x *= 1 - (-0.1 - ny) * (human ? 0.28 : 0.4 + gaunt * 0.15); // narrow lower face
-      if (nz < -0.4) v.z *= 0.93; // flatter face
-      if (nz > 0.3 && ny < -0.3) v.z *= 0.86; // skull base
-      if (ny < -0.55 && nz < 0) v.z *= 0.9; // recessed mouth area
-    },
+    shape: craniumShape,
     tint(p, n, c) {
       const ly = (p.y - hb[1] - cy) / sy, lz = (p.z - hb[2]) / sz;
       if (!human) {
+        const lx = (p.x - hb[0]) / sx;
         if (ly < -0.35 && lz < -0.45) c.lerp(C_BLOOD, 0.6);
         if (n.y < -0.5 && lz < -0.2) c.lerp(C_MOUTH, 0.85);
+        if (L.cheekTear) {
+          // raw flesh around the hole torn through the cheek
+          const d = Math.hypot(lx - L.cheekTear * 0.72, (ly + 0.4) * 1.1, (lz + 0.5) * 0.8);
+          if (d < 0.5) c.lerp(d < 0.36 ? C_WOUND : C_WOUND2, clamp((0.5 - d) * 6, 0, 0.9));
+        }
+        if (L.oneEye && Math.abs(lx - L.oneEye * 0.45) < 0.08 + 0.03 * ly && ly < 0.0 && ly > -0.75 && lz < -0.35) c.lerp(C_BLOOD, 0.85); // dried blood run from the empty socket
+        if (L.noEar && L.noEar * lx > 0.8 && Math.abs(ly + 0.05) < 0.32 && Math.abs(lz - 0.05) < 0.3) c.lerp(C_WOUND, 0.8);
       } else {
         if (ly < -0.42 && ly > -0.58 && lz < -0.7) c.lerp(color(0x7a4038), 0.35);
         if (L.stubble && ly < -0.3 && lz < -0.1) c.multiplyScalar(0.8);
@@ -153,12 +163,22 @@ function buildHead(mb, P, L) {
   const eyeX = sx * (human ? 0.36 : 0.4), eyeY = cy + hr * (human ? 0.08 : 0.1);
   for (const s of [-1, 1]) {
     if (!human) {
+      // sunken, bruised socket: near-black at the centre, fading to purple-brown at the rim
       mb.ellip('head', [s * eyeX, eyeY, fz + hr * 0.08], [hr * 0.2, hr * 0.15, hr * 0.12], {
-        ws: 6, hs: 4, color: C_SOCKET, region: CR.FLESH, rot: [0, 0, s * -0.2], ao: false, blood: false, mottle: 0,
+        ws: 7, hs: 5, color: C_SOCKET, region: CR.FLESH, rot: [0, 0, s * -0.2], ao: false, blood: false, mottle: 0,
+        tint(p, n, c) {
+          c.lerp(C_BRUISE, clamp((n.z + 0.55) * 2.2, 0, 0.8));
+        },
       });
-      mb.ellip('head', [s * eyeX * 0.97, eyeY - hr * 0.035, fz - hr * 0.025], [hr * 0.055, hr * 0.045, hr * 0.035], {
-        ws: 5, hs: 3, color: L.eye ?? 0x8a8460, glow: L.eyeGlow ?? 0.08, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
-      });
+      if (L.oneEye !== s) {
+        // clouded eyeball, half hidden under a drooping lid
+        mb.ellip('head', [s * eyeX * 0.97, eyeY - hr * 0.045, fz - hr * 0.005], [hr * 0.085, hr * 0.068, hr * 0.05], {
+          ws: 6, hs: 4, color: L.eye ?? 0x8a8460, glow: L.eyeGlow ?? 0.08, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
+          tint(p, n, c) {
+            if (n.y > 0.35) c.copy(C_BRUISE);
+          },
+        });
+      }
     } else {
       mb.ellip('head', [s * eyeX, eyeY, fz + hr * 0.01], [hr * 0.1, hr * 0.06, hr * 0.06], {
         ws: 6, hs: 4, color: L.eye ?? 0xd8d4cc, glow: L.eyeGlow || 0, mottle: 0, ao: false, blood: false, region: CR.PLAIN,
@@ -166,11 +186,42 @@ function buildHead(mb, P, L) {
       if (!L.eyeGlow) mb.ellip('head', [s * eyeX, eyeY, fz - hr * 0.045], [hr * 0.045, hr * 0.045, hr * 0.015], { ws: 5, hs: 3, color: 0x20140c, mottle: 0, ao: false, region: CR.PLAIN });
     }
   }
-  // ears
+  // ears (one may be torn off)
   for (const s of [-1, 1]) {
+    if (L.noEar === s) continue;
     mb.ellip('head', [s * sx * 0.97, cy - hr * 0.05, hr * 0.05], [hr * 0.09, hr * 0.24, hr * 0.16], {
       ws: 4, hs: 3, color: skinD, region: skinReg, rot: [0, s * 0.3, 0],
     });
+  }
+  if (!human && L.skullPatch) {
+    // scalp torn away: bare, blood-rimmed skull showing through (bright at distance)
+    const sp = L.skullPatch;
+    const dl = Math.hypot(sp[0], sp[1], sp[2]);
+    const dx = sp[0] / dl, dy = sp[1] / dl, dz = sp[2] / dl, cosR = Math.cos(sp[3]), cosRim = Math.cos(sp[3] * 0.72);
+    const dot = (x, y, z) => {
+      const lx = (x - hb[0]) / sx, ly = (y - hb[1] - cy) / sy, lz = (z - hb[2]) / sz;
+      return (lx * dx + ly * dy + lz * dz) / (Math.hypot(lx, ly, lz) + 1e-6);
+    };
+    mb.ellip('head', [0, cy, 0], [sx * 1.03, sy * 1.03, sz * 1.03], {
+      ws: 14, hs: 10, color: 0xcfc2a0, region: CR.BONE, mottle: 0.25, mf: 30, blood: false, shape: craniumShape,
+      tear: { amt: 0, fn: (x, y, z) => dot(x, y, z) < cosR + 0.04 * fbm3(x * 80, y * 80, z * 80, 1, 5) },
+      tint(p, n, c) {
+        const d = dot(p.x, p.y, p.z);
+        if (d < cosRim) c.lerp(C_WOUND, clamp((cosRim - d) / (cosRim - cosR), 0, 1) * 0.9);
+      },
+    });
+  }
+  if (!human && L.cheekTear) {
+    // cheek torn open: dark cavity with the back teeth showing
+    const s = L.cheekTear;
+    mb.ellip('head', [s * sx * 0.66, cy - hr * 0.42, fz * 0.55], [hr * 0.13, hr * 0.14, hr * 0.26], {
+      ws: 6, hs: 4, color: C_MOUTH, region: CR.FLESH, ao: false, blood: false, mottle: 0.2,
+    });
+    for (let i = 0; i < 3; i++) {
+      mb.box('head', [s * sx * (0.7 - i * 0.03), cy - hr * 0.44, fz * (0.72 - i * 0.16)], [hr * 0.07, hr * 0.12, hr * 0.12], {
+        color: C_TEETH.clone().multiplyScalar(0.75 + i * 0.08), region: CR.BONE, ao: false, blood: false, mottle: 0.3, rot: [0, s * 0.3, 0],
+      });
+    }
   }
   // jaw (lower mandible) relative to jaw bone
   const jy = hb[1] + cy - jb[1];
@@ -216,14 +267,29 @@ function hair(mb, P, L) {
   const sx = hr * (L.headSX || 0.84), sy = hr * (L.headSY || 1.0), sz = hr * (L.headSZ || 1.06);
   mb.ellip('head', [0, cy + hr * 0.02, hr * 0.03], [sx * 1.07, sy * 1.06, sz * 1.07], {
     ws: 12, hs: 8, t0: 0, tl: PI * (h.cover || 0.52), color: h.color, region: CR.HAIR, mottle: 0.3,
-    tear: h.patchy ? { amt: h.patchy, f: 30, seed: h.seed || 3 } : null,
+    tear: h.ragged ? { amt: h.ragged, f: 30, seed: h.seed || 3 } : null,
     shape(v) {
       if (v.z < -sz * 0.5 && v.y < sy * 0.55) v.y += sy * 0.08; // hairline
     },
     blood: false,
   });
   if (h.long) {
-    mb.ellip('head', [0, cy - hr * 0.35, hr * 0.45], [sx * 0.95, sy * 0.8, sz * 0.55], { ws: 8, hs: 6, color: h.color, region: CR.HAIR, tear: h.patchy ? { amt: h.patchy * 0.7, f: 30, seed: 9 } : null });
+    mb.ellip('head', [0, cy - hr * 0.35, hr * 0.45], [sx * 0.95, sy * 0.8, sz * 0.55], { ws: 8, hs: 6, color: h.color, region: CR.HAIR, tear: h.ragged ? { amt: h.ragged * 0.7, f: 30, seed: 9 } : null });
+  }
+  if (h.strands) {
+    // lank, matted strands hanging from the back and sides of the scalp down to the shoulders
+    const rnd = mulberry32(h.seed || 21);
+    for (let i = 0; i < h.strands; i++) {
+      const a = ((i + 0.5) / h.strands - 0.5) * 4.2 + (rnd() - 0.5) * 0.3; // 0 = back of the head
+      const sa = Math.sin(a), ca = Math.cos(a);
+      const len = hr * (2.1 + rnd() * 0.7);
+      mb.tube('head', [
+        [sa * sx * 0.9, cy + hr * 0.25, ca * sz * 0.85],
+        [sa * sx * 1.08, cy - hr * 0.5, ca * sz * 1.02],
+        [sa * sx * 1.12, cy - len * 0.7, ca * sz * 0.98 + hr * 0.1],
+        [sa * sx * (1.05 + rnd() * 0.2), cy - len, ca * sz * 0.9 + hr * 0.18],
+      ], hr * (0.2 + rnd() * 0.08), hr * 0.05, { rs: 5, ts: 5, color: mulColor(h.color, 0.8 + rnd() * 0.4), region: CR.HAIR, blood: false });
+    }
   }
 }
 
@@ -305,6 +371,10 @@ function buildTorso(mb, P, L) {
   const pr = L.pants ? L.pants.region ?? CR.DENIM : L.skinRegion ?? CR.SKIN;
   mb.lathe('hips', [0, 0, 0], resample([[0.05, -0.125], [0.1, -0.11], [0.122, -0.07], [0.13, -0.01], [0.128, 0.05], [0.124, 0.1]], 6), {
     rs: 12, sx: 1.14 * w * (L.hipsW || 1), sz: 0.82 * (L.hipsD || 1), color: pc, region: pr,
+    shape(v) {
+      if (v.z > 0) v.z *= 1 + 0.16 * clamp(1 - Math.abs(v.y + 0.05) / 0.07, 0, 1) * (v.z / (Math.hypot(v.x, v.z) + 1e-6)); // glutes
+      else v.z *= 0.93; // flatter lower belly
+    },
   });
   if (L.pants && L.belt !== false) {
     mb.lathe('hips', [0, 0, 0], [[0.131, 0.06], [0.131, 0.09]], { rs: 10, sx: 1.15 * w * (L.hipsW || 1), sz: 0.83 * (L.hipsD || 1), color: 0x2a2018, region: CR.LEATHER });
@@ -320,8 +390,9 @@ function buildTorso(mb, P, L) {
   // collarbones / trapezius
   for (const s of [-1, 1]) {
     const dm = (L.deltoid || 1) * (L.shirt && L.shirt.sleeves ? 0.92 : 1);
-    if (!L.noDeltoid) mb.ellip('chest', [s * (P.shoulderW - 0.012), P.shoulderY - chestY + 0.005, 0.005], [0.062 * dm, 0.058 * dm, 0.064 * dm], {
-      ws: 7, hs: 5,
+    // deltoid cap: tapers down into the upper arm instead of sitting on it like a ball
+    if (!L.noDeltoid) mb.ellip('chest', [s * (P.shoulderW - 0.01), P.shoulderY - chestY - 0.004, 0.005], [0.057 * dm, 0.064 * dm, 0.06 * dm], {
+      ws: 7, hs: 5, rot: [0, 0, s * 0.25],
       color: L.shoulderCol ?? (L.shirt && L.shirt.sleeves && L.shirt.type !== 'tank' ? L.shirt.color : L.skin),
       region: L.shoulderReg ?? (L.shirt && L.shirt.sleeves && L.shirt.type !== 'tank' ? L.shirt.region ?? CR.CLOTH : L.skinRegion ?? CR.SKIN),
     });
@@ -345,6 +416,7 @@ function buildShirt(mb, P, L, T) {
   const fnC = (x, y, z) => {
     if (tank && Math.abs(x) > 0.1 && y > chestY + 0.02) return true;
     if (sh.open && z < -0.05 && Math.abs(x) < 0.05 + (y - spineY) * 0.1) return true;
+    if (sh.openBack && z > 0.04 && Math.abs(x) < 0.03 + (chestY + 0.1 - y) * 0.12) return true;
     return false;
   };
   const shellProf = T.chestProf.map(([r, y]) => [r * g + 0.004, y]);
@@ -367,15 +439,17 @@ function buildShirt(mb, P, L, T) {
   if (sh.sleeves && !tank) {
     for (const s of [-1, 1]) {
       const n = s < 0 ? 'L' : 'R';
-      const len = sh.sleeves === 2 ? P.uarmLen + 0.02 : P.uarmLen * 0.45;
-      const r = (L.armR || 0.045) * 1.22 + 0.006;
-      mb.seg('uarm' + n, [0, 0.02, 0], [0, -len, 0], r * 1.08, r * 0.95, {
-        rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true,
+      const long = sh.sleeves === 2;
+      const len = long ? P.uarmLen + 0.02 : P.uarmLen * 0.45;
+      // short sleeves hug the arm (a wide tube around a thin arm reads as a puffed sleeve)
+      const r = long ? (L.armR || 0.045) * 1.22 + 0.006 : (L.armR || 0.045) * 1.12 + 0.005;
+      mb.seg('uarm' + n, [0, 0.02, 0], [0, -len, 0], r * (long ? 1.08 : 1.03), r * (long ? 0.95 : 1.0), {
+        rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true, tint: sh.tint,
         tear: { amt: tear * 0.8, f: 14, seed: (sh.seed || 1) + s * 3, fn: (x, y) => y < P.shoulderY - len + 0.05 * fbm3(x * 30, y, 0, 1, 6) },
       });
-      if (sh.sleeves === 2) {
+      if (long && L.missingArm !== n) {
         mb.seg('farm' + n, [0, 0.03, 0], [0, -P.farmLen * 0.85, 0], r * 0.9, r * 0.78, {
-          rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true,
+          rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true, tint: sh.tint,
           tear: { amt: tear * 0.9, f: 14, seed: (sh.seed || 1) + s * 5, fn: (x, y) => y < P.elbowY - P.farmLen * 0.85 + 0.06 * fbm3(x * 30, y * 3, 0, 1, 8) },
         });
       }
@@ -393,21 +467,44 @@ function buildShirt(mb, P, L, T) {
   }
 }
 
-/** Arms + hands. */
+/** Arms + hands. L.missingArm ('L' | 'R') tears that arm off at the elbow. */
 function buildArms(mb, P, L) {
   const r1 = L.armR || 0.045;
   const reg = L.skinRegion ?? CR.SKIN;
+  const lean = clamp(L.gaunt ?? 0.4, 0, 1);
   for (const s of [-1, 1]) {
     const n = s < 0 ? 'L' : 'R';
-    mb.seg('uarm' + n, [0, 0.01, 0], [0, -P.uarmLen, 0], r1, r1 * 0.78, { rs: 7, hs: 2, color: L.armCol ?? L.skin, region: reg, sz: 0.92, noise: L.lumpy ? 0.006 : 0, nf: 30 });
+    // biceps/triceps belly mid upper arm; forearm muscle just below the elbow, thin wrist
+    mb.seg('uarm' + n, [0, 0.01, 0], [0, -P.uarmLen, 0], r1, r1 * 0.78, {
+      rs: 7, hs: 4, color: L.armCol ?? L.skin, region: reg, sz: 0.92, noise: L.lumpy ? 0.006 : 0, nf: 30,
+      prof: (t) => 1 + (0.12 - lean * 0.07) * Math.sin(clamp((t - 0.1) * 1.4, 0, 1) * PI),
+    });
+    if (L.missingArm === n) {
+      stump(mb, 'farm' + n, r1 * 0.8, 0.02);
+      continue;
+    }
     mb.seg('farm' + n, [0, 0.015, 0], [0, -P.farmLen, 0], r1 * (L.farmMul || 0.84), r1 * (L.wristMul || 0.6), {
-      rs: 7, hs: 2, color: L.skin, region: reg, sz: 0.82, noise: L.lumpy ? 0.005 : 0, nf: 30,
+      rs: 7, hs: 4, color: L.skin, region: reg, sz: 0.82, noise: L.lumpy ? 0.005 : 0, nf: 30,
+      prof: (t) => 1 + (0.14 - lean * 0.06) * Math.exp(-(((t - 0.22) / 0.22) ** 2)),
       tint: L.armTint,
     });
     // elbow knob
     mb.ellip('farm' + n, [0, 0.0, 0.012], [r1 * 0.75, r1 * 0.75, r1 * 0.75], { ws: 6, hs: 4, color: L.skin, region: reg });
+    if (L.wristband === n) {
+      mb.lathe('hand' + n, [0, 0.03, 0], [[r1 * 0.66, 0], [r1 * 0.68, 0.012], [r1 * 0.66, 0.024]], { rs: 8, sz: 0.85, color: 0xd8dcd4, region: CR.PLAIN, blood: false });
+    }
     buildHand(mb, 'hand' + n, s, P, L);
   }
+}
+
+/** Ragged, bloody limb stump with the bone poking out, at the joint of `bone` (hangs along -Y). */
+function stump(mb, bone, r, y) {
+  mb.ellip(bone, [0, y, 0], [r * 1.05, r * 0.9, r * 1.0], {
+    ws: 7, hs: 5, color: 0x5a1210, region: CR.FLESH, mottle: 0.3, noise: r * 0.12, nf: 60, blood: false,
+  });
+  mb.spike(bone, [0, y - r * 0.3, 0.003], [r * 0.12, y - r * 2.1, -0.004], r * 0.34, { rs: 5, color: 0xd8ccb0, region: CR.BONE, blood: false });
+  // dangling sinew
+  mb.tube(bone, [[-r * 0.4, y - r * 0.5, -r * 0.2], [-r * 0.5, y - r * 1.3, -r * 0.1], [-r * 0.3, y - r * 2.0, 0]], r * 0.13, r * 0.05, { rs: 4, ts: 3, color: 0x6a1a18, region: CR.FLESH, blood: false });
 }
 
 function buildHand(mb, bone, s, P, L) {
@@ -450,14 +547,17 @@ function buildLegs(mb, P, L) {
   const pants = L.pants;
   const tr = L.thighR || 0.078;
   const skinReg = L.skinRegion ?? CR.SKIN;
+  const lean = clamp(L.gaunt ?? 0.4, 0, 1); // wasted muscle on gaunt corpses
   for (const s of [-1, 1]) {
     const n = s < 0 ? 'L' : 'R';
     const pc = pants ? pants.color : L.skin;
     const preg = pants ? pants.region ?? CR.DENIM : skinReg;
     const shorts = pants && pants.shorts;
     const tearY = pants ? (pants.tearY ?? 0) : 99;
+    // quads bulge in the upper third, taper into the knee
     mb.seg('thigh' + n, [0, 0.05, 0], [0, -P.thighLen, 0], tr, tr * 0.68, {
-      rs: 8, hs: 3, color: shorts ? L.skin : pc, region: shorts ? skinReg : preg, sz: 0.95, noise: L.lumpy ? 0.008 : 0, nf: 25,
+      rs: 8, hs: 5, color: shorts ? L.skin : pc, region: shorts ? skinReg : preg, sz: 0.95, noise: L.lumpy ? 0.008 : 0, nf: 25,
+      prof: (t) => 1 + (0.1 - lean * 0.05) * Math.sin(Math.min(1, t * 1.5) * PI) - 0.06 * smooth((t - 0.8) / 0.2),
       tint: shorts
         ? (p, nn, c) => {
             if (p.y > P.thighY - P.thighLen * 0.45 + 0.05 * fbm3(p.x * 30, 0, p.z * 30, 1, 2)) c.copy(color(pc)).multiplyScalar(0.9);
@@ -465,18 +565,22 @@ function buildLegs(mb, P, L) {
         : pants && pants.tint,
     });
     const pantsLeg = pants && !shorts;
+    const shinTint = (p, nn, c) => {
+      if (pantsLeg && p.y < tearY + 0.07 * fbm3(p.x * 25, p.y * 4, p.z * 25, 2, 11 + s)) c.copy(color(L.skin)).multiplyScalar(0.62).lerp(C_BLOOD, 0.25 * fbm3(p.x * 40, p.y * 40, p.z * 40, 1, 3));
+      if (pants && pants.tint) pants.tint(p, nn, c);
+    };
+    // calf muscle high on the back of the shin, slim ankle
     mb.seg('shin' + n, [0, 0.03, 0], [0, -P.shinLen + 0.03, 0], tr * (pantsLeg ? 0.72 : 0.62), tr * (pantsLeg ? 0.6 : 0.44), {
-      rs: 8, hs: 3, color: pants && !shorts ? pc : L.skin, region: pants && !shorts ? preg : skinReg, sz: 0.95,
+      rs: 8, hs: 5, color: pantsLeg ? pc : L.skin, region: pantsLeg ? preg : skinReg, sz: 0.95,
+      prof: pantsLeg ? null : (t) => 1 + (0.1 - lean * 0.04) * Math.sin(Math.min(1, t * 2.2) * PI) - 0.08 * smooth((t - 0.75) / 0.25),
       shape(v) {
         if (v.z > 0 && v.y > -P.shinLen * 0.5) v.z *= 1.15; // calf
       },
-      tint(p, nn, c) {
-        if (pants && !shorts && p.y < tearY + 0.07 * fbm3(p.x * 25, p.y * 4, p.z * 25, 2, 11 + s)) c.copy(color(L.skin)).multiplyScalar(0.62).lerp(C_BLOOD, 0.25 * fbm3(p.x * 40, p.y * 40, p.z * 40, 1, 3));
-        if (pants && pants.tint) pants.tint(p, nn, c);
-      },
+      tint: shinTint,
     });
-    // knee cap (bare legs only)
+    // knee: kneecap on bare legs, a fabric knee on trousers (hides the thigh/shin seam when bent)
     if (!pantsLeg) mb.ellip('shin' + n, [0, 0.0, -0.02], [tr * 0.55, tr * 0.55, tr * 0.5], { ws: 6, hs: 4, color: L.skin, region: skinReg });
+    else mb.ellip('shin' + n, [0, 0.01, 0], [tr * 0.72, tr * 0.8, tr * 0.7], { ws: 7, hs: 5, color: pc, region: preg, tint: shinTint });
     // foot
     if (L.shoes) {
       mb.box('foot' + n, [0, -P.ankleY * 0.45, -0.045], [0.1 * (L.footW || 1), P.ankleY * 1.1 + 0.015, 0.26 * (L.footL || 1)], {
@@ -505,11 +609,30 @@ function pick(rnd, arr) {
   return arr[(rnd() * arr.length) | 0];
 }
 
+// Per-variant injuries (see buildHead / buildArms): they change the silhouette and the face, so a
+// horde of the same type still reads as individuals.
+const WALKER_HURTS = [
+  { cheekTear: -1 },
+  { skullPatch: [0.5, 0.75, 0.25, 0.62] },
+  { jawHang: 0.5, noEar: 1 },
+  { oneEye: 1 },
+  { missingArm: 'L' },
+  { skullPatch: [-0.55, 0.6, -0.15, 0.55], noEar: -1 },
+  { jawHang: 0.42, oneEye: -1 },
+  { cheekTear: 1, missingArm: 'R' },
+];
+
+// Who they were: outfits from the valley's farms, motels, hospital and roads (walker variants 8+).
+const WALKER_OUTFITS = ['farmer', 'hunter', 'patient', 'office', 'roadcrew', 'woman'];
+const WALKER_VARIANTS = 8 + WALKER_OUTFITS.length;
+
 function walkerLook(v) {
+  if (v >= 8) return outfitLook(v, WALKER_OUTFITS[(v - 8) % WALKER_OUTFITS.length]);
   const rnd = mulberry32(1000 + v * 7919);
   const skin = SKINS[v % SKINS.length];
   const sleeveT = [1, 2, 0, 1, 2, 1, 2, 1][v % 8];
   return {
+    ...WALKER_HURTS[v],
     skin, skinRegion: v % 3 === 1 ? CR.GORE : CR.SKIN, gaunt: 0.45 + rnd() * 0.35,
     shirt: v === 6 ? null : {
       color: SHIRTS[(v * 5 + 2) % SHIRTS.length], region: v % 4 === 3 ? CR.CANVAS : CR.CLOTH,
@@ -530,6 +653,92 @@ function walkerLook(v) {
     wound: v % 3 === 0,
     dirt: { y0: 0.5, k: 0.9 },
   };
+}
+
+function outfitLook(v, outfit) {
+  const rnd = mulberry32(1000 + v * 7919);
+  const L = {
+    skin: SKINS[(v * 5) % SKINS.length], skinRegion: v % 2 ? CR.GORE : CR.SKIN, gaunt: 0.45 + rnd() * 0.3,
+    pants: { color: 0x3b4a63, region: CR.DENIM, tearY: 0.05 + rnd() * 0.1 },
+    shoes: { color: 0x2e2218 },
+    hair: { color: HAIRC[v % HAIRC.length], patchy: 0.4 + rnd() * 0.2, cover: 0.5 },
+    eye: v % 2 ? 0xd8d4b0 : 0xa8a078, eyeGlow: 0,
+    ribs: 0.4,
+    missingTeeth: (rnd() * 64) | 0,
+    blood: [
+      [[0, 1.52, -0.1], 0.1, 1],
+      [[(rnd() - 0.5) * 0.2, 1.25 + rnd() * 0.1, -0.14], 0.1 + rnd() * 0.06, 0.9],
+      [[(rnd() - 0.5) * 0.3, 1.0, -0.12], 0.07, 0.8],
+    ],
+    dirt: { y0: 0.5, k: 0.9 },
+  };
+  switch (outfit) {
+    case 'farmer': // red flannel under denim bib overalls, feed cap
+      return Object.assign(L, {
+        shirt: { color: 0x8a2622, region: CR.PLAID, sleeves: 2, tear: 0.2, seed: 401, rags: 1, hem: 0.02 },
+        pants: { color: 0x34466a, region: CR.DENIM, tearY: 0.12 },
+        shoes: { color: 0x3a2a1c }, overalls: true, cap: { color: 0x3a5a2a, peak: 0xd8d0b8 },
+        hair: { color: 0x6a6258, patchy: 0.5, cover: 0.5 }, jawHang: 0.35,
+      });
+    case 'hunter': // olive shirt, blaze-orange vest + cap
+      return Object.assign(L, {
+        shirt: { color: 0x3e4430, region: CR.CANVAS, sleeves: 2, tear: 0.25, seed: 411, rags: 2, hem: 0.03 },
+        vest: { color: 0xd8561a, region: CR.CANVAS, sleeves: 0, thick: 1.15, tear: 0.12, seed: 413, hem: 0.0, loose: 1.08 },
+        pants: { color: 0x4a4434, region: CR.CANVAS, tearY: 0.2 }, shoes: { color: 0x3a2a1c },
+        cap: { color: 0xd8561a }, oneEye: -1, cheekTear: 1,
+      });
+    case 'patient': // hospital gown, bare legs and feet, ID wristband
+      return Object.assign(L, {
+        skin: 0x939a8c, skinRegion: CR.SKIN, gaunt: 0.8,
+        shirt: { color: 0x9ab8b4, region: CR.CLOTH, sleeves: 1, tear: 0.12, seed: 421, rags: 0, hem: -0.02, openBack: true },
+        gown: true, pants: null, shoes: null, wristband: 'L',
+        hair: { color: 0x2a2420, patchy: 0.75, cover: 0.45 }, eye: 0xe0e0d0,
+        skullPatch: [0.1, 0.8, 0.45, 0.5], ribs: 0.6,
+        blood: [[[0, 1.3, -0.14], 0.12, 0.9], [[0.05, 1.0, -0.13], 0.1, 0.8], [[-0.1, 0.55, -0.05], 0.08, 0.7]],
+      });
+    case 'office': // white shirt, tie, charcoal slacks, dress shoes
+      return Object.assign(L, {
+        shirt: {
+          color: 0xc8c4b8, region: CR.CLOTH, sleeves: 2, tear: 0.16, seed: 431, rags: 1, hem: 0.0,
+          tint(p, n, c) {
+            if (Math.abs(p.x) < 0.008 && p.z < -0.08) c.multiplyScalar(0.7); // button placket
+          },
+        },
+        tie: 0x5a1a24, collar: true,
+        pants: { color: 0x2a2c30, region: CR.CLOTH, tearY: 0.06 }, shoes: { color: 0x141210 },
+        hair: { color: 0x1d1510, patchy: 0.25, cover: 0.52 }, cheekTear: -1, noEar: 1,
+        blood: [[[0, 1.5, -0.12], 0.14, 1], [[0.06, 1.28, -0.15], 0.14, 1], [[-0.08, 1.12, -0.14], 0.1, 0.9]],
+      });
+    case 'roadcrew': // grey tee, hi-vis vest with reflective tape, hard hat
+      return Object.assign(L, {
+        shirt: { color: 0x5a5a58, region: CR.CLOTH, sleeves: 1, tear: 0.25, seed: 441, rags: 2, hem: 0.03 },
+        vest: { color: 0xb8d420, region: CR.CANVAS, sleeves: 0, thick: 1.15, tear: 0.1, seed: 443, hem: 0.0, loose: 1.08, stripes: true },
+        pants: { color: 0x3b4a63, region: CR.DENIM, tearY: 0.1 }, shoes: { color: 0x3a2a1c },
+        hardHat: 0xe0a818, hair: null, oneEye: 1,
+      });
+    case 'woman': // long lank hair, tank top, jeans, sneakers
+      return Object.assign(L, {
+        body: { shoulderW: 0.17, hipW: 0.1, headR: 0.098, uarmLen: 0.28, farmLen: 0.25 },
+        chestR: 0.15, hipsW: 1.1, armR: 0.041, thighR: 0.076, neckR: 0.043,
+        shirt: { color: 0x6a3a5a, region: CR.CLOTH, type: 'tank', tear: 0.2, seed: 451, rags: 2, hem: 0.0 },
+        pants: { color: 0x4a5a7a, region: CR.DENIM, tearY: 0.25 }, shoes: { color: 0x9a968c, region: CR.CANVAS },
+        hair: { color: 0x3a2418, cover: 0.56, long: true, ragged: 0.12, strands: 9, seed: 23 },
+        jawHang: 0.4,
+      });
+  }
+  return L;
+}
+
+/** Radius of a lathe profile [[r, y], ...] at height y (linear). */
+function profR(prof, y) {
+  if (y <= prof[0][1]) return prof[0][0];
+  for (let i = 1; i < prof.length; i++) {
+    if (y <= prof[i][1]) {
+      const a = prof[i - 1], b = prof[i];
+      return a[0] + ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1] || 1);
+    }
+  }
+  return prof[prof.length - 1][0];
 }
 
 // ------------------------------------------------------------------ type builders
@@ -567,13 +776,99 @@ function exposedRibs(mb, P, side, y0, n, L, T) {
 }
 
 function buildWalker(v) {
-  const P = humanP({ headR: 0.102, neckLen: 0.1 });
   const L = walkerLook(v);
+  const P = humanP({ headR: 0.102, neckLen: 0.1, ...L.body });
   const mb = new MeshBuilder();
   const T = standardHumanoid(mb, P, L);
   if (L.ribs > 0.8) exposedRibs(mb, P, v % 2 ? 1 : -1, -0.06, 4, L, T);
   if (L.wound) (L.wounds || (L.wounds = [])).push([0.07, P.spineY + 0.03, -0.1, 0.06]);
-  return { mb, P };
+  outfitParts(mb, P, L, T);
+  return { mb, P, A: L.jawHang ? { jawHang: L.jawHang } : null };
+}
+
+/** Outfit accessories layered over the standard body (walker outfits, see outfitLook). */
+function outfitParts(mb, P, L, T) {
+  const hr = P.headR;
+  const sx = hr * (L.headSX || 0.84), sz = hr * (L.headSZ || 1.06);
+  const chestY = P.chestY, spineY = P.spineY;
+  if (L.vest) {
+    buildShirt(mb, P, { ...L, shirt: L.vest }, T);
+    if (L.vest.stripes) {
+      // reflective tape: two bands around the vest, faintly self-lit so they catch the eye at night
+      const g = L.vest.thick;
+      const openFront = (x, y, z) => L.vest.open && z < -0.05 && Math.abs(x) < 0.05 + (y - spineY) * 0.1 + 0.012;
+      const band = (bone, prof, y, sxk, szk, grow) => {
+        const r = profR(prof, y) * g + grow;
+        mb.lathe(bone, [0, 0, 0], [[r, y - 0.018], [r + 0.001, y], [r, y + 0.018]], {
+          rs: 12, sx: sxk, sz: szk, color: 0xd8d8cc, region: CR.PLAIN, glow: 0.35, mottle: 0.1, blood: false, double: true,
+          tear: { amt: 0, fn: openFront },
+        });
+      };
+      band('chest', T.chestProf, 0.03, T.sxC, T.szC, 0.008);
+      band('spine', resample(T.abCtrl, 7), 0.0, T.sxA * (L.vest.loose || 1.02), T.szA * (L.vest.loose || 1.04), 0.013);
+    }
+  }
+  if (L.overalls) {
+    // denim bib + straps; the trousers carry the rest of the overalls
+    const col = L.pants.color, g = 1.13;
+    const bib = (x, y, z) => z < -0.02 && Math.abs(x) < 0.1 + 0.01 * fbm3(x * 40, y * 40, 0, 1, 2) && y < chestY + 0.075;
+    mb.lathe('chest', [0, 0, 0], T.chestProf.slice(0, 8).map(([r, y]) => [r * g + 0.006, y]), {
+      rs: 12, sx: T.sxC, sz: T.szC, color: col, region: CR.DENIM, double: true, tear: { amt: 0, fn: (x, y, z) => !bib(x, y, z) },
+    });
+    const ab = resample(T.abCtrl, 7).map(([r, y]) => [r * g + 0.012, y]);
+    mb.lathe('spine', [0, 0, 0], ab, {
+      rs: 12, sx: T.sxA * 1.04, sz: T.szA * 1.06, color: col, region: CR.DENIM,
+      tear: { amt: 0.12, f: 12, seed: 7, fn: (x, y, z) => y > spineY - 0.06 && !bib(x, y, z) },
+    });
+    const zf = -(profR(T.chestProf, 0.075) * g + 0.01) * T.szC;
+    const zb = (profR(T.chestProf, 0.0) * g + 0.01) * T.szC;
+    const top = T.top;
+    for (const s of [-1, 1]) {
+      mb.tube('chest', [
+        [s * 0.085, 0.07, zf], [s * 0.1, top - 0.05, zf * 0.7], [s * 0.105, top - 0.02, 0.0], [s * 0.095, top - 0.06, zb * 0.8], [s * 0.06, -0.02, zb],
+      ], 0.012, 0.012, { rs: 4, ts: 10, color: col, region: CR.DENIM, cap: false });
+      mb.ellip('chest', [s * 0.085, 0.07, zf - 0.006], [0.012, 0.012, 0.006], { ws: 5, hs: 3, color: 0x8a8a80, region: CR.PLAIN, blood: false });
+    }
+  }
+  if (L.collar) {
+    mb.lathe('chest', [0, T.top - 0.035, 0.0], [[0.072, 0], [0.08, 0.028], [0.078, 0.05]], {
+      rs: 10, sx: 1.2, sz: 1.08, color: L.shirt.color, region: CR.CLOTH, double: true,
+      tear: { amt: 0, fn: (x, y, z) => z < -0.06 && Math.abs(x) < 0.015 },
+    });
+  }
+  if (L.tie) {
+    // knot at the collar, blade lying on the shirt front down to the sternum
+    const g = L.shirt.thick || 1.07;
+    const pts = [T.top - 0.04, 0.12, 0.03, -0.06].map((y) => [0, y, -(profR(T.chestProf, y) * g + 0.01) * T.szC - (y > 0.15 ? 0.012 : 0)]);
+    mb.ellip('chest', [0, pts[0][1] - 0.004, pts[0][2] - 0.004], [0.012, 0.013, 0.01], { ws: 6, hs: 4, color: L.tie, region: CR.CLOTH });
+    for (let i = 0; i < 3; i++) {
+      mb.seg('chest', pts[i], pts[i + 1], 0.006 + i * 0.003, 0.008 + i * 0.003, { rs: 6, hs: 1, caps: i === 2 ? 1 : 0, capScale: 1.5, sx: 2.2, sz: 0.3, color: L.tie, region: CR.CLOTH });
+    }
+  }
+  if (L.gown) {
+    // gown skirt hangs from the pelvis, flared so striding thighs stay inside; open at the back
+    mb.lathe('hips', [0, 0, 0], [[0.2, -0.3], [0.18, -0.14], [0.162, -0.02], [0.158, 0.06]], {
+      rs: 12, sx: 1.14 * (L.hipsW || 1), sz: 0.98, color: L.shirt.color, region: CR.CLOTH, double: true, mottle: 0.2,
+      tear: { amt: 0.12, f: 11, seed: 427, fn: (x, y, z) => (z > 0.05 && Math.abs(x) < 0.03 + (P.hipY - y) * 0.2) || y < P.hipY - 0.3 + 0.06 * fbm3(x * 20, 0, z * 20, 2, 4) },
+    });
+  }
+  if (L.cap) {
+    const c = L.cap.color;
+    const front = L.cap.peak && color(L.cap.peak);
+    mb.ellip('head', [0, hr * 1.02, 0.01], [sx * 1.1, hr * 0.8, sz * 0.95], {
+      ws: 10, hs: 6, t0: 0, tl: PI * 0.5, color: c, region: CR.CANVAS, rot: [0.08, 0, 0.06],
+      tint: front && ((p, n, cc) => { if (n.z < -0.5 && n.y < 0.8) cc.copy(front); }), // feed cap: pale front panel
+    });
+    mb.box('head', [0, hr * 1.1, -hr * 1.1], [hr * 1.3, 0.01, hr * 0.66], { color: mulColor(c, 0.85), region: CR.CANVAS, rot: [0.16, 0, 0.06] });
+  }
+  if (L.hardHat) {
+    const c = L.hardHat;
+    mb.ellip('head', [0, hr * 1.12, 0.005], [sx * 1.18, hr * 0.86, sz * 1.1], { ws: 12, hs: 6, t0: 0, tl: PI * 0.5, color: c, region: CR.PLAIN, mottle: 0.15, rot: [0.1, 0, -0.08] });
+    mb.lathe('head', [0, hr * 1.1, -hr * 0.08], [[sx * 1.1, 0.0], [sx * 1.42, -0.008], [sx * 1.42, 0.0], [sx * 1.1, 0.012]], {
+      rs: 14, sz: 1.14, color: mulColor(c, 0.9), region: CR.PLAIN, rot: [0.1, 0, -0.08],
+    });
+    mb.box('head', [0, hr * 1.95, 0.0], [hr * 0.22, hr * 0.12, sz * 1.8], { round: 0.5, color: mulColor(c, 0.95), region: CR.PLAIN, rot: [0.1, 0, -0.08] });
+  }
 }
 
 function buildRunner(v) {
@@ -587,11 +882,12 @@ function buildRunner(v) {
     eye: 0xe0d890, eyeGlow: 0.3, socket: 0.22, fingerMul: 1.15, claws: 0.02, curl: 0.7,
     blood: [[[0, 1.5, -0.1], 0.12, 1], [[0.05, 1.2, -0.13], 0.15, 1], [[-0.1, 0.95, -0.1], 0.1, 1], [[0.17, 0.8, 0], 0.08, 1]],
     missingTeeth: 0x12, fang: true,
+    ...[{ cheekTear: 1 }, { skullPatch: [-0.3, 0.8, 0.35, 0.6] }, { oneEye: -1, noEar: 1, jawHang: 0.25 }][v % 3],
   };
   const mb = new MeshBuilder();
   const T = standardHumanoid(mb, P, L);
   exposedRibs(mb, P, -1, -0.07, 4, L, T);
-  return { mb, P };
+  return { mb, P, A: L.jawHang ? { jawHang: L.jawHang } : null };
 }
 
 function buildSpitter() {
@@ -724,22 +1020,30 @@ function buildBoomer() {
   mb.ellip('chest', [0, 0.02, 0.04], [0.3, 0.26, 0.26], { ws: 12, hs: 8, color: 0xa8a468, region: CR.SKIN, noise: 0.015, nf: 12, torso: true });
   // neck fat roll
   mb.lathe('neck', [0, 0, 0], [[0.1, -0.06], [0.14, 0.0], [0.13, 0.05], [0.09, 0.08]], { rs: 10, sx: 1.2, color: 0xa8a468, region: CR.SKIN });
-  // pustules
+  // pustules: swollen blisters facing out of the skin, pale shiny cap over an inflamed rim
   const rnd = mulberry32(99);
+  const C_RIM = color(0x8a3024);
+  const blister = (bone, c, nrm, r, cap) => {
+    const nv = new THREE.Vector3(nrm[0], nrm[1], nrm[2]).normalize();
+    mb.ellip(bone, c, [r, r, r * 0.62], {
+      ws: 7, hs: 5, color: cap, region: CR.GLOW, glow: 0.12, mottle: 0.15, blood: false,
+      q: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), nv),
+      tint(p, n, cc) {
+        cc.lerp(C_RIM, clamp((0.75 - (n.x * nv.x + n.y * nv.y + n.z * nv.z)) * 1.6, 0, 0.85));
+      },
+    });
+  };
   for (let i = 0; i < 7; i++) {
     const a = (rnd() - 0.5) * 2.8, y = (rnd() - 0.5) * 0.5;
     const r = 0.025 + rnd() * 0.04;
-    const x = Math.sin(a) * 0.36 * Math.sqrt(1 - (y / 0.36) ** 2 * 0.5), z = -Math.cos(a) * 0.33 * Math.sqrt(1 - (y / 0.36) ** 2 * 0.5) - 0.06;
-    mb.ellip('belly', [x, y, z], [r, r, r * 0.7], {
-      ws: 6, hs: 5, color: rnd() < 0.5 ? 0x9a9050 : 0x8a7a48, region: CR.TUMOR, glow: 0.05, mottle: 0.2, blood: false,
-      tint(p, n, c) {
-        c.lerp(color(0x7a2a20), clamp(0.5 - Math.abs(n.z) * 0.6, 0, 0.5));
-      },
-    });
+    const k = Math.sqrt(1 - (y / 0.36) ** 2 * 0.5);
+    const x = Math.sin(a) * 0.36 * k, z = -Math.cos(a) * 0.33 * k - 0.06;
+    blister('belly', [x, y, z], [x / 0.36, y / 0.34, (z + 0.06) / 0.33], r, rnd() < 0.5 ? 0xc8c070 : 0xb8b468);
   }
   for (let i = 0; i < 5; i++) {
     const a = (rnd() - 0.5) * 3.5, y = 0.05 + rnd() * 0.2, r = 0.02 + rnd() * 0.025;
-    mb.ellip('chest', [Math.sin(a) * 0.3, y, -Math.cos(a) * 0.25], [r, r, r * 0.7], { ws: 6, hs: 4, color: 0x8a8048, region: CR.TUMOR, glow: 0.04, blood: false });
+    const x = Math.sin(a) * 0.3, z = -Math.cos(a) * 0.25;
+    blister('chest', [x, y, z], [x / 0.3, 0.2, z / 0.25], r, 0xb8b060);
   }
   return { mb, P };
 }
@@ -1059,16 +1363,18 @@ const BUILDERS = {
   [ZTYPE.BOSS_ABOMINATION]: buildAbomination,
   [ZTYPE.BOSS_HIVEQUEEN]: buildHiveQueen,
 };
-const VARIANTS = { [ZTYPE.WALKER]: 8, [ZTYPE.RUNNER]: 3 };
+const VARIANTS = { [ZTYPE.WALKER]: WALKER_VARIANTS, [ZTYPE.RUNNER]: 3 };
+const NO_EXTRAS = {};
 
 const rigCache = new Map();
 function getRig(type, variant) {
   const key = type + ':' + variant;
   let r = rigCache.get(key);
   if (!r) {
-    const { mb, P } = BUILDERS[type](variant);
+    const { mb, P, A } = BUILDERS[type](variant);
     r = mb.build();
     r.P = P;
+    r.A = A || NO_EXTRAS; // per-variant animation quirks (e.g. dislocated jaw)
     r.type = type;
     rigCache.set(key, r);
   }
@@ -1078,14 +1384,31 @@ function getRig(type, variant) {
 // ------------------------------------------------------------------ animation styles
 const ZS = {
   [ZTYPE.WALKER]: {
-    walkLean: -0.42, runLean: -0.45, cycleWalk: 1.25, cycleRun: 2.0, walkStride: 0.4, walkKnee: 0.7, runStride: 0.55, runKnee: 1.1,
-    limp: 0.65, sway: 1, armWalk: 0.95, armDroop: 0.18, armSwing: 0.18, armRun: 1.3, elbow: 0.35, headPitch: -0.15, headTilt: 0.28, jaw: 0.22,
-    idleLean: -0.45,
+    walkLean: -0.6, runLean: -0.6, cycleWalk: 1.3, cycleRun: 2.0, limp: 0.65, headPitch: -0.15, headTilt: 0.28, jaw: 0.22,
+    idleLean: -0.45, reachArms: true, shoulderRoll: 0.18,
+    // planted-foot gait (poseGait): a hunched, lurching shamble that drags the limp leg
+    gWalk: {
+      ref: 1.9, duty: 0.62, lift: 0.07, strike: 0.22, toeOff: -0.55, rollIn: 0.15, heelOff: 0.62, bias: -0.03, width: 0.03, ext: 0.985, bob: 0, vault: 0.7, vt: 0.7,
+      hipYaw: 0.16, drop: 0.08, hike: 0.12, sway: 0.055, roll: 0.12, nod: 0.07, headRoll: 0.18, droop: 0.1, armSwing: 0.32, elbow: 0.22, stumble: true, hipLean: 0.2,
+    },
+    gRun: {
+      ref: 3.5, duty: 0.54, lift: 0.1, strike: 0.2, toeOff: -0.6, rollIn: 0.15, heelOff: 0.55, bias: -0.05, width: 0.03, ext: 0.98, bob: 0, vault: 0.5, vt: 0.7,
+      hipYaw: 0.18, drop: 0.07, hike: 0.12, sway: 0.045, roll: 0.1, nod: 0.09, headRoll: 0.15, droop: 0.2, armSwing: 0.45, elbow: 0.3, stumble: true, hipLean: 0.2,
+    },
   },
   [ZTYPE.RUNNER]: {
-    walkLean: -0.35, runLean: -0.72, cycleWalk: 1.3, cycleRun: 2.9, walkStride: 0.45, walkKnee: 0.8, runStride: 0.95, runKnee: 1.6,
-    limp: 0, sway: 0.6, armWalk: 0.5, armDroop: 0.2, armSwing: 0.4, armRun: 0.35, runArmSwing: 1.25, flail: 1, elbow: 0.8, headPitch: 0.25, headTilt: 0.15, jaw: 0.35,
+    walkLean: -0.75, runLean: -0.95, cycleWalk: 1.2, cycleRun: 2.9, limp: 0, headPitch: 0.25, headTilt: 0.15, jaw: 0.35,
     idleLean: -0.6, twitchy: 1,
+    // stalking prowl: crouched, quick light steps, arms hanging forward
+    gWalk: {
+      ref: 2.2, duty: 0.6, lift: 0.08, strike: 0.1, toeOff: -0.6, rollIn: 0.12, heelOff: 0.55, bias: -0.04, width: 0.03, ext: 0.92, bob: 0.015, vt: 0.7,
+      hipYaw: 0.12, drop: 0.04, sway: 0.03, roll: 0.05, nod: 0.05, headRoll: 0.06, droop: 0.4, armSwing: 0.22, elbow: 0.5, hipLean: 0.25, head: 0, neck: 0.45,
+    },
+    // feral sprint: flight phase, heels kicked up behind, forefoot landings
+    gRun: {
+      ref: 5.6, duty: 0.34, lift: 0.36, liftPow: 0.62, strike: 0.02, toeOff: -0.95, rollIn: 0.1, heelOff: 0.35, bias: -0.1, width: 0, ext: 0.99, vt: 0.8,
+      pitchRate: 1.4, comp: 0.02, flight: 0.05, hipYaw: 0.2, drop: 0.04, sway: 0.015, roll: 0.03, nod: 0.1, sprint: true, asym: true, hipLean: 0.3,
+    },
   },
   [ZTYPE.SPITTER]: {
     walkLean: -0.35, runLean: -0.5, cycleWalk: 1.45, cycleRun: 2.3, walkStride: 0.38, walkKnee: 0.6, runStride: 0.65, runKnee: 1.1,
@@ -1243,6 +1566,7 @@ function poseIdle(z, p) {
   const splay = st.legSplay || 0.05;
   if (z.limpSide) legsStatic(z, p, 0.24, -0.5, -0.02, -0.06, splay);
   else legsStatic(z, p, -0.02, -0.06, 0.24, -0.5, splay);
+  z.standOn = true;
   // arms dangle
   const aw = n1(t * 0.6, z.seed + 11) * 0.12;
   if (st.mantis) {
@@ -1287,6 +1611,7 @@ function roar(z, p, t) {
 
 function poseLoco(z, p, run) {
   const st = z.st;
+  if (run ? st.gRun : st.gWalk) return poseGait(z, p, run);
   if (st.quad) return poseQuad(z, p, run, false);
   if (st.knuckle) return poseTankLoco(z, p, run, false);
   const t = z.time + z.off;
@@ -1311,12 +1636,7 @@ function poseLoco(z, p, run) {
     p[z.nb * 4 + 1] -= 0.025 * hitch * st.limp;
   }
   // arms
-  if (st.flail && run) {
-    const f = st.runArmSwing;
-    const ns = n1(t * 3, z.seed) * 0.3;
-    arm(p, 0, st.armRun + f * Math.sin(ph) + ns, 0.35 + 0.2 * Math.cos(ph * 2), 0.3, st.elbow + 0.5 * Math.max(0, Math.cos(ph)), 0.3);
-    arm(p, 1, st.armRun - f * Math.sin(ph) - ns, 0.35 + 0.2 * Math.sin(ph * 2), 0.3, st.elbow + 0.5 * Math.max(0, -Math.cos(ph)), 0.3);
-  } else if (st.mantis) {
+  if (st.mantis) {
     arm(p, 0, 0.9 + 0.1 * Math.sin(ph), 0.3, 0.3, 2.2, 0.4);
     arm(p, 1, 0.9 - 0.1 * Math.sin(ph), 0.3, 0.3, 2.2, 0.4);
   } else {
@@ -1396,17 +1716,511 @@ function poseTankLoco(z, p, run, idle) {
   R(p, JAW, -0.15 - 0.1 * Math.abs(Math.sin(t * 1.3)), 0, 0);
 }
 
+// ------------------------------------------------------------------ planted-foot gait (walker, runner)
+// Instead of swinging leg angles, these styles plan where each ankle goes. A stance foot stays put on the ground while
+// the body travels over it (one gait cycle covers exactly the ground distance that drives the phase, so feet don't
+// skate), lands on the heel and rolls off the ball; the swing foot lifts, drags its toes or kicks up behind. solveLegs
+// fits the legs with two-bone IK once the upper body (and the head-over-origin shift) is final.
+const FOOT_HEEL = 0.085, FOOT_BALL = 0.12, FOOT_TOE = 0.17;
+const frac = (x) => x - Math.floor(x);
+const hash01 = (a, b) => {
+  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x632be5ab, 0xc2b2ae35);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x27d4eb2f);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+
+/** Per-instance gait quirks (created lazily so the survivor zombie-mode shim gets them too). */
+function gaitVars(z) {
+  if (z.gv) return z.gv;
+  const r = mulberry32(((z.seed >>> 0) * 7919 + 1013 + (z.type | 0) * 131) >>> 0);
+  const limp = r(), arms = r();
+  z.gv = {
+    limp: limp < 0.2 ? 0 : 0.35 + 0.65 * r(), // how badly the bad leg drags (some shuffle on two good legs)
+    lean: 0.85 + 0.3 * r(),
+    stride: 0.92 + 0.16 * r(),
+    arms: arms < 0.36 ? 0 : arms < 0.76 ? 1 : 2, // walker: dangle / one arm reaching / both; runner: pump / claw / flail
+    reach: 1.05 + 0.35 * r(),
+    stumble: 0.05 + 0.12 * r(), // chance per gait cycle of a stumbling lurch
+    slouch: (r() - 0.5) * 0.14,
+    asym: (r() - 0.5) * 0.07, // runner: uneven, galloping rhythm
+  };
+  return z.gv;
+}
+
+/** Ground distance (m) of one gait cycle before the instance's rate; strides shorten when moving slowly. */
+function gaitLen(z, run, speed) {
+  const st = z.st;
+  const base = run ? st.cycleRun : st.cycleWalk;
+  const G = run ? st.gRun : st.gWalk;
+  if (!G) return base;
+  return base * gaitVars(z).stride * clamp(Math.sqrt(Math.max(speed, 0.01) / G.ref), 0.6, 1.15);
+}
+
+/** Per-leg timing for this frame. Leg 0 = left, 1 = right; the limp leg lands at 0, the other at td. */
+function gaitSetup(z, run) {
+  const st = z.st, G = run ? st.gRun : st.gWalk, V = gaitVars(z);
+  const k = z.gk || (z.gk = { G, len: 1, limp: 0, D: [0, 0], td: [0, 0], lift: [0, 0], drag: [0, 0], circ: [0, 0], bob: [0, 0], vault: [0, 0], x: [0, 0], w: [0, 0], stance: [false, false], load: [0, 0], u: 0 });
+  k.G = G;
+  k.len = gaitLen(z, run, z.speed) / ((z.rate || 1) * (z.gScale || 1)); // in rig units
+  const b = z.limpSide, g = 1 - b;
+  const limp = (G.limp ?? st.limp ?? 0) * V.limp;
+  k.limp = limp;
+  // limp: short stance on the bad leg and a quick step off it, long slow drag of the bad foot ("step... draag")
+  k.D[b] = G.duty - 0.12 * limp;
+  k.D[g] = G.duty + 0.12 * limp;
+  k.td[b] = 0;
+  k.td[g] = 0.5 - 0.1 * limp + (G.asym ? V.asym : 0);
+  k.lift[b] = G.lift * (1 - 0.8 * limp);
+  k.lift[g] = G.lift;
+  k.drag[b] = limp;
+  k.drag[g] = 0;
+  k.circ[b] = 0.05 * limp;
+  k.circ[g] = 0;
+  // single support: vault up over a stiff stance leg; the bad knee buckles under the weight instead
+  k.bob[b] = G.bob - 0.04 * limp;
+  k.bob[g] = G.bob;
+  k.vault[b] = (G.vault || 0) * (1 - 0.8 * limp);
+  k.vault[g] = G.vault || 0;
+  const u = frac(z.phase / TAU);
+  k.u = u;
+  for (let i = 0; i < 2; i++) {
+    const x = frac(u - k.td[i]), D = k.D[i];
+    k.x[i] = x;
+    k.stance[i] = x < D;
+    k.w[i] = x < D ? 0 : (x - D) / (1 - D);
+    k.load[i] = legLoad(k, i, x);
+  }
+  return k;
+}
+function legLoad(k, i, x) {
+  const D = k.D[i];
+  return x < D ? smooth(Math.min(x, D - x) / 0.08) : 0;
+}
+/** Planned forward offset of the flat foot (rig m) at cycle time x since touchdown. */
+function footFwd(k, i, x) {
+  const D = k.D[i], h = D * k.len * 0.5;
+  return x < D ? h - x * k.len : -h + 2 * h * smooth((x - D) / (1 - D));
+}
+/** Weight shift, -1 (left foot) .. 1 (right foot), at cycle time u. */
+const latAt = (k, u) => legLoad(k, 1, frac(u - k.td[1])) - legLoad(k, 0, frac(u - k.td[0]));
+/** Which foot leads, ~-1 (left ahead) .. 1 (right ahead), at cycle time u. */
+const leadAt = (k, u) => (footFwd(k, 1, frac(u - k.td[1])) - footFwd(k, 0, frac(u - k.td[0]))) / ((k.D[0] + k.D[1]) * 0.5 * k.len);
+/** Footfall jolt: a bump just after each touchdown (heavier on the limp leg). */
+function jolt(k, u, b) {
+  let j = 0;
+  for (let i = 0; i < 2; i++) {
+    const x = frac(u - k.td[i]);
+    if (x < 0.2) j += Math.sin((PI * x) / 0.2) * (i === b ? 1 + k.limp : 1);
+  }
+  return j;
+}
+/** Occasional stumbling lurch: 0..1 over a whole gait cycle, on a random minority of cycles. */
+function stumble(z, V) {
+  const c = Math.floor(z.phase / TAU);
+  if (hash01(c, z.seed) > V.stumble) return 0;
+  const s = Math.sin(PI * frac(z.phase / TAU));
+  return s * s;
+}
+
+function poseGait(z, p, run) {
+  const st = z.st, V = gaitVars(z), k = gaitSetup(z, run), G = k.G;
+  const t = z.time + z.off, n = z.nb * 4, u = k.u, b = z.limpSide;
+  z.gOn = true;
+  const lat = k.load[1] - k.load[0];
+  const latLag = latAt(k, u - 0.1);
+  const lead = leadAt(k, u), leadLag = leadAt(k, u - 0.07), leadLag2 = leadAt(k, u - 0.17);
+  const jl = jolt(k, u, b), jlLag = jolt(k, u - 0.06, b);
+  const tw = twitch(z, t, st.twitchy ? 2 : 0.5);
+  // pelvis: turns with the leading leg, drops on the swing side (a dragged leg hikes its hip instead), shifts over the stance foot
+  let roll = 0;
+  for (let i = 0; i < 2; i++) if (!k.stance[i]) roll += (i ? 1 : -1) * Math.sin(PI * k.w[i]) * lerp(-G.drop, G.hike || 0, k.drag[i]);
+  const yaw = G.hipYaw * lead;
+  const lean = (run ? st.runLean : st.walkLean) * V.lean;
+  const hl = lean * (G.hipLean || 0); // part of the lean tips the pelvis (the leg IK absorbs it)
+  R(p, HIPS, hl, yaw, roll);
+  p[n] = G.sway * lat + (b ? -0.015 : 0.015) * k.limp; // weight favors the good leg
+
+  if (G.sprint) {
+    // --- feral sprint: pitched far forward, shoulders whipping against the hips, head locked on the prey
+    const nod = G.nod * jl, tl = lean - hl;
+    R(p, SPINE, tl * 0.5 - nod * 0.4 + 0.03 * Math.sin(t * 2.3), -yaw * 0.9, -roll * 0.5 - G.roll * lat);
+    R(p, CHEST, tl * 0.5 - nod * 0.3, -yaw * 1.05, -G.roll * lat * 0.5);
+    posture(z, p);
+    A(p, CLAV_L, 0, 0, -0.06 * Math.max(0, -lead));
+    A(p, CLAV_R, 0, 0, 0.06 * Math.max(0, lead));
+    headLook(p, st.headPitch - 0.2 - 0.7 * G.nod * jlLag + tw * 0.25, yaw * 0.9 + n1(t * 0.7, z.seed + 4) * 0.12 + tw * 0.35, z.tilt * st.headTilt * 0.6 + tw * 0.2, 0.5);
+    R(p, JAW, -0.4 - 0.2 * jl - 0.15 * Math.abs(Math.sin(t * 5.3)), 0, 0);
+    for (let s = 0; s < 2; s++) {
+      const sg = s ? 1 : -1;
+      const d = -sg * leadLag, d2 = -sg * leadLag2; // + while this arm is forward (opposite leg leads)
+      const ns = n1(t * 3.1, z.seed + s * 3) * 0.25, na = n1(t * 2.3, z.seed + 9 + s) * 0.15;
+      if (V.arms === 1) {
+        // clawing forward at the prey, alternating grabs
+        arm(p, s, 1.2 + 0.45 * d + ns, 0.28 + na, 0.3, 0.35 + 0.45 * Math.max(0, d2 - d), 0.65);
+      } else if (V.arms === 2) {
+        // flailing: loose, oversized and out of sync
+        arm(p, s, 0.6 + 0.8 * d + ns * 1.5, 0.45 + 0.25 * Math.sin(u * TAU * 2 + s) + na, 0.3, 0.4 + 0.9 * Math.max(0, d2 - d), 0.3);
+      } else {
+        // sprinter's pump, wide and ragged
+        arm(p, s, 0.35 + 0.95 * d + ns, 0.3 + 0.12 * Math.abs(d) + na, 0.35, 1.2 - 0.45 * d + 0.6 * Math.max(0, d2 - d), 0.35);
+      }
+    }
+    return;
+  }
+
+  // --- shamble: hunched, lurching over the stance leg, head lolling a beat behind
+  const nod = G.nod * jl;
+  const stum = G.stumble ? stumble(z, V) : 0;
+  const lurch = k.limp * k.load[b] * (b ? 1 : -1); // + toward the right
+  const trunkRoll = -G.roll * lat - 0.22 * lurch;
+  const br = Math.sin(t * 1.9) * 0.015, tl = lean - hl;
+  R(p, SPINE, tl * 0.5 - nod * 0.5 - 0.14 * stum + br, -yaw * 0.7, -roll * 0.6 + trunkRoll * 0.5 + V.slouch * 0.5);
+  R(p, CHEST, tl * 0.5 - nod * 0.4 - 0.1 * stum + br, -yaw * 0.75, trunkRoll * 0.5 + V.slouch * 0.5);
+  p[n + 1] -= 0.03 * stum;
+  posture(z, p);
+  headLook(
+    p,
+    (G.head ?? st.headPitch) - 1.3 * G.nod * jlLag + 0.3 * stum + tw * 0.2 + (V.arms === 2 && st.reachArms ? 0.1 : 0),
+    n1(t * 0.4, z.seed + 4) * 0.25 + tw * 0.3 + yaw * 0.4,
+    z.tilt * st.headTilt - G.headRoll * latLag + tw * 0.15,
+    G.neck || 0.2
+  );
+  R(p, JAW, -st.jaw * (0.5 + 0.5 * Math.abs(Math.sin(t * 1.7))) - 0.08 * jl, 0, 0);
+  for (let s = 0; s < 2; s++) {
+    const sg = s ? 1 : -1;
+    const reach = st.reachArms && (V.arms === 2 || (V.arms === 1 && s === z.armSide));
+    const ns = n1(t * 0.8, z.seed + 2 + s) * 0.08;
+    if (reach) {
+      // arm held out toward the prey, bouncing on each footfall
+      arm(p, s, V.reach - 0.16 * jlLag - 0.05 * sg * lead + 0.3 * stum + ns, 0.1 + (st.armOut || 0), 0.2, 0.3 + 0.12 * jlLag, -0.15 + 0.2 * jlLag);
+    } else {
+      // dead weight: swings with the opposite leg, forearm trailing the upper arm (the elbow flops open and shut)
+      const a1 = G.droop + G.armSwing * -sg * leadLag + ns, a2 = G.droop + G.armSwing * -sg * leadLag2 + ns;
+      const flop = Math.max(0, a2 - a1);
+      arm(p, s, a1 + 0.6 * stum, 0.1 + (st.armOut || 0) - 0.05 * sg * latLag, 0.3, G.elbow + 1.4 * flop + 0.1 * jlLag, 0.3 + 0.5 * flop);
+    }
+  }
+  if (st.twitchy) {
+    A(p, UARM_L, tw * 0.4, 0, tw * 0.25);
+    A(p, CHEST, 0, tw * 0.1, 0);
+  }
+}
+
+/** Ankle position (forward, up) of a foot pitched ph (+ toe up) whose flat position is `flat`: pivots on the heel or the ball. */
+const _an = { f: 0, y: 0 };
+function pivotAnkle(flat, ph, a) {
+  const c = Math.cos(ph), s = Math.sin(ph);
+  if (ph > 0) {
+    _an.f = flat - FOOT_HEEL + FOOT_HEEL * c - a * s;
+    _an.y = FOOT_HEEL * s + a * c;
+  } else {
+    _an.f = flat + FOOT_BALL - FOOT_BALL * c - a * s;
+    _an.y = -FOOT_BALL * s + a * c;
+  }
+  return _an;
+}
+const _foot = { f: 0, y: 0, ph: 0, flat: 0 };
+/** Planned ankle (forward of the stance center, height) and world pitch of leg i this frame. */
+function planFoot(k, i, a) {
+  const G = k.G, D = k.D[i], x = k.x[i], len = k.len;
+  const fL = G.bias + D * len * 0.5, fO = G.bias - D * len * 0.5;
+  if (x < D) {
+    const s = x / D;
+    const ph = s < G.rollIn ? G.strike * (1 - smooth(s / G.rollIn)) : s > G.heelOff ? G.toeOff * Math.pow((s - G.heelOff) / (1 - G.heelOff), 1.6) : 0;
+    const q = pivotAnkle(fL - x * len, ph, a);
+    _foot.f = q.f;
+    _foot.y = q.y;
+    _foot.ph = ph;
+    _foot.flat = fL - x * len; // where the foot sits on the ground (the ankle rolls around it)
+    return _foot;
+  }
+  const w = k.w[i];
+  const q0 = pivotAnkle(fO, G.toeOff, a), f0 = q0.f, y0 = q0.y;
+  const q1 = pivotAnkle(fL, G.strike, a), f1 = q1.f, y1 = q1.y;
+  // Hermite: leaves and lands moving back at ground speed (world-still), so lift-off and touchdown don't snap
+  const v = -len * (1 - D) * G.vt;
+  const w2 = w * w, w3 = w2 * w;
+  const f = (2 * w3 - 3 * w2 + 1) * f0 + (w3 - 2 * w2 + w) * v + (3 * w2 - 2 * w3) * f1 + (w3 - w2) * v;
+  let ph = G.toeOff + (G.strike - G.toeOff) * smooth(w * (G.pitchRate || 1));
+  ph = lerp(ph, -0.5, k.drag[i] * Math.sin(PI * w)); // foot drop: the dragged foot hangs toe-down
+  let y = y0 + (y1 - y0) * w + k.lift[i] * Math.sin(PI * Math.pow(w, G.liftPow || 1));
+  // never through the ground: toe and heel stay above it (a dragged toe scrapes along)
+  const c = Math.cos(ph), sn = Math.sin(ph);
+  y = Math.max(y, a * c - FOOT_TOE * sn, a * c + FOOT_HEEL * sn);
+  _foot.f = f;
+  _foot.y = y;
+  _foot.ph = ph;
+  return _foot;
+}
+
+const _v3 = { x: 0, y: 0, z: 0 };
+/** v = R * v for three.js Euler XYZ (R = Rx Ry Rz); inv applies the transpose. */
+function rotXYZ(ax, ay, az, inv) {
+  let { x, y, z } = _v3, c, s, t;
+  if (!inv) {
+    c = Math.cos(az); s = Math.sin(az); t = x * c - y * s; y = x * s + y * c; x = t;
+    c = Math.cos(ay); s = Math.sin(ay); t = x * c + z * s; z = -x * s + z * c; x = t;
+    c = Math.cos(ax); s = Math.sin(ax); t = y * c - z * s; z = y * s + z * c; y = t;
+  } else {
+    c = Math.cos(ax); s = Math.sin(ax); t = y * c + z * s; z = -y * s + z * c; y = t;
+    c = Math.cos(ay); s = Math.sin(ay); t = x * c - z * s; z = x * s + z * c; x = t;
+    c = Math.cos(az); s = Math.sin(az); t = x * c + y * s; y = -x * s + y * c; x = t;
+  }
+  _v3.x = x;
+  _v3.y = y;
+  _v3.z = z;
+  return _v3;
+}
+
+const _ft = { x: [0, 0], y: [0, 0], f: [0, 0], z: [0, 0], ph: [0, 0], flat: [0, 0] };
+
+// How far (rig m) a pinned foot may end up from the gait plan before it gets dragged along: forward/back, sideways.
+const PIN_F = 0.22, PIN_X = 0.1;
+/**
+ * World-space foot pinning: a stance foot stays on the spot where it touched down, even when the body's actual
+ * motion (interpolated network movement, crowd shoves, turning, a speed estimate that lags) differs from what the
+ * gait planned. At lift-off the leftover offset fades out over the swing, so the next step lands on plan again.
+ * Needs the instance's world placement (wx, wz, wyaw, wScale); culled frames re-pin.
+ */
+function pinFeet(z, k) {
+  const L = z.pin || (z.pin = { on: [false, false], x: [0, 0], z: [0, 0], ex: [0, 0], ef: [0, 0], t: -1 });
+  const s = z.wScale, c = Math.cos(z.wyaw), sn = Math.sin(z.wyaw), cz = z.gcz;
+  const fresh = z.time - L.t < 0.12;
+  L.t = z.time;
+  for (let i = 0; i < 2; i++) {
+    if (!k.stance[i]) {
+      L.on[i] = false;
+      if (!fresh) L.ex[i] = L.ef[i] = 0;
+      const f = 1 - smooth(k.w[i]);
+      _ft.x[i] += L.ex[i] * f;
+      _ft.f[i] += L.ef[i] * f;
+      continue;
+    }
+    const px = _ft.x[i], pz = cz - _ft.flat[i]; // planned ground spot, rig space
+    if (!L.on[i] || !fresh) {
+      if (fresh) z.footfalls++;
+      L.on[i] = true;
+      L.x[i] = z.wx + (px * c + pz * sn) * s;
+      L.z[i] = z.wz + (pz * c - px * sn) * s;
+    }
+    const dx = L.x[i] - z.wx, dz = L.z[i] - z.wz;
+    let ex = (dx * c - dz * sn) / s - px, ez = (dx * sn + dz * c) / s - pz;
+    const e = Math.hypot(ex / PIN_X, ez / PIN_F);
+    if (e > 1) {
+      // shoved too far off plan: the foot slides (drag the pin along)
+      ex /= e;
+      ez /= e;
+      const lx = px + ex, lz = pz + ez;
+      L.x[i] = z.wx + (lx * c + lz * sn) * s;
+      L.z[i] = z.wz + (lz * c - lx * sn) * s;
+    }
+    L.ex[i] = ex;
+    L.ef[i] = -ez;
+    _ft.x[i] += ex;
+    _ft.f[i] -= ez;
+  }
+}
+/** Pelvis height + two-bone leg IK onto the planned feet. Runs after the upper body and the head shift are final. */
+function solveLegs(z, p) {
+  const k = z.gk, G = k.G, P = z.P, n = z.nb * 4;
+  const L1 = P.thighLen, L2 = P.shinLen, a = P.ankleY;
+  // feet are planned around a low-passed copy of the hips' z, so a changing head shift can't drag planted feet along
+  const rz = p[n + 2];
+  if (z.gcz === undefined || Math.abs(rz - z.gcz) > 0.3) z.gcz = rz;
+  else z.gcz += (rz - z.gcz) * 0.08;
+  const cz = z.gcz;
+  for (let i = 0; i < 2; i++) {
+    const q = planFoot(k, i, a);
+    _ft.f[i] = q.f;
+    _ft.y[i] = q.y;
+    _ft.ph[i] = q.ph;
+    _ft.flat[i] = q.flat;
+    _ft.x[i] = (i ? 1 : -1) * (P.hipW + G.width + (k.stance[i] ? 0 : k.circ[i] * Math.sin(PI * k.w[i])));
+  }
+  if (z.wScale) pinFeet(z, k);
+  // pelvis height: as high as the legs reach at touchdown / lift-off (they are longest-spread there), plus the
+  // vault over a walking stance leg or the dip-and-bound of a running one
+  const Lr = (L1 + L2) * G.ext, wd = G.width;
+  const reach = (f, y) => y + Math.sqrt(Math.max(0.01, Lr * Lr - f * f - wd * wd)) + 0.03;
+  let hTD = 9, hTO = 9;
+  for (let i = 0; i < 2; i++) {
+    const D = k.D[i];
+    const q1 = pivotAnkle(G.bias + D * k.len * 0.5, G.strike, a);
+    hTD = Math.min(hTD, reach(q1.f, q1.y));
+    const q0 = pivotAnkle(G.bias - D * k.len * 0.5, G.toeOff, a);
+    hTO = Math.min(hTO, reach(q0.f, q0.y));
+  }
+  let hy;
+  const s0 = k.stance[0], s1 = k.stance[1];
+  if (G.sprint) {
+    if (s0 || s1) {
+      let m = 9;
+      for (let i = 0; i < 2; i++) {
+        if (!k.stance[i]) continue;
+        const s = k.x[i] / k.D[i];
+        m = Math.min(m, lerp(hTD, hTO, s) - G.comp * Math.sin(PI * s));
+      }
+      hy = m;
+    } else {
+      // airborne: from the last lift-off to the next touchdown
+      const i = k.x[0] - k.D[0] < k.x[1] - k.D[1] ? 0 : 1, j = 1 - i;
+      const tau = k.x[i] - k.D[i], f = tau / Math.max(1e-4, tau + 1 - k.x[j]);
+      hy = lerp(hTO, hTD, f) + G.flight * Math.sin(PI * f);
+    }
+  } else {
+    hy = Math.min(hTD, hTO);
+    if (s0 !== s1) {
+      const i = s0 ? 0 : 1, j = 1 - i;
+      const tau = k.x[j] - k.D[j], f = tau / Math.max(1e-4, tau + 1 - k.x[j]);
+      const mid = reach(pivotAnkle(G.bias, 0, a).f, a);
+      hy += (k.bob[i] + k.vault[i] * Math.max(0, mid - hy)) * Math.sin(PI * f);
+    }
+  }
+  p[n + 1] += hy - P.hipY;
+  for (let i = 0; i < 2; i++) _ft.z[i] = cz - _ft.f[i];
+  keepReach(z, p, _ft, k.stance);
+  legsIK(z, p, _ft);
+}
+
+/**
+ * Lowers the pelvis until every planted ankle target T (rig x, y, z) is within reach. The drop is eased (quick to
+ * sink, slower to rise) so a foot landing out of reach or lifting off doesn't make the hips jump in one frame;
+ * meanwhile the IK leaves that foot a little short of its target.
+ */
+function keepReach(z, p, T, planted) {
+  const P = z.P, n = z.nb * 4, maxR = (P.thighLen + P.shinLen) * 0.999;
+  const hx = p[HIPS * 4], hyw = p[HIPS * 4 + 1], hz = p[HIPS * 4 + 2];
+  let need = 0;
+  for (let i = 0; i < 2; i++) {
+    if (!planted[i]) continue;
+    _v3.x = (i ? 1 : -1) * P.hipW;
+    _v3.y = -0.03;
+    _v3.z = 0;
+    const o = rotXYZ(hx, hyw, hz, false);
+    const dx = T.x[i] - (p[n] + o.x), dz = T.z[i] - (p[n + 2] + o.z);
+    const top = T.y[i] + Math.sqrt(Math.max(0, maxR * maxR - dx * dx - dz * dz));
+    need = Math.max(need, p[n + 1] + P.hipY + o.y - top);
+  }
+  if (!z.wScale) {
+    p[n + 1] -= need; // posed in place (calibration, treadmill): exact
+    return;
+  }
+  const dt = clamp(z.time - (z.dropT ?? z.time), 0, 0.1);
+  z.dropT = z.time;
+  const d0 = z.drop || 0;
+  z.drop = d0 + (need - d0) * Math.min(1, dt * (need > d0 ? 30 : 10));
+  p[n + 1] -= z.drop;
+}
+
+/** Two-bone IK of both legs onto ankle targets T (rig x, y, z) with the feet at world pitch T.ph. */
+function legsIK(z, p, T) {
+  const P = z.P, n = z.nb * 4, L1 = P.thighLen, L2 = P.shinLen;
+  const hx = p[HIPS * 4], hyw = p[HIPS * 4 + 1], hz = p[HIPS * 4 + 2];
+  for (let i = 0; i < 2; i++) {
+    const sg = i ? 1 : -1, th = i ? THIGH_R : THIGH_L;
+    _v3.x = sg * P.hipW;
+    _v3.y = -0.03;
+    _v3.z = 0;
+    const o = rotXYZ(hx, hyw, hz, false), ox = o.x, oy = o.y, oz = o.z; // o is the shared scratch vector
+    _v3.x = T.x[i] - (p[n] + ox);
+    _v3.y = T.y[i] - (p[n + 1] + P.hipY + oy);
+    _v3.z = T.z[i] - (p[n + 2] + oz);
+    const v = rotXYZ(hx, hyw, hz, true); // hip -> ankle in the hips' frame
+    let d = Math.hypot(v.x, v.y, v.z);
+    d = clamp(d, Math.abs(L1 - L2) + 0.02, (L1 + L2) * 0.9995);
+    const ck = clamp((d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2), -1, 1);
+    const kn = -Math.acos(ck);
+    const Y = L1 + L2 * ck, Zk = L2 * Math.sin(kn);
+    const splay = Math.asin(clamp(v.x / Y, -0.9, 0.9));
+    let pitch = Math.atan2(v.z, v.y) - Math.atan2(-Zk, -Y * Math.cos(splay));
+    if (pitch > PI) pitch -= TAU;
+    else if (pitch < -PI) pitch += TAU;
+    R(p, th, pitch, 0, splay);
+    R(p, th + 1, kn, 0, 0);
+    R(p, th + 2, T.ph[i] - (hx + pitch + kn), 0, -(splay + hz));
+  }
+}
+
+// Standing still (idle, braced attack, menace): the feet stay planted in the world while the hips sway, and the legs
+// are re-solved onto them. Turning on the spot or being shoved off the stance makes it shuffle a foot back under it.
+const STEP_T = 0.3, STEP_LIFT = 0.07, STEP_X = 0.09, STEP_F = 0.14;
+const _st = { x: [0, 0], y: [0, 0], z: [0, 0], ph: [0, 0], planted: [true, true] };
+function plantStatic(z, p) {
+  const P = z.P, n = z.nb * 4, L1 = P.thighLen, L2 = P.shinLen;
+  const S = z.stand || (z.stand = { x: [0, 0], z: [0, 0], sx: [0, 0], sz: [0, 0], u: [-1, -1], t: -1 });
+  const s = z.wScale, c = Math.cos(z.wyaw), sn = Math.sin(z.wyaw);
+  const fresh = z.time - S.t < 0.12, dt = fresh ? z.time - S.t : 0;
+  S.t = z.time;
+  const rz = p[n + 2];
+  if (z.gcz === undefined || Math.abs(rz - z.gcz) > 0.3) z.gcz = rz;
+  else z.gcz += (rz - z.gcz) * 0.08;
+  for (let i = 0; i < 2; i++) {
+    // where the static pose puts this ankle under a still pelvis (thigh + shin FK), in the world
+    const th = i ? THIGH_R : THIGH_L, kn = p[(th + 1) * 4];
+    _v3.x = 0;
+    _v3.y = -L1 - L2 * Math.cos(kn);
+    _v3.z = -L2 * Math.sin(kn);
+    const q = rotXYZ(p[th * 4], p[th * 4 + 1], p[th * 4 + 2], false);
+    const rx = (i ? 1 : -1) * P.hipW + q.x, rzr = z.gcz + q.z;
+    const wx = z.wx + (rx * c + rzr * sn) * s, wz = z.wz + (rzr * c - rx * sn) * s;
+    if (!fresh) {
+      S.x[i] = wx;
+      S.z[i] = wz;
+      S.u[i] = -1;
+    }
+    let px = S.x[i], pz = S.z[i], lift = 0;
+    if (S.u[i] >= 0) {
+      S.u[i] = Math.min(1, S.u[i] + dt / STEP_T);
+      const e = smooth(S.u[i]);
+      px = S.sx[i] + (wx - S.sx[i]) * e;
+      pz = S.sz[i] + (wz - S.sz[i]) * e;
+      lift = STEP_LIFT * Math.sin(PI * S.u[i]);
+      if (S.u[i] >= 1) {
+        S.u[i] = -1;
+        S.x[i] = wx;
+        S.z[i] = wz;
+      }
+    } else {
+      const ex = ((px - wx) * c - (pz - wz) * sn) / s, ez = ((px - wx) * sn + (pz - wz) * c) / s;
+      const e = Math.hypot(ex / STEP_X, ez / STEP_F);
+      if (e > 2.5) {
+        // shoved well off it before a step could fix it: the foot slides
+        px = wx + (px - wx) * (2.5 / e);
+        pz = wz + (pz - wz) * (2.5 / e);
+        S.x[i] = px;
+        S.z[i] = pz;
+      }
+      if (e > 1 && S.u[1 - i] < 0) {
+        S.u[i] = 0;
+        S.sx[i] = px;
+        S.sz[i] = pz;
+      }
+    }
+    const dx = px - z.wx, dz = pz - z.wz;
+    _st.x[i] = (dx * c - dz * sn) / s;
+    _st.z[i] = (dx * sn + dz * c) / s;
+    _st.y[i] = P.ankleY + lift;
+    _st.ph[i] = 0;
+    _st.planted[i] = S.u[i] < 0;
+  }
+  keepReach(z, p, _st, _st.planted);
+  legsIK(z, p, _st);
+}
+
 function poseAttack(z, p) {
   const st = z.st, type = z.type;
   const t = z.stateT;
   const per = (z.def.rate || 1) / z.rate;
   const u = (t % per) / per;
-  // lower body: keep walking if moving, else braced
-  if (z.speed > 0.4) poseLoco(z, p, false);
+  // lower body: keep walking (or running) if moving, else braced
+  const mv = z.sub ?? (z.speed > 0.4 ? 1 : 0);
+  if (mv) poseLoco(z, p, mv === 2);
   else {
     clearPose(p, z.nb);
     if (st.quad) legsStatic(z, p, st.baseT + 0.1, -st.baseK, st.baseT - 0.1, -st.baseK + 0.1, 0.14);
     else legsStatic(z, p, 0.35, -0.35, -0.15, -0.1, st.legSplay || 0.05);
+    z.standOn = true;
   }
   if (type === ZTYPE.TANK) return tankSmash(z, p, u);
   if (type === ZTYPE.BOSS_ABOMINATION) return abomSweep(z, p, u);
@@ -1584,6 +2398,109 @@ function poseSpecial(z, p) {
   }
 }
 
+/** Standing over the prey between swipes: braced like the attack, arms up clutching at it, heaving, jaw snapping. */
+function poseMenace(z, p) {
+  const st = z.st;
+  if (st.quad || st.knuckle || st.mantis || st.waddle || z.def.boss) return poseIdle(z, p);
+  const t = z.time + z.off;
+  legsStatic(z, p, 0.35, -0.35, -0.15, -0.1, st.legSplay || 0.05);
+  z.standOn = true;
+  const heave = Math.sin(t * 3.4 * z.rate);
+  const tw = twitch(z, t, st.twitchy ? 2.2 : 1.1);
+  const sway = n1(t * 0.7, z.seed + 13);
+  R(p, SPINE, -0.21 + 0.035 * heave - 0.08 * Math.abs(tw), 0.12 * sway, 0.05 * sway);
+  R(p, CHEST, -0.21 + 0.03 * heave, 0.08 * sway + 0.1 * tw, 0);
+  p[z.nb * 4] = 0.03 * sway;
+  posture(z, p);
+  for (let s = 0; s < 2; s++) {
+    // each hand grabs on its own slow rhythm: reach out, clutch, pull back
+    const g = Math.sin(t * (2.1 + 0.4 * s) * z.rate + s * 2.3 + z.seed);
+    const n = n1(t * 1.3, z.seed + 20 + s);
+    arm(p, s, 1.3 + 0.18 * g + 0.1 * n + 0.2 * tw, 0.24 - 0.06 * g, 0.3, 0.25 + 0.35 * Math.max(0, -g), 0.55 + 0.25 * Math.max(0, g));
+  }
+  headLook(p, 0.05 + 0.04 * heave + tw * 0.25, n1(t * 0.9, z.seed + 6) * 0.2 + tw * 0.35, z.tilt * 0.2 + tw * 0.2, 0.5);
+  R(p, JAW, -0.3 - 0.35 * Math.max(0, Math.sin(t * 6.3 + 0.7 * n1(t, z.seed))) - 0.2 * Math.abs(tw), 0, 0);
+}
+
+/** Hit reaction: torso and head snap back, arms jerk out, then it recovers (additive, upper body only). */
+function poseFlinch(z, p) {
+  const t = z.flinchT, s = z.flinchSide;
+  const e = t < 0.05 ? t / 0.05 : Math.exp(-(t - 0.05) * 7);
+  A(p, SPINE, 0.12 * e, 0.12 * s * e, 0.06 * s * e);
+  A(p, CHEST, 0.1 * e, 0.1 * s * e, 0);
+  A(p, NECK, 0.1 * e, 0, 0);
+  A(p, HEAD, 0.3 * e, 0.25 * s * e, 0.22 * s * e);
+  A(p, JAW, -0.3 * e, 0, 0);
+  A(p, UARM_L, 0.25 * e, 0, -0.35 * e);
+  A(p, UARM_R, 0.25 * e, 0, 0.35 * e);
+  A(p, FARM_L, 0.3 * e, 0, 0);
+  A(p, FARM_R, 0.3 * e, 0, 0);
+}
+
+// growl / scream / roar: jaw gape, head lift or thrust, chest heave
+const VOX = [
+  { dur: 1.4, jaw: 0.5, head: 0.14, chest: 0.04 },
+  { dur: 1.0, jaw: 0.95, head: -0.2, chest: -0.08 },
+  { dur: 1.6, jaw: 0.85, head: 0.35, chest: 0.12 },
+];
+function poseVocal(z, p) {
+  const V = VOX[z.voxKind], u = z.voxT / V.dur, t = z.time + z.off;
+  const e = smooth(u / 0.12) * (1 - smooth((u - 0.75) / 0.25)) * (0.8 + 0.2 * Math.sin(u * 23 + z.seed));
+  A(p, JAW, -V.jaw * e - 0.05 * e * Math.sin(t * 37), 0, 0);
+  A(p, NECK, V.head * 0.4 * e, 0, 0);
+  A(p, HEAD, V.head * 0.6 * e, 0, z.tilt * 0.1 * e);
+  A(p, CHEST, V.chest * e, 0, 0);
+}
+
+// ------------------------------------------------------------------ gaze: nearby zombies turn their heads to stare at the viewer
+const viewer = { x: 0, y: 0, z: 0, on: false };
+/** Camera position the zombies may stare at this frame (call once per frame). */
+export function setZombieViewer(x, y, z) {
+  viewer.x = x;
+  viewer.y = y;
+  viewer.z = z;
+  viewer.on = true;
+}
+const GAZE_NEAR = 13, GAZE_FAR = 19;
+/** Updates the instance's smoothed gaze (yaw/pitch relative to its facing, weight). */
+function updateGaze(z, dt) {
+  const st = z.state;
+  let want = 0, yaw = z.gazeYaw, pitch = z.gazePitch;
+  if (viewer.on && st !== ZANIM.DEAD && st !== ZANIM.STAGGER && st !== ZANIM.AIRBORNE && st !== ZANIM.SPECIAL) {
+    const o = z.object.position;
+    const dx = viewer.x - o.x, dz = viewer.z - o.z;
+    const d = Math.hypot(dx, dz);
+    const c = Math.cos(z.wyaw), sn = Math.sin(z.wyaw);
+    const lx = dx * c - dz * sn, lz = dx * sn + dz * c; // viewer in the body's frame (front = -z)
+    const a = Math.atan2(-lx, -lz);
+    // feeding zombies only look up when someone gets close
+    const range = st === ZANIM.EAT ? 7 : GAZE_FAR;
+    if (d < range && Math.abs(a) < 1.9) {
+      want = clamp((range - d) / (range - (st === ZANIM.EAT ? 5 : GAZE_NEAR)), 0, 1) * (st === ZANIM.RUN ? 0.6 : 1);
+      yaw = clamp(a, -1.15, 1.15);
+      pitch = clamp(Math.atan2(viewer.y - (o.y + z.def.headY), Math.max(d, 0.5)), -0.75, 0.6);
+    }
+  }
+  // the head follows in quick jerks (fast when far off, settling slowly), not a smooth servo
+  const ky = Math.min(1, dt * (Math.abs(yaw - z.gazeYaw) > 0.35 ? 9 : 3));
+  z.gazeYaw += (yaw - z.gazeYaw) * ky;
+  z.gazePitch += (pitch - z.gazePitch) * Math.min(1, dt * 4);
+  z.gazeW += (want - z.gazeW) * Math.min(1, dt * (want > z.gazeW ? 2.5 : 1.5));
+}
+/** Turns neck + head (and a little chest) so the face points along the gaze. */
+function applyGaze(z, p) {
+  const w = z.gazeW;
+  const curYaw = p[HIPS * 4 + 1] + p[SPINE * 4 + 1] + p[CHEST * 4 + 1] + p[NECK * 4 + 1] + p[HEAD * 4 + 1];
+  const curPitch = chestPitch(p) + p[NECK * 4] + p[HEAD * 4];
+  const dy = (z.gazeYaw - curYaw) * w, dp = (z.gazePitch - curPitch) * w;
+  p[CHEST * 4 + 1] += dy * 0.15;
+  p[NECK * 4 + 1] += dy * 0.35;
+  p[HEAD * 4 + 1] += dy * 0.5;
+  p[NECK * 4] += dp * 0.4;
+  p[HEAD * 4] += dp * 0.6;
+  p[HEAD * 4 + 2] += z.tilt * 0.12 * w; // head cocked while it stares
+}
+
 function poseAir(z, p) {
   const t = z.stateT, st = z.st, type = z.type;
   if (type === ZTYPE.LEAPER || st.quad) {
@@ -1706,6 +2623,8 @@ function poseHumanoid(z) {
   z.sacPulse = 0;
   z.bellyPulse = 0;
   z.abdPulse = 0;
+  z.gOn = false;
+  z.standOn = false;
   switch (z.state) {
     case ZANIM.WALK: poseLoco(z, p, false); break;
     case ZANIM.RUN: poseLoco(z, p, true); break;
@@ -1715,13 +2634,21 @@ function poseHumanoid(z) {
     case ZANIM.STAGGER: poseStagger(z, p); break;
     case ZANIM.DEAD: poseDead(z, p); break;
     case ZANIM.EAT: poseEat(z, p); break;
-    default: poseIdle(z, p); break;
+    default: if (z.sub === 1) poseMenace(z, p); else poseIdle(z, p); break;
   }
   poseExtras(z, p);
+  const jh = z.A ? z.A.jawHang : 0; // survivor zombie-mode state has no per-variant extras
+  if (jh) A(p, JAW, -jh, 0, z.tilt * jh * 0.35); // dislocated jaw hangs open and askew
+  const alive = z.state !== ZANIM.DEAD;
+  if (alive && z.voxT < VOX[z.voxKind]?.dur) poseVocal(z, p);
+  if (alive && z.state !== ZANIM.STAGGER && z.flinchT < 0.6) poseFlinch(z, p);
+  if (z.gazeW > 0.01) applyGaze(z, p);
   if (z.state !== ZANIM.DEAD && z.state !== ZANIM.EAT) {
     // keep the head over the object origin (server head hitbox is centered on the entity axis)
     p[z.nb * 4 + 2] -= headForward(z, p);
   }
+  if (z.gOn) solveLegs(z, p);
+  else if (z.standOn && z.wScale) plantStatic(z, p);
 }
 
 /** 2D forward kinematics of the spine chain: head-center Z offset relative to the hips. */
@@ -1857,9 +2784,9 @@ function calibrate(type, rig) {
     inst.speed = def.speed;
     inst.tilt = 0;
     poseHumanoid(inst);
-    inst.applyPose(inst.pose);
+    inst.applyPose(inst.pose, true);
     inst.object.updateMatrixWorld(true);
-    inst.headCenter.getWorldPosition(_hv);
+    inst.anchorWorld(inst.headCenter, _hv);
     sumY += _hv.y;
     sumZ += _hv.z;
   }
@@ -1879,6 +2806,7 @@ class ZombieInstance {
     this.seed = seed >>> 0;
     this.rig = rig;
     this.P = rig.P;
+    this.A = rig.A;
     this.st = ZS[type] || ZS[ZTYPE.WALKER];
     this.isBat = type === ZTYPE.BAT;
     const rnd = mulberry32(this.seed * 2654435761 + type);
@@ -1889,26 +2817,77 @@ class ZombieInstance {
     this.deadDir = rnd() < 0.5 ? 1 : -1;
     this.tilt = rnd() < 0.5 ? -1 : 1;
     this.cal = cal;
-    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.4);
+    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.4, true);
     this.mesh = inst.mesh;
     this.bones = inst.bones;
     this.skeleton = inst.skeleton;
     this.fx = inst.fx;
+    this.boneRoot = inst.root;
     this.nb = this.bones.length;
     this.X = {};
     for (const [name, idx] of rig.names) this.X[name] = idx;
     this.pose = new Float32Array(this.nb * 4 + 3);
     this.snap = new Float32Array(this.nb * 4 + 3);
     this.out = new Float32Array(this.nb * 4 + 3);
+    this.applied = new Float32Array(this.nb * 4 + 3);
+    // Bone matrices come from a flat forward-kinematics pass over the pose array (see _solve) instead of
+    // the Bone objects: the rig is rigid, bones are stored parents-first and bind poses are pure
+    // translations. The Bone objects only carry the anchors (headCenter, mouth) and size the skeleton.
+    const nb = this.nb;
+    this.parent = new Int16Array(nb);
+    this.bindPos = new Float64Array(nb * 3);
+    this.localPos = new Float64Array(nb * 3);
+    for (let i = 0; i < nb; i++) {
+      const d = rig.bones[i];
+      this.parent[i] = d.parent;
+      this.bindPos.set(d.pos, i * 3);
+      this.localPos[i * 3] = d.local.x;
+      this.localPos[i * 3 + 1] = d.local.y;
+      this.localPos[i * 3 + 2] = d.local.z;
+    }
+    this.world = new Float64Array(nb * 12); // per bone: 3x3 rotation*scale (column-major) + translation
+    // The renderer calls skeleton.update() for every drawn skinned mesh every frame, which re-uploads the
+    // bone texture. The bones are mesh-local (detached rig), so only a new pose or fx value changes them:
+    // solve + upload then, and only for zombies that are actually drawn.
+    this.poseDirty = true;
+    this.fxDirty = true;
+    const skeleton = this.skeleton;
+    skeleton.update = () => {
+      let changed = false;
+      if (this.poseDirty) {
+        this._solve();
+        changed = true;
+      }
+      if (this.fxDirty) {
+        skeleton.boneMatrices.set(this.fx.matrixWorld.elements, 0);
+        this.fxDirty = false;
+        changed = true;
+      }
+      if (changed && skeleton.boneTexture) skeleton.boneTexture.needsUpdate = true;
+    };
     this.object = new THREE.Group();
     this.object.name = 'zombie';
     this.body = new THREE.Group();
     const sw = 1 + (rnd() - 0.5) * 0.12, sh = 1 + (rnd() - 0.5) * 0.05;
     this.baseScale = cal.k;
+    this.gScale = cal.k * sw; // ground distance per rig unit (planted-foot strides)
+    this.wScale = 0; // set once the instance is placed in the world (calibration poses in place)
+    this.wx = this.wz = this.wyaw = 0;
     this.body.scale.set(cal.k * sw, cal.k * sh, cal.k * sw);
     this.body.add(this.mesh);
     this.object.add(this.body);
     this.state = ZANIM.IDLE;
+    this.sub = 0;
+    this.lastAttack = -1e9;
+    this.gazeYaw = 0;
+    this.gazePitch = 0;
+    this.gazeW = 0;
+    this.flinchT = 9;
+    this.flinchSide = 1;
+    this.voxT = 9;
+    this.voxKind = 0;
+    this.footfalls = 0; // gait touchdowns so far (footstep sounds land with the feet)
+    this.posedAt = -1;
     this.stateT = 0;
     this.fadeT = 1;
     this.fadeDur = 0.2;
@@ -1941,7 +2920,7 @@ class ZombieInstance {
     // initial pose
     this.computePose();
     this.out.set(this.pose);
-    this.applyPose(this.out);
+    this.applyPose(this.out, true);
   }
 
   computePose() {
@@ -1952,40 +2931,135 @@ class ZombieInstance {
     }
   }
 
-  applyPose(p) {
-    const b = this.bones;
+  applyPose(p, force = false) {
+    const a = this.applied;
+    if (!force) {
+      // settled poses (corpses at rest) repeat exactly: keep the bones already uploaded
+      let same = true;
+      for (let i = 0, n = p.length; i < n; i++) {
+        if (a[i] !== p[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    a.set(p);
+    this.poseDirty = true;
+  }
+
+  /**
+   * Forward kinematics of the applied pose: bone i's local transform is T(offset) * R(euler XYZ) * S(scale)
+   * (the root's offset is the pose translation), world = parent world * local, and the skinning matrix
+   * is world * T(-bind position). Writes skeleton.boneMatrices[16..] (bone 0 is the fx bone).
+   */
+  _solve() {
+    this.poseDirty = false;
+    const p = this.applied;
     const nb = this.nb;
+    const W = this.world;
+    const par = this.parent;
+    const lp = this.localPos;
+    const bp = this.bindPos;
+    const bm = this.skeleton.boneMatrices;
+    const head = this.headless && !this.isBat ? this.X.head : -1;
     for (let i = 1; i < nb; i++) {
       const k = i * 4;
-      b[i].rotation.set(p[k], p[k + 1], p[k + 2]);
-      const s = p[k + 3];
-      b[i].scale.set(s, s, s);
-    }
-    const r = b[1];
-    r.position.set(p[nb * 4], p[nb * 4 + 1], p[nb * 4 + 2] + this.cal.dz);
-    if (this.headless && !this.isBat) {
-      b[this.X.head].scale.set(0.001, 0.001, 0.001);
+      const cx = Math.cos(p[k]), sx = Math.sin(p[k]);
+      const cy = Math.cos(p[k + 1]), sy = Math.sin(p[k + 1]);
+      const cz = Math.cos(p[k + 2]), sz = Math.sin(p[k + 2]);
+      const s = i === head ? 0.001 : p[k + 3];
+      // local rotation * scale, column-major (same as Matrix4.makeRotationFromEuler, order XYZ)
+      const l0 = cy * cz * s, l1 = (cx * sz + sx * cz * sy) * s, l2 = (sx * sz - cx * cz * sy) * s;
+      const l3 = -cy * sz * s, l4 = (cx * cz - sx * sz * sy) * s, l5 = (sx * cz + cx * sz * sy) * s;
+      const l6 = sy * s, l7 = -sx * cy * s, l8 = cx * cy * s;
+      let tx, ty, tz;
+      if (i === 1) {
+        tx = p[nb * 4];
+        ty = p[nb * 4 + 1];
+        tz = p[nb * 4 + 2] + this.cal.dz;
+      } else {
+        tx = lp[i * 3];
+        ty = lp[i * 3 + 1];
+        tz = lp[i * 3 + 2];
+      }
+      const o = i * 12;
+      const pi = par[i];
+      if (pi <= 0) {
+        W[o] = l0; W[o + 1] = l1; W[o + 2] = l2;
+        W[o + 3] = l3; W[o + 4] = l4; W[o + 5] = l5;
+        W[o + 6] = l6; W[o + 7] = l7; W[o + 8] = l8;
+        W[o + 9] = tx; W[o + 10] = ty; W[o + 11] = tz;
+      } else {
+        const q = pi * 12;
+        const a0 = W[q], a1 = W[q + 1], a2 = W[q + 2], a3 = W[q + 3], a4 = W[q + 4], a5 = W[q + 5], a6 = W[q + 6], a7 = W[q + 7], a8 = W[q + 8];
+        W[o] = a0 * l0 + a3 * l1 + a6 * l2;
+        W[o + 1] = a1 * l0 + a4 * l1 + a7 * l2;
+        W[o + 2] = a2 * l0 + a5 * l1 + a8 * l2;
+        W[o + 3] = a0 * l3 + a3 * l4 + a6 * l5;
+        W[o + 4] = a1 * l3 + a4 * l4 + a7 * l5;
+        W[o + 5] = a2 * l3 + a5 * l4 + a8 * l5;
+        W[o + 6] = a0 * l6 + a3 * l7 + a6 * l8;
+        W[o + 7] = a1 * l6 + a4 * l7 + a7 * l8;
+        W[o + 8] = a2 * l6 + a5 * l7 + a8 * l8;
+        W[o + 9] = a0 * tx + a3 * ty + a6 * tz + W[q + 9];
+        W[o + 10] = a1 * tx + a4 * ty + a7 * tz + W[q + 10];
+        W[o + 11] = a2 * tx + a5 * ty + a8 * tz + W[q + 11];
+      }
+      // skinning matrix = world * T(-bind)
+      const bx = bp[i * 3], by = bp[i * 3 + 1], bz = bp[i * 3 + 2];
+      const m = i * 16;
+      bm[m] = W[o]; bm[m + 1] = W[o + 1]; bm[m + 2] = W[o + 2]; bm[m + 3] = 0;
+      bm[m + 4] = W[o + 3]; bm[m + 5] = W[o + 4]; bm[m + 6] = W[o + 5]; bm[m + 7] = 0;
+      bm[m + 8] = W[o + 6]; bm[m + 9] = W[o + 7]; bm[m + 10] = W[o + 8]; bm[m + 11] = 0;
+      bm[m + 12] = W[o + 9] - (W[o] * bx + W[o + 3] * by + W[o + 6] * bz);
+      bm[m + 13] = W[o + 10] - (W[o + 1] * bx + W[o + 4] * by + W[o + 7] * bz);
+      bm[m + 14] = W[o + 11] - (W[o + 2] * bx + W[o + 5] * by + W[o + 8] * bz);
+      bm[m + 15] = 1;
     }
   }
 
-  update(dt, anim, speed, time) {
+  /** World position of an anchor object parented to one of the bones (headCenter, mouth). */
+  anchorWorld(anchor, out) {
+    if (this.poseDirty) this._solve();
+    const o = this.bones.indexOf(anchor.parent) * 12;
+    const W = this.world;
+    const { x, y, z } = anchor.position;
+    out.set(W[o] * x + W[o + 3] * y + W[o + 6] * z + W[o + 9], W[o + 1] * x + W[o + 4] * y + W[o + 7] * z + W[o + 10], W[o + 2] * x + W[o + 5] * y + W[o + 8] * z + W[o + 11]);
+    this.mesh.updateWorldMatrix(true, false);
+    return out.applyMatrix4(this.mesh.matrixWorld);
+  }
+
+  update(dt, anim, speed, time, inView = false) {
     if (dt > 0.1) dt = 0.1;
-    if (anim !== this.state) {
+    // client-side sub-state, with hysteresis so a noisy speed can't flicker it:
+    // ATTACK: 0 braced / 1 walking / 2 running; IDLE: 1 = menacing (it just attacked, the prey is still close)
+    // the server picks IDLE from the zombie's own velocity; when the crowd or a survivor shoves it along, walk
+    if (anim === ZANIM.IDLE && !this.isBat && speed > (this.state === ZANIM.WALK ? 0.35 : 0.8)) anim = ZANIM.WALK;
+    let sub = 0;
+    if (anim === ZANIM.ATTACK && !this.isBat) {
+      const m = this.state === ZANIM.ATTACK ? this.sub : 0;
+      sub = speed > (m === 2 ? 2.6 : 3.2) ? 2 : speed > (m ? 0.25 : 0.6) ? 1 : 0;
+      this.lastAttack = time;
+    } else if (anim === ZANIM.IDLE && time - this.lastAttack < 2.5) sub = 1;
+    if (anim !== this.state || sub !== this.sub) {
       this.snap.set(this.out);
+      if (anim !== this.state) this.stateT = 0; // a sub-state change keeps the attack's swing timing
       this.state = anim;
-      this.stateT = 0;
+      this.sub = sub;
       this.fadeT = 0;
-      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER ? 0.1 : 0.22;
+      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER ? 0.1 : 0.25;
     }
     this.stateT += dt;
     this.fadeT += dt;
+    this.flinchT += dt;
+    this.voxT += dt;
     this.time = time;
     this.speed = speed;
     if (this.isBat) {
       this.flapPh += dt * (7 + clamp(speed, 0, 10) * 0.5) * this.rate * (this.state === ZANIM.ATTACK ? 0 : 1);
     } else if (anim !== ZANIM.DEAD) {
-      const run = anim === ZANIM.RUN;
-      const cyc = run ? this.st.cycleRun : this.st.cycleWalk;
+      const cyc = gaitLen(this, anim === ZANIM.RUN || (anim === ZANIM.ATTACK && sub === 2), speed);
       this.phase += (dt * speed * TAU * this.rate) / cyc;
       if (this.phase > 1e4) this.phase -= TAU * 1000;
     }
@@ -1995,11 +3069,17 @@ class ZombieInstance {
     let glow = 1;
     if (this.type === ZTYPE.SPITTER || this.type === ZTYPE.BOSS_HIVEQUEEN) glow = 0.8 + 0.25 * Math.sin(time * 3.1 + this.off);
     if (anim === ZANIM.DEAD) glow = Math.max(0.15, 1 - this.stateT * 0.6);
-    setFx(this.fx, this.hit, glow);
-    // skip posing when not rendered last frame (culled); crossfades still time out correctly
+    if (setFx(this.fx, this.hit, glow)) this.fxDirty = true;
+    // skip posing when culled (not rendered last frame, not in view now); crossfades still time out correctly
     const seen = this._seen;
     this._seen = false;
-    if (!seen && this.fadeT > this.fadeDur) return;
+    if (!seen && !inView && this.fadeT > this.fadeDur) return;
+    // world placement (the entity view sets it before update) for pinning planted feet and the gaze
+    this.wx = this.object.position.x;
+    this.wz = this.object.position.z;
+    this.wyaw = this.object.rotation.y;
+    if (!this.isBat && this.wScale) updateGaze(this, dt);
+    this.posedAt = time;
     this.computePose();
     const p = this.pose, o = this.out;
     if (this.fadeT < this.fadeDur) {
@@ -2014,19 +3094,40 @@ class ZombieInstance {
 
   flash(a) {
     this.hit = Math.max(this.hit, clamp(a, 0, 1));
-    setFx(this.fx, this.hit, 1);
+    if (setFx(this.fx, this.hit, 1)) this.fxDirty = true;
+  }
+
+  /** Took a hit: flinch (a fresh hit restarts it, toward a random side). */
+  hurt() {
+    this.flinchT = 0;
+    this.flinchSide = Math.random() < 0.5 ? -1 : 1;
+  }
+
+  /** Vocalizing (0 growl, 1 scream, 2 roar): the jaw and head move with the sound. */
+  vocalize(kind) {
+    this.voxKind = kind;
+    this.voxT = 0;
+  }
+
+  /** Gait touchdowns so far, or -1 when this frame's pose had no planted-foot gait (culled, other states). */
+  footfallCount() {
+    return this.gOn && this.posedAt === this.time ? this.footfalls : -1;
   }
 
   setHeadless(v) {
     this.headless = !!v;
-    if (!v && !this.isBat) this.bones[this.X.head].scale.set(1, 1, 1);
-    this.applyPose(this.out);
+    this.applyPose(this.out, true);
   }
 
   dispose() {
     this.skeleton.dispose();
     if (this.object.parent) this.object.parent.remove(this.object);
   }
+}
+
+/** Number of cached model variants for a zombie type (the seed passed to createZombie picks one). */
+export function zombieVariants(ztype) {
+  return VARIANTS[ztype] || 1;
 }
 
 /**
@@ -2039,11 +3140,16 @@ export function createZombie(ztype, seed = 0) {
   const rig = getRig(type, variant);
   const cal = calibrate(type, getRig(type, 0));
   const z = new ZombieInstance(type, seed, rig, cal);
+  z.wScale = z.gScale;
   return {
     object: z.object,
-    update: (dt, anim, speed, time) => z.update(dt, anim, speed, time),
+    update: (dt, anim, speed, time, inView) => z.update(dt, anim, speed, time, inView),
     flash: (a) => z.flash(a),
+    hurt: () => z.hurt(),
+    vocalize: (kind) => z.vocalize(kind),
+    footfalls: () => z.footfallCount(),
     setHeadless: (v) => z.setHeadless(v),
+    anchorWorld: (a, out) => z.anchorWorld(a, out),
     dispose: () => z.dispose(),
     _inst: z,
   };
@@ -2178,10 +3284,10 @@ function getSurvivorRig(v, zombie) {
 const HOLD_NONE = 0, HOLD_RIFLE = 1, HOLD_PISTOL = 2, HOLD_MELEE = 3, HOLD_THROW = 4;
 function holdFor(item) {
   if (!item) return HOLD_NONE;
-  if (item === ITEM.PISTOL) return HOLD_PISTOL;
-  if (item === ITEM.AK47 || item === ITEM.SHOTGUN || item === ITEM.HUNTING_RIFLE) return HOLD_RIFLE;
+  const w = WEAPONS[item];
+  if (w && !w.melee) return w.slot === 1 ? HOLD_PISTOL : HOLD_RIFLE;
   if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB) return HOLD_THROW;
-  if (WEAPONS[item] && WEAPONS[item].melee) return HOLD_MELEE;
+  if (w && w.melee) return HOLD_MELEE;
   return HOLD_THROW; // generic held item
 }
 
@@ -2355,10 +3461,14 @@ class SurvivorInstance {
     this.airW += ((s.onGround === false ? 1 : 0) - this.airW) * (1 - Math.exp(-dt * 12));
     this.runW += ((s.sprint && speed > 4 ? 1 : 0) - this.runW) * k;
     this.reloadW += ((s.reloading ? 1 : 0) - this.reloadW) * k;
-    const cyc = lerp(lerp(1.7, 2.5, clamp(speed / 7, 0, 1)), 1.1, this.crouchW);
+    const z = this.z;
+    let cyc = lerp(lerp(1.7, 2.5, clamp(speed / 7, 0, 1)), 1.1, this.crouchW);
+    if (this.zombie) {
+      z.st = ZS[ZTYPE.RUNNER];
+      cyc = gaitLen(z, speed > 3, speed); // the runner gait plants its feet against this stride
+    }
     this.phase += (dt * speed * TAU) / cyc;
     // zombie-mode / death state machine (advances even when culled)
-    const z = this.z;
     if (this.zombie || s.dead) {
       const anim = s.dead ? ZANIM.DEAD : s.onGround === false ? ZANIM.AIRBORNE : this.pulseMelee < 0.5 ? ZANIM.ATTACK : speed > 3 ? ZANIM.RUN : speed > 0.3 ? ZANIM.WALK : ZANIM.IDLE;
       if (anim !== z.state) {

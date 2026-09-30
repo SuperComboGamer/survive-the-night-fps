@@ -43,11 +43,15 @@ export const ITEM = {
   SHOTGUN: 60,
   AK47: 61,
   HUNTING_RIFLE: 62,
+  M4A1: 63,
+  MP5: 64,
+  DB_SHOTGUN: 65,
   // ammo pickups (go into ammo reserves, not inventory)
   AMMO_9MM: 70,
   AMMO_SHELLS: 71,
   AMMO_762: 72,
   AMMO_308: 73,
+  AMMO_556: 74,
   // car parts (quest)
   CAR_BATTERY: 80,
   SPARE_TIRE: 81,
@@ -63,9 +67,11 @@ export const ITEM = {
 };
 
 // ammo reserve indices
-export const AMMO = { P9: 0, SHELL: 1, R762: 2, R308: 3 };
-export const AMMO_NAMES = ['9mm', 'Shells', '7.62', '.308'];
-export const AMMO_MAX = [150, 48, 240, 40];
+export const AMMO = { P9: 0, SHELL: 1, R762: 2, R308: 3, R556: 4 };
+export const AMMO_NAMES = ['9mm', 'Shells', '7.62', '.308', '5.56'];
+export const AMMO_MAX = [150, 48, 240, 40, 180];
+// pickup item for each reserve index (same order as AMMO)
+export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556];
 
 // category: res | cons | throw | armor | weapon | ammo | part | schem
 export const ITEM_DEFS = {
@@ -107,11 +113,15 @@ export const ITEM_DEFS = {
   [ITEM.SHOTGUN]: { name: 'Shotgun', cat: 'weapon', stack: 1, color: 0x4a3a2a, desc: 'Devastating up close.' },
   [ITEM.AK47]: { name: 'AK-47', cat: 'weapon', stack: 1, color: 0x5a4632, desc: 'Full-auto 7.62 rifle.' },
   [ITEM.HUNTING_RIFLE]: { name: 'Hunting Rifle', cat: 'weapon', stack: 1, color: 0x6b4f33, desc: 'Bolt-action .308. Pierces.' },
+  [ITEM.M4A1]: { name: 'M4A1', cat: 'weapon', stack: 1, color: 0x2e2f2c, desc: 'Full-auto 5.56 carbine. Accurate, soft recoil.' },
+  [ITEM.MP5]: { name: 'MP5', cat: 'weapon', stack: 1, color: 0x353535, desc: 'Full-auto 9mm submachine gun. Fast and quiet.' },
+  [ITEM.DB_SHOTGUN]: { name: 'Double-Barrel', cat: 'weapon', stack: 1, color: 0x5c4028, desc: 'Two barrels of buckshot back to back. Slow to reload.' },
 
   [ITEM.AMMO_9MM]: { name: '9mm Ammo', cat: 'ammo', stack: 60, color: 0xc9a227, ammo: 0, desc: 'Pistol rounds.' },
   [ITEM.AMMO_SHELLS]: { name: 'Shotgun Shells', cat: 'ammo', stack: 24, color: 0xb03a2e, ammo: 1, desc: '12 gauge.' },
   [ITEM.AMMO_762]: { name: '7.62 Ammo', cat: 'ammo', stack: 90, color: 0xa6832a, ammo: 2, desc: 'Rifle rounds.' },
   [ITEM.AMMO_308]: { name: '.308 Ammo', cat: 'ammo', stack: 20, color: 0xd4ac0d, ammo: 3, desc: 'Hunting rounds.' },
+  [ITEM.AMMO_556]: { name: '5.56 Ammo', cat: 'ammo', stack: 90, color: 0x6b7a3a, ammo: 4, desc: 'NATO carbine rounds.' },
 
   [ITEM.CAR_BATTERY]: { name: 'Car Battery', cat: 'part', stack: 1, color: 0x1f3a93, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
   [ITEM.SPARE_TIRE]: { name: 'Spare Tire', cat: 'part', stack: 1, color: 0x1b1b1b, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
@@ -119,7 +129,7 @@ export const ITEM_DEFS = {
   [ITEM.FUEL_CAN]: { name: 'Jerry Can', cat: 'part', stack: 3, color: 0xb71c1c, desc: 'Fuel for the car. The tank needs three cans.' },
   [ITEM.FAN_BELT]: { name: 'Fan Belt', cat: 'part', stack: 1, color: 0x212121, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
 
-  [ITEM.SCHEM_SHOTGUN]: { name: 'Shotgun Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Shotgun at the workbench for the whole team.' },
+  [ITEM.SCHEM_SHOTGUN]: { name: 'Shotgun Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Shotgun and the Double-Barrel at the workbench for the whole team.' },
   [ITEM.SCHEM_RIFLE]: { name: 'Rifle Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Hunting Rifle at the workbench for the whole team.' },
   [ITEM.SCHEM_KEVLAR]: { name: 'Armor Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Kevlar Vest at the workbench for the whole team.' },
   [ITEM.SCHEM_EXPLOSIVES]: { name: 'Explosives Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks Pipe Bombs at the workbench for the whole team.' },
@@ -139,17 +149,21 @@ export const SCHEM_BIT = { [ITEM.SCHEM_SHOTGUN]: 0, [ITEM.SCHEM_RIFLE]: 1, [ITEM
 
 // ---------------------------------------------------------------- weapons
 // slot: 0 primary, 1 pistol, 2 melee, 4 build (hammer)
-// Firearms: damage per pellet, rate = seconds between shots, spread (radians) hip / moving penalty
+// Firearms: damage per pellet, rate = seconds between shots, spread (radians) hip / moving penalty,
+// noise = radius (m) in which the shot alerts zombies (default 70)
 export const WEAPONS = {
   [ITEM.KNIFE]: { slot: 2, melee: true, damage: 38, rate: 0.42, range: 2.0, altDamage: 80, altRate: 1.0, headMul: 1.6, knock: 0.5, swing: 0.12 },
   [ITEM.BAT]: { slot: 2, melee: true, damage: 60, rate: 0.72, range: 2.4, altDamage: 60, altRate: 0.72, headMul: 1.8, knock: 5, swing: 0.2 },
   [ITEM.SPIKED_BAT]: { slot: 2, melee: true, damage: 95, rate: 0.72, range: 2.4, altDamage: 95, altRate: 0.72, headMul: 1.8, knock: 5, swing: 0.2 },
   [ITEM.MACHETE]: { slot: 2, melee: true, damage: 75, rate: 0.55, range: 2.2, altDamage: 75, altRate: 0.55, headMul: 2.0, knock: 1.5, swing: 0.15 },
   [ITEM.HAMMER]: { slot: 4, melee: true, damage: 25, rate: 0.6, range: 2.0, altDamage: 25, altRate: 0.6, headMul: 1.5, knock: 1, swing: 0.15, build: true },
-  [ITEM.PISTOL]: { slot: 1, damage: 30, rate: 0.16, mag: 12, reload: 1.35, ammo: 0, pellets: 1, spread: 0.012, moveSpread: 0.02, recoil: 0.018, range: 120, headMul: 3.0, auto: false, sound: 'pistol' },
+  [ITEM.PISTOL]: { slot: 1, damage: 30, rate: 0.16, mag: 12, reload: 1.35, ammo: 0, pellets: 1, spread: 0.012, moveSpread: 0.02, recoil: 0.018, range: 120, headMul: 3.0, auto: false, noise: 45, sound: 'pistol' },
   [ITEM.SHOTGUN]: { slot: 0, damage: 17, rate: 0.85, mag: 6, reload: 0.55, reloadEach: true, ammo: 1, pellets: 9, spread: 0.075, moveSpread: 0.02, recoil: 0.07, range: 45, headMul: 2.0, auto: false, sound: 'shotgun' },
   [ITEM.AK47]: { slot: 0, damage: 36, rate: 0.1, mag: 30, reload: 2.3, ammo: 2, pellets: 1, spread: 0.02, moveSpread: 0.04, recoil: 0.022, range: 150, headMul: 2.6, auto: true, sound: 'ak47' },
   [ITEM.HUNTING_RIFLE]: { slot: 0, damage: 140, rate: 1.2, mag: 5, reload: 2.6, ammo: 3, pellets: 1, spread: 0.002, moveSpread: 0.03, recoil: 0.09, range: 220, headMul: 3.0, auto: false, pierce: 3, sound: 'rifle' },
+  [ITEM.M4A1]: { slot: 0, damage: 30, rate: 0.085, mag: 30, reload: 2.1, ammo: 4, pellets: 1, spread: 0.013, moveSpread: 0.032, recoil: 0.015, range: 170, headMul: 2.6, auto: true, sound: 'm4a1' },
+  [ITEM.MP5]: { slot: 0, damage: 21, rate: 0.075, mag: 30, reload: 1.9, ammo: 0, pellets: 1, spread: 0.017, moveSpread: 0.016, recoil: 0.011, range: 90, headMul: 2.4, auto: true, noise: 50, sound: 'mp5' },
+  [ITEM.DB_SHOTGUN]: { slot: 0, damage: 16, rate: 0.22, mag: 2, reload: 2.2, ammo: 1, pellets: 12, spread: 0.1, moveSpread: 0.02, recoil: 0.09, range: 38, headMul: 2.0, auto: false, sound: 'dbshotgun' },
 };
 
 // Player-zombie claws (not an item)
@@ -232,6 +246,8 @@ export const RECIPES = [
   { id: 21, out: ITEM.NAILS, n: 10, cost: { [ITEM.SCRAP]: 1 }, station: 'bench' },
   { id: 22, out: ITEM.FLARE, n: 2, cost: { [ITEM.POWDER]: 2, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 } },
   { id: 23, out: ITEM.BATTERY, n: 1, cost: { [ITEM.SCRAP]: 1, [ITEM.CHEM]: 1 }, station: 'bench' },
+  { id: 24, out: ITEM.AMMO_556, n: 15, cost: { [ITEM.SCRAP]: 2, [ITEM.POWDER]: 3 }, station: 'bench' },
+  { id: 25, out: ITEM.DB_SHOTGUN, n: 1, cost: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 2, [ITEM.WOOD]: 2, [ITEM.TAPE]: 1 }, station: 'bench', schem: ITEM.SCHEM_SHOTGUN },
 ];
 
 // ---------------------------------------------------------------- zombies
@@ -273,6 +289,14 @@ export const ZANIM = {
   STAGGER: 6,
   DEAD: 7,
   EAT: 8, // idle feeding pose
+};
+
+// the stray cat's animation states (sent over the wire)
+export const CANIM = {
+  IDLE: 0,
+  WALK: 1,
+  RUN: 2,
+  SIT: 3,
 };
 
 // ---------------------------------------------------------------- projectiles / areas
@@ -348,6 +372,10 @@ export const SOUND = {
   REVIVE: 54,
   DOWNED: 55,
   FLARE_BURN: 56,
+  M4A1: 57,
+  MP5: 58,
+  DB_SHOTGUN: 59,
+  CAT_MEOW: 60,
 };
 
 export const EVT = {
@@ -459,24 +487,24 @@ export const ZONE_NAMES = [
 
 // weighted loot tables per zone: [item, weight, min, max]
 export const LOOT_TABLES = {
-  [ZONE.CAMP]: [[ITEM.STICK, 5, 2, 4], [ITEM.CLOTH, 3, 1, 2], [ITEM.WOOD, 3, 1, 3]],
-  [ZONE.FOREST]: [[ITEM.STICK, 10, 2, 5], [ITEM.WOOD, 4, 1, 3], [ITEM.CLOTH, 3, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.SCRAP, 1, 1, 2], [ITEM.AMMO_9MM, 1, 6, 12]],
-  [ZONE.BARN]: [[ITEM.WOOD, 8, 2, 5], [ITEM.NAILS, 8, 4, 10], [ITEM.ROPE, 4, 1, 2], [ITEM.CLOTH, 5, 1, 3], [ITEM.WIRE, 4, 1, 2], [ITEM.LEATHER, 3, 1, 2], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.BAT, 1, 1, 1], [ITEM.ALCOHOL, 2, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
+  [ZONE.CAMP]: [[ITEM.CLOTH, 6, 2, 3], [ITEM.STICK, 4, 2, 4], [ITEM.WOOD, 3, 1, 3]],
+  [ZONE.FOREST]: [[ITEM.STICK, 8, 2, 5], [ITEM.WOOD, 4, 1, 3], [ITEM.CLOTH, 7, 1, 3], [ITEM.HERB, 3, 1, 2], [ITEM.SCRAP, 1, 1, 2], [ITEM.AMMO_9MM, 1, 6, 12]],
+  [ZONE.BARN]: [[ITEM.WOOD, 8, 2, 5], [ITEM.NAILS, 8, 4, 10], [ITEM.ROPE, 4, 1, 2], [ITEM.CLOTH, 5, 1, 3], [ITEM.WIRE, 4, 1, 2], [ITEM.LEATHER, 3, 1, 2], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.BAT, 1, 1, 1], [ITEM.ALCOHOL, 2, 1, 1], [ITEM.HAMMER, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
   [ZONE.DOCK]: [[ITEM.ROPE, 6, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.CLOTH, 4, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.CHEM, 2, 1, 2], [ITEM.NAILS, 3, 3, 8]],
   [ZONE.GAS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.CHEM, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.NAILS, 3, 4, 10], [ITEM.PISTOL, 1, 1, 1]],
   [ZONE.RANGER]: [[ITEM.GUNPARTS, 4, 1, 1], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.BATTERY, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.MEDKIT, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1]],
-  [ZONE.CABINS]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.POWDER, 4, 2, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1]],
-  [ZONE.MILITARY]: [[ITEM.AMMO_762, 7, 15, 30], [ITEM.PLATE, 4, 1, 1], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.POWDER, 5, 3, 8], [ITEM.WIRE, 4, 1, 3], [ITEM.MEDKIT, 3, 1, 1], [ITEM.PIPEBOMB, 2, 1, 1], [ITEM.SCRAP, 3, 2, 4], [ITEM.AK47, 1, 1, 1], [ITEM.KEVLAR, 1, 1, 1]],
+  [ZONE.CABINS]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.POWDER, 4, 2, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
+  [ZONE.MILITARY]: [[ITEM.AMMO_762, 7, 15, 30], [ITEM.PLATE, 4, 1, 1], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.POWDER, 5, 3, 8], [ITEM.WIRE, 4, 1, 3], [ITEM.MEDKIT, 3, 1, 1], [ITEM.PIPEBOMB, 2, 1, 1], [ITEM.SCRAP, 3, 2, 4], [ITEM.AMMO_556, 5, 20, 40], [ITEM.AK47, 1, 1, 1], [ITEM.M4A1, 1, 1, 1], [ITEM.KEVLAR, 1, 1, 1]],
   [ZONE.CHURCH]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.HERB, 5, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.TORCH, 3, 1, 2], [ITEM.AMMO_9MM, 2, 6, 12]],
   [ZONE.MOTEL]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.TAPE, 3, 1, 1], [ITEM.CHEM, 3, 1, 1], [ITEM.PISTOL, 1, 1, 1], [ITEM.FLARE, 2, 1, 2]],
   [ZONE.SAWMILL]: [[ITEM.WOOD, 10, 3, 6], [ITEM.NAILS, 8, 6, 12], [ITEM.STICK, 5, 3, 6], [ITEM.ROPE, 3, 1, 2], [ITEM.SCRAP, 4, 1, 3], [ITEM.TAPE, 2, 1, 1], [ITEM.WIRE, 3, 1, 2], [ITEM.HAMMER, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1]],
-  [ZONE.TRAILERS]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.TAPE, 3, 1, 1], [ITEM.SCRAP, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.MOLOTOV, 1, 1, 1]],
-  [ZONE.VILLAGE]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.HERB, 2, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1]],
+  [ZONE.TRAILERS]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.TAPE, 3, 1, 1], [ITEM.SCRAP, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.MOLOTOV, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
+  [ZONE.VILLAGE]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.HERB, 2, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.MP5, 1, 1, 1]],
   [ZONE.CAMPGROUND]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ROPE, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.STICK, 4, 2, 5], [ITEM.BATTERY, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.AMMO_SHELLS, 2, 4, 6], [ITEM.KNIFE, 1, 1, 1]],
-  [ZONE.CHECKPOINT]: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 5, 10, 20], [ITEM.WIRE, 5, 1, 3], [ITEM.POWDER, 4, 2, 6], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
+  [ZONE.CHECKPOINT]: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 5, 10, 20], [ITEM.WIRE, 5, 1, 3], [ITEM.POWDER, 4, 2, 6], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.AMMO_556, 5, 15, 30], [ITEM.M4A1, 1, 1, 1], [ITEM.MP5, 1, 1, 1]],
   [ZONE.QUARRY]: [[ITEM.SCRAP, 8, 2, 4], [ITEM.POWDER, 6, 3, 8], [ITEM.CHEM, 4, 1, 2], [ITEM.WIRE, 4, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 3, 1, 2], [ITEM.HAMMER, 1, 1, 1]],
-  [ZONE.RELAY]: [[ITEM.BATTERY, 6, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.AMMO_308, 3, 3, 6], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2]],
-  [ZONE.ROADSIDE]: [[ITEM.SCRAP, 6, 1, 2], [ITEM.CLOTH, 5, 1, 3], [ITEM.TAPE, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.BANDAGE, 3, 1, 1], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.NAILS, 3, 3, 8], [ITEM.FLARE, 2, 1, 1], [ITEM.CHEM, 2, 1, 1]],
+  [ZONE.RELAY]: [[ITEM.BATTERY, 6, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_556, 2, 10, 20], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2]],
+  [ZONE.ROADSIDE]: [[ITEM.SCRAP, 6, 1, 2], [ITEM.CLOTH, 8, 2, 3], [ITEM.TAPE, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.BANDAGE, 3, 1, 1], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.NAILS, 3, 3, 8], [ITEM.FLARE, 2, 1, 1], [ITEM.CHEM, 2, 1, 1]],
 };
 
 // candidate places for each car supply; every game the server hides each supply in one of them
@@ -495,13 +523,13 @@ export const CAR_PART_ZONES = SUPPLY_ZONES; // (legacy name)
 // table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic.
 export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11 };
 export const CONT_TABLES = {
-  military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2]],
-  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 4, 1, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1]],
-  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 5, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
-  locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1]],
+  military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2], [ITEM.M4A1, 1, 1, 1]],
+  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1]],
+  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
+  locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1]],
   cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1]],
   toolbox: [[ITEM.NAILS, 8, 6, 14], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 3, 1, 2], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
-  dumpster: [[ITEM.CLOTH, 6, 1, 3], [ITEM.SCRAP, 5, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.STICK, 3, 2, 4], [ITEM.TAPE, 2, 1, 1], [ITEM.BATTERY, 1, 1, 1]],
+  dumpster: [[ITEM.CLOTH, 8, 2, 4], [ITEM.SCRAP, 5, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.STICK, 3, 2, 4], [ITEM.TAPE, 2, 1, 1], [ITEM.BATTERY, 1, 1, 1]],
   logpile: [[ITEM.WOOD, 8, 3, 6], [ITEM.STICK, 5, 3, 6], [ITEM.NAILS, 2, 3, 6]],
   fridge: [[ITEM.ALCOHOL, 6, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.HERB, 3, 1, 2], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BANDAGE, 2, 1, 1]],
 };
@@ -520,8 +548,8 @@ export const CONT_DEFS = {
 };
 
 // zombie loot drops: [item, weight, min, max]
-export const ZOMBIE_LOOT = [[ITEM.CLOTH, 6, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 2, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
-export const SPECIAL_LOOT = [[ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.MEDKIT, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.PLATE, 1, 1, 1], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 2, 1, 2]];
+export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 2, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
+export const SPECIAL_LOOT = [[ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_556, 4, 15, 30], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.MEDKIT, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.PLATE, 1, 1, 1], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 2, 1, 2]];
 
 export function isFirearm(item) {
   const w = WEAPONS[item];

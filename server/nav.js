@@ -7,6 +7,7 @@ import { COL, BOX, CYL } from '../shared/collision.js';
 const SIZE = MAP_HALF * 2; // cells per side (1 m)
 const FIELD = 144; // flow field window size (cells): the horde spawns ~60-85 m out, inside the window
 const HALF_FIELD = FIELD / 2;
+const PW = FIELD + 2; // padded window: a 1-cell blocked border replaces per-neighbor bounds checks
 const INF = 0x7fffffff;
 const STRUCT_COST = 14; // extra cost to cross a structure cell (x10 units)
 
@@ -18,8 +19,15 @@ export class Nav {
     this.structRef = new Map(); // cell -> count
     this._buildStatic();
     this.fields = new Map(); // playerId -> field
-    // scratch for dijkstra
-    this.heap = new Int32Array(FIELD * FIELD * 20); // (cost, idx) pairs; lazy-deletion dijkstra pushes a cell up to 8x
+    this.structVer = 0; // bumped whenever structure costs change (fields computed before are stale)
+    this.maxStructCost = 0; // highest structure cost any cell has had (bounds the edge cost)
+    // scratch for the solver (padded window): walkability, entry cost, distance, bucket queue
+    this.pBlocked = new Uint8Array(PW * PW);
+    this.pCost = new Int32Array(PW * PW);
+    this.pDist = new Int32Array(PW * PW);
+    this.bucketHead = new Int32Array(0);
+    this.entryIdx = new Int32Array(FIELD * FIELD * 8 + 1); // a cell is queued once per improvement: <= 8 per cell
+    this.entryNext = new Int32Array(FIELD * FIELD * 8 + 1);
   }
 
   _cellIndex(x, z) {
@@ -90,11 +98,16 @@ export class Nav {
 
   addStructure(c) {
     if (c.flags & COL.NOBLOCK) return;
-    this._raster(c, (k) => (this.structCost[k] += STRUCT_COST), 0.35);
+    this._raster(c, (k) => {
+      const v = (this.structCost[k] += STRUCT_COST);
+      if (v > this.maxStructCost) this.maxStructCost = v;
+    }, 0.35);
+    this.structVer++;
   }
   removeStructure(c) {
     if (c.flags & COL.NOBLOCK) return;
     this._raster(c, (k) => (this.structCost[k] = Math.max(0, this.structCost[k] - STRUCT_COST)), 0.35);
+    this.structVer++;
   }
 
   isBlocked(x, z) {
@@ -106,91 +119,93 @@ export class Nav {
   computeField(playerId, x, z) {
     let f = this.fields.get(playerId);
     if (!f) {
-      f = { dist: new Int32Array(FIELD * FIELD), ox: 0, oz: 0, cx: x, cz: z, t: 0 };
+      f = { dist: new Int32Array(FIELD * FIELD), ox: 0, oz: 0, cx: x, cz: z, t: 0, ver: -1 };
       this.fields.set(playerId, f);
     }
     const ox = Math.floor(x + MAP_HALF) - HALF_FIELD; // global cell origin
     const oz = Math.floor(z + MAP_HALF) - HALF_FIELD;
-    f.ox = ox;
-    f.oz = oz;
     f.cx = x;
     f.cz = z;
-    const dist = f.dist;
-    dist.fill(INF);
-    const heap = this.heap;
-    let hn = 0;
-    const cap = heap.length / 2;
-    const push = (cost, idx) => {
-      if (hn >= cap) return; // should not happen; drop rather than overflow
-      let i = hn++;
-      heap[i * 2] = cost;
-      heap[i * 2 + 1] = idx;
-      while (i > 0) {
-        const p = (i - 1) >> 1;
-        if (heap[p * 2] <= cost) break;
-        heap[i * 2] = heap[p * 2];
-        heap[i * 2 + 1] = heap[p * 2 + 1];
-        i = p;
-      }
-      heap[i * 2] = cost;
-      heap[i * 2 + 1] = idx;
-    };
-    const pop = () => {
-      const top = heap[1];
-      const lastC = heap[(hn - 1) * 2];
-      const lastI = heap[(hn - 1) * 2 + 1];
-      hn--;
-      let i = 0;
-      while (true) {
-        let l = i * 2 + 1;
-        if (l >= hn) break;
-        const r = l + 1;
-        if (r < hn && heap[r * 2] < heap[l * 2]) l = r;
-        if (heap[l * 2] >= lastC) break;
-        heap[i * 2] = heap[l * 2];
-        heap[i * 2 + 1] = heap[l * 2 + 1];
-        i = l;
-      }
-      heap[i * 2] = lastC;
-      heap[i * 2 + 1] = lastI;
-      return top;
-    };
-    const si = HALF_FIELD;
-    const sj = HALF_FIELD;
-    dist[sj * FIELD + si] = 0;
-    push(0, sj * FIELD + si);
+    // a field only depends on the survivor's cell and the walkability / structure grids: when neither
+    // changed since it was computed (standing still, holding a position) it is still exact
+    if (f.ver === this.structVer && f.ox === ox && f.oz === oz) return f;
+    f.ox = ox;
+    f.oz = oz;
+    f.ver = this.structVer;
+    this._solve(f.dist, ox, oz);
+    return f;
+  }
+
+  // Dijkstra from the window center over 8-connected cells (10 straight, 14 diagonal, plus the entered
+  // cell's structure cost; no corner cutting). Edge costs are small integers, so the priority queue is a
+  // circular bucket queue (Dial's algorithm): O(1) push/pop, same distances as a heap.
+  _solve(out, ox, oz) {
     const blocked = this.blocked;
     const scost = this.structCost;
-    while (hn > 0) {
-      const c0 = heap[0];
-      const idx = pop();
-      if (c0 > dist[idx]) continue;
-      const li = idx % FIELD;
-      const lj = (idx / FIELD) | 0;
-      for (let n = 0; n < 8; n++) {
-        const di = NDI[n];
-        const dj = NDJ[n];
-        const ni = li + di;
-        const nj = lj + dj;
-        if (ni < 0 || nj < 0 || ni >= FIELD || nj >= FIELD) continue;
-        const gi = ox + ni;
-        const gj = oz + nj;
-        if (gi < 0 || gj < 0 || gi >= SIZE || gj >= SIZE) continue;
-        const gk = gj * SIZE + gi;
-        if (blocked[gk]) continue;
-        if (n >= 4) {
-          // diagonal: disallow corner cutting
-          if (blocked[(oz + lj) * SIZE + gi] || blocked[gj * SIZE + ox + li]) continue;
-        }
-        const nc = c0 + NCOST[n] + scost[gk] * 10;
-        const nidx = nj * FIELD + ni;
-        if (nc < dist[nidx]) {
-          dist[nidx] = nc;
-          push(nc, nidx);
+    const pb = this.pBlocked;
+    const pc = this.pCost;
+    const dist = this.pDist;
+    // padded window: border cells and cells outside the map are blocked
+    for (let pj = 0; pj < PW; pj++) {
+      const gj = oz + pj - 1;
+      const rowIn = pj > 0 && pj < PW - 1 && gj >= 0 && gj < SIZE;
+      for (let pi = 0; pi < PW; pi++) {
+        const p = pj * PW + pi;
+        const gi = ox + pi - 1;
+        if (rowIn && pi > 0 && pi < PW - 1 && gi >= 0 && gi < SIZE) {
+          const gk = gj * SIZE + gi;
+          pb[p] = blocked[gk];
+          pc[p] = scost[gk] * 10;
+        } else {
+          pb[p] = 1;
+          pc[p] = 0;
         }
       }
     }
-    return f;
+    dist.fill(INF);
+    let nb = 16;
+    while (nb <= 14 + this.maxStructCost * 10) nb *= 2; // every pending cost fits in [cur, cur + nb)
+    if (this.bucketHead.length < nb) this.bucketHead = new Int32Array(nb);
+    const head = this.bucketHead;
+    head.fill(-1, 0, nb);
+    const mask = nb - 1;
+    const eIdx = this.entryIdx;
+    const eNext = this.entryNext;
+    const src = (HALF_FIELD + 1) * PW + HALF_FIELD + 1;
+    dist[src] = 0;
+    eIdx[0] = src;
+    eNext[0] = -1;
+    head[0] = 0;
+    let en = 1;
+    let pending = 1;
+    for (let cur = 0; pending > 0; cur++) {
+      const b = cur & mask;
+      let e = head[b];
+      if (e < 0) continue;
+      head[b] = -1; // anything pushed while draining costs at least cur + 10: other buckets
+      while (e >= 0) {
+        const p = eIdx[e];
+        e = eNext[e];
+        pending--;
+        if (dist[p] !== cur) continue; // superseded by a cheaper entry
+        for (let n = 0; n < 8; n++) {
+          const q = p + NOFF[n];
+          if (pb[q]) continue;
+          // diagonal: disallow corner cutting
+          if (n >= 4 && (pb[p + NDI[n]] || pb[p + NDJ[n] * PW])) continue;
+          const nc = cur + NCOST[n] + pc[q];
+          if (nc < dist[q]) {
+            dist[q] = nc;
+            const nbk = nc & mask;
+            eIdx[en] = q;
+            eNext[en] = head[nbk];
+            head[nbk] = en++;
+            pending++;
+          }
+        }
+      }
+    }
+    for (let lj = 0; lj < FIELD; lj++) out.set(dist.subarray((lj + 1) * PW + 1, (lj + 1) * PW + 1 + FIELD), lj * FIELD);
   }
 
   removeField(playerId) {
@@ -236,3 +251,4 @@ export class Nav {
 const NDI = [1, -1, 0, 0, 1, 1, -1, -1];
 const NDJ = [0, 0, 1, -1, 1, -1, 1, -1];
 const NCOST = [10, 10, 10, 10, 14, 14, 14, 14];
+const NOFF = NDI.map((di, n) => NDJ[n] * PW + di); // neighbor offsets in the padded window

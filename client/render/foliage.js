@@ -8,6 +8,7 @@ import { MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
 import { hash2 } from '../../shared/rng.js';
 import { getTreeVariants, getBushVariants, getRockVariants, getGrassPatch } from './models/vegetation.js';
 import { VEG } from './materials.js';
+import { G } from './globals.js';
 import { groundFields } from './terrain.js';
 
 const CELL = 32;
@@ -339,8 +340,20 @@ export class Foliage {
     this.trees.lastX = this.bushes.lastX = this.rocks.lastX = 1e9;
   }
 
-  update(camPos, fogVisibility, time) {
+  // weather: { wind, windX, windZ } (optional). Drives the global wind: 0.3 is the everyday breeze, ~1.2 a gale
+  // (gusts included); the sway clock runs faster in strong wind.
+  update(camPos, fogVisibility, time, weather) {
     VEG.uVegCam.value.copy(camPos);
+    const dt = Math.min(0.1, Math.max(0, time - (this.lastTime ?? time)));
+    this.lastTime = time;
+    const wind = weather ? weather.wind : 0.3;
+    const W = G.uWind.value;
+    W.x += dt * (0.8 + 0.7 * wind);
+    W.y = 0.2 + 0.8 * wind;
+    if (weather) {
+      W.z = weather.windX;
+      W.w = weather.windZ;
+    }
     const treeR = Math.min(this.quality.treeDist, fogVisibility + 30);
     this.trees.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10);
     this.bushes.update(camPos.x, camPos.z, Math.min(85, fogVisibility + 10));

@@ -39,7 +39,7 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -50,6 +50,7 @@ const BIT_SLOTS = {
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
+  [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
 };
 
 export function playerFlags(p) {
@@ -99,6 +100,10 @@ function quant(e) {
     case ENT.CRATE:
     case ENT.CACHE:
       q[3] = e.state | 0;
+      break;
+    case ENT.CAT:
+      q[3] = qangle8(e.yaw);
+      q[4] = e.anim;
       break;
   }
 }
@@ -155,6 +160,9 @@ function writeCreate(w, e) {
       break;
     case ENT.CACHE:
       w.u8(e.ctype);
+      break;
+    case ENT.CAT:
+      w.u8(e.variant);
       break;
   }
   writeFields(w, e.kind, 0, FIELD_COUNT[e.kind]);

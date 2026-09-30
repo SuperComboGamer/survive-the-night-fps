@@ -415,6 +415,37 @@ export function raycastWorld(world, ox, oy, oz, dx, dy, dz, maxT, out = { t: -1,
   return out;
 }
 
+// Can an eye reach an interaction point without going through a wall? Only full-height colliders (top above reachTop)
+// block - sills, furniture and barricades can be reached over, and survivors pass gates/door boards anyway. The
+// target's own collider (one containing the point, e.g. a fridge) and hits within `pad` of the point are ignored.
+const _lq = [];
+export function canReach(world, ox, oy, oz, tx, ty, tz, reachTop, pad = 0.2) {
+  let dx = tx - ox;
+  let dy = ty - oy;
+  let dz = tz - oz;
+  const len = Math.hypot(dx, dy, dz);
+  const maxT = len - pad;
+  if (maxT <= 0) return true;
+  dx /= len;
+  dy /= len;
+  dz /= len;
+  const skip = COL.NOBLOCK | COL.NOBULLET | COL.HUMANPASS;
+  const mx = (ox + tx) / 2;
+  const mz = (oz + tz) / 2;
+  const r = Math.hypot(tx - ox, tz - oz) / 2;
+  const grids = world.colliderGrids;
+  for (let g = 0; g < grids.length; g++) {
+    const list = grids[g].query(mx, mz, r, _lq);
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c.flags & skip || c.y1 <= reachTop) continue;
+      if (ty >= c.y0 && ty <= c.y1 && footprintContains(c, tx, tz)) continue;
+      if (rayCollider(c, ox, oy, oz, dx, dy, dz, maxT) >= 0) return false;
+    }
+  }
+  return true;
+}
+
 // OBB overlap test in XZ (separating axis) with optional margin
 export function overlapBoxes(a, b, margin = 0) {
   const ax = [a.c, -a.s];

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Co-op horror survival FPS - scavenge by day, board up wherever you stand by night, fix the car and escape. three.js client, authoritative Node uWebSockets.js server",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "node scripts/dev.js",
     "dev:server": "node --watch-path=server --watch-path=shared server/index.js",

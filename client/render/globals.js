@@ -38,7 +38,8 @@ export const G = {
   uFogSun: { value: new SharedColor(0, 0, 0) },
   // world-space unit vector towards the dominant light (sun by day, moon by night)
   uSunDirW: { value: new SharedVec3(0, 1, 0) },
-  // x: time (s), y: wind strength 0..1, z/w: wind direction (unit, xz)
+  // x: sway clock (s, runs faster in strong wind), y: wind strength (~0.45 breeze .. ~1.1 gale),
+  // z/w: direction the wind blows toward (unit, xz). Foliage.update drives it from the weather.
   uWind: { value: new SharedVec4(0, 0.4, 0.8, 0.6) },
 };
 

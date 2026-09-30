@@ -21,8 +21,8 @@ server/      authoritative game server (uWebSockets.js)
 client/      three.js client (Vite root)
   index.html, main.js
   net/        connection, snapshot decode, interpolation, prediction
-  game/       client game state, entity views, input
-  render/     renderer, sky, terrain, vegetation, water, post, particles, textures, materials, models/
+  game/       client game state, entity views, input, weather schedule (weather.js)
+  render/     renderer, sky, terrain, vegetation, water, post, particles, weather fx, textures, materials, models/
   audio/      WebAudio engine: procedural synthesis + CC0 recordings in audio/samples/ (samples.js loads
               them after init; any sound whose file fails to load/decode falls back to its procedural version)
   ui/         DOM HUD (hud.js + hud2.js: compass, objective, world markers, downed, summary), field map
@@ -92,3 +92,12 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
 - **Containers** are `ENT.CACHE` entities (position + searched state) created from `world.containers`;
   searching is a server-side hold interaction (`ACT.HOLD_BEGIN/END`, progress in the self state).
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
+- **Weather** is client-side only and adds no network traffic. `client/game/weather.js` derives a seeded
+  schedule (fog banks, gales, rain, thunderstorms; weighted toward dusk and night, and the first evening always
+  brings fog) from the world seed and the replicated phase clock (`phase`, `day`, `timeLeft`, `phaseLen`), so
+  every client sees the same weather. Lightning strikes come from hashed 0.5 s slots of that clock, so they land
+  at the same time and place for everyone; each listener hears the thunder after its own distance delay. The
+  renderer reads `weather.state` for fog density (and the valley mist), the overcast deck (no sun shafts),
+  lightning light, wind (`Foliage.update` drives `G.uWind`: trees bend trunk and crown together, grass and bushes
+  lean; the ambience plays the same wind), ground mist, the flashlight beam's haze (post.js, denser in rain), and
+  rain streaks and splashes (`render/weatherfx.js`, kept out from under `world.roofs`).

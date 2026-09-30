@@ -49,6 +49,9 @@ def(S.PISTOL, 'gun_pistol', 'gun', 0.85, 0.04);
 def(S.SHOTGUN, 'gun_shotgun', 'gun', 0.9, 0.03);
 def(S.AK47, 'gun_ak47', 'gun', 0.8, 0.035);
 def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03);
+def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035);
+def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04);
+def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03);
 def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08, 0.15, R_SWING);
 def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08, 0.15, R_FLESH);
 def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1);
@@ -101,6 +104,7 @@ def(S.ENGINE_CRANK, 'car_start', 'big', 1, 0.02);
 def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05);
 def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02);
 def(S.FLARE_BURN, 'acid', 'fx', 0.45, 0.1);
+def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -108,6 +112,9 @@ const LOCAL = {
   shotgun: { bank: 'fp_shotgun', vol: 1, jit: 0.025, send: 0.18 },
   ak47: { bank: 'fp_ak47', vol: 0.88, jit: 0.03, send: 0.13 },
   rifle: { bank: 'fp_rifle', vol: 1, jit: 0.02, send: 0.2 },
+  m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13 },
+  mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1 },
+  dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2 },
   reload_start: { bank: 'reload_start', vol: 0.55 },
   reload_end: { bank: 'reload_end', vol: 0.6 },
   shell_insert: { bank: 'shell_insert', vol: 0.55 },
@@ -591,7 +598,7 @@ export class AudioEngine {
     this._lyaw = NaN;
     this._lpitch = NaN;
     this._state = {
-      night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, dead: false, menu: false,
+      night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, rain: 0, dead: false, menu: false,
       cycle: NaN, wind: NaN, gust: NaN, open: 0, indoor: 0,
     };
     this._vol = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
@@ -1313,7 +1320,7 @@ export class AudioEngine {
   // ---------------------------------------------------------------- ambience / state
   // state: { night 0..1, horde, boss, danger 0..1, lowHealth 0..1, nearFire 0..1, underCover, dead, menu } plus
   // optional extras: cycle (the renderer's day cycle 0..1: day 0.055-0.485, night 0.5-0.99; gives real dawn / dusk
-  // windows), wind 0..1 and gust 0..1 (to match visible wind; otherwise the engine wanders its own, readable via
+  // windows), wind (the weather's: 0.3 breeze .. ~1.2 gale) and gust 0..1 (to match visible wind; otherwise the engine wanders its own, readable via
   // `audio.wind`), open 0..1 (clearing / road: open-field reverb), indoor 0..1 (inside a building: room reverb and
   // muffled outdoor beds, like underCover).
   setAmbience(state) {
@@ -1329,18 +1336,25 @@ export class AudioEngine {
     s.lowHealth = clamp01(+state.lowHealth || 0);
     s.nearFire = clamp01(+state.nearFire || 0);
     s.underCover = !!state.underCover;
+    s.rain = clamp01(+state.rain || 0);
     s.dead = dead;
     s.menu = menu;
     // optional extras (see the setAmbience doc comment)
     const cy = state.cycle == null ? NaN : +state.cycle;
     s.cycle = cy === cy && Number.isFinite(cy) ? cy - Math.floor(cy) : NaN;
     const wv = state.wind == null ? NaN : +state.wind;
-    s.wind = wv === wv ? clamp01(wv) : NaN;
+    s.wind = wv === wv ? Math.max(0, Math.min(1.3, wv)) : NaN;
     const gv = state.gust == null ? NaN : +state.gust;
     s.gust = gv === gv ? clamp01(gv) : NaN;
     s.open = clamp01(+state.open || 0);
     s.indoor = clamp01(+state.indoor || 0);
     if (changed && this._ready) this._applyStateNow();
+  }
+
+  // thunder for a lightning strike at world (x, z), `dist` m away: it rolls in `delay` s after the flash
+  thunder(x, z, dist, delay) {
+    if (!this._ready) return;
+    this._ambience?.thunder(x, z, dist, delay);
   }
 
   _applyStateNow() {

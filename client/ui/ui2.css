@@ -1016,6 +1016,7 @@
 /* map on top of the HUD: hide the cinematic titles / toasts behind it */
 .stn-ui.map-open .cine,
 .stn-ui.map-open .top-center,
+.stn-ui.map-open .top-right,
 .stn-ui.map-open .layer-hud {
   visibility: hidden;
 }

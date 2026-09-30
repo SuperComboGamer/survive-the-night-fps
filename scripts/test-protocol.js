@@ -75,6 +75,11 @@ function spawn(kind) {
       e.ctype = irnd(1, 11);
       e.state = 0;
       break;
+    case ENT.CAT:
+      e.variant = irnd(0, 4);
+      e.yaw = rnd(0, 6.28);
+      e.anim = irnd(0, 3);
+      break;
   }
   ents.set(e.id, e);
   return e;
@@ -99,6 +104,9 @@ function expectQ(e) {
     case ENT.CACHE:
       q.push(e.state);
       break;
+    case ENT.CAT:
+      q.push(qangle8(e.yaw), e.anim);
+      break;
   }
   return q;
 }
@@ -109,7 +117,7 @@ const view = new ClientView();
 const store = { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} };
 const w = new Writer(1024);
 let bytes = 0;
-const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE];
+const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE, ENT.CAT];
 for (let i = 0; i < 80; i++) spawn(kinds[irnd(0, kinds.length - 1)]);
 let checks = 0;
 const TICKS = 3000;
@@ -145,6 +153,10 @@ for (let tick = 1; tick <= TICKS; tick++) {
     }
     if (e.kind === ENT.CRATE && Math.random() < 0.05) e.state = irnd(0, 2);
     if (e.kind === ENT.CACHE && Math.random() < 0.05) e.state = irnd(0, 1);
+    if (e.kind === ENT.CAT && Math.random() < 0.2) {
+      e.yaw = rnd(0, 6.28);
+      e.anim = irnd(0, 3);
+    }
   }
   // viewer moves around (relevance changes)
   viewer.state.x += rnd(-3, 3);

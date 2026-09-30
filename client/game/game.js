@@ -18,6 +18,7 @@ import {
   GRID_STEP,
   GRID_N,
   DUSK_WARNING,
+  EYE_HEIGHT,
 } from '../../shared/constants.js';
 import {
   ITEM,
@@ -39,6 +40,7 @@ import {
   ZONE,
   ZONE_NAMES,
   AMMO_NAMES,
+  AMMO_ITEMS,
   CONSUMABLES,
 } from '../../shared/defs.js';
 import { ACT, ENT, HOLD, CAR_ID, PING_KIND, PFLAG, dqpos } from '../../shared/protocol.js';
@@ -52,20 +54,42 @@ import { Entities } from './entities.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
-import { G } from '../render/globals.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
 import { Lights } from '../render/lights.js';
 import { Atmosphere } from '../render/atmosphere.js';
+import { WeatherFX } from '../render/weatherfx.js';
+import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
 import { createGhost } from '../render/models/structures.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
 
-const SHOT_SOUND = { [ITEM.PISTOL]: SOUND.PISTOL, [ITEM.SHOTGUN]: SOUND.SHOTGUN, [ITEM.AK47]: SOUND.AK47, [ITEM.HUNTING_RIFLE]: SOUND.RIFLE };
-const LOCAL_SHOT = { [ITEM.PISTOL]: 'pistol', [ITEM.SHOTGUN]: 'shotgun', [ITEM.AK47]: 'ak47', [ITEM.HUNTING_RIFLE]: 'rifle' };
+const WEATHER_TOAST = {
+  fog: 'Fog is rolling in',
+  gale: 'The wind is picking up',
+  rain: 'It starts to rain',
+  storm: 'A storm is breaking',
+};
+
+const SHOT_SOUND = {
+  [ITEM.PISTOL]: SOUND.PISTOL,
+  [ITEM.SHOTGUN]: SOUND.SHOTGUN,
+  [ITEM.AK47]: SOUND.AK47,
+  [ITEM.HUNTING_RIFLE]: SOUND.RIFLE,
+  [ITEM.M4A1]: SOUND.M4A1,
+  [ITEM.MP5]: SOUND.MP5,
+  [ITEM.DB_SHOTGUN]: SOUND.DB_SHOTGUN,
+};
+// first-person muzzle flash scale + camera shake per shot (default [1, 0.06])
+const SHOT_KICK = {
+  [ITEM.SHOTGUN]: [1.4, 0.25],
+  [ITEM.DB_SHOTGUN]: [1.6, 0.3],
+  [ITEM.HUNTING_RIFLE]: [1.3, 0.3],
+  [ITEM.MP5]: [0.8, 0.04],
+};
 const PING_LIFE = 12;
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
@@ -91,12 +115,17 @@ export class Game {
     this.time = 0;
     this.myId = 0;
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0 };
-    this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: [0, 0, 0, 0] };
+    this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
     this.players = new Map(); // id -> {name, status, kills, ping}
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
     this.clockInit = false;
+    this.clockAdj = 0; // pending clock correction, eased in over a few frames
+    this.latestTick = 0; // newest snapshot received
+    this.jitter2 = 0; // mean squared snapshot arrival error (ticks^2)
+    this.lateRun = 0; // consecutive snapshots far behind the clock
+    this.interpExtra = 0; // extra interpolation delay (ticks) on a jittery connection
     this.renderTick = 0;
     this.damageFx = 0;
     this.hitFx = 0;
@@ -130,6 +159,7 @@ export class Game {
     this.input = new Input(renderer.canvas);
     this.input.sensitivity = settings.sensitivity || 1;
     this.input.invertY = !!settings.invertY;
+    this.input.rawInput = settings.rawMouse !== false;
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
       inventory: (r) => this.onInventory(r),
@@ -141,6 +171,8 @@ export class Game {
     this.voice = new Voice(this.conn, audio);
     this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.talkPeers.map((id) => this.players.get(id)?.name || '?') });
     this.env = new Environment(this.scene);
+    this.weather = new Weather();
+    this.weather.onStrike = (s) => this.onLightning(s);
     this.lights = new Lights(this.scene, this.camera, renderer.q);
     this.vm = new ViewModel();
     renderer.vmScene.add(this.vm.group);
@@ -208,7 +240,8 @@ export class Game {
   // local flashlight scattering in the haze (post pass); denser at night and in the valley mist
   beamState() {
     const b = (this._beam ||= { light: this.lights.flashlight, density: 0 });
-    b.density = 0.00012 + this.env.night * 0.00022 + this.env.cur.mist * 0.008;
+    // (env.cur.mist already carries fog banks; rain catches the light too)
+    b.density = 0.00012 + this.env.night * 0.00022 + this.env.cur.mist * 0.008 + this.weather.state.rain * 0.0003;
     return b;
   }
 
@@ -239,6 +272,9 @@ export class Game {
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
     if (!this.atmosphere) this.atmosphere = new Atmosphere(this.scene);
+    this.weather.setWorld(this.world);
+    if (!this.weatherFx) this.weatherFx = new WeatherFX(this.scene, this.renderer.quality);
+    this.weatherFx.setWorld(this.world, this.weather);
     this.staticFires = [];
     for (const l of this.world.lights) {
       if (l.kind === 'embers') {
@@ -268,6 +304,7 @@ export class Game {
     this.entities.clear();
     this.clientTick = info.tick;
     this.clockInit = false;
+    this.interpExtra = 0;
     this.state = 'playing';
     this.input.enabled = true;
     this.input.requestLock();
@@ -304,11 +341,25 @@ export class Game {
     // clock
     if (!this.clockInit) {
       this.clientTick = tick;
+      this.clockAdj = 0;
+      this.jitter2 = 0;
+      this.lateRun = 0;
+      this.latestTick = tick;
       this.clockInit = true;
     } else {
-      const err = tick - this.clientTick;
-      if (Math.abs(err) > 6) this.clientTick = tick;
-      else this.clientTick += err * 0.08;
+      const err = tick - (this.clientTick + this.clockAdj);
+      // way off: resync. A single very late snapshot is not that - it's the head of a burst after a
+      // server/network stall, and pulling the clock back for it would rewind every entity
+      this.lateRun = err < -6 ? this.lateRun + 1 : 0;
+      if (err > 6 || this.lateRun > 4) {
+        this.clientTick = tick;
+        this.clockAdj = 0;
+        this.lateRun = 0;
+      } else if (err >= -6) {
+        this.clockAdj += err * 0.08;
+        this.jitter2 += (Math.min(err * err, 9) - this.jitter2) * 0.02;
+      }
+      if (tick > this.latestTick || this.latestTick - tick > 1000) this.latestTick = tick;
     }
     this.prediction.reconcile(ack, this.self);
     readEvents(r, this.eventHandler);
@@ -599,7 +650,7 @@ export class Game {
       mz = _v.z;
       _v.set(mx, my, mz);
     } else _v.set(mx, my, mz);
-    this.effects.worldMuzzle(_v, ev.weapon === ITEM.SHOTGUN ? 1.3 : 1);
+    this.effects.worldMuzzle(_v, def.pellets > 1 ? 1.3 : 1);
     this.lights.flashMuzzle(_v, 0.8);
     this.audio.play(SHOT_SOUND[ev.weapon] || SOUND.PISTOL, { x: mx, y: my, z: mz });
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
@@ -622,9 +673,10 @@ export class Game {
         case 'fire': {
           const def = WEAPONS[ev.weapon];
           this.vm.fire();
-          a.playLocal(LOCAL_SHOT[ev.weapon] || 'pistol');
+          a.playLocal(def.sound || 'pistol');
           this.vm.getMuzzle(_v);
-          this.effects.vmMuzzle(_v, ev.weapon === ITEM.SHOTGUN ? 1.4 : ev.weapon === ITEM.HUNTING_RIFLE ? 1.3 : 1);
+          const kick = SHOT_KICK[ev.weapon];
+          this.effects.vmMuzzle(_v, kick ? kick[0] : 1);
           this.renderer.vmMuzzle.intensity = 6;
           this.vmMuzzleT = 0.05;
           // world muzzle light at the camera
@@ -647,7 +699,7 @@ export class Game {
             if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
           }
           this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
-          this.camShake = Math.min(1, (this.camShake || 0) + (ev.weapon === ITEM.SHOTGUN ? 0.25 : ev.weapon === ITEM.HUNTING_RIFLE ? 0.3 : 0.06));
+          this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
           break;
         }
         case 'dry':
@@ -730,14 +782,7 @@ export class Game {
     const s = this.prediction.state;
     const ui = this.ui;
     if (code === 'Tab') {
-      if (ui.mapOpen) this.toggleMap(false);
-      const open = !ui.inventoryOpen;
-      ui.setCraftContext(this.craftContext());
-      ui.setInventoryOpen(open);
-      this.input.enabled = !open;
-      if (open) this.input.exitLock();
-      else this.input.requestLock();
-      this.audio.playLocal('ui_click', { volume: 0.5 });
+      this.toggleInventory(!ui.inventoryOpen);
       return;
     }
     if (code === 'KeyM') {
@@ -776,8 +821,14 @@ export class Game {
       this.prediction.requestSlot(digit);
       return;
     }
+    // hammer out: Q / E step through the structures, but E still interacts whenever the prompt offers [E]
+    const building = s.slot === SLOT_BUILD && !s.zombie;
     switch (code) {
       case 'KeyQ': {
+        if (building) {
+          this.cycleBuild(-1);
+          break;
+        }
         const t = this.lastSlot;
         this.lastSlot = s.slot;
         this.prediction.requestSlot(t);
@@ -793,7 +844,8 @@ export class Game {
         break;
       }
       case 'KeyE':
-        this.interact();
+        if (building && !this.prompt?.startsWith('[E]')) this.cycleBuild(1);
+        else this.interact();
         break;
       case 'KeyZ':
         this.ping();
@@ -815,6 +867,18 @@ export class Game {
         else this.voice.setTransmit(!this.voice.transmitting);
         break;
     }
+  }
+
+  toggleInventory(open) {
+    const ui = this.ui;
+    if (open === ui.inventoryOpen) return;
+    if (ui.mapOpen) this.toggleMap(false);
+    ui.setCraftContext(this.craftContext());
+    ui.setInventoryOpen(open);
+    this.input.enabled = !open;
+    if (open) this.input.exitLock();
+    else this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
   toggleMap(open) {
@@ -944,8 +1008,25 @@ export class Game {
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
-      onChatSend: (text) => this.conn.chat(text),
+      onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
+      onChatSend: (text) => this.devCommand(text) || this.conn.chat(text),
     };
+  }
+
+  // dev builds only: preview the weather locally. /weather fog|gale|rain|storm|clear|auto, /lightning [meters]
+  devCommand(text) {
+    if (!import.meta.env?.DEV) return false;
+    const [cmd, arg] = text.trim().split(/\s+/);
+    if (cmd === '/weather') {
+      this.weather.force = !arg || arg === 'auto' ? null : arg === 'clear' ? { rain: 0, bolts: 0, cloud: 0, fog: 1, wind: 0.3 } : { kind: arg };
+      this.ui.notify(`Weather: ${arg || 'auto'}`, 'toast', 2);
+      return true;
+    }
+    if (cmd === '/lightning') {
+      this.weather.strikeNear(this.camera.position, +arg || 150, true, this.input.yaw + Math.PI);
+      return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------- frame
@@ -985,9 +1066,14 @@ export class Game {
       const rti = Math.floor(rt);
       this.conn.sendInput(rti, rt - rti, out);
     }
-    // interpolation clock
-    this.clientTick += dt * SERVER_TICK_RATE;
-    this.renderTick = this.clientTick - INTERP_DELAY * SERVER_TICK_RATE;
+    // interpolation clock: corrections are eased in (a step in the clock is a step in every remote entity),
+    // and the render delay widens a little when snapshots arrive unevenly so entities don't stall and lurch
+    const adj = this.clockAdj * Math.min(1, dt * 6);
+    this.clockAdj -= adj;
+    this.clientTick += dt * SERVER_TICK_RATE + adj;
+    const extra = Math.min(1.5, Math.max(0, 2.5 * Math.sqrt(this.jitter2) - 0.6));
+    this.interpExtra += Math.max(-dt * 0.5, Math.min(dt * 0.5, extra - this.interpExtra));
+    this.renderTick = this.clientTick - INTERP_DELAY * SERVER_TICK_RATE - this.interpExtra;
 
     // camera
     this.prediction.renderPos(dt, this.renderPos);
@@ -1036,7 +1122,7 @@ export class Game {
     }
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.debugCam);
-    const lk = 0.0022 * inp.sensitivity;
+    const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time });
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
@@ -1083,9 +1169,18 @@ export class Game {
     const cycle = this.debugCycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
     if (!g.finale) this.global.timeLeft = Math.max(0, g.timeLeft - dt);
     else this.global.escapeT = Math.max(0, g.escapeT - dt);
-    this.env.update(dt, cycle, cam.position, time);
+    const weather = this.weather.update(dt, g, time, cam.position);
+    if (weather.kind !== this.weatherKind) {
+      this.weatherKind = weather.kind;
+      const say = WEATHER_TOAST[weather.kind];
+      if (say && time - (this.weatherToastT ?? -1e9) > 45 && self.alive) {
+        this.weatherToastT = time;
+        this.ui.notify(say, 'toast', 3.5);
+      }
+    }
+    this.env.update(dt, cycle, cam.position, time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage.update(cam.position, this.env.fogVisibility, time);
+    this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
     if (this.water) {
       const u = this.water.material.uniforms;
       u.uTime.value = time;
@@ -1108,7 +1203,9 @@ export class Game {
 
     this.effects.setAmbient(this.env.night);
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
-    this.atmosphere.update(time, cam, this.env.fog.color, this.env.night, this.localFlash && self.alive && !s.zombie, this.world.heightAt);
+    const flashOn = this.localFlash && self.alive && !s.zombie;
+    this.atmosphere.update(dt, time, cam, this.env, flashOn, this.world.heightAt, weather);
+    this.weatherFx.update(dt, time, cam, weather, this.env, flashOn, this.renderer.renderer.domElement.height);
 
     // audio
     const a = this.audio;
@@ -1128,15 +1225,15 @@ export class Game {
       danger: this.danger,
       lowHealth: self.alive && !self.zombie ? (s.downed ? 1 : Math.max(0, 1 - hpFrac / 0.35)) : 0,
       nearFire,
+      rain: weather.rain,
+      wind: weather.wind,
+      underCover: weather.cover,
       dead: !self.alive,
       menu: false,
       cycle: this.env.cycle,
       open: this.openness,
       indoor: this.indoor,
     });
-    // foliage sways with the same gusts the ambience plays
-    const wind = a.wind;
-    if (wind) G.uWind.value.y = 0.25 + 0.75 * Math.min(1, wind.strength ?? wind.gust ?? 0.4);
 
     // overlays by phase
     this.updateOverlays();
@@ -1178,18 +1275,26 @@ export class Game {
     const gy = this.world.heightAt(car.x, car.z);
     cam.position.set(car.x + Math.sin(this.menuAngle) * r, gy + 3.4, car.z + Math.cos(this.menuAngle) * r);
     cam.lookAt(car.x, gy + 1.2, car.z);
-    this.env.update(dt, 0.49, cam.position, this.time);
+    const weather = this.weather.update(dt, null, this.time, cam.position);
+    this.env.update(dt, 0.49, cam.position, this.time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage.update(cam.position, this.env.fogVisibility, this.time);
+    this.foliage.update(cam.position, this.env.fogVisibility, this.time, weather);
     this.lights.update(dt, this.time, cam.position, false, this.staticFires, [], this.env.night);
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
-    this.atmosphere.update(this.time, cam, this.env.fog.color, this.env.night, false, this.world.heightAt);
+    this.atmosphere.update(dt, this.time, cam, this.env, false, this.world.heightAt, weather);
+    this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
     this.vm.setVisible(false);
     if (this.audio.ready) {
       this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
       this.audio.setAmbience({ night: 0.6, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, dead: false, menu: true });
     }
     this.post = { time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure, rays: this.env.rays };
+  }
+
+  // a lightning strike's light reached us: the bolt now, its thunder when the sound gets here
+  onLightning(s) {
+    this.weatherFx?.strike(s, this.camera.position);
+    this.audio.thunder(s.x, s.z, s.dist, s.delay);
   }
 
   updateOverlays() {
@@ -1245,7 +1350,7 @@ export class Game {
     const ox = cam.position.x;
     const oy = cam.position.y;
     const oz = cam.position.z;
-    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, 3.3);
+    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, 3.3, this.renderPos.y + EYE_HEIGHT);
     const counts = this.invCounts();
     const g = this.global;
     if (e) {

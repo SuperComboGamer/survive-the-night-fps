@@ -1,21 +1,109 @@
 // Inventory / crafting screen (Tab). Equipment on the left, backpack grid in the centre,
 // crafting on the right; survivors + car checklist + campfire under the grid.
-import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
-import { el, svgEl, clamp, fmtTime } from './dom.js';
+import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
-const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308];
-const GROUPS = [
-  { title: 'Survival', cats: ['cons', 'res'] },
-  { title: 'Weapons', cats: ['weapon'] },
-  { title: 'Throwables', cats: ['throw'] },
-  { title: 'Armor', cats: ['armor'] },
-  { title: 'Ammunition', cats: ['ammo'] },
+// Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
+// icon: item shown on the tab; cat: item category whose colour marks the tab (defaults to the id).
+const CRAFT_TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'weapon', label: 'Weapons', icon: ITEM.PISTOL },
+  { id: 'ammo', label: 'Ammo', icon: ITEM.AMMO_SHELLS },
+  { id: 'throw', label: 'Throwables', icon: ITEM.MOLOTOV },
+  { id: 'armor', label: 'Armor', icon: ITEM.KEVLAR },
+  { id: 'med', label: 'Medical', icon: ITEM.MEDKIT, cat: 'cons' },
+  { id: 'util', label: 'Utility', icon: ITEM.ROPE, cat: 'res' },
 ];
+const TAB_KEY = 'stn.craftTab';
 const STATION_GLYPH = { fire: 'campfire', bench: 'wrench' };
+
+// Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, and
+// consumables split into medicine (anything that heals) and utility (torches, batteries), which
+// shares a tab with the raw materials.
+function craftTab(item) {
+  const cat = ITEM_DEFS[item]?.cat;
+  if (item === ITEM.HAMMER) return 'util';
+  if (cat === 'cons') return CONSUMABLES[item]?.heal ? 'med' : 'util';
+  return CRAFT_TABS.some((t) => t.id === cat) ? cat : 'util';
+}
+
+// order inside a tab: tools, then consumables, then materials (stable, so recipe order breaks ties)
+const CAT_RANK = { weapon: 0, cons: 1 };
+const craftRank = (r) => CAT_RANK[ITEM_DEFS[r.out]?.cat] ?? 2;
+
+// ---------------------------------------------------------------- recipe search
+// An item answers to its display name and its ITEM key, so "wood" finds Planks and "pipebomb" finds Pipe Bomb.
+const ITEM_KEY = Object.fromEntries(Object.entries(ITEM).map(([k, v]) => [v, k]));
+const norm = (s) => String(s).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+
+// 5 exact · 4 whole word · 3 prefix · 2 word prefix · 1 substring (or every word somewhere) · 0 none
+function termScore(text, q) {
+  const t = norm(text);
+  if (t === q) return 5;
+  const padded = ' ' + t + ' ';
+  if (padded.includes(' ' + q + ' ')) return 4;
+  if (t.startsWith(q)) return 3;
+  if (padded.includes(' ' + q)) return 2;
+  if (t.includes(q) || (q.includes(' ') && q.split(' ').every((w) => t.includes(w)))) return 1;
+  return 0;
+}
+
+const itemScore = (id, q) => Math.max(termScore(ITEM_DEFS[id]?.name || '', q), termScore(ITEM_KEY[id] || '', q));
+
+// Recipes relevant to a search across every tab, as titled sections: recipes whose output matches by name
+// (ranked above tab-label / station matches), the recipes for their craftable ingredients all the way down,
+// ammo for matching guns, then recipes that consume (or are unlocked by) a matching item.
+// recs = the screen's recipe entries ({ r, tab }) in 'All' order; sections hold those same entries.
+function searchRecipes(query, recs) {
+  const q = norm(query);
+  if (!q) return [];
+  const items = new Map(); // matching item id -> score
+  for (const id of Object.keys(ITEM_DEFS)) {
+    const s = itemScore(+id, q);
+    if (s) items.set(+id, s);
+  }
+  const score = new Map();
+  for (const rec of recs) {
+    const { r } = rec;
+    const n = items.get(r.out) || 0;
+    const s = n ? 5 + n : Math.max(termScore(rec.tab.label, q), r.station ? termScore(STATION_NAMES[r.station], q) : 0);
+    if (s) score.set(rec, s);
+  }
+  const results = recs.filter((rec) => score.has(rec)).sort((a, b) => score.get(b) - score.get(a));
+  const shown = new Set(results);
+  const take = (pred) => recs.filter((rec) => !shown.has(rec) && pred(rec.r)).map((rec) => (shown.add(rec), rec));
+
+  const parts = [];
+  const queue = results.filter((rec) => items.has(rec.r.out));
+  while (queue.length) {
+    const need = Object.keys(queue.shift().r.cost).map(Number);
+    const more = take((r) => need.includes(r.out));
+    parts.push(...more);
+    queue.push(...more);
+  }
+
+  const calibers = new Set([...items.keys()].map((id) => WEAPONS[id]).filter((w) => w && !w.melee && w.ammo != null).map((w) => w.ammo));
+  const ammo = take((r) => calibers.has(ITEM_DEFS[r.out].ammo));
+
+  const via = new Set();
+  const uses = take((r) => {
+    const hit = [...Object.keys(r.cost).map(Number), r.schem].filter((id) => items.has(id));
+    hit.forEach((id) => via.add(id));
+    return hit.length > 0;
+  });
+  const names = [...via].map((id) => ITEM_DEFS[id].name);
+
+  return [
+    { title: 'Results', recs: results },
+    { title: 'Ingredients', recs: parts },
+    { title: 'Ammunition', recs: ammo },
+    { title: names.length <= 2 ? 'Uses ' + names.join(' & ') : 'Uses matching items', recs: uses },
+  ].filter((s) => s.recs.length);
+}
 
 function statLines(id) {
   const d = ITEM_DEFS[id];
@@ -57,10 +145,14 @@ class Tooltip {
     this.cat = el('div', 'tip-cat', t);
     this.desc = el('div', 'tip-desc', this.root);
     this.stats = el('div', 'tip-stats', this.root);
+    this.reqs = el('div', 'tip-reqs', this.root);
     this.hint = el('div', 'tip-hint', this.root);
+    this.x = 0;
+    this.y = 0;
   }
 
-  show({ icon, name, cat, catCls, desc, stats, hint }, x, y) {
+  // reqs = [{ icon, name, val, ok }] - a have/need checklist (recipes)
+  show({ icon, name, cat, catCls, desc, stats, reqs, hint, hintCls }, x = this.x, y = this.y) {
     this.ico.innerHTML = icon || '';
     this.name.textContent = name || '';
     this.cat.textContent = cat || '';
@@ -70,13 +162,29 @@ class Tooltip {
     this.stats.textContent = '';
     for (const s of stats || []) el('div', 'tip-stat', this.stats, s);
     this.stats.hidden = !(stats && stats.length);
-    this.hint.textContent = hint || '';
+    this.reqs.textContent = '';
+    if (reqs && reqs.length) {
+      el('div', 'tip-reqs-h', this.reqs, 'Requires');
+      for (const q of reqs) {
+        const row = el('div', 'tip-req ' + (q.ok ? 'ok' : 'lack'), this.reqs);
+        svgEl('i', 'tip-req-ico', row, q.icon);
+        el('span', 'tip-req-name', row, q.name);
+        el('span', 'tip-req-val', row, q.val);
+        svgEl('i', 'tip-req-mark', row, glyph(q.ok ? 'check' : 'xmark'));
+      }
+    }
+    this.reqs.hidden = !(reqs && reqs.length);
+    this.hint.textContent = '';
+    for (const line of (hint || '').split('\n')) el('div', '', this.hint, line);
+    this.hint.className = 'tip-hint' + (hintCls ? ' ' + hintCls : '');
     this.hint.hidden = !hint;
     this.root.hidden = false;
     this.move(x, y);
   }
 
   move(x, y) {
+    this.x = x;
+    this.y = y;
     const r = this.root.getBoundingClientRect();
     let px = x + 18;
     let py = y + 18;
@@ -95,7 +203,7 @@ export class Inventory {
   constructor(ui, parent, tipParent) {
     this.ui = ui;
     this.open = false;
-    this.inv = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null, ammo: [0, 0, 0, 0], weapons: [0, 0, 0, 0, 0], throwCounts: {} };
+    this.inv = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null, ammo: AMMO_ITEMS.map(() => 0), weapons: [0, 0, 0, 0, 0], throwCounts: {} };
     this.counts = {};
     this.near = { fire: false, bench: false };
     this.unlocked = 0;
@@ -105,6 +213,13 @@ export class Inventory {
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
     el('div', 'inv-bg', root);
+    const close = el('button', 'inv-close', root);
+    close.type = 'button';
+    close.title = 'Close inventory (Tab)';
+    el('span', 'kbd sm', close, 'Tab');
+    el('span', 'inv-close-t', close, 'Close');
+    svgEl('i', 'inv-close-x', close, glyph('xmark'));
+    close.addEventListener('click', () => this.ui.cb.onCloseInventory());
     const wrap = el('div', 'inv-wrap', root);
 
     // ---- left: equipment
@@ -206,13 +321,39 @@ export class Inventory {
     this.stationEl = el('span', 'station', ch);
     this.stationIco = svgEl('i', 'st-ico', this.stationEl, glyph('campfire'));
     this.stationTxt = el('span', '', this.stationEl, '');
-    const list = el('div', 'craft-list', right);
+    // search sits above the tabs: while it holds a query it covers every tab, and the tabs step back
+    const find = (this.findEl = el('label', 'craft-find', right));
+    svgEl('i', 'cf-ico', find, glyph('search'));
+    const field = (this.findInput = el('input', 'cf-field', find));
+    field.type = 'text';
+    field.maxLength = 40;
+    field.autocomplete = 'off';
+    field.spellcheck = false;
+    field.placeholder = 'Search all recipes';
+    field.setAttribute('aria-label', 'Search recipes');
+    const clr = (this.findClear = svgEl('button', 'cf-clear', find, glyph('xmark')));
+    clr.type = 'button';
+    clr.hidden = true;
+    clr.title = 'Clear search (Esc)';
+    clr.setAttribute('aria-label', 'Clear search');
+    const tabBar = (this.tabBar = el('div', 'craft-tabs', right));
+    el('span', 'kbd sm ct-key', tabBar, 'Q');
+    const list = (this.craftList = el('div', 'craft-list', right));
     this.recipeEls = [];
-    for (const g of GROUPS) {
-      const recs = RECIPES.filter((r) => g.cats.includes(ITEM_DEFS[r.out]?.cat));
-      if (!recs.length) continue;
-      el('div', 'craft-group', list, g.title);
-      const gg = el('div', 'craft-grid', list);
+    this.tabs = [];
+    for (const t of CRAFT_TABS) {
+      const recs = t.id === 'all' ? null : RECIPES.filter((r) => craftTab(r.out) === t.id).sort((a, b) => craftRank(a) - craftRank(b));
+      if (recs && !recs.length) continue;
+      const tb = el('button', 'ct c-' + (t.cat || t.id), tabBar);
+      tb.type = 'button';
+      tb.dataset.tab = t.id;
+      svgEl('i', 'ct-ico', tb, t.icon ? itemIcon(t.icon) : glyph('grid'));
+      el('span', 'ct-lab', tb, t.label);
+      const tab = { id: t.id, label: t.label, b: tb, n: el('span', 'ct-n', tb), ready: -1, head: null, grid: null, recs: [] };
+      this.tabs.push(tab);
+      if (!recs) continue;
+      tab.head = el('div', 'craft-group', list, t.label);
+      const gg = (tab.grid = el('div', 'craft-grid', list));
       for (const r of recs) {
         const b = el('button', 'rc', gg);
         b.type = 'button';
@@ -239,11 +380,18 @@ export class Inventory {
           lock = svgEl('i', 'rc-lock', b, glyph('lock'));
           lock.title = `Needs the ${ITEM_DEFS[r.schem].name}`;
         }
-        this.recipeEls.push({ r, b, ings, st, lock, key: '' });
+        const rec = { r, tab, b, ings, st, lock, key: '' };
+        this.recipeEls.push(rec);
+        tab.recs.push(rec);
       }
     }
+    el('span', 'kbd sm ct-key', tabBar, 'E');
+    // search results: the same recipe buttons, moved into relevance sections while a search is active
+    this.findView = el('div', 'craft-found', list);
+    this.findView.hidden = true;
 
     this._bind(root, wrap);
+    this._setTab(lsGet(TAB_KEY, 'all'));
     this._renderAll();
   }
 
@@ -360,8 +508,54 @@ export class Inventory {
       }
     });
 
+    // crafting tabs: click, or Q / E to step through them while the screen is open. While a search is
+    // active the tabs are dimmed; picking one (or stepping with Q / E) clears the search and opens it.
+    this.tabBar.addEventListener('click', (e) => {
+      const b = e.target.closest('.ct');
+      if (!b || (b.dataset.tab === this.tab && !this.searching)) return;
+      this.ui.sound('ui_click');
+      this._setTab(b.dataset.tab);
+    });
+    // never fires from the search field: it stops its own keydowns, and isTyping() counts it as well
+    this._key = (e) => {
+      if (!this.open || e.repeat || e.ctrlKey || e.metaKey || e.altKey || this.ui.isTyping()) return;
+      const dir = e.code === 'KeyQ' ? -1 : e.code === 'KeyE' ? 1 : 0;
+      if (!dir) return;
+      e.preventDefault();
+      const n = this.tabs.length;
+      const i = this.tabs.findIndex((t) => t.id === this.tab);
+      this.ui.sound('ui_click');
+      this._setTab(this.tabs[(i + dir + n) % n].id);
+    };
+    window.addEventListener('keydown', this._key);
+
+    // crafting search. Keydown is consumed so the game (and Q / E above) never sees keys typed here -
+    // except Tab, which drops focus and falls through so it still closes the inventory.
+    const field = this.findInput;
+    field.addEventListener('input', () => this._showRecipes());
+    field.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        return field.blur();
+      }
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (field.value) this.clearSearch();
+        else field.blur();
+      }
+    });
+    this.findClear.addEventListener('click', () => {
+      this.ui.sound('ui_click');
+      this.clearSearch();
+      field.focus({ preventScroll: true });
+    });
+    this.findView.addEventListener('click', (e) => {
+      if (e.target.closest('.cf-reset')) this.clearSearch();
+    });
+
     // crafting
-    root.querySelector('.craft-list').addEventListener('click', (e) => {
+    this.craftList.addEventListener('click', (e) => {
       const b = e.target.closest('.rc');
       if (!b) return;
       const rec = this.recipeEls.find((x) => x.b === b);
@@ -413,7 +607,9 @@ export class Inventory {
   _tipInfo(t) {
     let id = 0;
     let hint = '';
+    let hintCls = '';
     let extra = null;
+    let reqs = null;
     if (t.classList.contains('cell')) {
       const s = this.inv.slots[+t.dataset.i];
       if (!s) return null;
@@ -432,13 +628,28 @@ export class Inventory {
     } else if (t.classList.contains('rc')) {
       const rec = this.recipeEls.find((x) => x.b === t);
       if (!rec) return null;
-      id = rec.r.out;
-      const parts = Object.entries(rec.r.cost).map(([k, v]) => `${v} ${ITEM_DEFS[k].name}`);
-      extra = ['Needs ' + parts.join(', ')];
-      const st = rec.r.station;
-      if (st) extra.push(this.near[st] ? `At a ${STATION_NAMES[st].toLowerCase()}` : st === 'fire' ? 'Requires a lit campfire nearby - build one anywhere [5]' : 'Requires a workbench nearby - build one anywhere [5]');
-      if (rec.r.schem) extra.push(this._schemOk(rec.r.schem) ? 'Schematic found' : `Locked: find the ${ITEM_DEFS[rec.r.schem].name}`);
-      hint = rec.b.classList.contains('ok') ? 'Click to craft' : rec.b.classList.contains('locked') ? 'Search lockers, ammo crates and toolboxes' : rec.b.classList.contains('no-station') ? (st === 'fire' ? 'Build or find a campfire' : 'Build or find a workbench') : 'Missing materials';
+      const { r } = rec;
+      id = r.out;
+      reqs = [];
+      const missing = [];
+      for (const ing of rec.ings) {
+        const have = this.counts[ing.id] || 0;
+        const ok = have >= ing.need;
+        const nm = ITEM_DEFS[ing.id].name;
+        if (!ok) missing.push(`${ing.need - have} ${nm}`);
+        reqs.push({ icon: itemIcon(ing.id), name: nm, val: Math.min(have, 999) + ' / ' + ing.need, ok });
+      }
+      const st = r.station;
+      const stationOk = !st || this.near[st];
+      if (st) reqs.push({ icon: glyph(STATION_GLYPH[st]), name: st === 'fire' ? 'Lit campfire' : STATION_NAMES[st], val: stationOk ? 'nearby' : 'not nearby', ok: stationOk });
+      const unlocked = !r.schem || this._schemOk(r.schem);
+      if (r.schem) reqs.push({ icon: glyph(unlocked ? 'unlock' : 'lock'), name: ITEM_DEFS[r.schem].name, val: unlocked ? 'found' : 'not found', ok: unlocked });
+      const todo = [];
+      if (missing.length) todo.push('Missing ' + missing.join(', '));
+      if (!stationOk) todo.push(`Build a ${STATION_NAMES[st].toLowerCase()} [5] or find one`);
+      if (!unlocked) todo.push('Find the schematic in lockers, crates or toolboxes');
+      hint = todo.length ? todo.join('\n') : 'Click to craft';
+      if (todo.length) hintCls = 'bad';
     } else if (t.classList.contains('cp')) {
       const i = this.partEls.indexOf(t);
       id = SUPPLIES[i];
@@ -460,7 +671,9 @@ export class Inventory {
       catCls: 'c-' + d.cat,
       desc: d.desc,
       stats: [...statLines(id), ...(extra || [])],
+      reqs,
       hint,
+      hintCls,
     };
   }
 
@@ -471,7 +684,7 @@ export class Inventory {
     this.inv = {
       slots: Array.from({ length: INVENTORY_SIZE }, (_, i) => (slots[i] && slots[i].item ? { item: slots[i].item, count: slots[i].count | 0 } : null)),
       armor: inv.armor && inv.armor.item ? inv.armor : null,
-      ammo: inv.ammo || [0, 0, 0, 0],
+      ammo: inv.ammo || AMMO_ITEMS.map(() => 0),
       weapons: inv.weapons || [0, 0, 0, 0, 0],
       throwCounts: inv.throwCounts || {},
     };
@@ -574,11 +787,70 @@ export class Inventory {
     cell.n.textContent = s && s.count > 1 ? String(s.count) : '';
   }
 
+  // Open a crafting tab. The search covers every tab, so picking one also ends it.
+  _setTab(id) {
+    const tab = this.tabs.find((t) => t.id === id) || this.tabs[0];
+    this.tab = tab.id;
+    lsSet(TAB_KEY, tab.id);
+    for (const t of this.tabs) t.b.classList.toggle('on', t === tab);
+    this.findInput.value = '';
+    this._showRecipes();
+  }
+
+  // Lay out the recipe list: the selected tab, or - while the search field holds a query - every recipe
+  // relevant to it, in relevance sections, with the tabs dimmed. The same buttons move between the two,
+  // so their craft state, clicks and tooltips carry over. The list's height comes from the flex column,
+  // not its contents, so neither filtering nor switching tabs moves the screen.
+  _showRecipes() {
+    const text = this.findInput.value;
+    const on = (this.searching = !!norm(text));
+    const all = this.tab === 'all';
+    this.findClear.hidden = !text;
+    this.findEl.classList.toggle('on', on);
+    this.tabBar.classList.toggle('searching', on);
+    for (const t of this.tabs) {
+      if (!t.grid) continue;
+      for (const rec of t.recs) t.grid.appendChild(rec.b); // back from the search view, in tab order
+      t.head.hidden = on || !all;
+      t.grid.hidden = on || (!all && t.id !== this.tab);
+    }
+    const view = this.findView;
+    view.textContent = '';
+    view.hidden = !on;
+    if (on) {
+      const sections = searchRecipes(text, this.recipeEls);
+      for (const s of sections) {
+        el('div', 'craft-group', view, s.title);
+        const grid = el('div', 'craft-grid', view);
+        for (const rec of s.recs) grid.appendChild(rec.b);
+      }
+      if (!sections.length) {
+        const none = el('div', 'craft-none', view);
+        el('span', '', none, `Nothing craftable matches "${text.trim()}"`);
+        const b = el('button', 'btn cf-reset', none, 'Clear search');
+        b.type = 'button';
+      }
+    }
+    this.craftList.scrollTop = 0;
+    if (this.tipTarget?.classList.contains('rc')) {
+      this.tipTarget = null;
+      this.tip.hide();
+    }
+  }
+
+  clearSearch() {
+    if (!this.findInput.value) return;
+    this.findInput.value = '';
+    this._showRecipes();
+  }
+
   _schemOk(item) {
     return !!(this.unlocked & (1 << SCHEM_BIT[item]));
   }
 
   _renderRecipes() {
+    let changed = false;
+    const ready = { all: 0 };
     for (const rec of this.recipeEls) {
       let afford = true;
       for (const ing of rec.ings) {
@@ -588,21 +860,40 @@ export class Inventory {
         const k = have + '/' + ing.need;
         if (ing.key !== k) {
           ing.key = k;
+          changed = true;
           ing.t.textContent = Math.min(have, 999) + '/' + ing.need;
           ing.chip.classList.toggle('lack', !ok);
         }
       }
       const stationOk = !rec.r.station || this.near[rec.r.station];
       const unlocked = !rec.r.schem || this._schemOk(rec.r.schem);
+      if (afford && stationOk && unlocked) {
+        ready.all++;
+        ready[rec.tab.id] = (ready[rec.tab.id] || 0) + 1;
+      }
       const key = (afford ? 'a' : '') + (stationOk ? 's' : '') + (unlocked ? 'u' : '');
       if (rec.key !== key) {
         rec.key = key;
+        changed = true;
         rec.b.classList.toggle('ok', afford && stationOk && unlocked);
         rec.b.classList.toggle('no-mat', !afford);
         rec.b.classList.toggle('no-station', !stationOk);
         rec.b.classList.toggle('locked', !unlocked);
         if (rec.lock) rec.lock.hidden = unlocked;
       }
+    }
+    // keep an open recipe tooltip's have/need counts live (pickups, crafting, walking to a station)
+    if (changed && this.tipTarget?.classList.contains('rc') && !this.tip.root.hidden) {
+      const info = this._tipInfo(this.tipTarget);
+      if (info) this.tip.show(info);
+    }
+    // badge each tab with how many of its recipes can be crafted right now
+    for (const t of this.tabs) {
+      const n = ready[t.id] || 0;
+      if (t.ready === n) continue;
+      t.ready = n;
+      t.n.textContent = n ? String(n) : '';
+      t.b.title = n ? `${n} ready to craft` : '';
     }
     const f = this.near.fire;
     const bn = this.near.bench;
@@ -683,6 +974,8 @@ export class Inventory {
       void this.root.offsetWidth;
       this.root.classList.add('in');
     } else {
+      // a focused search field would keep ui.isTyping() true and swallow gameplay keys
+      if (document.activeElement === this.findInput) this.findInput.blur();
       this.tip.hide();
       this.tipTarget = null;
       if (this.drag) {

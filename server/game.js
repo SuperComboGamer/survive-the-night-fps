@@ -44,6 +44,7 @@ import {
   REVIVE_HP,
   SEARCH_TIME,
   ENGINE_START_TIME,
+  EYE_HEIGHT,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -67,7 +68,9 @@ import {
   CONT_DEFS,
   CONT_TABLES,
   CONSUMABLES,
+  AMMO,
   AMMO_MAX,
+  AMMO_ITEMS,
   SOUND,
   EVT,
   NOTIFY,
@@ -79,18 +82,20 @@ import {
 import { C2S, S2C, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, qpos, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
 import { createPlayerState, simulatePlayer, eyeHeight } from '../shared/playersim.js';
-import { makeBox, COL, footprintContains, groundAt, overlapBoxes } from '../shared/collision.js';
+import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
 import { Zombies } from './zombies.js';
+import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
 const CRATE_TABLE = [
   [ITEM.AMMO_762, 5, 30, 60],
+  [ITEM.AMMO_556, 5, 30, 60],
   [ITEM.AMMO_SHELLS, 5, 8, 16],
   [ITEM.AMMO_9MM, 4, 20, 40],
   [ITEM.MEDKIT, 4, 1, 2],
@@ -100,7 +105,10 @@ const CRATE_TABLE = [
   [ITEM.PLATE, 2, 1, 1],
   [ITEM.GUNPARTS, 3, 1, 2],
   [ITEM.AK47, 1, 1, 1],
+  [ITEM.M4A1, 1, 1, 1],
+  [ITEM.MP5, 1, 1, 1],
   [ITEM.SHOTGUN, 1, 1, 1],
+  [ITEM.DB_SHOTGUN, 1, 1, 1],
   [ITEM.KEVLAR, 1, 1, 1],
   [ITEM.NAILS, 3, 10, 20],
   [ITEM.BATTERY, 2, 1, 2],
@@ -141,6 +149,7 @@ export class Game {
     this.areas = [];
     this.crates = [];
     this.caches = []; // searchable containers
+    this.cats = [];
 
     this.tick = 0;
     this.time = 0;
@@ -170,6 +179,7 @@ export class Game {
     this.events = [];
 
     this.zm = new Zombies(this);
+    this.cm = new Cats(this);
     this.combat = new Combat(this);
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
   }
@@ -473,6 +483,7 @@ export class Game {
     this.areas.length = 0;
     this.crates.length = 0;
     this.caches.length = 0;
+    this.cats.length = 0;
     this.waves = [];
     this.wave = 0;
     this.bossPending = null;
@@ -515,6 +526,7 @@ export class Game {
     this.placeSupplies();
     // zone guards + roaming dead
     this.zm.spawnInitial();
+    this.cm.spawnInitial();
     for (const p of this.players.values()) this.spawnHuman(p);
     this.notify(NOTIFY.NEW_GAME, this.day);
     this.globalDirty = true;
@@ -569,7 +581,7 @@ export class Game {
     Object.assign(s, fresh);
     s.weapons = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER];
     s.mags = [0, 12];
-    s.ammo = [36, 0, 0, 0];
+    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? 36 : 0));
     const sp = this.world.spawnPoints[Math.floor(this.rng() * this.world.spawnPoints.length)];
     s.x = sp.x + (this.rng() - 0.5) * 1.5;
     s.z = sp.z + (this.rng() - 0.5) * 1.5;
@@ -598,6 +610,7 @@ export class Game {
     addItem(p.inv, ITEM.WOOD, 6);
     addItem(p.inv, ITEM.NAILS, 8);
     addItem(p.inv, ITEM.STICK, 4);
+    addItem(p.inv, ITEM.CLOTH, 1);
     p.invDirty = true;
     this.fillHistory(p);
     this.playersDirty = true;
@@ -866,11 +879,10 @@ export class Game {
         if (!wpn || slot === SLOT_THROW) continue;
         this.dropItem(wpn, 1, x, y, z, { spread: 1.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
       }
-      const ammoItems = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308];
-      for (let i = 0; i < 4; i++) if (s.ammo[i] > 0) this.dropItem(ammoItems[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
+      for (let i = 0; i < AMMO_ITEMS.length; i++) if (s.ammo[i] > 0) this.dropItem(AMMO_ITEMS[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
       if (p.armorItem && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
     }
-    s.ammo = [0, 0, 0, 0];
+    s.ammo = AMMO_ITEMS.map(() => 0);
     p.invDirty = true;
   }
 
@@ -1199,6 +1211,7 @@ export class Game {
     const dy = e.y - ey;
     const d = Math.hypot(dx, dz);
     if (d > (e.kind === ENT.CRATE ? 4.8 : 3.6) || Math.abs(dy) > 3) return;
+    if (!this.canReachEnt(p, e)) return;
     if (e.kind === ENT.ITEM) {
       const taken = this.giveItem(p, e.item, e.count, e.mag);
       if (taken <= 0) {
@@ -1249,6 +1262,17 @@ export class Game {
     }
   }
 
+  // eye -> the entity's interaction point (as the client picks it) isn't cut off by a wall
+  canReachEnt(p, e) {
+    const s = p.state;
+    let y = e.y;
+    if (e.kind === ENT.ITEM) y += 0.15;
+    else if (e.kind === ENT.CRATE) y += 0.6;
+    else if (e.kind === ENT.STRUCTURE) y += Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
+    else if (e.kind === ENT.PLAYER) y += 0.3;
+    return canReach(this.world, s.x, s.y + eyeHeight(s), s.z, e.x, y, e.z, s.y + EYE_HEIGHT);
+  }
+
   feedFire(p, e) {
     if (e.burnLeft >= CAMPFIRE_MAX_FUEL - 5) return;
     let item = 0;
@@ -1276,7 +1300,7 @@ export class Game {
       return;
     }
     const e = this.ents[id];
-    if (!e || e.removed) return;
+    if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
       if (d > 2.8 || e.state !== 0) {
@@ -1309,6 +1333,7 @@ export class Game {
           const d = Math.hypot(tgt.x - s.x, tgt.z - s.z);
           if (h.kind === HOLD.SEARCH) ok = d < 3.2 && tgt.state === 0;
           else if (h.kind === HOLD.REVIVE) ok = d < 3 && tgt.alive && tgt.downed && !tgt.zombie;
+          ok = ok && this.canReachEnt(p, tgt);
         }
       }
     }
@@ -1843,6 +1868,17 @@ export class Game {
         }
         break;
       }
+      case 'cat': {
+        // bring the cat over (2 m in front)
+        const c = this.cats[0];
+        if (c) {
+          c.x = s.x - Math.sin(s.yaw) * 2;
+          c.z = s.z - Math.cos(s.yaw) * 2;
+          c.y = groundAt(this.world, c.x, c.z, 200, 0.2);
+          c.vx = c.vz = c.vy = 0;
+        }
+        break;
+      }
       case 'where':
         this.systemChat(`pos ${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} zone ${this.world.zoneAt(s.x, s.z)}`);
         break;
@@ -1882,6 +1918,7 @@ export class Game {
     this.updatePhase(dt);
     this.updatePlayers(dt);
     this.zm.update(dt);
+    this.cm.update(dt);
     this.combat.updateProjectiles(dt);
     this.combat.updateAreas(dt);
     this.updateStructures(dt);
@@ -2171,7 +2208,7 @@ export class Game {
           if (dx * dx + dz * dz > 1.9 * 1.9 || Math.abs(e.y - s.y) > 1.6) continue;
           if (this.time < e.noAutoUntil) continue;
           const cat = ITEM_DEFS[e.item]?.cat;
-          if (!AUTO_PICKUP[cat]) continue;
+          if (!AUTO_PICKUP[cat] || !this.canReachEnt(p, e)) continue;
           const taken = this.giveItem(p, e.item, e.count, e.mag);
           if (taken <= 0) {
             e.noAutoUntil = this.time + 3;
@@ -2295,7 +2332,7 @@ export class Game {
           for (let i = 0; i < 5; i++) c.u8(s.weapons[i]);
           c.u8(s.mags[0]);
           c.u8(s.mags[1]);
-          for (let i = 0; i < 4; i++) c.u16(s.ammo[i]);
+          for (let i = 0; i < AMMO_ITEMS.length; i++) c.u16(s.ammo[i]);
           c.u8(s.throwCount);
           break;
         case 4:

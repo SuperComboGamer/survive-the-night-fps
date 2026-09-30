@@ -1,11 +1,29 @@
 // Builds the static world: building primitives (from shared world gen) and props (procedural models)
 // merged per spatial chunk and per material -> a handful of draw calls, frustum + distance culled.
 import * as THREE from 'three';
-import { getMaterial } from './materials.js';
+import { getMaterial, staticSurface } from './materials.js';
 import { createProp } from './models/props.js';
 
 const CHUNK = 80;
 const IDENTITY = new THREE.Matrix4();
+// A (chunk, material) mesh whose largest piece has bounding radius r is drawn out to r * DETAIL_DIST
+// (never closer than DETAIL_MIN): bottles, cans and tail lights stop costing a draw call once they are a
+// few pixels wide, while anything with a building, wall or car in it keeps the full view distance.
+const DETAIL_DIST = 280;
+const DETAIL_MIN = 60;
+
+function templateRadius(pos) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < pos.length; i += 3) {
+    x0 = Math.min(x0, pos[i]);
+    x1 = Math.max(x1, pos[i]);
+    y0 = Math.min(y0, pos[i + 1]);
+    y1 = Math.max(y1, pos[i + 1]);
+    z0 = Math.min(z0, pos[i + 2]);
+    z1 = Math.max(z1, pos[i + 2]);
+  }
+  return 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0);
+}
 
 // transform of a mesh relative to the prop root (props are usually flat: identity)
 function localMatrix(o, root) {
@@ -18,6 +36,60 @@ function localMatrix(o, root) {
   }
   return m;
 }
+
+// faded paint for clapboard buildings (sRGB; white and cream turn up most often)
+const PAINT = [0xffffff, 0xffffff, 0xf0eadf, 0xf0eadf, 0xd9e0e4, 0xdbe0d0, 0xf0e8cf, 0xd8e3db, 0xdedcd8, 0xeedfda].map((h) => new THREE.Color(h));
+
+// one paint colour per building: painted parts that touch (walls, gable ends, towers) form a building
+function paintByBuilding(parts) {
+  const idx = [];
+  parts.forEach((p, i) => p.mat === 'clapboard' && idx.push(i));
+  const parent = idx.map((_, k) => k);
+  const find = (k) => (parent[k] === k ? k : (parent[k] = find(parent[k])));
+  const box = idx.map((i) => {
+    const p = parts[i];
+    const r = Math.max(p.sx, p.sz) / 2 + 0.3;
+    return [p.x - r, p.x + r, p.z - r, p.z + r, p.y - p.sy / 2 - 0.3, p.y + p.sy / 2 + 0.3];
+  });
+  for (let a = 0; a < idx.length; a++) {
+    for (let b = a + 1; b < idx.length; b++) {
+      const A = box[a];
+      const B = box[b];
+      if (A[0] < B[1] && B[0] < A[1] && A[2] < B[3] && B[2] < A[3] && A[4] < B[5] && B[4] < A[5]) parent[find(a)] = find(b);
+    }
+  }
+  const tint = new Map();
+  idx.forEach((i, k) => {
+    const root = parts[idx[find(k)]];
+    const h = Math.abs(Math.sin(Math.round(root.x) * 12.9898 + Math.round(root.z) * 78.233) * 43758.5453) % 1;
+    tint.set(i, PAINT[Math.floor(h * PAINT.length)]);
+  });
+  return tint;
+}
+
+// Window joinery around a glass part, as boxes [x, y, z, sx, sy, sz] in its frame (x along the wall, y up,
+// z through it): casing and sill proud of both wall faces, a sash around the pane and muntins across it.
+function windowTrim(sx, sy, t) {
+  const d = t + 0.06;
+  const out = [
+    [-(sx / 2 + 0.045), 0.015, 0, 0.09, sy + 0.17, d],
+    [sx / 2 + 0.045, 0.015, 0, 0.09, sy + 0.17, d],
+    [0, sy / 2 + 0.05, 0, sx + 0.34, 0.1, d + 0.01],
+    [0, -sy / 2 - 0.035, 0, sx + 0.3, 0.07, t + 0.16],
+    [-(sx / 2 - 0.025), 0, 0, 0.05, sy, 0.07],
+    [sx / 2 - 0.025, 0, 0, 0.05, sy, 0.07],
+    [0, sy / 2 - 0.025, 0, sx - 0.1, 0.05, 0.07],
+    [0, -sy / 2 + 0.025, 0, sx - 0.1, 0.05, 0.07],
+  ];
+  const nx = Math.min(3, Math.max(1, Math.round(sx / 0.6)));
+  const ny = Math.min(2, Math.max(1, Math.round(sy / 0.6)));
+  for (let k = 1; k < nx; k++) out.push([-sx / 2 + (k * sx) / nx, 0, 0, 0.035, sy - 0.1, 0.05]);
+  for (let k = 1; k < ny; k++) out.push([0, -sy / 2 + (k * sy) / ny, 0, sx - 0.1, 0.035, 0.05]);
+  return out;
+}
+
+// wall material -> door casing material
+const DOOR_TRIM = { clapboard: 'sash', logwall: 'trim', planks: 'trim', brick: 'trim', concrete: 'trim' };
 
 function boxGeo(sx, sy, sz) {
   const g = new THREE.BoxGeometry(sx, sy, sz);
@@ -131,14 +203,15 @@ export class StaticWorld {
     // prepared (non-indexed, trimmed attributes) once and cached, then each instance is transformed while
     // copying - no per-instance BufferGeometry clones or merges.
     const buckets = new Map(); // chunkKey -> Map(material -> {entries: [{tpl, m}], verts})
-    const add = (x, z, mat, tpl, m) => {
+    const add = (x, z, mat, tpl, m, tint = null) => {
       const key = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = new Map()));
       let list = b.get(mat);
-      if (!list) b.set(mat, (list = { entries: [], verts: 0 }));
-      list.entries.push({ tpl, m });
+      if (!list) b.set(mat, (list = { entries: [], verts: 0, radius: 0 }));
+      list.entries.push({ tpl, m, tint });
       list.verts += tpl.count;
+      list.radius = Math.max(list.radius, tpl.radius * m.getMaxScaleOnAxis());
     };
     const templates = new Map();
     const makeTpl = (geo, needColor) => {
@@ -150,6 +223,7 @@ export class StaticWorld {
         uv: g.attributes.uv.array,
         col: needColor ? g.attributes.color.array : null,
       };
+      tpl.radius = templateRadius(tpl.pos);
       g.dispose();
       return tpl;
     };
@@ -174,9 +248,26 @@ export class StaticWorld {
     const e = new THREE.Euler();
     const one = new THREE.Vector3(1, 1, 1);
     const p = new THREE.Vector3();
-    for (const part of world.parts) {
+    const paint = paintByBuilding(world.parts);
+    const up = new THREE.Vector3(0, 1, 0);
+    // window and door joinery: boxes [x, y, z, sx, sy, sz] in the frame m (most openings share their sizes)
+    const trimTpls = new Map();
+    const addTrim = (x, z, mat, m, [lx, ly, lz, sx, sy, sz]) => {
+      const key = `${sx.toFixed(3)},${sy.toFixed(3)},${sz.toFixed(3)}`;
+      let tpl = trimTpls.get(key);
+      if (!tpl) {
+        const tg = boxGeo(sx, sy, sz);
+        trimTpls.set(key, (tpl = makeTpl(tg, false)));
+        tg.dispose();
+      }
+      add(x, z, mat, tpl, new THREE.Matrix4().makeTranslation(lx, ly, lz).premultiply(m));
+    };
+    world.parts.forEach((part, pi) => {
       let g;
-      if (part.shape === 'box') g = boxGeo(part.sx, part.sy, part.sz);
+      // glass: a thin pane set back in the opening, framed by casings (the wall below it came just before)
+      const glass = part.shape === 'box' && part.mat === 'glass';
+      if (glass) g = boxGeo(part.sx, part.sy, 0.04);
+      else if (part.shape === 'box') g = boxGeo(part.sx, part.sy, part.sz);
       else if (part.shape === 'cyl') g = cylGeo(part.sx / 2, part.sy, part.sides || 12);
       else if (part.shape === 'cone') g = coneGeo(part.sx / 2, part.sy, part.sides || 4);
       else g = prismGeo(part.sx, part.sy, part.sz);
@@ -184,11 +275,35 @@ export class StaticWorld {
       q.setFromEuler(e);
       p.set(part.x, part.y, part.z);
       const m = new THREE.Matrix4().compose(p, q, one);
-      const mat = getMaterial(part.mat) || getMaterial('planks');
-      add(part.x, part.z, mat, makeTpl(g, !!mat.vertexColors), m);
+      const mat = staticSurface(getMaterial(part.mat) || getMaterial('planks'));
+      add(part.x, part.z, mat, makeTpl(g, !!mat.vertexColors), m, paint.get(pi));
       g.dispose();
+      if (glass) {
+        const trimMat = getMaterial(world.parts[pi - 1]?.mat === 'clapboard' ? 'sash' : 'trim');
+        for (const b of windowTrim(part.sx, part.sy, part.sz)) addTrim(part.x, part.z, trimMat, m, b);
+      }
+    });
+    // door casings on house walls: jambs and a head around each doorway that has a lintel over it (the
+    // lintel sits exactly above the doorway centre and tells the wall's material and thickness)
+    const lintels = new Map();
+    for (const part of world.parts) {
+      if (part.shape !== 'box' || !DOOR_TRIM[part.mat]) continue;
+      const key = `${part.x.toFixed(2)},${part.z.toFixed(2)}`;
+      if (!lintels.has(key)) lintels.set(key, []);
+      lintels.get(key).push(part);
     }
-    const up = new THREE.Vector3(0, 1, 0);
+    for (const o of world.openings) {
+      const lintel = (lintels.get(`${o.x.toFixed(2)},${o.z.toFixed(2)}`) || []).find((pt) => pt.y > o.y + o.h && Math.abs(Math.sin(pt.ry - o.ry)) < 0.01);
+      if (!lintel) continue;
+      const mat = getMaterial(DOOR_TRIM[lintel.mat]);
+      const t = lintel.sz;
+      q.setFromAxisAngle(up, o.ry);
+      p.set(o.x, o.y, o.z);
+      const m = new THREE.Matrix4().compose(p, q, one);
+      addTrim(o.x, o.z, mat, m, [-(o.w / 2 + 0.05), o.h / 2 + 0.03, 0, 0.1, o.h + 0.06, t + 0.05]);
+      addTrim(o.x, o.z, mat, m, [o.w / 2 + 0.05, o.h / 2 + 0.03, 0, 0.1, o.h + 0.06, t + 0.05]);
+      addTrim(o.x, o.z, mat, m, [0, o.h + 0.07, 0, o.w + 0.32, 0.14, t + 0.06]);
+    }
     for (const pr of world.props) {
       let obj;
       try {
@@ -205,7 +320,7 @@ export class StaticWorld {
         if (!o.isMesh || !o.geometry) return;
         o.updateMatrix();
         const m = o.matrix.equals(IDENTITY) && o.parent === obj ? base : new THREE.Matrix4().multiplyMatrices(base, localMatrix(o, obj));
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        const mats = (Array.isArray(o.material) ? o.material : [o.material]).map(staticSurface);
         if (mats.length !== 1) {
           // multi-material mesh: split by groups
           o.geometry.groups.forEach((grp, gi) => {
@@ -227,8 +342,10 @@ export class StaticWorld {
         const nrm = new Float32Array(n * 3);
         const uv = new Float32Array(n * 2);
         const col = mat.vertexColors ? new Float32Array(n * 3) : null;
+        const ground = mat.userData.staticGrime ? new Float32Array(n) : null;
+        const tints = mat.userData.staticPaint ? new Float32Array(n * 3).fill(1) : null;
         let o = 0;
-        for (const { tpl, m } of list.entries) {
+        for (const { tpl, m, tint } of list.entries) {
           const me = m.elements;
           nm.getNormalMatrix(m);
           const ne = nm.elements;
@@ -252,6 +369,12 @@ export class StaticWorld {
             nrm[k] = tx / l;
             nrm[k + 1] = ty / l;
             nrm[k + 2] = tz / l;
+            if (ground) ground[o + i] = pos[k + 1] - world.heightAt(pos[k], pos[k + 2]);
+            if (tints && tint) {
+              tints[k] = tint.r;
+              tints[k + 1] = tint.g;
+              tints[k + 2] = tint.b;
+            }
           }
           uv.set(tpl.uv, o * 2);
           if (col) col.set(tpl.col, o * 3);
@@ -262,12 +385,15 @@ export class StaticWorld {
         merged.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
         merged.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
         if (col) merged.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        if (ground) merged.setAttribute('aGround', new THREE.BufferAttribute(ground, 1));
+        if (tints) merged.setAttribute('aTint', new THREE.BufferAttribute(tints, 3));
         merged.computeBoundingSphere();
         const mesh = new THREE.Mesh(merged, mat);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
+        mesh.userData.maxDist = Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
         this.group.add(mesh);
         chunk.meshes.push(mesh);
       }
@@ -279,11 +405,19 @@ export class StaticWorld {
 
   update(camPos, maxDist) {
     const lim = (maxDist + CHUNK * 0.75) ** 2;
+    const half = CHUNK / 2;
     for (const c of this.chunks) {
       const dx = c.cx - camPos.x;
       const dz = c.cz - camPos.z;
-      const vis = dx * dx + dz * dz < lim;
-      for (const m of c.meshes) m.visible = vis;
+      if (dx * dx + dz * dz >= lim) {
+        for (const m of c.meshes) m.visible = false;
+        continue;
+      }
+      // distance to the nearest point of the chunk: every piece in it is at least this far away
+      const ex = Math.max(0, Math.abs(dx) - half);
+      const ez = Math.max(0, Math.abs(dz) - half);
+      const near = Math.sqrt(ex * ex + ez * ez);
+      for (const m of c.meshes) m.visible = near < m.userData.maxDist;
     }
   }
 

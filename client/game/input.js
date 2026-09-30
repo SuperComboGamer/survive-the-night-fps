@@ -31,6 +31,9 @@ export class Input {
     this.lookDY = 0;
     this.sensitivity = 1;
     this.invertY = false;
+    this.rawInput = true; // ask for unadjusted movement (no OS mouse acceleration)
+    this.rawActive = false; // the current lock actually delivers raw movement
+    this.skipMove = false; // drop the first delta after locking
     this.locked = false;
     this.enabled = false; // gameplay input enabled (not typing / not in menus)
     this.pressed = new Set(); // edge-triggered key codes since last consume
@@ -40,6 +43,8 @@ export class Input {
 
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === canvas;
+      // the first delta after locking can carry the cursor's jump to the lock point
+      this.skipMove = this.locked;
       if (!this.locked) {
         this.buttons &= ~(BTN.ATTACK | BTN.ALT);
         this.mouseButtons = 0;
@@ -48,9 +53,18 @@ export class Input {
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
-      // clamp absurd spikes (some browsers emit huge deltas on lock)
-      const mx = Math.max(-300, Math.min(300, e.movementX));
-      const my = Math.max(-300, Math.min(300, e.movementY));
+      if (this.skipMove) {
+        this.skipMove = false;
+        return;
+      }
+      let mx = e.movementX;
+      let my = e.movementY;
+      // Browsers merge all moves of a frame into one event, so a fast flick legitimately
+      // produces big deltas. Only non-raw (OS-warped) pointers emit bogus spikes; clamp those.
+      if (!this.rawActive) {
+        mx = Math.max(-300, Math.min(300, mx));
+        my = Math.max(-300, Math.min(300, my));
+      }
       const k = 0.0022 * this.sensitivity;
       this.yaw -= mx * k;
       this.pitch -= my * k * (this.invertY ? -1 : 1);
@@ -112,8 +126,21 @@ export class Input {
 
   requestLock() {
     if (this.locked) return;
+    this.rawActive = false;
+    if (!this.rawInput) {
+      this.canvas.requestPointerLock?.();
+      return;
+    }
     const p = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
-    if (p && p.catch) p.catch(() => this.canvas.requestPointerLock?.());
+    if (!p || !p.then) return; // no promise: the option was ignored, movement is OS-adjusted
+    p.then(
+      () => (this.rawActive = true),
+      (err) => {
+        // only retry without raw input when the browser can't do it; other rejections
+        // (e.g. re-locking too soon after Esc) would silently downgrade the session
+        if (err?.name === 'NotSupportedError') this.canvas.requestPointerLock?.();
+      },
+    );
   }
   exitLock() {
     if (document.pointerLockElement) document.exitPointerLock();

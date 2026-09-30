@@ -36,6 +36,7 @@ const callbacks = {
   onDropWeapon: (s) => game?.uiCallbacks().onDropWeapon(s),
   onSelectStructure: (t) => game?.uiCallbacks().onSelectStructure(t),
   onSelectThrowable: (it) => game?.uiCallbacks().onSelectThrowable(it),
+  onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),
   onChatSend: (text) => {
     game?.uiCallbacks().onChatSend(text);
     if (game && game.state === 'playing') {
@@ -64,8 +65,8 @@ ui.setControls([
   ['Ctrl / C', 'Crouch (stealth)'],
   ['LMB / RMB', 'Fire · Aim / heavy attack'],
   ['1 2 3 4 5', 'Primary · Pistol · Melee · Throwable · Build'],
-  ['Q / Wheel', 'Last weapon / cycle'],
-  ['R', 'Reload (build: cycle structure)'],
+  ['Q / Wheel', 'Last weapon / cycle (build: Q / E cycle structure)'],
+  ['R', 'Reload'],
   ['E', 'Interact · hold: search, revive, start the car'],
   ['Melee', 'Hit trees for wood, wrecks for scrap'],
   ['Z / MMB', 'Ping (go · danger · loot)'],
@@ -96,8 +97,10 @@ function applySettings(s) {
   renderer.setFov(s.fov || 75);
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;
+  game.input.rawInput = s.rawMouse !== false;
   game.voice.setVolume(s.voiceVolume ?? 1);
   game.foliage?.setQuality(renderer.q);
+  game.weatherFx?.setQuality(renderer.quality);
   game.lights.setShadows(renderer.q.flashShadows);
   game.env.setShadows(renderer.q);
   game.setShadowQuality?.(renderer.q);
@@ -125,15 +128,22 @@ function frame(now) {
   requestAnimationFrame(frame);
   let dt = (now - last) / 1000;
   last = now;
-  if (dt > 0.1) dt = 0.1;
   if (dt <= 0) return;
-  fpsAcc += dt;
-  fpsFrames++;
-  if (fpsAcc >= 0.5) {
-    game.fps = Math.round(fpsFrames / fpsAcc);
+  // average fps over ~1s of real frame times (before the sim clamp); a >1s gap means
+  // the tab was hidden, so restart the window instead of reporting ~0 fps
+  if (dt > 1) {
     fpsAcc = 0;
     fpsFrames = 0;
+  } else {
+    fpsAcc += dt;
+    fpsFrames++;
+    if (fpsAcc >= 1) {
+      game.fps = Math.round(fpsFrames / fpsAcc);
+      fpsAcc = 0;
+      fpsFrames = 0;
+    }
   }
+  if (dt > 0.1) dt = 0.1;
   const t0 = performance.now();
   try {
     game.update(dt);

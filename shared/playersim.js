@@ -33,7 +33,7 @@ import {
   DOWN_CRAWL_SPEED,
   EYE_HEIGHT_DOWNED,
 } from './constants.js';
-import { ITEM, WEAPONS, CLAWS } from './defs.js';
+import { ITEM, WEAPONS, CLAWS, AMMO, AMMO_ITEMS } from './defs.js';
 import { groundAt, resolveBody } from './collision.js';
 import { mulberry32 } from './rng.js';
 
@@ -57,7 +57,7 @@ export function createPlayerState() {
     slot: SLOT_MELEE,
     weapons: [0, ITEM.PISTOL, ITEM.KNIFE, 0, 0],
     mags: [0, 12],
-    ammo: [24, 0, 0, 0],
+    ammo: AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? 24 : 0)),
     throwCount: 0,
     switchT: 0,
     cooldown: 0,
@@ -98,7 +98,7 @@ export function copyPlayerState(dst, src) {
   for (let i = 0; i < 5; i++) dst.weapons[i] = src.weapons[i];
   dst.mags[0] = src.mags[0];
   dst.mags[1] = src.mags[1];
-  for (let i = 0; i < 4; i++) dst.ammo[i] = src.ammo[i];
+  for (let i = 0; i < AMMO_ITEMS.length; i++) dst.ammo[i] = src.ammo[i];
   dst.throwCount = src.throwCount;
   dst.switchT = src.switchT;
   dst.cooldown = src.cooldown;

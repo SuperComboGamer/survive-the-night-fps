@@ -187,9 +187,9 @@ export class GameRenderer {
     this.vmCamera = new THREE.PerspectiveCamera(68, 1, 0.01, 20);
     this.vmHemi = new THREE.HemisphereLight(0xffffff, 0x333333, 1);
     this.vmDir = new THREE.DirectionalLight(0xffffff, 1);
-    this.vmDir.position.set(0.5, 1, 0.3);
+    this.vmDir.position.set(-0.4, 1, 0.6); // from above, behind the left shoulder: lights the sides the player sees
     this.vmFlash = new THREE.PointLight(0xfff1d6, 0, 3, 1.5);
-    this.vmFlash.position.set(0.2, -0.1, -0.6);
+    this.vmFlash.position.set(-0.05, 0.12, 0.15); // flashlight spill: from the player's side, so the hands in the beam light up
     this.vmMuzzle = new THREE.PointLight(0xffb060, 0, 3, 1.5);
     this.vmMuzzle.position.set(0.2, -0.1, -1.0);
     this.vmScene.add(this.vmHemi, this.vmDir, this.vmFlash, this.vmMuzzle);
@@ -294,18 +294,51 @@ export class GameRenderer {
     this.resize();
   }
 
+  // Can the scene target use packed-float HDR (R11G11B10F) at this MSAA sample count? Probed once per
+  // count; renderers without float render targets or multisampled packed floats keep RGBA16F.
+  _packedHdr(samples) {
+    this._packed ??= new Map();
+    if (this._packed.has(samples)) return this._packed.get(samples);
+    const gl = this.renderer.getContext();
+    let ok = this.renderer.capabilities.isWebGL2 && this.renderer.extensions.has('EXT_color_buffer_float');
+    if (ok && samples > 0) {
+      const counts = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.R11F_G11F_B10F, gl.SAMPLES);
+      ok = !!counts && counts.length > 0 && Math.max(...counts) >= samples;
+    }
+    if (ok) {
+      const tex = gl.createTexture();
+      const fb = gl.createFramebuffer();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R11F_G11F_B10F, 4, 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.deleteFramebuffer(fb);
+      gl.deleteTexture(tex);
+      this.renderer.resetState(); // the probe bypassed three's GL state cache
+    }
+    this._packed.set(samples, ok);
+    return ok;
+  }
+
   _makeTarget() {
     if (this.rt) this.rt.dispose();
     const isWebGL2 = this.renderer.capabilities.isWebGL2;
     const samples = isWebGL2 ? QUALITY[this.quality].samples : 0;
+    // The scene target never needs alpha, so it is packed-float HDR where supported: half the memory
+    // traffic of RGBA16F, which dominates the cost of the 4x MSAA target (identical to within 2/255
+    // after tone mapping).
+    const packed = this._packedHdr(samples);
     this.rt = new THREE.WebGLRenderTarget(4, 4, {
-      type: THREE.HalfFloatType,
+      type: packed ? THREE.UnsignedInt101111Type : THREE.HalfFloatType,
+      format: packed ? THREE.RGBFormat : THREE.RGBAFormat,
       samples,
       depthBuffer: true,
       stencilBuffer: false,
       // the resolved world depth feeds SSAO / sun shafts (only with MSAA: without it the depth texture
       // is the live depth attachment and could not be sampled while applying them in place)
       depthTexture: samples > 0 ? new THREE.DepthTexture(4, 4) : null,
+      resolveDepthBuffer: samples > 0,
     });
     this.rt.texture.colorSpace = THREE.LinearSRGBColorSpace;
     this.postMat.uniforms.tScene.value = this.rt.texture;

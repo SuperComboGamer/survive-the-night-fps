@@ -29,32 +29,54 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (random world seed).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>`,
-`/spawn <ztype> <n>`, `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`, `/where`).
+`/spawn <ztype> <n>`, `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`, `/where`, `/cat` (brings the
+stray cat over)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
 | `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and runs `sim-smoke` |
-| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
+| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
 | `node scripts/e2e-weapons.js` | fires + reloads every gun, swings melee weapons, throws a molotov and a pipe bomb |
 | `node scripts/e2e-showcase.js` | spawns every zombie type + boss, screenshots, death -> zombie mode, voice peers |
 | `node scripts/e2e-stress.js` | ~120 zombies around the player, reports frame CPU time |
+| `node scripts/e2e-motion.js [url] [s] [jitterMs] [latencyMs]` | a zombie pack chases the player; reports motion jitter (stalls, velocity kinks, wobble, planted-foot slip, hip pops), optionally over a simulated bumpy connection |
 | `node scripts/e2e-night.js` | night shelter scene (torches, walls, traps) + proximity voice between two clients |
 | `node scripts/shot.js <url> <out.png>` | headless Chrome screenshot |
 
-Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/night need a server
+Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night need a server
 started with `GODMODE=1 DEBUG_COMMANDS=1`. Art/audio/UI modules also have standalone sandbox pages
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
-`/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server).
+`/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
+`/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
+`&hurt=1` a hit flinch, `&vox=0` a growl);
+`/sandbox/models-test.html?cats=grid` shows the cat's poses).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per
 client and 0.00 cm prediction error.
+
+## Deploying (Railway)
+
+Production runs on [Railway](https://railway.com) as one service (project "Survive the Night FPS") that
+auto-deploys every push to `main` and is served at https://survivethenightgame.com and
+https://www.survivethenightgame.com.
+
+- `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
+  `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Game state lives in
+  memory, so never scale it past one replica, and expect every deploy to start a fresh world.
+- Node 24 is pinned with `engines.node` in `package.json`. uWebSockets.js only ships prebuilt binaries
+  for Node 20/22/23/24 on glibc Linux, so don't move to an Alpine/musl image.
+- One process serves the client, the WebSocket (`/ws`) and `/status` on `PORT` (set to `3000` on the
+  service) on all interfaces, so a single domain is enough.
+- The custom domains are attached to the service in Railway (Settings -> Networking). Their DNS
+  records (a CNAME to the Railway target plus a `_railway-verify` TXT record per host) are managed
+  at the domain's DNS host.
 
 ## Controls
 
@@ -66,8 +88,8 @@ client and 0.00 cm prediction error.
 | Ctrl / C | Crouch (quieter - zombies notice you less) |
 | Mouse | Look · LMB fire / attack · RMB aim / heavy melee |
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
-| Q / wheel | Last weapon / cycle weapons |
-| R | Reload (build mode: cycle structure) |
+| Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
+| R | Reload |
 | E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
@@ -75,10 +97,10 @@ client and 0.00 cm prediction error.
 | F | Flashlight (battery drains, recharges when off) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / medkit; a medkit gets you up when downed) |
-| Tab | Inventory + crafting |
+| Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
 | Enter | Chat |
 | V | Push-to-talk proximity voice |
-| Build mode | LMB place · RMB rotate · R / wheel cycle · E repair · X demolish |
+| Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
 | Zombie form | LMB claw · RMB leap |
 
 ## The game
@@ -108,10 +130,14 @@ client and 0.00 cm prediction error.
   and new specials: spitters & boomers (night 2), leapers & bats (3), ropers & tanks (4), and a boss every
   third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages and
   bat swarms). Stragglers far from the team are brought back into the fight.
+- **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
+  MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
+  knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
+  in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
-  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotgun, hunting
+  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
@@ -162,4 +188,6 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
 - Hitscan and melee are lag compensated: each client reports the tick it was rendering, and the
   server rewinds zombie/player hitboxes (16-tick history) before tracing. Shotgun spread is seeded
   deterministically so the shooter's predicted tracers match the server's pellets.
-- Remote entities are interpolated 100 ms in the past from per-entity sample rings.
+- Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
+  when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a
+  late packet instead of freezing; their gaits pin planted feet to the ground in world space.

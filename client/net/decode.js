@@ -1,8 +1,8 @@
 // Snapshot / message decoding. Pure JS (no DOM, no three.js) so it also runs in Node test bots.
 import { ENT, POS_DELTA_BIT, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
-import { EVT } from '../../shared/defs.js';
+import { EVT, AMMO_ITEMS } from '../../shared/defs.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7]],
@@ -12,6 +12,7 @@ const BIT_SLOTS = {
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
+  [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
 };
 
 function readField(r, kind, s) {
@@ -64,7 +65,7 @@ export function readSelf(r, out) {
   const mask = r.u8();
   if (!out.weapons) out.weapons = [0, 0, 0, 0, 0];
   if (!out.mags) out.mags = [0, 0];
-  if (!out.ammo) out.ammo = [0, 0, 0, 0];
+  if (!out.ammo) out.ammo = AMMO_ITEMS.map(() => 0);
   if (mask & 1) {
     out.x = r.f32();
     out.y = r.f32();
@@ -101,7 +102,7 @@ export function readSelf(r, out) {
     for (let i = 0; i < 5; i++) out.weapons[i] = r.u8();
     out.mags[0] = r.u8();
     out.mags[1] = r.u8();
-    for (let i = 0; i < 4; i++) out.ammo[i] = r.u16();
+    for (let i = 0; i < AMMO_ITEMS.length; i++) out.ammo[i] = r.u16();
     out.throwCount = r.u8();
   }
   if (mask & 16) {
@@ -169,6 +170,9 @@ export function readEntities(r, store, tick) {
         break;
       case ENT.CACHE:
         e.ctype = r.u8();
+        break;
+      case ENT.CAT:
+        e.variant = r.u8();
         break;
     }
     const n = FIELD_COUNT[kind];

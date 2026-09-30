@@ -436,7 +436,7 @@ const DEFS = {
   brick: () => lambert({ map: tileTex('brick') }),
   shingles: () => lambert({ map: tileTex('shingles') }),
   tin: () => lambert({ map: tileTex('tin') }),
-  tin_rust: () => lambert({ map: tileTex('tin', [1.7, 2.3]), color: 0xa8745a }),
+  tin_rust: () => lambert({ map: tileTex('tin_rusty') }),
   rust: () => lambert({ map: tileTex('rust') }),
   metal: () => lambert({ map: tileTex('metal') }),
   stone: () => lambert({ map: tileTex('stone') }),
@@ -448,6 +448,7 @@ const DEFS = {
   olive: () => lambert({ map: tileTex('olive') }),
   dark: () => lambert({ color: 0x0b0a09 }),
   trim: () => lambert({ map: tileTex('wood'), color: 0x6e6256 }),
+  sash: () => lambert({ map: tileTex('sash') }),
 
   // ------------------------------------------------ props
   wood: () => lambert({ map: tileTex('wood'), vertexColors: true }),
@@ -532,6 +533,76 @@ export function getMaterial(name) {
   const m = MAT[name];
   if (!m) throw new Error(`materials: unknown material '${name}'`);
   return m;
+}
+
+// ------------------------------------------------ static world surface variants
+// Building surfaces merged into the static world carry extra per-vertex data: aGround (height above the
+// terrain) for splash-back dirt and contact darkening where walls meet the ground, and for painted
+// clapboard aTint, a faded paint colour per building (texture alpha = painted area).
+const GRIME_MATERIALS = new Set(['planks', 'barn', 'clapboard', 'logwall', 'concrete', 'brick', 'tin', 'tin_rust', 'stone', 'dockwood', 'rust', 'metal', 'charred']);
+const PAINTED_MATERIALS = new Set(['clapboard']);
+const staticVariants = new Map();
+
+function groundGrimePatch(mat, paint) {
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        attribute float aGround;
+        varying float vGround;
+        varying float vUpA;
+        varying vec3 vGPos;
+        ${paint ? 'attribute vec3 aTint;\nvarying vec3 vTint;' : ''}`,
+      )
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvUpA = abs( objectNormal.y );')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvGround = aGround;\nvGPos = position;${paint ? '\nvTint = aTint;' : ''}`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        varying float vGround;
+        varying float vUpA;
+        varying vec3 vGPos;
+        ${paint ? 'varying vec3 vTint;' : ''}
+        float grimeNoise( float x ) {
+          float i = floor( x ), f = fract( x );
+          f = f * f * ( 3.0 - 2.0 * f );
+          return mix( fract( sin( i * 127.1 ) * 43758.5453 ), fract( sin( ( i + 1.0 ) * 127.1 ) * 43758.5453 ), f );
+        }`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        ${paint ? 'diffuseColor.rgb *= mix( vec3( 1.0 ), vTint, sampledDiffuseColor.a );' : ''}
+        diffuseColor.a = opacity;
+        {
+          // walls only (floors and roofs face up or down): mud splashed up by rain, darker right at the ground
+          float side = 1.0 - smoothstep( 0.5, 0.85, vUpA );
+          float s = vGPos.x + vGPos.z;
+          float edge = grimeNoise( s * 2.3 ) * 0.28 + grimeNoise( s * 9.1 ) * 0.1;
+          float splash = ( 1.0 - smoothstep( 0.0, 0.8, vGround - edge ) ) * side;
+          diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.5, 0.43, 0.34 ), splash * 0.8 );
+          diffuseColor.rgb *= mix( 1.0, mix( 0.5, 1.0, smoothstep( -0.05, 0.35, vGround ) ), side );
+        }`,
+      );
+  };
+  mat.customProgramCacheKey = () => (paint ? 'static-grime-paint' : 'static-grime');
+  mat.userData.staticGrime = true;
+  mat.userData.staticPaint = paint;
+  return mat;
+}
+
+/** The static world's variant of a shared material (itself when the material has none). */
+export function staticSurface(mat) {
+  if (!GRIME_MATERIALS.has(mat.name)) return mat;
+  let v = staticVariants.get(mat);
+  if (!v) {
+    v = groundGrimePatch(mat.clone(), PAINTED_MATERIALS.has(mat.name));
+    v.name = mat.name;
+    staticVariants.set(mat, v);
+  }
+  return v;
 }
 
 // ================================================================== geometry helpers

@@ -41,7 +41,7 @@ function stars() {
 }
 
 export class Hud {
-  constructor(ui, layer, topLayer) {
+  constructor(ui, layer, topLayer, clockLayer) {
     this.ui = ui;
     this.c = Object.create(null); // diff cache
     this.root = layer;
@@ -63,13 +63,16 @@ export class Hud {
     svgEl('i', 'hi-ico', this.iPing, glyph('signal'));
     this.iPingT = el('b', '', this.iPing, '');
     this.iFps = el('span', 'hi-fps', info);
+    svgEl('i', 'hi-ico', this.iFps, glyph('ecg'));
+    this.iFpsT = el('b', '', this.iFps, '');
     this.iFps.hidden = true;
 
     // ---- objective tracker (left)
     this.objective = new Objective(layer);
-    // ---- top-centre compass + clock
+    // ---- top-centre compass
     this.compass = new Compass(topLayer);
-    const clock = (this.clock = el('div', 'clock is-day', topLayer));
+    // ---- top-right day / night clock
+    const clock = (this.clock = el('div', 'clock is-day', clockLayer));
     const svgWrap = svgEl(
       'div',
       'clk-dial',
@@ -642,12 +645,13 @@ export class Hud {
       this.iPing.hidden = !ping;
       this.iPing.classList.toggle('bad', h.ping > 150);
     }
-    const showFps = !!this.ui.settings.showFps && h.fps != null;
+    const showFps = !!this.ui.settings.showFps && !!h.fps;
     const fps = showFps ? Math.round(h.fps) + ' fps' : '';
     if (c.fps !== fps) {
       c.fps = fps;
-      this.iFps.textContent = fps;
+      this.iFpsT.textContent = fps;
       this.iFps.hidden = !fps;
+      this.iFps.classList.toggle('bad', h.fps < 30);
     }
   }
 

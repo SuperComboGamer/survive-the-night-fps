@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 6;
 
 // client -> server
 export const C2S = {
@@ -65,6 +65,7 @@ export const ENT = {
   CRATE: 6,
   AREA: 7,
   CACHE: 8, // searchable container (static position from world gen, state = searched)
+  CAT: 9, // the stray cat (ambient, can't be hurt)
 };
 
 // ---------------------------------------------------------------- quantization
@@ -281,3 +282,5 @@ export const CF = { POS: 0, STATE: 1 };
 export const AF = { POS: 0 };
 // CACHE fields
 export const KF = { POS: 0, STATE: 1 };
+// CAT fields
+export const TF = { POS: 0, YAW: 1, ANIM: 2 };

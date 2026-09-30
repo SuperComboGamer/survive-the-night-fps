@@ -1,12 +1,135 @@
 // Terrain mesh built from the shared heightfield (exactly matches collision), splat-blended ground
-// textures (meadow grass / forest floor / dirt road / asphalt / mud / rock) with baked ambient occlusion
-// under trees, drainage wetness and slope rock. The ground layers come from groundFields(), which the
-// grass placement shares, so grass cards stand on the grass layer.
+// textures (meadow grass / forest floor / mud / rock) with baked ambient occlusion under trees, drainage
+// wetness and slope rock. The ground layers come from groundFields(), which the grass placement shares, so
+// grass cards stand on the grass layer. Roads are drawn per pixel from a road frame baked into the vertices
+// (signed offset from the nearest road's centre line and distance along it): dirt roads get tyre ruts, a
+// grassy crown and puddles, trails a worn footpath and Route 9 faded lane lines and gravel shoulders.
 import * as THREE from 'three';
 import { GRID_N, GRID_STEP, MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
 import { smoothstep } from '../../shared/rng.js';
+import { ROAD } from '../../shared/world.js';
 import { getTexture } from './textures.js';
 import { GROUND_MACRO_GLSL, groundNoiseTexture, VEG } from './materials.js';
+
+
+// the road frame is kept this far (m) past a road's edge, so its fade-out stays well clear of the road
+const FRAME_REACH = 12;
+
+/**
+ * Per-vertex road frame: signed lateral offset from the nearest road's centre line, distance along that
+ * road, its half width, its kind and a confidence that falls to 0 wherever the frame jumps (junctions,
+ * road ends, switchbacks, out of reach) so the shader never interpolates across a discontinuity.
+ */
+function roadFrame(world) {
+  const N = GRID_N;
+  const cnt = N * N;
+  const lat = new Float32Array(cnt).fill(FRAME_REACH * 4);
+  const along = new Float32Array(cnt);
+  const hw = new Float32Array(cnt);
+  const edge = new Float32Array(cnt).fill(1e9);
+  const rid = new Int16Array(cnt).fill(-1);
+  const bad = new Uint8Array(cnt);
+  world.roads.forEach((road, ri) => {
+    const p = road.pts;
+    const n = p.length / 2;
+    const reach = road.width + FRAME_REACH;
+    let s0 = 0;
+    for (let s = 0; s < n - 1; s++) {
+      const ax = p[s * 2];
+      const az = p[s * 2 + 1];
+      const bx = p[s * 2 + 2];
+      const bz = p[s * 2 + 3];
+      const ex = bx - ax;
+      const ez = bz - az;
+      const el2 = ex * ex + ez * ez;
+      if (el2 < 1e-8) continue;
+      const el = Math.sqrt(el2);
+      const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - reach + MAP_HALF) / GRID_STEP));
+      const i1 = Math.min(N - 1, Math.ceil((Math.max(ax, bx) + reach + MAP_HALF) / GRID_STEP));
+      const j0 = Math.max(0, Math.floor((Math.min(az, bz) - reach + MAP_HALF) / GRID_STEP));
+      const j1 = Math.min(N - 1, Math.ceil((Math.max(az, bz) + reach + MAP_HALF) / GRID_STEP));
+      for (let j = j0; j <= j1; j++) {
+        const z = -MAP_HALF + j * GRID_STEP;
+        for (let i = i0; i <= i1; i++) {
+          const x = -MAP_HALF + i * GRID_STEP;
+          let t = ((x - ax) * ex + (z - az) * ez) / el2;
+          const cap = (t < 0 && s === 0) || (t > 1 && s === n - 2);
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const d = Math.hypot(x - ax - ex * t, z - az - ez * t);
+          const e = d - road.width;
+          const k = j * N + i;
+          if (e > FRAME_REACH || e >= edge[k]) continue;
+          edge[k] = e;
+          lat[k] = ex * (z - az) - ez * (x - ax) >= 0 ? d : -d;
+          along[k] = s0 + t * el;
+          hw[k] = road.width;
+          rid[k] = ri;
+          bad[k] = cap ? 1 : 0;
+        }
+      }
+      s0 += el;
+    }
+  });
+  // discontinuities: a different road (or none) next door, or a jump along the same road
+  const jump = GRID_STEP * 4;
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const k = j * N + i;
+      if (rid[k] < 0) {
+        bad[k] = 1;
+        continue;
+      }
+      for (let dj = -1; dj <= 1 && !bad[k]; dj++) {
+        const jj = j + dj;
+        if (jj < 0 || jj >= N) continue;
+        for (let di = -1; di <= 1; di++) {
+          const ii = i + di;
+          if (ii < 0 || ii >= N) continue;
+          const kk = jj * N + ii;
+          if (rid[kk] !== rid[k] || Math.abs(along[kk] - along[k]) > jump) {
+            bad[k] = 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+  // confidence: 0 within 2 cells of a discontinuity (so every triangle touching one is exactly 0), then
+  // two box blurs fade it back in
+  let conf = new Float32Array(cnt);
+  const R = 2;
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      let ok = 1;
+      for (let dj = -R; dj <= R && ok; dj++) {
+        const jj = Math.min(N - 1, Math.max(0, j + dj));
+        for (let di = -R; di <= R; di++) {
+          if (bad[jj * N + Math.min(N - 1, Math.max(0, i + di))]) {
+            ok = 0;
+            break;
+          }
+        }
+      }
+      conf[j * N + i] = ok;
+    }
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    const src = conf;
+    conf = new Float32Array(cnt);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        let s = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          const jj = Math.min(N - 1, Math.max(0, j + dj));
+          for (let di = -1; di <= 1; di++) s += src[jj * N + Math.min(N - 1, Math.max(0, i + di))];
+        }
+        conf[j * N + i] = s / 9;
+      }
+    }
+  }
+  const kind = (k) => (rid[k] >= 0 ? world.roads[rid[k]].kind : 0);
+  return { lat, along, hw, conf, kind };
+}
 
 const FIELDS = new WeakMap();
 // canopy contribution per tree variant (conifers shade the floor, dead trees barely)
@@ -15,6 +138,8 @@ const CANOPY_W = [1, 1, 0.95, 0.12, 0.1, 0.55, 0.05];
 /**
  * Per-vertex ground layers on the heightfield grid: splat (grass, forest, road, mud), rock (steep slopes),
  * wet (drainage lines / low ground), ao (under trees), normals. sample(x, z, out) bilinearly reads them.
+ * base: what the terrain draws under and beside the roads (grass, forest, mud summing to 1) + road coverage;
+ * the terrain shader lays the road over it per pixel.
  */
 export function groundFields(world) {
   let f = FIELDS.get(world);
@@ -24,6 +149,7 @@ export function groundFields(world) {
   const count = N * N;
   const nrm = new Float32Array(count * 3);
   const splat = new Float32Array(count * 4);
+  const base = new Float32Array(count * 4);
   const rock = new Float32Array(count);
   const wet = new Float32Array(count);
   const ao = new Float32Array(count).fill(1);
@@ -114,6 +240,10 @@ export function groundFields(world) {
       splat[k * 4 + 1] = wf / sum;
       splat[k * 4 + 2] = road / sum;
       splat[k * 4 + 3] = wm / sum;
+      base[k * 4] = (1 - forest) * (1 - mud);
+      base[k * 4 + 1] = forest * (1 - mud);
+      base[k * 4 + 2] = mud;
+      base[k * 4 + 3] = road;
     }
   }
   const sample = (x, z, out = {}) => {
@@ -131,7 +261,7 @@ export function groundFields(world) {
     out.canopy = bl(canopy);
     return out;
   };
-  f = { nrm, splat, rock, wet, ao, canopy, sample };
+  f = { nrm, splat, base, rock, wet, ao, canopy, sample };
   FIELDS.set(world, f);
   return f;
 }
@@ -141,45 +271,27 @@ export function buildTerrain(world) {
   const H = world.heights;
   const count = N * N;
   const F = groundFields(world);
+  const frame = roadFrame(world);
   const pos = new Float32Array(count * 3);
   const extra = new Float32Array(count * 4);
-  const rdir = new Float32Array(count * 2);
+  const roadAttr = new Float32Array(count * 4);
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const k = j * N + i;
       pos[k * 3] = -MAP_HALF + i * GRID_STEP;
       pos[k * 3 + 1] = H[k];
       pos[k * 3 + 2] = -MAP_HALF + j * GRID_STEP;
-      extra[k * 4] = world.roadKind[k] === 2 ? 1 : 0;
+      // road kind: +1 asphalt, -1 trail, 0 dirt road
+      const kd = frame.kind(k);
+      extra[k * 4] = kd === ROAD.ASPHALT ? 1 : kd === ROAD.TRAIL ? -1 : 0;
       extra[k * 4 + 1] = F.ao[k];
       extra[k * 4 + 2] = F.wet[k];
       extra[k * 4 + 3] = F.rock[k];
-      // road tangent as a double angle (cos 2a, sin 2a): direction-agnostic, so it interpolates cleanly
-      const dx = world.roadDir[k * 2];
-      const dz = world.roadDir[k * 2 + 1];
-      rdir[k * 2] = dx * dx - dz * dz;
-      rdir[k * 2 + 1] = 2 * dx * dz;
+      roadAttr[k * 4] = frame.lat[k];
+      roadAttr[k * 4 + 1] = frame.along[k];
+      roadAttr[k * 4 + 2] = frame.hw[k];
+      roadAttr[k * 4 + 3] = frame.conf[k];
     }
-  }
-  // road direction coherence: where neighbouring directions disagree (junctions, tight bends) the along-road
-  // mapping zig-zags -> shrink the vector there, the shader blends to plain dirt
-  const coh = new Float32Array(count);
-  for (let j = 0; j < N; j++) {
-    for (let i = 0; i < N; i++) {
-      const k = j * N + i;
-      let m = 1;
-      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-        const ii = i + di, jj = j + dj;
-        if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
-        const q = jj * N + ii;
-        m = Math.min(m, rdir[k * 2] * rdir[q * 2] + rdir[k * 2 + 1] * rdir[q * 2 + 1]);
-      }
-      coh[k] = smoothstep(0.55, 0.95, m);
-    }
-  }
-  for (let k = 0; k < count; k++) {
-    rdir[k * 2] *= coh[k];
-    rdir[k * 2 + 1] *= coh[k];
   }
   const idx = new Uint32Array((N - 1) * (N - 1) * 6);
   let o = 0;
@@ -200,9 +312,9 @@ export function buildTerrain(world) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.BufferAttribute(F.nrm, 3));
-  geo.setAttribute('aSplat', new THREE.BufferAttribute(F.splat, 4));
+  geo.setAttribute('aSplat', new THREE.BufferAttribute(F.base, 4));
   geo.setAttribute('aExtra', new THREE.BufferAttribute(extra, 4));
-  geo.setAttribute('aRoadDir', new THREE.BufferAttribute(rdir, 2));
+  geo.setAttribute('aRoad', new THREE.BufferAttribute(roadAttr, 4));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeBoundingSphere();
 
@@ -220,14 +332,17 @@ export function buildTerrain(world) {
     tAsph: { value: tex('ground_asphalt') },
     tMud: { value: tex('ground_mud') },
     tRock: { value: tex('rock') },
-    tDirt: { value: tex('ground_dirt') },
+    tNoise: { value: tex('ground_noise') },
     tGroundNoise: VEG.tGroundNoise,
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aSplat;\nattribute vec4 aExtra;\nattribute vec2 aRoadDir;\nvarying vec4 vSplat;\nvarying vec4 vExtra;\nvarying vec2 vRoadDir;\nvarying vec3 vWPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvExtra = aExtra;\nvRoadDir = aRoadDir;\nvWPos = position;');
+      .replace(
+        '#include <common>',
+        '#include <common>\nattribute vec4 aSplat;\nattribute vec4 aExtra;\nattribute vec4 aRoad;\nvarying vec4 vSplat;\nvarying vec4 vExtra;\nvarying vec4 vRoad;\nvarying vec3 vWPos;',
+      )
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvExtra = aExtra;\nvRoad = aRoad;\nvWPos = position;');
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
@@ -238,10 +353,10 @@ export function buildTerrain(world) {
         uniform sampler2D tAsph;
         uniform sampler2D tMud;
         uniform sampler2D tRock;
-        uniform sampler2D tDirt;
+        uniform sampler2D tNoise;
         varying vec4 vSplat;
         varying vec4 vExtra;
-        varying vec2 vRoadDir;
+        varying vec4 vRoad;
         varying vec3 vWPos;
         ${GROUND_MACRO_GLSL}
         // anti-tiling: a second, rotated + rescaled sample of the same layer takes over in noise patches; the seam
@@ -261,52 +376,58 @@ export function buildTerrain(world) {
         /* glsl */ `
         vec2 wp = vWPos.xz;
         vec2 tuv = wp * 0.22;
+        // gradients taken here, in uniform control flow, so branch-local samples get the right mip level
         vec2 gx = dFdx(tuv), gy = dFdy(tuv);
+        vec2 wx = dFdx(wp), wy = dFdy(wp);
+        const mat2 ROT = mat2(0.8, -0.6, 0.6, 0.8);
+        vec2 rwx = ROT * wx, rwy = ROT * wy;
         vec4 nz = texture2D(tGroundNoise, wp * (1.0 / 29.0));
         float n1 = nz.r * 0.6 + nz.g * 0.4;
         float n2 = nz.g * 0.5 + nz.b * 0.5;
+        // tNoise holds independent tileable noise fields in r / g / b (linear data): road edges, ruts, puddles
+        vec3 nMid = texture2D(tNoise, wp * 0.041 + 0.31).rgb;
+        vec3 nFine = texture2D(tNoise, wp * 0.23 + 0.67).rgb;
         float wet = vExtra.z;
-        vec4 w = vSplat;
+
+        // ---- road coverage: per pixel from the road frame, per vertex where the frame is not trustworthy
+        // (junctions, road ends). Ragged dirt edges that grass creeps over, clean asphalt edges with a gravel shoulder.
+        float conf = vRoad.w;
+        float lat = vRoad.x;
+        float aLat = abs(lat);
+        float hw = vRoad.z;
+        float asph = max(vExtra.x, 0.0);
+        float trail = max(-vExtra.x, 0.0);
+        float edgeN = (nFine.g - 0.5) * mix(1.3, 0.3, asph) + (nMid.b - 0.5) * mix(0.8, 0.0, asph);
+        float soft = mix(0.55, 0.12, asph);
+        float pixRoad = 1.0 - smoothstep(hw + asph * 0.7 - soft, hw + asph * 0.7 + soft * 0.3, aLat + edgeN);
+        float road = mix(vSplat.w, pixRoad, conf);
+        vec2 ruv = vec2(lat * 0.7, vRoad.y * 0.06);
+        vec2 rux = dFdx(ruv), ruy = dFdy(ruv);
+
+        // ---- ground under and beside the roads
+        vec3 w = vSplat.xyz;
         // ragged meadow / forest-floor border
         float nb = (n2 - 0.5) * 0.9;
         w.x = max(0.0, w.x + nb * w.y);
         w.y = max(0.0, w.y - nb * w.y);
-        vec4 cG = vec4(0.0), cF = vec4(0.0), cM = vec4(0.0), cR = vec4(0.0);
-        if (w.x > 0.002) {
+        vec4 cG = vec4(0.0), cF = vec4(0.0), cM = vec4(0.0);
+        // (grass is also sampled on the road: the crown between the ruts and the verges grow it)
+        if (w.x > 0.002 || road > 0.002) {
           cG = terrLayer(tGrass, tuv, gx, gy, n1, 1.3, 0.83, vec2(0.31, 0.17));
           cG.rgb = mix(cG.rgb, cG.w * vec3(1.45, 1.2, 0.66), groundDry(wp) * 0.3);
         }
-        if (w.y > 0.002) {
+        if (w.y > 0.002 && road < 0.998) {
           cF = terrLayer(tForest, tuv * 0.9 + 0.37, gx * 0.9, gy * 0.9, n2, 2.2, 1.17, vec2(0.13, 0.71));
           // moss mats on the damp forest floor
           cF.rgb = mix(cF.rgb, cF.rgb * vec3(0.72, 1.02, 0.58) + vec3(0.0, 0.006, 0.0), smoothstep(0.5, 0.78, nz.a * 0.7 + nz.r * 0.3 + wet * 0.35) * 0.75);
         }
-        if (w.w > 0.002) cM = terrLayer(tMud, tuv * 1.1, gx * 1.1, gy * 1.1, n1, 0.9, 0.79, vec2(0.57, 0.23));
-        // road textures run along the road (ruts and wear follow its direction)
-        float ra = atan(vRoadDir.y, vRoadDir.x + 1e-5) * 0.5;
-        vec2 rd = vec2(cos(ra), sin(ra));
-        vec2 ruv = vec2(dot(wp, vec2(rd.y, -rd.x)), dot(wp, rd)) * 0.22;
-        vec2 rgx = dFdx(ruv), rgy = dFdy(ruv);
-        if (w.z > 0.002) {
-          vec3 cRd = textureGrad(tRoad, ruv * 0.7, rgx * 0.7, rgy * 0.7).rgb;
-          vec3 cA = textureGrad(tAsph, ruv * 0.5, rgx * 0.5, rgy * 0.5).rgb;
-          // junctions / road ends: the interpolated direction field collapses (and swirls) - plain dirt there
-          float rdl = length(vRoadDir);
-          if (rdl < 0.97) {
-            vec3 cD = textureGrad(tDirt, tuv * 0.8 + 0.19, gx * 0.8, gy * 0.8).rgb;
-            float k = smoothstep(0.45, 0.97, rdl);
-            cRd = mix(cD, cRd, k);
-            cA = mix(cD * vec3(0.72, 0.74, 0.78), cA, k);
-          }
-          cR.rgb = mix(cRd, cA, vExtra.x);
-          cR.w = dot(cR.rgb, vec3(0.333));
-        }
+        if (w.z > 0.002 && road < 0.998) cM = terrLayer(tMud, tuv * 1.1, gx * 1.1, gy * 1.1, n1, 0.9, 0.79, vec2(0.57, 0.23));
         // height-aware blend: where two layers meet, the higher texel (blade, leaf, pebble) wins
-        vec4 b = (w + vec4(cG.w, cF.w, cR.w, cM.w * 0.7) * 0.9) * step(0.002, w);
-        float ma = max(max(b.x, b.y), max(b.z, b.w)) - 0.14;
+        vec3 b = (w + vec3(cG.w, cF.w, cM.w * 0.7) * 0.9) * step(0.002, w);
+        float ma = max(max(b.x, b.y), b.z) - 0.14;
         w = max(b - ma, 0.0);
-        w /= max(w.x + w.y + w.z + w.w, 1e-4);
-        vec3 ground = cG.rgb * w.x + cF.rgb * w.y + cR.rgb * w.z + cM.rgb * w.w;
+        w /= max(w.x + w.y + w.z, 1e-4);
+        vec3 ground = cG.rgb * w.x + cF.rgb * w.y + cM.rgb * w.z;
         // steep slopes: rock breaks through (height-aware too)
         float rk = 0.0;
         if (vExtra.w > 0.01) {
@@ -316,12 +437,57 @@ export function buildTerrain(world) {
         }
         // drainage lines and hollows: darker, greener
         ground *= mix(vec3(1.0), vec3(0.74, 0.84, 0.7), wet * 0.75 * (1.0 - rk));
+
+        // ---- roads
+        if (road > 0.002) {
+          float tb = smoothstep(0.3, 0.7, nMid.r);
+          vec3 dirt = textureGrad(tRoad, ROT * wp * 0.2, rwx * 0.2, rwy * 0.2).rgb;
+          if (tb > 0.002) dirt = mix(dirt, textureGrad(tRoad, wp * 0.083 + 0.5, wx * 0.083, wy * 0.083).rgb, tb * 0.5);
+          // tyre ruts (dirt roads) or one worn footpath (trails), wandering a little
+          float wob = (nMid.r - 0.5) * 0.55 + (nFine.b - 0.5) * 0.12;
+          float la = abs(lat + wob);
+          float rutC = 0.82 * (1.0 - trail);
+          float rw = mix(0.3, 0.42, trail);
+          float dr = abs(la - rutC);
+          float rut = (1.0 - smoothstep(rw * 0.55, rw * 0.9, dr)) * conf;
+          float berm = smoothstep(rw * 0.9, rw * 1.3, dr) * (1.0 - smoothstep(rw * 1.3, rw * 2.2, dr)) * conf * (1.0 - trail);
+          // tyre streaks: the dirt texture stretched along the road
+          vec3 streak = textureGrad(tRoad, ruv, rux, ruy).rgb;
+          vec3 rutCol = mix(dirt, streak, 0.55) * vec3(0.7, 0.67, 0.64);
+          // faint tread imprint across the tyre tracks
+          rutCol *= 1.0 - 0.1 * step(0.55, fract(vRoad.y * 3.3 + la * 1.5)) * (1.0 - trail);
+          dirt = mix(dirt, rutCol, rut * mix(0.85, 0.6, trail));
+          dirt *= 1.0 + berm * 0.1;
+          // standing water in the ruts
+          float pud = rut * smoothstep(0.62, 0.7, nMid.g) * smoothstep(0.35, 0.6, nFine.r) * (1.0 - trail);
+          dirt = mix(dirt, vec3(0.018, 0.02, 0.022) + dirt * 0.25, pud * 0.85);
+          // grassy crown between the ruts and grass creeping in from the verge
+          float crown = (1.0 - smoothstep(0.16, 0.4, la)) * smoothstep(0.38, 0.62, nMid.g + nFine.r * 0.25) * (1.0 - trail) * conf;
+          float verge = smoothstep(hw - 1.3, hw - 0.2, aLat + edgeN * 0.5) * smoothstep(0.45, 0.7, nFine.g) * conf * (1.0 - asph);
+          dirt = mix(dirt, cG.rgb * 0.92, max(crown * 0.85, verge * 0.7));
+          if (asph > 0.002) {
+            vec3 a = textureGrad(tAsph, ROT * wp * 0.16, rwx * 0.16, rwy * 0.16).rgb;
+            if (tb > 0.002) a = mix(a, textureGrad(tAsph, wp * 0.061 + 0.2, wx * 0.061, wy * 0.061).rgb, tb * 0.5);
+            // faded lane markings: dashed yellow centre line, white edge lines, worn through in places
+            float grit = textureGrad(tNoise, wp * 1.9, wx * 1.9, wy * 1.9).g;
+            float wear = smoothstep(0.25, 0.6, nFine.b) * smoothstep(0.2, 0.5, nMid.r) * smoothstep(0.3, 0.55, grit);
+            float cl = (1.0 - smoothstep(0.055, 0.085, aLat)) * step(fract(vRoad.y / 12.0), 0.3);
+            float el = 1.0 - smoothstep(0.05, 0.08, abs(aLat - (hw - 0.45)));
+            a = mix(a, vec3(0.22, 0.16, 0.05), cl * conf * wear * 0.75);
+            a = mix(a, vec3(0.27, 0.27, 0.25), el * conf * wear * 0.6);
+            // crumbling edge and a gravel shoulder
+            float sh = smoothstep(hw - 0.2, hw + 0.05, aLat + (nFine.g - 0.5) * 0.35);
+            a = mix(a, dirt * vec3(1.02, 1.0, 0.97), sh * conf);
+            dirt = mix(dirt, a, asph);
+          }
+          ground = mix(ground, dirt, road);
+        }
         ground *= groundMacro(wp);
         diffuseColor.rgb *= ground * vExtra.y;
         `,
       );
   };
-  mat.customProgramCacheKey = () => 'terrain-splat';
+  mat.customProgramCacheKey = () => 'terrain-splat-3';
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.frustumCulled = false;

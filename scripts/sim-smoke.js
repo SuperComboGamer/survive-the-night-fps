@@ -1,10 +1,10 @@
-// In-process server smoke test: fake clients join, walk around, search containers, chop trees,
+// In-process server smoke test: fake clients join, meet the cat, walk around, search containers, chop trees,
 // build (incl. door boards), go down + get revived, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
 import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY } from '../shared/defs.js';
+import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM } from '../shared/defs.js';
 import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 
 const seed = +(process.argv[2] || 4242);
@@ -108,6 +108,38 @@ check('game started', game.phase === PHASE.DAY && A.global?.phase === PHASE.DAY)
 check('players spawned near car', Math.hypot(A.p().state.x - game.world.car.x, A.p().state.z - game.world.car.z) < 14);
 check('supply hints sent', A.global.hints.slice(0, 7).every((z) => z !== 255), JSON.stringify(A.global.hints));
 check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.CACHE));
+
+// the stray cat: replicated, wanders over to survivors who stand still, bolts from the dead
+{
+  const cat = game.cats[0];
+  const car = game.world.car;
+  check('cat spawned near the car', cat && Math.hypot(cat.x - car.x, cat.z - car.z) < 12);
+  const rc = [...A.store.ents.values()].find((e) => e.kind === ENT.CAT);
+  check('cat replicated', rc && rc.variant === cat.variant && rc.id === cat.id);
+  let closest = Infinity;
+  let walked = 0;
+  let lx = cat.x;
+  let lz = cat.z;
+  run(20 * 90, () => {
+    for (const h of game.humans()) closest = Math.min(closest, Math.hypot(h.state.x - cat.x, h.state.z - cat.z));
+    walked += Math.hypot(cat.x - lx, cat.z - lz);
+    lx = cat.x;
+    lz = cat.z;
+  });
+  check('cat walks around', walked > 5 && Math.hypot(cat.x - car.x, cat.z - car.z) < 45, `${walked.toFixed(1)} m`);
+  check('cat visits a survivor standing still', closest < 2.6, `closest ${closest.toFixed(2)} m`);
+  const z = game.zm.spawn(ZTYPE.WALKER, cat.x + 3, cat.z);
+  const d0 = Math.hypot(z.x - cat.x, z.z - cat.z);
+  let ran = false;
+  run(30, () => (ran ||= rc.q[4] === CANIM.RUN));
+  check('cat bolts from a zombie', ran && Math.hypot(z.x - cat.x, z.z - cat.z) > d0 + 2, `${d0.toFixed(1)} -> ${Math.hypot(z.x - cat.x, z.z - cat.z).toFixed(1)} m`);
+  game.combat.damageZombie(z, 1e6, null, {});
+  A.tp(car.x + 30, car.z - 20);
+  run(2);
+  game.handleChat(A.p(), '/cat');
+  run(2);
+  check('/cat brings it over', Math.hypot(A.p().state.x - cat.x, A.p().state.z - cat.z) < 3);
+}
 
 // walk a little
 run(60, () => A.input(BTN.FWD, 0.3, 0));
