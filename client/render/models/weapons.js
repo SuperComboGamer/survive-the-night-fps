@@ -7,7 +7,7 @@
 //   Melee: the handle runs along Z through the fist, blade/bat toward -Z, cutting edge / hammer face toward -Y.
 //   Throwables (molotov, pipebomb, road flare): long axis along +Y (held like a bottle).
 import * as THREE from 'three';
-import { ITEM } from '../../../shared/defs.js';
+import { ITEM, CONSUMABLES } from '../../../shared/defs.js';
 import { WR, CR } from './charTextures.js';
 import {
   MeshBuilder,
@@ -144,6 +144,24 @@ function barrelZ(mb, x, y, z0, z1, r, ri, o = {}) {
   const f0 = -Math.max(z0, z1), f1 = -Math.min(z0, z1);
   const r1 = o.r1 ?? r;
   return latheZ(mb, [[0, f0], [r, f0], [r1, f1], [ri, f1], [ri, f1 - Math.min(0.03, (f1 - f0) * 0.4)], [0, f1 - Math.min(0.03, (f1 - f0) * 0.4)]], x, y, { sharp: true, ...o });
+}
+
+/** Outline (x, f = forward distance (-Z)) extruded along Y from y0 to y1. */
+function plateY(mb, pts, y0, y1, o = {}) {
+  const bevel = o.bevel ?? 0.001;
+  const geo = new THREE.ExtrudeGeometry(makeShape(pts), {
+    depth: Math.max(0.0005, Math.abs(y1 - y0) - bevel * 2),
+    bevelEnabled: bevel > 0,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 1,
+    curveSegments: o.curveSegs ?? 6,
+    steps: 1,
+  });
+  geo.rotateX(-PI / 2); // (x, y, z) -> (x, z, -y): shape y = forward (-Z), extrude = Y
+  geo.translate(0, Math.min(y0, y1) + bevel, 0);
+  projUV(geo);
+  return mb.geom(0, geo, o);
 }
 
 /** Box from ranges. */
@@ -736,6 +754,94 @@ function buildDoubleBarrel(P) {
   P.meta.chamber = sh(0, 0.052, -0.075);
 }
 
+// ------------------------------------------------------------------ Crossbow (scrap-built: plank tiller, leaf-spring prod, rope string)
+// Modelled latched with a bolt on the rail. The viewmodel swings the two limbs about their roots and re-aims
+// the two string halves (unit-length parts) every frame; meta.xbow carries what it needs for that.
+function buildCrossbow(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const O = [0, -0.035, -0.058]; // authored like the shotguns: stock wrist -> grip origin
+  const RAIL = 0.066; // top of the tiller, where the bolt lies
+  const SY = RAIL + 0.002; // the string rides just above it
+  const PROD = -0.47; // z of the limb roots
+  const LATCHED = 0.72, FLEX = 0.5, LIMB = 0.27, CURL = 0.03; // limb sweep (rad) when latched, how far it springs forward, length, recurve
+  // tiller: butt, wrist and a long fore-end cut from one plank, slimmer ahead of the trigger
+  profile(B, [
+    [0.5, RAIL], [0.16, RAIL], [0.09, RAIL], [-0.03, RAIL], [-0.085, 0.056], [-0.37, 0.03], [-0.37, -0.108], [-0.3, -0.085], [-0.2, -0.062],
+    [-0.12, -0.035], [-0.075, -0.012], [-0.045, 0.006], [-0.03, 0.016], [0.09, 0.02], [0.16, 0.028], [0.44, 0.034], [0.5, 0.042],
+  ], 0.038, { ...M.walnut, color: [1.2, 1.14, 1.04], bevel: 0.004, curveSegs: 4, widthFn: (f) => (f > 0.12 ? 0.8 : 1) });
+  profile(B, [[-0.37, 0.032], [-0.386, 0.032], [-0.386, -0.11], [-0.37, -0.11]], 0.04, { ...M.tape, bevel: 0.003 }); // taped butt
+  if (hi) {
+    boxR(B, -0.0035, 0.0035, RAIL, RAIL + 0.0006, -0.17, -0.5, M.black); // bolt groove
+    for (const z of [-0.2, -0.36]) boxR(B, -0.0157, 0.0157, 0.03, RAIL - 0.004, z, z - 0.014, M.tape); // tape wraps
+  }
+  // trigger plate, strap guard, trigger
+  boxR(B, -0.008, 0.008, 0.006, 0.02, 0.02, -0.075, M.gun);
+  B.tube(0, [[0, 0.008, 0.012], [0, -0.014, 0.004], [0, -0.018, -0.03], [0, -0.008, -0.062], [0, 0.008, -0.07]], 0.0032, 0.0032, { ...M.gun, rs: 5, ts: R(hi, 12, 6), cap: false });
+  B.tube(0, [[0, 0.008, -0.024], [0, -0.006, -0.028], [0, -0.012, -0.022]], 0.0025, 0.002, { ...M.gunDark, rs: 5, ts: 4 });
+  // prod bracket, rope lashing (clear of the rail), stirrup
+  boxR(B, -0.028, 0.028, 0.04, RAIL - 0.001, PROD + 0.016, PROD - 0.016, M.gun);
+  const rope = { region: WR.RAG, color: [0.72, 0.6, 0.4], mottle: 0.08 };
+  for (const z of [PROD + 0.03, PROD - 0.018]) boxR(B, -0.0172, 0.0172, 0.03, RAIL - 0.005, z, z - 0.012, rope);
+  B.tube(0, [[-0.03, 0.05, -0.495], [-0.04, 0.05, -0.55], [0, 0.05, -0.585], [0.04, 0.05, -0.55], [0.03, 0.05, -0.495]], 0.004, 0.004, { ...M.rust, rs: 5, ts: R(hi, 14, 8), cap: false });
+  // limb tip (right, relative to its root) for a sweep angle: out along the limb, curled toward the front
+  const tipAt = (b) => [LIMB * Math.cos(b) + CURL * Math.sin(b), LIMB * Math.sin(b) - CURL * Math.cos(b)];
+  const [tx, tz] = tipAt(LATCHED);
+  const [rx] = tipAt(LATCHED - FLEX);
+  const ROOT = 0.022;
+  const half = ROOT + rx; // the string is straight at rest: half its length = how far out the tips are
+  const nock = PROD + tz + Math.sqrt(half * half - (ROOT + tx) * (ROOT + tx)); // latched: the string meets the latch here
+  // latch: two cheeks, the nut between them, rear sight notch on a bridge
+  for (const s of [-1, 1]) boxR(B, s * 0.0105, s * 0.016, RAIL - 0.004, RAIL + 0.016, nock + 0.05, nock + 0.004, M.gun);
+  B.seg(0, [-0.0105, RAIL + 0.004, nock + 0.008], [0.0105, RAIL + 0.004, nock + 0.008], 0.007, 0.007, { ...M.steel, rs: R(hi, 10, 6), hs: 1 });
+  boxR(B, -0.016, 0.016, RAIL + 0.016, RAIL + 0.021, nock + 0.05, nock + 0.03, M.gun);
+  for (const s of [-1, 1]) boxR(B, s * 0.0018, s * 0.008, RAIL + 0.021, RAIL + 0.031, nock + 0.047, nock + 0.041, M.gunDark);
+  // front sight: a wire arch over the bolt, ahead of the string at rest, with a pin on top
+  for (const s of [-1, 1]) boxR(B, s * 0.0152, s * 0.018, RAIL - 0.012, RAIL + 0.025, PROD + 0.017, PROD + 0.011, M.gunDark);
+  boxR(B, -0.018, 0.018, RAIL + 0.022, RAIL + 0.025, PROD + 0.017, PROD + 0.011, M.gunDark);
+  boxR(B, -0.0012, 0.0012, RAIL + 0.025, RAIL + 0.0295, PROD + 0.0155, PROD + 0.0125, M.gunDark);
+  // limbs: tapered leaf springs, one part each so they can flex about the root
+  const spring = { ...M.steel, color: [0.72, 0.68, 0.62], mottle: 0.12 };
+  const N = hi ? 7 : 4;
+  for (const s of [1, -1]) {
+    const L = P.get(s > 0 ? 'limbR' : 'limbL');
+    const ca = Math.cos(LATCHED), sa = Math.sin(LATCHED);
+    const edge = (t, side) => {
+      const along = LIMB * t, out = CURL * Math.pow(t, 2.2) + side * (0.0045 - 0.002 * t); // toward the front
+      return [s * (ROOT + along * ca + out * sa), -(PROD + along * sa - out * ca)];
+    };
+    const pts = [];
+    for (let i = 0; i <= N; i++) pts.push(edge(i / N, 1));
+    for (let i = N; i >= 0; i--) pts.push(edge(i / N, -1));
+    plateY(L, pts, RAIL - 0.021, RAIL - 0.003, { ...spring, bevel: 0.0008 });
+    L.seg(0, [s * (ROOT + tx), RAIL - 0.023, PROD + tz], [s * (ROOT + tx), SY + 0.004, PROD + tz], 0.0035, 0.003, { ...M.rust, rs: 6, hs: 1 }); // string pin
+    P.pivot(s > 0 ? 'limbR' : 'limbL', new THREE.Vector3(s * ROOT, 0, PROD));
+  }
+  // string: latched V in the merged world model; in the viewmodel two unit lengths (+Z) the animation places
+  if (P.split) {
+    for (const n of ['stringR', 'stringL']) cylZ(P.get(n), 0, 0, 0, 1, 0.0017, { ...rope, rs: 5 });
+  } else {
+    for (const s of [-1, 1]) B.seg(0, [s * (ROOT + tx), SY, PROD + tz], [0, SY, nock], 0.0017, 0.0017, { ...rope, rs: 4, hs: 1, caps: 0 });
+  }
+  // bolt: ash shaft, scrap head, two tape vanes lying flat on the rail
+  const A = P.get('arrow');
+  const by = RAIL + 0.0045, tipZ = nock - 0.34;
+  cylZ(A, 0, by, nock, tipZ, 0.0042, { ...M.wood, color: [1.0, 1.1, 1.2], rs: R(hi, 8, 5) });
+  latheZ(A, [[0, -tipZ - 0.002], [0.0052, -tipZ - 0.002], [0.0068, -tipZ + 0.006], [0, -tipZ + 0.042]], 0, by, { ...M.steel, rs: R(hi, 8, 5), sharp: true });
+  for (const s of [-1, 1]) profile(A, [[-nock + 0.012, s * 0.004], [-nock + 0.022, s * 0.013], [-nock + 0.062, s * 0.013], [-nock + 0.075, s * 0.004]], 0.0012, { ...M.red, bevel: 0 });
+  for (const part of A.parts.slice(-2)) part.geo.rotateZ(PI / 2).translate(0, by, 0); // vanes were drawn upright: lay them flat
+  for (const [name, mb] of P.map) {
+    if (name === 'stringR' || name === 'stringL') continue;
+    for (const part of mb.parts) part.geo.translate(O[0], O[1], O[2]);
+  }
+  for (const k in P.pivots) P.pivots[k].add(new THREE.Vector3(O[0], O[1], O[2]));
+  const sh = (x, y, z) => new THREE.Vector3(x + O[0], y + O[1], z + O[2]);
+  P.meta.muzzle = sh(0, by, PROD - 0.05);
+  P.meta.leftHand = sh(0, 0.046, -0.3);
+  P.meta.sight = sh(0, RAIL + 0.0295, PROD + 0.014); // front pin (ADS pivots around it)
+  P.meta.xbow = { pivot: sh(ROOT, SY, PROD), tip: new THREE.Vector3(tx, 0, tz), flex: FLEX, half, rail: sh(0, by, nock - 0.17) };
+}
+
 // ------------------------------------------------------------------ Melee
 function buildKnife(P) {
   const hi = P.hi;
@@ -922,6 +1028,7 @@ const BUILDERS = {
   [ITEM.M4A1]: buildM4,
   [ITEM.MP5]: buildMP5,
   [ITEM.DB_SHOTGUN]: buildDoubleBarrel,
+  [ITEM.CROSSBOW]: buildCrossbow,
   [ITEM.KNIFE]: buildKnife,
   [ITEM.BAT]: buildBat,
   [ITEM.SPIKED_BAT]: buildSpikedBat,
@@ -1482,6 +1589,7 @@ const supportGrip = (roll, yaw, pitch = 0) => {
 // chargeFire: false = the charging handle stays put while firing; chargeQ: left-hand Euler on the charging handle;
 // chargeTravel: how far the handle is pulled on reload (0 = the hand just slaps meta.chargeKnob, e.g. a bolt catch);
 // breakAction: break-open shotgun (barrels part hinges down to reload)
+// crossbow: limbs and string follow the cocked state (update() is told whether a bolt is loaded)
 const VM = {
   [ITEM.AK47]: {
     kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2,
@@ -1512,6 +1620,11 @@ const VM = {
     kind: 'shotgun', breakAction: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.9, adsPitch: 0.1,
     rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.07, rx: 0.14, ry: 0.025 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+  },
+  [ITEM.CROSSBOW]: {
+    kind: 'rifle', crossbow: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.7, adsPitch: 0.1,
+    rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    recoil: { z: 0.018, rx: 0.03, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.PISTOL]: {
     // CS-style: low on the right, angled in toward the crosshair; index finger on the trigger, the left hand
@@ -1657,6 +1770,21 @@ function makeKit() {
   return mb.build().geometry;
 }
 
+// opened tin of tuna (food "use" prop): held upright between the palms, lid peeled back off the far rim
+function makeCan() {
+  const mb = new MeshBuilder({ skinned: false, atlas: 'weapon' });
+  const R = 0.043, H = 0.036;
+  mb.seg(0, [0, -H / 2, 0], [0, H / 2, 0], R, R, { region: WR.PLAIN, color: 0xb4b6b2, rs: 14, hs: 1, caps: 1, capScale: 0.02 });
+  mb.seg(0, [0, -H * 0.32, 0], [0, H * 0.32, 0], R + 0.0006, R + 0.0006, { region: WR.PLAIN, color: 0x2c5a8e, rs: 14, hs: 1, caps: 0 });
+  mb.seg(0, [0, -H * 0.06, 0], [0, H * 0.08, 0], R + 0.001, R + 0.001, { region: WR.PLAIN, color: 0xe0c45a, rs: 14, hs: 1, caps: 0 });
+  mb.seg(0, [0, H / 2 - 0.003, 0], [0, H / 2 + 0.0012, 0], R * 0.9, R * 0.9, { region: WR.PLAIN, color: 0xbfa08a, rs: 12, hs: 1, caps: 1, capScale: 0.1 });
+  // lid: hinged at the far rim and bent back past upright, underside to the camera
+  const a = (115 * PI) / 180, r = R * 0.92;
+  const c = [0, H / 2 + Math.sin(a) * r, -R + Math.cos(a) * r], n = [0, Math.cos(a) * 0.0006, -Math.sin(a) * 0.0006];
+  mb.seg(0, [c[0], c[1] - n[1], c[2] - n[2]], [c[0], c[1] + n[1], c[2] + n[2]], r, r, { region: WR.PLAIN, color: 0xc8cac6, rs: 12, hs: 1, caps: 1, capScale: 0.02 });
+  return mb.build().geometry;
+}
+
 export class ViewModel {
   constructor() {
     this.group = new THREE.Group();
@@ -1675,7 +1803,10 @@ export class ViewModel {
     this.scopeOverlay.visible = false;
     this.group.add(this.scopeOverlay);
     this.scoped = false;
-    this.kit = new THREE.Mesh(makeKit(), getViewWeaponMaterial());
+    this.kitGeo = makeKit();
+    this.canGeo = makeCan();
+    this.kitGrip = 0.1; // half the distance between the hands holding it
+    this.kit = new THREE.Mesh(this.kitGeo, getViewWeaponMaterial());
     this.kit.visible = false;
     this.kit.frustumCulled = false;
     this.sway.add(this.kit);
@@ -1708,6 +1839,9 @@ export class ViewModel {
     this.cycleT = 9; // bolt/pump cycle timer
     this.clawSide = 1;
     this.reloadHold = 0;
+    this.cocked = true; // crossbow: string latched with a bolt on the rail
+    this.cockHold = 0; // ...and how long to trust our own fire / reload over the caller's `loaded`
+    this._nock = new THREE.Vector3(); // where the middle of the string is (weapon space)
     this.visible = true;
     this.muzzleLocal = new THREE.Vector3();
     // cached targets
@@ -1771,6 +1905,8 @@ export class ViewModel {
     this.fireT = 9;
     this.cycleT = 9;
     this.reloadHold = 0;
+    this.cocked = true;
+    this.cockHold = 0;
     this.recZ.x = this.recX.x = this.recY.x = 0;
     this.recZ.v = this.recX.v = this.recY.v = 0;
     const style = claws ? 'claw' : 'normal';
@@ -1811,6 +1947,10 @@ export class ViewModel {
     this.recY.v += (Math.random() - 0.5) * rc.ry * 40;
     this.fireT = 0;
     if (this.cur.cfg.kind === 'shotgun' || this.cur.cfg.bolt) this.cycleT = 0;
+    if (this.cur.cfg.crossbow) {
+      this.cocked = false;
+      this.cockHold = 0.3;
+    }
   }
 
   reload(duration = 2, perShell = false) {
@@ -1841,7 +1981,11 @@ export class ViewModel {
     this.act = { type: 'throw', t: 0, dur: 1.15 };
   }
 
-  useItem(duration = 2) {
+  /** item: what is being used (food shows a tin instead of the medkit) */
+  useItem(duration = 2, item = 0) {
+    const food = !!CONSUMABLES[item]?.food;
+    this.kit.geometry = food ? this.canGeo : this.kitGeo;
+    this.kitGrip = food ? 0.068 : 0.1;
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
   }
 
@@ -1902,6 +2046,10 @@ export class ViewModel {
         const done = this.act;
         this.act = null;
         if (done.type === 'use') this.drawT = 0;
+        if (done.type === 'reload' && cur && cur.cfg.crossbow) {
+          this.cocked = true;
+          this.cockHold = 0.3;
+        }
         if ((done.type === 'throw' || done.type === 'use') && cur) cur.root.visible = true;
       }
     }
@@ -2031,6 +2179,19 @@ export class ViewModel {
       }
     }
     if (parts.barrels) parts.barrels.rotation.x = 0; // closed unless the reload opens it
+    if (cfg.crossbow) {
+      const reloading = !!act && act.type === 'reload';
+      // fire() and the end of the reload animation flip `cocked` themselves; otherwise follow the caller
+      if (this.cockHold > 0) this.cockHold -= dt;
+      else if (!reloading && s.loaded !== undefined) this.cocked = !!s.loaded;
+      // draw: hauled back during the reload, snapping forward (and ringing) right after a shot
+      const ft = this.fireT;
+      const draw = reloading ? smoothstep(0.2, 0.46, u) : this.cocked ? 1 : Math.max(0, 1 - ft / 0.035);
+      const ring = !reloading && !this.cocked && ft < 0.3 ? -0.014 * Math.sin(ft * 120) * Math.exp(-ft / 0.06) : 0;
+      this._poseCrossbow(cur, draw, ring);
+      parts.arrow.visible = this.cocked && !reloading;
+      parts.arrow.position.copy(parts.arrow.userData.base);
+    }
     if (parts.mag) {
       parts.mag.position.copy(parts.mag.userData.base);
       parts.mag.quaternion.identity();
@@ -2155,6 +2316,27 @@ export class ViewModel {
     }
   }
 
+  // crossbow limbs + string for a draw of 0 (loosed) .. 1 (latched); ring = the string's wobble along the rail (m).
+  // The limbs are modelled latched, so they swing forward by whatever draw is missing. The string never
+  // stretches: its middle sits as far behind the tips as its length allows. Leaves that point in this._nock.
+  _poseCrossbow(cur, draw, ring) {
+    const x = cur.meta.xbow, parts = cur.parts;
+    const a = x.flex * (1 - draw), ca = Math.cos(a), sa = Math.sin(a);
+    const tx = x.pivot.x + x.tip.x * ca + x.tip.z * sa; // right tip (the left one mirrors it)
+    const tz = x.pivot.z - x.tip.x * sa + x.tip.z * ca;
+    const nz = tz + Math.sqrt(Math.max(0, x.half * x.half - tx * tx)) + ring;
+    const len = Math.hypot(tx, nz - tz), yaw = Math.atan2(tx, nz - tz);
+    parts.limbR.rotation.y = a;
+    parts.limbL.rotation.y = -a;
+    parts.stringR.position.set(tx, x.pivot.y, tz);
+    parts.stringR.rotation.y = -yaw;
+    parts.stringR.scale.z = len;
+    parts.stringL.position.set(-tx, x.pivot.y, tz);
+    parts.stringL.rotation.y = yaw;
+    parts.stringL.scale.z = len;
+    this._nock.set(0, x.pivot.y, nz);
+  }
+
   _solveArm(arm, gripPos, handQ, shoulderPos, pole) {
     // wrist = grip - handQ * gripCenter
     arm.gripCenter(_v3).applyQuaternion(handQ);
@@ -2174,7 +2356,45 @@ export class ViewModel {
     st.aCam = st.bCam = false;
     st.pose = null;
     this._reloadState = st;
-    if (kind === 'rifle' && !cur.cfg.bolt) {
+    if (cur.cfg.crossbow) {
+      // dip the nose, haul the string back to the latch (update() flexes the limbs to match), then fetch a
+      // bolt from below, lay it in the groove and slide it back against the string
+      const tilt = win(u, 0.0, 0.12, 0.9, 1.0);
+      P6[0] -= tilt * 0.02;
+      P6[1] += tilt * 0.035;
+      P6[3] -= tilt * 0.2;
+      P6[4] += tilt * 0.02;
+      P6[5] += tilt * 0.12;
+      const strain = win(u, 0.2, 0.3, 0.42, 0.5); // the stock digs in while the string comes back
+      P6[2] += strain * 0.03;
+      P6[3] -= strain * 0.05;
+      const seat = smoothstep(0.82, 0.93, u);
+      const ar = parts.arrow;
+      if (u < 0.6) {
+        // A: hooked over the string (follows it), B: below the screen (camera space)
+        st.a.copy(this._nock);
+        st.a.y += 0.012;
+        st.qa.setFromEuler(_e1.set(-0.7, 0.3, -PI / 2, 'YXZ'));
+        st.b.set(-0.02, -0.5, -0.32);
+        st.bCam = true;
+        st.qb.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
+        st.m = smoothstep(0.49, 0.6, u);
+      } else {
+        // A: below the screen, B: the bolt, held over the rail and pressed home
+        st.a.set(-0.02, -0.5, -0.32);
+        st.aCam = true;
+        st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
+        st.b.copy(meta.xbow.rail);
+        st.b.y += 0.02 + (1 - seat) * 0.03;
+        st.b.z -= (1 - seat) * 0.06;
+        st.qb.setFromEuler(_e1.set(-0.9, 0.3, -PI / 2, 'YXZ'));
+        st.m = smoothstep(0.64, 0.78, u);
+        ar.visible = st.m > 0.55;
+        ar.position.set(ar.userData.base.x, ar.userData.base.y + (1 - seat) * 0.03, ar.userData.base.z - (1 - seat) * 0.06);
+      }
+      st.w = win(u, 0.08, 0.18, 0.93, 0.99);
+      st.pose = 'pinch';
+    } else if (kind === 'rifle' && !cur.cfg.bolt) {
       // AK: tilt, mag rock out, new mag in, charge
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
       P6[5] += tilt * 0.42;
@@ -2348,7 +2568,7 @@ export class ViewModel {
     _q1.copy(this.kit.quaternion).multiply(_q2);
     for (let side = -1; side <= 1; side += 2) {
       const arm = side < 0 ? this.armL : this.armR;
-      _v1.set(side * 0.1, -0.012, 0.0).applyQuaternion(this.kit.quaternion).add(kitPos);
+      _v1.set(side * this.kitGrip, -0.012, 0.0).applyQuaternion(this.kit.quaternion).add(kitPos);
       arm.setVisible(up > 0.02);
       arm.setPose('support');
       this._solveArm(arm, _v1, _q1, side < 0 ? SHOULDER_L : SHOULDER_R, side < 0 ? POLE_L : POLE_R);

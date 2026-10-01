@@ -52,6 +52,7 @@ def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03);
 def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035);
 def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04);
 def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03);
+def(S.CROSSBOW, 'xbow_shot', 'fx', 0.8, 0.05); // no blast: it carries about as far as a swing, not a gunshot
 def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08, 0.15, R_SWING);
 def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08, 0.15, R_FLESH);
 def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1);
@@ -77,6 +78,7 @@ def(S.BUILD, 'build', 'fx', 0.8, 0.05, 0.15, R_HAMMER);
 def(S.PICKUP, 'pickup', 'fx', 0.5, 0.08);
 def(S.CRAFT, 'craft', 'fx', 0.6, 0.05);
 def(S.RELOAD, 'reload', 'fx', 0.55, 0.04);
+def(S.CROSSBOW_COCK, 'xbow_cock', 'fx', 0.5, 0.03);
 def(S.DRY_FIRE, 'dry', 'fx', 0.55, 0.05);
 def(S.PLAYER_HURT, 'hurt', 'fx', 0.8, 0.06);
 def(S.PLAYER_DEATH, 'pdeath', 'fxfar', 1, 0.04);
@@ -105,6 +107,14 @@ def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05);
 def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02);
 def(S.FLARE_BURN, 'acid', 'fx', 0.45, 0.1);
 def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06);
+def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08);
+def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06);
+def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1);
+def(S.DOG_YELP, 'dog_yelp', 'zombie', 0.8, 0.08);
+def(S.SHADE_WHISPER, 'z_shade_whisper', 'zombie', 0.8, 0.1);
+def(S.SHADE_FREEZE, 'z_shade_freeze', 'zombie', 1, 0.06);
+def(S.SHADE_SHRIEK, 'z_shade_shriek', 'zombie', 1, 0.06);
+def(S.EAT, 'eat', 'fx', 0.5, 0.05);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -115,11 +125,14 @@ const LOCAL = {
   m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13 },
   mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1 },
   dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2 },
+  crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05 },
   reload_start: { bank: 'reload_start', vol: 0.55 },
   reload_end: { bank: 'reload_end', vol: 0.6 },
   shell_insert: { bank: 'shell_insert', vol: 0.55 },
   bolt: { bank: 'bolt', vol: 0.6 },
   pump: { bank: 'pump', vol: 0.7 },
+  xbow_cock: { bank: 'xbow_cock', vol: 0.6, jit: 0.02 },
+  xbow_load: { bank: 'xbow_load', vol: 0.5 },
   dry: { bank: 'dry', vol: 0.55 },
   swing: { bank: 'swing', vol: 0.5, jit: 0.08, rec: R_SWING },
   swing_heavy: { bank: 'swing_heavy', vol: 0.6, jit: 0.06, rec: R_SWING_HEAVY },
@@ -152,6 +165,7 @@ const LOCAL = {
   install_part: { bank: 'install_part', vol: 0.7 },
   campfire_add: { bank: 'campfire_add', vol: 0.6, rec: R_CAMPFIRE },
   eat: { bank: 'eat', vol: 0.5 },
+  can_open: { bank: 'can_open', vol: 0.5 },
 };
 
 // stinger(name): cinematic cues. bus 'music' follows the music volume, 'ui' is unaffected by the dead-muffle.

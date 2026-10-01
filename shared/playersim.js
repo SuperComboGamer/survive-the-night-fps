@@ -406,7 +406,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
         }
       }
     }
-    const wantReload = (pressed & BTN.RELOAD) || (attackPressed && s.mags[mi] === 0);
+    // an empty magazine reloads on the next trigger pull; autoReload weapons (crossbow) re-cock on their own
+    const wantReload = (pressed & BTN.RELOAD) || (s.mags[mi] === 0 && (attackPressed || (wdef.autoReload && s.cooldown <= 0)));
     if (wantReload && s.reloadT <= 0 && s.switchT <= 0 && s.mags[mi] < wdef.mag && s.ammo[wdef.ammo] > 0) {
       s.reloadT = wdef.reload;
       s.recoil = 0;

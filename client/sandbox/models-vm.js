@@ -1,6 +1,7 @@
 // Viewmodel / world-weapon sandbox (loaded by models-test.js when ?vm= or ?ww= is present).
 //   ?vm=ITEMID | ?vm=claws | ?vm=all (grid of every item)
 //   &act=fire|reload|melee|heavy|throw|use|ads|sprint|walk|crouch|jump
+//   &use=ITEMID  with act=use: the consumable being used (food shows the tin instead of the medkit)
 //   &t=SECONDS   freeze the clock at this time after the action starts (deterministic screenshot)
 //   &orbit=yaw,pitch,dist[,tx,ty,tz]  view the viewmodel from an orbiting camera
 //   &hide=L|R|LR hide an arm (inspect the other hand's grip)
@@ -148,7 +149,7 @@ if (params.get('vm') === 'hands') {
   table.position.y = -0.025;
   scene.add(table);
   const only = params.has('item') ? parseInt(params.get('item'), 10) : 0;
-  const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.BAT, ITEM.SPIKED_BAT];
+  const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.BAT, ITEM.SPIKED_BAT];
   const shortIds = [ITEM.PISTOL, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE];
   const lines = [];
   const place = (id, x, z) => {
@@ -202,7 +203,7 @@ if (params.get('vm') === 'hands') {
   const all = vmParam === 'all';
   const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
   const list = all
-    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
+    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
     : times
       ? times.map(() => single)
       : [single];
@@ -260,7 +261,7 @@ if (params.get('vm') === 'hands') {
         v.vm.throwItem();
         break;
       case 'use':
-        v.vm.useItem(2.0);
+        v.vm.useItem(2.0, +(params.get('use') || 0));
         break;
     }
   }

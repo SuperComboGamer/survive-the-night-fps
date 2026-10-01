@@ -41,10 +41,10 @@ function spawn(kind) {
       e.state.z = rnd(-50, 50);
       break;
     case ENT.ZOMBIE:
-      e.ztype = irnd(0, 9);
+      e.ztype = irnd(0, 11);
       e.variant = irnd(0, 255);
       e.yaw = rnd(0, 6.28);
-      e.anim = irnd(0, 8);
+      e.anim = irnd(0, 9);
       e.hp = 100;
       e.maxHp = 100;
       e.link = 0;
@@ -132,7 +132,7 @@ for (let tick = 1; tick <= TICKS; tick++) {
       e.y += rnd(-0.3, 0.3);
     }
     if (e.kind === ENT.ZOMBIE && Math.random() < 0.2) {
-      e.anim = irnd(0, 8);
+      e.anim = irnd(0, 9);
       e.yaw = rnd(0, 6.28);
       e.hp = Math.max(0, e.hp - rnd(0, 10));
       e.link = Math.random() < 0.1 ? irnd(1, 60000) : 0;

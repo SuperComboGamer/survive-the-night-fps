@@ -43,14 +43,17 @@ function weaponPickup(itemId) {
   g.name = `pickup_${itemId}`;
   g.userData.itemId = itemId;
   // lay the weapon on its side, barrel along X, resting on the ground
+  // (a crossbow lies flat instead, nose down on its stirrup, or it would stand on one limb)
+  const flat = itemId === ITEM.CROSSBOW;
   const holder = new THREE.Group();
   holder.add(w);
-  holder.rotation.set(0, PI / 2 - 0.35, PI / 2);
+  if (flat) holder.rotation.set(-0.16, PI / 2 - 0.35, 0, 'YXZ');
+  else holder.rotation.set(0, PI / 2 - 0.35, PI / 2);
   g.add(holder);
   let x = weaponXform.get(itemId);
   if (!x) {
     holder.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(holder);
+    const box = new THREE.Box3().setFromObject(holder, flat); // pitched: the loose (corner) bounds would reach below the model
     if (box.isEmpty()) box.set(new THREE.Vector3(), new THREE.Vector3());
     const c = box.getCenter(new THREE.Vector3());
     x = new THREE.Vector3(-c.x, -box.min.y + 0.005, -c.z);
@@ -291,6 +294,22 @@ BUILD[ITEM.BATTERY] = (b, r) => {
   }
 };
 
+// ring-pull tin: blue paper label with a yellow band, rolled rims
+const TIN_UV = [0.2, 0.2]; // a clean patch of the metal texture (the default random offset can land on a rust chip)
+function tunaTin(b, R, H) {
+  b.cyl('chrome', R, R, H, 14, { p: [0, H / 2, 0], uvOff: TIN_UV });
+  b.cyl('cloth', R + 0.0008, R + 0.0008, H * 0.68, 14, { p: [0, H / 2, 0], open: true, c: [0.16, 0.34, 0.56] });
+  b.cyl('cloth', R + 0.0014, R + 0.0014, H * 0.18, 14, { p: [0, H * 0.56, 0], open: true, c: [0.86, 0.74, 0.3] });
+  for (const y of [0.002, H - 0.002]) b.torus('chrome', R, 0.002, 4, 14, PI * 2, { p: [0, y, 0], r: [PI / 2, 0, 0], uvOff: TIN_UV });
+  b.torus('steel', 0.011, 0.002, 4, 10, PI * 2, { p: [R * 0.45, H + 0.002, 0], r: [PI / 2, 0, 0] });
+  b.box('steel', 0.014, 0.002, 0.008, { p: [R * 0.14, H + 0.001, 0] });
+}
+BUILD[ITEM.TUNA] = (b) => {
+  const R = 0.055, H = 0.04;
+  b.group({ p: [-0.012, 0, 0], r: [0, 0.4, 0] }, () => tunaTin(b, R, H));
+  b.group({ p: [0.014, H, 0.01], r: [0, -0.9, 0] }, () => tunaTin(b, R, H));
+};
+
 BUILD[ITEM.TORCH] = (b) => {
   b.group({ p: [0, 0.03, 0], r: [0, 0.3, PI / 2 - 0.08] }, () => {
     b.cyl('wood', 0.018, 0.022, 0.5, 6, { p: [0, 0, 0], grain: true, c: [0.7, 0.62, 0.52] });
@@ -427,6 +446,19 @@ BUILD[ITEM.AMMO_556] = (b, r) => {
   b.box('steel', 0.02, 0.03, 0.012, { p: [Math.cos(ry) * (w / 2 + 0.006), h - 0.012, -Math.sin(ry) * (w / 2 + 0.006)], r: [0, ry, 0] }); // latch
   labelOn(b, 'numbers', w * 0.7, h * 0.35, [Math.sin(ry) * -d * 0.51, h * 0.5, -Math.cos(ry) * d * 0.51], [0, PI + ry, 0]);
   looseRounds(b, r, w, 4, 0.0045, 0.045);
+};
+// crossbow bolts: a handful bundled with cord, scrap heads all one way
+BUILD[ITEM.AMMO_BOLTS] = (b, r) => {
+  const L = 0.34, R = 0.0045;
+  const spots = [[-0.011, R], [0, R], [0.011, R], [-0.0055, R * 2.8], [0.0055, R * 2.8]];
+  for (const [z, y] of spots) {
+    b.group({ p: [(r() - 0.5) * 0.03, y, z], r: [0, (r() - 0.5) * 0.06, 0] }, () => {
+      b.cylBetween('wood', [-L / 2, 0, 0], [L / 2 - 0.035, 0, 0], R, R, 5, { c: [0.8, 0.66, 0.46] });
+      b.cylBetween('steel', [L / 2 - 0.037, 0, 0], [L / 2 + 0.008, 0, 0], 0.0008, 0.0068, 5);
+      b.box('paint', 0.06, 0.0014, 0.024, { p: [-L / 2 + 0.045, 0, 0], r: [r() * PI, 0, 0], c: [0.55, 0.1, 0.08] });
+    });
+  }
+  for (const x of [-0.05, 0.06]) b.torus('rope', 0.0145, 0.0022, 4, 10, PI * 2, { p: [x, 0.0095, 0], r: [0, PI / 2, 0], s: [1, 0.8, 1] });
 };
 
 BUILD[ITEM.CAR_BATTERY] = (b) => {

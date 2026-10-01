@@ -70,7 +70,7 @@ function hitbox(type, x, z) {
   const cyl = new THREE.Mesh(new THREE.CylinderGeometry(d.radius, d.radius, d.height, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0x00ff66, wireframe: true, transparent: true, opacity: 0.35 }));
   cyl.position.y = d.height / 2;
   const hs = new THREE.Mesh(new THREE.SphereGeometry(d.headR, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff3030, wireframe: true }));
-  hs.position.y = d.headY;
+  hs.position.set(0, d.headY, -(d.headFwd || 0));
   g.add(cyl, hs);
   g.position.set(x, 0, z);
   scene.add(g);
@@ -197,6 +197,8 @@ if (q.has('cats')) {
   row1.forEach(([t, s], i) => addZombie(t, s, (i - 3.5) * 1.5, -1.5, t === ZTYPE.BAT ? 1.5 : 0));
   const row2 = [[ZTYPE.TANK, 9], [ZTYPE.BOSS_ABOMINATION, 10], [ZTYPE.BOSS_HIVEQUEEN, 11]];
   row2.forEach(([t, s], i) => addZombie(t, s, (i - 1) * 4.2, 3.5));
+  for (let i = 0; i < 2; i++) addZombie(ZTYPE.DOG, i * 3 + 1, 6.4 + i * 1.3, -1.5);
+  addZombie(ZTYPE.SHADE, 12, 9.2, -1.5);
   // front row: a survivor holding each weapon
   const wl = [ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.PISTOL, ITEM.SHOTGUN, ITEM.AK47, ITEM.HUNTING_RIFLE, ITEM.MOLOTOV, ITEM.PIPEBOMB];
   wl.forEach((it, i) => addSurvivor(i + 1, it, (i - (wl.length - 1) / 2) * 1.05, -4.2, false));

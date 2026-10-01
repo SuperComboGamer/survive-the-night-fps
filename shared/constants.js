@@ -66,6 +66,9 @@ export const ENGINE_START_TIME = 2.2; // start the car once every supply is inst
 export const FLASHLIGHT_MAX = 100;
 export const FLASHLIGHT_DRAIN = 0.55; // per second while on
 export const FLASHLIGHT_RECHARGE = 0.35; // per second while off
+export const FLASHLIGHT_RANGE = 36; // the beam counts as light on a Shade out to here (m)
+export const FLASHLIGHT_CONE = 0.4; // half-angle of the beam (rad)
+export const FIRE_LIGHT_MARGIN = 5; // a burning patch of ground lights this far beyond its edge (m)
 
 // Day / night (seconds)
 export const DAY_LENGTH = 240;

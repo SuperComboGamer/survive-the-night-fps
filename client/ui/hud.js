@@ -495,7 +495,7 @@ export class Hud {
         c.mag = mag;
         this.aMag.textContent = String(mag);
         const lowT = Math.max(1, Math.ceil(c.magMax * 0.25));
-        this.aMag.classList.toggle('low', mag > 0 && mag <= lowT);
+        this.aMag.classList.toggle('low', mag > 0 && mag <= lowT && mag < c.magMax); // a full single-shot is not low
         this.aMag.classList.toggle('out', mag === 0);
       }
       if (c.res !== res) {

@@ -3,7 +3,7 @@
 // peak-normalised to <= ~0.95. The engine turns them into AudioBuffers; Node can unit-test them directly.
 
 import {
-  TAU, clamp, lerp, rrange, rpick, Biquad, OnePole, Resonator, ModeBank, Pink, Brown, Wander, Curve,
+  TAU, clamp, lerp, smoothstep, rrange, rpick, Biquad, OnePole, Resonator, ModeBank, Pink, Brown, Wander, Curve,
   polyblep, ar, hann, alloc, normalize, finish, softclip, mixInto, loopify, dcBlock, peakOf,
 } from './dsp.js';
 
@@ -583,6 +583,53 @@ export function zBoss(sr, rng) {
   softclip(out, 1.5);
   return finish(out, sr, 0.95);
 }
+// the shade stalking in the dark: several breathy, almost voiceless whispers on top of each other, no words
+export function shadeWhisper(sr, rng, i) {
+  const dur = rrange(rng, 1.3, 1.9);
+  const out = alloc(sr, dur + 0.25);
+  const paths = [['i', 'e', 'u', 'i'], ['u', 'ae', 'i', 'e'], ['e', 'i', 'a', 'u']];
+  for (let k = 0; k < 3; k++) {
+    const b = rrange(rng, 150, 210);
+    const w = voice(sr, rng, {
+      dur: dur * rrange(rng, 0.7, 1), pitch: contour(rng, b, 4, 0.85, 1.2, 0.8), vowels: vowelPath(paths[(i + k) % 3], rng),
+      fscale: rrange(rng, 1.0, 1.25), bw: 2.6, voiced: 0.05, breath: 1.5, rasp: 0.6, raspHz: rrange(rng, 6, 11), jitter: 0.1, shimmer: 0.6,
+      drive: 1.2, chest: 0, a3: 0.8, a4: 0.6, hp: 500, env: [[0, 0], [0.2, 0.7], [0.45, 1], [0.7, 0.55], [1, 0]],
+    });
+    addNorm(out, w, sr, k * rrange(rng, 0.05, 0.12), 0.7 - k * 0.15);
+  }
+  return finish(out, sr, 0.8, 0.02, 0.12);
+}
+// light catches it: a sharp indrawn hiss, then it sets hard like cooling stone
+export function shadeFreeze(sr, rng) {
+  const out = alloc(sr, 0.75);
+  addNorm(out, noise(sr, rng, 0.2, { bp: [1500, 1.6], sweep: [900, 5200], env: (u) => u * u * (1 - smoothstep((u - 0.9) / 0.1)) }), sr, 0, 0.8);
+  addNorm(out, modal(sr, rng, [
+    { f: rrange(rng, 610, 680), d: 0.05, a: 1 }, { f: rrange(rng, 1380, 1520), d: 0.035, a: 0.8 },
+    { f: rrange(rng, 2500, 2800), d: 0.02, a: 0.6 }, { f: rrange(rng, 4300, 4700), d: 0.012, a: 0.4 },
+  ], 0.3, 1.2), sr, 0.19, 0.9);
+  addNorm(out, crackles(sr, rng, 0.45, 70, { skew: 2.2, pow: 2, hp: 1800, bp: 3600 }), sr, 0.2, 0.55);
+  addNorm(out, thump(sr, 95, 50, 0.03, 0.06), sr, 0.19, 0.5);
+  return finish(out, sr, 0.9);
+}
+// the light is gone: a thin doubled shriek that climbs as it comes for you
+export function shadeShriek(sr, rng) {
+  const dur = rrange(rng, 0.9, 1.1);
+  const out = alloc(sr, dur + 0.1);
+  const b = rrange(rng, 520, 600);
+  for (const det of [1, 1.07]) {
+    const v = voice(sr, rng, {
+      dur, pitch: [[0, b * det * 0.7], [0.25, b * det * 1.2], [0.7, b * det * 1.7], [1, b * det * 1.9]],
+      vowels: vowelPath(['u', 'i', 'ae', 'i'], rng), fscale: 1.2, bw: 2.6, jitter: 0.14, jitterHz: 60, shimmer: 0.6, sub: 0.2,
+      rasp: 0.8, raspHz: 260, breath: 0.9, drive: 4, chest: 0, a3: 0.8, a4: 0.6, hp: 350,
+      env: [[0, 0], [0.08, 0.5], [0.6, 1], [0.9, 0.7], [1, 0]],
+    });
+    addNorm(out, v, sr, det > 1 ? 0.02 : 0, det > 1 ? 0.6 : 1);
+  }
+  addNorm(out, whoosh(sr, rng, dur * 0.8, 500, 3000, 1400, 1.2, 0.6), sr, 0, 0.35);
+  softclip(out, 2.5);
+  return finish(out, sr, 0.9);
+}
+
 export function zpGrowl(sr, rng, i) {
   const b = rrange(rng, 90, 118);
   return voice(sr, rng, {
@@ -604,6 +651,67 @@ export function catMeow(sr, rng, i) {
     vowels: vowelPath(MEOW_V[i % MEOW_V.length], rng), fscale: rrange(rng, 1.45, 1.6), bw: 1.25, jitter: 0.015, jitterHz: 18,
     shimmer: 0.08, breath: 0.12, rasp: short ? 0.35 : 0.08, raspHz: 38, vib: 0.012, vibHz: 6, drive: 1.3, chest: 0.04, a3: 0.55, a4: 0.3, hp: 320,
     env: short ? [[0, 0], [0.12, 1], [0.6, 0.8], [1, 0]] : [[0, 0], [0.1, 0.45], [0.3, 1], [0.7, 0.8], [0.9, 0.35], [1, 0]],
+  });
+}
+
+// zombie dogs: a dog-sized vocal tract (formants ~15% up on a human's) run ragged - rasp, gurgle, overdrive
+// "rrowf!" x2-3: short harsh barks, pitch jumping up then dropping
+export function dogBark(sr, rng, i) {
+  const n = 2 + (i % 2);
+  const out = alloc(sr, 0.2 + n * 0.26);
+  let t = 0.01;
+  for (let k = 0; k < n; k++) {
+    const b = rrange(rng, 230, 320) * (k === n - 1 ? 0.9 : 1);
+    const v = voice(sr, rng, {
+      dur: rrange(rng, 0.13, 0.19), pitch: [[0, b * 0.8], [0.18, b * 1.3], [0.55, b * 1.05], [1, b * 0.6]],
+      vowels: vowelPath([['uh', 'a', 'o'], ['er', 'ae', 'uh'], ['o', 'a', 'u']][(i + k) % 3], rng), fscale: rrange(rng, 1.1, 1.2), bw: 2,
+      jitter: 0.08, jitterHz: 45, shimmer: 0.45, sub: 0.35, gurgle: 0.25, rasp: 0.9, raspHz: 130, breath: 0.55, drive: 5.5, chest: 0.4,
+      env: [[0, 0], [0.05, 1], [0.45, 0.75], [1, 0]],
+    });
+    addNorm(out, v, sr, t, rrange(rng, 0.75, 1));
+    t += rrange(rng, 0.2, 0.28);
+  }
+  return finish(out, sr);
+}
+// a long, breaking howl - the pack has your scent
+export function dogHowl(sr, rng, i) {
+  const b = rrange(rng, 290, 340);
+  const dur = rrange(rng, 2.3, 2.8);
+  const main = voice(sr, rng, {
+    dur, pitch: [[0, b * 0.7], [0.15, b * 1.5], [0.45, b * 1.62], [0.7, b * 1.4], [0.88, b * 1.05], [1, b * 0.7]],
+    vowels: vowelPath(i % 2 ? ['u', 'oo', 'o', 'u', 'uh'] : ['o', 'u', 'oo', 'o', 'u'], rng), fscale: 1.12, bw: 1.4,
+    jitter: 0.03, jitterHz: 12, shimmer: 0.2, sub: 0.2, gurgle: 0.35, gurgleHz: 7, rasp: 0.35, raspHz: 60, vib: 0.018, vibHz: 5,
+    breath: 0.3, drive: 2.4, chest: 0.2, env: [[0, 0], [0.12, 0.8], [0.3, 1], [0.75, 0.85], [0.92, 0.35], [1, 0]],
+  });
+  const out = alloc(sr, dur + 0.8);
+  addNorm(out, main, sr, 0, 0.9);
+  addNorm(out, main, sr, 0.45 + rng() * 0.2, 0.18); // off the hillside
+  return finish(out, sr);
+}
+// wet, rattling growl-snarl through bared teeth, sometimes ending in a jaw snap
+export function dogSnarl(sr, rng, i) {
+  const b = rrange(rng, 85, 115);
+  const dur = rrange(rng, 0.7, 1.1);
+  const out = alloc(sr, dur + 0.15);
+  const g = voice(sr, rng, {
+    dur, pitch: contour(rng, b, 4, 0.85, 1.3, 1.1), vowels: vowelPath([['er', 'uh', 'er'], ['uh', 'ae', 'er'], ['er', 'a', 'uh']][i % 3], rng),
+    fscale: 1.08, bw: 2.2, jitter: 0.1, jitterHz: 35, shimmer: 0.6, sub: 0.55, gurgle: 0.6, gurgleHz: 26, rasp: 1, raspHz: 70,
+    breath: 0.6, drive: 4.5, chest: 0.5, bubbles: 6, env: [[0, 0], [0.1, 0.8], [0.5, 1], [0.85, 0.8], [1, 0]],
+  });
+  addNorm(out, g, sr, 0, 0.9);
+  if (i % 3 !== 1) addNorm(out, noise(sr, rng, 0.03, { bp: [2600, 1.2], a: 0.0005, d: 0.012 }), sr, dur * 0.92, 0.7); // teeth clack
+  return finish(out, sr);
+}
+// yelps when hit; the last variant is a dying whine
+export function dogYelp(sr, rng, i) {
+  const dying = i === 2;
+  const b = rrange(rng, 620, 820) * (dying ? 0.85 : 1);
+  return voice(sr, rng, {
+    dur: dying ? rrange(rng, 0.8, 1.0) : rrange(rng, 0.2, 0.28),
+    pitch: dying ? [[0, b], [0.1, b * 1.2], [0.5, b * 0.9], [1, b * 0.45]] : [[0, b * 0.9], [0.2, b * 1.25], [1, b * 0.6]],
+    vowels: vowelPath(dying ? ['i', 'e', 'a', 'uh'] : ['i', 'ae', 'a'], rng), fscale: 1.25, bw: 1.6, jitter: 0.06, jitterHz: 40,
+    shimmer: 0.35, sub: 0.15, gurgle: dying ? 0.5 : 0.2, rasp: 0.55, raspHz: 150, breath: 0.4, drive: 3.5, chest: 0.1, a3: 0.6, hp: 250,
+    env: dying ? [[0, 0], [0.06, 1], [0.4, 0.7], [0.8, 0.3], [1, 0]] : [[0, 0], [0.08, 1], [0.5, 0.8], [1, 0]],
   });
 }
 
@@ -923,6 +1031,34 @@ export function pump(sr, rng) {
   addNorm(out, thump(sr, 190, 110, 0.01, 0.02), sr, 0.24, 0.6);
   return finish(out, sr);
 }
+// crossbow: the limbs slap forward (dull wooden thwack), the string thrums, the bolt hisses away. No blast.
+export function crossbowShot(sr, rng, fp) {
+  const out = alloc(sr, 0.6);
+  addNorm(out, modal(sr, rng, woodModes(rng, 1.5, 0.7), 0.25, 1.2, 3500), sr, 0, 1);
+  addNorm(out, noise(sr, rng, 0.03, { bp: [2200, 0.9], a: 0.0004, d: 0.006 }), sr, 0, 0.55);
+  addNorm(out, thump(sr, 150, 78, 0.012, 0.045), sr, 0.002, fp ? 0.8 : 0.5);
+  const f0 = rrange(rng, 172, 190);
+  addNorm(out, modal(sr, rng, [{ f: f0, d: 0.09, a: 1 }, { f: f0 * 2.02, d: 0.06, a: 0.5 }, { f: f0 * 3.07, d: 0.035, a: 0.3 }], 0.5, 1.5, 1200), sr, 0.004, 0.55);
+  addNorm(out, whoosh(sr, rng, 0.16, 1400, 3600, 1800, 1.4, 0.25), sr, 0.01, 0.3);
+  return finish(out, sr, 0.9, 0.0005, 0.05);
+}
+// cocking: hand to the string, the limbs creak as it is drawn back, the latch catches (timed to the viewmodel)
+export function xbowCock(sr, rng) {
+  const out = alloc(sr, 1.25);
+  addNorm(out, rustle(sr, rng, 0.16, 1900), sr, 0.2, 0.3);
+  addNorm(out, creak(sr, rng, 0.6, 22, 85, 1.5), sr, 0.42, 0.75);
+  addNorm(out, metalClick(sr, rng, 1500, 0.014), sr, 1.03, 0.9);
+  addNorm(out, thump(sr, 210, 120, 0.01, 0.018), sr, 1.03, 0.45);
+  return finish(out, sr);
+}
+// bolt laid in the groove and pushed back against the string
+export function xbowLoad(sr, rng) {
+  const out = alloc(sr, 0.3);
+  addNorm(out, noise(sr, rng, 0.09, { bp: [2600, 1.1], sweep: [1800, 3200], env: hann }), sr, 0, 0.4);
+  addNorm(out, modal(sr, rng, woodModes(rng, 2.4, 0.4), 0.12, 0.8, 4000), sr, 0.07, 0.9);
+  addNorm(out, metalClick(sr, rng, 2800, 0.008), sr, 0.075, 0.35);
+  return finish(out, sr);
+}
 export function dryClick(sr, rng) {
   const out = alloc(sr, 0.12);
   addNorm(out, metalClick(sr, rng, rrange(rng, 3000, 3400), 0.007), sr, 0, 1);
@@ -1116,6 +1252,17 @@ export function eatSnd(sr, rng) {
     addNorm(out, noise(sr, rng, 0.08, { bp: [800, 2], env: hann }), sr, t + 0.02, 0.4);
     addNorm(out, thump(sr, 120, 80, 0.01, 0.02), sr, t, 0.3);
   }
+  return finish(out, sr);
+}
+// ring-pull tin: tab snaps up, the lid peels back, the lid springs free
+export function canOpenSnd(sr, rng) {
+  const out = alloc(sr, 0.75);
+  addNorm(out, metalClick(sr, rng, rrange(rng, 3200, 3600), 0.012), sr, 0.02, 0.6);
+  const peel = noise(sr, rng, 0.36, { hp: 1400, bp: [2400, 1.2], sweep: [2400, 4200], env: (u) => Math.min(1, u * 8) * (1 - u * 0.6) });
+  const w = new Wander(rng, sr, 70);
+  for (let i = 0; i < peel.length; i++) peel[i] *= 0.35 + 0.65 * Math.abs(w.next());
+  addNorm(out, peel, sr, 0.12, 0.55);
+  addNorm(out, metalClick(sr, rng, rrange(rng, 1700, 2000), 0.03), sr, 0.5, 0.5);
   return finish(out, sr);
 }
 export function buildFail(sr, rng) {
@@ -1448,6 +1595,7 @@ export const SFX_DEFS = [
   { bank: 'gun_m4a1', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.m4a1, false) },
   { bank: 'gun_mp5', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, false) },
   { bank: 'gun_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, false) },
+  { bank: 'xbow_shot', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, false) },
   // first-person (stereo)
   { bank: 'fp_pistol', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.pistol, true) },
   { bank: 'fp_ak47', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, true) },
@@ -1456,6 +1604,7 @@ export const SFX_DEFS = [
   { bank: 'fp_m4a1', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.m4a1, true) },
   { bank: 'fp_mp5', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, true) },
   { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
+  { bank: 'fp_crossbow', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, true) },
   // zombies
   { bank: 'z_growl', n: 6, sr: MID, gen: zGrowl },
   { bank: 'z_attack', n: 3, sr: MID, gen: zAttack },
@@ -1469,8 +1618,15 @@ export const SFX_DEFS = [
   { bank: 'z_boomer', n: 2, sr: MID, gen: zBoomer },
   { bank: 'z_bat', n: 2, sr: HI, gen: zBat },
   { bank: 'z_boss', n: 2, sr: MID, gen: zBoss },
+  { bank: 'z_shade_whisper', n: 3, sr: MID, gen: shadeWhisper },
+  { bank: 'z_shade_freeze', n: 2, sr: HI, gen: shadeFreeze },
+  { bank: 'z_shade_shriek', n: 2, sr: MID, gen: shadeShriek },
   { bank: 'zp_growl', n: 3, sr: MID, gen: zpGrowl },
   { bank: 'cat_meow', n: 3, sr: HI, gen: catMeow },
+  { bank: 'dog_bark', n: 3, sr: MID, gen: dogBark },
+  { bank: 'dog_howl', n: 2, sr: MID, gen: dogHowl },
+  { bank: 'dog_snarl', n: 3, sr: MID, gen: dogSnarl },
+  { bank: 'dog_yelp', n: 3, sr: MID, gen: dogYelp },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },
@@ -1501,6 +1657,8 @@ export const SFX_DEFS = [
   { bank: 'shell_insert', n: 2, sr: HI, gen: shellInsert },
   { bank: 'bolt', n: 1, sr: HI, gen: boltCycle },
   { bank: 'pump', n: 1, sr: HI, gen: pump },
+  { bank: 'xbow_cock', n: 1, sr: HI, gen: xbowCock },
+  { bank: 'xbow_load', n: 1, sr: HI, gen: xbowLoad },
   { bank: 'dry', n: 1, sr: HI, gen: dryClick },
   { bank: 'switch', n: 2, sr: HI, gen: weaponSwitch },
   { bank: 'swing', n: 3, sr: HI, gen: (sr, r) => swing(sr, r, false) },
@@ -1525,6 +1683,7 @@ export const SFX_DEFS = [
   { bank: 'chat', n: 1, sr: HI, gen: chatBlip },
   { bank: 'install_part', n: 1, sr: HI, gen: installPart },
   { bank: 'eat', n: 1, sr: HI, gen: eatSnd },
+  { bank: 'can_open', n: 1, sr: HI, gen: canOpenSnd },
   { bank: 'build_fail', n: 1, sr: HI, gen: buildFail },
   // footsteps
   { bank: 'step_dirt', n: 5, sr: MID, gen: (sr, r) => footstep(sr, r, 'dirt') },

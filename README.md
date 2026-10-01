@@ -29,15 +29,15 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (random world seed).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>`,
-`/spawn <ztype> <n>`, `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`, `/where`, `/cat` (brings the
-stray cat over)).
+`/spawn <ztype> <n>` (`/spawn 10 3`: a zombie dog pack), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`,
+`/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
 | `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and runs `sim-smoke` |
-| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
+| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -55,7 +55,8 @@ container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
 `/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
 `&hurt=1` a hit flinch, `&vox=0` a growl);
-`/sandbox/models-test.html?cats=grid` shows the cat's poses).
+`/sandbox/models-test.html?cats=grid` shows the cat's poses; `?grid=10`, `?variants=10` and `?film=10` show the
+zombie dog's poses, coats and gait).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per
@@ -94,9 +95,9 @@ https://www.survivethenightgame.com.
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
 | M | Field map |
-| F | Flashlight (battery drains, recharges when off) |
+| F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
-| H | Quick heal (bandage / medkit; a medkit gets you up when downed) |
+| H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
 | Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
 | Enter | Chat |
 | V | Push-to-talk proximity voice |
@@ -119,7 +120,9 @@ https://www.survivethenightgame.com.
   roads and in the woods between them, so every walk passes something worth searching. Melee a tree for
   sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
   automatically when you walk over them. Searched containers partly restock at dawn. Supply planes
-  drop crates marked by red smoke (often carrying a schematic).
+  drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
+  found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
+  your stamina.
 - **Night: board up where you stand.** 45 seconds before dark the horn sounds. There is no base: the
   horde spawns around wherever the survivors are and comes in three waves (wave 1/3, 2/3, 3/3), so the
   team throws up a temporary shelter on the spot - door boards that snap into any doorway (survivors
@@ -127,17 +130,31 @@ https://www.survivethenightgame.com.
   spike traps, barbed wire, torches and a campfire. At dawn the sun burns the horde and a card sums up
   the night (kills, walls lost, downed, revived, lost).
 - **Every horde is harder:** more zombies (scaled by night *and* player count), more health and damage,
-  and new specials: spitters & boomers (night 2), leapers & bats (3), ropers & tanks (4), and a boss every
-  third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages and
-  bat swarms). Stragglers far from the team are brought back into the fight.
+  and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
+  and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
+  and bat swarms). Stragglers far from the team are brought back into the fight.
+- **Zombie dogs:** packs of two to four den in the thickest woods from day one (more of them each day). They
+  catch your scent from half again as far off as the dead, and the first to find you howls and
+  brings the whole pack. They fan out to come at you from the sides, crouch and lunge for a bite, peel away and
+  circle back in. Fast but fragile (a couple of pistol rounds, one to the head); from night 2 packs also run with
+  the horde, breaking from the treeline.
+- **The Shade only moves in the dark.** A fast, hard-hitting stalker that freezes solid the moment any light
+  falls on it - a flashlight beam, the glow of a standing torch or campfire, a burning road flare or molotov
+  fire - and comes for you the moment the light is gone. Frozen, it shrugs off three quarters of all damage
+  and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
+  the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
+  cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
 - **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
   MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
   in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
+  The **crossbow** is the quiet one: a single heavy bolt that only the dead within a few metres hear (a
+  gunshot carries 45-70 m), paid for with a slow re-cock after every shot. It needs no schematic and no
+  gunpowder - rope, sticks and scrap at the workbench, and more sticks and scrap for bolts.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
-  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
+  for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you

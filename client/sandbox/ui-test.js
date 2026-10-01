@@ -187,6 +187,7 @@ const inv = {
   [ITEM.TORCH, 3],
   [ITEM.WIRE, 2],
   [ITEM.PAINKILLERS, 2],
+  [ITEM.TUNA, 2],
 ].forEach(([item, count], i) => {
   inv.slots[i < 12 ? i : i + 1] = { item, count };
 });
