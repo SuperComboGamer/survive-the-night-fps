@@ -45,6 +45,7 @@ import {
   SEARCH_TIME,
   ENGINE_START_TIME,
   EYE_HEIGHT,
+  MAP_HALF,
   HORDE_SPAWN_MIN,
   HORDE_SPAWN_MAX,
 } from '../shared/constants.js';
@@ -67,6 +68,7 @@ import {
   FUEL_SPOTS,
   SCHEMATICS,
   SCHEM_BIT,
+  CONT,
   CONT_DEFS,
   CONT_TABLES,
   CONSUMABLES,
@@ -94,6 +96,11 @@ import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
+const CAR_ALARM_CHANCE = 0.05;
+const CAR_ALARM_MIN_ZOMBIES = 6;
+const CAR_ALARM_MAX_ZOMBIES = 7;
+const CAR_ALARM_SPAWN_MIN = 62;
+const CAR_ALARM_SPAWN_MAX = 86;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
 const CRATE_TABLE = [
   [ITEM.AMMO_762, 5, 30, 60],
@@ -1371,6 +1378,79 @@ export class Game {
       c.schem = 0;
     }
     this.sound(SOUND.SEARCH, c.x, c.y, c.z, 20);
+    if (c.ctype === CONT.TRUNK && this.rng() < CAR_ALARM_CHANCE) this.triggerCarAlarm(p, c);
+  }
+
+  triggerCarAlarm(p, c) {
+    const humans = this.humans();
+    if (!p.alive || p.zombie || !humans.length) return;
+    const count = CAR_ALARM_MIN_ZOMBIES + Math.floor(this.rng() * (CAR_ALARM_MAX_ZOMBIES - CAR_ALARM_MIN_ZOMBIES + 1));
+    this.makeZombieRoom(count, humans);
+    if (this.zombies.length >= MAX_ZOMBIES_ALIVE) return;
+    this.notify(NOTIFY.CAR_ALARM, 0);
+    this.sound(SOUND.HORDE_HORN, c.x, c.y, c.z, 140);
+    let spawned = 0;
+    for (let i = 0; i < count && this.zombies.length < MAX_ZOMBIES_ALIVE; i++) {
+      const sp = this.pickCarAlarmSpawn(p, c, humans);
+      if (!sp) break;
+      const r = this.rng();
+      const type = r < 0.65 ? ZTYPE.WALKER : r < 0.9 ? ZTYPE.RUNNER : this.day >= 2 ? ZTYPE.SPITTER : ZTYPE.RUNNER;
+      const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 6, sp.z + (this.rng() - 0.5) * 6, { horde: true, hpMul: 1 + 0.04 * this.day });
+      if (!z) continue;
+      z.target = p.id;
+      z.targetT = 0.8;
+      z.aggroId = p.id;
+      z.aggroT = 30;
+      z.alertX = p.state.x;
+      z.alertZ = p.state.z;
+      z.alertT = 20;
+      spawned++;
+    }
+    if (spawned) this.globalDirty = true;
+  }
+
+  // the day's wanderers fill most of the zombie cap: idle ones far out of everyone's sight drift off so n more fit
+  // (not the dog packs: the day's upkeep would only spawn them again)
+  makeZombieRoom(n, humans) {
+    let over = this.zombies.length + n - MAX_ZOMBIES_ALIVE;
+    if (over <= 0) return;
+    const far = [];
+    for (const z of this.zombies) {
+      if (z.dead || z.horde || z.boss || z.pack || z.target) continue;
+      let md = Infinity;
+      for (const h of humans) md = Math.min(md, Math.hypot(h.state.x - z.x, h.state.z - z.z));
+      if (md > 150) far.push({ z, md });
+    }
+    far.sort((a, b) => b.md - a.md);
+    for (const { z } of far) {
+      if (over-- <= 0) break;
+      this._listRemove(this.zombies, z);
+      this.removeEntity(z);
+    }
+  }
+
+  pickCarAlarmSpawn(p, c, humans) {
+    const s = p.state;
+    const lim = MAP_HALF - 14;
+    const behind = s.yaw + Math.PI;
+    for (let tries = 0; tries < 20; tries++) {
+      const a = behind + (this.rng() - 0.5) * Math.PI;
+      const d = CAR_ALARM_SPAWN_MIN + this.rng() * (CAR_ALARM_SPAWN_MAX - CAR_ALARM_SPAWN_MIN);
+      const x = s.x - Math.sin(a) * d;
+      const z = s.z - Math.cos(a) * d;
+      if (Math.abs(x) > lim || Math.abs(z) > lim) continue;
+      if (this.world.isDeepWater(x, z) || this.nav.isBlocked(x, z)) continue;
+      let ok = true;
+      for (const h of humans) {
+        const hs = h.state;
+        if (Math.hypot(hs.x - x, hs.z - z) < CAR_ALARM_SPAWN_MIN * 0.75) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return { x, z };
+    }
+    return this.zm.pickSpawnAround(c.x, c.z, humans, CAR_ALARM_SPAWN_MIN, CAR_ALARM_SPAWN_MAX);
   }
 
   pickupEvent(p, item, count) {
