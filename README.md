@@ -94,7 +94,7 @@ https://www.survivethenightgame.com.
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
 | M | Field map |
-| F | Flashlight (battery drains, recharges when off) |
+| F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
 | Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
@@ -129,14 +129,20 @@ https://www.survivethenightgame.com.
   spike traps, barbed wire, torches and a campfire. At dawn the sun burns the horde and a card sums up
   the night (kills, walls lost, downed, revived, lost).
 - **Every horde is harder:** more zombies (scaled by night *and* player count), more health and damage,
-  and new specials: spitters, boomers & zombie dog packs (night 2), leapers & bats (3), ropers & tanks (4), and a boss every
-  third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages and
-  bat swarms). Stragglers far from the team are brought back into the fight.
+  and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
+  and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
+  and bat swarms). Stragglers far from the team are brought back into the fight.
 - **Zombie dogs:** packs of two to four den in the thickest woods from day one (more of them each day). They
   catch your scent from half again as far off as the dead, and the first to find you howls and
   brings the whole pack. They fan out to come at you from the sides, crouch and lunge for a bite, peel away and
   circle back in. Fast but fragile (a couple of pistol rounds, one to the head); from night 2 packs also run with
   the horde, breaking from the treeline.
+- **The Shade only moves in the dark.** A fast, hard-hitting stalker that freezes solid the moment any light
+  falls on it - a flashlight beam, the glow of a standing torch or campfire, a burning road flare or molotov
+  fire - and comes for you the moment the light is gone. Frozen, it shrugs off three quarters of all damage
+  and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
+  the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
+  cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
 - **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
   MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and

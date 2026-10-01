@@ -181,7 +181,8 @@ export class Combat {
         const hy = oy + dy * h.t;
         const hz = oz + dz * h.t;
         const green = !h.isPlayer && (h.e.ztype === ZTYPE.SPITTER || h.e.ztype === ZTYPE.BOOMER || h.e.ztype === ZTYPE.BOSS_HIVEQUEEN);
-        g.impact(green ? IMPACT.GREEN_BLOOD : IMPACT.BLOOD, hx, hy, hz, -dx, -dy, -dz);
+        // a shade frozen by light is hard as stone: bullets chip it instead of drawing blood
+        g.impact(h.e.lit ? IMPACT.DIRT : green ? IMPACT.GREEN_BLOOD : IMPACT.BLOOD, hx, hy, hz, -dx, -dy, -dz);
         let killed;
         if (h.isPlayer) {
           g.damagePlayer(h.e, d, { kind: KILLER.PLAYER, id: p.id, weapon: ev.weapon, headshot: h.head, x: ox, z: oz });
@@ -267,7 +268,7 @@ export class Combat {
       let dmg = claws ? CLAWS.damage : heavy ? def.altDamage : def.damage;
       if (c.head) dmg *= def.headMul;
       hitAny = true;
-      g.impact(IMPACT.BLOOD, c.x, c.y, c.z, -fx, 0, -fz);
+      g.impact(c.e.lit ? IMPACT.DIRT : IMPACT.BLOOD, c.x, c.y, c.z, -fx, 0, -fz);
       let killed;
       if (c.isPlayer) {
         g.damagePlayer(c.e, dmg, { kind: KILLER.PLAYER, id: p.id, weapon: claws ? 0 : ev.weapon, headshot: c.head, x: ox, z: oz });
@@ -308,6 +309,9 @@ export class Combat {
   damageZombie(z, amount, attacker, opts = {}) {
     const g = this.g;
     if (z.dead) return false;
+    // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
+    const solid = z.lit && !z.onFire;
+    if (solid) amount *= z.def.litResist;
     z.hp -= amount;
     if (z.link) {
       z.linkDmg += amount;
@@ -321,7 +325,9 @@ export class Combat {
         if (z.pack && !attacker.zombie) g.zm.alertPack(z); // shoot one dog and the whole pack comes
       }
     }
-    if (opts.knock && !z.boss && z.ztype !== ZTYPE.TANK) {
+    if (solid) {
+      // stone still: no knockback, no stagger
+    } else if (opts.knock && !z.boss && z.ztype !== ZTYPE.TANK) {
       z.kx += (opts.dirX || 0) * opts.knock * 1.6;
       z.kz += (opts.dirZ || 0) * opts.knock * 1.6;
       if (opts.knock >= 3 && z.state === 0) {

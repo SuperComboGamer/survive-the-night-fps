@@ -97,13 +97,13 @@ export const ITEM_DEFS = {
   [ITEM.BANDAGE]: { name: 'Bandage', cat: 'cons', stack: 5, color: 0xe8e0d0, desc: 'Heals 25 HP.' },
   [ITEM.MEDKIT]: { name: 'Medkit', cat: 'cons', stack: 3, color: 0xc0392b, desc: 'Heals 80 HP.' },
   [ITEM.PAINKILLERS]: { name: 'Painkillers', cat: 'cons', stack: 5, color: 0xf0f0f0, desc: 'Heals 15 HP, restores stamina.' },
-  [ITEM.BATTERY]: { name: 'Batteries', cat: 'cons', stack: 5, color: 0xd4b106, desc: 'Recharges your flashlight.' },
-  [ITEM.TORCH]: { name: 'Torch', cat: 'cons', stack: 10, color: 0xe07b20, desc: 'Place with the hammer [5] to light your base.' },
+  [ITEM.BATTERY]: { name: 'Batteries', cat: 'cons', stack: 5, color: 0xd4b106, desc: 'Recharges your flashlight. A beam held on a Shade keeps it frozen.' },
+  [ITEM.TORCH]: { name: 'Torch', cat: 'cons', stack: 10, color: 0xe07b20, desc: 'Place with the hammer [5] to light your base. Shades cannot move in its light.' },
   [ITEM.TUNA]: { name: 'Canned Tuna', cat: 'cons', stack: 5, color: 0x3f6f9a, desc: 'A tin of tuna in oil. Heals 30 HP, restores stamina.' },
 
   [ITEM.MOLOTOV]: { name: 'Molotov', cat: 'throw', stack: 3, color: 0xd35400, desc: 'Sets an area ablaze.' },
   [ITEM.PIPEBOMB]: { name: 'Pipe Bomb', cat: 'throw', stack: 3, color: 0x566573, desc: 'Beeps, lures the horde, then a big boom.' },
-  [ITEM.FLARE]: { name: 'Road Flare', cat: 'throw', stack: 4, color: 0xe04a2a, desc: 'Burns bright red for 40s. Lights the area and draws the dead to it.' },
+  [ITEM.FLARE]: { name: 'Road Flare', cat: 'throw', stack: 4, color: 0xe04a2a, desc: 'Burns bright red for 40s. Lights the area (pinning Shades) and draws the dead to it.' },
 
   [ITEM.JACKET]: { name: 'Padded Jacket', cat: 'armor', stack: 1, color: 0x5d4e37, armor: 60, absorb: 0.3, desc: 'Absorbs 30% damage.' },
   [ITEM.KEVLAR]: { name: 'Kevlar Vest', cat: 'armor', stack: 1, color: 0x2f3b2f, armor: 120, absorb: 0.5, desc: 'Absorbs 50% damage.' },
@@ -180,7 +180,7 @@ export const CLAWS = { damage: 22, rate: 0.6, range: 2.0, headMul: 1.0, leapCool
 export const THROWABLES = {
   [ITEM.MOLOTOV]: { fuse: 0, radius: 4.5, burnTime: 8, dps: 40, speed: 17 },
   [ITEM.PIPEBOMB]: { fuse: 2.6, radius: 7, damage: 420, speed: 17 },
-  [ITEM.FLARE]: { fuse: 40, radius: 0, lure: 46, speed: 16 },
+  [ITEM.FLARE]: { fuse: 40, radius: 0, lure: 46, speed: 16, light: 14 },
 };
 export const THROW_ITEMS = [ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE];
 
@@ -207,6 +207,7 @@ export const STRUCT = {
 };
 
 // sx/sy/sz = size (m). block: blocks zombies (and players unless humanPass). hp.
+// light: radius (m) lit while it burns - Shades inside it are frozen.
 // station: 'fire' | 'bench' crafting station. snap: 'door' snaps into building doorways. schem: required schematic item.
 // Nothing needs a base any more: build a temporary shelter wherever the team is when night falls.
 export const STRUCT_DEFS = {
@@ -217,8 +218,8 @@ export const STRUCT_DEFS = {
   [STRUCT.METAL_WALL]: { name: 'Metal Wall', sx: 3, sy: 2.8, sz: 0.3, hp: 2400, block: true, schem: ITEM.SCHEM_METAL, cost: { [ITEM.SCRAP]: 5, [ITEM.NAILS]: 4, [ITEM.TAPE]: 1 }, desc: 'Scrap-metal wall. Very tough.' },
   [STRUCT.SPIKES]: { name: 'Spike Trap', sx: 2.2, sy: 0.5, sz: 2.2, hp: 45, block: false, trap: true, dps: 55, slow: 0.45, cost: { [ITEM.WOOD]: 2, [ITEM.NAILS]: 4 }, desc: 'Impales zombies that cross it. Wears out.' },
   [STRUCT.BARBED_WIRE]: { name: 'Barbed Wire', sx: 3, sy: 0.9, sz: 1.0, hp: 400, block: false, trap: true, dps: 12, slow: 0.3, cost: { [ITEM.WIRE]: 2, [ITEM.STICK]: 2 }, desc: 'Slows and shreds the horde.' },
-  [STRUCT.TORCH]: { name: 'Standing Torch', sx: 0.3, sy: 1.7, sz: 0.3, hp: 60, block: false, light: true, burn: 360, cost: { [ITEM.TORCH]: 1 }, desc: 'Lights the area for 6 minutes.' },
-  [STRUCT.CAMPFIRE]: { name: 'Campfire', sx: 1.7, sy: 0.6, sz: 1.7, hp: 250, block: false, light: true, station: 'fire', burn: 300, cost: { [ITEM.STICK]: 4, [ITEM.WOOD]: 1 }, desc: 'Crafting station (medicine, powder). Heals survivors resting nearby. Feed it wood [E].' },
+  [STRUCT.TORCH]: { name: 'Standing Torch', sx: 0.3, sy: 1.7, sz: 0.3, hp: 60, block: false, light: 9, burn: 360, cost: { [ITEM.TORCH]: 1 }, desc: 'Lights the area for 6 minutes. Shades freeze in its light.' },
+  [STRUCT.CAMPFIRE]: { name: 'Campfire', sx: 1.7, sy: 0.6, sz: 1.7, hp: 250, block: false, light: 13, station: 'fire', burn: 300, cost: { [ITEM.STICK]: 4, [ITEM.WOOD]: 1 }, desc: 'Crafting station (medicine, powder). Heals survivors resting nearby. Feed it wood [E].' },
   [STRUCT.WORKBENCH]: { name: 'Workbench', sx: 2.0, sy: 1.0, sz: 0.9, hp: 450, block: true, station: 'bench', cost: { [ITEM.WOOD]: 5, [ITEM.NAILS]: 6, [ITEM.SCRAP]: 2 }, desc: 'Crafting station: weapons, ammo, armor and explosives.' },
 };
 export const STRUCT_ORDER = [STRUCT.BARRICADE, STRUCT.DOOR, STRUCT.WALL, STRUCT.GATE, STRUCT.METAL_WALL, STRUCT.SPIKES, STRUCT.BARBED_WIRE, STRUCT.TORCH, STRUCT.CAMPFIRE, STRUCT.WORKBENCH];
@@ -274,11 +275,13 @@ export const ZTYPE = {
   BOSS_ABOMINATION: 8,
   BOSS_HIVEQUEEN: 9,
   DOG: 10,
+  SHADE: 11,
 };
 
 // speed m/s, hp, dmg per hit, attack rate s, radius, height (for hitboxes), headR, headY
 // common: rank-and-file (plain loot table, no killfeed line). Quadrupeds: headFwd = head sphere this far
 // ahead of the body, bodyTop = top of the body cylinder (default headY - headR).
+// shade: only moves in darkness; while any light is on it, it is frozen and takes litResist x damage
 export const ZOMBIE_DEFS = {
   [ZTYPE.WALKER]: { name: 'Walker', hp: 110, speed: 1.9, dmg: 11, rate: 1.1, range: 1.55, radius: 0.38, height: 1.75, headY: 1.58, headR: 0.17, structDmg: 22, loot: 0.28, common: true, minNight: 1 },
   [ZTYPE.RUNNER]: { name: 'Runner', hp: 75, speed: 5.6, dmg: 8, rate: 0.7, range: 1.5, radius: 0.34, height: 1.72, headY: 1.55, headR: 0.16, structDmg: 12, loot: 0.25, common: true, minNight: 1 },
@@ -292,6 +295,7 @@ export const ZOMBIE_DEFS = {
   [ZTYPE.BOSS_HIVEQUEEN]: { name: 'The Hive Queen', hp: 7500, speed: 2.4, dmg: 35, rate: 1.4, range: 3.0, radius: 1.3, height: 3.6, headY: 3.1, headR: 0.45, structDmg: 300, loot: 1, knock: 8, boss: true, spitRange: 30, spitRate: 1.6, minNight: 6 },
   // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier
   [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2 },
+  [ZTYPE.SHADE]: { name: 'Shade', hp: 240, speed: 6.6, dmg: 34, rate: 0.9, range: 1.7, radius: 0.36, height: 2.0, headY: 1.82, headR: 0.17, structDmg: 30, loot: 0.8, shade: true, litResist: 0.25, minNight: 2 },
 };
 
 // zombie animation states (sent over the wire, 4 bits)
@@ -305,6 +309,7 @@ export const ZANIM = {
   STAGGER: 6,
   DEAD: 7,
   EAT: 8, // idle feeding pose
+  FROZEN: 9, // shade pinned by light: holds whatever pose it was caught in
 };
 
 // the stray cat's animation states (sent over the wire)
@@ -399,6 +404,9 @@ export const SOUND = {
   CROSSBOW: 65,
   CROSSBOW_COCK: 66,
   EAT: 67,
+  SHADE_WHISPER: 68, // a shade stalking in the dark
+  SHADE_FREEZE: 69, // light catches it
+  SHADE_SHRIEK: 70, // the light is gone
 };
 
 export const EVT = {
@@ -461,6 +469,7 @@ export const NOTIFY = {
   NEED_SUPPLIES: 36,
   DOOR_ONLY: 37, // door boards must go in a doorway
   CAR_ALARM: 38,
+  SHADE: 39, // the first shade of the night is out there
 };
 
 // killer kinds for killfeed

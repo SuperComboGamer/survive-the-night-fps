@@ -96,6 +96,9 @@ def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08);
 def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06);
 def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1);
 def(S.DOG_YELP, 'dog_yelp', 'zombie', 0.8, 0.08);
+def(S.SHADE_WHISPER, 'z_shade_whisper', 'zombie', 0.8, 0.1);
+def(S.SHADE_FREEZE, 'z_shade_freeze', 'zombie', 1, 0.06);
+def(S.SHADE_SHRIEK, 'z_shade_shriek', 'zombie', 1, 0.06);
 def(S.EAT, 'eat', 'fx', 0.5, 0.05);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
