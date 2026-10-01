@@ -82,6 +82,15 @@ export const ESCAPE_TIME = 90; // engine warm-up: the final stand at the car
 export const ESCAPE_RADIUS = 14; // survivors this close to the car when the engine is ready escape
 export const GAME_OVER_DELAY = 12;
 
+// Supply drops: a cargo plane crosses the valley in a straight line and kicks the crate off its ramp
+export const PLANE_SPEED = 62; // m/s
+export const PLANE_LEAD = 800; // the plane appears (and later vanishes) this far from the release point
+export const PLANE_ALTITUDE = 110; // above the crate's landing spot
+export const PLANE_RAMP = 9; // cargo ramp sits this far behind the plane's origin (the crate leaves from here)
+export const CRATE_FREEFALL = 1.2; // seconds before the parachute opens
+export const CRATE_FALL_SPEED = 5.5; // descent under the canopy (m/s)
+export const CRATE_DRAG = 1.5; // 1/s: the crate sheds the plane's forward speed (drifts PLANE_SPEED / CRATE_DRAG m)
+
 // Networking / relevance
 export const AOI_RADIUS = 115; // players, zombies, projectiles
 export const AOI_ITEM_RADIUS = 55;

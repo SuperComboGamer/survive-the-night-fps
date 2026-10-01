@@ -31,6 +31,7 @@ function client(name) {
     structBreak() {},
     ping: () => c.pings++,
     summary: (s) => (c.summary = s),
+    flyover: (x, y, z, heading, eta) => (c.flyover = { x, y, z, heading, eta }),
   };
   c.conn = {
     send(bytes) {
@@ -139,6 +140,29 @@ check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT
   game.handleChat(A.p(), '/cat');
   run(2);
   check('/cat brings it over', Math.hypot(A.p().state.x - cat.x, A.p().state.z - cat.z) < 3);
+}
+
+// supply drop: the plane's flyover event, then a crate off its ramp that free-falls, opens its canopy and
+// sheds the plane's speed to land on the supply spot it was aimed at
+{
+  const n0 = game.crates.length;
+  game.handleChat(A.p(), '/airdrop');
+  run(1);
+  const fly = A.flyover;
+  const f = game.flyovers[0];
+  check('airdrop flyover sent', !!fly && !!f && Math.abs(fly.eta - (f.at - game.time)) < 0.1, fly ? `eta ${fly.eta.toFixed(1)} s` : '');
+  run(Math.ceil((f?.at - game.time) * 20) + 2);
+  const c = game.crates[n0];
+  check('crate leaves the ramp in free fall', c && c.state === 3 && Math.hypot(c.x - f.x, c.z - f.z) < 15);
+  let opened = false;
+  let t = 0;
+  while (c && c.state !== 1 && t++ < 20 * 60) {
+    game.update();
+    opened ||= c.state === 0;
+  }
+  check('canopy opens, crate lands on its spot', opened && c.state === 1 && Math.hypot(c.x - f.tx, c.z - f.tz) < 0.01 && Math.abs(c.y - f.gy) < 0.01, `${(t / 20).toFixed(1)} s under canopy`);
+  game.removeEntity(c);
+  game.crates.splice(n0, 1);
 }
 
 // walk a little

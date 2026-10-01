@@ -151,7 +151,7 @@ for (let tick = 1; tick <= TICKS; tick++) {
       e.hp = rnd(0, 500);
       e.state = irnd(0, 1);
     }
-    if (e.kind === ENT.CRATE && Math.random() < 0.05) e.state = irnd(0, 2);
+    if (e.kind === ENT.CRATE && Math.random() < 0.05) e.state = irnd(0, 3);
     if (e.kind === ENT.CACHE && Math.random() < 0.05) e.state = irnd(0, 1);
     if (e.kind === ENT.CAT && Math.random() < 0.2) {
       e.yaw = rnd(0, 6.28);

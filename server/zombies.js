@@ -95,6 +95,7 @@ export class Zombies {
       linkT: 0,
       losT: 0,
       los: false,
+      direct: false,
       blockStruct: 0,
       stuckT: 0,
       lastX: x,
@@ -379,6 +380,8 @@ export class Zombies {
       if (z.losT <= 0) {
         z.losT = 0.3;
         z.los = this.hasLOS(z, tx, ty + 1.4, tz, dist);
+        // seeing a survivor through a window is not a way in: walk straight only when no wall is in between
+        z.direct = z.los && dist < 12 && g.nav.segClear(z.x, z.z, tx, tz);
       }
     }
 
@@ -398,7 +401,7 @@ export class Zombies {
     } else if (target) {
       chasing = true;
       // steer straight at a visible survivor; otherwise follow the flow field (around walls to a way in)
-      if (z.los && dist < 12) {
+      if (z.direct && dist < 12) {
         dx = tx - z.x;
         dz = tz - z.z;
       } else if (g.nav.flowDir(target.id, z.x, z.z, _dir)) {

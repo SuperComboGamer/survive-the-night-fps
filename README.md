@@ -6,8 +6,8 @@ supplies the car needs. By night, the horde comes to wherever you are, so you bo
 hold. Every night there are more of them. Install every supply, start the engine, survive the final
 stand and drive away. Die, and you rise as one of them.
 
-- **Client:** three.js (Vite), procedural art; procedural audio layered with ~7 MB of CC0 field recordings
-  (ambience beds, wildlife, footsteps, foley - see `client/audio/samples/CREDITS.md`), with a procedural fallback
+- **Client:** three.js (Vite), procedural art; procedural audio layered with ~8.5 MB of CC0 recordings
+  (ambience beds, wildlife, footsteps, foley, gunshots, zombie voices - see `client/audio/samples/CREDITS.md`), with a procedural fallback
 - **Server:** Node + [uWebSockets.js](https://github.com/uNetworking/uWebSockets.js), authoritative 20 Hz simulation
 - **Netcode:** custom binary protocol, per-client delta compression, client-side prediction with
   reconciliation, entity interpolation, server-side lag compensation for hitscan and melee

@@ -45,6 +45,13 @@ import {
   SEARCH_TIME,
   ENGINE_START_TIME,
   EYE_HEIGHT,
+  PLANE_SPEED,
+  PLANE_LEAD,
+  PLANE_ALTITUDE,
+  PLANE_RAMP,
+  CRATE_FREEFALL,
+  CRATE_FALL_SPEED,
+  CRATE_DRAG,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -79,7 +86,7 @@ import {
   THROW_ITEMS,
   isFirearm,
 } from '../shared/defs.js';
-import { C2S, S2C, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, qpos, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
 import { createPlayerState, simulatePlayer, eyeHeight } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
@@ -148,6 +155,7 @@ export class Game {
     this.projectiles = [];
     this.areas = [];
     this.crates = [];
+    this.flyovers = []; // supply planes on their way to a release point
     this.caches = []; // searchable containers
     this.cats = [];
 
@@ -482,6 +490,7 @@ export class Game {
     this.projectiles.length = 0;
     this.areas.length = 0;
     this.crates.length = 0;
+    this.flyovers.length = 0;
     this.caches.length = 0;
     this.cats.length = 0;
     this.waves = [];
@@ -1845,6 +1854,9 @@ export class Game {
         if (this.spawnEntity(e)) this.crates.push(e);
         break;
       }
+      case 'airdrop':
+        this.spawnSupplyDrop();
+        break;
       case 'parts':
         for (let i = 0; i < SUPPLIES.length; i++) this.supplies[i] = SUPPLY_NEED[i];
         this.globalDirty = true;
@@ -2074,6 +2086,9 @@ export class Game {
     this.trackBoss();
   }
 
+  // A cargo plane crosses the valley in a straight line and kicks the crate off its ramp so that, after
+  // shedding the plane's speed under the canopy, it lands on a supply spot. Clients draw the plane and its
+  // smoke trail from one FLYOVER event; the crate itself is an ordinary entity once it leaves the ramp.
   spawnSupplyDrop() {
     const humans = this.humans();
     // somewhere 70-200 m from the survivors
@@ -2085,20 +2100,61 @@ export class Game {
     if (!pts.length) pts = this.world.resourceSpawns;
     if (!pts.length) return;
     const sp = pts[Math.floor(this.rng() * pts.length)];
-    const e = { kind: ENT.CRATE, x: sp.x, y: sp.y + 110, z: sp.z, gy: groundAt(this.world, sp.x, sp.z, 200, 0.6), state: 0, despawnAt: this.time + 600 };
-    if (!this.spawnEntity(e)) return;
-    this.crates.push(e);
+    const heading = this.rng() * Math.PI * 2;
+    const fx = -Math.sin(heading);
+    const fz = -Math.cos(heading);
+    const gy = groundAt(this.world, sp.x, sp.z, 200, 0.6);
+    const drift = PLANE_SPEED / CRATE_DRAG;
+    // release point = where the ramp is when the crate leaves; the plane's origin is PLANE_RAMP ahead of it
+    const rx = sp.x - fx * drift;
+    const rz = sp.z - fz * drift;
+    const alt = gy + PLANE_ALTITUDE;
+    const eta = PLANE_LEAD / PLANE_SPEED;
+    const px = rx + fx * PLANE_RAMP;
+    const pz = rz + fz * PLANE_RAMP;
+    this.flyovers.push({ at: this.time + eta, x: rx, y: alt - 2.4, z: rz, vx: fx * PLANE_SPEED, vz: fz * PLANE_SPEED, tx: sp.x, tz: sp.z, gy });
+    this.emit((w) => {
+      w.u8(EVT.FLYOVER);
+      w.i16(qpos(px));
+      w.i16(qpos(alt));
+      w.i16(qpos(pz));
+      w.u16(qangle16(heading));
+      w.u16(Math.round(eta * 1000));
+    });
     this.notify(NOTIFY.SUPPLY_DROP, 0);
-    this.sound(SOUND.PLANE, sp.x, 80, sp.z, 0);
   }
 
   updateCrates(dt) {
+    for (let i = this.flyovers.length - 1; i >= 0; i--) {
+      const f = this.flyovers[i];
+      if (this.time < f.at) continue;
+      this.flyovers.splice(i, 1);
+      // state 3: tumbling off the ramp, the canopy still packed
+      const e = { kind: ENT.CRATE, x: f.x, y: f.y, z: f.z, vx: f.vx, vy: 0, vz: f.vz, tx: f.tx, tz: f.tz, gy: f.gy, free: CRATE_FREEFALL, state: 3, despawnAt: this.time + 600 };
+      if (this.spawnEntity(e)) this.crates.push(e);
+    }
     for (let i = this.crates.length - 1; i >= 0; i--) {
       const c = this.crates[i];
-      if (c.state === 0) {
-        c.y -= 5.5 * dt;
+      if (c.state === 0 || c.state === 3) {
+        if (c.vx !== undefined) {
+          const k = Math.exp(-CRATE_DRAG * dt);
+          c.x += (c.vx * (1 - k)) / CRATE_DRAG;
+          c.z += (c.vz * (1 - k)) / CRATE_DRAG;
+          c.vx *= k;
+          c.vz *= k;
+        }
+        if (c.free > 0) {
+          c.free -= dt;
+          c.vy -= 9.8 * dt;
+          if (c.free <= 0) c.state = 0; // canopy opens
+        } else if (c.vy !== undefined) c.vy += (-CRATE_FALL_SPEED - c.vy) * Math.min(1, dt * 2.5);
+        c.y += (c.vy ?? -CRATE_FALL_SPEED) * dt;
         if (c.y <= c.gy) {
           c.y = c.gy;
+          if (c.tx !== undefined) {
+            c.x = c.tx;
+            c.z = c.tz;
+          }
           c.state = 1;
           this.sound(SOUND.CRATE_LAND, c.x, c.y, c.z, 80);
         }

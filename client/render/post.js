@@ -3,8 +3,11 @@
 // applied IN PLACE into the multisampled scene target with one blended full-screen quad
 // (out = rays + dst * ao), so the viewmodel drawn afterwards is never darkened or hazed.
 //
-//  AO:   half-res, 8/12-tap spiral (Alchemy-style) on view positions rebuilt from depth, normals from
-//        depth, fades out by 70 m; separable depth-aware blur; depth-aware upsample in the apply pass.
+//  AO:   half-res, 8/12-tap spiral on view positions rebuilt from depth, normals from depth; each sample
+//        occludes by the ANGLE it rises above the surface (minus a ~17 deg bias), not by 1/distance, so
+//        shallow creases between the 2 m terrain triangles never darken (they showed as stripes along
+//        the ground) while real corners (walls, trunks, props on the ground) do. Fades out by 70 m;
+//        separable depth-aware blur; depth-aware upsample in the apply pass.
 //  Rays: quarter-res; mask = visible sky around the sun (depth == far, weighted by sky luminance so
 //        clouds and canopy gaps shape it), 3 chained radial-blur passes towards the sun (8 taps each,
 //        512 effective taps), applied with a Henyey-Greenstein phase and distance-based in-scattering.
@@ -70,13 +73,13 @@ void main() {
     vec3 S = viewPosAt(suv, viewZAt(suv));
     vec3 v = S - P;
     float vv = dot(v, v);
-    float vn = dot(v, N);
-    // Alchemy AO term with a range check so far-behind samples don't occlude
-    float range = smoothstep(uRadius * uRadius * 4.0, uRadius * uRadius, vv);
-    sum += max(0.0, vn - 0.003 * dist - 0.01) / (vv + 0.02) * range;
+    // sine of the elevation of the sample above the tangent plane, with an angle bias; distant samples
+    // (behind silhouettes) fade out
+    float sinE = dot(v, N) * inversesqrt(vv + 1e-6);
+    float range = 1.0 - smoothstep(uRadius * uRadius, uRadius * uRadius * 4.0, vv);
+    sum += clamp((sinE - 0.3) / 0.7, 0.0, 1.0) * range;
   }
-  float ao = max(0.0, 1.0 - 1.6 * uRadius * sum / n);
-  ao *= ao;
+  float ao = max(0.0, 1.0 - 1.9 * sum / n);
   ao = mix(ao, 1.0, smoothstep(45.0, 75.0, dist));
   gl_FragColor = vec4(ao, dist / uFar, 0.0, 1.0);
 }

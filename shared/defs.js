@@ -395,6 +395,7 @@ export const EVT = {
   PING: 14, // playerId u16, kind u8, x,y,z (i16)
   SUMMARY: 15, // night u8, kills u16, structuresLost u8, downs u8, deaths u8, revives u8
   GATHER: 16, // kind u8 (1 chop, 2 salvage), x,y,z (i16) - private to the gatherer (feedback)
+  FLYOVER: 17, // supply plane: x,y,z (i16) of the plane's origin at release, heading u16, eta u16 (ms until release)
 };
 
 export const IMPACT = { BLOOD: 1, DIRT: 2, WOOD: 3, METAL: 4, ACID: 5, GREEN_BLOOD: 6, SPARK: 7 };

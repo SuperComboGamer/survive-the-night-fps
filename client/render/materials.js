@@ -15,7 +15,7 @@ import { getTexture, TEXTURE_WORLD_SIZE, atlasUV } from './textures.js';
 /** Legacy wind clock (vegetation now sways with the global uWind uniform, see globals.js). */
 export const vegetationTime = { value: 0 };
 
-export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds']);
+export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'aircraft', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds']);
 
 function tileTex(name, tile) {
   const t = tile ?? TEXTURE_WORLD_SIZE[name] ?? 1;
@@ -454,6 +454,7 @@ const DEFS = {
   wood: () => lambert({ map: tileTex('wood'), vertexColors: true }),
   paint: () => paintMaskPatch(lambert({ map: tileTex('paint'), vertexColors: true })),
   carpaint: () => paintMaskPatch(lambert({ map: tileTex('carpaint'), vertexColors: true })),
+  aircraft: () => lambert({ map: tileTex('aircraft'), vertexColors: true }),
   cloth: () => lambert({ map: tileTex('cloth'), vertexColors: true, side: THREE.DoubleSide }),
   burlap: () => lambert({ map: tileTex('burlap'), side: THREE.DoubleSide }),
   tire: () => lambert({ map: tileTex('tire') }),
