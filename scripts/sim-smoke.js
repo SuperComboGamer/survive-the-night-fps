@@ -1,11 +1,13 @@
-// In-process server smoke test: fake clients join, meet the cat, walk around, search containers, chop trees,
+// In-process server smoke test: fake clients join, meet the cat, get hunted by a zombie dog pack, walk around,
+// search containers, chop trees,
 // build (incl. door boards), go down + get revived, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
 import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM } from '../shared/defs.js';
+import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND } from '../shared/defs.js';
 import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
+import { raycastWorld } from '../shared/collision.js';
 
 const seed = +(process.argv[2] || 4242);
 const game = new Game({ seed, log: () => {} });
@@ -120,7 +122,19 @@ check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT
   let walked = 0;
   let lx = cat.x;
   let lz = cat.z;
-  run(20 * 90, () => {
+  run(20 * 90, (i) => {
+    // the cat roams at random: every 5 s, if it has wandered off, Alice goes and stands still 5 m from it
+    const p = A.p().state;
+    if (i % 100 === 99 && closest > 2.6 && Math.hypot(p.x - cat.x, p.z - cat.z) > 11) {
+      for (let k = 0; k < 8; k++) {
+        const x = cat.x + Math.sin(k * 0.785) * 5;
+        const z = cat.z + Math.cos(k * 0.785) * 5;
+        if (!game.nav.isBlocked(x, z)) {
+          A.tp(x, z);
+          break;
+        }
+      }
+    }
     for (const h of game.humans()) closest = Math.min(closest, Math.hypot(h.state.x - cat.x, h.state.z - cat.z));
     walked += Math.hypot(cat.x - lx, cat.z - lz);
     lx = cat.x;
@@ -139,6 +153,69 @@ check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT
   game.handleChat(A.p(), '/cat');
   run(2);
   check('/cat brings it over', Math.hypot(A.p().state.x - cat.x, A.p().state.z - cat.z) < 3);
+}
+
+// zombie dogs: packs den in the thick woods, hunt together, lunge and bite; the head sits ahead of the body
+{
+  const car = game.world.car;
+  const dogs = game.zombies.filter((z) => z.ztype === ZTYPE.DOG && !z.dead);
+  const packs = new Set(dogs.map((d) => d.pack));
+  check('dog packs roam the woods', dogs.length >= 4 && packs.size >= 2, `${dogs.length} dogs, ${packs.size} packs`);
+  const denOk = (d) => game.zm.forestAt(d.homeX, d.homeZ) >= 13 && game.world.zoneAt(d.homeX, d.homeZ) === ZONE.FOREST && Math.hypot(d.homeX - car.x, d.homeZ - car.z) >= 80;
+  check('dogs den in dense forest', dogs.every(denOk) && dogs.every((d) => Math.hypot(d.x - d.homeX, d.z - d.homeZ) < 25));
+  const d0 = dogs[0];
+  const pack = dogs.filter((d) => d.pack === d0.pack);
+  let bitten = 0;
+  let howls = 0;
+  const damagePlayer = game.damagePlayer;
+  const sound = game.sound;
+  game.damagePlayer = (p, amount, src) => {
+    if (p === A.p() && src.ztype === ZTYPE.DOG) bitten += amount;
+  };
+  game.sound = function (snd, ...rest) {
+    if (snd === SOUND.DOG_HOWL) howls++;
+    return sound.call(this, snd, ...rest);
+  };
+  A.tp(d0.x + 22, d0.z);
+  let hunted = false;
+  let lunged = false;
+  run(20 * 15, () => {
+    hunted ||= pack.every((d) => d.target === A.id);
+    lunged ||= pack.some((d) => d.anim === ZANIM.AIRBORNE);
+  });
+  check('the pack hunts together (one howl)', hunted && howls === 1, `howls ${howls}`);
+  check('dogs lunge and bite', lunged && bitten > 0, `${bitten.toFixed(0)} dmg`);
+  check('dog replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.ZOMBIE && e.ztype === ZTYPE.DOG && e.id === d0.id));
+  // hitscan from the side: the head sphere is ahead of the body, not above it (packmates out of the line of fire)
+  const p = A.p();
+  for (const d of pack) if (d !== d0) game.combat.damageZombie(d, 1e6, p, {});
+  const shots = [];
+  const damageZombie = game.combat.damageZombie;
+  game.combat.damageZombie = (z, amount, attacker, opts) => shots.push(z === d0 && opts.headshot);
+  const head = () => [d0.x - Math.sin(d0.yaw) * 0.5, d0.y + 0.58, d0.z - Math.cos(d0.yaw) * 0.5];
+  const body = () => [d0.x, d0.y + 0.4, d0.z];
+  const from = () => [d0.x + Math.cos(d0.yaw) * 4, d0.y + 0.6, d0.z - Math.sin(d0.yaw) * 4];
+  const ray = { t: -1, col: null, terrain: false };
+  const clear = (a, b) => {
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    raycastWorld(game.world, a[0], a[1], a[2], (b[0] - a[0]) / l, (b[1] - a[1]) / l, (b[2] - a[2]) / l, l, ray);
+    return ray.t < 0;
+  };
+  for (let k = 0; k < 16 && !(clear(from(), head()) && clear(from(), body())); k++) d0.yaw += Math.PI / 8; // a side with no tree in the way
+  const shoot = ([tx, ty, tz]) => {
+    const [sx, sy, sz] = from();
+    p.renderTick = game.tick & 0xffff;
+    p.renderFrac = 0;
+    game.combat.fire(p, { weapon: ITEM.PISTOL, x: sx, y: sy, z: sz, yaw: Math.atan2(-(tx - sx), -(tz - sz)), pitch: Math.atan2(ty - sy, Math.hypot(tx - sx, tz - sz)), recoilPitch: 0, spread: 0, seed: 1 });
+  };
+  shoot(head());
+  shoot(body());
+  check('dog head is ahead of its body', shots[0] === true && shots[1] === false, JSON.stringify(shots));
+  game.combat.damageZombie = damageZombie;
+  game.damagePlayer = damagePlayer;
+  game.sound = sound;
+  for (const d of pack) game.combat.damageZombie(d, 1e6, p, {});
+  p.hp = 100;
 }
 
 // walk a little
@@ -264,6 +341,11 @@ check('ping broadcast', B.pings > 0);
   game.handleChat(A.p(), '/night');
   run(3);
   check('night started', game.phase === PHASE.NIGHT && A.global.phase === PHASE.NIGHT);
+  check('no dogs in the first night\'s horde', game.waves.every((w) => !w.queue.includes(ZTYPE.DOG)));
+  const n0 = game.zombies.length;
+  game.spawnHordeGroup([ZTYPE.DOG, ZTYPE.DOG, ZTYPE.DOG]);
+  const hd = game.zombies.slice(n0);
+  check('horde dogs come as one pack', hd.length === 3 && hd.every((d) => d.ztype === ZTYPE.DOG && d.horde && d.pack === hd[0].pack));
   run(20 * 10);
   const zs = game.zombies.filter((z) => z.horde && !z.dead);
   const near = zs.filter((z) => Math.hypot(z.x - A.p().state.x, z.z - A.p().state.z) < 110).length;

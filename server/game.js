@@ -45,6 +45,8 @@ import {
   SEARCH_TIME,
   ENGINE_START_TIME,
   EYE_HEIGHT,
+  HORDE_SPAWN_MIN,
+  HORDE_SPAWN_MAX,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -677,6 +679,7 @@ export class Game {
         [ZTYPE.RUNNER, 16 + n * 2 + sp * 6],
         [ZTYPE.SPITTER, n >= 2 ? 6 + sp * 4 : 0],
         [ZTYPE.BOOMER, n >= 2 ? 6 + sp * 3 : 0],
+        [ZTYPE.DOG, n >= 2 ? 3 + sp * 2 : 0], // each pick is a pack of 2-3
         [ZTYPE.LEAPER, n >= 3 ? 6 + sp * 4 : 0],
         [ZTYPE.BAT, n >= 3 ? 7 : 0],
         [ZTYPE.ROPER, n >= 4 ? 5 + sp * 3 : 0],
@@ -689,7 +692,9 @@ export class Game {
         for (const [t, wgt] of weights) {
           r -= wgt;
           if (r <= 0) {
-            q.push(t);
+            const k = t === ZTYPE.DOG ? 2 + (this.rng() < 0.5 ? 1 : 0) : 1;
+            for (let j = 0; j < k; j++) q.push(t);
+            i += k - 1;
             break;
           }
         }
@@ -1834,7 +1839,25 @@ export class Game {
       case 'spawn': {
         const t = +args[1];
         const n = Math.min(20, +(args[2] || 1));
-        for (let i = 0; i < n; i++) this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t]?.boss });
+        const pack = this.zm.newPack();
+        for (let i = 0; i < n; i++) this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t]?.boss, pack });
+        break;
+      }
+      case 'den': {
+        // teleport 15 m from the nearest zombie dog pack's den (dense forest)
+        let best = null;
+        for (const z of this.zombies) {
+          if (z.dead || !z.pack || z.horde) continue;
+          if (!best || Math.hypot(z.homeX - s.x, z.homeZ - s.z) < Math.hypot(best.homeX - s.x, best.homeZ - s.z)) best = z;
+        }
+        if (best) {
+          const a = this.rng() * Math.PI * 2;
+          s.x = best.homeX + Math.sin(a) * 15;
+          s.z = best.homeZ + Math.cos(a) * 15;
+          s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+          s.vx = s.vy = s.vz = 0;
+          this.fillHistory(p);
+        }
         break;
       }
       case 'supply': {
@@ -1940,13 +1963,16 @@ export class Game {
     if (!humans.length) return 0;
     const alive = this.zombies.length;
     if (alive >= MAX_ZOMBIES_ALIVE) return 0;
-    const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans) : this.zm.pickHordeSpawn(humans);
+    // a group led by dogs comes out of the woods
+    const dogs = type0Queue[type0Queue.length - 1] === ZTYPE.DOG;
+    const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, dogs) : this.zm.pickHordeSpawn(humans, dogs);
     if (!sp) return 0;
     const group = 3 + Math.floor(this.rng() * 3);
+    const pack = this.zm.newPack(); // the group's dogs hunt as one pack
     let n = 0;
     for (let i = 0; i < group && type0Queue.length && alive + i < MAX_ZOMBIES_ALIVE; i++) {
       const type = type0Queue.pop();
-      const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 8, sp.z + (this.rng() - 0.5) * 8, { horde: true, hpMul: this.hordeHpMul });
+      const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 8, sp.z + (this.rng() - 0.5) * 8, { horde: true, hpMul: this.hordeHpMul, pack });
       if (!z) type0Queue.push(type);
       else n++;
     }
@@ -2047,7 +2073,7 @@ export class Game {
         const q = [];
         for (let i = 0; i < 5; i++) {
           const r = this.rng();
-          q.push(r < 0.45 ? ZTYPE.WALKER : r < 0.72 ? ZTYPE.RUNNER : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 ? ZTYPE.TANK : ZTYPE.RUNNER);
+          q.push(r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 ? ZTYPE.TANK : ZTYPE.RUNNER);
         }
         this.spawnHordeGroup(q, car);
       }

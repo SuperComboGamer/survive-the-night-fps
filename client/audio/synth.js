@@ -607,6 +607,67 @@ export function catMeow(sr, rng, i) {
   });
 }
 
+// zombie dogs: a dog-sized vocal tract (formants ~15% up on a human's) run ragged - rasp, gurgle, overdrive
+// "rrowf!" x2-3: short harsh barks, pitch jumping up then dropping
+export function dogBark(sr, rng, i) {
+  const n = 2 + (i % 2);
+  const out = alloc(sr, 0.2 + n * 0.26);
+  let t = 0.01;
+  for (let k = 0; k < n; k++) {
+    const b = rrange(rng, 230, 320) * (k === n - 1 ? 0.9 : 1);
+    const v = voice(sr, rng, {
+      dur: rrange(rng, 0.13, 0.19), pitch: [[0, b * 0.8], [0.18, b * 1.3], [0.55, b * 1.05], [1, b * 0.6]],
+      vowels: vowelPath([['uh', 'a', 'o'], ['er', 'ae', 'uh'], ['o', 'a', 'u']][(i + k) % 3], rng), fscale: rrange(rng, 1.1, 1.2), bw: 2,
+      jitter: 0.08, jitterHz: 45, shimmer: 0.45, sub: 0.35, gurgle: 0.25, rasp: 0.9, raspHz: 130, breath: 0.55, drive: 5.5, chest: 0.4,
+      env: [[0, 0], [0.05, 1], [0.45, 0.75], [1, 0]],
+    });
+    addNorm(out, v, sr, t, rrange(rng, 0.75, 1));
+    t += rrange(rng, 0.2, 0.28);
+  }
+  return finish(out, sr);
+}
+// a long, breaking howl - the pack has your scent
+export function dogHowl(sr, rng, i) {
+  const b = rrange(rng, 290, 340);
+  const dur = rrange(rng, 2.3, 2.8);
+  const main = voice(sr, rng, {
+    dur, pitch: [[0, b * 0.7], [0.15, b * 1.5], [0.45, b * 1.62], [0.7, b * 1.4], [0.88, b * 1.05], [1, b * 0.7]],
+    vowels: vowelPath(i % 2 ? ['u', 'oo', 'o', 'u', 'uh'] : ['o', 'u', 'oo', 'o', 'u'], rng), fscale: 1.12, bw: 1.4,
+    jitter: 0.03, jitterHz: 12, shimmer: 0.2, sub: 0.2, gurgle: 0.35, gurgleHz: 7, rasp: 0.35, raspHz: 60, vib: 0.018, vibHz: 5,
+    breath: 0.3, drive: 2.4, chest: 0.2, env: [[0, 0], [0.12, 0.8], [0.3, 1], [0.75, 0.85], [0.92, 0.35], [1, 0]],
+  });
+  const out = alloc(sr, dur + 0.8);
+  addNorm(out, main, sr, 0, 0.9);
+  addNorm(out, main, sr, 0.45 + rng() * 0.2, 0.18); // off the hillside
+  return finish(out, sr);
+}
+// wet, rattling growl-snarl through bared teeth, sometimes ending in a jaw snap
+export function dogSnarl(sr, rng, i) {
+  const b = rrange(rng, 85, 115);
+  const dur = rrange(rng, 0.7, 1.1);
+  const out = alloc(sr, dur + 0.15);
+  const g = voice(sr, rng, {
+    dur, pitch: contour(rng, b, 4, 0.85, 1.3, 1.1), vowels: vowelPath([['er', 'uh', 'er'], ['uh', 'ae', 'er'], ['er', 'a', 'uh']][i % 3], rng),
+    fscale: 1.08, bw: 2.2, jitter: 0.1, jitterHz: 35, shimmer: 0.6, sub: 0.55, gurgle: 0.6, gurgleHz: 26, rasp: 1, raspHz: 70,
+    breath: 0.6, drive: 4.5, chest: 0.5, bubbles: 6, env: [[0, 0], [0.1, 0.8], [0.5, 1], [0.85, 0.8], [1, 0]],
+  });
+  addNorm(out, g, sr, 0, 0.9);
+  if (i % 3 !== 1) addNorm(out, noise(sr, rng, 0.03, { bp: [2600, 1.2], a: 0.0005, d: 0.012 }), sr, dur * 0.92, 0.7); // teeth clack
+  return finish(out, sr);
+}
+// yelps when hit; the last variant is a dying whine
+export function dogYelp(sr, rng, i) {
+  const dying = i === 2;
+  const b = rrange(rng, 620, 820) * (dying ? 0.85 : 1);
+  return voice(sr, rng, {
+    dur: dying ? rrange(rng, 0.8, 1.0) : rrange(rng, 0.2, 0.28),
+    pitch: dying ? [[0, b], [0.1, b * 1.2], [0.5, b * 0.9], [1, b * 0.45]] : [[0, b * 0.9], [0.2, b * 1.25], [1, b * 0.6]],
+    vowels: vowelPath(dying ? ['i', 'e', 'a', 'uh'] : ['i', 'ae', 'a'], rng), fscale: 1.25, bw: 1.6, jitter: 0.06, jitterHz: 40,
+    shimmer: 0.35, sub: 0.15, gurgle: dying ? 0.5 : 0.2, rasp: 0.55, raspHz: 150, breath: 0.4, drive: 3.5, chest: 0.1, a3: 0.6, hp: 250,
+    env: dying ? [[0, 0], [0.06, 1], [0.4, 0.7], [0.8, 0.3], [1, 0]] : [[0, 0], [0.08, 1], [0.5, 0.8], [1, 0]],
+  });
+}
+
 // human (player) sounds
 export function humanHurt(sr, rng, i) {
   const b = rrange(rng, 125, 150);
@@ -1471,6 +1532,10 @@ export const SFX_DEFS = [
   { bank: 'z_boss', n: 2, sr: MID, gen: zBoss },
   { bank: 'zp_growl', n: 3, sr: MID, gen: zpGrowl },
   { bank: 'cat_meow', n: 3, sr: HI, gen: catMeow },
+  { bank: 'dog_bark', n: 3, sr: MID, gen: dogBark },
+  { bank: 'dog_howl', n: 2, sr: MID, gen: dogHowl },
+  { bank: 'dog_snarl', n: 3, sr: MID, gen: dogSnarl },
+  { bank: 'dog_yelp', n: 3, sr: MID, gen: dogYelp },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },
