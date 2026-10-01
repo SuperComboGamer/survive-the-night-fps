@@ -67,6 +67,13 @@ const rifleRound = (x, w = 6, h = 35) => {
   );
 };
 
+// crossbow bolt standing on its nock (40 high): leaf head, thin shaft, two vanes
+const bolt = (x) =>
+  P(`M${x} 0.6L${f(x + 2.6)} 8.4L${x} 10.6L${f(x - 2.6)} 8.4Z`) +
+  P(rct(x - 0.8, 10, 1.6, 28.6)) +
+  P(`M${f(x - 0.8)} 25.4L${f(x - 3.6)} 28.6V36.4L${f(x - 0.8)} 34Z`) +
+  P(`M${f(x + 0.8)} 25.4L${f(x + 3.6)} 28.6V36.4L${f(x + 0.8)} 34Z`);
+
 // rolled blueprint + unrolled sheet (40x32). `mark` = evenodd sub-paths cut out of the drawing area
 // (inner frame x 11..33.4, y 8.2..23.8)
 const scroll = (mark) =>
@@ -179,6 +186,22 @@ const ITEM_ICONS = {
       S('M36.6 24.2Q37.2 29.8 42.6 29.4L43.8 24.2', 1.5) + // trigger guard
       S('M39 24.6Q39.6 26.2 38.6 27.6', 1.2) +
       S('M41.4 24.6Q42 26.2 41 27.6', 1.2), // twin triggers
+  ],
+  // seen from above, latched: tiller, swept-back limbs, string drawn to the latch, bolt on the rail
+  [ITEM.CROSSBOW]: [
+    112,
+    56,
+    P('M2 23.4H30L36 25H88V31H36L30 32.6H2Z') + // stock + tiller
+      P('M81 23H89V33H81Z') + // prod bracket
+      S('M85 24Q84 10 68 4', 3.2) + // limbs
+      S('M85 32Q84 46 68 52', 3.2) +
+      S('M68 4L45 28L68 52', 1.1) + // string
+      P('M41 24.4H49V31.6H41Z') + // latch
+      P('M49 27.1H98V28.9H49Z') + // bolt
+      P('M96.5 24.6L106 28L96.5 31.4Z') +
+      P('M51 24.9H61L58 27.1H51Z') + // vanes
+      P('M51 31.1H61L58 28.9H51Z') +
+      S('M89 25Q101 28 89 31', 1.4), // stirrup
   ],
   [ITEM.PISTOL]: [
     64,
@@ -455,6 +478,7 @@ const ITEM_ICONS = {
   [ITEM.AMMO_762]: [36, 36, rifleRound(5) + rifleRound(15) + rifleRound(25)],
   [ITEM.AMMO_308]: [36, 40, rifleRound(8, 8, 39) + rifleRound(20, 8, 39)],
   [ITEM.AMMO_556]: [36, 36, [2.4, 10.6, 18.8, 27].map((x) => rifleRound(x, 5.4, 35)).join('')],
+  [ITEM.AMMO_BOLTS]: [36, 40, bolt(7.5) + bolt(18) + bolt(28.5)],
   // ---------------- car parts
   [ITEM.CAR_BATTERY]: [
     40,

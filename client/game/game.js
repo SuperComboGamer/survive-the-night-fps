@@ -79,6 +79,7 @@ const SHOT_SOUND = {
   [ITEM.M4A1]: SOUND.M4A1,
   [ITEM.MP5]: SOUND.MP5,
   [ITEM.DB_SHOTGUN]: SOUND.DB_SHOTGUN,
+  [ITEM.CROSSBOW]: SOUND.CROSSBOW,
 };
 // first-person muzzle flash scale + camera shake per shot (default [1, 0.06])
 const SHOT_KICK = {
@@ -86,6 +87,7 @@ const SHOT_KICK = {
   [ITEM.DB_SHOTGUN]: [1.6, 0.3],
   [ITEM.HUNTING_RIFLE]: [1.3, 0.3],
   [ITEM.MP5]: [0.8, 0.04],
+  [ITEM.CROSSBOW]: [0, 0.1],
 };
 const PING_LIFE = 12;
 const _ray = { t: -1, col: null, terrain: false };
@@ -578,8 +580,10 @@ export class Game {
       mz = _v.z;
       _v.set(mx, my, mz);
     } else _v.set(mx, my, mz);
-    this.effects.worldMuzzle(_v, def.pellets > 1 ? 1.3 : 1);
-    this.lights.flashMuzzle(_v, 0.8);
+    if (!def.quiet) {
+      this.effects.worldMuzzle(_v, def.pellets > 1 ? 1.3 : 1);
+      this.lights.flashMuzzle(_v, 0.8);
+    }
     this.audio.play(SHOT_SOUND[ev.weapon] || SOUND.PISTOL, { x: mx, y: my, z: mz });
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     for (let i = 0; i < n; i++) {
@@ -589,7 +593,8 @@ export class Game {
       const dz = _dirs[i * 3 + 2];
       raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
       const dist = _ray.t >= 0 ? _ray.t : Math.min(def.range, 80);
-      this.effects.tracer(mx, my, mz, dx, dy, dz, dist, 0.8);
+      if (def.quiet) this.effects.boltTrail(mx, my, mz, dx, dy, dz, dist);
+      else this.effects.tracer(mx, my, mz, dx, dy, dz, dist, 0.8);
     }
   }
 
@@ -602,15 +607,17 @@ export class Game {
           const def = WEAPONS[ev.weapon];
           this.vm.fire();
           a.playLocal(def.sound || 'pistol');
-          this.vm.getMuzzle(_v);
           const kick = SHOT_KICK[ev.weapon];
-          this.effects.vmMuzzle(_v, kick ? kick[0] : 1);
-          this.renderer.vmMuzzle.intensity = 6;
-          this.vmMuzzleT = 0.05;
-          // world muzzle light at the camera
-          _v2.set(-Math.sin(ev.yaw), 0, -Math.cos(ev.yaw));
-          _v.set(ev.x + _v2.x * 0.8, ev.y - 0.1, ev.z + _v2.z * 0.8);
-          this.lights.flashMuzzle(_v, 1);
+          if (!def.quiet) {
+            this.vm.getMuzzle(_v);
+            this.effects.vmMuzzle(_v, kick ? kick[0] : 1);
+            this.renderer.vmMuzzle.intensity = 6;
+            this.vmMuzzleT = 0.05;
+            // world muzzle light at the camera
+            _v2.set(-Math.sin(ev.yaw), 0, -Math.cos(ev.yaw));
+            _v.set(ev.x + _v2.x * 0.8, ev.y - 0.1, ev.z + _v2.z * 0.8);
+            this.lights.flashMuzzle(_v, 1);
+          }
           // tracers from the gun (visual), hits are server authoritative
           const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
           const cp = Math.cos(ev.pitch);
@@ -624,7 +631,8 @@ export class Game {
             const dz = _dirs[i * 3 + 2];
             raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
             const dist = _ray.t >= 0 ? _ray.t : Math.min(def.range, 90);
-            if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
+            if (def.quiet) this.effects.boltTrail(sx, sy, sz, dx, dy, dz, dist);
+            else if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
           }
           this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
           this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
@@ -636,12 +644,12 @@ export class Game {
         case 'reload': {
           this.vm.reload(ev.time, !!ev.each);
           if (ev.each) a.playLocal('shell_insert');
-          else a.playLocal('reload_start');
+          else a.playLocal(currentWeapon(s) === ITEM.CROSSBOW ? 'xbow_cock' : 'reload_start');
           break;
         }
         case 'reload_done': {
           const w = currentWeapon(s);
-          a.playLocal(w === ITEM.SHOTGUN ? 'pump' : w === ITEM.HUNTING_RIFLE ? 'bolt' : 'reload_end');
+          a.playLocal(w === ITEM.SHOTGUN ? 'pump' : w === ITEM.HUNTING_RIFLE ? 'bolt' : w === ITEM.CROSSBOW ? 'xbow_load' : 'reload_end');
           break;
         }
         case 'melee':
@@ -1054,7 +1062,7 @@ export class Game {
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.debugCam);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
-    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time });
+    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
       if (this.vmMuzzleT <= 0) this.renderer.vmMuzzle.intensity = 0;
