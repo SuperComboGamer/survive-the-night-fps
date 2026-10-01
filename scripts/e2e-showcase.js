@@ -60,7 +60,7 @@ const faceNearest = (page, type) =>
       }
     }
     if (!best) return null;
-    const h = [1.75, 1.72, 2.8, 1.85, 1.3, 1.9, 1.8, 0.4, 4.2, 3.6, 2.0][best.ztype];
+    const h = [1.75, 1.72, 2.8, 1.85, 1.3, 1.9, 1.8, 0.4, 4.2, 3.6, 0.85, 2.0][best.ztype];
     g.input.yaw = Math.atan2(-(best.rx - g.renderPos.x), -(best.rz - g.renderPos.z));
     g.input.pitch = Math.atan2(best.ry + h * 0.55 - (g.renderPos.y + 1.6), bd);
     return { d: +bd.toFixed(1), anim: best.q[4] };
@@ -70,7 +70,7 @@ const A = await openClient('Showcase');
 await chat(A, '/give 61 1'); // AK
 await chat(A, '/give 72 200');
 await A.keyboard.press('Digit1');
-const NAMES = ['walker', 'runner', 'tank', 'spitter', 'leaper', 'roper', 'boomer', 'bat', 'abomination', 'hivequeen', 'shade'];
+const NAMES = ['walker', 'runner', 'tank', 'spitter', 'leaper', 'roper', 'boomer', 'bat', 'abomination', 'hivequeen', 'dog', 'shade'];
 for (let t = 0; t < NAMES.length; t++) {
   await A.evaluate(() => {
     window.__game.input.yaw = 0;

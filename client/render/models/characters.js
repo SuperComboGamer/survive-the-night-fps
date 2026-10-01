@@ -10,6 +10,7 @@ import {
 } from './skinning.js';
 import { CR } from './charTextures.js';
 import { createWorldWeapon } from './weapons.js';
+import { createZombieDog, dogStats, DOG_COATS } from './dog.js';
 
 const PI = Math.PI;
 const TAU = PI * 2;
@@ -1418,7 +1419,7 @@ const BUILDERS = {
   [ZTYPE.BOSS_HIVEQUEEN]: buildHiveQueen,
   [ZTYPE.SHADE]: buildShade,
 };
-const VARIANTS = { [ZTYPE.WALKER]: WALKER_VARIANTS, [ZTYPE.RUNNER]: 3 };
+const VARIANTS = { [ZTYPE.WALKER]: WALKER_VARIANTS, [ZTYPE.RUNNER]: 3, [ZTYPE.DOG]: DOG_COATS };
 const NO_EXTRAS = {};
 
 const rigCache = new Map();
@@ -3226,6 +3227,7 @@ export function zombieVariants(ztype) {
  * Create a zombie of the given ZTYPE. seed picks the variant + per-instance randomness.
  */
 export function createZombie(ztype, seed = 0) {
+  if (ztype === ZTYPE.DOG) return createZombieDog(seed); // quadruped: its own rig + animation (dog.js)
   const type = BUILDERS[ztype] ? ztype : ZTYPE.WALKER;
   const nv = VARIANTS[type] || 1;
   const variant = nv > 1 ? ((seed >>> 0) * 2654435761 >>> 0) % nv : 0;
@@ -3251,12 +3253,14 @@ export function createZombie(ztype, seed = 0) {
 export function modelStats() {
   const out = [];
   for (const t of Object.values(ZTYPE)) {
+    if (!BUILDERS[t]) continue;
     const nv = VARIANTS[t] || 1;
     for (let v = 0; v < nv; v++) {
       const r = getRig(t, v);
       out.push({ type: t, variant: v, tris: r.tris, bones: r.bones.length, cal: calibrate(t, getRig(t, 0)) });
     }
   }
+  out.push(...dogStats());
   for (let v = 0; v < SURVIVOR_LOOKS; v++) {
     out.push({ type: 'survivor', variant: v, tris: getSurvivorRig(v, false).tris });
     out.push({ type: 'survivor-z', variant: v, tris: getSurvivorRig(v, true).tris });

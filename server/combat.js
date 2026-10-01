@@ -76,21 +76,22 @@ export class Combat {
     for (const h of g.players.values()) if (h.alive && h.zombie) fn(h, true);
   }
 
-  // hitbox params for a target
+  // hitbox params for a target: a body cylinder plus a head sphere (hx/hz ahead of it on quadrupeds)
   hitbox(e, isPlayer) {
     if (isPlayer) {
       const crouch = e.state.crouch;
-      return { r: e.zombie ? 0.42 : 0.38, top: crouch ? 1.0 : 1.42, headY: crouch ? 1.12 : 1.6, headR: 0.2 };
+      return { r: e.zombie ? 0.42 : 0.38, top: crouch ? 1.0 : 1.42, headY: crouch ? 1.12 : 1.6, headR: 0.2, hx: 0, hz: 0 };
     }
     const d = e.def;
-    if (d.flying) return { r: 0.45, top: 0.5, headY: 0.1, headR: 0.3, flying: true };
+    if (d.flying) return { r: 0.45, top: 0.5, headY: 0.1, headR: 0.3, hx: 0, hz: 0, flying: true };
     let headY = d.headY;
-    let top = d.headY - d.headR;
-    if (e.anim === ZANIM.AIRBORNE || e.state === 3) {
+    let top = d.bodyTop ?? d.headY - d.headR;
+    if (!d.headFwd && (e.anim === ZANIM.AIRBORNE || e.state === 3)) {
       headY *= 0.7;
       top *= 0.7;
     }
-    return { r: d.radius * 0.88, top, headY, headR: d.headR * 1.2 };
+    const f = d.headFwd || 0;
+    return { r: d.radius * 0.88, top, headY, headR: d.headR * 1.2, hx: -Math.sin(e.yaw) * f, hz: -Math.cos(e.yaw) * f };
   }
 
   // ---------------------------------------------------------------- guns
@@ -155,7 +156,7 @@ export class Combat {
         const lim = hb.r + hb.headY + 0.5;
         if (px * px + py * py + pz * pz > lim * lim) return;
         let head = false;
-        let ht = raySphere(pos.x, pos.y + hb.headY, pos.z, hb.headR, ox, oy, oz, dx, dy, dz, wallT);
+        let ht = raySphere(pos.x + hb.hx, pos.y + hb.headY, pos.z + hb.hz, hb.headR, ox, oy, oz, dx, dy, dz, wallT);
         if (ht >= 0 && !hb.flying) head = true;
         const bt = hb.flying ? raySphere(pos.x, pos.y + 0.15, pos.z, 0.5, ox, oy, oz, dx, dy, dz, wallT) : rayCylinder(pos.x, pos.z, pos.y, pos.y + hb.top, hb.r, ox, oy, oz, dx, dy, dz, wallT);
         let tt = -1;
@@ -255,7 +256,7 @@ export class Combat {
       const dot = (dx / l) * (-Math.sin(s.yaw)) + (dz / l) * -Math.cos(s.yaw);
       if (dot < 0.45 && dist > 0.3) return;
       // head if aiming at head height
-      const hd = raySphere(pos.x, pos.y + hb.headY, pos.z, hb.headR * 1.4, ox, oy, oz, fx, fy, fz, range + hb.r);
+      const hd = raySphere(pos.x + hb.hx, pos.y + hb.headY, pos.z + hb.hz, hb.headR * 1.4, ox, oy, oz, fx, fy, fz, range + hb.r);
       cands.push({ e, isPlayer, score: dist - dot, head: hd >= 0 && !hb.flying, x: pos.x, y: pos.y + Math.min(hb.headY, 1.3), z: pos.z });
     });
     // blocked by walls?
@@ -319,7 +320,10 @@ export class Combat {
     if (attacker) {
       z.aggroId = attacker.id;
       z.aggroT = 15;
-      if (!z.target) z.target = attacker.id;
+      if (!z.target) {
+        z.target = attacker.id;
+        if (z.pack && !attacker.zombie) g.zm.alertPack(z); // shoot one dog and the whole pack comes
+      }
     }
     if (solid) {
       // stone still: no knockback, no stagger
@@ -339,7 +343,7 @@ export class Combat {
       this.killZombie(z, attacker, opts);
       return true;
     }
-    if (g.rng() < 0.15) g.sound(SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
+    if (g.rng() < 0.15) g.sound(z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
     return false;
   }
 
@@ -364,11 +368,11 @@ export class Combat {
       },
       { x: z.x, z: z.z, r: 130 },
     );
-    if (!opts.fire) g.sound(z.boss ? SOUND.BOSS_ROAR : SOUND.ZOMBIE_DEATH, z.x, z.y + 1.5, z.z, z.boss ? 150 : 35);
+    if (!opts.fire) g.sound(z.boss ? SOUND.BOSS_ROAR : z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_DEATH, z.x, z.y + Math.min(1.5, z.def.height), z.z, z.boss ? 150 : 35);
     if (g.phase === PHASE.NIGHT || g.escape?.active) g.nightStats.kills++;
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
-      if (z.ztype !== ZTYPE.WALKER && z.ztype !== ZTYPE.RUNNER && z.ztype !== ZTYPE.BAT) {
+      if (!z.def.common) {
         g.killfeed(KILLER.PLAYER, attacker.id, 0x8000 | z.ztype, opts.weapon || 0, opts.headshot ? 1 : 0);
       }
       g.playersDirty = g.playersDirty || g.tick % 10 === 0;
@@ -381,8 +385,7 @@ export class Combat {
           g.dropItem(item, n, z.x, z.y, z.z, { spread: 2 + g.rng() * 2, life: 400 });
         }
       } else if (g.rng() < z.def.loot) {
-        const special = z.ztype !== ZTYPE.WALKER && z.ztype !== ZTYPE.RUNNER && z.ztype !== ZTYPE.BAT;
-        const [item, n] = g.rollTable(special ? SPECIAL_LOOT : ZOMBIE_LOOT);
+        const [item, n] = g.rollTable(z.def.common ? ZOMBIE_LOOT : SPECIAL_LOOT);
         g.dropItem(item, n, z.x, z.y, z.z, { spread: 0.5, life: 150 });
       }
     }

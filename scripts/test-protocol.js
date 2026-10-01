@@ -41,7 +41,7 @@ function spawn(kind) {
       e.state.z = rnd(-50, 50);
       break;
     case ENT.ZOMBIE:
-      e.ztype = irnd(0, 10);
+      e.ztype = irnd(0, 11);
       e.variant = irnd(0, 255);
       e.yaw = rnd(0, 6.28);
       e.anim = irnd(0, 9);

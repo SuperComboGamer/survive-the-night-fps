@@ -1,8 +1,8 @@
 // Zombie AI: targeting, flow-field navigation, melee, structure breaking, and special abilities
 // (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses,
-// the shade that only moves in darkness).
+// zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
 import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN } from '../shared/constants.js';
-import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES } from '../shared/defs.js';
+import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
@@ -10,6 +10,10 @@ import { eyeHeight } from '../shared/playersim.js';
 const GRAV = 16;
 const CELL = 4;
 const HN = Math.ceil((MAP_HALF * 2) / CELL);
+// forest: trees are counted per FCELL m cell; a spot's density is the tree count of the 3x3 cells around it
+const FCELL = 8;
+const FN = Math.ceil((MAP_HALF * 2) / FCELL);
+const FOREST_DENS = 13; // ~ the densest 20% of the woods (median 9 trees per 24 m square)
 const _pos = { x: 0, y: 0, z: 0 };
 const _dir = { x: 0, z: 0, cost: 0 };
 const _ray = { t: -1, col: null, terrain: false };
@@ -27,6 +31,9 @@ export class Zombies {
     this.humansCache = [];
     this.lights = []; // this tick's burning point lights, flat [x, y, z, radius, ...]
     this.lightTick = -1;
+    this.packSeq = 0;
+    this.treeGrid = null;
+    this.dens = null;
   }
 
   // ---------------------------------------------------------------- spawning
@@ -112,7 +119,13 @@ export class Zombies {
       wanderX: x,
       wanderZ: z,
       wanderT: 0,
-      idleEat: g.rng() < 0.25,
+      idleEat: g.rng() < (def.pack ? 0.5 : 0.25),
+      pack: def.pack ? opts.pack || this.newPack() : 0, // dogs: pack id (packmates share a target)
+      homeX: x, // dogs: the den they roam around by day
+      homeZ: z,
+      flank: def.pack ? (g.rng() - 0.5) * 1.5 : 0, // dogs: approach angle offset (rad) so a pack fans out
+      howlT: 0,
+      bit: false, // dogs: this lunge already bit someone
       farT: 0,
       dead: false,
       deadT: 0,
@@ -156,6 +169,91 @@ export class Zombies {
     }
     // roaming dead in the woods
     for (let i = 0; i < 22; i++) this.spawnRoamer([]);
+    // zombie dog packs in the thick woods
+    for (let i = 0; i < 3; i++) this.spawnForestPack([]);
+  }
+
+  newPack() {
+    this.packSeq = (this.packSeq % 0xffffff) + 1;
+    return this.packSeq;
+  }
+
+  // n dogs around a den, spread over the pack's flanks
+  spawnPack(x, z, n, opts = {}) {
+    const g = this.g;
+    const pack = this.newPack();
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + g.rng();
+      const r = 1 + g.rng() * 2.5;
+      const d = this.spawn(ZTYPE.DOG, x + Math.sin(a) * r, z + Math.cos(a) * r, { ...opts, pack });
+      if (!d) continue;
+      d.homeX = x;
+      d.homeZ = z;
+      if (n > 1) d.flank = (i / (n - 1) - 0.5) * 1.5;
+      k++;
+    }
+    return k;
+  }
+
+  // a pack at a forest den out of sight of every survivor (and away from the car and other packs)
+  spawnForestPack(humans) {
+    const g = this.g;
+    const dens = this.forestDens();
+    if (!dens.length) return 0;
+    const car = g.world.car;
+    for (let tries = 0; tries < 12; tries++) {
+      const d = dens[Math.floor(g.rng() * dens.length)];
+      if (Math.hypot(d.x - car.x, d.z - car.z) < 80) continue;
+      let ok = true;
+      for (const h of humans) if (Math.hypot(h.state.x - d.x, h.state.z - d.z) < 80) ok = false;
+      if (!ok) continue;
+      for (const o of g.zombies) if (o.pack && !o.dead && Math.hypot(o.homeX - d.x, o.homeZ - d.z) < 40) ok = false;
+      if (!ok) continue;
+      const n = 2 + Math.floor(g.rng() * (g.day >= 3 ? 3 : g.day >= 2 ? 2 : 1));
+      return this.spawnPack(d.x, d.z, n, { hpMul: 1 + 0.05 * g.day });
+    }
+    return 0;
+  }
+
+  // ---------------------------------------------------------------- forest
+  // trees in the 24 m square around (x,z)
+  forestAt(x, z) {
+    if (!this.treeGrid) {
+      const t = this.g.world.trees;
+      this.treeGrid = new Uint16Array(FN * FN);
+      for (let i = 0; i < t.length; i += 6) {
+        const ci = Math.max(0, Math.min(FN - 1, Math.floor((t[i] + MAP_HALF) / FCELL)));
+        const cj = Math.max(0, Math.min(FN - 1, Math.floor((t[i + 2] + MAP_HALF) / FCELL)));
+        this.treeGrid[cj * FN + ci]++;
+      }
+    }
+    const ci = Math.floor((x + MAP_HALF) / FCELL);
+    const cj = Math.floor((z + MAP_HALF) / FCELL);
+    let n = 0;
+    for (let j = Math.max(0, cj - 1); j <= Math.min(FN - 1, cj + 1); j++) {
+      for (let i = Math.max(0, ci - 1); i <= Math.min(FN - 1, ci + 1); i++) n += this.treeGrid[j * FN + i];
+    }
+    return n;
+  }
+
+  // walkable spots in dense forest, away from places and roads (built once per world)
+  forestDens() {
+    if (this.dens) return this.dens;
+    const g = this.g;
+    const w = g.world;
+    const out = [];
+    const lim = MAP_HALF - 24;
+    for (let z = -lim; z <= lim; z += 12) {
+      for (let x = -lim; x <= lim; x += 12) {
+        if (this.forestAt(x, z) < FOREST_DENS) continue;
+        if (w.zoneAt(x, z) !== ZONE.FOREST || w.roadDistAt(x, z) < 10) continue;
+        if (w.isDeepWater(x, z) || g.nav.isBlocked(x, z)) continue;
+        out.push({ x, z });
+      }
+    }
+    this.dens = out;
+    return out;
   }
 
   spawnRoamer(humans) {
@@ -212,10 +310,13 @@ export class Zombies {
   }
 
   // a walkable spot HORDE_SPAWN_MIN..MAX metres from (x,z) that no survivor is standing close to
-  pickSpawnAround(x, z, humans, minD = HORDE_SPAWN_MIN, maxD = HORDE_SPAWN_MAX) {
+  // (forest: the most wooded of the candidates - dog packs come out of the trees)
+  pickSpawnAround(x, z, humans, minD = HORDE_SPAWN_MIN, maxD = HORDE_SPAWN_MAX, forest = false) {
     const g = this.g;
     const w = g.world;
     const lim = MAP_HALF - 14;
+    let best = null;
+    let bestF = -1;
     for (let tries = 0; tries < 18; tries++) {
       const a = g.rng() * Math.PI * 2;
       const d = minD + g.rng() * (maxD - minD);
@@ -225,17 +326,24 @@ export class Zombies {
       if (w.isDeepWater(sx, sz) || g.nav.isBlocked(sx, sz)) continue;
       let ok = true;
       for (const h of humans) if (Math.hypot(h.state.x - sx, h.state.z - sz) < minD * 0.75) ok = false;
-      if (ok) return { x: sx, z: sz };
+      if (!ok) continue;
+      if (!forest) return { x: sx, z: sz };
+      const f = this.forestAt(sx, sz);
+      if (f > bestF) {
+        bestF = f;
+        best = { x: sx, z: sz };
+      }
+      if (f >= FOREST_DENS) break;
     }
-    return this.pickSpawnPoint(humans, minD);
+    return best || this.pickSpawnPoint(humans, minD);
   }
 
   // the night horde comes to wherever the survivors are
-  pickHordeSpawn(humans) {
+  pickHordeSpawn(humans, forest = false) {
     const g = this.g;
     if (!humans.length) return this.pickSpawnPoint(humans, 0);
     const h = humans[Math.floor(g.rng() * humans.length)];
-    return this.pickSpawnAround(h.state.x, h.state.z, humans);
+    return this.pickSpawnAround(h.state.x, h.state.z, humans, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, forest);
   }
 
   // ---------------------------------------------------------------- spatial hash
@@ -289,9 +397,15 @@ export class Zombies {
       if (this.maintainT <= 0) {
         this.maintainT = 4;
         let alive = 0;
-        for (const z of g.zombies) if (!z.dead && !z.horde) alive++;
+        let dogs = 0;
+        for (const z of g.zombies) {
+          if (z.dead || z.horde) continue;
+          if (z.pack) dogs++;
+          else alive++;
+        }
         const target = Math.min(62, 22 + g.day * 4 + humans.length * 2);
         if (alive < target) this.spawnRoamer(humans);
+        if (dogs < Math.min(18, 4 + g.day * 2)) this.spawnForestPack(humans);
       }
     }
 
@@ -347,6 +461,7 @@ export class Zombies {
     z.alertT -= dt;
     z.lureT -= dt;
     z.losT -= dt;
+    z.howlT -= dt;
     if (z.animT > 0) z.animT -= dt;
     z.trapSlow = Math.min(1, z.trapSlow + dt * 2);
 
@@ -374,7 +489,9 @@ export class Zombies {
     // retarget
     if (z.targetT <= 0) {
       z.targetT = 0.35 + g.rng() * 0.3;
+      const had = z.target;
       this.chooseTarget(z, humans);
+      if (z.pack && z.target && !had) this.alertPack(z);
     }
     const tp = z.target ? g.players.get(z.target) : null;
     const target = tp && tp.alive && !tp.zombie ? tp : null;
@@ -403,14 +520,34 @@ export class Zombies {
     let dz = 0;
     let speed = def.speed;
     let chasing = false;
-    if (z.lureT > 0 && !def.shade && !(target && dist < 7)) {
+    if (z.state === 7) {
+      // dog hit-and-run: peel off to one side after a lunge, then come back in
+      z.stateT -= dt;
+      if (z.stateT <= 0 || !target) z.state = 0;
+      if (target) {
+        const l = dist || 1;
+        const side = z.flank >= 0 ? 1 : -1;
+        dx = (-(tz - z.z) * side - (tx - z.x) * 0.5) / l;
+        dz = ((tx - z.x) * side - (tz - z.z) * 0.5) / l;
+        chasing = true;
+      }
+    } else if (z.lureT > 0 && !def.shade && !(target && dist < 7)) {
       dx = z.lureX - z.x;
       dz = z.lureZ - z.z;
       chasing = true;
     } else if (target) {
       chasing = true;
       // steer straight at a visible survivor; otherwise follow the flow field (around walls to a way in)
-      if (z.los && dist < 12) {
+      if (z.pack && z.los && dist < 18) {
+        // a pack fans out and closes in from the sides, straightening up for the last few metres
+        const a = z.flank * Math.min(1, Math.max(0, (dist - 3) / 8));
+        const ex = tx - z.x;
+        const ez = tz - z.z;
+        const c = Math.cos(a);
+        const sn = Math.sin(a);
+        dx = ex * c - ez * sn;
+        dz = ex * sn + ez * c;
+      } else if (z.los && dist < 12) {
         dx = tx - z.x;
         dz = tz - z.z;
       } else if (g.nav.flowDir(target.id, z.x, z.z, _dir)) {
@@ -441,6 +578,12 @@ export class Zombies {
         if (g.rng() < 0.4) {
           z.wanderX = z.x;
           z.wanderZ = z.z;
+        } else if (z.pack && !z.horde) {
+          // dogs keep to their patch of woods
+          const a = g.rng() * Math.PI * 2;
+          const r = g.rng() * 16;
+          z.wanderX = z.homeX + Math.sin(a) * r;
+          z.wanderZ = z.homeZ + Math.cos(a) * r;
         } else {
           z.wanderX = z.x + (g.rng() - 0.5) * 30;
           z.wanderZ = z.z + (g.rng() - 0.5) * 30;
@@ -452,7 +595,7 @@ export class Zombies {
         dx = 0;
         dz = 0;
       }
-      speed = Math.min(speed, 1.1) * 0.8;
+      speed = z.pack ? 1.5 : Math.min(speed, 1.1) * 0.8;
     }
     if (!chasing && z.ztype === ZTYPE.RUNNER) speed = 1.2;
     speed *= z.trapSlow;
@@ -460,7 +603,7 @@ export class Zombies {
 
     // stop to attack
     let attacking = false;
-    if (target && dist <= def.range + PLAYER_RADIUS && Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) {
+    if (target && z.state !== 7 && dist <= def.range + PLAYER_RADIUS && Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) {
       attacking = true;
       dx = tx - z.x;
       dz = tz - z.z;
@@ -471,7 +614,7 @@ export class Zombies {
         z.pendingTarget = target.id;
         z.anim = ZANIM.ATTACK;
         z.animT = 0.6;
-        if (g.rng() < 0.5) g.sound(z.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : SOUND.ZOMBIE_ATTACK, z.x, z.y + 1.6, z.z, 35);
+        if (g.rng() < 0.5) g.sound(z.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : z.ztype === ZTYPE.DOG ? SOUND.DOG_SNARL : SOUND.ZOMBIE_ATTACK, z.x, z.y + Math.min(1.6, def.height), z.z, 35);
       }
     }
     // boomer: detonate near humans
@@ -526,7 +669,7 @@ export class Zombies {
     z.lastZ = z.z;
 
     // facing & anim
-    if (attacking || (target && dist < 4)) z.yaw = turn(z.yaw, Math.atan2(-(tx - z.x), -(tz - z.z)), dt * 8);
+    if ((attacking || (target && dist < 4)) && z.state !== 7) z.yaw = turn(z.yaw, Math.atan2(-(tx - z.x), -(tz - z.z)), dt * 8);
     else if (Math.hypot(z.vx, z.vz) > 0.2) z.yaw = turn(z.yaw, Math.atan2(-z.vx, -z.vz), dt * 5);
     if (z.animT <= 0) {
       // hysteresis: a speed hovering at a threshold (crowd shoves, easing into an attack) must not flicker the gait
@@ -551,6 +694,7 @@ export class Zombies {
       else if (s.crouch) range *= 0.6;
       if (night && h.flashlight) range *= 1.5;
       if (s.sprinting) range *= 1.3;
+      if (!z.horde && z.def.sense) range *= z.def.sense; // dogs catch the scent from further off
       if (z.aggroId === h.id && z.aggroT > 0) range = 600;
       if (z.target === h.id) range *= 1.6; // hysteresis
       if (d < range && d < bd) {
@@ -559,6 +703,25 @@ export class Zombies {
       }
     }
     z.target = best ? best.id : 0;
+  }
+
+  // a dog that picks up a scent sets the rest of its pack onto the same survivor (and howls, once)
+  alertPack(z) {
+    const g = this.g;
+    let howl = z.howlT <= 0;
+    this.forNear(z.x, z.z, 45, (o) => {
+      if (o === z || o.dead || o.pack !== z.pack) return;
+      if (o.howlT > 0) howl = false;
+      if (!o.target) {
+        o.target = z.target;
+        o.aggroId = z.target;
+        o.aggroT = 12;
+      }
+    });
+    if (howl) {
+      z.howlT = 25;
+      g.sound(SOUND.DOG_HOWL, z.x, z.y + 0.7, z.z, 110);
+    }
   }
 
   hasLOS(z, tx, ty, tz, dist) {
@@ -761,6 +924,11 @@ export class Zombies {
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
+      if (def.lungeRange && z.state === 0 && g.rng() < 0.3) {
+        // dog hit-and-run: snap, peel away, come back in with a lunge
+        z.state = 7;
+        z.stateT = 0.6 + g.rng() * 0.5;
+      }
     } else if (z.pendingKind === 2) {
       const s = g.ents[z.pendingTarget];
       if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul);
@@ -868,6 +1036,21 @@ export class Zombies {
           }
         }
       }
+      // dog lunge: bite whoever it slams into, once
+      if (t === ZTYPE.DOG && !z.bit) {
+        for (const h of this.humansCache) {
+          const s = h.state;
+          if (Math.hypot(s.x - z.x, s.z - z.z) < 1.3 && z.y > s.y - 0.4 && z.y < s.y + 1.3 && this.canReach(z, h)) {
+            z.bit = true;
+            z.vx *= 0.25;
+            z.vz *= 0.25;
+            g.damagePlayer(h, def.dmg * 1.5 * (1 + 0.07 * (g.day - 1)), { kind: KILLER.ZOMBIE, ztype: t, x: z.x, z: z.z });
+            g.impact(IMPACT.BLOOD, s.x, s.y + 0.7, s.z);
+            g.sound(SOUND.DOG_SNARL, z.x, z.y + 0.6, z.z, 30);
+            break;
+          }
+        }
+      }
       if (z.y <= gy) {
         z.y = gy;
         z.vy = 0;
@@ -876,6 +1059,14 @@ export class Zombies {
         z.state = 0;
         z.anim = ZANIM.IDLE;
         z.animT = 0.3;
+        if (t === ZTYPE.DOG) {
+          z.animT = 0.15;
+          z.attackCd = Math.max(z.attackCd, 0.35);
+          if (z.bit) {
+            z.state = 7;
+            z.stateT = 0.5 + g.rng() * 0.6;
+          }
+        }
       }
       return true;
     }
@@ -976,7 +1167,7 @@ export class Zombies {
       }
       return true;
     }
-    if (z.state === 7) return false;
+    if (z.state === 7) return false; // dog hit-and-run: normal movement
 
     // ---- trigger specials (state 0)
     if (!target) return false;
@@ -1003,6 +1194,12 @@ export class Zombies {
       case ZTYPE.ROPER:
         if (z.specialCd <= 0 && z.los && dist < def.ropeRange && dist > 5 && !target.state.pulled && !target.state.pinned) {
           windup(0.7, 3, SOUND.ROPER_SHOOT);
+          return true;
+        }
+        break;
+      case ZTYPE.DOG:
+        if (z.specialCd <= 0 && z.los && dist < def.lungeRange && dist > 2.4 && z.vy > -1 && Math.abs(ty - z.y) < 2.5) {
+          windup(0.3, 8, SOUND.DOG_BARK);
           return true;
         }
         break;
@@ -1139,6 +1336,27 @@ export class Zombies {
           c.lob(PROJ.ACID, z, z.x, z.y + def.headY, z.z, z.x + rx, s.y, z.z + rz, T, 12);
         }
         z.specialCd = def.spitRate + 2 + g.rng() * 2;
+        break;
+      }
+      case 8: {
+        // dog lunge: a low, fast leap that lands at the survivor's feet
+        if (!target) return;
+        const s = target.state;
+        const T = Math.max(0.28, Math.min(0.5, dist / 11));
+        let ax = s.x + s.vx * T * 0.5 - z.x;
+        let az = s.z + s.vz * T * 0.5 - z.z;
+        const l = Math.hypot(ax, az) || 1;
+        const k = Math.max(0, l - 0.6) / l;
+        ax *= k;
+        az *= k;
+        z.vx = ax / T;
+        z.vz = az / T;
+        z.vy = (s.y - z.y + 0.5 * GRAV * T * T) / T;
+        z.yaw = Math.atan2(-ax, -az);
+        z.state = 2;
+        z.anim = ZANIM.AIRBORNE;
+        z.bit = false;
+        z.specialCd = 3 + g.rng() * 2.5;
         break;
       }
       case 99:

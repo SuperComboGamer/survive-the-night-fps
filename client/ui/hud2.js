@@ -331,7 +331,7 @@ export class Summary {
 export function nextNightText(night) {
   const n = night;
   const adds = [];
-  if (n === 2) adds.push('spitters', 'boomers', 'shades (they only move in the dark)');
+  if (n === 2) adds.push('spitters', 'boomers', 'zombie dog packs', 'shades (they only move in the dark)');
   if (n === 3) adds.push('leapers', 'bats', 'a boss');
   if (n === 4) adds.push('ropers', 'tanks');
   if (n >= 5 && n % 3 === 0) adds.push('a boss');

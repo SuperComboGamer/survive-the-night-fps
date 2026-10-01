@@ -45,6 +45,9 @@ import {
   SEARCH_TIME,
   ENGINE_START_TIME,
   EYE_HEIGHT,
+  MAP_HALF,
+  HORDE_SPAWN_MIN,
+  HORDE_SPAWN_MAX,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -65,6 +68,7 @@ import {
   FUEL_SPOTS,
   SCHEMATICS,
   SCHEM_BIT,
+  CONT,
   CONT_DEFS,
   CONT_TABLES,
   CONSUMABLES,
@@ -92,6 +96,11 @@ import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
+const CAR_ALARM_CHANCE = 0.05;
+const CAR_ALARM_MIN_ZOMBIES = 6;
+const CAR_ALARM_MAX_ZOMBIES = 7;
+const CAR_ALARM_SPAWN_MIN = 62;
+const CAR_ALARM_SPAWN_MAX = 86;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
 const CRATE_TABLE = [
   [ITEM.AMMO_762, 5, 30, 60],
@@ -680,6 +689,7 @@ export class Game {
         [ZTYPE.RUNNER, 16 + n * 2 + sp * 6],
         [ZTYPE.SPITTER, n >= 2 ? 6 + sp * 4 : 0],
         [ZTYPE.BOOMER, n >= 2 ? 6 + sp * 3 : 0],
+        [ZTYPE.DOG, n >= 2 ? 3 + sp * 2 : 0], // each pick is a pack of 2-3
         [ZTYPE.LEAPER, n >= 3 ? 6 + sp * 4 : 0],
         [ZTYPE.BAT, n >= 3 ? 7 : 0],
         [ZTYPE.ROPER, n >= 4 ? 5 + sp * 3 : 0],
@@ -694,9 +704,13 @@ export class Game {
           r -= wgt;
           if (r <= 0) {
             // only so many shades a night: each one ties up a light (or a survivor holding a beam on it)
-            if (t !== ZTYPE.SHADE) q.push(t);
-            else if (shades++ < shadeCap) q.push(t);
-            else q.push(ZTYPE.RUNNER);
+            if (t === ZTYPE.SHADE && shades++ >= shadeCap) {
+              q.push(ZTYPE.RUNNER);
+              break;
+            }
+            const k = t === ZTYPE.DOG ? 2 + (this.rng() < 0.5 ? 1 : 0) : 1;
+            for (let j = 0; j < k; j++) q.push(t);
+            i += k - 1;
             break;
           }
         }
@@ -1379,6 +1393,79 @@ export class Game {
       c.schem = 0;
     }
     this.sound(SOUND.SEARCH, c.x, c.y, c.z, 20);
+    if (c.ctype === CONT.TRUNK && this.rng() < CAR_ALARM_CHANCE) this.triggerCarAlarm(p, c);
+  }
+
+  triggerCarAlarm(p, c) {
+    const humans = this.humans();
+    if (!p.alive || p.zombie || !humans.length) return;
+    const count = CAR_ALARM_MIN_ZOMBIES + Math.floor(this.rng() * (CAR_ALARM_MAX_ZOMBIES - CAR_ALARM_MIN_ZOMBIES + 1));
+    this.makeZombieRoom(count, humans);
+    if (this.zombies.length >= MAX_ZOMBIES_ALIVE) return;
+    this.notify(NOTIFY.CAR_ALARM, 0);
+    this.sound(SOUND.HORDE_HORN, c.x, c.y, c.z, 140);
+    let spawned = 0;
+    for (let i = 0; i < count && this.zombies.length < MAX_ZOMBIES_ALIVE; i++) {
+      const sp = this.pickCarAlarmSpawn(p, c, humans);
+      if (!sp) break;
+      const r = this.rng();
+      const type = r < 0.65 ? ZTYPE.WALKER : r < 0.9 ? ZTYPE.RUNNER : this.day >= 2 ? ZTYPE.SPITTER : ZTYPE.RUNNER;
+      const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 6, sp.z + (this.rng() - 0.5) * 6, { horde: true, hpMul: 1 + 0.04 * this.day });
+      if (!z) continue;
+      z.target = p.id;
+      z.targetT = 0.8;
+      z.aggroId = p.id;
+      z.aggroT = 30;
+      z.alertX = p.state.x;
+      z.alertZ = p.state.z;
+      z.alertT = 20;
+      spawned++;
+    }
+    if (spawned) this.globalDirty = true;
+  }
+
+  // the day's wanderers fill most of the zombie cap: idle ones far out of everyone's sight drift off so n more fit
+  // (not the dog packs: the day's upkeep would only spawn them again)
+  makeZombieRoom(n, humans) {
+    let over = this.zombies.length + n - MAX_ZOMBIES_ALIVE;
+    if (over <= 0) return;
+    const far = [];
+    for (const z of this.zombies) {
+      if (z.dead || z.horde || z.boss || z.pack || z.target) continue;
+      let md = Infinity;
+      for (const h of humans) md = Math.min(md, Math.hypot(h.state.x - z.x, h.state.z - z.z));
+      if (md > 150) far.push({ z, md });
+    }
+    far.sort((a, b) => b.md - a.md);
+    for (const { z } of far) {
+      if (over-- <= 0) break;
+      this._listRemove(this.zombies, z);
+      this.removeEntity(z);
+    }
+  }
+
+  pickCarAlarmSpawn(p, c, humans) {
+    const s = p.state;
+    const lim = MAP_HALF - 14;
+    const behind = s.yaw + Math.PI;
+    for (let tries = 0; tries < 20; tries++) {
+      const a = behind + (this.rng() - 0.5) * Math.PI;
+      const d = CAR_ALARM_SPAWN_MIN + this.rng() * (CAR_ALARM_SPAWN_MAX - CAR_ALARM_SPAWN_MIN);
+      const x = s.x - Math.sin(a) * d;
+      const z = s.z - Math.cos(a) * d;
+      if (Math.abs(x) > lim || Math.abs(z) > lim) continue;
+      if (this.world.isDeepWater(x, z) || this.nav.isBlocked(x, z)) continue;
+      let ok = true;
+      for (const h of humans) {
+        const hs = h.state;
+        if (Math.hypot(hs.x - x, hs.z - z) < CAR_ALARM_SPAWN_MIN * 0.75) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return { x, z };
+    }
+    return this.zm.pickSpawnAround(c.x, c.z, humans, CAR_ALARM_SPAWN_MIN, CAR_ALARM_SPAWN_MAX);
   }
 
   pickupEvent(p, item, count) {
@@ -1847,7 +1934,25 @@ export class Game {
       case 'spawn': {
         const t = +args[1];
         const n = Math.min(20, +(args[2] || 1));
-        for (let i = 0; i < n; i++) this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t]?.boss });
+        const pack = this.zm.newPack();
+        for (let i = 0; i < n; i++) this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t]?.boss, pack });
+        break;
+      }
+      case 'den': {
+        // teleport 15 m from the nearest zombie dog pack's den (dense forest)
+        let best = null;
+        for (const z of this.zombies) {
+          if (z.dead || !z.pack || z.horde) continue;
+          if (!best || Math.hypot(z.homeX - s.x, z.homeZ - s.z) < Math.hypot(best.homeX - s.x, best.homeZ - s.z)) best = z;
+        }
+        if (best) {
+          const a = this.rng() * Math.PI * 2;
+          s.x = best.homeX + Math.sin(a) * 15;
+          s.z = best.homeZ + Math.cos(a) * 15;
+          s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+          s.vx = s.vy = s.vz = 0;
+          this.fillHistory(p);
+        }
         break;
       }
       case 'supply': {
@@ -1953,13 +2058,16 @@ export class Game {
     if (!humans.length) return 0;
     const alive = this.zombies.length;
     if (alive >= MAX_ZOMBIES_ALIVE) return 0;
-    const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans) : this.zm.pickHordeSpawn(humans);
+    // a group led by dogs comes out of the woods
+    const dogs = type0Queue[type0Queue.length - 1] === ZTYPE.DOG;
+    const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, dogs) : this.zm.pickHordeSpawn(humans, dogs);
     if (!sp) return 0;
     const group = 3 + Math.floor(this.rng() * 3);
+    const pack = this.zm.newPack(); // the group's dogs hunt as one pack
     let n = 0;
     for (let i = 0; i < group && type0Queue.length && alive + i < MAX_ZOMBIES_ALIVE; i++) {
       const type = type0Queue.pop();
-      const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 8, sp.z + (this.rng() - 0.5) * 8, { horde: true, hpMul: this.hordeHpMul });
+      const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 8, sp.z + (this.rng() - 0.5) * 8, { horde: true, hpMul: this.hordeHpMul, pack });
       if (!z) type0Queue.push(type);
       else {
         n++;
@@ -2066,7 +2174,7 @@ export class Game {
         const q = [];
         for (let i = 0; i < 5; i++) {
           const r = this.rng();
-          q.push(r < 0.45 ? ZTYPE.WALKER : r < 0.72 ? ZTYPE.RUNNER : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 ? ZTYPE.TANK : ZTYPE.RUNNER);
+          q.push(r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 ? ZTYPE.TANK : ZTYPE.RUNNER);
         }
         this.spawnHordeGroup(q, car);
       }
