@@ -1,11 +1,11 @@
 // In-process server smoke test: fake clients join, meet the cat, get hunted by a zombie dog pack, walk around,
-// search containers, chop trees,
+// search containers, trip a car alarm, chop trees,
 // build (incl. door boards), go down + get revived, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
 import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND } from '../shared/defs.js';
+import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT } from '../shared/defs.js';
 import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { raycastWorld } from '../shared/collision.js';
 
@@ -233,6 +233,31 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('hold progress reported', A.self.holdKind === HOLD.SEARCH && A.self.holdProgress > 0);
   run(30);
   check('container searched', c.state === 1 && A.pickups.length > before, `pickups ${A.pickups.length - before}`);
+}
+
+// a trunk's car alarm goes off: the ambush comes from behind the searcher, even with the day's valley near the zombie cap
+{
+  const p = A.p();
+  const s = p.state;
+  const [x0, z0] = [s.x, s.z];
+  const trunk = game.caches.find((c) => c.ctype === CONT.TRUNK);
+  A.tp(trunk.x + 1.5, trunk.z);
+  run(3);
+  const had = new Set(game.zombies);
+  const notes = A.notes.length;
+  game.triggerCarAlarm(p, trunk);
+  const amb = game.zombies.filter((z) => !had.has(z));
+  // the rear half-plane, give or take the scatter around each spawn point
+  const behind = amb.filter((z) => (z.x - s.x) * -Math.sin(s.yaw) + (z.z - s.z) * -Math.cos(s.yaw) < 8).length;
+  const dist = amb.map((z) => Math.hypot(z.x - s.x, z.z - s.z));
+  run(2);
+  check('car alarm ambush hunts the searcher', (amb.length === 6 || amb.length === 7) && amb.every((z) => z.horde && z.target === p.id), `${amb.length} zombies`);
+  check('ambush comes from behind, out of sight', behind === amb.length && Math.min(...dist) > 50, `${behind}/${amb.length} behind, ${Math.min(...dist).toFixed(0)}-${Math.max(...dist).toFixed(0)} m`);
+  check('car alarm announced', A.notes.slice(notes).some(([m]) => m === NOTIFY.CAR_ALARM));
+  check('zombie cap holds', game.zombies.length <= 120, `${game.zombies.length} zombies`);
+  for (const z of amb) game.combat.damageZombie(z, 1e6, p, {});
+  A.tp(x0, z0);
+  run(3);
 }
 
 // chop a tree

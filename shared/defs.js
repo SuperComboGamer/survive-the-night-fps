@@ -446,6 +446,7 @@ export const NOTIFY = {
   SUPPLIES_DONE: 35, // every supply installed: start the engine when ready
   NEED_SUPPLIES: 36,
   DOOR_ONLY: 37, // door boards must go in a doorway
+  CAR_ALARM: 38,
 };
 
 // killer kinds for killfeed
