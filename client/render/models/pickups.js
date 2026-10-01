@@ -294,6 +294,22 @@ BUILD[ITEM.BATTERY] = (b, r) => {
   }
 };
 
+// ring-pull tin: blue paper label with a yellow band, rolled rims
+const TIN_UV = [0.2, 0.2]; // a clean patch of the metal texture (the default random offset can land on a rust chip)
+function tunaTin(b, R, H) {
+  b.cyl('chrome', R, R, H, 14, { p: [0, H / 2, 0], uvOff: TIN_UV });
+  b.cyl('cloth', R + 0.0008, R + 0.0008, H * 0.68, 14, { p: [0, H / 2, 0], open: true, c: [0.16, 0.34, 0.56] });
+  b.cyl('cloth', R + 0.0014, R + 0.0014, H * 0.18, 14, { p: [0, H * 0.56, 0], open: true, c: [0.86, 0.74, 0.3] });
+  for (const y of [0.002, H - 0.002]) b.torus('chrome', R, 0.002, 4, 14, PI * 2, { p: [0, y, 0], r: [PI / 2, 0, 0], uvOff: TIN_UV });
+  b.torus('steel', 0.011, 0.002, 4, 10, PI * 2, { p: [R * 0.45, H + 0.002, 0], r: [PI / 2, 0, 0] });
+  b.box('steel', 0.014, 0.002, 0.008, { p: [R * 0.14, H + 0.001, 0] });
+}
+BUILD[ITEM.TUNA] = (b) => {
+  const R = 0.055, H = 0.04;
+  b.group({ p: [-0.012, 0, 0], r: [0, 0.4, 0] }, () => tunaTin(b, R, H));
+  b.group({ p: [0.014, H, 0.01], r: [0, -0.9, 0] }, () => tunaTin(b, R, H));
+};
+
 BUILD[ITEM.TORCH] = (b) => {
   b.group({ p: [0, 0.03, 0], r: [0, 0.3, PI / 2 - 0.08] }, () => {
     b.cyl('wood', 0.018, 0.022, 0.5, 6, { p: [0, 0, 0], grain: true, c: [0.7, 0.62, 0.52] });

@@ -26,6 +26,7 @@ export const ITEM = {
   PAINKILLERS: 22,
   BATTERY: 23,
   TORCH: 24,
+  TUNA: 25,
   // throwables
   MOLOTOV: 30,
   PIPEBOMB: 31,
@@ -98,6 +99,7 @@ export const ITEM_DEFS = {
   [ITEM.PAINKILLERS]: { name: 'Painkillers', cat: 'cons', stack: 5, color: 0xf0f0f0, desc: 'Heals 15 HP, restores stamina.' },
   [ITEM.BATTERY]: { name: 'Batteries', cat: 'cons', stack: 5, color: 0xd4b106, desc: 'Recharges your flashlight.' },
   [ITEM.TORCH]: { name: 'Torch', cat: 'cons', stack: 10, color: 0xe07b20, desc: 'Place with the hammer [5] to light your base.' },
+  [ITEM.TUNA]: { name: 'Canned Tuna', cat: 'cons', stack: 5, color: 0x3f6f9a, desc: 'A tin of tuna in oil. Heals 30 HP, restores stamina.' },
 
   [ITEM.MOLOTOV]: { name: 'Molotov', cat: 'throw', stack: 3, color: 0xd35400, desc: 'Sets an area ablaze.' },
   [ITEM.PIPEBOMB]: { name: 'Pipe Bomb', cat: 'throw', stack: 3, color: 0x566573, desc: 'Beeps, lures the horde, then a big boom.' },
@@ -187,6 +189,7 @@ export const CONSUMABLES = {
   [ITEM.MEDKIT]: { heal: 80, time: 3.5 },
   [ITEM.PAINKILLERS]: { heal: 15, stamina: 100, time: 1.0 },
   [ITEM.BATTERY]: { flashlight: 100, time: 1.0 },
+  [ITEM.TUNA]: { heal: 30, stamina: 100, time: 2.5, food: true }, // food: eaten (own sounds, first-person tin)
 };
 
 // ---------------------------------------------------------------- structures
@@ -395,6 +398,7 @@ export const SOUND = {
   DOG_YELP: 64,
   CROSSBOW: 65,
   CROSSBOW_COCK: 66,
+  EAT: 67,
 };
 
 export const EVT = {
@@ -510,21 +514,21 @@ export const LOOT_TABLES = {
   [ZONE.CAMP]: [[ITEM.CLOTH, 6, 2, 3], [ITEM.STICK, 4, 2, 4], [ITEM.WOOD, 3, 1, 3]],
   [ZONE.FOREST]: [[ITEM.STICK, 8, 2, 5], [ITEM.WOOD, 4, 1, 3], [ITEM.CLOTH, 7, 1, 3], [ITEM.HERB, 3, 1, 2], [ITEM.SCRAP, 1, 1, 2], [ITEM.AMMO_9MM, 1, 6, 12]],
   [ZONE.BARN]: [[ITEM.WOOD, 8, 2, 5], [ITEM.NAILS, 8, 4, 10], [ITEM.ROPE, 4, 1, 2], [ITEM.CLOTH, 5, 1, 3], [ITEM.WIRE, 4, 1, 2], [ITEM.LEATHER, 3, 1, 2], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.BAT, 1, 1, 1], [ITEM.ALCOHOL, 2, 1, 1], [ITEM.HAMMER, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
-  [ZONE.DOCK]: [[ITEM.ROPE, 6, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.CLOTH, 4, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.CHEM, 2, 1, 2], [ITEM.NAILS, 3, 3, 8]],
-  [ZONE.GAS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.CHEM, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.NAILS, 3, 4, 10], [ITEM.PISTOL, 1, 1, 1]],
+  [ZONE.DOCK]: [[ITEM.ROPE, 6, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.CLOTH, 4, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.CHEM, 2, 1, 2], [ITEM.NAILS, 3, 3, 8], [ITEM.TUNA, 4, 1, 2]],
+  [ZONE.GAS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.CHEM, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.NAILS, 3, 4, 10], [ITEM.PISTOL, 1, 1, 1], [ITEM.TUNA, 3, 1, 2]],
   [ZONE.RANGER]: [[ITEM.GUNPARTS, 4, 1, 1], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.BATTERY, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.MEDKIT, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.AMMO_BOLTS, 3, 2, 5]],
-  [ZONE.CABINS]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.POWDER, 4, 2, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1], [ITEM.AMMO_BOLTS, 3, 2, 5], [ITEM.CROSSBOW, 1, 1, 1]],
+  [ZONE.CABINS]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.POWDER, 4, 2, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1], [ITEM.AMMO_BOLTS, 3, 2, 5], [ITEM.CROSSBOW, 1, 1, 1], [ITEM.TUNA, 3, 1, 2]],
   [ZONE.MILITARY]: [[ITEM.AMMO_762, 7, 15, 30], [ITEM.PLATE, 4, 1, 1], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.POWDER, 5, 3, 8], [ITEM.WIRE, 4, 1, 3], [ITEM.MEDKIT, 3, 1, 1], [ITEM.PIPEBOMB, 2, 1, 1], [ITEM.SCRAP, 3, 2, 4], [ITEM.AMMO_556, 5, 20, 40], [ITEM.AK47, 1, 1, 1], [ITEM.M4A1, 1, 1, 1], [ITEM.KEVLAR, 1, 1, 1]],
   [ZONE.CHURCH]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.HERB, 5, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.TORCH, 3, 1, 2], [ITEM.AMMO_9MM, 2, 6, 12]],
-  [ZONE.MOTEL]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.TAPE, 3, 1, 1], [ITEM.CHEM, 3, 1, 1], [ITEM.PISTOL, 1, 1, 1], [ITEM.FLARE, 2, 1, 2]],
+  [ZONE.MOTEL]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.TAPE, 3, 1, 1], [ITEM.CHEM, 3, 1, 1], [ITEM.PISTOL, 1, 1, 1], [ITEM.FLARE, 2, 1, 2], [ITEM.TUNA, 3, 1, 1]],
   [ZONE.SAWMILL]: [[ITEM.WOOD, 10, 3, 6], [ITEM.NAILS, 8, 6, 12], [ITEM.STICK, 5, 3, 6], [ITEM.ROPE, 3, 1, 2], [ITEM.SCRAP, 4, 1, 3], [ITEM.TAPE, 2, 1, 1], [ITEM.WIRE, 3, 1, 2], [ITEM.HAMMER, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1]],
-  [ZONE.TRAILERS]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.TAPE, 3, 1, 1], [ITEM.SCRAP, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.MOLOTOV, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
-  [ZONE.VILLAGE]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.HERB, 2, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.MP5, 1, 1, 1]],
-  [ZONE.CAMPGROUND]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ROPE, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.STICK, 4, 2, 5], [ITEM.BATTERY, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.AMMO_SHELLS, 2, 4, 6], [ITEM.KNIFE, 1, 1, 1], [ITEM.AMMO_BOLTS, 2, 2, 4]],
+  [ZONE.TRAILERS]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.TAPE, 3, 1, 1], [ITEM.SCRAP, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.MOLOTOV, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1], [ITEM.TUNA, 4, 1, 2]],
+  [ZONE.VILLAGE]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.HERB, 2, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.TUNA, 3, 1, 2]],
+  [ZONE.CAMPGROUND]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ROPE, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.STICK, 4, 2, 5], [ITEM.BATTERY, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.AMMO_SHELLS, 2, 4, 6], [ITEM.KNIFE, 1, 1, 1], [ITEM.AMMO_BOLTS, 2, 2, 4], [ITEM.TUNA, 4, 1, 2]],
   [ZONE.CHECKPOINT]: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 5, 10, 20], [ITEM.WIRE, 5, 1, 3], [ITEM.POWDER, 4, 2, 6], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.AMMO_556, 5, 15, 30], [ITEM.M4A1, 1, 1, 1], [ITEM.MP5, 1, 1, 1]],
   [ZONE.QUARRY]: [[ITEM.SCRAP, 8, 2, 4], [ITEM.POWDER, 6, 3, 8], [ITEM.CHEM, 4, 1, 2], [ITEM.WIRE, 4, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 3, 1, 2], [ITEM.HAMMER, 1, 1, 1]],
   [ZONE.RELAY]: [[ITEM.BATTERY, 6, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_556, 2, 10, 20], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2]],
-  [ZONE.ROADSIDE]: [[ITEM.SCRAP, 6, 1, 2], [ITEM.CLOTH, 8, 2, 3], [ITEM.TAPE, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.BANDAGE, 3, 1, 1], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.NAILS, 3, 3, 8], [ITEM.FLARE, 2, 1, 1], [ITEM.CHEM, 2, 1, 1]],
+  [ZONE.ROADSIDE]: [[ITEM.SCRAP, 6, 1, 2], [ITEM.CLOTH, 8, 2, 3], [ITEM.TAPE, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.BANDAGE, 3, 1, 1], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.NAILS, 3, 3, 8], [ITEM.FLARE, 2, 1, 1], [ITEM.CHEM, 2, 1, 1], [ITEM.TUNA, 2, 1, 1]],
 };
 
 // candidate places for each car supply; every game the server hides each supply in one of them
@@ -544,14 +548,14 @@ export const CAR_PART_ZONES = SUPPLY_ZONES; // (legacy name)
 export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11 };
 export const CONT_TABLES = {
   military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2], [ITEM.M4A1, 1, 1, 1]],
-  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1]],
-  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
+  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.TUNA, 2, 1, 1]],
+  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.TUNA, 3, 1, 1]],
   locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1]],
-  cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1]],
+  cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1], [ITEM.TUNA, 3, 1, 2]],
   toolbox: [[ITEM.NAILS, 8, 6, 14], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 3, 1, 2], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
   dumpster: [[ITEM.CLOTH, 8, 2, 4], [ITEM.SCRAP, 5, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.STICK, 3, 2, 4], [ITEM.TAPE, 2, 1, 1], [ITEM.BATTERY, 1, 1, 1]],
   logpile: [[ITEM.WOOD, 8, 3, 6], [ITEM.STICK, 5, 3, 6], [ITEM.NAILS, 2, 3, 6]],
-  fridge: [[ITEM.ALCOHOL, 6, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.HERB, 3, 1, 2], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BANDAGE, 2, 1, 1]],
+  fridge: [[ITEM.ALCOHOL, 6, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.HERB, 3, 1, 2], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BANDAGE, 2, 1, 1], [ITEM.TUNA, 5, 1, 2]],
 };
 export const CONT_DEFS = {
   [CONT.CRATE]: { name: 'Crate', table: null, rolls: [2, 3] },
