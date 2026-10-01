@@ -470,6 +470,11 @@ export class Game {
       case NOTIFY.NEED_SUPPLIES:
         ui.notify('The car still needs supplies', 'warning', 2.5);
         break;
+      case NOTIFY.CAR_ALARM:
+        ui.notify('CAR ALARM!', 'danger', 4);
+        ui.notify('The noise is drawing the dead. Move!', 'sub', 4);
+        a.stinger?.('boss');
+        break;
       case NOTIFY.ENGINE_START:
         ui.notify('THE FINAL STAND', 'big', 5);
         ui.notify('The engine is warming up. Every corpse in the valley heard it. Hold the car!', 'sub', 6);

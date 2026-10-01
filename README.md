@@ -28,15 +28,15 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (random world seed).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>`,
-`/spawn <ztype> <n>`, `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`, `/where`, `/cat` (brings the
-stray cat over)).
+`/spawn <ztype> <n>` (`/spawn 10 3`: a zombie dog pack), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`,
+`/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
 | `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and runs `sim-smoke` |
-| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
+| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -54,7 +54,8 @@ container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
 `/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
 `&hurt=1` a hit flinch, `&vox=0` a growl);
-`/sandbox/models-test.html?cats=grid` shows the cat's poses).
+`/sandbox/models-test.html?cats=grid` shows the cat's poses; `?grid=10`, `?variants=10` and `?film=10` show the
+zombie dog's poses, coats and gait).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per
@@ -126,9 +127,14 @@ https://www.survivethenightgame.com.
   spike traps, barbed wire, torches and a campfire. At dawn the sun burns the horde and a card sums up
   the night (kills, walls lost, downed, revived, lost).
 - **Every horde is harder:** more zombies (scaled by night *and* player count), more health and damage,
-  and new specials: spitters & boomers (night 2), leapers & bats (3), ropers & tanks (4), and a boss every
+  and new specials: spitters, boomers & zombie dog packs (night 2), leapers & bats (3), ropers & tanks (4), and a boss every
   third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages and
   bat swarms). Stragglers far from the team are brought back into the fight.
+- **Zombie dogs:** packs of two to four den in the thickest woods from day one (more of them each day). They
+  catch your scent from half again as far off as the dead, and the first to find you howls and
+  brings the whole pack. They fan out to come at you from the sides, crouch and lunge for a bite, peel away and
+  circle back in. Fast but fragile (a couple of pistol rounds, one to the head); from night 2 packs also run with
+  the horde, breaking from the treeline.
 - **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
   MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and

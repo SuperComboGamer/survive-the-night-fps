@@ -270,20 +270,25 @@ export const ZTYPE = {
   BAT: 7,
   BOSS_ABOMINATION: 8,
   BOSS_HIVEQUEEN: 9,
+  DOG: 10,
 };
 
 // speed m/s, hp, dmg per hit, attack rate s, radius, height (for hitboxes), headR, headY
+// common: rank-and-file (plain loot table, no killfeed line). Quadrupeds: headFwd = head sphere this far
+// ahead of the body, bodyTop = top of the body cylinder (default headY - headR).
 export const ZOMBIE_DEFS = {
-  [ZTYPE.WALKER]: { name: 'Walker', hp: 110, speed: 1.9, dmg: 11, rate: 1.1, range: 1.55, radius: 0.38, height: 1.75, headY: 1.58, headR: 0.17, structDmg: 22, loot: 0.28, minNight: 1 },
-  [ZTYPE.RUNNER]: { name: 'Runner', hp: 75, speed: 5.6, dmg: 8, rate: 0.7, range: 1.5, radius: 0.34, height: 1.72, headY: 1.55, headR: 0.16, structDmg: 12, loot: 0.25, minNight: 1 },
+  [ZTYPE.WALKER]: { name: 'Walker', hp: 110, speed: 1.9, dmg: 11, rate: 1.1, range: 1.55, radius: 0.38, height: 1.75, headY: 1.58, headR: 0.17, structDmg: 22, loot: 0.28, common: true, minNight: 1 },
+  [ZTYPE.RUNNER]: { name: 'Runner', hp: 75, speed: 5.6, dmg: 8, rate: 0.7, range: 1.5, radius: 0.34, height: 1.72, headY: 1.55, headR: 0.16, structDmg: 12, loot: 0.25, common: true, minNight: 1 },
   [ZTYPE.TANK]: { name: 'Tank', hp: 2200, speed: 2.5, dmg: 38, rate: 1.6, range: 2.4, radius: 0.95, height: 2.8, headY: 2.45, headR: 0.3, structDmg: 260, loot: 1, knock: 11, minNight: 4 },
   [ZTYPE.SPITTER]: { name: 'Spitter', hp: 95, speed: 2.3, dmg: 8, rate: 1.1, range: 1.5, radius: 0.36, height: 1.85, headY: 1.68, headR: 0.17, structDmg: 15, loot: 0.5, spitRange: 22, spitRate: 3.5, minNight: 2 },
   [ZTYPE.LEAPER]: { name: 'Leaper', hp: 90, speed: 4.2, dmg: 9, rate: 0.5, range: 1.5, radius: 0.36, height: 1.3, headY: 1.1, headR: 0.17, structDmg: 12, loot: 0.5, leapRange: 14, minNight: 3 },
   [ZTYPE.ROPER]: { name: 'Roper', hp: 150, speed: 2.1, dmg: 6, rate: 0.5, range: 1.6, radius: 0.37, height: 1.9, headY: 1.72, headR: 0.17, structDmg: 15, loot: 0.6, ropeRange: 24, minNight: 4 },
   [ZTYPE.BOOMER]: { name: 'Boomer', hp: 70, speed: 1.7, dmg: 0, rate: 1, range: 2.2, radius: 0.6, height: 1.8, headY: 1.62, headR: 0.2, structDmg: 0, loot: 0.6, blastRadius: 5.5, blastDmg: 45, minNight: 2 },
-  [ZTYPE.BAT]: { name: 'Bat', hp: 28, speed: 7.5, dmg: 5, rate: 0.9, range: 1.3, radius: 0.3, height: 0.4, headY: 0.2, headR: 0.2, structDmg: 0, loot: 0.08, flying: true, minNight: 3 },
+  [ZTYPE.BAT]: { name: 'Bat', hp: 28, speed: 7.5, dmg: 5, rate: 0.9, range: 1.3, radius: 0.3, height: 0.4, headY: 0.2, headR: 0.2, structDmg: 0, loot: 0.08, flying: true, common: true, minNight: 3 },
   [ZTYPE.BOSS_ABOMINATION]: { name: 'The Abomination', hp: 9000, speed: 3.0, dmg: 55, rate: 1.8, range: 3.4, radius: 1.5, height: 4.2, headY: 3.7, headR: 0.5, structDmg: 600, loot: 1, knock: 16, boss: true, minNight: 3 },
   [ZTYPE.BOSS_HIVEQUEEN]: { name: 'The Hive Queen', hp: 7500, speed: 2.4, dmg: 35, rate: 1.4, range: 3.0, radius: 1.3, height: 3.6, headY: 3.1, headR: 0.45, structDmg: 300, loot: 1, knock: 8, boss: true, spitRange: 30, spitRate: 1.6, minNight: 6 },
+  // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier
+  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2 },
 };
 
 // zombie animation states (sent over the wire, 4 bits)
@@ -384,8 +389,12 @@ export const SOUND = {
   MP5: 58,
   DB_SHOTGUN: 59,
   CAT_MEOW: 60,
-  CROSSBOW: 61,
-  CROSSBOW_COCK: 62,
+  DOG_BARK: 61,
+  DOG_HOWL: 62,
+  DOG_SNARL: 63,
+  DOG_YELP: 64,
+  CROSSBOW: 65,
+  CROSSBOW_COCK: 66,
 };
 
 export const EVT = {
@@ -447,6 +456,7 @@ export const NOTIFY = {
   SUPPLIES_DONE: 35, // every supply installed: start the engine when ready
   NEED_SUPPLIES: 36,
   DOOR_ONLY: 37, // door boards must go in a doorway
+  CAR_ALARM: 38,
 };
 
 // killer kinds for killfeed
