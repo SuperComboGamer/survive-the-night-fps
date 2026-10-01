@@ -133,10 +133,13 @@ https://www.survivethenightgame.com.
   MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
   in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
+  The **crossbow** is the quiet one: a single heavy bolt that only the dead within a few metres hear (a
+  gunshot carries 45-70 m), paid for with a slow re-cock after every shot. It needs no schematic and no
+  gunpowder - rope, sticks and scrap at the workbench, and more sticks and scrap for bolts.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
-  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
+  for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
