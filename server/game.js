@@ -1383,10 +1383,12 @@ export class Game {
 
   triggerCarAlarm(p, c) {
     const humans = this.humans();
-    if (!p.alive || p.zombie || !humans.length || this.zombies.length >= MAX_ZOMBIES_ALIVE) return;
+    if (!p.alive || p.zombie || !humans.length) return;
+    const count = CAR_ALARM_MIN_ZOMBIES + Math.floor(this.rng() * (CAR_ALARM_MAX_ZOMBIES - CAR_ALARM_MIN_ZOMBIES + 1));
+    this.makeZombieRoom(count, humans);
+    if (this.zombies.length >= MAX_ZOMBIES_ALIVE) return;
     this.notify(NOTIFY.CAR_ALARM, 0);
     this.sound(SOUND.HORDE_HORN, c.x, c.y, c.z, 140);
-    const count = CAR_ALARM_MIN_ZOMBIES + Math.floor(this.rng() * (CAR_ALARM_MAX_ZOMBIES - CAR_ALARM_MIN_ZOMBIES + 1));
     let spawned = 0;
     for (let i = 0; i < count && this.zombies.length < MAX_ZOMBIES_ALIVE; i++) {
       const sp = this.pickCarAlarmSpawn(p, c, humans);
@@ -1405,6 +1407,26 @@ export class Game {
       spawned++;
     }
     if (spawned) this.globalDirty = true;
+  }
+
+  // the day's wanderers fill most of the zombie cap: idle ones far out of everyone's sight drift off so n more fit
+  // (not the dog packs: the day's upkeep would only spawn them again)
+  makeZombieRoom(n, humans) {
+    let over = this.zombies.length + n - MAX_ZOMBIES_ALIVE;
+    if (over <= 0) return;
+    const far = [];
+    for (const z of this.zombies) {
+      if (z.dead || z.horde || z.boss || z.pack || z.target) continue;
+      let md = Infinity;
+      for (const h of humans) md = Math.min(md, Math.hypot(h.state.x - z.x, h.state.z - z.z));
+      if (md > 150) far.push({ z, md });
+    }
+    far.sort((a, b) => b.md - a.md);
+    for (const { z } of far) {
+      if (over-- <= 0) break;
+      this._listRemove(this.zombies, z);
+      this.removeEntity(z);
+    }
   }
 
   pickCarAlarmSpawn(p, c, humans) {
