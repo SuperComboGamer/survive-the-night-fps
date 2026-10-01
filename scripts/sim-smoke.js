@@ -5,7 +5,7 @@
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
 import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND } from '../shared/defs.js';
+import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONSUMABLES, LOOT_TABLES, CONT_TABLES } from '../shared/defs.js';
 import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { raycastWorld } from '../shared/collision.js';
 
@@ -313,6 +313,24 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   run(8);
   const door = game.structures.find((e) => e.stype === STRUCT.DOOR);
   check('door boards snap into doorway', game.structures.length === n1 + 1 && door && Math.hypot(door.x - o.x, door.z - o.z) < 0.01);
+}
+
+// canned tuna: scavenged food, eaten for health + stamina
+{
+  const p = A.p();
+  const tins = () => p.inv.reduce((n, x) => n + (x && x.item === ITEM.TUNA ? x.count : 0), 0);
+  const c = CONSUMABLES[ITEM.TUNA];
+  check('tuna is in the loot tables', LOOT_TABLES[ZONE.DOCK].some(([item]) => item === ITEM.TUNA) && CONT_TABLES.fridge.some(([item]) => item === ITEM.TUNA));
+  game.giveItem(p, ITEM.TUNA, 2);
+  p.hp = 40;
+  p.lastDamageT = game.time; // holds off passive regeneration for the length of the meal
+  p.state.stamina = 10;
+  A.act(ACT.USE_ITEM, p.inv.findIndex((x) => x && x.item === ITEM.TUNA));
+  run(2);
+  check('eating tuna takes time', A.self.useItem === ITEM.TUNA && p.hp === 40 && tins() === 2);
+  run(Math.ceil(c.time * 20) + 2);
+  check('tuna heals and restores stamina', p.hp === 40 + c.heal && p.state.stamina === 100 && tins() === 1 && !p.useItem, `hp ${p.hp} stamina ${p.state.stamina} tins ${tins()}`);
+  p.hp = p.maxHp;
 }
 
 // ping

@@ -94,6 +94,7 @@ def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08);
 def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06);
 def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1);
 def(S.DOG_YELP, 'dog_yelp', 'zombie', 0.8, 0.08);
+def(S.EAT, 'eat', 'fx', 0.5, 0.05);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -141,6 +142,7 @@ const LOCAL = {
   install_part: { bank: 'install_part', vol: 0.7 },
   campfire_add: { bank: 'campfire_add', vol: 0.6 },
   eat: { bank: 'eat', vol: 0.5 },
+  can_open: { bank: 'can_open', vol: 0.5 },
 };
 
 // stinger(name): cinematic cues. bus 'music' follows the music volume, 'ui' is unaffected by the dead-muffle.

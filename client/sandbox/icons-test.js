@@ -5,7 +5,7 @@ import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
 const q = new URLSearchParams(location.search);
 const NEW_ONLY = q.get('new') === '1';
 if (q.get('big') === '1') document.body.style.cssText += '--cell:220px;--h:96px;';
-const NEW_ITEMS = [ITEM.M4A1, ITEM.MP5, ITEM.DB_SHOTGUN, ITEM.AMMO_556, ITEM.FLARE, ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL];
+const NEW_ITEMS = [ITEM.M4A1, ITEM.MP5, ITEM.DB_SHOTGUN, ITEM.AMMO_556, ITEM.FLARE, ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL, ITEM.TUNA];
 const NEW_STRUCTS = [STRUCT.CAMPFIRE, STRUCT.WORKBENCH, STRUCT.DOOR];
 const NEW_GLYPHS = ['compass', 'map', 'ping', 'wave', 'search', 'engine', 'fuel', 'downed', 'lock', 'unlock', 'blueprint', 'axe', 'container', 'flag', 'wrench', 'eyeOff', 'arrowRight'];
 

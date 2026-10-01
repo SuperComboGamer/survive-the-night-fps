@@ -96,7 +96,7 @@ https://www.survivethenightgame.com.
 | M | Field map |
 | F | Flashlight (battery drains, recharges when off) |
 | G | Drop current weapon |
-| H | Quick heal (bandage / medkit; a medkit gets you up when downed) |
+| H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
 | Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
 | Enter | Chat |
 | V | Push-to-talk proximity voice |
@@ -119,7 +119,9 @@ https://www.survivethenightgame.com.
   roads and in the woods between them, so every walk passes something worth searching. Melee a tree for
   sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
   automatically when you walk over them. Searched containers partly restock at dawn. Supply planes
-  drop crates marked by red smoke (often carrying a schematic).
+  drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
+  found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
+  your stamina.
 - **Night: board up where you stand.** 45 seconds before dark the horn sounds. There is no base: the
   horde spawns around wherever the survivors are and comes in three waves (wave 1/3, 2/3, 3/3), so the
   team throws up a temporary shelter on the spot - door boards that snap into any doorway (survivors

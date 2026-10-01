@@ -435,6 +435,20 @@ const ITEM_ICONS = {
     40,
     P('M14.2 18H17.8L17 38.6H15Z') + E('M12 12.4H20V18.6H12Z' + rct(12, 14.4, 8, 0.9) + rct(12, 16.4, 8, 0.9)) + flameTop(16, 0.4, 1.05),
   ],
+  // tin seen from above the rim: ring-pull lid, paper label with a fish
+  [ITEM.TUNA]: [
+    40,
+    32,
+    E(
+      'M3 9A17 5.5 0 0 1 37 9V23A17 5.5 0 0 1 3 23Z' +
+        ell(20, 9, 14.8, 4) +
+        ell(20, 9, 13.2, 2.9) +
+        ell(24.5, 9.2, 3.4, 1.2) +
+        'M3 12.5A17 5.5 0 0 0 37 12.5V19.5A17 5.5 0 0 1 3 19.5Z' +
+        'M11 21.1Q16 17.4 22 20.1L27.5 18.4V23.8L22 22.1Q16 24.8 11 21.1Z' +
+        circ(14.4, 20.7, 0.55),
+    ),
+  ],
   // ---------------- ammo
   [ITEM.AMMO_9MM]: [36, 32, round9(4.6) + round9(14.5) + round9(24.4)],
   [ITEM.AMMO_SHELLS]: [36, 34, shell(5) + shell(21)],

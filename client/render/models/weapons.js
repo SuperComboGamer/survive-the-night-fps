@@ -7,7 +7,7 @@
 //   Melee: the handle runs along Z through the fist, blade/bat toward -Z, cutting edge / hammer face toward -Y.
 //   Throwables (molotov, pipebomb, road flare): long axis along +Y (held like a bottle).
 import * as THREE from 'three';
-import { ITEM } from '../../../shared/defs.js';
+import { ITEM, CONSUMABLES } from '../../../shared/defs.js';
 import { WR, CR } from './charTextures.js';
 import {
   MeshBuilder,
@@ -1657,6 +1657,21 @@ function makeKit() {
   return mb.build().geometry;
 }
 
+// opened tin of tuna (food "use" prop): held upright between the palms, lid peeled back off the far rim
+function makeCan() {
+  const mb = new MeshBuilder({ skinned: false, atlas: 'weapon' });
+  const R = 0.043, H = 0.036;
+  mb.seg(0, [0, -H / 2, 0], [0, H / 2, 0], R, R, { region: WR.PLAIN, color: 0xb4b6b2, rs: 14, hs: 1, caps: 1, capScale: 0.02 });
+  mb.seg(0, [0, -H * 0.32, 0], [0, H * 0.32, 0], R + 0.0006, R + 0.0006, { region: WR.PLAIN, color: 0x2c5a8e, rs: 14, hs: 1, caps: 0 });
+  mb.seg(0, [0, -H * 0.06, 0], [0, H * 0.08, 0], R + 0.001, R + 0.001, { region: WR.PLAIN, color: 0xe0c45a, rs: 14, hs: 1, caps: 0 });
+  mb.seg(0, [0, H / 2 - 0.003, 0], [0, H / 2 + 0.0012, 0], R * 0.9, R * 0.9, { region: WR.PLAIN, color: 0xbfa08a, rs: 12, hs: 1, caps: 1, capScale: 0.1 });
+  // lid: hinged at the far rim and bent back past upright, underside to the camera
+  const a = (115 * PI) / 180, r = R * 0.92;
+  const c = [0, H / 2 + Math.sin(a) * r, -R + Math.cos(a) * r], n = [0, Math.cos(a) * 0.0006, -Math.sin(a) * 0.0006];
+  mb.seg(0, [c[0], c[1] - n[1], c[2] - n[2]], [c[0], c[1] + n[1], c[2] + n[2]], r, r, { region: WR.PLAIN, color: 0xc8cac6, rs: 12, hs: 1, caps: 1, capScale: 0.02 });
+  return mb.build().geometry;
+}
+
 export class ViewModel {
   constructor() {
     this.group = new THREE.Group();
@@ -1675,7 +1690,10 @@ export class ViewModel {
     this.scopeOverlay.visible = false;
     this.group.add(this.scopeOverlay);
     this.scoped = false;
-    this.kit = new THREE.Mesh(makeKit(), getViewWeaponMaterial());
+    this.kitGeo = makeKit();
+    this.canGeo = makeCan();
+    this.kitGrip = 0.1; // half the distance between the hands holding it
+    this.kit = new THREE.Mesh(this.kitGeo, getViewWeaponMaterial());
     this.kit.visible = false;
     this.kit.frustumCulled = false;
     this.sway.add(this.kit);
@@ -1841,7 +1859,11 @@ export class ViewModel {
     this.act = { type: 'throw', t: 0, dur: 1.15 };
   }
 
-  useItem(duration = 2) {
+  /** item: what is being used (food shows a tin instead of the medkit) */
+  useItem(duration = 2, item = 0) {
+    const food = !!CONSUMABLES[item]?.food;
+    this.kit.geometry = food ? this.canGeo : this.kitGeo;
+    this.kitGrip = food ? 0.068 : 0.1;
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
   }
 
@@ -2348,7 +2370,7 @@ export class ViewModel {
     _q1.copy(this.kit.quaternion).multiply(_q2);
     for (let side = -1; side <= 1; side += 2) {
       const arm = side < 0 ? this.armL : this.armR;
-      _v1.set(side * 0.1, -0.012, 0.0).applyQuaternion(this.kit.quaternion).add(kitPos);
+      _v1.set(side * this.kitGrip, -0.012, 0.0).applyQuaternion(this.kit.quaternion).add(kitPos);
       arm.setVisible(up > 0.02);
       arm.setPose('support');
       this._solveArm(arm, _v1, _q1, side < 0 ? SHOULDER_L : SHOULDER_R, side < 0 ? POLE_L : POLE_R);

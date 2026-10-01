@@ -1,6 +1,7 @@
 // Viewmodel / world-weapon sandbox (loaded by models-test.js when ?vm= or ?ww= is present).
 //   ?vm=ITEMID | ?vm=claws | ?vm=all (grid of every item)
 //   &act=fire|reload|melee|heavy|throw|use|ads|sprint|walk|crouch|jump
+//   &use=ITEMID  with act=use: the consumable being used (food shows the tin instead of the medkit)
 //   &t=SECONDS   freeze the clock at this time after the action starts (deterministic screenshot)
 //   &orbit=yaw,pitch,dist[,tx,ty,tz]  view the viewmodel from an orbiting camera
 //   &hide=L|R|LR hide an arm (inspect the other hand's grip)
@@ -260,7 +261,7 @@ if (params.get('vm') === 'hands') {
         v.vm.throwItem();
         break;
       case 'use':
-        v.vm.useItem(2.0);
+        v.vm.useItem(2.0, +(params.get('use') || 0));
         break;
     }
   }

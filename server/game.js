@@ -1513,7 +1513,7 @@ export class Game {
       p.state.exhausted = 0;
     }
     if (c.flashlight) p.battery = FLASHLIGHT_MAX;
-    this.sound(SOUND.HEAL, p.state.x, p.state.y + 1, p.state.z, 12);
+    this.sound(c.food ? SOUND.EAT : SOUND.HEAL, p.state.x, p.state.y + 1, p.state.z, 12);
   }
 
   // ---------------------------------------------------------------- building

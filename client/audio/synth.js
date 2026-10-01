@@ -1179,6 +1179,17 @@ export function eatSnd(sr, rng) {
   }
   return finish(out, sr);
 }
+// ring-pull tin: tab snaps up, the lid peels back, the lid springs free
+export function canOpenSnd(sr, rng) {
+  const out = alloc(sr, 0.75);
+  addNorm(out, metalClick(sr, rng, rrange(rng, 3200, 3600), 0.012), sr, 0.02, 0.6);
+  const peel = noise(sr, rng, 0.36, { hp: 1400, bp: [2400, 1.2], sweep: [2400, 4200], env: (u) => Math.min(1, u * 8) * (1 - u * 0.6) });
+  const w = new Wander(rng, sr, 70);
+  for (let i = 0; i < peel.length; i++) peel[i] *= 0.35 + 0.65 * Math.abs(w.next());
+  addNorm(out, peel, sr, 0.12, 0.55);
+  addNorm(out, metalClick(sr, rng, rrange(rng, 1700, 2000), 0.03), sr, 0.5, 0.5);
+  return finish(out, sr);
+}
 export function buildFail(sr, rng) {
   const out = alloc(sr, 0.45);
   addNorm(out, woodHit(sr, rng, 0.7), sr, 0, 0.6);
@@ -1590,6 +1601,7 @@ export const SFX_DEFS = [
   { bank: 'chat', n: 1, sr: HI, gen: chatBlip },
   { bank: 'install_part', n: 1, sr: HI, gen: installPart },
   { bank: 'eat', n: 1, sr: HI, gen: eatSnd },
+  { bank: 'can_open', n: 1, sr: HI, gen: canOpenSnd },
   { bank: 'build_fail', n: 1, sr: HI, gen: buildFail },
   // footsteps
   { bank: 'step_dirt', n: 5, sr: MID, gen: (sr, r) => footstep(sr, r, 'dirt') },

@@ -824,13 +824,13 @@ export class Game {
     const inv = this.inventory.slots;
     const hp = this.self.hp;
     const down = !!this.prediction.state.downed;
-    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.BANDAGE, ITEM.PAINKILLERS] : [ITEM.BANDAGE, ITEM.PAINKILLERS, ITEM.MEDKIT];
+    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : [ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS, ITEM.MEDKIT];
     for (const item of order) {
       const idx = inv.findIndex((x) => x && x.item === item);
       if (idx >= 0) {
         this.conn.action(ACT.USE_ITEM, idx);
-        this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : 'bandage');
-        this.vm.useItem?.(CONSUMABLES[item].time);
+        this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : CONSUMABLES[item].food ? 'can_open' : 'bandage');
+        this.vm.useItem?.(CONSUMABLES[item].time, item);
         return;
       }
     }
@@ -923,7 +923,10 @@ export class Game {
       onUseItem: (i) => {
         const it = this.inventory.slots[i];
         this.conn.action(ACT.USE_ITEM, i);
-        if (it && CONSUMABLES[it.item]) this.vm.useItem?.(CONSUMABLES[it.item].time);
+        const c = it && CONSUMABLES[it.item];
+        if (!c) return;
+        if (c.food) this.audio.playLocal('can_open');
+        this.vm.useItem?.(c.time, it.item);
       },
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
       onSwapItems: (a, b) => this.conn.action(ACT.SWAP_INV, a, b),
@@ -1474,7 +1477,7 @@ export class Game {
       h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : 'Starting the engine…';
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
-      h.useLabel = self.useItem ? `Using ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
+      h.useLabel = self.useItem ? `${CONSUMABLES[self.useItem]?.food ? 'Eating' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
     }
     // context panel
     const car = this.world.car;
