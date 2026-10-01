@@ -341,7 +341,7 @@ export class Entities {
           const v = createZombie(e.ztype, e.variant * 7 + e.id);
           e.view = v;
           this.scene.add(v.object);
-          e.growlT = 2 + Math.random() * 8;
+          e.growlT = e.ztype === ZTYPE.SHADE ? 0.5 + Math.random() * 2 : 2 + Math.random() * 8;
           e.stepT = Math.random();
           e.lastHp = e.q[5];
           e.dead = e.q[4] === ZANIM.DEAD;
@@ -676,17 +676,31 @@ export class Entities {
           if (e.loop) e.loop.setPosition(e.rx, e.ry + 2, e.rz);
           // ambient vocalizations + footsteps (client-side, no bandwidth)
           if (!e.dead && distC < 45 * 45) {
+            const shade = e.ztype === ZTYPE.SHADE;
+            if (shade) {
+              // the sounds to listen for: light catching it, and light letting it go. Pinned, it is silent.
+              const frozen = e.q[4] === ZANIM.FROZEN;
+              if (frozen !== e.frozen) {
+                if (e.frozen !== undefined && time - (e.thawT || 0) > 0.5) {
+                  e.thawT = time;
+                  g.audio.play(frozen ? SOUND.SHADE_FREEZE : SOUND.SHADE_SHRIEK, { x: e.rx, y: e.ry + 1.6, z: e.rz });
+                  if (!frozen) v.vocalize?.(1);
+                }
+                e.frozen = frozen;
+              }
+              if (frozen) e.growlT = Math.max(e.growlT, 1.5);
+            }
             e.growlT -= dt;
             if (e.growlT <= 0) {
-              e.growlT = 4 + Math.random() * 9;
-              const snd = e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : e.ztype >= ZTYPE.BOSS_ABOMINATION ? SOUND.BOSS_ROAR : SOUND.ZOMBIE_GROWL;
+              e.growlT = shade ? 1.8 + Math.random() * 2.2 : 4 + Math.random() * 9;
+              const snd = shade ? SOUND.SHADE_WHISPER : e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : ZOMBIE_DEFS[e.ztype].boss ? SOUND.BOSS_ROAR : SOUND.ZOMBIE_GROWL;
               if (e.ztype === ZTYPE.TANK && Math.random() < 0.6) e.growlT += 4;
               g.audio.play(snd, { x: e.rx, y: e.ry + 1.5, z: e.rz, volume: e.ztype === ZTYPE.BAT ? 0.6 : 0.9 });
               v.vocalize?.(snd === SOUND.RUNNER_SCREAM ? 1 : snd === SOUND.TANK_ROAR || snd === SOUND.BOSS_ROAR ? 2 : 0);
             }
             if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && distC < 22 * 22) {
               // a visible planted-foot gait sounds its steps as the feet land; otherwise keep a cadence timer
-              const heavy = e.ztype === ZTYPE.TANK || e.ztype >= ZTYPE.BOSS_ABOMINATION ? 1 : 0.45;
+              const heavy = e.ztype === ZTYPE.TANK || ZOMBIE_DEFS[e.ztype].boss ? 1 : shade ? 0.2 : 0.45;
               const falls = v.footfalls ? v.footfalls() : -1;
               if (falls >= 0) {
                 if (e.falls !== undefined && falls !== e.falls) g.audio.footstep('dirt', e.rx, e.ry, e.rz, heavy);

@@ -448,6 +448,11 @@ export class Game {
         ui.notify('has risen from the woods.', 'sub', 4);
         a.stinger?.('boss');
         break;
+      case NOTIFY.SHADE:
+        ui.notify('A SHADE IS OUT THERE', 'danger', 4);
+        ui.notify('It only moves in the dark. Keep a light on it: flashlight, torch, campfire or flare.', 'toast', 7);
+        a.playLocal('notify');
+        break;
       case NOTIFY.SUPPLY_DROP:
         ui.notify('A supply plane drones overhead... watch the treeline for red smoke.', 'toast', 6);
         a.stinger?.('supply');

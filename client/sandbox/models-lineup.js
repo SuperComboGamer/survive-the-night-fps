@@ -197,6 +197,7 @@ if (q.has('cats')) {
   row1.forEach(([t, s], i) => addZombie(t, s, (i - 3.5) * 1.5, -1.5, t === ZTYPE.BAT ? 1.5 : 0));
   const row2 = [[ZTYPE.TANK, 9], [ZTYPE.BOSS_ABOMINATION, 10], [ZTYPE.BOSS_HIVEQUEEN, 11]];
   row2.forEach(([t, s], i) => addZombie(t, s, (i - 1) * 4.2, 3.5));
+  addZombie(ZTYPE.SHADE, 12, 7, -1.5);
   // front row: a survivor holding each weapon
   const wl = [ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.PISTOL, ITEM.SHOTGUN, ITEM.AK47, ITEM.HUNTING_RIFLE, ITEM.MOLOTOV, ITEM.PIPEBOMB];
   wl.forEach((it, i) => addSurvivor(i + 1, it, (i - (wl.length - 1) / 2) * 1.05, -4.2, false));

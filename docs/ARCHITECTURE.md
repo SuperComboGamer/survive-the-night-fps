@@ -55,6 +55,13 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js)
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`).
 - **Night waves.** `startNight()` builds `NIGHT_WAVES` queues; groups spawn 58-84 m around a random
   survivor (`Zombies.pickSpawnAround`). The horde never targets structures or a fixed point - only people.
+- **Light and the Shade.** `ZTYPE.SHADE` (`ZOMBIE_DEFS[t].shade`) only moves in darkness. Every tick
+  `Zombies.isLit` asks whether light reaches it: it is day, it stands within the `light` radius of a burning
+  torch / campfire (`STRUCT_DEFS`), a road flare (`THROWABLES`) or a molotov fire, or it is inside a survivor's
+  flashlight cone (`FLASHLIGHT_RANGE`, `FLASHLIGHT_CONE`) - each with a clear ray to its head, chest or shins,
+  so walls, trees and terrain cast shadows. While lit (`z.lit`) it holds still with `ZANIM.FROZEN`, takes
+  `litResist` x damage and no knockback (`Combat.damageZombie`); the client keeps the pose it was caught in
+  (`ZombieInstance.hold`) and plays the freeze / release sounds from the replicated anim, with no extra traffic.
 - **Containers** are `ENT.CACHE` entities (position + searched state) created from `world.containers`;
   searching is a server-side hold interaction (`ACT.HOLD_BEGIN/END`, progress in the self state).
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).

@@ -989,6 +989,60 @@ function buildRoper() {
   return { mb, P };
 }
 
+// The Shade: a starved, ash-dark silhouette that the night swallows whole (a beam shows it grey as a statue). What
+// gives it away in the dark are the pale eyes and the veins of cold light under its skin - faint while it stalks,
+// flaring when a light pins it (see ZombieInstance.hold).
+function buildShade() {
+  const P = humanP({ hipY: 1.06, hipW: 0.09, thighLen: 0.5, shinLen: 0.49, spineLen: 0.15, chestLen: 0.2, neckOff: 0.18, neckLen: 0.14, headR: 0.098, shoulderW: 0.16, uarmLen: 0.4, farmLen: 0.41, handLen: 0.23, headZ: -0.015 });
+  const ash = color(0x5c5a68);
+  const ashen = (p, n, c) => {
+    if (fbm3(p.x * 16, p.y * 16, p.z * 16, 2, 9) > 0.6) c.lerp(ash, 0.55);
+  };
+  const L = {
+    skin: 0x34323b, skinRegion: CR.SKIN, gaunt: 1, ribs: 1, armR: 0.031, thighR: 0.056, neckR: 0.033, chestR: 0.138,
+    shirt: null, pants: { color: 0x131317, region: CR.CLOTH, tearY: 0.55 }, belt: false, shoes: null, hair: null,
+    eye: 0xe6eeff, eyeGlow: 1.3, nose: 0, fingerMul: 1.7, claws: 0.06, curl: 0.8, headSX: 0.8, headSY: 1.14, jawScale: 1.15,
+    fang: true, missingTeeth: 0x24, blood: [], dirt: { y0: 0, k: 0 },
+    torsoTint: ashen, armTint: ashen, headTint: (lx, ly, lz, c) => ashen({ x: lx * 0.08, y: ly * 0.11, z: lz * 0.1 }, null, c),
+  };
+  const mb = new MeshBuilder();
+  const T = standardHumanoid(mb, P, L);
+  const light = { rs: 3, color: 0x9db4ff, region: CR.GLOW, glow: 0.55, blood: false, ao: false, cap: false };
+  const vein = (bone, pts, r = 0.0045) => mb.tube(bone, pts, r, r * 0.35, { ...light, ts: pts.length * 2 });
+  // on the chest surface: a = angle around the body (0 = sternum), y above the chest bone
+  const onChest = (a, y) => {
+    const r = profR(T.chestProf, y) + 0.004;
+    return [Math.sin(a) * r * T.sxC, y, -Math.cos(a) * r * T.szC];
+  };
+  vein('chest', [onChest(0.06, -0.08), onChest(-0.05, 0.0), onChest(0.04, 0.08), onChest(-0.02, T.top * 0.7)], 0.006);
+  for (const s of [-1, 1]) {
+    vein('chest', [onChest(s * 0.05, 0.07), onChest(s * 0.45, 0.11), onChest(s * 0.85, 0.09), onChest(s * 1.2, 0.13)]);
+    vein('chest', [onChest(s * 0.05, -0.01), onChest(s * 0.5, -0.04), onChest(s * 0.95, -0.02)]);
+    const n = s < 0 ? 'L' : 'R';
+    const ra = L.armR * 0.92 + 0.003;
+    vein('uarm' + n, [[s * 0.004, -0.05, -ra], [-s * 0.006, -0.17, -ra * 1.04], [s * 0.005, -0.29, -ra * 0.92], [0, -P.uarmLen + 0.02, -ra * 0.85]]);
+    const rf = L.armR * 0.7 + 0.003;
+    vein('farm' + n, [[0, -0.04, -rf], [s * 0.006, -0.16, -rf * 0.95], [-s * 0.004, -0.28, -rf * 0.8], [0, -P.farmLen + 0.03, -rf * 0.7]]);
+    // tear tracks of light running down from the eyes
+    const hr = P.headR, cy = hr * 0.9, sx = hr * L.headSX, fz = -hr * 1.06 * 0.9;
+    vein('head', [[s * sx * 0.42, cy - hr * 0.02, fz * 1.0], [s * sx * 0.55, cy - hr * 0.32, fz * 0.93], [s * sx * 0.5, cy - hr * 0.62, fz * 0.74]], 0.004);
+  }
+  // spine: a ridge of bone spurs down the back
+  for (let i = 0; i < 5; i++) {
+    const y = -0.05 + i * 0.055;
+    const zb = profR(T.chestProf, y) * T.szC * 0.92;
+    mb.spike('chest', [0, y, zb - 0.012], [0, y + 0.035, zb + 0.05 + (i === 2 ? 0.02 : 0)], 0.014, { rs: 4, color: 0x24232a, region: CR.BONE, mottle: 0.2, blood: false });
+  }
+  // rags hanging from the waist
+  const rnd = mulberry32(4107);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + rnd() * 0.4;
+    const len = 0.22 + rnd() * 0.26;
+    mb.box('hips', [Math.sin(a) * 0.14, 0.03 - len * 0.5, Math.cos(a) * 0.11], [0.035 + rnd() * 0.03, len, 0.006], { rot: [rnd() * 0.2 - 0.1, a, rnd() * 0.2 - 0.1], color: 0x0b0b0e, region: CR.CLOTH, mottle: 0.2, blood: false });
+  }
+  return { mb, P, A: { jawHang: 0.5 } };
+}
+
 function buildBoomer() {
   const P = humanP({ hipY: 0.88, hipW: 0.13, thighLen: 0.4, shinLen: 0.4, spineLen: 0.14, chestLen: 0.22, neckOff: 0.2, neckLen: 0.06, headR: 0.12, shoulderW: 0.27, uarmLen: 0.28, farmLen: 0.26, handLen: 0.17 });
   const L = {
@@ -1362,6 +1416,7 @@ const BUILDERS = {
   [ZTYPE.BAT]: buildBat,
   [ZTYPE.BOSS_ABOMINATION]: buildAbomination,
   [ZTYPE.BOSS_HIVEQUEEN]: buildHiveQueen,
+  [ZTYPE.SHADE]: buildShade,
 };
 const VARIANTS = { [ZTYPE.WALKER]: WALKER_VARIANTS, [ZTYPE.RUNNER]: 3 };
 const NO_EXTRAS = {};
@@ -1443,6 +1498,12 @@ const ZS = {
     walkLean: -0.25, runLean: -0.4, cycleWalk: 2.6, cycleRun: 3.6, walkStride: 0.4, walkKnee: 0.7, runStride: 0.55, runKnee: 0.9,
     limp: 0, sway: 0.5, armWalk: 0.7, armDroop: 0.7, armSwing: 0.12, armRun: 0.9, elbow: 1.9, headPitch: 0.25, headTilt: 0.1, jaw: 0.3, legSplay: 0.08,
     idleLean: -0.25, mantis: true,
+  },
+  [ZTYPE.SHADE]: {
+    // long, low strides with both clawed hands reaching ahead: whatever stride the light catches is the statue it becomes
+    walkLean: -0.32, runLean: -0.6, cycleWalk: 1.7, cycleRun: 3.3, walkStride: 0.42, walkKnee: 0.6, runStride: 0.75, runKnee: 1.1,
+    limp: 0, sway: 0.5, armWalk: 0.55, armDroop: 0.35, armSwing: 0.1, armRun: 1.05, armOut: 0.22, elbow: 0.4, headPitch: 0.3, headTilt: 0.3, jaw: 0.45, neckFwd: 0.45,
+    idleLean: -0.28, shoulderRoll: 0.2,
   },
 };
 
@@ -2775,7 +2836,7 @@ function calibrate(type, rig) {
   let sumY = 0, sumZ = 0;
   const N = 8;
   // calibrate on each type's dominant locomotion state
-  const states = type === ZTYPE.RUNNER || type === ZTYPE.LEAPER ? [ZANIM.RUN, ZANIM.RUN] : [ZANIM.WALK, ZANIM.IDLE];
+  const states = type === ZTYPE.RUNNER || type === ZTYPE.LEAPER || type === ZTYPE.SHADE ? [ZANIM.RUN, ZANIM.RUN] : [ZANIM.WALK, ZANIM.IDLE];
   for (let i = 0; i < N; i++) {
     inst.state = states[i & 1];
     inst.time = 0;
@@ -3032,6 +3093,7 @@ class ZombieInstance {
 
   update(dt, anim, speed, time, inView = false) {
     if (dt > 0.1) dt = 0.1;
+    if (anim === ZANIM.FROZEN) return this.hold(dt, time);
     // client-side sub-state, with hysteresis so a noisy speed can't flicker it:
     // ATTACK: 0 braced / 1 walking / 2 running; IDLE: 1 = menacing (it just attacked, the prey is still close)
     // the server picks IDLE from the zombie's own velocity; when the crowd or a survivor shoves it along, walk
@@ -3044,11 +3106,12 @@ class ZombieInstance {
     } else if (anim === ZANIM.IDLE && time - this.lastAttack < 2.5) sub = 1;
     if (anim !== this.state || sub !== this.sub) {
       this.snap.set(this.out);
+      const thawed = this.state === ZANIM.FROZEN; // a shade the light let go of snaps back into motion
       if (anim !== this.state) this.stateT = 0; // a sub-state change keeps the attack's swing timing
       this.state = anim;
       this.sub = sub;
       this.fadeT = 0;
-      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER ? 0.1 : 0.25;
+      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER || thawed ? 0.1 : 0.25;
     }
     this.stateT += dt;
     this.fadeT += dt;
@@ -3068,6 +3131,7 @@ class ZombieInstance {
     }
     let glow = 1;
     if (this.type === ZTYPE.SPITTER || this.type === ZTYPE.BOSS_HIVEQUEEN) glow = 0.8 + 0.25 * Math.sin(time * 3.1 + this.off);
+    if (this.type === ZTYPE.SHADE) glow = 0.5 + 0.15 * Math.sin(time * 2.3 + this.off); // barely there while it stalks
     if (anim === ZANIM.DEAD) glow = Math.max(0.15, 1 - this.stateT * 0.6);
     if (setFx(this.fx, this.hit, glow)) this.fxDirty = true;
     // skip posing when culled (not rendered last frame, not in view now); crossfades still time out correctly
@@ -3095,6 +3159,34 @@ class ZombieInstance {
   flash(a) {
     this.hit = Math.max(this.hit, clamp(a, 0, 1));
     if (setFx(this.fx, this.hit, 1)) this.fxDirty = true;
+  }
+
+  /**
+   * Shade pinned by light (ZANIM.FROZEN): it holds the pose it was caught in, perfectly still, while the light under
+   * its skin flares. Seen for the first time already frozen, it strikes a mid-stride pose to hold.
+   */
+  hold(dt, time) {
+    if (this.state !== ZANIM.FROZEN) {
+      if (this.posedAt < 0) {
+        this.state = ZANIM.RUN;
+        this.speed = this.def.speed;
+        this.time = time;
+        this.computePose();
+        this.out.set(this.pose);
+        this.applyPose(this.out);
+      }
+      this.state = ZANIM.FROZEN;
+      this.sub = 0;
+      this.stateT = 0;
+      this.fadeT = this.fadeDur; // no crossfade: it stops dead
+    }
+    this.stateT += dt;
+    this.flinchT += dt;
+    this.voxT += dt;
+    this.time = time;
+    this.speed = 0;
+    if (this.hit > 0) this.hit = Math.max(0, this.hit - dt * 5);
+    if (setFx(this.fx, this.hit, 2.2 + 1.2 * Math.exp(-this.stateT * 5))) this.fxDirty = true;
   }
 
   /** Took a hit: flinch (a fresh hit restarts it, toward a random side). */

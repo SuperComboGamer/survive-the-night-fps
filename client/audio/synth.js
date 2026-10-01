@@ -3,7 +3,7 @@
 // peak-normalised to <= ~0.95. The engine turns them into AudioBuffers; Node can unit-test them directly.
 
 import {
-  TAU, clamp, lerp, rrange, rpick, Biquad, OnePole, Resonator, ModeBank, Pink, Brown, Wander, Curve,
+  TAU, clamp, lerp, smoothstep, rrange, rpick, Biquad, OnePole, Resonator, ModeBank, Pink, Brown, Wander, Curve,
   polyblep, ar, hann, alloc, normalize, finish, softclip, mixInto, loopify, dcBlock, peakOf,
 } from './dsp.js';
 
@@ -583,6 +583,53 @@ export function zBoss(sr, rng) {
   softclip(out, 1.5);
   return finish(out, sr, 0.95);
 }
+// the shade stalking in the dark: several breathy, almost voiceless whispers on top of each other, no words
+export function shadeWhisper(sr, rng, i) {
+  const dur = rrange(rng, 1.3, 1.9);
+  const out = alloc(sr, dur + 0.25);
+  const paths = [['i', 'e', 'u', 'i'], ['u', 'ae', 'i', 'e'], ['e', 'i', 'a', 'u']];
+  for (let k = 0; k < 3; k++) {
+    const b = rrange(rng, 150, 210);
+    const w = voice(sr, rng, {
+      dur: dur * rrange(rng, 0.7, 1), pitch: contour(rng, b, 4, 0.85, 1.2, 0.8), vowels: vowelPath(paths[(i + k) % 3], rng),
+      fscale: rrange(rng, 1.0, 1.25), bw: 2.6, voiced: 0.05, breath: 1.5, rasp: 0.6, raspHz: rrange(rng, 6, 11), jitter: 0.1, shimmer: 0.6,
+      drive: 1.2, chest: 0, a3: 0.8, a4: 0.6, hp: 500, env: [[0, 0], [0.2, 0.7], [0.45, 1], [0.7, 0.55], [1, 0]],
+    });
+    addNorm(out, w, sr, k * rrange(rng, 0.05, 0.12), 0.7 - k * 0.15);
+  }
+  return finish(out, sr, 0.8, 0.02, 0.12);
+}
+// light catches it: a sharp indrawn hiss, then it sets hard like cooling stone
+export function shadeFreeze(sr, rng) {
+  const out = alloc(sr, 0.75);
+  addNorm(out, noise(sr, rng, 0.2, { bp: [1500, 1.6], sweep: [900, 5200], env: (u) => u * u * (1 - smoothstep((u - 0.9) / 0.1)) }), sr, 0, 0.8);
+  addNorm(out, modal(sr, rng, [
+    { f: rrange(rng, 610, 680), d: 0.05, a: 1 }, { f: rrange(rng, 1380, 1520), d: 0.035, a: 0.8 },
+    { f: rrange(rng, 2500, 2800), d: 0.02, a: 0.6 }, { f: rrange(rng, 4300, 4700), d: 0.012, a: 0.4 },
+  ], 0.3, 1.2), sr, 0.19, 0.9);
+  addNorm(out, crackles(sr, rng, 0.45, 70, { skew: 2.2, pow: 2, hp: 1800, bp: 3600 }), sr, 0.2, 0.55);
+  addNorm(out, thump(sr, 95, 50, 0.03, 0.06), sr, 0.19, 0.5);
+  return finish(out, sr, 0.9);
+}
+// the light is gone: a thin doubled shriek that climbs as it comes for you
+export function shadeShriek(sr, rng) {
+  const dur = rrange(rng, 0.9, 1.1);
+  const out = alloc(sr, dur + 0.1);
+  const b = rrange(rng, 520, 600);
+  for (const det of [1, 1.07]) {
+    const v = voice(sr, rng, {
+      dur, pitch: [[0, b * det * 0.7], [0.25, b * det * 1.2], [0.7, b * det * 1.7], [1, b * det * 1.9]],
+      vowels: vowelPath(['u', 'i', 'ae', 'i'], rng), fscale: 1.2, bw: 2.6, jitter: 0.14, jitterHz: 60, shimmer: 0.6, sub: 0.2,
+      rasp: 0.8, raspHz: 260, breath: 0.9, drive: 4, chest: 0, a3: 0.8, a4: 0.6, hp: 350,
+      env: [[0, 0], [0.08, 0.5], [0.6, 1], [0.9, 0.7], [1, 0]],
+    });
+    addNorm(out, v, sr, det > 1 ? 0.02 : 0, det > 1 ? 0.6 : 1);
+  }
+  addNorm(out, whoosh(sr, rng, dur * 0.8, 500, 3000, 1400, 1.2, 0.6), sr, 0, 0.35);
+  softclip(out, 2.5);
+  return finish(out, sr, 0.9);
+}
+
 export function zpGrowl(sr, rng, i) {
   const b = rrange(rng, 90, 118);
   return voice(sr, rng, {
@@ -1469,6 +1516,9 @@ export const SFX_DEFS = [
   { bank: 'z_boomer', n: 2, sr: MID, gen: zBoomer },
   { bank: 'z_bat', n: 2, sr: HI, gen: zBat },
   { bank: 'z_boss', n: 2, sr: MID, gen: zBoss },
+  { bank: 'z_shade_whisper', n: 3, sr: MID, gen: shadeWhisper },
+  { bank: 'z_shade_freeze', n: 2, sr: HI, gen: shadeFreeze },
+  { bank: 'z_shade_shriek', n: 2, sr: MID, gen: shadeShriek },
   { bank: 'zp_growl', n: 3, sr: MID, gen: zpGrowl },
   { bank: 'cat_meow', n: 3, sr: HI, gen: catMeow },
   // players

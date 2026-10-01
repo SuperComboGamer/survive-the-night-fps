@@ -164,6 +164,7 @@ export class Game {
     this.bossPending = null;
     this.bossId = 0;
     this.warned = false;
+    this.shadeWarned = false; // the "a shade is out there" notice went out tonight
     this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false };
     this.supplyAt = [];
     this.restartT = 0;
@@ -668,6 +669,8 @@ export class Game {
     const total = Math.round((10 + 6 * n + 1.3 * n * n) * pf);
     const shares = [0.3, 0.33, 0.37];
     const scale = this.nightLen / NIGHT_LENGTH;
+    const shadeCap = Math.min(6, 1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2));
+    let shades = 0;
     this.waves = [];
     for (let k = 0; k < NIGHT_WAVES; k++) {
       const count = Math.max(3, Math.round(total * shares[k]));
@@ -681,6 +684,7 @@ export class Game {
         [ZTYPE.BAT, n >= 3 ? 7 : 0],
         [ZTYPE.ROPER, n >= 4 ? 5 + sp * 3 : 0],
         [ZTYPE.TANK, n >= 4 ? (1 + n * 0.3) * (0.5 + sp) : 0],
+        [ZTYPE.SHADE, n >= 2 ? 2.5 + sp * 2.5 : 0],
       ];
       const tot = weights.reduce((a, b) => a + b[1], 0);
       const q = [];
@@ -689,13 +693,22 @@ export class Game {
         for (const [t, wgt] of weights) {
           r -= wgt;
           if (r <= 0) {
-            q.push(t);
+            // only so many shades a night: each one ties up a light (or a survivor holding a beam on it)
+            if (t !== ZTYPE.SHADE) q.push(t);
+            else if (shades++ < shadeCap) q.push(t);
+            else q.push(ZTYPE.RUNNER);
             break;
           }
         }
       }
       this.waves.push({ start: WAVE_TIMES[k] * scale, queue: q, started: false, spawnT: 0, interval: (WAVE_SPREAD * scale) / Math.max(1, Math.ceil(count / 3.5)) });
     }
+    // from night 2 on there is always at least one shade out there (it comes with the second wave)
+    if (n >= 2 && !shades) {
+      const q = this.waves[1].queue;
+      q[Math.floor(this.rng() * q.length)] = ZTYPE.SHADE;
+    }
+    this.shadeWarned = false;
     this.wave = 0;
     this.hordeHpMul = 1 + 0.1 * (n - 1) + 0.12 * (humans - 1);
     this.bossPending = null;
@@ -1948,7 +1961,13 @@ export class Game {
       const type = type0Queue.pop();
       const z = this.zm.spawn(type, sp.x + (this.rng() - 0.5) * 8, sp.z + (this.rng() - 0.5) * 8, { horde: true, hpMul: this.hordeHpMul });
       if (!z) type0Queue.push(type);
-      else n++;
+      else {
+        n++;
+        if (type === ZTYPE.SHADE && !this.shadeWarned) {
+          this.shadeWarned = true;
+          this.notify(NOTIFY.SHADE, 0);
+        }
+      }
     }
     if (n) this.globalDirty = true;
     return n;

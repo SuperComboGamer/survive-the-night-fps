@@ -1,10 +1,12 @@
 // In-process server smoke test: fake clients join, meet the cat, walk around, search containers, chop trees,
-// build (incl. door boards), go down + get revived, survive a night of waves and run the escape finale.
+// build (incl. door boards), go down + get revived, pin a shade with light, survive a night of waves and run the
+// escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
 import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM } from '../shared/defs.js';
+import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, ZANIM, CANIM, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES } from '../shared/defs.js';
+import { groundAt } from '../shared/collision.js';
 import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 
 const seed = +(process.argv[2] || 4242);
@@ -264,6 +266,105 @@ check('ping broadcast', B.pings > 0);
   game.handleChat(A.p(), '/night');
   run(3);
   check('night started', game.phase === PHASE.NIGHT && A.global.phase === PHASE.NIGHT);
+
+  // the shade: only moves in darkness. Light on it (a beam, a torch, a flare) freezes it and makes it tough.
+  {
+    game.godMode = true;
+    const zm = game.zm;
+    const w = game.world;
+    const car = w.car;
+    const open = (x, z) => !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z);
+    // somewhere open and unlit, with a clear 20 m run to the north (-Z, yaw 0)
+    let spot = null;
+    for (let r = 40; r <= 120 && !spot; r += 10) {
+      for (let k = 0; k < 16 && !spot; k++) {
+        const x = car.x + Math.sin((k / 16) * Math.PI * 2) * r;
+        const z = car.z + Math.cos((k / 16) * Math.PI * 2) * r;
+        let ok = Math.abs(x) < 280 && Math.abs(z) < 280;
+        for (let d = 0; d <= 20 && ok; d += 2) ok = open(x, z - d) && open(x + 2, z - d) && open(x - 2, z - d);
+        const y = ok ? groundAt(w, x, z, 200, 0.3) : 0;
+        const ty = ok ? groundAt(w, x, z - 20, 200, 0.3) : 0;
+        if (ok && Math.abs(ty - y) < 1.5 && zm.clearLine(x, y + 1.6, z, x, ty + 1, z - 20) && zm.clearLine(x, y + 0.5, z, x, ty + 0.4, z - 20)) spot = { x, z };
+      }
+    }
+    check('found open ground for the shade test', !!spot);
+    A.tp(spot.x, spot.z);
+    B.tp(spot.x + 1.5, spot.z + 1.5);
+    const face = () => {
+      A.input(0, 0, 0);
+      B.input(0, 0, 0);
+    };
+    run(4, face);
+    const a = A.p().state;
+    const dist = (e) => Math.hypot(e.x - a.x, e.z - a.z);
+    const sh = zm.spawn(ZTYPE.SHADE, spot.x, spot.z - 20, { horde: true });
+    const d0 = dist(sh);
+    run(30, face);
+    const d1 = dist(sh);
+    check('shade closes in the dark', !sh.lit && d1 < d0 - 5, `${d0.toFixed(1)} -> ${d1.toFixed(1)} m`);
+    // beam on it: frozen where it stands
+    A.act(ACT.FLASHLIGHT, 1);
+    run(2, face);
+    const fx = sh.x;
+    const fz = sh.z;
+    run(30, face);
+    const rs = A.store.ents.get(sh.id);
+    check('flashlight beam freezes the shade', A.p().flashlight && sh.lit && Math.hypot(sh.x - fx, sh.z - fz) < 0.01 && rs && rs.q[4] === ZANIM.FROZEN, `moved ${Math.hypot(sh.x - fx, sh.z - fz).toFixed(3)} m, anim ${rs && rs.q[4]}`);
+    const hp0 = sh.hp;
+    game.combat.damageZombie(sh, 100, null, { knock: 5, dirX: 0, dirZ: -1 });
+    run(2, face);
+    check('frozen shade takes reduced damage and no knockback', Math.abs(hp0 - sh.hp - 100 * ZOMBIE_DEFS[ZTYPE.SHADE].litResist) < 1e-6 && Math.hypot(sh.x - fx, sh.z - fz) < 0.01, `${(hp0 - sh.hp).toFixed(1)} of 100`);
+    // a wall between the beam and the shade casts a shadow it can move in
+    game.giveItem(A.p(), ITEM.WOOD, 5);
+    game.giveItem(A.p(), ITEM.NAILS, 4);
+    A.input(0, 0, 0, 4);
+    run(15, face);
+    A.act(ACT.BUILD, STRUCT.WALL, a.x, a.z - 3, 0);
+    run(4, face);
+    const wall = game.structures.find((e) => e.stype === STRUCT.WALL);
+    const shadowed = !!wall && !sh.lit;
+    if (wall) game.destroyStructure(wall, false);
+    run(4, face);
+    check('a wall shadows the shade from the beam', shadowed && sh.lit, `wall ${!!wall}, in shadow ${shadowed}, lit again ${sh.lit}`);
+    // look away: the beam leaves it and it comes on again
+    run(20, () => A.input(0, Math.PI, 0));
+    const d2 = dist(sh);
+    check('shade moves again when the beam leaves it', !sh.lit && d2 < d1 - 2, `${d1.toFixed(1)} -> ${d2.toFixed(1)} m`);
+    const hp1 = sh.hp;
+    game.combat.damageZombie(sh, 20, null, {});
+    check('shade takes full damage in the dark', Math.abs(hp1 - sh.hp - 20) < 1e-6);
+    A.act(ACT.FLASHLIGHT, 0);
+    game.combat.damageZombie(sh, 1e6, null, {});
+    run(3, face);
+    // a standing torch holds it at the edge of its light
+    const n0 = game.structures.length;
+    game.giveItem(A.p(), ITEM.TORCH, 1);
+    A.act(ACT.BUILD, STRUCT.TORCH, a.x, a.z - 3, 0);
+    run(8, face);
+    const torch = game.structures.find((e) => e.stype === STRUCT.TORCH);
+    check('torch placed', game.structures.length === n0 + 1 && torch && torch.burnLeft > 0);
+    const sh2 = zm.spawn(ZTYPE.SHADE, spot.x, spot.z - 20, { horde: true });
+    run(80, face);
+    const td = Math.hypot(sh2.x - torch.x, sh2.z - torch.z);
+    const R = STRUCT_DEFS[STRUCT.TORCH].light;
+    check('torch light stops the shade at its edge', sh2.lit && td < R + 0.01 && td > R - 1.5, `${td.toFixed(2)} m from the torch (light ${R} m)`);
+    // the torch burns out: darkness, and it comes
+    torch.burnLeft = 0.01;
+    run(20, face);
+    check('shade moves when the torch burns out', !sh2.lit && Math.hypot(sh2.x - torch.x, sh2.z - torch.z) < td - 2);
+    // a road flare thrown down pins it too
+    const fl = game.combat.spawnProjectile(PROJ.FLARE, A.p(), sh2.x + 2, sh2.y + 0.5, sh2.z, 0, 0, 0, { fuse: THROWABLES[ITEM.FLARE].fuse });
+    run(6, face);
+    const px = sh2.x;
+    const pz = sh2.z;
+    run(20, face);
+    check('flare light pins the shade', !!fl && sh2.lit && Math.hypot(sh2.x - px, sh2.z - pz) < 0.01);
+    game.combat.damageZombie(sh2, 1e6, null, {});
+    game.projectiles.splice(game.projectiles.indexOf(fl), 1);
+    game.removeEntity(fl);
+    game.godMode = false;
+    run(40, face);
+  }
   run(20 * 10);
   const zs = game.zombies.filter((z) => z.horde && !z.dead);
   const near = zs.filter((z) => Math.hypot(z.x - A.p().state.x, z.z - A.p().state.z) < 110).length;
@@ -295,6 +396,18 @@ check('ping broadcast', B.pings > 0);
   game.escape.t = 0.1;
   run(5);
   check('victory at the car', game.phase === PHASE.VICTORY);
+}
+
+// shades join the horde from night 2
+{
+  const count = (n) => {
+    game.day = n;
+    game.startNight();
+    return game.waves.reduce((k, wv) => k + wv.queue.filter((t) => t === ZTYPE.SHADE).length, 0);
+  };
+  const n1 = count(1);
+  const later = [2, 3, 5, 8].map(count);
+  check('shades in the horde from night 2', n1 === 0 && later.every((k) => k >= 1 && k <= 6), `night 1: ${n1}, nights 2/3/5/8: ${later.join('/')}`);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);

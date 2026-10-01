@@ -1,9 +1,11 @@
 // Zombie AI: targeting, flow-field navigation, melee, structure breaking, and special abilities
-// (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses).
-import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
-import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, EVT, IMPACT, STRUCT_DEFS } from '../shared/defs.js';
+// (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses,
+// the shade that only moves in darkness).
+import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN } from '../shared/constants.js';
+import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
+import { eyeHeight } from '../shared/playersim.js';
 
 const GRAV = 16;
 const CELL = 4;
@@ -11,6 +13,9 @@ const HN = Math.ceil((MAP_HALF * 2) / CELL);
 const _pos = { x: 0, y: 0, z: 0 };
 const _dir = { x: 0, z: 0, cost: 0 };
 const _ray = { t: -1, col: null, terrain: false };
+const SHADE_THAW = 0.15; // unbroken darkness (s) before a lit shade moves again, so a beam flickering across it still holds it
+const BEAM_TAN = Math.tan(FLASHLIGHT_CONE);
+const BODY_AT = [0.9, 0.55, 0.2]; // head, chest, shins (fractions of the body height) - light on any of them counts
 
 export class Zombies {
   constructor(game) {
@@ -20,6 +25,8 @@ export class Zombies {
     this.fieldRR = 0;
     this.maintainT = 0;
     this.humansCache = [];
+    this.lights = []; // this tick's burning point lights, flat [x, y, z, radius, ...]
+    this.lightTick = -1;
   }
 
   // ---------------------------------------------------------------- spawning
@@ -111,6 +118,8 @@ export class Zombies {
       deadT: 0,
       burning: 0,
       onFire: false,
+      lit: false, // shade: frozen by light
+      darkT: 1,
       trapSlow: 1,
       hx: new Float32Array(16),
       hy: new Float32Array(16),
@@ -353,6 +362,9 @@ export class Zombies {
       if (z.dead) return;
     }
 
+    // the shade only moves in darkness: any light on it and it stands frozen where it was caught
+    if (def.shade && this.holdShade(z, dt)) return;
+
     // pending melee hit resolution
     if (z.pendingHit > 0) {
       z.pendingHit -= dt;
@@ -391,7 +403,7 @@ export class Zombies {
     let dz = 0;
     let speed = def.speed;
     let chasing = false;
-    if (z.lureT > 0 && !(target && dist < 7)) {
+    if (z.lureT > 0 && !def.shade && !(target && dist < 7)) {
       dx = z.lureX - z.x;
       dz = z.lureZ - z.z;
       chasing = true;
@@ -550,9 +562,11 @@ export class Zombies {
   }
 
   hasLOS(z, tx, ty, tz, dist) {
-    const ox = z.x;
-    const oy = z.y + z.def.headY;
-    const oz = z.z;
+    return this.clearLine(z.x, z.y + z.def.headY, z.z, tx, ty, tz);
+  }
+
+  // nothing solid (walls, structures, trees, terrain) on the straight line between two points
+  clearLine(ox, oy, oz, tx, ty, tz) {
     let dx = tx - ox;
     let dy = ty - oy;
     let dz = tz - oz;
@@ -562,6 +576,94 @@ export class Zombies {
     dz /= l;
     raycastWorld(this.g.world, ox, oy, oz, dx, dy, dz, l - 0.5, _ray, COL.NOBLOCK | COL.NOBULLET);
     return _ray.t < 0;
+  }
+
+  // ---------------------------------------------------------------- light (what pins a shade)
+  // every burning point light this tick: torches, campfires, road flares, burning ground
+  lightSources() {
+    const g = this.g;
+    const out = this.lights;
+    if (this.lightTick === g.tick) return out;
+    this.lightTick = g.tick;
+    out.length = 0;
+    for (const s of g.structures) {
+      const def = STRUCT_DEFS[s.stype];
+      if (def.light && s.burnLeft > 0) out.push(s.x, s.y + def.sy, s.z, def.light);
+    }
+    for (const e of g.projectiles) if (e.ptype === PROJ.FLARE) out.push(e.x, e.y + 0.35, e.z, THROWABLES[ITEM.FLARE].light);
+    for (const a of g.areas) if (a.atype === AREA.FIRE) out.push(a.x, a.y + 0.6, a.z, a.radius + FIRE_LIGHT_MARGIN);
+    return out;
+  }
+
+  // Is there light on this zombie? Daylight, a burning torch / campfire / flare / fire close enough, or a survivor's
+  // flashlight beam. Walls, trees and hills cast shadows: the light needs a clear line to some part of the body.
+  isLit(z) {
+    const g = this.g;
+    if (g.phase !== PHASE.NIGHT) return true;
+    const h = z.def.height;
+    const lights = this.lightSources();
+    for (let i = 0; i < lights.length; i += 4) {
+      const lx = lights[i];
+      const ly = lights[i + 1];
+      const lz = lights[i + 2];
+      const r = lights[i + 3];
+      if ((z.x - lx) ** 2 + (z.y + h * 0.5 - ly) ** 2 + (z.z - lz) ** 2 > r * r) continue;
+      for (let k = 0; k < BODY_AT.length; k++) if (this.clearLine(lx, ly, lz, z.x, z.y + h * BODY_AT[k], z.z)) return true;
+    }
+    for (const p of this.humansCache) {
+      if (!p.flashlight) continue;
+      const s = p.state;
+      const ox = s.x;
+      const oy = s.y + eyeHeight(s);
+      const oz = s.z;
+      const cp = Math.cos(s.pitch);
+      const fx = -Math.sin(s.yaw) * cp;
+      const fy = Math.sin(s.pitch);
+      const fz = -Math.cos(s.yaw) * cp;
+      for (let k = 0; k < BODY_AT.length; k++) {
+        const ty = z.y + h * BODY_AT[k];
+        const dx = z.x - ox;
+        const dy = ty - oy;
+        const dz = z.z - oz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > FLASHLIGHT_RANGE * FLASHLIGHT_RANGE) continue;
+        // inside the beam's cone, allowing for the width of the body
+        const along = dx * fx + dy * fy + dz * fz;
+        if (along <= 0 || Math.sqrt(Math.max(0, d2 - along * along)) > along * BEAM_TAN + z.def.radius) continue;
+        if (this.clearLine(ox, oy, oz, z.x, ty, z.z)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Shade: returns true while light pins it (it does nothing else this tick). Bodies part around it like a post,
+  // blows don't move it, and a swing it had started is lost.
+  holdShade(z, dt) {
+    if (this.isLit(z)) z.darkT = 0;
+    else z.darkT += dt;
+    const was = z.lit;
+    z.lit = z.darkT < SHADE_THAW;
+    if (!z.lit) {
+      if (was) z.targetT = 0; // the light is gone: straight back on the hunt
+      return false;
+    }
+    z.vx = z.vz = 0;
+    z.kx = z.kz = 0;
+    z.pendingHit = 0;
+    z.stuckT = 0;
+    z.detourT = 0;
+    z.anim = ZANIM.FROZEN;
+    z.animT = 0;
+    // caught off the ground (a ledge, a broken floor): it still drops
+    const gy = groundAt(this.g.world, z.x, z.z, z.y, 0.2, false);
+    if (z.y > gy + 0.05) {
+      z.vy -= GRAV * dt;
+      z.y = Math.max(gy, z.y + z.vy * dt);
+    } else {
+      z.y = gy;
+      z.vy = 0;
+    }
+    return true;
   }
 
   // melee reach: a clear torso-to-torso line, so the dead can't swipe through walls, boarded doors
@@ -883,7 +985,7 @@ export class Zombies {
       z.stateT = time;
       z.stateAct = act;
       z.anim = ZANIM.SPECIAL;
-      if (snd) g.sound(snd, z.x, z.y + def.headY, z.z, t >= ZTYPE.BOSS_ABOMINATION ? 120 : 45);
+      if (snd) g.sound(snd, z.x, z.y + def.headY, z.z, def.boss ? 120 : 45);
     };
     switch (t) {
       case ZTYPE.SPITTER:
