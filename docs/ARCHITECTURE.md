@@ -98,6 +98,13 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
   (`ZombieInstance.hold`) and plays the freeze / release sounds from the replicated anim, with no extra traffic.
 - **Containers** are `ENT.CACHE` entities (position + searched state) created from `world.containers`;
   searching is a server-side hold interaction (`ACT.HOLD_BEGIN/END`, progress in the self state).
+- **Supply drops** (`spawnSupplyDrop`): the server picks a supply spot and a random heading, emits one
+  `EVT.FLYOVER` (plane origin at release, heading, eta; constants `PLANE_*` / `CRATE_*`) and PLANE_LEAD / PLANE_SPEED
+  seconds later spawns the crate at the cargo ramp with the plane's speed: state 3 free fall, 0 under the canopy
+  (it sheds the forward speed and lands exactly on the spot), 1 landed, 2 opened. The client (`render/flyover.js`)
+  flies the plane model (`models/plane.js`), trails GPU-animated smoke puffs that linger ~2.5 min and drift with
+  the wind, and plays the engine drone as a positional loop (speed-of-sound delay, doppler, air absorption).
+  `/airdrop` (debug commands) calls one in.
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
 - **Weather** is client-side only and adds no network traffic. `client/game/weather.js` derives a seeded
   schedule (fog banks, gales, rain, thunderstorms; weighted toward dusk and night, and the first evening always

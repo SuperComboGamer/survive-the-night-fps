@@ -1,4 +1,4 @@
-// Curated CC0 field recordings (Freesound, via the Deadfall asset set; authors in samples/CREDITS.md) layered over
+// Curated CC0 recordings (Freesound, mostly via the Deadfall asset set; authors in samples/CREDITS.md) layered over
 // the procedural engine. Everything here is optional: files are fetched + decoded in the background after init and
 // every consumer falls back to the procedural banks while a recording is missing (still loading, fetch or decode
 // failed, no Ogg Vorbis support), so without them the game sounds exactly as before.
@@ -42,6 +42,26 @@ export const REC = {
   swing: { slices: [0,0.252, 0.312,0.482, 0.854,0.43, 1.344,0.452] },
   hit_flesh: { slices: [0,0.652, 0.712,0.192, 0.964,0.652, 1.676,0.165, 1.901,0.652] },
   fire_ignite: { slices: [0,1.7, 1.76,0.75] },
+
+  // gunshots: every take starts on its transient; full-auto takes are single shots spliced onto their burst's tail
+  gun_pistol: { slices: [0,1.28, 1.34,1.2, 2.6,1.2] },
+  gun_shotgun: { slices: [0,1.26, 1.32,1.149, 2.53,1.6] },
+  gun_dbshotgun: { slices: [0,2, 2.06,1.8, 3.92,1.54] },
+  gun_ak47: { slices: [0,0.96, 1.02,0.96, 2.04,0.96, 3.06,0.96, 4.08,1.3] },
+  gun_m4a1: { slices: [0,1.3, 1.36,0.72, 2.14,1.139, 3.34,0.86, 4.26,0.84] },
+  gun_mp5: { slices: [0,0.708, 0.768,0.708, 1.536,0.708, 2.304,0.708, 3.072,1.1, 4.232,1.1] },
+  gun_rifle: { slices: [0,2.2, 2.26,2.2] },
+  gun_far: { sr: 32000, slices: [0,1.2, 1.26,1.2, 2.52,1.2, 3.78,1.2, 5.04,1.2, 6.3,2] },
+  hit_bullet: { slices: [0,0.149, 0.21,0.144, 0.415,0.22, 0.695,0.19, 0.945,0.299] },
+  hit_head: { slices: [0,0.6, 0.66,0.299, 1.02,0.6] },
+  // zombie voices
+  zv_growl: { sr: 32000, slices: [0,2.629, 2.69,3.149, 5.9,2.24, 8.2,2.479, 10.74,2.369, 13.17,3.419, 16.65,3.529, 20.24,1.169, 21.47,0.69, 22.22,1.88, 24.16,1.55, 25.77,1.12] },
+  zv_attack: { sr: 32000, slices: [0,0.8, 0.86,0.77, 1.69,0.97, 2.72,0.81, 3.59,0.99, 4.64,1.039, 5.74,0.91, 6.71,0.78, 7.55,0.939, 8.55,0.87, 9.48,0.78, 10.32,1.05, 11.43,1.089, 12.58,0.519, 13.16,0.88] },
+  zv_pain: { sr: 32000, slices: [0,1.07, 1.13,0.51, 1.7,0.649, 2.41,0.538, 3.009,0.81, 3.879,0.878, 4.817,0.309] },
+  zv_death: { sr: 32000, slices: [0,0.6, 0.66,0.83, 1.55,1.6, 3.21,1.21, 4.48,1.19] },
+  zv_scream: { sr: 32000, slices: [0,1.909, 1.97,1.62, 3.65,1.419] },
+  zv_roar: { sr: 32000, slices: [0,1.55, 1.61,2.149] },
+  zv_idle: { sr: 32000 },
 
   branch_snap: { slices: [0,0.432, 0.492,0.282, 0.834,0.232, 1.126,0.852, 2.038,0.222, 2.32,0.852, 3.232,0.852, 4.144,0.852, 5.056,0.352, 5.468,0.852, 6.38,0.302, 6.742,0.412, 7.214,0.852, 8.126,0.192] },
   bush_rustle: { sr: 32000, slices: [0,0.572, 0.632,1.652, 2.344,0.702, 3.106,1.112, 4.278,1.652, 5.99,0.632, 6.682,1.64, 8.382,1.652] },

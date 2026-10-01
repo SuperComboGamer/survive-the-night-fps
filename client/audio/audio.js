@@ -1,6 +1,7 @@
 // WebAudio engine. Every sound, ambience bed and the music is synthesised at runtime; a curated set of CC0 field
-// recordings (samples.js: ambience beds, wildlife, footsteps, wood/fire foley) is layered on top once it has loaded,
-// with the procedural sounds as the fallback for anything that is missing. Public API on the AudioEngine class below.
+// recordings (samples.js: ambience beds, wildlife, footsteps, wood/fire foley, gunshots, zombie voices, bullet impacts)
+// is layered on top once it has loaded, with the procedural sounds as the fallback for anything that is missing.
+// Public API on the AudioEngine class below.
 import { SOUND } from '../../shared/defs.js';
 import { jobList, renderJob, DEF_BY_BANK } from './registry.js';
 import { Music } from './music.js';
@@ -30,7 +31,9 @@ const CATS = {
 for (const k in CATS) CATS[k].sendExp = 0.45 * CATS[k].roll;
 
 // Recorded foley (samples.js) replacing - or with `layer`, adding to - a procedural sound. key, vol, pitch range;
-// hits/gap: repeated strikes; layers: several recordings, each `at` seconds in.
+// hits/gap: repeated strikes; layers: several recordings, each `at` seconds in. layer: true adds the sound's own
+// procedural bank, a bank name adds that bank instead (at layerVol). far: a distant-perspective recording that
+// takes over from the close one as a positional source gets further away (FAR_NEAR..FAR_FULL m).
 const R_CHOP = { key: 'chop', vol: 1.9, pitch: [0.93, 1.07] };
 const R_WOOD = { key: 'chop', vol: 1.6, pitch: [1.05, 1.2] };
 const R_HAMMER = { key: 'hammer', vol: 2.8, pitch: [0.92, 1.08], hits: [2, 3], gap: [0.24, 0.38] };
@@ -39,28 +42,61 @@ const R_IGNITE = { key: 'fire_ignite', vol: 0.9, pitch: [0.85, 1.0], layer: true
 const R_SWING = { key: 'swing', vol: 0.8, pitch: [0.9, 1.15], lp: 9000 };
 const R_SWING_HEAVY = { key: 'swing', vol: 1.25, pitch: [0.78, 0.9], lp: 7000 };
 const R_FLESH = { key: 'hit_flesh', vol: 1.2, pitch: [0.85, 1.05], layer: true };
+// bullet impacts on flesh: in the world, and as the shooter's own quiet "that hit" confirmation (no tonal chime)
+const R_BULLET_FLESH = { key: 'hit_bullet', vol: 0.5, pitch: [0.85, 1.05] };
+const R_HEADSHOT = { key: 'hit_head', vol: 1.8, pitch: [0.92, 1.05] };
+const R_HIT_CONFIRM = { key: 'hit_bullet', vol: 1.6, pitch: [0.8, 0.95], lp: 6500 };
+const R_HEAD_CONFIRM = { key: 'hit_head', vol: 1.8, pitch: [0.9, 1.0], lp: 9000 };
+// zombie voices (human performances, pitched down for a heavier, less human throat)
+const R_Z_GROWL = { key: 'zv_growl', vol: 2, pitch: [0.8, 0.94] };
+const R_Z_ATTACK = { key: 'zv_attack', vol: 2.6, pitch: [0.82, 0.95] };
+const R_Z_PAIN = { key: 'zv_pain', vol: 2.8, pitch: [0.85, 0.98] };
+const R_Z_DEATH = { key: 'zv_death', vol: 3, pitch: [0.8, 0.92] };
+const R_Z_SCREAM = { key: 'zv_scream', vol: 2.3, pitch: [0.93, 1.05] };
+const R_Z_ROAR = { key: 'zv_roar', vol: 1.4, pitch: [0.64, 0.72] };
+const R_ZP_GROWL = { key: 'zv_growl', vol: 2, pitch: [0.88, 1.0] };
+// Recorded gunshots (one take set per weapon, heard both first person and from other players). In first person the
+// procedural "sweetener" (sub thump + tree-line echoes, no crack) is layered underneath for weight; from far away the
+// real distant recordings take over. `fp`: the first-person variant of each def.
+const gunRec = (key, pitch, farPitch, gain = 1) => {
+  const far = { key: 'gun_far', vol: 1.0 * gain, pitch: farPitch };
+  const remote = { key, vol: 1.15 * gain, pitch, far };
+  remote.fp = { key, vol: 1.25 * gain, pitch, layer: 'gsw_' + key.slice(4), layerVol: 0.55 };
+  return remote;
+};
+const R_GUN = {
+  pistol: gunRec('gun_pistol', [0.97, 1.04], [1.05, 1.15], 0.6),
+  shotgun: gunRec('gun_shotgun', [0.96, 1.03], [0.78, 0.86]),
+  ak47: gunRec('gun_ak47', [0.97, 1.03], [0.92, 1.0]),
+  rifle: gunRec('gun_rifle', [0.97, 1.02], [0.82, 0.9]),
+  m4a1: gunRec('gun_m4a1', [0.98, 1.04], [0.98, 1.06]),
+  mp5: gunRec('gun_mp5', [0.98, 1.05], [1.08, 1.18]),
+  dbshotgun: gunRec('gun_dbshotgun', [0.9, 0.96], [0.74, 0.8]),
+};
+const FAR_NEAR = 35;
+const FAR_FULL = 110;
 
 // SOUND id -> { bank, cat ('2d' = always non-positional), vol, jit (rate jitter), send (2D reverb send), rec }
 const SOUND_MAP = [];
 function def(id, bank, cat, vol = 1, jit = 0.04, send = 0.15, rec = null) {
   if (id !== undefined) SOUND_MAP[id] = { bank, cat, vol, jit, send, rec };
 }
-def(S.PISTOL, 'gun_pistol', 'gun', 0.85, 0.04);
-def(S.SHOTGUN, 'gun_shotgun', 'gun', 0.9, 0.03);
-def(S.AK47, 'gun_ak47', 'gun', 0.8, 0.035);
-def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03);
-def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035);
-def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04);
-def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03);
+def(S.PISTOL, 'gun_pistol', 'gun', 0.85, 0.04, 0.15, R_GUN.pistol);
+def(S.SHOTGUN, 'gun_shotgun', 'gun', 0.9, 0.03, 0.15, R_GUN.shotgun);
+def(S.AK47, 'gun_ak47', 'gun', 0.8, 0.035, 0.15, R_GUN.ak47);
+def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03, 0.15, R_GUN.rifle);
+def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035, 0.15, R_GUN.m4a1);
+def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04, 0.15, R_GUN.mp5);
+def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03, 0.15, R_GUN.dbshotgun);
 def(S.CROSSBOW, 'xbow_shot', 'fx', 0.8, 0.05); // no blast: it carries about as far as a swing, not a gunshot
 def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08, 0.15, R_SWING);
 def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08, 0.15, R_FLESH);
-def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1);
-def(S.ZOMBIE_ATTACK, 'z_attack', 'zombie', 0.9, 0.08);
-def(S.ZOMBIE_DEATH, 'z_death', 'zombie', 0.9, 0.08);
-def(S.ZOMBIE_PAIN, 'z_pain', 'zombie', 0.8, 0.1);
-def(S.RUNNER_SCREAM, 'z_runner', 'zombie', 1, 0.07);
-def(S.TANK_ROAR, 'z_tank', 'big', 1, 0.06);
+def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1, 0.15, R_Z_GROWL);
+def(S.ZOMBIE_ATTACK, 'z_attack', 'zombie', 0.9, 0.08, 0.15, R_Z_ATTACK);
+def(S.ZOMBIE_DEATH, 'z_death', 'zombie', 0.9, 0.08, 0.15, R_Z_DEATH);
+def(S.ZOMBIE_PAIN, 'z_pain', 'zombie', 0.8, 0.1, 0.15, R_Z_PAIN);
+def(S.RUNNER_SCREAM, 'z_runner', 'zombie', 1, 0.07, 0.15, R_Z_SCREAM);
+def(S.TANK_ROAR, 'z_tank', 'big', 1, 0.06, 0.15, R_Z_ROAR);
 def(S.SPITTER_SPIT, 'z_spit', 'zombie', 0.9, 0.08);
 def(S.LEAPER_SCREECH, 'z_leaper', 'zombie', 0.9, 0.08);
 def(S.ROPER_SHOOT, 'z_roper', 'zombie', 0.9, 0.06);
@@ -89,9 +125,9 @@ def(S.DAWN, 'dawn', '2d', 0.7, 0, 0.3);
 def(S.PLANE, 'plane', '2d', 0.8, 0, 0.2);
 def(S.CRATE_LAND, 'crate', 'fxfar', 1, 0.05);
 def(S.CAMPFIRE_ADD, 'campfire_add', 'fx', 0.8, 0.06, 0.15, R_CAMPFIRE);
-def(S.FLESH_HIT, 'flesh', 'fx', 0.75, 0.1);
-def(S.HEADSHOT, 'headshot_w', 'fx', 0.9, 0.08);
-def(S.ZPLAYER_GROWL, 'zp_growl', 'zombie', 0.9, 0.08);
+def(S.FLESH_HIT, 'flesh', 'fx', 0.75, 0.1, 0.15, R_BULLET_FLESH);
+def(S.HEADSHOT, 'headshot_w', 'fx', 0.9, 0.08, 0.15, R_HEADSHOT);
+def(S.ZPLAYER_GROWL, 'zp_growl', 'zombie', 0.9, 0.08, 0.15, R_ZP_GROWL);
 def(S.THROW, 'throw', 'fx', 0.55, 0.08);
 def(S.FOOTSTEP, 'step_dirt', 'step', 0.55, 0.08);
 def(S.LEAP, 'leap', 'fx', 0.8, 0.08);
@@ -118,13 +154,13 @@ def(S.EAT, 'eat', 'fx', 0.5, 0.05);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
-  pistol: { bank: 'fp_pistol', vol: 0.95, jit: 0.03, send: 0.14 },
-  shotgun: { bank: 'fp_shotgun', vol: 1, jit: 0.025, send: 0.18 },
-  ak47: { bank: 'fp_ak47', vol: 0.88, jit: 0.03, send: 0.13 },
-  rifle: { bank: 'fp_rifle', vol: 1, jit: 0.02, send: 0.2 },
-  m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13 },
-  mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1 },
-  dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2 },
+  pistol: { bank: 'fp_pistol', vol: 0.95, jit: 0.03, send: 0.14, rec: R_GUN.pistol.fp },
+  shotgun: { bank: 'fp_shotgun', vol: 1, jit: 0.025, send: 0.18, rec: R_GUN.shotgun.fp },
+  ak47: { bank: 'fp_ak47', vol: 0.88, jit: 0.03, send: 0.13, rec: R_GUN.ak47.fp },
+  rifle: { bank: 'fp_rifle', vol: 1, jit: 0.02, send: 0.2, rec: R_GUN.rifle.fp },
+  m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13, rec: R_GUN.m4a1.fp },
+  mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1, rec: R_GUN.mp5.fp },
+  dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2, rec: R_GUN.dbshotgun.fp },
   crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05 },
   reload_start: { bank: 'reload_start', vol: 0.55 },
   reload_end: { bank: 'reload_end', vol: 0.6 },
@@ -143,9 +179,8 @@ const LOCAL = {
   craft: { bank: 'craft', vol: 0.55 },
   build: { bank: 'build', vol: 0.65, rec: R_HAMMER },
   build_fail: { bank: 'build_fail', vol: 0.45, bus: 'ui' },
-  hitmarker: { bank: 'hitmarker', vol: 0.3, bus: 'ui', jit: 0.01, send: 0 },
-  headshot: { bank: 'headshot_ding', vol: 0.5, bus: 'ui', jit: 0.01, send: 0 },
-  kill: { bank: 'kill', vol: 0.35, bus: 'ui', jit: 0.01, send: 0 },
+  hitmarker: { bank: 'flesh', vol: 0.1, bus: 'ui', jit: 0.06, send: 0, rec: R_HIT_CONFIRM },
+  headshot: { bank: 'headshot_w', vol: 0.15, bus: 'ui', jit: 0.05, send: 0, rec: R_HEAD_CONFIRM },
   hurt: { bank: 'hurt', vol: 0.65, jit: 0.05, send: 0.05 },
   heal: { bank: 'heal', vol: 0.35, bus: 'ui', jit: 0, send: 0 },
   bandage: { bank: 'bandage', vol: 0.5 },
@@ -158,7 +193,7 @@ const LOCAL = {
   breath: { bank: 'breath', vol: 0.45, jit: 0.04, send: 0.02 },
   throw: { bank: 'throw', vol: 0.5 },
   claw: { bank: 'claw', vol: 0.65, jit: 0.07 },
-  zombie_player_growl: { bank: 'zp_growl', vol: 0.65, jit: 0.07 },
+  zombie_player_growl: { bank: 'zp_growl', vol: 0.65, jit: 0.07, rec: R_ZP_GROWL },
   death: { bank: 'death_local', vol: 0.9, bus: 'ui', send: 0 },
   notify: { bank: 'notify', vol: 0.3, bus: 'ui', jit: 0.02, send: 0 },
   chat: { bank: 'chat', vol: 0.25, bus: 'ui', jit: 0.02, send: 0 },
@@ -189,9 +224,11 @@ const LOOPS = {
   torch: { bank: 'loop_torch', ref: 1.2, max: 16, roll: 1.4, vol: 0.45, wet: 0.08, rec: [{ key: 'fire_roar', vol: 2.2, lp: 4500, rate: 1.1 }] },
   fire: { bank: 'loop_fire', ref: 3, max: 45, roll: 1.1, vol: 0.9, wet: 0.15, rec: [{ key: 'fire_roar', vol: 3 }, { key: 'fire_loop', vol: 2 }] },
   acid: { bank: 'loop_acid', ref: 1.5, max: 18, roll: 1.4, vol: 0.5, wet: 0.08 },
-  zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 22, roll: 1.3, vol: 0.55, wet: 0.12, cap: 10, jit: 0.14 },
+  zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 22, roll: 1.3, vol: 0.55, wet: 0.12, cap: 10, jit: 0.14, rec: [{ key: 'zv_idle', vol: 0.9, rate: 0.9, lp: 7000 }] },
   boss_breath: { bank: 'loop_boss_breath', ref: 5, max: 70, roll: 1.0, vol: 0.9, wet: 0.2, cap: 3 },
   generator: { bank: 'loop_generator', ref: 2.5, max: 40, roll: 1.2, vol: 0.6, wet: 0.1 },
+  // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
+  plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
 };
 const LOOP_CAP_TOTAL = 28;
 
@@ -352,6 +389,7 @@ class LoopEmitter {
     this.active = false;
     this.stopped = false;
     this.rate = 1 + (Math.random() - 0.5) * 2 * (this.def?.jit ?? 0.04);
+    this.pitch = 1; // setRate (doppler)
     this.variant = Math.floor(Math.random() * 8);
     this.srcs = [];
     this.extra = []; // per-layer gain / filter nodes of a recorded loop
@@ -360,6 +398,7 @@ class LoopEmitter {
     this.fade = null;
     this.panner = null;
     this.sendG = null;
+    this.air = null;
   }
   setPosition(x, y, z) {
     this.x = x;
@@ -370,6 +409,14 @@ class LoopEmitter {
   setVolume(v) {
     this.vol = v < 0 ? 0 : v;
     if (this.active) this.gain.gain.setTargetAtTime(this.vol * this.def.vol, this.e._ctx.currentTime, 0.05);
+  }
+  // playback-rate multiplier (doppler shift of a moving source)
+  setRate(r) {
+    this.pitch = r;
+    if (!this.active) return;
+    const now = this.e._ctx.currentTime;
+    const recs = this.proc ? null : this.def.rec;
+    for (let i = 0; i < this.srcs.length; i++) this.srcs[i].playbackRate.setTargetAtTime(this.rate * (recs?.[i]?.rate || 1) * r, now, 0.08);
   }
   stop() {
     if (this.stopped) return;
@@ -406,7 +453,7 @@ class LoopEmitter {
         const src = c.createBufferSource();
         src.buffer = buf;
         src.loop = true;
-        src.playbackRate.value = this.rate * (L.rate || 1);
+        src.playbackRate.value = this.rate * (L.rate || 1) * this.pitch;
         const lg = c.createGain();
         lg.gain.value = L.vol;
         let head = lg;
@@ -431,7 +478,7 @@ class LoopEmitter {
       const src = c.createBufferSource();
       src.buffer = buf;
       src.loop = true;
-      src.playbackRate.value = this.rate;
+      src.playbackRate.value = this.rate * this.pitch;
       src.connect(this.gain);
       src.start(now, Math.random() * buf.duration);
       this.srcs.push(src);
@@ -448,7 +495,14 @@ class LoopEmitter {
     setPannerPos(this.panner, this.x, this.y, this.z);
     this.sendG = c.createGain();
     this.sendG.gain.value = this.def.wet;
-    this.gain.connect(this.fade);
+    if (this.def.air) {
+      this.air = c.createBiquadFilter();
+      this.air.type = 'lowpass';
+      this.air.Q.value = 0.5;
+      this.air.frequency.value = this._airHz();
+      this.gain.connect(this.air);
+      this.air.connect(this.fade);
+    } else this.gain.connect(this.fade);
     this.fade.connect(this.panner);
     this.panner.connect(e._sfxIn);
     this.fade.connect(this.sendG);
@@ -462,6 +516,7 @@ class LoopEmitter {
     this.active = false;
     const now = this.e._ctx.currentTime;
     const nodes = [...this.srcs, ...this.extra, this.gain, this.fade, this.panner, this.sendG];
+    if (this.air) nodes.push(this.air);
     this.fade.gain.setTargetAtTime(0, now, 0.06);
     for (const s of this.srcs) {
       try {
@@ -477,7 +532,11 @@ class LoopEmitter {
     };
     this.srcs = [];
     this.extra = [];
-    this.gain = this.fade = this.panner = this.sendG = null;
+    this.gain = this.fade = this.panner = this.sendG = this.air = null;
+  }
+  // air absorption: distant sources lose their highs
+  _airHz() {
+    return Math.max(450, 16000 / (1 + this.d / 55));
   }
   _updateFade(now) {
     const m = this.def.max;
@@ -486,6 +545,7 @@ class LoopEmitter {
       this._fadeTarget = f;
       this.fade.gain.setTargetAtTime(f, now, 0.15);
     }
+    if (this.air) this.air.frequency.setTargetAtTime(this._airHz(), now, 0.2);
   }
 }
 
@@ -587,7 +647,7 @@ class VoiceSource {
   }
 }
 
-const NULL_LOOP = Object.freeze({ setPosition() {}, setVolume() {}, stop() {} });
+const NULL_LOOP = Object.freeze({ setPosition() {}, setVolume() {}, setRate() {}, stop() {} });
 const NULL_VOICE = Object.freeze({ setPosition() {}, setVolume() {}, setMuffled() {}, disconnect() {} });
 const CALM_WIND = Object.freeze({ speed: 4, gust: 0.4, strength: 0.18 });
 
@@ -687,7 +747,7 @@ export class AudioEngine {
     this._tick();
     // recordings stream in behind the procedural sound (beds crossfade over once decoded)
     const night = this._state.night > 0.5;
-    this._rec.start([night ? 'amb_night' : 'amb_day', night ? 'amb_crickets' : 'amb_day_wind', 'wind_light', 'wind_mid', 'fs_grass', 'fs_dirt', 'cloth', 'fs_wood', 'fire_roar', 'fire_loop']);
+    this._rec.start([night ? 'amb_night' : 'amb_day', night ? 'amb_crickets' : 'amb_day_wind', 'wind_light', 'wind_mid', 'fs_grass', 'fs_dirt', 'gun_pistol', 'hit_bullet', 'zv_growl', 'zv_attack', 'zv_pain', 'zv_death', 'cloth', 'fs_wood', 'fire_roar', 'fire_loop']);
   }
 
   _buildGraph() {
@@ -1072,14 +1132,20 @@ export class AudioEngine {
     if (!d) return;
     const o = opts || EMPTY;
     const pos = !(d.cat === '2d' || o.x === undefined || o.x === null);
-    if (d.rec && this._playRec(d.rec, pos ? d.cat : null, pos ? +o.x : 0, pos ? +(o.y ?? this._ly) : 0, pos ? +(o.z ?? 0) : 0, (o.volume ?? 1) * d.vol, this._sfxIn, d.send) && !d.rec.layer) return;
-    const buf = this._pick(d.bank, o.variant);
+    let bank = d.bank;
+    let lv = 1;
+    if (d.rec && this._playRec(d.rec, pos ? d.cat : null, pos ? +o.x : 0, pos ? +(o.y ?? this._ly) : 0, pos ? +(o.z ?? 0) : 0, (o.volume ?? 1) * d.vol, this._sfxIn, d.send)) {
+      if (!d.rec.layer) return;
+      if (d.rec.layer !== true) bank = d.rec.layer;
+      lv = d.rec.layerVol ?? 1;
+    }
+    const buf = this._pick(bank, o.variant);
     if (!buf) {
-      this._need(d.bank);
+      this._need(bank);
       return;
     }
     this._resume();
-    const vol = (o.volume ?? 1) * d.vol * (0.92 + Math.random() * 0.16);
+    const vol = (o.volume ?? 1) * d.vol * lv * (0.92 + Math.random() * 0.16);
     const rate = (o.rate ?? 1) * (1 + (Math.random() - 0.5) * 2 * d.jit) * this._rateMul;
     if (!pos) {
       this._play2D(buf, vol, rate, this._sfxIn, d.send, 0);
@@ -1095,15 +1161,21 @@ export class AudioEngine {
     const o = opts || EMPTY;
     const ui = d.bus === 'ui';
     const dest = ui ? this._uiIn : this._sfxIn;
-    if (d.rec && this._playRec(d.rec, null, 0, 0, 0, (o.volume ?? 1) * d.vol, dest, d.send ?? 0.06) && !d.rec.layer) return;
-    const buf = this._pick(d.bank, o.variant);
+    let bank = d.bank;
+    let lv = 1;
+    if (d.rec && this._playRec(d.rec, null, 0, 0, 0, (o.volume ?? 1) * d.vol, dest, d.send ?? 0.06)) {
+      if (!d.rec.layer) return;
+      if (d.rec.layer !== true) bank = d.rec.layer;
+      lv = d.rec.layerVol ?? 1;
+    }
+    const buf = this._pick(bank, o.variant);
     if (!buf) {
-      this._need(d.bank);
+      this._need(bank);
       return;
     }
     this._resume();
     const jit = d.jit ?? 0.04;
-    const vol = (o.volume ?? 1) * d.vol * (ui ? 1 : 0.94 + Math.random() * 0.12);
+    const vol = (o.volume ?? 1) * d.vol * lv * (ui ? 1 : 0.94 + Math.random() * 0.12);
     const rate = (o.rate ?? 1) * (1 + (Math.random() - 0.5) * 2 * jit) * (ui ? 1 : this._rateMul);
     this._play2D(buf, vol, rate, dest, d.send ?? 0.06, 0);
   }
@@ -1119,6 +1191,22 @@ export class AudioEngine {
     } else if (!rec.has(r.key)) return false;
     this._resume();
     const now = this._ctx.currentTime;
+    // distant perspective: equal-power crossfade from the close recording to the far one with distance
+    let near = 1;
+    const F = cat && r.far;
+    if (F && rec.has(F.key)) {
+      const dx = x - this._lx;
+      const dy = y - this._ly;
+      const dz = z - this._lz;
+      const k = clamp01((Math.sqrt(dx * dx + dy * dy + dz * dz) - FAR_NEAR) / (FAR_FULL - FAR_NEAR));
+      if (k > 0) {
+        const fb = rec.get(F.key);
+        const [off, dur] = rec.pick(F.key, fb);
+        this._playPos(fb, cat, x, y, z, vol * F.vol * Math.sqrt(k) * dbJit(1.5), rrange(F.pitch) * this._rateMul, off, dur);
+        near = Math.sqrt(1 - k);
+        if (near < 0.05) return true;
+      }
+    }
     const n = layers ? layers.length : 1;
     for (let i = 0; i < n; i++) {
       const L = layers ? layers[i] : r;
@@ -1128,7 +1216,7 @@ export class AudioEngine {
       for (let h = 0; h < hits; h++) {
         const [off, dur] = rec.pick(L.key, buf);
         const rate = rrange(L.pitch) * this._rateMul;
-        const v = vol * L.vol * dbJit(1.5);
+        const v = vol * near * L.vol * dbJit(1.5);
         if (cat) this._playPos(buf, cat, x, y, z, v, rate, off, dur, t, L.lp);
         else this._play2D(buf, v, rate, dest, send, now + t, off, dur, L.lp);
         if (L.gap) t += rrange(L.gap);
@@ -1318,7 +1406,7 @@ export class AudioEngine {
       if (l._want) {
         const cap = l.def.cap ?? 99;
         const n = counts[l.name] || 0;
-        if (n >= cap || total >= LOOP_CAP_TOTAL) l._want = false;
+        if (!l.def.always && (n >= cap || total >= LOOP_CAP_TOTAL)) l._want = false;
         else {
           counts[l.name] = n + 1;
           total++;

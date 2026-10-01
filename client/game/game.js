@@ -58,6 +58,7 @@ import { buildTerrain, buildWater } from '../render/terrain.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
+import { Flyover } from '../render/flyover.js';
 import { Lights } from '../render/lights.js';
 import { Atmosphere } from '../render/atmosphere.js';
 import { WeatherFX } from '../render/weatherfx.js';
@@ -273,6 +274,7 @@ export class Game {
     const t4 = performance.now();
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
+    if (!this.flyover) this.flyover = new Flyover(this.scene, this.effects.atlas);
     if (!this.atmosphere) this.atmosphere = new Atmosphere(this.scene);
     this.weather.setWorld(this.world);
     if (!this.weatherFx) this.weatherFx = new WeatherFX(this.scene, this.renderer.quality);
@@ -293,6 +295,7 @@ export class Game {
     this.scene.remove(this.terrain);
     this.scene.remove(this.water);
     this.staticWorld?.dispose();
+    this.flyover?.clear();
     this.world = null;
   }
 
@@ -451,8 +454,9 @@ export class Game {
       },
       hitmark(flags) {
         g.ui.hitmarker(!!(flags & 1), !!(flags & 2));
-        g.audio.playLocal(flags & 1 ? 'headshot' : 'hitmarker', { volume: 0.7 });
-        if (flags & 2) g.audio.playLocal('kill', { volume: 0.5 });
+        // a quiet meaty thwack confirms a gun hit (melee hits already sound MELEE_HIT); kills are heard as the death cry
+        const s = g.prediction.state;
+        if (!s.zombie && !WEAPONS[currentWeapon(s)]?.melee) g.audio.playLocal(flags & 1 ? 'headshot' : 'hitmarker', { volume: 0.7 });
       },
       damage(amount, fx, fz) {
         g.damageFx = Math.min(1, g.damageFx + amount / 40);
@@ -486,6 +490,9 @@ export class Game {
       },
       structBreak(x, y, z) {
         g.effects.structBreak(x, y, z);
+      },
+      flyover(x, y, z, heading, eta) {
+        g.flyover?.start(x, y, z, heading, eta, g.time, g.audio);
       },
       ping(pid, kind, x, y, z) {
         g.pings = g.pings.filter((p) => p.pid !== pid);
@@ -533,7 +540,7 @@ export class Game {
         a.playLocal('notify');
         break;
       case NOTIFY.SUPPLY_DROP:
-        ui.notify('A supply plane drones overhead... watch the treeline for red smoke.', 'toast', 6);
+        ui.notify('A supply plane is inbound - follow its smoke trail to the drop.', 'toast', 6);
         a.stinger?.('supply');
         break;
       case NOTIFY.SUPPLY_FOUND:
@@ -639,6 +646,7 @@ export class Game {
         this.deathShown = false;
         this.discovered = new Set([ZONE.CAMP]);
         this.pings = [];
+        this.flyover?.clear();
         ui.notify(`DAY ${arg}`, 'big', 5);
         ui.notify('Your car died on Route 9. Find the supplies to fix it - before the dark finds you.', 'sub', 6);
         break;
@@ -1224,6 +1232,7 @@ export class Game {
 
     this.effects.setAmbient(this.env.night);
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
+    this.flyover.update(dt, time, cam, this.env, weather);
     const flashOn = this.localFlash && self.alive && !s.zombie;
     this.atmosphere.update(dt, time, cam, this.env, flashOn, this.world.heightAt, weather);
     this.weatherFx.update(dt, time, cam, weather, this.env, flashOn, this.renderer.renderer.domElement.height);
@@ -1671,7 +1680,7 @@ export class Game {
             scale: Math.max(0.75, 1.1 - d / 300),
           });
         }
-      } else if (e.kind === ENT.CRATE && e.q[3] < 2) {
+      } else if (e.kind === ENT.CRATE && e.q[3] !== 2) {
         const d = dist(e.rx, e.rz);
         cm.push({ kind: 'crate', bearing: bearing(e.rx - rp.x, e.rz - rp.z), icon: glyph('hazard'), label: `${Math.round(d)}m` });
         if (d > 25 && d < 300 && this.project(e.rx, e.ry + 2, e.rz, sc)) wm.push({ kind: 'crate', x: sc.x, y: sc.y, icon: glyph('hazard'), name: 'Supply drop', sub: `${Math.round(d)}m`, scale: 0.85 });
@@ -1698,7 +1707,7 @@ export class Game {
       if (e.kind === ENT.PLAYER) {
         if (e.q[5] & (PFLAG.ZOMBIE | PFLAG.DEAD)) continue;
         mates.push({ x: e.rx, z: e.rz, name: this.name(e.id), status: e.downed ? 'downed' : 'alive' });
-      } else if (e.kind === ENT.CRATE && e.q[3] < 2) crates.push({ x: e.rx, z: e.rz });
+      } else if (e.kind === ENT.CRATE && e.q[3] !== 2) crates.push({ x: e.rx, z: e.rz });
     }
     const counts = this.invCounts();
     const carried = {};

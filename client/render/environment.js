@@ -190,7 +190,8 @@ export class Environment {
     this.lightDir = new THREE.Vector3(0, 1, 0);
     this.adaptRef = 0.1;
     // sun-shaft parameters for the post passes (renderer reads post.rays)
-    this.rays = { sunDir: this.lightDir, color: new THREE.Color(), strength: 0, sigma: 0.02 };
+    this.skyLightDir = new THREE.Vector3(0, 1, 0); // where the sun/moon really is (sky, haze, shafts)
+    this.rays = { sunDir: this.skyLightDir, color: new THREE.Color(), strength: 0, sigma: 0.02 };
     this._grey = new THREE.Color();
   }
 
@@ -265,12 +266,18 @@ export class Environment {
     // shadows don't jump direction
     const useSun = sunH > -0.05;
     const handover = Math.min(1, Math.abs(sunH + 0.05) / 0.06);
-    this.lightDir.copy(useSun ? sunDir : moonDir);
-    this.lightDir.y = Math.max(0.12, this.lightDir.y);
+    this.skyLightDir.copy(useSun ? sunDir : moonDir);
+    // Lighting and shadows use a key light raised to >= ~22 deg: a grazing sun stretches every tree shadow
+    // into a 50-150 m smear and each shadow texel over metres of ground (streaky bands across roads). The low
+    // sun stays low in the sky, the haze and the shafts; its shadows just soften as the light gets hazier.
+    const elev = this.skyLightDir.y;
+    this.lightDir.copy(this.skyLightDir);
+    this.lightDir.y = Math.max(0.38, this.lightDir.y);
     this.lightDir.normalize();
     this.sun.color.copy(c.dir);
     this.sun.intensity = c.dirI * Math.PI * handover;
     this.sun.position.copy(this.lightDir);
+    this.sun.shadow.intensity = 0.55 + 0.45 * THREE.MathUtils.smoothstep(elev, 0.12, 0.45);
     this.fog.color.copy(c.fog);
     u.uFog.value.copy(c.fog);
     this.fog.density = c.fogD;

@@ -269,25 +269,28 @@ export const GUNS = {
 // Layered gunshot: transient crack (+ supersonic N-wave), band-shaped noise body, pitch-dropping thump,
 // mechanical clicks, dark rumble tail and delayed tree-line echoes; soft-clipped for punch.
 // fp = first person: stereo (decorrelated body/tail/echoes), more low thump.
-export function gunshot(sr, rng, P, fp) {
+// sweet = only the thump, rumble tail and echoes: a sub / space layer under a recorded shot (which brings the crack).
+export function gunshot(sr, rng, P, fp, sweet = false) {
   const n = Math.ceil(P.dur * sr);
   const v = (a) => a * (1 + (rng() - 0.5) * 0.12);
   const shared = new Float32Array(n);
   // transient crack
-  const cn = Math.min(n, Math.floor(0.01 * sr));
-  const crack = new Float32Array(cn);
-  const hp = new Biquad().hp(sr, P.crackHP, 0.8);
-  for (let i = 0; i < cn; i++) crack[i] = hp.run(rng() * 2 - 1) * Math.exp(-i / sr / P.crackDecay);
-  if (P.nwave) {
-    const len = Math.max(3, Math.floor(0.0007 * sr));
-    normalize(crack, 1);
-    for (let i = 0; i < len; i++) crack[i] += P.nwave * (1 - (2 * i) / len);
+  if (!sweet) {
+    const cn = Math.min(n, Math.floor(0.01 * sr));
+    const crack = new Float32Array(cn);
+    const hp = new Biquad().hp(sr, P.crackHP, 0.8);
+    for (let i = 0; i < cn; i++) crack[i] = hp.run(rng() * 2 - 1) * Math.exp(-i / sr / P.crackDecay);
+    if (P.nwave) {
+      const len = Math.max(3, Math.floor(0.0007 * sr));
+      normalize(crack, 1);
+      for (let i = 0; i < len; i++) crack[i] += P.nwave * (1 - (2 * i) / len);
+    }
+    addNorm(shared, crack, sr, 0, P.crack);
   }
-  addNorm(shared, crack, sr, 0, P.crack);
   // low thump (pitch drop)
   addNorm(shared, thump(sr, v(P.thumpF0), P.thumpF1, P.thumpSweep, v(P.thumpDecay), Math.min(P.dur, P.thumpDecay * 8)), sr, 0, P.thump * (fp ? 1.15 : 0.75));
   // mechanical tail (slide / bolt carrier)
-  for (const [t, f, a] of P.mech) addNorm(shared, metalClick(sr, rng, v(f), 0.012), sr, t + (rng() - 0.5) * 0.006, a);
+  if (!sweet) for (const [t, f, a] of P.mech) addNorm(shared, metalClick(sr, rng, v(f), 0.012), sr, t + (rng() - 0.5) * 0.006, a);
 
   const nch = fp ? 2 : 1;
   const outs = [];
@@ -312,7 +315,7 @@ export function gunshot(sr, rng, P, fp) {
       body[i] = bark.run(blp2.run(blp.run(bhp.run(rng() * 2 - 1)))) * e;
     }
     normalize(body, 1);
-    mixInto(c, body, 0, 1);
+    if (!sweet) mixInto(c, body, 0, 1);
     // dark rumble tail (the blast rolling through the trees)
     const tail = new Float32Array(n);
     const tl = new Biquad().lp(sr, P.tailLP, 0.7);
@@ -1136,30 +1139,6 @@ export function healChime(sr, rng) {
   addNorm(out, rustle(sr, rng, 0.2, 2000), sr, 0, 0.25);
   return finish(out, sr, 0.8);
 }
-export function hitmarker(sr, rng) {
-  const out = alloc(sr, 0.06);
-  addNorm(out, modal(sr, rng, [{ f: 2900, d: 0.012 }, { f: 4400, d: 0.008, a: 0.6 }], 0.06, 0.2), sr, 0, 1);
-  addNorm(out, noise(sr, rng, 0.005, { hp: 5000, a: 0.0001, d: 0.001 }), sr, 0, 0.5);
-  return finish(out, sr, 0.9, 0.0001, 0.005);
-}
-export function headshotDing(sr, rng) {
-  const out = alloc(sr, 0.7);
-  addNorm(out, crackles(sr, rng, 0.035, 700, { hp: 1800, bp: 3200, pow: 1.3 }), sr, 0, 0.8);
-  addNorm(out, thump(sr, 150, 60, 0.015, 0.035), sr, 0, 0.6);
-  addNorm(out, modal(sr, rng, [{ f: 1480, d: 0.32 }, { f: 2960 * 1.01, d: 0.18, a: 0.5 }, { f: 4480, d: 0.1, a: 0.3 }, { f: 6100, d: 0.05, a: 0.2 }], 0.65, 0.3), sr, 0.012, 0.75);
-  return finish(out, sr);
-}
-export function killConfirm(sr, rng) {
-  const out = alloc(sr, 0.35);
-  addNorm(out, thump(sr, 180, 110, 0.03, 0.05), sr, 0, 0.7);
-  const c = new Float32Array(Math.floor(0.3 * sr));
-  for (let i = 0; i < c.length; i++) {
-    const t = i / sr;
-    c[i] = (Math.sin(TAU * 660 * t) + 0.6 * Math.sin(TAU * 990 * t)) * Math.exp(-t / 0.07) * Math.min(1, t / 0.004);
-  }
-  addNorm(out, c, sr, 0.015, 0.45);
-  return finish(out, sr);
-}
 export function uiClick(sr, rng) {
   const out = alloc(sr, 0.05);
   const c = new Float32Array(Math.floor(0.04 * sr));
@@ -1437,6 +1416,39 @@ export function loopGenerator(sr, rng) {
   softclip(hum, 1.4);
   return finishLoop(hum, sr, X, 0.8);
 }
+// four-engine turboprop in level flight: each prop's blade-pass drone (~68 Hz) is slightly detuned from the
+// others so they beat into the familiar throb, over the airframe's broadband roar and a faint turbine whine
+export function loopPlane(sr, rng) {
+  const L = 6;
+  const X = 0.6;
+  const n = Math.ceil((L + X) * sr);
+  const out = new Float32Array(n);
+  const props = [67.6, 68.05, 68.5, 68.95];
+  const ph = props.map(() => rng());
+  const dlp = new Biquad().lp(sr, 760, 0.8);
+  const body = new Biquad().bp(sr, 210, 0.9);
+  const rlp = new Biquad().lp(sr, 1300, 0.6);
+  const rhp = new Biquad().hp(sr, 70, 0.7);
+  const pk = new Pink(rng);
+  const br = new Brown(rng);
+  const gust = new Wander(rng, sr, 0.7);
+  const whineW = new Wander(rng, sr, 0.3);
+  let wph = 0;
+  for (let i = 0; i < n; i++) {
+    let prop = 0;
+    for (let k = 0; k < 4; k++) {
+      ph[k] += props[k] / sr;
+      if (ph[k] >= 1) ph[k] -= 1;
+      prop += Math.exp(-ph[k] * 7) - 0.14; // sharp pressure pulse per blade pass
+    }
+    const drone = dlp.run(prop);
+    const roar = rlp.run(rhp.run(pk.next())) * (0.85 + 0.15 * gust.next());
+    wph += (1850 * (1 + 0.004 * whineW.next())) / sr;
+    out[i] = drone * 0.55 + body.run(prop) * 0.25 + roar * 1.3 + br.next() * 0.12 + Math.sin(TAU * wph) * 0.012;
+  }
+  softclip(out, 1.3);
+  return finishLoop(out, sr, X, 0.8);
+}
 
 // ------------------------------------------------------------------ 2D event sounds
 export function plane(sr, rng) {
@@ -1605,6 +1617,14 @@ export const SFX_DEFS = [
   { bank: 'fp_mp5', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, true) },
   { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
   { bank: 'fp_crossbow', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, true) },
+  // sub thump + tree-line echoes layered under the recorded first-person shots
+  { bank: 'gsw_pistol', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.pistol, true, true) },
+  { bank: 'gsw_ak47', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.ak47, true, true) },
+  { bank: 'gsw_shotgun', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.shotgun, true, true) },
+  { bank: 'gsw_rifle', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.rifle, true, true) },
+  { bank: 'gsw_m4a1', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.m4a1, true, true) },
+  { bank: 'gsw_mp5', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.mp5, true, true) },
+  { bank: 'gsw_dbshotgun', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true, true) },
   // zombies
   { bank: 'z_growl', n: 6, sr: MID, gen: zGrowl },
   { bank: 'z_attack', n: 3, sr: MID, gen: zAttack },
@@ -1669,9 +1689,6 @@ export const SFX_DEFS = [
   { bank: 'craft', n: 1, sr: HI, gen: craftSnd },
   { bank: 'bandage', n: 1, sr: HI, gen: bandageSnd },
   { bank: 'heal', n: 1, sr: HI, gen: healChime },
-  { bank: 'hitmarker', n: 1, sr: HI, gen: hitmarker },
-  { bank: 'headshot_ding', n: 1, sr: HI, gen: headshotDing },
-  { bank: 'kill', n: 1, sr: HI, gen: killConfirm },
   { bank: 'ui_click', n: 1, sr: HI, gen: uiClick },
   { bank: 'ui_hover', n: 1, sr: HI, gen: uiHover },
   { bank: 'heartbeat', n: 1, sr: LO, gen: heartbeat },
@@ -1699,6 +1716,7 @@ export const SFX_DEFS = [
   { bank: 'loop_zombie_idle', n: 3, sr: LO, gen: loopZombieIdle },
   { bank: 'loop_boss_breath', n: 1, sr: LO, gen: loopBossBreath },
   { bank: 'loop_generator', n: 1, sr: LO, gen: loopGenerator },
+  { bank: 'loop_plane', n: 1, sr: LO, gen: loopPlane },
   // 2D events (rendered after init; rendered on demand if requested earlier)
   { bank: 'plane', n: 1, sr: LO, group: 'late', gen: plane },
   { bank: 'horde_horn', n: 1, sr: LO, group: 'late', gen: hordeHorn },

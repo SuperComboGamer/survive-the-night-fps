@@ -22,6 +22,7 @@ export const TEXTURE_WORLD_SIZE = {
   bark: [1, 2], bark_birch: [1, 2], bark_dead: [1, 2], rock: 2, tire: 1, paint: 1.5, carpaint: 2, cloth: 0.6,
   burlap: 0.6, bone: 0.3, charred: 1, skin: 0.6, mattress: 1, plastic: 1, pumpkin: 1, ash: 1, cardboard: 0.6,
   ground_grass: 4, ground_dirt: 4, ground_forest: 4, ground_road: 4, ground_asphalt: 4, ground_mud: 4, ground_sand: 4,
+  aircraft: 4,
 };
 
 function registerTex(t) {
@@ -1377,6 +1378,49 @@ function paintedMaskImg(W, seed, { rustAmt = 0.5, chipsN = 120, base = 222 } = {
   return img;
 }
 GEN.paint = () => paintedMaskImg(512, 191, { rustAmt: 0.3, chipsN: 160 });
+// aircraft skin (4 m): light neutral paint - tinted by vertex colour - with riveted panel seams, a slightly
+// different tone per panel and faint streaks of weathering. Tileable (seams wrap).
+GEN.aircraft = () => {
+  const W = 512;
+  const r = rngf(733);
+  const a = fbm(W, W, 4, 4, 5, 733), st = fbm(W, W, 36, 3, 4, 734);
+  const ROWS = 4;
+  const rh = W / ROWS;
+  const cuts = [];
+  for (let k = 0; k < ROWS; k++) {
+    const row = [];
+    let x = Math.floor(r() * 120);
+    while (x < W) {
+      row.push(x);
+      x += 96 + Math.floor(r() * 110);
+    }
+    cuts.push(row);
+  }
+  const tone = [];
+  for (let k = 0; k < ROWS * 16; k++) tone.push(0.955 + r() * 0.09);
+  const img = newImg(W, W);
+  eachPx(img, (x, y, i, d) => {
+    const p = i >> 2;
+    const row = Math.floor(y / rh);
+    const cs = cuts[row];
+    let col = 0;
+    let dc = W;
+    for (let c = 0; c < cs.length; c++) {
+      if (cs[c] <= x) col = c + 1;
+      const dd = Math.abs(x - cs[c]);
+      dc = Math.min(dc, dd, W - dd);
+    }
+    const dr = Math.min(y % rh, rh - (y % rh));
+    let k = (0.88 + 0.16 * a[p]) * (0.93 + 0.1 * st[p]) * tone[row * 16 + (col % cs.length)];
+    if (dr < 1.5 || dc < 1.5) k *= 0.8; // seam
+    else if ((dr > 4 && dr < 6 && x % 9 < 2) || (dc > 4 && dc < 6 && y % 9 < 2)) k *= 0.92; // rivet rows
+    d[i] = 214 * k;
+    d[i + 1] = 212 * k;
+    d[i + 2] = 207 * k;
+    d[i + 3] = 255;
+  });
+  return img;
+};
 GEN.carpaint = () => paintedMaskImg(512, 201, { rustAmt: 0.36, chipsN: 90 });
 
 GEN.tire = () => {

@@ -341,6 +341,16 @@ async function setupPickups() {
 
 // ------------------------------------------------------------------ misc
 async function setupMisc() {
+  if (ONLY === 'plane') {
+    // ?cat=misc&only=plane : the supply-drop plane, hung 6 m up so it can be orbited from below
+    const { createCargoPlane } = await import('../render/models/plane.js');
+    const plane = createCargoPlane();
+    plane.position.y = 6;
+    shadowAll(plane);
+    scene.add(plane);
+    frame(new THREE.Vector3(0, 6, 0), 48, 215, 18);
+    return;
+  }
   const { PROJ } = await import('../../shared/defs.js');
   const M = await import('../render/models/misc.js');
   const crate = M.createSupplyCrate();

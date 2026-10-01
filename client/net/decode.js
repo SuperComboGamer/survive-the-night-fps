@@ -259,6 +259,12 @@ export function readEvents(r, handler) {
       case EVT.PING:
         handler.ping?.(r.u16(), r.u8(), dqpos(r.i16()), dqpos(r.i16()), dqpos(r.i16()));
         break;
+      case EVT.FLYOVER: {
+        // read first: an optional call would skip its arguments (and the bytes) when there's no handler
+        const x = dqpos(r.i16()), y = dqpos(r.i16()), z = dqpos(r.i16()), heading = dqangle16(r.u16()), eta = r.u16() / 1000;
+        handler.flyover?.(x, y, z, heading, eta);
+        break;
+      }
       case EVT.SUMMARY:
         handler.summary?.({ night: r.u8(), kills: r.u16(), structLost: r.u8(), downs: r.u8(), deaths: r.u8(), revives: r.u8() });
         break;

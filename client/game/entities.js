@@ -554,12 +554,17 @@ export class Entities {
     e.obj?.userData.setLit?.(lit);
   }
 
+  // crate states: 3 tumbling off the plane's ramp, 0 under the canopy, 1 landed, 2 opened
   applyCrateState(e) {
     const st = e.q[3];
     if (st === e.state) return;
+    const prev = e.state;
     e.state = st;
     const para = e.obj?.userData.parachute;
-    if (para) para.visible = st === 0;
+    if (para) {
+      para.visible = st === 0;
+      if (st === 0 && prev === 3) e.chuteT = 0; // the canopy blooms open
+    }
     if (st === 1 && !e.emitter) e.emitter = this.g.effects.createEmitter('smoke_red', e.rx, e.ry, e.rz);
     if (st === 2 && e.emitter) {
       this.g.effects.removeEmitter(e.emitter);
@@ -868,6 +873,14 @@ export class Entities {
           if (e.obj) {
             e.obj.position.set(e.rx, e.ry, e.rz);
             if (e.state === 0) e.obj.rotation.y += dt * 0.3;
+            if (e.chuteT !== undefined) {
+              // streamer -> canopy: narrow and long, then it snaps open with a little overshoot
+              const k = (e.chuteT = Math.min(1, e.chuteT + dt / 0.9));
+              const b = k - 1;
+              const w = 0.1 + 0.9 * (1 + 2.70158 * b * b * b + 1.70158 * b * b);
+              e.obj.userData.parachute.scale.set(w, 1.3 - 0.3 * k, w);
+              if (k >= 1) e.chuteT = undefined;
+            }
           }
           if (e.emitter) {
             e.emitter.x = e.rx;

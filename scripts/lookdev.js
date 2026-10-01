@@ -1,5 +1,5 @@
 // Look-dev screenshots of the real game (server: GODMODE=1 DEBUG_COMMANDS=1).
-// usage: node scripts/lookdev.js [--url http://localhost:5173] [--out /tmp/lookdev] [--quality high] [--size 1280x720]
+// usage: node scripts/lookdev.js [--url http://localhost:5173] [--out /tmp/lookdev] [--quality high] [--size 1280x720] [--dpr 1]
 //        name:x,z,yawDeg,pitchDeg,cycle[,flashlight 0|1] [...]
 // cycle: 0.25 noon · 0.1 morning (sun east: yaw -90) · 0.46 dusk (sun west: yaw 90) · 0.75 midnight.
 // yaw 0 looks north (-z), 90 west (-x). Prints uncapped FPS measured over 2 s per view.
@@ -25,7 +25,7 @@ const browser = await puppeteer.launch({
   args: ['--use-angle=metal', '--enable-webgl', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', '--disable-gpu-vsync', '--disable-frame-rate-limit'],
 });
 const page = await browser.newPage();
-await page.setViewport({ width: W, height: H });
+await page.setViewport({ width: W, height: H, deviceScaleFactor: +(opt.dpr || 1) });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => {
