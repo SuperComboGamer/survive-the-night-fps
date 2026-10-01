@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { ZOMBIE_DEFS, ZANIM } from '../../shared/defs.js';
 import { createZombie } from '../render/models/characters.js';
+import { DOG_SOLES } from '../render/models/dog.js';
 
 const q = new URLSearchParams(location.search);
 const type = +q.get('film');
@@ -49,10 +50,21 @@ zb.object.traverse((o) => {
   if (o.isMesh) o.castShadow = true;
 });
 scene.add(zb.object);
-// the zombie rig is detached (bones aren't in the scene graph); feet are read from the solved skinning pose
+// the zombie rig is detached (bones aren't in the scene graph); feet are read from the solved skinning pose.
+// A quadruped (the dog) has scene-graph bones: its four paw soles hang off the wrist / hock bones
 const inst = zb._inst;
-const FEET = { footL: inst.X.footL, footR: inst.X.footR };
+const quad = inst.X.footL === undefined;
+const FEET = quad ? { fpL: 0, fpR: 0, hhL: 0, hhR: 0 } : { footL: inst.X.footL, footR: inst.X.footR };
+if (quad) {
+  for (const n in FEET) {
+    const sole = new THREE.Object3D();
+    sole.position.set(...DOG_SOLES[n.slice(0, 2)]);
+    inst.bones[inst.X[n]].add(sole);
+    FEET[n] = sole;
+  }
+}
 function footWorld(idx, out) {
+  if (quad) return idx.getWorldPosition(out);
   if (inst.poseDirty) {
     inst._solve();
     inst.poseDirty = true; // still upload it at render time
@@ -89,10 +101,10 @@ const fdt = q.has('fdt') ? +q.get('fdt') : cycleT / frames;
 
 // skate metric: horizontal foot speed while the foot is on the ground (lowest few cm of its travel)
 const _v = new THREE.Vector3();
-const track = { footL: [], footR: [] };
+const track = Object.fromEntries(Object.keys(FEET).map((n) => [n, []]));
 function sampleFeet() {
   zb.object.updateMatrixWorld(true);
-  for (const n of ['footL', 'footR']) {
+  for (const n in FEET) {
     footWorld(FEET[n], _v);
     track[n].push([_v.x, _v.y, _v.z, time]);
   }
@@ -148,11 +160,11 @@ function skate(tr) {
   }
   return { avg: grounded ? slid / grounded : 0, max: maxSlide, ground: grounded / tr.length };
 }
-const sL = skate(track.footL), sR = skate(track.footR);
+const skates = Object.keys(FEET).map((n) => [n, skate(track[n])]);
+const sL = skates[0][1], sR = skates[1][1];
 const gv = zb._inst.gv ? Object.entries(zb._inst.gv).map(([k, v]) => `${k}=${+v.toFixed(2)}`).join(' ') : '';
 const txt = `type ${def.name} anim ${anim} speed ${speed.toFixed(2)} cycle ${cycleT.toFixed(3)}s fdt ${fdt.toFixed(3)} limpSide ${zb._inst.limpSide} armSide ${zb._inst.armSide} ${gv}\n` +
-  `skate L avg ${sL.avg.toFixed(3)} max ${sL.max.toFixed(2)} grounded ${(sL.ground * 100).toFixed(0)}%  ` +
-  `R avg ${sR.avg.toFixed(3)} max ${sR.max.toFixed(2)} grounded ${(sR.ground * 100).toFixed(0)}%`;
+  'skate ' + skates.map(([n, s]) => `${n} avg ${s.avg.toFixed(3)} max ${s.max.toFixed(2)} grounded ${(s.ground * 100).toFixed(0)}%`).join('  ');
 ctx.fillStyle = '#dde';
 txt.split('\n').forEach((l, i) => ctx.fillText(l, 8, H * rows + 16 + i * 16));
 console.log(txt);
