@@ -96,7 +96,7 @@ https://www.survivethenightgame.com.
 | M | Field map |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
-| H | Quick heal (bandage / medkit; a medkit gets you up when downed) |
+| H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
 | Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
 | Enter | Chat |
 | V | Push-to-talk proximity voice |
@@ -119,7 +119,9 @@ https://www.survivethenightgame.com.
   roads and in the woods between them, so every walk passes something worth searching. Melee a tree for
   sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
   automatically when you walk over them. Searched containers partly restock at dawn. Supply planes
-  drop crates marked by red smoke (often carrying a schematic).
+  drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
+  found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
+  your stamina.
 - **Night: board up where you stand.** 45 seconds before dark the horn sounds. There is no base: the
   horde spawns around wherever the survivors are and comes in three waves (wave 1/3, 2/3, 3/3), so the
   team throws up a temporary shelter on the spot - door boards that snap into any doorway (survivors
@@ -145,10 +147,13 @@ https://www.survivethenightgame.com.
   MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
   in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
+  The **crossbow** is the quiet one: a single heavy bolt that only the dead within a few metres hear (a
+  gunshot carries 45-70 m), paid for with a slow re-cock after every shot. It needs no schematic and no
+  gunpowder - rope, sticks and scrap at the workbench, and more sticks and scrap for bolts.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
-  for melee weapons, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
+  for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you

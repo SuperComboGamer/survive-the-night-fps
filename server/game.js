@@ -85,7 +85,7 @@ import {
 } from '../shared/defs.js';
 import { C2S, S2C, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, qpos, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
-import { createPlayerState, simulatePlayer, eyeHeight } from '../shared/playersim.js';
+import { createPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { Nav } from './nav.js';
@@ -1058,7 +1058,7 @@ export class Game {
         break;
       }
       case 'reload':
-        this.sound(SOUND.RELOAD, s.x, s.y + 1.2, s.z, 20, p.id);
+        this.sound(currentWeapon(s) === ITEM.CROSSBOW ? SOUND.CROSSBOW_COCK : SOUND.RELOAD, s.x, s.y + 1.2, s.z, 20, p.id);
         break;
       case 'leap':
         this.sound(SOUND.ZPLAYER_GROWL, s.x, s.y + 1.5, s.z, 40, p.id);
@@ -1608,7 +1608,7 @@ export class Game {
       p.state.exhausted = 0;
     }
     if (c.flashlight) p.battery = FLASHLIGHT_MAX;
-    this.sound(SOUND.HEAL, p.state.x, p.state.y + 1, p.state.z, 12);
+    this.sound(c.food ? SOUND.EAT : SOUND.HEAL, p.state.x, p.state.y + 1, p.state.z, 12);
   }
 
   // ---------------------------------------------------------------- building

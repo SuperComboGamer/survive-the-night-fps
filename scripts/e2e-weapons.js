@@ -23,8 +23,8 @@ const hold = async (ms) => { await page.evaluate(() => (window.__game.input.mous
 const state = () => page.evaluate(() => { const s = window.__game.prediction.state; return { slot: s.slot, w: s.weapons.slice(), mags: s.mags.slice(), ammo: s.ammo.slice(), reload: +s.reloadT.toFixed(2) }; });
 let fails = 0;
 const expect = (name, ok, info) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info ? JSON.stringify(info) : ''}`); };
-// [gun, ammo item]: shotgun, AK-47, hunting rifle, M4A1, MP5, double-barrel
-for (const [item, ammoItem] of [[60, 71], [61, 72], [62, 73], [63, 74], [64, 70], [65, 71]]) {
+// [gun, ammo item]: shotgun, AK-47, hunting rifle, M4A1, MP5, double-barrel, crossbow
+for (const [item, ammoItem] of [[60, 71], [61, 72], [62, 73], [63, 74], [64, 70], [65, 71], [66, 75]]) {
   await chat(`/give ${item} 1`);
   await chat(`/give ${ammoItem} 60`);
   await sleep(500);
