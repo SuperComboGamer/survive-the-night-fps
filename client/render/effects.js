@@ -456,6 +456,12 @@ export class Effects {
     this.tracers.push({ x, y, z, dx, dy, dz, dist, t: 0, bright });
   }
 
+  // crossbow bolt: a short, slow, pale streak instead of a hot tracer
+  boltTrail(x, y, z, dx, dy, dz, dist) {
+    if (this.tracers.length >= this.tracerMax) this.tracers.shift();
+    this.tracers.push({ x, y, z, dx, dy, dz, dist, t: 0, bright: 0.5, speed: 150, len: 1.6, bolt: true });
+  }
+
   vmMuzzle(pos, scale = 1) {
     this.vmFlash.position.copy(pos);
     this.vmFlash.scale.setScalar(this.rnd(0.18, 0.28) * scale);
@@ -594,12 +600,13 @@ export class Effects {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
       t.t += dt;
-      const head = t.t * 380;
-      if (head - 5 > t.dist) {
+      const len = t.len || 5;
+      const head = t.t * (t.speed || 380);
+      if (head - len > t.dist) {
         this.tracers.splice(i, 1);
         continue;
       }
-      const a = Math.max(0, head - 5);
+      const a = Math.max(0, head - len);
       const b = Math.min(t.dist, head);
       const o = n * 6;
       this.tPos[o] = t.x + t.dx * a;
@@ -610,11 +617,11 @@ export class Effects {
       this.tPos[o + 5] = t.z + t.dz * b;
       const k = 0.9 * t.bright;
       this.tCol[o] = 0.25 * k;
-      this.tCol[o + 1] = 0.2 * k;
-      this.tCol[o + 2] = 0.12 * k;
+      this.tCol[o + 1] = (t.bolt ? 0.25 : 0.2) * k;
+      this.tCol[o + 2] = (t.bolt ? 0.25 : 0.12) * k;
       this.tCol[o + 3] = 1 * k;
-      this.tCol[o + 4] = 0.85 * k;
-      this.tCol[o + 5] = 0.55 * k;
+      this.tCol[o + 4] = (t.bolt ? 0.97 : 0.85) * k;
+      this.tCol[o + 5] = (t.bolt ? 0.9 : 0.55) * k;
       n++;
     }
     this.tracerGeo.setDrawRange(0, n * 2);

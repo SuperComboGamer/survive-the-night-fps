@@ -984,6 +984,34 @@ export function pump(sr, rng) {
   addNorm(out, thump(sr, 190, 110, 0.01, 0.02), sr, 0.24, 0.6);
   return finish(out, sr);
 }
+// crossbow: the limbs slap forward (dull wooden thwack), the string thrums, the bolt hisses away. No blast.
+export function crossbowShot(sr, rng, fp) {
+  const out = alloc(sr, 0.6);
+  addNorm(out, modal(sr, rng, woodModes(rng, 1.5, 0.7), 0.25, 1.2, 3500), sr, 0, 1);
+  addNorm(out, noise(sr, rng, 0.03, { bp: [2200, 0.9], a: 0.0004, d: 0.006 }), sr, 0, 0.55);
+  addNorm(out, thump(sr, 150, 78, 0.012, 0.045), sr, 0.002, fp ? 0.8 : 0.5);
+  const f0 = rrange(rng, 172, 190);
+  addNorm(out, modal(sr, rng, [{ f: f0, d: 0.09, a: 1 }, { f: f0 * 2.02, d: 0.06, a: 0.5 }, { f: f0 * 3.07, d: 0.035, a: 0.3 }], 0.5, 1.5, 1200), sr, 0.004, 0.55);
+  addNorm(out, whoosh(sr, rng, 0.16, 1400, 3600, 1800, 1.4, 0.25), sr, 0.01, 0.3);
+  return finish(out, sr, 0.9, 0.0005, 0.05);
+}
+// cocking: hand to the string, the limbs creak as it is drawn back, the latch catches (timed to the viewmodel)
+export function xbowCock(sr, rng) {
+  const out = alloc(sr, 1.25);
+  addNorm(out, rustle(sr, rng, 0.16, 1900), sr, 0.2, 0.3);
+  addNorm(out, creak(sr, rng, 0.6, 22, 85, 1.5), sr, 0.42, 0.75);
+  addNorm(out, metalClick(sr, rng, 1500, 0.014), sr, 1.03, 0.9);
+  addNorm(out, thump(sr, 210, 120, 0.01, 0.018), sr, 1.03, 0.45);
+  return finish(out, sr);
+}
+// bolt laid in the groove and pushed back against the string
+export function xbowLoad(sr, rng) {
+  const out = alloc(sr, 0.3);
+  addNorm(out, noise(sr, rng, 0.09, { bp: [2600, 1.1], sweep: [1800, 3200], env: hann }), sr, 0, 0.4);
+  addNorm(out, modal(sr, rng, woodModes(rng, 2.4, 0.4), 0.12, 0.8, 4000), sr, 0.07, 0.9);
+  addNorm(out, metalClick(sr, rng, 2800, 0.008), sr, 0.075, 0.35);
+  return finish(out, sr);
+}
 export function dryClick(sr, rng) {
   const out = alloc(sr, 0.12);
   addNorm(out, metalClick(sr, rng, rrange(rng, 3000, 3400), 0.007), sr, 0, 1);
@@ -1509,6 +1537,7 @@ export const SFX_DEFS = [
   { bank: 'gun_m4a1', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.m4a1, false) },
   { bank: 'gun_mp5', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, false) },
   { bank: 'gun_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, false) },
+  { bank: 'xbow_shot', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, false) },
   // first-person (stereo)
   { bank: 'fp_pistol', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.pistol, true) },
   { bank: 'fp_ak47', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, true) },
@@ -1517,6 +1546,7 @@ export const SFX_DEFS = [
   { bank: 'fp_m4a1', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.m4a1, true) },
   { bank: 'fp_mp5', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, true) },
   { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
+  { bank: 'fp_crossbow', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, true) },
   // zombies
   { bank: 'z_growl', n: 6, sr: MID, gen: zGrowl },
   { bank: 'z_attack', n: 3, sr: MID, gen: zAttack },
@@ -1566,6 +1596,8 @@ export const SFX_DEFS = [
   { bank: 'shell_insert', n: 2, sr: HI, gen: shellInsert },
   { bank: 'bolt', n: 1, sr: HI, gen: boltCycle },
   { bank: 'pump', n: 1, sr: HI, gen: pump },
+  { bank: 'xbow_cock', n: 1, sr: HI, gen: xbowCock },
+  { bank: 'xbow_load', n: 1, sr: HI, gen: xbowLoad },
   { bank: 'dry', n: 1, sr: HI, gen: dryClick },
   { bank: 'switch', n: 2, sr: HI, gen: weaponSwitch },
   { bank: 'swing', n: 3, sr: HI, gen: (sr, r) => swing(sr, r, false) },

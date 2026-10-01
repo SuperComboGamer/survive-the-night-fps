@@ -5,7 +5,7 @@
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
 import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT } from '../shared/defs.js';
+import { STRUCT, ITEM, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT } from '../shared/defs.js';
 import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { raycastWorld } from '../shared/collision.js';
 
@@ -329,6 +329,32 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   A.act(ACT.CRAFT, 15);
   run(3);
   check('schematic lock enforced', A.notes.some(([m]) => m === NOTIFY.LOCKED));
+  // crossbow: a bench recipe that needs no schematic, bolts are their own reserve, it re-cocks itself,
+  // and a walker 36 m off (out of sight by day) hears the pistol but not the bolt
+  game.giveItem(p, ITEM.ROPE, 1);
+  game.giveItem(p, ITEM.SCRAP, 4);
+  game.giveItem(p, ITEM.STICK, 6);
+  A.act(ACT.CRAFT, 26);
+  A.act(ACT.CRAFT, 27);
+  run(3);
+  check('crafted crossbow + bolts at workbench', s.weapons[0] === ITEM.CROSSBOW && s.mags[0] === 1 && s.ammo[AMMO.BOLT] === 4, `bolts ${s.ammo[AMMO.BOLT]}`);
+  const far = game.zm.spawn(ZTYPE.WALKER, s.x + 36, s.z);
+  A.input(0, 0, 0, 0);
+  run(12, () => A.input(0, 0, 0));
+  A.input(BTN.ATTACK, 0, 0);
+  run(2, () => A.input(0, 0, 0));
+  check('crossbow shot goes unheard', s.mags[0] === 0 && far.alertT <= 0 && !far.target, `alert ${far.alertT.toFixed(1)}`);
+  run(56, () => A.input(0, 0, 0));
+  check('crossbow re-cocks itself', s.mags[0] === 1 && s.ammo[AMMO.BOLT] === 3, `mag ${s.mags[0]} bolts ${s.ammo[AMMO.BOLT]}`);
+  A.input(0, 0, 0, 1);
+  run(12, () => A.input(0, 0, 0));
+  A.input(BTN.ATTACK, 0, 0);
+  run(2, () => A.input(0, 0, 0));
+  check('pistol shot is heard', far.alertT > 0, `alert ${far.alertT.toFixed(1)}`);
+  far.dead = true; // drop it before it wanders over
+  far.deadT = 2;
+  A.input(0, 0, 0, 4); // back to the hammer for the door boards
+  run(12, () => A.input(0, 0, 0));
   // door boards in a doorway
   const o = game.world.openings[0];
   A.tp(o.x + Math.cos(o.ry) * 0 + Math.sin(o.ry) * 2, o.z + Math.cos(o.ry) * 2);
