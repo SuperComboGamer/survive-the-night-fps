@@ -81,6 +81,7 @@ import { createPickup } from '../render/models/pickups.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
+import { KeyHints } from '../ui/keyhints.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -213,6 +214,7 @@ export class Game {
     this.input.sensitivity = settings.sensitivity || 1;
     this.input.invertY = !!settings.invertY;
     this.input.rawInput = settings.rawMouse !== false;
+    this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
       world: (seed) => this.loadWorld(seed),
@@ -1844,6 +1846,7 @@ export class Game {
     this.updateOverlays();
     // HUD
     this.updateHud(dt, s, aiming, wdef);
+    this.keyHints.update(dt);
     if (this.ui.mapOpen) this.updateMap(s);
     // voice talking indicators
     if (this.frame % 6 === 0) {

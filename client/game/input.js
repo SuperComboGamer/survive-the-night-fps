@@ -1,5 +1,5 @@
 // Keyboard + mouse input with pointer lock. Gameplay keys only; the UI handles its own DOM input.
-import { BTN } from '../../shared/constants.js';
+import { BTN, SLOT_BUILD } from '../../shared/constants.js';
 
 const KEYMAP = {
   KeyW: BTN.FWD,
@@ -17,6 +17,19 @@ const KEYMAP = {
   KeyC: BTN.CROUCH,
   KeyR: BTN.RELOAD,
 };
+
+// The one-off action keys the HUD names in its key hints (ui/keyhints.js). Game.onKey is what acts on these
+// codes and still spells them out itself: a rebind has to change both.
+export const ACTION_KEYS = {
+  flashlight: 'KeyF',
+  heal: 'KeyH',
+  map: 'KeyM',
+  inventory: 'Tab',
+  build: 'Digit' + (SLOT_BUILD + 1), // the weapon slots are on the digits, slot 0 on [1]
+};
+
+// what goes on the key cap: 'KeyF' -> 'F', 'Digit5' -> '5', 'Tab' -> 'Tab'
+export const keyLabel = (code) => code.replace(/^(Key|Digit)/, '');
 
 export class Input {
   constructor(canvas) {

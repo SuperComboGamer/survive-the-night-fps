@@ -765,6 +765,63 @@
   filter: drop-shadow(0 0 6px rgba(120, 0, 0, 0.6));
 }
 
+/* ------------------------------------------------------------------ key hints */
+/* one line in the empty strip under the toasts (ui/keyhints.js): clear of the crosshair, the prompt and the
+   objective list, and on its own ink so it reads over a black night and over a bright road alike */
+.stn-ui .keyhint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100 * var(--u));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: calc(9 * var(--u));
+  padding: calc(7 * var(--u)) calc(26 * var(--u)) calc(7 * var(--u)) calc(20 * var(--u));
+  white-space: nowrap;
+  background: var(--brush-ink) center / 100% 100% no-repeat;
+  font: 400 max(12px, calc(15 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.06em;
+  color: var(--bone);
+  text-shadow: var(--shadow-s);
+}
+
+.stn-ui .keyhint.in {
+  animation: stn-fadeIn 0.3s ease-out;
+}
+
+/* the key is the point: amber, like the other things the HUD wants looked at */
+.stn-ui .keyhint .kbd {
+  font-size: max(11px, calc(13 * var(--u)));
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+/* it blinks twice as the hint arrives, then holds still */
+.stn-ui .keyhint.in .kbd {
+  animation: stn-warnpulse 0.8s 0.3s 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stn-ui .keyhint.in,
+  .stn-ui .keyhint.in .kbd {
+    animation: none;
+  }
+}
+
+/* hammer out: the build strip has that spot, so the hint joins the strip's own key legend, at its left end */
+.stn-ui.build-open .keyhint {
+  left: calc(392 * var(--u));
+  bottom: calc(18 * var(--u));
+  transform: none;
+  padding: 0;
+  background: none;
+}
+
+.stn-ui.paused .keyhint,
+.stn-ui.death-on .keyhint {
+  visibility: hidden;
+}
+
 /* ------------------------------------------------------------------ dawn summary */
 /* a field report (.scrap), between the compass and the day's title card */
 .stn-ui .summary {
