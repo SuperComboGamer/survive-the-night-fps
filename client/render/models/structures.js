@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { STRUCT, STRUCT_DEFS } from '../../../shared/defs.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
+import { buildGenerator, buildFloodlight, ghostGuide } from './power.js';
 
 const PI = Math.PI;
 const cache = new Map();
@@ -326,6 +327,12 @@ function buildStage(type, d) {
       nails(np);
       break;
     }
+    case STRUCT.GENERATOR:
+      buildGenerator(b, d, tint, dr);
+      break;
+    case STRUCT.FLOODLIGHT:
+      buildFloodlight(b, d, tint, dr);
+      break;
   }
   return b.build();
 }
@@ -406,6 +413,8 @@ export function createGhost(type) {
   const mesh = new THREE.Mesh(geo, ghostValid);
   mesh.renderOrder = 10;
   g.add(mesh);
+  const guide = ghostGuide(type); // (a floodlight shows where its light will fall, a generator how far it reaches)
+  if (guide) g.add(guide);
   g.userData.ghost = true;
   g.userData.setValid = (ok) => {
     mesh.material = ok ? ghostValid : ghostInvalid;

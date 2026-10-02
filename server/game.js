@@ -132,6 +132,7 @@ import { Cemetery } from './cemetery.js';
 import { MountedGun } from './mountedgun.js';
 import { Fair } from './fair.js';
 import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
+import { Power } from './power.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -337,6 +338,7 @@ export class Game {
     this.cemetery = new Cemetery(this); // the dead that come up out of the graves at St. Agnes (cemetery.js)
     this.gun = new MountedGun(this); // the mounted gun at the Army Checkpoint, on the maps that have one
     this.fair = new Fair(this); // the Tri-County Fair: its generator and who is on its rides
+    this.power = new Power(this); // the buildable generator and its floodlights
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
@@ -1737,6 +1739,8 @@ export class Game {
         return this.gun.feed(p, r.u8());
       case ACT.RIDE:
         return this.fair.board(p, r.u8());
+      case ACT.GEN_SWITCH:
+        return this.power.flip(p, r.u16());
     }
   }
 
@@ -1846,6 +1850,7 @@ export class Game {
     }
     if (e.kind === ENT.STRUCTURE) {
       if (e.stype === STRUCT.CAMPFIRE) return this.feedFire(p, e);
+      if (this.power.interact(p, e)) return; // (a generator takes fuel)
       this.repair(p, e.id);
     }
   }
@@ -2339,6 +2344,7 @@ export class Game {
       const taken = this.giveItem(p, +k, n);
       if (taken < n) this.dropItem(+k, n - taken, e.x, e.y, e.z); // only what did not fit, not the whole refund again
     }
+    this.power.demolished(p, e); // (what is left in a generator's tank comes back)
     p.invDirty = true;
     this.destroyStructure(e, false);
   }
@@ -2371,7 +2377,7 @@ export class Game {
   damageStructure(e, amount) {
     if (e.removed) return;
     e.hp -= amount;
-    this.sound(e.stype === STRUCT.METAL_WALL ? SOUND.METAL_HIT : SOUND.WOOD_HIT, e.x, e.y + 1, e.z, 40);
+    this.sound(STRUCT_DEFS[e.stype].metal ? SOUND.METAL_HIT : SOUND.WOOD_HIT, e.x, e.y + 1, e.z, 40);
     if (e.hp <= 0) this.destroyStructure(e, true);
   }
 
@@ -2393,7 +2399,7 @@ export class Game {
         },
         { x: e.x, z: e.z, r: 120 },
       );
-      this.sound(e.stype === STRUCT.METAL_WALL ? SOUND.METAL_HIT : SOUND.WOOD_BREAK, e.x, e.y + 1, e.z, 70);
+      this.sound(STRUCT_DEFS[e.stype].metal ? SOUND.METAL_HIT : SOUND.WOOD_BREAK, e.x, e.y + 1, e.z, 70);
     }
     this.removeEntity(e);
   }
@@ -2798,6 +2804,10 @@ export class Game {
         // /cemetery: to the gate of St. Agnes Cemetery. /cemetery rise [n]: the nearest n graves give up their dead now
         this.cemetery.debug(p, args);
         break;
+      case 'floodlight':
+        // the materials for one generator and two floodlights, and a full tank of fuel
+        this.power.give(p);
+        break;
     }
     this.systemChat(`[debug] ${args.join(' ')}`);
   }
@@ -3200,6 +3210,7 @@ export class Game {
   }
 
   updateStructures(dt) {
+    this.power.update(dt); // generators burn their fuel, hum and feed the floodlights
     for (let i = this.structures.length - 1; i >= 0; i--) {
       const e = this.structures[i];
       if (e.stype === STRUCT.TORCH) {

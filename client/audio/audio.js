@@ -223,6 +223,12 @@ def(S.FAIR_START, 'car_start', 'fxfar', 0.9, 0.03, 0.15, R_CAR_CRANK);
 def(S.FAIR_STOP, 'car_part', 'fxfar', 0.9, 0.04);
 def(S.FAIR_FUEL, 'install_part', 'fx', 0.7, 0.05);
 def(S.RIDE_BOARD, 'metal_hit', 'fx', 0.5, 0.08, 0.15, R_METAL);
+// the built generator and its floodlights (synth-power.js; its drone is the 'genset' loop). Measured on the effects
+// bus 3 m off: the drone -16 LUFS; the start, the stop and a pour each under the player's own pistol shot
+def(S.GEN_START, 'gen_start', 'fxfar', 0.5, 0.03);
+def(S.GEN_STOP, 'gen_stop', 'fxfar', 0.5, 0.03);
+def(S.GEN_FUEL, 'gen_fuel', 'fx', 0.5, 0.05);
+def(S.FLOOD_SWITCH, 'flood_switch', 'fx', 0.8, 0.05);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -305,6 +311,7 @@ const LOOPS = {
   zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 18, roll: 1.3, vol: 0.34, wet: 0.12, cap: 8, jit: 0.14, rec: [{ key: 'zv_idle', vol: 0.9, rate: 0.9, lp: 7000 }] },
   boss_breath: { bank: 'loop_boss_breath', ref: 5, max: 70, roll: 1.0, vol: 0.9, wet: 0.2, cap: 3 },
   generator: { bank: 'loop_generator', ref: 2.5, max: 40, roll: 1.2, vol: 0.6, wet: 0.1 },
+  genset: { bank: 'loop_genset', ref: 3, max: 60, roll: 1.1, vol: 0.62, wet: 0.1, cap: 3 }, // a generator the survivors built, running
   // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
   plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
   // the Tri-County Fair's calliope, while its generator runs: heard as far as the dead hear it (NOISE.FAIR), duller

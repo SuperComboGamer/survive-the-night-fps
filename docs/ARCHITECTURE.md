@@ -473,6 +473,30 @@ strings of bulbs. The rides' frames, platform and deck are ordinary static parts
   so walls, trees and terrain cast shadows. While lit (`z.lit`) it holds still with `ZANIM.FROZEN`, takes
   `litResist` x damage and no knockback (`Combat.damageZombie`); the client keeps the pose it was caught in
   (`ZombieInstance.hold`) and plays the freeze / release sounds from the replicated anim, with no extra traffic.
+- **Power: the generator and its floodlights** (`STRUCT.GENERATOR` 11, `STRUCT.FLOODLIGHT` 12; numbers and the cone in
+  `shared/power.js`, the rule in `server/power.js`, the client in `client/game/power.js`). Both are ordinary structures
+  (they block, the dead break them, they count to `MAX_STRUCTURES`); everything else hangs off three hooks in
+  `server/game.js`: `Power.update` at the top of `updateStructures`, `Power.interact` in `interact` and
+  `ACT.GEN_SWITCH` (u16 entity id) in `handleAction`. A generator's tank is `e.burnLeft` (seconds) and its switch
+  `e.off`; it runs while the switch is on and there is fuel. Each tick `Power.update` burns the fuel of the running ones,
+  raises their hum through `Zombies.noise` every `GEN_HUM_EVERY` (with `game.rng` swapped for the module's own stream
+  for the call: the noise scatters where each zombie heads, and a generator must not shift what the rest of a seeded
+  run rolls), powers every floodlight within `GEN_RANGE` of a running one and lists the powered cones (lens and axis
+  from `floodAim`). `Zombies.isLit` asks `Power.floodLit` (one line, between the point lights and the flashlights): the
+  zombie's head, chest or shins inside a cone (`inFloodCone`, allowing for the body's width, like the flashlight)
+  with a clear line from the lens (`Zombies.clearLine`, so walls, trees and terrain cast shadows). The lens sits ahead
+  of the stand's own collider so that line never starts inside it. On the wire nothing is new: the state byte
+  (`SF.STATE`) of a generator is the switch in bit 0 and the fuel in 5 s steps above it (`genState`), of a floodlight 1
+  while powered. The client draws from that byte alone (`PowerViews`): the drone loop, the shake and the exhaust of a
+  running generator; a floodlight's lens, glare (shrinking off-axis and in haze) and a beam (an additive cone whose
+  silhouette fades out, dimmed by the haze instead of tinted, since fog would paint an additive cone the haze's
+  colour). The light itself is a pool of `FLOOD_SPOTS` (3) shadowless spot lights created with the game, like
+  `render/lights.js`, given each frame to the nearest lit floodlights within `SPOT_REACH`: a fourth lit lamp further
+  off keeps its lens, glare and beam and lights nothing. The spot is shaped to the rule (a little wider than
+  `FLOOD_HALF`, a soft edge, a slightly negative decay so the ground the lamp grazes 20 m out still shows the cone).
+  `[E]` on a generator is decided on the client: a press under `GEN_HOLD` is a tap (`ACT.INTERACT`: pour), held past it
+  `ACT.GEN_SWITCH` goes; the item guide counts `STRUCT_DEFS[t].fuel` as a use of that fuel.
+  `scripts/test-power.js` holds the rule on any seed.
 - **Bats and walls.** Bats fly (`Zombies.updateBat`), and what stops the dead on foot stops them in the air:
   after each tick's flight `flyCollide` puts a bat back outside whatever solid thing it overlaps (static
   colliders, player structures, and `roofBoxes`: every `world.roofs` entry as a block from eaves to ridge,

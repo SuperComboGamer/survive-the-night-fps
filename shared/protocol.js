@@ -63,6 +63,7 @@ export const ACT = {
   GUN_MAN: 25, // u8 on: take the grips of the mounted gun (1) or let go of them (0)
   GUN_FEED: 26, // u8 on: the gunner starts (1) or stops (0) feeding 7.62 from their backpack into its belt
   RIDE: 27, // u8 seat (fair.js): get onto that seat of a ride at the fair
+  GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
 };
 
 // special interaction targets that are not entities

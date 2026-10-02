@@ -130,6 +130,7 @@ export class Connection {
       case ACT.DEMOLISH:
       case ACT.REPAIR:
       case ACT.HOLD_BEGIN:
+      case ACT.GEN_SWITCH:
         w.u16(args[0]);
         break;
       case ACT.PING:

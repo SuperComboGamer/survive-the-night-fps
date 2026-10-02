@@ -452,6 +452,7 @@ export class Entities {
             this.applyTorchState(e);
           }
           if (def.station) this.stations.push(e);
+          g.power?.add(e, v); // (a generator's drone and exhaust, a floodlight's lamp: game/power.js)
           break;
         }
         case ENT.PROJECTILE: {

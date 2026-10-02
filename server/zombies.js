@@ -1119,6 +1119,7 @@ export class Zombies {
       for (let k = 0; k < BODY_AT.length; k++) if (this.clearLine(lx, ly, lz, z.x, z.y + h * BODY_AT[k], z.z)) return true;
     }
     if (g.fair.lit(z, h)) return true; // the lights of the fair, while its generator runs
+    if (g.power.floodLit(this, z, h)) return true; // the cone of a powered floodlight (power.js)
     for (const p of this.humansCache) {
       if (!p.flashlight) continue;
       const s = p.state;

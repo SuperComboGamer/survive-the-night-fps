@@ -251,25 +251,31 @@ export const STRUCT = {
   CAMPFIRE: 8,
   WORKBENCH: 9,
   DOOR: 10,
+  GENERATOR: 11, // burns Flamethrower Fuel, feeds the floodlights round it, hums (shared/power.js)
+  FLOODLIGHT: 12,
 };
 
 // sx/sy/sz = size (m). block: blocks zombies (and players unless humanPass). hp.
 // light: radius (m) lit while it burns - Shades inside it are frozen.
 // station: 'fire' | 'bench' crafting station. snap: 'door' snaps into building doorways. schem: required schematic item.
+// metal: rings and sparks when struck, not wood. fuel: the item it burns, poured in with [E] (the item guide lists it).
 // Nothing needs a base any more: build a temporary shelter wherever the team is when night falls.
 export const STRUCT_DEFS = {
   [STRUCT.BARRICADE]: { name: 'Wood Barricade', sx: 3, sy: 1.15, sz: 0.4, hp: 520, block: true, cost: { [ITEM.WOOD]: 3, [ITEM.NAILS]: 2 }, desc: 'Waist-high. Survivors vault it [Space]; zombies must break it.' },
   [STRUCT.DOOR]: { name: 'Door Boards', sx: 1.5, sy: 2.25, sz: 0.22, hp: 700, block: true, humanPass: true, snap: 'door', cost: { [ITEM.WOOD]: 3, [ITEM.NAILS]: 3 }, desc: 'Snaps into a doorway. Survivors squeeze through; the dead must smash it.' },
   [STRUCT.WALL]: { name: 'Wood Wall', sx: 3, sy: 2.8, sz: 0.35, hp: 900, block: true, cost: { [ITEM.WOOD]: 5, [ITEM.NAILS]: 4 }, desc: 'Tall plank wall.' },
   [STRUCT.GATE]: { name: 'Survivor Gate', sx: 3, sy: 2.6, sz: 0.35, hp: 800, block: true, humanPass: true, cost: { [ITEM.WOOD]: 5, [ITEM.NAILS]: 4, [ITEM.SCRAP]: 1 }, desc: 'Survivors can pass through. Zombies cannot.' },
-  [STRUCT.METAL_WALL]: { name: 'Metal Wall', sx: 3, sy: 2.8, sz: 0.3, hp: 2400, block: true, schem: ITEM.SCHEM_METAL, cost: { [ITEM.SCRAP]: 5, [ITEM.NAILS]: 4, [ITEM.TAPE]: 1 }, desc: 'Scrap-metal wall. Very tough.' },
+  [STRUCT.METAL_WALL]: { name: 'Metal Wall', sx: 3, sy: 2.8, sz: 0.3, hp: 2400, block: true, metal: true, schem: ITEM.SCHEM_METAL, cost: { [ITEM.SCRAP]: 5, [ITEM.NAILS]: 4, [ITEM.TAPE]: 1 }, desc: 'Scrap-metal wall. Very tough.' },
   [STRUCT.SPIKES]: { name: 'Spike Trap', sx: 2.2, sy: 0.5, sz: 2.2, hp: 45, block: false, trap: true, dps: 55, slow: 0.45, cost: { [ITEM.WOOD]: 2, [ITEM.NAILS]: 4 }, desc: 'Impales zombies that cross it. Wears out.' },
   [STRUCT.BARBED_WIRE]: { name: 'Barbed Wire', sx: 3, sy: 0.9, sz: 1.0, hp: 400, block: false, trap: true, dps: 12, slow: 0.3, cost: { [ITEM.WIRE]: 2, [ITEM.STICK]: 2 }, desc: 'Slows and shreds the horde.' },
   [STRUCT.TORCH]: { name: 'Standing Torch', sx: 0.3, sy: 1.7, sz: 0.3, hp: 60, block: false, light: 9, burn: 360, cost: { [ITEM.TORCH]: 1 }, desc: 'Lights the area for 6 minutes. Shades freeze in its light.' },
   [STRUCT.CAMPFIRE]: { name: 'Campfire', sx: 1.7, sy: 0.6, sz: 1.7, hp: 250, block: false, light: 13, station: 'fire', burn: 300, cost: { [ITEM.STICK]: 4, [ITEM.WOOD]: 1 }, desc: 'Crafting station (medicine, powder). Heals survivors resting nearby. Feed it wood [E].' },
   [STRUCT.WORKBENCH]: { name: 'Workbench', sx: 2.0, sy: 1.0, sz: 0.9, hp: 450, block: true, station: 'bench', cost: { [ITEM.WOOD]: 5, [ITEM.NAILS]: 6, [ITEM.SCRAP]: 2 }, desc: 'Crafting station: weapons, ammo, armor and explosives.' },
+  // the generator and its floodlights: the numbers behind these two lines are in shared/power.js
+  [STRUCT.GENERATOR]: { name: 'Generator', sx: 1.3, sy: 0.95, sz: 0.8, hp: 600, block: true, metal: true, fuel: ITEM.AMMO_FUEL, cost: { [ITEM.SCRAP]: 6, [ITEM.GUNPARTS]: 1, [ITEM.TAPE]: 2, [ITEM.WIRE]: 1 }, desc: 'Burns Flamethrower Fuel [E] and powers the floodlights within 16 m. It hums: the dead hear it from 40 m.' },
+  [STRUCT.FLOODLIGHT]: { name: 'Floodlight', sx: 0.6, sy: 2.2, sz: 0.5, hp: 160, block: true, metal: true, cost: { [ITEM.SCRAP]: 3, [ITEM.BATTERY]: 1, [ITEM.WIRE]: 1 }, desc: 'Lights a wide cone 24 m long the way it faces, with a running generator within 16 m. Shades freeze in it.' },
 };
-export const STRUCT_ORDER = [STRUCT.BARRICADE, STRUCT.DOOR, STRUCT.WALL, STRUCT.GATE, STRUCT.METAL_WALL, STRUCT.SPIKES, STRUCT.BARBED_WIRE, STRUCT.TORCH, STRUCT.CAMPFIRE, STRUCT.WORKBENCH];
+export const STRUCT_ORDER = [STRUCT.BARRICADE, STRUCT.DOOR, STRUCT.WALL, STRUCT.GATE, STRUCT.METAL_WALL, STRUCT.SPIKES, STRUCT.BARBED_WIRE, STRUCT.TORCH, STRUCT.CAMPFIRE, STRUCT.WORKBENCH, STRUCT.GENERATOR, STRUCT.FLOODLIGHT];
 // how near its interaction point the view ray has to pass to offer [E] on a structure (PICK_RADIUS in constants.js)
 export const structPickRadius = (stype) => Math.max(0.8, STRUCT_DEFS[stype].sx * 0.5);
 export const REPAIR_COST = { [ITEM.WOOD]: 1, [ITEM.NAILS]: 1 }; // per repair action (+35% hp)
@@ -495,6 +501,10 @@ export const SOUND = {
   FAIR_STOP: 98, // ...and winding down
   FAIR_FUEL: 99, // fuel going into its drum
   RIDE_BOARD: 100, // a survivor getting onto a ride
+  GEN_START: 85, // the built generator: the cord pulled, it catches
+  GEN_STOP: 86, // it coughs and dies (switched off, run dry)
+  GEN_FUEL: 87, // fuel going into its tank
+  FLOOD_SWITCH: 88, // a floodlight's lamp coming on or going out (client-side, from its replicated state)
 };
 
 export const EVT = {
@@ -575,6 +585,8 @@ export const NOTIFY = {
   FAIR_OFF: 56, // arg = player id: shut off again
   FAIR_DRY: 57, // it has run out of fuel
   FAIR_FULL: 58, // (to the survivor at the drum) the tank takes no more
+  GEN_LOW: 48, // a generator nearby has a minute of fuel left (sent to the survivors round it)
+  GEN_OUT: 49, // ...it has run dry: its floodlights are out
 };
 
 // killer kinds for killfeed

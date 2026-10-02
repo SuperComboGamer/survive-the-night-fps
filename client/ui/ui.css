@@ -2373,7 +2373,7 @@ body {
      there is room, sliding right and squeezing its cards as the window narrows */
   position: absolute;
   left: calc(392 * var(--u));
-  right: max(calc(214 * var(--u)), min(calc(392 * var(--u)), calc(100% - 1512 * var(--u))));
+  right: max(calc(214 * var(--u)), min(calc(392 * var(--u)), calc(100% - 1560 * var(--u))));
   bottom: calc(22 * var(--u));
   display: flex;
   flex-direction: column;
@@ -2443,7 +2443,7 @@ body {
 .stn-ui .bc {
   position: relative;
   flex: 0 1 calc(106 * var(--u));
-  min-width: 74px;
+  min-width: 60px; /* (twelve of them fit a 1280 px window: a long name takes two lines, a long cost two rows) */
   padding: calc(9 * var(--u)) calc(6 * var(--u)) calc(8 * var(--u));
   display: flex;
   flex-direction: column;
@@ -2505,12 +2505,14 @@ body {
   font: 500 max(9px, calc(11.5 * var(--u))) / 1 var(--f-num);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  white-space: nowrap;
+  text-align: center;
 }
 
 .stn-ui .bc-cost {
   display: flex;
-  gap: calc(6 * var(--u));
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(2 * var(--u)) calc(6 * var(--u));
 }
 
 .stn-ui .bc .ing {

@@ -88,6 +88,7 @@ import { WeatherFX } from '../render/weatherfx.js';
 import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
 import { createGhost, createStructure } from '../render/models/structures.js';
+import { PowerViews } from './power.js';
 import { createZombie, createSurvivor, zombieVariants } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createDeer } from '../render/models/deer.js';
@@ -262,6 +263,7 @@ export class Game {
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
+    this.power = new PowerViews(this); // the generator and its floodlights: their lights, sound and [E]
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
@@ -530,6 +532,7 @@ export class Game {
         set.add(s, createGhost(t));
       });
     }
+    steps.push(() => set.add(...this.power.warm())); // a floodlight's lens, glow and beam
     steps.push(() => {
       // the supply plane, in the materials Flyover gives it
       this.flyover.start(0, 0, 0, 0, 0, this.time, null);
@@ -1146,6 +1149,12 @@ export class Game {
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;
+      case NOTIFY.GEN_LOW:
+        ui.notify('The generator is down to its last minute of fuel.', 'warning', 4);
+        break;
+      case NOTIFY.GEN_OUT:
+        ui.notify('The generator has run dry. The floodlights are out.', 'danger', 5);
+        break;
       case NOTIFY.NEW_GAME:
         ui.hideOverlays();
         this.overlay = null;
@@ -1294,7 +1303,7 @@ export class Game {
     // nothing in the way but the world (of a spread, only every third pellet shows there, as the server sends them)
     if (wall >= 0 && (def.pellets === 1 || i % 3 === 0)) {
       let kind = IMPACT.DIRT;
-      if (col && !terrain) kind = col.flags & COL.TREE ? IMPACT.WOOD : col.flags & COL.STRUCT ? (this.entities.ents.get(col.id)?.stype === STRUCT.METAL_WALL ? IMPACT.METAL : IMPACT.WOOD) : IMPACT.SPARK;
+      if (col && !terrain) kind = col.flags & COL.TREE ? IMPACT.WOOD : col.flags & COL.STRUCT ? (STRUCT_DEFS[this.entities.ents.get(col.id)?.stype]?.metal ? IMPACT.METAL : IMPACT.WOOD) : IMPACT.SPARK;
       this.ownImpact(kind, ev.x + dx * wall, ev.y + dy * wall, ev.z + dz * wall, -dx, -dy, -dz);
     }
     return wall;
@@ -1462,6 +1471,7 @@ export class Game {
     inp.handlers.onKeyUp = (code) => {
       if (code === 'KeyV' && this.settings.pushToTalk !== false) this.voice.setTransmit(false);
       if (code === 'KeyE') this.endHold();
+      if (code === 'KeyE') this.power.release();
       if (code === 'Tab') this.showRoster(false);
     };
     inp.handlers.onBlur = () => this.showRoster(false);
@@ -1716,6 +1726,7 @@ export class Game {
       this.beginHold(t.id);
       return;
     }
+    if (t.kind === ENT.STRUCTURE && this.power.press(t)) return; // (a generator: a tap pours fuel, held it is the switch)
     if (t.kind === ENT.STRUCTURE) this.askedCost = REPAIR_COST;
     this.conn.action(ACT.INTERACT, t.id);
   }
@@ -2049,6 +2060,7 @@ export class Game {
     }
     const fires = this.entities.fireSources.concat(this.staticFires, this.fair.lights);
     this.lights.update(dt, time, cam.position, this.localFlash && self.alive && !s.zombie, fires, this.entities.remoteFlash, Math.max(this.env.night, this.under));
+    this.power.update(dt, time, cam.position, Math.max(this.env.night, this.under));
     // nearest big fire warms the viewmodel & the ambience
     let nearFire = 0;
     for (const f of fires) {
@@ -2056,7 +2068,7 @@ export class Game {
       nearFire = Math.max(nearFire, Math.max(0, 1 - Math.hypot(rp.x - f.x, rp.z - f.z) / 14) * f.intensity);
     }
     // viewmodel lighting follows the world
-    this.updateViewmodelLight(dt, cam, nearFire);
+    this.updateViewmodelLight(dt, cam, Math.max(nearFire, this.power.eyeLit)); // (in a floodlight's cone the hands are lit too)
     this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
 
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
@@ -2152,6 +2164,7 @@ export class Game {
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
     this.foliage.update(cam.position, this.env.fogVisibility, this.time, weather);
     this.lights.update(dt, this.time, cam.position, false, this.staticFires, [], this.env.night);
+    this.power.update(dt, this.time, cam.position, this.env.night); // (no floodlight is left lit from the game before)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
     this.atmosphere.update(dt, this.time, cam, this.env, false, this.world.heightAt, weather);
     this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
@@ -2270,7 +2283,9 @@ export class Game {
         this.lookTarget = e;
         const def = STRUCT_DEFS[e.stype];
         const hp = e.q[3] / 255;
-        if (e.stype === STRUCT.CAMPFIRE) {
+        const power = this.power.prompt(e, counts, s.slot === SLOT_BUILD); // what a generator or a floodlight is doing
+        if (power) this.prompt = power;
+        else if (e.stype === STRUCT.CAMPFIRE) {
           const lit = e.q[4] === 1;
           const w = counts[ITEM.WOOD] || 0;
           const st = counts[ITEM.STICK] || 0;
@@ -2476,6 +2491,7 @@ export class Game {
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
       h.useLabel = self.useItem ? `${CONSUMABLES[self.useItem]?.food ? 'Eating' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
+      this.power.hud(h); // ([E] held on a generator's switch)
     }
     // context panel
     const car = this.world.car;

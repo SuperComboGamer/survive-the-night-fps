@@ -198,7 +198,7 @@ export class Combat {
           let kind = IMPACT.DIRT;
           if (wallCol && !wallTerrain) {
             if (wallCol.flags & COL.TREE) kind = IMPACT.WOOD;
-            else if (wallCol.flags & COL.STRUCT) kind = this.g.ents[wallCol.id]?.stype === STRUCT.METAL_WALL ? IMPACT.METAL : IMPACT.WOOD;
+            else if (wallCol.flags & COL.STRUCT) kind = STRUCT_DEFS[this.g.ents[wallCol.id]?.stype]?.metal ? IMPACT.METAL : IMPACT.WOOD;
             else kind = IMPACT.SPARK;
           }
           // only a few impacts for shotgun spreads to save bandwidth

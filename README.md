@@ -48,13 +48,14 @@ off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell to
 (to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station),
 `/cemetery` (to the gate of St. Agnes Cemetery; `/cemetery rise [n]` makes the n graves nearest you give up their
 dead now), `/fair` (to the gate of the Tri-County Fair; `/fair on` starts its generator with a full tank, `/fair off`
-stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to the generator shed's door)).
+stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to the generator shed's door), `/floodlight` (what a generator and two floodlights cost, and a full tank of fuel)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) and the deer (`test-deer`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) the deer (`test-deer`) and the generator and its floodlights (`test-power`) and runs `sim-smoke` |
+| `node scripts/test-power.js [seed]` | the generator and its floodlights against the real server in-process and decoded as a client does, on the flattest open strip of the valley: what they cost, [E] pouring fuel and holding it for the switch, which lamps a generator feeds, the hum and the idle dead it draws (from a random stream of its own), the dead breaking it - and a Shade walking at a survivor that freezes as it enters a powered cone, moves again when the generator runs dry, walks free behind a wall inside the cone and freezes again when it steps out of the wall's shadow (part of `npm test`) |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
@@ -143,7 +144,7 @@ https://www.survivethenightgame.com.
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
-| E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm |
+| E | Interact: pick up, install supplies, feed a campfire, pour fuel into a generator, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm, switch a generator off or on |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
 | L | Leaderboard: every player's kills, nights survived, wins and revives over all their games, and yours. Click a column to sort by it |
@@ -303,6 +304,17 @@ them off.
   somebody starts it again or you jump. Nothing on foot reaches the top of the wheel, but spitters, bats and the
   Hive Queen do; near the ground the dead claw at you, a roper's rope pulls you out of the seat, and a blow that
   knocks a survivor down - a tank's, a boomer's - knocks you out of it.
+- **A generator and floodlights.** Two more things to build with the hammer. The **generator** (6 scrap metal, gun
+  parts, 2 duct tape, barbed wire) burns Flamethrower Fuel: [E] pours 25 units into its tank, a minute of running, and
+  the tank holds ten; holding [E] switches it off, and on again, without losing what is in the tank. While it runs it
+  powers every **floodlight** (3 scrap metal, batteries, barbed wire) within 16 m: a work lamp on a tripod that throws
+  a cold white cone 24 m long and about 70 degrees across, the way it faced when it was placed, and a Shade inside that
+  cone is pinned exactly as in torchlight - walls, trees and hills still cast shadows it can move in. The price is the
+  noise: a running generator hums, and the hum carries 40 m (a little further than an MP5, less far than a pistol), so
+  the idle dead drift over to it, and the dead break it like anything else in their way. A generator that is broken,
+  switched off or run dry takes its lights with it; one taken down with the hammer gives back the fuel left in its
+  tank. Its prompt says how much fuel is left; a floodlight's, whether it has power. While one of the two is being placed, a fan on the ground shows where the lamp's light will fall and every
+  generator shows the 16 m it reaches.
 - **Shoot the legs out from under them.** A bullet below the hip of a walker, runner, spitter, roper, boomer or
   shade goes into that leg: the zombie **stumbles** - it trips, slows to a shuffle and loses the swing it had started
   - and takes only 40% of the damage in the body. A leg that has taken 30% of the zombie's health is **shot off**

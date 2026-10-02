@@ -25,6 +25,8 @@ function addUse(name, cost, schem) {
 for (const r of RECIPES) addUse(ITEM_DEFS[r.out].name, r.cost, r.schem);
 for (const type of STRUCT_ORDER) addUse(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
 for (const f of FIXTURE_USES) addUse(f.name, f.cost); // ...and what is spent at a fixture (the Relay Station's radio)
+// ...and what a structure burns once it stands (a generator's fuel) is used in it too, all of it
+for (const type of STRUCT_ORDER) if (STRUCT_DEFS[type].fuel) addUse(STRUCT_DEFS[type].name, { [STRUCT_DEFS[type].fuel]: 1 }, STRUCT_DEFS[type].schem);
 for (const uses of USES.values()) uses.sort((a, b) => b.share - a.share);
 
 // What `item` goes into, as { list: [{ name, locked }], more }: at most `max` names and how many were left out; null
