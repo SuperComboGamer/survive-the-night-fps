@@ -165,9 +165,12 @@ https://www.survivethenightgame.com.
 - **Every horde is harder:** more zombies (scaled by night *and* player count), more health and damage,
   and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
   and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
-  and bat swarms). Night 2 has a boss of its own: a Tank comes in with the second wave. You hear its footfalls
+  and bat swarms). Night 2 has a boss of its own: a Tank. You hear its footfalls
   thump long before you see it; it charges, smacks survivors off their feet, breaks a wood barricade with one
-  blow and ploughs straight through whatever its charge breaks. A boomer cannot claw at what you built: stopped
+  blow and ploughs straight through whatever its charge breaks. Every boss comes in with the second wave, with
+  most of the night still ahead: bring it down before sunrise and it drops what it carries (ammunition, medkits,
+  gun parts). One that is still standing at dawn burns in the sun with the rest of the horde and leaves nothing.
+  A boomer cannot claw at what you built: stopped
   by it with a survivor close behind, it swells for a second and bursts against it, taking that piece with it (a
   metal wall is dented). Shoot it before it gets there - or while it swells, and the piece only takes the blast.
   Stragglers far from the team are brought back into the fight.

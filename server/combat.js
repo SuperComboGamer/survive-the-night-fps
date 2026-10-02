@@ -495,15 +495,20 @@ export class Combat {
     );
     if (!opts.fire && !opts.gib) g.sound(z.boss ? SOUND.BOSS_ROAR : z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_DEATH, z.x, z.y + Math.min(1.5, z.def.height), z.z, z.boss ? 150 : 35);
     if (g.phase === PHASE.NIGHT || g.escape?.active) g.nightStats.kills++;
+    // a boss still standing when the dawn sun sets it alight is the sun's kill, whoever lands the last blow: what it
+    // carried burns with it. Its loot is for the team that brings it down before sunrise (a molotov or the
+    // flamethrower is burnT, not onFire: that still pays out)
+    const sunKill = z.boss && z.onFire;
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
-      if (!z.def.common) {
+      if (!z.def.common && !sunKill) {
         g.killfeed(KILLER.PLAYER, attacker.id, 0x8000 | z.ztype, opts.weapon || 0, opts.headshot ? 1 : 0);
       }
       g.playersDirty = g.playersDirty || g.tick % 10 === 0;
     }
+    if (sunKill) g.killfeed(KILLER.WORLD, 0, 0x8000 | z.ztype, 0, 0); // the feed says the sun got it
     // loot
-    if (!opts.fire || z.boss) {
+    if ((!opts.fire || z.boss) && !sunKill) {
       if (z.boss) {
         for (let i = 0; i < 8; i++) {
           const [item, n] = g.rollTable(SPECIAL_LOOT);

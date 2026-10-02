@@ -231,6 +231,9 @@ more than its bytes**, so put things into the packets that already flow.
   one with only its middle hidden, then for the farthest one nobody is facing (`spawnsScreened`, `spawnsInView`
   count those). Rays stop at trunks, walls and terrain; foliage is not modelled. Used by the night waves, the
   final stand, the car-alarm fallback and the straggler teleport.
+  A boss night's boss (`bossPending`) comes in with wave `BOSS_WAVE`; `Game.spawnBosses` scales its health by
+  `BOSS_HP_PER_PLAYER`. A boss drops its loot only if it dies before the dawn sun sets it alight (`z.onFire`,
+  `Combat.killZombie`); the sun's kill goes to the killfeed as `KILLER.WORLD`.
 - **Noise.** `Zombies.noise(x, z, loud)` is the one entry point: `loud` is the radius (m) the noise carries
   (`NOISE` in constants.js; gunshots use `WEAPONS[w].noise`). Every zombie inside it with no target heads for
   the spot (`alertX/Z`, `alertT`), at a speed set by how loud it was where the zombie stood (`alertRush`,

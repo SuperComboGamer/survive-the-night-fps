@@ -349,9 +349,9 @@ export function nextNightText(night) {
   const n = night;
   const adds = [];
   if (n === 2) adds.push('spitters', 'boomers', 'zombie dog packs', 'shades (they only move in the dark)', 'a Tank (it charges, and barricades will not hold it)');
-  if (n === 3) adds.push('leapers', 'bats', 'a boss');
+  if (n === 3) adds.push('leapers', 'bats', 'a boss (kill it before sunrise for what it carries)');
   if (n === 4) adds.push('ropers', 'tanks in the horde');
-  if (n >= 5 && n % 3 === 0) adds.push('a boss');
+  if (n >= 5 && n % 3 === 0) adds.push('a boss (kill it before sunrise for what it carries)');
   const more = n <= 1 ? 'The next horde will be bigger.' : `Horde ${n}: bigger and hungrier.`;
   return adds.length ? `${more} New: ${adds.join(', ')}.` : more;
 }

@@ -2334,6 +2334,58 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   check('every snapshot decoded on the way', W.bad === 0 && L.bad === 0 && W.snaps >= 150 && L.snaps >= 10, `${W.snaps + L.snaps} snapshots`);
 }
 
+// the night boss: it comes in with the second wave (most of the night is left to fight it), its health follows the
+// size of the team, and it drops what it carries only if it is brought down before the dawn sun sets it alight
+{
+  const { BOSS_WAVE, BOSS_HP_PER_PLAYER } = await import('../shared/constants.js');
+  const { KILLER } = await import('../shared/defs.js');
+  const pending = (n) => {
+    game.day = n;
+    game.startNight();
+    return game.bossPending;
+  };
+  const [b2, b3, b4, b6] = [TANK_BOSS_NIGHT, 3, 4, 6].map(pending);
+  const w2 = game.waves[BOSS_WAVE].start;
+  const due = [b2, b3, b6].map((b) => (b ? b.t : -1));
+  check('a night boss comes in with the second wave', !b4 && b2?.types[0] === ZTYPE.TANK && b3?.types[0] === ZTYPE.BOSS_ABOMINATION && b6?.types[0] === ZTYPE.BOSS_HIVEQUEEN && due.every((t) => t >= w2 && t < w2 + 15 && t < game.nightLen / 2), `due ${due.map((t) => t.toFixed(0)).join('/')} s of ${game.nightLen} (wave 2 at ${w2.toFixed(0)} s)`);
+  const feed = [];
+  A.handler.killfeed = (kk, killer, victim) => feed.push([kk, victim]);
+  const fed = (kk, type) => feed.some((f) => f[0] === kk && f[1] === (0x8000 | type));
+  const spawn = (type) => {
+    game.bossId = 0;
+    for (let i = 0; i < 5 && !game.bossId; i++) game.spawnBosses([type]);
+    return game.ents[game.bossId];
+  };
+  const killedBy = (z, p) => {
+    const n = game.items.length;
+    game.combat.damageZombie(z, z.hp, p, {});
+    return game.items.length - n;
+  };
+  pending(3);
+  const team = game.humanCount();
+  const abom = spawn(ZTYPE.BOSS_ABOMINATION);
+  const tank = spawn(ZTYPE.TANK);
+  const queen = spawn(ZTYPE.BOSS_HIVEQUEEN);
+  const hpOf = (z) => z.def.hp * (1 + BOSS_HP_PER_PLAYER * (team - 1) + 0.05 * 3);
+  const bosses = [abom, tank, queen];
+  check('boss health follows the size of the team', bosses.every((z) => z && z.boss && Math.abs(z.maxHp - hpOf(z)) < 1), `${bosses.map((z) => z?.maxHp.toFixed(0)).join('/')} hp for ${team}`);
+  // killed in the night: its loot is on the ground and the feed names who did it
+  const loot = killedBy(abom, A.p());
+  run(2);
+  check('a boss killed before sunrise drops its loot', abom.dead && loot === 8 && fed(KILLER.PLAYER, ZTYPE.BOSS_ABOMINATION) && !fed(KILLER.WORLD, ZTYPE.BOSS_ABOMINATION), `${loot} items`);
+  // dawn finds the other two still standing. One is left to the sun, one finished off by a survivor while it burns
+  game.startDay();
+  run(20 * 6);
+  const late = queen.onFire && !queen.dead ? killedBy(queen, A.p()) : -1;
+  const had = new Set(game.items);
+  let t = 0;
+  for (; t < 20 * 40 && !tank.dead; t++) run(1);
+  const left = game.items.filter((e) => !had.has(e) && !e.point && Math.hypot(e.x - tank.x, e.z - tank.z) < 6).length;
+  run(2);
+  check('a boss the sun kills drops nothing', tank.dead && left === 0 && fed(KILLER.WORLD, ZTYPE.TANK), `dead ${((20 * 6 + t) / 20).toFixed(0)} s after dawn, ${left} items`);
+  check('...whoever lands the last blow once it is burning', queen.dead && late === 0 && fed(KILLER.WORLD, ZTYPE.BOSS_HIVEQUEEN) && !fed(KILLER.PLAYER, ZTYPE.BOSS_HIVEQUEEN), `${late} items`);
+}
+
 // a new playthrough is a new valley: the server rolls a fresh map and tells its clients the seed
 {
   // whatever a valley holds stands on its ground. Seed 10 has the army checkpoint's traffic queue running out past its
