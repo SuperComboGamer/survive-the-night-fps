@@ -118,7 +118,8 @@ export const NOISE_SPEED_MIN = 0.55; // speed multiplier towards the faintest no
 export const NOISE_MEMORY = 8; // it keeps heading for a noise for the time the trip takes plus this (s)...
 export const NOISE_MEMORY_MAX = 60; // ...but gives up after this long
 export const ESCAPE_TIME = 90; // engine warm-up: the final stand at the car
-export const ESCAPE_RADIUS = 14; // survivors this close to the car when the engine is ready escape
+export const ESCAPE_RADIUS = 14; // the warm-up only runs while a survivor on their feet is this close to the car; survivors this close when it drives off escape
+export const ESCAPE_DRIVE_TIME = 3; // hold [E] at the car once the engine is warm: get in and drive, which ends the run
 export const GAME_OVER_DELAY = 12;
 
 // Supply drops: a cargo plane crosses the valley in a straight line and kicks the crate off its ramp

@@ -62,7 +62,7 @@ export const ACT = {
 export const CAR_ID = 0xfffe;
 export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
-export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3 };
+export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4 };
 
 export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3 };
 

@@ -185,6 +185,13 @@ more than its bytes**, so put things into the packets that already flow.
   sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
   in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a
   survivor join it and count, the rest are removed as at nightfall, and the day's upkeep stops for its length.
+  The warm-up (`Game.updateEscape`) only counts down while a survivor on their feet is within `ESCAPE_RADIUS`
+  of the car; otherwise it stalls where it is, and the stand keeps coming on its own clock. A warm engine ends
+  nothing: a survivor at the car holds [E] (`HOLD.DRIVE`, `ESCAPE_DRIVE_TIME`, the same path and reach as the
+  engine-start hold) and `driveOff()` is the victory, for everyone; until then groups keep coming at
+  `ESCAPE_LINGER_PACE` of the stand's pace. Two bits of the global state's flags byte carry "stalled" and
+  "somebody is getting in" to the HUD, and the client holds its own countdown on a stall. The end screen
+  tells each player whether they were within `ESCAPE_RADIUS` when the car left (client side).
 - **Night waves.** `startNight()` builds `NIGHT_WAVES` queues; groups spawn 58-84 m around a random
   survivor (`Zombies.pickSpawnAround`). The horde never targets structures or a fixed point - only people.
 - **Noise.** `Zombies.noise(x, z, loud)` is the one entry point: `loud` is the radius (m) the noise carries

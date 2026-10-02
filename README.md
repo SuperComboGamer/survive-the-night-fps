@@ -103,7 +103,7 @@ https://www.survivethenightgame.com.
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
-| E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine |
+| E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
 | M | Field map |
@@ -122,10 +122,15 @@ https://www.survivethenightgame.com.
   a fan belt and three jerry cans of fuel. Every game the seven of them are hidden at random, each in a
   different place of that game's map, guarded by the dead; the HUD tells you where each one is *rumoured* to be.
   Carry them back and install them [E]. When all are in, hold [E] at the car to start the engine: it
-  needs 90 seconds to warm up and every corpse in the valley hears it - the **final stand**. Survive it,
-  get in (be within 14 m of the car) and you escape. The day/night clock stops during the final stand,
-  so the team chooses when to go - fortify the car first. The stand is sized to the survivors still
-  alive, the way a night's horde is: more of you, more of them.
+  needs 90 seconds to warm up and every corpse in the valley hears it - the **final stand**. The engine
+  only warms up while a survivor on their feet is within 14 m of the car: with nobody there it stalls
+  (the count stops where it is, it does not start over) and the HUD says so. Once it is warm, nothing
+  ends by itself: a survivor at the car holds [E] for 3 seconds to get in and drive, and that wins the
+  run for the team. Until then the dead keep coming, so it is the team's call when to go: survivors
+  within 14 m of the car leave with it, anyone further off is left behind (the end screen says which).
+  The day/night clock stops during the final stand, so the team chooses when to start it - fortify the
+  car first. The stand is sized to the survivors still alive, the way a night's horde is: more of you,
+  more of them.
 - **Day: scavenge & rebuild.** A clock shows the time until nightfall. Every place has searchable
   containers (lockers, ammo crates, toolboxes, cabinets, fridges, shelves, duffel bags, car trunks,
   log piles; hold [E]) plus loot on the floor, and ~90 roadside and woodland sites (wrecks, abandoned

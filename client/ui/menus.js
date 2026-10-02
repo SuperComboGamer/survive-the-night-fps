@@ -338,7 +338,7 @@ export class EndScreen {
     void this.root.offsetWidth;
     this.root.classList.add('in');
     this.kicker.textContent = victory ? 'The engine turns over' : 'Game over';
-    this.title.textContent = victory ? 'You escaped' : 'Everyone died';
+    this.title.textContent = stats.title || (victory ? 'You escaped' : 'Everyone died');
     this.reason.textContent =
       stats.reason || (victory ? 'Headlights cut through the trees. The valley shrinks in the mirror.' : 'The valley is quiet again. The car never started.');
     // stats.days is the day the run ended on. Night N closes day N, so a run that ends on day N - in its
