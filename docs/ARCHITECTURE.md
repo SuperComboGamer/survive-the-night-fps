@@ -42,6 +42,10 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
   Models must be authored so their FRONT faces **-Z**; then `object.rotation.y = yaw` orients them.
 - Camera: Euler order `'YXZ'`, `rotation.y = yaw`, `rotation.x = pitch` (pitch > 0 looks up).
 - Human player: capsule radius 0.35, height 1.8 m, eye height 1.62 m.
+- The camera is not exactly the simulated eye: the client eases it over step-ups and step-downs
+  (`Prediction.viewLag`: the simulation takes a kerb or a floor slab within one command) and dips it on landings
+  (`Game.landDip`). Presentation only; anything that must agree with the server (where a shot leaves from) uses
+  the simulated state, not `camera.position`.
 - Materials: prefer `MeshLambertMaterial` (performance). Share geometries and materials; never allocate
   in per-frame paths. The scene keeps a FIXED number of lights (light count changes force shader recompiles);
   toggling a light's `castShadow` also recompiles, so only quality changes do it.
