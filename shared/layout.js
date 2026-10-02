@@ -10,7 +10,7 @@ const PI = Math.PI;
 export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3 };
 
 // The named places. flat / blend: radius of the levelled ground and of its blend into the hills.
-// clear: radius kept free of trees. raise / pit: built up on / dug into the terrain. dirt: trampled yard.
+// clear: radius kept free of trees. reach: how far out what the place holds goes, where that is past flat (roads keep out). raise / pit: built up on / dug into the terrain. dirt: trampled yard.
 // site: where the place may sit -
 //   start     on Route 9 in the middle of the valley (the breakdown)
 //   highway   on Route 9, the road runs straight through it
@@ -26,7 +26,7 @@ export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3 };
 export const PLACES = {
   [ZONE.CAMP]: { site: 'start', flat: 18, blend: 24, clear: 22, dirt: 0.25, core: true },
   [ZONE.GAS]: { site: 'roadside', flat: 28, blend: 24, clear: 34, dirt: 0.2, gates: 'b', core: true },
-  [ZONE.CHURCH]: { flat: 40, blend: 24, clear: 46, gates: 'flr', core: true }, // (the cemetery lies behind it: cemetery.js)
+  [ZONE.CHURCH]: { flat: 40, blend: 24, clear: 46, reach: 46, gates: 'flr', core: true }, // (the cemetery lies behind it: cemetery.js)
   [ZONE.DOCK]: { site: 'shore', flat: 20, blend: 20, clear: 30, gates: 'f', core: true },
   [ZONE.VILLAGE]: { flat: 46, blend: 26, clear: 52, dirt: 0.15, core: true },
   [ZONE.CLINIC]: { flat: 30, blend: 24, clear: 34, dirt: 0.2, gates: 'flr' },

@@ -294,7 +294,7 @@ export function createWorld(seed) {
       aBase[k] = c;
       for (let zi = 0; zi < zones.length; zi++) {
         const zn = zones[zi];
-        if (Math.hypot(cx - zn.x, cz - zn.z) < zn.flat + 3) aZone[k] = zi;
+        if (Math.hypot(cx - zn.x, cz - zn.z) < (zn.reach || zn.flat) + 3) aZone[k] = zi;
       }
     }
   }
@@ -1258,7 +1258,7 @@ export function createWorld(seed) {
       sub.prop('bed', -1.8, 1.2, 0);
       sub.prop('table', 1.6, 1.3, 0);
       sub.loot(1.6, 1.3, 0.82);
-      if (i % 2 === 0) sub.cont(CONT.CABINET, -2.2, 2.1, { prop: 'cabinet', ry: PI });
+      if (i % 2 === 0) sub.cont(CONT.CABINET, -0.4, 2.1, { prop: 'cabinet', ry: PI }); // along the back wall, clear of the bed's foot
       else sub.cont(CONT.DUFFEL, 0.4, 0.6, { prop: 'duffel_bag', ry: 0.3, nocollide: true });
       if (i < 2) sub.partSpot(-1.8, -1.2);
       if (i % 2 === 0) sub.cont(CONT.LOGPILE, 4.1, 0, { prop: 'woodpile', ry: PI / 2 });
