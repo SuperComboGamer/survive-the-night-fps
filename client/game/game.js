@@ -28,9 +28,11 @@ import {
   ITEM,
   ITEM_DEFS,
   WEAPONS,
+  RECIPES,
   STRUCT,
   STRUCT_DEFS,
   STRUCT_ORDER,
+  REPAIR_COST,
   ZOMBIE_DEFS,
   SUPPLIES,
   SUPPLY_NEED,
@@ -57,6 +59,7 @@ import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../n
 import { Connection } from '../net/connection.js';
 import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
+import { harvestPrompt, needLines } from './harvest.js';
 import { Entities } from './entities.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
@@ -1026,10 +1029,15 @@ export class Game {
       case NOTIFY.STRUCT_CAP:
         ui.notify('Too many structures - demolish some [X]', 'warning', 2.5);
         break;
-      case NOTIFY.NOT_ENOUGH:
-        ui.notify(arg ? `You need ${ITEM_DEFS[arg]?.name || 'materials'}` : 'Not enough materials', 'warning', 2.5);
+      case NOTIFY.NOT_ENOUGH: {
+        // The server names one item (arg) or nothing at all. What is short, by how much and where it comes from is
+        // worked out here: from that item, or from the cost of what was last asked for against what we carry.
+        const need = arg ? needLines({ [arg]: 1 }, {}) : needLines(this.askedCost, this.invCounts());
+        if (!need.length) ui.notify('Not enough materials', 'warning', 2.5);
+        need.forEach((line, i) => ui.notify(line, i ? 'toast' : 'warning', 4.5));
         a.playLocal('build_fail');
         break;
+      }
       case NOTIFY.SEARCH_EMPTY:
         ui.notify(arg === 1 ? 'This tree is stripped bare' : arg === 2 ? 'Nothing left to salvage' : 'Already searched', 'toast', 1.6);
         break;
@@ -1467,6 +1475,7 @@ export class Game {
       this.beginHold(t.id);
       return;
     }
+    if (t.kind === ENT.STRUCTURE) this.askedCost = REPAIR_COST;
     this.conn.action(ACT.INTERACT, t.id);
   }
 
@@ -1521,6 +1530,7 @@ export class Game {
   tryBuild() {
     const gh = this.ghostPlace;
     if (!gh) return;
+    this.askedCost = STRUCT_DEFS[this.buildType].cost; // for NOTIFY.NOT_ENOUGH, should the server refuse
     this.conn.action(ACT.BUILD, this.buildType, gh.x, gh.z, this.buildRot);
   }
 
@@ -1528,6 +1538,7 @@ export class Game {
   uiCallbacks() {
     return {
       onCraft: (id) => {
+        this.askedCost = RECIPES[id]?.cost;
         this.conn.action(ACT.CRAFT, id);
         this.audio.playLocal('craft', { volume: 0.6 });
       },
@@ -2011,6 +2022,8 @@ export class Game {
       else if (carrying.length) this.prompt = `[E] Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
       else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
+    // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
+    if (!this.prompt) this.prompt = harvestPrompt(this.world, s);
   }
 
   updateBuildGhost(s) {

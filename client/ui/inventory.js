@@ -6,6 +6,7 @@ import { INVENTORY_SIZE } from '../../shared/constants.js';
 import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
+import { needLines } from '../game/harvest.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -788,12 +789,10 @@ export class Inventory {
       const { r } = rec;
       id = r.out;
       reqs = [];
-      const missing = [];
       for (const ing of rec.ings) {
         const have = this.counts[ing.id] || 0;
         const ok = have >= ing.need;
         const nm = ITEM_DEFS[ing.id].name;
-        if (!ok) missing.push(`${ing.need - have} ${nm}`);
         reqs.push({ icon: itemIcon(ing.id), name: nm, val: Math.min(have, 999) + ' / ' + ing.need, ok });
       }
       const st = r.station;
@@ -801,8 +800,7 @@ export class Inventory {
       if (st) reqs.push({ icon: glyph(STATION_GLYPH[st]), name: st === 'fire' ? 'Lit campfire' : STATION_NAMES[st], val: stationOk ? 'nearby' : 'not nearby', ok: stationOk });
       const unlocked = !r.schem || this._schemOk(r.schem);
       if (r.schem) reqs.push({ icon: glyph(unlocked ? 'unlock' : 'lock'), name: ITEM_DEFS[r.schem].name, val: unlocked ? 'found' : 'not found', ok: unlocked });
-      const todo = [];
-      if (missing.length) todo.push('Missing ' + missing.join(', '));
+      const todo = needLines(r.cost, this.counts); // what is short, and where it comes from
       if (!stationOk) todo.push(`Build a ${STATION_NAMES[st].toLowerCase()} [5] or find one`);
       if (!unlocked) todo.push('Find the schematic in lockers, crates or toolboxes');
       hint = todo.length ? todo.join('\n') : 'Click to craft';

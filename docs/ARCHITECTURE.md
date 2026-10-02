@@ -283,6 +283,12 @@ more than its bytes**, so put things into the packets that already flow.
   the commands that moved the player there are still queued; a hold under way is broken off `HOLD_SLACK` further
   out. A refusal is silent, so the server must never be stricter than the prompt: something new to interact with
   needs its radius in both `pick` and `reachOf`. sim-smoke takes each action from the edge of its prompt.
+- **Harvesting** is a melee swing that hits nobody: `Combat.melee` then traces the world to the weapon's range
+  + 0.3 m and hands a tree (`COL.TREE`) or a wreck (`COL.SALVAGE`: props marked `salvage`) to `Game.gatherHit`
+  (6 / 5 hits each, refilled at dawn). The client knows none of that state; `client/game/harvest.js` repeats the
+  trace and the yields for the interaction prompt ("[LMB] Chop for Sticks and Planks") and for the "Need 2 more
+  Planks" lines of a refused build or craft (the server only sends `NOTIFY.NOT_ENOUGH`). `sim-smoke` holds that
+  file against the server's swing and yields, so change the two together.
 - **Supply drops** (`spawnSupplyDrop`): the server picks a supply spot and a random heading, emits one
   `EVT.FLYOVER` (plane origin at release, heading, eta; constants `PLANE_*` / `CRATE_*`) and PLANE_LEAD / PLANE_SPEED
   seconds later spawns the crate at the cargo ramp with the plane's speed: state 3 free fall, 0 under the canopy
