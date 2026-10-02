@@ -20,6 +20,8 @@ import {
   GRID_N,
   DUSK_WARNING,
   EYE_HEIGHT,
+  INTERACT_REACH,
+  CAR_REACH,
 } from '../../shared/constants.js';
 import {
   ITEM,
@@ -1871,7 +1873,7 @@ export class Game {
     const ox = cam.position.x;
     const oy = cam.position.y;
     const oz = cam.position.z;
-    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, 3.3, this.renderPos.y + EYE_HEIGHT);
+    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, INTERACT_REACH, this.renderPos.y + EYE_HEIGHT);
     const counts = this.invCounts();
     const g = this.global;
     if (e) {
@@ -1919,7 +1921,7 @@ export class Game {
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
-    if (dcar < 3.9) {
+    if (dcar < CAR_REACH) {
       this.lookTarget = 'car';
       const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
       const carrying = missing.filter((p) => counts[p]);

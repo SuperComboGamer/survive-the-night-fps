@@ -269,6 +269,12 @@ more than its bytes**, so put things into the packets that already flow.
   candidates nearest first and stops at the first it can hit: a ray or two per swing, not one per zombie in reach.
 - **Containers** are `ENT.CACHE` entities (position + searched state) created from `world.containers`;
   searching is a server-side hold interaction (`ACT.HOLD_BEGIN/END`, progress in the self state).
+- **Interaction reach.** The `[E]` prompt comes from `Entities.pick`: the view ray, `INTERACT_REACH` long, has to
+  pass within a pick radius of the target (`PICK_RADIUS`, `structPickRadius`). The server takes its distance limits
+  from the same constants (`Game.reachOf`) plus `INTERACT_SLACK`, because it handles an action on arrival while
+  the commands that moved the player there are still queued; a hold under way is broken off `HOLD_SLACK` further
+  out. A refusal is silent, so the server must never be stricter than the prompt: something new to interact with
+  needs its radius in both `pick` and `reachOf`. sim-smoke takes each action from the edge of its prompt.
 - **Supply drops** (`spawnSupplyDrop`): the server picks a supply spot and a random heading, emits one
   `EVT.FLYOVER` (plane origin at release, heading, eta; constants `PLANE_*` / `CRATE_*`) and PLANE_LEAD / PLANE_SPEED
   seconds later spawns the crate at the cargo ramp with the plane's speed: state 3 free fall, 0 under the canopy

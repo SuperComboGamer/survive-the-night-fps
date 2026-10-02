@@ -7,8 +7,8 @@ import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
 import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
-import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
-import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
+import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
+import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER, structPickRadius } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { createPlayerState, simulatePlayer } from '../shared/playersim.js';
 import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
@@ -940,6 +940,74 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('...and plates for a kevlar vest, leather for jackets and machetes', plates >= 3 && leather >= 4, `${plates.toFixed(1)} plates, ${leather.toFixed(1)} leather`);
 }
 
+// [E] has to work from wherever the client offers it. Its view ray, INTERACT_REACH long, only needs to pass within
+// the target's pick radius (Entities.pick), and the server's copy of a survivor who came up at a sprint is still
+// some 0.1 s behind the one that client looks out of: promptEdge is how far out that puts them.
+const RUN_UP = SPRINT_SPEED * 0.1;
+const promptEdge = (radius) => Math.hypot(INTERACT_REACH, radius) + RUN_UP - 0.02;
+// stand c that far from e, on a side with a clear line to it
+const standOff = (c, e, d) => {
+  const s = c.p().state;
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2;
+    s.x = e.x + Math.sin(a) * d;
+    s.z = e.z + Math.cos(a) * d;
+    s.y = groundAt(game.world, s.x, s.z, e.y + 1.5, 0.3);
+    s.vx = s.vy = s.vz = 0;
+    if (!game.nav.isBlocked(s.x, s.z) && !game.world.isDeepWater(s.x, s.z) && Math.abs(s.y - e.y) < 1.2 && game.canReachEnt(c.p(), e)) return true;
+  }
+  return false;
+};
+// These checks take no tick, roll none of the game's dice and make no noise (they wind A's cooldowns back instead
+// of waiting them out): the scenario below runs on its own clock and must play out as it does without them.
+{
+  const p = A.p();
+  const s = p.state;
+  const [x0, y0, z0] = [s.x, s.y, s.z];
+  const from = (e) => `from ${Math.hypot(e.x - s.x, e.z - s.z).toFixed(2)} m`;
+  // a hold starts there, and is not dropped there once under way (a plain container: no car alarm, no stash)
+  const c = game.caches
+    .filter((c) => c.state === 0 && c.ctype !== CONT.TRUNK && !c.stash && !c.schem)
+    .sort((a, b) => Math.hypot(a.x - x0, a.z - z0) - Math.hypot(b.x - x0, b.z - z0))
+    .find((c) => standOff(A, c, promptEdge(PICK_RADIUS.CACHE)));
+  A.act(ACT.HOLD_BEGIN, c.id);
+  const began = p.hold?.kind === HOLD.SEARCH;
+  game.updateHold(p, 0);
+  check('a search starts at the edge of its prompt, and is kept up there', began && p.hold?.kind === HOLD.SEARCH, from(c));
+  A.act(ACT.HOLD_END);
+  // a press: an item on the ground, from the edge and from a ledge straight above it
+  const drop = () => game.spawnItem(ITEM.TAPE, 1, x0, y0 + 0.02, z0);
+  let item = drop();
+  standOff(A, item, promptEdge(PICK_RADIUS.ITEM));
+  A.act(ACT.INTERACT, item.id);
+  check('an item is picked up from the edge of its prompt', item.removed, from(item));
+  item = drop();
+  s.x = x0 + 0.2;
+  s.z = z0;
+  s.y = item.y + 0.15 + INTERACT_REACH - EYE_HEIGHT - 0.05; // eyes just within reach of its pick point
+  p.interactT = -1;
+  A.act(ACT.INTERACT, item.id);
+  check('...and from a ledge above it', item.removed, `${(s.y - item.y).toFixed(2)} m up`);
+  // a supply crate (opened for nothing: no loot)
+  const crate = { kind: ENT.CRATE, x: x0, y: y0, z: z0, gy: y0, state: 1, despawnAt: game.time + 600 };
+  game.spawnEntity(crate);
+  game.crates.push(crate);
+  standOff(A, crate, promptEdge(PICK_RADIUS.CRATE));
+  const rng = game.rng;
+  game.rng = () => 0.99;
+  game.dropItem = () => null;
+  p.interactT = -1;
+  A.act(ACT.INTERACT, crate.id);
+  game.rng = rng;
+  delete game.dropItem;
+  check('a supply crate is opened from the edge of its prompt', crate.state === 2, from(crate));
+  game.removeEntity(crate);
+  game.crates.splice(game.crates.indexOf(crate), 1);
+  s.x = x0;
+  s.y = y0;
+  s.z = z0;
+}
+
 // a trunk's car alarm goes off: the ambush comes from behind the searcher, even with the day's valley near the zombie cap
 {
   const p = A.p();
@@ -1149,6 +1217,42 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
     for (const e of drops) game.removeItemEnt(e);
     p.inv.splice(0, p.inv.length, ...inv);
     p.invDirty = true;
+  }
+  // [E] on a structure from the edge of its prompt (promptEdge above): feed the fire, mend the bench. As there:
+  // no ticks, and the hammering goes unheard
+  {
+    const [x1, y1, z1] = [s.x, s.y, s.z];
+    const built = p.actionT;
+    const noise = game.zm.noise;
+    game.zm.noise = () => {};
+    const fuel = fire.burnLeft;
+    standOff(A, fire, promptEdge(structPickRadius(STRUCT.CAMPFIRE)));
+    p.interactT = -1;
+    A.act(ACT.INTERACT, fire.id);
+    const fed = fire.burnLeft > fuel;
+    bench.hp = bench.maxHp / 2;
+    standOff(A, bench, promptEdge(structPickRadius(STRUCT.WORKBENCH)));
+    p.interactT = p.actionT = -1;
+    A.act(ACT.INTERACT, bench.id);
+    check('a fire is fed and a structure mended from the edge of their prompts', fed && bench.hp > bench.maxHp / 2, `${Math.hypot(bench.x - s.x, bench.z - s.z).toFixed(2)} m from the bench`);
+    bench.hp = bench.maxHp;
+    fire.burnLeft = fuel;
+    s.x = x1;
+    s.y = y1;
+    s.z = z1;
+    // ...and the build ghost reaches BUILD_REACH: a torch put down at full stretch, on the run
+    game.giveItem(p, ITEM.TORCH, 1);
+    const n = game.structures.length;
+    for (let k = 0; k < 12 && game.structures.length === n; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      p.actionT = -1;
+      A.act(ACT.BUILD, STRUCT.TORCH, s.x + Math.sin(a) * (BUILD_REACH + RUN_UP - 0.05), s.z + Math.cos(a) * (BUILD_REACH + RUN_UP - 0.05), 0);
+    }
+    const torch = game.structures.length > n && game.structures[n];
+    check('a structure is placed at the full reach of the build ghost', !!torch, torch ? `${Math.hypot(torch.x - s.x, torch.z - s.z).toFixed(2)} m` : '');
+    if (torch) game.destroyStructure(torch, false);
+    game.zm.noise = noise;
+    p.actionT = built;
   }
   // craft at the fire: gunpowder needs chem
   game.giveItem(p, ITEM.CHEM, 2);
@@ -1648,9 +1752,12 @@ check('ping broadcast', B.pings > 0);
   }
   const pl = [...A.store.ents.values()].find((e) => e.kind === ENT.PLAYER && e.id === B.id);
   check('downed flag replicated', pl && pl.q[5] & 256);
+  // from the edge of the revive prompt (promptEdge above), and without stepping closer for the whole of it
+  standOff(A, b, promptEdge(PICK_RADIUS.DOWNED));
+  const from = Math.hypot(b.x - A.p().state.x, b.z - A.p().state.z);
   A.act(ACT.HOLD_BEGIN, B.id);
   run(90);
-  check('B revived', b.alive && !b.downed && b.hp > 0, `hp ${b.hp}`);
+  check('B revived', b.alive && !b.downed && b.hp > 0, `hp ${b.hp}, from ${from.toFixed(2)} m`);
 }
 
 // night + waves
@@ -2085,7 +2192,7 @@ check('ping broadcast', B.pings > 0);
 // supplies + escape
 {
   const car = game.world.car;
-  A.tp(car.x + 2.5, car.z);
+  A.tp(car.x + CAR_REACH + RUN_UP - 0.02, car.z); // the edge of the car's [E] prompt (see promptEdge)
   run(3);
   const p = A.p();
   for (let i = 0; i < SUPPLIES.length; i++) game.giveItem(p, SUPPLIES[i], SUPPLY_NEED[i]);
