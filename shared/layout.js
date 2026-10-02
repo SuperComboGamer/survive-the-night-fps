@@ -32,6 +32,7 @@ export const PLACES = {
   [ZONE.CLINIC]: { flat: 30, blend: 24, clear: 34, dirt: 0.2, gates: 'flr' },
   [ZONE.MOTEL]: { site: 'roadside', flat: 32, blend: 24, clear: 36, dirt: 0.2, gates: 'b' },
   [ZONE.DRIVEIN]: { site: 'roadside', flat: 34, blend: 24, clear: 38, dirt: 0.5, gates: 'lr' },
+  [ZONE.FAIR]: { flat: 38, blend: 24, clear: 42, dirt: 0.45, gates: 'flr', core: true },
   [ZONE.CHECKPOINT]: { site: 'highway', flat: 24, blend: 22, clear: 26, dirt: 0.3 },
   [ZONE.CAMPGROUND]: { site: 'lakeside', flat: 30, blend: 24, clear: 30, dirt: 0.35 },
   [ZONE.RELAY]: { site: 'hill', flat: 22, blend: 30, clear: 26, raise: 9, dirt: 0.35, gates: 'f' },
@@ -47,7 +48,7 @@ export const PLACES = {
   [ZONE.SUMMERCAMP]: { flat: 34, blend: 26, clear: 26, dirt: 0.3, gates: 'flr' },
   [ZONE.LODGE]: { flat: 28, blend: 26, clear: 30, dirt: 0.25, gates: 'flr' },
 };
-export const PLACE_COUNT = 15; // named places on a map besides the breakdown
+export const PLACE_COUNT = 16; // named places on a map besides the breakdown
 
 const RIM = 46; // places keep this far inside the map edge, where the ground climbs out of the valley
 const MIN_GAP = 26; // woods left between two places

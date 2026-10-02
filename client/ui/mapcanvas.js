@@ -2,6 +2,7 @@
 // stipple, water, roads, trails and building footprints) from the deterministic world once per world.
 // Names and live markers are drawn on top by the map screen / compass, never baked in.
 import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
+import { WHEEL } from '../../shared/fair.js';
 
 export const MAP_PX = 1280; // baked canvas size (2 px per metre)
 const S = MAP_PX / MAP_SIZE;
@@ -189,6 +190,23 @@ export function renderMapCanvas(world) {
       g.lineTo(x + 1.5, y - 0.5);
       g.moveTo(x, y - 2);
       g.lineTo(x, y + 2);
+    }
+    g.stroke();
+  }
+  // ---- the fair's Ferris wheel, the one landmark that is seen from across the valley: a wheel, as a mark
+  if (world.fair) {
+    const f = world.fair;
+    const x = mapX(f.x + f.c * WHEEL.x + f.s * WHEEL.z);
+    const y = mapY(f.z - f.s * WHEEL.x + f.c * WHEEL.z);
+    const r = WHEEL.r * S * 0.8;
+    g.strokeStyle = 'rgba(52, 30, 24, 0.8)';
+    g.lineWidth = 1.6;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI;
+      g.moveTo(x - Math.cos(a) * r, y - Math.sin(a) * r);
+      g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
     }
     g.stroke();
   }

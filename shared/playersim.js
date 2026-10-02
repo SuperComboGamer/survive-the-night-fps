@@ -36,6 +36,7 @@ import {
 import { ITEM, WEAPONS, CLAWS, AMMO, AMMO_ITEMS } from './defs.js';
 import { groundAt, resolveBody, deepWaterAt } from './collision.js';
 import { mulberry32 } from './rng.js';
+import { rideStep, rideCarry } from './fair.js';
 
 export function createPlayerState() {
   return {
@@ -75,6 +76,10 @@ export function createPlayerState() {
     downed: 0, // incapacitated: crawl, pistol only, waiting for a teammate to revive
     lastBtn: 0,
     fireCount: 0,
+    // on a ride at the fair (fair.js): the seat + 1, the ride clock as this player has it (commands), whether it turns
+    ride: 0,
+    rideT: 0,
+    rideGo: 0,
   };
 }
 
@@ -115,6 +120,9 @@ export function copyPlayerState(dst, src) {
   dst.downed = src.downed;
   dst.lastBtn = src.lastBtn;
   dst.fireCount = src.fireCount;
+  dst.ride = src.ride;
+  dst.rideT = src.rideT;
+  dst.rideGo = src.rideGo;
   return dst;
 }
 
@@ -129,6 +137,7 @@ export function samePlayerState(a, b) {
   if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
+  if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   return a.downed === b.downed && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
 }
 
@@ -191,6 +200,10 @@ export function hashPlayerState(s) {
     mix(Math.round(s.pullZ * 64));
   }
   mix(s.lastBtn | (s.fireCount << 16));
+  if (s.ride) {
+    mix(s.ride | (s.rideGo << 8));
+    mix(s.rideT | 0);
+  }
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
 
@@ -270,7 +283,10 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   }
 
   // ------------------------------------------------ movement
-  const disabled = s.pinned || s.stunT > 0;
+  // in a seat of a ride the body goes where the seat does (fair.js): nothing below moves it, and it is put there
+  // once the command is through
+  const riding = s.ride !== 0 && rideStep(s, pressed, world, events);
+  const disabled = s.pinned || s.stunT > 0 || riding;
   let fwd = 0;
   let right = 0;
   if (!disabled) {
@@ -420,6 +436,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.x = _pos.x;
   s.y = ny;
   s.z = _pos.z;
+  if (riding) rideCarry(s, world);
 
   // ------------------------------------------------ weapons
   if (s.switchT > 0) s.switchT -= dt;

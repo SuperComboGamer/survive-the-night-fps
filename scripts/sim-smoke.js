@@ -1065,8 +1065,10 @@ const standOff = (c, e, d) => {
   const d = g.players.get(D.id);
   const t = g.players.get(T.id);
   const s = d.state;
-  const home = [s.x, s.z];
   const tp = (p, x, z) => g.handleChat(p, `/tp ${x} ${z}`);
+  // (on open ground: a spawn point can be beside a post of the rest area, and /tp puts a survivor on top of that)
+  for (let k = 0; k < 40 && groundAt(g.world, s.x, s.z, 200, 0.3) > g.world.heightAt(s.x, s.z) + 0.05; k++) tp(d, s.x + 0.5, s.z);
+  const home = [s.x, s.z];
   const rope = (p) => p.inv.reduce((n, x) => n + (x && x.item === ITEM.ROPE ? x.count : 0), 0);
   const off = (e) => Math.hypot(e.x - s.x, e.z - s.z);
   // the dropper puts three rope down out of the first backpack slot; `drop` is the stack on the ground
@@ -2820,7 +2822,7 @@ check('ping broadcast', B.pings > 0);
   if (lane) {
     s.x = lane.ox;
     s.z = lane.oz;
-    s.y = groundAt(g.world, s.x, s.z, 200, 0.3);
+    s.y = gy(s.x, s.z); // (on the ground the lane was judged by: a post beside the spot is no floor)
     s.vx = s.vy = s.vz = 0;
     g.fillHistory(p);
     tick(2);

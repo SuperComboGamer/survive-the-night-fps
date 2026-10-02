@@ -47,7 +47,8 @@ Army Checkpoint; it says so when the map has no checkpoint: seed 1 has one), `/w
 off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
 (to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station),
 `/cemetery` (to the gate of St. Agnes Cemetery; `/cemetery rise [n]` makes the n graves nearest you give up their
-dead now)).
+dead now), `/fair` (to the gate of the Tri-County Fair; `/fair on` starts its generator with a full tank, `/fair off`
+stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to the generator shed's door)).
 
 ### Tests & tools
 
@@ -62,6 +63,7 @@ dead now)).
 | `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
 | `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
 | `node scripts/test-deer.js [seed ...]` | the deer against the real server in-process: where the groups are put, what makes them bolt (a survivor standing or crouched, a noise, the dead) and how far and fast, a shot at a running one missing unless the server rewinds to the shooter's picture exactly as for a zombie dog, head shots on a grazing one, what a kill leaves and that it counts for nothing, that nothing that walks the zombie list meets them, the dawn's newcomers, venison, that none of it draws on the game's random stream, and half an hour of being chased about with none in the lake, the mine or a wall and none pushing at a fence (part of `npm test`; `VERBOSE=1` prints the passes) |
+| `node scripts/test-fair.js [seed]` | the Tri-County Fair against the real server in-process: the place, its rides and its generator are where a survivor can get at them and the dead can follow one in; the generator takes its fuel from the backpack, the drum fills the tank and no further, it runs dry, it shuts off; it is heard 150 m off and no further and its lights hold a Shade; a seat carries its rider round, Space gets them out with the fall damage of the height, a blow or a rope takes them out, a stopped wheel leaves them where they are, out of the reach of the dead below, the dead stay in their seat; and a rider at 0, 100 and 250 ms each way, whose prediction has to be the server's result to the bit, and is rebased only when they get on, the generator starts or stops under them and they get off (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
@@ -287,6 +289,20 @@ them off.
   first survivor who comes within 5 m of it. A rise is fair warning: the earth heaves and is heard (and felt
   underfoot) for 1.2 s before anything shows, and the zombie then takes 2.5 s to climb out, doing nothing else:
   what is still under the grass cannot be hit, but a head above it can.
+- **The Tri-County Fair** is on every map: a midway of game stalls and food stands to search, a carousel, a Ferris
+  wheel 18 m tall over the clearing, and a generator in a shed at the side. Hold [E] on the generator to start it: it
+  burns Flamethrower Fuel, 25 out of your backpack for two and a half minutes, and the drum beside it takes more [E],
+  up to ten minutes in the tank. Hold [E] again to shut it off; what is left stays in the tank. While it runs, the
+  bulbs on the midway and on the rides light up - that light holds a Shade frozen the way torchlight does - the
+  calliope plays, and every four seconds the fair is a noise that carries 150 m (a car alarm carries 140): every
+  corpse with nobody to chase comes to the midway, the wandering herd too. Run it to pull the dead off somewhere you
+  want to search, or to bring them to you. And the rides turn: [E] on a gondola at the platform or on a horse sits
+  you in it (the wheel goes round once in 40 s, the carousel in 8). From the seat you look round, shoot, reload and
+  heal; [E] gets you off at the bottom, Space gets you out anywhere, with the fall that comes with it (from the top
+  of the wheel that is half your health). If the generator dies with you at the top, you are stuck up there until
+  somebody starts it again or you jump. Nothing on foot reaches the top of the wheel, but spitters, bats and the
+  Hive Queen do; near the ground the dead claw at you, a roper's rope pulls you out of the seat, and a blow that
+  knocks a survivor down - a tank's, a boomer's - knocks you out of it.
 - **Shoot the legs out from under them.** A bullet below the hip of a walker, runner, spitter, roper, boomer or
   shade goes into that leg: the zombie **stumbles** - it trips, slows to a shuffle and loses the swing it had started
   - and takes only 40% of the damage in the body. A leg that has taken 30% of the zombie's health is **shot off**
@@ -363,9 +379,10 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 - **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
   (your car, a rest area) on it near the middle and the roadside places strung along it.
 - **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
-- **Sixteen places** to a map. Six are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel (with
+- **Seventeen places** to a map. Seven are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel (with
   St. Agnes Cemetery behind it, `shared/cemetery.js`), Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
-  general store, police station, garage, houses) and Blackrock Mine (on high ground). The other ten are drawn
+  general store, police station, garage, houses), Blackrock Mine (on high ground) and the Tri-County Fair (in a
+  clearing of its own, the Ferris wheel over the midway). The other ten are drawn
   from sixteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
   Campground (near the lake), the Relay Station and Ranger Lookout (on high ground), Miller Farm, Harlan
   Sawmill, Granite Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage

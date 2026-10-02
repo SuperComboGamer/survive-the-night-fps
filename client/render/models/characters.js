@@ -3827,6 +3827,7 @@ class SurvivorInstance {
     this.meleeSide = 0;
     this.deadT = 0;
     this.crouchW = 0;
+    this.sitW = 0; // seated (a ride at the fair): thighs level, shins hanging
     this.airW = 0;
     this.runW = 0;
     this.reloadW = 0;
@@ -3919,7 +3920,8 @@ class SurvivorInstance {
     this.stateT += dt;
     this.fadeT += dt;
     const k = 1 - Math.exp(-dt * 10);
-    this.crouchW += ((s.crouch ? 1 : 0) - this.crouchW) * k;
+    this.crouchW += ((s.crouch && !s.sit ? 1 : 0) - this.crouchW) * k;
+    this.sitW += ((s.sit ? 1 : 0) - this.sitW) * k;
     this.airW += ((s.onGround === false ? 1 : 0) - this.airW) * (1 - Math.exp(-dt * 12));
     this.runW += ((s.sprint && speed > 4 ? 1 : 0) - this.runW) * k;
     this.reloadW += ((s.reloading ? 1 : 0) - this.reloadW) * k;
@@ -4023,9 +4025,10 @@ class SurvivorInstance {
     // legs
     const amp = mv * lerp(lerp(0.45, 0.75, run), 0.4, cr);
     const knee = mv * lerp(lerp(0.75, 1.3, run), 0.6, cr);
-    const baseT = cr * 0.95;
-    const baseK = 0.06 + cr * 1.5;
-    legCycle(z, p, ph, amp, knee, baseT, baseK, 0, 0.03);
+    const sit = this.sitW;
+    const baseT = lerp(cr * 0.95, 1.5, sit);
+    const baseK = lerp(0.06 + cr * 1.5, 1.45, sit);
+    legCycle(z, p, ph, amp * (1 - sit), knee * (1 - sit), baseT, baseK, 0, 0.03 + 0.1 * sit);
     // air: tuck legs
     if (air > 0.01) {
       for (let side = 0; side < 2; side++) {

@@ -16,6 +16,7 @@ import { ROAD, planLayout, gatePoint } from './layout.js';
 import { planMine, MINE_R, MINE_H, PORTAL } from './mine.js';
 import { buildClinic, darkAt } from './clinic.js';
 import { buildCemetery } from './cemetery.js';
+import { buildFair } from './fair.js';
 
 export { ROAD };
 
@@ -44,6 +45,7 @@ const STREETS = {
   [ZONE.TRAILERS]: [[[[0, -28], [0, -12], [2.5, 4], [0, 28]], ROAD.DIRT, 2.4]],
   [ZONE.CAMPGROUND]: [[[[0, -26], [5, -9], [4, 8], [0, 26]], ROAD.DIRT, 2.2]],
   [ZONE.DRIVEIN]: [[[[0, -30], [0, -20], [-1.5, -11]], ROAD.DIRT, 2.6]],
+  [ZONE.FAIR]: [[[[0, -33], [0, -20], [0, -4], [0, 9]], ROAD.DIRT, 2.6]],
 };
 
 export function createWorld(seed) {
@@ -1873,6 +1875,12 @@ export function createWorld(seed) {
     b.loot(12, 20.5);
   });
 
+  // TRI-COUNTY FAIR: the midway, the carousel and the Ferris wheel, and the generator that runs them (fair.js).
+  let fair = null;
+  place(ZONE.FAIR, (b, z) => {
+    fair = buildFair(b, z, seed, { door, win });
+  });
+
   // ---------------------------------------------------------------- the mine: its portals, and what is down there
   // The workings under Blackrock Mine (mine.js) are planned now that every place stands and every roadside site has
   // its spot, so the far portal comes up clear of them all: it levels an apron and heaps a mound behind itself.
@@ -2461,6 +2469,7 @@ export function createWorld(seed) {
     clinic, // Mercy Clinic (clinic.js), or null on a map without it
     darks,
     darkAt: (x, y, z) => darkAt(darks, x, y, z), // how dark it is there at noon: 0 in daylight .. 1 (clinic.js)
+    fair,
     roadDistAt,
     roadKindAt,
     rayTerrain,

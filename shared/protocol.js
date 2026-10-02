@@ -34,9 +34,10 @@ export const S2C = {
 // ack follows).
 export const SNAP = { GLOBAL: 1, SELF: 2, REMOVES: 4, CREATES: 8, UPDATES: 16, EVENTS: 32, TICK: 64, ACK: 128 };
 // self section: u8 mask, bits 0-4 = the simulated state in 5 chunks (only ever sent with SYNC), STATUS = the
-// server-driven status (hp, armor, battery, ...; its own u8 field mask follows), SYNC = "this is the authoritative
+// server-driven status (hp, armor, battery, ...; its own u8 field mask follows), RIDE = the seat of a ride the
+// player is in (part of the simulated state like bits 0-4: only ever with SYNC), SYNC = "this is the authoritative
 // state after the acked command: rebase the prediction on it". Without SYNC the client's own prediction stands.
-export const SELF = { SIM: 0x1f, STATUS: 0x20, SYNC: 0x80 };
+export const SELF = { SIM: 0x1f, STATUS: 0x20, RIDE: 0x40, SYNC: 0x80 };
 
 // discrete, non-predicted actions
 export const ACT = {
@@ -61,15 +62,18 @@ export const ACT = {
   SPLIT_INV: 19, // u8 inventory index, u16 count: that many leave the stack for a free slot of their own
   GUN_MAN: 25, // u8 on: take the grips of the mounted gun (1) or let go of them (0)
   GUN_FEED: 26, // u8 on: the gunner starts (1) or stops (0) feeding 7.62 from their backpack into its belt
+  RIDE: 27, // u8 seat (fair.js): get onto that seat of a ride at the fair
 };
 
 // special interaction targets that are not entities
 export const CAR_ID = 0xfffe;
 export const BELL_ID = 0xfffd; // the bell rope in the chapel (shared/fixtures.js)
 export const RADIO_ID = 0xfffc; // the radio set at the Relay Station
+export const FAIR_GEN_ID = 0xffe0; // the fair's generator (HOLD_BEGIN: start it / shut it off)
+export const FAIR_TANK_ID = 0xffe1; // ...and its fuel drum (INTERACT: pour a portion in)
 export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
-export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6 };
+export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, FAIR_START: 9, FAIR_STOP: 10 };
 
 export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3 };
 
@@ -97,6 +101,7 @@ export const ENT = {
   CAT: 9, // the stray cat (ambient, can't be hurt)
   DEER: 10, // a deer (shared/deer.js): can be hunted, is no zombie
   GUN: 12, // the mounted gun at the Army Checkpoint (static position: the pintle; state = belt, gunner, where it was left pointing)
+  FAIR: 11, // the fair's generator: whether it runs, the ride clock, the fuel left (FRF)
 };
 
 // ---------------------------------------------------------------- quantization
@@ -449,6 +454,9 @@ export const PFLAG = {
   DOWNED: 256,
   REVIVING: 512, // being revived by a teammate
 };
+// ...and in the five bits above them, the seat of a ride the player sits in + 1 (fair.js; 0: on foot)
+export const PRIDE_SHIFT = 11;
+export const playerRide = (flags) => flags >> PRIDE_SHIFT;
 // ZOMBIE fields (LEGS: legs blown off, bit 0 left, bit 1 right)
 export const ZF = { POS: 0, YAW: 1, ANIM: 2, HP: 3, LINK: 4, LEGS: 5, STATUS: 6 };
 // zombie status bits (ZF.STATUS)
@@ -472,3 +480,7 @@ export const TF = { POS: 0, YAW: 1, ANIM: 2 };
 export const GF = { POS: 0, BELT: 1, GUNNER: 2, AIM: 3 };
 // DEER fields (ANIM: a DANIM state, shared/deer.js; a dead one stays on the wire as DANIM.DEAD until it is gone)
 export const DF = { POS: 0, YAW: 1, ANIM: 2 };
+// FAIR fields. CLOCK: 24 bits of ticks - stopped, the ride clock itself; running, the server tick at which it read
+// zero (so the clock now is the tick now less that, and nothing has to be sent while it runs). FUEL: 16 bits of
+// ticks - stopped, what is left in the tank; running, the server tick it runs dry at.
+export const FRF = { POS: 0, STATE: 1, CLOCK: 2, FUEL: 3 };

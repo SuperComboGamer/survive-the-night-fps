@@ -491,6 +491,10 @@ export const SOUND = {
   DEER_SNORT: 79, // a deer blows through its nose: the group has seen, heard or smelt something, and bolts
   DEER_BLEAT: 80, // a deer hit, or brought down
   DEER_HOOF: 81, // a hoof coming down at a run (client-side, timed to the bound)
+  FAIR_START: 97, // the fair's generator catching
+  FAIR_STOP: 98, // ...and winding down
+  FAIR_FUEL: 99, // fuel going into its drum
+  RIDE_BOARD: 100, // a survivor getting onto a ride
 };
 
 export const EVT = {
@@ -567,6 +571,10 @@ export const NOTIFY = {
   RADIO_CALL: 44, // arg = player id: they called a supply drop on the Relay Station's radio
   RADIO_NO: 45, // (to whoever tried the radio) arg = why not (RADIO_NO in shared/fixtures.js)
   GRAVES: 61, // the cemetery has woken: part of tonight's horde is coming up out of its graves (sent to the survivors near it)
+  FAIR_ON: 55, // arg = player id: the fair's generator is running (lights, music, the rides)
+  FAIR_OFF: 56, // arg = player id: shut off again
+  FAIR_DRY: 57, // it has run out of fuel
+  FAIR_FULL: 58, // (to the survivor at the drum) the tank takes no more
 };
 
 // killer kinds for killfeed

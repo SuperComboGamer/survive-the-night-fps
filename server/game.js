@@ -130,6 +130,8 @@ import { PlayerStats } from './stats.js';
 import { Fixtures } from './fixtures.js';
 import { Cemetery } from './cemetery.js';
 import { MountedGun } from './mountedgun.js';
+import { Fair } from './fair.js';
+import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -334,6 +336,7 @@ export class Game {
     this.fixtures = new Fixtures(this); // the chapel bell and the Relay Station's radio
     this.cemetery = new Cemetery(this); // the dead that come up out of the graves at St. Agnes (cemetery.js)
     this.gun = new MountedGun(this); // the mounted gun at the Army Checkpoint, on the maps that have one
+    this.fair = new Fair(this); // the Tri-County Fair: its generator and who is on its rides
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
@@ -814,6 +817,7 @@ export class Game {
     this.placeSupplies();
     this.cemetery.reset();
     this.gun.spawn();
+    this.fair.reset();
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
@@ -1731,6 +1735,8 @@ export class Game {
         return this.gun.man(p, r.u8());
       case ACT.GUN_FEED:
         return this.gun.feed(p, r.u8());
+      case ACT.RIDE:
+        return this.fair.board(p, r.u8());
     }
   }
 
@@ -1782,6 +1788,7 @@ export class Game {
       } else if (!this.allSuppliesIn()) this.notify(NOTIFY.NEED_SUPPLIES, 0, p.id);
       return;
     }
+    if (id === FAIR_TANK_ID) return this.fair.topUp(p);
     const e = this.ents[id];
     if (!e || e.removed) return;
     const dx = e.x - ex;
@@ -1899,6 +1906,7 @@ export class Game {
       return;
     }
     if (this.fixtures.owns(id)) return this.fixtures.holdBegin(p, id);
+    if (id === FAIR_GEN_ID) return this.fair.holdBegin(p);
     const e = this.ents[id];
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
@@ -1927,6 +1935,7 @@ export class Game {
     if (ok) {
       if (h.target === CAR_ID) ok = this.nearCar(p, 6) && (h.kind === HOLD.DRIVE ? this.escape.active && this.escape.ready : !this.escape.active);
       else if (this.fixtures.owns(h.target)) ok = this.fixtures.holdOk(p, h);
+      else if (h.target === FAIR_GEN_ID) ok = this.fair.holdOk(p, h);
       else {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
@@ -1953,6 +1962,7 @@ export class Game {
     else if (h.kind === HOLD.ENGINE) this.startEngine(p);
     else if (h.kind === HOLD.DRIVE) this.driveOff(p);
     else if (this.fixtures.owns(h.target)) this.fixtures.holdDone(p, h);
+    else if (h.target === FAIR_GEN_ID) this.fair.holdDone(p, h);
   }
 
   searchCache(p, c) {
@@ -2772,6 +2782,10 @@ export class Game {
         this.sendChat(p, 0, CHATF.SYSTEM, `${gr.members.length} deer 34 m to the ${['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(b / (Math.PI / 4)) & 7]}`);
         break;
       }
+      case 'fair':
+        // /fair: to the gate of the Tri-County Fair. /fair on | off: its generator. /fair wheel | carousel: onto a ride
+        this.fair.debug(p, args[1]);
+        break;
       case 'where':
         this.systemChat(`pos ${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} zone ${this.world.zoneAt(s.x, s.z)}`);
         break;
@@ -2825,6 +2839,7 @@ export class Game {
       return;
     }
     this.processInputs();
+    this.fair.update();
     ts.mark(T_INPUTS);
     this.updatePhase(dt);
     this.cemetery.update(dt);
@@ -3403,6 +3418,12 @@ export class Game {
         }
         if (put(chunk)) mask |= 1 << chunk;
       }
+      // (the seat of a ride at the fair: fair.js)
+      c.reset();
+      c.u8(s.ride);
+      c.u8(s.rideGo);
+      c.u32(s.rideT);
+      if (put(12)) mask |= SELF.RIDE;
     }
     // status: 7 field groups behind their own mask
     const subAt = w.reserve8();

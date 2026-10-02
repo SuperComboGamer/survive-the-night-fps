@@ -382,6 +382,42 @@ a few hooks into code that already exists:
   the car, where two groups in range were being moved about by the dead (+5% on the wire), +37 B/s roaming, +4 B/s
   in the night's fight; no new messages or packets. The server spends about 0.01 ms a tick on them.
 
+## The fair: a ride in the player simulation
+
+The Tri-County Fair (`ZONE.FAIR`, core) is built by `buildFair` in `shared/fair.js`, called from world.js like any
+place, and returns `world.fair`: its frame, the generator and its fuel drum, the lamps (light for the Shade) and the
+strings of bulbs. The rides' frames, platform and deck are ordinary static parts; what turns is drawn by the client.
+
+- **One clock, in commands.** Both rides turn on one ride clock that only moves while the generator runs, counted in
+  commands (`CMD_RATE` to a second), and `seatPos(fair, seat, t)` is where a rider's feet are in a seat (0-7 the
+  wheel's gondolas, 8-15 the carousel's horses) when it reads t. A survivor in a seat carries their own reading of it
+  in the simulated state: `ride` (seat + 1), `rideT`, `rideGo`. `simulatePlayer` asks `rideStep` at the start of a
+  command (moves `rideT` on by one, or decides the rider is out: Space, any speed or air under them that something
+  else gave them - a knock, a rope - or having turned) and while it holds them treats them like a pinned player, then
+  `rideCarry` puts the body in the seat (crouched height and eye, still, on the ground). That is all prediction needs:
+  client and server run the same commands over the same numbers. The server only changes the three fields when the
+  client cannot know: boarding (`ACT.RIDE`, `Fair.board`), the generator starting or stopping under riders
+  (`Fair.turn`), and a rider whose reading has drifted more than half a second off the wheel's (`DRIFT`: their
+  commands stopped coming, or the server dropped some). They travel as the self state's `SELF.RIDE` chunk.
+- **The server** (`server/fair.js`, `Game.fair`) owns the wheel's clock (3 commands a tick while it runs), the fuel
+  (in ticks) and the generator's rules: `HOLD.FAIR_START` / `FAIR_STOP` on `FAIR_GEN_ID` (a portion of
+  `ITEM.AMMO_FUEL` from the backpack if the tank is dry), `ACT.INTERACT` on `FAIR_TANK_ID` (a portion more), the
+  standing noise (`NOISE.FAIR`, every `GEN.noiseEvery` s) and `Fair.lit`, the one call `Zombies.isLit` makes for it.
+  The dead in a seat stay in it and go round with it until they rise. Everything a client draws comes from one entity,
+  `ENT.FAIR`, in everyone's area of interest: running or not, and the clock and the fuel as server ticks they read zero
+  at (`FRF`), so a running fair sends nothing. Which seat a player sits in rides in the top five bits of their
+  entity's flags (`PRIDE_SHIFT`).
+- **The client** (`client/game/fair.js`, `Game.fair`; meshes in `client/render/fair.js`) draws the whole fair at one
+  reading of the clock per frame: a rider's own prediction (their seat must be under them), or for a player on foot
+  the server's clock at the interpolation time moved on by the lead their own commands have on it, so that a seat
+  being boarded is already where it will be. Every rider - other players too - is drawn in their seat at that reading
+  (`Entities`: a player whose flags name a seat slides into it over a fifth of a second), so the ride and its riders
+  can never come apart, whatever the link does. A step in that reading (the generator starting or stopping under a
+  rider, a correction after a stall) fades out as an offset (`FADE`) instead of jumping. While seated the camera is
+  the seat as drawn (`FairClient.carry`), `Prediction.viewLag` leaves rides alone, and [E] on "Get off" is the
+  simulation's own jump, pressed for one command (`FairClient.press`).
+- `scripts/test-fair.js` holds the rules against the server, and a rider's prediction against it on a laggy link.
+
 ## Gameplay systems (iteration 2)
 
 - **No base.** Structures can be built anywhere (within 7 m of the builder). `STRUCT.DOOR` snaps into the

@@ -1539,6 +1539,63 @@ export function loopPlane(sr, rng) {
   return finishLoop(out, sr, X, 0.8);
 }
 
+// The calliope of the Tri-County Fair: a steam organ wheezing through a waltz that never ends. Pipes are sines
+// with a few harmonics, breath in them and a chiff as each one speaks; every pipe is a little out of tune in its
+// own way and the whole machine drifts in pitch, which is what makes it sound abandoned. Sixteen bars of
+// oom-pah-pah, the tail of the buffer playing the first bar again so that the loop's crossfade is the tune over
+// itself.
+export function loopCalliope(sr, rng) {
+  const BEAT = 0.34;
+  const L = 16 * 3 * BEAT;
+  const X = 0.5;
+  const out = alloc(sr, L + X);
+  const pipe = (m) => 440 * Math.pow(2, (m - 69) / 12) * (1 + ((((m * 2654435761) >>> 0) % 1000) / 1000 - 0.5) * 0.02);
+  const note = (m, t0, dur, amp) => {
+    const f = pipe(m);
+    const i0 = Math.floor(t0 * sr);
+    const n = Math.floor((dur + 0.08) * sr);
+    const bp = new Biquad().bp(sr, Math.min(f * 2, sr * 0.4), 2);
+    let ph = rng();
+    for (let i = 0; i < n && i0 + i < out.length; i++) {
+      const t = i / sr;
+      const env = Math.min(1, t / 0.03) * (t < dur ? 1 : Math.max(0, 1 - (t - dur) / 0.08));
+      // (the wow turns a whole number of times in the loop; a pipe speaks a shade flat until it has filled)
+      ph += (f * (1 + 0.005 * Math.sin((TAU * 5 * (t0 + t)) / L) - (t < 0.05 ? 0.012 * (1 - t / 0.05) : 0))) / sr;
+      const a = TAU * ph;
+      const tone = Math.sin(a) + 0.28 * Math.sin(2 * a) + 0.2 * Math.sin(3 * a) + 0.07 * Math.sin(4 * a);
+      out[i0 + i] += (tone + bp.run(rng() * 2 - 1) * (t < 0.06 ? 1.1 : 0.22)) * env * amp;
+    }
+  };
+  // the tune, a bar to a row: [melody (MIDI, 0 = hold the last note), the bar's chord as root, third, fifth]
+  const BARS = [
+    [[79, 76, 79], [48, 64, 67]], [[84, 0, 0], [48, 64, 67]], [[83, 81, 83], [43, 62, 65]], [[79, 0, 0], [43, 62, 67]],
+    [[81, 77, 81], [41, 60, 65]], [[86, 0, 84], [43, 62, 65]], [[83, 79, 81], [43, 59, 62]], [[79, 0, 0], [48, 64, 67]],
+    [[88, 86, 84], [48, 64, 67]], [[81, 0, 0], [41, 60, 65]], [[86, 84, 83], [43, 62, 65]], [[79, 0, 0], [43, 59, 62]],
+    [[84, 83, 81], [41, 60, 65]], [[79, 76, 79], [48, 64, 67]], [[81, 83, 86], [43, 62, 65]], [[84, 0, 0], [48, 64, 67]],
+  ];
+  const play = (off) => {
+    BARS.forEach(([tune, [root, third, fifth]], b) => {
+      const t = off + b * 3 * BEAT;
+      if (t >= L + X) return;
+      for (let k = 0; k < 3; k++) {
+        if (!tune[k]) continue;
+        let len = 1;
+        while (k + len < 3 && !tune[k + len]) len++;
+        note(tune[k], t + k * BEAT, len * BEAT * 0.92, 0.5);
+      }
+      note(root, t, BEAT * 0.7, 0.42);
+      for (const k of [1, 2]) {
+        note(third, t + k * BEAT, BEAT * 0.42, 0.2);
+        note(fifth, t + k * BEAT, BEAT * 0.42, 0.2);
+      }
+    });
+  };
+  play(0);
+  play(L);
+  softclip(out, 0.9);
+  return finishLoop(out, sr, X, 0.85);
+}
+
 // ------------------------------------------------------------------ 2D event sounds
 export function plane(sr, rng) {
   const dur = 9;
@@ -1815,6 +1872,7 @@ export const SFX_DEFS = [
   { bank: 'loop_boss_breath', n: 1, sr: LO, gen: loopBossBreath },
   { bank: 'loop_generator', n: 1, sr: LO, gen: loopGenerator },
   { bank: 'loop_plane', n: 1, sr: LO, gen: loopPlane },
+  { bank: 'loop_calliope', n: 1, sr: LO, gen: loopCalliope },
   // 2D events (rendered after init; rendered on demand if requested earlier)
   { bank: 'plane', n: 1, sr: LO, group: 'late', gen: plane },
   { bank: 'horde_horn', n: 1, sr: LO, group: 'late', gen: hordeHorn },

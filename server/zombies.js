@@ -1118,6 +1118,7 @@ export class Zombies {
       if ((z.x - lx) ** 2 + (z.y + h * 0.5 - ly) ** 2 + (z.z - lz) ** 2 > r * r) continue;
       for (let k = 0; k < BODY_AT.length; k++) if (this.clearLine(lx, ly, lz, z.x, z.y + h * BODY_AT[k], z.z)) return true;
     }
+    if (g.fair.lit(z, h)) return true; // the lights of the fair, while its generator runs
     for (const p of this.humansCache) {
       if (!p.flashlight) continue;
       const s = p.state;

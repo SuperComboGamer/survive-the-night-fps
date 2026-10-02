@@ -1,7 +1,7 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
-import { ENT, PFLAG, ZSTATUS, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
+import { ENT, PFLAG, ZSTATUS, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD } from '../../shared/constants.js';
@@ -868,12 +868,19 @@ export class Entities {
         }
         case ENT.PLAYER: {
           e.samples.sample(renderTick, tmp);
+          // on a ride at the fair they are drawn in their seat, where the ride is drawn this frame (game/fair.js),
+          // and slide into it and out of it over a moment instead of popping
+          const ride = playerRide(e.q[5]);
+          if (ride) e.seat = ride;
+          e.seatK = Math.max(0, Math.min(1, (e.seatK || 0) + (ride ? dt : -dt) * 5));
+          if (e.seatK > 0) g.fair.seatBlend(e.seat - 1, tmp, e.seatK);
           const dx = tmp.x - e.rx;
           const dy = tmp.y - e.ry;
           const dz = tmp.z - e.rz;
           const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 10);
-          e.vy = dy / Math.max(dt, 1e-3);
+          if (e.seatK > 0) e.speed = 0; // (carried, not walking)
+          e.vy = e.seatK > 0 ? 0 : dy / Math.max(dt, 1e-3);
           e.rx = tmp.x;
           e.ry = tmp.y;
           e.rz = tmp.z;
@@ -903,7 +910,7 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips });
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, sit: e.seatK > 0.5 });
           v.object.visible = !(dead && zombie);
           // flashlight
           const flashOn = !!(flags & PFLAG.FLASHLIGHT) && !dead;

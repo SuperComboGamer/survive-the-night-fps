@@ -69,6 +69,7 @@ import { harvestPrompt, strippedKey, needLines } from './harvest.js';
 import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
+import { FairClient } from './fair.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
@@ -260,6 +261,7 @@ export class Game {
     this.entities = new Entities(this);
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
+    this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
@@ -367,6 +369,7 @@ export class Game {
     if (this.mine) this.scene.add(this.mine);
     this.clinic = buildClinic(this.world); // the lining of Mercy Clinic's dark wards and its signs (null on a map without it)
     if (this.clinic) this.scene.add(this.clinic);
+    this.fair.setWorld(this.world);
     this.under = 0;
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
@@ -418,6 +421,7 @@ export class Game {
     }
     this.staticWorld?.dispose();
     this.foliage?.dispose();
+    this.fair.setWorld(null);
     for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
     this.world = null;
@@ -973,6 +977,7 @@ export class Game {
     const ui = this.ui;
     const a = this.audio;
     if (this.fixtures.notify(msg, arg)) return;
+    if (this.fair.onNotify(msg, arg)) return;
     switch (msg) {
       case NOTIFY.NIGHT_FALLS: {
         // a themed night says so (the same theme the server drew: both work it out from the seed)
@@ -1700,6 +1705,7 @@ export class Game {
     const g = this.global;
     if (!t) return;
     if (t === 'gun') return this.gun.use();
+    if (t.fair) return this.fair.interact(t);
     if (t === 'car') {
       if (g.suppliesDone && (!g.finale || g.escapeReady)) this.beginHold(CAR_ID); // start the engine; once it is warm, get in and drive
       else this.conn.action(ACT.INTERACT, CAR_ID);
@@ -1845,7 +1851,7 @@ export class Game {
     }
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
-    const buttons = this.gun.shape(self.alive ? inp.sample() : 0); // (manning the mounted gun: its trigger, not the weapon's)
+    const buttons = this.gun.shape(self.alive ? inp.sample() | this.fair.press : 0); // (manning the mounted gun: its trigger, not the weapon's. fair.press: [E] getting out of a seat)
     if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
@@ -1872,10 +1878,12 @@ export class Game {
     const extra = Math.min(1.5, Math.max(0, 2.5 * Math.sqrt(this.jitter2) - 0.6));
     this.interpExtra += Math.max(-dt * 0.5, Math.min(dt * 0.5, extra - this.interpExtra));
     this.renderTick = this.clientTick - INTERP_DELAY * SERVER_TICK_RATE - this.interpExtra;
+    this.fair.update(dt, time); // (the ride clock of this frame: riders, ourselves included, are placed by it)
 
     // camera
     this.prediction.renderPos(dt, this.renderPos);
     const rp = this.renderPos;
+    this.fair.carry(rp);
     const targetEye = eyeHeight(s);
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * (s.downed ? 5 : 12));
     const hspeed = Math.hypot(s.vx, s.vz);
@@ -2039,7 +2047,7 @@ export class Game {
       u.uSunCol.value.copy(this.env.cur.dir);
       u.uCam.value.copy(cam.position);
     }
-    const fires = this.entities.fireSources.concat(this.staticFires);
+    const fires = this.entities.fireSources.concat(this.staticFires, this.fair.lights);
     this.lights.update(dt, time, cam.position, this.localFlash && self.alive && !s.zombie, fires, this.entities.remoteFlash, Math.max(this.env.night, this.under));
     // nearest big fire warms the viewmodel & the ambience
     let nearFire = 0;
@@ -2225,6 +2233,7 @@ export class Game {
     this.lookTarget = null;
     this.prompt = null;
     if (!this.self.alive || s.zombie || s.downed) return;
+    if (s.ride) return this.fair.rideLook(s);
     if (this.gun.look(true)) return; // hands on the mounted gun: [E] is the gun's
     cam.getWorldDirection(_v);
     const ox = cam.position.x;
@@ -2278,6 +2287,7 @@ export class Game {
     if (this.gun.look(false)) return; // at the grips of the mounted gun
     // the bell rope, the radio set
     if (this.fixtures.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT, counts)) return;
+    if (this.fair.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
@@ -2461,7 +2471,7 @@ export class Game {
     if (self.holdKind) {
       h.useProgress = self.holdProgress;
       const t = this.entities.ents.get(this.holding);
-      h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : 'Starting the engine…';
+      h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : self.holdKind === HOLD.FAIR_START ? 'Starting the generator…' : self.holdKind === HOLD.FAIR_STOP ? 'Shutting it off…' : 'Starting the engine…';
       h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
@@ -2474,7 +2484,7 @@ export class Game {
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };
     else if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
-    else h.context = null;
+    else h.context = this.fair.hud();
     h.ping = Math.round(this.conn.rtt);
     h.stalled = performance.now() - (this.snapAt || 0) > 1000; // nothing from the server for a second
     h.fps = this.fps || 0;

@@ -218,6 +218,11 @@ def(S.GUN_MAN, 'bolt', 'fxfar', 0.8, 0.04, 0.15, R_BOLT); // someone takes the g
 def(S.DEER_SNORT, 'deer_snort', 'fxfar', 1.3, 0.06); // (a breath of noise: this puts it level with the cat's meow)
 def(S.DEER_BLEAT, 'deer_bleat', 'fxfar', 0.7, 0.07);
 def(S.DEER_HOOF, 'step_hoof', 'fx', 0.8, 0.1, 0.08);
+// the Tri-County Fair: its generator cranking up and clunking off, fuel going into the drum, a seat taking a rider
+def(S.FAIR_START, 'car_start', 'fxfar', 0.9, 0.03, 0.15, R_CAR_CRANK);
+def(S.FAIR_STOP, 'car_part', 'fxfar', 0.9, 0.04);
+def(S.FAIR_FUEL, 'install_part', 'fx', 0.7, 0.05);
+def(S.RIDE_BOARD, 'metal_hit', 'fx', 0.5, 0.08, 0.15, R_METAL);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -302,6 +307,9 @@ const LOOPS = {
   generator: { bank: 'loop_generator', ref: 2.5, max: 40, roll: 1.2, vol: 0.6, wet: 0.1 },
   // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
   plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
+  // the Tri-County Fair's calliope, while its generator runs: heard as far as the dead hear it (NOISE.FAIR), duller
+  // with distance, in tune with itself on every client (no rate jitter)
+  calliope: { bank: 'loop_calliope', ref: 9, max: 160, roll: 1.0, vol: 0.85, wet: 0.3, air: true, always: true, jit: 0 },
 };
 const LOOP_CAP_TOTAL = 28;
 

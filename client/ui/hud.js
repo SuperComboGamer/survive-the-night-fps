@@ -621,6 +621,9 @@ export class Hud {
         this.ctxTitle.textContent = 'The car';
       } else if (type === 'structure') {
         this.ctxIco.innerHTML = glyph('hammer');
+      } else if (type === 'fair') {
+        this.ctxIco.innerHTML = glyph('fuel');
+        this.ctxTitle.textContent = 'Fair generator';
       }
     }
     if (!ctx) return;
@@ -657,6 +660,17 @@ export class Hud {
         this.ctxVal.textContent = Math.round(r * 100) + '%';
         this.ctxFill.style.transform = `scaleX(${r})`;
         this.ctx.classList.toggle('warn', r < 0.35);
+      }
+    } else if (type === 'fair') {
+      // the Tri-County Fair's generator (client/game/fair.js): running or not, and the fuel in its tank
+      const fuel = Math.max(0, Math.ceil(ctx.fuel || 0));
+      const key = ctx.running ? fuel : -1 - fuel;
+      if (c.ctxA !== key) {
+        c.ctxA = key;
+        this.ctxVal.textContent = ctx.running ? 'Running · ' + fmtTime(fuel) : fuel > 0 ? 'Off · ' + fmtTime(fuel) : 'Off';
+        this.ctxFill.style.transform = `scaleX(${Math.round(clamp(fuel / (ctx.max || 1), 0, 1) * 300) / 300})`;
+        this.ctx.classList.toggle('warn', ctx.running && fuel < 30);
+        this.ctx.classList.toggle('dead', !ctx.running);
       }
     }
   }

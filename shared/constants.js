@@ -144,6 +144,7 @@ export const NOISE = {
   BUILD: 30, // hammering a structure together
   BELL: 220, // each toll of the chapel bell
   RADIO: 90, // the Relay Station's radio calling for a supply drop
+  FAIR: 150, // the calliope of the Tri-County Fair, for as long as its generator runs
 };
 export const NOISE_RUSH = 50; // a zombie this far (m) inside a noise's radius comes at a full run; nearer the edge it ambles
 export const NOISE_SPEED_MIN = 0.55; // speed multiplier towards the faintest noise it still hears
