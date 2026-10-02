@@ -2144,6 +2144,117 @@ check('ping broadcast', B.pings > 0);
   check('with DAWN_RETURN off a death lasts the run, as before', g.phase === PHASE.DAY && g.day === 2 && Ben.p().zombie && Ben.p().alive && returned(Ann) === ids && reload, `after dawn: zombie ${Ben.p().zombie}; a reload: survivor ${reload}, ${kit(Dee.p())}`);
 }
 
+// what is left lying when a survivor dies or leaves, the ceiling on loose drops, and the limits on coming and
+// going (games of their own: the one above is left as it was)
+{
+  const join = (g, name, ip) => {
+    const c = { id: 0, rejected: false, chats: [], net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, handler: new Proxy({}, { get: () => () => {} }) };
+    c.session = g.onOpen({
+      ip,
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) c.id = r.u16();
+        else if (t === S2C.REJECT) c.rejected = true;
+        else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
+        else if (t === S2C.CHAT) {
+          r.u16();
+          r.u8();
+          c.chats.push(r.str());
+        }
+      },
+    });
+    const w = new Writer(64);
+    w.u8(C2S.JOIN);
+    w.u8(PROTOCOL_VERSION);
+    w.str(name);
+    g.onMessage(c.session, w.bytes().slice());
+    return c;
+  };
+  const ticks = (g, n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  // the items that appeared on the ground while fn ran
+  const fell = (g, fn) => {
+    const had = new Set(g.items);
+    fn();
+    return g.items.filter((e) => !had.has(e));
+  };
+  const list = (pairs) => pairs.map(([item, count]) => `${item}x${count}`).sort().join(' ');
+  const names = (ents) => list(ents.map((e) => [e.item, e.count]));
+  const KIT = [[ITEM.BANDAGE, 2], [ITEM.TORCH, 1], [ITEM.WOOD, 6], [ITEM.NAILS, 8], [ITEM.STICK, 4], [ITEM.CLOTH, 1], [ITEM.PISTOL, 1], [ITEM.KNIFE, 1], [ITEM.HAMMER, 1], [ITEM.AMMO_9MM, 36]];
+  const FOUND = [[ITEM.FUEL_CAN, 1], [ITEM.AK47, 1], [ITEM.AMMO_762, 30], [ITEM.WOOD, 5]];
+
+  const g = new Game({ seed, godMode: true, log: () => {} });
+  const W = join(g, 'Witness', 'home');
+  ticks(g, 5);
+  const s = g.players.get(W.id).state;
+  // leaving with the kit everyone is handed: nothing stays behind
+  const none = fell(g, () => g.onClose(join(g, 'Leaver', 'home').session));
+  check('a survivor who leaves takes the starting kit along: nothing is left lying', none.length === 0 && g.drops === 0 && g.players.size === 1, names(none));
+  // leaving with a haul: what was found stays for the team, the car supply for good
+  const haul = fell(g, () => {
+    const F = join(g, 'Finder', 'home');
+    for (const [item, n] of FOUND) g.giveItem(g.players.get(F.id), item, n);
+    g.onClose(F.session);
+  });
+  const can = haul.find((e) => e.item === ITEM.FUEL_CAN);
+  check('what a leaver found stays for the team, a car supply for good', names(haul) === list(FOUND) && can.despawnAt === Infinity && !can.drop && g.drops === 3, names(haul));
+  // dying: everything goes on the ground, as before
+  const D = join(g, 'Dier', 'home');
+  const dead = fell(g, () => g.killPlayer(g.players.get(D.id), {}));
+  check('a survivor who dies drops all they carry', names(dead) === list(KIT) && g.drops === 3 + KIT.length, names(dead));
+  g.onClose(D.session);
+  // an item lying still is not looked at again for a client that has it - until its count changes
+  const nails = g.dropItem(ITEM.NAILS, 20, s.x + 6, s.y, s.z, { spread: 0 });
+  ticks(g, 3);
+  const seen = W.store.ents.get(nails.id)?.q[3];
+  nails.count = 7;
+  ticks(g, 2);
+  check('a partly picked up stack still reaches the clients', seen === 20 && W.store.ents.get(nails.id)?.q[3] === 7 && W.store.ents.get(can.id)?.kind === ENT.ITEM, `${seen} -> ${W.store.ents.get(nails.id)?.q[3]}`);
+  // the ceiling: the oldest loose drops make room, a car supply never does, loot is not counted
+  const far = g.world.zones.reduce((a, b) => (Math.hypot(b.x - s.x, b.z - s.z) > Math.hypot(a.x - s.x, a.z - s.z) ? b : a));
+  const drop = (item) => g.dropItem(item, 1, far.x, g.world.heightAt(far.x, far.z), far.z);
+  const loot = g.items.filter((e) => e.point).length;
+  const plugs = drop(ITEM.SPARK_PLUGS);
+  const first = drop(ITEM.STICK);
+  let last = null;
+  for (let i = 0; i < g.maxDrops + 40; i++) last = drop(ITEM.STICK);
+  const lying = g.items.filter((e) => e.drop).length;
+  check('loose drops have a ceiling: the oldest make room, car supplies and loot never', lying === g.maxDrops && g.drops === lying && first.removed && nails.removed && !last.removed && !plugs.removed && !can.removed && g.items.filter((e) => e.point).length === loot, `${lying} loose of ${g.items.length} items`);
+  ticks(g, 2);
+  check('...and the client is told the ones that went are gone', !W.store.ents.has(nails.id) && W.store.ents.has(can.id));
+
+  // coming and going: a lobby's worth of joins from one address is fine, a stream of them is not
+  const g2 = new Game({ seed, godMode: true, log: () => {} });
+  const max = g2.maxPlayers;
+  const H = join(g2, 'Host', 'house');
+  let admitted = 0;
+  let refused = 0;
+  for (let i = 0; i < 2 * max + 4; i++) {
+    const c = join(g2, 'Churn', 'elsewhere');
+    if (c.id && !c.rejected) admitted++;
+    else if (c.rejected && !c.session.player) refused++;
+    g2.onClose(c.session);
+  }
+  check('joins from one address are limited', admitted === 2 * max && refused === 4 && g2.players.size === 1, `${admitted} admitted, ${refused} turned away`);
+  const lines = (word) => H.chats.filter((t) => t.includes(word)).length;
+  check('join and leave chat lines are throttled, and nobody leaves who was not announced', H.chats.length === 2 * max + 1 && lines('joined') === lines('left') + 1, `${H.chats.length} lines for ${admitted + 1} joins and ${admitted} leaves`);
+  const kids = [];
+  for (let i = 1; i < max; i++) kids.push(join(g2, 'Kid' + i, 'house'));
+  check('a household fills the lobby from its one address meanwhile', g2.players.size === max && kids.every((c) => c.id && !c.rejected) && H.chats.length === 2 * max + 1);
+  for (const c of kids) g2.onClose(c.session);
+  ticks(g2, 85); // 4 s: one more join for the address that was turned away
+  const again = [join(g2, 'Churn', 'elsewhere'), join(g2, 'Churn', 'elsewhere')];
+  check('an address gets a join back every few seconds', !!again[0].id && again[1].rejected && g2.players.size === 2);
+  g2.onClose(again[0].session);
+  ticks(g2, 340); // 21 s since the lines ran out: two are back
+  const N = join(g2, 'Newcomer', 'next door');
+  check('...and arrivals are announced again once the chat has been quiet', H.chats.length === 2 * max + 2 && H.chats[H.chats.length - 1].startsWith('Newcomer'));
+  ticks(g2, 601 - g2.tick);
+  check('an allowance that has worn off is forgotten', !g2.joins.has('next door') && g2.joins.has('house') && !!N.id);
+}
+
 // night + waves
 {
   game.handleChat(A.p(), '/night');

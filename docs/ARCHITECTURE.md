@@ -107,7 +107,8 @@ more than its bytes**, so put things into the packets that already flow.
   `writeEntities` only diffs that staged copy against its own baseline. So what `quant` produces must not depend
   on who is looking, and code that changes an entity between two clients' snapshots has to restage it (the one
   case today, `writeSelf` rounding the viewer's own state, is handled in `writeEntities`). The staging arrays
-  are allocated once; keep it that way.
+  are allocated once; keep it that way. Every client's snapshot still walks every live entity, so the number of
+  entities is what to keep an eye on (see Items on the ground below).
 - **Global state**: all of it when anything but the clocks changed, otherwise just time / horde left once a
   second. **Events**: encoded once, filtered per client by radius / recipient; a shot carries no origin (the
   client uses the shooter's replicated position).
@@ -328,6 +329,16 @@ more than its bytes**, so put things into the packets that already flow.
   rejoin under one of them is a player-zombie again (`handleJoin`), since a JOIN carries no identity but the name.
   At sunrise their parked kit in `leftKits` (empty: the dead dropped theirs) becomes `RETURN_KIT`, so a rejoin
   after it is a survivor with what the dead who stayed woke with.
+- **Items on the ground.** Everything that puts an item down goes through `Game.dropItem`, which marks it a
+  loose drop (`e.drop`). At most `MAX_DROPS` of them lie around: one more and the oldest despawns (`spawnItem`).
+  Car supplies, schematics and walkie-talkies are permanent and not counted, loot points and hidden supplies are
+  not drops. A survivor who dies drops all they carry (`dropAll`); one who leaves the game takes along what they
+  were handed at the start (`p.kit`, recorded by `spawnHuman`) and drops only the rest (`parkKit`, see Joining a
+  run in progress below), so a reconnect neither litters nor doubles the kit.
+- **Coming and going.** `Game.admitJoin` gives each address (`conn.ip`, from `clientAddress` in `index.js`:
+  behind a proxy it is the forwarded one) two lobbies' worth of joins at once and one more every `JOIN_EVERY`
+  seconds; past that a join is refused as "server full". The "joined" / "left" chat lines have one allowance for
+  everybody (`GREET_EVERY`): once it is used up players come and go unannounced, the player list still shows them.
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
 - **Joining a run in progress** (`Game.handleJoin`). `spawnHuman(p, kit, beside)` puts the newcomer down where
   `pickJoinSpawn` says: 2.5-9 m from the survivor with the most company, on a spot that is open on the nav grid, level

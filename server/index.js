@@ -48,6 +48,28 @@ loadDir(DIST);
 if (files.size) console.log(`[server] serving ${files.size} static files from dist/`);
 else console.log('[server] no dist/ build found - run `npm run build` (or use `npm run dev` for the Vite dev server)');
 
+// ---------------------------------------------------------------- who is connecting
+// The game counts joins per address (Game.admitJoin). Behind a reverse proxy - Railway's edge in production -
+// the socket's peer is the proxy, the same for every player, and the client is named in X-Forwarded-For (first
+// entry) or X-Real-IP. Those headers are only believed from a peer on a private network, i.e. a proxy of ours:
+// a client connecting directly could write anything into them. TRUST_PROXY=1 / 0 settles it either way.
+const TRUST_PROXY = process.env.TRUST_PROXY;
+// a header's address without its port, '' if it does not look like one
+const address = (text) => {
+  const a = text.trim().replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1');
+  return /^[0-9a-f:.]{2,45}$/i.test(a) ? a.toLowerCase() : '';
+};
+function clientAddress(res, req) {
+  // uWS spells the peer out as eight hex groups, an IPv4 one as 0000:0000:0000:0000:0000:ffff:hhhh:hhhh
+  let peer = Buffer.from(res.getRemoteAddressAsText()).toString();
+  const v4 = /^(?:0000:){5}ffff:(..)(..):(..)(..)$/i.exec(peer);
+  if (v4) peer = v4.slice(1).map((h) => parseInt(h, 16)).join('.');
+  // loopback, 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier-grade NAT), link-local, IPv6 unique-local
+  const ours = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.|(0000:){7}0001$|f[cd]|fe[89ab])/i.test(peer);
+  if (TRUST_PROXY === '0' || !(ours || TRUST_PROXY === '1')) return peer;
+  return address(req.getHeader('x-forwarded-for').split(',')[0]) || address(req.getHeader('x-real-ip')) || peer;
+}
+
 const app = uWS.App();
 
 app.ws('/ws', {
@@ -57,7 +79,7 @@ app.ws('/ws', {
   idleTimeout: 60,
   sendPingsAutomatically: true,
   upgrade: (res, req, context) => {
-    const ip = Buffer.from(res.getRemoteAddressAsText()).toString();
+    const ip = clientAddress(res, req);
     res.upgrade({ ip }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
   },
   open: (ws) => {

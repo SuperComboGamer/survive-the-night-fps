@@ -28,7 +28,9 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 ```
 
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (pins the map: without it every
-playthrough is a new random valley).
+playthrough is a new random valley), `TRUST_PROXY` (`1` / `0`: whether to take a player's address from the
+`X-Forwarded-For` / `X-Real-IP` header; unset, only a proxy on a private network is believed - see
+`clientAddress` in `server/index.js`. Joins are rate-limited per address).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
@@ -90,6 +92,9 @@ https://www.survivethenightgame.com.
   for Node 20/22/23/24 on glibc Linux, so don't move to an Alpine/musl image.
 - One process serves the client, the WebSocket (`/ws`) and `/status` on `PORT` (set to `3000` on the
   service) on all interfaces, so a single domain is enough.
+- Railway's edge proxy is the peer of every socket, so the per-address join limit goes by the address the
+  edge forwards (`X-Forwarded-For`, see `clientAddress` in `server/index.js`). A `join refused` line in the
+  log names the address it counted: if that is ever the proxy's rather than a player's, set `TRUST_PROXY=1`.
 - The custom domains are attached to the service in Railway (Settings -> Networking). Their DNS
   records (a CNAME to the Railway target plus a `_railway-verify` TXT record per host) are managed
   at the domain's DNS host.
