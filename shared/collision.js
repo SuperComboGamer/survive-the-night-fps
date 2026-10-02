@@ -346,6 +346,12 @@ export function groundAt(world, x, z, y, r = 0.2, human = true) {
   return h;
 }
 
+// Deep water at (x,z) with nothing over it that feet at height y could stand on: where nothing on foot,
+// living or dead, may step. A pier deck over the lake is walkable; the lake beside and beneath it is not.
+export function deepWaterAt(world, x, z, y, r = 0.2, human = true) {
+  return world.isDeepWater(x, z) && groundAt(world, x, z, y, r, human) <= world.heightAt(x, z) + 0.01;
+}
+
 // Resolve horizontal overlap of a vertical cylinder body. Mutates pos {x,y,z}.
 // Returns the last blocking collider (or null).
 export function resolveBody(world, pos, r, height, human = true) {

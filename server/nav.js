@@ -5,8 +5,11 @@
 // every cell-to-cell step that crosses a static collider is cut (edge mask), and near walls the first
 // step from a survivor or zombie is checked against the real geometry (a cell center can sit on the
 // far side of the wall from whoever is standing in that cell).
-import { MAP_HALF } from '../shared/constants.js';
-import { COL, BOX, CYL } from '../shared/collision.js';
+// A deck over the lake (the pier) is a second level the flat grid has to be told about: its cells are
+// walkable, the steps over its sides are cut where the ground is more than a step below the planks, and
+// flowDir takes the height of the feet to tell who is on it from who is in the water beside it.
+import { MAP_HALF, STEP_HEIGHT } from '../shared/constants.js';
+import { COL, BOX, CYL, groundAt, footprintContains } from '../shared/collision.js';
 
 const SIZE = MAP_HALF * 2; // cells per side (1 m)
 const FIELD = 144; // flow field window size (cells): the horde spawns ~60-85 m out, inside the window
@@ -20,6 +23,8 @@ const PERCH = 512; // source mask: the field starts from the ground around what 
 const PERCH_R = 4; // how far (cells) from the survivor that ground is looked for: wider than half a bus or a tent
 const PERCH_W = PERCH_R * 2 + 1;
 const PERCH_RING = 10; // ...and how much further off than the nearest of it still starts the field (x10 units; under a step's cost)
+const SLAB = 0.45; // a box thinner than this is a floor, a deck or a ceiling (the pier's planks are 0.22)
+const DECK_HEADROOM = 1.9; // a slab with less room than this under it is walked on, not under (a walker is 1.75 m, a lintel hangs at 2.2)
 
 export class Nav {
   constructor(world) {
@@ -28,6 +33,10 @@ export class Nav {
     this.edge = new Uint8Array(SIZE * SIZE); // bit n: the step toward neighbor n crosses a static collider
     this.nearWall = new Uint8Array(SIZE * SIZE);
     this.solid = new Set(); // static colliders the grid treats as walls (for exact segment checks)
+    this.decks = new Set(); // slabs that are a level of their own to walk on (a pier over the lake)
+    this.deck = new Map(); // cell whose centre is under the planks of one -> their height
+    this.rim = new Map(); // cell of the ground or water beside one, too far below to step up -> the deck's height
+    this.deckBox = { i0: SIZE, j0: SIZE, i1: -1, j1: -1 }; // the cells all of that lies in (flowDir looks no further)
     this.structCost = new Uint16Array(SIZE * SIZE);
     this.structRef = new Map(); // cell -> count
     this._q = [];
@@ -84,12 +93,23 @@ export class Nav {
     const w = this.world;
     const grid = w.staticGrid;
     const seen = new Set();
+    const slabs = [];
+    const floors = [];
     for (const cell of grid.cells) {
       for (const c of cell) {
         if (seen.has(c)) continue;
         seen.add(c);
         if (c.flags & COL.NOBLOCK) continue;
         const gy = w.heightAt(c.x, c.z);
+        if (c.type === BOX && c.y1 - c.y0 < SLAB && !(c.flags & COL.TREE)) {
+          // a thin slab off the ground (a pier deck, a ceiling) is never a wall: whether it is a level
+          // the dead walk on is settled in _markDecks
+          if (c.y1 >= gy + 0.5) {
+            slabs.push(c);
+            continue;
+          }
+          floors.push(c);
+        }
         // ignore elevated colliders (walkable platforms are handled: floors are thin & low)
         if (c.y0 > gy + 1.2) continue;
         if (c.y1 < gy + 0.5) continue; // low floors / decks: walkable
@@ -102,17 +122,93 @@ export class Nav {
         this._raster(c, (k) => (this.nearWall[k] = 1), NEAR_WALL);
       }
     }
+    this._markDecks(slabs, floors);
     for (let j = 0; j < SIZE; j++) {
       for (let i = 0; i < SIZE; i++) {
         const x = i - MAP_HALF + 0.5;
         const z = j - MAP_HALF + 0.5;
-        if (w.isDeepWater(x, z)) {
-          // decks over water stay walkable
-          let deck = false;
-          const col = w.staticGrid.cellAt(x, z);
-          if (col) for (const c of col) if (!(c.flags & COL.TREE) && c.type === BOX && c.y1 > w.heightAt(x, z) + 0.5 && c.y1 - c.y0 < 0.5) deck = deck || Math.abs(c.c * (x - c.x) - c.s * (z - c.z)) <= c.hx && Math.abs(c.s * (x - c.x) + c.c * (z - c.z)) <= c.hz;
-          if (!deck) this.blocked[j * SIZE + i] = 1;
-        }
+        // decks over water stay walkable
+        if (w.isDeepWater(x, z) && !this.deck.has(j * SIZE + i)) this.blocked[j * SIZE + i] = 1;
+      }
+    }
+    // a deck is walked onto where the ground comes up to it, never over a side that stands more than a
+    // step above the ground beside it: cut those steps, or the field leads the horde into the water under
+    // the pier. A step from the ground stays only where all the ground it can be taken from (the cell
+    // beside the deck, and what the deck leaves uncovered of its own cell) is within reach of the planks.
+    // (Steps to blocked cells are left alone: nothing enters them anyway, and a field seeded from a
+    // survivor in one, at the very edge of the deck, still has to flow onto it.)
+    const box = this.deckBox;
+    for (const [k, top] of this.deck) {
+      const i = k % SIZE;
+      const j = (k - i) / SIZE;
+      box.i0 = Math.min(box.i0, i - 1);
+      box.j0 = Math.min(box.j0, j - 1);
+      box.i1 = Math.max(box.i1, i + 1);
+      box.j1 = Math.max(box.j1, j + 1);
+      const open = this._lowest(k, true);
+      for (let n = 0; n < 8; n++) {
+        const ni = i + NDI[n];
+        const nj = j + NDJ[n];
+        if (ni < 0 || nj < 0 || ni >= SIZE || nj >= SIZE) continue;
+        const nk = nj * SIZE + ni;
+        if (this.blocked[nk] || this.deck.has(nk)) continue;
+        if (top - Math.min(open, this._lowest(nk, true)) <= STEP_HEIGHT) continue;
+        this.edge[k] |= 1 << n;
+        this.edge[nk] |= 1 << OPP[n];
+        this.rim.set(nk, top);
+      }
+    }
+  }
+
+  // is (x,z) under the planks of a deck
+  _decked(x, z) {
+    for (const d of this.decks) if (footprintContains(d, x, z)) return true;
+    return false;
+  }
+
+  // lowest terrain in cell k, sampled at its centre and corners; open: only where no deck is overhead
+  _lowest(k, open) {
+    const cx = (k % SIZE) - MAP_HALF + 0.5;
+    const cz = Math.floor(k / SIZE) - MAP_HALF + 0.5;
+    let low = Infinity;
+    for (let n = 0; n < 5; n++) {
+      const x = cx + CELL_X[n];
+      const z = cz + CELL_Z[n];
+      if (!open || !this._decked(x, z)) low = Math.min(low, this.world.heightAt(x, z));
+    }
+    return low;
+  }
+
+  // Decks: slabs that are a level of their own to walk on, as a pier is all the way out from the shore.
+  // Fills this.decks (the slabs) and this.deck (every cell whose centre is under their planks).
+  _markDecks(slabs, floors) {
+    const w = this.world;
+    const add = (c) => {
+      this.decks.add(c);
+      this._raster(c, (k) => this.deck.set(k, Math.max(c.y1, this.deck.get(k) ?? c.y1)), 0);
+    };
+    for (const c of slabs) {
+      // a deck where the lake is under it or it hangs too low to walk beneath (a ceiling does neither), and
+      // it stands more than a step above the ground
+      let deck = false;
+      this._raster(c, (k) => {
+        const x = (k % SIZE) - MAP_HALF + 0.5;
+        const z = Math.floor(k / SIZE) - MAP_HALF + 0.5;
+        deck = deck || ((c.y0 < w.heightAt(x, z) + DECK_HEADROOM || w.isDeepWater(x, z)) && c.y1 - this._lowest(k, false) > STEP_HEIGHT);
+      }, 0);
+      if (deck) add(c);
+    }
+    // a pier's planks nearest the shore lie low enough at their centre to pass for a floor: whatever
+    // joins a deck at its own height is deck as well, back to where the ground meets it
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const c of floors) {
+        if (this.decks.has(c)) continue;
+        let joined = false;
+        for (const d of this.decks) joined = joined || (Math.abs(d.y1 - c.y1) < 0.01 && Math.hypot(d.x - c.x, d.z - c.z) < d.r + c.r);
+        if (!joined) continue;
+        add(c);
+        grew = true;
       }
     }
   }
@@ -140,11 +236,34 @@ export class Nav {
     }
   }
 
-  // straight 2D line (x0,z0)->(x1,z1) misses every static wall the grid knows about (player structures,
-  // trees and terrain are not considered)
+  // straight 2D line (x0,z0)->(x1,z1) misses every static wall the grid knows about and does not go up or
+  // down the side of a deck (player structures, trees and terrain are not considered)
   segClear(x0, z0, x1, z1) {
-    const q = this.world.staticGrid.query((x0 + x1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2 + 0.1, this._q);
-    return this._clearAmong(q, x0, z0, x1, z1);
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const q = this.world.staticGrid.query((x0 + x1) / 2, (z0 + z1) / 2, len / 2 + 0.1, this._q);
+    if (!this._clearAmong(q, x0, z0, x1, z1)) return false;
+    for (let i = 0; i < q.length; i++) if (this.decks.has(q[i]) && this._deckSide(q[i], x0, z0, x1, z1, len)) return false;
+    return true;
+  }
+  // does the walk (x0,z0)->(x1,z1) cross an edge of deck c where the ground outside it is a step or more
+  // below (the lake, the shallows beside a pier)? The end of a deck that meets the ground is fine.
+  _deckSide(c, x0, z0, x1, z1, len) {
+    const n = Math.ceil(len / 0.25);
+    let px = x0;
+    let pz = z0;
+    let on = footprintContains(c, x0, z0);
+    for (let i = 1; i <= n; i++) {
+      const x = x0 + ((x1 - x0) * i) / n;
+      const z = z0 + ((z1 - z0) * i) / n;
+      // (whoever stands at the far end may be on the very edge: feet hold on a little past it)
+      const now = footprintContains(c, x, z, i === n ? 0.25 : 0);
+      // the sample off the deck: what is underfoot there for feet at deck height
+      if (now !== on && c.y1 - groundAt(this.world, on ? x : px, on ? z : pz, c.y1, 0, false) > STEP_HEIGHT) return true;
+      on = now;
+      px = x;
+      pz = z;
+    }
+    return false;
   }
   _clearAmong(list, x0, z0, x1, z1) {
     for (let i = 0; i < list.length; i++) if (this.solid.has(list[i]) && segHits(list[i], x0, z0, x1, z1, EDGE_PAD)) return false;
@@ -352,7 +471,8 @@ export class Nav {
 
   // Direction (writes out.x,out.z normalized) following the field of playerId from (x,z).
   // Returns false if outside the field window, unreachable, or already in the survivor's cell.
-  flowDir(playerId, x, z, out) {
+  // y (optional): the height of the feet there, which tells a deck from the water under it.
+  flowDir(playerId, x, z, out, y) {
     const f = this.fields.get(playerId);
     if (!f) return false;
     const gi = Math.floor(x + MAP_HALF);
@@ -361,6 +481,16 @@ export class Nav {
     const lj = gj - f.oz;
     if (li < 1 || lj < 1 || li >= FIELD - 1 || lj >= FIELD - 1) return false;
     const gk = gj * SIZE + gi;
+    // along the side of a deck two levels share a cell and the grid holds one of them. Feet on the other
+    // (on the planks over a cell that belongs to the water beside them: 1, too far under a cell that belongs
+    // to the deck to step up: -1) follow the field through cells of their own level only.
+    let lvl = 0;
+    const box = this.deckBox;
+    if (y !== undefined && gi >= box.i0 && gi <= box.i1 && gj >= box.j0 && gj <= box.j1) {
+      const top = this.deck.get(gk);
+      if (top !== undefined) lvl = y < top - STEP_HEIGHT ? -1 : 0;
+      else if (y > this.rim.get(gk) - 0.1) lvl = 1;
+    }
     // beside a wall the cell center may be on the other side of it: test the actual steps from (x,z)
     const q = this.nearWall[gk] ? this.world.staticGrid.query(x, z, 2, this._q) : null;
     const cx = gi - MAP_HALF + 0.5;
@@ -368,14 +498,16 @@ export class Nav {
     const d0 = f.dist[lj * FIELD + li];
     let best = INF;
     let bi = -2;
-    if (d0 < INF && (!q || this._clearAmong(q, x, z, cx, cz))) {
+    if (!lvl && d0 < INF && (!q || this._clearAmong(q, x, z, cx, cz))) {
       best = d0;
       bi = -1;
     }
     for (let n = 0; n < 8; n++) {
       const d = f.dist[(lj + NDJ[n]) * FIELD + li + NDI[n]];
       if (d >= best) continue;
-      if (q) {
+      if (lvl) {
+        if (this.deck.has(gk + NDJ[n] * SIZE + NDI[n]) !== lvl > 0) continue;
+      } else if (q) {
         if (!this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) continue;
       } else if (this.edge[gk] & (1 << n) || (n >= 4 && (this.blocked[gk + NDI[n]] || this.blocked[gk + NDJ[n] * SIZE]))) continue;
       best = d;
@@ -443,6 +575,8 @@ const NDJ = [0, 0, 1, -1, 1, -1, 1, -1];
 const NCOST = [10, 10, 10, 10, 14, 14, 14, 14];
 const OPP = [1, 0, 3, 2, 7, 6, 5, 4]; // index of the reverse step
 const HALF_DIRS = [0, 2, 4, 5]; // one of each step pair (+x, +z, +x+z, +x-z)
+const CELL_X = [0, -0.5, 0.5, -0.5, 0.5]; // a cell's centre and corners
+const CELL_Z = [0, -0.5, -0.5, 0.5, 0.5];
 const NOFF = NDI.map((di, n) => NDJ[n] * PW + di); // neighbor offsets in the padded window
 // the cells of the PERCH_W x PERCH_W window around a survivor, nearest first: [di, dj, distance (x10 units)]
 const PERCH_CELLS = [];
