@@ -1169,6 +1169,52 @@ check('ping broadcast', B.pings > 0);
 
 // a new playthrough is a new valley: the server rolls a fresh map and tells its clients the seed
 {
+  // whatever a valley holds stands on its ground. Seed 10 has the army checkpoint's traffic queue running out past its
+  // levelled yard and up a hillside, 777 the farm's field and the chapel's graveyard fence doing the same.
+  {
+    const { createWorld, TREE_TYPES } = await import('../shared/world.js');
+    const { PROPS } = await import('../shared/props.js');
+    let stood = 0;
+    let off = 0;
+    let buried = 0;
+    let onRoad = 0;
+    for (const sd of [10, 777]) {
+      const w = createWorld(sd);
+      const dock = w.zoneById[ZONE.DOCK];
+      const open = (x, z) => w.zones.every((zn) => Math.hypot(x - zn.x, z - zn.z) > zn.flat) && Math.hypot(x - dock.x, z - dock.z) > 60; // (the pier has a deck)
+      for (const p of w.props) {
+        const def = PROPS[p.type];
+        if (def.boxes?.length !== 1 || def.cyls || !open(p.x, p.z)) continue;
+        const [lx, , lz, sx, , sz] = def.boxes[0];
+        const c = Math.cos(p.ry);
+        const s = Math.sin(p.ry);
+        let low = Infinity; // the ground under the lowest corner of its footprint: that is where an upright prop rests
+        for (const dx of [lx - sx / 2, lx + sx / 2]) for (const dz of [lz - sz / 2, lz + sz / 2]) low = Math.min(low, w.heightAt(p.x + c * dx + s * dz, p.z - s * dx + c * dz));
+        stood++;
+        if (Math.abs(p.y - low) > 0.05) off++;
+      }
+      for (const ct of w.containers) if (open(ct.x, ct.z) && w.heightAt(ct.x, ct.z) > ct.y) buried++;
+      for (let i = 0; i < w.trees.length; i += 6) {
+        const x = w.trees[i];
+        const z = w.trees[i + 2];
+        if (w.roadDistAt(x, z) > 6) continue;
+        const r = TREE_TYPES[w.trees[i + 5]].r * w.trees[i + 3];
+        let hit = false; // its trunk reaches over the edge of a road (road.width is the half width)
+        for (const rd of w.roads) {
+          for (let n = 0; n < rd.pts.length - 2 && !hit; n += 2) {
+            const ex = rd.pts[n + 2] - rd.pts[n];
+            const ez = rd.pts[n + 3] - rd.pts[n + 1];
+            const t = Math.min(1, Math.max(0, ((x - rd.pts[n]) * ex + (z - rd.pts[n + 1]) * ez) / (ex * ex + ez * ez || 1)));
+            hit = Math.hypot(x - rd.pts[n] - ex * t, z - rd.pts[n + 1] - ez * t) < rd.width + r - 0.01;
+          }
+        }
+        if (hit) onRoad++;
+      }
+    }
+    check('props outside the levelled yards rest on the ground, not above or under it', stood > 100 && off === 0, `${off} of ${stood} off it`);
+    check('...with every container out there above the ground', buried === 0, `${buried} buried`);
+    check('no tree stands on a road or trail', onRoad === 0, `${onRoad}`);
+  }
   const g2 = new Game({ log: () => {} });
   const resets = [];
   const session = g2.onOpen({
