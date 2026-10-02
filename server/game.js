@@ -52,6 +52,10 @@ import {
   REVIVE_HP,
   SEARCH_TIME,
   ENGINE_START_TIME,
+  INTERACT_REACH,
+  PICK_RADIUS,
+  INTERACT_SLACK,
+  HOLD_SLACK,
   EYE_HEIGHT,
   MAP_HALF,
   HORDE_SPAWN_MIN,
@@ -75,6 +79,7 @@ import {
   RECIPES,
   STRUCT,
   STRUCT_DEFS,
+  structPickRadius,
   REPAIR_COST,
   CAMPFIRE_FUEL,
   CAMPFIRE_MAX_FUEL,
@@ -1572,9 +1577,10 @@ export class Game {
     if (!e || e.removed) return;
     const dx = e.x - ex;
     const dz = e.z - ez;
-    const dy = e.y - ey;
+    const dy = this.pickY(e) - ey;
     const d = Math.hypot(dx, dz);
-    if (d > (e.kind === ENT.CRATE ? 4.8 : 3.6) || Math.abs(dy) > 3) return;
+    const reach = this.reachOf(e);
+    if (d > reach || Math.abs(dy) > reach) return;
     if (!this.canReachEnt(p, e)) return;
     if (e.kind === ENT.ITEM) {
       const taken = this.giveItem(p, e.item, e.count, e.mag);
@@ -1628,15 +1634,28 @@ export class Game {
     }
   }
 
-  // eye -> the entity's interaction point (as the client picks it) isn't cut off by a wall
+  // height of the entity's interaction point (as the client picks it)
+  pickY(e) {
+    if (e.kind === ENT.ITEM) return e.y + 0.15;
+    if (e.kind === ENT.CRATE) return e.y + 0.6;
+    if (e.kind === ENT.STRUCTURE) return e.y + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
+    if (e.kind === ENT.PLAYER) return e.y + 0.3;
+    return e.y;
+  }
+
+  // How far away the entity can be interacted with: as far as a client can be offered [E] on it (its view ray passes
+  // within the pick radius of the interaction point, inside INTERACT_REACH of the eye), and INTERACT_SLACK beyond,
+  // because our copy of the player trails the one that client looks out of. Never less: a refusal is silent, so
+  // the player would be holding [E] on a prompt with nothing happening
+  reachOf(e) {
+    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : PICK_RADIUS.DOWNED;
+    return Math.hypot(INTERACT_REACH, r) + INTERACT_SLACK;
+  }
+
+  // eye -> the entity's interaction point isn't cut off by a wall
   canReachEnt(p, e) {
     const s = p.state;
-    let y = e.y;
-    if (e.kind === ENT.ITEM) y += 0.15;
-    else if (e.kind === ENT.CRATE) y += 0.6;
-    else if (e.kind === ENT.STRUCTURE) y += Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
-    else if (e.kind === ENT.PLAYER) y += 0.3;
-    return canReach(this.world, s.x, s.y + eyeHeight(s), s.z, e.x, y, e.z, s.y + EYE_HEIGHT);
+    return canReach(this.world, s.x, s.y + eyeHeight(s), s.z, e.x, this.pickY(e), e.z, s.y + EYE_HEIGHT);
   }
 
   feedFire(p, e) {
@@ -1674,7 +1693,7 @@ export class Game {
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
-      if (d > 2.8 || e.state !== 0) {
+      if (d > this.reachOf(e) || e.state !== 0) {
         if (e.state !== 0) this.notify(NOTIFY.SEARCH_EMPTY, 0, p.id);
         return;
       }
@@ -1683,7 +1702,7 @@ export class Game {
       return;
     }
     if (e.kind === ENT.PLAYER && e !== p && e.alive && e.downed && !e.zombie) {
-      if (d > 2.6) return;
+      if (d > this.reachOf(e)) return;
       p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME };
       e.revivedBy = p.id;
     }
@@ -1701,9 +1720,10 @@ export class Game {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
         else {
-          const d = Math.hypot(tgt.x - s.x, tgt.z - s.z);
-          if (h.kind === HOLD.SEARCH) ok = d < 3.2 && tgt.state === 0;
-          else if (h.kind === HOLD.REVIVE) ok = d < 3 && tgt.alive && tgt.downed && !tgt.zombie;
+          // broken off a little further out than it can start: a hold begun at the edge survives a step back
+          const near = Math.hypot(tgt.x - s.x, tgt.z - s.z) < this.reachOf(tgt) + HOLD_SLACK;
+          if (h.kind === HOLD.SEARCH) ok = near && tgt.state === 0;
+          else if (h.kind === HOLD.REVIVE) ok = near && tgt.alive && tgt.downed && !tgt.zombie;
           ok = ok && this.canReachEnt(p, tgt);
         }
       }
@@ -2000,7 +2020,8 @@ export class Game {
       y = door.y;
       rot8 = Math.round((((door.ry % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * 256) & 255;
     }
-    if (Math.hypot(x - s.x, z - s.z) > BUILD_REACH + (door ? 1 : 0)) return fail();
+    // the client's ghost reaches BUILD_REACH from where that client stands; we see the player a moment earlier
+    if (Math.hypot(x - s.x, z - s.z) > BUILD_REACH + INTERACT_SLACK + (door ? 1 : 0)) return fail();
     const car = this.world.car;
     if (Math.hypot(x - car.x, z - car.z) < 3.2) return fail();
     if (this.world.isDeepWater(x, z)) return fail();

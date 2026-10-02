@@ -245,6 +245,8 @@ export const STRUCT_DEFS = {
   [STRUCT.WORKBENCH]: { name: 'Workbench', sx: 2.0, sy: 1.0, sz: 0.9, hp: 450, block: true, station: 'bench', cost: { [ITEM.WOOD]: 5, [ITEM.NAILS]: 6, [ITEM.SCRAP]: 2 }, desc: 'Crafting station: weapons, ammo, armor and explosives.' },
 };
 export const STRUCT_ORDER = [STRUCT.BARRICADE, STRUCT.DOOR, STRUCT.WALL, STRUCT.GATE, STRUCT.METAL_WALL, STRUCT.SPIKES, STRUCT.BARBED_WIRE, STRUCT.TORCH, STRUCT.CAMPFIRE, STRUCT.WORKBENCH];
+// how near its interaction point the view ray has to pass to offer [E] on a structure (PICK_RADIUS in constants.js)
+export const structPickRadius = (stype) => Math.max(0.8, STRUCT_DEFS[stype].sx * 0.5);
 export const REPAIR_COST = { [ITEM.WOOD]: 1, [ITEM.NAILS]: 1 }; // per repair action (+35% hp)
 export const CAMPFIRE_FUEL = { [ITEM.WOOD]: 70, [ITEM.STICK]: 22 }; // seconds of burn per item fed
 export const CAMPFIRE_MAX_FUEL = 600;

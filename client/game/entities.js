@@ -2,9 +2,9 @@
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
 import { ENT, PFLAG, ZSTATUS, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
-import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS } from '../../shared/defs.js';
+import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
-import { SERVER_TICK_RATE } from '../../shared/constants.js';
+import { SERVER_TICK_RATE, PICK_RADIUS } from '../../shared/constants.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createPickup } from '../render/models/pickups.js';
@@ -1119,7 +1119,8 @@ export class Entities {
     this.drawRopeTo(z, x, y, zz);
   }
 
-  // closest interactable along the view ray; with reachTop, only ones not behind a wall (see canReach)
+  // closest interactable along the view ray; with reachTop, only ones not behind a wall (see canReach). The radii
+  // are shared with the server, which works out from them how far away an interaction can come from (Game.reachOf)
   pick(ox, oy, oz, dx, dy, dz, maxDist, reachTop) {
     let best = null;
     let bestT = maxDist;
@@ -1132,27 +1133,27 @@ export class Entities {
         cx = e.rx;
         cy = e.ry + 0.15;
         cz = e.rz;
-        r = 0.5;
+        r = PICK_RADIUS.ITEM;
       } else if (e.kind === ENT.CRATE && e.state === 1) {
         cx = e.rx;
         cy = e.ry + 0.6;
         cz = e.rz;
-        r = 1.1;
+        r = PICK_RADIUS.CRATE;
       } else if (e.kind === ENT.STRUCTURE) {
         cx = e.rx;
         cy = e.ry + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
         cz = e.rz;
-        r = Math.max(0.8, STRUCT_DEFS[e.stype].sx * 0.5);
+        r = structPickRadius(e.stype);
       } else if (e.kind === ENT.CACHE) {
         cx = dqpos(e.q[0]);
         cy = dqpos(e.q[1]);
         cz = dqpos(e.q[2]);
-        r = 0.75;
+        r = PICK_RADIUS.CACHE;
       } else if (e.kind === ENT.PLAYER && e.downed) {
         cx = e.rx;
         cy = e.ry + 0.3;
         cz = e.rz;
-        r = 1.1;
+        r = PICK_RADIUS.DOWNED;
       } else continue;
       const rx = cx - ox;
       const ry = cy - oy;
