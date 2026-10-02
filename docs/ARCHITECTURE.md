@@ -192,6 +192,14 @@ more than its bytes**, so put things into the packets that already flow.
   so walls, trees and terrain cast shadows. While lit (`z.lit`) it holds still with `ZANIM.FROZEN`, takes
   `litResist` x damage and no knockback (`Combat.damageZombie`); the client keeps the pose it was caught in
   (`ZombieInstance.hold`) and plays the freeze / release sounds from the replicated anim, with no extra traffic.
+- **Bats and walls.** Bats fly (`Zombies.updateBat`), and what stops the dead on foot stops them in the air:
+  after each tick's flight `flyCollide` puts a bat back outside whatever solid thing it overlaps (static
+  colliders, player structures, and `roofBoxes`: every `world.roofs` entry as a block from eaves to ridge,
+  because gable roofs and shelter tops are drawn without a collider), on the side it came in from, so it slides
+  along a wall or over a roof. They do not use the flow fields. A bat held up on its way to a survivor is shut
+  out (`BAT_SHUT_OUT`): it wheels round them, a tight pass over the roofs and then a wider one at window height,
+  looks for a clear line every third tick (`batSees`) and comes straight down the first one it gets - a doorway,
+  a window, the top of a wall with no roof over it, or the survivor stepping outside.
 - **Fire and burning.** `Combat.ignite(z, attacker, weapon, time)` gives a zombie the burn status (`BURN` in
   defs.js; `z.burnT` seconds left, `z.burnBy` / `z.burnWeapon` for the kill). `Zombies.updateOne` ticks it
   through `damageZombie` with `{ fire, dot }` (`fire`: burnt corpse, no loot; `dot`: one small tick of a

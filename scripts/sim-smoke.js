@@ -199,6 +199,97 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   check('/cat brings it over', Math.hypot(A.p().state.x - cat.x, A.p().state.z - cat.z) < 3);
 }
 
+// bats fly round walls, not through them: a flock cannot get at a survivor in a room with its one doorway boarded
+// up, wheels round the building meanwhile, and is in once the boards come off
+// (a game of its own on the same map: nothing in here touches the run below)
+{
+  const g = new Game({ seed, log: () => {} });
+  const session = g.onOpen({ send() {} });
+  const jw = new Writer(64);
+  jw.u8(C2S.JOIN);
+  jw.u8(PROTOCOL_VERSION);
+  jw.str('Dee');
+  g.onMessage(session, jw.bytes().slice());
+  const p = [...g.players.values()][0];
+  const s = p.state;
+  const w = g.world;
+  // only bats in this valley (the dead that started here would be at the boards themselves)
+  for (const z of g.zombies) {
+    z.dead = true;
+    z.deadT = 2;
+  }
+  g.zm.maintainT = g.zm.herds.spawnT = 1e9;
+  for (let i = 0; i < 10; i++) g.update();
+  // a room is closed if every ray of a fan from inside it ends on a wall, the floor or the roof, or leaves through
+  // its doorway o (collider roofs only: a gable has none, the fan sees the sky through it)
+  const ray = { t: -1, col: null, terrain: false };
+  const closed = (o, x, y, z) => {
+    const nx = Math.sin(o.ry);
+    const nz = Math.cos(o.ry);
+    for (let k = 0; k < 48; k++) {
+      for (let j = 0; j < 9; j++) {
+        const a = (k / 48) * Math.PI * 2;
+        const pitch = -0.25 + j * 0.2;
+        const dx = Math.sin(a) * Math.cos(pitch);
+        const dy = Math.sin(pitch);
+        const dz = Math.cos(a) * Math.cos(pitch);
+        raycastWorld(w, x, y, z, dx, dy, dz, 14, ray);
+        if (ray.t >= 0 && ray.t < 0.4) return false; // (no room to stand: a partition runs into this doorway)
+        if (ray.t >= 0) continue;
+        const t = ((o.x - x) * nx + (o.z - z) * nz) / (dx * nx + dz * nz);
+        const side = (x + dx * t - o.x) * nz - (z + dz * t - o.z) * nx;
+        if (!(t > 0 && Math.abs(side) < o.w / 2 && y + dy * t < o.y + o.h)) return false;
+      }
+    }
+    return true;
+  };
+  let room = null;
+  for (const o of w.openings) {
+    for (const side of [1.3, -1.3]) {
+      const x = o.x + Math.sin(o.ry) * side;
+      const z = o.z + Math.cos(o.ry) * side;
+      if (room || g.nav.isBlocked(x, z)) continue;
+      const y = groundAt(w, x, z, o.y + 0.3, 0.3);
+      if (closed(o, x, y + 1.3, z) && closed(o, x, y + 0.5, z)) room = { o, x, y, z };
+    }
+  }
+  check('found a room with one way in for the bat test', !!room);
+  s.x = room.x;
+  s.y = room.y;
+  s.z = room.z;
+  g.fillHistory(p);
+  g.giveItem(p, ITEM.WOOD, 3);
+  g.giveItem(p, ITEM.NAILS, 3);
+  s.slot = 4; // the hammer
+  g.build(p, STRUCT.DOOR, room.o.x, room.o.z, 0);
+  const boards = g.structures.find((e) => e.stype === STRUCT.DOOR);
+  const bats = [];
+  for (let i = 0; i < 6; i++) bats.push(g.zm.spawn(ZTYPE.BAT, room.x + Math.sin(i) * 20, room.z + Math.cos(i) * 20, { horde: true }));
+  // count the bites instead of taking them
+  let bites = 0;
+  g.damagePlayer = (q, amount, src) => {
+    if (src && src.ztype === ZTYPE.BAT) bites++;
+  };
+  const off = (b) => Math.hypot(b.x - room.x, b.z - room.z);
+  let flown = 0;
+  for (let i = 0; i < 20 * 20; i++) {
+    const at = bats.map((b) => [b.x, b.y, b.z]);
+    g.update();
+    if (i >= 200) bats.forEach((b, k) => (flown += Math.hypot(b.x - at[k][0], b.y - at[k][1], b.z - at[k][2])));
+  }
+  const far = Math.max(...bats.map(off));
+  check('door boards keep a flock of bats out of a closed room', !!boards && bats.every((b) => b && !b.dead) && bites === 0, `${bites} bites in 20 s`);
+  check('...and it wheels round the building instead', flown / 6 / 10 > 4 && far < 25, `${(flown / 6 / 10).toFixed(1)} m/s, at most ${far.toFixed(1)} m off`);
+  g.destroyStructure(boards, false);
+  // (they come when one of them, wheeling past, gets a line through the doorway: a second or two, at worst a lap)
+  let t = 0;
+  while (bites === 0 && t < 30 * 20) {
+    g.update();
+    t++;
+  }
+  check('the boards come off: the bats are in', bites > 0, `first bite after ${(t / 20).toFixed(1)} s`);
+}
+
 // zombie dogs: packs den in the thick woods, hunt together, lunge and bite; the head sits ahead of the body
 {
   const car = game.world.car;
