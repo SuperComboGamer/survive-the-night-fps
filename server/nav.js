@@ -278,6 +278,13 @@ export class Nav {
     for (let i = 0; i < list.length; i++) if (this.solid.has(list[i]) && segHits(list[i], x0, z0, x1, z1, EDGE_PAD)) return false;
     return true;
   }
+  // Is the step from cell k toward neighbor n one up or down the side of a deck that the grid has cut? Beside a
+  // wall a step is tested against the real walls instead of the grid's mask (_clearAmong), and the side of a
+  // deck is no wall: without this the dead in the cut beside a boxcar, or on the track under a platform with a
+  // post near its edge, are sent up a drop they cannot climb.
+  _deckStep(k, n) {
+    return (this.edge[k] & (1 << n)) !== 0 && this.deck.has(k) !== this.deck.has(k + NDJ[n] * SIZE + NDI[n]);
+  }
 
   // which cells a flow field starts from for a survivor at (x,z): bit 0 their own cell, bit n+1 neighbor n.
   // Away from walls just the own cell; beside one, every nearby cell center the survivor can actually walk to.
@@ -292,6 +299,7 @@ export class Nav {
     let m = this._clearAmong(q, x, z, cx, cz) ? 1 : 0;
     for (let n = 0; n < 8; n++) {
       if (this.blocked[(j + NDJ[n]) * SIZE + i + NDI[n]]) continue;
+      if (this._deckStep(j * SIZE + i, n)) continue; // (the ground under the side of the deck they stand on is no way to them)
       if (this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) m |= 2 << n;
     }
     if (!m && this._perch(x, z, i, j)) return PERCH;
@@ -517,7 +525,7 @@ export class Nav {
       if (lvl) {
         if (this.deck.has(gk + NDJ[n] * SIZE + NDI[n]) !== lvl > 0) continue;
       } else if (q) {
-        if (!this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) continue;
+        if (this._deckStep(gk, n) || !this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) continue;
       } else if (this.edge[gk] & (1 << n) || (n >= 4 && (this.blocked[gk + NDI[n]] || this.blocked[gk + NDJ[n] * SIZE]))) continue;
       best = d;
       bi = n;

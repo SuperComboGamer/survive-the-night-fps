@@ -2740,6 +2740,21 @@ export class Game {
         this.fillHistory(p);
         break;
       }
+      case 'depot':
+      case 'train': {
+        // /depot: to the front of the station house at Whitlock Depot. /train: onto the loading bank beside the
+        // freight train stalled on the line
+        const spot = this.world.rail?.spots[args[0]];
+        if (!spot) {
+          this.systemChat(`this valley has no ${args[0]}`);
+          break;
+        }
+        [s.x, s.z] = spot;
+        s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+        s.vx = s.vy = s.vz = 0;
+        this.fillHistory(p);
+        break;
+      }
       case 'gun':
         // /gun: to the grips of the mounted gun at the Army Checkpoint
         if (this.gun.teleport(p)) this.fillHistory(p);

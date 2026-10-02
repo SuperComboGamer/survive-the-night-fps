@@ -142,6 +142,38 @@ export function renderMapCanvas(world) {
     }
   }
 
+  // ---- the railway, as a survey map draws one: a line with sleepers hatched across it, from one tunnel mouth to
+  // the other (a bar across each), and the siding at the depot
+  if (world.rail) {
+    g.strokeStyle = '#2a2019';
+    world.rail.tracks.forEach((t, ti) => {
+      const from = ti ? t.from : world.rail.portals[0].i;
+      const to = ti ? t.to : world.rail.portals[1].i;
+      g.lineWidth = 1.7;
+      g.beginPath();
+      g.moveTo(mapX(t.x[from]), mapY(t.z[from]));
+      for (let i = from + 1; i <= to; i++) g.lineTo(mapX(t.x[i]), mapY(t.z[i]));
+      g.stroke();
+      g.lineWidth = 1.3;
+      g.beginPath();
+      for (let i = from + 3; i < to; i += 5) {
+        const l = Math.hypot(t.x[i + 1] - t.x[i - 1], t.z[i + 1] - t.z[i - 1]) || 1;
+        const nx = (-(t.z[i + 1] - t.z[i - 1]) / l) * 2.3;
+        const nz = ((t.x[i + 1] - t.x[i - 1]) / l) * 2.3;
+        g.moveTo(mapX(t.x[i] - nx), mapY(t.z[i] - nz));
+        g.lineTo(mapX(t.x[i] + nx), mapY(t.z[i] + nz));
+      }
+      g.stroke();
+    });
+    g.lineWidth = 3.4;
+    for (const p of world.rail.portals) {
+      g.beginPath();
+      g.moveTo(mapX(p.x - p.dz * 5.5), mapY(p.z + p.dx * 5.5));
+      g.lineTo(mapX(p.x + p.dz * 5.5), mapY(p.z - p.dx * 5.5));
+      g.stroke();
+    }
+  }
+
   // ---- the workings of the mine, as the surveyor drew them: the drifts dashed under the ground they run
   // beneath, a tick across each mouth
   if (world.mine) {

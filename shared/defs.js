@@ -688,7 +688,7 @@ export const LOOT_TABLES = {
 // Every place (and many roadside / woodland sites) has containers: hold [E] to search.
 // table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic or one of the
 // game's hidden walkie-talkies (WALKIE_STASHES) on top of its loot.
-export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12, CASKET: 15 };
+export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12, FREIGHT: 13, CASKET: 15 };
 // Mercy Clinic's own (shared/clinic.js): the cabinets of its pharmacy and wards, and the one drug locker of a map
 CONT.MEDICINE = 16;
 CONT.DRUG_LOCKER = 17;
@@ -710,6 +710,9 @@ export const CONT_TABLES = {
   strongbox: [[ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.FLAMETHROWER, 1, 1, 1]],
   // the casket in the crypt of St. Agnes Cemetery: what somebody who meant to sit the nights out in there left behind
   crypt: [[ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.TORCH, 4, 2, 3], [ITEM.FLARE, 3, 1, 2], [ITEM.ALCOHOL, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
+  // freight that never got where it was going (the boxcars of the stalled train, the depot's freight shed): what a
+  // shelter is built of, by the crate
+  freight: [[ITEM.WOOD, 8, 3, 6], [ITEM.NAILS, 7, 6, 14], [ITEM.SCRAP, 6, 2, 4], [ITEM.ROPE, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.WIRE, 3, 1, 3], [ITEM.TUNA, 4, 1, 3], [ITEM.CHEM, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.BATTERY, 3, 1, 2], [ITEM.ALCOHOL, 2, 1, 2], [ITEM.GUNPARTS, 1, 1, 1]],
 };
 // what a clinic keeps under lock: the one table where a medkit is a likely find and not a lucky one
 CONT_TABLES.medical = [[ITEM.BANDAGE, 7, 1, 3], [ITEM.PAINKILLERS, 6, 1, 2], [ITEM.MEDKIT, 4, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.CHEM, 3, 1, 2]];
@@ -730,6 +733,7 @@ export const CONT_DEFS = {
   // it as a place to find things (there is one to a map, so not "strongboxes").
   [CONT.STRONGBOX]: { name: 'Strongbox', table: 'strongbox', rolls: [1, 1], also: [[ITEM.PIPEBOMB, 2]], loaded: 2, once: true, guide: "the mine's strongbox" },
   [CONT.CASKET]: { name: 'Casket', table: 'crypt', rolls: [3, 4], guide: 'the casket in the crypt' },
+  [CONT.FREIGHT]: { name: 'Freight Crate', table: 'freight', rolls: [2, 4] },
 };
 // Mercy Clinic. The drug locker stands in its deepest ward and is filled once a game, as the strongbox is: what makes
 // the walk into the dark worth it

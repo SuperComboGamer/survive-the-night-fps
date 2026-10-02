@@ -3,11 +3,12 @@
 // trails join - so no two playthroughs share a map. world.js then builds whatever this plans.
 import { MAP_HALF } from './constants.js';
 import { ZONE } from './defs.js';
+import { smoothstep } from './rng.js';
 
 const PI = Math.PI;
 
-// Road kinds (roadKind grid): 1 dirt county road, 2 asphalt highway, 3 forest trail
-export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3 };
+// Road kinds (roadKind grid): 1 dirt county road, 2 asphalt highway, 3 forest trail, 4 the bed of the railway
+export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3, RAIL: 4 };
 
 // The named places. flat / blend: radius of the levelled ground and of its blend into the hills.
 // clear: radius kept free of trees. reach: how far out what the place holds goes, where that is past flat (roads keep out). raise / pit: built up on / dug into the terrain. dirt: trampled yard.
@@ -18,6 +19,7 @@ export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3 };
 //   shore     on the lake shore, back to the water
 //   lakeside  a short walk from the lake
 //   hill      on high ground
+//   rail      on the railway, the line running through the back of its yard (the depot)
 //   (none)    anywhere in the woods
 // gates: the sides a road may arrive at (f front, b back, l left, r right; default all four). The front
 // faces the road the place hangs off.
@@ -34,6 +36,7 @@ export const PLACES = {
   [ZONE.DRIVEIN]: { site: 'roadside', flat: 34, blend: 24, clear: 38, dirt: 0.5, gates: 'lr' },
   [ZONE.FAIR]: { flat: 38, blend: 24, clear: 42, dirt: 0.45, gates: 'flr', core: true },
   [ZONE.CHECKPOINT]: { site: 'highway', flat: 24, blend: 22, clear: 26, dirt: 0.3 },
+  [ZONE.STATION]: { site: 'rail', flat: 30, blend: 24, clear: 34, raise: 1.2, dirt: 0.4, gates: 'f', core: true },
   [ZONE.CAMPGROUND]: { site: 'lakeside', flat: 30, blend: 24, clear: 30, dirt: 0.35 },
   [ZONE.RELAY]: { site: 'hill', flat: 22, blend: 30, clear: 26, raise: 9, dirt: 0.35, gates: 'f' },
   [ZONE.RANGER]: { site: 'hill', flat: 24, blend: 30, clear: 28, raise: 7 },
@@ -48,7 +51,18 @@ export const PLACES = {
   [ZONE.SUMMERCAMP]: { flat: 34, blend: 26, clear: 26, dirt: 0.3, gates: 'flr' },
   [ZONE.LODGE]: { flat: 28, blend: 26, clear: 30, dirt: 0.25, gates: 'flr' },
 };
-export const PLACE_COUNT = 16; // named places on a map besides the breakdown
+export const PLACE_COUNT = 17; // named places on a map besides the breakdown
+
+// The railway (planned below, built by rail.js). The line runs through the depot DEPOT_TRACK m behind the middle of
+// its yard (local +Z), dead straight for RAIL_STRAIGHT m either side of it and eased back into its curve over
+// RAIL_EASE more. The stalled train takes RAIL_TRAIN m of line. Every other place keeps RAIL_GAP m of woods
+// between its levelled ground and the line.
+export const DEPOT_TRACK = 10;
+export const RAIL_STEP = 2; // the planned line has a point this often (m)
+const RAIL_STRAIGHT = 40;
+const RAIL_EASE = 44;
+const RAIL_TRAIN = 96;
+const RAIL_GAP = 16;
 
 const RIM = 46; // places keep this far inside the map edge, where the ground climbs out of the valley
 const MIN_GAP = 26; // woods left between two places
@@ -69,12 +83,14 @@ export function gatePoint(zn, g) {
 // facing (ry) that points the front (local -Z) of something at (x,z) towards (tx,tz)
 const facing = (x, z, tx, tz) => Math.atan2(x - tx, z - tz);
 
-// rng: seeded stream. relief(x, z): height of the raw hills, for places that want high ground.
-// Returns { valley, zones, lake, ponds, highway, links }:
+// rng: seeded stream. relief(x, z): height of the raw hills, for places that want high ground. rrng: the railway's
+// own stream (the course of Route 9 and the lake of a seed do not move for it).
+// Returns { valley, zones, lake, ponds, highway, links, rail }:
 //   zones    the places: their PLACES entry plus { id, x, z, ry, h, hwy }
 //   highway  [x, z] points Route 9 passes through, from one edge of the map to the other
 //   links    [a, b, kind] roads to route; an end is { zone, gate } or { x, z } (a junction on Route 9 near there)
-export function planLayout(rng, relief) {
+//   rail     the railway: { line, depot, train, bank }, see below (null if no course could be found for it)
+export function planLayout(rng, relief, rrng = rng) {
   const shuffle = (a) => {
     for (let i = a.length - 1; i > 0; i--) {
       const j = rng.int(0, i);
@@ -138,7 +154,7 @@ export function planLayout(rng, relief) {
       const s = slots[i];
       const [x, z] = hwyAt(s);
       let ok = false;
-      if (spec.site === 'highway') ok = inside(x, z, spec.flat) && gap(x, z, spec.flat) > MIN_GAP && put(id, x, z);
+      if (spec.site === 'highway') ok = inside(x, z, spec.flat) && gap(x, z, spec.flat) > MIN_GAP && offRail(x, z, spec.flat) && put(id, x, z);
       else {
         // beside the road on either side, the front gate on the road
         const [ax, az] = hwyAt(s - 4);
@@ -148,7 +164,7 @@ export function planLayout(rng, relief) {
         for (const sd of [side, -side]) {
           const cx = x - ((bz - az) / l) * sd * spec.flat * GATE;
           const cz = z + ((bx - ax) / l) * sd * spec.flat * GATE;
-          if (ok || !inside(cx, cz, spec.flat) || gap(cx, cz, spec.flat) < MIN_GAP) continue;
+          if (ok || !inside(cx, cz, spec.flat) || gap(cx, cz, spec.flat) < MIN_GAP || !offRail(cx, cz, spec.flat)) continue;
           ok = put(id, cx, cz, facing(cx, cz, x, z), true);
         }
       }
@@ -177,8 +193,175 @@ export function planLayout(rng, relief) {
   }
   const lakeDist = (x, z) => Math.hypot(x - lake.x, z - lake.z) - lake.r; // to the waterline
 
+  // ---------------------------------------------------------------- the railway
+  // A single track from rim to rim on its own course. It crosses Route 9 once, on the level, between the breakdown
+  // and the first stop along one arm of the highway, and runs out to either rim in a long easy curve: clear of the
+  // lake and never back towards the road. Whitlock Depot stands on it (the line is dead straight through the
+  // depot, as a platform is) and a freight train stands stalled on it somewhere else. Of the courses that fit, the
+  // one that asks for the least digging is taken.
+  //   line   [x, z] every RAIL_STEP m, from a little outside one edge of the map to a little outside the other
+  //   depot  index of the point of the line the depot stands at; train: of the middle of the stalled train
+  //   bank   the side of the line (1 left, -1 right, looking along it) the loading bank beside the train is on
+  let rail = null;
+  {
+    const spec = PLACES[ZONE.STATION];
+    const edge = (x, z) => Math.max(Math.abs(x), Math.abs(z));
+    // about what the ground does there (world.js presses the valley floor into the raw hills the same way)
+    const ground = (x, z) => Math.max(-1, relief(x, z) * (0.1 + 0.9 * (0.35 + 0.65 * smoothstep(30, 160, Math.hypot(x - camp[0], z - camp[1])))));
+    const half = RAIL_TRAIN / 2;
+    let best = Infinity;
+    for (let tries = 0, found = 0; tries < 400 && found < 8; tries++) {
+      // (every draw of a try is made here: a course that is thrown out leaves the stream where one that is kept does)
+      const sC = (rrng.chance(0.5) ? 1 : -1) * rrng.range(46, 64);
+      const turn = rrng.range(-0.5, 0.5);
+      const bellies = [rrng.range(-0.22, 0.22), rrng.range(-0.22, 0.22)];
+      const side = rrng.chance(0.5) ? 1 : -1;
+      const first = rrng.chance(0.5) ? 0 : 1;
+      const u = [rrng(), rrng()];
+      const bank = rrng.chance(0.5) ? 1 : -1;
+      const C = hwyAt(sC);
+      const [ax, az] = hwyAt(sC - 4);
+      const [bx, bz] = hwyAt(sC + 4);
+      const heading = Math.atan2(bx - ax, bz - az) + PI / 2 + turn;
+      const dx = Math.sin(heading);
+      const dz = Math.cos(heading);
+      // two arms out from the crossing (s > 0 and s < 0), each drifting sideways by its belly on the way to the rim
+      const arms = [1, -1].map((dir, k) => {
+        const len = Math.min((MAP_HALF - Math.sign(dx * dir) * C[0]) / Math.abs(dx), (MAP_HALF - Math.sign(dz * dir) * C[1]) / Math.abs(dz));
+        return { len, belly: bellies[k] * len };
+      });
+      const curve = (s) => {
+        const a = arms[s < 0 ? 1 : 0];
+        const o = (a.belly * (1 - Math.cos(PI * Math.min(1, Math.abs(s) / a.len)))) / 2;
+        return [C[0] + dx * s - dz * o, C[1] + dz * s + dx * o];
+      };
+      // how much the curve turns per metre at s (it bends towards its belly: the heading falls as the belly grows)
+      const bend = (s) => {
+        const a = arms[s < 0 ? 1 : 0];
+        const w = PI / a.len;
+        const t = Math.min(PI, Math.abs(s) * w);
+        const o1 = ((a.belly * w) / 2) * Math.sin(t);
+        const o2 = t < PI ? ((a.belly * w * w) / 2) * Math.cos(t) : 0;
+        return -o2 / (1 + o1 * o1) ** 1.5;
+      };
+      // the depot on one arm, well out from the crossing and well in from the rim; the stalled train on the other
+      // arm if it has the room, or further along the same one (a stretch of open line away from the crossing, the
+      // depot and the rim)
+      const reach = arms.map((a) => a.len - half - 58);
+      const plans = [];
+      for (const kD of [first, 1 - first]) {
+        const room = arms[kD].len - 195;
+        if (room < 0) continue;
+        const sD = (kD ? -1 : 1) * (95 + u[0] * room);
+        const apart = RAIL_STRAIGHT + half + 4 + RAIL_EASE + 4;
+        const spans = [[1 - kD, 60 + half, reach[1 - kD]], [kD, Math.abs(sD) + apart, reach[kD]], [kD, 60 + half, Math.abs(sD) - apart]];
+        const span = spans.find(([, lo, hi]) => hi >= lo);
+        if (span) plans.push([sD, (span[0] ? -1 : 1) * (span[1] + u[1] * (span[2] - span[1]))]);
+      }
+      let depot = null;
+      let at, sD, sT;
+      for (const plan of plans) {
+        if (depot) break;
+        [sD, sT] = plan;
+        // The line, a point every metre out from the crossing either way (s is the distance along it): it turns
+        // as the curve does, but not at all along the depot's platform and the train, easing back in either side.
+        // Taking the turn out (rather than pulling the curve straight) never makes a bend tighter than the curve's.
+        const H = 1;
+        const n0 = Math.ceil((arms[1].len + 260) / H);
+        const n1 = Math.ceil((arms[0].len + 260) / H);
+        const xs = new Float64Array(n0 + n1 + 1);
+        const zs = new Float64Array(n0 + n1 + 1);
+        const keep = (s) => smoothstep(RAIL_STRAIGHT, RAIL_STRAIGHT + RAIL_EASE, Math.abs(s - sD)) * smoothstep(half + 4, half + 4 + RAIL_EASE, Math.abs(s - sT));
+        for (const way of [-1, 1]) {
+          let x = C[0];
+          let z = C[1];
+          let h = heading;
+          xs[n0] = x;
+          zs[n0] = z;
+          for (let i = 1; i <= (way < 0 ? n0 : n1); i++) {
+            const mid = way * (i - 0.5) * H;
+            h += way * bend(mid) * keep(mid) * H * 0.5;
+            x += way * Math.sin(h) * H;
+            z += way * Math.cos(h) * H;
+            h += way * bend(mid) * keep(mid) * H * 0.5;
+            xs[n0 + way * i] = x;
+            zs[n0 + way * i] = z;
+          }
+        }
+        at = (s) => {
+          const f = Math.max(0, Math.min(n0 + n1 - 1.001, n0 + s / H));
+          const i = Math.floor(f);
+          return [xs[i] + (xs[i + 1] - xs[i]) * (f - i), zs[i] + (zs[i + 1] - zs[i]) * (f - i)];
+        };
+        const D = at(sD);
+        const p0 = at(sD - 2);
+        const p1 = at(sD + 2);
+        const T = [(p1[0] - p0[0]) / 4, (p1[1] - p0[1]) / 4];
+        for (const sd of [side, -side]) {
+          const x = D[0] - T[1] * sd * DEPOT_TRACK;
+          const z = D[1] + T[0] * sd * DEPOT_TRACK;
+          if (depot || !inside(x, z, spec.flat) || gap(x, z, spec.flat) < MIN_GAP || hwyDist(x, z) < spec.flat + 30 || lakeDist(x, z) < spec.flat + 24) continue;
+          depot = { x, z, ry: Math.atan2(T[1] * sd, -T[0] * sd) }; // (its back, local +Z, to the line)
+        }
+      }
+      if (!depot) continue;
+      // walk it out to both edges: off the lake and its shore, clear of the breakdown, away from the highway for good,
+      // and out through the rim at a fair angle (a line that ran along the rim would be one long cutting)
+      let ok = true;
+      const pts = []; // [x, z, s], from the far end of the second arm to the far end of the first
+      for (const dir of [-1, 1]) {
+        let out = false;
+        const run = [];
+        for (let n = dir < 0 ? 1 : 0; n < 400 && ok && !out; n++) {
+          const s = n * RAIL_STEP * dir;
+          const [x, z] = at(s);
+          run.push([x, z, s]);
+          out = edge(x, z) > MAP_HALF + 4;
+          if (out || n % 2) continue;
+          ok = lakeDist(x, z) > 58 && Math.hypot(x - camp[0], z - camp[1]) > 46 && (n < 12 || hwyDist(x, z) > Math.min(n * RAIL_STEP * 0.7, 70));
+        }
+        if (!ok || !out) {
+          ok = false;
+          break;
+        }
+        const a = run[run.length - 2];
+        const b = run[run.length - 1];
+        const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        ok = Math.abs(Math.abs(b[0]) > Math.abs(b[1]) ? b[0] - a[0] : b[1] - a[1]) / l > 0.62;
+        if (dir < 0) pts.push(...run.reverse());
+        else pts.push(...run);
+      }
+      if (!ok) continue;
+      if (pts.some(([x, z, s]) => Math.abs(s - sT) <= half && edge(x, z) > MAP_HALF - 62)) continue;
+      found++;
+      // the digging: how far the ground along it strays from its own running mean
+      let score = 0;
+      const g = pts.map(([x, z]) => (edge(x, z) < MAP_HALF - 40 ? ground(x, z) : NaN));
+      for (let i = 0; i < g.length; i++) {
+        let sum = 0;
+        let cnt = 0;
+        for (let k = Math.max(0, i - 12); k <= Math.min(g.length - 1, i + 12); k++) {
+          if (g[k] !== g[k]) continue;
+          sum += g[k];
+          cnt++;
+        }
+        if (g[i] === g[i]) score += Math.abs(g[i] - sum / cnt);
+      }
+      if (score >= best) continue;
+      best = score;
+      const nearest = (s0) => pts.reduce((bi, p, i) => (Math.abs(p[2] - s0) < Math.abs(pts[bi][2] - s0) ? i : bi), 0);
+      rail = { line: pts.map(([x, z]) => [x, z]), depot: nearest(sD), train: nearest(sT), bank, site: depot };
+    }
+  }
+  const railDist = (x, z) => {
+    let d = Infinity;
+    for (const p of rail.line) d = Math.min(d, Math.hypot(x - p[0], z - p[1]));
+    return d;
+  };
+  const offRail = (x, z, flat) => !rail || railDist(x, z) > flat + RAIL_GAP;
+
   // ---------------------------------------------------------------- places
-  const fits = (x, z, spec) => inside(x, z, spec.flat) && hwyDist(x, z) > spec.flat + 22 && lakeDist(x, z) > spec.flat + SHORE && gap(x, z, spec.flat) > MIN_GAP;
+  const fits = (x, z, spec) => inside(x, z, spec.flat) && hwyDist(x, z) > spec.flat + 22 && lakeDist(x, z) > spec.flat + SHORE && gap(x, z, spec.flat) > MIN_GAP && offRail(x, z, spec.flat);
   // what a site is after, on top of elbow room
   const WANTS = {
     hill: (x, z) => relief(x, z) / 12,
@@ -187,6 +370,8 @@ export function planLayout(rng, relief) {
   const place = (id) => {
     const spec = PLACES[id];
     if (spec.site === 'highway' || spec.site === 'roadside') return station(id, spec);
+    // (the depot's spot was picked with the course of the line)
+    if (spec.site === 'rail') return !!rail && gap(rail.site.x, rail.site.z, spec.flat) > MIN_GAP && put(id, rail.site.x, rail.site.z, rail.site.ry, true);
     if (spec.site === 'shore') {
       // on the shore nearest the valley, the pier (local +Z) running out over the water
       const inland = Math.atan2(camp[0] - lake.x, camp[1] - lake.z);
@@ -194,7 +379,7 @@ export function planLayout(rng, relief) {
         const a = inland + rng.range(-0.7, 0.7);
         const x = lake.x + Math.sin(a) * (lake.r + 11.5);
         const z = lake.z + Math.cos(a) * (lake.r + 11.5);
-        if (inside(x, z, spec.flat) && gap(x, z, spec.flat) > MIN_GAP) return put(id, x, z, Math.atan2(lake.x - x, lake.z - z), true);
+        if (inside(x, z, spec.flat) && gap(x, z, spec.flat) > MIN_GAP && offRail(x, z, spec.flat)) return put(id, x, z, Math.atan2(lake.x - x, lake.z - z), true);
       }
       return false;
     }
@@ -215,11 +400,11 @@ export function planLayout(rng, relief) {
     return !!best && put(id, best[0], best[1]);
   };
   // every core place, then a random draw of the rest; whatever will not fit gives its turn to the next in line.
-  // Sited in order of how picky they are: Route 9 first, then the lake, then the biggest.
+  // Sited in order of how picky they are: the depot on its line, Route 9, then the lake, then the biggest.
   {
     const ids = Object.keys(PLACES).map(Number).filter((id) => id !== ZONE.CAMP);
     const pool = [...ids.filter((id) => PLACES[id].core), ...shuffle(ids.filter((id) => !PLACES[id].core))];
-    const rank = { highway: 0, roadside: 0, shore: 1, lakeside: 2 };
+    const rank = { rail: -1, highway: 0, roadside: 0, shore: 1, lakeside: 2 };
     const picky = (id) => rank[PLACES[id].site] ?? 3;
     const picked = pool.splice(0, PLACE_COUNT).sort((a, b) => picky(a) - picky(b) || !!PLACES[b].core - !!PLACES[a].core || PLACES[b].flat - PLACES[a].flat);
     for (const id of picked) {
@@ -234,7 +419,7 @@ export function planLayout(rng, relief) {
     const r = rng.range(13, 20);
     const x = rng.range(-MAP_HALF + 60, MAP_HALF - 60);
     const z = rng.range(-MAP_HALF + 60, MAP_HALF - 60);
-    if (hwyDist(x, z) < r + 30 || lakeDist(x, z) < r + 70 || gap(x, z, r) < 28) continue;
+    if (hwyDist(x, z) < r + 30 || lakeDist(x, z) < r + 70 || gap(x, z, r) < 28 || !offRail(x, z, r + 18)) continue;
     if (ponds.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + r + 60)) continue;
     ponds.push({ x, z, r, depth: 0.9 + r * 0.115 });
   }
@@ -347,5 +532,7 @@ export function planLayout(rng, relief) {
     highway.push(hwyAt(stops[i]));
   }
 
-  return { valley: { x: camp[0], z: camp[1] }, zones, lake, ponds, highway, links };
+  // (if the depot found no room after all, the line still runs: it just has no station on it)
+  if (rail && !zones.some((zn) => zn.id === ZONE.STATION)) rail.depot = -1;
+  return { valley: { x: camp[0], z: camp[1] }, zones, lake, ponds, highway, links, rail };
 }

@@ -20,6 +20,7 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
                  vegetation, colliders. A new playthrough is a new seed (S2C.WORLD_RESET); SEED pins it
   mine.js        the workings under Blackrock Mine: a second level under the heightfield (see The mine below)
   clinic.js      Mercy Clinic and the rule that its wards are dark at noon (see Dark interiors below)
+  rail.js        the railway: its heights, the cut and fill, Whitlock Depot, the stalled train (see The railway)
   collision.js   static/dynamic collider grids, ray casts
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
@@ -417,6 +418,50 @@ strings of bulbs. The rides' frames, platform and deck are ordinary static parts
   the seat as drawn (`FairClient.carry`), `Prediction.viewLag` leaves rides alone, and [E] on "Get off" is the
   simulation's own jump, pressed for one command (`FairClient.press`).
 - `scripts/test-fair.js` holds the rules against the server, and a rider's prediction against it on a laggy link.
+
+## The railway
+
+A single track across the valley from a tunnel in one rim to a tunnel in the other.
+
+- **The course** is planned in `planLayout` (`shared/layout.js`) on a stream of its own (`seed ^ 0x7a11`), after
+  Route 9 and the lake and before any place: it crosses Route 9 between the breakdown and the first stop of one
+  arm, and each arm runs out to the rim drifting sideways by its own belly. The depot's spot and the stalled
+  train's are picked with it; the line is then laid by its turn per metre, with no turn at all along the
+  platform and the train (eased in and out), so it is dead straight there and never bends tighter than the
+  curve it came from. Of the courses that pass (off the lake, clear of the breakdown, away from the highway for
+  good, out through the rim at a fair angle) the one with the least digging is taken. Every other place keeps
+  `RAIL_GAP` of woods between its levelled ground and the line, and the ponds keep off it. The depot is `core`
+  and sited first (`site: 'rail'`).
+- **The heights** (`planRail` in `shared/rail.js`): the raw ground along the line, less the rise of the rim,
+  smoothed over a train's length and held to `RAIL.GRADE`; level at `RAIL.DROP` below the depot's yard through
+  the depot, and level under the train. Every road meets it at the height of its bed (`pinRoad` in
+  `buildRoad`), and the road router pays to run along it (`cost`), so roads cross it rather than follow it. It is
+  never a wall to them.
+- **The ground** (`grade`, after the roads are flattened in): every vertex within `RAIL.BED` of the centre line
+  is set to the bed, and beyond that the ground is clamped to a slope of `RAIL.SLOPE` up or down from it -
+  cuttings and embankments. In a bore the bed is wider and the sides steep, under the portal's stone. The bed is
+  entered in the road grids as `ROAD.RAIL`, so nothing grows or is built on it and its ground is drawn as a dirt
+  road. The heightfield has a point every 2 m, so only about the middle 3 m of the bed is level to the
+  centimetre (under the sleepers); the ballast is drawn over the edges. The mine is planned after this, and its
+  portals' aprons and the ground it heaps over a thin roof may move the edge of the bed; `settle` puts the bed
+  back unless a roof under it needs that ground, and then the track rides over the hump at its ruling grade
+  (`rail.humps` counts the vertices kept up: none in 300 valleys tested).
+- **Standing on it.** Rails and sleepers are drawn by `client/render/railway.js` and have no collider: the line
+  is open ground to bodies and to the nav grid. What stands above the ground to be walked on - the depot's
+  platform, the loading dock beside the train, the floors of the two open boxcars - are thin slabs, which the
+  nav grid takes as decks (as it takes the pier). They lie level with each other at `RAIL.FLOOR` over the bed,
+  and the ground beside them (the depot's yard, the loading bank) is `RAIL.DROP` over it, a step below, so the
+  dead walk up onto them; the drop to the bed is a deck's edge. `rail.decks` puts them in `world.floorAt` where
+  they stand more than a step over the ground, so what is built, dropped or burnt in a boxcar is on its floor.
+  `nav.js` keeps a deck's cut edges in the steps it tests against the real walls (`_deckStep`): beside the car
+  the dead would otherwise be sent up the side of the dock. A doorway's jamb can still hold one up for a while:
+  the field cuts the corner a body cannot, and it sidesteps until free.
+- **The train and the depot** are static-world parts and props (`build`, on its own stream `seed ^ 0x7a12`):
+  each car stands on the chord between its ends. A moving train would need none of this changed: the track is
+  a polyline with heights a metre apart (`rail.main`), and the stalled train and the cave-ins are what would be
+  in its way.
+- `scripts/test-rail.js` holds the plan on any number of seeds (`--sweep`), and the bed, the tunnels, the
+  boxcars, the dead and a running game on six.
 
 ## Gameplay systems (iteration 2)
 

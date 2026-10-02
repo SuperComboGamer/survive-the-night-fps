@@ -17,6 +17,7 @@ import { planMine, MINE_R, MINE_H, PORTAL } from './mine.js';
 import { buildClinic, darkAt } from './clinic.js';
 import { buildCemetery } from './cemetery.js';
 import { buildFair } from './fair.js';
+import { planRail } from './rail.js';
 
 export { ROAD };
 
@@ -65,7 +66,7 @@ export function createWorld(seed) {
     return n1 * 24 + n2 * 4.5 + rd * rd * 9 - 5;
   };
   // own rng stream: the plan only depends on the seed
-  const { valley, zones, lake, ponds, highway: hwyAnchors, links } = planLayout(mulberry32(seed ^ 0x1a707), relief);
+  const { valley, zones, lake, ponds, highway: hwyAnchors, links, rail: railPlan } = planLayout(mulberry32(seed ^ 0x1a707), relief, mulberry32(seed ^ 0x7a11));
   const zoneById = {};
   for (const z of zones) zoneById[z.id] = z;
   const nearZone = (x, z, pad) => {
@@ -154,6 +155,10 @@ export function createWorld(seed) {
   const zwx = (zn, lx, lz) => zn.x + Math.cos(zn.ry) * lx + Math.sin(zn.ry) * lz;
   const zwz = (zn, lx, lz) => zn.z - Math.sin(zn.ry) * lx + Math.cos(zn.ry) * lz;
 
+  // the railway (rail.js; null on a map without one): the line gets its heights before any road does, since every
+  // road that crosses it meets it on the level
+  const rail = planRail(railPlan, { seed, depot: zoneById[ZONE.STATION], rawH, edgeRise });
+
   // ---------------------------------------------------------------- roads
   const roads = [];
   const catmull = (p0, p1, p2, p3, t) => {
@@ -204,6 +209,7 @@ export function createWorld(seed) {
         if (d < zn.flat + 12) hs[i] = lerp(hs[i], zn.h, 1 - smoothstep(zn.flat * 0.75, zn.flat + 12, d));
       }
     }
+    if (rail) rail.pinRoad(pts, hs); // (...and the railway at the level of its bed)
     let length = 0;
     for (let i = 1; i < n; i++) length += Math.hypot(pts[i * 2] - pts[i * 2 - 2], pts[i * 2 + 1] - pts[i * 2 - 1]);
     const road = { pts: new Float32Array(pts), hs, kind, width, name, length };
@@ -298,6 +304,7 @@ export function createWorld(seed) {
       }
     }
   }
+  if (rail) rail.cost(aBase, AG, AN); // (a road crosses the railway, it does not run along its bed)
   const markRoadCells = (road) => {
     const p = road.pts;
     for (let i = 0; i < p.length / 2; i++) {
@@ -525,6 +532,8 @@ export function createWorld(seed) {
   const roadDistAt = (x, z) => sampleGrid(roadDist, x, z);
   const roadKindAt = (x, z) => sampleGrid(roadKind, x, z);
   const inLakeRaw = (x, z) => heightAt(x, z) < WATER_LEVEL + 0.35;
+  // the railway's cuttings and embankments, and its bed entered in the road grids
+  if (rail) rail.grade({ heights, roadDist, roadKind, roadDir, heightAt });
 
   // ---------------------------------------------------------------- roadside & woodland sites
   // Chosen now (before anything is built) so the ground under sheds / camps can be levelled.
@@ -542,7 +551,7 @@ export function createWorld(seed) {
     const s = (x - zn.x) * Math.sin(zn.ry) + (z - zn.z) * Math.cos(zn.ry);
     return s > 20 && s < 58 && Math.abs((x - zn.x) * Math.cos(zn.ry) - (z - zn.z) * Math.sin(zn.ry)) < 21;
   };
-  const siteOk = (x, z) => Math.abs(x) < MAP_HALF - 50 && Math.abs(z) < MAP_HALF - 50 && !DRY.some(([dx, dz]) => inLakeRaw(x + dx, z + dz)) && !nearZone(x, z, 16) && Math.hypot(x - lake.x, z - lake.z) > lake.r + 8 && !behindAdit(x, z);
+  const siteOk = (x, z) => Math.abs(x) < MAP_HALF - 50 && Math.abs(z) < MAP_HALF - 50 && !DRY.some(([dx, dz]) => inLakeRaw(x + dx, z + dz)) && !nearZone(x, z, 16) && Math.hypot(x - lake.x, z - lake.z) > lake.r + 8 && !behindAdit(x, z) && !rail?.keep(x, z);
   const ROADSIDE_W = [['wreck', 5], ['camp', 2.5], ['logpile', 1.5], ['shed', 1.4], ['stash', 1], ['ruin', 1], ['grave', 0.8], ['roadblock', 1.2], ['bus', 0.5]];
   const TRAIL_W = [['camp', 3], ['hunter', 2.5], ['stash', 1.5], ['logpile', 1], ['grave', 1.2], ['shed', 1]];
   const WOODS_W = [['camp', 2.5], ['hunter', 2.5], ['stash', 2], ['shed', 1.5], ['ruin', 1.5], ['grave', 1.2], ['logpile', 0.8]];
@@ -1182,6 +1191,10 @@ export function createWorld(seed) {
     }
   });
 
+  // WHITLOCK DEPOT and the rest of the railway (rail.js): the freight train stalled on the line, the tunnel mouths,
+  // the plank crossings. Built on a stream of its own, like the mine: no other place moves for it.
+  if (rail) rail.build({ place, builder: (x, z, ry, y) => new Builder(x, z, ry, y), roads, staticGrid, K: { door, win, gap } });
+
   // HARLAN SAWMILL: an open mill shed, log yard, office and workshop.
   place(ZONE.SAWMILL, (b) => {
     for (const px of [-12, -6, 0, 6, 12]) for (const pz of [-6, 6]) b.cyl(px, 0, pz, 0.2, 5.2, 'metal', { sides: 8 });
@@ -1255,10 +1268,10 @@ export function createWorld(seed) {
       sub.zone = z.id;
       // sub's -Z side faces the clearing center -> door on the north wall
       sub.room(0, 0, 6, 5, 2.7, 'logwall', { n: [door(3, 1.1)], e: [win(2.5)], w: [win(2.5)] }, { roof: 'gable', roofH: 2, roofMat: 'shingles' });
-      sub.prop('bed', -1.8, 1.2, 0);
+      sub.prop('bed', -1.8, 0.8, 0); // (clear of the cabinet against the back wall)
       sub.prop('table', 1.6, 1.3, 0);
       sub.loot(1.6, 1.3, 0.82);
-      if (i % 2 === 0) sub.cont(CONT.CABINET, -0.4, 2.1, { prop: 'cabinet', ry: PI }); // along the back wall, clear of the bed's foot
+      if (i % 2 === 0) sub.cont(CONT.CABINET, -2.2, 2.1, { prop: 'cabinet', ry: PI });
       else sub.cont(CONT.DUFFEL, 0.4, 0.6, { prop: 'duffel_bag', ry: 0.3, nocollide: true });
       if (i < 2) sub.partSpot(-1.8, -1.2);
       if (i % 2 === 0) sub.cont(CONT.LOGPILE, 4.1, 0, { prop: 'woodpile', ry: PI / 2 });
@@ -2050,6 +2063,8 @@ export function createWorld(seed) {
       if (!inRoom(m.x[i], m.z[i], 3)) mine.dens.push({ x: m.x[i] + tz * lat, y: m.y[i], z: m.z[i] - tx * lat });
     }
   }
+  // (the mine may have moved the ground at the edge of the railway's bed: rail.js puts it back)
+  if (rail) rail.humps = rail.settle({ heights, heightAt, mine });
 
   // ---------------------------------------------------------------- roadside & woodland sites
   const TRUNK_ZONE = ZONE.ROADSIDE;
@@ -2149,6 +2164,7 @@ export function createWorld(seed) {
       const z = p[i * 2 + 1];
       if (Math.abs(x) > MAP_HALF - 8 || Math.abs(z) > MAP_HALF - 8) continue;
       if (nearZone(x, z, 10)) continue;
+      if (rail && rail.dist(x, z) < 14) continue; // (nothing stands in a level crossing)
       const tx = p[i * 2 + 2] - p[i * 2 - 2];
       const tz = p[i * 2 + 3] - p[i * 2 - 1];
       const tl = Math.hypot(tx, tz) || 1;
@@ -2395,6 +2411,11 @@ export function createWorld(seed) {
       const f = mine.floorFor(x, z, y);
       if (f === f) return f;
     }
+    // (...or what the railway has to stand on above the ground: a platform, the floor of an open boxcar)
+    if (rail) {
+      const f = rail.floorFor(x, z, y);
+      if (f === f) return f;
+    }
     return heightAt(x, z);
   };
   // how far (x,y,z) is above the solid ground: the terrain, or in the air of a drift its floor (the rock around a
@@ -2470,6 +2491,7 @@ export function createWorld(seed) {
     darks,
     darkAt: (x, y, z) => darkAt(darks, x, y, z), // how dark it is there at noon: 0 in daylight .. 1 (clinic.js)
     fair,
+    rail,
     roadDistAt,
     roadKindAt,
     rayTerrain,

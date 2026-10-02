@@ -39,7 +39,8 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
 dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z> [y]`
 (with a height: onto what is under feet at it, down a drift of the mine), `/mine` (to the adit of Blackrock Mine;
-`/mine far` to the far portal, `/mine in` down to the junction), `/clinic` (to the front door of Mercy Clinic;
+`/mine far` to the far portal, `/mine in` down to the junction), `/depot` (to the front of the station house at
+Whitlock Depot), `/train` (onto the loading bank beside the stalled freight train), `/clinic` (to the front door of Mercy Clinic;
 `/clinic ward` into its dark wards; says so on a map without it), `/gun` (to the grips of the mounted gun at the
 Army Checkpoint; it says so when the map has no checkpoint: seed 1 has one), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/deer` (34 m from the nearest group of deer;
@@ -54,7 +55,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) the deer (`test-deer`) and the generator and its floodlights (`test-power`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) the deer (`test-deer`) the generator and its floodlights (`test-power`) and the railway (`test-rail`) and runs `sim-smoke` |
 | `node scripts/test-power.js [seed]` | the generator and its floodlights against the real server in-process and decoded as a client does, on the flattest open strip of the valley: what they cost, [E] pouring fuel and holding it for the switch, which lamps a generator feeds, the hum and the idle dead it draws (from a random stream of its own), the dead breaking it - and a Shade walking at a survivor that freezes as it enters a powered cone, moves again when the generator runs dry, walks free behind a wall inside the cone and freezes again when it steps out of the wall's shadow (part of `npm test`) |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
@@ -70,6 +71,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
 | `node scripts/test-clinic.js [seed ...]` | Mercy Clinic on the first five valleys that have it: daylight in reception and outside, the wards wholly dark and the passage between going dark with no step in it, the one drug locker in the dark, the valley's flow fields leading into the deepest ward and out again; and in a running game the dead of the wards keep to them and go back when led out, a Shade moves in there at noon and is pinned in reception, the sunrise spares what stands in the wards, the drug locker's contents come once, and `/clinic` works. `VERBOSE=1` prints the passes too |
 | `node scripts/test-cemetery.js [seed ...]` | St. Agnes Cemetery on six valleys (every grave is open ground a body can stand up on, the casket and the crypt's doorway) and in a running game: a restless grave by day (the warning, the climb, a head shot while it climbs and a shot that the ground stops), the dead of the graves getting out through the railings to the chapel's door, a wave's share of the horde, and a scripted night inside a ring of walls round the chapel: the dead come up inside it and reach the survivors, and the horde is no bigger for it (part of `npm test`) |
+| `node scripts/test-rail.js [seed ...]` | the railway on six valleys: a line from rim to rim and a depot on it, crossing Route 9 once, off the water and every other place's ground, never steeper than 3% or tighter than a gentle curve; its bed level and open (a survivor walks it from either tunnel to the train, the nav grid has it as open ground); every road over it on planks and on the level; each tunnel shut by its cave-in; the open boxcars walked into from the bank, searched from inside, boarded up, and found by the dead's flow field; and in a running game a zombie comes into a boxcar after a survivor and has to break the door boards down once they are up. `--sweep 300` checks the plan alone on seeds 1..300 |
 | `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least once), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -391,10 +393,23 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 - **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
   (your car, a rest area) on it near the middle and the roadside places strung along it.
 - **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
-- **Seventeen places** to a map. Seven are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel (with
+- **The railway** runs across the valley from a tunnel in the hillside on one rim to a tunnel on the other,
+  on a course of its own: it crosses Route 9 once, on the level, a short walk from The Breakdown, keeps off the
+  water and out of every other place, and bends in long easy curves, never steeper than 3% - the ground is cut
+  and banked up to it, so it runs through cuttings and along embankments. Rails and sleepers are only drawn:
+  the line is open ground to walk, for the living and the dead. Every road and trail that crosses it does so
+  over planks. Each tunnel is shut by a cave-in a few metres in. Somewhere along it a freight train stands
+  where it stopped: a locomotive, a tank car, two boxcars standing open at a timber loading dock, a flat of
+  lumber and a closed boxcar. The open boxcars are walked into from the dock and hold freight crates (planks,
+  nails, scrap, rope, tape, wire, tinned food, now and then gun parts); a boxcar's one doorway takes door
+  boards, so one makes a shelter for the night. The field map draws the line hatched (`shared/rail.js`,
+  `node scripts/test-rail.js`).
+- **Eighteen places** to a map. Eight are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel (with
   St. Agnes Cemetery behind it, `shared/cemetery.js`), Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
-  general store, police station, garage, houses), Blackrock Mine (on high ground) and the Tri-County Fair (in a
-  clearing of its own, the Ferris wheel over the midway). The other ten are drawn
+  general store, police station, garage, houses), Blackrock Mine (on high ground), the Tri-County Fair (in a
+  clearing of its own, the Ferris wheel over the midway) and Whitlock Depot (on the railway: the station house with
+  its waiting room and ticket office, a platform, a freight shed, a water tower and a signal, and a siding with two
+  cars on it). The other ten are drawn
   from sixteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
   Campground (near the lake), the Relay Station and Ranger Lookout (on high ground), Miller Farm, Harlan
   Sawmill, Granite Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage

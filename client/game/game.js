@@ -77,6 +77,7 @@ import { buildTerrain, buildWater } from '../render/terrain.js';
 import { buildMine } from '../render/mine.js';
 import { buildClinic, disposeClinic } from '../render/clinic.js';
 import { Graves } from '../render/cemetery.js';
+import { buildRailway } from '../render/railway.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
@@ -372,6 +373,8 @@ export class Game {
     this.clinic = buildClinic(this.world); // the lining of Mercy Clinic's dark wards and its signs (null on a map without it)
     if (this.clinic) this.scene.add(this.clinic);
     this.fair.setWorld(this.world);
+    this.railway = buildRailway(this.world); // (the ballast, sleepers and rails of the line)
+    if (this.railway) this.scene.add(this.railway);
     this.under = 0;
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
@@ -420,6 +423,11 @@ export class Game {
       this.scene.remove(this.clinic);
       disposeClinic(this.clinic);
       this.clinic = null;
+    }
+    if (this.railway) {
+      this.scene.remove(this.railway);
+      for (const mesh of this.railway.children) mesh.geometry.dispose(); // (its materials are the shared ones)
+      this.railway = null;
     }
     this.staticWorld?.dispose();
     this.foliage?.dispose();
@@ -2231,7 +2239,8 @@ export class Game {
     if (w.roadDistAt(x, z) < 2.8) {
       const i = Math.round((x + MAP_HALF) / GRID_STEP);
       const j = Math.round((z + MAP_HALF) / GRID_STEP);
-      return w.roadKind[j * GRID_N + i] === 2 ? 'road' : 'dirt';
+      const kind = w.roadKind[j * GRID_N + i];
+      return kind === 2 ? 'road' : kind === 4 ? 'gravel' : 'dirt'; // (4: the bed of the railway, its ballast)
     }
     // needle / leaf litter under a crown
     for (const c of w.staticGrid.query(x, z, 3, _near)) {
