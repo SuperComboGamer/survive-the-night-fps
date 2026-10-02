@@ -141,11 +141,39 @@ export function renderMapCanvas(world) {
     }
   }
 
+  // ---- the workings of the mine, as the surveyor drew them: the drifts dashed under the ground they run
+  // beneath, a tick across each mouth
+  if (world.mine) {
+    g.strokeStyle = 'rgba(52, 30, 24, 0.7)';
+    g.lineWidth = 2.6;
+    g.setLineDash([2.5, 4.5]);
+    for (const l of [world.mine.main, ...world.mine.galleries]) {
+      g.beginPath();
+      g.moveTo(mapX(l.x[0]), mapY(l.z[0]));
+      for (let i = 1; i < l.n; i++) g.lineTo(mapX(l.x[i]), mapY(l.z[i]));
+      g.stroke();
+    }
+    g.setLineDash([]);
+    for (const rm of world.mine.rooms) {
+      g.beginPath();
+      g.arc(mapX(rm.x), mapY(rm.z), rm.r * S * 0.8, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.lineWidth = 3;
+    for (const p of world.mine.portals) {
+      g.beginPath();
+      g.moveTo(mapX(p.x - p.dz * 4.5), mapY(p.z + p.dx * 4.5));
+      g.lineTo(mapX(p.x + p.dz * 4.5), mapY(p.z - p.dx * 4.5));
+      g.stroke();
+    }
+  }
+
   // ---- buildings (walls + floors + roofs from the static parts)
   g.fillStyle = 'rgba(38, 28, 22, 0.88)';
   for (const p of world.parts) {
     if (p.shape !== 'box' && p.shape !== 'cyl') continue;
     if (p.sy < 0.9 && p.sx * p.sz < 30) continue;
+    if (world.mine && p.y + p.sy / 2 < world.heightAt(p.x, p.z)) continue; // (the timbering of the mine: it is under the ground)
     const w = p.sx * S;
     const h = p.sz * S;
     if (w * h < 1.2) continue;

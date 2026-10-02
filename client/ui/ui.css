@@ -3032,6 +3032,129 @@ body {
   color: var(--blood-lite);
 }
 
+/* split popover: how much of a stack to put in a slot of its own, or down on the ground (Shift+LMB) */
+.stn-ui .cell.splitting {
+  border-color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber), inset 0 0 14px rgba(0, 0, 0, 0.65);
+}
+
+.stn-ui .split {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  width: calc(280 * var(--u));
+  min-width: 236px;
+  padding: calc(12 * var(--u)) calc(14 * var(--u));
+  background: linear-gradient(170deg, rgba(26, 22, 19, 0.98), rgba(10, 8, 7, 0.98));
+  border: 1px solid rgba(230, 223, 207, 0.3);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.7);
+}
+
+.stn-ui .split-head {
+  display: flex;
+  align-items: center;
+  gap: calc(9 * var(--u));
+}
+
+.stn-ui .split-ico {
+  flex: none;
+  width: calc(40 * var(--u));
+  height: calc(30 * var(--u));
+  min-width: 30px;
+  min-height: 22px;
+}
+
+.stn-ui .split-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .split-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 max(13px, calc(17 * var(--u))) / 1.1 var(--f-num);
+  letter-spacing: 0.03em;
+}
+
+.stn-ui .split-of {
+  flex: none;
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .split-row {
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  margin-top: calc(10 * var(--u));
+}
+
+/* (two classes deep: .set-range, further down, sets a width of its own) */
+.stn-ui .split .split-range {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.stn-ui .split-range:focus-visible {
+  outline: 1px solid rgba(230, 223, 207, 0.4);
+  outline-offset: 3px;
+}
+
+.stn-ui .split-num {
+  flex: none;
+  width: 3.6em;
+  height: calc(28 * var(--u));
+  min-height: 22px;
+  padding: 0 0.45em;
+  text-align: right;
+  font: max(12px, calc(14.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  outline: none;
+  caret-color: var(--blood-lite);
+}
+
+.stn-ui .split-num:focus {
+  border-color: rgba(230, 223, 207, 0.6);
+}
+
+.stn-ui .split-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(8 * var(--u));
+  margin-top: calc(11 * var(--u));
+}
+
+.stn-ui .split-b {
+  padding: calc(8 * var(--u)) calc(6 * var(--u));
+  font-size: max(11px, calc(13.5 * var(--u)));
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.stn-ui .split-b:disabled {
+  cursor: not-allowed;
+  color: var(--bone-dim);
+  border-color: rgba(230, 223, 207, 0.1);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.stn-ui .split-note {
+  margin-top: calc(8 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1.2 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .split-note:empty {
+  display: none;
+}
+
 .stn-ui .grid-hints {
   display: flex;
   flex-wrap: wrap;
@@ -3043,13 +3166,9 @@ body {
 }
 
 .stn-ui .inv-sub {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: calc(14 * var(--u));
   margin-top: calc(14 * var(--u));
 }
 
-.stn-ui .sv-box,
 .stn-ui .camp-box {
   padding: calc(12 * var(--u)) calc(14 * var(--u)) calc(12 * var(--u));
 }
@@ -3064,15 +3183,16 @@ body {
   gap: calc(3 * var(--u));
 }
 
+/* a row of the player list [Tab] (roster.js) */
 .stn-ui .sv {
   position: relative;
   display: grid;
-  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto auto auto;
+  grid-template-columns: calc(18 * var(--u)) 1fr auto auto auto minmax(3.2em, auto) auto;
   align-items: center;
-  gap: calc(7 * var(--u));
-  padding: calc(3 * var(--u)) calc(6 * var(--u));
+  gap: calc(10 * var(--u));
+  padding: calc(8 * var(--u)) calc(12 * var(--u));
   background: rgba(0, 0, 0, 0.25);
-  font: 400 max(11px, calc(14 * var(--u))) / 1.2 var(--f-num);
+  font: 400 max(13px, calc(17 * var(--u))) / 1.2 var(--f-num);
 }
 
 .stn-ui .sv-st svg {
@@ -4225,17 +4345,14 @@ body {
   color: #ff7a66;
 }
 
-.stn-ui .sp-controls,
-.stn-ui .pause-controls {
-  position: absolute;
-  left: calc(38 * var(--u));
-  bottom: calc(36 * var(--u));
-  width: calc(330 * var(--u));
-  min-width: 250px;
-  padding: calc(14 * var(--u)) calc(16 * var(--u)) calc(14 * var(--u));
-  background: linear-gradient(175deg, rgba(20, 17, 15, 0.8), rgba(8, 7, 6, 0.85));
-  -webkit-mask: var(--torn) center / 100% 100% no-repeat;
-  mask: var(--torn) center / 100% 100% no-repeat;
+.stn-ui .stn-controls .set-card {
+  width: calc(520 * var(--u));
+  min-width: 380px;
+}
+
+.stn-ui .stn-controls .set-body {
+  padding-top: calc(16 * var(--u));
+  padding-bottom: calc(16 * var(--u));
 }
 
 .stn-ui .ctl-grid {
@@ -4266,6 +4383,11 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: calc(12 * var(--u));
+}
+
+.stn-ui .sp-btns {
+  display: flex;
   gap: calc(12 * var(--u));
 }
 
@@ -4562,10 +4684,7 @@ body {
   margin-top: calc(34 * var(--u));
   cursor: default;
 }
-
-.stn-ui .pause-controls {
-  cursor: default;
-}/* ---------- death */
+/* ---------- death */
 
 
 .stn-ui .death {

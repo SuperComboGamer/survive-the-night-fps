@@ -11,8 +11,9 @@ import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from './constants.
 import { ZONE, CONT } from './defs.js';
 import { PROPS } from './props.js';
 import { mulberry32, createNoise2D, fbm, smoothstep, lerp, clamp } from './rng.js';
-import { ColliderGrid, makeBox, makeCyl, COL } from './collision.js';
+import { ColliderGrid, makeBox, makeCyl, footprintContains, COL } from './collision.js';
 import { ROAD, planLayout, gatePoint } from './layout.js';
+import { planMine, MINE_R, MINE_H, PORTAL } from './mine.js';
 
 export { ROAD };
 
@@ -529,7 +530,15 @@ export function createWorld(seed) {
     return true;
   };
   const DRY = [[0, 0], [6, 0], [-6, 0], [0, 6], [0, -6]]; // a site wants dry ground under all of it
-  const siteOk = (x, z) => Math.abs(x) < MAP_HALF - 50 && Math.abs(z) < MAP_HALF - 50 && !DRY.some(([dx, dz]) => inLakeRaw(x + dx, z + dz)) && !nearZone(x, z, 16) && Math.hypot(x - lake.x, z - lake.z) > lake.r + 8;
+  // the ground behind the adit of Blackrock Mine (the back of its yard, local (0, 22)) is kept for the mound the
+  // adit is set into (mine.js)
+  const behindAdit = (x, z) => {
+    const zn = zoneById[ZONE.MINE];
+    if (!zn) return false;
+    const s = (x - zn.x) * Math.sin(zn.ry) + (z - zn.z) * Math.cos(zn.ry);
+    return s > 20 && s < 58 && Math.abs((x - zn.x) * Math.cos(zn.ry) - (z - zn.z) * Math.sin(zn.ry)) < 21;
+  };
+  const siteOk = (x, z) => Math.abs(x) < MAP_HALF - 50 && Math.abs(z) < MAP_HALF - 50 && !DRY.some(([dx, dz]) => inLakeRaw(x + dx, z + dz)) && !nearZone(x, z, 16) && Math.hypot(x - lake.x, z - lake.z) > lake.r + 8 && !behindAdit(x, z);
   const ROADSIDE_W = [['wreck', 5], ['camp', 2.5], ['logpile', 1.5], ['shed', 1.4], ['stash', 1], ['ruin', 1], ['grave', 0.8], ['roadblock', 1.2], ['bus', 0.5]];
   const TRAIL_W = [['camp', 3], ['hunter', 2.5], ['stash', 1.5], ['logpile', 1], ['grave', 1.2], ['shed', 1]];
   const WOODS_W = [['camp', 2.5], ['hunter', 2.5], ['stash', 2], ['shed', 1.5], ['ruin', 1.5], ['grave', 1.2], ['logpile', 0.8]];
@@ -1677,17 +1686,8 @@ export function createWorld(seed) {
   // BLACKROCK MINE: a worked-out pit on the hillside - the boarded-up adit, a headframe over the shaft, the tipple
   // at the end of the rails, the dry house and the powder store.
   place(ZONE.MINE, (b) => {
-    // adit: a timbered portal in a face of blasted rock
-    b.box(0, 0, 24.5, 9, 4.4, 5, 'stone');
-    b.box(-6.5, 0, 24, 6, 3.4, 4.5, 'stone', { ry: 0.25 });
-    b.box(6.5, 0, 24.2, 6, 3.8, 4.5, 'stone', { ry: -0.2 });
-    b.box(0.4, 4.2, 25, 6, 1.2, 3.5, 'stone', { ry: 0.1, collide: false });
-    b.box(0, 0, 21.9, 2.6, 2.5, 0.25, 'dark', { collide: false });
-    b.box(-1.45, 0, 21.7, 0.3, 2.7, 0.3, 'trim');
-    b.box(1.45, 0, 21.7, 0.3, 2.7, 0.3, 'trim');
-    b.box(0, 2.7, 21.7, 3.4, 0.3, 0.3, 'trim', { collide: false });
-    b.box(0, 0.7, 21.6, 3.1, 0.2, 0.06, 'planks', { rz: 0.12 });
-    b.box(0, 1.5, 21.6, 3.1, 0.2, 0.06, 'planks', { rz: -0.1 });
+    // the adit, in the face of blasted rock at the back of the yard (local 0, 22), is built with the workings
+    // behind it, once every place stands: see the mine below
     b.prop('lantern_post', -3, 20, 0);
     b.prop('lantern_post', 3, 20, 0);
     // rails down to the tipple
@@ -1858,6 +1858,176 @@ export function createWorld(seed) {
     b.loot(-14, -3);
     b.loot(12, 20.5);
   });
+
+  // ---------------------------------------------------------------- the mine: its portals, and what is down there
+  // The workings under Blackrock Mine (mine.js) are planned now that every place stands and every roadside site has
+  // its spot, so the far portal comes up clear of them all: it levels an apron and heaps a mound behind itself.
+  // null on a map without the mine, or with nowhere to come up - the adit is boarded up then.
+  let mine = null;
+  {
+    // is anything built, lying or due to be built within r of (x,z)?
+    const things = new Map(); // what has no collider, by 4 m cell
+    for (const list of [props, lootSpawns, containers, partSpots]) {
+      for (const t of list) {
+        const key = Math.floor(t.x / 4) * 4096 + Math.floor(t.z / 4);
+        if (!things.has(key)) things.set(key, []);
+        things.get(key).push(t);
+      }
+    }
+    const q = [];
+    const taken = (x, z, r) => {
+      for (const c of staticGrid.query(x, z, r, q)) if (footprintContains(c, x, z, r)) return true;
+      for (let i = Math.floor((x - r - 1) / 4); i <= Math.floor((x + r + 1) / 4); i++) {
+        for (let j = Math.floor((z - r - 1) / 4); j <= Math.floor((z + r + 1) / 4); j++) {
+          for (const t of things.get(i * 4096 + j) || []) if (Math.hypot(t.x - x, t.z - z) < r + 1) return true;
+        }
+      }
+      for (const st of sites) if (Math.hypot(st.x - x, st.z - z) < r + 8) return true;
+      return false;
+    };
+    mine = planMine({ seed, zones, heights, heightAt, roadDistAt, taken });
+  }
+  if (!mine) {
+    place(ZONE.MINE, (b) => {
+      b.box(0, 0, 24.5, 9, 4.4, 5, 'stone');
+      b.box(-6.5, 0, 24, 6, 3.4, 4.5, 'stone', { ry: 0.25 });
+      b.box(6.5, 0, 24.2, 6, 3.8, 4.5, 'stone', { ry: -0.2 });
+      b.box(0.4, 4.2, 25, 6, 1.2, 3.5, 'stone', { ry: 0.1, collide: false });
+      b.box(0, 0, 21.9, 2.6, 2.5, 0.25, 'dark', { collide: false });
+      b.box(-1.45, 0, 21.7, 0.3, 2.7, 0.3, 'trim');
+      b.box(1.45, 0, 21.7, 0.3, 2.7, 0.3, 'trim');
+      b.box(0, 2.7, 21.7, 3.4, 0.3, 0.3, 'trim', { collide: false });
+      b.box(0, 0.7, 21.6, 3.1, 0.2, 0.06, 'planks', { rz: 0.12 });
+      b.box(0, 1.5, 21.6, 3.1, 0.2, 0.06, 'planks', { rz: -0.1 });
+    });
+  } else {
+    const mrng = mulberry32(seed ^ 0x51ab5); // its own stream: nothing else in the valley moves for it
+    const sd = () => mrng.int(0, 9999);
+    const inner = MINE_R + PORTAL.LINER;
+    const L = PORTAL.LEN;
+    mine.portals.forEach((p, pi) => {
+      const b = new Builder(p.x, p.z, p.ry, p.y); // (its +Z runs on into the drift)
+      b.zone = p.zone;
+      // stone piers either side of the decline and a slab over them, proud of the mound behind. The rock lining of
+      // the drift is drawn just inside the piers: a collider flush with it keeps bodies off it
+      for (const sx of [-1, 1]) {
+        b.box(sx * (inner + PORTAL.PIER / 2), -4.5, L / 2, PORTAL.PIER, 4.5 + PORTAL.TOP, L, 'stone');
+        const lx = sx * (MINE_R + PORTAL.LINER / 2);
+        staticGrid.add(makeBox(b.wx(lx, L / 2), b.wz(lx, L / 2), p.y - 4.5, p.y + PORTAL.SLAB, PORTAL.LINER, L, b.ry));
+      }
+      b.box(0, PORTAL.SLAB, L / 2, inner * 2, PORTAL.TOP - PORTAL.SLAB, L, 'stone');
+      b.box(-inner - PORTAL.PIER - 1.6, -1.5, 2.2, 5, 4.9, 5, 'stone', { ry: 0.25 });
+      b.box(inner + PORTAL.PIER + 1.6, -1.5, 2.4, 5, 5.3, 5, 'stone', { ry: -0.2 });
+      b.box(0.4, PORTAL.TOP - 0.2, 3, 6, 1.2, 4.5, 'stone', { ry: 0.1, collide: false });
+      // a timber set in the mouth, and what is left of the boards that shut it
+      for (const sx of [-1, 1]) b.box(sx * (MINE_R + 0.1), 0, -0.05, 0.45, 2.95, 0.4, 'trim');
+      b.box(0, 2.95, -0.05, MINE_R * 2 + 1.1, 0.5, 0.4, 'trim', { collide: false });
+      b.box(-1.25, 0.1, -0.32, 0.2, 2.6, 0.06, 'planks', { rz: 0.42, collide: false });
+      b.box(1.3, 2.2, -0.3, 1.5, 0.2, 0.06, 'planks', { rz: -0.14, collide: false });
+      b.box(0.9, 0.03, -1.6, 2.6, 0.06, 0.2, 'planks', { ry: 0.5, collide: false });
+      b.box(-0.6, 0.03, -2.3, 2.2, 0.06, 0.2, 'planks', { ry: -0.9, collide: false });
+      b.roofSpan(0, L / 2, inner + PORTAL.PIER, L / 2, PORTAL.TOP, 0.2);
+      b.clear(0, 3, 10);
+      b.clear(0, -4, 7);
+      if (pi) {
+        // the far portal: the rails run out onto the apron, where the last shift left a tub and their tools
+        for (const rx of [-0.45, 0.45]) b.box(rx, 0, -3.2, 0.08, 0.1, 6.4, 'rust', { collide: false });
+        for (let tz = -6; tz < 0; tz += 1.2) b.box(0, 0, tz, 1.5, 0.06, 0.22, 'planks', { collide: false });
+        b.prop('lantern_post', -3, -2, 0, { seed: sd() });
+        b.prop('lantern_post', 3, -2, 0, { seed: sd() });
+        b.prop('cart', 3.4, -5.2, 0.5, { seed: sd() });
+        b.cont(CONT.TOOLBOX, -3.5, -4.4, { prop: 'toolbox', ry: 0.7, nocollide: true, seed: sd() });
+        b.prop('barrel', -4.4, -1.6, 0, { seed: sd() });
+        b.loot(-2.6, -3.2);
+      } else for (const rx of [-0.45, 0.45]) b.box(rx, 0, -0.5, 0.08, 0.1, 1, 'rust', { collide: false });
+    });
+    // unit vector along a line at its point i
+    const along = (l, i) => {
+      const a = Math.max(0, i - 1);
+      const c = Math.min(l.n - 1, i + 1);
+      const tl = Math.hypot(l.x[c] - l.x[a], l.z[c] - l.z[a]) || 1;
+      return [(l.x[c] - l.x[a]) / tl, (l.z[c] - l.z[a]) / tl];
+    };
+    const inRoom = (x, z, pad) => mine.rooms.some((rm) => Math.hypot(x - rm.x, z - rm.z) < rm.r + pad);
+    // The timbering and the track are not parts of the static world: they are drawn with the rock (client/render/
+    // mine.js), which knows that no daylight gets down there. mine.frames: boxes [x, y, z (middle), sx, sy, sz, ry, rz
+    // (turned about its own Z, then about Y), kind: 0 timber, 1 rail, 2 sleeper]. None of them has a collider.
+    mine.frames = [];
+    const piece = (x, y, z, sx, sy, sz, ry, rz, kind) => mine.frames.push([x, y, z, sx, sy, sz, ry, rz, kind]);
+    // a timber set: two posts and a cap across the drift
+    const timber = (l, i) => {
+      if (inRoom(l.x[i], l.z[i], 0.6)) return;
+      const [tx, tz] = along(l, i);
+      const ry = Math.atan2(tx, tz);
+      for (const side of [-1, 1]) piece(l.x[i] + tz * side * (MINE_R - 0.1), l.y[i] + (MINE_H - 0.2) / 2, l.z[i] - tx * side * (MINE_R - 0.1), 0.24, MINE_H - 0.2, 0.24, ry, 0, 0);
+      piece(l.x[i], l.y[i] + MINE_H - 0.32, l.z[i], MINE_R * 2 + 0.3, 0.24, 0.28, ry, 0, 0);
+    };
+    const m = mine.main;
+    for (let i = 2; i < m.n - 2; i += 4) timber(m, i);
+    for (const g of mine.galleries) for (let i = 5; i < g.n; i += 4) timber(g, i);
+    // rails and sleepers the length of the main drift
+    for (let i = 0; i < m.n - 1; i++) {
+      const ex = m.x[i + 1] - m.x[i];
+      const ez = m.z[i + 1] - m.z[i];
+      const ey = m.y[i + 1] - m.y[i];
+      const len = Math.hypot(ex, ez) || 1;
+      for (const side of [-0.45, 0.45]) piece((m.x[i] + m.x[i + 1]) / 2 + (ez / len) * side, (m.y[i] + m.y[i + 1]) / 2 + 0.11, (m.z[i] + m.z[i + 1]) / 2 - (ex / len) * side, Math.hypot(len, ey) + 0.04, 0.1, 0.08, Math.atan2(-ez, ex), Math.atan2(ey, len), 1);
+      const [tx, tz] = along(m, i);
+      piece(m.x[i], m.y[i] + 0.03, m.z[i], 1.5, 0.06, 0.22, Math.atan2(tx, tz), 0, 2);
+    }
+    // the junction, where the galleries leave: a tub on the rails, a drum somebody has kept burning
+    {
+      const rm = mine.rooms[0];
+      const [tx, tz] = along(m, mine.jx);
+      const b = new Builder(rm.x, rm.z, Math.atan2(tx, tz), rm.y); // (+Z: along the drift)
+      b.zone = ZONE.MINE;
+      const k = (rm.r * 0.8 - 0.6) * Math.SQRT1_2; // out towards the corners, clear of the drift and the galleries
+      b.prop('cart', 0.05, 1.8, 0.02, { seed: sd() });
+      b.prop('barrel', k, k, 0, { seed: sd() });
+      b.light(k, 1.0, k, 'embers');
+      b.cont(CONT.CRATE, -k, k, { prop: 'crate', ry: 0.4, seed: sd() });
+      b.prop('pallet', -k, -k, 0.3, { seed: sd() });
+      b.prop('crate_small', -k + 0.1, -k, 0.5, { ly: 0.15, seed: sd() });
+      b.prop('bones', k, -k, 1, { nocollide: true, seed: sd() });
+      b.loot(k - 0.9, -k + 0.4);
+      // (a mine with no gallery keeps its strongbox here)
+      if (mine.rooms.length === 1) b.cont(CONT.STRONGBOX, k + 0.3, -k - 0.3, { prop: 'strongbox', ry: -0.8, seed: 0 });
+    }
+    // the rooms at the ends of the galleries: what the miners left, and what nobody has come back for
+    const ends = mine.rooms.slice(1);
+    // the strongbox: what makes the trip worth it (CONT.STRONGBOX), against the wall of the deepest room
+    const deepest = ends.reduce((a, rm) => (!a || rm.y < a.y ? rm : a), null);
+    ends.forEach((rm, k) => {
+      const b = new Builder(rm.x, rm.z, Math.atan2(rm.dx, rm.dz), rm.y); // (+Z: on in from the gallery, to the back wall)
+      b.zone = ZONE.MINE;
+      const back = rm.r - 1.05;
+      if (k % 3 === 0) b.cont(CONT.AMMO_BOX, -0.3, back, { prop: 'military_crate', ry: mrng.range(-0.2, 0.2), seed: sd() });
+      else b.cont(CONT.CRATE, 0.2, back, { prop: 'crate', ry: mrng.range(-0.4, 0.4), seed: sd() });
+      if (k % 2 === 0) b.cont(CONT.TOOLBOX, -back * 0.7, back * 0.45, { prop: 'toolbox', ry: mrng.range(0, 3), nocollide: true, seed: sd() });
+      else b.cont(CONT.CRATE, back * 0.72, back * 0.4, { prop: 'crate', ry: mrng.range(0, 1.5), seed: sd() });
+      b.prop('barrel', back * 0.75, -back * 0.3, 0, { seed: sd() });
+      b.prop('pallet', -back * 0.6, -back * 0.45, mrng.range(0, 3), { seed: sd() });
+      b.prop(k % 2 ? 'corpse' : 'bones', mrng.range(-1, 1), mrng.range(-0.5, 1), mrng.range(0, 6), { nocollide: true, seed: sd() });
+      b.loot(mrng.range(-1.5, 1.5), back - 1.3);
+      b.loot(-back * 0.6, -back * 0.45, 0.17);
+      if (k === ends.length - 1) b.partSpot(1.3, back - 0.4);
+      if (rm === deepest) b.cont(CONT.STRONGBOX, -back * 0.62, back * 0.72, { prop: 'strongbox', ry: -0.7, seed: 0 });
+    });
+    // where the dead stand about down there: the rooms, and the drift between the bays
+    mine.dens = [];
+    for (const rm of mine.rooms) {
+      for (let i = rm.kind === 'junction' ? 3 : 2; i > 0; i--) {
+        const a = mrng.range(0, PI * 2);
+        const r = mrng.range(0, Math.max(0.5, rm.r - 2));
+        mine.dens.push({ x: rm.x + Math.sin(a) * r, y: rm.y, z: rm.z + Math.cos(a) * r });
+      }
+    }
+    for (let i = 30 + mrng.int(0, 10); i < m.n - 30; i += mrng.int(16, 26)) {
+      const [tx, tz] = along(m, i);
+      const lat = mrng.range(-1, 1);
+      if (!inRoom(m.x[i], m.z[i], 3)) mine.dens.push({ x: m.x[i] + tz * lat, y: m.y[i], z: m.z[i] - tx * lat });
+    }
+  }
 
   // ---------------------------------------------------------------- roadside & woodland sites
   const TRUNK_ZONE = ZONE.ROADSIDE;
@@ -2196,22 +2366,40 @@ export function createWorld(seed) {
   }
 
   // ---------------------------------------------------------------- queries
+  // The ground under feet at height y over (x,z): the terrain, or the floor of the drift they are down in.
+  // (heightAt is the terrain alone: what grows, what is built and what the map shows stand on that)
+  const floorAt = (x, z, y) => {
+    if (mine) {
+      const f = mine.floorFor(x, z, y);
+      if (f === f) return f;
+    }
+    return heightAt(x, z);
+  };
+  // how far (x,y,z) is above the solid ground: the terrain, or in the air of a drift its floor (the rock around a
+  // drift is under the terrain, so its walls and roof stop a ray like any hillside)
+  const above = (x, y, z) => {
+    if (mine) {
+      const f = mine.voidFloor(x, z, y);
+      if (f === f) return y - f;
+    }
+    return y - heightAt(x, z);
+  };
   const rayTerrain = (ox, oy, oz, dx, dy, dz, maxT) => {
     const step = 0.75;
     let prevT = 0;
-    let prevD = oy - heightAt(ox, oz);
+    let prevD = above(ox, oy, oz);
     if (prevD < 0) return 0;
     for (let t = step; t <= maxT + step; t += step) {
       const tt = t > maxT ? maxT : t;
       const y = oy + dy * tt;
       if (y > 70 && dy >= 0) return -1;
-      const d = y - heightAt(ox + dx * tt, oz + dz * tt);
+      const d = above(ox + dx * tt, y, oz + dz * tt);
       if (d < 0) {
         let lo = prevT;
         let hi = tt;
         for (let k = 0; k < 6; k++) {
           const m = (lo + hi) / 2;
-          const dm = oy + dy * m - heightAt(ox + dx * m, oz + dz * m);
+          const dm = above(ox + dx * m, oy + dy * m, oz + dz * m);
           if (dm < 0) hi = m;
           else lo = m;
         }
@@ -2254,6 +2442,8 @@ export function createWorld(seed) {
     roadKind,
     roadDir,
     heightAt,
+    floorAt,
+    mine,
     roadDistAt,
     roadKindAt,
     rayTerrain,
@@ -2301,6 +2491,7 @@ const CONT_H = {
   [CONT.DUMPSTER]: 0.9,
   [CONT.LOGPILE]: 0.8,
   [CONT.FRIDGE]: 1.0,
+  [CONT.STRONGBOX]: 0.5,
 };
 
 // Douglas-Peucker polyline simplification

@@ -18,6 +18,7 @@ export const PROPS = {
   crate: { size: [1, 1, 1], boxes: [[0, 0.5, 0, 1, 1, 1]], desc: 'wooden shipping crate' },
   crate_small: { size: [0.6, 0.6, 0.6], boxes: [[0, 0.3, 0, 0.6, 0.6, 0.6]], desc: 'small wooden box' },
   military_crate: { size: [1.4, 0.7, 0.8], boxes: [[0, 0.35, 0, 1.4, 0.7, 0.8]], desc: 'olive drab ammo crate with stencil marks' },
+  strongbox: { size: [0.9, 0.62, 0.56], boxes: [[0, 0.31, 0, 0.9, 0.62, 0.56]], desc: 'iron-bound steel strongbox, its padlock hanging open' },
   barrel: { size: [0.7, 1.0, 0.7], cyls: [[0, 0, 0.35, 1.0]], desc: 'rusty metal oil drum (variant: red/blue/rust)' },
   sandbags: { size: [2.4, 0.9, 0.7], boxes: [[0, 0.45, 0, 2.4, 0.9, 0.7]], desc: 'stacked sandbag wall, slightly curved' },
   heli_wreck: {

@@ -511,8 +511,18 @@ class GibPool {
           P[k] += mx;
           P[k + 1] += my;
           P[k + 2] += mz;
+          // down in the mine the rock round the drift stops it: back where it was, and off the way it came
+          const mine = world.mine;
+          if (mine && P[k + 1] < world.heightAt(P[k], P[k + 2]) - 0.3 && Number.isNaN(mine.voidFloor(P[k], P[k + 2], P[k + 1])) && !Number.isNaN(mine.voidFloor(P[k] - mx, P[k + 2] - mz, P[k + 1] - my))) {
+            P[k] -= mx;
+            P[k + 1] -= my;
+            P[k + 2] -= mz;
+            V[k] *= -0.3;
+            V[k + 1] = Math.min(0, V[k + 1]);
+            V[k + 2] *= -0.3;
+          }
         }
-        const gy = world.heightAt(P[k], P[k + 2]);
+        const gy = world.floorAt(P[k], P[k + 2], P[k + 1]);
         if (floor === null && P[k + 1] - rad <= gy) floor = gy;
         for (let c = 0; c < 3; c++) R[k + c] += W[k + c] * dt;
         if (age < 0.9 && (this.trail[i] -= dt) <= 0) {
@@ -650,7 +660,7 @@ export class Effects {
         this.drop(x, y, z, nx * 0.5, ny * 0.5, nz * 0.5, 0.14, 0.26 * far, g, 0, 0);
         this.mist(x, y, z, nx * 0.8, 0.3, nz * 0.8, 0.28, 0.2, 0.55, g);
         if (Math.random() < 0.55) {
-          const gy = this.world.heightAt(x, z);
+          const gy = this.world.floorAt(x, z, y);
           if (y - gy < 2.2) (g ? this.acid : this.blood).add(x + this.rnd(-0.5, 0.5), gy + 0.03, z + this.rnd(-0.5, 0.5), this.rnd(0.5, 1.3));
         }
         break;
@@ -670,7 +680,7 @@ export class Effects {
         break;
       case IMPACT.ACID:
         for (let i = 0; i < 14; i++) A.emit(x, y, z, this.rnd(-2, 2), this.rnd(1, 4), this.rnd(-2, 2), this.rnd(0.4, 0.9), 0.12, 0.2, 0.4, 0.95, 0.2, 0.95, 0.2, 0.6, 0.1, 0, 10, 1, TEX.BLOOD);
-        this.acid.add(x, this.world.heightAt(x, z) + 0.04, z, 4.6);
+        this.acid.add(x, this.world.floorAt(x, z, y) + 0.04, z, 4.6);
         break;
     }
   }
@@ -705,7 +715,7 @@ export class Effects {
       A.emit(x + this.rnd(-1, 1), y + this.rnd(0, 1), z + this.rnd(-1, 1), this.rnd(-1, 1) * s, this.rnd(0.5, 2) * s * 0.6, this.rnd(-1, 1) * s, this.rnd(2, 4), this.rnd(1, 2), this.rnd(4, 7), green ? 0.25 : 0.12, green ? 0.3 : 0.11, green ? 0.12 : 0.1, 0.75, 0.2, 0.2, 0.2, 0, -0.4, 1.2, TEX.SMOKE, 0.3);
     }
     for (let i = 0; i < 20; i++) D.emit(x, y, z, this.rnd(-12, 12), this.rnd(2, 12), this.rnd(-12, 12), this.rnd(0.5, 1.3), 0.08, 0.04, 1, 0.7, 0.3, 1, 1, 0.3, 0.05, 0, 12, 0.3, TEX.SPARK);
-    const gy = this.world.heightAt(x, z);
+    const gy = this.world.floorAt(x, z, y);
     if (y - gy < 3) (green ? this.acid : this.scorch).add(x, gy + 0.05, z, radius * 1.1);
     this.shake = Math.max(this.shake, green ? 0.5 : 1);
   }
@@ -723,7 +733,7 @@ export class Effects {
       this.drop(x, y, z, this.rnd(-1, 1) * s, this.rnd(0, 1.2) * s, this.rnd(-1, 1) * s, this.rnd(0.45, 0.95), this.rnd(0.08, 0.2), green, 12, 1);
     }
     for (let i = 0; i < 2; i++) this.mist(x, y, z, this.rnd(-0.5, 0.5), this.rnd(0.3, 0.9), this.rnd(-0.5, 0.5), 0.45, 0.3, 0.9, green);
-    const gy = this.world.heightAt(x, z);
+    const gy = this.world.floorAt(x, z, y);
     (green ? this.acid : this.blood).add(x, gy + 0.03, z, 1.6);
   }
 
@@ -743,7 +753,7 @@ export class Effects {
     for (let i = 0; i < 5; i++) {
       this.mist(x + this.rnd(-r, r), y + this.rnd(0.3, 0.85) * h, z + this.rnd(-r, r), dx * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.2, 1), dz * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.7, 1.2), 0.6 * s, 2 * s, green);
     }
-    const gy = this.world.heightAt(x, z);
+    const gy = this.world.floorAt(x, z, y);
     if (y - gy < 3) (green ? this.acid : this.blood).add(x + dx * 0.4, gy + 0.03, z + dz * 0.4, this.rnd(1.8, 2.6) * s);
     // the pieces: thrown along the blow, scattered sideways and up
     const toss = (pool, at, sx, sy, sz, cr, cg, cb, lift = 1) => {
@@ -784,7 +794,7 @@ export class Effects {
       this.drop(x, y, z, (dx * 0.5 + this.rnd(-0.7, 0.7)) * sp, this.rnd(-0.2, 1) * sp, (dz * 0.5 + this.rnd(-0.7, 0.7)) * sp, this.rnd(0.4, 0.85), this.rnd(0.08, 0.18), green, 12, 1);
     }
     this.mist(x, y, z, dx * 0.6 + this.rnd(-0.3, 0.3), this.rnd(0.2, 0.6), dz * 0.6 + this.rnd(-0.3, 0.3), 0.5, 0.25, 0.8, green);
-    const gy = this.world.heightAt(x, z);
+    const gy = this.world.floorAt(x, z, y);
     if (y - gy < 2.5) (green ? this.acid : this.blood).add(x + dx * 0.2, gy + 0.03, z + dz * 0.2, this.rnd(1, 1.5));
     const sp = this.rnd(2.5, 5);
     this.gibLimbs.add(x, y - len * 0.4, z, dx * sp + this.rnd(-1.6, 1.6), this.rnd(2.2, 4.5), dz * sp + this.rnd(-1.6, 1.6), len, thick, thick, r, g, b, green);
@@ -834,7 +844,7 @@ export class Effects {
     if (dist < FULL - 0.3) {
       for (let i = 0; i < 2; i++) D.emit(ex - dx * 0.15, ey - dy * 0.15, ez - dz * 0.15, this.rnd(-2.5, 2.5), this.rnd(0.5, 3), this.rnd(-2.5, 2.5), this.rnd(0.25, 0.5), this.rnd(0.5, 0.9), 0.15, 1, 0.6, 0.2, 0.8, 0.8, 0.14, 0.02, 0, -2, 1.5, TEX.FIRE, this.rnd(-3, 3));
       if (Math.random() < 0.06) {
-        const gy = this.world.heightAt(ex, ez);
+        const gy = this.world.floorAt(ex, ez, ey);
         if (ey - gy < 0.5) this.scorch.add(ex, gy + 0.05, ez, this.rnd(0.9, 1.6));
       }
     }
@@ -937,7 +947,7 @@ export class Effects {
           const d = Math.sqrt(Math.random()) * em.radius;
           const px = em.x + Math.cos(a) * d;
           const pz = em.z + Math.sin(a) * d;
-          const py = this.world.heightAt(px, pz);
+          const py = this.world.floorAt(px, pz, em.y + 0.5);
           if (r < 0.75) D.emit(px, py + 0.1, pz, 0, this.rnd(1.5, 3), 0, this.rnd(0.35, 0.7), this.rnd(0.7, 1.3), 0.2, 0.95, 0.36, 0.08, 0.75, 0.7, 0.1, 0.02, 0, -1.5, 1.2, TEX.FIRE, 2);
           else A.emit(px, py + 1.2, pz, 0, 1.6, 0, 2.5, 0.8, 3, 0.08, 0.07, 0.06, 0.55, 0.12, 0.12, 0.12, 0, -0.2, 0.4, TEX.SMOKE, 0.3);
           break;

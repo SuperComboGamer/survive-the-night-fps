@@ -35,7 +35,7 @@ export const PLACES = {
   [ZONE.CAMPGROUND]: { site: 'lakeside', flat: 30, blend: 24, clear: 30, dirt: 0.35 },
   [ZONE.RELAY]: { site: 'hill', flat: 22, blend: 30, clear: 26, raise: 9, dirt: 0.35, gates: 'f' },
   [ZONE.RANGER]: { site: 'hill', flat: 24, blend: 30, clear: 28, raise: 7 },
-  [ZONE.MINE]: { site: 'hill', flat: 30, blend: 28, clear: 34, raise: 4, dirt: 0.9, gates: 'flr' },
+  [ZONE.MINE]: { site: 'hill', flat: 30, blend: 28, clear: 34, raise: 4, dirt: 0.9, gates: 'flr', core: true },
   [ZONE.BARN]: { flat: 46, blend: 30, clear: 52, dirt: 0.45, gates: 'fbr' },
   [ZONE.SAWMILL]: { flat: 36, blend: 26, clear: 40, dirt: 0.85 },
   [ZONE.MILITARY]: { flat: 30, blend: 24, clear: 32, dirt: 0.5, gates: 'fb' },

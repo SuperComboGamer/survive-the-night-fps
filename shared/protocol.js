@@ -1,16 +1,17 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 22;
 
 // client -> server
 export const C2S = {
-  JOIN: 1, // u8 version, str name
+  JOIN: 1, // u8 version, str name, str player id (the browser's own, see client/net/identity.js; '' or absent: nothing is kept for them)
   INPUT: 2, // u16 renderTick, u8 renderFrac, u8 head, u16 seq, [u8 hash], cmds... (see writeInput)
   ACTION: 3, // u8 action, ...
   CHAT: 4, // str
   VOICE: 5, // u16 targetId, str payload(json)
   PING: 6, // f64 clientTime (answered at once with S2C.PONG; the game client pings inside its INPUT packets instead)
+  BOARD: 7, // (nothing): asks for the leaderboard, answered with S2C.BOARD
 };
 
 // server -> client
@@ -24,6 +25,7 @@ export const S2C = {
   REJECT: 7,
   PONG: 8,
   WORLD_RESET: 9, // u32 seed: a new playthrough on a new map - rebuild the world from this seed
+  BOARD: 10, // the leaderboard, as asked for (see writeBoard)
 };
 
 // S2C.SNAPSHOT flags: a section is only on the wire when its bit is set. WebSocket delivery is reliable and ordered,
@@ -39,7 +41,7 @@ export const SELF = { SIM: 0x1f, STATUS: 0x20, SYNC: 0x80 };
 // discrete, non-predicted actions
 export const ACT = {
   INTERACT: 1, // u16 entityId (0 = look target resolved server-side)
-  DROP_SLOT: 2, // u8 inventory index, u8 count (0 = all)
+  DROP_SLOT: 2, // u8 inventory index, u16 count (0 = all)
   DROP_WEAPON: 3, // u8 weapon slot
   CRAFT: 4, // u8 recipe id
   USE_ITEM: 5, // u8 inventory index
@@ -56,6 +58,7 @@ export const ACT = {
   HOLD_BEGIN: 16, // u16 target (container / downed teammate / CAR_ID): hold-to-interact starts
   HOLD_END: 17, // released [E]
   PING: 18, // u8 kind, i16 x, i16 y, i16 z (1/64 m)
+  SPLIT_INV: 19, // u8 inventory index, u16 count: that many leave the stack for a free slot of their own
 };
 
 // special interaction targets that are not entities
@@ -373,6 +376,44 @@ export function readInput(r) {
     c = d;
   }
   return { cmds, hash, ping };
+}
+
+// ---------------------------------------------------------------- leaderboard
+// S2C.BOARD: varu players on record, varu row count, then per row str name, u8 flags (BOARDF), one varu per
+// BOARD_STATS entry and, on the recipient's own row (BOARDF.ME), their place in each of those stats (varu; 0: none,
+// nothing scored there yet). The rows are the best BOARD_TOP by each stat, everybody in the game and the recipient,
+// in no order: the client sorts them. A row names nobody but by the name they play under - the id a player joins
+// with is what proves who they are, and no message carries it back out.
+export const BOARD_STATS = ['kills', 'nights', 'wins', 'revives'];
+export const BOARDF = { ME: 1, HERE: 2 }; // the recipient's own row; in this game right now
+export const BOARD_TOP = 20;
+
+// rows: [{ name, flags, kills, nights, wins, revives, ranks: [n per stat] (the ME row only) }]
+export function writeBoard(w, total, rows) {
+  w.varu(total);
+  w.varu(rows.length);
+  for (const row of rows) {
+    w.str(row.name);
+    w.u8(row.flags);
+    for (const k of BOARD_STATS) w.varu(row[k]);
+    if (row.flags & BOARDF.ME) for (const rank of row.ranks) w.varu(rank);
+  }
+}
+
+// Reads what writeBoard wrote: { total, rows: [{ name, me, here, kills, nights, wins, revives, ranks | null }] }.
+export function readBoard(r) {
+  const total = r.varu();
+  const rows = [];
+  for (let n = r.varu(); n > 0; n--) {
+    const row = { name: r.str(), me: false, here: false, ranks: null };
+    const flags = r.u8();
+    row.me = !!(flags & BOARDF.ME);
+    row.here = !!(flags & BOARDF.HERE);
+    for (const k of BOARD_STATS) row[k] = r.varu();
+    if (row.me) row.ranks = BOARD_STATS.map(() => r.varu());
+    rows.push(row);
+  }
+  return { total, rows };
 }
 
 // ---------------------------------------------------------------- entity field layouts

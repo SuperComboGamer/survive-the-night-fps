@@ -30,13 +30,16 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (pins the map: without it every
 playthrough is a new random valley), `TRUST_PROXY` (`1` / `0`: whether to take a player's address from the
 `X-Forwarded-For` / `X-Real-IP` header; unset, only a proxy on a private network is believed - see
-`clientAddress` in `server/index.js`. Joins are rate-limited per address).
+`clientAddress` in `server/index.js`. Joins are rate-limited per address), `STATS_FILE` (where the leaderboard is
+kept: `data/stats.json` by default, or `stats.json` on the Railway volume when the service has one; empty keeps
+nothing past the process).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
-dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`,
-`/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
+dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z> [y]`
+(with a height: onto what is under feet at it, down a drift of the mine), `/mine` (to the adit of Blackrock Mine;
+`/mine far` to the far portal, `/mine in` down to the junction), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose)).
 
@@ -44,11 +47,15 @@ off every zombie within 30 m that has legs to lose)).
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`) and the mine under the valley (`test-mine`) and runs `sim-smoke` |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
+| `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
+| `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
+| `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
+| `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
 | `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least twice), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -92,6 +99,9 @@ https://www.survivethenightgame.com.
 - `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
   `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Game state lives in
   memory, so never scale it past one replica, and expect every deploy to start a fresh world.
+- The leaderboard (`server/stats.js`) is a JSON file, and a deploy starts from a fresh disk: attach a
+  volume to the service and the file goes there by itself (`RAILWAY_VOLUME_MOUNT_PATH`). Without one
+  every deploy empties the board.
 - Node 24 is pinned with `engines.node` in `package.json`. uWebSockets.js only ships prebuilt binaries
   for Node 20/22/23/24 on glibc Linux, so don't move to an Alpine/musl image.
 - One process serves the client, the WebSocket (`/ws`) and `/status` on `PORT` (set to `3000` on the
@@ -123,11 +133,13 @@ https://www.survivethenightgame.com.
 | E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
+| L | Leaderboard: every player's kills, nights survived, wins and revives over all their games, and yours. Click a column to sort by it |
 | M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
-| Tab | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20) |
+| I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop |
+| Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
 | Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
 | V | Push-to-talk proximity voice (same reach as chat) |
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
@@ -154,7 +166,8 @@ them off.
   The day/night clock stops during the final stand, so the team chooses when to start it - fortify the
   car first. The stand is sized to the survivors still alive, the way a night's horde is: more of you,
   more of them.
-- **Day: scavenge & rebuild.** A clock shows the time until nightfall. Every place has searchable
+- **Day: scavenge & rebuild.** A clock shows the time until nightfall. A day is short - 2:45, the first
+  3:15 - sized for a dash to one place or two, a look round each, and the horn. Every place has searchable
   containers (lockers, ammo crates, toolboxes, cabinets, fridges, shelves, duffel bags, car trunks,
   log piles; hold [E]) plus loot on the floor, and ~90 roadside and woodland sites (wrecks, abandoned
   camps, sheds, hunter stands, military stashes, burnt homesteads, roadblocks, graves) sit along the
@@ -162,7 +175,9 @@ them off.
   sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
   automatically when you walk over them - except a stack you dropped yourself (right-click it in the
   backpack), which stays down until you have walked a few steps away, so you can clear a slot or leave
-  it for a teammate. A full backpack tells you what it left lying.
+  it for a teammate. A full backpack tells you what it left lying. **Ammunition** is carried in the
+  backpack like everything else, a stack per calibre (150 rounds of 9mm to a stack, 240 of 7.62, ...), and
+  the guns reload out of it: to share it, Shift+click the stack, pick how many, and drop them.
   Searched containers partly restock at dawn. Supply planes
   drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
   found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
@@ -184,7 +199,7 @@ them off.
   and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
   and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
   and bat swarms). Night 2 has a boss of its own: a Tank. You hear its footfalls
-  thump long before you see it; it charges, smacks survivors off their feet, breaks a wood barricade with one
+  thump long before you see it, and inside 30 m each one shakes the camera (a charge is a rumble); it charges, smacks survivors off their feet, breaks a wood barricade with one
   blow and ploughs straight through whatever its charge breaks. Every boss comes in with the second wave, with
   most of the night still ahead: bring it down before sunrise and it drops what it carries (ammunition, medkits,
   gun parts). One that is still standing at dawn burns in the sun with the rest of the horde and leaves nothing.
@@ -262,7 +277,7 @@ them off.
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
   places) and a field map [M] keep the team together. A nameplate carries its owner's health bar while they
   are hurt, within 12 m or in your crosshair (amber below 60%, red below 30%), a downed teammate's turns into
-  a red DOWN plate, and the survivors list in the inventory [Tab] shows everyone's health and who is down, dead
+  a red DOWN plate, and the player list [Tab] shows everyone's health and who is down, dead
   or turned. Friendly fire is off, headshots deal bonus damage, health slowly regenerates.
 - **Joining late:** the server runs one drop-in game. Join a run in progress and you arrive beside the team
   (at the car if they are still by it, or if nobody is left alive), with the starting kit plus a little more
@@ -288,14 +303,23 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 - **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
   (your car, a rest area) on it near the middle and the roadside places strung along it.
 - **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
-- **Sixteen places** to a map. Five are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel,
-  Blackwater Dock (always on the lake shore, pier out over the water) and Hollow Creek (the village: diner,
-  general store, police station, garage, houses). The other eleven are drawn from sixteen: Pinewood Motel,
-  Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside Campground (near the lake), the
-  Relay Station, Ranger Lookout and Blackrock Mine (on high ground), Miller Farm, Harlan Sawmill, Granite
-  Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage (a scrapyard),
-  Camp Tamarack (a summer camp) and Elk Ridge Lodge. Each is sited by its own rule and kept apart from the
-  rest, the highway and the water.
+- **Sixteen places** to a map. Six are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel,
+  Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
+  general store, police station, garage, houses) and Blackrock Mine (on high ground). The other ten are drawn
+  from fifteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
+  Campground (near the lake), the Relay Station and Ranger Lookout (on high ground), Miller Farm, Harlan
+  Sawmill, Granite Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage
+  (a scrapyard), Camp Tamarack (a summer camp) and Elk Ridge Lodge. Each is sited by its own rule and kept
+  apart from the rest, the highway and the water.
+- **The mine goes under the valley.** The adit at the back of Blackrock Mine's yard stands open: a decline
+  runs down from it to a drift 100-200 m long that comes up again at a second portal on the edge of another
+  place (a different one on every map; the field map shows the workings dashed). Half way there is a junction
+  with a few dead-end galleries off it, each ending in a room with crates nobody has come back for - and one
+  of the car's supplies may be hidden down there. The deepest room holds the map's one strongbox: an M4A1, an
+  AK-47 or a flamethrower, loaded, with two magazines more and two pipe bombs. It is there once; it does not
+  refill at sunrise. It is pitch dark at noon, so bring a light: the dead live
+  down there, the Shade among them from the second day, and the sun that burns the horde at dawn does not
+  reach them. The horde follows a survivor in by either mouth (`shared/mine.js`, `node scripts/test-mine.js`).
 - **Roads** are not drawn by hand either: county roads are a spanning tree grown out from Route 9 (every
   place hangs off the nearest thing that already has a road, and turns its front to it), then the worst
   detours are closed with a couple more roads and with forest trails. Each link is routed over the terrain
@@ -345,9 +369,14 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
   a client gets in a tick (player list, inventory, snapshot) leaves as one packet, and the ping rides
   inside the command packets and snapshots. `npm run bench:net` measures all of it.
 - Hitscan and melee are lag compensated: each client reports the tick it was rendering, and the
-  server rewinds zombie/player hitboxes (16-tick history) to it before tracing - to the render time
-  that came with that very command, however long it sat in the queue. Shotgun spread is seeded
+  server rewinds zombie/player hitboxes (32-tick history) to it before tracing - to the render time
+  that came with that very command, however long it sat in the queue, and as far back as 1 s
+  (`MAX_REWIND`: a shot asks for its ping plus about 0.2 s). Shotgun spread is seeded
   deterministically so the shooter's predicted tracers match the server's pellets.
+- The shooter sees what a shot strikes at once: the client judges its own pellets against the same
+  hitboxes (`shared/hitbox.js`) where it has the zombies drawn and shows the blood or the puff off the
+  wall as the gun fires, then drops the server's word of the same impact when it arrives. The damage
+  and the hit marker stay the server's. `scripts/test-netsync.js` checks the rewind.
 - Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
   when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a
   late packet instead of freezing; their gaits pin planted feet to the ground in world space.

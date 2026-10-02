@@ -15,7 +15,8 @@ export const DEFAULT_CONTROLS = [
   ['E', 'Interact · pick up'],
   ['F', 'Flashlight'],
   ['1 – 5', 'Weapon slots'],
-  ['Tab', 'Inventory & crafting'],
+  ['I', 'Inventory & crafting'],
+  ['Tab', 'Player list (hold)'],
   ['Y / Enter', 'Chat'],
   ['V', 'Push to talk'],
   ['Esc', 'Menu'],
@@ -95,6 +96,8 @@ export class Splash {
     let saved = lsGet('stn.name', '');
     if (!saved) saved = 'Survivor' + String(100 + ((Math.random() * 900) | 0));
     this.name.value = saved.slice(0, 16);
+    // kept as it is typed, not only on Join: a name outlives a tab closed, or a full server, before the first run
+    this.name.addEventListener('input', () => lsSet('stn.name', this._typedName()));
     this.joinBtn = el('button', 'btn btn-blood sp-joinbtn', form);
     this.joinBtn.type = 'submit';
     this.joinTxt = el('span', '', this.joinBtn, 'Join');
@@ -106,13 +109,14 @@ export class Splash {
     // the player's own record (records.js): not there at all until a first run is on it
     this.record = el('div', 'sp-record', main);
 
-    const ctl = el('div', 'sp-controls paper', root);
-    el('h3', 'panel-h', ctl, 'Field notes · controls');
-    this.ctlList = el('div', 'ctl-grid', ctl);
-    renderControls(this.ctlList, DEFAULT_CONTROLS);
-
     const foot = el('div', 'sp-foot', root);
-    const sb = el('button', 'btn btn-ghost sp-settings', foot);
+    const btns = el('div', 'sp-btns', foot);
+    const cb = el('button', 'btn btn-ghost', btns);
+    cb.type = 'button';
+    svgEl('i', 'btn-ico', cb, glyph('keyboard'));
+    el('span', '', cb, 'Controls');
+    cb.addEventListener('click', () => this.ui.controlsPanel.show());
+    const sb = el('button', 'btn btn-ghost sp-settings', btns);
     sb.type = 'button';
     svgEl('i', 'btn-ico', sb, glyph('gear'));
     el('span', '', sb, 'Settings');
@@ -123,9 +127,13 @@ export class Splash {
     this.joining = false;
   }
 
+  _typedName() {
+    return this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
+  }
+
   _join() {
     if (this.joining || this.full) return;
-    let name = this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
+    let name = this._typedName();
     if (!name) {
       name = 'Survivor' + String(100 + ((Math.random() * 900) | 0));
       this.name.value = name;
@@ -236,6 +244,10 @@ export class Pause {
     el('span', 'pr-t', resume, 'Click to resume');
     el('p', 'pause-note', main, 'The night does not wait. The world keeps moving while you are away.');
     const btns = el('div', 'pause-btns', main);
+    const cb = el('button', 'btn btn-ghost', btns);
+    cb.type = 'button';
+    svgEl('i', 'btn-ico', cb, glyph('keyboard'));
+    el('span', '', cb, 'Controls');
     const sb = el('button', 'btn btn-ghost', btns);
     sb.type = 'button';
     svgEl('i', 'btn-ico', sb, glyph('gear'));
@@ -244,11 +256,11 @@ export class Pause {
     lb.type = 'button';
     svgEl('i', 'btn-ico', lb, glyph('exit'));
     el('span', '', lb, 'Leave game');
-    const ctl = el('div', 'pause-controls paper', root);
-    el('h3', 'panel-h', ctl, 'Controls');
-    this.ctlList = el('div', 'ctl-grid', ctl);
-    renderControls(this.ctlList, DEFAULT_CONTROLS);
 
+    cb.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.ui.controlsPanel.show();
+    });
     sb.addEventListener('click', (e) => {
       e.stopPropagation();
       this.ui.settingsPanel.show();
@@ -259,7 +271,7 @@ export class Pause {
     });
     // clicking anywhere that is not a control resumes (keeps the user gesture for pointer lock)
     root.addEventListener('click', (e) => {
-      if (e.target.closest('.pause-btns, .pause-controls')) return;
+      if (e.target.closest('.pause-btns')) return;
       this.ui.sound('ui_click');
       this.ui.cb.onResume();
     });
@@ -274,9 +286,62 @@ export class Pause {
       this.root.classList.remove('in');
       void this.root.offsetWidth;
       this.root.classList.add('in');
-    } else if (this.ui.settingsPanel.visible && this.ui.splash.root.hidden) {
-      this.ui.settingsPanel.hide();
+    } else if (this.ui.splash.root.hidden) {
+      if (this.ui.settingsPanel.visible) this.ui.settingsPanel.hide();
+      if (this.ui.controlsPanel.visible) this.ui.controlsPanel.hide();
     }
+  }
+}
+
+// ---------------------------------------------------------------- controls reference
+// The key list, opened from the Controls button on the splash and the pause menu. It borrows the settings
+// panel's card (settings.js) and closes the same ways: the cross, Done, Esc, or a click outside the card.
+export class ControlsPanel {
+  constructor(ui, parent) {
+    this.ui = ui;
+    this.root = el('div', 'stn-settings stn-controls', parent);
+    this.root.setAttribute('role', 'dialog');
+    this.root.hidden = true;
+    const card = el('div', 'set-card paper', this.root);
+    const head = el('div', 'set-head', card);
+    el('h2', 'set-title', head, 'Controls');
+    el('span', 'set-sub', head, 'field notes');
+    const close = svgEl('button', 'set-close btn-icon', head, glyph('xmark'));
+    close.title = 'Close';
+    close.addEventListener('click', () => this.hide());
+    this.list = el('div', 'ctl-grid', el('div', 'set-body', card));
+    renderControls(this.list, DEFAULT_CONTROLS);
+    const done = el('button', 'btn btn-blood', el('div', 'set-foot', card), 'Done');
+    done.addEventListener('click', () => this.hide());
+
+    this.root.addEventListener('pointerdown', (e) => {
+      if (e.target === this.root) this.hide();
+    });
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (this.root.hidden || e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.hide();
+      },
+      true
+    );
+  }
+
+  show() {
+    this.root.hidden = false;
+    this.root.classList.remove('in');
+    void this.root.offsetWidth;
+    this.root.classList.add('in');
+  }
+
+  hide() {
+    this.root.hidden = true;
+  }
+
+  get visible() {
+    return !this.root.hidden;
   }
 }
 

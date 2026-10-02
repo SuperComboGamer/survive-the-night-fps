@@ -5,11 +5,13 @@ import { UI } from './ui/ui.js';
 import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
+import { playerId } from './net/identity.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
 
 let game = null;
 let joining = false;
+playerId(); // who this browser is to the leaderboard: made up and stored on the first launch, sent with every join
 const audio = new AudioEngine();
 
 // The browser only lets audio start on a user gesture. The first key or pointer press on the splash is one (typing a
@@ -71,6 +73,7 @@ const callbacks = {
   onCraftRepeat: (id, n) => game?.uiCallbacks().onCraftRepeat(id, n),
   onUseItem: (i) => game?.uiCallbacks().onUseItem(i),
   onDropItem: (i, n) => game?.uiCallbacks().onDropItem(i, n),
+  onSplitItem: (i, n) => game?.uiCallbacks().onSplitItem(i, n),
   onSwapItems: (a, b) => game?.uiCallbacks().onSwapItems(a, b),
   onEquipArmor: (i) => game?.uiCallbacks().onEquipArmor(i),
   onDropWeapon: (s) => game?.uiCallbacks().onDropWeapon(s),
@@ -111,9 +114,11 @@ ui.setControls([
   ['Melee', 'Hit trees for wood, wrecks for scrap'],
   ['Z / MMB', 'Ping (go · danger · loot)'],
   ['M', 'Field map'],
+  ['L', 'Leaderboard'],
   ['F', 'Flashlight'],
   ['H', 'Quick heal'],
-  ['Tab', 'Inventory & crafting'],
+  ['I', 'Inventory & crafting'],
+  ['Tab', 'Player list (hold)'],
   ['Y / Enter · V', 'Chat · push-to-talk'],
   ['X', 'Demolish (build mode)'],
 ]);
@@ -130,6 +135,7 @@ function applyAudioSettings(s) {
   // "Music & ambience": the slider's default leaves the ambience mix as it was tuned; below that it fades out with the music
   const ambience = Math.min(1, s.musicVolume / DEFAULT_SETTINGS.musicVolume);
   audio.setVolumes({ master: s.masterVolume, music: s.musicVolume, ambience, sfx: s.sfxVolume, voice: s.voiceVolume });
+  audio.setVoiceDucking(s.voiceDuck !== false);
 }
 
 function applySettings(s) {
@@ -141,7 +147,6 @@ function applySettings(s) {
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;
   game.input.rawInput = s.rawMouse !== false;
-  game.voice.setVolume(s.voiceVolume ?? 1);
   game.foliage?.setQuality(renderer.q);
   game.weatherFx?.setQuality(renderer.quality);
   game.lights.setShadows(renderer.q.flashShadows);

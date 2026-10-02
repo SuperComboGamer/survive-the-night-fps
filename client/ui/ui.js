@@ -1,6 +1,6 @@
 // Survive The Night - DOM user interface.
 // Plain DOM + CSS (see ui.css). The game (client/main.js) owns gameplay input, pointer lock,
-// Tab / Enter handling; this module only handles events on its own DOM (menus, inventory,
+// I / Tab / Enter handling; this module only handles events on its own DOM (menus, inventory,
 // chat input, settings).
 import { el } from './dom.js';
 import { Hud } from './hud.js';
@@ -8,9 +8,11 @@ import { Killfeed, Pickups, Notifier } from './feed.js';
 import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
-import { Splash, Pause, Death, EndScreen, Banner, VoiceList, renderControls, DEFAULT_CONTROLS } from './menus.js';
+import { Splash, Pause, Death, EndScreen, Banner, VoiceList, ControlsPanel, renderControls, DEFAULT_CONTROLS } from './menus.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
+import { Leaderboard } from './leaderboard.js';
+import { Roster } from './roster.js';
 import { Summary } from './hud2.js';
 
 const NOOP = () => {};
@@ -20,6 +22,7 @@ const CALLBACKS = [
   'onCraftRepeat',
   'onUseItem',
   'onDropItem',
+  'onSplitItem',
   'onSwapItems',
   'onEquipArmor',
   'onDropWeapon',
@@ -81,8 +84,11 @@ export class UI {
     this.death = new Death(this, ovL);
     this.end = new EndScreen(this, ovL);
     this.pause = new Pause(this, ovL);
+    this.board = new Leaderboard(this, ovL); // (over the end screen: between two runs is when the board gets looked at)
+    this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
+    this.controlsPanel = new ControlsPanel(this, modalL);
 
     this._bindSounds();
     this._voice = { enabled: false, transmitting: false };
@@ -142,6 +148,7 @@ export class UI {
   hideSplash() {
     this.splash.hide();
     if (this.settingsPanel.visible) this.settingsPanel.hide();
+    if (this.controlsPanel.visible) this.controlsPanel.hide();
     this._menuState();
   }
 
@@ -157,11 +164,9 @@ export class UI {
     return { ...this.settings };
   }
 
-  // extra: override the controls reference shown on the splash + pause screens. list = [[keys, action], ...]
+  // extra: override the controls reference behind the Controls button (splash + pause). list = [[keys, action], ...]
   setControls(list) {
-    const l = Array.isArray(list) && list.length ? list : DEFAULT_CONTROLS;
-    renderControls(this.splash.ctlList, l);
-    renderControls(this.pause.ctlList, l);
+    renderControls(this.controlsPanel.list, Array.isArray(list) && list.length ? list : DEFAULT_CONTROLS);
   }
 
   // ------------------------------------------------------------ per-frame
@@ -193,6 +198,19 @@ export class UI {
 
   get mapOpen() {
     return this.map.open;
+  }
+
+  setBoardOpen(open) {
+    this.board.setOpen(open);
+  }
+
+  get boardOpen() {
+    return this.board.open;
+  }
+
+  // the leaderboard as the server last sent it (shared/protocol.js readBoard); null: not heard from yet
+  setBoard(data) {
+    this.board.set(data);
   }
 
   killfeed(e) {
@@ -255,8 +273,17 @@ export class UI {
     this.inventory.setCraftContext(ctx);
   }
 
+  // the player list [Tab]
   setPlayers(list) {
-    this.inventory.setPlayers(list);
+    this.roster.set(list);
+  }
+
+  setRosterOpen(open) {
+    this.roster.setOpen(open);
+  }
+
+  get rosterOpen() {
+    return this.roster.open;
   }
 
   // extra: camp status for the inventory screen. info = { fuel?: seconds, max?: seconds, parts?: bitmask }

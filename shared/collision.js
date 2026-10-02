@@ -330,8 +330,9 @@ const _q2 = [];
 const _push = { x: 0, z: 0, nx: 0, nz: 0 };
 
 // Highest walkable surface under (x,z) that is at or below y + STEP_HEIGHT
+// (the lowest of them is the terrain, or for feet down in the mine the floor of the drift: world.floorAt)
 export function groundAt(world, x, z, y, r = 0.2, human = true) {
-  let h = world.heightAt(x, z);
+  let h = world.floorAt ? world.floorAt(x, z, y) : world.heightAt(x, z);
   const grids = world.colliderGrids;
   for (let g = 0; g < grids.length; g++) {
     const list = grids[g].query(x, z, r, _q);
@@ -376,8 +377,12 @@ export function resolveBody(world, pos, r, height, human = true) {
     }
     if (!moved) break;
   }
+  // down in the mine the rock around the drift is a wall too (mine.js)
+  if (world.mine && world.mine.confine(pos, r) && !hit) hit = ROCK;
   return hit;
 }
+// what resolveBody says it hit when the rock of the mine stopped a body: not a collider of any grid
+const ROCK = makeCyl(0, 0, 0, 0, 0);
 
 // Ray against static + structure colliders and terrain. Returns {t, col} with t = -1 if nothing within maxT.
 const _rq = [];

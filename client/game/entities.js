@@ -18,7 +18,8 @@ const MAX_GLINTS = 96;
 const ITEM_GLINT_RANGE = 13; // a loose item glints inside this distance (m), fading in over the last 3
 const ITEM_GLINT_GAIN = 0.9; // ...at up to this brightness by day, against 1 for a container or a car supply
 const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next one
-const HEAVY_STEP_SHAKE = 14; // a tank's footfall jolts the camera inside this distance (m)
+const HEAVY_STEP_SHAKE = 30; // a tank's footfall shakes the camera inside this distance (m), harder the nearer it lands
+const HEAVY_RUN_SHAKE = 42; // ... and from this far off, harder still, when it is charging
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
 function glintTexture() {
@@ -840,7 +841,12 @@ export class Entities {
               }
               if (stepped) {
                 g.audio.footstep(g.surfaceAt(e.rx, e.ry, e.rz), e.rx, e.ry, e.rz, stepVol, { heavy });
-                if (heavy && distC < HEAVY_STEP_SHAKE * HEAVY_STEP_SHAKE) g.camShake = Math.min(1, (g.camShake || 0) + 0.3 * (1 - Math.sqrt(distC) / HEAVY_STEP_SHAKE));
+                if (heavy) {
+                  // (Game.quake) a charge is its run: the footfalls come faster than one dies away, and the thumps run into a rumble
+                  const run = e.q[4] === ZANIM.RUN;
+                  const near = 1 - Math.sqrt(distC) / (run ? HEAVY_RUN_SHAKE : HEAVY_STEP_SHAKE);
+                  if (near > 0) g.quake = Math.min(1, g.quake + (run ? 1 : 0.7) * near);
+                }
               }
             }
           }

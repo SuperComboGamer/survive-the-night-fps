@@ -1,7 +1,7 @@
 // Field map overlay [M]: the baked survey map of the valley with live markers - you, your team, the
 // car, pings, where the car supplies are rumoured to be, and the places you have discovered.
 // A click sets your own waypoint (the game keeps it and shows it on the compass and in the world).
-import { ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS } from '../../shared/defs.js';
+import { ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
 import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
 import { el, svgEl } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -140,21 +140,21 @@ export class MapScreen {
   }
 
   // d: { self:{x,z,yaw}, mates:[{x,z,name,status}], car:{x,z}, pings:[{x,z,kind,name}], crates:[{x,z}],
-  //      benches:[{x,z}], discovered:Set, hints:[zone...], supplies:[n...], carried:{item:n},
-  //      waypoint:{x,z,zone} | null }
+  //      benches:[{x,z}], discovered:Set, hints:[zone...], found:bits (a hint whose supply has been taken),
+  //      supplies:[n...], carried:{item:n}, waypoint:{x,z,zone} | null }
   update(d) {
     if (!this.open || !this.world) return;
     const pct = (v) => ((v + MAP_HALF) / MAP_SIZE) * 100;
     const way = d.waypoint;
-    // place names: known once discovered
+    const taken = (i) => !!(d.found & (1 << i));
+    // place names: known once discovered. A rumour names its place too, and marks it while its supply is still there
     this.labelEls.forEach((l, i) => {
       const z = this.world.zones[i];
       const known = d.discovered.has(z.id);
-      const hinted = d.hints.includes(z.id);
-      const txt = known ? ZONE_NAMES[z.id] : hinted ? ZONE_NAMES[z.id] + '?' : '?';
+      const txt = known ? ZONE_NAMES[z.id] : d.hints.includes(z.id) ? ZONE_NAMES[z.id] + '?' : '?';
       if (l.textContent !== txt) l.textContent = txt;
       l.classList.toggle('unknown', !known);
-      l.classList.toggle('hinted', hinted);
+      l.classList.toggle('hinted', d.hints.some((zid, k) => zid === z.id && !taken(k)));
       l.classList.toggle('way', !!way && way.zone === z.id);
     });
     let n = 0;
@@ -170,10 +170,10 @@ export class MapScreen {
     };
     // your waypoint goes under everything else (on a place its own name is the label, in the waypoint's colour)
     if (way) put(way.x, way.z, 'way', glyph('flag'), way.zone >= 0 ? '' : 'waypoint');
-    // rumoured supply places
+    // rumoured supply places: gone from the map once the supply has been picked up there, nothing left to look for
     const seen = new Set();
     d.hints.forEach((zid, i) => {
-      if (zid === 255) return;
+      if (zid === 255 || taken(i)) return;
       const si = Math.min(i, 4);
       if (d.supplies[si] >= SUPPLY_NEED[si]) return;
       const z = this.world.zoneById[zid];
@@ -193,7 +193,7 @@ export class MapScreen {
     for (let i = n; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;
     this.coords.textContent = `${Math.round(d.self.x)} E · ${Math.round(-d.self.z)} N`;
     // supply checklist
-    const key = JSON.stringify([d.supplies, d.hints, d.carried]);
+    const key = JSON.stringify([d.supplies, d.hints, d.found, d.carried]);
     if (key !== this._supKey) {
       this._supKey = key;
       this.supList.textContent = '';
@@ -202,8 +202,8 @@ export class MapScreen {
         svgEl('i', 'ms-ico', r, itemIcon(item));
         const t = el('div', 'ms-t', r);
         el('b', '', t, ITEM_DEFS[item].name + (SUPPLY_NEED[i] > 1 ? ` ${d.supplies[i]}/${SUPPLY_NEED[i]}` : ''));
-        const zs = i < 4 ? [d.hints[i]] : d.hints.slice(4);
-        el('span', '', t, d.supplies[i] >= SUPPLY_NEED[i] ? 'installed' : zs.filter((z) => z !== 255).map((z) => ZONE_NAMES[z]).join(' · ') || 'unknown');
+        const rum = supplyRumours(i, d.hints, d.found);
+        el('span', '', t, d.supplies[i] >= SUPPLY_NEED[i] ? 'installed' : rum.zones.map((z) => ZONE_NAMES[z]).join(' · ') || (rum.found ? 'found' : 'unknown'));
       });
     }
   }

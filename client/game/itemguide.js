@@ -3,7 +3,7 @@
 // Both are derived once, at load, from the tables in shared/defs.js, so the text follows a change to a recipe or a
 // loot table by itself. Pure - no DOM, no three.js - so scripts/test-itemguide.js can hold it against the tables,
 // generated worlds and the server.
-import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, loadedAmmo } from '../../shared/defs.js';
 import { PLACES } from '../../shared/layout.js';
 
 const schemLocked = (schem, unlocked) => !!schem && !(unlocked & (1 << SCHEM_BIT[schem]));
@@ -65,8 +65,21 @@ function addSource(place, name, yields, visits = 1) {
 const plural = (name) => name + (name.endsWith('s') ? '' : name.endsWith('x') ? 'es' : 's');
 
 for (const g of GATHER) addSource(false, g.name, g.gives, g.hits);
-// a kind of container with a table of its own, named as its search prompt names it
-for (const d of Object.values(CONT_DEFS)) if (d.table) addSource(false, plural(d.name.toLowerCase()), perRoll(CONT_TABLES[d.table]), (d.rolls[0] + d.rolls[1]) / 2);
+// a kind of container with a table of its own, named as its search prompt names it: its rolls, what is always in
+// it besides (also), and the ammunition its weapons come with (loaded) - Game.searchCache
+for (const d of Object.values(CONT_DEFS)) {
+  if (!d.table) continue;
+  const rolls = (d.rolls[0] + d.rolls[1]) / 2;
+  const yields = new Map();
+  const add = (item, n) => yields.set(item, (yields.get(item) || 0) + n);
+  for (const [item, n] of perRoll(CONT_TABLES[d.table])) {
+    add(item, n * rolls);
+    const ammo = d.loaded ? loadedAmmo(item, d.loaded) : null;
+    if (ammo) add(ammo[0], ammo[1] * n * rolls);
+  }
+  for (const [item, n] of d.also || []) add(item, n);
+  addSource(false, d.guide || plural(d.name.toLowerCase()), yields);
+}
 // what the dead drop: one roll, at the odds of that kind of zombie
 const odds = (common) => {
   const kinds = Object.values(ZOMBIE_DEFS).filter((z) => !z.boss && !!z.common === common);

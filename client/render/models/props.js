@@ -17,6 +17,7 @@ const VARIANTS = {
   duffel_bag: 3, locker: 2, cabinet: 2, toolbox: 1, fridge: 2, log_pile: 2, jersey_barrier: 2, camper: 2, school_bus: 2,
   dump_truck: 2, boom_gate: 2, saw_table: 1, gravel_pile: 2, hunting_stand: 1, billboard: 1, motel_sign: 1, satellite_dish: 1,
   fence_chain: 2,
+  strongbox: 1,
 };
 
 export const PROP_TYPES = Object.keys(PROPS);
@@ -528,6 +529,25 @@ BUILD.military_crate = (b, r) => {
   }
   label(b, 'stencil', 'army', 0.8, 0.36, [0, 0.33, -0.385], 'z-');
   label(b, 'stencil', 'numbers', 0.6, 0.18, [0.2, 0.685, 0.1], 'y+');
+};
+
+// the strongbox down the mine: a steel chest bound in iron, the padlock hanging open on its hasp (front: -z)
+BUILD.strongbox = (b) => {
+  const steel = [0.12, 0.13, 0.15];
+  b.box('paint', 0.86, 0.4, 0.52, { p: [0, 0.2, 0], c: steel });
+  b.box('paint', 0.9, 0.17, 0.56, { p: [0, 0.495, 0], c: steel.map((c) => c * 1.12) }); // lid
+  b.box('dark', 0.905, 0.012, 0.565, { p: [0, 0.405, 0] }); // lid seam
+  b.box('rust', 0.92, 0.04, 0.58, { p: [0, 0.02, 0] }); // skid
+  for (const x of [-0.3, 0.3]) {
+    b.box('rust', 0.07, 0.6, 0.585, { p: [x, 0.3, 0] }); // iron bands, over the lid and down both faces
+    for (const y of [0.1, 0.3, 0.5]) b.cyl('steel', 0.012, 0.012, 0.6, 6, { p: [x, y, 0], r: [PI / 2, 0, 0] }); // rivets, through and through
+  }
+  for (const sx of [-1, 1]) b.torus('steel', 0.07, 0.012, 4, 8, PI, { p: [sx * 0.45, 0.3, 0], r: [0, PI / 2, PI] }); // drop handles
+  b.box('steel', 0.1, 0.16, 0.02, { p: [0, 0.4, -0.29] }); // hasp
+  b.group({ p: [0.02, 0.3, -0.31], r: [0, 0, 0.5] }, () => {
+    b.box('chrome', 0.09, 0.08, 0.035, { p: [0, -0.04, 0] }); // padlock, sprung
+    b.torus('steel', 0.03, 0.008, 4, 8, PI, { p: [0, 0.01, 0] });
+  });
 };
 
 BUILD.barrel = (b, r, v) => {

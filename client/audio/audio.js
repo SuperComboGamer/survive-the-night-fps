@@ -632,7 +632,20 @@ class LoopEmitter {
 // ------------------------------------------------------------------ proximity voice chat source
 // Two paths out of one stream: the voice placed in the world (heard out to TALK_RANGE), and the same voice squeezed
 // through a walkie-talkie speaker, which takes over as the speaker gets too far away to hear directly.
-const VOICE_REF = 2; // the placed voice is at full level this close (m)
+// A microphone arrives some 9 dB under the game's own sound, and still 8 dB apart from one player to the next after
+// the browser's own gain control, so each voice is levelled first (VOICE_LEVEL) and the bus then lifts all of them to where speech sits over the
+// music and the forest (VOICE_BUS). While somebody audible is talking, the rest of the mix steps back as well (DUCK_*).
+const VOICE_REF = 4; // the placed voice is at full level this close (m)...
+const VOICE_ROLLOFF = 0.5; // ...and thins out gently past it: -3.5 dB at 8 m, -7.5 dB at 15 m, -11 dB at TALK_CLEAR
+const voiceDistance = (d) => VOICE_REF / (VOICE_REF + VOICE_ROLLOFF * Math.max(0, d - VOICE_REF)); // (what the panner applies)
+const VOICE_LEVEL = Object.freeze({ threshold: -30, knee: 10, ratio: 4, attack: 0.004, release: 0.2 });
+const VOICE_BUS = 1.6; // voice bus gain at "Voice chat" 100%: a voice beside you lands near -12 LUFS, level with a pistol shot
+const DUCK_MUSIC = 0.4; // score while somebody talks (-8 dB)...
+const DUCK_WORLD = 0.56; // ...and effects + ambience (-5 dB)
+const DUCK_FLOOR = -38; // voice bus level (dBFS) where the ducking starts...
+const DUCK_FULL = -16; // ...and where it is all the way down: a faint voice at the edge of earshot moves the mix less
+const DUCK_HOLD = 0.7; // s the mix stays down after the last word (the gaps inside a sentence)
+const DUCK_MS = 50;
 let radioCurve = null; // handset overdrive
 function radioShape() {
   if (!radioCurve) {
@@ -666,17 +679,26 @@ class VoiceSource {
     this.src = c.createMediaStreamSource(stream);
     this.hp = c.createBiquadFilter();
     this.hp.type = 'highpass';
-    this.hp.frequency.value = 90;
+    this.hp.frequency.value = 110;
     this.lp = c.createBiquadFilter();
     this.lp.type = 'lowpass';
     this.lp.frequency.value = 16000;
+    // a little presence: consonants are what gunfire and the score bury first
+    this.pres = c.createBiquadFilter();
+    this.pres.type = 'peaking';
+    this.pres.frequency.value = 2800;
+    this.pres.Q.value = 0.9;
+    this.pres.gain.value = 3;
     this.gain = c.createGain();
+    // leveller: a quiet microphone and a loud one come out within a few dB of each other
+    this.level = c.createDynamicsCompressor();
+    for (const k in VOICE_LEVEL) this.level[k].value = VOICE_LEVEL[k];
     this.fade = c.createGain();
     this.panner = c.createPanner();
     this.panner.panningModel = 'HRTF';
     this.panner.distanceModel = 'inverse';
     this.panner.refDistance = VOICE_REF;
-    this.panner.rolloffFactor = 1;
+    this.panner.rolloffFactor = VOICE_ROLLOFF;
     this.panner.maxDistance = TALK_RANGE;
     this.rhp = c.createBiquadFilter();
     this.rhp.type = 'highpass';
@@ -693,11 +715,13 @@ class VoiceSource {
     this.rfade.gain.value = 0;
     this.src.connect(this.hp);
     this.hp.connect(this.lp);
-    this.lp.connect(this.gain);
-    this.gain.connect(this.fade);
+    this.lp.connect(this.pres);
+    this.pres.connect(this.gain);
+    this.gain.connect(this.level);
+    this.level.connect(this.fade);
     this.fade.connect(this.panner);
     this.panner.connect(e._voiceIn);
-    this.gain.connect(this.rhp);
+    this.level.connect(this.rhp);
     this.rhp.connect(this.rlp);
     this.rlp.connect(this.rdrive);
     this.rdrive.connect(this.rfade);
@@ -751,7 +775,7 @@ class VoiceSource {
       this.fade.gain.setTargetAtTime(f, now, 0.08);
     }
     // the radio makes up whatever distance takes off the voice itself
-    const r = this.radio ? 1 - f * Math.min(1, VOICE_REF / Math.max(d, 1e-3)) : 0;
+    const r = this.radio ? 1 - f * voiceDistance(d) : 0;
     if (Math.abs(r - this._rfade) > 0.01 || (r === 0) !== (this._rfade === 0)) {
       this._rfade = r;
       this.rfade.gain.setTargetAtTime(r, now, 0.08);
@@ -769,7 +793,7 @@ class VoiceSource {
   disconnect() {
     if (this.dead) return;
     this.dead = true;
-    for (const n of [this.src, this.hp, this.lp, this.gain, this.fade, this.panner, this.rhp, this.rlp, this.rdrive, this.rfade]) {
+    for (const n of [this.src, this.hp, this.lp, this.pres, this.gain, this.level, this.fade, this.panner, this.rhp, this.rlp, this.rdrive, this.rfade]) {
       try {
         n.disconnect();
       } catch {}
@@ -814,6 +838,7 @@ export class AudioEngine {
       cycle: NaN, wind: NaN, gust: NaN, open: 0, indoor: 0,
     };
     this._vol = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
+    this._duck = { on: true, k: 0, set: 0, at: 0, timer: null, buf: null };
     this._rateMul = 1;
     this._hrtfCount = 0;
     this._hbNext = 0;
@@ -934,7 +959,9 @@ export class AudioEngine {
     this._worldLP.frequency.value = 20000;
     this._worldLP.Q.value = 0.6;
     this._worldIn.connect(this._worldLP);
-    this._worldLP.connect(this._pre);
+    this._worldDuck = g(1); // (voice chat ducking)
+    this._worldLP.connect(this._worldDuck);
+    this._worldDuck.connect(this._pre);
 
     this._sfxIn = g(1); // user sfx volume
     this._sfxLP = c.createBiquadFilter(); // low-health muffle
@@ -948,9 +975,15 @@ export class AudioEngine {
     this._uiIn = g(1);
     this._uiIn.connect(this._pre);
     this._musicIn = g(1);
-    this._musicIn.connect(this._pre);
+    this._musicDuck = g(1);
+    this._musicIn.connect(this._musicDuck);
+    this._musicDuck.connect(this._pre);
     this._voiceIn = g(1);
     this._voiceIn.connect(this._pre);
+    this._voiceAn = c.createAnalyser(); // how loud the voices you can hear are right now: drives the ducking
+    this._voiceAn.fftSize = 1024;
+    this._voiceIn.connect(this._voiceAn);
+    this._duck.buf = new Float32Array(this._voiceAn.fftSize);
 
     // shared reverb: forest by default, crossfading to an open-field or a small-room response (buffers assigned when
     // their IRs are rendered); convolvers that have been silent for a while are disconnected to save CPU
@@ -1736,7 +1769,8 @@ export class AudioEngine {
 
   setVolumes(v = EMPTY) {
     for (const k of ['master', 'music', 'sfx', 'ambience', 'voice']) {
-      if (v[k] !== undefined && v[k] !== null && Number.isFinite(+v[k])) this._vol[k] = clamp01(+v[k]);
+      // (voice runs to 2: the slider can push a quiet friend past the level the mix was balanced at)
+      if (v[k] !== undefined && v[k] !== null && Number.isFinite(+v[k])) this._vol[k] = k === 'voice' ? Math.min(2, Math.max(0, +v[k])) : clamp01(+v[k]);
     }
     if (this._ctx) this._applyVolumes(0.04);
   }
@@ -1755,7 +1789,7 @@ export class AudioEngine {
     set(this._uiIn, v.sfx);
     set(this._ambIn, v.ambience);
     set(this._ambSend, v.ambience);
-    set(this._voiceIn, v.voice);
+    set(this._voiceIn, v.voice * VOICE_BUS);
   }
 
   // debug: every bank referenced by the public API that is not (yet) loaded, plus unmapped SOUND ids
@@ -1781,10 +1815,45 @@ export class AudioEngine {
     try {
       const v = new VoiceSource(this, mediaStream);
       this._voices.add(v);
+      if (!this._duck.timer) this._duck.timer = setInterval(() => this._duckTick(), DUCK_MS);
       return v.handle;
     } catch (err) {
       console.warn('[audio] voice source failed', err);
       return NULL_VOICE;
+    }
+  }
+
+  // false: the game's sound stays where it is while people talk
+  setVoiceDucking(on) {
+    this._duck.on = !!on;
+  }
+
+  // Runs while there are voice sources. The level on the voice bus is read after distance, the panner and the "Voice
+  // chat" slider, so the mix moves by how well you can actually hear the speaker: down at once, back up slowly.
+  _duckTick() {
+    const d = this._duck;
+    const now = this._ctx.currentTime;
+    let k = 0;
+    if (d.on && this._voices.size) {
+      this._voiceAn.getFloatTimeDomainData(d.buf);
+      let sum = 0;
+      for (let i = 0; i < d.buf.length; i++) sum += d.buf[i] * d.buf[i];
+      const db = 10 * Math.log10(sum / d.buf.length + 1e-12);
+      k = clamp01((db - DUCK_FLOOR) / (DUCK_FULL - DUCK_FLOOR));
+    }
+    if (k >= d.k) {
+      d.k = k;
+      d.at = now;
+    } else if (now - d.at > DUCK_HOLD || !d.on) d.k = Math.max(k, d.k - 0.06);
+    if (Math.abs(d.k - d.set) > 0.02 || (d.k === 0) !== (d.set === 0)) {
+      const tc = d.k > d.set ? 0.04 : 0.18;
+      d.set = d.k;
+      this._musicDuck.gain.setTargetAtTime(Math.pow(DUCK_MUSIC, d.k), now, tc);
+      this._worldDuck.gain.setTargetAtTime(Math.pow(DUCK_WORLD, d.k), now, tc);
+    }
+    if (!this._voices.size && d.k === 0) {
+      clearInterval(d.timer);
+      d.timer = null;
     }
   }
 }

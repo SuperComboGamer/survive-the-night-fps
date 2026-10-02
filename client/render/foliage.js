@@ -257,6 +257,7 @@ class GrassField {
         if (cell) {
           for (const c of cell) {
             if (c.flags & 16) continue; // trees fine
+            if (c.y1 < y - 0.5) continue; // (what stands down in the mine is not in the grass's way)
             const lx = c.c * (x - c.x) - c.s * (z - c.z);
             const lz = c.s * (x - c.x) + c.c * (z - c.z);
             if (c.type === 0 ? Math.abs(lx) < c.hx + 0.2 && Math.abs(lz) < c.hz + 0.2 : lx * lx + lz * lz < (c.r + 0.2) ** 2) {

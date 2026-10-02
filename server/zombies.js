@@ -3,7 +3,7 @@
 // zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
 // The herd that wanders the roads by day is in herd.js.
 import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
-import { LEG_HP, STUMBLE_SPEED, HOBBLE_SPEED, CRAWL_SPEED, CRAWL_SPEED_MIN, CRAWL_SPEED_MAX, CRAWL_SLOW, CRAWL_HEIGHT, CRAWL_HEAD_Y } from '../shared/constants.js';
+import { HISTORY_TICKS, LEG_HP, STUMBLE_SPEED, HOBBLE_SPEED, CRAWL_SPEED, CRAWL_SPEED_MIN, CRAWL_SPEED_MAX, CRAWL_SLOW, CRAWL_HEIGHT, CRAWL_HEAD_Y } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
@@ -63,7 +63,8 @@ export class Zombies {
     const lim = MAP_HALF - 6;
     x = Math.max(-lim, Math.min(lim, x));
     z = Math.max(-lim, Math.min(lim, z));
-    if (w.isDeepWater(x, z) || g.nav.isBlocked(x, z)) {
+    const down = opts.y !== undefined; // a spot down in the mine: given with its floor, and the valley's grid is not asked
+    if (!down && (w.isDeepWater(x, z) || g.nav.isBlocked(x, z))) {
       // nudge to a free spot
       let ok = false;
       for (let i = 0; i < 12 && !ok; i++) {
@@ -77,7 +78,7 @@ export class Zombies {
       }
       if (!ok) return null;
     }
-    let y = groundAt(w, x, z, 200, 0.2, false);
+    let y = down ? opts.y : groundAt(w, x, z, 200, 0.2, false);
     if (def.flying) y += 3 + g.rng() * 2;
     const hp = def.hp * (opts.hpMul || 1);
     const e = {
@@ -109,6 +110,10 @@ export class Zombies {
       alertT: 0,
       alertLvl: 0, // how loud the noise it is heading for was where it stood (m of carry left)
       alertRush: 1, // 0 ambling over .. 1 at a full run
+      alertU: false, // ...and it came from down in the mine
+      under: down, // down in the mine (updateOne keeps it)
+      den: !!opts.den, // it lives down there: it keeps to the workings, and goes back when it has been led out
+      spared: false, // one of the horde that was down there at sunrise: it burns when it comes up into the day
       lureX: 0,
       lureZ: 0,
       lureT: 0,
@@ -168,9 +173,9 @@ export class Zombies {
       legs: 0, // legs shot off (Combat.hitLeg): bit 0 the left, bit 1 the right. One gone it hobbles, both gone it crawls
       legHp: def.legs ? [hp * LEG_HP, hp * LEG_HP] : null, // what each leg still takes (left, right)
       stumbleT: 0, // tripped by a shot in the leg: seconds until it has caught itself
-      hx: new Float32Array(16),
-      hy: new Float32Array(16),
-      hz: new Float32Array(16),
+      hx: new Float32Array(HISTORY_TICKS),
+      hy: new Float32Array(HISTORY_TICKS),
+      hz: new Float32Array(HISTORY_TICKS),
       hitStruct: null,
     };
     if (!g.spawnEntity(e)) return null;
@@ -208,6 +213,32 @@ export class Zombies {
     // a herd wandering the roads
     this.herds.reset();
     this.herds.spawn([]);
+    // ...and the ones that never came up out of the mine
+    this.stockMine([]);
+  }
+
+  // The dead that live down in the mine: one to a den (world.mine.dens: the rooms, the drift between them), topped
+  // up at every sunrise. They stand about in the dark until somebody comes down; some never got their legs back.
+  // Not while a survivor is down there to see them appear.
+  stockMine(humans) {
+    const g = this.g;
+    const mine = g.world.mine;
+    if (!mine || humans.some((h) => mine.under(h.state.x, h.state.y + 0.3, h.state.z))) return 0;
+    const free = mine.dens.filter((d) => !g.zombies.some((z) => z.den && !z.dead && Math.hypot(z.homeX - d.x, z.homeZ - d.z) < 0.5));
+    let n = 0;
+    for (const d of free) {
+      const r = g.rng();
+      const type = r < 0.2 ? ZTYPE.RUNNER : g.day >= 2 && r < 0.3 ? ZTYPE.SHADE : g.day >= 3 && r < 0.38 ? ZTYPE.LEAPER : ZTYPE.WALKER;
+      const z = this.spawn(type, d.x, d.z, { y: d.y, den: true, hpMul: 1.1 + 0.05 * g.day });
+      if (!z) continue;
+      // (a crawler from the start: both legs gone, as Combat.hitLeg leaves them)
+      if (type === ZTYPE.WALKER && z.legHp && g.rng() < 0.25) {
+        z.legs = 3;
+        z.legHp = [0, 0];
+      }
+      n++;
+    }
+    return n;
   }
 
   newPack() {
@@ -507,13 +538,18 @@ export class Zombies {
   // A noise at (x,z) that carries `loud` metres. Every zombie inside that radius with nobody to chase heads for
   // it, so a louder noise draws a bigger crowd, and the louder it was where a zombie stood the harder it runs.
   // A much fainter noise does not pull a zombie off the one it is already heading for. Returns how many heard it.
-  noise(x, z, loud) {
+  // y (optional): the height it was made at, which tells a noise down in the mine from one on the ground above it.
+  // Between the two levels a noise carries by way of the nearer portal, not through the rock.
+  noise(x, z, loud, y) {
     const g = this.g;
+    const mn = g.mineNav;
+    const su = !!mn && y !== undefined && mn.mine.under(x, y + 0.3, z);
     let heard = 0;
     let calls = 0;
     for (const e of g.zombies) {
       if (e.dead || e.target || e.def.flying) continue;
-      const d = Math.hypot(e.x - x, e.z - z);
+      let d = Math.hypot(e.x - x, e.z - z);
+      if (mn && (su || e.under)) d = su && e.under ? Math.max(d, mn.dist(e.x, e.z, x, z)) : su ? mn.between(x, z, e.x, e.z).d : mn.between(e.x, e.z, x, z).d;
       const lvl = loud - d; // how much further the noise would have carried past this zombie
       if (lvl <= 0) continue;
       const fresh = e.alertT <= 0;
@@ -525,6 +561,7 @@ export class Zombies {
       e.alertZ = z + (g.rng() - 0.5) * 2 * off;
       e.alertLvl = lvl;
       e.alertRush = rush;
+      e.alertU = su;
       e.alertT = Math.min(NOISE_MEMORY_MAX, NOISE_MEMORY + d / (e.def.speed * (NOISE_SPEED_MIN + (1 - NOISE_SPEED_MIN) * rush)));
       heard++;
       // a couple of them answer: the survivors hear what they woke
@@ -556,11 +593,16 @@ export class Zombies {
     }
     this.rebuildHash();
 
-    // flow fields: refresh 2 per tick round-robin
+    // who is down in the mine (the survivors here, each zombie in updateOne)
+    const mn = g.mineNav;
+    for (const h of humans) h.under = !!mn && mn.under(h.state);
+    if (mn) mn.refresh();
+    // flow fields: refresh 2 per tick round-robin (to a survivor down in the mine the valley's grid leads nowhere:
+    // the way to them is by a portal, steerLevels)
     if (humans.length) {
       for (let k = 0; k < Math.min(2, humans.length); k++) {
         const h = humans[this.fieldRR++ % humans.length];
-        g.nav.computeField(h.id, h.state.x, h.state.z);
+        if (!h.under) g.nav.computeField(h.id, h.state.x, h.state.z);
       }
     }
 
@@ -572,7 +614,7 @@ export class Zombies {
         let alive = 0;
         let dogs = 0;
         for (const z of g.zombies) {
-          if (z.dead || z.horde) continue;
+          if (z.dead || z.horde || z.den) continue;
           if (z.pack) dogs++;
           else if (!z.herd) alive++;
         }
@@ -631,6 +673,14 @@ export class Zombies {
     if (z.animT > 0) z.animT -= dt;
     if (z.stumbleT > 0) z.stumbleT -= dt;
     z.trapSlow = Math.min(1, z.trapSlow + dt * 2);
+    const mn = g.mineNav;
+    const zu = (z.under = !!mn && !def.flying && mn.under(z));
+    // the horde that was down in the mine at sunrise did not burn (z.spared, Game.startDay): the sun gets it when
+    // it comes up, if that is before the next nightfall
+    if (z.spared && (!zu || g.phase !== PHASE.DAY)) {
+      z.spared = false;
+      if (g.phase === PHASE.DAY && !z.onFire && z.burning <= 0) z.burning = 0.3 + g.rng() * 1.5;
+    }
 
     // dawn: horde burns
     if (z.burning > 0) {
@@ -682,7 +732,9 @@ export class Zombies {
         z.losT = 0.3;
         z.los = this.hasLOS(z, tx, ty + 1.4, tz, dist);
         // seeing a survivor through a window is not a way in: walk straight only when no wall is in between
-        z.direct = z.los && dist < (z.pack ? 18 : 12) && g.nav.segClear(z.x, z.z, tx, tz);
+        // (down in the mine: no rock, and nothing that stands in the drift)
+        if (zu || target.under) z.direct = zu && target.under && z.los && dist < 12 && mn.segClear(z.x, z.z, tx, tz);
+        else z.direct = z.los && dist < (z.pack ? 18 : 12) && g.nav.segClear(z.x, z.z, tx, tz);
       }
     }
 
@@ -709,12 +761,26 @@ export class Zombies {
     } else if (z.lureT > 0 && !def.shade && !(target && dist < 7)) {
       dx = z.lureX - z.x;
       dz = z.lureZ - z.z;
+      // (a pipe bomb down in the mine only draws what is down there with it: along the drift)
+      if (zu && mn.dir(z.x, z.z, z.lureX, z.lureZ, _dir)) {
+        dx = _dir.x;
+        dz = _dir.z;
+      }
       chasing = true;
     } else if (target) {
       chasing = true;
       if (z.herd) speed = Math.max(speed, HERD_RUSH); // a roused herd comes at a run, walkers and all
       // steer straight at a visible survivor; otherwise follow the flow field (around walls to a way in)
-      if (z.pack && z.direct && dist < 18) {
+      if (zu || target.under) {
+        // one of the two is down in the mine: along the drifts, and by a portal from one level to the other
+        if (z.direct || !this.steerLevels(z, tx, tz, target.under)) {
+          dx = tx - z.x;
+          dz = tz - z.z;
+        } else {
+          dx = _dir.x;
+          dz = _dir.z;
+        }
+      } else if (z.pack && z.direct && dist < 18) {
         // a pack fans out and closes in from the sides, straightening up for the last few metres
         const a = z.flank * Math.min(1, Math.max(0, (dist - 3) / 8));
         const ex = tx - z.x;
@@ -749,7 +815,11 @@ export class Zombies {
     } else if (z.alertT > 0) {
       dx = z.alertX - z.x;
       dz = z.alertZ - z.z;
-      if (Math.hypot(dx, dz) < 3) z.alertT = 0;
+      if (Math.hypot(dx, dz) < 3 && zu === z.alertU) z.alertT = 0;
+      else if ((zu || z.alertU) && this.steerLevels(z, z.alertX, z.alertZ, z.alertU)) {
+        dx = _dir.x;
+        dz = _dir.z;
+      }
       chasing = true;
       speed *= NOISE_SPEED_MIN + (1 - NOISE_SPEED_MIN) * z.alertRush;
       // whether it gets there or gives up, it mills about where the noise led it instead of trekking back
@@ -761,7 +831,12 @@ export class Zombies {
       z.wanderT -= dt;
       if (z.wanderT <= 0) {
         z.wanderT = 5 + g.rng() * 9;
-        if (g.rng() < 0.4) {
+        const spot = zu && g.rng() < (z.den ? 0.35 : 0.6) ? mn.randomSpot(z.x, z.z, 14, g.rng) : null;
+        if (zu) {
+          // down in the mine: about the drifts, or nowhere
+          z.wanderX = spot ? spot.x : z.x;
+          z.wanderZ = spot ? spot.z : z.z;
+        } else if (g.rng() < 0.4) {
           z.wanderX = z.x;
           z.wanderZ = z.z;
         } else if (z.pack && !z.horde) {
@@ -777,9 +852,18 @@ export class Zombies {
       }
       dx = z.wanderX - z.x;
       dz = z.wanderZ - z.z;
-      if (Math.hypot(dx, dz) < 1) {
+      if (z.den && !zu) {
+        // led up out of the mine and left there: back down to its den
+        if (this.steerLevels(z, z.homeX, z.homeZ, true)) {
+          dx = _dir.x;
+          dz = _dir.z;
+        }
+      } else if (Math.hypot(dx, dz) < 1) {
         dx = 0;
         dz = 0;
+      } else if (zu && mn.dir(z.x, z.z, z.wanderX, z.wanderZ, _dir)) {
+        dx = _dir.x;
+        dz = _dir.z;
       }
       speed = z.pack ? 1.5 : Math.min(speed, 1.1) * 0.8;
     }
@@ -903,9 +987,13 @@ export class Zombies {
     const night = g.phase === PHASE.NIGHT;
     let best = null;
     let bd = Infinity;
+    const mn = g.mineNav;
     for (const h of humans) {
       const s = h.state;
-      const d = Math.hypot(s.x - z.x, s.z - z.z);
+      let d = Math.hypot(s.x - z.x, s.z - z.z);
+      // a survivor on the other level is as far off as the walk round by a portal; one down the same drifts as far
+      // as the drifts make it (not the few metres of rock between two galleries)
+      if (mn && (z.under || h.under)) d = z.under && h.under ? Math.max(d, mn.dist(z.x, z.z, s.x, s.z)) : z.under ? mn.between(z.x, z.z, s.x, s.z).d : mn.between(s.x, s.z, z.x, z.z).d;
       let range = z.horde ? 600 : night ? 55 : 26;
       if (h.downed) range *= 0.5;
       else if (s.crouch) range *= 0.6;
@@ -939,6 +1027,34 @@ export class Zombies {
       z.howlT = 25;
       g.sound(SOUND.DOG_HOWL, z.x, z.y + 0.7, z.z, 110);
     }
+  }
+
+  // The way for z to (tx,tz) when either is down in the mine (tu: the spot is). Down there it follows the mine's own
+  // fields; between the levels it goes by the portal that makes the shortest trip: to the spot outside its mouth by
+  // the valley's flow field, straight through the mouth, and on down the drift. Writes _dir; false when a straight
+  // line is all there is (same cell, no field out here, no way).
+  steerLevels(z, tx, tz, tu) {
+    const g = this.g;
+    const mn = g.mineNav;
+    if (!mn) return false;
+    if (z.under && tu) return mn.dir(z.x, z.z, tx, tz, _dir);
+    const p = z.under ? mn.between(z.x, z.z, tx, tz).portal : mn.between(tx, tz, z.x, z.z).portal;
+    // the leg it is on: up the drift to the spot inside the mouth and out, or to the spot outside it and in
+    const [near, far] = z.under ? [p.in, p.out] : [p.out, p.in];
+    let ax = far.x;
+    let az = far.z;
+    // (between the two spots, in the mouth itself, it walks straight through)
+    const q = p.p;
+    const s = (z.x - q.x) * q.dx + (z.z - q.z) * q.dz;
+    if (s < -3.6 || s > 3.1 || Math.abs((z.z - q.z) * q.dx - (z.x - q.x) * q.dz) > 2.2) {
+      if (z.under ? mn.dir(z.x, z.z, near.x, near.z, _dir) : g.nav.flowDir(p.key, z.x, z.z, _dir, z.y)) return true;
+      ax = near.x;
+      az = near.z;
+    }
+    const l = Math.hypot(ax - z.x, az - z.z) || 1;
+    _dir.x = (ax - z.x) / l;
+    _dir.z = (az - z.z) / l;
+    return true;
   }
 
   hasLOS(z, tx, ty, tz, dist) {
@@ -979,7 +1095,7 @@ export class Zombies {
   // flashlight beam. Walls, trees and hills cast shadows: the light needs a clear line to some part of the body.
   isLit(z) {
     const g = this.g;
-    if (g.phase !== PHASE.NIGHT) return true;
+    if (g.phase !== PHASE.NIGHT && !z.under) return true; // (no daylight gets down the mine)
     const h = bodyHeight(z);
     const lights = this.lightSources();
     for (let i = 0; i < lights.length; i += 4) {

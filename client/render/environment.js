@@ -111,6 +111,8 @@ const KEYS = [
   { s: 0.55, zenith: C(0x5a6778), horizon: C(0x8e9594), glow: C(0xbcb3a2), hemiSky: C(0xadb6ba), hemiGround: C(0x33302a), hemi: 0.86, dir: C(0xf6e6cf), dirI: 2.15, fog: C(0x7e8584), fogD: 0.0074, mist: 0.004, scatter: 0.6, rays: 0.6, exposure: 0.92 },
   { s: 1.0, zenith: C(0x5a6778), horizon: C(0x8e9594), glow: C(0xbcb3a2), hemiSky: C(0xadb6ba), hemiGround: C(0x33302a), hemi: 0.88, dir: C(0xf6e6cf), dirI: 2.2, fog: C(0x7e8584), fogD: 0.0072, mist: 0.003, scatter: 0.55, rays: 0.55, exposure: 0.92 },
 ];
+// what is left of all that well down the mine: no sun, a trace of ambient to make shapes out by, dark haze
+const UNDER = { hemi: 0.1, hemiSky: C(0x566078), hemiGround: C(0x15141a), fog: C(0x020203), fogD: 0.03, exposure: 1.5 };
 const COLOR_KEYS = ['zenith', 'horizon', 'glow', 'hemiSky', 'hemiGround', 'dir', 'fog'];
 const NUM_KEYS = ['hemi', 'dirI', 'fogD', 'mist', 'scatter', 'rays', 'exposure'];
 
@@ -225,7 +227,8 @@ export class Environment {
     return 0.47; // menu / waiting: dusk
   }
 
-  // w: weather state (client/game/weather.js), optional. overrides: { fogMul, mistMul } (look-dev)
+  // w: weather state (client/game/weather.js), optional. overrides: { fogMul, mistMul } (look-dev), { under }: how
+  // far down the mine the eye is, 0..1 (Game)
   update(dt, targetCycle, camPos, time, w = null, overrides = {}) {
     // smooth cycle (handles wrap)
     let d = targetCycle - this.cycle;
@@ -252,6 +255,21 @@ export class Environment {
     this.night = 1 - Math.max(0, Math.min(1, (sunH + 0.12) / 0.3));
     const u = this.uniforms;
     if (w) this.applyWeather(dt, w);
+    // down the mine none of it arrives: the sky's light and the sun go out, and the haze between the eye and
+    // whatever a flashlight finds is dark (the sky itself is left alone: it is what shows in the mouth of the drift)
+    const down = overrides.under || 0;
+    if (down > 0) {
+      c.hemi += (UNDER.hemi - c.hemi) * down;
+      c.hemiSky.lerp(UNDER.hemiSky, down);
+      c.hemiGround.lerp(UNDER.hemiGround, down);
+      c.dirI *= 1 - down;
+      c.fog.lerp(UNDER.fog, down);
+      c.fogD += (UNDER.fogD - c.fogD) * down;
+      c.exposure += (UNDER.exposure - c.exposure) * down;
+      c.mist *= 1 - down;
+      c.scatter *= 1 - down;
+      c.rays *= 1 - down;
+    }
 
     u.uZenith.value.copy(c.zenith);
     u.uHorizon.value.copy(c.horizon);

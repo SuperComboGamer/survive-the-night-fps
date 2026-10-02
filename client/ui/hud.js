@@ -668,12 +668,13 @@ export class Hud {
       this.iSurvT.textContent = surv;
       this.iSurv.hidden = !surv;
     }
-    const ping = h.ping == null ? '' : Math.round(h.ping) + ' ms';
+    // (stalled: the link has gone quiet, and nothing done until it is back reaches the server)
+    const ping = h.ping == null ? '' : h.stalled ? 'no signal' : Math.round(h.ping) + ' ms';
     if (c.ping !== ping) {
       c.ping = ping;
       this.iPingT.textContent = ping;
       this.iPing.hidden = !ping;
-      this.iPing.classList.toggle('bad', h.ping > 150);
+      this.iPing.classList.toggle('bad', !!h.stalled || h.ping > 150);
     }
     const showFps = !!this.ui.settings.showFps && !!h.fps;
     const fps = showFps ? Math.round(h.fps) + ' fps' : '';

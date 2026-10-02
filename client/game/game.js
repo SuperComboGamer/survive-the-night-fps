@@ -43,6 +43,8 @@ import {
   NOTIFY,
   KILLER,
   ZTYPE,
+  ZANIM,
+  IMPACT,
   ZONE,
   ZONE_NAMES,
   AMMO_NAMES,
@@ -56,16 +58,19 @@ import { createWorld } from '../../shared/world.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
+import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
+import { playerId } from '../net/identity.js';
 import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
-import { harvestPrompt, needLines } from './harvest.js';
+import { harvestPrompt, strippedKey, needLines } from './harvest.js';
 import { Entities } from './entities.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
+import { buildMine } from '../render/mine.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
@@ -119,6 +124,7 @@ const CRAFT_BURST = 20;
 const CRAFT_RATE = 40; // per second
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
 const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
+const BOARD_EVERY = 4000; // ms between two requests for the leaderboard while it is open
 // Turning while aimed is slowed by the gun's zoom, tan(aimed fov / 2) / tan(hip fov / 2) (the ratio of the two
 // magnifications, the same on any aspect ratio), so what is under the crosshair slides across the screen as far per
 // centimetre of mouse as it does from the hip, whatever the zoom. On top of that, AIM_SENS: at 1 aimed and hip would
@@ -127,7 +133,11 @@ const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have j
 const AIM_SENS = 0.82;
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
+const _shotHits = [];
+const _hbPos = { x: 0, y: 0, z: 0 };
 const _v = new THREE.Vector3();
+const _spot = { x: 0, y: 0, z: 0 };
+const DOWN_WEATHER = { rain: 0, wind: 0.2 }; // the weather as it is well down a drift of the mine
 const _v2 = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _qv = new THREE.Quaternion();
@@ -149,7 +159,7 @@ export class Game {
     this.frame = 0;
     this.time = 0;
     this.myId = 0;
-    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
+    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
     this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
@@ -172,6 +182,7 @@ export class Game {
     this.camBob = 0;
     this.landDip = 0; // how far a landing has pushed the view down, a spring (landVel) kicked on touchdown
     this.landVel = 0;
+    this.quake = 0; // the ground shaking under something heavy, 0..1: a tank's footfalls each add to it (Entities)
     this.fallV = 0; // downward speed in the last frame in the air
     this.eyeH = 1.62;
     this.fovCur = settings.fov || 75;
@@ -184,6 +195,9 @@ export class Game {
     this.localFlashT = 0;
     this.openness = 0;
     this.indoor = 0;
+    this.under = 0; // how far down the mine the eye is (0..1)
+    this._envOver = { under: 0 };
+    this._wxDown = {};
     this.stepAcc = 0;
     this.deathShown = false;
     this.overlay = null;
@@ -205,7 +219,9 @@ export class Game {
     // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
     this.waypoint = null;
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
+    this.boardT = 0; // when the leaderboard is next asked for, while it is open (performance.now)
     this.discovered = new Set([ZONE.CAMP]);
+    this.stripped = new Set(); // the trees and wrecks with nothing left to give today (harvest.js strippedKey)
     this.discoverT = 0;
     this.debugCam = null;
     this.warm = null; // shader warm-up in progress (prewarm)
@@ -222,6 +238,7 @@ export class Game {
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
+      board: (b) => this.ui.setBoard(b),
       voice: (from, payload) => this.voice.onSignal(from, payload),
       close: () => this.onDisconnect(),
     });
@@ -337,6 +354,9 @@ export class Game {
     this.scene.add(this.terrain);
     this.water = buildWater(this.world);
     this.scene.add(this.water);
+    this.mine = buildMine(this.world); // (null in a valley without the workings)
+    if (this.mine) this.scene.add(this.mine);
+    this.under = 0;
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
     this.staticWorld.setShadows(!!this.renderer.q.shadows);
@@ -370,6 +390,14 @@ export class Game {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
       mesh.material.dispose();
+    }
+    if (this.mine) {
+      this.scene.remove(this.mine);
+      for (const mesh of this.mine.children) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      this.mine = null;
     }
     this.staticWorld?.dispose();
     this.foliage?.dispose();
@@ -596,7 +624,7 @@ export class Game {
   // ---------------------------------------------------------------- connection
   async join(name) {
     this.audio.stinger?.('join');
-    const info = await this.conn.connect(name);
+    const info = await this.conn.connect(name, playerId());
     this.myId = info.id;
     this.voice.setMyId(info.id);
     this.loadWorld(info.seed);
@@ -612,6 +640,7 @@ export class Game {
     this.inputBuffer.clear();
     this.input.requestLock();
     this.discovered = new Set([ZONE.CAMP]);
+    this.stripped.clear(); // (the first snapshot says which are)
     this.waypoint = null;
     return info;
   }
@@ -625,6 +654,9 @@ export class Game {
     this.voice.closeAll();
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
+    this.ui.setBoardOpen(false);
+    this.ui.setBoard(null); // (what it showed was that server's, as of then)
+    this.ui.setRosterOpen(false);
     this.ui.setInventoryOpen(false);
     this.ui.showPause(false); // ("Leave game" is pressed on it)
     this.ui.clearNotices();
@@ -646,6 +678,7 @@ export class Game {
   onSnapshot(r) {
     const flags = readHeader(r, this.net);
     const tick = this.net.tick;
+    this.snapAt = performance.now(); // (when they stop coming the HUD says so: updateHud)
     const ack = this.net.ack;
     if (flags & SNAP.GLOBAL) this.global = readGlobal(r, this.global);
     const sync = readSelf(r, this.self, flags);
@@ -720,7 +753,7 @@ export class Game {
     const slots = this.inventory.slots;
     for (let i = 0; i < INVENTORY_SIZE; i++) {
       const item = r.u8();
-      const count = r.u8();
+      const count = r.u16();
       slots[i] = item ? { item, count } : null;
     }
     const armorItem = r.u8();
@@ -788,8 +821,8 @@ export class Game {
     }
   }
 
-  // The survivors list of the inventory screen: the player list plus everyone's health. Health is not in the
-  // list message: a teammate's rides in their entity record (field 7, 0..255), our own in the self state.
+  // What the player list [Tab] shows: the players as the server lists them, plus everyone's health. Health is not
+  // in the list message: a teammate's rides in their entity record (field 7, 0..255), our own in the self state.
   pushRoster() {
     const ST = ['alive', 'zombie', 'dead', 'downed'];
     const list = [];
@@ -836,7 +869,9 @@ export class Game {
       shot(ev) {
         g.remoteShot(ev);
       },
-      impact(kind, x, y, z, nx, ny, nz) {
+      impact(kind, x, y, z, nx, ny, nz, own) {
+        // what our own shot struck was shown as it was fired (predictPellet): this is the server saying so again
+        if (!own && g.sameAsOwn(x, y, z)) return;
         // hits on ourselves are shown by the damage vignette, not particles in our face
         const dc = Math.hypot(x - g.camera.position.x, y - g.camera.position.y, z - g.camera.position.z);
         if (dc < 1.2) return;
@@ -887,6 +922,12 @@ export class Game {
       },
       structBreak(x, y, z) {
         g.effects.structBreak(x, y, z);
+      },
+      stripped(qx, qy, qz) {
+        g.stripped.add(strippedKey(qx, qy, qz));
+      },
+      regrown() {
+        g.stripped.clear();
       },
       flyover(x, y, z, heading, eta) {
         g.flyover?.start(x, y, z, heading, eta, g.time, g.audio);
@@ -1070,7 +1111,7 @@ export class Game {
         // arg: the item a full backpack left lying where the survivor walked over it (0: a craft, a search, a swap)
         const d = ITEM_DEFS[arg];
         if (d?.cat === 'part') {
-          ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack [Tab].`, 'danger', 6);
+          ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack [I].`, 'danger', 6);
           a.playLocal('build_fail');
         } else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
         break;
@@ -1083,6 +1124,7 @@ export class Game {
         this.overlay = null;
         this.deathShown = false;
         this.discovered = new Set([ZONE.CAMP]);
+        this.stripped.clear();
         this.pings = [];
         this.waypoint = null;
         this.flyover?.clear();
@@ -1177,6 +1219,83 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- local predicted events
+  // One pellet of our own shot, judged the way the server will judge it (Combat.fire): against the world (_ray holds
+  // that already) and against the hitboxes of the dead where they are drawn - the server rewinds its own to the same
+  // moment, so the two agree. What the pellet strikes is shown now (ownImpact) instead of a round trip later, when
+  // the server says so. Only the look of it: the damage and the hit marker wait for the server.
+  // Returns how far the pellet flies before something stops it, -1 if nothing does.
+  predictPellet(ev, def, i, dx, dy, dz) {
+    const wall = _ray.t;
+    const wallT = wall >= 0 ? wall : def.range;
+    const col = _ray.col;
+    const terrain = _ray.terrain;
+    const hits = _shotHits;
+    hits.length = 0;
+    for (const e of this.entities.ents.values()) {
+      const zdef = e.kind === ENT.ZOMBIE ? ZOMBIE_DEFS[e.ztype] : null;
+      if (zdef ? e.dead : e.kind !== ENT.PLAYER || e.id === this.myId || (e.q[5] & (PFLAG.ZOMBIE | PFLAG.DEAD)) !== PFLAG.ZOMBIE) continue;
+      // (first by how far the ray passes from it: most of them are nowhere near)
+      const rx = e.rx - ev.x;
+      const ry = e.ry + 0.8 - ev.y;
+      const rz = e.rz - ev.z;
+      const along = rx * dx + ry * dy + rz * dz;
+      if (along < -1 || along > wallT + 2 || rx * rx + ry * ry + rz * rz - along * along > 16) continue;
+      const hb = zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
+      _hbPos.x = e.rx;
+      _hbPos.y = e.ry;
+      _hbPos.z = e.rz;
+      const t = rayHitbox(_hbPos, hb, ev.x, ev.y, ev.z, dx, dy, dz, wallT);
+      if (t >= 0) hits.push({ t, e });
+    }
+    hits.sort((a, b) => a.t - b.t);
+    const pierce = def.pierce || 1;
+    for (let k = 0; k < hits.length && k < pierce; k++) {
+      const { t, e } = hits[k];
+      const z = e.kind === ENT.ZOMBIE;
+      const green = z && (e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN);
+      // (a shade pinned by light is stone: the bullet chips it)
+      this.ownImpact(z && e.q[4] === ZANIM.FROZEN ? IMPACT.DIRT : green ? IMPACT.GREEN_BLOOD : IMPACT.BLOOD, ev.x + dx * t, ev.y + dy * t, ev.z + dz * t, -dx, -dy, -dz);
+    }
+    if (hits.length) return hits.length >= pierce ? hits[pierce - 1].t : wall;
+    // nothing in the way but the world (of a spread, only every third pellet shows there, as the server sends them)
+    if (wall >= 0 && (def.pellets === 1 || i % 3 === 0)) {
+      let kind = IMPACT.DIRT;
+      if (col && !terrain) kind = col.flags & COL.TREE ? IMPACT.WOOD : col.flags & COL.STRUCT ? (this.entities.ents.get(col.id)?.stype === STRUCT.METAL_WALL ? IMPACT.METAL : IMPACT.WOOD) : IMPACT.SPARK;
+      this.ownImpact(kind, ev.x + dx * wall, ev.y + dy * wall, ev.z + dz * wall, -dx, -dy, -dz);
+    }
+    return wall;
+  }
+
+  // An impact of our own shot, shown as it is fired. The server sends word of the same impact a round trip later,
+  // and sameAsOwn drops that one.
+  ownImpact(kind, x, y, z, nx, ny, nz) {
+    const list = this.ownImpacts || (this.ownImpacts = []);
+    if (list.length >= 48) list.shift();
+    list.push({ x, y, z, t: this.time });
+    this.eventHandler.impact(kind, x, y, z, nx, ny, nz, true);
+  }
+
+  // Is this impact from the server one that was shown already (ownImpact)? It is when one of ours from the last two
+  // seconds struck within a metre of it: the server judges the shot against the picture we aimed at, so the two land
+  // together. That one of ours is then spent. One that is never answered (the server saw a miss) just lapses.
+  sameAsOwn(x, y, z) {
+    const list = this.ownImpacts;
+    if (!list || !list.length) return false;
+    while (list.length && this.time - list[0].t > 2) list.shift();
+    let best = -1;
+    let bd = 1;
+    for (let i = 0; i < list.length; i++) {
+      const d = Math.hypot(list[i].x - x, list[i].y - y, list[i].z - z);
+      if (d < bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    if (best < 0) return false;
+    list.splice(best, 1);
+    return true;
+  }
+
   onLocalEvents(events, s) {
     const a = this.audio;
     for (const ev of events) {
@@ -1209,19 +1328,21 @@ export class Game {
             _v.set(ev.x + _v2.x * 0.8, ev.y - 0.1, ev.z + _v2.z * 0.8);
             this.lights.flashMuzzle(_v, 1);
           }
-          // tracers from the gun (visual), hits are server authoritative
+          // Tracers from the gun, and what every pellet strikes (predictPellet): the blood or the puff off the wall is
+          // shown now, not a round trip later. The damage and the hit marker are still the server's alone
           const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
           const cp = Math.cos(ev.pitch);
           const sx = ev.x + Math.cos(ev.yaw) * 0.12 - Math.sin(ev.yaw) * cp * 0.5;
           const sz = ev.z - Math.sin(ev.yaw) * 0.12 - Math.cos(ev.yaw) * cp * 0.5;
           const sy = ev.y - 0.12 + Math.sin(ev.pitch) * 0.5;
           for (let i = 0; i < n; i++) {
-            if (def.pellets > 1 && i % 2) continue;
             const dx = _dirs[i * 3];
             const dy = _dirs[i * 3 + 1];
             const dz = _dirs[i * 3 + 2];
             raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
-            const dist = _ray.t >= 0 ? _ray.t : Math.min(def.range, 90);
+            const end = this.predictPellet(ev, def, i, dx, dy, dz);
+            if (def.pellets > 1 && i % 2) continue;
+            const dist = end >= 0 ? end : Math.min(def.range, 90);
             if (def.quiet) this.effects.boltTrail(sx, sy, sz, dx, dy, dz, dist);
             else if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
           }
@@ -1276,12 +1397,12 @@ export class Game {
     inp.handlers.isTyping = () => this.ui.isTyping();
     inp.handlers.onLockChange = (locked) => {
       if (this.state !== 'playing') return;
-      if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen) {
+      if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen) {
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
         this.ui.showPause(false);
-        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen;
+        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen;
       }
     };
     inp.handlers.onMouseDown = (button) => {
@@ -1300,7 +1421,9 @@ export class Game {
     inp.handlers.onKeyUp = (code) => {
       if (code === 'KeyV' && this.settings.pushToTalk !== false) this.voice.setTransmit(false);
       if (code === 'KeyE') this.endHold();
+      if (code === 'Tab') this.showRoster(false);
     };
+    inp.handlers.onBlur = () => this.showRoster(false);
   }
 
   onKey(code) {
@@ -1308,6 +1431,10 @@ export class Game {
     const s = this.prediction.state;
     const ui = this.ui;
     if (code === 'Tab') {
+      this.showRoster(true);
+      return;
+    }
+    if (code === 'KeyI') {
       this.toggleInventory(!ui.inventoryOpen);
       return;
     }
@@ -1320,12 +1447,21 @@ export class Game {
       this.toggleMap(false);
       return;
     }
+    if (code === 'KeyL') {
+      if (ui.inventoryOpen || ui.isTyping()) return;
+      this.toggleBoard(!ui.boardOpen);
+      return;
+    }
+    if (code === 'Escape' && ui.boardOpen) {
+      this.toggleBoard(false);
+      return;
+    }
     // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
     // and the pause menu.
     if (code === 'Enter' || code === 'KeyY') {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
-      if (!ui.isTyping() && !ui.mapOpen) {
+      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen) {
         ui.openChat();
         this.input.buttons = 0;
         this.inputBuffer.clear();
@@ -1404,8 +1540,8 @@ export class Game {
     const ui = this.ui;
     if (open === ui.inventoryOpen) return;
     if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
+    if (ui.boardOpen) this.toggleBoard(false, false);
     ui.setCraftContext(this.craftContext());
-    if (open) this.pushRoster(); // health as of now, not as of the last player list
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
     if (open) this.input.exitLock();
@@ -1413,10 +1549,20 @@ export class Game {
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
+  // The player list, up for as long as [Tab] is held. Nothing in it takes a click: the pointer stays locked and
+  // the game goes on under it.
+  showRoster(open) {
+    const ui = this.ui;
+    if (open === ui.rosterOpen) return;
+    if (open) this.pushRoster(); // health as of now, not as of the last player list
+    ui.setRosterOpen(open);
+  }
+
   // relock: false when something else that needs the cursor is taking over
   toggleMap(open, relock = true) {
     const ui = this.ui;
     if (open === ui.mapOpen) return;
+    if (open && ui.boardOpen) this.toggleBoard(false, false);
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.buttons = 0;
@@ -1425,6 +1571,23 @@ export class Game {
     // while it is free never reach the weapon: Input only counts a mouse button pressed under the lock.
     if (open) this.input.exitLock();
     else if (relock) this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // The leaderboard [L]: it takes clicks (which list, which column), so it frees the pointer the way the map does.
+  // relock: false when something else that needs the cursor is taking over
+  toggleBoard(open, relock = true) {
+    const ui = this.ui;
+    if (open === ui.boardOpen) return;
+    if (open && ui.mapOpen) this.toggleMap(false, false);
+    ui.setBoardOpen(open);
+    this.input.enabled = !open && !ui.inventoryOpen;
+    this.input.buttons = 0;
+    this.endHold();
+    if (open) {
+      this.boardT = 0; // ask the server at once (update)
+      this.input.exitLock();
+    } else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
@@ -1586,6 +1749,7 @@ export class Game {
         this.vm.useItem?.(c.time, it.item);
       },
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
+      onSplitItem: (i, n) => this.conn.action(ACT.SPLIT_INV, i, n),
       onSwapItems: (a, b) => this.conn.action(ACT.SWAP_INV, a, b),
       onEquipArmor: (i) => this.conn.action(ACT.EQUIP_ARMOR, i),
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
@@ -1693,10 +1857,13 @@ export class Game {
     this.landVel = (this.landVel - LAND_SPRING * landA) * landE;
     // a step up or down reaches the eye over ~100 ms (Prediction.viewLag), with the eye kept 0.3 m clear of the floor
     const stepLag = this.prediction.viewLag(dt, this.eyeH - 0.3);
-    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag;
+    // a heavy footfall drops the view and rattles it, then dies away in ~0.4 s however faint it was: far off it is a
+    // tremor that lasts as long as the jolt of one landing beside you
+    this.quake *= Math.exp(-dt * 6);
+    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag - this.quake * 0.03;
     this.recoilKick *= Math.exp(-dt * 10);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
-    const shake = this.camShake * 0.02 + this.effects.shake * 0.03;
+    const shake = this.camShake * 0.02 + this.effects.shake * 0.03 + this.quake * 0.02;
     const cam = this.camera;
     if (this.debugCam) {
       const d = this.debugCam;
@@ -1736,7 +1903,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.debugCam);
+    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
     if (this.vmMuzzleT > 0) {
@@ -1773,7 +1940,8 @@ export class Game {
 
     // discovery of places
     this.discoverT -= dt;
-    if (this.discoverT <= 0 && self.alive && !s.zombie) {
+    // (a drift of the mine runs under places it does not come up in)
+    if (this.discoverT <= 0 && self.alive && !s.zombie && !this.world.mine?.under(rp.x, rp.y + 0.3, rp.z)) {
       this.discoverT = 0.5;
       for (const z of this.world.zones) {
         if (this.discovered.has(z.id)) continue;
@@ -1810,7 +1978,14 @@ export class Game {
         this.ui.notify(say, 'toast', 3.5);
       }
     }
-    this.env.update(dt, cycle, cam.position, time, weather);
+    // how far down the mine the eye is, 0 in daylight .. 1 a dozen metres down a drift: the sky's light goes out
+    // with it (Environment), and so do the rain and the wind (below)
+    const mine = this.world.mine;
+    const deep = mine && mine.under(rp.x, rp.y + 0.3, rp.z) ? Math.min(1, Math.max(0, (mine.depth(rp.x, rp.z) - 2) / 11)) : 0;
+    this.under += (deep - this.under) * Math.min(1, dt * 4);
+    if (this.under < 0.002) this.under = 0;
+    this._envOver.under = this.under;
+    this.env.update(dt, cycle, cam.position, time, weather, this._envOver);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
     this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
     if (this.water) {
@@ -1822,7 +1997,7 @@ export class Game {
       u.uCam.value.copy(cam.position);
     }
     const fires = this.entities.fireSources.concat(this.staticFires);
-    this.lights.update(dt, time, cam.position, this.localFlash && self.alive && !s.zombie, fires, this.entities.remoteFlash, this.env.night);
+    this.lights.update(dt, time, cam.position, this.localFlash && self.alive && !s.zombie, fires, this.entities.remoteFlash, Math.max(this.env.night, this.under));
     // nearest big fire warms the viewmodel & the ambience
     let nearFire = 0;
     for (const f of fires) {
@@ -1833,12 +2008,14 @@ export class Game {
     this.updateViewmodelLight(dt, cam, nearFire);
     this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
 
-    this.effects.setAmbient(this.env.night);
+    this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
     this.flyover.update(dt, time, cam, this.env, weather);
     const flashOn = this.localFlash && self.alive && !s.zombie;
-    this.atmosphere.update(dt, time, cam, this.env, flashOn, this.world.heightAt, weather);
-    this.weatherFx.update(dt, time, cam, weather, this.env, flashOn, this.renderer.renderer.domElement.height);
+    // (no rain or blown leaves once the eye is well down a drift: what falls in the mouth is kept out by its roof)
+    const sky = this.under > 0.5 ? Object.assign(this._wxDown, weather, DOWN_WEATHER) : weather;
+    this.atmosphere.update(dt, time, cam, this.env, flashOn, this.world.heightAt, sky);
+    this.weatherFx.update(dt, time, cam, sky, this.env, flashOn, this.renderer.renderer.domElement.height);
 
     // audio
     const a = this.audio;
@@ -1865,7 +2042,7 @@ export class Game {
       menu: false,
       cycle: this.env.cycle,
       open: this.openness,
-      indoor: this.indoor,
+      indoor: Math.max(this.indoor, this.under),
     });
 
     // overlays by phase
@@ -1874,6 +2051,11 @@ export class Game {
     this.updateHud(dt, s, aiming, wdef);
     this.keyHints.update(dt);
     if (this.ui.mapOpen) this.updateMap(s);
+    // the leaderboard is asked for while it is up: as it opens, then every few seconds (it moves as people play)
+    if (this.ui.boardOpen && performance.now() >= this.boardT) {
+      this.boardT = performance.now() + BOARD_EVERY;
+      this.conn.board();
+    }
     // voice talking indicators
     if (this.frame % 6 === 0) {
       const talking = this.voice.poll();
@@ -1940,11 +2122,13 @@ export class Game {
     if (g.phase === PHASE.GAMEOVER && this.overlay !== 'gameover') {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
+      this.ui.setBoardOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport });
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
+      this.ui.setBoardOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
       // when it left stayed in the valley, and so did the players who had already turned.
@@ -1974,6 +2158,7 @@ export class Game {
 
   surfaceAt(x, y, z) {
     const w = this.world;
+    if (w.mine && w.mine.under(x, y + 0.3, z)) return 'dirt'; // (the floor of a drift)
     const th = w.heightAt(x, z);
     if (y > th + 0.08) return 'wood';
     if (th < WATER_LEVEL + 0.3) return 'water';
@@ -2040,7 +2225,7 @@ export class Game {
         } else if (s.slot === SLOT_BUILD) {
           if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? '[E] Relight torch (1 Cloth) · [X] Remove' : '[X] Remove torch';
           else this.prompt = hp < 0.99 ? `[E] Repair ${def.name} (1 Planks, 1 Nails) · [X] Demolish` : `[X] Demolish ${def.name}`;
-        } else if (def.station === 'bench') this.prompt = 'Workbench · craft here [Tab]';
+        } else if (def.station === 'bench') this.prompt = 'Workbench · craft here [I]';
         this.contextStructure = { name: def.name, hp };
         return;
       }
@@ -2058,7 +2243,7 @@ export class Game {
       else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
-    if (!this.prompt) this.prompt = harvestPrompt(this.world, s);
+    if (!this.prompt) this.prompt = harvestPrompt(this.world, s, this.stripped);
   }
 
   updateBuildGhost(s) {
@@ -2084,10 +2269,23 @@ export class Game {
     if (t < 0) t = 5; // aim at the ground 5m ahead
     let x = ox + _v.x * t;
     let z = oz + _v.z * t;
-    let y = this.world.heightAt(x, z);
     let rotY = (this.buildRot / 256) * Math.PI * 2;
     const def = STRUCT_DEFS[this.buildType];
     let reason = '';
+    // on the ground of the level the builder is on: down in the mine the floor of the drift (aimed at its wall, the
+    // piece stands in front of it), and nothing goes up on one level from the other (Game.build on the server)
+    const mine = this.world.mine;
+    const here = !!mine && mine.under(s.x, s.y + 0.3, s.z);
+    if (here) {
+      _spot.x = x;
+      _spot.y = s.y;
+      _spot.z = z;
+      mine.confine(_spot, 0.5);
+      x = _spot.x;
+      z = _spot.z;
+    }
+    let y = this.world.floorAt(x, z, s.y + 0.5);
+    if (mine && here !== mine.under(x, y + 0.3, z)) reason = 'Obstructed';
     if (def.snap === 'door') {
       // door boards: aim near a doorway (look along the ray a bit further for walls)
       let o = this.world.openingNear(x, z, 1.4);
@@ -2126,10 +2324,11 @@ export class Game {
   buildBlocked(def, x, y, z, yaw) {
     const col = makeBox(x, z, y - 0.3, y + def.sy, def.sx, def.sz, yaw, def.block ? COL.STRUCT : COL.STRUCT | COL.NOBLOCK);
     const tmp = this._bq || (this._bq = []);
+    const down = !!this.world.mine?.under(x, y + 0.3, z); // (what stands on the ground over a drift is not in the way)
     if (!def.snap) {
       this.world.staticGrid.query(x, z, col.r + 0.2, tmp);
       for (const o of tmp) {
-        if (o.y1 < y + 0.2) continue;
+        if (o.y1 < y + 0.2 || (down && o.y0 > y + def.sy + 0.5)) continue;
         if (overlapBoxes(col, o)) return true;
       }
     }
@@ -2227,6 +2426,7 @@ export class Game {
     else if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
     else h.context = null;
     h.ping = Math.round(this.conn.rtt);
+    h.stalled = performance.now() - (this.snapAt || 0) > 1000; // nothing from the server for a second
     h.fps = this.fps || 0;
     h.players = { alive: g.humansAlive, total: g.playersTotal };
     // objective tracker
@@ -2238,8 +2438,8 @@ export class Game {
         anyCarried = true;
       }
     });
-    h.objective = { supplies: g.supplies, hints: g.hints, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
-    this.ui.setCamp({ supplies: g.supplies, hints: g.hints, carried });
+    h.objective = { supplies: g.supplies, hints: g.hints, found: g.found, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
+    this.ui.setCamp({ supplies: g.supplies, hints: g.hints, found: g.found, carried });
     // downed overlay
     h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
     // compass + world markers
@@ -2248,7 +2448,7 @@ export class Game {
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
-    if (this.ui.inventoryOpen && this.frame % 20 === 10) this.pushRoster(); // health moves between player lists
+    if (this.ui.rosterOpen && this.frame % 20 === 10) this.pushRoster(); // health moves between player lists
   }
 
   buildMarkers(h, rp) {
@@ -2262,12 +2462,12 @@ export class Game {
     const dCar = dist(car.x, car.z);
     const carIcon = glyph('car');
     cm.push({ kind: 'car', bearing: bearing(car.x - rp.x, car.z - rp.z), icon: carIcon, label: dCar > 6 ? `${Math.round(dCar)}m` : '', pinEdge: g.finale, cls: g.finale ? 'urgent' : '' });
-    // rumoured supply places still missing something
+    // rumoured supply places still missing something (one already taken from its hiding place is no reason to go there)
     const done = (i) => g.supplies[i] >= SUPPLY_NEED[i];
     const hintSeen = new Set();
     g.hints.forEach((zid, i) => {
       const si = Math.min(i, 4);
-      if (zid === 255 || done(si)) return;
+      if (zid === 255 || done(si) || g.found & (1 << i)) return;
       const z = this.world.zoneById[zid];
       if (!z || hintSeen.has(zid + ':' + si)) return;
       hintSeen.add(zid + ':' + si);
@@ -2365,6 +2565,7 @@ export class Game {
       benches: g.benches,
       discovered: this.discovered,
       hints: g.hints,
+      found: g.found,
       supplies: g.supplies,
       carried,
       waypoint: this.waypoint,

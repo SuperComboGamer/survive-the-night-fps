@@ -77,6 +77,7 @@ export function readGlobal(r, prev) {
     bossId: r.u16(),
     supplies: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()],
     hints: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8()],
+    found: r.u8(), // a bit per hint: that supply has been taken from its hiding place
     unlocked: r.u8(),
     wave: r.u8(),
     waves: r.u8(),
@@ -342,6 +343,16 @@ export function readEvents(r, handler, flags, ents) {
       }
       case EVT.SUMMARY:
         handler.summary?.({ night: r.u8(), kills: r.u16(), structLost: r.u8(), downs: r.u8(), deaths: r.u8(), revives: r.u8() });
+        break;
+      case EVT.STRIPPED:
+        // left quantized: they name colliders (harvest.js strippedKey), they are not places to draw anything at
+        for (let k = r.u8(); k > 0; k--) {
+          const x = r.i16(), y = r.i16(), z = r.i16();
+          handler.stripped?.(x, y, z);
+        }
+        break;
+      case EVT.REGROWN:
+        handler.regrown?.();
         break;
       default:
         throw new Error(`unknown event ${type}`);

@@ -237,8 +237,9 @@ for (const seed of SEEDS) {
     };
 
     // What the place holds: things carry the place they belong to. A few places reach well past their levelled
-    // yard (the pier, the checkpoint's traffic queue, the farm's field).
-    const mine = (o) => o.zone === zn.id && Math.hypot(o.x - zn.x, o.z - zn.z) < zn.flat + 32;
+    // yard (the pier, the checkpoint's traffic queue, the farm's field). What lies down in the workings under
+    // Blackrock Mine is not walked to from the yard's gate: scripts/test-mine.js goes down there.
+    const mine = (o) => o.zone === zn.id && Math.hypot(o.x - zn.x, o.z - zn.z) < zn.flat + 32 && !world.mine?.under(o.x, o.y, o.z);
     const containers = world.containers.filter(mine);
     const loot = world.lootSpawns.filter(mine);
     const spots = world.partSpots.filter(mine);
@@ -279,9 +280,10 @@ for (const seed of SEEDS) {
 
     // ---- roads against buildings
     // A body walked down the middle of every road nearby must not touch the upright pieces of what the place built
-    // (walls, posts, machines: world.parts; props are not in it).
+    // (walls, posts, machines: world.parts; props are not in it. The timbering of a drift that runs under the road
+    // is not in its way.)
     const R = zn.flat + 20;
-    const walls = world.parts.filter((p) => (p.shape === 'box' || p.shape === 'cyl') && !p.rx && !p.rz && p.sy >= 1.5 && p.y - p.sy / 2 < zn.h + 0.5 && Math.hypot(p.x - zn.x, p.z - zn.z) < R);
+    const walls = world.parts.filter((p) => (p.shape === 'box' || p.shape === 'cyl') && !p.rx && !p.rz && p.sy >= 1.5 && p.y - p.sy / 2 < zn.h + 0.5 && p.y + p.sy / 2 > world.heightAt(p.x, p.z) && Math.hypot(p.x - zn.x, p.z - zn.z) < R);
     let hit = []; // [piece, distance from the centre line]
     for (const p of walls) {
       counts.road++;

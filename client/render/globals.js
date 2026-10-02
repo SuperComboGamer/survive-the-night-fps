@@ -125,7 +125,8 @@ const FOG_FRAGMENT = /* glsl */ `
     #else
       float fogOD = 3.0 * smoothstep(fogNear, fogFar, fogL);
     #endif
-    fogOD += stnMistOD(cameraPosition.y, cameraPosition.y + fogRay.y, fogL);
+    // (the mist lies on the valley floor, not under it: down a drift of the mine it is no thicker than there)
+    fogOD += stnMistOD(max(cameraPosition.y, uMist.y - 1.5), max(cameraPosition.y + fogRay.y, uMist.y - 1.5), fogL);
     fogOD *= 1.0 + uPs1.z;
     float fogFactor = 1.0 - exp(-fogOD);
     gl_FragColor.rgb = mix(gl_FragColor.rgb, stnFogColor(fogColor, fogDir), fogFactor);

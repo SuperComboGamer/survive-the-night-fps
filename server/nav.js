@@ -131,6 +131,15 @@ export class Nav {
         if (w.isDeepWater(x, z) && !this.deck.has(j * SIZE + i)) this.blocked[j * SIZE + i] = 1;
       }
     }
+    // inside a portal of the mine the ground is not there to walk on: the decline under it is the workings' own
+    // level (minenav.js), and what is on this one walks in at the mouth
+    for (const p of w.mine?.portals || []) {
+      for (let j = Math.max(0, Math.floor(p.z - 14 + MAP_HALF)); j <= Math.min(SIZE - 1, Math.floor(p.z + 14 + MAP_HALF)); j++) {
+        for (let i = Math.max(0, Math.floor(p.x - 14 + MAP_HALF)); i <= Math.min(SIZE - 1, Math.floor(p.x + 14 + MAP_HALF)); i++) {
+          if (w.mine.inHole(i - MAP_HALF + 0.5, j - MAP_HALF + 0.5)) this.blocked[j * SIZE + i] = 1;
+        }
+      }
+    }
     // a deck is walked onto where the ground comes up to it, never over a side that stands more than a
     // step above the ground beside it: cut those steps, or the field leads the horde into the water under
     // the pier. A step from the ground stays only where all the ground it can be taken from (the cell

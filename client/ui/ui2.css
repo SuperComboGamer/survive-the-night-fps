@@ -1444,3 +1444,203 @@
 .stn-ui .schem-row {
   flex-wrap: wrap;
 }
+
+/* ------------------------------------------------------------------ leaderboard */
+.stn-ui .lbscr {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  animation: stn-fadeIn 0.18s ease-out;
+}
+
+.stn-ui .lb-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(94vw, max(600px, calc(820 * var(--u))));
+  max-height: 90vh;
+  padding: calc(12 * var(--u)) calc(16 * var(--u)) calc(16 * var(--u));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+.stn-ui .lb-lists {
+  align-self: flex-start;
+  margin-bottom: calc(12 * var(--u));
+}
+
+.stn-ui .lb-table {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* (not in em: the head row is set smaller than the rows under it, and the columns have to line up) */
+  --lb-rank: max(34px, calc(44 * var(--u)));
+  --lb-stat: max(72px, calc(92 * var(--u)));
+}
+
+.stn-ui .lb-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.stn-ui .lb-row {
+  display: grid;
+  grid-template-columns: var(--lb-rank) minmax(0, 1fr) repeat(4, var(--lb-stat));
+  align-items: center;
+  column-gap: calc(8 * var(--u));
+  padding: calc(6 * var(--u)) calc(10 * var(--u));
+  border-left: 2px solid transparent;
+  font: max(11.5px, calc(14 * var(--u))) / 1.2 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .lb-body .lb-row:nth-child(odd) {
+  background: rgba(230, 223, 207, 0.035);
+}
+
+.stn-ui .lb-hd {
+  padding-bottom: calc(8 * var(--u));
+  border-bottom: 1px solid rgba(230, 223, 207, 0.12);
+  font: 500 max(10px, calc(12 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.stn-ui .lb-col {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: calc(5 * var(--u));
+  padding: calc(4 * var(--u)) 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--bone-dim);
+  cursor: pointer;
+}
+
+.stn-ui .lb-col:hover {
+  color: var(--bone);
+}
+
+.stn-ui .lb-col.on {
+  color: var(--bone);
+  border-bottom-color: var(--blood-hi);
+}
+
+.stn-ui .lb-ico {
+  display: inline-flex;
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.stn-ui .lb-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .lb-rank {
+  color: var(--bone-dim);
+}
+
+.stn-ui .lb-name {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8 * var(--u));
+  min-width: 0;
+}
+
+.stn-ui .lb-nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .lb-tag {
+  flex: none;
+  padding: 0.15em 0.5em;
+  border: 1px solid var(--blood-hi);
+  font: 500 max(8.5px, calc(10 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+}
+
+.stn-ui .lb-tag.here {
+  border-color: rgba(182, 208, 138, 0.5);
+  color: var(--good);
+}
+
+.stn-ui .lb-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.stn-ui .lb-val.on {
+  color: var(--bone);
+}
+
+.stn-ui .lb-row.me {
+  border-left-color: var(--blood-hi);
+  background: rgba(212, 42, 42, 0.13);
+}
+
+.stn-ui .lb-body .lb-row.me:nth-child(odd) {
+  background: rgba(212, 42, 42, 0.16);
+}
+
+/* your own row, off the bottom of the list it did not make */
+.stn-ui .lb-mine {
+  margin-top: calc(6 * var(--u));
+  padding-top: calc(6 * var(--u));
+  border-top: 1px dashed rgba(230, 223, 207, 0.2);
+}
+
+.stn-ui .lb-note {
+  padding: calc(28 * var(--u)) calc(10 * var(--u));
+  text-align: center;
+  font: max(11px, calc(13 * var(--u))) / 1.4 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .lb-frame .map-keys {
+  margin-top: calc(14 * var(--u));
+}
+
+/* ------------------------------------------------------------------ player list */
+/* up while [Tab] is held, over a game that goes on: it takes no clicks and hides none of the HUD */
+.stn-ui .rosterscr {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  animation: stn-fadeIn 0.12s ease-out;
+}
+
+.stn-ui .roster-frame {
+  width: min(92vw, max(440px, calc(600 * var(--u))));
+  max-height: 86vh;
+  overflow: hidden;
+  padding: calc(12 * var(--u)) calc(16 * var(--u)) calc(16 * var(--u));
+  /* (opaque: the prompt and the markers of the HUD under it would read through the paper) */
+  background: linear-gradient(175deg, #1e1a17, #0d0b0a);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* like the map: on top of the HUD, with the titles and toasts behind it hidden */
+.stn-ui.board-open .obj,
+.stn-ui.board-open .wmk-layer,
+.stn-ui.board-open .cine,
+.stn-ui.board-open .top-center,
+.stn-ui.board-open .top-right,
+.stn-ui.board-open .layer-hud {
+  visibility: hidden;
+}

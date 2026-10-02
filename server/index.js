@@ -5,6 +5,7 @@ import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
 import { Game } from './game.js';
+import { PlayerStats } from './stats.js';
 import { SERVER_TICK_RATE, DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -12,8 +13,14 @@ const PORT = +(process.env.PORT || DEFAULT_PORT);
 const MAX = +(process.env.MAX_PLAYERS || MAX_PLAYERS);
 const SEED = process.env.SEED ? +process.env.SEED : undefined;
 const DIST = resolve(__dirname, '../dist');
+// The leaderboard's records (stats.js): STATS_FILE, or stats.json on the Railway volume if the service has one, or in
+// data/ here. They are only as lasting as the disk that is on - a deploy without a volume starts from a fresh one.
+// STATS_FILE= (empty) keeps nothing past this process.
+const STATS_FILE = process.env.STATS_FILE ?? join(process.env.RAILWAY_VOLUME_MOUNT_PATH || resolve(__dirname, '../data'), 'stats.json');
+const stats = new PlayerStats({ file: STATS_FILE, log: (...a) => console.log('[server]', ...a) });
 
 const game = new Game({
+  stats,
   seed: SEED,
   maxPlayers: MAX,
   dayLength: process.env.DAY_SECONDS ? +process.env.DAY_SECONDS : undefined,
@@ -184,5 +191,8 @@ setInterval(() => {
   s.msgsOut = 0;
 }, 10000);
 
+// the leaderboard goes to disk every half minute if it changed, and once more on the way out
+setInterval(() => stats.save(), 30000);
+process.on('exit', () => stats.saveSync());
 process.on('SIGINT', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));

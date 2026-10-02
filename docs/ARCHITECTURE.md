@@ -18,6 +18,7 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   world.js       deterministic world generation from a seed: builds the plan - terrain, A*-routed roads,
                  roadside/woodland sites, buildings, props, containers, supply spots, doorways,
                  vegetation, colliders. A new playthrough is a new seed (S2C.WORLD_RESET); SEED pins it
+  mine.js        the workings under Blackrock Mine: a second level under the heightfield (see The mine below)
   collision.js   static/dynamic collider grids, ray casts
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
@@ -196,6 +197,13 @@ more than its bytes**, so put things into the packets that already flow.
   turn each other down as they pile up (`crowd` in `CATS`): a swarm must not out-shout gunfire or the music.
 - **Master bus** (`_buildGraph`): 2:1 glue compressor -> limiter -> soft clipper -> master volume. Kept light on
   purpose: the quiet forest sits ~10 dB under automatic fire and nothing leaves above full scale.
+- **Voice chat in the mix** (`VoiceSource`). WebRTC delivers a microphone at about -21 LUFS after Chrome's own gain
+  control, some 9 dB under the game, so each voice goes through a leveller (a compressor: an 8 dB spread between
+  microphones comes out as 2.5 dB) and the voice bus lifts it to about -12 LUFS within `VOICE_REF` (4 m), level with
+  a pistol shot. It thins out gently past that (-7.5 dB at 15 m, -11 dB at `TALK_CLEAR`). While a voice is audible,
+  `_duckTick` turns the music down 8 dB and effects + ambience 5 dB, scaled by how loud the voice reaches you; the
+  "Lower game for voices" setting turns that off. Measured with a voice 2 m away (voice over the rest of the mix):
+  day +14 dB, night +10, horde +7, under automatic fire -1 (it was +3, 0, -7 and -12.5 before).
 - **Start-up.** The browser only allows audio after a user gesture, so `main.js` starts the engine on the first key
   or pointer press on the splash (the click on Join at the latest) and nothing waits for it: the join opens the
   socket straight away. Until `audio.ready` (about a second of bank rendering) a one-shot asked for is dropped and
@@ -204,6 +212,59 @@ more than its bytes**, so put things into the packets that already flow.
 - **Checking it without ears.** `/sandbox/audio-test.html` plays everything by hand (`?procedural` for the
   fallback); `?autotest` runs the engine's self-test (every recording decodes, loops are seamless, beds follow
   the state) and ends with `AUDIO_TEST_OK`. `node client/audio/selftest.js` checks the procedural banks.
+
+## The mine: a second level under the heightfield
+
+The valley is a heightfield, so everything about the ground is a function of (x, z). The workings under Blackrock
+Mine (`shared/mine.js`, planned by `world.js` once every place stands) are a second level under it, and the rule
+that keeps the two apart is in three functions of the world, so nothing that walks, falls, shoots or looks has to
+know the mine is there:
+
+- **`world.floorAt(x, z, y)`** is the ground under feet at height y: the terrain, or the floor of the drift they
+  are down in. `groundAt` (collision.js) starts from it instead of `heightAt`, so the player simulation, zombies,
+  cats, dropped items and thrown things land on the right level. `heightAt` stays the terrain alone: what grows,
+  what is built on the surface and what the map shows use that. **Code that puts something on the ground at a
+  known height must ask `floorAt(x, z, y)` or `groundAt(world, x, z, y)`; `heightAt` there puts it on the hillside
+  above the drift.** (`groundAt(world, x, z, 200)` still means "the highest thing here": the surface.)
+- **`world.rayTerrain`** treats the air of a drift as air and the rock round it as the hillside it is, so
+  bullets, lines of sight, the flashlight test of the Shade and reach checks stop at the walls, the roof and the
+  ground above without any colliders for the rock.
+- **`resolveBody`** ends with `mine.confine`: a body below the ground beside a drift is pushed back off the rock
+  (the planned distance field, `mine.sdf`: negative inside a drift). Players and zombies never get into the rock,
+  so prediction needs nothing new.
+
+The plan (`planMine`): the adit is at the back of the mine yard; the far portal goes to the best of a handful
+of spots round every other place (dry, off the roads, clear of what is built there and of the roadside sites).
+The main drift runs from one to the other by a dog-leg, the junction; its floor goes down each decline at
+`DECLINE`, then as near under the ground as `COVER` allows, and deeper round the junction. Galleries leave the
+level stretches and end in rooms. Two grids at 0.5 m are baked over all of it (distance to the rock, height of
+the floor) and every query is a bilinear read of them. The terrain is only changed at the portals: a levelled
+apron, a mound behind, and `COVER_MIN` of ground over every roof. Inside a portal (the first `PORTAL.HOLE`
+metres of the decline, under its stone) the terrain is not drawn (the terrain shader discards it) and the
+valley's nav grid is blocked.
+
+- **The dead** (`server/minenav.js`): the valley's flow fields are one flat level, so the workings have a 1 m grid
+  of their own with a distance field to whatever cell something is headed for. `Zombies.steerLevels` joins the
+  two: a zombie on the surface after a survivor down there walks to the nearer mouth by the valley's field to the
+  spot outside it, straight through, and on down the drift, and the other way round. Targeting and noise measure
+  the walk round by a portal, not the few metres of rock between the levels (`MineNav.between`; `Zombies.noise`
+  takes the height the noise was made at). The dwellers (`z.den`, one to a den of `world.mine.dens`, restocked at
+  sunrise by `stockMine`) keep to the workings and go home when led out. No daylight gets down there: `isLit`
+  never pins a Shade by day in the mine, and the horde that is down there at sunrise is `spared` until it comes up.
+- **Drawing it** (`client/render/mine.js`): the rock is one mesh from the baked grids (floor and roof on the
+  grid, walls on the zero contour, roughened into the rock only), with the timber sets and the track
+  (`world.mine.frames`) drawn the same way and not as static-world parts. Their materials take the sun, the sky's
+  light and the haze's glow by a per-vertex `aSky` (1 in a mouth, 0 well down a drift), so the adit shows black
+  from the yard at noon. Everything else down there (zombies, props, items) is lit by the scene's lights, and
+  those follow the eye: `Game.under` (0..1, how far down the eye is) fades the hemisphere light, the sun, the
+  haze and the rain out in `Environment.update`. The water sheet only covers heightfield cells that dip below the
+  water line, since a drift runs down through that level.
+- **The strongbox** (`CONT.STRONGBOX`, one to a map, in the deepest room) is what makes the trip worth it. It is an
+  ordinary container whose `CONT_DEFS` entry says more than a table: `also` (what is always in it), `loaded` (a
+  weapon rolled from it comes with that many magazines, `loadedAmmo`), `once` (not refilled at sunrise) and
+  `guide` (what the item tooltips call it). `Game.searchCache` and the item guide both read those, so another
+  container can use them too.
+- `scripts/test-mine.js` holds all of this on a dozen valleys and in a running game.
 
 ## Gameplay systems (iteration 2)
 

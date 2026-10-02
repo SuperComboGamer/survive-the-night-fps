@@ -7,7 +7,8 @@ export const CMD_DT = 1 / CMD_RATE;
 export const CMDS_PER_PACKET = 3; // the client batches its commands into one packet per server tick...
 export const CMDS_PER_PACKET_IDLE = 6; // ...and into half as many while it has nothing to say (no keys held, mouse still)
 export const INTERP_DELAY = 0.1; // seconds remote entities are rendered in the past
-export const MAX_REWIND = 0.5; // lag compensation cap (seconds)
+export const MAX_REWIND = 1; // lag compensation cap (seconds). A shot asks for its ping plus about 0.2 s: this covers a ping of 0.8 s
+export const HISTORY_TICKS = 32; // positions a target keeps for it (a power of two, and more ticks than MAX_REWIND spans)
 
 export const MAX_PLAYERS = 8;
 export const DEFAULT_PORT = 3000;
@@ -107,8 +108,14 @@ export const FLASHLIGHT_CONE = 0.4; // half-angle of the beam (rad)
 export const FIRE_LIGHT_MARGIN = 5; // a burning patch of ground lights this far beyond its edge (m)
 
 // Day / night (seconds)
-export const DAY_LENGTH = 240;
-export const FIRST_DAY_LENGTH = 300;
+// A day is a dash: out to a place, a look round it, on to a second one, and the horn. Timed with the player
+// simulation over 40 valleys (scripts/daytime.js), sprint held, by a survivor who knows where every container is:
+// 14 s from the breakdown to the nearest place (17 on a bad map), 15 s on to the next (20), and 25-30 s to search
+// every container in one (48); walking all the way, a third more. So a day allows 40 s on the road and 40 s in
+// each of two places before the horn - a team that keeps moving reaches both, and empties one of them - and
+// DUSK_WARNING after it. The first day has half a minute more, for finding your feet at the breakdown.
+export const DAY_LENGTH = 165;
+export const FIRST_DAY_LENGTH = 195;
 export const NIGHT_LENGTH = 180;
 export const DUSK_WARNING = 45; // horn: pick a spot and build a shelter
 export const NIGHT_WAVES = 3; // each night's horde arrives in waves

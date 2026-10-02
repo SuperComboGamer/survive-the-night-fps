@@ -1,13 +1,12 @@
-// Inventory / crafting screen (Tab). Equipment on the left, backpack grid in the centre,
-// crafting on the right; survivors + car checklist + campfire under the grid.
+// Inventory / crafting screen (I). Equipment on the left, backpack grid in the centre,
+// crafting on the right; car checklist + campfire under the grid.
 import { usedIn, foundIn, sourcesOf } from '../game/itemguide.js';
-import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN, supplyRumours } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
 import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { needLines } from '../game/harvest.js';
-import { healthTier } from './hud2.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -29,8 +28,7 @@ const STATION_GLYPH = { fire: 'campfire', bench: 'wrench' };
 // (Ctrl still works, through that contextmenu event).
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
 const MAX_KEY = IS_MAC ? 'Cmd' : 'Ctrl';
-// ms a craft counts as on its way to the server before it is given up on: two slow round trips, as the ammo
-// reserve only follows the inventory once the next command packet has come back
+// ms a craft counts as on its way to the server before it is given up on: two slow round trips
 const SENT_TTL = 2500;
 
 // Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, and
@@ -139,11 +137,8 @@ function statLines(id) {
   return out;
 }
 
-// how much of an item an inventory ({ slots, ammo, weapons }) holds, wherever it is kept: backpack, ammo reserve
-// or a weapon slot
+// how much of an item an inventory ({ slots, weapons }) holds, wherever it is kept: backpack or a weapon slot
 function carried(inv, item) {
-  const d = ITEM_DEFS[item];
-  if (d.cat === 'ammo') return inv.ammo[d.ammo] | 0;
   return inv.slots.reduce((n, s) => n + (s && s.item === item ? s.count : 0), inv.weapons.includes(item) ? 1 : 0);
 }
 
@@ -257,19 +252,21 @@ export class Inventory {
     this.counts = {};
     this.near = { fire: false, bench: false };
     this.unlocked = 0;
-    this.camp = { supplies: [0, 0, 0, 0, 0], hints: [], carried: {} };
+    this.camp = { supplies: [0, 0, 0, 0, 0], hints: [], found: 0, carried: {} };
     this.tip = new Tooltip(tipParent);
     this.bulk = 0; // crafts a click on a recipe asks for while a bulk key is held (CRAFT_FEW / CRAFT_MAX); 0: none held
     this.keys = { few: false, max: false }; // bulk keys pressed since the screen opened
     this.sent = []; // crafts asked for that the server has not answered yet: { r, n, t, had }
+    this.split = null; // the stack the split popover is open on, and how much of it is picked: { i, item, n }
+    this.splitShut = -1; // the stack whose popover the press now going on has just put away
 
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
     el('div', 'inv-bg', root);
     const close = el('button', 'inv-close', root);
     close.type = 'button';
-    close.title = 'Close inventory (Tab)';
-    el('span', 'kbd sm', close, 'Tab');
+    close.title = 'Close inventory (I)';
+    el('span', 'kbd sm', close, 'I');
     el('span', 'inv-close-t', close, 'Close');
     svgEl('i', 'inv-close-x', close, glyph('xmark'));
     close.addEventListener('click', () => this.ui.cb.onCloseInventory());
@@ -301,7 +298,7 @@ export class Inventory {
     this.armFill = el('i', '', ab);
     this.armPts = el('span', 'arm-pts', arm, '');
 
-    this._h(left, 'Ammunition');
+    this._h(left, 'Ammunition', 'in pack');
     const ammo = el('div', 'ammo-list', left);
     this.ammoEls = AMMO_ITEMS.map((id, i) => {
       const r = el('div', 'am', ammo);
@@ -330,6 +327,7 @@ export class Inventory {
     const hints = el('div', 'grid-hints', gp);
     for (const [k, t] of [
       ['LMB', 'use / equip'],
+      ['Shift+LMB', 'split / drop some'],
       ['RMB', 'drop stack'],
       ['Shift+RMB', 'drop one'],
       ['Drag', 'move · drag out to drop'],
@@ -340,11 +338,6 @@ export class Inventory {
     }
 
     const sub = el('div', 'inv-sub', mid);
-    const sv = el('div', 'sv-box paper', sub);
-    const svh = this._h(sv, 'Survivors');
-    this.svCount = el('span', 'inv-cap', svh, '');
-    this.svList = el('ul', 'sv-list', sv);
-
     const camp = el('div', 'camp-box paper', sub);
     const cph = this._h(camp, 'Car supplies');
     this.carCount = el('span', 'inv-cap', cph, '0 / 7');
@@ -457,6 +450,33 @@ export class Inventory {
       el('span', '', s, t);
     }
 
+    // ---- split popover (Shift+LMB on a stack): how much of it to put in a slot of its own, or down on the ground
+    // for a teammate
+    const sp = (this.splitEl = el('div', 'split', root));
+    sp.hidden = true;
+    const sh = el('div', 'split-head', sp);
+    this.splitIco = el('i', 'split-ico', sh);
+    this.splitName = el('span', 'split-name', sh);
+    this.splitOf = el('span', 'split-of', sh);
+    const sr = el('div', 'split-row', sp);
+    const range = (this.splitRange = el('input', 'set-range split-range', sr));
+    range.type = 'range';
+    range.min = 1;
+    range.step = 1;
+    range.setAttribute('aria-label', 'How many');
+    const num = (this.splitNum = el('input', 'split-num', sr));
+    num.type = 'text';
+    num.inputMode = 'numeric';
+    num.maxLength = 4;
+    num.autocomplete = 'off';
+    num.setAttribute('aria-label', 'How many');
+    const sb = el('div', 'split-btns', sp);
+    this.splitDrop = el('button', 'btn split-b', sb, 'Drop');
+    this.splitDrop.type = 'button';
+    this.splitKeep = el('button', 'btn split-b', sb, 'Split');
+    this.splitKeep.type = 'button';
+    this.splitNote = el('div', 'split-note', sp);
+
     this._bind(root, wrap);
     this._setTab(lsGet(TAB_KEY, 'all'));
     this._renderAll();
@@ -483,7 +503,7 @@ export class Inventory {
       if (!s) return;
       if (e.button === 0) {
         e.preventDefault();
-        this.drag = { i, x: e.clientX, y: e.clientY, started: false };
+        this.drag = { i, x: e.clientX, y: e.clientY, started: false, shut: this.splitShut === i };
       } else if (e.button === 2) {
         e.preventDefault();
         this.ui.sound('ui_click');
@@ -534,6 +554,10 @@ export class Inventory {
           this.ui.sound('ui_click');
           cb.onDropItem(d.i, 0);
         }
+      } else if (e.shiftKey) {
+        // (not on the stack it was open on: that click only put it away. And a single item has nothing to split:
+        // the click must not use it instead)
+        if (!d.shut) this._openSplit(d.i);
       } else {
         this._useSlot(d.i);
       }
@@ -543,7 +567,7 @@ export class Inventory {
 
     // tooltips
     wrap.addEventListener('pointerover', (e) => {
-      if (this.drag?.started) return;
+      if (this.drag?.started || this.split) return;
       const t = e.target.closest('.cell, .eq, .rc, .armor, .cp, .am, .schem');
       if (t === this.tipTarget) return;
       this.tipTarget = t;
@@ -556,6 +580,39 @@ export class Inventory {
       this.tipTarget = null;
       this.tip.hide();
     });
+
+    // split popover. A press anywhere else puts it away, and goes on to do whatever it does there (captured: the
+    // grid's own handler comes after, and must find it closed)
+    root.addEventListener(
+      'pointerdown',
+      (e) => {
+        this.splitShut = -1;
+        if (!this.split || this.splitEl.contains(e.target)) return;
+        this.splitShut = this.split.i;
+        this._closeSplit();
+      },
+      true,
+    );
+    this.splitRange.addEventListener('input', () => this._setSplit(+this.splitRange.value));
+    this.splitNum.addEventListener('input', () => {
+      const digits = this.splitNum.value.replace(/\D/g, '');
+      if (digits !== this.splitNum.value) this.splitNum.value = digits;
+      this._setSplit(+digits, true);
+    });
+    this.splitNum.addEventListener('change', () => this.split && this._setSplit(this.split.n));
+    // (the whole number selected, so that typing replaces it; after the click that gave the focus has placed its caret)
+    this.splitNum.addEventListener('focus', () => setTimeout(() => this.splitNum.select()));
+    this.splitDrop.addEventListener('click', () => this._doSplit(true));
+    this.splitKeep.addEventListener('click', () => this._doSplit(false));
+    // Enter splits, Escape puts it away. Captured, so that neither reaches the game (the chat, the pause menu)
+    this._splitKey = (e) => {
+      if (!this.split || (e.key !== 'Enter' && e.key !== 'Escape')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') this._closeSplit();
+      else if (!e.repeat) this._doSplit(false);
+    };
+    window.addEventListener('keydown', this._splitKey, true);
 
     // equipment: RMB drops the weapon
     this.eqEls.forEach((q, slot) => {
@@ -597,7 +654,7 @@ export class Inventory {
     window.addEventListener('keydown', this._key);
 
     // crafting search. Keydown is consumed so the game (and Q / E above) never sees keys typed here -
-    // except Tab, which drops focus and falls through so it still closes the inventory.
+    // except Tab, which drops focus (so that I closes the inventory again) and falls through to the player list.
     const field = this.findInput;
     field.addEventListener('input', () => this._showRecipes());
     field.addEventListener('keydown', (e) => {
@@ -689,8 +746,7 @@ export class Inventory {
   // The inventory as it will be once the crafts on their way to the server are answered: counting on what the
   // server last sent would offer the same materials twice to a second click that lands before the answer (a
   // double-click does). A craft is answered when there is more of its output than there was (the inventory
-  // message for the backpack; the ammo reserve follows a round trip later, with the self state) - or it never
-  // is, and is given up on after SENT_TTL.
+  // message) - or it never is, and is given up on after SENT_TTL.
   _model() {
     const now = performance.now();
     this.sent = this.sent.filter((e) => now - e.t < SENT_TTL && carried(this.inv, e.r.out) <= e.had);
@@ -700,7 +756,7 @@ export class Inventory {
   }
 
   // What a click on a recipe makes now, with a bulk key held: n crafts - what the key asks for, less what the
-  // materials, the backpack or the ammo reserve stop short of. full: it is room, not materials, that stops the next.
+  // materials or the backpack stop short of. full: it is room, not materials, that stops the next.
   _bulkRun(r, model = this._model()) {
     const inv = copyInv(model);
     const n = craftRun(r, inv, this.bulk);
@@ -712,10 +768,9 @@ export class Inventory {
   _craftHint(r) {
     if (!this.bulk) return [`Click to craft\nShift+click to craft ${CRAFT_FEW} · ${MAX_KEY}+click up to ${CRAFT_MAX}`, ''];
     const { n, full } = this._bulkRun(r);
-    const room = ITEM_DEFS[r.out].cat === 'ammo' ? 'the reserve' : 'the backpack';
-    if (!n) return [full ? `No room in ${room}` : 'The materials are spoken for', 'bad'];
+    if (!n) return [full ? 'No room in the backpack' : 'The materials are spoken for', 'bad'];
     const made = `Click to craft ${ITEM_DEFS[r.out].name} ×${n * r.n}`;
-    return [n === this.bulk ? made : `${made}\nThat is all ${full ? room + ' has room for' : 'the materials make'}`, ''];
+    return [n === this.bulk ? made : `${made}\nThat is all ${full ? 'the backpack has room for' : 'the materials make'}`, ''];
   }
 
   // The count on every recipe that can be made, while a bulk key is held: the items a click would add, or 'full'
@@ -743,6 +798,77 @@ export class Inventory {
     this.ghost = svgEl('div', 'drag-ghost', this.ui.root, itemIcon(s.item));
     if (s.count > 1) el('span', 'cell-n', this.ghost, String(s.count));
     this.cells[d.i].c.classList.add('dragging');
+  }
+
+  // The split popover, on stack i: half of it picked to begin with. It sits above the stack, or below when there
+  // is no room there, and inside the screen either way.
+  _openSplit(i) {
+    const s = this.inv.slots[i];
+    if (!s || s.count < 2) return;
+    this._closeSplit();
+    this.tip.hide();
+    this.tipTarget = null;
+    this.split = { i, item: s.item, n: s.count >> 1 };
+    this.splitIco.innerHTML = itemIcon(s.item);
+    this.splitName.textContent = ITEM_DEFS[s.item]?.name || '';
+    this.splitEl.hidden = false;
+    this.cells[i].c.classList.add('splitting');
+    this._syncSplit();
+    const c = this.cells[i].c.getBoundingClientRect();
+    const o = this.root.getBoundingClientRect();
+    const r = this.splitEl.getBoundingClientRect();
+    const x = clamp(c.left + c.width / 2 - r.width / 2, o.left + 8, o.right - r.width - 8);
+    const y = c.top - r.height - 8 >= o.top + 8 ? c.top - r.height - 8 : c.bottom + 8;
+    this.splitEl.style.transform = `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px)`;
+    this.splitRange.focus({ preventScroll: true });
+  }
+
+  // the popover against its stack as the server last left it: put away when the stack is gone (or down to one),
+  // and never picking more than it holds
+  _syncSplit() {
+    const sp = this.split;
+    if (!sp) return;
+    const s = this.inv.slots[sp.i];
+    if (!s || s.item !== sp.item || s.count < 2) return this._closeSplit();
+    this.splitRange.max = s.count;
+    this.splitOf.textContent = 'of ' + s.count;
+    this._setSplit(sp.n);
+  }
+
+  // typed: it came from the number field, whose text is left as it was typed
+  _setSplit(n, typed = false) {
+    const sp = this.split;
+    if (!sp) return;
+    const max = this.inv.slots[sp.i].count;
+    const free = this.inv.slots.some((s) => !s);
+    sp.n = clamp(n | 0, 1, max);
+    this.splitRange.value = sp.n;
+    this.splitRange.style.setProperty('--p', (((sp.n - 1) / (max - 1)) * 100).toFixed(1) + '%');
+    if (!typed) this.splitNum.value = String(sp.n);
+    this.splitDrop.textContent = 'Drop ' + sp.n;
+    this.splitKeep.textContent = 'Split ' + sp.n;
+    // nothing to split off a stack taken whole, and nowhere to put it with every slot taken
+    this.splitKeep.disabled = sp.n >= max || !free;
+    this.splitNote.textContent = sp.n >= max ? 'The whole stack: it can only be dropped' : free ? '' : 'No free slot to split into';
+  }
+
+  // drop: the amount picked goes on the ground; else into a free slot of its own
+  _doSplit(drop) {
+    const sp = this.split;
+    if (!sp || (!drop && this.splitKeep.disabled)) return;
+    this.ui.sound('ui_click');
+    if (drop) this.ui.cb.onDropItem(sp.i, sp.n);
+    else this.ui.cb.onSplitItem(sp.i, sp.n);
+    this._closeSplit();
+  }
+
+  _closeSplit() {
+    if (!this.split) return;
+    this.cells[this.split.i].c.classList.remove('splitting');
+    this.split = null;
+    this.splitEl.hidden = true;
+    // (a focused number field would keep ui.isTyping() true and swallow gameplay keys)
+    if (this.splitEl.contains(document.activeElement)) document.activeElement.blur();
   }
 
   _useSlot(i) {
@@ -774,7 +900,7 @@ export class Inventory {
       if (!s) return null;
       id = s.item;
       const h = hintFor(ITEM_DEFS[id]?.cat);
-      hint = (h ? h + ' · ' : '') + 'RMB drop · Shift+RMB drop one';
+      hint = (h ? h + ' · ' : '') + 'RMB drop · Shift+RMB drop one' + (s.count > 1 ? '\nShift+LMB split, or drop some' : '');
     } else if (t.classList.contains('eq')) {
       const q = this.eqEls[+t.dataset.slot];
       if (!(q.item > 0)) return null;
@@ -811,8 +937,8 @@ export class Inventory {
     } else if (t.classList.contains('cp')) {
       const i = this.partEls.indexOf(t);
       id = SUPPLIES[i];
-      const zs = (i < 4 ? [this.camp.hints[i]] : (this.camp.hints || []).slice(4)).filter((z) => z != null && z !== 255);
-      extra = [zs.length ? `Rumoured: ${zs.map((z) => ZONE_NAMES[z]).join(', ')}` : 'Nobody knows where'];
+      const rum = supplyRumours(i, this.camp.hints, this.camp.found);
+      extra = [rum.zones.length ? `Rumoured: ${rum.zones.map((z) => ZONE_NAMES[z]).join(', ')}` : rum.found ? 'Found - it only has to reach the car' : 'Nobody knows where'];
       if (SUPPLY_NEED[i] > 1) extra.push(`${this.camp.supplies[i] | 0} / ${SUPPLY_NEED[i]} in the tank`);
     } else if (t.classList.contains('schem')) {
       id = +t.dataset.item;
@@ -868,6 +994,7 @@ export class Inventory {
     this.counts = {};
     for (const s of this.inv.slots) if (s) this.counts[s.item] = (this.counts[s.item] || 0) + s.count;
     this._renderAll();
+    this._syncSplit();
   }
 
   _renderAll() {
@@ -959,7 +1086,7 @@ export class Inventory {
     const key = s ? s.item + ':' + s.count : '';
     if (cell.key === key) return;
     cell.key = key;
-    cell.c.className = 'cell' + (s ? ' c-' + (ITEM_DEFS[s.item]?.cat || 'res') : ' empty');
+    cell.c.className = 'cell' + (s ? ' c-' + (ITEM_DEFS[s.item]?.cat || 'res') : ' empty') + (this.split?.i === i ? ' splitting' : '');
     cell.ico.innerHTML = s ? itemIcon(s.item) : '';
     cell.n.textContent = s && s.count > 1 ? String(s.count) : '';
   }
@@ -1097,70 +1224,17 @@ export class Inventory {
     this._renderRecipes();
   }
 
-  // list: [{id, name, status: 'alive' | 'downed' | 'dead' | 'zombie', hp (0..1, -1 = unknown), kills, ping, talking,
-  // radio, self}]. Called often while the screen is open: the rows are rebuilt only when something but health
-  // changed, and a change of health moves just that row's bar.
-  setPlayers(list) {
-    list = Array.isArray(list) ? list : [];
-    const key = list.map((p) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0].join('|')).join(';');
-    if (key !== this._svKey) {
-      this._svKey = key;
-      this.svList.textContent = '';
-      this._svRows = [];
-      let alive = 0;
-      let down = 0;
-      for (const p of list) {
-        const st = p.status || 'alive';
-        if (st === 'alive' || st === 'downed') alive++; // as the HUD counts them: down is not dead yet
-        if (st === 'downed') down++;
-        const li = el('li', 'sv st-' + st + (p.self ? ' self' : '') + (p.talking ? ' talking' : ''), this.svList);
-        svgEl('i', 'sv-st', li, glyph(st === 'zombie' ? 'claw' : st === 'dead' ? 'skull' : st === 'downed' ? 'downed' : 'person'));
-        const nm = el('span', 'sv-name', li, p.name || '???');
-        if (p.self) el('small', 'sv-you', nm, 'you');
-        el('span', 'sv-tag', li, st === 'alive' ? '' : st === 'downed' ? 'down' : st); // the state in a word
-        const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
-        if (p.radio) {
-          rd.classList.add('on');
-          rd.title = 'Carries a walkie-talkie';
-        }
-        svgEl('i', 'sv-mic', li, glyph('mic'));
-        const k = el('span', 'sv-kills', li);
-        svgEl('i', '', k, glyph('skull'));
-        el('b', '', k, String(p.kills | 0));
-        el('span', 'sv-ping', li, p.ping != null ? Math.round(p.ping) + 'ms' : '');
-        // health, for those who still have some: a bar along the foot of the row
-        const row = { bar: null, fill: null, hp: null };
-        if (st === 'alive') {
-          row.bar = el('i', 'sv-hp', li);
-          row.fill = el('i', '', row.bar);
-        }
-        this._svRows.push(row);
-      }
-      this.svCount.textContent = list.length ? alive + ' alive' + (down ? ` (${down} down)` : '') : '';
-    }
-    for (let i = 0; i < list.length; i++) {
-      const row = this._svRows[i];
-      if (!row.bar) continue;
-      const hp = Math.round(clamp(list[i].hp ?? -1, -1, 1) * 100);
-      if (row.hp === hp) continue;
-      row.hp = hp;
-      row.bar.hidden = hp < 0;
-      if (hp < 0) continue;
-      row.bar.className = 'sv-hp' + healthTier(hp / 100);
-      row.bar.title = `${hp}% health`;
-      row.fill.style.transform = `scaleX(${hp / 100})`;
-    }
-  }
-
-  // info = { supplies:[n x5], hints:[zone x7], carried:{item:n} } (any subset)
+  // info = { supplies:[n x5], hints:[zone x7], found:bits (a hint whose supply has been taken), carried:{item:n} }
+  // (any subset)
   setCamp(info) {
     if (!info) return;
     const c = this.camp;
-    const key = JSON.stringify([info.supplies, info.hints, info.carried]);
+    const key = JSON.stringify([info.supplies, info.hints, info.found, info.carried]);
     if (key === this._campKey) return;
     this._campKey = key;
     if (info.supplies) c.supplies = info.supplies;
     if (info.hints) c.hints = info.hints;
+    if (info.found != null) c.found = info.found;
     if (info.carried) c.carried = info.carried;
     let n = 0;
     let tot = 0;
@@ -1172,8 +1246,10 @@ export class Inventory {
       const done = have >= need;
       li.classList.toggle('on', done);
       li.classList.toggle('carried', !done && !!c.carried[SUPPLIES[i]]);
-      const zs = (i < 4 ? [c.hints[i]] : (c.hints || []).slice(4)).filter((z) => z != null && z !== 255);
-      li.where.textContent = done ? 'installed' : c.carried[SUPPLIES[i]] ? 'carrying' : need > 1 ? `${have}/${need} · ${zs.map((z) => ZONE_NAMES[z]).join(', ')}` : zs.length ? ZONE_NAMES[zs[0]] + '?' : '?';
+      const rum = supplyRumours(i, c.hints, c.found);
+      const zs = rum.zones;
+      const gone = rum.found ? 'found' : '?'; // no place left to search: every one has been picked up, or none was rumoured
+      li.where.textContent = done ? 'installed' : c.carried[SUPPLIES[i]] ? 'carrying' : need > 1 ? `${have}/${need} · ${zs.map((z) => ZONE_NAMES[z]).join(', ') || gone}` : zs.length ? ZONE_NAMES[zs[0]] + '?' : gone;
     });
     this.carCount.textContent = n + ' / ' + tot;
   }
@@ -1192,6 +1268,7 @@ export class Inventory {
       // a focused search field would keep ui.isTyping() true and swallow gameplay keys
       if (document.activeElement === this.findInput) this.findInput.blur();
       this._dropBulk();
+      this._closeSplit();
       this.tip.hide();
       this.tipTarget = null;
       if (this.drag) {

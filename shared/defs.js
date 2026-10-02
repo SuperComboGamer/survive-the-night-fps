@@ -51,7 +51,7 @@ export const ITEM = {
   DB_SHOTGUN: 65,
   CROSSBOW: 66,
   FLAMETHROWER: 67,
-  // ammo pickups (go into ammo reserves, not inventory)
+  // ammunition (carried in the backpack like anything else: the guns reload from the stacks in it)
   AMMO_9MM: 70,
   AMMO_SHELLS: 71,
   AMMO_762: 72,
@@ -73,11 +73,12 @@ export const ITEM = {
   SCHEM_METAL: 94,
 };
 
-// ammo reserve indices
+// ammo reserve indices: the reserve of a calibre (state.ammo) is every round of it in the backpack
 export const AMMO = { P9: 0, SHELL: 1, R762: 2, R308: 3, R556: 4, BOLT: 5, FUEL: 6 };
 export const AMMO_NAMES = ['9mm', 'Shells', '7.62', '.308', '5.56', 'Bolts', 'Fuel'];
+// rounds to a backpack stack. More than that is carried as more stacks: the backpack is the only limit
 export const AMMO_MAX = [150, 48, 240, 40, 180, 30, 300];
-// pickup item for each reserve index (same order as AMMO)
+// the item of each reserve index (same order as AMMO)
 export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556, ITEM.AMMO_BOLTS, ITEM.AMMO_FUEL];
 
 // category: res | cons | throw | armor | gear | weapon | ammo | part | schem
@@ -107,7 +108,7 @@ export const ITEM_DEFS = {
 
   [ITEM.MOLOTOV]: { name: 'Molotov', cat: 'throw', stack: 3, color: 0xd35400, desc: 'Sets an area ablaze.' },
   [ITEM.PIPEBOMB]: { name: 'Pipe Bomb', cat: 'throw', stack: 3, color: 0x566573, desc: 'Beeps, lures the horde, then a big boom.' },
-  [ITEM.FLARE]: { name: 'Road Flare', cat: 'throw', stack: 4, color: 0xe04a2a, desc: 'Burns bright red for 40s. Lights the area (pinning Shades) and draws the dead to it.' },
+  [ITEM.FLARE]: { name: 'Road Flare', cat: 'throw', stack: 4, color: 0xe04a2a, desc: 'Burns bright red for 40s. Lights the area, pinning Shades.' },
 
   [ITEM.JACKET]: { name: 'Padded Jacket', cat: 'armor', stack: 1, color: 0x5d4e37, armor: 60, absorb: 0.3, desc: 'Absorbs 30% damage.' },
   [ITEM.KEVLAR]: { name: 'Kevlar Vest', cat: 'armor', stack: 1, color: 0x2f3b2f, armor: 120, absorb: 0.5, desc: 'Absorbs 50% damage.' },
@@ -129,13 +130,13 @@ export const ITEM_DEFS = {
   [ITEM.CROSSBOW]: { name: 'Crossbow', cat: 'weapon', stack: 1, color: 0x5a4a34, desc: 'One heavy bolt, almost no noise. Slow to cock.' },
   [ITEM.FLAMETHROWER]: { name: 'Flamethrower', cat: 'weapon', stack: 1, color: 0xb5651d, desc: 'A short cone of fire. Whatever it touches keeps burning.' },
 
-  [ITEM.AMMO_9MM]: { name: '9mm Ammo', cat: 'ammo', stack: 60, color: 0xc9a227, ammo: 0, desc: 'Pistol rounds.' },
-  [ITEM.AMMO_SHELLS]: { name: 'Shotgun Shells', cat: 'ammo', stack: 24, color: 0xb03a2e, ammo: 1, desc: '12 gauge.' },
-  [ITEM.AMMO_762]: { name: '7.62 Ammo', cat: 'ammo', stack: 90, color: 0xa6832a, ammo: 2, desc: 'Rifle rounds.' },
-  [ITEM.AMMO_308]: { name: '.308 Ammo', cat: 'ammo', stack: 20, color: 0xd4ac0d, ammo: 3, desc: 'Hunting rounds.' },
-  [ITEM.AMMO_556]: { name: '5.56 Ammo', cat: 'ammo', stack: 90, color: 0x6b7a3a, ammo: 4, desc: 'NATO carbine rounds.' },
-  [ITEM.AMMO_BOLTS]: { name: 'Crossbow Bolts', cat: 'ammo', stack: 12, color: 0x9a8a62, ammo: 5, desc: 'Scrap-tipped bolts. No gunpowder needed.' },
-  [ITEM.AMMO_FUEL]: { name: 'Flamethrower Fuel', cat: 'ammo', stack: 100, color: 0xc0561a, ammo: 6, desc: 'A canister of thickened fuel.' },
+  [ITEM.AMMO_9MM]: { name: '9mm Ammo', cat: 'ammo', stack: AMMO_MAX[0], color: 0xc9a227, ammo: 0, desc: 'Pistol rounds.' },
+  [ITEM.AMMO_SHELLS]: { name: 'Shotgun Shells', cat: 'ammo', stack: AMMO_MAX[1], color: 0xb03a2e, ammo: 1, desc: '12 gauge.' },
+  [ITEM.AMMO_762]: { name: '7.62 Ammo', cat: 'ammo', stack: AMMO_MAX[2], color: 0xa6832a, ammo: 2, desc: 'Rifle rounds.' },
+  [ITEM.AMMO_308]: { name: '.308 Ammo', cat: 'ammo', stack: AMMO_MAX[3], color: 0xd4ac0d, ammo: 3, desc: 'Hunting rounds.' },
+  [ITEM.AMMO_556]: { name: '5.56 Ammo', cat: 'ammo', stack: AMMO_MAX[4], color: 0x6b7a3a, ammo: 4, desc: 'NATO carbine rounds.' },
+  [ITEM.AMMO_BOLTS]: { name: 'Crossbow Bolts', cat: 'ammo', stack: AMMO_MAX[5], color: 0x9a8a62, ammo: 5, desc: 'Scrap-tipped bolts. No gunpowder needed.' },
+  [ITEM.AMMO_FUEL]: { name: 'Flamethrower Fuel', cat: 'ammo', stack: AMMO_MAX[6], color: 0xc0561a, ammo: 6, desc: 'A canister of thickened fuel.' },
 
   [ITEM.CAR_BATTERY]: { name: 'Car Battery', cat: 'part', stack: 1, color: 0x1f3a93, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
   [ITEM.SPARE_TIRE]: { name: 'Spare Tire', cat: 'part', stack: 1, color: 0x1b1b1b, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
@@ -160,6 +161,20 @@ export const radioLinked = (speakerHasWalkie, listenerHasWalkie) => speakerHasWa
 export const SUPPLIES = [ITEM.CAR_BATTERY, ITEM.SPARE_TIRE, ITEM.SPARK_PLUGS, ITEM.FAN_BELT, ITEM.FUEL_CAN];
 export const SUPPLY_NEED = [1, 1, 1, 1, 3];
 export const CAR_PARTS = SUPPLIES; // (legacy name)
+
+// Where supply i is still worth looking for. hints: the place each hidden one is rumoured to be in (the 4 parts,
+// then the 3 jerry cans; 255: none); found: a bit per hint, set once that one has been taken from its hiding place.
+// -> { zones: the places left to search, found: how many have been taken }
+export function supplyRumours(i, hints, found = 0) {
+  const zones = [];
+  let n = 0;
+  (hints || []).forEach((z, k) => {
+    if (Math.min(k, SUPPLIES.length - 1) !== i || z == null || z === 255) return;
+    if (found & (1 << k)) n++;
+    else zones.push(z);
+  });
+  return { zones, found: n };
+}
 
 // schematics: bit index into the team's unlock mask
 export const SCHEMATICS = [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL];
@@ -202,7 +217,7 @@ export const CLAWS = { damage: 22, rate: 0.6, range: 2.0, headMul: 1.0, leapCool
 export const THROWABLES = {
   [ITEM.MOLOTOV]: { fuse: 0, radius: 4.5, burnTime: 8, dps: 40, speed: 17 },
   [ITEM.PIPEBOMB]: { fuse: 2.6, radius: 7, damage: 420, speed: 17 },
-  [ITEM.FLARE]: { fuse: 40, radius: 0, lure: 46, speed: 16, light: 14 },
+  [ITEM.FLARE]: { fuse: 40, radius: 0, speed: 16, light: 14 },
 };
 export const THROW_ITEMS = [ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE];
 
@@ -370,7 +385,7 @@ export const PROJ = {
   MOLOTOV: 3,
   PIPEBOMB: 4,
   ROCK: 5,
-  FLARE: 6, // road flare: lands and burns (light + lure)
+  FLARE: 6, // road flare: lands and burns (light)
 };
 export const AREA = {
   ACID: 1,
@@ -474,6 +489,8 @@ export const EVT = {
   FLYOVER: 17, // supply plane: x,y,z (i16) of the plane's origin at release, heading u16, eta u16 (ms until release)
   ZOMBIE_LEG: 18, // zombie id u16, legs blown off by this hit u8 (bit 0 left, bit 1 right), impulse dir u8 (yaw)
   PONG: 19, // answer to an IN_PING command packet: u8 ms the server sat on it before this snapshot left - private
+  STRIPPED: 20, // u8 n, then n trees / wrecks by their collider's x, y0, z (i16): nothing left to gather from them
+  REGROWN: 21, // every stripped tree and wreck gives again (dawn)
 };
 
 export const IMPACT = { BLOOD: 1, DIRT: 2, WOOD: 3, METAL: 4, ACID: 5, GREEN_BLOOD: 6, SPARK: 7 };
@@ -609,7 +626,7 @@ export const LOOT_TABLES = {
 // Every place (and many roadside / woodland sites) has containers: hold [E] to search.
 // table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic or one of the
 // game's hidden walkie-talkies (WALKIE_STASHES) on top of its loot.
-export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11 };
+export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12 };
 // A place's own table only reaches its floor loot, crates and shelves, so whatever a recipe or an ammo type depends on
 // needs a container table too: ammo crates hold the AK-47 next to the 7.62 they are full of (as rare as the M4A1) and
 // kevlar plates by the pair (a vest takes two), trunks and duffels hold leather. A new entry thins every other one in
@@ -624,6 +641,8 @@ export const CONT_TABLES = {
   dumpster: [[ITEM.CLOTH, 8, 2, 4], [ITEM.SCRAP, 5, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.STICK, 3, 2, 4], [ITEM.TAPE, 2, 1, 1], [ITEM.BATTERY, 1, 1, 1]],
   logpile: [[ITEM.WOOD, 8, 3, 6], [ITEM.STICK, 5, 3, 6], [ITEM.NAILS, 2, 3, 6]],
   fridge: [[ITEM.ALCOHOL, 6, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.HERB, 3, 1, 2], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BANDAGE, 2, 1, 1], [ITEM.TUNA, 5, 1, 2]],
+  // the one strongbox of a map, in the deepest room of the mine: one roll, and every row is a gun worth the trip
+  strongbox: [[ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.FLAMETHROWER, 1, 1, 1]],
 };
 export const CONT_DEFS = {
   [CONT.CRATE]: { name: 'Crate', table: null, rolls: [2, 3] },
@@ -637,7 +656,17 @@ export const CONT_DEFS = {
   [CONT.DUMPSTER]: { name: 'Dumpster', table: 'dumpster', rolls: [1, 2] },
   [CONT.LOGPILE]: { name: 'Log Pile', table: 'logpile', rolls: [1, 2] },
   [CONT.FRIDGE]: { name: 'Fridge', table: 'fridge', rolls: [1, 2] },
+  // also: what is always in it besides the rolls, [item, count]. loaded: a weapon rolled from it comes with this many
+  // magazines of its ammunition (loadedAmmo). once: it is not refilled at sunrise. guide: what the item tooltips call
+  // it as a place to find things (there is one to a map, so not "strongboxes").
+  [CONT.STRONGBOX]: { name: 'Strongbox', table: 'strongbox', rolls: [1, 1], also: [[ITEM.PIPEBOMB, 2]], loaded: 2, once: true, guide: "the mine's strongbox" },
 };
+// the ammunition that comes with weapon `item` out of a container whose weapons are loaded: [ammo item, count], or
+// null for anything that takes none
+export function loadedAmmo(item, mags) {
+  const w = WEAPONS[item];
+  return w && !w.melee && w.mag > 0 && AMMO_ITEMS[w.ammo] !== undefined ? [AMMO_ITEMS[w.ammo], w.mag * mags] : null;
+}
 
 // zombie loot drops: [item, weight, min, max]
 export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 2, 1, 3], [ITEM.BATTERY, 1, 1, 1]];

@@ -5,7 +5,7 @@
 import { Game } from '../server/game.js';
 import { createWorld } from '../shared/world.js';
 import { COL } from '../shared/collision.js';
-import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT } from '../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, WEAPONS, AMMO_ITEMS } from '../shared/defs.js';
 import { usedIn, foundIn, sourcesOf, GATHER } from '../client/game/itemguide.js';
 
 const fails = [];
@@ -29,8 +29,22 @@ const expectFrom = (name, table, visits) => {
     at.set(name, (at.get(name) || 0) + visits * (weight / total) * ((min + max) / 2));
   }
 };
-const contName = { 'Ammo Crate': 'ammo crates', 'Car Trunk': 'car trunks', 'Duffel Bag': 'duffel bags', Locker: 'lockers', Cabinet: 'cabinets', Toolbox: 'toolboxes', Dumpster: 'dumpsters', 'Log Pile': 'log piles', Fridge: 'fridges' };
-for (const d of Object.values(CONT_DEFS)) if (d.table) expectFrom(contName[d.name] || d.name, CONT_TABLES[d.table], (d.rolls[0] + d.rolls[1]) / 2);
+const contName = { 'Ammo Crate': 'ammo crates', 'Car Trunk': 'car trunks', 'Duffel Bag': 'duffel bags', Locker: 'lockers', Cabinet: 'cabinets', Toolbox: 'toolboxes', Dumpster: 'dumpsters', 'Log Pile': 'log piles', Fridge: 'fridges', Strongbox: "the mine's strongbox" };
+for (const d of Object.values(CONT_DEFS)) {
+  if (!d.table) continue;
+  const name = contName[d.name] || d.name;
+  const rolls = (d.rolls[0] + d.rolls[1]) / 2;
+  expectFrom(name, CONT_TABLES[d.table], rolls);
+  // what is always in it besides the rolls, and the magazines its weapons come with (the strongbox down the mine)
+  for (const [item, n] of d.also || []) expected.get(item).set(name, (expected.get(item).get(name) || 0) + n);
+  const total = CONT_TABLES[d.table].reduce((sum, row) => sum + row[1], 0);
+  for (const [item, weight, min, max] of d.loaded ? CONT_TABLES[d.table] : []) {
+    const w = WEAPONS[item];
+    if (!w || w.melee) continue;
+    const at = expected.get(AMMO_ITEMS[w.ammo]);
+    at.set(name, (at.get(name) || 0) + rolls * (weight / total) * ((min + max) / 2) * w.mag * d.loaded);
+  }
+}
 check('every kind of container with a table of its own has a plural the player would recognise', Object.values(CONT_DEFS).every((d) => !d.table || contName[d.name]), Object.values(CONT_DEFS).filter((d) => d.table && !contName[d.name]).map((d) => d.name).join(', '));
 
 // Which place tables are rolled at all is world generation's business: the floor loot of a zone, and its crates and
