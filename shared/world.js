@@ -973,7 +973,7 @@ export function createWorld(seed) {
     b.prop('streetlight', -8, -17, PI);
     b.prop('streetlight', 12, -17, PI);
     b.loot(-10, -6);
-    b.loot(8, 10.5);
+    b.loot(8, 10.5, 0.62); // on the bed of the last room
   });
 
   // MILLER FARM ---------------------------------------------------
@@ -997,7 +997,7 @@ export function createWorld(seed) {
     b.prop('tire_pile', 16, 16.8, 0, { nocollide: true });
     // farmhouse
     b.room(-16, 4, 10, 8, 3, 'clapboard', { n: [door(5, 1.2), win(2.2), win(7.8)], e: [win(4)], w: [win(4)], s: [win(3), door(7.5, 1.1)] }, { roof: 'gableZ', roofH: 2.6, roofMat: 'shingles' });
-    b.wall(-16, 0, -16, 8, 3, 0.18, 'clapboard', [door(4, 1.1)]);
+    b.wall(-17.2, 0, -17.2, 8, 3, 0.18, 'clapboard', [door(4, 1.1)]); // inner wall, clear of the front door (x -16)
     b.box(-16, 0, -1.2, 10, 0.3, 2.2, 'planks', { collide: true }); // porch
     b.prop('bed', -19.5, 6, 0);
     b.prop('table', -13, 2, 0.1);
@@ -1274,11 +1274,12 @@ export function createWorld(seed) {
     b.prop('body_bag', -2.6, -9.2, 0.1, { nocollide: true });
     b.prop('radio_mast', 16, 10, 0);
     b.prop('fuel_tank', -17, 14, 0.9);
-    b.loot(-13.5, -1.5);
-    b.loot(14, -5);
+    // (a tent is one solid box: what belongs to it lies in front of its open flap, where it can be seen)
+    b.loot(-14.3, -6.6);
+    b.loot(14.6, -8.6);
     b.loot(2, 3);
-    b.partSpot(15.2, -6.8);
-    b.partSpot(-12.5, 10.5);
+    b.partSpot(15.6, -8.3);
+    b.partSpot(-15.5, 10.9);
     b.light(0, 0.5, 7, 'embers');
   });
 
@@ -1397,7 +1398,7 @@ export function createWorld(seed) {
     b.room(-15, -14, 12, 8, 3.2, 'clapboard', { e: [door(4, 1.4), win(1.5, 1.6), win(6.5, 1.6)], n: [win(3), win(9)], s: [door(10, 1.1)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'planks' });
     b.box(-17, 0, -14, 0.8, 1.05, 5, 'planks', { collide: true }); // counter
     b.cont(CONT.FRIDGE, -20.5, -16.5, { prop: 'fridge', ry: PI / 2 });
-    b.cont(CONT.CABINET, -19.5, -10.4, { prop: 'cabinet', ry: PI });
+    b.cont(CONT.CABINET, -20.2, -10.4, { prop: 'cabinet', ry: 0 }); // in the corner beside the back door (x -19), facing the kitchen
     b.prop('table', -11.5, -16, 0);
     b.prop('table', -11.5, -12, 0);
     b.prop('chair', -12.2, -15.2, 0.3);
@@ -1440,7 +1441,7 @@ export function createWorld(seed) {
     house(-15, 13, 'e', 1);
     house(-15, 29, 'e', 2);
     house(15, 32, 'w', 3);
-    house(-28, -2, 'n', 4);
+    house(-28, 9, 'n', 4); // south of the east-west street, its door on it
     b.prop('water_tower', -30, -30, 0.2);
     b.cont(CONT.DUMPSTER, 23, -23, { prop: 'dumpster', ry: 0 });
     b.cont(CONT.DUMPSTER, -22, -21, { prop: 'dumpster', ry: PI, seed: 1 });
@@ -1484,7 +1485,7 @@ export function createWorld(seed) {
     t4.partSpot(-1.5, -0.4);
     void t2;
     b.wreck('school_bus', -22, 22, PI / 2 + 0.2, { trunk: false });
-    b.cont(CONT.DUFFEL, -18.5, 20.5, { prop: 'duffel_bag', ry: 0.3, nocollide: true });
+    b.cont(CONT.DUFFEL, -18.5, 19.2, { prop: 'duffel_bag', ry: 0.3, nocollide: true }); // beside the bus (it is one solid box)
     b.wreck('car_wreck', -4.5, -22, 0.3);
     b.wreck('car_wreck', 5.5, 8, PI + 0.4, { seed: 1 });
     b.wreck('pickup_truck', 5, -24, -0.5);
