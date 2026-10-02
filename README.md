@@ -44,7 +44,7 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 | --- | --- |
 | `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`) and runs `sim-smoke` |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
-| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
+| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least twice), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
@@ -188,6 +188,14 @@ them off.
   by it with a survivor close behind, it swells for a second and bursts against it, taking that piece with it (a
   metal wall is dented). Shoot it before it gets there - or while it swells, and the piece only takes the blast.
   Stragglers far from the team are brought back into the fight.
+- **Some nights have a theme.** From night 2 on, about two nights in three draw a theme from the map's seed and
+  the night number, never the same one two nights running; night 1 is always plain. A theme changes what the
+  horde is made of, not how many come: **The Pack** (about a third of the horde are dogs),
+  **Sprinters** (half are runners), **Bile** (spitters and boomers), **Lights Out** (twice the shades the night
+  would allow, six at most), **Wings** (bats and leapers, from night 3) and **The Snare** (ropers, from night 4).
+  The dawn card names the coming night's theme and what to do about it ("Dog packs: they cannot jump a
+  barricade, so close the ring and leave no gap."), the dusk horn repeats it and the night's title carries its name.
+  The table is `NIGHT_THEMES` in `shared/nights.js`.
 - **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
   noise the further it carries: an MP5 35 m, a pistol 45 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
   a car alarm 140 m, a pipe bomb or a bursting boomer 170 m. More carry means more of them coming - and the
@@ -296,6 +304,7 @@ shared/     deterministic code used by both sides
   collision.js  OBB/cylinder colliders, uniform grid, raycasts
   protocol.js   binary Writer/Reader, message ids, quantization
   defs.js       items, weapons, recipes, structures, zombies, events (wire ids)
+  nights.js     seed + night number -> the night's theme (what its horde is made of, and the warning)
 server/     uWebSockets.js server, game loop, zombie AI + flow-field navigation, combat, snapshots
 client/     three.js client: net/, game/ (prediction, entities, input, voice), render/, audio/, ui/
 ```

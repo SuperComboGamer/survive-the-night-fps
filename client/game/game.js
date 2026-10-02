@@ -53,6 +53,7 @@ import {
 } from '../../shared/defs.js';
 import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
+import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
@@ -885,7 +886,7 @@ export class Game {
       },
       summary(s) {
         // after the "DAY N" title card has faded
-        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1)), 4300);
+        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1), nightTheme(g.seed, s.night + 1)), 4300);
       },
     };
     return this._eh;
@@ -895,11 +896,14 @@ export class Game {
     const ui = this.ui;
     const a = this.audio;
     switch (msg) {
-      case NOTIFY.NIGHT_FALLS:
-        ui.notify(`NIGHT ${arg}`, 'big', 4);
-        ui.notify(arg <= 1 ? 'The horde is coming to wherever you are. Hold your shelter.' : `Horde ${arg}: more of them than last night.`, 'sub', 4);
+      case NOTIFY.NIGHT_FALLS: {
+        // a themed night says so (the same theme the server drew: both work it out from the seed)
+        const th = nightTheme(this.seed, arg);
+        ui.notify(th ? `NIGHT ${arg}: ${th.name.toUpperCase()}` : `NIGHT ${arg}`, 'big', th ? 6 : 4);
+        ui.notify(th ? th.warn : arg <= 1 ? 'The horde is coming to wherever you are. Hold your shelter.' : `Horde ${arg}: more of them than last night.`, 'sub', th ? 6 : 4);
         a.stinger?.('night');
         break;
+      }
       case NOTIFY.WAVE:
         ui.notify(`WAVE ${arg}`, 'danger', 3);
         a.playLocal('notify');
@@ -909,10 +913,14 @@ export class Game {
         ui.notify('You made it. The sun burns the horde - go find those supplies.', 'sub', 4);
         a.stinger?.('dawn');
         break;
-      case NOTIFY.HORDE_SOON:
+      case NOTIFY.HORDE_SOON: {
         ui.notify('THE HORDE IS COMING', 'danger', 5);
         ui.notify('Board up where you stand: door boards, barricades, a campfire.', 'toast', 6);
+        // the dawn card said it first; this is the reminder with 45 seconds left (arg = the coming night)
+        const th = nightTheme(this.seed, arg);
+        if (th) ui.notify(`${th.name} tonight. ${th.warn}`, 'warning', 9);
         break;
+      }
       case NOTIFY.BOSS: {
         const zd = ZOMBIE_DEFS[arg];
         ui.notify(zd ? (zd.boss ? '' : 'A ') + zd.name.toUpperCase() : 'SOMETHING', 'big', 4);
