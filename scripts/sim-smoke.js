@@ -810,6 +810,77 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   }
 }
 
+// a survivor on a pickup-truck roof is not out of the horde's reach: the cell under them is blocked for the dead, so
+// their flow field starts from the ground around the truck, and the dead standing against it claw up at the survivor's
+// legs. A dog is too short for a truck roof, and a bus roof (3.1 m) is beyond every reach.
+// (a game of its own: the one the other checks run in is left exactly as it was)
+{
+  const g = new Game({ seed, log: () => {} });
+  const session = g.onOpen({ send() {} });
+  const join = new Writer(64);
+  join.u8(C2S.JOIN);
+  join.u8(PROTOCOL_VERSION);
+  join.str('P');
+  g.onMessage(session, join.bytes().slice());
+  const tick = (n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  tick(3);
+  const p = [...g.players.values()][0];
+  const s = p.state;
+  const w = g.world;
+  const car = w.car;
+  // d metres out from the truck's side (its local X axis)
+  const side = (t, d) => [t.x + Math.cos(t.ry) * d, t.z - Math.sin(t.ry) * d];
+  const open = (t, d) => !w.isDeepWater(...side(t, d)) && !g.nav.isBlocked(...side(t, d));
+  const truck = w.props
+    .filter((t) => t.type === 'pickup_truck')
+    .sort((a, b) => Math.hypot(a.x - car.x, a.z - car.z) - Math.hypot(b.x - car.x, b.z - car.z))
+    .find((t) => [-12, -11, -2.2, 2.2, 11, 12].every((d) => open(t, d)) && g.nav.segClear(...side(t, -12), ...side(t, -2.2)) && g.nav.segClear(...side(t, 2.2), ...side(t, 12)));
+  check('found a pickup truck with open ground either side', !!truck);
+  for (const z of g.zombies) {
+    z.dead = true;
+    z.deadT = 2;
+  }
+  g.zm.maintainT = 1e9;
+  let clawed = 0;
+  g.damagePlayer = (q, amount, src) => {
+    if (src.ztype === ZTYPE.WALKER) clawed += amount;
+  };
+  const roof = truck.y + 1.9;
+  s.x = truck.x;
+  s.z = truck.z;
+  s.y = roof;
+  s.vx = s.vy = s.vz = 0;
+  g.fillHistory(p);
+  tick(3);
+  const dir = { x: 0, z: 0, cost: 0 };
+  const led = g.nav.flowDir(p.id, ...side(truck, 12), dir);
+  const toTruck = -(dir.x * Math.cos(truck.ry) - dir.z * Math.sin(truck.ry));
+  const onRoof = Math.abs(s.y - roof) < 0.01;
+  check('the flow field leads the dead to a survivor on a truck roof', onRoof && led && toTruck > 0.3, `on the roof ${onRoof}, a way in from 12 m off ${led}`);
+  const zs = [-12, 12, -11, 11].map((d) => g.zm.spawn(ZTYPE.WALKER, ...side(truck, d), { horde: true }));
+  tick(20 * 14);
+  const beside = zs.filter((z) => Math.hypot(z.x - s.x, z.z - s.z) < 2.2).length;
+  check('walkers gather at the truck and claw up at the survivor', beside === 4 && clawed >= 100, `${beside} of 4 against it, ${clawed.toFixed(0)} dmg in 14 s`);
+  // reach: a body standing against the truck's side
+  const against = (type) => {
+    const z = g.zm.spawn(type, ...side(truck, 12), { horde: true });
+    [z.x, z.z] = side(truck, 1.45);
+    z.y = w.heightAt(z.x, z.z);
+    return z;
+  };
+  const walker = against(ZTYPE.WALKER);
+  const dog = against(ZTYPE.DOG);
+  const up = g.zm.canReachUp(walker, p);
+  const short = g.zm.canReachUp(dog, p);
+  s.y = roof + 1.2;
+  const high = g.zm.canReachUp(walker, p);
+  s.y = walker.y;
+  const level = g.zm.canReachUp(walker, p);
+  check('a dog is too short for a truck roof, a bus roof is too high, and on the ground nothing reaches up', up && !short && !high && !level, `walker ${up}, dog ${short}, 3.1 m ${high}, level ${level}`);
+}
+
 // supply drop: the plane's flyover event, then a crate off its ramp that free-falls, opens its canopy and
 // sheds the plane's speed to land on the supply spot it was aimed at
 {
