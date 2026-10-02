@@ -1175,9 +1175,110 @@ check('ping broadcast', B.pings > 0);
   check('engine started: final stand', game.escape.active && A.global.finale, `t ${A.global.escapeT}`);
   run(20 * 20);
   check('finale spawns horde', game.zombies.filter((z) => z.horde && !z.dead).length > 5);
+  // nobody at the car: the engine stalls, and the clients are told (they count the warm-up down themselves)
+  const away = car.x > 0 ? -60 : 60;
+  A.tp(car.x + away, car.z);
+  B.tp(car.x + away, car.z + 3);
+  run(20);
+  const left = game.escape.t;
+  run(20 * 3);
+  check('nobody at the car: the engine stalls', game.escape.t === left && A.global.escapeStalled && Math.abs(A.global.escapeT - left) < 0.11, `${left.toFixed(1)} s left, the client was sent ${A.global.escapeT}`);
+  A.tp(car.x + 2.5, car.z);
+  run(20);
+  check('back at the car: it picks up where it stopped', game.escape.t < left && game.escape.t > left - 1.1 && !A.global.escapeStalled, `${game.escape.t.toFixed(1)} s left`);
+  // warm, the run goes on until a survivor at the car holds [E] to get in and drive
+  A.act(ACT.HOLD_BEGIN, CAR_ID);
+  run(2);
+  check('no getting in before the engine is warm', !A.p().hold);
+  A.act(ACT.HOLD_END);
   game.escape.t = 0.1;
-  run(5);
-  check('victory at the car', game.phase === PHASE.VICTORY);
+  run(20 * 3);
+  check('engine warm: the run waits for a driver', game.escape.ready && A.global.escapeReady && game.phase !== PHASE.VICTORY, `phase ${game.phase}`);
+  A.act(ACT.HOLD_BEGIN, CAR_ID);
+  run(20);
+  check('getting in is a hold the whole team is told about', A.self.holdKind === HOLD.DRIVE && A.self.holdProgress > 0.2 && B.global.escapeLeaving && game.phase !== PHASE.VICTORY, `kind ${A.self.holdKind}, progress ${A.self.holdProgress?.toFixed(2)}`);
+  run(Math.round(20 * ESCAPE_DRIVE_TIME));
+  check('victory when a survivor drives off', game.phase === PHASE.VICTORY && A.notes.some((n) => n[0] === NOTIFY.VICTORY));
+}
+
+// the escape is the team's to make (a game of its own, two survivors, day 3)
+import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constants.js'; // (here, beside the checks that use them)
+{
+  const g = new Game({ seed, log: () => {}, godMode: true });
+  const join = (name) => {
+    const session = g.onOpen({ send() {} });
+    const w = new Writer(64);
+    w.u8(C2S.JOIN);
+    w.u8(PROTOCOL_VERSION);
+    w.str(name);
+    g.onMessage(session, w.bytes().slice());
+    return session;
+  };
+  const hold = (session, act) => {
+    const w = new Writer(8);
+    w.u8(C2S.ACTION);
+    w.u8(act);
+    if (act === ACT.HOLD_BEGIN) w.u16(CAR_ID);
+    g.onMessage(session, w.bytes().slice());
+  };
+  const sa = join('Ann');
+  const sb = join('Ben');
+  const a = sa.player;
+  const b = sb.player;
+  const car = g.world.car;
+  const far = car.x > 0 ? -250 : 250;
+  const put = (p, dx) => {
+    p.state.x = car.x + dx;
+    p.state.z = car.z;
+    p.state.y = groundAt(g.world, p.state.x, p.state.z, 200, 0.3);
+    p.state.vx = p.state.vy = p.state.vz = 0;
+  };
+  // every tick: both survivors where the test wants them (a stand shoves a survivor who cannot be hurt), and the
+  // horde shot as it comes, so the stand's size is what gets counted
+  const tick = (seconds, da, db, fn) => {
+    for (let i = 0; i < seconds * 20; i++) {
+      put(a, da);
+      put(b, db);
+      fn?.();
+      g.update();
+      for (const z of g.zombies) if (z.horde && !z.boss && !z.dead) g.combat.killZombie(z, null, {});
+    }
+  };
+  g.day = 3;
+  g.supplies = SUPPLY_NEED.slice();
+  g.startEngine(null);
+  const e = g.escape;
+  tick(ESCAPE_TIME + 10, far, far + 3);
+  check('the engine does not warm up with the team away from the car', !e.ready && e.stalled && e.t === ESCAPE_TIME, `${e.t} s left after ${ESCAPE_TIME + 10} s, ${e.sent} of the stand's ${g.finalStandSize()} came anyway`);
+  tick(30, ESCAPE_RADIUS - 1, far);
+  const t30 = e.t;
+  g.goDown(b);
+  tick(5, far, 2);
+  g.revive(b, null);
+  check('one survivor on their feet within reach of the car keeps it warming; a downed one does not', Math.abs(t30 - (ESCAPE_TIME - 30)) < 0.01 && e.t === t30 && e.stalled, `${t30.toFixed(2)} s left after 30 s at the car, ${e.t.toFixed(2)} s after 5 more with only a downed survivor there`);
+  tick(5, ESCAPE_RADIUS + 1, far);
+  check('a stall holds the warm-up where it is', e.t === t30 && !e.boss, `${e.t.toFixed(2)} s left`);
+  tick(ESCAPE_TIME - 31, 2, far);
+  const sent = e.sent;
+  const early = e.ready;
+  tick(1.5, 2, far);
+  check('the engine is warm after its full time at the car, and the boss came', !early && e.ready && e.boss && e.t === 0 && g.phase !== PHASE.VICTORY && sent === g.finalStandSize(), `${sent} of the stand's ${g.finalStandSize()} came`);
+  tick(20, 2, 2);
+  check('a warm engine ends nothing by itself, and goes on drawing the dead', g.phase !== PHASE.VICTORY && e.active && e.sent > sent, `20 s at the car: phase ${g.phase}, ${e.sent - sent} more came`);
+  // getting in: from the car, on your feet, and for the whole hold
+  put(a, 9);
+  hold(sa, ACT.HOLD_BEGIN);
+  const fromAfar = !!a.hold;
+  tick(1, 2, far);
+  hold(sa, ACT.HOLD_BEGIN);
+  tick(ESCAPE_DRIVE_TIME - 0.5, 2, far);
+  const leaving = e.leaving;
+  hold(sa, ACT.HOLD_END);
+  tick(2, 2, far);
+  check('getting in needs the whole hold, at the car', !fromAfar && leaving && !e.leaving && g.phase !== PHASE.VICTORY, `phase ${g.phase}`);
+  tick(1, 2, far, () => !a.hold && hold(sa, ACT.HOLD_BEGIN));
+  tick(ESCAPE_DRIVE_TIME, 2, far);
+  check('a survivor drives off: victory, whoever is still out there', g.phase === PHASE.VICTORY && !e.active && b.alive && Math.hypot(b.state.x - car.x, b.state.z - car.z) > 200, `phase ${g.phase}`);
 }
 
 // the final stand is sized to the team from the same sum as a night's horde (games of their own, on day 3)

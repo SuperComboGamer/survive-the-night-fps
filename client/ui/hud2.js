@@ -181,8 +181,12 @@ export class Objective {
     let tone = '';
     if (o.finale) {
       if (o.escapeReady) {
-        dir = 'The engine is running - get to the car!';
+        // nothing ends the run but a survivor driving, and whoever is not at the car then stays behind
+        dir = o.escapeLeaving ? 'Someone is getting in: be at the car or be left behind!' : 'The engine is running. Hold [E] at the car to drive away.';
         tone = 'good';
+      } else if (o.escapeStalled) {
+        dir = 'The engine stalls: get back to the car';
+        tone = 'danger';
       } else {
         dir = `Defend the car · engine ready in ${fmtTime(o.escapeT)}`;
         tone = 'danger';

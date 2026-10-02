@@ -14,6 +14,7 @@ import {
   INVENTORY_SIZE,
   WATER_LEVEL,
   MAX_PLAYERS,
+  ESCAPE_RADIUS,
   MAP_HALF,
   GRID_STEP,
   GRID_N,
@@ -612,11 +613,12 @@ export class Game {
         break;
       case NOTIFY.ENGINE_START:
         ui.notify('THE FINAL STAND', 'big', 5);
-        ui.notify('The engine is warming up. Every corpse in the valley heard it. Hold the car!', 'sub', 6);
+        ui.notify('The engine is warming up. Every corpse in the valley heard it. Stay at the car: it stalls if nobody is there.', 'sub', 6);
         a.stinger?.('boss');
         break;
       case NOTIFY.ESCAPE_READY:
         ui.notify('GET IN THE CAR!', 'big', 5);
+        ui.notify('Hold [E] at the car to drive away. Whoever is not at the car is left behind.', 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.SCHEMATIC:
@@ -1029,7 +1031,7 @@ export class Game {
     const g = this.global;
     if (!t) return;
     if (t === 'car') {
-      if (g.suppliesDone && !g.finale) this.beginHold(CAR_ID);
+      if (g.suppliesDone && (!g.finale || g.escapeReady)) this.beginHold(CAR_ID); // start the engine; once it is warm, get in and drive
       else this.conn.action(ACT.INTERACT, CAR_ID);
       return;
     }
@@ -1288,7 +1290,7 @@ export class Game {
     const g = this.global;
     const cycle = this.debugCycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
     if (!g.finale) this.global.timeLeft = Math.max(0, g.timeLeft - dt);
-    else this.global.escapeT = Math.max(0, g.escapeT - dt);
+    else if (!g.escapeStalled) this.global.escapeT = Math.max(0, g.escapeT - dt); // a stalled warm-up stands still
     const weather = this.weather.update(dt, g, time, cam.position);
     if (weather.kind !== this.weatherKind) {
       this.weatherKind = weather.kind;
@@ -1433,7 +1435,19 @@ export class Game {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      this.ui.showVictory({ days: g.day, kills, reason: 'The engine roars. You tear down Route 9 and leave the valley behind.', restartIn: Math.ceil(g.restartT) });
+      // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
+      // when it left stayed in the valley, and so did the players who had already turned.
+      const car = this.world.car;
+      let title = 'You escaped';
+      let reason = 'The engine roars. You tear down Route 9 and leave the valley behind.';
+      if (!this.self.alive || this.prediction.state.zombie) {
+        title = 'They escaped';
+        reason = 'The engine roars and the car is gone down Route 9. You stay in the valley with the rest of the dead.';
+      } else if (Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z) > ESCAPE_RADIUS) {
+        title = 'Left behind';
+        reason = 'The car tears down Route 9 without you. The others made it out of the valley.';
+      }
+      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT) });
     } else if ((g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) && (this.overlay === 'gameover' || this.overlay === 'victory')) {
       this.overlay = null;
       this.ui.hideOverlays();
@@ -1527,7 +1541,7 @@ export class Game {
       this.lookTarget = 'car';
       const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
       const carrying = missing.filter((p) => counts[p]);
-      if (g.finale) this.prompt = g.escapeReady ? 'GET IN - the engine is running!' : 'Defend the car until the engine is warm';
+      if (g.finale) this.prompt = g.escapeReady ? '[E] Hold to get in and drive away' : 'Defend the car until the engine is warm';
       else if (!missing.length) this.prompt = '[E] Hold to start the engine (final stand)';
       else if (carrying.length) this.prompt = `[E] Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
       else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
@@ -1668,6 +1682,8 @@ export class Game {
     h.finale = g.finale;
     h.escapeT = g.escapeT;
     h.escapeReady = g.escapeReady;
+    h.escapeStalled = g.escapeStalled;
+    h.escapeLeaving = g.escapeLeaving;
     const boss = g.bossId ? this.entities.ents.get(g.bossId) : null;
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
     h.prompt = this.prompt;
@@ -1684,7 +1700,7 @@ export class Game {
     if (self.holdKind) {
       h.useProgress = self.holdProgress;
       const t = this.entities.ents.get(this.holding);
-      h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : 'Starting the engine…';
+      h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : 'Starting the engine…';
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
       h.useLabel = self.useItem ? `${CONSUMABLES[self.useItem]?.food ? 'Eating' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
@@ -1709,7 +1725,7 @@ export class Game {
         anyCarried = true;
       }
     });
-    h.objective = { supplies: g.supplies, hints: g.hints, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
+    h.objective = { supplies: g.supplies, hints: g.hints, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
     this.ui.setCamp({ supplies: g.supplies, hints: g.hints, carried });
     // downed overlay
     h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
@@ -1790,7 +1806,7 @@ export class Game {
     }
     // the car when it matters (finale, or carrying supplies back)
     if ((g.finale || h.objective?.anyCarried || g.suppliesDone) && dCar > 10 && this.project(car.x, car.y + 2.2, car.z, sc)) {
-      wm.push({ kind: 'car', x: sc.x, y: sc.y, icon: carIcon, name: g.finale ? (g.escapeReady ? 'GET IN' : 'Defend the car') : 'Your car', sub: `${Math.round(dCar)}m`, cls: g.finale ? 'urgent' : '', scale: 0.95 });
+      wm.push({ kind: 'car', x: sc.x, y: sc.y, icon: carIcon, name: g.finale ? (g.escapeReady ? 'GET IN' : g.escapeStalled ? 'Engine stalled' : 'Defend the car') : 'Your car', sub: `${Math.round(dCar)}m`, cls: g.finale ? 'urgent' : '', scale: 0.95 });
     }
   }
 

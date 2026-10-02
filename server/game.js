@@ -23,6 +23,7 @@ import {
   TANK_BOSS_NIGHT,
   ESCAPE_TIME,
   ESCAPE_RADIUS,
+  ESCAPE_DRIVE_TIME,
   GAME_OVER_DELAY,
   PLAYER_MAX_HP,
   ZOMBIE_PLAYER_MAX_HP,
@@ -116,6 +117,9 @@ const FINAL_STAND_ALIVE = 0.6; // at most this share of them is on its feet at o
 const FINAL_STAND_SPREAD = ESCAPE_TIME - 30; // seconds they set out over: a walker needs the last 30 of the warm-up to reach the car
 const FINAL_STAND_TANKS = 1; // Tanks among them, per survivor (the boss comes on top)
 const FINAL_STAND_JOIN_RANGE = 95; // wanderers this close to a survivor join the stand (the same reach as at nightfall)
+// The escape is the team's to make (the radius and the hold are ESCAPE_RADIUS and ESCAPE_DRIVE_TIME in constants.js).
+// Also a first pass:
+const ESCAPE_LINGER_PACE = 0.5; // once the engine is warm, groups keep coming at this share of the stand's pace until someone drives
 const NO_HASH = -2; // a command packet that came without a state fingerprint
 const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE; // commands a client issues per server tick
 const CMD_QUEUE_MAX = 24; // commands a client can have waiting (0.4 s of them); older ones are dropped
@@ -220,7 +224,7 @@ export class Game {
     this.bossId = 0;
     this.warned = false;
     this.shadeWarned = false; // the "a shade is out there" notice went out tonight
-    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
+    this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
     this.supplyAt = [];
     this.restartT = 0;
     this.globalDirty = true;
@@ -575,7 +579,7 @@ export class Game {
     this.bossPending = null;
     this.bossId = 0;
     this.gather.clear();
-    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
+    this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
   }
 
   startGame() {
@@ -909,7 +913,7 @@ export class Game {
   startEngine(p) {
     if (this.escape.active || !this.allSuppliesIn()) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
-    this.escape = { active: true, t: ESCAPE_TIME, ready: false, spawnT: 3, boss: false, sent: 0, tanks: 0 };
+    this.escape = { active: true, t: ESCAPE_TIME, ready: false, stalled: false, leaving: false, spawnT: 3, boss: false, sent: 0, tanks: 0 };
     const car = this.world.car;
     this.notify(NOTIFY.ENGINE_START, p ? p.id : 0);
     this.sound(SOUND.ENGINE_CRANK, car.x, car.y + 0.8, car.z, 300);
@@ -935,6 +939,15 @@ export class Game {
     }
     this.globalDirty = true;
     this.log('engine started - final stand');
+  }
+
+  // A survivor got in and drove (HOLD.DRIVE at the car, once the engine is warm). That wins the run for the whole
+  // team, as victory always has: one phase and one restart for everybody. Whoever is not at the car is left
+  // behind, which each client works out for its own end screen from ESCAPE_RADIUS.
+  driveOff(p) {
+    if (!this.escape.active || !this.escape.ready) return;
+    this.log('drove off:', p.name);
+    this.victory();
   }
 
   // ---------------------------------------------------------------- items / loot
@@ -1440,7 +1453,12 @@ export class Game {
     const s = p.state;
     if (p.useItem) return;
     if (id === CAR_ID) {
-      if (!this.nearCar(p) || this.escape.active) return;
+      if (!this.nearCar(p)) return;
+      if (this.escape.active) {
+        // once the engine is warm the same hold gets in and drives: the run does not end until somebody does
+        if (this.escape.ready) p.hold = { kind: HOLD.DRIVE, target: CAR_ID, t: 0, need: ESCAPE_DRIVE_TIME };
+        return;
+      }
       if (!this.allSuppliesIn()) return this.interact(p, CAR_ID);
       p.hold = { kind: HOLD.ENGINE, target: CAR_ID, t: 0, need: ENGINE_START_TIME };
       return;
@@ -1471,7 +1489,7 @@ export class Game {
     let ok = !p.downed && !p.zombie && p.alive;
     let tgt = null;
     if (ok) {
-      if (h.target === CAR_ID) ok = this.nearCar(p, 6) && !this.escape.active;
+      if (h.target === CAR_ID) ok = this.nearCar(p, 6) && (h.kind === HOLD.DRIVE ? this.escape.active && this.escape.ready : !this.escape.active);
       else {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
@@ -1495,6 +1513,7 @@ export class Game {
     if (h.kind === HOLD.SEARCH) this.searchCache(p, tgt);
     else if (h.kind === HOLD.REVIVE) this.revive(tgt, p);
     else if (h.kind === HOLD.ENGINE) this.startEngine(p);
+    else if (h.kind === HOLD.DRIVE) this.driveOff(p);
   }
 
   searchCache(p, c) {
@@ -2346,32 +2365,52 @@ export class Game {
     }
   }
 
-  // The engine is warming up: the whole valley heard it. Hold the car until it is ready, then get in.
+  // The engine is warming up: the whole valley heard it. It only warms while a survivor on their feet is at the car
+  // (it stalls otherwise: the count stops where it is, it does not start over), and once it is warm the run goes on
+  // until a survivor gets in and drives (HOLD.DRIVE -> driveOff).
   updateEscape(dt) {
     const e = this.escape;
     const car = this.world.car;
-    if (!e.ready) {
+    let held = false; // somebody stands at the car
+    let leaving = false; // somebody is getting in
+    for (const p of this.players.values()) {
+      if (!p.alive || p.zombie || p.downed) continue;
+      if (Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS) held = true;
+      if (p.hold && p.hold.kind === HOLD.DRIVE) leaving = true;
+    }
+    const stalled = !e.ready && !held;
+    if (stalled !== e.stalled || leaving !== e.leaving) {
+      e.stalled = stalled;
+      e.leaving = leaving;
+      this.globalDirty = true; // the HUD says both, and the client stops its own countdown on a stall
+    }
+    if (!e.ready && !stalled) {
       const prev = Math.ceil(e.t);
       e.t -= dt;
       if (Math.ceil(e.t) !== prev) this.globalDirty = true;
-      e.spawnT -= dt;
-      // its size, the cap on how many stand at once and the pace all follow the survivors still alive; a group that
-      // finds the cap full waits and comes as soon as there is room
-      const size = e.spawnT <= 0 ? this.finalStandSize() : 0; // 0: no group is due
-      if (e.sent < size && this.hordeAlive() < Math.min(MAX_ZOMBIES_ALIVE, Math.round(size * FINAL_STAND_ALIVE))) {
-        e.spawnT = (FINAL_STAND_SPREAD / Math.ceil(size / 3.5)) * (0.7 + this.rng() * 0.6); // groups of 3-5, as a wave's
-        const n = this.day;
-        const tanks = FINAL_STAND_TANKS * Math.max(1, this.humanCount());
-        const q = [];
-        for (let i = Math.min(5, size - e.sent); i > 0; i--) {
-          const r = this.rng();
-          const type = r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 && e.tanks < tanks ? ZTYPE.TANK : ZTYPE.RUNNER;
-          if (type === ZTYPE.TANK) e.tanks++;
-          q.push(type);
-        }
-        e.sent += this.spawnHordeGroup(q, car);
-        for (const t of q) if (t === ZTYPE.TANK) e.tanks--; // rolled, but the group came out smaller: it was not sent
+    }
+    // The stand comes on its own clock, stalled engine or not: the dead hunt the survivors, not the car.
+    e.spawnT -= dt;
+    // its size, the cap on how many stand at once and the pace all follow the survivors still alive; a group that
+    // finds the cap full waits and comes as soon as there is room
+    const size = e.spawnT <= 0 ? this.finalStandSize() : 0; // 0: no group is due
+    // a warm engine goes on drawing them once the stand is spent, so every second the team lingers at the car costs
+    const linger = e.ready && size > 0 && e.sent >= size;
+    if ((e.sent < size || linger) && this.hordeAlive() < Math.min(MAX_ZOMBIES_ALIVE, Math.round(size * FINAL_STAND_ALIVE))) {
+      e.spawnT = ((FINAL_STAND_SPREAD / Math.ceil(size / 3.5)) * (0.7 + this.rng() * 0.6)) / (linger ? ESCAPE_LINGER_PACE : 1); // groups of 3-5, as a wave's
+      const n = this.day;
+      const tanks = FINAL_STAND_TANKS * Math.max(1, this.humanCount());
+      const q = [];
+      for (let i = linger ? 5 : Math.min(5, size - e.sent); i > 0; i--) {
+        const r = this.rng();
+        const type = r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 && e.tanks < tanks ? ZTYPE.TANK : ZTYPE.RUNNER;
+        if (type === ZTYPE.TANK) e.tanks++;
+        q.push(type);
       }
+      e.sent += this.spawnHordeGroup(q, car);
+      for (const t of q) if (t === ZTYPE.TANK) e.tanks--; // rolled, but the group came out smaller: it was not sent
+    }
+    if (!e.ready) {
       if (!e.boss && e.t <= ESCAPE_TIME * 0.5) {
         e.boss = true;
         this.spawnBosses([this.day % 2 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN], car);
@@ -2382,14 +2421,6 @@ export class Game {
         this.notify(NOTIFY.ESCAPE_READY, 0);
         this.sound(SOUND.CAR_START, car.x, car.y + 0.8, car.z, 300);
         this.globalDirty = true;
-      }
-    } else {
-      for (const p of this.players.values()) {
-        if (!p.alive || p.zombie) continue;
-        if (Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS) {
-          this.victory();
-          return;
-        }
       }
     }
     this.trackBoss();
@@ -2636,7 +2667,9 @@ export class Game {
     w.u8(this.phase === PHASE.NIGHT ? this.wave : 0);
     w.u8(NIGHT_WAVES);
     w.u16(Math.round(Math.max(0, this.escape.t) * 10));
-    w.u8((this.escape.active ? 1 : 0) | (this.allSuppliesIn() ? 2 : 0) | (this.escape.ready ? 4 : 0));
+    const esc = this.escape;
+    // 8: the warm-up has stalled (nobody on their feet at the car), 16: a survivor is getting in to drive
+    w.u8((esc.active ? 1 : 0) | (this.allSuppliesIn() ? 2 : 0) | (esc.ready ? 4 : 0) | (esc.active && esc.stalled ? 8 : 0) | (esc.active && esc.leaving ? 16 : 0));
     let alive = 0;
     let total = 0;
     for (const p of this.players.values()) {

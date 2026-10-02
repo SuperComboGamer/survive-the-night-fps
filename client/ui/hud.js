@@ -304,8 +304,10 @@ export class Hud {
 
     let title, label, time;
     if (h.finale) {
-      title = h.escapeReady ? 'Get in the car!' : 'Final stand';
-      label = h.escapeReady ? 'The engine is running' : 'Engine ready in';
+      // a stalled warm-up keeps its time on show: it stopped there, it did not start over. (A title that fits one
+      // line: a second one pushes the horde counter down into the kill feed.)
+      title = h.escapeReady ? 'Get in the car!' : h.escapeStalled ? 'Stalled' : 'Final stand';
+      label = h.escapeReady ? (h.escapeLeaving ? 'Someone is getting in' : 'The engine is running') : h.escapeStalled ? 'Get back to the car' : 'Engine ready in';
       time = h.escapeReady ? '' : fmtTime(h.escapeT);
     } else if (state === 'night') {
       title = 'Night ' + day;

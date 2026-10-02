@@ -92,6 +92,8 @@ export function readGlobal(r, prev) {
   g.finale = !!(g.flags & 1);
   g.suppliesDone = !!(g.flags & 2);
   g.escapeReady = !!(g.flags & 4);
+  g.escapeStalled = !!(g.flags & 8); // nobody on their feet at the car: the warm-up has stopped where it is
+  g.escapeLeaving = !!(g.flags & 16); // a survivor is getting in to drive
   return g;
 }
 

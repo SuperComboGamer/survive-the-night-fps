@@ -353,7 +353,10 @@ switch (screen) {
   }
   case 'hud-finale': {
     buildScene(bg || 'night');
+    // &ready: the engine is warm (&leaving: somebody is getting in); &stalled: nobody at the car, the warm-up stands still
     const ready = !!q.get('ready');
+    const stalled = !ready && !!q.get('stalled');
+    const leaving = ready && !!q.get('leaving');
     const h = {
       ...baseHud,
       phase: PHASE.NIGHT,
@@ -361,19 +364,21 @@ switch (screen) {
       hordeLeft: 58,
       finale: true,
       escapeReady: ready,
+      escapeStalled: stalled,
+      escapeLeaving: leaving,
       slot: 0,
       mag: 4,
       reserve: 0,
-      prompt: ready ? '[E] Get in the car' : null,
+      prompt: ready ? '[E] Hold to get in and drive away' : null,
       context: null,
       compassMarks: [{ kind: 'car', bearing: -2.4, icon: glyph('car'), label: '63m', pinEdge: true, cls: 'urgent' }, ...baseHud.compassMarks.slice(1)],
-      worldMarks: [{ kind: 'car', x: 1180, y: 430, icon: glyph('car'), name: ready ? 'GET IN' : 'Defend the car', sub: '63m', cls: 'urgent', scale: 0.95 }],
+      worldMarks: [{ kind: 'car', x: 1180, y: 430, icon: glyph('car'), name: ready ? 'GET IN' : stalled ? 'Engine stalled' : 'Defend the car', sub: '63m', cls: 'urgent', scale: 0.95 }],
     };
     ui.hideSplash();
     feedSome();
     loop((t) => {
-      const escapeT = Math.max(0, 47 - t);
-      return { ...h, escapeT, objective: { ...baseHud.objective, supplies: [1, 1, 1, 1, 3], carried: {}, anyCarried: false, suppliesDone: true, phase: PHASE.NIGHT, finale: true, escapeT: Math.ceil(escapeT), escapeReady: ready } };
+      const escapeT = stalled ? 47 : Math.max(0, 47 - t);
+      return { ...h, escapeT, objective: { ...baseHud.objective, supplies: [1, 1, 1, 1, 3], carried: {}, anyCarried: false, suppliesDone: true, phase: PHASE.NIGHT, finale: true, escapeT: Math.ceil(escapeT), escapeReady: ready, escapeStalled: stalled, escapeLeaving: leaving } };
     });
     break;
   }
