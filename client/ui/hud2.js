@@ -23,6 +23,10 @@ const PING_LABEL = ['Go here', 'Danger', 'Loot'];
 // world bearing of (dx,dz): 0 = north (-Z), +90 deg = east (+X)
 export const bearing = (dx, dz) => Math.atan2(dx, -dz);
 
+// A survivor's health fraction as a class, for nameplates, the compass and the survivors list: 'crit' below 30%
+// (where your own vitals turn red), 'hurt' below 60%. Negative = no health to show (downed, unknown).
+export const healthTier = (f) => (f < 0 || f >= 0.6 ? '' : f < 0.3 ? ' crit' : ' hurt');
+
 // ---------------------------------------------------------------- compass
 // A marker may also carry `name` (what it is: shown before its label while you face it, and always for your
 // waypoint), `d` (its distance in metres) and `pinEdge` (stays on the tape's end when out of view).
@@ -130,7 +134,8 @@ export class Compass {
     return m;
   }
 
-  // yaw: camera yaw (0 = facing -Z/north, positive = turning left/west). markers: [{bearing, kind, icon, label, cls}]
+  // yaw: camera yaw (0 = facing -Z/north, positive = turning left/west). markers: [{bearing, kind, icon, label, cls,
+  // hp (a teammate's health 0..1, optional)}]
   update(yaw, markers) {
     const heading = -yaw; // clockwise from north
     if (!this.width) this.width = this.root.clientWidth;
@@ -240,7 +245,7 @@ export class Compass {
       const mk = r.mk;
       const edge = r.edge + (r.lvl === ASIDE ? ' aside' : r.lvl === TICK ? ' tick' : '');
       const m = this._marker(n++);
-      const cls = 'cmp-mk k-' + mk.kind + (mk.cls ? ' ' + mk.cls : '') + edge;
+      const cls = 'cmp-mk k-' + mk.kind + (mk.cls ? ' ' + mk.cls : '') + healthTier(mk.hp ?? -1) + edge;
       if (m.cls !== cls) m.e.className = m.cls = cls;
       if (m.key !== mk.icon) m.ico.innerHTML = m.key = mk.icon;
       if (m.lkey !== r.text) m.lab.textContent = m.lkey = r.text;
@@ -381,12 +386,12 @@ export class Markers {
     for (const it of list) {
       const m = this._get(n++);
       const k = m.k;
-      const cls = 'wmk k-' + it.kind + (it.cls ? ' ' + it.cls : '');
+      const bar = it.bar ?? -1;
+      const cls = 'wmk k-' + it.kind + (it.cls ? ' ' + it.cls : '') + healthTier(bar); // the bar's colour follows its length
       if (k.cls !== cls) m.e.className = k.cls = cls;
       if (k.icon !== it.icon) m.ico.innerHTML = k.icon = it.icon || '';
       if (k.name !== it.name) m.name.textContent = k.name = it.name || '';
       if (k.sub !== it.sub) m.sub.textContent = k.sub = it.sub || '';
-      const bar = it.bar ?? -1;
       if (k.bar !== bar) {
         k.bar = bar;
         m.bar.hidden = bar < 0;

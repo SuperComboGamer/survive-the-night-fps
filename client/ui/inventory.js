@@ -7,6 +7,7 @@ import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { needLines } from '../game/harvest.js';
+import { healthTier } from './hud2.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -1096,31 +1097,59 @@ export class Inventory {
     this._renderRecipes();
   }
 
+  // list: [{id, name, status: 'alive' | 'downed' | 'dead' | 'zombie', hp (0..1, -1 = unknown), kills, ping, talking,
+  // radio, self}]. Called often while the screen is open: the rows are rebuilt only when something but health
+  // changed, and a change of health moves just that row's bar.
   setPlayers(list) {
     list = Array.isArray(list) ? list : [];
     const key = list.map((p) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0].join('|')).join(';');
-    if (key === this._svKey) return;
-    this._svKey = key;
-    this.svList.textContent = '';
-    let alive = 0;
-    for (const p of list) {
-      if (p.status === 'alive') alive++;
-      const li = el('li', 'sv st-' + (p.status || 'alive') + (p.self ? ' self' : '') + (p.talking ? ' talking' : ''), this.svList);
-      svgEl('i', 'sv-st', li, glyph(p.status === 'zombie' ? 'claw' : p.status === 'dead' ? 'skull' : 'person'));
-      const nm = el('span', 'sv-name', li, p.name || '???');
-      if (p.self) el('small', 'sv-you', nm, 'you');
-      const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
-      if (p.radio) {
-        rd.classList.add('on');
-        rd.title = 'Carries a walkie-talkie';
+    if (key !== this._svKey) {
+      this._svKey = key;
+      this.svList.textContent = '';
+      this._svRows = [];
+      let alive = 0;
+      let down = 0;
+      for (const p of list) {
+        const st = p.status || 'alive';
+        if (st === 'alive' || st === 'downed') alive++; // as the HUD counts them: down is not dead yet
+        if (st === 'downed') down++;
+        const li = el('li', 'sv st-' + st + (p.self ? ' self' : '') + (p.talking ? ' talking' : ''), this.svList);
+        svgEl('i', 'sv-st', li, glyph(st === 'zombie' ? 'claw' : st === 'dead' ? 'skull' : st === 'downed' ? 'downed' : 'person'));
+        const nm = el('span', 'sv-name', li, p.name || '???');
+        if (p.self) el('small', 'sv-you', nm, 'you');
+        el('span', 'sv-tag', li, st === 'alive' ? '' : st === 'downed' ? 'down' : st); // the state in a word
+        const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
+        if (p.radio) {
+          rd.classList.add('on');
+          rd.title = 'Carries a walkie-talkie';
+        }
+        svgEl('i', 'sv-mic', li, glyph('mic'));
+        const k = el('span', 'sv-kills', li);
+        svgEl('i', '', k, glyph('skull'));
+        el('b', '', k, String(p.kills | 0));
+        el('span', 'sv-ping', li, p.ping != null ? Math.round(p.ping) + 'ms' : '');
+        // health, for those who still have some: a bar along the foot of the row
+        const row = { bar: null, fill: null, hp: null };
+        if (st === 'alive') {
+          row.bar = el('i', 'sv-hp', li);
+          row.fill = el('i', '', row.bar);
+        }
+        this._svRows.push(row);
       }
-      svgEl('i', 'sv-mic', li, glyph('mic'));
-      const k = el('span', 'sv-kills', li);
-      svgEl('i', '', k, glyph('skull'));
-      el('b', '', k, String(p.kills | 0));
-      el('span', 'sv-ping', li, p.ping != null ? Math.round(p.ping) + 'ms' : '');
+      this.svCount.textContent = list.length ? alive + ' alive' + (down ? ` (${down} down)` : '') : '';
     }
-    this.svCount.textContent = list.length ? alive + ' alive' : '';
+    for (let i = 0; i < list.length; i++) {
+      const row = this._svRows[i];
+      if (!row.bar) continue;
+      const hp = Math.round(clamp(list[i].hp ?? -1, -1, 1) * 100);
+      if (row.hp === hp) continue;
+      row.hp = hp;
+      row.bar.hidden = hp < 0;
+      if (hp < 0) continue;
+      row.bar.className = 'sv-hp' + healthTier(hp / 100);
+      row.bar.title = `${hp}% health`;
+      row.fill.style.transform = `scaleX(${hp / 100})`;
+    }
   }
 
   // info = { supplies:[n x5], hints:[zone x7], carried:{item:n} } (any subset)

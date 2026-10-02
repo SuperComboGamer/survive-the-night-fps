@@ -151,13 +151,13 @@ const baseHud = {
   compassMarks: [
     { kind: 'car', bearing: -0.3, icon: glyph('car'), label: '142m' },
     { kind: 'hint', bearing: 0.35, icon: itemIcon(ITEM.CAR_BATTERY), label: '88m' },
-    { kind: 'mate', bearing: -0.9, icon: glyph('person'), label: 'Marlowe' },
+    { kind: 'mate', bearing: -0.9, icon: glyph('person'), label: 'Marlowe', hp: 0.45 },
     { kind: 'ping', bearing: -0.55, icon: glyph('ping'), label: '31m', cls: 'p1' },
     { kind: 'poi', bearing: 0.9, icon: glyph('flag'), label: '' },
   ],
   worldMarks: [
-    { kind: 'mate', x: 420, y: 300, icon: '', name: 'Marlowe', sub: '38m', scale: 1 },
-    { kind: 'mate', x: 900, y: 420, icon: glyph('downed'), name: 'Old Hank', sub: 'hold [E] to revive', cls: 'downed', scale: 1 },
+    { kind: 'mate', x: 420, y: 300, icon: '', name: 'Marlowe', sub: '38m', bar: 0.45, scale: 1 },
+    { kind: 'mate', x: 900, y: 420, icon: glyph('downed'), name: 'Old Hank', sub: 'DOWN · hold [E] to revive', cls: 'downed', scale: 1 },
     { kind: 'ping', x: 700, y: 360, icon: glyph('ping'), name: 'Marlowe: Loot', sub: '22m', cls: 'p2', scale: 1 },
   ],
   objective: { supplies: [1, 0, 1, 0, 2], hints: [3, 1, 6, 4, 2, 9, 13], carried: { [ITEM.SPARE_TIRE]: 1 }, anyCarried: true, phase: PHASE.DAY, timeLeft: 134, finale: false, escapeT: 0, escapeReady: false, suppliesDone: false, wave: 0, waves: 3 },
@@ -195,10 +195,10 @@ const inv = {
 });
 
 const players = [
-  { id: 1, name: 'Survivor417', status: 'alive', kills: 23, ping: 42, talking: false, self: true },
-  { id: 2, name: 'Marlowe', status: 'alive', kills: 31, ping: 67, talking: true, self: false },
+  { id: 1, name: 'Survivor417', status: 'alive', hp: 1, kills: 23, ping: 42, talking: false, self: true },
+  { id: 2, name: 'Marlowe', status: 'alive', hp: 0.45, kills: 31, ping: 67, talking: true, self: false },
   { id: 3, name: 'deadeye_kat', status: 'zombie', kills: 12, ping: 88, talking: false, self: false },
-  { id: 4, name: 'Old Hank', status: 'alive', kills: 8, ping: 120, talking: false, self: false },
+  { id: 4, name: 'Old Hank', status: 'downed', kills: 8, ping: 120, talking: false, self: false },
   { id: 5, name: 'Ruth', status: 'dead', kills: 3, ping: 55, talking: false, self: false },
 ];
 

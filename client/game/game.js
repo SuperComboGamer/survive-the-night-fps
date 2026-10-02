@@ -760,7 +760,6 @@ export class Game {
   onPlayers(r) {
     const n = r.u8();
     const seen = new Set();
-    const list = [];
     for (let i = 0; i < n; i++) {
       const id = r.u16();
       const name = r.str();
@@ -774,9 +773,7 @@ export class Game {
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
     // (a count that went down was reset by the server for the new run: the run's kills then count from there)
     if (this.run) this.run.kills0 = Math.min(this.run.kills0, this.players.get(this.myId)?.kills ?? Infinity);
-    const ST = ['alive', 'zombie', 'dead', 'downed'];
-    for (const [id, p] of this.players) list.push({ id, name: p.name, status: ST[p.status] === 'downed' ? 'alive' : ST[p.status] || 'alive', kills: p.kills, ping: id === this.myId ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self: id === this.myId });
-    this.ui.setPlayers(list);
+    this.pushRoster();
     this.voice.syncPlayers([...this.players.keys()]);
     // who the walkie-talkie reaches
     const onRadio = !!this.players.get(this.myId)?.walkie;
@@ -789,6 +786,21 @@ export class Game {
         this.audio.playLocal?.('radio', { volume: 0.6 });
       }
     }
+  }
+
+  // The survivors list of the inventory screen: the player list plus everyone's health. Health is not in the
+  // list message: a teammate's rides in their entity record (field 7, 0..255), our own in the self state.
+  pushRoster() {
+    const ST = ['alive', 'zombie', 'dead', 'downed'];
+    const list = [];
+    const turned = !this.self.alive || !!this.prediction.state.zombie; // the dead get no report on the living
+    for (const [id, p] of this.players) {
+      const self = id === this.myId;
+      const e = self || turned ? null : this.entities.ents.get(id);
+      const hp = self ? (this.self.maxHp ? this.self.hp / this.self.maxHp : 1) : e ? e.q[7] / 255 : -1; // -1: nothing to show
+      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self });
+    }
+    this.ui.setPlayers(list);
   }
 
   // the peers you can hear talking right now (for the HUD)
@@ -1388,6 +1400,7 @@ export class Game {
     if (open === ui.inventoryOpen) return;
     if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
     ui.setCraftContext(this.craftContext());
+    if (open) this.pushRoster(); // health as of now, not as of the last player list
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
     if (open) this.input.exitLock();
@@ -2230,6 +2243,7 @@ export class Game {
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
+    if (this.ui.inventoryOpen && this.frame % 20 === 10) this.pushRoster(); // health moves between player lists
   }
 
   buildMarkers(h, rp) {
@@ -2284,16 +2298,23 @@ export class Game {
         if (zombie || dead) continue;
         const d = dist(e.rx, e.rz);
         const name = this.name(e.id);
-        cm.push({ kind: 'mate', bearing: bearing(e.rx - rp.x, e.rz - rp.z), icon: glyph(e.downed ? 'downed' : 'person'), label: name.slice(0, 10), cls: e.downed ? 'downed' : '', pinEdge: e.downed });
+        // health rides in every player's entity record (field 7, 0..255); a downed survivor has none left to show,
+        // and one who has turned is not told which of the living is the weakest
+        const hp = e.downed || h.zombie || !this.self.alive ? -1 : e.q[7] / 255;
+        cm.push({ kind: 'mate', bearing: bearing(e.rx - rp.x, e.rz - rp.z), icon: glyph(e.downed ? 'downed' : 'person'), label: name.slice(0, 10), cls: e.downed ? 'downed' : '', hp, pinEdge: e.downed });
         if (d < 250 && this.project(e.rx, e.ry + (e.downed ? 0.9 : 2.15), e.rz, sc)) {
           const near = d < 12;
+          // the bar is there when it says something: they are hurt, they are within reach, or we look their way
+          // (the nameplate within an eighth of the screen height of the crosshair). Unhurt and far off: just the name
+          const looked = Math.hypot(sc.x - window.innerWidth / 2, sc.y - window.innerHeight / 2) < window.innerHeight * 0.125;
           wm.push({
             kind: 'mate',
             x: sc.x,
             y: sc.y,
             icon: e.downed ? glyph('downed') : '',
             name,
-            sub: e.downed ? (e.beingRevived ? 'being revived' : near ? 'hold [E] to revive' : `down · ${Math.round(d)}m`) : d > 15 ? `${Math.round(d)}m` : '',
+            sub: e.downed ? `DOWN · ${e.beingRevived ? 'being revived' : near ? 'hold [E] to revive' : `${Math.round(d)}m`}` : d > 15 ? `${Math.round(d)}m` : '',
+            bar: hp >= 0 && (hp < 1 || near || looked) ? hp : -1,
             cls: e.downed ? 'downed' : near ? 'near' : '',
             scale: Math.max(0.75, 1.1 - d / 300),
           });
