@@ -378,9 +378,11 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
 
 // bats fly round walls, not through them: a flock cannot get at a survivor in a room with its one doorway boarded
 // up, wheels round the building meanwhile, and is in once the boards come off
-// (a game of its own on the same map: nothing in here touches the run below)
+// (a game of its own: nothing in here touches the run below. On a pinned valley, 167: the fan of rays below takes a
+// room for closed when what it sees through a window ends on a hillside or a wreck within its reach, and on the
+// run's own valley, as the clinic's place in the pool redrew it, the first doorway it comes to is a motel room's)
 {
-  const g = new Game({ seed, log: () => {} });
+  const g = new Game({ seed: 167, log: () => {} });
   const session = g.onOpen({ send() {} });
   const jw = new Writer(64);
   jw.u8(C2S.JOIN);
