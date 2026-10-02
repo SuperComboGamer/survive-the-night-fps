@@ -15,6 +15,9 @@ import { getTexture } from '../render/textures.js';
 const RING = 10;
 const TAU = Math.PI * 2;
 const MAX_GLINTS = 96;
+const ITEM_GLINT_RANGE = 13; // a loose item glints inside this distance (m), fading in over the last 3
+const ITEM_GLINT_GAIN = 0.9; // ...at up to this brightness by day, against 1 for a container or a car supply
+const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next one
 const HEAVY_STEP_SHAKE = 14; // a tank's footfall jolts the camera inside this distance (m)
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
@@ -281,25 +284,28 @@ export class Entities {
     this.fireSources = [];
     this.tmp = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
     this.bossEnt = null;
-    // loot glints (one Points draw call for every unsearched container nearby)
+    // loot glints (one Points draw call for every unsearched container and loose item nearby)
     const gg = new THREE.BufferGeometry();
     this.glintPos = new Float32Array(MAX_GLINTS * 3);
     this.glintSize = new Float32Array(MAX_GLINTS);
+    this.glintGain = new Float32Array(MAX_GLINTS); // brightness: the sprite is additive, so this is also how it fades
     gg.setAttribute('position', new THREE.BufferAttribute(this.glintPos, 3).setUsage(THREE.DynamicDrawUsage));
     gg.setAttribute('aSize', new THREE.BufferAttribute(this.glintSize, 1).setUsage(THREE.DynamicDrawUsage));
+    gg.setAttribute('aGain', new THREE.BufferAttribute(this.glintGain, 1).setUsage(THREE.DynamicDrawUsage));
     gg.setDrawRange(0, 0);
     const gm = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       uniforms: { map: { value: glintTexture() }, uScale: { value: 400 } },
-      vertexShader: 'attribute float aSize; uniform float uScale; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = aSize * uScale / max(1.0, -mv.z); gl_Position = projectionMatrix * mv; }',
-      fragmentShader: 'uniform sampler2D map; void main(){ vec4 c = texture2D(map, gl_PointCoord); gl_FragColor = vec4(c.rgb * c.a, c.a); }',
+      vertexShader: 'attribute float aSize; attribute float aGain; uniform float uScale; varying float vGain; void main(){ vGain = aGain; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = aSize * uScale / max(1.0, -mv.z); gl_Position = projectionMatrix * mv; }',
+      fragmentShader: 'uniform sampler2D map; varying float vGain; void main(){ vec4 c = texture2D(map, gl_PointCoord); gl_FragColor = vec4(c.rgb * c.a * vGain, c.a); }',
     });
     this.glints = new THREE.Points(gg, gm);
     this.glints.frustumCulled = false;
     this.glints.renderOrder = 7;
     this.caches = new Set();
+    this.loose = new Set(); // every other item on the ground: a small glint up close (see update)
     this.stations = []; // built campfires / workbenches (crafting)
   }
 
@@ -311,6 +317,7 @@ export class Entities {
     for (const e of this.ents.values()) this.destroyView(e, true);
     this.ents.clear();
     this.caches.clear();
+    this.loose.clear();
     this.stations.length = 0;
     for (const c of this.corpses) this.disposeZombieView(c.view);
     this.corpses.length = 0;
@@ -399,6 +406,7 @@ export class Entities {
         case ENT.ITEM: {
           const cat = ITEM_DEFS[e.item]?.cat;
           if (cat === 'part' || cat === 'schem') this.caches.add(e); // car supplies & schematics glint from afar
+          else this.loose.add(e); // a dropped gun, a death pile, zombie loot: lost in the grass without one
           const v = createPickup(e.item);
           v.position.set(e.rx, e.ry, e.rz);
           v.rotation.y = ((e.id * 2654435761) % 1000) / 159;
@@ -606,6 +614,7 @@ export class Entities {
   destroyView(e) {
     const g = this.g;
     if (e.kind === ENT.CACHE || e.kind === ENT.ITEM) this.caches.delete(e);
+    if (e.kind === ENT.ITEM) this.loose.delete(e);
     if (e.kind === ENT.STRUCTURE) {
       const i = this.stations.indexOf(e);
       if (i >= 0) this.stations.splice(i, 1);
@@ -1014,6 +1023,41 @@ export class Entities {
       this.glintPos[n * 3 + 2] = z;
       const pulse = 0.55 + 0.45 * Math.sin(time * (supply ? 4 : 2.6) + e.id * 1.7);
       this.glintSize[n] = (supply ? 0.3 + 0.22 * pulse : 0.14 + 0.1 * pulse) * Math.min(1, (range - d) / 6) * (d < 3 ? 0.6 : 1);
+      this.glintGain[n] = 1;
+      n++;
+    }
+    // ...and a small, quiet one on every other loose item close by, each flaring on its own beat. Dimmer at night:
+    // the night's exposure would turn it into a lamp, and it lights nothing
+    const gain = ITEM_GLINT_GAIN * (1 - 0.6 * g.env.night);
+    const pos = this.glintPos;
+    const first = n * 3;
+    for (const e of this.loose) {
+      if (n >= MAX_GLINTS) break;
+      const x = dqpos(e.q[0]);
+      const z = dqpos(e.q[2]);
+      const d2 = (x - camPos.x) * (x - camPos.x) + (z - camPos.z) * (z - camPos.z);
+      if (d2 > ITEM_GLINT_RANGE * ITEM_GLINT_RANGE) continue; // too far to glint: nothing more is done for it
+      const y = dqpos(e.q[1]) + 0.35; // up among the grass tips: the model lies under them
+      // a heap gets one glint, not one per item: an item beside one that already glints goes without
+      // (looking at the latest first: what fell together is listed together)
+      let j = n * 3 - 3;
+      for (; j >= first; j -= 3) {
+        const dx = pos[j] - x;
+        const dy = pos[j + 1] - y;
+        const dz = pos[j + 2] - z;
+        if (dx * dx + dy * dy + dz * dz < ITEM_GLINT_SPACING * ITEM_GLINT_SPACING) break;
+      }
+      if (j >= first) continue;
+      const d = Math.sqrt(d2);
+      let flare = 0.5 + 0.5 * Math.sin(time * 1.9 + e.id * 1.7);
+      flare *= flare;
+      const near = Math.min(1, 0.3 + d * 0.175); // underfoot the model is plain to see: full size from 4 m out
+      pos[n * 3] = x;
+      pos[n * 3 + 1] = y;
+      pos[n * 3 + 2] = z;
+      // past 6.5 m it holds its size on screen (it would be a pixel or two at 10 m) and only fades
+      this.glintSize[n] = (0.2 + 0.07 * flare) * near * Math.max(1, d / 6.5);
+      this.glintGain[n] = gain * (0.7 + 0.3 * flare) * near * Math.min(1, (ITEM_GLINT_RANGE - d) / 3);
       n++;
     }
     const gg = this.glints.geometry;
@@ -1021,6 +1065,7 @@ export class Entities {
     if (n) {
       gg.attributes.position.needsUpdate = true;
       gg.attributes.aSize.needsUpdate = true;
+      gg.attributes.aGain.needsUpdate = true;
     }
     this.glints.material.uniforms.uScale.value = (g.renderer.renderer.domElement.height * 0.5) / Math.tan((g.camera.fov * Math.PI) / 360);
   }
