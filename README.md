@@ -40,10 +40,11 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`) and runs `sim-smoke` |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
+| `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least twice), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
 | `node scripts/e2e-weapons.js` | fires + reloads every gun, swings melee weapons, throws a molotov and a pipe bomb |
@@ -237,7 +238,8 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 The place catalogue (`PLACES` in `shared/layout.js`) is the one table to edit: mark a place `core` to have
 it on every map, change `PLACE_COUNT`, or add a place (a `ZONE` id, name and loot table in `defs.js`, a
 `PLACES` entry, and a `place(ZONE.X, (b) => {...})` builder in `world.js`).
-`/sandbox/map-test.html?seed=N&debug=1` shows the field map of any seed.
+`/sandbox/map-test.html?seed=N&debug=1` shows the field map of any seed, and `node scripts/test-world.js`
+walks every place's doorways and checks that what it holds can be reached (give it seeds that have a new place).
 
 ## Architecture
 
