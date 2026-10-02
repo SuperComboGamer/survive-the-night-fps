@@ -10,17 +10,12 @@
 // All other materials must NOT rely on vertex colours.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { getTexture, TEXTURE_WORLD_SIZE, atlasUV } from './textures.js';
+import { getTexture, getNormalMap, TEXTURE_WORLD_SIZE, atlasUV } from './textures.js';
 
-/** Shared wind clock for all vegetation materials. The game updates `.value` (seconds) every frame. */
+/** Legacy wind clock (vegetation now sways with the global uWind uniform, see globals.js). */
 export const vegetationTime = { value: 0 };
-/**
- * Shared wind for all vegetation: x,y = world XZ direction the wind blows toward, z = strength
- * (0 still, ~0.3 breeze, 1+ gale, gusts included), w = sway clock (integrated, runs faster in strong wind).
- */
-export const vegetationWind = { value: new THREE.Vector4(0, 1, 0.3, 0) };
 
-export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds']);
+export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'aircraft', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds']);
 
 function tileTex(name, tile) {
   const t = tile ?? TEXTURE_WORLD_SIZE[name] ?? 1;
@@ -28,23 +23,14 @@ function tileTex(name, tile) {
   return getTexture(name, 1 / tx, 1 / ty);
 }
 
-function lambert(o) {
-  return new THREE.MeshLambertMaterial(o);
+function tileNormal(name) {
+  const t = TEXTURE_WORLD_SIZE[name] ?? 1;
+  const [tx, ty] = Array.isArray(t) ? t : [t, t];
+  return getNormalMap(name, 1 / tx, 1 / ty);
 }
 
-// paint mask: texture alpha = painted area. Vertex colour tints only the painted parts (rust stays rust).
-function paintMaskPatch(mat) {
-  mat.onBeforeCompile = (sh) => {
-    sh.fragmentShader = sh.fragmentShader.replace(
-      '#include <color_fragment>',
-      `#if defined( USE_COLOR )
-        diffuseColor.rgb *= mix( vec3( 1.0 ), vColor.rgb, sampledDiffuseColor.a );
-      #endif
-      diffuseColor.a = opacity;`,
-    );
-  };
-  mat.customProgramCacheKey = () => 'paintmask';
-  return mat;
+function lambert(o) {
+  return new THREE.MeshLambertMaterial(o);
 }
 
 // moss on upward-facing surfaces (object-space normal.y, robust for yaw-only instancing & merged world geometry)
@@ -72,140 +58,405 @@ function mossPatch(mat, amount = 1) {
   return mat;
 }
 
-// Wind bend shared by foliage cards and tree trunks, in the mesh's local frame (y up from the base):
-// the plant leans downwind by an amount that grows with height (uSway * h + uBend * h^2), sways
-// around that lean, and gust fronts roll across the forest along the wind. Trunks and their foliage
-// share uBend, so crowns stay on their trunks however hard it blows.
-const WIND_BEND = /* glsl */ `
-  {
-    vec3 ip = modelMatrix[3].xyz;
-    mat3 im = mat3( modelMatrix );
-    #ifdef USE_INSTANCING
-      ip += instanceMatrix[3].xyz;
-      im = im * mat3( instanceMatrix );
-    #endif
-    vec3 wl = transpose( im ) * vec3( uWind.x, 0.0, uWind.y );
-    vec2 wd = wl.xz / max( length( wl.xz ), 1e-5 );
-    vec2 wp = vec2( -wd.y, wd.x );
-    float W = uWind.z;
-    float t = uWind.w;
-    float ph = ip.x * 0.37 + ip.z * 0.23;
-    float front = sin( dot( ip.xz, uWind.xy ) * 0.08 - t * 0.5 ) * 0.6 + sin( dot( ip.xz, uWind.xy ) * 0.031 - t * 0.19 + ph * 0.05 ) * 0.4;
-    float gust = W * ( 0.72 + 0.42 * front );
-    float g = sin( t * 0.83 + ph ) + 0.45 * sin( t * 1.97 + ph * 1.7 ) + 0.2 * sin( t * 3.3 + ph * 0.6 );
-    float hh = max( transformed.y, 0.0 );
-    float amp = uSway * hh + uBend * hh * hh;
-    float push = gust * gust * 3.4 + g * ( 0.45 + 2.0 * gust );
-    vec2 d = ( wd * push + wp * sin( t * 0.71 + ph * 1.3 ) * ( 0.35 + 0.9 * gust ) ) * amp;
-    #ifdef WIND_FLUTTER
-      float f = sin( t * 4.6 + ph * 3.0 + transformed.x * 1.7 + transformed.z * 1.3 + transformed.y * 0.9 );
-      float fl = uFlutter * min( hh, 1.0 ) * ( 0.55 + 1.1 * W );
-      d += vec2( f, f * 0.7 ) * fl;
-    #endif
-    d *= min( 1.0, ( 0.75 * hh + 0.05 ) / max( length( d ), 1e-5 ) ); // grass lies flat, never through the ground
-    transformed.xz += d;
-    transformed.y -= 0.5 * dot( d, d ) / max( hh, 0.6 );
-  }
+// ================================================================== vegetation shading
+// Every vegetation geometry carries `aVeg` (vec4):
+//   trees : x crown occlusion, y branch weight (0 trunk .. 1 tip), z branch phase, w needle flutter weight
+//   plants: x occlusion, y flex (0 anchored .. 1 tip), z phase, w dryness
+// Shared uniforms (Foliage keeps them current). uVegCam is the MAIN camera position: LOD cross-fades and
+// grass thinning must agree in the shadow passes, where cameraPosition is the light's camera.
+export const VEG = {
+  uVegCam: { value: new THREE.Vector3() },
+  uTreeLod: { value: new THREE.Vector2(53, 67) },
+  uGrassFade: { value: new THREE.Vector2(16, 34) },
+  tGroundNoise: { value: null },
+};
+
+/** Tileable value noise, RGBA = 4 / 8 / 16 / 32 cells per repeat (linear data, shared with the terrain). */
+export function groundNoiseTexture() {
+  if (VEG.tGroundNoise.value) return VEG.tGroundNoise.value;
+  const N = 256;
+  const data = new Uint8Array(N * N * 4);
+  const hash = (x, y, c) => {
+    let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(c + 11, 2147483647)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  [4, 8, 16, 32].forEach((cells, c) => {
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const fx = (x / N) * cells, fy = (y / N) * cells;
+        const ix = Math.floor(fx), iy = Math.floor(fy);
+        let tx = fx - ix, ty = fy - iy;
+        tx = tx * tx * (3 - 2 * tx);
+        ty = ty * ty * (3 - 2 * ty);
+        const x1 = (ix + 1) % cells, y1 = (iy + 1) % cells;
+        const v = (hash(ix, iy, c) * (1 - tx) + hash(x1, iy, c) * tx) * (1 - ty) + (hash(ix, y1, c) * (1 - tx) + hash(x1, y1, c) * tx) * ty;
+        data[(y * N + x) * 4 + c] = Math.round(v * 255);
+      }
+    }
+  });
+  const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
+  VEG.tGroundNoise.value = t;
+  return t;
+}
+
+// large-scale ground colour drift, shared by the terrain splat and the grass cards (cards sit in their layer)
+export const GROUND_MACRO_GLSL = /* glsl */ `
+uniform sampler2D tGroundNoise;
+vec3 groundMacro(vec2 xz) {
+  vec4 a = textureLod(tGroundNoise, xz * (1.0 / 180.0) + 0.37, 0.0);
+  float b = textureLod(tGroundNoise, xz * (1.0 / 46.0) + 0.61, 0.0).g;
+  float m = a.r * 0.6 + b * 0.4;
+  return (0.8 + 0.4 * m) * mix(vec3(1.06, 1.0, 0.86), vec3(0.93, 1.0, 1.07), smoothstep(0.25, 0.75, a.b));
+}
+float groundDry(vec2 xz) {
+  return smoothstep(0.52, 0.78, textureLod(tGroundNoise, xz * (1.0 / 97.0) + 0.21, 0.0).a);
+}
 `;
 
-function windUniforms(sh, mat) {
-  sh.uniforms.uTime = vegetationTime;
-  sh.uniforms.uWind = vegetationWind;
-  sh.uniforms.uSway = mat.userData.sway;
-  sh.uniforms.uBend = mat.userData.bend;
-  sh.uniforms.uFlutter = mat.userData.flutter;
-  return '#include <common>\nuniform float uTime;\nuniform vec4 uWind;\nuniform float uSway;\nuniform float uBend;\nuniform float uFlutter;';
+const VEG_VERT_PARS = /* glsl */ `
+uniform vec4 uWind;
+uniform vec3 uVegCam;
+uniform vec2 uTreeLod;
+uniform vec2 uGrassFade;
+attribute vec4 aVeg;
+varying float vVegFade;
+varying float vVegSolid;
+#ifndef VEG_DEPTH
+  varying vec4 vVeg;
+  varying vec3 vVegTint;
+#endif
+#ifdef VEG_GRASS
+  ${GROUND_MACRO_GLSL}
+#endif
+bool vegDrop = false;
+vec3 vegNW;
+float vegHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// wind pressure: steady part + gust fronts rolling downwind (visible as waves over canopy and meadows)
+float vegGust(vec2 xz) {
+  vec2 dir = uWind.zw;
+  float along = dot(xz, dir);
+  float across = dot(xz, vec2(-dir.y, dir.x));
+  float t = uWind.x;
+  float w1 = sin(along * 0.018 - t * 0.9 + sin(across * 0.011 + t * 0.07) * 2.1) * 0.5 + 0.5;
+  float w2 = sin(along * 0.043 - t * 1.7 + sin(across * 0.029) * 1.3) * 0.5 + 0.5;
+  return uWind.y * (0.65 + 0.35 * w2 + 1.2 * w1 * w1 * (0.55 + 0.45 * w2));
+}
+// trunk bend (grows with height^2) + branch bob/swing (own phase per branch) + needle flutter
+vec3 vegTreeWind(vec3 root, vec3 p, float y, vec4 w, vec3 n, float seed) {
+  vec3 dir = vec3(uWind.z, 0.0, uWind.w);
+  vec3 side = vec3(-uWind.w, 0.0, uWind.z);
+  float g = vegGust(root.xz);
+  float t = uWind.x;
+  float fT = 1.5 + seed * 0.3;
+  float sway = sin(t * fT + seed * 6.2831) * 0.6 + sin(t * fT * 2.37 + seed * 17.0) * 0.25;
+  float amp = 0.0085 * g * (0.55 + 0.45 * g) * y * y * 0.05;
+  vec3 off = dir * (amp * (1.0 + 0.45 * sway)) + side * (amp * 0.35 * sin(t * fT * 0.71 + seed * 3.0));
+  off.y -= dot(off, off) * 0.5 / max(y, 1.0);
+  float bw = w.y * w.y;
+  float ph = w.z * 6.2831 + seed * 3.0;
+  float fBr = 1.6 + w.z * 1.1;
+  float gl = vegGust(p.xz);
+  float brAmp = 0.25 * (1.0 - exp(-gl * gl * 1.5));
+  off.y += sin(t * fBr + ph) * brAmp * 0.8 * bw;
+  off += dir * (brAmp * (0.6 + 0.4 * sin(t * fBr * 1.3 + ph * 1.7)) * bw);
+  off += side * (brAmp * 0.35 * sin(t * fBr * 0.8 + ph * 2.3) * bw);
+  float fl = sin(t * 9.0 + dot(p, vec3(1.7, 2.3, 1.3)) + ph) * 0.6 + sin(t * 14.3 + dot(p.xz, vec2(3.1, -2.2))) * 0.4;
+  off += n * (fl * max(w.w, 0.0) * (0.008 + 0.03 * min(gl * gl, 1.5)));
+  return off;
+}
+// small plants: whole plant bends downwind (tips move, base anchored; saturates - a gust lays grass over,
+// never flat) + leaf flutter
+vec3 vegPlantWind(vec3 root, float flex, float stiff, vec3 n, float ph, float h) {
+  vec2 dir = uWind.zw;
+  float g = vegGust(root.xz);
+  float t = uWind.x;
+  float fx = mix(1.0, 0.15, stiff);
+  // h: height of this vertex above the root (m)
+  float b = (1.0 - exp(-(0.3 + 0.7 * g) * g * 1.3 * fx)) * flex * h;
+  float fl = (sin(t * 7.3 + root.x * 0.9 + root.z * 1.3 + ph * 6.0) * 0.5 + sin(t * 11.1 + root.z * 1.7 + root.x * 0.4 + ph * 11.0) * 0.3) * min(0.25 + g, 1.2) * fx * flex * h;
+  vec3 off = vec3(dir.x, 0.0, dir.y) * (b * 0.6) + vec3(-dir.y, 0.0, dir.x) * (fl * 0.12);
+  off.y -= b * b / max(h, 0.05) * 0.3;
+  off += n * sin(t * (5.0 + ph * 4.0) + ph * 31.0) * (0.004 + 0.02 * min(g, 1.0)) * flex;
+  return off;
+}
+`;
+
+const VEG_VERT_MAIN = /* glsl */ `
+#include <begin_vertex>
+{
+  mat4 vegM = modelMatrix;
+  #ifdef USE_INSTANCING
+    vegM = modelMatrix * instanceMatrix;
+  #endif
+  mat3 vm3 = mat3(vegM);
+  vec3 vegRoot = vegM[3].xyz;
+  vec3 vsc2 = vec3(dot(vm3[0], vm3[0]), dot(vm3[1], vm3[1]), dot(vm3[2], vm3[2]));
+  float vegSeed = vegHash(vegRoot.xz + 0.37);
+  float vegD = distance(vegRoot.xz, uVegCam.xz);
+  vegNW = normalize(vm3 * normal);
+  vec3 vegOff = vec3(0.0);
+  float vegFade = 0.0;
+  #ifdef VEG_TREE
+    vegOff = vegTreeWind(vegRoot, vegRoot + vm3 * transformed, max(transformed.y, 0.0) * sqrt(vsc2.y), aVeg, vegNW, vegSeed);
+    vegFade = smoothstep(uTreeLod.x, uTreeLod.y, vegD);
+  #endif
+  #ifdef VEG_PLANT
+    vegOff = vegPlantWind(vegRoot, aVeg.y, VEG_STIFF, vegNW, aVeg.z, max(transformed.y, 0.0) * sqrt(vsc2.y));
+  #endif
+  #ifdef VEG_GRASS
+    // distance thinning: instances drop out by seed, the survivors widen to keep the cover closed
+    float th = smoothstep(uGrassFade.x, uGrassFade.y, vegD);
+    vegDrop = vegSeed < th * 0.92 || vegD > uGrassFade.y;
+    transformed.xz *= 1.0 + 1.1 * th;
+    vegOff = vegPlantWind(vegRoot, aVeg.y, 0.0, vegNW, aVeg.z + vegSeed, max(transformed.y, 0.0) * sqrt(vsc2.y));
+  #endif
+  transformed += (transpose(vm3) * vegOff) / vsc2;
+  vVegFade = vegFade;
+  // near LOD beyond the band / far LOD inside it: collapse. Shadows always come from the far LOD (all casters,
+  // no fade), so it also holds the near casters - those only exist for the shadow passes.
+  #if defined( VEG_LOD_OUT ) && !defined( VEG_DEPTH )
+    if (vegFade >= 1.0) vegDrop = true;
+  #endif
+  #if defined( VEG_LOD_IN ) && !defined( VEG_DEPTH )
+    if (vegFade <= 0.0) vegDrop = true;
+  #endif
+  vVegSolid = step(aVeg.w, -0.5);
+  #ifndef VEG_DEPTH
+    // (solid bark geometry: no translucency, no dryness)
+    vVeg = vec4(aVeg.x, vegFade, smoothstep(0.25, 0.9, aVeg.x) * (1.0 - vVegSolid), max(aVeg.w, 0.0));
+    float vbr = mix(0.8, 1.12, fract(vegSeed * 5.13));
+    float vhue = fract(vegSeed * 17.7) - 0.5;
+    vVegTint = vbr * vec3(1.0 + vhue * 0.12, 1.0, 1.0 - vhue * 0.18);
+    #ifdef VEG_OPAQUE
+      vVegTint = mix(vec3(1.0), vVegTint, 0.5);
+    #endif
+    #ifdef VEG_GRASS
+      vVegTint = mix(vec3(1.0), vVegTint, 0.6) * groundMacro(vegRoot.xz);
+      // drier swathes of meadow (the terrain's grass layer uses the same field)
+      vVeg.w = clamp(aVeg.w + groundDry(vegRoot.xz) * 0.45 * aVeg.y, 0.0, 1.0);
+    #endif
+  #endif
+}
+`;
+
+const VEG_FRAG_PARS = /* glsl */ `
+varying vec4 vVeg;
+varying vec3 vVegTint;
+uniform vec4 uVegTrans;
+`;
+
+// complementary screen-space dither between the near and far tree LOD
+const VEG_LOD_DITHER = /* glsl */ `
+#if defined( VEG_LOD_OUT ) || defined( VEG_LOD_IN )
+{
+  float vegIgn = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  #ifdef VEG_LOD_OUT
+    if (vegIgn < vVegFade) discard;
+  #else
+    if (vegIgn >= vVegFade) discard;
+  #endif
+}
+#endif
+`;
+
+// thin needles / blades: light from behind the card + a forward-scattering lobe towards the viewer, only
+// on the outer shell (vVeg.z ~ crown depth) so backlit crowns get a glowing rim and a dark core
+const VEG_TRANSLUCENCY = /* glsl */ `
+void RE_Direct_Veg( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
+  RE_Direct_Lambert( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
+  float back = saturate( -dot( geometryNormal, directLight.direction ) );
+  float fwd = pow( saturate( dot( -geometryViewDir, directLight.direction ) ), 8.0 );
+  vec3 fwdCol = directLight.color;
+  #if NUM_SUN_LIGHTS > 0
+    // the sun through the thin outer shell: the shadow map sees a solid crown, the rim still transmits
+    if ( dot( directLight.direction, sunLights[ 0 ].direction ) > 0.9999 ) fwdCol = mix( directLight.color, sunLights[ 0 ].color, 0.55 * vVeg.z );
+  #endif
+  reflectedLight.directDiffuse += BRDF_Lambert( material.diffuseColor ) * uVegTrans.rgb * ( directLight.color * back * 0.5 + fwdCol * fwd * uVegTrans.w * vVeg.z ) * vVeg.z;
+}
+#undef RE_Direct
+#define RE_Direct RE_Direct_Veg
+`;
+
+// far-LOD trunks share their tree's card material: aVeg.w = -1 marks solid, vertex-coloured bark
+const VEG_MAP = /* glsl */ `
+#ifdef USE_MAP
+  vec4 sampledDiffuseColor = vVegSolid > 0.5 ? vec4( 1.0 ) : texture2D( map, vMapUv );
+  diffuseColor *= sampledDiffuseColor;
+#endif
+`;
+
+// alpha boost with the mip level so distant cards don't dissolve
+const VEG_MIP_ALPHA = /* glsl */ `
+#if defined( USE_MAP ) && defined( USE_ALPHATEST )
+{
+  vec2 tsz = vec2( textureSize( map, 0 ) );
+  vec2 mdx = dFdx( vMapUv * tsz ), mdy = dFdy( vMapUv * tsz );
+  float mlod = max( 0.0, 0.5 * log2( max( dot( mdx, mdx ), dot( mdy, mdy ) ) ) );
+  diffuseColor.a *= 1.0 + mlod * 0.3;
+}
+#endif
+#include <alphatest_fragment>
+`;
+
+function vegVertex(sh) {
+  Object.assign(sh.uniforms, VEG);
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', `#include <common>\n${VEG_VERT_PARS}`)
+    .replace('#include <begin_vertex>', VEG_VERT_MAIN)
+    .replace('#include <project_vertex>', '#include <project_vertex>\nif (vegDrop) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);');
+  return sh;
 }
 
-// foliage: wind sway (height based, phase from instance/object position), no back-face normal flip,
-// alpha boost with mip level so distant cards don't dissolve.
-function foliagePatch(mat, sway, flutter, bend = 0) {
-  mat.userData.uTime = vegetationTime;
-  mat.userData.sway = { value: sway };
-  mat.userData.flutter = { value: flutter };
-  mat.userData.bend = { value: bend };
-  mat.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', windUniforms(sh, mat)).replace('#include <begin_vertex>', '#include <begin_vertex>\n#define WIND_FLUTTER\n' + WIND_BEND);
+/** Shadow-map twin of a vegetation material: same wind and cut-outs, so shadows match. */
+function vegDepthMaterial(defines) {
+  const m = new THREE.MeshDepthMaterial();
+  m.defines = { ...defines, VEG_DEPTH: '' };
+  m.onBeforeCompile = (sh) => {
+    vegVertex(sh);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
-      .replace(
-        '#include <alphatest_fragment>',
-        `#ifdef USE_MAP
-          {
-            vec2 tsz = vec2( textureSize( map, 0 ) );
-            vec2 dx = dFdx( vMapUv * tsz ), dy = dFdy( vMapUv * tsz );
-            float lod = max( 0.0, 0.5 * log2( max( dot( dx, dx ), dot( dy, dy ) ) ) );
-            diffuseColor.a *= 1.0 + lod * 0.3;
-          }
-        #endif
-        #include <alphatest_fragment>`,
-      );
+      .replace('#include <common>', '#include <common>\nvarying float vVegFade;\nvarying float vVegSolid;')
+      .replace('#include <map_fragment>', VEG_MAP)
+      .replace('#include <alphatest_fragment>', VEG_MIP_ALPHA);
   };
-  mat.customProgramCacheKey = () => 'foliage';
-  return mat;
+  m.customProgramCacheKey = () => 'veg-depth';
+  return m;
 }
 
-// Tree trunks + limbs bend with their crowns. The props (logs, stumps, fences) keep the plain bark
-// materials, so only the instanced trees get these (cached) wind-bent copies.
-export const TREE_BEND = 0.00055;
-const _trunks = new Map();
-export function trunkMaterial(base) {
-  let m = _trunks.get(base);
-  if (!m) {
-    m = base.clone();
-    m.userData = { sway: { value: 0 }, flutter: { value: 0 }, bend: { value: TREE_BEND } };
-    m.onBeforeCompile = (sh) => {
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', windUniforms(sh, m)).replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_BEND);
-    };
-    m.customProgramCacheKey = () => 'trunk';
-    _trunks.set(base, m);
-  }
-  return m;
+/**
+ * Vegetation material (Lambert). kind: 'tree' | 'trunk' | 'plant' | 'grass'. lod: 0 near tree LOD (dithers out
+ * across uTreeLod), 1 far tree LOD (dithers in). trans: [r, g, b, forward lobe] translucency (null = opaque).
+ */
+function vegMaterial(o, { kind, trans = null, stiff = 0.5 }, lod = -1) {
+  const opaque = kind === 'trunk';
+  const mat = lambert(opaque ? o : { alphaTest: 0.5, side: THREE.DoubleSide, vertexColors: true, ...o });
+  const defines = {};
+  if (kind === 'tree' || kind === 'trunk') defines.VEG_TREE = '';
+  if (kind === 'plant') defines.VEG_PLANT = '';
+  if (kind === 'grass') defines.VEG_GRASS = '';
+  if (opaque) defines.VEG_OPAQUE = '';
+  if (trans) defines.VEG_TRANS = ''; // (program cache key: the translucency code is spliced in)
+  if (lod === 0) defines.VEG_LOD_OUT = '';
+  if (lod === 1) defines.VEG_LOD_IN = '';
+  defines.VEG_STIFF = stiff.toFixed(3);
+  mat.defines = defines;
+  if (kind === 'grass') groundNoiseTexture();
+  const uTrans = { value: new THREE.Vector4(...(trans || [0, 0, 0, 0])) };
+  mat.userData.vegTrans = uTrans;
+  mat.onBeforeCompile = (sh) => {
+    vegVertex(sh);
+    sh.uniforms.uVegTrans = uTrans;
+    if (kind === 'tree' && !opaque) {
+      // look shadows up slightly outside the crown shell: the outer cards aren't shadowed by the (coarser,
+      // far-LOD) caster around them
+      sh.vertexShader = sh.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n#ifdef USE_SHADOWMAP\nworldPosition.xyz += vegNW * 0.5;\n#endif');
+    }
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\n${VEG_FRAG_PARS}\nvarying float vVegFade;\nvarying float vVegSolid;`)
+      .replace('#include <map_fragment>', VEG_MAP)
+      .replace('#include <lights_lambert_pars_fragment>', `#include <lights_lambert_pars_fragment>\n${trans ? VEG_TRANSLUCENCY : ''}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${VEG_LOD_DITHER}`)
+      .replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''))
+      .replace('#include <alphatest_fragment>', VEG_MIP_ALPHA)
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        diffuseColor.rgb *= vVegTint * mix( 1.0, vVeg.x, 0.5 );
+        #if defined( VEG_GRASS ) || defined( VEG_PLANT )
+          // dry straw tips / dead fronds: toward a luminance-matched pale straw
+          diffuseColor.rgb = mix( diffuseColor.rgb, dot( diffuseColor.rgb, vec3( 0.3, 0.59, 0.11 ) ) * vec3( 1.55, 1.2, 0.62 ), vVeg.w );
+        #endif`,
+      )
+      // occlusion darkens the sky light; thin needles / blades of the outer shell also pass sky light through
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\nreflectedLight.indirectDiffuse *= mix( 0.4, 1.0, vVeg.x ) * ( 1.0 + 0.35 * vVeg.z * step( 0.001, uVegTrans.w ) );');
+  };
+  mat.customProgramCacheKey = () => 'veg';
+  mat.userData.depth = vegDepthMaterial(defines);
+  return mat;
 }
 
 function alphaCards(o) {
   return lambert({ alphaTest: 0.5, side: THREE.DoubleSide, vertexColors: true, ...o });
 }
 
+const TREE_TRANS = [0.9, 1.0, 0.42, 12.0];
+const VEG_MATS = {
+  tree_bark: [() => ({ map: tileTex('bark') }), { kind: 'trunk' }],
+  tree_bark_birch: [() => ({ map: tileTex('bark_birch') }), { kind: 'trunk' }],
+  tree_bark_dead: [() => ({ map: tileTex('bark_dead') }), { kind: 'trunk' }],
+  tree_charred: [() => ({ map: tileTex('charred') }), { kind: 'trunk' }],
+  pine: [() => ({ map: getTexture('pine') }), { kind: 'tree', trans: TREE_TRANS }],
+  leaves: [() => ({ map: getTexture('leaves') }), { kind: 'tree', trans: [1.0, 0.8, 0.4, 10.0] }],
+};
+const vegDef = (name) => [VEG_MATS[name][0](), VEG_MATS[name][1]];
+const vegNoLod = new Map();
+/** Twin of a tree material without the LOD fade (variants drawn with one LOD at every distance). */
+export function vegStaticMaterial(mat) {
+  let m = vegNoLod.get(mat);
+  if (!m) {
+    m = vegMaterial(...vegDef(mat.name), -1);
+    m.name = mat.name + '_static';
+    vegNoLod.set(mat, m);
+  }
+  return m;
+}
+const vegFar = new Map();
+/** Far-LOD twin of a tree material (dithers in where the near one dithers out). */
+export function vegFarMaterial(mat) {
+  let m = vegFar.get(mat);
+  if (!m) {
+    m = vegMaterial(...vegDef(mat.name), 1);
+    m.name = mat.name + '_far';
+    vegFar.set(mat, m);
+  }
+  return m;
+}
+
 const DEFS = {
   // ------------------------------------------------ building surfaces (no vertex colours, meter UVs)
-  planks: () => lambert({ map: tileTex('planks') }),
-  barn: () => lambert({ map: tileTex('barn') }),
-  clapboard: () => lambert({ map: tileTex('clapboard') }),
-  logwall: () => lambert({ map: tileTex('logwall') }),
-  concrete: () => lambert({ map: tileTex('concrete') }),
-  brick: () => lambert({ map: tileTex('brick') }),
-  shingles: () => lambert({ map: tileTex('shingles') }),
-  tin: () => lambert({ map: tileTex('tin') }),
-  tin_rust: () => lambert({ map: tileTex('tin_rusty') }),
-  rust: () => lambert({ map: tileTex('rust') }),
-  metal: () => lambert({ map: tileTex('metal') }),
-  stone: () => lambert({ map: tileTex('stone') }),
-  dockwood: () => lambert({ map: tileTex('dockwood') }),
-  glass: () => lambert({ map: tileTex('glass') }),
+  planks: () => surface('planks'),
+  barn: () => surface('barn'),
+  clapboard: () => surface('clapboard'),
+  logwall: () => surface('logwall'),
+  concrete: () => surface('concrete'),
+  brick: () => surface('brick'),
+  shingles: () => surface('shingles'),
+  tin: () => surface('tin'),
+  tin_rust: () => surface('tin_rust', {}, 'tin'),
+  rust: () => surface('rust'),
+  metal: () => surface('metal'),
+  stone: () => surface('stone'),
+  dockwood: () => surface('dockwood'),
+  glass: () => surface('glass'),
   door: () => lambert({ map: tileTex('door') }),
   hay: () => lambert({ map: tileTex('hay') }),
   canvas: () => lambert({ map: tileTex('canvas'), side: THREE.DoubleSide }),
-  olive: () => lambert({ map: tileTex('olive') }),
+  olive: () => surface('olive'),
   dark: () => lambert({ color: 0x0b0a09 }),
   trim: () => lambert({ map: tileTex('wood'), color: 0x6e6256 }),
   sash: () => lambert({ map: tileTex('sash') }),
 
   // ------------------------------------------------ props
   wood: () => lambert({ map: tileTex('wood'), vertexColors: true }),
-  paint: () => paintMaskPatch(lambert({ map: tileTex('paint'), vertexColors: true })),
-  carpaint: () => paintMaskPatch(lambert({ map: tileTex('carpaint'), vertexColors: true })),
+  paint: () => surface('paint', { vertexColors: true }),
+  carpaint: () => surface('carpaint', { vertexColors: true }),
+  aircraft: () => lambert({ map: tileTex('aircraft'), vertexColors: true }),
   cloth: () => lambert({ map: tileTex('cloth'), vertexColors: true, side: THREE.DoubleSide }),
   burlap: () => lambert({ map: tileTex('burlap'), side: THREE.DoubleSide }),
   tire: () => lambert({ map: tileTex('tire') }),
   rubber: () => lambert({ color: 0x1b1a19 }),
-  chrome: () => lambert({ map: tileTex('paint'), color: 0x9c9c98 }),
+  chrome: () => surface('chrome'),
   bone: () => lambert({ map: tileTex('bone'), color: 0xa8a090 }),
   blood: () => lambert({ color: 0x3c0605 }),
   blood_decal: () =>
     lambert({ map: getTexture('decal_blood'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   flesh: () => lambert({ map: tileTex('skin') }),
-  charred: () => lambert({ map: tileTex('charred') }),
+  charred: () => surface('charred'),
   ash: () => lambert({ map: tileTex('ash') }),
   ember: () => new THREE.MeshBasicMaterial({ color: 0xb4400e }),
   emissive_red: () => new THREE.MeshBasicMaterial({ color: 0x6a0a06 }),
@@ -238,14 +489,19 @@ const DEFS = {
   chainlink: () => lambert({ map: tileTex('chainlink', 0.3), transparent: true, alphaTest: 0.08, depthWrite: false, side: THREE.DoubleSide }),
 
   // ------------------------------------------------ vegetation
+  // (bark / bark_dead are also used by props; instanced trees use the tree_* twins, which sway)
   bark: () => lambert({ map: tileTex('bark') }),
   bark_birch: () => lambert({ map: tileTex('bark_birch') }),
   bark_dead: () => lambert({ map: tileTex('bark_dead') }),
-  pine: () => foliagePatch(alphaCards({ map: getTexture('pine') }), 0.002, 0.05, TREE_BEND),
-  leaves: () => foliagePatch(alphaCards({ map: getTexture('leaves') }), 0.004, 0.06, TREE_BEND),
-  bush: () => foliagePatch(alphaCards({ map: getTexture('bush') }), 0.05, 0.03),
-  fern: () => foliagePatch(alphaCards({ map: getTexture('fern') }), 0.07, 0.03),
-  grass: () => foliagePatch(alphaCards({ map: getTexture('grass_blade') }), 0.22, 0.02),
+  tree_bark: () => vegMaterial(...vegDef('tree_bark'), 0),
+  tree_bark_birch: () => vegMaterial(...vegDef('tree_bark_birch'), 0),
+  tree_bark_dead: () => vegMaterial(...vegDef('tree_bark_dead'), 0),
+  tree_charred: () => vegMaterial(...vegDef('tree_charred'), 0),
+  pine: () => vegMaterial(...vegDef('pine'), 0),
+  leaves: () => vegMaterial(...vegDef('leaves'), 0),
+  bush: () => vegMaterial({ map: getTexture('bush') }, { kind: 'plant', trans: [0.8, 0.9, 0.45, 7.0], stiff: 0.55 }),
+  fern: () => vegMaterial({ map: getTexture('fern') }, { kind: 'plant', trans: [0.85, 1.0, 0.45, 8.0], stiff: 0.3 }),
+  grass: () => vegMaterial({ map: getTexture('grass_blade') }, { kind: 'grass', trans: [0.9, 0.95, 0.5, 6.0] }),
   rock: () => mossPatch(lambert({ map: tileTex('rock') }), 1),
 };
 
@@ -271,70 +527,228 @@ export function getMaterial(name) {
   return m;
 }
 
-// ------------------------------------------------ static world surface variants
-// Building surfaces merged into the static world carry extra per-vertex data: aGround (height above the
-// terrain) for splash-back dirt and contact darkening where walls meet the ground, and for painted
-// clapboard aTint, a faded paint colour per building (texture alpha = painted area).
-const GRIME_MATERIALS = new Set(['planks', 'barn', 'clapboard', 'logwall', 'concrete', 'brick', 'tin', 'tin_rust', 'stone', 'dockwood', 'rust', 'metal', 'charred']);
-const PAINTED_MATERIALS = new Set(['clapboard']);
-const staticVariants = new Map();
+// ------------------------------------------------ weathered surfaces
+// Building surfaces and painted / galvanised props are shaded in three steps on top of their tile:
+//  1. a coat (paint, rust or moss) laid over the tile's bare material wherever the tile's wear field (its
+//     alpha) plus slow noise over the surface crosses a threshold, so damage never repeats with the tile;
+//  2. broad tonal drift, run-off streaks down walls and damp stains from the same noise;
+//  3. static world only: mud splashed up from the ground and contact darkening (aGround).
+// The slow noise is world-space and static-world only; anything that moves shows its tile's own wear.
+//
+// tone: tonal drift (+-), streak: run-off streaks, stain: [r, g, b, amount] tint of the damp patches,
+// dust: [r, g, b, amount] film settling on upward faces, gloss: sky reflected at grazing angles (paint,
+// plating, glass; rust and moss kill it), splash: how high the mud reaches (m). layer: the coat -
+//   kind 'paint' | 'rust' | 'moss'; col / col2 (sRGB: paint + its chalked tint, fresh rust + dark scale,
+//   moss + dry lichen); cover: how much of the surface the coat takes (about -1 none .. 1 all);
+//   detail / macro: weight of the tile's wear field and of the slow noise; soft: edge width;
+//   ground / run / up: bias near the ground, down the run-off streaks and on upward faces;
+//   shade [gain, power]: how much of the tile's own shading shows through; fx: lifted paint edge / rust
+//   bleed / moss opacity; tint: static world multiplies the coat by a per-building colour (aTint).
+const RUST = { kind: 'rust', col: 0x9c6830, col2: 0x4a3020 };
+const SURF = {
+  planks: { tone: 0.2, streak: 0.22, stain: [0.66, 0.72, 0.52, 0.55] },
+  barn: { tone: 0.16, streak: 0.16, stain: [0.74, 0.74, 0.66, 0.4], layer: { kind: 'paint', col: 0x7a3229, col2: 0xd4bdb0, cover: 0.42, detail: 2.2, macro: 1.8, soft: 0.14, ground: -0.45, run: -0.2, shade: [4.6, 0.75], fx: 0.12, tint: true } },
+  clapboard: { tone: 0.12, streak: 0.14, stain: [0.72, 0.76, 0.62, 0.5], layer: { kind: 'paint', col: 0xcfccc0, col2: 0xf0e8d4, cover: 0.42, detail: 2.0, macro: 1.9, soft: 0.03, ground: -0.5, run: -0.25, shade: [3.6, 0.42], fx: 0.4, tint: true } },
+  logwall: { tone: 0.2, streak: 0.2, stain: [0.7, 0.74, 0.58, 0.5] },
+  concrete: { tone: 0.16, streak: 0.3, stain: [0.66, 0.68, 0.6, 0.6] },
+  brick: { tone: 0.16, streak: 0.14, stain: [0.62, 0.6, 0.58, 0.55] },
+  shingles: { tone: 0.2, streak: 0, stain: [0.8, 0.84, 0.72, 0.4], layer: { kind: 'moss', col: 0x4a5a26, col2: 0x7e7c5c, cover: -0.42, detail: 1.3, macro: 3.2, soft: 0.16, ground: 0, run: 0, up: 0, shade: [5, 0.5], fx: 0.85 } },
+  tin: { tone: 0.14, streak: 0.14, gloss: 0.3, stain: [0.8, 0.78, 0.72, 0.4], layer: { ...RUST, cover: -0.42, detail: 1.2, macro: 2.6, soft: 0.05, ground: 0.45, run: 0.3, shade: [3.2, 0.8], fx: 0.6 } },
+  tin_rust: { tone: 0.14, streak: 0.14, gloss: 0.25, stain: [0.8, 0.76, 0.7, 0.4], layer: { ...RUST, cover: 0.1, detail: 1.2, macro: 2.8, soft: 0.05, ground: 0.45, run: 0.35, shade: [3.2, 0.8], fx: 0.7 } },
+  rust: { tone: 0.22, streak: 0.1 },
+  metal: { tone: 0.16, streak: 0.16, layer: { ...RUST, cover: -0.5, detail: 1.4, macro: 2.4, soft: 0.04, ground: 0.4, run: 0.25, shade: [5, 0.6], fx: 0.6 } },
+  stone: { tone: 0.2, streak: 0.16, stain: [0.72, 0.76, 0.62, 0.5], layer: { kind: 'moss', col: 0x45562a, col2: 0x70745a, cover: -0.4, detail: 1.4, macro: 2.6, soft: 0.14, ground: 0.5, run: 0.1, up: 0.35, shade: [4, 0.5], fx: 0.8 } },
+  dockwood: { tone: 0.2, streak: 0.1, stain: [0.6, 0.72, 0.5, 0.6] },
+  charred: { tone: 0.2, streak: 0.1 },
+  olive: { tone: 0.12, streak: 0.12, layer: { ...RUST, cover: -0.55, detail: 1.4, macro: 2.0, soft: 0.04, ground: 0.4, run: 0.2, shade: [4.5, 0.6], fx: 0.5 } },
+  paint: { tone: 0.12, streak: 0.12, gloss: 0.5, splash: 0.5, dust: [0.36, 0.33, 0.28, 0.22], layer: { ...RUST, cover: -0.42, detail: 1.6, macro: 1.8, soft: 0.04, ground: 0.55, run: 0.25, up: 0.08, shade: [1.1, 0.6], fx: 0.4 } },
+  carpaint: { tone: 0.2, streak: 0.24, gloss: 1.2, splash: 0.4, stain: [0.74, 0.7, 0.62, 0.5], dust: [0.4, 0.37, 0.31, 0.3], layer: { ...RUST, cover: -0.44, detail: 1.6, macro: 1.7, soft: 0.035, ground: 0.6, run: 0.2, up: 0.14, shade: [1.1, 0.6], fx: 0.4 } },
+  chrome: { tone: 0.1, streak: 0.08, gloss: 3.2, splash: 0.4, dust: [0.3, 0.28, 0.24, 0.2], layer: { ...RUST, cover: -0.5, detail: 1.6, macro: 2.0, soft: 0.05, ground: 0.4, run: 0.1, shade: [1.6, 0.6], fx: 0.4 } },
+  glass: { tone: 0.1, streak: 0.2, gloss: 2.4, splash: 0.5, dust: [0.3, 0.28, 0.24, 0.3] },
+};
+const LAYER_KINDS = { paint: 0, rust: 1, moss: 2 };
 
-function groundGrimePatch(mat, paint) {
-  mat.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-        attribute float aGround;
-        varying float vGround;
-        varying float vUpA;
-        varying vec3 vGPos;
-        ${paint ? 'attribute vec3 aTint;\nvarying vec3 vTint;' : ''}`,
-      )
-      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvUpA = abs( objectNormal.y );')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvGround = aGround;\nvGPos = position;${paint ? '\nvTint = aTint;' : ''}`);
-    sh.fragmentShader = sh.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-        varying float vGround;
-        varying float vUpA;
-        varying vec3 vGPos;
-        ${paint ? 'varying vec3 vTint;' : ''}
-        float grimeNoise( float x ) {
-          float i = floor( x ), f = fract( x );
-          f = f * f * ( 3.0 - 2.0 * f );
-          return mix( fract( sin( i * 127.1 ) * 43758.5453 ), fract( sin( ( i + 1.0 ) * 127.1 ) * 43758.5453 ), f );
-        }`,
-      )
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-        ${paint ? 'diffuseColor.rgb *= mix( vec3( 1.0 ), vTint, sampledDiffuseColor.a );' : ''}
-        diffuseColor.a = opacity;
-        {
-          // walls only (floors and roofs face up or down): mud splashed up by rain, darker right at the ground
-          float side = 1.0 - smoothstep( 0.5, 0.85, vUpA );
-          float s = vGPos.x + vGPos.z;
-          float edge = grimeNoise( s * 2.3 ) * 0.28 + grimeNoise( s * 9.1 ) * 0.1;
-          float splash = ( 1.0 - smoothstep( 0.0, 0.8, vGround - edge ) ) * side;
-          diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.5, 0.43, 0.34 ), splash * 0.8 );
-          diffuseColor.rgb *= mix( 1.0, mix( 0.5, 1.0, smoothstep( -0.05, 0.35, vGround ) ), side );
-        }`,
-      );
+const SURF_VERT_PARS = /* glsl */ `
+varying vec3 vGPos;
+varying vec3 vGNrm;
+#ifdef SURF_STATIC
+  attribute float aGround;
+  varying float vGround;
+#endif
+#ifdef SURF_TINT_ATTR
+  attribute vec3 aTint;
+  varying vec3 vTint;
+#endif
+`;
+const SURF_VERT_MAIN = /* glsl */ `
+vGPos = position;
+#ifdef SURF_STATIC
+  vGround = aGround;
+#endif
+#ifdef SURF_TINT_ATTR
+  vTint = aTint;
+#endif
+`;
+const SURF_FRAG_PARS = /* glsl */ `
+varying vec3 vGPos;
+varying vec3 vGNrm;
+uniform sampler2D tSurfNoise;
+uniform vec4 uSurfA;
+uniform vec4 uSurfStain;
+uniform vec4 uSurfDust;
+#ifdef SURF_STATIC
+  varying float vGround;
+  float grimeNoise( float x ) {
+    float i = floor( x ), f = fract( x );
+    f = f * f * ( 3.0 - 2.0 * f );
+    return mix( fract( sin( i * 127.1 ) * 43758.5453 ), fract( sin( ( i + 1.0 ) * 127.1 ) * 43758.5453 ), f );
+  }
+#endif
+#ifdef SURF_TINT_ATTR
+  varying vec3 vTint;
+#endif
+#ifdef SURF_LAYER
+  uniform vec4 uLayerA;
+  uniform vec4 uLayerB;
+  uniform vec4 uLayerS;
+  uniform vec3 uLayerCol;
+  uniform vec3 uLayerCol2;
+#endif
+`;
+const SURF_FRAG_MAIN = /* glsl */ `
+diffuseColor.a = opacity;
+float surfGloss = uSurfA.z;
+{
+  vec3 gn = normalize( vGNrm );
+  float hl = length( gn.xz );
+  float wall = step( 0.35, hl );
+  // walls: along the wall and up it; floors and shallow roofs: the ground plane
+  vec2 sp = wall > 0.5 ? vec2( dot( vGPos.xz, vec2( -gn.z, gn.x ) ) / hl, vGPos.y ) : vGPos.xz;
+  float up = max( gn.y, 0.0 );
+  #ifdef SURF_STATIC
+    vec4 nA = texture2D( tSurfNoise, sp * 0.043 );
+    vec4 nB = texture2D( tSurfNoise, sp * 0.137 + 0.37 );
+    float run = smoothstep( 0.45, 0.85, texture2D( tSurfNoise, vec2( sp.x * 0.61, sp.y * 0.021 ) + 0.11 ).g ) * wall;
+    float g0 = 1.0 - smoothstep( 0.0, uSurfA.w * 1.5, vGround );
+  #else
+    // things that move keep to their tile's own wear: noise in their object space would be the same on every
+    // copy, and in world space it would crawl over them
+    vec4 nA = vec4( 0.5 ), nB = vec4( 0.5 );
+    float run = 0.0, g0 = 0.0;
+  #endif
+  float macro = nA.r * 0.45 + nA.g * 0.3 + nB.r * 0.25;
+  float mid = nA.b * 0.5 + nB.g * 0.5;
+  #ifdef SURF_LAYER
+  {
+    float t = uLayerA.x + ( sampledDiffuseColor.a - 0.5 ) * uLayerA.y + ( macro - 0.5 + ( mid - 0.5 ) * 0.5 ) * uLayerA.z + g0 * uLayerB.x + run * uLayerB.y + up * uLayerB.z;
+    float mask = smoothstep( -uLayerA.w, uLayerA.w, t );
+    float shade = pow( dot( sampledDiffuseColor.rgb, vec3( 0.3333 ) ) * uLayerS.x, uLayerS.y );
+    vec3 lc = uLayerCol;
+    #ifdef SURF_TINT_ATTR
+      lc *= vTint;
+    #endif
+    #if SURF_LAYER == 0
+      // paint: chalks and yellows where it is about to let go, a thin shadow under its lifted edge
+      lc = mix( lc, lc * uLayerCol2, 1.0 - smoothstep( 0.0, 0.3, t ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, lc * shade, mask ) * ( 1.0 - mask * ( 1.0 - mask ) * 4.0 * uLayerS.z );
+    #elif SURF_LAYER == 1
+      // rust: fresh orange at its edge and in the speckle, dark scale inside, bleeding into what surrounds it
+      float bleed = smoothstep( -uLayerA.w * 4.0 - 0.06, 0.0, t ) * ( 1.0 - mask );
+      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 0.86, 0.6, 0.4 ), bleed * uLayerS.z );
+      lc = mix( uLayerCol2, lc, clamp( ( 1.0 - smoothstep( 0.0, 0.45, t ) ) * 0.75 + ( nB.a - 0.5 ) * 0.9 + ( sampledDiffuseColor.a - 0.7 ) * 1.4 + 0.12, 0.0, 1.0 ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, lc * shade, mask );
+      surfGloss *= 1.0 - mask;
+    #else
+      lc = mix( uLayerCol2, lc, smoothstep( 0.3, 0.7, sampledDiffuseColor.a * 0.6 + nB.a * 0.4 ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, lc * shade, mask * uLayerS.z );
+      surfGloss *= 1.0 - mask;
+    #endif
+  }
+  #endif
+  diffuseColor.rgb *= ( 1.0 + ( macro - 0.5 ) * 2.0 * uSurfA.x ) * ( 1.0 - run * uSurfA.y );
+  float damp = smoothstep( 0.5, 0.78, nA.g * 0.6 + nB.r * 0.4 + g0 * 0.2 );
+  diffuseColor.rgb *= mix( vec3( 1.0 ), uSurfStain.rgb, damp * uSurfStain.a );
+  float film = up * up * uSurfDust.a * ( 0.4 + 1.2 * mid );
+  diffuseColor.rgb = mix( diffuseColor.rgb, uSurfDust.rgb, film );
+  surfGloss *= 1.0 - film;
+  #ifdef SURF_STATIC
+  {
+    // walls only (floors and roofs face up or down): mud splashed up by rain, darker right at the ground
+    float side = 1.0 - smoothstep( 0.5, 0.85, abs( gn.y ) );
+    float s = vGPos.x + vGPos.z;
+    float edge = grimeNoise( s * 2.3 ) * 0.28 + grimeNoise( s * 9.1 ) * 0.1;
+    float splash = ( 1.0 - smoothstep( 0.0, uSurfA.w, vGround - edge * uSurfA.w * 1.25 ) ) * side;
+    diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.5, 0.43, 0.34 ), splash * 0.8 );
+    diffuseColor.rgb *= mix( 1.0, mix( 0.5, 1.0, smoothstep( -0.05, 0.35, vGround ) ), side );
+    surfGloss *= 1.0 - splash;
+  }
+  #endif
+}
+`;
+// the sky (the hemisphere light) mirrored in a glossy surface, strongest at grazing angles
+const SURF_FRAG_GLOSS = /* glsl */ `
+#if NUM_HEMI_LIGHTS > 0
+{
+  // the face normal, not the normal map: corrugations and laps would alias into sparkle at a distance
+  vec3 vd = normalize( vViewPosition );
+  float fres = 0.05 + 0.95 * pow( 1.0 - saturate( dot( nonPerturbedNormal, vd ) ), 4.0 );
+  outgoingLight += getHemisphereLightIrradiance( hemisphereLights[ 0 ], reflect( -vd, nonPerturbedNormal ) ) * ( RECIPROCAL_PI * surfGloss * fres );
+}
+#endif
+`;
+
+function surfacePatch(mat, name, isStatic = false) {
+  const s = SURF[name];
+  const L = s.layer;
+  const tinted = isStatic && !!L?.tint;
+  const defines = { ...mat.defines };
+  if (isStatic) defines.SURF_STATIC = '';
+  if (L) defines.SURF_LAYER = LAYER_KINDS[L.kind];
+  if (tinted) defines.SURF_TINT_ATTR = '';
+  mat.defines = defines;
+  const uniforms = {
+    tSurfNoise: { value: isStatic ? groundNoiseTexture() : null },
+    uSurfA: { value: new THREE.Vector4(s.tone ?? 0, s.streak ?? 0, s.gloss ?? 0, s.splash ?? 0.8) },
+    uSurfStain: { value: new THREE.Vector4(...(s.stain ?? [1, 1, 1, 0])) },
+    uSurfDust: { value: new THREE.Vector4(...(s.dust ?? [0, 0, 0, 0])) },
   };
-  mat.customProgramCacheKey = () => (paint ? 'static-grime-paint' : 'static-grime');
-  mat.userData.staticGrime = true;
-  mat.userData.staticPaint = paint;
+  if (L) {
+    uniforms.uLayerA = { value: new THREE.Vector4(L.cover, L.detail, L.macro, L.soft) };
+    uniforms.uLayerB = { value: new THREE.Vector4(L.ground ?? 0, L.run ?? 0, L.up ?? 0, 0) };
+    uniforms.uLayerS = { value: new THREE.Vector4(L.shade[0], L.shade[1], L.fx ?? 0, 0) };
+    // a tinted coat takes its whole colour from the building
+    uniforms.uLayerCol = { value: new THREE.Color(tinted ? 0xffffff : L.col) };
+    uniforms.uLayerCol2 = { value: new THREE.Color(L.col2) };
+  }
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>\n${SURF_VERT_PARS}`)
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvGNrm = objectNormal;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${SURF_VERT_MAIN}`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\n${SURF_FRAG_PARS}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\n${SURF_FRAG_MAIN}`)
+      .replace('#include <opaque_fragment>', `${SURF_FRAG_GLOSS}\n#include <opaque_fragment>`);
+  };
+  mat.customProgramCacheKey = () => 'surface';
+  mat.userData.staticGrime = isStatic;
+  mat.userData.staticPaint = tinted;
   return mat;
 }
 
+/** A weathered surface material: tile + normal map + the SURF coat and noise (see above). */
+function surface(name, o = {}, tex = name) {
+  return surfacePatch(lambert({ map: tileTex(tex), normalMap: tileNormal(tex), ...o }), name);
+}
+
+const staticVariants = new Map();
 /** The static world's variant of a shared material (itself when the material has none). */
 export function staticSurface(mat) {
-  if (!GRIME_MATERIALS.has(mat.name)) return mat;
+  if (!SURF[mat.name]) return mat;
   let v = staticVariants.get(mat);
   if (!v) {
-    v = groundGrimePatch(mat.clone(), PAINTED_MATERIALS.has(mat.name));
+    v = surfacePatch(mat.clone(), mat.name, true);
     v.name = mat.name;
     staticVariants.set(mat, v);
   }

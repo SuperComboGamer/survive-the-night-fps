@@ -1,13 +1,16 @@
 // Terrain mesh built from the shared heightfield (exactly matches collision), splat-blended ground
-// textures (grass / forest floor / mud) with baked ambient occlusion under trees. Roads are drawn per
-// pixel from a road frame baked into the vertices (signed offset from the nearest road's centre line and
-// distance along it): dirt roads get tyre ruts, a grassy crown and puddles, trails a worn footpath and
-// Route 9 faded lane lines and gravel shoulders.
+// textures (meadow grass / forest floor / mud / rock) with baked ambient occlusion under trees, drainage
+// wetness and slope rock. The ground layers come from groundFields(), which the grass placement shares, so
+// grass cards stand on the grass layer. Roads are drawn per pixel from a road frame baked into the vertices
+// (signed offset from the nearest road's centre line and distance along it): dirt roads get tyre ruts, a
+// grassy crown and puddles, trails a worn footpath and Route 9 faded lane lines and gravel shoulders.
 import * as THREE from 'three';
 import { GRID_N, GRID_STEP, MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
 import { smoothstep } from '../../shared/rng.js';
 import { ROAD } from '../../shared/world.js';
 import { getTexture } from './textures.js';
+import { GROUND_MACRO_GLSL, groundNoiseTexture, VEG } from './materials.js';
+
 
 // the road frame is kept this far (m) past a road's edge, so its fade-out stays well clear of the road
 const FRAME_REACH = 12;
@@ -128,42 +131,83 @@ function roadFrame(world) {
   return { lat, along, hw, conf, kind };
 }
 
-export function buildTerrain(world) {
+const FIELDS = new WeakMap();
+// canopy contribution per tree variant (conifers shade the floor, dead trees barely)
+const CANOPY_W = [1, 1, 0.95, 0.12, 0.1, 0.55, 0.05];
+
+/**
+ * Per-vertex ground layers on the heightfield grid: splat (grass, forest, road, mud), rock (steep slopes),
+ * wet (drainage lines / low ground), ao (under trees), normals. sample(x, z, out) bilinearly reads them.
+ * base: what the terrain draws under and beside the roads (grass, forest, mud summing to 1) + road coverage;
+ * the terrain shader lays the road over it per pixel.
+ */
+export function groundFields(world) {
+  let f = FIELDS.get(world);
+  if (f) return f;
   const N = GRID_N;
   const H = world.heights;
   const count = N * N;
-  const pos = new Float32Array(count * 3);
   const nrm = new Float32Array(count * 3);
   const splat = new Float32Array(count * 4);
-  const extra = new Float32Array(count * 3);
-  const roadAttr = new Float32Array(count * 4);
+  const base = new Float32Array(count * 4);
+  const rock = new Float32Array(count);
+  const wet = new Float32Array(count);
+  const ao = new Float32Array(count).fill(1);
+  const canopy = new Float32Array(count);
+  const at = (i, j) => H[Math.max(0, Math.min(N - 1, j)) * N + Math.max(0, Math.min(N - 1, i))];
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const k = j * N + i;
-      pos[k * 3] = -MAP_HALF + i * GRID_STEP;
-      pos[k * 3 + 1] = H[k];
-      pos[k * 3 + 2] = -MAP_HALF + j * GRID_STEP;
-      const hl = H[j * N + Math.max(0, i - 1)];
-      const hr = H[j * N + Math.min(N - 1, i + 1)];
-      const hd = H[Math.max(0, j - 1) * N + i];
-      const hu = H[Math.min(N - 1, j + 1) * N + i];
-      let nx = hl - hr;
-      let ny = 2 * GRID_STEP;
-      let nz = hd - hu;
+      const nx = at(i - 1, j) - at(i + 1, j);
+      const ny = 2 * GRID_STEP;
+      const nz = at(i, j - 1) - at(i, j + 1);
       const l = Math.hypot(nx, ny, nz);
       nrm[k * 3] = nx / l;
       nrm[k * 3 + 1] = ny / l;
       nrm[k * 3 + 2] = nz / l;
     }
   }
-  const frame = roadFrame(world);
-  // zone / forest masks
+  // canopy density and trunk occlusion from the trees
+  const trees = world.trees;
+  for (let t = 0; t < trees.length; t += 6) {
+    const tx = trees[t], tz = trees[t + 2], sc = trees[t + 3], v = trees[t + 5] | 0;
+    const R = 6.5 * sc;
+    const cw = CANOPY_W[v] ?? 0.5;
+    const i0 = Math.max(0, Math.floor((tx - R + MAP_HALF) / GRID_STEP));
+    const i1 = Math.min(N - 1, Math.ceil((tx + R + MAP_HALF) / GRID_STEP));
+    const j0 = Math.max(0, Math.floor((tz - R + MAP_HALF) / GRID_STEP));
+    const j1 = Math.min(N - 1, Math.ceil((tz + R + MAP_HALF) / GRID_STEP));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = j * N + i;
+        const d = Math.hypot(-MAP_HALF + i * GRID_STEP - tx, -MAP_HALF + j * GRID_STEP - tz);
+        if (d >= R) continue;
+        const q = 1 - (d / R) ** 2;
+        canopy[k] += cw * q * q;
+        const r = 3.2 * sc;
+        if (d < r) ao[k] = Math.max(0.45, ao[k] - 0.28 * (1 - d / r));
+      }
+    }
+  }
+  // contact shade under bushes / ferns
+  const bushes = world.bushes;
+  for (let b = 0; b < bushes.length; b += 6) {
+    const bx = bushes[b], bz = bushes[b + 2], r = 1.6 * bushes[b + 3];
+    const i0 = Math.max(0, Math.floor((bx - r + MAP_HALF) / GRID_STEP)), i1 = Math.min(N - 1, Math.ceil((bx + r + MAP_HALF) / GRID_STEP));
+    const j0 = Math.max(0, Math.floor((bz - r + MAP_HALF) / GRID_STEP)), j1 = Math.min(N - 1, Math.ceil((bz + r + MAP_HALF) / GRID_STEP));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const d = Math.hypot(-MAP_HALF + i * GRID_STEP - bx, -MAP_HALF + j * GRID_STEP - bz);
+        if (d < r) ao[j * N + i] = Math.max(0.45, ao[j * N + i] - 0.16 * (1 - d / r));
+      }
+    }
+  }
   const zones = world.zones;
   for (let j = 0; j < N; j++) {
     for (let i = 0; i < N; i++) {
       const k = j * N + i;
-      const x = pos[k * 3];
-      const z = pos[k * 3 + 2];
+      const x = -MAP_HALF + i * GRID_STEP;
+      const z = -MAP_HALF + j * GRID_STEP;
       const h = H[k];
       let open = 0;
       let yard = 0;
@@ -173,49 +217,80 @@ export function buildTerrain(world) {
         if (zn.dirt) yard = Math.max(yard, zn.dirt * (1 - smoothstep(zn.flat * 0.35, zn.flat * 0.85, d)));
       }
       const n = Math.sin(x * 0.043 + Math.sin(z * 0.031) * 2.1) * Math.cos(z * 0.037 - x * 0.012);
-      const patch = smoothstep(0.1, 0.7, n);
-      const forest = Math.max(0, (1 - open) * (0.75 + 0.25 * patch));
+      // forest floor under the canopy, meadow grass in the gaps (and in the open around the sites)
+      const forest = smoothstep(0.2, 0.75, canopy[k] + n * 0.18) * (1 - 0.8 * open);
+      const rd = world.roadDist[k];
+      const road = 1 - smoothstep(1.9, 3.3, rd);
       const slope = 1 - nrm[k * 3 + 1];
-      let mud = Math.max(smoothstep(WATER_LEVEL + 1.3, WATER_LEVEL + 0.2, h), smoothstep(0.22, 0.4, slope) * 0.8);
+      // concavity at two scales: drainage lines and hollows collect water
+      let lap = 0;
+      for (const s of [2, 5]) lap += ((at(i - s, j) + at(i + s, j) + at(i, j - s) + at(i, j + s)) * 0.25 - h) / (s * GRID_STEP);
+      wet[k] = Math.max(smoothstep(0.02, 0.16, lap), smoothstep(WATER_LEVEL + 2.5, WATER_LEVEL + 0.4, h)) * (1 - road);
+      rock[k] = smoothstep(0.16, 0.27, slope + n * 0.03) * (1 - road);
+      let mud = smoothstep(WATER_LEVEL + 1.3, WATER_LEVEL + 0.2, h);
       // trampled dirt yards in the busier places
       const yn = 0.5 + 0.5 * Math.sin(x * 0.21 + Math.cos(z * 0.17) * 2.3);
       mud = Math.max(mud, yard * (0.55 + 0.45 * yn));
-      // ground under (and beside) the road: grass / forest floor / mud, always summing to 1
-      const wg = (1 - forest) * (1 - mud);
-      const wf = forest * (1 - mud);
-      const sum = wg + wf + mud || 1;
+      const rest = (1 - road) * (1 - mud);
+      const wg = (1 - forest) * rest;
+      const wf = forest * rest;
+      const wm = mud * (1 - road);
+      const sum = wg + wf + road + wm || 1;
       splat[k * 4] = wg / sum;
       splat[k * 4 + 1] = wf / sum;
-      splat[k * 4 + 2] = mud / sum;
-      // per-vertex road coverage: used where the road frame is not trustworthy (junctions, road ends)
-      splat[k * 4 + 3] = 1 - smoothstep(1.9, 3.3, world.roadDist[k]);
+      splat[k * 4 + 2] = road / sum;
+      splat[k * 4 + 3] = wm / sum;
+      base[k * 4] = (1 - forest) * (1 - mud);
+      base[k * 4 + 1] = forest * (1 - mud);
+      base[k * 4 + 2] = mud;
+      base[k * 4 + 3] = road;
+    }
+  }
+  const sample = (x, z, out = {}) => {
+    const fx = Math.max(0, Math.min(N - 1.001, (x + MAP_HALF) / GRID_STEP));
+    const fz = Math.max(0, Math.min(N - 1.001, (z + MAP_HALF) / GRID_STEP));
+    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+    const k00 = j * N + i, k10 = k00 + 1, k01 = k00 + N, k11 = k01 + 1;
+    const bl = (a, s = 1, o = 0) => (a[k00 * s + o] * (1 - u) + a[k10 * s + o] * u) * (1 - v) + (a[k01 * s + o] * (1 - u) + a[k11 * s + o] * u) * v;
+    out.grass = bl(splat, 4, 0);
+    out.forest = bl(splat, 4, 1);
+    out.road = bl(splat, 4, 2);
+    out.mud = bl(splat, 4, 3);
+    out.rock = bl(rock);
+    out.wet = bl(wet);
+    out.canopy = bl(canopy);
+    return out;
+  };
+  f = { nrm, splat, base, rock, wet, ao, canopy, sample };
+  FIELDS.set(world, f);
+  return f;
+}
+
+export function buildTerrain(world) {
+  const N = GRID_N;
+  const H = world.heights;
+  const count = N * N;
+  const F = groundFields(world);
+  const frame = roadFrame(world);
+  const pos = new Float32Array(count * 3);
+  const extra = new Float32Array(count * 4);
+  const roadAttr = new Float32Array(count * 4);
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const k = j * N + i;
+      pos[k * 3] = -MAP_HALF + i * GRID_STEP;
+      pos[k * 3 + 1] = H[k];
+      pos[k * 3 + 2] = -MAP_HALF + j * GRID_STEP;
+      // road kind: +1 asphalt, -1 trail, 0 dirt road
       const kd = frame.kind(k);
-      extra[k * 3] = kd === ROAD.ASPHALT ? 1 : 0;
-      extra[k * 3 + 1] = kd === ROAD.TRAIL ? 1 : 0;
-      extra[k * 3 + 2] = 1;
+      extra[k * 4] = kd === ROAD.ASPHALT ? 1 : kd === ROAD.TRAIL ? -1 : 0;
+      extra[k * 4 + 1] = F.ao[k];
+      extra[k * 4 + 2] = F.wet[k];
+      extra[k * 4 + 3] = F.rock[k];
       roadAttr[k * 4] = frame.lat[k];
       roadAttr[k * 4 + 1] = frame.along[k];
       roadAttr[k * 4 + 2] = frame.hw[k];
       roadAttr[k * 4 + 3] = frame.conf[k];
-    }
-  }
-  // baked occlusion around tree trunks
-  const trees = world.trees;
-  for (let t = 0; t < trees.length; t += 6) {
-    const tx = trees[t];
-    const tz = trees[t + 2];
-    const sc = trees[t + 3];
-    const r = 3.2 * sc;
-    const i0 = Math.max(0, Math.floor((tx - r + MAP_HALF) / GRID_STEP));
-    const i1 = Math.min(N - 1, Math.ceil((tx + r + MAP_HALF) / GRID_STEP));
-    const j0 = Math.max(0, Math.floor((tz - r + MAP_HALF) / GRID_STEP));
-    const j1 = Math.min(N - 1, Math.ceil((tz + r + MAP_HALF) / GRID_STEP));
-    for (let j = j0; j <= j1; j++) {
-      for (let i = i0; i <= i1; i++) {
-        const k = j * N + i;
-        const d = Math.hypot(pos[k * 3] - tx, pos[k * 3 + 2] - tz);
-        if (d < r) extra[k * 3 + 2] = Math.max(0.45, extra[k * 3 + 2] - 0.28 * (1 - d / r));
-      }
     }
   }
   const idx = new Uint32Array((N - 1) * (N - 1) * 6);
@@ -236,9 +311,9 @@ export function buildTerrain(world) {
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 4));
-  geo.setAttribute('aExtra', new THREE.BufferAttribute(extra, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(F.nrm, 3));
+  geo.setAttribute('aSplat', new THREE.BufferAttribute(F.base, 4));
+  geo.setAttribute('aExtra', new THREE.BufferAttribute(extra, 4));
   geo.setAttribute('aRoad', new THREE.BufferAttribute(roadAttr, 4));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeBoundingSphere();
@@ -248,6 +323,7 @@ export function buildTerrain(world) {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     return t;
   };
+  groundNoiseTexture();
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   const uniforms = {
     tGrass: { value: tex('ground_grass') },
@@ -255,79 +331,116 @@ export function buildTerrain(world) {
     tRoad: { value: tex('ground_road') },
     tAsph: { value: tex('ground_asphalt') },
     tMud: { value: tex('ground_mud') },
+    tRock: { value: tex('rock') },
     tNoise: { value: tex('ground_noise') },
+    tGroundNoise: VEG.tGroundNoise,
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute vec4 aSplat;\nattribute vec3 aExtra;\nattribute vec4 aRoad;\nvarying vec4 vSplat;\nvarying vec3 vExtra;\nvarying vec4 vRoad;\nvarying vec3 vWPos;',
+        '#include <common>\nattribute vec4 aSplat;\nattribute vec4 aExtra;\nattribute vec4 aRoad;\nvarying vec4 vSplat;\nvarying vec4 vExtra;\nvarying vec4 vRoad;\nvarying vec3 vWPos;',
       )
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvExtra = aExtra;\nvRoad = aRoad;\nvWPos = position;');
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        '#include <common>\nuniform sampler2D tGrass;\nuniform sampler2D tForest;\nuniform sampler2D tRoad;\nuniform sampler2D tAsph;\nuniform sampler2D tMud;\nuniform sampler2D tNoise;\nvarying vec4 vSplat;\nvarying vec3 vExtra;\nvarying vec4 vRoad;\nvarying vec3 vWPos;',
+        `#include <common>
+        uniform sampler2D tGrass;
+        uniform sampler2D tForest;
+        uniform sampler2D tRoad;
+        uniform sampler2D tAsph;
+        uniform sampler2D tMud;
+        uniform sampler2D tRock;
+        uniform sampler2D tNoise;
+        varying vec4 vSplat;
+        varying vec4 vExtra;
+        varying vec4 vRoad;
+        varying vec3 vWPos;
+        ${GROUND_MACRO_GLSL}
+        // anti-tiling: a second, rotated + rescaled sample of the same layer takes over in noise patches; the seam
+        // follows the texture's luminance (its "height"), so it reads as relief instead of a cross-fade.
+        // Explicit gradients: layers are only sampled where they have weight (non-uniform control flow).
+        vec4 terrLayer(sampler2D t, vec2 uv, vec2 dx, vec2 dy, float n, float ang, float sc, vec2 off) {
+          vec3 a = textureGrad(t, uv, dx, dy).rgb;
+          mat2 R = mat2(cos(ang), sin(ang), -sin(ang), cos(ang)) * sc;
+          vec3 b = textureGrad(t, R * uv + off, R * dx, R * dy).rgb;
+          float la = dot(a, vec3(0.333)), lb = dot(b, vec3(0.333));
+          float k = smoothstep(0.4, 0.6, n + (lb - la) * 1.5);
+          return vec4(mix(a, b, k), mix(la, lb, k));
+        }`,
       )
       .replace(
         '#include <map_fragment>',
         /* glsl */ `
         vec2 wp = vWPos.xz;
-        // Layers are only sampled where they contribute. Samples inside branches use gradients taken here,
-        // in uniform control flow, so their mip level is right at the branch edges.
-        vec2 wx = dFdx(wp);
-        vec2 wy = dFdy(wp);
+        vec2 tuv = wp * 0.22;
+        // gradients taken here, in uniform control flow, so branch-local samples get the right mip level
+        vec2 gx = dFdx(tuv), gy = dFdy(tuv);
+        vec2 wx = dFdx(wp), wy = dFdy(wp);
         const mat2 ROT = mat2(0.8, -0.6, 0.6, 0.8);
-        vec2 rwx = ROT * wx;
-        vec2 rwy = ROT * wy;
-        // tNoise holds independent tileable noise fields in r / g / b (linear data)
-        vec3 nBig = texture2D(tNoise, wp * 0.0067).rgb;
+        vec2 rwx = ROT * wx, rwy = ROT * wy;
+        vec4 nz = texture2D(tGroundNoise, wp * (1.0 / 29.0));
+        float n1 = nz.r * 0.6 + nz.g * 0.4;
+        float n2 = nz.g * 0.5 + nz.b * 0.5;
+        // tNoise holds independent tileable noise fields in r / g / b (linear data): road edges, ruts, puddles
         vec3 nMid = texture2D(tNoise, wp * 0.041 + 0.31).rgb;
         vec3 nFine = texture2D(tNoise, wp * 0.23 + 0.67).rgb;
-        // every ground texture is sampled at two scales / rotations blended by noise, which hides the tiling
-        float tb = smoothstep(0.3, 0.7, nMid.r);
-        vec3 w = vSplat.xyz;
-        float nb = (nMid.g - 0.45) * 0.9;
-        w.x = max(0.0, w.x + nb * w.y);
-        w.y = max(0.0, w.y - nb * w.y);
-        w.z = smoothstep(0.05, 0.75, w.z + (nFine.r - 0.5) * 0.5 * w.z);
-        w /= max(0.0001, w.x + w.y + w.z);
+        float wet = vExtra.z;
 
-        // ---- road coverage: ragged dirt edges that grass creeps over, clean asphalt edges with a gravel shoulder
+        // ---- road coverage: per pixel from the road frame, per vertex where the frame is not trustworthy
+        // (junctions, road ends). Ragged dirt edges that grass creeps over, clean asphalt edges with a gravel shoulder.
         float conf = vRoad.w;
         float lat = vRoad.x;
         float aLat = abs(lat);
         float hw = vRoad.z;
-        float asph = vExtra.x;
-        float trail = vExtra.y;
+        float asph = max(vExtra.x, 0.0);
+        float trail = max(-vExtra.x, 0.0);
         float edgeN = (nFine.g - 0.5) * mix(1.3, 0.3, asph) + (nMid.b - 0.5) * mix(0.8, 0.0, asph);
         float soft = mix(0.55, 0.12, asph);
         float pixRoad = 1.0 - smoothstep(hw + asph * 0.7 - soft, hw + asph * 0.7 + soft * 0.3, aLat + edgeN);
         float road = mix(vSplat.w, pixRoad, conf);
         vec2 ruv = vec2(lat * 0.7, vRoad.y * 0.06);
-        vec2 rux = dFdx(ruv);
-        vec2 ruy = dFdy(ruv);
+        vec2 rux = dFdx(ruv), ruy = dFdy(ruv);
 
-        vec3 cG = vec3(0.0);
-        vec3 cF = vec3(0.0);
-        vec3 cM = vec3(0.0);
-        if (w.x > 0.001 || road > 0.002) {
-          if (tb < 0.998) cG = textureGrad(tGrass, wp * 0.22, wx * 0.22, wy * 0.22).rgb * (1.0 - tb);
-          if (tb > 0.002) cG += textureGrad(tGrass, ROT * wp * 0.1386 + 0.41, rwx * 0.1386, rwy * 0.1386).rgb * tb;
-          // meadow colour drifts between lush, dry straw and dark damp patches
-          cG *= mix(vec3(1.0), vec3(1.22, 1.1, 0.72), smoothstep(0.52, 0.78, nBig.g) * 0.85);
-          cG *= mix(vec3(1.0), vec3(0.8, 0.94, 0.82), smoothstep(0.55, 0.8, nMid.b) * 0.7);
+        // ---- ground under and beside the roads
+        vec3 w = vSplat.xyz;
+        // ragged meadow / forest-floor border
+        float nb = (n2 - 0.5) * 0.9;
+        w.x = max(0.0, w.x + nb * w.y);
+        w.y = max(0.0, w.y - nb * w.y);
+        vec4 cG = vec4(0.0), cF = vec4(0.0), cM = vec4(0.0);
+        // (grass is also sampled on the road: the crown between the ruts and the verges grow it)
+        if (w.x > 0.002 || road > 0.002) {
+          cG = terrLayer(tGrass, tuv, gx, gy, n1, 1.3, 0.83, vec2(0.31, 0.17));
+          cG.rgb = mix(cG.rgb, cG.w * vec3(1.45, 1.2, 0.66), groundDry(wp) * 0.3);
         }
-        if (w.y > 0.001 && road < 0.998) {
-          if (tb < 0.998) cF = textureGrad(tForest, wp * 0.198 + 0.37, wx * 0.198, wy * 0.198).rgb * (1.0 - tb);
-          if (tb > 0.002) cF += textureGrad(tForest, ROT * wp * 0.15246 + 0.451, rwx * 0.15246, rwy * 0.15246).rgb * tb;
+        if (w.y > 0.002 && road < 0.998) {
+          cF = terrLayer(tForest, tuv * 0.9 + 0.37, gx * 0.9, gy * 0.9, n2, 2.2, 1.17, vec2(0.13, 0.71));
+          // moss mats on the damp forest floor
+          cF.rgb = mix(cF.rgb, cF.rgb * vec3(0.72, 1.02, 0.58) + vec3(0.0, 0.006, 0.0), smoothstep(0.5, 0.78, nz.a * 0.7 + nz.r * 0.3 + wet * 0.35) * 0.75);
         }
-        if (w.z > 0.001 && road < 0.998) cM = textureGrad(tMud, wp * 0.242, wx * 0.242, wy * 0.242).rgb;
-        vec3 ground = cG * w.x + cF * w.y + cM * w.z;
+        if (w.z > 0.002 && road < 0.998) cM = terrLayer(tMud, tuv * 1.1, gx * 1.1, gy * 1.1, n1, 0.9, 0.79, vec2(0.57, 0.23));
+        // height-aware blend: where two layers meet, the higher texel (blade, leaf, pebble) wins
+        vec3 b = (w + vec3(cG.w, cF.w, cM.w * 0.7) * 0.9) * step(0.002, w);
+        float ma = max(max(b.x, b.y), b.z) - 0.14;
+        w = max(b - ma, 0.0);
+        w /= max(w.x + w.y + w.z, 1e-4);
+        vec3 ground = cG.rgb * w.x + cF.rgb * w.y + cM.rgb * w.z;
+        // steep slopes: rock breaks through (height-aware too)
+        float rk = 0.0;
+        if (vExtra.w > 0.01) {
+          vec4 cK = terrLayer(tRock, tuv * (0.21 / 0.22), gx * (0.21 / 0.22), gy * (0.21 / 0.22), n2, 1.7, 0.71, vec2(0.41, 0.05));
+          rk = smoothstep(0.3, 0.7, vExtra.w + (cK.w - 0.35) * 0.9);
+          ground = mix(ground, cK.rgb * vec3(0.95, 0.97, 1.0), rk);
+        }
+        // drainage lines and hollows: darker, greener
+        ground *= mix(vec3(1.0), vec3(0.74, 0.84, 0.7), wet * 0.75 * (1.0 - rk));
 
         // ---- roads
         if (road > 0.002) {
+          float tb = smoothstep(0.3, 0.7, nMid.r);
           vec3 dirt = textureGrad(tRoad, ROT * wp * 0.2, rwx * 0.2, rwy * 0.2).rgb;
           if (tb > 0.002) dirt = mix(dirt, textureGrad(tRoad, wp * 0.083 + 0.5, wx * 0.083, wy * 0.083).rgb, tb * 0.5);
           // tyre ruts (dirt roads) or one worn footpath (trails), wandering a little
@@ -351,7 +464,7 @@ export function buildTerrain(world) {
           // grassy crown between the ruts and grass creeping in from the verge
           float crown = (1.0 - smoothstep(0.16, 0.4, la)) * smoothstep(0.38, 0.62, nMid.g + nFine.r * 0.25) * (1.0 - trail) * conf;
           float verge = smoothstep(hw - 1.3, hw - 0.2, aLat + edgeN * 0.5) * smoothstep(0.45, 0.7, nFine.g) * conf * (1.0 - asph);
-          dirt = mix(dirt, cG * 0.92, max(crown * 0.85, verge * 0.7));
+          dirt = mix(dirt, cG.rgb * 0.92, max(crown * 0.85, verge * 0.7));
           if (asph > 0.002) {
             vec3 a = textureGrad(tAsph, ROT * wp * 0.16, rwx * 0.16, rwy * 0.16).rgb;
             if (tb > 0.002) a = mix(a, textureGrad(tAsph, wp * 0.061 + 0.2, wx * 0.061, wy * 0.061).rgb, tb * 0.5);
@@ -369,12 +482,12 @@ export function buildTerrain(world) {
           }
           ground = mix(ground, dirt, road);
         }
-        ground *= 0.7 + nBig.b * 0.24;
-        diffuseColor.rgb *= ground * vExtra.z;
+        ground *= groundMacro(wp);
+        diffuseColor.rgb *= ground * vExtra.y;
         `,
       );
   };
-  mat.customProgramCacheKey = () => 'terrain-splat-2';
+  mat.customProgramCacheKey = () => 'terrain-splat-3';
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.frustumCulled = false;

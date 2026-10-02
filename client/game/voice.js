@@ -1,5 +1,6 @@
 // Proximity voice chat: WebRTC peer-to-peer audio mesh; signaling is relayed through the game server
-// WebSocket. Remote voices are routed through positional panners so you only hear nearby players.
+// WebSocket. Remote voices are routed through positional panners so you only hear nearby players; a peer
+// you share a walkie-talkie link with also comes through the radio once they are out of earshot.
 // Push-to-talk (V) by default; the microphone track is enabled only while transmitting.
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
 
@@ -8,7 +9,7 @@ export class Voice {
     this.conn = conn;
     this.audio = audio;
     this.myId = 0;
-    this.peers = new Map(); // id -> {pc, source, stream, analyser, level, talking}
+    this.peers = new Map(); // id -> {pc, source, stream, analyser, level, talking, radio, seen}
     this.localStream = null;
     this.localTrack = null;
     this.transmitting = false;
@@ -64,7 +65,7 @@ export class Voice {
 
   _createPeer(id, initiator) {
     const pc = new RTCPeerConnection({ iceServers: ICE });
-    const peer = { pc, source: null, stream: null, analyser: null, level: 0, talking: false, pendingIce: [] };
+    const peer = { pc, source: null, stream: null, analyser: null, level: 0, talking: false, radio: false, seen: false, pendingIce: [] };
     this.peers.set(id, peer);
     // only the initiator creates the audio transceiver; the answerer reuses the one negotiated
     // from the offer (adding its own would create an extra, unassociated m-line)
@@ -103,6 +104,7 @@ export class Voice {
     if (peer.source || !peer.stream || !this.audio.ready || !this.audio.createVoiceSource) return;
     peer.source = this.audio.createVoiceSource(peer.stream);
     peer.source.setVolume?.(this.volume);
+    peer.source.setRadio?.(peer.radio);
     try {
       const ctx = this.audio.context;
       const src = ctx.createMediaStreamSource(peer.stream);
@@ -166,8 +168,22 @@ export class Voice {
     if (!p) return;
     if (!p.source) this._ensureSource(p);
     if (!p.source) return;
+    p.seen = true;
     p.source.setPosition(x, y, z);
     p.source.setMuffled?.(!!zombie);
+  }
+
+  // walkie-talkie link with this peer (both of you carry one): they reach you at any distance
+  setRadio(id, on) {
+    const p = this.peers.get(id);
+    if (!p || p.radio === on) return;
+    p.radio = on;
+    p.source?.setRadio?.(on);
+  }
+
+  // true while this peer is coming through the radio rather than being heard directly
+  overRadio(id) {
+    return this.peers.get(id)?.source?.mode?.() === 2;
   }
 
   setVolume(v) {
@@ -175,10 +191,13 @@ export class Voice {
     for (const p of this.peers.values()) p.source?.setVolume?.(v);
   }
 
-  // talking detection (call ~10x per second); returns list of talking peer ids
+  // talking detection (call ~10x per second); returns the ids of the talking peers you can actually hear
   poll() {
     const talking = [];
     for (const [id, p] of this.peers) {
+      // a peer whose position stopped coming in since the last poll has left the area: out of earshot
+      if (!p.seen) p.source?.setAbsent?.();
+      p.seen = false;
       if (!p.analyser) continue;
       p.analyser.getByteTimeDomainData(p.buf);
       let sum = 0;
@@ -188,7 +207,7 @@ export class Voice {
       }
       const rms = Math.sqrt(sum / p.buf.length);
       p.level = p.level * 0.6 + rms * 0.4;
-      p.talking = p.level > 0.02;
+      p.talking = p.level > 0.02 && p.source?.mode?.() !== 0;
       if (p.talking) talking.push(id);
     }
     return talking;

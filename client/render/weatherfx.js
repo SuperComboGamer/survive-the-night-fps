@@ -167,7 +167,7 @@ void main() {
   #include <fog_fragment>
 }`;
 
-const QUALITY_DROPS = { low: 4000, medium: 8000, high: 12000 };
+const QUALITY_DROPS = { low: 4000, medium: 8000, high: 12000, ultra: 12000 };
 const SPLASHES = 200;
 const SPLASH_LIFE = 0.28;
 const LEAVES = 420;

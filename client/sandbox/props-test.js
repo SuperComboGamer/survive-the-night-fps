@@ -17,7 +17,7 @@ const NEW_ONLY = Q.get('new') === '1';
 // iteration-2 additions (for ?new=1)
 const NEW_PROPS = ['duffel_bag', 'locker', 'cabinet', 'toolbox', 'fridge', 'log_pile', 'jersey_barrier', 'camper', 'school_bus', 'dump_truck', 'boom_gate', 'saw_table', 'gravel_pile', 'hunting_stand', 'billboard', 'motel_sign', 'satellite_dish', 'fence_chain'];
 const NEW_STRUCTS = ['CAMPFIRE', 'WORKBENCH', 'DOOR'];
-const NEW_ITEMS = ['FLARE', 'SCHEM_SHOTGUN', 'SCHEM_RIFLE', 'SCHEM_KEVLAR', 'SCHEM_EXPLOSIVES', 'SCHEM_METAL', 'TUNA'];
+const NEW_ITEMS = ['FLARE', 'SCHEM_SHOTGUN', 'SCHEM_RIFLE', 'SCHEM_KEVLAR', 'SCHEM_EXPLOSIVES', 'SCHEM_METAL', 'TUNA', 'WALKIE'];
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
@@ -341,6 +341,16 @@ async function setupPickups() {
 
 // ------------------------------------------------------------------ misc
 async function setupMisc() {
+  if (ONLY === 'plane') {
+    // ?cat=misc&only=plane : the supply-drop plane, hung 6 m up so it can be orbited from below
+    const { createCargoPlane } = await import('../render/models/plane.js');
+    const plane = createCargoPlane();
+    plane.position.y = 6;
+    shadowAll(plane);
+    scene.add(plane);
+    frame(new THREE.Vector3(0, 6, 0), 48, 215, 18);
+    return;
+  }
   const { PROJ } = await import('../../shared/defs.js');
   const M = await import('../render/models/misc.js');
   const crate = M.createSupplyCrate();

@@ -1,9 +1,11 @@
 // Client-side prediction of the local player with server reconciliation.
-// Runs the exact shared simulation at a fixed 60 Hz; unacknowledged commands are replayed on top of
-// every authoritative server state, and visual corrections are smoothed out over a few frames.
-import { CMD_DT, CMDS_PER_PACKET } from '../../shared/constants.js';
-import { qangle16, dqangle16, qpitch, dqpitch } from '../../shared/protocol.js';
-import { createPlayerState, copyPlayerState, simulatePlayer } from '../../shared/playersim.js';
+// Runs the exact shared simulation at a fixed 60 Hz. Every packet of commands carries a fingerprint of the state
+// they led to; the server only sends its own state back when that disagrees with its result (or something else
+// moved the player), and then the unacknowledged commands are replayed on top of it and the visual correction is
+// smoothed out over a few frames.
+import { CMD_DT, CMDS_PER_PACKET, CMDS_PER_PACKET_IDLE } from '../../shared/constants.js';
+import { qangle16, dqangle16, qpitch, dqpitch, MAX_CMDS } from '../../shared/protocol.js';
+import { createPlayerState, copyPlayerState, simulatePlayer, hashPlayerState } from '../../shared/playersim.js';
 
 export class Prediction {
   constructor(world) {
@@ -21,6 +23,8 @@ export class Prediction {
     this.slotRequest = 255;
     this.hasServerState = false;
     this.corrections = 0;
+    this.idleRun = 0; // commands in a row with no keys held and the view still
+    this.lastOut = null;
   }
 
   setWorld(world) {
@@ -49,28 +53,53 @@ export class Prediction {
       if (events.length) onEvents(events, this.state);
       this.pending.push(cmd);
       if (this.pending.length > 180) this.pending.shift();
-      this.outbox.push({ seq: this.seq, buttons, qyaw: qy, qpitch: qp, slot: cmd.slot });
+      // how many commands in a row have repeated the same hands-off input
+      const last = this.lastOut;
+      this.idleRun = buttons === 0 && cmd.slot === 255 && last && last.buttons === 0 && last.qyaw === qy && last.qpitch === qp ? this.idleRun + 1 : 0;
+      this.lastOut = { seq: this.seq, buttons, qyaw: qy, qpitch: qp, slot: cmd.slot };
+      this.outbox.push(this.lastOut);
       n++;
     }
     this.alpha = this.acc / CMD_DT;
     return n;
   }
 
-  // take up to CMDS_PER_PACKET commands ready to send (or all if flushing)
-  takeOutbox(force = false) {
-    if (!this.outbox.length) return null;
-    if (!force && this.outbox.length < CMDS_PER_PACKET) return null;
+  // The commands that are ready to go out as one packet (null: keep batching). One packet per server tick
+  // (CMDS_PER_PACKET commands) is the rhythm; a frame so long that waiting for the next one would overshoot that
+  // sends what it has, and while there is nothing to say (no keys, mouse still) twice as many are batched up -
+  // the first command that differs goes out at once, with the idle ones before it. frameDt: this frame's length.
+  // force: don't batch (this frame's commands fired a shot: it has to leave with this frame's render time).
+  takeOutbox(frameDt = CMD_DT, force = false) {
     const out = this.outbox;
+    const n = out.length;
+    if (!n) return null;
+    if (n > MAX_CMDS) return out.splice(0, MAX_CMDS); // a very long frame: the rest follows in a second packet
+    if (!force) {
+      const perFrame = Math.min(frameDt, 0.25) / CMD_DT; // commands the next frame will add
+      if (this.idleRun >= n ? n < CMDS_PER_PACKET_IDLE : n < CMDS_PER_PACKET && n + perFrame <= CMDS_PER_PACKET + 0.5) return null;
+    }
     this.outbox = [];
     return out;
   }
 
-  reconcile(ack, server) {
-    // drop acknowledged commands (wrap-aware seq <= ack)
+  // Fingerprint of the predicted state after the last of `cmds`, to send along with them (-1: they don't end
+  // with the newest command, so the state after them is gone)
+  hash(cmds) {
+    return cmds[cmds.length - 1].seq === this.seq ? hashPlayerState(this.state) : -1;
+  }
+
+  // The server confirmed everything up to `ack` and our prediction of it: nothing to correct
+  confirm(ack) {
     const p = this.pending;
     let k = 0;
     while (k < p.length && ((ack - p[k].seq) & 0xffff) < 0x8000) k++;
     if (k) p.splice(0, k);
+  }
+
+  // The server sent its state after command `ack`: rebase on it and replay what it hasn't seen yet
+  reconcile(ack, server) {
+    this.confirm(ack);
+    const p = this.pending;
     const ox = this.state.x;
     const oy = this.state.y;
     const oz = this.state.z;

@@ -1,12 +1,13 @@
-// In-process server smoke test: fake clients join, meet the cat, get hunted by a zombie dog pack, walk around,
-// search containers, trip a car alarm, chop trees, build (incl. door boards), go down + get revived, pin a shade
+// In-process server smoke test: fake clients join, meet the cat, get hunted by a zombie dog pack, rouse the wandering herd, walk around,
+// search containers, trip a car alarm, chop trees, build (incl. door boards), draw the dead with noise, go down +
+// get revived, pin a shade
 // with light, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { Game } from '../server/game.js';
-import { C2S, ACT, ENT, HOLD, CAR_ID, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch } from '../shared/protocol.js';
-import { PHASE, BTN } from '../shared/constants.js';
-import { STRUCT, ITEM, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES } from '../shared/defs.js';
-import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
+import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
+import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES } from '../shared/constants.js';
+import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
+import { readSnapshot } from '../client/net/decode.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
 
 const seed = +(process.argv[2] || 4242);
@@ -18,7 +19,7 @@ const check = (name, ok, info = '') => {
 };
 
 function client(name) {
-  const c = { name, id: 0, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, notes: [], pickups: [], seq: 0, summary: null, pings: 0 };
+  const c = { name, id: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, notes: [], pickups: [], seq: 0, summary: null, pings: 0, chats: [], roster: new Map() };
   const handler = {
     sound() {},
     shot() {},
@@ -33,20 +34,30 @@ function client(name) {
     structBreak() {},
     ping: () => c.pings++,
     summary: (s) => (c.summary = s),
+    flyover: (x, y, z, heading, eta) => (c.flyover = { x, y, z, heading, eta }),
   };
+  c.handler = handler;
   c.conn = {
     send(bytes) {
       const r = new Reader(bytes.slice ? bytes.slice().buffer : bytes);
       const t = r.u8();
       if (t === S2C.WELCOME) c.id = r.u16();
       else if (t === S2C.SNAPSHOT) {
-        const tick = r.u32();
-        r.u16();
-        if (r.u8()) c.global = readGlobal(r);
-        readSelf(r, c.self);
-        readEntities(r, c.store, tick);
-        readEvents(r, handler);
+        readSnapshot(r, c);
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing snapshot bytes`);
+      } else if (t === S2C.CHAT) c.chats.push({ id: r.u16(), flags: r.u8(), text: r.str() });
+      else if (t === S2C.PLAYERS) {
+        c.roster.clear();
+        for (let n = r.u8(); n > 0; n--) {
+          const id = r.u16();
+          r.str();
+          const status = r.u8();
+          const walkie = !!(r.u8() & PLF.WALKIE);
+          const kills = r.u16();
+          r.u16();
+          c.roster.set(id, { status, walkie, kills });
+        }
+        if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }
     },
   };
@@ -80,15 +91,12 @@ function client(name) {
     w2.u8(C2S.INPUT);
     w2.u16(game.tick & 0xffff);
     w2.u8(0);
-    w2.u8(3);
+    const cmds = [];
     for (let i = 0; i < 3; i++) {
       c.seq = (c.seq + 1) & 0xffff;
-      w2.u16(c.seq);
-      w2.u16(buttons);
-      w2.u16(qangle16(yaw));
-      w2.i16(qpitch(pitch));
-      w2.u8(i === 0 ? slot : 255);
+      cmds.push({ seq: c.seq, buttons, qyaw: qangle16(yaw), qpitch: qpitch(pitch), slot: i === 0 ? slot : 255 });
     }
+    writeInput(w2, cmds); // these clients don't predict, so no state fingerprint: the server keeps sending its state
     game.onMessage(c.session, w2.bytes().slice());
   };
   c.tp = (x, z) => game.handleChat(c.p(), `/tp ${x} ${z}`);
@@ -109,7 +117,9 @@ run(5);
 check('game started', game.phase === PHASE.DAY && A.global?.phase === PHASE.DAY);
 check('players spawned near car', Math.hypot(A.p().state.x - game.world.car.x, A.p().state.z - game.world.car.z) < 14);
 check('supply hints sent', A.global.hints.slice(0, 7).every((z) => z !== 255), JSON.stringify(A.global.hints));
+check('every supply is hidden in a different place of this map', new Set(A.global.hints).size === 7 && A.global.hints.every((z) => game.world.zoneById[z] && z !== ZONE.CAMP));
 check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.CACHE));
+check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash === ITEM.WALKIE && !c.schem && CONT_DEFS[c.ctype].schem).length === WALKIE_STASHES);
 
 // the stray cat: replicated, wanders over to survivors who stand still, bolts from the dead
 {
@@ -218,6 +228,118 @@ check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT
   p.hp = 100;
 }
 
+// the wandering herd: 10-15 of the dead shuffle along the roads together. One of them noticing a survivor, or a
+// noise reaching them, sets the whole herd running
+{
+  const w = game.world;
+  const hs = game.zm.herds;
+  const h = hs.first();
+  const live = () => h.members.filter((z) => !z.dead);
+  const vel = (z) => Math.hypot(z.vx, z.vz);
+  const open = (x, z) => Math.abs(x) < 300 && Math.abs(z) < 300 && !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z);
+  const [ax0, az0] = [A.p().state.x, A.p().state.z];
+  const damagePlayer = game.damagePlayer;
+  game.damagePlayer = () => {};
+  const n = h ? live().length : 0;
+  check('a herd of 10-15 wanders the valley', n >= 10 && n <= 15 && live().every((z) => z.herd === h.id && !z.horde), `${n} zombies`);
+  check('the herd keeps clear of the car', !!h && Math.hypot(h.x - w.car.x, h.z - w.car.z) > 60 && Math.hypot(h.cx - w.car.x, h.cz - w.car.z) > 40);
+  // wandering: together, at a slow walk
+  let walked = 0;
+  let top = 0;
+  let spread = 0;
+  let [lx, lz] = [h.cx, h.cz];
+  run(20 * 25, () => {
+    h.restT = 0; // no standing around at a road's end while we watch
+    walked += Math.hypot(h.cx - lx, h.cz - lz);
+    [lx, lz] = [h.cx, h.cz];
+    for (const z of live()) {
+      top = Math.max(top, vel(z));
+      spread = Math.max(spread, Math.hypot(z.x - h.cx, z.z - h.cz));
+    }
+  });
+  check('the herd wanders together at a slow walk', !h.hot && walked > 12 && walked < 35 && top < 2 && spread < 20 && live().every((z) => !z.target), `${walked.toFixed(1)} m in 25 s, fastest ${top.toFixed(2)} m/s, spread ${spread.toFixed(1)} m`);
+  // a survivor 25 m from the nearest of them: that one notices, and the whole herd comes at a run
+  let seen = null;
+  for (let k = 0; k < 16 && !seen; k++) {
+    const [ux, uz] = [Math.sin(k * 0.3927), Math.cos(k * 0.3927)];
+    const front = live().reduce((a, b) => (b.x * ux + b.z * uz > a.x * ux + a.z * uz ? b : a));
+    const [x, z] = [front.x + ux * 25, front.z + uz * 25];
+    if (open(x, z)) seen = { x, z };
+  }
+  check('found open ground by the herd', !!seen);
+  const notes = [A.notes.length, B.notes.length];
+  A.tp(seen.x, seen.z);
+  const beyond = live().filter((z) => Math.hypot(z.x - seen.x, z.z - seen.z) > 27).length;
+  run(20);
+  const alerted = (c, from) => c.notes.slice(from).some(([m, a]) => m === NOTIFY.HERD && a === n);
+  check('one of them notices a survivor: the whole herd is onto them', h.hot && beyond > 0 && live().every((z) => z.target === A.id), `${beyond} of ${n} were out of range`);
+  check('the survivor is warned (and only them)', alerted(A, notes[0]) && !alerted(B, notes[1]));
+  const ran = new Set();
+  run(40, () => live().forEach((z) => vel(z) > 4.5 && ran.add(z)));
+  check('a roused herd comes at a run, walkers and all', ran.size === n && live().some((z) => z.ztype === ZTYPE.WALKER && ran.has(z)), `${ran.size} of ${n} over 4.5 m/s`);
+  // out of their sight: they give up, and drift back to the road at a walk
+  // (the survivor gets away to the far side of the herd from the car, so the chase leads it away from the tests to come)
+  const off = (x, z) => ((x - h.cx) * (h.cx - w.car.x) + (z - h.cz) * (h.cz - w.car.z)) / Math.hypot(x - h.cx, z - h.cz);
+  const away = [[-250, -250], [250, -250], [-250, 250], [250, 250], [0, -260], [0, 260], [-260, 0], [260, 0]].filter(([x, z]) => open(x, z) && Math.hypot(x - h.cx, z - h.cz) > 220).sort((a, b) => off(b[0], b[1]) - off(a[0], a[1]))[0];
+  A.tp(away[0], away[1]);
+  // ~20 s on their quarry, ~12 s searching where they lost it (longer if a noise on the way, like a supply crate landing, draws them)
+  let chase = 0;
+  while ((h.hot || live().some((z) => z.target)) && chase++ < 20 * 90) game.update();
+  check('the herd loses a survivor who gets away', !h.hot && chase > 20 * 15 && live().every((z) => !z.target) && Math.hypot(h.cx - away[0], h.cz - away[1]) > 40, `after ${(chase / 20).toFixed(0)} s, ${Math.hypot(h.cx - away[0], h.cz - away[1]).toFixed(0)} m off`);
+  run(60);
+  check('...and goes back to wandering', live().every((z) => vel(z) < 2) && live().length === n);
+  // a noise 45 m off (on the side away from the car) that only the nearest of them can hear: the lot of them run to it
+  let noise = null;
+  const a0 = Math.atan2(h.cx - w.car.x, h.cz - w.car.z);
+  for (let k = 0; k < 16 && !noise; k++) {
+    const a = a0 + ((k + 1) >> 1) * (k & 1 ? 0.3927 : -0.3927);
+    const [x, z] = [h.cx + Math.sin(a) * 45, h.cz + Math.cos(a) * 45];
+    if (open(x, z) && game.humans().every((p) => Math.hypot(p.state.x - x, p.state.z - z) > 70)) noise = { x, z };
+  }
+  check('found open ground for the noise', !!noise);
+  const far = () => live().reduce((s, z) => s + Math.hypot(z.x - noise.x, z.z - noise.z), 0) / n;
+  const d0 = far();
+  const loud = Math.min(...live().map((z) => Math.hypot(z.x - noise.x, z.z - noise.z))) + 0.5;
+  game.zm.noise(noise.x, noise.z, loud);
+  const heard = live().filter((z) => z.alertT > 0).length;
+  ran.clear();
+  run(60, () => live().forEach((z) => vel(z) > 4.5 && ran.add(z)));
+  check('a noise one of them hears brings the whole herd running', heard >= 1 && heard < n && h.hot && ran.size === n && far() < d0 - 8 && live().every((z) => !z.target), `${heard} of ${n} heard it, ${d0.toFixed(1)} -> ${far().toFixed(1)} m`);
+  // leave things as they were: Alice back where she stood, without the dead that closed in on the survivors meanwhile
+  game.damagePlayer = damagePlayer;
+  A.tp(ax0, az0);
+  A.p().hp = 100;
+  for (const z of game.zombies) {
+    if (z.herd || !game.humans().some((p) => z.target === p.id || Math.hypot(p.state.x - z.x, p.state.z - z.z) < 40)) continue;
+    z.dead = true;
+    z.deadT = 2;
+  }
+  run(2);
+}
+
+// supply drop: the plane's flyover event, then a crate off its ramp that free-falls, opens its canopy and
+// sheds the plane's speed to land on the supply spot it was aimed at
+{
+  const n0 = game.crates.length;
+  game.handleChat(A.p(), '/airdrop');
+  run(1);
+  const fly = A.flyover;
+  const f = game.flyovers[0];
+  check('airdrop flyover sent', !!fly && !!f && Math.abs(fly.eta - (f.at - game.time)) < 0.1, fly ? `eta ${fly.eta.toFixed(1)} s` : '');
+  run(Math.ceil((f?.at - game.time) * 20) + 2);
+  const c = game.crates[n0];
+  check('crate leaves the ramp in free fall', c && c.state === 3 && Math.hypot(c.x - f.x, c.z - f.z) < 15);
+  let opened = false;
+  let t = 0;
+  while (c && c.state !== 1 && t++ < 20 * 60) {
+    game.update();
+    opened ||= c.state === 0;
+  }
+  check('canopy opens, crate lands on its spot', opened && c.state === 1 && Math.hypot(c.x - f.tx, c.z - f.tz) < 0.01 && Math.abs(c.y - f.gy) < 0.01, `${(t / 20).toFixed(1)} s under canopy`);
+  game.removeEntity(c);
+  game.crates.splice(n0, 1);
+}
+
 // walk a little
 run(60, () => A.input(BTN.FWD, 0.3, 0));
 check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
@@ -315,6 +437,9 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('built campfire + workbench anywhere', game.structures.length === n0 + 2, `${game.structures.length - n0}`);
   const fire = game.structures.find((e) => e.stype === STRUCT.CAMPFIRE);
   check('campfire lit', fire && fire.burnLeft > 0 && fire.state === 1);
+  const bench = game.structures.find((e) => e.stype === STRUCT.WORKBENCH);
+  const bm = A.global.benches;
+  check('workbench on the field map', bench && bm.length === 1 && Math.hypot(bm[0].x - bench.x, bm[0].z - bench.z) < 0.05, JSON.stringify(bm));
   // craft at the fire: gunpowder needs chem
   game.giveItem(p, ITEM.CHEM, 2);
   A.act(ACT.CRAFT, 19);
@@ -353,6 +478,32 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('pistol shot is heard', far.alertT > 0, `alert ${far.alertT.toFixed(1)}`);
   far.dead = true; // drop it before it wanders over
   far.deadT = 2;
+  // flamethrower: a cone of fire that needs no aim. What stands in it is scorched and set alight - the burn is
+  // replicated and keeps eating at it once the stream stops; what stands beside the cone or out of its reach is not
+  {
+    const keep = [s.weapons[0], s.mags[0]];
+    s.weapons[0] = ITEM.FLAMETHROWER;
+    s.mags[0] = WEAPONS[ITEM.FLAMETHROWER].mag;
+    A.input(0, 0, 0, 0);
+    run(12, () => A.input(0, 0, 0));
+    const lit = game.zm.spawn(ZTYPE.WALKER, s.x, s.z - 6);
+    const beside = game.zm.spawn(ZTYPE.WALKER, s.x + 7, s.z - 2);
+    const beyond = game.zm.spawn(ZTYPE.WALKER, s.x, s.z - 18);
+    run(10, () => A.input(BTN.ATTACK, 0, 0));
+    const used = WEAPONS[ITEM.FLAMETHROWER].mag - s.mags[0];
+    const seen = A.store.ents.get(lit.id);
+    check('flamethrower scorches and ignites what is in its cone', used > 3 && lit.burnT > 0 && lit.hp < lit.maxHp && !!seen && (seen.q[8] & ZSTATUS.BURNING) !== 0, `fuel -${used}, hp ${lit.hp.toFixed(0)}/${lit.maxHp}`);
+    check('...and nothing beside it or out of reach', beside.burnT === 0 && beyond.burnT === 0 && beside.hp === beside.maxHp && beyond.hp === beyond.maxHp);
+    run(4, () => A.input(0, 0, 0)); // (the last of the stream is still on its way to the server)
+    const hp0 = lit.hp;
+    run(20, () => A.input(0, 0, 0));
+    check('a zombie set alight keeps burning', !lit.dead && Math.abs(hp0 - lit.hp - BURN.dps) < 2, `-${(hp0 - lit.hp).toFixed(1)} hp in 1 s`);
+    for (const z of [lit, beside, beyond]) {
+      z.dead = true;
+      z.deadT = 2;
+    }
+    [s.weapons[0], s.mags[0]] = keep;
+  }
   A.input(0, 0, 0, 4); // back to the hammer for the door boards
   run(12, () => A.input(0, 0, 0));
   // door boards in a doorway
@@ -366,6 +517,125 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('door boards snap into doorway', game.structures.length === n1 + 1 && door && Math.hypot(door.x - o.x, door.z - o.z) < 0.01);
 }
 
+// talking: chat only carries to those in earshot; a walkie-talkie each bridges any distance
+// (no ticks and no game rng in here, so the rest of the run plays out as before)
+{
+  const a = A.p();
+  const b = B.p();
+  const sa = a.state;
+  const sb = b.state;
+  const home = [sb.x, sb.y, sb.z];
+  const inv = [a, b].map((p) => p.inv.map((x) => x && { ...x }));
+  const say = (c, text) => {
+    A.chats.length = B.chats.length = 0;
+    const w = new Writer(64);
+    w.u8(C2S.CHAT);
+    w.str(text);
+    game.onMessage(c.session, w.bytes().slice());
+  };
+  const at = (d) => {
+    sb.x = sa.x + d;
+    sb.y = sa.y;
+    sb.z = sa.z;
+  };
+  at(10);
+  say(A, 'near');
+  check('chat reaches a survivor in earshot', B.chats.length === 1 && B.chats[0].text === 'near' && B.chats[0].id === A.id && B.chats[0].flags === 0 && A.chats[0]?.flags === 0);
+  at((TALK_CLEAR + TALK_RANGE) / 2);
+  say(A, 'edge');
+  check('chat from the edge of earshot is faint', B.chats[0]?.flags === CHATF.FAINT && A.chats[0]?.flags === 0);
+  at(TALK_RANGE + 40);
+  say(A, 'far');
+  check('chat does not carry out of earshot', B.chats.length === 0 && A.chats[0]?.flags === CHATF.UNHEARD);
+  game.giveItem(a, ITEM.WALKIE, 1);
+  say(A, 'anyone?');
+  check('one walkie-talkie reaches nobody', B.chats.length === 0 && A.chats[0]?.flags === CHATF.UNHEARD);
+  game.giveItem(b, ITEM.WALKIE, 1);
+  say(A, 'come in');
+  check('walkie-talkies carry chat any distance', B.chats[0]?.flags === CHATF.RADIO && B.chats[0].text === 'come in' && A.chats[0]?.flags === 0);
+  say(B, 'copy');
+  check('...both ways', A.chats[0]?.flags === CHATF.RADIO && A.chats[0].id === B.id);
+  // the player list says who is on the radio, as soon as an inventory changes
+  game.playersDirty = false;
+  game.sendInventory(a);
+  const dirty = game.playersDirty;
+  game.sendPlayers();
+  check('player list says who is on the radio', dirty && A.roster.get(B.id)?.walkie === true && B.roster.get(A.id)?.walkie === true);
+  a.inv[a.inv.findIndex((x) => x && x.item === ITEM.WALKIE)] = null;
+  game.sendInventory(a);
+  game.sendPlayers();
+  check('losing it takes you off the radio', B.roster.get(A.id)?.walkie === false && B.roster.get(B.id)?.walkie === true);
+  say(B, 'hello?');
+  check('...and out of reach again', A.chats.length === 0 && B.chats[0]?.flags === CHATF.UNHEARD);
+  // a hidden one turns up when its container is searched (a stand-in container, searched on a throwaway rng)
+  const rng = game.rng;
+  game.rng = () => 0.5;
+  const stash = { ctype: CONT.LOGPILE, zone: ZONE.FOREST, x: sa.x, y: sa.y, z: sa.z, state: 0, schem: 0, stash: ITEM.WALKIE };
+  game.searchCache(a, stash);
+  game.rng = rng;
+  check('searching a stash turns up its walkie-talkie', stash.stash === 0 && a.inv.some((x) => x && x.item === ITEM.WALKIE));
+  // back to how things were
+  [sb.x, sb.y, sb.z] = home;
+  [a, b].forEach((p, i) => {
+    p.inv.splice(0, p.inv.length, ...inv[i]);
+    p.invDirty = true;
+  });
+}
+
+// noise: the dead come to what they hear - the louder it is, the more of them come and the harder they run
+{
+  const w = game.world;
+  const rings = [20, 40, 60, 90, 130]; // walkers in a line, this far from the noise
+  const humans = [A.p().state, B.p().state];
+  const open = (x, z) => Math.abs(x) < 300 && Math.abs(z) < 300 && !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z) && humans.every((h) => Math.hypot(h.x - x, h.z - z) > 60);
+  // an open stretch well away from the survivors, with nothing between the noise and the walkers
+  let spot = null;
+  for (let x = -240; x <= 240 && !spot; x += 20) {
+    for (let z = -240; z <= 240 && !spot; z += 20) {
+      for (let a = 0; a < 8 && !spot; a++) {
+        const dx = Math.sin((a * Math.PI) / 4);
+        const dz = Math.cos((a * Math.PI) / 4);
+        if (open(x, z) && rings.every((d) => open(x + dx * d, z + dz * d)) && game.nav.segClear(x, z, x + dx * 130, z + dz * 130)) spot = { x, z, dx, dz };
+      }
+    }
+  }
+  const zs = spot ? rings.map((d) => game.zm.spawn(ZTYPE.WALKER, spot.x + spot.dx * d, spot.z + spot.dz * d)) : [];
+  const far = (z) => Math.hypot(z.x - spot.x, z.z - spot.z);
+  const hush = () => zs.forEach((z) => (z.alertT = 0));
+  const hears = (loud) => {
+    hush();
+    game.zm.noise(spot.x, spot.z, loud);
+    return zs.filter((z) => z.alertT > 0).length;
+  };
+  const heard = [WEAPONS[ITEM.CROSSBOW].noise, WEAPONS[ITEM.PISTOL].noise, NOISE.GUNSHOT, WEAPONS[ITEM.HUNTING_RIFLE].noise, NOISE.EXPLOSION].map(hears);
+  check('the louder the noise, the more zombies hear it', heard.join() === '0,2,3,4,5', `bolt/pistol/rifle shot/hunting rifle/blast: ${heard.join('/')} of ${zs.length}`);
+  // a real blast: nobody is in it, everybody hears it
+  hush();
+  game.combat.explode(spot.x, w.heightAt(spot.x, spot.z) + 0.3, spot.z, THROWABLES[ITEM.PIPEBOMB].radius, { zombies: THROWABLES[ITEM.PIPEBOMB].damage, kind: 0, owner: A.p(), weapon: ITEM.PIPEBOMB });
+  check('an explosion draws the whole area', zs.every((z) => z.alertT > 0 && !z.dead && Math.hypot(z.alertX - spot.x, z.alertZ - spot.z) < 8), zs.map((z) => z.alertT.toFixed(0)).join('/'));
+  check('nearer the blast they run harder', zs[0].alertRush === 1 && zs[4].alertRush < zs[0].alertRush && zs[4].alertRush > 0, zs.map((z) => z.alertRush.toFixed(2)).join('/'));
+  // a pistol somewhere else is too faint to turn the nearest one around; a second blast is not
+  const [ox, oz] = [zs[0].x + spot.dz * 15, zs[0].z - spot.dx * 15];
+  game.zm.noise(ox, oz, WEAPONS[ITEM.PISTOL].noise);
+  const kept = Math.hypot(zs[0].alertX - spot.x, zs[0].alertZ - spot.z) < 8;
+  game.zm.noise(ox, oz, NOISE.EXPLOSION);
+  check('a fainter noise does not pull them off a louder one', kept && Math.hypot(zs[0].alertX - ox, zs[0].alertZ - oz) < 8);
+  // a hunting rifle: the one that heard it loud runs in, the one that barely heard it ambles, the last never heard it
+  hush();
+  zs[1].target = A.id; // already hunting someone: noise means nothing to it
+  game.zm.noise(spot.x, spot.z, WEAPONS[ITEM.HUNTING_RIFLE].noise);
+  check('zombies already hunting ignore noise', zs[1].alertT <= 0 && zs[4].alertT <= 0);
+  const d0 = zs.map(far);
+  run(80);
+  const came = zs.map((z, i) => d0[i] - far(z));
+  check('zombies come to the noise, faster the louder it was', came[0] > came[3] + 1 && came[3] > 2 && zs[3].alertT > 0, `${came[0].toFixed(1)} m vs ${came[3].toFixed(1)} m in 4 s`);
+  for (const z of zs) {
+    z.dead = true;
+    z.deadT = 2;
+  }
+  run(2);
+}
+
 // canned tuna: scavenged food, eaten for health + stamina
 {
   const p = A.p();
@@ -373,14 +643,15 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   const c = CONSUMABLES[ITEM.TUNA];
   check('tuna is in the loot tables', LOOT_TABLES[ZONE.DOCK].some(([item]) => item === ITEM.TUNA) && CONT_TABLES.fridge.some(([item]) => item === ITEM.TUNA));
   game.giveItem(p, ITEM.TUNA, 2);
+  const had = tins(); // she may have looted a tin on the way
   p.hp = 40;
   p.lastDamageT = game.time; // holds off passive regeneration for the length of the meal
   p.state.stamina = 10;
   A.act(ACT.USE_ITEM, p.inv.findIndex((x) => x && x.item === ITEM.TUNA));
   run(2);
-  check('eating tuna takes time', A.self.useItem === ITEM.TUNA && p.hp === 40 && tins() === 2);
+  check('eating tuna takes time', A.self.useItem === ITEM.TUNA && p.hp === 40 && tins() === had);
   run(Math.ceil(c.time * 20) + 2);
-  check('tuna heals and restores stamina', p.hp === 40 + c.heal && p.state.stamina === 100 && tins() === 1 && !p.useItem, `hp ${p.hp} stamina ${p.state.stamina} tins ${tins()}`);
+  check('tuna heals and restores stamina', p.hp === 40 + c.heal && p.state.stamina === 100 && tins() === had - 1 && !p.useItem, `hp ${p.hp} stamina ${p.state.stamina} tins ${tins()}`);
   p.hp = p.maxHp;
 }
 
@@ -418,7 +689,9 @@ check('ping broadcast', B.pings > 0);
     const w = game.world;
     const car = w.car;
     const open = (x, z) => !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z);
-    // somewhere open and unlit, with a clear 20 m run to the north (-Z, yaw 0)
+    // nothing standing within r of (x,z): room to build there (a tree trunk is too thin to block a nav cell)
+    const bare = (x, z, r) => w.staticGrid.query(x, z, r, []).every((o) => o.y1 < w.heightAt(x, z) + 0.2);
+    // somewhere open and unlit, with a clear 20 m run to the north (-Z, yaw 0) and room for a wall 3 m up it
     let spot = null;
     for (let r = 40; r <= 120 && !spot; r += 10) {
       for (let k = 0; k < 16 && !spot; k++) {
@@ -428,7 +701,7 @@ check('ping broadcast', B.pings > 0);
         for (let d = 0; d <= 20 && ok; d += 2) ok = open(x, z - d) && open(x + 2, z - d) && open(x - 2, z - d);
         const y = ok ? groundAt(w, x, z, 200, 0.3) : 0;
         const ty = ok ? groundAt(w, x, z - 20, 200, 0.3) : 0;
-        if (ok && Math.abs(ty - y) < 1.5 && zm.clearLine(x, y + 1.6, z, x, ty + 1, z - 20) && zm.clearLine(x, y + 0.5, z, x, ty + 0.4, z - 20)) spot = { x, z };
+        if (ok && bare(x, z - 3, 2.5) && Math.abs(ty - y) < 1.5 && zm.clearLine(x, y + 1.6, z, x, ty + 1, z - 20) && zm.clearLine(x, y + 0.5, z, x, ty + 0.4, z - 20)) spot = { x, z };
       }
     }
     check('found open ground for the shade test', !!spot);
@@ -526,6 +799,54 @@ check('ping broadcast', B.pings > 0);
   check('dawn + summary', game.phase === PHASE.DAY && A.summary && A.summary.night === 1, JSON.stringify(A.summary));
 }
 
+// overkill: one heavy blow that takes a zombie far below zero blows it apart (ZOMBIE_DIE flag 8) - a rifle round, a
+// point-blank blast, a bomb. Small arms, blades, fire and a blast from across the road leave a corpse.
+// (no ticks, and none of the game's rng: the rest of the run is left as it was)
+{
+  const p = A.p();
+  const s = p.state;
+  const ray = { t: -1, col: null, terrain: false };
+  const rng = game.rng;
+  game.rng = () => 0.5;
+  const walker = (hp) => {
+    const z = game.zm.spawn(ZTYPE.WALKER, s.x + 5, s.z + 5);
+    if (hp) z.hp = hp;
+    return z;
+  };
+  // the flags of the death event it sent (-1: it lived)
+  const died = (z) => {
+    const ev = game.events.find((e) => e.bytes[0] === EVT.ZOMBIE_DIE && (e.bytes[1] | (e.bytes[2] << 8)) === z.id);
+    if (!z.dead) game.combat.killZombie(z, null, {});
+    return ev ? ev.bytes[4] : -1;
+  };
+  const hit = (dmg, opts = {}, hp = 0) => {
+    const z = walker(hp);
+    game.combat.damageZombie(z, dmg, p, opts);
+    return died(z);
+  };
+  // a shotgun blast at its chest from dist m away, from a side with nothing in the way
+  const blast = (dist, hp = 0) => {
+    const z = walker(hp);
+    for (let k = 0; k < 16; k++) {
+      const a = (k * Math.PI) / 8;
+      const sx = z.x + Math.sin(a) * dist;
+      const sz = z.z + Math.cos(a) * dist;
+      raycastWorld(game.world, sx, z.y + 1.1, sz, -Math.sin(a), 0, -Math.cos(a), dist, ray);
+      if (ray.t >= 0) continue;
+      p.renderTick = game.tick & 0xffff;
+      p.renderFrac = 0;
+      game.combat.fire(p, { weapon: ITEM.SHOTGUN, x: sx, y: z.y + 1.1, z: sz, yaw: a, pitch: 0, recoilPitch: 0, spread: WEAPONS[ITEM.SHOTGUN].spread, seed: 7 });
+      break;
+    }
+    return died(z);
+  };
+  const gibbed = { rifle: hit(WEAPONS[ITEM.HUNTING_RIFLE].damage), bomb: hit(THROWABLES[ITEM.PIPEBOMB].damage), blast: blast(1.5), woundedBlast: blast(1.5, 40) };
+  const corpse = { headshot: hit(94, { headshot: true }, 60), club: hit(171, { melee: true }), burnt: hit(30, { fire: true }, 20), farBlast: blast(12, 5) };
+  game.rng = rng;
+  check('overkill blows a zombie apart', Object.values(gibbed).every((f) => f >= 0 && f & 8), JSON.stringify(gibbed));
+  check('small arms, blades, fire and a distant blast leave a corpse', Object.values(corpse).every((f) => f >= 0 && !(f & 8)), JSON.stringify(corpse));
+}
+
 // supplies + escape
 {
   const car = game.world.car;
@@ -556,6 +877,50 @@ check('ping broadcast', B.pings > 0);
   const n1 = count(1);
   const later = [2, 3, 5, 8].map(count);
   check('shades in the horde from night 2', n1 === 0 && later.every((k) => k >= 1 && k <= 6), `night 1: ${n1}, nights 2/3/5/8: ${later.join('/')}`);
+}
+
+// a new playthrough is a new valley: the server rolls a fresh map and tells its clients the seed
+{
+  const g2 = new Game({ log: () => {} });
+  const resets = [];
+  const session = g2.onOpen({
+    send(bytes) {
+      const r = new Reader(bytes.slice().buffer);
+      if (r.u8() === S2C.WORLD_RESET) resets.push(r.u32());
+    },
+  });
+  const w = new Writer(64);
+  w.u8(C2S.JOIN);
+  w.u8(PROTOCOL_VERSION);
+  w.str('C');
+  g2.onMessage(session, w.bytes().slice());
+  const first = g2.world;
+  check('the first game is played on the map the server booted with', g2.phase === PHASE.DAY && resets.length === 0);
+  g2.gameOver();
+  g2.restartT = 0;
+  g2.update();
+  const p = [...g2.players.values()][0];
+  const car = g2.world.car;
+  check('the next game rolls a new map and sends its seed', g2.phase === PHASE.DAY && g2.world !== first && g2.world.seed === g2.seed && resets.length === 1 && resets[0] === g2.seed >>> 0, `seed ${first.seed} -> ${g2.seed}`);
+  check('...with the survivors at its breakdown and its supplies hidden in seven of its places', Math.hypot(p.state.x - car.x, p.state.z - car.z) < 14 && new Set(g2.supplyHints).size === 7 && g2.supplyHints.every((z) => g2.world.zoneById[z]));
+  const kept = game.seed;
+  // the run that is ending leaves a score behind: A drops a walker, B dies, and A gets the kill
+  const pa = A.p();
+  const pb = B.p();
+  game.combat.killZombie(game.zm.spawn(ZTYPE.WALKER, pa.state.x + 6, pa.state.z + 6), pa, {});
+  game.killPlayer(pb, { kind: KILLER.PLAYER, id: A.id });
+  run(1);
+  const score = (p) => [p.kills, p.zkills, p.deaths];
+  const board = () => [...A.roster.values()].map((r) => r.kills);
+  const last = { a: score(pa), b: score(pb), board: board() };
+  game.gameOver();
+  game.restartT = 0;
+  game.update();
+  check('a pinned seed keeps its map', game.phase === PHASE.DAY && game.seed === kept && game.world.seed === kept);
+  const next = { a: score(pa), b: score(pb), board: board() };
+  const scored = last.a[0] > 0 && last.a[1] > 0 && last.b[2] > 0 && last.board.some((k) => k > 0);
+  const zeroed = [...game.players.values()].every((p) => p.kills === 0 && p.zkills === 0 && p.deaths === 0) && [A, B].every((c) => [...c.roster.values()].every((r) => r.kills === 0));
+  check('a new game counts kills and deaths from zero for everyone', scored && zeroed, `[kills, zkills, deaths] ${JSON.stringify(last)} -> ${JSON.stringify(next)}`);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);

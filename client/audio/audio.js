@@ -1,9 +1,13 @@
-// Procedural WebAudio engine: every sound, ambience bed and the music is synthesised at runtime.
-// Public API documented on the AudioEngine class below. No audio asset files are used.
+// WebAudio engine. Every sound, ambience bed and the music is synthesised at runtime; a curated set of CC0 field
+// recordings (samples.js: ambience beds, wildlife, footsteps, wood/fire foley, gunshots, zombie voices, bullet impacts)
+// is layered on top once it has loaded, with the procedural sounds as the fallback for anything that is missing.
+// Public API on the AudioEngine class below.
 import { SOUND } from '../../shared/defs.js';
+import { TALK_CLEAR, TALK_RANGE } from '../../shared/constants.js';
 import { jobList, renderJob, DEF_BY_BANK } from './registry.js';
 import { Music } from './music.js';
 import { Ambience } from './ambience.js';
+import { Recordings } from './samples.js';
 
 const S = SOUND;
 const EMPTY = Object.freeze({});
@@ -13,173 +17,290 @@ const TICK_MS = 200;
 
 // ------------------------------------------------------------------ positional categories
 // ref/roll: inverse distance model; max: culled beyond; air: distance (m) constant of the air-absorption low-pass;
-// wet: reverb send; hrtf: use HRTF panning when closer than this; cap: max simultaneous voices of the category;
-// delay: apply speed-of-sound delay for far sources.
+// wet: reverb send at the reference distance - the diffuse field falls off as (ref/d)^(0.45*roll), much slower than
+// the direct sound, so distant sources get wetter; hrtf: use HRTF panning when closer than this; cap: max
+// simultaneous voices of the category; delay: apply speed-of-sound delay for far sources; crowd: each voice of the
+// category already sounding turns the next one down (x 1/sqrt(1 + crowd * n)), so a swarm reads as a swarm instead
+// of adding up to something louder than gunfire and flattening the music under the master compressor.
 const CATS = {
-  gun: { ref: 7, max: 260, roll: 1.0, air: 60, wet: 0.5, hrtf: 30, cap: 16, delay: true },
-  explosion: { ref: 12, max: 320, roll: 0.9, air: 90, wet: 0.55, hrtf: 35, cap: 6, delay: true },
-  big: { ref: 6, max: 110, roll: 1.0, air: 45, wet: 0.4, hrtf: 30, cap: 6 },
-  zombie: { ref: 2.2, max: 45, roll: 1.1, air: 28, wet: 0.3, hrtf: 18, cap: 16 },
-  fx: { ref: 2, max: 36, roll: 1.2, air: 25, wet: 0.22, hrtf: 12, cap: 14 },
-  fxfar: { ref: 4, max: 75, roll: 1.0, air: 35, wet: 0.32, hrtf: 18, cap: 8 },
-  step: { ref: 1.5, max: 25, roll: 1.4, air: 20, wet: 0.1, hrtf: 8, cap: 10 },
+  gun: { ref: 7, max: 260, roll: 1.0, air: 60, wet: 0.27, hrtf: 30, cap: 16, delay: true },
+  explosion: { ref: 12, max: 320, roll: 0.9, air: 90, wet: 0.27, hrtf: 35, cap: 6, delay: true },
+  big: { ref: 6, max: 110, roll: 1.0, air: 45, wet: 0.2, hrtf: 30, cap: 6 },
+  zombie: { ref: 2.2, max: 45, roll: 1.1, air: 28, wet: 0.16, hrtf: 18, cap: 10, crowd: 0.45 },
+  fx: { ref: 2, max: 36, roll: 1.2, air: 25, wet: 0.13, hrtf: 12, cap: 14 },
+  fxfar: { ref: 4, max: 75, roll: 1.0, air: 35, wet: 0.16, hrtf: 18, cap: 8 },
+  step: { ref: 1.5, max: 25, roll: 1.4, air: 20, wet: 0.065, hrtf: 8, cap: 10 },
+  thump: { ref: 5, max: 80, roll: 1.0, air: 40, wet: 0.22, hrtf: 0, cap: 4 }, // a tank's footfalls: heard long before it is seen
 };
+for (const k in CATS) CATS[k].sendExp = 0.45 * CATS[k].roll;
 
-// SOUND id -> { bank, cat ('2d' = always non-positional), vol, jit (rate jitter), send (2D reverb send) }
+// Recorded foley (samples.js) replacing - or with `layer`, adding to - a procedural sound. key, vol, pitch range;
+// hits/gap: repeated strikes; layers: several recordings, each `at` seconds in. layer: true adds the sound's own
+// procedural bank, a bank name adds that bank instead (at layerVol). far: a distant-perspective recording that
+// takes over from the close one as a positional source gets further away (FAR_NEAR..FAR_FULL m).
+const R_CHOP = { key: 'chop', vol: 1.9, pitch: [0.93, 1.07] };
+const R_WOOD = { key: 'chop', vol: 1.6, pitch: [1.05, 1.2] };
+const R_HAMMER = { key: 'hammer', vol: 2.8, pitch: [0.92, 1.08], hits: [2, 3], gap: [0.24, 0.38] };
+const R_CAMPFIRE = { layers: [{ key: 'sticks', vol: 1.7, pitch: [0.9, 1.1], at: 0 }, { key: 'fire_ignite', vol: 0.9, pitch: [0.95, 1.05], at: 0.16 }] };
+const R_IGNITE = { key: 'fire_ignite', vol: 0.9, pitch: [0.85, 1.0], layer: true };
+const R_SWING = { key: 'swing', vol: 0.8, pitch: [0.9, 1.15], lp: 9000 };
+const R_SWING_HEAVY = { key: 'swing', vol: 1.25, pitch: [0.78, 0.9], lp: 7000 };
+const R_FLESH = { key: 'hit_flesh', vol: 1.2, pitch: [0.85, 1.05], layer: true };
+// bullet impacts on flesh: in the world, and as the shooter's own quiet "that hit" confirmation (no tonal chime)
+const R_BULLET_FLESH = { key: 'hit_bullet', vol: 0.5, pitch: [0.85, 1.05] };
+const R_HEADSHOT = { key: 'hit_head', vol: 1.8, pitch: [0.92, 1.05] };
+const R_HIT_CONFIRM = { key: 'hit_bullet', vol: 1.6, pitch: [0.8, 0.95], lp: 6500 };
+const R_HEAD_CONFIRM = { key: 'hit_head', vol: 1.8, pitch: [0.9, 1.0], lp: 9000 };
+// zombie voices (human performances, pitched down for a heavier, less human throat). Levels measured in play: one
+// zombie at arm's length sits a little under a pistol shot; a swarm is held together by the category's `crowd`.
+const R_Z_GROWL = { key: 'zv_growl', vol: 1.6, pitch: [0.8, 0.94] };
+const R_Z_ATTACK = { key: 'zv_attack', vol: 1.9, pitch: [0.82, 0.95] };
+const R_Z_PAIN = { key: 'zv_pain', vol: 2, pitch: [0.85, 0.98] };
+const R_Z_DEATH = { key: 'zv_death', vol: 2.2, pitch: [0.8, 0.92] };
+const R_BODY = { key: 'imp_body', vol: 1.1, pitch: [0.85, 1.05], lp: 5000 }; // a body hitting the dirt
+const R_Z_SCREAM = { key: 'zv_scream', vol: 1.9, pitch: [0.93, 1.05] };
+const R_Z_MOAN = { key: 'zv_moan', vol: 1.5, pitch: [0.8, 0.95] }; // idle and wandering: long, mournful, unhurried
+const R_Z_ROAR = { key: 'zv_roar', vol: 1.4, pitch: [0.88, 1.0] };
+const R_Z_BOSS = { key: 'zv_boss', vol: 1.7, pitch: [0.78, 0.9] };
+const R_Z_SCREECH = { key: 'zv_screech', vol: 1.8, pitch: [0.95, 1.12] };
+const R_Z_SPIT = { key: 'zv_spit', vol: 1, pitch: [0.9, 1.05], layer: true, layerVol: 0.6 }; // the hock, over the procedural spit
+const R_Z_GURGLE = { key: 'zv_gurgle', vol: 1.25, pitch: [0.8, 0.95] };
+const R_Z_WHISPER = { key: 'zv_whisper', vol: 1.3, pitch: [0.85, 1.0] };
+const R_ZP_GROWL = { key: 'zv_growl', vol: 1.6, pitch: [0.88, 1.0] };
+// feral dogs (real dogs, pitched down a little: bigger and meaner) and the stray cat
+const R_DOG_BARK = { key: 'dog_bark', vol: 1.3, pitch: [0.82, 0.95] };
+const R_DOG_SNARL = { key: 'dog_snarl', vol: 1.2, pitch: [0.8, 0.95] };
+const R_DOG_HOWL = { key: 'dog_howl', vol: 1.85, pitch: [0.85, 0.98] };
+const R_DOG_YELP = { key: 'dog_yelp', vol: 1.05, pitch: [0.9, 1.05] };
+const R_CAT_MEOW = { key: 'cat_meow', vol: 2.4, pitch: [0.95, 1.08] };
+// Recorded gunshots (one take set per weapon, heard both first person and from other players). In first person the
+// procedural "sweetener" (sub thump + tree-line echoes, no crack) is layered underneath for weight; from far away the
+// real distant recordings take over. `fp`: the first-person variant of each def.
+const gunRec = (key, pitch, farPitch, gain = 1) => {
+  const far = { key: 'gun_far', vol: 1.0 * gain, pitch: farPitch };
+  const remote = { key, vol: 1.15 * gain, pitch, far };
+  remote.fp = { key, vol: 1.25 * gain, pitch, layer: 'gsw_' + key.slice(4), layerVol: 0.55 };
+  return remote;
+};
+const R_GUN = {
+  pistol: gunRec('gun_pistol', [0.97, 1.04], [1.05, 1.15], 0.6),
+  shotgun: gunRec('gun_shotgun', [0.96, 1.03], [0.78, 0.86]),
+  ak47: gunRec('gun_ak47', [0.97, 1.03], [0.92, 1.0]),
+  rifle: gunRec('gun_rifle', [0.97, 1.02], [0.82, 0.9]),
+  m4a1: gunRec('gun_m4a1', [0.98, 1.04], [0.98, 1.06]),
+  mp5: gunRec('gun_mp5', [0.98, 1.05], [1.08, 1.18]),
+  dbshotgun: gunRec('gun_dbshotgun', [0.9, 0.96], [0.74, 0.8]),
+};
+// the survivors' voice (one performer for every grunt and scream)
+const R_P_HURT = { key: 'pv_hurt', vol: 1.5, pitch: [0.96, 1.04] };
+const R_P_DEATH = { key: 'pv_death', vol: 1.8, pitch: [0.95, 1.02] };
+// explosions: real blasts over the procedural sub thump; from far off the distant recordings take over
+const R_EXPLOSION = { key: 'exp_near', vol: 1.3, pitch: [0.92, 1.02], far: { key: 'exp_far', vol: 1.2, pitch: [0.9, 1.05] }, layer: true, layerVol: 0.6 };
+const R_GLASS = { key: 'imp_glass', vol: 1.3, pitch: [0.95, 1.08] };
+const R_WOOD_BREAK = { key: 'imp_wood_break', vol: 1.3, pitch: [0.9, 1.05], layer: true, layerVol: 0.5 };
+const R_METAL = { key: 'imp_metal', vol: 1.7, pitch: [0.9, 1.08] };
+const R_ACID = { key: 'imp_acid', vol: 0.55, pitch: [0.9, 1.1], layer: true, layerVol: 0.6 };
+// the horn before dark, the car
+const R_HORN = { key: 'horn', vol: 1.15, pitch: [0.97, 1.03] };
+const R_CAR_CRANK = { key: 'car_crank', vol: 1.1, pitch: [0.97, 1.03] };
+const R_CAR_START = { key: 'car_start', vol: 1.3, pitch: [0.98, 1.02] };
+// picking things up and going through containers: a hand in a pack, over the procedural cue
+const R_PICKUP = { key: 'fol_bag', vol: 0.8, pitch: [0.95, 1.12], layer: true, layerVol: 0.7 };
+const R_SEARCH = { key: 'fol_bag', vol: 0.9, pitch: [0.85, 1.05], hits: [2, 3], gap: [0.22, 0.4] };
+// first aid, food, the flashlight, the crossbow
+const R_BANDAGE = { layers: [{ key: 'fol_rip', vol: 0.7, pitch: [0.95, 1.05], at: 0 }, { key: 'cloth', vol: 1.5, pitch: [0.9, 1.1], at: 0.55 }, { key: 'cloth', vol: 1.3, pitch: [0.9, 1.1], at: 1.0 }] };
+const R_CAN = { key: 'fol_can', vol: 1.5, pitch: [0.96, 1.05] };
+const R_CLICK = { key: 'fol_click', vol: 1.6, pitch: [0.95, 1.06] };
+const R_XBOW = { key: 'fol_xbow', vol: 0.9, pitch: [0.94, 1.04], layer: true, layerVol: 0.5 };
+// weapon handling: real magazines, pumps, bolts and hammers
+const R_MAG_OUT = { key: 'fol_mag_out', vol: 0.95, pitch: [0.96, 1.04] };
+const R_MAG_IN = { key: 'fol_mag_in', vol: 0.7, pitch: [0.96, 1.04] };
+const R_PUMP = { key: 'fol_pump', vol: 0.95, pitch: [0.95, 1.03] };
+const R_SHELL = { key: 'fol_shell', vol: 0.6, pitch: [0.95, 1.06] };
+const R_BOLT = { key: 'fol_bolt', vol: 1.4, pitch: [0.97, 1.04] };
+const R_DRY = { key: 'fol_dry', vol: 0.55, pitch: [0.96, 1.05] };
+const R_DRAW = { key: 'fol_draw', vol: 1.2, pitch: [0.94, 1.06] };
+const FAR_NEAR = 35;
+const FAR_FULL = 110;
+
+// SOUND id -> { bank, cat ('2d' = always non-positional), vol, jit (rate jitter), send (2D reverb send), rec }
 const SOUND_MAP = [];
-function def(id, bank, cat, vol = 1, jit = 0.04, send = 0.15) {
-  if (id !== undefined) SOUND_MAP[id] = { bank, cat, vol, jit, send };
+function def(id, bank, cat, vol = 1, jit = 0.04, send = 0.15, rec = null) {
+  if (id !== undefined) SOUND_MAP[id] = { bank, cat, vol, jit, send, rec };
 }
-def(S.PISTOL, 'gun_pistol', 'gun', 0.85, 0.04);
-def(S.SHOTGUN, 'gun_shotgun', 'gun', 0.9, 0.03);
-def(S.AK47, 'gun_ak47', 'gun', 0.8, 0.035);
-def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03);
-def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035);
-def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04);
-def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03);
-def(S.CROSSBOW, 'xbow_shot', 'fx', 0.8, 0.05); // no blast: it carries about as far as a swing, not a gunshot
-def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08);
-def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08);
-def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1);
-def(S.ZOMBIE_ATTACK, 'z_attack', 'zombie', 0.9, 0.08);
-def(S.ZOMBIE_DEATH, 'z_death', 'zombie', 0.9, 0.08);
-def(S.ZOMBIE_PAIN, 'z_pain', 'zombie', 0.8, 0.1);
-def(S.RUNNER_SCREAM, 'z_runner', 'zombie', 1, 0.07);
-def(S.TANK_ROAR, 'z_tank', 'big', 1, 0.06);
-def(S.SPITTER_SPIT, 'z_spit', 'zombie', 0.9, 0.08);
-def(S.LEAPER_SCREECH, 'z_leaper', 'zombie', 0.9, 0.08);
+def(S.PISTOL, 'gun_pistol', 'gun', 0.85, 0.04, 0.15, R_GUN.pistol);
+def(S.SHOTGUN, 'gun_shotgun', 'gun', 0.9, 0.03, 0.15, R_GUN.shotgun);
+def(S.AK47, 'gun_ak47', 'gun', 0.8, 0.035, 0.15, R_GUN.ak47);
+def(S.RIFLE, 'gun_rifle', 'gun', 0.9, 0.03, 0.15, R_GUN.rifle);
+def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035, 0.15, R_GUN.m4a1);
+def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04, 0.15, R_GUN.mp5);
+def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03, 0.15, R_GUN.dbshotgun);
+def(S.CROSSBOW, 'xbow_shot', 'fx', 0.8, 0.05, 0.15, R_XBOW); // no blast: it carries about as far as a swing, not a gunshot
+def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08, 0.15, R_SWING);
+def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08, 0.15, R_FLESH);
+def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1, 0.15, R_Z_GROWL);
+def(S.ZOMBIE_MOAN, 'z_growl', 'zombie', 0.75, 0.1, 0.15, R_Z_MOAN);
+def(S.ZOMBIE_ATTACK, 'z_attack', 'zombie', 0.9, 0.08, 0.15, R_Z_ATTACK);
+def(S.ZOMBIE_DEATH, 'z_death', 'zombie', 0.9, 0.08, 0.15, R_Z_DEATH);
+def(S.ZOMBIE_PAIN, 'z_pain', 'zombie', 0.8, 0.1, 0.15, R_Z_PAIN);
+def(S.RUNNER_SCREAM, 'z_runner', 'zombie', 1, 0.07, 0.15, R_Z_SCREAM);
+def(S.TANK_ROAR, 'z_tank', 'big', 1, 0.06, 0.15, R_Z_ROAR);
+def(S.SPITTER_SPIT, 'z_spit', 'zombie', 0.9, 0.08, 0.15, R_Z_SPIT);
+def(S.LEAPER_SCREECH, 'z_leaper', 'zombie', 0.9, 0.08, 0.15, R_Z_SCREECH);
 def(S.ROPER_SHOOT, 'z_roper', 'zombie', 0.9, 0.06);
-def(S.BOOMER_GURGLE, 'z_boomer', 'zombie', 0.9, 0.08);
-def(S.EXPLOSION, 'explosion', 'explosion', 1, 0.05);
+def(S.BOOMER_GURGLE, 'z_boomer', 'zombie', 0.9, 0.08, 0.15, R_Z_GURGLE);
+def(S.EXPLOSION, 'explosion', 'explosion', 1, 0.05, 0.15, R_EXPLOSION);
 def(S.BAT_SCREECH, 'z_bat', 'zombie', 0.7, 0.1);
-def(S.BOSS_ROAR, 'z_boss', 'big', 1, 0.05);
-def(S.ACID_SIZZLE, 'acid', 'fx', 0.7, 0.08);
-def(S.FIRE_WHOOSH, 'fire_whoosh', 'fxfar', 0.9, 0.06);
-def(S.GLASS_BREAK, 'glass', 'fx', 0.8, 0.08);
-def(S.WOOD_HIT, 'wood_hit', 'fx', 0.8, 0.08);
-def(S.WOOD_BREAK, 'wood_break', 'fxfar', 1, 0.06);
-def(S.METAL_HIT, 'metal_hit', 'fx', 0.75, 0.06);
-def(S.BUILD, 'build', 'fx', 0.8, 0.05);
-def(S.PICKUP, 'pickup', 'fx', 0.5, 0.08);
+def(S.BOSS_ROAR, 'z_boss', 'big', 1, 0.05, 0.15, R_Z_BOSS);
+def(S.ACID_SIZZLE, 'acid', 'fx', 0.7, 0.08, 0.15, R_ACID);
+def(S.FIRE_WHOOSH, 'fire_whoosh', 'fxfar', 0.9, 0.06, 0.15, R_IGNITE);
+def(S.GLASS_BREAK, 'glass', 'fx', 0.8, 0.08, 0.15, R_GLASS);
+def(S.WOOD_HIT, 'wood_hit', 'fx', 0.8, 0.08, 0.15, R_WOOD);
+def(S.WOOD_BREAK, 'wood_break', 'fxfar', 1, 0.06, 0.15, R_WOOD_BREAK);
+def(S.METAL_HIT, 'metal_hit', 'fx', 0.75, 0.06, 0.15, R_METAL);
+def(S.BUILD, 'build', 'fx', 0.8, 0.05, 0.15, R_HAMMER);
+def(S.PICKUP, 'pickup', 'fx', 0.5, 0.08, 0.15, R_PICKUP);
 def(S.CRAFT, 'craft', 'fx', 0.6, 0.05);
-def(S.RELOAD, 'reload', 'fx', 0.55, 0.04);
+def(S.RELOAD, 'reload', 'fx', 0.55, 0.04, 0.15, R_MAG_IN);
 def(S.CROSSBOW_COCK, 'xbow_cock', 'fx', 0.5, 0.03);
-def(S.DRY_FIRE, 'dry', 'fx', 0.55, 0.05);
-def(S.PLAYER_HURT, 'hurt', 'fx', 0.8, 0.06);
-def(S.PLAYER_DEATH, 'pdeath', 'fxfar', 1, 0.04);
-def(S.HEAL, 'bandage', 'fx', 0.5, 0.05);
+def(S.DRY_FIRE, 'dry', 'fx', 0.55, 0.05, 0.15, R_DRY);
+def(S.PLAYER_HURT, 'hurt', 'fx', 0.8, 0.06, 0.15, R_P_HURT);
+def(S.PLAYER_DEATH, 'pdeath', 'fxfar', 1, 0.04, 0.15, R_P_DEATH);
+def(S.HEAL, 'bandage', 'fx', 0.5, 0.05, 0.15, R_BANDAGE);
 def(S.CAR_PART, 'car_part', 'fx', 0.9, 0.03);
-def(S.HORDE_HORN, 'horde_horn', '2d', 0.8, 0, 0.35);
+def(S.HORDE_HORN, 'horde_horn', '2d', 0.8, 0, 0.35, R_HORN);
 def(S.DAWN, 'dawn', '2d', 0.7, 0, 0.3);
 def(S.PLANE, 'plane', '2d', 0.8, 0, 0.2);
 def(S.CRATE_LAND, 'crate', 'fxfar', 1, 0.05);
-def(S.CAMPFIRE_ADD, 'campfire_add', 'fx', 0.8, 0.06);
-def(S.FLESH_HIT, 'flesh', 'fx', 0.75, 0.1);
-def(S.HEADSHOT, 'headshot_w', 'fx', 0.9, 0.08);
-def(S.ZPLAYER_GROWL, 'zp_growl', 'zombie', 0.9, 0.08);
+def(S.CAMPFIRE_ADD, 'campfire_add', 'fx', 0.8, 0.06, 0.15, R_CAMPFIRE);
+def(S.FLESH_HIT, 'flesh', 'fx', 0.75, 0.1, 0.15, R_BULLET_FLESH);
+def(S.HEADSHOT, 'headshot_w', 'fx', 0.9, 0.08, 0.15, R_HEADSHOT);
+def(S.ZPLAYER_GROWL, 'zp_growl', 'zombie', 0.9, 0.08, 0.15, R_ZP_GROWL);
 def(S.THROW, 'throw', 'fx', 0.55, 0.08);
 def(S.FOOTSTEP, 'step_dirt', 'step', 0.55, 0.08);
 def(S.LEAP, 'leap', 'fx', 0.8, 0.08);
-def(S.CAR_START, 'car_start', 'fxfar', 1, 0.02);
+def(S.CAR_START, 'car_start', 'fxfar', 1, 0.02, 0.15, R_CAR_START);
 def(S.SLAM, 'slam', 'explosion', 1, 0.05);
-def(S.SWITCH, 'switch', 'fx', 0.45, 0.06);
-def(S.CHOP, 'wood_hit', 'fx', 0.9, 0.1);
-def(S.SALVAGE, 'metal_hit', 'fx', 0.8, 0.1);
-def(S.SEARCH, 'craft', 'fx', 0.4, 0.08);
+def(S.SWITCH, 'switch', 'fx', 0.45, 0.06, 0.15, R_DRAW);
+def(S.CHOP, 'wood_hit', 'fx', 0.9, 0.1, 0.15, R_CHOP);
+def(S.SALVAGE, 'metal_hit', 'fx', 0.8, 0.1, 0.15, R_METAL);
+def(S.SEARCH, 'craft', 'fx', 0.4, 0.08, 0.15, R_SEARCH);
 def(S.PING, 'notify', 'fx', 0.6, 0.02);
-def(S.ENGINE_CRANK, 'car_start', 'big', 1, 0.02);
-def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05);
-def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02);
+def(S.ENGINE_CRANK, 'car_start', 'big', 1, 0.02, 0.15, R_CAR_CRANK);
+def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05, 0.15, R_BANDAGE);
+def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02, 0.15, R_P_HURT);
 def(S.FLARE_BURN, 'acid', 'fx', 0.45, 0.1);
-def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06);
-def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08);
-def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06);
-def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1);
-def(S.DOG_YELP, 'dog_yelp', 'zombie', 0.8, 0.08);
-def(S.SHADE_WHISPER, 'z_shade_whisper', 'zombie', 0.8, 0.1);
+def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06, 0.15, R_CAT_MEOW);
+def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08, 0.15, R_DOG_BARK);
+def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06, 0.15, R_DOG_HOWL);
+def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1, 0.15, R_DOG_SNARL);
+def(S.DOG_YELP, 'dog_yelp', 'zombie', 0.8, 0.08, 0.15, R_DOG_YELP);
+def(S.SHADE_WHISPER, 'z_shade_whisper', 'zombie', 0.8, 0.1, 0.15, R_Z_WHISPER);
 def(S.SHADE_FREEZE, 'z_shade_freeze', 'zombie', 1, 0.06);
 def(S.SHADE_SHRIEK, 'z_shade_shriek', 'zombie', 1, 0.06);
 def(S.EAT, 'eat', 'fx', 0.5, 0.05);
+def(S.BODY_FALL, 'land', 'fx', 0.9, 0.1, 0.15, R_BODY);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
-  pistol: { bank: 'fp_pistol', vol: 0.95, jit: 0.03, send: 0.14 },
-  shotgun: { bank: 'fp_shotgun', vol: 1, jit: 0.025, send: 0.18 },
-  ak47: { bank: 'fp_ak47', vol: 0.88, jit: 0.03, send: 0.13 },
-  rifle: { bank: 'fp_rifle', vol: 1, jit: 0.02, send: 0.2 },
-  m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13 },
-  mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1 },
-  dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2 },
-  crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05 },
-  reload_start: { bank: 'reload_start', vol: 0.55 },
-  reload_end: { bank: 'reload_end', vol: 0.6 },
-  shell_insert: { bank: 'shell_insert', vol: 0.55 },
-  bolt: { bank: 'bolt', vol: 0.6 },
-  pump: { bank: 'pump', vol: 0.7 },
+  pistol: { bank: 'fp_pistol', vol: 0.95, jit: 0.03, send: 0.14, rec: R_GUN.pistol.fp },
+  shotgun: { bank: 'fp_shotgun', vol: 1, jit: 0.025, send: 0.18, rec: R_GUN.shotgun.fp },
+  ak47: { bank: 'fp_ak47', vol: 0.88, jit: 0.03, send: 0.13, rec: R_GUN.ak47.fp },
+  rifle: { bank: 'fp_rifle', vol: 1, jit: 0.02, send: 0.2, rec: R_GUN.rifle.fp },
+  m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13, rec: R_GUN.m4a1.fp },
+  mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1, rec: R_GUN.mp5.fp },
+  dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2, rec: R_GUN.dbshotgun.fp },
+  crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05, rec: R_XBOW },
+  reload_start: { bank: 'reload_start', vol: 0.55, rec: R_MAG_OUT },
+  reload_end: { bank: 'reload_end', vol: 0.6, rec: R_MAG_IN },
+  shell_insert: { bank: 'shell_insert', vol: 0.55, rec: R_SHELL },
+  bolt: { bank: 'bolt', vol: 0.6, rec: R_BOLT },
+  pump: { bank: 'pump', vol: 0.7, rec: R_PUMP },
   xbow_cock: { bank: 'xbow_cock', vol: 0.6, jit: 0.02 },
   xbow_load: { bank: 'xbow_load', vol: 0.5 },
-  dry: { bank: 'dry', vol: 0.55 },
-  swing: { bank: 'swing', vol: 0.5, jit: 0.08 },
-  swing_heavy: { bank: 'swing_heavy', vol: 0.6, jit: 0.06 },
-  hit: { bank: 'flesh_heavy', vol: 0.75, jit: 0.08 },
-  hit_wood: { bank: 'wood_hit', vol: 0.7, jit: 0.08 },
-  switch: { bank: 'switch', vol: 0.45 },
-  pickup: { bank: 'pickup', vol: 0.5, jit: 0.06 },
+  dry: { bank: 'dry', vol: 0.55, rec: R_DRY },
+  swing: { bank: 'swing', vol: 0.5, jit: 0.08, rec: R_SWING },
+  swing_heavy: { bank: 'swing_heavy', vol: 0.6, jit: 0.06, rec: R_SWING_HEAVY },
+  hit: { bank: 'flesh_heavy', vol: 0.75, jit: 0.08, rec: R_FLESH },
+  hit_wood: { bank: 'wood_hit', vol: 0.7, jit: 0.08, rec: R_WOOD },
+  switch: { bank: 'switch', vol: 0.45, rec: R_DRAW },
+  pickup: { bank: 'pickup', vol: 0.5, jit: 0.06, rec: R_PICKUP },
   craft: { bank: 'craft', vol: 0.55 },
-  build: { bank: 'build', vol: 0.65 },
+  build: { bank: 'build', vol: 0.65, rec: R_HAMMER },
   build_fail: { bank: 'build_fail', vol: 0.45, bus: 'ui' },
-  hitmarker: { bank: 'hitmarker', vol: 0.3, bus: 'ui', jit: 0.01, send: 0 },
-  headshot: { bank: 'headshot_ding', vol: 0.5, bus: 'ui', jit: 0.01, send: 0 },
-  kill: { bank: 'kill', vol: 0.35, bus: 'ui', jit: 0.01, send: 0 },
-  hurt: { bank: 'hurt', vol: 0.65, jit: 0.05, send: 0.05 },
+  hitmarker: { bank: 'flesh', vol: 0.1, bus: 'ui', jit: 0.06, send: 0, rec: R_HIT_CONFIRM },
+  headshot: { bank: 'headshot_w', vol: 0.15, bus: 'ui', jit: 0.05, send: 0, rec: R_HEAD_CONFIRM },
+  hurt: { bank: 'hurt', vol: 0.65, jit: 0.05, send: 0.05, rec: R_P_HURT },
   heal: { bank: 'heal', vol: 0.35, bus: 'ui', jit: 0, send: 0 },
-  bandage: { bank: 'bandage', vol: 0.5 },
+  bandage: { bank: 'bandage', vol: 0.5, rec: R_BANDAGE },
   ui_click: { bank: 'ui_click', vol: 0.35, bus: 'ui', jit: 0.02, send: 0 },
   ui_hover: { bank: 'ui_hover', vol: 0.12, bus: 'ui', jit: 0.03, send: 0 },
   heartbeat: { bank: 'heartbeat', vol: 0.8, bus: 'ui', jit: 0, send: 0 },
   jump: { bank: 'jump', vol: 0.35, jit: 0.06, send: 0.03 },
   land: { bank: 'land', vol: 0.45, jit: 0.08, send: 0.03 },
-  flashlight: { bank: 'flashlight', vol: 0.4, jit: 0.03, send: 0 },
+  flashlight: { bank: 'flashlight', vol: 0.4, jit: 0.03, send: 0, rec: R_CLICK },
   breath: { bank: 'breath', vol: 0.45, jit: 0.04, send: 0.02 },
   throw: { bank: 'throw', vol: 0.5 },
   claw: { bank: 'claw', vol: 0.65, jit: 0.07 },
-  zombie_player_growl: { bank: 'zp_growl', vol: 0.65, jit: 0.07 },
+  zombie_player_growl: { bank: 'zp_growl', vol: 0.65, jit: 0.07, rec: R_ZP_GROWL },
   death: { bank: 'death_local', vol: 0.9, bus: 'ui', send: 0 },
   notify: { bank: 'notify', vol: 0.3, bus: 'ui', jit: 0.02, send: 0 },
   chat: { bank: 'chat', vol: 0.25, bus: 'ui', jit: 0.02, send: 0 },
+  radio: { bank: 'radio', vol: 0.3, bus: 'ui', jit: 0.03, send: 0 }, // walkie-talkie squelch: someone keys up / a radio message
   install_part: { bank: 'install_part', vol: 0.7 },
-  campfire_add: { bank: 'campfire_add', vol: 0.6 },
+  campfire_add: { bank: 'campfire_add', vol: 0.6, rec: R_CAMPFIRE },
   eat: { bank: 'eat', vol: 0.5 },
-  can_open: { bank: 'can_open', vol: 0.5 },
+  can_open: { bank: 'can_open', vol: 0.5, rec: R_CAN },
 };
 
 // stinger(name): cinematic cues. bus 'music' follows the music volume, 'ui' is unaffected by the dead-muffle.
+// rec: a recorded cue (samples.js) that plays instead once loaded, at recVol (else vol).
 const STINGERS = {
-  night: { bank: 'stg_night', vol: 0.9, bus: 'music', duck: 7 },
-  dawn: { bank: 'stg_dawn', vol: 0.75, bus: 'music', duck: 6, birds: true },
-  death: { bank: 'stg_death', vol: 0.85, bus: 'ui', duck: 5 },
-  boss: { bank: 'stg_boss', vol: 1, bus: 'music', duck: 4.5 },
-  victory: { bank: 'stg_victory', vol: 0.85, bus: 'music', duck: 8 },
-  gameover: { bank: 'stg_gameover', vol: 0.85, bus: 'music', duck: 8 },
+  night: { bank: 'stg_night', vol: 0.9, bus: 'music', duck: 7, rec: 'stg_night', recVol: 1.05 },
+  dawn: { bank: 'stg_dawn', vol: 0.75, bus: 'music', duck: 6, birds: true, rec: 'stg_dawn', recVol: 1 },
+  death: { bank: 'stg_death', vol: 0.85, bus: 'ui', duck: 5, rec: 'stg_death', recVol: 0.6 },
+  boss: { bank: 'stg_boss', vol: 1, bus: 'music', duck: 4.5, rec: 'stg_boss' },
+  victory: { bank: 'stg_victory', vol: 0.85, bus: 'music', duck: 8, rec: 'stg_victory', recVol: 1 },
+  gameover: { bank: 'stg_gameover', vol: 0.85, bus: 'music', duck: 12, rec: 'stg_gameover' },
   supply: { bank: 'plane', vol: 0.75, bus: 'amb', duck: 0 },
   jumpscare: { bank: 'stg_jumpscare', vol: 0.85, bus: 'music', duck: 1.8 },
   join: { bank: 'stg_join', vol: 0.5, bus: 'music', duck: 0 },
   car_part: { bank: 'stg_car_part', vol: 0.75, bus: 'music', duck: 2 },
 };
 
-// createLoop(name) definitions
+// createLoop(name) definitions. rec: recorded layers used instead of the procedural bank once loaded
+// (key, vol relative to the loop's vol, optional lowpass / playback rate)
 const LOOPS = {
-  campfire: { bank: 'loop_campfire', ref: 2.5, max: 32, roll: 1.2, vol: 0.8, wet: 0.12 },
-  torch: { bank: 'loop_torch', ref: 1.2, max: 16, roll: 1.4, vol: 0.45, wet: 0.08 },
-  fire: { bank: 'loop_fire', ref: 3, max: 45, roll: 1.1, vol: 0.9, wet: 0.15 },
+  campfire: { bank: 'loop_campfire', ref: 2.5, max: 32, roll: 1.2, vol: 0.8, wet: 0.12, rec: [{ key: 'fire_roar', vol: 2 }, { key: 'fire_loop', vol: 2.2 }] },
+  torch: { bank: 'loop_torch', ref: 1.2, max: 16, roll: 1.4, vol: 0.45, wet: 0.08, rec: [{ key: 'fire_roar', vol: 2.2, lp: 4500, rate: 1.1 }] },
+  fire: { bank: 'loop_fire', ref: 3, max: 45, roll: 1.1, vol: 0.9, wet: 0.15, rec: [{ key: 'fire_roar', vol: 3 }, { key: 'fire_loop', vol: 2 }] },
+  flamethrower: { bank: 'loop_fire', ref: 3, max: 55, roll: 1.1, vol: 1, wet: 0.15, rec: [{ key: 'fire_roar', vol: 3.4, rate: 1.45 }] }, // the jet: a fire's roar pitched up into a hiss
+  burning: { bank: 'loop_torch', ref: 1.5, max: 24, roll: 1.3, vol: 0.6, wet: 0.1, cap: 4, rec: [{ key: 'fire_roar', vol: 2.4, lp: 5000, rate: 1.2 }] }, // a body on fire
   acid: { bank: 'loop_acid', ref: 1.5, max: 18, roll: 1.4, vol: 0.5, wet: 0.08 },
-  zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 22, roll: 1.3, vol: 0.55, wet: 0.12, cap: 10, jit: 0.14 },
+  // every zombie carries one; only the nearest few are ever heard
+  zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 18, roll: 1.3, vol: 0.34, wet: 0.12, cap: 8, jit: 0.14, rec: [{ key: 'zv_idle', vol: 0.9, rate: 0.9, lp: 7000 }] },
   boss_breath: { bank: 'loop_boss_breath', ref: 5, max: 70, roll: 1.0, vol: 0.9, wet: 0.2, cap: 3 },
   generator: { bank: 'loop_generator', ref: 2.5, max: 40, roll: 1.2, vol: 0.6, wet: 0.1 },
+  // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
+  plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
 };
 const LOOP_CAP_TOTAL = 28;
 
-const STEP_BANKS = { dirt: 'step_dirt', grass: 'step_grass', wood: 'step_wood', water: 'step_water', metal: 'step_metal' };
+const STEP_BANKS = {
+  dirt: 'step_dirt', grass: 'step_grass', wood: 'step_wood', water: 'step_water', metal: 'step_metal',
+  forest: 'step_grass', leaves: 'step_grass', moss: 'step_grass', gravel: 'step_dirt', road: 'step_dirt', path: 'step_dirt', mud: 'step_dirt',
+};
+// surface -> recorded footsteps; STEP_TONE: [gain (matched to the procedural steps), lowpass Hz]
+const STEP_REC = {
+  dirt: 'fs_dirt', path: 'fs_dirt', road: 'fs_gravel', gravel: 'fs_gravel', grass: 'fs_grass', forest: 'fs_forest', moss: 'fs_forest',
+  leaves: 'fs_leaves', mud: 'fs_mud', wood: 'fs_wood', water: 'fs_water',
+};
+const STEP_TONE = {
+  fs_dirt: [1.8, 14000], fs_gravel: [1.9, 16000], fs_grass: [2.9, 13000], fs_forest: [2.6, 11000], fs_leaves: [2.9, 16000],
+  fs_mud: [1.8, 10000], fs_wood: [2, 16000], fs_water: [1.9, 16000],
+};
+const dbJit = (db) => Math.pow(10, ((Math.random() * 2 - 1) * db) / 20);
+const rrange = (r) => r[0] + (r[1] - r[0]) * Math.random();
 
 const yieldNow = (() => {
   if (typeof MessageChannel !== 'undefined') {
@@ -195,6 +316,25 @@ const yieldNow = (() => {
 })();
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+// Output soft clipper: straight up to CLIP_KNEE, then rounded off so it can never pass CLIP_CEIL (the limiter before
+// it is a compressor, not a brick wall: fast transients overshoot it).
+const CLIP_RANGE = 4; // input range covered by the curve (x full scale)
+const CLIP_KNEE = 0.8;
+const CLIP_CEIL = 0.98;
+let clipCurve = null;
+function softClipCurve() {
+  if (!clipCurve) {
+    const n = 4097;
+    clipCurve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = ((i / (n - 1)) * 2 - 1) * CLIP_RANGE;
+      const a = Math.abs(x);
+      clipCurve[i] = Math.sign(x) * (a <= CLIP_KNEE ? a : CLIP_KNEE + (CLIP_CEIL - CLIP_KNEE) * Math.tanh((a - CLIP_KNEE) / (CLIP_CEIL - CLIP_KNEE)));
+    }
+  }
+  return clipCurve;
+}
 
 function setPannerPos(p, x, y, z) {
   if (p.positionX) {
@@ -264,6 +404,13 @@ class VoicePool {
     this.chans = [];
     for (let i = 0; i < size; i++) this.chans.push(new Chan(e, dest, send));
   }
+  // voices of a category sounding right now
+  count(cat, now) {
+    let n = 0;
+    const ch = this.chans;
+    for (let i = 0; i < ch.length; i++) if (ch[i].src && ch[i].cat === cat && ch[i].end > now && ch[i].start <= now + 0.05) n++;
+    return n;
+  }
   acquire(prio, cat, cap, now) {
     let free = null;
     let weakest = null;
@@ -322,12 +469,16 @@ class LoopEmitter {
     this.active = false;
     this.stopped = false;
     this.rate = 1 + (Math.random() - 0.5) * 2 * (this.def?.jit ?? 0.04);
+    this.pitch = 1; // setRate (doppler)
     this.variant = Math.floor(Math.random() * 8);
-    this.src = null;
+    this.srcs = [];
+    this.extra = []; // per-layer gain / filter nodes of a recorded loop
+    this.proc = false; // playing the procedural bank (upgraded to the recording once it loads)
     this.gain = null;
     this.fade = null;
     this.panner = null;
     this.sendG = null;
+    this.air = null;
   }
   setPosition(x, y, z) {
     this.x = x;
@@ -339,24 +490,80 @@ class LoopEmitter {
     this.vol = v < 0 ? 0 : v;
     if (this.active) this.gain.gain.setTargetAtTime(this.vol * this.def.vol, this.e._ctx.currentTime, 0.05);
   }
+  // playback-rate multiplier (doppler shift of a moving source)
+  setRate(r) {
+    this.pitch = r;
+    if (!this.active) return;
+    const now = this.e._ctx.currentTime;
+    const recs = this.proc ? null : this.def.rec;
+    for (let i = 0; i < this.srcs.length; i++) this.srcs[i].playbackRate.setTargetAtTime(this.rate * (recs?.[i]?.rate || 1) * r, now, 0.08);
+  }
   stop() {
     if (this.stopped) return;
     this.stopped = true;
     this._deactivate();
     this.e._loops.delete(this);
   }
+  // recorded layers all decoded -> true; still decoding -> null (worth waiting for); unavailable -> false
+  _recReady() {
+    const r = this.def.rec;
+    const rec = this.e._rec;
+    if (!r || !rec) return false;
+    let wait = false;
+    for (const L of r) {
+      if (rec.has(L.key)) continue;
+      if (!rec.pending(L.key)) return false;
+      rec.want(L.key);
+      wait = true;
+    }
+    return wait ? null : true;
+  }
   _activate(now) {
     const e = this.e;
-    const pool = e._pools.get(this.def.bank);
-    if (!pool || !pool.length) return false;
     const c = e._ctx;
-    const buf = pool[this.variant % pool.length];
-    this.src = c.createBufferSource();
-    this.src.buffer = buf;
-    this.src.loop = true;
-    this.src.playbackRate.value = this.rate;
+    const recReady = this._recReady();
+    if (recReady === null) return true; // recording is decoding: stay silent a moment instead of flipping sources
+    const pool = recReady ? null : e._pools.get(this.def.bank);
+    if (!recReady && (!pool || !pool.length)) return false;
     this.gain = c.createGain();
     this.gain.gain.value = this.vol * this.def.vol;
+    if (recReady) {
+      for (const L of this.def.rec) {
+        const buf = e._rec.get(L.key);
+        const src = c.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        src.playbackRate.value = this.rate * (L.rate || 1) * this.pitch;
+        const lg = c.createGain();
+        lg.gain.value = L.vol;
+        let head = lg;
+        if (L.lp) {
+          const f = c.createBiquadFilter();
+          f.type = 'lowpass';
+          f.frequency.value = L.lp;
+          f.Q.value = 0.5;
+          lg.connect(f);
+          head = f;
+          this.extra.push(f);
+        }
+        src.connect(lg);
+        head.connect(this.gain);
+        this.extra.push(lg);
+        src.start(now, Math.random() * buf.duration);
+        this.srcs.push(src);
+      }
+      this.proc = false;
+    } else {
+      const buf = pool[this.variant % pool.length];
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      src.playbackRate.value = this.rate * this.pitch;
+      src.connect(this.gain);
+      src.start(now, Math.random() * buf.duration);
+      this.srcs.push(src);
+      this.proc = true;
+    }
     this.fade = c.createGain();
     this.fade.gain.value = 0;
     this.panner = c.createPanner();
@@ -368,13 +575,18 @@ class LoopEmitter {
     setPannerPos(this.panner, this.x, this.y, this.z);
     this.sendG = c.createGain();
     this.sendG.gain.value = this.def.wet;
-    this.src.connect(this.gain);
-    this.gain.connect(this.fade);
+    if (this.def.air) {
+      this.air = c.createBiquadFilter();
+      this.air.type = 'lowpass';
+      this.air.Q.value = 0.5;
+      this.air.frequency.value = this._airHz();
+      this.gain.connect(this.air);
+      this.air.connect(this.fade);
+    } else this.gain.connect(this.fade);
     this.fade.connect(this.panner);
     this.panner.connect(e._sfxIn);
     this.fade.connect(this.sendG);
     this.sendG.connect(e._sfxSend);
-    this.src.start(now, Math.random() * buf.duration);
     this.active = true;
     this._fadeTarget = -1;
     return true;
@@ -383,19 +595,28 @@ class LoopEmitter {
     if (!this.active) return;
     this.active = false;
     const now = this.e._ctx.currentTime;
-    const { src, gain, fade, panner, sendG } = this;
-    fade.gain.setTargetAtTime(0, now, 0.06);
-    try {
-      src.stop(now + 0.35);
-    } catch {}
-    src.onended = () => {
-      for (const n of [src, gain, fade, panner, sendG]) {
+    const nodes = [...this.srcs, ...this.extra, this.gain, this.fade, this.panner, this.sendG];
+    if (this.air) nodes.push(this.air);
+    this.fade.gain.setTargetAtTime(0, now, 0.06);
+    for (const s of this.srcs) {
+      try {
+        s.stop(now + 0.35);
+      } catch {}
+    }
+    this.srcs[0].onended = () => {
+      for (const n of nodes) {
         try {
           n.disconnect();
         } catch {}
       }
     };
-    this.src = this.gain = this.fade = this.panner = this.sendG = null;
+    this.srcs = [];
+    this.extra = [];
+    this.gain = this.fade = this.panner = this.sendG = this.air = null;
+  }
+  // air absorption: distant sources lose their highs
+  _airHz() {
+    return Math.max(450, 16000 / (1 + this.d / 55));
   }
   _updateFade(now) {
     const m = this.def.max;
@@ -404,10 +625,23 @@ class LoopEmitter {
       this._fadeTarget = f;
       this.fade.gain.setTargetAtTime(f, now, 0.15);
     }
+    if (this.air) this.air.frequency.setTargetAtTime(this._airHz(), now, 0.2);
   }
 }
 
 // ------------------------------------------------------------------ proximity voice chat source
+// Two paths out of one stream: the voice placed in the world (heard out to TALK_RANGE), and the same voice squeezed
+// through a walkie-talkie speaker, which takes over as the speaker gets too far away to hear directly.
+const VOICE_REF = 2; // the placed voice is at full level this close (m)
+let radioCurve = null; // handset overdrive
+function radioShape() {
+  if (!radioCurve) {
+    radioCurve = new Float32Array(257);
+    for (let i = 0; i < 257; i++) radioCurve[i] = Math.tanh(((i - 128) / 128) * 2.6) * 0.62;
+  }
+  return radioCurve;
+}
+
 class VoiceSource {
   constructor(e, stream) {
     const c = e._ctx;
@@ -417,6 +651,8 @@ class VoiceSource {
     this.z = 0;
     this.vol = 1;
     this.dead = false;
+    this.present = false; // we know where the speaker is (out of sight = out of earshot)
+    this.radio = false; // a walkie-talkie link to the speaker
     // Chrome quirk: a remote WebRTC stream only flows into WebAudio if it is also attached to a media element.
     try {
       this.el = new Audio();
@@ -439,18 +675,40 @@ class VoiceSource {
     this.panner = c.createPanner();
     this.panner.panningModel = 'HRTF';
     this.panner.distanceModel = 'inverse';
-    this.panner.refDistance = 2;
+    this.panner.refDistance = VOICE_REF;
     this.panner.rolloffFactor = 1;
-    this.panner.maxDistance = 35;
+    this.panner.maxDistance = TALK_RANGE;
+    this.rhp = c.createBiquadFilter();
+    this.rhp.type = 'highpass';
+    this.rhp.frequency.value = 480;
+    this.rhp.Q.value = 1.1;
+    this.rlp = c.createBiquadFilter();
+    this.rlp.type = 'lowpass';
+    this.rlp.frequency.value = 2700;
+    this.rlp.Q.value = 1.4;
+    this.rdrive = c.createWaveShaper();
+    this.rdrive.curve = radioShape();
+    this.rfade = c.createGain();
+    this.fade.gain.value = 0;
+    this.rfade.gain.value = 0;
     this.src.connect(this.hp);
     this.hp.connect(this.lp);
     this.lp.connect(this.gain);
     this.gain.connect(this.fade);
     this.fade.connect(this.panner);
     this.panner.connect(e._voiceIn);
-    this._fade = -1;
+    this.gain.connect(this.rhp);
+    this.rhp.connect(this.rlp);
+    this.rlp.connect(this.rdrive);
+    this.rdrive.connect(this.rfade);
+    this.rfade.connect(e._voiceIn);
+    this._fade = 0;
+    this._rfade = 0;
     this.handle = {
       setPosition: (x, y, z) => this.setPosition(x, y, z),
+      setAbsent: () => this.setAbsent(),
+      setRadio: (b) => this.setRadio(b),
+      mode: () => this.mode(),
       setVolume: (v) => this.setVolume(v),
       setMuffled: (b) => this.setMuffled(b),
       disconnect: () => this.disconnect(),
@@ -461,8 +719,24 @@ class VoiceSource {
     this.x = x;
     this.y = y;
     this.z = z;
+    this.present = true;
     setPannerPos(this.panner, x, y, z);
     this.updateFade(this.e._ctx.currentTime);
+  }
+  // the speaker is no longer anywhere near (left our area of interest)
+  setAbsent() {
+    if (this.dead || !this.present) return;
+    this.present = false;
+    this.updateFade(this.e._ctx.currentTime);
+  }
+  setRadio(b) {
+    if (this.dead || this.radio === !!b) return;
+    this.radio = !!b;
+    this.updateFade(this.e._ctx.currentTime);
+  }
+  // how the speaker reaches us right now: 0 not at all, 1 by ear, 2 over the radio
+  mode() {
+    return this._rfade > 0.5 ? 2 : this._fade > 0 ? 1 : 0;
   }
   updateFade(now) {
     const e = this.e;
@@ -470,11 +744,17 @@ class VoiceSource {
     const dy = this.y - e._ly;
     const dz = this.z - e._lz;
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    // inaudible beyond ~35 m (the inverse model alone never reaches zero)
-    const f = d <= 25 ? 1 : d >= 35 ? 0 : 1 - (d - 25) / 10;
-    if (Math.abs(f - this._fade) > 0.01) {
+    // inaudible beyond TALK_RANGE (the inverse model alone never reaches zero)
+    const f = !this.present || d >= TALK_RANGE ? 0 : d <= TALK_CLEAR ? 1 : 1 - (d - TALK_CLEAR) / (TALK_RANGE - TALK_CLEAR);
+    if (Math.abs(f - this._fade) > 0.01 || (f === 0) !== (this._fade === 0)) {
       this._fade = f;
       this.fade.gain.setTargetAtTime(f, now, 0.08);
+    }
+    // the radio makes up whatever distance takes off the voice itself
+    const r = this.radio ? 1 - f * Math.min(1, VOICE_REF / Math.max(d, 1e-3)) : 0;
+    if (Math.abs(r - this._rfade) > 0.01 || (r === 0) !== (this._rfade === 0)) {
+      this._rfade = r;
+      this.rfade.gain.setTargetAtTime(r, now, 0.08);
     }
   }
   setVolume(v) {
@@ -489,7 +769,7 @@ class VoiceSource {
   disconnect() {
     if (this.dead) return;
     this.dead = true;
-    for (const n of [this.src, this.hp, this.lp, this.gain, this.fade, this.panner]) {
+    for (const n of [this.src, this.hp, this.lp, this.gain, this.fade, this.panner, this.rhp, this.rlp, this.rdrive, this.rfade]) {
       try {
         n.disconnect();
       } catch {}
@@ -505,12 +785,16 @@ class VoiceSource {
   }
 }
 
-const NULL_LOOP = Object.freeze({ setPosition() {}, setVolume() {}, stop() {} });
-const NULL_VOICE = Object.freeze({ setPosition() {}, setVolume() {}, setMuffled() {}, disconnect() {} });
+const NULL_LOOP = Object.freeze({ setPosition() {}, setVolume() {}, setRate() {}, stop() {} });
+const NULL_VOICE = Object.freeze({ setPosition() {}, setAbsent() {}, setRadio() {}, mode: () => 0, setVolume() {}, setMuffled() {}, disconnect() {} });
+const CALM_WIND = Object.freeze({ speed: 4, gust: 0.4, strength: 0.18 });
 
 // ------------------------------------------------------------------ engine
 export class AudioEngine {
-  constructor() {
+  // opts.recordings: false = procedural sound only (never fetches the recordings)
+  constructor(opts = EMPTY) {
+    this._opts = opts || EMPTY;
+    this._rec = null;
     this._ctx = null;
     this._ready = false;
     this._initPromise = null;
@@ -525,7 +809,10 @@ export class AudioEngine {
     this._lz = 0;
     this._lyaw = NaN;
     this._lpitch = NaN;
-    this._state = { night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, rain: 0, wind: 0.3, dead: false, menu: false };
+    this._state = {
+      night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, rain: 0, dead: false, menu: false,
+      cycle: NaN, wind: NaN, gust: NaN, open: 0, indoor: 0,
+    };
     this._vol = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
     this._rateMul = 1;
     this._hrtfCount = 0;
@@ -535,6 +822,9 @@ export class AudioEngine {
     this._loopScratch = [];
     this._mix = { world: -1, sfxLP: -1 };
     this._queue = null;
+    this._foot = 1; // alternates the own footsteps a hair left / right
+    this._gearT = 2; // steps until the next clothing rustle
+    this._evictAt = 0;
   }
 
   get ready() {
@@ -542,6 +832,10 @@ export class AudioEngine {
   }
   get context() {
     return this._ctx;
+  }
+  // current ambience wind { speed m/s, gust 0..1, strength 0..1 } (e.g. for foliage sway that matches the sound)
+  get wind() {
+    return this._ambience ? this._ambience.wind : CALM_WIND;
   }
 
   init() {
@@ -571,6 +865,7 @@ export class AudioEngine {
     this._buildGraph();
     this._applyVolumes(0);
     this._applyListener(true);
+    this._rec = new Recordings(c, this._opts.recordings !== false);
 
     // --- asynchronous rendering (web workers, main-thread fallback)
     const { core, late } = jobList();
@@ -588,6 +883,10 @@ export class AudioEngine {
     this._timer = setInterval(() => this._tick(), TICK_MS);
     this._applyStateNow();
     this._tick();
+    // recordings stream in behind the procedural sound (beds crossfade over once decoded)
+    const night = this._state.night > 0.5;
+    const score = this._state.menu ? 'mus_menu' : night ? 'mus_night' : 'mus_day';
+    this._rec.start([night ? 'amb_night' : 'amb_day', score, night ? 'amb_crickets' : 'amb_day_wind', 'wind_light', 'wind_mid', 'fs_grass', 'fs_dirt', 'gun_pistol', 'hit_bullet', 'zv_growl', 'zv_attack', 'zv_pain', 'zv_death', 'cloth', 'fs_wood', 'fire_roar', 'fire_loop']);
   }
 
   _buildGraph() {
@@ -597,26 +896,36 @@ export class AudioEngine {
       n.gain.value = v;
       return n;
     };
+    // Master dynamics. A gentle 2:1 "glue" compressor, a fast limiter for whatever still gets through, then a soft
+    // clipper so nothing leaves above full scale. Deliberately light: a quiet forest stays some 12 dB under automatic
+    // fire (measured on the bus) - squeezing harder makes the night as loud as the gunfight and both of them tiring.
+    // (WebAudio compressors add their own make-up gain; _makeup / _post trim the chain back to ~+3 dB for quiet sound.)
     this._master = g(1);
     this._comp = c.createDynamicsCompressor();
-    this._comp.threshold.value = -20;
-    this._comp.knee.value = 12;
-    this._comp.ratio.value = 3.5;
-    this._comp.attack.value = 0.004;
-    this._comp.release.value = 0.22;
-    this._makeup = g(1.35);
+    this._comp.threshold.value = -12;
+    this._comp.knee.value = 8;
+    this._comp.ratio.value = 2;
+    this._comp.attack.value = 0.006;
+    this._comp.release.value = 0.25;
+    this._makeup = g(1.1);
     this._limit = c.createDynamicsCompressor();
-    this._limit.threshold.value = -2.5;
-    this._limit.knee.value = 0;
+    this._limit.threshold.value = -3;
+    this._limit.knee.value = 2;
     this._limit.ratio.value = 20;
     this._limit.attack.value = 0.001;
-    this._limit.release.value = 0.08;
+    this._limit.release.value = 0.1;
+    this._post = g(0.9 / CLIP_RANGE); // (the shaper reads its curve over -1..1: scale -CLIP_RANGE..CLIP_RANGE into that)
+    this._clip = c.createWaveShaper();
+    this._clip.curve = softClipCurve();
     this._pre = g(1);
-    this._pre.connect(this._master);
-    this._master.connect(this._comp);
+    // user master volume sits after the dynamics, so the slider scales the output instead of just easing the compressor
+    this._pre.connect(this._comp);
     this._comp.connect(this._makeup);
     this._makeup.connect(this._limit);
-    this._limit.connect(c.destination);
+    this._limit.connect(this._post);
+    this._post.connect(this._clip);
+    this._clip.connect(this._master);
+    this._master.connect(c.destination);
 
     // world bus: sfx + ambience + reverb, muffled when dead
     this._worldIn = g(1);
@@ -643,14 +952,22 @@ export class AudioEngine {
     this._voiceIn = g(1);
     this._voiceIn.connect(this._pre);
 
-    // shared forest reverb (buffer assigned when its IR is rendered)
+    // shared reverb: forest by default, crossfading to an open-field or a small-room response (buffers assigned when
+    // their IRs are rendered); convolvers that have been silent for a while are disconnected to save CPU
     this._revIn = g(1);
     this._revIn.channelCount = 1;
     this._revIn.channelCountMode = 'explicit';
     this._conv = c.createConvolver();
     this._revOut = g(0.9);
-    this._revIn.connect(this._conv);
-    this._conv.connect(this._revOut);
+    this._envs = {};
+    for (const name of ['forest', 'open', 'room']) {
+      const conv = name === 'forest' ? this._conv : c.createConvolver();
+      const gain = g(name === 'forest' ? 1 : 0);
+      gain.connect(conv);
+      conv.connect(this._revOut);
+      if (name === 'forest') this._revIn.connect(gain);
+      this._envs[name] = { conv, gain, on: name === 'forest', w: name === 'forest' ? 1 : 0, zeroAt: 0 };
+    }
     this._revOut.connect(this._worldIn);
     this._sfxSend = g(1);
     this._sfxSend.connect(this._revIn);
@@ -672,8 +989,8 @@ export class AudioEngine {
       if (buf.copyToChannel) buf.copyToChannel(chans[k], k);
       else buf.getChannelData(k).set(chans[k]);
     }
-    if (bank === 'ir_forest') {
-      this._conv.buffer = buf;
+    if (bank === 'ir_forest' || bank === 'ir_open' || bank === 'ir_room') {
+      this._envs[bank.slice(3)].conv.buffer = buf;
       return;
     }
     if (bank === 'ir_hall') {
@@ -961,19 +1278,28 @@ export class AudioEngine {
     const d = SOUND_MAP[soundId];
     if (!d) return;
     const o = opts || EMPTY;
-    const buf = this._pick(d.bank, o.variant);
+    const pos = !(d.cat === '2d' || o.x === undefined || o.x === null);
+    let bank = d.bank;
+    let lv = 1;
+    const delay = +o.delay || 0; // opts.delay (s): start a little later (a body takes a moment to hit the ground)
+    if (d.rec && this._playRec(d.rec, pos ? d.cat : null, pos ? +o.x : 0, pos ? +(o.y ?? this._ly) : 0, pos ? +(o.z ?? 0) : 0, (o.volume ?? 1) * d.vol, this._sfxIn, d.send, o.rate ?? 1, delay)) {
+      if (!d.rec.layer) return;
+      if (d.rec.layer !== true) bank = d.rec.layer;
+      lv = d.rec.layerVol ?? 1;
+    }
+    const buf = this._pick(bank, o.variant);
     if (!buf) {
-      this._need(d.bank);
+      this._need(bank);
       return;
     }
     this._resume();
-    const vol = (o.volume ?? 1) * d.vol * (0.92 + Math.random() * 0.16);
+    const vol = (o.volume ?? 1) * d.vol * lv * (0.92 + Math.random() * 0.16);
     const rate = (o.rate ?? 1) * (1 + (Math.random() - 0.5) * 2 * d.jit) * this._rateMul;
-    if (d.cat === '2d' || o.x === undefined || o.x === null) {
-      this._play2D(buf, vol, rate, this._sfxIn, d.send, 0);
+    if (!pos) {
+      this._play2D(buf, vol, rate, this._sfxIn, d.send, delay ? this._ctx.currentTime + delay : 0);
       return;
     }
-    this._playPos(buf, d.cat, +o.x, +(o.y ?? this._ly), +(o.z ?? 0), vol, rate);
+    this._playPos(buf, d.cat, +o.x, +(o.y ?? this._ly), +(o.z ?? 0), vol, rate, 0, 0, delay);
   }
 
   playLocal(name, opts = EMPTY) {
@@ -981,43 +1307,158 @@ export class AudioEngine {
     const d = LOCAL[name];
     if (!d) return;
     const o = opts || EMPTY;
-    const buf = this._pick(d.bank, o.variant);
+    const ui = d.bus === 'ui';
+    const dest = ui ? this._uiIn : this._sfxIn;
+    let bank = d.bank;
+    let lv = 1;
+    if (d.rec && this._playRec(d.rec, null, 0, 0, 0, (o.volume ?? 1) * d.vol, dest, d.send ?? 0.06, o.rate ?? 1)) {
+      if (!d.rec.layer) return;
+      if (d.rec.layer !== true) bank = d.rec.layer;
+      lv = d.rec.layerVol ?? 1;
+    }
+    const buf = this._pick(bank, o.variant);
     if (!buf) {
-      this._need(d.bank);
+      this._need(bank);
       return;
     }
     this._resume();
-    const ui = d.bus === 'ui';
     const jit = d.jit ?? 0.04;
-    const vol = (o.volume ?? 1) * d.vol * (ui ? 1 : 0.94 + Math.random() * 0.12);
+    const vol = (o.volume ?? 1) * d.vol * lv * (ui ? 1 : 0.94 + Math.random() * 0.12);
     const rate = (o.rate ?? 1) * (1 + (Math.random() - 0.5) * 2 * jit) * (ui ? 1 : this._rateMul);
-    this._play2D(buf, vol, rate, ui ? this._uiIn : this._sfxIn, d.send ?? 0.06, 0);
+    this._play2D(buf, vol, rate, dest, d.send ?? 0.06, 0);
   }
 
-  footstep(surface, x, y, z, volume = 1) {
+  // recorded foley (R_* defs): every layer must be decoded, otherwise false and the caller plays the procedural bank
+  // (a recording that is only waiting to be decoded is asked for, so it is there the next time).
+  // cat = positional category or null for 2D; pitch = the caller's own rate on top of the take's pitch range.
+  _playRec(r, cat, x, y, z, vol, dest, send, pitch = 1, delay = 0) {
+    const rec = this._rec;
+    if (!rec) return false;
+    const layers = r.layers || null;
+    let ready = true;
+    for (let i = layers ? layers.length - 1 : 0; i >= 0; i--) {
+      const key = layers ? layers[i].key : r.key;
+      if (rec.has(key)) continue;
+      rec.want(key);
+      ready = false;
+    }
+    if (!ready) return false;
+    this._resume();
+    const now = this._ctx.currentTime;
+    // distant perspective: equal-power crossfade from the close recording to the far one with distance
+    let near = 1;
+    const F = cat && r.far;
+    if (F && rec.has(F.key)) {
+      const dx = x - this._lx;
+      const dy = y - this._ly;
+      const dz = z - this._lz;
+      const k = clamp01((Math.sqrt(dx * dx + dy * dy + dz * dz) - FAR_NEAR) / (FAR_FULL - FAR_NEAR));
+      if (k > 0) {
+        const fb = rec.get(F.key);
+        const [off, dur] = rec.pick(F.key, fb);
+        this._playPos(fb, cat, x, y, z, vol * F.vol * Math.sqrt(k) * dbJit(1.5), rrange(F.pitch) * pitch * this._rateMul, off, dur, delay);
+        near = Math.sqrt(1 - k);
+        if (near < 0.05) return true;
+      }
+    }
+    const n = layers ? layers.length : 1;
+    for (let i = 0; i < n; i++) {
+      const L = layers ? layers[i] : r;
+      const buf = rec.get(L.key);
+      let t = (L.at || 0) + delay;
+      const hits = L.hits ? Math.round(rrange(L.hits)) : 1;
+      for (let h = 0; h < hits; h++) {
+        const [off, dur] = rec.pick(L.key, buf);
+        const rate = rrange(L.pitch) * pitch * this._rateMul;
+        const v = vol * near * L.vol * dbJit(1.5);
+        if (cat) this._playPos(buf, cat, x, y, z, v, rate, off, dur, t, L.lp);
+        else this._play2D(buf, v, rate, dest, send, now + t, off, dur, L.lp);
+        if (L.gap) t += rrange(L.gap);
+      }
+    }
+    return true;
+  }
+
+  // surface: 'dirt' | 'grass' | 'forest' | 'leaves' | 'gravel' | 'road' | 'mud' | 'wood' | 'water' | 'metal'.
+  // x undefined = the local player's own feet (2D). opts (optional): { crouch, run, heavy }; for the local player
+  // crouch / run are otherwise inferred from the volume the game passes (0.25 crouch, 0.8 sprint).
+  footstep(surface, x, y, z, volume = 1, opts = EMPTY) {
     if (!this._ready) return;
-    const bank = STEP_BANKS[surface] || 'step_dirt';
-    const buf = this._pick(bank);
-    if (!buf) return;
-    const vol = (volume ?? 1) * (0.88 + Math.random() * 0.24);
-    const rate = (1 + (Math.random() - 0.5) * 0.14) * this._rateMul;
-    if (x === undefined || x === null) {
-      this._resume();
-      this._play2D(buf, vol * 0.32, rate, this._sfxIn, 0.03, 0);
+    const local = x === undefined || x === null;
+    // heavy (tank, bosses): a ground-shaking thump under the surface step, carrying far past where a footstep fades
+    if (opts && opts.heavy && !local) {
+      const th = this._pick('step_heavy');
+      if (th) this._playPos(th, 'thump', +x, +(y ?? this._ly), +(z ?? 0), (volume ?? 1) * dbJit(1.5), (0.92 + Math.random() * 0.16) * this._rateMul);
+    }
+    const key = STEP_REC[surface];
+    const rec = key && this._rec && this._rec.has(key) ? this._rec.get(key) : null;
+    if (!rec) {
+      const buf = this._pick(STEP_BANKS[surface] || 'step_dirt');
+      if (!buf) return;
+      const vol = (volume ?? 1) * (0.88 + Math.random() * 0.24);
+      const rate = (1 + (Math.random() - 0.5) * 0.14) * this._rateMul;
+      if (local) {
+        this._resume();
+        this._play2D(buf, vol * 0.32, rate, this._sfxIn, 0.03, 0);
+        return;
+      }
+      this._playPos(buf, 'step', +x, +(y ?? this._ly), +(z ?? 0), vol * 0.6, rate);
       return;
     }
-    this._playPos(buf, 'step', +x, +(y ?? this._ly), +(z ?? 0), vol * 0.6, rate);
+    const o = opts || EMPTY;
+    const v = volume ?? 1;
+    const crouch = o.crouch ?? v <= 0.3;
+    const run = o.run ?? (local ? v >= 0.75 : v >= 0.95);
+    const tone = STEP_TONE[key];
+    const [off, dur] = this._rec.pick(key, rec);
+    const rate = (o.heavy ? 0.8 : 1) * (run ? 1.04 : crouch ? 0.96 : 1) * (0.94 + Math.random() * 0.12) * this._rateMul;
+    const g = v * tone[0] * dbJit(2);
+    const lp = crouch ? tone[1] * 0.7 : run ? 20000 : tone[1];
+    if (!local) {
+      this._playPos(rec, 'step', +x, +(y ?? this._ly), +(z ?? 0), g * 0.6, rate, off, dur, 0, lp);
+      return;
+    }
+    this._resume();
+    const now = this._ctx.currentTime;
+    this._foot = -this._foot;
+    // x1.41: a mono source through a StereoPanner loses 3 dB per ear at centre
+    this._play2D(rec, g * 0.45, rate, this._sfxIn, run ? 0.05 : 0.03, now, off, dur, lp, this._foot * (0.04 + Math.random() * 0.06));
+    // clothing / gear rustle every few steps (more often when running)
+    if (--this._gearT <= 0 && this._rec.has('cloth')) {
+      this._gearT = run ? 1 + Math.random() * 2 : 3 + Math.random() * 4;
+      const cb = this._rec.get('cloth');
+      const [co, cd] = this._rec.pick('cloth', cb);
+      const cv = v * 0.32 * (run ? 0.3 : 0.22) * (crouch ? 0.6 : 1);
+      this._play2D(cb, cv * dbJit(2), 0.95 + Math.random() * 0.15, this._sfxIn, 0.02, now + 0.05, co, Math.min(cd, 0.4), 12000, 0, 0.1);
+    }
   }
 
-  _play2D(buf, vol, rate, dest, send, when) {
+  // one-shot through its own short-lived nodes. Optional: [off, dur] slice, lowpass, stereo pan, fade-out (s).
+  _play2D(buf, vol, rate, dest, send, when, off = 0, dur = 0, lp = 0, pan = 0, fade = 0) {
     const c = this._ctx;
     const src = c.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = rate;
+    let head = src;
+    let f = null;
+    if (lp && lp < 18000) {
+      f = c.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = lp;
+      f.Q.value = 0.5;
+      src.connect(f);
+      head = f;
+    }
     const g = c.createGain();
     g.gain.value = vol;
-    src.connect(g);
-    g.connect(dest);
+    head.connect(g);
+    let p = null;
+    if (pan && c.createStereoPanner) {
+      p = c.createStereoPanner();
+      p.pan.value = pan;
+      g.connect(p);
+      p.connect(dest);
+    } else g.connect(dest);
     let sg = null;
     if (send > 0 && dest !== this._uiIn) {
       sg = c.createGain();
@@ -1027,14 +1468,25 @@ export class AudioEngine {
     }
     src.onended = () => {
       src.disconnect();
+      if (f) f.disconnect();
       g.disconnect();
+      if (p) p.disconnect();
       if (sg) sg.disconnect();
     };
-    src.start(when || 0);
+    if (dur > 0) {
+      const t = Math.max(when || 0, c.currentTime);
+      if (fade > 0) {
+        const end = t + dur / rate;
+        g.gain.setValueAtTime(vol, Math.max(t, end - fade));
+        g.gain.linearRampToValueAtTime(0, end);
+      }
+      src.start(t, off, dur);
+    } else src.start(when || 0);
     return src;
   }
 
-  _playPos(buf, catName, x, y, z, vol, rate) {
+  // positional one-shot on a pooled voice. Optional: [off, dur] slice, extra start delay (s), lowpass.
+  _playPos(buf, catName, x, y, z, vol, rate, off = 0, dur = 0, when = 0, lp = 0) {
     const cat = CATS[catName];
     const dx = x - this._lx;
     const dy = y - this._ly;
@@ -1042,9 +1494,10 @@ export class AudioEngine {
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(d <= cat.max)) return; // also rejects NaN
     const att = cat.ref / (cat.ref + cat.roll * (Math.max(d, cat.ref) - cat.ref));
+    const now = this._ctx.currentTime;
+    if (cat.crowd) vol /= Math.sqrt(1 + cat.crowd * this._pool.count(catName, now));
     const prio = vol * att;
     if (prio < 0.002) return;
-    const now = this._ctx.currentTime;
     const ch = this._pool.acquire(prio, catName, cat.cap, now);
     if (!ch) return;
     const p = ch.panner;
@@ -1059,22 +1512,23 @@ export class AudioEngine {
     p.refDistance = cat.ref;
     p.rolloffFactor = cat.roll;
     setPannerPos(p, x, y, z);
-    const fc = 350 + 19650 * Math.exp(-d / cat.air);
+    let fc = 350 + 19650 * Math.exp(-d / cat.air);
+    if (lp && lp < fc) fc = lp;
     ch.filter.frequency.value = fc > 18000 ? 20000 : fc;
     ch.gain.gain.value = vol;
-    const far = d / cat.max;
-    ch.send.gain.value = cat.wet * (0.25 + 0.75 * far) * Math.pow(cat.ref / Math.max(d, cat.ref), 0.35);
+    ch.send.gain.value = cat.wet * Math.pow(cat.ref / Math.max(d, cat.ref), cat.sendExp);
     const src = this._ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = rate;
     src.connect(ch.filter);
     src.onended = ch.onEnded;
     const delay = cat.delay && d > 20 ? d / 343 : 0;
-    const t = now + delay;
-    src.start(t);
+    const t = now + delay + when;
+    if (dur > 0) src.start(t, off, dur);
+    else src.start(t);
     ch.src = src;
     ch.start = t;
-    ch.end = t + buf.duration / rate;
+    ch.end = t + (dur > 0 ? dur : buf.duration) / rate;
     ch.prio = prio;
     ch.cat = catName;
   }
@@ -1101,11 +1555,18 @@ export class AudioEngine {
     list.sort((a, b) => a.d - b.d);
     const counts = {};
     let total = 0;
+    const rec = this._rec;
     for (const l of list) {
+      if (l.active && l.def.rec) {
+        // a procedural loop hands over to its recording once decoded; a recorded one keeps its buffers in use
+        if (l.proc) {
+          if (l._recReady()) l._deactivate();
+        } else for (const L of l.def.rec) rec.get(L.key);
+      }
       if (l._want) {
         const cap = l.def.cap ?? 99;
         const n = counts[l.name] || 0;
-        if (n >= cap || total >= LOOP_CAP_TOTAL) l._want = false;
+        if (!l.def.always && (n >= cap || total >= LOOP_CAP_TOTAL)) l._want = false;
         else {
           counts[l.name] = n + 1;
           total++;
@@ -1119,6 +1580,11 @@ export class AudioEngine {
   }
 
   // ---------------------------------------------------------------- ambience / state
+  // state: { night 0..1, horde, boss, danger 0..1, lowHealth 0..1, nearFire 0..1, underCover, dead, menu } plus
+  // optional extras: cycle (the renderer's day cycle 0..1: day 0.055-0.485, night 0.5-0.99; gives real dawn / dusk
+  // windows), wind (the weather's: 0.3 breeze .. ~1.2 gale) and gust 0..1 (to match visible wind; otherwise the engine wanders its own, readable via
+  // `audio.wind`), open 0..1 (clearing / road: open-field reverb), indoor 0..1 (inside a building: room reverb and
+  // muffled outdoor beds, like underCover).
   setAmbience(state) {
     if (!state) return;
     const s = this._state;
@@ -1133,9 +1599,17 @@ export class AudioEngine {
     s.nearFire = clamp01(+state.nearFire || 0);
     s.underCover = !!state.underCover;
     s.rain = clamp01(+state.rain || 0);
-    s.wind = Number.isFinite(state.wind) ? Math.max(0, Math.min(2, state.wind)) : 0.3;
     s.dead = dead;
     s.menu = menu;
+    // optional extras (see the setAmbience doc comment)
+    const cy = state.cycle == null ? NaN : +state.cycle;
+    s.cycle = cy === cy && Number.isFinite(cy) ? cy - Math.floor(cy) : NaN;
+    const wv = state.wind == null ? NaN : +state.wind;
+    s.wind = wv === wv ? Math.max(0, Math.min(1.3, wv)) : NaN;
+    const gv = state.gust == null ? NaN : +state.gust;
+    s.gust = gv === gv ? clamp01(gv) : NaN;
+    s.open = clamp01(+state.open || 0);
+    s.indoor = clamp01(+state.indoor || 0);
     if (changed && this._ready) this._applyStateNow();
   }
 
@@ -1171,12 +1645,15 @@ export class AudioEngine {
       this._mix.sfxLP = lpf;
       this._sfxLP.frequency.setTargetAtTime(lpf, now, 0.4);
     }
-    if (lh > 0.12) {
-      const period = 60 / (60 + 70 * lh);
+    // fear: a faint, slightly quick pulse when zombies are close in the dark (low health overrides it)
+    const fear = s.dead || s.menu || !this._ambience ? 0 : this._ambience.fear * (0.3 + 0.7 * s.night);
+    if (lh > 0.12 || fear > 0.06) {
+      const hurt = lh > 0.12;
+      const period = hurt ? 60 / (60 + 70 * lh) : 60 / (74 + 24 * fear);
       if (this._hbNext < now) this._hbNext = now + 0.05;
       const hb = this._pick('heartbeat');
       while (hb && this._hbNext < now + 0.45) {
-        this._play2D(hb, 0.2 + 0.65 * lh, 1, this._uiIn, 0, this._hbNext);
+        this._play2D(hb, hurt ? 0.2 + 0.65 * lh : 0.02 + 0.07 * fear, 1, this._uiIn, 0, this._hbNext);
         this._hbNext += period;
       }
     } else this._hbNext = 0;
@@ -1188,6 +1665,41 @@ export class AudioEngine {
     }
     this._updateLoops(now);
     for (const v of this._voices) v.updateFade(now);
+    this._updateReverb(now);
+    if (now - this._evictAt > 10) {
+      this._evictAt = now;
+      this._rec.evict(now);
+    }
+  }
+
+  // reverb environment weights (equal power): room when under cover / indoors, open field when `open`, else forest
+  _updateReverb(now) {
+    const s = this._state;
+    const E = this._envs;
+    const room = E.room.conv.buffer ? Math.max(s.underCover ? 1 : 0, s.indoor) : 0;
+    const open = E.open.conv.buffer ? s.open * (1 - room) : 0;
+    const forest = 1 - room - open;
+    for (const name in E) {
+      const e = E[name];
+      let w = Math.sqrt(Math.max(0, name === 'room' ? room : name === 'open' ? open : forest));
+      if (w < 0.03) w = 0;
+      if (w > 0 && !e.on) {
+        e.gain.gain.cancelScheduledValues(now);
+        e.gain.gain.setValueAtTime(0, now);
+        this._revIn.connect(e.gain);
+        e.on = true;
+      }
+      if (w === 0) {
+        if (!e.zeroAt) e.zeroAt = now;
+        if (e.on && now - e.zeroAt > 4) {
+          this._revIn.disconnect(e.gain);
+          e.on = false;
+        }
+      } else e.zeroAt = 0;
+      if (Math.abs(w - e.w) < 0.01) continue;
+      e.w = w;
+      e.gain.gain.setTargetAtTime(w, now, 0.4);
+    }
   }
 
   // ---------------------------------------------------------------- stingers / mix
@@ -1197,17 +1709,29 @@ export class AudioEngine {
     if (!d) return;
     this._resume();
     const requested = this._ctx.currentTime;
-    const go = () => {
+    const rec = this._rec;
+    const go = (recorded) => {
       // skip if it arrives too late to still make sense
       if (this._ctx.currentTime - requested > 2.5) return;
-      const buf = this._pick(d.bank);
+      const buf = recorded || this._pick(d.bank);
       if (!buf) return;
       const dest = d.bus === 'music' ? this._musicIn : d.bus === 'ui' ? this._uiIn : d.bus === 'amb' ? this._ambIn : this._sfxIn;
-      this._play2D(buf, d.vol, 1, dest, d.bus === 'amb' ? 0.2 : 0, 0);
+      this._play2D(buf, recorded ? d.recVol ?? d.vol : d.vol, 1, dest, d.bus === 'amb' ? 0.2 : 0, 0);
       if (d.duck) this._music?.duck(this._ctx.currentTime, d.duck);
       if (d.birds) this._ambience?.burst('amb_bird', 5);
     };
-    this._need(d.bank, go);
+    // the recorded cue when it is there; one still being decoded is worth a short wait, else the procedural one
+    if (d.rec && rec && rec.covers(d.rec)) {
+      const wait = () => {
+        const buf = rec.get(d.rec);
+        if (buf) go(buf);
+        else if (rec.pending(d.rec) && this._ctx.currentTime - requested < 1) setTimeout(wait, 60);
+        else this._need(d.bank, () => go(null));
+      };
+      wait();
+      return;
+    }
+    this._need(d.bank, () => go(null));
   }
 
   setVolumes(v = EMPTY) {
@@ -1246,7 +1770,7 @@ export class AudioEngine {
     for (const k in STEP_BANKS) need.add(STEP_BANKS[k]);
     for (const b of DEF_BY_BANK.keys()) need.add(b);
     for (const b of need) if (!this._pools.get(b)?.length) missing.push(b);
-    if (!this._conv.buffer) missing.push('ir_forest');
+    for (const k in this._envs) if (!this._envs[k].conv.buffer) missing.push('ir_' + k);
     if (!this._hallIR) missing.push('ir_hall');
     return missing;
   }

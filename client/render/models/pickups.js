@@ -409,6 +409,18 @@ BUILD[ITEM.KEVLAR] = (b) => {
   labelOn(b, 'numbers', 0.26, 0.08, [0, 0.0625, 0.05], [-PI / 2, 0, PI], 'stencil');
 };
 
+// handset on its back: olive body, stub antenna and channel knob at the top, speaker grille, display, orange talk key
+BUILD[ITEM.WALKIE] = (b) => {
+  b.group({ p: [0, 0.019, 0.03], r: [0, 0.5, 0] }, () => {
+    b.box('paint', 0.064, 0.036, 0.14, { c: [0.3, 0.36, 0.26] });
+    b.box('dark', 0.044, 0.004, 0.05, { p: [0, 0.019, 0.03] });
+    b.box('chrome', 0.04, 0.004, 0.022, { p: [0, 0.019, -0.03] });
+    b.cyl('dark', 0.006, 0.008, 0.1, 6, { p: [-0.018, 0.004, -0.12], r: [PI / 2, 0, 0] });
+    b.cyl('dark', 0.009, 0.009, 0.016, 8, { p: [0.016, 0.004, -0.078], r: [PI / 2, 0, 0] });
+    b.box('paint', 0.006, 0.02, 0.04, { p: [-0.034, 0.002, 0], c: [0.8, 0.4, 0.1] });
+  });
+};
+
 // loose rounds scattered around a box of width w
 function looseRounds(b, r, w, rounds, roundR, roundL, shell = false) {
   for (let k = 0; k < rounds; k++) {
@@ -459,6 +471,14 @@ BUILD[ITEM.AMMO_BOLTS] = (b, r) => {
     });
   }
   for (const x of [-0.05, 0.06]) b.torus('rope', 0.0145, 0.0022, 4, 10, PI * 2, { p: [x, 0.0095, 0], r: [0, PI / 2, 0], s: [1, 0.8, 1] });
+};
+// flamethrower fuel: the red steel flask that screws in under the lance, lying on its side
+BUILD[ITEM.AMMO_FUEL] = (b) => {
+  b.group({ p: [0, 0.039, 0], r: [0, 0.5, PI / 2] }, () => {
+    b.lathe('paint', [[0, -0.1], [0.03, -0.1], [0.038, -0.09], [0.038, 0.06], [0.032, 0.082], [0.015, 0.094], [0.015, 0.116], [0, 0.116]], 12, { c: [0.6, 0.14, 0.08] });
+    b.cyl('paint', 0.0388, 0.0388, 0.046, 12, { p: [0, -0.015, 0], c: [0.85, 0.8, 0.66], open: true });
+    b.cyl('dark', 0.018, 0.018, 0.014, 8, { p: [0, 0.118, 0] });
+  });
 };
 
 BUILD[ITEM.CAR_BATTERY] = (b) => {

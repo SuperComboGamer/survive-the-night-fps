@@ -6,7 +6,9 @@ supplies the car needs. By night, the horde comes to wherever you are, so you bo
 hold. Every night there are more of them. Install every supply, start the engine, survive the final
 stand and drive away. Die, and you rise as one of them.
 
-- **Client:** three.js (Vite), fully procedural art and audio (no asset files)
+- **Client:** three.js (Vite), procedural art; procedural audio layered with ~16 MB of CC0 recordings
+  (the score and stingers, ambience beds, weather, wildlife, footsteps, foley, gunshots, explosions, creature and survivor voices -
+  see `client/audio/samples/CREDITS.md`), with a procedural fallback
 - **Server:** Node + [uWebSockets.js](https://github.com/uNetworking/uWebSockets.js), authoritative 20 Hz simulation
 - **Netcode:** custom binary protocol, per-client delta compression, client-side prediction with
   reconciliation, entity interpolation, server-side lag compensation for hitscan and melee
@@ -25,18 +27,22 @@ npm run build      # builds the client into dist/
 npm start          # serves dist/ + the WebSocket on http://localhost:3000
 ```
 
-Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (random world seed).
+Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (pins the map: without it every
+playthrough is a new random valley).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
-`DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>`,
+`DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>` (the item by name:
+`/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <ztype> <n>` (`/spawn 10 3`: a zombie dog pack), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`,
-`/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack)).
+`/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
+`/herd` (teleports 45 m from the wandering herd, just out of its sight)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and runs `sim-smoke` |
-| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`) and runs `sim-smoke` |
+| `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
+| `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping, stations, schematic locks, door boards, pings, downed/revive, night waves, dawn summary, supplies, final stand, victory |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -58,8 +64,9 @@ container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/
 zombie dog's poses, coats and gait).
 
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
-spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen; bots see ~2 KB/s per
-client and 0.00 cm prediction error.
+spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen. `npm run bench:net`
+(4 players fighting night 3) measures ~1.3 KB/s down and ~0.4 KB/s up of payload per client in 40 packets/s
+(~0.3 / 0.14 KB/s in 30 packets/s while standing around by day) and no prediction error.
 
 ## Deploying (Railway)
 
@@ -98,16 +105,16 @@ https://www.survivethenightgame.com.
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
 | Tab | Inventory + crafting (Q / E switch crafting tabs while it is open) |
-| Enter | Chat |
-| V | Push-to-talk proximity voice |
+| Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
+| V | Push-to-talk proximity voice (same reach as chat) |
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
 | Zombie form | LMB claw · RMB leap |
 
 ## The game
 
 - **The escape (objective):** your car died on Route 9. It needs a battery, a spare tire, spark plugs,
-  a fan belt and three jerry cans of fuel. Every game the supplies are hidden in different places
-  (the fuel in three of them), guarded by the dead; the HUD tells you where each one is *rumoured* to be.
+  a fan belt and three jerry cans of fuel. Every game the seven of them are hidden at random, each in a
+  different place of that game's map, guarded by the dead; the HUD tells you where each one is *rumoured* to be.
   Carry them back and install them [E]. When all are in, hold [E] at the car to start the engine: it
   needs 90 seconds to warm up and every corpse in the valley hears it - the **final stand**. Survive it,
   get in (be within 14 m of the car) and you escape. The day/night clock stops during the final stand,
@@ -122,6 +129,13 @@ https://www.survivethenightgame.com.
   drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
   found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
   your stamina.
+- **Talking carries only so far.** Voice and text chat reach the survivors around you: clear out to 25 m,
+  fading to nothing by 35 m (a chat line from the edge of earshot shows up faint, and your own line tells you
+  when nobody was close enough to hear it). **Walkie-talkies** bridge the rest: six are hidden in lockers,
+  ammo crates and toolboxes every game - they cannot be crafted, only found. Just carry one, and your voice
+  and chat reach every other survivor carrying one, anywhere in the valley (a radio line is marked with a
+  handset, a radio voice crackles through the handset's speaker). Both ends need one; drop yours for a
+  teammate who has none, and you lose it when you die.
 - **Night: board up where you stand.** 45 seconds before dark the horn sounds. There is no base: the
   horde spawns around wherever the survivors are and comes in three waves (wave 1/3, 2/3, 3/3), so the
   team throws up a temporary shelter on the spot - door boards that snap into any doorway (survivors
@@ -131,7 +145,23 @@ https://www.survivethenightgame.com.
 - **Every horde is harder:** more zombies (scaled by night *and* player count), more health and damage,
   and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
   and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
-  and bat swarms). Stragglers far from the team are brought back into the fight.
+  and bat swarms). Night 2 has a boss of its own: a Tank comes in with the second wave. You hear its footfalls
+  thump long before you see it; it charges, smacks survivors off their feet, breaks a wood barricade with one
+  blow and ploughs straight through whatever its charge breaks. Stragglers far from the team are brought back
+  into the fight.
+- **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
+  noise the further it carries: a pistol or MP5 45-50 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
+  a car alarm 140 m, a pipe bomb or a bursting boomer 170 m. More carry means more of them coming - and the
+  louder it was where a zombie stood, the harder it runs, so a blast empties the whole neighbourhood onto you at
+  a sprint while a distant pistol shot brings a few ambling over. They go to where the noise *was*: shoot and
+  move, or throw a pipe bomb to pull a crowd off a place you want to search. Chopping, salvaging, hammering, a
+  shattering molotov and a supply crate thumping down are quieter (30-60 m) but not silent.
+- **The wandering herd:** by day a crowd of ten to fifteen walkers and runners shuffles along the valley's roads
+  together, from place to place, at a slow walk (it keeps clear of your car). Let one of them notice you - about
+  26 m, less if you crouch - or let a noise reach any of them, and the whole herd comes at a run, walkers
+  included: faster than you walk, slower than you sprint. Sprint out of their sight and they give up after about
+  twenty seconds, search where they last saw you (or where the noise came from), then drift back to the road.
+  Kill the herd and another turns up somewhere else a minute and a half later.
 - **Zombie dogs:** packs of two to four den in the thickest woods from day one (more of them each day). They
   catch your scent from half again as far off as the dead, and the first to find you howls and
   brings the whole pack. They fan out to come at you from the sides, crouch and lunge for a bite, peel away and
@@ -148,8 +178,13 @@ https://www.survivethenightgame.com.
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
   in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
   The **crossbow** is the quiet one: a single heavy bolt that only the dead within a few metres hear (a
-  gunshot carries 45-70 m), paid for with a slow re-cock after every shot. It needs no schematic and no
+  gunshot carries 45-100 m), paid for with a slow re-cock after every shot. It needs no schematic and no
   gunpowder - rope, sticks and scrap at the workbench, and more sticks and scrap for bolts.
+  The **flamethrower** is the one for crowds: a short cone of fire (11 m) that needs no aim and sets whatever
+  it touches **alight** - a burning zombie keeps burning for 5 s after the fire that lit it, and a molotov fire
+  lights them the same way. Burnt bodies leave nothing to loot. It is built at the workbench once the team has
+  the explosives schematic (or found at the crash site, in ammo crates and in supply drops), and drinks fuel
+  brewed from alcohol and chemicals.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
@@ -165,21 +200,38 @@ https://www.survivethenightgame.com.
 
 ### The valley
 
-Sixteen places joined by a road network that is routed over the terrain with A* (roads follow the
-valleys, share corridors and bend around hills instead of radiating from a hub), a winding asphalt
-highway, and forest trails: The Breakdown (your car, a rest area), Pinewood Motel, Hollow Creek (the
-village: diner, general store, police station, garage, houses), Shady Pines Trailers, Lakeside
-Campground, Blackwater Dock, Route 9 Gas Station, the Army Checkpoint (a roadblock with an abandoned
-traffic jam), Granite Quarry, the Relay Station (fenced hilltop), Harlan Sawmill, Miller Farm,
-St. Agnes Chapel, Ranger Lookout, the Hunting Cabins and the military Crash Site, plus a lake and
-several ponds. Every place is generated deterministically from the seed.
+**Every playthrough is a new valley.** When a game ends (or the last survivor leaves) the server rolls a
+new seed and every client rebuilds the map from it; nothing but the seed crosses the wire. For a seed,
+`shared/layout.js` plans the valley and `shared/world.js` builds it:
+
+- **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
+  (your car, a rest area) on it near the middle and the roadside places strung along it.
+- **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
+- **Sixteen places** to a map. Five are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel,
+  Blackwater Dock (always on the lake shore, pier out over the water) and Hollow Creek (the village: diner,
+  general store, police station, garage, houses). The other eleven are drawn from sixteen: Pinewood Motel,
+  Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside Campground (near the lake), the
+  Relay Station, Ranger Lookout and Blackrock Mine (on high ground), Miller Farm, Harlan Sawmill, Granite
+  Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage (a scrapyard),
+  Camp Tamarack (a summer camp) and Elk Ridge Lodge. Each is sited by its own rule and kept apart from the
+  rest, the highway and the water.
+- **Roads** are not drawn by hand either: county roads are a spanning tree grown out from Route 9 (every
+  place hangs off the nearest thing that already has a road, and turns its front to it), then the worst
+  detours are closed with a couple more roads and with forest trails. Each link is routed over the terrain
+  with A* (roads follow the valleys, share corridors and bend around hills and water).
+
+The place catalogue (`PLACES` in `shared/layout.js`) is the one table to edit: mark a place `core` to have
+it on every map, change `PLACE_COUNT`, or add a place (a `ZONE` id, name and loot table in `defs.js`, a
+`PLACES` entry, and a `place(ZONE.X, (b) => {...})` builder in `world.js`).
+`/sandbox/map-test.html?seed=N&debug=1` shows the field map of any seed.
 
 ## Architecture
 
 ```
 shared/     deterministic code used by both sides
-  world.js      seed -> terrain, places, A*-routed roads, sites, buildings, props, containers, supply
-                spots, doorways, vegetation, colliders
+  layout.js     seed -> the plan of the valley: Route 9, the lake, which places and where, which roads
+  world.js      the plan -> terrain, A*-routed roads, sites, buildings, props, containers, supply spots,
+                doorways, vegetation, colliders
   playersim.js  movement + weapon state machine (prediction on the client, authority on the server)
   collision.js  OBB/cylinder colliders, uniform grid, raycasts
   protocol.js   binary Writer/Reader, message ids, quantization
@@ -190,19 +242,28 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
 
 ### Netcode
 
-- Clients simulate input at a fixed 60 Hz and send commands (9 bytes each, batched in pairs).
-  The server consumes them with a token bucket (anti speed-hack) using the *same* shared simulation,
-  and acknowledges the last processed command in every snapshot. The client rewinds to the
-  authoritative state and replays unacknowledged commands; residual error is smoothed visually.
-  The bots measure the prediction error - it is 0.00 cm in normal play (fully deterministic).
+- Clients simulate input at a fixed 60 Hz and send their commands one packet per server tick (three
+  commands, the later ones as deltas of the first; half as many packets while no key is held and the
+  mouse is still). The server consumes them with a token bucket (anti speed-hack) using the *same*
+  shared simulation. Because both ends run the same deterministic code, the server does not send a
+  client its own state: every command packet carries an 8-bit fingerprint of the state the client
+  predicted, and only when that disagrees with the server's result - or something other than the
+  player's commands touched the state (knockback, a pickup, a respawn) - does the snapshot carry the
+  authoritative state. The client then rewinds to it and replays unacknowledged commands; residual
+  error is smoothed visually. `test-netsync` checks that the two stay in exact agreement, and get back
+  into it within a round trip, with up to 250 ms of lag each way.
 - Snapshots (20 Hz) are delta-compressed per client against what that client last received
-  (WebSockets are reliable + ordered, so no ack window is needed): creates carry full state,
-  updates carry only changed fields behind a bitmask, positions are 1/64 m int16 or int8 deltas,
-  angles are 8/16-bit, far entities update at half rate and only entities within the area of
-  interest are sent. Events (sounds, shots, impacts, kills) are pre-encoded once and filtered per
-  client by distance. Typical traffic is ~2-3 KB/s per client with 100+ zombies alive.
+  (WebSockets are reliable + ordered, so no ack window is needed) and only contain the sections that
+  have something in them (a flags byte; tick and acked command are implied). Creates carry full
+  state; updates are sorted by id and carry only changed fields behind a one-byte head, with ids as
+  steps and positions (1/64 m) as 1-3 byte deltas; angles are 8-bit (zombies) or 9+7-bit (players),
+  far entities update at half rate and only entities within the area of interest are sent. Events
+  (sounds, shots, impacts, kills) are pre-encoded once and filtered per client by distance. Everything
+  a client gets in a tick (player list, inventory, snapshot) leaves as one packet, and the ping rides
+  inside the command packets and snapshots. `npm run bench:net` measures all of it.
 - Hitscan and melee are lag compensated: each client reports the tick it was rendering, and the
-  server rewinds zombie/player hitboxes (16-tick history) before tracing. Shotgun spread is seeded
+  server rewinds zombie/player hitboxes (16-tick history) to it before tracing - to the render time
+  that came with that very command, however long it sat in the queue. Shotgun spread is seeded
   deterministically so the shooter's predicted tracers match the server's pellets.
 - Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
   when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a

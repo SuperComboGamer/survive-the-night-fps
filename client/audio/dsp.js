@@ -425,6 +425,72 @@ export function forestIR(sr, dur = 3, seed = 1) {
   return out;
 }
 
+// Open ground (road, clearing): almost dry - a ground reflection, a thin fast tail and discrete, darkening slap
+// echoes off the distant tree lines.
+export function openIR(sr, dur = 3, seed = 3) {
+  const rng = mulberry32(seed);
+  const n = Math.floor(sr * dur);
+  const out = [new Float32Array(n), new Float32Array(n)];
+  for (let ch = 0; ch < 2; ch++) {
+    const c = out[ch];
+    const lp = new OnePole();
+    const pre = Math.floor(0.004 * sr);
+    for (let i = pre; i < n; i++) {
+      const t = (i - pre) / sr;
+      if ((i & 63) === 0) lp.lp(sr, 700 + 6000 * Math.exp(-t * 5));
+      const env = Math.exp(-t * 7.5) * (1 - Math.exp(-t * 12));
+      c[i] = lp.run(rng() * 2 - 1) * env * 0.18;
+    }
+    // ground reflection
+    const g0 = Math.floor((0.006 + rng() * 0.004) * sr);
+    for (let j = 0; j < 10 && g0 + j < n; j++) c[g0 + j] += 0.5 * Math.exp(-j / 3);
+    const echoes = [0.42 + rng() * 0.05, 0.78 + rng() * 0.08, 1.35 + rng() * 0.12, 2.1 + rng() * 0.2];
+    const eg = [0.32, 0.2, 0.11, 0.06];
+    for (let k = 0; k < echoes.length; k++) {
+      const st = Math.floor(echoes[k] * sr);
+      const len = Math.floor((0.04 + 0.03 * k) * sr);
+      const elp = new OnePole().lp(sr, 2600 - k * 550);
+      for (let j = 0; j < len && st + j < n; j++) {
+        c[st + j] += elp.run(rng() * 2 - 1) * eg[k] * Math.exp(-j / ((0.01 + 0.006 * k) * sr)) * 2.4;
+      }
+    }
+    dcBlock(c, sr, 25);
+    fade(c, sr, 0, 0.05);
+  }
+  const p = peakOf(out);
+  scale(out, 0.6 / Math.max(p, 1e-6));
+  return out;
+}
+
+// Small wooden room / under a roof: dense early reflections and a short, slightly dark tail.
+export function roomIR(sr, dur = 0.8, seed = 4) {
+  const rng = mulberry32(seed);
+  const n = Math.floor(sr * dur);
+  const out = [new Float32Array(n), new Float32Array(n)];
+  for (let ch = 0; ch < 2; ch++) {
+    const c = out[ch];
+    const lp = new OnePole();
+    const pre = Math.floor(0.0015 * sr);
+    for (let i = pre; i < n; i++) {
+      const t = (i - pre) / sr;
+      if ((i & 63) === 0) lp.lp(sr, 1500 + 6500 * Math.exp(-t * 8));
+      const env = Math.exp(-t * (6.9 / 0.45)) * (1 - Math.exp(-t * 400));
+      c[i] = lp.run(rng() * 2 - 1) * env * 0.5;
+    }
+    for (let k = 0; k < 40; k++) {
+      const t = 0.0015 + Math.pow(rng(), 1.6) * 0.03;
+      const i = Math.floor(t * sr);
+      const g = (0.3 + rng() * 0.6) * Math.exp(-t * 40) * (rng() < 0.5 ? -1 : 1);
+      for (let j = 0; j < 8 && i + j < n; j++) c[i + j] += g * Math.exp(-j / 2);
+    }
+    dcBlock(c, sr, 40);
+    fade(c, sr, 0, 0.04);
+  }
+  const p = peakOf(out);
+  scale(out, 0.6 / Math.max(p, 1e-6));
+  return out;
+}
+
 // Long, dark, dense hall for music (piano notes with long reverb).
 export function hallIR(sr, dur = 5, seed = 2) {
   const rng = mulberry32(seed);

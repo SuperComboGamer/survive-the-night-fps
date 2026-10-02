@@ -1,5 +1,6 @@
-// UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|inventory|build|
-// death|gameover|victory|pause|settings|chat|icons   &bg=night|day|fire   &status=ok|full|offline
+// UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
+// hud-finale|hud-live|inventory|build|death|gameover|victory|pause|settings|chat|icons   &bg=night|day|fire
+// &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=
 import { UI } from '../ui/ui.js';
 import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
 import { PHASE, INVENTORY_SIZE } from '../../shared/constants.js';
@@ -255,6 +256,8 @@ switch (screen) {
   case 'hud': {
     buildScene(bg || 'day');
     const h = { ...baseHud };
+    // &weapon=<item id>&mag=<n>&reserve=<n>&reload=<0..1>: try the ammo block with any primary
+    if (q.get('weapon')) Object.assign(h, { weapons: [+q.get('weapon'), ...baseHud.weapons.slice(1)], mag: +q.get('mag') || 0, reserve: +(q.get('reserve') ?? 24), reloading: q.get('reload') == null ? -1 : +q.get('reload') });
     ui.hideSplash();
     ui.updateHud(h);
     perfCheck(h);
@@ -308,13 +311,14 @@ switch (screen) {
       useProgress: 0.62,
       useLabel: 'Bandaging',
       crosshair: { spread: 5, visible: true },
+      objective: { ...baseHud.objective, carried: {}, anyCarried: false, timeLeft: 23 },
     };
     ui.hideSplash();
     feedSome();
     ui.notify('The horde is coming', 'big', 60);
     ui.notify('Get back to the fire', 'sub', 60);
     ui.notify('THE HORDE IS COMING', 'danger', 60);
-    loop((t) => ({ ...h, timeLeft: Math.max(0, 23 - t) }));
+    loop((t) => ({ ...h, timeLeft: Math.max(0, 23 - t), objective: { ...h.objective, timeLeft: Math.ceil(Math.max(0, 23 - t)) } }));
     setTimeout(() => ui.damage(45), 300);
     setTimeout(() => ui.damage(30), 900);
     break;
@@ -326,6 +330,90 @@ switch (screen) {
     feedSome();
     ui.addChat('', 'You have risen. Hunt the survivors.', { system: true });
     loop((t) => ({ ...h, ability: Math.min(1, 0.55 + t * 0.12) }));
+    break;
+  }
+  case 'hud-downed': {
+    buildScene(bg || 'night');
+    const reviving = !!q.get('revive');
+    const h = { ...baseHud, hp: 30, phase: PHASE.NIGHT, timeLeft: 88, night: 1, hordeLeft: 21, prompt: null, context: null, crosshair: { spread: 7, visible: false } };
+    ui.hideSplash();
+    feedSome();
+    loop((t) => ({ ...h, downed: { bleed: Math.max(0, 22 - t), reviving, medkit: !!q.get('medkit') } }));
+    break;
+  }
+  case 'hud-dawn': {
+    buildScene(bg || 'day');
+    const h = { ...baseHud, day: 4, timeLeft: 296, prompt: null, context: null, objective: { ...baseHud.objective, carried: {}, anyCarried: false } };
+    ui.hideSplash();
+    ui.updateHud(h);
+    ui.notify('Dawn', 'big', 60);
+    ui.notify('You made it through the night', 'sub', 60);
+    ui.showSummary({ night: 3, kills: 64, structLost: 5, downs: 2, revives: 1, deaths: 0 }, 'Horde 4: bigger and hungrier. New: ropers, tanks in the horde.');
+    break;
+  }
+  case 'hud-finale': {
+    buildScene(bg || 'night');
+    const ready = !!q.get('ready');
+    const h = {
+      ...baseHud,
+      phase: PHASE.NIGHT,
+      night: 1,
+      hordeLeft: 58,
+      finale: true,
+      escapeReady: ready,
+      slot: 0,
+      mag: 4,
+      reserve: 0,
+      prompt: ready ? '[E] Get in the car' : null,
+      context: null,
+      compassMarks: [{ kind: 'car', bearing: -2.4, icon: glyph('car'), label: '63m', pinEdge: true, cls: 'urgent' }, ...baseHud.compassMarks.slice(1)],
+      worldMarks: [{ kind: 'car', x: 1180, y: 430, icon: glyph('car'), name: ready ? 'GET IN' : 'Defend the car', sub: '63m', cls: 'urgent', scale: 0.95 }],
+    };
+    ui.hideSplash();
+    feedSome();
+    loop((t) => {
+      const escapeT = Math.max(0, 47 - t);
+      return { ...h, escapeT, objective: { ...baseHud.objective, supplies: [1, 1, 1, 1, 3], carried: {}, anyCarried: false, suppliesDone: true, phase: PHASE.NIGHT, finale: true, escapeT: Math.ceil(escapeT), escapeReady: ready } };
+    });
+    break;
+  }
+  // everything moving at once: a firefight, to judge the HUD's motion
+  case 'hud-live': {
+    buildScene(bg || 'night');
+    const h = { ...baseHud, phase: PHASE.NIGHT, night: 1, hordeLeft: 40, timeLeft: 150, prompt: null, context: null };
+    ui.hideSplash();
+    let mag = 30;
+    let reserve = 90;
+    let hp = 100;
+    let shotT = 0;
+    let reloadT = -1;
+    let last = 0;
+    loop((t) => {
+      const dt = t - last;
+      last = t;
+      if (reloadT >= 0) {
+        reloadT += dt / 2.3;
+        if (reloadT >= 1) {
+          const take = Math.min(30 - mag, reserve);
+          mag += take;
+          reserve -= take;
+          reloadT = -1;
+        }
+      } else if ((shotT -= dt) <= 0) {
+        if (mag > 0) {
+          mag--;
+          shotT = 0.1;
+          if (Math.random() < 0.3) ui.hitmarker(Math.random() < 0.3, Math.random() < 0.25);
+        } else if (reserve > 0) reloadT = 0;
+        else reserve = 90;
+      }
+      if (Math.random() < 0.006) {
+        const d = 6 + Math.random() * 22;
+        hp = Math.max(8, hp - d);
+        ui.damage(d, Math.random() * 6.28);
+      } else if (Math.random() < 0.002) hp = Math.min(100, hp + 35);
+      return { ...h, hp, mag, reserve, reloading: reloadT, stamina: 50 + Math.sin(t) * 50, exhausted: Math.sin(t) < -0.9, yaw: t * 0.4, hordeLeft: Math.max(0, 40 - Math.floor(t)), timeLeft: 150 - t };
+    });
     break;
   }
   case 'inventory': {

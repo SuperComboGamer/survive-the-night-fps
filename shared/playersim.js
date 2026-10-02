@@ -118,6 +118,82 @@ export function copyPlayerState(dst, src) {
   return dst;
 }
 
+// true when two states are identical in every field copyPlayerState carries
+export function samePlayerState(a, b) {
+  if (a.x !== b.x || a.y !== b.y || a.z !== b.z || a.vx !== b.vx || a.vy !== b.vy || a.vz !== b.vz) return false;
+  if (a.yaw !== b.yaw || a.pitch !== b.pitch || a.onGround !== b.onGround || a.crouch !== b.crouch) return false;
+  if (a.stamina !== b.stamina || a.exhausted !== b.exhausted || a.staminaDelay !== b.staminaDelay || a.sprinting !== b.sprinting) return false;
+  if (a.slot !== b.slot || a.mags[0] !== b.mags[0] || a.mags[1] !== b.mags[1] || a.throwCount !== b.throwCount) return false;
+  for (let i = 0; i < 5; i++) if (a.weapons[i] !== b.weapons[i]) return false;
+  for (let i = 0; i < AMMO_ITEMS.length; i++) if (a.ammo[i] !== b.ammo[i]) return false;
+  if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
+  if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
+  if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
+  return a.downed === b.downed && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
+}
+
+// Rounds every float of the state to float32, which is how the server puts it on the wire: after the server has
+// snapped its state and the client has taken it over, both simulate on from bit-identical numbers.
+const fr = Math.fround;
+export function snapPlayerState(s) {
+  s.x = fr(s.x);
+  s.y = fr(s.y);
+  s.z = fr(s.z);
+  s.vx = fr(s.vx);
+  s.vy = fr(s.vy);
+  s.vz = fr(s.vz);
+  s.stamina = fr(s.stamina);
+  s.staminaDelay = fr(s.staminaDelay);
+  s.switchT = fr(s.switchT);
+  s.cooldown = fr(s.cooldown);
+  s.reloadT = fr(s.reloadT);
+  s.recoil = fr(s.recoil);
+  s.leapCd = fr(s.leapCd);
+  s.stunT = fr(s.stunT);
+  s.pullX = fr(s.pullX);
+  s.pullY = fr(s.pullY);
+  s.pullZ = fr(s.pullZ);
+  return s;
+}
+
+// 8-bit fingerprint of the simulated state (the view angles aside: those come with every command). The client sends
+// the fingerprint of its prediction with its commands and the server compares it with its own state after the same
+// command: as long as they agree the state itself never has to be sent. Floats go in rounded (millimetres,
+// milliseconds), so the last-bit differences between JS engines' Math.sin / hypot don't count as a mismatch; a real
+// divergence that small is harmless, and it gets caught as soon as it grows.
+export function hashPlayerState(s) {
+  let h = 0x811c9dc5;
+  const mix = (v) => {
+    h = Math.imul(h ^ v, 0x01000193);
+    h ^= h >>> 15;
+  };
+  mix(Math.round(s.x * 512));
+  mix(Math.round(s.y * 512));
+  mix(Math.round(s.z * 512));
+  mix(Math.round(s.vx * 128));
+  mix(Math.round(s.vy * 128));
+  mix(Math.round(s.vz * 128));
+  mix((s.onGround ? 1 : 0) | (s.crouch ? 2 : 0) | (s.exhausted ? 4 : 0) | (s.sprinting ? 8 : 0) | (s.zombie ? 16 : 0) | (s.pulled ? 32 : 0) | (s.pinned ? 64 : 0) | (s.downed ? 128 : 0));
+  mix(Math.round(s.stamina * 64));
+  mix(Math.round(s.staminaDelay * 512));
+  mix(s.slot | (s.mags[0] << 8) | (s.mags[1] << 16) | (s.throwCount << 24));
+  for (let i = 0; i < 5; i++) mix(s.weapons[i]);
+  for (let i = 0; i < AMMO_ITEMS.length; i++) mix(s.ammo[i]);
+  mix(Math.round(s.switchT * 512));
+  mix(Math.round(s.cooldown * 512));
+  mix(Math.round(s.reloadT * 512));
+  mix(Math.round(s.recoil * 256));
+  mix(Math.round(s.leapCd * 512));
+  mix(Math.round(s.stunT * 512));
+  if (s.pulled) {
+    mix(Math.round(s.pullX * 64));
+    mix(Math.round(s.pullY * 64));
+    mix(Math.round(s.pullZ * 64));
+  }
+  mix(s.lastBtn | (s.fireCount << 16));
+  return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
+}
+
 export function eyeHeight(s) {
   return s.downed ? EYE_HEIGHT_DOWNED : s.crouch ? EYE_HEIGHT_CROUCH : EYE_HEIGHT;
 }

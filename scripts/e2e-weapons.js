@@ -23,8 +23,8 @@ const hold = async (ms) => { await page.evaluate(() => (window.__game.input.mous
 const state = () => page.evaluate(() => { const s = window.__game.prediction.state; return { slot: s.slot, w: s.weapons.slice(), mags: s.mags.slice(), ammo: s.ammo.slice(), reload: +s.reloadT.toFixed(2) }; });
 let fails = 0;
 const expect = (name, ok, info) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info ? JSON.stringify(info) : ''}`); };
-// [gun, ammo item]: shotgun, AK-47, hunting rifle, M4A1, MP5, double-barrel, crossbow
-for (const [item, ammoItem] of [[60, 71], [61, 72], [62, 73], [63, 74], [64, 70], [65, 71], [66, 75]]) {
+// [gun, ammo item]: shotgun, AK-47, hunting rifle, M4A1, MP5, double-barrel, crossbow, flamethrower
+for (const [item, ammoItem] of [[60, 71], [61, 72], [62, 73], [63, 74], [64, 70], [65, 71], [66, 75], [67, 76]]) {
   await chat(`/give ${item} 1`);
   await chat(`/give ${ammoItem} 60`);
   await sleep(500);
@@ -34,7 +34,7 @@ for (const [item, ammoItem] of [[60, 71], [61, 72], [62, 73], [63, 74], [64, 70]
   await page.keyboard.press('Digit1');
   await sleep(700);
   const s0 = await state();
-  await hold([61, 63, 64].includes(item) ? 700 : 150);
+  await hold([61, 63, 64, 67].includes(item) ? 700 : 150);
   await sleep(300);
   const s1 = await state();
   expect(`fire weapon ${item}`, s0.w[0] === item && s1.mags[0] < s0.mags[0], { before: s0.mags[0], after: s1.mags[0] });

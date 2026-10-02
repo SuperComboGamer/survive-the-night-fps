@@ -37,13 +37,17 @@ function localMatrix(o, root) {
   return m;
 }
 
-// faded paint for clapboard buildings (sRGB; white and cream turn up most often)
-const PAINT = [0xffffff, 0xffffff, 0xf0eadf, 0xf0eadf, 0xd9e0e4, 0xdbe0d0, 0xf0e8cf, 0xd8e3db, 0xdedcd8, 0xeedfda].map((h) => new THREE.Color(h));
+// faded paint per painted wall material (sRGB): siding is mostly white and cream, barns oxide red
+const hexes = (list) => list.map((h) => new THREE.Color(h));
+const PAINT = {
+  clapboard: hexes([0xcfccc0, 0xcfccc0, 0xc8c1af, 0xc8c1af, 0xadb8bd, 0xb0b9a1, 0xc9bf9d, 0xabbbaf, 0xb8b5af, 0xc6b2a9, 0x93a2ab, 0xc2b287]),
+  barn: hexes([0x7a3229, 0x7a3229, 0x6e2c25, 0x853a2e, 0x652823, 0x80402f, 0x76352d]),
+};
 
 // one paint colour per building: painted parts that touch (walls, gable ends, towers) form a building
 function paintByBuilding(parts) {
   const idx = [];
-  parts.forEach((p, i) => p.mat === 'clapboard' && idx.push(i));
+  parts.forEach((p, i) => PAINT[p.mat] && idx.push(i));
   const parent = idx.map((_, k) => k);
   const find = (k) => (parent[k] === k ? k : (parent[k] = find(parent[k])));
   const box = idx.map((i) => {
@@ -62,7 +66,8 @@ function paintByBuilding(parts) {
   idx.forEach((i, k) => {
     const root = parts[idx[find(k)]];
     const h = Math.abs(Math.sin(Math.round(root.x) * 12.9898 + Math.round(root.z) * 78.233) * 43758.5453) % 1;
-    tint.set(i, PAINT[Math.floor(h * PAINT.length)]);
+    const pal = PAINT[parts[i].mat];
+    tint.set(i, pal[Math.floor(h * pal.length)]);
   });
   return tint;
 }
@@ -203,13 +208,16 @@ export class StaticWorld {
     // prepared (non-indexed, trimmed attributes) once and cached, then each instance is transformed while
     // copying - no per-instance BufferGeometry clones or merges.
     const buckets = new Map(); // chunkKey -> Map(material -> {entries: [{tpl, m}], verts})
-    const add = (x, z, mat, tpl, m, tint = null) => {
+    // wuv: [ax, az], the part's local x axis in the world - its UVs are then laid out in world space, so
+    // courses of brick, boards and logs run unbroken across the pieces a wall is built from.
+    // uvo: [du, dv] shifts the UVs (so every window pane shows a different part of the glass)
+    const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null) => {
       const key = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = new Map()));
       let list = b.get(mat);
       if (!list) b.set(mat, (list = { entries: [], verts: 0, radius: 0 }));
-      list.entries.push({ tpl, m, tint });
+      list.entries.push({ tpl, m, tint, wuv, uvo });
       list.verts += tpl.count;
       list.radius = Math.max(list.radius, tpl.radius * m.getMaxScaleOnAxis());
     };
@@ -276,7 +284,9 @@ export class StaticWorld {
       p.set(part.x, part.y, part.z);
       const m = new THREE.Matrix4().compose(p, q, one);
       const mat = staticSurface(getMaterial(part.mat) || getMaterial('planks'));
-      add(part.x, part.z, mat, makeTpl(g, !!mat.vertexColors), m, paint.get(pi));
+      const upright = part.shape === 'box' && !glass && !part.rx && !part.rz;
+      const h = Math.abs(Math.sin(part.x * 12.9898 + part.z * 78.233 + part.y * 37.719) * 43758.5453);
+      add(part.x, part.z, mat, makeTpl(g, !!mat.vertexColors), m, paint.get(pi), upright ? [Math.cos(part.ry || 0), -Math.sin(part.ry || 0)] : null, glass ? [(h % 1) * 2, ((h * 7.13) % 1) * 2] : null);
       g.dispose();
       if (glass) {
         const trimMat = getMaterial(world.parts[pi - 1]?.mat === 'clapboard' ? 'sash' : 'trim');
@@ -345,12 +355,13 @@ export class StaticWorld {
         const ground = mat.userData.staticGrime ? new Float32Array(n) : null;
         const tints = mat.userData.staticPaint ? new Float32Array(n * 3).fill(1) : null;
         let o = 0;
-        for (const { tpl, m, tint } of list.entries) {
+        for (const { tpl, m, tint, wuv, uvo } of list.entries) {
           const me = m.elements;
           nm.getNormalMatrix(m);
           const ne = nm.elements;
           const sp = tpl.pos;
           const sn = tpl.nrm;
+          uv.set(tpl.uv, o * 2);
           for (let i = 0; i < tpl.count; i++) {
             const x = sp[i * 3];
             const y = sp[i * 3 + 1];
@@ -369,6 +380,20 @@ export class StaticWorld {
             nrm[k] = tx / l;
             nrm[k + 1] = ty / l;
             nrm[k + 2] = tz / l;
+            if (wuv) {
+              const j = (o + i) * 2;
+              if (Math.abs(ty) > 0.7 * l) {
+                uv[j] = pos[k] * wuv[0] + pos[k + 2] * wuv[1];
+                uv[j + 1] = pos[k + 2] * wuv[0] - pos[k] * wuv[1];
+              } else {
+                // along the wall (to the right, seen from outside) and up it
+                uv[j] = (pos[k] * tz - pos[k + 2] * tx) / Math.hypot(tx, tz);
+                uv[j + 1] = pos[k + 1];
+              }
+            } else if (uvo) {
+              uv[(o + i) * 2] += uvo[0];
+              uv[(o + i) * 2 + 1] += uvo[1];
+            }
             if (ground) ground[o + i] = pos[k + 1] - world.heightAt(pos[k], pos[k + 2]);
             if (tints && tint) {
               tints[k] = tint.r;
@@ -376,7 +401,6 @@ export class StaticWorld {
               tints[k + 2] = tint.b;
             }
           }
-          uv.set(tpl.uv, o * 2);
           if (col) col.set(tpl.col, o * 3);
           o += tpl.count;
         }

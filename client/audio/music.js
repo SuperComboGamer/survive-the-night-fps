@@ -1,6 +1,11 @@
-// Generative horror score. A handful of long-lived oscillators (drone, choir, tension strings) plus
-// pre-rendered instrument buffers (piano, music box, taiko, bass, brass, swells) scheduled with a
-// look-ahead from the engine's 200 ms tick. Never repeats identically: every choice is random.
+// Horror score in two layers, both driven from the engine's 200 ms tick:
+//  - recorded stems (CC0, samples.js): a menu theme, a few far-apart tones for the daylight hours, the night drone,
+//    a rising "dread" layer that follows how close the dead are, the horde's taiko and the boss theme, crossfaded
+//    by game state. All sit in or around D minor (the day's tones are D, A flat and C: notes of the scale below).
+//  - the generative score underneath: a handful of long-lived oscillators (drone, choir, tension strings) plus
+//    pre-rendered instrument buffers (piano, music box, taiko, bass, brass, swells) scheduled with a look-ahead.
+//    Never repeats identically: every choice is random. Each generative layer gives way to the stem cast for it
+//    once that has loaded, and stands in for it until then (or for good, when the recordings are unavailable).
 
 const LOOK = 0.5; // seconds scheduled ahead of currentTime
 const ROOT = 38; // D2
@@ -36,6 +41,103 @@ const LULLABY = [
   [7, 8, 7, 3, 0, 1, 3, 2],
 ];
 const LULLABY_BASS = [0, -4, -7, -5, 0];
+
+// Recorded stems. gain: level when fully in (the files are mastered to the level they play at, measured on the
+// music bus against the generative score they replace); tc: fade time constant (s), `in`: a faster one for coming
+// in; at: where a fresh start enters the loop (s) - left out, it starts at a random phase so no two nights open
+// alike; tone: the stem runs through a low-pass that setTone() opens and closes.
+const STEMS = {
+  menu: { key: 'mus_menu', gain: 1, tc: 2.5, in: 1.2, at: 0 },
+  day: { key: 'mus_day', gain: 1.25, tc: 5 },
+  night: { key: 'mus_night', gain: 1, tc: 4 },
+  dread: { key: 'mus_dread', gain: 0.8, tc: 2.5, in: 1 },
+  horde: { key: 'mus_horde', gain: 1, tc: 2, in: 0.5, at: 0, tone: true },
+  boss: { key: 'mus_boss', gain: 1, tc: 1.5, in: 0.08, at: 10 }, // comes in on the hit that opens the main theme
+};
+const TONE_SHUT = 420; // Hz: the horde's drums from far off, before anything is close
+
+// one looping recorded stem: decoded when first wanted, stopped (and left to be evicted) once it has faded out
+class Stem {
+  constructor(music, def) {
+    this.m = music;
+    this.def = def;
+    this.gain = music.ctx.createGain();
+    this.gain.gain.value = 0;
+    this.gain.connect(music.out);
+    this.head = this.gain; // what the source plays into
+    this.lp = null;
+    if (def.tone) {
+      this.lp = music.ctx.createBiquadFilter();
+      this.lp.type = 'lowpass';
+      this.lp.Q.value = 0.6;
+      this.lp.frequency.value = TONE_SHUT;
+      this.lp.connect(this.gain);
+      this.head = this.lp;
+    }
+    this.tone = -1;
+    this.src = null;
+    this.target = 0;
+    this.offAt = 0;
+    this.rate = 1;
+  }
+  // 0 = muffled, as if from far off; 1 = wide open
+  setTone(k, now) {
+    if (!this.lp || Math.abs(k - this.tone) < 0.02) return;
+    this.tone = k;
+    this.lp.frequency.setTargetAtTime(TONE_SHUT * Math.pow(18000 / TONE_SHUT, k), now, 0.6);
+  }
+  // the recording is, or is about to be, what plays for this layer
+  get on() {
+    const rec = this.m.e._rec;
+    return !!rec && rec.covers(this.def.key);
+  }
+  set(level, now) {
+    const d = this.def;
+    const v = level * d.gain;
+    const want = v > 0.003;
+    // get() keeps the decoded buffer alive (or brings it back) while the stem is wanted or still fading out
+    const buf = (want || this.src) && this.m.e._rec ? this.m.e._rec.get(d.key) : null;
+    if (Math.abs(v - this.target) > 0.004) {
+      if (this.src) this.gain.gain.setTargetAtTime(v, now, v > this.target ? d.in ?? d.tc : d.tc);
+      this.target = v;
+    }
+    if (want) {
+      this.offAt = 0;
+      if (!this.src && buf) this._start(buf, now);
+    } else if (this.src) {
+      if (!this.offAt) this.offAt = now + d.tc * 6 + 1;
+      else if (now > this.offAt) this._stop();
+    }
+  }
+  setRate(r, now) {
+    if (r === this.rate) return;
+    this.rate = r;
+    if (this.src) this.src.playbackRate.setTargetAtTime(r, now, 1.5);
+  }
+  _start(buf, now) {
+    const d = this.def;
+    const s = this.m.ctx.createBufferSource();
+    s.buffer = buf;
+    s.loop = true;
+    s.playbackRate.value = this.rate;
+    s.connect(this.head);
+    const g = this.gain.gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(0, now);
+    g.setTargetAtTime(this.target, now, d.in ?? d.tc);
+    s.start(now, d.at === undefined ? Math.random() * buf.duration : Math.min(d.at, buf.duration * 0.5));
+    this.src = s;
+  }
+  _stop() {
+    const s = this.src;
+    this.src = null;
+    this.offAt = 0;
+    try {
+      s.stop();
+    } catch {}
+    s.disconnect();
+  }
+}
 
 export class Music {
   constructor(engine) {
@@ -84,6 +186,11 @@ export class Music {
     this.tensionG = layer(0, 0.3);
     this.hordeG = layer(0, 0.25);
     this.bossG = layer(0, 0.18);
+    this.stems = {};
+    for (const k in STEMS) this.stems[k] = new Stem(this, STEMS[k]);
+    this.stemList = Object.values(this.stems);
+    this.genPiano = true; // generative piano / swells are part of the mix (off under the menu and boss themes)
+    this.genDrums = true; // generative taiko sequencer (off under the recorded horde / boss stems)
 
     this.last = Object.create(null);
     this.danger = 0;
@@ -404,7 +511,7 @@ export class Music {
   }
 
   _schedulePiano(now, st) {
-    if (!this._buffer('mus_piano', 2)) return;
+    if (!this.genPiano || !this._buffer('mus_piano', 2)) return;
     if (this.nextNote < now) this.nextNote = now + 0.2;
     while (this.nextNote < now + LOOK) {
       const t = this.nextNote;
@@ -426,7 +533,7 @@ export class Music {
     if (now < this.nextSwell - LOOK) return;
     const t = Math.max(now + 0.05, this.nextSwell);
     this.nextSwell = t + rand(35, 80) * (1.3 - 0.5 * st.night);
-    if (st.boss) return;
+    if (st.boss || !this.genPiano) return;
     const v = Math.floor(Math.random() * 2);
     const buf = this._buffer('mus_swell', v);
     if (!buf) return;
@@ -437,8 +544,9 @@ export class Music {
   }
 
   _sequence(now, st) {
-    const want = !st.menu && (st.horde || st.boss);
+    const want = !st.menu && (st.horde || st.boss) && this.genDrums;
     if (want) this.seqUntil = now + 6;
+    else if (!this.genDrums) this.seqUntil = 0;
     if (now > this.seqUntil) {
       this.seqStep = -1;
       return;
@@ -484,7 +592,8 @@ export class Music {
   }
 
   _tension(now, st) {
-    const target = st.menu ? 0 : clamp01(this.danger * 0.9 + (st.horde ? 0.15 : 0)) * (1 - 0.4 * st.nearFire) * (st.dead ? 0.3 : 1);
+    const gen = this.stems.dread.on ? 0 : 1; // the recorded dread layer plays this part once it has loaded
+    const target = st.menu ? 0 : gen * clamp01(this.danger * 0.9 + (st.horde ? 0.15 : 0)) * (1 - 0.4 * st.nearFire) * (st.dead ? 0.3 : 1);
     if (target > 0.02) {
       this._ensureTension();
       this.tensionOffAt = 0;
@@ -512,6 +621,7 @@ export class Music {
     this.detune = st.dead ? 0.94 : 1;
     const det = st.dead ? -35 : 0;
     for (const o of this.droneOsc) o.detune.setTargetAtTime(o._baseDet + det, now, 1.5);
+    for (const s of this.stemList) s.setRate(this.detune, now);
     if (st.menu) {
       this.menuPhrase = null;
       this.nextNote = now + 0.6;
@@ -535,15 +645,43 @@ export class Music {
     this.danger += (st.danger - this.danger) * k;
     const night = st.night;
     const fire = 1 - 0.25 * st.nearFire;
-    const drone = menu ? 0.42 : (0.14 + 0.24 * night + (st.boss ? 0.14 : 0) + (st.dead ? 0.12 : 0)) * fire;
+
+    // recorded stems. The boss theme is a full score of its own: under it the night drone drops back and the horde's
+    // taiko makes way; the dread layer follows the nearest zombie, a little held back by day and beside a fire.
+    const R = this.stems;
+    const boss = !menu && st.boss;
+    const horde = !menu && st.horde && !boss;
+    const bossRec = boss && R.boss.on;
+    const dark = clamp01((night - 0.12) / 0.55);
+    const nightLvl = menu ? 0 : dark * (bossRec ? 0.3 : horde ? 0.8 : 1) * fire;
+    // by day: sparse tones, drawing back when something is close, when the fight is on, or once you are dead
+    const dayLvl = menu || boss ? 0 : (1 - dark) * (1 - 0.7 * this.danger) * (horde ? 0.3 : 1) * (st.dead ? 0.4 : 1);
+    R.menu.set(menu ? 1 : 0, now);
+    R.day.set(dayLvl, now);
+    R.night.set(nightLvl + (st.dead && !menu ? 0.25 : 0), now);
+    R.dread.set(menu || bossRec ? 0 : clamp01(this.danger * 1.15 - 0.1) * (0.55 + 0.45 * night) * (1 - 0.35 * st.nearFire) * (st.dead ? 0.3 : 1), now);
+    // the horde's drums: dull and distant while nothing is near, opening up and swelling as the dead close in
+    const close = clamp01(this.danger * 1.5);
+    R.horde.set(horde ? 0.6 + 0.4 * close : 0, now);
+    R.horde.setTone(0.35 + 0.65 * close, now);
+    R.boss.set(boss ? 1 : 0, now);
+    const menuRec = menu && R.menu.on;
+    this.genPiano = !menuRec && !bossRec;
+    this.genDrums = boss ? !bossRec : !R.horde.on;
+
+    // generative layers, each giving way to the stem that plays its part
+    const droneGen = menu ? (menuRec ? 0 : 1) : bossRec ? 0 : 1 - (R.night.on ? 0.85 * dark : 0);
+    const drone = (menu ? 0.42 : (0.14 + 0.24 * night + (st.boss ? 0.14 : 0) + (st.dead ? 0.12 : 0)) * fire) * droneGen;
     this._set('drone', this.droneG.gain, drone, 2.5, now);
-    const choir = menu ? 0.05 : night * 0.09 * (0.4 + 0.6 * Math.max(0, Math.sin(now * 0.04)));
+    const choir = menuRec || bossRec ? 0 : menu ? 0.05 : night * 0.09 * (0.4 + 0.6 * Math.max(0, Math.sin(now * 0.04)));
     this._set('choir', this.choirG.gain, choir, 3, now);
     this._set('dLp', this.dFilter.frequency, st.dead ? 160 : menu ? 380 : 240 + 140 * night + (st.boss ? 200 : 0), 3, now);
-    const piano = menu ? 0.85 : (0.55 + 0.2 * night) * (st.horde || st.boss ? 0.55 : 1);
+    // (under the day's tones the generative notes thin out to leave them room)
+    const piano = !this.genPiano ? 0 : menu ? 0.85 : (0.55 + 0.2 * night) * (st.horde || st.boss ? 0.55 : 1) * (R.day.on ? 1 - 0.5 * (1 - dark) : 1);
     this._set('piano', this.pianoG.gain, piano, 2, now);
-    this._set('horde', this.hordeG.gain, !menu && (st.horde || st.boss) ? 0.75 : 0, st.horde || st.boss ? 1.2 : 3, now);
-    this._set('boss', this.bossG.gain, !menu && st.boss ? 0.7 : 0, st.boss ? 0.8 : 3, now);
+    const drums = !menu && (st.horde || st.boss) && this.genDrums;
+    this._set('horde', this.hordeG.gain, drums ? 0.75 : 0, drums ? 1.2 : 3, now);
+    this._set('boss', this.bossG.gain, drums && st.boss ? 0.7 : 0, st.boss ? 0.8 : 3, now);
     const lp = st.dead ? 700 : 18000 * Math.pow(3500 / 18000, st.lowHealth * 0.8);
     this._set('filter', this.filter.frequency, lp, st.dead ? 0.6 : 1, now);
     if (now > this.nextChord) {

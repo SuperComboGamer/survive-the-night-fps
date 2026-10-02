@@ -34,6 +34,7 @@
   --brush-night: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 60' preserveAspectRatio='none'><path fill='rgb(10,14,24)' fill-opacity='.8' d='M10 20C70 9 140 13 205 11C272 9 342 7 391 15L385 21L397 27L383 33L394 41C330 51 262 48 200 50C128 51 62 53 13 44L19 38L4 33L15 28L2 23Z'/><path fill='rgb(10,14,24)' fill-opacity='.5' d='M36 7C120 3 230 3 318 5L320 8C230 6 120 7 38 10Z M60 53C150 55 250 54 350 52L348 55C250 57 150 58 62 56Z'/></svg>");
   --brush-dawn: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 60' preserveAspectRatio='none'><path fill='rgb(92,52,14)' fill-opacity='.8' d='M10 20C70 9 140 13 205 11C272 9 342 7 391 15L385 21L397 27L383 33L394 41C330 51 262 48 200 50C128 51 62 53 13 44L19 38L4 33L15 28L2 23Z'/><path fill='rgb(92,52,14)' fill-opacity='.5' d='M36 7C120 3 230 3 318 5L320 8C230 6 120 7 38 10Z M60 53C150 55 250 54 350 52L348 55C250 57 150 58 62 56Z'/></svg>");
   --torn: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><path d='M0 1.2L4 .3L7 1.5L11 .4L15 1.1L19 .2L24 1.3L28 .5L33 1.4L37 .3L42 1L47 .2L52 1.5L56 .6L61 1.2L66 .2L70 1.3L75 .4L80 1.1L84 .3L89 1.4L93 .5L97 1.2L100 .4L100 99.3L96 99.8L92 98.7L87 99.6L83 98.8L78 99.9L73 98.6L69 99.5L64 98.9L59 99.8L54 98.7L49 99.6L45 98.5L40 99.7L35 98.9L30 99.8L26 98.6L21 99.5L16 98.8L12 99.9L7 98.7L3 99.6L0 98.9Z'/></svg>");
+  --torn-b: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 10' preserveAspectRatio='none'><path d='M0 0H100V5L96 8L92 4.5L87 9L83 5.5L78 8.5L73 4L69 7.5L64 5L59 9L54 5.5L49 8L45 4.5L40 9L35 6L30 8.5L26 4.5L21 8L16 5L12 9L7 5.5L3 8L0 5Z'/></svg>");
   --scratch: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><g fill='none' stroke='white' stroke-width='.08'><path d='M12 0L12.3 35L11.9 100' opacity='.6'/><path d='M47 0L46.8 60L47.2 100' opacity='.35'/><path d='M81 0L81.4 22L80.9 100' opacity='.5'/><path d='M66 30L66.1 58' opacity='.4'/></g></svg>");
 }
 
@@ -73,6 +74,8 @@ body {
   --accent: var(--blood-hi);
   --xh: rgba(242, 237, 227, 0.94);
   --shadow: 0 1px 1px rgba(0, 0, 0, 0.9), 0 0 6px rgba(0, 0, 0, 0.6), 0 0 16px rgba(0, 0, 0, 0.35);
+  /* for small type: the wide halo above smears into a grey smudge over a bright sky */
+  --shadow-s: 0 1px 1px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.8);
   position: fixed;
   inset: 0;
   z-index: 10;
@@ -211,6 +214,23 @@ body {
 .stn-ui .torn {
   -webkit-mask: var(--torn) center / 100% 100% no-repeat;
   mask: var(--torn) center / 100% 100% no-repeat;
+}
+
+/* a strip of dark paper torn off along the bottom: the objective list, the context card, the dawn report */
+.stn-ui .scrap {
+  background: linear-gradient(98deg, rgba(11, 9, 8, 0.9), rgba(11, 9, 8, 0.76) 60%, rgba(11, 9, 8, 0.5));
+  text-shadow: var(--shadow-s);
+  -webkit-mask: linear-gradient(#000, #000) top / 100% calc(100% - 6px) no-repeat, var(--torn-b) bottom / 100% 7px no-repeat;
+  mask: linear-gradient(#000, #000) top / 100% calc(100% - 6px) no-repeat, var(--torn-b) bottom / 100% 7px no-repeat;
+}
+
+.stn-ui .scrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--noise) 0 0 / 180px;
+  opacity: 0.06;
+  pointer-events: none;
 }
 
 .stn-ui .panel-h {
@@ -425,14 +445,14 @@ body {
 
 .stn-ui .hud-info {
   position: absolute;
-  top: calc(20 * var(--u));
+  top: calc(18 * var(--u));
   left: calc(26 * var(--u));
   display: flex;
-  gap: calc(16 * var(--u));
+  gap: calc(14 * var(--u));
   font: max(10px, calc(13 * var(--u))) / 1 var(--f-mono);
   letter-spacing: 0.08em;
-  color: var(--bone-dim);
-  text-shadow: var(--shadow);
+  color: var(--bone-2);
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .hud-info > span {
@@ -443,7 +463,7 @@ body {
 
 .stn-ui .hud-info b {
   font-weight: 400;
-  color: var(--bone-2);
+  color: var(--bone);
 }
 
 .stn-ui .hi-ico svg {
@@ -451,7 +471,8 @@ body {
   height: calc(15 * var(--u));
   min-width: 11px;
   min-height: 11px;
-  opacity: 0.75;
+  opacity: 0.9;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.9));
 }
 
 .stn-ui .hi-ping.bad,
@@ -459,27 +480,26 @@ body {
 .stn-ui .hi-fps.bad,
 .stn-ui .hi-fps.bad b {
   color: var(--amber);
-}/* ---------- voice speakers */
+}/* ---------- voice speakers: who is talking, parked in the comms row over the vitals beside your own mic */
 
 
 .stn-ui .voice {
-  position: absolute;
-  top: calc(48 * var(--u));
-  left: calc(22 * var(--u));
   display: flex;
-  flex-direction: column;
-  gap: calc(4 * var(--u));
+  gap: calc(5 * var(--u));
+  margin-left: calc(4 * var(--u));
 }
 
 .stn-ui .vc-row {
   display: flex;
   align-items: center;
   gap: calc(7 * var(--u));
-  padding: calc(3 * var(--u)) calc(14 * var(--u)) calc(3 * var(--u)) calc(6 * var(--u));
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.55), transparent);
+  padding: calc(3 * var(--u)) calc(10 * var(--u)) calc(3 * var(--u)) calc(7 * var(--u));
+  background: rgba(9, 7, 6, 0.6);
+  border-left: 2px solid var(--good);
   font: 400 max(11px, calc(14 * var(--u))) / 1.1 var(--f-num);
   letter-spacing: 0.04em;
-  text-shadow: var(--shadow);
+  text-shadow: var(--shadow-s);
+  white-space: nowrap;
   animation: stn-slideInL 0.2s ease-out;
 }
 
@@ -527,6 +547,11 @@ body {
 .stn-ui.inv-open .clk-dial,
 .stn-ui.inv-open .boss {
   display: none;
+}
+
+/* the compact clock steps left of the inventory's close button */
+.stn-ui.inv-open .top-right {
+  right: max(132px, calc(160 * var(--u)));
 }
 
 .stn-ui.inv-open .clock {
@@ -1034,13 +1059,11 @@ body {
   left: 0;
   top: calc(112 * var(--u));
   transform: translateX(-50%);
-  width: calc(230 * var(--u));
-  min-width: 170px;
-  padding: calc(8 * var(--u)) calc(12 * var(--u)) calc(9 * var(--u));
-  background: linear-gradient(90deg, rgba(8, 6, 5, 0.66), rgba(8, 6, 5, 0.4));
+  width: calc(240 * var(--u));
+  min-width: 176px;
+  padding: calc(8 * var(--u)) calc(12 * var(--u)) calc(9 * var(--u) + 6px);
   border-left: 2px solid var(--amber);
   color: var(--bone);
-  text-shadow: var(--shadow);
   animation: stn-promptIn 0.2s ease-out;
 }
 
@@ -1180,7 +1203,7 @@ body {
   bottom: calc(26 * var(--u));
   display: flex;
   flex-direction: column;
-  gap: calc(7 * var(--u));
+  gap: calc(6 * var(--u));
   color: var(--hud);
   text-shadow: var(--shadow);
 }
@@ -1196,13 +1219,38 @@ body {
   z-index: -1;
 }
 
-.stn-ui .v-mic {
+/* comms row over the vitals: microphone, a handset while you carry a walkie-talkie, then whoever is talking */
+.stn-ui .v-comms {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  margin-bottom: calc(2 * var(--u));
+}
+
+.stn-ui .v-radio {
+  flex: none;
   width: calc(20 * var(--u));
   height: calc(20 * var(--u));
   min-width: 14px;
   min-height: 14px;
-  margin-bottom: calc(2 * var(--u));
+  color: var(--good);
+  opacity: 0.85;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
+}
+
+.stn-ui .v-radio svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .v-mic {
+  flex: none;
+  width: calc(20 * var(--u));
+  height: calc(20 * var(--u));
+  min-width: 14px;
+  min-height: 14px;
   opacity: 0.45;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
   transition: opacity 0.1s, color 0.1s;
 }
 
@@ -1247,16 +1295,41 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* the health bar, with the stamina line riding under it */
+.stn-ui .v-stack {
+  display: flex;
+  flex-direction: column;
+  gap: max(3px, calc(4 * var(--u)));
+}
+
 .stn-ui .v-bar {
   position: relative;
-  width: calc(230 * var(--u));
-  min-width: 150px;
-  height: calc(9 * var(--u));
-  min-height: 6px;
-  background: rgba(10, 8, 7, 0.6);
-  box-shadow: inset 0 0 0 1px rgba(230, 223, 207, 0.16), 0 0 8px rgba(0, 0, 0, 0.4);
+  width: calc(236 * var(--u));
+  min-width: 156px;
+  height: calc(10 * var(--u));
+  min-height: 7px;
+  background: rgba(10, 8, 7, 0.68);
+  box-shadow: inset 0 0 0 1px rgba(230, 223, 207, 0.2), 0 1px 5px rgba(0, 0, 0, 0.5);
   transform: skewX(-18deg);
   overflow: hidden;
+}
+
+/* quarter notches on the health bar */
+.stn-ui .v-hp .v-stack > .v-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent calc(25% - 1px),
+    rgba(8, 6, 5, 0.8) calc(25% - 1px) calc(25% + 1px),
+    transparent calc(25% + 1px) calc(50% - 1px),
+    rgba(8, 6, 5, 0.8) calc(50% - 1px) calc(50% + 1px),
+    transparent calc(50% + 1px) calc(75% - 1px),
+    rgba(8, 6, 5, 0.8) calc(75% - 1px) calc(75% + 1px),
+    transparent calc(75% + 1px)
+  );
+  pointer-events: none;
 }
 
 .stn-ui .v-fill,
@@ -1323,8 +1396,6 @@ body {
 }
 
 .stn-ui .v-ar .v-bar {
-  width: calc(180 * var(--u));
-  min-width: 120px;
   height: calc(6 * var(--u));
   min-height: 4px;
 }
@@ -1337,20 +1408,28 @@ body {
   color: var(--steel);
 }
 
+/* stamina: a thin line continuing the slant of the health bar above it */
+.stn-ui .v-st {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  transform: translateX(calc(-3.4 * var(--u)));
+}
+
 .stn-ui .v-st .v-ico {
-  width: calc(14 * var(--u));
-  height: calc(14 * var(--u));
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
   min-width: 10px;
   min-height: 10px;
-  margin: 0 max(2px, calc(3 * var(--u)));
-  opacity: 0.6;
+  margin: calc(-5 * var(--u)) 0;
+  opacity: 0; /* the bolt only shows once you are spent */
+  transition: opacity 0.2s;
 }
 
 .stn-ui .v-st .v-bar {
-  width: calc(230 * var(--u));
   height: calc(3.5 * var(--u));
   min-height: 3px;
-  margin-left: calc(max(50px, calc(72 * var(--u))) + 10 * var(--u));
+  box-shadow: inset 0 0 0 1px rgba(230, 223, 207, 0.1), 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
 .stn-ui .v-st .v-fill {
@@ -1374,10 +1453,11 @@ body {
 .stn-ui .v-flash {
   display: flex;
   align-items: center;
-  gap: calc(8 * var(--u));
-  margin-top: calc(2 * var(--u));
+  gap: calc(10 * var(--u));
+  margin-top: calc(3 * var(--u));
   font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
-  color: var(--bone-dim);
+  color: var(--bone-2);
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .batt {
@@ -1386,7 +1466,6 @@ body {
   height: calc(13 * var(--u));
   min-width: 20px;
   min-height: 10px;
-  margin-left: calc(3 * var(--u));
   padding: 2px;
   border: 1.5px solid rgba(230, 223, 207, 0.6);
   border-radius: 2px;
@@ -1413,7 +1492,11 @@ body {
 }
 
 .stn-ui .fl-beam {
-  opacity: 0.25;
+  display: grid;
+  place-items: center;
+  width: calc(20 * var(--u));
+  min-width: 14px;
+  opacity: 0.4;
   transition: opacity 0.15s, color 0.15s;
 }
 
@@ -1619,46 +1702,69 @@ body {
   opacity: 1;
 }
 
-.stn-ui .a-type {
-  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
-}
-
-.stn-ui .a-type.hide {
-  display: none;
-}
-
-.stn-ui .reload {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: calc(5 * var(--u));
-  margin-top: calc(3 * var(--u));
-}
-
-.stn-ui .reload-bar {
+/* the magazine: one slanted pip per round under the count - --n rounds, the last --m of them lit */
+.stn-ui .a-pips {
+  --n: 30;
+  --m: 0;
+  --pitch: min(calc(12 * var(--u)), calc(176 * var(--u) / var(--n)));
   position: relative;
-  width: calc(150 * var(--u));
-  min-width: 100px;
-  height: calc(3 * var(--u));
-  min-height: 2px;
-  background: rgba(255, 255, 255, 0.16);
-  overflow: hidden;
+  width: calc(var(--pitch) * var(--n));
+  height: calc(9 * var(--u));
+  min-height: 6px;
+  margin: calc(4 * var(--u)) calc(2 * var(--u)) calc(5 * var(--u)) 0;
+  color: rgba(230, 223, 207, 0.2);
+  transform: skewX(-18deg);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
 }
 
-.stn-ui .reload-bar i {
+/* whole-pixel pips stay crisp */
+@supports (width: round(nearest, 1px, 1px)) {
+  .stn-ui .a-pips {
+    --pitch: max(3px, round(nearest, min(calc(12 * var(--u)), calc(176 * var(--u) / var(--n))), 1px));
+  }
+}
+
+.stn-ui .a-pips,
+.stn-ui .a-pips i {
+  background: linear-gradient(90deg, transparent 0 2px, currentColor 2px) 0 0 / var(--pitch) 100% repeat-x;
+}
+
+.stn-ui .a-pips i {
   position: absolute;
   inset: 0;
-  background: var(--amber);
-  transform-origin: left;
+  color: var(--hud);
+  clip-path: inset(0 0 0 calc(100% - 100% * var(--m) / var(--n)));
 }
 
-.stn-ui .reload-t {
-  font: max(10px, calc(11.5 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.3em;
+/* too many rounds to tell apart: a plain gauge */
+.stn-ui .a-pips.dense {
+  --pitch: calc(176 * var(--u) / var(--n));
+}
+
+.stn-ui .a-pips.dense,
+.stn-ui .a-pips.dense i {
+  background: currentColor;
+}
+
+.stn-ui .a-pips.low i,
+.stn-ui .ammo.reloading .a-pips i {
+  color: var(--amber);
+}
+
+.stn-ui .a-type {
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.18em;
   text-transform: uppercase;
+  color: var(--bone-2);
+  text-shadow: var(--shadow-s);
+}
+
+/* reloading: the pips fill back up in amber */
+.stn-ui .ammo.reloading .a-mag {
+  opacity: 0.45;
+}
+
+.stn-ui .ammo.reloading .a-type {
   color: var(--amber);
   animation: stn-warnpulse 0.9s infinite;
 }/* ---------- zombie mode */
@@ -1840,6 +1946,46 @@ body {
   height: 1em;
 }
 
+/* over the walkie-talkie */
+.stn-ui .chat-line.radio {
+  font-family: var(--f-mono);
+  color: #d5e6bd;
+}
+
+.stn-ui .chat-line.radio .chat-name {
+  color: var(--good);
+}
+
+.stn-ui .chat-r {
+  display: inline-block;
+  vertical-align: -0.15em;
+  margin-right: 0.35em;
+  color: var(--good);
+}
+
+.stn-ui .chat-r svg {
+  width: 1em;
+  height: 1em;
+}
+
+/* from the edge of earshot / heard by nobody */
+.stn-ui .chat-line.faint .chat-text {
+  font-style: italic;
+  opacity: 0.55;
+}
+
+.stn-ui .chat-line.unheard .chat-text {
+  opacity: 0.55;
+}
+
+.stn-ui .chat-note {
+  margin-left: 0.7em;
+  font: max(9px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
 .stn-ui .chat-input {
   display: none;
 }
@@ -1871,6 +2017,14 @@ body {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--blood-lite);
+}
+
+.stn-ui .chat.on-radio .chat-say {
+  color: var(--good);
+}
+
+.stn-ui .chat.on-radio.open .chat-input {
+  border-left-color: var(--good);
 }
 
 .stn-ui .chat-field {
@@ -2045,7 +2199,7 @@ body {
   position: absolute;
   left: 50%;
   top: 44%;
-  width: 150%;
+  width: 132%; /* short enough to stay clear of the objective list and the killfeed */
   height: 78%;
   transform: translate(-50%, -50%);
   background: var(--brush-ink) center / 100% 100% no-repeat;
@@ -2215,10 +2369,12 @@ body {
 
 
 .stn-ui .build {
+  /* in the gap between the vitals and the weapon list, not across them: centred on the screen while
+     there is room, sliding right and squeezing its cards as the window narrows */
   position: absolute;
-  left: 50%;
+  left: calc(392 * var(--u));
+  right: max(calc(214 * var(--u)), min(calc(392 * var(--u)), calc(100% - 1512 * var(--u))));
   bottom: calc(22 * var(--u));
-  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2280,13 +2436,14 @@ body {
   display: flex;
   align-items: flex-end;
   gap: calc(6 * var(--u));
+  max-width: 100%;
   padding-top: calc(6 * var(--u));
 }
 
 .stn-ui .bc {
   position: relative;
-  width: calc(106 * var(--u));
-  min-width: 78px;
+  flex: 0 1 calc(106 * var(--u));
+  min-width: 74px;
   padding: calc(9 * var(--u)) calc(6 * var(--u)) calc(8 * var(--u));
   display: flex;
   flex-direction: column;
@@ -2345,7 +2502,7 @@ body {
 }
 
 .stn-ui .bc-name {
-  font: 500 max(9.5px, calc(11.5 * var(--u))) / 1 var(--f-num);
+  font: 500 max(9px, calc(11.5 * var(--u))) / 1 var(--f-num);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -2799,6 +2956,9 @@ body {
 .stn-ui .c-armor {
   --cat: #87a36e;
 }
+.stn-ui .c-gear {
+  --cat: #6fb39a;
+}
 .stn-ui .c-weapon {
   --cat: #9fb0bb;
 }
@@ -2906,7 +3066,7 @@ body {
 
 .stn-ui .sv {
   display: grid;
-  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto;
+  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto auto;
   align-items: center;
   gap: calc(7 * var(--u));
   padding: calc(3 * var(--u)) calc(6 * var(--u));
@@ -2953,6 +3113,22 @@ body {
 .stn-ui .sv.st-dead .sv-name {
   text-decoration: line-through;
   text-decoration-color: rgba(212, 42, 42, 0.8);
+}
+
+.stn-ui .sv-radio {
+  opacity: 0;
+  color: var(--good);
+}
+
+.stn-ui .sv-radio.on {
+  opacity: 0.85;
+}
+
+.stn-ui .sv-radio svg {
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
 }
 
 .stn-ui .sv-mic {

@@ -1,11 +1,12 @@
 // Headless test bots: node scripts/bot.js [bots=2] [seconds=20] [url=ws://localhost:3000/ws]
 // Each bot joins, runs the shared player simulation for prediction, wanders + shoots, decodes every
-// snapshot, and reports bandwidth and prediction error (validates client/server determinism).
-import { C2S, S2C, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, dqangle16, qpitch, dqpitch } from '../shared/protocol.js';
-import { BTN, CMD_DT } from '../shared/constants.js';
+// snapshot, and reports bandwidth and prediction error (validates client/server determinism): the server only
+// sends a bot its own state when the two disagree, so "rebased" counts the corrections and "pred err" their size.
+import { C2S, S2C, SNAP, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, dqangle16, qpitch, dqpitch, writeInput } from '../shared/protocol.js';
+import { BTN, CMD_DT, CMDS_PER_PACKET } from '../shared/constants.js';
 import { createWorld } from '../shared/world.js';
-import { createPlayerState, simulatePlayer, copyPlayerState } from '../shared/playersim.js';
-import { readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
+import { createPlayerState, simulatePlayer, copyPlayerState, hashPlayerState } from '../shared/playersim.js';
+import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { ENT } from '../shared/protocol.js';
 import { makeBox, COL } from '../shared/collision.js';
 import { STRUCT_DEFS } from '../shared/defs.js';
@@ -19,13 +20,14 @@ function runBot(idx) {
   return new Promise((resolve) => {
     const ws = new WebSocket(URL);
     ws.binaryType = 'arraybuffer';
-    const st = { id: 0, world: null, bytes: 0, msgs: 0, snaps: 0, maxErr: 0, sumErr: 0, errN: 0, bigErr: 0, events: 0, ents: new Map(), zombies: 0, items: 0, structs: 0, global: null, self: {}, kills: 0, hitmarks: 0, entErrors: 0 };
+    const st = { id: 0, world: null, bytes: 0, msgs: 0, up: 0, upMsgs: 0, snaps: 0, syncs: 0, net: { tick: 0, ack: 0 }, maxErr: 0, sumErr: 0, errN: 0, bigErr: 0, events: 0, ents: new Map(), zombies: 0, items: 0, structs: 0, global: null, self: {}, kills: 0, hitmarks: 0, entErrors: 0 };
     const pred = createPlayerState();
     const pending = [];
     let seq = 0;
     let yaw = Math.random() * 6.28;
     let t = 0;
     let lastTick = 0;
+    let synced = false; // got the first server state
     const store = {
       ents: st.ents,
       onCreate(e) {
@@ -87,40 +89,47 @@ function runBot(idx) {
         const seed = r.u32();
         if (!worlds.has(seed)) worlds.set(seed, createWorld(seed));
         st.world = createWorld(seed); // own copy (structure grid is per client)
-        interval = setInterval(tick, CMD_DT * 1000 * 2);
+        interval = setInterval(tick, CMD_DT * 1000 * CMDS_PER_PACKET);
+      } else if (type === S2C.WORLD_RESET) {
+        st.world = createWorld(r.u32()); // a new playthrough on a new map
       } else if (type === S2C.SNAPSHOT) {
         st.snaps++;
-        const tick = r.u32();
-        const ack = r.u16();
+        const flags = readHeader(r, st.net);
+        const tick = st.net.tick;
+        const ack = st.net.ack;
         lastTick = tick;
-        if (r.u8()) st.global = readGlobal(r);
-        readSelf(r, st.self);
+        if (flags & SNAP.GLOBAL) st.global = readGlobal(r, st.global);
+        const sync = readSelf(r, st.self, flags);
         try {
-          readEntities(r, store, tick);
+          readEntities(r, store, tick, flags);
         } catch (err) {
           st.entErrors++;
           console.log('entity decode error', err.message);
           return;
         }
-        readEvents(r, handler);
+        readEvents(r, handler, flags, st.ents);
         if (r.left !== 0) console.log(`bot${idx}: ${r.left} trailing bytes in snapshot!`);
-        // reconciliation check: our predicted state after cmd `ack` vs server
         const idxAck = pending.findIndex((p) => p.seq === ack);
-        if (idxAck >= 0) {
-          const pp = pending[idxAck].state;
-          const err = Math.hypot(pp.x - st.self.x, pp.y - st.self.y, pp.z - st.self.z);
-          st.maxErr = Math.max(st.maxErr, err);
-          st.sumErr += err;
-          st.errN++;
-          if (err > 0.05) st.bigErr++;
-          pending.splice(0, idxAck + 1);
-        } else {
-          // drop everything the server has already consumed (seq <= ack, wrap-aware)
-          while (pending.length && ((ack - pending[0].seq) & 0xffff) < 0x8000) pending.shift();
+        if (sync) {
+          // the server sent its state: how far off was our prediction of the acked command?
+          st.syncs++;
+          if (idxAck >= 0 && synced) {
+            const pp = pending[idxAck].state;
+            const err = Math.hypot(pp.x - st.self.x, pp.y - st.self.y, pp.z - st.self.z);
+            st.maxErr = Math.max(st.maxErr, err);
+            st.sumErr += err;
+            st.errN++;
+            if (err > 0.05) st.bigErr++;
+          }
         }
-        // reconcile: reset to server state and replay remaining
-        copyPlayerState(pred, st.self);
-        for (const p of pending) simulatePlayer(pred, p.cmd, st.world, null);
+        // drop everything the server has already consumed (seq <= ack, wrap-aware)
+        while (pending.length && ((ack - pending[0].seq) & 0xffff) < 0x8000) pending.shift();
+        if (sync) {
+          // rebase: reset to the server state and replay what it hasn't seen
+          synced = true;
+          copyPlayerState(pred, st.self);
+          for (const p of pending) simulatePlayer(pred, p.cmd, st.world, null);
+        }
         st.zombies = 0;
         st.items = 0;
         st.structs = 0;
@@ -132,12 +141,12 @@ function runBot(idx) {
       }
     };
     function tick() {
-      if (!st.world || ws.readyState !== 1) return;
+      if (!st.world || ws.readyState !== 1 || !synced) return;
       const w = new Writer(64);
       w.u8(C2S.INPUT);
       w.u16(lastTick - 2);
       w.u8(128);
-      w.u8(2);
+      const cmds = [];
       // hunter mode: aim at the nearest zombie (interpolated ~2 ticks back like a real client)
       let target = null;
       if (process.env.HUNT) {
@@ -151,7 +160,7 @@ function runBot(idx) {
           }
         }
       }
-      for (let k = 0; k < 2; k++) {
+      for (let k = 0; k < CMDS_PER_PACKET; k++) {
         t += CMD_DT;
         let buttons = 0;
         let pitch = -0.05;
@@ -180,12 +189,11 @@ function runBot(idx) {
         copyPlayerState(snap, pred);
         pending.push({ seq, cmd, state: snap });
         if (pending.length > 120) pending.shift();
-        w.u16(seq);
-        w.u16(buttons);
-        w.u16(qy);
-        w.i16(qp);
-        w.u8(slot);
+        cmds.push({ seq, buttons, qyaw: qy, qpitch: qp, slot });
       }
+      writeInput(w, cmds, hashPlayerState(pred));
+      st.up += w.o;
+      st.upMsgs++;
       ws.send(w.bytes());
       // occasionally try building a barricade near camp
       if (Math.random() < 0.01) {
@@ -196,6 +204,8 @@ function runBot(idx) {
         a.i16(Math.round((pred.x - Math.sin(pred.yaw) * 3) * 64));
         a.i16(Math.round((pred.z - Math.cos(pred.yaw) * 3) * 64));
         a.u8(Math.floor(Math.random() * 256));
+        st.up += a.o;
+        st.upMsgs++;
         ws.send(a.bytes());
       }
     }
@@ -204,7 +214,7 @@ function runBot(idx) {
       ws.close();
       const secs = SECONDS;
       console.log(
-        `bot${idx}: id=${st.id} snaps=${st.snaps} ${(st.bytes / secs / 1024).toFixed(2)} KB/s  avg ${(st.bytes / Math.max(1, st.msgs)).toFixed(0)} B/msg | pred err avg ${(st.sumErr / Math.max(1, st.errN) * 100).toFixed(2)}cm max ${(st.maxErr * 100).toFixed(1)}cm big=${st.bigErr}/${st.errN} | ents z=${st.zombies} items=${st.items} structs=${st.structs} | hits=${st.hitmarks} kills=${st.kills} entErr=${st.entErrors} | phase=${st.global?.phase} day=${st.global?.day} t=${st.global?.timeLeft}`,
+        `bot${idx}: id=${st.id} snaps=${st.snaps} down ${(st.bytes / secs / 1024).toFixed(2)} KB/s ${(st.msgs / secs).toFixed(1)} msg/s avg ${(st.bytes / Math.max(1, st.msgs)).toFixed(0)} B/msg, up ${(st.up / secs / 1024).toFixed(2)} KB/s ${(st.upMsgs / secs).toFixed(1)} msg/s | rebased ${st.syncs}/${st.snaps} | pred err avg ${(st.sumErr / Math.max(1, st.errN) * 100).toFixed(2)}cm max ${(st.maxErr * 100).toFixed(1)}cm big=${st.bigErr}/${st.errN} | ents z=${st.zombies} items=${st.items} structs=${st.structs} | hits=${st.hitmarks} kills=${st.kills} entErr=${st.entErrors} | phase=${st.global?.phase} day=${st.global?.day} t=${st.global?.timeLeft}`,
       );
       resolve(st);
     }, SECONDS * 1000);

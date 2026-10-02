@@ -7,11 +7,12 @@ const KEY = 'stn.settings';
 export const DEFAULT_SETTINGS = Object.freeze({
   sensitivity: 1.0,
   fov: 75,
-  masterVolume: 0.8,
+  masterVolume: 0.4,
   musicVolume: 0.6,
   sfxVolume: 0.9,
   voiceVolume: 1,
   quality: 'medium',
+  renderScale: 1,
   pushToTalk: true,
   invertY: false,
   rawMouse: true,
@@ -26,6 +27,7 @@ const NUM_RANGES = {
   musicVolume: [0, 1],
   sfxVolume: [0, 1],
   voiceVolume: [0, 1],
+  renderScale: [0.5, 1],
 };
 
 export function sanitizeSettings(s) {
@@ -35,7 +37,7 @@ export function sanitizeSettings(s) {
       const v = Number(s[k]);
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
-    if (['low', 'medium', 'high'].includes(s.quality)) out.quality = s.quality;
+    if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
     for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
@@ -80,7 +82,8 @@ const SECTIONS = [
   {
     title: 'Graphics',
     rows: [
-      { k: 'quality', label: 'Quality', type: 'seg', options: ['low', 'medium', 'high'] },
+      { k: 'quality', label: 'Quality', type: 'seg', options: ['low', 'medium', 'high', 'ultra'], hint: 'Shadows, sun rays, ambient occlusion, grass density, view distance' },
+      { k: 'renderScale', label: 'Render scale', type: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
       { k: 'showFps', label: 'Show FPS counter', type: 'toggle' },
     ],
   },

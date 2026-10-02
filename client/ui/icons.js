@@ -203,6 +203,22 @@ const ITEM_ICONS = {
       P('M51 31.1H61L58 28.9H51Z') +
       S('M89 25Q101 28 89 31', 1.4), // stirrup
   ],
+  // pipe lance with a finned shield and a flared nozzle, gas bottle for a stock, fuel flask hung underneath
+  [ITEM.FLAMETHROWER]: [
+    128,
+    44,
+    P('M6 11.4H28Q34 11.4 34 15.4V19.4Q34 23.4 28 23.4H6Q2 23.4 2 19.4V15.4Q2 11.4 6 11.4Z') + // gas bottle
+      P('M33 9.6H67V23H33Z') + // receiver
+      P('M39 22.6H47.6L44.6 35.6Q44.2 36.8 43 36.8H37.6Q36.4 36.8 36.8 35.6Z') + // grip
+      S('M47.6 23.4Q52 23.8 51.4 28.6Q50.8 30 47.8 29.9', 1.6) + // trigger guard
+      P('M58 22.6H63V26.4H58Z') + // flask neck
+      P('M56.4 26H64.6Q66.6 26 66.6 28V40Q66.6 42 64.6 42H56.4Q54.4 42 54.4 40V28Q54.4 26 56.4 26Z') + // fuel flask
+      P('M67 13.6H113V18.6H67Z') + // lance
+      P('M71 11.6H90V20.6H71Z') + // wooden sleeve
+      [95, 99.2, 103.4, 107.6].map((x) => P(rct(x, 11, 2.2, 10.2))).join('') + // heat shield fins
+      P('M112 13.2L123 10V22.2L112 19Z') + // nozzle
+      S('M67 22.2H108L120 24', 1.2), // pilot line
+  ],
   [ITEM.PISTOL]: [
     64,
     44,
@@ -319,6 +335,24 @@ const ITEM_ICONS = {
         rct(9, 24.4, 22, 1.3) +
         rct(19.35, 16.3, 1.3, 19),
     ),
+  ],
+  // ---------------- gear
+  // handset: stub antenna and channel knob on top, speaker grille, display, talk key on the side
+  [ITEM.WALKIE]: [
+    32,
+    40,
+    P(rct(9.4, 1.6, 2.6, 10.6)) +
+      P(rct(18.4, 8.2, 3.6, 4)) +
+      P(rct(4.8, 17, 1.6, 8)) +
+      E(
+        'M9 12H23Q25 12 25 14V36.4Q25 38.4 23 38.4H9Q7 38.4 7 36.4V14Q7 12 9 12Z' +
+          rct(10, 15.2, 12, 1.5) +
+          rct(10, 18.2, 12, 1.5) +
+          rct(10, 21.2, 12, 1.5) +
+          rct(10, 25.6, 12, 4.6) +
+          circ(12.6, 34.2, 1.4) +
+          circ(19.4, 34.2, 1.4),
+      ),
   ],
   // ---------------- resources
   [ITEM.WOOD]: [
@@ -479,6 +513,13 @@ const ITEM_ICONS = {
   [ITEM.AMMO_308]: [36, 40, rifleRound(8, 8, 39) + rifleRound(20, 8, 39)],
   [ITEM.AMMO_556]: [36, 36, [2.4, 10.6, 18.8, 27].map((x) => rifleRound(x, 5.4, 35)).join('')],
   [ITEM.AMMO_BOLTS]: [36, 40, bolt(7.5) + bolt(18) + bolt(28.5)],
+  // fuel flask: screw cap, a flame stencilled on the side
+  [ITEM.AMMO_FUEL]: [
+    36,
+    38,
+    P(rct(14.5, 2.4, 7, 4.2)) +
+      E('M11 7.6H25Q29 7.6 29 11.6V32Q29 36 25 36H11Q7 36 7 32V11.6Q7 7.6 11 7.6Z' + 'M18 13.6Q23.4 19 22.4 24.4Q21.6 28.6 18 28.6Q14.4 28.6 13.6 24.4Q13.2 21.2 15.4 19Q15.4 22.4 17.2 22.8Q16.2 18.2 18 13.6Z'),
+  ],
   // ---------------- car parts
   [ITEM.CAR_BATTERY]: [
     40,
@@ -658,6 +699,12 @@ const GLYPHS = {
   xmark: S('M6 6L18 18M18 6L6 18', 2.4),
   sun: P(circ(12, 12, 4.8)) + S(raysPath(12, 12, 7.4, 10.4, 8), 1.6),
   moon: P('M15.6 2.4A10 10 0 1 0 21.6 16A8 8 0 0 1 15.6 2.4Z'),
+  radio:
+    '<g transform="translate(2.6 0)">' +
+    E('M5.6 10H13.4Q15 10 15 11.6V21Q15 22.6 13.4 22.6H5.6Q4 22.6 4 21V11.6Q4 10 5.6 10Z' + rct(6.2, 12.2, 6.6, 1.2) + rct(6.2, 14.5, 6.6, 1.2) + circ(9.5, 19.2, 1.5)) +
+    P(rct(6, 3, 1.9, 7.2)) +
+    S('M11.2 3.2A3.4 3.4 0 0 1 11.2 7.2M13.8 1.8A6.4 6.4 0 0 1 13.8 8.6', 1.5) +
+    '</g>',
   battery: E('M3 7H19Q20 7 20 8V16Q20 17 19 17H3Q2 17 2 16V8Q2 7 3 7Z' + 'M3.6 8.6H18.4V15.4H3.6Z') + P(rct(20.4, 10, 2, 4)),
   flashlight: P('M2 9.6H11L15 7V17L11 14.4H2Z') + S('M17.6 8L22 6M17.6 12H22.4M17.6 16L22 18', 1.5),
   exit: S('M14 4H20V20H14M10 8L6 12L10 16M6 12H16', 2),

@@ -1,7 +1,7 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
-import { ENT, PFLAG, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
+import { ENT, PFLAG, ZSTATUS, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { SERVER_TICK_RATE } from '../../shared/constants.js';
@@ -15,6 +15,7 @@ import { getTexture } from '../render/textures.js';
 const RING = 10;
 const TAU = Math.PI * 2;
 const MAX_GLINTS = 96;
+const HEAVY_STEP_SHAKE = 14; // a tank's footfall jolts the camera inside this distance (m)
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
 function glintTexture() {
@@ -237,10 +238,19 @@ const _pv = new THREE.Matrix4();
 const _sph = new THREE.Sphere();
 const _up = new THREE.Vector3(0, 1, 0);
 
+function setShadowFlags(obj, cast, receive) {
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = cast;
+    o.receiveShadow = receive;
+  });
+}
+
 export class Entities {
   constructor(game) {
     this.g = game;
     this.ents = new Map();
+    this.charShadows = !!game.renderer?.q?.charShadows;
     this.corpses = [];
     this.zombieCount = 0;
     this.store = {
@@ -320,6 +330,12 @@ export class Entities {
   }
 
   // ---------------------------------------------------------------- lifecycle
+  setCharShadows(on) {
+    if (on === this.charShadows) return;
+    this.charShadows = on;
+    for (const e of this.ents.values()) if (e.view && (e.kind === ENT.ZOMBIE || e.kind === ENT.PLAYER)) setShadowFlags(e.view.object, on, false);
+  }
+
   onCreate(e, t) {
     e.samples = new Samples();
     this.pushSample(e, t);
@@ -338,21 +354,29 @@ export class Entities {
         case ENT.ZOMBIE: {
           e.vx = e.vy = e.vz = 0; // rendered velocity (m/s) and fading correction offset
           e.ex = e.ey = e.ez = 0;
+          e.sx = e.rx; // where its path was sampled last frame (the drawn position is this + the offset)
+          e.sy = e.ry;
+          e.sz = e.rz;
           const v = createZombie(e.ztype, e.variant * 7 + e.id);
           e.view = v;
+          setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
           e.growlT = e.ztype === ZTYPE.SHADE ? 0.5 + Math.random() * 2 : 2 + Math.random() * 8;
+          e.voice = 0.92 + ((((e.id * 2654435761) >>> 0) % 997) / 997) * 0.2; // its own throat: everything it utters is pitched by this
           e.stepT = Math.random();
           e.lastHp = e.q[5];
           e.dead = e.q[4] === ZANIM.DEAD;
           if (ZOMBIE_DEFS[e.ztype].boss) this.bossEnt = e;
           if (e.ztype === ZTYPE.BOSS_ABOMINATION || e.ztype === ZTYPE.BOSS_HIVEQUEEN) e.loop = g.audio.createLoop?.('boss_breath', e.rx, e.ry + 2, e.rz);
+          // the wet, rattling breath of the dead: only the nearest few are ever heard (the audio engine caps the loop)
+          else if (!e.dead && !ZOMBIE_DEFS[e.ztype].flying && e.ztype !== ZTYPE.DOG && e.ztype !== ZTYPE.SHADE) e.loop = g.audio.createLoop?.('zombie_idle', e.rx, e.ry + 1.5, e.rz);
           this.zombieCount++;
           break;
         }
         case ENT.PLAYER: {
           const v = createSurvivor(e.id * 31 + 7);
           e.view = v;
+          setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
           e.weapon = -1;
           e.zombieForm = null;
@@ -388,6 +412,7 @@ export class Entities {
           const v = createStructure(e.stype);
           v.position.set(e.rx, e.ry, e.rz);
           v.rotation.y = yaw;
+          setShadowFlags(v, true, true);
           this.scene.add(v);
           e.obj = v;
           e.hpFrac = e.q[3] / 255;
@@ -536,12 +561,17 @@ export class Entities {
     e.obj?.userData.setLit?.(lit);
   }
 
+  // crate states: 3 tumbling off the plane's ramp, 0 under the canopy, 1 landed, 2 opened
   applyCrateState(e) {
     const st = e.q[3];
     if (st === e.state) return;
+    const prev = e.state;
     e.state = st;
     const para = e.obj?.userData.parachute;
-    if (para) para.visible = st === 0;
+    if (para) {
+      para.visible = st === 0;
+      if (st === 0 && prev === 3) e.chuteT = 0; // the canopy blooms open
+    }
     if (st === 1 && !e.emitter) e.emitter = this.g.effects.createEmitter('smoke_red', e.rx, e.ry, e.rz);
     if (st === 2 && e.emitter) {
       this.g.effects.removeEmitter(e.emitter);
@@ -560,6 +590,7 @@ export class Entities {
       e.view = null;
       this.zombieCount--;
       if (e.loop) e.loop.stop();
+      if (e.burnLoop) e.burnLoop.stop();
       if (this.bossEnt === e) this.bossEnt = null;
       return;
     }
@@ -595,8 +626,30 @@ export class Entities {
     if (e.col) g.world.structGrid.remove(e.col);
     if (e.emitter) g.effects.removeEmitter(e.emitter);
     if (e.loop) e.loop.stop();
+    if (e.burnLoop) e.burnLoop.stop();
     e.view = null;
     e.obj = null;
+  }
+
+  // a zombie that is alight (ZSTATUS.BURNING): flames up its body, its fire lights the dark around it, it crackles
+  updateBurning(e, dt, distC) {
+    if (e.dead || !(e.q[8] & ZSTATUS.BURNING)) {
+      if (e.burnLoop) {
+        e.burnLoop.stop();
+        e.burnLoop = null;
+      }
+      return;
+    }
+    const g = this.g;
+    const def = ZOMBIE_DEFS[e.ztype];
+    if (distC < 70 * 70 && Math.random() < dt * 16) g.effects.burnPuff(e.rx, e.ry, e.rz, def.height * 0.9, def.radius);
+    const f = e.burnLight || (e.burnLight = { x: 0, y: 0, z: 0, intensity: 0.4 });
+    f.x = e.rx;
+    f.y = e.ry + def.height - 0.6; // (the light pool lifts a fire's light 1.2 m: this one sits over its head)
+    f.z = e.rz;
+    this.fireSources.push(f);
+    if (!e.burnLoop) e.burnLoop = g.audio.createLoop?.('burning', e.rx, e.ry + 1, e.rz) || null;
+    e.burnLoop?.setPosition(e.rx, e.ry + 1, e.rz);
   }
 
   // ---------------------------------------------------------------- events from server
@@ -604,14 +657,34 @@ export class Entities {
     const e = this.ents.get(id);
     if (!e) return;
     e.dead = true;
+    if (e.loop) {
+      e.loop.stop(); // its breathing stops with it
+      e.loop = null;
+    }
     const g = this.g;
+    const def = ZOMBIE_DEFS[e.ztype];
+    const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN;
+    if (flags & 8) {
+      // overkill: the body is blown apart along the blow (yaw), nothing is left to fall over
+      const biped = !def.flying && !def.headFwd;
+      g.effects.gibBody(e.rx, e.ry, e.rz, def.height, def.radius, -Math.sin(yaw), -Math.cos(yaw), { green, head: biped && !(flags & 1), limbs: !def.flying, fur: !biped });
+      g.audio.play(SOUND.HEADSHOT, { x: e.rx, y: e.ry + def.height * 0.5, z: e.rz, volume: 1.3, rate: 0.8 });
+      g.audio.play(SOUND.MELEE_HIT, { x: e.rx, y: e.ry + def.height * 0.5, z: e.rz, rate: 0.7 });
+      this.disposeZombieView(e.view);
+      e.view = null;
+      return;
+    }
     if (flags & 1) {
       e.view?.setHeadless(true);
-      const def = ZOMBIE_DEFS[e.ztype];
       const f = def.headFwd || 0; // quadrupeds carry the head ahead of the body
-      g.effects.gib(e.rx - Math.sin(e.ryaw) * f, e.ry + def.headY, e.rz - Math.cos(e.ryaw) * f, e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN);
+      g.effects.gib(e.rx - Math.sin(e.ryaw) * f, e.ry + def.headY, e.rz - Math.cos(e.ryaw) * f, green);
     }
     if (flags & 2) e.burning = 3;
+    // the body hits the ground a moment after the kill: a thud, heavier for the big ones, a light flop for a dog
+    if (!def.flying) {
+      const big = def.height > 2.5;
+      g.audio.play(SOUND.BODY_FALL, { x: e.rx, y: e.ry + 0.2, z: e.rz, delay: big ? 0.8 : 0.5, volume: big ? 1.5 : def.headFwd ? 0.55 : 1, rate: big ? 0.72 : def.headFwd ? 1.25 : 1 });
+    }
   }
 
   // ---------------------------------------------------------------- per frame
@@ -635,14 +708,19 @@ export class Entities {
           const sp = Math.hypot(tmp.vx, tmp.vz) * SERVER_TICK_RATE;
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 6);
           // when a late packet makes the sampled path jump, carry the jump as an offset that fades out: the body
-          // glides onto the corrected path instead of popping (a real teleport still snaps)
+          // glides onto the corrected path instead of popping (a real teleport still snaps). The jump is measured
+          // on the path itself, not on the drawn position: there the offset's own fading reads as a jump and gets
+          // put straight back, and the body stays beside its hitbox for good
           const fade = Math.exp(-dt * 8);
           e.ex *= fade;
           e.ey *= fade;
           e.ez *= fade;
-          const jx = tmp.x + e.ex - (e.rx + e.vx * dt);
-          const jy = tmp.y + e.ey - (e.ry + e.vy * dt);
-          const jz = tmp.z + e.ez - (e.rz + e.vz * dt);
+          const jx = tmp.x - (e.sx + e.vx * dt);
+          const jy = tmp.y - (e.sy + e.vy * dt);
+          const jz = tmp.z - (e.sz + e.vz * dt);
+          e.sx = tmp.x;
+          e.sy = tmp.y;
+          e.sz = tmp.z;
           const jump = Math.hypot(jx, jy, jz);
           if (jump > 3) e.ex = e.ey = e.ez = 0;
           else if (jump > 0.02 + 40 * dt * dt) {
@@ -674,7 +752,13 @@ export class Entities {
             e.burning -= dt;
             if (Math.random() < dt * 20) g.effects.burnPuff(e.rx, e.ry, e.rz);
           }
-          if (e.loop) e.loop.setPosition(e.rx, e.ry + 2, e.rz);
+          this.updateBurning(e, dt, distC);
+          if (e.loop) {
+            if (e.dead) {
+              e.loop.stop();
+              e.loop = null;
+            } else e.loop.setPosition(e.rx, e.ry + 2, e.rz);
+          }
           // ambient vocalizations + footsteps (client-side, no bandwidth)
           if (!e.dead && distC < 45 * 45) {
             const shade = e.ztype === ZTYPE.SHADE;
@@ -695,19 +779,22 @@ export class Entities {
             if (e.growlT <= 0) {
               e.growlT = shade ? 1.8 + Math.random() * 2.2 : 4 + Math.random() * 9;
               const dog = e.ztype === ZTYPE.DOG;
-              const snd = shade ? SOUND.SHADE_WHISPER : dog ? (e.speed > 3 && Math.random() < 0.6 ? SOUND.DOG_BARK : SOUND.DOG_SNARL) : e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : ZOMBIE_DEFS[e.ztype].boss ? SOUND.BOSS_ROAR : SOUND.ZOMBIE_GROWL;
+              const snd = shade ? SOUND.SHADE_WHISPER : dog ? (e.speed > 3 && Math.random() < 0.6 ? SOUND.DOG_BARK : SOUND.DOG_SNARL) : e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : ZOMBIE_DEFS[e.ztype].boss ? SOUND.BOSS_ROAR : e.speed < 1.2 && distC > 14 * 14 && e.q[4] !== ZANIM.ATTACK ? SOUND.ZOMBIE_MOAN : SOUND.ZOMBIE_GROWL; // shambling about somewhere off in the trees, it moans; on the hunt or on top of you, it growls
               if (e.ztype === ZTYPE.TANK && Math.random() < 0.6) e.growlT += 4;
               if (dog) e.growlT *= 0.6;
-              g.audio.play(snd, { x: e.rx, y: e.ry + (dog ? 0.6 : 1.5), z: e.rz, volume: e.ztype === ZTYPE.BAT ? 0.6 : 0.9 });
+              g.audio.play(snd, { x: e.rx, y: e.ry + (dog ? 0.6 : 1.5), z: e.rz, volume: e.ztype === ZTYPE.BAT ? 0.6 : 0.9, rate: e.voice });
               v.vocalize?.(snd === SOUND.RUNNER_SCREAM || snd === SOUND.DOG_BARK ? 1 : snd === SOUND.TANK_ROAR || snd === SOUND.BOSS_ROAR ? 2 : 0);
             }
-            if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && distC < 22 * 22) {
+            // a tank's (or a boss's) footfalls thump: they carry as far as its voice, and close by they shake the ground
+            const heavy = e.ztype === ZTYPE.TANK || !!ZOMBIE_DEFS[e.ztype].boss;
+            if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && (heavy || distC < 22 * 22)) {
               // a visible planted-foot gait sounds its steps as the feet land; otherwise keep a cadence timer
               const dog = e.ztype === ZTYPE.DOG;
-              const heavy = e.ztype === ZTYPE.TANK || ZOMBIE_DEFS[e.ztype].boss ? 1 : dog ? 0.25 : shade ? 0.2 : 0.45;
+              const stepVol = heavy ? 1 : dog ? 0.25 : shade ? 0.2 : 0.45;
               const falls = v.footfalls ? v.footfalls() : -1;
+              let stepped = false;
               if (falls >= 0) {
-                if (e.falls !== undefined && falls !== e.falls) g.audio.footstep('dirt', e.rx, e.ry, e.rz, heavy);
+                stepped = e.falls !== undefined && falls !== e.falls;
                 e.falls = falls;
                 e.stepT = 1;
               } else {
@@ -715,8 +802,12 @@ export class Entities {
                 e.stepT -= dt * (0.8 + e.speed * 0.45) * (dog ? 1.8 : 1); // four paws: a quick, light patter
                 if (e.stepT <= 0) {
                   e.stepT = 1;
-                  g.audio.footstep('dirt', e.rx, e.ry, e.rz, heavy);
+                  stepped = true;
                 }
+              }
+              if (stepped) {
+                g.audio.footstep(g.surfaceAt(e.rx, e.ry, e.rz), e.rx, e.ry, e.rz, stepVol, { heavy });
+                if (heavy && distC < HEAVY_STEP_SHAKE * HEAVY_STEP_SHAKE) g.camShake = Math.min(1, (g.camShake || 0) + 0.3 * (1 - Math.sqrt(distC) / HEAVY_STEP_SHAKE));
               }
             }
           }
@@ -849,6 +940,14 @@ export class Entities {
           if (e.obj) {
             e.obj.position.set(e.rx, e.ry, e.rz);
             if (e.state === 0) e.obj.rotation.y += dt * 0.3;
+            if (e.chuteT !== undefined) {
+              // streamer -> canopy: narrow and long, then it snaps open with a little overshoot
+              const k = (e.chuteT = Math.min(1, e.chuteT + dt / 0.9));
+              const b = k - 1;
+              const w = 0.1 + 0.9 * (1 + 2.70158 * b * b * b + 1.70158 * b * b);
+              e.obj.userData.parachute.scale.set(w, 1.3 - 0.3 * k, w);
+              if (k >= 1) e.chuteT = undefined;
+            }
           }
           if (e.emitter) {
             e.emitter.x = e.rx;
