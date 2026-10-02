@@ -568,6 +568,24 @@ const ITEM_ICONS = {
       E(circ(12, 16, 8) + circ(12, 16, 2.4) + rct(11.4, 9.2, 1.2, 3.6) + rct(11.4, 19.2, 1.2, 3.6) + rct(5.2, 15.4, 3.6, 1.2) + rct(15.2, 15.4, 3.6, 1.2)) +
       E(circ(32, 16, 4.4) + circ(32, 16, 1.5)),
   ],
+  // the mounted gun (not an item: the weapon of its kills in the killfeed, MOUNTED_GUN in shared/mountedgun.js)
+  16: [
+    128,
+    48,
+    P('M4 8H7.5V25H4Z') + // spade grips
+      P('M7 10H14V12.4H7Z') +
+      P('M7 20.6H14V23H7Z') +
+      P('M13 8H56V25H13Z') + // receiver
+      P('M24 4.6H46V8H24Z') + // top cover
+      P('M17 3H20V8H17Z') + // rear sight
+      P('M56 11.5H86V21.5H56Z') + // barrel support
+      [60, 67, 74, 81].map((x) => E(rct(x - 2.4, 13, 4.8, 7) + circ(x, 16.5, 1.5))).join('') +
+      P('M86 14.4H120V18.6H86Z') + // barrel
+      P('M118 13H126V20H118Z') + // muzzle
+      P('M30 25H44V29H30Z') + // cradle
+      P('M35.4 29H38.6V34H35.4Z') + // pintle
+      S('M37 33L22 46.5M37 33L55 46.5M37 33V44', 2.6), // tripod
+  ],
 };
 
 // ---------------------------------------------------------------- structures

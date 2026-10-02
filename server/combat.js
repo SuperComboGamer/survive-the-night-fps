@@ -94,7 +94,7 @@ export class Combat {
   // ---------------------------------------------------------------- guns
   fire(p, ev) {
     const g = this.g;
-    const def = WEAPONS[ev.weapon];
+    const def = ev.def || WEAPONS[ev.weapon]; // (ev.def: a gun that is no item brings its own row, the mounted gun)
     if (!def) return;
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     const ox = ev.x;

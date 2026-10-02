@@ -124,6 +124,9 @@ export const PROPS = {
   // ---- the chapel bell and the Relay Station's radio (shared/fixtures.js)
   church_bell: { size: [2.3, 1.5, 1.1], desc: 'church bell as it hangs in a belfry: lip at y=0, crown bolted into a timber headstock along X at y~0.96 (2.3 long, to the posts either side), clapper, rope wheel at the -X end (no collision)' },
   radio_set: { size: [1.0, 2.5, 0.6], boxes: [[0, 0.43, 0, 1.0, 0.86, 0.56]], desc: 'field radio on a steel equipment cabinet: olive set with a tuning dial, knobs, speaker and a red power lamp, handset off its hook on a coiled cord, whip antenna; front faces -Z' },
+  // the mounted gun's stand (shared/mountedgun.js finds the nest by it; the gun on top is an entity). The collider
+  // is the legs only, low enough that a round from the gunner's eye passes over it
+  mg_tripod: { size: [1.5, 1.2, 1.5], cyls: [[0, 0, 0.22, 0.6]], desc: 'tall steel machine-gun tripod, the pintle head at y=1.18 with nothing on it, front leg toward -Z, two olive ammo cans and spent brass at its feet' },
 };
 
 // props whose static collider can be salvaged for scrap

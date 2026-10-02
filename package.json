@@ -14,7 +14,7 @@
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js",
     "check": "node scripts/check.js",
-    "test": "node scripts/check.js && node scripts/test-protocol.js && node scripts/test-netsync.js && node scripts/test-world.js && node scripts/test-mine.js && node scripts/test-clinic.js && node scripts/test-cemetery.js && node scripts/test-records.js && node scripts/test-stats.js && node scripts/test-ammo.js && node scripts/test-fixtures.js && node scripts/sim-smoke.js",
+    "test": "node scripts/check.js && node scripts/test-protocol.js && node scripts/test-netsync.js && node scripts/test-world.js && node scripts/test-mine.js && node scripts/test-clinic.js && node scripts/test-cemetery.js && node scripts/test-records.js && node scripts/test-stats.js && node scripts/test-ammo.js && node scripts/test-fixtures.js && node scripts/test-gun.js && node scripts/sim-smoke.js",
     "test:bots": "node scripts/bot.js 4 20",
     "bench:net": "node scripts/net-bench.js",
     "test:e2e": "node scripts/e2e-gameplay.js",

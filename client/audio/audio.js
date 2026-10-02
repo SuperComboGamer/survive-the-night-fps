@@ -210,6 +210,10 @@ def(S.RADIO_TUNE, 'radio_tune', 'fx', 0.35, 0.02);
 def(S.RADIO_CALL, 'radio_call', 'big', 0.32, 0.02);
 def(S.GRAVE_STIR, 'grave_stir', 'fxfar', 1, 0.06);
 def(S.GRAVE_BURST, 'grave_burst', 'fxfar', 1, 0.06);
+// the mounted gun: procedural only (no recording of one), louder than any rifle and with more room on it
+def(S.MOUNTED_GUN, 'gun_hmg', 'gun', 1, 0.03, 0.2);
+def(S.GUN_FEED, 'shell_insert', 'fx', 0.7, 0.08, 0.15, R_SHELL); // rounds going onto its belt
+def(S.GUN_MAN, 'bolt', 'fxfar', 0.8, 0.04, 0.15, R_BOLT); // someone takes the grips and racks it
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -221,6 +225,7 @@ const LOCAL = {
   mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1, rec: R_GUN.mp5.fp },
   dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2, rec: R_GUN.dbshotgun.fp },
   crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05, rec: R_XBOW },
+  hmg: { bank: 'fp_hmg', vol: 1, jit: 0.025, send: 0.18 }, // the mounted gun, from behind its grips
   reload_start: { bank: 'reload_start', vol: 0.55, rec: R_MAG_OUT },
   reload_end: { bank: 'reload_end', vol: 0.6, rec: R_MAG_IN },
   shell_insert: { bank: 'shell_insert', vol: 0.55, rec: R_SHELL },

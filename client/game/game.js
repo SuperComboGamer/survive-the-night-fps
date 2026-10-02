@@ -66,6 +66,8 @@ import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
 import { harvestPrompt, strippedKey, needLines } from './harvest.js';
 import { Entities } from './entities.js';
+import { GunClient } from './mountedgun.js';
+import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
@@ -255,6 +257,7 @@ export class Game {
     this.vmItem = -1;
     this.entities = new Entities(this);
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
+    this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
@@ -894,7 +897,7 @@ export class Game {
         g.ui.hitmarker(!!(flags & 1), !!(flags & 2));
         // a quiet meaty thwack confirms a gun hit (melee hits already sound MELEE_HIT); kills are heard as the death cry
         const s = g.prediction.state;
-        if (!s.zombie && !WEAPONS[currentWeapon(s)]?.melee) g.audio.playLocal(flags & 1 ? 'headshot' : 'hitmarker', { volume: 0.7 });
+        if (!s.zombie && (g.gun.manning || !WEAPONS[currentWeapon(s)]?.melee)) g.audio.playLocal(flags & 1 ? 'headshot' : 'hitmarker', { volume: 0.7 });
       },
       damage(amount, fx, fz) {
         g.damageFx = Math.min(1, g.damageFx + amount / 40);
@@ -1189,6 +1192,7 @@ export class Game {
   }
 
   remoteShot(ev) {
+    if (ev.weapon === MOUNTED_GUN) return this.gun.remoteShot(ev); // (from its muzzle, not from the gunner's hands)
     const def = WEAPONS[ev.weapon];
     if (!def) return;
     const shooter = this.entities.ents.get(ev.shooter);
@@ -1285,6 +1289,13 @@ export class Game {
       this.ownImpact(kind, ev.x + dx * wall, ev.y + dy * wall, ev.z + dz * wall, -dx, -dy, -dz);
     }
     return wall;
+  }
+
+  // A round of ours that no weapon in the hands fired (the mounted gun's: its own row `def`, one pellet along
+  // dx,dy,dz), judged like any other. Returns how far it flies, -1 if nothing stops it.
+  predictShot(ev, def, dx, dy, dz) {
+    raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
+    return this.predictPellet(ev, def, 0, dx, dy, dz);
   }
 
   // An impact of our own shot, shown as it is fired. The server sends word of the same impact a round trip later,
@@ -1684,6 +1695,7 @@ export class Game {
     const t = this.lookTarget;
     const g = this.global;
     if (!t) return;
+    if (t === 'gun') return this.gun.use();
     if (t === 'car') {
       if (g.suppliesDone && (!g.finale || g.escapeReady)) this.beginHold(CAR_ID); // start the engine; once it is warm, get in and drive
       else this.conn.action(ACT.INTERACT, CAR_ID);
@@ -1829,14 +1841,16 @@ export class Game {
     }
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
-    const buttons = self.alive ? inp.sample() : 0;
+    const buttons = this.gun.shape(self.alive ? inp.sample() : 0); // (manning the mounted gun: its trigger, not the weapon's)
     if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
       for (const ev of evs) if (ev.type === 'fire' || ev.type === 'melee') attacked = true;
       this.onLocalEvents(evs, st);
     };
-    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents, this.inputBuffer) > 0) inp.clearLatch();
+    const ran = this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents, this.inputBuffer);
+    if (ran > 0) inp.clearLatch();
+    if (this.gun.commands(ran)) attacked = true; // the mounted gun is fired by the same commands, outside the simulation
     // a packet carries one render time, the one of the frame it leaves in, and the server rewinds its targets to
     // that for every command in the packet: a shot or a swing goes out in its own frame instead of waiting for
     // the batch to fill, or it would be judged against where things stood a frame or two after it was aimed
@@ -1925,7 +1939,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam);
+    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
     if (this.vmMuzzleT > 0) {
@@ -1955,6 +1969,7 @@ export class Game {
 
     // entities
     this.entities.update(dt, this.renderTick, time, rp);
+    this.gun.update(dt, ldx * lk, ldy * lk);
 
     // interaction target
     this.updateLookTarget();
@@ -2206,6 +2221,7 @@ export class Game {
     this.lookTarget = null;
     this.prompt = null;
     if (!this.self.alive || s.zombie || s.downed) return;
+    if (this.gun.look(true)) return; // hands on the mounted gun: [E] is the gun's
     cam.getWorldDirection(_v);
     const ox = cam.position.x;
     const oy = cam.position.y;
@@ -2255,6 +2271,7 @@ export class Game {
         return;
       }
     }
+    if (this.gun.look(false)) return; // at the grips of the mounted gun
     // the bell rope, the radio set
     if (this.fixtures.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT, counts)) return;
     // the car
@@ -2411,6 +2428,7 @@ export class Game {
       h.reserve = null;
       h.reloading = -1;
     }
+    this.gun.hud(h); // (manning the mounted gun: its belt)
     h.phase = g.phase;
     h.day = g.day;
     h.timeLeft = g.timeLeft;

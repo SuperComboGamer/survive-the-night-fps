@@ -128,6 +128,7 @@ import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T
 import { PlayerStats } from './stats.js';
 import { Fixtures } from './fixtures.js';
 import { Cemetery } from './cemetery.js';
+import { MountedGun } from './mountedgun.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -329,6 +330,7 @@ export class Game {
     this.combat = new Combat(this);
     this.fixtures = new Fixtures(this); // the chapel bell and the Relay Station's radio
     this.cemetery = new Cemetery(this); // the dead that come up out of the graves at St. Agnes (cemetery.js)
+    this.gun = new MountedGun(this); // the mounted gun at the Army Checkpoint, on the maps that have one
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
@@ -807,6 +809,7 @@ export class Game {
     for (let i = 0; i < WALKIE_STASHES && lockers.length; i++) lockers.splice(Math.floor(pick() * lockers.length), 1)[0].stash = ITEM.WALKIE;
     this.placeSupplies();
     this.cemetery.reset();
+    this.gun.spawn();
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
@@ -1551,6 +1554,7 @@ export class Game {
         copyPlayerState(p.shadow, p.state);
         if (cmd.hash === NO_HASH || (cmd.hash >= 0 && cmd.hash !== hashPlayerState(p.state))) p.selfSync = true;
         for (const ev of events) this.handleSimEvent(p, ev);
+        if (this.gun.ent) this.gun.command(p, cmd); // the gunner's commands are the mounted gun's trigger
       }
     }
   }
@@ -1716,6 +1720,10 @@ export class Game {
       }
       case ACT.INSTALL_PART:
         return this.interact(p, CAR_ID);
+      case ACT.GUN_MAN:
+        return this.gun.man(p, r.u8());
+      case ACT.GUN_FEED:
+        return this.gun.feed(p, r.u8());
     }
   }
 
@@ -2709,6 +2717,11 @@ export class Game {
         this.fillHistory(p);
         break;
       }
+      case 'gun':
+        // /gun: to the grips of the mounted gun at the Army Checkpoint
+        if (this.gun.teleport(p)) this.fillHistory(p);
+        else this.systemChat('this valley has no Army Checkpoint, so no mounted gun (a new game deals a new valley)');
+        break;
       case 'cat': {
         // bring the cat over (2 m in front)
         const c = this.cats[0];
@@ -2778,6 +2791,7 @@ export class Game {
     this.cemetery.update(dt);
     ts.mark(T_PHASE);
     this.updatePlayers(dt);
+    this.gun.update(dt);
     ts.mark(T_PLAYERS);
     this.zm.update(dt);
     ts.mark(T_ZOMBIES);

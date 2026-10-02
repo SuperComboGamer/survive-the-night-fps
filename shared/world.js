@@ -1166,6 +1166,18 @@ export function createWorld(seed) {
     b.partSpot(12.8, 13);
     b.loot(-8, -9);
     b.loot(8.5, 12);
+    // The machine-gun nest on the verge beside the boom gate, covering the lane out of the checkpoint: the tripod
+    // (the gun on it is an entity, shared/mountedgun.js finds the nest by this prop) in a horseshoe of sandbags,
+    // open at the back - the way in for the gunner, and for whatever comes for them. Every seed is given: the
+    // nest draws nothing from the valley's random stream.
+    {
+      const n = b.sub(4.2, -7.8);
+      n.prop('mg_tripod', 0, 0, 0, { seed: 0 });
+      n.prop('sandbags', -1.05, -1.45, 0.2, { seed: 0 });
+      n.prop('sandbags', 1.05, -1.45, -0.2, { seed: 1 });
+      n.prop('sandbags', -2.2, 0, PI / 2 - 0.12, { seed: 1 });
+      n.prop('sandbags', 2.2, 0, PI / 2 + 0.12, { seed: 0 });
+    }
   });
 
   // HARLAN SAWMILL: an open mill shed, log yard, office and workshop.

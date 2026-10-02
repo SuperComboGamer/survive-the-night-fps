@@ -40,7 +40,8 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z> [y]`
 (with a height: onto what is under feet at it, down a drift of the mine), `/mine` (to the adit of Blackrock Mine;
 `/mine far` to the far portal, `/mine in` down to the junction), `/clinic` (to the front door of Mercy Clinic;
-`/clinic ward` into its dark wards; says so on a map without it), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
+`/clinic ward` into its dark wards; says so on a map without it), `/gun` (to the grips of the mounted gun at the
+Army Checkpoint; it says so when the map has no checkpoint: seed 1 has one), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
 (to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station),
@@ -56,6 +57,7 @@ dead now)).
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
 | `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
+| `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the backpack's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
 | `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
 | `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
@@ -296,6 +298,18 @@ them off.
   lights them the same way. Burnt bodies leave nothing to loot. It is built at the workbench once the team has
   the explosives schematic (or found at the crash site, in ammo crates and in supply drops), and drinks fuel
   brewed from alcohol and chemicals.
+- **The mounted gun.** On a map with the Army Checkpoint, a heavy machine gun stands on a tripod in a horseshoe of
+  sandbags beside the boom gate, covering the road out. It does not move: stand at its grips and press [E] to man
+  it (one gunner at a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button
+  is its trigger: 600 rounds a minute, each a little harder than an AK-47's and through one body into the next,
+  out to 200 m in a tight cone, with no climb. It swivels with your view 70 degrees either side of the road and
+  from 15 degrees down to 25 up; look further and it stays at its stop. Step away, press [E] again, go down or die
+  and you let go. It is the loudest gun in the valley - every shot carries 110 m - so using it brings the
+  neighbourhood, and the sandbags only cover the front: the dead walk round into the open back. **One belt:** it
+  has 250 rounds when the game starts, shown in place of your ammunition while you man it, and when they are gone
+  it clicks. Hold [R] (or [E]) at the grips to feed it 50 rounds a second from the 7.62 in your backpack - the
+  same rounds the AK-47 eats - up to 250. Its belt and who mans it start over with every new game; its kills are
+  the gunner's.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
@@ -362,6 +376,8 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
   refill at sunrise. It is pitch dark at noon, so bring a light: the dead live
   down there, the Shade among them from the second day, and the sun that burns the horde at dawn does not
   reach them. The horde follows a survivor in by either mouth (`shared/mine.js`, `node scripts/test-mine.js`).
+- **The Army Checkpoint has a machine-gun nest** on the verge by its boom gate (see The mounted gun above;
+  `shared/mountedgun.js`, `node scripts/test-gun.js`).
 - **Roads** are not drawn by hand either: county roads are a spanning tree grown out from Route 9 (every
   place hangs off the nearest thing that already has a road, and turns its front to it), then the worst
   detours are closed with a couple more roads and with forest trails. Each link is routed over the terrain

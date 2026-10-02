@@ -398,7 +398,7 @@ check('nearly every valley has the workings', cut >= SEEDS.length - 1, `${cut} o
     game.phase = PHASE.NIGHT;
     run(0.2);
     game.startDay();
-    run(8);
+    run(9.5); // (the sun catches each of them up to 5.5 s after sunrise, and a walker then burns for 3)
     check(`${tag} at sunrise the horde on the surface burns, the horde down the mine does not`, up.dead && !down.dead && down.burning <= 0 && !down.onFire);
     check(`${tag} ...and the mine has its dead again`, living().filter((z) => z.den).length >= mine.dens.length - 2);
     down.x = B.x - B.dx * 8;

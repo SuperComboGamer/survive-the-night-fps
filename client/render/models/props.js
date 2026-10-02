@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { PROPS } from '../../../shared/props.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
 import { FIXTURE_PROPS } from './fixtures.js';
+import { buildGunTripod } from './mountedgun.js';
 
 const PI = Math.PI;
 const cache = new Map();
@@ -20,6 +21,7 @@ const VARIANTS = {
   fence_chain: 2,
   medicine_cabinet: 1, drug_locker: 1, wheelchair: 1, ambulance: 1,
   strongbox: 1,
+  mg_tripod: 1,
 };
 
 export const PROP_TYPES = Object.keys(PROPS);
@@ -2622,3 +2624,6 @@ BUILD.fence_chain = (b, r, v) => {
   if (v === 1) b.plane('cloth', 0.2, 0.3, { p: [0.4, 2.02, -0.08], r: [0.1, 0, 0.3], c: [0.45, 0.2, 0.15] });
   weeds(b, r, [[-1.3, 0.05], [0.4, 0.0], [1.2, -0.05]], 0.5);
 };
+
+// the mounted gun's stand (the gun on it is an entity: models/mountedgun.js has both)
+BUILD.mg_tripod = buildGunTripod;

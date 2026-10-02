@@ -199,6 +199,7 @@ export const BTN = {
   ATTACK: 128,
   ALT: 256,
   RELOAD: 512,
+  GUN: 1024, // the trigger of the mounted gun, from the survivor who mans it (shared/mountedgun.js). The simulation ignores it
 };
 
 export const PHASE = {

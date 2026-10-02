@@ -59,6 +59,8 @@ export const ACT = {
   HOLD_END: 17, // released [E]
   PING: 18, // u8 kind, i16 x, i16 y, i16 z (1/64 m)
   SPLIT_INV: 19, // u8 inventory index, u16 count: that many leave the stack for a free slot of their own
+  GUN_MAN: 25, // u8 on: take the grips of the mounted gun (1) or let go of them (0)
+  GUN_FEED: 26, // u8 on: the gunner starts (1) or stops (0) feeding 7.62 from their backpack into its belt
 };
 
 // special interaction targets that are not entities
@@ -93,6 +95,7 @@ export const ENT = {
   AREA: 7,
   CACHE: 8, // searchable container (static position from world gen, state = searched)
   CAT: 9, // the stray cat (ambient, can't be hurt)
+  GUN: 12, // the mounted gun at the Army Checkpoint (static position: the pintle; state = belt, gunner, where it was left pointing)
 };
 
 // ---------------------------------------------------------------- quantization
@@ -463,3 +466,6 @@ export const AF = { POS: 0 };
 export const KF = { POS: 0, STATE: 1 };
 // CAT fields
 export const TF = { POS: 0, YAW: 1, ANIM: 2 };
+// GUN fields (u16 each). BELT: rounds left. GUNNER: the player who mans it, 0 nobody. AIM: where it was left
+// pointing, packed like a player's view (packLook) - while it is manned it follows the gunner's replicated view
+export const GF = { POS: 0, BELT: 1, GUNNER: 2, AIM: 3 };

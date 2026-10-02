@@ -405,6 +405,9 @@ export class Entities {
           e.meowT = 4 + Math.random() * 10;
           break;
         }
+        case ENT.GUN:
+          g.gun.attach(e); // the mounted gun: client/game/mountedgun.js draws and turns it
+          break;
         case ENT.ITEM: {
           const cat = ITEM_DEFS[e.item]?.cat;
           if (cat === 'part' || cat === 'schem') this.caches.add(e); // car supplies & schematics glint from afar
@@ -877,7 +880,8 @@ export class Entities {
             v.setZombie(zombie);
             e.weapon = -1;
           }
-          const weapon = zombie ? 0 : e.q[6];
+          const grips = g.gun.gunner === e.id; // at the mounted gun: both hands on it, their own weapon put away
+          const weapon = zombie || grips ? 0 : e.q[6];
           if (weapon !== e.weapon) {
             e.weapon = weapon;
             v.setWeapon(weapon);
@@ -890,7 +894,7 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time });
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips });
           v.object.visible = !(dead && zombie);
           // flashlight
           const flashOn = !!(flags & PFLAG.FLASHLIGHT) && !dead;

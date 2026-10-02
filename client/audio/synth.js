@@ -264,6 +264,16 @@ export const GUNS = {
     tail: 0.16, tailLP: 600, tailDecay: 0.4,
     mech: [], echoes: [[0.28, 0.11], [0.63, 0.055], [1.06, 0.028]], drive: 2.1,
   },
+  // the mounted gun: a heavy machine gun. Against the AK the bark sits an octave lower and lasts half as long
+  // again, the thump is deeper and longer, and a heavy bolt clunks home behind each round: at the same 600 a minute
+  // it is a slow pounding where the rifle rattles
+  hmg: {
+    dur: 1.5, crack: 1.0, crackHP: 1800, crackDecay: 0.0017, nwave: 0.55,
+    bodyHP: 180, bodyLP0: 5000, bodyLP1: 600, lpSweep: 0.05, bodyDecay: 0.058, bark: [480, 1.3, 7],
+    thump: 1.0, thumpF0: 110, thumpF1: 36, thumpSweep: 0.03, thumpDecay: 0.09,
+    tail: 0.13, tailLP: 720, tailDecay: 0.32,
+    mech: [[0.05, 880, 0.15], [0.086, 1450, 0.08]], echoes: [[0.26, 0.09], [0.58, 0.05], [0.98, 0.028]], drive: 2.3,
+  },
 };
 
 // Layered gunshot: transient crack (+ supersonic N-wave), band-shaped noise body, pitch-dropping thump,
@@ -1649,6 +1659,7 @@ export const SFX_DEFS = [
   { bank: 'gun_mp5', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, false) },
   { bank: 'gun_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, false) },
   { bank: 'xbow_shot', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, false) },
+  { bank: 'gun_hmg', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.hmg, false) },
   // first-person (stereo)
   { bank: 'fp_pistol', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.pistol, true) },
   { bank: 'fp_ak47', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, true) },
@@ -1658,6 +1669,7 @@ export const SFX_DEFS = [
   { bank: 'fp_mp5', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, true) },
   { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
   { bank: 'fp_crossbow', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, true) },
+  { bank: 'fp_hmg', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.hmg, true) },
   // sub thump + tree-line echoes layered under the recorded first-person shots
   { bank: 'gsw_pistol', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.pistol, true, true) },
   { bank: 'gsw_ak47', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.ak47, true, true) },

@@ -4055,6 +4055,11 @@ class SurvivorInstance {
       A(p, UARM_L, 0.4 * air, 0, -0.3 * air);
       A(p, UARM_R, 0.4 * air, 0, 0.3 * air);
     }
+    // both hands out on the grips of a mounted gun (s.grips, from Entities while this survivor mans one)
+    if (s.grips) {
+      arm(p, 0, 1.15, 0.1, 0, 0.45, 0);
+      arm(p, 1, 1.15, 0.1, 0, 0.45, 0);
+    }
     // throw pulse without IK hold
     if (this.hold === HOLD_NONE && this.pulseMelee < 0.4) {
       const u = this.pulseMelee / 0.4;

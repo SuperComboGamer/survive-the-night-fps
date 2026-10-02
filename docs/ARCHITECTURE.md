@@ -429,6 +429,21 @@ wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the onl
   only throws the gib (`Effects.gibLeg`, a piece from the limb pool the overkill gibs use), so a client that was
   not there still sees the right model. `scripts/e2e-legs.js` runs it in the real client; the sandbox's
   `?film=0&legs=3` prints where the head ends up, which is what `CRAWL_HEAD_Y` / `CRAWL_HEAD_FWD` are set from.
+- **The mounted gun** (`shared/mountedgun.js`, `server/mountedgun.js`, `client/game/mountedgun.js`, the models in
+  `client/render/models/mountedgun.js`). The nest is a prop of the Army Checkpoint (`mg_tripod`, found by
+  `gunNest`); the gun on it is one entity, `ENT.GUN` (belt, gunner, where it was left pointing), made by
+  `startGame`. Manning it is `ACT.GUN_MAN`, feeding the belt `ACT.GUN_FEED`; neither touches the player simulation,
+  so the gunner walks as ever, and letting go is stepping away (`atGrips`, checked by the server every tick and by
+  the gunner's own client). It is fired by commands like a gun in the hands, but not by the simulation: while
+  manning, the client puts the fire button into its commands as `BTN.GUN` instead of `BTN.ATTACK` (so the weapon
+  in the hands stays quiet), and both ends run `stepGun` over the gunner's commands - the server in
+  `processInputs` after each one is simulated, the client over the commands each frame's prediction step issued -
+  so the client draws a round on the command the server fires it on. A round is `gunShot`: from the gunner's eye
+  along their view held inside the arc, through `Combat.fire` with the gun's own row (`ev.def`, `GUN`), so it is
+  rewound, pierces and scores like any other. Remote clients draw it from the muzzle (`EVT.SHOT` with
+  `MOUNTED_GUN`, id 16, which no item has); the gun turns with the gunner's replicated view, so it costs no
+  traffic while it swivels. The gunner's client keeps its own count of the belt while its rounds are in flight
+  and takes the server's once they have all landed.
 - **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
   (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
   fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a

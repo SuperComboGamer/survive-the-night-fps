@@ -20,6 +20,7 @@ export const ITEM = {
   WIRE: 13,
   PLATE: 14,
   GUNPARTS: 15,
+  // (16 is no item: the mounted gun's shots and kills carry it as their weapon, MOUNTED_GUN in mountedgun.js)
   // consumables
   BANDAGE: 20,
   MEDKIT: 21,
@@ -474,6 +475,9 @@ export const SOUND = {
   RADIO_CALL: 76, // ...and the call for a supply drop going out
   GRAVE_STIR: 111, // the earth of a grave heaving: something under it is on its way up (client-side, from EVT.GRAVE)
   GRAVE_BURST: 112, // ...and breaking through
+  MOUNTED_GUN: 91, // a round from the mounted gun (client-side, from its EVT.SHOT)
+  GUN_FEED: 92, // rounds going into its belt
+  GUN_MAN: 93, // someone takes its grips
 };
 
 export const EVT = {
