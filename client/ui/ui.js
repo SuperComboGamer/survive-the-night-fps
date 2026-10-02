@@ -202,6 +202,12 @@ export class UI {
     this.notifier.notify(text, style, duration);
   }
 
+  // drop the title card (and the ones queued behind it), the toasts and the dawn card: the game they belong to is gone
+  clearNotices() {
+    this.notifier.clear();
+    this.summary.root.hidden = true;
+  }
+
   pickup(itemId, count) {
     this.pickups.add(itemId, count);
   }
@@ -264,15 +270,20 @@ export class UI {
 
   // ------------------------------------------------------------ overlays
   showDeath(info) {
+    if (!this.end.root.hidden) return; // the run is over and its end screen is up: that is the title to read
     this.death.show(info || {});
   }
 
+  // The death that ends a run arrives with the end of the run (one server tick), and the end screen takes 1.6 s to
+  // fade in over whatever is under it: take the death card down first, or the two titles are drawn on top of each other.
   showGameOver(stats) {
+    this.death.hide();
     this.end.show('gameover', stats || {});
     this._menuState();
   }
 
   showVictory(stats) {
+    this.death.hide();
     this.end.show('victory', stats || {});
     this._menuState();
   }

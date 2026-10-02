@@ -30,9 +30,10 @@ export function renderControls(parent, list) {
   }
 }
 
+// what the game asks of the player: on every splash, whichever tagline is drawn under it
+const GOAL = 'Scavenge by day. Board up by night. Fix the car. Get out.';
 const TAGLINES = [
   'Your car died on Route 9. The dark is coming.',
-  'Scavenge by day. Board up by night. Fix the car. Get out.',
   'Nobody is coming to save you.',
   'Wherever you are at sundown is where you make your stand.',
   'Every night there are more of them.',
@@ -75,6 +76,7 @@ export class Splash {
       d.style.cssText = `left:${x}%;--w:${w};--len:${len};--d:${delay}s`;
     }
 
+    el('p', 'sp-goal', main, GOAL);
     el('p', 'sp-tag', main, TAGLINES[(Math.random() * TAGLINES.length) | 0]);
 
     const form = (this.form = el('form', 'sp-join', main));
