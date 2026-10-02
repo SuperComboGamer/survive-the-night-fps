@@ -47,8 +47,8 @@ export function darkAt(darks, x, y, z) {
 
 // b: world.js's Builder in the place's frame (front: -Z, the road). parts: the static world's parts, which the
 // lining is taken back out of. darks: the world's dark interiors, which the passage and the wing are added to.
-// Everything random comes from the clinic's own stream, and every prop is given its seed: no other part of the
-// valley moves for it.
+// Everything random in it comes from the clinic's own stream, and every prop is given its seed: building it draws
+// nothing from the valley's.
 // Returns the clinic: { x, y, z, ry, door, ward, home, dens, roam, lining, signs } (see the end)
 export function buildClinic(b, { seed, parts, darks }) {
   const rng = mulberry32(seed ^ 0xc11a1c);
