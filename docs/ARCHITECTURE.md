@@ -302,6 +302,7 @@ wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the onl
   askew to the nav grid's 1 m cells has, one map in ten, no cell-to-cell step through it, which closed the wards
   to the horde. `scripts/test-clinic.js` holds the rule, the dead and the drug locker on five valleys and in a
   running game.
+
 ## St. Agnes Cemetery: the dead come up out of the ground
 
 - **The place** (`shared/cemetery.js`, `buildCemetery`) is part of the chapel's: the chapel's builder calls it, so
@@ -337,6 +338,49 @@ wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the onl
   railings and a cross for every grave, and names the cemetery once the chapel is known.
 - `scripts/test-cemetery.js` holds the place on six valleys and the rule in a running game, including a scripted
   night inside a ring of walls built round the chapel.
+
+## Deer: wildlife that can be hunted
+
+The deer (`server/deer.js`, shared numbers in `shared/deer.js`, the view in `client/game/deer.js` and
+`client/render/models/deer.js`) are an entity kind of their own, `ENT.DEER` (fields: position, yaw, a `DANIM` state,
+the coat in the create), kept in `game.deer` - not a zombie type with a flag. That was the choice between two kinds of
+work: a zombie type would have had every system that walks `game.zombies` skip it (the horde's size and waves and
+what is left of it, the night summary, kill counts and the leaderboard, the killfeed, the dawn sun, what a noise draws,
+the night themes, `/spawn`, the Shade's light test, the leg shots, the cat's fear, the client's dread music and voices),
+now and in everything added later; an entity kind needs its own hit registration, history and death, which come down to
+a few hooks into code that already exists:
+
+- **Shots and blows.** `Combat.forTargets` hands a survivor's shots and swings the live deer along with the dead, so a
+  deer is judged by the same lag-compensated trace: its position is in the 32-tick history (`Game.recordHistory`), and
+  `Combat.hitbox` gives it `deerHitbox` - a body cylinder and a head sphere ahead of it, up on the neck or (`DANIM.GRAZE`)
+  down in the grass, where the model carries it (`/sandbox/models-test.html?deer=grid&hit=1` prints the skull against
+  it). `Combat.damageZombie` passes a hit on a deer to `Deer.damage` before anything zombie-only runs; `legZone` is
+  for zombies only. Blasts (`Combat.explode`) and burning ground (`updateAreas`) call `Deer.blast` / `scorch`. The
+  client's own-shot prediction (`Game.predictPellet`) tests the same shapes where the deer are drawn, and the view
+  follows the zombie's sample ring and fading offset, so the picture the shooter aims at is the one the server rewinds to.
+- **Death.** `Deer.kill` drops `DEER_LOOT` through `Game.dropItem` and leaves the body on the wire as `DANIM.DEAD` for
+  `DEER.corpse` s; nothing is credited to anyone (no `zkills`, `credit`, `killfeed` or `nightStats`). The hit marker still
+  shows the kill. On the client a removed dead deer joins the corpse list (`DANIM.DEAD` is `ZANIM.DEAD`'s number).
+- **What they fear.** Every group looks round four times a second (`Deer.threat`): a survivor nearer than `DEER.notice`
+  (the multipliers for crouching, lying downed and sprinting are the dead's from `Zombies.chooseTarget`; a survivor down
+  the mine is not seen), one of the dead or a player-zombie nearer than `DEER.dread`. `Zombies.noise` hands every noise
+  to `Deer.hear`. A bolt (`Deer.refuge`) looks for open woods `DEER.flee` m straight away from it, then at headings
+  further round, and the group runs there by a flow field of its own (`nav.computeField('deer' + id, ...)`, one solve
+  per bolt or drift) where the straight line is not clear. A group already running ignores what is behind it.
+- **Getting about.** The body moves by the collision the dead use (`resolveBody` with `human = false`), never takes a
+  step into deep water or a mine portal (`world.mine.inHole`), and a deer that is held up for 0.6 s stops pushing: a
+  grazing one gives up that tuft, a running one takes a few strides to the side and then the field again, and after
+  three of those it stops where it is. `scripts/test-deer.js` chases groups round the valley for half an hour of game
+  time and counts the ticks spent pushing at something (under 0.1%).
+- **Its own randomness.** Everything random in `deer.js` comes off `mulberry32(seed ^ 0xdee4)`, the scatter of the drops
+  too (`game.rng` is swapped for the deer's stream around `dropItem`), so the game's stream - and `sim-smoke` - is the
+  same with deer in the valley as without; the test counts the draws.
+- **Numbers and traffic.** Groups: `DEER.groups` of `groupMin`-`groupMax`, `DEER.cap` in all; `Deer.dawn` (from
+  `Game.startDay`) walks new groups in from the rim to replace what was hunted. A standing deer costs nothing on the wire
+  and grazing deer stand most of the time; one that moves costs about 4-5 B an update at the half rate of anything
+  past `LOD_NEAR`. `npm run bench:net` (seed 4242, 4 players): +81 B/s of payload per client in the half-minute standing at
+  the car, where two groups in range were being moved about by the dead (+5% on the wire), +37 B/s roaming, +4 B/s
+  in the night's fight; no new messages or packets. The server spends about 0.01 ms a tick on them.
 
 ## Gameplay systems (iteration 2)
 

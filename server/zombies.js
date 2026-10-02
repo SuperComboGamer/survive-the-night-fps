@@ -548,6 +548,7 @@ export class Zombies {
     const g = this.g;
     const mn = g.mineNav;
     const su = !!mn && y !== undefined && mn.mine.under(x, y + 0.3, z);
+    g.dm.hear(x, z, loud, y); // the deer hear it too, and run the other way
     let heard = 0;
     let calls = 0;
     for (const e of g.zombies) {

@@ -123,6 +123,7 @@ import { ClientView, writeEntities, stageEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
+import { Deer } from './deer.js';
 import { Combat } from './combat.js';
 import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T_UPKEEP, T_SNAPSHOTS } from './tickstats.js';
 import { PlayerStats } from './stats.js';
@@ -292,6 +293,7 @@ export class Game {
     this.flyovers = []; // supply planes on their way to a release point
     this.caches = []; // searchable containers
     this.cats = [];
+    this.deer = []; // the deer, the dead ones lying about included (deer.js)
 
     this.tick = 0;
     this.time = 0;
@@ -327,6 +329,7 @@ export class Game {
 
     this.zm = new Zombies(this);
     this.cm = new Cats(this);
+    this.dm = new Deer(this);
     this.combat = new Combat(this);
     this.fixtures = new Fixtures(this); // the chapel bell and the Relay Station's radio
     this.cemetery = new Cemetery(this); // the dead that come up out of the graves at St. Agnes (cemetery.js)
@@ -759,6 +762,7 @@ export class Game {
     this.flyovers.length = 0;
     this.caches.length = 0;
     this.cats.length = 0;
+    this.deer.length = 0;
     this.waves = [];
     this.wave = 0;
     this.fallen.clear();
@@ -813,6 +817,7 @@ export class Game {
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
+    this.dm.spawnInitial();
     for (const p of this.players.values()) {
       p.kills = p.zkills = p.deaths = 0; // the scoreboard counts this run only: whoever stayed on from the last one starts level
       this.spawnHuman(p);
@@ -1145,6 +1150,8 @@ export class Game {
     this.zm.stockMine(this.humans());
     this.zm.wards.stock(this.humans());
     this.cemetery.dawn();
+    // ...and deer walk in from the rim for the ones that were hunted
+    this.dm.dawn(this.humans());
     // ...and burns the sickness out of whoever died since the last sunrise
     if (this.dawnReturn) this.returnFallen();
     // the valley restocks a little: some searched containers are refilled, trees & wrecks regrow
@@ -2733,6 +2740,38 @@ export class Game {
         }
         break;
       }
+      case 'deer': {
+        // /deer: to 34 m from the nearest group of deer (out of what startles them). /deer spawn [m]: a group 20 m
+        // ahead (or that many), which lets you stand there for ten seconds before it notices you
+        if (args[1] === 'spawn') {
+          const d = Math.max(4, Math.min(60, +args[2] || 20));
+          const gr = this.dm.spawnAhead(s.x, s.z, s.yaw, d);
+          this.sendChat(p, 0, CHATF.SYSTEM, gr ? `${gr.members.length} deer ${d} m ahead` : 'no room for deer there');
+          break;
+        }
+        const gr = this.dm.nearest(s.x, s.z);
+        if (!gr) {
+          this.sendChat(p, 0, CHATF.SYSTEM, 'no deer in the valley');
+          break;
+        }
+        // from the side you came from, on ground you can stand on
+        const a0 = Math.atan2(s.x - gr.cx, s.z - gr.cz);
+        for (let k = 0; k < 16; k++) {
+          const a = a0 + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 0.39;
+          const x = gr.cx + Math.sin(a) * 34;
+          const z = gr.cz + Math.cos(a) * 34;
+          if (!this.dm.open(x, z) && k < 15) continue;
+          s.x = x;
+          s.z = z;
+          break;
+        }
+        s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+        s.vx = s.vy = s.vz = 0;
+        this.fillHistory(p);
+        const b = Math.atan2(gr.cx - s.x, -(gr.cz - s.z));
+        this.sendChat(p, 0, CHATF.SYSTEM, `${gr.members.length} deer 34 m to the ${['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(b / (Math.PI / 4)) & 7]}`);
+        break;
+      }
       case 'where':
         this.systemChat(`pos ${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} zone ${this.world.zoneAt(s.x, s.z)}`);
         break;
@@ -2796,6 +2835,7 @@ export class Game {
     this.zm.update(dt);
     ts.mark(T_ZOMBIES);
     this.cm.update(dt);
+    this.dm.update(dt);
     ts.mark(T_CATS);
     this.combat.updateProjectiles(dt);
     this.combat.updateAreas(dt);
@@ -3239,6 +3279,11 @@ export class Game {
       p.hx[k] = p.state.x;
       p.hy[k] = p.state.y;
       p.hz[k] = p.state.z;
+    }
+    for (const d of this.deer) {
+      d.hx[k] = d.x;
+      d.hy[k] = d.y;
+      d.hz[k] = d.z;
     }
   }
 

@@ -59,6 +59,7 @@ import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
+import { deerHitbox } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { playerId } from '../net/identity.js';
@@ -88,6 +89,7 @@ import { ViewModel } from '../render/models/weapons.js';
 import { createGhost, createStructure } from '../render/models/structures.js';
 import { createZombie, createSurvivor, zombieVariants } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
+import { createDeer } from '../render/models/deer.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
@@ -508,6 +510,7 @@ export class Game {
       set.add(sv.object, new THREE.Mesh(e.coneGeo, e.coneMat), new THREE.Mesh(e.ropeGeo, e.ropeMat), new THREE.Points(e.glints.geometry, e.glints.material));
     });
     steps.push(() => set.add(createCat(0, 1).object));
+    for (const v of [0, 2, 1]) steps.push(() => set.add(createDeer(v, 1).object)); // a doe of each coat, the buck
     steps.push(() => set.add(createSupplyCrate()));
     for (const p of Object.values(PROJ)) steps.push(() => set.add(createProjectile(p)));
     const items = Object.values(ITEM).filter((it) => it);
@@ -1258,14 +1261,15 @@ export class Game {
     hits.length = 0;
     for (const e of this.entities.ents.values()) {
       const zdef = e.kind === ENT.ZOMBIE ? ZOMBIE_DEFS[e.ztype] : null;
-      if (zdef ? e.dead : e.kind !== ENT.PLAYER || e.id === this.myId || (e.q[5] & (PFLAG.ZOMBIE | PFLAG.DEAD)) !== PFLAG.ZOMBIE) continue;
+      const deer = e.kind === ENT.DEER; // (hunted through the same path as the dead are shot: shared/deer.js)
+      if (zdef || deer ? e.dead : e.kind !== ENT.PLAYER || e.id === this.myId || (e.q[5] & (PFLAG.ZOMBIE | PFLAG.DEAD)) !== PFLAG.ZOMBIE) continue;
       // (first by how far the ray passes from it: most of them are nowhere near)
       const rx = e.rx - ev.x;
       const ry = e.ry + 0.8 - ev.y;
       const rz = e.rz - ev.z;
       const along = rx * dx + ry * dy + rz * dz;
       if (along < -1 || along > wallT + 2 || rx * rx + ry * ry + rz * rz - along * along > 16) continue;
-      const hb = zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
+      const hb = deer ? deerHitbox(e.ryaw, e.q[4]) : zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
       _hbPos.x = e.rx;
       _hbPos.y = e.ry;
       _hbPos.z = e.rz;
@@ -1655,12 +1659,12 @@ export class Game {
     const inv = this.inventory.slots;
     const hp = this.self.hp;
     const down = !!this.prediction.state.downed;
-    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : [ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS, ITEM.MEDKIT];
+    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.VENISON, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : [ITEM.BANDAGE, ITEM.TUNA, ITEM.VENISON, ITEM.PAINKILLERS, ITEM.MEDKIT];
     for (const item of order) {
       const idx = inv.findIndex((x) => x && x.item === item);
       if (idx >= 0) {
         this.conn.action(ACT.USE_ITEM, idx);
-        this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : CONSUMABLES[item].food ? 'can_open' : 'bandage');
+        this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : CONSUMABLES[item].meat ? 'eat' : CONSUMABLES[item].food ? 'can_open' : 'bandage');
         this.vm.useItem?.(CONSUMABLES[item].time, item);
         return;
       }
@@ -1779,7 +1783,7 @@ export class Game {
         this.conn.action(ACT.USE_ITEM, i);
         const c = it && CONSUMABLES[it.item];
         if (!c) return;
-        if (c.food) this.audio.playLocal('can_open');
+        if (c.food) this.audio.playLocal(c.meat ? 'eat' : 'can_open'); // (venison comes in no tin)
         this.vm.useItem?.(c.time, it.item);
       },
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),

@@ -27,6 +27,7 @@ import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
+import { deerHitbox } from '../shared/deer.js';
 
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(3 * 16);
@@ -81,6 +82,7 @@ export class Combat {
       return;
     }
     for (const z of g.zombies) if (!z.dead) fn(z, false);
+    for (const d of g.deer) if (!d.dead) fn(d, false); // (deer.js: a survivor can hunt them; damageZombie hands the hit on)
     for (const h of g.players.values()) if (h.alive && h.zombie) fn(h, true);
   }
 
@@ -88,6 +90,7 @@ export class Combat {
   // are in shared/hitbox.js: the client judges its own shots against them too, to show what they strike at once
   hitbox(e, isPlayer) {
     if (isPlayer) return playerHitbox(e.zombie, e.state.crouch);
+    if (e.kind === ENT.DEER) return deerHitbox(e.yaw, e.anim);
     return zombieHitbox(e.def, e.yaw, e.legs, e.anim === ZANIM.AIRBORNE || e.state === 3);
   }
 
@@ -234,7 +237,7 @@ export class Combat {
   // Does a bullet that struck this zombie's body at height y (its feet at feetY) go into a leg? Only what walks on two
   // (ZOMBIE_DEFS[t].legs) and still has one: below the hip is leg, and a crawler has none left to hit.
   legZone(z, feetY, y) {
-    return !!z.def.legs && z.legs !== 3 && y < feetY + z.def.height * LEG_ZONE;
+    return z.kind === ENT.ZOMBIE && !!z.def.legs && z.legs !== 3 && y < feetY + z.def.height * LEG_ZONE;
   }
 
   // A bullet in a leg (bit: 1 the left, 2 the right; with that one gone already the other takes it). The leg takes
@@ -467,6 +470,7 @@ export class Combat {
   damageZombie(z, amount, attacker, opts = {}) {
     const g = this.g;
     if (z.dead) return false;
+    if (z.kind === ENT.DEER) return g.dm.damage(z, amount, attacker, opts); // not one of the dead: nothing below is for it
     // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
     const solid = z.lit && !z.onFire;
     if (solid) amount *= z.def.litResist;
@@ -597,6 +601,7 @@ export class Combat {
         const dl = Math.hypot(zz.x - x, zz.z - z) || 1;
         this.damageZombie(zz, opts.zombies * (0.35 + 0.65 * f), opts.owner || null, { weapon: opts.weapon, knock: 6 * f, dirX: (zz.x - x) / dl, dirZ: (zz.z - z) / dl });
       });
+      g.dm.blast(x, y, z, radius, opts.zombies, opts.owner, opts.weapon);
       for (const h of g.players.values()) {
         if (!h.alive || !h.zombie || !opts.owner) continue;
         const d = Math.hypot(h.state.x - x, h.state.z - z);
@@ -880,6 +885,7 @@ export class Combat {
             z.trapSlow = Math.min(z.trapSlow, 0.75);
           }
         });
+        g.dm.scorch(a, dt);
         for (const h of g.players.values()) {
           if (!h.alive || !h.zombie) continue;
           if (Math.hypot(h.state.x - a.x, h.state.z - a.z) < a.radius) g.damagePlayer(h, a.dps * dt, { kind: KILLER.PLAYER, id: a.owner ? a.owner.id : 0, weapon: ITEM.MOLOTOV, x: a.x, z: a.z });

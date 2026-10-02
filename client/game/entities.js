@@ -7,6 +7,7 @@ import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD } from '../../shared/constants.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
+import { createDeerView, deerAnimChanged, removeDeerView, updateDeer } from './deer.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createStructure, setStructureDamage } from '../render/models/structures.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
@@ -333,7 +334,7 @@ export class Entities {
     if (e.kind === ENT.PLAYER) {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
-    } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT) yaw = dqangle8(q[3]);
+    } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT || e.kind === ENT.DEER) yaw = dqangle8(q[3]);
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
 
@@ -407,6 +408,9 @@ export class Entities {
         }
         case ENT.GUN:
           g.gun.attach(e); // the mounted gun: client/game/mountedgun.js draws and turns it
+          break;
+        case ENT.DEER:
+          createDeerView(this, e);
           break;
         case ENT.ITEM: {
           const cat = ITEM_DEFS[e.item]?.cat;
@@ -530,6 +534,10 @@ export class Entities {
       case ENT.CAT:
         if (!initial && mask & 0b11) this.pushSample(e, t);
         break;
+      case ENT.DEER:
+        if (!initial && mask & 0b11) this.pushSample(e, t);
+        if (mask & 0b100) deerAnimChanged(this, e, initial);
+        break;
       case ENT.ITEM:
         if (!initial && mask & 1) {
           this.pushSample(e, t);
@@ -608,6 +616,7 @@ export class Entities {
       if (this.bossEnt === e) this.bossEnt = null;
       return;
     }
+    if (e.kind === ENT.DEER && removeDeerView(this, e)) return;
     this.destroyView(e, false);
   }
 
@@ -629,7 +638,7 @@ export class Entities {
       this.zombieCount--;
       this.disposeZombieView(e.view);
       if (this.bossEnt === e) this.bossEnt = null;
-    } else if (e.kind === ENT.PLAYER || e.kind === ENT.CAT) {
+    } else if (e.kind === ENT.PLAYER || e.kind === ENT.CAT || e.kind === ENT.DEER) {
       if (e.view) {
         this.scene.remove(e.view.object);
         e.view.dispose?.();
@@ -942,6 +951,9 @@ export class Entities {
           }
           break;
         }
+        case ENT.DEER:
+          updateDeer(this, e, dt, renderTick, time, camPos, _frustum);
+          break;
         case ENT.PROJECTILE: {
           e.samples.sample(renderTick, tmp);
           const moved = Math.hypot(tmp.x - e.rx, tmp.y - e.ry, tmp.z - e.rz) > 1e-3;

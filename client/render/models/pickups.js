@@ -300,6 +300,21 @@ BUILD[ITEM.TUNA] = (b) => {
   b.group({ p: [0.014, H, 0.01], r: [0, -0.9, 0] }, () => tunaTin(b, R, H));
 };
 
+// a cut of venison on the bone, raw and red or browned off the fire; what lies on the ground is two of them
+function venisonCut(b, cooked) {
+  b.sphere('paint', 0.07, 8, 6, { p: [0, 0.035, 0], s: [1.25, 0.5, 0.85], c: cooked ? [0.42, 0.24, 0.13] : [0.6, 0.16, 0.15] });
+  b.sphere('paint', 0.045, 7, 5, { p: [-0.02, 0.05, 0.005], s: [1.1, 0.45, 0.8], c: cooked ? [0.52, 0.32, 0.17] : [0.72, 0.26, 0.24] });
+  b.sphere('paint', 0.04, 6, 5, { p: [0.05, 0.036, 0], s: [0.9, 0.5, 1], c: cooked ? [0.3, 0.17, 0.09] : [0.86, 0.78, 0.7] }); // the seared edge, or the fat
+  b.cylBetween('bone', [-0.07, 0.03, 0], [-0.15, 0.034, 0], 0.012, 0.014, 6);
+  b.sphere('bone', 0.02, 6, 4, { p: [-0.155, 0.034, 0] });
+}
+for (const item of [ITEM.VENISON_RAW, ITEM.VENISON]) {
+  BUILD[item] = (b) => {
+    b.group({ p: [-0.03, 0, -0.04], r: [0, 0.5, 0] }, () => venisonCut(b, item === ITEM.VENISON));
+    b.group({ p: [0.05, 0, 0.06], r: [0, -2.2, 0] }, () => venisonCut(b, item === ITEM.VENISON));
+  };
+}
+
 BUILD[ITEM.TORCH] = (b) => {
   b.group({ p: [0, 0.03, 0], r: [0, 0.3, PI / 2 - 0.08] }, () => {
     b.cyl('wood', 0.018, 0.022, 0.5, 6, { p: [0, 0, 0], grain: true, c: [0.7, 0.62, 0.52] });

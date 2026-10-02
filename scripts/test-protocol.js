@@ -86,6 +86,11 @@ function spawn(kind) {
       e.yaw = rnd(0, 6.28);
       e.anim = irnd(0, 3);
       break;
+    case ENT.DEER:
+      e.variant = irnd(0, 255);
+      e.yaw = rnd(0, 6.28);
+      e.anim = irnd(0, 8);
+      break;
   }
   ents.set(e.id, e);
   return e;
@@ -111,6 +116,7 @@ function expectQ(e) {
       q.push(e.state);
       break;
     case ENT.CAT:
+    case ENT.DEER:
       q.push(qangle8(e.yaw), e.anim);
       break;
   }
@@ -129,7 +135,7 @@ let bytes = 0;
 let snaps = 0;
 let skips = 0;
 let rounded = 0;
-const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE, ENT.CAT];
+const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE, ENT.CAT, ENT.DEER];
 for (let i = 0; i < 80; i++) spawn(kinds[irnd(0, kinds.length - 1)]);
 let checks = 0;
 const TICKS = 3000;
@@ -172,6 +178,10 @@ for (let tick = 1; tick <= TICKS; tick++) {
     if (e.kind === ENT.CAT && Math.random() < 0.2) {
       e.yaw = rnd(0, 6.28);
       e.anim = irnd(0, 3);
+    }
+    if (e.kind === ENT.DEER && Math.random() < 0.2) {
+      e.yaw = rnd(0, 6.28);
+      e.anim = irnd(0, 8);
     }
   }
   // viewers move around (relevance changes)

@@ -95,6 +95,7 @@ export const ENT = {
   AREA: 7,
   CACHE: 8, // searchable container (static position from world gen, state = searched)
   CAT: 9, // the stray cat (ambient, can't be hurt)
+  DEER: 10, // a deer (shared/deer.js): can be hunted, is no zombie
   GUN: 12, // the mounted gun at the Army Checkpoint (static position: the pintle; state = belt, gunner, where it was left pointing)
 };
 
@@ -469,3 +470,5 @@ export const TF = { POS: 0, YAW: 1, ANIM: 2 };
 // GUN fields (u16 each). BELT: rounds left. GUNNER: the player who mans it, 0 nobody. AIM: where it was left
 // pointing, packed like a player's view (packLook) - while it is manned it follows the gunner's replicated view
 export const GF = { POS: 0, BELT: 1, GUNNER: 2, AIM: 3 };
+// DEER fields (ANIM: a DANIM state, shared/deer.js; a dead one stays on the wire as DANIM.DEAD until it is gone)
+export const DF = { POS: 0, YAW: 1, ANIM: 2 };

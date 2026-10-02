@@ -506,6 +506,21 @@ const ITEM_ICONS = {
         circ(14.4, 20.7, 0.55),
     ),
   ],
+  // venison: a haunch on the bone, a seam of fat through the raw one; the cooked one grill-marked and steaming
+  [ITEM.VENISON_RAW]: [
+    40,
+    32,
+    E('M4 18Q2 7 13 4Q23 2 27 10Q29 16 24 21Q17 27 9 25Q5 23 4 18Z' + 'M8.6 15.2Q13.5 9.4 21.6 10.4L21.4 11.8Q14.2 11 9.8 16.2Z') +
+      P('M23.4 17.4L31.5 23.6L29.6 26L21.4 19.8Z' + circ(33, 23.4, 2.3) + circ(31, 26.6, 2.3)),
+  ],
+  [ITEM.VENISON]: [
+    40,
+    36,
+    E('M4 22Q2 11 13 8Q23 6 27 14Q29 20 24 25Q17 31 9 29Q5 27 4 22Z' + 'M9 16.5L10.6 15.4L17.6 24.6L16 25.7Z' + 'M14.2 13L15.8 11.9L22.8 21.1L21.2 22.2Z') +
+      P('M23.4 21.4L31.5 27.6L29.6 30L21.4 23.8Z' + circ(33, 27.4, 2.3) + circ(31, 30.6, 2.3)) +
+      S('M11 6Q9.4 4.4 11 2.8Q12.6 1.4 11.3 0.6', 1.5) +
+      S('M19 5.4Q17.4 3.8 19 2.2Q20.6 0.8 19.3 0', 1.5),
+  ],
   // ---------------- ammo
   [ITEM.AMMO_9MM]: [36, 32, round9(4.6) + round9(14.5) + round9(24.4)],
   [ITEM.AMMO_SHELLS]: [36, 34, shell(5) + shell(21)],

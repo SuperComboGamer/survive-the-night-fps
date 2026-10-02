@@ -3,7 +3,7 @@ import { ENT, SNAP, SELF, PFLAG, UPOS, UEXT, UEXT_ABS, dqpos, dqangle16, dqangle
 import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED } from '../../shared/constants.js';
 import { EVT, AMMO_ITEMS } from '../../shared/defs.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.GUN]: 6 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.GUN]: 6 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -15,6 +15,7 @@ const BIT_SLOTS = {
   [ENT.CACHE]: [[0, 3], [3, 4]],
   [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
   [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6]],
+  [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
 };
 
 // reads slots [s0, s1) of an entity record with kind-specific widths
@@ -228,6 +229,7 @@ export function readEntities(r, store, tick, flags) {
           e.ctype = r.u8();
           break;
         case ENT.CAT:
+        case ENT.DEER:
           e.variant = r.u8();
           break;
       }

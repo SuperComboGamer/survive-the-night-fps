@@ -214,6 +214,10 @@ def(S.GRAVE_BURST, 'grave_burst', 'fxfar', 1, 0.06);
 def(S.MOUNTED_GUN, 'gun_hmg', 'gun', 1, 0.03, 0.2);
 def(S.GUN_FEED, 'shell_insert', 'fx', 0.7, 0.08, 0.15, R_SHELL); // rounds going onto its belt
 def(S.GUN_MAN, 'bolt', 'fxfar', 0.8, 0.04, 0.15, R_BOLT); // someone takes the grips and racks it
+// deer (procedural only): the snort carries across a clearing, the hoofbeats only reach whoever they pass close by
+def(S.DEER_SNORT, 'deer_snort', 'fxfar', 1.3, 0.06); // (a breath of noise: this puts it level with the cat's meow)
+def(S.DEER_BLEAT, 'deer_bleat', 'fxfar', 0.7, 0.07);
+def(S.DEER_HOOF, 'step_hoof', 'fx', 0.8, 0.1, 0.08);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {

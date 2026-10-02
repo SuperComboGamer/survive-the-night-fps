@@ -6,10 +6,15 @@
 //   ?surv=1      survivor row with every weapon;  ?zombie=1 -> zombified survivors
 //   ?cam=side|back|top   camera angle;  ?t=SECONDS fixed clock;  ?zoom=F
 //   ?cats=1      the stray cat in every coat (cycles CANIM states);  ?cats=grid -> one per CANIM state
+//   ?deer=1      the deer in every coat (cycles DANIM states);  ?deer=grid -> one per DANIM state (&coat=N);
+//                ?deer=film&anim=2 -> six of them a sixth of a bound apart (&anim=1: of a walking stride);
+//                &hit=1 draws the server's hitbox on each and prints where the middle of the skull is
 import * as THREE from 'three';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, CANIM, ITEM } from '../../shared/defs.js';
 import { createZombie, createSurvivor, modelStats, zombieVariants } from '../render/models/characters.js';
 import { createCat, CAT_COATS } from '../render/models/cat.js';
+import { createDeer, DEER_COATS } from '../render/models/deer.js';
+import { DANIM, DEER, deerHitbox } from '../../shared/deer.js';
 import { MeshBuilder } from '../render/models/skinning.js';
 MeshBuilder.debugNaN = true;
 MeshBuilder.debugStats = new URLSearchParams(location.search).get('tstats') === '1';
@@ -126,10 +131,44 @@ function addCat(coat, x, z, fixed) {
   return c;
 }
 
+// a deer: coat 0-1 a doe, 2 the buck. fixed: a DANIM state it holds (else they all cycle)
+const DEER_STATES = [DANIM.IDLE, DANIM.WALK, DANIM.RUN, DANIM.GRAZE, DANIM.DEAD];
+function addDeer(coat, x, z, fixed) {
+  const d = createDeer(coat === 2 ? 1 : coat << 1, coat * 7 + 1);
+  d.object.scale.setScalar(1); // (the hitbox is drawn for one of average size)
+  d.object.position.set(x, 0, z);
+  d.object.traverse((o) => {
+    if (o.isMesh) o.castShadow = true;
+  });
+  scene.add(d.object);
+  const a = { kind: 'd', obj: d, x, z, fixed };
+  if (showHit) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0x00ff66, wireframe: true, transparent: true, opacity: 0.35 });
+    a.cyl = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 16, 1, true), mat);
+    a.head = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff3030, wireframe: true }));
+    scene.add(a.cyl, a.head);
+  }
+  actors.push(a);
+  return d;
+}
+
 const zoom = q.has('zoom') ? +q.get('zoom') : 1;
 let target = new THREE.Vector3(0, 1.2, 0);
 let dist = 14;
-if (q.has('cats')) {
+if (q.has('deer')) {
+  const film = q.get('deer') === 'film';
+  const grid = film || q.get('deer') === 'grid';
+  const n = film ? 6 : grid ? DEER_STATES.length : DEER_COATS;
+  const coat = q.has('coat') ? +q.get('coat') : 0;
+  const col = q.get('cam') === 'side';
+  for (let i = 0; i < n; i++) {
+    const o = (i - (n - 1) / 2) * (col ? 2.4 : 1.5);
+    addDeer(grid ? coat : i, col ? 0 : -o, col ? o : 0, film ? DEER_STATES[fixedAnim] : grid ? DEER_STATES[i] : undefined);
+    if (film) actors[actors.length - 1].lead = i / 6; // (of a gait cycle)
+  }
+  target.set(0, 0.7, 0);
+  dist = n * (col ? 2.1 : 1.5);
+} else if (q.has('cats')) {
   const grid = q.get('cats') === 'grid';
   const n = grid ? 4 : CAT_COATS;
   const coat = q.has('coat') ? +q.get('coat') : 0;
@@ -237,7 +276,32 @@ function frame() {
   const tu0 = performance.now();
   for (const a of actors) {
     const anim = a.fixed !== undefined ? a.fixed : q.has('stress') ? (a.x > 0 ? 1 : 2) : cycleIdx;
-    if (a.kind === 'c') {
+    if (a.kind === 'd') {
+      const da = a.fixed !== undefined ? a.fixed : DEER_STATES[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 3) % DEER_STATES.length];
+      const speed = da === DANIM.WALK ? DEER.walk : da === DANIM.RUN ? DEER.run : 0;
+      if (a.lead && !a.led) {
+        a.led = true;
+        const cycle = (da === DANIM.RUN ? 4.6 : 1.25) / speed; // (the strides of DeerInstance.update)
+        for (let i = 0; i < 300 + Math.round(a.lead * cycle * 600); i++) a.obj.update(i < 300 ? 1 / 60 : 1 / 600, da, speed, 0, true);
+      }
+      if (fixedT >= 0) {
+        if (!a.warm) {
+          a.warm = true;
+          for (let i = 0; i < Math.round(fixedT * 60); i++) a.obj.update(1 / 60, da, speed, i / 60, true);
+        }
+        a.obj.update(0, da, speed, fixedT, true);
+      } else a.obj.update(dt, da, speed, T, true);
+      a.obj.anchorWorld(a.obj.object.userData.head, tmp);
+      a.skull = [tmp.y, a.z - tmp.z];
+      if (a.cyl) {
+        const hb = deerHitbox(0, da);
+        a.cyl.scale.set(hb.r, hb.top, hb.r);
+        a.cyl.position.set(a.x, hb.top / 2, a.z);
+        a.head.scale.setScalar(hb.headR);
+        a.head.position.set(a.x + hb.hx, hb.headY, a.z + hb.hz);
+        a.cyl.visible = a.head.visible = da !== DANIM.DEAD;
+      }
+    } else if (a.kind === 'c') {
       const ca = a.fixed !== undefined ? a.fixed : fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4;
       const speed = ca === CANIM.WALK ? 0.8 : ca === CANIM.RUN ? 5.4 : 0;
       if (fixedT >= 0) {
@@ -281,7 +345,7 @@ function frame() {
       } else s.update(dt, st);
     }
   }
-  info.textContent = q.has('cats') ? `cat: ${q.get('cats') === 'grid' ? 'IDLE WALK RUN SIT (left to right)' : Object.keys(CANIM)[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4]}   t=${T.toFixed(2)}` : (q.has('grid') ? 'IDLE WALK RUN ATTACK SPECIAL AIRBORNE STAGGER DEAD EAT (left to right)' : `anim: ${stateNames[cycleIdx]} (${cycleIdx})`) + `   t=${T.toFixed(2)}` + (q.get('stats') === '1' ? '\n' + statTxt : '');
+  info.textContent = q.has('deer') ? 'deer: ' + (q.get('deer') === 'grid' ? 'IDLE WALK RUN GRAZE DEAD (left to right)' : q.get('deer') === 'film' ? 'a gait cycle in sixths' : 'doe, grey doe, buck') + '   skull [height, ahead]: ' + actors.map((a) => a.skull.map((v) => v.toFixed(2)).join(' ')).join(' | ') : q.has('cats') ? `cat: ${q.get('cats') === 'grid' ? 'IDLE WALK RUN SIT (left to right)' : Object.keys(CANIM)[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4]}   t=${T.toFixed(2)}` : (q.has('grid') ? 'IDLE WALK RUN ATTACK SPECIAL AIRBORNE STAGGER DEAD EAT (left to right)' : `anim: ${stateNames[cycleIdx]} (${cycleIdx})`) + `   t=${T.toFixed(2)}` + (q.get('stats') === '1' ? '\n' + statTxt : '');
   const tu1 = performance.now();
   renderer.render(scene, camera);
   if (q.has('stress')) {

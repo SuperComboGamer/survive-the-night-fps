@@ -40,7 +40,7 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.GUN]: 6 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.GUN]: 6 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -53,6 +53,7 @@ const BIT_SLOTS = {
   [ENT.CACHE]: [[0, 3], [3, 4]],
   [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
   [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6]],
+  [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
 };
 
 export function playerFlags(p) {
@@ -106,6 +107,7 @@ function quant(e) {
       q[3] = e.state | 0;
       break;
     case ENT.CAT:
+    case ENT.DEER:
       q[3] = qangle8(e.yaw);
       q[4] = e.anim;
       break;
@@ -172,6 +174,7 @@ function writeCreate(w, e) {
       w.u8(e.ctype);
       break;
     case ENT.CAT:
+    case ENT.DEER:
       w.u8(e.variant);
       break;
   }

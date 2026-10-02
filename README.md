@@ -42,7 +42,8 @@ dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`,
 `/mine far` to the far portal, `/mine in` down to the junction), `/clinic` (to the front door of Mercy Clinic;
 `/clinic ward` into its dark wards; says so on a map without it), `/gun` (to the grips of the mounted gun at the
 Army Checkpoint; it says so when the map has no checkpoint: seed 1 has one), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
-`/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
+`/herd` (teleports 45 m from the wandering herd, just out of its sight), `/deer` (34 m from the nearest group of deer;
+`/deer spawn [m]` puts a group 20 m - or that many - ahead, and lets you stand there ten seconds before it notices you), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
 (to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station),
 `/cemetery` (to the gate of St. Agnes Cemetery; `/cemetery rise [n]` makes the n graves nearest you give up their
@@ -52,7 +53,7 @@ dead now)).
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`) and St. Agnes Cemetery (`test-cemetery`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) and the deer (`test-deer`) and runs `sim-smoke` |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
@@ -60,6 +61,7 @@ dead now)).
 | `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the backpack's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
 | `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
 | `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
+| `node scripts/test-deer.js [seed ...]` | the deer against the real server in-process: where the groups are put, what makes them bolt (a survivor standing or crouched, a noise, the dead) and how far and fast, a shot at a running one missing unless the server rewinds to the shooter's picture exactly as for a zombie dog, head shots on a grazing one, what a kill leaves and that it counts for nothing, that nothing that walks the zombie list meets them, the dawn's newcomers, venison, that none of it draws on the game's random stream, and half an hour of being chased about with none in the lake, the mine or a wall and none pushing at a fence (part of `npm test`; `VERBOSE=1` prints the passes) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
@@ -85,7 +87,7 @@ container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/
 `/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
 `&hurt=1` a hit flinch, `&vox=0` a growl, `&legs=1` hopping on one leg, `&legs=3&speed=0.8&dist=2.8&ty=0.3` crawling,
 `&legs=3&fall=1` going down, `&anim=10` tripped by a shot in the leg);
-`/sandbox/models-test.html?cats=grid` shows the cat's poses; `?grid=10`, `?variants=10` and `?film=10` show the
+`/sandbox/models-test.html?cats=grid` shows the cat's poses, `?deer=grid&hit=1` the deer's with the hitbox over each (and where its skull is), `?deer=film&anim=2` a bound in sixths; `?grid=10`, `?variants=10` and `?film=10` show the
 zombie dog's poses, coats and gait).
 
 `sim-smoke` is one long run on one map, and `npm test` runs it on seed 4242 only, so a check that leans on what the
@@ -146,7 +148,7 @@ https://www.survivethenightgame.com.
 | M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
-| H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
+| H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; a medkit gets you up when downed) |
 | I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop |
 | Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
 | Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
@@ -250,6 +252,18 @@ them off.
   included: faster than you walk, slower than you sprint. Sprint out of their sight and they give up after about
   twenty seconds, search where they last saw you (or where the noise came from), then drift back to the road.
   Kill the herd and another turns up somewhere else a minute and a half later.
+- **Deer** graze the valley all game, day and night: five groups of two to four (sixteen deer at most), a buck with
+  antlers in some, on the woods and clearings away from the places and the roads, heads down, a few steps now and then,
+  drifting on to new ground every few minutes. Come within 22 m of one - 13 m crouched, more if you sprint - let a noise
+  reach them or let one of the dead come near, and the whole group bolts with a snort, white tails up, at 9 m/s (you
+  sprint at 7.5), runs about sixty metres, stops to watch where it came from and settles. A deer bolting past is a
+  warning. Zombies ignore them; nothing eats anything. **Hunting:** any weapon brings one down (70 HP: three pistol rounds
+  in the body or one in the head - and the head is down in the grass while it grazes - one crossbow bolt, a heavy knife
+  blow from close by), and a kill leaves 1-2 leather and two cuts of **raw venison** where it fell. The crossbow
+  is the hunter's weapon: a gunshot sends every group within its carry running and brings the dead, a bolt is heard by
+  nothing six metres off. Cook venison at a campfire: **cooked venison** heals 45 HP and restores your stamina, more
+  than a tin of tuna; raw, it is eaten for 8. A kill counts for nothing on the scoreboard. Hunted groups are replaced: at
+  sunrise new ones walk in from the edge of the map, out of everyone's sight, until the valley has its five again.
 - **Zombie dogs:** packs of two to four den in the thickest woods from day one (more of them each day). They
   catch your scent from half again as far off as the dead, and the first to find you howls and
   brings the whole pack. They fan out to come at you from the sides, crouch and lunge for a bite, peel away and
@@ -316,7 +330,7 @@ them off.
   for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team. Two materials have to be looked for: **leather** (padded jacket,
-  machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge, and **kevlar plates** (two
+  machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge - or off a deer - and **kevlar plates** (two
   to a vest) in ammo crates, which hold them in pairs.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate

@@ -728,6 +728,44 @@ export function dogYelp(sr, rng, i) {
   });
 }
 
+// deer. The snort: a blast of breath down the nose, hard-edged and hissing, sometimes twice - what a whitetail does
+// when something is wrong, the moment before the flag goes up and the group is gone
+export function deerSnort(sr, rng, i) {
+  const n = i % 3 === 2 ? 2 : 1;
+  const out = alloc(sr, 0.5 + n * 0.32);
+  let t = 0.01;
+  for (let k = 0; k < n; k++) {
+    const dur = rrange(rng, 0.22, 0.32);
+    const f = rrange(rng, 1700, 2300);
+    addNorm(out, noise(sr, rng, dur, { bp: [f, 1.4], sweep: [f * 1.25, f * 0.7, 0.6], env: (u) => Math.min(1, u * 30) * (1 - u) ** 1.6 }), sr, t, 0.9);
+    addNorm(out, noise(sr, rng, dur * 0.8, { hp: 3500, lp: 9000, env: (u) => Math.min(1, u * 40) * (1 - u) ** 2.5 }), sr, t, 0.4);
+    addNorm(out, noise(sr, rng, dur * 0.6, { bp: [520, 2], env: (u) => Math.min(1, u * 25) * (1 - u) ** 2 }), sr, t, 0.3); // the chest behind it
+    t += dur + rrange(rng, 0.08, 0.16);
+  }
+  return finish(out, sr);
+}
+// a bleat when it is hit: short, nasal, high; the last variant is the one it dies with
+export function deerBleat(sr, rng, i) {
+  const dying = i === 2;
+  const b = rrange(rng, 420, 520) * (dying ? 0.9 : 1);
+  return voice(sr, rng, {
+    dur: dying ? rrange(rng, 0.7, 0.9) : rrange(rng, 0.3, 0.42),
+    pitch: dying ? [[0, b], [0.12, b * 1.15], [0.5, b * 0.95], [1, b * 0.6]] : [[0, b * 0.9], [0.25, b * 1.15], [1, b * 0.8]],
+    vowels: vowelPath(dying ? ['ae', 'e', 'a', 'uh'] : ['ae', 'e', 'ae'], rng), fscale: 1.3, bw: 1.3, jitter: 0.03, jitterHz: 30,
+    shimmer: 0.25, sub: 0.1, rasp: 0.5, raspHz: 55, vib: 0.03, vibHz: 11, breath: 0.25, drive: 2.2, chest: 0.1, a3: 0.6, hp: 280,
+    env: dying ? [[0, 0], [0.06, 1], [0.45, 0.75], [0.8, 0.3], [1, 0]] : [[0, 0], [0.08, 1], [0.6, 0.8], [1, 0]],
+  });
+}
+// a hoof coming down on the forest floor at a run: a hard little knock on packed earth, leaf litter thrown up
+export function hoofbeat(sr, rng) {
+  const out = alloc(sr, 0.3);
+  addNorm(out, thump(sr, rrange(rng, 150, 185), 70, 0.012, 0.03), sr, 0, 0.9);
+  addNorm(out, noise(sr, rng, 0.07, { lp: 900, a: 0.001, d: 0.018 }), sr, 0, 0.6);
+  addNorm(out, noise(sr, rng, 0.14, { hp: 2000, lp: 6500, env: (u) => Math.min(1, u * 10) * (1 - u) ** 2 }), sr, 0.006, 0.35);
+  addNorm(out, crackles(sr, rng, 0.1, 160, { hp: 2400, bp: 3800, env: (u) => 1 - u }), sr, 0.008, 0.25);
+  return finish(out, sr, 0.9, 0.0005, 0.03);
+}
+
 // human (player) sounds
 export function humanHurt(sr, rng, i) {
   const b = rrange(rng, 125, 150);
@@ -1700,6 +1738,8 @@ export const SFX_DEFS = [
   { bank: 'dog_howl', n: 2, sr: MID, gen: dogHowl },
   { bank: 'dog_snarl', n: 3, sr: MID, gen: dogSnarl },
   { bank: 'dog_yelp', n: 3, sr: MID, gen: dogYelp },
+  { bank: 'deer_snort', n: 3, sr: MID, gen: deerSnort },
+  { bank: 'deer_bleat', n: 3, sr: MID, gen: deerBleat },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },
@@ -1765,6 +1805,7 @@ export const SFX_DEFS = [
   { bank: 'step_water', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'water') },
   { bank: 'step_metal', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'metal') },
   { bank: 'step_heavy', n: 3, sr: MID, gen: heavyStep },
+  { bank: 'step_hoof', n: 4, sr: MID, gen: hoofbeat },
   // loops
   { bank: 'loop_campfire', n: 1, sr: MID, gen: (sr, r) => loopFire(sr, r, 1) },
   { bank: 'loop_torch', n: 1, sr: MID, gen: (sr, r) => loopFire(sr, r, 0) },

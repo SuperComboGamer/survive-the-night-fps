@@ -72,6 +72,9 @@ export const ITEM = {
   SCHEM_KEVLAR: 92,
   SCHEM_EXPLOSIVES: 93,
   SCHEM_METAL: 94,
+  // consumables: what a hunted deer gives (shared/deer.js)
+  VENISON_RAW: 26,
+  VENISON: 27,
 };
 
 // ammo reserve indices: the reserve of a calibre (state.ammo) is every round of it in the backpack
@@ -150,6 +153,9 @@ export const ITEM_DEFS = {
   [ITEM.SCHEM_KEVLAR]: { name: 'Armor Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Kevlar Vest at the workbench for the whole team.' },
   [ITEM.SCHEM_EXPLOSIVES]: { name: 'Explosives Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks Pipe Bombs and the Flamethrower at the workbench for the whole team.' },
   [ITEM.SCHEM_METAL]: { name: 'Fortification Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks Metal Walls for the whole team.' },
+
+  [ITEM.VENISON_RAW]: { name: 'Raw Venison', cat: 'cons', stack: 6, color: 0x8e2f2a, desc: 'A cut off a deer. Cook it at a campfire: raw, it heals 8 HP.' },
+  [ITEM.VENISON]: { name: 'Cooked Venison', cat: 'cons', stack: 6, color: 0x7a4a2c, desc: 'Venison off the fire. Heals 45 HP, restores stamina.' },
 };
 
 // ---------------------------------------------------------------- talking
@@ -228,6 +234,9 @@ export const CONSUMABLES = {
   [ITEM.PAINKILLERS]: { heal: 15, stamina: 100, time: 1.0 },
   [ITEM.BATTERY]: { flashlight: 100, time: 1.0 },
   [ITEM.TUNA]: { heal: 30, stamina: 100, time: 2.5, food: true }, // food: eaten (own sounds, first-person tin)
+  // meat: food that comes in no tin (1: a raw cut, 2: a cooked one, in the hands)
+  [ITEM.VENISON_RAW]: { heal: 8, time: 2.5, food: true, meat: 1 },
+  [ITEM.VENISON]: { heal: 45, stamina: 100, time: 2.5, food: true, meat: 2 },
 };
 
 // ---------------------------------------------------------------- structures
@@ -302,6 +311,7 @@ export const RECIPES = [
   { id: 27, out: ITEM.AMMO_BOLTS, n: 4, cost: { [ITEM.STICK]: 2, [ITEM.SCRAP]: 1 }, station: 'bench' },
   { id: 28, out: ITEM.FLAMETHROWER, n: 1, cost: { [ITEM.GUNPARTS]: 2, [ITEM.SCRAP]: 4, [ITEM.TAPE]: 2, [ITEM.CHEM]: 1 }, station: 'bench', schem: ITEM.SCHEM_EXPLOSIVES },
   { id: 29, out: ITEM.AMMO_FUEL, n: 50, cost: { [ITEM.ALCOHOL]: 1, [ITEM.CHEM]: 1 }, station: 'bench' },
+  { id: 30, out: ITEM.VENISON, n: 1, cost: { [ITEM.VENISON_RAW]: 1 }, station: 'fire' },
 ];
 
 // ---------------------------------------------------------------- zombies
@@ -478,6 +488,9 @@ export const SOUND = {
   MOUNTED_GUN: 91, // a round from the mounted gun (client-side, from its EVT.SHOT)
   GUN_FEED: 92, // rounds going into its belt
   GUN_MAN: 93, // someone takes its grips
+  DEER_SNORT: 79, // a deer blows through its nose: the group has seen, heard or smelt something, and bolts
+  DEER_BLEAT: 80, // a deer hit, or brought down
+  DEER_HOOF: 81, // a hoof coming down at a run (client-side, timed to the bound)
 };
 
 export const EVT = {
