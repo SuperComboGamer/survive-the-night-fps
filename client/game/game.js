@@ -19,6 +19,7 @@ import {
   GRID_STEP,
   GRID_N,
   DUSK_WARNING,
+  DAWN_RETURN,
   EYE_HEIGHT,
   INTERACT_REACH,
   CAR_REACH,
@@ -785,6 +786,13 @@ export class Game {
     return this.players.get(id)?.name || 'Someone';
   }
 
+  // a death now lasts until sunrise (DAWN_RETURN) - unless there is none to come: the final stand stops the clock,
+  // and a wipe ends the run
+  dawnAhead() {
+    const g = this.global;
+    return DAWN_RETURN && !g.finale && (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT);
+  }
+
   // ---------------------------------------------------------------- events
   get eventHandler() {
     if (this._eh) return this._eh;
@@ -964,13 +972,22 @@ export class Game {
         ui.notify(arg === this.myId ? "You're back on your feet." : `${this.name(arg)} is back up.`, 'good', 3);
         break;
       case NOTIFY.YOU_DIED:
-        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT };
+        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
         ui.showDeath(this.deathInfo);
         a.stinger?.('death');
         this.deathShown = true;
         break;
       case NOTIFY.PLAYER_DIED:
-        if (arg !== this.myId) ui.notify(`${this.name(arg)} has fallen... and will rise as one of them.`, 'danger', 5);
+        if (arg !== this.myId) ui.notify(`${this.name(arg)} has fallen... and will rise as one of them${this.dawnAhead() ? ' until dawn' : ''}.`, 'danger', 5);
+        break;
+      case NOTIFY.RETURNED:
+        if (arg === this.myId) {
+          // (the death card is still up if we died in the last seconds of the night)
+          if (this.deathShown) ui.hideOverlays();
+          this.deathShown = false;
+          ui.notify('The sun burns it out of you: you are a survivor again.', 'good', 6);
+          ui.notify('You wake with one pistol magazine and a bandage. Your old gear may still lie where you fell.', 'toast', 8);
+        } else ui.notify(`${this.name(arg)} is back among the living.`, 'good', 5);
         break;
       case NOTIFY.VICTORY:
         a.stinger?.('victory');
@@ -1856,7 +1873,7 @@ export class Game {
       this.deathShown = false;
       this.ui.hideOverlays();
       this.ui.notify('YOU HAVE RISEN', 'big', 4);
-      this.ui.notify('Hunt the survivors. [RMB] to leap.', 'sub', 4);
+      this.ui.notify(this.dawnAhead() ? 'Hunt the survivors until dawn. [RMB] to leap.' : 'Hunt the survivors. [RMB] to leap.', 'sub', 4);
     }
   }
 

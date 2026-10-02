@@ -289,11 +289,19 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
     same = same && kit(back.player) === kept && from(back.player.state, a.state) < 9.1;
   }
   check('rejoining gives back what they left with, not a fresh kit', same && loose(...supplies) === ground, `${kit(back.player)}, on the ground ${loose(...supplies)}`);
-  // dying drops the kit where they fell: a reconnect after that does not come with another
+  // dying drops the kit where they fell, and a death lasts until dawn (DAWN_RETURN): a reconnect after that does not
+  // come with another kit, it is one of the dead again
   g.killPlayer(back.player, { kind: 2, ztype: ZTYPE.WALKER });
   g.onClose(back);
-  const again = join('Cat').player;
-  check('...nor after dying', !again.zombie && again.state.mags[1] + again.state.ammo[AMMO.P9] + has(again, ITEM.BANDAGE) + has(again, ITEM.TORCH) === 0, kit(again));
+  back = join('Cat');
+  const again = back.player;
+  check('...nor after dying: before sunrise they are back among the dead, with nothing', again.zombie && again.alive && !again.state.weapons.some(Boolean) && !again.inv.some(Boolean), `weapons ${again.state.weapons.join()}, ${again.inv.filter(Boolean).length} stacks in the pack`);
+  // ...and one who stays away until the sun is up comes back a survivor with what the dead who stayed wake with
+  const fell = loose(...supplies); // (with what they dropped where they fell)
+  g.onClose(back);
+  g.returnFallen();
+  const woke = join('Cat').player;
+  check('...and after sunrise a survivor with one magazine and a bandage, not a fresh kit', !woke.zombie && woke.alive && kit(woke) === `${WEAPONS[ITEM.PISTOL].mag}/0/1/0/0/0` && from(woke.state, a.state) < 9.1 && loose(...supplies) === fell, kit(woke));
   check('a new arrival still gets the kit for the day', kit(join('Dee').player) === fresh);
 }
 
@@ -1799,6 +1807,139 @@ check('ping broadcast', B.pings > 0);
   A.act(ACT.HOLD_BEGIN, B.id);
   run(90);
   check('B revived', b.alive && !b.downed && b.hp > 0, `hp ${b.hp}, from ${from.toFixed(2)} m`);
+}
+
+// death lasts until dawn (DAWN_RETURN): the night you die is the night you hunt, a reload is no way round it, at
+// sunrise you are a survivor again beside the team with next to nothing - and a wipe is still a loss
+// (a game of its own: these deaths and a third and fourth player would change the run the rest of this file checks)
+{
+  const g = new Game({ seed, godMode: true, dawnReturn: true, log: () => {} });
+  const w = g.world;
+  const car = w.car;
+  const join = (name) => {
+    const c = { name, id: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, notes: [], chats: [] };
+    c.handler = { ...A.handler, notify: (m, a) => c.notes.push([m, a]), pickup() {}, ping() {}, summary() {}, flyover() {} };
+    c.session = g.onOpen({
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) c.id = r.u16();
+        else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
+        else if (t === S2C.CHAT) {
+          r.u16();
+          r.u8();
+          c.chats.push(r.str());
+        }
+      },
+    });
+    const wr = new Writer(64);
+    wr.u8(C2S.JOIN);
+    wr.u8(PROTOCOL_VERSION);
+    wr.str(name);
+    g.onMessage(c.session, wr.bytes().slice());
+    c.p = () => g.players.get(c.id);
+    return c;
+  };
+  const tick = (n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  const nightfall = () => {
+    g.timeLeft = 0.04;
+    tick(1);
+  };
+  const has = (p, item) => p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0);
+  // tools, rounds in the pistol, reserves, bandages, stacks in the pack
+  const kit = (p) => [p.state.weapons.join(), p.state.mags[1], p.state.ammo.join(''), has(p, ITEM.BANDAGE), p.inv.filter(Boolean).length].join(' / ');
+  const from = (s, o) => Math.hypot(s.x - o.x, s.z - o.z);
+  const survivor = (p) => p.alive && !p.zombie;
+  const returned = (c) => c.notes.filter((n) => n[0] === NOTIFY.RETURNED).map((n) => n[1]).sort().join();
+  const walker = { kind: 2, ztype: ZTYPE.WALKER };
+  const Ann = join('Ann');
+  const Ben = join('Ben');
+  const Cat = join('Cat');
+  let Dee = join('Dee');
+  tick(2);
+  const starter = kit(Ann.p());
+  // the team holds open, level ground a long way from the car
+  const open = (x, z) => !w.isDeepWater(x, z) && !g.nav.isBlocked(x, z);
+  let spot = null;
+  for (let r = 150; r <= 260 && !spot; r += 10) {
+    for (let k = 0; k < 24 && !spot; k++) {
+      const x = car.x + Math.sin((k / 24) * Math.PI * 2) * r;
+      const z = car.z + Math.cos((k / 24) * Math.PI * 2) * r;
+      if (Math.abs(x) > 280 || Math.abs(z) > 280 || !open(x, z) || !open(x + 1.5, z)) continue;
+      let clear = 0;
+      let level = true;
+      for (let i = -12; i <= 12; i += 2) {
+        for (let j = -12; j <= 12; j += 2) {
+          if (open(x + i, z + j)) clear++;
+          if (Math.abs(w.heightAt(x + i, z + j) - w.heightAt(x, z)) > 1.5) level = false;
+        }
+      }
+      if (level && clear > 150) spot = { x, z };
+    }
+  }
+  check('found open ground for the dawn return', !!spot);
+  [Ann, Cat, Ben, Dee].forEach((c, i) => {
+    const s = c.p().state;
+    s.x = spot.x + i * 1.5;
+    s.z = spot.z;
+    s.y = groundAt(w, s.x, s.z, 200, 0.3);
+  });
+  nightfall();
+  // Ben and Dee die in the night; Dee reloads the page
+  g.killPlayer(Ben.p(), walker);
+  g.killPlayer(Dee.p(), walker);
+  tick(20 * 7);
+  const rose = Ben.p().zombie && Dee.p().zombie;
+  g.onClose(Dee.session);
+  Dee = join('Dee');
+  check('a dead player who reloads is still one of them', g.phase === PHASE.NIGHT && Dee.p().zombie && Dee.p().alive && Dee.chats.some((t) => t.includes('until dawn')), Dee.chats.join(' | '));
+  g.timeLeft = 0.5;
+  tick(5);
+  check('a dead player is a zombie through the night', rose && g.phase === PHASE.NIGHT && [Ben, Dee].every((c) => c.p().zombie && c.p().alive && c.self.zombie === 1) && !returned(Ann));
+  // sunrise, with three walkers 5 m to the north of the team and nothing else near
+  for (const z of [...g.zombies]) {
+    g._listRemove(g.zombies, z);
+    g.removeEntity(z);
+  }
+  const dead = [-1, 0, 1].map((i) => g.zm.spawn(ZTYPE.WALKER, spot.x + i, spot.z - 5));
+  g.timeLeft = 0.04;
+  tick(1);
+  const back = [Ben, Dee].map((c) => c.p());
+  check('at dawn the dead are survivors again', g.phase === PHASE.DAY && g.day === 2 && back.every((p) => survivor(p) && p.hp === 100) && [Ben, Dee].every((c) => c.self.zombie === 0 && c.self.alive === 1));
+  const mates = back.map((p) => Math.min(from(p.state, Ann.p().state), from(p.state, Cat.p().state)));
+  check('...beside the team, not at the car', mates.every((d) => d >= 2.4 && d <= 9.1) && back.every((p) => from(p.state, car) > 100), `${mates.map((d) => d.toFixed(1)).join(' and ')} m from a teammate, ${from(back[0].state, car).toFixed(0)} m from the car`);
+  check('...on open ground with a clear walk to them', back.every(({ state: s }) => open(s.x, s.z) && Math.abs(s.y - groundAt(w, s.x, s.z, s.y)) < 0.01 && [Ann, Cat].some((c) => g.zm.clearLine(s.x, s.y + 0.6, s.z, c.p().state.x, c.p().state.y + 0.6, c.p().state.z))));
+  const near = Math.min(...back.flatMap((p) => dead.map((z) => from(z, p.state))));
+  check('...on the side away from the dead', near > 8, `nearest zombie ${near.toFixed(1)} m (${Math.min(...dead.map((z) => from(z, Ann.p().state))).toFixed(1)} m from a teammate)`);
+  check('...with next to nothing: the tools, one pistol magazine and a bandage', back.every((p) => kit(p) === `${Ann.p().state.weapons.join()} / ${WEAPONS[ITEM.PISTOL].mag} / 0000000 / 1 / 1`) && Ben.self.mags[1] === WEAPONS[ITEM.PISTOL].mag && Ben.self.ammo.every((n) => n === 0), `${kit(back[0])} against the starting ${starter}`);
+  const ids = [Ben.id, Dee.id].sort().join();
+  check('...and everyone is told who came back', [Ann, Cat, Ben, Dee].every((c) => returned(c) === ids), returned(Ann));
+  // a wipe is still a loss: the last survivors fall with dawn due on the very next tick, Ben already one of the dead
+  nightfall();
+  g.killPlayer(Ben.p(), walker);
+  tick(20 * 7);
+  g.timeLeft = 0.04;
+  for (const c of [Dee, Cat, Ann]) g.killPlayer(c.p(), walker);
+  const over = g.phase;
+  tick(3);
+  g.returnFallen(); // (even asked outright)
+  check('a wipe is a loss, dawn or not: nobody comes back', over === PHASE.GAMEOVER && g.phase === PHASE.GAMEOVER && g.day === 2 && ![...g.players.values()].some(survivor) && returned(Ann) === ids);
+  // the switch off is the rule as it was: a death lasts the run, and a reload is a survivor again at once
+  g.restartT = 0;
+  tick(1);
+  g.dawnReturn = false;
+  nightfall();
+  g.killPlayer(Ben.p(), walker);
+  g.killPlayer(Dee.p(), walker);
+  tick(20 * 7);
+  g.onClose(Dee.session);
+  Dee = join('Dee');
+  const reload = survivor(Dee.p());
+  g.timeLeft = 0.04;
+  tick(1);
+  check('with DAWN_RETURN off a death lasts the run, as before', g.phase === PHASE.DAY && g.day === 2 && Ben.p().zombie && Ben.p().alive && returned(Ann) === ids && reload, `after dawn: zombie ${Ben.p().zombie}; a reload: survivor ${reload}, ${kit(Dee.p())}`);
 }
 
 // night + waves

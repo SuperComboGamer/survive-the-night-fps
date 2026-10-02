@@ -4,7 +4,7 @@ A co-op multiplayer horror survival FPS in the browser. Your car broke down on R
 a dead valley. By day, scavenge the valley's farms, motels, trailer parks and roadside wrecks for the
 supplies the car needs. By night, the horde comes to wherever you are, so you board up on the spot and
 hold. Every night there are more of them. Install every supply, start the engine, survive the final
-stand and drive away. Die, and you rise as one of them.
+stand and drive away. Die, and you rise as one of them until the sun comes up.
 
 - **Client:** three.js (Vite), procedural art; procedural audio layered with ~16 MB of CC0 recordings
   (the score and stingers, ambience beds, weather, wildlife, footsteps, foley, gunshots, explosions, creature and survivor voices -
@@ -232,6 +232,12 @@ https://www.survivethenightgame.com.
   (at the car if they are still by it, or if nobody is left alive), with the starting kit plus a little more
   9mm and bandages for each day gone by. Leave and come back during the same run and you have what you left with.
 - **Death:** survivors respawn as player-controlled zombies (claws + leap) hunting their former friends.
+  That lasts until dawn. The sun that burns the horde burns it out of them too: at sunrise they are survivors
+  again, beside the team, with the tools, one pistol magazine and one bandage. What they carried was dropped
+  where they fell and lies there for four minutes, so after a death in the night it can be walked back to.
+  A wipe still ends the run, a death in the final stand lasts to the end of it (the clock is stopped: no dawn),
+  and reloading the page is no way round a death: you rejoin as what you were. `DAWN_RETURN` in
+  `shared/constants.js` turns all of this off, and a death lasts the rest of the run as it used to.
 - **Your record:** the browser keeps your last 20 finished runs and your bests - fastest escape, most nights
   survived, most kills in a run, escapes in a row - and shows them on the end screen (a new best is called out)
   and on the title screen. A run counts if you were in it from its first minute and still there when it ended.

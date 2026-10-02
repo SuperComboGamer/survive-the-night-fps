@@ -52,6 +52,7 @@ import {
   DOWN_TIME,
   REVIVE_TIME,
   REVIVE_HP,
+  DAWN_RETURN,
   SEARCH_TIME,
   ENGINE_START_TIME,
   INTERACT_REACH,
@@ -215,6 +216,15 @@ const CRATE_TABLE = [
   [ITEM.POWDER, 3, 5, 10],
 ];
 
+// What a player who died comes back with at dawn (returnFallen), next to the tools every survivor has (pistol,
+// knife, hammer): the magazine in the pistol and one bandage. Enough for a daytime walk back to where they fell;
+// nothing to hold a night with. Against the starting kit that is 36 rounds, a bandage, the torch and two
+// barricades' worth of wood and nails short - and everything they had found lies where they died (dropAll), for
+// 240 s: still there at sunrise after a death in the night, gone after one earlier in the day unless a teammate
+// picked it up. First-pass numbers. The shape is a starting kit's: rounds in the pistol, 9mm in reserve, pack items.
+// They are put down beside the team, where a late joiner would be (pickJoinSpawn).
+const RETURN_KIT = { mag: WEAPONS[ITEM.PISTOL].mag, ammo: 0, items: [[ITEM.BANDAGE, 1]] };
+
 const randomSeed = () => (Math.random() * 0x7fffffff) | 0;
 
 export class Game {
@@ -228,6 +238,7 @@ export class Game {
     this.startDayNum = opts.startDay || 1;
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
     this.debugCommands = !!opts.debugCommands; // testing only: /kill /night /day /give /items /spawn /tp chat commands
+    this.dawnReturn = opts.dawnReturn ?? DAWN_RETURN; // the dead are survivors again at sunrise (the option: tests)
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.setWorld(opts.seed ?? randomSeed());
     this.rng = mulberry32(this.seed ^ 0xabcdef);
@@ -259,6 +270,7 @@ export class Game {
     this.supplies = [0, 0, 0, 0, 0]; // installed per SUPPLIES entry
     this.supplyHints = [255, 255, 255, 255, 255, 255, 255]; // zones: 4 parts + 3 jerry cans
     this.unlocked = 0; // schematics bitmask
+    this.fallen = new Set(); // names of players who left dead since the last sunrise (removePlayer, handleJoin)
     this.waves = [];
     this.wave = 0;
     this.bossPending = null;
@@ -475,7 +487,14 @@ export class Game {
     w.u8(this.maxPlayers);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
-    else {
+    else if (this.fallen.delete(p.name) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+      // died in this run and came back in before sunrise: they are what they were, and wait for dawn with the rest
+      // of the dead - a reload is no way round a death. (A JOIN carries nothing but a name, so under another name
+      // they are a newcomer: closing that takes an identity in the join message.) The kit parked under their name
+      // stays where it is: the dead carry nothing, and returnFallen replaces it at sunrise.
+      this.spawnPlayerZombie(p);
+      this.sendChat(p, 0, CHATF.SYSTEM, `You died in this run: you are one of them ${this.escape.active ? 'to the end of it' : 'until dawn'}.`);
+    } else {
       // a run in progress: beside the team, with a kit for the day - or, back in the run they left, with what they
       // left with (parkKit)
       const left = this.leftKits.get(p.name);
@@ -484,7 +503,7 @@ export class Game {
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
     this.notify(NOTIFY.PLAYER_JOINED, p.id);
-    this.systemChat(`${p.name} joined the survivors.`);
+    this.systemChat(p.zombie ? `${p.name} is back among the dead.` : `${p.name} joined the survivors.`);
     this.playersDirty = true;
     this.globalDirty = true;
     this.log(`join ${p.name} (${this.players.size}/${this.maxPlayers})`);
@@ -590,6 +609,7 @@ export class Game {
     this.dropAll(p);
     this.players.delete(p.id);
     this.nav.removeField(p.id);
+    if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(p.name); // left dead: dead if they rejoin before sunrise (handleJoin)
     this.removeEntity(p);
     this.notify(NOTIFY.PLAYER_LEFT, 0);
     this.systemChat(`${p.name} left.`);
@@ -667,6 +687,7 @@ export class Game {
     this.cats.length = 0;
     this.waves = [];
     this.wave = 0;
+    this.fallen.clear();
     this.bossPending = null;
     this.bossId = 0;
     this.gather.clear();
@@ -879,6 +900,29 @@ export class Game {
     this.playersDirty = true;
   }
 
+  // Sunrise, with DAWN_RETURN on: every player who died since the last one - risen as a zombie, or still lying
+  // where they fell - is a survivor again, beside the team, with RETURN_KIT in place of the starting kit. The night
+  // they died is still the night they hunted. The final stand stops the clock, so there is no dawn in it: a death
+  // there lasts to the end of the run.
+  returnFallen() {
+    // Whoever left dead has sat the night out. If they come back into this run now, they are a survivor, with what
+    // the dead who stayed wake with: handleJoin hands back the kit parked under their name (parkKit left it empty),
+    // so waiting out a death offline is neither better nor worse than waiting it out as a zombie.
+    for (const name of this.fallen) if (this.leftKits.has(name)) this.leftKits.set(name, RETURN_KIT);
+    this.fallen.clear();
+    // Nobody alive to come back to: a wipe is a loss, never a second chance. checkAllDead ends the run on the death
+    // that leaves nobody standing, in the tick it happens, so the clock does not reach dawn in that state - this
+    // is that rule, stated again where the dead come back.
+    if (!this.humans().length) return;
+    for (const p of this.players.values()) {
+      if (p.alive && !p.zombie) continue;
+      this.spawnHuman(p, RETURN_KIT, true); // beside the team, as a late joiner is (pickJoinSpawn)
+      const s = p.state;
+      this.notify(NOTIFY.RETURNED, p.id);
+      this.sound(SOUND.REVIVE, s.x, s.y + 1, s.z, 30);
+    }
+  }
+
   fillHistory(e) {
     for (let i = 0; i < 16; i++) {
       e.hx[i] = e.x;
@@ -1011,6 +1055,8 @@ export class Game {
     for (const z of this.zombies) {
       if (!z.dead && (z.horde || z.def.flying)) z.burning = 0.5 + this.rng() * 5;
     }
+    // ...and burns the sickness out of whoever died since the last sunrise
+    if (this.dawnReturn) this.returnFallen();
     // the valley restocks a little: some searched containers are refilled, trees & wrecks regrow
     for (const c of this.caches) {
       if (c.state === 1 && this.rng() < 0.4) c.state = 0;
