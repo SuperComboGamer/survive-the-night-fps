@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   invertY: false,
   rawMouse: true,
   weaponSway: true,
+  keyHints: true,
   showFps: true,
 });
 
@@ -41,7 +42,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
-    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -70,6 +71,7 @@ const SECTIONS = [
       { k: 'invertY', label: 'Invert mouse Y', type: 'toggle' },
       { k: 'rawMouse', label: 'Raw mouse input', type: 'toggle', hint: 'Off = OS mouse acceleration applies' },
       { k: 'weaponSway', label: 'Weapon look sway', type: 'toggle', hint: 'Gun trails behind fast turns' },
+      { k: 'keyHints', label: 'Key hints', type: 'toggle', hint: 'Names a key when it would help, until you have used it twice' },
       { k: 'fov', label: 'Field of view', type: 'range', min: 60, max: 100, step: 1, fmt: (v) => Math.round(v) + '°' },
     ],
   },

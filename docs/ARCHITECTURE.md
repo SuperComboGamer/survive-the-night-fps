@@ -29,7 +29,8 @@ client/      three.js client (Vite root)
   audio/      WebAudio engine: procedural synthesis + CC0 recordings in audio/samples/ (samples.js loads
               them after init; any sound whose file fails to load/decode falls back to its procedural version)
   ui/         DOM HUD (hud.js + hud2.js: compass, objective, world markers, downed, summary), field map
-              (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat
+              (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat,
+              contextual key hints (keyhints.js: reads the game state once a frame, owns its one HUD line)
   sandbox/    standalone dev pages for visually testing modules (not shipped)
 scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js)
 ```

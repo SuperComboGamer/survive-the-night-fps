@@ -124,6 +124,12 @@ https://www.survivethenightgame.com.
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
 | Zombie form | LMB claw · RMB leap |
 
+The HUD names a key at the moment it answers something: the flashlight when night falls and the light is off,
+quick heal when you are under half health with something that heals in the pack, the build slot at the dusk
+warning if you carry enough to build, and the map and the inventory once each in the first minute. Each hint
+stops for good once you have done the thing twice (remembered in the browser); Settings -> Key hints turns
+them off.
+
 ## The game
 
 - **The escape (objective):** your car died on Route 9. It needs a battery, a spare tire, spark plugs,
