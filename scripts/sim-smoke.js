@@ -11,7 +11,12 @@ import { readSnapshot } from '../client/net/decode.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
 
 const seed = +(process.argv[2] || 4242);
-const game = new Game({ seed, log: () => {} });
+// The checks must pass on any seed, so none of them may lean on what the ones before it happened to leave behind.
+// Two things are settled for the whole run: nothing hurts the survivors (they stand about for minutes while the
+// dead wander in) except in the check about getting hurt, which switches god mode off for itself; and the first
+// day is long enough for every check of the day, so night falls when the test calls it, and no supply plane comes
+// over but the one the test calls. Everything else a check depends on, it sets up itself.
+const game = new Game({ seed, godMode: true, dayLength: 3600, log: () => {} });
 const fails = [];
 const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`);
@@ -109,6 +114,19 @@ const run = (ticks, fn) => {
     game.update();
   }
 };
+// is a tree within m metres of the line (x0,z0)-(x1,z1)? A trunk is too thin to block a nav cell, so the checks that
+// need a clear stretch of ground ask this as well: a zombie walking the line would have to go round it, and a
+// trunk beside the line still shadows something a little off it from a light at the end
+const treeBy = (x0, z0, x1, z1, m) => {
+  const t = game.world.trees;
+  const l = Math.hypot(x1 - x0, z1 - z0) || 1;
+  const [ux, uz] = [(x1 - x0) / l, (z1 - z0) / l];
+  for (let i = 0; i < t.length; i += 6) {
+    const along = Math.max(0, Math.min(l, (t[i] - x0) * ux + (t[i + 2] - z0) * uz));
+    if (Math.hypot(t[i] - x0 - ux * along, t[i + 2] - z0 - uz * along) < m) return true;
+  }
+  return false;
+};
 
 game.debugCommands = true;
 const A = client('Alice');
@@ -152,7 +170,23 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   });
   check('cat walks around', walked > 5 && Math.hypot(cat.x - car.x, cat.z - car.z) < 45, `${walked.toFixed(1)} m`);
   check('cat visits a survivor standing still', closest < 2.6, `closest ${closest.toFixed(2)} m`);
-  const z = game.zm.spawn(ZTYPE.WALKER, cat.x + 3, cat.z);
+  // a zombie 3 m from it, on a side where that spot is open ground (a spawn on the car is nudged out of the cat's
+  // sight) and the cat has a clear run the other way (cornered against the car, a tree or the survivor it is
+  // sitting with, it slides along or only darts off sideways after a second or more). Alice stands with Bob for
+  // it, so the cat has one place to steer clear of and not two
+  A.tp(B.p().state.x, B.p().state.z);
+  const free = (x, z) => !game.world.isDeepWater(x, z) && !game.nav.isBlocked(x, z);
+  const away = (x, z) => free(x, z) && game.humans().every((h) => Math.hypot(h.state.x - x, h.state.z - z) > 1.2);
+  let [ux, uz] = [1, 0];
+  for (let k = 0; k < 8; k++) {
+    const [vx, vz] = [Math.cos(k * 0.785), Math.sin(k * 0.785)];
+    const lane = (o) => game.nav.segClear(cat.x - vz * o, cat.z + vx * o, cat.x - vx * 5 - vz * o, cat.z - vz * 5 + vx * o);
+    if (!free(cat.x + vx * 3, cat.z + vz * 3) || ![-0.5, 0, 0.5].every(lane) || treeBy(cat.x, cat.z, cat.x - vx * 5, cat.z - vz * 5, 0.8)) continue;
+    if (![1, 2, 3, 4, 5].every((d) => away(cat.x - vx * d, cat.z - vz * d))) continue;
+    [ux, uz] = [vx, vz];
+    break;
+  }
+  const z = game.zm.spawn(ZTYPE.WALKER, cat.x + ux * 3, cat.z + uz * 3);
   const d0 = Math.hypot(z.x - cat.x, z.z - cat.z);
   let ran = false;
   run(30, () => (ran ||= rc.q[4] === CANIM.RUN));
@@ -173,7 +207,14 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   check('dog packs roam the woods', dogs.length >= 4 && packs.size >= 2, `${dogs.length} dogs, ${packs.size} packs`);
   const denOk = (d) => game.zm.forestAt(d.homeX, d.homeZ) >= 13 && game.world.zoneAt(d.homeX, d.homeZ) === ZONE.FOREST && Math.hypot(d.homeX - car.x, d.homeZ - car.z) >= 80;
   check('dogs den in dense forest', dogs.every(denOk) && dogs.every((d) => Math.hypot(d.x - d.homeX, d.z - d.homeZ) < 25));
-  const d0 = dogs[0];
+  // the pack to try this on, and where Alice stands for it: 22 m from one of its dogs, on open ground inside the map
+  // (the dogs cannot follow her onto a boulder or past the map's edge, nor bite her through a tree trunk), with every
+  // other pack's den out of scent range of her (dens can be 40 m apart, and two packs on her scent is two howls) and
+  // the wandering herd out of earshot of the pistol shots below (a den can be right by its road)
+  const spots = dogs.flatMap((d) => [0, 1, 2, 3, 4, 5, 6, 7].map((k) => [d, d.x + Math.cos(k * 0.785) * 22, d.z + Math.sin(k * 0.785) * 22]));
+  const ground = (x, z) => Math.abs(x) < 300 && Math.abs(z) < 300 && !game.world.isDeepWater(x, z) && !game.nav.isBlocked(x, z) && !treeBy(x, z, x, z, 2);
+  const alone = ([d, x, z]) => ground(x, z) && game.zombies.every((o) => (o.pack ? o.pack === d.pack || Math.hypot(o.homeX - x, o.homeZ - z) > 62 : !o.herd || Math.hypot(o.x - x, o.z - z) > 90));
+  const [d0, ax, az] = spots.find(alone) || spots[0];
   const pack = dogs.filter((d) => d.pack === d0.pack);
   let bitten = 0;
   let howls = 0;
@@ -186,7 +227,7 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
     if (snd === SOUND.DOG_HOWL) howls++;
     return sound.call(this, snd, ...rest);
   };
-  A.tp(d0.x + 22, d0.z);
+  A.tp(ax, az);
   let hunted = false;
   let lunged = false;
   run(20 * 15, () => {
@@ -199,6 +240,11 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   // hitscan from the side: the head sphere is ahead of the body, not above it (packmates out of the line of fire)
   const p = A.p();
   for (const d of pack) if (d !== d0) game.combat.damageZombie(d, 1e6, p, {});
+  for (const z of game.zombies) {
+    if (z === d0 || z.dead || z.herd || Math.hypot(z.x - d0.x, z.z - d0.z) > 8) continue; // (as is whatever else has come for her meanwhile)
+    z.dead = true;
+    z.deadT = 2;
+  }
   const shots = [];
   const damageZombie = game.combat.damageZombie;
   game.combat.damageZombie = (z, amount, attacker, opts) => shots.push(z === d0 && opts.headshot);
@@ -237,6 +283,15 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   const live = () => h.members.filter((z) => !z.dead);
   const vel = (z) => Math.hypot(z.vx, z.vz);
   const open = (x, z) => Math.abs(x) < 300 && Math.abs(z) < 300 && !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z);
+  // The herd is watched as it is with nobody about. The dog den Alice was left at can be right by its road, and the
+  // pistol shots there carry 50 m: she starts from beside Bob at the car (which the herd keeps 60 m clear of), and
+  // a herd that is after her or after the noise forgets it, which sends it back to the road as losing someone does
+  A.tp(B.p().state.x, B.p().state.z);
+  if (h && (h.hot || live().some((z) => z.target))) {
+    for (const z of live()) z.target = z.aggroId = z.alertT = 0;
+    h.prey = h.searchT = h.rouseT = 0;
+    run(20 * 10); // (and has ten seconds for the run to go out of its legs)
+  }
   const [ax0, az0] = [A.p().state.x, A.p().state.z];
   const damagePlayer = game.damagePlayer;
   game.damagePlayer = () => {};
@@ -259,12 +314,13 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   });
   check('the herd wanders together at a slow walk', !h.hot && walked > 12 && walked < 35 && top < 2 && spread < 20 && live().every((z) => !z.target), `${walked.toFixed(1)} m in 25 s, fastest ${top.toFixed(2)} m/s, spread ${spread.toFixed(1)} m`);
   // a survivor 25 m from the nearest of them: that one notices, and the whole herd comes at a run
+  // (from a side that leaves the far end of the herd out of range: abreast of a column on a road, all of it is in range)
   let seen = null;
   for (let k = 0; k < 16 && !seen; k++) {
     const [ux, uz] = [Math.sin(k * 0.3927), Math.cos(k * 0.3927)];
     const front = live().reduce((a, b) => (b.x * ux + b.z * uz > a.x * ux + a.z * uz ? b : a));
     const [x, z] = [front.x + ux * 25, front.z + uz * 25];
-    if (open(x, z)) seen = { x, z };
+    if (open(x, z) && live().some((q) => Math.hypot(q.x - x, q.z - z) > 27)) seen = { x, z };
   }
   check('found open ground by the herd', !!seen);
   const notes = [A.notes.length, B.notes.length];
@@ -289,6 +345,9 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   run(60);
   check('...and goes back to wandering', live().every((z) => vel(z) < 2) && live().length === n);
   // a noise 45 m off (on the side away from the car) that only the nearest of them can hear: the lot of them run to it
+  // (20 s on, when the herd has sorted itself out: straight after the chase it is still strung out along it, or
+  // bunched against whatever building the straight line to a survivor 250 m off ran into)
+  run(20 * 20);
   let noise = null;
   const a0 = Math.atan2(h.cx - w.car.x, h.cz - w.car.z);
   for (let k = 0; k < 16 && !noise; k++) {
@@ -416,7 +475,20 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   game.giveItem(p, ITEM.NAILS, 30);
   game.giveItem(p, ITEM.SCRAP, 6);
   game.giveItem(p, ITEM.STICK, 10);
-  A.tp(game.world.car.x + 12, game.world.car.z + 12);
+  // the camp goes on open ground by the car: nothing standing within 4.5 m of her (room for the fire and the bench)
+  // or in the 9 m north of her (-Z) that the flamethrower below burns down, open ground where its three walkers and
+  // the crossbow's are put, and that last one out of Bob's sight as well as hers
+  const camp = (() => {
+    const w = game.world;
+    const b = B.p().state;
+    const open = (x, z) => !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z);
+    const cluttered = (x, z, r) => w.staticGrid.query(x, z, r, []).some((o) => o.y1 > w.heightAt(x, z) + 0.2 && Math.hypot(o.x - x, o.z - z) < r + o.r);
+    const fits = ([x, z]) => open(x, z) && !cluttered(x, z, 4.5) && !cluttered(x, z - 6, 3.5) && open(x + 7, z - 2) && open(x, z - 18) && open(x + 36, z) && Math.hypot(x + 36 - b.x, z - b.z) > 35;
+    const spots = [[w.car.x + 12, w.car.z + 12]];
+    for (let r = 20; r <= 60; r += 8) for (let k = 0; k < 12; k++) spots.push([w.car.x + Math.sin(k * 0.5236) * r, w.car.z + Math.cos(k * 0.5236) * r]);
+    return spots.find(fits) || spots[0];
+  })();
+  A.tp(camp[0], camp[1]);
   run(3);
   A.input(0, 0, 0, 4);
   run(15, () => A.input(0, 0, 0));
@@ -456,6 +528,7 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('schematic lock enforced', A.notes.some(([m]) => m === NOTIFY.LOCKED));
   // crossbow: a bench recipe that needs no schematic, bolts are their own reserve, it re-cocks itself,
   // and a walker 36 m off (out of sight by day) hears the pistol but not the bolt
+  s.weapons[0] = s.ammo[AMMO.BOLT] = 0; // (a gun or bolts looted on the way: the crossbow goes into an empty hand, the bolts are counted)
   game.giveItem(p, ITEM.ROPE, 1);
   game.giveItem(p, ITEM.SCRAP, 4);
   game.giveItem(p, ITEM.STICK, 6);
@@ -508,6 +581,12 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   run(12, () => A.input(0, 0, 0));
   // door boards in a doorway
   const o = game.world.openings[0];
+  // (with nobody standing in it: one of the dead that haunt the place is in the way of the boards)
+  for (const z of game.zombies) {
+    if (Math.hypot(z.x - o.x, z.z - o.z) > 15) continue;
+    z.dead = true;
+    z.deadT = 2;
+  }
   A.tp(o.x + Math.cos(o.ry) * 0 + Math.sin(o.ry) * 2, o.z + Math.cos(o.ry) * 2);
   run(3);
   const n1 = game.structures.length;
@@ -589,13 +668,19 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   const humans = [A.p().state, B.p().state];
   const open = (x, z) => Math.abs(x) < 300 && Math.abs(z) < 300 && !w.isDeepWater(x, z) && !game.nav.isBlocked(x, z) && humans.every((h) => Math.hypot(h.x - x, h.z - z) > 60);
   // an open stretch well away from the survivors, with nothing between the noise and the walkers
+  // (and no tree or water on the few metres the two walkers that are timed below cover: going round a trunk costs one
+  // a second, and a pond between two of the rings stops it)
   let spot = null;
   for (let x = -240; x <= 240 && !spot; x += 20) {
     for (let z = -240; z <= 240 && !spot; z += 20) {
       for (let a = 0; a < 8 && !spot; a++) {
         const dx = Math.sin((a * Math.PI) / 4);
         const dz = Math.cos((a * Math.PI) / 4);
-        if (open(x, z) && rings.every((d) => open(x + dx * d, z + dz * d)) && game.nav.segClear(x, z, x + dx * 130, z + dz * 130)) spot = { x, z, dx, dz };
+        const rough = (d0, d1) => {
+          for (let d = d0; d <= d1; d++) if (!open(x + dx * d, z + dz * d)) return true;
+          return treeBy(x + dx * d0, z + dz * d0, x + dx * d1, z + dz * d1, 2.5);
+        };
+        if (open(x, z) && rings.every((d) => open(x + dx * d, z + dz * d)) && game.nav.segClear(x, z, x + dx * 130, z + dz * 130) && !rough(8, 22) && !rough(80, 92)) spot = { x, z, dx, dz };
       }
     }
   }
@@ -663,6 +748,17 @@ check('ping broadcast', B.pings > 0);
 // downed + revive
 {
   const b = B.p();
+  // The two of them are mortal for this check only. It starts from a Bob on his feet at full health, whatever became
+  // of him before (the 500 damage finishes a man who is already down instead of flooring him, and a dead one feels
+  // nothing), with nothing after either of them and nothing near enough to get to them before he is up again
+  for (const z of game.zombies) {
+    if (z.target !== b.id && z.target !== A.id && Math.hypot(z.x - A.p().state.x, z.z - A.p().state.z) > 40) continue;
+    z.dead = true;
+    z.deadT = 2;
+  }
+  if (!b.alive || b.zombie) game.spawnHuman(b); // (dead, or dead and turned)
+  if (b.downed) game.revive(b, null);
+  b.hp = b.maxHp;
   B.tp(A.p().state.x + 1.5, A.p().state.z);
   run(3);
   game.godMode = false;
@@ -685,6 +781,15 @@ check('ping broadcast', B.pings > 0);
   // the shade: only moves in darkness. Light on it (a beam, a torch, a flare) freezes it and makes it tough.
   {
     game.godMode = true;
+    // nothing else is out there while the shade is watched: the dead that turned on the survivors at nightfall are
+    // gone, and the night's clock is held back until the end of this block so the first wave does not walk into it
+    // (one zombie standing where the wall or the torch is to go is enough to break it)
+    for (const z of game.zombies) {
+      z.dead = true;
+      z.deadT = 2;
+    }
+    const clock = game.timeLeft;
+    game.timeLeft += 600;
     const zm = game.zm;
     const w = game.world;
     const car = w.car;
@@ -692,6 +797,7 @@ check('ping broadcast', B.pings > 0);
     // nothing standing within r of (x,z): room to build there (a tree trunk is too thin to block a nav cell)
     const bare = (x, z, r) => w.staticGrid.query(x, z, r, []).every((o) => o.y1 < w.heightAt(x, z) + 0.2);
     // somewhere open and unlit, with a clear 20 m run to the north (-Z, yaw 0) and room for a wall 3 m up it
+    // (no tree within 3 m of that run: the shade does not walk it dead straight, and a trunk beside it casts a shadow)
     let spot = null;
     for (let r = 40; r <= 120 && !spot; r += 10) {
       for (let k = 0; k < 16 && !spot; k++) {
@@ -701,7 +807,7 @@ check('ping broadcast', B.pings > 0);
         for (let d = 0; d <= 20 && ok; d += 2) ok = open(x, z - d) && open(x + 2, z - d) && open(x - 2, z - d);
         const y = ok ? groundAt(w, x, z, 200, 0.3) : 0;
         const ty = ok ? groundAt(w, x, z - 20, 200, 0.3) : 0;
-        if (ok && bare(x, z - 3, 2.5) && Math.abs(ty - y) < 1.5 && zm.clearLine(x, y + 1.6, z, x, ty + 1, z - 20) && zm.clearLine(x, y + 0.5, z, x, ty + 0.4, z - 20)) spot = { x, z };
+        if (ok && bare(x, z - 3, 2.5) && !treeBy(x, z + 2, x, z - 22, 3) && Math.abs(ty - y) < 1.5 && zm.clearLine(x, y + 1.6, z, x, ty + 1, z - 20) && zm.clearLine(x, y + 0.5, z, x, ty + 0.4, z - 20)) spot = { x, z };
       }
     }
     check('found open ground for the shade test', !!spot);
@@ -779,7 +885,8 @@ check('ping broadcast', B.pings > 0);
     game.combat.damageZombie(sh2, 1e6, null, {});
     game.projectiles.splice(game.projectiles.indexOf(fl), 1);
     game.removeEntity(fl);
-    // (god mode stays on: by now the first wave has reached the team)
+    game.timeLeft = clock;
+    // (god mode stays on: the first wave is about to reach the team)
   }
   check('no dogs in the first night\'s horde', game.waves.every((w) => !w.queue.includes(ZTYPE.DOG)));
   const n0 = game.zombies.length;
@@ -808,8 +915,13 @@ check('ping broadcast', B.pings > 0);
   const ray = { t: -1, col: null, terrain: false };
   const rng = game.rng;
   game.rng = () => 0.5;
+  // open ground a few metres from her, wherever the night left her standing, not up against a tree and with none of
+  // the horde standing on it (with the rng stubbed, a spawn on a blocked spot is not nudged free: there is no walker)
+  const clear = ([x, z]) => !game.world.isDeepWater(x, z) && !game.nav.isBlocked(x, z) && !treeBy(x, z, x, z, 1.5) && game.zombies.every((e) => e.dead || Math.hypot(e.x - x, e.z - z) > 3);
+  const near = [[5, 5], [-5, 5], [5, -5], [-5, -5], [7, 0], [0, 7], [-7, 0], [0, -7], [9, 9], [-9, 9], [9, -9], [-9, -9], [12, 0], [0, 12], [-12, 0], [0, -12]];
+  const [wx, wz] = near.map(([dx, dz]) => [s.x + dx, s.z + dz]).find(clear) || [s.x + 5, s.z + 5];
   const walker = (hp) => {
-    const z = game.zm.spawn(ZTYPE.WALKER, s.x + 5, s.z + 5);
+    const z = game.zm.spawn(ZTYPE.WALKER, wx, wz);
     if (hp) z.hp = hp;
     return z;
   };
@@ -824,15 +936,28 @@ check('ping broadcast', B.pings > 0);
     game.combat.damageZombie(z, dmg, p, opts);
     return died(z);
   };
-  // a shotgun blast at its chest from dist m away, from a side with nothing in the way
+  // a shotgun blast at its chest from dist m away, from a side with nothing in the way of any pellet bound for it:
+  // a trunk beside the line of fire lets the middle of the blast past and stops the rest, and so does another of
+  // the dead on the way (the night's horde is still about, burning)
   const blast = (dist, hp = 0) => {
     const z = walker(hp);
     for (let k = 0; k < 16; k++) {
       const a = (k * Math.PI) / 8;
       const sx = z.x + Math.sin(a) * dist;
       const sz = z.z + Math.cos(a) * dist;
-      raycastWorld(game.world, sx, z.y + 1.1, sz, -Math.sin(a), 0, -Math.cos(a), dist, ray);
-      if (ray.t >= 0) continue;
+      // (to the middle and both shoulders of it, at chest and head height: the pellets that find it fly inside those)
+      const blocked = (o, h) => {
+        const [tx, ty, tz] = [z.x + Math.cos(a) * o - sx, h - 1.1, z.z - Math.sin(a) * o - sz];
+        const l = Math.hypot(tx, ty, tz);
+        raycastWorld(game.world, sx, z.y + 1.1, sz, tx / l, ty / l, tz / l, l, ray);
+        return ray.t >= 0;
+      };
+      if ([0, -0.35, 0.35].some((o) => blocked(o, 1.1) || blocked(o, 1.6))) continue;
+      const between = (e) => {
+        const along = (e.x - sx) * -Math.sin(a) + (e.z - sz) * -Math.cos(a);
+        return e !== z && !e.dead && along > -0.5 && along < dist + 0.5 && Math.abs((e.x - sx) * Math.cos(a) - (e.z - sz) * Math.sin(a)) < 0.9;
+      };
+      if (game.zombies.some(between)) continue;
       p.renderTick = game.tick & 0xffff;
       p.renderFrac = 0;
       game.combat.fire(p, { weapon: ITEM.SHOTGUN, x: sx, y: z.y + 1.1, z: sz, yaw: a, pitch: 0, recoilPitch: 0, spread: WEAPONS[ITEM.SHOTGUN].spread, seed: 7 });
