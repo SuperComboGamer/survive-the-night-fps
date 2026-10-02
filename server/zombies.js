@@ -440,8 +440,8 @@ export class Zombies {
       }
     }
 
-    // day population maintenance
-    if (g.phase === PHASE.DAY) {
+    // day population maintenance (not during the final stand: its zombies are counted, and need the room under the cap)
+    if (g.phase === PHASE.DAY && !g.escape.active) {
       this.maintainT -= dt;
       if (this.maintainT <= 0) {
         this.maintainT = 4;

@@ -124,7 +124,8 @@ https://www.survivethenightgame.com.
   Carry them back and install them [E]. When all are in, hold [E] at the car to start the engine: it
   needs 90 seconds to warm up and every corpse in the valley hears it - the **final stand**. Survive it,
   get in (be within 14 m of the car) and you escape. The day/night clock stops during the final stand,
-  so the team chooses when to go - fortify the car first.
+  so the team chooses when to go - fortify the car first. The stand is sized to the survivors still
+  alive, the way a night's horde is: more of you, more of them.
 - **Day: scavenge & rebuild.** A clock shows the time until nightfall. Every place has searchable
   containers (lockers, ammo crates, toolboxes, cabinets, fridges, shelves, duffel bags, car trunks,
   log piles; hold [E]) plus loot on the floor, and ~90 roadside and woodland sites (wrecks, abandoned

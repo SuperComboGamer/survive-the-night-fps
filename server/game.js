@@ -109,6 +109,13 @@ import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
+// The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
+// waves do. Balance numbers, a first pass:
+const FINAL_STAND_SIZE = 1.25; // its zombies, as a multiple of that night's horde (the ones that join at the start count)
+const FINAL_STAND_ALIVE = 0.6; // at most this share of them is on its feet at once
+const FINAL_STAND_SPREAD = ESCAPE_TIME - 30; // seconds they set out over: a walker needs the last 30 of the warm-up to reach the car
+const FINAL_STAND_TANKS = 1; // Tanks among them, per survivor (the boss comes on top)
+const FINAL_STAND_JOIN_RANGE = 95; // wanderers this close to a survivor join the stand (the same reach as at nightfall)
 const NO_HASH = -2; // a command packet that came without a state fingerprint
 const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE; // commands a client issues per server tick
 const CMD_QUEUE_MAX = 24; // commands a client can have waiting (0.4 s of them); older ones are dropped
@@ -213,7 +220,7 @@ export class Game {
     this.bossId = 0;
     this.warned = false;
     this.shadeWarned = false; // the "a shade is out there" notice went out tonight
-    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false };
+    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
     this.supplyAt = [];
     this.restartT = 0;
     this.globalDirty = true;
@@ -568,7 +575,7 @@ export class Game {
     this.bossPending = null;
     this.bossId = 0;
     this.gather.clear();
-    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false };
+    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
   }
 
   startGame() {
@@ -732,6 +739,12 @@ export class Game {
     for (let i = 0; i < n; i++) this.supplyAt.push(len * (0.2 + (i + this.rng()) * (0.6 / n))); // timeLeft thresholds
   }
 
+  // How many of the dead night n brings for this many survivors. The final stand is sized from the same number
+  // (finalStandSize), so a change here moves both.
+  hordeSize(n, humans) {
+    return Math.round((10 + 6 * n + 1.3 * n * n) * (0.6 + 0.4 * humans));
+  }
+
   // Night N: the horde comes in waves to wherever the survivors are. Bigger, tougher and nastier every night.
   startNight() {
     this.phase = PHASE.NIGHT;
@@ -740,8 +753,7 @@ export class Game {
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
     const n = this.day;
     const humans = Math.max(1, this.humanCount());
-    const pf = 0.6 + 0.4 * humans;
-    const total = Math.round((10 + 6 * n + 1.3 * n * n) * pf);
+    const total = this.hordeSize(n, humans);
     const shares = [0.3, 0.33, 0.37];
     const scale = this.nightLen / NIGHT_LENGTH;
     const shadeCap = Math.min(6, 1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2));
@@ -888,16 +900,39 @@ export class Game {
     return true;
   }
 
+  // How many of the dead the final stand brings in all. It is read whenever a group is due (updateEscape), so it
+  // follows the survivors still alive: a death shrinks what is still to come, a late joiner adds to it.
+  finalStandSize() {
+    return Math.round(FINAL_STAND_SIZE * this.hordeSize(this.day, Math.max(1, this.humanCount())));
+  }
+
   startEngine(p) {
     if (this.escape.active || !this.allSuppliesIn()) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
-    this.escape = { active: true, t: ESCAPE_TIME, ready: false, spawnT: 3, boss: false };
+    this.escape = { active: true, t: ESCAPE_TIME, ready: false, spawnT: 3, boss: false, sent: 0, tanks: 0 };
     const car = this.world.car;
     this.notify(NOTIFY.ENGINE_START, p ? p.id : 0);
     this.sound(SOUND.ENGINE_CRANK, car.x, car.y + 0.8, car.z, 300);
     this.sound(SOUND.HORDE_HORN, 0, 0, 0, 0);
     this.hordeHpMul = 1 + 0.12 * this.day + 0.12 * (Math.max(1, this.humanCount()) - 1);
-    for (const z of this.zombies) z.horde = true;
+    // as at nightfall: the wanderers near the survivors join in, and count towards the stand's size; the rest drift
+    // off, which leaves the stand its room under MAX_ZOMBIES_ALIVE (a day's valley can fill most of it)
+    const hs = this.humans();
+    for (const z of [...this.zombies]) {
+      if (z.dead) continue;
+      let md = Infinity;
+      for (const h of hs) md = Math.min(md, Math.hypot(h.state.x - z.x, h.state.z - z.z));
+      if (z.horde || z.boss || md < FINAL_STAND_JOIN_RANGE) {
+        z.horde = true;
+        if (!z.boss) {
+          this.escape.sent++;
+          if (z.ztype === ZTYPE.TANK) this.escape.tanks++;
+        }
+      } else {
+        this._listRemove(this.zombies, z);
+        this.removeEntity(z);
+      }
+    }
     this.globalDirty = true;
     this.log('engine started - final stand');
   }
@@ -2320,16 +2355,22 @@ export class Game {
       e.t -= dt;
       if (Math.ceil(e.t) !== prev) this.globalDirty = true;
       e.spawnT -= dt;
-      const cap = Math.min(MAX_ZOMBIES_ALIVE, 40 + this.day * 8);
-      if (e.spawnT <= 0 && this.hordeAlive() < cap) {
-        e.spawnT = Math.max(1.2, 3 - this.day * 0.15) * (0.7 + this.rng() * 0.6);
+      // its size, the cap on how many stand at once and the pace all follow the survivors still alive; a group that
+      // finds the cap full waits and comes as soon as there is room
+      const size = e.spawnT <= 0 ? this.finalStandSize() : 0; // 0: no group is due
+      if (e.sent < size && this.hordeAlive() < Math.min(MAX_ZOMBIES_ALIVE, Math.round(size * FINAL_STAND_ALIVE))) {
+        e.spawnT = (FINAL_STAND_SPREAD / Math.ceil(size / 3.5)) * (0.7 + this.rng() * 0.6); // groups of 3-5, as a wave's
         const n = this.day;
+        const tanks = FINAL_STAND_TANKS * Math.max(1, this.humanCount());
         const q = [];
-        for (let i = 0; i < 5; i++) {
+        for (let i = Math.min(5, size - e.sent); i > 0; i--) {
           const r = this.rng();
-          q.push(r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 ? ZTYPE.TANK : ZTYPE.RUNNER);
+          const type = r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 && e.tanks < tanks ? ZTYPE.TANK : ZTYPE.RUNNER;
+          if (type === ZTYPE.TANK) e.tanks++;
+          q.push(type);
         }
-        this.spawnHordeGroup(q, car);
+        e.sent += this.spawnHordeGroup(q, car);
+        for (const t of q) if (t === ZTYPE.TANK) e.tanks--; // rolled, but the group came out smaller: it was not sent
       }
       if (!e.boss && e.t <= ESCAPE_TIME * 0.5) {
         e.boss = true;

@@ -168,7 +168,10 @@ more than its bytes**, so put things into the packets that already flow.
   schematic (`schem`, team-wide unlock bitmask in the global state).
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
-  of them enables the engine hold-interaction, which starts the final stand (`game.escape`).
+  of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
+  sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
+  in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a
+  survivor join it and count, the rest are removed as at nightfall, and the day's upkeep stops for its length.
 - **Night waves.** `startNight()` builds `NIGHT_WAVES` queues; groups spawn 58-84 m around a random
   survivor (`Zombies.pickSpawnAround`). The horde never targets structures or a fixed point - only people.
 - **Noise.** `Zombies.noise(x, z, loud)` is the one entry point: `loud` is the radius (m) the noise carries

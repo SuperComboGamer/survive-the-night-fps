@@ -220,7 +220,7 @@ export class Herds {
   // ---------------------------------------------------------------- update
   update(dt, humans) {
     const g = this.g;
-    if (g.phase === PHASE.DAY && !this.list.size) {
+    if (g.phase === PHASE.DAY && !g.escape.active && !this.list.size) {
       this.spawnT -= dt;
       if (this.spawnT <= 0) this.spawnT = this.spawn(humans) ? RESPAWN : 10;
     }
