@@ -21,6 +21,8 @@ import {
   WAVE_SPREAD,
   BOSS_EVERY,
   TANK_BOSS_NIGHT,
+  BOSS_WAVE,
+  BOSS_HP_PER_PLAYER,
   ESCAPE_TIME,
   ESCAPE_RADIUS,
   ESCAPE_DRIVE_TIME,
@@ -957,12 +959,15 @@ export class Game {
     this.wave = 0;
     this.hordeHpMul = 1 + 0.1 * (n - 1) + 0.12 * (humans - 1);
     this.bossPending = null;
+    // a boss comes in with the second wave: early enough in the night that the survivors have to deal with it, and
+    // can - at dawn the sun takes whatever is left of it, and what it carried (Combat.killZombie)
+    const bossT = WAVE_TIMES[BOSS_WAVE] * scale + 8;
     if (n === TANK_BOSS_NIGHT) {
-      // the first boss is a Tank, early enough in the night that the survivors have to deal with it
-      this.bossPending = { types: [ZTYPE.TANK], t: WAVE_TIMES[1] * scale + 8 };
+      // the first boss is a Tank
+      this.bossPending = { types: [ZTYPE.TANK], t: bossT };
     } else if (n % BOSS_EVERY === 0) {
       const type = (n / BOSS_EVERY) % 2 === 1 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN;
-      this.bossPending = { types: [type], t: WAVE_TIMES[NIGHT_WAVES - 1] * scale + 10 };
+      this.bossPending = { types: [type], t: bossT };
     }
     this.notify(NOTIFY.NIGHT_FALLS, n);
     this.globalDirty = true;
@@ -2603,7 +2608,7 @@ export class Game {
     const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans) : this.zm.pickHordeSpawn(humans);
     if (!sp) return;
     for (const type of types) {
-      const z = this.zm.spawn(type, sp.x, sp.z, { horde: true, hpMul: 1 + 0.35 * (Math.max(1, this.humanCount()) - 1) + 0.05 * this.day, boss: true });
+      const z = this.zm.spawn(type, sp.x, sp.z, { horde: true, hpMul: 1 + BOSS_HP_PER_PLAYER * (Math.max(1, this.humanCount()) - 1) + 0.05 * this.day, boss: true });
       if (z) {
         this.bossId = z.id;
         this.notify(NOTIFY.BOSS, type);

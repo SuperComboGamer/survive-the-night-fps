@@ -825,9 +825,12 @@ export class Game {
         g.audio.playLocal(g.self.zombie ? 'zombie_player_growl' : 'hurt', { volume: Math.min(1, 0.4 + amount / 40) });
       },
       killfeed(kk, killerId, victimId, weapon, flags) {
-        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : 'The world';
+        // a zombie the world killed is a boss that outlived the night: the dawn sun burnt it, and its loot with it
+        const sunKill = kk === KILLER.WORLD && !!(victimId & 0x8000);
+        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : 'The world';
         const victim = victimId & 0x8000 ? ZOMBIE_DEFS[victimId & 0xff]?.name || 'Zombie' : g.name(victimId);
         g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
+        if (sunKill) g.ui.notify(`${victim.startsWith('The ') ? victim : 'The ' + victim} burned in the sun, and what it carried with it. Kill a boss before sunrise to loot it.`, 'toast', 7);
       },
       notify(msg, arg) {
         g.onNotify(msg, arg);
@@ -894,6 +897,8 @@ export class Game {
         ui.notify(zd ? (zd.boss ? '' : 'A ') + zd.name.toUpperCase() : 'SOMETHING', 'big', 4);
         ui.notify('has risen from the woods.', 'sub', 4);
         if (arg === ZTYPE.TANK) ui.notify('Listen for its footsteps. It charges, and it smashes straight through barricades.', 'toast', 7);
+        // (the final stand's boss never sees a sunrise: the clock is stopped)
+        if (!this.global.finale) ui.notify('Bring it down before sunrise and what it carries is yours. The sun leaves nothing.', 'toast', 7);
         a.stinger?.('boss');
         break;
       }

@@ -110,6 +110,10 @@ export const HORDE_SPAWN_MIN = 58; // horde groups appear this far from the surv
 export const HORDE_SPAWN_MAX = 84;
 export const BOSS_EVERY = 3;
 export const TANK_BOSS_NIGHT = 2; // this night's boss is a Tank: it comes in with the second wave
+// Every night boss comes in with this wave (index into WAVE_TIMES), not at the end of the night: the sun kills
+// whatever is left at dawn, so a boss has to arrive while there is still time to bring it down
+export const BOSS_WAVE = 1;
+export const BOSS_HP_PER_PLAYER = 0.6; // boss health: its base hp, plus this share of it for every survivor after the first
 
 // Noise: how far (m) each loud thing carries to the dead. Every zombie inside that radius with nobody to chase
 // comes to look, so a louder noise pulls in more of them - and the louder it was where a zombie stood, the
