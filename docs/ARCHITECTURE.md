@@ -205,6 +205,14 @@ more than its bytes**, so put things into the packets that already flow.
   tells each player whether they were within `ESCAPE_RADIUS` when the car left (client side).
 - **Night waves.** `startNight()` builds `NIGHT_WAVES` queues; groups spawn 58-84 m around a random
   survivor (`Zombies.pickSpawnAround`). The horde never targets structures or a fixed point - only people.
+  The picker passes over a spot a survivor would watch them appear at (`spawnExposure`: a clear ray from a
+  survivor's eyes to head height at the spot, or 4 m to either side of it since a group is scattered that far),
+  out to `sightRange()`: the distance the client's haze hides things at for the hour on the phase clock (about
+  200 m at noon, 58 m in the dark, so a dark night's spawn band is all cover; the fog keyframes are copied from
+  `client/render/environment.js`, the weather is client-only and left out). After 18 candidates it settles for
+  one with only its middle hidden, then for the farthest one nobody is facing (`spawnsScreened`, `spawnsInView`
+  count those). Rays stop at trunks, walls and terrain; foliage is not modelled. Used by the night waves, the
+  final stand, the car-alarm fallback and the straggler teleport.
 - **Noise.** `Zombies.noise(x, z, loud)` is the one entry point: `loud` is the radius (m) the noise carries
   (`NOISE` in constants.js; gunshots use `WEAPONS[w].noise`). Every zombie inside it with no target heads for
   the spot (`alertX/Z`, `alertT`), at a speed set by how loud it was where the zombie stood (`alertRush`,
