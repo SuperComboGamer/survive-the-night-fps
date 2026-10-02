@@ -339,7 +339,9 @@ export class EndScreen {
     this.title.textContent = victory ? 'You escaped' : 'Everyone died';
     this.reason.textContent =
       stats.reason || (victory ? 'Headlights cut through the trees. The valley shrinks in the mirror.' : 'The valley is quiet again. The car never started.');
-    const n = stats.days | 0;
+    // stats.days is the day the run ended on. Night N closes day N, so a run that ends on day N - in its
+    // daylight or in its night - got through N - 1 nights (a wipe during the first night survived none)
+    const n = Math.max(0, (stats.days | 0) - 1);
     this.nights.textContent = String(n);
     this.nightsL.textContent = n === 1 ? 'night survived' : 'nights survived';
 

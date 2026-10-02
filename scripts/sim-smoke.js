@@ -6,7 +6,7 @@
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
 import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES } from '../shared/constants.js';
-import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT } from '../shared/defs.js';
+import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
 
@@ -53,9 +53,9 @@ function client(name) {
           r.str();
           const status = r.u8();
           const walkie = !!(r.u8() & PLF.WALKIE);
+          const kills = r.u16();
           r.u16();
-          r.u16();
-          c.roster.set(id, { status, walkie });
+          c.roster.set(id, { status, walkie, kills });
         }
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }
@@ -904,10 +904,23 @@ check('ping broadcast', B.pings > 0);
   check('the next game rolls a new map and sends its seed', g2.phase === PHASE.DAY && g2.world !== first && g2.world.seed === g2.seed && resets.length === 1 && resets[0] === g2.seed >>> 0, `seed ${first.seed} -> ${g2.seed}`);
   check('...with the survivors at its breakdown and its supplies hidden in seven of its places', Math.hypot(p.state.x - car.x, p.state.z - car.z) < 14 && new Set(g2.supplyHints).size === 7 && g2.supplyHints.every((z) => g2.world.zoneById[z]));
   const kept = game.seed;
+  // the run that is ending leaves a score behind: A drops a walker, B dies, and A gets the kill
+  const pa = A.p();
+  const pb = B.p();
+  game.combat.killZombie(game.zm.spawn(ZTYPE.WALKER, pa.state.x + 6, pa.state.z + 6), pa, {});
+  game.killPlayer(pb, { kind: KILLER.PLAYER, id: A.id });
+  run(1);
+  const score = (p) => [p.kills, p.zkills, p.deaths];
+  const board = () => [...A.roster.values()].map((r) => r.kills);
+  const last = { a: score(pa), b: score(pb), board: board() };
   game.gameOver();
   game.restartT = 0;
   game.update();
   check('a pinned seed keeps its map', game.phase === PHASE.DAY && game.seed === kept && game.world.seed === kept);
+  const next = { a: score(pa), b: score(pb), board: board() };
+  const scored = last.a[0] > 0 && last.a[1] > 0 && last.b[2] > 0 && last.board.some((k) => k > 0);
+  const zeroed = [...game.players.values()].every((p) => p.kills === 0 && p.zkills === 0 && p.deaths === 0) && [A, B].every((c) => [...c.roster.values()].every((r) => r.kills === 0));
+  check('a new game counts kills and deaths from zero for everyone', scored && zeroed, `[kills, zkills, deaths] ${JSON.stringify(last)} -> ${JSON.stringify(next)}`);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);

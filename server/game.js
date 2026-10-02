@@ -612,7 +612,10 @@ export class Game {
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
-    for (const p of this.players.values()) this.spawnHuman(p);
+    for (const p of this.players.values()) {
+      p.kills = p.zkills = p.deaths = 0; // the scoreboard counts this run only: whoever stayed on from the last one starts level
+      this.spawnHuman(p);
+    }
     this.notify(NOTIFY.NEW_GAME, this.day);
     this.globalDirty = true;
     this.playersDirty = true;
