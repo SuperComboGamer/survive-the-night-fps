@@ -43,6 +43,7 @@ import {
   AMMO_NAMES,
   AMMO_ITEMS,
   CONSUMABLES,
+  PROJ,
   radioLinked,
 } from '../../shared/defs.js';
 import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
@@ -67,7 +68,11 @@ import { Atmosphere } from '../render/atmosphere.js';
 import { WeatherFX } from '../render/weatherfx.js';
 import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
-import { createGhost } from '../render/models/structures.js';
+import { createGhost, createStructure } from '../render/models/structures.js';
+import { createZombie, createSurvivor, zombieVariants } from '../render/models/characters.js';
+import { createCat } from '../render/models/cat.js';
+import { createPickup } from '../render/models/pickups.js';
+import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
 
@@ -165,6 +170,8 @@ export class Game {
     this.discovered = new Set([ZONE.CAMP]);
     this.discoverT = 0;
     this.debugCam = null;
+    this.warm = null; // shader warm-up in progress (prewarm)
+    this.warmKey = ''; // quality + map the programs were last warmed for
 
     this.input = new Input(renderer.canvas);
     this.input.sensitivity = settings.sensitivity || 1;
@@ -298,6 +305,7 @@ export class Game {
       }
     }
     this.ui.map.setWorld(this.world);
+    this.prewarm();
     console.log(`[client] world ${seed}: gen ${(t1 - t0).toFixed(0)}ms, terrain ${(t2 - t1).toFixed(0)}ms, static ${(t3 - t2).toFixed(0)}ms, foliage ${(t4 - t3).toFixed(0)}ms, rest ${(performance.now() - t4).toFixed(0)}ms`);
   }
 
@@ -313,6 +321,217 @@ export class Game {
     for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
     this.world = null;
+  }
+
+  // ---------------------------------------------------------------- shader warm-up
+  // three.js builds a material's shader program the first time it is drawn and waits for it on the main thread,
+  // so the frame in which the first torch, gate, muzzle flash or spitter appeared used to stall. Instead every
+  // program play can need at this quality is built behind the splash: started without waiting for it (the driver
+  // compiles in the background), not used until it is built, and then one frame nobody sees draws one of
+  // everything (warmFrame). Runs again for a new map (other props, other materials) and when the quality changes
+  // (other lights and shadows: another program for every lit material).
+  prewarm() {
+    const key = `${this.renderer.quality}:${this.seed}`;
+    if (!this.world || key === this.warmKey) return;
+    this.warmKey = key;
+    this.warmTodo ||= this.warmViews();
+    this.scene.add(this.warmSet);
+    // hold: the frame loop draws nothing (the scene's own programs are still being built)
+    const w = (this.warm = { hold: true, ready: false, sync: false, t0: performance.now() });
+    w.steps = this.warmSteps(w);
+    const tick = () => {
+      if (this.warm !== w) return; // finished early (play began), or the quality changed again
+      const step = w.steps.next();
+      if (step.done) w.ready = true; // update() draws the warm frame
+      else setTimeout(tick, step.value);
+    };
+    setTimeout(tick, 0);
+  }
+
+  // A warm-up's work in slices short enough to leave the splash responsive. Each yield is the wait before the
+  // next slice (ms); with w.sync set it runs straight through.
+  *warmSteps(w) {
+    const R = this.renderer;
+    const compile = () => {
+      R.compilePrograms();
+      const stage = this.warmStage();
+      R.compileDepth(stage.casters);
+      stage.undo();
+    };
+    // first what the scene holds already. The frame loop waits for these, then draws again: the splash gets its
+    // backdrop while the views are still being built
+    compile();
+    while (!w.sync && !R.programsReady()) yield 16;
+    w.hold = false;
+    if (!this.warmTodo.length) return;
+    while (this.warmTodo.length) {
+      this.warmTodo.shift()();
+      if (!w.sync) yield 0;
+    }
+    compile(); // the views' own
+    while (!w.sync && !R.programsReady()) yield 16;
+  }
+
+  // One of every view that does not exist until the game needs it (what Entities draws, the build ghosts, the
+  // supply plane, the weapons in the hands), as a list of small build steps. Building them also bakes what they
+  // are made from - zombie rigs, pickup and weapon meshes - which used to happen in the frame the first one
+  // showed up. The views stay in this.warmSet (hidden: only the warm frame shows it) for the next warm-up.
+  // Anything new that the game creates on demand with a material of its own belongs here, or its program is
+  // built mid-game again.
+  warmViews() {
+    const set = (this.warmSet = new THREE.Group());
+    set.visible = false;
+    const chars = (set.userData.chars = []); // these cast shadows on the presets where characters do
+    const steps = [];
+    // every zombie rig. createZombie picks the variant from its seed, so go through seeds until a rig turns up that
+    // has not been built yet; one view is kept, they all share a material
+    for (const t of Object.values(ZTYPE)) {
+      const rigs = new Set();
+      let seed = 0;
+      for (let v = zombieVariants(t); v > 0; v--) {
+        steps.push(() => {
+          for (let fresh = false, tries = 0; !fresh && tries < 64; tries++) {
+            const z = createZombie(t, seed++);
+            const rig = z.object.getObjectByProperty('isSkinnedMesh', true).geometry;
+            fresh = !rigs.has(rig);
+            rigs.add(rig);
+            if (chars.length) z.dispose();
+            else set.add(chars[0] = z.object);
+          }
+        });
+      }
+    }
+    steps.push(() => {
+      const sv = createSurvivor(1);
+      sv.setWeapon(ITEM.PISTOL);
+      chars.push(sv.object);
+      // (Entities draws these three with its own geometry: a teammate's flashlight cone, a roper's rope, the loot glints)
+      const e = this.entities;
+      set.add(sv.object, new THREE.Mesh(e.coneGeo, e.coneMat), new THREE.Mesh(e.ropeGeo, e.ropeMat), new THREE.Points(e.glints.geometry, e.glints.material));
+    });
+    steps.push(() => set.add(createCat(0, 1).object));
+    steps.push(() => set.add(createSupplyCrate()));
+    for (const p of Object.values(PROJ)) steps.push(() => set.add(createProjectile(p)));
+    const items = Object.values(ITEM).filter((it) => it);
+    for (let i = 0; i < items.length; i += 3) {
+      steps.push(() => {
+        for (const it of items.slice(i, i + 3)) set.add(createPickup(it));
+      });
+    }
+    for (const t of STRUCT_ORDER) {
+      steps.push(() => {
+        const s = createStructure(t);
+        s.traverse((o) => o.isMesh && (o.castShadow = o.receiveShadow = true)); // as Entities sets them up
+        set.add(s, createGhost(t));
+      });
+    }
+    steps.push(() => {
+      // the supply plane, in the materials Flyover gives it
+      this.flyover.start(0, 0, 0, 0, 0, this.time, null);
+      set.add(this.flyover.planes.pop().obj);
+    });
+    // the viewmodel builds a weapon's mesh the first time it is held
+    for (const it of [...Object.keys(WEAPONS), ...THROW_ITEMS]) steps.push(() => this.vm.setItem(+it));
+    steps.push(() => {
+      this.vm.setItem(0);
+      this.vmItem = -1;
+    });
+    return steps;
+  }
+
+  // Sets the scenes up for the warm frame: one mesh of every static-world material, everything else that is
+  // hidden or out of view shown, and every mesh that can cast a shadow at this quality casting one. Returns those
+  // casters and the way back. The shadow passes draw the casters with depth materials three keeps to itself; it
+  // only picks a program for one when the kind of mesh changes, by the sides and texture of the mesh that came by
+  // just then, so here every caster makes it pick again (needsUpdate) and every combination play can meet exists.
+  warmStage() {
+    const set = this.warmSet;
+    const undo = [];
+    const casters = [];
+    for (const o of set.userData.chars) o.traverse((m) => m.isSkinnedMesh && (m.castShadow = this.entities.charShadows));
+    // vegetation that can cast at this quality (InstancedSet.update: within castDist, never the near tree LOD)
+    const f = this.foliage;
+    for (const s of [f.trees, f.bushes, f.rocks]) {
+      if (!(s.castDist > 0)) continue;
+      for (const lods of s.meshes) {
+        lods.forEach((parts, l) => {
+          if (lods.length > 1 && l === 0) return;
+          for (const m of parts) {
+            if (m.castShadow) continue;
+            m.castShadow = true;
+            undo.push(() => (m.castShadow = false));
+          }
+        });
+      }
+    }
+    const show = (o) => {
+      if (!o.visible) {
+        o.visible = true;
+        undo.push(() => (o.visible = false));
+      }
+      if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
+      if (o.frustumCulled) {
+        o.frustumCulled = false;
+        undo.push(() => (o.frustumCulled = true));
+      }
+      if (o.castShadow) {
+        casters.push(o);
+        const own = Object.hasOwn(o, 'onBeforeShadow') && o.onBeforeShadow;
+        o.onBeforeShadow = function (...a) {
+          a[5].needsUpdate = true; // (the depth material this mesh is about to be drawn with)
+          if (own) own.apply(this, a);
+        };
+        undo.push(() => (own ? (o.onBeforeShadow = own) : delete o.onBeforeShadow));
+      }
+    };
+    // the static world: one mesh of each material will do (StaticWorld.update sets their visibility again)
+    const statics = this.staticWorld.group;
+    const mats = new Set();
+    for (const m of statics.children) {
+      m.visible = !mats.has(m.material);
+      mats.add(m.material);
+      if (m.visible) show(m);
+    }
+    const showAll = (o) => {
+      if (o === statics) return;
+      show(o);
+      for (const c of o.children) showAll(c);
+    };
+    showAll(this.scene);
+    showAll(this.renderer.vmScene);
+    return { casters, undo: () => undo.forEach((u) => u()) };
+  }
+
+  // One frame through the whole pipeline that is never seen (the frame loop draws the real one over it before the
+  // browser presents), with one of everything in it and every post pass on: it uses each program once, so not
+  // even a program's first use is left for play.
+  warmFrame() {
+    const R = this.renderer;
+    this.camera.getWorldDirection(_v);
+    this.warmSet.position.copy(this.camera.position).addScaledVector(_v, 6);
+    const stage = this.warmStage();
+    const fl = this.lights.flashlight;
+    const flI = fl.intensity;
+    fl.intensity = 1; // the beam pass only runs with the flashlight on, the sun shafts with the sun on screen
+    R.render({ time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure, rays: { ...this.env.rays, sunDir: _v, strength: 1 }, beam: { light: fl, density: 0.001 }, adaptRef: 0.1, dt: 0.016 }, true);
+    R.adaptReset = true; // the eye adaptation does not start from this frame
+    fl.intensity = flI;
+    stage.undo();
+  }
+
+  // Ends a warm-up. If play has begun before it is done (a quick join, a new map or quality mid-game), the rest
+  // happens here in one go, as it used to on the first frame.
+  finishPrewarm() {
+    const w = this.warm;
+    const programs = this.renderer.renderer.info.programs;
+    w.sync = true;
+    while (!w.steps.next().done);
+    const n = programs.length;
+    const t = performance.now();
+    this.warmFrame();
+    this.scene.remove(this.warmSet);
+    this.warm = null;
+    console.log(`[client] shaders: ${programs.length} programs ${w.ready ? 'built' : 'built in one go (play had begun)'} ${(t - w.t0).toFixed(0)}ms after the world, warm frame ${(performance.now() - t).toFixed(0)}ms${programs.length > n ? `, which had to build ${programs.length - n} itself` : ''}`);
   }
 
   // ---------------------------------------------------------------- connection
@@ -1190,6 +1409,8 @@ export class Game {
     this.frame++;
     this.time += dt;
     const time = this.time;
+    // a warm-up ends here, ahead of this frame's draw: when its programs are built, or now if play has begun
+    if (this.warm && (this.warm.ready || this.state === 'playing')) this.finishPrewarm();
     if (this.state === 'menu' || !this.world) return this.updateMenu(dt);
     const s = this.prediction.state;
     const self = this.self;
