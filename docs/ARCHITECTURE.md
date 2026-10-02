@@ -89,7 +89,13 @@ more than its bytes**, so put things into the packets that already flow.
   area of interest per kind, creates in full, updates only for changed fields, sorted by id behind a one-byte
   head (id step, position as a 1 / 2 / 3-byte delta or absolute, which fields follow), far entities every other
   tick. Up to 10 fields per kind; the three most frequently changing ones belong in fields 1-3 (no ext byte).
-  Players replicate their view angles at 9 + 7 bits.
+  Players replicate their view angles at 9 + 7 bits. An entity is read and quantized once a tick for everyone,
+  not once per client: `stageEntities` (in `Game.sendSnapshots`, before the client loop) copies the positions
+  into typed arrays, `quant` runs the first time a client needs the entity that tick, and each client's
+  `writeEntities` only diffs that staged copy against its own baseline. So what `quant` produces must not depend
+  on who is looking, and code that changes an entity between two clients' snapshots has to restage it (the one
+  case today, `writeSelf` rounding the viewer's own state, is handled in `writeEntities`). The staging arrays
+  are allocated once; keep it that way.
 - **Global state**: all of it when anything but the clocks changed, otherwise just time / horde left once a
   second. **Events**: encoded once, filtered per client by radius / recipient; a shot carries no origin (the
   client uses the shooter's replicated position).

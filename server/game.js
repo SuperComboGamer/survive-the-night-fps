@@ -102,7 +102,7 @@ import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, h
 import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { Nav } from './nav.js';
-import { ClientView, writeEntities } from './snapshot.js';
+import { ClientView, writeEntities, stageEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
@@ -2836,6 +2836,7 @@ export class Game {
       global = gw.bytes();
     }
     this.globalDirty = false;
+    if (this.players.size) stageEntities(this.all); // once for all clients: each sendTick's writeEntities reads the staged copy
     for (const p of this.players.values()) {
       const conn = p.session.conn;
       if (p.pingAt) {
