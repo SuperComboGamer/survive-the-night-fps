@@ -177,6 +177,15 @@ function starterKit(day = 1) {
     ],
   };
 }
+// A loose drop is an entity every client in range has to be told about, so there is a ceiling on them: once this
+// many lie around the valley, each new one takes the place of the oldest (spawnItem). Car supplies, schematics
+// and walkie-talkies never despawn and are not counted. (A whole lobby dying with full packs is under 300.)
+const MAX_DROPS = 400;
+// Coming and going. An address may join twice the lobby in one go, then once every JOIN_EVERY seconds: more than
+// a household reloading its browsers gets near (admitJoin). The join / leave chat lines of everybody together
+// get two lobbies' worth, then one every GREET_EVERY seconds; past that, players come and go unannounced.
+const JOIN_EVERY = 4;
+const GREET_EVERY = 10;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only.
@@ -257,8 +266,13 @@ export class Game {
 
     this.sessions = new Set();
     this.players = new Map(); // id -> player
+    this.joins = new Map(); // address -> its join allowance (see allow)
+    this.greets = { n: 0, t: 0 }; // the allowance of join / leave chat lines
     this.zombies = [];
     this.items = [];
+    this.maxDrops = opts.maxDrops ?? MAX_DROPS;
+    this.drops = 0; // loose drops lying around (items with e.drop)
+    this.dropSeq = 0;
     this.structures = [];
     this.projectiles = [];
     this.areas = [];
@@ -459,6 +473,25 @@ export class Game {
     }
   }
 
+  // A rate allowance: a.n is how much of it was used lately, wearing off by one every `every` seconds (a.t: when
+  // that was last worked out). Uses one more unless that would take it past `burst`.
+  allow(a, burst, every) {
+    a.n = Math.max(0, a.n - (this.time - a.t) / every);
+    a.t = this.time;
+    if (a.n + 1 > burst) return false;
+    a.n++;
+    return true;
+  }
+  // May this session's address join now? (JOIN_EVERY; an allowance that has worn off is forgotten in update)
+  admitJoin(session) {
+    let a = this.joins.get(session.ip);
+    if (!a) this.joins.set(session.ip, (a = { n: 0, t: this.time, refused: false }));
+    const ok = this.allow(a, 2 * this.maxPlayers, JOIN_EVERY);
+    if (!ok && !a.refused) this.log(`join refused: too many in a row from ${session.ip || 'one address'}`);
+    a.refused = !ok;
+    return ok;
+  }
+
   handleJoin(session, r) {
     if (session.player) return;
     const version = r.u8();
@@ -471,6 +504,7 @@ export class Game {
     };
     if (version !== PROTOCOL_VERSION) return reject(REJECT_REASON.VERSION);
     if (this.players.size >= this.maxPlayers) return reject(REJECT_REASON.FULL);
+    if (!this.admitJoin(session)) return reject(REJECT_REASON.FULL); // (the one "try again later" the client knows)
     // unique names
     const names = new Set([...this.players.values()].map((p) => p.name));
     let base = name;
@@ -509,7 +543,8 @@ export class Game {
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
     this.notify(NOTIFY.PLAYER_JOINED, p.id);
-    this.systemChat(p.zombie ? `${p.name} is back among the dead.` : `${p.name} joined the survivors.`);
+    p.greeted = this.allow(this.greets, 2 * this.maxPlayers, GREET_EVERY);
+    if (p.greeted) this.systemChat(p.zombie ? `${p.name} is back among the dead.` : `${p.name} joined the survivors.`);
     this.playersDirty = true;
     this.globalDirty = true;
     this.log(`join ${p.name} (${this.players.size}/${this.maxPlayers})`);
@@ -613,14 +648,15 @@ export class Game {
 
   removePlayer(p) {
     this.releaseHolds(p);
-    this.parkKit(p);
+    this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
     this.dropAll(p);
     this.players.delete(p.id);
     this.nav.removeField(p.id);
     if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(p.name); // left dead: dead if they rejoin before sunrise (handleJoin)
     this.removeEntity(p);
     this.notify(NOTIFY.PLAYER_LEFT, 0);
-    this.systemChat(`${p.name} left.`);
+    // (whoever arrived unannounced leaves unannounced; an announced one always gets their line, and it counts)
+    if (p.greeted && this.allow(this.greets, Infinity, GREET_EVERY)) this.systemChat(`${p.name} left.`);
     this.playersDirty = true;
     this.log(`leave ${p.name} (${this.players.size}/${this.maxPlayers})`);
     if (this.players.size === 0) this.resetToWaiting();
@@ -686,6 +722,7 @@ export class Game {
     }
     this.zombies.length = 0;
     this.items.length = 0;
+    this.drops = 0;
     this.structures.length = 0;
     this.projectiles.length = 0;
     this.areas.length = 0;
@@ -877,7 +914,7 @@ export class Game {
     p.hold = null;
     p.inv = createInventory();
     for (const [item, n] of kit.items) addItem(p.inv, item, n);
-    p.kit = kit;
+    p.kit = kit; // what they were handed: it goes with them if they leave the game (parkKit)
     p.invDirty = true;
     this.fillHistory(p);
     this.playersDirty = true;
@@ -1190,9 +1227,16 @@ export class Game {
       despawnAt: opts.permanent || opts.point ? Infinity : this.time + (opts.life || 150),
       permanent: !!opts.permanent,
       noAutoUntil: opts.noAuto ? this.time + opts.noAuto : 0,
+      drop: opts.drop && !opts.permanent ? ++this.dropSeq : 0, // a loose drop: its place in the order they fell
     };
     if (!this.spawnEntity(e)) return null;
     this.items.push(e);
+    // the ceiling on loose drops (MAX_DROPS): the oldest one makes room
+    if (e.drop && ++this.drops > this.maxDrops) {
+      let oldest = e;
+      for (const it of this.items) if (it.drop && it.drop < oldest.drop) oldest = it;
+      this.removeItemEnt(oldest);
+    }
     return e;
   }
 
@@ -1201,6 +1245,7 @@ export class Game {
       e.point.ent = null;
       e.point.respawnAt = this.time + (e.point.zone === ZONE.FOREST ? 110 + this.rng() * 140 : 150 + this.rng() * 180);
     }
+    if (e.drop && !e.removed) this.drops--;
     this._listRemove(this.items, e);
     this.removeEntity(e);
   }
@@ -1264,9 +1309,11 @@ export class Game {
       gy = groundAt(this.world, dx, dz, this.world.heightAt(dx, dz) + 1, 0.1, true);
     }
     const cat = ITEM_DEFS[item]?.cat;
-    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto });
+    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto, drop: true });
   }
 
+  // everything a survivor carries goes on the ground around them (one who leaves the game has had what is left of
+  // their starting kit taken out first: parkKit)
   dropAll(p) {
     const s = p.state;
     const x = s.x;
@@ -2536,6 +2583,8 @@ export class Game {
       this.freeIds.push(this.quarantine[0]);
       this.quarantine.splice(0, 2);
     }
+    // forget the join allowances that have worn off (see allow)
+    if (this.tick % 600 === 0) for (const [ip, a] of this.joins) if (this.time - a.t >= a.n * JOIN_EVERY) this.joins.delete(ip);
     if (this.phase === PHASE.WAITING) {
       this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
