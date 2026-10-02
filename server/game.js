@@ -46,6 +46,7 @@ import {
   PLAYER_RADIUS,
   PLAYER_HEIGHT,
   WATER_LEVEL,
+  STEP_HEIGHT,
   DOWN_TIME,
   REVIVE_TIME,
   REVIVE_HP,
@@ -1130,13 +1131,64 @@ export class Game {
     this.removeEntity(e);
   }
 
-  // scatter a dropped item near x,z
+  // The height something dropped from feet height y comes to rest at on x,z - or null where nobody could pick it up
+  // again: on the lake bed (a deck over the water is ground like any other) or inside something solid.
+  dropRest(x, y, z) {
+    const w = this.world;
+    const terrain = w.heightAt(x, z);
+    // onto whatever is there up to a metre above the feet (a table, a hood), uphill onto what stands on the slope
+    const gy = groundAt(w, x, z, Math.max(y, terrain) + 1, 0.1, true);
+    if (w.isDeepWater(x, z) && gy <= terrain + 0.01) return null;
+    const near = [];
+    for (const grid of w.colliderGrids) {
+      for (const c of grid.query(x, z, 0.15, near)) {
+        if (c.flags & (COL.NOBLOCK | COL.HUMANPASS)) continue;
+        // a wall, a rock, a wreck, a tree trunk - not the floor under it or a roof over it
+        if (c.y1 > gy + STEP_HEIGHT && c.y0 < gy + 0.3 && footprintContains(c, x, z, 0.15)) return null;
+      }
+    }
+    return gy;
+  }
+
+  // Scatter a dropped item near x,z. It never comes to rest where nobody can get at it - the lake bed off the pier,
+  // inside a wall or a rock, beyond the edge of the map: it lands short of that instead, on the way back to the feet of
+  // whoever dropped it (opts.from, else x,z itself), and when those will not do either (a body out in the lake) on the
+  // nearest spot around them that will. A car supply lost that way would make the game unwinnable. The search draws
+  // nothing from the rng.
   dropItem(item, count, x, y, z, opts = {}) {
     const a = this.rng() * Math.PI * 2;
     const r = opts.spread ?? 0.6 + this.rng() * 0.8;
-    const dx = x + Math.sin(a) * r;
-    const dz = z + Math.cos(a) * r;
-    const gy = groundAt(this.world, dx, dz, y + 1, 0.1, true);
+    const lim = MAP_HALF - 3; // as far out as a survivor gets (simulatePlayer)
+    const inMap = (v) => Math.max(-lim, Math.min(lim, v));
+    const hx = inMap(opts.from?.x ?? x);
+    const hz = inMap(opts.from?.z ?? z);
+    const sx = inMap(x + Math.sin(a) * r);
+    const sz = inMap(z + Math.cos(a) * r);
+    // it falls from the ground under the dropper's feet (they may be in mid-air), not onto a roof beside them. What
+    // flies over open water has no ground to speak of and drops from where it is, onto the deck if that is nearest
+    const under = groundAt(this.world, hx, hz, y, PLAYER_RADIUS * 0.7, true);
+    const fy = this.world.isDeepWater(hx, hz) && under <= this.world.heightAt(hx, hz) + 0.01 ? y : Math.min(y, under);
+    let dx;
+    let dz;
+    let gy = null;
+    const tryAt = (px, pz) => {
+      dx = px;
+      dz = pz;
+      gy = this.dropRest(px, fy, pz);
+    };
+    // where it was thrown, then two thirds and one third of the way there, then the dropper's feet
+    for (let k = 3; k >= 0 && gy === null; k--) tryAt(hx + ((sx - hx) * k) / 3, hz + ((sz - hz) * k) / 3);
+    // then rings around the feet, each a little wider than the last, as far as the lake is across
+    for (let ring = 0.25, n = 0; ring < 140 && gy === null; ring *= 1.15, n++) {
+      for (let k = 0; k < 16 && gy === null; k++) tryAt(inMap(hx + Math.sin(a + n + k * 0.3927) * ring), inMap(hz + Math.cos(a + n + k * 0.3927) * ring));
+    }
+    if (gy === null) {
+      // nowhere at all (no map has such a place): back at the breakdown rather than gone
+      const sp = this.world.spawnPoints[0];
+      dx = sp.x;
+      dz = sp.z;
+      gy = groundAt(this.world, dx, dz, this.world.heightAt(dx, dz) + 1, 0.1, true);
+    }
     const cat = ITEM_DEFS[item]?.cat;
     return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto });
   }
@@ -1383,7 +1435,7 @@ export class Game {
         const n = cnt === 0 ? it.count : Math.min(cnt, it.count);
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4 });
+        this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4, from: s });
         it.count -= n;
         if (it.count <= 0) p.inv[idx] = null;
         p.invDirty = true;
@@ -1397,7 +1449,7 @@ export class Game {
         if (!wpn) return;
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
+        this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s });
         s.weapons[slot] = 0;
         if (slot === SLOT_PRIMARY) s.mags[0] = 0;
         if (slot === SLOT_PISTOL) s.mags[1] = 0;

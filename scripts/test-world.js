@@ -22,13 +22,8 @@ const SEEDS = process.argv.length > 2 ? process.argv.slice(2).map(Number) : [1, 
 
 // Known failures: what the checks below find wrong today that is being fixed somewhere else. A failure listed here
 // is printed but does not fail the test. An entry is a place, a check and the spot in the place's own frame.
-const KNOWN = [
-  // Blackwater Dock: the pier's deck stops 2 m short of the T at its end, so nobody can get to the crate and the
-  // floor loot out there. Fixed by the pull request from branch fix-pier-deck-and-drops: delete these two entries
-  // once that is merged (this test says so when they no longer fail).
-  { place: ZONE.DOCK, check: 'reach', at: [-0.6, 44.5], why: 'the pier deck stops short of its end (fixed on branch fix-pier-deck-and-drops)' },
-  { place: ZONE.DOCK, check: 'reach', at: [-3.5, 45.5], why: 'the pier deck stops short of its end (fixed on branch fix-pier-deck-and-drops)' },
-];
+// e.g. { place: ZONE.DOCK, check: 'reach', at: [-0.6, 44.5], why: 'the pier deck stops short of its end' }
+const KNOWN = [];
 
 const CELL = 0.2; // walk grid (m): finer than the 0.3 m of play a body has in the narrowest doorway (1 m wide)
 const GROUND_R = PLAYER_RADIUS * 0.7; // simulatePlayer feels for the ground under this much of the body

@@ -1040,9 +1040,11 @@ export function createWorld(seed) {
   // BLACKWATER DOCK -------------------------------------------------
   place(ZONE.DOCK, (b, z) => {
     const deckY = WATER_LEVEL + 1.1 - z.h; // relative to zone base
-    // pier: runs +Z (toward the lake)
-    for (let i = 0; i < 8; i++) {
-      b.box(0, deckY - 0.22, 11 + i * 4, 3, 0.22, 4.05, 'dockwood', { collide: true });
+    // pier: runs +Z (toward the lake) in 4 m spans from z 9; a ninth, short one carries the deck the last 2 m to the
+    // T end (z 43-47), so there is no hole to stop a survivor short of the crate out there
+    for (let i = 0; i < 9; i++) {
+      const len = i < 8 ? 4 : 2;
+      b.box(0, deckY - 0.22, 9 + i * 4 + len / 2, 3, 0.22, len + 0.05, 'dockwood', { collide: true });
       b.cyl(-1.4, deckY - 3.5, 9.2 + i * 4, 0.14, 3.6, 'dockwood', { collide: false });
       b.cyl(1.4, deckY - 3.5, 9.2 + i * 4, 0.14, 3.6, 'dockwood', { collide: false });
     }
