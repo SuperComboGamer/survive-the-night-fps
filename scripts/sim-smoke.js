@@ -374,6 +374,131 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
     z.deadT = 2;
   }
   run(2);
+  // the herd and what stands in its way: with a long wall between it and where it is going it takes the way round
+  // that the nav grid knows, wandering or roused, instead of walking at the wall; and one of them left where there is
+  // no way back from (the lake) is put back with the herd once no survivor is near enough to see it happen.
+  // (A game of its own on a pinned map: the wall is looked for there, and the run above is left as it was.)
+  {
+    const g2 = new Game({ seed: 165, godMode: true, dayLength: 3600, log: () => {} });
+    g2.debugCommands = true;
+    const session = g2.onOpen({ send() {} });
+    const wj = new Writer(64);
+    wj.u8(C2S.JOIN);
+    wj.u8(PROTOCOL_VERSION);
+    wj.str('D');
+    g2.onMessage(session, wj.bytes().slice());
+    const run2 = (ticks, fn) => {
+      for (let i = 0; i < ticks; i++) {
+        g2.update();
+        fn?.(i);
+      }
+    };
+    run2(5);
+    const p = [...g2.players.values()][0];
+    const w = g2.world;
+    const nav = g2.nav;
+    const hs = g2.zm.herds;
+    const h = hs.first();
+    const ms = h.members.filter((z) => !z.dead);
+    const n = ms.length;
+    const open = (x, z) => Math.abs(x) < 300 && Math.abs(z) < 300 && !w.isDeepWater(x, z) && !nav.isBlocked(x, z);
+    // room for the herd to stand about (x,z): open ground, nothing between it and that spot
+    const room = (x, z) => {
+      for (let dx = -3; dx <= 3; dx += 1.5) for (let dz = -3; dz <= 3; dz += 1.5) if (!open(x + dx, z + dz) || !nav.segClear(x, z, x + dx, z + dz)) return false;
+      return true;
+    };
+    // a wall 16 m long or more with such room 7-10 m off either side of its middle, and a way round that the nav grid knows
+    const out = { x: 0, z: 0, cost: 0 };
+    let spot = null;
+    for (const c of nav.solid) {
+      if (spot || Math.max(c.hx, c.hz) < 8 || Math.min(c.hx, c.hz) > 0.4 || c.y1 - c.y0 < 1.5) continue;
+      const [nx, nz] = c.hx > c.hz ? [c.s, c.c] : [c.c, -c.s];
+      for (let m = 7; m <= 10 && !spot; m++) {
+        const [ax, az, bx, bz] = [c.x + nx * m, c.z + nz * m, c.x - nx * m, c.z - nz * m];
+        if (!room(ax, az) || !room(bx, bz)) continue;
+        nav.computeField('wall', bx, bz);
+        if (nav.flowDir('wall', ax, az, out) && out.cost < 600) spot = { ax, az, bx, bz, round: out.cost / 10 };
+      }
+    }
+    nav.removeField('wall');
+    // deep water 90 m or more from there, and two places for the survivor: 60 m beyond it from the herd (in sight of
+    // whatever stands in it, out of the herd's), and a corner of the map far from both
+    let lake = null;
+    for (let r = 90; r < 500 && spot && !lake; r += 10) {
+      for (let k = 0; k < 24 && !lake; k++) {
+        const [x, z] = [spot.ax + Math.sin(k * 0.2618) * r, spot.az + Math.cos(k * 0.2618) * r];
+        if (Math.abs(x) < 300 && Math.abs(z) < 300 && [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3]].every(([dx, dz]) => w.isDeepWater(x + dx, z + dz))) lake = { x, z };
+      }
+    }
+    const from = (o, x, z) => Math.hypot(x - o.x, z - o.z);
+    let near = null;
+    const a0 = lake ? Math.atan2(lake.x - spot.ax, lake.z - spot.az) : 0;
+    for (let k = 0; k < 12 && lake && !near; k++) {
+      const a = a0 + ((k + 1) >> 1) * (k & 1 ? 0.2618 : -0.2618);
+      const [x, z] = [lake.x + Math.sin(a) * 60, lake.z + Math.cos(a) * 60];
+      if (open(x, z)) near = { x, z };
+    }
+    const clear = (c) => Math.min(Math.hypot(c[0] - spot.ax, c[1] - spot.az), from(lake, c[0], c[1]));
+    const away = lake && [[-250, -250], [250, -250], [-250, 250], [250, 250], [0, -260], [0, 260], [-260, 0], [260, 0]].filter(([x, z]) => open(x, z)).sort((a, b) => clear(b) - clear(a))[0];
+    check('found a wall in the herd\'s way, a lake and somewhere to watch from', n >= 10 && !!spot && !!lake && !!near && !!away && clear(away) > 130, spot ? `${n} zombies, ${spot.round.toFixed(1)} m round the wall, ${Math.hypot(spot.ax - spot.bx, spot.az - spot.bz).toFixed(0)} m through it` : '');
+    const put = (z, x, zz) => {
+      z.x = x;
+      z.z = zz;
+      z.y = groundAt(w, x, zz, 200, 0.2, false);
+      z.vx = z.vz = 0;
+      g2.fillHistory(z);
+    };
+    // how far a member has to walk to where the herd is going, by the herd's flow field
+    const way = (z) => (nav.flowDir(h.key, z.x, z.z, out) && out.cost < 1e9 ? out.cost / 10 : Math.hypot(z.x - h.gx, z.z - h.gz));
+    const stuck = new Set(); // members whose stuck detour fired: they walked into something
+    const watch = () => ms.forEach((z) => z.detourT > 0 && stuck.add(z));
+    // wandering: the herd on one side of the wall, its waypoint on the other (and no moving on from there)
+    g2.handleChat(p, `/tp ${away[0]} ${away[1]}`);
+    ms.forEach((z) => put(z, spot.ax + z.herdX * 0.5, spot.az + z.herdZ * 0.5));
+    hs.setWaypoint(h, spot.bx, spot.bz);
+    h.restT = 1e9;
+    run2(2);
+    let w0 = ms.map(way);
+    run2(20 * 20, watch);
+    let gain = Math.min(...ms.map((z, i) => w0[i] - way(z)));
+    check('a wandering herd sets off round a wall in its way', !h.hot && gain > 12 && stuck.size === 0, `every one of them ${gain.toFixed(1)} m or more along in 20 s, ${stuck.size} of ${n} stuck on it`);
+    // (at its walk the way round takes round / 0.9 s: half as long again is allowed)
+    const limit = Math.ceil((spot.round / 0.9) * 1.5);
+    const there = () => ms.every((z) => Math.hypot(z.x - spot.bx, z.z - spot.bz) < 7.5);
+    let took = 20;
+    while (!there() && took < limit) {
+      run2(20, watch);
+      took++;
+    }
+    check('...and the whole herd gets round it', there() && stuck.size === 0, `after ${took} s (${limit} s allowed)`);
+    run2(20 * 5);
+    // roused: a noise back on the first side that only the nearest of them hears
+    stuck.clear();
+    g2.zm.noise(spot.ax, spot.az, Math.min(...ms.map((z) => Math.hypot(z.x - spot.ax, z.z - spot.az))) + 0.5);
+    const heard = ms.filter((z) => z.alertT > 0).length;
+    run2(1);
+    w0 = ms.map(way);
+    run2(50, watch);
+    gain = Math.min(...ms.map((z, i) => w0[i] - way(z)));
+    check('a noise beyond a wall brings the whole herd running round it', heard >= 1 && heard < n && h.hot && gain > 7 && stuck.size === 0, `${heard} of ${n} heard it, every one of them ${gain.toFixed(1)} m or more along in 2.5 s, ${stuck.size} stuck on the wall`);
+    // a straggler: the herd stands where the noise was, one of them is in the lake, and the survivor is in sight of it
+    h.searchT = 0;
+    h.hot = false;
+    hs.setWaypoint(h, spot.ax, spot.az);
+    h.restT = 1e9;
+    const lost = ms[0];
+    const rest = ms.filter((z) => z !== lost);
+    put(lost, lake.x, lake.z);
+    g2.handleChat(p, `/tp ${near.x} ${near.z}`);
+    run2(20 * 20);
+    const mid = (k) => rest.reduce((sum, z) => sum + z[k], 0) / rest.length;
+    const drag = Math.hypot(h.cx - mid('x'), h.cz - mid('z'));
+    check('one left with no way back does not hold the middle of the herd back', drag < 1 && from(lost, h.cx, h.cz) > 60 && ms.every((z) => !z.target && !z.dead), `the middle of the herd is ${drag.toFixed(1)} m from the middle of the others, the straggler ${from(lost, h.cx, h.cz).toFixed(0)} m off`);
+    // ...and nobody in sight of it or of the herd
+    g2.handleChat(p, `/tp ${away[0]} ${away[1]}`);
+    run2(20 * 3);
+    check('...and is put back with the herd when no survivor is near', from(lost, h.cx, h.cz) < 7.5 && h.members.length === n && ms.every((z) => !z.dead), `${from(lost, h.cx, h.cz).toFixed(1)} m from the middle of the herd`);
+  }
 }
 
 // supply drop: the plane's flyover event, then a crate off its ramp that free-falls, opens its canopy and
