@@ -1185,6 +1185,109 @@ check('ping broadcast', B.pings > 0);
   check('dawn + summary', game.phase === PHASE.DAY && A.summary && A.summary.night === 1, JSON.stringify(A.summary));
 }
 
+// the boomer has no claws: what the survivors built would hold it up for good, so it bursts against it instead -
+// after a windup they can read, taking the piece it leans on with it. Not against the static world, and not while
+// every survivor is far off. (a game of its own, emptied of the dead: the run around this block is left as it was)
+{
+  const { makeBox } = await import('../shared/collision.js');
+  const g = new Game({ seed, log: () => {} });
+  g.debugCommands = true;
+  const session = g.onOpen({ send() {} });
+  const jw = new Writer(64);
+  jw.u8(C2S.JOIN);
+  jw.u8(PROTOCOL_VERSION);
+  jw.str('D');
+  g.onMessage(session, jw.bytes().slice());
+  const tick = (n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  tick(3);
+  for (const z of g.zombies) {
+    z.dead = true;
+    z.deadT = 2;
+  }
+  tick(2);
+  g.zm.maintainT = g.zm.herds.spawnT = 1e9;
+  const p = [...g.players.values()][0];
+  const s = p.state;
+  const w = g.world;
+  const def = ZOMBIE_DEFS[ZTYPE.BOOMER];
+  const open = (x, z) => !w.isDeepWater(x, z) && !g.nav.isBlocked(x, z);
+  const bare = (x, z, r) => w.staticGrid.query(x, z, r, []).every((o) => o.y1 < w.heightAt(x, z) + 0.2);
+  // level open ground with room for a 3 m pen 5 m north of the survivor (-Z) and for them to back 12 m off
+  let spot = null;
+  for (let r = 40; r <= 120 && !spot; r += 10) {
+    for (let k = 0; k < 16 && !spot; k++) {
+      const x = w.car.x + Math.sin((k / 16) * Math.PI * 2) * r;
+      const z = w.car.z + Math.cos((k / 16) * Math.PI * 2) * r;
+      let ok = Math.abs(x) < 280 && Math.abs(z) < 280;
+      for (let d = -12; d <= 12 && ok; d += 2) ok = [-4, 0, 4].every((o) => open(x + o, z + d) && Math.abs(w.heightAt(x + o, z + d) - w.heightAt(x, z)) < 0.8);
+      if (ok && bare(x, z - 5, 6)) spot = { x, z };
+    }
+  }
+  check('found open ground for the boomer test', !!spot);
+  const { x: px, z: pz } = spot;
+  const cz = pz - 5; // the pen's middle
+  const tp = (x, z) => g.handleChat(p, `/tp ${x} ${z}`);
+  const boomer = () => g.zm.spawn(ZTYPE.BOOMER, px, cz, { horde: true });
+  const waiting = (z) => !z.dead && z.state === 0 && z.breachT === 0;
+  tp(px, pz);
+  // a wall of the static world between them (one the nav grid does not know about, so it walks straight into it)
+  const wz = cz + 1.7;
+  const rocks = [-3, 0, 3].map((o) => makeBox(px + o, wz, w.heightAt(px + o, wz) - 0.3, w.heightAt(px + o, wz) + 1.15, 3, 0.4, 0));
+  for (const c of rocks) w.staticGrid.add(c);
+  const z0 = boomer();
+  tick(100);
+  check('a boomer leaning on the static world does not burst', waiting(z0) && Math.abs(z0.z - wz) < 1.3, `state ${z0.state}, ${Math.abs(z0.z - wz).toFixed(2)} m from it`);
+  for (const c of rocks) w.staticGrid.remove(c);
+  z0.dead = true;
+  z0.deadT = 2;
+  tick(2);
+  // a pen of four barricades, built the way a survivor builds them, with a boomer shut inside
+  g.giveItem(p, ITEM.WOOD, 12);
+  g.giveItem(p, ITEM.NAILS, 8);
+  s.slot = 4; // the hammer
+  for (const [ox, oz, rot] of [[0, 1.7, 0], [0, -1.7, 0], [-1.7, 0, 64], [1.7, 0, 64]]) {
+    g.build(p, STRUCT.BARRICADE, px + ox, cz + oz, rot);
+    tick(6);
+  }
+  const pen = g.structures.filter((e) => e.stype === STRUCT.BARRICADE);
+  check('boomer pen built', pen.length === 4);
+  // the survivor well back from it: the boomer is stuck in there, as it always was
+  tp(px, pz + 12);
+  const z1 = boomer();
+  tick(100);
+  check('a boomer held up far from every survivor does not burst', waiting(z1) && Math.abs(z1.x - px) < 1.5 && Math.abs(z1.z - cz) < 1.5 && pen.every((e) => e.hp === e.maxHp), `${Math.hypot(s.x - z1.x, s.z - z1.z).toFixed(1)} m away (range ${def.breachRange})`);
+  // the survivor walks up to the pen: now it swells...
+  tp(px, pz);
+  let t0 = 0;
+  while (z1.state !== 1 && t0 < 80) {
+    tick(1);
+    t0++;
+  }
+  const piece = g.ents[z1.breachId];
+  check('a boomer held up by a barricade winds up', z1.state === 1 && z1.stateAct === 99 && pen.includes(piece), `after ${(t0 / 20).toFixed(2)} s, ${Math.hypot(s.x - z1.x, s.z - z1.z).toFixed(1)} m from the survivor`);
+  tick(20);
+  check('...for long enough to read', !z1.dead && z1.anim === ZANIM.SPECIAL && p.hp === p.maxHp && pen.every((e) => !e.removed), `still swelling 1 s in (windup ${def.breachWindup} s)`);
+  tick(Math.ceil(def.breachWindup * 20) - 20 + 2);
+  const rest = pen.filter((e) => e !== piece);
+  check('...and bursts against it: that piece goes, the others stand, the survivor behind it is hurt', z1.dead && !!piece?.removed && rest.every((e) => !e.removed && e.hp > e.maxHp / 2) && p.hp < p.maxHp && p.alive, `the others ${rest.map((e) => e.hp.toFixed(0)).join('/')} of ${STRUCT_DEFS[STRUCT.BARRICADE].hp}, survivor -${(p.maxHp - p.hp).toFixed(0)} hp`);
+  // shot dead during the windup it only blasts: the piece it was leaning on is left standing
+  tp(px, cz - 5);
+  const z2 = boomer();
+  let t1 = 0;
+  while (z2.state !== 1 && t1 < 160) {
+    tick(1);
+    t1++;
+  }
+  const next = g.ents[z2.breachId];
+  const hp0 = next?.hp;
+  const wound = z2.state === 1 && rest.includes(next);
+  g.combat.damageZombie(z2, 1e6, null, {});
+  tick(2);
+  check('a boomer shot during its windup leaves the piece standing', wound && z2.dead && !next.removed && next.hp < hp0 && hp0 - next.hp < 260, `-${(hp0 - next?.hp).toFixed(0)} of ${hp0?.toFixed(0)} hp`);
+}
+
 // overkill: one heavy blow that takes a zombie far below zero blows it apart (ZOMBIE_DIE flag 8) - a rifle round, a
 // point-blank blast, a bomb. Small arms, blades, fire and a blast from across the road leave a corpse.
 // (no ticks, and none of the game's rng: the rest of the run is left as it was)
