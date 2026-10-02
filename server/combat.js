@@ -407,7 +407,9 @@ export class Combat {
   meleeClear(p, c, ox, oy, oz) {
     const g = this.g;
     const s = p.state;
-    if (!p.zombie) return canReach(g.world, ox, oy, oz, c.x, c.y, c.z, Math.min(s.y, c.feet) + EYE_HEIGHT, c.r);
+    // (the line stops at the body's near side, but never more than 0.6 m short of its centre: the big ones are held
+    // 0.65 m off a wall and are wider than that, so a tank or a boss leaning on the far side would be in reach)
+    if (!p.zombie) return canReach(g.world, ox, oy, oz, c.x, c.y, c.z, Math.min(s.y, c.feet) + EYE_HEIGHT, Math.min(c.r, 0.6));
     const vs = c.e.state;
     const cy = s.y + (s.crouch ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT) * 0.55;
     let dx = c.x - ox;
