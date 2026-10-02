@@ -63,6 +63,12 @@ container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/
 `/sandbox/models-test.html?cats=grid` shows the cat's poses; `?grid=10`, `?variants=10` and `?film=10` show the
 zombie dog's poses, coats and gait).
 
+`sim-smoke` is one long run on one map, and `npm test` runs it on seed 4242 only, so a check that leans on what the
+checks before it happened to leave behind (a survivor's health, where the dead have wandered to, what was looted on
+the way, the time of day) passes by luck and breaks when something unrelated shifts the timing. Each check sets up
+what it depends on, and the run is meant to pass on any seed: after adding one, sweep a few,
+`for s in $(seq 1 20); do echo "$s $(node scripts/sim-smoke.js $s | tail -1)"; done`.
+
 Measured on a laptop: the server ticks in ~2-3 ms with a 120+ zombie horde (50 ms budget); the client
 spends ~0.8 ms updating and ~2.5 ms submitting a frame with 120 zombies on screen. `npm run bench:net`
 (4 players fighting night 3) measures ~1.3 KB/s down and ~0.4 KB/s up of payload per client in 40 packets/s
