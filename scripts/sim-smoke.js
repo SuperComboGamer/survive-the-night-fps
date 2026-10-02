@@ -6,7 +6,7 @@
 import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
 import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
-import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
+import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
 import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
@@ -2166,6 +2166,87 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   const n1 = count(1);
   const later = [2, 3, 5, 8].map(count);
   check('shades in the horde from night 2', n1 === 0 && later.every((k) => k >= 1 && k <= 6), `night 1: ${n1}, nights 2/3/5/8: ${later.join('/')}`);
+}
+
+// a full entity registry: a join that cannot get an id is turned away and leaves nothing behind, what a survivor
+// does meanwhile costs them nothing, every snapshot still decodes, and the game is whole again once the entities
+// have expired and their ids are back (a game of its own: the one above is left as it was)
+{
+  const g = new Game({ seed, godMode: true, log: () => {} });
+  const join = (name) => {
+    const c = { id: 0, reject: 0, snaps: 0, bad: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, handler: new Proxy({}, { get: () => () => {} }) };
+    c.session = g.onOpen({
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) c.id = r.u16();
+        else if (t === S2C.REJECT) c.reject = r.u8();
+        else if (t === S2C.SNAPSHOT) {
+          c.snaps++;
+          try {
+            readSnapshot(r, c);
+            if (r.left !== 0) c.bad++;
+          } catch {
+            c.bad++;
+          }
+        }
+      },
+    });
+    const w = new Writer(64);
+    w.u8(C2S.JOIN);
+    w.u8(PROTOCOL_VERSION);
+    w.str(name);
+    g.onMessage(c.session, w.bytes().slice());
+    return c;
+  };
+  const ticks = (n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  const W = join('Witness');
+  ticks(5);
+  const p = g.players.get(W.id);
+  const s = p.state;
+  // fill it with items that last 3.5 s, at the place furthest from the witness (out of its sight: only the ids matter)
+  const far = g.world.zones.reduce((a, b) => (Math.hypot(b.x - s.x, b.z - s.z) > Math.hypot(a.x - s.x, a.z - s.z) ? b : a));
+  const filler = [];
+  for (let e; (e = g.spawnItem(ITEM.WOOD, 1, far.x, 0, far.z, { life: 3.5 })); ) filler.push(e);
+  check('the entity registry fills up, and then refuses to spawn', filler.length > 10000 && g.zm.spawn(ZTYPE.WALKER, s.x + 30, s.z) === null, `${g.all.length} entities`);
+  const G = join('Ghost');
+  check('a join with no entity id left is turned away', G.reject === REJECT_REASON.FULL && G.id === 0 && !G.session.player && g.players.size === 1 && !g.players.has(undefined));
+  // the witness tries to build, drop a stack, drop the pistol and throw a molotov
+  g.giveItem(p, ITEM.MOLOTOV, 1);
+  s.slot = 4;
+  const held = () => JSON.stringify([p.inv, s.weapons, s.throwCount]);
+  const build = () => {
+    for (let k = 0; k < 12 && !g.structures.length; k++) {
+      p.actionT = -99;
+      g.build(p, STRUCT.CAMPFIRE, s.x + Math.sin(k * 0.52) * 3, s.z + Math.cos(k * 0.52) * 3, 0);
+    }
+    return g.structures.length;
+  };
+  const had = held();
+  const built = build();
+  g.onMessage(W.session, new Uint8Array([C2S.ACTION, ACT.DROP_SLOT, p.inv.findIndex((it) => it), 0]));
+  g.onMessage(W.session, new Uint8Array([C2S.ACTION, ACT.DROP_WEAPON, 1]));
+  s.throwCount--; // (the simulation counts the molotov as thrown before the server hears of it)
+  g.handleSimEvent(p, { type: 'throw', item: ITEM.MOLOTOV });
+  check('while it is full, building, dropping and throwing cost a survivor nothing', built === 0 && held() === had && g.projectiles.length === 0);
+  // forty ids come free as the ghost goes: they are back from quarantine 3 s later
+  for (const e of filler.splice(0, 40)) g.removeItemEnt(e);
+  g.onClose(G.session);
+  ticks(62);
+  const isId = (id) => Number.isInteger(id) && id > 0 && id < g.ents.length;
+  const clean = () => g.freeIds.every(isId) && g.quarantine.every((v, i) => i % 2 === 1 || isId(v)) && g.all.every((e) => isId(e.id) && g.ents[e.id] === e);
+  check('...and leaves nothing behind when it goes', g.players.size === 1 && clean());
+  const zs = [0, 1, 2].map((i) => g.zm.spawn(ZTYPE.WALKER, s.x + 10 + i * 2, s.z + 10));
+  ticks(40);
+  check('what spawns next has an id of its own and is replicated', zs.every((z) => z && isId(z.id) && W.store.ents.get(z.id)?.kind === ENT.ZOMBIE));
+  ticks(40);
+  const L = join('Late');
+  ticks(10);
+  const room = filler.every((e) => e.removed) && L.id > 0 && g.players.get(L.id)?.session === L.session && clean();
+  check('once the items have expired there is room again: for a join, for a campfire', room && build() === 1 && held() !== had, `${g.all.length} entities`);
+  check('every snapshot decoded on the way', W.bad === 0 && L.bad === 0 && W.snaps >= 150 && L.snaps >= 10, `${W.snaps + L.snaps} snapshots`);
 }
 
 // a new playthrough is a new valley: the server rolls a fresh map and tells its clients the seed

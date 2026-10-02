@@ -281,11 +281,14 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- entity registry
+  // Returns null when every id is in use (or resting in quarantine): callers have to cope with that.
   spawnEntity(e) {
     let id;
     if (this.freeIds.length) id = this.freeIds.pop();
     else if (this.nextId < MAX_ENTITIES) id = this.nextId++;
-    else return null;
+    // (the id check is a backstop: an entity whose id is not a slot of the registry mis-frames every snapshot
+    // it is written into, for every client)
+    if (!Number.isInteger(id) || id <= 0 || id >= MAX_ENTITIES) return null;
     this.gens[id] = (this.gens[id] + 1) >>> 0 || 1;
     e.id = id;
     e.gen = this.gens[id];
@@ -297,6 +300,9 @@ export class Game {
   removeEntity(e) {
     if (e.removed) return;
     e.removed = true;
+    // only the holder of a slot gives its id back: an entity that never got one (spawnEntity returned null) would
+    // put `undefined` into the free list, and the next thing spawned would take that as its id
+    if (this.ents[e.id] !== e) return;
     this.ents[e.id] = null;
     this.quarantine.push(e.id, this.tick + 60);
     const i = this.all.indexOf(e);
@@ -450,6 +456,8 @@ export class Game {
     if (this.phase === PHASE.WAITING) this.rollWorld();
 
     const p = this.createPlayer(session, name);
+    // no entity id left for them: turned away like from a full server, to try again once ids have come back
+    if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
     const w = new Writer(64);
     w.u8(S2C.WELCOME);
@@ -539,7 +547,8 @@ export class Game {
         return this.state.z;
       },
     };
-    this.spawnEntity(p);
+    // (a player without an id must never get into `players`: it would sit there under the key `undefined`)
+    if (!this.spawnEntity(p)) return null;
     this.players.set(p.id, p);
     return p;
   }
@@ -1377,10 +1386,11 @@ export class Game {
         break;
       case 'throw': {
         const item = ev.item;
-        removeItem(p.inv, item, 1);
+        // (no entity id left for the projectile: nothing leaves the hand, and syncThrow gives the simulation
+        // back the one it counted as thrown)
+        if (this.combat.throwProjectile(p, item)) removeItem(p.inv, item, 1);
         p.invDirty = true;
         this.syncThrow(p);
-        this.combat.throwProjectile(p, item);
         break;
       }
       case 'reload':
@@ -1435,7 +1445,8 @@ export class Game {
         const n = cnt === 0 ? it.count : Math.min(cnt, it.count);
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4, from: s });
+        // (no entity id left for it on the ground: it stays in the pack)
+        if (!this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4, from: s })) return;
         it.count -= n;
         if (it.count <= 0) p.inv[idx] = null;
         p.invDirty = true;
@@ -1449,7 +1460,7 @@ export class Game {
         if (!wpn) return;
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s });
+        if (!this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s })) return;
         s.weapons[slot] = 0;
         if (slot === SLOT_PRIMARY) s.mags[0] = 0;
         if (slot === SLOT_PISTOL) s.mags[1] = 0;
@@ -1574,12 +1585,13 @@ export class Game {
           const slot = WEAPONS[e.item].slot;
           const old = s.weapons[slot];
           const oldMag = slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0;
+          // (the weapon in hand goes down first: with no entity id left for it there is no swap, and it is kept)
+          if (old && !this.dropItem(old, 1, s.x, s.y, s.z, { mag: oldMag, spread: 0.5 })) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
           s.weapons[slot] = e.item;
           if (s.slot === slot) s.reloadT = 0; // a reload of the weapon swapped out must not finish on this one
           if (slot === SLOT_PRIMARY) s.mags[0] = e.mag;
           if (slot === SLOT_PISTOL) s.mags[1] = e.mag;
           this.removeItemEnt(e);
-          if (old) this.dropItem(old, 1, s.x, s.y, s.z, { mag: oldMag, spread: 0.5 });
           this.pickupEvent(p, e.item, 1);
         } else {
           this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
@@ -2017,8 +2029,6 @@ export class Game {
       }
       for (const zb of this.zombies) if (!zb.dead && footprintContains(col, zb.x, zb.z, zb.def.radius * 0.8)) return fail();
     }
-    payCost(p.inv, def.cost);
-    p.invDirty = true;
     const e = {
       kind: ENT.STRUCTURE,
       stype: type,
@@ -2034,7 +2044,9 @@ export class Game {
       collider: null,
       trapTick: 0,
     };
-    if (!this.spawnEntity(e)) return;
+    if (!this.spawnEntity(e)) return fail(); // (no entity id left: nothing is built, so nothing is paid)
+    payCost(p.inv, def.cost);
+    p.invDirty = true;
     e.collider = this.structCollider(type, x, y, z, rot8, e.id);
     this.world.structGrid.add(e.collider);
     this.nav.addStructure(e.collider);

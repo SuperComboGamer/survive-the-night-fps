@@ -590,8 +590,9 @@ export class Combat {
     const oy = s.y + eyeHeight(s) - 0.1;
     const oz = s.z + dz * 0.5;
     const ptype = item === ITEM.MOLOTOV ? PROJ.MOLOTOV : item === ITEM.FLARE ? PROJ.FLARE : PROJ.PIPEBOMB;
-    this.spawnProjectile(ptype, p, ox, oy, oz, dx * def.speed + s.vx * 0.5, dy * def.speed + 1.5, dz * def.speed + s.vz * 0.5, { fuse: def.fuse || 0 });
-    this.g.sound(SOUND.THROW, ox, oy, oz, 20, p.id);
+    const e = this.spawnProjectile(ptype, p, ox, oy, oz, dx * def.speed + s.vx * 0.5, dy * def.speed + 1.5, dz * def.speed + s.vz * 0.5, { fuse: def.fuse || 0 });
+    if (e) this.g.sound(SOUND.THROW, ox, oy, oz, 20, p.id);
+    return e; // null: the entity registry is full, nothing was thrown
   }
 
   // ballistic lob from (x,y,z) to land at (tx,ty,tz) after T seconds
