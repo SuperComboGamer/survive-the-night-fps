@@ -166,6 +166,8 @@ class ParticlePool {
   }
 
   // p: {x,y,z, vx,vy,vz, life, size, size1, r,g,b,a, r1,g1,b1,a1, grav, drag, tex, spin}
+  // 20 positional arguments, then the optional spin. One number too many still runs: it takes the tex slot (0 = FIRE)
+  // and the TEX.* constant lands in spin, so count them
   emit(x, y, z, vx, vy, vz, life, size, size1, r, g, b, a, r1, g1, b1, a1, grav, drag, tex, spin = 0) {
     let i;
     if (this.count < this.max) i = this.count++;
@@ -664,7 +666,7 @@ export class Effects {
       case IMPACT.METAL:
       case IMPACT.SPARK:
         for (let i = 0; i < 12; i++) D.emit(x, y, z, nx * 4 + this.rnd(-3, 3), this.rnd(0, 4), nz * 4 + this.rnd(-3, 3), this.rnd(0.15, 0.4), 0.06, 0.02, 1, 0.8, 0.4, 1, 1, 0.4, 0.1, 0, 14, 0.5, TEX.SPARK);
-        D.emit(x, y, z, 0, 0, 0, 0.07, 0.6, 0.2, 1, 0.8, 0.5, 1, 1, 0.6, 0.3, 0, 0, 0, 0, TEX.GLOW);
+        D.emit(x, y, z, 0, 0, 0, 0.07, 0.6, 0.2, 1, 0.8, 0.5, 1, 1, 0.6, 0.3, 0, 0, 0, TEX.GLOW);
         break;
       case IMPACT.ACID:
         for (let i = 0; i < 14; i++) A.emit(x, y, z, this.rnd(-2, 2), this.rnd(1, 4), this.rnd(-2, 2), this.rnd(0.4, 0.9), 0.12, 0.2, 0.4, 0.95, 0.2, 0.95, 0.2, 0.6, 0.1, 0, 10, 1, TEX.BLOOD);
@@ -689,7 +691,7 @@ export class Effects {
     }
     const green = kind === 2;
     // flash
-    D.emit(x, y, z, 0, 0, 0, 0.18, radius * 2.5, radius * 4, 1, green ? 1 : 0.85, green ? 0.5 : 0.5, 1, 1, 0.4, 0.1, 0, 0, 0, 0, TEX.GLOW);
+    D.emit(x, y, z, 0, 0, 0, 0.18, radius * 2.5, radius * 4, 1, green ? 1 : 0.85, green ? 0.5 : 0.5, 1, 1, 0.4, 0.1, 0, 0, 0, TEX.GLOW);
     for (let i = 0; i < 36; i++) {
       const vx = this.rnd(-1, 1);
       const vy = this.rnd(0.2, 1.2);
