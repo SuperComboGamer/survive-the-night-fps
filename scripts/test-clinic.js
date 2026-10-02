@@ -303,6 +303,26 @@ if (worlds[0]?.clinic) {
     }
     check(`${tag} ...and it is not there again at sunrise`, CONT_DEFS[CONT.DRUG_LOCKER].once && box.state === 1 && refilled === 0, `refilled ${refilled} of 12 mornings`);
   }
+
+  // ---- the debug commands (DEBUG_COMMANDS=1)
+  {
+    const p = A1.p();
+    const s = p.state;
+    car();
+    game.debugCommand(p, ['clinic']);
+    check(`${tag} /clinic puts a survivor at the front door, in daylight`, Math.hypot(s.x - c.door.x, s.z - c.door.z) < 0.1 && world.darkAt(s.x, s.y + 1, s.z) === 0 && Math.abs(s.y - world.heightAt(s.x, s.z)) < 0.3, `at ${where(s)}`);
+    game.debugCommand(p, ['clinic', 'ward']);
+    check(`${tag} /clinic ward puts them on the floor of a ward, in the dark`, inDark(s) && Math.abs(s.y - c.y) < 0.05, `at ${where(s)}, ${(s.y - c.y).toFixed(2)} m above the floor`);
+    // ...and on a valley without the clinic it says so, and moves nobody
+    let bare = 1;
+    while (createWorld(bare).clinic) bare++;
+    const g = new Game({ seed: bare, log: () => {} });
+    const said = [];
+    g.systemChat = (text) => said.push(text);
+    const nobody = { state: { x: 1, y: 2, z: 3 } };
+    g.debugCommand(nobody, ['clinic', 'ward']);
+    check(`[game ${bare}] /clinic on a valley without one says so`, said.some((t) => /no Mercy Clinic/.test(t)) && nobody.state.x === 1 && nobody.state.z === 3, said.join(' | '));
+  }
 }
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASS');
 process.exit(fails.length ? 1 : 0);

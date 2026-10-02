@@ -19,6 +19,7 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
                  roadside/woodland sites, buildings, props, containers, supply spots, doorways,
                  vegetation, colliders. A new playthrough is a new seed (S2C.WORLD_RESET); SEED pins it
   mine.js        the workings under Blackrock Mine: a second level under the heightfield (see The mine below)
+  clinic.js      Mercy Clinic and the rule that its wards are dark at noon (see Dark interiors below)
   collision.js   static/dynamic collider grids, ray casts
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
@@ -265,6 +266,42 @@ valley's nav grid is blocked.
   `guide` (what the item tooltips call it). `Game.searchCache` and the item guide both read those, so another
   container can use them too.
 - `scripts/test-mine.js` holds all of this on a dozen valleys and in a running game.
+
+## Dark interiors: the wards of Mercy Clinic
+
+The mine's rule, cut down to what a building needs: a place on the surface where it is dark at noon. The ward
+wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the only one so far.
+
+- **The rule** is a list on the world, `world.darks`: boxes (in a builder's frame, with a floor and a top), each
+  with the mouth the day comes in by. `world.darkAt(x, y, z)` is 0 outside every box and, inside one, rises from 0
+  `near` metres from the mouth to 1 at `far` (measured on the flat, a smoothstep): 1 m and 6.5 m, the length of the
+  passage from reception, so the wards are wholly dark and the passage goes dark along its length. Server and
+  client both ask it; nothing is on the wire.
+- **The server** counts a point as in the dark from 0.5 (`WARD_DARK`, `Zombies.inDark`). `Zombies.isLit` gives no
+  daylight to a Shade there (its one clause next to the mine's: torches, flares, fires and flashlights pin it as
+  anywhere), and `Game.startDay` spares what of the horde stands there at sunrise (`z.spared`, as down the mine:
+  it burns when it walks out into the day). The dwellers (`server/clinic.js`, `Wards`, owned by `Zombies`): one
+  to a den of `world.clinic.dens` - three walkers by day, one crawling, and a Shade from the second day - restocked
+  at sunrise unless a survivor is in the dark, spawned on their own random stream (it is swapped in for the
+  game's while they are made). `z.ward` keeps them out of the day's wanderers and, with no one to chase, shuffles
+  them between standing spots they have a clear walk to (`clinic.roam`), or takes them back to the hall by a flow
+  field of their own when they were led out and left.
+- **The client** does what it does down the mine. `Game.under` is the greater of how far down the mine the eye
+  is and `darkAt` at the eye, so the sky's light, the sun and the haze go out as a survivor walks down the
+  passage, smoothly (`Environment.update`). What is seen from inside is the lining (`clinic.lining`): floor,
+  ceiling, the inner face of every wall and the partitions, boxes that world generation takes back out of
+  `world.parts` and `client/render/clinic.js` draws with the material of the mine's rock (`material` / `mesh`,
+  exported from `render/mine.js`), each vertex taking as much of the day as `darkAt` leaves there. So from
+  reception the passage falls away into black, while reception keeps its daylight. The shell of the wing (outer
+  walls, boarded windows, roof) is static world as usual: it is lit like any building from outside.
+- **What it costs in layout.** No doorway in the wards is in line with the passage, so nothing in them is seen
+  from the daylight (zombies and props there are lit by the scene's lights, which follow the eye: from the mouth
+  of the passage a walker coming down it is lit as in reception - the mine's rough edge, and here only along the
+  passage). Looking back from deep in the passage, reception is as dim as the eye's light makes it. Every doorway
+  of the clinic is 1.6 m wide: the place is turned to face its road, and a 1.2-1.3 m doorway in a wall that runs
+  askew to the nav grid's 1 m cells has, one map in ten, no cell-to-cell step through it, which closed the wards
+  to the horde. `scripts/test-clinic.js` holds the rule, the dead and the drug locker on five valleys and in a
+  running game.
 
 ## Gameplay systems (iteration 2)
 

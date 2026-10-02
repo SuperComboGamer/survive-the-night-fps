@@ -92,6 +92,8 @@ export function buildClinic(b, { seed, parts, darks }) {
   // is a floor to whatever the server puts down from above, and the guards of the place would stand on it)
   b.room(0, 0, 18, 8, H, 'clapboard', { n: [win(2), win(5.5), win(10), door(13), win(16)], s: [door(3), door(11.5)], w: [win(4)], e: [win(4)] }, { roof: 'gableZ', roofH: 2, roofMat: 'shingles', floorMat: 'concrete' });
   b.wall(-1, -4 + WALL, -1, 4 - WALL, H, 0.2, 'clapboard', [door(4.875)]);
+  // a ceiling under the roof (a gable is drawn from outside only: without one the sky shows in at both ends)
+  b.box(0, H - 0.06, 0, 18 - WALL * 2, 0.06, 8 - WALL * 2, 'sash', { collide: false });
   // the name over the door
   signs.push({ x: b.wx(4, -4.14), y: b.y0 + 2.76, z: b.wz(4, -4.14), ry: b.ry + PI, w: 3.4, h: 0.5, kind: 1 });
   // reception: the desk, a row of chairs under the window, what was left where it fell

@@ -39,7 +39,8 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
 dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z> [y]`
 (with a height: onto what is under feet at it, down a drift of the mine), `/mine` (to the adit of Blackrock Mine;
-`/mine far` to the far portal, `/mine in` down to the junction), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
+`/mine far` to the far portal, `/mine in` down to the junction), `/clinic` (to the front door of Mercy Clinic;
+`/clinic ward` into its dark wards; says so on a map without it), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose)).
 
@@ -47,7 +48,7 @@ off every zombie within 30 m that has legs to lose)).
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`) and the mine under the valley (`test-mine`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`) and Mercy Clinic's dark wards (`test-clinic`) and runs `sim-smoke` |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
@@ -56,7 +57,8 @@ off every zombie within 30 m that has legs to lose)).
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
-| `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least twice), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
+| `node scripts/test-clinic.js [seed ...]` | Mercy Clinic on the first five valleys that have it: daylight in reception and outside, the wards wholly dark and the passage between going dark with no step in it, the one drug locker in the dark, the valley's flow fields leading into the deepest ward and out again; and in a running game the dead of the wards keep to them and go back when led out, a Shade moves in there at noon and is pinned in reception, the sunrise spares what stands in the wards, the drug locker's contents come once, and `/clinic` works. `VERBOSE=1` prints the passes too |
+| `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least once), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
 | `node scripts/test-itemguide.js` | holds the "Used in" / "Found in" lines of the inventory tooltips against the recipe and loot tables they are derived from, generated worlds and the server's gathering (runs after `npm test`, as its `posttest`) |
@@ -306,11 +308,21 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 - **Sixteen places** to a map. Six are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel,
   Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
   general store, police station, garage, houses) and Blackrock Mine (on high ground). The other ten are drawn
-  from fifteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
+  from sixteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
   Campground (near the lake), the Relay Station and Ranger Lookout (on high ground), Miller Farm, Harlan
   Sawmill, Granite Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage
-  (a scrapyard), Camp Tamarack (a summer camp) and Elk Ridge Lodge. Each is sited by its own rule and kept
-  apart from the rest, the highway and the water.
+  (a scrapyard), Camp Tamarack (a summer camp), Elk Ridge Lodge and Mercy Clinic. Each is sited by its own
+  rule and kept apart from the rest, the highway and the water.
+- **Mercy Clinic is dark at noon.** Reception and the pharmacy at the front have windows and daylight; a passage
+  behind them leads to the ward wing, whose windows were boarded over when the wards were sealed. Walk down the
+  passage and the day goes out behind you: in the wards it is as dark as down the mine, a flashlight, a torch or a
+  flare is all there is to see by, and a Shade moves there at noon (the daylight that pins it everywhere else
+  does not reach it, and the sun that burns the horde at dawn spares whatever stands in there). Three of the dead
+  live in the wards, one of them crawling, and from the second day a Shade in the isolation ward; the wards fill
+  up again at sunrise. It is where the medicine is: the pharmacy's medicine cabinets, one more in the wards, and
+  in the deepest ward the map's one drug locker - two medkits, three painkillers and four bandages on top of what
+  else is in it, once a game. Outside, an ambulance that never left still has its rear compartment to search
+  (`shared/clinic.js`, `node scripts/test-clinic.js`).
 - **The mine goes under the valley.** The adit at the back of Blackrock Mine's yard stands open: a decline
   runs down from it to a drift 100-200 m long that comes up again at a second portal on the edge of another
   place (a different one on every map; the field map shows the workings dashed). Half way there is a junction
