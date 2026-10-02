@@ -309,7 +309,8 @@ export class MeshBuilder {
           cx = cx / 3 + bw.x;
           cy = cy / 3 + bw.y;
           cz = cz / 3 + bw.z;
-          let drop = fbm3(cx * (t.f || 9), cy * (t.f || 9), cz * (t.f || 9), 2, t.seed || 0) < (t.amt || 0.3);
+          // ?? not ||: amt 0 means "no random holes, only my fn mask" (fbm3 is never below 0)
+          let drop = fbm3(cx * (t.f || 9), cy * (t.f || 9), cz * (t.f || 9), 2, t.seed || 0) < (t.amt ?? 0.3);
           if (t.fn && t.fn(cx, cy, cz)) drop = true;
           if (!drop) keep.push(index[i], index[i + 1], index[i + 2]);
         }
