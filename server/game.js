@@ -39,10 +39,13 @@ import {
   FLASHLIGHT_RECHARGE,
   SLOT_PRIMARY,
   SLOT_PISTOL,
+  SLOT_MELEE,
   SLOT_THROW,
   SLOT_BUILD,
   INVENTORY_SIZE,
   PLAYER_RADIUS,
+  PLAYER_HEIGHT,
+  WATER_LEVEL,
   DOWN_TIME,
   REVIVE_TIME,
   REVIVE_HP,
@@ -100,7 +103,7 @@ import {
 import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
-import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
+import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
@@ -130,6 +133,35 @@ const CAR_ALARM_MAX_ZOMBIES = 7;
 const CAR_ALARM_SPAWN_MIN = 62;
 const CAR_ALARM_SPAWN_MAX = 86;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
+// Someone who joins a run in progress is put down beside the team (pickJoinSpawn): JOIN_NEAR_MIN..MAX metres from a
+// teammate, at whichever of JOIN_TRIES spots around them is furthest from the dead (nothing within JOIN_CLEAR is
+// as good as it gets). If even that one has a zombie within JOIN_LAP, the ring out to JOIN_FAR_MAX is tried too.
+const JOIN_NEAR_MIN = 2.5;
+const JOIN_NEAR_MAX = 9;
+const JOIN_FAR_MAX = 22;
+const JOIN_TRIES = 48;
+const JOIN_CLEAR = 15;
+const JOIN_LAP = 6;
+const LEFT_KITS_MAX = 64; // kits remembered for players who left this run (parkKit)
+// What a survivor starts with. Day 1's kit is the opening hand; someone who joins on a later day gets a little more
+// 9mm, bandages and light for each day gone by (first-pass numbers): enough to be of use that night, well short of
+// what those days of scavenging turn up - no primary, no armour, no medkit, nothing to throw.
+const STARTER_TOOLS = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER]; // by weapon slot
+function starterKit(day = 1) {
+  const d = Math.max(0, day - 1);
+  return {
+    mag: WEAPONS[ITEM.PISTOL].mag,
+    ammo: Math.min(AMMO_MAX[AMMO.P9], 36 + 24 * d), // 9mm in reserve
+    items: [
+      [ITEM.BANDAGE, 2 + Math.min(3, d)],
+      [ITEM.TORCH, d ? 2 : 1],
+      [ITEM.WOOD, 6],
+      [ITEM.NAILS, 8],
+      [ITEM.STICK, 4],
+      [ITEM.CLOTH, 1],
+    ],
+  };
+}
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only.
@@ -231,6 +263,7 @@ export class Game {
     this.playersDirty = true;
     this.playersListT = 0;
     this.gather = new Map(); // collider -> {left, day}
+    this.leftKits = new Map(); // name -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
     this.lootPoints = [];
@@ -424,7 +457,14 @@ export class Game {
     w.u8(this.maxPlayers);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
-    else this.spawnHuman(p);
+    else {
+      // a run in progress: beside the team, with a kit for the day - or, back in the run they left, with what they
+      // left with (parkKit)
+      const left = this.leftKits.get(p.name);
+      this.leftKits.delete(p.name);
+      this.spawnHuman(p, left || starterKit(this.day), true);
+      if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
+    }
     this.notify(NOTIFY.PLAYER_JOINED, p.id);
     this.systemChat(`${p.name} joined the survivors.`);
     this.playersDirty = true;
@@ -452,6 +492,7 @@ export class Game {
       respawnT: 0,
       inv: createInventory(),
       invDirty: true,
+      kit: null, // the starting kit they were issued (spawnHuman)
       flashlight: false,
       battery: FLASHLIGHT_MAX,
       lastDamageT: -99,
@@ -500,8 +541,33 @@ export class Game {
     return p;
   }
 
+  // A leaver takes what is left of their starting kit with them - never more of anything than they were issued - and
+  // gets exactly that back if they rejoin this run under the same name. Only what they found on top of it is dropped
+  // for the team. Dropping the kit and issuing a fresh one on the way back in would let a reconnect loop pile rounds
+  // and bandages up at the team's feet, and refill anyone who had used theirs up (or lost them by dying).
+  // The name is all a JOIN identifies a player by: under a new one they are a newcomer.
+  parkKit(p) {
+    const kit = p.kit;
+    if (!kit) return;
+    const s = p.state;
+    const left = { mag: 0, ammo: 0, items: [] };
+    const gone = p.zombie || !p.alive; // the dead dropped theirs where they fell
+    if (!gone) {
+      left.ammo = Math.min(s.ammo[AMMO.P9], kit.ammo);
+      s.ammo[AMMO.P9] -= left.ammo;
+      if (s.weapons[SLOT_PISTOL] === ITEM.PISTOL) left.mag = Math.min(s.mags[1], kit.mag);
+      // (the pistol, knife and hammer everyone starts with: a rejoin brings its own)
+      for (const slot of [SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD]) if (s.weapons[slot] === STARTER_TOOLS[slot]) s.weapons[slot] = 0;
+    }
+    for (const [item, n] of kit.items) left.items.push([item, gone ? 0 : removeItem(p.inv, item, n)]);
+    this.leftKits.delete(p.name);
+    this.leftKits.set(p.name, left);
+    if (this.leftKits.size > LEFT_KITS_MAX) this.leftKits.delete(this.leftKits.keys().next().value); // (the oldest)
+  }
+
   removePlayer(p) {
     this.releaseHolds(p);
+    this.parkKit(p);
     this.dropAll(p);
     this.players.delete(p.id);
     this.nav.removeField(p.id);
@@ -585,6 +651,7 @@ export class Game {
     this.bossPending = null;
     this.bossId = 0;
     this.gather.clear();
+    this.leftKits.clear();
     this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
   }
 
@@ -668,19 +735,82 @@ export class Game {
     });
   }
 
-  spawnHuman(p) {
+  // Where someone who joins a run in progress is put down: beside the team instead of alone at the car, which by
+  // then can be 250 m and a horde away from anyone. null = the car will do: nobody alive to join, or the team is
+  // within clear earshot of it anyway (day 1 before anyone has set off).
+  pickJoinSpawn(p) {
+    // the team: the survivor with the most others within earshot (one on their feet before one who is down)
+    let a = null;
+    let most = -1;
+    for (const q of this.players.values()) {
+      if (q === p || !q.alive || q.zombie) continue;
+      let n = q.downed ? 0 : 0.5;
+      for (const o of this.players.values()) if (o !== q && o !== p && o.alive && !o.zombie && Math.hypot(o.state.x - q.state.x, o.state.z - q.state.z) < TALK_RANGE) n++;
+      if (n > most) {
+        most = n;
+        a = q.state;
+      }
+    }
+    const w = this.world;
+    if (!a || Math.hypot(a.x - w.car.x, a.z - w.car.z) < TALK_CLEAR) return null;
+    const ay = groundAt(w, a.x, a.z, a.y, PLAYER_RADIUS * 0.7);
+    const dead = []; // zombies and player-zombies that could be near a spot
+    for (const z of this.zombies) if (!z.dead && Math.hypot(z.x - a.x, z.z - a.z) < JOIN_FAR_MAX + JOIN_CLEAR) dead.push(z);
+    for (const q of this.players.values()) if (q.zombie && q.alive) dead.push(q.state);
+    const lim = MAP_HALF - 3;
+    const body = { x: 0, y: 0, z: 0 };
+    const a0 = this.rng() * Math.PI * 2;
+    let spot = null;
+    let far = -1;
+    // right beside them; only if the dead are all over that ground, a little further out
+    for (const [r0, r1] of [[JOIN_NEAR_MIN, JOIN_NEAR_MAX], [JOIN_NEAR_MAX, JOIN_FAR_MAX]]) {
+      for (let k = 0; k < JOIN_TRIES; k++) {
+        const ang = a0 + ((k + this.rng()) / JOIN_TRIES) * Math.PI * 2;
+        const d = r0 + this.rng() * (r1 - r0);
+        const x = a.x + Math.sin(ang) * d;
+        const z = a.z + Math.cos(ang) * d;
+        if (Math.abs(x) > lim || Math.abs(z) > lim || this.nav.isBlocked(x, z)) continue;
+        // somewhere to stand: on the teammate's level (not down a bank, not up on a counter), dry, with room for a
+        // body clear of every wall, prop, tree and built structure...
+        const y = groundAt(w, x, z, ay, PLAYER_RADIUS * 0.7);
+        if (Math.abs(y - ay) > 1 || y < WATER_LEVEL) continue;
+        body.x = x;
+        body.y = y;
+        body.z = z;
+        if (resolveBody(w, body, PLAYER_RADIUS, PLAYER_HEIGHT)) continue;
+        // ...and a straight walk to the teammate: no wall, barricade or door boards in between
+        if (!this.zm.clearLine(x, y + 0.6, z, a.x, ay + 0.6, a.z)) continue;
+        // out of the fight if there is such a spot: the one furthest from the nearest of the dead
+        let near = JOIN_CLEAR;
+        for (const e of dead) near = Math.min(near, Math.hypot(e.x - x, e.z - z));
+        if (near > far) {
+          far = near;
+          spot = { x, y, z, yaw: Math.atan2(-(a.x - x), -(a.z - z)) }; // facing the teammate
+        }
+      }
+      if (far >= JOIN_LAP) break;
+    }
+    // nowhere around them (a closet, a ledge): the teammate's own spot is good by construction - players do not
+    // collide with each other
+    return spot || { x: a.x, y: a.y, z: a.z, yaw: a.yaw };
+  }
+
+  // kit: what they start with (starterKit, or what a returning player left with); beside: put them with the team
+  // if there is one to join. A respawn into a run in progress would pass both, as handleJoin does.
+  spawnHuman(p, kit = starterKit(), beside = false) {
     const s = p.state;
     const fresh = createPlayerState();
     Object.assign(s, fresh);
-    s.weapons = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER];
-    s.mags = [0, 12];
-    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? 36 : 0));
+    s.weapons = STARTER_TOOLS.slice();
+    s.mags = [0, kit.mag];
+    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? kit.ammo : 0));
     const sp = this.world.spawnPoints[Math.floor(this.rng() * this.world.spawnPoints.length)];
     s.x = sp.x + (this.rng() - 0.5) * 1.5;
     s.z = sp.z + (this.rng() - 0.5) * 1.5;
     s.y = groundAt(this.world, s.x, s.z, 50, 0.3);
     const car = this.world.car;
     s.yaw = Math.atan2(-(car.x - s.x), -(car.z - s.z)) + Math.PI; // back to the car, facing the road
+    if (beside) Object.assign(s, this.pickJoinSpawn(p)); // (x, y, z, yaw - or nothing: the car it is)
     p.hp = PLAYER_MAX_HP;
     p.maxHp = PLAYER_MAX_HP;
     p.armor = 0;
@@ -698,12 +828,8 @@ export class Game {
     p.useItem = null;
     p.hold = null;
     p.inv = createInventory();
-    addItem(p.inv, ITEM.BANDAGE, 2);
-    addItem(p.inv, ITEM.TORCH, 1);
-    addItem(p.inv, ITEM.WOOD, 6);
-    addItem(p.inv, ITEM.NAILS, 8);
-    addItem(p.inv, ITEM.STICK, 4);
-    addItem(p.inv, ITEM.CLOTH, 1);
+    for (const [item, n] of kit.items) addItem(p.inv, item, n);
+    p.kit = kit;
     p.invDirty = true;
     this.fillHistory(p);
     this.playersDirty = true;

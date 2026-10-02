@@ -212,6 +212,9 @@ https://www.survivethenightgame.com.
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
   places) and a field map [M] keep the team together. Friendly fire is off, headshots deal bonus damage,
   health slowly regenerates.
+- **Joining late:** the server runs one drop-in game. Join a run in progress and you arrive beside the team
+  (at the car if they are still by it, or if nobody is left alive), with the starting kit plus a little more
+  9mm and bandages for each day gone by. Leave and come back during the same run and you have what you left with.
 - **Death:** survivors respawn as player-controlled zombies (claws + leap) hunting their former friends.
 
 ### The valley
