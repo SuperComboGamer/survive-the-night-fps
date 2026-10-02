@@ -216,13 +216,16 @@ export class Game {
     this.weather = new Weather();
     this.weather.onStrike = (s) => this.onLightning(s);
     this.lights = new Lights(this.scene, this.camera, renderer.q);
-    this.vm = new ViewModel();
-    renderer.vmScene.add(this.vm.group);
+    this.vm = null; // built with the first world (ensureViewModel), not here: the splash has to paint first
     this.vmItem = -1;
     this.entities = new Entities(this);
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
+    // a click on the canvas takes the pointer back when the lock was lost or refused
+    renderer.canvas.addEventListener('click', () => {
+      if (this.state === 'playing' && !this.input.locked && !this.ui.inventoryOpen && !this.ui.isTyping()) this.input.requestLock();
+    });
   }
 
   // How much sun/moon reaches the camera: blocked by buildings/terrain (ray cast towards the light)
@@ -294,8 +297,18 @@ export class Game {
     this.staticWorld?.setShadows(!!q.shadows);
   }
 
+  // The first-person arms and weapons. Baking their two 1024 px atlases holds the main thread for ~0.3 s, so it is
+  // done with the first world build (behind the splash, or on the join if that comes first) instead of in the
+  // constructor, where it kept the splash from painting. Nothing uses the view model before a world is loaded.
+  ensureViewModel() {
+    if (this.vm) return;
+    this.vm = new ViewModel();
+    this.renderer.vmScene.add(this.vm.group);
+  }
+
   // ---------------------------------------------------------------- world
   loadWorld(seed) {
+    this.ensureViewModel();
     if (this.seed === seed && this.world) return;
     const t0 = performance.now();
     if (this.world) this.unloadWorld();
@@ -583,9 +596,6 @@ export class Game {
     this.inputBuffer.clear();
     this.input.requestLock();
     this.discovered = new Set([ZONE.CAMP]);
-    this.renderer.canvas.addEventListener('click', () => {
-      if (this.state === 'playing' && !this.input.locked && !this.ui.inventoryOpen && !this.ui.isTyping()) this.input.requestLock();
-    });
     return info;
   }
 
