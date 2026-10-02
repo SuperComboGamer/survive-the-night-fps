@@ -4,14 +4,21 @@
    Same scale unit (--u) and palette as ui.css.
    ===================================================================================== */
 
+/* your own waypoint, wherever it shows (compass, world marker, map legend) */
+.stn-ui {
+  --way: #c9a6ff;
+}
+
 /* ------------------------------------------------------------------ compass */
 /* three rows: markers (icon over its distance), the tape and its ticks, then the letters */
 .stn-ui .compass {
+  /* where the tape runs: under an icon and a line of label text, however small the window */
+  --tape: max(27px, calc(34 * var(--u)));
   position: relative;
   width: calc(600 * var(--u));
   min-width: 384px;
-  height: calc(58 * var(--u));
-  min-height: 48px;
+  height: calc(var(--tape) + 30 * var(--u));
+  min-height: 53px;
   margin-bottom: calc(4 * var(--u));
   pointer-events: none;
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
@@ -23,7 +30,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(28 * var(--u));
+  top: var(--tape);
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(230, 223, 207, 0.55) 18%, rgba(230, 223, 207, 0.55) 82%, transparent);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
@@ -46,7 +53,7 @@
 .stn-ui .cmp-tick {
   position: absolute;
   left: 0;
-  top: calc(28 * var(--u));
+  top: var(--tape);
   width: 1px;
   height: max(4px, calc(5 * var(--u)));
   background: rgba(230, 223, 207, 0.5);
@@ -95,7 +102,7 @@
 .stn-ui .cmp-center {
   position: absolute;
   left: 50%;
-  top: calc(30 * var(--u));
+  top: calc(var(--tape) + 2 * var(--u));
   width: 0;
   height: 0;
   transform: translateX(-50%);
@@ -128,11 +135,39 @@
 
 .stn-ui .cmp-mk-lab {
   margin-top: calc(1 * var(--u));
-  font: max(8.5px, calc(10 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.04em;
+  font: 500 max(11px, calc(12.5 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.05em;
   white-space: nowrap;
   color: var(--bone);
   text-shadow: var(--shadow-s);
+}
+
+/* never shown: the compass reads the label font off it to measure label text on a canvas */
+.stn-ui .cmp-probe {
+  position: absolute;
+  visibility: hidden;
+}
+
+/* crowded: the marker that matters less stands aside without its text... */
+.stn-ui .cmp-mk.aside .cmp-mk-ico {
+  transform: scale(0.8);
+  opacity: 0.8;
+}
+
+/* ...or, with no room beside it either, is a tick on the tape at its bearing */
+.stn-ui .cmp-mk.tick .cmp-mk-ico {
+  display: none;
+}
+
+.stn-ui .cmp-mk.tick::after {
+  content: '';
+  position: absolute;
+  top: calc(var(--tape) - 5 * var(--u));
+  left: 50%;
+  width: 3px;
+  height: max(6px, calc(8 * var(--u)));
+  margin-left: -1.5px;
+  background: currentColor;
 }
 
 .stn-ui .cmp-mk.k-car {
@@ -178,6 +213,12 @@
 .stn-ui .cmp-mk.k-ping.p2 {
   color: var(--brass);
 }
+.stn-ui .cmp-mk.k-way {
+  color: var(--way);
+}
+.stn-ui .cmp-mk.k-way .cmp-mk-lab {
+  color: var(--way);
+}
 
 /* out of view and pinned inside the end of the tape: a chevron points the way round */
 .stn-ui .cmp-mk.edge::before {
@@ -201,6 +242,12 @@
   left: calc(100% + 2 * var(--u));
   --r: -135deg;
   --dx: 3px;
+}
+
+/* (one chevron per end of the tape: the marker that kept its place has it) */
+.stn-ui .cmp-mk.aside::before,
+.stn-ui .cmp-mk.tick::before {
+  display: none;
 }
 
 @keyframes stn-nudge {
@@ -580,6 +627,9 @@
 .stn-ui .wmk.k-crate {
   color: #ff6a55;
 }
+.stn-ui .wmk.k-way {
+  color: var(--way);
+}
 
 @keyframes stn-pingbob {
   0%,
@@ -846,6 +896,7 @@
   width: min(80vh, 62vw);
   height: min(80vh, 62vw);
   overflow: hidden;
+  cursor: crosshair; /* a click sets your waypoint */
   border: 1px solid rgba(0, 0, 0, 0.6);
   box-shadow: inset 0 0 40px rgba(40, 24, 10, 0.5);
 }
@@ -880,6 +931,23 @@
 
 .stn-ui .map-lab.hinted {
   color: #7a3a08;
+}
+
+/* a name is a target for the waypoint click; the place that holds the waypoint wears its colour */
+.stn-ui .map-lab {
+  cursor: pointer;
+}
+.stn-ui .map-lab:hover {
+  text-decoration: underline;
+}
+.stn-ui .map-lab.way {
+  color: #5b2a9d;
+  font-style: normal;
+}
+
+/* markers let clicks through to the map and the names under them - except the waypoint, which a click takes back */
+.stn-ui .map-markers {
+  pointer-events: none;
 }
 
 .stn-ui .mm {
@@ -948,6 +1016,41 @@
 .stn-ui .mm.bench {
   color: #2f5a4a;
   z-index: 1;
+}
+/* a flag in a ring around the spot; the ring is also what a click takes it back by */
+.stn-ui .mm.way {
+  color: #5b2a9d;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.stn-ui .mm.way::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(22px, calc(30 * var(--u)));
+  height: max(22px, calc(30 * var(--u)));
+  transform: translate(-50%, -50%);
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  background: rgba(232, 220, 192, 0.3);
+  box-shadow: 0 0 4px rgba(232, 220, 192, 0.9);
+}
+.stn-ui .mm.way .mm-ico {
+  position: relative;
+}
+.stn-ui .mm.way .mm-ico svg {
+  width: calc(15 * var(--u));
+  height: calc(15 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+}
+/* (out of the box, so the ring stays centred on the spot) */
+.stn-ui .mm.way .mm-lab {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 7 * var(--u));
+  transform: translateX(-50%);
 }
 
 .stn-ui .map-side {
@@ -1051,6 +1154,9 @@
 }
 .stn-ui .lg.bench {
   color: #7fc4a8;
+}
+.stn-ui .lg.way {
+  color: var(--way);
 }
 
 .stn-ui .map-keys {

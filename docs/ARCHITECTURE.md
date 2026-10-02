@@ -290,6 +290,15 @@ more than its bytes**, so put things into the packets that already flow.
   flies the plane model (`models/plane.js`), trails GPU-animated smoke puffs that linger ~2.5 min and drift with
   the wind, and plays the engine drone as a positional loop (speed-of-sound delay, doppler, air absorption).
   `/airdrop` (debug commands) calls one in.
+- **Waypoint and compass.** The waypoint is client-side only and adds no network traffic (the mark the team
+  sees is the ping). A click on the field map sets `Game.waypoint` (`MapScreen._pick`: a place's name or yard
+  snaps to the place; the map frees the pointer while it is open, the way the inventory does), `Game.buildMarkers`
+  shows it as a compass marker and a world marker, and it clears on arrival, with a new game and with the
+  world. `Compass.update` (`ui/hud2.js`) lays the markers out in rank order (`RANK`, then the nearer one),
+  each taking the room it needs: an icon that would touch one already placed stands aside by an icon's width
+  without its text, or becomes a tick on the tape; a label that would touch another is pushed a little
+  sideways or dropped; the marker you face (and always the waypoint) spells out its `name`. Label widths come
+  from a canvas `measureText` cache, so the pass never reads layout, and the DOM is only written on change.
 - **Talking.** Chat and voice reach `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it a walkie-talkie link
   carries them (`radioLinked` in defs: both ends carry `ITEM.WALKIE`). Text is gated on the server:
   `handleChat` sends each recipient its own `S2C.CHAT` flags (`CHATF`: radio / faint / unheard). Voice is a

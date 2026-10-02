@@ -114,7 +114,7 @@ https://www.survivethenightgame.com.
 | E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
-| M | Field map |
+| M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
