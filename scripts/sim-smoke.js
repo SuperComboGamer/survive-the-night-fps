@@ -992,6 +992,44 @@ check('ping broadcast', B.pings > 0);
   check('victory at the car', game.phase === PHASE.VICTORY);
 }
 
+// the final stand is sized to the team from the same sum as a night's horde (games of their own, on day 3)
+{
+  const stand = (n, shoot) => {
+    const g = new Game({ seed, log: () => {}, godMode: true });
+    const sessions = [];
+    for (let i = 0; i < n; i++) {
+      const session = g.onOpen({ send() {} });
+      const w = new Writer(64);
+      w.u8(C2S.JOIN);
+      w.u8(PROTOCOL_VERSION);
+      w.str('S' + i);
+      g.onMessage(session, w.bytes().slice());
+      sessions.push(session);
+    }
+    g.day = 3;
+    g.supplies = SUPPLY_NEED.slice();
+    g.startEngine(null);
+    const r = { size: g.finalStandSize(), night: g.hordeSize(3, n), far: 0, peak: 0 };
+    for (const z of g.zombies) if (!z.horde) r.far++;
+    while (!g.escape.ready) {
+      g.update();
+      r.peak = Math.max(r.peak, g.zombies.filter((z) => !z.boss).length); // (the boss comes on top of the cap, as on any night)
+      // a team that shoots: everything dies as it comes, so the cap on how many stand at once never holds any back
+      if (shoot) for (const z of g.zombies) if (z.horde && !z.boss && !z.dead) g.combat.killZombie(z, null, {});
+    }
+    r.sent = g.escape.sent;
+    r.tanks = g.escape.tanks;
+    for (const s of sessions.slice(1)) g.onClose(s);
+    r.alone = g.finalStandSize();
+    return r;
+  };
+  const one = stand(1, true);
+  const eight = stand(8, false);
+  check('the final stand grows with the team as a night does', one.size > 0 && Math.abs(eight.size / one.size - eight.night / one.night) < 0.1 && eight.alone === one.size, `${one.size} for one, ${eight.size} for eight (night 3: ${one.night}, ${eight.night}); ${eight.alone} once seven of the eight have left`);
+  check('a lone survivor who shoots gets the whole stand and no more, one Tank at most', one.sent === one.size && one.tanks <= 1, `${one.sent} of ${one.size}, ${one.tanks} Tanks`);
+  check('the zombie cap holds through a stand of eight who do not shoot', eight.peak <= 120 && eight.sent > one.sent && eight.sent <= eight.size && eight.far === 0, `peak ${eight.peak} zombies, ${eight.sent} of ${eight.size} came`);
+}
+
 // shades join the horde from night 2
 {
   const count = (n) => {
