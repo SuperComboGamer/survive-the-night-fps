@@ -13,6 +13,9 @@ import { readSnapshot } from '../client/net/decode.js';
 import { createPlayerState, copyPlayerState, simulatePlayer } from '../shared/playersim.js';
 import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
 import { COL, BOX, footprintContains } from '../shared/collision.js';
+import { HARVEST, harvestAt, harvestPrompt, needLines } from '../client/game/harvest.js';
+import { SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
+import { ITEM_DEFS } from '../shared/defs.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
 
 const seed = +(process.argv[2] || 4242);
@@ -1066,6 +1069,105 @@ const standOff = (c, e, d) => {
   run(30, (i) => A.input(i % 20 < 10 ? BTN.ATTACK : 0, yaw, -0.1));
   const sticks1 = A.p().inv.reduce((n, s) => n + (s && s.item === ITEM.STICK ? s.count : 0), 0);
   check('chopping a tree gives sticks', sticks1 > sticks0, `${sticks0} -> ${sticks1}`);
+
+  // The client's harvest prompt (client/game/harvest.js) mirrors two things the server decides: how far a swing
+  // reaches (Combat.melee) and what a hit gives (Game.gatherHit). Hold it against both, without leaving a trace.
+  const s = p.state;
+  const cols = game.world.staticGrid.query(game.world.car.x, game.world.car.z, 400, []);
+  const treeCol = cols.find((c) => c.flags & COL.TREE && Math.hypot(c.x - tx, c.z - tz) < 0.01);
+  const wreckCol = cols.find((c) => c.flags & COL.SALVAGE);
+  const keep = { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, slot: s.slot, melee: s.weapons[SLOT_MELEE] };
+  const real = { gatherHit: game.gatherHit, giveOrDrop: game.giveOrDrop, rng: game.rng, forTargets: game.combat.forTargets, noise: game.zm.noise };
+  const events = game.events.length;
+  let landed = null;
+  game.gatherHit = (q, col) => (landed = col);
+  game.combat.forTargets = () => {}; // nobody in the way: a swing that finds a zombie never reaches the tree
+  const stand = (col, d) => {
+    s.x = col.x + d;
+    s.z = col.z;
+    s.y = game.world.heightAt(s.x, s.z);
+    s.yaw = Math.PI / 2; // facing it
+  };
+  // walk a line up to the collider, looking at it: wherever the prompt offers the hit the swing lands, and nowhere else
+  const sweep = (col, weapon, slot) => {
+    const n = { offered: 0, refused: 0, wrong: 0 };
+    s.weapons[SLOT_MELEE] = weapon;
+    s.slot = slot;
+    for (let d = 0.3; d < col.r + 3.2; d += 0.04) {
+      for (const pitch of [-0.4, 0, 0.5]) {
+        stand(col, d);
+        s.pitch = pitch;
+        landed = null;
+        game.combat.melee(p, { weapon: weapon || ITEM.KNIFE, heavy: false });
+        const hit = landed ? HARVEST.find((h) => landed.flags & h.flag) : null;
+        const offered = harvestAt(game.world, s);
+        if (offered !== hit) n.wrong++;
+        else if (offered) n.offered++;
+        else n.refused++;
+      }
+    }
+    return n;
+  };
+  const agrees = (n) => n.wrong === 0 && n.offered > 0 && n.refused > 0;
+  const knife = sweep(treeCol, ITEM.KNIFE, SLOT_MELEE);
+  const bat = sweep(treeCol, ITEM.BAT, SLOT_PISTOL); // a longer weapon, and not in hand: the prompt answers for the swap
+  const bare = sweep(treeCol, 0, SLOT_PISTOL); // no melee weapon: it assumes the shortest reach (the knife's)
+  const wreck = sweep(wreckCol, ITEM.KNIFE, SLOT_MELEE);
+  check('harvest prompt reaches exactly as far as a swing (tree)', agrees(knife) && agrees(bat) && agrees(bare) && bat.offered > knife.offered, JSON.stringify({ knife, bat, bare }));
+  check('harvest prompt reaches exactly as far as a swing (wreck)', agrees(wreck), JSON.stringify(wreck));
+  // what it says, by what is in hand
+  stand(treeCol, treeCol.r + 1);
+  s.pitch = 0;
+  const say = (weapon, slot) => {
+    s.weapons[SLOT_MELEE] = weapon;
+    s.slot = slot;
+    return harvestPrompt(game.world, s) || '';
+  };
+  const yields = (h) => h.gives.map((it) => ITEM_DEFS[it].name);
+  const said = [say(ITEM.KNIFE, SLOT_MELEE), say(ITEM.KNIFE, SLOT_PISTOL), say(0, SLOT_PISTOL)];
+  check(
+    'harvest prompt says how, by what is in hand, and what for',
+    said[0].startsWith('[LMB] ') && said[1].startsWith(`[${SLOT_MELEE + 1}] `) && said[1].includes(ITEM_DEFS[ITEM.KNIFE].name) && !said[2].startsWith('[') && said.every((t) => yields(HARVEST[0]).every((nm) => t.includes(nm))),
+    JSON.stringify(said),
+  );
+  // ...and those yields are the server's: the first item with every hit, the rest when the dice allow
+  game.gatherHit = real.gatherHit;
+  game.zm.noise = () => {};
+  const got = new Set();
+  game.giveOrDrop = (q, item) => got.add(item);
+  const gives = (col, roll) => {
+    const left = game.gather.get(col);
+    game.gather.delete(col);
+    game.rng = () => roll;
+    got.clear();
+    game.gatherHit(p, col, col.x, s.y + 1, col.z, ITEM.KNIFE);
+    if (left) game.gather.set(col, left);
+    else game.gather.delete(col);
+    return [...got];
+  };
+  const sure = [treeCol, wreckCol].map((c) => gives(c, 0.999));
+  const lucky = [treeCol, wreckCol].map((c) => gives(c, 0));
+  check(
+    'harvest prompt promises what a hit gives',
+    HARVEST.every((h, i) => sure[i].length === 1 && sure[i][0] === h.gives[0] && h.gives.every((it) => lucky[i].includes(it))),
+    HARVEST.map((h, i) => `${h.verb}: always ${sure[i].map((it) => ITEM_DEFS[it].name)}, at best ${lucky[i].map((it) => ITEM_DEFS[it].name)}`).join('; '),
+  );
+  Object.assign(game, { gatherHit: real.gatherHit, giveOrDrop: real.giveOrDrop, rng: real.rng });
+  game.combat.forTargets = real.forTargets;
+  game.zm.noise = real.noise;
+  game.events.length = events;
+  Object.assign(s, { x: keep.x, y: keep.y, z: keep.z, yaw: keep.yaw, pitch: keep.pitch, slot: keep.slot });
+  s.weapons[SLOT_MELEE] = keep.melee;
+
+  // a failed build or craft: what is short, by how much, and where it comes from
+  const wall = STRUCT_DEFS[STRUCT.WALL].cost;
+  const need = needLines(wall, { [ITEM.WOOD]: 1, [ITEM.NAILS]: 9 });
+  const both = needLines(STRUCT_DEFS[STRUCT.GATE].cost, {});
+  check(
+    'a shortfall names the item, the amount and the source',
+    need.length === 2 && need[0] === `Need ${wall[ITEM.WOOD] - 1} more ${ITEM_DEFS[ITEM.WOOD].name}` && /trees/.test(need[1]) && !/wrecks/.test(need[1]) && /trees/.test(both[1]) && /wrecks/.test(both[1]) && needLines(wall, wall).length === 0,
+    JSON.stringify([need, both]),
+  );
 }
 
 // melee needs a clear line: no stabbing the dead through the wall you shelter behind, no claws through it either.
