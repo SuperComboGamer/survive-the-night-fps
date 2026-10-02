@@ -924,6 +924,22 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('container searched', c.state === 1 && A.pickups.length > before, `pickups ${A.pickups.length - before}`);
 }
 
+// what this valley's containers hold if each is searched once: a place's own table reaches too few of them to supply
+// a gun or a recipe by itself (the AK-47 and leather used to be in place tables only)
+{
+  const holds = (item) =>
+    game.caches.reduce((sum, c) => {
+      const def = CONT_DEFS[c.ctype];
+      const table = (def.table && CONT_TABLES[def.table]) || LOOT_TABLES[c.zone] || LOOT_TABLES[ZONE.ROADSIDE];
+      const total = table.reduce((n, t) => n + t[1], 0);
+      const perRoll = table.reduce((n, [i, w, lo, hi]) => n + (i === item ? (w / total) * ((lo + hi) / 2) : 0), 0);
+      return sum + perRoll * ((def.rolls[0] + def.rolls[1]) / 2);
+    }, 0);
+  const [ak, m4, plates, leather] = [ITEM.AK47, ITEM.M4A1, ITEM.PLATE, ITEM.LEATHER].map(holds);
+  check('containers hold an AK-47 for all that 7.62, about as often as an M4A1', ak >= 0.5 && ak >= m4 * 0.8, `${ak.toFixed(2)} AK-47, ${m4.toFixed(2)} M4A1`);
+  check('...and plates for a kevlar vest, leather for jackets and machetes', plates >= 3 && leather >= 4, `${plates.toFixed(1)} plates, ${leather.toFixed(1)} leather`);
+}
+
 // a trunk's car alarm goes off: the ambush comes from behind the searcher, even with the day's valley near the zombie cap
 {
   const p = A.p();

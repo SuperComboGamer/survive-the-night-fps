@@ -197,7 +197,8 @@ https://www.survivethenightgame.com.
 - **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
   MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
   knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
-  in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site.
+  in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site,
+  and the AK-47 in the same ammo crates as its 7.62 (the checkpoint, the crash site, military stashes in the woods).
   The **crossbow** is the quiet one: a single heavy bolt that only the dead within a few metres hear (a
   gunshot carries 45-100 m), paid for with a slow re-cock after every shot. It needs no schematic and no
   gunpowder - rope, sticks and scrap at the workbench, and more sticks and scrap for bolts.
@@ -211,7 +212,9 @@ https://www.survivethenightgame.com.
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
   for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
-  and unlock their recipes for the whole team.
+  and unlock their recipes for the whole team. Two materials have to be looked for: **leather** (padded jacket,
+  machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge, and **kevlar plates** (two
+  to a vest) in ammo crates, which hold them in pairs.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
