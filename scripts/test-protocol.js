@@ -1,20 +1,23 @@
 // Fuzz test: server delta encoder vs client decoder for every entity kind, including removals,
-// id reuse with new generations, LOD skipping and large/small position deltas; then the varints and the
-// command packets (writeInput / readInput).
-import { Writer, Reader, ENT, MAX_CMDS, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput } from '../shared/protocol.js';
-import { ClientView, writeEntities, playerFlags } from '../server/snapshot.js';
+// id reuse with new generations, LOD skipping and large/small position deltas, for several clients a tick off
+// one staging of the entities (each must get what quantizing for it alone would give; one that is skipped for a
+// tick catches up); then the varints and the command packets (writeInput / readInput).
+import { Writer, Reader, ENT, MAX_CMDS, POS_SCALE, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput } from '../shared/protocol.js';
+import { ClientView, writeEntities, stageEntities, playerFlags } from '../server/snapshot.js';
 import { readEntities } from '../client/net/decode.js';
-import { createPlayerState } from '../shared/playersim.js';
+import { createPlayerState, snapPlayerState } from '../shared/playersim.js';
+import { LOD_NEAR } from '../shared/constants.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const irnd = (a, b) => Math.floor(rnd(a, b + 1));
 let gen = 1;
 const ents = new Map();
 const freeIds = [];
-let nextId = 2;
+const VIEWERS = 3;
+let nextId = VIEWERS + 1;
 
-function makeViewer() {
-  const p = { kind: ENT.PLAYER, id: 1, gen: gen++, state: createPlayerState(), hp: 100, maxHp: 100, alive: true, zombie: false, flashlight: false, removed: false };
+function makeViewer(id) {
+  const p = { kind: ENT.PLAYER, id, gen: gen++, state: createPlayerState(), hp: 100, maxHp: 100, alive: true, zombie: false, flashlight: false, removed: false, viewer: true };
   p.state.x = 0;
   p.state.z = 0;
   Object.defineProperty(p, 'x', { get: () => p.state.x });
@@ -113,12 +116,18 @@ function expectQ(e) {
   return q;
 }
 
-const viewer = makeViewer();
-ents.set(viewer.id, viewer);
-const view = new ClientView();
-const store = { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} };
+// the clients: each a player the others see, with its own baseline and its own decoder
+const viewers = [];
+for (let i = 0; i < VIEWERS; i++) {
+  const p = makeViewer(i + 1);
+  ents.set(p.id, p);
+  viewers.push({ p, view: new ClientView(), store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} } });
+}
 const w = new Writer(1024);
 let bytes = 0;
+let snaps = 0;
+let skips = 0;
+let rounded = 0;
 const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE, ENT.CAT];
 for (let i = 0; i < 80; i++) spawn(kinds[irnd(0, kinds.length - 1)]);
 let checks = 0;
@@ -126,8 +135,7 @@ const TICKS = 3000;
 for (let tick = 1; tick <= TICKS; tick++) {
   // mutate
   for (const e of ents.values()) {
-    if (e === viewer) continue;
-    if (Math.random() < 0.3) {
+    if (!e.viewer && Math.random() < 0.3) {
       // every position encoding: a few cm on the flat (1 byte), a step (2 bytes), a leap (3) and a teleport (absolute)
       const big = Math.random() < 0.05;
       const tiny = Math.random() < 0.3;
@@ -164,51 +172,70 @@ for (let tick = 1; tick <= TICKS; tick++) {
       e.anim = irnd(0, 3);
     }
   }
-  // viewer moves around (relevance changes)
-  viewer.state.x += rnd(-3, 3);
-  viewer.state.z += rnd(-3, 3);
+  // viewers move around (relevance changes)
+  for (const { p } of viewers) {
+    p.state.x += rnd(-3, 3);
+    p.state.z += rnd(-3, 3);
+    // ...now and then onto a spot a hair short of half a position step, which float32 rounding takes into the next
+    if (Math.random() < 0.3) p.state.x = (qpos(p.state.x) + 0.5) / POS_SCALE - 1e-9;
+  }
   // removals / spawns
   for (const e of [...ents.values()]) {
-    if (e !== viewer && Math.random() < 0.01) {
+    if (!e.viewer && Math.random() < 0.01) {
       e.removed = true;
       ents.delete(e.id);
       freeIds.push(e.id);
     }
   }
   while (ents.size < 90) spawn(kinds[irnd(0, kinds.length - 1)]);
-  // encode + decode
-  w.reset();
-  const flags = writeEntities(w, view, viewer, [...ents.values()], tick);
-  bytes += w.o;
-  const r = new Reader(w.copy());
-  readEntities(r, store, tick, flags);
-  if (r.left !== 0) throw new Error(`tick ${tick}: ${r.left} trailing bytes`);
-  // verify: every entity the server thinks the client knows matches exactly
-  for (const id of view.knownIds) {
-    const e = ents.get(id);
-    const c = store.ents.get(id);
-    if (!c) throw new Error(`tick ${tick}: client missing entity ${id}`);
-    if (!e) throw new Error(`tick ${tick}: server knows removed entity ${id}`);
-    if (c.kind !== e.kind) throw new Error(`tick ${tick}: kind mismatch for ${id}`);
-    const exp = expectQ(e);
-    // LOD-skipped entities may lag; compare against the server baseline instead
-    for (let s = 0; s < exp.length; s++) {
-      if (c.q[s] !== view.base[id * 9 + s]) throw new Error(`tick ${tick}: entity ${id} kind ${e.kind} slot ${s}: client ${c.q[s]} != baseline ${view.base[id * 9 + s]}`);
+  // encode + decode: staged once, then one client after the other, as Game.sendSnapshots does
+  const all = [...ents.values()];
+  stageEntities(all);
+  for (const { p: viewer, view, store } of viewers) {
+    // a client that is not draining its socket gets nothing this tick; its next snapshot has to cover the gap
+    if (Math.random() < 0.1) {
+      skips++;
+      continue;
     }
-    checks++;
+    // Game.writeSelf rounds a client's own state to float32 when it syncs it, right before its entities are written:
+    // the clients after it in the tick must be sent the rounded position
+    if (Math.random() < 0.5) {
+      const was = qpos(viewer.x);
+      snapPlayerState(viewer.state);
+      if (qpos(viewer.x) !== was) rounded++;
+    }
+    w.reset();
+    const flags = writeEntities(w, view, viewer, all, tick);
+    bytes += w.o;
+    snaps++;
+    const r = new Reader(w.copy());
+    readEntities(r, store, tick, flags);
+    if (r.left !== 0) throw new Error(`tick ${tick}: ${r.left} trailing bytes`);
+    // verify: every entity the server thinks the client knows matches exactly
+    for (const id of view.knownIds) {
+      const e = ents.get(id);
+      const c = store.ents.get(id);
+      if (!c) throw new Error(`tick ${tick}: client missing entity ${id}`);
+      if (!e) throw new Error(`tick ${tick}: server knows removed entity ${id}`);
+      if (c.kind !== e.kind) throw new Error(`tick ${tick}: kind mismatch for ${id}`);
+      const exp = expectQ(e);
+      // an entity whose update LOD held back this tick may lag (compare against the server baseline); anything
+      // else must be the server's state as it is right now, exactly (players' view angles to the precision they
+      // replicate at): what quantizing it for this client alone gives
+      const dx = e.x - viewer.state.x;
+      const dz = e.z - viewer.state.z;
+      const held = e.kind !== ENT.PLAYER && dx * dx + dz * dz > LOD_NEAR * LOD_NEAR && ((tick + id) & 1) === 1;
+      for (let s = 0; s < exp.length; s++) {
+        if (c.q[s] !== view.base[id * 9 + s]) throw new Error(`tick ${tick}: entity ${id} kind ${e.kind} slot ${s}: client ${c.q[s]} != baseline ${view.base[id * 9 + s]}`);
+        if (!held && c.q[s] !== exp[s]) throw new Error(`tick ${tick}: client ${viewer.id} has entity ${id} kind ${e.kind} slot ${s} at ${c.q[s]}, the server has ${exp[s]}`);
+      }
+      checks++;
+    }
+    if (store.ents.size !== view.knownIds.length) throw new Error(`tick ${tick}: client has ${store.ents.size} entities, server thinks ${view.knownIds.length}`);
   }
-  if (store.ents.size !== view.knownIds.length) throw new Error(`tick ${tick}: client has ${store.ents.size} entities, server thinks ${view.knownIds.length}`);
 }
-// whatever the client was told this tick must be the server's current state, exactly (players' view angles to the
-// precision they replicate at): compare everything not LOD-skipped on the last tick
-for (const id of view.knownIds) {
-  const e = ents.get(id);
-  const c = store.ents.get(id);
-  const exp = expectQ(e);
-  const lagging = exp.some((v, s) => c.q[s] !== v);
-  if (lagging && (e.kind === ENT.PLAYER || Math.hypot(e.x - viewer.state.x, e.z - viewer.state.z) < 40)) throw new Error(`entity ${id} kind ${e.kind} is near the viewer but out of date: ${[...c.q]} vs ${exp}`);
-}
-console.log(`protocol fuzz OK: ${TICKS} ticks, ${checks} entity checks, avg ${(bytes / TICKS).toFixed(0)} B/tick for ~90 entities`);
+if (!rounded || !skips) throw new Error(`the fuzz never moved a viewer by rounding it mid-tick (${rounded}) or never skipped a client (${skips})`);
+console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one staging (${skips} snapshots skipped, ${rounded} viewers moved a step by rounding mid-tick), ${checks} entity checks, avg ${(bytes / snaps).toFixed(0)} B/snapshot for ~90 entities`);
 
 // varints
 {

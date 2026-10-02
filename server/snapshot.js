@@ -168,81 +168,121 @@ function writeCreate(w, e) {
       w.u8(e.variant);
       break;
   }
-  writeFields(w, e.kind, q, 0, 0, FIELD_COUNT[e.kind]);
+  writeFields(w, e.kind, SQ, e.id * SLOTS, 0, FIELD_COUNT[e.kind]);
 }
 
-// rough relevance radius per kind
-function relevant(e, vx, vz, viewer) {
-  switch (e.kind) {
-    case ENT.PLAYER:
-      return true;
-    case ENT.CRATE:
-      return true;
-    case ENT.ZOMBIE:
-      if (e.boss) return true;
-      return inRange(e, vx, vz, AOI_RADIUS);
-    case ENT.ITEM:
-      return inRange(e, vx, vz, AOI_ITEM_RADIUS);
-    case ENT.STRUCTURE:
-      return inRange(e, vx, vz, AOI_STRUCTURE_RADIUS);
-    case ENT.CACHE:
-      return inRange(e, vx, vz, AOI_CACHE_RADIUS);
-    default:
-      return inRange(e, vx, vz, AOI_RADIUS);
+// Per-tick staging, shared by every client's snapshot: what an entity looks like on the wire does not depend on who
+// is looking, so it is read off the entity once a tick, not once per client. stageEntities (once a tick, before the
+// first writeEntities) copies every position into typed arrays for the area-of-interest and LOD tests; staged()
+// quantizes an entity the first time a client needs it that tick, so the many that nobody is near are never
+// quantized at all. The per-client loop then compares typed arrays against that client's baseline: it no longer
+// reads e.x / e.z off nine object shapes (a load V8 can only do by boxing the double, which was half of the
+// server's garbage). All of it is allocated once, here.
+const SX = new Float64Array(MAX_ENTITIES);
+const SZ = new Float64Array(MAX_ENTITIES);
+const SQ = new Int32Array(MAX_ENTITIES * SLOTS); // quantized state by id (same offsets as ClientView.base)
+const SQT = new Uint32Array(MAX_ENTITIES); // the stageStamp SQ was filled at, per id
+let stageStamp = 0;
+// all: the live entities, as writeEntities then gets them
+export function stageEntities(all) {
+  stageStamp = (stageStamp + 1) >>> 0 || 1; // never 0: that is "not staged"
+  for (let i = 0; i < all.length; i++) {
+    const e = all[i];
+    SX[e.id] = e.x;
+    SZ[e.id] = e.z;
   }
 }
-function inRange(e, x, z, r) {
-  const dx = e.x - x;
-  const dz = e.z - z;
-  return dx * dx + dz * dz <= r * r;
+// offset of e's quantized state in SQ (and of its baseline in ClientView.base)
+function staged(e) {
+  const id = e.id;
+  const o = id * SLOTS;
+  if (SQT[id] !== stageStamp) {
+    SQT[id] = stageStamp;
+    quant(e);
+    for (let s = 0; s < SLOTS; s++) SQ[o + s] = q[s];
+  }
+  return o;
 }
+
+// relevance radius per kind, squared; 0 = relevant everywhere
+const AOI2 = new Float64Array(256).fill(AOI_RADIUS * AOI_RADIUS);
+AOI2[ENT.PLAYER] = 0;
+AOI2[ENT.CRATE] = 0;
+AOI2[ENT.ITEM] = AOI_ITEM_RADIUS * AOI_ITEM_RADIUS;
+AOI2[ENT.STRUCTURE] = AOI_STRUCTURE_RADIUS * AOI_STRUCTURE_RADIUS;
+AOI2[ENT.CACHE] = AOI_CACHE_RADIUS * AOI_CACHE_RADIUS;
 
 let seenStamp = 1;
 const _cre = [];
-const _upd = [];
 const _rem = [];
-// this snapshot's updates: entity, changed-field mask and quantized state, in id order
-let _uq = new Int32Array(256 * SLOTS);
-const _ue = [];
-const _um = [];
-const _uo = [];
-const byId = (a, b) => _ue[a].id - _ue[b].id;
+// this snapshot's updates: their ids (sorted before writing) and, per id, the kind and the changed-field mask
+const _uid = new Uint16Array(MAX_ENTITIES);
+const _uk = new Uint8Array(MAX_ENTITIES);
+const _um = new Uint16Array(MAX_ENTITIES); // up to 10 mask bits: the position and fields 1-9
 const numeric = (a, b) => a - b;
 
 // Writes the entity sections for one client: removes, creates (full), updates (changed fields only), each only
 // if it has entries. Returns the SNAP bits of the sections written.
-// candidates: array of live entities to consider (the viewer's own player is skipped).
+// candidates: array of live entities to consider (the viewer's own player is skipped); stageEntities must have
+// run on them this tick.
 export function writeEntities(w, view, viewer, candidates, tick) {
   const stamp = ++seenStamp;
   const vx = viewer.state.x;
   const vz = viewer.state.z;
   const base = view.base;
   const known = view.known;
+  const seen = view.seen;
+  // The one state that changes between two clients' snapshots of a tick is the viewer's own: Game.writeSelf, just
+  // before this, rounds it to what went on the wire when it syncs the client. The clients before this one were
+  // sent the unrounded position and the ones after it get the rounded one, so stage the viewer afresh.
+  SX[viewer.id] = vx;
+  SZ[viewer.id] = vz;
+  SQT[viewer.id] = 0;
   let sections = 0;
-  _cre.length = 0;
-  _upd.length = 0;
+  let nc = 0;
+  let n = 0;
   _rem.length = 0;
   for (let i = 0; i < candidates.length; i++) {
     const e = candidates[i];
     if (e === viewer || e.removed) continue;
-    if (!relevant(e, vx, vz, viewer)) continue;
-    const kg = known[e.id];
-    if (kg !== e.gen) {
-      _cre.push(e);
+    const id = e.id;
+    const kind = e.kind;
+    const dx = SX[id] - vx;
+    const dz = SZ[id] - vz;
+    const d2 = dx * dx + dz * dz;
+    // area of interest: a rough radius per kind (bosses are seen from anywhere)
+    const r2 = AOI2[kind];
+    if (r2 !== 0 && !(d2 <= r2) && !(kind === ENT.ZOMBIE && e.boss)) continue;
+    if (known[id] !== e.gen) {
+      _cre[nc++] = e;
       continue; // not marked seen: a stale generation gets removed below before the create
     }
-    view.seen[e.id] = stamp;
-    const dx = e.x - vx;
-    const dz = e.z - vz;
+    seen[id] = stamp;
     // LOD: far entities update every other tick
-    if (dx * dx + dz * dz > LOD_NEAR * LOD_NEAR && ((tick + e.id) & 1) === 1 && e.kind !== ENT.PLAYER) continue;
-    _upd.push(e);
+    if (d2 > LOD_NEAR * LOD_NEAR && ((tick + id) & 1) === 1 && kind !== ENT.PLAYER) continue;
+    // an update if anything differs from what this client has
+    const b = staged(e);
+    const bits = BIT_SLOTS[kind];
+    let mask = 0;
+    for (let bi = 0; bi < bits.length; bi++) {
+      const r = bits[bi];
+      for (let s = r[0]; s < r[1]; s++) {
+        if (SQ[b + s] !== base[b + s]) {
+          mask |= 1 << bi;
+          break;
+        }
+      }
+    }
+    if (!mask) continue;
+    _uid[n++] = id;
+    _uk[id] = kind;
+    _um[id] = mask;
   }
   // removes first (so a reused id is removed before its new create): ascending ids, each as a step from the last
   const ids = view.knownIds;
   for (let i = ids.length - 1; i >= 0; i--) {
     const id = ids[i];
-    if (view.seen[id] !== stamp) _rem.push(id);
+    if (seen[id] !== stamp) _rem.push(id);
   }
   if (_rem.length) {
     sections |= SNAP.REMOVES;
@@ -256,62 +296,34 @@ export function writeEntities(w, view, viewer, candidates, tick) {
     }
   }
   // creates
-  if (_cre.length) {
+  if (nc) {
     sections |= SNAP.CREATES;
-    w.varu(_cre.length);
-    for (let i = 0; i < _cre.length; i++) {
+    w.varu(nc);
+    for (let i = 0; i < nc; i++) {
       const e = _cre[i];
-      quant(e);
+      _cre[i] = null;
+      const b = staged(e);
       writeCreate(w, e);
-      const b = e.id * SLOTS;
-      const n = FIELD_COUNT[e.kind];
-      for (let s = 0; s < n; s++) base[b + s] = q[s];
+      const fc = FIELD_COUNT[e.kind];
+      for (let s = 0; s < fc; s++) base[b + s] = SQ[b + s];
       known[e.id] = e.gen;
-      view.seen[e.id] = stamp;
+      seen[e.id] = stamp;
       view._addKnown(e.id);
     }
   }
-  // updates: find what changed...
-  if (_upd.length * SLOTS > _uq.length) _uq = new Int32Array(_upd.length * SLOTS * 2);
-  let n = 0;
-  for (let i = 0; i < _upd.length; i++) {
-    const e = _upd[i];
-    quant(e);
-    const b = e.id * SLOTS;
-    const bits = BIT_SLOTS[e.kind];
-    let mask = 0;
-    for (let bi = 0; bi < bits.length; bi++) {
-      const r = bits[bi];
-      for (let s = r[0]; s < r[1]; s++) {
-        if (q[s] !== base[b + s]) {
-          mask |= 1 << bi;
-          break;
-        }
-      }
-    }
-    if (!mask) continue;
-    _ue[n] = e;
-    _um[n] = mask;
-    _uo[n] = n;
-    const o = n * SLOTS;
-    for (let s = 0; s < SLOTS; s++) _uq[o + s] = q[s];
-    n++;
-  }
   if (!n) return sections;
-  // ...and write it in id order
-  _uo.length = n;
-  _uo.sort(byId);
+  // updates, in id order
+  const order = _uid.subarray(0, n).sort();
   w.varu(n);
   let prevId = 0;
   for (let i = 0; i < n; i++) {
-    const k = _uo[i];
-    const e = _ue[k];
-    const mask = _um[k];
-    const o = k * SLOTS;
-    const b = e.id * SLOTS;
-    const bits = BIT_SLOTS[e.kind];
-    const step = e.id - prevId;
-    prevId = e.id;
+    const id = order[i];
+    const kind = _uk[id];
+    const mask = _um[id];
+    const b = id * SLOTS;
+    const bits = BIT_SLOTS[kind];
+    const step = id - prevId;
+    prevId = id;
     let head = step <= 3 ? step : 0;
     let ext = mask >> 4;
     let dx = 0;
@@ -319,9 +331,9 @@ export function writeEntities(w, view, viewer, candidates, tick) {
     let dz = 0;
     let pos = UPOS.NONE;
     if (mask & 1) {
-      dx = _uq[o] - base[b];
-      dy = _uq[o + 1] - base[b + 1];
-      dz = _uq[o + 2] - base[b + 2];
+      dx = SQ[b] - base[b];
+      dy = SQ[b + 1] - base[b + 1];
+      dz = SQ[b + 2] - base[b + 2];
       if (dy === 0 && dx >= -8 && dx <= 7 && dz >= -8 && dz <= 7) pos = UPOS.NIB;
       else if (dx >= -32 && dx <= 31 && dz >= -32 && dz <= 31 && dy >= -8 && dy <= 7) pos = UPOS.PACK;
       else {
@@ -336,21 +348,20 @@ export function writeEntities(w, view, viewer, candidates, tick) {
     if (ext) w.u8(ext);
     if (pos === UPOS.NIB) w.u8(((dx & 15) << 4) | (dz & 15));
     else if (pos === UPOS.PACK) w.u16(((dx & 63) << 10) | ((dz & 63) << 4) | (dy & 15));
-    else if (ext & UEXT_ABS) writeFields(w, e.kind, _uq, o, 0, 3);
+    else if (ext & UEXT_ABS) writeFields(w, kind, SQ, b, 0, 3);
     else if (pos === UPOS.WIDE) {
       w.i8(dx);
       w.i8(dy);
       w.i8(dz);
     }
     for (let bi = 1; bi < bits.length; bi++) {
-      if (mask & (1 << bi)) writeFields(w, e.kind, _uq, o, bits[bi][0], bits[bi][1]);
+      if (mask & (1 << bi)) writeFields(w, kind, SQ, b, bits[bi][0], bits[bi][1]);
     }
     for (let bi = 0; bi < bits.length; bi++) {
       if (!(mask & (1 << bi))) continue;
       const r = bits[bi];
-      for (let s = r[0]; s < r[1]; s++) base[b + s] = _uq[o + s];
+      for (let s = r[0]; s < r[1]; s++) base[b + s] = SQ[b + s];
     }
-    _ue[k] = null;
   }
   return sections | SNAP.UPDATES;
 }
