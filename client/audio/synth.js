@@ -918,6 +918,27 @@ export function crateLand(sr, rng) {
   softclip(out, 1.5);
   return finish(out, sr);
 }
+// A grave heaving (St. Agnes Cemetery): the ground groaning under a load, soil sliding, grit and small stones
+// shifting, something knocking from underneath. It lasts the warning (CEMETERY.STIR) and a little over.
+export function graveStir(sr, rng) {
+  const out = alloc(sr, 1.7);
+  addNorm(out, noise(sr, rng, 1.6, { lp: 170, env: (u) => Math.sin(Math.PI * Math.min(1, u * 1.1)) ** 0.7 }), sr, 0, 1);
+  addNorm(out, noise(sr, rng, 1.5, { hp: 700, bp: [1900, 0.7], env: (u) => u * (1 - u) * 4 * (0.6 + 0.4 * Math.sin(u * 40)) }), sr, 0.05, 0.4);
+  addNorm(out, crackles(sr, rng, 1.5, 70, { hp: 900, bp: 2400, skew: 1.2, env: (u) => 0.3 + 0.7 * u, len: 0.005 }), sr, 0.05, 0.5);
+  for (let k = 0; k < 3; k++) addNorm(out, thump(sr, rrange(rng, 70, 95), 40, 0.03, 0.09), sr, 0.22 + k * 0.4 + rng() * 0.1, 0.55);
+  softclip(out, 1.4);
+  return finish(out, sr, 0.9, 0.03, 0.15);
+}
+// ...and breaking open: one heavy thump of turf, and the dirt it threw coming down after it
+export function graveBurst(sr, rng) {
+  const out = alloc(sr, 1.5);
+  addNorm(out, thump(sr, 85, 34, 0.06, 0.16, 1.4), sr, 0, 1);
+  addNorm(out, noise(sr, rng, 0.45, { lp: 900, a: 0.002, d: 0.1 }), sr, 0, 0.85);
+  addNorm(out, noise(sr, rng, 0.9, { hp: 1200, bp: [2600, 0.6], env: (u) => Math.min(1, u * 14) * (1 - u) ** 2 }), sr, 0.03, 0.35);
+  addNorm(out, crackles(sr, rng, 1.2, 110, { hp: 800, bp: 2000, skew: 1.6, env: (u) => (1 - u) ** 1.5, len: 0.005 }), sr, 0.08, 0.5);
+  softclip(out, 1.5);
+  return finish(out, sr, 0.95);
+}
 export function carPart(sr, rng) {
   const out = alloc(sr, 1.1);
   addNorm(out, metalHit(sr, rng, rrange(rng, 170, 200)), sr, 0, 0.9);
@@ -1688,6 +1709,8 @@ export const SFX_DEFS = [
   { bank: 'fire_whoosh', n: 1, sr: HI, gen: fireWhoosh },
   { bank: 'campfire_add', n: 1, sr: HI, gen: campfireAdd },
   { bank: 'crate', n: 1, sr: MID, gen: crateLand },
+  { bank: 'grave_stir', n: 2, sr: MID, gen: graveStir },
+  { bank: 'grave_burst', n: 2, sr: MID, gen: graveBurst },
   { bank: 'car_part', n: 1, sr: HI, gen: carPart },
   { bank: 'car_start', n: 1, sr: MID, gen: carStart },
   // foley

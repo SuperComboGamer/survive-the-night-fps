@@ -127,6 +127,7 @@ import { Combat } from './combat.js';
 import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T_UPKEEP, T_SNAPSHOTS } from './tickstats.js';
 import { PlayerStats } from './stats.js';
 import { Fixtures } from './fixtures.js';
+import { Cemetery } from './cemetery.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -327,6 +328,7 @@ export class Game {
     this.cm = new Cats(this);
     this.combat = new Combat(this);
     this.fixtures = new Fixtures(this); // the chapel bell and the Relay Station's radio
+    this.cemetery = new Cemetery(this); // the dead that come up out of the graves at St. Agnes (cemetery.js)
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
@@ -804,6 +806,7 @@ export class Game {
     const pick = mulberry32((this.seed ^ 0x57a1c1e) + this.tick);
     for (let i = 0; i < WALKIE_STASHES && lockers.length; i++) lockers.splice(Math.floor(pick() * lockers.length), 1)[0].stash = ITEM.WALKIE;
     this.placeSupplies();
+    this.cemetery.reset();
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
@@ -1138,6 +1141,7 @@ export class Game {
     // ...and the mine fills up again with the ones that live down there
     this.zm.stockMine(this.humans());
     this.zm.wards.stock(this.humans());
+    this.cemetery.dawn();
     // ...and burns the sickness out of whoever died since the last sunrise
     if (this.dawnReturn) this.returnFallen();
     // the valley restocks a little: some searched containers are refilled, trees & wrecks regrow
@@ -2724,6 +2728,10 @@ export class Game {
         // /bell: the chapel bell tolls now, wherever you are. /radio: to the Relay Station's radio, with the batteries
         this.fixtures.debug(p, args);
         break;
+      case 'cemetery':
+        // /cemetery: to the gate of St. Agnes Cemetery. /cemetery rise [n]: the nearest n graves give up their dead now
+        this.cemetery.debug(p, args);
+        break;
     }
     this.systemChat(`[debug] ${args.join(' ')}`);
   }
@@ -2767,6 +2775,7 @@ export class Game {
     this.processInputs();
     ts.mark(T_INPUTS);
     this.updatePhase(dt);
+    this.cemetery.update(dt);
     ts.mark(T_PHASE);
     this.updatePlayers(dt);
     ts.mark(T_PLAYERS);
@@ -2863,6 +2872,7 @@ export class Game {
           wv.started = true;
           this.wave = k + 1;
           if (k > 0) this.notify(NOTIFY.WAVE, k + 1);
+          this.cemetery.wave(wv); // (with a survivor near St. Agnes Cemetery, part of it comes up out of the graves)
           this.globalDirty = true;
         }
         if (!wv.started || !wv.queue.length) continue;

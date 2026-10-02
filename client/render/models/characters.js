@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, ITEM, WEAPONS } from '../../../shared/defs.js';
 import { CRAWL_HEAD_FWD } from '../../../shared/constants.js';
+import { CEMETERY } from '../../../shared/cemetery.js';
 import {
   MeshBuilder, instantiateRig, setFx, getCharacterMaterial, ikTwoBone, mulberry32, fbm3, noise3,
   clamp, lerp, smooth, color,
@@ -2699,6 +2700,39 @@ function poseEat(z, p) {
   arm(p, 1, 0.45 - 0.25 * pl, 0.3, 0.3, 0.7 + 0.5 * Math.max(0, -pl), 0.6);
 }
 
+/**
+ * Climbing out of a grave (ZANIM.RISE). The server brings its feet up from a body's height under the grass in two
+ * heaves (riseDepth in shared/cemetery.js: the ground hides what is not out yet); this is what the body does
+ * meanwhile. It claws its way up with its arms over its head, plants its hands on the grass with its chest out,
+ * then gets a knee over the lip and stands.
+ */
+function poseRise(z, p) {
+  const st = z.st, t = z.time + z.off;
+  if (st.quad || st.knuckle) return poseIdle(z, p);
+  const u = clamp(z.stateT / CEMETERY.RISE, 0, 1);
+  const up = 1 - smooth((u - 0.28) / 0.2); // clawing up through the earth
+  const stand = smooth((u - 0.55) / 0.45); // straightening up at the end
+  const haul = 1 - stand; // (and between the two: hands planted, hauling)
+  const claw = Math.sin(t * 8.5), shake = Math.sin(t * 31) * 0.03 * haul;
+  const lean = lerp(lerp(-0.72, -0.12, up), st.idleLean || 0, stand);
+  // a knee comes up over the lip of the grave half way through the second heave
+  const step = Math.sin(PI * clamp((u - 0.55) / 0.4, 0, 1));
+  const kL = z.limpSide ? 0 : step, kR = z.limpSide ? step : 0;
+  legsStatic(z, p, 1.05 * kL, -1.5 * kL, 1.05 * kR, -1.5 * kR, 0.06);
+  R(p, SPINE, lean * 0.55 + shake, 0.12 * claw * up, 0.05 * claw * up);
+  R(p, CHEST, lean * 0.45, 0.1 * claw * up, 0);
+  posture(z, p);
+  // overhead, one hand after the other; then forward and down onto the grass; then hanging as they always do
+  for (let side = 0; side < 2; side++) {
+    const c = side ? -claw : claw;
+    const pitch = lerp(lerp(1.0, 2.7 + 0.3 * c, up), side ? 0.14 : 0.18, stand);
+    const elbow = lerp(lerp(0.3, 0.7 - 0.45 * c, up), 0.4, stand);
+    arm(p, side, pitch, lerp(0.3, 0.1 + (st.armOut || 0), stand), 0.25, elbow, lerp(0.65, 0.35, stand));
+  }
+  headLook(p, lerp(lerp(0.35, 0.75, up), st.headPitch, stand), 0.3 * Math.sin(t * 2.3) * haul, z.tilt * st.headTilt + 0.2 * claw * up, 0.3);
+  R(p, JAW, -st.jaw - 0.45 * haul - 0.1 * claw * up, 0, 0);
+}
+
 // ------------------------------------------------------------------ legs shot off (ZombieInstance.setLegs)
 // A shot in the leg trips it (ZANIM.STUMBLE). With one leg gone it hops along on the other, with both gone it lies
 // prone and drags itself forward by its arms. The server's speeds (HOBBLE_SPEED, CRAWL_SPEED in constants.js) and its
@@ -2979,6 +3013,7 @@ function poseHumanoid(z) {
     case ZANIM.STAGGER: poseStagger(z, p); break;
     case ZANIM.DEAD: poseDead(z, p); break;
     case ZANIM.EAT: poseEat(z, p); break;
+    case ZANIM.RISE: poseRise(z, p); break;
     default: if (z.sub === 1) poseMenace(z, p); else poseIdle(z, p); break;
   }
   poseExtras(z, p);

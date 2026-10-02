@@ -368,6 +368,7 @@ export const ZANIM = {
   EAT: 8, // idle feeding pose
   FROZEN: 9, // shade pinned by light: holds whatever pose it was caught in
   STUMBLE: 10, // shot in the leg: it trips and catches itself
+  RISE: 11, // climbing out of a grave (cemetery.js): its feet are still under the ground
 };
 
 // the stray cat's animation states (sent over the wire)
@@ -471,6 +472,8 @@ export const SOUND = {
   BELL_ROPE: 74, // the rope taken up and hauled on
   RADIO_TUNE: 75, // the Relay Station's radio keyed up
   RADIO_CALL: 76, // ...and the call for a supply drop going out
+  GRAVE_STIR: 111, // the earth of a grave heaving: something under it is on its way up (client-side, from EVT.GRAVE)
+  GRAVE_BURST: 112, // ...and breaking through
 };
 
 export const EVT = {
@@ -495,6 +498,7 @@ export const EVT = {
   PONG: 19, // answer to an IN_PING command packet: u8 ms the server sat on it before this snapshot left - private
   STRIPPED: 20, // u8 n, then n trees / wrecks by their collider's x, y0, z (i16): nothing left to gather from them
   REGROWN: 21, // every stripped tree and wreck gives again (dawn)
+  GRAVE: 35, // grave u8 (index into world.cemetery.graves): its earth heaves, and CEMETERY.STIR later one of the dead climbs out
 };
 
 export const IMPACT = { BLOOD: 1, DIRT: 2, WOOD: 3, METAL: 4, ACID: 5, GREEN_BLOOD: 6, SPARK: 7 };
@@ -545,6 +549,7 @@ export const NOTIFY = {
   BELL_WAIT: 43, // (to whoever pulled the rope too soon) arg = seconds until it can be
   RADIO_CALL: 44, // arg = player id: they called a supply drop on the Relay Station's radio
   RADIO_NO: 45, // (to whoever tried the radio) arg = why not (RADIO_NO in shared/fixtures.js)
+  GRAVES: 61, // the cemetery has woken: part of tonight's horde is coming up out of its graves (sent to the survivors near it)
 };
 
 // killer kinds for killfeed
@@ -646,7 +651,7 @@ export const LOOT_TABLES = {
 // Every place (and many roadside / woodland sites) has containers: hold [E] to search.
 // table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic or one of the
 // game's hidden walkie-talkies (WALKIE_STASHES) on top of its loot.
-export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12 };
+export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12, CASKET: 15 };
 // Mercy Clinic's own (shared/clinic.js): the cabinets of its pharmacy and wards, and the one drug locker of a map
 CONT.MEDICINE = 16;
 CONT.DRUG_LOCKER = 17;
@@ -666,6 +671,8 @@ export const CONT_TABLES = {
   fridge: [[ITEM.ALCOHOL, 6, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.HERB, 3, 1, 2], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BANDAGE, 2, 1, 1], [ITEM.TUNA, 5, 1, 2]],
   // the one strongbox of a map, in the deepest room of the mine: one roll, and every row is a gun worth the trip
   strongbox: [[ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.FLAMETHROWER, 1, 1, 1]],
+  // the casket in the crypt of St. Agnes Cemetery: what somebody who meant to sit the nights out in there left behind
+  crypt: [[ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.TORCH, 4, 2, 3], [ITEM.FLARE, 3, 1, 2], [ITEM.ALCOHOL, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
 };
 // what a clinic keeps under lock: the one table where a medkit is a likely find and not a lucky one
 CONT_TABLES.medical = [[ITEM.BANDAGE, 7, 1, 3], [ITEM.PAINKILLERS, 6, 1, 2], [ITEM.MEDKIT, 4, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.CHEM, 3, 1, 2]];
@@ -685,6 +692,7 @@ export const CONT_DEFS = {
   // magazines of its ammunition (loadedAmmo). once: it is not refilled at sunrise. guide: what the item tooltips call
   // it as a place to find things (there is one to a map, so not "strongboxes").
   [CONT.STRONGBOX]: { name: 'Strongbox', table: 'strongbox', rolls: [1, 1], also: [[ITEM.PIPEBOMB, 2]], loaded: 2, once: true, guide: "the mine's strongbox" },
+  [CONT.CASKET]: { name: 'Casket', table: 'crypt', rolls: [3, 4], guide: 'the casket in the crypt' },
 };
 // Mercy Clinic. The drug locker stands in its deepest ward and is filled once a game, as the strongbox is: what makes
 // the walk into the dark worth it

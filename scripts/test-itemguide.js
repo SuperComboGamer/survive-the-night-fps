@@ -30,7 +30,7 @@ const expectFrom = (name, table, visits) => {
     at.set(name, (at.get(name) || 0) + visits * (weight / total) * ((min + max) / 2));
   }
 };
-const contName = { 'Ammo Crate': 'ammo crates', 'Car Trunk': 'car trunks', 'Duffel Bag': 'duffel bags', Locker: 'lockers', Cabinet: 'cabinets', Toolbox: 'toolboxes', Dumpster: 'dumpsters', 'Log Pile': 'log piles', Fridge: 'fridges', Strongbox: "the mine's strongbox" };
+const contName = { 'Ammo Crate': 'ammo crates', 'Car Trunk': 'car trunks', 'Duffel Bag': 'duffel bags', Locker: 'lockers', Cabinet: 'cabinets', Toolbox: 'toolboxes', Dumpster: 'dumpsters', 'Log Pile': 'log piles', Fridge: 'fridges', Strongbox: "the mine's strongbox", Casket: 'the casket in the crypt' };
 Object.assign(contName, { 'Medicine Cabinet': 'medicine cabinets', 'Drug Locker': "the clinic's drug locker" }); // (Mercy Clinic's)
 for (const d of Object.values(CONT_DEFS)) {
   if (!d.table) continue;

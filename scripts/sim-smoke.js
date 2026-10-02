@@ -712,7 +712,7 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   // no way back from (the lake) is put back with the herd once no survivor is near enough to see it happen.
   // (A game of its own on a pinned map: the wall is looked for there, and the run above is left as it was.)
   {
-    const g2 = new Game({ seed: 167, godMode: true, dayLength: 3600, log: () => {} });
+    const g2 = new Game({ seed: 170, godMode: true, dayLength: 3600, log: () => {} });
     g2.debugCommands = true;
     const session = g2.onOpen({ send() {} });
     const wj = new Writer(64);

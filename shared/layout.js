@@ -26,7 +26,7 @@ export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3 };
 export const PLACES = {
   [ZONE.CAMP]: { site: 'start', flat: 18, blend: 24, clear: 22, dirt: 0.25, core: true },
   [ZONE.GAS]: { site: 'roadside', flat: 28, blend: 24, clear: 34, dirt: 0.2, gates: 'b', core: true },
-  [ZONE.CHURCH]: { flat: 34, blend: 24, clear: 38, gates: 'flb', core: true },
+  [ZONE.CHURCH]: { flat: 40, blend: 24, clear: 46, gates: 'flr', core: true }, // (the cemetery lies behind it: cemetery.js)
   [ZONE.DOCK]: { site: 'shore', flat: 20, blend: 20, clear: 30, gates: 'f', core: true },
   [ZONE.VILLAGE]: { flat: 46, blend: 26, clear: 52, dirt: 0.15, core: true },
   [ZONE.CLINIC]: { flat: 30, blend: 24, clear: 34, dirt: 0.2, gates: 'flr' },

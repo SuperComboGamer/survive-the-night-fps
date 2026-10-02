@@ -72,6 +72,7 @@ import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
 import { buildMine } from '../render/mine.js';
 import { buildClinic, disposeClinic } from '../render/clinic.js';
+import { Graves } from '../render/cemetery.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
@@ -371,6 +372,7 @@ export class Game {
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
     if (!this.flyover) this.flyover = new Flyover(this.scene, this.effects.atlas);
+    (this.graves ||= new Graves(this)).setWorld(this.world); // the earth of St. Agnes Cemetery, when it breaks open
     if (!this.atmosphere) this.atmosphere = new Atmosphere(this.scene);
     this.weather.setWorld(this.world);
     if (!this.weatherFx) this.weatherFx = new WeatherFX(this.scene, this.renderer.quality);
@@ -942,6 +944,9 @@ export class Game {
       flyover(x, y, z, heading, eta) {
         g.flyover?.start(x, y, z, heading, eta, g.time, g.audio);
       },
+      grave(i) {
+        g.graves?.stir(i);
+      },
       ping(pid, kind, x, y, z) {
         g.pings = g.pings.filter((p) => p.pid !== pid);
         g.pings.push({ pid, kind, x, y, z, t: g.time, name: g.name(pid) });
@@ -1139,12 +1144,17 @@ export class Game {
         this.pings = [];
         this.waypoint = null;
         this.flyover?.clear();
+        this.graves?.reset();
         this.introPending = false;
         ui.notify(`DAY ${arg}`, 'big', 5);
         ui.notify('Your car died on Route 9. Find the supplies to fix it - before the dark finds you.', 'sub', 6);
         break;
       case NOTIFY.PLAYER_JOINED:
       case NOTIFY.PLAYER_LEFT:
+        break;
+      case NOTIFY.GRAVES:
+        ui.notify('THE GRAVES ARE STIRRING', 'danger', 5);
+        ui.notify('Part of the horde is coming up out of St. Agnes Cemetery. Watch the ground behind you.', 'toast', 7);
         break;
     }
   }
@@ -2025,6 +2035,7 @@ export class Game {
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
     this.flyover.update(dt, time, cam, this.env, weather);
+    this.graves.update(dt);
     const flashOn = this.localFlash && self.alive && !s.zombie;
     // (no rain or blown leaves once the eye is well down a drift: what falls in the mouth is kept out by its roof)
     const sky = this.under > 0.5 ? Object.assign(this._wxDown, weather, DOWN_WEATHER) : weather;

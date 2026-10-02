@@ -704,6 +704,9 @@ export class Zombies {
       if (z.dead) return;
     }
 
+    // climbing out of a grave (cemetery.js): it does nothing else until it is out
+    if (z.riseT > 0) return g.cemetery.climb(z, dt);
+
     // the shade only moves in darkness: any light on it and it stands frozen where it was caught
     if (def.shade && this.holdShade(z, dt)) return;
 

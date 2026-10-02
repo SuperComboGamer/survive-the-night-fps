@@ -354,6 +354,11 @@ export function readEvents(r, handler, flags, ents) {
       case EVT.REGROWN:
         handler.regrown?.();
         break;
+      case EVT.GRAVE: {
+        const grave = r.u8();
+        handler.grave?.(grave);
+        break;
+      }
       default:
         throw new Error(`unknown event ${type}`);
     }

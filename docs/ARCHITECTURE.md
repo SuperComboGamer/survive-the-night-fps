@@ -302,6 +302,41 @@ wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the onl
   askew to the nav grid's 1 m cells has, one map in ten, no cell-to-cell step through it, which closed the wards
   to the horde. `scripts/test-clinic.js` holds the rule, the dead and the drug locker on five valleys and in a
   running game.
+## St. Agnes Cemetery: the dead come up out of the ground
+
+- **The place** (`shared/cemetery.js`, `buildCemetery`) is part of the chapel's: the chapel's builder calls it, so
+  it is on every map, and `PLACES` gives the chapel a 40 m yard for it (its back gate moved to the right-hand side).
+  It has its own random stream. Its railings are parts with no collider of their own plus one `COL.STATIC |
+  COL.NOBULLET` box per panel: a body does not pass them, a bullet and a line of sight do, and the nav grid cuts the
+  steps across them like any thin wall (the gateway and the two panels that are down stay open). Headstones are
+  the `gravestone` / `grave_cross` props, thin enough not to block a nav cell; mounds, pits and the gravel path have
+  no colliders. Everything stands on the terrain where it is (the far corners lie past the levelled yard).
+  Loot and the casket (`CONT.CASKET`, table `crypt`) are `ZONE.CEMETERY`; the crypt's supply spot is the chapel's.
+  `world.cemetery` holds the graves (`{ x, y, z, yaw }`: where one of the dead stands up, and which way it faces),
+  `inside(x, z)` for the fenced ground, and what the field map draws.
+- **The rule** (`server/cemetery.js`, `Game.cemetery`) is called from five places in `server/game.js` (a new run,
+  sunrise, the start of each wave, the tick, `/cemetery`) and one in `Zombies.updateOne`. A wave that starts with a
+  survivor within `CEMETERY.NEAR` takes `CEMETERY.SHARE` of its walkers and runners out of its queue into
+  `Cemetery.pending`; until they are up they wait in a wave of their own that never starts by the clock
+  (`Cemetery.share`, pushed onto `Game.waves`), so the horde the HUD counts does not change. Each is given a grave
+  when its turn comes (`pick`: weighted to the graves nearest the survivors, `1 / (1 + d/6)^3`, none within
+  `KEEP_OFF` of one, none that gave up its dead in the last `STIR + RISE + REST`). By day `RESTLESS` graves drawn
+  at sunrise each wake for the first survivor within `WAKE`.
+- **A rise** is `stir` (`EVT.GRAVE`, the grave's index: the warning) and `CEMETERY.STIR` later `rise`: an ordinary
+  `Zombies.spawn` whose feet are put a body's height under the grass, `z.riseT = CEMETERY.RISE`. While `riseT > 0`
+  `Zombies.updateOne` hands it to `Cemetery.climb`, which only raises it (`riseDepth`: two heaves) and holds
+  `ZANIM.RISE`. Nothing else knows: the hitbox goes with `z.y`, so `raycastWorld` stops a shot at the terrain before
+  it reaches what is still under it, and the client draws the zombie where it is replicated, the terrain covering
+  the rest. `poseRise` (`characters.js`) is the body meanwhile: arms overhead, then hands on the grass, then a knee
+  over the lip.
+- **On the client** (`client/render/cemetery.js`, `Game.graves`): the broken earth of every grave is one
+  `InstancedMesh`, in the scene from the moment the valley loads (warm-up), an instance scaled to nothing until its
+  grave stirs. `EVT.GRAVE` plays `SOUND.GRAVE_STIR`, heaves that instance and spits dirt for `CEMETERY.STIR` (and
+  shakes the camera through `Game.quake` within 12 m), then `SOUND.GRAVE_BURST`, a spray, and the grave stays
+  broken for the run. Walking in through the railings is "Discovered · St. Agnes Cemetery"; the field map draws the
+  railings and a cross for every grave, and names the cemetery once the chapel is known.
+- `scripts/test-cemetery.js` holds the place on six valleys and the rule in a running game, including a scripted
+  night inside a ring of walls built round the chapel.
 
 ## Gameplay systems (iteration 2)
 

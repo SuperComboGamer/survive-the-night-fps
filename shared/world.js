@@ -15,6 +15,7 @@ import { ColliderGrid, makeBox, makeCyl, footprintContains, COL } from './collis
 import { ROAD, planLayout, gatePoint } from './layout.js';
 import { planMine, MINE_R, MINE_H, PORTAL } from './mine.js';
 import { buildClinic, darkAt } from './clinic.js';
+import { buildCemetery } from './cemetery.js';
 
 export { ROAD };
 
@@ -898,6 +899,7 @@ export function createWorld(seed) {
     build(b, zone);
   };
   let car;
+  let cemetery = null; // (the chapel's builder fills it in)
   const spawnPoints = [];
 
   // THE BREAKDOWN (start): your car died on the shoulder of Route 9 next to a little rest area.
@@ -1325,26 +1327,8 @@ export function createWorld(seed) {
     b.room(-9, 18, 4, 4, 2.6, 'planks', { e: [door(2, 1.2)] }, { roof: 'flat', roofMat: 'tin' });
     b.cont(CONT.TOOLBOX, -9.5, 18.8, { prop: 'toolbox', ry: 0.4, nocollide: true });
     b.partSpot(-10, 17);
-    // graveyard (+X side)
-    for (let gx = 0; gx < 5; gx++) {
-      for (let gz = 0; gz < 6; gz++) {
-        if (rng.chance(0.2)) continue;
-        const px = 10 + gx * 3.2 + rng.range(-0.4, 0.4);
-        const pz = -4 + gz * 3.6 + rng.range(-0.4, 0.4);
-        b.prop(rng.chance(0.7) ? 'gravestone' : 'grave_cross', px, pz, rng.range(-0.15, 0.15));
-      }
-    }
-    for (let i = 0; i < 8; i++) {
-      b.prop('fence', 9.5 + i * 3, -7.5, 0);
-      b.prop('fence', 9.5 + i * 3, 19.5, 0);
-    }
-    for (let i = 0; i < 9; i++) {
-      if (i === 4) continue;
-      b.prop('fence', 7.8, -6 + i * 3, PI / 2);
-      b.prop('fence', 33.8, -6 + i * 3, PI / 2);
-    }
-    b.box(20, -0.3, 8, 1.2, 0.35, 2.2, 'dark', { collide: false }); // open grave
-    b.prop('bones', 21.5, 8.5, 0, { nocollide: true });
+    // the graves: St. Agnes Cemetery behind the chapel, the old churchyard beside it (cemetery.js)
+    cemetery = buildCemetery(b, { seed, heightAt, staticGrid });
     b.prop('lantern_post', -3, -5, 0);
     b.prop('lantern_post', 3, -5, 0);
     b.prop('corpse', 14, 2, 0.5, { nocollide: true });
@@ -2496,6 +2480,7 @@ export function createWorld(seed) {
     hordeSpawns,
     spawnPoints,
     car,
+    cemetery,
   };
 }
 

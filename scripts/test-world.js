@@ -239,7 +239,8 @@ for (const seed of SEEDS) {
     // What the place holds: things carry the place they belong to. A few places reach well past their levelled
     // yard (the pier, the checkpoint's traffic queue, the farm's field). What lies down in the workings under
     // Blackrock Mine is not walked to from the yard's gate: scripts/test-mine.js goes down there.
-    const mine = (o) => o.zone === zn.id && Math.hypot(o.x - zn.x, o.z - zn.z) < zn.flat + 32 && !world.mine?.under(o.x, o.y, o.z);
+    // (St. Agnes Cemetery is part of the chapel's place: what it holds is walked to from the chapel's gate)
+    const mine = (o) => (o.zone === zn.id || (zn.id === ZONE.CHURCH && o.zone === ZONE.CEMETERY)) && Math.hypot(o.x - zn.x, o.z - zn.z) < zn.flat + 32 && !world.mine?.under(o.x, o.y, o.z);
     const containers = world.containers.filter(mine);
     const loot = world.lootSpawns.filter(mine);
     const spots = world.partSpots.filter(mine);

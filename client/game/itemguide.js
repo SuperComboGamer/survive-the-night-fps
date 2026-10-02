@@ -93,6 +93,8 @@ addSource(false, 'special zombies', perRoll(SPECIAL_LOOT), odds(false));
 // containers with no table of their own. Only the tables that are ever rolled count: the places a map can have and
 // the woods between them. (ZONE.ROADSIDE's never is: every roadside container has a table of its own.)
 for (const zone of [...Object.keys(PLACES).map(Number), ZONE.FOREST]) addSource(true, ZONE_NAMES[zone], perRoll(LOOT_TABLES[zone]));
+// (St. Agnes Cemetery is no place of its own - it lies behind the chapel - but what lies around in it is its own table's)
+addSource(true, ZONE_NAMES[ZONE.CEMETERY], perRoll(LOOT_TABLES[ZONE.CEMETERY]));
 
 // The order they are told in: the best two found anywhere, then the places, then the rest. Ranking them all by
 // yield alone would bury a kind of container there are fifty of under a place with three things lying around.

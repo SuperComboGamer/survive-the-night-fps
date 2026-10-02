@@ -43,13 +43,15 @@ dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`,
 `/clinic ward` into its dark wards; says so on a map without it), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
-(to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station)).
+(to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station),
+`/cemetery` (to the gate of St. Agnes Cemetery; `/cemetery rise [n]` makes the n graves nearest you give up their
+dead now)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`) and Mercy Clinic's dark wards (`test-clinic`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`) and St. Agnes Cemetery (`test-cemetery`) and runs `sim-smoke` |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
@@ -60,6 +62,7 @@ off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell to
 | `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
 | `node scripts/test-clinic.js [seed ...]` | Mercy Clinic on the first five valleys that have it: daylight in reception and outside, the wards wholly dark and the passage between going dark with no step in it, the one drug locker in the dark, the valley's flow fields leading into the deepest ward and out again; and in a running game the dead of the wards keep to them and go back when led out, a Shade moves in there at noon and is pinned in reception, the sunrise spares what stands in the wards, the drug locker's contents come once, and `/clinic` works. `VERBOSE=1` prints the passes too |
+| `node scripts/test-cemetery.js [seed ...]` | St. Agnes Cemetery on six valleys (every grave is open ground a body can stand up on, the casket and the crypt's doorway) and in a running game: a restless grave by day (the warning, the climb, a head shot while it climbs and a shot that the ground stops), the dead of the graves getting out through the railings to the chapel's door, a wave's share of the horde, and a scripted night inside a ring of walls round the chapel: the dead come up inside it and reach the survivors, and the horde is no bigger for it (part of `npm test`) |
 | `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least once), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
@@ -256,6 +259,18 @@ them off.
   and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
   the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
   cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
+- **The dead of St. Agnes do not stay buried.** Behind the chapel lies St. Agnes Cemetery: iron railings with a gate
+  and two panels down, rows of headstones either side of a gravel path, sunken graves and open ones, a dead tree,
+  and at the head of the path a crypt with a casket in it worth searching (shells, torches, flares, a medkit, now
+  and then a double-barrel); the chapel's shed outside the railings is the groundskeeper's, with his toolbox. A few older
+  graves lie in the churchyard beside the chapel itself. Spend the night within about 60 m of it and every wave
+  gives 30% of its walkers and runners to the graves: they come up over the next 20 s, most of them from the graves
+  nearest the survivors, never one a survivor is standing at - inside whatever has been walled off round the
+  chapel. The horde is no bigger for it; only where part of it arrives changes, and specials and bosses still come
+  from the treeline. By day three graves are restless (drawn at every sunrise), and each gives up one walker to the
+  first survivor who comes within 5 m of it. A rise is fair warning: the earth heaves and is heard (and felt
+  underfoot) for 1.2 s before anything shows, and the zombie then takes 2.5 s to climb out, doing nothing else:
+  what is still under the grass cannot be hit, but a head above it can.
 - **Shoot the legs out from under them.** A bullet below the hip of a walker, runner, spitter, roper, boomer or
   shade goes into that leg: the zombie **stumbles** - it trips, slows to a shuffle and loses the swing it had started
   - and takes only 40% of the damage in the body. A leg that has taken 30% of the zombie's health is **shot off**
@@ -320,8 +335,8 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 - **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
   (your car, a rest area) on it near the middle and the roadside places strung along it.
 - **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
-- **Sixteen places** to a map. Six are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel,
-  Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
+- **Sixteen places** to a map. Six are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel (with
+  St. Agnes Cemetery behind it, `shared/cemetery.js`), Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
   general store, police station, garage, houses) and Blackrock Mine (on high ground). The other ten are drawn
   from sixteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
   Campground (near the lake), the Relay Station and Ranger Lookout (on high ground), Miller Farm, Harlan

@@ -1,7 +1,7 @@
 // Field map overlay [M]: the baked survey map of the valley with live markers - you, your team, the
 // car, pings, where the car supplies are rumoured to be, and the places you have discovered.
 // A click sets your own waypoint (the game keeps it and shows it on the compass and in the world).
-import { ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
+import { ZONE, ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
 import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
 import { el, svgEl } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -107,6 +107,14 @@ export class MapScreen {
       l.dataset.zone = z.id;
       return l;
     });
+    // St. Agnes Cemetery is part of the chapel's place: a name of its own on the map, in smaller letters (a click
+    // on it is a click in the chapel's yard)
+    this.cemLab = null;
+    if (world.cemetery) {
+      this.cemLab = el('div', 'map-lab sub', this.labels);
+      this.cemLab.style.left = ((world.cemetery.x + MAP_HALF) / MAP_SIZE) * 100 + '%';
+      this.cemLab.style.top = ((world.cemetery.z + MAP_HALF) / MAP_SIZE) * 100 + '%';
+    }
   }
 
   _ensureCanvas() {
@@ -157,6 +165,11 @@ export class MapScreen {
       l.classList.toggle('hinted', d.hints.some((zid, k) => zid === z.id && !taken(k)));
       l.classList.toggle('way', !!way && way.zone === z.id);
     });
+    if (this.cemLab) {
+      // (known once you have been to it, or to the chapel it lies behind)
+      const txt = d.discovered.has(ZONE.CEMETERY) || d.discovered.has(ZONE.CHURCH) ? ZONE_NAMES[ZONE.CEMETERY] : '';
+      if (this.cemLab.textContent !== txt) this.cemLab.textContent = txt;
+    }
     let n = 0;
     const put = (x, z, cls, icon, label = '', rot = null) => {
       const m = this._mk(n++);

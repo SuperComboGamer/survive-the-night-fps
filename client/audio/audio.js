@@ -208,6 +208,8 @@ def(S.BELL_TOLL, 'bell_toll', 'bell', 0.6, 0);
 def(S.BELL_ROPE, 'bell_rope', 'fx', 0.33, 0.05);
 def(S.RADIO_TUNE, 'radio_tune', 'fx', 0.35, 0.02);
 def(S.RADIO_CALL, 'radio_call', 'big', 0.32, 0.02);
+def(S.GRAVE_STIR, 'grave_stir', 'fxfar', 1, 0.06);
+def(S.GRAVE_BURST, 'grave_burst', 'fxfar', 1, 0.06);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {

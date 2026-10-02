@@ -168,6 +168,31 @@ export function renderMapCanvas(world) {
     }
   }
 
+  // ---- St. Agnes Cemetery: its railings as a broken line, a cross for every grave
+  const cem = world.cemetery;
+  if (cem) {
+    g.strokeStyle = 'rgba(38, 28, 22, 0.7)';
+    g.lineWidth = 1.2;
+    g.save();
+    g.translate(mapX(cem.x), mapY(cem.z));
+    g.rotate(-cem.ry);
+    g.setLineDash([3, 2]);
+    g.strokeRect(-cem.hx * S, -cem.hz * S, cem.hx * 2 * S, cem.hz * 2 * S);
+    g.setLineDash([]);
+    g.restore();
+    g.lineWidth = 0.9;
+    g.beginPath();
+    for (const gr of cem.graves) {
+      const x = mapX(gr.x);
+      const y = mapY(gr.z);
+      g.moveTo(x - 1.5, y - 0.5);
+      g.lineTo(x + 1.5, y - 0.5);
+      g.moveTo(x, y - 2);
+      g.lineTo(x, y + 2);
+    }
+    g.stroke();
+  }
+
   // ---- buildings (walls + floors + roofs from the static parts)
   g.fillStyle = 'rgba(38, 28, 22, 0.88)';
   for (const p of world.parts) {

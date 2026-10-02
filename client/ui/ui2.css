@@ -1062,6 +1062,12 @@
   color: #5b2a9d;
   font-style: normal;
 }
+/* a named part of a place (St. Agnes Cemetery behind the chapel): smaller, under the place's own name */
+.stn-ui .map-lab.sub {
+  font-size: max(8px, calc(10 * var(--u)));
+  font-style: italic;
+  font-weight: 400;
+}
 
 /* markers let clicks through to the map and the names under them - except the waypoint, which a click takes back */
 .stn-ui .map-markers {
