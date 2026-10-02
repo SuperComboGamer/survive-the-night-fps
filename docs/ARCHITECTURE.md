@@ -111,6 +111,17 @@ more than its bytes**, so put things into the packets that already flow.
   flashlight), SSAO, sun shafts, grass density, tree distance. Everything applies live on a settings change
   (`main.js applySettings` -> renderer, Environment.setShadows, Foliage.setQuality, Game.setShadowQuality).
   The render-scale setting multiplies the preset's pixel ratio.
+- **Shader warm-up** (`Game.prewarm`): three.js builds a material's program the first time it is drawn and
+  waits for it on the main thread, so nothing may be drawn for the first time during play. Behind the splash, and
+  again for a new map or another quality, `GameRenderer.compilePrograms` starts every program of the world
+  scene, the viewmodel scene and the post passes (`renderer.compile`: the driver builds them in the background)
+  and `compileDepth` the shadow passes' depth programs; the frame loop draws nothing until the scene's are
+  built; `Game.warmViews` meanwhile builds one of every view that only exists on demand (which also bakes the
+  zombie rigs and the weapon and pickup meshes), and `Game.warmFrame` ends it with one frame nobody sees that
+  draws one of everything. A player who joins sooner gets the rest in one go on the first frame, as before.
+  The rule this buys: `renderer.info.programs.length` does not grow while playing. Anything new that is created
+  on demand with a material of its own (an entity view, a lazily built effect) goes into `warmViews`; what is
+  already in a scene, hidden or not, is covered.
 - **Shared shader state:** `render/globals.js` must be imported first (main.js does). Its `G` uniforms (mist,
   key-light direction, fog sun colour, wind) are injected into every built-in material and every ShaderMaterial
   that merges `UniformsLib.fog` / `.lights`, BY REFERENCE (values survive three's per-material uniform clone).

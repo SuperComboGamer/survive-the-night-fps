@@ -107,6 +107,7 @@ function applySettings(s) {
   game.lights.setShadows(renderer.q.flashShadows);
   game.env.setShadows(renderer.q);
   game.setShadowQuality?.(renderer.q);
+  game.prewarm(); // (does nothing unless the quality changed)
   applyAudioSettings(s);
 }
 
@@ -154,7 +155,8 @@ function frame(now) {
     console.error('update error', err);
   }
   const t1 = performance.now();
-  if (game.post) renderer.render(game.post, game.state === 'playing');
+  // (nothing is drawn while the scene's shader programs are being built in the background: Game.prewarm)
+  if (game.post && !game.warm?.hold) renderer.render(game.post, game.state === 'playing');
   const t2 = performance.now();
   game.cpuUpdateMs = (game.cpuUpdateMs || 0) * 0.95 + (t1 - t0) * 0.05;
   game.cpuRenderMs = (game.cpuRenderMs || 0) * 0.95 + (t2 - t1) * 0.05;
