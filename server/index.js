@@ -95,7 +95,8 @@ app.ws('/ws', {
 });
 
 app.get('/status', (res) => {
-  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0 });
+  // tick: the last 10 s window, the totals since boot and the last slow tick (timings only: this endpoint is public)
+  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()) });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
@@ -123,8 +124,12 @@ app.listen(PORT, (token) => {
 // ---------------------------------------------------------------- fixed-rate tick loop
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 let next = performance.now();
+let due = next; // when the timer that wakes the loop was due
 function loop() {
   const now = performance.now();
+  // a wake with a tick to run: how long after its timer was due did it come? That is the event loop or the host
+  // holding the server up, not the cost of a tick (after a slow tick the timer is armed late, so it is not counted)
+  if (now >= next) game.tickStats.late(now - due);
   let steps = 0;
   while (now >= next && steps < 4) {
     try {
@@ -136,7 +141,9 @@ function loop() {
     steps++;
   }
   if (now - next > 1000) next = now; // way behind (debugger / sleep): resync
-  const wait = Math.max(0, next - performance.now());
+  const armed = performance.now();
+  const wait = Math.max(0, next - armed);
+  due = armed + wait;
   setTimeout(loop, wait > 2 ? wait - 1 : 0);
 }
 loop();
@@ -144,9 +151,12 @@ loop();
 // periodic stats
 setInterval(() => {
   const s = game.stats;
+  const t = game.tickStats.roll(); // the ticks since the last line (closed with nobody on too: /status reads it)
   if (game.players.size) {
     const perClient = s.bytesOut / Math.max(1, game.players.size) / 10;
-    console.log(`[stats] players ${game.players.size} zombies ${game.zombies.length} ents ${game.all.length} tick ${s.tickMs.toFixed(2)}ms out ${(perClient / 1024).toFixed(1)} KB/s/client`);
+    // tick: mean, 99th percentile and worst; over: ticks past the budget / ticks; late: how late the loop woke, mean and worst
+    const tick = `tick ${t.meanMs.toFixed(2)}ms p99 ${t.p99Ms.toFixed(2)}ms max ${t.maxMs.toFixed(2)}ms over ${t.over}/${t.ticks} late ${t.lateMeanMs.toFixed(2)}ms latemax ${t.lateMaxMs.toFixed(2)}ms`;
+    console.log(`[stats] players ${game.players.size} zombies ${game.zombies.length} ents ${game.all.length} ${tick} out ${(perClient / 1024).toFixed(1)} KB/s/client`);
   }
   s.bytesOut = 0;
   s.msgsOut = 0;
