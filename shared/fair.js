@@ -168,7 +168,7 @@ export function buildFair(b, zone, seed, { door, win }) {
     s.wall(-2, 1.5, 2, 1.5, 2.5, 0.15, mat);
     s.wall(-2, -1.3, -2, 1.5, 2.5, 0.15, mat);
     s.wall(2, 1.5, 2, -1.3, 2.5, 0.15, mat);
-    s.box(-0.6, 0, -1.3, 2.8, 1.0, 0.45, 'planks');
+    s.box(-0.8, 0, -1.3, 2.4, 1.0, 0.45, 'planks'); // (the way in past its end is 1.5 m: narrower, a stall askew to the nav grid can be shut to the dead)
     s.box(0, 2.5, -0.5, 4.7, 0.1, 4.4, 'canvas', { collide: false });
     for (const sx of [-1, 1]) s.cyl(sx * 2.15, 0, -2.5, 0.05, 2.5, 'metal', { sides: 6 });
     s.roofSpan(0, -0.5, 2.35, 2.2, 2.5, 0.1);
@@ -180,7 +180,7 @@ export function buildFair(b, zone, seed, { door, win }) {
     s.cont(CONT.SHELF, 0.5, 1.15, { prop: 'shelf', ry: 0, seed: sd() });
     s.prop('crate_small', -1.4, 0.9, 0.3, { seed: sd() });
     for (const px of [-1.5, -0.8, -0.1]) s.prop('pumpkin', px, -1.3, rng.range(0, TAU), { ly: 1.0, nocollide: true, seed: sd() });
-    s.loot(0.4, -1.3, 1.02);
+    s.loot(0, -1.3, 1.02);
   };
   // food stands: a fridge that has not run in a long time, what is left under the counter
   const fridge = (s) => {
@@ -192,7 +192,7 @@ export function buildFair(b, zone, seed, { door, win }) {
     s.cont(CONT.CABINET, -0.9, 1.1, { prop: 'cabinet', ry: 0, seed: sd() });
     s.prop('crate_small', 1.3, 1.0, 0.5, { seed: sd() });
     s.prop('crate_small', 1.3, 1.0, 1.1, { ly: 0.6, seed: sd() });
-    s.loot(0.2, -1.3, 1.02);
+    s.loot(-0.2, -1.3, 1.02);
   };
   stall(-8, -19, -PI / 2, 'barn', game);
   stall(-8, -12, -PI / 2, 'clapboard', fridge);

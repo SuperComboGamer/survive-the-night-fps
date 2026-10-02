@@ -257,6 +257,20 @@ export function planRail(plan, { seed, depot, rawH, edgeRise }) {
         aBase[cj * n + ci] += 7;
       }
     }
+    // ...and under the stalled train and its loading bank a road would run into the cars: there it is as dear as
+    // water, so the road crosses the line somewhere else (two cells either side take in the bank)
+    const under = new Set();
+    for (let i = Math.max(0, iT - HALF_TRAIN); i <= Math.min(main.n - 1, iT + HALF_TRAIN); i++) {
+      const ci = Math.floor((main.x[i] + MAP_HALF) / size);
+      const cj = Math.floor((main.z[i] + MAP_HALF) / size);
+      for (let dj = -2; dj <= 2; dj++)
+        for (let di = -2; di <= 2; di++) {
+          const k = (cj + dj) * n + ci + di;
+          if (ci + di < 0 || cj + dj < 0 || ci + di >= n || cj + dj >= n || under.has(k)) continue;
+          under.add(k);
+          aBase[k] += 500;
+        }
+    }
   };
 
   // Cuts and fills the heightfield to the formation and enters the bed in the road grids.

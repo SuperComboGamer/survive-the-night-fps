@@ -262,6 +262,8 @@ const give = (p, n) => {
       const x = f.x + Math.sin(ang) * d;
       const z = f.z + Math.cos(ang) * d;
       if (Math.max(Math.abs(x), Math.abs(z)) > 300 || game.world.isDeepWater(x, z)) continue;
+      // (not in another place's yard: put down among its buildings, a walker can be boxed in where it stands)
+      if (game.world.zones.some((zn) => Math.hypot(zn.x - x, zn.z - z) < zn.flat + 4)) continue;
       const zb = game.zm.spawn(ZTYPE.WALKER, x, z);
       if (zb) {
         zb.x = x;

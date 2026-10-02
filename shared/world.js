@@ -1857,7 +1857,8 @@ export function createWorld(seed) {
         b.box(x + 1.7, 1.3, rz + 1, 0.2, 0.25, 0.15, 'rust', { collide: false });
         if (!rng.chance(0.62)) continue;
         const r = rng();
-        b.wreck(r < 0.7 ? 'car_wreck' : r < 0.9 ? 'pickup_truck' : 'camper', x + rng.range(-0.3, 0.3), rz, PI + rng.range(-0.12, 0.12), { trunk: rng.chance(0.35) });
+        // (a camper reaches into the space in front of it: only where no row of cars stands 6 m ahead)
+        b.wreck(r < 0.7 ? 'car_wreck' : r < 0.9 || rz === 11 || rz === -13 ? 'pickup_truck' : 'camper', x + rng.range(-0.3, 0.3), rz, PI + rng.range(-0.12, 0.12), { trunk: rng.chance(0.35) });
       }
     }
     // ticket booth

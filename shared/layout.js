@@ -39,7 +39,7 @@ export const PLACES = {
   [ZONE.STATION]: { site: 'rail', flat: 30, blend: 24, clear: 34, raise: 1.2, dirt: 0.4, gates: 'f', core: true },
   [ZONE.CAMPGROUND]: { site: 'lakeside', flat: 30, blend: 24, clear: 30, dirt: 0.35 },
   [ZONE.RELAY]: { site: 'hill', flat: 22, blend: 30, clear: 26, raise: 9, dirt: 0.35, gates: 'f' },
-  [ZONE.RANGER]: { site: 'hill', flat: 24, blend: 30, clear: 28, raise: 7 },
+  [ZONE.RANGER]: { site: 'hill', flat: 24, blend: 30, clear: 28, raise: 7, gates: 'flr' }, // (no back gate: a road through it runs past the shed)
   [ZONE.MINE]: { site: 'hill', flat: 30, blend: 28, clear: 34, raise: 4, dirt: 0.9, gates: 'flr', core: true },
   [ZONE.BARN]: { flat: 46, blend: 30, clear: 52, dirt: 0.45, gates: 'fbr' },
   [ZONE.SAWMILL]: { flat: 36, blend: 26, clear: 40, dirt: 0.85 },
