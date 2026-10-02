@@ -264,6 +264,16 @@ export const GUNS = {
     tail: 0.16, tailLP: 600, tailDecay: 0.4,
     mech: [], echoes: [[0.28, 0.11], [0.63, 0.055], [1.06, 0.028]], drive: 2.1,
   },
+  // the mounted gun: a heavy machine gun. Against the AK the bark sits an octave lower and lasts half as long
+  // again, the thump is deeper and longer, and a heavy bolt clunks home behind each round: at the same 600 a minute
+  // it is a slow pounding where the rifle rattles
+  hmg: {
+    dur: 1.5, crack: 1.0, crackHP: 1800, crackDecay: 0.0017, nwave: 0.55,
+    bodyHP: 180, bodyLP0: 5000, bodyLP1: 600, lpSweep: 0.05, bodyDecay: 0.058, bark: [480, 1.3, 7],
+    thump: 1.0, thumpF0: 110, thumpF1: 36, thumpSweep: 0.03, thumpDecay: 0.09,
+    tail: 0.13, tailLP: 720, tailDecay: 0.32,
+    mech: [[0.05, 880, 0.15], [0.086, 1450, 0.08]], echoes: [[0.26, 0.09], [0.58, 0.05], [0.98, 0.028]], drive: 2.3,
+  },
 };
 
 // Layered gunshot: transient crack (+ supersonic N-wave), band-shaped noise body, pitch-dropping thump,
@@ -718,6 +728,44 @@ export function dogYelp(sr, rng, i) {
   });
 }
 
+// deer. The snort: a blast of breath down the nose, hard-edged and hissing, sometimes twice - what a whitetail does
+// when something is wrong, the moment before the flag goes up and the group is gone
+export function deerSnort(sr, rng, i) {
+  const n = i % 3 === 2 ? 2 : 1;
+  const out = alloc(sr, 0.5 + n * 0.32);
+  let t = 0.01;
+  for (let k = 0; k < n; k++) {
+    const dur = rrange(rng, 0.22, 0.32);
+    const f = rrange(rng, 1700, 2300);
+    addNorm(out, noise(sr, rng, dur, { bp: [f, 1.4], sweep: [f * 1.25, f * 0.7, 0.6], env: (u) => Math.min(1, u * 30) * (1 - u) ** 1.6 }), sr, t, 0.9);
+    addNorm(out, noise(sr, rng, dur * 0.8, { hp: 3500, lp: 9000, env: (u) => Math.min(1, u * 40) * (1 - u) ** 2.5 }), sr, t, 0.4);
+    addNorm(out, noise(sr, rng, dur * 0.6, { bp: [520, 2], env: (u) => Math.min(1, u * 25) * (1 - u) ** 2 }), sr, t, 0.3); // the chest behind it
+    t += dur + rrange(rng, 0.08, 0.16);
+  }
+  return finish(out, sr);
+}
+// a bleat when it is hit: short, nasal, high; the last variant is the one it dies with
+export function deerBleat(sr, rng, i) {
+  const dying = i === 2;
+  const b = rrange(rng, 420, 520) * (dying ? 0.9 : 1);
+  return voice(sr, rng, {
+    dur: dying ? rrange(rng, 0.7, 0.9) : rrange(rng, 0.3, 0.42),
+    pitch: dying ? [[0, b], [0.12, b * 1.15], [0.5, b * 0.95], [1, b * 0.6]] : [[0, b * 0.9], [0.25, b * 1.15], [1, b * 0.8]],
+    vowels: vowelPath(dying ? ['ae', 'e', 'a', 'uh'] : ['ae', 'e', 'ae'], rng), fscale: 1.3, bw: 1.3, jitter: 0.03, jitterHz: 30,
+    shimmer: 0.25, sub: 0.1, rasp: 0.5, raspHz: 55, vib: 0.03, vibHz: 11, breath: 0.25, drive: 2.2, chest: 0.1, a3: 0.6, hp: 280,
+    env: dying ? [[0, 0], [0.06, 1], [0.45, 0.75], [0.8, 0.3], [1, 0]] : [[0, 0], [0.08, 1], [0.6, 0.8], [1, 0]],
+  });
+}
+// a hoof coming down on the forest floor at a run: a hard little knock on packed earth, leaf litter thrown up
+export function hoofbeat(sr, rng) {
+  const out = alloc(sr, 0.3);
+  addNorm(out, thump(sr, rrange(rng, 150, 185), 70, 0.012, 0.03), sr, 0, 0.9);
+  addNorm(out, noise(sr, rng, 0.07, { lp: 900, a: 0.001, d: 0.018 }), sr, 0, 0.6);
+  addNorm(out, noise(sr, rng, 0.14, { hp: 2000, lp: 6500, env: (u) => Math.min(1, u * 10) * (1 - u) ** 2 }), sr, 0.006, 0.35);
+  addNorm(out, crackles(sr, rng, 0.1, 160, { hp: 2400, bp: 3800, env: (u) => 1 - u }), sr, 0.008, 0.25);
+  return finish(out, sr, 0.9, 0.0005, 0.03);
+}
+
 // human (player) sounds
 export function humanHurt(sr, rng, i) {
   const b = rrange(rng, 125, 150);
@@ -917,6 +965,27 @@ export function crateLand(sr, rng) {
   for (let k = 0; k < 4; k++) addNorm(out, metalClick(sr, rng, rrange(rng, 1500, 3000), 0.02), sr, 0.04 + rng() * 0.3, 0.15);
   softclip(out, 1.5);
   return finish(out, sr);
+}
+// A grave heaving (St. Agnes Cemetery): the ground groaning under a load, soil sliding, grit and small stones
+// shifting, something knocking from underneath. It lasts the warning (CEMETERY.STIR) and a little over.
+export function graveStir(sr, rng) {
+  const out = alloc(sr, 1.7);
+  addNorm(out, noise(sr, rng, 1.6, { lp: 170, env: (u) => Math.sin(Math.PI * Math.min(1, u * 1.1)) ** 0.7 }), sr, 0, 1);
+  addNorm(out, noise(sr, rng, 1.5, { hp: 700, bp: [1900, 0.7], env: (u) => u * (1 - u) * 4 * (0.6 + 0.4 * Math.sin(u * 40)) }), sr, 0.05, 0.4);
+  addNorm(out, crackles(sr, rng, 1.5, 70, { hp: 900, bp: 2400, skew: 1.2, env: (u) => 0.3 + 0.7 * u, len: 0.005 }), sr, 0.05, 0.5);
+  for (let k = 0; k < 3; k++) addNorm(out, thump(sr, rrange(rng, 70, 95), 40, 0.03, 0.09), sr, 0.22 + k * 0.4 + rng() * 0.1, 0.55);
+  softclip(out, 1.4);
+  return finish(out, sr, 0.9, 0.03, 0.15);
+}
+// ...and breaking open: one heavy thump of turf, and the dirt it threw coming down after it
+export function graveBurst(sr, rng) {
+  const out = alloc(sr, 1.5);
+  addNorm(out, thump(sr, 85, 34, 0.06, 0.16, 1.4), sr, 0, 1);
+  addNorm(out, noise(sr, rng, 0.45, { lp: 900, a: 0.002, d: 0.1 }), sr, 0, 0.85);
+  addNorm(out, noise(sr, rng, 0.9, { hp: 1200, bp: [2600, 0.6], env: (u) => Math.min(1, u * 14) * (1 - u) ** 2 }), sr, 0.03, 0.35);
+  addNorm(out, crackles(sr, rng, 1.2, 110, { hp: 800, bp: 2000, skew: 1.6, env: (u) => (1 - u) ** 1.5, len: 0.005 }), sr, 0.08, 0.5);
+  softclip(out, 1.5);
+  return finish(out, sr, 0.95);
 }
 export function carPart(sr, rng) {
   const out = alloc(sr, 1.1);
@@ -1470,6 +1539,63 @@ export function loopPlane(sr, rng) {
   return finishLoop(out, sr, X, 0.8);
 }
 
+// The calliope of the Tri-County Fair: a steam organ wheezing through a waltz that never ends. Pipes are sines
+// with a few harmonics, breath in them and a chiff as each one speaks; every pipe is a little out of tune in its
+// own way and the whole machine drifts in pitch, which is what makes it sound abandoned. Sixteen bars of
+// oom-pah-pah, the tail of the buffer playing the first bar again so that the loop's crossfade is the tune over
+// itself.
+export function loopCalliope(sr, rng) {
+  const BEAT = 0.34;
+  const L = 16 * 3 * BEAT;
+  const X = 0.5;
+  const out = alloc(sr, L + X);
+  const pipe = (m) => 440 * Math.pow(2, (m - 69) / 12) * (1 + ((((m * 2654435761) >>> 0) % 1000) / 1000 - 0.5) * 0.02);
+  const note = (m, t0, dur, amp) => {
+    const f = pipe(m);
+    const i0 = Math.floor(t0 * sr);
+    const n = Math.floor((dur + 0.08) * sr);
+    const bp = new Biquad().bp(sr, Math.min(f * 2, sr * 0.4), 2);
+    let ph = rng();
+    for (let i = 0; i < n && i0 + i < out.length; i++) {
+      const t = i / sr;
+      const env = Math.min(1, t / 0.03) * (t < dur ? 1 : Math.max(0, 1 - (t - dur) / 0.08));
+      // (the wow turns a whole number of times in the loop; a pipe speaks a shade flat until it has filled)
+      ph += (f * (1 + 0.005 * Math.sin((TAU * 5 * (t0 + t)) / L) - (t < 0.05 ? 0.012 * (1 - t / 0.05) : 0))) / sr;
+      const a = TAU * ph;
+      const tone = Math.sin(a) + 0.28 * Math.sin(2 * a) + 0.2 * Math.sin(3 * a) + 0.07 * Math.sin(4 * a);
+      out[i0 + i] += (tone + bp.run(rng() * 2 - 1) * (t < 0.06 ? 1.1 : 0.22)) * env * amp;
+    }
+  };
+  // the tune, a bar to a row: [melody (MIDI, 0 = hold the last note), the bar's chord as root, third, fifth]
+  const BARS = [
+    [[79, 76, 79], [48, 64, 67]], [[84, 0, 0], [48, 64, 67]], [[83, 81, 83], [43, 62, 65]], [[79, 0, 0], [43, 62, 67]],
+    [[81, 77, 81], [41, 60, 65]], [[86, 0, 84], [43, 62, 65]], [[83, 79, 81], [43, 59, 62]], [[79, 0, 0], [48, 64, 67]],
+    [[88, 86, 84], [48, 64, 67]], [[81, 0, 0], [41, 60, 65]], [[86, 84, 83], [43, 62, 65]], [[79, 0, 0], [43, 59, 62]],
+    [[84, 83, 81], [41, 60, 65]], [[79, 76, 79], [48, 64, 67]], [[81, 83, 86], [43, 62, 65]], [[84, 0, 0], [48, 64, 67]],
+  ];
+  const play = (off) => {
+    BARS.forEach(([tune, [root, third, fifth]], b) => {
+      const t = off + b * 3 * BEAT;
+      if (t >= L + X) return;
+      for (let k = 0; k < 3; k++) {
+        if (!tune[k]) continue;
+        let len = 1;
+        while (k + len < 3 && !tune[k + len]) len++;
+        note(tune[k], t + k * BEAT, len * BEAT * 0.92, 0.5);
+      }
+      note(root, t, BEAT * 0.7, 0.42);
+      for (const k of [1, 2]) {
+        note(third, t + k * BEAT, BEAT * 0.42, 0.2);
+        note(fifth, t + k * BEAT, BEAT * 0.42, 0.2);
+      }
+    });
+  };
+  play(0);
+  play(L);
+  softclip(out, 0.9);
+  return finishLoop(out, sr, X, 0.85);
+}
+
 // ------------------------------------------------------------------ 2D event sounds
 export function plane(sr, rng) {
   const dur = 9;
@@ -1628,6 +1754,7 @@ export const SFX_DEFS = [
   { bank: 'gun_mp5', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, false) },
   { bank: 'gun_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, false) },
   { bank: 'xbow_shot', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, false) },
+  { bank: 'gun_hmg', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.hmg, false) },
   // first-person (stereo)
   { bank: 'fp_pistol', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.pistol, true) },
   { bank: 'fp_ak47', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, true) },
@@ -1637,6 +1764,7 @@ export const SFX_DEFS = [
   { bank: 'fp_mp5', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.mp5, true) },
   { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
   { bank: 'fp_crossbow', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, true) },
+  { bank: 'fp_hmg', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.hmg, true) },
   // sub thump + tree-line echoes layered under the recorded first-person shots
   { bank: 'gsw_pistol', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.pistol, true, true) },
   { bank: 'gsw_ak47', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.ak47, true, true) },
@@ -1667,6 +1795,8 @@ export const SFX_DEFS = [
   { bank: 'dog_howl', n: 2, sr: MID, gen: dogHowl },
   { bank: 'dog_snarl', n: 3, sr: MID, gen: dogSnarl },
   { bank: 'dog_yelp', n: 3, sr: MID, gen: dogYelp },
+  { bank: 'deer_snort', n: 3, sr: MID, gen: deerSnort },
+  { bank: 'deer_bleat', n: 3, sr: MID, gen: deerBleat },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },
@@ -1688,6 +1818,8 @@ export const SFX_DEFS = [
   { bank: 'fire_whoosh', n: 1, sr: HI, gen: fireWhoosh },
   { bank: 'campfire_add', n: 1, sr: HI, gen: campfireAdd },
   { bank: 'crate', n: 1, sr: MID, gen: crateLand },
+  { bank: 'grave_stir', n: 2, sr: MID, gen: graveStir },
+  { bank: 'grave_burst', n: 2, sr: MID, gen: graveBurst },
   { bank: 'car_part', n: 1, sr: HI, gen: carPart },
   { bank: 'car_start', n: 1, sr: MID, gen: carStart },
   // foley
@@ -1730,6 +1862,7 @@ export const SFX_DEFS = [
   { bank: 'step_water', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'water') },
   { bank: 'step_metal', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'metal') },
   { bank: 'step_heavy', n: 3, sr: MID, gen: heavyStep },
+  { bank: 'step_hoof', n: 4, sr: MID, gen: hoofbeat },
   // loops
   { bank: 'loop_campfire', n: 1, sr: MID, gen: (sr, r) => loopFire(sr, r, 1) },
   { bank: 'loop_torch', n: 1, sr: MID, gen: (sr, r) => loopFire(sr, r, 0) },
@@ -1739,6 +1872,7 @@ export const SFX_DEFS = [
   { bank: 'loop_boss_breath', n: 1, sr: LO, gen: loopBossBreath },
   { bank: 'loop_generator', n: 1, sr: LO, gen: loopGenerator },
   { bank: 'loop_plane', n: 1, sr: LO, gen: loopPlane },
+  { bank: 'loop_calliope', n: 1, sr: LO, gen: loopCalliope },
   // 2D events (rendered after init; rendered on demand if requested earlier)
   { bank: 'plane', n: 1, sr: LO, group: 'late', gen: plane },
   { bank: 'horde_horn', n: 1, sr: LO, group: 'late', gen: hordeHorn },

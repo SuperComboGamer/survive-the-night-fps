@@ -5,8 +5,10 @@
 import { Game } from '../server/game.js';
 import { createWorld } from '../shared/world.js';
 import { COL } from '../shared/collision.js';
-import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT } from '../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, WEAPONS, AMMO_ITEMS } from '../shared/defs.js';
 import { usedIn, foundIn, sourcesOf, GATHER } from '../client/game/itemguide.js';
+import { FIXTURE_USES, RADIO_COST } from '../shared/fixtures.js';
+import { DEER_LOOT } from '../shared/deer.js';
 
 const fails = [];
 const check = (name, ok, info = '') => {
@@ -29,8 +31,23 @@ const expectFrom = (name, table, visits) => {
     at.set(name, (at.get(name) || 0) + visits * (weight / total) * ((min + max) / 2));
   }
 };
-const contName = { 'Ammo Crate': 'ammo crates', 'Car Trunk': 'car trunks', 'Duffel Bag': 'duffel bags', Locker: 'lockers', Cabinet: 'cabinets', Toolbox: 'toolboxes', Dumpster: 'dumpsters', 'Log Pile': 'log piles', Fridge: 'fridges' };
-for (const d of Object.values(CONT_DEFS)) if (d.table) expectFrom(contName[d.name] || d.name, CONT_TABLES[d.table], (d.rolls[0] + d.rolls[1]) / 2);
+const contName = { 'Ammo Crate': 'ammo crates', 'Car Trunk': 'car trunks', 'Duffel Bag': 'duffel bags', Locker: 'lockers', Cabinet: 'cabinets', Toolbox: 'toolboxes', Dumpster: 'dumpsters', 'Log Pile': 'log piles', Fridge: 'fridges', Strongbox: "the mine's strongbox", Casket: 'the casket in the crypt', 'Freight Crate': 'freight crates' };
+Object.assign(contName, { 'Medicine Cabinet': 'medicine cabinets', 'Drug Locker': "the clinic's drug locker" }); // (Mercy Clinic's)
+for (const d of Object.values(CONT_DEFS)) {
+  if (!d.table) continue;
+  const name = contName[d.name] || d.name;
+  const rolls = (d.rolls[0] + d.rolls[1]) / 2;
+  expectFrom(name, CONT_TABLES[d.table], rolls);
+  // what is always in it besides the rolls, and the magazines its weapons come with (the strongbox down the mine)
+  for (const [item, n] of d.also || []) expected.get(item).set(name, (expected.get(item).get(name) || 0) + n);
+  const total = CONT_TABLES[d.table].reduce((sum, row) => sum + row[1], 0);
+  for (const [item, weight, min, max] of d.loaded ? CONT_TABLES[d.table] : []) {
+    const w = WEAPONS[item];
+    if (!w || w.melee) continue;
+    const at = expected.get(AMMO_ITEMS[w.ammo]);
+    at.set(name, (at.get(name) || 0) + rolls * (weight / total) * ((min + max) / 2) * w.mag * d.loaded);
+  }
+}
 check('every kind of container with a table of its own has a plural the player would recognise', Object.values(CONT_DEFS).every((d) => !d.table || contName[d.name]), Object.values(CONT_DEFS).filter((d) => d.table && !contName[d.name]).map((d) => d.name).join(', '));
 
 // Which place tables are rolled at all is world generation's business: the floor loot of a zone, and its crates and
@@ -55,6 +72,8 @@ const places = new Set([...rolled].map((zone) => ZONE_NAMES[zone]));
 const drops = { zombies: ZOMBIE_LOOT, 'special zombies': SPECIAL_LOOT };
 for (const name in drops) for (const row of drops[name]) expected.get(row[0]).set(name, null);
 for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(g.name, n * g.hits);
+// a deer leaves all of its table, every time
+for (const [item, min, max] of DEER_LOOT) expected.get(item).set('hunt deer', (min + max) / 2);
 
 {
   const wrong = [];
@@ -116,7 +135,8 @@ for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(
   const text = (item) => foundIn(item, 0, 99).replace(/, or craft it$/, '');
   const leatherAt = holders(ITEM.LEATHER, LOOT_TABLES).filter((zone) => rolled.has(+zone)).map((zone) => ZONE_NAMES[zone]);
   const leatherIn = Object.values(CONT_DEFS).filter((d) => d.table && holders(ITEM.LEATHER, CONT_TABLES).includes(d.table)).map((d) => contName[d.name]);
-  check('leather: the places and containers whose tables list it, and nothing else', leatherAt.length > 0 && sameSet(new Set(text(ITEM.LEATHER).toLowerCase().split(', ')), new Set([...leatherAt, ...leatherIn].map((n) => n.toLowerCase()))), text(ITEM.LEATHER));
+  check('leather: the places and containers whose tables list it, the deer, and nothing else', leatherAt.length > 0 && sameSet(new Set(text(ITEM.LEATHER).toLowerCase().split(', ')), new Set([...leatherAt, ...leatherIn, 'hunt deer'].map((n) => n.toLowerCase()))), text(ITEM.LEATHER));
+  check('hunting deer is a source of leather and of raw venison, and cooked venison is made from the raw', foundIn(ITEM.LEATHER).startsWith('Hunt deer') && foundIn(ITEM.VENISON_RAW) === 'Hunt deer' && foundIn(ITEM.VENISON) === 'Craft it' && usedIn(ITEM.VENISON_RAW).list.some((u) => u.name === nameOf(ITEM.VENISON) && !u.locked), `${foundIn(ITEM.LEATHER)} | ${foundIn(ITEM.VENISON_RAW)} | ${foundIn(ITEM.VENISON)}`);
   const powderIn = Object.values(CONT_DEFS).filter((d) => d.table && holders(ITEM.POWDER, CONT_TABLES).includes(d.table)).map((d) => contName[d.name]);
   check('gunpowder: its containers, the zombies that drop it, and that it can be crafted', powderIn.length > 0 && powderIn.every((n) => text(ITEM.POWDER).toLowerCase().includes(n)) && text(ITEM.POWDER).includes('special zombies') === SPECIAL_LOOT.some((row) => row[0] === ITEM.POWDER) && foundIn(ITEM.POWDER).endsWith(', or craft it') === RECIPES.some((r) => r.out === ITEM.POWDER && !r.schem), foundIn(ITEM.POWDER));
   check('sticks come from trees and scrap from wrecks, before anything else', foundIn(ITEM.STICK).startsWith('Chop trees') && foundIn(ITEM.SCRAP).startsWith('Salvage wrecks'), `${foundIn(ITEM.STICK)} | ${foundIn(ITEM.SCRAP)}`);
@@ -131,6 +151,10 @@ for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(
   };
   for (const r of RECIPES) use(nameOf(r.out), r.cost, r.schem);
   for (const type of STRUCT_ORDER) use(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
+  for (const f of FIXTURE_USES) use(f.name, f.cost); // (what is spent at a fixture: the Relay Station's radio)
+  // (what a structure burns once built is a use of that fuel: the generator's)
+  const burners = STRUCT_ORDER.filter((type) => STRUCT_DEFS[type].fuel);
+  for (const type of burners) use(STRUCT_DEFS[type].name, { [STRUCT_DEFS[type].fuel]: 1 }, STRUCT_DEFS[type].schem);
   const bad = [];
   for (const item of items) {
     const want = users.get(item);
@@ -153,6 +177,10 @@ for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(
   const plate = usedIn(ITEM.PLATE, 0, 99).list;
   const vest = RECIPES.find((r) => r.out === ITEM.KEVLAR);
   check('a kevlar plate names the vest, locked until its schematic is found', !!vest.cost[ITEM.PLATE] && plate.some((u) => u.name === nameOf(ITEM.KEVLAR) && u.locked === !!vest.schem) && usedIn(ITEM.PLATE, ALL, 99).list.every((u) => !u.locked), plate.map((u) => `${u.locked ? 'locked ' : ''}${u.name}`).join(', '));
+  const cells = usedIn(ITEM.BATTERY, 0, 99)?.list || [];
+  check("batteries name the Relay Station's radio, which spends them on a supply drop", RADIO_COST[ITEM.BATTERY] > 0 && cells.some((u) => /radio/i.test(u.name) && !u.locked), cells.map((u) => u.name).join(', '));
+  const burnt = burners.map((type) => [STRUCT_DEFS[type].fuel, STRUCT_DEFS[type].name]);
+  check('a fuel names what burns it: Flamethrower Fuel the Generator', burnt.length > 0 && burnt.every(([item, name]) => usedIn(item, ALL, 99).list.some((u) => u.name === name)) && burnt.some(([item]) => item === ITEM.AMMO_FUEL), burnt.map(([item, name]) => `${nameOf(item)}: ${usedIn(item, ALL, 99).list.map((u) => u.name).join(', ')}`).join(' | '));
 }
 
 // ---------------------------------------------------------------- gathering: GATHER mirrors Game.gatherHit
@@ -184,6 +212,27 @@ for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(
     for (const [item, per] of g.gives) if (Math.abs((got[item] || 0) / (N * g.hits) - per) > Math.max(0.012, per * 0.15)) drift.push(item);
     check(`"${g.name}" gives what the server gives: ${g.hits} hits, ${g.gives.map(([item]) => nameOf(item)).join(', ')}`, hits === g.hits && drift.length === 0, drift.length ? `GATHER in client/game/itemguide.js is out of step with Game.gatherHit for ${drift.map(nameOf).join(', ')}` : `per hit: ${g.gives.map(([item]) => ((got[item] || 0) / (N * g.hits)).toFixed(2)).join(' / ')}`);
   });
+}
+
+// ---------------------------------------------------------------- hunting: 'hunt deer' is what a kill leaves
+// Bring deer down on a real server and count what Deer.kill puts on the ground.
+{
+  const game = new Game({ seed: 4242, log: () => {} });
+  game.startGame();
+  const got = {};
+  game.dropItem = (item, n) => (got[item] = (got[item] || 0) + n);
+  const at = game.dm.grounds()[0];
+  const N = 600;
+  let only = true;
+  for (let n = 0; n < N; n++) {
+    const before = JSON.stringify(got);
+    const d = game.dm.spawnGroup(at.x, at.z, 1).members[0];
+    only = only && game.combat.damageZombie(d, d.hp, null) === true && d.dead && JSON.stringify(got) !== before;
+  }
+  const stated = new Map(DEER_LOOT.map(([item, min, max]) => [item, (min + max) / 2]));
+  const drift = Object.keys(got).map(Number).filter((item) => !stated.has(item));
+  for (const [item, per] of stated) if (Math.abs((got[item] || 0) / N - per) > 0.08) drift.push(item);
+  check(`"hunt deer" gives what the server gives: ${DEER_LOOT.map(([item]) => nameOf(item)).join(', ')}, every kill`, only && drift.length === 0, drift.length ? `out of step for ${drift.map(nameOf).join(', ')}` : `per kill: ${DEER_LOOT.map(([item]) => ((got[item] || 0) / N).toFixed(2)).join(' / ')}`);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}`);

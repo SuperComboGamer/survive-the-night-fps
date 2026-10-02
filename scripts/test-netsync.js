@@ -5,14 +5,15 @@
 // client cannot predict). Expected: the prediction of every command matches the server's result exactly, except for
 // about a round trip after each shove; the server rebases the client only during that window and never in between.
 // Then a link that hiccups (runStall): the commands that arrive late in one burst must not stay queued on the server.
+// Then lag compensation (runRewind): a shot aimed at a screen that is behind the server lands, as far back as MAX_REWIND.
 // Then the input buffer (runBuffer): early presses of fire, reload and jump are performed, and only those.
 // Last (runSteps), no server: the camera's step smoothing, which reads the prediction and must not be fooled by it.
 // usage: node scripts/test-netsync.js [lagMs=100] [jitterMs=30]
 import { Spring } from '../client/render/models/weapons.js';
 import { Game } from '../server/game.js';
 import { C2S, S2C, SNAP, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
-import { BTN, SERVER_TICK_RATE, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
-import { ITEM, AMMO } from '../shared/defs.js';
+import { BTN, SERVER_TICK_RATE, MAX_REWIND, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
+import { ITEM, AMMO, ZTYPE } from '../shared/defs.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { Connection } from '../client/net/connection.js';
 import { Prediction } from '../client/game/prediction.js';
@@ -265,6 +266,55 @@ function runStall(HOLD) {
   }
   const ok = checked > TICKS / 2 && wrongTime === 0 && waiting === 0;
   console.log(`${ok ? 'PASS' : 'FAIL'}  a ${HOLD} ms hiccup on the link: a second later at most ${waiting} commands are left waiting on the server, ${wrongTime} of ${checked} commands were run with another packet's render time`);
+  return ok;
+}
+
+// Lag compensation: a runner crosses the line of fire at 6 m/s and the survivor's screen is `back` ticks behind the
+// server - the ping, the interpolation delay, and on a lossy link or a slow machine a good deal more. Every shot is
+// aimed at where the runner stood on that screen. Expected: a hit at every delay up to MAX_REWIND (the shot is judged
+// against the runner as it was drawn), and past it a miss (judged against where it stood MAX_REWIND ago, 6 m/s on).
+// Up in the air, so that nothing of the world is in the way, and moved by hand: its history is what is tested.
+function runRewind() {
+  const game = new Game({ seed: 4242, godMode: true, log: () => {} });
+  const session = game.onOpen({ send() {} });
+  const w = new Writer(64);
+  w.u8(C2S.JOIN);
+  w.u8(PROTOCOL_VERSION);
+  w.str('rewind');
+  game.onMessage(session, w.bytes().slice());
+  for (let i = 0; i < 5; i++) game.update();
+  const p = [...game.players.values()][0];
+  const s = p.state;
+  const z = game.zm.spawn(ZTYPE.RUNNER, s.x, s.z - 8, {});
+  const y = game.world.heightAt(s.x, s.z) + 60;
+  const seen = new Map(); // tick -> where it stood
+  for (let i = 0; i < 60; i++) {
+    game.tick++;
+    z.x = s.x + i * 0.3;
+    z.y = y;
+    z.z = s.z;
+    game.recordHistory();
+    seen.set(game.tick, z.x);
+  }
+  game.tick++;
+  let hit = false;
+  const damageZombie = game.combat.damageZombie;
+  game.combat.damageZombie = (e) => (hit = hit || e === z);
+  const cap = MAX_REWIND * SERVER_TICK_RATE;
+  const within = [3, 8, 12, 16, cap - 1];
+  const missed = [];
+  const shoot = (back) => {
+    hit = false;
+    p.renderTick = (game.tick - back) & 0xffff;
+    p.renderFrac = 0;
+    game.combat.fire(p, { weapon: ITEM.PISTOL, x: seen.get(game.tick - back), y: y + 1, z: s.z + 3, yaw: 0, pitch: 0, recoilPitch: 0, spread: 0, seed: 1 });
+    return hit;
+  };
+  for (const back of within) if (!shoot(back)) missed.push(back);
+  const beyond = shoot(cap + 6);
+  game.combat.damageZombie = damageZombie;
+  const ok = z && !missed.length && !beyond;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  lag compensation: shots at a runner as drawn ${within.map((b) => b * (1000 / SERVER_TICK_RATE)).join(', ')} ms ago ${missed.length ? `missed at ${missed.map((b) => b * (1000 / SERVER_TICK_RATE)).join(', ')} ms` : 'all hit'}; one ${(cap + 6) * (1000 / SERVER_TICK_RATE)} ms ago, past the ${MAX_REWIND * 1000} ms cap, ${beyond ? 'hit' : 'missed'}`);
   return ok;
 }
 
@@ -649,6 +699,7 @@ let ok = true;
 if (!args.length) ok = runSprings() && ok;
 for (const [lag, jit] of cases) ok = run(lag, jit) && ok;
 if (!args.length) for (const hold of [300, 700, 1500]) ok = runStall(hold) && ok;
+if (!args.length) ok = runRewind() && ok;
 if (!args.length) ok = runBuffer(100) && ok;
 if (!args.length) ok = runSteps() && ok;
 process.exit(ok ? 0 : 1);

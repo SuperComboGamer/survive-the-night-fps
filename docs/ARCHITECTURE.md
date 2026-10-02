@@ -18,6 +18,9 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   world.js       deterministic world generation from a seed: builds the plan - terrain, A*-routed roads,
                  roadside/woodland sites, buildings, props, containers, supply spots, doorways,
                  vegetation, colliders. A new playthrough is a new seed (S2C.WORLD_RESET); SEED pins it
+  mine.js        the workings under Blackrock Mine: a second level under the heightfield (see The mine below)
+  clinic.js      Mercy Clinic and the rule that its wards are dark at noon (see Dark interiors below)
+  rail.js        the railway: its heights, the cut and fill, Whitlock Depot, the stalled train (see The railway)
   collision.js   static/dynamic collider grids, ray casts
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
@@ -196,6 +199,13 @@ more than its bytes**, so put things into the packets that already flow.
   turn each other down as they pile up (`crowd` in `CATS`): a swarm must not out-shout gunfire or the music.
 - **Master bus** (`_buildGraph`): 2:1 glue compressor -> limiter -> soft clipper -> master volume. Kept light on
   purpose: the quiet forest sits ~10 dB under automatic fire and nothing leaves above full scale.
+- **Voice chat in the mix** (`VoiceSource`). WebRTC delivers a microphone at about -21 LUFS after Chrome's own gain
+  control, some 9 dB under the game, so each voice goes through a leveller (a compressor: an 8 dB spread between
+  microphones comes out as 2.5 dB) and the voice bus lifts it to about -12 LUFS within `VOICE_REF` (4 m), level with
+  a pistol shot. It thins out gently past that (-7.5 dB at 15 m, -11 dB at `TALK_CLEAR`). While a voice is audible,
+  `_duckTick` turns the music down 8 dB and effects + ambience 5 dB, scaled by how loud the voice reaches you; the
+  "Lower game for voices" setting turns that off. Measured with a voice 2 m away (voice over the rest of the mix):
+  day +14 dB, night +10, horde +7, under automatic fire -1 (it was +3, 0, -7 and -12.5 before).
 - **Start-up.** The browser only allows audio after a user gesture, so `main.js` starts the engine on the first key
   or pointer press on the splash (the click on Join at the latest) and nothing waits for it: the join opens the
   socket straight away. Until `audio.ready` (about a second of bank rendering) a one-shot asked for is dropped and
@@ -204,6 +214,254 @@ more than its bytes**, so put things into the packets that already flow.
 - **Checking it without ears.** `/sandbox/audio-test.html` plays everything by hand (`?procedural` for the
   fallback); `?autotest` runs the engine's self-test (every recording decodes, loops are seamless, beds follow
   the state) and ends with `AUDIO_TEST_OK`. `node client/audio/selftest.js` checks the procedural banks.
+
+## The mine: a second level under the heightfield
+
+The valley is a heightfield, so everything about the ground is a function of (x, z). The workings under Blackrock
+Mine (`shared/mine.js`, planned by `world.js` once every place stands) are a second level under it, and the rule
+that keeps the two apart is in three functions of the world, so nothing that walks, falls, shoots or looks has to
+know the mine is there:
+
+- **`world.floorAt(x, z, y)`** is the ground under feet at height y: the terrain, or the floor of the drift they
+  are down in. `groundAt` (collision.js) starts from it instead of `heightAt`, so the player simulation, zombies,
+  cats, dropped items and thrown things land on the right level. `heightAt` stays the terrain alone: what grows,
+  what is built on the surface and what the map shows use that. **Code that puts something on the ground at a
+  known height must ask `floorAt(x, z, y)` or `groundAt(world, x, z, y)`; `heightAt` there puts it on the hillside
+  above the drift.** (`groundAt(world, x, z, 200)` still means "the highest thing here": the surface.)
+- **`world.rayTerrain`** treats the air of a drift as air and the rock round it as the hillside it is, so
+  bullets, lines of sight, the flashlight test of the Shade and reach checks stop at the walls, the roof and the
+  ground above without any colliders for the rock.
+- **`resolveBody`** ends with `mine.confine`: a body below the ground beside a drift is pushed back off the rock
+  (the planned distance field, `mine.sdf`: negative inside a drift). Players and zombies never get into the rock,
+  so prediction needs nothing new.
+
+The plan (`planMine`): the adit is at the back of the mine yard; the far portal goes to the best of a handful
+of spots round every other place (dry, off the roads, clear of what is built there and of the roadside sites).
+The main drift runs from one to the other by a dog-leg, the junction; its floor goes down each decline at
+`DECLINE`, then as near under the ground as `COVER` allows, and deeper round the junction. Galleries leave the
+level stretches and end in rooms. Two grids at 0.5 m are baked over all of it (distance to the rock, height of
+the floor) and every query is a bilinear read of them. The terrain is only changed at the portals: a levelled
+apron, a mound behind, and `COVER_MIN` of ground over every roof. Inside a portal (the first `PORTAL.HOLE`
+metres of the decline, under its stone) the terrain is not drawn (the terrain shader discards it) and the
+valley's nav grid is blocked.
+
+- **The dead** (`server/minenav.js`): the valley's flow fields are one flat level, so the workings have a 1 m grid
+  of their own with a distance field to whatever cell something is headed for. `Zombies.steerLevels` joins the
+  two: a zombie on the surface after a survivor down there walks to the nearer mouth by the valley's field to the
+  spot outside it, straight through, and on down the drift, and the other way round. Targeting and noise measure
+  the walk round by a portal, not the few metres of rock between the levels (`MineNav.between`; `Zombies.noise`
+  takes the height the noise was made at). The dwellers (`z.den`, one to a den of `world.mine.dens`, restocked at
+  sunrise by `stockMine`) keep to the workings and go home when led out. No daylight gets down there: `isLit`
+  never pins a Shade by day in the mine, and the horde that is down there at sunrise is `spared` until it comes up.
+- **Drawing it** (`client/render/mine.js`): the rock is one mesh from the baked grids (floor and roof on the
+  grid, walls on the zero contour, roughened into the rock only), with the timber sets and the track
+  (`world.mine.frames`) drawn the same way and not as static-world parts. Their materials take the sun, the sky's
+  light and the haze's glow by a per-vertex `aSky` (1 in a mouth, 0 well down a drift), so the adit shows black
+  from the yard at noon. Everything else down there (zombies, props, items) is lit by the scene's lights, and
+  those follow the eye: `Game.under` (0..1, how far down the eye is) fades the hemisphere light, the sun, the
+  haze and the rain out in `Environment.update`. The water sheet only covers heightfield cells that dip below the
+  water line, since a drift runs down through that level.
+- **The strongbox** (`CONT.STRONGBOX`, one to a map, in the deepest room) is what makes the trip worth it. It is an
+  ordinary container whose `CONT_DEFS` entry says more than a table: `also` (what is always in it), `loaded` (a
+  weapon rolled from it comes with that many magazines, `loadedAmmo`), `once` (not refilled at sunrise) and
+  `guide` (what the item tooltips call it). `Game.searchCache` and the item guide both read those, so another
+  container can use them too.
+- `scripts/test-mine.js` holds all of this on a dozen valleys and in a running game.
+
+## Dark interiors: the wards of Mercy Clinic
+
+The mine's rule, cut down to what a building needs: a place on the surface where it is dark at noon. The ward
+wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the only one so far.
+
+- **The rule** is a list on the world, `world.darks`: boxes (in a builder's frame, with a floor and a top), each
+  with the mouth the day comes in by. `world.darkAt(x, y, z)` is 0 outside every box and, inside one, rises from 0
+  `near` metres from the mouth to 1 at `far` (measured on the flat, a smoothstep): 1 m and 6.5 m, the length of the
+  passage from reception, so the wards are wholly dark and the passage goes dark along its length. Server and
+  client both ask it; nothing is on the wire.
+- **The server** counts a point as in the dark from 0.5 (`WARD_DARK`, `Zombies.inDark`). `Zombies.isLit` gives no
+  daylight to a Shade there (its one clause next to the mine's: torches, flares, fires and flashlights pin it as
+  anywhere), and `Game.startDay` spares what of the horde stands there at sunrise (`z.spared`, as down the mine:
+  it burns when it walks out into the day). The dwellers (`server/clinic.js`, `Wards`, owned by `Zombies`): one
+  to a den of `world.clinic.dens` - three walkers by day, one crawling, and a Shade from the second day - restocked
+  at sunrise unless a survivor is in the dark, spawned on their own random stream (it is swapped in for the
+  game's while they are made). `z.ward` keeps them out of the day's wanderers and, with no one to chase, shuffles
+  them between standing spots they have a clear walk to (`clinic.roam`), or takes them back to the hall by a flow
+  field of their own when they were led out and left.
+- **The client** does what it does down the mine. `Game.under` is the greater of how far down the mine the eye
+  is and `darkAt` at the eye, so the sky's light, the sun and the haze go out as a survivor walks down the
+  passage, smoothly (`Environment.update`). What is seen from inside is the lining (`clinic.lining`): floor,
+  ceiling, the inner face of every wall and the partitions, boxes that world generation takes back out of
+  `world.parts` and `client/render/clinic.js` draws with the material of the mine's rock (`material` / `mesh`,
+  exported from `render/mine.js`), each vertex taking as much of the day as `darkAt` leaves there. So from
+  reception the passage falls away into black, while reception keeps its daylight. The shell of the wing (outer
+  walls, boarded windows, roof) is static world as usual: it is lit like any building from outside.
+- **What it costs in layout.** No doorway in the wards is in line with the passage, so nothing in them is seen
+  from the daylight (zombies and props there are lit by the scene's lights, which follow the eye: from the mouth
+  of the passage a walker coming down it is lit as in reception - the mine's rough edge, and here only along the
+  passage). Looking back from deep in the passage, reception is as dim as the eye's light makes it. Every doorway
+  of the clinic is 1.6 m wide: the place is turned to face its road, and a 1.2-1.3 m doorway in a wall that runs
+  askew to the nav grid's 1 m cells has, one map in ten, no cell-to-cell step through it, which closed the wards
+  to the horde. `scripts/test-clinic.js` holds the rule, the dead and the drug locker on five valleys and in a
+  running game.
+
+## St. Agnes Cemetery: the dead come up out of the ground
+
+- **The place** (`shared/cemetery.js`, `buildCemetery`) is part of the chapel's: the chapel's builder calls it, so
+  it is on every map, and `PLACES` gives the chapel a 40 m yard for it (its back gate moved to the right-hand side).
+  It has its own random stream. Its railings are parts with no collider of their own plus one `COL.STATIC |
+  COL.NOBULLET` box per panel: a body does not pass them, a bullet and a line of sight do, and the nav grid cuts the
+  steps across them like any thin wall (the gateway and the two panels that are down stay open). Headstones are
+  the `gravestone` / `grave_cross` props, thin enough not to block a nav cell; mounds, pits and the gravel path have
+  no colliders. Everything stands on the terrain where it is (the far corners lie past the levelled yard).
+  Loot and the casket (`CONT.CASKET`, table `crypt`) are `ZONE.CEMETERY`; the crypt's supply spot is the chapel's.
+  `world.cemetery` holds the graves (`{ x, y, z, yaw }`: where one of the dead stands up, and which way it faces),
+  `inside(x, z)` for the fenced ground, and what the field map draws.
+- **The rule** (`server/cemetery.js`, `Game.cemetery`) is called from five places in `server/game.js` (a new run,
+  sunrise, the start of each wave, the tick, `/cemetery`) and one in `Zombies.updateOne`. A wave that starts with a
+  survivor within `CEMETERY.NEAR` takes `CEMETERY.SHARE` of its walkers and runners out of its queue into
+  `Cemetery.pending`; until they are up they wait in a wave of their own that never starts by the clock
+  (`Cemetery.share`, pushed onto `Game.waves`), so the horde the HUD counts does not change. Each is given a grave
+  when its turn comes (`pick`: weighted to the graves nearest the survivors, `1 / (1 + d/6)^3`, none within
+  `KEEP_OFF` of one, none that gave up its dead in the last `STIR + RISE + REST`). By day `RESTLESS` graves drawn
+  at sunrise each wake for the first survivor within `WAKE`.
+- **A rise** is `stir` (`EVT.GRAVE`, the grave's index: the warning) and `CEMETERY.STIR` later `rise`: an ordinary
+  `Zombies.spawn` whose feet are put a body's height under the grass, `z.riseT = CEMETERY.RISE`. While `riseT > 0`
+  `Zombies.updateOne` hands it to `Cemetery.climb`, which only raises it (`riseDepth`: two heaves) and holds
+  `ZANIM.RISE`. Nothing else knows: the hitbox goes with `z.y`, so `raycastWorld` stops a shot at the terrain before
+  it reaches what is still under it, and the client draws the zombie where it is replicated, the terrain covering
+  the rest. `poseRise` (`characters.js`) is the body meanwhile: arms overhead, then hands on the grass, then a knee
+  over the lip.
+- **On the client** (`client/render/cemetery.js`, `Game.graves`): the broken earth of every grave is one
+  `InstancedMesh`, in the scene from the moment the valley loads (warm-up), an instance scaled to nothing until its
+  grave stirs. `EVT.GRAVE` plays `SOUND.GRAVE_STIR`, heaves that instance and spits dirt for `CEMETERY.STIR` (and
+  shakes the camera through `Game.quake` within 12 m), then `SOUND.GRAVE_BURST`, a spray, and the grave stays
+  broken for the run. Walking in through the railings is "Discovered · St. Agnes Cemetery"; the field map draws the
+  railings and a cross for every grave, and names the cemetery once the chapel is known.
+- `scripts/test-cemetery.js` holds the place on six valleys and the rule in a running game, including a scripted
+  night inside a ring of walls built round the chapel.
+
+## Deer: wildlife that can be hunted
+
+The deer (`server/deer.js`, shared numbers in `shared/deer.js`, the view in `client/game/deer.js` and
+`client/render/models/deer.js`) are an entity kind of their own, `ENT.DEER` (fields: position, yaw, a `DANIM` state,
+the coat in the create), kept in `game.deer` - not a zombie type with a flag. That was the choice between two kinds of
+work: a zombie type would have had every system that walks `game.zombies` skip it (the horde's size and waves and
+what is left of it, the night summary, kill counts and the leaderboard, the killfeed, the dawn sun, what a noise draws,
+the night themes, `/spawn`, the Shade's light test, the leg shots, the cat's fear, the client's dread music and voices),
+now and in everything added later; an entity kind needs its own hit registration, history and death, which come down to
+a few hooks into code that already exists:
+
+- **Shots and blows.** `Combat.forTargets` hands a survivor's shots and swings the live deer along with the dead, so a
+  deer is judged by the same lag-compensated trace: its position is in the 32-tick history (`Game.recordHistory`), and
+  `Combat.hitbox` gives it `deerHitbox` - a body cylinder and a head sphere ahead of it, up on the neck or (`DANIM.GRAZE`)
+  down in the grass, where the model carries it (`/sandbox/models-test.html?deer=grid&hit=1` prints the skull against
+  it). `Combat.damageZombie` passes a hit on a deer to `Deer.damage` before anything zombie-only runs; `legZone` is
+  for zombies only. Blasts (`Combat.explode`) and burning ground (`updateAreas`) call `Deer.blast` / `scorch`. The
+  client's own-shot prediction (`Game.predictPellet`) tests the same shapes where the deer are drawn, and the view
+  follows the zombie's sample ring and fading offset, so the picture the shooter aims at is the one the server rewinds to.
+- **Death.** `Deer.kill` drops `DEER_LOOT` through `Game.dropItem` and leaves the body on the wire as `DANIM.DEAD` for
+  `DEER.corpse` s; nothing is credited to anyone (no `zkills`, `credit`, `killfeed` or `nightStats`). The hit marker still
+  shows the kill. On the client a removed dead deer joins the corpse list (`DANIM.DEAD` is `ZANIM.DEAD`'s number).
+- **What they fear.** Every group looks round four times a second (`Deer.threat`): a survivor nearer than `DEER.notice`
+  (the multipliers for crouching, lying downed and sprinting are the dead's from `Zombies.chooseTarget`; a survivor down
+  the mine is not seen), one of the dead or a player-zombie nearer than `DEER.dread`. `Zombies.noise` hands every noise
+  to `Deer.hear`. A bolt (`Deer.refuge`) looks for open woods `DEER.flee` m straight away from it, then at headings
+  further round, and the group runs there by a flow field of its own (`nav.computeField('deer' + id, ...)`, one solve
+  per bolt or drift) where the straight line is not clear. A group already running ignores what is behind it.
+- **Getting about.** The body moves by the collision the dead use (`resolveBody` with `human = false`), never takes a
+  step into deep water or a mine portal (`world.mine.inHole`), and a deer that is held up for 0.6 s stops pushing: a
+  grazing one gives up that tuft, a running one takes a few strides to the side and then the field again, and after
+  three of those it stops where it is. `scripts/test-deer.js` chases groups round the valley for half an hour of game
+  time and counts the ticks spent pushing at something (under 0.1%).
+- **Its own randomness.** Everything random in `deer.js` comes off `mulberry32(seed ^ 0xdee4)`, the scatter of the drops
+  too (`game.rng` is swapped for the deer's stream around `dropItem`), so the game's stream - and `sim-smoke` - is the
+  same with deer in the valley as without; the test counts the draws.
+- **Numbers and traffic.** Groups: `DEER.groups` of `groupMin`-`groupMax`, `DEER.cap` in all; `Deer.dawn` (from
+  `Game.startDay`) walks new groups in from the rim to replace what was hunted. A standing deer costs nothing on the wire
+  and grazing deer stand most of the time; one that moves costs about 4-5 B an update at the half rate of anything
+  past `LOD_NEAR`. `npm run bench:net` (seed 4242, 4 players): +81 B/s of payload per client in the half-minute standing at
+  the car, where two groups in range were being moved about by the dead (+5% on the wire), +37 B/s roaming, +4 B/s
+  in the night's fight; no new messages or packets. The server spends about 0.01 ms a tick on them.
+
+## The fair: a ride in the player simulation
+
+The Tri-County Fair (`ZONE.FAIR`, core) is built by `buildFair` in `shared/fair.js`, called from world.js like any
+place, and returns `world.fair`: its frame, the generator and its fuel drum, the lamps (light for the Shade) and the
+strings of bulbs. The rides' frames, platform and deck are ordinary static parts; what turns is drawn by the client.
+
+- **One clock, in commands.** Both rides turn on one ride clock that only moves while the generator runs, counted in
+  commands (`CMD_RATE` to a second), and `seatPos(fair, seat, t)` is where a rider's feet are in a seat (0-7 the
+  wheel's gondolas, 8-15 the carousel's horses) when it reads t. A survivor in a seat carries their own reading of it
+  in the simulated state: `ride` (seat + 1), `rideT`, `rideGo`. `simulatePlayer` asks `rideStep` at the start of a
+  command (moves `rideT` on by one, or decides the rider is out: Space, any speed or air under them that something
+  else gave them - a knock, a rope - or having turned) and while it holds them treats them like a pinned player, then
+  `rideCarry` puts the body in the seat (crouched height and eye, still, on the ground). That is all prediction needs:
+  client and server run the same commands over the same numbers. The server only changes the three fields when the
+  client cannot know: boarding (`ACT.RIDE`, `Fair.board`), the generator starting or stopping under riders
+  (`Fair.turn`), and a rider whose reading has drifted more than half a second off the wheel's (`DRIFT`: their
+  commands stopped coming, or the server dropped some). They travel as the self state's `SELF.RIDE` chunk.
+- **The server** (`server/fair.js`, `Game.fair`) owns the wheel's clock (3 commands a tick while it runs), the fuel
+  (in ticks) and the generator's rules: `HOLD.FAIR_START` / `FAIR_STOP` on `FAIR_GEN_ID` (a portion of
+  `ITEM.AMMO_FUEL` from the backpack if the tank is dry), `ACT.INTERACT` on `FAIR_TANK_ID` (a portion more), the
+  standing noise (`NOISE.FAIR`, every `GEN.noiseEvery` s) and `Fair.lit`, the one call `Zombies.isLit` makes for it.
+  The dead in a seat stay in it and go round with it until they rise. Everything a client draws comes from one entity,
+  `ENT.FAIR`, in everyone's area of interest: running or not, and the clock and the fuel as server ticks they read zero
+  at (`FRF`), so a running fair sends nothing. Which seat a player sits in rides in the top five bits of their
+  entity's flags (`PRIDE_SHIFT`).
+- **The client** (`client/game/fair.js`, `Game.fair`; meshes in `client/render/fair.js`) draws the whole fair at one
+  reading of the clock per frame: a rider's own prediction (their seat must be under them), or for a player on foot
+  the server's clock at the interpolation time moved on by the lead their own commands have on it, so that a seat
+  being boarded is already where it will be. Every rider - other players too - is drawn in their seat at that reading
+  (`Entities`: a player whose flags name a seat slides into it over a fifth of a second), so the ride and its riders
+  can never come apart, whatever the link does. A step in that reading (the generator starting or stopping under a
+  rider, a correction after a stall) fades out as an offset (`FADE`) instead of jumping. While seated the camera is
+  the seat as drawn (`FairClient.carry`), `Prediction.viewLag` leaves rides alone, and [E] on "Get off" is the
+  simulation's own jump, pressed for one command (`FairClient.press`).
+- `scripts/test-fair.js` holds the rules against the server, and a rider's prediction against it on a laggy link.
+
+## The railway
+
+A single track across the valley from a tunnel in one rim to a tunnel in the other.
+
+- **The course** is planned in `planLayout` (`shared/layout.js`) on a stream of its own (`seed ^ 0x7a11`), after
+  Route 9 and the lake and before any place: it crosses Route 9 between the breakdown and the first stop of one
+  arm, and each arm runs out to the rim drifting sideways by its own belly. The depot's spot and the stalled
+  train's are picked with it; the line is then laid by its turn per metre, with no turn at all along the
+  platform and the train (eased in and out), so it is dead straight there and never bends tighter than the
+  curve it came from. Of the courses that pass (off the lake, clear of the breakdown, away from the highway for
+  good, out through the rim at a fair angle) the one with the least digging is taken. Every other place keeps
+  `RAIL_GAP` of woods between its levelled ground and the line, and the ponds keep off it. The depot is `core`
+  and sited first (`site: 'rail'`).
+- **The heights** (`planRail` in `shared/rail.js`): the raw ground along the line, less the rise of the rim,
+  smoothed over a train's length and held to `RAIL.GRADE`; level at `RAIL.DROP` below the depot's yard through
+  the depot, and level under the train. Every road meets it at the height of its bed (`pinRoad` in
+  `buildRoad`), and the road router pays to run along it (`cost`), so roads cross it rather than follow it. It is
+  never a wall to them.
+- **The ground** (`grade`, after the roads are flattened in): every vertex within `RAIL.BED` of the centre line
+  is set to the bed, and beyond that the ground is clamped to a slope of `RAIL.SLOPE` up or down from it -
+  cuttings and embankments. In a bore the bed is wider and the sides steep, under the portal's stone. The bed is
+  entered in the road grids as `ROAD.RAIL`, so nothing grows or is built on it and its ground is drawn as a dirt
+  road. The heightfield has a point every 2 m, so only about the middle 3 m of the bed is level to the
+  centimetre (under the sleepers); the ballast is drawn over the edges. The mine is planned after this, and its
+  portals' aprons and the ground it heaps over a thin roof may move the edge of the bed; `settle` puts the bed
+  back unless a roof under it needs that ground, and then the track rides over the hump at its ruling grade
+  (`rail.humps` counts the vertices kept up: none in 300 valleys tested).
+- **Standing on it.** Rails and sleepers are drawn by `client/render/railway.js` and have no collider: the line
+  is open ground to bodies and to the nav grid. What stands above the ground to be walked on - the depot's
+  platform, the loading dock beside the train, the floors of the two open boxcars - are thin slabs, which the
+  nav grid takes as decks (as it takes the pier). They lie level with each other at `RAIL.FLOOR` over the bed,
+  and the ground beside them (the depot's yard, the loading bank) is `RAIL.DROP` over it, a step below, so the
+  dead walk up onto them; the drop to the bed is a deck's edge. `rail.decks` puts them in `world.floorAt` where
+  they stand more than a step over the ground, so what is built, dropped or burnt in a boxcar is on its floor.
+  `nav.js` keeps a deck's cut edges in the steps it tests against the real walls (`_deckStep`): beside the car
+  the dead would otherwise be sent up the side of the dock. A doorway's jamb can still hold one up for a while:
+  the field cuts the corner a body cannot, and it sidesteps until free.
+- **The train and the depot** are static-world parts and props (`build`, on its own stream `seed ^ 0x7a12`):
+  each car stands on the chord between its ends. A moving train would need none of this changed: the track is
+  a polyline with heights a metre apart (`rail.main`), and the stalled train and the cave-ins are what would be
+  in its way.
+- `scripts/test-rail.js` holds the plan on any number of seeds (`--sweep`), and the bed, the tunnels, the
+  boxcars, the dead and a running game on six.
 
 ## Gameplay systems (iteration 2)
 
@@ -260,6 +518,30 @@ more than its bytes**, so put things into the packets that already flow.
   so walls, trees and terrain cast shadows. While lit (`z.lit`) it holds still with `ZANIM.FROZEN`, takes
   `litResist` x damage and no knockback (`Combat.damageZombie`); the client keeps the pose it was caught in
   (`ZombieInstance.hold`) and plays the freeze / release sounds from the replicated anim, with no extra traffic.
+- **Power: the generator and its floodlights** (`STRUCT.GENERATOR` 11, `STRUCT.FLOODLIGHT` 12; numbers and the cone in
+  `shared/power.js`, the rule in `server/power.js`, the client in `client/game/power.js`). Both are ordinary structures
+  (they block, the dead break them, they count to `MAX_STRUCTURES`); everything else hangs off three hooks in
+  `server/game.js`: `Power.update` at the top of `updateStructures`, `Power.interact` in `interact` and
+  `ACT.GEN_SWITCH` (u16 entity id) in `handleAction`. A generator's tank is `e.burnLeft` (seconds) and its switch
+  `e.off`; it runs while the switch is on and there is fuel. Each tick `Power.update` burns the fuel of the running ones,
+  raises their hum through `Zombies.noise` every `GEN_HUM_EVERY` (with `game.rng` swapped for the module's own stream
+  for the call: the noise scatters where each zombie heads, and a generator must not shift what the rest of a seeded
+  run rolls), powers every floodlight within `GEN_RANGE` of a running one and lists the powered cones (lens and axis
+  from `floodAim`). `Zombies.isLit` asks `Power.floodLit` (one line, between the point lights and the flashlights): the
+  zombie's head, chest or shins inside a cone (`inFloodCone`, allowing for the body's width, like the flashlight)
+  with a clear line from the lens (`Zombies.clearLine`, so walls, trees and terrain cast shadows). The lens sits ahead
+  of the stand's own collider so that line never starts inside it. On the wire nothing is new: the state byte
+  (`SF.STATE`) of a generator is the switch in bit 0 and the fuel in 5 s steps above it (`genState`), of a floodlight 1
+  while powered. The client draws from that byte alone (`PowerViews`): the drone loop, the shake and the exhaust of a
+  running generator; a floodlight's lens, glare (shrinking off-axis and in haze) and a beam (an additive cone whose
+  silhouette fades out, dimmed by the haze instead of tinted, since fog would paint an additive cone the haze's
+  colour). The light itself is a pool of `FLOOD_SPOTS` (3) shadowless spot lights created with the game, like
+  `render/lights.js`, given each frame to the nearest lit floodlights within `SPOT_REACH`: a fourth lit lamp further
+  off keeps its lens, glare and beam and lights nothing. The spot is shaped to the rule (a little wider than
+  `FLOOD_HALF`, a soft edge, a slightly negative decay so the ground the lamp grazes 20 m out still shows the cone).
+  `[E]` on a generator is decided on the client: a press under `GEN_HOLD` is a tap (`ACT.INTERACT`: pour), held past it
+  `ACT.GEN_SWITCH` goes; the item guide counts `STRUCT_DEFS[t].fuel` as a use of that fuel.
+  `scripts/test-power.js` holds the rule on any seed.
 - **Bats and walls.** Bats fly (`Zombies.updateBat`), and what stops the dead on foot stops them in the air:
   after each tick's flight `flyCollide` puts a bat back outside whatever solid thing it overlaps (static
   colliders, player structures, and `roofBoxes`: every `world.roofs` entry as a block from eaves to ridge,
@@ -296,6 +578,21 @@ more than its bytes**, so put things into the packets that already flow.
   only throws the gib (`Effects.gibLeg`, a piece from the limb pool the overkill gibs use), so a client that was
   not there still sees the right model. `scripts/e2e-legs.js` runs it in the real client; the sandbox's
   `?film=0&legs=3` prints where the head ends up, which is what `CRAWL_HEAD_Y` / `CRAWL_HEAD_FWD` are set from.
+- **The mounted gun** (`shared/mountedgun.js`, `server/mountedgun.js`, `client/game/mountedgun.js`, the models in
+  `client/render/models/mountedgun.js`). The nest is a prop of the Army Checkpoint (`mg_tripod`, found by
+  `gunNest`); the gun on it is one entity, `ENT.GUN` (belt, gunner, where it was left pointing), made by
+  `startGame`. Manning it is `ACT.GUN_MAN`, feeding the belt `ACT.GUN_FEED`; neither touches the player simulation,
+  so the gunner walks as ever, and letting go is stepping away (`atGrips`, checked by the server every tick and by
+  the gunner's own client). It is fired by commands like a gun in the hands, but not by the simulation: while
+  manning, the client puts the fire button into its commands as `BTN.GUN` instead of `BTN.ATTACK` (so the weapon
+  in the hands stays quiet), and both ends run `stepGun` over the gunner's commands - the server in
+  `processInputs` after each one is simulated, the client over the commands each frame's prediction step issued -
+  so the client draws a round on the command the server fires it on. A round is `gunShot`: from the gunner's eye
+  along their view held inside the arc, through `Combat.fire` with the gun's own row (`ev.def`, `GUN`), so it is
+  rewound, pierces and scores like any other. Remote clients draw it from the muzzle (`EVT.SHOT` with
+  `MOUNTED_GUN`, id 16, which no item has); the gun turns with the gunner's replicated view, so it costs no
+  traffic while it swivels. The gunner's client keeps its own count of the belt while its rounds are in flight
+  and takes the server's once they have all landed.
 - **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
   (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
   fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a
@@ -321,7 +618,28 @@ more than its bytes**, so put things into the packets that already flow.
   (it sheds the forward speed and lands exactly on the spot), 1 landed, 2 opened. The client (`render/flyover.js`)
   flies the plane model (`models/plane.js`), trails GPU-animated smoke puffs that linger ~2.5 min and drift with
   the wind, and plays the engine drone as a positional loop (speed-of-sound delay, doppler, air absorption).
-  `/airdrop` (debug commands) calls one in.
+  `/airdrop` (debug commands) calls one in. `flySupplyDrop(x, z, heading, y)` is the plane on its own, for a drop
+  aimed at a spot (the Relay Station's radio, below); `y` is the height of the ground meant there.
+- **Fixtures: the chapel bell and the Relay Station's radio** (`shared/fixtures.js`, `server/fixtures.js`,
+  `client/game/fixtures.js`). Things in the world a survivor works with a hold [E] that are neither entities nor
+  the car. Their interaction targets are `BELL_ID` / `RADIO_ID` (protocol.js, next to `CAR_ID`), sent with
+  `ACT.HOLD_BEGIN` like any hold; `Game.holdBegin` / `updateHold` hand a hold on one of them to `Fixtures`
+  (`owns`, `holdBegin`, `holdOk`, `holdDone`), and the kinds `HOLD.BELL` / `HOLD.RADIO` drive the progress ring.
+  Where they are is a spot in their place's own frame (`BELL_ROPE`, `BELL_AT`, `RADIO_AT`; `fixtureSpots(world)`
+  turns them into world positions); world.js builds the rope (a part of the chapel), the bell (prop
+  `church_bell`, in an open belfry) and the radio (prop `radio_set`, under open sky beside the mast) at the same
+  numbers, and `scripts/test-fixtures.js` holds the two together. Reach is an entity's: the client offers [E] when
+  its view ray passes within `FIXTURE_PICK` of the spot inside `INTERACT_REACH` with nothing in the way
+  (`canReach`), the server allows `FIXTURE_REACH`. A pull (`Fixtures.ringBell`) sends `NOTIFY.BELL` and the
+  tolls follow from `Fixtures.update`: each is a `SOUND.BELL_TOLL` with no radius (everyone hears it; the `bell`
+  category in audio.js carries it across the map) and a `Zombies.noise` of `NOISE.BELL`. A call
+  (`Fixtures.callPlane`) spends `RADIO_BATTERIES`, aims `flySupplyDrop` at the caller (pushed a crate's width
+  clear of whatever stands beside them, the heading off a stream of its own: the game's is not drawn from) and
+  makes a `NOISE.RADIO`; `calledDay` keeps it to one a day, and `phase` to the day. The client keeps what it knows
+  of both (the rope's wait, the day's call) from the notices, so its prompt can be out of date for a client that
+  joined since; it sends the hold anyway, and the server answers a refusal with `NOTIFY.BELL_WAIT` /
+  `NOTIFY.RADIO_NO` (reason in `RADIO_NO`). The item guide lists what a fixture costs (`FIXTURE_USES`) with the
+  recipes. `/bell` and `/radio` (debug commands) ring it and go to it.
 - **Waypoint and compass.** The waypoint is client-side only and adds no network traffic (the mark the team
   sees is the ping). A click on the field map sets `Game.waypoint` (`MapScreen._pick`: a place's name or yard
   snaps to the place; the map frees the pointer while it is open, the way the inventory does), `Game.buildMarkers`

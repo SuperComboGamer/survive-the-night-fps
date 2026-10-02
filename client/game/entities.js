@@ -1,12 +1,13 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
-import { ENT, PFLAG, ZSTATUS, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
+import { ENT, PFLAG, ZSTATUS, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD } from '../../shared/constants.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
+import { createDeerView, deerAnimChanged, removeDeerView, updateDeer } from './deer.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createStructure, setStructureDamage } from '../render/models/structures.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
@@ -18,7 +19,8 @@ const MAX_GLINTS = 96;
 const ITEM_GLINT_RANGE = 13; // a loose item glints inside this distance (m), fading in over the last 3
 const ITEM_GLINT_GAIN = 0.9; // ...at up to this brightness by day, against 1 for a container or a car supply
 const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next one
-const HEAVY_STEP_SHAKE = 14; // a tank's footfall jolts the camera inside this distance (m)
+const HEAVY_STEP_SHAKE = 30; // a tank's footfall shakes the camera inside this distance (m), harder the nearer it lands
+const HEAVY_RUN_SHAKE = 42; // ... and from this far off, harder still, when it is charging
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
 function glintTexture() {
@@ -332,7 +334,7 @@ export class Entities {
     if (e.kind === ENT.PLAYER) {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
-    } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT) yaw = dqangle8(q[3]);
+    } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT || e.kind === ENT.DEER) yaw = dqangle8(q[3]);
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
 
@@ -404,6 +406,12 @@ export class Entities {
           e.meowT = 4 + Math.random() * 10;
           break;
         }
+        case ENT.GUN:
+          g.gun.attach(e); // the mounted gun: client/game/mountedgun.js draws and turns it
+          break;
+        case ENT.DEER:
+          createDeerView(this, e);
+          break;
         case ENT.ITEM: {
           const cat = ITEM_DEFS[e.item]?.cat;
           if (cat === 'part' || cat === 'schem') this.caches.add(e); // car supplies & schematics glint from afar
@@ -444,6 +452,7 @@ export class Entities {
             this.applyTorchState(e);
           }
           if (def.station) this.stations.push(e);
+          g.power?.add(e, v); // (a generator's drone and exhaust, a floodlight's lamp: game/power.js)
           break;
         }
         case ENT.PROJECTILE: {
@@ -526,6 +535,10 @@ export class Entities {
       case ENT.CAT:
         if (!initial && mask & 0b11) this.pushSample(e, t);
         break;
+      case ENT.DEER:
+        if (!initial && mask & 0b11) this.pushSample(e, t);
+        if (mask & 0b100) deerAnimChanged(this, e, initial);
+        break;
       case ENT.ITEM:
         if (!initial && mask & 1) {
           this.pushSample(e, t);
@@ -604,6 +617,7 @@ export class Entities {
       if (this.bossEnt === e) this.bossEnt = null;
       return;
     }
+    if (e.kind === ENT.DEER && removeDeerView(this, e)) return;
     this.destroyView(e, false);
   }
 
@@ -625,7 +639,7 @@ export class Entities {
       this.zombieCount--;
       this.disposeZombieView(e.view);
       if (this.bossEnt === e) this.bossEnt = null;
-    } else if (e.kind === ENT.PLAYER || e.kind === ENT.CAT) {
+    } else if (e.kind === ENT.PLAYER || e.kind === ENT.CAT || e.kind === ENT.DEER) {
       if (e.view) {
         this.scene.remove(e.view.object);
         e.view.dispose?.();
@@ -840,7 +854,12 @@ export class Entities {
               }
               if (stepped) {
                 g.audio.footstep(g.surfaceAt(e.rx, e.ry, e.rz), e.rx, e.ry, e.rz, stepVol, { heavy });
-                if (heavy && distC < HEAVY_STEP_SHAKE * HEAVY_STEP_SHAKE) g.camShake = Math.min(1, (g.camShake || 0) + 0.3 * (1 - Math.sqrt(distC) / HEAVY_STEP_SHAKE));
+                if (heavy) {
+                  // (Game.quake) a charge is its run: the footfalls come faster than one dies away, and the thumps run into a rumble
+                  const run = e.q[4] === ZANIM.RUN;
+                  const near = 1 - Math.sqrt(distC) / (run ? HEAVY_RUN_SHAKE : HEAVY_STEP_SHAKE);
+                  if (near > 0) g.quake = Math.min(1, g.quake + (run ? 1 : 0.7) * near);
+                }
               }
             }
           }
@@ -850,12 +869,19 @@ export class Entities {
         }
         case ENT.PLAYER: {
           e.samples.sample(renderTick, tmp);
+          // on a ride at the fair they are drawn in their seat, where the ride is drawn this frame (game/fair.js),
+          // and slide into it and out of it over a moment instead of popping
+          const ride = playerRide(e.q[5]);
+          if (ride) e.seat = ride;
+          e.seatK = Math.max(0, Math.min(1, (e.seatK || 0) + (ride ? dt : -dt) * 5));
+          if (e.seatK > 0) g.fair.seatBlend(e.seat - 1, tmp, e.seatK);
           const dx = tmp.x - e.rx;
           const dy = tmp.y - e.ry;
           const dz = tmp.z - e.rz;
           const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 10);
-          e.vy = dy / Math.max(dt, 1e-3);
+          if (e.seatK > 0) e.speed = 0; // (carried, not walking)
+          e.vy = e.seatK > 0 ? 0 : dy / Math.max(dt, 1e-3);
           e.rx = tmp.x;
           e.ry = tmp.y;
           e.rz = tmp.z;
@@ -871,7 +897,8 @@ export class Entities {
             v.setZombie(zombie);
             e.weapon = -1;
           }
-          const weapon = zombie ? 0 : e.q[6];
+          const grips = g.gun.gunner === e.id; // at the mounted gun: both hands on it, their own weapon put away
+          const weapon = zombie || grips ? 0 : e.q[6];
           if (weapon !== e.weapon) {
             e.weapon = weapon;
             v.setWeapon(weapon);
@@ -884,7 +911,7 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time });
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, sit: e.seatK > 0.5 });
           v.object.visible = !(dead && zombie);
           // flashlight
           const flashOn = !!(flags & PFLAG.FLASHLIGHT) && !dead;
@@ -932,6 +959,9 @@ export class Entities {
           }
           break;
         }
+        case ENT.DEER:
+          updateDeer(this, e, dt, renderTick, time, camPos, _frustum);
+          break;
         case ENT.PROJECTILE: {
           e.samples.sample(renderTick, tmp);
           const moved = Math.hypot(tmp.x - e.rx, tmp.y - e.ry, tmp.z - e.rz) > 1e-3;

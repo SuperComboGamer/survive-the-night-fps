@@ -506,6 +506,21 @@ const ITEM_ICONS = {
         circ(14.4, 20.7, 0.55),
     ),
   ],
+  // venison: a haunch on the bone, a seam of fat through the raw one; the cooked one grill-marked and steaming
+  [ITEM.VENISON_RAW]: [
+    40,
+    32,
+    E('M4 18Q2 7 13 4Q23 2 27 10Q29 16 24 21Q17 27 9 25Q5 23 4 18Z' + 'M8.6 15.2Q13.5 9.4 21.6 10.4L21.4 11.8Q14.2 11 9.8 16.2Z') +
+      P('M23.4 17.4L31.5 23.6L29.6 26L21.4 19.8Z' + circ(33, 23.4, 2.3) + circ(31, 26.6, 2.3)),
+  ],
+  [ITEM.VENISON]: [
+    40,
+    36,
+    E('M4 22Q2 11 13 8Q23 6 27 14Q29 20 24 25Q17 31 9 29Q5 27 4 22Z' + 'M9 16.5L10.6 15.4L17.6 24.6L16 25.7Z' + 'M14.2 13L15.8 11.9L22.8 21.1L21.2 22.2Z') +
+      P('M23.4 21.4L31.5 27.6L29.6 30L21.4 23.8Z' + circ(33, 27.4, 2.3) + circ(31, 30.6, 2.3)) +
+      S('M11 6Q9.4 4.4 11 2.8Q12.6 1.4 11.3 0.6', 1.5) +
+      S('M19 5.4Q17.4 3.8 19 2.2Q20.6 0.8 19.3 0', 1.5),
+  ],
   // ---------------- ammo
   [ITEM.AMMO_9MM]: [36, 32, round9(4.6) + round9(14.5) + round9(24.4)],
   [ITEM.AMMO_SHELLS]: [36, 34, shell(5) + shell(21)],
@@ -567,6 +582,24 @@ const ITEM_ICONS = {
     S('M14.08 5.81L33.28 9.73A6.4 6.4 0 0 1 33.28 22.27L14.08 26.19A10.4 10.4 0 0 1 14.08 5.81Z', 2.4) +
       E(circ(12, 16, 8) + circ(12, 16, 2.4) + rct(11.4, 9.2, 1.2, 3.6) + rct(11.4, 19.2, 1.2, 3.6) + rct(5.2, 15.4, 3.6, 1.2) + rct(15.2, 15.4, 3.6, 1.2)) +
       E(circ(32, 16, 4.4) + circ(32, 16, 1.5)),
+  ],
+  // the mounted gun (not an item: the weapon of its kills in the killfeed, MOUNTED_GUN in shared/mountedgun.js)
+  16: [
+    128,
+    48,
+    P('M4 8H7.5V25H4Z') + // spade grips
+      P('M7 10H14V12.4H7Z') +
+      P('M7 20.6H14V23H7Z') +
+      P('M13 8H56V25H13Z') + // receiver
+      P('M24 4.6H46V8H24Z') + // top cover
+      P('M17 3H20V8H17Z') + // rear sight
+      P('M56 11.5H86V21.5H56Z') + // barrel support
+      [60, 67, 74, 81].map((x) => E(rct(x - 2.4, 13, 4.8, 7) + circ(x, 16.5, 1.5))).join('') +
+      P('M86 14.4H120V18.6H86Z') + // barrel
+      P('M118 13H126V20H118Z') + // muzzle
+      P('M30 25H44V29H30Z') + // cradle
+      P('M35.4 29H38.6V34H35.4Z') + // pintle
+      S('M37 33L22 46.5M37 33L55 46.5M37 33V44', 2.6), // tripod
   ],
 };
 
@@ -650,6 +683,29 @@ const STRUCT_ICONS = {
       P(rct(5.4, 8.6, 3.2, 3.6)) +
       P(rct(5.4, 27.4, 3.2, 3.6)),
   ],
+  // tube frame, the tank on top, engine block and alternator (a bolt cut out of it), the exhaust out of one end
+  [STRUCT.GENERATOR]: [
+    48,
+    36,
+    E('M5 10H43Q45 10 45 12V30Q45 32 43 32H5Q3 32 3 30V12Q3 10 5 10Z' + rct(5.4, 12.4, 37.2, 17.2)) +
+      P('M11 3.6H33Q35.4 3.6 35.4 6V10H8.6V6Q8.6 3.6 11 3.6Z') +
+      P(rct(13, 1.4, 5, 2.2)) +
+      E(rct(8, 16.4, 13.4, 11.2) + rct(9.6, 18.4, 10.2, 1.1) + rct(9.6, 20.9, 10.2, 1.1) + rct(9.6, 23.4, 10.2, 1.1)) +
+      E(circ(32, 22, 6.6) + 'M33.8 16.8L29 22.8H31.9L30.3 27.2L35 21.2H32.1Z') +
+      P(rct(21.4, 21, 4, 2)) +
+      P(rct(6.6, 32, 5.4, 2.8)) +
+      P(rct(36, 32, 5.4, 2.8)) +
+      S('M45 19.4H47.2', 2.2),
+  ],
+  // a lamp head on a tripod, throwing light both ways out of the icon
+  [STRUCT.FLOODLIGHT]: [
+    48,
+    36,
+    E('M15 2.6H33Q35.4 2.6 35.4 5V15Q35.4 17.4 33 17.4H15Q12.6 17.4 12.6 15V5Q12.6 2.6 15 2.6Z' + rct(15.4, 5.4, 17.2, 1.7) + rct(15.4, 9.15, 17.2, 1.7) + rct(15.4, 12.9, 17.2, 1.7)) +
+      P(rct(22.9, 17.4, 2.2, 8.6)) +
+      S('M24 25L14.6 35M24 25L33.4 35M24 25.6V35', 1.9) +
+      S('M9.2 5.2L5 3.4M8.6 10H3.4M9.2 14.8L5 16.6M38.8 5.2L43 3.4M39.4 10H44.6M38.8 14.8L43 16.6', 1.5),
+  ],
 };
 
 // ---------------------------------------------------------------- glyphs (24x24)
@@ -695,6 +751,7 @@ const GLYPHS = {
   person: P(circ(12, 7, 4)) + P('M4 21.6Q4 13.4 12 13.4Q20 13.4 20 21.6Z'),
   people: P(circ(8.6, 7.4, 3.4)) + P('M2 20Q2 13 8.6 13Q15.2 13 15.2 20Z') + P(circ(16.4, 6.4, 2.8), ' opacity=".7"') + P('M15.4 11.6Q22 11.4 22.4 18.4H16.8Q16.6 14.2 15.4 11.6Z', ' opacity=".7"'),
   gear: E(gearPath(12, 12, 10.6, 8, 8) + circ(12, 12, 3.4)),
+  keyboard: E('M3 5H21Q22.4 5 22.4 6.4V17.6Q22.4 19 21 19H3Q1.6 19 1.6 17.6V6.4Q1.6 5 3 5Z' + [7.6, 10.9].map((y) => [4.2, 7.55, 10.9, 14.25, 17.6].map((x) => rct(x, y, 2.2, 2.2)).join('')).join('') + rct(7.55, 14.4, 8.9, 2)),
   check: S('M4.6 12.6L9.6 17.6L19.6 6.6', 2.6),
   xmark: S('M6 6L18 18M18 6L6 18', 2.4),
   sun: P(circ(12, 12, 4.8)) + S(raysPath(12, 12, 7.4, 10.4, 8), 1.6),

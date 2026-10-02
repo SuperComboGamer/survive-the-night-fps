@@ -28,7 +28,7 @@ const imp = (p) => import(pathToFileURL(join(ROOT, p)).href);
 const { Game } = await imp('server/game.js');
 const { C2S, S2C, SNAP, ACT, ENT, PROTOCOL_VERSION, Writer, Reader } = await imp('shared/protocol.js');
 const { BTN, PHASE, SERVER_TICK_RATE, INTERP_DELAY } = await imp('shared/constants.js');
-const { ITEM, WEAPONS, AMMO_ITEMS, STRUCT_DEFS } = await imp('shared/defs.js');
+const { ITEM, WEAPONS, AMMO_ITEMS, AMMO_MAX, STRUCT_DEFS } = await imp('shared/defs.js');
 const decode = await imp('client/net/decode.js');
 const { Connection } = await imp('client/net/connection.js');
 const { Prediction } = await imp('client/game/prediction.js');
@@ -463,7 +463,7 @@ for (const [name, secs] of PHASES) {
     if (name === 'night-fight' && k % (20 * TR) === 0) {
       for (const c of clients) {
         const p = game.players.get(c.id);
-        for (const it of AMMO_ITEMS) game.giveItem(p, it, 999);
+        AMMO_ITEMS.forEach((it, cal) => game.giveItem(p, it, AMMO_MAX[cal] - p.state.ammo[cal])); // (a full stack of each)
       }
     }
     for (let f = 0; f < FRAMES_PER_TICK; f++) {

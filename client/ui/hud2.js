@@ -1,7 +1,7 @@
 // Iteration 2 HUD pieces: compass strip, objective tracker ("field notes"), world markers (teammate
 // nameplates, pings, the car), downed overlay, damage direction arrows and the dawn summary card.
 // Same conventions as hud.js: update() is called every frame and only touches the DOM on change.
-import { ITEM_DEFS, SUPPLIES, SUPPLY_NEED, ZONE_NAMES, ITEM } from '../../shared/defs.js';
+import { ITEM_DEFS, SUPPLIES, SUPPLY_NEED, ZONE_NAMES, ITEM, supplyRumours } from '../../shared/defs.js';
 import { PHASE, DUSK_WARNING } from '../../shared/constants.js';
 import { el, svgEl, fmtTime, clamp } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -23,7 +23,7 @@ const PING_LABEL = ['Go here', 'Danger', 'Loot'];
 // world bearing of (dx,dz): 0 = north (-Z), +90 deg = east (+X)
 export const bearing = (dx, dz) => Math.atan2(dx, -dz);
 
-// A survivor's health fraction as a class, for nameplates, the compass and the survivors list: 'crit' below 30%
+// A survivor's health fraction as a class, for nameplates, the compass and the player list: 'crit' below 30%
 // (where your own vitals turn red), 'hurt' below 60%. Negative = no health to show (downed, unknown).
 export const healthTier = (f) => (f < 0 || f >= 0.6 ? '' : f < 0.3 ? ' crit' : ' hurt');
 
@@ -302,10 +302,12 @@ export class Objective {
       let where;
       if (complete) where = 'installed';
       else if (carried) where = 'in your pack';
-      else if (i < 4) where = o.hints[i] === 255 ? 'somewhere out there' : ZONE_NAMES[o.hints[i]] + '?'; // a rumour, as on the map
       else {
-        const zs = o.hints.slice(4).filter((z) => z !== 255);
-        where = zs.length ? zs.map((z) => ZONE_NAMES[z]).join(' · ') : 'somewhere out there';
+        // the places it is still rumoured to be in (a rumour keeps its question mark, as on the map); none left
+        // because every one has been picked up: it is in somebody's hands, or lying where they left it
+        const rum = supplyRumours(i, o.hints, o.found);
+        if (!rum.zones.length) where = rum.found ? 'found' : 'somewhere out there';
+        else where = need > 1 ? rum.zones.map((z) => ZONE_NAMES[z]).join(' · ') : ZONE_NAMES[rum.zones[0]] + '?';
       }
       const st = need > 1 && !complete ? `${have}/${need}` : '';
       const k = where + '|' + st + '|' + complete + '|' + !!carried;

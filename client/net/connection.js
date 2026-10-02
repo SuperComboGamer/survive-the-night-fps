@@ -1,5 +1,5 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
 
 export class Connection {
   constructor(handlers) {
@@ -20,7 +20,8 @@ export class Connection {
     return `${proto}://${location.host}/ws`;
   }
 
-  connect(name) {
+  // pid: who this browser is to the leaderboard (identity.js)
+  connect(name, pid = '') {
     return new Promise((resolve, reject) => {
       let settled = false;
       const ws = new WebSocket(this.url());
@@ -32,6 +33,7 @@ export class Connection {
         w.u8(C2S.JOIN);
         w.u8(PROTOCOL_VERSION);
         w.str(name);
+        w.str(pid);
         ws.send(w.copy());
       };
       ws.onmessage = (m) => {
@@ -69,6 +71,9 @@ export class Connection {
             break;
           case S2C.WORLD_RESET:
             this.h.world?.(r.u32());
+            break;
+          case S2C.BOARD:
+            this.h.board?.(readBoard(r));
             break;
         }
       };
@@ -125,6 +130,7 @@ export class Connection {
       case ACT.DEMOLISH:
       case ACT.REPAIR:
       case ACT.HOLD_BEGIN:
+      case ACT.GEN_SWITCH:
         w.u16(args[0]);
         break;
       case ACT.PING:
@@ -134,6 +140,10 @@ export class Connection {
         w.i16(Math.max(-32768, Math.min(32767, Math.round(args[3] * 64))));
         break;
       case ACT.DROP_SLOT:
+      case ACT.SPLIT_INV:
+        w.u8(args[0]);
+        w.u16(args[1]);
+        break;
       case ACT.SWAP_INV:
         w.u8(args[0]);
         w.u8(args[1]);
@@ -147,6 +157,13 @@ export class Connection {
       default:
         if (args.length) w.u8(args[0]);
     }
+    this.sendRaw(w);
+  }
+
+  // asks for the leaderboard: it comes back as S2C.BOARD (the server answers once a second at most)
+  board() {
+    const w = this.w.reset();
+    w.u8(C2S.BOARD);
     this.sendRaw(w);
   }
 

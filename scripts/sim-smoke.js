@@ -4,7 +4,7 @@
 // with light, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
-import { RECIPES, AMMO_MAX } from '../shared/defs.js';
+import { RECIPES, AMMO_MAX, AMMO_ITEMS } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
 import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
@@ -13,7 +13,7 @@ import { readSnapshot } from '../client/net/decode.js';
 import { createPlayerState, copyPlayerState, simulatePlayer } from '../shared/playersim.js';
 import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
 import { COL, BOX, footprintContains } from '../shared/collision.js';
-import { HARVEST, harvestAt, harvestPrompt, needLines } from '../client/game/harvest.js';
+import { HARVEST, harvestAt, harvestPrompt, strippedKey, needLines } from '../client/game/harvest.js';
 import { SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
 import { ITEM_DEFS } from '../shared/defs.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
@@ -30,6 +30,13 @@ const fails = [];
 const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`);
   if (!ok) fails.push(name);
+};
+// A survivor's reserve of a calibre is the rounds of it in their backpack: makes that n (in game g), as one stack.
+const setAmmo = (p, cal, n, g = game) => {
+  for (let i = 0; i < p.inv.length; i++) if (p.inv[i]?.item === AMMO_ITEMS[cal]) p.inv[i] = null;
+  if (n > 0) g.giveItem(p, AMMO_ITEMS[cal], n);
+  p.invDirty = true;
+  g.syncAmmo(p);
 };
 
 function client(name) {
@@ -275,7 +282,7 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   check('...with a kit for the day: more rounds and bandages than day 1, still no more than a pistol', s.ammo[AMMO.P9] > a.state.ammo[AMMO.P9] && has(c, ITEM.BANDAGE) > has(a, ITEM.BANDAGE) && s.weapons.join() === a.state.weapons.join() && c.armor === 0, `${kit(c)} against ${kit(a)}`);
   const fresh = kit(c);
   // they fire 30 rounds, use a bandage, find some scrap - and drop out
-  s.ammo[AMMO.P9] -= 30;
+  setAmmo(c, AMMO.P9, s.ammo[AMMO.P9] - 30, g);
   c.inv.find((x) => x && x.item === ITEM.BANDAGE).count--;
   g.giveItem(c, ITEM.SCRAP, 5);
   const kept = kit(c);
@@ -371,9 +378,11 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
 
 // bats fly round walls, not through them: a flock cannot get at a survivor in a room with its one doorway boarded
 // up, wheels round the building meanwhile, and is in once the boards come off
-// (a game of its own on the same map: nothing in here touches the run below)
+// (a game of its own: nothing in here touches the run below. On a pinned valley, 167: the fan of rays below takes a
+// room for closed when what it sees through a window ends on a hillside or a wreck within its reach, and on the
+// run's own valley, as the clinic's place in the pool redrew it, the first doorway it comes to is a motel room's)
 {
-  const g = new Game({ seed, log: () => {} });
+  const g = new Game({ seed: 167, log: () => {} });
   const session = g.onOpen({ send() {} });
   const jw = new Writer(64);
   jw.u8(C2S.JOIN);
@@ -703,7 +712,7 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   // no way back from (the lake) is put back with the herd once no survivor is near enough to see it happen.
   // (A game of its own on a pinned map: the wall is looked for there, and the run above is left as it was.)
   {
-    const g2 = new Game({ seed: 165, godMode: true, dayLength: 3600, log: () => {} });
+    const g2 = new Game({ seed: 170, godMode: true, dayLength: 3600, log: () => {} });
     g2.debugCommands = true;
     const session = g2.onOpen({ send() {} });
     const wj = new Writer(64);
@@ -1056,8 +1065,10 @@ const standOff = (c, e, d) => {
   const d = g.players.get(D.id);
   const t = g.players.get(T.id);
   const s = d.state;
-  const home = [s.x, s.z];
   const tp = (p, x, z) => g.handleChat(p, `/tp ${x} ${z}`);
+  // (on open ground: a spawn point can be beside a post of the rest area, and /tp puts a survivor on top of that)
+  for (let k = 0; k < 40 && groundAt(g.world, s.x, s.z, 200, 0.3) > g.world.heightAt(s.x, s.z) + 0.05; k++) tp(d, s.x + 0.5, s.z);
+  const home = [s.x, s.z];
   const rope = (p) => p.inv.reduce((n, x) => n + (x && x.item === ITEM.ROPE ? x.count : 0), 0);
   const off = (e) => Math.hypot(e.x - s.x, e.z - s.z);
   // the dropper puts three rope down out of the first backpack slot; `drop` is the stack on the ground
@@ -1068,7 +1079,7 @@ const standOff = (c, e, d) => {
     m.u8(C2S.ACTION);
     m.u8(ACT.DROP_SLOT);
     m.u8(0);
-    m.u8(0);
+    m.u16(0);
     g.onMessage(D.session, m.bytes().slice());
     return g.items.find((e) => !had.has(e));
   };
@@ -1118,6 +1129,32 @@ const standOff = (c, e, d) => {
   d.inv[0] = null;
   ticks(70); // (it is tried again every 3 s)
   check('...and it is picked up once there is room', battery.removed && d.inv[0]?.item === ITEM.CAR_BATTERY && told(D, NOTIFY.SUPPLY_FOUND) === 1 && told(D, NOTIFY.INVENTORY_FULL) === said);
+  // a car supply taken from its hiding place: the team is told that place needs no more searching (the battery
+  // above lay loose, it was nobody's rumour), and putting it down again does not bring the rumour back
+  ticks(2);
+  check('a car supply picked up off the ground leaves the rumours as they were', g.supplyFound === 0 && T.global.found === 0);
+  const hidden = g.items.find((e) => e.hint === 5);
+  const rumours = [...g.supplyHints];
+  d.inv[1] = null;
+  [s.x, s.y, s.z] = [hidden.x, hidden.y, hidden.z];
+  const take = new Writer(8);
+  take.u8(C2S.ACTION);
+  take.u8(ACT.INTERACT);
+  take.u16(hidden.id);
+  g.onMessage(D.session, take.bytes().slice());
+  ticks(2);
+  check('a car supply taken from its hiding place is marked found for the whole team', hidden.removed && g.supplyFound === 1 << 5 && D.global.found === 1 << 5 && T.global.found === 1 << 5, `found ${g.supplyFound}, sent ${T.global.found}`);
+  check('...its place still named by the rumour, and the others untouched', JSON.stringify(T.global.hints) === JSON.stringify(rumours));
+  const had = new Set(g.items);
+  const put = new Writer(8);
+  put.u8(C2S.ACTION);
+  put.u8(ACT.DROP_SLOT);
+  put.u8(1);
+  put.u16(0);
+  g.onMessage(D.session, put.bytes().slice());
+  ticks(2);
+  const lying = g.items.find((e) => !had.has(e));
+  check('...and it stays found when it is put down again', lying?.item === hidden.item && lying.hint === -1 && T.global.found === 1 << 5);
 }
 
 // a trunk's car alarm goes off: the ambush comes from behind the searcher, even with the day's valley near the zombie cap
@@ -1269,6 +1306,93 @@ const standOff = (c, e, d) => {
     need.length === 2 && need[0] === `Need ${wall[ITEM.WOOD] - 1} more ${ITEM_DEFS[ITEM.WOOD].name}` && /trees/.test(need[1]) && !/wrecks/.test(need[1]) && /trees/.test(both[1]) && /wrecks/.test(both[1]) && needLines(wall, wall).length === 0,
     JSON.stringify([need, both]),
   );
+}
+
+// a wreck gives five hits a day: the fifth tells every client it is used up, so no prompt goes on offering the hit;
+// whoever joins later is told what was used up before they came, and dawn brings it all back
+// (a game of its own: the one above is left as it was)
+{
+  const g = new Game({ seed, godMode: true, log: () => {} });
+  const join = (name) => {
+    const c = { id: 0, notes: [], stripped: new Set(), net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} } };
+    const on = { notify: (m, a) => c.notes.push([m, a]), stripped: (x, y, z) => c.stripped.add(strippedKey(x, y, z)), regrown: () => c.stripped.clear() };
+    c.handler = new Proxy({}, { get: (_, k) => on[k] || (() => {}) });
+    c.session = g.onOpen({
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) c.id = r.u16();
+        else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
+      },
+    });
+    const w = new Writer(64);
+    w.u8(C2S.JOIN);
+    w.u8(PROTOCOL_VERSION);
+    w.str(name);
+    g.onMessage(c.session, w.bytes().slice());
+    return c;
+  };
+  const ticks = (n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  const S = join('Salvager');
+  const T = join('Teammate');
+  ticks(5);
+  const p = g.players.get(S.id);
+  const s = p.state;
+  s.weapons[SLOT_MELEE] = ITEM.KNIFE;
+  g.combat.forTargets = () => {}; // nobody in the way: a swing that finds a zombie never reaches the wreck
+  // the ticks in between simulate the survivor, so every swing and every look is taken from the same spot again
+  let at = null;
+  const stand = () => Object.assign(s, { x: at.x, y: g.world.heightAt(at.x, at.z), z: at.z, yaw: Math.PI / 2, pitch: at.pitch, slot: SLOT_MELEE });
+  let landed = null;
+  const swing = () => {
+    stand();
+    landed = null;
+    g.combat.melee(p, { weapon: ITEM.KNIFE, heavy: false });
+    return landed;
+  };
+  const prompt = (c) => (stand(), harvestPrompt(g.world, s, c.stripped) || '');
+  const scrap = () => p.inv.reduce((n, x) => n + (x && x.item === ITEM.SCRAP ? x.count : 0), 0);
+  const emptied = (c) => c.notes.filter(([msg, arg]) => msg === NOTIFY.SEARCH_EMPTY && arg === 2).length;
+  // a wreck, and a spot beside it from where the swing lands on it (found with swings that take nothing)
+  const take = g.gatherHit;
+  g.gatherHit = (q, col) => (landed = col);
+  let wreck = null;
+  for (const col of g.world.staticGrid.query(g.world.car.x, g.world.car.z, 400, []).filter((c) => c.flags & COL.SALVAGE)) {
+    for (let d = col.r + 3; d > 0.3 && !wreck; d -= 0.05) {
+      for (const pitch of [-0.4, 0]) {
+        at = { x: col.x + d, z: col.z, pitch };
+        if (!wreck && swing() === col) wreck = col;
+        if (wreck) break;
+      }
+    }
+    if (wreck) break;
+  }
+  g.gatherHit = (q, col, ...rest) => ((landed = col), take.call(g, q, col, ...rest));
+  check('found a wreck to salvage', !!wreck);
+  const key = strippedKey(Math.round(wreck.x * 64), Math.round(wreck.y0 * 64), Math.round(wreck.z * 64));
+  for (let i = 0; i < 4; i++) swing();
+  ticks(1);
+  check('a wreck with a hit left in it is still offered', scrap() >= 4 && S.stripped.size === 0 && T.stripped.size === 0 && prompt(S).startsWith('[LMB] ') && emptied(S) === 0, `${scrap()} scrap, "${prompt(S)}"`);
+  swing();
+  ticks(1);
+  const had = scrap();
+  check('the last hit tells every client the wreck is used up, and the one who took it', landed === wreck && S.stripped.has(key) && S.stripped.size === 1 && T.stripped.has(key) && emptied(S) === 1 && emptied(T) === 0, `stripped ${S.stripped.size}/${T.stripped.size}, told ${emptied(S)}/${emptied(T)}`);
+  check('...and the prompt no longer offers the hit: it says there is nothing to be had', prompt(S) === HARVEST[1].spent && !prompt(S).startsWith('[') && prompt({ stripped: new Set() }).startsWith('[LMB] '), `"${prompt(S)}"`);
+  const rng = g.rng;
+  g.rng = () => 0.999; // (no "nothing left" toast: that one is a roll of the dice)
+  swing();
+  g.rng = rng;
+  check('...and there is nothing: another swing gives no scrap', landed === wreck && scrap() === had, `${had} -> ${scrap()}`);
+  const L = join('Latecomer');
+  ticks(2);
+  check('whoever joins later is told which are used up', L.stripped.size === 1 && L.stripped.has(key), `${L.stripped.size}`);
+  g.startDay();
+  ticks(1);
+  check('dawn brings them back, on every client', S.stripped.size === 0 && T.stripped.size === 0 && L.stripped.size === 0 && prompt(S).startsWith('[LMB] '), `"${prompt(S)}"`);
+  swing();
+  check('...and the wreck gives again', scrap() > had, `${had} -> ${scrap()}`);
 }
 
 // melee needs a clear line: no stabbing the dead through the wall you shelter behind, no claws through it either.
@@ -1479,7 +1603,7 @@ const standOff = (c, e, d) => {
   // every craft goes through, none is refused, the inventory ends up as the client expected - and where it stopped
   // short of what was asked for, one more would have been refused.
   {
-    const keep = [p.inv.map((x) => x && { ...x }), [...s.ammo], [...s.weapons]];
+    const keep = [p.inv.map((x) => x && { ...x }), [...s.weapons]];
     const full = (n) => Array.from({ length: n }, () => [ITEM.LEATHER, 10]); // slots no recipe below can use
     const refusals = () => A.notes.filter(([m]) => [NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.NEED_BENCH, NOTIFY.NEED_FIRE, NOTIFY.LOCKED].includes(m)).map(([m]) => m);
     const bulk = (id, stacks, set = () => {}, more = true) => {
@@ -1487,6 +1611,7 @@ const standOff = (c, e, d) => {
       stacks.forEach(([item, count], i) => (p.inv[i] = { item, count }));
       set();
       game.syncThrow(p);
+      game.syncAmmo(p);
       const model = copyInv({ slots: p.inv, ammo: s.ammo, weapons: s.weapons });
       const n = craftRun(RECIPES[id], model, CRAFT_MAX);
       A.notes.length = 0;
@@ -1505,7 +1630,7 @@ const standOff = (c, e, d) => {
     check('a bulk craft of 20 is 20 crafts in one tick', planks.n === CRAFT_MAX && planks.ok && count(ITEM.WOOD) === 20 && count(ITEM.STICK) === 0, `${planks.n} sent, ${count(ITEM.WOOD)} planks, ${count(ITEM.STICK)} sticks left`);
     // the materials run out (3 scrap); a full nail stack with nowhere else to go; the last scrap paid frees the slot
     // the nails need; bats with the melee slot taken and two free slots; a bat into the empty melee slot, then no room
-    const mats = bulk(9, [[ITEM.SCRAP, 3], [ITEM.POWDER, 20]], () => (s.ammo[AMMO.P9] = 0));
+    const mats = bulk(9, [[ITEM.SCRAP, 3], [ITEM.POWDER, 20]]);
     const stack = bulk(21, [[ITEM.SCRAP, 5], [ITEM.NAILS, 45], ...full(22)]);
     const freed = bulk(21, [[ITEM.SCRAP, 1], [ITEM.NAILS, 55], ...full(22)]);
     const bats = bulk(3, [[ITEM.WOOD, 9], ...full(21)]);
@@ -1515,15 +1640,15 @@ const standOff = (c, e, d) => {
       [mats, stack, freed, bats, bat].every((c) => c.ok) && [mats.n, stack.n, freed.n, bats.n, bat.n].join() === '3,1,1,2,1' && [mats.next, stack.next, freed.next, bats.next, bat.next].join() === [NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.INVENTORY_FULL].join(),
       JSON.stringify({ mats, stack, freed, bats, bat }),
     );
-    // ammunition: the server takes a craft while the reserve has room for a single round, and the rest of that
-    // batch is gone. A bulk craft stops at the last whole batch that fits (120 + 2 x 12 of 150), so nothing is lost
+    // ammunition is a stack in the backpack like the nails: with every other slot taken, a bulk craft stops at the
+    // last whole batch that stack takes (120 + 2 x 12 of 150), and the reserve is what the stack holds
     const cap = AMMO_MAX[AMMO.P9];
-    const ammo = bulk(9, [[ITEM.SCRAP, 10], [ITEM.POWDER, 30]], () => (s.ammo[AMMO.P9] = cap - 30), false);
-    check('bulk ammunition stops at the last whole batch the reserve takes', ammo.n === 2 && ammo.ok && s.ammo[AMMO.P9] === cap - 30 + 2 * RECIPES[9].n && count(ITEM.SCRAP) === 8 && count(ITEM.POWDER) === 26, `${ammo.n} batches sent at ${cap - 30} of ${cap}: reserve ${s.ammo[AMMO.P9]}, ${count(ITEM.SCRAP)} scrap and ${count(ITEM.POWDER)} powder left`);
+    const ammo = bulk(9, [[ITEM.SCRAP, 10], [ITEM.POWDER, 30], [ITEM.AMMO_9MM, cap - 30], ...full(21)]);
+    check('bulk ammunition stops at the last whole batch the backpack takes', ammo.n === 2 && ammo.ok && ammo.next === NOTIFY.INVENTORY_FULL && s.ammo[AMMO.P9] === cap - 30 + 2 * RECIPES[9].n && count(ITEM.AMMO_9MM) === s.ammo[AMMO.P9] && count(ITEM.SCRAP) === 8 && count(ITEM.POWDER) === 26, `${ammo.n} batches sent at ${cap - 30} of ${cap}: reserve ${s.ammo[AMMO.P9]}, ${count(ITEM.SCRAP)} scrap and ${count(ITEM.POWDER)} powder left`);
     p.inv.splice(0, p.inv.length, ...keep[0]);
-    keep[1].forEach((v, i) => (s.ammo[i] = v));
-    keep[2].forEach((v, i) => (s.weapons[i] = v));
+    keep[1].forEach((v, i) => (s.weapons[i] = v));
     game.syncThrow(p);
+    game.syncAmmo(p);
     p.invDirty = true;
   }
   // locked recipe
@@ -1533,7 +1658,8 @@ const standOff = (c, e, d) => {
   check('schematic lock enforced', A.notes.some(([m]) => m === NOTIFY.LOCKED));
   // crossbow: a bench recipe that needs no schematic, bolts are their own reserve, it re-cocks itself,
   // and a walker 36 m off (out of sight by day) hears the pistol but not the bolt
-  s.weapons[0] = s.ammo[AMMO.BOLT] = 0; // (a gun or bolts looted on the way: the crossbow goes into an empty hand, the bolts are counted)
+  s.weapons[0] = 0; // (a gun or bolts looted on the way: the crossbow goes into an empty hand, the bolts are counted)
+  setAmmo(p, AMMO.BOLT, 0);
   game.giveItem(p, ITEM.ROPE, 1);
   game.giveItem(p, ITEM.SCRAP, 4);
   game.giveItem(p, ITEM.STICK, 6);
@@ -1541,22 +1667,24 @@ const standOff = (c, e, d) => {
   A.act(ACT.CRAFT, 27);
   run(3);
   check('crafted crossbow + bolts at workbench', s.weapons[0] === ITEM.CROSSBOW && s.mags[0] === 1 && s.ammo[AMMO.BOLT] === 4, `bolts ${s.ammo[AMMO.BOLT]}`);
-  // four more bolts with room for one in the reserve: the other three land at her feet (they were paid for)
+  // four more bolts with room in the backpack for one (a stack one short of full, every other slot taken, and the
+  // materials not used up): the craft is refused whole - nothing paid, nothing spilt at her feet
   {
-    const had = s.ammo[AMMO.BOLT];
-    game.giveItem(p, ITEM.AMMO_BOLTS, 999); // fill the reserve...
-    const cap = s.ammo[AMMO.BOLT];
-    s.ammo[AMMO.BOLT] = cap - 1; // ...but for one
-    game.giveItem(p, ITEM.STICK, 2);
-    game.giveItem(p, ITEM.SCRAP, 1);
+    const inv = p.inv.slice();
+    const cap = AMMO_MAX[AMMO.BOLT];
+    const has = (item) => p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0);
+    p.inv.fill(null);
+    [[ITEM.AMMO_BOLTS, cap - 1], [ITEM.STICK, 3], [ITEM.SCRAP, 2]].forEach(([item, count], i) => (p.inv[i] = { item, count }));
+    for (let i = 3; i < p.inv.length; i++) p.inv[i] = { item: ITEM.LEATHER, count: 10 };
     const before = new Set(game.items);
+    A.notes.length = 0;
     A.act(ACT.CRAFT, 27);
     run(3);
     const spilt = game.items.filter((e) => !before.has(e) && e.item === ITEM.AMMO_BOLTS);
-    const n = spilt.reduce((k, e) => k + e.count, 0);
-    check('ammo crafted with the reserve nearly full is not lost', s.ammo[AMMO.BOLT] === cap && n === 3, `reserve ${cap - 1} -> ${s.ammo[AMMO.BOLT]} of ${cap}, ${n} on the ground`);
-    for (const e of spilt) game.removeItemEnt(e);
-    s.ammo[AMMO.BOLT] = had;
+    check('ammo the backpack has no room for is not crafted', A.notes.some(([m]) => m === NOTIFY.INVENTORY_FULL) && s.ammo[AMMO.BOLT] === cap - 1 && has(ITEM.STICK) === 3 && has(ITEM.SCRAP) === 2 && spilt.length === 0, `${s.ammo[AMMO.BOLT]} of ${cap} bolts, ${has(ITEM.STICK)} sticks, ${has(ITEM.SCRAP)} scrap, ${spilt.length} stacks on the ground`);
+    p.inv.splice(0, p.inv.length, ...inv);
+    p.invDirty = true;
+    game.syncAmmo(p);
   }
   const far = game.zm.spawn(ZTYPE.WALKER, s.x + 36, s.z);
   A.input(0, 0, 0, 0);
@@ -1602,13 +1730,15 @@ const standOff = (c, e, d) => {
   // a rifle taken by swap (slot taken, backpack full) while the gun in hand is reloading: that reload is dropped,
   // it must not finish on the rifle just picked up and fill its magazine
   {
-    const keep = [s.weapons[0], s.mags[0], s.ammo[AMMO.SHELL], s.ammo[AMMO.R308]];
+    const keep = [s.weapons[0], s.mags[0]];
     const inv = p.inv.slice();
-    for (let i = 0; i < p.inv.length; i++) p.inv[i] ||= { item: ITEM.CLOTH, count: 1 };
+    // (a full backpack: six shells, five .308 rounds, and cloth)
+    p.inv.fill(null);
+    p.inv[0] = { item: ITEM.AMMO_SHELLS, count: 6 };
+    p.inv[1] = { item: ITEM.AMMO_308, count: 5 };
+    for (let i = 2; i < p.inv.length; i++) p.inv[i] = { item: ITEM.CLOTH, count: 1 };
     s.weapons[0] = ITEM.SHOTGUN; // (the shortest reload there is: one shell)
     s.mags[0] = 2;
-    s.ammo[AMMO.SHELL] = 6;
-    s.ammo[AMMO.R308] = 5;
     A.input(BTN.RELOAD, 0, 0);
     run(2, () => A.input(0, 0, 0));
     const reloading = s.reloadT > 0;
@@ -1618,9 +1748,10 @@ const standOff = (c, e, d) => {
     run(Math.ceil(WEAPONS[ITEM.SHOTGUN].reload * 20) + 1, () => A.input(0, 0, 0)); // as long as the shell had left to go in
     check('a weapon swapped in mid-reload does not inherit the reload', reloading && s.weapons[0] === ITEM.HUNTING_RIFLE && s.mags[0] === 0 && s.ammo[AMMO.R308] === 5, `rifle mag ${s.mags[0]}, .308 reserve ${s.ammo[AMMO.R308]}`);
     for (const e of game.items.filter((e) => !before.has(e) && e.item === ITEM.SHOTGUN)) game.removeItemEnt(e); // the one she put down
-    [s.weapons[0], s.mags[0], s.ammo[AMMO.SHELL], s.ammo[AMMO.R308]] = keep;
+    [s.weapons[0], s.mags[0]] = keep;
     p.inv.splice(0, p.inv.length, ...inv);
     p.invDirty = true;
+    game.syncAmmo(p);
   }
   // heavy melee (RMB): one harder blow, then a longer recovery - more in the blow, less per second, so that
   // neither button is always the right one. (no ticks and no game rng in here: the run plays out as before)
@@ -1984,7 +2115,7 @@ check('ping broadcast', B.pings > 0);
   const keep = [bs.weapons[0], bs.mags[0], bs.ammo[AMMO.R308]];
   bs.weapons[0] = ITEM.HUNTING_RIFLE;
   bs.mags[0] = 1;
-  bs.ammo[AMMO.R308] = 5;
+  setAmmo(b, AMMO.R308, 5);
   B.input(0, 0, 0, 0);
   run(12, () => B.input(0, 0, 0));
   B.input(BTN.RELOAD, 0, 0);
@@ -2008,7 +2139,8 @@ check('ping broadcast', B.pings > 0);
     let t = 0;
     while (t < 60 && bs.mags[1] === mag) run(1, () => B.input(t++ % 2 ? 0 : BTN.ATTACK, 0, 0)); // click, click
     check('downed mid-reload: the pistol fires at once', reloading && told && t <= 4, `first shot after ${(t / 20).toFixed(2)} s`);
-    [bs.weapons[0], bs.mags[0], bs.ammo[AMMO.R308]] = keep;
+    [bs.weapons[0], bs.mags[0]] = keep;
+    setAmmo(b, AMMO.R308, keep[2]);
   }
   check('downed flag replicated', pl && pl.q[5] & 256);
   check('a downed teammate: no health, and the player list says down', hpSeen() === 0 && A.roster.get(B.id)?.status === 3, `status ${A.roster.get(B.id)?.status}`);
@@ -2375,6 +2507,16 @@ check('ping broadcast', B.pings > 0);
     const pz = sh2.z;
     run(20, face);
     check('flare light pins the shade', !!fl && sh2.lit && Math.hypot(sh2.x - px, sh2.z - pz) < 0.01);
+    // ...but the flare draws no zombies to it: only a pipe bomb lures
+    const wk = zm.spawn(ZTYPE.WALKER, fl.x + 12, fl.z);
+    run(10, face);
+    check('a burning flare lures no zombies', !!wk && !(wk.lureT > 0));
+    const pb = game.combat.spawnProjectile(PROJ.PIPEBOMB, A.p(), wk.x + 6, wk.y + 0.5, wk.z, 0, 0, 0, { fuse: 5 });
+    run(10, face);
+    check('a pipe bomb still lures them', !!pb && wk.lureT > 0);
+    game.projectiles.splice(game.projectiles.indexOf(pb), 1);
+    game.removeEntity(pb);
+    game.combat.damageZombie(wk, 1e6, null, {});
     game.combat.damageZombie(sh2, 1e6, null, {});
     game.projectiles.splice(game.projectiles.indexOf(fl), 1);
     game.removeEntity(fl);
@@ -2680,7 +2822,7 @@ check('ping broadcast', B.pings > 0);
   if (lane) {
     s.x = lane.ox;
     s.z = lane.oz;
-    s.y = groundAt(g.world, s.x, s.z, 200, 0.3);
+    s.y = gy(s.x, s.z); // (on the ground the lane was judged by: a post beside the spot is no floor)
     s.vx = s.vy = s.vz = 0;
     g.fillHistory(p);
     tick(2);
@@ -2852,7 +2994,7 @@ check('ping broadcast', B.pings > 0);
   m.u8(C2S.ACTION);
   m.u8(ACT.DROP_SLOT);
   m.u8(0);
-  m.u8(0);
+  m.u16(0);
   const had = game.items.length;
   game.onMessage(A.session, m.bytes().slice());
   drops.push(game.items[had]);
@@ -3104,7 +3246,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   };
   const had = held();
   const built = build();
-  g.onMessage(W.session, new Uint8Array([C2S.ACTION, ACT.DROP_SLOT, p.inv.findIndex((it) => it), 0]));
+  g.onMessage(W.session, new Uint8Array([C2S.ACTION, ACT.DROP_SLOT, p.inv.findIndex((it) => it), 0, 0]));
   g.onMessage(W.session, new Uint8Array([C2S.ACTION, ACT.DROP_WEAPON, 1]));
   s.throwCount--; // (the simulation counts the molotov as thrown before the server hears of it)
   g.handleSimEvent(p, { type: 'throw', item: ITEM.MOLOTOV });
@@ -3289,9 +3431,11 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
       const w = createWorld(sd);
       const dock = w.zoneById[ZONE.DOCK];
       const open = (x, z) => w.zones.every((zn) => Math.hypot(x - zn.x, z - zn.z) > zn.flat) && Math.hypot(x - dock.x, z - dock.z) > 60; // (the pier has a deck)
+      const down = (o) => !!w.mine?.under(o.x, o.y + 0.3, o.z); // (what stands down in the mine stands on its floor: scripts/test-mine.js)
+      const decked = (o) => !!w.rail && w.rail.floorFor(o.x, o.z, o.y + 0.3) <= o.y + 0.01; // (...and in a boxcar on its floor: scripts/test-rail.js)
       for (const p of w.props) {
         const def = PROPS[p.type];
-        if (def.boxes?.length !== 1 || def.cyls || !open(p.x, p.z)) continue;
+        if (def.boxes?.length !== 1 || def.cyls || !open(p.x, p.z) || down(p) || decked(p)) continue;
         const [lx, , lz, sx, , sz] = def.boxes[0];
         const c = Math.cos(p.ry);
         const s = Math.sin(p.ry);
@@ -3300,7 +3444,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
         stood++;
         if (Math.abs(p.y - low) > 0.05) off++;
       }
-      for (const ct of w.containers) if (open(ct.x, ct.z) && w.heightAt(ct.x, ct.z) > ct.y) buried++;
+      for (const ct of w.containers) if (open(ct.x, ct.z) && !down(ct) && w.heightAt(ct.x, ct.z) > ct.y) buried++;
       for (let i = 0; i < w.trees.length; i += 6) {
         const x = w.trees[i];
         const z = w.trees[i + 2];

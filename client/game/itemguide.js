@@ -1,10 +1,12 @@
 // What an item is for and where more of it comes from, for the inventory's tooltips: "Used in" (the recipes and
-// structures that consume it) and "Found in" (the containers, trees, wrecks, zombies and places that yield it).
-// Both are derived once, at load, from the tables in shared/defs.js, so the text follows a change to a recipe or a
-// loot table by itself. Pure - no DOM, no three.js - so scripts/test-itemguide.js can hold it against the tables,
+// structures that consume it) and "Found in" (the containers, trees, wrecks, zombies, deer and places that yield it).
+// Both are derived once, at load, from the tables in shared/defs.js (and DEER_LOOT in shared/deer.js), so the text
+// follows a change to a recipe or a loot table by itself. Pure - no DOM, no three.js - so scripts/test-itemguide.js can hold it against the tables,
 // generated worlds and the server.
-import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, loadedAmmo } from '../../shared/defs.js';
 import { PLACES } from '../../shared/layout.js';
+import { FIXTURE_USES } from '../../shared/fixtures.js';
+import { DEER_LOOT } from '../../shared/deer.js';
 
 const schemLocked = (schem, unlocked) => !!schem && !(unlocked & (1 << SCHEM_BIT[schem]));
 
@@ -22,6 +24,9 @@ function addUse(name, cost, schem) {
 }
 for (const r of RECIPES) addUse(ITEM_DEFS[r.out].name, r.cost, r.schem);
 for (const type of STRUCT_ORDER) addUse(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
+for (const f of FIXTURE_USES) addUse(f.name, f.cost); // ...and what is spent at a fixture (the Relay Station's radio)
+// ...and what a structure burns once it stands (a generator's fuel) is used in it too, all of it
+for (const type of STRUCT_ORDER) if (STRUCT_DEFS[type].fuel) addUse(STRUCT_DEFS[type].name, { [STRUCT_DEFS[type].fuel]: 1 }, STRUCT_DEFS[type].schem);
 for (const uses of USES.values()) uses.sort((a, b) => b.share - a.share);
 
 // What `item` goes into, as { list: [{ name, locked }], more }: at most `max` names and how many were left out; null
@@ -65,8 +70,21 @@ function addSource(place, name, yields, visits = 1) {
 const plural = (name) => name + (name.endsWith('s') ? '' : name.endsWith('x') ? 'es' : 's');
 
 for (const g of GATHER) addSource(false, g.name, g.gives, g.hits);
-// a kind of container with a table of its own, named as its search prompt names it
-for (const d of Object.values(CONT_DEFS)) if (d.table) addSource(false, plural(d.name.toLowerCase()), perRoll(CONT_TABLES[d.table]), (d.rolls[0] + d.rolls[1]) / 2);
+// a kind of container with a table of its own, named as its search prompt names it: its rolls, what is always in
+// it besides (also), and the ammunition its weapons come with (loaded) - Game.searchCache
+for (const d of Object.values(CONT_DEFS)) {
+  if (!d.table) continue;
+  const rolls = (d.rolls[0] + d.rolls[1]) / 2;
+  const yields = new Map();
+  const add = (item, n) => yields.set(item, (yields.get(item) || 0) + n);
+  for (const [item, n] of perRoll(CONT_TABLES[d.table])) {
+    add(item, n * rolls);
+    const ammo = d.loaded ? loadedAmmo(item, d.loaded) : null;
+    if (ammo) add(ammo[0], ammo[1] * n * rolls);
+  }
+  for (const [item, n] of d.also || []) add(item, n);
+  addSource(false, d.guide || plural(d.name.toLowerCase()), yields);
+}
 // what the dead drop: one roll, at the odds of that kind of zombie
 const odds = (common) => {
   const kinds = Object.values(ZOMBIE_DEFS).filter((z) => !z.boss && !!z.common === common);
@@ -74,10 +92,14 @@ const odds = (common) => {
 };
 addSource(false, 'zombies', perRoll(ZOMBIE_LOOT), odds(true));
 addSource(false, 'special zombies', perRoll(SPECIAL_LOOT), odds(false));
+// what a deer leaves when it is brought down (server/deer.js): all of DEER_LOOT, every time
+addSource(false, 'hunt deer', DEER_LOOT.map(([item, min, max]) => [item, (min + max) / 2]));
 // A place's table is rolled for the loot lying around it (one roll a find) and for its crates and shelves, the
 // containers with no table of their own. Only the tables that are ever rolled count: the places a map can have and
 // the woods between them. (ZONE.ROADSIDE's never is: every roadside container has a table of its own.)
 for (const zone of [...Object.keys(PLACES).map(Number), ZONE.FOREST]) addSource(true, ZONE_NAMES[zone], perRoll(LOOT_TABLES[zone]));
+// (St. Agnes Cemetery is no place of its own - it lies behind the chapel - but what lies around in it is its own table's)
+addSource(true, ZONE_NAMES[ZONE.CEMETERY], perRoll(LOOT_TABLES[ZONE.CEMETERY]));
 
 // The order they are told in: the best two found anywhere, then the places, then the rest. Ranking them all by
 // yield alone would bury a kind of container there are fifty of under a place with three things lying around.

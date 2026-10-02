@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { PROPS } from '../../../shared/props.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
+import { FIXTURE_PROPS } from './fixtures.js';
+import { buildGunTripod } from './mountedgun.js';
 
 const PI = Math.PI;
 const cache = new Map();
@@ -17,6 +19,9 @@ const VARIANTS = {
   duffel_bag: 3, locker: 2, cabinet: 2, toolbox: 1, fridge: 2, log_pile: 2, jersey_barrier: 2, camper: 2, school_bus: 2,
   dump_truck: 2, boom_gate: 2, saw_table: 1, gravel_pile: 2, hunting_stand: 1, billboard: 1, motel_sign: 1, satellite_dish: 1,
   fence_chain: 2,
+  medicine_cabinet: 1, drug_locker: 1, wheelchair: 1, ambulance: 1,
+  strongbox: 1,
+  mg_tripod: 1,
 };
 
 export const PROP_TYPES = Object.keys(PROPS);
@@ -226,7 +231,7 @@ function cinderBlocks(b, x, z, h) {
   plank(b, 'wood', 0.3, h - 0.4, 0.3, { p: [x, 0.4 + (h - 0.4) / 2, z], c: WOODS[1] });
 }
 
-const BUILD = {};
+const BUILD = { ...FIXTURE_PROPS }; // (the chapel bell and the radio set have a file of their own)
 
 BUILD.car = (b, r) => {
   b.push([0, 0, 0], [0, 0, 0], [1, 1, 0.952]);
@@ -528,6 +533,25 @@ BUILD.military_crate = (b, r) => {
   }
   label(b, 'stencil', 'army', 0.8, 0.36, [0, 0.33, -0.385], 'z-');
   label(b, 'stencil', 'numbers', 0.6, 0.18, [0.2, 0.685, 0.1], 'y+');
+};
+
+// the strongbox down the mine: a steel chest bound in iron, the padlock hanging open on its hasp (front: -z)
+BUILD.strongbox = (b) => {
+  const steel = [0.12, 0.13, 0.15];
+  b.box('paint', 0.86, 0.4, 0.52, { p: [0, 0.2, 0], c: steel });
+  b.box('paint', 0.9, 0.17, 0.56, { p: [0, 0.495, 0], c: steel.map((c) => c * 1.12) }); // lid
+  b.box('dark', 0.905, 0.012, 0.565, { p: [0, 0.405, 0] }); // lid seam
+  b.box('rust', 0.92, 0.04, 0.58, { p: [0, 0.02, 0] }); // skid
+  for (const x of [-0.3, 0.3]) {
+    b.box('rust', 0.07, 0.6, 0.585, { p: [x, 0.3, 0] }); // iron bands, over the lid and down both faces
+    for (const y of [0.1, 0.3, 0.5]) b.cyl('steel', 0.012, 0.012, 0.6, 6, { p: [x, y, 0], r: [PI / 2, 0, 0] }); // rivets, through and through
+  }
+  for (const sx of [-1, 1]) b.torus('steel', 0.07, 0.012, 4, 8, PI, { p: [sx * 0.45, 0.3, 0], r: [0, PI / 2, PI] }); // drop handles
+  b.box('steel', 0.1, 0.16, 0.02, { p: [0, 0.4, -0.29] }); // hasp
+  b.group({ p: [0.02, 0.3, -0.31], r: [0, 0, 0.5] }, () => {
+    b.box('chrome', 0.09, 0.08, 0.035, { p: [0, -0.04, 0] }); // padlock, sprung
+    b.torus('steel', 0.03, 0.008, 4, 8, PI, { p: [0, 0.01, 0] });
+  });
 };
 
 BUILD.barrel = (b, r, v) => {
@@ -1628,6 +1652,105 @@ BUILD.fridge = (b, r, v) => {
   b.box('cardboard', 0.3, 0.02, 0.24, { p: [0.05, H + 0.01, 0.05], r: [0, 0.3, 0] });
 };
 
+// ---- Mercy Clinic (shared/clinic.js)
+// medicine cabinet: white enamelled steel, drawers below, two doors above - one shut with a red cross on it, the
+// other hanging open on what is left on the shelves (front: -z)
+BUILD.medicine_cabinet = (b, r) => {
+  const white = [0.86, 0.87, 0.82];
+  const W = 0.9, H = 1.8, D = 0.45, zf = -D / 2;
+  b.box('dark', W - 0.08, 0.08, D - 0.08, { p: [0, 0.04, 0.02] }); // plinth
+  b.box('paint', W, 0.62, D, { p: [0, 0.39, 0], c: white });
+  for (const y of [0.25, 0.55]) {
+    b.box('paint', W - 0.08, 0.24, 0.02, { p: [0, y, zf - 0.008], c: white.map((c) => c * 1.04) });
+    b.box('chrome', 0.3, 0.025, 0.03, { p: [0, y + 0.05, zf - 0.03] });
+  }
+  // upper case: back, sides, top, shelves
+  const y0 = 0.7, dy = (y0 + H) / 2, dh = H - y0;
+  b.box('paint', W, dh, 0.02, { p: [0, dy, D / 2 - 0.01], c: white });
+  for (const sx of [-1, 1]) b.box('paint', 0.025, dh, D, { p: [sx * (W / 2 - 0.0125), dy, 0], c: white });
+  b.box('paint', W, 0.03, D, { p: [0, H - 0.015, 0], c: white });
+  b.box('dark', W - 0.06, dh - 0.04, 0.004, { p: [0, dy, D / 2 - 0.024] });
+  for (const y of [1.02, 1.36]) b.box('steel', W - 0.05, 0.012, D - 0.06, { p: [0, y, 0.01] });
+  // bottles, jars and cartons
+  for (const [sy, n] of [[0.7, 4], [1.026, 5], [1.366, 4]]) {
+    for (let k = 0; k < n; k++) {
+      const x = -0.34 + ((k + r() * 0.6) * 0.7) / n;
+      const z = rr(r, -0.06, 0.1);
+      const what = r();
+      if (what < 0.35) b.cyl('bottle_brown', 0.028, 0.032, 0.13, 6, { p: [x, sy + 0.065, z] });
+      else if (what < 0.6) b.cyl('paint', 0.03, 0.03, 0.09, 7, { p: [x, sy + 0.045, z], c: [0.85, 0.85, 0.8] });
+      else if (what < 0.8) b.box('cardboard', 0.1, 0.07, 0.06, { p: [x, sy + 0.035, z], r: [0, rr(r, -0.4, 0.4), 0] });
+      else b.cyl('bottle', 0.03, 0.035, 0.16, 6, { p: [x, sy + 0.08, z] });
+    }
+  }
+  const dw = W / 2 - 0.015, door = white.map((c) => c * 1.03);
+  b.box('paint', dw, dh - 0.03, 0.02, { p: [-W / 4, dy, zf - 0.01], c: door });
+  label(b, 'labels', 'cross_mark', 0.2, 0.2, [-W / 4, dy + 0.2, zf - 0.0215], 'z-');
+  b.box('chrome', 0.02, 0.14, 0.025, { p: [-0.04, dy, zf - 0.03] });
+  b.group({ p: [W / 2 - 0.012, dy, zf - 0.01], r: [0, -1.25, 0] }, () => {
+    b.box('paint', dw, dh - 0.03, 0.02, { p: [-dw / 2, 0, 0], c: door });
+    b.box('chrome', 0.02, 0.14, 0.025, { p: [-dw + 0.04, 0, -0.02] });
+  });
+  for (const x of [-0.3, 0.22]) b.box('rust', 0.05 + r() * 0.04, 0.1 + r() * 0.1, 0.004, { p: [x, 0.14, zf - 0.02] });
+};
+
+// the drug locker of the isolation ward: a squat steel cabinet for what was counted out under two keys, its heavy
+// door standing open (front: -z)
+BUILD.drug_locker = (b) => {
+  const grey = [0.2, 0.23, 0.24];
+  const W = 0.8, H = 1.25, D = 0.6, zf = -D / 2, t = 0.04;
+  const hh = H - 0.06, hy = 0.06 + hh / 2;
+  b.box('dark', W - 0.06, 0.06, D - 0.06, { p: [0, 0.03, 0] });
+  b.box('paint', W, hh, t, { p: [0, hy, D / 2 - t / 2], c: grey });
+  for (const sx of [-1, 1]) b.box('paint', t, hh, D, { p: [sx * (W / 2 - t / 2), hy, 0], c: grey });
+  for (const y of [H - t / 2, 0.06 + t / 2]) b.box('paint', W, t, D, { p: [0, y, 0], c: grey });
+  b.box('dark', W - t * 2, hh - t * 2, 0.004, { p: [0, hy, D / 2 - t - 0.004] });
+  for (const y of [0.5, 0.86]) b.box('steel', W - t * 2, 0.012, D - 0.1, { p: [0, y, 0.02] });
+  // what is in it: cartons with a red cross, jars, boxes of ampoules
+  b.box('paint', 0.3, 0.2, 0.24, { p: [-0.16, 0.2, 0.02], c: [0.8, 0.8, 0.76] });
+  label(b, 'labels', 'cross_mark', 0.14, 0.14, [-0.16, 0.2, -0.102], 'z-');
+  b.box('paint', 0.24, 0.16, 0.2, { p: [0.17, 0.18, 0.04], r: [0, 0.3, 0], c: [0.8, 0.8, 0.76] });
+  for (const [x, y] of [[-0.24, 0.506], [-0.12, 0.506], [0.02, 0.506], [0.22, 0.866], [0.1, 0.866]]) b.cyl('paint', 0.035, 0.035, 0.1, 7, { p: [x, y + 0.05, 0.03], c: [0.85, 0.85, 0.8] });
+  b.box('cardboard', 0.22, 0.09, 0.16, { p: [0.2, 0.551, 0.04], r: [0, -0.2, 0] });
+  b.box('cardboard', 0.2, 0.08, 0.14, { p: [-0.18, 0.906, 0.05], r: [0, 0.25, 0] });
+  // the door, hung on the left: a wheel handle, two locks, the warning nobody heeded
+  b.group({ p: [-W / 2 + 0.02, hy, zf - 0.03], r: [0, 1.15, 0] }, () => {
+    b.box('paint', W - 0.04, hh - 0.04, 0.05, { p: [(W - 0.04) / 2, 0, 0], c: grey.map((c) => c * 1.08) });
+    b.torus('chrome', 0.07, 0.012, 5, 10, PI * 2, { p: [0.5, 0.05, -0.06] });
+    b.cyl('steel', 0.02, 0.02, 0.06, 6, { p: [0.5, 0.05, -0.04], r: [PI / 2, 0, 0] });
+    for (const y of [0.3, -0.25]) b.cyl('chrome', 0.022, 0.022, 0.02, 8, { p: [0.64, y, -0.03], r: [PI / 2, 0, 0] });
+    label(b, 'labels', 'hazard_small', 0.14, 0.14, [0.24, 0.3, -0.027], 'z-');
+  });
+};
+
+// a folding hospital wheelchair, left where its last passenger got out of it (front: -z)
+BUILD.wheelchair = (b) => {
+  const vinyl = [0.16, 0.2, 0.26];
+  for (const sx of [-1, 1]) {
+    const x = sx * 0.24;
+    b.cylBetween('chrome', [x, 0.5, 0.12], [x, 0.5, -0.3], 0.012, 0.012, 5); // seat rail
+    b.cylBetween('chrome', [x, 0.3, 0.16], [x, 0.92, 0.22], 0.012, 0.012, 5); // back post
+    b.cylBetween('chrome', [x, 0.92, 0.22], [x, 0.9, 0.34], 0.012, 0.012, 5);
+    b.cylBetween('rubber', [x, 0.9, 0.3], [x, 0.9, 0.38], 0.018, 0.018, 5); // push handle
+    b.cylBetween('chrome', [x, 0.5, -0.3], [x, 0.14, -0.38], 0.012, 0.012, 5); // down to the footrest
+    b.box('steel', 0.14, 0.012, 0.1, { p: [x * 0.75, 0.13, -0.42] });
+    b.cylBetween('chrome', [x, 0.68, 0.2], [x, 0.68, -0.18], 0.012, 0.012, 5); // armrest
+    b.box('rubber', 0.04, 0.02, 0.26, { p: [x, 0.695, 0] });
+    b.cylBetween('chrome', [x, 0.68, -0.18], [x, 0.5, -0.2], 0.012, 0.012, 5);
+    // the big wheel with its push rim, and the caster in front of it
+    b.group({ p: [sx * 0.3, 0.3, 0.14] }, () => {
+      b.torus('rubber', 0.285, 0.016, 5, 14, PI * 2, { r: [0, PI / 2, 0] });
+      b.torus('chrome', 0.25, 0.007, 4, 14, PI * 2, { p: [sx * 0.03, 0, 0], r: [0, PI / 2, 0] });
+      for (let k = 0; k < 6; k++) b.cylBetween('steel', [0, 0, 0], [0, Math.cos((k / 6) * PI * 2) * 0.28, Math.sin((k / 6) * PI * 2) * 0.28], 0.004, 0.004, 3);
+    });
+    b.cyl('rubber', 0.06, 0.06, 0.03, 8, { p: [x, 0.06, -0.3], r: [0, 0, PI / 2] });
+    b.cylBetween('chrome', [x, 0.06, -0.3], [x, 0.3, -0.3], 0.008, 0.008, 4);
+  }
+  b.cylBetween('chrome', [-0.3, 0.3, 0.14], [0.3, 0.3, 0.14], 0.01, 0.01, 5); // axle
+  b.box('cloth', 0.46, 0.02, 0.42, { p: [0, 0.5, -0.09], c: vinyl });
+  b.box('cloth', 0.46, 0.36, 0.02, { p: [0, 0.72, 0.21], c: vinyl });
+};
+
 BUILD.log_pile = (b, r) => {
   const rows = [
     { n: 4, rad: 0.27, z0: -0.825, dz: 0.55 },
@@ -1874,6 +1997,60 @@ BUILD.camper = (b, r, v) => {
   for (const [x, z] of [[-0.86, fa], [0.86, fa]]) b.group({ p: [x, wr - sink * 0.5, z] }, () => wheel(b, wr, 0.24, { flat: 0.3, rim: 'steel' }));
   for (const sx of [-1, 1]) for (const x of [0.78, 1.02]) b.group({ p: [sx * x, wr - sink * 0.5, ra] }, () => wheel(b, wr, 0.22, { flat: x > 0.9 ? 0.32 : 0.18, rim: 'steel' }));
   weeds(b, r, [[1.3, -0.5], [-1.3, 1.0], [1.25, 2.6], [-1.2, -2.8], [0.4, 3.4]], 0.6);
+};
+
+// the ambulance on the clinic's car park: a box body on a van chassis, cab at -z, an orange stripe and red crosses,
+// one rear door hanging open on the dark inside
+BUILD.ambulance = (b, r) => {
+  const white = [0.82, 0.82, 0.78], orange = [0.74, 0.3, 0.1];
+  const W = 2.1, hw = W / 2, CW = 1.96, chw = CW / 2;
+  const fa = -1.85, ra = 1.6, wr = 0.38;
+  for (const sx of [-1, 1]) b.box('dark', 0.12, 0.2, 5.3, { p: [sx * 0.45, 0.48, 0] }); // chassis rails
+  // cab: nose, cabin, windscreen and side glass
+  b.box('carpaint', CW, 0.62, 1.05, { p: [0, 0.83, -2.32], c: white });
+  b.box('dark', CW - 0.04, 0.5, 0.9, { p: [0, 0.62, fa] }); // front wheel well
+  b.frustum('carpaint', CW, 1.3, CW - 0.16, 1.0, 1.14, 1.9, { p: [0, 0, -1.3], topOff: [0, 0.15], c: white });
+  b.box('glass', CW - 0.3, 0.56, 0.02, { p: [0, 1.52, -1.812], r: [0.376, 0, 0] });
+  for (const sx of [-1, 1]) {
+    b.box('glass', 0.02, 0.44, 0.62, { p: [sx * (chw - 0.045), 1.52, -1.3] });
+    b.box('carpaint', 0.012, 0.2, 2.2, { p: [sx * (chw + 0.004), 1.02, -1.75], c: orange });
+    b.box('chrome', 0.06, 0.24, 0.14, { p: [sx * (chw + 0.16), 1.5, -1.86] }); // mirror
+    b.box('chrome', 0.03, 0.03, 0.12, { p: [sx * (chw + 0.012), 1.08, -1.0] });
+  }
+  b.box('dark', 1.2, 0.3, 0.02, { p: [0, 0.86, -2.85] }); // grille
+  for (let k = 0; k < 3; k++) b.box('chrome', 1.2, 0.02, 0.025, { p: [0, 0.76 + k * 0.09, -2.856] });
+  for (const sx of [-1, 1]) b.box(sx < 0 ? 'dark' : 'glass', 0.26, 0.18, 0.02, { p: [sx * 0.78, 0.88, -2.855] });
+  b.box('chrome', CW + 0.1, 0.18, 0.12, { p: [0, 0.5, -2.86] });
+  label(b, 'labels', 'plate', 0.32, 0.16, [0, 0.5, -2.922], 'z-');
+  // the box: patient compartment from behind the cab to the rear doors
+  b.box('carpaint', W, 1.95, 3.55, { p: [0, 1.6, 1.07], c: white });
+  b.box('dark', W - 0.04, 0.5, 1.0, { p: [0, 0.66, ra] }); // rear wheel well
+  for (const sx of [-1, 1]) {
+    const x = sx * (hw + 0.005);
+    b.box('carpaint', 0.012, 0.24, 3.55, { p: [x, 1.2, 1.07], c: orange });
+    label(b, 'labels', 'cross_mark', 0.66, 0.66, [sx * (hw + 0.008), 1.92, 1.4], sx < 0 ? 'x-' : 'x+');
+    b.box('glass', 0.012, 0.3, 0.5, { p: [x, 2.2, 0.1] });
+    b.box('rust', 0.006, 0.3 + r() * 0.3, 0.4, { p: [sx * (hw + 0.012), 0.82, 0.3 + r()] });
+  }
+  // light bar and beacons, all dead
+  b.box('dark', 1.5, 0.06, 0.3, { p: [0, 2.6, -0.45] });
+  for (const sx of [-1, 1]) b.box('taillight', 0.5, 0.13, 0.24, { p: [sx * 0.46, 2.69, -0.45] });
+  for (const sx of [-1, 1]) b.box('taillight', 0.16, 0.08, 0.1, { p: [sx * 0.8, 2.61, 2.72] });
+  // the rear: the left door shut, the right one swung wide; a stretcher half out of the dark
+  b.box('dark', 1.86, 1.7, 0.02, { p: [0, 1.6, 2.85] });
+  const leaf = () => {
+    b.box('carpaint', 0.93, 1.7, 0.04, { p: [0, 0, 0], c: white.map((q) => q * 0.97) });
+    b.box('glass', 0.5, 0.4, 0.045, { p: [0, 0.4, 0] });
+  };
+  b.group({ p: [-0.47, 1.6, 2.87] }, leaf);
+  label(b, 'labels', 'cross_mark', 0.36, 0.36, [-0.47, 1.35, 2.893], 'z+');
+  b.group({ p: [0.95, 1.6, 2.87], r: [0, 1.95, 0] }, () => b.group({ p: [-0.465, 0, 0] }, leaf));
+  b.box('steel', 0.56, 0.04, 1.5, { p: [0.4, 0.98, 2.6], r: [-0.08, 0, 0] });
+  b.box('mattress', 0.52, 0.07, 1.4, { p: [0.4, 1.03, 2.6], r: [-0.08, 0, 0] });
+  b.box('chrome', W, 0.12, 0.26, { p: [0, 0.58, 2.96] }); // step bumper
+  for (const sx of [-1, 1]) b.box('taillight', 0.12, 0.3, 0.03, { p: [sx * 0.99, 1.0, 2.86] });
+  for (const [x, z, flat] of [[-0.84, fa, 0.3], [0.84, fa, 0.05], [-0.88, ra, 0.1], [0.88, ra, 0.32]]) b.group({ p: [x, wr - flat * 0.1, z] }, () => wheel(b, wr, 0.24, { flat, rim: 'steel' }));
+  weeds(b, r, [[1.2, -0.6], [-1.2, 1.2], [0.3, 3.2], [-1.1, -2.6]], 0.55);
 };
 
 BUILD.school_bus = (b, r, v) => {
@@ -2447,3 +2624,6 @@ BUILD.fence_chain = (b, r, v) => {
   if (v === 1) b.plane('cloth', 0.2, 0.3, { p: [0.4, 2.02, -0.08], r: [0.1, 0, 0.3], c: [0.45, 0.2, 0.15] });
   weeds(b, r, [[-1.3, 0.05], [0.4, 0.0], [1.2, -0.05]], 0.5);
 };
+
+// the mounted gun's stand (the gun on it is an entity: models/mountedgun.js has both)
+BUILD.mg_tripod = buildGunTripod;

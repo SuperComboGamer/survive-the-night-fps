@@ -1,6 +1,6 @@
 // Combat: lag-compensated hitscan, melee, thrown/lobbed projectiles, explosions, damage areas.
-import { SERVER_TICK_RATE, MAX_REWIND, PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_CROUCH_HEIGHT, EYE_HEIGHT, PHASE, NOISE } from '../shared/constants.js';
-import { LEG_ZONE, LEG_BODY_DAMAGE, STUMBLE_TIME, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, CRAWL_RADIUS } from '../shared/constants.js';
+import { SERVER_TICK_RATE, MAX_REWIND, HISTORY_TICKS, PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_CROUCH_HEIGHT, EYE_HEIGHT, PHASE, NOISE } from '../shared/constants.js';
+import { LEG_ZONE, LEG_BODY_DAMAGE, STUMBLE_TIME } from '../shared/constants.js';
 import { SOUND as _SOUND } from '../shared/defs.js';
 import {
   ITEM,
@@ -25,7 +25,9 @@ import {
 } from '../shared/defs.js';
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
-import { raycastWorld, rayCylinder, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
+import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
+import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
+import { deerHitbox } from '../shared/deer.js';
 
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(3 * 16);
@@ -34,15 +36,6 @@ const _bp = { x: 0, y: 0, z: 0 };
 
 // buckshot loses its punch with distance
 const pelletFalloff = (t) => Math.max(0.25, Math.min(1, 1 - (t - 8) / 30));
-
-// Ray against a target's hitbox (see Combat.hitbox) standing at pos: distance to the hit or -1, _head = it took the head.
-let _head = false;
-function rayTarget(pos, hb, ox, oy, oz, dx, dy, dz, maxT) {
-  const ht = raySphere(pos.x + hb.hx, pos.y + hb.headY, pos.z + hb.hz, hb.headR, ox, oy, oz, dx, dy, dz, maxT);
-  const bt = hb.flying ? raySphere(pos.x, pos.y + 0.15, pos.z, 0.5, ox, oy, oz, dx, dy, dz, maxT) : rayCylinder(pos.x, pos.z, pos.y, pos.y + hb.top, hb.r, ox, oy, oz, dx, dy, dz, maxT);
-  _head = ht >= 0 && !hb.flying && (bt < 0 || ht <= bt + 0.05);
-  return _head ? ht : bt;
-}
 
 export class Combat {
   constructor(game) {
@@ -70,8 +63,8 @@ export class Combat {
       out.z = e.z;
       return out;
     }
-    const a = t0 & 15;
-    const b = (t0 + 1) & 15;
+    const a = t0 & (HISTORY_TICKS - 1);
+    const b = (t0 + 1) & (HISTORY_TICKS - 1);
     const bx = t0 + 1 >= g.tick ? e.x : e.hx[b];
     const by = t0 + 1 >= g.tick ? e.y : e.hy[b];
     const bz = t0 + 1 >= g.tick ? e.z : e.hz[b];
@@ -89,33 +82,22 @@ export class Combat {
       return;
     }
     for (const z of g.zombies) if (!z.dead) fn(z, false);
+    for (const d of g.deer) if (!d.dead) fn(d, false); // (deer.js: a survivor can hunt them; damageZombie hands the hit on)
     for (const h of g.players.values()) if (h.alive && h.zombie) fn(h, true);
   }
 
-  // hitbox params for a target: a body cylinder plus a head sphere (hx/hz ahead of it on quadrupeds)
+  // hitbox params for a target: a body cylinder plus a head sphere (hx/hz ahead of it on quadrupeds). The shapes
+  // are in shared/hitbox.js: the client judges its own shots against them too, to show what they strike at once
   hitbox(e, isPlayer) {
-    if (isPlayer) {
-      const crouch = e.state.crouch;
-      return { r: e.zombie ? 0.42 : 0.38, top: crouch ? 1.0 : 1.42, headY: crouch ? 1.12 : 1.6, headR: 0.2, hx: 0, hz: 0 };
-    }
-    const d = e.def;
-    if (d.flying) return { r: 0.45, top: 0.5, headY: 0.1, headR: 0.3, hx: 0, hz: 0, flying: true };
-    // both legs gone: it lies on the ground, its head ahead of its body
-    if (e.legs === 3) return { r: CRAWL_RADIUS, top: CRAWL_HEIGHT, headY: CRAWL_HEAD_Y, headR: d.headR * 1.2, hx: -Math.sin(e.yaw) * CRAWL_HEAD_FWD, hz: -Math.cos(e.yaw) * CRAWL_HEAD_FWD };
-    let headY = d.headY;
-    let top = d.bodyTop ?? d.headY - d.headR;
-    if (!d.headFwd && (e.anim === ZANIM.AIRBORNE || e.state === 3)) {
-      headY *= 0.7;
-      top *= 0.7;
-    }
-    const f = d.headFwd || 0;
-    return { r: d.radius * 0.88, top, headY, headR: d.headR * 1.2, hx: -Math.sin(e.yaw) * f, hz: -Math.cos(e.yaw) * f };
+    if (isPlayer) return playerHitbox(e.zombie, e.state.crouch);
+    if (e.kind === ENT.DEER) return deerHitbox(e.yaw, e.anim);
+    return zombieHitbox(e.def, e.yaw, e.legs, e.anim === ZANIM.AIRBORNE || e.state === 3);
   }
 
   // ---------------------------------------------------------------- guns
   fire(p, ev) {
     const g = this.g;
-    const def = WEAPONS[ev.weapon];
+    const def = ev.def || WEAPONS[ev.weapon]; // (ev.def: a gun that is no item brings its own row, the mounted gun)
     if (!def) return;
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     const ox = ev.x;
@@ -137,7 +119,7 @@ export class Combat {
       { except: p.id, x: ox, z: oz, r: 320 },
     );
     // the dead come to the noise
-    g.zm.noise(ox, oz, def.noise || NOISE.GUNSHOT);
+    g.zm.noise(ox, oz, def.noise || NOISE.GUNSHOT, p.state.y);
     if (def.flame) return this.flame(p, ev, def);
     const t = this.rewindTime(p);
     let hitFlags = 0;
@@ -165,12 +147,12 @@ export class Combat {
         const pz = rz - dz * along;
         const lim = hb.r + hb.headY + 0.5;
         if (px * px + py * py + pz * pz > lim * lim) return;
-        const tt = rayTarget(pos, hb, ox, oy, oz, dx, dy, dz, wallT);
+        const tt = rayHitbox(pos, hb, ox, oy, oz, dx, dy, dz, wallT);
         if (tt < 0) return;
         // below the hip it is in a leg: the left or the right by which side of the body it struck
         let leg = 0;
-        if (!isPlayer && !_head && this.legZone(e, pos.y, oy + dy * tt)) leg = (ox + dx * tt - pos.x) * Math.cos(e.yaw) - (oz + dz * tt - pos.z) * Math.sin(e.yaw) < 0 ? 1 : 2;
-        _hits.push({ e, isPlayer, t: tt, head: _head, leg });
+        if (!isPlayer && !headHit && this.legZone(e, pos.y, oy + dy * tt)) leg = (ox + dx * tt - pos.x) * Math.cos(e.yaw) - (oz + dz * tt - pos.z) * Math.sin(e.yaw) < 0 ? 1 : 2;
+        _hits.push({ e, isPlayer, t: tt, head: headHit, leg });
       });
       _hits.sort((a, b) => a.t - b.t);
       const maxPierce = def.pierce || 1;
@@ -216,7 +198,7 @@ export class Combat {
           let kind = IMPACT.DIRT;
           if (wallCol && !wallTerrain) {
             if (wallCol.flags & COL.TREE) kind = IMPACT.WOOD;
-            else if (wallCol.flags & COL.STRUCT) kind = this.g.ents[wallCol.id]?.stype === STRUCT.METAL_WALL ? IMPACT.METAL : IMPACT.WOOD;
+            else if (wallCol.flags & COL.STRUCT) kind = STRUCT_DEFS[this.g.ents[wallCol.id]?.stype]?.metal ? IMPACT.METAL : IMPACT.WOOD;
             else kind = IMPACT.SPARK;
           }
           // only a few impacts for shotgun spreads to save bandwidth
@@ -243,10 +225,10 @@ export class Combat {
     const hb = this.hitbox(z, false);
     let sum = 0;
     for (let j = from; j < n; j++) {
-      const tt = rayTarget(pos, hb, ox, oy, oz, _dirs[j * 3], _dirs[j * 3 + 1], _dirs[j * 3 + 2], def.range);
+      const tt = rayHitbox(pos, hb, ox, oy, oz, _dirs[j * 3], _dirs[j * 3 + 1], _dirs[j * 3 + 2], def.range);
       if (tt < 0) continue;
-      const leg = !_head && this.legZone(z, pos.y, oy + _dirs[j * 3 + 1] * tt);
-      sum += def.damage * pelletFalloff(tt) * (_head ? (z.boss ? 1.6 : def.headMul) : leg ? LEG_BODY_DAMAGE : 1);
+      const leg = !headHit && this.legZone(z, pos.y, oy + _dirs[j * 3 + 1] * tt);
+      sum += def.damage * pelletFalloff(tt) * (headHit ? (z.boss ? 1.6 : def.headMul) : leg ? LEG_BODY_DAMAGE : 1);
     }
     return sum;
   }
@@ -255,7 +237,7 @@ export class Combat {
   // Does a bullet that struck this zombie's body at height y (its feet at feetY) go into a leg? Only what walks on two
   // (ZOMBIE_DEFS[t].legs) and still has one: below the hip is leg, and a crawler has none left to hit.
   legZone(z, feetY, y) {
-    return !!z.def.legs && z.legs !== 3 && y < feetY + z.def.height * LEG_ZONE;
+    return z.kind === ENT.ZOMBIE && !!z.def.legs && z.legs !== 3 && y < feetY + z.def.height * LEG_ZONE;
   }
 
   // A bullet in a leg (bit: 1 the left, 2 the right; with that one gone already the other takes it). The leg takes
@@ -488,6 +470,7 @@ export class Combat {
   damageZombie(z, amount, attacker, opts = {}) {
     const g = this.g;
     if (z.dead) return false;
+    if (z.kind === ENT.DEER) return g.dm.damage(z, amount, attacker, opts); // not one of the dead: nothing below is for it
     // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
     const solid = z.lit && !z.onFire;
     if (solid) amount *= z.def.litResist;
@@ -560,6 +543,7 @@ export class Combat {
     const sunKill = z.boss && z.onFire;
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
+      g.credit([attacker], 'kills');
       if (!z.def.common && !sunKill) {
         g.killfeed(KILLER.PLAYER, attacker.id, 0x8000 | z.ztype, opts.weapon || 0, opts.headshot ? 1 : 0);
       }
@@ -617,6 +601,7 @@ export class Combat {
         const dl = Math.hypot(zz.x - x, zz.z - z) || 1;
         this.damageZombie(zz, opts.zombies * (0.35 + 0.65 * f), opts.owner || null, { weapon: opts.weapon, knock: 6 * f, dirX: (zz.x - x) / dl, dirZ: (zz.z - z) / dl });
       });
+      g.dm.blast(x, y, z, radius, opts.zombies, opts.owner, opts.weapon);
       for (const h of g.players.values()) {
         if (!h.alive || !h.zombie || !opts.owner) continue;
         const d = Math.hypot(h.state.x - x, h.state.z - z);
@@ -630,7 +615,7 @@ export class Combat {
       }
     }
     // the loudest thing in the valley: whatever it did not kill comes running
-    g.zm.noise(x, z, NOISE.EXPLOSION);
+    g.zm.noise(x, z, NOISE.EXPLOSION, y);
   }
 
   // ---------------------------------------------------------------- projectiles
@@ -757,10 +742,10 @@ export class Combat {
               break;
             }
           }
-          if (hitHuman || hitWorld || ny < g.world.heightAt(nx, nz) - 0.1) {
+          if (hitHuman || hitWorld || ny < g.world.floorAt(nx, nz, oy) - 0.1) {
             const px = hitHuman ? hitHuman.state.x : hx;
             const pz = hitHuman ? hitHuman.state.z : hz;
-            const py = g.world.heightAt(px, pz);
+            const py = g.world.floorAt(px, pz, hitHuman ? hitHuman.state.y + 0.5 : oy); // (down in the mine: the floor of the drift)
             const src = e.ownerRef;
             if (e.ptype === PROJ.ACID) {
               if (hitHuman) g.damagePlayer(hitHuman, 10, { kind: KILLER.ZOMBIE, ztype: src ? src.ztype : ZTYPE.SPITTER, x: e.x, z: e.z });
@@ -799,14 +784,14 @@ export class Combat {
           g.zm.forNear(nx, nz, 2, (z) => {
             if (!z.dead && Math.hypot(z.x - nx, z.z - nz) < z.def.radius + 0.3 && ny > z.y && ny < z.y + z.def.height) hitZ = true;
           });
-          if (hitWorld || hitZ || ny < g.world.heightAt(nx, nz)) {
+          if (hitWorld || hitZ || ny < g.world.floorAt(nx, nz, oy)) {
             const px = hitZ ? nx : hx;
             const pz = hitZ ? nz : hz;
             const py = groundAt(g.world, px, pz, (hitZ ? ny : hy) + 0.3, 0.2);
             this.spawnArea(AREA.FIRE, px, py, pz, THROWABLES[ITEM.MOLOTOV].radius, THROWABLES[ITEM.MOLOTOV].burnTime, e.ownerRef, THROWABLES[ITEM.MOLOTOV].dps);
             g.sound(SOUND.GLASS_BREAK, px, py, pz, 60);
             g.sound(SOUND.FIRE_WHOOSH, px, py, pz, 80);
-            g.zm.noise(px, pz, NOISE.MOLOTOV);
+            g.zm.noise(px, pz, NOISE.MOLOTOV, py);
             done = true;
           }
           break;
@@ -815,23 +800,25 @@ export class Combat {
         case PROJ.PIPEBOMB: {
           e.fuse -= dt;
           const flare = e.ptype === PROJ.FLARE;
-          // lure zombies
-          if (g.tick % 5 === 0) {
-            if (flare && g.tick % 60 === 0) g.sound(_SOUND.FLARE_BURN, e.x, e.y, e.z, 40);
-            g.zm.forNear(e.x, e.z, flare ? THROWABLES[ITEM.FLARE].lure : 40, (z) => {
-              if (!z.boss && !z.dead) {
+          if (flare && g.tick % 60 === 0) g.sound(_SOUND.FLARE_BURN, e.x, e.y, e.z, 40);
+          // a pipe bomb lures zombies (a flare only gives light)
+          if (!flare && g.tick % 5 === 0) {
+            // (not through the rock between the mine and the ground above it)
+            const lu = !!g.mineNav && g.mineNav.under(e);
+            g.zm.forNear(e.x, e.z, 40, (z) => {
+              if (!z.boss && !z.dead && z.under === lu) {
                 z.lureX = e.x;
                 z.lureZ = e.z;
                 z.lureT = 1;
               }
             });
           }
-          if (hitWorld || ny < g.world.heightAt(nx, nz)) {
+          if (hitWorld || ny < g.world.floorAt(nx, nz, oy)) {
             // bounce
             e.x = hx - dx * 0.05;
-            e.y = Math.max(hy, g.world.heightAt(hx, hz)) + 0.08;
+            e.y = Math.max(hy, g.world.floorAt(hx, hz, oy)) + 0.08;
             e.z = hz - dz * 0.05;
-            const gh = g.world.heightAt(e.x, e.z);
+            const gh = g.world.floorAt(e.x, e.z, e.y);
             if (e.y - gh < 0.3) {
               e.vy = Math.abs(e.vy) * 0.3;
               e.vx *= 0.5;
@@ -898,6 +885,7 @@ export class Combat {
             z.trapSlow = Math.min(z.trapSlow, 0.75);
           }
         });
+        g.dm.scorch(a, dt);
         for (const h of g.players.values()) {
           if (!h.alive || !h.zombie) continue;
           if (Math.hypot(h.state.x - a.x, h.state.z - a.z) < a.radius) g.damagePlayer(h, a.dps * dt, { kind: KILLER.PLAYER, id: a.owner ? a.owner.id : 0, weapon: ITEM.MOLOTOV, x: a.x, z: a.z });

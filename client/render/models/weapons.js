@@ -1895,6 +1895,18 @@ function makeCan() {
   return mb.build().geometry;
 }
 
+// a cut of venison on the bone (food "use" prop for meat): raw and red, or browned off the fire
+function makeMeat(cooked) {
+  const mb = new MeshBuilder({ skinned: false, atlas: 'weapon' });
+  const flesh = cooked ? 0x6a3a1e : 0x9a2a26;
+  mb.box(0, [0, 0, 0], [0.11, 0.05, 0.075], { region: WR.PLAIN, color: flesh, round: 0.75, seg: 3 });
+  mb.box(0, [0.012, 0.012, 0.004], [0.075, 0.034, 0.06], { region: WR.PLAIN, color: cooked ? 0x8a5428 : 0xb8443c, round: 0.8, seg: 2 });
+  mb.box(0, [-0.03, -0.004, 0], [0.04, 0.045, 0.07], { region: WR.PLAIN, color: cooked ? 0x4a2812 : 0xd8c4b4, round: 0.7, seg: 2 }); // seared edge, or the fat
+  mb.seg(0, [-0.045, 0, 0], [-0.1, 0.006, 0], 0.011, 0.009, { region: WR.PLAIN, color: 0xe2d8c4, rs: 8, hs: 1, caps: 1, capScale: 0.6 });
+  mb.seg(0, [-0.098, -0.008, 0], [-0.098, 0.02, 0], 0.012, 0.012, { region: WR.PLAIN, color: 0xe2d8c4, rs: 8, hs: 1, caps: 1, capScale: 0.6 });
+  return mb.build().geometry;
+}
+
 export class ViewModel {
   constructor() {
     this.group = new THREE.Group();
@@ -1915,6 +1927,7 @@ export class ViewModel {
     this.scoped = false;
     this.kitGeo = makeKit();
     this.canGeo = makeCan();
+    this.meatGeo = [makeMeat(false), makeMeat(true)];
     this.kitGrip = 0.1; // half the distance between the hands holding it
     this.kit = new THREE.Mesh(this.kitGeo, getViewWeaponMaterial());
     this.kit.visible = false;
@@ -2094,7 +2107,8 @@ export class ViewModel {
   /** item: what is being used (food shows a tin instead of the medkit) */
   useItem(duration = 2, item = 0) {
     const food = !!CONSUMABLES[item]?.food;
-    this.kit.geometry = food ? this.canGeo : this.kitGeo;
+    const meat = CONSUMABLES[item]?.meat || 0; // 1: a raw cut, 2: a cooked one
+    this.kit.geometry = meat ? this.meatGeo[meat - 1] : food ? this.canGeo : this.kitGeo;
     this.kitGrip = food ? 0.068 : 0.1;
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
   }

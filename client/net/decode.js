@@ -3,7 +3,7 @@ import { ENT, SNAP, SELF, PFLAG, UPOS, UEXT, UEXT_ABS, dqpos, dqangle16, dqangle
 import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED } from '../../shared/constants.js';
 import { EVT, AMMO_ITEMS } from '../../shared/defs.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 6 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -14,6 +14,9 @@ const BIT_SLOTS = {
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
   [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6]],
+  [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
 };
 
 // reads slots [s0, s1) of an entity record with kind-specific widths
@@ -29,7 +32,7 @@ function readFields(r, kind, q, s0, s1) {
       } else if (s === 5) q[s] = r.u16();
       else if (s > 5) q[s] = r.u8();
     } else if (kind === ENT.ZOMBIE) q[s] = s === 6 ? r.u16() : r.u8();
-    else if (kind === ENT.ITEM) q[s] = r.u16();
+    else if (kind === ENT.ITEM || kind === ENT.GUN) q[s] = r.u16();
     else q[s] = r.u8();
   }
 }
@@ -77,6 +80,7 @@ export function readGlobal(r, prev) {
     bossId: r.u16(),
     supplies: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()],
     hints: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8()],
+    found: r.u8(), // a bit per hint: that supply has been taken from its hiding place
     unlocked: r.u8(),
     wave: r.u8(),
     waves: r.u8(),
@@ -104,6 +108,7 @@ export function readSelf(r, out, flags) {
   if (!out.weapons) out.weapons = [0, 0, 0, 0, 0];
   if (!out.mags) out.mags = [0, 0];
   if (!out.ammo) out.ammo = AMMO_ITEMS.map(() => 0);
+  if (out.ride === undefined) out.ride = out.rideGo = out.rideT = 0;
   if (!(flags & SNAP.SELF)) return false;
   const mask = r.u8();
   if (mask & 1) {
@@ -151,6 +156,11 @@ export function readSelf(r, out, flags) {
       out.pullY = r.f32();
       out.pullZ = r.f32();
     } else out.pullX = out.pullY = out.pullZ = 0;
+  }
+  if (mask & SELF.RIDE) {
+    out.ride = r.u8();
+    out.rideGo = r.u8();
+    out.rideT = r.u32();
   }
   if (mask & SELF.STATUS) {
     const m = r.u8();
@@ -226,6 +236,7 @@ export function readEntities(r, store, tick, flags) {
           e.ctype = r.u8();
           break;
         case ENT.CAT:
+        case ENT.DEER:
           e.variant = r.u8();
           break;
       }
@@ -343,6 +354,21 @@ export function readEvents(r, handler, flags, ents) {
       case EVT.SUMMARY:
         handler.summary?.({ night: r.u8(), kills: r.u16(), structLost: r.u8(), downs: r.u8(), deaths: r.u8(), revives: r.u8() });
         break;
+      case EVT.STRIPPED:
+        // left quantized: they name colliders (harvest.js strippedKey), they are not places to draw anything at
+        for (let k = r.u8(); k > 0; k--) {
+          const x = r.i16(), y = r.i16(), z = r.i16();
+          handler.stripped?.(x, y, z);
+        }
+        break;
+      case EVT.REGROWN:
+        handler.regrown?.();
+        break;
+      case EVT.GRAVE: {
+        const grave = r.u8();
+        handler.grave?.(grave);
+        break;
+      }
       default:
         throw new Error(`unknown event ${type}`);
     }

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { GRID_N, GRID_STEP, MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
 import { smoothstep } from '../../shared/rng.js';
 import { ROAD } from '../../shared/world.js';
+import { MINE_R, PORTAL } from '../../shared/mine.js';
 import { getTexture } from './textures.js';
 import { GROUND_MACRO_GLSL, groundNoiseTexture, VEG } from './materials.js';
 
@@ -334,6 +335,9 @@ export function buildTerrain(world) {
     tRock: { value: tex('rock') },
     tNoise: { value: tex('ground_noise') },
     tGroundNoise: VEG.tGroundNoise,
+    // the mouths of the mine (x, z, and the unit vector into the drift): inside a portal the decline runs down
+    // through the ground, which is not drawn there (the portal's own stone stands over the gap)
+    uHole: { value: [0, 1].map((k) => (world.mine ? new THREE.Vector4(world.mine.portals[k].x, world.mine.portals[k].z, world.mine.portals[k].dx, world.mine.portals[k].dz) : new THREE.Vector4(1e6, 1e6, 1, 0))) },
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -354,6 +358,7 @@ export function buildTerrain(world) {
         uniform sampler2D tMud;
         uniform sampler2D tRock;
         uniform sampler2D tNoise;
+        uniform vec4 uHole[2];
         varying vec4 vSplat;
         varying vec4 vExtra;
         varying vec4 vRoad;
@@ -375,6 +380,11 @@ export function buildTerrain(world) {
         '#include <map_fragment>',
         /* glsl */ `
         vec2 wp = vWPos.xz;
+        for (int i = 0; i < 2; i++) {
+          vec2 hd = wp - uHole[i].xy;
+          float hs = dot(hd, uHole[i].zw);
+          if (hs > 0.0 && hs < ${PORTAL.HOLE.toFixed(2)} && abs(hd.y * uHole[i].z - hd.x * uHole[i].w) < ${(MINE_R + PORTAL.LINER).toFixed(2)}) discard;
+        }
         vec2 tuv = wp * 0.22;
         // gradients taken here, in uniform control flow, so branch-local samples get the right mip level
         vec2 gx = dFdx(tuv), gy = dFdy(tuv);
@@ -487,7 +497,7 @@ export function buildTerrain(world) {
         `,
       );
   };
-  mat.customProgramCacheKey = () => 'terrain-splat-3';
+  mat.customProgramCacheKey = () => 'terrain-splat-4';
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.frustumCulled = false;
@@ -496,11 +506,24 @@ export function buildTerrain(world) {
 }
 
 // Water surface (lake + ponds): dark murky water with animated ripples, fresnel sky reflection and
-// moon/sun glints. One plane over the whole valley at the water line - terrain hides it everywhere else.
+// moon/sun glints. A sheet at the water line over every cell of the heightfield that dips below it, and nowhere
+// else: under dry ground it would show in the drifts of the mine, which run down through that level.
 export function buildWater(world) {
-  const size = MAP_HALF * 2 + 40;
-  const geo = new THREE.PlaneGeometry(size, size, 1, 1);
-  geo.rotateX(-Math.PI / 2);
+  const N = GRID_N;
+  const H = world.heights;
+  const quads = [];
+  for (let j = 0; j < N - 1; j++) {
+    for (let i = 0; i < N - 1; i++) {
+      const k = j * N + i;
+      if (Math.min(H[k], H[k + 1], H[k + N], H[k + N + 1]) > WATER_LEVEL + 0.02) continue;
+      const x = -MAP_HALF + i * GRID_STEP;
+      const z = -MAP_HALF + j * GRID_STEP;
+      quads.push(x, 0, z, x, 0, z + GRID_STEP, x + GRID_STEP, 0, z, x + GRID_STEP, 0, z, x, 0, z + GRID_STEP, x + GRID_STEP, 0, z + GRID_STEP);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(quads, 3));
+  geo.computeBoundingSphere();
   const mat = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,

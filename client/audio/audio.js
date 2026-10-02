@@ -31,6 +31,9 @@ const CATS = {
   fxfar: { ref: 4, max: 75, roll: 1.0, air: 35, wet: 0.16, hrtf: 18, cap: 8 },
   step: { ref: 1.5, max: 25, roll: 1.4, air: 20, wet: 0.065, hrtf: 8, cap: 10 },
   thump: { ref: 5, max: 80, roll: 1.0, air: 40, wet: 0.22, hrtf: 0, cap: 4 }, // a tank's footfalls: heard long before it is seen
+  // the chapel bell, heard from anywhere in the valley: fainter and duller with distance, and dry enough that what
+  // arrives still comes from the chapel's side (the reverb is not panned, and falls off slower than the bell itself)
+  bell: { ref: 30, max: 1000, roll: 0.6, air: 320, wet: 0.12, hrtf: 0, cap: 4, delay: true },
 };
 for (const k in CATS) CATS[k].sendExp = 0.45 * CATS[k].roll;
 
@@ -200,6 +203,32 @@ def(S.SHADE_FREEZE, 'z_shade_freeze', 'zombie', 1, 0.06);
 def(S.SHADE_SHRIEK, 'z_shade_shriek', 'zombie', 1, 0.06);
 def(S.EAT, 'eat', 'fx', 0.5, 0.05);
 def(S.BODY_FALL, 'land', 'fx', 0.9, 0.1, 0.15, R_BODY);
+// the chapel bell and the Relay Station's radio (synth-fixtures.js). The bell is one bell: no pitch jitter
+def(S.BELL_TOLL, 'bell_toll', 'bell', 0.6, 0);
+def(S.BELL_ROPE, 'bell_rope', 'fx', 0.33, 0.05);
+def(S.RADIO_TUNE, 'radio_tune', 'fx', 0.35, 0.02);
+def(S.RADIO_CALL, 'radio_call', 'big', 0.32, 0.02);
+def(S.GRAVE_STIR, 'grave_stir', 'fxfar', 1, 0.06);
+def(S.GRAVE_BURST, 'grave_burst', 'fxfar', 1, 0.06);
+// the mounted gun: procedural only (no recording of one), louder than any rifle and with more room on it
+def(S.MOUNTED_GUN, 'gun_hmg', 'gun', 1, 0.03, 0.2);
+def(S.GUN_FEED, 'shell_insert', 'fx', 0.7, 0.08, 0.15, R_SHELL); // rounds going onto its belt
+def(S.GUN_MAN, 'bolt', 'fxfar', 0.8, 0.04, 0.15, R_BOLT); // someone takes the grips and racks it
+// deer (procedural only): the snort carries across a clearing, the hoofbeats only reach whoever they pass close by
+def(S.DEER_SNORT, 'deer_snort', 'fxfar', 1.3, 0.06); // (a breath of noise: this puts it level with the cat's meow)
+def(S.DEER_BLEAT, 'deer_bleat', 'fxfar', 0.7, 0.07);
+def(S.DEER_HOOF, 'step_hoof', 'fx', 0.8, 0.1, 0.08);
+// the Tri-County Fair: its generator cranking up and clunking off, fuel going into the drum, a seat taking a rider
+def(S.FAIR_START, 'car_start', 'fxfar', 0.9, 0.03, 0.15, R_CAR_CRANK);
+def(S.FAIR_STOP, 'car_part', 'fxfar', 0.9, 0.04);
+def(S.FAIR_FUEL, 'install_part', 'fx', 0.7, 0.05);
+def(S.RIDE_BOARD, 'metal_hit', 'fx', 0.5, 0.08, 0.15, R_METAL);
+// the built generator and its floodlights (synth-power.js; its drone is the 'genset' loop). Measured on the effects
+// bus 3 m off: the drone -16 LUFS; the start, the stop and a pour each under the player's own pistol shot
+def(S.GEN_START, 'gen_start', 'fxfar', 0.5, 0.03);
+def(S.GEN_STOP, 'gen_stop', 'fxfar', 0.5, 0.03);
+def(S.GEN_FUEL, 'gen_fuel', 'fx', 0.5, 0.05);
+def(S.FLOOD_SWITCH, 'flood_switch', 'fx', 0.8, 0.05);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -211,6 +240,7 @@ const LOCAL = {
   mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1, rec: R_GUN.mp5.fp },
   dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2, rec: R_GUN.dbshotgun.fp },
   crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05, rec: R_XBOW },
+  hmg: { bank: 'fp_hmg', vol: 1, jit: 0.025, send: 0.18 }, // the mounted gun, from behind its grips
   reload_start: { bank: 'reload_start', vol: 0.55, rec: R_MAG_OUT },
   reload_end: { bank: 'reload_end', vol: 0.6, rec: R_MAG_IN },
   shell_insert: { bank: 'shell_insert', vol: 0.55, rec: R_SHELL },
@@ -281,8 +311,12 @@ const LOOPS = {
   zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 18, roll: 1.3, vol: 0.34, wet: 0.12, cap: 8, jit: 0.14, rec: [{ key: 'zv_idle', vol: 0.9, rate: 0.9, lp: 7000 }] },
   boss_breath: { bank: 'loop_boss_breath', ref: 5, max: 70, roll: 1.0, vol: 0.9, wet: 0.2, cap: 3 },
   generator: { bank: 'loop_generator', ref: 2.5, max: 40, roll: 1.2, vol: 0.6, wet: 0.1 },
+  genset: { bank: 'loop_genset', ref: 3, max: 60, roll: 1.1, vol: 0.62, wet: 0.1, cap: 3 }, // a generator the survivors built, running
   // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
   plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
+  // the Tri-County Fair's calliope, while its generator runs: heard as far as the dead hear it (NOISE.FAIR), duller
+  // with distance, in tune with itself on every client (no rate jitter)
+  calliope: { bank: 'loop_calliope', ref: 9, max: 160, roll: 1.0, vol: 0.85, wet: 0.3, air: true, always: true, jit: 0 },
 };
 const LOOP_CAP_TOTAL = 28;
 
@@ -632,7 +666,20 @@ class LoopEmitter {
 // ------------------------------------------------------------------ proximity voice chat source
 // Two paths out of one stream: the voice placed in the world (heard out to TALK_RANGE), and the same voice squeezed
 // through a walkie-talkie speaker, which takes over as the speaker gets too far away to hear directly.
-const VOICE_REF = 2; // the placed voice is at full level this close (m)
+// A microphone arrives some 9 dB under the game's own sound, and still 8 dB apart from one player to the next after
+// the browser's own gain control, so each voice is levelled first (VOICE_LEVEL) and the bus then lifts all of them to where speech sits over the
+// music and the forest (VOICE_BUS). While somebody audible is talking, the rest of the mix steps back as well (DUCK_*).
+const VOICE_REF = 4; // the placed voice is at full level this close (m)...
+const VOICE_ROLLOFF = 0.5; // ...and thins out gently past it: -3.5 dB at 8 m, -7.5 dB at 15 m, -11 dB at TALK_CLEAR
+const voiceDistance = (d) => VOICE_REF / (VOICE_REF + VOICE_ROLLOFF * Math.max(0, d - VOICE_REF)); // (what the panner applies)
+const VOICE_LEVEL = Object.freeze({ threshold: -30, knee: 10, ratio: 4, attack: 0.004, release: 0.2 });
+const VOICE_BUS = 1.6; // voice bus gain at "Voice chat" 100%: a voice beside you lands near -12 LUFS, level with a pistol shot
+const DUCK_MUSIC = 0.4; // score while somebody talks (-8 dB)...
+const DUCK_WORLD = 0.56; // ...and effects + ambience (-5 dB)
+const DUCK_FLOOR = -38; // voice bus level (dBFS) where the ducking starts...
+const DUCK_FULL = -16; // ...and where it is all the way down: a faint voice at the edge of earshot moves the mix less
+const DUCK_HOLD = 0.7; // s the mix stays down after the last word (the gaps inside a sentence)
+const DUCK_MS = 50;
 let radioCurve = null; // handset overdrive
 function radioShape() {
   if (!radioCurve) {
@@ -666,17 +713,26 @@ class VoiceSource {
     this.src = c.createMediaStreamSource(stream);
     this.hp = c.createBiquadFilter();
     this.hp.type = 'highpass';
-    this.hp.frequency.value = 90;
+    this.hp.frequency.value = 110;
     this.lp = c.createBiquadFilter();
     this.lp.type = 'lowpass';
     this.lp.frequency.value = 16000;
+    // a little presence: consonants are what gunfire and the score bury first
+    this.pres = c.createBiquadFilter();
+    this.pres.type = 'peaking';
+    this.pres.frequency.value = 2800;
+    this.pres.Q.value = 0.9;
+    this.pres.gain.value = 3;
     this.gain = c.createGain();
+    // leveller: a quiet microphone and a loud one come out within a few dB of each other
+    this.level = c.createDynamicsCompressor();
+    for (const k in VOICE_LEVEL) this.level[k].value = VOICE_LEVEL[k];
     this.fade = c.createGain();
     this.panner = c.createPanner();
     this.panner.panningModel = 'HRTF';
     this.panner.distanceModel = 'inverse';
     this.panner.refDistance = VOICE_REF;
-    this.panner.rolloffFactor = 1;
+    this.panner.rolloffFactor = VOICE_ROLLOFF;
     this.panner.maxDistance = TALK_RANGE;
     this.rhp = c.createBiquadFilter();
     this.rhp.type = 'highpass';
@@ -693,11 +749,13 @@ class VoiceSource {
     this.rfade.gain.value = 0;
     this.src.connect(this.hp);
     this.hp.connect(this.lp);
-    this.lp.connect(this.gain);
-    this.gain.connect(this.fade);
+    this.lp.connect(this.pres);
+    this.pres.connect(this.gain);
+    this.gain.connect(this.level);
+    this.level.connect(this.fade);
     this.fade.connect(this.panner);
     this.panner.connect(e._voiceIn);
-    this.gain.connect(this.rhp);
+    this.level.connect(this.rhp);
     this.rhp.connect(this.rlp);
     this.rlp.connect(this.rdrive);
     this.rdrive.connect(this.rfade);
@@ -751,7 +809,7 @@ class VoiceSource {
       this.fade.gain.setTargetAtTime(f, now, 0.08);
     }
     // the radio makes up whatever distance takes off the voice itself
-    const r = this.radio ? 1 - f * Math.min(1, VOICE_REF / Math.max(d, 1e-3)) : 0;
+    const r = this.radio ? 1 - f * voiceDistance(d) : 0;
     if (Math.abs(r - this._rfade) > 0.01 || (r === 0) !== (this._rfade === 0)) {
       this._rfade = r;
       this.rfade.gain.setTargetAtTime(r, now, 0.08);
@@ -769,7 +827,7 @@ class VoiceSource {
   disconnect() {
     if (this.dead) return;
     this.dead = true;
-    for (const n of [this.src, this.hp, this.lp, this.gain, this.fade, this.panner, this.rhp, this.rlp, this.rdrive, this.rfade]) {
+    for (const n of [this.src, this.hp, this.lp, this.pres, this.gain, this.level, this.fade, this.panner, this.rhp, this.rlp, this.rdrive, this.rfade]) {
       try {
         n.disconnect();
       } catch {}
@@ -814,6 +872,7 @@ export class AudioEngine {
       cycle: NaN, wind: NaN, gust: NaN, open: 0, indoor: 0,
     };
     this._vol = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
+    this._duck = { on: true, k: 0, set: 0, at: 0, timer: null, buf: null };
     this._rateMul = 1;
     this._hrtfCount = 0;
     this._hbNext = 0;
@@ -934,7 +993,9 @@ export class AudioEngine {
     this._worldLP.frequency.value = 20000;
     this._worldLP.Q.value = 0.6;
     this._worldIn.connect(this._worldLP);
-    this._worldLP.connect(this._pre);
+    this._worldDuck = g(1); // (voice chat ducking)
+    this._worldLP.connect(this._worldDuck);
+    this._worldDuck.connect(this._pre);
 
     this._sfxIn = g(1); // user sfx volume
     this._sfxLP = c.createBiquadFilter(); // low-health muffle
@@ -948,9 +1009,15 @@ export class AudioEngine {
     this._uiIn = g(1);
     this._uiIn.connect(this._pre);
     this._musicIn = g(1);
-    this._musicIn.connect(this._pre);
+    this._musicDuck = g(1);
+    this._musicIn.connect(this._musicDuck);
+    this._musicDuck.connect(this._pre);
     this._voiceIn = g(1);
     this._voiceIn.connect(this._pre);
+    this._voiceAn = c.createAnalyser(); // how loud the voices you can hear are right now: drives the ducking
+    this._voiceAn.fftSize = 1024;
+    this._voiceIn.connect(this._voiceAn);
+    this._duck.buf = new Float32Array(this._voiceAn.fftSize);
 
     // shared reverb: forest by default, crossfading to an open-field or a small-room response (buffers assigned when
     // their IRs are rendered); convolvers that have been silent for a while are disconnected to save CPU
@@ -1736,7 +1803,8 @@ export class AudioEngine {
 
   setVolumes(v = EMPTY) {
     for (const k of ['master', 'music', 'sfx', 'ambience', 'voice']) {
-      if (v[k] !== undefined && v[k] !== null && Number.isFinite(+v[k])) this._vol[k] = clamp01(+v[k]);
+      // (voice runs to 2: the slider can push a quiet friend past the level the mix was balanced at)
+      if (v[k] !== undefined && v[k] !== null && Number.isFinite(+v[k])) this._vol[k] = k === 'voice' ? Math.min(2, Math.max(0, +v[k])) : clamp01(+v[k]);
     }
     if (this._ctx) this._applyVolumes(0.04);
   }
@@ -1755,7 +1823,7 @@ export class AudioEngine {
     set(this._uiIn, v.sfx);
     set(this._ambIn, v.ambience);
     set(this._ambSend, v.ambience);
-    set(this._voiceIn, v.voice);
+    set(this._voiceIn, v.voice * VOICE_BUS);
   }
 
   // debug: every bank referenced by the public API that is not (yet) loaded, plus unmapped SOUND ids
@@ -1781,10 +1849,45 @@ export class AudioEngine {
     try {
       const v = new VoiceSource(this, mediaStream);
       this._voices.add(v);
+      if (!this._duck.timer) this._duck.timer = setInterval(() => this._duckTick(), DUCK_MS);
       return v.handle;
     } catch (err) {
       console.warn('[audio] voice source failed', err);
       return NULL_VOICE;
+    }
+  }
+
+  // false: the game's sound stays where it is while people talk
+  setVoiceDucking(on) {
+    this._duck.on = !!on;
+  }
+
+  // Runs while there are voice sources. The level on the voice bus is read after distance, the panner and the "Voice
+  // chat" slider, so the mix moves by how well you can actually hear the speaker: down at once, back up slowly.
+  _duckTick() {
+    const d = this._duck;
+    const now = this._ctx.currentTime;
+    let k = 0;
+    if (d.on && this._voices.size) {
+      this._voiceAn.getFloatTimeDomainData(d.buf);
+      let sum = 0;
+      for (let i = 0; i < d.buf.length; i++) sum += d.buf[i] * d.buf[i];
+      const db = 10 * Math.log10(sum / d.buf.length + 1e-12);
+      k = clamp01((db - DUCK_FLOOR) / (DUCK_FULL - DUCK_FLOOR));
+    }
+    if (k >= d.k) {
+      d.k = k;
+      d.at = now;
+    } else if (now - d.at > DUCK_HOLD || !d.on) d.k = Math.max(k, d.k - 0.06);
+    if (Math.abs(d.k - d.set) > 0.02 || (d.k === 0) !== (d.set === 0)) {
+      const tc = d.k > d.set ? 0.04 : 0.18;
+      d.set = d.k;
+      this._musicDuck.gain.setTargetAtTime(Math.pow(DUCK_MUSIC, d.k), now, tc);
+      this._worldDuck.gain.setTargetAtTime(Math.pow(DUCK_WORLD, d.k), now, tc);
+    }
+    if (!this._voices.size && d.k === 0) {
+      clearInterval(d.timer);
+      d.timer = null;
     }
   }
 }

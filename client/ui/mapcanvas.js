@@ -2,6 +2,7 @@
 // stipple, water, roads, trails and building footprints) from the deterministic world once per world.
 // Names and live markers are drawn on top by the map screen / compass, never baked in.
 import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
+import { WHEEL } from '../../shared/fair.js';
 
 export const MAP_PX = 1280; // baked canvas size (2 px per metre)
 const S = MAP_PX / MAP_SIZE;
@@ -141,11 +142,113 @@ export function renderMapCanvas(world) {
     }
   }
 
+  // ---- the railway, as a survey map draws one: a line with sleepers hatched across it, from one tunnel mouth to
+  // the other (a bar across each), and the siding at the depot
+  if (world.rail) {
+    g.strokeStyle = '#2a2019';
+    world.rail.tracks.forEach((t, ti) => {
+      const from = ti ? t.from : world.rail.portals[0].i;
+      const to = ti ? t.to : world.rail.portals[1].i;
+      g.lineWidth = 1.7;
+      g.beginPath();
+      g.moveTo(mapX(t.x[from]), mapY(t.z[from]));
+      for (let i = from + 1; i <= to; i++) g.lineTo(mapX(t.x[i]), mapY(t.z[i]));
+      g.stroke();
+      g.lineWidth = 1.3;
+      g.beginPath();
+      for (let i = from + 3; i < to; i += 5) {
+        const l = Math.hypot(t.x[i + 1] - t.x[i - 1], t.z[i + 1] - t.z[i - 1]) || 1;
+        const nx = (-(t.z[i + 1] - t.z[i - 1]) / l) * 2.3;
+        const nz = ((t.x[i + 1] - t.x[i - 1]) / l) * 2.3;
+        g.moveTo(mapX(t.x[i] - nx), mapY(t.z[i] - nz));
+        g.lineTo(mapX(t.x[i] + nx), mapY(t.z[i] + nz));
+      }
+      g.stroke();
+    });
+    g.lineWidth = 3.4;
+    for (const p of world.rail.portals) {
+      g.beginPath();
+      g.moveTo(mapX(p.x - p.dz * 5.5), mapY(p.z + p.dx * 5.5));
+      g.lineTo(mapX(p.x + p.dz * 5.5), mapY(p.z - p.dx * 5.5));
+      g.stroke();
+    }
+  }
+
+  // ---- the workings of the mine, as the surveyor drew them: the drifts dashed under the ground they run
+  // beneath, a tick across each mouth
+  if (world.mine) {
+    g.strokeStyle = 'rgba(52, 30, 24, 0.7)';
+    g.lineWidth = 2.6;
+    g.setLineDash([2.5, 4.5]);
+    for (const l of [world.mine.main, ...world.mine.galleries]) {
+      g.beginPath();
+      g.moveTo(mapX(l.x[0]), mapY(l.z[0]));
+      for (let i = 1; i < l.n; i++) g.lineTo(mapX(l.x[i]), mapY(l.z[i]));
+      g.stroke();
+    }
+    g.setLineDash([]);
+    for (const rm of world.mine.rooms) {
+      g.beginPath();
+      g.arc(mapX(rm.x), mapY(rm.z), rm.r * S * 0.8, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.lineWidth = 3;
+    for (const p of world.mine.portals) {
+      g.beginPath();
+      g.moveTo(mapX(p.x - p.dz * 4.5), mapY(p.z + p.dx * 4.5));
+      g.lineTo(mapX(p.x + p.dz * 4.5), mapY(p.z - p.dx * 4.5));
+      g.stroke();
+    }
+  }
+
+  // ---- St. Agnes Cemetery: its railings as a broken line, a cross for every grave
+  const cem = world.cemetery;
+  if (cem) {
+    g.strokeStyle = 'rgba(38, 28, 22, 0.7)';
+    g.lineWidth = 1.2;
+    g.save();
+    g.translate(mapX(cem.x), mapY(cem.z));
+    g.rotate(-cem.ry);
+    g.setLineDash([3, 2]);
+    g.strokeRect(-cem.hx * S, -cem.hz * S, cem.hx * 2 * S, cem.hz * 2 * S);
+    g.setLineDash([]);
+    g.restore();
+    g.lineWidth = 0.9;
+    g.beginPath();
+    for (const gr of cem.graves) {
+      const x = mapX(gr.x);
+      const y = mapY(gr.z);
+      g.moveTo(x - 1.5, y - 0.5);
+      g.lineTo(x + 1.5, y - 0.5);
+      g.moveTo(x, y - 2);
+      g.lineTo(x, y + 2);
+    }
+    g.stroke();
+  }
+  // ---- the fair's Ferris wheel, the one landmark that is seen from across the valley: a wheel, as a mark
+  if (world.fair) {
+    const f = world.fair;
+    const x = mapX(f.x + f.c * WHEEL.x + f.s * WHEEL.z);
+    const y = mapY(f.z - f.s * WHEEL.x + f.c * WHEEL.z);
+    const r = WHEEL.r * S * 0.8;
+    g.strokeStyle = 'rgba(52, 30, 24, 0.8)';
+    g.lineWidth = 1.6;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI;
+      g.moveTo(x - Math.cos(a) * r, y - Math.sin(a) * r);
+      g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    }
+    g.stroke();
+  }
+
   // ---- buildings (walls + floors + roofs from the static parts)
   g.fillStyle = 'rgba(38, 28, 22, 0.88)';
   for (const p of world.parts) {
     if (p.shape !== 'box' && p.shape !== 'cyl') continue;
     if (p.sy < 0.9 && p.sx * p.sz < 30) continue;
+    if (world.mine && p.y + p.sy / 2 < world.heightAt(p.x, p.z)) continue; // (the timbering of the mine: it is under the ground)
     const w = p.sx * S;
     const h = p.sz * S;
     if (w * h < 1.2) continue;

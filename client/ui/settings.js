@@ -12,7 +12,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   masterVolume: 0.4,
   musicVolume: 0.6,
   sfxVolume: 0.9,
-  voiceVolume: 1,
+  voiceVolume: 1, // 100% = the level the mix is balanced at (audio.js VOICE_BUS); the slider runs to 200%
+  voiceDuck: true,
   quality: 'medium',
   renderScale: 1,
   ps1: false,
@@ -31,7 +32,7 @@ const NUM_RANGES = {
   masterVolume: [0, 1],
   musicVolume: [0, 1],
   sfxVolume: [0, 1],
-  voiceVolume: [0, 1],
+  voiceVolume: [0, 2],
   renderScale: [0.5, 1],
 };
 
@@ -43,7 +44,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
-    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -82,7 +83,8 @@ const SECTIONS = [
       { k: 'masterVolume', label: 'Master', type: 'range', min: 0, max: 1, step: 0.01, fmt: pct },
       { k: 'musicVolume', label: 'Music & ambience', type: 'range', min: 0, max: 1, step: 0.01, fmt: pct },
       { k: 'sfxVolume', label: 'Effects', type: 'range', min: 0, max: 1, step: 0.01, fmt: pct },
-      { k: 'voiceVolume', label: 'Voice chat', type: 'range', min: 0, max: 1, step: 0.01, fmt: pct },
+      { k: 'voiceVolume', label: 'Voice chat', type: 'range', min: 0, max: 2, step: 0.01, fmt: pct },
+      { k: 'voiceDuck', label: 'Lower game for voices', type: 'toggle', hint: 'Music and effects step back while someone you can hear is talking' },
       { k: 'pushToTalk', label: 'Push to talk', type: 'toggle', hint: 'Off = open mic' },
     ],
   },

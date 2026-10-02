@@ -92,10 +92,10 @@ await shot('06-fired');
 // flashlight + inventory
 await page.keyboard.press('KeyF');
 await sleep(500);
-await page.keyboard.press('Tab');
+await page.keyboard.press('KeyI');
 await sleep(800);
 await shot('07-inventory');
-await page.keyboard.press('Tab');
+await page.keyboard.press('KeyI');
 await sleep(500);
 if (scenario === 'zombies') {
   // face the nearest zombie every second and take screenshots (use GODMODE=1 on the server)

@@ -4,7 +4,7 @@
 // previous update, positions as 1-3 byte deltas when small; layout in shared/protocol.js), far entities update at
 // half rate, and irrelevant/destroyed entities get a remove. Sections with nothing in them are not written at all.
 import { MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, AOI_STRUCTURE_RADIUS, AOI_CACHE_RADIUS } from '../shared/constants.js';
-import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qlookYaw, qlookPitch, packLook, PFLAG, ZSTATUS } from '../shared/protocol.js';
+import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qlookYaw, qlookPitch, packLook, PFLAG, PRIDE_SHIFT, ZSTATUS } from '../shared/protocol.js';
 import { ZOMBIE_DEFS } from '../shared/defs.js';
 
 export const SLOTS = 9;
@@ -40,7 +40,7 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 6 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -52,6 +52,9 @@ const BIT_SLOTS = {
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
   [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6]],
+  [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
 };
 
 export function playerFlags(p) {
@@ -67,7 +70,7 @@ export function playerFlags(p) {
   if (s.pinned) f |= PFLAG.PINNED;
   if (p.downed) f |= PFLAG.DOWNED;
   if (p.revivedBy) f |= PFLAG.REVIVING;
-  return f;
+  return f | (s.ride << PRIDE_SHIFT); // (the seat of a ride at the fair: fair.js)
 }
 
 function quant(e) {
@@ -105,8 +108,23 @@ function quant(e) {
       q[3] = e.state | 0;
       break;
     case ENT.CAT:
+    case ENT.DEER:
       q[3] = qangle8(e.yaw);
       q[4] = e.anim;
+      break;
+    case ENT.GUN:
+      q[3] = e.belt;
+      q[4] = e.gunner;
+      q[5] = packLook(qlookYaw(e.yaw), qlookPitch(e.pitch));
+      break;
+    case ENT.FAIR:
+      // (server/fair.js keeps clock and fuel as the wire wants them: see FRF in protocol.js)
+      q[3] = e.running;
+      q[4] = e.clock & 255;
+      q[5] = (e.clock >> 8) & 255;
+      q[6] = (e.clock >> 16) & 255;
+      q[7] = e.fuel & 255;
+      q[8] = (e.fuel >> 8) & 255;
       break;
   }
 }
@@ -130,6 +148,7 @@ function writeFields(w, kind, q, o, fromSlot, toSlot) {
         else w.u8(v);
         break;
       case ENT.ITEM:
+      case ENT.GUN:
         w.u16(v);
         break;
       default:
@@ -165,6 +184,7 @@ function writeCreate(w, e) {
       w.u8(e.ctype);
       break;
     case ENT.CAT:
+    case ENT.DEER:
       w.u8(e.variant);
       break;
   }
@@ -208,6 +228,7 @@ function staged(e) {
 const AOI2 = new Float64Array(256).fill(AOI_RADIUS * AOI_RADIUS);
 AOI2[ENT.PLAYER] = 0;
 AOI2[ENT.CRATE] = 0;
+AOI2[ENT.FAIR] = 0; // (its lights and its music carry further than anything else in the valley)
 AOI2[ENT.ITEM] = AOI_ITEM_RADIUS * AOI_ITEM_RADIUS;
 AOI2[ENT.STRUCTURE] = AOI_STRUCTURE_RADIUS * AOI_STRUCTURE_RADIUS;
 AOI2[ENT.CACHE] = AOI_CACHE_RADIUS * AOI_CACHE_RADIUS;

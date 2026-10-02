@@ -15,7 +15,6 @@ export class Voice {
     this.transmitting = false;
     this.enabled = false;
     this.wantMic = false;
-    this.volume = 1;
     this.onState = null;
   }
 
@@ -103,7 +102,6 @@ export class Voice {
   _ensureSource(peer) {
     if (peer.source || !peer.stream || !this.audio.ready || !this.audio.createVoiceSource) return;
     peer.source = this.audio.createVoiceSource(peer.stream);
-    peer.source.setVolume?.(this.volume);
     peer.source.setRadio?.(peer.radio);
     try {
       const ctx = this.audio.context;
@@ -184,11 +182,6 @@ export class Voice {
   // true while this peer is coming through the radio rather than being heard directly
   overRadio(id) {
     return this.peers.get(id)?.source?.mode?.() === 2;
-  }
-
-  setVolume(v) {
-    this.volume = v;
-    for (const p of this.peers.values()) p.source?.setVolume?.(v);
   }
 
   // talking detection (call ~10x per second); returns the ids of the talking peers you can actually hear

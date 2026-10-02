@@ -473,7 +473,8 @@ export class StaticWorld {
               uv[(o + i) * 2] += uvo[0];
               uv[(o + i) * 2 + 1] += uvo[1];
             }
-            if (ground) ground[o + i] = pos[k + 1] - world.heightAt(pos[k], pos[k + 2]);
+            // (height above the ground it stands on: down in the mine that is the floor of the drift)
+            if (ground) ground[o + i] = pos[k + 1] - (world.floorAt ? world.floorAt(pos[k], pos[k + 2], pos[k + 1] + 0.3) : world.heightAt(pos[k], pos[k + 2]));
             if (tints && tint) {
               tints[k] = tint.r;
               tints[k + 1] = tint.g;

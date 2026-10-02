@@ -30,26 +30,49 @@ npm start          # serves dist/ + the WebSocket on http://localhost:3000
 Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (pins the map: without it every
 playthrough is a new random valley), `TRUST_PROXY` (`1` / `0`: whether to take a player's address from the
 `X-Forwarded-For` / `X-Real-IP` header; unset, only a proxy on a private network is believed - see
-`clientAddress` in `server/index.js`. Joins are rate-limited per address).
+`clientAddress` in `server/index.js`. Joins are rate-limited per address), `STATS_FILE` (where the leaderboard is
+kept: `data/stats.json` by default, or `stats.json` on the Railway volume when the service has one; empty keeps
+nothing past the process).
 Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
-dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`,
-`/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
-`/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
-off every zombie within 30 m that has legs to lose)).
+dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z> [y]`
+(with a height: onto what is under feet at it, down a drift of the mine), `/mine` (to the adit of Blackrock Mine;
+`/mine far` to the far portal, `/mine in` down to the junction), `/depot` (to the front of the station house at
+Whitlock Depot), `/train` (onto the loading bank beside the stalled freight train), `/clinic` (to the front door of Mercy Clinic;
+`/clinic ward` into its dark wards; says so on a map without it), `/gun` (to the grips of the mounted gun at the
+Army Checkpoint; it says so when the map has no checkpoint: seed 1 has one), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
+`/herd` (teleports 45 m from the wandering herd, just out of its sight), `/deer` (34 m from the nearest group of deer;
+`/deer spawn [m]` puts a group 20 m - or that many - ahead, and lets you stand there ten seconds before it notices you), `/legs [1|2]` (takes one or both legs
+off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
+(to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station),
+`/cemetery` (to the gate of St. Agnes Cemetery; `/cemetery rise [n]` makes the n graves nearest you give up their
+dead now), `/fair` (to the gate of the Tri-County Fair; `/fair on` starts its generator with a full tank, `/fair off`
+stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to the generator shed's door), `/floodlight` (what a generator and two floodlights cost, and a full tank of fuel)).
 
 ### Tests & tools
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`) and runs `sim-smoke` |
+| `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) the deer (`test-deer`) the generator and its floodlights (`test-power`) and the railway (`test-rail`) and runs `sim-smoke` |
+| `node scripts/test-power.js [seed]` | the generator and its floodlights against the real server in-process and decoded as a client does, on the flattest open strip of the valley: what they cost, [E] pouring fuel and holding it for the switch, which lamps a generator feeds, the hum and the idle dead it draws (from a random stream of its own), the dead breaking it - and a Shade walking at a survivor that freezes as it enters a powered cone, moves again when the generator runs dry, walks free behind a wall inside the cone and freezes again when it steps out of the wall's shadow (part of `npm test`) |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
+| `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
+| `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the backpack's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
+| `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
+| `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
+| `node scripts/test-deer.js [seed ...]` | the deer against the real server in-process: where the groups are put, what makes them bolt (a survivor standing or crouched, a noise, the dead) and how far and fast, a shot at a running one missing unless the server rewinds to the shooter's picture exactly as for a zombie dog, head shots on a grazing one, what a kill leaves and that it counts for nothing, that nothing that walks the zombie list meets them, the dawn's newcomers, venison, that none of it draws on the game's random stream, and half an hour of being chased about with none in the lake, the mine or a wall and none pushing at a fence (part of `npm test`; `VERBOSE=1` prints the passes) |
+| `node scripts/test-fair.js [seed]` | the Tri-County Fair against the real server in-process: the place, its rides and its generator are where a survivor can get at them and the dead can follow one in; the generator takes its fuel from the backpack, the drum fills the tank and no further, it runs dry, it shuts off; it is heard 150 m off and no further and its lights hold a Shade; a seat carries its rider round, Space gets them out with the fall damage of the height, a blow or a rope takes them out, a stopped wheel leaves them where they are, out of the reach of the dead below, the dead stay in their seat; and a rider at 0, 100 and 250 ms each way, whose prediction has to be the server's result to the bit, and is rebased only when they get on, the generator starts or stops under them and they get off (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
-| `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least twice), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
+| `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
+| `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
+| `node scripts/test-clinic.js [seed ...]` | Mercy Clinic on the first five valleys that have it: daylight in reception and outside, the wards wholly dark and the passage between going dark with no step in it, the one drug locker in the dark, the valley's flow fields leading into the deepest ward and out again; and in a running game the dead of the wards keep to them and go back when led out, a Shade moves in there at noon and is pinned in reception, the sunrise spares what stands in the wards, the drug locker's contents come once, and `/clinic` works. `VERBOSE=1` prints the passes too |
+| `node scripts/test-cemetery.js [seed ...]` | St. Agnes Cemetery on six valleys (every grave is open ground a body can stand up on, the casket and the crypt's doorway) and in a running game: a restless grave by day (the warning, the climb, a head shot while it climbs and a shot that the ground stops), the dead of the graves getting out through the railings to the chapel's door, a wave's share of the horde, and a scripted night inside a ring of walls round the chapel: the dead come up inside it and reach the survivors, and the horde is no bigger for it (part of `npm test`) |
+| `node scripts/test-rail.js [seed ...]` | the railway on six valleys: a line from rim to rim and a depot on it, crossing Route 9 once, off the water and every other place's ground, never steeper than 3% or tighter than a gentle curve; its bed level and open (a survivor walks it from either tunnel to the train, the nav grid has it as open ground); every road over it on planks and on the level; each tunnel shut by its cave-in; the open boxcars walked into from the bank, searched from inside, boarded up, and found by the dead's flow field; and in a running game a zombie comes into a boxcar after a survivor and has to break the door boards down once they are up. `--sweep 300` checks the plan alone on seeds 1..300 |
+| `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least once), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
 | `node scripts/test-itemguide.js` | holds the "Used in" / "Found in" lines of the inventory tooltips against the recipe and loot tables they are derived from, generated worlds and the server's gathering (runs after `npm test`, as its `posttest`) |
@@ -69,7 +92,7 @@ container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/
 `/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
 `&hurt=1` a hit flinch, `&vox=0` a growl, `&legs=1` hopping on one leg, `&legs=3&speed=0.8&dist=2.8&ty=0.3` crawling,
 `&legs=3&fall=1` going down, `&anim=10` tripped by a shot in the leg);
-`/sandbox/models-test.html?cats=grid` shows the cat's poses; `?grid=10`, `?variants=10` and `?film=10` show the
+`/sandbox/models-test.html?cats=grid` shows the cat's poses, `?deer=grid&hit=1` the deer's with the hitbox over each (and where its skull is), `?deer=film&anim=2` a bound in sixths; `?grid=10`, `?variants=10` and `?film=10` show the
 zombie dog's poses, coats and gait).
 
 `sim-smoke` is one long run on one map, and `npm test` runs it on seed 4242 only, so a check that leans on what the
@@ -92,6 +115,9 @@ https://www.survivethenightgame.com.
 - `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
   `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Game state lives in
   memory, so never scale it past one replica, and expect every deploy to start a fresh world.
+- The leaderboard (`server/stats.js`) is a JSON file, and a deploy starts from a fresh disk: attach a
+  volume to the service and the file goes there by itself (`RAILWAY_VOLUME_MOUNT_PATH`). Without one
+  every deploy empties the board.
 - Node 24 is pinned with `engines.node` in `package.json`. uWebSockets.js only ships prebuilt binaries
   for Node 20/22/23/24 on glibc Linux, so don't move to an Alpine/musl image.
 - One process serves the client, the WebSocket (`/ws`) and `/status` on `PORT` (set to `3000` on the
@@ -120,14 +146,16 @@ https://www.survivethenightgame.com.
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
-| E | Interact: pick up, install supplies, feed a campfire, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm |
+| E | Interact: pick up, install supplies, feed a campfire, pour fuel into a generator, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm, switch a generator off or on |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
+| L | Leaderboard: every player's kills, nights survived, wins and revives over all their games, and yours. Click a column to sort by it |
 | M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
-| H | Quick heal (bandage / canned tuna / painkillers / medkit; a medkit gets you up when downed) |
-| Tab | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20) |
+| H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; a medkit gets you up when downed) |
+| I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop |
+| Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
 | Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
 | V | Push-to-talk proximity voice (same reach as chat) |
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
@@ -154,7 +182,8 @@ them off.
   The day/night clock stops during the final stand, so the team chooses when to start it - fortify the
   car first. The stand is sized to the survivors still alive, the way a night's horde is: more of you,
   more of them.
-- **Day: scavenge & rebuild.** A clock shows the time until nightfall. Every place has searchable
+- **Day: scavenge & rebuild.** A clock shows the time until nightfall. A day is short - 2:45, the first
+  3:15 - sized for a dash to one place or two, a look round each, and the horn. Every place has searchable
   containers (lockers, ammo crates, toolboxes, cabinets, fridges, shelves, duffel bags, car trunks,
   log piles; hold [E]) plus loot on the floor, and ~90 roadside and woodland sites (wrecks, abandoned
   camps, sheds, hunter stands, military stashes, burnt homesteads, roadblocks, graves) sit along the
@@ -162,7 +191,9 @@ them off.
   sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
   automatically when you walk over them - except a stack you dropped yourself (right-click it in the
   backpack), which stays down until you have walked a few steps away, so you can clear a slot or leave
-  it for a teammate. A full backpack tells you what it left lying.
+  it for a teammate. A full backpack tells you what it left lying. **Ammunition** is carried in the
+  backpack like everything else, a stack per calibre (150 rounds of 9mm to a stack, 240 of 7.62, ...), and
+  the guns reload out of it: to share it, Shift+click the stack, pick how many, and drop them.
   Searched containers partly restock at dawn. Supply planes
   drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
   found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
@@ -184,7 +215,7 @@ them off.
   and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
   and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
   and bat swarms). Night 2 has a boss of its own: a Tank. You hear its footfalls
-  thump long before you see it; it charges, smacks survivors off their feet, breaks a wood barricade with one
+  thump long before you see it, and inside 30 m each one shakes the camera (a charge is a rumble); it charges, smacks survivors off their feet, breaks a wood barricade with one
   blow and ploughs straight through whatever its charge breaks. Every boss comes in with the second wave, with
   most of the night still ahead: bring it down before sunrise and it drops what it carries (ammunition, medkits,
   gun parts). One that is still standing at dawn burns in the sun with the rest of the horde and leaves nothing.
@@ -202,17 +233,42 @@ them off.
   The table is `NIGHT_THEMES` in `shared/nights.js`.
 - **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
   noise the further it carries: an MP5 35 m, a pistol 45 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
-  a car alarm 140 m, a pipe bomb or a bursting boomer 170 m. More carry means more of them coming - and the
+  a car alarm 140 m, a pipe bomb or a bursting boomer 170 m, the chapel bell 220 m. More carry means more of them coming - and the
   louder it was where a zombie stood, the harder it runs, so a blast empties the whole neighbourhood onto you at
   a sprint while a distant pistol shot brings a few ambling over. They go to where the noise *was*: shoot and
   move, or throw a pipe bomb to pull a crowd off a place you want to search. Chopping, salvaging, hammering, a
   shattering molotov and a supply crate thumping down are quieter (30-60 m) but not silent.
+- **Ring the chapel bell.** A rope hangs just inside the door of St. Agnes Chapel (on every map), and the bell it
+  rings hangs in the open belfry under the spire. Hold [E] on the rope for a second and a half and the bell tolls
+  three times over about six seconds. Every survivor hears it wherever they are, fainter and from the chapel's
+  side the further off they are, and is told the bell is ringing. Each toll carries 220 m to the dead: every idle
+  one inside that and the wandering herd leave what they are doing and come to the chapel, at a run from 170 m in
+  and ambling from further out (like any noise, it holds a zombie for a minute at most, so a walker from the far
+  edge stops short). Ring it to empty a place you want to search, or to bring everything onto the chapel. It works by day and by night, and the rope will not pull again for 45 seconds.
+- **Call a supply drop on the Relay Station's radio.** Where the map has a Relay Station, a field radio stands
+  beside the foot of its mast. Hold [E] on it for 4 seconds with two batteries in your backpack: they are spent and a
+  supply plane comes for you, and drops its crate (red smoke, a schematic as often as any drop) where you stood
+  when the call went out - half a minute later, give or take. One call a day, by day only (the radio answers again
+  after sunrise; no plane flies at night), the team is told who called, and the call is heard by the dead for 90 m.
+  The prompt says what is missing: the batteries, the day's call, or the daylight.
 - **The wandering herd:** by day a crowd of ten to fifteen walkers and runners shuffles along the valley's roads
   together, from place to place, at a slow walk (it keeps clear of your car). Let one of them notice you - about
   26 m, less if you crouch - or let a noise reach any of them, and the whole herd comes at a run, walkers
   included: faster than you walk, slower than you sprint. Sprint out of their sight and they give up after about
   twenty seconds, search where they last saw you (or where the noise came from), then drift back to the road.
   Kill the herd and another turns up somewhere else a minute and a half later.
+- **Deer** graze the valley all game, day and night: five groups of two to four (sixteen deer at most), a buck with
+  antlers in some, on the woods and clearings away from the places and the roads, heads down, a few steps now and then,
+  drifting on to new ground every few minutes. Come within 22 m of one - 13 m crouched, more if you sprint - let a noise
+  reach them or let one of the dead come near, and the whole group bolts with a snort, white tails up, at 9 m/s (you
+  sprint at 7.5), runs about sixty metres, stops to watch where it came from and settles. A deer bolting past is a
+  warning. Zombies ignore them; nothing eats anything. **Hunting:** any weapon brings one down (70 HP: three pistol rounds
+  in the body or one in the head - and the head is down in the grass while it grazes - one crossbow bolt, a heavy knife
+  blow from close by), and a kill leaves 1-2 leather and two cuts of **raw venison** where it fell. The crossbow
+  is the hunter's weapon: a gunshot sends every group within its carry running and brings the dead, a bolt is heard by
+  nothing six metres off. Cook venison at a campfire: **cooked venison** heals 45 HP and restores your stamina, more
+  than a tin of tuna; raw, it is eaten for 8. A kill counts for nothing on the scoreboard. Hunted groups are replaced: at
+  sunrise new ones walk in from the edge of the map, out of everyone's sight, until the valley has its five again.
 - **Zombie dogs:** packs of two to four den in the thickest woods from day one (more of them each day). They
   catch your scent from half again as far off as the dead, and the first to find you howls and
   brings the whole pack. They fan out to come at you from the sides, crouch and lunge for a bite, peel away and
@@ -224,6 +280,43 @@ them off.
   and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
   the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
   cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
+- **The dead of St. Agnes do not stay buried.** Behind the chapel lies St. Agnes Cemetery: iron railings with a gate
+  and two panels down, rows of headstones either side of a gravel path, sunken graves and open ones, a dead tree,
+  and at the head of the path a crypt with a casket in it worth searching (shells, torches, flares, a medkit, now
+  and then a double-barrel); the chapel's shed outside the railings is the groundskeeper's, with his toolbox. A few older
+  graves lie in the churchyard beside the chapel itself. Spend the night within about 60 m of it and every wave
+  gives 30% of its walkers and runners to the graves: they come up over the next 20 s, most of them from the graves
+  nearest the survivors, never one a survivor is standing at - inside whatever has been walled off round the
+  chapel. The horde is no bigger for it; only where part of it arrives changes, and specials and bosses still come
+  from the treeline. By day three graves are restless (drawn at every sunrise), and each gives up one walker to the
+  first survivor who comes within 5 m of it. A rise is fair warning: the earth heaves and is heard (and felt
+  underfoot) for 1.2 s before anything shows, and the zombie then takes 2.5 s to climb out, doing nothing else:
+  what is still under the grass cannot be hit, but a head above it can.
+- **The Tri-County Fair** is on every map: a midway of game stalls and food stands to search, a carousel, a Ferris
+  wheel 18 m tall over the clearing, and a generator in a shed at the side. Hold [E] on the generator to start it: it
+  burns Flamethrower Fuel, 25 out of your backpack for two and a half minutes, and the drum beside it takes more [E],
+  up to ten minutes in the tank. Hold [E] again to shut it off; what is left stays in the tank. While it runs, the
+  bulbs on the midway and on the rides light up - that light holds a Shade frozen the way torchlight does - the
+  calliope plays, and every four seconds the fair is a noise that carries 150 m (a car alarm carries 140): every
+  corpse with nobody to chase comes to the midway, the wandering herd too. Run it to pull the dead off somewhere you
+  want to search, or to bring them to you. And the rides turn: [E] on a gondola at the platform or on a horse sits
+  you in it (the wheel goes round once in 40 s, the carousel in 8). From the seat you look round, shoot, reload and
+  heal; [E] gets you off at the bottom, Space gets you out anywhere, with the fall that comes with it (from the top
+  of the wheel that is half your health). If the generator dies with you at the top, you are stuck up there until
+  somebody starts it again or you jump. Nothing on foot reaches the top of the wheel, but spitters, bats and the
+  Hive Queen do; near the ground the dead claw at you, a roper's rope pulls you out of the seat, and a blow that
+  knocks a survivor down - a tank's, a boomer's - knocks you out of it.
+- **A generator and floodlights.** Two more things to build with the hammer. The **generator** (6 scrap metal, gun
+  parts, 2 duct tape, barbed wire) burns Flamethrower Fuel: [E] pours 25 units into its tank, a minute of running, and
+  the tank holds ten; holding [E] switches it off, and on again, without losing what is in the tank. While it runs it
+  powers every **floodlight** (3 scrap metal, batteries, barbed wire) within 16 m: a work lamp on a tripod that throws
+  a cold white cone 24 m long and about 70 degrees across, the way it faced when it was placed, and a Shade inside that
+  cone is pinned exactly as in torchlight - walls, trees and hills still cast shadows it can move in. The price is the
+  noise: a running generator hums, and the hum carries 40 m (a little further than an MP5, less far than a pistol), so
+  the idle dead drift over to it, and the dead break it like anything else in their way. A generator that is broken,
+  switched off or run dry takes its lights with it; one taken down with the hammer gives back the fuel left in its
+  tank. Its prompt says how much fuel is left; a floodlight's, whether it has power. While one of the two is being placed, a fan on the ground shows where the lamp's light will fall and every
+  generator shows the 16 m it reaches.
 - **Shoot the legs out from under them.** A bullet below the hip of a walker, runner, spitter, roper, boomer or
   shade goes into that leg: the zombie **stumbles** - it trips, slows to a shuffle and loses the swing it had started
   - and takes only 40% of the damage in the body. A leg that has taken 30% of the zombie's health is **shot off**
@@ -249,20 +342,32 @@ them off.
   lights them the same way. Burnt bodies leave nothing to loot. It is built at the workbench once the team has
   the explosives schematic (or found at the crash site, in ammo crates and in supply drops), and drinks fuel
   brewed from alcohol and chemicals.
+- **The mounted gun.** On a map with the Army Checkpoint, a heavy machine gun stands on a tripod in a horseshoe of
+  sandbags beside the boom gate, covering the road out. It does not move: stand at its grips and press [E] to man
+  it (one gunner at a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button
+  is its trigger: 600 rounds a minute, each a little harder than an AK-47's and through one body into the next,
+  out to 200 m in a tight cone, with no climb. It swivels with your view 70 degrees either side of the road and
+  from 15 degrees down to 25 up; look further and it stays at its stop. Step away, press [E] again, go down or die
+  and you let go. It is the loudest gun in the valley - every shot carries 110 m - so using it brings the
+  neighbourhood, and the sandbags only cover the front: the dead walk round into the open back. **One belt:** it
+  has 250 rounds when the game starts, shown in place of your ammunition while you man it, and when they are gone
+  it clicks. Hold [R] (or [E]) at the grips to feed it 50 rounds a second from the 7.62 in your backpack - the
+  same rounds the AK-47 eats - up to 250. Its belt and who mans it start over with every new game; its kills are
+  the gunner's.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
   for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team. Two materials have to be looked for: **leather** (padded jacket,
-  machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge, and **kevlar plates** (two
+  machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge - or off a deer - and **kevlar plates** (two
   to a vest) in ammo crates, which hold them in pairs.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
   places) and a field map [M] keep the team together. A nameplate carries its owner's health bar while they
   are hurt, within 12 m or in your crosshair (amber below 60%, red below 30%), a downed teammate's turns into
-  a red DOWN plate, and the survivors list in the inventory [Tab] shows everyone's health and who is down, dead
+  a red DOWN plate, and the player list [Tab] shows everyone's health and who is down, dead
   or turned. Friendly fire is off, headshots deal bonus damage, health slowly regenerates.
 - **Joining late:** the server runs one drop-in game. Join a run in progress and you arrive beside the team
   (at the car if they are still by it, or if nobody is left alive), with the starting kit plus a little more
@@ -288,14 +393,49 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 - **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
   (your car, a rest area) on it near the middle and the roadside places strung along it.
 - **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
-- **Sixteen places** to a map. Five are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel,
-  Blackwater Dock (always on the lake shore, pier out over the water) and Hollow Creek (the village: diner,
-  general store, police station, garage, houses). The other eleven are drawn from sixteen: Pinewood Motel,
-  Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside Campground (near the lake), the
-  Relay Station, Ranger Lookout and Blackrock Mine (on high ground), Miller Farm, Harlan Sawmill, Granite
-  Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage (a scrapyard),
-  Camp Tamarack (a summer camp) and Elk Ridge Lodge. Each is sited by its own rule and kept apart from the
-  rest, the highway and the water.
+- **The railway** runs across the valley from a tunnel in the hillside on one rim to a tunnel on the other,
+  on a course of its own: it crosses Route 9 once, on the level, a short walk from The Breakdown, keeps off the
+  water and out of every other place, and bends in long easy curves, never steeper than 3% - the ground is cut
+  and banked up to it, so it runs through cuttings and along embankments. Rails and sleepers are only drawn:
+  the line is open ground to walk, for the living and the dead. Every road and trail that crosses it does so
+  over planks. Each tunnel is shut by a cave-in a few metres in. Somewhere along it a freight train stands
+  where it stopped: a locomotive, a tank car, two boxcars standing open at a timber loading dock, a flat of
+  lumber and a closed boxcar. The open boxcars are walked into from the dock and hold freight crates (planks,
+  nails, scrap, rope, tape, wire, tinned food, now and then gun parts); a boxcar's one doorway takes door
+  boards, so one makes a shelter for the night. The field map draws the line hatched (`shared/rail.js`,
+  `node scripts/test-rail.js`).
+- **Eighteen places** to a map. Eight are on every one: The Breakdown, Route 9 Gas Station, St. Agnes Chapel (with
+  St. Agnes Cemetery behind it, `shared/cemetery.js`), Blackwater Dock (always on the lake shore, pier out over the water), Hollow Creek (the village: diner,
+  general store, police station, garage, houses), Blackrock Mine (on high ground), the Tri-County Fair (in a
+  clearing of its own, the Ferris wheel over the midway) and Whitlock Depot (on the railway: the station house with
+  its waiting room and ticket office, a platform, a freight shed, a water tower and a signal, and a siding with two
+  cars on it). The other ten are drawn
+  from sixteen: Pinewood Motel, Starlite Drive-In and the Army Checkpoint (all on Route 9), Lakeside
+  Campground (near the lake), the Relay Station and Ranger Lookout (on high ground), Miller Farm, Harlan
+  Sawmill, Granite Quarry, Shady Pines Trailers, the Hunting Cabins, the military Crash Site, Dutch's Salvage
+  (a scrapyard), Camp Tamarack (a summer camp), Elk Ridge Lodge and Mercy Clinic. Each is sited by its own
+  rule and kept apart from the rest, the highway and the water.
+- **Mercy Clinic is dark at noon.** Reception and the pharmacy at the front have windows and daylight; a passage
+  behind them leads to the ward wing, whose windows were boarded over when the wards were sealed. Walk down the
+  passage and the day goes out behind you: in the wards it is as dark as down the mine, a flashlight, a torch or a
+  flare is all there is to see by, and a Shade moves there at noon (the daylight that pins it everywhere else
+  does not reach it, and the sun that burns the horde at dawn spares whatever stands in there). Three of the dead
+  live in the wards, one of them crawling, and from the second day a Shade in the isolation ward; the wards fill
+  up again at sunrise. It is where the medicine is: the pharmacy's medicine cabinets, one more in the wards, and
+  in the deepest ward the map's one drug locker - two medkits, three painkillers and four bandages on top of what
+  else is in it, once a game. Outside, an ambulance that never left still has its rear compartment to search
+  (`shared/clinic.js`, `node scripts/test-clinic.js`).
+- **The mine goes under the valley.** The adit at the back of Blackrock Mine's yard stands open: a decline
+  runs down from it to a drift 100-200 m long that comes up again at a second portal on the edge of another
+  place (a different one on every map; the field map shows the workings dashed). Half way there is a junction
+  with a few dead-end galleries off it, each ending in a room with crates nobody has come back for - and one
+  of the car's supplies may be hidden down there. The deepest room holds the map's one strongbox: an M4A1, an
+  AK-47 or a flamethrower, loaded, with two magazines more and two pipe bombs. It is there once; it does not
+  refill at sunrise. It is pitch dark at noon, so bring a light: the dead live
+  down there, the Shade among them from the second day, and the sun that burns the horde at dawn does not
+  reach them. The horde follows a survivor in by either mouth (`shared/mine.js`, `node scripts/test-mine.js`).
+- **The Army Checkpoint has a machine-gun nest** on the verge by its boom gate (see The mounted gun above;
+  `shared/mountedgun.js`, `node scripts/test-gun.js`).
 - **Roads** are not drawn by hand either: county roads are a spanning tree grown out from Route 9 (every
   place hangs off the nearest thing that already has a road, and turns its front to it), then the worst
   detours are closed with a couple more roads and with forest trails. Each link is routed over the terrain
@@ -345,9 +485,14 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
   a client gets in a tick (player list, inventory, snapshot) leaves as one packet, and the ping rides
   inside the command packets and snapshots. `npm run bench:net` measures all of it.
 - Hitscan and melee are lag compensated: each client reports the tick it was rendering, and the
-  server rewinds zombie/player hitboxes (16-tick history) to it before tracing - to the render time
-  that came with that very command, however long it sat in the queue. Shotgun spread is seeded
+  server rewinds zombie/player hitboxes (32-tick history) to it before tracing - to the render time
+  that came with that very command, however long it sat in the queue, and as far back as 1 s
+  (`MAX_REWIND`: a shot asks for its ping plus about 0.2 s). Shotgun spread is seeded
   deterministically so the shooter's predicted tracers match the server's pellets.
+- The shooter sees what a shot strikes at once: the client judges its own pellets against the same
+  hitboxes (`shared/hitbox.js`) where it has the zombies drawn and shows the blood or the puff off the
+  wall as the gun fires, then drops the server's word of the same impact when it arrives. The damage
+  and the hit marker stay the server's. `scripts/test-netsync.js` checks the rewind.
 - Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
   when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a
   late packet instead of freezing; their gaits pin planted feet to the ground in world space.

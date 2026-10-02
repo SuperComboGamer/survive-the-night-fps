@@ -86,6 +86,16 @@ function spawn(kind) {
       e.yaw = rnd(0, 6.28);
       e.anim = irnd(0, 3);
       break;
+    case ENT.DEER:
+      e.variant = irnd(0, 255);
+      e.yaw = rnd(0, 6.28);
+      e.anim = irnd(0, 8);
+      break;
+    case ENT.FAIR:
+      e.running = 0;
+      e.clock = irnd(0, 0xffffff);
+      e.fuel = irnd(0, 0xffff);
+      break;
   }
   ents.set(e.id, e);
   return e;
@@ -111,7 +121,11 @@ function expectQ(e) {
       q.push(e.state);
       break;
     case ENT.CAT:
+    case ENT.DEER:
       q.push(qangle8(e.yaw), e.anim);
+      break;
+    case ENT.FAIR:
+      q.push(e.running, e.clock & 255, (e.clock >> 8) & 255, e.clock >> 16, e.fuel & 255, e.fuel >> 8);
       break;
   }
   return q;
@@ -129,7 +143,7 @@ let bytes = 0;
 let snaps = 0;
 let skips = 0;
 let rounded = 0;
-const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE, ENT.CAT];
+const kinds = [ENT.PLAYER, ENT.ZOMBIE, ENT.ITEM, ENT.STRUCTURE, ENT.PROJECTILE, ENT.CRATE, ENT.AREA, ENT.CACHE, ENT.CAT, ENT.DEER, ENT.FAIR];
 for (let i = 0; i < 80; i++) spawn(kinds[irnd(0, kinds.length - 1)]);
 let checks = 0;
 const TICKS = 3000;
@@ -161,6 +175,7 @@ for (let tick = 1; tick <= TICKS; tick++) {
       e.downed = Math.random() < 0.2;
       e.revivedBy = Math.random() < 0.1 ? 5 : 0;
       e.state.slot = irnd(0, 2);
+      e.state.ride = Math.random() < 0.3 ? irnd(1, 16) : 0; // onto a ride at the fair, off it
     }
     if (e.kind === ENT.ITEM && Math.random() < 0.05) e.count = irnd(1, 900);
     if (e.kind === ENT.STRUCTURE && Math.random() < 0.1) {
@@ -172,6 +187,15 @@ for (let tick = 1; tick <= TICKS; tick++) {
     if (e.kind === ENT.CAT && Math.random() < 0.2) {
       e.yaw = rnd(0, 6.28);
       e.anim = irnd(0, 3);
+    }
+    if (e.kind === ENT.DEER && Math.random() < 0.2) {
+      e.yaw = rnd(0, 6.28);
+      e.anim = irnd(0, 8);
+    }
+    if (e.kind === ENT.FAIR && Math.random() < 0.1) {
+      e.running = irnd(0, 1);
+      e.clock = irnd(0, 0xffffff);
+      if (Math.random() < 0.5) e.fuel = irnd(0, 0xffff);
     }
   }
   // viewers move around (relevance changes)

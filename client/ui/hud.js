@@ -2,6 +2,7 @@
 // touches the DOM when a (rounded) value actually changed.
 import { ITEM_DEFS, WEAPONS, AMMO_NAMES, CAR_PARTS } from '../../shared/defs.js';
 import { PHASE, DAY_LENGTH, FIRST_DAY_LENGTH, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/constants.js';
+import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
 import { Compass, Objective, Markers, Downed, DamageDir } from './hud2.js';
@@ -474,13 +475,14 @@ export class Hud {
     }
 
     // active weapon block
-    const id = slot === 3 ? h.throwItem || weapons[3] || 0 : weapons[slot] || 0;
+    // (manning the mounted gun: it stands in for the weapon in the hands, its belt for the magazine)
+    const id = h.mounted ? MOUNTED_GUN : slot === 3 ? h.throwItem || weapons[3] || 0 : weapons[slot] || 0;
     if (c.wId !== id) {
       const wasId = c.wId;
       c.wId = id;
-      this.wName.textContent = id ? ITEM_DEFS[id]?.name || '' : 'Unarmed';
+      this.wName.textContent = h.mounted ? GUN.name : id ? ITEM_DEFS[id]?.name || '' : 'Unarmed';
       this.wIco.innerHTML = id ? itemIcon(id) : '';
-      const w = WEAPONS[id];
+      const w = h.mounted ? GUN : WEAPONS[id];
       c.aTypeStr = w && !w.melee ? AMMO_NAMES[w.ammo] : '';
       c.magMax = w && w.mag ? w.mag : 0;
       c.magEach = !!(w && w.reloadEach);
@@ -488,7 +490,7 @@ export class Hud {
       if (wasId !== undefined) this.ammo.animate([{ opacity: 0.3, transform: 'translateX(8px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' });
     }
     let mode;
-    if (slot === 3 && id) mode = 'throw';
+    if (slot === 3 && id && !h.mounted) mode = 'throw';
     else if (h.mag == null) mode = 'none';
     else mode = 'gun';
     if (c.ammoMode !== mode) {
@@ -619,6 +621,9 @@ export class Hud {
         this.ctxTitle.textContent = 'The car';
       } else if (type === 'structure') {
         this.ctxIco.innerHTML = glyph('hammer');
+      } else if (type === 'fair') {
+        this.ctxIco.innerHTML = glyph('fuel');
+        this.ctxTitle.textContent = 'Fair generator';
       }
     }
     if (!ctx) return;
@@ -656,6 +661,17 @@ export class Hud {
         this.ctxFill.style.transform = `scaleX(${r})`;
         this.ctx.classList.toggle('warn', r < 0.35);
       }
+    } else if (type === 'fair') {
+      // the Tri-County Fair's generator (client/game/fair.js): running or not, and the fuel in its tank
+      const fuel = Math.max(0, Math.ceil(ctx.fuel || 0));
+      const key = ctx.running ? fuel : -1 - fuel;
+      if (c.ctxA !== key) {
+        c.ctxA = key;
+        this.ctxVal.textContent = ctx.running ? 'Running · ' + fmtTime(fuel) : fuel > 0 ? 'Off · ' + fmtTime(fuel) : 'Off';
+        this.ctxFill.style.transform = `scaleX(${Math.round(clamp(fuel / (ctx.max || 1), 0, 1) * 300) / 300})`;
+        this.ctx.classList.toggle('warn', ctx.running && fuel < 30);
+        this.ctx.classList.toggle('dead', !ctx.running);
+      }
     }
   }
 
@@ -668,12 +684,13 @@ export class Hud {
       this.iSurvT.textContent = surv;
       this.iSurv.hidden = !surv;
     }
-    const ping = h.ping == null ? '' : Math.round(h.ping) + ' ms';
+    // (stalled: the link has gone quiet, and nothing done until it is back reaches the server)
+    const ping = h.ping == null ? '' : h.stalled ? 'no signal' : Math.round(h.ping) + ' ms';
     if (c.ping !== ping) {
       c.ping = ping;
       this.iPingT.textContent = ping;
       this.iPing.hidden = !ping;
-      this.iPing.classList.toggle('bad', h.ping > 150);
+      this.iPing.classList.toggle('bad', !!h.stalled || h.ping > 150);
     }
     const showFps = !!this.ui.settings.showFps && !!h.fps;
     const fps = showFps ? Math.round(h.fps) + ' fps' : '';

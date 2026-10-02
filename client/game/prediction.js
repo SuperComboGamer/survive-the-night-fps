@@ -162,7 +162,8 @@ export class Prediction {
 
   // what the feet stand on: 0 nothing (in the air), 1 the terrain, 2 something on it (a floor slab, a kerb, a crate)
   footing(s) {
-    return !s.onGround ? 0 : s.y - this.world.heightAt(s.x, s.z) > 0.03 ? 2 : 1;
+    // (in a seat of a ride: nothing - what the wheel does to the feet is not a step)
+    return !s.onGround || s.ride ? 0 : s.y - this.world.floorAt(s.x, s.z, s.y + 0.3) > 0.03 ? 2 : 1;
   }
 
   // How far below the simulated eye the camera should sit this frame (negative: above it). Call once a frame.

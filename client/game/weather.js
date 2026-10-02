@@ -105,6 +105,7 @@ export class Weather {
   setWorld(world) {
     this.seed = world.seed | 0;
     this.roofs = world.roofs || [];
+    this.mine = world.mine || null;
     this.world = world;
     this.cache.clear();
     this.lastSlot = -1;
@@ -323,8 +324,9 @@ export class Weather {
     s.flash = f;
   }
 
-  // is (x,y,z) under a building roof or shelter?
+  // is (x,y,z) under a building roof or shelter, or down in the mine?
   coverAt(x, y, z) {
+    if (this.mine && this.mine.under(x, y, z)) return true;
     for (const r of this.roofs) {
       const dx = x - r.x;
       const dz = z - r.z;

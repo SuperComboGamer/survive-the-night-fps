@@ -24,7 +24,9 @@ export const ACTION_KEYS = {
   flashlight: 'KeyF',
   heal: 'KeyH',
   map: 'KeyM',
-  inventory: 'Tab',
+  board: 'KeyL',
+  inventory: 'KeyI',
+  players: 'Tab', // held, not pressed: the player list is up from keydown to keyup
   build: 'Digit' + (SLOT_BUILD + 1), // the weapon slots are on the digits, slot 0 on [1]
 };
 
@@ -117,7 +119,7 @@ export class Input {
         if (!e.repeat) this.handlers.onKey?.('Tab');
         return;
       }
-      if (!this.enabled && e.code !== 'Enter' && e.code !== 'Escape' && e.code !== 'KeyM') return;
+      if (!this.enabled && e.code !== 'Enter' && e.code !== 'Escape' && e.code !== 'KeyM' && e.code !== 'KeyL' && e.code !== 'KeyI') return;
       if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'ControlLeft' || e.code === 'KeyF' || e.code === 'KeyM' || (e.ctrlKey && (e.code === 'KeyW' || e.code === 'KeyS' || e.code === 'KeyD'))) e.preventDefault();
       const b = KEYMAP[e.code];
       if (b) {
@@ -134,6 +136,7 @@ export class Input {
     window.addEventListener('blur', () => {
       this.buttons = 0;
       this.mouseButtons = 0;
+      this.handlers.onBlur?.(); // (the keyup of a key held as the window lost the focus never comes)
     });
   }
 

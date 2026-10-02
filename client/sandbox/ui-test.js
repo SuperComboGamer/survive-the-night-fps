@@ -1,5 +1,5 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
-// hud-finale|hud-live|inventory|build|death|gameover|victory|pause|settings|chat|icons   &bg=night|day|fire
+// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|chat|icons   &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=
 import { UI } from '../ui/ui.js';
 import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
@@ -95,6 +95,7 @@ const ui = new UI(document.getElementById('ui'), {
   onCraftRepeat: (id, n) => log('craft', id, 'and', n, 'more'),
   onUseItem: (i) => log('use', i),
   onDropItem: (i, c) => log('drop', i, c),
+  onSplitItem: (i, c) => log('split', i, c),
   onSwapItems: (a, b) => log('swap', a, b),
   onEquipArmor: (i) => log('armor', i),
   onDropWeapon: (s) => log('dropWeapon', s),
@@ -190,6 +191,9 @@ const inv = {
   [ITEM.WIRE, 2],
   [ITEM.PAINKILLERS, 2],
   [ITEM.TUNA, 2],
+  [ITEM.AMMO_9MM, 46],
+  [ITEM.AMMO_SHELLS, 12],
+  [ITEM.AMMO_762, 90],
 ].forEach(([item, count], i) => {
   inv.slots[i < 12 ? i : i + 1] = { item, count };
 });
@@ -420,6 +424,13 @@ switch (screen) {
       } else if (Math.random() < 0.002) hp = Math.min(100, hp + 35);
       return { ...h, hp, mag, reserve, reloading: reloadT, stamina: 50 + Math.sin(t) * 50, exhausted: Math.sin(t) < -0.9, yaw: t * 0.4, hordeLeft: Math.max(0, 40 - Math.floor(t)), timeLeft: 150 - t };
     });
+    break;
+  }
+  case 'players': {
+    buildScene(bg || 'night');
+    ui.hideSplash();
+    ui.updateHud({ ...baseHud });
+    ui.setRosterOpen(true);
     break;
   }
   case 'inventory': {
