@@ -92,6 +92,7 @@ const ui = new UI(document.getElementById('ui'), {
     if (q.get('joinfail')) setTimeout(() => ui.setJoinError('Connection failed. The server did not answer.'), 800);
   },
   onCraft: (id) => log('craft', id),
+  onCraftRepeat: (id, n) => log('craft', id, 'and', n, 'more'),
   onUseItem: (i) => log('use', i),
   onDropItem: (i, c) => log('drop', i, c),
   onSwapItems: (a, b) => log('swap', a, b),

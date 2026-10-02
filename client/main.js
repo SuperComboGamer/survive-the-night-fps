@@ -30,6 +30,7 @@ const callbacks = {
     }
   },
   onCraft: (id) => game?.uiCallbacks().onCraft(id),
+  onCraftRepeat: (id, n) => game?.uiCallbacks().onCraftRepeat(id, n),
   onUseItem: (i) => game?.uiCallbacks().onUseItem(i),
   onDropItem: (i, n) => game?.uiCallbacks().onDropItem(i, n),
   onSwapItems: (a, b) => game?.uiCallbacks().onSwapItems(a, b),

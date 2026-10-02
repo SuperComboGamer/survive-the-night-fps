@@ -3,6 +3,7 @@
 import { usedIn, foundIn, sourcesOf } from '../game/itemguide.js';
 import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
+import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 
@@ -21,6 +22,14 @@ const CRAFT_TABS = [
 ];
 const TAB_KEY = 'stn.craftTab';
 const STATION_GLYPH = { fire: 'campfire', bench: 'wrench' };
+// Bulk crafting: Shift+click a recipe for CRAFT_FEW, Ctrl+click for as many as the materials allow. On a Mac the
+// second key is Cmd as well: there Ctrl+click is the context-menu gesture and the browser never sends the click
+// (Ctrl still works, through that contextmenu event).
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+const MAX_KEY = IS_MAC ? 'Cmd' : 'Ctrl';
+// ms a craft counts as on its way to the server before it is given up on: two slow round trips, as the ammo
+// reserve only follows the inventory once the next command packet has come back
+const SENT_TTL = 2500;
 
 // Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, and
 // consumables split into medicine (anything that heals) and utility (torches, batteries), which
@@ -126,6 +135,14 @@ function statLines(id) {
   if (t) out.push(`Radius ${t.radius}m` + (t.damage ? ` · ${t.damage} dmg` : ` · burns ${t.burnTime}s`));
   if (d && d.cat === 'armor') out.push(`${d.armor} armor · absorbs ${Math.round(d.absorb * 100)}%`);
   return out;
+}
+
+// how much of an item an inventory ({ slots, ammo, weapons }) holds, wherever it is kept: backpack, ammo reserve
+// or a weapon slot
+function carried(inv, item) {
+  const d = ITEM_DEFS[item];
+  if (d.cat === 'ammo') return inv.ammo[d.ammo] | 0;
+  return inv.slots.reduce((n, s) => n + (s && s.item === item ? s.count : 0), inv.weapons.includes(item) ? 1 : 0);
 }
 
 function hintFor(cat) {
@@ -240,6 +257,9 @@ export class Inventory {
     this.unlocked = 0;
     this.camp = { supplies: [0, 0, 0, 0, 0], hints: [], carried: {} };
     this.tip = new Tooltip(tipParent);
+    this.bulk = 0; // crafts a click on a recipe asks for while a bulk key is held (CRAFT_FEW / CRAFT_MAX); 0: none held
+    this.keys = { few: false, max: false }; // bulk keys pressed since the screen opened
+    this.sent = []; // crafts asked for that the server has not answered yet: { r, n, t, had }
 
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
@@ -411,7 +431,10 @@ export class Inventory {
           lock = svgEl('i', 'rc-lock', b, glyph('lock'));
           lock.title = `Needs the ${ITEM_DEFS[r.schem].name}`;
         }
-        const rec = { r, tab, b, ings, st, lock, key: '' };
+        // what a click would add while a bulk key is held (_renderBulk)
+        const bulk = el('span', 'rc-bulk', b);
+        bulk.hidden = true;
+        const rec = { r, tab, b, ings, st, lock, bulk, bulkTxt: '', key: '' };
         this.recipeEls.push(rec);
         tab.recs.push(rec);
       }
@@ -420,6 +443,17 @@ export class Inventory {
     // search results: the same recipe buttons, moved into relevance sections while a search is active
     this.findView = el('div', 'craft-found', list);
     this.findView.hidden = true;
+    // the bulk keys, spelled out under the list: nobody finds a modifier click by hovering
+    const keys = el('div', 'grid-hints craft-hints', right);
+    for (const [k, t] of [
+      ['LMB', 'craft'],
+      ['Shift+LMB', `craft ${CRAFT_FEW}`],
+      [MAX_KEY + '+LMB', `craft up to ${CRAFT_MAX}`],
+    ]) {
+      const s = el('span', 'gh', keys);
+      el('span', 'kbd sm', s, k);
+      el('span', '', s, t);
+    }
 
     this._bind(root, wrap);
     this._setTab(lsGet(TAB_KEY, 'all'));
@@ -585,15 +619,22 @@ export class Inventory {
       if (e.target.closest('.cf-reset')) this.clearSearch();
     });
 
-    // crafting
+    // crafting. With a bulk key held a click is that many crafts - as many of them as the server will take
+    // (_bulkRun), sent as the ordinary craft and its repeats. None at all (no room for the output) is refused
+    // here, with the same shake as a recipe that cannot be made.
     this.craftList.addEventListener('click', (e) => {
       const b = e.target.closest('.rc');
       if (!b) return;
       const rec = this.recipeEls.find((x) => x.b === b);
       if (!rec) return;
-      if (b.classList.contains('ok')) {
+      const model = this._model();
+      const n = this.bulk ? this._bulkRun(rec.r, model).n : 1;
+      if (b.classList.contains('ok') && n) {
         this.ui.sound('ui_click');
         cb.onCraft(rec.r.id);
+        if (n > 1) cb.onCraftRepeat(rec.r.id, n - 1);
+        this.sent.push({ r: rec.r, n, t: performance.now(), had: carried(model, rec.r.out) });
+        if (this.bulk) this._renderBulk();
         b.getAnimations().forEach((a) => a.cancel());
         b.animate([{ background: 'rgba(228,220,203,.22)' }, { background: 'rgba(228,220,203,0)' }], { duration: 380 });
       } else {
@@ -604,6 +645,91 @@ export class Inventory {
         );
       }
     });
+    // macOS: Ctrl+click asks for the context menu and no click follows. The key is down (this.bulk), so make it one
+    this.craftList.addEventListener('contextmenu', (e) => {
+      if (IS_MAC && e.button === 0 && e.ctrlKey) e.target.closest('.rc')?.click();
+    });
+    // The bulk keys. They are also sprint and crouch, and may still be down from the game when the screen opens:
+    // only a press made while it is open counts, so a click with a leftover key stays a single craft. Captured,
+    // or the search field would keep its keydowns to itself.
+    this._bulkKey = (e) => {
+      const k = e.key === 'Shift' ? 'few' : e.key === 'Control' || (IS_MAC && e.key === 'Meta') ? 'max' : '';
+      if (!k || e.repeat || (e.type === 'keydown' && !this.open)) return;
+      this.keys[k] = e.type === 'keydown';
+      this._setBulk();
+    };
+    window.addEventListener('keydown', this._bulkKey, true);
+    window.addEventListener('keyup', this._bulkKey, true);
+    // (a key released while another window had the focus never reports its keyup)
+    window.addEventListener('blur', () => this._dropBulk());
+  }
+
+  _dropBulk() {
+    this.keys.few = this.keys.max = false;
+    this._setBulk();
+  }
+
+  _setBulk() {
+    const n = this.keys.max ? CRAFT_MAX : this.keys.few ? CRAFT_FEW : 0;
+    if (n === this.bulk) return;
+    this.bulk = n;
+    this._renderBulk();
+    this._refreshTip();
+  }
+
+  // an open recipe tooltip, redrawn
+  _refreshTip() {
+    if (!this.tipTarget?.classList.contains('rc') || this.tip.root.hidden) return;
+    const info = this._tipInfo(this.tipTarget);
+    if (info) this.tip.show(info);
+  }
+
+  // The inventory as it will be once the crafts on their way to the server are answered: counting on what the
+  // server last sent would offer the same materials twice to a second click that lands before the answer (a
+  // double-click does). A craft is answered when there is more of its output than there was (the inventory
+  // message for the backpack; the ammo reserve follows a round trip later, with the self state) - or it never
+  // is, and is given up on after SENT_TTL.
+  _model() {
+    const now = performance.now();
+    this.sent = this.sent.filter((e) => now - e.t < SENT_TTL && carried(this.inv, e.r.out) <= e.had);
+    const inv = copyInv(this.inv);
+    for (const e of this.sent) craftRun(e.r, inv, e.n);
+    return inv;
+  }
+
+  // What a click on a recipe makes now, with a bulk key held: n crafts - what the key asks for, less what the
+  // materials, the backpack or the ammo reserve stop short of. full: it is room, not materials, that stops the next.
+  _bulkRun(r, model = this._model()) {
+    const inv = copyInv(model);
+    const n = craftRun(r, inv, this.bulk);
+    // (`inv` is as the last craft left it)
+    return { n, full: n < this.bulk && Object.keys(r.cost).every((id) => carried(inv, +id) >= r.cost[id]) };
+  }
+
+  // tooltip hint of a recipe that can be made, as [text, class]
+  _craftHint(r) {
+    if (!this.bulk) return [`Click to craft\nShift+click to craft ${CRAFT_FEW} · ${MAX_KEY}+click up to ${CRAFT_MAX}`, ''];
+    const { n, full } = this._bulkRun(r);
+    const room = ITEM_DEFS[r.out].cat === 'ammo' ? 'the reserve' : 'the backpack';
+    if (!n) return [full ? `No room in ${room}` : 'The materials are spoken for', 'bad'];
+    const made = `Click to craft ${ITEM_DEFS[r.out].name} ×${n * r.n}`;
+    return [n === this.bulk ? made : `${made}\nThat is all ${full ? room + ' has room for' : 'the materials make'}`, ''];
+  }
+
+  // The count on every recipe that can be made, while a bulk key is held: the items a click would add, or 'full'
+  // when there is no room for even one more craft's worth.
+  _renderBulk() {
+    const on = this.open && this.bulk > 0;
+    const model = on ? this._model() : null;
+    for (const rec of this.recipeEls) {
+      const { n, full } = on && rec.b.classList.contains('ok') ? this._bulkRun(rec.r, model) : { n: 0, full: false };
+      const txt = n ? '+' + n * rec.r.n : full ? 'full' : '';
+      if (rec.bulkTxt === txt) continue;
+      rec.bulkTxt = txt;
+      rec.bulk.textContent = txt;
+      rec.bulk.hidden = !txt;
+      rec.bulk.classList.toggle('none', !n);
+    }
   }
 
   _startDrag(d) {
@@ -681,6 +807,8 @@ export class Inventory {
       if (!unlocked) todo.push('Find the schematic in lockers, crates or toolboxes');
       hint = todo.length ? todo.join('\n') : 'Click to craft';
       if (todo.length) hintCls = 'bad';
+      // it can be made: name the bulk keys, or - with one of them held - say what the click will make
+      if (!todo.length) [hint, hintCls] = this._craftHint(r);
     } else if (t.classList.contains('cp')) {
       const i = this.partEls.indexOf(t);
       id = SUPPLIES[i];
@@ -950,6 +1078,11 @@ export class Inventory {
     this.stationEl.classList.toggle('near', f || bn);
     this.stationIco.innerHTML = glyph(bn ? 'wrench' : 'campfire');
     this.stationTxt.textContent = f && bn ? 'Campfire + workbench' : f ? 'At a campfire' : bn ? 'At a workbench' : 'No station nearby';
+    // a bulk key is down: its counts follow the inventory (the ammo reserve too, which the block above does not watch)
+    if (this.bulk) {
+      this._renderBulk();
+      this._refreshTip();
+    }
   }
 
   // ctx = { fire, bench, unlocked }
@@ -1031,6 +1164,7 @@ export class Inventory {
     } else {
       // a focused search field would keep ui.isTyping() true and swallow gameplay keys
       if (document.activeElement === this.findInput) this.findInput.blur();
+      this._dropBulk();
       this.tip.hide();
       this.tipTarget = null;
       if (this.drag) {

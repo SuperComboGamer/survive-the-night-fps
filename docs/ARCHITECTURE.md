@@ -190,6 +190,14 @@ more than its bytes**, so put things into the packets that already flow.
   doorways recorded by world generation (`world.openings`); campfires and workbenches are crafting stations
   (`STRUCT_DEFS[t].station`), recipes name the station they need (`RECIPES[i].station`) and optionally a
   schematic (`schem`, team-wide unlock bitmask in the global state).
+- **Crafting in bulk** (Shift / Ctrl+click a recipe) is not in the protocol: it is `ACT.CRAFT` sent n times. The
+  server refuses each craft it cannot do with a toast, so the client counts first: `craftRun` in
+  `client/game/bulkcraft.js` repeats the checks of `Game.craft` and the slot rules of `server/inventory.js` on a
+  copy of the inventory (and, stricter than the server, only counts ammunition while a whole batch fits the
+  reserve). `sim-smoke` holds it against the server, so change the two together. The inventory screen replays
+  the crafts still on their way before it counts again (`Inventory._model`), the repeats leave through a bucket
+  in `Game.sendCrafts` (the server drops what a client sends past 200 messages a second), and a listener plays
+  one craft sound per 0.1 s however many `SOUND.CRAFT` events a tick brings.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
