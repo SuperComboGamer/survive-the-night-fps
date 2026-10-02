@@ -66,6 +66,12 @@ export class Lights {
   // remoteFlash: [{pos: Vector3, dir: Vector3}] remote players with flashlight on (sorted by distance)
   update(dt, time, camPos, localFlashOn, sources, remoteFlash, night) {
     this.flashlight.intensity = localFlashOn ? 16 + night * 8 : 0;
+    // a dark flashlight lights nothing, so its shadow map (high / ultra) is not rendered either. This runs
+    // before the frame is drawn, so the frame it comes on has a fresh map; castShadow stays as it is
+    // (toggling that would recompile every program). The map has to exist though: with none, three binds
+    // a placeholder its shadow samplers reject, and every lit draw fails.
+    const sh = this.flashlight.shadow;
+    sh.autoUpdate = localFlashOn || !sh.map;
     // nearest (big fires count as closer) fire sources
     const tmp = this._tmp;
     tmp.length = 0;
