@@ -10,7 +10,7 @@ import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSIO
 import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
-import { createPlayerState, simulatePlayer } from '../shared/playersim.js';
+import { createPlayerState, copyPlayerState, simulatePlayer } from '../shared/playersim.js';
 import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
 import { COL, BOX, footprintContains } from '../shared/collision.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
@@ -1306,6 +1306,47 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
     [s.weapons[0], s.mags[0], s.ammo[AMMO.SHELL], s.ammo[AMMO.R308]] = keep;
     p.inv.splice(0, p.inv.length, ...inv);
     p.invDirty = true;
+  }
+  // heavy melee (RMB): one harder blow, then a longer recovery - more in the blow, less per second, so that
+  // neither button is always the right one. (no ticks and no game rng in here: the run plays out as before)
+  {
+    const melee = [ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE];
+    const flat = melee.filter((id) => !(WEAPONS[id].altDamage > WEAPONS[id].damage && WEAPONS[id].altRate > WEAPONS[id].rate && WEAPONS[id].altDamage / WEAPONS[id].altRate < WEAPONS[id].damage / WEAPONS[id].rate));
+    check('every melee weapon has a heavy attack of its own', flat.length === 0, flat.join(','));
+    const bat = WEAPONS[ITEM.BAT];
+    // the swing itself, in the shared sim: which button, and how long before the next one
+    const sim = copyPlayerState(createPlayerState(), s);
+    sim.weapons[2] = ITEM.BAT;
+    sim.slot = 2;
+    const swing = (buttons) => {
+      sim.cooldown = sim.switchT = sim.lastBtn = 0;
+      const ev = [];
+      simulatePlayer(sim, { seq: 1, buttons, yaw: 0, pitch: 0, slot: 255 }, game.world, ev);
+      return [ev.find((e) => e.type === 'melee')?.heavy, sim.cooldown];
+    };
+    const [lightEv, lightCd] = swing(BTN.ATTACK);
+    const [heavyEv, heavyCd] = swing(BTN.ALT);
+    check('RMB swings heavy and recovers slower', lightEv === false && heavyEv === true && lightCd === bat.rate && heavyCd === bat.altRate, `${lightCd} s / ${heavyCd} s`);
+    // the blow, on the server: looking down at a walker's chest
+    const rng = game.rng;
+    game.rng = () => 0.99;
+    const look = [s.yaw, s.pitch];
+    s.yaw = 0;
+    s.pitch = -0.6;
+    const dummy = game.zm.spawn(ZTYPE.WALKER, s.x, s.z - 1.5, { hpMul: 20 });
+    game.fillHistory(dummy);
+    const blow = (heavy) => {
+      const hp = dummy.hp;
+      game.combat.melee(p, { weapon: ITEM.BAT, heavy });
+      return hp - dummy.hp;
+    };
+    const light = blow(false);
+    const heavy = blow(true);
+    check('a heavy blow deals altDamage', light === bat.damage && heavy === bat.altDamage, `${light} / ${heavy}`);
+    dummy.dead = true;
+    dummy.deadT = 2;
+    [s.yaw, s.pitch] = look;
+    game.rng = rng;
   }
   A.input(0, 0, 0, 4); // back to the hammer for the door boards
   run(12, () => A.input(0, 0, 0));

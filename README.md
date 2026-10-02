@@ -172,7 +172,7 @@ https://www.survivethenightgame.com.
   metal wall is dented). Shoot it before it gets there - or while it swells, and the piece only takes the blast.
   Stragglers far from the team are brought back into the fight.
 - **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
-  noise the further it carries: a pistol or MP5 45-50 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
+  noise the further it carries: an MP5 35 m, a pistol 45 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
   a car alarm 140 m, a pipe bomb or a bursting boomer 170 m. More carry means more of them coming - and the
   louder it was where a zombie stood, the harder it runs, so a blast empties the whole neighbourhood onto you at
   a sprint while a distant pistol shot brings a few ambling over. They go to where the noise *was*: shoot and
@@ -195,13 +195,17 @@ https://www.survivethenightgame.com.
   and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
   the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
   cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
-- **Arsenal:** pistol, pump shotgun, double-barrel (two shells back to back, slow break-open reload),
-  MP5 (full-auto 9mm, quiet), AK-47, M4A1 (full-auto 5.56, accurate) and a scoped hunting rifle, plus
-  knife, bats, machete and hammer. Guns turn up where you would expect them: double-barrels on farms and
+- **Arsenal:** pistol, pump shotgun, double-barrel (two heavier blasts back to back, then a break-open
+  reload), MP5 (full-auto 9mm out of the pistol's reserve, the quietest gun that fires a bullet), AK-47,
+  M4A1 (full-auto 5.56, accurate) and a scoped bolt-action hunting rifle (no bullet hits harder: one body
+  shot drops most of the dead and carries on through the ones behind), plus knife, bats, machete and
+  hammer. Knife, bats and machete have a heavy attack (RMB): a harder blow that can drop what a light swing
+  only wounds, paid for with a longer recovery, so light swings still do more damage over time.
+  Guns turn up where you would expect them: double-barrels on farms and
   in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site,
   and the AK-47 in the same ammo crates as its 7.62 (the checkpoint, the crash site, military stashes in the woods).
   The **crossbow** is the quiet one: a single heavy bolt that only the dead within a few metres hear (a
-  gunshot carries 45-100 m), paid for with a slow re-cock after every shot. It needs no schematic and no
+  gunshot carries 35-100 m), paid for with a slow re-cock after every shot. It needs no schematic and no
   gunpowder - rope, sticks and scrap at the workbench, and more sticks and scrap for bolts.
   The **flamethrower** is the one for crowds: a short cone of fire (11 m) that needs no aim and sets whatever
   it touches **alight** - a burning zombie keeps burning for 5 s after the fire that lit it, and a molotov fire
