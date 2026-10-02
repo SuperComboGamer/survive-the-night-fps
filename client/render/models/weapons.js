@@ -1781,17 +1781,54 @@ const smoothstep = (a, b, x) => {
 };
 const win = (u, a, b, c, d) => smoothstep(a, b, u) * (1 - smoothstep(c, d, u)); // rise a..b, fall c..d
 
-class Spring {
+// A damped spring, kicked through .v (recoil, landing dip, look lag). Its constants were tuned with one explicit
+// step per frame at 60 fps (v += a * dt, x += v * dt), and that step is part of the feel: it takes c / 60 off a
+// kick in its first frame. One such step per frame also made the motion depend on the frame time, and it is only
+// stable for short steps: one 100 ms frame threw the kick forward instead of back, and 10 fps diverged.
+// So the motion is defined as that 60 Hz step, a linear map M of (x, v), and a frame of any length applies
+// M^(dt * 60) exactly: the old motion at 60 fps, the same curve at every other frame rate, and never further out
+// than that curve however long the frame. (Exported for scripts/test-netsync.js, which holds it to this.)
+const SPRING_HZ = 60;
+export class Spring {
   constructor(k, c) {
-    this.k = k;
-    this.c = c;
     this.x = 0;
     this.v = 0;
+    // a spring too stiff to be stepped at that rate (M would flip it over every step, which has no in-between)
+    // gets a finer step
+    let h = 1 / SPRING_HZ;
+    while (c * h >= 1 || k * h * h + c * h >= 2) h /= 2;
+    this.rate = 1 / h;
+    this.m00 = 1 - k * h * h;
+    this.m01 = (1 - c * h) * h;
+    this.m10 = -k * h;
+    this.m11 = 1 - c * h;
+    // M's eigenvalues are r * e^(+-i * w) for a spring that rings, r * e^(+-w) for one that does not
+    const r = Math.sqrt(this.m11); // det M = 1 - c * h
+    const cw = (this.m00 + this.m11) / (2 * r);
+    this.ring = cw < 1;
+    this.w = Math.max(1e-6, this.ring ? Math.acos(cw) : Math.acosh(cw));
+    this.lr = Math.log(r);
+    this.ia = 1 / (this.ring ? Math.sin(this.w) : Math.sinh(this.w));
+    this.ib = this.ia / r;
   }
   step(dt, target = 0) {
-    const a = -this.k * (this.x - target) - this.c * this.v;
-    this.v += a * dt;
-    this.x += this.v * dt;
+    // M^t = a * I + b * M (t = 1 gives a = 0, b = 1: the old step)
+    const t = dt * this.rate, w = this.w, lr = this.lr;
+    let s, s1; // r^t * sin(t * w) and r^t * sin((t - 1) * w), sinh for a spring that does not ring
+    if (this.ring) {
+      const rt = Math.exp(t * lr);
+      s = rt * Math.sin(t * w);
+      s1 = rt * Math.sin((t - 1) * w);
+    } else {
+      // from the two eigenvalues to the power t: both are below 1, so nothing overflows however long the frame
+      const p = Math.exp(t * (lr + w)), q = Math.exp(t * (lr - w));
+      s = (p - q) / 2;
+      s1 = (p * Math.exp(-w) - q * Math.exp(w)) / 2;
+    }
+    const a = -s1 * this.ia, b = s * this.ib;
+    const x = this.x - target, v = this.v;
+    this.x = target + a * x + b * (this.m00 * x + this.m01 * v);
+    this.v = a * v + b * (this.m10 * x + this.m11 * v);
     return this.x;
   }
 }

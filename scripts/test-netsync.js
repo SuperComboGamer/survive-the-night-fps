@@ -8,6 +8,7 @@
 // Then the input buffer (runBuffer): early presses of fire, reload and jump are performed, and only those.
 // Last (runSteps), no server: the camera's step smoothing, which reads the prediction and must not be fooled by it.
 // usage: node scripts/test-netsync.js [lagMs=100] [jitterMs=30]
+import { Spring } from '../client/render/models/weapons.js';
 import { Game } from '../server/game.js';
 import { C2S, S2C, SNAP, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
 import { BTN, SERVER_TICK_RATE, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
@@ -19,6 +20,70 @@ import { InputBuffer } from '../client/game/inputbuffer.js';
 import { createWorld } from '../shared/world.js';
 import { makeCyl } from '../shared/collision.js';
 import { createPlayerState, copyPlayerState, samePlayerState, simulatePlayer } from '../shared/playersim.js';
+
+// Not netcode, but the same kind of promise: the viewmodel's springs (recoil, landing dip, look lag) must move the
+// gun the same way whatever the frame time. The reference is what they were tuned as, one explicit step per frame at
+// 60 fps. Kick each spring and run it in frames of 16, 33, 66, 100 and 500 ms, at 240 fps and in uneven frames.
+// Expected: at every frame that falls on a 60 fps frame the spring is where the reference is, in between it never
+// swings past the reference's furthest frame by more than the curve does (one long frame used to throw the gun
+// the wrong way, 10 fps used to diverge), and it comes to rest on its target.
+function runSprings() {
+  // [k, c] as in ViewModel's constructor: recoil back / pitch / yaw, the landing dip, the look lag
+  const SPRINGS = [[260, 22], [200, 18], [150, 16], [120, 22], [160, 25]];
+  const KICK = 2;
+  const N = 180; // 3 s of 60 fps frames
+  const ref = new Float64Array(N + 1);
+  let rs = 5;
+  const rnd = () => ((rs = (Math.imul(rs, 1103515245) + 12345) | 0) >>> 0) / 4294967296;
+  const bad = [];
+  let worst = 0; // furthest from the reference, as a share of its peak
+  let reach = 0; // furthest swing, as a share of the reference's
+  for (const [k, c] of SPRINGS) {
+    let x = 0, v = KICK, peak = 0;
+    for (let i = 1; i <= N; i++) {
+      v += (-k * x - c * v) / 60;
+      x += v / 60;
+      ref[i] = x;
+      peak = Math.max(peak, Math.abs(x));
+    }
+    // frames of `every` 60ths of a second; 0: uneven frames of 2 to 60 ms that meet the reference every 6th of a second
+    for (const every of [1, 2, 4, 6, 30, 0.25, 0]) {
+      const s = new Spring(k, c);
+      s.v += KICK;
+      let at = 0; // time so far, in 60ths
+      while (at < N - 1e-9) {
+        let d = every;
+        if (!every) {
+          const next = Math.min(N, (Math.floor(at / 10 + 1e-9) + 1) * 10);
+          d = Math.min(0.12 + rnd() * 3.5, next - at);
+          if (next - at - d < 0.01) d = next - at;
+        }
+        at += d;
+        s.step(d / 60);
+        if (!(Math.abs(s.x) <= peak * 1.02)) bad.push(`k ${k} c ${c}, frames of ${every || 'uneven'}/60 s: swung to ${(s.x / peak).toFixed(2)} of the 60 fps peak`);
+        reach = Math.max(reach, Math.abs(s.x) / peak);
+        const i = Math.round(at);
+        if (Math.abs(at - i) < 1e-9) worst = Math.max(worst, Math.abs(s.x - ref[i]) / peak);
+      }
+      if (!(Math.abs(s.x) < peak * 1e-4 && Math.abs(s.v) < KICK * 1e-4)) bad.push(`k ${k} c ${c}, frames of ${every || 'uneven'}/60 s: not at rest after 3 s (${s.x})`);
+    }
+    // a target other than 0, and one frame much longer than anything a browser delivers
+    const s = new Spring(k, c);
+    s.step(0.5, 1);
+    s.step(1e6, 1);
+    if (!(Math.abs(s.x - 1) < 1e-9)) bad.push(`k ${k} c ${c}: rests at ${s.x} with its target at 1`);
+  }
+  if (!(worst < 1e-9)) bad.push(`up to ${worst.toExponential(1)} of the peak away from the 60 fps motion`);
+  // a spring too stiff for a 60 Hz step at all still settles
+  const stiff = new Spring(9000, 150);
+  stiff.v += KICK;
+  let far = 0;
+  for (let i = 0; i < 30; i++) far = Math.max(far, Math.abs(stiff.step(1 / 30)));
+  if (!(far < KICK / 60 && Math.abs(stiff.x) < 1e-9)) bad.push(`a stiff spring swung to ${far} and ended at ${stiff.x}`);
+  const ok = !bad.length;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  viewmodel springs at any frame time: ${ok ? `${SPRINGS.length} springs in frames of 16, 33, 66, 100 and 500 ms, at 240 fps and in uneven frames stay within ${worst.toExponential(1)} of the 60 fps motion's peak, swing at most ${reach.toFixed(3)} times as far and come to rest` : bad.slice(0, 4).join('; ')}`);
+  return ok;
+}
 
 function run(LAG, JIT) {
   let rs = 12345;
@@ -581,6 +646,7 @@ const cases = args.length
       [250, 120],
     ];
 let ok = true;
+if (!args.length) ok = runSprings() && ok;
 for (const [lag, jit] of cases) ok = run(lag, jit) && ok;
 if (!args.length) for (const hold of [300, 700, 1500]) ok = runStall(hold) && ok;
 if (!args.length) ok = runBuffer(100) && ok;
