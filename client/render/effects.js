@@ -9,6 +9,12 @@ import { getTexture } from './textures.js';
 
 // atlas cells (3x3)
 export const TEX = { FIRE: 0, SMOKE: 1, SPARK: 2, BLOOD: 3, GLOW: 4, MUZZLE: 5, DUST: 6 };
+// added to a cell: the particle is lit like a body (by the sky's light level, or by the local flashlight when its beam
+// is on it) instead of getting the smoke's night tint. Blood uses it: under that tint it glowed in the dark and went
+// a dull grey-pink in the beam
+const LIT = 16;
+const TORCH_GAIN = 0.3; // how much of the flashlight a drop of blood throws back, next to a matt surface facing the lamp
+const isSpot = (o) => o.isSpotLight;
 const ATLAS_NAMES = ['fx_fire', 'fx_smoke', 'fx_spark', 'fx_blood', 'fx_glow', 'fx_muzzle', 'fx_smoke'];
 
 function buildAtlas() {
@@ -64,7 +70,11 @@ attribute float aRot;
 varying vec4 vColor;
 varying float vTex;
 varying float vRot;
+varying float vLit;
 uniform float uScale;
+uniform float uLit;
+uniform vec4 uTorch;
+uniform float uTorchDecay;
 #include <fog_pars_vertex>
 void main() {
   vColor = aColor;
@@ -72,6 +82,12 @@ void main() {
   vRot = aRot;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   float depth = -mvPosition.z;
+  // light on a LIT particle: the sky's level or the local flashlight's beam, whichever is the stronger (cone and
+  // falloff as three's SpotLight; the lamp is taken to sit at the eye, looking straight ahead).
+  // uTorch: strength, cos(cone), cos(inner cone), reach (m)
+  float dist = max(0.3, length(mvPosition.xyz));
+  float reach = clamp(1.0 - pow(dist / uTorch.w, 4.0), 0.0, 1.0);
+  vLit = max(uLit, uTorch.x * smoothstep(uTorch.y, uTorch.z, depth / dist) * pow(dist, -uTorchDecay) * reach * reach);
   // particles right in front of the lens fade out instead of filling the screen
   vColor.a *= smoothstep(0.35, 1.6, depth);
   gl_PointSize = min(aSize * uScale / max(0.1, depth), 420.0);
@@ -84,6 +100,7 @@ uniform float uTint;
 varying vec4 vColor;
 varying float vTex;
 varying float vRot;
+varying float vLit;
 #include <fog_pars_fragment>
 void main() {
   vec2 pc = gl_PointCoord - 0.5;
@@ -91,10 +108,12 @@ void main() {
   pc = vec2(c * pc.x - s * pc.y, s * pc.x + c * pc.y) + 0.5;
   if (pc.x < 0.0 || pc.x > 1.0 || pc.y < 0.0 || pc.y > 1.0) discard;
   float cell = floor(vTex + 0.5);
+  float lit = step(${LIT - 0.5}, cell);
+  cell -= ${LIT}.0 * lit;
   vec2 uv = (vec2(mod(cell, 3.0), 2.0 - floor(cell / 3.0)) + vec2(pc.x, 1.0 - pc.y)) / 3.0;
   vec4 t = texture2D(uAtlas, uv);
   vec4 col = t * vColor;
-  col.rgb *= uTint;
+  col.rgb *= mix(uTint, vLit, lit);
   if (col.a < 0.004) discard;
   gl_FragColor = col;
   #include <fog_fragment>
@@ -132,7 +151,7 @@ class ParticlePool {
     this.material = new THREE.ShaderMaterial({
       vertexShader: PVERT,
       fragmentShader: PFRAG,
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uAtlas: { value: null }, uScale: { value: 600 }, uTint: { value: 1 } }]),
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uAtlas: { value: null }, uScale: { value: 600 }, uTint: { value: 1 }, uLit: { value: 1 }, uTorch: { value: new THREE.Vector4(0, 0.9, 1, 50) }, uTorchDecay: { value: 1 } }]),
       transparent: true,
       depthWrite: false,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
@@ -597,6 +616,17 @@ export class Effects {
   }
 
   // ---------------------------------------------------------------- one-shots
+  // one drop of blood (green: acid blood): dark, each its own shade, lit like the body it left. It shrinks away rather
+  // than fading out, so it is red to the end instead of going pink over whatever is behind it
+  drop(x, y, z, vx, vy, vz, life, size, green, grav, drag) {
+    const k = this.rnd(0.6, 1);
+    this.alpha.emit(x, y, z, vx, vy, vz, life, size, size * 0.3, (green ? 0.15 : 0.34) * k, (green ? 0.3 : 0.006) * k, (green ? 0.035 : 0.008) * k, 1, green ? 0.08 : 0.16, green ? 0.16 : 0, 0, 0.8, grav, drag, TEX.BLOOD + LIT, this.rnd(-4, 4));
+  }
+  // the red (green) haze a burst of it leaves hanging for a moment
+  mist(x, y, z, vx, vy, vz, life, size, size1, green) {
+    this.alpha.emit(x, y, z, vx, vy, vz, life, size, size1, green ? 0.06 : 0.12, green ? 0.12 : 0.003, green ? 0.015 : 0.004, 0.55, green ? 0.03 : 0.06, green ? 0.06 : 0, 0, 0, 0, 3, TEX.SMOKE + LIT);
+  }
+
   impact(kind, x, y, z, nx, ny, nz) {
     const A = this.alpha;
     const D = this.add;
@@ -604,11 +634,19 @@ export class Effects {
       case IMPACT.BLOOD:
       case IMPACT.GREEN_BLOOD: {
         const g = kind === IMPACT.GREEN_BLOOD;
-        for (let i = 0; i < 10; i++) {
-          const s = this.rnd(1, 4);
-          A.emit(x, y, z, nx * s + this.rnd(-1.5, 1.5), ny * s + this.rnd(0, 2.5), nz * s + this.rnd(-1.5, 1.5), this.rnd(0.35, 0.8), this.rnd(0.12, 0.25), this.rnd(0.25, 0.45), g ? 0.25 : 0.45, g ? 0.45 : 0.02, g ? 0.05 : 0.02, 0.95, g ? 0.15 : 0.25, g ? 0.3 : 0.0, 0.02, 0, 9, 1.5, TEX.BLOOD, this.rnd(-3, 3));
+        // a spit of small drops back out of the wound (the normal points back along the shot), a splash and a puff of
+        // mist where it struck: gone in under half a second, and never big enough to hide what was hit. Past 5 m the
+        // drops are drawn bigger (twice the size by 15 m): at their true size a hit across the road is a pixel or two
+        const e = this.eye;
+        const far = e ? 1 + Math.min(1, Math.max(0, (Math.hypot(x - e.x, y - e.y, z - e.z) - 5) / 10)) : 1;
+        for (let i = 0; i < 9; i++) {
+          const s = this.rnd(0.8, 4);
+          const vx = nx * s + this.rnd(-1.1, 1.1), vy = ny * s + this.rnd(-0.4, 1.8), vz = nz * s + this.rnd(-1.1, 1.1);
+          const t = this.rnd(0, 0.03); // a head start, so the very first frame is a spray and not a dot
+          this.drop(x + vx * t, y + vy * t, z + vz * t, vx, vy, vz, this.rnd(0.22, 0.45), this.rnd(0.06, 0.13) * far, g, 11, 3);
         }
-        A.emit(x, y, z, nx * 0.5, 0.4, nz * 0.5, 0.5, 0.3, 0.9, g ? 0.25 : 0.35, g ? 0.4 : 0.02, 0.03, 0.55, 0.2, g ? 0.3 : 0.0, 0.0, 0, 0, 3, TEX.SMOKE);
+        this.drop(x, y, z, nx * 0.5, ny * 0.5, nz * 0.5, 0.14, 0.26 * far, g, 0, 0);
+        this.mist(x, y, z, nx * 0.8, 0.3, nz * 0.8, 0.28, 0.2, 0.55, g);
         if (Math.random() < 0.55) {
           const gy = this.world.heightAt(x, z);
           if (y - gy < 2.2) (g ? this.acid : this.blood).add(x + this.rnd(-0.5, 0.5), gy + 0.03, z + this.rnd(-0.5, 0.5), this.rnd(0.5, 1.3));
@@ -677,10 +715,12 @@ export class Effects {
 
   // headshot kill: gory burst
   gib(x, y, z, green) {
-    for (let i = 0; i < 26; i++) {
+    // bigger drops, thrown wider and longer in the air than a body hit's: the burst that says the head is gone
+    for (let i = 0; i < 24; i++) {
       const s = this.rnd(1, 5);
-      this.alpha.emit(x, y, z, this.rnd(-1, 1) * s, this.rnd(0, 1.2) * s, this.rnd(-1, 1) * s, this.rnd(0.5, 1.1), this.rnd(0.12, 0.3), 0.35, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 12, 1, TEX.BLOOD, this.rnd(-4, 4));
+      this.drop(x, y, z, this.rnd(-1, 1) * s, this.rnd(0, 1.2) * s, this.rnd(-1, 1) * s, this.rnd(0.45, 0.95), this.rnd(0.08, 0.2), green, 12, 1);
     }
+    for (let i = 0; i < 2; i++) this.mist(x, y, z, this.rnd(-0.5, 0.5), this.rnd(0.3, 0.9), this.rnd(-0.5, 0.5), 0.45, 0.3, 0.9, green);
     const gy = this.world.heightAt(x, z);
     (green ? this.acid : this.blood).add(x, gy + 0.03, z, 1.6);
   }
@@ -688,7 +728,6 @@ export class Effects {
   // overkill: the whole body comes apart. (x,y,z) = its feet, h / r = its height and radius, (dx,dz) = the way the blow
   // was travelling. opts: green (acid blood), head (it still had one to lose), limbs, fur (limbs are a dog's legs)
   gibBody(x, y, z, h, r, dx, dz, opts = {}) {
-    const A = this.alpha;
     const green = !!opts.green;
     const mass = Math.max(0.2, Math.min(3, (h / 1.75) * (r / 0.38)));
     const s = Math.sqrt(mass); // size of the pieces
@@ -697,10 +736,10 @@ export class Effects {
     // blood: a burst thrown along the blow, a mist that hangs, a pool where it stood
     for (let i = Math.round((16 + 20 * Math.min(mass, 1.5)) * few); i > 0; i--) {
       const sp = this.rnd(1.5, 7);
-      A.emit(x + this.rnd(-r, r) * 0.5, y + this.rnd(0.2, 1) * h, z + this.rnd(-r, r) * 0.5, (dx * 0.6 + this.rnd(-0.6, 0.6)) * sp, this.rnd(0, 1.1) * sp, (dz * 0.6 + this.rnd(-0.6, 0.6)) * sp, this.rnd(0.6, 1.3), this.rnd(0.14, 0.34) * s, 0.4 * s, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 11, 0.8, TEX.BLOOD, this.rnd(-4, 4));
+      this.drop(x + this.rnd(-r, r) * 0.5, y + this.rnd(0.2, 1) * h, z + this.rnd(-r, r) * 0.5, (dx * 0.6 + this.rnd(-0.6, 0.6)) * sp, this.rnd(0, 1.1) * sp, (dz * 0.6 + this.rnd(-0.6, 0.6)) * sp, this.rnd(0.6, 1.3), this.rnd(0.12, 0.3) * s, green, 11, 0.8);
     }
     for (let i = 0; i < 5; i++) {
-      A.emit(x + this.rnd(-r, r), y + this.rnd(0.3, 0.85) * h, z + this.rnd(-r, r), dx * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.2, 1), dz * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.9, 1.6), 0.6 * s, 2.4 * s, green ? 0.25 : 0.4, green ? 0.4 : 0.02, 0.03, 0.5, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0, 0.5, 1.5, TEX.SMOKE, 0.5);
+      this.mist(x + this.rnd(-r, r), y + this.rnd(0.3, 0.85) * h, z + this.rnd(-r, r), dx * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.2, 1), dz * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.7, 1.2), 0.6 * s, 2 * s, green);
     }
     const gy = this.world.heightAt(x, z);
     if (y - gy < 3) (green ? this.acid : this.blood).add(x + dx * 0.4, gy + 0.03, z + dz * 0.4, this.rnd(1.8, 2.6) * s);
@@ -736,10 +775,10 @@ export class Effects {
 
   // a flying gib: the drops it trails, the smear where it lands
   gibDrip(x, y, z, green) {
-    this.alpha.emit(x, y, z, this.rnd(-0.4, 0.4), this.rnd(-0.2, 0.6), this.rnd(-0.4, 0.4), this.rnd(0.35, 0.6), this.rnd(0.1, 0.18), 0.05, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 9, 1, TEX.BLOOD, this.rnd(-3, 3));
+    this.drop(x, y, z, this.rnd(-0.4, 0.4), this.rnd(-0.2, 0.6), this.rnd(-0.4, 0.4), this.rnd(0.35, 0.6), this.rnd(0.08, 0.15), green, 9, 1);
   }
   gibSplat(x, y, z, green) {
-    for (let i = 0; i < 3; i++) this.alpha.emit(x, y + 0.05, z, this.rnd(-1.2, 1.2), this.rnd(0.6, 2), this.rnd(-1.2, 1.2), this.rnd(0.3, 0.5), this.rnd(0.1, 0.16), 0.2, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 10, 1, TEX.BLOOD, this.rnd(-3, 3));
+    for (let i = 0; i < 3; i++) this.drop(x, y + 0.05, z, this.rnd(-1.2, 1.2), this.rnd(0.6, 2), this.rnd(-1.2, 1.2), this.rnd(0.3, 0.5), this.rnd(0.08, 0.14), green, 10, 1);
     if (Math.random() < (green ? 0.2 : 0.45)) (green ? this.acid : this.blood).add(x, y + 0.03, z, this.rnd(0.35, 0.8));
   }
 
@@ -911,13 +950,22 @@ export class Effects {
     }
   }
 
-  // night: smoke / dust are lit only by the fire, so darken them
+  // night: smoke / dust are lit only by the fire, so darken them; blood (LIT) gets the little the night sky gives a body
   setAmbient(night) {
     this.alpha.material.uniforms.uTint.value = 1 - night * 0.7;
+    this.alpha.material.uniforms.uLit.value = 1 - night * 0.75;
   }
 
   update(dt, camera, viewportHeight) {
     this.time += dt;
+    this.eye = camera.position; // (impact sizes a far hit by its distance from here)
+    // what the local flashlight throws on blood: the lamp is the spot light riding on the camera (render/lights.js)
+    const torch = this.torch || (this.torch = camera.children.find(isSpot));
+    if (torch) {
+      const u = this.alpha.material.uniforms;
+      u.uTorch.value.set((torch.intensity * TORCH_GAIN) / Math.PI, Math.cos(torch.angle), Math.cos(torch.angle * (1 - torch.penumbra)), torch.distance);
+      u.uTorchDecay.value = torch.decay;
+    }
     for (const em of this.emitters) this._runEmitter(em, dt);
     const pixelScale = (viewportHeight * 0.5) / Math.tan((camera.fov * Math.PI) / 360);
     this.add.update(dt, pixelScale);
