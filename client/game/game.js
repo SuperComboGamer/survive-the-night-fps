@@ -110,6 +110,12 @@ const CRAFT_BURST = 20;
 const CRAFT_RATE = 40; // per second
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
 const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
+// Turning while aimed is slowed by the gun's zoom, tan(aimed fov / 2) / tan(hip fov / 2) (the ratio of the two
+// magnifications, the same on any aspect ratio), so what is under the crosshair slides across the screen as far per
+// centimetre of mouse as it does from the hip, whatever the zoom. On top of that, AIM_SENS: at 1 aimed and hip would
+// match exactly; 0.82 keeps an ordinary gun where the flat 0.6 it replaces had it (0.82 * 0.73 at 75 degrees). The
+// "Aim sensitivity" setting multiplies it (1.22 there is the exact match).
+const AIM_SENS = 0.82;
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
 const _v = new THREE.Vector3();
@@ -159,6 +165,7 @@ export class Game {
     this.fallV = 0; // downward speed in the last frame in the air
     this.eyeH = 1.62;
     this.fovCur = settings.fov || 75;
+    this.aimT = 0; // 0 hip .. 1 aimed, eased with the zoom (look sensitivity)
     this.buildType = STRUCT.BARRICADE;
     this.buildRot = 0;
     this.ghosts = {};
@@ -1597,7 +1604,12 @@ export class Game {
       cam.fov = this.fovCur;
       cam.updateProjectionMatrix();
     }
-    inp.sensitivity = (this.settings.sensitivity || 1) * (aiming ? 0.6 : 1);
+    // look sensitivity follows the zoom as it eases in and out (see AIM_SENS), so the turn rate never steps mid-turn.
+    // The sprint fov is wider than the hip one and must not speed the turn up; settled at the hip it is the setting alone
+    this.aimT += ((aiming ? 1 : 0) - this.aimT) * Math.min(1, dt * 12);
+    if (!aiming && this.aimT < 0.001) this.aimT = 0;
+    const zoom = this.aimT > 0 ? Math.min(1, Math.tan((this.fovCur * Math.PI) / 360) / Math.tan((baseFov * Math.PI) / 360)) : 1;
+    inp.sensitivity = (this.settings.sensitivity || 1) * zoom * (1 + (AIM_SENS * (this.settings.aimSensitivity || 1) - 1) * this.aimT);
 
     // viewmodel
     const weaponNow = s.zombie ? -2 : self.alive ? currentWeapon(s) : 0;
