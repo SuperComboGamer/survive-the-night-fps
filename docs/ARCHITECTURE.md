@@ -230,3 +230,9 @@ more than its bytes**, so put things into the packets that already flow.
   lightning light, wind (`Foliage.update` drives `G.uWind`: trees bend trunk and crown together, grass and bushes
   lean; the ambience plays the same wind), ground mist, the flashlight beam's haze (post.js, denser in rain), and
   rain streaks and splashes (`render/weatherfx.js`, kept out from under `world.roofs`).
+- **Item guide** (`client/game/itemguide.js`): the "Used in" and "Found in" lines of the inventory's tooltips are
+  derived at load from `RECIPES`, `STRUCT_DEFS`, the loot tables (`CONT_TABLES`, `LOOT_TABLES`, `ZOMBIE_LOOT`,
+  `SPECIAL_LOOT`) and `PLACES`, so a new recipe, item or table needs no text written for it. The one thing it
+  repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.
+  `scripts/test-itemguide.js` holds every line against the tables, generated worlds (which place tables are
+  rolled at all) and the server's gathering. Supply-drop loot (`CRATE_TABLE`, private to the server) is not in it.
