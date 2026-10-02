@@ -139,6 +139,99 @@ check('every supply is hidden in a different place of this map', new Set(A.globa
 check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.CACHE));
 check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash === ITEM.WALKIE && !c.schem && CONT_DEFS[c.ctype].schem).length === WALKIE_STASHES);
 
+// joining a run in progress: the newcomer arrives beside the team instead of alone at the car, with a kit for the
+// day, and leaving and coming back does not turn into supplies for the team
+// (a game of its own, and no ticks: a third and fourth player would change the run the rest of this file checks)
+{
+  const g = new Game({ seed, log: () => {} });
+  const w = g.world;
+  const car = w.car;
+  const join = (name) => {
+    const session = g.onOpen({ send() {} });
+    const wr = new Writer(64);
+    wr.u8(C2S.JOIN);
+    wr.u8(PROTOCOL_VERSION);
+    wr.str(name);
+    g.onMessage(session, wr.bytes().slice());
+    return session;
+  };
+  const has = (p, item) => p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0);
+  const kit = (p) => [p.state.mags[1], p.state.ammo[AMMO.P9], has(p, ITEM.BANDAGE), has(p, ITEM.TORCH), has(p, ITEM.WOOD), has(p, ITEM.NAILS)].join('/');
+  const loose = (...items) => items.map((item) => g.items.reduce((n, e) => n + (e.item === item ? e.count : 0), 0)).join('/');
+  const from = (s, o) => Math.hypot(s.x - o.x, s.z - o.z);
+  const a = join('Ann').player;
+  const b = join('Ben').player;
+  check('a second player on day 1 starts at the car with the same kit', g.day === 1 && from(b.state, car) < 14 && kit(b) === kit(a), kit(b));
+  // the team sets off: open, level ground a long way from the car, three walkers 5 m to the north of them
+  const open = (x, z) => !w.isDeepWater(x, z) && !g.nav.isBlocked(x, z);
+  let spot = null;
+  for (let r = 150; r <= 260 && !spot; r += 10) {
+    for (let k = 0; k < 24 && !spot; k++) {
+      const x = car.x + Math.sin((k / 24) * Math.PI * 2) * r;
+      const z = car.z + Math.cos((k / 24) * Math.PI * 2) * r;
+      if (Math.abs(x) > 280 || Math.abs(z) > 280 || !open(x, z) || !open(x + 1.5, z)) continue;
+      let clear = 0;
+      let level = true;
+      for (let i = -12; i <= 12; i += 2) {
+        for (let j = -12; j <= 12; j += 2) {
+          if (open(x + i, z + j)) clear++;
+          if (Math.abs(w.heightAt(x + i, z + j) - w.heightAt(x, z)) > 1.5) level = false;
+        }
+      }
+      if (level && clear > 150) spot = { x, z };
+    }
+  }
+  check('found open ground for the late join', !!spot);
+  [a, b].forEach((p, i) => {
+    p.state.x = spot.x + i * 1.5;
+    p.state.z = spot.z;
+    p.state.y = groundAt(w, p.state.x, p.state.z, 200, 0.3);
+  });
+  for (const z of [...g.zombies]) {
+    if (from(z, spot) > 60) continue;
+    g._listRemove(g.zombies, z);
+    g.removeEntity(z);
+  }
+  const dead = [-1, 0, 1].map((i) => g.zm.spawn(ZTYPE.WALKER, spot.x + i, spot.z - 5));
+  g.day = 3;
+  const session = join('Cat');
+  const c = session.player;
+  const s = c.state;
+  const mate = from(s, a.state);
+  const near = Math.min(...dead.map((z) => from(z, s)));
+  check('a late joiner arrives beside the team, not at the car', mate >= 2.4 && mate <= 9.1 && from(s, car) > 100, `${mate.toFixed(1)} m from a teammate, ${from(s, car).toFixed(0)} m from the car`);
+  const facing = (-Math.sin(s.yaw) * (a.state.x - s.x) - Math.cos(s.yaw) * (a.state.z - s.z)) / mate;
+  check('...on open ground with a clear walk to them, facing them', open(s.x, s.z) && Math.abs(s.y - groundAt(w, s.x, s.z, s.y)) < 0.01 &&g.zm.clearLine(s.x, s.y + 0.6, s.z, a.state.x, a.state.y + 0.6, a.state.z) && facing > 0.99);
+  check('...on the side away from the dead', near > 8, `nearest zombie ${near.toFixed(1)} m (${Math.min(...dead.map((z) => from(z, a.state))).toFixed(1)} m from the teammate)`);
+  check('...with a kit for the day: more rounds and bandages than day 1, still no more than a pistol', s.ammo[AMMO.P9] > a.state.ammo[AMMO.P9] && has(c, ITEM.BANDAGE) > has(a, ITEM.BANDAGE) && s.weapons.join() === a.state.weapons.join() && c.armor === 0, `${kit(c)} against ${kit(a)}`);
+  const fresh = kit(c);
+  // they fire 30 rounds, use a bandage, find some scrap - and drop out
+  s.ammo[AMMO.P9] -= 30;
+  c.inv.find((x) => x && x.item === ITEM.BANDAGE).count--;
+  g.giveItem(c, ITEM.SCRAP, 5);
+  const kept = kit(c);
+  const supplies = [ITEM.PISTOL, ITEM.AMMO_9MM, ITEM.BANDAGE, ITEM.TORCH, ITEM.WOOD, ITEM.NAILS];
+  const ground = loose(...supplies);
+  const scrap = +loose(ITEM.SCRAP);
+  g.onClose(session);
+  check('a leaver takes the starting kit along and leaves what they found', loose(...supplies) === ground && +loose(ITEM.SCRAP) === scrap + 5, `on the ground ${loose(...supplies)}`);
+  // ...and come back, three times over: the same kit each time, nothing more on the ground
+  let back = null;
+  let same = true;
+  for (let i = 0; i < 3; i++) {
+    if (back) g.onClose(back);
+    back = join('Cat');
+    same = same && kit(back.player) === kept && from(back.player.state, a.state) < 9.1;
+  }
+  check('rejoining gives back what they left with, not a fresh kit', same && loose(...supplies) === ground, `${kit(back.player)}, on the ground ${loose(...supplies)}`);
+  // dying drops the kit where they fell: a reconnect after that does not come with another
+  g.killPlayer(back.player, { kind: 2, ztype: ZTYPE.WALKER });
+  g.onClose(back);
+  const again = join('Cat').player;
+  check('...nor after dying', !again.zombie && again.state.mags[1] + again.state.ammo[AMMO.P9] + has(again, ITEM.BANDAGE) + has(again, ITEM.TORCH) === 0, kit(again));
+  check('a new arrival still gets the kit for the day', kit(join('Dee').player) === fresh);
+}
+
 // the stray cat: replicated, wanders over to survivors who stand still, bolts from the dead
 {
   const cat = game.cats[0];

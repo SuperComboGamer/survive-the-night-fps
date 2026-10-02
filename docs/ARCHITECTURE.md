@@ -254,6 +254,14 @@ more than its bytes**, so put things into the packets that already flow.
   are `WALKIE_STASHES` extra items hidden in schematic-type containers by `startGame` on their own random
   stream (`cache.stash`), and never despawn once dropped.
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
+- **Joining a run in progress** (`Game.handleJoin`). `spawnHuman(p, kit, beside)` puts the newcomer down where
+  `pickJoinSpawn` says: 2.5-9 m from the survivor with the most company, on a spot that is open on the nav grid, level
+  with that teammate, dry, clear of every collider (`resolveBody`) and with a clear knee-high line to them
+  (`Zombies.clearLine`) - the one furthest from the dead, out to 22 m if they are all over the nearer ground. It
+  returns null (the car spawn) when nobody is alive or the team is within `TALK_CLEAR` of the car. The kit is
+  `starterKit(day)`. A leaver's starting kit is not dropped: `parkKit` keeps what is left of it (never more than was
+  issued) in `leftKits` by name, and a rejoin during the same run gets exactly that back, so reconnecting creates no
+  supplies. Anything that brings a survivor back mid-run should call `spawnHuman` the same way.
 - **Weather** is client-side only and adds no network traffic. `client/game/weather.js` derives a seeded
   schedule (fog banks, gales, rain, thunderstorms; weighted toward dusk and night, and the first evening always
   brings fog) from the world seed and the replicated phase clock (`phase`, `day`, `timeLeft`, `phaseLen`), so
