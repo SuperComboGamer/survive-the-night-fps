@@ -11,7 +11,7 @@
 // and the skinning vertex shader reads getBoneMatrix(0.0)[3].xyz. No material clones, no per-draw
 // uniform uploads (MeshLambertMaterial does not honor uniformsNeedUpdate).
 import * as THREE from 'three';
-import { regionUV, getCharAtlas, getWeaponAtlas, fbm3, noise3, mulberry32 } from './charTextures.js';
+import { WR, regionUV, getCharAtlas, getWeaponAtlas, fbm3, noise3, mulberry32 } from './charTextures.js';
 
 export { fbm3, noise3, mulberry32 };
 
@@ -498,6 +498,31 @@ function patchShader(shader) {
     );
 }
 
+// The weapon in the player's hands: the viewmodel key light is about a quarter of the world's sun
+// (Game.updateViewmodelLight), so the gunmetal and polymer paint that reads fine on a weapon lying in the
+// sun came out near black here, with no highlight to show its form. Per weapon-atlas cell:
+// [albedo lift, highlight strength] (cells not listed: [1, 0]). Only the dark paint is lifted and only metal,
+// polymer and glass get a real highlight, so wood, tape and cloth stay as they were. World weapons share the
+// atlas but not this material: they keep the paint as authored.
+const VM_SURFACE = {
+  [WR.GUNMETAL]: [2.1, 1], [WR.POLYMER]: [2.2, 0.55], [WR.STEEL]: [1, 1], [WR.GLASS]: [1, 1], [WR.BLOOD]: [1, 0.5],
+  [WR.WOOD]: [1, 0.3], [WR.WALNUT]: [1, 0.3], [WR.RUST]: [1, 0.2], [WR.ASH]: [1, 0.15], [WR.LEATHER]: [1, 0.15],
+  [WR.TAPE]: [1, 0.12], [WR.PLAIN]: [1, 0.1],
+};
+function patchViewWeaponShader(shader) {
+  patchShader(shader);
+  const cells = Array.from({ length: 16 }, (_, r) => VM_SURFACE[r] || [1, 0]);
+  shader.fragmentShader = shader.fragmentShader.replace(
+    '#include <specularmap_fragment>',
+    `#include <specularmap_fragment>
+      const vec2 vmSurface[16] = vec2[16]( ${cells.map((c) => `vec2( ${c[0].toFixed(2)}, ${c[1].toFixed(2)} )`).join(', ')} );
+      ivec2 vmCell = clamp( ivec2( vMapUv * 4.0 ), 0, 3 ); // 4x4 atlas, row 0 at the top (see regionUV)
+      vec2 vmSurf = vmSurface[ vmCell.x + 4 * ( 3 - vmCell.y ) ];
+      diffuseColor.rgb *= vmSurf.x;
+      specularStrength = vmSurf.y;`
+  );
+}
+
 function makeMat(map, fog) {
   const m = new THREE.MeshLambertMaterial({ map, vertexColors: true, fog });
   m.onBeforeCompile = patchShader;
@@ -523,7 +548,11 @@ export function getViewArmMaterial() {
 }
 /** Viewmodel weapon material, no fog. */
 export function getViewWeaponMaterial() {
-  if (!_vmWeaponMat) _vmWeaponMat = makeMat(getWeaponAtlas(), false);
+  if (!_vmWeaponMat) {
+    _vmWeaponMat = new THREE.MeshPhongMaterial({ map: getWeaponAtlas(), vertexColors: true, fog: false, specular: 0x4a4a4a, shininess: 26 });
+    _vmWeaponMat.onBeforeCompile = patchViewWeaponShader;
+    _vmWeaponMat.customProgramCacheKey = () => 'stn-vm-weapon-v1';
+  }
   return _vmWeaponMat;
 }
 /** Viewmodel claws/zombie arms material (char atlas), no fog. */

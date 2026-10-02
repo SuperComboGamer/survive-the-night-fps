@@ -149,7 +149,12 @@ more than its bytes**, so put things into the packets that already flow.
   reading the chunk's own vertex buffer) that the shadow passes draw instead; only materials whose texture cuts
   holes in the shadow (chain link, weeds, stencils) cast from their own mesh. The viewmodel scene has
   its own lights; `Game.updateViewmodelLight` rotates the key light into camera space and dims it by a
-  ray/crown probe towards the light so hands are dark in shade.
+  ray/crown probe towards the light so hands are dark in shade. Those lights are about a quarter of the
+  world's (no factor PI), so the weapon in the hands has its own material, the one Phong material
+  (`getViewWeaponMaterial` in `render/models/skinning.js`): per weapon-atlas cell (`VM_SURFACE`) it lifts the
+  dark gunmetal and polymer paint and sets the highlight strength, so metal shows its form while wood, tape
+  and cloth stay matte. The arms and every world weapon (held by others, lying as pickups) stay Lambert on
+  the paint as authored.
 - **Time of day** is one palette table (`KEYS` in `render/environment.js`): colours, light levels, fog, mist,
   haze scatter, shaft strength and base exposure per sun height. Eye adaptation only compensates relative to
   `Environment.adaptRef` (the log-average luminance an open scene has at that light level), clamped 0.7-1.6x.
