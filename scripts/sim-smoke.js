@@ -1469,6 +1469,91 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   }
 }
 
+// the pier: a deck over deep water is no refuge. The dead walk it by the rule a survivor's feet follow, a Tank's
+// charge pulls up at the water's edge, and one that ends up on the lake bed wades back out.
+// (a game of its own: none of this touches the run above or its rng)
+{
+  const g = new Game({ seed, log: () => {} });
+  const session = g.onOpen({ send() {} });
+  const jw = new Writer(64);
+  jw.u8(C2S.JOIN);
+  jw.u8(PROTOCOL_VERSION);
+  jw.str('Dockhand');
+  g.onMessage(session, jw.bytes().slice());
+  const p = [...g.players.values()][0];
+  const s = p.state;
+  const w = g.world;
+  for (const z of [...g.zombies]) {
+    g._listRemove(g.zombies, z);
+    g.removeEntity(z);
+  }
+  g.zm.herds.reset();
+  g.zm.maintainT = g.zm.herds.spawnT = 1e9; // no roamers, no herd: only the dead put here
+  // the dock's own frame: lz runs out along the pier, lx across it
+  const dock = w.zoneById[ZONE.DOCK];
+  const at = (lx, lz) => ({ x: dock.x + Math.cos(dock.ry) * lx + Math.sin(dock.ry) * lz, z: dock.z - Math.sin(dock.ry) * lx + Math.cos(dock.ry) * lz });
+  // how far out the lake gets deep, lx to the side of the pier's centre line
+  const deepFrom = (lx) => {
+    let lz = 12;
+    while (lz < 40 && !w.isDeepWater(at(lx, lz).x, at(lx, lz).z)) lz += 0.5;
+    return lz;
+  };
+  const stand = at(0, Math.min(40, deepFrom(0) + 12)); // on the deck, well out over deep water
+  const deckY = groundAt(w, stand.x, stand.z, 200, 0.25);
+  // the survivor is held where they stand (a Tank's blow would throw them down the pier); hits are counted, not taken
+  const hold = () => {
+    [s.x, s.y, s.z] = [stand.x, deckY, stand.z];
+    s.vx = s.vy = s.vz = 0;
+  };
+  hold();
+  g.fillHistory(p);
+  // set one of the dead down on the ground (or the lake bed) at a spot in the dock's frame
+  const put = (z, lx, lz) => {
+    const q = at(lx, lz);
+    [z.x, z.y, z.z] = [q.x, w.heightAt(q.x, q.z), q.z];
+    [z.lastX, z.lastZ] = [q.x, q.z];
+    g.fillHistory(z);
+    return z;
+  };
+  let hits = 0;
+  let firstHit = -1;
+  g.damagePlayer = (who) => {
+    if (who !== p) return;
+    if (!hits++) firstHit = g.tick;
+  };
+  const dead = (t) => g.zm.spawn(t, at(0, 0).x, at(0, 0).z, { horde: true });
+  // walkers and runners (all a first night has) let go on land at the foot of the pier
+  const walkers = [ZTYPE.WALKER, ZTYPE.WALKER, ZTYPE.WALKER, ZTYPE.RUNNER, ZTYPE.WALKER, ZTYPE.WALKER, ZTYPE.RUNNER].map((t, i) => put(dead(t), i - 3, 2));
+  // a Tank in the shallows beside the pier, the lake between it and the survivor, ready to charge
+  const tank = put(dead(ZTYPE.TANK), 4, deepFrom(4) - 4.5);
+  tank.specialCd = 0;
+  // a walker on the lake bed beside the deck, as a pounce off the edge would leave it
+  const sunk = put(dead(ZTYPE.WALKER), 3, deepFrom(3) + 3);
+  const onBed = (z) => z.state !== 2 && w.isDeepWater(z.x, z.z) && z.y <= w.heightAt(z.x, z.z) + 0.05;
+  const t0 = g.tick;
+  const reached = new Set();
+  let wet = 0; // ticks any of those let go on land spent on the lake bed
+  let charges = 0;
+  let charging = false;
+  let out = sunk && onBed(sunk) ? -1 : -2; // seconds the sunk walker took to leave the lake (-1: still in it, -2: bad setup)
+  for (let t = 0; t < 20 * 30; t++) {
+    hold();
+    g.update();
+    for (const z of [...walkers, tank]) {
+      if (onBed(z)) wet++;
+      if (Math.hypot(z.x - s.x, z.z - s.z) < z.def.range + 1.5 && Math.abs(z.y - deckY) < 0.1) reached.add(z);
+    }
+    if (tank.state === 6 && !charging) charges++;
+    charging = tank.state === 6;
+    if (out === -1 && !onBed(sunk)) out = (g.tick - t0) / 20;
+  }
+  const came = walkers.filter((z) => reached.has(z)).length;
+  check('the dead walk the pier to a survivor standing on it', came >= 6 && hits > 0 && firstHit - t0 < 20 * 15, `${came} of ${walkers.length} walkers and runners reached them, ${hits} hits in 30 s${hits ? `, the first after ${((firstHit - t0) / 20).toFixed(1)} s` : ''}`);
+  check('a Tank charging at the pier stops at the water and comes round by the deck', charges > 0 && reached.has(tank), `${charges} charges`);
+  check('the lake itself is still no way across', wet === 0, `${wet} ticks on the lake bed`);
+  check('one left on the lake bed wades out', out >= 0 && out < 15 && !onBed(sunk), out >= 0 ? `after ${out.toFixed(1)} s` : '');
+}
+
 // canned tuna: scavenged food, eaten for health + stamina
 {
   const p = A.p();

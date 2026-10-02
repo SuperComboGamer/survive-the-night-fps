@@ -5,7 +5,7 @@
 import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
-import { resolveBody, groundAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
+import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
 import { Herds, HERD_RUSH } from './herd.js';
 import { ColliderGrid, makeBox, rayCollider, CYL } from '../shared/collision.js'; // (bat flight: flyCollide, roofBoxes)
@@ -138,6 +138,7 @@ export class Zombies {
       detourT: 0,
       detourX: 0,
       detourZ: 0,
+      sunk: false, // in the lake with nothing underfoot: wading back up the bed (wadeOut)
       wanderX: x,
       wanderZ: z,
       wanderT: 0,
@@ -720,7 +721,7 @@ export class Zombies {
       } else if (z.direct && dist < 12) {
         dx = tx - z.x;
         dz = tz - z.z;
-      } else if (g.nav.flowDir(target.id, z.x, z.z, _dir)) {
+      } else if (g.nav.flowDir(target.id, z.x, z.z, _dir, z.y)) {
         dx = _dir.x;
         dz = _dir.z;
       } else {
@@ -811,6 +812,12 @@ export class Zombies {
       z.detourT -= dt;
       dx = z.detourX;
       dz = z.detourZ;
+    }
+    // in the lake (see wadeOut): nothing else matters until it has climbed the bed back to the shallows
+    if (z.sunk && (z.sunk = deepWaterAt(w, z.x, z.z, z.y, 0.2, false))) {
+      dx = w.heightAt(z.x + 1, z.z) - w.heightAt(z.x - 1, z.z);
+      dz = w.heightAt(z.x, z.z + 1) - w.heightAt(z.x, z.z - 1);
+      attacking = false;
     }
     let len = Math.hypot(dx, dz);
     if (len > 1e-4) {
@@ -1116,7 +1123,7 @@ export class Zombies {
     }
     const hit = resolveBody(g.world, _pos, def.moveR ?? Math.min(rad, 0.65), def.moveH ?? def.height, false);
     z.blockStruct = hit && hit.flags & COL.STRUCT ? hit.id : 0;
-    if (g.world.isDeepWater(_pos.x, _pos.z)) {
+    if (deepWaterAt(g.world, _pos.x, _pos.z, z.y, 0.2, false) && !this.wadeOut(z, ox, oz)) {
       _pos.x = ox;
       _pos.z = oz;
     }
@@ -1132,6 +1139,15 @@ export class Zombies {
       z.y = gy;
       z.vy = 0;
     }
+  }
+
+  // integrate is about to refuse a step into the lake. One that is already in it (dropped off a deck by a
+  // pounce, shoved off the edge) may take the step if it climbs the lake bed: it wades back to the shallows
+  // instead of standing on the bottom all night. updateOne steers it up the bed while z.sunk is set.
+  wadeOut(z, ox, oz) {
+    const w = this.g.world;
+    z.sunk = deepWaterAt(w, ox, oz, z.y, 0.2, false);
+    return z.sunk && w.heightAt(_pos.x, _pos.z) > w.heightAt(ox, oz);
   }
 
   resolveHit(z) {
@@ -1235,7 +1251,7 @@ export class Zombies {
       _pos.y = z.y;
       _pos.z = z.z + z.vz * dt;
       resolveBody(g.world, _pos, 0.35, 1.2, false);
-      if (!g.world.isDeepWater(_pos.x, _pos.z)) {
+      if (!deepWaterAt(g.world, _pos.x, _pos.z, z.y, 0.2, false)) {
         z.x = _pos.x;
         z.z = _pos.z;
       }
@@ -1359,6 +1375,11 @@ export class Zombies {
       // tank charge
       z.stateT -= dt;
       z.anim = ZANIM.RUN;
+      // the lake ahead and no deck over it: the charge pulls up at the edge instead of carrying it in
+      if (deepWaterAt(g.world, z.x + z.chargeX * 10 * dt, z.z + z.chargeZ * 10 * dt, z.y, 0.2, false)) {
+        z.chargeX = z.chargeZ = 0;
+        z.stateT = 0;
+      }
       _pos.x = z.x + z.chargeX * 10 * dt;
       _pos.y = z.y;
       _pos.z = z.z + z.chargeZ * 10 * dt;

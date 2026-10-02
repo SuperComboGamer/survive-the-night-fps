@@ -34,7 +34,7 @@ import {
   EYE_HEIGHT_DOWNED,
 } from './constants.js';
 import { ITEM, WEAPONS, CLAWS, AMMO, AMMO_ITEMS } from './defs.js';
-import { groundAt, resolveBody } from './collision.js';
+import { groundAt, resolveBody, deepWaterAt } from './collision.js';
 import { mulberry32 } from './rng.js';
 
 export function createPlayerState() {
@@ -387,7 +387,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   _pos.z = s.z + s.vz * dt;
   const human = !s.zombie;
   const hit = resolveBody(world, _pos, PLAYER_RADIUS, height, human);
-  if (world.isDeepWater(_pos.x, _pos.z) && groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human) <= world.heightAt(_pos.x, _pos.z) + 0.01) {
+  if (deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) {
     _pos.x = ox;
     _pos.z = oz;
     s.vx = 0;
