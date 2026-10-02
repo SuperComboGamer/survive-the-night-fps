@@ -2,8 +2,14 @@
 // world -> [SSAO + sun shafts applied in place, see post.js] -> viewmodel -> bloom (bright pass ->
 // separable blur at 1/4 res) -> final pass (ACES tonemap, film grain, vignette, horror color grade,
 // damage / low-health / infected vision).
+//
+// PS1 mode (setPs1, the "PS1 shader" setting) draws the same chain the way a 1995 console would have: a frame of
+// about 250 lines scaled up with hard pixels, no anti-aliasing (so no AO, sun shafts or flashlight beam either:
+// they read the resolved depth), vertices snapped to the pixel grid and thicker fog (both in globals.js), and
+// 15-bit colour through the console's ordered dither in the final pass.
 import * as THREE from 'three';
 import { ScreenPasses } from './post.js';
+import { G } from './globals.js';
 
 // Quality presets. Knobs read by other modules:
 //  shadows / shadowMapSize (per cascade, 2 cascades) / shadowDist (m): cascaded sun shadows
@@ -18,6 +24,9 @@ const QUALITY = {
 };
 // legacy alias used by older call sites
 for (const q of Object.values(QUALITY)) q.sunShadows = q.shadows;
+
+const PS1_LINES = 256; // frame height aimed for in PS1 mode (the real one is the nearest whole-pixel scale: 240 at 720p, 270 at 1080p)
+const PS1_FOG = 1.2; // extra fog in PS1 mode: optical depth x2.2, so about two thirds of the view distance
 
 const BLOOM_BRIGHT = /* glsl */ `
 precision highp float;
@@ -107,7 +116,15 @@ uniform float uDead;
 uniform float uExposure;
 uniform sampler2D tAdapt;
 uniform vec2 uRes;
+uniform float uPs1;
 varying vec2 vUv;
+
+// the PlayStation's 4x4 dither offsets (in 8-bit steps), added before the colour is cut to 5 bits a channel
+const mat4 PS1_DITHER = mat4(-4.0, 0.0, -3.0, 1.0, 2.0, -2.0, 3.0, -1.0, -3.0, 1.0, -4.0, 0.0, 3.0, -1.0, 2.0, -2.0);
+vec3 ps1Color(vec3 c) {
+  ivec2 p = ivec2(gl_FragCoord.xy) & 3;
+  return floor(clamp(c * 255.0 + PS1_DITHER[p.y][p.x], 0.0, 255.0) / 8.0) / 31.0;
+}
 
 vec3 aces(vec3 x) {
   const float a = 2.51; const float b = 0.03; const float c = 2.43; const float d = 0.59; const float e = 0.14;
@@ -156,11 +173,14 @@ void main() {
   col *= mix(0.35, 1.0, vig);
   // film grain + subtle flicker
   float g = hash(uv * uRes + fract(uTime * 13.7) * 100.0) - 0.5;
-  col += g * (0.022 + uNight * 0.012 + uLowHealth * 0.02) * (1.0 - l * 0.5);
+  // (PS1 mode: far less of it. At that size a grain is a blob, and it would bury the dither pattern)
+  col += g * (0.022 + uNight * 0.012 + uLowHealth * 0.02) * (1.0 - l * 0.5) * (1.0 - 0.7 * uPs1);
   col *= 0.985 + 0.015 * sin(uTime * 37.0);
   // dead: fade to dark red
   col = mix(col, col * vec3(0.5, 0.1, 0.1), uDead * 0.6);
-  gl_FragColor = vec4(toSRGB(clamp(col, 0.0, 1.0)), 1.0);
+  col = toSRGB(clamp(col, 0.0, 1.0));
+  if (uPs1 > 0.5) col = ps1Color(col);
+  gl_FragColor = vec4(col, 1.0);
 }
 `;
 
@@ -212,6 +232,7 @@ export class GameRenderer {
         uExposure: { value: 1 },
         tAdapt: { value: null },
         uRes: { value: new THREE.Vector2(1, 1) },
+        uPs1: { value: 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -267,6 +288,7 @@ export class GameRenderer {
     this.rt = null;
     this.quality = null;
     this.renderScale = 1;
+    this.ps1 = false;
     this.setQuality(quality);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -291,6 +313,18 @@ export class GameRenderer {
     s = Math.max(0.5, Math.min(1, +s || 1));
     if (s === this.renderScale) return;
     this.renderScale = s;
+    this.resize();
+  }
+
+  // PS1 mode on/off (see the top of this file). The frame size is then its own: quality's pixel ratio and the
+  // render scale do not apply.
+  setPs1(on) {
+    on = !!on;
+    if (on === this.ps1) return;
+    this.ps1 = on;
+    this.canvas.style.imageRendering = on ? 'pixelated' : '';
+    this.postMat.uniforms.uPs1.value = on ? 1 : 0;
+    this._makeTarget();
     this.resize();
   }
 
@@ -324,7 +358,7 @@ export class GameRenderer {
   _makeTarget() {
     if (this.rt) this.rt.dispose();
     const isWebGL2 = this.renderer.capabilities.isWebGL2;
-    const samples = isWebGL2 ? QUALITY[this.quality].samples : 0;
+    const samples = isWebGL2 && !this.ps1 ? QUALITY[this.quality].samples : 0;
     // The scene target never needs alpha, so it is packed-float HDR where supported: half the memory
     // traffic of RGBA16F, which dominates the cost of the 4x MSAA target (identical to within 2/255
     // after tone mapping).
@@ -352,7 +386,9 @@ export class GameRenderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, QUALITY[this.quality].maxPixelRatio) * this.renderScale;
+    const dpr = window.devicePixelRatio || 1;
+    // PS1 mode: every pixel of the frame is a whole number of screen pixels, so the scaled-up image stays even
+    const pr = this.ps1 ? dpr / Math.max(1, Math.round((h * dpr) / PS1_LINES)) : Math.min(dpr, QUALITY[this.quality].maxPixelRatio) * this.renderScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
@@ -364,6 +400,8 @@ export class GameRenderer {
     this.rt.setSize(pw, ph);
     this.passes.setSize(pw, ph);
     this.postMat.uniforms.uRes.value.set(pw, ph);
+    if (this.ps1) G.uPs1.value.set(pw / 2, ph / 2, PS1_FOG, 0);
+    else G.uPs1.value.set(0, 0, 0, 0);
     // bloom at half (bright pass) and quarter (blur) resolution of the CSS size
     const bw = Math.max(4, Math.floor(w / 2));
     const bh = Math.max(4, Math.floor(h / 2));

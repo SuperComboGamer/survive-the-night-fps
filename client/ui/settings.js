@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   voiceVolume: 1,
   quality: 'medium',
   renderScale: 1,
+  ps1: false,
   pushToTalk: true,
   invertY: false,
   rawMouse: true,
@@ -42,7 +43,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
-    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -90,6 +91,7 @@ const SECTIONS = [
     rows: [
       { k: 'quality', label: 'Quality', type: 'seg', options: ['low', 'medium', 'high', 'ultra'], hint: 'Shadows, sun rays, ambient occlusion, grass density, view distance' },
       { k: 'renderScale', label: 'Render scale', type: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
+      { k: 'ps1', label: 'PS1 shader', type: 'toggle', hint: 'Low resolution, wobbling polygons, dithered colour, thicker fog' },
       { k: 'showFps', label: 'Show FPS counter', type: 'toggle' },
     ],
   },

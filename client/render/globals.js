@@ -12,6 +12,11 @@
 //  - forward sun/moon in-scattering: haze towards the light glows with the light colour
 //    (two-lobe Henyey-Greenstein), which is what makes backlit trees and dusk read as "real".
 // Custom ShaderMaterials only need `fog: true`, UniformsLib.fog merged in and the fog chunks included.
+//
+// PS1 mode (the "PS1 shader" setting, GameRenderer.setPs1): every fogged built-in material snaps its vertices
+// to the pixel grid of the low-resolution frame, which is the polygon wobble of a console with no sub-pixel
+// precision, and the fog closes in. The depth materials of the shadow passes include no fog chunk, so the
+// shadow maps stay as they are.
 import * as THREE from 'three';
 
 // three clones uniform values per material; these return themselves so all programs share one value
@@ -41,11 +46,25 @@ export const G = {
   // x: sway clock (s, runs faster in strong wind), y: wind strength (~0.45 breeze .. ~1.1 gale),
   // z/w: direction the wind blows toward (unit, xz). Foliage.update drives it from the weather.
   uWind: { value: new SharedVec4(0, 0.4, 0.8, 0.6) },
+  // PS1 mode. xy: half the frame size in pixels (0 = off, vertices are not snapped), z: extra fog (added share
+  // of the optical depth). GameRenderer drives it.
+  uPs1: { value: new SharedVec4(0, 0, 0, 0) },
 };
 
 const FOG_PARS_VERTEX = /* glsl */ `
+#define STN_PS1
+uniform vec4 uPs1;
 #ifdef USE_FOG
   varying vec3 vFogViewPos;
+#endif
+`;
+
+// appended to three's project_vertex (vertices behind the eye are left alone: their triangles are clipped)
+const PS1_SNAP_VERTEX = /* glsl */ `
+#ifdef STN_PS1
+  if (uPs1.x > 0.0 && gl_Position.w > 0.0) {
+    gl_Position.xy = floor(gl_Position.xy / gl_Position.w * uPs1.xy + 0.5) / uPs1.xy * gl_Position.w;
+  }
 #endif
 `;
 
@@ -82,6 +101,7 @@ float stnMistOD(float y0, float y1, float L) {
 const FOG_PARS_FRAGMENT = /* glsl */ `
 #ifdef USE_FOG
   uniform vec3 fogColor;
+  uniform vec4 uPs1;
   varying vec3 vFogViewPos;
   #ifdef FOG_EXP2
     uniform float fogDensity;
@@ -106,6 +126,7 @@ const FOG_FRAGMENT = /* glsl */ `
       float fogOD = 3.0 * smoothstep(fogNear, fogFar, fogL);
     #endif
     fogOD += stnMistOD(cameraPosition.y, cameraPosition.y + fogRay.y, fogL);
+    fogOD *= 1.0 + uPs1.z;
     float fogFactor = 1.0 - exp(-fogOD);
     gl_FragColor.rgb = mix(gl_FragColor.rgb, stnFogColor(fogColor, fogDir), fogFactor);
   }
@@ -123,6 +144,7 @@ export function installGlobals() {
   THREE.ShaderChunk.fog_vertex = FOG_VERTEX;
   THREE.ShaderChunk.fog_pars_fragment = FOG_PARS_FRAGMENT;
   THREE.ShaderChunk.fog_fragment = FOG_FRAGMENT;
+  THREE.ShaderChunk.project_vertex += PS1_SNAP_VERTEX;
 }
 
 installGlobals();
