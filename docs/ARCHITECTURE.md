@@ -289,6 +289,15 @@ more than its bytes**, so put things into the packets that already flow.
   radio path that takes over as the speaker leaves earshot (or the area of interest). The walkies themselves
   are `WALKIE_STASHES` extra items hidden in schematic-type containers by `startGame` on their own random
   stream (`cache.stash`), and never despawn once dropped.
+- **Death lasts until dawn** (`DAWN_RETURN` in constants.js). A survivor who dies becomes a player-zombie
+  (`killPlayer`, then `spawnPlayerZombie`). `startDay` calls `returnFallen`: every player who is dead or a zombie
+  is a survivor again (`spawnHuman(p, RETURN_KIT, true)`), on the spot `pickJoinSpawn` picks beside the team as
+  for a late joiner, and `NOTIFY.RETURNED` tells everyone who. It does nothing with nobody alive: `checkAllDead`
+  ends the run on the death that leaves nobody standing, before the clock gets to dawn. The final stand stops the
+  clock, so there is no dawn in it. `fallen` holds the names of players who left dead since the last sunrise: a
+  rejoin under one of them is a player-zombie again (`handleJoin`), since a JOIN carries no identity but the name.
+  At sunrise their parked kit in `leftKits` (empty: the dead dropped theirs) becomes `RETURN_KIT`, so a rejoin
+  after it is a survivor with what the dead who stayed woke with.
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
 - **Joining a run in progress** (`Game.handleJoin`). `spawnHuman(p, kit, beside)` puts the newcomer down where
   `pickJoinSpawn` says: 2.5-9 m from the survivor with the most company, on a spot that is open on the nav grid, level

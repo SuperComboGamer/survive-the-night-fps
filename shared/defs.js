@@ -515,6 +515,7 @@ export const NOTIFY = {
   CAR_ALARM: 38,
   SHADE: 39, // the first shade of the night is out there
   HERD: 40, // the wandering herd is onto you (sent to the survivor it noticed). arg = how many of them
+  RETURNED: 41, // arg = player id: dead (or a player-zombie) since the last sunrise, a survivor again at this one
 };
 
 // killer kinds for killfeed

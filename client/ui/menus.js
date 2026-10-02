@@ -293,7 +293,7 @@ export class Death {
     this.by = el('div', 'death-by', m, '');
     this.rise = el('div', 'death-rise', m, '');
     svgEl('i', 'death-claw', this.rise, glyph('claw'));
-    el('span', '', this.rise, 'You have risen as one of them. Hunt the survivors.');
+    this.riseText = el('span', '', this.rise, '');
   }
 
   show(info = {}) {
@@ -304,6 +304,8 @@ export class Death {
     if (info.killer) parts.push('Killed by ' + info.killer);
     if (info.day) parts.push((info.night ? 'Night ' : 'Day ') + info.day);
     this.by.textContent = parts.join(' · ');
+    // info.dawn: this death lasts until sunrise (DAWN_RETURN), not for the rest of the run
+    this.riseText.textContent = info.dawn ? 'You rise as one of them. Hunt the survivors until dawn: the sun brings you back.' : 'You have risen as one of them. Hunt the survivors.';
     this.root.hidden = false;
     this.root.className = 'death';
     this.ui.root.classList.add('death-on');

@@ -60,6 +60,12 @@ export const REVIVE_TIME = 3.5; // hold [E] on a downed teammate
 export const REVIVE_HP = 40;
 export const EYE_HEIGHT_DOWNED = 0.55;
 
+// Death: a survivor who dies rises as a player-controlled zombie and hunts the team. With DAWN_RETURN on, that
+// lasts until the next sunrise: the sun that burns the horde burns it out of them too, and they are survivors
+// again, beside the team, with next to nothing (Game.returnFallen). false = the rule as it was: one death lasts
+// the rest of the run (and nothing else in the game changes).
+export const DAWN_RETURN = true;
+
 // Zombie legs (ZOMBIE_DEFS[t].legs): shots below the hip hit a leg. They trip the zombie and wear the leg down;
 // a leg blown off leaves it hobbling, and with both gone it drags itself along the ground
 export const LEG_ZONE = 0.48; // the legs reach this far up the body (fraction of its height)
