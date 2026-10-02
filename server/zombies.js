@@ -117,6 +117,8 @@ export class Zombies {
       los: false,
       direct: false,
       blockStruct: 0,
+      breachT: 0, // boomers: how long a structure has been holding it up
+      breachId: 0, // boomers: the structure it is winding up to burst against
       stuckT: 0,
       lastX: x,
       lastZ: z,
@@ -711,6 +713,26 @@ export class Zombies {
     const moveSpeed = attacking ? 0 : len > 1e-4 ? speed : 0;
 
     this.integrate(z, dt, dx * moveSpeed, dz * moveSpeed, humans);
+
+    // boomer: it also detonates against what the survivors built. It cannot claw through a structure (structDmg 0),
+    // so brought to a stop by one with a survivor close behind it, it swells up and bursts there. blockStruct is only
+    // ever a player-built piece, never the static world; the range keeps a fence across the map from spending it;
+    // sliding along a fence toward its end is not being stopped. The longer windup is the survivors' cue to shoot
+    // it (then the piece only takes the blast) or step back.
+    if (def.breachHold && z.state === 0) {
+      const held = z.blockStruct && moveSpeed > 0 && dist < def.breachRange && Math.hypot(z.x - z.lastX, z.z - z.lastZ) < moveSpeed * dt * 0.5;
+      if (held) z.breachT += dt;
+      else z.breachT = Math.max(0, z.breachT - dt * 0.5);
+      if (z.breachT >= def.breachHold) {
+        z.breachT = 0;
+        z.breachId = z.blockStruct;
+        z.state = 1;
+        z.stateT = def.breachWindup;
+        z.stateAct = 99;
+        z.anim = ZANIM.SPECIAL;
+        g.sound(SOUND.BOOMER_GURGLE, z.x, z.y + 1.4, z.z, 30);
+      }
+    }
 
     // attack blocking structure
     if (!attacking && z.blockStruct && moveSpeed > 0 && def.structDmg > 0) {
@@ -1434,10 +1456,14 @@ export class Zombies {
         z.specialCd = 3 + g.rng() * 2.5;
         break;
       }
-      case 99:
-        // boomer detonation
+      case 99: {
+        // boomer detonation. Bursting against a structure, that piece takes the brunt: the blast alone falls off so
+        // gently that a number big enough to open a wall would level its neighbours too
+        const s = z.breachId ? g.ents[z.breachId] : null;
+        if (s && s.kind === ENT.STRUCTURE && Math.hypot(s.x - z.x, s.z - z.z) < def.blastRadius) g.damageStructure(s, def.breachDmg);
         g.combat.killZombie(z, null, { explode: true });
         break;
+      }
     }
   }
 

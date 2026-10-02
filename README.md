@@ -154,8 +154,10 @@ https://www.survivethenightgame.com.
   and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
   and bat swarms). Night 2 has a boss of its own: a Tank comes in with the second wave. You hear its footfalls
   thump long before you see it; it charges, smacks survivors off their feet, breaks a wood barricade with one
-  blow and ploughs straight through whatever its charge breaks. Stragglers far from the team are brought back
-  into the fight.
+  blow and ploughs straight through whatever its charge breaks. A boomer cannot claw at what you built: stopped
+  by it with a survivor close behind, it swells for a second and bursts against it, taking that piece with it (a
+  metal wall is dented). Shoot it before it gets there - or while it swells, and the piece only takes the blast.
+  Stragglers far from the team are brought back into the fight.
 - **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
   noise the further it carries: a pistol or MP5 45-50 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
   a car alarm 140 m, a pipe bomb or a bursting boomer 170 m. More carry means more of them coming - and the
