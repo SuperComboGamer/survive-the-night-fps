@@ -108,6 +108,7 @@ import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canF
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Combat } from './combat.js';
+import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T_UPKEEP, T_SNAPSHOTS } from './tickstats.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -242,6 +243,7 @@ export class Game {
     this.cm = new Cats(this);
     this.combat = new Combat(this);
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
+    this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
 
   // ---------------------------------------------------------------- entity registry
@@ -2230,8 +2232,10 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- tick
+  // (the ts.mark after each group of calls times it as one section of the tick: see tickstats.js)
   update() {
-    const t0 = performance.now();
+    const ts = this.tickStats;
+    ts.begin();
     this.tick++;
     const dt = SERVER_DT;
     this.time += dt;
@@ -2243,22 +2247,42 @@ export class Game {
     if (this.phase === PHASE.WAITING) {
       this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
+      ts.mark(T_INPUTS);
       this.sendSnapshots();
+      ts.mark(T_SNAPSHOTS);
+      this.endTick();
       return;
     }
     this.processInputs();
+    ts.mark(T_INPUTS);
     this.updatePhase(dt);
+    ts.mark(T_PHASE);
     this.updatePlayers(dt);
+    ts.mark(T_PLAYERS);
     this.zm.update(dt);
+    ts.mark(T_ZOMBIES);
     this.cm.update(dt);
+    ts.mark(T_CATS);
     this.combat.updateProjectiles(dt);
     this.combat.updateAreas(dt);
+    ts.mark(T_COMBAT);
     this.updateStructures(dt);
     this.updateItems(dt);
     this.updateCrates(dt);
     this.recordHistory();
+    ts.mark(T_UPKEEP);
     this.sendSnapshots();
-    this.stats.tickMs = this.stats.tickMs * 0.95 + (performance.now() - t0) * 0.05;
+    ts.mark(T_SNAPSHOTS);
+    this.endTick();
+  }
+
+  // Closes the tick's timing. One over its budget is logged at once with where the time went and what the server
+  // was carrying (TickStats lets a line through every few seconds and counts the rest).
+  endTick() {
+    const ts = this.tickStats;
+    const due = ts.end();
+    this.stats.tickMs = this.stats.tickMs * 0.95 + ts.ms * 0.05;
+    if (due) this.log(`slow tick ${ts.slowText(`players ${this.players.size} zombies ${this.zombies.length} ents ${this.all.length}`)}`);
   }
 
   hordeAlive() {

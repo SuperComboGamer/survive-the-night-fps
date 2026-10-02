@@ -92,6 +92,11 @@ https://www.survivethenightgame.com.
 - The custom domains are attached to the service in Railway (Settings -> Networking). Their DNS
   records (a CNAME to the Railway target plus a `_railway-verify` TXT record per host) are managed
   at the domain's DNS host.
+- Is it keeping up? With players on, a `[stats]` line every 10 s gives the tick time over those 10 s (`tick`
+  mean, `p99`, `max`), `over a/b` (ticks past the 50 ms budget: everyone rubber-bands) and `late` / `latemax`
+  (how late the loop woke: the host or the event loop was busy, not the tick itself). A tick over budget also logs
+  `slow tick` at once (at most one line per 5 s) with the ms per section (`phase=`, `zombies=`, `snapshots=`, ...)
+  and the player, zombie and entity counts. `GET /status` has the same under `tick`, with totals since boot.
 
 ## Controls
 

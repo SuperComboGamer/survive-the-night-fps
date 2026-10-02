@@ -128,6 +128,66 @@ const treeBy = (x0, z0, x1, z1, m) => {
   return false;
 };
 
+// tick timing (server/tickstats.js): what a window reports for a made-up series of tick times, then a Game of its
+// own whose zombie update is held up
+{
+  const { TickStats, TICK_SAMPLES, SLOW_LOG_EVERY, T_ZOMBIES } = await import('../server/tickstats.js');
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const ts = new TickStats(50);
+  // 200 ticks 50 ms apart, 2 ms each, but for a 60 ms one, a 120 ms one a second after it, a 3 and a 4
+  const logged = [];
+  for (let i = 0; i < 200; i++) if (ts.record(i === 50 ? 60 : i === 70 ? 120 : i === 90 ? 3 : i === 110 ? 4 : 2, i * 50)) logged.push(i);
+  for (let i = 0; i < 10; i++) ts.late(i === 4 ? 300 : 0.5);
+  let w = ts.roll();
+  check('tick window: mean, worst, ticks over budget', w.ticks === 200 && near(w.meanMs, 2.895) && w.maxMs === 120 && w.over === 2, `${w.meanMs.toFixed(3)} / ${w.maxMs} ms, ${w.over} of ${w.ticks}`);
+  check('tick window: the 99th percentile leaves the worst 1% out', w.p99Ms === 4, `${w.p99Ms} ms`);
+  check('tick window: how late the loop woke', near(w.lateMeanMs, 30.45) && w.lateMaxMs === 300, `${w.lateMeanMs.toFixed(2)} / ${w.lateMaxMs} ms`);
+  check('a slow tick is logged at once, another within 5 s is only counted', logged.join() === '50' && ts.unlogged === 1);
+  const again = ts.record(80, 50 * 50 + SLOW_LOG_EVERY);
+  const text = ts.slowText('players 0');
+  check('...and the next line says how many went unlogged', again && text.startsWith('80.00ms:') && text.endsWith('| players 0 late 0.50ms | slow ticks not logged before it: 1') && ts.unlogged === 0, text);
+  w = ts.roll();
+  const t = ts.total;
+  check('the next window starts from nothing, the totals since boot carry on', w.ticks === 1 && w.meanMs === 80 && w.p99Ms === 80 && w.over === 1 && w.lateMaxMs === 0 && t.ticks === 201 && t.over === 3 && t.maxMs === 120 && t.lateMaxMs === 300);
+  // more ticks than the percentile keeps (it reads the newest TICK_SAMPLES), then a short window and an empty one
+  for (let i = 0; i < TICK_SAMPLES + 100; i++) ts.record(i < 100 ? 40 : 1, 1e6 + i);
+  w = ts.roll();
+  const long = w.ticks === TICK_SAMPLES + 100 && w.maxMs === 40 && near(w.meanMs, (4000 + TICK_SAMPLES) / (TICK_SAMPLES + 100)) && w.p99Ms === 1;
+  for (const ms of [5, 7, 6]) ts.record(ms, 2e6);
+  w = ts.roll();
+  const short = w.ticks === 3 && w.meanMs === 6 && w.p99Ms === 7 && w.maxMs === 7;
+  w = ts.roll();
+  check('tick window: longer than the sample buffer, short, empty', long && short && w.ticks === 0 && w.meanMs === 0 && w.p99Ms === 0 && w.maxMs === 0);
+
+  const lines = [];
+  const g = new Game({ seed, log: (...a) => lines.push(a.join(' ')) });
+  const session = g.onOpen({ send() {} });
+  const jw = new Writer(64);
+  jw.u8(C2S.JOIN);
+  jw.u8(PROTOCOL_VERSION);
+  jw.str('T');
+  g.onMessage(session, jw.bytes().slice());
+  const zmUpdate = g.zm.update;
+  let hold = 60;
+  g.zm.update = function (dt) {
+    for (const until = performance.now() + hold; performance.now() < until; );
+    return zmUpdate.call(this, dt);
+  };
+  g.update();
+  g.update();
+  hold = 0;
+  g.update();
+  const st = g.tickStats;
+  const slow = lines.filter((l) => l.startsWith('slow tick'));
+  const sum = st.slowSec.reduce((a, b) => a + b, 0);
+  check('a held-up tick is logged once, with its sections and what the server carried', slow.length === 1 && / zombies=\d+\.\d\d .* \| players 1 zombies \d+ ents \d+ late \d/.test(slow[0]) && st.unlogged >= 1, slow[0]);
+  check('...the sections add up to the tick and name the culprit', st.slowMs >= 60 && st.slowSec[T_ZOMBIES] >= 60 && Math.abs(sum - st.slowMs) < 1e-6 &&st.status(performance.now()).lastSlow.sections.zombies >= 60);
+  g.onClose(session);
+  g.update(); // nobody on: a waiting server's ticks are timed too
+  w = st.roll();
+  check('every tick is timed, playing or waiting', g.phase === PHASE.WAITING && w.ticks === 4 && g.tick === 4 && w.over >= 2 && w.maxMs >= 60 && st.total.ticks === 4);
+}
+
 game.debugCommands = true;
 const A = client('Alice');
 const B = client('Bob');
