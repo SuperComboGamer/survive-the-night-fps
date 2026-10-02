@@ -1,5 +1,5 @@
 // Combat: lag-compensated hitscan, melee, thrown/lobbed projectiles, explosions, damage areas.
-import { SERVER_TICK_RATE, MAX_REWIND, PLAYER_RADIUS, PHASE, NOISE } from '../shared/constants.js';
+import { SERVER_TICK_RATE, MAX_REWIND, PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_CROUCH_HEIGHT, EYE_HEIGHT, PHASE, NOISE } from '../shared/constants.js';
 import { SOUND as _SOUND } from '../shared/defs.js';
 import {
   ITEM,
@@ -24,7 +24,7 @@ import {
 } from '../shared/defs.js';
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
-import { raycastWorld, rayCylinder, raySphere, groundAt, footprintContains, COL } from '../shared/collision.js';
+import { raycastWorld, rayCylinder, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(3 * 16);
@@ -349,14 +349,16 @@ export class Combat {
       if (dot < 0.45 && dist > 0.3) return;
       // head if aiming at head height
       const hd = raySphere(pos.x + hb.hx, pos.y + hb.headY, pos.z + hb.hz, hb.headR * 1.4, ox, oy, oz, fx, fy, fz, range + hb.r);
-      cands.push({ e, isPlayer, score: dist - dot, head: hd >= 0 && !hb.flying, x: pos.x, y: pos.y + Math.min(hb.headY, 1.3), z: pos.z });
+      cands.push({ e, isPlayer, score: dist - dot, head: hd >= 0 && !hb.flying, x: pos.x, y: pos.y + Math.min(hb.headY, 1.3), z: pos.z, feet: pos.y, r: hb.r });
     });
-    // blocked by walls?
     cands.sort((a, b) => a.score - b.score);
     let hitAny = false;
     let hitFlags = 0;
-    for (let i = 0; i < cands.length && i < maxTargets; i++) {
+    // the nearest ones with nothing solid in the way (tested best first, so a swing costs a ray or two, not one per zombie in reach)
+    for (let i = 0, n = 0; i < cands.length && n < maxTargets; i++) {
       const c = cands[i];
+      if (!this.meleeClear(p, c, ox, oy, oz)) continue;
+      n++;
       let dmg = claws ? CLAWS.damage : heavy ? def.altDamage : def.damage;
       if (c.head) dmg *= def.headMul;
       hitAny = true;
@@ -394,6 +396,30 @@ export class Combat {
       }
     }
     g.sound(claws ? SOUND.ZPLAYER_GROWL : SOUND.MELEE_SWING, ox, oy, oz, 20, p.id);
+  }
+
+  // Is a swing's line to a target (a candidate of Combat.melee) open? No swing goes through a wall.
+  // A survivor strikes from the eye at the upper body, by the rule their hands already follow (canReach): over what
+  // stands no higher than eye height above the lower of the two - barricades, sills, fences, car hoods - and through
+  // what survivors walk through (gates, door boards). Measured from the lower one, so a jump does not clear a wall.
+  // A player-zombie's claws get the rule of the AI dead (Zombies.canReach): chest to chest, stopped by anything
+  // solid, barricades included, and by door boards and gates unless the victim is standing in them.
+  meleeClear(p, c, ox, oy, oz) {
+    const g = this.g;
+    const s = p.state;
+    if (!p.zombie) return canReach(g.world, ox, oy, oz, c.x, c.y, c.z, Math.min(s.y, c.feet) + EYE_HEIGHT, c.r);
+    const vs = c.e.state;
+    const cy = s.y + (s.crouch ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT) * 0.55;
+    let dx = c.x - ox;
+    let dy = c.feet + (vs.downed ? 0.3 : vs.crouch ? 0.6 : 0.9) - cy;
+    let dz = c.z - oz;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx /= l;
+    dy /= l;
+    dz /= l;
+    raycastWorld(g.world, ox, cy, oz, dx, dy, dz, l, _ray);
+    const col = _ray.col;
+    return !col || !!(col.flags & COL.HUMANPASS && footprintContains(col, c.x, c.z));
   }
 
   // ---------------------------------------------------------------- damage

@@ -976,6 +976,101 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   check('chopping a tree gives sticks', sticks1 > sticks0, `${sticks0} -> ${sticks1}`);
 }
 
+// melee needs a clear line: no stabbing the dead through the wall you shelter behind, no claws through it either.
+// A survivor's blade still goes over what they see over (a barricade) and through what they walk through (a gate)
+{
+  const w = game.world;
+  const p = A.p();
+  const q = B.p();
+  const keep = [p, q].map((e) => [e.state.x, e.state.y, e.state.z, e.state.yaw, e.state.pitch]);
+  const ray = { t: -1, col: null, terrain: false };
+  // solid from shin to eye between two points on level ground? (walled: something is; else: nothing is)
+  const line = (a, b, walled) => {
+    const l = Math.hypot(b[0] - a[0], b[2] - a[2]);
+    return Math.abs(a[1] - b[1]) < 0.3 && [0.5, 1.0, 1.62].every((h) => !!raycastWorld(w, a[0], a[1] + h, a[2], (b[0] - a[0]) / l, 0, (b[2] - a[2]) / l, l, ray).col === walled && !ray.terrain);
+  };
+  // the wall beside a doorway: `out` and `far` on one side of it (0.85 and 2.35 m off), `inn` on the other,
+  // and none of the dead that haunt the buildings near enough to take a swing meant for the one under test
+  let spot = null;
+  for (const o of w.openings) {
+    for (const side of [1, -1]) {
+      const [nx, nz, mx, mz] = [Math.sin(o.ry), Math.cos(o.ry), o.x + Math.cos(o.ry) * side * (o.w / 2 + 0.8), o.z - Math.sin(o.ry) * side * (o.w / 2 + 0.8)];
+      const [inn, out, far] = [-0.85, 0.85, 2.35].map((d) => [mx + nx * d, groundAt(w, mx + nx * d, mz + nz * d, o.y + 1, 0.3), mz + nz * d]);
+      const alone = game.zombies.every((e) => e.dead || Math.hypot(e.x - mx, e.z - mz) > 8);
+      if (!spot && alone && [inn, out, far].every((v) => !game.nav.isBlocked(v[0], v[2])) && line(inn, out, true) && line(far, out, false)) spot = { inn, out, far, mid: [(out[0] + far[0]) / 2, (out[2] + far[2]) / 2], rot8: Math.round((((o.ry % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * 256) & 255 };
+    }
+  }
+  check('found a building wall to swing at', !!spot);
+  const { inn, out, far, mid, rot8 } = spot;
+  const hits = [];
+  let landed = 0;
+  let chopped = 0;
+  const [damageZombie, damagePlayer, impact, gatherHit] = [game.combat.damageZombie, game.damagePlayer, game.impact, game.gatherHit];
+  game.combat.damageZombie = (z) => (hits.push(z), false);
+  game.damagePlayer = (h) => hits.push(h);
+  game.impact = () => landed++;
+  game.gatherHit = () => chopped++;
+  const stand = (e, [x, y, z]) => {
+    const t = e.kind === ENT.PLAYER ? e.state : e;
+    [t.x, t.y, t.z] = [x, y, z];
+  };
+  // one swing by `e` standing at `from`, aimed at `to`: how many it hit
+  const swing = (e, from, to, weapon = ITEM.KNIFE) => {
+    stand(e, from);
+    e.state.yaw = Math.atan2(-(to[0] - from[0]), -(to[2] - from[2]));
+    e.state.pitch = 0;
+    e.renderTick = game.tick & 0xffff;
+    e.renderFrac = 0;
+    hits.length = landed = 0;
+    game.combat.melee(e, { weapon, heavy: false });
+    return hits.length;
+  };
+  // Bob as a player-zombie for a swing: his claws go for the living, and Alice's blade would go for him
+  const claws = (from, to) => {
+    q.zombie = true;
+    const n = swing(q, from, to, 0);
+    q.zombie = false;
+    return n;
+  };
+  const z = game.zm.spawn(ZTYPE.WALKER, out[0], out[2]);
+  stand(z, out);
+  const open = swing(p, far, out) === 1 && hits[0] === z;
+  const through = swing(p, inn, out);
+  check('melee hits a zombie in the open', open);
+  check('melee does not reach through a building wall', through === 0 && landed > 0, `${through} hit, the swing landed on the wall: ${landed > 0}`);
+  stand(p, out);
+  const clawed = [claws(far, out), claws(inn, out)];
+  check("a player-zombie's claws do not reach through it either", clawed[0] === 1 && clawed[1] === 0, `open ${clawed[0]}, through the wall ${clawed[1]}`);
+  // what the team builds, set down between the two: only its collider matters to a swing
+  const across = {};
+  for (const [name, type] of [['barricade', STRUCT.BARRICADE], ['gate', STRUCT.GATE], ['wall', STRUCT.WALL]]) {
+    const col = game.structCollider(type, mid[0], far[1], mid[1], rot8, 0);
+    w.structGrid.add(col);
+    const blade = swing(p, far, out);
+    stand(p, out);
+    across[name] = [blade, claws(far, out)];
+    w.structGrid.remove(col);
+  }
+  check('a blade goes over a barricade and through a gate, not through a wall the team built', across.barricade[0] === 1 && across.gate[0] === 1 && across.wall[0] === 0, JSON.stringify(across));
+  check('...and claws are stopped by all three, as the AI dead are', across.barricade[1] === 0 && across.gate[1] === 0 && across.wall[1] === 0);
+  // a swing at a tree still chops it, also when a zombie hides behind the trunk (it used to take the blow instead)
+  const t = w.trees;
+  let tree = null;
+  for (let i = 0; i < t.length && !tree; i += 6) {
+    const [front, back] = [1.4, -0.8].map((d) => [t[i] + d, groundAt(w, t[i] + d, t[i + 2], t[i + 1] + 1, 0.3), t[i + 2]]);
+    raycastWorld(w, front[0], front[1] + 1.3, front[2], -1, 0, 0, 2.2, ray);
+    const alone = game.zombies.every((e) => e === z || e.dead || Math.hypot(e.x - t[i], e.z - t[i + 2]) > 8);
+    if (alone && Math.abs(front[1] - back[1]) < 0.3 && ray.col && Math.hypot(ray.col.x - t[i], ray.col.z - t[i + 2]) < 0.01) tree = { front, back };
+  }
+  stand(z, tree.back);
+  const behind = swing(p, tree.front, tree.back);
+  check('a swing at a tree chops it, not the zombie behind the trunk', behind === 0 && chopped === 1, `${behind} hit, ${chopped} chop`);
+  [game.combat.damageZombie, game.damagePlayer, game.impact, game.gatherHit] = [damageZombie, damagePlayer, impact, gatherHit];
+  z.dead = true;
+  z.deadT = 2;
+  [p, q].forEach((e, i) => ([e.state.x, e.state.y, e.state.z, e.state.yaw, e.state.pitch] = keep[i]));
+}
+
 // build a campfire + workbench + door boards
 {
   const p = A.p();
