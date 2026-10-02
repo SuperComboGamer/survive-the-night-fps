@@ -457,9 +457,11 @@ export class Summary {
     this.root.hidden = true;
     this.title = el('div', 'sm-title', this.root, '');
     this.stats = el('div', 'sm-stats', this.root);
+    this.theme = el('div', 'sm-theme', this.root);
     this.next = el('div', 'sm-next', this.root, '');
   }
-  show(s, nextText) {
+  // theme: the coming night's theme (shared/nights.js), or null for a plain night
+  show(s, nextText, theme) {
     this.title.textContent = `Night ${s.night} survived`;
     this.stats.textContent = '';
     const stat = (label, v, cls = '') => {
@@ -472,6 +474,12 @@ export class Summary {
     stat('downed', s.downs, s.downs ? 'warn' : '');
     stat('revived', s.revives, s.revives ? 'good' : '');
     stat('lost', s.deaths, s.deaths ? 'bad' : '');
+    // a themed night gets a line of its own: the one thing on the card the team can act on before dark
+    this.theme.textContent = '';
+    if (theme) {
+      el('b', '', this.theme, `Tonight: ${theme.name}`);
+      el('span', '', this.theme, theme.warn);
+    }
     this.next.textContent = nextText || '';
     this.root.hidden = false;
     this.root.classList.remove('out');

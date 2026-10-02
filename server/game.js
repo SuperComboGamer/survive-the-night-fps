@@ -114,6 +114,7 @@ import { createWorld } from '../shared/world.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
+import { nightTheme } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
@@ -244,6 +245,7 @@ export class Game {
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
     this.debugCommands = !!opts.debugCommands; // testing only: /kill /night /day /give /items /spawn /tp chat commands
     this.dawnReturn = opts.dawnReturn ?? DAWN_RETURN; // the dead are survivors again at sunrise (the option: tests)
+    this.themes = opts.themes !== false; // night themes (shared/nights.js). false: every night is plain (tests, benchmarks)
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.setWorld(opts.seed ?? randomSeed());
     this.rng = mulberry32(this.seed ^ 0xabcdef);
@@ -963,7 +965,9 @@ export class Game {
     const total = this.hordeSize(n, humans);
     const shares = [0.3, 0.33, 0.37];
     const scale = this.nightLen / NIGHT_LENGTH;
-    const shadeCap = Math.min(6, 1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2));
+    // tonight's theme re-weights the blend below (the client works out the same theme from the seed to warn the team)
+    const theme = this.themes ? nightTheme(this.seed, n) : null;
+    const shadeCap = Math.min(6, (1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2)) * (theme?.shadeCap ?? 1));
     let shades = 0;
     this.waves = [];
     for (let k = 0; k < NIGHT_WAVES; k++) {
@@ -981,6 +985,7 @@ export class Game {
         [ZTYPE.TANK, n >= 4 ? (1 + n * 0.3) * (0.5 + sp) : 0],
         [ZTYPE.SHADE, n >= 2 ? 2.5 + sp * 2.5 : 0],
       ];
+      if (theme) for (const wt of weights) wt[1] *= theme.mul[wt[0]] ?? 1;
       const tot = weights.reduce((a, b) => a + b[1], 0);
       const q = [];
       for (let i = 0; i < count; i++) {

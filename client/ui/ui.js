@@ -183,8 +183,8 @@ export class UI {
     this.hud.damage(amount, angle);
   }
 
-  showSummary(stats, nextText) {
-    this.summary.show(stats, nextText);
+  showSummary(stats, nextText, theme) {
+    this.summary.show(stats, nextText, theme);
   }
 
   setMapOpen(open) {

@@ -17,6 +17,7 @@ import { HARVEST, harvestAt, harvestPrompt, needLines } from '../client/game/har
 import { SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
 import { ITEM_DEFS } from '../shared/defs.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
+import { NIGHT_THEMES, nightTheme } from '../shared/nights.js';
 
 const seed = +(process.argv[2] || 4242);
 // The checks must pass on any seed, so none of them may lean on what the ones before it happened to leave behind.
@@ -2876,6 +2877,95 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   run(2);
   check('a boss the sun kills drops nothing', tank.dead && left === 0 && fed(KILLER.WORLD, ZTYPE.TANK), `dead ${((20 * 6 + t) / 20).toFixed(0)} s after dawn, ${left} items`);
   check('...whoever lands the last blow once it is burning', queen.dead && late === 0 && fed(KILLER.WORLD, ZTYPE.BOSS_HIVEQUEEN) && !fed(KILLER.PLAYER, ZTYPE.BOSS_HIVEQUEEN), `${late} items`);
+}
+
+// night themes: the seed and the night number decide what a night's horde is made of (shared/nights.js)
+{
+  // the draw: the same answer every time, night 1 plain, no theme before its first night or two nights running
+  let broken = 0;
+  let themed = 0;
+  let nights = 0;
+  const drawn = new Set();
+  for (let s = 1; s <= 300; s++) {
+    for (let n = 1; n <= 8; n++) {
+      const t = nightTheme(s, n);
+      if (t !== nightTheme(s, n) || (t && (n === 1 || n < t.from || t === nightTheme(s, n - 1)))) broken++;
+      if (n === 1) continue;
+      nights++;
+      if (t) themed++;
+      if (t) drawn.add(t);
+    }
+  }
+  check('a night\'s theme is drawn from the seed and the night', broken === 0 && drawn.size === NIGHT_THEMES.length, `${drawn.size} of ${NIGHT_THEMES.length} themes over 300 seeds`);
+  check('...and some nights stay plain', themed / nights > 0.55 && themed / nights < 0.75, `${((themed / nights) * 100).toFixed(0)}% themed`);
+
+  // the blend: 500 rolls of the real startNight on a seed whose night draws the theme, against a plain night of
+  // the same number. (startNight reads the seed for the theme alone, so the map can stay as it is. 500 rolls:
+  // two plain samples of 150 differ by up to a fifth in the share of a rare type, which is the margin below.)
+  const kept = game.seed;
+  const seedFor = (th, n) => {
+    let s = 1;
+    while (nightTheme(s, n) !== th) s++;
+    return s;
+  };
+  const roll = (th, n) => {
+    game.seed = seedFor(th, n);
+    const r = { n: 0, hp: 0, by: new Map(), shades: 0 };
+    const queued = game.events.length;
+    for (let i = 0; i < 500; i++) {
+      game.day = n;
+      game.startNight();
+      game.events.length = queued; // (drop the "night falls" notice each roll queues for the clients)
+      let shades = 0;
+      for (const wv of game.waves) {
+        for (const t of wv.queue) {
+          r.n++;
+          r.hp += ZOMBIE_DEFS[t].hp;
+          r.by.set(t, (r.by.get(t) || 0) + 1);
+          if (t === ZTYPE.SHADE) shades++;
+        }
+      }
+      r.shades = Math.max(r.shades, shades);
+    }
+    return r;
+  };
+  const share = (r, t) => (r.by.get(t) || 0) / r.n;
+  const blend = [];
+  const size = [];
+  const early = [];
+  let wrongBlend = 0;
+  let wrongSize = 0;
+  for (const th of NIGHT_THEMES) {
+    const n = th.from;
+    const plain = roll(null, n);
+    const r = roll(th, n);
+    // what it boosts is at least 1.3x as common as on a plain night, what it thins at most 0.85x
+    for (const [t, mul] of Object.entries(th.mul)) {
+      const k = share(r, +t) / share(plain, +t);
+      if (mul > 1 ? k < 1.3 : k > 0.85) wrongBlend++;
+      blend.push(`${ZOMBIE_DEFS[t].name} x${k.toFixed(1)}`);
+    }
+    // same head count (a dog pack can run a wave a body or two over), total health within a fifth
+    const kn = r.n / plain.n;
+    const kh = r.hp / plain.hp;
+    if (Math.abs(kn - 1) > 0.04 || Math.abs(kh - 1) > 0.2) wrongSize++;
+    size.push(`${th.id} x${kn.toFixed(2)}/x${kh.toFixed(2)}`);
+    for (const t of r.by.keys()) if (ZOMBIE_DEFS[t].minNight > n) early.push(`${th.id}: ${ZOMBIE_DEFS[t].name} on night ${n}`);
+    if (r.shades > 6) early.push(`${th.id}: ${r.shades} shades`);
+  }
+  check('a themed night has its blend', wrongBlend === 0, `against a plain night: ${blend.join(', ')}`);
+  check('...the same head count and about the same total health as a plain one', wrongSize === 0, `count/health: ${size.join(', ')}`);
+  check('...and no zombie the night has not unlocked', early.length === 0, early.join(', '));
+  // switched off (tests, benchmarks), the same seed gives the plain night
+  const pack = NIGHT_THEMES.find((th) => th.id === 'pack');
+  const plain = roll(null, 2);
+  game.themes = false;
+  const off = roll(pack, 2);
+  game.themes = true;
+  const on = roll(pack, 2);
+  game.seed = kept;
+  const dogs = [plain, off, on].map((r) => share(r, ZTYPE.DOG));
+  check('themes can be switched off', dogs[1] < dogs[0] * 1.3 && dogs[2] > dogs[0] * 2, `dogs on night 2: plain ${(dogs[0] * 100).toFixed(0)}%, The Pack switched off ${(dogs[1] * 100).toFixed(0)}%, The Pack ${(dogs[2] * 100).toFixed(0)}%`);
 }
 
 // a new playthrough is a new valley: the server rolls a fresh map and tells its clients the seed

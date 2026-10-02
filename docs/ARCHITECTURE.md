@@ -20,6 +20,8 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
                  vegetation, colliders. A new playthrough is a new seed (S2C.WORLD_RESET); SEED pins it
   collision.js   static/dynamic collider grids, ray casts
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
+  nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
+                 it to the wave weights and the client announces it, each from the seed: nothing on the wire
 server/      authoritative game server (uWebSockets.js)
 client/      three.js client (Vite root)
   index.html, main.js

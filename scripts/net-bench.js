@@ -62,7 +62,8 @@ const wrapPi = (a) => {
 };
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
-const game = new Game({ seed: SEED, godMode: !MORTAL, startDay: DAY, maxPlayers: Math.max(8, PLAYERS), log: () => {} });
+// (themes off: the night fought is the plain blend whatever the seed, so runs stay comparable)
+const game = new Game({ seed: SEED, godMode: !MORTAL, startDay: DAY, maxPlayers: Math.max(8, PLAYERS), themes: false, log: () => {} });
 let phaseName = 'join';
 
 const KIND_NAME = {};

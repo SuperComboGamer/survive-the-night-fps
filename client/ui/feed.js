@@ -174,6 +174,7 @@ export class Notifier {
 
 function toneFor(text) {
   const t = text.toUpperCase();
+  if (/^NIGHT \d/.test(t)) return 'night'; // a night's title, whatever its theme is called ("NIGHT 2: LIGHTS OUT")
   if (/DIED|DEAD|HORDE|BOSS|ABOMINATION|QUEEN|FINAL|OUT\b/.test(t)) return 'blood';
   if (/ESCAPE|DAWN|SURVIVED|READY|REPAIRED/.test(t)) return 'dawn';
   if (/NIGHT/.test(t)) return 'night';
