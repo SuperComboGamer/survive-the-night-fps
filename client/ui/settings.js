@@ -1,6 +1,7 @@
 // Settings: persistence + the settings panel (shared by splash and pause menu).
 import { el, svgEl, lsGet, lsSet, clamp } from './dom.js';
 import { glyph } from './icons.js';
+import { loadRecord, clearRecord } from './records.js';
 
 const KEY = 'stn.settings';
 
@@ -110,6 +111,23 @@ export class SettingsPanel {
       el('h3', 'set-sec-title', s, sec.title);
       for (const row of sec.rows) this._row(s, row);
     }
+    // not a setting, but this is where a player looks for it: wiping the personal record (records.js).
+    // It takes two clicks: the first only arms the button.
+    const rs = el('section', 'set-sec', body);
+    el('h3', 'set-sec-title', rs, 'Your record');
+    this.recRow = el('div', 'set-row set-rec', rs);
+    this.recHint = el('small', 'set-hint', el('label', 'set-label', this.recRow, 'Personal bests & run history'));
+    const rc = el('div', 'set-ctl', this.recRow);
+    this.recKeep = el('button', 'btn btn-ghost', rc, 'Keep it');
+    this.recClear = el('button', 'btn btn-ghost btn-danger', rc);
+    this.recKeep.type = this.recClear.type = 'button';
+    this.recKeep.addEventListener('click', () => this._syncRecord());
+    this.recClear.addEventListener('click', () => {
+      if (!this.recArmed) return this._syncRecord(true);
+      clearRecord();
+      this._syncRecord();
+      this.ui.splash.syncRecord();
+    });
     const foot = el('div', 'set-foot', card);
     const reset = el('button', 'btn btn-ghost', foot, 'Reset defaults');
     reset.addEventListener('click', () => {
@@ -190,6 +208,22 @@ export class SettingsPanel {
   sync() {
     const s = this.ui.settings;
     for (const k in this.inputs) this.inputs[k].sync(s);
+    this._syncRecord();
+  }
+
+  _syncRecord(armed = false) {
+    const { runs, escapes } = loadRecord().total;
+    const n = `${runs} run${runs === 1 ? '' : 's'}`;
+    this.recArmed = armed;
+    this.recRow.classList.toggle('armed', armed);
+    this.recKeep.hidden = !armed;
+    this.recClear.textContent = armed ? 'Yes, clear it' : 'Clear record';
+    this.recClear.disabled = !runs;
+    this.recHint.textContent = armed
+      ? `Erase ${n} and your bests for good?`
+      : runs
+        ? `${n}, ${escapes} escape${escapes === 1 ? '' : 's'}. Kept in this browser only.`
+        : 'Nothing recorded yet. Kept in this browser only.';
   }
 
   show() {

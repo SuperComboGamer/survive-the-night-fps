@@ -74,6 +74,7 @@ import { createCat } from '../render/models/cat.js';
 import { createPickup } from '../render/models/pickups.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
+import { recordRun } from '../ui/records.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -108,6 +109,7 @@ const PING_LIFE = 12;
 const CRAFT_BURST = 20;
 const CRAFT_RATE = 40; // per second
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
+const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
 const _v = new THREE.Vector3();
@@ -168,6 +170,9 @@ export class Game {
     this.stepAcc = 0;
     this.deathShown = false;
     this.overlay = null;
+    this.runOn = false; // a run is under way, as far as this client has seen (trackRun)
+    this.run = null; // ...and we have been in it from the start: { tick, kills0 }
+    this.runReport = null; // what the run that just ended did to the personal record, for the end screen
     this.prevPhase = -1;
     this.lastHudInvKey = '';
     this.talkPeers = [];
@@ -564,6 +569,8 @@ export class Game {
     this.clockInit = false;
     this.interpExtra = 0;
     this.introPending = true; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
+    this.runOn = false;
+    this.run = this.runReport = null;
     this.state = 'playing';
     this.input.enabled = true;
     this.inputBuffer.clear();
@@ -638,6 +645,41 @@ export class Game {
     readEvents(r, this.eventHandler, flags, this.entities.ents);
     // (after the events: a join that starts the run gets NEW_GAME in this same snapshot, and that is its introduction)
     if (this.introPending && flags & SNAP.GLOBAL && (this.global.phase === PHASE.DAY || this.global.phase === PHASE.NIGHT)) this.lateJoinIntro();
+    if (flags & SNAP.GLOBAL) this.trackRun();
+  }
+
+  // The personal record (ui/records.js). A run goes on it when this player was in it from its first minute
+  // and is still connected when it ends: joining later or leaving early records nothing. It follows the
+  // replicated phase, not the NEW_GAME / VICTORY / GAME_OVER notifications: a client the server skips for a
+  // tick loses that tick's events, while the global state always catches up.
+  trackRun() {
+    const g = this.global;
+    if (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) {
+      if (this.runOn) return;
+      this.runOn = true;
+      // how much of the run was played before we saw it: nothing when it starts under us
+      const gone = g.phase === PHASE.DAY && g.day === 1 ? g.phaseLen - g.timeLeft : Infinity;
+      // kills0: our score when the run began. The server's count can carry over from the run before
+      this.run = gone <= RUN_JOIN_GRACE ? { tick: this.net.tick - gone * SERVER_TICK_RATE, kills0: this.players.get(this.myId)?.kills ?? Infinity } : null;
+    } else if (this.runOn) {
+      this.runOn = false;
+      const run = this.run;
+      this.run = null;
+      if (g.phase !== PHASE.VICTORY && g.phase !== PHASE.GAMEOVER) return;
+      if (!run) {
+        this.runReport = { late: true };
+        return;
+      }
+      this.runReport = recordRun({
+        t: Date.now(),
+        seed: this.seed,
+        result: g.phase === PHASE.VICTORY ? 'escaped' : 'wiped',
+        nights: g.day - 1, // night N closes day N: a run that ends on day N got through N - 1 of them
+        secs: (this.net.tick - run.tick) / SERVER_TICK_RATE, // the server's tick clock, which the day and night run on: a stalled tab or a laggy link cannot bend it
+        kills: (this.players.get(this.myId)?.kills ?? 0) - run.kills0,
+        team: this.players.size,
+      });
+    }
   }
 
   onInventory(r) {
@@ -696,6 +738,8 @@ export class Game {
       this.players.set(id, { name, status, walkie, kills, ping });
     }
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
+    // (a count that went down was reset by the server for the new run: the run's kills then count from there)
+    if (this.run) this.run.kills0 = Math.min(this.run.kills0, this.players.get(this.myId)?.kills ?? Infinity);
     const ST = ['alive', 'zombie', 'dead', 'downed'];
     for (const [id, p] of this.players) list.push({ id, name: p.name, status: ST[p.status] === 'downed' ? 'alive' : ST[p.status] || 'alive', kills: p.kills, ping: id === this.myId ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self: id === this.myId });
     this.ui.setPlayers(list);
@@ -1756,7 +1800,7 @@ export class Game {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT) });
+      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport });
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
@@ -1773,7 +1817,7 @@ export class Game {
         title = 'Left behind';
         reason = 'The car tears down Route 9 without you. The others made it out of the valley.';
       }
-      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT) });
+      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT), record: this.runReport });
     } else if ((g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) && (this.overlay === 'gameover' || this.overlay === 'victory')) {
       this.overlay = null;
       this.ui.hideOverlays();
