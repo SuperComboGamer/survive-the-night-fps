@@ -274,6 +274,69 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   p.hp = 100;
 }
 
+// the Tank fits through a doorway: against the world it moves as a body smaller than the one bullets hit
+// (ZOMBIE_DEFS moveR / moveH), so standing indoors does not put a survivor out of its reach. It walks in, and its
+// charge carries in. (a game of its own on the same map: no ticks and no rng are taken from the run around it)
+{
+  const g = new Game({ seed, log: () => {} });
+  const session = g.onOpen({ send() {} });
+  const jw = new Writer(64);
+  jw.u8(C2S.JOIN);
+  jw.u8(PROTOCOL_VERSION);
+  jw.str('Dana');
+  g.onMessage(session, jw.bytes().slice());
+  for (let i = 0; i < 5; i++) g.update();
+  const p = [...g.players.values()][0];
+  const s = p.state;
+  const w = g.world;
+  const roofed = (x, z, m) => w.roofs.some((r) => Math.abs(r.c * (x - r.x) - r.s * (z - r.z)) < r.hx - m && Math.abs(r.s * (x - r.x) + r.c * (z - r.z)) < r.hz - m);
+  // the narrowest doorway with a room 4 m deep behind it and a clear, level 12 m run up to it from outside
+  let d = null;
+  for (const o of w.openings.slice().sort((a, b) => a.w - b.w)) {
+    for (const side of [1, -1]) {
+      const nx = Math.sin(o.ry) * side;
+      const nz = Math.cos(o.ry) * side;
+      const [ix, iz, ox, oz] = [o.x + nx * 4, o.z + nz * 4, o.x - nx * 12, o.z - nz * 12];
+      if (d || !roofed(ix, iz, 0.5) || roofed(ox, oz, -1) || g.nav.isBlocked(ix, iz) || g.nav.isBlocked(ox, oz) || w.isDeepWater(ox, oz)) continue;
+      const iy = groundAt(w, ix, iz, o.y + 0.4, 0.3);
+      const oy = groundAt(w, ox, oz, 200, 0.3, false);
+      if (Math.abs(oy - o.y) < 0.5 && g.nav.segClear(ox, oz, ix, iz) && g.zm.clearLine(ox, oy + ZOMBIE_DEFS[ZTYPE.TANK].headY, oz, ix, iy + 1.4, iz)) d = { o, nx, nz, ix, iy, iz, ox, oz };
+    }
+  }
+  check('found a doorway with a clear run up to it', !!d, d ? `${d.o.w} m wide, ${d.o.h} m high` : '');
+  const depth = (z) => (z.x - d.o.x) * d.nx + (z.z - d.o.z) * d.nz; // how far past the door's plane it is
+  let tank = null;
+  let hits = 0;
+  let rammed = 0;
+  g.damagePlayer = (pl, amount, src) => {
+    if (src.ztype !== ZTYPE.TANK) return;
+    if (tank.state === 6) rammed += amount;
+    else hits += amount;
+  };
+  // the survivor 4 m inside, a Tank 12 m outside, both on the door's axis
+  const release = (specialCd) => {
+    s.x = d.ix;
+    s.y = d.iy;
+    s.z = d.iz;
+    s.vx = s.vy = s.vz = 0;
+    g.fillHistory(p);
+    tank = g.zm.spawn(ZTYPE.TANK, d.ox, d.oz, { horde: true });
+    tank.specialCd = specialCd;
+  };
+  release(1e9); // on foot: no charge
+  let t = 0;
+  for (; t < 20 * 25 && !hits; t++) g.update();
+  check('a Tank walks in through a doorway to a survivor indoors', hits > 0 && depth(tank) > 0.5, `${(t / 20).toFixed(1)} s, ${depth(tank).toFixed(1)} m inside`);
+  g.combat.damageZombie(tank, 1e6, null, {});
+  release(0); // charge ready: it runs until it rams the survivor or clips something
+  let charged = false;
+  for (t = 0; t < 20 * 6 && !(charged && tank.state !== 6); t++) {
+    g.update();
+    charged ||= tank.state === 6;
+  }
+  check('a Tank charge carries through the doorway', charged && depth(tank) > 0.5, `ended ${depth(tank).toFixed(1)} m inside, ${rammed ? 'rammed the survivor' : 'short of the survivor'}`);
+}
+
 // the wandering herd: 10-15 of the dead shuffle along the roads together. One of them noticing a survivor, or a
 // noise reaching them, sets the whole herd running
 {

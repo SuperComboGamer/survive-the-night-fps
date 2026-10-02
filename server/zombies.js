@@ -961,7 +961,7 @@ export class Zombies {
         _pos.z = h.state.z + (ddz / d) * min;
       }
     }
-    const hit = resolveBody(g.world, _pos, Math.min(rad, 0.65), def.height, false);
+    const hit = resolveBody(g.world, _pos, def.moveR ?? Math.min(rad, 0.65), def.moveH ?? def.height, false);
     z.blockStruct = hit && hit.flags & COL.STRUCT ? hit.id : 0;
     if (g.world.isDeepWater(_pos.x, _pos.z)) {
       _pos.x = ox;
@@ -1209,7 +1209,8 @@ export class Zombies {
       _pos.x = z.x + z.chargeX * 10 * dt;
       _pos.y = z.y;
       _pos.z = z.z + z.chargeZ * 10 * dt;
-      const hit = resolveBody(g.world, _pos, 0.65, 2.5, false);
+      // the body it walks with (moveR / moveH): a charge at an open doorway carries on inside
+      const hit = resolveBody(g.world, _pos, def.moveR ?? 0.65, def.moveH ?? 2.5, false);
       z.x = _pos.x;
       z.z = _pos.z;
       z.y = groundAt(g.world, z.x, z.z, z.y, 0.2, false);
