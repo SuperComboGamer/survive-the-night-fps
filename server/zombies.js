@@ -3,6 +3,7 @@
 // zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
 // The herd that wanders the roads by day is in herd.js.
 import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
+import { LEG_HP, STUMBLE_SPEED, HOBBLE_SPEED, CRAWL_SPEED, CRAWL_SPEED_MIN, CRAWL_SPEED_MAX, CRAWL_SLOW, CRAWL_HEIGHT, CRAWL_HEAD_Y } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
@@ -164,6 +165,9 @@ export class Zombies {
       lit: false, // shade: frozen by light
       darkT: 1,
       trapSlow: 1,
+      legs: 0, // legs shot off (Combat.hitLeg): bit 0 the left, bit 1 the right. One gone it hobbles, both gone it crawls
+      legHp: def.legs ? [hp * LEG_HP, hp * LEG_HP] : null, // what each leg still takes (left, right)
+      stumbleT: 0, // tripped by a shot in the leg: seconds until it has caught itself
       hx: new Float32Array(16),
       hy: new Float32Array(16),
       hz: new Float32Array(16),
@@ -625,6 +629,7 @@ export class Zombies {
     z.losT -= dt;
     z.howlT -= dt;
     if (z.animT > 0) z.animT -= dt;
+    if (z.stumbleT > 0) z.stumbleT -= dt;
     z.trapSlow = Math.min(1, z.trapSlow + dt * 2);
 
     // dawn: horde burns
@@ -729,7 +734,7 @@ export class Zombies {
         dz = tz - z.z;
       }
       // spitters keep their distance
-      if (z.ztype === ZTYPE.SPITTER && z.los && dist < 11) {
+      if (z.ztype === ZTYPE.SPITTER && z.los && dist < 11 && z.legs !== 3) {
         const l = dist || 1;
         dx = -(tz - z.z) / l;
         dz = (tx - z.x) / l;
@@ -779,6 +784,10 @@ export class Zombies {
       speed = z.pack ? 1.5 : Math.min(speed, 1.1) * 0.8;
     }
     if (!chasing && z.ztype === ZTYPE.RUNNER && !z.herd) speed = 1.2;
+    // legs (Combat.hitLeg): on one it hobbles, on none it drags itself along by its arms, and a fresh hit trips it
+    if (z.legs === 3) speed = crawlSpeed(def) * (chasing ? 1 : CRAWL_SLOW);
+    else if (z.legs) speed *= HOBBLE_SPEED;
+    if (z.stumbleT > 0) speed *= STUMBLE_SPEED;
     speed *= z.trapSlow;
     if ((g.phase === PHASE.NIGHT || g.escape.active) && z.horde) speed *= 1.06 + Math.min(0.2, 0.015 * g.day);
 
@@ -875,9 +884,10 @@ export class Zombies {
     z.lastX = z.x;
     z.lastZ = z.z;
 
-    // facing & anim
-    if ((attacking || (target && dist < 4)) && z.state !== 7) z.yaw = turn(z.yaw, Math.atan2(-(tx - z.x), -(tz - z.z)), dt * 8);
-    else if (Math.hypot(z.vx, z.vz) > 0.2) z.yaw = turn(z.yaw, Math.atan2(-z.vx, -z.vz), dt * 5);
+    // facing & anim (a crawler hauls itself round slowly: its head leads its body, and the hitbox with it)
+    const swing = z.legs === 3 ? 0.4 : 1;
+    if ((attacking || (target && dist < 4)) && z.state !== 7) z.yaw = turn(z.yaw, Math.atan2(-(tx - z.x), -(tz - z.z)), dt * 8 * swing);
+    else if (Math.hypot(z.vx, z.vz) > 0.2) z.yaw = turn(z.yaw, Math.atan2(-z.vx, -z.vz), dt * 5 * swing);
     if (z.animT <= 0) {
       // hysteresis: a speed hovering at a threshold (crowd shoves, easing into an attack) must not flicker the gait
       const sp = Math.hypot(z.vx, z.vz);
@@ -932,7 +942,7 @@ export class Zombies {
   }
 
   hasLOS(z, tx, ty, tz, dist) {
-    return this.clearLine(z.x, z.y + z.def.headY, z.z, tx, ty, tz);
+    return this.clearLine(z.x, z.y + (z.legs === 3 ? CRAWL_HEAD_Y : z.def.headY), z.z, tx, ty, tz);
   }
 
   // nothing solid (walls, structures, trees, terrain) on the straight line between two points
@@ -970,7 +980,7 @@ export class Zombies {
   isLit(z) {
     const g = this.g;
     if (g.phase !== PHASE.NIGHT) return true;
-    const h = z.def.height;
+    const h = bodyHeight(z);
     const lights = this.lightSources();
     for (let i = 0; i < lights.length; i += 4) {
       const lx = lights[i];
@@ -1041,7 +1051,7 @@ export class Zombies {
   canReach(z, p) {
     const s = p.state;
     const ox = z.x;
-    const oy = z.y + z.def.height * 0.55;
+    const oy = z.y + bodyHeight(z) * 0.55;
     const oz = z.z;
     let dx = s.x - ox;
     let dy = s.y + (s.downed ? 0.3 : s.crouch ? 0.6 : 0.9) - oy;
@@ -1067,9 +1077,9 @@ export class Zombies {
     const s = p.state;
     const up = s.y - z.y;
     // feet within a step of the zombie's are on its own footing: the torso line alone decides
-    if (up < 0.5 || up > Math.min(2.5, z.def.height + 0.75) + slack) return false;
+    if (up < 0.5 || up > Math.min(2.5, bodyHeight(z) + 0.75) + slack) return false;
     const w = this.g.world;
-    const oy = z.y + z.def.height * 0.55;
+    const oy = z.y + bodyHeight(z) * 0.55;
     const ty = s.y + 0.35;
     raycastWorld(w, z.x, oy, z.z, 0, ty > oy ? 1 : -1, 0, Math.abs(ty - oy), _ray);
     if (_ray.col) return false;
@@ -1417,8 +1427,8 @@ export class Zombies {
     }
     if (z.state === 7) return false; // dog hit-and-run: normal movement
 
-    // ---- trigger specials (state 0)
-    if (!target) return false;
+    // ---- trigger specials (state 0). A crawler has none left: it cannot rear up to spit or to throw its rope
+    if (!target || z.legs === 3) return false;
     const windup = (time, act, snd) => {
       z.state = 1;
       z.stateT = time;
@@ -1903,6 +1913,16 @@ function roofBetween(w, ox, oy, oz, tx, ty, tz) {
   const list = roofBoxes(w).query((ox + tx) / 2, (oz + tz) / 2, Math.hypot(tx - ox, tz - oz) / 2, _fq);
   for (let i = 0; i < list.length; i++) if (rayCollider(list[i], ox, oy, oz, dx, dy, dz, l) >= 0) return true;
   return false;
+}
+
+// how fast a zombie of this kind drags itself along once both legs are gone (m/s)
+export function crawlSpeed(def) {
+  return Math.max(CRAWL_SPEED_MIN, Math.min(CRAWL_SPEED_MAX, def.speed * CRAWL_SPEED));
+}
+
+// how tall it stands, or lies: what its reach is measured from
+function bodyHeight(z) {
+  return z.legs === 3 ? CRAWL_HEIGHT : z.def.height;
 }
 
 function turn(a, b, maxStep) {

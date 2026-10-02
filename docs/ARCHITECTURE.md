@@ -279,6 +279,23 @@ more than its bytes**, so put things into the packets that already flow.
   `Combat.fire` hands its shots to `Combat.flame`: a lag-compensated cone test with a wall check per target
   instead of a ray. Clients draw every `EVT.SHOT` of it as one puff of the stream (`Game.flamePuff` ->
   `Effects.flameJet`) and keep one roar loop per shooter alive while the puffs keep coming.
+- **Legs.** `ZOMBIE_DEFS[t].legs` marks what walks on two; the numbers are `LEG_*`, `STUMBLE_*`, `HOBBLE_SPEED`
+  and `CRAWL_*` in constants.js. `Combat.fire` calls a hit on the body cylinder below `LEG_ZONE` of the zombie's
+  height a leg hit (`legZone`; the left or right leg by which side of the body it struck) and hands it to
+  `Combat.hitLeg`: the leg's own health (`z.legHp`, `LEG_HP` of the zombie's) takes all of it, the body
+  `LEG_BODY_DAMAGE` of it, and the zombie trips (`z.stumbleT`, `ZANIM.STUMBLE`: slowed, its swing cancelled). A
+  leg worn through sets its bit in `z.legs`, replicated as the `ZF.LEGS` field, and sends `EVT.ZOMBIE_LEG` once for
+  the piece that flies off. `Zombies.updateOne` hobbles on one leg (`HOBBLE_SPEED`) and crawls on none
+  (`crawlSpeed`): a crawler starts no special, turns slowly, reaches and sees from `CRAWL_HEIGHT`, and
+  `Combat.hitbox` gives it a low cylinder with the head `CRAWL_HEAD_FWD` ahead, as for a quadruped. Only bullets do
+  this: blades, fire and blasts hurt the body as before. On the client the field drives the model
+  (`ZombieInstance.setLegs`: the shin bone is scaled away and the stump bone under the thigh shown, the way a shot-off
+  head is) and the pose: `poseStumble`, `poseHobble` (one hop per cycle of the phase, the ankle placed and the leg
+  fitted to it so the planted foot stays put), `poseCrawl` (prone, every animation state played from the ground; it
+  puts the head where the server's hitbox has it, and bends each elbow until the hand is on the ground). The event
+  only throws the gib (`Effects.gibLeg`, a piece from the limb pool the overkill gibs use), so a client that was
+  not there still sees the right model. `scripts/e2e-legs.js` runs it in the real client; the sandbox's
+  `?film=0&legs=3` prints where the head ends up, which is what `CRAWL_HEAD_Y` / `CRAWL_HEAD_FWD` are set from.
 - **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
   (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
   fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { ENT, PFLAG, ZSTATUS, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
-import { SERVER_TICK_RATE, PICK_RADIUS } from '../../shared/constants.js';
+import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD } from '../../shared/constants.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createPickup } from '../render/models/pickups.js';
@@ -368,6 +368,7 @@ export class Entities {
           e.view = v;
           setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
+          v.setLegs?.(e.q[7]); // legs it lost before it came into view
           e.growlT = e.ztype === ZTYPE.SHADE ? 0.5 + Math.random() * 2 : 2 + Math.random() * 8;
           e.voice = 0.92 + ((((e.id * 2654435761) >>> 0) % 997) / 997) * 0.2; // its own throat: everything it utters is pitched by this
           e.stepT = Math.random();
@@ -505,6 +506,7 @@ export class Entities {
           if (anim === ZANIM.DEAD && !e.dead) e.dead = true;
           if (anim === ZANIM.SPECIAL && !initial) this.zombieSpecialSound(e);
         }
+        if (mask & 0b100000 && !initial) e.view?.setLegs?.(e.q[7], true); // ZF.LEGS: a leg has just been shot off
         break;
       case ENT.PLAYER:
         if (!initial && mask & 0b11) this.pushSample(e, t);
@@ -651,7 +653,7 @@ export class Entities {
     }
     const g = this.g;
     const def = ZOMBIE_DEFS[e.ztype];
-    if (distC < 70 * 70 && Math.random() < dt * 16) g.effects.burnPuff(e.rx, e.ry, e.rz, def.height * 0.9, def.radius);
+    if (distC < 70 * 70 && Math.random() < dt * 16) g.effects.burnPuff(e.rx, e.ry, e.rz, (e.q[7] === 3 ? CRAWL_HEIGHT : def.height) * 0.9, def.radius);
     const f = e.burnLight || (e.burnLight = { x: 0, y: 0, z: 0, intensity: 0.4 });
     f.x = e.rx;
     f.y = e.ry + def.height - 0.6; // (the light pool lifts a fire's light 1.2 m: this one sits over its head)
@@ -673,10 +675,11 @@ export class Entities {
     const g = this.g;
     const def = ZOMBIE_DEFS[e.ztype];
     const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN;
+    const crawl = e.q[7] === 3; // both legs shot off: it was lying on the ground, its head ahead of it
     if (flags & 8) {
       // overkill: the body is blown apart along the blow (yaw), nothing is left to fall over
       const biped = !def.flying && !def.headFwd;
-      g.effects.gibBody(e.rx, e.ry, e.rz, def.height, def.radius, -Math.sin(yaw), -Math.cos(yaw), { green, head: biped && !(flags & 1), limbs: !def.flying, fur: !biped });
+      g.effects.gibBody(e.rx, e.ry, e.rz, crawl ? CRAWL_HEIGHT : def.height, def.radius, -Math.sin(yaw), -Math.cos(yaw), { green, head: biped && !(flags & 1), limbs: !def.flying, fur: !biped });
       g.audio.play(SOUND.HEADSHOT, { x: e.rx, y: e.ry + def.height * 0.5, z: e.rz, volume: 1.3, rate: 0.8 });
       g.audio.play(SOUND.MELEE_HIT, { x: e.rx, y: e.ry + def.height * 0.5, z: e.rz, rate: 0.7 });
       this.disposeZombieView(e.view);
@@ -685,15 +688,36 @@ export class Entities {
     }
     if (flags & 1) {
       e.view?.setHeadless(true);
-      const f = def.headFwd || 0; // quadrupeds carry the head ahead of the body
-      g.effects.gib(e.rx - Math.sin(e.ryaw) * f, e.ry + def.headY, e.rz - Math.cos(e.ryaw) * f, green);
+      const f = crawl ? CRAWL_HEAD_FWD : def.headFwd || 0; // quadrupeds carry the head ahead of the body
+      g.effects.gib(e.rx - Math.sin(e.ryaw) * f, e.ry + (crawl ? CRAWL_HEAD_Y : def.headY), e.rz - Math.cos(e.ryaw) * f, green);
     }
     if (flags & 2) e.burning = 3;
     // the body hits the ground a moment after the kill: a thud, heavier for the big ones, a light flop for a dog
-    if (!def.flying) {
+    if (!def.flying && !crawl) {
       const big = def.height > 2.5;
       g.audio.play(SOUND.BODY_FALL, { x: e.rx, y: e.ry + 0.2, z: e.rz, delay: big ? 0.8 : 0.5, volume: big ? 1.5 : def.headFwd ? 0.55 : 1, rate: big ? 0.72 : def.headFwd ? 1.25 : 1 });
     }
+  }
+
+  // A leg shot off (EVT.ZOMBIE_LEG; bits: 1 the left, 2 the right): the shin and foot fly off along the shot (yaw),
+  // blood bursts from the knee. The model itself changes with the replicated ZF.LEGS field (onUpdate), which is
+  // also what a client that was not there to see it gets.
+  zombieLeg(id, bits, yaw) {
+    const e = this.ents.get(id);
+    const v = e?.view;
+    if (!v?.shin) return;
+    const g = this.g;
+    const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN;
+    const c = v.shin.color;
+    for (let side = 0; side < 2; side++) {
+      if (!(bits & (1 << side))) continue;
+      v.kneeWorld(side, _v);
+      g.effects.gibLeg(_v.x, _v.y, _v.z, -Math.sin(yaw), -Math.cos(yaw), v.shin.len, v.shin.thick, ((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255, green);
+      g.audio.play(SOUND.HEADSHOT, { x: _v.x, y: _v.y, z: _v.z, volume: 1.1, rate: 0.85 });
+    }
+    v.hurt();
+    // with neither leg left it goes down on its front
+    if ((e.q[7] | bits) === 3 && !e.dead) g.audio.play(SOUND.BODY_FALL, { x: e.rx, y: e.ry + 0.2, z: e.rz, delay: 0.3, volume: 0.9 });
   }
 
   // ---------------------------------------------------------------- per frame
@@ -796,7 +820,7 @@ export class Entities {
             }
             // a tank's (or a boss's) footfalls thump: they carry as far as its voice, and close by they shake the ground
             const heavy = e.ztype === ZTYPE.TANK || !!ZOMBIE_DEFS[e.ztype].boss;
-            if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && (heavy || distC < 22 * 22)) {
+            if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && e.q[7] !== 3 && (heavy || distC < 22 * 22)) {
               // a visible planted-foot gait sounds its steps as the feet land; otherwise keep a cadence timer
               const dog = e.ztype === ZTYPE.DOG;
               const stepVol = heavy ? 1 : dog ? 0.25 : shade ? 0.2 : 0.45;

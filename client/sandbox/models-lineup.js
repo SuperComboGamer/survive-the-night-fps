@@ -85,6 +85,7 @@ function addZombie(type, seed, x, z, y = 0) {
   });
   scene.add(zb.object);
   if (q.get('headless') === '1') zb.setHeadless(true);
+  if (q.has('legs')) zb.setLegs?.(+q.get('legs')); // &legs=1|2|3: legs shot off (types that have them to lose)
   if (showHit) hitbox(type, x, z).position.y = y ? y - ZOMBIE_DEFS[type].headY : 0;
   actors.push({ kind: 'z', type, obj: zb, x, z });
   return zb;

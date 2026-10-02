@@ -2615,6 +2615,187 @@ check('ping broadcast', B.pings > 0);
   check('small arms, blades, fire and a distant blast leave a corpse', Object.values(corpse).every((f) => f >= 0 && !(f & 8)), JSON.stringify(corpse));
 }
 
+// legs: a bullet below the hip of what walks on two goes into a leg. It trips the zombie and wears the leg down, the
+// body taking only a share of it; a leg worn through is shot off. On one leg it hobbles, on none it crawls: slower,
+// lying low with its head ahead of it, and with no spit or rope left in it. Every client is told, there or not.
+// (a game of its own, emptied of the dead: the run around this block is left as it was)
+{
+  const { LEG_HP, LEG_BODY_DAMAGE, STUMBLE_TIME, HOBBLE_SPEED, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, SERVER_TICK_RATE } = await import('../shared/constants.js');
+  const { crawlSpeed } = await import('../server/zombies.js');
+  const g = new Game({ seed, godMode: true, dayLength: 3600, log: () => {} });
+  const join = (name) => {
+    const c = { id: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, legs: [] };
+    c.handler = { sound() {}, shot() {}, impact() {}, hitmark() {}, damage() {}, killfeed() {}, notify() {}, explosion() {}, pickup() {}, zombieDie() {}, structBreak() {}, ping() {}, summary() {}, flyover() {}, zombieLeg: (id, bits) => c.legs.push(`${id}:${bits}`) };
+    c.session = g.onOpen({
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) c.id = r.u16();
+        else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
+      },
+    });
+    const jw = new Writer(64);
+    jw.u8(C2S.JOIN);
+    jw.u8(PROTOCOL_VERSION);
+    jw.str(name);
+    g.onMessage(c.session, jw.bytes().slice());
+    return c;
+  };
+  const tick = (n, fn) => {
+    for (let i = 0; i < n; i++) {
+      g.update();
+      fn?.();
+    }
+  };
+  const A1 = join('L');
+  tick(3);
+  for (const z of g.zombies) {
+    z.dead = true;
+    z.deadT = 2;
+  }
+  tick(2);
+  g.zm.maintainT = g.zm.herds.spawnT = 1e9;
+  const p = g.players.get(A1.id);
+  const s = p.state;
+  const pistol = WEAPONS[ITEM.PISTOL];
+  // a stretch of open, level ground for her to stand at the end of: the dead are put down at the far end of it and
+  // come up it. By the car if there is one, or else the first one on a sweep of the valley
+  const gy = (x, z) => groundAt(g.world, x, z, 200, 0.2, false);
+  const laneAt = (ox, oz) => {
+    if (g.world.isDeepWater(ox, oz) || g.nav.isBlocked(ox, oz)) return null;
+    const oy = gy(ox, oz);
+    for (let k = 0; k < 16; k++) {
+      const a = (k * Math.PI) / 8;
+      const [ux, uz] = [Math.sin(a), Math.cos(a)];
+      const [fx, fz] = [ox + ux * 15, oz + uz * 15];
+      let ok = g.nav.segClear(ox, oz, fx, fz) && !treeBy(ox, oz, fx, fz, 1.6);
+      for (let d = 1; d <= 15 && ok; d++) ok = !g.world.isDeepWater(ox + ux * d, oz + uz * d) && !g.nav.isBlocked(ox + ux * d, oz + uz * d) && Math.abs(gy(ox + ux * d, oz + uz * d) - oy) < 1.2;
+      if (ok && g.zm.clearLine(ox, oy + 0.4, oz, fx, gy(fx, fz) + 0.4, fz)) return { ox, oz, ux, uz };
+    }
+    return null;
+  };
+  let lane = laneAt(s.x, s.z);
+  for (let x = -200; x <= 200 && !lane; x += 25) for (let z = -200; z <= 200 && !lane; z += 25) lane = laneAt(x, z);
+  check('there is open ground to test legs on', !!lane);
+  if (lane) {
+    s.x = lane.ox;
+    s.z = lane.oz;
+    s.y = groundAt(g.world, s.x, s.z, 200, 0.3);
+    s.vx = s.vy = s.vz = 0;
+    g.fillHistory(p);
+    tick(2);
+    const put = (type, d) => {
+      const z = g.zm.spawn(type, s.x + lane.ux * d, s.z + lane.uz * d);
+      z.yaw = Math.atan2(lane.ux, lane.uz); // facing her: forward is (-sin yaw, -cos yaw)
+      return z;
+    };
+    // a pistol round from 3 m in front of it (flank: from 3 m to its right) at the point `h` above its feet, `side`
+    // m to its right and `fwd` ahead
+    const shoot = (z, h, side = 0, fwd = 0, flank = false) => {
+      const [fx, fz] = [-Math.sin(z.yaw), -Math.cos(z.yaw)];
+      const [rx, rz] = [Math.cos(z.yaw), -Math.sin(z.yaw)];
+      const [tx, ty, tz] = [z.x + rx * side + fx * fwd, z.y + h, z.z + rz * side + fz * fwd];
+      // (from the side: whichever one the lie of the ground leaves a clear line from)
+      const from = (k) => [z.x + rx * 2 * k, gy(z.x + rx * 2 * k, z.z + rz * 2 * k) + 1, z.z + rz * 2 * k];
+      const [ox, oy, oz] = !flank ? [z.x + fx * 3, z.y + 1, z.z + fz * 3] : g.zm.clearLine(...from(1), tx, ty, tz) ? from(1) : from(-1);
+      p.renderTick = g.tick & 0xffff;
+      p.renderFrac = 0;
+      const hp = z.hp;
+      g.combat.fire(p, { weapon: ITEM.PISTOL, x: ox, y: oy, z: oz, yaw: Math.atan2(-(tx - ox), -(tz - oz)), pitch: Math.atan2(ty - oy, Math.hypot(tx - ox, tz - oz)), recoilPitch: 0, spread: 0, seed: 1 });
+      return hp - z.hp;
+    };
+    const near = (a, b) => Math.abs(a - b) < 0.01;
+    // how fast it comes at her (m/s), once it has caught itself
+    const pace = (z) => {
+      z.aggroId = p.id;
+      z.aggroT = 60;
+      tick(Math.ceil((STUMBLE_TIME + 0.6) * SERVER_TICK_RATE));
+      const [x0, z0] = [z.x, z.z];
+      tick(2 * SERVER_TICK_RATE);
+      return Math.hypot(z.x - x0, z.z - z0) / 2;
+    };
+
+    const w = put(ZTYPE.WALKER, 14);
+    const def = w.def;
+    const leg0 = w.maxHp * LEG_HP;
+    const body = shoot(w, 1.15);
+    check('a shot in the chest is the body\'s, and no leg\'s', near(body, pistol.damage) && w.legs === 0 && w.anim !== ZANIM.STUMBLE && near(w.legHp[0], leg0) && near(w.legHp[1], leg0), `-${body.toFixed(1)} hp, anim ${w.anim}`);
+    const full = pace(w);
+    const first = shoot(w, 0.4, 0.1);
+    check('a shot below the hip is in the leg on that side: the leg takes it, the body a share, and it trips', near(first, pistol.damage * LEG_BODY_DAMAGE) && near(w.legHp[1], leg0 - pistol.damage) && near(w.legHp[0], leg0) && w.legs === 0 && w.anim === ZANIM.STUMBLE && w.stumbleT > 0, `-${first.toFixed(1)} hp, legs ${w.legHp.map((v) => v.toFixed(0))}, anim ${w.anim}`);
+    shoot(w, 0.4, 0.1);
+    tick(1);
+    const e1 = A1.store.ents.get(w.id);
+    check('a leg worn through is shot off, and the clients are told', w.legs === 2 && A1.legs.join() === `${w.id}:2` && e1?.q[7] === 2, `legs ${w.legs}, events ${A1.legs.join() || 'none'}, replicated ${e1?.q[7]}`);
+    const hobble = pace(w);
+    check('on one leg it hobbles', hobble > full * HOBBLE_SPEED * 0.6 && hobble < full * HOBBLE_SPEED * 1.25 && full > def.speed * 0.8, `${hobble.toFixed(2)} m/s on one leg, ${full.toFixed(2)} on two (a walker's is ${def.speed})`);
+    // the right one is gone: a shot on that side finds the left
+    shoot(w, 0.4, 0.1);
+    shoot(w, 0.4, 0.1);
+    tick(1);
+    check('...and with the other gone too it is down for good', w.legs === 3 && !w.dead && A1.legs.join() === `${w.id}:2,${w.id}:1` && A1.store.ents.get(w.id)?.q[7] === 3, `legs ${w.legs}, events ${A1.legs.join()}`);
+    const crawl = pace(w);
+    const want = crawlSpeed(def);
+    check('with none it crawls', crawl > want * 0.6 && crawl < want * 1.25 && crawl < hobble, `${crawl.toFixed(2)} m/s (${want.toFixed(2)} for a walker), anim ${w.anim}`);
+    // it lies on the ground now: a shot at where its chest was passes over it, its head is ahead of it, and there
+    // is no leg left to hit
+    const hb = g.combat.hitbox(w, false);
+    w.hp = w.maxHp = 1000;
+    w.yaw = Math.atan2(lane.ux, lane.uz);
+    const over = shoot(w, 1.15);
+    const low = shoot(w, 0.3, 0, 0, true);
+    const head = shoot(w, CRAWL_HEAD_Y, 0, CRAWL_HEAD_FWD);
+    check('a crawler is hit where it lies', hb.top === CRAWL_HEIGHT && near(over, 0) && near(low, pistol.damage) && near(head, pistol.damage * pistol.headMul) && w.legs === 3, `over it -${over.toFixed(0)}, body -${low.toFixed(0)}, head -${head.toFixed(0)}`);
+    // it still bites at whoever it gets to
+    w.x = s.x + lane.ux * 1.2;
+    w.z = s.z + lane.uz * 1.2;
+    g.fillHistory(w);
+    let bit = false;
+    tick(4 * SERVER_TICK_RATE, () => (bit = bit || w.anim === ZANIM.ATTACK));
+    check('a crawler still attacks what it reaches', bit && w.legs === 3);
+    // somebody who joins now sees it as it is
+    const B1 = join('M');
+    tick(3);
+    check('a late joiner sees the legs it has lost', B1.store.ents.get(w.id)?.q[7] === 3 && B1.legs.length === 0, `replicated ${B1.store.ents.get(w.id)?.q[7]}`);
+    g.onClose(B1.session); // (the rest is between the dead and the one survivor at the end of the lane)
+    g.combat.killZombie(w, null, {});
+    tick(2);
+
+    // only what walks on two has legs to lose
+    const legged = Object.values(ZTYPE).filter((t) => ZOMBIE_DEFS[t].legs);
+    const dog = put(ZTYPE.DOG, 14);
+    const dogHit = shoot(dog, 0.25);
+    check('a dog, a tank or a boss has no leg to shoot off', near(dogHit, pistol.damage) && dog.legHp === null && dog.legs === 0 && dog.anim !== ZANIM.STUMBLE && legged.length === 6 && [ZTYPE.DOG, ZTYPE.TANK, ZTYPE.LEAPER, ZTYPE.BAT, ZTYPE.BOSS_ABOMINATION, ZTYPE.BOSS_HIVEQUEEN].every((t) => !ZOMBIE_DEFS[t].legs), `dog -${dogHit.toFixed(0)}, legged: ${legged.map((t) => ZOMBIE_DEFS[t].name).join(' ')}`);
+    g.combat.killZombie(dog, null, {});
+
+    // a shade pinned by light is stone in the leg too: it takes litResist of the hit there, and does not trip
+    const shade = put(ZTYPE.SHADE, 14);
+    shade.lit = true;
+    const sLeg = shade.maxHp * LEG_HP;
+    const chip = shoot(shade, 0.4, 0.1);
+    const lr = shade.def.litResist;
+    check('a shade held by light is as hard in the leg', near(chip, pistol.damage * LEG_BODY_DAMAGE * lr) && near(shade.legHp[1], sLeg - pistol.damage * lr) && shade.anim !== ZANIM.STUMBLE && shade.stumbleT <= 0, `-${chip.toFixed(2)} hp, leg ${shade.legHp[1].toFixed(1)} of ${sLeg.toFixed(0)}`);
+    g.combat.killZombie(shade, null, {});
+
+    // a spitter on its feet spits; one on the ground has no way to rear up for it
+    const spits = (cripple) => {
+      const z = put(ZTYPE.SPITTER, 10);
+      z.aggroId = p.id;
+      z.aggroT = 60;
+      if (cripple) for (let i = 0; i < 2; i++) g.combat.hitLeg(z, z.maxHp, 1);
+      const spat = new Set();
+      tick(9 * SERVER_TICK_RATE, () => g.projectiles.forEach((e) => e.ownerRef === z && spat.add(e)));
+      const legs = z.legs;
+      g.combat.killZombie(z, null, {});
+      tick(2);
+      return [spat.size, legs];
+    };
+    const [up, upLegs] = spits(false);
+    const [down, downLegs] = spits(true);
+    check('a crawler has no spit left in it', up > 0 && upLegs === 0 && down === 0 && downLegs === 3, `on its feet ${up}, crawling ${down}`);
+  }
+}
+
 // the pier, and where dropped things come to rest. The deck runs unbroken to the T end, so the crate and the loot spot
 // out there can be walked to. And nothing dropped ends up where nobody can pick it up again - on the lake bed off the
 // pier, inside something solid, beyond the edge of the map - least of all a car supply: a game has just the seven.

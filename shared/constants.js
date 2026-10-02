@@ -77,10 +77,12 @@ export const HOBBLE_SPEED = 0.5; // speed multiplier on one leg
 export const CRAWL_SPEED = 0.3; // speed multiplier with no legs...
 export const CRAWL_SPEED_MIN = 0.8; // ...but never slower / faster than this (m/s)
 export const CRAWL_SPEED_MAX = 1.5;
-export const CRAWL_HEIGHT = 0.45; // a crawler's body is this tall (m); its head leads the body by CRAWL_HEAD_FWD
-export const CRAWL_HEAD_Y = 0.3;
-export const CRAWL_HEAD_FWD = 0.5;
-export const CRAWL_RADIUS = 0.5;
+export const CRAWL_SLOW = 0.6; // ...and this much of it with nobody to chase
+// (the crawl pose is drawn to these: the model sandbox prints where the head is, /sandbox/models-test.html?film=0&legs=3)
+export const CRAWL_HEIGHT = 0.45; // a crawler's body is this tall (m)...
+export const CRAWL_RADIUS = 0.5; // ...and this far across, lying down
+export const CRAWL_HEAD_Y = 0.38; // its head is this high off the ground...
+export const CRAWL_HEAD_FWD = 0.5; // ...and this far ahead of the middle of its body
 
 // Hold-to-interact durations
 export const SEARCH_TIME = 1.0; // search a container

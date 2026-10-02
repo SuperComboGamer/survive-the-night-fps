@@ -882,6 +882,9 @@ export class Game {
       zombieDie(id, yaw, flags) {
         g.entities.zombieDie(id, yaw, flags);
       },
+      zombieLeg(id, legs, yaw) {
+        g.entities.zombieLeg(id, legs, yaw);
+      },
       structBreak(x, y, z) {
         g.effects.structBreak(x, y, z);
       },
