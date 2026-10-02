@@ -3679,6 +3679,27 @@ body {
   margin-top: calc(5 * var(--u));
 }
 
+/* bulk crafting: what a click would add, on every recipe that can be made while Shift / Ctrl is held */
+.stn-ui .rc-bulk {
+  position: absolute;
+  right: calc(5 * var(--u));
+  bottom: calc(5 * var(--u));
+  padding: calc(3 * var(--u)) calc(5 * var(--u)) calc(2 * var(--u));
+  font: 700 max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  color: #14110e;
+  background: var(--amber);
+  pointer-events: none;
+}
+
+.stn-ui .rc-bulk.none {
+  color: var(--blood-lite);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.stn-ui .craft-hints {
+  flex: none;
+}
+
 .stn-ui .rc-station {
   position: absolute;
   top: calc(5 * var(--u));

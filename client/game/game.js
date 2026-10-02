@@ -102,6 +102,11 @@ const SHOT_KICK = {
   [ITEM.CROSSBOW]: [0, 0.1],
 };
 const PING_LIFE = 12;
+// A bulk craft is one ACT.CRAFT per craft. The server drops whatever a client sends past 200 messages in a second,
+// commands included (Game.onMessage), so the repeats leave through a bucket: a whole Ctrl+click at once, and when
+// clicks pile up on top of that, the rest over the next ticks.
+const CRAFT_BURST = 20;
+const CRAFT_RATE = 40; // per second
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
 const _v = new THREE.Vector3();
@@ -128,6 +133,9 @@ export class Game {
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
+    this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
+    this.craftBudget = CRAFT_BURST;
+    this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
     this.players = new Map(); // id -> {name, status, kills, ping}
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
@@ -710,6 +718,11 @@ export class Game {
     const g = this;
     this._eh = {
       sound(snd, x, y, z) {
+        // a bulk craft is a tick's worth of craft events at one bench: one rummage, not twenty on top of each other
+        if (snd === SOUND.CRAFT) {
+          if (g.time - g.craftSoundT < 0.1) return;
+          g.craftSoundT = g.time;
+        }
         // (HORDE_HORN / DAWN / PLANE are always played 2D by the audio engine)
         g.audio.play(snd, { x, y, z });
       },
@@ -1292,6 +1305,23 @@ export class Game {
     return { fire: st.fire, bench: st.bench, unlocked: this.global.unlocked | 0 };
   }
 
+  // n more of a craft just asked for (a bulk click in the crafting panel, which has counted what the server will take)
+  craftRepeat(id, n) {
+    const q = this.craftQueue;
+    while (n-- > 0 && q.length < 4 * CRAFT_BURST) q.push(id);
+    this.sendCrafts(0);
+  }
+
+  // sends the waiting crafts the bucket has room for; called every frame to refill it
+  sendCrafts(dt) {
+    this.craftBudget = Math.min(CRAFT_BURST, this.craftBudget + dt * CRAFT_RATE);
+    const q = this.craftQueue;
+    while (q.length && this.craftBudget >= 1) {
+      this.conn.action(ACT.CRAFT, q.shift());
+      this.craftBudget--;
+    }
+  }
+
   interact() {
     const t = this.lookTarget;
     const g = this.global;
@@ -1369,6 +1399,7 @@ export class Game {
         this.conn.action(ACT.CRAFT, id);
         this.audio.playLocal('craft', { volume: 0.6 });
       },
+      onCraftRepeat: (id, n) => this.craftRepeat(id, n),
       onUseItem: (i) => {
         const it = this.inventory.slots[i];
         this.conn.action(ACT.USE_ITEM, i);
@@ -1451,6 +1482,7 @@ export class Game {
       const rti = Math.floor(rt);
       this.conn.sendInput(rti, rt - rti, out, this.prediction.hash(out));
     }
+    this.sendCrafts(dt);
     // interpolation clock: corrections are eased in (a step in the clock is a step in every remote entity),
     // and the render delay widens a little when snapshots arrive unevenly so entities don't stall and lurch
     const adj = this.clockAdj * Math.min(1, dt * 6);

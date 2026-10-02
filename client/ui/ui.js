@@ -17,6 +17,7 @@ const NOOP = () => {};
 const CALLBACKS = [
   'onJoin',
   'onCraft',
+  'onCraftRepeat',
   'onUseItem',
   'onDropItem',
   'onSwapItems',

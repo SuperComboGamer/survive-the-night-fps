@@ -3,6 +3,8 @@
 // get revived, pin a shade
 // with light, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
+import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
+import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
 import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
@@ -800,6 +802,58 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   A.act(ACT.CRAFT, 21); // nails at the bench
   run(3);
   check('crafted at workbench', p.inv.reduce((n, x) => n + (x && x.item === ITEM.NAILS ? x.count : 0), 0) === nails0 + 10);
+  // Crafting in bulk (Shift / Ctrl+click): the client works out how many crafts the server will take (craftRun,
+  // client/game/bulkcraft.js) and sends that many ACT.CRAFT in one go. Whatever it says has to be what happens:
+  // every craft goes through, none is refused, the inventory ends up as the client expected - and where it stopped
+  // short of what was asked for, one more would have been refused.
+  {
+    const keep = [p.inv.map((x) => x && { ...x }), [...s.ammo], [...s.weapons]];
+    const full = (n) => Array.from({ length: n }, () => [ITEM.LEATHER, 10]); // slots no recipe below can use
+    const refusals = () => A.notes.filter(([m]) => [NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.NEED_BENCH, NOTIFY.NEED_FIRE, NOTIFY.LOCKED].includes(m)).map(([m]) => m);
+    const bulk = (id, stacks, set = () => {}, more = true) => {
+      p.inv.fill(null);
+      stacks.forEach(([item, count], i) => (p.inv[i] = { item, count }));
+      set();
+      game.syncThrow(p);
+      const model = copyInv({ slots: p.inv, ammo: s.ammo, weapons: s.weapons });
+      const n = craftRun(RECIPES[id], model, CRAFT_MAX);
+      A.notes.length = 0;
+      for (let i = 0; i < n; i++) A.act(ACT.CRAFT, id);
+      run(1);
+      const at = (x) => (x ? x.item * 256 + x.count : 0);
+      const same = p.inv.every((x, i) => at(x) === at(model.slots[i])) && s.ammo.join() === model.ammo.join() && s.weapons.join() === model.weapons.join();
+      const quiet = refusals().length === 0;
+      if (more) A.act(ACT.CRAFT, id); // one more than the client would have sent
+      run(1);
+      return { n, ok: same && quiet, next: refusals()[0] };
+    };
+    const count = (item) => p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0);
+    // 60 sticks: twenty planks from twenty actions in one tick
+    const planks = bulk(18, [[ITEM.STICK, 20], [ITEM.STICK, 20], [ITEM.STICK, 20]]);
+    check('a bulk craft of 20 is 20 crafts in one tick', planks.n === CRAFT_MAX && planks.ok && count(ITEM.WOOD) === 20 && count(ITEM.STICK) === 0, `${planks.n} sent, ${count(ITEM.WOOD)} planks, ${count(ITEM.STICK)} sticks left`);
+    // the materials run out (3 scrap); a full nail stack with nowhere else to go; the last scrap paid frees the slot
+    // the nails need; bats with the melee slot taken and two free slots; a bat into the empty melee slot, then no room
+    const mats = bulk(9, [[ITEM.SCRAP, 3], [ITEM.POWDER, 20]], () => (s.ammo[AMMO.P9] = 0));
+    const stack = bulk(21, [[ITEM.SCRAP, 5], [ITEM.NAILS, 45], ...full(22)]);
+    const freed = bulk(21, [[ITEM.SCRAP, 1], [ITEM.NAILS, 55], ...full(22)]);
+    const bats = bulk(3, [[ITEM.WOOD, 9], ...full(21)]);
+    const bat = bulk(3, [[ITEM.WOOD, 6], ...full(23)], () => (s.weapons[2] = 0));
+    check(
+      'a bulk craft stops where the server would refuse the next one',
+      [mats, stack, freed, bats, bat].every((c) => c.ok) && [mats.n, stack.n, freed.n, bats.n, bat.n].join() === '3,1,1,2,1' && [mats.next, stack.next, freed.next, bats.next, bat.next].join() === [NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.INVENTORY_FULL].join(),
+      JSON.stringify({ mats, stack, freed, bats, bat }),
+    );
+    // ammunition: the server takes a craft while the reserve has room for a single round, and the rest of that
+    // batch is gone. A bulk craft stops at the last whole batch that fits (120 + 2 x 12 of 150), so nothing is lost
+    const cap = AMMO_MAX[AMMO.P9];
+    const ammo = bulk(9, [[ITEM.SCRAP, 10], [ITEM.POWDER, 30]], () => (s.ammo[AMMO.P9] = cap - 30), false);
+    check('bulk ammunition stops at the last whole batch the reserve takes', ammo.n === 2 && ammo.ok && s.ammo[AMMO.P9] === cap - 30 + 2 * RECIPES[9].n && count(ITEM.SCRAP) === 8 && count(ITEM.POWDER) === 26, `${ammo.n} batches sent at ${cap - 30} of ${cap}: reserve ${s.ammo[AMMO.P9]}, ${count(ITEM.SCRAP)} scrap and ${count(ITEM.POWDER)} powder left`);
+    p.inv.splice(0, p.inv.length, ...keep[0]);
+    keep[1].forEach((v, i) => (s.ammo[i] = v));
+    keep[2].forEach((v, i) => (s.weapons[i] = v));
+    game.syncThrow(p);
+    p.invDirty = true;
+  }
   // locked recipe
   A.notes.length = 0;
   A.act(ACT.CRAFT, 15);
