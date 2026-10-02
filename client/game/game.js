@@ -106,6 +106,7 @@ const SHOT_KICK = {
   [ITEM.CROSSBOW]: [0, 0.1],
 };
 const PING_LIFE = 12;
+const WAYPOINT_REACH = 10; // metres: this close to a waypoint that is not on a named place and it is reached
 // A bulk craft is one ACT.CRAFT per craft. The server drops whatever a client sends past 200 messages in a second,
 // commands included (Game.onMessage), so the repeats leave through a bucket: a whole Ctrl+click at once, and when
 // clicks pile up on top of that, the rest over the next ticks.
@@ -127,6 +128,7 @@ const _p = new THREE.Vector3();
 const _qv = new THREE.Quaternion();
 const _sunRay = { t: -1, col: null, terrain: false };
 const _near = [];
+const _sc = { x: 0, y: 0 };
 
 export class Game {
   constructor({ renderer, ui, audio, settings }) {
@@ -194,6 +196,10 @@ export class Game {
     this.holding = 0; // hold-to-interact target we told the server about
     this.flames = new Map(); // flamethrowers spraying right now: shooter id (-1 = ours) -> { loop, t }
     this.pings = [];
+    // your own waypoint, set on the field map and never sent anywhere:
+    // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
+    this.waypoint = null;
+    ui.map.onWaypoint = (at) => this.setWaypoint(at);
     this.discovered = new Set([ZONE.CAMP]);
     this.discoverT = 0;
     this.debugCam = null;
@@ -316,6 +322,7 @@ export class Game {
     const t0 = performance.now();
     if (this.world) this.unloadWorld();
     this.seed = seed;
+    this.waypoint = null; // it pointed into the old valley
     this.world = createWorld(seed);
     this.prediction.setWorld(this.world);
     const t1 = performance.now();
@@ -599,6 +606,7 @@ export class Game {
     this.inputBuffer.clear();
     this.input.requestLock();
     this.discovered = new Set([ZONE.CAMP]);
+    this.waypoint = null;
     return info;
   }
 
@@ -1037,6 +1045,7 @@ export class Game {
         this.deathShown = false;
         this.discovered = new Set([ZONE.CAMP]);
         this.pings = [];
+        this.waypoint = null;
         this.flyover?.clear();
         this.introPending = false;
         ui.notify(`DAY ${arg}`, 'big', 5);
@@ -1273,7 +1282,9 @@ export class Game {
       return;
     }
     if (code === 'Enter') {
-      if (!ui.isTyping()) {
+      // (not from the map: the chat box is hidden under it and could never take the focus, which left
+      // every key dead until a reload)
+      if (!ui.isTyping() && !ui.mapOpen) {
         ui.openChat();
         this.input.buttons = 0;
         this.inputBuffer.clear();
@@ -1351,7 +1362,7 @@ export class Game {
   toggleInventory(open) {
     const ui = this.ui;
     if (open === ui.inventoryOpen) return;
-    if (ui.mapOpen) this.toggleMap(false);
+    if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
     ui.setCraftContext(this.craftContext());
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
@@ -1360,14 +1371,41 @@ export class Game {
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
-  toggleMap(open) {
+  // relock: false when something else that needs the cursor is taking over
+  toggleMap(open, relock = true) {
     const ui = this.ui;
     if (open === ui.mapOpen) return;
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.buttons = 0;
     this.endHold();
+    // the map takes clicks (your waypoint), so it frees the pointer the way the inventory does. Clicks made
+    // while it is free never reach the weapon: Input only counts a mouse button pressed under the lock.
+    if (open) this.input.exitLock();
+    else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // at: { x, z, zone } from a click on the field map (zone: the place it snapped to, or -1), null to clear
+  setWaypoint(at) {
+    const cur = this.waypoint;
+    // a second click on the place that holds it takes it back
+    if (!at || (cur && at.zone >= 0 && at.zone === cur.zone)) {
+      if (!cur) return;
+      this.waypoint = null;
+      this.audio.playLocal('ui_click', { volume: 0.35 });
+      return;
+    }
+    const zone = at.zone >= 0 ? this.world.zoneById[at.zone] : null;
+    // you have arrived inside a place's yard, or a few steps from a bare spot
+    this.waypoint = { x: at.x, y: this.world.heightAt(at.x, at.z), z: at.z, zone: at.zone, r: zone ? zone.flat : WAYPOINT_REACH, visited: !zone || this.discovered.has(at.zone), away: false };
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // a place lends the waypoint its name once you know it: discovered, or rumoured to hold a supply
+  waypointName() {
+    const z = this.waypoint.zone;
+    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z)) ? ZONE_NAMES[z] : 'Waypoint';
   }
 
   cycleBuild(dir) {
@@ -1698,6 +1736,17 @@ export class Game {
           this.discovered.add(z.id);
           this.ui.notify(`Discovered · ${ZONE_NAMES[z.id]}`, 'toast', 3.5);
         }
+      }
+    }
+    // the waypoint has done its job once you are there
+    const wp = this.waypoint;
+    if (wp && self.alive && !s.zombie) {
+      const d = Math.hypot(rp.x - wp.x, rp.z - wp.z);
+      if (d > wp.r + 2) wp.away = true; // (set where you already stand, it waits until you have left and come back)
+      else if (wp.away && d < wp.r) {
+        this.waypoint = null;
+        // a place seen for the first time has just said so itself ("Discovered")
+        if (wp.visited) this.ui.notify(wp.zone >= 0 ? `Arrived · ${ZONE_NAMES[wp.zone]}` : 'Waypoint reached', 'toast', 2.5);
       }
     }
     this.pings = this.pings.filter((p) => time - p.t < PING_LIFE);
@@ -2175,14 +2224,26 @@ export class Game {
       hintSeen.add(zid + ':' + si);
       const d = dist(z.x, z.z);
       if (d < 25) return;
-      cm.push({ kind: 'hint', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: itemIcon(SUPPLIES[si]), label: `${Math.round(d)}m` });
+      hintSeen.add(zid);
+      // (the compass spells a marker's name out while you face it; a rumour keeps its question mark, as on the map)
+      cm.push({ kind: 'hint', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: itemIcon(SUPPLIES[si]), label: `${Math.round(d)}m`, name: ZONE_NAMES[zid] + '?', d });
     });
-    // discovered places nearby
+    // discovered places nearby (a place that already has a supply icon or the waypoint on it needs no flag too)
+    const wp = this.waypoint;
     for (const z of this.world.zones) {
-      if (!this.discovered.has(z.id) || z.id === ZONE.CAMP) continue;
+      if (!this.discovered.has(z.id) || z.id === ZONE.CAMP || hintSeen.has(z.id) || wp?.zone === z.id) continue;
       const d = dist(z.x, z.z);
       if (d < 30 || d > 260) continue;
-      cm.push({ kind: 'poi', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: glyph('flag'), label: '' });
+      cm.push({ kind: 'poi', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: glyph('flag'), label: '', name: `${ZONE_NAMES[z.id]} · ${Math.round(d)}m`, d });
+    }
+    // your waypoint: always on the tape (pinned to its end when behind you), and a marker standing on the spot
+    if (wp) {
+      const d = dist(wp.x, wp.z);
+      const name = this.waypointName();
+      const label = `${Math.round(d)}m`;
+      cm.push({ kind: 'way', bearing: bearing(wp.x - rp.x, wp.z - rp.z), icon: glyph('flag'), label, name, d, pinEdge: true });
+      // (raised with the distance, so that walking at it the marker floats over the crosshair and not on it)
+      if (d > 8 && this.project(wp.x, wp.y + 2.4 + d * 0.07, wp.z, _sc)) wm.push({ kind: 'way', x: _sc.x, y: _sc.y, icon: glyph('flag'), name, sub: label, scale: 0.95 });
     }
     // teammates
     const sc = { x: 0, y: 0 };
@@ -2250,6 +2311,7 @@ export class Game {
       hints: g.hints,
       supplies: g.supplies,
       carried,
+      waypoint: this.waypoint,
     });
     void s;
   }
