@@ -262,6 +262,11 @@ more than its bytes**, so put things into the packets that already flow.
   `Combat.fire` hands its shots to `Combat.flame`: a lag-compensated cone test with a wall check per target
   instead of a ray. Clients draw every `EVT.SHOT` of it as one puff of the stream (`Game.flamePuff` ->
   `Effects.flameJet`) and keep one roar loop per shooter alive while the puffs keep coming.
+- **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
+  (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
+  fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a
+  player-zombie's claws need a clear chest-to-chest line, so a barricade stops them too. Melee tests its
+  candidates nearest first and stops at the first it can hit: a ray or two per swing, not one per zombie in reach.
 - **Containers** are `ENT.CACHE` entities (position + searched state) created from `world.containers`;
   searching is a server-side hold interaction (`ACT.HOLD_BEGIN/END`, progress in the self state).
 - **Supply drops** (`spawnSupplyDrop`): the server picks a supply spot and a random heading, emits one
