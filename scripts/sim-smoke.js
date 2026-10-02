@@ -10,6 +10,9 @@ import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, PROTOCOL_VERSION, Writer, Read
 import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
+import { createPlayerState, simulatePlayer } from '../shared/playersim.js';
+import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
+import { COL, BOX, footprintContains } from '../shared/collision.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
 
 const seed = +(process.argv[2] || 4242);
@@ -1802,6 +1805,85 @@ check('ping broadcast', B.pings > 0);
   game.rng = rng;
   check('overkill blows a zombie apart', Object.values(gibbed).every((f) => f >= 0 && f & 8), JSON.stringify(gibbed));
   check('small arms, blades, fire and a distant blast leave a corpse', Object.values(corpse).every((f) => f >= 0 && !(f & 8)), JSON.stringify(corpse));
+}
+
+// the pier, and where dropped things come to rest. The deck runs unbroken to the T end, so the crate and the loot spot
+// out there can be walked to. And nothing dropped ends up where nobody can pick it up again - on the lake bed off the
+// pier, inside something solid, beyond the edge of the map - least of all a car supply: a game has just the seven.
+// (no ticks, and none of the game's rng: the rest of the run is left as it was)
+{
+  const w = game.world;
+  const dock = w.zoneById[ZONE.DOCK];
+  const [dc, ds] = [Math.cos(dock.ry), Math.sin(dock.ry)];
+  // the dock's own frame: the pier runs out over the lake along +z, 3 m wide, the T end 43-47 m out
+  const at = (lx, lz) => ({ x: dock.x + dc * lx + ds * lz, z: dock.z - ds * lx + dc * lz });
+  const out = (p) => ds * (p.x - dock.x) + dc * (p.z - dock.z);
+  const deckY = WATER_LEVEL + 1.1;
+  const outermost = (list) => list.filter((e) => e.zone === ZONE.DOCK).sort((a, b) => out(b) - out(a))[0];
+  const crate = outermost(game.caches);
+  const spot = outermost(game.lootPoints);
+  // a survivor walks out from the bank with the real movement code, then across the T to the loot spot
+  const s = createPlayerState();
+  Object.assign(s, at(0, 4));
+  s.y = groundAt(w, s.x, s.z, w.heightAt(s.x, s.z) + 0.5);
+  const walk = (to, there) => {
+    for (let i = 0; i < 60 * 15 && !there(); i++) simulatePlayer(s, { buttons: BTN.FWD, yaw: Math.atan2(s.x - to.x, s.z - to.z), pitch: 0, slot: 255 }, w, null);
+  };
+  const off = (e) => Math.hypot(e.x - s.x, e.z - s.z);
+  walk(at(0, 60), () => out(s) > 43.3);
+  check('the pier deck runs unbroken to its T end', out(s) > 43.3 && Math.abs(s.y - deckY) < 0.01 && w.isDeepWater(s.x, s.z), `walked ${out(s).toFixed(1)} m out`);
+  const search = off(crate) <= 2.8 && game.canReachEnt({ state: s }, crate); // holdBegin's rule
+  const crateOff = off(crate);
+  walk(spot, () => off(spot) < 1.2);
+  const pick = off(spot) < 1.2 && game.canReachEnt({ state: s }, { kind: ENT.ITEM, x: spot.x, y: spot.y, z: spot.z });
+  check('...where its crate can be searched and its loot spot walked to', search && pick && out(crate) > 43 && out(spot) > 43, `crate ${crateOff.toFixed(1)} m off, loot spot ${off(spot).toFixed(1)} m off`);
+
+  const rng = game.rng;
+  let n = 0;
+  game.rng = () => (n = (n + 0.618034) % 1);
+  const drops = [];
+  const drop = (...args) => drops[drops.push(game.dropItem(...args)) - 1];
+  const sunk = (e) => !e || (w.isDeepWater(e.x, e.z) && e.y < w.heightAt(e.x, e.z) + 1);
+  // inside a wall, a rock, a crate (on top of one is fine)
+  const buried = (e) => !e || w.colliderGrids.some((g) => g.query(e.x, e.z, 0.1, []).some((c) => !(c.flags & (COL.NOBLOCK | COL.HUMANPASS)) && c.y0 < e.y + 0.1 && c.y1 > e.y + 0.5 && footprintContains(c, e.x, e.z)));
+  // car supplies scattered from the deck's edges the way a death scatters them
+  let wet = 0;
+  for (let i = 0; i < 80; i++) {
+    const p = at(i % 2 ? 1.3 : -1.3, 41 + (i % 6));
+    if (w.isDeepWater(p.x, p.z)) wet++;
+    drop(SUPPLIES[i % SUPPLIES.length], 1, p.x, deckY, p.z, { spread: 1.5 + (i % 4) * 0.5 });
+  }
+  // ...and one out of the backpack of a survivor at the edge who faces the water
+  const a = A.p();
+  const sa = a.state;
+  const was = [sa.x, sa.y, sa.z, sa.yaw, a.inv[0]];
+  Object.assign(sa, at(1.3, 41), { y: deckY, yaw: Math.atan2(-dc, ds) });
+  a.inv[0] = { item: ITEM.CAR_BATTERY, count: 1 };
+  const m = new Writer(8);
+  m.u8(C2S.ACTION);
+  m.u8(ACT.DROP_SLOT);
+  m.u8(0);
+  m.u8(0);
+  const had = game.items.length;
+  game.onMessage(A.session, m.bytes().slice());
+  drops.push(game.items[had]);
+  [sa.x, sa.y, sa.z, sa.yaw, a.inv[0]] = was;
+  check('car supplies dropped on the pier stay out of the lake', wet === 80 && drops.length === 81 && !drops.some(sunk) && !drops.some(buried) && drops.every((e) => e.permanent), `${drops.filter(sunk).length} of ${drops.length} on the lake bed`);
+  // into the middle of a wall (the first upright slab of the map will do) by someone 1 m off its face, and from well
+  // beyond the edge of the map
+  let wall = null;
+  for (const cell of w.staticGrid.cells) wall ||= cell.find((c) => c.type === BOX && c.y1 - c.y0 > 2 && c.y0 < w.heightAt(c.x, c.z) + 0.3);
+  const [nx, nz, thick] = wall.hx < wall.hz ? [wall.c, -wall.s, wall.hx] : [wall.s, wall.c, wall.hz]; // across its thin side
+  const inside = drop(ITEM.CAR_BATTERY, 1, wall.x, w.heightAt(wall.x, wall.z), wall.z, { spread: 0, from: { x: wall.x + nx * (thick + 1), z: wall.z + nz * (thick + 1) } });
+  const beyond = drop(ITEM.FUEL_CAN, 1, MAP_HALF + 40, 0, MAP_HALF + 40, { spread: 3 });
+  check('...and out of the walls, and inside the map', !buried(inside) && !footprintContains(wall, inside.x, inside.z, 0.1) && !sunk(inside) && !buried(beyond) && !sunk(beyond) && Math.max(Math.abs(beyond.x), Math.abs(beyond.z)) <= MAP_HALF - 3);
+  // if no spot at all will do (no map has such a place), a supply goes back to the breakdown rather than vanish
+  game.dropRest = () => null;
+  const last = drop(ITEM.CAR_BATTERY, 1, sa.x, sa.y, sa.z);
+  delete game.dropRest;
+  check('a car supply with nowhere to land turns up at the breakdown', last && last.permanent && Math.hypot(last.x - w.spawnPoints[0].x, last.z - w.spawnPoints[0].z) < 0.01);
+  game.rng = rng;
+  for (const e of drops.reverse()) if (e) game.removeItemEnt(e);
 }
 
 // supplies + escape

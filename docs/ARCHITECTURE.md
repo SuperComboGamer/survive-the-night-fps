@@ -211,6 +211,9 @@ more than its bytes**, so put things into the packets that already flow.
   `ESCAPE_LINGER_PACE` of the stand's pace. Two bits of the global state's flags byte carry "stalled" and
   "somebody is getting in" to the HUD, and the client holds its own countdown on a stall. The end screen
   tells each player whether they were within `ESCAPE_RADIUS` when the car left (client side).
+  A supply cannot be lost on the way to the car: whatever drops an item (a death, [G], a full backpack, a
+  disconnect, loot) calls `Game.dropItem`, which only lets it come to rest where a survivor can pick it up
+  again - never on the lake bed off the pier, inside a wall or beyond the edge of the map.
 - **Night waves.** `startNight()` builds `NIGHT_WAVES` queues; groups spawn 58-84 m around a random
   survivor (`Zombies.pickSpawnAround`). The horde never targets structures or a fixed point - only people.
   The picker passes over a spot a survivor would watch them appear at (`spawnExposure`: a clear ray from a
