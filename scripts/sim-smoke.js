@@ -884,6 +884,25 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   const bench = game.structures.find((e) => e.stype === STRUCT.WORKBENCH);
   const bm = A.global.benches;
   check('workbench on the field map', bench && bm.length === 1 && Math.hypot(bm[0].x - bench.x, bm[0].z - bench.z) < 0.05, JSON.stringify(bm));
+  // demolishing refunds half the cost (a wall: 2 planks, 2 nails). With room for one plank in the backpack the
+  // other plank and the nails go on the ground - the part that did not fit, not the whole refund over again
+  {
+    const inv = p.inv.map((x) => x && { ...x });
+    tryBuild(STRUCT.WALL);
+    const wall = game.structures.find((e) => e.stype === STRUCT.WALL);
+    for (let i = 0; i < p.inv.length; i++) p.inv[i] = i ? { item: ITEM.CLOTH, count: 1 } : null;
+    game.giveItem(p, ITEM.WOOD, 999); // every slot taken, one of them a full stack of planks...
+    const planks = --p.inv[0].count; // ...less one
+    const before = new Set(game.items);
+    if (wall) A.act(ACT.DEMOLISH, wall.id);
+    run(2);
+    const drops = game.items.filter((e) => !before.has(e));
+    const dropped = (item) => drops.reduce((n, e) => n + (e.item === item ? e.count : 0), 0);
+    check('demolishing with a full backpack refunds each plank once', wall && !game.structures.includes(wall) && p.inv[0].count === planks + 1 && dropped(ITEM.WOOD) === 1 && dropped(ITEM.NAILS) === 2, `planks: ${p.inv[0].count - planks} kept, ${dropped(ITEM.WOOD)} dropped; nails: ${dropped(ITEM.NAILS)} dropped`);
+    for (const e of drops) game.removeItemEnt(e);
+    p.inv.splice(0, p.inv.length, ...inv);
+    p.invDirty = true;
+  }
   // craft at the fire: gunpowder needs chem
   game.giveItem(p, ITEM.CHEM, 2);
   A.act(ACT.CRAFT, 19);
@@ -908,6 +927,23 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   A.act(ACT.CRAFT, 27);
   run(3);
   check('crafted crossbow + bolts at workbench', s.weapons[0] === ITEM.CROSSBOW && s.mags[0] === 1 && s.ammo[AMMO.BOLT] === 4, `bolts ${s.ammo[AMMO.BOLT]}`);
+  // four more bolts with room for one in the reserve: the other three land at her feet (they were paid for)
+  {
+    const had = s.ammo[AMMO.BOLT];
+    game.giveItem(p, ITEM.AMMO_BOLTS, 999); // fill the reserve...
+    const cap = s.ammo[AMMO.BOLT];
+    s.ammo[AMMO.BOLT] = cap - 1; // ...but for one
+    game.giveItem(p, ITEM.STICK, 2);
+    game.giveItem(p, ITEM.SCRAP, 1);
+    const before = new Set(game.items);
+    A.act(ACT.CRAFT, 27);
+    run(3);
+    const spilt = game.items.filter((e) => !before.has(e) && e.item === ITEM.AMMO_BOLTS);
+    const n = spilt.reduce((k, e) => k + e.count, 0);
+    check('ammo crafted with the reserve nearly full is not lost', s.ammo[AMMO.BOLT] === cap && n === 3, `reserve ${cap - 1} -> ${s.ammo[AMMO.BOLT]} of ${cap}, ${n} on the ground`);
+    for (const e of spilt) game.removeItemEnt(e);
+    s.ammo[AMMO.BOLT] = had;
+  }
   const far = game.zm.spawn(ZTYPE.WALKER, s.x + 36, s.z);
   A.input(0, 0, 0, 0);
   run(12, () => A.input(0, 0, 0));
@@ -948,6 +984,29 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
       z.deadT = 2;
     }
     [s.weapons[0], s.mags[0]] = keep;
+  }
+  // a rifle taken by swap (slot taken, backpack full) while the gun in hand is reloading: that reload is dropped,
+  // it must not finish on the rifle just picked up and fill its magazine
+  {
+    const keep = [s.weapons[0], s.mags[0], s.ammo[AMMO.SHELL], s.ammo[AMMO.R308]];
+    const inv = p.inv.slice();
+    for (let i = 0; i < p.inv.length; i++) p.inv[i] ||= { item: ITEM.CLOTH, count: 1 };
+    s.weapons[0] = ITEM.SHOTGUN; // (the shortest reload there is: one shell)
+    s.mags[0] = 2;
+    s.ammo[AMMO.SHELL] = 6;
+    s.ammo[AMMO.R308] = 5;
+    A.input(BTN.RELOAD, 0, 0);
+    run(2, () => A.input(0, 0, 0));
+    const reloading = s.reloadT > 0;
+    const rifle = game.spawnItem(ITEM.HUNTING_RIFLE, 1, s.x, s.y + 0.02, s.z, { mag: 0 });
+    const before = new Set(game.items);
+    A.act(ACT.INTERACT, rifle.id);
+    run(Math.ceil(WEAPONS[ITEM.SHOTGUN].reload * 20) + 1, () => A.input(0, 0, 0)); // as long as the shell had left to go in
+    check('a weapon swapped in mid-reload does not inherit the reload', reloading && s.weapons[0] === ITEM.HUNTING_RIFLE && s.mags[0] === 0 && s.ammo[AMMO.R308] === 5, `rifle mag ${s.mags[0]}, .308 reserve ${s.ammo[AMMO.R308]}`);
+    for (const e of game.items.filter((e) => !before.has(e) && e.item === ITEM.SHOTGUN)) game.removeItemEnt(e); // the one she put down
+    [s.weapons[0], s.mags[0], s.ammo[AMMO.SHELL], s.ammo[AMMO.R308]] = keep;
+    p.inv.splice(0, p.inv.length, ...inv);
+    p.invDirty = true;
   }
   A.input(0, 0, 0, 4); // back to the hammer for the door boards
   run(12, () => A.input(0, 0, 0));
@@ -1091,6 +1150,24 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
     z.deadT = 2;
   }
   run(2);
+  // a pipe bomb going off on the very tick a corpse is swept from the list still hurts everything round it
+  // (a blast looks zombies up in a spatial hash of list indices: the sweep has to come before it is built)
+  {
+    const corpse = game.zm.spawn(ZTYPE.WALKER, spot.x + spot.dx * 60, spot.z + spot.dz * 60);
+    const pack = [];
+    for (let i = 0; i < 12; i++) pack.push(game.zm.spawn(ZTYPE.WALKER, spot.x + Math.sin(i) * 2.5, spot.z + Math.cos(i) * 2.5));
+    corpse.dead = true;
+    corpse.deadT = 2; // swept on the next tick...
+    const bomb = game.combat.spawnProjectile(PROJ.PIPEBOMB, A.p(), spot.x, w.heightAt(spot.x, spot.z) + 0.1, spot.z, 0, 0, 0, { fuse: 0.01, grav: 0 }); // ...which is when this goes off
+    run(1);
+    const hurt = pack.filter((z) => z.dead || z.hp < z.maxHp).length;
+    check('a blast on the tick a corpse is swept hits everything in range', !game.zombies.includes(corpse) && !game.projectiles.includes(bomb) && hurt === pack.length, `${hurt} of ${pack.length} hurt`);
+    for (const z of pack) {
+      z.dead = true;
+      z.deadT = 2;
+    }
+    run(2);
+  }
 }
 
 // canned tuna: scavenged food, eaten for health + stamina
@@ -1110,6 +1187,35 @@ check('movement works', Math.hypot(A.p().state.vx, A.p().state.vz) > 1 || true);
   run(Math.ceil(c.time * 20) + 2);
   check('tuna heals and restores stamina', p.hp === 40 + c.heal && p.state.stamina === 100 && tins() === had - 1 && !p.useItem, `hp ${p.hp} stamina ${p.state.stamina} tins ${tins()}`);
   p.hp = p.maxHp;
+}
+
+// armour: a vest taken off goes into the backpack with the points it has left, however few, and comes back on
+// with exactly those - swapping between two vests neither repairs one nor throws one away
+{
+  const p = A.p();
+  const inv = p.inv.slice();
+  p.inv.fill(null);
+  p.inv[0] = { item: ITEM.JACKET, count: 1 };
+  p.inv[1] = { item: ITEM.KEVLAR, count: 1 };
+  A.act(ACT.EQUIP_ARMOR, 0);
+  run(1);
+  const jacket = p.armor; // new
+  p.armor = 20; // most of it soaked up
+  A.act(ACT.EQUIP_ARMOR, 1); // the kevlar on, the jacket into its slot
+  run(1);
+  const kevlar = p.armor;
+  const kept = p.inv[1]?.item === ITEM.JACKET;
+  p.armor = kevlar - 10; // barely scratched
+  A.act(ACT.EQUIP_ARMOR, 1); // and back
+  run(1);
+  const worn = [p.armorItem, p.armor];
+  A.act(ACT.EQUIP_ARMOR, 1);
+  run(1);
+  check('a worn vest taken off is kept, not thrown away', jacket > 20 && kevlar > jacket && kept && worn[0] === ITEM.JACKET);
+  check('...and is as worn when it goes back on', worn[1] === 20 && p.armorItem === ITEM.KEVLAR && p.armor === kevlar - 10 && A.self.armor === kevlar - 10 && A.self.armorMax === kevlar, `jacket ${jacket} -> 20 -> ${worn[1]}, kevlar ${kevlar} -> ${kevlar - 10} -> ${p.armor}`);
+  p.armor = p.armorMax = p.armorItem = 0;
+  p.inv.splice(0, p.inv.length, ...inv);
+  p.invDirty = true;
 }
 
 // ping
@@ -1133,10 +1239,29 @@ check('ping broadcast', B.pings > 0);
   b.hp = b.maxHp;
   B.tp(A.p().state.x + 1.5, A.p().state.z);
   run(3);
+  // he goes down in the middle of reloading a rifle: that reload must not run on over the pistol he is left with
+  const bs = b.state;
+  const keep = [bs.weapons[0], bs.mags[0], bs.ammo[AMMO.R308]];
+  bs.weapons[0] = ITEM.HUNTING_RIFLE;
+  bs.mags[0] = 1;
+  bs.ammo[AMMO.R308] = 5;
+  B.input(0, 0, 0, 0);
+  run(12, () => B.input(0, 0, 0));
+  B.input(BTN.RELOAD, 0, 0);
+  run(2, () => B.input(0, 0, 0));
+  const reloading = bs.slot === 0 && bs.reloadT > 2;
   game.godMode = false;
   game.damagePlayer(b, 500, { kind: 2, ztype: 0, x: b.state.x, z: b.state.z });
   run(2);
   check('B downed instead of dead', b.alive && b.downed && B.self.downed === 1, `bleed ${B.self.bleed}`);
+  {
+    const told = B.self.slot === 1 && B.self.reloadT === 0; // his client is sent the pistol with no reload running
+    const mag = bs.mags[1];
+    let t = 0;
+    while (t < 60 && bs.mags[1] === mag) run(1, () => B.input(t++ % 2 ? 0 : BTN.ATTACK, 0, 0)); // click, click
+    check('downed mid-reload: the pistol fires at once', reloading && told && t <= 4, `first shot after ${(t / 20).toFixed(2)} s`);
+    [bs.weapons[0], bs.mags[0], bs.ammo[AMMO.R308]] = keep;
+  }
   const pl = [...A.store.ents.values()].find((e) => e.kind === ENT.PLAYER && e.id === B.id);
   check('downed flag replicated', pl && pl.q[5] & 256);
   A.act(ACT.HOLD_BEGIN, B.id);
