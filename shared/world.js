@@ -1299,12 +1299,18 @@ export function createWorld(seed) {
   place(ZONE.CHURCH, (b) => {
     const tall = (at) => ({ at, w: 1.1, y0: 1.3, y1: 3.6, glass: true });
     b.room(0, 6, 9, 18, 5, 'clapboard', { n: [door(4.5, 1.6)], e: [tall(3), tall(7.5), tall(12), tall(16)], w: [tall(2), tall(6.5), tall(11), tall(15)] }, { roof: 'gable', roofH: 4.2, roofMat: 'shingles' });
-    // steeple on the front of the ridge
-    b.box(0, 5, -1.3, 2.6, 5.4, 2.6, 'clapboard', { collide: false });
-    b.box(0, 10.4, -1.3, 3.0, 0.3, 3.0, 'trim', { collide: false });
-    b.cone(0, 10.7, -1.3, 2.0, 6.5, 'shingles', 4);
-    b.box(0, 17.1, -1.3, 0.12, 1.5, 0.12, 'trim', { collide: false });
-    b.box(0, 17.9, -1.3, 0.8, 0.12, 0.12, 'trim', { collide: false });
+    // steeple on the front of the ridge, with an open belfry under the spire: the bell hangs in it and its rope
+    // comes down through the ceiling just inside the door (BELL_AT / BELL_ROPE in shared/fixtures.js)
+    b.box(0, 5, -1.3, 2.6, 4.3, 2.6, 'clapboard', { collide: false });
+    b.box(0, 9.3, -1.3, 3.0, 0.14, 3.0, 'trim', { collide: false });
+    for (const [px, pz] of [[-1.15, -2.45], [1.15, -2.45], [-1.15, -0.15], [1.15, -0.15]]) b.box(px, 9.44, pz, 0.3, 1.66, 0.3, 'clapboard', { collide: false });
+    b.prop('church_bell', 0, -1.3, 0, { ly: 9.56, seed: 0, nocollide: true }); // (a given seed: no draw from the world's stream)
+    b.box(0, 11.1, -1.3, 3.0, 0.3, 3.0, 'trim', { collide: false });
+    b.cone(0, 11.4, -1.3, 2.0, 6.5, 'shingles', 4);
+    b.box(0, 17.8, -1.3, 0.12, 1.5, 0.12, 'trim', { collide: false });
+    b.box(0, 18.6, -1.3, 0.8, 0.12, 0.12, 'trim', { collide: false });
+    b.cyl(-1.05, 1.1, -1.3, 0.025, 3.9, 'rope', { collide: false, sides: 6 });
+    b.cyl(-1.05, 1.2, -1.3, 0.05, 0.5, 'taillight', { collide: false, sides: 8 }); // the sally: where a hand takes the rope
     for (let r = 0; r < 6; r++) {
       b.prop('pew', -2.2, 1 + r * 1.8, 0);
       b.prop('pew', 2.2, 1 + r * 1.8, 0);
@@ -1373,6 +1379,9 @@ export function createWorld(seed) {
     b.wreck('pickup_truck', -4, -18, 0.3);
     b.prop('barrel', 12.5, 9.5, 0);
     b.loot(6, -3);
+    // the radio set, on its cabinet beside the foot of the mast and under open sky: the crate a survivor calls down with
+    // it lands where they stand (RADIO_AT in shared/fixtures.js; a given seed: no draw from the world's stream)
+    b.prop('radio_set', 9.4, 4.3, 0, { seed: 0 });
   });
 
   // GRANITE QUARRY: a sunken pit with gravel piles, a dump truck, an office and a blasting bunker.

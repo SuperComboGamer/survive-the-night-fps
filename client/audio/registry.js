@@ -2,9 +2,10 @@
 // synthesis worker and the main-thread fallback.
 import { SFX_DEFS } from './synth.js';
 import { AMB_DEFS, MUSIC_DEFS, STINGER_DEFS } from './synth-amb.js';
+import { FIXTURE_DEFS } from './synth-fixtures.js';
 import { mulberry32, hashString, forestIR, hallIR, openIR, roomIR, chans } from './dsp.js';
 
-export const ALL_DEFS = [...SFX_DEFS, ...AMB_DEFS, ...MUSIC_DEFS, ...STINGER_DEFS];
+export const ALL_DEFS = [...SFX_DEFS, ...AMB_DEFS, ...MUSIC_DEFS, ...STINGER_DEFS, ...FIXTURE_DEFS];
 export const DEF_BY_BANK = new Map(ALL_DEFS.map((d) => [d.bank, d]));
 
 // Render one variant. Returns { chans: Float32Array[], sr }.

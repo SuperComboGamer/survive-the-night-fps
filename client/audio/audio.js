@@ -31,6 +31,9 @@ const CATS = {
   fxfar: { ref: 4, max: 75, roll: 1.0, air: 35, wet: 0.16, hrtf: 18, cap: 8 },
   step: { ref: 1.5, max: 25, roll: 1.4, air: 20, wet: 0.065, hrtf: 8, cap: 10 },
   thump: { ref: 5, max: 80, roll: 1.0, air: 40, wet: 0.22, hrtf: 0, cap: 4 }, // a tank's footfalls: heard long before it is seen
+  // the chapel bell, heard from anywhere in the valley: fainter and duller with distance, and dry enough that what
+  // arrives still comes from the chapel's side (the reverb is not panned, and falls off slower than the bell itself)
+  bell: { ref: 30, max: 1000, roll: 0.6, air: 320, wet: 0.12, hrtf: 0, cap: 4, delay: true },
 };
 for (const k in CATS) CATS[k].sendExp = 0.45 * CATS[k].roll;
 
@@ -200,6 +203,11 @@ def(S.SHADE_FREEZE, 'z_shade_freeze', 'zombie', 1, 0.06);
 def(S.SHADE_SHRIEK, 'z_shade_shriek', 'zombie', 1, 0.06);
 def(S.EAT, 'eat', 'fx', 0.5, 0.05);
 def(S.BODY_FALL, 'land', 'fx', 0.9, 0.1, 0.15, R_BODY);
+// the chapel bell and the Relay Station's radio (synth-fixtures.js). The bell is one bell: no pitch jitter
+def(S.BELL_TOLL, 'bell_toll', 'bell', 0.6, 0);
+def(S.BELL_ROPE, 'bell_rope', 'fx', 0.33, 0.05);
+def(S.RADIO_TUNE, 'radio_tune', 'fx', 0.35, 0.02);
+def(S.RADIO_CALL, 'radio_call', 'big', 0.32, 0.02);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {

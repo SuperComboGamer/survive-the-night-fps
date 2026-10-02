@@ -126,6 +126,7 @@ import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T_UPKEEP, T_SNAPSHOTS } from './tickstats.js';
 import { PlayerStats } from './stats.js';
+import { Fixtures } from './fixtures.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -325,6 +326,7 @@ export class Game {
     this.zm = new Zombies(this);
     this.cm = new Cats(this);
     this.combat = new Combat(this);
+    this.fixtures = new Fixtures(this); // the chapel bell and the Relay Station's radio
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
@@ -761,6 +763,7 @@ export class Game {
     this.gather.clear();
     this.leftKits.clear();
     this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
+    this.fixtures.reset();
   }
 
   startGame() {
@@ -1876,6 +1879,7 @@ export class Game {
       p.hold = { kind: HOLD.ENGINE, target: CAR_ID, t: 0, need: ENGINE_START_TIME };
       return;
     }
+    if (this.fixtures.owns(id)) return this.fixtures.holdBegin(p, id);
     const e = this.ents[id];
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
@@ -1903,6 +1907,7 @@ export class Game {
     let tgt = null;
     if (ok) {
       if (h.target === CAR_ID) ok = this.nearCar(p, 6) && (h.kind === HOLD.DRIVE ? this.escape.active && this.escape.ready : !this.escape.active);
+      else if (this.fixtures.owns(h.target)) ok = this.fixtures.holdOk(p, h);
       else {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
@@ -1928,6 +1933,7 @@ export class Game {
     else if (h.kind === HOLD.REVIVE) this.revive(tgt, p);
     else if (h.kind === HOLD.ENGINE) this.startEngine(p);
     else if (h.kind === HOLD.DRIVE) this.driveOff(p);
+    else if (this.fixtures.owns(h.target)) this.fixtures.holdDone(p, h);
   }
 
   searchCache(p, c) {
@@ -2713,6 +2719,11 @@ export class Game {
       case 'where':
         this.systemChat(`pos ${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} zone ${this.world.zoneAt(s.x, s.z)}`);
         break;
+      case 'bell':
+      case 'radio':
+        // /bell: the chapel bell tolls now, wherever you are. /radio: to the Relay Station's radio, with the batteries
+        this.fixtures.debug(p, args);
+        break;
     }
     this.systemChat(`[debug] ${args.join(' ')}`);
   }
@@ -2769,6 +2780,7 @@ export class Game {
     this.updateStructures(dt);
     this.updateItems(dt);
     this.updateCrates(dt);
+    this.fixtures.update(dt);
     this.recordHistory();
     ts.mark(T_UPKEEP);
     this.sendSnapshots();
@@ -2972,9 +2984,17 @@ export class Game {
     if (!pts.length) return;
     const sp = pts[Math.floor(this.rng() * pts.length)];
     const heading = this.rng() * Math.PI * 2;
+    this.flySupplyDrop(sp.x, sp.z, heading);
+  }
+
+  // The plane itself, for a drop at (x, z), coming in on `heading`. y: the height of the ground meant there, for a
+  // spot that may have something over or beside it (a drop called to where a survivor stands, server/fixtures.js);
+  // without it, the top of whatever is highest there.
+  flySupplyDrop(x, z, heading, y = 200) {
+    const sp = { x, z };
     const fx = -Math.sin(heading);
     const fz = -Math.cos(heading);
-    const gy = groundAt(this.world, sp.x, sp.z, 200, 0.6);
+    const gy = groundAt(this.world, sp.x, sp.z, y, 0.6);
     const drift = PLANE_SPEED / CRATE_DRAG;
     // release point = where the ramp is when the crate leaves; the plane's origin is PLANE_RAMP ahead of it
     const rx = sp.x - fx * drift;

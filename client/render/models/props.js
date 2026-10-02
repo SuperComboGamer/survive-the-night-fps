@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { PROPS } from '../../../shared/props.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
+import { FIXTURE_PROPS } from './fixtures.js';
 
 const PI = Math.PI;
 const cache = new Map();
@@ -228,7 +229,7 @@ function cinderBlocks(b, x, z, h) {
   plank(b, 'wood', 0.3, h - 0.4, 0.3, { p: [x, 0.4 + (h - 0.4) / 2, z], c: WOODS[1] });
 }
 
-const BUILD = {};
+const BUILD = { ...FIXTURE_PROPS }; // (the chapel bell and the radio set have a file of their own)
 
 BUILD.car = (b, r) => {
   b.push([0, 0, 0], [0, 0, 0], [1, 1, 0.952]);

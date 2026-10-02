@@ -42,7 +42,8 @@ dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`,
 `/mine far` to the far portal, `/mine in` down to the junction), `/clinic` (to the front door of Mercy Clinic;
 `/clinic ward` into its dark wards; says so on a map without it), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
-off every zombie within 30 m that has legs to lose)).
+off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
+(to the Relay Station's radio with the two batteries a call costs; says so if the map has no Relay Station)).
 
 ### Tests & tools
 
@@ -54,6 +55,7 @@ off every zombie within 30 m that has legs to lose)).
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
 | `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
 | `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
+| `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
@@ -219,11 +221,24 @@ them off.
   The table is `NIGHT_THEMES` in `shared/nights.js`.
 - **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
   noise the further it carries: an MP5 35 m, a pistol 45 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
-  a car alarm 140 m, a pipe bomb or a bursting boomer 170 m. More carry means more of them coming - and the
+  a car alarm 140 m, a pipe bomb or a bursting boomer 170 m, the chapel bell 220 m. More carry means more of them coming - and the
   louder it was where a zombie stood, the harder it runs, so a blast empties the whole neighbourhood onto you at
   a sprint while a distant pistol shot brings a few ambling over. They go to where the noise *was*: shoot and
   move, or throw a pipe bomb to pull a crowd off a place you want to search. Chopping, salvaging, hammering, a
   shattering molotov and a supply crate thumping down are quieter (30-60 m) but not silent.
+- **Ring the chapel bell.** A rope hangs just inside the door of St. Agnes Chapel (on every map), and the bell it
+  rings hangs in the open belfry under the spire. Hold [E] on the rope for a second and a half and the bell tolls
+  three times over about six seconds. Every survivor hears it wherever they are, fainter and from the chapel's
+  side the further off they are, and is told the bell is ringing. Each toll carries 220 m to the dead: every idle
+  one inside that and the wandering herd leave what they are doing and come to the chapel, at a run from 170 m in
+  and ambling from further out (like any noise, it holds a zombie for a minute at most, so a walker from the far
+  edge stops short). Ring it to empty a place you want to search, or to bring everything onto the chapel. It works by day and by night, and the rope will not pull again for 45 seconds.
+- **Call a supply drop on the Relay Station's radio.** Where the map has a Relay Station, a field radio stands
+  beside the foot of its mast. Hold [E] on it for 4 seconds with two batteries in your backpack: they are spent and a
+  supply plane comes for you, and drops its crate (red smoke, a schematic as often as any drop) where you stood
+  when the call went out - half a minute later, give or take. One call a day, by day only (the radio answers again
+  after sunrise; no plane flies at night), the team is told who called, and the call is heard by the dead for 90 m.
+  The prompt says what is missing: the batteries, the day's call, or the daylight.
 - **The wandering herd:** by day a crowd of ten to fifteen walkers and runners shuffles along the valley's roads
   together, from place to place, at a slow walk (it keeps clear of your car). Let one of them notice you - about
   26 m, less if you crouch - or let a noise reach any of them, and the whole herd comes at a run, walkers

@@ -419,7 +419,28 @@ wing of Mercy Clinic (`shared/clinic.js`, a place of the random pool) is the onl
   (it sheds the forward speed and lands exactly on the spot), 1 landed, 2 opened. The client (`render/flyover.js`)
   flies the plane model (`models/plane.js`), trails GPU-animated smoke puffs that linger ~2.5 min and drift with
   the wind, and plays the engine drone as a positional loop (speed-of-sound delay, doppler, air absorption).
-  `/airdrop` (debug commands) calls one in.
+  `/airdrop` (debug commands) calls one in. `flySupplyDrop(x, z, heading, y)` is the plane on its own, for a drop
+  aimed at a spot (the Relay Station's radio, below); `y` is the height of the ground meant there.
+- **Fixtures: the chapel bell and the Relay Station's radio** (`shared/fixtures.js`, `server/fixtures.js`,
+  `client/game/fixtures.js`). Things in the world a survivor works with a hold [E] that are neither entities nor
+  the car. Their interaction targets are `BELL_ID` / `RADIO_ID` (protocol.js, next to `CAR_ID`), sent with
+  `ACT.HOLD_BEGIN` like any hold; `Game.holdBegin` / `updateHold` hand a hold on one of them to `Fixtures`
+  (`owns`, `holdBegin`, `holdOk`, `holdDone`), and the kinds `HOLD.BELL` / `HOLD.RADIO` drive the progress ring.
+  Where they are is a spot in their place's own frame (`BELL_ROPE`, `BELL_AT`, `RADIO_AT`; `fixtureSpots(world)`
+  turns them into world positions); world.js builds the rope (a part of the chapel), the bell (prop
+  `church_bell`, in an open belfry) and the radio (prop `radio_set`, under open sky beside the mast) at the same
+  numbers, and `scripts/test-fixtures.js` holds the two together. Reach is an entity's: the client offers [E] when
+  its view ray passes within `FIXTURE_PICK` of the spot inside `INTERACT_REACH` with nothing in the way
+  (`canReach`), the server allows `FIXTURE_REACH`. A pull (`Fixtures.ringBell`) sends `NOTIFY.BELL` and the
+  tolls follow from `Fixtures.update`: each is a `SOUND.BELL_TOLL` with no radius (everyone hears it; the `bell`
+  category in audio.js carries it across the map) and a `Zombies.noise` of `NOISE.BELL`. A call
+  (`Fixtures.callPlane`) spends `RADIO_BATTERIES`, aims `flySupplyDrop` at the caller (pushed a crate's width
+  clear of whatever stands beside them, the heading off a stream of its own: the game's is not drawn from) and
+  makes a `NOISE.RADIO`; `calledDay` keeps it to one a day, and `phase` to the day. The client keeps what it knows
+  of both (the rope's wait, the day's call) from the notices, so its prompt can be out of date for a client that
+  joined since; it sends the hold anyway, and the server answers a refusal with `NOTIFY.BELL_WAIT` /
+  `NOTIFY.RADIO_NO` (reason in `RADIO_NO`). The item guide lists what a fixture costs (`FIXTURE_USES`) with the
+  recipes. `/bell` and `/radio` (debug commands) ring it and go to it.
 - **Waypoint and compass.** The waypoint is client-side only and adds no network traffic (the mark the team
   sees is the ping). A click on the field map sets `Game.waypoint` (`MapScreen._pick`: a place's name or yard
   snaps to the place; the map frees the pointer while it is open, the way the inventory does), `Game.buildMarkers`

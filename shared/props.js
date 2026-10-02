@@ -120,6 +120,10 @@ export const PROPS = {
   motel_sign: { size: [2.6, 7, 0.5], cyls: [[0, 0, 0.18, 7]], desc: 'tall vintage motel sign on a steel pole: arrow-shaped board reading MOTEL, dead bulbs, rust' },
   satellite_dish: { size: [2.6, 3.2, 2.6], cyls: [[0, 0, 0.35, 1.6]], desc: 'large white satellite dish on a concrete base, tilted up toward -Z' },
   fence_chain: { size: [3, 2.2, 0.1], boxes: [[0, 1.1, 0, 3, 2.2, 0.12]], desc: 'chain-link fence segment along X, posts at x=+-1.5, sagging mesh, barbed wire on top' },
+
+  // ---- the chapel bell and the Relay Station's radio (shared/fixtures.js)
+  church_bell: { size: [2.3, 1.5, 1.1], desc: 'church bell as it hangs in a belfry: lip at y=0, crown bolted into a timber headstock along X at y~0.96 (2.3 long, to the posts either side), clapper, rope wheel at the -X end (no collision)' },
+  radio_set: { size: [1.0, 2.5, 0.6], boxes: [[0, 0.43, 0, 1.0, 0.86, 0.56]], desc: 'field radio on a steel equipment cabinet: olive set with a tuning dial, knobs, speaker and a red power lamp, handset off its hook on a coiled cord, whip antenna; front faces -Z' },
 };
 
 // props whose static collider can be salvaged for scrap

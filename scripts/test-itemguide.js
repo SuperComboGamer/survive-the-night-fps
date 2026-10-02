@@ -7,6 +7,7 @@ import { createWorld } from '../shared/world.js';
 import { COL } from '../shared/collision.js';
 import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, WEAPONS, AMMO_ITEMS } from '../shared/defs.js';
 import { usedIn, foundIn, sourcesOf, GATHER } from '../client/game/itemguide.js';
+import { FIXTURE_USES, RADIO_COST } from '../shared/fixtures.js';
 
 const fails = [];
 const check = (name, ok, info = '') => {
@@ -146,6 +147,7 @@ for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(
   };
   for (const r of RECIPES) use(nameOf(r.out), r.cost, r.schem);
   for (const type of STRUCT_ORDER) use(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
+  for (const f of FIXTURE_USES) use(f.name, f.cost); // (what is spent at a fixture: the Relay Station's radio)
   const bad = [];
   for (const item of items) {
     const want = users.get(item);
@@ -168,6 +170,8 @@ for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(
   const plate = usedIn(ITEM.PLATE, 0, 99).list;
   const vest = RECIPES.find((r) => r.out === ITEM.KEVLAR);
   check('a kevlar plate names the vest, locked until its schematic is found', !!vest.cost[ITEM.PLATE] && plate.some((u) => u.name === nameOf(ITEM.KEVLAR) && u.locked === !!vest.schem) && usedIn(ITEM.PLATE, ALL, 99).list.every((u) => !u.locked), plate.map((u) => `${u.locked ? 'locked ' : ''}${u.name}`).join(', '));
+  const cells = usedIn(ITEM.BATTERY, 0, 99)?.list || [];
+  check("batteries name the Relay Station's radio, which spends them on a supply drop", RADIO_COST[ITEM.BATTERY] > 0 && cells.some((u) => /radio/i.test(u.name) && !u.locked), cells.map((u) => u.name).join(', '));
 }
 
 // ---------------------------------------------------------------- gathering: GATHER mirrors Game.gatherHit

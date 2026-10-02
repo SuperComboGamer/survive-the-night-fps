@@ -5,6 +5,7 @@
 // generated worlds and the server.
 import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, loadedAmmo } from '../../shared/defs.js';
 import { PLACES } from '../../shared/layout.js';
+import { FIXTURE_USES } from '../../shared/fixtures.js';
 
 const schemLocked = (schem, unlocked) => !!schem && !(unlocked & (1 << SCHEM_BIT[schem]));
 
@@ -22,6 +23,7 @@ function addUse(name, cost, schem) {
 }
 for (const r of RECIPES) addUse(ITEM_DEFS[r.out].name, r.cost, r.schem);
 for (const type of STRUCT_ORDER) addUse(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
+for (const f of FIXTURE_USES) addUse(f.name, f.cost); // ...and what is spent at a fixture (the Relay Station's radio)
 for (const uses of USES.values()) uses.sort((a, b) => b.share - a.share);
 
 // What `item` goes into, as { list: [{ name, locked }], more }: at most `max` names and how many were left out; null

@@ -76,6 +76,7 @@ import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
 import { Flyover } from '../render/flyover.js';
+import { FixtureUI } from './fixtures.js';
 import { Lights } from '../render/lights.js';
 import { Atmosphere } from '../render/atmosphere.js';
 import { WeatherFX } from '../render/weatherfx.js';
@@ -252,6 +253,7 @@ export class Game {
     this.vm = null; // built with the first world (ensureViewModel), not here: the splash has to paint first
     this.vmItem = -1;
     this.entities = new Entities(this);
+    this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
@@ -959,6 +961,7 @@ export class Game {
   onNotify(msg, arg) {
     const ui = this.ui;
     const a = this.audio;
+    if (this.fixtures.notify(msg, arg)) return;
     switch (msg) {
       case NOTIFY.NIGHT_FALLS: {
         // a themed night says so (the same theme the server drew: both work it out from the seed)
@@ -1676,6 +1679,7 @@ export class Game {
       else this.conn.action(ACT.INTERACT, CAR_ID);
       return;
     }
+    if (t === 'bell' || t === 'radio') return this.fixtures.interact(t);
     if (t.kind === ENT.CACHE || (t.kind === ENT.PLAYER && t.downed)) {
       this.beginHold(t.id);
       return;
@@ -2240,6 +2244,8 @@ export class Game {
         return;
       }
     }
+    // the bell rope, the radio set
+    if (this.fixtures.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT, counts)) return;
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
@@ -2423,6 +2429,7 @@ export class Game {
       h.useProgress = self.holdProgress;
       const t = this.entities.ents.get(this.holding);
       h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : 'Starting the engine…';
+      h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
       h.useLabel = self.useItem ? `${CONSUMABLES[self.useItem]?.food ? 'Eating' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';

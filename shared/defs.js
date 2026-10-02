@@ -467,6 +467,10 @@ export const SOUND = {
   SHADE_SHRIEK: 70, // the light is gone
   ZOMBIE_MOAN: 71, // an idle or wandering zombie (client-side vocalisation; a chasing one growls)
   BODY_FALL: 72, // a killed zombie hitting the ground (client-side, timed to the fall)
+  BELL_TOLL: 73, // the chapel bell: heard all over the valley, from the chapel
+  BELL_ROPE: 74, // the rope taken up and hauled on
+  RADIO_TUNE: 75, // the Relay Station's radio keyed up
+  RADIO_CALL: 76, // ...and the call for a supply drop going out
 };
 
 export const EVT = {
@@ -537,6 +541,10 @@ export const NOTIFY = {
   SHADE: 39, // the first shade of the night is out there
   HERD: 40, // the wandering herd is onto you (sent to the survivor it noticed). arg = how many of them
   RETURNED: 41, // arg = player id: dead (or a player-zombie) since the last sunrise, a survivor again at this one
+  BELL: 42, // the chapel bell is ringing. arg = seconds until the rope can be pulled again
+  BELL_WAIT: 43, // (to whoever pulled the rope too soon) arg = seconds until it can be
+  RADIO_CALL: 44, // arg = player id: they called a supply drop on the Relay Station's radio
+  RADIO_NO: 45, // (to whoever tried the radio) arg = why not (RADIO_NO in shared/fixtures.js)
 };
 
 // killer kinds for killfeed
