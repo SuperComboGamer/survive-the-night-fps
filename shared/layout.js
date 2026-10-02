@@ -29,6 +29,7 @@ export const PLACES = {
   [ZONE.CHURCH]: { flat: 34, blend: 24, clear: 38, gates: 'flb', core: true },
   [ZONE.DOCK]: { site: 'shore', flat: 20, blend: 20, clear: 30, gates: 'f', core: true },
   [ZONE.VILLAGE]: { flat: 46, blend: 26, clear: 52, dirt: 0.15, core: true },
+  [ZONE.CLINIC]: { flat: 30, blend: 24, clear: 34, dirt: 0.2, gates: 'flr' },
   [ZONE.MOTEL]: { site: 'roadside', flat: 32, blend: 24, clear: 36, dirt: 0.2, gates: 'b' },
   [ZONE.DRIVEIN]: { site: 'roadside', flat: 34, blend: 24, clear: 38, dirt: 0.5, gates: 'lr' },
   [ZONE.CHECKPOINT]: { site: 'highway', flat: 24, blend: 22, clear: 26, dirt: 0.3 },

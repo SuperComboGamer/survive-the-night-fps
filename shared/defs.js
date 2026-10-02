@@ -639,6 +639,9 @@ export const LOOT_TABLES = {
 // table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic or one of the
 // game's hidden walkie-talkies (WALKIE_STASHES) on top of its loot.
 export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12 };
+// Mercy Clinic's own (shared/clinic.js): the cabinets of its pharmacy and wards, and the one drug locker of a map
+CONT.MEDICINE = 16;
+CONT.DRUG_LOCKER = 17;
 // A place's own table only reaches its floor loot, crates and shelves, so whatever a recipe or an ammo type depends on
 // needs a container table too: ammo crates hold the AK-47 next to the 7.62 they are full of (as rare as the M4A1) and
 // kevlar plates by the pair (a vest takes two), trunks and duffels hold leather. A new entry thins every other one in
@@ -656,6 +659,8 @@ export const CONT_TABLES = {
   // the one strongbox of a map, in the deepest room of the mine: one roll, and every row is a gun worth the trip
   strongbox: [[ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.FLAMETHROWER, 1, 1, 1]],
 };
+// what a clinic keeps under lock: the one table where a medkit is a likely find and not a lucky one
+CONT_TABLES.medical = [[ITEM.BANDAGE, 7, 1, 3], [ITEM.PAINKILLERS, 6, 1, 2], [ITEM.MEDKIT, 4, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.CHEM, 3, 1, 2]];
 export const CONT_DEFS = {
   [CONT.CRATE]: { name: 'Crate', table: null, rolls: [2, 3] },
   [CONT.AMMO_BOX]: { name: 'Ammo Crate', table: 'military', rolls: [2, 3], schem: true },
@@ -673,6 +678,10 @@ export const CONT_DEFS = {
   // it as a place to find things (there is one to a map, so not "strongboxes").
   [CONT.STRONGBOX]: { name: 'Strongbox', table: 'strongbox', rolls: [1, 1], also: [[ITEM.PIPEBOMB, 2]], loaded: 2, once: true, guide: "the mine's strongbox" },
 };
+// Mercy Clinic. The drug locker stands in its deepest ward and is filled once a game, as the strongbox is: what makes
+// the walk into the dark worth it
+CONT_DEFS[CONT.MEDICINE] = { name: 'Medicine Cabinet', table: 'medical', rolls: [2, 3] };
+CONT_DEFS[CONT.DRUG_LOCKER] = { name: 'Drug Locker', table: 'medical', rolls: [1, 1], also: [[ITEM.MEDKIT, 2], [ITEM.PAINKILLERS, 3], [ITEM.BANDAGE, 4]], once: true, guide: "the clinic's drug locker" };
 // the ammunition that comes with weapon `item` out of a container whose weapons are loaded: [ammo item, count], or
 // null for anything that takes none
 export function loadedAmmo(item, mags) {

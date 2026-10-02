@@ -17,8 +17,8 @@ import { COL, footprintContains, pushCircle, canReach, groundAt } from '../share
 import { simulatePlayer, createPlayerState } from '../shared/playersim.js';
 import { BTN, CMD_RATE, MAP_HALF, GRID_STEP, PLAYER_RADIUS, PLAYER_HEIGHT, EYE_HEIGHT, STEP_HEIGHT, WATER_LEVEL } from '../shared/constants.js';
 
-// Between them these four valleys have every place twice or more (the test fails if one is missing).
-const SEEDS = process.argv.length > 2 ? process.argv.slice(2).map(Number) : [1, 4, 8, 9];
+// Between them these four valleys have every place (the test fails if one is missing).
+const SEEDS = process.argv.length > 2 ? process.argv.slice(2).map(Number) : [1, 2, 8, 9];
 
 // Known failures: what the checks below find wrong today that is being fixed somewhere else. A failure listed here
 // is printed but does not fail the test. An entry is a place, a check and the spot in the place's own frame.

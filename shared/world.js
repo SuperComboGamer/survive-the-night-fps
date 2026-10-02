@@ -14,6 +14,7 @@ import { mulberry32, createNoise2D, fbm, smoothstep, lerp, clamp } from './rng.j
 import { ColliderGrid, makeBox, makeCyl, footprintContains, COL } from './collision.js';
 import { ROAD, planLayout, gatePoint } from './layout.js';
 import { planMine, MINE_R, MINE_H, PORTAL } from './mine.js';
+import { buildClinic, darkAt } from './clinic.js';
 
 export { ROAD };
 
@@ -1469,6 +1470,14 @@ export function createWorld(seed) {
     b.loot(26, -4);
   });
 
+  // MERCY CLINIC (clinic.js): reception and a pharmacy in the daylight, and behind them a ward wing with its windows
+  // boarded over. darks: the interiors no daylight gets into (world.darkAt), of which its wards are the only ones
+  const darks = [];
+  let clinic = null;
+  place(ZONE.CLINIC, (b) => {
+    clinic = buildClinic(b, { seed, parts, darks });
+  });
+
   // SHADY PINES TRAILERS: mobile homes along a gravel lane, a burnt-out trailer, a bus someone lived in.
   place(ZONE.TRAILERS, (b) => {
     const trailer = (cx, cz, flip, burnt, i) => {
@@ -2444,6 +2453,9 @@ export function createWorld(seed) {
     heightAt,
     floorAt,
     mine,
+    clinic, // Mercy Clinic (clinic.js), or null on a map without it
+    darks,
+    darkAt: (x, y, z) => darkAt(darks, x, y, z), // how dark it is there at noon: 0 in daylight .. 1 (clinic.js)
     roadDistAt,
     roadKindAt,
     rayTerrain,

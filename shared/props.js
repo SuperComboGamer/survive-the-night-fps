@@ -92,11 +92,15 @@ export const PROPS = {
   cabinet: { size: [1.2, 0.9, 0.55], boxes: [[0, 0.45, 0, 1.2, 0.9, 0.55]], desc: 'low wooden kitchen / supply cabinet with drawers and 2 doors, worn paint; front faces -Z' },
   toolbox: { size: [0.55, 0.3, 0.28], desc: 'red metal toolbox with a handle, rusty corners (no collision)' },
   fridge: { size: [0.8, 1.8, 0.72], boxes: [[0, 0.9, 0, 0.8, 1.8, 0.72]], desc: 'old stained off-white refrigerator, 2 doors, handle on the front (-Z)' },
+  medicine_cabinet: { size: [0.9, 1.8, 0.45], boxes: [[0, 0.9, 0, 0.9, 1.8, 0.45]], desc: 'tall white enamelled steel medicine cabinet, glazed doors over a drawer base, a red cross on it; front faces -Z' },
+  drug_locker: { size: [0.8, 1.25, 0.6], boxes: [[0, 0.625, 0, 0.8, 1.25, 0.6]], desc: 'squat grey steel controlled-drugs locker, heavy door with a wheel handle and two locks, standing ajar; front faces -Z' },
+  wheelchair: { size: [0.65, 0.95, 1.0], desc: 'folding hospital wheelchair, vinyl seat, big spoked wheels (no collision)' },
   log_pile: { size: [4.2, 1.3, 2.4], boxes: [[0, 0.62, 0, 4.2, 1.25, 2.3]], desc: 'pile of felled tree trunks stacked along X (bark, cut ends visible), chocked with stakes' },
 
   // ---- iteration 2: new places & roadside dressing
   jersey_barrier: { size: [3, 0.85, 0.6], boxes: [[0, 0.42, 0, 3, 0.85, 0.6]], desc: 'concrete highway jersey barrier along X, stained, chipped, faded stripes' },
   camper: { size: [2.4, 3.0, 6.6], boxes: [[0, 1.5, 0, 2.4, 3.0, 6.5]], salvage: true, desc: 'abandoned 1980s RV / camper van, cab at -Z, beige with brown stripes, flat tires, curtains' },
+  ambulance: { size: [2.2, 2.7, 5.8], boxes: [[0, 1.35, 0, 2.2, 2.7, 5.7]], salvage: true, desc: 'wrecked box ambulance, cab at -Z, white with an orange stripe and red crosses, dead light bar, one rear door hanging open, flat tires' },
   school_bus: { size: [2.6, 3.1, 10.5], boxes: [[0, 1.55, 0, 2.6, 3.1, 10.4]], salvage: true, desc: 'rusted yellow school bus, front at -Z, broken windows, flat tires, slightly sunk' },
   dump_truck: { size: [2.6, 3.2, 7.2], boxes: [[0, 1.6, 0, 2.6, 3.2, 7.1]], salvage: true, desc: 'rusty quarry dump truck, cab at -Z, big bed at the back, huge tires' },
   boom_gate: { size: [4.6, 1.2, 0.4], cyls: [[-2.1, 0, 0.18, 1.2]], desc: 'checkpoint boom barrier: a post at x=-2.1 with a red/white striped arm along +X at y~1.0 (arm has no collision)' },
