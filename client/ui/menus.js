@@ -16,7 +16,7 @@ export const DEFAULT_CONTROLS = [
   ['F', 'Flashlight'],
   ['1 – 5', 'Weapon slots'],
   ['Tab', 'Inventory & crafting'],
-  ['Enter', 'Chat'],
+  ['Y / Enter', 'Chat'],
   ['V', 'Push to talk'],
   ['Esc', 'Menu'],
 ];

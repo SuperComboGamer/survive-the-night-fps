@@ -1320,7 +1320,9 @@ export class Game {
       this.toggleMap(false);
       return;
     }
-    if (code === 'Enter') {
+    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
+    // and the pause menu.
+    if (code === 'Enter' || code === 'KeyY') {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
       if (!ui.isTyping() && !ui.mapOpen) {

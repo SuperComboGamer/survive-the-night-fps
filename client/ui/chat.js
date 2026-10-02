@@ -82,7 +82,7 @@ export class Chat {
     this.input.value = '';
     this.count.textContent = '';
     this.log.scrollTop = this.log.scrollHeight;
-    // Focus on the next tick so the key that opened chat (e.g. "T") is not typed into the field.
+    // Focus on the next tick so the key that opened chat ("Y") is not typed into the field.
     setTimeout(() => {
       if (this.typing) this.input.focus({ preventScroll: true });
     }, 0);

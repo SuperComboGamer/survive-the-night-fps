@@ -114,7 +114,7 @@ ui.setControls([
   ['F', 'Flashlight'],
   ['H', 'Quick heal'],
   ['Tab', 'Inventory & crafting'],
-  ['Enter · V', 'Chat · push-to-talk'],
+  ['Y / Enter · V', 'Chat · push-to-talk'],
   ['X', 'Demolish (build mode)'],
 ]);
 const settings = ui.getSettings();
