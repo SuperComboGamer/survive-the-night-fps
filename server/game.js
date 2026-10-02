@@ -142,6 +142,11 @@ const CAR_ALARM_MIN_ZOMBIES = 6;
 const CAR_ALARM_MAX_ZOMBIES = 7;
 const CAR_ALARM_SPAWN_MIN = 62;
 const CAR_ALARM_SPAWN_MAX = 86;
+// A stack a survivor put down on purpose (ACT.DROP_SLOT) is theirs to leave lying: walking over it does not put it
+// back in their backpack until they have been this far from it. A teammate's feet, and their own [E], take it as usual.
+const DROP_LEAVE_DIST = 3;
+// seconds between two "no room for that" notices to a survivor whose full backpack keeps leaving things on the ground
+const FULL_NOTICE_EVERY = 6;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
 // Someone who joins a run in progress is put down beside the team (pickJoinSpawn): JOIN_NEAR_MIN..MAX metres from a
 // teammate, at whichever of JOIN_TRIES spots around them is furthest from the dead (nothing within JOIN_CLEAR is
@@ -288,6 +293,7 @@ export class Game {
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
     this.lootPoints = [];
+    this.dropper = 0; // the survivor putting a stack down right now (ACT.DROP_SLOT), for spawnItem to note on the item
     this.w = new Writer(1 << 16);
     this.ew = new Writer(1 << 14);
     this.events = [];
@@ -559,6 +565,8 @@ export class Game {
       interactT: 0,
       actionT: 0,
       pingT: 0,
+      fullT: -99, // when they were last told their backpack had no room for something lying there (updateItems)...
+      partFullT: -99, // ...and when that something was a car supply
       pinnedBy: 0,
       ropedBy: 0,
       ping: 0,
@@ -1178,6 +1186,7 @@ export class Game {
       z,
       mag: opts.mag ?? (isFirearm(item) ? Math.floor(WEAPONS[item].mag * (0.3 + this.rng() * 0.7)) : 0),
       point: opts.point || null,
+      droppedBy: this.dropper, // who put it down on purpose and has stayed by it since (0: nobody); see updateItems
       despawnAt: opts.permanent || opts.point ? Infinity : this.time + (opts.life || 150),
       permanent: !!opts.permanent,
       noAutoUntil: opts.noAuto ? this.time + opts.noAuto : 0,
@@ -1498,11 +1507,14 @@ export class Game {
         const cnt = r.u8();
         const it = p.inv[idx];
         if (!it) return;
+        this.dropper = p.id; // the stack remembers who put it down, so it does not hop back into their backpack
         const n = cnt === 0 ? it.count : Math.min(cnt, it.count);
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
+        const dropped = this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4, from: s });
+        this.dropper = 0;
         // (no entity id left for it on the ground: it stays in the pack)
-        if (!this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4, from: s })) return;
+        if (!dropped) return;
         it.count -= n;
         if (it.count <= 0) p.inv[idx] = null;
         p.invDirty = true;
@@ -2913,6 +2925,12 @@ export class Game {
           if (!e || e.removed) continue;
           const dx = e.x - s.x;
           const dz = e.z - s.z;
+          // what this survivor put down themselves stays down while they stand by it (to clear a slot, to hand it to
+          // a teammate): once they have walked off it is a stack like any other, for them too
+          if (e.droppedBy === p.id) {
+            if (dx * dx + dz * dz <= DROP_LEAVE_DIST * DROP_LEAVE_DIST) continue;
+            e.droppedBy = 0;
+          }
           if (dx * dx + dz * dz > 1.9 * 1.9 || Math.abs(e.y - s.y) > 1.6) continue;
           if (this.time < e.noAutoUntil) continue;
           const cat = ITEM_DEFS[e.item]?.cat;
@@ -2920,6 +2938,15 @@ export class Game {
           const taken = this.giveItem(p, e.item, e.count, e.mag);
           if (taken <= 0) {
             e.noAutoUntil = this.time + 3;
+            // No room in the backpack (ammo is another matter: a full reserve). Say so, or the survivor walks on
+            // without knowing: always for a car supply, the run depends on those; for the rest only as they walk
+            // over it, not again and again while they stand in a pile of it.
+            const part = cat === 'part';
+            if (cat !== 'ammo' && this.time - (part ? p.partFullT : p.fullT) >= FULL_NOTICE_EVERY && (part || s.vx * s.vx + s.vz * s.vz > 1)) {
+              p.fullT = this.time;
+              if (part) p.partFullT = this.time;
+              this.notify(NOTIFY.INVENTORY_FULL, e.item, p.id);
+            }
             continue;
           }
           this.pickupEvent(p, e.item, taken);

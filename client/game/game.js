@@ -1033,9 +1033,15 @@ export class Game {
       case NOTIFY.SEARCH_EMPTY:
         ui.notify(arg === 1 ? 'This tree is stripped bare' : arg === 2 ? 'Nothing left to salvage' : 'Already searched', 'toast', 1.6);
         break;
-      case NOTIFY.INVENTORY_FULL:
-        ui.notify('Inventory full', 'warning', 2);
+      case NOTIFY.INVENTORY_FULL: {
+        // arg: the item a full backpack left lying where the survivor walked over it (0: a craft, a search, a swap)
+        const d = ITEM_DEFS[arg];
+        if (d?.cat === 'part') {
+          ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack [Tab].`, 'danger', 6);
+          a.playLocal('build_fail');
+        } else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
         break;
+      }
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;

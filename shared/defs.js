@@ -497,7 +497,7 @@ export const NOTIFY = {
   NEED_STATION: 16,
   CANT_BUILD_HERE: 17,
   NOT_ENOUGH: 18,
-  INVENTORY_FULL: 19,
+  INVENTORY_FULL: 19, // arg = the item that was walked over and left lying for want of room (0 = no item to name)
   NEW_GAME: 20,
   PLAYER_DIED: 21, // arg = player id
   CAMPFIRE_LIT: 22,
