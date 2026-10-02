@@ -2581,6 +2581,7 @@ export class Game {
   }
   debugCommand(p, args) {
     const s = p.state;
+    const [x0, z0] = [s.x, s.z];
     switch (args[0]) {
       case 'kill':
         if (p.alive) this.killPlayer(p, { kind: KILLER.WORLD });
@@ -2824,6 +2825,8 @@ export class Game {
         this.power.give(p);
         break;
     }
+    // a command that took the player somewhere takes them out of a fair ride's seat, or the ride carries them back
+    if (s.ride && args[0] !== 'fair' && (s.x !== x0 || s.z !== z0)) s.ride = 0;
     this.systemChat(`[debug] ${args.join(' ')}`);
   }
 
