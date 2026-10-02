@@ -1,12 +1,12 @@
 // Inventory / crafting screen (Tab). Equipment on the left, backpack grid in the centre,
 // crafting on the right; survivors + car checklist + campfire under the grid.
-import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
-const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
+const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
 // Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
 // icon: item shown on the tab; cat: item category whose colour marks the tab (defaults to the id).
 const CRAFT_TABS = [
@@ -111,6 +111,7 @@ function statLines(id) {
   const w = WEAPONS[id];
   if (w) {
     if (w.melee) out.push(`Damage ${w.damage}` + (w.altDamage !== w.damage ? ` · heavy ${w.altDamage}` : ''), `Swing ${w.rate.toFixed(2)}s`);
+    else if (w.flame) out.push(`Fire ${Math.round(w.damage / w.rate)}/s · ${w.range}m`, `Tank ${w.mag} · ${AMMO_NAMES[w.ammo]}`, `Sets alight: ${BURN.dps}/s for ${BURN.time}s`);
     else out.push(`Damage ${w.damage}${w.pellets > 1 ? ' × ' + w.pellets : ''}`, `Magazine ${w.mag} · ${AMMO_NAMES[w.ammo]}`, w.quiet ? 'Single shot · near-silent' : w.auto ? 'Full-auto' : 'Semi-auto');
   }
   const c = CONSUMABLES[id];
@@ -917,7 +918,7 @@ export class Inventory {
 
   setPlayers(list) {
     list = Array.isArray(list) ? list : [];
-    const key = list.map((p) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.self ? 1 : 0].join('|')).join(';');
+    const key = list.map((p) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0].join('|')).join(';');
     if (key === this._svKey) return;
     this._svKey = key;
     this.svList.textContent = '';
@@ -928,6 +929,11 @@ export class Inventory {
       svgEl('i', 'sv-st', li, glyph(p.status === 'zombie' ? 'claw' : p.status === 'dead' ? 'skull' : 'person'));
       const nm = el('span', 'sv-name', li, p.name || '???');
       if (p.self) el('small', 'sv-you', nm, 'you');
+      const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
+      if (p.radio) {
+        rd.classList.add('on');
+        rd.title = 'Carries a walkie-talkie';
+      }
       svgEl('i', 'sv-mic', li, glyph('mic'));
       const k = el('span', 'sv-kills', li);
       svgEl('i', '', k, glyph('skull'));

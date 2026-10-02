@@ -10,7 +10,7 @@
 // All other materials must NOT rely on vertex colours.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { getTexture, TEXTURE_WORLD_SIZE, atlasUV } from './textures.js';
+import { getTexture, getNormalMap, TEXTURE_WORLD_SIZE, atlasUV } from './textures.js';
 
 /** Legacy wind clock (vegetation now sways with the global uWind uniform, see globals.js). */
 export const vegetationTime = { value: 0 };
@@ -23,23 +23,14 @@ function tileTex(name, tile) {
   return getTexture(name, 1 / tx, 1 / ty);
 }
 
-function lambert(o) {
-  return new THREE.MeshLambertMaterial(o);
+function tileNormal(name) {
+  const t = TEXTURE_WORLD_SIZE[name] ?? 1;
+  const [tx, ty] = Array.isArray(t) ? t : [t, t];
+  return getNormalMap(name, 1 / tx, 1 / ty);
 }
 
-// paint mask: texture alpha = painted area. Vertex colour tints only the painted parts (rust stays rust).
-function paintMaskPatch(mat) {
-  mat.onBeforeCompile = (sh) => {
-    sh.fragmentShader = sh.fragmentShader.replace(
-      '#include <color_fragment>',
-      `#if defined( USE_COLOR )
-        diffuseColor.rgb *= mix( vec3( 1.0 ), vColor.rgb, sampledDiffuseColor.a );
-      #endif
-      diffuseColor.a = opacity;`,
-    );
-  };
-  mat.customProgramCacheKey = () => 'paintmask';
-  return mat;
+function lambert(o) {
+  return new THREE.MeshLambertMaterial(o);
 }
 
 // moss on upward-facing surfaces (object-space normal.y, robust for yaw-only instancing & merged world geometry)
@@ -428,44 +419,44 @@ export function vegFarMaterial(mat) {
 
 const DEFS = {
   // ------------------------------------------------ building surfaces (no vertex colours, meter UVs)
-  planks: () => lambert({ map: tileTex('planks') }),
-  barn: () => lambert({ map: tileTex('barn') }),
-  clapboard: () => lambert({ map: tileTex('clapboard') }),
-  logwall: () => lambert({ map: tileTex('logwall') }),
-  concrete: () => lambert({ map: tileTex('concrete') }),
-  brick: () => lambert({ map: tileTex('brick') }),
-  shingles: () => lambert({ map: tileTex('shingles') }),
-  tin: () => lambert({ map: tileTex('tin') }),
-  tin_rust: () => lambert({ map: tileTex('tin_rusty') }),
-  rust: () => lambert({ map: tileTex('rust') }),
-  metal: () => lambert({ map: tileTex('metal') }),
-  stone: () => lambert({ map: tileTex('stone') }),
-  dockwood: () => lambert({ map: tileTex('dockwood') }),
-  glass: () => lambert({ map: tileTex('glass') }),
+  planks: () => surface('planks'),
+  barn: () => surface('barn'),
+  clapboard: () => surface('clapboard'),
+  logwall: () => surface('logwall'),
+  concrete: () => surface('concrete'),
+  brick: () => surface('brick'),
+  shingles: () => surface('shingles'),
+  tin: () => surface('tin'),
+  tin_rust: () => surface('tin_rust', {}, 'tin'),
+  rust: () => surface('rust'),
+  metal: () => surface('metal'),
+  stone: () => surface('stone'),
+  dockwood: () => surface('dockwood'),
+  glass: () => surface('glass'),
   door: () => lambert({ map: tileTex('door') }),
   hay: () => lambert({ map: tileTex('hay') }),
   canvas: () => lambert({ map: tileTex('canvas'), side: THREE.DoubleSide }),
-  olive: () => lambert({ map: tileTex('olive') }),
+  olive: () => surface('olive'),
   dark: () => lambert({ color: 0x0b0a09 }),
   trim: () => lambert({ map: tileTex('wood'), color: 0x6e6256 }),
   sash: () => lambert({ map: tileTex('sash') }),
 
   // ------------------------------------------------ props
   wood: () => lambert({ map: tileTex('wood'), vertexColors: true }),
-  paint: () => paintMaskPatch(lambert({ map: tileTex('paint'), vertexColors: true })),
-  carpaint: () => paintMaskPatch(lambert({ map: tileTex('carpaint'), vertexColors: true })),
+  paint: () => surface('paint', { vertexColors: true }),
+  carpaint: () => surface('carpaint', { vertexColors: true }),
   aircraft: () => lambert({ map: tileTex('aircraft'), vertexColors: true }),
   cloth: () => lambert({ map: tileTex('cloth'), vertexColors: true, side: THREE.DoubleSide }),
   burlap: () => lambert({ map: tileTex('burlap'), side: THREE.DoubleSide }),
   tire: () => lambert({ map: tileTex('tire') }),
   rubber: () => lambert({ color: 0x1b1a19 }),
-  chrome: () => lambert({ map: tileTex('paint'), color: 0x9c9c98 }),
+  chrome: () => surface('chrome'),
   bone: () => lambert({ map: tileTex('bone'), color: 0xa8a090 }),
   blood: () => lambert({ color: 0x3c0605 }),
   blood_decal: () =>
     lambert({ map: getTexture('decal_blood'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   flesh: () => lambert({ map: tileTex('skin') }),
-  charred: () => lambert({ map: tileTex('charred') }),
+  charred: () => surface('charred'),
   ash: () => lambert({ map: tileTex('ash') }),
   ember: () => new THREE.MeshBasicMaterial({ color: 0xb4400e }),
   emissive_red: () => new THREE.MeshBasicMaterial({ color: 0x6a0a06 }),
@@ -536,70 +527,228 @@ export function getMaterial(name) {
   return m;
 }
 
-// ------------------------------------------------ static world surface variants
-// Building surfaces merged into the static world carry extra per-vertex data: aGround (height above the
-// terrain) for splash-back dirt and contact darkening where walls meet the ground, and for painted
-// clapboard aTint, a faded paint colour per building (texture alpha = painted area).
-const GRIME_MATERIALS = new Set(['planks', 'barn', 'clapboard', 'logwall', 'concrete', 'brick', 'tin', 'tin_rust', 'stone', 'dockwood', 'rust', 'metal', 'charred']);
-const PAINTED_MATERIALS = new Set(['clapboard']);
-const staticVariants = new Map();
+// ------------------------------------------------ weathered surfaces
+// Building surfaces and painted / galvanised props are shaded in three steps on top of their tile:
+//  1. a coat (paint, rust or moss) laid over the tile's bare material wherever the tile's wear field (its
+//     alpha) plus slow noise over the surface crosses a threshold, so damage never repeats with the tile;
+//  2. broad tonal drift, run-off streaks down walls and damp stains from the same noise;
+//  3. static world only: mud splashed up from the ground and contact darkening (aGround).
+// The slow noise is world-space and static-world only; anything that moves shows its tile's own wear.
+//
+// tone: tonal drift (+-), streak: run-off streaks, stain: [r, g, b, amount] tint of the damp patches,
+// dust: [r, g, b, amount] film settling on upward faces, gloss: sky reflected at grazing angles (paint,
+// plating, glass; rust and moss kill it), splash: how high the mud reaches (m). layer: the coat -
+//   kind 'paint' | 'rust' | 'moss'; col / col2 (sRGB: paint + its chalked tint, fresh rust + dark scale,
+//   moss + dry lichen); cover: how much of the surface the coat takes (about -1 none .. 1 all);
+//   detail / macro: weight of the tile's wear field and of the slow noise; soft: edge width;
+//   ground / run / up: bias near the ground, down the run-off streaks and on upward faces;
+//   shade [gain, power]: how much of the tile's own shading shows through; fx: lifted paint edge / rust
+//   bleed / moss opacity; tint: static world multiplies the coat by a per-building colour (aTint).
+const RUST = { kind: 'rust', col: 0x9c6830, col2: 0x4a3020 };
+const SURF = {
+  planks: { tone: 0.2, streak: 0.22, stain: [0.66, 0.72, 0.52, 0.55] },
+  barn: { tone: 0.16, streak: 0.16, stain: [0.74, 0.74, 0.66, 0.4], layer: { kind: 'paint', col: 0x7a3229, col2: 0xd4bdb0, cover: 0.42, detail: 2.2, macro: 1.8, soft: 0.14, ground: -0.45, run: -0.2, shade: [4.6, 0.75], fx: 0.12, tint: true } },
+  clapboard: { tone: 0.12, streak: 0.14, stain: [0.72, 0.76, 0.62, 0.5], layer: { kind: 'paint', col: 0xcfccc0, col2: 0xf0e8d4, cover: 0.42, detail: 2.0, macro: 1.9, soft: 0.03, ground: -0.5, run: -0.25, shade: [3.6, 0.42], fx: 0.4, tint: true } },
+  logwall: { tone: 0.2, streak: 0.2, stain: [0.7, 0.74, 0.58, 0.5] },
+  concrete: { tone: 0.16, streak: 0.3, stain: [0.66, 0.68, 0.6, 0.6] },
+  brick: { tone: 0.16, streak: 0.14, stain: [0.62, 0.6, 0.58, 0.55] },
+  shingles: { tone: 0.2, streak: 0, stain: [0.8, 0.84, 0.72, 0.4], layer: { kind: 'moss', col: 0x4a5a26, col2: 0x7e7c5c, cover: -0.42, detail: 1.3, macro: 3.2, soft: 0.16, ground: 0, run: 0, up: 0, shade: [5, 0.5], fx: 0.85 } },
+  tin: { tone: 0.14, streak: 0.14, gloss: 0.3, stain: [0.8, 0.78, 0.72, 0.4], layer: { ...RUST, cover: -0.42, detail: 1.2, macro: 2.6, soft: 0.05, ground: 0.45, run: 0.3, shade: [3.2, 0.8], fx: 0.6 } },
+  tin_rust: { tone: 0.14, streak: 0.14, gloss: 0.25, stain: [0.8, 0.76, 0.7, 0.4], layer: { ...RUST, cover: 0.1, detail: 1.2, macro: 2.8, soft: 0.05, ground: 0.45, run: 0.35, shade: [3.2, 0.8], fx: 0.7 } },
+  rust: { tone: 0.22, streak: 0.1 },
+  metal: { tone: 0.16, streak: 0.16, layer: { ...RUST, cover: -0.5, detail: 1.4, macro: 2.4, soft: 0.04, ground: 0.4, run: 0.25, shade: [5, 0.6], fx: 0.6 } },
+  stone: { tone: 0.2, streak: 0.16, stain: [0.72, 0.76, 0.62, 0.5], layer: { kind: 'moss', col: 0x45562a, col2: 0x70745a, cover: -0.4, detail: 1.4, macro: 2.6, soft: 0.14, ground: 0.5, run: 0.1, up: 0.35, shade: [4, 0.5], fx: 0.8 } },
+  dockwood: { tone: 0.2, streak: 0.1, stain: [0.6, 0.72, 0.5, 0.6] },
+  charred: { tone: 0.2, streak: 0.1 },
+  olive: { tone: 0.12, streak: 0.12, layer: { ...RUST, cover: -0.55, detail: 1.4, macro: 2.0, soft: 0.04, ground: 0.4, run: 0.2, shade: [4.5, 0.6], fx: 0.5 } },
+  paint: { tone: 0.12, streak: 0.12, gloss: 0.5, splash: 0.5, dust: [0.36, 0.33, 0.28, 0.22], layer: { ...RUST, cover: -0.42, detail: 1.6, macro: 1.8, soft: 0.04, ground: 0.55, run: 0.25, up: 0.08, shade: [1.1, 0.6], fx: 0.4 } },
+  carpaint: { tone: 0.2, streak: 0.24, gloss: 1.2, splash: 0.4, stain: [0.74, 0.7, 0.62, 0.5], dust: [0.4, 0.37, 0.31, 0.3], layer: { ...RUST, cover: -0.44, detail: 1.6, macro: 1.7, soft: 0.035, ground: 0.6, run: 0.2, up: 0.14, shade: [1.1, 0.6], fx: 0.4 } },
+  chrome: { tone: 0.1, streak: 0.08, gloss: 3.2, splash: 0.4, dust: [0.3, 0.28, 0.24, 0.2], layer: { ...RUST, cover: -0.5, detail: 1.6, macro: 2.0, soft: 0.05, ground: 0.4, run: 0.1, shade: [1.6, 0.6], fx: 0.4 } },
+  glass: { tone: 0.1, streak: 0.2, gloss: 2.4, splash: 0.5, dust: [0.3, 0.28, 0.24, 0.3] },
+};
+const LAYER_KINDS = { paint: 0, rust: 1, moss: 2 };
 
-function groundGrimePatch(mat, paint) {
-  mat.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-        attribute float aGround;
-        varying float vGround;
-        varying float vUpA;
-        varying vec3 vGPos;
-        ${paint ? 'attribute vec3 aTint;\nvarying vec3 vTint;' : ''}`,
-      )
-      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvUpA = abs( objectNormal.y );')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvGround = aGround;\nvGPos = position;${paint ? '\nvTint = aTint;' : ''}`);
-    sh.fragmentShader = sh.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-        varying float vGround;
-        varying float vUpA;
-        varying vec3 vGPos;
-        ${paint ? 'varying vec3 vTint;' : ''}
-        float grimeNoise( float x ) {
-          float i = floor( x ), f = fract( x );
-          f = f * f * ( 3.0 - 2.0 * f );
-          return mix( fract( sin( i * 127.1 ) * 43758.5453 ), fract( sin( ( i + 1.0 ) * 127.1 ) * 43758.5453 ), f );
-        }`,
-      )
-      .replace(
-        '#include <color_fragment>',
-        `#include <color_fragment>
-        ${paint ? 'diffuseColor.rgb *= mix( vec3( 1.0 ), vTint, sampledDiffuseColor.a );' : ''}
-        diffuseColor.a = opacity;
-        {
-          // walls only (floors and roofs face up or down): mud splashed up by rain, darker right at the ground
-          float side = 1.0 - smoothstep( 0.5, 0.85, vUpA );
-          float s = vGPos.x + vGPos.z;
-          float edge = grimeNoise( s * 2.3 ) * 0.28 + grimeNoise( s * 9.1 ) * 0.1;
-          float splash = ( 1.0 - smoothstep( 0.0, 0.8, vGround - edge ) ) * side;
-          diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.5, 0.43, 0.34 ), splash * 0.8 );
-          diffuseColor.rgb *= mix( 1.0, mix( 0.5, 1.0, smoothstep( -0.05, 0.35, vGround ) ), side );
-        }`,
-      );
+const SURF_VERT_PARS = /* glsl */ `
+varying vec3 vGPos;
+varying vec3 vGNrm;
+#ifdef SURF_STATIC
+  attribute float aGround;
+  varying float vGround;
+#endif
+#ifdef SURF_TINT_ATTR
+  attribute vec3 aTint;
+  varying vec3 vTint;
+#endif
+`;
+const SURF_VERT_MAIN = /* glsl */ `
+vGPos = position;
+#ifdef SURF_STATIC
+  vGround = aGround;
+#endif
+#ifdef SURF_TINT_ATTR
+  vTint = aTint;
+#endif
+`;
+const SURF_FRAG_PARS = /* glsl */ `
+varying vec3 vGPos;
+varying vec3 vGNrm;
+uniform sampler2D tSurfNoise;
+uniform vec4 uSurfA;
+uniform vec4 uSurfStain;
+uniform vec4 uSurfDust;
+#ifdef SURF_STATIC
+  varying float vGround;
+  float grimeNoise( float x ) {
+    float i = floor( x ), f = fract( x );
+    f = f * f * ( 3.0 - 2.0 * f );
+    return mix( fract( sin( i * 127.1 ) * 43758.5453 ), fract( sin( ( i + 1.0 ) * 127.1 ) * 43758.5453 ), f );
+  }
+#endif
+#ifdef SURF_TINT_ATTR
+  varying vec3 vTint;
+#endif
+#ifdef SURF_LAYER
+  uniform vec4 uLayerA;
+  uniform vec4 uLayerB;
+  uniform vec4 uLayerS;
+  uniform vec3 uLayerCol;
+  uniform vec3 uLayerCol2;
+#endif
+`;
+const SURF_FRAG_MAIN = /* glsl */ `
+diffuseColor.a = opacity;
+float surfGloss = uSurfA.z;
+{
+  vec3 gn = normalize( vGNrm );
+  float hl = length( gn.xz );
+  float wall = step( 0.35, hl );
+  // walls: along the wall and up it; floors and shallow roofs: the ground plane
+  vec2 sp = wall > 0.5 ? vec2( dot( vGPos.xz, vec2( -gn.z, gn.x ) ) / hl, vGPos.y ) : vGPos.xz;
+  float up = max( gn.y, 0.0 );
+  #ifdef SURF_STATIC
+    vec4 nA = texture2D( tSurfNoise, sp * 0.043 );
+    vec4 nB = texture2D( tSurfNoise, sp * 0.137 + 0.37 );
+    float run = smoothstep( 0.45, 0.85, texture2D( tSurfNoise, vec2( sp.x * 0.61, sp.y * 0.021 ) + 0.11 ).g ) * wall;
+    float g0 = 1.0 - smoothstep( 0.0, uSurfA.w * 1.5, vGround );
+  #else
+    // things that move keep to their tile's own wear: noise in their object space would be the same on every
+    // copy, and in world space it would crawl over them
+    vec4 nA = vec4( 0.5 ), nB = vec4( 0.5 );
+    float run = 0.0, g0 = 0.0;
+  #endif
+  float macro = nA.r * 0.45 + nA.g * 0.3 + nB.r * 0.25;
+  float mid = nA.b * 0.5 + nB.g * 0.5;
+  #ifdef SURF_LAYER
+  {
+    float t = uLayerA.x + ( sampledDiffuseColor.a - 0.5 ) * uLayerA.y + ( macro - 0.5 + ( mid - 0.5 ) * 0.5 ) * uLayerA.z + g0 * uLayerB.x + run * uLayerB.y + up * uLayerB.z;
+    float mask = smoothstep( -uLayerA.w, uLayerA.w, t );
+    float shade = pow( dot( sampledDiffuseColor.rgb, vec3( 0.3333 ) ) * uLayerS.x, uLayerS.y );
+    vec3 lc = uLayerCol;
+    #ifdef SURF_TINT_ATTR
+      lc *= vTint;
+    #endif
+    #if SURF_LAYER == 0
+      // paint: chalks and yellows where it is about to let go, a thin shadow under its lifted edge
+      lc = mix( lc, lc * uLayerCol2, 1.0 - smoothstep( 0.0, 0.3, t ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, lc * shade, mask ) * ( 1.0 - mask * ( 1.0 - mask ) * 4.0 * uLayerS.z );
+    #elif SURF_LAYER == 1
+      // rust: fresh orange at its edge and in the speckle, dark scale inside, bleeding into what surrounds it
+      float bleed = smoothstep( -uLayerA.w * 4.0 - 0.06, 0.0, t ) * ( 1.0 - mask );
+      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 0.86, 0.6, 0.4 ), bleed * uLayerS.z );
+      lc = mix( uLayerCol2, lc, clamp( ( 1.0 - smoothstep( 0.0, 0.45, t ) ) * 0.75 + ( nB.a - 0.5 ) * 0.9 + ( sampledDiffuseColor.a - 0.7 ) * 1.4 + 0.12, 0.0, 1.0 ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, lc * shade, mask );
+      surfGloss *= 1.0 - mask;
+    #else
+      lc = mix( uLayerCol2, lc, smoothstep( 0.3, 0.7, sampledDiffuseColor.a * 0.6 + nB.a * 0.4 ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, lc * shade, mask * uLayerS.z );
+      surfGloss *= 1.0 - mask;
+    #endif
+  }
+  #endif
+  diffuseColor.rgb *= ( 1.0 + ( macro - 0.5 ) * 2.0 * uSurfA.x ) * ( 1.0 - run * uSurfA.y );
+  float damp = smoothstep( 0.5, 0.78, nA.g * 0.6 + nB.r * 0.4 + g0 * 0.2 );
+  diffuseColor.rgb *= mix( vec3( 1.0 ), uSurfStain.rgb, damp * uSurfStain.a );
+  float film = up * up * uSurfDust.a * ( 0.4 + 1.2 * mid );
+  diffuseColor.rgb = mix( diffuseColor.rgb, uSurfDust.rgb, film );
+  surfGloss *= 1.0 - film;
+  #ifdef SURF_STATIC
+  {
+    // walls only (floors and roofs face up or down): mud splashed up by rain, darker right at the ground
+    float side = 1.0 - smoothstep( 0.5, 0.85, abs( gn.y ) );
+    float s = vGPos.x + vGPos.z;
+    float edge = grimeNoise( s * 2.3 ) * 0.28 + grimeNoise( s * 9.1 ) * 0.1;
+    float splash = ( 1.0 - smoothstep( 0.0, uSurfA.w, vGround - edge * uSurfA.w * 1.25 ) ) * side;
+    diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.5, 0.43, 0.34 ), splash * 0.8 );
+    diffuseColor.rgb *= mix( 1.0, mix( 0.5, 1.0, smoothstep( -0.05, 0.35, vGround ) ), side );
+    surfGloss *= 1.0 - splash;
+  }
+  #endif
+}
+`;
+// the sky (the hemisphere light) mirrored in a glossy surface, strongest at grazing angles
+const SURF_FRAG_GLOSS = /* glsl */ `
+#if NUM_HEMI_LIGHTS > 0
+{
+  // the face normal, not the normal map: corrugations and laps would alias into sparkle at a distance
+  vec3 vd = normalize( vViewPosition );
+  float fres = 0.05 + 0.95 * pow( 1.0 - saturate( dot( nonPerturbedNormal, vd ) ), 4.0 );
+  outgoingLight += getHemisphereLightIrradiance( hemisphereLights[ 0 ], reflect( -vd, nonPerturbedNormal ) ) * ( RECIPROCAL_PI * surfGloss * fres );
+}
+#endif
+`;
+
+function surfacePatch(mat, name, isStatic = false) {
+  const s = SURF[name];
+  const L = s.layer;
+  const tinted = isStatic && !!L?.tint;
+  const defines = { ...mat.defines };
+  if (isStatic) defines.SURF_STATIC = '';
+  if (L) defines.SURF_LAYER = LAYER_KINDS[L.kind];
+  if (tinted) defines.SURF_TINT_ATTR = '';
+  mat.defines = defines;
+  const uniforms = {
+    tSurfNoise: { value: isStatic ? groundNoiseTexture() : null },
+    uSurfA: { value: new THREE.Vector4(s.tone ?? 0, s.streak ?? 0, s.gloss ?? 0, s.splash ?? 0.8) },
+    uSurfStain: { value: new THREE.Vector4(...(s.stain ?? [1, 1, 1, 0])) },
+    uSurfDust: { value: new THREE.Vector4(...(s.dust ?? [0, 0, 0, 0])) },
   };
-  mat.customProgramCacheKey = () => (paint ? 'static-grime-paint' : 'static-grime');
-  mat.userData.staticGrime = true;
-  mat.userData.staticPaint = paint;
+  if (L) {
+    uniforms.uLayerA = { value: new THREE.Vector4(L.cover, L.detail, L.macro, L.soft) };
+    uniforms.uLayerB = { value: new THREE.Vector4(L.ground ?? 0, L.run ?? 0, L.up ?? 0, 0) };
+    uniforms.uLayerS = { value: new THREE.Vector4(L.shade[0], L.shade[1], L.fx ?? 0, 0) };
+    // a tinted coat takes its whole colour from the building
+    uniforms.uLayerCol = { value: new THREE.Color(tinted ? 0xffffff : L.col) };
+    uniforms.uLayerCol2 = { value: new THREE.Color(L.col2) };
+  }
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>\n${SURF_VERT_PARS}`)
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvGNrm = objectNormal;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${SURF_VERT_MAIN}`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>\n${SURF_FRAG_PARS}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\n${SURF_FRAG_MAIN}`)
+      .replace('#include <opaque_fragment>', `${SURF_FRAG_GLOSS}\n#include <opaque_fragment>`);
+  };
+  mat.customProgramCacheKey = () => 'surface';
+  mat.userData.staticGrime = isStatic;
+  mat.userData.staticPaint = tinted;
   return mat;
 }
 
+/** A weathered surface material: tile + normal map + the SURF coat and noise (see above). */
+function surface(name, o = {}, tex = name) {
+  return surfacePatch(lambert({ map: tileTex(tex), normalMap: tileNormal(tex), ...o }), name);
+}
+
+const staticVariants = new Map();
 /** The static world's variant of a shared material (itself when the material has none). */
 export function staticSurface(mat) {
-  if (!GRIME_MATERIALS.has(mat.name)) return mat;
+  if (!SURF[mat.name]) return mat;
   let v = staticVariants.get(mat);
   if (!v) {
-    v = groundGrimePatch(mat.clone(), PAINTED_MATERIALS.has(mat.name));
+    v = surfacePatch(mat.clone(), mat.name, true);
     v.name = mat.name;
     staticVariants.set(mat, v);
   }

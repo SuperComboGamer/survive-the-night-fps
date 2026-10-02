@@ -1,5 +1,5 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput } from '../../shared/protocol.js';
 
 export class Connection {
   constructor(handlers) {
@@ -11,7 +11,8 @@ export class Connection {
     this.r = new Reader(new ArrayBuffer(0));
     this.bytesIn = 0;
     this.bytesOut = 0;
-    this.pingTimer = 0;
+    this.pingAt = 0; // when the ping that is still out was sent
+    this.pingNext = 0; // when the next one is due
   }
 
   url() {
@@ -32,7 +33,6 @@ export class Connection {
         w.u8(PROTOCOL_VERSION);
         w.str(name);
         ws.send(w.copy());
-        this.pingTimer = setInterval(() => this.ping(), 2000);
       };
       ws.onmessage = (m) => {
         const buf = m.data;
@@ -67,17 +67,13 @@ export class Connection {
           case S2C.VOICE:
             this.h.voice?.(r.u16(), r.str());
             break;
-          case S2C.PONG: {
-            const t = r.f64();
-            const rtt = performance.now() - t;
-            this.rtt = this.rtt * 0.7 + rtt * 0.3;
+          case S2C.WORLD_RESET:
+            this.h.world?.(r.u32());
             break;
-          }
         }
       };
       ws.onclose = () => {
         this.open = false;
-        clearInterval(this.pingTimer);
         if (!settled) reject(new Error('Could not connect to server'));
         else this.h.close?.();
       };
@@ -95,28 +91,29 @@ export class Connection {
     this.ws.send(w.bytes());
   }
 
-  ping() {
-    const w = this.w.reset();
-    w.u8(C2S.PING);
-    w.f64(performance.now());
-    this.sendRaw(w);
-  }
-
-  // cmds: [{seq, buttons, qyaw, qpitch, slot}]
-  sendInput(renderTick, renderFrac, cmds) {
+  // cmds: [{seq, buttons, qyaw, qpitch, slot}], hash: fingerprint of the predicted state after the last of them.
+  // Every 2 s one of these packets doubles as a ping; the answer comes back inside a snapshot (pong).
+  sendInput(renderTick, renderFrac, cmds, hash) {
+    const now = performance.now();
+    const ping = now >= this.pingNext;
+    if (ping) {
+      this.pingAt = now;
+      this.pingNext = now + 2000;
+    }
     const w = this.w.reset();
     w.u8(C2S.INPUT);
     w.u16(renderTick & 0xffff);
     w.u8(Math.max(0, Math.min(255, Math.round(renderFrac * 255))));
-    w.u8(cmds.length);
-    for (const c of cmds) {
-      w.u16(c.seq);
-      w.u16(c.buttons);
-      w.u16(c.qyaw);
-      w.i16(c.qpitch);
-      w.u8(c.slot);
-    }
+    writeInput(w, cmds, hash, ping);
     this.sendRaw(w);
+  }
+
+  // held: ms the server kept the ping before the snapshot with the answer left
+  pong(held) {
+    if (!this.pingAt) return;
+    const rtt = Math.max(0, performance.now() - this.pingAt - held);
+    this.pingAt = 0;
+    this.rtt = this.rtt * 0.7 + rtt * 0.3;
   }
 
   action(act, ...args) {

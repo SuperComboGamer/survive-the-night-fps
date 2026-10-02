@@ -32,7 +32,7 @@ export class Compass {
     for (let i = 0; i < 24; i++) {
       const a = (i / 24) * TAU;
       const card = CARDINALS.find(([c]) => Math.abs(wrapA(c - a)) < 0.01);
-      const t = el('i', 'cmp-tick' + (card ? (card[1].length === 1 ? ' major' : ' minor') : ''), this.strip);
+      const t = el('i', 'cmp-tick' + (card ? (card[1].length === 1 ? ' major' : ' minor') : '') + (i === 0 ? ' north' : ''), this.strip);
       if (card) el('b', '', t, card[1]);
       this.ticks.push({ a, e: t });
     }
@@ -91,13 +91,16 @@ export class Compass {
     let n = 0;
     for (const mk of markers) {
       let x = toX(mk.bearing);
-      const edge = x === null;
-      if (edge) {
+      let edge = '';
+      if (x === null) {
         if (!mk.pinEdge) continue;
-        x = wrapA(mk.bearing - heading) > 0 ? W - 6 : 6;
+        // out of view: pinned just inside the tape's faded ends, with a chevron pointing the way round
+        const right = wrapA(mk.bearing - heading) > 0;
+        x = W * (right ? 0.87 : 0.13);
+        edge = right ? ' edge edge-r' : ' edge edge-l';
       }
       const m = this._marker(n++);
-      const cls = 'cmp-mk k-' + mk.kind + (mk.cls ? ' ' + mk.cls : '') + (edge ? ' edge' : '');
+      const cls = 'cmp-mk k-' + mk.kind + (mk.cls ? ' ' + mk.cls : '') + edge;
       if (m.cls !== cls) m.e.className = m.cls = cls;
       if (m.key !== mk.icon) m.ico.innerHTML = m.key = mk.icon;
       const lab = mk.label || '';
@@ -112,10 +115,13 @@ export class Compass {
 // ---------------------------------------------------------------- objective tracker
 export class Objective {
   constructor(parent) {
-    this.root = el('div', 'obj', parent);
+    this.root = el('div', 'obj scrap', parent);
     const head = el('div', 'obj-head', this.root);
     this.hIco = svgEl('i', 'obj-hico', head, glyph('car'));
     this.hTitle = el('span', 'obj-title', head, 'Escape');
+    // one pip per supply the car still needs
+    const pips = el('span', 'obj-pips', head);
+    this.pips = Array.from({ length: SUPPLY_NEED.reduce((a, b) => a + b, 0) }, () => el('i', '', pips));
     this.hCount = el('span', 'obj-count', head, '');
     this.directive = el('div', 'obj-dir', this.root, '');
     this.list = el('div', 'obj-list', this.root);
@@ -125,9 +131,11 @@ export class Objective {
       const name = el('span', 'obj-name', r, ITEM_DEFS[item].name + (SUPPLY_NEED[i] > 1 ? 's' : ''));
       const where = el('span', 'obj-where', r, '');
       const st = el('span', 'obj-st', r, '');
+      svgEl('i', 'obj-box', r, glyph('check')); // ticked off once it is in the car
       return { r, name, where, st, key: '' };
     });
     this.key = '';
+    this.done = -1;
   }
 
   update(o) {
@@ -147,13 +155,13 @@ export class Objective {
       const complete = have >= need;
       let where;
       if (complete) where = 'installed';
-      else if (carried) where = 'carrying · bring it to the car';
-      else if (i < 4) where = o.hints[i] === 255 ? 'somewhere out there' : 'rumoured: ' + ZONE_NAMES[o.hints[i]];
+      else if (carried) where = 'in your pack';
+      else if (i < 4) where = o.hints[i] === 255 ? 'somewhere out there' : ZONE_NAMES[o.hints[i]] + '?'; // a rumour, as on the map
       else {
         const zs = o.hints.slice(4).filter((z) => z !== 255);
         where = zs.length ? zs.map((z) => ZONE_NAMES[z]).join(' · ') : 'somewhere out there';
       }
-      const st = need > 1 ? `${have}/${need}` : complete ? '' : carried ? '!' : '';
+      const st = need > 1 && !complete ? `${have}/${need}` : '';
       const k = where + '|' + st + '|' + complete + '|' + !!carried;
       if (row.key === k) return;
       row.key = k;
@@ -161,8 +169,13 @@ export class Objective {
       row.st.textContent = st;
       row.r.classList.toggle('done', complete);
       row.r.classList.toggle('carried', !!carried && !complete);
+      row.r.classList.toggle('wrap', where.length > 26); // a long list of places gets a line of its own
     });
-    this.hCount.textContent = `${done}/${total}`;
+    if (this.done !== done) {
+      this.done = done;
+      this.hCount.textContent = `${done}/${total}`;
+      this.pips.forEach((p, i) => p.classList.toggle('on', i < done));
+    }
     // what to do right now
     let dir = '';
     let tone = '';
@@ -190,7 +203,7 @@ export class Objective {
       dir = 'Scavenge and find the car supplies before dark';
     }
     this.directive.textContent = dir;
-    this.directive.className = 'obj-dir' + (tone ? ' t-' + tone : '');
+    this.directive.className = 'obj-dir' + (tone ? ' dir-' + tone : '');
     this.directive.hidden = !dir;
     this.root.classList.toggle('compact', o.phase === PHASE.NIGHT || o.finale);
   }
@@ -295,7 +308,7 @@ export class DamageDir {
 // ---------------------------------------------------------------- dawn summary
 export class Summary {
   constructor(parent) {
-    this.root = el('div', 'summary paper', parent);
+    this.root = el('div', 'summary scrap', parent);
     this.root.hidden = true;
     this.title = el('div', 'sm-title', this.root, '');
     this.stats = el('div', 'sm-stats', this.root);
@@ -331,9 +344,9 @@ export class Summary {
 export function nextNightText(night) {
   const n = night;
   const adds = [];
-  if (n === 2) adds.push('spitters', 'boomers', 'zombie dog packs', 'shades (they only move in the dark)');
+  if (n === 2) adds.push('spitters', 'boomers', 'zombie dog packs', 'shades (they only move in the dark)', 'a Tank (it charges, and barricades will not hold it)');
   if (n === 3) adds.push('leapers', 'bats', 'a boss');
-  if (n === 4) adds.push('ropers', 'tanks');
+  if (n === 4) adds.push('ropers', 'tanks in the horde');
   if (n >= 5 && n % 3 === 0) adds.push('a boss');
   const more = n <= 1 ? 'The next horde will be bigger.' : `Horde ${n}: bigger and hungrier.`;
   return adds.length ? `${more} New: ${adds.join(', ')}.` : more;

@@ -5,13 +5,14 @@
    ===================================================================================== */
 
 /* ------------------------------------------------------------------ compass */
+/* three rows: markers (icon over its distance), the tape and its ticks, then the letters */
 .stn-ui .compass {
   position: relative;
-  width: calc(560 * var(--u));
-  min-width: 360px;
-  height: calc(40 * var(--u));
-  min-height: 30px;
-  margin-bottom: calc(2 * var(--u));
+  width: calc(600 * var(--u));
+  min-width: 384px;
+  height: calc(58 * var(--u));
+  min-height: 48px;
+  margin-bottom: calc(4 * var(--u));
   pointer-events: none;
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
   mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
@@ -22,9 +23,19 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(12 * var(--u));
+  top: calc(28 * var(--u));
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(230, 223, 207, 0.4) 20%, rgba(230, 223, 207, 0.4) 80%, transparent);
+  background: linear-gradient(90deg, transparent, rgba(230, 223, 207, 0.55) 18%, rgba(230, 223, 207, 0.55) 82%, transparent);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+}
+
+/* a patch of shade, so the tape reads against a bright sky */
+.stn-ui .compass::after {
+  content: '';
+  position: absolute;
+  inset: 0 8%;
+  z-index: -1;
+  background: radial-gradient(ellipse 50% 50% at 50% 55%, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.14) 60%, transparent 100%);
 }
 
 .stn-ui .cmp-strip {
@@ -35,71 +46,82 @@
 .stn-ui .cmp-tick {
   position: absolute;
   left: 0;
-  top: calc(8 * var(--u));
+  top: calc(28 * var(--u));
   width: 1px;
-  height: calc(8 * var(--u));
-  background: rgba(230, 223, 207, 0.35);
+  height: max(4px, calc(5 * var(--u)));
+  background: rgba(230, 223, 207, 0.5);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
 }
 
 .stn-ui .cmp-tick.minor {
-  height: calc(10 * var(--u));
-  background: rgba(230, 223, 207, 0.55);
+  height: max(5px, calc(7 * var(--u)));
+  background: rgba(230, 223, 207, 0.75);
 }
 
 .stn-ui .cmp-tick.major {
-  top: calc(5 * var(--u));
-  height: calc(14 * var(--u));
   width: 2px;
+  height: max(7px, calc(9 * var(--u)));
+  margin-left: -1px;
   background: var(--bone);
 }
 
 .stn-ui .cmp-tick b {
   position: absolute;
-  top: calc(16 * var(--u));
+  top: calc(12 * var(--u));
   left: 50%;
   transform: translateX(-50%);
-  font: 400 max(10px, calc(12 * var(--u))) / 1 var(--f-num);
-  letter-spacing: 0.1em;
-  color: var(--bone-dim);
-  text-shadow: var(--shadow);
+  margin-left: 0.06em;
+  font: 500 max(10px, calc(12 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.12em;
+  color: var(--bone-2);
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .cmp-tick.major b {
-  top: calc(20 * var(--u));
-  font: 400 max(13px, calc(17 * var(--u))) / 1 var(--f-head);
+  font: 400 max(14px, calc(19 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.04em;
   color: var(--bone);
 }
 
+.stn-ui .cmp-tick.north {
+  background: var(--blood-lite);
+}
+
+.stn-ui .cmp-tick.north b {
+  color: var(--blood-lite);
+}
+
+/* the heading mark sits under the tape, pointing up at it */
 .stn-ui .cmp-center {
   position: absolute;
   left: 50%;
-  top: 0;
+  top: calc(30 * var(--u));
   width: 0;
   height: 0;
   transform: translateX(-50%);
   border-left: calc(5 * var(--u)) solid transparent;
   border-right: calc(5 * var(--u)) solid transparent;
-  border-top: calc(7 * var(--u)) solid var(--blood-hi);
+  border-bottom: max(5px, calc(7 * var(--u))) solid var(--blood-hi);
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
 }
 
 .stn-ui .cmp-mk {
   position: absolute;
   left: 0;
-  top: calc(-1 * var(--u));
+  top: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-left: calc(-9 * var(--u));
-  width: calc(18 * var(--u));
+  margin-left: calc(-10 * var(--u));
+  width: calc(20 * var(--u));
   color: var(--bone);
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
 }
 
 .stn-ui .cmp-mk-ico svg {
   display: block;
-  width: calc(17 * var(--u));
-  height: calc(17 * var(--u));
+  width: calc(16 * var(--u));
+  height: calc(16 * var(--u));
   min-width: 12px;
   min-height: 12px;
 }
@@ -109,7 +131,8 @@
   font: max(8.5px, calc(10 * var(--u))) / 1 var(--f-mono);
   letter-spacing: 0.04em;
   white-space: nowrap;
-  color: var(--bone-2);
+  color: var(--bone);
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .cmp-mk.k-car {
@@ -155,27 +178,52 @@
 .stn-ui .cmp-mk.k-ping.p2 {
   color: var(--brass);
 }
-.stn-ui .cmp-mk.edge .cmp-mk-lab {
-  display: none;
+
+/* out of view and pinned inside the end of the tape: a chevron points the way round */
+.stn-ui .cmp-mk.edge::before {
+  content: '';
+  position: absolute;
+  top: calc(4 * var(--u));
+  width: max(4px, calc(6 * var(--u)));
+  height: max(4px, calc(6 * var(--u)));
+  border: solid currentColor;
+  border-width: 0 0 2px 2px;
+  animation: stn-nudge 0.9s ease-in-out infinite;
+}
+
+.stn-ui .cmp-mk.edge-l::before {
+  right: calc(100% + 2 * var(--u));
+  --r: 45deg;
+  --dx: -3px;
+}
+
+.stn-ui .cmp-mk.edge-r::before {
+  left: calc(100% + 2 * var(--u));
+  --r: -135deg;
+  --dx: 3px;
+}
+
+@keyframes stn-nudge {
+  0%,
+  100% {
+    transform: rotate(var(--r));
+  }
+  50% {
+    transform: translateX(var(--dx)) rotate(var(--r));
+  }
 }
 
 /* ------------------------------------------------------------------ objective tracker */
-.stn-ui .voice {
-  top: auto;
-  bottom: calc(210 * var(--u));
-}
-
+/* a field note (.scrap): what to do right now, then the supplies as a list to tick off */
 .stn-ui .obj {
   position: absolute;
   top: calc(46 * var(--u));
-  left: calc(22 * var(--u));
-  width: calc(300 * var(--u));
-  min-width: 230px;
-  padding: calc(9 * var(--u)) calc(12 * var(--u)) calc(10 * var(--u));
-  background: linear-gradient(100deg, rgba(8, 6, 5, 0.62), rgba(8, 6, 5, 0.25) 80%, transparent);
+  left: calc(24 * var(--u));
+  width: calc(330 * var(--u));
+  min-width: 256px;
+  padding: calc(10 * var(--u)) calc(14 * var(--u)) calc(11 * var(--u) + 6px) calc(13 * var(--u));
   border-left: 2px solid var(--sun);
   color: var(--bone);
-  text-shadow: var(--shadow);
   transition: opacity 0.4s;
 }
 
@@ -187,7 +235,7 @@
 .stn-ui .obj-head {
   display: flex;
   align-items: center;
-  gap: calc(7 * var(--u));
+  gap: calc(8 * var(--u));
 }
 
 .stn-ui .obj-hico svg {
@@ -199,37 +247,73 @@
 }
 
 .stn-ui .obj-title {
+  font: 400 max(15px, calc(20 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.16em;
+}
+
+/* one pip per supply the car needs */
+.stn-ui .obj-pips {
   flex: 1;
-  font: 400 max(14px, calc(19 * var(--u))) / 1 var(--f-head);
-  letter-spacing: 0.14em;
+  display: flex;
+  justify-content: flex-end;
+  gap: max(2px, calc(3 * var(--u)));
+}
+
+.stn-ui .obj-pips i {
+  width: calc(10 * var(--u));
+  min-width: 7px;
+  height: calc(5 * var(--u));
+  min-height: 4px;
+  background: rgba(230, 223, 207, 0.2);
+  transform: skewX(-18deg);
+  transition: background 0.5s, box-shadow 0.5s;
+}
+
+.stn-ui .obj-pips i.on {
+  background: var(--sun);
+  box-shadow: 0 0 6px rgba(243, 217, 164, 0.45);
 }
 
 .stn-ui .obj-count {
-  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  min-width: 2.2em;
+  text-align: right;
+  font: max(10px, calc(12.5 * var(--u))) / 1 var(--f-mono);
   color: var(--bone-2);
 }
 
 .stn-ui .obj-dir {
-  margin-top: calc(6 * var(--u));
-  font: max(10.5px, calc(13 * var(--u))) / 1.3 var(--f-type);
-  color: var(--bone-2);
+  margin-top: calc(7 * var(--u));
+  padding-bottom: calc(8 * var(--u));
+  border-bottom: 1px dashed rgba(230, 223, 207, 0.18);
+  font: max(11px, calc(13.5 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone);
 }
 
-.stn-ui .obj-dir.t-good {
+.stn-ui .obj.compact .obj-dir {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.stn-ui .obj-dir.dir-good {
   color: var(--good);
 }
-.stn-ui .obj-dir.t-danger {
-  color: var(--blood-lite);
-  animation: stn-warnpulse 1.2s ease-in-out infinite;
-}
-.stn-ui .obj-dir.t-night {
+.stn-ui .obj-dir.dir-night {
   color: var(--moon);
+}
+/* urgent: the same red brush stroke as the clock's dusk warning */
+.stn-ui .obj-dir.dir-danger {
+  margin: calc(6 * var(--u)) calc(-7 * var(--u)) 0;
+  padding: calc(5 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u));
+  border-bottom: 0;
+  background: var(--brush-red) center / 100% 100% no-repeat;
+  color: #ffe3da;
+  animation: stn-dangerpulse 1.2s ease-in-out infinite;
 }
 
 .stn-ui .obj-list {
   display: flex;
   flex-direction: column;
-  gap: calc(2 * var(--u));
+  gap: calc(1 * var(--u));
   margin-top: calc(7 * var(--u));
 }
 
@@ -237,20 +321,22 @@
   display: none;
 }
 
+/* icon | name | where it is rumoured to be | count | tick box */
 .stn-ui .obj-row {
   display: grid;
-  grid-template-columns: calc(24 * var(--u)) auto 1fr auto;
+  grid-template-columns: calc(22 * var(--u)) auto minmax(0, 1fr) auto max(10px, calc(13 * var(--u)));
   align-items: center;
-  gap: calc(6 * var(--u));
-  min-height: calc(19 * var(--u));
-  font: 400 max(10.5px, calc(13 * var(--u))) / 1.1 var(--f-num);
-  color: var(--bone-2);
+  gap: calc(6 * var(--u)) calc(7 * var(--u));
+  min-height: calc(22 * var(--u));
+  font: 400 max(11px, calc(14 * var(--u))) / 1.1 var(--f-num);
+  color: var(--bone);
 }
 
 .stn-ui .obj-ico {
+  grid-area: 1 / 1;
   display: flex;
   justify-content: center;
-  opacity: 0.75;
+  opacity: 0.9;
 }
 
 .stn-ui .obj-ico svg {
@@ -259,22 +345,64 @@
   width: auto;
 }
 
+.stn-ui .obj-name {
+  grid-area: 1 / 2;
+  white-space: nowrap;
+}
+
 .stn-ui .obj-where {
+  grid-area: 1 / 3;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-type);
-  color: rgba(230, 223, 207, 0.45);
+  text-align: right;
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-type);
+  color: rgba(230, 223, 207, 0.62);
 }
 
 .stn-ui .obj-st {
+  grid-area: 1 / 4;
   font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
   color: var(--amber);
 }
 
-.stn-ui .obj-row.carried {
-  color: var(--bone);
+.stn-ui .obj-st:empty {
+  display: none;
 }
+
+/* a long list of places drops under the name */
+.stn-ui .obj-row.wrap {
+  row-gap: calc(2 * var(--u));
+  padding-bottom: calc(3 * var(--u));
+}
+
+.stn-ui .obj-row.wrap .obj-where {
+  grid-area: 2 / 2 / 3 / -1;
+  text-align: left;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.stn-ui .obj-box {
+  grid-area: 1 / 5;
+  display: grid;
+  place-items: center;
+  width: max(10px, calc(13 * var(--u)));
+  height: max(10px, calc(13 * var(--u)));
+  border: 1.5px solid rgba(230, 223, 207, 0.48);
+  transform: rotate(-3deg);
+}
+
+.stn-ui .obj-box svg {
+  flex: none;
+  width: 150%;
+  height: 150%;
+  transform: translate(10%, -14%);
+  opacity: 0;
+  color: var(--good);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.9));
+}
+
 .stn-ui .obj-row.carried .obj-ico {
   opacity: 1;
   color: var(--amber);
@@ -282,20 +410,44 @@
 .stn-ui .obj-row.carried .obj-where {
   color: var(--amber);
 }
+.stn-ui .obj-row.carried .obj-box {
+  border-color: var(--amber);
+  background: radial-gradient(circle, var(--amber) 0 34%, transparent 40%);
+  animation: stn-warnpulse 1.4s ease-in-out infinite;
+}
 
+/* in the car: struck through and stepped back, so what is still missing stands out */
 .stn-ui .obj-row.done {
-  color: var(--good);
+  color: rgba(182, 208, 138, 0.7);
 }
 .stn-ui .obj-row.done .obj-name {
   text-decoration: line-through;
   text-decoration-color: rgba(182, 208, 138, 0.6);
 }
 .stn-ui .obj-row.done .obj-ico {
-  opacity: 1;
+  opacity: 0.7;
   color: var(--good);
 }
 .stn-ui .obj-row.done .obj-where {
-  color: rgba(182, 208, 138, 0.55);
+  color: rgba(182, 208, 138, 0.5);
+}
+.stn-ui .obj-row.done .obj-box {
+  border-color: rgba(182, 208, 138, 0.45);
+}
+.stn-ui .obj-row.done .obj-box svg {
+  opacity: 1;
+  animation: stn-tick 0.35s ease-out;
+}
+
+@keyframes stn-tick {
+  from {
+    opacity: 0;
+    transform: translate(10%, -14%) scale(1.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(10%, -14%) scale(1);
+  }
 }
 
 /* ------------------------------------------------------------------ world markers */
@@ -338,20 +490,26 @@
   display: none;
 }
 
+/* a soft patch of ink behind each label, so a name reads over fog and a bright sky alike */
 .stn-ui .wmk-txt {
   display: flex;
   flex-direction: column;
   align-items: center;
+  padding: calc(2 * var(--u)) calc(14 * var(--u)) calc(3 * var(--u));
+  background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(6, 5, 4, 0.66), rgba(6, 5, 4, 0.36) 60%, transparent 100%);
 }
 
 .stn-ui .wmk-name {
   font: 500 max(11px, calc(13 * var(--u))) / 1.05 var(--f-num);
   letter-spacing: 0.06em;
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .wmk-sub {
   font: max(9px, calc(10.5 * var(--u))) / 1.2 var(--f-mono);
-  color: var(--bone-2);
+  color: var(--bone);
+  opacity: 0.85;
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .wmk-sub:empty {
@@ -472,24 +630,30 @@
   color: var(--blood-lite);
 }
 
+/* roughened like the cinematic titles */
 .stn-ui .dn-title {
   font: 400 max(26px, calc(46 * var(--u))) / 1 var(--f-head);
   letter-spacing: 0.16em;
   color: var(--blood-lite);
+  text-shadow: 0 2px 2px rgba(0, 0, 0, 0.7), 0 0 34px rgba(200, 0, 0, 0.45);
+  filter: url(#stn-rough);
 }
 
 .stn-ui .dn-sub {
   font: max(11px, calc(14 * var(--u))) / 1.3 var(--f-type);
   color: var(--bone);
+  text-shadow: var(--shadow-s);
 }
 
 .stn-ui .dn-bar {
   width: calc(260 * var(--u));
   min-width: 180px;
-  height: calc(5 * var(--u));
-  min-height: 4px;
+  height: calc(6 * var(--u));
+  min-height: 5px;
   margin-top: calc(6 * var(--u));
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(10, 8, 7, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(230, 223, 207, 0.18), 0 1px 5px rgba(0, 0, 0, 0.5);
+  transform: skewX(-18deg);
   overflow: hidden;
 }
 
@@ -510,6 +674,7 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--bone-2);
+  text-shadow: var(--shadow-s);
 }
 
 @keyframes stn-dnbeat {
@@ -531,63 +696,76 @@
   height: 0;
 }
 
+/* an arc of blood on the side the hit came from, bowed around the crosshair */
 .stn-ui .dd {
   position: absolute;
   left: 0;
   top: 0;
-  width: calc(90 * var(--u));
-  height: calc(18 * var(--u));
-  margin: calc(-9 * var(--u)) 0 0 calc(-45 * var(--u));
+  width: calc(210 * var(--u));
+  height: calc(64 * var(--u));
+  margin: calc(-32 * var(--u)) 0 0 calc(-105 * var(--u));
   opacity: 0;
-  transform: rotate(var(--a, 0rad)) translateY(calc(-150 * var(--u)));
-  background: radial-gradient(ellipse 50% 60% at 50% 100%, rgba(230, 30, 20, 0.95), rgba(160, 10, 10, 0.5) 50%, transparent 72%);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+  transform: rotate(var(--a, 0rad)) translateY(calc(-176 * var(--u)));
+  background: radial-gradient(ellipse 50% 100% at 50% 100%, transparent 60%, rgba(255, 70, 50, 0.95) 66%, rgba(190, 16, 14, 0.7) 80%, transparent 100%);
+  /* fade the ends of the arc out before the box cuts them off */
+  -webkit-mask-image: linear-gradient(90deg, transparent 10%, #000 40%, #000 60%, transparent 90%), linear-gradient(180deg, #000 45%, transparent 92%);
+  mask-image: linear-gradient(90deg, transparent 10%, #000 40%, #000 60%, transparent 90%), linear-gradient(180deg, #000 45%, transparent 92%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  filter: drop-shadow(0 0 6px rgba(120, 0, 0, 0.6));
 }
 
 /* ------------------------------------------------------------------ dawn summary */
+/* a field report (.scrap), between the compass and the day's title card */
 .stn-ui .summary {
   position: absolute;
-  top: calc(250 * var(--u));
+  top: calc(96 * var(--u));
   left: 50%;
   transform: translateX(-50%);
-  min-width: 320px;
-  padding: calc(14 * var(--u)) calc(26 * var(--u)) calc(14 * var(--u));
+  min-width: 360px;
+  padding: calc(13 * var(--u)) calc(30 * var(--u)) calc(14 * var(--u) + 6px);
+  background: linear-gradient(180deg, rgba(17, 14, 12, 0.94), rgba(9, 7, 6, 0.9));
+  border-top: 2px solid var(--sun);
   text-align: center;
   color: var(--bone);
-  text-shadow: var(--shadow);
-  border-top: 2px solid var(--sun);
 }
 
 .stn-ui .sm-title {
-  font: 400 max(20px, calc(30 * var(--u))) / 1 var(--f-head);
-  letter-spacing: 0.14em;
+  padding-left: 0.18em;
+  font: 400 max(21px, calc(32 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.18em;
   color: var(--sun);
 }
 
 .stn-ui .sm-stats {
   display: flex;
   justify-content: center;
-  gap: calc(22 * var(--u));
-  margin-top: calc(10 * var(--u));
+  margin-top: calc(12 * var(--u));
 }
 
 .stn-ui .sm-stat {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(2 * var(--u));
+  gap: calc(4 * var(--u));
+  min-width: calc(86 * var(--u));
+  padding: 0 calc(14 * var(--u));
+}
+
+.stn-ui .sm-stat + .sm-stat {
+  border-left: 1px solid rgba(230, 223, 207, 0.13);
 }
 
 .stn-ui .sm-stat b {
-  font: 500 max(18px, calc(26 * var(--u))) / 1 var(--f-num);
+  font: 600 max(19px, calc(28 * var(--u))) / 1 var(--f-num);
+  font-variant-numeric: tabular-nums;
 }
 
 .stn-ui .sm-stat span {
   font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--bone-dim);
+  color: var(--bone-2);
 }
 
 .stn-ui .sm-stat.warn b {
@@ -601,7 +779,9 @@
 }
 
 .stn-ui .sm-next {
-  margin-top: calc(10 * var(--u));
+  margin-top: calc(12 * var(--u));
+  padding-top: calc(9 * var(--u));
+  border-top: 1px dashed rgba(230, 223, 207, 0.18);
   font: max(10.5px, calc(13 * var(--u))) / 1.3 var(--f-type);
   color: var(--bone-2);
 }
@@ -765,6 +945,10 @@
 .stn-ui .mm.crate {
   color: #c1201a;
 }
+.stn-ui .mm.bench {
+  color: #2f5a4a;
+  z-index: 1;
+}
 
 .stn-ui .map-side {
   display: flex;
@@ -864,6 +1048,9 @@
 }
 .stn-ui .lg.crate {
   color: #ff6a55;
+}
+.stn-ui .lg.bench {
+  color: #7fc4a8;
 }
 
 .stn-ui .map-keys {

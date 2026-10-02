@@ -205,7 +205,9 @@ if (item) {
   check('inventory changed after pickup', inv0 !== inv1 || gone);
 } else check('found an item to pick up', false);
 
-// 5. chat
+// 5. chat (it only carries as far as a voice does: walk back to Bob first)
+const bob = await B.evaluate(() => ({ x: window.__game.renderPos.x, z: window.__game.renderPos.z }));
+await walkTo(A, bob.x, bob.z, 8, 20000);
 await A.keyboard.press('Enter');
 await sleep(300);
 await A.keyboard.type('anyone out there?');

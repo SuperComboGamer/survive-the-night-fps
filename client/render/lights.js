@@ -49,10 +49,10 @@ export class Lights {
     this.flashlight.castShadow = on;
   }
 
-  flashMuzzle(pos, power = 1) {
+  flashMuzzle(pos, power = 1, time = 0.05) {
     this.muzzle.position.copy(pos);
     this.muzzle.intensity = 22 * power;
-    this.muzzleT = 0.05;
+    this.muzzleT = time;
   }
 
   flashFx(x, y, z, power, duration) {

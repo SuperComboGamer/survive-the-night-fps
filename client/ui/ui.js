@@ -67,7 +67,7 @@ export class UI {
     const topRight = el('div', 'top-right', topL);
 
     this.hud = new Hud(this, hudL, topCenter, topRight);
-    this.voiceList = new VoiceList(hudL);
+    this.voiceList = new VoiceList(this.hud.comms); // who is talking, beside your own mic over the vitals
     this.kf = new Killfeed(hudL);
     this.pickups = new Pickups(hudL);
     this.chat = new Chat(this, hudL);
@@ -212,6 +212,12 @@ export class UI {
 
   openChat() {
     this.chat.open();
+  }
+
+  // carrying a walkie-talkie: chat and voice reach every other survivor carrying one
+  setRadio(on) {
+    this.chat.setRadio(!!on);
+    this.hud.radio.hidden = !on;
   }
 
   // extra: programmatically close chat without sending

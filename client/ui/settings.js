@@ -7,7 +7,7 @@ const KEY = 'stn.settings';
 export const DEFAULT_SETTINGS = Object.freeze({
   sensitivity: 1.0,
   fov: 75,
-  masterVolume: 0.8,
+  masterVolume: 0.4,
   musicVolume: 0.6,
   sfxVolume: 0.9,
   voiceVolume: 1,

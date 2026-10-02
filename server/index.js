@@ -51,7 +51,7 @@ else console.log('[server] no dist/ build found - run `npm run build` (or use `n
 const app = uWS.App();
 
 app.ws('/ws', {
-  compression: uWS.DISABLED, // payloads are already tightly packed binary
+  compression: uWS.DISABLED, // payloads are already tightly packed binary (measured: deflate only takes ~10% more off)
   maxPayloadLength: 64 * 1024,
   maxBackpressure: 512 * 1024,
   idleTimeout: 60,
@@ -66,9 +66,17 @@ app.ws('/ws', {
       closed: false,
       send(bytes) {
         if (this.closed) return;
-        // drop state for badly backed-up clients rather than letting memory grow unbounded
+        // drop messages for badly backed-up clients rather than letting memory grow unbounded
         if (ws.getBufferedAmount() > 256 * 1024) return;
         ws.send(bytes, true, false);
+      },
+      // ...and tell the game, which holds that client's snapshots back instead (a dropped one would break its delta chain)
+      congested() {
+        return !this.closed && ws.getBufferedAmount() > 256 * 1024;
+      },
+      // batches every send inside fn into one syscall / TCP segment
+      cork(fn) {
+        if (!this.closed) ws.cork(fn);
       },
     };
     ws.getUserData().session = game.onOpen(conn);

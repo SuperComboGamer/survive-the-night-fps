@@ -1,9 +1,10 @@
 // Per-client delta-compressed snapshot encoding.
 // WebSocket delivery is reliable + ordered, so each client's baseline is simply "what we last sent it":
-// creates carry full state, updates carry only changed fields (bitmask), positions use int8 deltas
-// when small, far entities update at half rate, and irrelevant/destroyed entities get a remove.
+// creates carry full state, updates carry only the changed fields behind a one-byte head (ids as steps from the
+// previous update, positions as 1-3 byte deltas when small; layout in shared/protocol.js), far entities update at
+// half rate, and irrelevant/destroyed entities get a remove. Sections with nothing in them are not written at all.
 import { MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, AOI_STRUCTURE_RADIUS, AOI_CACHE_RADIUS } from '../shared/constants.js';
-import { ENT, POS_DELTA_BIT, qpos, qangle16, qangle8, qpitch, PFLAG } from '../shared/protocol.js';
+import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qlookYaw, qlookPitch, packLook, PFLAG, ZSTATUS } from '../shared/protocol.js';
 import { ZOMBIE_DEFS } from '../shared/defs.js';
 
 export const SLOTS = 9;
@@ -39,11 +40,11 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 7, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
-  [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7]],
+  [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ITEM]: [[0, 3], [3, 4]],
   [ENT.STRUCTURE]: [[0, 3], [3, 4], [4, 5]],
   [ENT.PROJECTILE]: [[0, 3]],
@@ -76,8 +77,8 @@ function quant(e) {
   switch (e.kind) {
     case ENT.PLAYER: {
       const s = e.state;
-      q[3] = qangle16(s.yaw);
-      q[4] = qpitch(s.pitch);
+      q[3] = qlookYaw(s.yaw);
+      q[4] = qlookPitch(s.pitch);
       q[5] = playerFlags(e);
       q[6] = e.zombie ? 0 : s.weapons[s.slot] || 0;
       q[7] = Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255)));
@@ -89,6 +90,8 @@ function quant(e) {
       q[4] = e.anim;
       q[5] = Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255)));
       q[6] = e.link || 0;
+      q[7] = e.legs;
+      q[8] = e.onFire || e.burnT > 0 ? ZSTATUS.BURNING : 0;
       break;
     case ENT.ITEM:
       q[3] = e.count;
@@ -108,19 +111,19 @@ function quant(e) {
   }
 }
 
-function writeFields(w, kind, fromSlot, toSlot) {
-  // writes q[fromSlot..toSlot) with kind-specific widths
+function writeFields(w, kind, q, o, fromSlot, toSlot) {
+  // writes q[o + fromSlot .. o + toSlot) with kind-specific widths
   for (let s = fromSlot; s < toSlot; s++) {
-    const v = q[s];
+    const v = q[o + s];
     if (s < 3) {
       w.i16(v);
       continue;
     }
     switch (kind) {
       case ENT.PLAYER:
-        if (s === 3 || s === 5) w.u16(v);
-        else if (s === 4) w.i16(v);
-        else w.u8(v);
+        if (s === 3) w.u16(packLook(v, q[o + 4])); // the view angles share a u16 (pitch = slot 4)
+        else if (s === 5) w.u16(v);
+        else if (s > 5) w.u8(v);
         break;
       case ENT.ZOMBIE:
         if (s === 6) w.u16(v);
@@ -165,7 +168,7 @@ function writeCreate(w, e) {
       w.u8(e.variant);
       break;
   }
-  writeFields(w, e.kind, 0, FIELD_COUNT[e.kind]);
+  writeFields(w, e.kind, q, 0, 0, FIELD_COUNT[e.kind]);
 }
 
 // rough relevance radius per kind
@@ -198,8 +201,16 @@ let seenStamp = 1;
 const _cre = [];
 const _upd = [];
 const _rem = [];
+// this snapshot's updates: entity, changed-field mask and quantized state, in id order
+let _uq = new Int32Array(256 * SLOTS);
+const _ue = [];
+const _um = [];
+const _uo = [];
+const byId = (a, b) => _ue[a].id - _ue[b].id;
+const numeric = (a, b) => a - b;
 
-// Writes the entity section for one client: removes, creates (full), updates (changed fields only).
+// Writes the entity sections for one client: removes, creates (full), updates (changed fields only), each only
+// if it has entries. Returns the SNAP bits of the sections written.
 // candidates: array of live entities to consider (the viewer's own player is skipped).
 export function writeEntities(w, view, viewer, candidates, tick) {
   const stamp = ++seenStamp;
@@ -207,6 +218,7 @@ export function writeEntities(w, view, viewer, candidates, tick) {
   const vz = viewer.state.z;
   const base = view.base;
   const known = view.known;
+  let sections = 0;
   _cre.length = 0;
   _upd.length = 0;
   _rem.length = 0;
@@ -226,33 +238,42 @@ export function writeEntities(w, view, viewer, candidates, tick) {
     if (dx * dx + dz * dz > LOD_NEAR * LOD_NEAR && ((tick + e.id) & 1) === 1 && e.kind !== ENT.PLAYER) continue;
     _upd.push(e);
   }
-  // removes first (so a reused id is removed before its new create)
+  // removes first (so a reused id is removed before its new create): ascending ids, each as a step from the last
   const ids = view.knownIds;
   for (let i = ids.length - 1; i >= 0; i--) {
     const id = ids[i];
     if (view.seen[id] !== stamp) _rem.push(id);
   }
-  w.u16(_rem.length);
-  for (let i = 0; i < _rem.length; i++) {
-    w.u16(_rem[i]);
-    view._removeKnown(_rem[i]);
+  if (_rem.length) {
+    sections |= SNAP.REMOVES;
+    _rem.sort(numeric);
+    w.varu(_rem.length);
+    let prev = 0;
+    for (let i = 0; i < _rem.length; i++) {
+      w.varu(_rem[i] - prev);
+      prev = _rem[i];
+      view._removeKnown(_rem[i]);
+    }
   }
   // creates
-  w.u16(_cre.length);
-  for (let i = 0; i < _cre.length; i++) {
-    const e = _cre[i];
-    quant(e);
-    writeCreate(w, e);
-    const b = e.id * SLOTS;
-    const n = FIELD_COUNT[e.kind];
-    for (let s = 0; s < n; s++) base[b + s] = q[s];
-    known[e.id] = e.gen;
-    view.seen[e.id] = stamp;
-    view._addKnown(e.id);
+  if (_cre.length) {
+    sections |= SNAP.CREATES;
+    w.varu(_cre.length);
+    for (let i = 0; i < _cre.length; i++) {
+      const e = _cre[i];
+      quant(e);
+      writeCreate(w, e);
+      const b = e.id * SLOTS;
+      const n = FIELD_COUNT[e.kind];
+      for (let s = 0; s < n; s++) base[b + s] = q[s];
+      known[e.id] = e.gen;
+      view.seen[e.id] = stamp;
+      view._addKnown(e.id);
+    }
   }
-  // updates
-  const updAt = w.reserve16();
-  let updates = 0;
+  // updates: find what changed...
+  if (_upd.length * SLOTS > _uq.length) _uq = new Int32Array(_upd.length * SLOTS * 2);
+  let n = 0;
   for (let i = 0; i < _upd.length; i++) {
     const e = _upd[i];
     quant(e);
@@ -269,30 +290,69 @@ export function writeEntities(w, view, viewer, candidates, tick) {
       }
     }
     if (!mask) continue;
-    let delta = false;
+    _ue[n] = e;
+    _um[n] = mask;
+    _uo[n] = n;
+    const o = n * SLOTS;
+    for (let s = 0; s < SLOTS; s++) _uq[o + s] = q[s];
+    n++;
+  }
+  if (!n) return sections;
+  // ...and write it in id order
+  _uo.length = n;
+  _uo.sort(byId);
+  w.varu(n);
+  let prevId = 0;
+  for (let i = 0; i < n; i++) {
+    const k = _uo[i];
+    const e = _ue[k];
+    const mask = _um[k];
+    const o = k * SLOTS;
+    const b = e.id * SLOTS;
+    const bits = BIT_SLOTS[e.kind];
+    const step = e.id - prevId;
+    prevId = e.id;
+    let head = step <= 3 ? step : 0;
+    let ext = mask >> 4;
+    let dx = 0;
+    let dy = 0;
+    let dz = 0;
+    let pos = UPOS.NONE;
     if (mask & 1) {
-      const dx = q[0] - base[b];
-      const dy = q[1] - base[b + 1];
-      const dz = q[2] - base[b + 2];
-      delta = dx >= -127 && dx <= 127 && dy >= -127 && dy <= 127 && dz >= -127 && dz <= 127;
+      dx = _uq[o] - base[b];
+      dy = _uq[o + 1] - base[b + 1];
+      dz = _uq[o + 2] - base[b + 2];
+      if (dy === 0 && dx >= -8 && dx <= 7 && dz >= -8 && dz <= 7) pos = UPOS.NIB;
+      else if (dx >= -32 && dx <= 31 && dz >= -32 && dz <= 31 && dy >= -8 && dy <= 7) pos = UPOS.PACK;
+      else {
+        pos = UPOS.WIDE;
+        if (dx < -128 || dx > 127 || dy < -128 || dy > 127 || dz < -128 || dz > 127) ext |= UEXT_ABS;
+      }
     }
-    w.u16(e.id);
-    w.u8(mask | (delta ? POS_DELTA_BIT : 0));
+    head |= (pos << 2) | ((mask & 0b1110) << 3);
+    if (ext) head |= UEXT;
+    w.u8(head);
+    if (step > 3) w.varu(step);
+    if (ext) w.u8(ext);
+    if (pos === UPOS.NIB) w.u8(((dx & 15) << 4) | (dz & 15));
+    else if (pos === UPOS.PACK) w.u16(((dx & 63) << 10) | ((dz & 63) << 4) | (dy & 15));
+    else if (ext & UEXT_ABS) writeFields(w, e.kind, _uq, o, 0, 3);
+    else if (pos === UPOS.WIDE) {
+      w.i8(dx);
+      w.i8(dy);
+      w.i8(dz);
+    }
+    for (let bi = 1; bi < bits.length; bi++) {
+      if (mask & (1 << bi)) writeFields(w, e.kind, _uq, o, bits[bi][0], bits[bi][1]);
+    }
     for (let bi = 0; bi < bits.length; bi++) {
       if (!(mask & (1 << bi))) continue;
       const r = bits[bi];
-      if (bi === 0 && delta) {
-        w.i8(q[0] - base[b]);
-        w.i8(q[1] - base[b + 1]);
-        w.i8(q[2] - base[b + 2]);
-      } else {
-        writeFields(w, e.kind, r[0], r[1]);
-      }
-      for (let s = r[0]; s < r[1]; s++) base[b + s] = q[s];
+      for (let s = r[0]; s < r[1]; s++) base[b + s] = _uq[o + s];
     }
-    updates++;
+    _ue[k] = null;
   }
-  w.patch16(updAt, updates);
+  return sections | SNAP.UPDATES;
 }
 
 export { ZOMBIE_DEFS };

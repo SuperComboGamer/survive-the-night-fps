@@ -1,11 +1,13 @@
 // Zombie AI: targeting, flow-field navigation, melee, structure breaking, and special abilities
 // (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses,
 // zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
-import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN } from '../shared/constants.js';
-import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE } from '../shared/defs.js';
+// The herd that wanders the roads by day is in herd.js.
+import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
+import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
+import { Herds, HERD_RUSH } from './herd.js';
 
 const GRAV = 16;
 const CELL = 4;
@@ -34,6 +36,7 @@ export class Zombies {
     this.packSeq = 0;
     this.treeGrid = null;
     this.dens = null;
+    this.herds = new Herds(game, this);
   }
 
   // ---------------------------------------------------------------- spawning
@@ -89,6 +92,8 @@ export class Zombies {
       alertX: 0,
       alertZ: 0,
       alertT: 0,
+      alertLvl: 0, // how loud the noise it is heading for was where it stood (m of carry left)
+      alertRush: 1, // 0 ambling over .. 1 at a full run
       lureX: 0,
       lureZ: 0,
       lureT: 0,
@@ -127,11 +132,18 @@ export class Zombies {
       flank: def.pack ? (g.rng() - 0.5) * 1.5 : 0, // dogs: approach angle offset (rad) so a pack fans out
       howlT: 0,
       bit: false, // dogs: this lunge already bit someone
+      herd: 0, // wandering herd it walks with (herd.js)
+      herdX: 0, // its place in the crowd, relative to the herd's waypoint
+      herdZ: 0,
+      herdNav: 0,
       farT: 0,
       dead: false,
       deadT: 0,
       burning: 0,
       onFire: false,
+      burnT: 0, // set alight (Combat.ignite): seconds of burning left
+      burnBy: 0, // player who lit it (gets the kill)
+      burnWeapon: 0,
       lit: false, // shade: frozen by light
       darkT: 1,
       trapSlow: 1,
@@ -172,6 +184,9 @@ export class Zombies {
     for (let i = 0; i < 22; i++) this.spawnRoamer([]);
     // zombie dog packs in the thick woods
     for (let i = 0; i < 3; i++) this.spawnForestPack([]);
+    // a herd wandering the roads
+    this.herds.reset();
+    this.herds.spawn([]);
   }
 
   newPack() {
@@ -377,6 +392,39 @@ export class Zombies {
     }
   }
 
+  // ---------------------------------------------------------------- noise
+  // A noise at (x,z) that carries `loud` metres. Every zombie inside that radius with nobody to chase heads for
+  // it, so a louder noise draws a bigger crowd, and the louder it was where a zombie stood the harder it runs.
+  // A much fainter noise does not pull a zombie off the one it is already heading for. Returns how many heard it.
+  noise(x, z, loud) {
+    const g = this.g;
+    let heard = 0;
+    let calls = 0;
+    for (const e of g.zombies) {
+      if (e.dead || e.target || e.def.flying) continue;
+      const d = Math.hypot(e.x - x, e.z - z);
+      const lvl = loud - d; // how much further the noise would have carried past this zombie
+      if (lvl <= 0) continue;
+      const fresh = e.alertT <= 0;
+      if (!fresh && lvl < e.alertLvl * 0.5) continue;
+      const rush = Math.min(1, lvl / NOISE_RUSH);
+      // it only knows roughly where the noise came from: the crowd spreads out over the spot instead of stacking on it
+      const off = Math.min(5, 1 + d * 0.06);
+      e.alertX = x + (g.rng() - 0.5) * 2 * off;
+      e.alertZ = z + (g.rng() - 0.5) * 2 * off;
+      e.alertLvl = lvl;
+      e.alertRush = rush;
+      e.alertT = Math.min(NOISE_MEMORY_MAX, NOISE_MEMORY + d / (e.def.speed * (NOISE_SPEED_MIN + (1 - NOISE_SPEED_MIN) * rush)));
+      heard++;
+      // a couple of them answer: the survivors hear what they woke
+      if (fresh && calls < 2 && rush > 0.3 && g.rng() < 0.5) {
+        calls++;
+        g.sound(e.ztype === ZTYPE.RUNNER ? SOUND.RUNNER_SCREAM : e.ztype === ZTYPE.DOG ? SOUND.DOG_BARK : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : SOUND.ZOMBIE_GROWL, e.x, e.y + e.def.headY, e.z, 70);
+      }
+    }
+    return heard;
+  }
+
   // ---------------------------------------------------------------- main update
   update(dt) {
     const g = this.g;
@@ -402,7 +450,7 @@ export class Zombies {
         for (const z of g.zombies) {
           if (z.dead || z.horde) continue;
           if (z.pack) dogs++;
-          else alive++;
+          else if (!z.herd) alive++;
         }
         const target = Math.min(62, 22 + g.day * 4 + humans.length * 2);
         if (alive < target) this.spawnRoamer(humans);
@@ -432,6 +480,8 @@ export class Zombies {
         }
       }
     }
+
+    this.herds.update(dt, humans);
 
     const zs = g.zombies;
     for (let i = zs.length - 1; i >= 0; i--) {
@@ -475,6 +525,12 @@ export class Zombies {
       const dmg = z.maxHp * (z.boss ? 0.035 : 0.35) * dt;
       if (g.tick % 6 === 0) g.impact(IMPACT.SPARK, z.x, z.y + 1, z.z);
       g.combat.damageZombie(z, dmg, null, { fire: true });
+      if (z.dead) return;
+    }
+    // set alight (Combat.ignite): it keeps burning for a while after the fire that lit it
+    if (z.burnT > 0) {
+      z.burnT -= dt;
+      g.combat.damageZombie(z, BURN.dps * dt, g.players.get(z.burnBy) || null, { weapon: z.burnWeapon, fire: true, dot: true });
       if (z.dead) return;
     }
 
@@ -540,6 +596,7 @@ export class Zombies {
       chasing = true;
     } else if (target) {
       chasing = true;
+      if (z.herd) speed = Math.max(speed, HERD_RUSH); // a roused herd comes at a run, walkers and all
       // steer straight at a visible survivor; otherwise follow the flow field (around walls to a way in)
       if (z.pack && z.direct && dist < 18) {
         // a pack fans out and closes in from the sides, straightening up for the last few metres
@@ -567,12 +624,22 @@ export class Zombies {
         dz = (tx - z.x) / l;
         speed *= 0.6;
       }
+    } else if (z.herd) {
+      // wandering herd: it keeps its place in the crowd, at a shuffle or (the herd roused) at a run
+      speed = this.herds.steer(z, dt, _dir);
+      dx = _dir.x;
+      dz = _dir.z;
+      chasing = speed >= HERD_RUSH;
     } else if (z.alertT > 0) {
       dx = z.alertX - z.x;
       dz = z.alertZ - z.z;
       if (Math.hypot(dx, dz) < 3) z.alertT = 0;
       chasing = true;
-      speed *= 0.8;
+      speed *= NOISE_SPEED_MIN + (1 - NOISE_SPEED_MIN) * z.alertRush;
+      // whether it gets there or gives up, it mills about where the noise led it instead of trekking back
+      z.wanderX = z.x;
+      z.wanderZ = z.z;
+      z.wanderT = 3;
     } else {
       // wander
       z.wanderT -= dt;
@@ -600,7 +667,7 @@ export class Zombies {
       }
       speed = z.pack ? 1.5 : Math.min(speed, 1.1) * 0.8;
     }
-    if (!chasing && z.ztype === ZTYPE.RUNNER) speed = 1.2;
+    if (!chasing && z.ztype === ZTYPE.RUNNER && !z.herd) speed = 1.2;
     speed *= z.trapSlow;
     if ((g.phase === PHASE.NIGHT || g.escape.active) && z.horde) speed *= 1.06 + Math.min(0.2, 0.015 * g.day);
 
@@ -1153,12 +1220,15 @@ export class Zombies {
         const s = g.ents[hit.id];
         if (s) g.damageStructure(s, 700);
         g.sound(SOUND.SLAM, z.x, z.y, z.z, 60);
-        end = true;
+        // what the blow breaks (a barricade, door boards) it ploughs straight through; anything that holds stops it
+        if (s && !s.removed) end = true;
       } else if (hit) end = true;
       for (const h of this.humansCache) {
         const s = h.state;
         if (Math.hypot(s.x - z.x, s.z - z.z) < 1.8 && Math.abs(s.y - z.y) < 2 && this.canReach(z, h)) {
           g.damagePlayer(h, 32, { kind: KILLER.ZOMBIE, ztype: t, x: z.x, z: z.z });
+          g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
+          g.sound(SOUND.MELEE_HIT, s.x, s.y + 1.2, s.z, 40);
           this.knock(h, z.x, z.z, 15, 6, 0.8);
           end = true;
         }

@@ -2,6 +2,7 @@
 import './render/globals.js'; // must run before any material is created (global fog + shared uniforms)
 import { GameRenderer } from './render/renderer.js';
 import { UI } from './ui/ui.js';
+import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
 import { setMaxAnisotropy } from './render/textures.js';
@@ -87,7 +88,9 @@ ui.showSplash();
 
 function applyAudioSettings(s) {
   if (!audio.ready) return;
-  audio.setVolumes({ master: s.masterVolume, music: s.musicVolume, sfx: s.sfxVolume, voice: s.voiceVolume });
+  // "Music & ambience": the slider's default leaves the ambience mix as it was tuned; below that it fades out with the music
+  const ambience = Math.min(1, s.musicVolume / DEFAULT_SETTINGS.musicVolume);
+  audio.setVolumes({ master: s.masterVolume, music: s.musicVolume, ambience, sfx: s.sfxVolume, voice: s.voiceVolume });
 }
 
 function applySettings(s) {

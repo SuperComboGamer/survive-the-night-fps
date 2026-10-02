@@ -3204,6 +3204,8 @@ class ZombieInstance {
 
   /** Gait touchdowns so far, or -1 when this frame's pose had no planted-foot gait (culled, other states). */
   footfallCount() {
+    // knuckle walk (tank): legCycle puts a foot down each half cycle, as its thigh reaches the front of the swing
+    if (this.st.knuckle) return this.state === ZANIM.WALK || this.state === ZANIM.RUN ? Math.floor(this.phase / PI - 0.5) : -1;
     return this.gOn && this.posedAt === this.time ? this.footfalls : -1;
   }
 

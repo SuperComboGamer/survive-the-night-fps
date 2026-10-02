@@ -1,4 +1,6 @@
 // Chat panel (lower-left). All user text goes through textContent - never innerHTML.
+// Chat only carries as far as a voice does: lines from the edge of earshot come in faint, lines from further
+// away arrive over the walkie-talkie (if you both carry one), and your own line says so when nobody heard it.
 import { el, svgEl } from './dom.js';
 import { glyph } from './icons.js';
 
@@ -12,7 +14,7 @@ export class Chat {
     this.root = el('div', 'chat', parent);
     this.log = el('div', 'chat-log', this.root);
     const bar = (this.bar = el('div', 'chat-input', this.root));
-    el('span', 'chat-say', bar, 'Say');
+    this.say = el('span', 'chat-say', bar, 'Say');
     this.input = el('input', 'chat-field', bar);
     this.input.type = 'text';
     this.input.maxLength = MAX_LEN;
@@ -52,12 +54,21 @@ export class Chat {
     if (opts.system) line.classList.add('sys');
     if (opts.zombie) line.classList.add('zed');
     if (opts.zombie) svgEl('i', 'chat-z', line, glyph('claw'));
+    if (opts.radio) {
+      line.classList.add('radio');
+      svgEl('i', 'chat-r', line, glyph('radio'));
+    }
+    if (opts.faint) line.classList.add('faint');
     if (name && !opts.system) {
       const n = el('span', 'chat-name', line, String(name));
       if (opts.color && /^#[0-9a-f]{3,8}$/i.test(opts.color)) n.style.color = opts.color;
       el('span', 'chat-colon', line, ':');
     }
     el('span', 'chat-text', line, String(text ?? ''));
+    if (opts.unheard) {
+      line.classList.add('unheard');
+      el('span', 'chat-note', line, 'nobody in earshot');
+    }
     this.log.appendChild(line);
     while (this.log.childElementCount > MAX_LINES) this.log.firstElementChild.remove();
     this.log.scrollTop = this.log.scrollHeight;
@@ -84,6 +95,12 @@ export class Chat {
     this.input.value = '';
     this.input.blur();
     this.ui.cb.onChatClosed?.();
+  }
+
+  // with a walkie-talkie the message goes out over the radio as well
+  setRadio(on) {
+    this.root.classList.toggle('on-radio', on);
+    this.say.textContent = on ? 'Radio' : 'Say';
   }
 
   clear() {

@@ -1217,6 +1217,13 @@ export function chatBlip(sr) {
   }
   return finish(out, sr, 0.9, 0.001, 0.01);
 }
+// walkie-talkie squelch: the click of the key and a short tail of static
+export function radioSquelch(sr, rng) {
+  const out = alloc(sr, 0.16);
+  addNorm(out, noise(sr, rng, 0.012, { bp: [2400, 1.2], a: 0.0005, d: 0.004 }), sr, 0, 0.9);
+  addNorm(out, noise(sr, rng, 0.13, { bp: [1700, 0.8], a: 0.004, d: 0.045 }), sr, 0.008, 0.5);
+  return finish(out, sr, 0.9, 0.0005, 0.02);
+}
 export function installPart(sr, rng) {
   const out = alloc(sr, 1.0);
   for (let k = 0; k < 6; k++) addNorm(out, metalClick(sr, rng, 2200 + (k % 2) * 200, 0.01), sr, k * 0.062, 0.45);
@@ -1297,6 +1304,19 @@ export function footstep(sr, rng, surface) {
       addNorm(out, noise(sr, rng, 0.06, { lp: 900, a: 0.004, d: 0.015 }), sr, rrange(rng, 0.035, 0.06), 0.35);
   }
   return finish(out, sr, 0.9, 0.0005, 0.03);
+}
+// a very heavy body putting a foot down (tank, bosses): a sub thump under a knock that small speakers still carry,
+// the dull thud of packed earth, a little grit
+export function heavyStep(sr, rng) {
+  const out = alloc(sr, 0.7);
+  addNorm(out, thump(sr, rrange(rng, 130, 150), 44, 0.05, 0.12, 0.7), sr, 0, 1);
+  addNorm(out, thump(sr, rrange(rng, 210, 240), 95, 0.02, 0.05), sr, 0, 0.7);
+  addNorm(out, noise(sr, rng, 0.3, { lp: 520, a: 0.002, d: 0.06 }), sr, 0, 0.85);
+  addNorm(out, noise(sr, rng, 0.14, { lp: 1600, a: 0.001, d: 0.03 }), sr, 0, 0.45);
+  addNorm(out, crackles(sr, rng, 0.25, 90, { hp: 900, bp: 2200, env: (u) => (1 - u) ** 2 }), sr, 0.02, 0.18);
+  normalize(out, 1);
+  softclip(out, 1.8);
+  return finish(out, sr, 0.95, 0.0005, 0.05);
 }
 
 // ------------------------------------------------------------------ seamless loops
@@ -1698,6 +1718,7 @@ export const SFX_DEFS = [
   { bank: 'claw', n: 2, sr: MID, gen: clawSnd },
   { bank: 'notify', n: 1, sr: HI, gen: notifySnd },
   { bank: 'chat', n: 1, sr: HI, gen: chatBlip },
+  { bank: 'radio', n: 2, sr: HI, gen: radioSquelch },
   { bank: 'install_part', n: 1, sr: HI, gen: installPart },
   { bank: 'eat', n: 1, sr: HI, gen: eatSnd },
   { bank: 'can_open', n: 1, sr: HI, gen: canOpenSnd },
@@ -1708,6 +1729,7 @@ export const SFX_DEFS = [
   { bank: 'step_wood', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'wood') },
   { bank: 'step_water', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'water') },
   { bank: 'step_metal', n: 4, sr: MID, gen: (sr, r) => footstep(sr, r, 'metal') },
+  { bank: 'step_heavy', n: 3, sr: MID, gen: heavyStep },
   // loops
   { bank: 'loop_campfire', n: 1, sr: MID, gen: (sr, r) => loopFire(sr, r, 1) },
   { bank: 'loop_torch', n: 1, sr: MID, gen: (sr, r) => loopFire(sr, r, 0) },

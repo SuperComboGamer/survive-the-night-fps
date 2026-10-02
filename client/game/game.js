@@ -42,12 +42,13 @@ import {
   AMMO_NAMES,
   AMMO_ITEMS,
   CONSUMABLES,
+  radioLinked,
 } from '../../shared/defs.js';
-import { ACT, ENT, HOLD, CAR_ID, PING_KIND, PFLAG, dqpos } from '../../shared/protocol.js';
+import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
-import { readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
+import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { Prediction } from './prediction.js';
 import { Entities } from './entities.js';
@@ -117,7 +118,7 @@ export class Game {
     this.frame = 0;
     this.time = 0;
     this.myId = 0;
-    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0 };
+    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
     this.players = new Map(); // id -> {name, status, kills, ping}
@@ -125,6 +126,7 @@ export class Game {
     this.clientTick = 0;
     this.clockInit = false;
     this.clockAdj = 0; // pending clock correction, eased in over a few frames
+    this.net = { tick: 0, ack: 0 }; // running snapshot header state (tick / acked command of the last one)
     this.latestTick = 0; // newest snapshot received
     this.jitter2 = 0; // mean squared snapshot arrival error (ticks^2)
     this.lateRun = 0; // consecutive snapshots far behind the clock
@@ -150,10 +152,13 @@ export class Game {
     this.prevPhase = -1;
     this.lastHudInvKey = '';
     this.talkPeers = [];
+    this.talkKey = '';
+    this.onRadio = false; // carrying a walkie-talkie
     this.lookTarget = null;
     this.menuAngle = 0;
     this.lowHpBeat = 0;
     this.holding = 0; // hold-to-interact target we told the server about
+    this.flames = new Map(); // flamethrowers spraying right now: shooter id (-1 = ours) -> { loop, t }
     this.pings = [];
     this.discovered = new Set([ZONE.CAMP]);
     this.discoverT = 0;
@@ -165,6 +170,7 @@ export class Game {
     this.input.rawInput = settings.rawMouse !== false;
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
+      world: (seed) => this.loadWorld(seed),
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
@@ -172,7 +178,7 @@ export class Game {
       close: () => this.onDisconnect(),
     });
     this.voice = new Voice(this.conn, audio);
-    this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.talkPeers.map((id) => this.players.get(id)?.name || '?') });
+    this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.speakers() });
     this.env = new Environment(this.scene);
     this.weather = new Weather();
     this.weather.onStrike = (s) => this.onLightning(s);
@@ -280,10 +286,11 @@ export class Game {
     if (!this.weatherFx) this.weatherFx = new WeatherFX(this.scene, this.renderer.quality);
     this.weatherFx.setWorld(this.world, this.weather);
     this.staticFires = [];
+    this.staticEmitters = [];
     for (const l of this.world.lights) {
       if (l.kind === 'embers') {
         // burning barrels / smouldering wrecks
-        this.effects.createEmitter('barrel', l.x, l.y, l.z);
+        this.staticEmitters.push(this.effects.createEmitter('barrel', l.x, l.y, l.z));
         this.staticFires.push({ x: l.x, y: l.y - 0.4, z: l.z, intensity: 0.75 });
       }
     }
@@ -291,10 +298,16 @@ export class Game {
     console.log(`[client] world ${seed}: gen ${(t1 - t0).toFixed(0)}ms, terrain ${(t2 - t1).toFixed(0)}ms, static ${(t3 - t2).toFixed(0)}ms, foliage ${(t4 - t3).toFixed(0)}ms, rest ${(performance.now() - t4).toFixed(0)}ms`);
   }
 
+  // (the server deals a new map every playthrough, so worlds come and go for as long as the page is open)
   unloadWorld() {
-    this.scene.remove(this.terrain);
-    this.scene.remove(this.water);
+    for (const mesh of [this.terrain, this.water]) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
     this.staticWorld?.dispose();
+    this.foliage?.dispose();
+    for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
     this.world = null;
   }
@@ -338,11 +351,12 @@ export class Game {
   }
 
   onSnapshot(r) {
-    const tick = r.u32();
-    const ack = r.u16();
-    if (r.u8()) this.global = readGlobal(r);
-    readSelf(r, this.self);
-    readEntities(r, this.entities.store, tick);
+    const flags = readHeader(r, this.net);
+    const tick = this.net.tick;
+    const ack = this.net.ack;
+    if (flags & SNAP.GLOBAL) this.global = readGlobal(r, this.global);
+    const sync = readSelf(r, this.self, flags);
+    readEntities(r, this.entities.store, tick, flags);
     // clock
     if (!this.clockInit) {
       this.clientTick = tick;
@@ -366,8 +380,10 @@ export class Game {
       }
       if (tick > this.latestTick || this.latestTick - tick > 1000) this.latestTick = tick;
     }
-    this.prediction.reconcile(ack, this.self);
-    readEvents(r, this.eventHandler);
+    // the server only sends our own state when the prediction has to be rebased on it
+    if (sync) this.prediction.reconcile(ack, this.self);
+    else this.prediction.confirm(ack);
+    readEvents(r, this.eventHandler, flags, this.entities.ents);
   }
 
   onInventory(r) {
@@ -401,12 +417,14 @@ export class Game {
   }
 
   onChat(id, flags, text) {
-    if (flags & 1) this.ui.addChat('', text, { system: true });
+    const radio = !!(flags & CHATF.RADIO);
+    if (flags & CHATF.SYSTEM) this.ui.addChat('', text, { system: true });
     else {
       const p = this.players.get(id);
-      this.ui.addChat(p ? p.name : '???', text, { zombie: !!(flags & 2), color: flags & 2 ? '#7fae5a' : undefined });
+      const zombie = !!(flags & CHATF.ZOMBIE);
+      this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined, radio, faint: !!(flags & CHATF.FAINT), unheard: !!(flags & CHATF.UNHEARD) });
     }
-    this.audio.playLocal?.('chat', { volume: 0.5 });
+    this.audio.playLocal?.(radio ? 'radio' : 'chat', { volume: 0.5 });
   }
 
   onPlayers(r) {
@@ -417,16 +435,33 @@ export class Game {
       const id = r.u16();
       const name = r.str();
       const status = r.u8();
+      const walkie = !!(r.u8() & PLF.WALKIE);
       const kills = r.u16();
       const ping = r.u16();
       seen.add(id);
-      this.players.set(id, { name, status, kills, ping });
+      this.players.set(id, { name, status, walkie, kills, ping });
     }
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
     const ST = ['alive', 'zombie', 'dead', 'downed'];
-    for (const [id, p] of this.players) list.push({ id, name: p.name, status: ST[p.status] === 'downed' ? 'alive' : ST[p.status] || 'alive', kills: p.kills, ping: id === this.myId ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), self: id === this.myId });
+    for (const [id, p] of this.players) list.push({ id, name: p.name, status: ST[p.status] === 'downed' ? 'alive' : ST[p.status] || 'alive', kills: p.kills, ping: id === this.myId ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self: id === this.myId });
     this.ui.setPlayers(list);
     this.voice.syncPlayers([...this.players.keys()]);
+    // who the walkie-talkie reaches
+    const onRadio = !!this.players.get(this.myId)?.walkie;
+    for (const [id, p] of this.players) if (id !== this.myId) this.voice.setRadio(id, radioLinked(p.walkie, onRadio));
+    if (onRadio !== this.onRadio) {
+      this.onRadio = onRadio;
+      this.ui.setRadio(onRadio);
+      if (onRadio) {
+        this.ui.addChat('', 'Walkie-talkie: your voice and chat now reach every survivor carrying one.', { system: true });
+        this.audio.playLocal?.('radio', { volume: 0.6 });
+      }
+    }
+  }
+
+  // the peers you can hear talking right now (for the HUD)
+  speakers() {
+    return this.talkPeers.map((id) => ({ name: this.players.get(id)?.name || '?', radio: this.voice.overRadio(id) }));
   }
 
   name(id) {
@@ -499,6 +534,9 @@ export class Game {
         g.pings.push({ pid, kind, x, y, z, t: g.time, name: g.name(pid) });
         g.audio.playLocal('notify', { volume: 0.7 });
       },
+      pong(held) {
+        g.conn.pong(held);
+      },
       summary(s) {
         // after the "DAY N" title card has faded
         setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1)), 4300);
@@ -529,11 +567,14 @@ export class Game {
         ui.notify('THE HORDE IS COMING', 'danger', 5);
         ui.notify('Board up where you stand: door boards, barricades, a campfire.', 'toast', 6);
         break;
-      case NOTIFY.BOSS:
-        ui.notify(ZOMBIE_DEFS[arg]?.name?.toUpperCase() || 'SOMETHING', 'big', 4);
+      case NOTIFY.BOSS: {
+        const zd = ZOMBIE_DEFS[arg];
+        ui.notify(zd ? (zd.boss ? '' : 'A ') + zd.name.toUpperCase() : 'SOMETHING', 'big', 4);
         ui.notify('has risen from the woods.', 'sub', 4);
+        if (arg === ZTYPE.TANK) ui.notify('Listen for its footsteps. It charges, and it smashes straight through barricades.', 'toast', 7);
         a.stinger?.('boss');
         break;
+      }
       case NOTIFY.SHADE:
         ui.notify('A SHADE IS OUT THERE', 'danger', 4);
         ui.notify('It only moves in the dark. Keep a light on it: flashlight, torch, campfire or flare.', 'toast', 7);
@@ -562,6 +603,11 @@ export class Game {
       case NOTIFY.CAR_ALARM:
         ui.notify('CAR ALARM!', 'danger', 4);
         ui.notify('The noise is drawing the dead. Move!', 'sub', 4);
+        a.stinger?.('boss');
+        break;
+      case NOTIFY.HERD:
+        ui.notify('THE HERD HAS SEEN YOU', 'danger', 4);
+        ui.notify(`${arg} of them, all coming at a run. Sprint out of their sight or stand and fight.`, 'sub', 5);
         a.stinger?.('boss');
         break;
       case NOTIFY.ENGINE_START:
@@ -670,6 +716,7 @@ export class Game {
       mz = _v.z;
       _v.set(mx, my, mz);
     } else _v.set(mx, my, mz);
+    if (def.flame) return this.flamePuff(ev.shooter, ev, mx, my, mz, def);
     if (!def.quiet) {
       this.effects.worldMuzzle(_v, def.pellets > 1 ? 1.3 : 1);
       this.lights.flashMuzzle(_v, 0.8);
@@ -688,6 +735,24 @@ export class Game {
     }
   }
 
+  // One puff of a flamethrower's stream, ours or someone else's: the fire, its light, and the roar while it lasts.
+  // (mx,my,mz) = the nozzle; the stream follows the aim from the eye (ev)
+  flamePuff(id, ev, mx, my, mz, def) {
+    const cp = Math.cos(ev.pitch);
+    const dx = -Math.sin(ev.yaw) * cp;
+    const dy = Math.sin(ev.pitch);
+    const dz = -Math.cos(ev.yaw) * cp;
+    raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
+    const ahead = (mx - ev.x) * dx + (my - ev.y) * dy + (mz - ev.z) * dz; // the nozzle is this far along the stream
+    this.effects.flameJet(mx, my, mz, dx, dy, dz, Math.max(0.3, (_ray.t >= 0 ? _ray.t : def.range) - ahead), def.flame.cone);
+    _v.set(mx + dx * 1.2, my + dy * 1.2 + 0.25, mz + dz * 1.2);
+    this.lights.flashMuzzle(_v, 0.3, 0.12);
+    let f = this.flames.get(id);
+    if (!f) this.flames.set(id, (f = { loop: this.audio.createLoop?.('flamethrower', mx, my, mz) || null, t: 0 }));
+    f.loop?.setPosition(mx, my, mz);
+    f.t = 0.2;
+  }
+
   // ---------------------------------------------------------------- local predicted events
   onLocalEvents(events, s) {
     const a = this.audio;
@@ -696,6 +761,19 @@ export class Game {
         case 'fire': {
           const def = WEAPONS[ev.weapon];
           this.vm.fire();
+          if (def.flame) {
+            // a stream of fire, not a shot: it leaves the nozzle, ahead of the eye and low on the right
+            this.vm.getMuzzle(_v);
+            this.effects.vmMuzzle(_v, 0.55, 0.1);
+            this.renderer.vmMuzzle.intensity = 3;
+            this.vmMuzzleT = 0.12;
+            const cp = Math.cos(ev.pitch);
+            const fx = ev.x + Math.cos(ev.yaw) * 0.12 - Math.sin(ev.yaw) * cp * 0.7;
+            const fz = ev.z - Math.sin(ev.yaw) * 0.12 - Math.cos(ev.yaw) * cp * 0.7;
+            this.flamePuff(-1, ev, fx, ev.y - 0.12 + Math.sin(ev.pitch) * 0.7, fz, def);
+            this.camShake = Math.min(1, (this.camShake || 0) + 0.012);
+            break;
+          }
           a.playLocal(def.sound || 'pistol');
           const kick = SHOT_KICK[ev.weapon];
           if (!def.quiet) {
@@ -791,7 +869,7 @@ export class Game {
       if (s.slot === SLOT_BUILD && !s.zombie && this.self.alive && !s.downed) {
         if (button === 0) this.tryBuild();
         else if (button === 2) {
-          this.buildRot = (this.buildRot + 32) & 255;
+          this.buildRot = (this.buildRot - 32) & 255; // 45deg clockwise seen from above (+yaw is counter-clockwise)
           this.audio.playLocal('ui_click', { volume: 0.4 });
         }
       }
@@ -1088,12 +1166,19 @@ export class Game {
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
     const buttons = self.alive ? inp.sample() : 0;
-    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, (evs, st) => this.onLocalEvents(evs, st)) > 0) inp.clearLatch();
-    const out = this.prediction.takeOutbox();
-    if (out) {
+    let attacked = false;
+    const onEvents = (evs, st) => {
+      for (const ev of evs) if (ev.type === 'fire' || ev.type === 'melee') attacked = true;
+      this.onLocalEvents(evs, st);
+    };
+    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents) > 0) inp.clearLatch();
+    // a packet carries one render time, the one of the frame it leaves in, and the server rewinds its targets to
+    // that for every command in the packet: a shot or a swing goes out in its own frame instead of waiting for
+    // the batch to fill, or it would be judged against where things stood a frame or two after it was aimed
+    for (let out; (out = this.prediction.takeOutbox(dt, attacked)); ) {
       const rt = this.renderTick;
       const rti = Math.floor(rt);
-      this.conn.sendInput(rti, rt - rti, out);
+      this.conn.sendInput(rti, rt - rti, out, this.prediction.hash(out));
     }
     // interpolation clock: corrections are eased in (a step in the clock is a step in every remote entity),
     // and the render delay widens a little when snapshots arrive unevenly so entities don't stall and lurch
@@ -1156,6 +1241,12 @@ export class Game {
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
       if (this.vmMuzzleT <= 0) this.renderer.vmMuzzle.intensity = 0;
+    }
+    // a flamethrower's roar stops a moment after its last puff
+    for (const [id, f] of this.flames) {
+      if ((f.t -= dt) > 0) continue;
+      f.loop?.stop();
+      this.flames.delete(id);
     }
 
     // local footsteps
@@ -1273,9 +1364,13 @@ export class Game {
     // voice talking indicators
     if (this.frame % 6 === 0) {
       const talking = this.voice.poll();
-      if (talking.join() !== this.talkPeers.join()) {
+      const key = talking.map((id) => (this.voice.overRadio(id) ? 'r' : '') + id).join();
+      if (key !== this.talkKey) {
+        // squelch as somebody keys up on the radio
+        if (talking.some((id) => this.voice.overRadio(id) && !this.talkPeers.includes(id))) this.audio.playLocal?.('radio', { volume: 0.5 });
+        this.talkKey = key;
         this.talkPeers = talking;
-        this.ui.setVoiceState({ enabled: this.voice.enabled, transmitting: this.voice.transmitting, speakers: talking.map((id) => this.name(id)) });
+        this.ui.setVoiceState({ enabled: this.voice.enabled, transmitting: this.voice.transmitting, speakers: this.speakers() });
       }
     }
     // post
@@ -1497,7 +1592,7 @@ export class Game {
     const valid = !reason;
     gh.userData.setValid?.(valid);
     this.ghostPlace = { x, z };
-    this.ui.setBuildMenu({ selected: this.buildType, rotate: Math.round((this.buildRot / 256) * 360), counts, valid, reason, unlocked });
+    this.ui.setBuildMenu({ selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, valid, reason, unlocked });
   }
 
   // same overlap rules the server applies when placing a structure
@@ -1718,6 +1813,7 @@ export class Game {
       car: this.world.car,
       pings: this.pings,
       crates,
+      benches: g.benches,
       discovered: this.discovered,
       hints: g.hints,
       supplies: g.supplies,

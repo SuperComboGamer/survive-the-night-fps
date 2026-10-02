@@ -1,7 +1,8 @@
-// Curated CC0 recordings (Freesound, mostly via the Deadfall asset set; authors in samples/CREDITS.md) layered over
-// the procedural engine. Everything here is optional: files are fetched + decoded in the background after init and
-// every consumer falls back to the procedural banks while a recording is missing (still loading, fetch or decode
-// failed, no Ogg Vorbis support), so without them the game sounds exactly as before.
+// Curated CC0 recordings (Freesound; authors in samples/CREDITS.md) layered over the procedural engine: the score,
+// ambience and weather beds, wildlife, footsteps, foley, gunshots, explosions, creature and survivor voices.
+// Everything here is optional: files are fetched + decoded in the background after init and every consumer falls
+// back to the procedural banks while a recording is missing (still loading, fetch or decode failed, no Ogg Vorbis
+// support), so without them the game still has every sound, synthesised.
 
 let URLS = {};
 try {
@@ -15,6 +16,7 @@ try {
 // slices: flat [start, dur, start, dur, ...] in seconds.
 const BED32 = { sr: 32000, lazy: true };
 export const REC = {
+
   amb_day: BED32,
   amb_day_wind: BED32,
   amb_dawn: BED32,
@@ -52,16 +54,71 @@ export const REC = {
   gun_mp5: { slices: [0,0.708, 0.768,0.708, 1.536,0.708, 2.304,0.708, 3.072,1.1, 4.232,1.1] },
   gun_rifle: { slices: [0,2.2, 2.26,2.2] },
   gun_far: { sr: 32000, slices: [0,1.2, 1.26,1.2, 2.52,1.2, 3.78,1.2, 5.04,1.2, 6.3,2] },
+  // weapon handling: magazine out / in, pump racked, a shell thumbed in, bolt worked, dry fire, a weapon drawn; then cloth torn
+  // for a bandage, a can peeled open, the flashlight's switch, the crossbow's string
+  fol_mag_out: { slices: [0,0.469, 0.53,0.54, 1.131,0.599] },
+  fol_mag_in: { slices: [0,0.619, 0.68,0.61, 1.351,0.759, 2.171,0.679] },
+  fol_pump: { slices: [0,0.479, 0.54,0.58, 1.181,0.632] },
+  fol_shell: { slices: [0,0.364, 0.425,0.316, 0.801,0.476] },
+  fol_bolt: { slices: [0,0.989, 1.05,1.306, 2.417,1.165] },
+  fol_dry: { slices: [0,0.258, 0.319,0.256, 0.636,0.259] },
+  fol_draw: { slices: [0,0.576, 0.637,0.473, 1.171,0.619] },
+  fol_rip: { slices: [0,0.869, 0.93,0.759] },
+  fol_can: { slices: [0,1.119, 1.18,1.749] },
+  fol_click: { slices: [0,0.109, 0.17,0.139, 0.37,0.159, 0.59,0.116] },
+  fol_xbow: { slices: [0,0.19, 0.251,0.332, 0.643,0.5] },
+  // a hand in a pack: grabbing something up, rummaging through a container
+  fol_bag: { slices: [0,0.489, 0.55,0.429, 1.04,0.549, 1.65,0.659] },
+  // explosions (close, and from far off through the trees), breaking glass and wood, struck metal, a body going down, acid
+  exp_near: { slices: [0,3.367, 3.428,3.079, 6.568,2.829, 9.458,1.946] },
+  exp_far: { sr: 32000, slices: [0,5.449, 5.51,4.349] },
+  imp_glass: { slices: [0,1.197, 1.258,1.899, 3.218,1.433] },
+  imp_wood_break: { slices: [0,1.565, 1.626,0.899, 2.586,1.029, 3.676,1.249] },
+  imp_metal: { slices: [0,0.316, 0.377,0.333, 0.77,0.319, 1.15,0.312, 1.523,0.677, 2.261,1.199] },
+  imp_body: { sr: 32000, slices: [0,0.985, 1.046,0.624] },
+  imp_acid: { sr: 32000, slices: [0,1.946] },
   hit_bullet: { slices: [0,0.149, 0.21,0.144, 0.415,0.22, 0.695,0.19, 0.945,0.299] },
   hit_head: { slices: [0,0.6, 0.66,0.299, 1.02,0.6] },
+  // the survivors' own voice (one performer): hurt, dying
+  pv_hurt: { sr: 32000, slices: [0,0.293, 0.354,0.246, 0.66,0.298, 1.019,0.329, 1.408,0.321, 1.79,0.301, 2.152,0.445, 2.658,0.499, 3.218,0.319, 3.597,0.405, 4.064,0.435, 4.559,0.343, 4.964,0.47, 5.495,0.285] },
+  pv_death: { sr: 32000, slices: [0,1.353, 1.414,1.184, 2.659,1.286, 4.005,1.053, 5.119,1.256, 6.436,1.138] },
   // zombie voices
   zv_growl: { sr: 32000, slices: [0,2.629, 2.69,3.149, 5.9,2.24, 8.2,2.479, 10.74,2.369, 13.17,3.419, 16.65,3.529, 20.24,1.169, 21.47,0.69, 22.22,1.88, 24.16,1.55, 25.77,1.12] },
   zv_attack: { sr: 32000, slices: [0,0.8, 0.86,0.77, 1.69,0.97, 2.72,0.81, 3.59,0.99, 4.64,1.039, 5.74,0.91, 6.71,0.78, 7.55,0.939, 8.55,0.87, 9.48,0.78, 10.32,1.05, 11.43,1.089, 12.58,0.519, 13.16,0.88] },
   zv_pain: { sr: 32000, slices: [0,1.07, 1.13,0.51, 1.7,0.649, 2.41,0.538, 3.009,0.81, 3.879,0.878, 4.817,0.309] },
   zv_death: { sr: 32000, slices: [0,0.6, 0.66,0.83, 1.55,1.6, 3.21,1.21, 4.48,1.19] },
   zv_scream: { sr: 32000, slices: [0,1.909, 1.97,1.62, 3.65,1.419] },
-  zv_roar: { sr: 32000, slices: [0,1.55, 1.61,2.149] },
   zv_idle: { sr: 32000 },
+  // idle moans (several voices), and one voice per kind of special: tank, boss, leaper, spitter, boomer, shade
+  zv_moan: { sr: 32000, slices: [0,2.619, 2.68,1.599, 4.34,2.379, 6.78,2.149, 8.99,3.939, 12.99,1.499, 14.55,1.399, 16.01,3.599, 19.67,2.479, 22.21,4.349, 26.62,3.473, 30.154,1.599, 31.814,3.339, 35.214,2.599, 37.874,1.899, 39.834,1.299, 41.194,3.137, 44.392,2.459, 46.912,2.992] },
+  zv_roar: { sr: 32000, slices: [0,2.183, 2.244,3.115, 5.42,2.306, 7.788,2.366, 10.215,2.377, 12.652,1.476, 14.189,1.576] },
+  zv_boss: { sr: 32000, slices: [0,2.978, 3.039,3.331, 6.431,3.338, 9.83,4.002, 13.893,4.622] },
+  zv_screech: { sr: 32000, slices: [0,0.889, 0.95,1.328, 2.339,1.959, 4.359,1.503, 5.922,1.549, 7.532,1.299, 8.892,2.428] },
+  zv_spit: { sr: 32000, slices: [0,0.885, 0.946,0.769, 1.775,0.634] },
+  zv_gurgle: { sr: 32000, slices: [0,1.572, 1.633,1.62, 3.314,1.589, 4.964,2.299, 7.324,2.499, 9.884,1.699, 11.644,2.293] },
+  zv_whisper: { sr: 32000, slices: [0,2.019, 2.08,2.529, 4.67,1.739, 6.47,1.699, 8.23,1.729, 10.02,1.889] },
+  // feral dogs, the stray cat
+  dog_bark: { sr: 32000, slices: [0,0.953, 1.014,0.323, 1.398,0.653, 2.113,0.306, 2.479,0.634, 3.174,0.839, 4.074,0.924, 5.059,0.96, 6.081,1.376] },
+  dog_snarl: { sr: 32000, slices: [0,1.379, 1.44,1.449, 2.95,1.404, 4.415,1.328, 5.804,1.239, 7.104,1.409, 8.574,1.369] },
+  dog_howl: { sr: 32000, slices: [0,2.199, 2.26,3.405, 5.726,1.993, 7.779,1.513] },
+  dog_yelp: { sr: 32000, slices: [0,1.162, 1.223,0.889, 2.173,0.824, 3.057,0.416, 3.534,1.229] },
+  cat_meow: { sr: 32000, slices: [0,1.249, 1.31,1.377, 2.748,1.076, 3.885,0.548] },
+  amb_horde: BED32, // a large group of the dead, idle and hungry: the horde heard from wherever it is
+  // weather: rain falling through the forest; thunder, close (a crack, then the roll) and far off
+  amb_rain: BED32,
+  thunder_near: { sr: 32000, lazy: true, slices: [0,12.079, 12.14,12.149, 24.35,7.579] },
+  thunder_far: { sr: 32000, lazy: true, slices: [0,9.599, 9.66,7.199] },
+  // the horn before dark (two blasts of a distant war horn); the car: an engine that will not catch, and one that does
+  horn: { sr: 32000, slices: [0,6.149, 6.21,6.399] },
+  car_crank: { sr: 32000, slices: [0,4.599] },
+  car_start: { sr: 32000, slices: [0,4.749] },
+  // cinematic stingers (stereo): night falls, something big, you died, the sun, you got out, nobody did
+  stg_night: BED32,
+  stg_boss: BED32,
+  stg_death: BED32,
+  stg_dawn: BED32,
+  stg_victory: BED32,
+  stg_gameover: BED32,
 
   branch_snap: { slices: [0,0.432, 0.492,0.282, 0.834,0.232, 1.126,0.852, 2.038,0.222, 2.32,0.852, 3.232,0.852, 4.144,0.852, 5.056,0.352, 5.468,0.852, 6.38,0.302, 6.742,0.412, 7.214,0.852, 8.126,0.192] },
   bush_rustle: { sr: 32000, slices: [0,0.572, 0.632,1.652, 2.344,0.702, 3.106,1.112, 4.278,1.652, 5.99,0.632, 6.682,1.64, 8.382,1.652] },
@@ -74,6 +131,14 @@ export const REC = {
   wolf_howl: { sr: 32000, lazy: true, slices: [0,9.052, 9.112,9.052, 18.224,9.052, 27.336,6.402] },
   bird_robin: { sr: 32000, lazy: true, slices: [0,2.392, 2.452,4.052, 6.564,1.242, 7.866,4.052, 11.978,3.482, 15.52,2.452, 18.032,3.842, 21.934,3.312, 25.306,4.052, 29.418,4.052] },
   bird_chickadee: { sr: 32000, lazy: true, slices: [0,1.952, 2.012,1.192, 3.264,1.902, 5.226,0.722, 6.008,1.142, 7.21,1.102, 8.372,0.462, 8.894,2.052, 11.006,2.052, 13.118,0.882] },
+  // score stems (music.js): stereo loops cut on their bar lines, or crossfaded where there are none. Last, so the
+  // big files queue behind everything the first minutes of play need (the one in use is asked for up front)
+  mus_menu: BED32,
+  mus_day: { sr: 24000, lazy: true },
+  mus_night: BED32,
+  mus_dread: BED32,
+  mus_horde: BED32,
+  mus_boss: BED32,
 };
 
 const FETCH_CONCURRENCY = 3;

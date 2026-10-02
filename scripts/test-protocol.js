@@ -1,6 +1,7 @@
 // Fuzz test: server delta encoder vs client decoder for every entity kind, including removals,
-// id reuse with new generations, LOD skipping and large/small position deltas.
-import { Writer, Reader, ENT, qpos, qangle16, qangle8, qpitch } from '../shared/protocol.js';
+// id reuse with new generations, LOD skipping and large/small position deltas; then the varints and the
+// command packets (writeInput / readInput).
+import { Writer, Reader, ENT, MAX_CMDS, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput } from '../shared/protocol.js';
 import { ClientView, writeEntities, playerFlags } from '../server/snapshot.js';
 import { readEntities } from '../client/net/decode.js';
 import { createPlayerState } from '../shared/playersim.js';
@@ -48,6 +49,7 @@ function spawn(kind) {
       e.hp = 100;
       e.maxHp = 100;
       e.link = 0;
+      e.burnT = 0;
       break;
     case ENT.ITEM:
       e.item = irnd(1, 84);
@@ -89,10 +91,10 @@ function expectQ(e) {
   const q = [qpos(e.x), qpos(e.y), qpos(e.z)];
   switch (e.kind) {
     case ENT.PLAYER:
-      q.push(qangle16(e.state.yaw), qpitch(e.state.pitch), playerFlags(e), e.zombie ? 0 : e.state.weapons[e.state.slot] || 0, Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255))), e.state.fireCount & 255);
+      q.push(qlookYaw(e.state.yaw), qlookPitch(e.state.pitch), playerFlags(e), e.zombie ? 0 : e.state.weapons[e.state.slot] || 0, Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255))), e.state.fireCount & 255);
       break;
     case ENT.ZOMBIE:
-      q.push(qangle8(e.yaw), e.anim, Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255))), e.link);
+      q.push(qangle8(e.yaw), e.anim, Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255))), e.link, e.legs | 0, e.burnT > 0 ? 1 : 0);
       break;
     case ENT.ITEM:
       q.push(e.count);
@@ -126,16 +128,20 @@ for (let tick = 1; tick <= TICKS; tick++) {
   for (const e of ents.values()) {
     if (e === viewer) continue;
     if (Math.random() < 0.3) {
+      // every position encoding: a few cm on the flat (1 byte), a step (2 bytes), a leap (3) and a teleport (absolute)
       const big = Math.random() < 0.05;
-      e.x += big ? rnd(-30, 30) : rnd(-0.8, 0.8);
-      e.z += big ? rnd(-30, 30) : rnd(-0.8, 0.8);
-      e.y += rnd(-0.3, 0.3);
+      const tiny = Math.random() < 0.3;
+      const step = tiny ? 0.1 : Math.random() < 0.5 ? 0.45 : 1.9;
+      e.x += big ? rnd(-30, 30) : rnd(-step, step);
+      e.z += big ? rnd(-30, 30) : rnd(-step, step);
+      if (!tiny) e.y += rnd(-0.3, 0.3);
     }
     if (e.kind === ENT.ZOMBIE && Math.random() < 0.2) {
       e.anim = irnd(0, 9);
       e.yaw = rnd(0, 6.28);
       e.hp = Math.max(0, e.hp - rnd(0, 10));
       e.link = Math.random() < 0.1 ? irnd(1, 60000) : 0;
+      e.burnT = Math.random() < 0.3 ? 3 : 0; // set alight / gone out
     }
     if (e.kind === ENT.PLAYER && Math.random() < 0.3) {
       e.state.yaw = rnd(0, 6.28);
@@ -172,10 +178,10 @@ for (let tick = 1; tick <= TICKS; tick++) {
   while (ents.size < 90) spawn(kinds[irnd(0, kinds.length - 1)]);
   // encode + decode
   w.reset();
-  writeEntities(w, view, viewer, [...ents.values()], tick);
+  const flags = writeEntities(w, view, viewer, [...ents.values()], tick);
   bytes += w.o;
   const r = new Reader(w.copy());
-  readEntities(r, store, tick);
+  readEntities(r, store, tick, flags);
   if (r.left !== 0) throw new Error(`tick ${tick}: ${r.left} trailing bytes`);
   // verify: every entity the server thinks the client knows matches exactly
   for (const id of view.knownIds) {
@@ -193,4 +199,71 @@ for (let tick = 1; tick <= TICKS; tick++) {
   }
   if (store.ents.size !== view.knownIds.length) throw new Error(`tick ${tick}: client has ${store.ents.size} entities, server thinks ${view.knownIds.length}`);
 }
+// whatever the client was told this tick must be the server's current state, exactly (players' view angles to the
+// precision they replicate at): compare everything not LOD-skipped on the last tick
+for (const id of view.knownIds) {
+  const e = ents.get(id);
+  const c = store.ents.get(id);
+  const exp = expectQ(e);
+  const lagging = exp.some((v, s) => c.q[s] !== v);
+  if (lagging && (e.kind === ENT.PLAYER || Math.hypot(e.x - viewer.state.x, e.z - viewer.state.z) < 40)) throw new Error(`entity ${id} kind ${e.kind} is near the viewer but out of date: ${[...c.q]} vs ${exp}`);
+}
 console.log(`protocol fuzz OK: ${TICKS} ticks, ${checks} entity checks, avg ${(bytes / TICKS).toFixed(0)} B/tick for ~90 entities`);
+
+// varints
+{
+  const vw = new Writer(64);
+  const vals = [0, 1, 127, 128, 255, 16383, 16384, 65535, 2097151, 2097152, 0x7fffffff, 0xffffffff];
+  for (let i = 0; i < 2000; i++) vals.push(Math.floor(Math.random() * 2 ** irnd(1, 32)));
+  for (const v of vals) vw.varu(v);
+  const vr = new Reader(vw.copy());
+  for (const v of vals) {
+    const got = vr.varu();
+    if (got !== v) throw new Error(`varu ${v} came back as ${got}`);
+  }
+  if (vr.left !== 0) throw new Error('varu trailing bytes');
+}
+
+// command packets: every mix of repeated / slightly changed / jumping commands, with and without a fingerprint
+{
+  const iw = new Writer(256);
+  let seq = irnd(0, 65535);
+  let inBytes = 0;
+  const PACKETS = 20000;
+  for (let k = 0; k < PACKETS; k++) {
+    const n = irnd(1, MAX_CMDS);
+    const style = irnd(0, 3);
+    const cmds = [];
+    let buttons = irnd(0, 1023);
+    let qyaw = irnd(0, 65535);
+    let qp = irnd(-31000, 31000);
+    for (let i = 0; i < n; i++) {
+      seq = (seq + 1) & 0xffff;
+      if (style === 1) {
+        qyaw = (qyaw + irnd(-150, 150)) & 0xffff;
+        qp = Math.max(-32767, Math.min(32767, qp + irnd(-150, 150)));
+      } else if (style >= 2) {
+        if (Math.random() < 0.5) buttons = irnd(0, 1023);
+        if (Math.random() < 0.5) qyaw = irnd(0, 65535);
+        if (Math.random() < 0.5) qp = irnd(-32767, 32767);
+      }
+      cmds.push({ seq, buttons, qyaw, qpitch: qp, slot: style === 3 && Math.random() < 0.3 ? irnd(0, 4) : 255 });
+    }
+    const hash = Math.random() < 0.1 ? -1 : irnd(0, 255);
+    const ping = Math.random() < 0.1;
+    iw.reset();
+    writeInput(iw, cmds, hash, ping);
+    inBytes += iw.o;
+    const ir = new Reader(iw.copy());
+    const got = readInput(ir);
+    if (ir.left !== 0) throw new Error(`input packet ${k}: ${ir.left} trailing bytes`);
+    if (got.hash !== hash || got.ping !== ping) throw new Error(`input packet ${k}: hash ${got.hash} != ${hash} or ping ${got.ping} != ${ping}`);
+    if (got.cmds.length !== n) throw new Error(`input packet ${k}: ${got.cmds.length} commands, sent ${n}`);
+    for (let i = 0; i < n; i++) {
+      const a = cmds[i];
+      const b = got.cmds[i];
+      if (a.seq !== b.seq || a.buttons !== b.buttons || a.qyaw !== b.qyaw || a.qpitch !== b.qpitch || a.slot !== b.slot) throw new Error(`input packet ${k} cmd ${i}: ${JSON.stringify(b)} != ${JSON.stringify(a)}`);
+    }
+  }
+  console.log(`input codec OK: ${PACKETS} packets, avg ${(inBytes / PACKETS).toFixed(1)} B`);
+}

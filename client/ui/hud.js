@@ -150,7 +150,7 @@ export class Hud {
     this.promptText = el('span', 'prompt-t', this.prompt, '');
     this.prompt.hidden = true;
 
-    this.ctx = el('div', 'ctx', center);
+    this.ctx = el('div', 'ctx scrap', center);
     this.ctx.hidden = true;
     const ch = el('div', 'ctx-head', this.ctx);
     this.ctxIco = el('i', 'ctx-ico', ch);
@@ -169,14 +169,24 @@ export class Hud {
 
     // ---- bottom-left vitals
     const vit = (this.vitals = el('div', 'vitals', layer));
-    this.mic = svgEl('div', 'v-mic', vit, glyph('mic'));
+    const comms = (this.comms = el('div', 'v-comms', vit)); // the voice speaker list is parked in here too (ui.js)
+    this.mic = svgEl('div', 'v-mic', comms, glyph('mic'));
     this.mic.hidden = true;
+    this.radio = svgEl('div', 'v-radio', comms, glyph('radio')); // carrying a walkie-talkie
+    this.radio.title = 'Walkie-talkie';
+    this.radio.hidden = true;
     const hp = (this.hpRow = el('div', 'vrow v-hp', vit));
     this.hpIco = svgEl('i', 'v-ico', hp, glyph('cross'));
     this.hpNum = el('span', 'v-num', hp, '100');
-    const hpb = el('div', 'v-bar', hp);
+    const stack = el('div', 'v-stack', hp);
+    const hpb = el('div', 'v-bar', stack);
     this.hpLag = el('i', 'v-lag', hpb);
     this.hpFill = el('i', 'v-fill', hpb);
+    // stamina rides directly under the health bar
+    const st = (this.stRow = el('div', 'v-st', stack));
+    const stb = el('div', 'v-bar', st);
+    this.stFill = el('i', 'v-fill', stb);
+    svgEl('i', 'v-ico', st, glyph('bolt'));
     this.ecg = svgEl(
       'i',
       'v-ecg',
@@ -189,16 +199,12 @@ export class Hud {
     const arb = el('div', 'v-bar', ar);
     this.arFill = el('i', 'v-fill', arb);
     this.arRow.hidden = true;
-    const st = (this.stRow = el('div', 'vrow v-st', vit));
-    svgEl('i', 'v-ico', st, glyph('bolt'));
-    const stb = el('div', 'v-bar', st);
-    this.stFill = el('i', 'v-fill', stb);
     const fl = (this.flRow = el('div', 'v-flash', vit));
+    this.flBeam = svgEl('i', 'fl-beam', fl, glyph('flashlight'));
     const batt = el('span', 'batt', fl);
     this.flLvl = el('i', 'batt-lvl', batt);
     el('i', 'batt-nub', batt);
     this.flTxt = el('span', 'fl-txt', fl, '100%');
-    this.flBeam = svgEl('i', 'fl-beam', fl, glyph('flashlight'));
 
     // ---- bottom-right weapons
     const wp = (this.weap = el('div', 'weap', layer));
@@ -211,7 +217,7 @@ export class Hud {
       el('span', 'slot-key', row, String(i + 1));
       return { row, ico, name, cnt, item: -1 };
     });
-    const am = el('div', 'ammo', wp);
+    const am = (this.ammo = el('div', 'ammo', wp));
     const wn = el('div', 'w-head', am);
     this.wIco = el('i', 'w-ico', wn);
     this.wName = el('span', 'w-name', wn, '');
@@ -219,11 +225,11 @@ export class Hud {
     this.aMag = el('span', 'a-mag', ar2, '0');
     this.aSep = el('span', 'a-sep', ar2, '/');
     this.aRes = el('span', 'a-res', ar2, '0');
+    // the magazine, one pip per round (--n rounds, --m of them lit); it fills back up while reloading
+    this.aPips = el('div', 'a-pips', am);
+    el('i', '', this.aPips);
+    this.aPips.hidden = true;
     this.aType = el('div', 'a-type', am, '');
-    this.reload = el('div', 'reload', am);
-    this.reloadFill = el('i', '', el('div', 'reload-bar', this.reload));
-    el('span', 'reload-t', this.reload, 'Reloading');
-    this.reload.hidden = true;
 
     // ---- downed overlay
     this.downed = new Downed(layer);
@@ -371,8 +377,15 @@ export class Hud {
     const maxHp = h.maxHp || 100;
     const hp = Math.max(0, Math.ceil(h.hp || 0));
     if (c.hp !== hp) {
+      // a hit or a heal kicks the number; the 1 hp ticks of regeneration stay quiet
+      const d = c.hp === undefined || c.hpZ !== zombie ? 0 : hp - c.hp;
       c.hp = hp;
+      c.hpZ = zombie;
       this.hpNum.textContent = String(hp);
+      if (d < 0 || d > 1) {
+        const col = d < 0 ? '#ff5446' : '#b6d08a';
+        this.hpNum.animate([{ color: col, transform: `scale(${d < 0 ? 1.14 : 1.08})` }, { color: col, offset: 0.35 }, { transform: 'scale(1)' }], { duration: d < 0 ? 380 : 560, easing: 'ease-out' });
+      }
     }
     const hr = Math.round(clamp((h.hp || 0) / maxHp, 0, 1) * 400) / 400;
     if (c.hpR !== hr) {
@@ -461,14 +474,16 @@ export class Hud {
     // active weapon block
     const id = slot === 3 ? h.throwItem || weapons[3] || 0 : weapons[slot] || 0;
     if (c.wId !== id) {
+      const wasId = c.wId;
       c.wId = id;
       this.wName.textContent = id ? ITEM_DEFS[id]?.name || '' : 'Unarmed';
       this.wIco.innerHTML = id ? itemIcon(id) : '';
       const w = WEAPONS[id];
       c.aTypeStr = w && !w.melee ? AMMO_NAMES[w.ammo] : '';
-      this.aType.textContent = c.aTypeStr;
       c.magMax = w && w.mag ? w.mag : 0;
-      c.mag = c.res = c.ammoMode = undefined;
+      c.magEach = !!(w && w.reloadEach);
+      c.mag = c.res = c.ammoMode = c.pipM = undefined;
+      if (wasId !== undefined) this.ammo.animate([{ opacity: 0.3, transform: 'translateX(8px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' });
     }
     let mode;
     if (slot === 3 && id) mode = 'throw';
@@ -479,7 +494,13 @@ export class Hud {
       this.ammoRow.hidden = mode === 'none';
       this.aSep.hidden = this.aRes.hidden = mode === 'throw';
       this.aType.hidden = mode !== 'gun';
-      c.mag = c.res = undefined;
+      const pips = mode === 'gun' && c.magMax > 0;
+      this.aPips.hidden = !pips;
+      if (pips) {
+        this.aPips.style.setProperty('--n', c.magMax);
+        this.aPips.classList.toggle('dense', c.magMax > 60); // too many rounds to tell apart: a plain gauge
+      }
+      c.mag = c.res = c.pipM = undefined;
     }
     if (mode === 'throw') {
       const tc = h.throwCount | 0;
@@ -495,8 +516,10 @@ export class Hud {
         c.mag = mag;
         this.aMag.textContent = String(mag);
         const lowT = Math.max(1, Math.ceil(c.magMax * 0.25));
-        this.aMag.classList.toggle('low', mag > 0 && mag <= lowT && mag < c.magMax); // a full single-shot is not low
+        const low = mag > 0 && mag <= lowT && mag < c.magMax; // a full single-shot is not low
+        this.aMag.classList.toggle('low', low);
         this.aMag.classList.toggle('out', mag === 0);
+        this.aPips.classList.toggle('low', low);
       }
       if (c.res !== res) {
         c.res = res;
@@ -504,15 +527,20 @@ export class Hud {
         this.aRes.classList.toggle('out', res === 0);
       }
     }
-    const rl = h.reloading >= 0 ? Math.round(clamp(h.reloading, 0, 1) * 200) / 200 : -1;
+    const rl = mode === 'gun' && h.reloading >= 0 ? Math.round(clamp(h.reloading, 0, 1) * 200) / 200 : -1;
     if (c.rl !== rl) {
-      const was = c.rl;
+      if ((rl >= 0) !== (c.rl >= 0)) this.ammo.classList.toggle('reloading', rl >= 0);
       c.rl = rl;
-      if ((rl >= 0) !== (was >= 0)) {
-        this.reload.hidden = rl < 0;
-        this.aType.classList.toggle('hide', rl >= 0);
-      }
-      if (rl >= 0) this.reloadFill.style.transform = `scaleX(${rl})`;
+    }
+    const lab = rl >= 0 ? 'Reloading' : c.aTypeStr;
+    if (c.aLab !== lab) this.aType.textContent = c.aLab = lab;
+    if (mode === 'gun') {
+      // lit pips: the rounds in the magazine, plus the ones sliding in as a reload runs (one shell at a
+      // time for a shotgun, never more than the reserve holds)
+      let m = c.mag;
+      if (rl >= 0) m += rl * (c.magEach ? 1 : Math.max(0, Math.min(c.magMax, c.mag + (c.res < 0 ? c.magMax : c.res)) - c.mag));
+      m = Math.round(Math.min(c.magMax, m) * 20) / 20;
+      if (c.pipM !== m) this.aPips.style.setProperty('--m', (c.pipM = m));
     }
   }
 
@@ -578,7 +606,7 @@ export class Hud {
       c.ctxType = type;
       c.ctxA = c.ctxB = c.ctxC = undefined;
       this.ctx.hidden = !type;
-      this.ctx.className = 'ctx' + (type ? ' ctx-' + type : '');
+      this.ctx.className = 'ctx scrap' + (type ? ' ctx-' + type : '');
       this.ctxBar.hidden = type === 'car';
       this.ctxParts.hidden = type !== 'car';
       if (type === 'campfire') {

@@ -2,13 +2,13 @@
 //  - recorded beds (samples.js): day forest, dawn chorus, dusk, night, crickets, three wind layers crossfaded by wind
 //    speed and a shared deterministic gust field, and the near-fire body. Every bed starts at a random loop phase
 //    and "breathes" (±1.5 dB at 0.03-0.08 Hz) so no loop is ever heard twice the same way.
-//  - procedural beds (wind, pines, crickets, fire) cover for any recording that is not (yet) available and fade out
-//    once it is; the horror layers (night drone, horde chorus) are always procedural.
+//  - procedural beds (wind, pines, crickets, fire, the horde's chorus) cover for any recording that is not (yet)
+//    available and fade out once it is; the night drone is always procedural.
 //  - threat: the forest falls silent as zombies close in (birds, crickets, night life) and only slowly recovers.
 //  - one-shots at world positions around the listener, as Poisson processes: recorded takes (song birds, raven,
-//    woodpecker, owls, creaks, twig snaps, wolves) when loaded, the original procedural events otherwise, plus the
-//    always-procedural horror events (screams, whispers, bell, distant groans). At night "dread" events - a branch
-//    snapping, a rustle, something padding past - are placed in a cone behind the listener.
+//    woodpecker, owls, creaks, twig snaps, wolves) and the dead out in the dark (moans carried on the wind, a far-off
+//    scream, a whisper at your shoulder) when loaded, the original procedural events otherwise, plus the bell. At
+//    night "dread" events - a branch snapping, a rustle, something padding past - are placed in a cone behind you.
 //  - weather (s.wind 0..1+, s.rain 0..1): wind swells the wind beds and sets the trees creaking, rain and gales
 //    quiet the birds and crickets, a rain bed plays (a muffled drumming under a roof) and thunder is placed at each
 //    lightning strike.
@@ -31,10 +31,10 @@ const PROC_EVENTS = [
   { bank: 'amb_twig', by: ['branch_snap'], rate: (s, d, n) => (1.1 * n + 0.6 * s.danger) * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], vol: 0.35, ref: 4, gap: 10, hrtf: true },
   { bank: 'amb_owl', by: ['owl_barred', 'owl_horned'], rate: (s, d, n) => 1.9 * n * (s.horde ? 0.4 : 1), dist: [25, 70], elev: [6, 14], vol: 0.42, ref: 15, gap: 12 },
   { bank: 'amb_wolf', by: ['wolf_howl'], rate: (s, d, n) => 1.1 * smooth(0.4, 0.9, n) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [150, 260], elev: [0, 10], vol: 0.8, ref: 80, gap: 25 },
-  { bank: 'amb_scream', rate: (s, d, n) => (0.35 * smooth(0.5, 1, n) + (s.horde ? 0.8 : 0)) * (s.menu ? 0 : 1), dist: [120, 250], elev: [0, 5], vol: 0.55, ref: 70, gap: 30 },
-  { bank: 'amb_whisper', rate: (s, d, n) => (0.22 * smooth(0.6, 1, n) + (s.dead ? 2 : 0) + s.lowHealth * 0.7) * (s.menu ? 0 : 1), dist: [2.5, 6], elev: [0, 1.5], vol: 0.2, ref: 2, gap: 20, hrtf: true },
+  { bank: 'amb_scream', by: ['zv_scream'], rate: (s, d, n) => (0.35 * smooth(0.5, 1, n) + (s.horde ? 0.8 : 0)) * (s.menu ? 0 : 1), dist: [120, 250], elev: [0, 5], vol: 0.55, ref: 70, gap: 30 },
+  { bank: 'amb_whisper', by: ['zv_whisper'], rate: (s, d, n) => (0.22 * smooth(0.6, 1, n) + (s.dead ? 2 : 0) + s.lowHealth * 0.7) * (s.menu ? 0 : 1), dist: [2.5, 6], elev: [0, 1.5], vol: 0.2, ref: 2, gap: 20, hrtf: true },
   { bank: 'amb_bell', rate: (s, d, n) => 0.2 * smooth(0.5, 1, n), dist: [220, 320], elev: [10, 30], vol: 0.65, ref: 120, gap: 90, tolls: true },
-  { bank: 'z_growl', rate: (s, d, n) => (2 * smooth(0.5, 1, n) + (s.horde ? 14 : 0)) * (s.menu ? 0 : 1), dist: [35, 80], elev: [0, 1], vol: 0.4, ref: 6, gap: 0.8, rateJit: 0.15 },
+  { bank: 'z_growl', by: ['zv_moan'], rate: (s, d, n) => (2 * smooth(0.5, 1, n) + (s.horde ? 14 : 0)) * (s.menu ? 0 : 1), dist: [35, 80], elev: [0, 1], vol: 0.4, ref: 6, gap: 0.8, rateJit: 0.15 },
 ];
 
 // Recorded events. rate(s, tf, quiet, wind m/s) -> events per minute (only while the recording is loaded).
@@ -50,16 +50,23 @@ const REC_EVENTS = [
   { key: 'wolf_howl', rate: (s, t) => 0.45 * smooth(0.4, 0.9, t.night) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [200, 320], elev: [0, 8], vol: 0.6, ref: 80, gap: 40, wet: 0.9, rj: 0.04, answer: 0.45 },
   { key: 'tree_creak', rate: (s, t, q, w) => (1 + 1.4 * t.night + 3.5 * smooth(5, 14, w)) * (s.menu ? 0.6 : 1), dist: [8, 32], elev: [4, 14], vol: 1.2, ref: 6, gap: 4, wet: 0.5, rj: 0.15 },
   { key: 'branch_snap', rate: (s, t) => 0.9 * t.night * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], ground: true, vol: 0.7, ref: 4, gap: 10, hrtf: true, wet: 0.4, rj: 0.12 },
+  // the dead, out in the dark: moans carried on the wind (a chorus of them once the horde is up), now and then a
+  // scream from far away, and - late at night, hurt, or dead - a whisper right at your shoulder
+  { key: 'zv_moan', rate: (s, t) => (2 * smooth(0.5, 1, t.night) + (s.horde ? 14 : 0)) * (s.menu ? 0 : 1), dist: [35, 80], elev: [0, 1], vol: 0.5, ref: 6, gap: 0.8, wet: 0.7, rj: 0.1, pitch: 0.85 },
+  { key: 'zv_scream', rate: (s, t) => (0.35 * smooth(0.5, 1, t.night) + (s.horde ? 0.8 : 0)) * (s.menu ? 0 : 1), dist: [120, 250], elev: [0, 5], vol: 1.3, ref: 70, gap: 30, wet: 0.9, rj: 0.06, pitch: 0.9 },
+  { key: 'zv_whisper', rate: (s, t) => (0.22 * smooth(0.6, 1, t.night) + (s.dead ? 2 : 0) + s.lowHealth * 0.7) * (s.menu ? 0 : 1), dist: [2.5, 6], elev: [0, 1.5], vol: 0.3, ref: 2, gap: 20, hrtf: true, wet: 0.3, rj: 0.08 },
 ];
 
-const THUNDER = { bank: 'amb_thunder', dist: [0, 0], elev: [0, 0], vol: 1, ref: 160, gap: 0 };
-const THUNDER_NEAR = { bank: 'amb_thunder_near', dist: [0, 0], elev: [0, 0], vol: 1, ref: 60, gap: 0, rateJit: 0.08 };
+const THUNDER = { bank: 'amb_thunder', dist: [0, 0], elev: [0, 0], vol: 1, ref: 160, gap: 0, rec: { key: 'thunder_far', vol: 1.05, ref: 160, rj: 0.05, wet: 0.5 } };
+const THUNDER_NEAR = { bank: 'amb_thunder_near', dist: [0, 0], elev: [0, 0], vol: 1, ref: 60, gap: 0, rateJit: 0.08, rec: { key: 'thunder_near', vol: 1, ref: 60, rj: 0.06, wet: 0.5 } };
 
 const REC_BY_KEY = Object.fromEntries(REC_EVENTS.map((e) => [e.key, e]));
 
 // recorded beds: base linear gain (calibrated against the procedural mix), wind: rate follows the gusts,
-// dry: bypasses the "under cover" muffle
+// dry: bypasses the "under cover" muffle; lp: a fixed low-pass (heard from a distance); wet: reverb send
 const REC_BEDS = {
+  amb_horde: { gain: 0.36, lp: 3200, wet: 0.4 },
+  amb_rain: { gain: 1.2, rain: true }, // through the rain's own low-pass: a muffled drumming under a roof
   amb_day: { gain: 0.65 },
   amb_day_wind: { gain: 0.42 },
   amb_dawn: { gain: 0.55 },
@@ -137,6 +144,21 @@ class RecBed {
     this.gain = amb.ctx.createGain();
     this.gain.gain.value = 0;
     this.gain.connect(dest);
+    this.head = this.gain; // what the source plays into
+    if (def.lp) {
+      const f = amb.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = def.lp;
+      f.Q.value = 0.5;
+      f.connect(this.gain);
+      this.head = f;
+    }
+    if (def.wet) {
+      const send = amb.ctx.createGain();
+      send.gain.value = def.wet;
+      this.gain.connect(send);
+      send.connect(amb.e._ambSend);
+    }
     this.src = null;
     this.target = 0;
     this.offAt = 0;
@@ -174,7 +196,7 @@ class RecBed {
     s.buffer = buf;
     s.loop = true;
     s.playbackRate.value = this.rate;
-    s.connect(this.gain);
+    s.connect(this.head);
     const g = this.gain.gain;
     g.cancelScheduledValues(now);
     g.setValueAtTime(0, now);
@@ -232,7 +254,7 @@ export class Ambience {
     this.coverLP.Q.value = 0.5;
     this.coverLP.connect(this.out);
     this.rbeds = {};
-    for (const [k, d] of Object.entries(REC_BEDS)) this.rbeds[k] = new RecBed(this, k, d, d.dry ? this.out : this.coverLP);
+    for (const [k, d] of Object.entries(REC_BEDS)) this.rbeds[k] = new RecBed(this, k, d, d.rain ? this.rainLP : d.dry ? this.out : this.coverLP);
     this.rbedList = Object.values(this.rbeds);
     this.lvl = {}; // recorded bed levels (0..1 before gain)
     for (const k in REC_BEDS) this.lvl[k] = 0;
@@ -376,13 +398,13 @@ export class Ambience {
   }
 
   // recorded take of `key` (random slice); o: { vol, ref, hrtf, rj, wet, pitch }. Returns its duration (0 = not played).
-  emitRec(key, o, now, when, pos) {
+  emitRec(key, o, now, when, pos, steal = false) {
     const buf = this.rec.get(key);
     if (!buf) return 0;
     const [off, dur] = this.rec.pick(key, buf);
     const rate = (o.pitch || 1) * (1 + (Math.random() - 0.5) * 2 * (o.rj ?? 0.05)) * this.e._rateMul;
     const t = Math.max(now, when);
-    return this._voice(buf, off, dur, pos[0], pos[1], pos[2], o.vol * rand(0.75, 1.1), o.ref, o.hrtf, rate, o.wet ?? 0.6, t, now) ? dur / rate : 0;
+    return this._voice(buf, off, dur, pos[0], pos[1], pos[2], o.vol * rand(0.75, 1.1), o.ref, o.hrtf, rate, o.wet ?? 0.6, t, now, steal) ? dur / rate : 0;
   }
 
   // a recorded event: the first phrase now; each phrase of a bout queues the next one from the same perch
@@ -428,7 +450,9 @@ export class Ambience {
     const now = this.ctx.currentTime;
     const near = dist < 170;
     const y = this.e._ly + (near ? 25 : 80);
-    this.pending.push({ t: now + delay, ev: near ? THUNDER_NEAR : THUNDER, pos: [x, y, z], steal: true });
+    const ev = near ? THUNDER_NEAR : THUNDER;
+    this.rec.want(ev.rec.key); // decoded by the time the sound gets here
+    this.pending.push({ t: now + delay, ev, pos: [x, y, z], steal: true });
   }
 
   burst(bank, count) {
@@ -524,6 +548,8 @@ export class Ambience {
     const recWind = rec.covers('wind_light') && rec.covers('wind_mid') ? 1 : 0;
     const recCrickets = rec.covers('amb_crickets') ? 1 : 0;
     const recFire = rec.covers('fire_roar') ? 1 : 0;
+    const recHorde = rec.covers('amb_horde') ? 1 : 0;
+    const recRain = rec.covers('amb_rain') ? 1 : 0;
     const tc = 1.6;
     // weather wind: 0.3 is the everyday breeze, ~1.2 a gale (gusts included, in step with the trees)
     const ww = Math.max(0, (s.wind === s.wind ? s.wind : 0.3) - 0.3);
@@ -531,7 +557,7 @@ export class Ambience {
     const weatherQuiet = (1 - 0.8 * rain) * (1 - 0.6 * smooth(0.5, 1, s.wind || 0));
     this.beds.wind.set(Math.min(0.95, (0.22 + 0.2 * n) * this.gust * (1 + ww * 1.7) * (1 - 0.4 * cover) * (s.menu ? 0.8 : 1)) * (1 - recWind), now, tc);
     this.beds.pines.set(Math.min(0.8, (0.14 + 0.09 * n) * this.gust * this.gust * (1 + ww * 2.2) * (1 - 0.6 * cover)) * (1 - recWind), now, tc);
-    this.beds.rain.set(s.menu ? 0 : rain * (cover ? 0.42 : 0.55), now, 2);
+    this.beds.rain.set(s.menu ? 0 : rain * (cover ? 0.42 : 0.55) * (1 - recRain), now, 2);
     const rl = cover ? 650 : 11000;
     if (rl !== this._rl) {
       this._rl = rl;
@@ -540,7 +566,7 @@ export class Ambience {
     const cr = s.menu ? 0.18 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1) * weatherQuiet;
     this.beds.crickets.set(cr * (1 - recCrickets), now, 2.5);
     this.beds.drone.set(s.menu ? 0.16 : n * 0.28 + (s.horde ? 0.1 : 0) + (s.dead ? 0.25 : 0), now, 3);
-    this.beds.horde.set(!s.menu && s.horde ? 0.32 : 0, now, 2.5);
+    this.beds.horde.set(!s.menu && s.horde ? 0.32 * (1 - recHorde) : 0, now, 2.5);
     this.beds.fire.set(s.menu ? 0 : s.nearFire * 0.25 * (1 - recFire), now, 1);
     const wl = cover ? 900 : 1400 + 2600 * (this.gust - 0.6) + 1800 * Math.min(1, ww);
     if (Math.abs(wl - (this._wl || 0)) > 60) {
@@ -563,10 +589,12 @@ export class Ambience {
     L.wind_mid = bell(w, 8.5, 3.5) * gustAmp;
     L.wind_strong = bell(w, 13.5, 4) * gustAmp;
     L.fire_roar = s.menu ? 0 : s.nearFire;
+    L.amb_horde = !s.menu && s.horde ? 1 : 0;
+    L.amb_rain = s.menu ? 0 : rain * (cover ? 0.76 : 1);
     const outdoor = 0.35 + 0.65 * (1 - cover);
     const wrate = 0.97 + 0.07 * gust + 0.02 * smooth(5, 20, w);
     for (const b of this.rbedList) {
-      b.set(L[b.key] * (b.def.dry ? 1 : outdoor), now, b.def.wind ? 0.5 : 1.6);
+      b.set(L[b.key] * (b.def.dry || b.def.rain ? 1 : outdoor), now, b.def.wind ? 0.5 : 1.6);
       if (b.def.wind) b.setRate(wrate, now);
     }
     const clp = cover ? 2500 : 20000;
@@ -617,8 +645,10 @@ export class Ambience {
       const p = this.pending[k];
       if (p.t < now + 0.3) {
         this.pending.splice(k, 1);
-        if (!p.key) this.emit(p.ev, now, p.t, p.pos, !!p.steal);
-        else {
+        if (!p.key) {
+          // the recorded take when the event has one and it is decoded, else its procedural bank
+          if (!(p.ev.rec && this.emitRec(p.ev.rec.key, p.ev.rec, now, p.t, p.pos, !!p.steal))) this.emit(p.ev, now, p.t, p.pos, !!p.steal);
+        } else {
           const dur = this.emitRec(p.key, p.o, now, p.t, p.pos);
           if (dur && p.left > 0) {
             p.t += dur + rand(p.o.gapIn[0], p.o.gapIn[1]);

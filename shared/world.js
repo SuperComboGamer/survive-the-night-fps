@@ -1,17 +1,20 @@
 // Deterministic world generation. The server and every client call createWorld(seed) and get
 // bit-identical terrain, places, roads, vegetation, buildings, containers and colliders, so the map
-// never has to be sent over the network.
+// never has to be sent over the network - only its seed, and a new playthrough means a new seed.
 //
-// Iteration 2 layout: sixteen places spread over the valley and joined by a road network that is
-// routed over the terrain with A* (roads follow valleys and share corridors instead of radiating
-// from one hub), a winding asphalt highway (Route 9) where your car broke down, forest trails, and
-// dozens of small roadside / woodland sites (wrecks, camps, sheds, stashes...) so every walk passes
-// something worth searching.
+// layout.js plans the valley for the seed (the course of Route 9, where your car broke down; the lake;
+// which named places there are and where; which of them the roads join) and this file builds it: the
+// terrain, a road network routed over it with A* (roads follow valleys and share corridors), forest
+// trails, and dozens of small roadside / woodland sites (wrecks, camps, sheds, stashes...) so every walk
+// passes something worth searching.
 import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from './constants.js';
 import { ZONE, CONT } from './defs.js';
 import { PROPS } from './props.js';
 import { mulberry32, createNoise2D, fbm, smoothstep, lerp, clamp } from './rng.js';
 import { ColliderGrid, makeBox, makeCyl, COL } from './collision.js';
+import { ROAD, planLayout, gatePoint } from './layout.js';
+
+export { ROAD };
 
 const PI = Math.PI;
 
@@ -27,65 +30,7 @@ export const TREE_TYPES = [
 ];
 export const ROCK_TYPES = [{ r: 0.9 }, { r: 1.2 }, { r: 0.7 }];
 
-// Road kinds (roadKind grid): 1 dirt county road, 2 asphalt highway, 3 forest trail
-export const ROAD = { DIRT: 1, ASPHALT: 2, TRAIL: 3 };
-
-// Named places. ry: facing (local -Z = front = where the place's main road arrives).
-// j: position jitter per seed. hwy: Route 9 runs straight through (facing follows the road).
-const ZONE_LAYOUT = [
-  { id: ZONE.CAMP, x: 0, z: 10, flat: 18, blend: 24, clear: 22, j: 0, hwy: true, dirt: 0.25 },
-  { id: ZONE.MOTEL, x: -122, z: 42, flat: 32, blend: 24, clear: 36, j: 3, ry: 0, dirt: 0.2 },
-  { id: ZONE.CHURCH, x: -238, z: -28, flat: 34, blend: 24, clear: 38, ry: -PI / 2 },
-  { id: ZONE.BARN, x: -172, z: -150, flat: 46, blend: 30, clear: 52, ry: PI, dirt: 0.45 },
-  { id: ZONE.SAWMILL, x: -40, z: -128, flat: 36, blend: 26, clear: 40, ry: PI, dirt: 0.85 },
-  { id: ZONE.MILITARY, x: 58, z: -246, flat: 30, blend: 24, clear: 32, ry: PI, dirt: 0.5 },
-  { id: ZONE.RELAY, x: 172, z: -212, flat: 22, blend: 30, clear: 26, raise: 9, ry: PI, dirt: 0.35 },
-  { id: ZONE.QUARRY, x: 220, z: -104, flat: 38, blend: 22, clear: 42, pit: 6, ry: PI / 2, dirt: 1 },
-  { id: ZONE.GAS, x: 150, z: -12, flat: 28, blend: 24, clear: 34, j: 3, ry: PI, dirt: 0.2 },
-  { id: ZONE.CHECKPOINT, x: 252, z: 24, flat: 24, blend: 22, clear: 26, j: 2, hwy: true, dirt: 0.3 },
-  { id: ZONE.DOCK, x: 193, z: 193, flat: 20, blend: 20, clear: 30, j: 0, ry: PI / 4 },
-  { id: ZONE.CAMPGROUND, x: 122, z: 168, flat: 30, blend: 24, clear: 30, ry: PI / 2, dirt: 0.35 },
-  { id: ZONE.VILLAGE, x: 38, z: 118, flat: 46, blend: 26, clear: 52, ry: 0, dirt: 0.15 },
-  { id: ZONE.TRAILERS, x: -102, z: 152, flat: 32, blend: 24, clear: 36, ry: -PI / 2, dirt: 0.6 },
-  { id: ZONE.RANGER, x: -222, z: 186, flat: 24, blend: 30, clear: 28, raise: 7, ry: -PI / 2 },
-  { id: ZONE.CABINS, x: -18, z: 244, flat: 26, blend: 24, clear: 22, ry: 0 },
-];
-
-const LAKE = { x: 245, z: 245, r: 62 };
-// smaller ponds (jittered per seed); the valley floor is otherwise kept above the water line
-const PONDS = [
-  { x: -8, z: -178, r: 20, depth: 3.2 },
-  { x: -122, z: -212, r: 16, depth: 2.8 },
-  { x: -158, z: 96, r: 15, depth: 2.6 },
-  { x: 118, z: -150, r: 19, depth: 3.0 },
-  { x: -262, z: 102, r: 13, depth: 2.4 },
-];
 const FLOOR = WATER_LEVEL + 1.2; // soft floor of the terrain outside lakes/ponds
-
-// County roads and forest trails, routed over the terrain. Endpoints: [zoneId, gate] or ['hwy', x]
-// (a junction on Route 9 near that x). gates: front / back / left (-X local) / right (+X local).
-const LINKS = [
-  [['hwy', -170], [ZONE.CHURCH, 'front'], ROAD.DIRT],
-  [[ZONE.CHURCH, 'left'], [ZONE.BARN, 'front'], ROAD.DIRT],
-  [[ZONE.BARN, 'left'], [ZONE.SAWMILL, 'right'], ROAD.DIRT],
-  [[ZONE.SAWMILL, 'front'], ['hwy', -46], ROAD.DIRT],
-  [[ZONE.SAWMILL, 'left'], [ZONE.QUARRY, 'front'], ROAD.DIRT],
-  [[ZONE.QUARRY, 'right'], [ZONE.RELAY, 'front'], ROAD.DIRT],
-  [[ZONE.QUARRY, 'left'], ['hwy', 198], ROAD.DIRT],
-  [['hwy', 64], [ZONE.VILLAGE, 'front'], ROAD.DIRT],
-  [[ZONE.VILLAGE, 'right'], [ZONE.CAMPGROUND, 'front'], ROAD.DIRT],
-  [[ZONE.CAMPGROUND, 'back'], [ZONE.DOCK, 'front'], ROAD.DIRT],
-  [[ZONE.DOCK, 'front'], ['hwy', 228], ROAD.DIRT],
-  [[ZONE.VILLAGE, 'left'], [ZONE.TRAILERS, 'front'], ROAD.DIRT],
-  [[ZONE.TRAILERS, 'left'], [ZONE.MOTEL, 'back'], ROAD.DIRT],
-  [[ZONE.TRAILERS, 'back'], [ZONE.RANGER, 'front'], ROAD.DIRT],
-  [[ZONE.VILLAGE, 'back'], [ZONE.CABINS, 'front'], ROAD.DIRT],
-  [[ZONE.SAWMILL, 'back'], [ZONE.MILITARY, 'front'], ROAD.TRAIL],
-  [[ZONE.MILITARY, 'left'], [ZONE.RELAY, 'right'], ROAD.TRAIL],
-  [[ZONE.CHURCH, 'right'], [ZONE.RANGER, 'left'], ROAD.TRAIL],
-  [[ZONE.CABINS, 'left'], [ZONE.TRAILERS, 'right'], ROAD.TRAIL],
-  [[ZONE.GAS, 'back'], [ZONE.QUARRY, 'back'], ROAD.TRAIL],
-];
 
 // streets inside places (local coords): [[lx,lz]...], kind, width
 const STREETS = {
@@ -95,6 +40,7 @@ const STREETS = {
   ],
   [ZONE.TRAILERS]: [[[[0, -28], [0, -12], [2.5, 4], [0, 28]], ROAD.DIRT, 2.4]],
   [ZONE.CAMPGROUND]: [[[[0, -26], [5, -9], [4, 8], [0, 26]], ROAD.DIRT, 2.2]],
+  [ZONE.DRIVEIN]: [[[[0, -30], [0, -20], [-1.5, -11]], ROAD.DIRT, 2.6]],
 };
 
 export function createWorld(seed) {
@@ -105,25 +51,30 @@ export function createWorld(seed) {
   const nD = createNoise2D(seed + 4);
   const nE = createNoise2D(seed + 5);
 
-  // ---------------------------------------------------------------- places
-  const zones = ZONE_LAYOUT.map((z) => {
-    const j = z.j ?? 8;
-    const ry = z.ry === undefined ? 0 : z.ry + rng.range(-0.12, 0.12);
-    return { ...z, x: z.x + rng.range(-j, j), z: z.z + rng.range(-j, j), h: 0, ry };
-  });
-  const zoneById = {};
-  for (const z of zones) zoneById[z.id] = z;
-
-  const ponds = PONDS.map((p) => ({ ...p, x: p.x + rng.range(-6, 6), z: p.z + rng.range(-6, 6) }));
-  // raw hills; valleys are softly floored above the water line (only the lake and ponds hold water)
-  const H0 = (x, z) => {
-    const d = Math.hypot(x, z - 60);
-    const hill = 0.35 + 0.65 * smoothstep(30, 160, d);
+  // ---------------------------------------------------------------- layout
+  // the raw hills, before the valley floor is pressed into them
+  const relief = (x, z) => {
     const n1 = fbm(nA, x * 0.0042, z * 0.0042, 4);
     const n2 = fbm(nB, x * 0.017, z * 0.017, 3);
     const rd = 1 - Math.abs(nC(x * 0.0075, z * 0.0075));
+    return n1 * 24 + n2 * 4.5 + rd * rd * 9 - 5;
+  };
+  // own rng stream: the plan only depends on the seed
+  const { valley, zones, lake, ponds, highway: hwyAnchors, links } = planLayout(mulberry32(seed ^ 0x1a707), relief);
+  const zoneById = {};
+  for (const z of zones) zoneById[z.id] = z;
+  const nearZone = (x, z, pad) => {
+    for (const zn of zones) if (Math.hypot(x - zn.x, z - zn.z) < zn.flat + pad) return zn;
+    return null;
+  };
+
+  // the hills flatten out around the breakdown; valleys are softly floored above the water line (only the
+  // lake and ponds hold water)
+  const H0 = (x, z) => {
+    const d = Math.hypot(x - valley.x, z - valley.z);
+    const hill = 0.35 + 0.65 * smoothstep(30, 160, d);
     const micro = fbm(nD, x * 0.09, z * 0.09, 2) * 0.28;
-    const h = (n1 * 24 + n2 * 4.5 + rd * rd * 9 - 5) * (0.1 + 0.9 * hill);
+    const h = relief(x, z) * (0.1 + 0.9 * hill);
     const a = (h - FLOOR) * 0.8;
     return FLOOR + 0.5 * (a + Math.sqrt(a * a + 9)) + micro;
   };
@@ -146,12 +97,12 @@ export function createWorld(seed) {
       h = lerp(h, zn.h, t);
     }
     // lake
-    const dLraw = Math.hypot(x - LAKE.x, z - LAKE.z);
-    if (dLraw < LAKE.r + 60) {
+    const dLraw = Math.hypot(x - lake.x, z - lake.z);
+    if (dLraw < lake.r + 60) {
       const dL = dLraw + nE(x * 0.03, z * 0.03) * 9;
-      const shore = 1 - smoothstep(LAKE.r - 6, LAKE.r + 45, dL);
+      const shore = 1 - smoothstep(lake.r - 6, lake.r + 45, dL);
       h = lerp(h, Math.min(h, WATER_LEVEL + 1.2), shore * 0.9);
-      const bowl = 1 - smoothstep(LAKE.r * 0.25, LAKE.r - 2, dL);
+      const bowl = 1 - smoothstep(lake.r * 0.25, lake.r - 2, dL);
       h = lerp(h, WATER_LEVEL - 5.5, bowl);
     }
     for (let i = 0; i < ponds.length; i++) {
@@ -197,11 +148,6 @@ export function createWorld(seed) {
   // local <-> world for a place
   const zwx = (zn, lx, lz) => zn.x + Math.cos(zn.ry) * lx + Math.sin(zn.ry) * lz;
   const zwz = (zn, lx, lz) => zn.z - Math.sin(zn.ry) * lx + Math.cos(zn.ry) * lz;
-  const gate = (zn, g) => {
-    const d = zn.flat * 0.88;
-    const [lx, lz] = g === 'front' ? [0, -d] : g === 'back' ? [0, d] : g === 'left' ? [-d, 0] : g === 'right' ? [d, 0] : [0, 0];
-    return [zwx(zn, lx, lz), zwz(zn, lx, lz)];
-  };
 
   // ---------------------------------------------------------------- roads
   const roads = [];
@@ -246,6 +192,13 @@ export function createWorld(seed) {
         hs[i] = s / c;
       }
     }
+    // ...but a road meets a place at the level of its yard, it does not cut a ramp into it
+    for (let i = 0; i < n; i++) {
+      for (const zn of zones) {
+        const d = Math.hypot(pts[i * 2] - zn.x, pts[i * 2 + 1] - zn.z);
+        if (d < zn.flat + 12) hs[i] = lerp(hs[i], zn.h, 1 - smoothstep(zn.flat * 0.75, zn.flat + 12, d));
+      }
+    }
     let length = 0;
     for (let i = 1; i < n; i++) length += Math.hypot(pts[i * 2] - pts[i * 2 - 2], pts[i * 2 + 1] - pts[i * 2 - 1]);
     const road = { pts: new Float32Array(pts), hs, kind, width, name, length };
@@ -253,15 +206,11 @@ export function createWorld(seed) {
     return road;
   };
 
-  // Route 9: winding asphalt highway west -> east past the motel, your broken-down car, the gas station
-  // and the army checkpoint. Meander points between the anchors keep it from ever running straight.
+  // Route 9: winding asphalt highway across the whole valley, past your broken-down car and the front of
+  // every place that stands on it. Meander points between the anchors keep it from ever running straight.
   let highway;
   {
-    const motel = zoneById[ZONE.MOTEL];
-    const camp = zoneById[ZONE.CAMP];
-    const gas = zoneById[ZONE.GAS];
-    const cp = zoneById[ZONE.CHECKPOINT];
-    const anchors = [[-MAP_HALF - 12, 70 + rng.range(-10, 10)], [-238, 48 + rng.range(-8, 8)], gate(motel, 'front'), [camp.x, camp.z], gate(gas, 'front'), [cp.x, cp.z], [MAP_HALF + 12, 36 + rng.range(-8, 8)]];
+    const anchors = hwyAnchors;
     const ctrl = [anchors[0]];
     for (let i = 0; i < anchors.length - 1; i++) {
       const [ax, az] = anchors[i];
@@ -282,12 +231,13 @@ export function createWorld(seed) {
     }
     highway = buildRoad(ctrl, ROAD.ASPHALT, 3.6, 'Route 9');
   }
-  const hwyPoint = (x) => {
+  // nearest point of Route 9 to (x,z): [x, z, index]
+  const hwyPoint = (x, z) => {
     const p = highway.pts;
     let best = 0;
     let bd = Infinity;
     for (let i = 0; i < p.length / 2; i++) {
-      const d = Math.abs(p[i * 2] - x);
+      const d = Math.hypot(p[i * 2] - x, p[i * 2 + 1] - z);
       if (d < bd) {
         bd = d;
         best = i;
@@ -298,14 +248,13 @@ export function createWorld(seed) {
   // places Route 9 runs through face along the road
   for (const zn of zones) {
     if (!zn.hwy) continue;
-    const [, , i] = hwyPoint(zn.x);
+    const [hx, hz, i] = hwyPoint(zn.x, zn.z);
     const p = highway.pts;
     const a = Math.max(0, i - 3);
     const b = Math.min(p.length / 2 - 1, i + 3);
     const dx = p[b * 2] - p[a * 2];
     const dz = p[b * 2 + 1] - p[a * 2 + 1];
-    zn.ry = Math.atan2(-dx, -dz); // front (-Z local) faces east along the road
-    const [hx, hz] = hwyPoint(zn.x);
+    zn.ry = Math.atan2(-dx, -dz); // front (-Z local) faces along the road
     zn.x = hx;
     zn.z = hz;
   }
@@ -358,7 +307,7 @@ export function createWorld(seed) {
   const aClosed = new Uint8Array(AN * AN);
   const heapK = new Int32Array(AN * AN * 8);
   const heapF = new Float32Array(AN * AN * 8);
-  const route = (ax, az, bx, bz, exempt) => {
+  const route = (ax, az, bx, bz) => {
     const cell = (v) => clamp(Math.floor((v + MAP_HALF) / AG), 0, AN - 1);
     const s = cell(az) * AN + cell(ax);
     const t = cell(bz) * AN + cell(bx);
@@ -398,7 +347,7 @@ export function createWorld(seed) {
       heapK[i] = lk;
       return top;
     };
-    const cost = (k) => aBase[k] * (aRoad[k] ? 0.42 : 1) + (aZone[k] >= 0 && !exempt.has(aZone[k]) ? 30 : 0);
+    const cost = (k) => aBase[k] * (aRoad[k] ? 0.42 : 1) + (aZone[k] >= 0 ? 30 : 0);
     aG[s] = 0;
     push(s, 0);
     while (hn > 0) {
@@ -446,20 +395,22 @@ export function createWorld(seed) {
     return simplify(pts, 1.6);
   };
   const endpoint = (e) => {
-    if (e[0] === 'hwy') {
-      const [x, z] = hwyPoint(e[1]);
-      return { x, z, zi: -1 };
+    if (!e.zone) {
+      const [x, z] = hwyPoint(e.x, e.z);
+      return { x, z };
     }
-    const zn = zoneById[e[0]];
-    const [x, z] = gate(zn, e[1]);
-    // driveway: the road continues from the gate into the place (unless it has its own streets)
-    const inner = STREETS[zn.id] ? null : [zn.x + (x - zn.x) * 0.5, zn.z + (z - zn.z) * 0.5];
-    return { x, z, zi: zones.indexOf(zn), inner };
+    const zn = e.zone;
+    const [x, z] = gatePoint(zn, e.gate);
+    // driveway: the road runs on in from the gate - half way to the middle at the front, a little way into the
+    // yard at the sides and back (unless one of the place's own streets meets it there)
+    const street = (STREETS[zn.id] || []).some(([pts]) => [pts[0], pts[pts.length - 1]].some(([lx, lz]) => Math.hypot(zwx(zn, lx, lz) - x, zwz(zn, lx, lz) - z) < 6));
+    const t = e.gate === 'f' ? 0.5 : 0.75;
+    const inner = street ? null : [zn.x + (x - zn.x) * t, zn.z + (z - zn.z) * t];
+    return { x, z, inner };
   };
-  for (const [a, b, kind] of LINKS) {
+  for (const [a, b, kind] of links) {
     const A = endpoint(a);
     const B = endpoint(b);
-    const exempt = new Set([A.zi, B.zi]);
     // a bend waypoint keeps long roads from running dead straight across flat ground
     const L = Math.hypot(B.x - A.x, B.z - A.z);
     let ctrl;
@@ -470,10 +421,14 @@ export function createWorld(seed) {
       let wz = A.z + (B.z - A.z) * t + ((B.x - A.x) / L) * off;
       wx = clamp(wx, -MAP_HALF + 50, MAP_HALF - 50);
       wz = clamp(wz, -MAP_HALF + 50, MAP_HALF - 50);
-      const a1 = route(A.x, A.z, wx, wz, exempt);
-      const a2 = route(wx, wz, B.x, B.z, exempt);
-      ctrl = simplify([...a1, ...a2.slice(1)], 1.6);
-    } else ctrl = route(A.x, A.z, B.x, B.z, exempt);
+      // (not if the bend would drag the road through a place or the water)
+      if (rawH(wx, wz) > WATER_LEVEL + 1.5 && !nearZone(wx, wz, 14)) {
+        const a1 = route(A.x, A.z, wx, wz);
+        const a2 = route(wx, wz, B.x, B.z);
+        ctrl = simplify([...a1, ...a2.slice(1)], 1.6);
+      }
+    }
+    if (!ctrl) ctrl = route(A.x, A.z, B.x, B.z);
     if (A.inner && kind !== ROAD.TRAIL) ctrl = [A.inner, ...ctrl];
     if (B.inner && kind !== ROAD.TRAIL) ctrl = [...ctrl, B.inner];
     const r = buildRoad(ctrl, kind, kind === ROAD.TRAIL ? 1.5 : 2.6);
@@ -481,6 +436,7 @@ export function createWorld(seed) {
   }
   for (const zid in STREETS) {
     const zn = zoneById[zid];
+    if (!zn) continue;
     for (const [pts, kind, width] of STREETS[zid]) buildRoad(pts.map(([lx, lz]) => [zwx(zn, lx, lz), zwz(zn, lx, lz)]), kind, width);
   }
 
@@ -564,10 +520,6 @@ export function createWorld(seed) {
   const roadDistAt = (x, z) => sampleGrid(roadDist, x, z);
   const roadKindAt = (x, z) => sampleGrid(roadKind, x, z);
   const inLakeRaw = (x, z) => heightAt(x, z) < WATER_LEVEL + 0.35;
-  const nearZone = (x, z, pad) => {
-    for (const zn of zones) if (Math.hypot(x - zn.x, z - zn.z) < zn.flat + pad) return zn;
-    return null;
-  };
 
   // ---------------------------------------------------------------- roadside & woodland sites
   // Chosen now (before anything is built) so the ground under sheds / camps can be levelled.
@@ -576,7 +528,8 @@ export function createWorld(seed) {
     for (const s of sites) if (Math.hypot(s.x - x, s.z - z) < minGap) return false;
     return true;
   };
-  const siteOk = (x, z) => Math.abs(x) < MAP_HALF - 50 && Math.abs(z) < MAP_HALF - 50 && !inLakeRaw(x, z) && !nearZone(x, z, 16) && Math.hypot(x - LAKE.x, z - LAKE.z) > LAKE.r + 8;
+  const DRY = [[0, 0], [6, 0], [-6, 0], [0, 6], [0, -6]]; // a site wants dry ground under all of it
+  const siteOk = (x, z) => Math.abs(x) < MAP_HALF - 50 && Math.abs(z) < MAP_HALF - 50 && !DRY.some(([dx, dz]) => inLakeRaw(x + dx, z + dz)) && !nearZone(x, z, 16) && Math.hypot(x - lake.x, z - lake.z) > lake.r + 8;
   const ROADSIDE_W = [['wreck', 5], ['camp', 2.5], ['logpile', 1.5], ['shed', 1.4], ['stash', 1], ['ruin', 1], ['grave', 0.8], ['roadblock', 1.2], ['bus', 0.5]];
   const TRAIL_W = [['camp', 3], ['hunter', 2.5], ['stash', 1.5], ['logpile', 1], ['grave', 1.2], ['shed', 1]];
   const WOODS_W = [['camp', 2.5], ['hunter', 2.5], ['stash', 2], ['shed', 1.5], ['ruin', 1.5], ['grave', 1.2], ['logpile', 0.8]];
@@ -890,18 +843,19 @@ export function createWorld(seed) {
   const gap = (at, w, y1) => ({ at, w, y0: 0, y1 });
 
   // ---------------------------------------------------------------- places
-  const zb = (zone) => {
+  // builds a place if this map has it: build(builder in the place's frame, the place)
+  const place = (id, build) => {
+    const zone = zoneById[id];
+    if (!zone) return;
     const b = new Builder(zone.x, zone.z, zone.ry, zone.h);
-    b.zone = zone.id;
-    return b;
+    b.zone = id;
+    build(b, zone);
   };
   let car;
   const spawnPoints = [];
 
   // THE BREAKDOWN (start): your car died on the shoulder of Route 9 next to a little rest area.
-  {
-    const z = zoneById[ZONE.CAMP];
-    const b = zb(z);
+  place(ZONE.CAMP, (b, z) => {
     const pc = b.prop('car', 5.4, 1.5, 0.04, { seed: 7 });
     car = { x: pc.x, y: pc.y, z: pc.z, ry: pc.ry };
     b.clear(5.4, 1.5, 4);
@@ -928,12 +882,10 @@ export function createWorld(seed) {
     b.loot(12, 5.5);
     b.loot(16.5, -1.2, 0.82);
     b.loot(7.5, 5.2);
-  }
+  });
 
   // PINEWOOD MOTEL: a row of rooms under a long roof facing Route 9, office, parking lot.
-  {
-    const z = zoneById[ZONE.MOTEL];
-    const b = zb(z);
+  place(ZONE.MOTEL, (b) => {
     b.box(-3, -0.05, -9, 46, 0.1, 17, 'concrete', { collide: true }); // parking lot
     const RW = 6;
     const n = 6;
@@ -986,12 +938,10 @@ export function createWorld(seed) {
     b.prop('streetlight', 12, -17, PI);
     b.loot(-10, -6);
     b.loot(8, 10.5);
-  }
+  });
 
   // MILLER FARM ---------------------------------------------------
-  {
-    const z = zoneById[ZONE.BARN];
-    const b = zb(z);
+  place(ZONE.BARN, (b) => {
     // barn: 14 wide (x), 20 deep (z), ridge along z
     b.room(10, 8, 14, 20, 6, 'barn', { n: [gap(7, 5, 4.6)], e: [door(12, 1.6)], s: [gap(7, 3, 3.2)] }, { roof: 'gable', roofH: 4.6, roofMat: 'tin', floorMat: 'planks' });
     b.box(10, 6, 8, 14, 0.2, 20, 'planks', { collide: false }); // hayloft ceiling
@@ -1049,12 +999,10 @@ export function createWorld(seed) {
     b.prop('corpse', 1, -9, 2.2, { nocollide: true });
     b.loot(-30, -26);
     b.loot(3, -11);
-  }
+  });
 
   // BLACKWATER DOCK -------------------------------------------------
-  {
-    const z = zoneById[ZONE.DOCK];
-    const b = zb(z);
+  place(ZONE.DOCK, (b, z) => {
     const deckY = WATER_LEVEL + 1.1 - z.h; // relative to zone base
     // pier: runs +Z (toward the lake)
     for (let i = 0; i < 8; i++) {
@@ -1091,12 +1039,10 @@ export function createWorld(seed) {
     b.prop('dock_post', 2.5, 8.5, 0);
     b.prop('bones', 4, 12, 0, { nocollide: true, ground: true });
     b.loot(3.5, -3);
-  }
+  });
 
   // ROUTE 9 GAS STATION ---------------------------------------------
-  {
-    const z = zoneById[ZONE.GAS];
-    const b = zb(z);
+  place(ZONE.GAS, (b) => {
     b.box(0, -0.05, -6, 30, 0.1, 22, 'concrete', { collide: true }); // forecourt
     // store
     b.room(-3, 10, 12, 8, 3.4, 'brick', { n: [door(6, 1.6), win(2.5, 3, 0.9, 2.5), win(9.5, 3, 0.9, 2.5)], w: [win(4)], s: [door(2, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
@@ -1129,12 +1075,10 @@ export function createWorld(seed) {
     b.prop('corpse', 3, -4, 0.8, { nocollide: true });
     b.loot(-11.5, 9.6);
     b.loot(12.5, 3);
-  }
+  });
 
   // ARMY CHECKPOINT: Route 9 roadblock - barriers, tents, a traffic jam nobody drove out of.
-  {
-    const z = zoneById[ZONE.CHECKPOINT];
-    const b = zb(z);
+  place(ZONE.CHECKPOINT, (b) => {
     b.prop('jersey_barrier', -2, -5, 0);
     b.prop('jersey_barrier', 2.2, 3, 0);
     b.prop('jersey_barrier', -6, -5, 0, { seed: 2 });
@@ -1172,12 +1116,10 @@ export function createWorld(seed) {
     b.partSpot(12.8, 13);
     b.loot(-8, -9);
     b.loot(8.5, 12);
-  }
+  });
 
   // HARLAN SAWMILL: an open mill shed, log yard, office and workshop.
-  {
-    const z = zoneById[ZONE.SAWMILL];
-    const b = zb(z);
+  place(ZONE.SAWMILL, (b) => {
     for (const px of [-12, -6, 0, 6, 12]) for (const pz of [-6, 6]) b.cyl(px, 0, pz, 0.2, 5.2, 'metal', { sides: 8 });
     b.box(0, 5.2, 0, 26, 0.2, 14, 'tin_rust', { collide: false });
     b.wall(-13, 6.3, 13, 6.3, 5.2, 0.25, 'barn');
@@ -1211,12 +1153,10 @@ export function createWorld(seed) {
     b.prop('corpse', 2, -9, 1.4, { nocollide: true });
     b.loot(-4, -10);
     b.loot(11, 12);
-  }
+  });
 
   // RANGER LOOKOUT ---------------------------------------------------
-  {
-    const z = zoneById[ZONE.RANGER];
-    const b = zb(z);
+  place(ZONE.RANGER, (b) => {
     b.prop('watchtower', 7, 7, 0.2);
     b.room(-6, 2, 8, 6, 3, 'logwall', { n: [door(4, 1.2), win(1.8), win(6.2)], e: [win(3)], w: [win(3)] }, { roof: 'gable', roofH: 2.2, roofMat: 'shingles' });
     b.prop('bed', -8.5, 3.2, 0);
@@ -1239,12 +1179,10 @@ export function createWorld(seed) {
     b.cont(CONT.LOGPILE, -11.5, -1, { prop: 'woodpile', ry: 1.57 });
     b.cont(CONT.DUFFEL, 7, 7, { prop: 'duffel_bag', ry: 0.4, nocollide: true });
     b.loot(2, -8, 0.82);
-  }
+  });
 
   // HUNTING CABINS ---------------------------------------------------
-  {
-    const z = zoneById[ZONE.CABINS];
-    const b = zb(z);
+  place(ZONE.CABINS, (b, z) => {
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * PI * 2 + 0.5;
       const cx = Math.sin(a) * 15;
@@ -1273,12 +1211,10 @@ export function createWorld(seed) {
       const r = rng.range(8, 22);
       b.tree(Math.sin(a) * r, Math.cos(a) * r, rng.int(0, 2), rng.range(0.8, 1.1));
     }
-  }
+  });
 
   // MILITARY CRASH SITE ----------------------------------------------
-  {
-    const z = zoneById[ZONE.MILITARY];
-    const b = zb(z);
+  place(ZONE.MILITARY, (b) => {
     b.wreck('heli_wreck', 0, 7, 0.6, { trunk: false });
     b.prop('military_tent', -14, -3, 0.2);
     b.prop('military_tent', -12, 12, 1.4);
@@ -1308,12 +1244,10 @@ export function createWorld(seed) {
     b.partSpot(15.2, -6.8);
     b.partSpot(-12.5, 10.5);
     b.light(0, 0.5, 7, 'embers');
-  }
+  });
 
   // ST. AGNES CHAPEL + GRAVEYARD -----------------------------------------------
-  {
-    const z = zoneById[ZONE.CHURCH];
-    const b = zb(z);
+  place(ZONE.CHURCH, (b) => {
     const tall = (at) => ({ at, w: 1.1, y0: 1.3, y1: 3.6, glass: true });
     b.room(0, 6, 9, 18, 5, 'clapboard', { n: [door(4.5, 1.6)], e: [tall(3), tall(7.5), tall(12), tall(16)], w: [tall(2), tall(6.5), tall(11), tall(15)] }, { roof: 'gable', roofH: 4.2, roofMat: 'shingles' });
     // steeple on the front of the ridge
@@ -1361,12 +1295,10 @@ export function createWorld(seed) {
     b.prop('corpse', 14, 2, 0.5, { nocollide: true });
     b.loot(20.5, 6.2);
     for (let i = 0; i < 12; i++) b.tree(rng.range(-30, 40), rng.range(-30, 36), rng.chance(0.5) ? 3 : 4, rng.range(0.8, 1.2));
-  }
+  });
 
   // RELAY STATION: fenced hilltop compound with a mast, dishes and an equipment hut.
-  {
-    const z = zoneById[ZONE.RELAY];
-    const b = zb(z);
+  place(ZONE.RELAY, (b) => {
     const FX = 15;
     const FZ = 12;
     for (let x = -FX + 1.5; x < FX; x += 3) {
@@ -1392,12 +1324,10 @@ export function createWorld(seed) {
     b.wreck('pickup_truck', -4, -18, 0.3);
     b.prop('barrel', 12.5, 9.5, 0);
     b.loot(6, -3);
-  }
+  });
 
   // GRANITE QUARRY: a sunken pit with gravel piles, a dump truck, an office and a blasting bunker.
-  {
-    const z = zoneById[ZONE.QUARRY];
-    const b = zb(z);
+  place(ZONE.QUARRY, (b) => {
     b.prop('gravel_pile', 10, -16, 0);
     b.prop('gravel_pile', 17, 6, 1.2, { seed: 1 });
     b.prop('gravel_pile', -2, 22, 2.1, { seed: 2 });
@@ -1423,12 +1353,10 @@ export function createWorld(seed) {
     b.prop('corpse', 4, -12, 2.1, { nocollide: true });
     b.loot(-8, 6);
     b.loot(20, -8);
-  }
+  });
 
   // HOLLOW CREEK: the village crossroads - diner, general store, police station, garage, houses.
-  {
-    const z = zoneById[ZONE.VILLAGE];
-    const b = zb(z);
+  place(ZONE.VILLAGE, (b) => {
     // diner (NW)
     b.room(-15, -14, 12, 8, 3.2, 'clapboard', { e: [door(4, 1.4), win(1.5, 1.6), win(6.5, 1.6)], n: [win(3), win(9)], s: [door(10, 1.1)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'planks' });
     b.box(-17, 0, -14, 0.8, 1.05, 5, 'planks', { collide: true }); // counter
@@ -1491,12 +1419,10 @@ export function createWorld(seed) {
     b.prop('corpse', -2, 12, 2.3, { nocollide: true });
     b.loot(-4, -34);
     b.loot(26, -4);
-  }
+  });
 
   // SHADY PINES TRAILERS: mobile homes along a gravel lane, a burnt-out trailer, a bus someone lived in.
-  {
-    const z = zoneById[ZONE.TRAILERS];
-    const b = zb(z);
+  place(ZONE.TRAILERS, (b) => {
     const trailer = (cx, cz, flip, burnt, i) => {
       const s = b.sub(cx, cz, flip ? PI : 0);
       const mat = burnt ? 'charred' : i % 3 === 0 ? 'tin' : i % 3 === 1 ? 'tin_rust' : 'clapboard';
@@ -1535,12 +1461,10 @@ export function createWorld(seed) {
     b.prop('corpse', 3, 20, 1.8, { nocollide: true });
     b.loot(-18, 4, 0.82);
     b.loot(3.5, -8);
-  }
+  });
 
   // LAKESIDE CAMPGROUND: campsites along a loop lane, RVs, a ranger station by the water.
-  {
-    const z = zoneById[ZONE.CAMPGROUND];
-    const b = zb(z);
+  place(ZONE.CAMPGROUND, (b) => {
     const site = (sx, sz, ry, withRv) => {
       const s = b.sub(sx, sz, ry);
       s.prop('tent', 0, 0, 0);
@@ -1570,7 +1494,331 @@ export function createWorld(seed) {
     b.cont(CONT.DUMPSTER, -4, 22, { prop: 'dumpster', ry: PI / 2 });
     b.prop('corpse', 6, -20, 0.2, { nocollide: true });
     b.loot(3, 12);
-  }
+  });
+
+  // DUTCH'S SALVAGE: a fenced scrapyard - rows of stacked wrecks, a car crusher and crane, the office and a parts shed.
+  place(ZONE.SCRAPYARD, (b) => {
+    const FX = 24;
+    const FZ = 21;
+    for (let x = -FX + 1.5; x < FX; x += 3) {
+      if (Math.abs(x) > 4) b.prop('fence_chain', x, -FZ, 0);
+      b.prop('fence_chain', x, FZ, 0);
+    }
+    for (let zz = -FZ + 1.5; zz < FZ; zz += 3) {
+      b.prop('fence_chain', -FX, zz, PI / 2);
+      b.prop('fence_chain', FX, zz, PI / 2);
+    }
+    b.prop('boom_gate', -0.4, -FZ, 0);
+    b.prop('billboard', -10, -25, 0);
+    // office
+    b.room(-16, -13, 8, 6, 2.9, 'tin_rust', { e: [door(3, 1.2)], n: [win(4, 1.6)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'planks' });
+    b.cont(CONT.LOCKER, -19.5, -12, { prop: 'locker', ry: -PI / 2 });
+    b.cont(CONT.CABINET, -16.5, -10.45, { prop: 'cabinet', ry: 0 });
+    b.prop('table', -15.5, -14.2, 0);
+    b.loot(-15.5, -14.2, 0.82);
+    b.partSpot(-19.2, -15.2);
+    // parts shed
+    b.room(15, -13, 7, 7, 3.4, 'tin', { w: [gap(3.5, 3.4, 2.9)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'concrete' });
+    b.cont(CONT.SHELF, 18.1, -13, { prop: 'shelf', ry: PI / 2 });
+    b.cont(CONT.SHELF, 15, -9.9, { prop: 'shelf', ry: 0, seed: 1 });
+    b.cont(CONT.TOOLBOX, 13, -15.6, { prop: 'toolbox', ry: 0.4, nocollide: true });
+    b.prop('tire_pile', 17.5, -15.5, 0);
+    b.partSpot(17.4, -10.6);
+    b.prop('generator', 9.6, -15.5, 0.2);
+    // the rows: wrecks parked nose to tail, some stacked two high
+    for (const [rz, xs] of [[-1, [-19.5, -16, -12.5]], [7, [-19.5, -16, -12.5, -9]], [15, [-19.5, -16, -12.5]]]) {
+      for (const x of xs) {
+        const ry = (rng.chance(0.5) ? 0 : PI) + rng.range(-0.08, 0.08);
+        const type = rng.chance(0.8) ? 'car_wreck' : 'pickup_truck';
+        b.wreck(type, x, rz, ry, { trunk: rng.chance(0.4) });
+        if (type === 'car_wreck' && rng.chance(0.45)) b.prop('car_wreck', x + rng.range(-0.15, 0.15), rz + rng.range(-0.2, 0.2), ry + rng.range(-0.12, 0.12), { ly: 1.5 });
+      }
+    }
+    // crusher, with what comes out of it
+    b.box(12, 0, 6, 4.2, 0.5, 6.5, 'rust');
+    b.box(10.1, 0.5, 6, 0.4, 2.6, 6.5, 'rust');
+    b.box(13.9, 0.5, 6, 0.4, 2.6, 6.5, 'rust');
+    b.box(12, 3.1, 6, 4.2, 0.5, 6.5, 'metal');
+    b.box(12, 0.5, 6, 1.7, 0.9, 2.4, 'rust');
+    b.box(17.2, 0, 2.2, 1.7, 0.9, 2.4, 'rust', { ry: 0.1 });
+    b.box(17.3, 0.9, 2.3, 1.7, 0.9, 2.4, 'tin_rust', { ry: -0.15 });
+    b.box(19.6, 0, 2, 1.7, 0.9, 2.4, 'tin_rust', { ry: 0.3 });
+    b.cont(CONT.TOOLBOX, 9.2, 9.8, { prop: 'toolbox', ry: 1.2, nocollide: true });
+    // crane
+    b.box(4, 0, 15.5, 3, 1.5, 4, 'rust');
+    b.cyl(4, 1.5, 15.5, 0.3, 6, 'rust', { sides: 8 });
+    b.box(4, 7.3, 11.5, 0.5, 0.5, 9.5, 'rust', { collide: false });
+    b.box(4, 4.6, 7.2, 0.06, 2.7, 0.06, 'dark', { collide: false });
+    b.cyl(4, 4.2, 7.2, 0.9, 0.4, 'metal', { collide: false });
+    b.partSpot(5.9, 17.6);
+    b.wreck('school_bus', 20.3, 12.5, 0.03, { trunk: false });
+    b.wreck('dump_truck', -3, 16.5, 1.45, { trunk: false });
+    b.wreck('tractor', 1.5, 3, 0.6, { trunk: false });
+    b.cont(CONT.DUMPSTER, -6, -18.6, { prop: 'dumpster', ry: PI });
+    b.cont(CONT.DUMPSTER, 8, 18.8, { prop: 'dumpster', ry: 0, seed: 1 });
+    b.cont(CONT.CRATE, -6.5, -4, { prop: 'crate', ry: 0.3 });
+    for (const [tx, tz] of [[-21.6, 19], [-19.9, 18.5], [8.5, -5], [1, 19]]) b.prop('tire_pile', tx, tz, 0);
+    b.prop('barrel', 0.5, -3, 0);
+    b.light(0.5, 1.0, -3, 'embers');
+    b.prop('barrel', 9.5, -8, 0);
+    b.prop('streetlight', -6, -19.6, PI);
+    b.prop('streetlight', 6, -19.6, PI);
+    b.prop('corpse', 2.5, -9, 0.9, { nocollide: true });
+    b.prop('corpse', -9.5, 11.5, 2.4, { nocollide: true });
+    b.loot(0, -7);
+    b.loot(14.5, 11.5);
+    b.loot(-5.5, 9.5);
+  });
+
+  // CAMP TAMARACK: a summer camp among the pines - bunk cabins either side of the fire circle, the mess hall behind it.
+  place(ZONE.SUMMERCAMP, (b) => {
+    // mess hall
+    b.room(0, 17, 14, 8, 3.4, 'logwall', { n: [door(7, 1.6), win(2.6, 1.6), win(11.4, 1.6)], e: [win(4)], w: [win(4)], s: [door(11.5, 1.1)] }, { roof: 'gableZ', roofH: 2.8, roofMat: 'shingles' });
+    b.prop('picnic_table', -3.6, 16, 0);
+    b.prop('picnic_table', 0.4, 16, 0);
+    b.loot(0.4, 16, 0.82);
+    b.cont(CONT.FRIDGE, 6.4, 19.4, { prop: 'fridge', ry: PI / 2 });
+    b.cont(CONT.CABINET, 3.6, 20.5, { prop: 'cabinet', ry: 0 });
+    b.cont(CONT.SHELF, 0.6, 20.6, { prop: 'shelf', ry: 0 });
+    b.partSpot(6.2, 14.2);
+    b.cont(CONT.LOGPILE, 8.7, 16, { prop: 'woodpile', ry: PI / 2 });
+    b.cont(CONT.DUMPSTER, 2, 23.2, { prop: 'dumpster', ry: 0 });
+    // bunk cabins, doors on the fire circle
+    const bunk = (cx, cz, ry, i) => {
+      const s = b.sub(cx, cz, ry);
+      s.room(0, 0, 6, 5, 2.7, 'planks', { n: [door(3, 1.1)], e: [win(2.5)], w: [win(2.5)] }, { roof: 'gable', roofH: 1.9, roofMat: 'shingles' });
+      s.prop('bed', -2.3, 0.9, 0);
+      s.prop('bed', 2.3, 0.9, 0);
+      if (i % 2) s.cont(CONT.LOCKER, 0, 2.1, { prop: 'locker', ry: 0 });
+      else s.cont(CONT.DUFFEL, 0, 1.5, { prop: 'duffel_bag', ry: 0.6, nocollide: true });
+      s.loot(0, -0.6);
+      return s;
+    };
+    bunk(-19, -10, -PI / 2, 0).partSpot(2.4, -1.8);
+    bunk(-19, 3, -PI / 2, 1);
+    bunk(19, -10, PI / 2, 2);
+    bunk(19, 3, PI / 2, 3).partSpot(-2.4, -1.8);
+    // fire circle + flagpole
+    b.prop('campfire', 0, -3, 0, { nocollide: true, seed: 1 });
+    b.prop('log_bench', 3, -3, 0);
+    b.prop('log_bench', -3, -3, 0);
+    b.prop('log_bench', 0, 0, PI / 2);
+    b.prop('log_bench', 0, -6, PI / 2);
+    b.cyl(6, 0, -12, 0.06, 7.5, 'metal', { sides: 6 });
+    b.box(6.6, 6.5, -12, 1.1, 0.7, 0.03, 'paint', { collide: false });
+    // archery range
+    for (const hx of [-22, -18.5, -15]) b.prop('hay_round', hx, 21, PI / 2);
+    for (const fx of [-21.5, -18.5, -15.5]) b.prop('fence', fx, 11, 0);
+    b.cont(CONT.CRATE, -12.3, 12.6, { prop: 'crate', ry: 0.3 });
+    b.loot(-18.5, 16);
+    // canoes
+    b.prop('boat', 16, 18.5, 0.1, { nocollide: true });
+    b.prop('boat', 18, 19, -0.06, { nocollide: true });
+    b.prop('dock_post', 15, 15.6, 0);
+    b.prop('dock_post', 19, 15.6, 0);
+    b.prop('outhouse', 11, 26, 0);
+    b.prop('outhouse', 13, 26, 0);
+    b.prop('well', -9, -15, 0);
+    b.prop('picnic_table', 8, 8, 0.3);
+    b.prop('picnic_table', -8, 8.5, -0.2);
+    b.prop('lantern_post', -3, -10, 0);
+    b.prop('lantern_post', 3.4, 10.5, 0);
+    b.prop('lantern_post', -13, -3, 0);
+    // the bus that brought them
+    b.wreck('school_bus', 9.5, -22, 1.3, { trunk: false });
+    b.cont(CONT.DUFFEL, 5.6, -18.6, { prop: 'duffel_bag', ry: 0.4, nocollide: true });
+    b.prop('corpse', -2, -8.5, 0.6, { nocollide: true });
+    b.prop('corpse', 5, 10.5, 2.2, { nocollide: true });
+    b.prop('bones', -16, 17, 0, { nocollide: true });
+    b.loot(1.2, -5.2);
+    b.loot(15.5, -3.5);
+    for (let i = 0; i < 16; i++) b.tree(rng.range(-31, 31), rng.range(-31, 31), rng.int(0, 2), rng.range(0.9, 1.25));
+  });
+
+  // BLACKROCK MINE: a worked-out pit on the hillside - the boarded-up adit, a headframe over the shaft, the tipple
+  // at the end of the rails, the dry house and the powder store.
+  place(ZONE.MINE, (b) => {
+    // adit: a timbered portal in a face of blasted rock
+    b.box(0, 0, 24.5, 9, 4.4, 5, 'stone');
+    b.box(-6.5, 0, 24, 6, 3.4, 4.5, 'stone', { ry: 0.25 });
+    b.box(6.5, 0, 24.2, 6, 3.8, 4.5, 'stone', { ry: -0.2 });
+    b.box(0.4, 4.2, 25, 6, 1.2, 3.5, 'stone', { ry: 0.1, collide: false });
+    b.box(0, 0, 21.9, 2.6, 2.5, 0.25, 'dark', { collide: false });
+    b.box(-1.45, 0, 21.7, 0.3, 2.7, 0.3, 'trim');
+    b.box(1.45, 0, 21.7, 0.3, 2.7, 0.3, 'trim');
+    b.box(0, 2.7, 21.7, 3.4, 0.3, 0.3, 'trim', { collide: false });
+    b.box(0, 0.7, 21.6, 3.1, 0.2, 0.06, 'planks', { rz: 0.12 });
+    b.box(0, 1.5, 21.6, 3.1, 0.2, 0.06, 'planks', { rz: -0.1 });
+    b.prop('lantern_post', -3, 20, 0);
+    b.prop('lantern_post', 3, 20, 0);
+    // rails down to the tipple
+    for (const rx of [-0.45, 0.45]) b.box(rx, 0, 11.5, 0.08, 0.1, 19, 'rust', { collide: false });
+    for (let tz = 2.6; tz < 21; tz += 1.7) b.box(0, 0, tz, 1.5, 0.06, 0.22, 'planks', { collide: false });
+    b.prop('cart', 0, 15, 0);
+    b.prop('cart', 0.15, 7, 0.04, { seed: 1 });
+    for (const px of [-2.2, 2.2]) for (const pz of [-2.2, 2.2]) b.cyl(px, 0, pz, 0.16, 4.2, 'trim', { sides: 6 });
+    b.box(0, 4.2, 0, 5, 2.2, 5, 'barn', { collide: false });
+    b.box(0, 2.9, -3.8, 1.4, 0.2, 4.4, 'rust', { rx: -0.5 });
+    b.prop('gravel_pile', 0, -7.5, 0);
+    b.prop('gravel_pile', 6.5, -4.5, 1.1, { seed: 1 });
+    // headframe over the shaft
+    b.box(-14, -0.3, 8, 3.2, 0.36, 3.2, 'dark', { collide: false });
+    for (const cz of [6.2, 9.8]) b.box(-14, 0, cz, 4, 0.5, 0.4, 'concrete');
+    for (const cx of [-15.8, -12.2]) b.box(cx, 0, 8, 0.4, 0.5, 3.2, 'concrete');
+    b.box(-14, 0.07, 8, 3.6, 0.08, 0.5, 'planks', { ry: 0.5, collide: false });
+    for (const px of [-2.4, 2.4]) for (const pz of [-2.4, 2.4]) b.cyl(-14 + px, 0, 8 + pz, 0.16, 9, 'rust', { sides: 6 });
+    for (const pz of [-2.4, 2.4]) b.box(-14, 4.5, 8 + pz, 4.8, 0.2, 0.2, 'rust', { collide: false });
+    for (const px of [-2.4, 2.4]) b.box(-14 + px, 4.5, 8, 0.2, 0.2, 4.8, 'rust', { collide: false });
+    b.box(-14, 9, 8, 5.6, 0.25, 5.6, 'rust', { collide: false });
+    b.cyl(-14, 10, 8, 1.2, 0.25, 'metal', { rz: PI / 2 });
+    // hoist house
+    b.room(-22, 8, 5, 5, 2.8, 'tin_rust', { e: [gap(2.5, 2.4, 2.4)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'concrete' });
+    b.prop('generator', -22.6, 9.2, PI / 2);
+    b.cont(CONT.TOOLBOX, -21, 6.6, { prop: 'toolbox', ry: 0.5, nocollide: true });
+    b.partSpot(-23.6, 6.4);
+    // dry house
+    b.room(-15, -12, 8, 6, 2.9, 'planks', { e: [door(3, 1.2)], n: [win(2.5), win(5.5)], s: [win(4)] }, { roof: 'gable', roofH: 2.2, roofMat: 'tin' });
+    b.cont(CONT.LOCKER, -18.5, -13.5, { prop: 'locker', ry: -PI / 2 });
+    b.cont(CONT.LOCKER, -18.5, -11.5, { prop: 'locker', ry: -PI / 2, seed: 1 });
+    b.cont(CONT.CABINET, -14, -9.45, { prop: 'cabinet', ry: 0 });
+    b.prop('table', -14, -13.2, 0);
+    b.loot(-14, -13.2, 0.82);
+    b.partSpot(-12, -14.2);
+    // powder store
+    b.room(18, 6, 4.5, 4, 2.4, 'concrete', { w: [door(2, 1.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+    b.cont(CONT.AMMO_BOX, 19.2, 6.9, { prop: 'military_crate', ry: PI / 2 });
+    b.partSpot(19.4, 4.7);
+    b.prop('sandbags', 14, 3.4, PI / 2);
+    b.prop('sandbags', 14, 8.6, PI / 2, { seed: 1 });
+    b.wreck('dump_truck', 10, -15, -0.4, { trunk: false });
+    b.wreck('pickup_truck', -4, -17, 0.3);
+    b.prop('fuel_tank', 22, -6, 0.2);
+    b.prop('barrel', 12, 10.5, 0);
+    b.prop('barrel', 12.8, 11.2, 0);
+    b.cont(CONT.CRATE, 5, 9, { prop: 'crate', ry: 0.2 });
+    b.cont(CONT.TOOLBOX, 3, -2.8, { prop: 'toolbox', ry: 0.9, nocollide: true });
+    b.cont(CONT.LOGPILE, 8, 18.5, { prop: 'log_pile', ry: 0.1 });
+    b.prop('lantern_post', -9, -8, 0);
+    b.prop('corpse', 2.2, 12, 1.1, { nocollide: true });
+    b.prop('bones', -9.5, 14, 0, { nocollide: true });
+    b.loot(3.6, 19.6);
+    b.loot(-14, 3.4);
+    b.loot(10, -6.5);
+  });
+
+  // ELK RIDGE LODGE: a hunting lodge - one big log hall with a bunk room, a porch, the game shed and stands out back.
+  place(ZONE.LODGE, (b) => {
+    b.room(0, 6, 16, 10, 3.6, 'logwall', { n: [door(8, 1.6), win(3, 1.6), win(13, 1.6)], e: [win(3), win(7.5)], w: [win(5)], s: [door(13.5, 1.1), win(5)] }, { roof: 'gableZ', roofH: 3.2, roofMat: 'shingles' });
+    b.wall(3, 1, 3, 11, 3.6, 0.2, 'logwall', [door(6, 1.2)]);
+    // bunk room
+    b.prop('bed', 7.2, 2.6, 0);
+    b.prop('bed', 7.2, 5.6, 0);
+    b.cont(CONT.LOCKER, 5, 10.5, { prop: 'locker', ry: 0 });
+    b.cont(CONT.LOCKER, 6.3, 10.5, { prop: 'locker', ry: 0, seed: 1 });
+    b.partSpot(4, 9.6);
+    b.loot(4.6, 2.2);
+    // the hall: fireplace, tables, kitchen corner
+    b.box(-7.3, 0, 8.5, 1.1, 3.6, 2.2, 'stone');
+    b.box(-7.3, 3.6, 8.5, 1.0, 4.4, 1.2, 'stone', { collide: false });
+    b.prop('table', -3, 4.5, 0);
+    b.prop('chair', -3.9, 5.5, 2.6);
+    b.prop('chair', -2, 3.5, 0.4);
+    b.prop('table', -2.6, 8.4, 0.1);
+    b.loot(-2.6, 8.4, 0.82);
+    b.cont(CONT.CABINET, -1.5, 10.5, { prop: 'cabinet', ry: 0 });
+    b.cont(CONT.FRIDGE, 1.3, 10.4, { prop: 'fridge', ry: 0 });
+    b.cont(CONT.DUFFEL, 0.6, 2.3, { prop: 'duffel_bag', ry: 0.9, nocollide: true });
+    // porch
+    b.box(0, 0, -0.5, 16, 0.25, 2.6, 'planks');
+    for (const px of [-7.6, -2.6, 2.6, 7.6]) b.cyl(px, 0.25, -1.55, 0.1, 2.9, 'trim', { sides: 6 });
+    b.box(0, 3.15, -0.6, 16.6, 0.14, 3, 'shingles', { collide: false });
+    b.roofSpan(0, -0.6, 8.3, 1.5, 3.15, 0.14);
+    b.prop('lantern_post', -3.2, -3, 0);
+    b.prop('lantern_post', 3.2, -3, 0);
+    // game shed
+    b.room(14, -10, 4.5, 4.5, 2.6, 'planks', { w: [door(2.25, 1.2)] }, { roof: 'flat', roofMat: 'tin' });
+    b.cont(CONT.CRATE, 15.3, -8.7, { prop: 'crate', ry: 0.1 });
+    b.cont(CONT.TOOLBOX, 12.7, -11.4, { prop: 'toolbox', ry: 0.6, nocollide: true });
+    b.partSpot(15.4, -11.4);
+    // skinning rack
+    b.cyl(-14, 0, -6, 0.09, 2.4, 'trim', { sides: 6 });
+    b.cyl(-11, 0, -6, 0.09, 2.4, 'trim', { sides: 6 });
+    b.box(-12.5, 2.3, -6, 3.3, 0.12, 0.12, 'trim', { collide: false });
+    b.prop('bones', -12.5, -5.4, 0, { nocollide: true });
+    b.cont(CONT.LOGPILE, -10.2, 6.2, { prop: 'woodpile', ry: PI / 2 });
+    b.prop('woodpile', -10.2, 3.4, PI / 2, { seed: 1 });
+    b.prop('hunting_stand', -20, 14, 0.8);
+    b.prop('hunting_stand', 19, 16, -0.6);
+    b.cont(CONT.DUFFEL, 17.4, 14.6, { prop: 'duffel_bag', ry: 0.2, nocollide: true });
+    b.prop('well', 11, 15, 0);
+    b.prop('outhouse', -17, -1, -PI / 2);
+    b.prop('picnic_table', 7, -7.5, 0.2);
+    b.prop('campfire', 0, -9.5, 0, { nocollide: true, seed: 1 });
+    b.prop('log_bench', 2.7, -9.5, 0);
+    b.prop('log_bench', -2.7, -9.5, 0);
+    b.wreck('pickup_truck', -7, -17, 0.4);
+    b.wreck('pickup_truck', 6.5, -18, -0.3, { seed: 1 });
+    b.prop('corpse', 2.4, -5.5, 1.9, { nocollide: true });
+    b.prop('corpse', -13, 12.5, 0.3, { nocollide: true });
+    b.loot(0.4, -11.6);
+    b.loot(15, 3);
+    for (let i = 0; i < 9; i++) b.tree(rng.range(-26, 26), rng.range(-26, 26), rng.int(0, 2), rng.range(0.9, 1.2));
+  });
+
+  // STARLITE DRIVE-IN: the big screen at the back of a field of cars that never left, the snack bar and projection
+  // booth in the middle of it, a ticket booth on the lane in from Route 9.
+  place(ZONE.DRIVEIN, (b) => {
+    // the screen
+    for (const px of [-9, -3, 3, 9]) b.cyl(px, 0, 26, 0.22, 11.4, 'metal', { sides: 8 });
+    b.box(0, 3.4, 25.6, 22, 8, 0.4, 'clapboard', { collide: false });
+    b.box(0, 3.1, 25.6, 22.6, 0.3, 0.6, 'metal', { collide: false });
+    // snack bar, the projector in its back room
+    b.room(0, 2, 11, 7, 3.2, 'brick', { n: [door(2.5, 1.3), win(7.5, 3, 1.0, 2.3)], s: [win(5.5, 1.2, 1.5, 2.1)], e: [door(3.5, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+    b.box(2, 0, 0.6, 5, 1.05, 0.7, 'planks');
+    b.loot(2, 0.6, 1.07);
+    b.box(0, 0, 4.7, 0.7, 1.4, 0.9, 'metal');
+    b.cont(CONT.FRIDGE, 4.9, 4.6, { prop: 'fridge', ry: PI / 2 });
+    b.cont(CONT.CABINET, 3, 5.05, { prop: 'cabinet', ry: 0 });
+    b.cont(CONT.SHELF, -3.4, 5.1, { prop: 'shelf', ry: 0 });
+    b.cont(CONT.LOCKER, -5, 2.6, { prop: 'locker', ry: -PI / 2 });
+    b.partSpot(-4.7, 4.7);
+    // the field: every car still facing the screen, a speaker post at each space
+    for (const [rz, xs] of [[11, [-17, -12, -7, 7, 12, 17]], [17, [-15, -10, -4, 4, 10, 15]], [-7, [-18, -13, -8, 8, 13, 18]], [-13, [-15, -10, 10, 15]]]) {
+      for (const x of xs) {
+        b.cyl(x + 1.7, 0, rz + 1, 0.05, 1.3, 'metal', { sides: 5, collide: false });
+        b.box(x + 1.7, 1.3, rz + 1, 0.2, 0.25, 0.15, 'rust', { collide: false });
+        if (!rng.chance(0.62)) continue;
+        const r = rng();
+        b.wreck(r < 0.7 ? 'car_wreck' : r < 0.9 ? 'pickup_truck' : 'camper', x + rng.range(-0.3, 0.3), rz, PI + rng.range(-0.12, 0.12), { trunk: rng.chance(0.35) });
+      }
+    }
+    // ticket booth
+    b.room(3.3, -21, 3, 3, 2.6, 'clapboard', { w: [win(1.5, 1.4, 1.0, 2.0)], s: [door(1.5, 1.0)] }, { roof: 'flat', roofMat: 'tin' });
+    b.cont(CONT.CABINET, 3.7, -21.9, { prop: 'cabinet', ry: PI });
+    b.partSpot(2.4, -20.3);
+    b.prop('boom_gate', -0.6, -21, 0);
+    b.prop('billboard', -11, -27, 0);
+    for (let zz = -15; zz <= 21; zz += 3) {
+      if (Math.abs(zz) < 4) continue; // side gates
+      b.prop('fence', -26, zz, PI / 2);
+      b.prop('fence', 26, zz, PI / 2);
+    }
+    b.prop('picnic_table', 8.6, -3, 0.2);
+    b.prop('picnic_table', -8.6, -2.6, -0.3);
+    b.cont(CONT.DUFFEL, -8.6, -1.1, { prop: 'duffel_bag', ry: 0.5, nocollide: true });
+    b.cont(CONT.DUMPSTER, 7.6, 4.6, { prop: 'dumpster', ry: -PI / 2 });
+    b.cont(CONT.DUMPSTER, -20, -20, { prop: 'dumpster', ry: 0.3, seed: 1 });
+    b.prop('streetlight', -6, -24, PI);
+    b.prop('streetlight', 9, -24, PI);
+    b.prop('barrel', 10.5, 0.6, 0);
+    b.light(10.5, 1.0, 0.6, 'embers');
+    b.prop('corpse', -2, -9.5, 0.4, { nocollide: true });
+    b.prop('corpse', 6, 13.5, 2.5, { nocollide: true });
+    b.prop('bones', -12, 20.5, 0, { nocollide: true });
+    b.loot(0, 8.5);
+    b.loot(-14, -3);
+    b.loot(12, 20.5);
+  });
 
   // ---------------------------------------------------------------- roadside & woodland sites
   const TRUNK_ZONE = ZONE.ROADSIDE;
@@ -1779,7 +2027,7 @@ export function createWorld(seed) {
     const scale = rng.range(0.75, 1.3);
     if (occupied(x, z, 1.5 * scale)) continue;
     // variant: mostly conifers; dead trees near the chapel & in dark patches
-    const nearChurch = Math.hypot(x - church.x, z - church.z) < 90;
+    const nearChurch = church && Math.hypot(x - church.x, z - church.z) < 90;
     const r = rng();
     let v;
     if (nearChurch && r < 0.45) v = rng.chance(0.5) ? 3 : 4;
@@ -1807,9 +2055,10 @@ export function createWorld(seed) {
     occupy(x, z, r);
     staticGrid.add(makeCyl(x, z, y - 1, y + r * 0.9, r * 0.85, COL.STATIC));
   }
-  // quarry boulders
-  {
-    const q = zoneById[ZONE.QUARRY];
+  // boulders around the quarry and the mine
+  for (const id of [ZONE.QUARRY, ZONE.MINE]) {
+    const q = zoneById[id];
+    if (!q) continue;
     for (let i = 0; i < 14; i++) {
       const a = rng.range(0, PI * 2);
       const d = rng.range(q.flat * 0.75, q.flat + 8);
@@ -1949,7 +2198,7 @@ export function createWorld(seed) {
     zoneById,
     roads,
     highway,
-    lake: LAKE,
+    lake,
     ponds,
     trees: new Float32Array(trees),
     rocks: new Float32Array(rocks),

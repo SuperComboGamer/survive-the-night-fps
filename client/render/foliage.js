@@ -153,6 +153,14 @@ class InstancedSet {
       }
     }
   }
+
+  // (geometries and materials belong to the shared variants: only the instance buffers go)
+  dispose() {
+    for (const mesh of this.meshes.flat(2)) {
+      mesh.removeFromParent();
+      mesh.dispose();
+    }
+  }
 }
 
 // ------------------------------------------------------------------ grass
@@ -201,6 +209,12 @@ class GrassField {
     }
     VEG.uGrassFade.value.set(this.R * 0.5, this.R);
     this.lastX = 1e9;
+  }
+
+  dispose() {
+    this.mesh?.removeFromParent();
+    this.mesh?.dispose();
+    this.mesh = null;
   }
 
   density(x, z) {
@@ -324,6 +338,11 @@ export class Foliage {
     this.rocks = new InstancedSet(scene, world.rocks, getRockVariants(), { radius: quality.treeDist, rebuildDist: 10, receive: true });
     this.grass = new GrassField(scene, world);
     this.setQuality(quality);
+  }
+
+  dispose() {
+    for (const set of [this.trees, this.bushes, this.rocks]) set.dispose();
+    this.grass.dispose();
   }
 
   setQuality(q) {

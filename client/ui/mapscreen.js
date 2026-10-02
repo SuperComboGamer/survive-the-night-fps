@@ -34,6 +34,7 @@ export class MapScreen {
       ['hint', 'fuel', 'Rumoured supply'],
       ['ping', 'ping', 'Ping'],
       ['crate', 'hazard', 'Supply drop'],
+      ['bench', 'wrench', 'Workbench'],
     ]) {
       const r = el('div', 'lg ' + cls, lg);
       svgEl('i', 'lg-ico', r, glyph(ico));
@@ -100,7 +101,7 @@ export class MapScreen {
   }
 
   // d: { self:{x,z,yaw}, mates:[{x,z,name,status}], car:{x,z}, pings:[{x,z,kind,name}], crates:[{x,z}],
-  //      discovered:Set, hints:[zone...], supplies:[n...], carried:{item:n} }
+  //      benches:[{x,z}], discovered:Set, hints:[zone...], supplies:[n...], carried:{item:n} }
   update(d) {
     if (!this.open || !this.world) return;
     const pct = (v) => ((v + MAP_HALF) / MAP_SIZE) * 100;
@@ -139,6 +140,7 @@ export class MapScreen {
       const off = seen.size % 3;
       put(z.x + (off - 1) * 6, z.z - 14, 'hint', itemIcon(SUPPLIES[si]));
     });
+    for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), 'bench');
     for (const c of d.crates) put(c.x, c.z, 'crate', glyph('hazard'), 'drop');
     for (const p of d.pings) put(p.x, p.z, 'ping k' + p.kind, glyph('ping'), p.name);
     put(d.car.x, d.car.z, 'car', glyph('car'), 'car');

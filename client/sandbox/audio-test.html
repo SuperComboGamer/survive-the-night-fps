@@ -67,7 +67,7 @@
     <section><h2>playLocal</h2><div class="btns" id="locals"></div></section>
     <section><h2>Footsteps</h2><div class="btns" id="steps"></div></section>
     <section><h2>Loops (toggle; follow the dot)</h2><div class="btns" id="loops"></div></section>
-    <section><h2>Stingers</h2><div class="btns" id="stingers"></div></section>
+    <section><h2>Stingers &amp; thunder</h2><div class="btns" id="stingers"></div></section>
     <section><h2>Voice chat</h2><div class="btns"><button id="voice">test voice source (oscillator stream)</button><button id="mic">microphone as remote voice</button></div></section>
   </div>
 </main>
@@ -76,8 +76,8 @@ import { AudioEngine } from '../audio/audio.js';
 import { REC } from '../audio/samples.js';
 import { SOUND } from '../../shared/defs.js';
 
-const LOCAL_NAMES = ['pistol', 'shotgun', 'ak47', 'rifle', 'm4a1', 'mp5', 'dbshotgun', 'crossbow', 'reload_start', 'reload_end', 'shell_insert', 'bolt', 'pump', 'xbow_cock', 'xbow_load', 'dry', 'swing', 'swing_heavy', 'hit', 'hit_wood', 'switch', 'pickup', 'craft', 'build', 'build_fail', 'hitmarker', 'headshot', 'hurt', 'heal', 'bandage', 'ui_click', 'ui_hover', 'heartbeat', 'jump', 'land', 'flashlight', 'breath', 'throw', 'claw', 'zombie_player_growl', 'death', 'notify', 'chat', 'install_part', 'campfire_add', 'eat', 'can_open'];
-const LOOP_NAMES = ['campfire', 'torch', 'fire', 'acid', 'zombie_idle', 'boss_breath', 'generator'];
+const LOCAL_NAMES = ['pistol', 'shotgun', 'ak47', 'rifle', 'm4a1', 'mp5', 'dbshotgun', 'crossbow', 'reload_start', 'reload_end', 'shell_insert', 'bolt', 'pump', 'xbow_cock', 'xbow_load', 'dry', 'swing', 'swing_heavy', 'hit', 'hit_wood', 'switch', 'pickup', 'craft', 'build', 'build_fail', 'hitmarker', 'headshot', 'hurt', 'heal', 'bandage', 'ui_click', 'ui_hover', 'heartbeat', 'jump', 'land', 'flashlight', 'breath', 'throw', 'claw', 'zombie_player_growl', 'death', 'notify', 'chat', 'radio', 'install_part', 'campfire_add', 'eat', 'can_open'];
+const LOOP_NAMES = ['campfire', 'torch', 'fire', 'acid', 'zombie_idle', 'boss_breath', 'generator', 'plane'];
 const STINGER_NAMES = ['night', 'dawn', 'death', 'boss', 'victory', 'gameover', 'supply', 'jumpscare', 'join', 'car_part'];
 const SURFACES = ['dirt', 'wood', 'grass', 'water', 'metal', 'forest', 'leaves', 'gravel', 'mud'];
 const params = new URLSearchParams(location.search);
@@ -96,7 +96,7 @@ const log = (...a) => {
 const src = { x: 6, z: -8 };
 let range = 60;
 let yaw = 0;
-const amb = { night: 0, danger: 0, lowHealth: 0, nearFire: 0, cycle: -0.05, wind: -0.05, gust: -0.05, open: 0, indoor: 0, horde: false, boss: false, dead: false, menu: false, underCover: false };
+const amb = { night: 0, danger: 0, lowHealth: 0, nearFire: 0, rain: 0, cycle: -0.05, wind: -0.05, gust: -0.05, open: 0, indoor: 0, horde: false, boss: false, dead: false, menu: false, underCover: false };
 const ambOut = {};
 function ambState() {
   Object.assign(ambOut, amb);
@@ -151,6 +151,8 @@ for (const n of LOOP_NAMES) {
   });
 }
 for (const n of STINGER_NAMES) mkBtn($('stingers'), n, () => audio.stinger(n));
+mkBtn($('stingers'), 'thunder (near)', () => audio.thunder(src.x * 8, src.z * 8, 90, 0.3));
+mkBtn($('stingers'), 'thunder (far)', () => audio.thunder(src.x * 60, src.z * 60, 600, 1.5));
 
 function slider(parent, key, obj, min, max, step, onChange) {
   const l = document.createElement('label');
@@ -176,14 +178,15 @@ function check(parent, key, obj, onChange) {
   };
   parent.appendChild(l);
 }
-for (const k of ['night', 'danger', 'lowHealth', 'nearFire', 'open', 'indoor']) slider($('amb'), k, amb, 0, 1, 0.01, () => {});
+for (const k of ['night', 'danger', 'lowHealth', 'nearFire', 'rain', 'open', 'indoor']) slider($('amb'), k, amb, 0, 1, 0.01, () => {});
 for (const k of ['cycle', 'wind', 'gust']) slider($('amb'), k, amb, -0.05, 0.999, 0.005, () => {});
 setInterval(() => {
   if (!audio.ready) return;
   const st = audio._rec.status();
   const beds = Object.entries(audio._ambience.rbeds).filter(([, b]) => b.src).map(([k, b]) => `${k} ${b.target.toFixed(2)}`);
+  const stems = Object.entries(audio._music.stems).filter(([, m]) => m.src).map(([k, m]) => `${k} ${m.target.toFixed(2)}`);
   const w = audio.wind;
-  $('recs').textContent = `${procedural ? 'procedural only' : `${st.decoded.length}/${st.total} decoded, ${st.failed.length} failed`} · wind ${w.speed.toFixed(1)} m/s gust ${w.gust.toFixed(2)} · playing: ${beds.join(', ') || '-'}`;
+  $('recs').textContent = `${procedural ? 'procedural only' : `${st.decoded.length}/${st.total} decoded, ${st.failed.length} failed`} · wind ${w.speed.toFixed(1)} m/s gust ${w.gust.toFixed(2)} · playing: ${beds.join(', ') || '-'} · score: ${stems.join(', ') || 'generative'}`;
 }, 500);
 for (const k of ['horde', 'boss', 'dead', 'menu', 'underCover']) check($('amb'), k, amb, () => {});
 for (const k of Object.keys(vols)) slider($('vols'), k, vols, 0, 1, 0.01, () => audio.setVolumes(vols));
@@ -348,10 +351,10 @@ async function autotest() {
   log('init', initMs.toFixed(0), 'ms');
   await audio.init(); // second call must be a no-op
 
-  // ---- output level checks (analyser tapped after the master limiter)
+  // ---- output level checks (analyser tapped at the master output, before the master volume)
   const an = audio.context.createAnalyser();
   an.fftSize = 2048;
-  audio._limit.connect(an);
+  audio._clip.connect(an);
   const tbuf = new Float32Array(2048);
   const peakOver = async (ms) => {
     let p = 0;

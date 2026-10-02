@@ -404,16 +404,17 @@ export class VoiceList {
     this.key = '';
   }
 
+  // speakers: names, or { name, radio } (radio = coming through the walkie-talkie)
   set(speakers) {
-    const list = Array.isArray(speakers) ? speakers.slice(0, 6) : [];
-    const key = list.join('\u0001');
+    const list = (Array.isArray(speakers) ? speakers.slice(0, 6) : []).map((s) => (typeof s === 'object' && s ? s : { name: s }));
+    const key = list.map((s) => (s.radio ? '\u0002' : '') + s.name).join('\u0001');
     if (key === this.key) return;
     this.key = key;
     this.root.textContent = '';
-    for (const name of list) {
-      const r = el('div', 'vc-row', this.root);
-      svgEl('i', 'vc-ico', r, glyph('mic'));
-      el('span', 'vc-name', r, String(name));
+    for (const s of list) {
+      const r = el('div', 'vc-row' + (s.radio ? ' radio' : ''), this.root);
+      svgEl('i', 'vc-ico', r, glyph(s.radio ? 'radio' : 'mic'));
+      el('span', 'vc-name', r, String(s.name));
     }
   }
 }

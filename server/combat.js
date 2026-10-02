@@ -1,5 +1,5 @@
 // Combat: lag-compensated hitscan, melee, thrown/lobbed projectiles, explosions, damage areas.
-import { SERVER_TICK_RATE, MAX_REWIND, PLAYER_RADIUS, PHASE } from '../shared/constants.js';
+import { SERVER_TICK_RATE, MAX_REWIND, PLAYER_RADIUS, PHASE, NOISE } from '../shared/constants.js';
 import { SOUND as _SOUND } from '../shared/defs.js';
 import {
   ITEM,
@@ -19,6 +19,8 @@ import {
   SPECIAL_LOOT,
   STRUCT,
   STRUCT_DEFS,
+  GIB,
+  BURN,
 } from '../shared/defs.js';
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
@@ -27,6 +29,19 @@ import { raycastWorld, rayCylinder, raySphere, groundAt, footprintContains, COL 
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(3 * 16);
 const _hits = [];
+const _bp = { x: 0, y: 0, z: 0 };
+
+// buckshot loses its punch with distance
+const pelletFalloff = (t) => Math.max(0.25, Math.min(1, 1 - (t - 8) / 30));
+
+// Ray against a target's hitbox (see Combat.hitbox) standing at pos: distance to the hit or -1, _head = it took the head.
+let _head = false;
+function rayTarget(pos, hb, ox, oy, oz, dx, dy, dz, maxT) {
+  const ht = raySphere(pos.x + hb.hx, pos.y + hb.headY, pos.z + hb.hz, hb.headR, ox, oy, oz, dx, dy, dz, maxT);
+  const bt = hb.flying ? raySphere(pos.x, pos.y + 0.15, pos.z, 0.5, ox, oy, oz, dx, dy, dz, maxT) : rayCylinder(pos.x, pos.z, pos.y, pos.y + hb.top, hb.r, ox, oy, oz, dx, dy, dz, maxT);
+  _head = ht >= 0 && !hb.flying && (bt < 0 || ht <= bt + 0.05);
+  return _head ? ht : bt;
+}
 
 export class Combat {
   constructor(game) {
@@ -106,29 +121,21 @@ export class Combat {
     // broadcast the shot to everyone else (tracers, muzzle flash, sound)
     g.emit(
       (w) => {
+        // no origin: the client takes the shooter's replicated position (it only draws tracers from this)
         w.u8(EVT.SHOT);
         w.u16(p.id);
         w.u8(ev.weapon);
-        w.i16(qpos(ox));
-        w.i16(qpos(oy));
-        w.i16(qpos(oz));
         w.u16(qangle16(ev.yaw));
         w.i16(qpitch(ev.pitch));
         w.u16(ev.seed);
-        w.u16(Math.round(ev.spread * 10000));
-        w.u16(Math.round(ev.recoilPitch * 10000));
+        w.u8(Math.min(255, Math.round(ev.spread * 500)));
+        w.u8(Math.min(255, Math.round(ev.recoilPitch * 500)));
       },
       { except: p.id, x: ox, z: oz, r: 320 },
     );
-    // alert nearby zombies to the noise
-    const noise = def.noise || 70;
-    g.zm.forNear(ox, oz, noise, (z) => {
-      if (!z.target && !z.dead) {
-        z.alertX = ox;
-        z.alertZ = oz;
-        z.alertT = 12;
-      }
-    });
+    // the dead come to the noise
+    g.zm.noise(ox, oz, def.noise || NOISE.GUNSHOT);
+    if (def.flame) return this.flame(p, ev, def);
     const t = this.rewindTime(p);
     let hitFlags = 0;
     const tmp = { x: 0, y: 0, z: 0 };
@@ -155,17 +162,8 @@ export class Combat {
         const pz = rz - dz * along;
         const lim = hb.r + hb.headY + 0.5;
         if (px * px + py * py + pz * pz > lim * lim) return;
-        let head = false;
-        let ht = raySphere(pos.x + hb.hx, pos.y + hb.headY, pos.z + hb.hz, hb.headR, ox, oy, oz, dx, dy, dz, wallT);
-        if (ht >= 0 && !hb.flying) head = true;
-        const bt = hb.flying ? raySphere(pos.x, pos.y + 0.15, pos.z, 0.5, ox, oy, oz, dx, dy, dz, wallT) : rayCylinder(pos.x, pos.z, pos.y, pos.y + hb.top, hb.r, ox, oy, oz, dx, dy, dz, wallT);
-        let tt = -1;
-        if (head && (bt < 0 || ht <= bt + 0.05)) tt = ht;
-        else if (bt >= 0) {
-          tt = bt;
-          head = false;
-        } else if (head) tt = ht;
-        if (tt >= 0) _hits.push({ e, isPlayer, t: tt, head });
+        const tt = rayTarget(pos, hb, ox, oy, oz, dx, dy, dz, wallT);
+        if (tt >= 0) _hits.push({ e, isPlayer, t: tt, head: _head });
       });
       _hits.sort((a, b) => a.t - b.t);
       const maxPierce = def.pierce || 1;
@@ -174,7 +172,7 @@ export class Combat {
       for (const h of _hits) {
         if (pierced >= maxPierce) break;
         let d = dmg;
-        if (def.pellets > 1) d *= Math.max(0.25, Math.min(1, 1 - (h.t - 8) / 30));
+        if (def.pellets > 1) d *= pelletFalloff(h.t);
         const headMul = h.head ? (h.isPlayer ? 2 : h.e.boss ? 1.6 : def.headMul) : 1;
         d *= headMul;
         const hx = ox + dx * h.t;
@@ -188,7 +186,11 @@ export class Combat {
           g.damagePlayer(h.e, d, { kind: KILLER.PLAYER, id: p.id, weapon: ev.weapon, headshot: h.head, x: ox, z: oz });
           killed = !h.e.alive;
         } else {
-          killed = this.damageZombie(h.e, d, p, { weapon: ev.weapon, headshot: h.head, dirX: dx, dirZ: dz });
+          // a blast kills with its first few pellets: the blow is all of them, the ones still to come are the overkill
+          const lethal = def.pellets > 1 && d >= h.e.hp;
+          const blow = lethal ? this.blastDamage(h.e, t, def, 0, n, ox, oy, oz) : d;
+          const rest = lethal ? this.blastDamage(h.e, t, def, i + 1, n, ox, oy, oz) : 0;
+          killed = this.damageZombie(h.e, d, p, { weapon: ev.weapon, headshot: h.head, dirX: dx, dirZ: dz, blow, rest });
         }
         hitFlags |= 8 | (h.head ? 1 : 0) | (killed ? 2 : 0);
         pierced++;
@@ -218,6 +220,96 @@ export class Combat {
         },
         { to: p.id },
       );
+    }
+  }
+
+  // What a blast's pellets from index `from` on put into a zombie, were it to stand through all of them. It dies to
+  // the first few and the rest fly on through the corpse, but they are what makes a point-blank blast overkill.
+  // Cover in the way is not checked.
+  blastDamage(z, t, def, from, n, ox, oy, oz) {
+    const pos = this.histPos(z, t, _bp);
+    const hb = this.hitbox(z, false);
+    let sum = 0;
+    for (let j = from; j < n; j++) {
+      const tt = rayTarget(pos, hb, ox, oy, oz, _dirs[j * 3], _dirs[j * 3 + 1], _dirs[j * 3 + 2], def.range);
+      if (tt >= 0) sum += def.damage * pelletFalloff(tt) * (_head ? (z.boss ? 1.6 : def.headMul) : 1);
+    }
+    return sum;
+  }
+
+  // ---------------------------------------------------------------- flamethrower
+  // One puff of the stream: everything in a cone ahead of the nozzle that no wall shields is scorched and set alight.
+  flame(p, ev, def) {
+    const g = this.g;
+    const ox = ev.x;
+    const oy = ev.y;
+    const oz = ev.z;
+    const cp = Math.cos(ev.pitch);
+    const dx = -Math.sin(ev.yaw) * cp;
+    const dy = Math.sin(ev.pitch);
+    const dz = -Math.cos(ev.yaw) * cp;
+    const widen = Math.tan(def.flame.cone);
+    const t = this.rewindTime(p);
+    const tmp = { x: 0, y: 0, z: 0 };
+    _hits.length = 0;
+    this.forTargets(p, (e, isPlayer) => {
+      const pos = this.histPos(e, t, tmp);
+      const hb = this.hitbox(e, isPlayer);
+      const rx = pos.x - ox;
+      const rz = pos.z - oz;
+      const flat = Math.hypot(rx, rz);
+      if (flat > def.range + hb.r) return;
+      // the point of the body nearest the stream: at the height the stream passes it, kept between feet and head
+      const lo = pos.y + (hb.flying ? -0.1 : 0.15);
+      const hi = pos.y + (hb.flying ? 0.4 : hb.top + hb.headR);
+      const ry = Math.max(lo, Math.min(hi, oy + (dy / Math.max(cp, 0.2)) * flat)) - oy;
+      const along = rx * dx + ry * dy + rz * dz;
+      if (along < -hb.r || along > def.range + hb.r) return;
+      const off = Math.hypot(rx - dx * along, ry - dy * along, rz - dz * along);
+      if (off > hb.r + 0.15 + Math.max(0, along) * widen) return;
+      // nothing solid in between
+      const l = Math.hypot(rx, ry, rz);
+      if (l > hb.r + 0.3) {
+        raycastWorld(g.world, ox, oy, oz, rx / l, ry / l, rz / l, l, _ray);
+        if (_ray.t >= 0 && _ray.t < l - hb.r - 0.3) return;
+      }
+      _hits.push({ e, isPlayer, t: along });
+    });
+    let hitFlags = 0;
+    for (const h of _hits) {
+      // the far third of the stream is thinner
+      const d = def.damage * (1 - 0.6 * Math.max(0, Math.min(1, (h.t / def.range - 0.65) / 0.35)));
+      let killed;
+      if (h.isPlayer) {
+        g.damagePlayer(h.e, d, { kind: KILLER.PLAYER, id: p.id, weapon: ev.weapon, x: ox, z: oz });
+        killed = !h.e.alive;
+      } else {
+        killed = this.damageZombie(h.e, d, p, { weapon: ev.weapon, fire: true, dot: true, dirX: dx, dirZ: dz });
+        this.ignite(h.e, p, ev.weapon);
+      }
+      hitFlags |= 8 | (killed ? 2 : 0);
+    }
+    // a stream is many puffs a second: tick the hit marker a few times a second, and for every kill
+    if (hitFlags && (hitFlags & 2 || g.tick - (p.flameMarkTick || 0) >= 4)) {
+      p.flameMarkTick = g.tick;
+      g.emit(
+        (w) => {
+          w.u8(EVT.HITMARK);
+          w.u8(hitFlags);
+        },
+        { to: p.id },
+      );
+    }
+  }
+
+  // Set a zombie alight (the BURN status): it burns for `time` seconds, the damage and the kill going to whoever
+  // lit it. Fire on something already burning tops the time back up; it does not stack.
+  ignite(z, attacker, weapon = 0, time = BURN.time) {
+    if (z.dead) return;
+    if (time > z.burnT) z.burnT = time;
+    if (attacker && attacker.kind === ENT.PLAYER) {
+      z.burnBy = attacker.id;
+      z.burnWeapon = weapon;
     }
   }
 
@@ -340,10 +432,15 @@ export class Combat {
       z.animT = 0.3;
     }
     if (z.hp <= 0) {
-      this.killZombie(z, attacker, opts);
+      // overkill (GIB): one heavy blow that drives it far below zero blows the body apart. Blades and clubs don't.
+      // opts.blow / opts.rest: for a blast, whose pellets land one by one - all of it, and what was still to come
+      const rest = opts.rest || 0;
+      const gib = !solid && !opts.melee && (opts.blow || amount) >= GIB.minHit && rest - z.hp >= z.maxHp * GIB.overkill;
+      this.killZombie(z, attacker, gib ? { ...opts, gib } : opts);
       return true;
     }
-    if (g.rng() < 0.15) g.sound(z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
+    // (a burn or a flame stream is many small hits a second: it cries out as often as it would for one)
+    if (g.rng() < (opts.dot ? 0.02 : 0.15)) g.sound(z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
     return false;
   }
 
@@ -357,7 +454,7 @@ export class Combat {
     z.vx = z.vz = 0;
     g.zm.releaseLink(z);
     z.link = 0;
-    const flags = (opts.headshot ? 1 : 0) | (opts.fire ? 2 : 0) | (opts.explode || z.ztype === ZTYPE.BOOMER ? 4 : 0);
+    const flags = (opts.headshot ? 1 : 0) | (opts.fire ? 2 : 0) | (opts.explode || z.ztype === ZTYPE.BOOMER ? 4 : 0) | (opts.gib ? 8 : 0);
     const yaw = Math.atan2(-(opts.dirX || 0), -(opts.dirZ || 0));
     g.emit(
       (w) => {
@@ -368,7 +465,7 @@ export class Combat {
       },
       { x: z.x, z: z.z, r: 130 },
     );
-    if (!opts.fire) g.sound(z.boss ? SOUND.BOSS_ROAR : z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_DEATH, z.x, z.y + Math.min(1.5, z.def.height), z.z, z.boss ? 150 : 35);
+    if (!opts.fire && !opts.gib) g.sound(z.boss ? SOUND.BOSS_ROAR : z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_DEATH, z.x, z.y + Math.min(1.5, z.def.height), z.z, z.boss ? 150 : 35);
     if (g.phase === PHASE.NIGHT || g.escape?.active) g.nightStats.kills++;
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
@@ -440,6 +537,8 @@ export class Combat {
         if (d < radius) g.damageStructure(s, opts.structures * (1 - d / radius));
       }
     }
+    // the loudest thing in the valley: whatever it did not kill comes running
+    g.zm.noise(x, z, NOISE.EXPLOSION);
   }
 
   // ---------------------------------------------------------------- projectiles
@@ -614,6 +713,7 @@ export class Combat {
             this.spawnArea(AREA.FIRE, px, py, pz, THROWABLES[ITEM.MOLOTOV].radius, THROWABLES[ITEM.MOLOTOV].burnTime, e.ownerRef, THROWABLES[ITEM.MOLOTOV].dps);
             g.sound(SOUND.GLASS_BREAK, px, py, pz, 60);
             g.sound(SOUND.FIRE_WHOOSH, px, py, pz, 80);
+            g.zm.noise(px, pz, NOISE.MOLOTOV);
             done = true;
           }
           break;
@@ -699,7 +799,9 @@ export class Combat {
         g.zm.forNear(a.x, a.z, a.radius, (z) => {
           if (z.dead || z.def.flying) return;
           if (Math.hypot(z.x - a.x, z.z - a.z) < a.radius && Math.abs(z.y - a.y) < 2) {
-            this.damageZombie(z, a.dps * dt, a.owner && a.owner.kind === ENT.PLAYER ? a.owner : null, { weapon: ITEM.MOLOTOV, fire: true });
+            const owner = a.owner && a.owner.kind === ENT.PLAYER ? a.owner : null;
+            this.damageZombie(z, a.dps * dt, owner, { weapon: ITEM.MOLOTOV, fire: true });
+            this.ignite(z, owner, ITEM.MOLOTOV); // whatever walks out of the fire walks out burning
             z.trapSlow = Math.min(z.trapSlow, 0.75);
           }
         });

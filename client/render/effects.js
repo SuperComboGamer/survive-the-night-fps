@@ -1,8 +1,10 @@
 // Visual effects: pooled CPU-simulated particles rendered as two Points draw calls (additive + alpha)
-// sharing a sprite atlas, ground decals (instanced), bullet tracers, muzzle flashes, explosions and
+// sharing a sprite atlas, ground decals (instanced), gibs (instanced), bullet tracers, muzzle flashes, explosions and
 // continuous emitters (campfire, torches, molotov fires, acid pools, supply-drop smoke).
 import * as THREE from 'three';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { IMPACT } from '../../shared/defs.js';
+import { raycastWorld } from '../../shared/collision.js';
 import { getTexture } from './textures.js';
 
 // atlas cells (3x3)
@@ -304,6 +306,238 @@ class DecalPool {
   }
 }
 
+// ---------------------------------------------------------------- gibs
+// What is left of a body blown apart by an overkill hit: instanced pieces that tumble, bounce off the world, come to
+// rest lying flat and then sink away like the corpses do. Unit-sized shapes, vertex colours for the gore; the
+// instance colour gives a piece its hue (blood or acid for the meat, skin / cloth / bone for a limb).
+const GIB_GRAV = 20;
+const GIB_SINK = 1.5; // seconds a piece takes to sink away once its time is up
+const _gray = { t: -1, col: null, terrain: false };
+
+function paintVerts(geo, fn) {
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) fn(pos.getX(i), pos.getY(i), pos.getZ(i), col, i * 3);
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+const paint = (col, o, r, g, b) => {
+  col[o] = r;
+  col[o + 1] = g;
+  col[o + 2] = b;
+};
+
+// a ragged lump of meat, flatter than it is wide
+function lumpGeometry() {
+  let g = new THREE.IcosahedronGeometry(1, 2);
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  g = mergeVertices(g);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 + 0.2 * Math.sin(x * 3.1 + 1.3) * Math.sin(z * 2.7 + 0.4) + 0.14 * Math.sin(y * 4.3 + x * 2.1);
+    p.setXYZ(i, x * k, y * k * 0.6, z * k);
+  }
+  g.computeVertexNormals();
+  return paintVerts(g, (x, y, z, col, o) => {
+    const s = 0.6 + 0.4 * Math.sin(x * 5.3 + y * 3.9 + z * 4.7);
+    paint(col, o, s, s, s);
+  });
+}
+
+// a torn-off length of limb along X: a knuckle of hand / foot (or the head of a bone) at +X, a raw stump with the
+// bone showing at -X
+function limbGeometry() {
+  const g = new THREE.CylinderGeometry(0.72, 1, 1, 7, 3);
+  g.rotateZ(-Math.PI / 2);
+  paintVerts(g, (x, y, z, col, o) => {
+    if (x < -0.4) paint(col, o, 1.1, 0.1, 0.08);
+    else if (x < -0.1) paint(col, o, 1, 0.5, 0.45);
+    else paint(col, o, 1, 1, 1);
+  });
+  const bone = new THREE.CylinderGeometry(0.3, 0.34, 0.26, 5);
+  bone.rotateZ(Math.PI / 2);
+  bone.translate(-0.58, 0, 0);
+  paintVerts(bone, (x, y, z, col, o) => paint(col, o, 1.7, 1.6, 1.4));
+  const end = new THREE.SphereGeometry(1, 7, 5);
+  end.scale(0.2, 1.05, 1.3);
+  end.translate(0.56, 0, 0);
+  paintVerts(end, (x, y, z, col, o) => paint(col, o, 0.9, 0.9, 0.9));
+  return mergeGeometries([g, bone, end]);
+}
+
+// a severed head: face towards -Z, a raw neck underneath
+function headGeometry() {
+  const g = new THREE.SphereGeometry(1, 12, 7);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i);
+    p.setXYZ(i, p.getX(i) * 0.82 * (y < 0 ? 1 + y * 0.25 : 1), y, p.getZ(i) * 0.95);
+  }
+  g.computeVertexNormals();
+  return paintVerts(g, (x, y, z, col, o) => {
+    if (y < -0.75) paint(col, o, 1.1, 0.1, 0.08); // neck
+    else if (y > 0.5 || (z > 0.25 && y > 0)) paint(col, o, 0.22, 0.2, 0.18); // hair
+    else if (z < -0.6 && y > 0.1 && Math.abs(x) > 0.2) paint(col, o, 0.1, 0.08, 0.08); // eye sockets
+    else if (z < -0.6 && y < -0.5 && Math.abs(x) < 0.2) paint(col, o, 0.35, 0.05, 0.05); // mouth
+    else paint(col, o, 1, 1, 1);
+  });
+}
+
+class GibPool {
+  // sit: how much of a piece's half thickness stays above the ground when it lies there
+  constructor(scene, geo, material, max, sit = 0.75) {
+    this.sit = sit;
+    this.mesh = new THREE.InstancedMesh(geo, material, max);
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.frustumCulled = false;
+    this.max = max;
+    this.next = 0;
+    this.state = new Uint8Array(max); // 0 free, 1 flying, 2 landed
+    this.pos = new Float32Array(max * 3);
+    this.vel = new Float32Array(max * 3);
+    this.rot = new Float32Array(max * 3); // roll about its length, yaw, pitch (applied yaw * pitch * roll)
+    this.spin = new Float32Array(max * 3);
+    this.scale = new Float32Array(max * 3);
+    this.rad = new Float32Array(max); // half its thickness: how high its centre rests above the ground
+    this.age = new Float32Array(max);
+    this.life = new Float32Array(max);
+    this.rest = new Float32Array(max); // seconds since it landed for good
+    this.trail = new Float32Array(max);
+    this.bounces = new Uint8Array(max);
+    this.green = new Uint8Array(max);
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._e = new THREE.Euler();
+    this._p = new THREE.Vector3();
+    this._s = new THREE.Vector3();
+    this._c = new THREE.Color();
+    this._m.makeScale(0, 0, 0);
+    for (let i = 0; i < max; i++) {
+      this.mesh.setMatrixAt(i, this._m);
+      this.mesh.setColorAt(i, this._c);
+    }
+    scene.add(this.mesh);
+  }
+
+  // a piece at (x,y,z) thrown with velocity v: sx = length, sy/sz = thickness, (r,g,b) its hue (sRGB)
+  add(x, y, z, vx, vy, vz, sx, sy, sz, r, g, b, green) {
+    const i = this.next;
+    this.next = (i + 1) % this.max;
+    const k = i * 3;
+    this.state[i] = 1;
+    this.pos[k] = x;
+    this.pos[k + 1] = y;
+    this.pos[k + 2] = z;
+    this.vel[k] = vx;
+    this.vel[k + 1] = vy;
+    this.vel[k + 2] = vz;
+    for (let c = 0; c < 3; c++) {
+      this.rot[k + c] = Math.random() * 6.283;
+      this.spin[k + c] = (Math.random() - 0.5) * 22;
+    }
+    this.scale[k] = sx;
+    this.scale[k + 1] = sy;
+    this.scale[k + 2] = sz;
+    this.rad[i] = Math.min(sy, sz) * this.sit;
+    this.age[i] = 0;
+    this.life[i] = 8 + Math.random() * 3;
+    this.rest[i] = 0;
+    this.trail[i] = Math.random() * 0.07;
+    this.bounces[i] = 0;
+    this.green[i] = green ? 1 : 0;
+    this.mesh.setColorAt(i, this._c.setRGB(r, g, b, THREE.SRGBColorSpace));
+    this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  update(dt, fx) {
+    const world = fx.world;
+    const P = this.pos, V = this.vel, R = this.rot, W = this.spin;
+    let dirty = false;
+    for (let i = 0; i < this.max; i++) {
+      const st = this.state[i];
+      if (!st) continue;
+      const k = i * 3;
+      const rad = this.rad[i];
+      const age = (this.age[i] += dt);
+      let size = 1;
+      let sink = 0;
+      if (st === 1) {
+        V[k + 1] -= GIB_GRAV * dt;
+        const mx = V[k] * dt, my = V[k + 1] * dt, mz = V[k + 2] * dt;
+        const len = Math.hypot(mx, my, mz);
+        let floor = null; // height of what it came down on
+        let wall = false;
+        if (len > 1e-6) {
+          raycastWorld(world, P[k], P[k + 1] - rad, P[k + 2], mx / len, my / len, mz / len, len, _gray);
+          const c = _gray.col;
+          // (the ground is checked below; a piece that starts inside something just falls out of it)
+          if (c && _gray.t > 1e-3) {
+            const hy = P[k + 1] - rad + (my / len) * _gray.t;
+            if (my < 0 && hy > c.y1 - 0.08) {
+              floor = hy;
+              P[k] += mx * (_gray.t / len);
+              P[k + 2] += mz * (_gray.t / len);
+            } else wall = true;
+          }
+        }
+        if (wall) {
+          V[k] *= -0.3;
+          V[k + 2] *= -0.3;
+          P[k + 1] += my;
+        } else if (floor === null) {
+          P[k] += mx;
+          P[k + 1] += my;
+          P[k + 2] += mz;
+        }
+        const gy = world.heightAt(P[k], P[k + 2]);
+        if (floor === null && P[k + 1] - rad <= gy) floor = gy;
+        for (let c = 0; c < 3; c++) R[k + c] += W[k + c] * dt;
+        if (age < 0.9 && (this.trail[i] -= dt) <= 0) {
+          this.trail[i] = 0.07;
+          fx.gibDrip(P[k], P[k + 1], P[k + 2], this.green[i]);
+        }
+        if (floor !== null) {
+          P[k + 1] = floor + rad;
+          if (!this.bounces[i]) fx.gibSplat(P[k], floor, P[k + 2], this.green[i]);
+          if (V[k + 1] < -3 && this.bounces[i] < 2) {
+            this.bounces[i]++;
+            V[k] *= 0.55;
+            V[k + 1] *= -0.32;
+            V[k + 2] *= 0.55;
+            for (let c = 0; c < 3; c++) W[k + c] *= 0.5;
+          } else {
+            this.state[i] = 2;
+          }
+        }
+      } else {
+        const over = age - this.life[i];
+        if (over >= GIB_SINK) {
+          this.state[i] = 0;
+          size = 0;
+        } else if (over > 0) {
+          size = 1 - (over / GIB_SINK) * 0.6;
+          sink = over * 0.2;
+        } else if (this.rest[i] > 0.4) continue; // lying still
+        else {
+          // it flops over onto its side
+          this.rest[i] += dt;
+          const e = Math.min(1, dt * 16);
+          R[k] += (Math.round(R[k] / Math.PI) * Math.PI - R[k]) * e;
+          R[k + 2] += (Math.round(R[k + 2] / Math.PI) * Math.PI - R[k + 2]) * e;
+        }
+      }
+      this._q.setFromEuler(this._e.set(R[k], R[k + 1], R[k + 2], 'YZX'));
+      this._p.set(P[k], P[k + 1] - sink, P[k + 2]);
+      this._s.set(this.scale[k] * size, this.scale[k + 1] * size, this.scale[k + 2] * size);
+      this.mesh.setMatrixAt(i, this._m.compose(this._p, this._q, this._s));
+      dirty = true;
+    }
+    if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 export class Effects {
   constructor(scene, vmScene, world) {
     this.scene = scene;
@@ -315,6 +549,12 @@ export class Effects {
     this.acid = new DecalPool(scene, 'decal_acid', 24, 0x6aff3a, 0.85);
     this.acid.life = 7;
     this.scorch = new DecalPool(scene, 'decal_scorch', 30, 0x111111, 0.85);
+    // gibs: meat, limbs (and bare bones), heads
+    const gibMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.gibLumps = new GibPool(scene, lumpGeometry(), gibMat, 110);
+    this.gibLimbs = new GibPool(scene, limbGeometry(), gibMat, 70);
+    this.gibHeads = new GibPool(scene, headGeometry(), gibMat, 14, 0.95);
+    this.gibLoad = 0; // bodies blown apart lately: a crowd going up at once throws fewer pieces each
     // tracers
     this.tracerMax = 64;
     const tg = new THREE.BufferGeometry();
@@ -445,9 +685,99 @@ export class Effects {
     (green ? this.acid : this.blood).add(x, gy + 0.03, z, 1.6);
   }
 
-  burnPuff(x, y, z) {
-    this.add.emit(x + this.rnd(-0.3, 0.3), y + this.rnd(0, 1.2), z + this.rnd(-0.3, 0.3), 0, this.rnd(1, 2.5), 0, this.rnd(0.3, 0.6), this.rnd(0.5, 0.9), 0.1, 1, 0.55, 0.2, 0.9, 0.9, 0.2, 0.05, 0, -2, 1, TEX.FIRE, 2);
-    this.alpha.emit(x, y + 1.3, z, this.rnd(-0.3, 0.3), 1.5, this.rnd(-0.3, 0.3), 1.6, 0.5, 1.8, 0.1, 0.09, 0.08, 0.6, 0.15, 0.15, 0.15, 0, -0.2, 0.8, TEX.SMOKE);
+  // overkill: the whole body comes apart. (x,y,z) = its feet, h / r = its height and radius, (dx,dz) = the way the blow
+  // was travelling. opts: green (acid blood), head (it still had one to lose), limbs, fur (limbs are a dog's legs)
+  gibBody(x, y, z, h, r, dx, dz, opts = {}) {
+    const A = this.alpha;
+    const green = !!opts.green;
+    const mass = Math.max(0.2, Math.min(3, (h / 1.75) * (r / 0.38)));
+    const s = Math.sqrt(mass); // size of the pieces
+    const few = this.gibLoad > 4 ? 0.5 : 1;
+    this.gibLoad++;
+    // blood: a burst thrown along the blow, a mist that hangs, a pool where it stood
+    for (let i = Math.round((16 + 20 * Math.min(mass, 1.5)) * few); i > 0; i--) {
+      const sp = this.rnd(1.5, 7);
+      A.emit(x + this.rnd(-r, r) * 0.5, y + this.rnd(0.2, 1) * h, z + this.rnd(-r, r) * 0.5, (dx * 0.6 + this.rnd(-0.6, 0.6)) * sp, this.rnd(0, 1.1) * sp, (dz * 0.6 + this.rnd(-0.6, 0.6)) * sp, this.rnd(0.6, 1.3), this.rnd(0.14, 0.34) * s, 0.4 * s, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 11, 0.8, TEX.BLOOD, this.rnd(-4, 4));
+    }
+    for (let i = 0; i < 5; i++) {
+      A.emit(x + this.rnd(-r, r), y + this.rnd(0.3, 0.85) * h, z + this.rnd(-r, r), dx * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.2, 1), dz * this.rnd(0.4, 2) + this.rnd(-0.6, 0.6), this.rnd(0.9, 1.6), 0.6 * s, 2.4 * s, green ? 0.25 : 0.4, green ? 0.4 : 0.02, 0.03, 0.5, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0, 0.5, 1.5, TEX.SMOKE, 0.5);
+    }
+    const gy = this.world.heightAt(x, z);
+    if (y - gy < 3) (green ? this.acid : this.blood).add(x + dx * 0.4, gy + 0.03, z + dz * 0.4, this.rnd(1.8, 2.6) * s);
+    // the pieces: thrown along the blow, scattered sideways and up
+    const toss = (pool, at, sx, sy, sz, cr, cg, cb, lift = 1) => {
+      const sp = this.rnd(2, 6.5);
+      pool.add(x + this.rnd(-r, r) * 0.6, y + at * h, z + this.rnd(-r, r) * 0.6, dx * sp + this.rnd(-2.6, 2.6), this.rnd(2, 6.5) * lift, dz * sp + this.rnd(-2.6, 2.6), sx, sy, sz, cr, cg, cb, green);
+    };
+    for (let i = Math.round(Math.min(16, 3 + 5 * mass) * few); i > 0; i--) {
+      const size = this.rnd(0.08, 0.16) * s;
+      const fat = !green && Math.random() < 0.15; // a paler, fattier piece
+      toss(this.gibLumps, this.rnd(0.25, 0.95), size * this.rnd(1, 1.5), size, size * this.rnd(0.8, 1.2), green ? this.rnd(0.17, 0.25) : fat ? 0.42 : this.rnd(0.26, 0.4), green ? this.rnd(0.3, 0.42) : fat ? 0.25 : this.rnd(0.025, 0.045), green ? 0.07 : fat ? 0.2 : 0.03);
+    }
+    if (opts.limbs) {
+      for (let i = 0; i < 4; i++) {
+        const leg = i > 1; // a dog's four are all legs
+        const len = (opts.fur ? 0.26 : leg ? 0.42 : 0.34) * s;
+        const thick = (opts.fur ? 0.035 : leg ? 0.065 : 0.045) * s;
+        if (opts.fur) toss(this.gibLimbs, this.rnd(0.2, 0.6), len, thick, thick, 0.2, 0.17, 0.14);
+        else if (leg) toss(this.gibLimbs, this.rnd(0.15, 0.45), len, thick, thick, 0.17, 0.18, 0.22); // trouser leg
+        else toss(this.gibLimbs, this.rnd(0.6, 0.85), len, thick, thick, 0.4, 0.42, 0.34); // bare, rotten arm
+      }
+    }
+    for (let i = Math.round((1 + 2 * Math.min(mass, 2)) * few); i > 0; i--) {
+      const thick = this.rnd(0.016, 0.026) * s;
+      toss(this.gibLimbs, this.rnd(0.3, 0.9), this.rnd(0.14, 0.3) * s, thick, thick, 0.6, 0.57, 0.47); // bone
+    }
+    if (opts.head) {
+      const hr = 0.115 * s;
+      toss(this.gibHeads, 0.9, hr, hr, hr, 0.4, 0.42, 0.34, 1.2);
+    }
+  }
+
+  // a flying gib: the drops it trails, the smear where it lands
+  gibDrip(x, y, z, green) {
+    this.alpha.emit(x, y, z, this.rnd(-0.4, 0.4), this.rnd(-0.2, 0.6), this.rnd(-0.4, 0.4), this.rnd(0.35, 0.6), this.rnd(0.1, 0.18), 0.05, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 9, 1, TEX.BLOOD, this.rnd(-3, 3));
+  }
+  gibSplat(x, y, z, green) {
+    for (let i = 0; i < 3; i++) this.alpha.emit(x, y + 0.05, z, this.rnd(-1.2, 1.2), this.rnd(0.6, 2), this.rnd(-1.2, 1.2), this.rnd(0.3, 0.5), this.rnd(0.1, 0.16), 0.2, green ? 0.3 : 0.5, green ? 0.5 : 0.02, 0.02, 1, green ? 0.2 : 0.25, green ? 0.3 : 0, 0, 0.1, 10, 1, TEX.BLOOD, this.rnd(-3, 3));
+    if (Math.random() < (green ? 0.2 : 0.45)) (green ? this.acid : this.blood).add(x, y + 0.03, z, this.rnd(0.35, 0.8));
+  }
+
+  // a body on fire: flames licking up it, smoke off the top. h / r = how tall and how wide it is
+  burnPuff(x, y, z, h = 1.2, r = 0.3) {
+    const s = Math.max(1, r / 0.4);
+    this.add.emit(x + this.rnd(-r, r), y + this.rnd(0, h), z + this.rnd(-r, r), 0, this.rnd(1, 2.5), 0, this.rnd(0.3, 0.6), this.rnd(0.5, 0.9) * s, 0.1, 1, 0.55, 0.2, 0.9, 0.9, 0.2, 0.05, 0, -2, 1, TEX.FIRE, 2);
+    this.alpha.emit(x, y + h + 0.1, z, this.rnd(-0.3, 0.3), 1.5, this.rnd(-0.3, 0.3), 1.6, 0.5 * s, 1.8 * s, 0.1, 0.09, 0.08, 0.6, 0.15, 0.15, 0.15, 0, -0.2, 0.8, TEX.SMOKE);
+  }
+
+  // flamethrower: one puff of the stream leaving (x,y,z) along (dx,dy,dz). dist = how far it gets before it hits
+  // something (the puffs die there and the fire splashes off it), cone = the stream's half-angle (rad)
+  flameJet(x, y, z, dx, dy, dz, dist, cone = 0.2) {
+    const D = this.add;
+    const SPEED = 20; // m/s at the nozzle, shed at 1/s: a puff has flown SPEED * (1 - e^-t) after t seconds
+    const FULL = SPEED * 0.52; // how far the stream runs in the open
+    const reach = Math.min(dist, FULL);
+    const life = Math.max(0.12, -Math.log(1 - reach / SPEED));
+    const j = cone * 0.6;
+    for (let i = 0; i < 7; i++) {
+      const s = SPEED * this.rnd(0.82, 1.08);
+      // puffs come several times a second: spread each one's fire along the stretch it covers, so the stream is unbroken
+      const o = Math.min(reach * 0.5, this.rnd(0, 1.7));
+      // white-hot where it overlaps at the nozzle, billowing out orange, gone dark red
+      D.emit(x + dx * o, y + dy * o, z + dz * o, (dx + this.rnd(-j, j)) * s, (dy + this.rnd(-j, j)) * s, (dz + this.rnd(-j, j)) * s, life * (1 - (0.6 * o) / reach) * this.rnd(0.75, 1.05), this.rnd(0.14, 0.22) + o * 0.2, this.rnd(1.2, 2.1) * (0.35 + (0.65 * reach) / FULL), 1, 0.6, 0.2, 0.9, 0.8, 0.13, 0.02, 0, -1.6, 1, TEX.FIRE, this.rnd(-3, 3));
+    }
+    D.emit(x + dx * 0.25, y + dy * 0.25, z + dz * 0.25, dx * SPEED * 0.5, dy * SPEED * 0.5, dz * SPEED * 0.5, 0.12, 0.3, 0.7, 1, 0.9, 0.6, 0.7, 1, 0.5, 0.1, 0, 0, 1, TEX.GLOW);
+    const ex = x + dx * reach;
+    const ey = y + dy * reach;
+    const ez = z + dz * reach;
+    if (dist < FULL - 0.3) {
+      for (let i = 0; i < 2; i++) D.emit(ex - dx * 0.15, ey - dy * 0.15, ez - dz * 0.15, this.rnd(-2.5, 2.5), this.rnd(0.5, 3), this.rnd(-2.5, 2.5), this.rnd(0.25, 0.5), this.rnd(0.5, 0.9), 0.15, 1, 0.6, 0.2, 0.8, 0.8, 0.14, 0.02, 0, -2, 1.5, TEX.FIRE, this.rnd(-3, 3));
+      if (Math.random() < 0.06) {
+        const gy = this.world.heightAt(ex, ez);
+        if (ey - gy < 0.5) this.scorch.add(ex, gy + 0.05, ez, this.rnd(0.9, 1.6));
+      }
+    }
+    if (Math.random() < 0.3) this.alpha.emit(ex, ey + 0.3, ez, dx * 1.5 + this.rnd(-0.4, 0.4), this.rnd(0.8, 1.6), dz * 1.5 + this.rnd(-0.4, 0.4), this.rnd(1.4, 2.2), 0.7, 2.6, 0.08, 0.07, 0.06, 0.4, 0.12, 0.12, 0.12, 0, -0.2, 0.6, TEX.SMOKE, 0.3);
   }
 
   // tracer from (x,y,z) along (dx,dy,dz) for dist meters
@@ -462,12 +792,12 @@ export class Effects {
     this.tracers.push({ x, y, z, dx, dy, dz, dist, t: 0, bright: 0.5, speed: 150, len: 1.6, bolt: true });
   }
 
-  vmMuzzle(pos, scale = 1) {
+  vmMuzzle(pos, scale = 1, time = 0.05) {
     this.vmFlash.position.copy(pos);
     this.vmFlash.scale.setScalar(this.rnd(0.18, 0.28) * scale);
     this.vmFlash.material.rotation = Math.random() * 6.28;
     this.vmFlash.visible = true;
-    this.vmFlashT = 0.05;
+    this.vmFlashT = time;
   }
 
   worldMuzzle(pos, scale = 1) {
@@ -595,6 +925,10 @@ export class Effects {
     this.blood.update(dt);
     this.acid.update(dt);
     this.scorch.update(dt);
+    this.gibLumps.update(dt, this);
+    this.gibLimbs.update(dt, this);
+    this.gibHeads.update(dt, this);
+    this.gibLoad = Math.max(0, this.gibLoad - dt * 3);
     // tracers
     let n = 0;
     for (let i = this.tracers.length - 1; i >= 0; i--) {

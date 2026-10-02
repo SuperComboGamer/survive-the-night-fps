@@ -4,6 +4,11 @@
 //  - Image row 0 is the TOP of the texture (v = 1), like a canvas. flipY is applied on upload.
 //  - Building / prop surface textures are designed for METER UVs: each texture covers a known world size
 //    (see TEXTURE_WORLD_SIZE); materials.js sets texture.repeat = 1 / worldSize.
+//  - Surface generators may also return `height` (Float32Array, 0..1, same size) and `relief` (the depth in
+//    meters that 0..1 spans): getNormalMap(name) bakes the tangent-space normal map from it.
+//  - Weathered surfaces keep their top layer OUT of the texture: RGB is the clean / bare material and the
+//    alpha channel a tileable "wear" detail field. materials.js lays the paint, rust or moss over it in the
+//    shader, driven by world-space noise, so no wall repeats its damage (see `surfacePatch` there).
 //  - Ground textures are 512px and seamlessly tileable (periodic noise + wrapped drawing).
 //  - fx_* sprites are white/grey on transparent (RGB is never black under transparent pixels -> premultiply-friendly).
 //  - decal_* textures carry their own colour + alpha.
@@ -12,13 +17,14 @@ import * as THREE from 'three';
 // ------------------------------------------------------------------ registry
 const cache = new Map();
 const derived = new Map();
+const heights = new Map(); // height fields waiting to be baked into normal maps
 const allTextures = new Set();
 let maxAniso = 4;
 
 // world size (meters) covered by one repeat of each surface texture (used by materials.js)
 export const TEXTURE_WORLD_SIZE = {
-  planks: 2, barn: 2, clapboard: 2, logwall: 2, concrete: 3, brick: 1, shingles: 2, tin: 2, tin_rusty: 2, rust: 1.5,
-  metal: 1.5, stone: 2, dockwood: 2, glass: 1, sash: 1, door: [1, 2.1], hay: 1, canvas: 2, olive: 2, wood: 1,
+  planks: 2, barn: 2, clapboard: 2, logwall: 2, concrete: 3, brick: 2, shingles: 2, tin: 2, rust: 1.5, chrome: 1,
+  metal: 1.5, stone: 2, dockwood: 2, glass: 2, sash: 1, door: [1, 2.1], hay: 1, canvas: 2, olive: 2, wood: 1,
   bark: [1, 2], bark_birch: [1, 2], bark_dead: [1, 2], rock: 2, tire: 1, paint: 1.5, carpaint: 2, cloth: 0.6,
   burlap: 0.6, bone: 0.3, charred: 1, skin: 0.6, mattress: 1, plastic: 1, pumpkin: 1, ash: 1, cardboard: 0.6,
   ground_grass: 4, ground_dirt: 4, ground_forest: 4, ground_road: 4, ground_asphalt: 4, ground_mud: 4, ground_sand: 4,
@@ -31,18 +37,10 @@ function registerTex(t) {
   return t;
 }
 
-/** Cached texture by name. Optional rx/ry return a cached clone with that repeat (shares the GPU image). */
-export function getTexture(name, rx, ry) {
-  let t = cache.get(name);
-  if (!t) {
-    const gen = GEN[name];
-    if (!gen) throw new Error(`textures: unknown texture '${name}'`);
-    t = finish(gen(), name);
-    cache.set(name, t);
-  }
+function repeated(t, key, rx, ry) {
   if (rx === undefined) return t;
   if (ry === undefined) ry = rx;
-  const key = `${name}|${rx}|${ry}`;
+  key = `${key}|${rx}|${ry}`;
   let d = derived.get(key);
   if (!d) {
     d = t.clone();
@@ -52,6 +50,58 @@ export function getTexture(name, rx, ry) {
     derived.set(key, d);
   }
   return d;
+}
+
+/** Cached texture by name. Optional rx/ry return a cached clone with that repeat (shares the GPU image). */
+export function getTexture(name, rx, ry) {
+  let t = cache.get(name);
+  if (!t) {
+    const gen = GEN[name];
+    if (!gen) throw new Error(`textures: unknown texture '${name}'`);
+    const out = gen();
+    if (out.height) heights.set(name, { h: out.height, w: out.canvas ? out.canvas.width : out.w, ht: out.canvas ? out.canvas.height : out.h, relief: out.relief ?? 0.01 });
+    t = finish(out, name);
+    cache.set(name, t);
+  }
+  return repeated(t, name, rx, ry);
+}
+
+/**
+ * Tangent-space normal map baked from the height field of a surface texture, or null when its generator
+ * leaves none. Same repeat convention as getTexture.
+ */
+export function getNormalMap(name, rx, ry) {
+  const key = `${name}#n`;
+  let t = cache.get(key);
+  if (t === undefined) {
+    getTexture(name);
+    const hf = heights.get(name);
+    heights.delete(name);
+    t = hf ? finish(normalFromHeight(hf, TEXTURE_WORLD_SIZE[name] ?? 1), key) : null;
+    cache.set(key, t);
+  }
+  return t && repeated(t, key, rx, ry);
+}
+
+// slopes are true to scale: `relief` meters of depth over a texture covering `size` meters
+function normalFromHeight({ h, w, ht, relief }, size) {
+  const [sx, sy] = Array.isArray(size) ? size : [size, size];
+  const kx = (relief * w) / sx / 2, ky = (relief * ht) / sy / 2;
+  const d = new Uint8ClampedArray(w * ht * 4);
+  for (let y = 0, i = 0; y < ht; y++) {
+    const up = ((y + ht - 1) % ht) * w, dn = ((y + 1) % ht) * w, row = y * w;
+    for (let x = 0; x < w; x++, i += 4) {
+      // image rows run down while v runs up
+      const nx = (h[row + ((x + w - 1) % w)] - h[row + ((x + 1) % w)]) * kx;
+      const ny = (h[dn + x] - h[up + x]) * ky;
+      const inv = 127.5 / Math.sqrt(nx * nx + ny * ny + 1);
+      d[i] = 127.5 + nx * inv;
+      d[i + 1] = 127.5 + ny * inv;
+      d[i + 2] = 127.5 + inv;
+      d[i + 3] = 255;
+    }
+  }
+  return { w, h: ht, d, linear: true };
 }
 
 export function setMaxAnisotropy(n) {
@@ -234,7 +284,7 @@ function colorRamp(stops) {
 }
 
 /** random crack polyline (random walk), drawn wrapped */
-function drawCracks(ctx, W, H, r, count, { len = [40, 160], width = [0.8, 1.6], col = 'rgba(15,12,10,0.7)', light = null, branch = 0.3, step = 5, wander = 0.5 } = {}) {
+function drawCracks(ctx, W, H, r, count, { len = [40, 160], width = [0.8, 1.6], col = 'rgba(15,12,10,0.7)', light = null, branch = 0.3, step = 5, wander = 0.5, along = null } = {}) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const paths = [];
@@ -249,7 +299,8 @@ function drawCracks(ctx, W, H, r, count, { len = [40, 160], width = [0.8, 1.6], 
     }
     paths.push({ pts, w: lerp(width[0], width[1], r()) * (depth ? 0.7 : 1) });
   };
-  for (let i = 0; i < count; i++) walk(r() * W, r() * H, r() * Math.PI * 2, lerp(len[0], len[1], r()), 0);
+  // `along`: every crack starts within 0.12 rad of that direction (checks follow the grain)
+  for (let i = 0; i < count; i++) walk(r() * W, r() * H, along === null ? r() * Math.PI * 2 : along + (r() < 0.5 ? Math.PI : 0) + (r() - 0.5) * 0.24, lerp(len[0], len[1], r()), 0);
   const stroke = (style, dx, dy, wmul) => {
     ctx.strokeStyle = style;
     for (const p of paths) {
@@ -334,19 +385,35 @@ class Rec {
 }
 
 // ------------------------------------------------------------------ shared wood field
-function woodGrainImg(W, H, seed, light, dark, { rings = 24, streak = 0.6, lineDark = 0.28, fine = 0.08 } = {}) {
+// Grain runs along u: gently wavy growth lines that pinch around a few knots. `wave` = how far the lines
+// wander (large values give the looping figure of plywood), `knots` per image.
+function woodGrainImg(W, H, seed, light, dark, { rings = 24, streak = 0.6, lineDark = 0.28, fine = 0.08, wave = 2.2, knots = 3 } = {}) {
   const g1 = fbm(W, H, 1, 28, 4, seed, 0.55);
-  const g2 = fbm(W, H, 2, 3, 3, seed + 1);
+  const g2 = fbm(W, H, 2, 6, 3, seed + 1);
   const g3 = fbm(W, H, 4, 4, 4, seed + 2);
   const r = rngf(seed + 3);
+  const kn = [];
+  for (let k = 0; k < knots; k++) kn.push([r() * W, r() * H, 5 + r() * 7]);
   const img = newImg(W, H);
   const d = img.d;
   for (let y = 0, i = 0, p = 0; y < H; y++)
     for (let x = 0; x < W; x++, i += 4, p++) {
-      const t = (y / H) * rings + g2[p] * 7 + g1[p] * 1.2;
+      // each knot lifts the lines over itself and leaves a dark eye
+      let bulge = 0, eye = 0;
+      for (const [kx, ky, kr] of kn) {
+        let dx = Math.abs(x - kx), dy = Math.abs(y - ky);
+        if (dx > W / 2) dx = W - dx;
+        if (dy > H / 2) dy = H - dy;
+        const q = (dx * dx) / (kr * kr * 9) + (dy * dy) / (kr * kr);
+        if (q < 9) {
+          bulge += Math.exp(-q) * 2.6;
+          eye = Math.max(eye, Math.exp(-q * 3.2));
+        }
+      }
+      const t = (y / H) * rings + g2[p] * wave + g1[p] * 1.2 + bulge;
       const s = Math.abs(Math.sin(t * Math.PI));
       const line = s ** 10;
-      let v = 0.32 + (g1[p] - 0.5) * streak + 0.35 * g3[p] - line * lineDark + (r() - 0.5) * fine;
+      let v = 0.32 + (g1[p] - 0.5) * streak + 0.35 * g3[p] - line * lineDark + (r() - 0.5) * fine - eye * 0.3;
       v = clamp(v);
       d[i] = lerp(dark[0], light[0], v);
       d[i + 1] = lerp(dark[1], light[1], v);
@@ -381,6 +448,7 @@ function boardsImg({ W = 512, H = 512, n = 8, seed = 1, vertical = false, light,
   }
   const img = newImg(W, H);
   const d = img.d;
+  const height = new Float32Array(W * H);
   for (let y = 0, i = 0, p = 0; y < H; y++)
     for (let x = 0; x < W; x++, i += 4, p++) {
       const u = vertical ? y : x, v = vertical ? x : y;
@@ -414,8 +482,13 @@ function boardsImg({ W = 512, H = 512, n = 8, seed = 1, vertical = false, light,
       d[i + 1] = G;
       d[i + 2] = Bc;
       d[i + 3] = 255;
+      // gaps and butt joints are cut in, each board is slightly cupped and its grain stands out
+      let hgt = 0.62 + 0.12 * Math.sin((Math.PI * lv) / bw) + ((gd[gi] + gd[gi + 1] + gd[gi + 2]) / 765) * 0.26;
+      if (lv < 2.2 || (nearJ < 1.2 && B.js.length)) hgt = 0;
+      else if (lv < 4 || lv > bw - 2) hgt *= 0.7;
+      height[p] = hgt;
     }
-  return { img, boards, bw, vertical, n };
+  return { img, boards, bw, vertical, n, height };
 }
 
 function nailsOnBoards(ctx, W, H, info, r, { studs = 3, rust = 0.35 } = {}) {
@@ -498,6 +571,21 @@ function mulByNoise(img, noise, lo, hi) {
   });
 }
 
+/** height field from an image's luminance (dark = cut in): cracks, chips, pits and scratches for free */
+function lumHeight(img, gain = 1) {
+  const { w, h, d } = img;
+  const out = new Float32Array(w * h);
+  for (let p = 0, i = 0; p < out.length; p++, i += 4) out[p] = clamp(((d[i] + d[i + 1] + d[i + 2]) / 765) * gain);
+  return out;
+}
+
+/** the canvas as raw pixels with a wear field (0..1) written to its alpha - never premultiplied */
+function withField(c, field) {
+  const img = canvasToImg(c);
+  for (let p = 0; p < field.length; p++) img.d[p * 4 + 3] = clamp(field[p]) * 255;
+  return img;
+}
+
 // ================================================================== GENERATORS
 const GEN = {};
 
@@ -508,7 +596,7 @@ GEN.wood = () => {
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
   const r = rngf(12);
-  drawCracks(ctx, W, W, r, 5, { len: [30, 120], width: [0.6, 1.2], wander: 0.12, step: 4, col: 'rgba(25,20,16,0.6)' });
+  drawCracks(ctx, W, W, r, 5, { len: [30, 120], width: [0.6, 1.2], wander: 0.12, step: 4, col: 'rgba(25,20,16,0.6)', along: 0 });
   // knots
   for (let k = 0; k < 2; k++) {
     const x = r() * W, y = r() * W;
@@ -530,166 +618,127 @@ GEN.wood = () => {
 GEN.planks = () => {
   const W = 512;
   const r = rngf(21);
-  const info = boardsImg({ W, H: W, n: 8, seed: 21, light: [134, 120, 102], dark: [66, 57, 48], tone: 0.14 });
-  const moss = fbm(W, W, 6, 6, 4, 22);
-  tintByNoise(info.img, moss, [52, 60, 34], 0.72, 0.9, 0.5);
+  const info = boardsImg({ W, H: W, n: 8, seed: 21, light: [134, 120, 102], dark: [66, 57, 48], tone: 0.14, joints: 1 });
   const c = imgToCanvas(info.img);
   const ctx = ctx2d(c);
   drips(ctx, W, W, r, 40, [18, 14, 10], [0.05, 0.16]);
   nailsOnBoards(ctx, W, W, info, r);
-  drawCracks(ctx, W, W, r, 10, { len: [20, 90], wander: 0.1, step: 4, width: [0.6, 1.1], col: 'rgba(20,16,12,0.55)' });
-  return { canvas: c };
+  drawCracks(ctx, W, W, r, 10, { len: [20, 90], wander: 0.1, step: 4, width: [0.6, 1.1], col: 'rgba(20,16,12,0.55)', along: 0 });
+  return { canvas: c, height: info.height, relief: 0.012 };
 };
 
-// barn red over vertical boards: the paint wears through along the grain and at the board edges, faded
-// and chalky where the weather hits hardest
+// barn boards, bare: grey weathered wood, nails and their rust runs. A = how well paint holds - it wears
+// through along the grain and lets go first at the board edges. The red is laid on in the shader.
 GEN.barn = () => {
   const W = 512;
   const r = rngf(31);
-  const info = boardsImg({ W, H: W, n: 10, seed: 31, vertical: true, light: [128, 120, 110], dark: [66, 60, 54], tone: 0.1, joints: 2 });
-  const img = info.img;
+  const info = boardsImg({ W, H: W, n: 10, seed: 31, vertical: true, light: [128, 120, 110], dark: [66, 60, 54], tone: 0.1, joints: 1 });
   const streak = fbm(W, W, 30, 3, 4, 32, 0.6);
   const fine = fbm(W, W, 48, 16, 3, 35, 0.6);
-  const region = fbm(W, W, 3, 3, 4, 34);
-  const fade = fbm(W, W, 4, 4, 4, 36);
-  const tone = [];
-  for (let b = 0; b < info.n; b++) tone.push(0.9 + r() * 0.18);
-  eachPx(img, (x, y, i, d) => {
-    const p = i >> 2;
-    const lv = x % info.bw;
-    if (lv < 2.2) return; // gaps stay dark
-    const worn = sstep(0.4, 0.85, region[p]);
-    const f = streak[p] * 0.58 + fine[p] * 0.3 + worn * 0.26 + (lv < 5 || lv > info.bw - 4 ? 0.1 : 0);
-    const peel = sstep(0.74, 0.77, f);
-    const fd = fade[p];
-    let R = lerp(104, 140, fd), G = lerp(32, 48, fd), B = lerp(26, 38, fd);
-    R = lerp(R, 150, worn * 0.3);
-    G = lerp(G, 92, worn * 0.3);
-    B = lerp(B, 80, worn * 0.3);
-    // the grain shows through thin paint
-    const lum = (d[i] + d[i + 1] + d[i + 2]) / 360;
-    const k = (0.7 + lum * 0.42) * tone[Math.floor(x / info.bw) % info.n] * (1 - sstep(0.7, 0.74, f) * 0.18);
-    d[i] = lerp(d[i], R * k, 1 - peel);
-    d[i + 1] = lerp(d[i + 1], G * k, 1 - peel);
-    d[i + 2] = lerp(d[i + 2], B * k, 1 - peel);
-  });
-  const c = imgToCanvas(img);
+  const field = new Float32Array(W * W);
+  for (let p = 0; p < field.length; p++) {
+    const lv = (p % W) % info.bw;
+    field[p] = 1 - (streak[p] * 0.62 + fine[p] * 0.38) - (lv < 6 || lv > info.bw - 5 ? 0.14 : 0);
+  }
+  const c = imgToCanvas(info.img);
   const ctx = ctx2d(c);
   drips(ctx, W, W, r, 50, [26, 16, 12], [0.05, 0.16], [40, 260], [2, 10]);
   nailsOnBoards(ctx, W, W, info, r, { studs: 2 });
-  return { canvas: c };
+  return { ...withField(c, field), height: info.height, relief: 0.012 };
 };
 
-// weathered paint over wood. RGB: paint (near white, the static world tints it per building) or bare
-// grey wood where it has peeled; A = paint mask. Peeling is small flakes that gather along the drip
-// edges and in a few worn regions, never big blobs.
+// lap siding, bare: weathered grey boards with the shadow of each lap, butt joints and nail heads. A = how
+// well paint holds: small flakes, and water sits on the lower edge of every board, where it lets go first.
+// The paint, in each building's own colour, is laid on in the shader.
 GEN.clapboard = () => {
-  const W = 512, n = 8, bh = W / n;
+  const W = 512, n = 16, bh = W / n;
   const r = rngf(41);
-  const grain = woodGrainImg(W, W, 41, [150, 144, 132], [104, 98, 90], { rings: 20, streak: 0.5 });
+  const grain = woodGrainImg(W, W, 41, [150, 144, 132], [104, 98, 90], { rings: 40, streak: 0.5, wave: 1, knots: 2, lineDark: 0.2 });
   const fine = fbm(W, W, 40, 20, 4, 42, 0.6);
-  const region = fbm(W, W, 3, 3, 4, 43);
   const flake = fbm(W, W, 16, 12, 4, 46, 0.55);
   const vs = fbm(W, W, 36, 2, 4, 44);
-  const mil = fbm(W, W, 4, 4, 5, 45);
-  const tone = [];
-  for (let b = 0; b < n; b++) tone.push(0.95 + r() * 0.08);
+  const tone = [], off = [];
+  for (let b = 0; b < n; b++) {
+    tone.push(0.92 + r() * 0.14);
+    off.push(Math.floor(r() * W));
+  }
   const img = newImg(W, W);
-  const mask = new Float32Array(W * W);
+  const field = new Float32Array(W * W), height = new Float32Array(W * W);
   const d = img.d, gd = grain.d;
   for (let y = 0, i = 0, p = 0; y < W; y++) {
     const b = Math.floor(y / bh), lv = y % bh;
-    // lap profile: shadow cast by the board above, the face leaning out toward its lower edge, dark butt edge
-    let shade;
-    if (lv < 2) shade = 0.3;
-    else if (lv < 9) shade = lerp(0.52, 0.86, (lv - 2) / 7);
-    else shade = lerp(0.86, 1.03, (lv - 9) / (bh - 11));
-    if (lv >= bh - 2) shade = 0.7;
-    // water sits on the lower edge of each board: that is where paint lets go first
-    const edgeBias = sstep(bh * 0.6, bh - 2, lv) * 0.16 + (lv < 9 ? 0.06 : 0);
+    // the board above casts a shadow on the top of this one; its own butt edge is in shade
+    let shade = lv < 1.5 ? 0.34 : lv < 6 ? lerp(0.6, 0.96, (lv - 1.5) / 4.5) : 1;
+    if (lv >= bh - 1.5) shade = 0.76;
+    const edgeBias = sstep(bh * 0.5, bh - 1, lv) * 0.2 + (lv < 5 ? 0.06 : 0);
     for (let x = 0; x < W; x++, i += 4, p++) {
-      const worn = sstep(0.45, 0.85, region[p]);
-      const f = flake[p] * 0.62 + fine[p] * 0.38 + edgeBias + worn * 0.2;
-      const peel = sstep(0.77, 0.8, f);
-      const lip = sstep(0.73, 0.77, f) * (1 - peel);
-      const pv = tone[b] * (0.9 + fine[p] * 0.14);
-      let R = lerp(gd[i] * 0.95, 200 * pv, 1 - peel);
-      let G = lerp(gd[i + 1] * 0.95, 197 * pv, 1 - peel);
-      let B = lerp(gd[i + 2] * 0.92, 186 * pv, 1 - peel);
-      // chalky, yellowed paint in the worn regions; a lifted rim around each flake
-      R *= 1 - worn * 0.06 + lip * 0.06;
-      G *= 1 - worn * 0.08 + lip * 0.06;
-      B *= 1 - worn * 0.16 + lip * 0.05;
-      if (lip > 0 && peel < 0.5) {
-        const e = sstep(0.76, 0.77, f) * 0.25;
-        R *= 1 - e;
-        G *= 1 - e;
-        B *= 1 - e;
-      }
-      // soft mildew and dust, faint vertical weathering
-      const m = sstep(0.55, 0.95, mil[p]) * 0.3;
-      const g = 0.86 + 0.14 * vs[p];
-      d[i] = lerp(R, 92, m) * g * shade;
-      d[i + 1] = lerp(G, 98, m) * g * shade;
-      d[i + 2] = lerp(B, 80, m) * g * shade;
+      const gi = (y * W + ((x + off[b]) % W)) * 4;
+      const g = (0.86 + 0.14 * vs[p]) * shade * tone[b];
+      d[i] = gd[gi] * g;
+      d[i + 1] = gd[gi + 1] * g;
+      d[i + 2] = gd[gi + 2] * g;
       d[i + 3] = 255;
-      mask[p] = 1 - peel;
+      field[p] = 1 - (flake[p] * 0.6 + fine[p] * 0.4) - edgeBias;
+      // each board leans out toward its lower edge, then steps back under the next
+      height[p] = lv < 1.5 ? 0 : 0.12 + (lv / bh) * 0.8 + (gd[gi] / 255 - 0.5) * 0.12;
     }
   }
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  drips(ctx, W, W, r, 40, [70, 62, 46], [0.04, 0.12], [40, 260], [2, 10]);
+  drips(ctx, W, W, r, 40, [50, 44, 34], [0.04, 0.12], [40, 260], [2, 10]);
   // butt joints and nail heads (with the odd rust run)
   for (let b = 0; b < n; b++) {
     const x = r() * W;
-    ctx.fillStyle = 'rgba(40,34,28,0.55)';
-    wrapDraw(W, W, x, b * bh + bh / 2, 4, (px) => ctx.fillRect(px, b * bh + 2, 1.4, bh - 3));
+    ctx.fillStyle = 'rgba(30,26,22,0.7)';
+    wrapDraw(W, W, x, b * bh + bh / 2, 4, (px) => ctx.fillRect(px, b * bh + 1.5, 1.4, bh - 2));
     for (let s = 0; s < 5; s++) {
-      const nx = ((s + 0.5) / 5) * W + (r() - 0.5) * 8, ny = b * bh + bh - 7;
-      if (r() < 0.35) {
-        const gg = ctx.createLinearGradient(0, ny, 0, ny + 30);
-        gg.addColorStop(0, 'rgba(96,52,24,0.35)');
+      const nx = ((s + 0.5) / 5) * W + (r() - 0.5) * 8, ny = b * bh + bh - 6;
+      if (r() < 0.3) {
+        const gg = ctx.createLinearGradient(0, ny, 0, ny + 26);
+        gg.addColorStop(0, 'rgba(96,52,24,0.4)');
         gg.addColorStop(1, 'rgba(96,52,24,0)');
         ctx.fillStyle = gg;
-        ctx.fillRect(nx - 1.2, ny, 2.4, 30);
+        ctx.fillRect(nx - 1.2, ny, 2.4, 26);
       }
-      ctx.fillStyle = 'rgba(46,40,34,0.8)';
+      ctx.fillStyle = 'rgba(40,34,28,0.85)';
       ctx.fillRect(nx - 1, ny - 1, 2, 2);
     }
   }
-  const out = canvasToImg(c);
-  for (let p = 0; p < W * W; p++) out.d[p * 4 + 3] = mask[p] * 255;
-  return out;
+  return { ...withField(c, field), height, relief: 0.014 };
 };
 
 GEN.logwall = () => {
   const W = 512, n = 8, bh = W / n;
   const r = rngf(51);
-  const grain = woodGrainImg(W, W, 51, [118, 96, 72], [58, 44, 32], { rings: 34, streak: 0.8 });
+  const grain = woodGrainImg(W, W, 51, [116, 90, 64], [52, 38, 27], { rings: 30, streak: 0.8, wave: 1.4, knots: 5 });
   const ch = fbm(W, W, 16, 8, 4, 52);
   const dirt = fbm(W, W, 5, 5, 4, 53);
   const img = newImg(W, W);
+  const height = new Float32Array(W * W);
   const d = img.d, gd = grain.d;
   const off = [];
   for (let b = 0; b < n; b++) off.push(Math.floor(r() * W));
   for (let y = 0, i = 0, p = 0; y < W; y++) {
     const b = Math.floor(y / bh), lv = y - b * bh;
     for (let x = 0; x < W; x++, i += 4, p++) {
-      const wob = (ch[p] - 0.5) * 6;
-      const chinkH = 6 + wob;
+      const wob = (ch[p] - 0.5) * 7;
+      const chinkH = 9 + wob;
       if (lv < chinkH * 0.5 || lv > bh - chinkH * 0.5) {
-        const v = 120 + ch[p] * 40 - 30 * dirt[p];
+        // mortar chinking, set back between the logs: dirty, and dark under the log above
+        const v = (84 + ch[p] * 36 - 30 * dirt[p]) * (lv < bh / 2 ? 0.62 : 1);
         d[i] = v;
-        d[i + 1] = v * 0.95;
-        d[i + 2] = v * 0.86;
+        d[i + 1] = v * 0.94;
+        d[i + 2] = v * 0.84;
+        height[p] = 0.1 + ch[p] * 0.08;
       } else {
         const t = (lv - chinkH * 0.5) / (bh - chinkH);
-        const s = Math.pow(Math.sin(Math.PI * t), 0.55) * (1 - 0.25 * t);
+        const s = Math.pow(Math.sin(Math.PI * t), 0.55);
         const gi = (((y + off[b]) % W) * W + ((x + off[b] * 3) % W)) * 4;
-        const k = (0.45 + 0.65 * s) * (0.8 + 0.3 * dirt[p]);
+        const k = (0.56 + 0.52 * s * (1 - 0.2 * t)) * (0.8 + 0.3 * dirt[p]);
         d[i] = gd[gi] * k;
         d[i + 1] = gd[gi + 1] * k;
         d[i + 2] = gd[gi + 2] * k;
+        height[p] = 0.2 + s * 0.74 + (gd[gi] / 255 - 0.3) * 0.12;
       }
       d[i + 3] = 255;
     }
@@ -697,105 +746,106 @@ GEN.logwall = () => {
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
   // checks (cracks along logs)
-  drawCracks(ctx, W, W, r, 22, { len: [30, 140], wander: 0.08, step: 5, width: [0.8, 1.6], col: 'rgba(22,16,12,0.7)', branch: 0 });
+  drawCracks(ctx, W, W, r, 22, { len: [30, 140], wander: 0.08, step: 5, width: [0.8, 1.6], col: 'rgba(22,16,12,0.7)', branch: 0, along: 0 });
   drips(ctx, W, W, r, 30, [20, 15, 10], [0.05, 0.14]);
-  return { canvas: c };
+  return { canvas: c, height, relief: 0.05 };
 };
 
 GEN.concrete = () => {
   const W = 512;
   const r = rngf(61);
-  const a = fbm(W, W, 4, 4, 6, 61, 0.55), b = fbm(W, W, 16, 16, 3, 62);
-  const st = fbm(W, W, 26, 2, 4, 63), big = fbm(W, W, 2, 2, 3, 64), agg = fbm(W, W, 96, 96, 2, 66);
+  const a = fbm(W, W, 6, 6, 6, 61, 0.55), b = fbm(W, W, 16, 16, 3, 62);
+  const st = fbm(W, W, 26, 2, 4, 63), agg = fbm(W, W, 96, 96, 2, 66);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    // cement with a fine aggregate grain, broad stains and a little run-off streaking
-    let v = 0.46 + (a[p] - 0.5) * 0.34 + (b[p] - 0.5) * 0.14 + (agg[p] - 0.5) * 0.16 + (r() - 0.5) * 0.06;
+    // cement with a fine aggregate grain and a little run-off streaking
+    let v = 0.46 + (a[p] - 0.5) * 0.3 + (b[p] - 0.5) * 0.14 + (agg[p] - 0.5) * 0.16 + (r() - 0.5) * 0.06;
     v *= 0.9 + 0.12 * st[p];
-    v *= 0.86 + 0.2 * big[p];
     d[i] = lerp(48, 132, v);
     d[i + 1] = lerp(47, 129, v);
     d[i + 2] = lerp(44, 121, v);
     d[i + 3] = 255;
   });
-  const moss = fbm(W, W, 5, 5, 5, 65);
-  tintByNoise(img, moss, [48, 54, 34], 0.72, 0.92, 0.45);
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  blotches(ctx, W, W, r, 14, [30, 28, 24], [0.06, 0.16], [20, 60]);
+  blotches(ctx, W, W, r, 14, [30, 28, 24], [0.05, 0.13], [16, 50]);
   drips(ctx, W, W, r, 24, [24, 24, 20], [0.04, 0.12], [60, 260], [4, 16]);
-  for (let k = 0; k < 160; k++) {
-    const x = r() * W, y = r() * W, R = 0.6 + r() * 1.3;
-    ctx.fillStyle = `rgba(30,30,28,${0.15 + r() * 0.3})`;
+  // bug holes left by air against the formwork
+  for (let k = 0; k < 220; k++) {
+    const x = r() * W, y = r() * W, R = 0.6 + r() * 1.5;
+    ctx.fillStyle = `rgba(26,26,24,${0.2 + r() * 0.4})`;
     ctx.beginPath();
     ctx.arc(x, y, R, 0, 7);
     ctx.fill();
   }
-  drawCracks(ctx, W, W, r, 4, { len: [80, 260], width: [0.7, 1.4], col: 'rgba(22,21,20,0.6)', light: 'rgba(150,146,138,0.18)', branch: 0.5, wander: 0.5, step: 6 });
-  return { canvas: c };
+  drawCracks(ctx, W, W, r, 3, { len: [50, 150], width: [0.5, 1], col: 'rgba(22,21,20,0.42)', light: 'rgba(150,146,138,0.12)', branch: 0.5, wander: 0.5, step: 6 });
+  // a control joint along each edge of the 3 m pour
+  for (const [x, y, w, h] of [[0, 0, W, 2], [0, 0, 2, W]]) {
+    ctx.fillStyle = 'rgba(20,20,18,0.6)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(160,156,148,0.14)';
+    ctx.fillRect(x + (w < h ? 2 : 0), y + (w < h ? 0 : 2), w < h ? 1.5 : w, w < h ? h : 1.5);
+  }
+  return { canvas: c, height: lumHeight(canvasToImg(c), 2), relief: 0.006 };
 };
 
+// running bond, 2 m: 28 courses of 9 bricks. Red-brown stock with dark clinkers, pale salmon ones and the odd
+// spalled face; recessed mortar in the shadow of the brick above; salt runs from a few joints.
 GEN.brick = () => {
-  const W = 512, rows = 16, rh = W / rows, cols = 4, cw = W / cols, mort = 4;
+  const W = 1024, rows = 28, rh = W / rows, cols = 9, cw = W / cols, mort = 5;
   const r = rngf(71);
-  const tex = fbm(W, W, 24, 24, 3, 72);
-  const soot = fbm(W, W, 4, 4, 5, 73);
-  const chip = fbm(W, W, 32, 32, 3, 74);
-  const efl = fbm(W, W, 30, 3, 3, 75);
+  const tex = fbm(W, W, 48, 48, 3, 72);
+  const body = fbm(W, W, 18, 36, 3, 76);
+  const chip = fbm(W, W, 64, 64, 3, 74);
   const bc = [];
   for (let k = 0; k < rows * cols; k++) {
     const t = r();
-    // mostly red-brown with a few dark clinkers and paler salmon bricks
-    const base = t < 0.08 ? [84, 48, 38] : t < 0.22 ? [150, 92, 68] : [lerp(116, 142, r()), lerp(56, 70, r()), lerp(40, 50, r())];
-    bc.push(base);
+    const base = t < 0.06 ? [86, 54, 46] : t < 0.14 ? [136, 92, 72] : t < 0.18 ? [104, 82, 72] : [lerp(108, 124, r()), lerp(62, 70, r()), lerp(50, 57, r())];
+    bc.push({ c: base, spall: r() < 0.05, sx: r(), sy: r(), k: 0.94 + r() * 0.12 });
   }
   const img = newImg(W, W);
+  const height = new Float32Array(W * W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
     const row = Math.floor(y / rh), ly = y - row * rh;
     const xo = (x + (row % 2) * (cw / 2)) % W;
     const col = Math.floor(xo / cw), lx = xo - col * cw;
-    const e = Math.min(lx, cw - lx, ly, rh - ly) - (chip[p] - 0.5) * 3;
-    let R, G, B;
-    if (e < mort * 0.5) {
-      // recessed mortar, in the shadow of the brick above
-      const v = 118 + tex[p] * 26;
-      R = v;
-      G = v * 0.97;
-      B = v * 0.91;
-      if (ly < mort * 0.5 + 1 && ly >= 0) {
-        R *= 0.72;
-        G *= 0.72;
-        B *= 0.72;
-      }
-    } else {
-      const c0 = bc[row * cols + col];
-      const k = 0.82 + tex[p] * 0.34 + (r() - 0.5) * 0.08;
-      R = c0[0] * k;
-      G = c0[1] * k;
-      B = c0[2] * k;
+    const e = Math.min(lx, cw - lx, ly, rh - ly) - (chip[p] - 0.5) * 4;
+    const face = sstep(mort * 0.5 - 0.8, mort * 0.5 + 1.2, e);
+    // mortar: sandy grey, darker under the brick above
+    let v = 122 + tex[p] * 30 + (r() - 0.5) * 10;
+    if (ly < mort * 0.5 + 1.5) v *= 0.7;
+    let R = v, G = v * 0.97, B = v * 0.9, h = 0.22 + tex[p] * 0.1;
+    if (face > 0) {
+      const b = bc[row * cols + col];
+      let k = b.k * (0.8 + tex[p] * 0.24 + body[p] * 0.16) + (r() - 0.5) * 0.07;
       // the top arris catches the light, the bottom one is in shadow
-      if (e < mort * 0.5 + 2) {
-        const top = ly < rh / 2 ? 1.08 : 0.84;
-        R *= top;
-        G *= top;
-        B *= top;
+      if (e < mort * 0.5 + 3) k *= ly < rh / 2 ? 1.1 : 0.84;
+      let fr = b.c[0] * k, fg = b.c[1] * k, fb = b.c[2] * k, fh = 0.86 + tex[p] * 0.14;
+      if (b.spall) {
+        // the fired face has flaked off: a paler, rougher core
+        const sp = sstep(0.34, 0.26, Math.hypot(lx / cw - 0.2 - b.sx * 0.6, (ly / rh - 0.2 - b.sy * 0.6) * 0.5) + (chip[p] - 0.5) * 0.2);
+        fr = lerp(fr, 150 * (0.8 + tex[p] * 0.3), sp * 0.8);
+        fg = lerp(fg, 106 * (0.8 + tex[p] * 0.3), sp * 0.8);
+        fb = lerp(fb, 84 * (0.8 + tex[p] * 0.3), sp * 0.8);
+        fh -= sp * 0.3;
       }
+      R = lerp(R, fr, face);
+      G = lerp(G, fg, face);
+      B = lerp(B, fb, face);
+      h = lerp(h, fh, face);
     }
-    const s = 0.84 + 0.2 * soot[p];
-    R *= s;
-    G *= s;
-    B *= s;
-    const ef = sstep(0.8, 0.95, efl[p]) * 0.3;
-    d[i] = lerp(R, 172, ef);
-    d[i + 1] = lerp(G, 168, ef);
-    d[i + 2] = lerp(B, 158, ef);
+    d[i] = R;
+    d[i + 1] = G;
+    d[i + 2] = B;
     d[i + 3] = 255;
+    height[p] = h;
   });
   const c = imgToCanvas(img);
-  drips(ctx2d(c), W, W, r, 24, [30, 22, 18], [0.05, 0.14], [40, 200], [3, 12]);
-  return { canvas: c };
+  const ctx = ctx2d(c);
+  drips(ctx, W, W, r, 26, [30, 22, 18], [0.04, 0.12], [80, 400], [6, 24]);
+  return { canvas: c, height, relief: 0.012 };
 };
 
 // weathered white-painted wood for window casings and sashes
@@ -815,139 +865,113 @@ GEN.sash = () => {
   return { canvas: c };
 };
 
+// asphalt shingles, 2 m: 12 courses of three-tab strips, granules worn thin in places. A = where moss takes
+// hold (the slots between tabs and the damp lower edge of each course); the moss is laid on in the shader.
 GEN.shingles = () => {
-  const W = 512, rows = 8, rh = W / rows, tabs = 6, tw = W / tabs;
+  const W = 512, rows = 12, rh = W / rows, tabs = 6, tw = W / tabs;
   const r = rngf(81);
-  const gran = fbm(W, W, 64, 64, 2, 82);
-  const moss = fbm(W, W, 5, 5, 5, 83);
-  const dirt = fbm(W, W, 3, 3, 4, 84);
+  const gran = fbm(W, W, 96, 96, 2, 82);
+  const worn = fbm(W, W, 12, 12, 4, 84);
+  const mo = fbm(W, W, 10, 10, 4, 83);
   const tc = [];
   for (let k = 0; k < rows * tabs; k++) {
-    const miss = r() < 0.05;
-    const v = lerp(0.75, 1.2, r());
-    tc.push({ miss, c: [58 * v, 54 * v, 51 * v + r() * 6], jag: r() * 3 });
+    const v = lerp(0.8, 1.16, r());
+    tc.push({ c: [60 * v, 56 * v, 53 * v + r() * 6], curl: r() < 0.1 ? 1 : 0, off: (r() - 0.5) * 2 });
   }
   const img = newImg(W, W);
+  const field = new Float32Array(W * W), height = new Float32Array(W * W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
     const row = Math.floor(y / rh), ly = y - row * rh;
     const xo = (x + (row % 2) * (tw / 2)) % W;
     const col = Math.floor(xo / tw), lx = xo - col * tw;
     const T = tc[row * tabs + col];
-    let R, G, B;
-    if (T.miss) {
-      R = 26;
-      G = 22;
-      B = 20;
-    } else {
-      const k = 0.78 + gran[p] * 0.45 + (r() - 0.5) * 0.2;
-      R = T.c[0] * k;
-      G = T.c[1] * k;
-      B = T.c[2] * k;
-    }
-    // shadow under the row above + curled bottom edge highlight
-    if (ly < 7) {
-      const s = lerp(0.35, 1, ly / 7);
-      R *= s;
-      G *= s;
-      B *= s;
-    }
-    if (ly > rh - 3) {
-      R *= 1.2;
-      G *= 1.2;
-      B *= 1.2;
-    }
-    if (lx < 1.8 || lx > tw - 1) {
-      R *= 0.4;
-      G *= 0.4;
-      B *= 0.4;
-    }
-    const m = sstep(0.62, 0.82, moss[p]) * 0.8;
-    R = lerp(R, 46 + gran[p] * 20, m);
-    G = lerp(G, 56 + gran[p] * 22, m);
-    B = lerp(B, 30, m);
-    const dd = 0.8 + 0.3 * dirt[p];
-    d[i] = R * dd;
-    d[i + 1] = G * dd;
-    d[i + 2] = B * dd;
+    let k = 0.8 + gran[p] * 0.42 + (r() - 0.5) * 0.2;
+    // granules gone: the darker mat shows through
+    k *= 1 - sstep(0.62, 0.8, worn[p]) * 0.28;
+    // shadow under the course above, a lighter lifted lower edge, dark slots between the tabs
+    if (ly < 6) k *= lerp(0.38, 1, ly / 6);
+    if (ly > rh - 2.5) k *= 1.16 + T.curl * 0.2;
+    const slot = lx < 1.8 || lx > tw - 0.8;
+    if (slot) k *= 0.42;
+    d[i] = T.c[0] * k;
+    d[i + 1] = T.c[1] * k;
+    d[i + 2] = T.c[2] * k;
     d[i + 3] = 255;
+    field[p] = mo[p] * 0.8 + (slot ? 0.3 : 0) + sstep(rh - 9, rh, ly) * 0.16 + (ly < 6 ? 0.16 : 0);
+    height[p] = slot || ly < 1.5 ? 0 : 0.2 + (ly / rh) * (0.55 + T.curl * 0.25) + gran[p] * 0.2;
   });
-  return { canvas: imgToCanvas(img) };
+  return { ...withField(imgToCanvas(img), field), height, relief: 0.008 };
 };
 
-// corrugated galvanised sheet: mottled zinc, rust gathering in the valleys, running down from the
-// fastener rows and eating the sheets where they have been wet longest. `rusty` 0..1.
-function tinImg(seed, rusty) {
+// corrugated galvanised sheet, 2 m, clean: mottled zinc spangle, an overlap every metre and two rows of
+// fasteners. A = where rust starts: in the valleys, along the laps and in the run below each fastener. The
+// rust itself is laid on in the shader (SURF.tin / SURF.tin_rust share this tile).
+GEN.tin = () => {
   const W = 512, period = 16;
-  const r = rngf(seed);
-  const mot = fbm(W, W, 6, 6, 5, seed + 1);
-  const spang = fbm(W, W, 64, 64, 2, seed + 2);
-  const vs = fbm(W, W, 40, 3, 4, seed + 3);
-  const rustN = fbm(W, W, 12, 8, 4, seed + 4, 0.55);
-  const region = fbm(W, W, 3, 2, 4, seed + 5);
-  const rr = colorRamp([[0, 46, 26, 16], [0.4, 90, 46, 22], [0.75, 128, 68, 32], [1, 146, 90, 50]]);
-  const tmp = [0, 0, 0];
+  const r = rngf(91);
+  const mot = fbm(W, W, 10, 10, 4, 92);
+  const spang = fbm(W, W, 64, 64, 2, 93);
+  const vs = fbm(W, W, 40, 3, 4, 94);
+  const rustN = fbm(W, W, 14, 10, 4, 95, 0.6);
   const img = newImg(W, W);
+  const field = new Float32Array(W * W), height = new Float32Array(W * W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
     const ph = (x / period) * Math.PI * 2;
     const s = Math.sin(ph);
-    const sh = 0.74 + 0.2 * s + 0.1 * Math.max(0, Math.sin(ph - 0.6)) ** 8;
-    const g = (112 + mot[p] * 34 + (spang[p] - 0.5) * 16) * (1 - sstep(0.55, 0.9, region[p]) * 0.22);
-    let R = g * 0.98, G = g, B = g * 0.99;
-    const valley = sstep(0.2, -0.8, s);
-    const t = rustN[p] * 0.5 + vs[p] * 0.34 + valley * 0.12 + region[p] * 0.3 * (0.4 + rusty);
-    const rk = sstep(0.86 - rusty * 0.45, 0.94 - rusty * 0.45, t);
-    rr(rustN[p] * 0.6 + vs[p] * 0.5 + (r() - 0.5) * 0.12, tmp);
-    // a faint orange bloom around the rust
-    const halo = sstep(0.72 - rusty * 0.45, 0.86 - rusty * 0.45, t) * (1 - rk) * 0.3;
-    R = lerp(lerp(R, 128, halo), tmp[0], rk);
-    G = lerp(lerp(G, 92, halo), tmp[1], rk);
-    B = lerp(lerp(B, 70, halo), tmp[2], rk);
-    let k = sh * (0.86 + 0.18 * vs[p]);
-    if (x % 256 < 2) k *= 0.45; // sheet overlap every 1 m
-    d[i] = R * k;
-    d[i + 1] = G * k;
-    d[i + 2] = B * k;
+    const lap = x % 256;
+    const g = 120 + mot[p] * 30 + (spang[p] - 0.5) * 18;
+    let k = (0.84 + 0.12 * s + 0.07 * Math.max(0, Math.sin(ph - 0.6)) ** 8) * (0.88 + 0.16 * vs[p]);
+    if (lap < 2) k *= 0.5;
+    else if (lap < 5) k *= 1.1;
+    d[i] = g * 0.97 * k;
+    d[i + 1] = g * k;
+    d[i + 2] = g * 1.01 * k;
     d[i + 3] = 255;
+    field[p] = rustN[p] * 0.58 + vs[p] * 0.3 + sstep(0.2, -0.8, s) * 0.12 + (lap < 12 ? 0.14 : 0);
+    height[p] = 0.5 + 0.5 * s + (lap < 3 ? 0.2 : 0);
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  drips(ctx, W, W, r, Math.round(20 + rusty * 40), [96, 44, 18], [0.06, 0.2 + rusty * 0.15], [30, 200], [2, 6]);
+  drips(ctx, W, W, r, 26, [34, 32, 30], [0.04, 0.1], [40, 220], [2, 7]);
+  drips(ctx, W, W, r, 16, [206, 208, 204], [0.04, 0.1], [30, 160], [2, 6]);
   for (const yy of [18, 274]) {
     for (let x = period / 2; x < W; x += period * 2) {
       const fx = x + period / 4;
-      ctx.fillStyle = 'rgba(34,30,28,0.9)';
+      ctx.fillStyle = 'rgba(70,68,66,0.9)';
       ctx.beginPath();
-      ctx.arc(fx, yy, 2.2, 0, 7);
+      ctx.arc(fx, yy, 3, 0, 7);
       ctx.fill();
-      if (r() < 0.35 + rusty * 0.5) {
-        const L = 30 + r() * (80 + rusty * 120);
-        const gg = ctx.createLinearGradient(0, yy, 0, yy + L);
-        gg.addColorStop(0, `rgba(112,52,20,${0.45 + rusty * 0.3})`);
-        gg.addColorStop(1, 'rgba(112,52,20,0)');
-        ctx.fillStyle = gg;
-        ctx.fillRect(fx - 1.6, yy, 3.2, L);
+      ctx.fillStyle = 'rgba(30,28,26,0.95)';
+      ctx.beginPath();
+      ctx.arc(fx, yy, 1.7, 0, 7);
+      ctx.fill();
+      // water runs down from every screw hole
+      const L = 30 + r() * 170;
+      for (let dy = 0; dy < L; dy++) {
+        const row = ((yy + dy) % W) * W, a = 0.5 * (1 - dy / L);
+        for (let dx = -2; dx <= 2; dx++) field[row + Math.round(fx) + dx] += a * (1 - Math.abs(dx) / 3);
       }
     }
   }
-  return { canvas: c };
-}
-GEN.tin = () => tinImg(91, 0.12);
-GEN.tin_rusty = () => tinImg(97, 0.62);
+  return { ...withField(c, field), height, relief: 0.018 };
+};
 
+// steel rusted through: dark scale with orange bloom in patches, pitted, flaking along faint plates
 GEN.rust = () => {
   const W = 512;
   const r = rngf(101);
-  const a = fbm(W, W, 6, 6, 6, 101, 0.55), b = fbm(W, W, 24, 24, 3, 102);
-  const wo = worley(W, W, 14, 14, 103);
-  const rr = colorRamp([[0, 34, 20, 14], [0.35, 78, 38, 18], [0.6, 122, 60, 26], [0.8, 150, 80, 36], [1, 168, 104, 58]]);
+  const a = fbm(W, W, 8, 8, 6, 101, 0.6), b = fbm(W, W, 28, 28, 4, 102, 0.6), c2 = fbm(W, W, 72, 72, 3, 104);
+  const vs = fbm(W, W, 30, 3, 3, 105);
+  const wo = worley(W, W, 18, 18, 103);
+  const rr = colorRamp([[0, 30, 21, 17], [0.3, 58, 37, 25], [0.55, 88, 56, 32], [0.78, 114, 76, 42], [1, 134, 98, 60]]);
   const tmp = [0, 0, 0];
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const edge = sstep(0.0, 0.12, wo.f2[p] - wo.f1[p]);
-    const t = a[p] * 0.7 + b[p] * 0.3 + (r() - 0.5) * 0.12 - (1 - edge) * 0.25;
+    const edge = sstep(0.0, 0.1, wo.f2[p] - wo.f1[p]);
+    const t = a[p] * 0.5 + b[p] * 0.3 + c2[p] * 0.2 + (vs[p] - 0.5) * 0.16 + (r() - 0.5) * 0.1 - (1 - edge) * 0.09;
     rr(t, tmp);
     d[i] = tmp[0];
     d[i + 1] = tmp[1];
@@ -956,13 +980,14 @@ GEN.rust = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  for (let k = 0; k < 500; k++) {
-    ctx.fillStyle = `rgba(18,10,6,${0.3 + r() * 0.5})`;
+  for (let k = 0; k < 700; k++) {
+    ctx.fillStyle = `rgba(20,12,8,${0.25 + r() * 0.45})`;
     ctx.beginPath();
-    ctx.arc(r() * W, r() * W, 0.6 + r() * 2, 0, 7);
+    ctx.arc(r() * W, r() * W, 0.5 + r() * 1.7, 0, 7);
     ctx.fill();
   }
-  return { canvas: c };
+  drips(ctx, W, W, r, 22, [24, 14, 10], [0.06, 0.16], [30, 180], [2, 8]);
+  return { canvas: c, height: lumHeight(canvasToImg(c), 2.2), relief: 0.005 };
 };
 
 function scratches(ctx, W, H, r, n, col, len = [4, 30]) {
@@ -996,14 +1021,15 @@ function chips(ctx, W, H, r, n, col, rad = [1, 5]) {
   }
 }
 
+// bare dark steel: mill scale, scratches down to bright metal and a few dings. A = where rust takes first.
 GEN.metal = () => {
   const W = 512;
   const r = rngf(111);
-  const a = fbm(W, W, 5, 5, 6, 111), vs = fbm(W, W, 30, 2, 4, 112);
+  const a = fbm(W, W, 8, 8, 5, 111), vs = fbm(W, W, 30, 2, 4, 112), rs = fbm(W, W, 18, 18, 4, 113, 0.6);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const k = (0.75 + a[p] * 0.4) * (0.82 + 0.25 * vs[p]) + (r() - 0.5) * 0.05;
+    const k = (0.78 + a[p] * 0.36) * (0.84 + 0.22 * vs[p]) + (r() - 0.5) * 0.05;
     d[i] = 64 * k;
     d[i + 1] = 72 * k;
     d[i + 2] = 74 * k;
@@ -1013,11 +1039,15 @@ GEN.metal = () => {
   const ctx = ctx2d(c);
   scratches(ctx, W, W, r, 260, 'rgba(150,152,150,0.35)');
   scratches(ctx, W, W, r, 80, 'rgba(20,20,20,0.35)');
-  chips(ctx, W, W, r, 90, (rr) => (rr() < 0.5 ? 'rgba(110,56,26,0.85)' : 'rgba(70,38,20,0.9)'), [1, 5]);
-  drips(ctx, W, W, r, 30, [60, 30, 14], [0.08, 0.22], [30, 160], [2, 7]);
-  return { canvas: c };
+  chips(ctx, W, W, r, 50, 'rgba(26,26,26,0.7)', [1, 4]);
+  drips(ctx, W, W, r, 24, [20, 20, 18], [0.06, 0.16], [30, 160], [2, 7]);
+  const field = new Float32Array(W * W);
+  for (let p = 0; p < field.length; p++) field[p] = rs[p] * 0.7 + vs[p] * 0.3;
+  return { ...withField(c, field), height: lumHeight(canvasToImg(c), 2.4), relief: 0.003 };
 };
 
+// coursed rubble, 2 m: rough-faced blocks of uneven size in recessed mortar. A = where moss takes hold
+// (the joints and the block edges first); the moss is laid on in the shader.
 GEN.stone = () => {
   const W = 512;
   const r = rngf(121);
@@ -1036,7 +1066,7 @@ GEN.stone = () => {
       cuts.push(xx);
       xx += wd;
     }
-    rows.push({ y0: yy, h: hgt, cuts, off, cols: cuts.map(() => [lerp(88, 128, r()), 0, 0, r()]) });
+    rows.push({ y0: yy, h: hgt, cuts, off, cols: cuts.map(() => [lerp(88, 128, r()), 0, 0, r(), r() - 0.5, r() - 0.5]) });
     yy += hgt;
   }
   for (const row of rows)
@@ -1046,12 +1076,12 @@ GEN.stone = () => {
       c[2] = c[0] * (0.86 + (1 - warm) * 0.08);
       c[0] *= 1 + warm * 0.06;
     }
-  const tex = fbm(W, W, 12, 12, 4, 122), big = fbm(W, W, 4, 4, 4, 123), mo = fbm(W, W, 6, 6, 5, 124);
+  const tex = fbm(W, W, 12, 12, 4, 122), fine = fbm(W, W, 48, 48, 3, 123), mo = fbm(W, W, 9, 9, 5, 124);
   const img = newImg(W, W);
+  const field = new Float32Array(W * W), height = new Float32Array(W * W);
   let ri = 0;
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    while (ri < rows.length - 1 && y >= rows[ri].y0 + rows[ri].h) ri++;
     if (y < rows[ri].y0) ri = 0;
     while (y >= rows[ri].y0 + rows[ri].h) ri++;
     const row = rows[ri];
@@ -1061,39 +1091,43 @@ GEN.stone = () => {
     while (s < row.cuts.length - 1 && xo >= row.cuts[s + 1]) s++;
     const x0 = row.cuts[s], x1 = s < row.cuts.length - 1 ? row.cuts[s + 1] : W;
     const e = Math.min(xo - x0, x1 - xo, ly, row.h - ly) + (tex[p] - 0.5) * 7;
+    const c0 = row.cols[s];
+    // each block's face is split a little out of true: one side stands prouder than the other
+    const tilt = ((xo - x0) / (x1 - x0) - 0.5) * c0[4] + (ly / row.h - 0.5) * c0[5];
     let R, G, B;
     if (e < 3) {
       const v = 52 + tex[p] * 20;
       R = v;
       G = v * 0.96;
       B = v * 0.88;
+      height[p] = 0.12 + fine[p] * 0.1;
     } else {
-      const c0 = row.cols[s];
-      const k = (0.72 + tex[p] * 0.45) * (0.85 + 0.25 * big[p]) * (e < 7 ? 0.8 : 1) + (r() - 0.5) * 0.06;
+      const k = (0.74 + tex[p] * 0.4 + (fine[p] - 0.5) * 0.2) * (e < 7 ? 0.82 : 1) * (1 + tilt * 0.2) + (r() - 0.5) * 0.06;
       R = c0[0] * k;
       G = c0[1] * k;
       B = c0[2] * k;
+      height[p] = clamp(0.3 + sstep(3, 12, e) * 0.34 + tex[p] * 0.22 + (fine[p] - 0.5) * 0.12 + tilt * 0.3);
     }
-    const m = sstep(0.68, 0.85, mo[p] + (e < 6 ? 0.08 : 0)) * 0.6;
-    d[i] = lerp(R, 44, m);
-    d[i + 1] = lerp(G, 54, m);
-    d[i + 2] = lerp(B, 30, m);
+    d[i] = R;
+    d[i + 1] = G;
+    d[i + 2] = B;
     d[i + 3] = 255;
+    field[p] = mo[p] * 0.84 + (e < 3 ? 0.22 : e < 8 ? 0.1 : 0);
   });
   const c = imgToCanvas(img);
   drips(ctx2d(c), W, W, r, 30, [15, 14, 12], [0.06, 0.18], [40, 200], [4, 14]);
-  return { canvas: c };
+  return { ...withField(c, field), height, relief: 0.035 };
 };
 
 GEN.dockwood = () => {
   const W = 512;
   const r = rngf(131);
   const info = boardsImg({ W, H: W, n: 8, seed: 131, light: [88, 70, 52], dark: [38, 30, 24], tone: 0.2, grime: 0.5, warm: 4 });
-  const alg = fbm(W, W, 5, 5, 5, 132);
+  const alg = fbm(W, W, 8, 8, 5, 132);
   eachPx(info.img, (x, y, i, d) => {
     const lv = y % info.bw;
     const nearEdge = lv < 8 || lv > info.bw - 8 ? 0.35 : 0;
-    const t = clamp(sstep(0.6, 0.85, alg[i >> 2]) * 0.6 + nearEdge * alg[i >> 2]);
+    const t = clamp(sstep(0.6, 0.85, alg[i >> 2]) * 0.5 + nearEdge * alg[i >> 2]);
     d[i] = lerp(d[i], 36, t);
     d[i + 1] = lerp(d[i + 1], 44, t);
     d[i + 2] = lerp(d[i + 2], 26, t);
@@ -1101,44 +1135,42 @@ GEN.dockwood = () => {
   const c = imgToCanvas(info.img);
   const ctx = ctx2d(c);
   nailsOnBoards(ctx, W, W, info, r, { studs: 3, rust: 0.8 });
-  drawCracks(ctx, W, W, r, 14, { len: [30, 140], wander: 0.08, step: 5, width: [0.8, 1.5], col: 'rgba(12,10,8,0.7)', branch: 0 });
-  return { canvas: c };
+  drawCracks(ctx, W, W, r, 14, { len: [30, 140], wander: 0.08, step: 5, width: [0.8, 1.5], col: 'rgba(12,10,8,0.7)', branch: 0, along: 0 });
+  return { canvas: c, height: info.height, relief: 0.014 };
 };
 
+// window glass, 2 m: a dark room behind dusty panes - rain-streaked dirt, one starred impact and a couple
+// of long cracks in the whole tile (the static world shifts every pane to a different part of it).
 GEN.glass = () => {
-  const W = 256;
+  const W = 512;
   const r = rngf(141);
-  const a = fbm(W, W, 4, 4, 5, 141), b = fbm(W, W, 10, 10, 3, 142);
+  const a = fbm(W, W, 5, 5, 5, 141), b = fbm(W, W, 14, 14, 3, 142), vs = fbm(W, W, 30, 3, 4, 143);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const refl = sstep(0.1, 0.0, Math.abs(((x + y * 0.6) / W) % 1 - 0.35)) * 0.5;
-    const grime = sstep(0.45, 0.9, a[p]);
-    let R = 20 + refl * 26, G = 26 + refl * 30, B = 30 + refl * 34;
-    R = lerp(R, 64 + b[p] * 20, grime * 0.8);
-    G = lerp(G, 60 + b[p] * 18, grime * 0.8);
-    B = lerp(B, 48 + b[p] * 14, grime * 0.8);
-    d[i] = R;
-    d[i + 1] = G;
-    d[i + 2] = B;
+    const grime = sstep(0.42, 0.88, a[p] * 0.65 + vs[p] * 0.35);
+    d[i] = lerp(15, 60 + b[p] * 22, grime * 0.7);
+    d[i + 1] = lerp(19, 58 + b[p] * 20, grime * 0.7);
+    d[i + 2] = lerp(22, 48 + b[p] * 16, grime * 0.7);
     d[i + 3] = 255;
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  // spiderweb crack
-  const cx = lerp(60, 200, r()), cy = lerp(60, 200, r());
-  ctx.strokeStyle = 'rgba(170,180,182,0.55)';
-  ctx.lineWidth = 0.9;
-  const rays = 9 + Math.floor(r() * 5);
+  drips(ctx, W, W, r, 34, [74, 68, 54], [0.05, 0.16], [30, 180], [2, 9]);
+  // starred impact
+  const cx = 150, cy = 330;
+  ctx.strokeStyle = 'rgba(170,180,182,0.5)';
+  ctx.lineWidth = 0.8;
+  const rays = 11;
   const pts = [];
   for (let k = 0; k < rays; k++) {
     let ang = (k / rays) * Math.PI * 2 + r() * 0.4, x = cx, y = cy;
     const ray = [[x, y]];
-    const L = 60 + r() * 140;
-    for (let s = 0; s < L; s += 8) {
+    const L = 30 + r() * 80;
+    for (let s = 0; s < L; s += 7) {
       ang += (r() - 0.5) * 0.25;
-      x += Math.cos(ang) * 8;
-      y += Math.sin(ang) * 8;
+      x += Math.cos(ang) * 7;
+      y += Math.sin(ang) * 7;
       ray.push([x, y]);
     }
     pts.push(ray);
@@ -1146,7 +1178,7 @@ GEN.glass = () => {
     ray.forEach(([px, py], j) => (j ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
     ctx.stroke();
   }
-  for (const ringIdx of [2, 4, 7]) {
+  for (const ringIdx of [2, 4]) {
     ctx.beginPath();
     for (let k = 0; k <= rays; k++) {
       const ray = pts[k % rays];
@@ -1158,9 +1190,9 @@ GEN.glass = () => {
   }
   ctx.fillStyle = 'rgba(200,205,205,0.4)';
   ctx.beginPath();
-  ctx.arc(cx, cy, 3, 0, 7);
+  ctx.arc(cx, cy, 2.5, 0, 7);
   ctx.fill();
-  drips(ctx, W, W, r, 16, [70, 62, 48], [0.1, 0.3], [20, 90], [3, 10]);
+  drawCracks(ctx, W, W, r, 3, { len: [120, 300], width: [0.6, 1], col: 'rgba(170,180,182,0.42)', branch: 0.4, wander: 0.22, step: 7 });
   return { canvas: c };
 };
 
@@ -1309,14 +1341,15 @@ GEN.canvas = () => {
   return { canvas: c };
 };
 
+// military drab paint: chalky and scuffed. A = where rust breaks through (the rust is laid on in the shader).
 GEN.olive = () => {
   const W = 512;
   const r = rngf(181);
-  const a = fbm(W, W, 5, 5, 6, 181), vs = fbm(W, W, 30, 2, 4, 182), b = fbm(W, W, 18, 18, 3, 183);
+  const a = fbm(W, W, 8, 8, 5, 181), vs = fbm(W, W, 30, 2, 4, 182), b = fbm(W, W, 18, 18, 3, 183), rs = fbm(W, W, 14, 14, 4, 184, 0.6);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const k = (0.78 + a[p] * 0.32 + (b[p] - 0.5) * 0.1) * (0.84 + 0.22 * vs[p]) + (r() - 0.5) * 0.04;
+    const k = (0.8 + a[p] * 0.28 + (b[p] - 0.5) * 0.1) * (0.86 + 0.2 * vs[p]) + (r() - 0.5) * 0.04;
     d[i] = 72 * k;
     d[i + 1] = 78 * k;
     d[i + 2] = 50 * k;
@@ -1324,60 +1357,74 @@ GEN.olive = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  chips(ctx, W, W, r, 160, (rr) => (rr() < 0.6 ? 'rgba(46,48,40,0.9)' : 'rgba(100,60,30,0.8)'), [0.8, 4]);
+  chips(ctx, W, W, r, 110, 'rgba(46,48,40,0.9)', [0.8, 4]);
   scratches(ctx, W, W, r, 120, 'rgba(120,122,100,0.3)');
   drips(ctx, W, W, r, 30, [25, 25, 16], [0.08, 0.2], [40, 180], [3, 10]);
-  return { canvas: c };
+  const field = new Float32Array(W * W);
+  for (let p = 0; p < field.length; p++) field[p] = rs[p] * 0.75 + vs[p] * 0.25;
+  return withField(c, field);
 };
 
 // ---------------------------------------------------------------- props
-function paintedMaskImg(W, seed, { rustAmt = 0.5, chipsN = 120, base = 222 } = {}) {
-  // RGB: paint (light, to be tinted) or rust; A = paint mask
+// Painted sheet metal, clean. RGB: light neutral paint (tinted by vertex colour) - faintly mottled, scuffed,
+// dulled in patches where the gloss has gone. A = where rust breaks through: broad weak spots plus the stone
+// chips and scratches that always go first. The rust itself is laid on in the shader (SURF.paint / carpaint),
+// by world-space noise, so no two cars corrode alike.
+function paintedImg(W, seed, { streaks = 0.5, chipsN = 120, scuffs = 160 } = {}) {
   const r = rngf(seed);
-  const a = fbm(W, W, 4, 4, 6, seed, 0.55), vs = fbm(W, W, 26, 2, 4, seed + 1), mot = fbm(W, W, 8, 8, 4, seed + 2);
-  const rs = fbm(W, W, 10, 10, 4, seed + 3);
-  const rr = colorRamp([[0, 40, 24, 16], [0.45, 96, 48, 22], [0.8, 138, 72, 32], [1, 154, 96, 52]]);
-  const tmp = [0, 0, 0];
+  const a = fbm(W, W, 6, 6, 5, seed, 0.55), dull = fbm(W, W, 12, 12, 4, seed + 2), vs = fbm(W, W, 26, 2, 4, seed + 1);
+  const rs = fbm(W, W, 10, 10, 5, seed + 3, 0.6), fine = fbm(W, W, 40, 40, 3, seed + 4);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const m = a[p] * 0.7 + vs[p] * 0.3;
-    const paint = 1 - sstep(1 - rustAmt - 0.02, 1 - rustAmt + 0.02, m);
-    const k = (0.78 + mot[p] * 0.3) * (0.82 + 0.22 * vs[p]);
-    rr(rs[p] + (r() - 0.5) * 0.2, tmp);
-    const edge = paint > 0.02 && paint < 0.98 ? 0.6 : 1;
-    d[i] = lerp(tmp[0], base * k, paint) * edge;
-    d[i + 1] = lerp(tmp[1], base * 0.98 * k, paint) * edge;
-    d[i + 2] = lerp(tmp[2], base * 0.93 * k, paint) * edge;
-    d[i + 3] = 255 * paint;
+    // gloss gone in patches: flatter and a touch paler
+    const flat = sstep(0.5, 0.75, dull[p]);
+    const k = (0.9 + a[p] * 0.14) * (1 - streaks * 0.16 + streaks * 0.2 * vs[p]) * (1 + flat * 0.05) + (fine[p] - 0.5) * 0.05;
+    d[i] = 216 * k;
+    d[i + 1] = 214 * k;
+    d[i + 2] = lerp(208, 198, flat) * k;
+    d[i + 3] = 255;
   });
-  // chips via canvas on a separate mask canvas
-  const c = mkCanvas(W, W);
+  const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, W, W);
-  chips(ctx, W, W, r, chipsN, '#fff', [1, 5]);
-  const cm = canvasToImg(c);
-  eachPx(img, (x, y, i, d) => {
-    if (cm.d[i] > 128 && d[i + 3] > 0) {
-      rr(0.35 + r() * 0.4, tmp);
-      d[i] = tmp[0];
-      d[i + 1] = tmp[1];
-      d[i + 2] = tmp[2];
-      d[i + 3] = 0;
-    }
-  });
-  // dark grime streaks (applies to both)
-  const gs = fbm(W, W, 30, 2, 4, seed + 7);
-  eachPx(img, (x, y, i, d) => {
-    const k = 0.7 + 0.3 * gs[i >> 2];
-    d[i] *= k;
-    d[i + 1] *= k;
-    d[i + 2] *= k;
-  });
-  return img;
+  scratches(ctx, W, W, r, scuffs, 'rgba(250,250,246,0.16)', [6, 40]);
+  scratches(ctx, W, W, r, scuffs / 2, 'rgba(40,38,34,0.2)', [4, 26]);
+  blotches(ctx, W, W, r, 26, [60, 54, 44], [0.04, 0.1], [10, 46]);
+  // chips and deep scratches, as a mask
+  const m = mkCanvas(W, W);
+  const mx = ctx2d(m);
+  mx.fillStyle = '#000';
+  mx.fillRect(0, 0, W, W);
+  chips(mx, W, W, r, chipsN, '#fff', [0.8, 3.6]);
+  scratches(mx, W, W, r, chipsN / 4, '#fff', [6, 30]);
+  const cm = canvasToImg(m).d;
+  const field = new Float32Array(W * W);
+  for (let p = 0; p < field.length; p++) field[p] = Math.max(rs[p] * 0.72 + fine[p] * 0.28, (cm[p * 4] / 255) * 1.1);
+  return withField(c, field);
 }
-GEN.paint = () => paintedMaskImg(512, 191, { rustAmt: 0.3, chipsN: 160 });
+GEN.paint = () => paintedImg(512, 191, { streaks: 0.7, chipsN: 150 });
+// brightwork: bumpers, handles, rims. Pitted where the plating has failed; A = where rust takes first.
+GEN.chrome = () => {
+  const W = 256;
+  const r = rngf(205);
+  const a = fbm(W, W, 5, 5, 5, 205), pit = fbm(W, W, 40, 40, 3, 206), rs = fbm(W, W, 12, 12, 4, 207, 0.6);
+  const img = newImg(W, W);
+  eachPx(img, (x, y, i, d) => {
+    const p = i >> 2;
+    const k = (0.84 + a[p] * 0.2) * (1 - sstep(0.62, 0.8, pit[p]) * 0.3) + (r() - 0.5) * 0.03;
+    d[i] = 150 * k;
+    d[i + 1] = 153 * k;
+    d[i + 2] = 156 * k;
+    d[i + 3] = 255;
+  });
+  const c = imgToCanvas(img);
+  const ctx = ctx2d(c);
+  scratches(ctx, W, W, r, 120, 'rgba(236,238,240,0.3)', [4, 30]);
+  scratches(ctx, W, W, r, 50, 'rgba(30,30,32,0.3)', [4, 20]);
+  const field = new Float32Array(W * W);
+  for (let p = 0; p < field.length; p++) field[p] = rs[p] * 0.6 + pit[p] * 0.4;
+  return withField(c, field);
+};
 // aircraft skin (4 m): light neutral paint - tinted by vertex colour - with riveted panel seams, a slightly
 // different tone per panel and faint streaks of weathering. Tileable (seams wrap).
 GEN.aircraft = () => {
@@ -1421,7 +1468,7 @@ GEN.aircraft = () => {
   });
   return img;
 };
-GEN.carpaint = () => paintedMaskImg(512, 201, { rustAmt: 0.36, chipsN: 90 });
+GEN.carpaint = () => paintedImg(512, 201, { streaks: 0.15, chipsN: 110, scuffs: 220 });
 
 GEN.tire = () => {
   const W = 256;

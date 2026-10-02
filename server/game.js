@@ -7,9 +7,11 @@
 import {
   SERVER_TICK_RATE,
   SERVER_DT,
+  CMD_RATE,
   MAX_PLAYERS,
   MAX_ENTITIES,
   PHASE,
+  CMDS_PER_PACKET,
   DAY_LENGTH,
   FIRST_DAY_LENGTH,
   NIGHT_LENGTH,
@@ -18,6 +20,7 @@ import {
   WAVE_TIMES,
   WAVE_SPREAD,
   BOSS_EVERY,
+  TANK_BOSS_NIGHT,
   ESCAPE_TIME,
   ESCAPE_RADIUS,
   GAME_OVER_DELAY,
@@ -55,6 +58,10 @@ import {
   CRATE_FREEFALL,
   CRATE_FALL_SPEED,
   CRATE_DRAG,
+  NOISE,
+  TALK_CLEAR,
+  TALK_RANGE,
+  WALKIE_STASHES,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -71,8 +78,6 @@ import {
   LOOT_TABLES,
   SUPPLIES,
   SUPPLY_NEED,
-  SUPPLY_ZONES,
-  FUEL_SPOTS,
   SCHEMATICS,
   SCHEM_BIT,
   CONT,
@@ -89,10 +94,11 @@ import {
   ZONE,
   THROW_ITEMS,
   isFirearm,
+  radioLinked,
 } from '../shared/defs.js';
-import { C2S, S2C, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
-import { createPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
+import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { Nav } from './nav.js';
@@ -103,12 +109,36 @@ import { Cats } from './cats.js';
 import { Combat } from './combat.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
-const CAR_ALARM_CHANCE = 0.05;
+const NO_HASH = -2; // a command packet that came without a state fingerprint
+const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE; // commands a client issues per server tick
+const CMD_QUEUE_MAX = 24; // commands a client can have waiting (0.4 s of them); older ones are dropped
+const CMD_CATCH_UP = 1.05; // a client's command allowance refills this much faster than it issues them (processInputs)
+const CAR_ALARM_CHANCE = 0.1;
 const CAR_ALARM_MIN_ZOMBIES = 6;
 const CAR_ALARM_MAX_ZOMBIES = 7;
 const CAR_ALARM_SPAWN_MIN = 62;
 const CAR_ALARM_SPAWN_MAX = 86;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
+// Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
+// (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
+// as it fits one item only.
+const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
+const itemKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
+const ITEM_NAMES = Object.entries(ITEM)
+  .filter(([, id]) => ITEM_DEFS[id])
+  .map(([key, id]) => ({ id, name: key.toLowerCase(), keys: [itemKey(key), itemKey(ITEM_DEFS[id].name)] }));
+// every item `text` could mean: exactly one if it is clear
+function findItems(text) {
+  if (/^\d+$/.test(text)) return ITEM_NAMES.filter((it) => it.id === +text);
+  const k = itemKey(text);
+  if (!k) return [];
+  for (const fits of [(key) => key === k, (key) => key.startsWith(k), (key) => key.includes(k)]) {
+    const found = ITEM_NAMES.filter((it) => it.keys.some(fits));
+    if (found.length) return found;
+  }
+  return [];
+}
+
 const CRATE_TABLE = [
   [ITEM.AMMO_762, 5, 30, 60],
   [ITEM.AMMO_556, 5, 30, 60],
@@ -125,15 +155,19 @@ const CRATE_TABLE = [
   [ITEM.MP5, 1, 1, 1],
   [ITEM.SHOTGUN, 1, 1, 1],
   [ITEM.DB_SHOTGUN, 1, 1, 1],
+  [ITEM.FLAMETHROWER, 1, 1, 1],
+  [ITEM.AMMO_FUEL, 2, 40, 80],
   [ITEM.KEVLAR, 1, 1, 1],
   [ITEM.NAILS, 3, 10, 20],
   [ITEM.BATTERY, 2, 1, 2],
   [ITEM.POWDER, 3, 5, 10],
 ];
 
+const randomSeed = () => (Math.random() * 0x7fffffff) | 0;
+
 export class Game {
   constructor(opts = {}) {
-    this.seed = opts.seed ?? ((Math.random() * 0x7fffffff) | 0);
+    this.fixedSeed = opts.seed !== undefined; // a given seed pins the map: every playthrough is the same valley
     this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
     // optional overrides (testing): DAY_SECONDS / NIGHT_SECONDS / START_DAY env vars
     this.dayLen = opts.dayLength || DAY_LENGTH;
@@ -141,12 +175,9 @@ export class Game {
     this.nightLen = opts.nightLength || NIGHT_LENGTH;
     this.startDayNum = opts.startDay || 1;
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
-    this.debugCommands = !!opts.debugCommands; // testing only: /kill /night /day /give /spawn /tp chat commands
+    this.debugCommands = !!opts.debugCommands; // testing only: /kill /night /day /give /items /spawn /tp chat commands
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
-    const t0 = Date.now();
-    this.world = createWorld(this.seed);
-    this.nav = new Nav(this.world);
-    this.log(`world seed ${this.seed} generated in ${Date.now() - t0}ms`);
+    this.setWorld(opts.seed ?? randomSeed());
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
     this.ents = new Array(MAX_ENTITIES).fill(null);
@@ -422,11 +453,17 @@ export class Game {
       renderTick: 0,
       renderFrac: 0,
       view: new ClientView(),
+      shadow: createPlayerState(), // the state right after the last command: what the client's prediction holds
+      selfSync: true, // the client has to rebase its prediction on our state (see writeSelf)
+      snapTick: -2, // tick and acked command of the last snapshot it was sent
+      ackSent: 0,
+      pingAt: 0, // when its latest IN_PING arrived (0 = none waiting)
       hx: new Float32Array(16),
       hy: new Float32Array(16),
       hz: new Float32Array(16),
       chatT: 0,
       chatCount: 0,
+      walkie: false, // on the radio, as last sent in the player list
       interactT: 0,
       actionT: 0,
       pingT: 0,
@@ -480,9 +517,32 @@ export class Game {
     return n;
   }
 
+  // ---------------------------------------------------------------- world
+  setWorld(seed) {
+    const t0 = Date.now();
+    this.seed = seed;
+    this.world = createWorld(seed);
+    this.nav = new Nav(this.world);
+    this.worldPlayed = false;
+    if (this.zm) this.zm.treeGrid = this.zm.dens = null; // (per-world caches)
+    this.log(`world seed ${seed} generated in ${Date.now() - t0}ms`);
+  }
+
+  // Every playthrough gets a valley of its own: once a game has been played on this one, generate the next
+  // and tell the clients its seed. Call with the world cleared (structures live in the old world's grids).
+  rollWorld() {
+    if (!this.worldPlayed || this.fixedSeed) return;
+    this.setWorld(randomSeed());
+    const w = new Writer(8);
+    w.u8(S2C.WORLD_RESET);
+    w.u32(this.seed >>> 0);
+    this.broadcast(w.bytes());
+  }
+
   // ---------------------------------------------------------------- game flow
   resetToWaiting() {
     this.clearWorld();
+    this.rollWorld();
     this.phase = PHASE.WAITING;
     this.day = 0;
     this.globalDirty = true;
@@ -513,6 +573,8 @@ export class Game {
 
   startGame() {
     this.clearWorld();
+    this.rollWorld();
+    this.worldPlayed = true;
     this.phase = PHASE.DAY;
     this.day = this.startDayNum;
     this.timeLeft = this.firstDayLen;
@@ -529,7 +591,7 @@ export class Game {
     for (const lp of this.lootPoints) if (this.rng() < 0.8) this.spawnLoot(lp);
     // searchable containers
     for (const c of w.containers) {
-      const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0 };
+      const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0, stash: 0 };
       if (this.spawnEntity(e)) this.caches.push(e);
     }
     // hide the schematics in lockers / ammo crates / toolboxes around the map (one each, far from the start)
@@ -542,6 +604,10 @@ export class Game {
         break;
       }
     }
+    // ...and the game's walkie-talkies in the same kind of container, anywhere on the map (own random stream)
+    const lockers = this.caches.filter((c) => CONT_DEFS[c.ctype].schem && !c.schem);
+    const pick = mulberry32((this.seed ^ 0x57a1c1e) + this.tick);
+    for (let i = 0; i < WALKIE_STASHES && lockers.length; i++) lockers.splice(Math.floor(pick() * lockers.length), 1)[0].stash = ITEM.WALKIE;
     this.placeSupplies();
     // zone guards + roaming dead
     this.zm.spawnInitial();
@@ -553,45 +619,33 @@ export class Game {
     this.log('new game started');
   }
 
-  // Hide every car supply at one of its candidate places (three different places for the fuel).
+  // Hide the car supplies around the valley: each at a random hiding spot of a random place on this map, and
+  // never two in the same place while there is a place left without one. The survivors are told which place
+  // each is rumoured to be in.
   placeSupplies() {
-    const w = this.world;
-    const usedSpots = new Set();
-    const zoneLoad = new Map();
-    const pickSpot = (zones) => {
-      const order = zones.slice().sort(() => this.rng() - 0.5);
-      order.sort((a, b) => (zoneLoad.get(a) || 0) - (zoneLoad.get(b) || 0));
-      for (const zid of order) {
-        const spots = w.partSpots.filter((s) => s.zone === zid && !usedSpots.has(s));
-        if (!spots.length) continue;
-        const sp = spots[Math.floor(this.rng() * spots.length)];
-        usedSpots.add(sp);
-        zoneLoad.set(zid, (zoneLoad.get(zid) || 0) + 1);
-        return sp;
+    const shuffle = (a) => {
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(this.rng() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
       }
-      return null;
+      return a;
     };
-    const hints = [];
+    const byPlace = new Map();
+    for (const sp of this.world.partSpots) byPlace.set(sp.zone, [...(byPlace.get(sp.zone) || []), sp]);
+    const places = shuffle([...byPlace.values()].map(shuffle));
     this.supplySpots = [];
-    for (let i = 0; i < 4; i++) {
-      const item = SUPPLIES[i];
-      const sp = pickSpot(SUPPLY_ZONES[item]);
-      hints.push(sp ? sp.zone : 255);
-      if (sp) {
+    // deal them out round the places: a place only gets a second one once every place has had one
+    let turn = 0;
+    this.supplyHints = SUPPLIES.flatMap((item, i) => new Array(SUPPLY_NEED[i]).fill(item)).map((item) => {
+      for (let tries = 0; tries < places.length; tries++) {
+        const sp = places[turn++ % places.length].pop();
+        if (!sp) continue;
         this.spawnItem(item, 1, sp.x, sp.y, sp.z, { permanent: true });
         this.supplySpots.push(sp);
+        return sp.zone;
       }
-    }
-    const fuelZones = SUPPLY_ZONES[ITEM.FUEL_CAN].slice();
-    for (let i = 0; i < FUEL_SPOTS; i++) {
-      const sp = pickSpot(fuelZones.filter((z) => !hints.slice(4).includes(z)));
-      hints.push(sp ? sp.zone : 255);
-      if (sp) {
-        this.spawnItem(ITEM.FUEL_CAN, 1, sp.x, sp.y, sp.z, { permanent: true });
-        this.supplySpots.push(sp);
-      }
-    }
-    this.supplyHints = hints;
+      return 255;
+    });
   }
 
   spawnHuman(p) {
@@ -735,7 +789,10 @@ export class Game {
     this.wave = 0;
     this.hordeHpMul = 1 + 0.1 * (n - 1) + 0.12 * (humans - 1);
     this.bossPending = null;
-    if (n % BOSS_EVERY === 0) {
+    if (n === TANK_BOSS_NIGHT) {
+      // the first boss is a Tank, early enough in the night that the survivors have to deal with it
+      this.bossPending = { types: [ZTYPE.TANK], t: WAVE_TIMES[1] * scale + 8 };
+    } else if (n % BOSS_EVERY === 0) {
       const type = (n / BOSS_EVERY) % 2 === 1 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN;
       this.bossPending = { types: [type], t: WAVE_TIMES[NIGHT_WAVES - 1] * scale + 10 };
     }
@@ -896,7 +953,7 @@ export class Game {
     const dz = z + Math.cos(a) * r;
     const gy = groundAt(this.world, dx, dz, y + 1, 0.1, true);
     const cat = ITEM_DEFS[item]?.cat;
-    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem', noAuto: opts.noAuto });
+    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto });
   }
 
   dropAll(p) {
@@ -1016,23 +1073,30 @@ export class Game {
 
   // ---------------------------------------------------------------- input
   handleInput(p, r) {
-    p.renderTick = r.u16();
-    p.renderFrac = r.u8() / 255;
-    const n = r.u8();
-    for (let i = 0; i < n && i < 8; i++) {
-      const seq = r.u16();
-      const buttons = r.u16();
-      const yaw = dqangle16(r.u16());
-      const pitch = Math.max(-1.55, Math.min(1.55, dqpitch(r.i16())));
-      const slot = r.u8();
-      p.cmdQueue.push({ seq, buttons, yaw, pitch, slot });
+    // where the client's interpolation clock stood when it sent these commands: what it had on screen, so what
+    // their shots were aimed at. It stays with them: by the time a command is run, newer packets may have come in
+    const renderTick = r.u16();
+    const renderFrac = r.u8() / 255;
+    const { cmds, hash, ping } = readInput(r);
+    if (ping) p.pingAt = performance.now(); // answered in this player's next snapshot (sendSnapshots)
+    for (let i = 0; i < cmds.length; i++) {
+      const c = cmds[i];
+      // the packet's last command carries the client's fingerprint of its predicted state after it (NO_HASH: none
+      // to check against, so that client gets our state)
+      p.cmdQueue.push({ seq: c.seq, buttons: c.buttons, yaw: dqangle16(c.qyaw), pitch: Math.max(-1.55, Math.min(1.55, dqpitch(c.qpitch))), slot: c.slot, hash: i < cmds.length - 1 ? -1 : hash < 0 ? NO_HASH : hash, renderTick, renderFrac });
     }
-    if (p.cmdQueue.length > 24) p.cmdQueue.splice(0, p.cmdQueue.length - 24);
+    if (p.cmdQueue.length > CMD_QUEUE_MAX) p.cmdQueue.splice(0, p.cmdQueue.length - CMD_QUEUE_MAX);
   }
 
   processInputs() {
     for (const p of this.players.values()) {
-      p.cmdBudget = Math.min(p.cmdBudget + 3, 10);
+      // A client issues CMDS_PER_TICK commands a tick, and that is what it is allowed. They do not arrive that
+      // evenly: a hiccup on the link or at either end and a whole burst comes in late. So the allowance banks up
+      // while nothing arrives (as far as the queue is long) and a late burst is run at once, and it refills a touch
+      // faster than commands are issued, so whatever does get left waiting drains. A queue that only ever empties
+      // as fast as it fills would delay everything that client does from then on: it would stand somewhere it left
+      // a moment ago, for the dead to hit, and fire every shot late.
+      p.cmdBudget = Math.min(p.cmdBudget + CMDS_PER_TICK * CMD_CATCH_UP, CMD_QUEUE_MAX);
       while (p.cmdQueue.length && p.cmdBudget >= 1) {
         const cmd = p.cmdQueue.shift();
         if (p.hasSeq && ((cmd.seq - p.lastSeq) & 0xffff) >= 0x8000) continue; // old/duplicate
@@ -1040,10 +1104,18 @@ export class Game {
         p.cmdBudget--;
         p.lastSeq = cmd.seq;
         p.hasSeq = true;
+        // lag compensation rewinds to what this command's packet said was on screen (Combat.rewindTime)
+        p.renderTick = cmd.renderTick;
+        p.renderFrac = cmd.renderFrac;
         if (!p.alive) continue;
         const events = [];
         if (p.useItem && cmd.slot !== 255) p.useItem = null; // switching cancels use
+        // The client predicts with the same simulation, so its state only needs sending when the two can differ:
+        // something other than a command touched ours since the last one, or its fingerprint says it got elsewhere
+        if (!samePlayerState(p.state, p.shadow)) p.selfSync = true;
         simulatePlayer(p.state, cmd, this.world, events);
+        copyPlayerState(p.shadow, p.state);
+        if (cmd.hash === NO_HASH || (cmd.hash >= 0 && cmd.hash !== hashPlayerState(p.state))) p.selfSync = true;
         for (const ev of events) this.handleSimEvent(p, ev);
       }
     }
@@ -1401,6 +1473,10 @@ export class Game {
       this.pickupEvent(p, c.schem, 1);
       c.schem = 0;
     }
+    if (c.stash) {
+      this.giveOrDrop(p, c.stash, 1);
+      c.stash = 0;
+    }
     this.sound(SOUND.SEARCH, c.x, c.y, c.z, 20);
     if (c.ctype === CONT.TRUNK && this.rng() < CAR_ALARM_CHANCE) this.triggerCarAlarm(p, c);
   }
@@ -1413,6 +1489,7 @@ export class Game {
     if (this.zombies.length >= MAX_ZOMBIES_ALIVE) return;
     this.notify(NOTIFY.CAR_ALARM, 0);
     this.sound(SOUND.HORDE_HORN, c.x, c.y, c.z, 140);
+    this.zm.noise(c.x, c.z, NOISE.CAR_ALARM);
     let spawned = 0;
     for (let i = 0; i < count && this.zombies.length < MAX_ZOMBIES_ALIVE; i++) {
       const sp = this.pickCarAlarmSpawn(p, c, humans);
@@ -1428,19 +1505,20 @@ export class Game {
       z.alertX = p.state.x;
       z.alertZ = p.state.z;
       z.alertT = 20;
+      z.alertRush = 1;
       spawned++;
     }
     if (spawned) this.globalDirty = true;
   }
 
   // the day's wanderers fill most of the zombie cap: idle ones far out of everyone's sight drift off so n more fit
-  // (not the dog packs: the day's upkeep would only spawn them again)
+  // (not the dog packs or the wandering herd: the day's upkeep would only spawn them again)
   makeZombieRoom(n, humans) {
     let over = this.zombies.length + n - MAX_ZOMBIES_ALIVE;
     if (over <= 0) return;
     const far = [];
     for (const z of this.zombies) {
-      if (z.dead || z.horde || z.boss || z.pack || z.target) continue;
+      if (z.dead || z.horde || z.boss || z.pack || z.herd || z.target) continue;
       let md = Infinity;
       for (const h of humans) md = Math.min(md, Math.hypot(h.state.x - z.x, h.state.z - z.z));
       if (md > 150) far.push({ z, md });
@@ -1512,6 +1590,7 @@ export class Game {
       if (r() < plankChance) this.giveOrDrop(p, ITEM.WOOD, 1);
       if (!dead && r() < 0.07) this.giveOrDrop(p, ITEM.HERB, 1);
       this.sound(SOUND.CHOP, x, y, z, 30);
+      this.zm.noise(x, z, NOISE.CHOP);
     } else {
       this.giveOrDrop(p, ITEM.SCRAP, weapon === ITEM.HAMMER ? 1 + (r() < 0.5 ? 1 : 0) : 1);
       if (r() < 0.3) this.giveOrDrop(p, ITEM.NAILS, 2 + Math.floor(r() * 3));
@@ -1519,6 +1598,7 @@ export class Game {
       if (r() < 0.05) this.giveOrDrop(p, ITEM.WIRE, 1);
       if (r() < 0.04) this.giveOrDrop(p, ITEM.BATTERY, 1);
       this.sound(SOUND.SALVAGE, x, y, z, 35);
+      this.zm.noise(x, z, NOISE.SALVAGE);
     }
   }
 
@@ -1703,7 +1783,9 @@ export class Game {
     this.world.structGrid.add(e.collider);
     this.nav.addStructure(e.collider);
     this.structures.push(e);
+    if (type === STRUCT.WORKBENCH) this.globalDirty = true;
     this.sound(SOUND.BUILD, x, y + 0.8, z, 35);
+    this.zm.noise(x, z, NOISE.BUILD);
   }
 
   demolish(p, id) {
@@ -1743,6 +1825,7 @@ export class Game {
     p.actionT = this.time;
     p.invDirty = true;
     this.sound(SOUND.BUILD, e.x, e.y + 0.8, e.z, 30);
+    this.zm.noise(e.x, e.z, NOISE.BUILD);
   }
 
   damageStructure(e, amount) {
@@ -1757,6 +1840,7 @@ export class Game {
     this.world.structGrid.remove(e.collider);
     this.nav.removeStructure(e.collider);
     this._listRemove(this.structures, e);
+    if (e.stype === STRUCT.WORKBENCH) this.globalDirty = true;
     if (broken) {
       if (this.phase === PHASE.NIGHT) this.nightStats.structLost++;
       this.emit(
@@ -1912,12 +1996,36 @@ export class Game {
       p.chatCount = 0;
     }
     if (++p.chatCount > 6) return;
+    // only those in earshot hear it, and whoever a walkie-talkie reaches
+    const base = p.zombie ? CHATF.ZOMBIE : 0;
+    const radio = this.hasWalkie(p);
+    const s = p.state;
+    let heard = 0;
+    for (const q of this.players.values()) {
+      if (q === p) continue;
+      const d = Math.hypot(q.state.x - s.x, q.state.y - s.y, q.state.z - s.z);
+      let flags = base;
+      if (d > TALK_CLEAR) {
+        if (radioLinked(radio, this.hasWalkie(q))) flags |= CHATF.RADIO;
+        else if (d <= TALK_RANGE) flags |= CHATF.FAINT;
+        else continue;
+      }
+      this.sendChat(q, p.id, flags, text);
+      heard++;
+    }
+    this.sendChat(p, p.id, heard || this.players.size < 2 ? base : base | CHATF.UNHEARD, text);
+  }
+  sendChat(to, id, flags, text) {
     const w = new Writer(text.length * 3 + 8);
     w.u8(S2C.CHAT);
-    w.u16(p.id);
-    w.u8(p.zombie ? 2 : 0);
+    w.u16(id);
+    w.u8(flags);
     w.str(text);
-    this.broadcast(w.bytes());
+    to.session.conn.send(w.bytes());
+  }
+  // a survivor carrying a walkie-talkie is on the radio (the dead drop theirs, player-zombies carry nothing)
+  hasWalkie(p) {
+    return p.alive && !p.zombie && countItem(p.inv, ITEM.WALKIE) > 0;
   }
   debugCommand(p, args) {
     const s = p.state;
@@ -1935,9 +2043,26 @@ export class Game {
         if (this.phase === PHASE.NIGHT) this.timeLeft = 0.05;
         break;
       case 'give': {
-        const item = +args[1];
-        if (ITEM_DEFS[item]) this.giveItem(p, item, +(args[2] || 1));
+        // /give <item> [n]: the item by name or id (see findItems); /items lists the names
+        const words = args.slice(1);
+        const n = words.length > 1 && /^\d+$/.test(words[words.length - 1]) ? +words.pop() : 1;
+        const found = findItems(words.join(' '));
+        if (found.length !== 1) {
+          this.sendChat(p, 0, CHATF.SYSTEM, found.length ? `which one: ${found.map((it) => it.name).join(', ')}?` : `no item called "${words.join(' ')}" (/items lists them)`);
+          break;
+        }
+        const taken = this.giveItem(p, found[0].id, n);
         p.invDirty = true;
+        this.sendChat(p, 0, CHATF.SYSTEM, `gave ${taken} x ${ITEM_DEFS[found[0].id].name}`);
+        break;
+      }
+      case 'items': {
+        // /items [text]: the names /give takes, by category (only the ones containing `text`)
+        const k = itemKey(args.slice(1).join(' '));
+        for (const cat in ITEM_CAT_LABELS) {
+          const names = ITEM_NAMES.filter((it) => ITEM_DEFS[it.id].cat === cat && (!k || it.keys.some((key) => key.includes(k)))).map((it) => it.name);
+          if (names.length) this.sendChat(p, 0, CHATF.SYSTEM, `${ITEM_CAT_LABELS[cat]}: ${names.join(' ')}`);
+        }
         break;
       }
       case 'spawn': {
@@ -1958,6 +2083,19 @@ export class Game {
           const a = this.rng() * Math.PI * 2;
           s.x = best.homeX + Math.sin(a) * 15;
           s.z = best.homeZ + Math.cos(a) * 15;
+          s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+          s.vx = s.vy = s.vz = 0;
+          this.fillHistory(p);
+        }
+        break;
+      }
+      case 'herd': {
+        // teleport 45 m from the wandering herd (just out of its sight)
+        const h = this.zm.herds.first();
+        if (h) {
+          const a = this.rng() * Math.PI * 2;
+          s.x = h.cx + Math.sin(a) * 45;
+          s.z = h.cz + Math.cos(a) * 45;
           s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
           s.vx = s.vy = s.vz = 0;
           this.fillHistory(p);
@@ -2020,7 +2158,7 @@ export class Game {
     const w = new Writer(text.length * 3 + 8);
     w.u8(S2C.CHAT);
     w.u16(0);
-    w.u8(1);
+    w.u8(CHATF.SYSTEM);
     w.str(text);
     this.broadcast(w.bytes());
   }
@@ -2152,7 +2290,7 @@ export class Game {
       if (z) {
         this.bossId = z.id;
         this.notify(NOTIFY.BOSS, type);
-        this.sound(SOUND.BOSS_ROAR, sp.x, 2, sp.z, 0);
+        this.sound(type === ZTYPE.TANK ? SOUND.TANK_ROAR : SOUND.BOSS_ROAR, sp.x, 2, sp.z, 0);
       }
     }
     this.bossPending = null;
@@ -2284,6 +2422,7 @@ export class Game {
           }
           c.state = 1;
           this.sound(SOUND.CRATE_LAND, c.x, c.y, c.z, 80);
+          this.zm.noise(c.x, c.z, NOISE.CRATE_LAND);
         }
       }
       if (this.time > c.despawnAt) {
@@ -2464,104 +2603,141 @@ export class Game {
     w.u8(total);
     w.f32(this.restartT);
     w.u16(Math.round(this.phase === PHASE.DAY ? (this.day <= 1 ? this.firstDayLen : this.dayLen) : this.nightLen));
+    // workbenches, for the field map: structures themselves only replicate inside AOI_STRUCTURE_RADIUS
+    const at = w.reserve8();
+    let benches = 0;
+    for (const e of this.structures) {
+      if (e.stype !== STRUCT.WORKBENCH || benches === 255) continue;
+      w.i16(qpos(e.x));
+      w.i16(qpos(e.z));
+      benches++;
+    }
+    w.patch8(at, benches);
   }
 
-  // Self state for reconciliation, delta-compressed in 6 chunks against what this client last got
-  // (byte-compared), so an idle player costs 1 byte/tick and a moving one ~30.
+  // Self state. The simulated part only goes out when the client has to rebase its prediction on it (SELF.SYNC):
+  // in its first snapshot, while it is dead, when anything but its own commands touched the state (knockback, a
+  // pickup, a respawn...) or when its fingerprint of the prediction disagreed with ours (processInputs). Then it is
+  // 5 chunks, delta-compressed against what this client last got (byte-compared), and our own state is rounded to
+  // what went on the wire so both ends carry on from identical numbers. The status part (hp, armor, battery...)
+  // goes out group by group as it changes. A client whose prediction holds costs nothing. Returns false when
+  // there was nothing to write.
   writeSelf(w, p) {
     const s = p.state;
     const c = this.cw || (this.cw = new Writer(128));
-    if (!p.selfCache) p.selfCache = [null, null, null, null, null, null];
-    const maskAt = w.reserve8();
-    let mask = 0;
-    for (let chunk = 0; chunk < 6; chunk++) {
-      c.reset();
-      switch (chunk) {
-        case 0:
-          c.f32(s.x);
-          c.f32(s.y);
-          c.f32(s.z);
-          c.f32(s.vx);
-          c.f32(s.vy);
-          c.f32(s.vz);
-          break;
-        case 1: {
-          let f = 0;
-          if (s.onGround) f |= 1;
-          if (s.crouch) f |= 2;
-          if (s.exhausted) f |= 4;
-          if (s.zombie) f |= 8;
-          if (s.pulled) f |= 16;
-          if (s.pinned) f |= 32;
-          if (s.sprinting) f |= 64;
-          if (p.alive) f |= 128;
-          if (p.flashlight) f |= 256;
-          if (s.downed) f |= 512;
-          c.u16(f);
-          c.u16(Math.round(s.stamina * 100));
-          c.u16(Math.round(Math.max(0, s.staminaDelay) * 1000));
-          break;
-        }
-        case 2:
-          c.u8(s.slot);
-          c.u16(Math.round(Math.max(0, s.switchT) * 1000));
-          c.u16(Math.round(Math.max(0, s.cooldown) * 1000));
-          c.u16(Math.round(Math.max(0, s.reloadT) * 1000));
-          c.u16(Math.round(s.recoil * 1000));
-          c.u16(s.lastBtn);
-          c.u8(s.fireCount);
-          break;
-        case 3:
-          for (let i = 0; i < 5; i++) c.u8(s.weapons[i]);
-          c.u8(s.mags[0]);
-          c.u8(s.mags[1]);
-          for (let i = 0; i < AMMO_ITEMS.length; i++) c.u16(s.ammo[i]);
-          c.u8(s.throwCount);
-          break;
-        case 4:
-          c.u16(Math.round(Math.max(0, s.leapCd) * 1000));
-          c.u16(Math.round(Math.max(0, s.stunT) * 1000));
-          if (s.pulled) {
-            c.f32(s.pullX);
-            c.f32(s.pullY);
-            c.f32(s.pullZ);
-          }
-          break;
-        case 5: {
-          c.u16(Math.max(0, Math.ceil(p.hp)));
-          c.u16(p.maxHp);
-          c.u8(Math.ceil(p.armor));
-          c.u8(p.armorMax);
-          c.u8(Math.round(p.battery));
-          c.u8(p.useItem ? p.useItem.item : 0);
-          c.u8(p.useItem ? Math.min(255, Math.round((p.useItem.t / p.useItem.total) * 255)) : 0);
-          c.f32(p.respawnT);
-          const h = p.hold;
-          c.u8(h ? h.kind : 0);
-          c.u8(h ? Math.min(255, Math.round((h.t / h.need) * 255)) : 0);
-          c.u8(p.downed ? Math.max(0, Math.min(255, Math.ceil(p.bleed * 4))) : 0);
-          c.u8(p.revivedBy ? 1 : 0);
-          break;
-        }
-      }
-      const prev = p.selfCache[chunk];
+    if (!p.selfCache) p.selfCache = [];
+    // appends the scratch chunk if it differs from the one this client has
+    const put = (i) => {
+      const prev = p.selfCache[i];
       let same = prev && prev.length === c.o;
-      if (same) {
-        for (let i = 0; i < c.o; i++) {
-          if (prev[i] !== c.u8a[i]) {
-            same = false;
-            break;
-          }
-        }
-      }
-      if (same) continue;
-      mask |= 1 << chunk;
-      p.selfCache[chunk] = c.u8a.slice(0, c.o);
+      for (let k = 0; same && k < c.o; k++) same = prev[k] === c.u8a[k];
+      if (same) return 0;
+      p.selfCache[i] = c.u8a.slice(0, c.o);
       w.ensure(c.o);
       w.u8a.set(c.u8a.subarray(0, c.o), w.o);
       w.o += c.o;
+      return 1;
+    };
+    const maskAt = w.reserve8();
+    let mask = 0;
+    if (p.selfSync || !p.alive || !samePlayerState(s, p.shadow)) {
+      mask = SELF.SYNC;
+      p.selfSync = false;
+      snapPlayerState(s);
+      copyPlayerState(p.shadow, s);
+      for (let chunk = 0; chunk < 5; chunk++) {
+        c.reset();
+        switch (chunk) {
+          case 0:
+            c.f32(s.x);
+            c.f32(s.y);
+            c.f32(s.z);
+            c.f32(s.vx);
+            c.f32(s.vy);
+            c.f32(s.vz);
+            break;
+          case 1:
+            c.u8((s.onGround ? 1 : 0) | (s.crouch ? 2 : 0) | (s.exhausted ? 4 : 0) | (s.zombie ? 8 : 0) | (s.pulled ? 16 : 0) | (s.pinned ? 32 : 0) | (s.sprinting ? 64 : 0) | (s.downed ? 128 : 0));
+            c.f32(s.stamina);
+            c.f32(s.staminaDelay);
+            break;
+          case 2:
+            c.u8(s.slot);
+            c.f32(s.switchT);
+            c.f32(s.cooldown);
+            c.f32(s.reloadT);
+            c.f32(s.recoil);
+            c.u16(s.lastBtn);
+            c.u8(s.fireCount);
+            break;
+          case 3:
+            for (let i = 0; i < 5; i++) c.u8(s.weapons[i]);
+            c.u8(s.mags[0]);
+            c.u8(s.mags[1]);
+            for (let i = 0; i < AMMO_ITEMS.length; i++) c.u16(s.ammo[i]);
+            c.u8(s.throwCount);
+            break;
+          case 4:
+            c.f32(s.leapCd);
+            c.f32(s.stunT);
+            c.u8(s.pulled ? 1 : 0);
+            if (s.pulled) {
+              c.f32(s.pullX);
+              c.f32(s.pullY);
+              c.f32(s.pullZ);
+            }
+            break;
+        }
+        if (put(chunk)) mask |= 1 << chunk;
+      }
+    }
+    // status: 7 field groups behind their own mask
+    const subAt = w.reserve8();
+    let sub = 0;
+    for (let g = 0; g < 7; g++) {
+      c.reset();
+      switch (g) {
+        case 0:
+          c.u16(Math.max(0, Math.ceil(p.hp)));
+          c.u16(p.maxHp);
+          break;
+        case 1:
+          c.u8(Math.ceil(p.armor));
+          c.u8(p.armorMax);
+          break;
+        case 2:
+          c.u8((p.alive ? 1 : 0) | (p.flashlight ? 2 : 0) | (p.revivedBy ? 4 : 0));
+          c.u8(Math.round(p.battery));
+          break;
+        case 3:
+          c.u8(p.useItem ? p.useItem.item : 0);
+          c.u8(p.useItem ? Math.min(255, Math.round((p.useItem.t / p.useItem.total) * 255)) : 0);
+          break;
+        case 4:
+          c.u8(Math.max(0, Math.min(255, Math.ceil(p.respawnT))));
+          break;
+        case 5: {
+          const h = p.hold;
+          c.u8(h ? h.kind : 0);
+          c.u8(h ? Math.min(255, Math.round((h.t / h.need) * 255)) : 0);
+          break;
+        }
+        case 6:
+          c.u8(p.downed ? Math.max(0, Math.min(255, Math.ceil(p.bleed * 4))) : 0);
+          break;
+      }
+      if (put(5 + g)) sub |= 1 << g;
+    }
+    if (sub) {
+      mask |= SELF.STATUS;
+      w.patch8(subAt, sub);
+    } else w.o = subAt;
+    if (!mask) {
+      w.o = maskAt;
+      return false;
     }
     w.patch8(maskAt, mask);
+    return true;
   }
 
   sendInventory(p) {
@@ -2577,10 +2753,26 @@ export class Game {
     w.u8(p.armorMax);
     p.session.conn.send(w.bytes());
     this.stats.bytesOut += w.o;
+    this.stats.msgsOut++;
     p.invDirty = false;
+    if (this.hasWalkie(p) !== p.walkie) this.playersDirty = true; // picked one up / lost it: tell everyone who is on the radio
   }
 
+  // sends everyone the player list now (it normally rides along with the next snapshot, see sendTick)
   sendPlayers() {
+    this.playersList();
+    for (const p of this.players.values()) this.sendList(p);
+  }
+  sendList(p) {
+    if (p.listVer === this.listVer) return;
+    p.listVer = this.listVer;
+    p.session.conn.send(this.listBytes);
+    this.stats.bytesOut += this.listBytes.length;
+    this.stats.msgsOut++;
+  }
+
+  // Rebuilds the player list message; a client is sent it when its copy is out of date (listVer)
+  playersList() {
     const w = this.w.reset();
     w.u8(S2C.PLAYERS);
     w.u8(this.players.size);
@@ -2588,56 +2780,133 @@ export class Game {
       w.u16(p.id);
       w.str(p.name);
       w.u8(!p.alive ? 2 : p.zombie ? 1 : p.downed ? 3 : 0);
+      p.walkie = this.hasWalkie(p);
+      w.u8(p.walkie ? PLF.WALKIE : 0);
       w.u16(p.kills + p.zkills);
       w.u16(Math.min(9999, Math.round(p.ping)));
     }
-    this.broadcast(w.bytes());
     this.playersDirty = false;
+    const prev = this.listBytes;
+    let same = !!prev && prev.length === w.o;
+    for (let i = 0; same && i < w.o; i++) same = prev[i] === w.u8a[i];
+    if (same) return;
+    this.listBytes = w.u8a.slice(0, w.o);
+    this.listVer = (this.listVer || 0) + 1;
+  }
+
+  // Global state for one client: all of it the first time and whenever anything but the clocks changed, just the
+  // clocks (time left, horde left: bytes 2-5) when only they moved, nothing when not even those did.
+  // all: this tick's full global state. Returns false if nothing was written.
+  writeGlobalFor(w, p, all) {
+    const prev = p.globalCache;
+    let full = !prev || prev.length !== all.length;
+    let clocks = false;
+    for (let i = 0; !full && i < all.length; i++) {
+      if (prev[i] === all[i]) continue;
+      if (i >= 2 && i < 6) clocks = true;
+      else full = true;
+    }
+    if (!full && !clocks) return false;
+    w.u8(full ? 1 : 0);
+    w.ensure(all.length);
+    if (full) {
+      w.u8a.set(all, w.o);
+      w.o += all.length;
+      p.globalCache = all.slice();
+    } else {
+      for (let i = 2; i < 6; i++) w.u8(all[i]);
+      prev.set(all.subarray(2, 6), 2);
+    }
+    return true;
   }
 
   sendSnapshots() {
+    // the list is rebuilt on changes and every 2 s (kills, ping), and only goes out when it came out different
     if (this.playersDirty || this.tick - this.playersListT > 40) {
       this.playersListT = this.tick;
-      this.sendPlayers();
+      this.playersList();
     }
-    const sendGlobal = this.globalDirty || this.tick % 20 === 0;
+    let global = null;
+    if (this.globalDirty || this.tick % 20 === 0) {
+      const gw = (this.gw || (this.gw = new Writer(256))).reset();
+      this.writeGlobal(gw);
+      global = gw.bytes();
+    }
     this.globalDirty = false;
-    const all = this.all;
     for (const p of this.players.values()) {
-      if (p.invDirty) this.sendInventory(p);
-      const w = this.w.reset();
-      w.u8(S2C.SNAPSHOT);
-      w.u32(this.tick);
-      w.u16(p.lastSeq);
-      w.u8(sendGlobal ? 1 : 0);
-      if (sendGlobal) this.writeGlobal(w);
-      this.writeSelf(w, p);
-      writeEntities(w, p.view, p, all, this.tick);
-      // events
-      const at = w.reserve8();
-      let n = 0;
-      const px = p.state.x;
-      const pz = p.state.z;
-      for (const ev of this.events) {
-        if (ev.to && ev.to !== p.id) continue;
-        if (ev.except && ev.except === p.id) continue;
-        if (ev.r2) {
-          const dx = ev.x - px;
-          const dz = ev.z - pz;
-          if (dx * dx + dz * dz > ev.r2) continue;
-        }
-        if (n >= 255) break;
-        w.ensure(ev.bytes.length);
-        w.u8a.set(ev.bytes, w.o);
-        w.o += ev.bytes.length;
-        n++;
+      const conn = p.session.conn;
+      if (p.pingAt) {
+        const held = Math.min(255, Math.round(performance.now() - p.pingAt));
+        p.pingAt = 0;
+        this.emit(
+          (w) => {
+            w.u8(EVT.PONG);
+            w.u8(held);
+          },
+          { to: p.id },
+        );
       }
-      w.patch8(at, n);
-      p.session.conn.send(w.bytes());
-      this.stats.bytesOut += w.o;
-      this.stats.msgsOut++;
+      // A client that isn't draining its socket gets nothing this tick: every baseline stays where it is and the
+      // next snapshot that does go out covers the gap (dropping an encoded one would break the delta chain)
+      if (conn.congested && conn.congested()) continue;
+      // everything this client gets this tick leaves as one packet
+      if (conn.cork) conn.cork(() => this.sendTick(p, global));
+      else this.sendTick(p, global);
     }
     this.events.length = 0;
+  }
+
+  // one client's traffic for this tick: the player list and its inventory when they changed, then the snapshot
+  // global: this tick's full global state when it is due (null otherwise)
+  sendTick(p, global) {
+    const conn = p.session.conn;
+    this.sendList(p);
+    if (p.invDirty) this.sendInventory(p);
+    const w = this.w.reset();
+    w.u8(S2C.SNAPSHOT);
+    const flagsAt = w.reserve8();
+    let flags = 0;
+    const ackStep = (p.lastSeq - p.ackSent) & 0xffff;
+    if (this.tick !== p.snapTick + 1) {
+      flags |= SNAP.TICK;
+      w.u32(this.tick);
+      w.u16(p.lastSeq);
+    } else if (ackStep !== CMDS_PER_PACKET) {
+      flags |= SNAP.ACK;
+      w.varu(ackStep);
+    }
+    p.snapTick = this.tick;
+    p.ackSent = p.lastSeq;
+    if (global && this.writeGlobalFor(w, p, global)) flags |= SNAP.GLOBAL;
+    if (this.writeSelf(w, p)) flags |= SNAP.SELF;
+    flags |= writeEntities(w, p.view, p, this.all, this.tick);
+    // events
+    const at = w.reserve8();
+    let n = 0;
+    const px = p.state.x;
+    const pz = p.state.z;
+    for (const ev of this.events) {
+      if (ev.to && ev.to !== p.id) continue;
+      if (ev.except && ev.except === p.id) continue;
+      if (ev.r2) {
+        const dx = ev.x - px;
+        const dz = ev.z - pz;
+        if (dx * dx + dz * dz > ev.r2) continue;
+      }
+      if (n >= 255) break;
+      w.ensure(ev.bytes.length);
+      w.u8a.set(ev.bytes, w.o);
+      w.o += ev.bytes.length;
+      n++;
+    }
+    if (n) {
+      flags |= SNAP.EVENTS;
+      w.patch8(at, n);
+    } else w.o = at;
+    w.patch8(flagsAt, flags);
+    conn.send(w.bytes());
+    this.stats.bytesOut += w.o;
+    this.stats.msgsOut++;
   }
 }
 
