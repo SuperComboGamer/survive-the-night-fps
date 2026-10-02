@@ -1,7 +1,8 @@
 // Full-screen menus and overlays: splash/title, pause, death, game over / victory, connection banner.
 import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
-import { el, svgEl, lsGet, lsSet } from './dom.js';
+import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
+import { loadRecord, recordSummary } from './records.js';
 
 export const DEFAULT_CONTROLS = [
   ['W A S D', 'Move'],
@@ -102,6 +103,8 @@ export class Splash {
     const st = (this.status = el('div', 'sp-status', main));
     this.dot = el('i', 'dot', st);
     this.statusTxt = el('span', '', st, 'Contacting server…');
+    // the player's own record (records.js): not there at all until a first run is on it
+    this.record = el('div', 'sp-record', main);
 
     const ctl = el('div', 'sp-controls paper', root);
     el('h3', 'panel-h', ctl, 'Field notes · controls');
@@ -184,11 +187,21 @@ export class Splash {
     this._syncBtn();
   }
 
+  syncRecord() {
+    const parts = recordSummary(loadRecord());
+    this.record.textContent = '';
+    this.record.hidden = !parts.length;
+    if (!parts.length) return;
+    el('b', '', this.record, 'Your record');
+    el('span', '', this.record, parts.join(' · '));
+  }
+
   show() {
     this.root.hidden = false;
     this.joining = false;
     this.root.classList.remove('joining');
     this._syncBtn();
+    this.syncRecord();
     this.root.classList.remove('in');
     void this.root.offsetWidth;
     this.root.classList.add('in');
@@ -327,8 +340,45 @@ export class EndScreen {
     const st = el('div', 'end-stat', m);
     this.nights = el('b', '', st, '0');
     this.nightsL = el('span', '', st, 'nights survived');
-    this.board = el('div', 'end-board paper', m);
+    // the team's board and the player's own record sit side by side, so the record costs the screen no height
+    const panels = el('div', 'end-panels', m);
+    this.board = el('div', 'end-board paper', panels);
+    this.record = el('div', 'end-board end-record paper', panels);
     this.count = el('div', 'end-count', m);
+  }
+
+  // What this run did to the player's own record. rep: recordRun's report (records.js), { late: true } for a
+  // run joined too late to count, or nothing when the run was not followed at all.
+  _record(rep) {
+    const box = this.record;
+    box.textContent = '';
+    box.hidden = !rep;
+    if (!rep) return;
+    el('h3', 'panel-h', box, 'Your record');
+    if (rep.late) {
+      el('p', 'er-note', box, 'You joined this run after its first minute, so it is not on your record.');
+      return;
+    }
+    const { run, news, record: rec } = rep;
+    const tiles = el('div', 'er-tiles', box);
+    // this run's figure over the best that stands after it, lit when this run set it
+    const tile = (k, label, value, best) => {
+      const t = el('div', 'er-tile' + (news.some((n) => n.k === k) ? ' new' : ''), tiles);
+      el('span', '', t, label);
+      el('b', '', t, value);
+      el('small', '', t, best);
+    };
+    tile('secs', 'Time', fmtTime(run.secs), rec.best.secs ? 'fastest escape ' + fmtTime(rec.best.secs) : 'no escape yet');
+    tile('nights', 'Nights', String(run.nights), 'best ' + rec.best.nights);
+    tile('kills', 'Kills', String(run.kills), 'best ' + rec.best.kills);
+    for (const n of news) {
+      const row = el('div', 'er-new', box);
+      el('b', '', row, n.label);
+      el('span', '', row, n.text);
+      if (n.was) el('small', '', row, 'was ' + n.was);
+    }
+    const t = rec.total;
+    el('div', 'er-foot', box, `Run ${t.runs} · ${t.escapes} escape${t.escapes === 1 ? '' : 's'}` + (t.streak > 1 ? ` · ${t.streak} in a row` : ''));
   }
 
   show(kind, stats = {}) {
@@ -362,6 +412,7 @@ export class EndScreen {
       });
     }
     this.board.hidden = !kills.length;
+    this._record(stats.record);
 
     clearInterval(this._iv);
     this.count.textContent = '';

@@ -293,6 +293,13 @@ more than its bytes**, so put things into the packets that already flow.
   `starterKit(day)`. A leaver's starting kit is not dropped: `parkKit` keeps what is left of it (never more than was
   issued) in `leftKits` by name, and a rejoin during the same run gets exactly that back, so reconnecting creates no
   supplies. Anything that brings a survivor back mid-run should call `spawnHuman` the same way.
+- **The personal record** is client-side only: no server state, no traffic. `Game.trackRun` follows the replicated
+  phase (not the NEW_GAME / VICTORY / GAME_OVER notifications: a client skipped for a tick loses its events) and
+  records a run when it ends, if this client was in it from its first minute (`RUN_JOIN_GRACE`): outcome, nights,
+  length in server ticks, the player's own kills since the run began, team size, seed. `client/ui/records.js`
+  keeps the last 20 runs plus running totals and bests under `localStorage['stn.runs']` (format at the top of the
+  file). Every read goes through `sanitizeRecord` - the stored value is never trusted - and a write that fails
+  is kept in memory for as long as the page lives. `scripts/test-records.js` checks it.
 - **Weather** is client-side only and adds no network traffic. `client/game/weather.js` derives a seeded
   schedule (fog banks, gales, rain, thunderstorms; weighted toward dusk and night, and the first evening always
   brings fog) from the world seed and the replicated phase clock (`phase`, `day`, `timeLeft`, `phaseLen`), so
