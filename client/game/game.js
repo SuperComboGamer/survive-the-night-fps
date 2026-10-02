@@ -323,6 +323,7 @@ export class Game {
     this.clientTick = info.tick;
     this.clockInit = false;
     this.interpExtra = 0;
+    this.introPending = true; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
     this.state = 'playing';
     this.input.enabled = true;
     this.input.requestLock();
@@ -340,13 +341,23 @@ export class Game {
     this.input.exitLock();
     this.entities.clear();
     this.voice.closeAll();
+    // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
+    this.ui.setInventoryOpen(false);
+    this.ui.showPause(false); // ("Leave game" is pressed on it)
+    this.ui.clearNotices();
     this.ui.hideOverlays();
+    this.overlay = null;
+    this.deathShown = false;
     this.ui.showSplash();
-    this.ui.setJoinError('Disconnected from server.');
+    // a player who pressed "Leave game" knows why they are back here: only a drop is an error
+    if (!this.leaving) this.ui.setJoinError('Disconnected from server.');
+    this.leaving = false;
   }
 
   leave() {
+    if (this.state !== 'playing') return;
+    this.leaving = true;
     this.conn.close();
   }
 
@@ -384,6 +395,8 @@ export class Game {
     if (sync) this.prediction.reconcile(ack, this.self);
     else this.prediction.confirm(ack);
     readEvents(r, this.eventHandler, flags, this.entities.ents);
+    // (after the events: a join that starts the run gets NEW_GAME in this same snapshot, and that is its introduction)
+    if (this.introPending && flags & SNAP.GLOBAL && (this.global.phase === PHASE.DAY || this.global.phase === PHASE.NIGHT)) this.lateJoinIntro();
   }
 
   onInventory(r) {
@@ -693,6 +706,7 @@ export class Game {
         this.discovered = new Set([ZONE.CAMP]);
         this.pings = [];
         this.flyover?.clear();
+        this.introPending = false;
         ui.notify(`DAY ${arg}`, 'big', 5);
         ui.notify('Your car died on Route 9. Find the supplies to fix it - before the dark finds you.', 'sub', 6);
         break;
@@ -700,6 +714,35 @@ export class Game {
       case NOTIFY.PLAYER_LEFT:
         break;
     }
+  }
+
+  // Joined a run that is already under way. NEW_GAME, the card that says what the game is, went out before we were
+  // here (and on a drop-in server that is how most first-time players arrive), so say it for the moment we arrive
+  // in: the goal in one line, the day and phase, and how far the team has got.
+  lateJoinIntro() {
+    this.introPending = false;
+    const g = this.global;
+    const ui = this.ui;
+    const night = g.phase === PHASE.NIGHT;
+    let need = 0;
+    let have = 0;
+    SUPPLY_NEED.forEach((n, i) => {
+      need += n;
+      have += Math.min(n, g.supplies[i]);
+    });
+    ui.notify(g.finale ? 'THE FINAL STAND' : `${night ? 'NIGHT' : 'DAY'} ${g.day}`, 'big', 5);
+    if (g.finale) {
+      ui.notify('The car is fixed and the engine is warming up. Defend it, then get in.', 'sub', 6);
+      ui.notify('You joined a run in progress: every supply is in. Your team is at the car.', 'toast', 8);
+      return;
+    }
+    ui.notify('Your car died on Route 9. Find the supplies, fix it, drive out.', 'sub', 6);
+    ui.notify(g.suppliesDone ? 'You joined a run in progress: every supply is in. Starting the engine is next.' : `You joined a run in progress: ${have} of ${need} car supplies are in.`, 'toast', 8);
+    let team = 'Your team is marked on the compass. Scavenge with them before dark.';
+    if (night) team = 'Night: the horde is out. Find your team on the compass and hold out until dawn.';
+    else if (g.suppliesDone) team = 'Your team is marked on the compass. Meet them at the car.';
+    else if (g.timeLeft <= DUSK_WARNING) team = 'Night is seconds away. Find your team on the compass and board up with them.';
+    ui.notify(team, 'toast', 8);
   }
 
   remoteShot(ev) {

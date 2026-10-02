@@ -3969,20 +3969,30 @@ body {
   animation: stn-dropfall 5.5s calc(var(--d) + 7s) ease-in infinite;
 }
 
+/* the goal, the same on every visit... */
+.stn-ui .sp-goal {
+  margin: calc(52 * var(--u)) 0 0;
+  font: max(14px, calc(20 * var(--u))) / 1.3 var(--f-type);
+  letter-spacing: 0.05em;
+  color: var(--bone);
+  text-shadow: var(--shadow);
+}
+
+/* ...and under it, smaller, the tagline drawn for this one */
 .stn-ui .sp-tag {
-  margin: calc(58 * var(--u)) 0 0;
-  font: max(13px, calc(19 * var(--u))) / 1.3 var(--f-type);
+  margin: calc(9 * var(--u)) 0 0;
+  font: max(12px, calc(15.5 * var(--u))) / 1.3 var(--f-type);
   letter-spacing: 0.05em;
   color: var(--bone-2);
   text-shadow: var(--shadow);
-  opacity: 0.9;
+  opacity: 0.75;
 }
 
 .stn-ui .sp-join {
   display: flex;
   align-items: flex-end;
   gap: calc(14 * var(--u));
-  margin-top: calc(46 * var(--u));
+  margin-top: calc(40 * var(--u));
 }
 
 .stn-ui .sp-field {
