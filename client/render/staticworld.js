@@ -1,5 +1,7 @@
 // Builds the static world: building primitives (from shared world gen) and props (procedural models)
 // merged per spatial chunk and per material -> a handful of draw calls, frustum + distance culled.
+// Shadow maps take no notice of materials, so they are not drawn from the meshes the player sees but from
+// "casters": one or two more meshes per chunk that cover all of its materials at once (same vertices, never seen).
 import * as THREE from 'three';
 import { getMaterial, staticSurface } from './materials.js';
 import { createProp } from './models/props.js';
@@ -11,6 +13,64 @@ const IDENTITY = new THREE.Matrix4();
 // few pixels wide, while anything with a building, wall or car in it keeps the full view distance.
 const DETAIL_DIST = 280;
 const DETAIL_MIN = 60;
+
+// Which faces of a material the depth pass draws into a shadow map (three's rule: the back faces of a
+// one-sided material, both of a two-sided one), or CUTOUT when its texture punches holes in the shadow (chain
+// link, weeds, stencilled lettering): that shadow cannot be drawn without the material, so its mesh keeps
+// casting for itself.
+const CUTOUT = 3;
+const SHADOW_SIDE = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide };
+function shadowSide(mat) {
+  if ((mat.alphaTest > 0 && (mat.map || mat.alphaMap)) || mat.alphaToCoverage || mat.displacementMap) return CUTOUT;
+  return mat.shadowSide ?? SHADOW_SIDE[mat.side];
+}
+// a caster's material, by shadow side: the depth pass only reads the faces to keep from it. It is never
+// meant to reach the colour pass, and writes nothing if something (frustumCulled = false) puts it there.
+const CASTER_MAT = [THREE.FrontSide, THREE.BackSide, THREE.DoubleSide].map((side) => new THREE.MeshBasicMaterial({ shadowSide: side, colorWrite: false, depthWrite: false }));
+
+// A caster must be drawn into shadow maps and nowhere else. three asks every mesh whether it is inside the
+// frustum of the pass being drawn, and a caster says no unless that frustum is a light's shadow camera (the
+// view frustum is the renderer's own).
+class ShadowCaster extends THREE.Mesh {
+  constructor(geometry, material, isShadowFrustum) {
+    super(geometry, material);
+    this.name = 'static-shadow-caster';
+    this.castShadow = true;
+    this.matrixAutoUpdate = false;
+    this.isShadowFrustum = isShadowFrustum;
+  }
+
+  intersectsFrustum(frustum) {
+    return this.isShadowFrustum(frustum) && frustum.intersectsObject(this);
+  }
+}
+
+// (frustum) => whether it belongs to a light of the scene; each frustum is looked up among the lights once.
+// Made out here, not in the StaticWorld constructor: a closure from there would keep everything the build
+// had in scope alive for as long as the world is.
+function shadowFrustumTest(scene) {
+  const known = new Map();
+  return (f) => {
+    let yes = known.get(f);
+    if (yes === undefined) {
+      yes = false;
+      scene.traverse((o) => {
+        const sh = o.isLight && o.shadow;
+        for (let i = 0; sh && i < sh.getViewportCount(); i++) yes ||= sh.getFrustum(i) === f;
+      });
+      known.set(f, yes);
+    }
+    return yes;
+  };
+}
+
+// the bounding sphere a geometry made of just these positions would compute for itself
+function boundsOf(pos) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.computeBoundingSphere();
+  return g.boundingSphere;
+}
 
 function templateRadius(pos) {
   let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
@@ -342,13 +402,32 @@ export class StaticWorld {
         add(pr.x, pr.z, mats[0], cachedTpl(o.geometry, !!mats[0].vertexColors), m);
       });
     }
+    const isShadowFrustum = shadowFrustumTest(scene);
+    this.casters = new THREE.Group();
+    this.casters.name = 'static-shadow-casters';
     const nm = new THREE.Matrix3();
     for (const [key, b] of buckets) {
       const [cx, cz] = key.split(',').map(Number);
-      const chunk = { cx: (cx + 0.5) * CHUNK, cz: (cz + 0.5) * CHUNK, meshes: [] };
+      const chunk = { cx: (cx + 0.5) * CHUNK, cz: (cz + 0.5) * CHUNK, meshes: [], casters: [] };
+      // The positions of a whole chunk live in one vertex buffer that its meshes and its casters all read (no
+      // second copy for the shadows): every material owns a run of it. The runs are ordered by shadow side and,
+      // within a side, from the pieces seen furthest away to the nearest, so a caster is a single run too and
+      // can stop where the meshes it stands in for stop being drawn.
+      for (const [mat, list] of b) {
+        list.side = shadowSide(mat);
+        list.maxDist = Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
+      }
+      const runs = [...b.values()].sort((p, q) => p.side - q.side || q.maxDist - p.maxDist);
+      let total = 0;
+      for (const list of runs) {
+        list.base = total;
+        total += list.verts;
+      }
+      const chunkPos = new Float32Array(total * 3);
+      const shared = new THREE.InterleavedBuffer(chunkPos, 3);
       for (const [mat, list] of b) {
         const n = list.verts;
-        const pos = new Float32Array(n * 3);
+        const pos = chunkPos.subarray(list.base * 3, (list.base + n) * 3);
         const nrm = new Float32Array(n * 3);
         const uv = new Float32Array(n * 2);
         const col = mat.vertexColors ? new Float32Array(n * 3) : null;
@@ -405,26 +484,57 @@ export class StaticWorld {
           o += tpl.count;
         }
         const merged = new THREE.BufferGeometry();
-        merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        // this material's run of the chunk's buffer: a view that starts at its first vertex (the other
+        // attributes are the mesh's own and start at 0, so the draw range does too)
+        merged.setAttribute('position', new THREE.InterleavedBufferAttribute(shared, 3, list.base * 3));
+        merged.setDrawRange(0, n);
         merged.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
         merged.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
         if (col) merged.setAttribute('color', new THREE.BufferAttribute(col, 3));
         if (ground) merged.setAttribute('aGround', new THREE.BufferAttribute(ground, 1));
         if (tints) merged.setAttribute('aTint', new THREE.BufferAttribute(tints, 3));
-        merged.computeBoundingSphere();
+        merged.boundingSphere = boundsOf(pos);
         const mesh = new THREE.Mesh(merged, mat);
-        mesh.castShadow = true;
+        mesh.castShadow = list.side === CUTOUT; // everything else is in the chunk's caster
         mesh.receiveShadow = true;
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
-        mesh.userData.maxDist = Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
+        mesh.userData.maxDist = list.maxDist;
         this.group.add(mesh);
         chunk.meshes.push(mesh);
       }
+      // one caster per shadow side (nearly every chunk has one or two)
+      for (let i = 0; i < runs.length && runs[i].side !== CUTOUT; ) {
+        const first = runs[i];
+        const dist = [];
+        const end = [];
+        for (; i < runs.length && runs[i].side === first.side; i++) {
+          dist.push(runs[i].maxDist);
+          end.push(runs[i].base + runs[i].verts - first.base);
+        }
+        const n = end[end.length - 1];
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.InterleavedBufferAttribute(shared, 3, first.base * 3));
+        geo.setDrawRange(0, n);
+        geo.boundingSphere = boundsOf(chunkPos.subarray(first.base * 3, (first.base + n) * 3));
+        const caster = new ShadowCaster(geo, CASTER_MAT[first.side], isShadowFrustum);
+        // vertices to draw while the camera is nearer than dist[k]: end[k] (see update)
+        caster.userData.dist = dist;
+        caster.userData.end = end;
+        this.casters.add(caster);
+        chunk.casters.push(caster);
+      }
       this.chunks.push(chunk);
     }
+    this.casters.matrixAutoUpdate = false;
+    this.group.add(this.casters);
     this.group.matrixAutoUpdate = false;
     scene.add(this.group);
+  }
+
+  // with shadows off in the quality settings the casters are not even walked
+  setShadows(on) {
+    this.casters.visible = on;
   }
 
   update(camPos, maxDist) {
@@ -435,6 +545,7 @@ export class StaticWorld {
       const dz = c.cz - camPos.z;
       if (dx * dx + dz * dz >= lim) {
         for (const m of c.meshes) m.visible = false;
+        for (const s of c.casters) s.visible = false;
         continue;
       }
       // distance to the nearest point of the chunk: every piece in it is at least this far away
@@ -442,6 +553,15 @@ export class StaticWorld {
       const ez = Math.max(0, Math.abs(dz) - half);
       const near = Math.sqrt(ex * ex + ez * ez);
       for (const m of c.meshes) m.visible = near < m.userData.maxDist;
+      // a caster draws exactly the meshes that are shown: its vertices are sorted by maxDist, so those are
+      // the leading part of it
+      for (const s of c.casters) {
+        const { dist, end } = s.userData;
+        let n = 0;
+        for (let i = 0; i < dist.length && near < dist[i]; i++) n = end[i];
+        s.visible = n > 0;
+        s.geometry.drawRange.count = n;
+      }
     }
   }
 
