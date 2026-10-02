@@ -35,8 +35,10 @@ export class Prediction {
     this.slotRequest = slot;
   }
 
-  // advance fixed steps; returns number of commands generated
-  step(frameDt, buttons, yaw, pitch, onEvents) {
+  // advance fixed steps; returns number of commands generated.
+  // buffer (optional, an InputBuffer): has the last word on the buttons of each command, knowing the state it
+  // will run on. What it decides is the command: it is what gets simulated here, sent and replayed.
+  step(frameDt, held, yaw, pitch, onEvents, buffer) {
     if (!this.hasServerState) return 0;
     this.acc += Math.min(frameDt, 0.25);
     let n = 0;
@@ -45,8 +47,10 @@ export class Prediction {
       this.seq = (this.seq + 1) & 0xffff;
       const qy = qangle16(yaw);
       const qp = qpitch(pitch);
-      const cmd = { seq: this.seq, buttons, yaw: dqangle16(qy), pitch: dqpitch(qp), slot: this.slotRequest };
+      const cmd = { seq: this.seq, buttons: held, yaw: dqangle16(qy), pitch: dqpitch(qp), slot: this.slotRequest };
       this.slotRequest = 255;
+      if (buffer) cmd.buttons = buffer.shape(cmd, this.state, this.world);
+      const buttons = cmd.buttons;
       copyPlayerState(this.prev, this.state);
       const events = [];
       simulatePlayer(this.state, cmd, this.world, events);

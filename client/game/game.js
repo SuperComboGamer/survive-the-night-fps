@@ -51,6 +51,7 @@ import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { Prediction } from './prediction.js';
+import { InputBuffer } from './inputbuffer.js';
 import { Entities } from './entities.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
@@ -188,6 +189,7 @@ export class Game {
     this.vmItem = -1;
     this.entities = new Entities(this);
     this.prediction = new Prediction(null);
+    this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
   }
 
@@ -326,6 +328,7 @@ export class Game {
     this.introPending = true; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
     this.state = 'playing';
     this.input.enabled = true;
+    this.inputBuffer.clear();
     this.input.requestLock();
     this.discovered = new Set([ZONE.CAMP]);
     this.renderer.canvas.addEventListener('click', () => {
@@ -945,6 +948,7 @@ export class Game {
       if (!ui.isTyping()) {
         ui.openChat();
         this.input.buttons = 0;
+        this.inputBuffer.clear();
       }
       return;
     }
@@ -1209,12 +1213,13 @@ export class Game {
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
     const buttons = self.alive ? inp.sample() : 0;
+    if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
       for (const ev of evs) if (ev.type === 'fire' || ev.type === 'melee') attacked = true;
       this.onLocalEvents(evs, st);
     };
-    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents) > 0) inp.clearLatch();
+    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents, this.inputBuffer) > 0) inp.clearLatch();
     // a packet carries one render time, the one of the frame it leaves in, and the server rewinds its targets to
     // that for every command in the packet: a shot or a swing goes out in its own frame instead of waiting for
     // the batch to fill, or it would be judged against where things stood a frame or two after it was aimed
