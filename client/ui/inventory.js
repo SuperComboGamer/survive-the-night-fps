@@ -1,5 +1,6 @@
 // Inventory / crafting screen (Tab). Equipment on the left, backpack grid in the centre,
 // crafting on the right; survivors + car checklist + campfire under the grid.
+import { usedIn, foundIn, sourcesOf } from '../game/itemguide.js';
 import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
@@ -135,6 +136,18 @@ function hintFor(cat) {
 }
 
 // ---------------------------------------------------------------- tooltip
+// A comma-separated line that wraps between its names and never inside one. list = [{ name, locked }], or the line
+// as text; locked: waits on a schematic, so it carries the crafting list's padlock. more: how many were left out.
+function phrases(parent, list, more = 0) {
+  if (typeof list === 'string') list = list.split(', ').map((name) => ({ name }));
+  list.forEach((it, i) => {
+    if (i) parent.append(' '); // the one place the line may break
+    const s = el('span', 'tip-phrase' + (it.locked ? ' locked' : ''), parent);
+    if (it.locked) svgEl('i', 'tip-note-lock', s, glyph('lock'));
+    s.append(it.name + (i < list.length - 1 ? ',' : more ? ` +${more} more` : ''));
+  });
+}
+
 class Tooltip {
   constructor(parent) {
     this.root = el('div', 'tip', parent);
@@ -146,14 +159,18 @@ class Tooltip {
     this.cat = el('div', 'tip-cat', t);
     this.desc = el('div', 'tip-desc', this.root);
     this.stats = el('div', 'tip-stats', this.root);
+    this.notes = el('div', 'tip-notes', this.root);
     this.reqs = el('div', 'tip-reqs', this.root);
     this.hint = el('div', 'tip-hint', this.root);
     this.x = 0;
     this.y = 0;
   }
 
-  // reqs = [{ icon, name, val, ok }] - a have/need checklist (recipes)
-  show({ icon, name, cat, catCls, desc, stats, reqs, hint, hintCls }, x = this.x, y = this.y) {
+  // reqs = [{ icon, name, val, ok, src }] - a have/need checklist (recipes); src: where to get what is short
+  // notes = [{ label, list, more }] - labelled lines ("Used in", "Found in"); list and more as phrases() takes them
+  // anchor = the element the tooltip describes: move() keeps the tooltip from lying across it
+  show({ icon, name, cat, catCls, desc, stats, notes, reqs, hint, hintCls, anchor }, x = this.x, y = this.y) {
+    this.anchor = anchor;
     this.ico.innerHTML = icon || '';
     this.name.textContent = name || '';
     this.cat.textContent = cat || '';
@@ -163,6 +180,13 @@ class Tooltip {
     this.stats.textContent = '';
     for (const s of stats || []) el('div', 'tip-stat', this.stats, s);
     this.stats.hidden = !(stats && stats.length);
+    this.notes.textContent = '';
+    for (const n of notes || []) {
+      const row = el('div', 'tip-note', this.notes);
+      el('div', 'tip-note-h', row, n.label);
+      phrases(el('div', 'tip-note-v', row), n.list, n.more);
+    }
+    this.notes.hidden = !(notes && notes.length);
     this.reqs.textContent = '';
     if (reqs && reqs.length) {
       el('div', 'tip-reqs-h', this.reqs, 'Requires');
@@ -172,6 +196,7 @@ class Tooltip {
         el('span', 'tip-req-name', row, q.name);
         el('span', 'tip-req-val', row, q.val);
         svgEl('i', 'tip-req-mark', row, glyph(q.ok ? 'check' : 'xmark'));
+        if (q.src) phrases(el('div', 'tip-req-src', this.reqs), q.src);
       }
     }
     this.reqs.hidden = !(reqs && reqs.length);
@@ -190,7 +215,12 @@ class Tooltip {
     let px = x + 18;
     let py = y + 18;
     if (px + r.width > innerWidth - 8) px = x - r.width - 14;
-    if (py + r.height > innerHeight - 8) py = innerHeight - r.height - 8;
+    if (py + r.height > innerHeight - 8) {
+      py = innerHeight - r.height - 8;
+      // pushed up from the bottom edge it would lie across the very thing it describes: stand beside that instead
+      const a = this.anchor?.getBoundingClientRect();
+      if (a && py < a.bottom && px < a.right && px + r.width > a.left) px = a.right + 8 + r.width > innerWidth - 8 ? a.left - r.width - 8 : a.right + 8;
+    }
     this.root.style.transform = `translate(${Math.max(8, px) | 0}px,${Math.max(8, py) | 0}px)`;
   }
 
@@ -665,6 +695,23 @@ export class Inventory {
     }
     const d = ITEM_DEFS[id];
     if (!d) return null;
+    // Something carried (a backpack cell, an ammo reserve): what it goes into and where more of it is found. A
+    // line with nothing to say is left out, and "Found in" is for what the world yields: a thing that is only
+    // ever crafted has its recipe next door.
+    const notes = [];
+    if (t.classList.contains('cell') || t.classList.contains('am')) {
+      const used = usedIn(id, this.unlocked);
+      if (used) notes.push({ label: 'Used in', ...used });
+      if (sourcesOf(id).length) notes.push({ label: 'Found in', list: foundIn(id, this.unlocked) });
+    }
+    // A recipe: under each ingredient the player is short of, the same line (reqs opens with the ingredients, in
+    // the recipe's order).
+    if (t.classList.contains('rc')) {
+      const ings = this.recipeEls.find((x) => x.b === t).ings;
+      ings.forEach((ing, i) => {
+        if (!reqs[i].ok) reqs[i].src = foundIn(ing.id, this.unlocked);
+      });
+    }
     return {
       icon: itemIcon(id),
       name: d.name,
@@ -672,9 +719,11 @@ export class Inventory {
       catCls: 'c-' + d.cat,
       desc: d.desc,
       stats: [...statLines(id), ...(extra || [])],
+      notes,
       reqs,
       hint,
       hintCls,
+      anchor: t,
     };
   }
 

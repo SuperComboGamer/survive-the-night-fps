@@ -18,6 +18,7 @@
     "test:bots": "node scripts/bot.js 4 20",
     "bench:net": "node scripts/net-bench.js",
     "test:e2e": "node scripts/e2e-gameplay.js",
+    "posttest": "node scripts/test-itemguide.js",
     "test:sim": "node scripts/sim-smoke.js"
   },
   "dependencies": {
