@@ -1019,6 +1019,106 @@ const standOff = (c, e, d) => {
   s.z = z0;
 }
 
+// walking over things picks them up - but not a stack the survivor has just put down, which stays down until they
+// have walked off (a teammate's feet take it, and their own [E]); and a full backpack that leaves a car supply lying
+// says so (a game of its own: the one above is left as it was)
+{
+  const g = new Game({ seed, godMode: true, debugCommands: true, log: () => {} });
+  const join = (name) => {
+    const c = { id: 0, notes: [], net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} } };
+    c.handler = new Proxy({}, { get: (_, k) => (k === 'notify' ? (m, a) => c.notes.push([m, a]) : () => {}) });
+    c.session = g.onOpen({
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) c.id = r.u16();
+        else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
+      },
+    });
+    const w = new Writer(64);
+    w.u8(C2S.JOIN);
+    w.u8(PROTOCOL_VERSION);
+    w.str(name);
+    g.onMessage(c.session, w.bytes().slice());
+    return c;
+  };
+  const ticks = (n) => {
+    for (let i = 0; i < n; i++) g.update();
+  };
+  const D = join('Dropper'); // (first in the pickup pass: on a tie the stack would be theirs)
+  const T = join('Teammate');
+  ticks(5);
+  for (const z of g.zombies) {
+    z.dead = true;
+    z.deadT = 2;
+  }
+  const d = g.players.get(D.id);
+  const t = g.players.get(T.id);
+  const s = d.state;
+  const home = [s.x, s.z];
+  const tp = (p, x, z) => g.handleChat(p, `/tp ${x} ${z}`);
+  const rope = (p) => p.inv.reduce((n, x) => n + (x && x.item === ITEM.ROPE ? x.count : 0), 0);
+  const off = (e) => Math.hypot(e.x - s.x, e.z - s.z);
+  // the dropper puts three rope down out of the first backpack slot; `drop` is the stack on the ground
+  const drop = () => {
+    d.inv[0] = { item: ITEM.ROPE, count: 3 };
+    const had = new Set(g.items);
+    const m = new Writer(8);
+    m.u8(C2S.ACTION);
+    m.u8(ACT.DROP_SLOT);
+    m.u8(0);
+    m.u8(0);
+    g.onMessage(D.session, m.bytes().slice());
+    return g.items.find((e) => !had.has(e));
+  };
+  d.inv.fill(null);
+  t.inv.fill(null);
+  tp(t, s.x + 12, s.z);
+  let stack = drop();
+  const within = off(stack) < 1.9 && g.canReachEnt(d, stack); // (in reach of the pickup pass, or this proves nothing)
+  ticks(200);
+  check('a stack dropped from the backpack stays down while its dropper stands by it', within && rope(d) === 0 && !stack.removed && stack.count === 3, `10 s, ${off(stack).toFixed(2)} m from it`);
+  tp(t, stack.x, stack.z);
+  ticks(5);
+  check('...a teammate who walks over it has it', rope(t) === 3 && rope(d) === 0 && stack.removed);
+  tp(t, s.x + 12, s.z);
+  stack = drop();
+  ticks(85); // (nobody's feet take a stack in its first 4 s on the ground)
+  // a step back (2.6 m from it: out of pickup range, not yet away from it) and return, then 4 m off and return
+  const r = Math.hypot(home[0] - stack.x, home[1] - stack.z);
+  const leave = (m) => {
+    tp(d, stack.x + ((home[0] - stack.x) / r) * m, stack.z + ((home[1] - stack.z) / r) * m);
+    ticks(8);
+    tp(d, ...home);
+    ticks(8);
+    return rope(d);
+  };
+  const stepped = leave(2.6);
+  const walked = leave(4);
+  check('...and so has the dropper, once they have walked off and come back', stepped === 0 && walked === 3 && stack.removed, `a step back and return: ${stepped}, 4 m off and return: ${walked}`);
+  stack = drop();
+  ticks(1);
+  const m = new Writer(8);
+  m.u8(C2S.ACTION);
+  m.u8(ACT.INTERACT);
+  m.u16(stack.id);
+  g.onMessage(D.session, m.bytes().slice());
+  check('...or at once with [E]', rope(d) === 3 && stack.removed);
+  // every slot taken, a car battery at the dropper's feet
+  for (let i = 0; i < d.inv.length; i++) d.inv[i] = { item: ITEM.CLOTH, count: 1 };
+  const told = (c, kind) => c.notes.filter(([msg, arg]) => msg === kind && arg === ITEM.CAR_BATTERY).length;
+  const battery = g.spawnItem(ITEM.CAR_BATTERY, 1, s.x + 0.5, s.y + 0.02, s.z, { permanent: true });
+  ticks(8);
+  const first = told(D, NOTIFY.INVENTORY_FULL);
+  ticks(200);
+  const said = told(D, NOTIFY.INVENTORY_FULL);
+  check('a full backpack that leaves a car supply lying says so, to that survivor', first === 1 && !battery.removed && told(T, NOTIFY.INVENTORY_FULL) === 0);
+  check('...again every few seconds while they stand by it, not on every try', said === 2, `${said} notices in 10 s`);
+  d.inv[0] = null;
+  ticks(70); // (it is tried again every 3 s)
+  check('...and it is picked up once there is room', battery.removed && d.inv[0]?.item === ITEM.CAR_BATTERY && told(D, NOTIFY.SUPPLY_FOUND) === 1 && told(D, NOTIFY.INVENTORY_FULL) === said);
+}
+
 // a trunk's car alarm goes off: the ambush comes from behind the searcher, even with the day's valley near the zombie cap
 {
   const p = A.p();
@@ -2706,7 +2806,8 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   g.onMessage(W.session, new Uint8Array([C2S.ACTION, ACT.DROP_WEAPON, 1]));
   s.throwCount--; // (the simulation counts the molotov as thrown before the server hears of it)
   g.handleSimEvent(p, { type: 'throw', item: ITEM.MOLOTOV });
-  check('while it is full, building, dropping and throwing cost a survivor nothing', built === 0 && held() === had && g.projectiles.length === 0);
+  // (g.dropper: a drop that found no id must not leave the next items spawned marked as this survivor's own)
+  check('while it is full, building, dropping and throwing cost a survivor nothing', built === 0 && held() === had && g.projectiles.length === 0 && g.dropper === 0);
   // forty ids come free as the ghost goes: they are back from quarantine 3 s later
   for (const e of filler.splice(0, 40)) g.removeItemEnt(e);
   g.onClose(G.session);

@@ -145,7 +145,10 @@ https://www.survivethenightgame.com.
   camps, sheds, hunter stands, military stashes, burnt homesteads, roadblocks, graves) sit along the
   roads and in the woods between them, so every walk passes something worth searching. Melee a tree for
   sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
-  automatically when you walk over them. Searched containers partly restock at dawn. Supply planes
+  automatically when you walk over them - except a stack you dropped yourself (right-click it in the
+  backpack), which stays down until you have walked a few steps away, so you can clear a slot or leave
+  it for a teammate. A full backpack tells you what it left lying.
+  Searched containers partly restock at dawn. Supply planes
   drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
   found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
   your stamina.
