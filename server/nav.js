@@ -16,6 +16,10 @@ const INF = 0x7fffffff;
 const STRUCT_COST = 14; // extra cost to cross a structure cell (x10 units)
 const EDGE_PAD = 0.03; // clearance a step keeps from a wall (small, so 1.1 m back doors stay open)
 const NEAR_WALL = 1.5; // cells within this of a wall check first steps against the real geometry
+const PERCH = 512; // source mask: the field starts from the ground around what the survivor stands on (this.seeds)
+const PERCH_R = 4; // how far (cells) from the survivor that ground is looked for: wider than half a bus or a tent
+const PERCH_W = PERCH_R * 2 + 1;
+const PERCH_RING = 10; // ...and how much further off than the nearest of it still starts the field (x10 units; under a step's cost)
 
 export class Nav {
   constructor(world) {
@@ -39,6 +43,8 @@ export class Nav {
     this.bucketHead = new Int32Array(0);
     this.entryIdx = new Int32Array(FIELD * FIELD * 8 + 1); // a cell is queued once per improvement: <= 8 per cell
     this.entryNext = new Int32Array(FIELD * FIELD * 8 + 1);
+    this.seeds = new Int32Array(PERCH_W * PERCH_W); // source cells of a PERCH field: cell in the PERCH_W window << 8 | cost
+    this.seedN = 0;
   }
 
   _cellIndex(x, z) {
@@ -147,6 +153,7 @@ export class Nav {
 
   // which cells a flow field starts from for a survivor at (x,z): bit 0 their own cell, bit n+1 neighbor n.
   // Away from walls just the own cell; beside one, every nearby cell center the survivor can actually walk to.
+  // PERCH when there is none (they stand on top of something): the cells are in this.seeds, see _perch.
   _sources(x, z) {
     const i = Math.floor(x + MAP_HALF);
     const j = Math.floor(z + MAP_HALF);
@@ -159,7 +166,37 @@ export class Nav {
       if (this.blocked[(j + NDJ[n]) * SIZE + i + NDI[n]]) continue;
       if (this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) m |= 2 << n;
     }
+    if (!m && this._perch(x, z, i, j)) return PERCH;
     return m || 1;
+  }
+
+  // A survivor standing on something (a car roof, a dumpster, a table): no cell center around can be walked to from
+  // there, every step crosses what they stand on, so a field started at their own cell reaches nothing and the horde
+  // has no path. Start it from the ground around the perch instead: the walkable cells with a straight line to the
+  // survivor that crosses no wall but the one under their feet, the nearest of them and those within a step further
+  // (the dead close in on every side they can get near from, and walk round to it from the others). The same goes
+  // for a survivor wedged between two props. Fills this.seeds; false if there is no such cell.
+  _perch(x, z, i, j) {
+    // the walls that can be in the way: every one in reach of the window but those under the survivor's feet
+    const q = this.world.staticGrid.query(x, z, PERCH_R * 1.5 + 1.5, this._q);
+    let n = 0;
+    for (let k = 0; k < q.length; k++) if (this.solid.has(q[k]) && !segHits(q[k], x, z, x, z, EDGE_PAD)) q[n++] = q[k];
+    q.length = n;
+    let near = INF;
+    n = 0;
+    // nearest first (measured between cell centers: the field stays the same while the survivor stays in their cell)
+    for (let k = 0; k < PERCH_CELLS.length; k++) {
+      const [di, dj, d] = PERCH_CELLS[k];
+      if (d > near + PERCH_RING) break;
+      const gi = i + di;
+      const gj = j + dj;
+      if (gi < 0 || gj < 0 || gi >= SIZE || gj >= SIZE || this.blocked[gj * SIZE + gi]) continue;
+      if (!this._clearAmong(q, x, z, gi - MAP_HALF + 0.5, gj - MAP_HALF + 0.5)) continue;
+      if (near === INF) near = d;
+      this.seeds[n++] = (((dj + PERCH_R) * PERCH_W + di + PERCH_R) << 8) | (d - near);
+    }
+    this.seedN = n;
+    return n > 0;
   }
 
   addStructure(c) {
@@ -185,9 +222,11 @@ export class Nav {
   computeField(playerId, x, z) {
     let f = this.fields.get(playerId);
     if (!f) {
-      f = { dist: new Int32Array(FIELD * FIELD), ox: 0, oz: 0, cx: x, cz: z, t: 0, ver: -1, src: 0 };
+      f = { dist: new Int32Array(FIELD * FIELD), ox: 0, oz: 0, cx: x, cz: z, t: 0, ver: -1, src: 0, seeds: null };
       this.fields.set(playerId, f);
     }
+    // standing where they stood, nothing built since: the field is the one already there
+    if (f.ver === this.structVer && f.cx === x && f.cz === z) return f;
     const ox = Math.floor(x + MAP_HALF) - HALF_FIELD; // global cell origin
     const oz = Math.floor(z + MAP_HALF) - HALF_FIELD;
     const src = this._sources(x, z);
@@ -195,13 +234,19 @@ export class Nav {
     f.cz = z;
     // a field only depends on the survivor's cell (and which neighbors they can step to) and the
     // walkability / structure grids: when none changed since it was computed it is still exact
-    if (f.ver === this.structVer && f.ox === ox && f.oz === oz && f.src === src) return f;
+    if (f.ver === this.structVer && f.ox === ox && f.oz === oz && f.src === src && (src !== PERCH || this._sameSeeds(f.seeds))) return f;
     f.ox = ox;
     f.oz = oz;
     f.ver = this.structVer;
     f.src = src;
+    if (src === PERCH) f.seeds = this.seeds.slice(0, this.seedN);
     this._solve(f.dist, ox, oz, src);
     return f;
+  }
+  _sameSeeds(seeds) {
+    if (seeds.length !== this.seedN) return false;
+    for (let k = 0; k < seeds.length; k++) if (seeds[k] !== this.seeds[k]) return false;
+    return true;
   }
 
   // Dijkstra from the window center over 8-connected cells (10 straight, 14 diagonal, plus the entered
@@ -246,6 +291,18 @@ export class Nav {
     const center = (HALF_FIELD + 1) * PW + HALF_FIELD + 1;
     let en = 0;
     let pending = 0;
+    // seed, survivor on a perch: the ground cells around it (walkable, picked by _perch), the nearest at 0 and
+    // the rest at up to PERCH_RING (less than a step, so the bucket bound above still holds)
+    for (let k = srcMask === PERCH ? this.seedN - 1 : -1; k >= 0; k--) {
+      const v = this.seeds[k] >> 8;
+      const q = center + (((v / PERCH_W) | 0) - PERCH_R) * PW + (v % PERCH_W) - PERCH_R;
+      const c = this.seeds[k] & 255;
+      dist[q] = c;
+      eIdx[en] = q;
+      eNext[en] = head[c];
+      head[c] = en++;
+      pending++;
+    }
     // seed: the survivor's own cell at 0 and any extra source neighbors at their step cost
     for (let n = -1; n < 8; n++) {
       if (!(srcMask & (1 << (n + 1)))) continue;
@@ -387,3 +444,7 @@ const NCOST = [10, 10, 10, 10, 14, 14, 14, 14];
 const OPP = [1, 0, 3, 2, 7, 6, 5, 4]; // index of the reverse step
 const HALF_DIRS = [0, 2, 4, 5]; // one of each step pair (+x, +z, +x+z, +x-z)
 const NOFF = NDI.map((di, n) => NDJ[n] * PW + di); // neighbor offsets in the padded window
+// the cells of the PERCH_W x PERCH_W window around a survivor, nearest first: [di, dj, distance (x10 units)]
+const PERCH_CELLS = [];
+for (let dj = -PERCH_R; dj <= PERCH_R; dj++) for (let di = -PERCH_R; di <= PERCH_R; di++) PERCH_CELLS.push([di, dj, Math.round(Math.hypot(di, dj) * 10)]);
+PERCH_CELLS.sort((a, b) => a[2] - b[2]);

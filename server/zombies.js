@@ -779,7 +779,7 @@ export class Zombies {
 
     // stop to attack
     let attacking = false;
-    if (target && z.state !== 7 && dist <= def.range + PLAYER_RADIUS && Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) {
+    if (target && z.state !== 7 && dist <= def.range + PLAYER_RADIUS && ((Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) || this.canReachUp(z, target))) {
       attacking = true;
       dx = tx - z.x;
       dz = tz - z.z;
@@ -1045,6 +1045,29 @@ export class Zombies {
     return !c || (c.flags & COL.HUMANPASS && footprintContains(c, s.x, s.z));
   }
 
+  // melee reach at a survivor standing on something (a car roof, a dumpster), where the torso line above runs
+  // into the perch itself: the arms go up beside it and across at the survivor's shins, so what the survivor
+  // stands on is not in the way, and a wall or a ceiling between the two still is. Feet up to 2.5 m above the
+  // zombie's own are in reach: what a survivor gets onto with one hop off a barricade (1.15 + 0.9 jump + 0.45
+  // step), so the roof of a car, a pickup (1.9) or a tractor (2.2), and no camper (3.0), bus or building roof
+  // (2.7 and up). A short body stretches 0.75 m above its head at most: a dog gets at a car roof, not a truck's.
+  // slack: extra height allowed to a swing already on its way (the survivor jumped).
+  canReachUp(z, p, slack = 0) {
+    const s = p.state;
+    const up = s.y - z.y;
+    // feet within a step of the zombie's are on its own footing: the torso line alone decides
+    if (up < 0.5 || up > Math.min(2.5, z.def.height + 0.75) + slack) return false;
+    const w = this.g.world;
+    const oy = z.y + z.def.height * 0.55;
+    const ty = s.y + 0.35;
+    raycastWorld(w, z.x, oy, z.z, 0, ty > oy ? 1 : -1, 0, Math.abs(ty - oy), _ray);
+    if (_ray.col) return false;
+    const l = Math.hypot(s.x - z.x, s.z - z.z) || 1;
+    raycastWorld(w, z.x, ty, z.z, (s.x - z.x) / l, 0, (s.z - z.z) / l, l, _ray);
+    const c = _ray.col;
+    return !c || (c.flags & COL.HUMANPASS && footprintContains(c, s.x, s.z));
+  }
+
   integrate(z, dt, dvx, dvz, humans) {
     const g = this.g;
     const def = z.def;
@@ -1116,7 +1139,7 @@ export class Zombies {
       if (!p || !p.alive || p.zombie) return;
       const s = p.state;
       const d = Math.hypot(s.x - z.x, s.z - z.z);
-      if (d > def.range + PLAYER_RADIUS + 0.9 || Math.abs(s.y - z.y) > 2.5 || !this.canReach(z, p)) return;
+      if (d > def.range + PLAYER_RADIUS + 0.9 || ((Math.abs(s.y - z.y) > 2.5 || !this.canReach(z, p)) && !this.canReachUp(z, p, 0.9))) return;
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
