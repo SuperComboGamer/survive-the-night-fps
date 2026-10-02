@@ -536,6 +536,19 @@ export class Zombies {
     const g = this.g;
     const humans = g.humans();
     this.humansCache = humans;
+    // Sweep the corpses before the hash is built: it stores indices into g.zombies, so a splice any later would
+    // leave everything that asks forNear this tick (a blast, a fire, a trap, the crowd's own spacing) looking at
+    // the wrong zombies, or at none.
+    const zs = g.zombies;
+    for (let i = zs.length - 1; i >= 0; i--) {
+      const z = zs[i];
+      if (!z.dead) continue;
+      z.deadT += dt;
+      if (z.deadT > 1.6) {
+        zs.splice(i, 1);
+        g.removeEntity(z);
+      }
+    }
     this.rebuildHash();
 
     // flow fields: refresh 2 per tick round-robin
@@ -589,18 +602,9 @@ export class Zombies {
 
     this.herds.update(dt, humans);
 
-    const zs = g.zombies;
     for (let i = zs.length - 1; i >= 0; i--) {
       const z = zs[i];
-      if (z.dead) {
-        z.deadT += dt;
-        if (z.deadT > 1.6) {
-          zs.splice(i, 1);
-          g.removeEntity(z);
-        }
-        continue;
-      }
-      this.updateOne(z, dt, humans);
+      if (!z.dead) this.updateOne(z, dt, humans);
     }
   }
 

@@ -1198,6 +1198,14 @@ export class Game {
       }
       return 0;
     }
+    if (def.cat === 'armor' && mag) {
+      // a worn vest that was dropped comes back with the points it had left, not as a new one
+      const i = p.inv.findIndex((x) => !x);
+      if (i < 0) return 0;
+      p.inv[i] = { item, count: 1, mag };
+      p.invDirty = true;
+      return 1;
+    }
     const left = addItem(p.inv, item, count);
     const taken = count - left;
     if (taken > 0) {
@@ -1515,6 +1523,7 @@ export class Game {
           const old = s.weapons[slot];
           const oldMag = slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0;
           s.weapons[slot] = e.item;
+          if (s.slot === slot) s.reloadT = 0; // a reload of the weapon swapped out must not finish on this one
           if (slot === SLOT_PRIMARY) s.mags[0] = e.mag;
           if (slot === SLOT_PISTOL) s.mags[1] = e.mag;
           this.removeItemEnt(e);
@@ -1816,7 +1825,12 @@ export class Game {
       if (!canFit(copy, rec.out, rec.n)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
     payCost(p.inv, rec.cost);
-    this.giveItem(p, rec.out, rec.n);
+    const taken = this.giveItem(p, rec.out, rec.n);
+    // rounds the reserve has no room for were paid for all the same: they go on the ground instead of nowhere
+    if (def.cat === 'ammo' && taken < rec.n) {
+      this.dropItem(rec.out, rec.n - taken, p.state.x, p.state.y, p.state.z, { spread: 0.8 });
+      this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+    }
     p.invDirty = true;
     this.syncThrow(p);
     this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
@@ -1839,13 +1853,12 @@ export class Game {
       return;
     }
     if (def.cat === 'armor') {
-      const old = p.armorItem;
-      const oldFrac = p.armorMax ? p.armor / p.armorMax : 0;
-      p.inv[idx] = null;
+      // the vest taken off goes into the backpack with the points it has left (`mag`, as a stored weapon keeps its
+      // magazine), whatever its condition: it is neither made new nor thrown away. No `mag` is a new vest
+      p.inv[idx] = p.armorItem && p.armor > 0 ? { item: p.armorItem, count: 1, mag: p.armor } : null;
       p.armorItem = it.item;
-      p.armor = def.armor;
+      p.armor = it.mag || def.armor;
       p.armorMax = def.armor;
-      if (old && oldFrac > 0.5) p.inv[idx] = { item: old, count: 1 };
       p.invDirty = true;
       return;
     }
@@ -1988,7 +2001,9 @@ export class Game {
     const frac = (e.hp / e.maxHp) * 0.5;
     for (const k in def.cost) {
       const n = Math.floor(def.cost[k] * frac);
-      if (n > 0) this.giveItem(p, +k, n) < n && this.dropItem(+k, n, e.x, e.y, e.z);
+      if (n <= 0) continue;
+      const taken = this.giveItem(p, +k, n);
+      if (taken < n) this.dropItem(+k, n - taken, e.x, e.y, e.z); // only what did not fit, not the whole refund again
     }
     p.invDirty = true;
     this.destroyStructure(e, false);
@@ -2107,7 +2122,10 @@ export class Game {
     const s = p.state;
     s.downed = 1;
     s.sprinting = 0;
-    if (s.weapons[SLOT_PISTOL]) s.slot = SLOT_PISTOL;
+    if (s.weapons[SLOT_PISTOL] && s.slot !== SLOT_PISTOL) {
+      s.slot = SLOT_PISTOL;
+      s.reloadT = 0; // a reload in progress was of the weapon just put away: left running it locks the pistol, then reloads it
+    }
     this.nightStats.downs++;
     this.notify(NOTIFY.DOWNED, p.id);
     this.sound(SOUND.DOWNED, s.x, s.y + 0.6, s.z, 70);
