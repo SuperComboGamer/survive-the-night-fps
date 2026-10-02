@@ -187,6 +187,11 @@ more than its bytes**, so put things into the packets that already flow.
   turn each other down as they pile up (`crowd` in `CATS`): a swarm must not out-shout gunfire or the music.
 - **Master bus** (`_buildGraph`): 2:1 glue compressor -> limiter -> soft clipper -> master volume. Kept light on
   purpose: the quiet forest sits ~10 dB under automatic fire and nothing leaves above full scale.
+- **Start-up.** The browser only allows audio after a user gesture, so `main.js` starts the engine on the first key
+  or pointer press on the splash (the click on Join at the latest) and nothing waits for it: the join opens the
+  socket straight away. Until `audio.ready` (about a second of bank rendering) a one-shot asked for is dropped and
+  a loop is only queued, so the game can be in play before there is sound; ambience and music then come in from
+  the state of that moment, and `main.js` plays the join stinger it could not play earlier.
 - **Checking it without ears.** `/sandbox/audio-test.html` plays everything by hand (`?procedural` for the
   fallback); `?autotest` runs the engine's self-test (every recording decodes, loops are seamless, beds follow
   the state) and ends with `AUDIO_TEST_OK`. `node client/audio/selftest.js` checks the procedural banks.
