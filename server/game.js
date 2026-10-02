@@ -189,19 +189,21 @@ const JOIN_EVERY = 4;
 const GREET_EVERY = 10;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
-// as it fits one item only.
+// as it fits one item only. A zombie type goes the same way: its ZTYPE key (`boss_hivequeen`) or its name
+// (`hive queen`).
 const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
 const itemKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
 const ITEM_NAMES = Object.entries(ITEM)
   .filter(([, id]) => ITEM_DEFS[id])
   .map(([key, id]) => ({ id, name: key.toLowerCase(), keys: [itemKey(key), itemKey(ITEM_DEFS[id].name)] }));
-// every item `text` could mean: exactly one if it is clear
-function findItems(text) {
-  if (/^\d+$/.test(text)) return ITEM_NAMES.filter((it) => it.id === +text);
+const ZOMBIE_NAMES = Object.entries(ZTYPE).map(([key, id]) => ({ id, name: key.toLowerCase(), keys: [itemKey(key), itemKey(ZOMBIE_DEFS[id].name)] }));
+// every one of `names` (ITEM_NAMES, ZOMBIE_NAMES) `text` could mean: exactly one if it is clear
+function findNamed(names, text) {
+  if (/^\d+$/.test(text)) return names.filter((it) => it.id === +text);
   const k = itemKey(text);
   if (!k) return [];
   for (const fits of [(key) => key === k, (key) => key.startsWith(k), (key) => key.includes(k)]) {
-    const found = ITEM_NAMES.filter((it) => it.keys.some(fits));
+    const found = names.filter((it) => it.keys.some(fits));
     if (found.length) return found;
   }
   return [];
@@ -2452,10 +2454,10 @@ export class Game {
         if (this.phase === PHASE.NIGHT) this.timeLeft = 0.05;
         break;
       case 'give': {
-        // /give <item> [n]: the item by name or id (see findItems); /items lists the names
+        // /give <item> [n]: the item by name or id (see findNamed); /items lists the names
         const words = args.slice(1);
         const n = words.length > 1 && /^\d+$/.test(words[words.length - 1]) ? +words.pop() : 1;
-        const found = findItems(words.join(' '));
+        const found = findNamed(ITEM_NAMES, words.join(' '));
         if (found.length !== 1) {
           this.sendChat(p, 0, CHATF.SYSTEM, found.length ? `which one: ${found.map((it) => it.name).join(', ')}?` : `no item called "${words.join(' ')}" (/items lists them)`);
           break;
@@ -2475,12 +2477,25 @@ export class Game {
         break;
       }
       case 'spawn': {
-        const t = +args[1];
-        const n = Math.min(20, +(args[2] || 1));
+        // /spawn <type> [n]: up to 20 of a zombie type, by name or id (see findNamed), 12 m ahead; /zombies lists the names
+        const words = args.slice(1);
+        const n = Math.min(20, words.length > 1 && /^\d+$/.test(words[words.length - 1]) ? +words.pop() : 1);
+        const found = findNamed(ZOMBIE_NAMES, words.join(' '));
+        if (found.length !== 1) {
+          this.sendChat(p, 0, CHATF.SYSTEM, found.length ? `which one: ${found.map((it) => it.name).join(', ')}?` : `no zombie called "${words.join(' ')}" (/zombies lists them)`);
+          break;
+        }
+        const t = found[0].id;
         const pack = this.zm.newPack();
-        for (let i = 0; i < n; i++) this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t]?.boss, pack });
+        let made = 0;
+        for (let i = 0; i < n; i++) if (this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t].boss, pack })) made++;
+        this.sendChat(p, 0, CHATF.SYSTEM, `spawned ${made} x ${ZOMBIE_DEFS[t].name}`);
         break;
       }
+      case 'zombies':
+        // the names /spawn takes
+        this.sendChat(p, 0, CHATF.SYSTEM, `zombies: ${ZOMBIE_NAMES.map((it) => it.name).join(' ')}`);
+        break;
       case 'legs': {
         // /legs [1|2]: shoot that many legs (default both) off every zombie within 30 m that has legs to lose
         const n = args[1] === '1' ? 1 : 2;
