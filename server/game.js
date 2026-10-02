@@ -1129,11 +1129,12 @@ export class Game {
     // horde burns in the sunlight (what is down in the mine burns when it comes up into it: Zombies.updateOne)
     for (const z of this.zombies) {
       if (z.dead || !(z.horde || z.def.flying)) continue;
-      if (z.under) z.spared = true;
+      if (z.under || this.zm.inDark(z)) z.spared = true; // (nor into the boarded-up wards of the clinic)
       else z.burning = 0.5 + this.rng() * 5;
     }
     // ...and the mine fills up again with the ones that live down there
     this.zm.stockMine(this.humans());
+    this.zm.wards.stock(this.humans());
     // ...and burns the sickness out of whoever died since the last sunrise
     if (this.dawnReturn) this.returnFallen();
     // the valley restocks a little: some searched containers are refilled, trees & wrecks regrow
@@ -2680,6 +2681,20 @@ export class Game {
         const rm = mine.rooms[0];
         [s.x, s.z] = args[1] === 'in' ? [rm.x + 2.5, rm.z] : [pt.x - pt.dx * 4.5, pt.z - pt.dz * 4.5];
         s.y = groundAt(this.world, s.x, s.z, args[1] === 'in' ? rm.y + 0.2 : 200, 0.3);
+        s.vx = s.vy = s.vz = 0;
+        this.fillHistory(p);
+        break;
+      }
+      case 'clinic': {
+        // /clinic: to the front door of Mercy Clinic. /clinic ward: into its dark wards
+        const c = this.world.clinic;
+        if (!c) {
+          this.systemChat('this valley has no Mercy Clinic');
+          break;
+        }
+        const at = args[1] === 'ward' ? c.ward : c.door;
+        [s.x, s.z] = [at.x, at.z];
+        s.y = groundAt(this.world, s.x, s.z, c.y + 0.3, 0.3); // (from above, the ground in a ward is its roof)
         s.vx = s.vy = s.vz = 0;
         this.fillHistory(p);
         break;

@@ -17,11 +17,15 @@ import { mulberry32, smoothstep } from './rng.js';
 
 const PI = Math.PI;
 const H = 3.4; // eaves of the front block and of the ward wing
-const LINK_H = 3.0; // ...and of the passage between them
+const LINK_H = 2.8; // ...and of the passage between them, its flat roof under their eaves
 const FLOOR = 0.12; // top of every floor in it
 const WALL = 0.125; // half the thickness of an outer wall
 const SKIN = 0.09; // the lining on the inside of an outer wall: thick enough to bury the sills of the boarded windows
 const CEIL = 0.03; // ...and under a roof
+// Every doorway in it is this wide. The dead find their way by a 1 m grid (server/nav.js), and the place is turned to
+// face its road: through a narrower doorway in a wall that runs askew to the grid there is, one map in ten, no step
+// from a cell on one side to a cell on the other, and the wards behind it are closed to the horde
+const DOOR = 1.6;
 // the day reaches FADE[0] m in from the mouth undimmed and is gone FADE[1] m from it (the passage is 6 m long)
 const FADE = [1, 6.5];
 
@@ -49,7 +53,7 @@ export function darkAt(darks, x, y, z) {
 export function buildClinic(b, { seed, parts, darks }) {
   const rng = mulberry32(seed ^ 0xc11a1c);
   const sd = () => rng.int(0, 9999);
-  const door = (at, w = 1.3) => ({ at, w, y0: 0, y1: 2.2 });
+  const door = (at, w = DOOR) => ({ at, w, y0: 0, y1: 2.2 });
   const win = (at, w = 1.6) => ({ at, w, y0: 0.95, y1: 2.15, glass: true });
   const prop = (type, lx, lz, ry = 0, o = {}) => b.prop(type, lx, lz, ry, { seed: sd(), ...o });
   const cont = (ctype, lx, lz, o) => b.cont(ctype, lx, lz, { seed: sd(), ...o });
@@ -84,9 +88,10 @@ export function buildClinic(b, { seed, parts, darks }) {
   }
 
   // ---------------------------------------------------------------- the front block: pharmacy | reception
-  // (x -9..9, z -4..4; the pharmacy is the west end, behind a partition)
-  b.room(0, 0, 18, 8, H, 'clapboard', { n: [win(2), win(5.5), win(10), door(13, 1.6), win(16)], s: [door(3), door(11.5, 1.1)], w: [win(4)], e: [win(4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-  b.wall(-1, -4 + WALL, -1, 4 - WALL, H, 0.2, 'clapboard', [door(4.875, 1.2)]);
+  // (x -9..9, z -4..4; the pharmacy is the west end, behind a partition. Pitched roofs here and on the wing: a flat one
+  // is a floor to whatever the server puts down from above, and the guards of the place would stand on it)
+  b.room(0, 0, 18, 8, H, 'clapboard', { n: [win(2), win(5.5), win(10), door(13), win(16)], s: [door(3), door(11.5)], w: [win(4)], e: [win(4)] }, { roof: 'gableZ', roofH: 2, roofMat: 'shingles', floorMat: 'concrete' });
+  b.wall(-1, -4 + WALL, -1, 4 - WALL, H, 0.2, 'clapboard', [door(4.875)]);
   // the name over the door
   signs.push({ x: b.wx(4, -4.14), y: b.y0 + 2.76, z: b.wz(4, -4.14), ry: b.ry + PI, w: 3.4, h: 0.5, kind: 1 });
   // reception: the desk, a row of chairs under the window, what was left where it fell
@@ -129,7 +134,7 @@ export function buildClinic(b, { seed, parts, darks }) {
   const boarded = [[5, 22, 0, 1], [-5, 22, 0, 1], [-9, 19.5, 1, -1], [-9, 14, 1, -1], [9, 14.5, 1, 1], [9, 19.5, 1, 1]]; // [x, z, in a wall that runs along z, outward]
   // (x, z) of a point d metres out from the middle of the wall at one of them
   const off = ([wx, wz, turned, out], d) => (turned ? [wx + d * out, wz] : [wx, wz + d * out]);
-  b.room(0, 16, 18, 12, H, 'clapboard', { n: [door(15)], s: [win(4, 1.4), win(14, 1.4)], w: [win(2.5, 1.4), win(8, 1.4)], e: [win(4.5, 1.4), win(9.5, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floor: false });
+  b.room(0, 16, 18, 12, H, 'clapboard', { n: [door(15)], s: [win(4, 1.4), win(14, 1.4)], w: [win(2.5, 1.4), win(8, 1.4)], e: [win(4.5, 1.4), win(9.5, 1.4)] }, { roof: 'gableZ', roofH: 2.4, roofMat: 'shingles', floor: false });
   for (const w of boarded) {
     const ry = w[2] ? PI / 2 : 0;
     const [fx, fz] = off(w, -0.06);
@@ -154,7 +159,7 @@ export function buildClinic(b, { seed, parts, darks }) {
     take(n0);
   };
   // the opening of a doorway in the skin over a wall that has one (not at floor level: the wall's own is the doorway)
-  const hole = (at, w = 1.3) => ({ at, w, y0: 0.001, y1: 2.2 - FLOOR });
+  const hole = (at) => ({ at, w: DOOR, y0: 0.001, y1: 2.2 - FLOOR });
   const K = SKIN / 2;
   const top = H - CEIL;
   const linkTop = LINK_H - CEIL;
@@ -169,8 +174,8 @@ export function buildClinic(b, { seed, parts, darks }) {
   run(LW + K, 4 + WALL, LW + K, 10 - WALL, linkTop, SKIN);
   run(LE - K, 4 + WALL, LE - K, 10 - WALL, linkTop, SKIN);
   run(LW, 10 - WALL - K, LE, 10 - WALL - K, linkTop, SKIN, [hole(6 - LW)]);
-  for (const jx of [5.36, 6.64]) line('wall', jx, 0, 10, 0.02, 2.2, (WALL + SKIN) * 2, { collide: false });
-  line('wall', 6, 2.18, 10, 1.3, 0.02, (WALL + SKIN) * 2, { collide: false });
+  for (const jx of [6 - DOOR / 2 + 0.01, 6 + DOOR / 2 - 0.01]) line('wall', jx, 0, 10, 0.02, 2.2, (WALL + SKIN) * 2, { collide: false });
+  line('wall', 6, 2.18, 10, DOOR, 0.02, (WALL + SKIN) * 2, { collide: false });
   // the wing: the inside of its four walls
   run(WW, WF + K, WE, WF + K, top, SKIN, [hole(6 - WW)]);
   run(WW + K, WF, WW + K, WB, top, SKIN);
@@ -181,7 +186,7 @@ export function buildClinic(b, { seed, parts, darks }) {
   const [IW, IE, IB] = [WW + SKIN, WE - SKIN, WB - SKIN];
   run(IW, 12.6, IE, 12.6, top, 0.2, [door(-5 - IW), door(2.5 - IW)]);
   run(-1, 12.7, -1, IB, top, 0.2);
-  run(IW, 17.3, -1.1, 17.3, top, 0.2, [door(-3 - IW, 1.2)]);
+  run(IW, 17.3, -1.1, 17.3, top, 0.2, [door(-3 - IW)]);
   // the boards over the windows, from inside
   for (const w of boarded) {
     const [px, pz] = off(w, -(WALL + SKIN + 0.018));
@@ -221,7 +226,8 @@ export function buildClinic(b, { seed, parts, darks }) {
 
   // ---------------------------------------------------------------- the dark, and who lives in it
   const mouth = [b.wx(6, 4), b.wz(6, 4)];
-  for (const [cx, cz, hx, hz] of [[6, 7, 1.5, 3], [0, 16, 9, 6]]) {
+  // (the passage and the wing: two boxes that overlap in the wall between them)
+  for (const [cx, cz, hx, hz] of [[6, 7.1, 1.5, 3.1], [0, 16, 9, 6]]) {
     darks.push({ x: b.wx(cx, cz), z: b.wz(cx, cz), c: b.c, s: b.s, hx, hz, y0: b.y0 - 0.5, y1: b.y0 + H, mx: mouth[0], mz: mouth[1], near: FADE[0], far: FADE[1] });
   }
   const at = (lx, lz, more) => ({ x: b.wx(lx, lz), y: b.y0 + FLOOR, z: b.wz(lx, lz), ...more });

@@ -71,6 +71,7 @@ import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
 import { buildMine } from '../render/mine.js';
+import { buildClinic, disposeClinic } from '../render/clinic.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
@@ -356,6 +357,8 @@ export class Game {
     this.scene.add(this.water);
     this.mine = buildMine(this.world); // (null in a valley without the workings)
     if (this.mine) this.scene.add(this.mine);
+    this.clinic = buildClinic(this.world); // the lining of Mercy Clinic's dark wards and its signs (null on a map without it)
+    if (this.clinic) this.scene.add(this.clinic);
     this.under = 0;
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
@@ -398,6 +401,11 @@ export class Game {
         mesh.material.dispose();
       }
       this.mine = null;
+    }
+    if (this.clinic) {
+      this.scene.remove(this.clinic);
+      disposeClinic(this.clinic);
+      this.clinic = null;
     }
     this.staticWorld?.dispose();
     this.foliage?.dispose();
@@ -1982,7 +1990,9 @@ export class Game {
     // with it (Environment), and so do the rain and the wind (below)
     const mine = this.world.mine;
     const deep = mine && mine.under(rp.x, rp.y + 0.3, rp.z) ? Math.min(1, Math.max(0, (mine.depth(rp.x, rp.z) - 2) / 11)) : 0;
-    this.under += (deep - this.under) * Math.min(1, dt * 4);
+    // (the same in a boarded-up ward of the clinic, as far as it is dark where the eye is: world.darkAt)
+    const dark = Math.max(deep, this.world.darkAt(rp.x, rp.y + 1, rp.z));
+    this.under += (dark - this.under) * Math.min(1, dt * 4);
     if (this.under < 0.002) this.under = 0;
     this._envOver.under = this.under;
     this.env.update(dt, cycle, cam.position, time, weather, this._envOver);

@@ -43,7 +43,8 @@ function noise3(x, y, z) {
 }
 
 // a Lambert material that takes the sun, the sky's light and the glow of the haze by aSky, every other light as it comes
-function material(texture, key) {
+// (exported with mesh() below for the other place it is dark at noon: the wards of the clinic, render/clinic.js)
+export function material(texture, key) {
   const map = getTexture(texture);
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
   const mat = new THREE.MeshLambertMaterial({ map, vertexColors: true });
@@ -65,7 +66,7 @@ function material(texture, key) {
 }
 
 // vertex soup -> a mesh with flat normals, the texture laid along whichever way each face mostly is
-function mesh(name, soup, texture) {
+export function mesh(name, soup, texture) {
   const n = soup.pos.length / 3;
   const P = new Float32Array(soup.pos);
   const N = new Float32Array(n * 3);

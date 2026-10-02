@@ -9,6 +9,7 @@ import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
 import { Herds, HERD_RUSH } from './herd.js';
+import { Wards, WARD_DARK } from './clinic.js';
 import { ColliderGrid, makeBox, rayCollider, CYL } from '../shared/collision.js'; // (bat flight: flyCollide, roofBoxes)
 
 const GRAV = 16;
@@ -52,6 +53,7 @@ export class Zombies {
     this.treeGrid = null;
     this.dens = null;
     this.herds = new Herds(game, this);
+    this.wards = new Wards(game, this); // the dead of Mercy Clinic's wards (clinic.js)
   }
 
   // ---------------------------------------------------------------- spawning
@@ -215,6 +217,8 @@ export class Zombies {
     this.herds.spawn([]);
     // ...and the ones that never came up out of the mine
     this.stockMine([]);
+    // ...nor out of the wards of the clinic
+    this.wards.stock([]);
   }
 
   // The dead that live down in the mine: one to a den (world.mine.dens: the rooms, the drift between them), topped
@@ -614,7 +618,7 @@ export class Zombies {
         let alive = 0;
         let dogs = 0;
         for (const z of g.zombies) {
-          if (z.dead || z.horde || z.den) continue;
+          if (z.dead || z.horde || z.den || z.ward) continue;
           if (z.pack) dogs++;
           else if (!z.herd) alive++;
         }
@@ -676,8 +680,8 @@ export class Zombies {
     const mn = g.mineNav;
     const zu = (z.under = !!mn && !def.flying && mn.under(z));
     // the horde that was down in the mine at sunrise did not burn (z.spared, Game.startDay): the sun gets it when
-    // it comes up, if that is before the next nightfall
-    if (z.spared && (!zu || g.phase !== PHASE.DAY)) {
+    // it comes up, if that is before the next nightfall (the same for what the sunrise found in the clinic's wards)
+    if (z.spared && (!(zu || this.inDark(z)) || g.phase !== PHASE.DAY)) {
       z.spared = false;
       if (g.phase === PHASE.DAY && !z.onFire && z.burning <= 0) z.burning = 0.3 + g.rng() * 1.5;
     }
@@ -858,6 +862,10 @@ export class Zombies {
           dx = _dir.x;
           dz = _dir.z;
         }
+      } else if (z.ward && this.wards.steer(z, _dir)) {
+        // one of the clinic's: about its wards, and back to them when it was led out
+        dx = _dir.x;
+        dz = _dir.z;
       } else if (Math.hypot(dx, dz) < 1) {
         dx = 0;
         dz = 0;
@@ -1095,7 +1103,7 @@ export class Zombies {
   // flashlight beam. Walls, trees and hills cast shadows: the light needs a clear line to some part of the body.
   isLit(z) {
     const g = this.g;
-    if (g.phase !== PHASE.NIGHT && !z.under) return true; // (no daylight gets down the mine)
+    if (g.phase !== PHASE.NIGHT && !z.under && !this.inDark(z)) return true; // (no daylight gets down the mine, or into a boarded-up ward)
     const h = bodyHeight(z);
     const lights = this.lightSources();
     for (let i = 0; i < lights.length; i += 4) {
@@ -1130,6 +1138,12 @@ export class Zombies {
       }
     }
     return false;
+  }
+
+  // Does z stand in one of the world's dark interiors (world.darks: the wards of Mercy Clinic), where it is dark at
+  // noon? No daylight pins a Shade there, and the sunrise burns nothing in there.
+  inDark(z) {
+    return this.g.world.darkAt(z.x, z.y + 1, z.z) >= WARD_DARK;
   }
 
   // Shade: returns true while light pins it (it does nothing else this tick). Bodies part around it like a post,
