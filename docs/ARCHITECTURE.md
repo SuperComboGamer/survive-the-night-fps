@@ -342,6 +342,10 @@ more than its bytes**, so put things into the packets that already flow.
   seconds; past that a join is refused as "server full". The "joined" / "left" chat lines have one allowance for
   everybody (`GREET_EVERY`): once it is used up players come and go unannounced, the player list still shows them.
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
+  What the rest of the team sees of a survivor needs no traffic of its own: their health is field 7 of the
+  player entity (0..255, always in the area of interest), down / dead / turned is `PFLAG` and the status byte of
+  `S2C.PLAYERS`. Nameplates, the compass and the survivors list read those (`Game.buildMarkers`,
+  `Game.pushRoster`; the colour marks are `healthTier` in `ui/hud2.js`).
 - **Joining a run in progress** (`Game.handleJoin`). `spawnHuman(p, kit, beside)` puts the newcomer down where
   `pickJoinSpawn` says: 2.5-9 m from the survivor with the most company, on a spot that is open on the nav grid, level
   with that teammate, dry, clear of every collider (`resolveBody`) and with a clear knee-high line to them

@@ -197,9 +197,19 @@
 .stn-ui .cmp-mk.k-mate {
   color: var(--steel);
 }
+/* nearly dead: red, like their nameplate */
+.stn-ui .cmp-mk.k-mate.crit {
+  color: var(--blood-lite);
+}
 .stn-ui .cmp-mk.k-mate.downed {
   color: var(--blood-lite);
   animation: stn-warnpulse 0.7s ease-in-out infinite;
+}
+/* down: the name on a red chip, as on the nameplate */
+.stn-ui .cmp-mk.k-mate.downed .cmp-mk-lab {
+  padding: 1px calc(3 * var(--u));
+  background: rgba(157, 17, 23, 0.92);
+  color: #fff;
 }
 .stn-ui .cmp-mk.k-crate {
   color: #ff6a55;
@@ -563,11 +573,13 @@
   display: none;
 }
 
+/* dark track and a dark rim, so the fill reads against a bright sky as well as at night */
 .stn-ui .wmk-bar {
   display: block;
-  width: calc(46 * var(--u));
-  height: 3px;
-  background: rgba(0, 0, 0, 0.5);
+  width: max(40px, calc(52 * var(--u)));
+  height: max(4px, calc(4 * var(--u)));
+  background: rgba(6, 5, 4, 0.78);
+  box-shadow: 0 0 0 1px rgba(6, 5, 4, 0.78);
   overflow: hidden;
 }
 
@@ -584,17 +596,37 @@
 .stn-ui .wmk.k-mate.near .wmk-name {
   color: var(--bone);
 }
+/* a teammate's health: bone while they are fine, amber below 60%, red (bar and name) below 30% */
+.stn-ui .wmk.k-mate .wmk-bar i {
+  background: var(--bone);
+}
+.stn-ui .wmk.k-mate.hurt .wmk-bar i {
+  background: var(--amber);
+}
+.stn-ui .wmk.k-mate.crit .wmk-bar i {
+  background: var(--blood-lite);
+}
+.stn-ui .wmk.k-mate.crit .wmk-name {
+  color: var(--blood-lite);
+}
+/* down: no bar, a solid red plate that says so - the only filled nameplate there is */
 .stn-ui .wmk.k-mate.downed {
   color: var(--blood-lite);
 }
+.stn-ui .wmk.k-mate.downed .wmk-txt {
+  padding: calc(3 * var(--u)) calc(9 * var(--u));
+  background: rgba(157, 17, 23, 0.92);
+  box-shadow: 0 0 0 1px rgba(6, 5, 4, 0.7);
+}
 .stn-ui .wmk.k-mate.downed .wmk-name {
-  color: var(--blood-lite);
+  color: #fff;
 }
 .stn-ui .wmk.k-mate.downed .wmk-ico {
   animation: stn-warnpulse 0.7s ease-in-out infinite;
 }
 .stn-ui .wmk.k-mate.downed .wmk-sub {
-  color: var(--bone);
+  color: #fff;
+  opacity: 1;
 }
 
 .stn-ui .wmk.k-ping {

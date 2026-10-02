@@ -1991,6 +1991,14 @@ check('ping broadcast', B.pings > 0);
   run(2, () => B.input(0, 0, 0));
   const reloading = bs.slot === 0 && bs.reloadT > 2;
   game.godMode = false;
+  // what the team's HUD shows of B (nameplate bar, survivors list) is read from these: B's health in A's copy of
+  // the entity, and B's status in the player list
+  const pl = [...A.store.ents.values()].find((e) => e.kind === ENT.PLAYER && e.id === B.id);
+  const hpSeen = () => pl.q[7] / 255;
+  b.hp = b.maxHp;
+  game.damagePlayer(b, 60, { kind: 2, ztype: 0, x: b.state.x, z: b.state.z });
+  run(2);
+  check('a hurt teammate: health replicated', !b.downed && b.hp > 0 && b.hp < b.maxHp && Math.abs(hpSeen() - b.hp / b.maxHp) < 0.005, `${b.hp}/${b.maxHp} seen as ${hpSeen().toFixed(3)}`);
   game.damagePlayer(b, 500, { kind: 2, ztype: 0, x: b.state.x, z: b.state.z });
   run(2);
   check('B downed instead of dead', b.alive && b.downed && B.self.downed === 1, `bleed ${B.self.bleed}`);
@@ -2002,14 +2010,15 @@ check('ping broadcast', B.pings > 0);
     check('downed mid-reload: the pistol fires at once', reloading && told && t <= 4, `first shot after ${(t / 20).toFixed(2)} s`);
     [bs.weapons[0], bs.mags[0], bs.ammo[AMMO.R308]] = keep;
   }
-  const pl = [...A.store.ents.values()].find((e) => e.kind === ENT.PLAYER && e.id === B.id);
   check('downed flag replicated', pl && pl.q[5] & 256);
+  check('a downed teammate: no health, and the player list says down', hpSeen() === 0 && A.roster.get(B.id)?.status === 3, `status ${A.roster.get(B.id)?.status}`);
   // from the edge of the revive prompt (promptEdge above), and without stepping closer for the whole of it
   standOff(A, b, promptEdge(PICK_RADIUS.DOWNED));
   const from = Math.hypot(b.x - A.p().state.x, b.z - A.p().state.z);
   A.act(ACT.HOLD_BEGIN, B.id);
   run(90);
   check('B revived', b.alive && !b.downed && b.hp > 0, `hp ${b.hp}, from ${from.toFixed(2)} m`);
+  check('...and seen back on their feet, hurt', Math.abs(hpSeen() - b.hp / b.maxHp) < 0.005 && hpSeen() < 0.6 && A.roster.get(B.id)?.status === 0, `seen as ${hpSeen().toFixed(3)}`);
 }
 
 // death lasts until dawn (DAWN_RETURN): the night you die is the night you hunt, a reload is no way round it, at
@@ -2981,9 +2990,14 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   game.startDay();
   run(20 * 6);
   const late = queen.onFire && !queen.dead ? killedBy(queen, A.p()) : -1;
-  const had = new Set(game.items);
+  // what its death leaves, not what lay there already: counted over the tick it dies on (it walks to the survivors
+  // while it burns, and a zombie killed by a blast beside them may have dropped something of its own by then)
+  let had = new Set(game.items);
   let t = 0;
-  for (; t < 20 * 40 && !tank.dead; t++) run(1);
+  for (; t < 20 * 40 && !tank.dead; t++) {
+    had = new Set(game.items);
+    run(1);
+  }
   const left = game.items.filter((e) => !had.has(e) && !e.point && Math.hypot(e.x - tank.x, e.z - tank.z) < 6).length;
   run(2);
   check('a boss the sun kills drops nothing', tank.dead && left === 0 && fed(KILLER.WORLD, ZTYPE.TANK), `dead ${((20 * 6 + t) / 20).toFixed(0)} s after dawn, ${left} items`);

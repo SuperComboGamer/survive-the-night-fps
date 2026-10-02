@@ -248,8 +248,10 @@ them off.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
-  places) and a field map [M] keep the team together. Friendly fire is off, headshots deal bonus damage,
-  health slowly regenerates.
+  places) and a field map [M] keep the team together. A nameplate carries its owner's health bar while they
+  are hurt, within 12 m or in your crosshair (amber below 60%, red below 30%), a downed teammate's turns into
+  a red DOWN plate, and the survivors list in the inventory [Tab] shows everyone's health and who is down, dead
+  or turned. Friendly fire is off, headshots deal bonus damage, health slowly regenerates.
 - **Joining late:** the server runs one drop-in game. Join a run in progress and you arrive beside the team
   (at the car if they are still by it, or if nobody is left alive), with the starting kit plus a little more
   9mm and bandages for each day gone by. Leave and come back during the same run and you have what you left with.

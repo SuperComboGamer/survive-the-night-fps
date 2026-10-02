@@ -3065,8 +3065,9 @@ body {
 }
 
 .stn-ui .sv {
+  position: relative;
   display: grid;
-  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto auto;
+  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto auto auto;
   align-items: center;
   gap: calc(7 * var(--u));
   padding: calc(3 * var(--u)) calc(6 * var(--u));
@@ -3113,6 +3114,59 @@ body {
 .stn-ui .sv.st-dead .sv-name {
   text-decoration: line-through;
   text-decoration-color: rgba(212, 42, 42, 0.8);
+}
+
+/* down: the one row somebody has to act on */
+.stn-ui .sv.st-downed {
+  background: rgba(157, 17, 23, 0.34);
+  color: var(--blood-lite);
+}
+
+.stn-ui .sv.st-downed .sv-st {
+  animation: stn-warnpulse 0.7s ease-in-out infinite;
+}
+
+/* the state in a word, for whoever is not on their feet (empty, and so no width, for the living) */
+.stn-ui .sv-tag {
+  font: max(8px, calc(9 * var(--u))) / 1.4 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stn-ui .sv-tag:not(:empty) {
+  padding: 0 calc(4 * var(--u));
+  border: 1px solid currentColor;
+}
+
+.stn-ui .sv.st-downed .sv-tag {
+  border-color: var(--blood-hi);
+  background: var(--blood-hi);
+  color: #fff;
+}
+
+/* health: a bar along the foot of the row, coloured at the same marks as the nameplates */
+.stn-ui .sv-hp {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: max(3px, calc(3 * var(--u)));
+  background: var(--bone-faint);
+}
+
+.stn-ui .sv-hp i {
+  display: block;
+  height: 100%;
+  background: var(--bone-2);
+  transform-origin: left;
+}
+
+.stn-ui .sv-hp.hurt i {
+  background: var(--amber);
+}
+
+.stn-ui .sv-hp.crit i {
+  background: var(--blood-lite);
 }
 
 .stn-ui .sv-radio {
