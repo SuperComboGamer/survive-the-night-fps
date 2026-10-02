@@ -48,6 +48,28 @@ loadDir(DIST);
 if (files.size) console.log(`[server] serving ${files.size} static files from dist/`);
 else console.log('[server] no dist/ build found - run `npm run build` (or use `npm run dev` for the Vite dev server)');
 
+// ---------------------------------------------------------------- who is connecting
+// The game counts joins per address (Game.admitJoin). Behind a reverse proxy - Railway's edge in production -
+// the socket's peer is the proxy, the same for every player, and the client is named in X-Forwarded-For (first
+// entry) or X-Real-IP. Those headers are only believed from a peer on a private network, i.e. a proxy of ours:
+// a client connecting directly could write anything into them. TRUST_PROXY=1 / 0 settles it either way.
+const TRUST_PROXY = process.env.TRUST_PROXY;
+// a header's address without its port, '' if it does not look like one
+const address = (text) => {
+  const a = text.trim().replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1');
+  return /^[0-9a-f:.]{2,45}$/i.test(a) ? a.toLowerCase() : '';
+};
+function clientAddress(res, req) {
+  // uWS spells the peer out as eight hex groups, an IPv4 one as 0000:0000:0000:0000:0000:ffff:hhhh:hhhh
+  let peer = Buffer.from(res.getRemoteAddressAsText()).toString();
+  const v4 = /^(?:0000:){5}ffff:(..)(..):(..)(..)$/i.exec(peer);
+  if (v4) peer = v4.slice(1).map((h) => parseInt(h, 16)).join('.');
+  // loopback, 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier-grade NAT), link-local, IPv6 unique-local
+  const ours = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.|(0000:){7}0001$|f[cd]|fe[89ab])/i.test(peer);
+  if (TRUST_PROXY === '0' || !(ours || TRUST_PROXY === '1')) return peer;
+  return address(req.getHeader('x-forwarded-for').split(',')[0]) || address(req.getHeader('x-real-ip')) || peer;
+}
+
 const app = uWS.App();
 
 app.ws('/ws', {
@@ -57,7 +79,7 @@ app.ws('/ws', {
   idleTimeout: 60,
   sendPingsAutomatically: true,
   upgrade: (res, req, context) => {
-    const ip = Buffer.from(res.getRemoteAddressAsText()).toString();
+    const ip = clientAddress(res, req);
     res.upgrade({ ip }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
   },
   open: (ws) => {
@@ -95,7 +117,8 @@ app.ws('/ws', {
 });
 
 app.get('/status', (res) => {
-  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0 });
+  // tick: the last 10 s window, the totals since boot and the last slow tick (timings only: this endpoint is public)
+  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()) });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
@@ -123,8 +146,12 @@ app.listen(PORT, (token) => {
 // ---------------------------------------------------------------- fixed-rate tick loop
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 let next = performance.now();
+let due = next; // when the timer that wakes the loop was due
 function loop() {
   const now = performance.now();
+  // a wake with a tick to run: how long after its timer was due did it come? That is the event loop or the host
+  // holding the server up, not the cost of a tick (after a slow tick the timer is armed late, so it is not counted)
+  if (now >= next) game.tickStats.late(now - due);
   let steps = 0;
   while (now >= next && steps < 4) {
     try {
@@ -136,7 +163,9 @@ function loop() {
     steps++;
   }
   if (now - next > 1000) next = now; // way behind (debugger / sleep): resync
-  const wait = Math.max(0, next - performance.now());
+  const armed = performance.now();
+  const wait = Math.max(0, next - armed);
+  due = armed + wait;
   setTimeout(loop, wait > 2 ? wait - 1 : 0);
 }
 loop();
@@ -144,9 +173,12 @@ loop();
 // periodic stats
 setInterval(() => {
   const s = game.stats;
+  const t = game.tickStats.roll(); // the ticks since the last line (closed with nobody on too: /status reads it)
   if (game.players.size) {
     const perClient = s.bytesOut / Math.max(1, game.players.size) / 10;
-    console.log(`[stats] players ${game.players.size} zombies ${game.zombies.length} ents ${game.all.length} tick ${s.tickMs.toFixed(2)}ms out ${(perClient / 1024).toFixed(1)} KB/s/client`);
+    // tick: mean, 99th percentile and worst; over: ticks past the budget / ticks; late: how late the loop woke, mean and worst
+    const tick = `tick ${t.meanMs.toFixed(2)}ms p99 ${t.p99Ms.toFixed(2)}ms max ${t.maxMs.toFixed(2)}ms over ${t.over}/${t.ticks} late ${t.lateMeanMs.toFixed(2)}ms latemax ${t.lateMaxMs.toFixed(2)}ms`;
+    console.log(`[stats] players ${game.players.size} zombies ${game.zombies.length} ents ${game.all.length} ${tick} out ${(perClient / 1024).toFixed(1)} KB/s/client`);
   }
   s.bytesOut = 0;
   s.msgsOut = 0;

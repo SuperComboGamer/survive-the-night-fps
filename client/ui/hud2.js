@@ -23,7 +23,24 @@ const PING_LABEL = ['Go here', 'Danger', 'Loot'];
 // world bearing of (dx,dz): 0 = north (-Z), +90 deg = east (+X)
 export const bearing = (dx, dz) => Math.atan2(dx, -dz);
 
+// A survivor's health fraction as a class, for nameplates, the compass and the survivors list: 'crit' below 30%
+// (where your own vitals turn red), 'hurt' below 60%. Negative = no health to show (downed, unknown).
+export const healthTier = (f) => (f < 0 || f >= 0.6 ? '' : f < 0.3 ? ' crit' : ' hurt');
+
 // ---------------------------------------------------------------- compass
+// A marker may also carry `name` (what it is: shown before its label while you face it, and always for your
+// waypoint), `d` (its distance in metres) and `pinEdge` (stays on the tape's end when out of view).
+// When two markers would print over each other the one that matters more keeps its place and its text:
+// a downed teammate or the car in the final stand, then by kind in this order - with whatever you are
+// facing just behind your teammates - and between two of a kind the nearer one.
+const RANK = { ping: 1, way: 2, mate: 3, crate: 5, car: 6, hint: 7, poi: 8 };
+const RANK_FACING = 4;
+const LABEL_GAP = 6; // px kept clear between two labels
+const byRank = (a, b) => a.rank - b.rank || a.d - b.d;
+const FULL = 0; // icon at its bearing, with its text when that fits under it (or a little to one side)
+const ASIDE = 1; // icon moved aside by one icon's width, no text
+const TICK = 2; // no room beside it either: a tick on the tape at its bearing
+
 export class Compass {
   constructor(parent) {
     this.root = el('div', 'compass', parent);
@@ -42,7 +59,61 @@ export class Compass {
     // strip width, kept current by a ResizeObserver: reading clientWidth every frame, after the HUD's
     // style writes, forced a synchronous style + layout pass per frame
     this.width = 0;
-    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => (this.width = this.root.clientWidth)).observe(this.root);
+    if (typeof ResizeObserver !== 'undefined')
+      new ResizeObserver(() => {
+        this.width = this.root.clientWidth;
+        this._font();
+      }).observe(this.root);
+    // label widths come from a canvas with the label's font, never from laying out the label itself
+    this.probe = el('span', 'cmp-mk-lab cmp-probe', this.root);
+    this.ctx = document.createElement('canvas').getContext('2d');
+    this.textW = new Map();
+    this.spacing = -1;
+    document.fonts?.addEventListener?.('loadingdone', () => this._font()); // the web font replaces the fallback
+    this.vis = []; // scratch: the markers on the tape this frame, in marker order...
+    this.order = []; // ...and by rank
+  }
+
+  _font() {
+    const cs = getComputedStyle(this.probe);
+    this.ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    this.spacing = parseFloat(cs.letterSpacing) || 0;
+    this.textW.clear();
+  }
+
+  _width(text) {
+    let w = this.textW.get(text);
+    if (w === undefined) {
+      if (this.textW.size > 400) this.textW.clear(); // distances tick over as you walk
+      w = this.ctx.measureText(text).width + this.spacing * text.length;
+      this.textW.set(text, w);
+    }
+    return w;
+  }
+
+  // Where the label (width w) of a marker at x goes among those already placed (order[0..i)): under its
+  // icon, or pushed off a label in its way by up to `slack`. NaN when there is no room for it.
+  _labelAt(i, x, w, slack) {
+    let at = x;
+    for (let tries = 0; tries < 2; tries++) {
+      let hit = null;
+      for (let j = 0; j < i && !hit; j++) {
+        const o = this.order[j];
+        if (o.text && Math.abs(o.lx - at) < (o.w + w) / 2 + LABEL_GAP - 0.1) hit = o; // (a hair under what it is pushed to)
+      }
+      if (!hit) return at;
+      at = hit.lx + (x >= hit.lx ? 1 : -1) * ((hit.w + w) / 2 + LABEL_GAP);
+      if (Math.abs(at - x) > slack) break;
+    }
+    return NaN;
+  }
+
+  _iconFree(i, x, gap) {
+    for (let j = 0; j < i; j++) {
+      const o = this.order[j];
+      if (o.lvl !== TICK && Math.abs(o.px - x) < gap - 0.5) return false;
+    }
+    return true;
   }
 
   // transforms are only rewritten when they change (standing still / not turning costs no style work)
@@ -57,16 +128,18 @@ export class Compass {
       const e = el('div', 'cmp-mk', this.root);
       const ico = el('i', 'cmp-mk-ico', e);
       const lab = el('span', 'cmp-mk-lab', e);
-      m = { e, ico, lab, key: '', lkey: '', cls: '' };
+      m = { e, ico, lab, key: '', lkey: '', cls: '', dx: 0 };
       this.pool[i] = m;
     }
     return m;
   }
 
-  // yaw: camera yaw (0 = facing -Z/north, positive = turning left/west). markers: [{bearing, kind, icon, label, cls}]
+  // yaw: camera yaw (0 = facing -Z/north, positive = turning left/west). markers: [{bearing, kind, icon, label, cls,
+  // hp (a teammate's health 0..1, optional)}]
   update(yaw, markers) {
     const heading = -yaw; // clockwise from north
     if (!this.width) this.width = this.root.clientWidth;
+    if (this.spacing < 0) this._font();
     const W = this.width || 520;
     const toX = (a) => {
       const d = wrapA(a - heading);
@@ -88,7 +161,12 @@ export class Compass {
       }
       this._moveTo(t, x);
     }
-    let n = 0;
+    // which markers are on the tape, and which one you are facing
+    const vis = this.vis;
+    const order = this.order;
+    let count = 0;
+    let facing = null;
+    let off = W * 0.045; // facing: the named marker nearest the centre mark, within this of it
     for (const mk of markers) {
       let x = toX(mk.bearing);
       let edge = '';
@@ -99,13 +177,81 @@ export class Compass {
         x = W * (right ? 0.87 : 0.13);
         edge = right ? ' edge edge-r' : ' edge edge-l';
       }
+      const r = vis[count] || (vis[count] = {});
+      order[count++] = r;
+      r.mk = mk;
+      r.x = x;
+      r.edge = edge;
+      r.rank = mk.cls === 'downed' || mk.cls === 'urgent' ? 0 : (RANK[mk.kind] ?? 9);
+      r.d = mk.d || 0;
+      if (mk.name && !edge && Math.abs(x - W / 2) < off) {
+        off = Math.abs(x - W / 2);
+        facing = r;
+      }
+    }
+    order.length = count;
+    if (facing && facing.rank > RANK_FACING) facing.rank = RANK_FACING;
+    order.sort(byRank);
+    // lay them out in that order: each takes the room it needs, the next ones fit around it
+    const gap = Math.max(15, W * 0.036); // two icons nearer than this touch
+    for (let i = 0; i < count; i++) {
+      const r = order[i];
+      const mk = r.mk;
+      r.px = r.x;
+      r.lvl = FULL;
+      r.text = '';
+      if (!this._iconFree(i, r.x, gap)) {
+        // beside the nearest icon in its way, on its own side of it (pinned ones: towards the middle)
+        let by = null;
+        for (let j = 0; j < i; j++) if (order[j].lvl !== TICK && (!by || Math.abs(order[j].px - r.x) < Math.abs(by.px - r.x))) by = order[j];
+        const side = r.edge ? (r.x < W / 2 ? 1 : -1) : r.x >= by.px ? 1 : -1;
+        r.lvl = TICK;
+        for (let k = 0; k < 2; k++) {
+          const x = by.px + (k ? -side : side) * gap;
+          // never further than one icon's width from where it belongs
+          if (Math.abs(x - r.x) > gap + 0.5 || !this._iconFree(i, x, gap)) continue;
+          r.px = x;
+          r.lvl = ASIDE;
+          break;
+        }
+        continue;
+      }
+      const short = mk.label || '';
+      if (mk.name && !r.edge && (r === facing || mk.kind === 'way')) {
+        const long = short ? mk.name + ' · ' + short : mk.name;
+        const w = this._width(long);
+        // a name has to fit inside the part of the tape that is not faded out
+        if (r.px - w / 2 > W * 0.1 && r.px + w / 2 < W * 0.9 && this._labelAt(i, r.px, w, 0) === r.px) {
+          r.text = long;
+          r.w = w;
+          r.lx = r.px;
+          continue;
+        }
+      }
+      if (short) {
+        const w = this._width(short);
+        const at = this._labelAt(i, r.px, w, gap * 0.7); // still plainly under its own icon
+        if (!Number.isNaN(at)) {
+          r.text = short;
+          r.w = w;
+          r.lx = at;
+        }
+      }
+    }
+    // write them out in marker order, so a marker keeps its element from frame to frame
+    let n = 0;
+    while (n < count) {
+      const r = vis[n];
+      const mk = r.mk;
+      const edge = r.edge + (r.lvl === ASIDE ? ' aside' : r.lvl === TICK ? ' tick' : '');
       const m = this._marker(n++);
-      const cls = 'cmp-mk k-' + mk.kind + (mk.cls ? ' ' + mk.cls : '') + edge;
+      const cls = 'cmp-mk k-' + mk.kind + (mk.cls ? ' ' + mk.cls : '') + healthTier(mk.hp ?? -1) + edge;
       if (m.cls !== cls) m.e.className = m.cls = cls;
       if (m.key !== mk.icon) m.ico.innerHTML = m.key = mk.icon;
-      const lab = mk.label || '';
-      if (m.lkey !== lab) m.lab.textContent = m.lkey = lab;
-      this._moveTo(m, x);
+      if (m.lkey !== r.text) m.lab.textContent = m.lkey = r.text;
+      const dx = r.text ? Math.round(r.lx - r.px) : 0;
+      if (m.dx !== dx) m.lab.style.transform = (m.dx = dx) ? `translateX(${dx}px)` : '';
+      this._moveTo(m, r.px);
       if (m.e.hidden) m.e.hidden = false;
     }
     for (let i = n; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;
@@ -181,8 +327,12 @@ export class Objective {
     let tone = '';
     if (o.finale) {
       if (o.escapeReady) {
-        dir = 'The engine is running - get to the car!';
+        // nothing ends the run but a survivor driving, and whoever is not at the car then stays behind
+        dir = o.escapeLeaving ? 'Someone is getting in: be at the car or be left behind!' : 'The engine is running. Hold [E] at the car to drive away.';
         tone = 'good';
+      } else if (o.escapeStalled) {
+        dir = 'The engine stalls: get back to the car';
+        tone = 'danger';
       } else {
         dir = `Defend the car · engine ready in ${fmtTime(o.escapeT)}`;
         tone = 'danger';
@@ -236,12 +386,12 @@ export class Markers {
     for (const it of list) {
       const m = this._get(n++);
       const k = m.k;
-      const cls = 'wmk k-' + it.kind + (it.cls ? ' ' + it.cls : '');
+      const bar = it.bar ?? -1;
+      const cls = 'wmk k-' + it.kind + (it.cls ? ' ' + it.cls : '') + healthTier(bar); // the bar's colour follows its length
       if (k.cls !== cls) m.e.className = k.cls = cls;
       if (k.icon !== it.icon) m.ico.innerHTML = k.icon = it.icon || '';
       if (k.name !== it.name) m.name.textContent = k.name = it.name || '';
       if (k.sub !== it.sub) m.sub.textContent = k.sub = it.sub || '';
-      const bar = it.bar ?? -1;
       if (k.bar !== bar) {
         k.bar = bar;
         m.bar.hidden = bar < 0;
@@ -312,9 +462,11 @@ export class Summary {
     this.root.hidden = true;
     this.title = el('div', 'sm-title', this.root, '');
     this.stats = el('div', 'sm-stats', this.root);
+    this.theme = el('div', 'sm-theme', this.root);
     this.next = el('div', 'sm-next', this.root, '');
   }
-  show(s, nextText) {
+  // theme: the coming night's theme (shared/nights.js), or null for a plain night
+  show(s, nextText, theme) {
     this.title.textContent = `Night ${s.night} survived`;
     this.stats.textContent = '';
     const stat = (label, v, cls = '') => {
@@ -327,6 +479,12 @@ export class Summary {
     stat('downed', s.downs, s.downs ? 'warn' : '');
     stat('revived', s.revives, s.revives ? 'good' : '');
     stat('lost', s.deaths, s.deaths ? 'bad' : '');
+    // a themed night gets a line of its own: the one thing on the card the team can act on before dark
+    this.theme.textContent = '';
+    if (theme) {
+      el('b', '', this.theme, `Tonight: ${theme.name}`);
+      el('span', '', this.theme, theme.warn);
+    }
     this.next.textContent = nextText || '';
     this.root.hidden = false;
     this.root.classList.remove('out');
@@ -345,9 +503,9 @@ export function nextNightText(night) {
   const n = night;
   const adds = [];
   if (n === 2) adds.push('spitters', 'boomers', 'zombie dog packs', 'shades (they only move in the dark)', 'a Tank (it charges, and barricades will not hold it)');
-  if (n === 3) adds.push('leapers', 'bats', 'a boss');
+  if (n === 3) adds.push('leapers', 'bats', 'a boss (kill it before sunrise for what it carries)');
   if (n === 4) adds.push('ropers', 'tanks in the horde');
-  if (n >= 5 && n % 3 === 0) adds.push('a boss');
+  if (n >= 5 && n % 3 === 0) adds.push('a boss (kill it before sunrise for what it carries)');
   const more = n <= 1 ? 'The next horde will be bigger.' : `Horde ${n}: bigger and hungrier.`;
   return adds.length ? `${more} New: ${adds.join(', ')}.` : more;
 }

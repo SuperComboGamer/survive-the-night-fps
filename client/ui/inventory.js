@@ -1,9 +1,13 @@
 // Inventory / crafting screen (Tab). Equipment on the left, backpack grid in the centre,
 // crafting on the right; survivors + car checklist + campfire under the grid.
+import { usedIn, foundIn, sourcesOf } from '../game/itemguide.js';
 import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
+import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
+import { needLines } from '../game/harvest.js';
+import { healthTier } from './hud2.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -20,6 +24,14 @@ const CRAFT_TABS = [
 ];
 const TAB_KEY = 'stn.craftTab';
 const STATION_GLYPH = { fire: 'campfire', bench: 'wrench' };
+// Bulk crafting: Shift+click a recipe for CRAFT_FEW, Ctrl+click for as many as the materials allow. On a Mac the
+// second key is Cmd as well: there Ctrl+click is the context-menu gesture and the browser never sends the click
+// (Ctrl still works, through that contextmenu event).
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
+const MAX_KEY = IS_MAC ? 'Cmd' : 'Ctrl';
+// ms a craft counts as on its way to the server before it is given up on: two slow round trips, as the ammo
+// reserve only follows the inventory once the next command packet has come back
+const SENT_TTL = 2500;
 
 // Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, and
 // consumables split into medicine (anything that heals) and utility (torches, batteries), which
@@ -127,6 +139,14 @@ function statLines(id) {
   return out;
 }
 
+// how much of an item an inventory ({ slots, ammo, weapons }) holds, wherever it is kept: backpack, ammo reserve
+// or a weapon slot
+function carried(inv, item) {
+  const d = ITEM_DEFS[item];
+  if (d.cat === 'ammo') return inv.ammo[d.ammo] | 0;
+  return inv.slots.reduce((n, s) => n + (s && s.item === item ? s.count : 0), inv.weapons.includes(item) ? 1 : 0);
+}
+
 function hintFor(cat) {
   if (cat === 'cons') return 'LMB use';
   if (cat === 'weapon' || cat === 'throw') return 'LMB equip';
@@ -135,6 +155,18 @@ function hintFor(cat) {
 }
 
 // ---------------------------------------------------------------- tooltip
+// A comma-separated line that wraps between its names and never inside one. list = [{ name, locked }], or the line
+// as text; locked: waits on a schematic, so it carries the crafting list's padlock. more: how many were left out.
+function phrases(parent, list, more = 0) {
+  if (typeof list === 'string') list = list.split(', ').map((name) => ({ name }));
+  list.forEach((it, i) => {
+    if (i) parent.append(' '); // the one place the line may break
+    const s = el('span', 'tip-phrase' + (it.locked ? ' locked' : ''), parent);
+    if (it.locked) svgEl('i', 'tip-note-lock', s, glyph('lock'));
+    s.append(it.name + (i < list.length - 1 ? ',' : more ? ` +${more} more` : ''));
+  });
+}
+
 class Tooltip {
   constructor(parent) {
     this.root = el('div', 'tip', parent);
@@ -146,14 +178,18 @@ class Tooltip {
     this.cat = el('div', 'tip-cat', t);
     this.desc = el('div', 'tip-desc', this.root);
     this.stats = el('div', 'tip-stats', this.root);
+    this.notes = el('div', 'tip-notes', this.root);
     this.reqs = el('div', 'tip-reqs', this.root);
     this.hint = el('div', 'tip-hint', this.root);
     this.x = 0;
     this.y = 0;
   }
 
-  // reqs = [{ icon, name, val, ok }] - a have/need checklist (recipes)
-  show({ icon, name, cat, catCls, desc, stats, reqs, hint, hintCls }, x = this.x, y = this.y) {
+  // reqs = [{ icon, name, val, ok, src }] - a have/need checklist (recipes); src: where to get what is short
+  // notes = [{ label, list, more }] - labelled lines ("Used in", "Found in"); list and more as phrases() takes them
+  // anchor = the element the tooltip describes: move() keeps the tooltip from lying across it
+  show({ icon, name, cat, catCls, desc, stats, notes, reqs, hint, hintCls, anchor }, x = this.x, y = this.y) {
+    this.anchor = anchor;
     this.ico.innerHTML = icon || '';
     this.name.textContent = name || '';
     this.cat.textContent = cat || '';
@@ -163,6 +199,13 @@ class Tooltip {
     this.stats.textContent = '';
     for (const s of stats || []) el('div', 'tip-stat', this.stats, s);
     this.stats.hidden = !(stats && stats.length);
+    this.notes.textContent = '';
+    for (const n of notes || []) {
+      const row = el('div', 'tip-note', this.notes);
+      el('div', 'tip-note-h', row, n.label);
+      phrases(el('div', 'tip-note-v', row), n.list, n.more);
+    }
+    this.notes.hidden = !(notes && notes.length);
     this.reqs.textContent = '';
     if (reqs && reqs.length) {
       el('div', 'tip-reqs-h', this.reqs, 'Requires');
@@ -172,6 +215,7 @@ class Tooltip {
         el('span', 'tip-req-name', row, q.name);
         el('span', 'tip-req-val', row, q.val);
         svgEl('i', 'tip-req-mark', row, glyph(q.ok ? 'check' : 'xmark'));
+        if (q.src) phrases(el('div', 'tip-req-src', this.reqs), q.src);
       }
     }
     this.reqs.hidden = !(reqs && reqs.length);
@@ -190,7 +234,12 @@ class Tooltip {
     let px = x + 18;
     let py = y + 18;
     if (px + r.width > innerWidth - 8) px = x - r.width - 14;
-    if (py + r.height > innerHeight - 8) py = innerHeight - r.height - 8;
+    if (py + r.height > innerHeight - 8) {
+      py = innerHeight - r.height - 8;
+      // pushed up from the bottom edge it would lie across the very thing it describes: stand beside that instead
+      const a = this.anchor?.getBoundingClientRect();
+      if (a && py < a.bottom && px < a.right && px + r.width > a.left) px = a.right + 8 + r.width > innerWidth - 8 ? a.left - r.width - 8 : a.right + 8;
+    }
     this.root.style.transform = `translate(${Math.max(8, px) | 0}px,${Math.max(8, py) | 0}px)`;
   }
 
@@ -210,6 +259,9 @@ export class Inventory {
     this.unlocked = 0;
     this.camp = { supplies: [0, 0, 0, 0, 0], hints: [], carried: {} };
     this.tip = new Tooltip(tipParent);
+    this.bulk = 0; // crafts a click on a recipe asks for while a bulk key is held (CRAFT_FEW / CRAFT_MAX); 0: none held
+    this.keys = { few: false, max: false }; // bulk keys pressed since the screen opened
+    this.sent = []; // crafts asked for that the server has not answered yet: { r, n, t, had }
 
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
@@ -381,7 +433,10 @@ export class Inventory {
           lock = svgEl('i', 'rc-lock', b, glyph('lock'));
           lock.title = `Needs the ${ITEM_DEFS[r.schem].name}`;
         }
-        const rec = { r, tab, b, ings, st, lock, key: '' };
+        // what a click would add while a bulk key is held (_renderBulk)
+        const bulk = el('span', 'rc-bulk', b);
+        bulk.hidden = true;
+        const rec = { r, tab, b, ings, st, lock, bulk, bulkTxt: '', key: '' };
         this.recipeEls.push(rec);
         tab.recs.push(rec);
       }
@@ -390,6 +445,17 @@ export class Inventory {
     // search results: the same recipe buttons, moved into relevance sections while a search is active
     this.findView = el('div', 'craft-found', list);
     this.findView.hidden = true;
+    // the bulk keys, spelled out under the list: nobody finds a modifier click by hovering
+    const keys = el('div', 'grid-hints craft-hints', right);
+    for (const [k, t] of [
+      ['LMB', 'craft'],
+      ['Shift+LMB', `craft ${CRAFT_FEW}`],
+      [MAX_KEY + '+LMB', `craft up to ${CRAFT_MAX}`],
+    ]) {
+      const s = el('span', 'gh', keys);
+      el('span', 'kbd sm', s, k);
+      el('span', '', s, t);
+    }
 
     this._bind(root, wrap);
     this._setTab(lsGet(TAB_KEY, 'all'));
@@ -555,15 +621,22 @@ export class Inventory {
       if (e.target.closest('.cf-reset')) this.clearSearch();
     });
 
-    // crafting
+    // crafting. With a bulk key held a click is that many crafts - as many of them as the server will take
+    // (_bulkRun), sent as the ordinary craft and its repeats. None at all (no room for the output) is refused
+    // here, with the same shake as a recipe that cannot be made.
     this.craftList.addEventListener('click', (e) => {
       const b = e.target.closest('.rc');
       if (!b) return;
       const rec = this.recipeEls.find((x) => x.b === b);
       if (!rec) return;
-      if (b.classList.contains('ok')) {
+      const model = this._model();
+      const n = this.bulk ? this._bulkRun(rec.r, model).n : 1;
+      if (b.classList.contains('ok') && n) {
         this.ui.sound('ui_click');
         cb.onCraft(rec.r.id);
+        if (n > 1) cb.onCraftRepeat(rec.r.id, n - 1);
+        this.sent.push({ r: rec.r, n, t: performance.now(), had: carried(model, rec.r.out) });
+        if (this.bulk) this._renderBulk();
         b.getAnimations().forEach((a) => a.cancel());
         b.animate([{ background: 'rgba(228,220,203,.22)' }, { background: 'rgba(228,220,203,0)' }], { duration: 380 });
       } else {
@@ -574,6 +647,91 @@ export class Inventory {
         );
       }
     });
+    // macOS: Ctrl+click asks for the context menu and no click follows. The key is down (this.bulk), so make it one
+    this.craftList.addEventListener('contextmenu', (e) => {
+      if (IS_MAC && e.button === 0 && e.ctrlKey) e.target.closest('.rc')?.click();
+    });
+    // The bulk keys. They are also sprint and crouch, and may still be down from the game when the screen opens:
+    // only a press made while it is open counts, so a click with a leftover key stays a single craft. Captured,
+    // or the search field would keep its keydowns to itself.
+    this._bulkKey = (e) => {
+      const k = e.key === 'Shift' ? 'few' : e.key === 'Control' || (IS_MAC && e.key === 'Meta') ? 'max' : '';
+      if (!k || e.repeat || (e.type === 'keydown' && !this.open)) return;
+      this.keys[k] = e.type === 'keydown';
+      this._setBulk();
+    };
+    window.addEventListener('keydown', this._bulkKey, true);
+    window.addEventListener('keyup', this._bulkKey, true);
+    // (a key released while another window had the focus never reports its keyup)
+    window.addEventListener('blur', () => this._dropBulk());
+  }
+
+  _dropBulk() {
+    this.keys.few = this.keys.max = false;
+    this._setBulk();
+  }
+
+  _setBulk() {
+    const n = this.keys.max ? CRAFT_MAX : this.keys.few ? CRAFT_FEW : 0;
+    if (n === this.bulk) return;
+    this.bulk = n;
+    this._renderBulk();
+    this._refreshTip();
+  }
+
+  // an open recipe tooltip, redrawn
+  _refreshTip() {
+    if (!this.tipTarget?.classList.contains('rc') || this.tip.root.hidden) return;
+    const info = this._tipInfo(this.tipTarget);
+    if (info) this.tip.show(info);
+  }
+
+  // The inventory as it will be once the crafts on their way to the server are answered: counting on what the
+  // server last sent would offer the same materials twice to a second click that lands before the answer (a
+  // double-click does). A craft is answered when there is more of its output than there was (the inventory
+  // message for the backpack; the ammo reserve follows a round trip later, with the self state) - or it never
+  // is, and is given up on after SENT_TTL.
+  _model() {
+    const now = performance.now();
+    this.sent = this.sent.filter((e) => now - e.t < SENT_TTL && carried(this.inv, e.r.out) <= e.had);
+    const inv = copyInv(this.inv);
+    for (const e of this.sent) craftRun(e.r, inv, e.n);
+    return inv;
+  }
+
+  // What a click on a recipe makes now, with a bulk key held: n crafts - what the key asks for, less what the
+  // materials, the backpack or the ammo reserve stop short of. full: it is room, not materials, that stops the next.
+  _bulkRun(r, model = this._model()) {
+    const inv = copyInv(model);
+    const n = craftRun(r, inv, this.bulk);
+    // (`inv` is as the last craft left it)
+    return { n, full: n < this.bulk && Object.keys(r.cost).every((id) => carried(inv, +id) >= r.cost[id]) };
+  }
+
+  // tooltip hint of a recipe that can be made, as [text, class]
+  _craftHint(r) {
+    if (!this.bulk) return [`Click to craft\nShift+click to craft ${CRAFT_FEW} · ${MAX_KEY}+click up to ${CRAFT_MAX}`, ''];
+    const { n, full } = this._bulkRun(r);
+    const room = ITEM_DEFS[r.out].cat === 'ammo' ? 'the reserve' : 'the backpack';
+    if (!n) return [full ? `No room in ${room}` : 'The materials are spoken for', 'bad'];
+    const made = `Click to craft ${ITEM_DEFS[r.out].name} ×${n * r.n}`;
+    return [n === this.bulk ? made : `${made}\nThat is all ${full ? room + ' has room for' : 'the materials make'}`, ''];
+  }
+
+  // The count on every recipe that can be made, while a bulk key is held: the items a click would add, or 'full'
+  // when there is no room for even one more craft's worth.
+  _renderBulk() {
+    const on = this.open && this.bulk > 0;
+    const model = on ? this._model() : null;
+    for (const rec of this.recipeEls) {
+      const { n, full } = on && rec.b.classList.contains('ok') ? this._bulkRun(rec.r, model) : { n: 0, full: false };
+      const txt = n ? '+' + n * rec.r.n : full ? 'full' : '';
+      if (rec.bulkTxt === txt) continue;
+      rec.bulkTxt = txt;
+      rec.bulk.textContent = txt;
+      rec.bulk.hidden = !txt;
+      rec.bulk.classList.toggle('none', !n);
+    }
   }
 
   _startDrag(d) {
@@ -632,12 +790,10 @@ export class Inventory {
       const { r } = rec;
       id = r.out;
       reqs = [];
-      const missing = [];
       for (const ing of rec.ings) {
         const have = this.counts[ing.id] || 0;
         const ok = have >= ing.need;
         const nm = ITEM_DEFS[ing.id].name;
-        if (!ok) missing.push(`${ing.need - have} ${nm}`);
         reqs.push({ icon: itemIcon(ing.id), name: nm, val: Math.min(have, 999) + ' / ' + ing.need, ok });
       }
       const st = r.station;
@@ -645,12 +801,13 @@ export class Inventory {
       if (st) reqs.push({ icon: glyph(STATION_GLYPH[st]), name: st === 'fire' ? 'Lit campfire' : STATION_NAMES[st], val: stationOk ? 'nearby' : 'not nearby', ok: stationOk });
       const unlocked = !r.schem || this._schemOk(r.schem);
       if (r.schem) reqs.push({ icon: glyph(unlocked ? 'unlock' : 'lock'), name: ITEM_DEFS[r.schem].name, val: unlocked ? 'found' : 'not found', ok: unlocked });
-      const todo = [];
-      if (missing.length) todo.push('Missing ' + missing.join(', '));
+      const todo = needLines(r.cost, this.counts); // what is short, and where it comes from
       if (!stationOk) todo.push(`Build a ${STATION_NAMES[st].toLowerCase()} [5] or find one`);
       if (!unlocked) todo.push('Find the schematic in lockers, crates or toolboxes');
       hint = todo.length ? todo.join('\n') : 'Click to craft';
       if (todo.length) hintCls = 'bad';
+      // it can be made: name the bulk keys, or - with one of them held - say what the click will make
+      if (!todo.length) [hint, hintCls] = this._craftHint(r);
     } else if (t.classList.contains('cp')) {
       const i = this.partEls.indexOf(t);
       id = SUPPLIES[i];
@@ -665,6 +822,23 @@ export class Inventory {
     }
     const d = ITEM_DEFS[id];
     if (!d) return null;
+    // Something carried (a backpack cell, an ammo reserve): what it goes into and where more of it is found. A
+    // line with nothing to say is left out, and "Found in" is for what the world yields: a thing that is only
+    // ever crafted has its recipe next door.
+    const notes = [];
+    if (t.classList.contains('cell') || t.classList.contains('am')) {
+      const used = usedIn(id, this.unlocked);
+      if (used) notes.push({ label: 'Used in', ...used });
+      if (sourcesOf(id).length) notes.push({ label: 'Found in', list: foundIn(id, this.unlocked) });
+    }
+    // A recipe: under each ingredient the player is short of, the same line (reqs opens with the ingredients, in
+    // the recipe's order).
+    if (t.classList.contains('rc')) {
+      const ings = this.recipeEls.find((x) => x.b === t).ings;
+      ings.forEach((ing, i) => {
+        if (!reqs[i].ok) reqs[i].src = foundIn(ing.id, this.unlocked);
+      });
+    }
     return {
       icon: itemIcon(id),
       name: d.name,
@@ -672,9 +846,11 @@ export class Inventory {
       catCls: 'c-' + d.cat,
       desc: d.desc,
       stats: [...statLines(id), ...(extra || [])],
+      notes,
       reqs,
       hint,
       hintCls,
+      anchor: t,
     };
   }
 
@@ -901,6 +1077,11 @@ export class Inventory {
     this.stationEl.classList.toggle('near', f || bn);
     this.stationIco.innerHTML = glyph(bn ? 'wrench' : 'campfire');
     this.stationTxt.textContent = f && bn ? 'Campfire + workbench' : f ? 'At a campfire' : bn ? 'At a workbench' : 'No station nearby';
+    // a bulk key is down: its counts follow the inventory (the ammo reserve too, which the block above does not watch)
+    if (this.bulk) {
+      this._renderBulk();
+      this._refreshTip();
+    }
   }
 
   // ctx = { fire, bench, unlocked }
@@ -916,31 +1097,59 @@ export class Inventory {
     this._renderRecipes();
   }
 
+  // list: [{id, name, status: 'alive' | 'downed' | 'dead' | 'zombie', hp (0..1, -1 = unknown), kills, ping, talking,
+  // radio, self}]. Called often while the screen is open: the rows are rebuilt only when something but health
+  // changed, and a change of health moves just that row's bar.
   setPlayers(list) {
     list = Array.isArray(list) ? list : [];
     const key = list.map((p) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0].join('|')).join(';');
-    if (key === this._svKey) return;
-    this._svKey = key;
-    this.svList.textContent = '';
-    let alive = 0;
-    for (const p of list) {
-      if (p.status === 'alive') alive++;
-      const li = el('li', 'sv st-' + (p.status || 'alive') + (p.self ? ' self' : '') + (p.talking ? ' talking' : ''), this.svList);
-      svgEl('i', 'sv-st', li, glyph(p.status === 'zombie' ? 'claw' : p.status === 'dead' ? 'skull' : 'person'));
-      const nm = el('span', 'sv-name', li, p.name || '???');
-      if (p.self) el('small', 'sv-you', nm, 'you');
-      const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
-      if (p.radio) {
-        rd.classList.add('on');
-        rd.title = 'Carries a walkie-talkie';
+    if (key !== this._svKey) {
+      this._svKey = key;
+      this.svList.textContent = '';
+      this._svRows = [];
+      let alive = 0;
+      let down = 0;
+      for (const p of list) {
+        const st = p.status || 'alive';
+        if (st === 'alive' || st === 'downed') alive++; // as the HUD counts them: down is not dead yet
+        if (st === 'downed') down++;
+        const li = el('li', 'sv st-' + st + (p.self ? ' self' : '') + (p.talking ? ' talking' : ''), this.svList);
+        svgEl('i', 'sv-st', li, glyph(st === 'zombie' ? 'claw' : st === 'dead' ? 'skull' : st === 'downed' ? 'downed' : 'person'));
+        const nm = el('span', 'sv-name', li, p.name || '???');
+        if (p.self) el('small', 'sv-you', nm, 'you');
+        el('span', 'sv-tag', li, st === 'alive' ? '' : st === 'downed' ? 'down' : st); // the state in a word
+        const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
+        if (p.radio) {
+          rd.classList.add('on');
+          rd.title = 'Carries a walkie-talkie';
+        }
+        svgEl('i', 'sv-mic', li, glyph('mic'));
+        const k = el('span', 'sv-kills', li);
+        svgEl('i', '', k, glyph('skull'));
+        el('b', '', k, String(p.kills | 0));
+        el('span', 'sv-ping', li, p.ping != null ? Math.round(p.ping) + 'ms' : '');
+        // health, for those who still have some: a bar along the foot of the row
+        const row = { bar: null, fill: null, hp: null };
+        if (st === 'alive') {
+          row.bar = el('i', 'sv-hp', li);
+          row.fill = el('i', '', row.bar);
+        }
+        this._svRows.push(row);
       }
-      svgEl('i', 'sv-mic', li, glyph('mic'));
-      const k = el('span', 'sv-kills', li);
-      svgEl('i', '', k, glyph('skull'));
-      el('b', '', k, String(p.kills | 0));
-      el('span', 'sv-ping', li, p.ping != null ? Math.round(p.ping) + 'ms' : '');
+      this.svCount.textContent = list.length ? alive + ' alive' + (down ? ` (${down} down)` : '') : '';
     }
-    this.svCount.textContent = list.length ? alive + ' alive' : '';
+    for (let i = 0; i < list.length; i++) {
+      const row = this._svRows[i];
+      if (!row.bar) continue;
+      const hp = Math.round(clamp(list[i].hp ?? -1, -1, 1) * 100);
+      if (row.hp === hp) continue;
+      row.hp = hp;
+      row.bar.hidden = hp < 0;
+      if (hp < 0) continue;
+      row.bar.className = 'sv-hp' + healthTier(hp / 100);
+      row.bar.title = `${hp}% health`;
+      row.fill.style.transform = `scaleX(${hp / 100})`;
+    }
   }
 
   // info = { supplies:[n x5], hints:[zone x7], carried:{item:n} } (any subset)
@@ -982,6 +1191,7 @@ export class Inventory {
     } else {
       // a focused search field would keep ui.isTyping() true and swallow gameplay keys
       if (document.activeElement === this.findInput) this.findInput.blur();
+      this._dropBulk();
       this.tip.hide();
       this.tipTarget = null;
       if (this.drag) {

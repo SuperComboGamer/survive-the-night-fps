@@ -3,6 +3,7 @@
 // comes at a run. Lose them and they search the spot for a while, then drift back to the road.
 import { MAP_HALF, PHASE } from '../shared/constants.js';
 import { ZTYPE, SOUND, NOTIFY } from '../shared/defs.js';
+import { groundAt } from '../shared/collision.js';
 
 export const HERD_RUSH = 5; // m/s roused: faster than a survivor walks, slower than a sprint
 const HERD_MIN = 10; // zombies in a herd
@@ -14,6 +15,11 @@ const STEP = 12; // road points (~2 m apart) the waypoint leads the herd by
 const REACH = 9; // the waypoint moves on once the middle of the herd is this close to it (m)
 const STALL = 75; // ...or after this long without getting there (s): something is in the way
 const FAR = 48; // a member further than this from its place follows the flow field instead of walking straight at it
+const LOOK = 0.3; // s between a member's looks along the straight line to its place (a hunting zombie's losT)
+const LAG = 12; // a member with no way to its place, this much further from the waypoint than the herd: left behind (m)
+const LOST = 14; // ...and after this long of it a straggler (s; what Zombies.update gives the horde's)
+const STRAY = 125; // a straggler is put back with the herd when every survivor is this far from it (m; the horde's too)
+const UNSEEN = 75; // ...and this far from where it turns up (m; as near as the roaming dead turn up by day)
 const ROUSE = 20; // s the whole herd stays on a survivor one of them noticed (then only those still sensing them)
 const SEARCH = 12; // s it mills about where the noise came from / where it lost its quarry
 const RESPAWN = 90; // s of daylight after the last of a herd is gone before another one turns up
@@ -214,7 +220,7 @@ export class Herds {
   // ---------------------------------------------------------------- update
   update(dt, humans) {
     const g = this.g;
-    if (g.phase === PHASE.DAY && !this.list.size) {
+    if (g.phase === PHASE.DAY && !g.escape.active && !this.list.size) {
       this.spawnT -= dt;
       if (this.spawnT <= 0) this.spawnT = this.spawn(humans) ? RESPAWN : 10;
     }
@@ -228,7 +234,7 @@ export class Herds {
       else h.members.push(z);
     }
     for (const h of this.list.values()) {
-      if (h.members.length >= DISBAND || (h.hot && h.members.length)) this.tick(h, dt);
+      if (h.members.length >= DISBAND || (h.hot && h.members.length)) this.tick(h, dt, humans);
       else {
         // what is left of it is no herd any more: they roam like any other of the dead, and a new herd is due
         for (const z of h.members) z.herd = 0;
@@ -239,16 +245,21 @@ export class Herds {
     }
   }
 
-  tick(h, dt) {
+  tick(h, dt, humans) {
     const g = this.g;
     const ms = h.members;
     let cx = 0;
     let cz = 0;
+    let n = 0;
     let prey = null;
     let heard = null;
     for (const z of ms) {
-      cx += z.x;
-      cz += z.z;
+      // (a straggler does not hold the middle of the herd back: see steer)
+      if (z.farT <= LOST) {
+        cx += z.x;
+        cz += z.z;
+        n++;
+      }
       if (z.target) {
         const p = prey ? null : g.players.get(z.target);
         if (p && p.alive && !p.zombie) prey = p;
@@ -258,8 +269,11 @@ export class Herds {
         z.alertT = 0;
       }
     }
-    h.cx = cx / ms.length;
-    h.cz = cz / ms.length;
+    if (n) {
+      h.cx = cx / n;
+      h.cz = cz / n;
+    }
+    if (n < ms.length && g.tick % 40 === 0) this.gather(h, humans);
     h.rouseT -= dt;
     h.searchT -= dt;
     if (prey) {
@@ -332,24 +346,79 @@ export class Herds {
   // ---------------------------------------------------------------- members
   // Where a herd member with nobody to chase heads this tick: its place in the crowd around the herd's waypoint (or
   // around the noise / the spot the herd last saw someone). Writes the direction to out, returns the speed.
+  // It walks straight there while nothing is in the way, and otherwise takes the way round that the herd's flow
+  // field knows, the way a hunting zombie does with its survivor's (Zombies.updateOne): a wall, a fence or the
+  // lake between it and its place does not hold it up.
   steer(z, dt, out) {
     const h = this.list.get(z.herd);
     out.x = 0;
     out.z = 0;
     if (!h) return 0;
-    const dx = h.gx + z.herdX - z.x;
-    const dz = h.gz + z.herdZ - z.z;
+    const sx = h.gx + z.herdX;
+    const sz = h.gz + z.herdZ;
+    const dx = sx - z.x;
+    const dz = sz - z.z;
     const d = Math.hypot(dx, dz);
     // got stuck on the way (the stuck detour kicked in): follow the flow field around whatever it was for a while
     if (z.detourT > 0) z.herdNav = 6;
     else if (z.herdNav > 0) z.herdNav -= dt;
-    if (d >= 1 && !((z.herdNav > 0 || d > FAR) && this.g.nav.flowDir(h.key, z.x, z.z, out))) {
+    if (z.losT <= 0) {
+      z.losT = LOOK;
+      z.direct = d <= FAR && this.clearWay(z.x, z.z, sx, sz, d);
+    }
+    const off = Math.hypot(z.x - h.gx, z.z - h.gz);
+    let lost = false;
+    if (d >= 1 && !((z.herdNav > 0 || !z.direct) && this.g.nav.flowDir(h.key, z.x, z.z, out))) {
+      // (where the field has no answer either, a cell it does not reach or one outside its window, it is straight
+      // on as well: that is what the horde does)
       out.x = dx / d;
       out.z = dz / d;
+      lost = !z.direct && off > SPREAD; // (among the crowd it has arrived: only its own place is out of reach)
     }
+    const lead = Math.hypot(h.cx - h.gx, h.cz - h.gz) - off;
+    // No way to its place, and the herd has left it behind (walled in, in the lake, in a corner the nav grid cannot
+    // see out of, further off than the field reaches): after LOST s of that it is a straggler, see gather. The time
+    // runs off again at half speed, like stuckT: one clear look between two walls does not start it over.
+    if (lost && lead < -LAG) z.farT = Math.min(LOST + 1, z.farT + dt);
+    else z.farT = Math.max(0, z.farT - dt * 0.5);
     if (h.hot) return Math.max(z.def.speed, HERD_RUSH);
     // keep together: the ones out in front dawdle, stragglers hurry
-    const lead = Math.hypot(h.cx - h.gx, h.cz - h.gz) - Math.hypot(z.x - h.gx, z.z - h.gz);
     return PACE * Math.max(0.45, Math.min(1.7, 1 - lead / 8));
+  }
+
+  // nothing between a member and its place that it would have to go round: no wall the nav grid knows, no deep water
+  clearWay(x0, z0, x1, z1, d) {
+    const g = this.g;
+    if (!g.nav.segClear(x0, z0, x1, z1)) return false;
+    for (let t = 1.5; t <= d; t += 1.5) if (g.world.isDeepWater(x0 + ((x1 - x0) * t) / d, z0 + ((z1 - z0) * t) / d)) return false;
+    return true;
+  }
+
+  // Stragglers (see steer) are put back with the herd, as the horde's are brought back into the fight
+  // (Zombies.update): one that no survivor is near enough to see go, onto ground that no survivor is near enough to
+  // see it turn up on. Until then it stays where it is, and the herd goes on without it.
+  gather(h, humans) {
+    const g = this.g;
+    const free = (x, z) => !g.nav.isBlocked(x, z) && !g.world.isDeepWater(x, z);
+    for (const z of h.members) {
+      if (z.farT <= LOST || z.target) continue;
+      // its place in the crowd around the middle of the herd, or the middle itself if it could not walk on from there
+      let x = h.cx + z.herdX;
+      let zz = h.cz + z.herdZ;
+      if (!free(x, zz) || !this.clearWay(h.cx, h.cz, x, zz, Math.hypot(z.herdX, z.herdZ))) {
+        x = h.cx;
+        zz = h.cz;
+        if (!free(x, zz)) continue;
+      }
+      let seen = false;
+      for (const p of humans) seen = seen || Math.hypot(p.state.x - z.x, p.state.z - z.z) < STRAY || Math.hypot(p.state.x - x, p.state.z - zz) < UNSEEN;
+      if (seen) continue;
+      z.x = x;
+      z.z = zz;
+      z.y = groundAt(g.world, x, zz, 200, 0.2, false);
+      z.vx = z.vz = z.vy = 0;
+      z.farT = 0;
+      g.fillHistory(z);
+    }
   }
 }

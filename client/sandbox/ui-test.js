@@ -92,6 +92,7 @@ const ui = new UI(document.getElementById('ui'), {
     if (q.get('joinfail')) setTimeout(() => ui.setJoinError('Connection failed. The server did not answer.'), 800);
   },
   onCraft: (id) => log('craft', id),
+  onCraftRepeat: (id, n) => log('craft', id, 'and', n, 'more'),
   onUseItem: (i) => log('use', i),
   onDropItem: (i, c) => log('drop', i, c),
   onSwapItems: (a, b) => log('swap', a, b),
@@ -150,13 +151,13 @@ const baseHud = {
   compassMarks: [
     { kind: 'car', bearing: -0.3, icon: glyph('car'), label: '142m' },
     { kind: 'hint', bearing: 0.35, icon: itemIcon(ITEM.CAR_BATTERY), label: '88m' },
-    { kind: 'mate', bearing: -0.9, icon: glyph('person'), label: 'Marlowe' },
+    { kind: 'mate', bearing: -0.9, icon: glyph('person'), label: 'Marlowe', hp: 0.45 },
     { kind: 'ping', bearing: -0.55, icon: glyph('ping'), label: '31m', cls: 'p1' },
     { kind: 'poi', bearing: 0.9, icon: glyph('flag'), label: '' },
   ],
   worldMarks: [
-    { kind: 'mate', x: 420, y: 300, icon: '', name: 'Marlowe', sub: '38m', scale: 1 },
-    { kind: 'mate', x: 900, y: 420, icon: glyph('downed'), name: 'Old Hank', sub: 'hold [E] to revive', cls: 'downed', scale: 1 },
+    { kind: 'mate', x: 420, y: 300, icon: '', name: 'Marlowe', sub: '38m', bar: 0.45, scale: 1 },
+    { kind: 'mate', x: 900, y: 420, icon: glyph('downed'), name: 'Old Hank', sub: 'DOWN · hold [E] to revive', cls: 'downed', scale: 1 },
     { kind: 'ping', x: 700, y: 360, icon: glyph('ping'), name: 'Marlowe: Loot', sub: '22m', cls: 'p2', scale: 1 },
   ],
   objective: { supplies: [1, 0, 1, 0, 2], hints: [3, 1, 6, 4, 2, 9, 13], carried: { [ITEM.SPARE_TIRE]: 1 }, anyCarried: true, phase: PHASE.DAY, timeLeft: 134, finale: false, escapeT: 0, escapeReady: false, suppliesDone: false, wave: 0, waves: 3 },
@@ -194,10 +195,10 @@ const inv = {
 });
 
 const players = [
-  { id: 1, name: 'Survivor417', status: 'alive', kills: 23, ping: 42, talking: false, self: true },
-  { id: 2, name: 'Marlowe', status: 'alive', kills: 31, ping: 67, talking: true, self: false },
+  { id: 1, name: 'Survivor417', status: 'alive', hp: 1, kills: 23, ping: 42, talking: false, self: true },
+  { id: 2, name: 'Marlowe', status: 'alive', hp: 0.45, kills: 31, ping: 67, talking: true, self: false },
   { id: 3, name: 'deadeye_kat', status: 'zombie', kills: 12, ping: 88, talking: false, self: false },
-  { id: 4, name: 'Old Hank', status: 'alive', kills: 8, ping: 120, talking: false, self: false },
+  { id: 4, name: 'Old Hank', status: 'downed', kills: 8, ping: 120, talking: false, self: false },
   { id: 5, name: 'Ruth', status: 'dead', kills: 3, ping: 55, talking: false, self: false },
 ];
 
@@ -353,7 +354,10 @@ switch (screen) {
   }
   case 'hud-finale': {
     buildScene(bg || 'night');
+    // &ready: the engine is warm (&leaving: somebody is getting in); &stalled: nobody at the car, the warm-up stands still
     const ready = !!q.get('ready');
+    const stalled = !ready && !!q.get('stalled');
+    const leaving = ready && !!q.get('leaving');
     const h = {
       ...baseHud,
       phase: PHASE.NIGHT,
@@ -361,19 +365,21 @@ switch (screen) {
       hordeLeft: 58,
       finale: true,
       escapeReady: ready,
+      escapeStalled: stalled,
+      escapeLeaving: leaving,
       slot: 0,
       mag: 4,
       reserve: 0,
-      prompt: ready ? '[E] Get in the car' : null,
+      prompt: ready ? '[E] Hold to get in and drive away' : null,
       context: null,
       compassMarks: [{ kind: 'car', bearing: -2.4, icon: glyph('car'), label: '63m', pinEdge: true, cls: 'urgent' }, ...baseHud.compassMarks.slice(1)],
-      worldMarks: [{ kind: 'car', x: 1180, y: 430, icon: glyph('car'), name: ready ? 'GET IN' : 'Defend the car', sub: '63m', cls: 'urgent', scale: 0.95 }],
+      worldMarks: [{ kind: 'car', x: 1180, y: 430, icon: glyph('car'), name: ready ? 'GET IN' : stalled ? 'Engine stalled' : 'Defend the car', sub: '63m', cls: 'urgent', scale: 0.95 }],
     };
     ui.hideSplash();
     feedSome();
     loop((t) => {
-      const escapeT = Math.max(0, 47 - t);
-      return { ...h, escapeT, objective: { ...baseHud.objective, supplies: [1, 1, 1, 1, 3], carried: {}, anyCarried: false, suppliesDone: true, phase: PHASE.NIGHT, finale: true, escapeT: Math.ceil(escapeT), escapeReady: ready } };
+      const escapeT = stalled ? 47 : Math.max(0, 47 - t);
+      return { ...h, escapeT, objective: { ...baseHud.objective, supplies: [1, 1, 1, 1, 3], carried: {}, anyCarried: false, suppliesDone: true, phase: PHASE.NIGHT, finale: true, escapeT: Math.ceil(escapeT), escapeReady: ready, escapeStalled: stalled, escapeLeaving: leaving } };
     });
     break;
   }

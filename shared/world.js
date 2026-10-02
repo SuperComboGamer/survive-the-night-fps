@@ -585,7 +585,7 @@ export function createWorld(seed) {
     sites.push({ x, z, ry: rng.range(0, PI * 2), type: pickW(WOODS_W), road: 0 });
   }
   // level the ground under built sites
-  const FLAT_SITES = { shed: 5.5, ruin: 6.5, camp: 5, stash: 4, logpile: 4.5, hunter: 3.5, grave: 3.5 };
+  const FLAT_SITES = { shed: 5.5, ruin: 6.5, camp: 5, stash: 4, logpile: 4.5, hunter: 3.5, grave: 3.5, wreck: 4.5, bus: 7 };
   for (const s of sites) {
     const r = FLAT_SITES[s.type];
     if (!r) continue;
@@ -645,6 +645,32 @@ export function createWorld(seed) {
     }
   };
 
+  // Where a prop touches the ground, [x0, x1, z0, z1] in its own frame: the collision boxes that reach down to its
+  // base and its cylinders. null for things that only lie there (a corpse, a duffel bag: no collider).
+  const FOOT = {};
+  const footprint = (type) => {
+    if (type in FOOT) return FOOT[type];
+    const def = PROPS[type] || {};
+    let f = null;
+    const grow = (x0, x1, z0, z1) => {
+      f = f ? [Math.min(f[0], x0), Math.max(f[1], x1), Math.min(f[2], z0), Math.max(f[3], z1)] : [x0, x1, z0, z1];
+    };
+    for (const [lx, ly, lz, sx, sy, sz] of def.boxes || []) if (ly - sy / 2 < 0.3) grow(lx - sx / 2, lx + sx / 2, lz - sz / 2, lz + sz / 2);
+    for (const [lx, lz, r] of def.cyls || []) grow(lx - r, lx + r, lz - r, lz + r);
+    return (FOOT[type] = f);
+  };
+  // Base height of a prop standing on open ground. Props are always upright (colliders only turn about Y), so on a
+  // slope it is the ground under the lowest corner of the footprint: the uphill side digs in, nothing hangs in the air.
+  const seatY = (type, x, z, ry) => {
+    const f = footprint(type);
+    if (!f) return heightAt(x, z);
+    const c = Math.cos(ry);
+    const s = Math.sin(ry);
+    let y = Infinity;
+    for (const lx of [f[0], f[1]]) for (const lz of [f[2], f[3]]) y = Math.min(y, heightAt(x + c * lx + s * lz, z - s * lx + c * lz));
+    return y;
+  };
+
   class Builder {
     constructor(ox, oz, ry, y0) {
       this.ox = ox;
@@ -655,6 +681,7 @@ export function createWorld(seed) {
       this.s = Math.sin(ry);
       this.zone = ZONE.FOREST;
       this.ground = false; // props follow the terrain (roadside sites)
+      this.yard = null; // the place being built: its props follow the terrain beyond the levelled radius (yard.flat)
     }
     wx(lx, lz) {
       return this.ox + this.c * lx + this.s * lz;
@@ -666,6 +693,7 @@ export function createWorld(seed) {
       const b = new Builder(this.wx(lx, lz), this.wz(lx, lz), this.ry + ry, this.y0 + ly);
       b.zone = this.zone;
       b.ground = this.ground;
+      b.yard = this.yard;
       return b;
     }
     // ly = bottom of box (relative to builder base height)
@@ -697,14 +725,21 @@ export function createWorld(seed) {
       const z = this.wz(lx, lz);
       parts.push({ shape: 'prism', x, y: this.y0 + ly + sy / 2, z, sx, sy, sz, rx: 0, ry: this.ry + (o.ry || 0), rz: 0, mat });
     }
-    baseY(x, z, o) {
-      return o.y !== undefined ? o.y : o.ly !== undefined ? this.y0 + o.ly : o.ground || (this.ground && o.ground !== false) ? heightAt(x, z) : this.y0;
+    // is (x,z) off this builder's levelled base? (a roadside site: everywhere; a place: outside its yard, where the
+    // ground is whatever the hills are - a field or a traffic queue that runs on past the yard must not keep its height)
+    open(x, z) {
+      return this.ground || (this.yard !== null && Math.hypot(x - this.yard.x, z - this.yard.z) > this.yard.flat);
+    }
+    baseY(type, x, z, ry, o) {
+      if (o.y !== undefined) return o.y;
+      if (o.ly !== undefined) return this.y0 + o.ly;
+      return o.ground || (o.ground !== false && this.open(x, z)) ? seatY(type, x, z, ry) : this.y0;
     }
     prop(type, lx, lz, ry = 0, o = {}) {
       const x = this.wx(lx, lz);
       const z = this.wz(lx, lz);
-      const y = this.baseY(x, z, o);
       const wry = this.ry + ry;
+      const y = this.baseY(type, x, z, wry, o);
       props.push({ type, x, y, z, ry: wry, seed: o.seed ?? rng.int(0, 9999) });
       if (!o.nocollide) addPropColliders(type, x, y, z, wry);
       return { x, y, z, ry: wry };
@@ -719,7 +754,7 @@ export function createWorld(seed) {
     cont(ctype, lx, lz, o = {}) {
       const x = this.wx(lx, lz);
       const z = this.wz(lx, lz);
-      const y = this.baseY(x, z, o);
+      const y = this.baseY(o.prop, x, z, this.ry + (o.ry || 0), o);
       if (o.prop) this.prop(o.prop, lx, lz, o.ry || 0, { y, seed: o.seed, nocollide: o.nocollide });
       containers.push({ x, y: y + (o.h ?? CONT_H[ctype] ?? 0.5), z, ry: this.ry + (o.ry || 0), ctype, zone: o.zone ?? this.zone });
     }
@@ -849,6 +884,7 @@ export function createWorld(seed) {
     if (!zone) return;
     const b = new Builder(zone.x, zone.z, zone.ry, zone.h);
     b.zone = id;
+    b.yard = zone;
     build(b, zone);
   };
   let car;
@@ -937,7 +973,7 @@ export function createWorld(seed) {
     b.prop('streetlight', -8, -17, PI);
     b.prop('streetlight', 12, -17, PI);
     b.loot(-10, -6);
-    b.loot(8, 10.5);
+    b.loot(8, 10.5, 0.62); // on the bed of the last room
   });
 
   // MILLER FARM ---------------------------------------------------
@@ -961,7 +997,7 @@ export function createWorld(seed) {
     b.prop('tire_pile', 16, 16.8, 0, { nocollide: true });
     // farmhouse
     b.room(-16, 4, 10, 8, 3, 'clapboard', { n: [door(5, 1.2), win(2.2), win(7.8)], e: [win(4)], w: [win(4)], s: [win(3), door(7.5, 1.1)] }, { roof: 'gableZ', roofH: 2.6, roofMat: 'shingles' });
-    b.wall(-16, 0, -16, 8, 3, 0.18, 'clapboard', [door(4, 1.1)]);
+    b.wall(-17.2, 0, -17.2, 8, 3, 0.18, 'clapboard', [door(4, 1.1)]); // inner wall, clear of the front door (x -16)
     b.box(-16, 0, -1.2, 10, 0.3, 2.2, 'planks', { collide: true }); // porch
     b.prop('bed', -19.5, 6, 0);
     b.prop('table', -13, 2, 0.1);
@@ -1004,9 +1040,11 @@ export function createWorld(seed) {
   // BLACKWATER DOCK -------------------------------------------------
   place(ZONE.DOCK, (b, z) => {
     const deckY = WATER_LEVEL + 1.1 - z.h; // relative to zone base
-    // pier: runs +Z (toward the lake)
-    for (let i = 0; i < 8; i++) {
-      b.box(0, deckY - 0.22, 11 + i * 4, 3, 0.22, 4.05, 'dockwood', { collide: true });
+    // pier: runs +Z (toward the lake) in 4 m spans from z 9; a ninth, short one carries the deck the last 2 m to the
+    // T end (z 43-47), so there is no hole to stop a survivor short of the crate out there
+    for (let i = 0; i < 9; i++) {
+      const len = i < 8 ? 4 : 2;
+      b.box(0, deckY - 0.22, 9 + i * 4 + len / 2, 3, 0.22, len + 0.05, 'dockwood', { collide: true });
       b.cyl(-1.4, deckY - 3.5, 9.2 + i * 4, 0.14, 3.6, 'dockwood', { collide: false });
       b.cyl(1.4, deckY - 3.5, 9.2 + i * 4, 0.14, 3.6, 'dockwood', { collide: false });
     }
@@ -1238,11 +1276,12 @@ export function createWorld(seed) {
     b.prop('body_bag', -2.6, -9.2, 0.1, { nocollide: true });
     b.prop('radio_mast', 16, 10, 0);
     b.prop('fuel_tank', -17, 14, 0.9);
-    b.loot(-13.5, -1.5);
-    b.loot(14, -5);
+    // (a tent is one solid box: what belongs to it lies in front of its open flap, where it can be seen)
+    b.loot(-14.3, -6.6);
+    b.loot(14.6, -8.6);
     b.loot(2, 3);
-    b.partSpot(15.2, -6.8);
-    b.partSpot(-12.5, 10.5);
+    b.partSpot(15.6, -8.3);
+    b.partSpot(-15.5, 10.9);
     b.light(0, 0.5, 7, 'embers');
   });
 
@@ -1361,7 +1400,7 @@ export function createWorld(seed) {
     b.room(-15, -14, 12, 8, 3.2, 'clapboard', { e: [door(4, 1.4), win(1.5, 1.6), win(6.5, 1.6)], n: [win(3), win(9)], s: [door(10, 1.1)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'planks' });
     b.box(-17, 0, -14, 0.8, 1.05, 5, 'planks', { collide: true }); // counter
     b.cont(CONT.FRIDGE, -20.5, -16.5, { prop: 'fridge', ry: PI / 2 });
-    b.cont(CONT.CABINET, -19.5, -10.4, { prop: 'cabinet', ry: PI });
+    b.cont(CONT.CABINET, -20.2, -10.4, { prop: 'cabinet', ry: 0 }); // in the corner beside the back door (x -19), facing the kitchen
     b.prop('table', -11.5, -16, 0);
     b.prop('table', -11.5, -12, 0);
     b.prop('chair', -12.2, -15.2, 0.3);
@@ -1404,7 +1443,7 @@ export function createWorld(seed) {
     house(-15, 13, 'e', 1);
     house(-15, 29, 'e', 2);
     house(15, 32, 'w', 3);
-    house(-28, -2, 'n', 4);
+    house(-28, 9, 'n', 4); // south of the east-west street, its door on it
     b.prop('water_tower', -30, -30, 0.2);
     b.cont(CONT.DUMPSTER, 23, -23, { prop: 'dumpster', ry: 0 });
     b.cont(CONT.DUMPSTER, -22, -21, { prop: 'dumpster', ry: PI, seed: 1 });
@@ -1448,7 +1487,7 @@ export function createWorld(seed) {
     t4.partSpot(-1.5, -0.4);
     void t2;
     b.wreck('school_bus', -22, 22, PI / 2 + 0.2, { trunk: false });
-    b.cont(CONT.DUFFEL, -18.5, 20.5, { prop: 'duffel_bag', ry: 0.3, nocollide: true });
+    b.cont(CONT.DUFFEL, -18.5, 19.2, { prop: 'duffel_bag', ry: 0.3, nocollide: true }); // beside the bus (it is one solid box)
     b.wreck('car_wreck', -4.5, -22, 0.3);
     b.wreck('car_wreck', 5.5, 8, PI + 0.4, { seed: 1 });
     b.wreck('pickup_truck', 5, -24, -0.5);
@@ -1931,16 +1970,18 @@ export function createWorld(seed) {
         const side = road.width + 3;
         const px = x + nx * side;
         const pz = z + nz * side;
-        props.push({ type: 'power_pole', x: px, y: heightAt(px, pz), z: pz, ry: dir, seed: i });
-        addPropColliders('power_pole', px, heightAt(px, pz), pz, dir);
+        const py = seatY('power_pole', px, pz, dir);
+        props.push({ type: 'power_pole', x: px, y: py, z: pz, ry: dir, seed: i });
+        addPropColliders('power_pole', px, py, pz, dir);
       } else if (i % 53 === 26) {
         const r = rng();
         const px = x + nx * (road.width + 2.2);
         const pz = z + nz * (road.width + 2.2);
         const type = r < 0.45 ? 'road_sign' : r < 0.7 ? 'mailbox' : null;
         if (type) {
-          props.push({ type, x: px, y: heightAt(px, pz), z: pz, ry: dir, seed: rng.int(0, 99) });
-          addPropColliders(type, px, heightAt(px, pz), pz, dir);
+          const py = seatY(type, px, pz, dir);
+          props.push({ type, x: px, y: py, z: pz, ry: dir, seed: rng.int(0, 99) });
+          addPropColliders(type, px, py, pz, dir);
         }
       }
     }
@@ -1998,12 +2039,35 @@ export function createWorld(seed) {
     return false;
   };
 
+  // Does a trunk / boulder of radius r at (x,z) stand on a road or trail? roadClear cannot promise that it does not:
+  // the roadDist grid has 2 m cells and stores the distance less the road's extra width, so its test for a trail
+  // (1.5 m to the edge) only reaches 0.1 m from the centre line. This one measures against the centre lines.
+  const onRoadway = (x, z, r) => {
+    if (roadDistAt(x, z) > r + 4.1) return false; // nowhere near one (the grid is good for that: a road's edge is 2.6 on it, read up to 1.5 m off)
+    for (const road of roads) {
+      const p = road.pts;
+      const lim = (road.width + r) * (road.width + r);
+      for (let i = 0; i < p.length - 2; i += 2) {
+        const ex = p[i + 2] - p[i];
+        const ez = p[i + 3] - p[i + 1];
+        const t = clamp(((x - p[i]) * ex + (z - p[i + 1]) * ez) / (ex * ex + ez * ez || 1), 0, 1);
+        const dx = x - p[i] - ex * t;
+        const dz = z - p[i + 1] - ez * t;
+        if (dx * dx + dz * dz < lim) return true;
+      }
+    }
+    return false;
+  };
+
   const trees = [];
   const pushTree = (x, z, v, scale) => {
     const y = heightAt(x, z);
     const rot = rng.range(0, PI * 2);
-    trees.push(x, y, z, scale, rot, v);
     occupy(x, z, 1.4 * scale);
+    // a tree on a road is drawn and given its room like any other, then left out: the random stream and the occupancy
+    // map stay as they were, so not one other tree, rock, bush or pick-up spot of the seed moves
+    if (onRoadway(x, z, TREE_TYPES[v].r * scale)) return;
+    trees.push(x, y, z, scale, rot, v);
     const c = makeCyl(x, z, y - 1, y + 14 * scale, TREE_TYPES[v].r * scale, COL.STATIC | COL.TREE);
     c.tv = v;
     staticGrid.add(c);
@@ -2042,6 +2106,14 @@ export function createWorld(seed) {
   }
 
   const rocks = [];
+  const pushRock = (x, z, v, scale, r) => {
+    const y = heightAt(x, z) - 0.25 * scale;
+    const rot = rng.range(0, PI * 2);
+    occupy(x, z, r);
+    if (onRoadway(x, z, r * 0.85)) return; // (left out the way a tree is, above)
+    rocks.push(x, y, z, scale, rot, v);
+    staticGrid.add(makeCyl(x, z, y - 1, y + r * 0.9, r * 0.85, COL.STATIC));
+  };
   for (let a = 0; a < 900 && rocks.length < 380 * 6; a++) {
     const x = rng.range(-LIM, LIM);
     const z = rng.range(-LIM, LIM);
@@ -2050,10 +2122,7 @@ export function createWorld(seed) {
     const scale = rng.range(0.6, 1.8);
     const r = ROCK_TYPES[v].r * scale;
     if (occupied(x, z, r + 0.5)) continue;
-    const y = heightAt(x, z) - 0.25 * scale;
-    rocks.push(x, y, z, scale, rng.range(0, PI * 2), v);
-    occupy(x, z, r);
-    staticGrid.add(makeCyl(x, z, y - 1, y + r * 0.9, r * 0.85, COL.STATIC));
+    pushRock(x, z, v, scale, r);
   }
   // boulders around the quarry and the mine
   for (const id of [ZONE.QUARRY, ZONE.MINE]) {
@@ -2067,11 +2136,7 @@ export function createWorld(seed) {
       if (occupied(x, z, 1.2) || roadClear(x, z, 0)) continue;
       const v = rng.int(0, ROCK_TYPES.length - 1);
       const scale = rng.range(1.2, 2.4);
-      const r = ROCK_TYPES[v].r * scale;
-      const y = heightAt(x, z) - 0.25 * scale;
-      rocks.push(x, y, z, scale, rng.range(0, PI * 2), v);
-      occupy(x, z, r);
-      staticGrid.add(makeCyl(x, z, y - 1, y + r * 0.9, r * 0.85, COL.STATIC));
+      pushRock(x, z, v, scale, ROCK_TYPES[v].r * scale);
     }
   }
 

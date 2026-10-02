@@ -5,9 +5,10 @@
 import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
-import { resolveBody, groundAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
+import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
 import { Herds, HERD_RUSH } from './herd.js';
+import { ColliderGrid, makeBox, rayCollider, CYL } from '../shared/collision.js'; // (bat flight: flyCollide, roofBoxes)
 
 const GRAV = 16;
 const CELL = 4;
@@ -22,6 +23,16 @@ const _ray = { t: -1, col: null, terrain: false };
 const SHADE_THAW = 0.15; // unbroken darkness (s) before a lit shade moves again, so a beam flickering across it still holds it
 const BEAM_TAN = Math.tan(FLASHLIGHT_CONE);
 const BODY_AT = [0.9, 0.55, 0.2]; // head, chest, shins (fractions of the body height) - light on any of them counts
+// the client's distance haze: fog density by sun height (KEYS s / fogD in client/render/environment.js), see sightRange()
+const HAZE_SUN = [-1, -0.12, 0.02, 0.18, 0.55, 1];
+const HAZE_DENSITY = [0.025, 0.025, 0.0195, 0.0108, 0.0074, 0.0072];
+// a zombie is lost in the haze once it has swallowed this much of it: what the dark of the night does at
+// HORDE_SPAWN_MIN, the nearest the horde has always appeared (so in full darkness the whole spawn band stays hidden)
+const HAZE_HIDES = 0.88;
+const SPAWN_TRIES = 18; // candidates a horde spawn pick looks at before settling for the least exposed one
+const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes have a clear line to this far above its ground (m)
+const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
+const SPAWN_VIEW_COS = Math.cos(1.13); // a survivor is looking at what lies within ~65 deg of dead ahead (the default FOV on a wide screen, and a margin)
 
 export class Zombies {
   constructor(game) {
@@ -34,6 +45,9 @@ export class Zombies {
     this.lights = []; // this tick's burning point lights, flat [x, y, z, radius, ...]
     this.lightTick = -1;
     this.packSeq = 0;
+    this.spawnPicks = 0; // horde spawn positions picked around the survivors (pickSpawnAround)...
+    this.spawnsScreened = 0; // ...how many of them found nowhere wholly out of sight and took a spot with only its middle hidden...
+    this.spawnsInView = 0; // ...and how many found nothing but spots in plain view
     this.treeGrid = null;
     this.dens = null;
     this.herds = new Herds(game, this);
@@ -116,12 +130,15 @@ export class Zombies {
       los: false,
       direct: false,
       blockStruct: 0,
+      breachT: 0, // boomers: how long a structure has been holding it up
+      breachId: 0, // boomers: the structure it is winding up to burst against
       stuckT: 0,
       lastX: x,
       lastZ: z,
       detourT: 0,
       detourX: 0,
       detourZ: 0,
+      sunk: false, // in the lake with nothing underfoot: wading back up the bed (wadeOut)
       wanderX: x,
       wanderZ: z,
       wanderT: 0,
@@ -325,15 +342,81 @@ export class Zombies {
     return best;
   }
 
-  // a walkable spot HORDE_SPAWN_MIN..MAX metres from (x,z) that no survivor is standing close to
+  // How far off a survivor could make out a zombie right now (m): where the client's distance haze (FogExp2,
+  // 1 - exp(-(density * d)^2)) has swallowed HAZE_HIDES of it. The haze follows the sun and the sun follows the
+  // phase clock (Environment.cycleFor, mirrored here): ~200 m at noon, ~72 m as the night falls, 58 m in the dark.
+  // The weather is not known here (clients derive it from the seed); a fog bank or rain only ever shortens this,
+  // so leaving it out errs towards calling a spot visible.
+  sightRange() {
+    const g = this.g;
+    const night = g.phase === PHASE.NIGHT;
+    const len = night ? g.nightLen : g.day <= 1 ? g.firstDayLen : g.dayLen;
+    const left = Math.max(0, Math.min(len, g.timeLeft));
+    const el = len - left;
+    let c; // position in the day/night cycle: the day on [0, 0.5), the night on [0.5, 1)
+    if (night) {
+      // 30 s of nightfall, the long dark, then 60 s of dawn
+      const tin = Math.min(30, len * 0.25);
+      const tout = Math.min(60, len * 0.35);
+      c = el < tin ? 0.5 + 0.02 * (el / tin) : left < tout ? 1.04 - 0.065 * (left / tout) : 0.52 + 0.455 * ((el - tin) / (len - tin - tout));
+    } else {
+      // light morning to late afternoon, then 75 s of dusk
+      const tout = Math.min(75, len * 0.35);
+      c = left < tout ? 0.5 - 0.05 * (left / tout) : 0.04 + 0.41 * (el / (len - tout));
+    }
+    const s = Math.sin(c * Math.PI * 2);
+    let k = 0;
+    while (k < HAZE_SUN.length - 2 && HAZE_SUN[k + 1] < s) k++;
+    const t = Math.max(0, Math.min(1, (s - HAZE_SUN[k]) / (HAZE_SUN[k + 1] - HAZE_SUN[k])));
+    return Math.sqrt(-Math.log(1 - HAZE_HIDES)) / (HAZE_DENSITY[k] + (HAZE_DENSITY[k + 1] - HAZE_DENSITY[k]) * t);
+  }
+
+  // Would the survivors watch a group of zombies appear around (x,z)? 2: one of them, within `sight` m, has a clear
+  // line to head height at the spot (in plain view). 1: nobody does, but someone has one SPAWN_SPREAD m to either
+  // side of it as they look at it - the group is scattered that far, so whatever hides its middle (a tree trunk,
+  // the corner of a house) does not hide all of it. 0: neither, the whole group comes up out of sight.
+  spawnExposure(x, z, humans, sight) {
+    const w = this.g.world;
+    const y = groundAt(w, x, z, 200, 0.2, false) + SPAWN_HEAD;
+    for (const h of humans) {
+      const s = h.state;
+      if (Math.hypot(x - s.x, z - s.z) > sight) continue;
+      if (this.clearLine(s.x, s.y + eyeHeight(s), s.z, x, y, z)) return 2;
+    }
+    for (const h of humans) {
+      const s = h.state;
+      const dx = x - s.x;
+      const dz = z - s.z;
+      const d = Math.hypot(dx, dz);
+      if (d > sight) continue;
+      for (let side = -1; side <= 1; side += 2) {
+        const px = x - (dz / d) * SPAWN_SPREAD * side;
+        const pz = z + (dx / d) * SPAWN_SPREAD * side;
+        if (this.clearLine(s.x, s.y + eyeHeight(s), s.z, px, groundAt(w, px, pz, 200, 0.2, false) + SPAWN_HEAD, pz)) return 1;
+      }
+    }
+    return 0;
+  }
+
+  // a walkable spot HORDE_SPAWN_MIN..MAX metres from (x,z) that no survivor is standing close to, and that none of
+  // them can see (spawnExposure): the first candidate wholly out of sight is taken. Failing that, after SPAWN_TRIES
+  // candidates (1-3 rays per survivor each), the first whose middle at least is hidden; and when every one of them
+  // is in plain view (open ground, a team looking all ways) the farthest of those nobody is facing, or else the
+  // farthest. spawnsScreened / spawnsInView count those two fallbacks.
   // (forest: the most wooded of the candidates - dog packs come out of the trees)
   pickSpawnAround(x, z, humans, minD = HORDE_SPAWN_MIN, maxD = HORDE_SPAWN_MAX, forest = false) {
     const g = this.g;
     const w = g.world;
     const lim = MAP_HALF - 14;
+    const sight = this.sightRange();
     let best = null;
     let bestF = -1;
-    for (let tries = 0; tries < 18; tries++) {
+    let part = null;
+    let partF = -1;
+    let seen = null;
+    let seenD = -1;
+    this.spawnPicks++;
+    for (let tries = 0; tries < SPAWN_TRIES; tries++) {
       const a = g.rng() * Math.PI * 2;
       const d = minD + g.rng() * (maxD - minD);
       const sx = x + Math.sin(a) * d;
@@ -341,17 +424,41 @@ export class Zombies {
       if (Math.abs(sx) > lim || Math.abs(sz) > lim) continue;
       if (w.isDeepWater(sx, sz) || g.nav.isBlocked(sx, sz)) continue;
       let ok = true;
-      for (const h of humans) if (Math.hypot(h.state.x - sx, h.state.z - sz) < minD * 0.75) ok = false;
+      let md = Infinity; // distance to the nearest survivor
+      let faced = false; // some survivor is looking this way (forward is (-sin yaw, -cos yaw))
+      for (const h of humans) {
+        const s = h.state;
+        const hd = Math.hypot(s.x - sx, s.z - sz);
+        if (hd < minD * 0.75) ok = false;
+        if (hd < md) md = hd;
+        if ((s.x - sx) * Math.sin(s.yaw) + (s.z - sz) * Math.cos(s.yaw) > hd * SPAWN_VIEW_COS) faced = true;
+      }
       if (!ok) continue;
-      if (!forest) return { x: sx, z: sz };
-      const f = this.forestAt(sx, sz);
-      if (f > bestF) {
+      const f = forest ? this.forestAt(sx, sz) : 0;
+      if (f <= bestF) continue; // no more wooded than the hidden one in hand: not worth the rays
+      const v = this.spawnExposure(sx, sz, humans, sight);
+      if (v === 0) {
+        if (!forest) return { x: sx, z: sz };
         bestF = f;
         best = { x: sx, z: sz };
+        if (f >= FOREST_DENS) break;
+      } else if (v === 1) {
+        if (f > partF) {
+          partF = f;
+          part = { x: sx, z: sz };
+        }
+      } else {
+        if (!faced) md += 1000;
+        if (md > seenD) {
+          seenD = md;
+          seen = { x: sx, z: sz };
+        }
       }
-      if (f >= FOREST_DENS) break;
     }
-    return best || this.pickSpawnPoint(humans, minD);
+    if (best) return best;
+    if (part) this.spawnsScreened++;
+    else if (seen) this.spawnsInView++;
+    return part || seen || this.pickSpawnPoint(humans, minD);
   }
 
   // the night horde comes to wherever the survivors are
@@ -430,6 +537,19 @@ export class Zombies {
     const g = this.g;
     const humans = g.humans();
     this.humansCache = humans;
+    // Sweep the corpses before the hash is built: it stores indices into g.zombies, so a splice any later would
+    // leave everything that asks forNear this tick (a blast, a fire, a trap, the crowd's own spacing) looking at
+    // the wrong zombies, or at none.
+    const zs = g.zombies;
+    for (let i = zs.length - 1; i >= 0; i--) {
+      const z = zs[i];
+      if (!z.dead) continue;
+      z.deadT += dt;
+      if (z.deadT > 1.6) {
+        zs.splice(i, 1);
+        g.removeEntity(z);
+      }
+    }
     this.rebuildHash();
 
     // flow fields: refresh 2 per tick round-robin
@@ -440,8 +560,8 @@ export class Zombies {
       }
     }
 
-    // day population maintenance
-    if (g.phase === PHASE.DAY) {
+    // day population maintenance (not during the final stand: its zombies are counted, and need the room under the cap)
+    if (g.phase === PHASE.DAY && !g.escape.active) {
       this.maintainT -= dt;
       if (this.maintainT <= 0) {
         this.maintainT = 4;
@@ -483,18 +603,9 @@ export class Zombies {
 
     this.herds.update(dt, humans);
 
-    const zs = g.zombies;
     for (let i = zs.length - 1; i >= 0; i--) {
       const z = zs[i];
-      if (z.dead) {
-        z.deadT += dt;
-        if (z.deadT > 1.6) {
-          zs.splice(i, 1);
-          g.removeEntity(z);
-        }
-        continue;
-      }
-      this.updateOne(z, dt, humans);
+      if (!z.dead) this.updateOne(z, dt, humans);
     }
   }
 
@@ -610,7 +721,7 @@ export class Zombies {
       } else if (z.direct && dist < 12) {
         dx = tx - z.x;
         dz = tz - z.z;
-      } else if (g.nav.flowDir(target.id, z.x, z.z, _dir)) {
+      } else if (g.nav.flowDir(target.id, z.x, z.z, _dir, z.y)) {
         dx = _dir.x;
         dz = _dir.z;
       } else {
@@ -673,7 +784,7 @@ export class Zombies {
 
     // stop to attack
     let attacking = false;
-    if (target && z.state !== 7 && dist <= def.range + PLAYER_RADIUS && Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) {
+    if (target && z.state !== 7 && dist <= def.range + PLAYER_RADIUS && ((Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) || this.canReachUp(z, target))) {
       attacking = true;
       dx = tx - z.x;
       dz = tz - z.z;
@@ -702,6 +813,12 @@ export class Zombies {
       dx = z.detourX;
       dz = z.detourZ;
     }
+    // in the lake (see wadeOut): nothing else matters until it has climbed the bed back to the shallows
+    if (z.sunk && (z.sunk = deepWaterAt(w, z.x, z.z, z.y, 0.2, false))) {
+      dx = w.heightAt(z.x + 1, z.z) - w.heightAt(z.x - 1, z.z);
+      dz = w.heightAt(z.x, z.z + 1) - w.heightAt(z.x, z.z - 1);
+      attacking = false;
+    }
     let len = Math.hypot(dx, dz);
     if (len > 1e-4) {
       dx /= len;
@@ -710,6 +827,26 @@ export class Zombies {
     const moveSpeed = attacking ? 0 : len > 1e-4 ? speed : 0;
 
     this.integrate(z, dt, dx * moveSpeed, dz * moveSpeed, humans);
+
+    // boomer: it also detonates against what the survivors built. It cannot claw through a structure (structDmg 0),
+    // so brought to a stop by one with a survivor close behind it, it swells up and bursts there. blockStruct is only
+    // ever a player-built piece, never the static world; the range keeps a fence across the map from spending it;
+    // sliding along a fence toward its end is not being stopped. The longer windup is the survivors' cue to shoot
+    // it (then the piece only takes the blast) or step back.
+    if (def.breachHold && z.state === 0) {
+      const held = z.blockStruct && moveSpeed > 0 && dist < def.breachRange && Math.hypot(z.x - z.lastX, z.z - z.lastZ) < moveSpeed * dt * 0.5;
+      if (held) z.breachT += dt;
+      else z.breachT = Math.max(0, z.breachT - dt * 0.5);
+      if (z.breachT >= def.breachHold) {
+        z.breachT = 0;
+        z.breachId = z.blockStruct;
+        z.state = 1;
+        z.stateT = def.breachWindup;
+        z.stateAct = 99;
+        z.anim = ZANIM.SPECIAL;
+        g.sound(SOUND.BOOMER_GURGLE, z.x, z.y + 1.4, z.z, 30);
+      }
+    }
 
     // attack blocking structure
     if (!attacking && z.blockStruct && moveSpeed > 0 && def.structDmg > 0) {
@@ -919,6 +1056,29 @@ export class Zombies {
     return !c || (c.flags & COL.HUMANPASS && footprintContains(c, s.x, s.z));
   }
 
+  // melee reach at a survivor standing on something (a car roof, a dumpster), where the torso line above runs
+  // into the perch itself: the arms go up beside it and across at the survivor's shins, so what the survivor
+  // stands on is not in the way, and a wall or a ceiling between the two still is. Feet up to 2.5 m above the
+  // zombie's own are in reach: what a survivor gets onto with one hop off a barricade (1.15 + 0.9 jump + 0.45
+  // step), so the roof of a car, a pickup (1.9) or a tractor (2.2), and no camper (3.0), bus or building roof
+  // (2.7 and up). A short body stretches 0.75 m above its head at most: a dog gets at a car roof, not a truck's.
+  // slack: extra height allowed to a swing already on its way (the survivor jumped).
+  canReachUp(z, p, slack = 0) {
+    const s = p.state;
+    const up = s.y - z.y;
+    // feet within a step of the zombie's are on its own footing: the torso line alone decides
+    if (up < 0.5 || up > Math.min(2.5, z.def.height + 0.75) + slack) return false;
+    const w = this.g.world;
+    const oy = z.y + z.def.height * 0.55;
+    const ty = s.y + 0.35;
+    raycastWorld(w, z.x, oy, z.z, 0, ty > oy ? 1 : -1, 0, Math.abs(ty - oy), _ray);
+    if (_ray.col) return false;
+    const l = Math.hypot(s.x - z.x, s.z - z.z) || 1;
+    raycastWorld(w, z.x, ty, z.z, (s.x - z.x) / l, 0, (s.z - z.z) / l, l, _ray);
+    const c = _ray.col;
+    return !c || (c.flags & COL.HUMANPASS && footprintContains(c, s.x, s.z));
+  }
+
   integrate(z, dt, dvx, dvz, humans) {
     const g = this.g;
     const def = z.def;
@@ -961,9 +1121,9 @@ export class Zombies {
         _pos.z = h.state.z + (ddz / d) * min;
       }
     }
-    const hit = resolveBody(g.world, _pos, Math.min(rad, 0.65), def.height, false);
+    const hit = resolveBody(g.world, _pos, def.moveR ?? Math.min(rad, 0.65), def.moveH ?? def.height, false);
     z.blockStruct = hit && hit.flags & COL.STRUCT ? hit.id : 0;
-    if (g.world.isDeepWater(_pos.x, _pos.z)) {
+    if (deepWaterAt(g.world, _pos.x, _pos.z, z.y, 0.2, false) && !this.wadeOut(z, ox, oz)) {
       _pos.x = ox;
       _pos.z = oz;
     }
@@ -981,6 +1141,15 @@ export class Zombies {
     }
   }
 
+  // integrate is about to refuse a step into the lake. One that is already in it (dropped off a deck by a
+  // pounce, shoved off the edge) may take the step if it climbs the lake bed: it wades back to the shallows
+  // instead of standing on the bottom all night. updateOne steers it up the bed while z.sunk is set.
+  wadeOut(z, ox, oz) {
+    const w = this.g.world;
+    z.sunk = deepWaterAt(w, ox, oz, z.y, 0.2, false);
+    return z.sunk && w.heightAt(_pos.x, _pos.z) > w.heightAt(ox, oz);
+  }
+
   resolveHit(z) {
     const g = this.g;
     const def = z.def;
@@ -990,7 +1159,7 @@ export class Zombies {
       if (!p || !p.alive || p.zombie) return;
       const s = p.state;
       const d = Math.hypot(s.x - z.x, s.z - z.z);
-      if (d > def.range + PLAYER_RADIUS + 0.9 || Math.abs(s.y - z.y) > 2.5 || !this.canReach(z, p)) return;
+      if (d > def.range + PLAYER_RADIUS + 0.9 || ((Math.abs(s.y - z.y) > 2.5 || !this.canReach(z, p)) && !this.canReachUp(z, p, 0.9))) return;
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
@@ -1082,7 +1251,7 @@ export class Zombies {
       _pos.y = z.y;
       _pos.z = z.z + z.vz * dt;
       resolveBody(g.world, _pos, 0.35, 1.2, false);
-      if (!g.world.isDeepWater(_pos.x, _pos.z)) {
+      if (!deepWaterAt(g.world, _pos.x, _pos.z, z.y, 0.2, false)) {
         z.x = _pos.x;
         z.z = _pos.z;
       }
@@ -1206,10 +1375,16 @@ export class Zombies {
       // tank charge
       z.stateT -= dt;
       z.anim = ZANIM.RUN;
+      // the lake ahead and no deck over it: the charge pulls up at the edge instead of carrying it in
+      if (deepWaterAt(g.world, z.x + z.chargeX * 10 * dt, z.z + z.chargeZ * 10 * dt, z.y, 0.2, false)) {
+        z.chargeX = z.chargeZ = 0;
+        z.stateT = 0;
+      }
       _pos.x = z.x + z.chargeX * 10 * dt;
       _pos.y = z.y;
       _pos.z = z.z + z.chargeZ * 10 * dt;
-      const hit = resolveBody(g.world, _pos, 0.65, 2.5, false);
+      // the body it walks with (moveR / moveH): a charge at an open doorway carries on inside
+      const hit = resolveBody(g.world, _pos, def.moveR ?? 0.65, def.moveH ?? 2.5, false);
       z.x = _pos.x;
       z.z = _pos.z;
       z.y = groundAt(g.world, z.x, z.z, z.y, 0.2, false);
@@ -1432,10 +1607,14 @@ export class Zombies {
         z.specialCd = 3 + g.rng() * 2.5;
         break;
       }
-      case 99:
-        // boomer detonation
+      case 99: {
+        // boomer detonation. Bursting against a structure, that piece takes the brunt: the blast alone falls off so
+        // gently that a number big enough to open a wall would level its neighbours too
+        const s = z.breachId ? g.ents[z.breachId] : null;
+        if (s && s.kind === ENT.STRUCTURE && Math.hypot(s.x - z.x, s.z - z.z) < def.blastRadius) g.damageStructure(s, def.breachDmg);
         g.combat.killZombie(z, null, { explode: true });
         break;
+      }
     }
   }
 
@@ -1452,12 +1631,56 @@ export class Zombies {
       z.stateT -= dt;
       if (z.stateT <= 0) z.state = 0;
     }
+    if (z.state === BAT_SHUT_OUT && !target) z.state = 0;
+    // s a shut-out bat spends on a pass over the roofs (each bat its own: a flock does not come down as one)
+    const pass = 1.5 + (z.variant % 16) * 0.1;
     if (target && z.state !== 7) {
       const d3 = Math.hypot(tx - z.x, ty + 1.3 - z.y, tz - z.z);
       gx = tx + Math.sin(time * 2.1) * 1.5;
       gz = tz + Math.cos(time * 1.7) * 1.5;
       gy = d3 < 8 ? ty + 1.3 : Math.max(ty + 3, ground + 3.5);
-      if (d3 < 1.6 && z.attackCd <= 0 && this.canReach(z, target)) {
+      if (z.state === BAT_SHUT_OUT) {
+        // Something solid stopped it on the way in, and it has no path-finding. It wheels round the survivor instead:
+        // a tight pass high over the roofs (detourT), then a wider one low, between window height and the eaves, and
+        // round again. The moment it has a clear line - through a doorway or a window, down past the top of a wall
+        // with no roof over it, or because they stepped outside - it comes down it. A bite puts it back on the hunt.
+        z.detourT -= dt;
+        z.wanderT -= dt;
+        z.stateT -= dt;
+        if (z.detourT < -BAT_LOW_PASS && z.stateT <= 0 && z.wanderT <= 0) z.detourT = pass;
+        // Its own look, every third tick and not the whole flock at once (the one in updateOne, every 0.3 s, is too
+        // stale for a bat crossing the view through a window at full speed). None on the way up: a bat that was just
+        // stopped does not turn straight back into the same wall.
+        if (z.detourT < 0.8 && z.stateT <= 0 && dist < 30 && (g.tick + z.id) % 3 === 0 && this.batSees(z, tx, ty + 1.4, tz)) {
+          // it turns on the spot (round a slow curve it would be out of the view again) and commits for a while
+          z.stateT = 2.5;
+          z.detourT = Math.min(z.detourT, 0);
+          z.wanderT = 0;
+          const l = d3 || 1;
+          z.vx = ((tx - z.x) / l) * def.speed;
+          z.vy = ((ty + 1.3 - z.y) / l) * def.speed;
+          z.vz = ((tz - z.z) / l) * def.speed;
+        }
+        if (z.detourT > 0) {
+          gx = tx + Math.sin(time * 1.25) * 6;
+          gz = tz + Math.cos(time * 1.25) * 6;
+          gy = Math.max(ground, ty) + 7 + Math.sin(time) * 2;
+        } else if (z.stateT > 0) {
+          gx = tx;
+          gz = tz;
+          gy = ty + 1.3;
+        } else if (z.wanderT > 0) {
+          // (it could not climb: it is under a roof or an eave itself) off along the walls at door height
+          gx = z.x + z.detourX * 10;
+          gz = z.z + z.detourZ * 10;
+          gy = ground + 1.3;
+        } else {
+          gx = tx + Math.sin(time * 0.8) * 10;
+          gz = tz + Math.cos(time * 0.8) * 10;
+          gy = Math.max(ty + 2.8 + Math.sin(time * 0.7) * 1.8, ground + 1.5);
+        }
+      }
+      if (d3 < 1.6 && z.attackCd <= 0 && this.canReach(z, target) && !roofBetween(g.world, z.x, z.y + def.headY, z.z, tx, ty + 0.9, tz)) {
         z.attackCd = def.rate + g.rng() * 0.5;
         z.anim = ZANIM.ATTACK;
         z.animT = 0.4;
@@ -1489,6 +1712,9 @@ export class Zombies {
     z.vx += ((dx / l) * sp - z.vx) * k;
     z.vy += ((dy / l) * sp - z.vy) * k;
     z.vz += ((dz / l) * sp - z.vz) * k;
+    const px = z.x;
+    const py = z.y;
+    const pz = z.z;
     z.x += z.vx * dt;
     z.y += z.vy * dt + Math.sin(time * 9) * 0.03;
     z.z += z.vz * dt;
@@ -1497,9 +1723,186 @@ export class Zombies {
     z.z = Math.max(-lim, Math.min(lim, z.z));
     const gr = g.world.heightAt(z.x, z.z);
     if (z.y < gr + 0.6) z.y = gr + 0.6;
+    const hit = this.flyCollide(z, px, py, pz);
+    // held up: pressed against something it cannot get round (sliding along a wall is not being held up)
+    if (hit && Math.hypot(z.x - px, z.y - py, z.z - pz) < sp * dt * 0.3) z.stuckT += dt;
+    else z.stuckT = Math.max(0, z.stuckT - dt * 0.5);
+    const shut = z.state === BAT_SHUT_OUT;
+    if (z.state === 7 || (shut && z.detourT <= 0 && z.wanderT > 0)) {
+      // peeling off indoors, or off along the walls: turn the corner instead of hanging in it
+      if (z.stuckT > 0.15) {
+        z.stuckT = 0;
+        const t = z.detourX;
+        z.detourX = -z.detourZ;
+        z.detourZ = t;
+        // In a room it cannot get the distance that spaces its bites out in the open: it takes the time instead
+        // (not for ever: attackCd has been running down since the bite)
+        if (z.state === 7 && z.attackCd > -1.5) z.stateT += BAT_TURN;
+      }
+    } else if (!target) z.stuckT = 0;
+    else if (z.stuckT > 0.4) {
+      // on the hunt, low round the survivor or coming down a line: break off, up and over. Held up on the way up:
+      // off along the walls instead.
+      z.stuckT = 0;
+      z.state = BAT_SHUT_OUT;
+      z.stateT = 0;
+      if (shut && z.detourT > 0) {
+        z.detourT = 0;
+        z.wanderT = 2;
+        z.detourX = Math.sin(time * 2.4);
+        z.detourZ = Math.cos(time * 2.4);
+      } else z.detourT = pass;
+    }
     if (Math.hypot(z.vx, z.vz) > 0.3) z.yaw = turn(z.yaw, Math.atan2(-z.vx, -z.vz), dt * 6);
     if (z.animT <= 0) z.anim = ZANIM.WALK;
   }
+
+  // A clear line from a bat to a point on a survivor, roofs counted, and clear all the way there: hasLOS stops half
+  // a metre short, which is enough to see a survivor through the wall they are leaning on.
+  batSees(z, tx, ty, tz) {
+    const w = this.g.world;
+    const oy = z.y + z.def.headY;
+    if (roofBetween(w, z.x, oy, z.z, tx, ty, tz)) return false;
+    const dx = tx - z.x;
+    const dy = ty - oy;
+    const dz = tz - z.z;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    raycastWorld(w, z.x, oy, z.z, dx / l, dy / l, dz / l, l, _ray, COL.NOBLOCK | COL.NOBULLET);
+    return _ray.t < 0;
+  }
+
+  // Flight is stopped by everything solid: walls, floors and ceilings, props, tree trunks, player-built structures and
+  // roofs (roofBoxes). The bat flew from (px,py,pz) this tick: whatever it now overlaps puts it back on the side it
+  // came in from and takes the speed that carried it in, so it slides along a wall, over a roof or under a lintel
+  // instead of stopping dead. One small grid query per grid, nothing swept: a tick's flight (under half a metre) is
+  // shorter than the thinnest wall plus the bat's own width. Returns true if anything stopped it.
+  flyCollide(z, px, py, pz) {
+    const w = this.g.world;
+    const r = z.def.radius;
+    let any = false;
+    for (let pass = 0; pass < 3; pass++) {
+      let hit = false;
+      for (let gi = 0; gi < 3; gi++) {
+        // (a box is grown squarely: its corners reach r * sqrt 2 past the circle the grid tests)
+        const list = (gi === 0 ? w.staticGrid : gi === 1 ? w.structGrid : roofBoxes(w)).query(z.x, z.z, r * 1.42, _fq);
+        for (let i = 0; i < list.length; i++) {
+          const c = list[i];
+          if (c.flags & COL.NOBLOCK) continue;
+          // the body spans y - BAT_BELLY .. y + height, and is r wide: the collider grown by that much, against a point
+          const y0 = c.y0 - z.def.height;
+          const y1 = c.y1 + BAT_BELLY;
+          if (z.y <= y0 || z.y >= y1) continue;
+          const dx = z.x - c.x;
+          const dz = z.z - c.z;
+          let nx = 0;
+          let nz = 0;
+          if (c.type === CYL) {
+            const rr = c.r + r;
+            const d2 = dx * dx + dz * dz;
+            if (d2 >= rr * rr) continue;
+            if (py < y1 && py > y0) {
+              const pd = Math.hypot(px - c.x, pz - c.z);
+              if (pd < rr) continue; // it was already inside (spawned there): let it fly out
+              // out along the radius it is on (dead centre: the way it came)
+              const d = Math.sqrt(d2);
+              nx = d > 1e-4 ? dx / d : (px - c.x) / pd;
+              nz = d > 1e-4 ? dz / d : (pz - c.z) / pd;
+              z.x = c.x + nx * (rr + BAT_SKIN);
+              z.z = c.z + nz * (rr + BAT_SKIN);
+            }
+          } else {
+            const lx = c.c * dx - c.s * dz;
+            const lz = c.s * dx + c.c * dz;
+            const ex = c.hx + r;
+            const ez = c.hz + r;
+            if (Math.abs(lx) >= ex || Math.abs(lz) >= ez) continue;
+            if (py < y1 && py > y0) {
+              // which face it came in through: where it was, in the box's frame
+              const plx = c.c * (px - c.x) - c.s * (pz - c.z);
+              const plz = c.s * (px - c.x) + c.c * (pz - c.z);
+              const outX = Math.abs(plx) >= ex;
+              const outZ = Math.abs(plz) >= ez;
+              if (!outX && !outZ) continue; // it was already inside (spawned there): let it fly out
+              // (round a corner, both: the face it has gone the least way past)
+              let ox = lx;
+              let oz = lz;
+              if (outX && (!outZ || ex - Math.abs(lx) < ez - Math.abs(lz))) {
+                nx = plx > 0 ? 1 : -1;
+                ox = nx * (ex + BAT_SKIN);
+              } else {
+                nz = plz > 0 ? 1 : -1;
+                oz = nz * (ez + BAT_SKIN);
+              }
+              // back to world, as pushCircle does
+              z.x = c.x + c.c * ox + c.s * oz;
+              z.z = c.z - c.s * ox + c.c * oz;
+              const wx = c.c * nx + c.s * nz;
+              nz = -c.s * nx + c.c * nz;
+              nx = wx;
+            }
+          }
+          hit = true;
+          if (nx || nz) {
+            const vn = z.vx * nx + z.vz * nz;
+            if (vn < 0) {
+              z.vx -= vn * nx;
+              z.vz -= vn * nz;
+            }
+          } else if (py >= y1) {
+            // it came down onto it
+            z.y = y1;
+            if (z.vy < 0) z.vy = 0;
+          } else {
+            // it came up under it
+            z.y = y0;
+            if (z.vy > 0) z.vy = 0;
+          }
+        }
+      }
+      if (!hit) return any;
+      any = true;
+    }
+    // wedged between things that push it into each other: stay where it was
+    z.x = px;
+    z.y = py;
+    z.z = pz;
+    return true;
+  }
+}
+
+const BAT_SHUT_OUT = 8; // a bat's state, next to 0 (hunting) and 7 (peeling off after a bite): walls are in its way
+const BAT_LOW_PASS = 8; // s a shut-out bat spends low round the building between passes over the top
+const BAT_TURN = 0.25; // s each wall it meets adds to its peeling off after a bite
+const BAT_BELLY = 0.1; // how far a bat's body hangs below its position
+const BAT_SKIN = 0.001; // it is put back this far clear of a wall, so rounding never leaves it counted as inside
+const _fq = [];
+const _roofs = new WeakMap();
+
+// Gable roofs and shelter tops are drawn but have no collider (a collision box cannot slope), so a ray goes straight
+// through them. For bats each roof is a solid block from the eaves to the ridge over its footprint, the same box the
+// client keeps the rain out of (world.roofs). Built once per world.
+function roofBoxes(w) {
+  let grid = _roofs.get(w);
+  if (!grid) {
+    grid = new ColliderGrid(MAP_HALF + 20, 8);
+    for (const r of w.roofs) grid.add(makeBox(r.x, r.z, r.y, r.y + Math.abs(r.rise), r.hx * 2, r.hz * 2, Math.atan2(r.s, r.c)));
+    _roofs.set(w, grid);
+  }
+  return grid;
+}
+
+// is one of those roofs on the straight line between two points
+function roofBetween(w, ox, oy, oz, tx, ty, tz) {
+  let dx = tx - ox;
+  let dy = ty - oy;
+  let dz = tz - oz;
+  const l = Math.hypot(dx, dy, dz) || 1;
+  dx /= l;
+  dy /= l;
+  dz /= l;
+  const list = roofBoxes(w).query((ox + tx) / 2, (oz + tz) / 2, Math.hypot(tx - ox, tz - oz) / 2, _fq);
+  for (let i = 0; i < list.length; i++) if (rayCollider(list[i], ox, oy, oz, dx, dy, dz, l) >= 0) return true;
+  return false;
 }
 
 function turn(a, b, maxStep) {

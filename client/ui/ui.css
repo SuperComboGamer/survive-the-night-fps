@@ -3065,8 +3065,9 @@ body {
 }
 
 .stn-ui .sv {
+  position: relative;
   display: grid;
-  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto auto;
+  grid-template-columns: calc(16 * var(--u)) 1fr auto auto auto auto auto;
   align-items: center;
   gap: calc(7 * var(--u));
   padding: calc(3 * var(--u)) calc(6 * var(--u));
@@ -3113,6 +3114,59 @@ body {
 .stn-ui .sv.st-dead .sv-name {
   text-decoration: line-through;
   text-decoration-color: rgba(212, 42, 42, 0.8);
+}
+
+/* down: the one row somebody has to act on */
+.stn-ui .sv.st-downed {
+  background: rgba(157, 17, 23, 0.34);
+  color: var(--blood-lite);
+}
+
+.stn-ui .sv.st-downed .sv-st {
+  animation: stn-warnpulse 0.7s ease-in-out infinite;
+}
+
+/* the state in a word, for whoever is not on their feet (empty, and so no width, for the living) */
+.stn-ui .sv-tag {
+  font: max(8px, calc(9 * var(--u))) / 1.4 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stn-ui .sv-tag:not(:empty) {
+  padding: 0 calc(4 * var(--u));
+  border: 1px solid currentColor;
+}
+
+.stn-ui .sv.st-downed .sv-tag {
+  border-color: var(--blood-hi);
+  background: var(--blood-hi);
+  color: #fff;
+}
+
+/* health: a bar along the foot of the row, coloured at the same marks as the nameplates */
+.stn-ui .sv-hp {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: max(3px, calc(3 * var(--u)));
+  background: var(--bone-faint);
+}
+
+.stn-ui .sv-hp i {
+  display: block;
+  height: 100%;
+  background: var(--bone-2);
+  transform-origin: left;
+}
+
+.stn-ui .sv-hp.hurt i {
+  background: var(--amber);
+}
+
+.stn-ui .sv-hp.crit i {
+  background: var(--blood-lite);
 }
 
 .stn-ui .sv-radio {
@@ -3679,6 +3733,27 @@ body {
   margin-top: calc(5 * var(--u));
 }
 
+/* bulk crafting: what a click would add, on every recipe that can be made while Shift / Ctrl is held */
+.stn-ui .rc-bulk {
+  position: absolute;
+  right: calc(5 * var(--u));
+  bottom: calc(5 * var(--u));
+  padding: calc(3 * var(--u)) calc(5 * var(--u)) calc(2 * var(--u));
+  font: 700 max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  color: #14110e;
+  background: var(--amber);
+  pointer-events: none;
+}
+
+.stn-ui .rc-bulk.none {
+  color: var(--blood-lite);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.stn-ui .craft-hints {
+  flex: none;
+}
+
 .stn-ui .rc-station {
   position: absolute;
   top: calc(5 * var(--u));
@@ -3771,6 +3846,43 @@ body {
   opacity: 0.4;
 }
 
+/* what the item goes into and where more of it is found */
+.stn-ui .tip-notes {
+  margin-top: calc(10 * var(--u));
+  display: flex;
+  flex-direction: column;
+  gap: calc(7 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.35 var(--f-mono);
+  color: var(--bone-2);
+}
+
+.stn-ui .tip-note-h {
+  margin-bottom: calc(3 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+/* a line of names: it wraps between them, never inside one */
+.stn-ui .tip-phrase {
+  white-space: nowrap;
+}
+
+/* waits on a schematic the team has not found: dimmed, with the crafting list's padlock */
+.stn-ui .tip-phrase.locked {
+  color: var(--bone-dim);
+}
+
+.stn-ui .tip-note-lock svg {
+  display: inline;
+  width: auto;
+  height: 0.85em;
+  margin-right: 0.3em;
+  vertical-align: -0.08em;
+  color: #9cb4cf;
+}
+
 .stn-ui .tip-reqs {
   margin-top: calc(10 * var(--u));
   display: flex;
@@ -3831,6 +3943,14 @@ body {
   border-left-color: var(--blood-lite);
   background: rgba(157, 17, 23, 0.26);
   color: var(--blood-lite);
+}
+
+/* under an ingredient the player is short of: where to get it (indented to start under the ingredient's name) */
+.stn-ui .tip-req-src {
+  margin-bottom: calc(3 * var(--u));
+  padding: 0 calc(7 * var(--u)) 0 calc(2px + 39 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
+  color: var(--bone-2);
 }
 
 .stn-ui .tip-hint {
@@ -3969,20 +4089,30 @@ body {
   animation: stn-dropfall 5.5s calc(var(--d) + 7s) ease-in infinite;
 }
 
+/* the goal, the same on every visit... */
+.stn-ui .sp-goal {
+  margin: calc(52 * var(--u)) 0 0;
+  font: max(14px, calc(20 * var(--u))) / 1.3 var(--f-type);
+  letter-spacing: 0.05em;
+  color: var(--bone);
+  text-shadow: var(--shadow);
+}
+
+/* ...and under it, smaller, the tagline drawn for this one */
 .stn-ui .sp-tag {
-  margin: calc(58 * var(--u)) 0 0;
-  font: max(13px, calc(19 * var(--u))) / 1.3 var(--f-type);
+  margin: calc(9 * var(--u)) 0 0;
+  font: max(12px, calc(15.5 * var(--u))) / 1.3 var(--f-type);
   letter-spacing: 0.05em;
   color: var(--bone-2);
   text-shadow: var(--shadow);
-  opacity: 0.9;
+  opacity: 0.75;
 }
 
 .stn-ui .sp-join {
   display: flex;
   align-items: flex-end;
   gap: calc(14 * var(--u));
-  margin-top: calc(46 * var(--u));
+  margin-top: calc(40 * var(--u));
 }
 
 .stn-ui .sp-field {
@@ -4702,6 +4832,117 @@ body {
   color: var(--bone);
   min-width: 1.4em;
   animation: stn-pulse 1s ease-in-out infinite;
+}/* ---------- personal record: end screen panel, splash line, settings row */
+
+
+/* beside the body count rather than under it: the end screen is no taller for it */
+.stn-ui .end-panels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0 calc(18 * var(--u));
+}
+
+.stn-ui .er-tiles {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  gap: calc(4 * var(--u));
+}
+
+.stn-ui .er-tile {
+  display: flex;
+  flex-direction: column;
+  gap: calc(5 * var(--u));
+  padding: calc(7 * var(--u)) calc(9 * var(--u));
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.stn-ui .er-tile span,
+.stn-ui .er-tile small,
+.stn-ui .er-new small,
+.stn-ui .er-foot {
+  font: max(9.5px, calc(11 * var(--u))) / 1.2 var(--f-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .er-tile b {
+  font: 500 max(20px, calc(30 * var(--u))) / 1 var(--f-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.stn-ui .er-tile.new {
+  box-shadow: inset 0 2px 0 var(--sun);
+}
+
+.stn-ui .er-tile.new b {
+  color: var(--sun);
+}
+
+.stn-ui .er-new {
+  display: flex;
+  align-items: baseline;
+  gap: calc(9 * var(--u));
+  margin-top: calc(4 * var(--u));
+  padding: calc(5 * var(--u)) calc(9 * var(--u));
+  background: rgba(243, 217, 164, 0.09);
+  box-shadow: inset 2px 0 0 var(--sun);
+  font: 400 max(13px, calc(17 * var(--u))) / 1.2 var(--f-num);
+  color: var(--sun);
+}
+
+.stn-ui .er-new b {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.stn-ui .er-new small {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.stn-ui .er-foot {
+  margin-top: calc(10 * var(--u));
+}
+
+.stn-ui .er-note {
+  margin: 0;
+  font: max(11.5px, calc(14 * var(--u))) / 1.4 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .sp-record {
+  margin-top: calc(12 * var(--u));
+  font: max(11px, calc(13.5 * var(--u))) / 1.3 var(--f-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+  text-shadow: var(--shadow);
+}
+
+.stn-ui .sp-record b {
+  margin-right: 0.9em;
+  font-weight: 400;
+  color: var(--sun);
+}
+
+.stn-ui .set-rec .btn {
+  padding: calc(7 * var(--u)) calc(14 * var(--u));
+  font-size: max(10.5px, calc(12.5 * var(--u)));
+  letter-spacing: 0.16em;
+}
+
+.stn-ui .set-rec .btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.stn-ui .set-rec.armed .btn-danger {
+  border-color: var(--blood-lite);
+  color: #ff9d90;
 }/* ==================================================================== KEYFRAMES */
 
 

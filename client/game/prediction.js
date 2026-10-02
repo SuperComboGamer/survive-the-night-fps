@@ -3,7 +3,7 @@
 // they led to; the server only sends its own state back when that disagrees with its result (or something else
 // moved the player), and then the unacknowledged commands are replayed on top of it and the visual correction is
 // smoothed out over a few frames.
-import { CMD_DT, CMDS_PER_PACKET, CMDS_PER_PACKET_IDLE } from '../../shared/constants.js';
+import { CMD_DT, CMDS_PER_PACKET, CMDS_PER_PACKET_IDLE, STEP_HEIGHT } from '../../shared/constants.js';
 import { qangle16, dqangle16, qpitch, dqpitch, MAX_CMDS } from '../../shared/protocol.js';
 import { createPlayerState, copyPlayerState, simulatePlayer, hashPlayerState } from '../../shared/playersim.js';
 
@@ -20,6 +20,11 @@ export class Prediction {
     this.errX = 0;
     this.errY = 0;
     this.errZ = 0;
+    this.lag = 0; // height the camera still owes the steps the feet have taken (viewLag)
+    this.lagNew = 0; // the newest command's step: the render position is still blending into it
+    this.lagSeq = 0; // the newest command viewLag has looked at, and the feet as they stood after it
+    this.lagY = 0;
+    this.lagFoot = 0;
     this.slotRequest = 255;
     this.hasServerState = false;
     this.corrections = 0;
@@ -35,8 +40,10 @@ export class Prediction {
     this.slotRequest = slot;
   }
 
-  // advance fixed steps; returns number of commands generated
-  step(frameDt, buttons, yaw, pitch, onEvents) {
+  // advance fixed steps; returns number of commands generated.
+  // buffer (optional, an InputBuffer): has the last word on the buttons of each command, knowing the state it
+  // will run on. What it decides is the command: it is what gets simulated here, sent and replayed.
+  step(frameDt, held, yaw, pitch, onEvents, buffer) {
     if (!this.hasServerState) return 0;
     this.acc += Math.min(frameDt, 0.25);
     let n = 0;
@@ -45,8 +52,10 @@ export class Prediction {
       this.seq = (this.seq + 1) & 0xffff;
       const qy = qangle16(yaw);
       const qp = qpitch(pitch);
-      const cmd = { seq: this.seq, buttons, yaw: dqangle16(qy), pitch: dqpitch(qp), slot: this.slotRequest };
+      const cmd = { seq: this.seq, buttons: held, yaw: dqangle16(qy), pitch: dqpitch(qp), slot: this.slotRequest };
       this.slotRequest = 255;
+      if (buffer) cmd.buttons = buffer.shape(cmd, this.state, this.world);
+      const buttons = cmd.buttons;
       copyPlayerState(this.prev, this.state);
       const events = [];
       simulatePlayer(this.state, cmd, this.world, events);
@@ -108,6 +117,9 @@ export class Prediction {
     const first = !this.hasServerState;
     copyPlayerState(this.state, server);
     for (let i = 0; i < p.length; i++) simulatePlayer(this.state, p[i], this.world, null);
+    // a correction is not a step: viewLag carries on from the rebased feet
+    this.lagY = this.state.y;
+    this.lagFoot = this.footing(this.state);
     if (first) {
       this.hasServerState = true;
       copyPlayerState(this.prev, this.state);
@@ -122,6 +134,7 @@ export class Prediction {
       if (d2 > 9) {
         // teleport (respawn, huge knockback): no smoothing
         this.errX = this.errY = this.errZ = 0;
+        this.lag = this.lagNew = 0;
         copyPlayerState(this.prev, this.state);
       } else {
         this.errX += dx;
@@ -145,5 +158,40 @@ export class Prediction {
     out.y = this.prev.y + (this.state.y - this.prev.y) * a + this.errY;
     out.z = this.prev.z + (this.state.z - this.prev.z) * a + this.errZ;
     return out;
+  }
+
+  // what the feet stand on: 0 nothing (in the air), 1 the terrain, 2 something on it (a floor slab, a kerb, a crate)
+  footing(s) {
+    return !s.onGround ? 0 : s.y - this.world.heightAt(s.x, s.z) > 0.03 ? 2 : 1;
+  }
+
+  // How far below the simulated eye the camera should sit this frame (negative: above it). Call once a frame.
+  // The simulation lifts the feet onto anything up to STEP_HEIGHT within one command and drops them off it the same
+  // way, which has to stay so (it is what the server runs); drawn as it is, the whole view pops at every doorsill,
+  // kerb and porch. So the height of each such step is taken back out of the camera and handed over in ~100 ms.
+  // Only a step counts: on the ground before and after the command, and onto or off something standing on the
+  // terrain. The terrain itself is continuous however steep (lagging behind it would sink the view into every
+  // hillside), and a jump, a fall or a landing is never touched. Corrections stay out of it too (see reconcile).
+  // Camera only: renderPos stays where the feet are. max: the most the camera may be held below the eye (a
+  // crawling survivor's eye is not a step's height above the floor).
+  viewLag(dt, max = STEP_HEIGHT) {
+    const n = (this.seq - this.lagSeq) & 0xffff;
+    if (n) {
+      const s = this.state;
+      const p = this.prev;
+      const fp = this.footing(p);
+      const fs = this.footing(s);
+      // a frame that ran several commands: all but the newest are in the render position in full already
+      const add = n > 1 && this.lagFoot * fp > 1 ? p.y - this.lagY : 0;
+      this.lagNew = fp * fs > 1 ? s.y - p.y : 0;
+      // never more than one step behind: up a flight of them the camera keeps up with the feet
+      this.lag = Math.max(-STEP_HEIGHT, Math.min(STEP_HEIGHT, this.lag + add + this.lagNew));
+      this.lagSeq = this.seq;
+      this.lagY = s.y;
+      this.lagFoot = fs;
+    }
+    this.lag *= Math.exp(-dt * 10);
+    // renderPos is only `alpha` of the way into the newest command: the rest of its step is not on screen yet
+    return Math.min(this.lag, max) - this.lagNew * (1 - this.alpha);
   }
 }

@@ -437,6 +437,70 @@ export class GameRenderer {
     return THREE.DataUtils.fromHalfFloat(buf[0]);
   }
 
+  // Starts building the shader program of every material in the world scene, the viewmodel scene and the post
+  // passes this quality runs, without waiting for any of them (Game.prewarm): the driver compiles and links in
+  // the background (KHR_parallel_shader_compile) and only the first USE of a program waits for it. A program's
+  // cache key holds its scene's lights and fog and the colour space of the target it is drawn into, so each
+  // scene is compiled as itself and against the same kind of target as in render(), or these would be programs
+  // nobody uses.
+  compilePrograms() {
+    const r = this.renderer;
+    const p = this.passes;
+    const q = this.q;
+    r.setRenderTarget(this.rt);
+    r.compile(this.scene, this.camera);
+    r.compile(this.vmScene, this.vmCamera);
+    const mats = [this.lumMat, this.adaptMat];
+    if (q.bloom) mats.push(this.brightMat, this.blurMat);
+    if (this.rt.depthTexture) {
+      if (q.ao) mats.push(p.aoMat, p.aoBlur);
+      if (q.godrays) mats.push(p.maskMat, p.rayBlur, p.beamMat);
+      if (q.ao || q.godrays) mats.push(p.applyMat);
+    }
+    for (const m of mats) {
+      this.quad.material = m;
+      r.compile(this.postScene, this.postCamera);
+    }
+    this.quad.material = this.postMat;
+    r.setRenderTarget(null); // the final pass is the only one drawn to the canvas
+    r.compile(this.postScene, this.postCamera);
+  }
+
+  // The shadow passes draw each caster with a depth material of three's own, so their programs cannot be started
+  // through the casters' materials. A stand-in can: a depth material in the state WebGLShadowMap gives its own for
+  // that mesh (sides swapped, the texture and alpha test of the mesh's material), worn by the mesh for one
+  // compile(). Same cache key, so the shadow pass finds its program built. casters: the meshes that cast.
+  compileDepth(casters) {
+    const r = this.renderer;
+    if (!r.shadowMap.enabled) return;
+    const flip = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide };
+    this._depth ??= new Map(); // material -> its stand-in
+    const worn = casters.map((o) => {
+      const m = o.material;
+      if (Array.isArray(m)) return m; // (none today: its programs would be built by the warm frame instead)
+      let d = o.customDepthMaterial || this._depth.get(m);
+      if (!d) this._depth.set(m, (d = new THREE.MeshDepthMaterial()));
+      d.side = m.shadowSide ?? flip[m.side];
+      d.map = m.map;
+      d.alphaMap = m.alphaMap;
+      d.alphaTest = m.alphaTest;
+      o.material = d;
+      return m;
+    });
+    // three draws the casters outside any scene: the world's lights still count, its fog does not. So compile()
+    // gets the lights from the world scene, the materials from the casters alone and no fog from a bare scene.
+    const root = { traverseVisible: (f) => this.scene.traverseVisible(f), traverse: (f) => casters.forEach(f) };
+    r.setRenderTarget(this.rt);
+    r.compile(root, this.camera, (this._bare ??= new THREE.Scene()));
+    r.setRenderTarget(null);
+    casters.forEach((o, i) => (o.material = worn[i]));
+  }
+
+  /** false while a program is still being built in the background */
+  programsReady() {
+    return this.renderer.info.programs.every((p) => p.isReady());
+  }
+
   render(post, drawViewmodel = true) {
     const r = this.renderer;
     const u = this.postMat.uniforms;
@@ -449,7 +513,11 @@ export class GameRenderer {
     u.uExposure.value = post.exposure ?? 1;
     r.setRenderTarget(this.rt);
     r.autoClear = true;
+    // three resolves the MSAA target after every render into it. Only the world's depth is ever sampled
+    // (AO, sun shafts, beam), so the resolves after the in-place apply pass and the viewmodel are colour only.
+    this.rt.resolveDepthBuffer = this.rt.samples > 0;
     r.render(this.scene, this.camera);
+    this.rt.resolveDepthBuffer = false;
     this.stats.calls = r.info.render.calls;
     this.stats.tris = r.info.render.triangles;
     const q = this.q;

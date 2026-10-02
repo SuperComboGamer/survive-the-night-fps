@@ -21,8 +21,11 @@ import {
   WAVE_SPREAD,
   BOSS_EVERY,
   TANK_BOSS_NIGHT,
+  BOSS_WAVE,
+  BOSS_HP_PER_PLAYER,
   ESCAPE_TIME,
   ESCAPE_RADIUS,
+  ESCAPE_DRIVE_TIME,
   GAME_OVER_DELAY,
   PLAYER_MAX_HP,
   ZOMBIE_PLAYER_MAX_HP,
@@ -38,15 +41,24 @@ import {
   FLASHLIGHT_RECHARGE,
   SLOT_PRIMARY,
   SLOT_PISTOL,
+  SLOT_MELEE,
   SLOT_THROW,
   SLOT_BUILD,
   INVENTORY_SIZE,
   PLAYER_RADIUS,
+  PLAYER_HEIGHT,
+  WATER_LEVEL,
+  STEP_HEIGHT,
   DOWN_TIME,
   REVIVE_TIME,
   REVIVE_HP,
+  DAWN_RETURN,
   SEARCH_TIME,
   ENGINE_START_TIME,
+  INTERACT_REACH,
+  PICK_RADIUS,
+  INTERACT_SLACK,
+  HOLD_SLACK,
   EYE_HEIGHT,
   MAP_HALF,
   HORDE_SPAWN_MIN,
@@ -70,6 +82,7 @@ import {
   RECIPES,
   STRUCT,
   STRUCT_DEFS,
+  structPickRadius,
   REPAIR_COST,
   CAMPFIRE_FUEL,
   CAMPFIRE_MAX_FUEL,
@@ -99,16 +112,28 @@ import {
 import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
-import { makeBox, COL, footprintContains, groundAt, overlapBoxes, canReach } from '../shared/collision.js';
+import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
+import { nightTheme } from '../shared/nights.js';
 import { Nav } from './nav.js';
-import { ClientView, writeEntities } from './snapshot.js';
+import { ClientView, writeEntities, stageEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Combat } from './combat.js';
+import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T_UPKEEP, T_SNAPSHOTS } from './tickstats.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
+// The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
+// waves do. Balance numbers, a first pass:
+const FINAL_STAND_SIZE = 1.25; // its zombies, as a multiple of that night's horde (the ones that join at the start count)
+const FINAL_STAND_ALIVE = 0.6; // at most this share of them is on its feet at once
+const FINAL_STAND_SPREAD = ESCAPE_TIME - 30; // seconds they set out over: a walker needs the last 30 of the warm-up to reach the car
+const FINAL_STAND_TANKS = 1; // Tanks among them, per survivor (the boss comes on top)
+const FINAL_STAND_JOIN_RANGE = 95; // wanderers this close to a survivor join the stand (the same reach as at nightfall)
+// The escape is the team's to make (the radius and the hold are ESCAPE_RADIUS and ESCAPE_DRIVE_TIME in constants.js).
+// Also a first pass:
+const ESCAPE_LINGER_PACE = 0.5; // once the engine is warm, groups keep coming at this share of the stand's pace until someone drives
 const NO_HASH = -2; // a command packet that came without a state fingerprint
 const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE; // commands a client issues per server tick
 const CMD_QUEUE_MAX = 24; // commands a client can have waiting (0.4 s of them); older ones are dropped
@@ -118,7 +143,50 @@ const CAR_ALARM_MIN_ZOMBIES = 6;
 const CAR_ALARM_MAX_ZOMBIES = 7;
 const CAR_ALARM_SPAWN_MIN = 62;
 const CAR_ALARM_SPAWN_MAX = 86;
+// A stack a survivor put down on purpose (ACT.DROP_SLOT) is theirs to leave lying: walking over it does not put it
+// back in their backpack until they have been this far from it. A teammate's feet, and their own [E], take it as usual.
+const DROP_LEAVE_DIST = 3;
+// seconds between two "no room for that" notices to a survivor whose full backpack keeps leaving things on the ground
+const FULL_NOTICE_EVERY = 6;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
+// Someone who joins a run in progress is put down beside the team (pickJoinSpawn): JOIN_NEAR_MIN..MAX metres from a
+// teammate, at whichever of JOIN_TRIES spots around them is furthest from the dead (nothing within JOIN_CLEAR is
+// as good as it gets). If even that one has a zombie within JOIN_LAP, the ring out to JOIN_FAR_MAX is tried too.
+const JOIN_NEAR_MIN = 2.5;
+const JOIN_NEAR_MAX = 9;
+const JOIN_FAR_MAX = 22;
+const JOIN_TRIES = 48;
+const JOIN_CLEAR = 15;
+const JOIN_LAP = 6;
+const LEFT_KITS_MAX = 64; // kits remembered for players who left this run (parkKit)
+// What a survivor starts with. Day 1's kit is the opening hand; someone who joins on a later day gets a little more
+// 9mm, bandages and light for each day gone by (first-pass numbers): enough to be of use that night, well short of
+// what those days of scavenging turn up - no primary, no armour, no medkit, nothing to throw.
+const STARTER_TOOLS = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER]; // by weapon slot
+function starterKit(day = 1) {
+  const d = Math.max(0, day - 1);
+  return {
+    mag: WEAPONS[ITEM.PISTOL].mag,
+    ammo: Math.min(AMMO_MAX[AMMO.P9], 36 + 24 * d), // 9mm in reserve
+    items: [
+      [ITEM.BANDAGE, 2 + Math.min(3, d)],
+      [ITEM.TORCH, d ? 2 : 1],
+      [ITEM.WOOD, 6],
+      [ITEM.NAILS, 8],
+      [ITEM.STICK, 4],
+      [ITEM.CLOTH, 1],
+    ],
+  };
+}
+// A loose drop is an entity every client in range has to be told about, so there is a ceiling on them: once this
+// many lie around the valley, each new one takes the place of the oldest (spawnItem). Car supplies, schematics
+// and walkie-talkies never despawn and are not counted. (A whole lobby dying with full packs is under 300.)
+const MAX_DROPS = 400;
+// Coming and going. An address may join twice the lobby in one go, then once every JOIN_EVERY seconds: more than
+// a household reloading its browsers gets near (admitJoin). The join / leave chat lines of everybody together
+// get two lobbies' worth, then one every GREET_EVERY seconds; past that, players come and go unannounced.
+const JOIN_EVERY = 4;
+const GREET_EVERY = 10;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only.
@@ -163,6 +231,15 @@ const CRATE_TABLE = [
   [ITEM.POWDER, 3, 5, 10],
 ];
 
+// What a player who died comes back with at dawn (returnFallen), next to the tools every survivor has (pistol,
+// knife, hammer): the magazine in the pistol and one bandage. Enough for a daytime walk back to where they fell;
+// nothing to hold a night with. Against the starting kit that is 36 rounds, a bandage, the torch and two
+// barricades' worth of wood and nails short - and everything they had found lies where they died (dropAll), for
+// 240 s: still there at sunrise after a death in the night, gone after one earlier in the day unless a teammate
+// picked it up. First-pass numbers. The shape is a starting kit's: rounds in the pistol, 9mm in reserve, pack items.
+// They are put down beside the team, where a late joiner would be (pickJoinSpawn).
+const RETURN_KIT = { mag: WEAPONS[ITEM.PISTOL].mag, ammo: 0, items: [[ITEM.BANDAGE, 1]] };
+
 const randomSeed = () => (Math.random() * 0x7fffffff) | 0;
 
 export class Game {
@@ -176,6 +253,8 @@ export class Game {
     this.startDayNum = opts.startDay || 1;
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
     this.debugCommands = !!opts.debugCommands; // testing only: /kill /night /day /give /items /spawn /tp chat commands
+    this.dawnReturn = opts.dawnReturn ?? DAWN_RETURN; // the dead are survivors again at sunrise (the option: tests)
+    this.themes = opts.themes !== false; // night themes (shared/nights.js). false: every night is plain (tests, benchmarks)
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.setWorld(opts.seed ?? randomSeed());
     this.rng = mulberry32(this.seed ^ 0xabcdef);
@@ -189,8 +268,13 @@ export class Game {
 
     this.sessions = new Set();
     this.players = new Map(); // id -> player
+    this.joins = new Map(); // address -> its join allowance (see allow)
+    this.greets = { n: 0, t: 0 }; // the allowance of join / leave chat lines
     this.zombies = [];
     this.items = [];
+    this.maxDrops = opts.maxDrops ?? MAX_DROPS;
+    this.drops = 0; // loose drops lying around (items with e.drop)
+    this.dropSeq = 0;
     this.structures = [];
     this.projectiles = [];
     this.areas = [];
@@ -207,22 +291,25 @@ export class Game {
     this.supplies = [0, 0, 0, 0, 0]; // installed per SUPPLIES entry
     this.supplyHints = [255, 255, 255, 255, 255, 255, 255]; // zones: 4 parts + 3 jerry cans
     this.unlocked = 0; // schematics bitmask
+    this.fallen = new Set(); // names of players who left dead since the last sunrise (removePlayer, handleJoin)
     this.waves = [];
     this.wave = 0;
     this.bossPending = null;
     this.bossId = 0;
     this.warned = false;
     this.shadeWarned = false; // the "a shade is out there" notice went out tonight
-    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false };
+    this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
     this.supplyAt = [];
     this.restartT = 0;
     this.globalDirty = true;
     this.playersDirty = true;
     this.playersListT = 0;
     this.gather = new Map(); // collider -> {left, day}
+    this.leftKits = new Map(); // name -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
     this.lootPoints = [];
+    this.dropper = 0; // the survivor putting a stack down right now (ACT.DROP_SLOT), for spawnItem to note on the item
     this.w = new Writer(1 << 16);
     this.ew = new Writer(1 << 14);
     this.events = [];
@@ -231,14 +318,18 @@ export class Game {
     this.cm = new Cats(this);
     this.combat = new Combat(this);
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
+    this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
   }
 
   // ---------------------------------------------------------------- entity registry
+  // Returns null when every id is in use (or resting in quarantine): callers have to cope with that.
   spawnEntity(e) {
     let id;
     if (this.freeIds.length) id = this.freeIds.pop();
     else if (this.nextId < MAX_ENTITIES) id = this.nextId++;
-    else return null;
+    // (the id check is a backstop: an entity whose id is not a slot of the registry mis-frames every snapshot
+    // it is written into, for every client)
+    if (!Number.isInteger(id) || id <= 0 || id >= MAX_ENTITIES) return null;
     this.gens[id] = (this.gens[id] + 1) >>> 0 || 1;
     e.id = id;
     e.gen = this.gens[id];
@@ -250,6 +341,9 @@ export class Game {
   removeEntity(e) {
     if (e.removed) return;
     e.removed = true;
+    // only the holder of a slot gives its id back: an entity that never got one (spawnEntity returned null) would
+    // put `undefined` into the free list, and the next thing spawned would take that as its id
+    if (this.ents[e.id] !== e) return;
     this.ents[e.id] = null;
     this.quarantine.push(e.id, this.tick + 60);
     const i = this.all.indexOf(e);
@@ -381,6 +475,25 @@ export class Game {
     }
   }
 
+  // A rate allowance: a.n is how much of it was used lately, wearing off by one every `every` seconds (a.t: when
+  // that was last worked out). Uses one more unless that would take it past `burst`.
+  allow(a, burst, every) {
+    a.n = Math.max(0, a.n - (this.time - a.t) / every);
+    a.t = this.time;
+    if (a.n + 1 > burst) return false;
+    a.n++;
+    return true;
+  }
+  // May this session's address join now? (JOIN_EVERY; an allowance that has worn off is forgotten in update)
+  admitJoin(session) {
+    let a = this.joins.get(session.ip);
+    if (!a) this.joins.set(session.ip, (a = { n: 0, t: this.time, refused: false }));
+    const ok = this.allow(a, 2 * this.maxPlayers, JOIN_EVERY);
+    if (!ok && !a.refused) this.log(`join refused: too many in a row from ${session.ip || 'one address'}`);
+    a.refused = !ok;
+    return ok;
+  }
+
   handleJoin(session, r) {
     if (session.player) return;
     const version = r.u8();
@@ -393,13 +506,19 @@ export class Game {
     };
     if (version !== PROTOCOL_VERSION) return reject(REJECT_REASON.VERSION);
     if (this.players.size >= this.maxPlayers) return reject(REJECT_REASON.FULL);
+    if (!this.admitJoin(session)) return reject(REJECT_REASON.FULL); // (the one "try again later" the client knows)
     // unique names
     const names = new Set([...this.players.values()].map((p) => p.name));
     let base = name;
     let k = 2;
     while (names.has(name)) name = `${base.slice(0, 13)}#${k++}`;
+    // an emptied server rolls its next valley on the tick after (resetToWaiting): a join that beats that tick
+    // rolls it here, so the seed in WELCOME is the one this run is played on
+    if (this.phase === PHASE.WAITING) this.rollWorld();
 
     const p = this.createPlayer(session, name);
+    // no entity id left for them: turned away like from a full server, to try again once ids have come back
+    if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
     const w = new Writer(64);
     w.u8(S2C.WELCOME);
@@ -410,9 +529,24 @@ export class Game {
     w.u8(this.maxPlayers);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
-    else this.spawnHuman(p);
+    else if (this.fallen.delete(p.name) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+      // died in this run and came back in before sunrise: they are what they were, and wait for dawn with the rest
+      // of the dead - a reload is no way round a death. (A JOIN carries nothing but a name, so under another name
+      // they are a newcomer: closing that takes an identity in the join message.) The kit parked under their name
+      // stays where it is: the dead carry nothing, and returnFallen replaces it at sunrise.
+      this.spawnPlayerZombie(p);
+      this.sendChat(p, 0, CHATF.SYSTEM, `You died in this run: you are one of them ${this.escape.active ? 'to the end of it' : 'until dawn'}.`);
+    } else {
+      // a run in progress: beside the team, with a kit for the day - or, back in the run they left, with what they
+      // left with (parkKit)
+      const left = this.leftKits.get(p.name);
+      this.leftKits.delete(p.name);
+      this.spawnHuman(p, left || starterKit(this.day), true);
+      if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
+    }
     this.notify(NOTIFY.PLAYER_JOINED, p.id);
-    this.systemChat(`${p.name} joined the survivors.`);
+    p.greeted = this.allow(this.greets, 2 * this.maxPlayers, GREET_EVERY);
+    if (p.greeted) this.systemChat(p.zombie ? `${p.name} is back among the dead.` : `${p.name} joined the survivors.`);
     this.playersDirty = true;
     this.globalDirty = true;
     this.log(`join ${p.name} (${this.players.size}/${this.maxPlayers})`);
@@ -438,6 +572,7 @@ export class Game {
       respawnT: 0,
       inv: createInventory(),
       invDirty: true,
+      kit: null, // the starting kit they were issued (spawnHuman)
       flashlight: false,
       battery: FLASHLIGHT_MAX,
       lastDamageT: -99,
@@ -467,6 +602,8 @@ export class Game {
       interactT: 0,
       actionT: 0,
       pingT: 0,
+      fullT: -99, // when they were last told their backpack had no room for something lying there (updateItems)...
+      partFullT: -99, // ...and when that something was a car supply
       pinnedBy: 0,
       ropedBy: 0,
       ping: 0,
@@ -481,19 +618,47 @@ export class Game {
         return this.state.z;
       },
     };
-    this.spawnEntity(p);
+    // (a player without an id must never get into `players`: it would sit there under the key `undefined`)
+    if (!this.spawnEntity(p)) return null;
     this.players.set(p.id, p);
     return p;
   }
 
+  // A leaver takes what is left of their starting kit with them - never more of anything than they were issued - and
+  // gets exactly that back if they rejoin this run under the same name. Only what they found on top of it is dropped
+  // for the team. Dropping the kit and issuing a fresh one on the way back in would let a reconnect loop pile rounds
+  // and bandages up at the team's feet, and refill anyone who had used theirs up (or lost them by dying).
+  // The name is all a JOIN identifies a player by: under a new one they are a newcomer.
+  parkKit(p) {
+    const kit = p.kit;
+    if (!kit) return;
+    const s = p.state;
+    const left = { mag: 0, ammo: 0, items: [] };
+    const gone = p.zombie || !p.alive; // the dead dropped theirs where they fell
+    if (!gone) {
+      left.ammo = Math.min(s.ammo[AMMO.P9], kit.ammo);
+      s.ammo[AMMO.P9] -= left.ammo;
+      if (s.weapons[SLOT_PISTOL] === ITEM.PISTOL) left.mag = Math.min(s.mags[1], kit.mag);
+      // (the pistol, knife and hammer everyone starts with: a rejoin brings its own)
+      for (const slot of [SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD]) if (s.weapons[slot] === STARTER_TOOLS[slot]) s.weapons[slot] = 0;
+    }
+    for (const [item, n] of kit.items) left.items.push([item, gone ? 0 : removeItem(p.inv, item, n)]);
+    this.leftKits.delete(p.name);
+    this.leftKits.set(p.name, left);
+    if (this.leftKits.size > LEFT_KITS_MAX) this.leftKits.delete(this.leftKits.keys().next().value); // (the oldest)
+  }
+
   removePlayer(p) {
     this.releaseHolds(p);
+    this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
     this.dropAll(p);
     this.players.delete(p.id);
     this.nav.removeField(p.id);
+    if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(p.name); // left dead: dead if they rejoin before sunrise (handleJoin)
     this.removeEntity(p);
     this.notify(NOTIFY.PLAYER_LEFT, 0);
-    this.systemChat(`${p.name} left.`);
+    // (whoever arrived unannounced leaves unannounced; an announced one always gets their line, and it counts)
+    if (p.greeted && this.allow(this.greets, Infinity, GREET_EVERY)) this.systemChat(`${p.name} left.`);
     this.playersDirty = true;
     this.log(`leave ${p.name} (${this.players.size}/${this.maxPlayers})`);
     if (this.players.size === 0) this.resetToWaiting();
@@ -540,9 +705,12 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- game flow
+  // The last player has left. This runs inside their socket's close callback, so the next valley is not rolled
+  // here: generating one blocks the thread for a few hundred ms (seconds on a loaded machine), and the socket
+  // would stay open that long. The played world stays, cleared, until the next tick rolls its successor (update),
+  // or the next join if that comes first (handleJoin).
   resetToWaiting() {
     this.clearWorld();
-    this.rollWorld();
     this.phase = PHASE.WAITING;
     this.day = 0;
     this.globalDirty = true;
@@ -556,6 +724,7 @@ export class Game {
     }
     this.zombies.length = 0;
     this.items.length = 0;
+    this.drops = 0;
     this.structures.length = 0;
     this.projectiles.length = 0;
     this.areas.length = 0;
@@ -565,10 +734,12 @@ export class Game {
     this.cats.length = 0;
     this.waves = [];
     this.wave = 0;
+    this.fallen.clear();
     this.bossPending = null;
     this.bossId = 0;
     this.gather.clear();
-    this.escape = { active: false, t: 0, ready: false, spawnT: 0, boss: false };
+    this.leftKits.clear();
+    this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
   }
 
   startGame() {
@@ -612,7 +783,10 @@ export class Game {
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
-    for (const p of this.players.values()) this.spawnHuman(p);
+    for (const p of this.players.values()) {
+      p.kills = p.zkills = p.deaths = 0; // the scoreboard counts this run only: whoever stayed on from the last one starts level
+      this.spawnHuman(p);
+    }
     this.notify(NOTIFY.NEW_GAME, this.day);
     this.globalDirty = true;
     this.playersDirty = true;
@@ -648,19 +822,82 @@ export class Game {
     });
   }
 
-  spawnHuman(p) {
+  // Where someone who joins a run in progress is put down: beside the team instead of alone at the car, which by
+  // then can be 250 m and a horde away from anyone. null = the car will do: nobody alive to join, or the team is
+  // within clear earshot of it anyway (day 1 before anyone has set off).
+  pickJoinSpawn(p) {
+    // the team: the survivor with the most others within earshot (one on their feet before one who is down)
+    let a = null;
+    let most = -1;
+    for (const q of this.players.values()) {
+      if (q === p || !q.alive || q.zombie) continue;
+      let n = q.downed ? 0 : 0.5;
+      for (const o of this.players.values()) if (o !== q && o !== p && o.alive && !o.zombie && Math.hypot(o.state.x - q.state.x, o.state.z - q.state.z) < TALK_RANGE) n++;
+      if (n > most) {
+        most = n;
+        a = q.state;
+      }
+    }
+    const w = this.world;
+    if (!a || Math.hypot(a.x - w.car.x, a.z - w.car.z) < TALK_CLEAR) return null;
+    const ay = groundAt(w, a.x, a.z, a.y, PLAYER_RADIUS * 0.7);
+    const dead = []; // zombies and player-zombies that could be near a spot
+    for (const z of this.zombies) if (!z.dead && Math.hypot(z.x - a.x, z.z - a.z) < JOIN_FAR_MAX + JOIN_CLEAR) dead.push(z);
+    for (const q of this.players.values()) if (q.zombie && q.alive) dead.push(q.state);
+    const lim = MAP_HALF - 3;
+    const body = { x: 0, y: 0, z: 0 };
+    const a0 = this.rng() * Math.PI * 2;
+    let spot = null;
+    let far = -1;
+    // right beside them; only if the dead are all over that ground, a little further out
+    for (const [r0, r1] of [[JOIN_NEAR_MIN, JOIN_NEAR_MAX], [JOIN_NEAR_MAX, JOIN_FAR_MAX]]) {
+      for (let k = 0; k < JOIN_TRIES; k++) {
+        const ang = a0 + ((k + this.rng()) / JOIN_TRIES) * Math.PI * 2;
+        const d = r0 + this.rng() * (r1 - r0);
+        const x = a.x + Math.sin(ang) * d;
+        const z = a.z + Math.cos(ang) * d;
+        if (Math.abs(x) > lim || Math.abs(z) > lim || this.nav.isBlocked(x, z)) continue;
+        // somewhere to stand: on the teammate's level (not down a bank, not up on a counter), dry, with room for a
+        // body clear of every wall, prop, tree and built structure...
+        const y = groundAt(w, x, z, ay, PLAYER_RADIUS * 0.7);
+        if (Math.abs(y - ay) > 1 || y < WATER_LEVEL) continue;
+        body.x = x;
+        body.y = y;
+        body.z = z;
+        if (resolveBody(w, body, PLAYER_RADIUS, PLAYER_HEIGHT)) continue;
+        // ...and a straight walk to the teammate: no wall, barricade or door boards in between
+        if (!this.zm.clearLine(x, y + 0.6, z, a.x, ay + 0.6, a.z)) continue;
+        // out of the fight if there is such a spot: the one furthest from the nearest of the dead
+        let near = JOIN_CLEAR;
+        for (const e of dead) near = Math.min(near, Math.hypot(e.x - x, e.z - z));
+        if (near > far) {
+          far = near;
+          spot = { x, y, z, yaw: Math.atan2(-(a.x - x), -(a.z - z)) }; // facing the teammate
+        }
+      }
+      if (far >= JOIN_LAP) break;
+    }
+    // nowhere around them (a closet, a ledge): the teammate's own spot is good by construction - players do not
+    // collide with each other
+    return spot || { x: a.x, y: a.y, z: a.z, yaw: a.yaw };
+  }
+
+  // kit: what they start with (starterKit, or what a returning player left with); beside: put them with the team
+  // if there is one to join. A respawn into a run in progress would pass both, as handleJoin does.
+  spawnHuman(p, kit = starterKit(), beside = false) {
     const s = p.state;
     const fresh = createPlayerState();
     Object.assign(s, fresh);
-    s.weapons = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER];
-    s.mags = [0, 12];
-    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? 36 : 0));
+    s.weapons = STARTER_TOOLS.slice();
+    s.mags = [0, kit.mag];
+    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? kit.ammo : 0));
     const sp = this.world.spawnPoints[Math.floor(this.rng() * this.world.spawnPoints.length)];
     s.x = sp.x + (this.rng() - 0.5) * 1.5;
     s.z = sp.z + (this.rng() - 0.5) * 1.5;
     s.y = groundAt(this.world, s.x, s.z, 50, 0.3);
     const car = this.world.car;
     s.yaw = Math.atan2(-(car.x - s.x), -(car.z - s.z)) + Math.PI; // back to the car, facing the road
+    if (beside) Object.assign(s, this.pickJoinSpawn(p)); // (x, y, z, yaw - or nothing: the car it is)
     p.hp = PLAYER_MAX_HP;
     p.maxHp = PLAYER_MAX_HP;
     p.armor = 0;
@@ -678,12 +915,8 @@ export class Game {
     p.useItem = null;
     p.hold = null;
     p.inv = createInventory();
-    addItem(p.inv, ITEM.BANDAGE, 2);
-    addItem(p.inv, ITEM.TORCH, 1);
-    addItem(p.inv, ITEM.WOOD, 6);
-    addItem(p.inv, ITEM.NAILS, 8);
-    addItem(p.inv, ITEM.STICK, 4);
-    addItem(p.inv, ITEM.CLOTH, 1);
+    for (const [item, n] of kit.items) addItem(p.inv, item, n);
+    p.kit = kit; // what they were handed: it goes with them if they leave the game (parkKit)
     p.invDirty = true;
     this.fillHistory(p);
     this.playersDirty = true;
@@ -714,6 +947,29 @@ export class Game {
     this.playersDirty = true;
   }
 
+  // Sunrise, with DAWN_RETURN on: every player who died since the last one - risen as a zombie, or still lying
+  // where they fell - is a survivor again, beside the team, with RETURN_KIT in place of the starting kit. The night
+  // they died is still the night they hunted. The final stand stops the clock, so there is no dawn in it: a death
+  // there lasts to the end of the run.
+  returnFallen() {
+    // Whoever left dead has sat the night out. If they come back into this run now, they are a survivor, with what
+    // the dead who stayed wake with: handleJoin hands back the kit parked under their name (parkKit left it empty),
+    // so waiting out a death offline is neither better nor worse than waiting it out as a zombie.
+    for (const name of this.fallen) if (this.leftKits.has(name)) this.leftKits.set(name, RETURN_KIT);
+    this.fallen.clear();
+    // Nobody alive to come back to: a wipe is a loss, never a second chance. checkAllDead ends the run on the death
+    // that leaves nobody standing, in the tick it happens, so the clock does not reach dawn in that state - this
+    // is that rule, stated again where the dead come back.
+    if (!this.humans().length) return;
+    for (const p of this.players.values()) {
+      if (p.alive && !p.zombie) continue;
+      this.spawnHuman(p, RETURN_KIT, true); // beside the team, as a late joiner is (pickJoinSpawn)
+      const s = p.state;
+      this.notify(NOTIFY.RETURNED, p.id);
+      this.sound(SOUND.REVIVE, s.x, s.y + 1, s.z, 30);
+    }
+  }
+
   fillHistory(e) {
     for (let i = 0; i < 16; i++) {
       e.hx[i] = e.x;
@@ -729,6 +985,12 @@ export class Game {
     for (let i = 0; i < n; i++) this.supplyAt.push(len * (0.2 + (i + this.rng()) * (0.6 / n))); // timeLeft thresholds
   }
 
+  // How many of the dead night n brings for this many survivors. The final stand is sized from the same number
+  // (finalStandSize), so a change here moves both.
+  hordeSize(n, humans) {
+    return Math.round((10 + 6 * n + 1.3 * n * n) * (0.6 + 0.4 * humans));
+  }
+
   // Night N: the horde comes in waves to wherever the survivors are. Bigger, tougher and nastier every night.
   startNight() {
     this.phase = PHASE.NIGHT;
@@ -737,11 +999,12 @@ export class Game {
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
     const n = this.day;
     const humans = Math.max(1, this.humanCount());
-    const pf = 0.6 + 0.4 * humans;
-    const total = Math.round((10 + 6 * n + 1.3 * n * n) * pf);
+    const total = this.hordeSize(n, humans);
     const shares = [0.3, 0.33, 0.37];
     const scale = this.nightLen / NIGHT_LENGTH;
-    const shadeCap = Math.min(6, 1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2));
+    // tonight's theme re-weights the blend below (the client works out the same theme from the seed to warn the team)
+    const theme = this.themes ? nightTheme(this.seed, n) : null;
+    const shadeCap = Math.min(6, (1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2)) * (theme?.shadeCap ?? 1));
     let shades = 0;
     this.waves = [];
     for (let k = 0; k < NIGHT_WAVES; k++) {
@@ -759,6 +1022,7 @@ export class Game {
         [ZTYPE.TANK, n >= 4 ? (1 + n * 0.3) * (0.5 + sp) : 0],
         [ZTYPE.SHADE, n >= 2 ? 2.5 + sp * 2.5 : 0],
       ];
+      if (theme) for (const wt of weights) wt[1] *= theme.mul[wt[0]] ?? 1;
       const tot = weights.reduce((a, b) => a + b[1], 0);
       const q = [];
       for (let i = 0; i < count; i++) {
@@ -789,12 +1053,15 @@ export class Game {
     this.wave = 0;
     this.hordeHpMul = 1 + 0.1 * (n - 1) + 0.12 * (humans - 1);
     this.bossPending = null;
+    // a boss comes in with the second wave: early enough in the night that the survivors have to deal with it, and
+    // can - at dawn the sun takes whatever is left of it, and what it carried (Combat.killZombie)
+    const bossT = WAVE_TIMES[BOSS_WAVE] * scale + 8;
     if (n === TANK_BOSS_NIGHT) {
-      // the first boss is a Tank, early enough in the night that the survivors have to deal with it
-      this.bossPending = { types: [ZTYPE.TANK], t: WAVE_TIMES[1] * scale + 8 };
+      // the first boss is a Tank
+      this.bossPending = { types: [ZTYPE.TANK], t: bossT };
     } else if (n % BOSS_EVERY === 0) {
       const type = (n / BOSS_EVERY) % 2 === 1 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN;
-      this.bossPending = { types: [type], t: WAVE_TIMES[NIGHT_WAVES - 1] * scale + 10 };
+      this.bossPending = { types: [type], t: bossT };
     }
     this.notify(NOTIFY.NIGHT_FALLS, n);
     this.globalDirty = true;
@@ -838,6 +1105,8 @@ export class Game {
     for (const z of this.zombies) {
       if (!z.dead && (z.horde || z.def.flying)) z.burning = 0.5 + this.rng() * 5;
     }
+    // ...and burns the sickness out of whoever died since the last sunrise
+    if (this.dawnReturn) this.returnFallen();
     // the valley restocks a little: some searched containers are refilled, trees & wrecks regrow
     for (const c of this.caches) {
       if (c.state === 1 && this.rng() < 0.4) c.state = 0;
@@ -885,18 +1154,50 @@ export class Game {
     return true;
   }
 
+  // How many of the dead the final stand brings in all. It is read whenever a group is due (updateEscape), so it
+  // follows the survivors still alive: a death shrinks what is still to come, a late joiner adds to it.
+  finalStandSize() {
+    return Math.round(FINAL_STAND_SIZE * this.hordeSize(this.day, Math.max(1, this.humanCount())));
+  }
+
   startEngine(p) {
     if (this.escape.active || !this.allSuppliesIn()) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
-    this.escape = { active: true, t: ESCAPE_TIME, ready: false, spawnT: 3, boss: false };
+    this.escape = { active: true, t: ESCAPE_TIME, ready: false, stalled: false, leaving: false, spawnT: 3, boss: false, sent: 0, tanks: 0 };
     const car = this.world.car;
     this.notify(NOTIFY.ENGINE_START, p ? p.id : 0);
     this.sound(SOUND.ENGINE_CRANK, car.x, car.y + 0.8, car.z, 300);
     this.sound(SOUND.HORDE_HORN, 0, 0, 0, 0);
     this.hordeHpMul = 1 + 0.12 * this.day + 0.12 * (Math.max(1, this.humanCount()) - 1);
-    for (const z of this.zombies) z.horde = true;
+    // as at nightfall: the wanderers near the survivors join in, and count towards the stand's size; the rest drift
+    // off, which leaves the stand its room under MAX_ZOMBIES_ALIVE (a day's valley can fill most of it)
+    const hs = this.humans();
+    for (const z of [...this.zombies]) {
+      if (z.dead) continue;
+      let md = Infinity;
+      for (const h of hs) md = Math.min(md, Math.hypot(h.state.x - z.x, h.state.z - z.z));
+      if (z.horde || z.boss || md < FINAL_STAND_JOIN_RANGE) {
+        z.horde = true;
+        if (!z.boss) {
+          this.escape.sent++;
+          if (z.ztype === ZTYPE.TANK) this.escape.tanks++;
+        }
+      } else {
+        this._listRemove(this.zombies, z);
+        this.removeEntity(z);
+      }
+    }
     this.globalDirty = true;
     this.log('engine started - final stand');
+  }
+
+  // A survivor got in and drove (HOLD.DRIVE at the car, once the engine is warm). That wins the run for the whole
+  // team, as victory always has: one phase and one restart for everybody. Whoever is not at the car is left
+  // behind, which each client works out for its own end screen from ESCAPE_RADIUS.
+  driveOff(p) {
+    if (!this.escape.active || !this.escape.ready) return;
+    this.log('drove off:', p.name);
+    this.victory();
   }
 
   // ---------------------------------------------------------------- items / loot
@@ -927,12 +1228,20 @@ export class Game {
       z,
       mag: opts.mag ?? (isFirearm(item) ? Math.floor(WEAPONS[item].mag * (0.3 + this.rng() * 0.7)) : 0),
       point: opts.point || null,
+      droppedBy: this.dropper, // who put it down on purpose and has stayed by it since (0: nobody); see updateItems
       despawnAt: opts.permanent || opts.point ? Infinity : this.time + (opts.life || 150),
       permanent: !!opts.permanent,
       noAutoUntil: opts.noAuto ? this.time + opts.noAuto : 0,
+      drop: opts.drop && !opts.permanent ? ++this.dropSeq : 0, // a loose drop: its place in the order they fell
     };
     if (!this.spawnEntity(e)) return null;
     this.items.push(e);
+    // the ceiling on loose drops (MAX_DROPS): the oldest one makes room
+    if (e.drop && ++this.drops > this.maxDrops) {
+      let oldest = e;
+      for (const it of this.items) if (it.drop && it.drop < oldest.drop) oldest = it;
+      this.removeItemEnt(oldest);
+    }
     return e;
   }
 
@@ -941,21 +1250,75 @@ export class Game {
       e.point.ent = null;
       e.point.respawnAt = this.time + (e.point.zone === ZONE.FOREST ? 110 + this.rng() * 140 : 150 + this.rng() * 180);
     }
+    if (e.drop && !e.removed) this.drops--;
     this._listRemove(this.items, e);
     this.removeEntity(e);
   }
 
-  // scatter a dropped item near x,z
+  // The height something dropped from feet height y comes to rest at on x,z - or null where nobody could pick it up
+  // again: on the lake bed (a deck over the water is ground like any other) or inside something solid.
+  dropRest(x, y, z) {
+    const w = this.world;
+    const terrain = w.heightAt(x, z);
+    // onto whatever is there up to a metre above the feet (a table, a hood), uphill onto what stands on the slope
+    const gy = groundAt(w, x, z, Math.max(y, terrain) + 1, 0.1, true);
+    if (w.isDeepWater(x, z) && gy <= terrain + 0.01) return null;
+    const near = [];
+    for (const grid of w.colliderGrids) {
+      for (const c of grid.query(x, z, 0.15, near)) {
+        if (c.flags & (COL.NOBLOCK | COL.HUMANPASS)) continue;
+        // a wall, a rock, a wreck, a tree trunk - not the floor under it or a roof over it
+        if (c.y1 > gy + STEP_HEIGHT && c.y0 < gy + 0.3 && footprintContains(c, x, z, 0.15)) return null;
+      }
+    }
+    return gy;
+  }
+
+  // Scatter a dropped item near x,z. It never comes to rest where nobody can get at it - the lake bed off the pier,
+  // inside a wall or a rock, beyond the edge of the map: it lands short of that instead, on the way back to the feet of
+  // whoever dropped it (opts.from, else x,z itself), and when those will not do either (a body out in the lake) on the
+  // nearest spot around them that will. A car supply lost that way would make the game unwinnable. The search draws
+  // nothing from the rng.
   dropItem(item, count, x, y, z, opts = {}) {
     const a = this.rng() * Math.PI * 2;
     const r = opts.spread ?? 0.6 + this.rng() * 0.8;
-    const dx = x + Math.sin(a) * r;
-    const dz = z + Math.cos(a) * r;
-    const gy = groundAt(this.world, dx, dz, y + 1, 0.1, true);
+    const lim = MAP_HALF - 3; // as far out as a survivor gets (simulatePlayer)
+    const inMap = (v) => Math.max(-lim, Math.min(lim, v));
+    const hx = inMap(opts.from?.x ?? x);
+    const hz = inMap(opts.from?.z ?? z);
+    const sx = inMap(x + Math.sin(a) * r);
+    const sz = inMap(z + Math.cos(a) * r);
+    // it falls from the ground under the dropper's feet (they may be in mid-air), not onto a roof beside them. What
+    // flies over open water has no ground to speak of and drops from where it is, onto the deck if that is nearest
+    const under = groundAt(this.world, hx, hz, y, PLAYER_RADIUS * 0.7, true);
+    const fy = this.world.isDeepWater(hx, hz) && under <= this.world.heightAt(hx, hz) + 0.01 ? y : Math.min(y, under);
+    let dx;
+    let dz;
+    let gy = null;
+    const tryAt = (px, pz) => {
+      dx = px;
+      dz = pz;
+      gy = this.dropRest(px, fy, pz);
+    };
+    // where it was thrown, then two thirds and one third of the way there, then the dropper's feet
+    for (let k = 3; k >= 0 && gy === null; k--) tryAt(hx + ((sx - hx) * k) / 3, hz + ((sz - hz) * k) / 3);
+    // then rings around the feet, each a little wider than the last, as far as the lake is across
+    for (let ring = 0.25, n = 0; ring < 140 && gy === null; ring *= 1.15, n++) {
+      for (let k = 0; k < 16 && gy === null; k++) tryAt(inMap(hx + Math.sin(a + n + k * 0.3927) * ring), inMap(hz + Math.cos(a + n + k * 0.3927) * ring));
+    }
+    if (gy === null) {
+      // nowhere at all (no map has such a place): back at the breakdown rather than gone
+      const sp = this.world.spawnPoints[0];
+      dx = sp.x;
+      dz = sp.z;
+      gy = groundAt(this.world, dx, dz, this.world.heightAt(dx, dz) + 1, 0.1, true);
+    }
     const cat = ITEM_DEFS[item]?.cat;
-    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto });
+    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto, drop: true });
   }
 
+  // everything a survivor carries goes on the ground around them (one who leaves the game has had what is left of
+  // their starting kit taken out first: parkKit)
   dropAll(p) {
     const s = p.state;
     const x = s.x;
@@ -1012,6 +1375,14 @@ export class Game {
         }
       }
       return 0;
+    }
+    if (def.cat === 'armor' && mag) {
+      // a worn vest that was dropped comes back with the points it had left, not as a new one
+      const i = p.inv.findIndex((x) => !x);
+      if (i < 0) return 0;
+      p.inv[i] = { item, count: 1, mag };
+      p.invDirty = true;
+      return 1;
     }
     const left = addItem(p.inv, item, count);
     const taken = count - left;
@@ -1132,10 +1503,11 @@ export class Game {
         break;
       case 'throw': {
         const item = ev.item;
-        removeItem(p.inv, item, 1);
+        // (no entity id left for the projectile: nothing leaves the hand, and syncThrow gives the simulation
+        // back the one it counted as thrown)
+        if (this.combat.throwProjectile(p, item)) removeItem(p.inv, item, 1);
         p.invDirty = true;
         this.syncThrow(p);
-        this.combat.throwProjectile(p, item);
         break;
       }
       case 'reload':
@@ -1187,10 +1559,14 @@ export class Game {
         const cnt = r.u8();
         const it = p.inv[idx];
         if (!it) return;
+        this.dropper = p.id; // the stack remembers who put it down, so it does not hop back into their backpack
         const n = cnt === 0 ? it.count : Math.min(cnt, it.count);
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4 });
+        const dropped = this.dropItem(it.item, n, ex, s.y, ez, { spread: 0.3, mag: it.mag, noAuto: 4, from: s });
+        this.dropper = 0;
+        // (no entity id left for it on the ground: it stays in the pack)
+        if (!dropped) return;
         it.count -= n;
         if (it.count <= 0) p.inv[idx] = null;
         p.invDirty = true;
@@ -1204,7 +1580,7 @@ export class Game {
         if (!wpn) return;
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
+        if (!this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s })) return;
         s.weapons[slot] = 0;
         if (slot === SLOT_PRIMARY) s.mags[0] = 0;
         if (slot === SLOT_PISTOL) s.mags[1] = 0;
@@ -1316,9 +1692,10 @@ export class Game {
     if (!e || e.removed) return;
     const dx = e.x - ex;
     const dz = e.z - ez;
-    const dy = e.y - ey;
+    const dy = this.pickY(e) - ey;
     const d = Math.hypot(dx, dz);
-    if (d > (e.kind === ENT.CRATE ? 4.8 : 3.6) || Math.abs(dy) > 3) return;
+    const reach = this.reachOf(e);
+    if (d > reach || Math.abs(dy) > reach) return;
     if (!this.canReachEnt(p, e)) return;
     if (e.kind === ENT.ITEM) {
       const taken = this.giveItem(p, e.item, e.count, e.mag);
@@ -1329,11 +1706,13 @@ export class Game {
           const slot = WEAPONS[e.item].slot;
           const old = s.weapons[slot];
           const oldMag = slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0;
+          // (the weapon in hand goes down first: with no entity id left for it there is no swap, and it is kept)
+          if (old && !this.dropItem(old, 1, s.x, s.y, s.z, { mag: oldMag, spread: 0.5 })) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
           s.weapons[slot] = e.item;
+          if (s.slot === slot) s.reloadT = 0; // a reload of the weapon swapped out must not finish on this one
           if (slot === SLOT_PRIMARY) s.mags[0] = e.mag;
           if (slot === SLOT_PISTOL) s.mags[1] = e.mag;
           this.removeItemEnt(e);
-          if (old) this.dropItem(old, 1, s.x, s.y, s.z, { mag: oldMag, spread: 0.5 });
           this.pickupEvent(p, e.item, 1);
         } else {
           this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
@@ -1370,15 +1749,28 @@ export class Game {
     }
   }
 
-  // eye -> the entity's interaction point (as the client picks it) isn't cut off by a wall
+  // height of the entity's interaction point (as the client picks it)
+  pickY(e) {
+    if (e.kind === ENT.ITEM) return e.y + 0.15;
+    if (e.kind === ENT.CRATE) return e.y + 0.6;
+    if (e.kind === ENT.STRUCTURE) return e.y + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
+    if (e.kind === ENT.PLAYER) return e.y + 0.3;
+    return e.y;
+  }
+
+  // How far away the entity can be interacted with: as far as a client can be offered [E] on it (its view ray passes
+  // within the pick radius of the interaction point, inside INTERACT_REACH of the eye), and INTERACT_SLACK beyond,
+  // because our copy of the player trails the one that client looks out of. Never less: a refusal is silent, so
+  // the player would be holding [E] on a prompt with nothing happening
+  reachOf(e) {
+    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : PICK_RADIUS.DOWNED;
+    return Math.hypot(INTERACT_REACH, r) + INTERACT_SLACK;
+  }
+
+  // eye -> the entity's interaction point isn't cut off by a wall
   canReachEnt(p, e) {
     const s = p.state;
-    let y = e.y;
-    if (e.kind === ENT.ITEM) y += 0.15;
-    else if (e.kind === ENT.CRATE) y += 0.6;
-    else if (e.kind === ENT.STRUCTURE) y += Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
-    else if (e.kind === ENT.PLAYER) y += 0.3;
-    return canReach(this.world, s.x, s.y + eyeHeight(s), s.z, e.x, y, e.z, s.y + EYE_HEIGHT);
+    return canReach(this.world, s.x, s.y + eyeHeight(s), s.z, e.x, this.pickY(e), e.z, s.y + EYE_HEIGHT);
   }
 
   feedFire(p, e) {
@@ -1402,7 +1794,12 @@ export class Game {
     const s = p.state;
     if (p.useItem) return;
     if (id === CAR_ID) {
-      if (!this.nearCar(p) || this.escape.active) return;
+      if (!this.nearCar(p)) return;
+      if (this.escape.active) {
+        // once the engine is warm the same hold gets in and drives: the run does not end until somebody does
+        if (this.escape.ready) p.hold = { kind: HOLD.DRIVE, target: CAR_ID, t: 0, need: ESCAPE_DRIVE_TIME };
+        return;
+      }
       if (!this.allSuppliesIn()) return this.interact(p, CAR_ID);
       p.hold = { kind: HOLD.ENGINE, target: CAR_ID, t: 0, need: ENGINE_START_TIME };
       return;
@@ -1411,7 +1808,7 @@ export class Game {
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
-      if (d > 2.8 || e.state !== 0) {
+      if (d > this.reachOf(e) || e.state !== 0) {
         if (e.state !== 0) this.notify(NOTIFY.SEARCH_EMPTY, 0, p.id);
         return;
       }
@@ -1420,7 +1817,7 @@ export class Game {
       return;
     }
     if (e.kind === ENT.PLAYER && e !== p && e.alive && e.downed && !e.zombie) {
-      if (d > 2.6) return;
+      if (d > this.reachOf(e)) return;
       p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME };
       e.revivedBy = p.id;
     }
@@ -1433,14 +1830,15 @@ export class Game {
     let ok = !p.downed && !p.zombie && p.alive;
     let tgt = null;
     if (ok) {
-      if (h.target === CAR_ID) ok = this.nearCar(p, 6) && !this.escape.active;
+      if (h.target === CAR_ID) ok = this.nearCar(p, 6) && (h.kind === HOLD.DRIVE ? this.escape.active && this.escape.ready : !this.escape.active);
       else {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
         else {
-          const d = Math.hypot(tgt.x - s.x, tgt.z - s.z);
-          if (h.kind === HOLD.SEARCH) ok = d < 3.2 && tgt.state === 0;
-          else if (h.kind === HOLD.REVIVE) ok = d < 3 && tgt.alive && tgt.downed && !tgt.zombie;
+          // broken off a little further out than it can start: a hold begun at the edge survives a step back
+          const near = Math.hypot(tgt.x - s.x, tgt.z - s.z) < this.reachOf(tgt) + HOLD_SLACK;
+          if (h.kind === HOLD.SEARCH) ok = near && tgt.state === 0;
+          else if (h.kind === HOLD.REVIVE) ok = near && tgt.alive && tgt.downed && !tgt.zombie;
           ok = ok && this.canReachEnt(p, tgt);
         }
       }
@@ -1457,6 +1855,7 @@ export class Game {
     if (h.kind === HOLD.SEARCH) this.searchCache(p, tgt);
     else if (h.kind === HOLD.REVIVE) this.revive(tgt, p);
     else if (h.kind === HOLD.ENGINE) this.startEngine(p);
+    else if (h.kind === HOLD.DRIVE) this.driveOff(p);
   }
 
   searchCache(p, c) {
@@ -1625,7 +2024,12 @@ export class Game {
       if (!canFit(copy, rec.out, rec.n)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
     payCost(p.inv, rec.cost);
-    this.giveItem(p, rec.out, rec.n);
+    const taken = this.giveItem(p, rec.out, rec.n);
+    // rounds the reserve has no room for were paid for all the same: they go on the ground instead of nowhere
+    if (def.cat === 'ammo' && taken < rec.n) {
+      this.dropItem(rec.out, rec.n - taken, p.state.x, p.state.y, p.state.z, { spread: 0.8 });
+      this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+    }
     p.invDirty = true;
     this.syncThrow(p);
     this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
@@ -1648,13 +2052,12 @@ export class Game {
       return;
     }
     if (def.cat === 'armor') {
-      const old = p.armorItem;
-      const oldFrac = p.armorMax ? p.armor / p.armorMax : 0;
-      p.inv[idx] = null;
+      // the vest taken off goes into the backpack with the points it has left (`mag`, as a stored weapon keeps its
+      // magazine), whatever its condition: it is neither made new nor thrown away. No `mag` is a new vest
+      p.inv[idx] = p.armorItem && p.armor > 0 ? { item: p.armorItem, count: 1, mag: p.armor } : null;
       p.armorItem = it.item;
-      p.armor = def.armor;
+      p.armor = it.mag || def.armor;
       p.armorMax = def.armor;
-      if (old && oldFrac > 0.5) p.inv[idx] = { item: old, count: 1 };
       p.invDirty = true;
       return;
     }
@@ -1732,7 +2135,8 @@ export class Game {
       y = door.y;
       rot8 = Math.round((((door.ry % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * 256) & 255;
     }
-    if (Math.hypot(x - s.x, z - s.z) > BUILD_REACH + (door ? 1 : 0)) return fail();
+    // the client's ghost reaches BUILD_REACH from where that client stands; we see the player a moment earlier
+    if (Math.hypot(x - s.x, z - s.z) > BUILD_REACH + INTERACT_SLACK + (door ? 1 : 0)) return fail();
     const car = this.world.car;
     if (Math.hypot(x - car.x, z - car.z) < 3.2) return fail();
     if (this.world.isDeepWater(x, z)) return fail();
@@ -1761,8 +2165,6 @@ export class Game {
       }
       for (const zb of this.zombies) if (!zb.dead && footprintContains(col, zb.x, zb.z, zb.def.radius * 0.8)) return fail();
     }
-    payCost(p.inv, def.cost);
-    p.invDirty = true;
     const e = {
       kind: ENT.STRUCTURE,
       stype: type,
@@ -1778,7 +2180,9 @@ export class Game {
       collider: null,
       trapTick: 0,
     };
-    if (!this.spawnEntity(e)) return;
+    if (!this.spawnEntity(e)) return fail(); // (no entity id left: nothing is built, so nothing is paid)
+    payCost(p.inv, def.cost);
+    p.invDirty = true;
     e.collider = this.structCollider(type, x, y, z, rot8, e.id);
     this.world.structGrid.add(e.collider);
     this.nav.addStructure(e.collider);
@@ -1797,7 +2201,9 @@ export class Game {
     const frac = (e.hp / e.maxHp) * 0.5;
     for (const k in def.cost) {
       const n = Math.floor(def.cost[k] * frac);
-      if (n > 0) this.giveItem(p, +k, n) < n && this.dropItem(+k, n, e.x, e.y, e.z);
+      if (n <= 0) continue;
+      const taken = this.giveItem(p, +k, n);
+      if (taken < n) this.dropItem(+k, n - taken, e.x, e.y, e.z); // only what did not fit, not the whole refund again
     }
     p.invDirty = true;
     this.destroyStructure(e, false);
@@ -1916,7 +2322,10 @@ export class Game {
     const s = p.state;
     s.downed = 1;
     s.sprinting = 0;
-    if (s.weapons[SLOT_PISTOL]) s.slot = SLOT_PISTOL;
+    if (s.weapons[SLOT_PISTOL] && s.slot !== SLOT_PISTOL) {
+      s.slot = SLOT_PISTOL;
+      s.reloadT = 0; // a reload in progress was of the weapon just put away: left running it locks the pistol, then reloads it
+    }
     this.nightStats.downs++;
     this.notify(NOTIFY.DOWNED, p.id);
     this.sound(SOUND.DOWNED, s.x, s.y + 0.6, s.z, 70);
@@ -2167,8 +2576,10 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- tick
+  // (the ts.mark after each group of calls times it as one section of the tick: see tickstats.js)
   update() {
-    const t0 = performance.now();
+    const ts = this.tickStats;
+    ts.begin();
     this.tick++;
     const dt = SERVER_DT;
     this.time += dt;
@@ -2177,24 +2588,47 @@ export class Game {
       this.freeIds.push(this.quarantine[0]);
       this.quarantine.splice(0, 2);
     }
+    // forget the join allowances that have worn off (see allow)
+    if (this.tick % 600 === 0) for (const [ip, a] of this.joins) if (this.time - a.t >= a.n * JOIN_EVERY) this.joins.delete(ip);
     if (this.phase === PHASE.WAITING) {
+      this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
+      ts.mark(T_INPUTS);
       this.sendSnapshots();
+      ts.mark(T_SNAPSHOTS);
+      this.endTick();
       return;
     }
     this.processInputs();
+    ts.mark(T_INPUTS);
     this.updatePhase(dt);
+    ts.mark(T_PHASE);
     this.updatePlayers(dt);
+    ts.mark(T_PLAYERS);
     this.zm.update(dt);
+    ts.mark(T_ZOMBIES);
     this.cm.update(dt);
+    ts.mark(T_CATS);
     this.combat.updateProjectiles(dt);
     this.combat.updateAreas(dt);
+    ts.mark(T_COMBAT);
     this.updateStructures(dt);
     this.updateItems(dt);
     this.updateCrates(dt);
     this.recordHistory();
+    ts.mark(T_UPKEEP);
     this.sendSnapshots();
-    this.stats.tickMs = this.stats.tickMs * 0.95 + (performance.now() - t0) * 0.05;
+    ts.mark(T_SNAPSHOTS);
+    this.endTick();
+  }
+
+  // Closes the tick's timing. One over its budget is logged at once with where the time went and what the server
+  // was carrying (TickStats lets a line through every few seconds and counts the rest).
+  endTick() {
+    const ts = this.tickStats;
+    const due = ts.end();
+    this.stats.tickMs = this.stats.tickMs * 0.95 + ts.ms * 0.05;
+    if (due) this.log(`slow tick ${ts.slowText(`players ${this.players.size} zombies ${this.zombies.length} ents ${this.all.length}`)}`);
   }
 
   hordeAlive() {
@@ -2286,7 +2720,7 @@ export class Game {
     const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans) : this.zm.pickHordeSpawn(humans);
     if (!sp) return;
     for (const type of types) {
-      const z = this.zm.spawn(type, sp.x, sp.z, { horde: true, hpMul: 1 + 0.35 * (Math.max(1, this.humanCount()) - 1) + 0.05 * this.day, boss: true });
+      const z = this.zm.spawn(type, sp.x, sp.z, { horde: true, hpMul: 1 + BOSS_HP_PER_PLAYER * (Math.max(1, this.humanCount()) - 1) + 0.05 * this.day, boss: true });
       if (z) {
         this.bossId = z.id;
         this.notify(NOTIFY.BOSS, type);
@@ -2308,26 +2742,52 @@ export class Game {
     }
   }
 
-  // The engine is warming up: the whole valley heard it. Hold the car until it is ready, then get in.
+  // The engine is warming up: the whole valley heard it. It only warms while a survivor on their feet is at the car
+  // (it stalls otherwise: the count stops where it is, it does not start over), and once it is warm the run goes on
+  // until a survivor gets in and drives (HOLD.DRIVE -> driveOff).
   updateEscape(dt) {
     const e = this.escape;
     const car = this.world.car;
-    if (!e.ready) {
+    let held = false; // somebody stands at the car
+    let leaving = false; // somebody is getting in
+    for (const p of this.players.values()) {
+      if (!p.alive || p.zombie || p.downed) continue;
+      if (Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS) held = true;
+      if (p.hold && p.hold.kind === HOLD.DRIVE) leaving = true;
+    }
+    const stalled = !e.ready && !held;
+    if (stalled !== e.stalled || leaving !== e.leaving) {
+      e.stalled = stalled;
+      e.leaving = leaving;
+      this.globalDirty = true; // the HUD says both, and the client stops its own countdown on a stall
+    }
+    if (!e.ready && !stalled) {
       const prev = Math.ceil(e.t);
       e.t -= dt;
       if (Math.ceil(e.t) !== prev) this.globalDirty = true;
-      e.spawnT -= dt;
-      const cap = Math.min(MAX_ZOMBIES_ALIVE, 40 + this.day * 8);
-      if (e.spawnT <= 0 && this.hordeAlive() < cap) {
-        e.spawnT = Math.max(1.2, 3 - this.day * 0.15) * (0.7 + this.rng() * 0.6);
-        const n = this.day;
-        const q = [];
-        for (let i = 0; i < 5; i++) {
-          const r = this.rng();
-          q.push(r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 ? ZTYPE.TANK : ZTYPE.RUNNER);
-        }
-        this.spawnHordeGroup(q, car);
+    }
+    // The stand comes on its own clock, stalled engine or not: the dead hunt the survivors, not the car.
+    e.spawnT -= dt;
+    // its size, the cap on how many stand at once and the pace all follow the survivors still alive; a group that
+    // finds the cap full waits and comes as soon as there is room
+    const size = e.spawnT <= 0 ? this.finalStandSize() : 0; // 0: no group is due
+    // a warm engine goes on drawing them once the stand is spent, so every second the team lingers at the car costs
+    const linger = e.ready && size > 0 && e.sent >= size;
+    if ((e.sent < size || linger) && this.hordeAlive() < Math.min(MAX_ZOMBIES_ALIVE, Math.round(size * FINAL_STAND_ALIVE))) {
+      e.spawnT = ((FINAL_STAND_SPREAD / Math.ceil(size / 3.5)) * (0.7 + this.rng() * 0.6)) / (linger ? ESCAPE_LINGER_PACE : 1); // groups of 3-5, as a wave's
+      const n = this.day;
+      const tanks = FINAL_STAND_TANKS * Math.max(1, this.humanCount());
+      const q = [];
+      for (let i = linger ? 5 : Math.min(5, size - e.sent); i > 0; i--) {
+        const r = this.rng();
+        const type = r < 0.45 ? ZTYPE.WALKER : r < 0.67 ? ZTYPE.RUNNER : r < 0.72 && n >= 2 ? ZTYPE.DOG : r < 0.8 && n >= 2 ? ZTYPE.SPITTER : r < 0.87 && n >= 2 ? ZTYPE.BOOMER : r < 0.93 && n >= 3 ? ZTYPE.LEAPER : r < 0.97 && n >= 3 && e.tanks < tanks ? ZTYPE.TANK : ZTYPE.RUNNER;
+        if (type === ZTYPE.TANK) e.tanks++;
+        q.push(type);
       }
+      e.sent += this.spawnHordeGroup(q, car);
+      for (const t of q) if (t === ZTYPE.TANK) e.tanks--; // rolled, but the group came out smaller: it was not sent
+    }
+    if (!e.ready) {
       if (!e.boss && e.t <= ESCAPE_TIME * 0.5) {
         e.boss = true;
         this.spawnBosses([this.day % 2 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN], car);
@@ -2338,14 +2798,6 @@ export class Game {
         this.notify(NOTIFY.ESCAPE_READY, 0);
         this.sound(SOUND.CAR_START, car.x, car.y + 0.8, car.z, 300);
         this.globalDirty = true;
-      }
-    } else {
-      for (const p of this.players.values()) {
-        if (!p.alive || p.zombie) continue;
-        if (Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS) {
-          this.victory();
-          return;
-        }
       }
     }
     this.trackBoss();
@@ -2527,6 +2979,12 @@ export class Game {
           if (!e || e.removed) continue;
           const dx = e.x - s.x;
           const dz = e.z - s.z;
+          // what this survivor put down themselves stays down while they stand by it (to clear a slot, to hand it to
+          // a teammate): once they have walked off it is a stack like any other, for them too
+          if (e.droppedBy === p.id) {
+            if (dx * dx + dz * dz <= DROP_LEAVE_DIST * DROP_LEAVE_DIST) continue;
+            e.droppedBy = 0;
+          }
           if (dx * dx + dz * dz > 1.9 * 1.9 || Math.abs(e.y - s.y) > 1.6) continue;
           if (this.time < e.noAutoUntil) continue;
           const cat = ITEM_DEFS[e.item]?.cat;
@@ -2534,6 +2992,15 @@ export class Game {
           const taken = this.giveItem(p, e.item, e.count, e.mag);
           if (taken <= 0) {
             e.noAutoUntil = this.time + 3;
+            // No room in the backpack (ammo is another matter: a full reserve). Say so, or the survivor walks on
+            // without knowing: always for a car supply, the run depends on those; for the rest only as they walk
+            // over it, not again and again while they stand in a pile of it.
+            const part = cat === 'part';
+            if (cat !== 'ammo' && this.time - (part ? p.partFullT : p.fullT) >= FULL_NOTICE_EVERY && (part || s.vx * s.vx + s.vz * s.vz > 1)) {
+              p.fullT = this.time;
+              if (part) p.partFullT = this.time;
+              this.notify(NOTIFY.INVENTORY_FULL, e.item, p.id);
+            }
             continue;
           }
           this.pickupEvent(p, e.item, taken);
@@ -2592,7 +3059,9 @@ export class Game {
     w.u8(this.phase === PHASE.NIGHT ? this.wave : 0);
     w.u8(NIGHT_WAVES);
     w.u16(Math.round(Math.max(0, this.escape.t) * 10));
-    w.u8((this.escape.active ? 1 : 0) | (this.allSuppliesIn() ? 2 : 0) | (this.escape.ready ? 4 : 0));
+    const esc = this.escape;
+    // 8: the warm-up has stalled (nobody on their feet at the car), 16: a survivor is getting in to drive
+    w.u8((esc.active ? 1 : 0) | (this.allSuppliesIn() ? 2 : 0) | (esc.ready ? 4 : 0) | (esc.active && esc.stalled ? 8 : 0) | (esc.active && esc.leaving ? 16 : 0));
     let alive = 0;
     let total = 0;
     for (const p of this.players.values()) {
@@ -2833,6 +3302,7 @@ export class Game {
       global = gw.bytes();
     }
     this.globalDirty = false;
+    if (this.players.size) stageEntities(this.all); // once for all clients: each sendTick's writeEntities reads the staged copy
     for (const p of this.players.values()) {
       const conn = p.session.conn;
       if (p.pingAt) {

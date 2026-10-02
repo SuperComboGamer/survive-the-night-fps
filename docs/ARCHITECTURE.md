@@ -20,6 +20,8 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
                  vegetation, colliders. A new playthrough is a new seed (S2C.WORLD_RESET); SEED pins it
   collision.js   static/dynamic collider grids, ray casts
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
+  nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
+                 it to the wave weights and the client announces it, each from the seed: nothing on the wire
 server/      authoritative game server (uWebSockets.js)
 client/      three.js client (Vite root)
   index.html, main.js
@@ -29,7 +31,8 @@ client/      three.js client (Vite root)
   audio/      WebAudio engine: procedural synthesis + CC0 recordings in audio/samples/ (samples.js loads
               them after init; any sound whose file fails to load/decode falls back to its procedural version)
   ui/         DOM HUD (hud.js + hud2.js: compass, objective, world markers, downed, summary), field map
-              (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat
+              (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat,
+              contextual key hints (keyhints.js: reads the game state once a frame, owns its one HUD line)
   sandbox/    standalone dev pages for visually testing modules (not shipped)
 scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js)
 ```
@@ -42,6 +45,10 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
   Models must be authored so their FRONT faces **-Z**; then `object.rotation.y = yaw` orients them.
 - Camera: Euler order `'YXZ'`, `rotation.y = yaw`, `rotation.x = pitch` (pitch > 0 looks up).
 - Human player: capsule radius 0.35, height 1.8 m, eye height 1.62 m.
+- The camera is not exactly the simulated eye: the client eases it over step-ups and step-downs
+  (`Prediction.viewLag`: the simulation takes a kerb or a floor slab within one command) and dips it on landings
+  (`Game.landDip`). Presentation only; anything that must agree with the server (where a shot leaves from) uses
+  the simulated state, not `camera.position`.
 - Materials: prefer `MeshLambertMaterial` (performance). Share geometries and materials; never allocate
   in per-frame paths. The scene keeps a FIXED number of lights (light count changes force shader recompiles);
   toggling a light's `castShadow` also recompiles, so only quality changes do it.
@@ -70,6 +77,13 @@ more than its bytes**, so put things into the packets that already flow.
   hands it to `Combat.rewindTime` as each one runs), and the per-tick command allowance banks up while nothing
   arrives (`CMD_QUEUE_MAX`) and refills slightly faster than commands are issued (`CMD_CATCH_UP`), so a burst
   that arrives late after a hiccup is run at once instead of standing in the queue from then on.
+- **Early presses** (`client/game/inputbuffer.js`). The simulation acts on the press of fire, reload and jump,
+  not on the button being down, so a press that comes a moment before it can act would do nothing. The client
+  holds such a press out of its commands' buttons until the first command that can act on it (150 ms for fire
+  and jump, the weapon draw for reload), and presses R itself when an automatic runs dry with the trigger held.
+  Whether a press acts is asked of `simulatePlayer` on a scratch copy of the state, so a new rule in the
+  simulation needs no counterpart there. This only shapes what the client sends: `Prediction.step` simulates the
+  shaped command, and the server never knows.
 - **Down: one snapshot per tick** (`Game.sendTick`), corked together with the player list and inventory when
   those changed. A flags byte (`SNAP`) says which sections follow; tick and acked command are implied
   (+1, +`CMDS_PER_PACKET`) unless flagged. A client whose socket is backed up is skipped, never sent a snapshot
@@ -89,7 +103,14 @@ more than its bytes**, so put things into the packets that already flow.
   area of interest per kind, creates in full, updates only for changed fields, sorted by id behind a one-byte
   head (id step, position as a 1 / 2 / 3-byte delta or absolute, which fields follow), far entities every other
   tick. Up to 10 fields per kind; the three most frequently changing ones belong in fields 1-3 (no ext byte).
-  Players replicate their view angles at 9 + 7 bits.
+  Players replicate their view angles at 9 + 7 bits. An entity is read and quantized once a tick for everyone,
+  not once per client: `stageEntities` (in `Game.sendSnapshots`, before the client loop) copies the positions
+  into typed arrays, `quant` runs the first time a client needs the entity that tick, and each client's
+  `writeEntities` only diffs that staged copy against its own baseline. So what `quant` produces must not depend
+  on who is looking, and code that changes an entity between two clients' snapshots has to restage it (the one
+  case today, `writeSelf` rounding the viewer's own state, is handled in `writeEntities`). The staging arrays
+  are allocated once; keep it that way. Every client's snapshot still walks every live entity, so the number of
+  entities is what to keep an eye on (see Items on the ground below).
 - **Global state**: all of it when anything but the clocks changed, otherwise just time / horde left once a
   second. **Events**: encoded once, filtered per client by radius / recipient; a shot carries no origin (the
   client uses the shooter's replicated position).
@@ -105,6 +126,17 @@ more than its bytes**, so put things into the packets that already flow.
   flashlight), SSAO, sun shafts, grass density, tree distance. Everything applies live on a settings change
   (`main.js applySettings` -> renderer, Environment.setShadows, Foliage.setQuality, Game.setShadowQuality).
   The render-scale setting multiplies the preset's pixel ratio.
+- **Shader warm-up** (`Game.prewarm`): three.js builds a material's program the first time it is drawn and
+  waits for it on the main thread, so nothing may be drawn for the first time during play. Behind the splash, and
+  again for a new map or another quality, `GameRenderer.compilePrograms` starts every program of the world
+  scene, the viewmodel scene and the post passes (`renderer.compile`: the driver builds them in the background)
+  and `compileDepth` the shadow passes' depth programs; the frame loop draws nothing until the scene's are
+  built; `Game.warmViews` meanwhile builds one of every view that only exists on demand (which also bakes the
+  zombie rigs and the weapon and pickup meshes), and `Game.warmFrame` ends it with one frame nobody sees that
+  draws one of everything. A player who joins sooner gets the rest in one go on the first frame, as before.
+  The rule this buys: `renderer.info.programs.length` does not grow while playing. Anything new that is created
+  on demand with a material of its own (an entity view, a lazily built effect) goes into `warmViews`; what is
+  already in a scene, hidden or not, is covered.
 - **Shared shader state:** `render/globals.js` must be imported first (main.js does). Its `G` uniforms (mist,
   key-light direction, fog sun colour, wind) are injected into every built-in material and every ShaderMaterial
   that merges `UniformsLib.fog` / `.lights`, BY REFERENCE (values survive three's per-material uniform clone).
@@ -116,9 +148,17 @@ more than its bytes**, so put things into the packets that already flow.
   horizon matches the fog.
 - **Sun/moon:** three's cascaded `SunLight` (`three/addons/lights/SunLight.js`, 2 cascades in one atlas,
   texel-snapped, Vogel PCF) - it lights every built-in material like a DirectionalLight. Casters: terrain,
-  static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The viewmodel scene has
+  static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The static world's
+  meshes do not cast themselves: each chunk has one shadow-only mesh per shadow side (`StaticWorld.casters`,
+  reading the chunk's own vertex buffer) that the shadow passes draw instead; only materials whose texture cuts
+  holes in the shadow (chain link, weeds, stencils) cast from their own mesh. The viewmodel scene has
   its own lights; `Game.updateViewmodelLight` rotates the key light into camera space and dims it by a
-  ray/crown probe towards the light so hands are dark in shade.
+  ray/crown probe towards the light so hands are dark in shade. Those lights are about a quarter of the
+  world's (no factor PI), so the weapon in the hands has its own material, the one Phong material
+  (`getViewWeaponMaterial` in `render/models/skinning.js`): per weapon-atlas cell (`VM_SURFACE`) it lifts the
+  dark gunmetal and polymer paint and sets the highlight strength, so metal shows its form while wood, tape
+  and cloth stay matte. The arms and every world weapon (held by others, lying as pickups) stay Lambert on
+  the paint as authored.
 - **Time of day** is one palette table (`KEYS` in `render/environment.js`): colours, light levels, fog, mist,
   haze scatter, shaft strength and base exposure per sun height. Eye adaptation only compensates relative to
   `Environment.adaptRef` (the log-average luminance an open scene has at that light level), clamped 0.7-1.6x.
@@ -156,6 +196,11 @@ more than its bytes**, so put things into the packets that already flow.
   turn each other down as they pile up (`crowd` in `CATS`): a swarm must not out-shout gunfire or the music.
 - **Master bus** (`_buildGraph`): 2:1 glue compressor -> limiter -> soft clipper -> master volume. Kept light on
   purpose: the quiet forest sits ~10 dB under automatic fire and nothing leaves above full scale.
+- **Start-up.** The browser only allows audio after a user gesture, so `main.js` starts the engine on the first key
+  or pointer press on the splash (the click on Join at the latest) and nothing waits for it: the join opens the
+  socket straight away. Until `audio.ready` (about a second of bank rendering) a one-shot asked for is dropped and
+  a loop is only queued, so the game can be in play before there is sound; ambience and music then come in from
+  the state of that moment, and `main.js` plays the join stinger it could not play earlier.
 - **Checking it without ears.** `/sandbox/audio-test.html` plays everything by hand (`?procedural` for the
   fallback); `?autotest` runs the engine's self-test (every recording decodes, loops are seamless, beds follow
   the state) and ends with `AUDIO_TEST_OK`. `node client/audio/selftest.js` checks the procedural banks.
@@ -166,11 +211,43 @@ more than its bytes**, so put things into the packets that already flow.
   doorways recorded by world generation (`world.openings`); campfires and workbenches are crafting stations
   (`STRUCT_DEFS[t].station`), recipes name the station they need (`RECIPES[i].station`) and optionally a
   schematic (`schem`, team-wide unlock bitmask in the global state).
+- **Crafting in bulk** (Shift / Ctrl+click a recipe) is not in the protocol: it is `ACT.CRAFT` sent n times. The
+  server refuses each craft it cannot do with a toast, so the client counts first: `craftRun` in
+  `client/game/bulkcraft.js` repeats the checks of `Game.craft` and the slot rules of `server/inventory.js` on a
+  copy of the inventory (and, stricter than the server, only counts ammunition while a whole batch fits the
+  reserve). `sim-smoke` holds it against the server, so change the two together. The inventory screen replays
+  the crafts still on their way before it counts again (`Inventory._model`), the repeats leave through a bucket
+  in `Game.sendCrafts` (the server drops what a client sends past 200 messages a second), and a listener plays
+  one craft sound per 0.1 s however many `SOUND.CRAFT` events a tick brings.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
-  of them enables the engine hold-interaction, which starts the final stand (`game.escape`).
+  of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
+  sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
+  in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a
+  survivor join it and count, the rest are removed as at nightfall, and the day's upkeep stops for its length.
+  The warm-up (`Game.updateEscape`) only counts down while a survivor on their feet is within `ESCAPE_RADIUS`
+  of the car; otherwise it stalls where it is, and the stand keeps coming on its own clock. A warm engine ends
+  nothing: a survivor at the car holds [E] (`HOLD.DRIVE`, `ESCAPE_DRIVE_TIME`, the same path and reach as the
+  engine-start hold) and `driveOff()` is the victory, for everyone; until then groups keep coming at
+  `ESCAPE_LINGER_PACE` of the stand's pace. Two bits of the global state's flags byte carry "stalled" and
+  "somebody is getting in" to the HUD, and the client holds its own countdown on a stall. The end screen
+  tells each player whether they were within `ESCAPE_RADIUS` when the car left (client side).
+  A supply cannot be lost on the way to the car: whatever drops an item (a death, [G], a full backpack, a
+  disconnect, loot) calls `Game.dropItem`, which only lets it come to rest where a survivor can pick it up
+  again - never on the lake bed off the pier, inside a wall or beyond the edge of the map.
 - **Night waves.** `startNight()` builds `NIGHT_WAVES` queues; groups spawn 58-84 m around a random
   survivor (`Zombies.pickSpawnAround`). The horde never targets structures or a fixed point - only people.
+  The picker passes over a spot a survivor would watch them appear at (`spawnExposure`: a clear ray from a
+  survivor's eyes to head height at the spot, or 4 m to either side of it since a group is scattered that far),
+  out to `sightRange()`: the distance the client's haze hides things at for the hour on the phase clock (about
+  200 m at noon, 58 m in the dark, so a dark night's spawn band is all cover; the fog keyframes are copied from
+  `client/render/environment.js`, the weather is client-only and left out). After 18 candidates it settles for
+  one with only its middle hidden, then for the farthest one nobody is facing (`spawnsScreened`, `spawnsInView`
+  count those). Rays stop at trunks, walls and terrain; foliage is not modelled. Used by the night waves, the
+  final stand, the car-alarm fallback and the straggler teleport.
+  A boss night's boss (`bossPending`) comes in with wave `BOSS_WAVE`; `Game.spawnBosses` scales its health by
+  `BOSS_HP_PER_PLAYER`. A boss drops its loot only if it dies before the dawn sun sets it alight (`z.onFire`,
+  `Combat.killZombie`); the sun's kill goes to the killfeed as `KILLER.WORLD`.
 - **Noise.** `Zombies.noise(x, z, loud)` is the one entry point: `loud` is the radius (m) the noise carries
   (`NOISE` in constants.js; gunshots use `WEAPONS[w].noise`). Every zombie inside it with no target heads for
   the spot (`alertX/Z`, `alertT`), at a speed set by how loud it was where the zombie stood (`alertRush`,
@@ -183,6 +260,14 @@ more than its bytes**, so put things into the packets that already flow.
   so walls, trees and terrain cast shadows. While lit (`z.lit`) it holds still with `ZANIM.FROZEN`, takes
   `litResist` x damage and no knockback (`Combat.damageZombie`); the client keeps the pose it was caught in
   (`ZombieInstance.hold`) and plays the freeze / release sounds from the replicated anim, with no extra traffic.
+- **Bats and walls.** Bats fly (`Zombies.updateBat`), and what stops the dead on foot stops them in the air:
+  after each tick's flight `flyCollide` puts a bat back outside whatever solid thing it overlaps (static
+  colliders, player structures, and `roofBoxes`: every `world.roofs` entry as a block from eaves to ridge,
+  because gable roofs and shelter tops are drawn without a collider), on the side it came in from, so it slides
+  along a wall or over a roof. They do not use the flow fields. A bat held up on its way to a survivor is shut
+  out (`BAT_SHUT_OUT`): it wheels round them, a tight pass over the roofs and then a wider one at window height,
+  looks for a clear line every third tick (`batSees`) and comes straight down the first one it gets - a doorway,
+  a window, the top of a wall with no roof over it, or the survivor stepping outside.
 - **Fire and burning.** `Combat.ignite(z, attacker, weapon, time)` gives a zombie the burn status (`BURN` in
   defs.js; `z.burnT` seconds left, `z.burnBy` / `z.burnWeapon` for the kill). `Zombies.updateOne` ticks it
   through `damageZombie` with `{ fire, dot }` (`fire`: burnt corpse, no loot; `dot`: one small tick of a
@@ -194,8 +279,25 @@ more than its bytes**, so put things into the packets that already flow.
   `Combat.fire` hands its shots to `Combat.flame`: a lag-compensated cone test with a wall check per target
   instead of a ray. Clients draw every `EVT.SHOT` of it as one puff of the stream (`Game.flamePuff` ->
   `Effects.flameJet`) and keep one roar loop per shooter alive while the puffs keep coming.
+- **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
+  (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
+  fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a
+  player-zombie's claws need a clear chest-to-chest line, so a barricade stops them too. Melee tests its
+  candidates nearest first and stops at the first it can hit: a ray or two per swing, not one per zombie in reach.
 - **Containers** are `ENT.CACHE` entities (position + searched state) created from `world.containers`;
   searching is a server-side hold interaction (`ACT.HOLD_BEGIN/END`, progress in the self state).
+- **Interaction reach.** The `[E]` prompt comes from `Entities.pick`: the view ray, `INTERACT_REACH` long, has to
+  pass within a pick radius of the target (`PICK_RADIUS`, `structPickRadius`). The server takes its distance limits
+  from the same constants (`Game.reachOf`) plus `INTERACT_SLACK`, because it handles an action on arrival while
+  the commands that moved the player there are still queued; a hold under way is broken off `HOLD_SLACK` further
+  out. A refusal is silent, so the server must never be stricter than the prompt: something new to interact with
+  needs its radius in both `pick` and `reachOf`. sim-smoke takes each action from the edge of its prompt.
+- **Harvesting** is a melee swing that hits nobody: `Combat.melee` then traces the world to the weapon's range
+  + 0.3 m and hands a tree (`COL.TREE`) or a wreck (`COL.SALVAGE`: props marked `salvage`) to `Game.gatherHit`
+  (6 / 5 hits each, refilled at dawn). The client knows none of that state; `client/game/harvest.js` repeats the
+  trace and the yields for the interaction prompt ("[LMB] Chop for Sticks and Planks") and for the "Need 2 more
+  Planks" lines of a refused build or craft (the server only sends `NOTIFY.NOT_ENOUGH`). `sim-smoke` holds that
+  file against the server's swing and yields, so change the two together.
 - **Supply drops** (`spawnSupplyDrop`): the server picks a supply spot and a random heading, emits one
   `EVT.FLYOVER` (plane origin at release, heading, eta; constants `PLANE_*` / `CRATE_*`) and PLANE_LEAD / PLANE_SPEED
   seconds later spawns the crate at the cargo ramp with the plane's speed: state 3 free fall, 0 under the canopy
@@ -203,6 +305,15 @@ more than its bytes**, so put things into the packets that already flow.
   flies the plane model (`models/plane.js`), trails GPU-animated smoke puffs that linger ~2.5 min and drift with
   the wind, and plays the engine drone as a positional loop (speed-of-sound delay, doppler, air absorption).
   `/airdrop` (debug commands) calls one in.
+- **Waypoint and compass.** The waypoint is client-side only and adds no network traffic (the mark the team
+  sees is the ping). A click on the field map sets `Game.waypoint` (`MapScreen._pick`: a place's name or yard
+  snaps to the place; the map frees the pointer while it is open, the way the inventory does), `Game.buildMarkers`
+  shows it as a compass marker and a world marker, and it clears on arrival, with a new game and with the
+  world. `Compass.update` (`ui/hud2.js`) lays the markers out in rank order (`RANK`, then the nearer one),
+  each taking the room it needs: an icon that would touch one already placed stands aside by an icon's width
+  without its text, or becomes a tick on the tape; a label that would touch another is pushed a little
+  sideways or dropped; the marker you face (and always the waypoint) spells out its `name`. Label widths come
+  from a canvas `measureText` cache, so the pass never reads layout, and the DOM is only written on change.
 - **Talking.** Chat and voice reach `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it a walkie-talkie link
   carries them (`radioLinked` in defs: both ends carry `ITEM.WALKIE`). Text is gated on the server:
   `handleChat` sends each recipient its own `S2C.CHAT` flags (`CHATF`: radio / faint / unheard). Voice is a
@@ -211,7 +322,45 @@ more than its bytes**, so put things into the packets that already flow.
   radio path that takes over as the speaker leaves earshot (or the area of interest). The walkies themselves
   are `WALKIE_STASHES` extra items hidden in schematic-type containers by `startGame` on their own random
   stream (`cache.stash`), and never despawn once dropped.
+- **Death lasts until dawn** (`DAWN_RETURN` in constants.js). A survivor who dies becomes a player-zombie
+  (`killPlayer`, then `spawnPlayerZombie`). `startDay` calls `returnFallen`: every player who is dead or a zombie
+  is a survivor again (`spawnHuman(p, RETURN_KIT, true)`), on the spot `pickJoinSpawn` picks beside the team as
+  for a late joiner, and `NOTIFY.RETURNED` tells everyone who. It does nothing with nobody alive: `checkAllDead`
+  ends the run on the death that leaves nobody standing, before the clock gets to dawn. The final stand stops the
+  clock, so there is no dawn in it. `fallen` holds the names of players who left dead since the last sunrise: a
+  rejoin under one of them is a player-zombie again (`handleJoin`), since a JOIN carries no identity but the name.
+  At sunrise their parked kit in `leftKits` (empty: the dead dropped theirs) becomes `RETURN_KIT`, so a rejoin
+  after it is a survivor with what the dead who stayed woke with.
+- **Items on the ground.** Everything that puts an item down goes through `Game.dropItem`, which marks it a
+  loose drop (`e.drop`). At most `MAX_DROPS` of them lie around: one more and the oldest despawns (`spawnItem`).
+  Car supplies, schematics and walkie-talkies are permanent and not counted, loot points and hidden supplies are
+  not drops. A survivor who dies drops all they carry (`dropAll`); one who leaves the game takes along what they
+  were handed at the start (`p.kit`, recorded by `spawnHuman`) and drops only the rest (`parkKit`, see Joining a
+  run in progress below), so a reconnect neither litters nor doubles the kit.
+- **Coming and going.** `Game.admitJoin` gives each address (`conn.ip`, from `clientAddress` in `index.js`:
+  behind a proxy it is the forwarded one) two lobbies' worth of joins at once and one more every `JOIN_EVERY`
+  seconds; past that a join is refused as "server full". The "joined" / "left" chat lines have one allowance for
+  everybody (`GREET_EVERY`): once it is used up players come and go unannounced, the player list still shows them.
 - **Downed/revive** is part of the deterministic player state (`s.downed`: crawl speed, pistol only).
+  What the rest of the team sees of a survivor needs no traffic of its own: their health is field 7 of the
+  player entity (0..255, always in the area of interest), down / dead / turned is `PFLAG` and the status byte of
+  `S2C.PLAYERS`. Nameplates, the compass and the survivors list read those (`Game.buildMarkers`,
+  `Game.pushRoster`; the colour marks are `healthTier` in `ui/hud2.js`).
+- **Joining a run in progress** (`Game.handleJoin`). `spawnHuman(p, kit, beside)` puts the newcomer down where
+  `pickJoinSpawn` says: 2.5-9 m from the survivor with the most company, on a spot that is open on the nav grid, level
+  with that teammate, dry, clear of every collider (`resolveBody`) and with a clear knee-high line to them
+  (`Zombies.clearLine`) - the one furthest from the dead, out to 22 m if they are all over the nearer ground. It
+  returns null (the car spawn) when nobody is alive or the team is within `TALK_CLEAR` of the car. The kit is
+  `starterKit(day)`. A leaver's starting kit is not dropped: `parkKit` keeps what is left of it (never more than was
+  issued) in `leftKits` by name, and a rejoin during the same run gets exactly that back, so reconnecting creates no
+  supplies. Anything that brings a survivor back mid-run should call `spawnHuman` the same way.
+- **The personal record** is client-side only: no server state, no traffic. `Game.trackRun` follows the replicated
+  phase (not the NEW_GAME / VICTORY / GAME_OVER notifications: a client skipped for a tick loses its events) and
+  records a run when it ends, if this client was in it from its first minute (`RUN_JOIN_GRACE`): outcome, nights,
+  length in server ticks, the player's own kills since the run began, team size, seed. `client/ui/records.js`
+  keeps the last 20 runs plus running totals and bests under `localStorage['stn.runs']` (format at the top of the
+  file). Every read goes through `sanitizeRecord` - the stored value is never trusted - and a write that fails
+  is kept in memory for as long as the page lives. `scripts/test-records.js` checks it.
 - **Weather** is client-side only and adds no network traffic. `client/game/weather.js` derives a seeded
   schedule (fog banks, gales, rain, thunderstorms; weighted toward dusk and night, and the first evening always
   brings fog) from the world seed and the replicated phase clock (`phase`, `day`, `timeLeft`, `phaseLen`), so
@@ -221,3 +370,9 @@ more than its bytes**, so put things into the packets that already flow.
   lightning light, wind (`Foliage.update` drives `G.uWind`: trees bend trunk and crown together, grass and bushes
   lean; the ambience plays the same wind), ground mist, the flashlight beam's haze (post.js, denser in rain), and
   rain streaks and splashes (`render/weatherfx.js`, kept out from under `world.roofs`).
+- **Item guide** (`client/game/itemguide.js`): the "Used in" and "Found in" lines of the inventory's tooltips are
+  derived at load from `RECIPES`, `STRUCT_DEFS`, the loot tables (`CONT_TABLES`, `LOOT_TABLES`, `ZOMBIE_LOOT`,
+  `SPECIAL_LOOT`) and `PLACES`, so a new recipe, item or table needs no text written for it. The one thing it
+  repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.
+  `scripts/test-itemguide.js` holds every line against the tables, generated worlds (which place tables are
+  rolled at all) and the server's gathering. Supply-drop loot (`CRATE_TABLE`, private to the server) is not in it.

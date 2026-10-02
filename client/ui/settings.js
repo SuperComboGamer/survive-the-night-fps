@@ -1,11 +1,13 @@
 // Settings: persistence + the settings panel (shared by splash and pause menu).
 import { el, svgEl, lsGet, lsSet, clamp } from './dom.js';
 import { glyph } from './icons.js';
+import { loadRecord, clearRecord } from './records.js';
 
 const KEY = 'stn.settings';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   sensitivity: 1.0,
+  aimSensitivity: 1.0,
   fov: 75,
   masterVolume: 0.4,
   musicVolume: 0.6,
@@ -17,11 +19,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
   invertY: false,
   rawMouse: true,
   weaponSway: true,
+  keyHints: true,
   showFps: true,
 });
 
 const NUM_RANGES = {
   sensitivity: [0.1, 3],
+  aimSensitivity: [0.25, 2],
   fov: [60, 100],
   masterVolume: [0, 1],
   musicVolume: [0, 1],
@@ -38,7 +42,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
-    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -63,9 +67,11 @@ const SECTIONS = [
     title: 'Controls',
     rows: [
       { k: 'sensitivity', label: 'Mouse sensitivity', type: 'range', min: 0.1, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) + '×' },
+      { k: 'aimSensitivity', label: 'Aim sensitivity', type: 'range', min: 0.25, max: 2, step: 0.05, fmt: (v) => v.toFixed(2) + '×', hint: 'While aiming, on top of the zoom' },
       { k: 'invertY', label: 'Invert mouse Y', type: 'toggle' },
       { k: 'rawMouse', label: 'Raw mouse input', type: 'toggle', hint: 'Off = OS mouse acceleration applies' },
       { k: 'weaponSway', label: 'Weapon look sway', type: 'toggle', hint: 'Gun trails behind fast turns' },
+      { k: 'keyHints', label: 'Key hints', type: 'toggle', hint: 'Names a key when it would help, until you have used it twice' },
       { k: 'fov', label: 'Field of view', type: 'range', min: 60, max: 100, step: 1, fmt: (v) => Math.round(v) + '°' },
     ],
   },
@@ -110,6 +116,23 @@ export class SettingsPanel {
       el('h3', 'set-sec-title', s, sec.title);
       for (const row of sec.rows) this._row(s, row);
     }
+    // not a setting, but this is where a player looks for it: wiping the personal record (records.js).
+    // It takes two clicks: the first only arms the button.
+    const rs = el('section', 'set-sec', body);
+    el('h3', 'set-sec-title', rs, 'Your record');
+    this.recRow = el('div', 'set-row set-rec', rs);
+    this.recHint = el('small', 'set-hint', el('label', 'set-label', this.recRow, 'Personal bests & run history'));
+    const rc = el('div', 'set-ctl', this.recRow);
+    this.recKeep = el('button', 'btn btn-ghost', rc, 'Keep it');
+    this.recClear = el('button', 'btn btn-ghost btn-danger', rc);
+    this.recKeep.type = this.recClear.type = 'button';
+    this.recKeep.addEventListener('click', () => this._syncRecord());
+    this.recClear.addEventListener('click', () => {
+      if (!this.recArmed) return this._syncRecord(true);
+      clearRecord();
+      this._syncRecord();
+      this.ui.splash.syncRecord();
+    });
     const foot = el('div', 'set-foot', card);
     const reset = el('button', 'btn btn-ghost', foot, 'Reset defaults');
     reset.addEventListener('click', () => {
@@ -190,6 +213,22 @@ export class SettingsPanel {
   sync() {
     const s = this.ui.settings;
     for (const k in this.inputs) this.inputs[k].sync(s);
+    this._syncRecord();
+  }
+
+  _syncRecord(armed = false) {
+    const { runs, escapes } = loadRecord().total;
+    const n = `${runs} run${runs === 1 ? '' : 's'}`;
+    this.recArmed = armed;
+    this.recRow.classList.toggle('armed', armed);
+    this.recKeep.hidden = !armed;
+    this.recClear.textContent = armed ? 'Yes, clear it' : 'Clear record';
+    this.recClear.disabled = !runs;
+    this.recHint.textContent = armed
+      ? `Erase ${n} and your bests for good?`
+      : runs
+        ? `${n}, ${escapes} escape${escapes === 1 ? '' : 's'}. Kept in this browser only.`
+        : 'Nothing recorded yet. Kept in this browser only.';
   }
 
   show() {

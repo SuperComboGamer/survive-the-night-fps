@@ -1,7 +1,8 @@
 // Full-screen menus and overlays: splash/title, pause, death, game over / victory, connection banner.
 import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
-import { el, svgEl, lsGet, lsSet } from './dom.js';
+import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
+import { loadRecord, recordSummary } from './records.js';
 
 export const DEFAULT_CONTROLS = [
   ['W A S D', 'Move'],
@@ -30,9 +31,10 @@ export function renderControls(parent, list) {
   }
 }
 
+// what the game asks of the player: on every splash, whichever tagline is drawn under it
+const GOAL = 'Scavenge by day. Board up by night. Fix the car. Get out.';
 const TAGLINES = [
   'Your car died on Route 9. The dark is coming.',
-  'Scavenge by day. Board up by night. Fix the car. Get out.',
   'Nobody is coming to save you.',
   'Wherever you are at sundown is where you make your stand.',
   'Every night there are more of them.',
@@ -75,6 +77,7 @@ export class Splash {
       d.style.cssText = `left:${x}%;--w:${w};--len:${len};--d:${delay}s`;
     }
 
+    el('p', 'sp-goal', main, GOAL);
     el('p', 'sp-tag', main, TAGLINES[(Math.random() * TAGLINES.length) | 0]);
 
     const form = (this.form = el('form', 'sp-join', main));
@@ -100,6 +103,8 @@ export class Splash {
     const st = (this.status = el('div', 'sp-status', main));
     this.dot = el('i', 'dot', st);
     this.statusTxt = el('span', '', st, 'Contacting server…');
+    // the player's own record (records.js): not there at all until a first run is on it
+    this.record = el('div', 'sp-record', main);
 
     const ctl = el('div', 'sp-controls paper', root);
     el('h3', 'panel-h', ctl, 'Field notes · controls');
@@ -182,11 +187,21 @@ export class Splash {
     this._syncBtn();
   }
 
+  syncRecord() {
+    const parts = recordSummary(loadRecord());
+    this.record.textContent = '';
+    this.record.hidden = !parts.length;
+    if (!parts.length) return;
+    el('b', '', this.record, 'Your record');
+    el('span', '', this.record, parts.join(' · '));
+  }
+
   show() {
     this.root.hidden = false;
     this.joining = false;
     this.root.classList.remove('joining');
     this._syncBtn();
+    this.syncRecord();
     this.root.classList.remove('in');
     void this.root.offsetWidth;
     this.root.classList.add('in');
@@ -278,7 +293,7 @@ export class Death {
     this.by = el('div', 'death-by', m, '');
     this.rise = el('div', 'death-rise', m, '');
     svgEl('i', 'death-claw', this.rise, glyph('claw'));
-    el('span', '', this.rise, 'You have risen as one of them. Hunt the survivors.');
+    this.riseText = el('span', '', this.rise, '');
   }
 
   show(info = {}) {
@@ -289,6 +304,8 @@ export class Death {
     if (info.killer) parts.push('Killed by ' + info.killer);
     if (info.day) parts.push((info.night ? 'Night ' : 'Day ') + info.day);
     this.by.textContent = parts.join(' · ');
+    // info.dawn: this death lasts until sunrise (DAWN_RETURN), not for the rest of the run
+    this.riseText.textContent = info.dawn ? 'You rise as one of them. Hunt the survivors until dawn: the sun brings you back.' : 'You have risen as one of them. Hunt the survivors.';
     this.root.hidden = false;
     this.root.className = 'death';
     this.ui.root.classList.add('death-on');
@@ -325,8 +342,45 @@ export class EndScreen {
     const st = el('div', 'end-stat', m);
     this.nights = el('b', '', st, '0');
     this.nightsL = el('span', '', st, 'nights survived');
-    this.board = el('div', 'end-board paper', m);
+    // the team's board and the player's own record sit side by side, so the record costs the screen no height
+    const panels = el('div', 'end-panels', m);
+    this.board = el('div', 'end-board paper', panels);
+    this.record = el('div', 'end-board end-record paper', panels);
     this.count = el('div', 'end-count', m);
+  }
+
+  // What this run did to the player's own record. rep: recordRun's report (records.js), { late: true } for a
+  // run joined too late to count, or nothing when the run was not followed at all.
+  _record(rep) {
+    const box = this.record;
+    box.textContent = '';
+    box.hidden = !rep;
+    if (!rep) return;
+    el('h3', 'panel-h', box, 'Your record');
+    if (rep.late) {
+      el('p', 'er-note', box, 'You joined this run after its first minute, so it is not on your record.');
+      return;
+    }
+    const { run, news, record: rec } = rep;
+    const tiles = el('div', 'er-tiles', box);
+    // this run's figure over the best that stands after it, lit when this run set it
+    const tile = (k, label, value, best) => {
+      const t = el('div', 'er-tile' + (news.some((n) => n.k === k) ? ' new' : ''), tiles);
+      el('span', '', t, label);
+      el('b', '', t, value);
+      el('small', '', t, best);
+    };
+    tile('secs', 'Time', fmtTime(run.secs), rec.best.secs ? 'fastest escape ' + fmtTime(rec.best.secs) : 'no escape yet');
+    tile('nights', 'Nights', String(run.nights), 'best ' + rec.best.nights);
+    tile('kills', 'Kills', String(run.kills), 'best ' + rec.best.kills);
+    for (const n of news) {
+      const row = el('div', 'er-new', box);
+      el('b', '', row, n.label);
+      el('span', '', row, n.text);
+      if (n.was) el('small', '', row, 'was ' + n.was);
+    }
+    const t = rec.total;
+    el('div', 'er-foot', box, `Run ${t.runs} · ${t.escapes} escape${t.escapes === 1 ? '' : 's'}` + (t.streak > 1 ? ` · ${t.streak} in a row` : ''));
   }
 
   show(kind, stats = {}) {
@@ -336,10 +390,12 @@ export class EndScreen {
     void this.root.offsetWidth;
     this.root.classList.add('in');
     this.kicker.textContent = victory ? 'The engine turns over' : 'Game over';
-    this.title.textContent = victory ? 'You escaped' : 'Everyone died';
+    this.title.textContent = stats.title || (victory ? 'You escaped' : 'Everyone died');
     this.reason.textContent =
       stats.reason || (victory ? 'Headlights cut through the trees. The valley shrinks in the mirror.' : 'The valley is quiet again. The car never started.');
-    const n = stats.days | 0;
+    // stats.days is the day the run ended on. Night N closes day N, so a run that ends on day N - in its
+    // daylight or in its night - got through N - 1 nights (a wipe during the first night survived none)
+    const n = Math.max(0, (stats.days | 0) - 1);
     this.nights.textContent = String(n);
     this.nightsL.textContent = n === 1 ? 'night survived' : 'nights survived';
 
@@ -358,6 +414,7 @@ export class EndScreen {
       });
     }
     this.board.hidden = !kills.length;
+    this._record(stats.record);
 
     clearInterval(this._iv);
     this.count.textContent = '';

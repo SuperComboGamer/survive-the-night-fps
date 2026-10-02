@@ -14,19 +14,25 @@ import {
   INVENTORY_SIZE,
   WATER_LEVEL,
   MAX_PLAYERS,
+  ESCAPE_RADIUS,
   MAP_HALF,
   GRID_STEP,
   GRID_N,
   DUSK_WARNING,
+  DAWN_RETURN,
   EYE_HEIGHT,
+  INTERACT_REACH,
+  CAR_REACH,
 } from '../../shared/constants.js';
 import {
   ITEM,
   ITEM_DEFS,
   WEAPONS,
+  RECIPES,
   STRUCT,
   STRUCT_DEFS,
   STRUCT_ORDER,
+  REPAIR_COST,
   ZOMBIE_DEFS,
   SUPPLIES,
   SUPPLY_NEED,
@@ -42,15 +48,19 @@ import {
   AMMO_NAMES,
   AMMO_ITEMS,
   CONSUMABLES,
+  PROJ,
   radioLinked,
 } from '../../shared/defs.js';
 import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
+import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { Prediction } from './prediction.js';
+import { InputBuffer } from './inputbuffer.js';
+import { harvestPrompt, needLines } from './harvest.js';
 import { Entities } from './entities.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
@@ -65,8 +75,14 @@ import { Atmosphere } from '../render/atmosphere.js';
 import { WeatherFX } from '../render/weatherfx.js';
 import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
-import { createGhost } from '../render/models/structures.js';
+import { createGhost, createStructure } from '../render/models/structures.js';
+import { createZombie, createSurvivor, zombieVariants } from '../render/models/characters.js';
+import { createCat } from '../render/models/cat.js';
+import { createPickup } from '../render/models/pickups.js';
+import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
+import { recordRun } from '../ui/records.js';
+import { KeyHints } from '../ui/keyhints.js';
 import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -95,6 +111,20 @@ const SHOT_KICK = {
   [ITEM.CROSSBOW]: [0, 0.1],
 };
 const PING_LIFE = 12;
+const WAYPOINT_REACH = 10; // metres: this close to a waypoint that is not on a named place and it is reached
+// A bulk craft is one ACT.CRAFT per craft. The server drops whatever a client sends past 200 messages in a second,
+// commands included (Game.onMessage), so the repeats leave through a bucket: a whole Ctrl+click at once, and when
+// clicks pile up on top of that, the rest over the next ticks.
+const CRAFT_BURST = 20;
+const CRAFT_RATE = 40; // per second
+const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
+const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
+// Turning while aimed is slowed by the gun's zoom, tan(aimed fov / 2) / tan(hip fov / 2) (the ratio of the two
+// magnifications, the same on any aspect ratio), so what is under the crosshair slides across the screen as far per
+// centimetre of mouse as it does from the hip, whatever the zoom. On top of that, AIM_SENS: at 1 aimed and hip would
+// match exactly; 0.82 keeps an ordinary gun where the flat 0.6 it replaces had it (0.82 * 0.73 at 75 degrees). The
+// "Aim sensitivity" setting multiplies it (1.22 there is the exact match).
+const AIM_SENS = 0.82;
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
 const _v = new THREE.Vector3();
@@ -103,6 +133,7 @@ const _p = new THREE.Vector3();
 const _qv = new THREE.Quaternion();
 const _sunRay = { t: -1, col: null, terrain: false };
 const _near = [];
+const _sc = { x: 0, y: 0 };
 
 export class Game {
   constructor({ renderer, ui, audio, settings }) {
@@ -121,6 +152,9 @@ export class Game {
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
+    this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
+    this.craftBudget = CRAFT_BURST;
+    this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
     this.players = new Map(); // id -> {name, status, kills, ping}
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
@@ -136,8 +170,12 @@ export class Game {
     this.hitFx = 0;
     this.recoilKick = 0;
     this.camBob = 0;
+    this.landDip = 0; // how far a landing has pushed the view down, a spring (landVel) kicked on touchdown
+    this.landVel = 0;
+    this.fallV = 0; // downward speed in the last frame in the air
     this.eyeH = 1.62;
     this.fovCur = settings.fov || 75;
+    this.aimT = 0; // 0 hip .. 1 aimed, eased with the zoom (look sensitivity)
     this.buildType = STRUCT.BARRICADE;
     this.buildRot = 0;
     this.ghosts = {};
@@ -149,6 +187,9 @@ export class Game {
     this.stepAcc = 0;
     this.deathShown = false;
     this.overlay = null;
+    this.runOn = false; // a run is under way, as far as this client has seen (trackRun)
+    this.run = null; // ...and we have been in it from the start: { tick, kills0 }
+    this.runReport = null; // what the run that just ended did to the personal record, for the end screen
     this.prevPhase = -1;
     this.lastHudInvKey = '';
     this.talkPeers = [];
@@ -160,14 +201,21 @@ export class Game {
     this.holding = 0; // hold-to-interact target we told the server about
     this.flames = new Map(); // flamethrowers spraying right now: shooter id (-1 = ours) -> { loop, t }
     this.pings = [];
+    // your own waypoint, set on the field map and never sent anywhere:
+    // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
+    this.waypoint = null;
+    ui.map.onWaypoint = (at) => this.setWaypoint(at);
     this.discovered = new Set([ZONE.CAMP]);
     this.discoverT = 0;
     this.debugCam = null;
+    this.warm = null; // shader warm-up in progress (prewarm)
+    this.warmKey = ''; // quality + map the programs were last warmed for
 
     this.input = new Input(renderer.canvas);
     this.input.sensitivity = settings.sensitivity || 1;
     this.input.invertY = !!settings.invertY;
     this.input.rawInput = settings.rawMouse !== false;
+    this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
       world: (seed) => this.loadWorld(seed),
@@ -183,12 +231,16 @@ export class Game {
     this.weather = new Weather();
     this.weather.onStrike = (s) => this.onLightning(s);
     this.lights = new Lights(this.scene, this.camera, renderer.q);
-    this.vm = new ViewModel();
-    renderer.vmScene.add(this.vm.group);
+    this.vm = null; // built with the first world (ensureViewModel), not here: the splash has to paint first
     this.vmItem = -1;
     this.entities = new Entities(this);
     this.prediction = new Prediction(null);
+    this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
+    // a click on the canvas takes the pointer back when the lock was lost or refused
+    renderer.canvas.addEventListener('click', () => {
+      if (this.state === 'playing' && !this.input.locked && !this.ui.inventoryOpen && !this.ui.isTyping()) this.input.requestLock();
+    });
   }
 
   // How much sun/moon reaches the camera: blocked by buildings/terrain (ray cast towards the light)
@@ -257,14 +309,26 @@ export class Game {
   setShadowQuality(q) {
     this.entities.setCharShadows(!!q.charShadows);
     if (this.terrain) this.terrain.castShadow = !!q.shadows;
+    this.staticWorld?.setShadows(!!q.shadows);
+  }
+
+  // The first-person arms and weapons. Baking their two 1024 px atlases holds the main thread for ~0.3 s, so it is
+  // done with the first world build (behind the splash, or on the join if that comes first) instead of in the
+  // constructor, where it kept the splash from painting. Nothing uses the view model before a world is loaded.
+  ensureViewModel() {
+    if (this.vm) return;
+    this.vm = new ViewModel();
+    this.renderer.vmScene.add(this.vm.group);
   }
 
   // ---------------------------------------------------------------- world
   loadWorld(seed) {
+    this.ensureViewModel();
     if (this.seed === seed && this.world) return;
     const t0 = performance.now();
     if (this.world) this.unloadWorld();
     this.seed = seed;
+    this.waypoint = null; // it pointed into the old valley
     this.world = createWorld(seed);
     this.prediction.setWorld(this.world);
     const t1 = performance.now();
@@ -275,6 +339,7 @@ export class Game {
     this.scene.add(this.water);
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
+    this.staticWorld.setShadows(!!this.renderer.q.shadows);
     const t3 = performance.now();
     this.foliage = new Foliage(this.scene, this.world, this.renderer.q);
     const t4 = performance.now();
@@ -295,6 +360,7 @@ export class Game {
       }
     }
     this.ui.map.setWorld(this.world);
+    this.prewarm();
     console.log(`[client] world ${seed}: gen ${(t1 - t0).toFixed(0)}ms, terrain ${(t2 - t1).toFixed(0)}ms, static ${(t3 - t2).toFixed(0)}ms, foliage ${(t4 - t3).toFixed(0)}ms, rest ${(performance.now() - t4).toFixed(0)}ms`);
   }
 
@@ -312,6 +378,221 @@ export class Game {
     this.world = null;
   }
 
+  // ---------------------------------------------------------------- shader warm-up
+  // three.js builds a material's shader program the first time it is drawn and waits for it on the main thread,
+  // so the frame in which the first torch, gate, muzzle flash or spitter appeared used to stall. Instead every
+  // program play can need at this quality is built behind the splash: started without waiting for it (the driver
+  // compiles in the background), not used until it is built, and then one frame nobody sees draws one of
+  // everything (warmFrame). Runs again for a new map (other props, other materials) and when the quality changes
+  // (other lights and shadows: another program for every lit material).
+  prewarm() {
+    const key = `${this.renderer.quality}:${this.seed}`;
+    if (!this.world || key === this.warmKey) return;
+    this.warmKey = key;
+    this.warmTodo ||= this.warmViews();
+    this.scene.add(this.warmSet);
+    // hold: the frame loop draws nothing (the scene's own programs are still being built)
+    const w = (this.warm = { hold: true, ready: false, sync: false, t0: performance.now() });
+    w.steps = this.warmSteps(w);
+    const tick = () => {
+      if (this.warm !== w) return; // finished early (play began), or the quality changed again
+      const step = w.steps.next();
+      if (step.done) w.ready = true; // update() draws the warm frame
+      else setTimeout(tick, step.value);
+    };
+    setTimeout(tick, 0);
+  }
+
+  // A warm-up's work in slices short enough to leave the splash responsive. Each yield is the wait before the
+  // next slice (ms); with w.sync set it runs straight through.
+  *warmSteps(w) {
+    const R = this.renderer;
+    const compile = () => {
+      R.compilePrograms();
+      const stage = this.warmStage();
+      R.compileDepth(stage.casters);
+      stage.undo();
+    };
+    // first what the scene holds already. The frame loop waits for these, then draws again: the splash gets its
+    // backdrop while the views are still being built
+    compile();
+    while (!w.sync && !R.programsReady()) yield 16;
+    w.hold = false;
+    if (!this.warmTodo.length) return;
+    while (this.warmTodo.length) {
+      this.warmTodo.shift()();
+      if (!w.sync) yield 0;
+    }
+    compile(); // the views' own
+    while (!w.sync && !R.programsReady()) yield 16;
+  }
+
+  // One of every view that does not exist until the game needs it (what Entities draws, the build ghosts, the
+  // supply plane, the weapons in the hands), as a list of small build steps. Building them also bakes what they
+  // are made from - zombie rigs, pickup and weapon meshes - which used to happen in the frame the first one
+  // showed up. The views stay in this.warmSet (hidden: only the warm frame shows it) for the next warm-up.
+  // Anything new that the game creates on demand with a material of its own belongs here, or its program is
+  // built mid-game again.
+  warmViews() {
+    const set = (this.warmSet = new THREE.Group());
+    set.visible = false;
+    const chars = (set.userData.chars = []); // these cast shadows on the presets where characters do
+    const steps = [];
+    // every zombie rig. createZombie picks the variant from its seed, so go through seeds until a rig turns up that
+    // has not been built yet; one view is kept, they all share a material
+    for (const t of Object.values(ZTYPE)) {
+      const rigs = new Set();
+      let seed = 0;
+      for (let v = zombieVariants(t); v > 0; v--) {
+        steps.push(() => {
+          for (let fresh = false, tries = 0; !fresh && tries < 64; tries++) {
+            const z = createZombie(t, seed++);
+            const rig = z.object.getObjectByProperty('isSkinnedMesh', true).geometry;
+            fresh = !rigs.has(rig);
+            rigs.add(rig);
+            if (chars.length) z.dispose();
+            else set.add(chars[0] = z.object);
+          }
+        });
+      }
+    }
+    steps.push(() => {
+      const sv = createSurvivor(1);
+      sv.setWeapon(ITEM.PISTOL);
+      chars.push(sv.object);
+      // (Entities draws these three with its own geometry: a teammate's flashlight cone, a roper's rope, the loot glints)
+      const e = this.entities;
+      set.add(sv.object, new THREE.Mesh(e.coneGeo, e.coneMat), new THREE.Mesh(e.ropeGeo, e.ropeMat), new THREE.Points(e.glints.geometry, e.glints.material));
+    });
+    steps.push(() => set.add(createCat(0, 1).object));
+    steps.push(() => set.add(createSupplyCrate()));
+    for (const p of Object.values(PROJ)) steps.push(() => set.add(createProjectile(p)));
+    const items = Object.values(ITEM).filter((it) => it);
+    for (let i = 0; i < items.length; i += 3) {
+      steps.push(() => {
+        for (const it of items.slice(i, i + 3)) set.add(createPickup(it));
+      });
+    }
+    for (const t of STRUCT_ORDER) {
+      steps.push(() => {
+        const s = createStructure(t);
+        s.traverse((o) => o.isMesh && (o.castShadow = o.receiveShadow = true)); // as Entities sets them up
+        set.add(s, createGhost(t));
+      });
+    }
+    steps.push(() => {
+      // the supply plane, in the materials Flyover gives it
+      this.flyover.start(0, 0, 0, 0, 0, this.time, null);
+      set.add(this.flyover.planes.pop().obj);
+    });
+    // the viewmodel builds a weapon's mesh the first time it is held
+    for (const it of [...Object.keys(WEAPONS), ...THROW_ITEMS]) steps.push(() => this.vm.setItem(+it));
+    steps.push(() => {
+      this.vm.setItem(0);
+      this.vmItem = -1;
+    });
+    return steps;
+  }
+
+  // Sets the scenes up for the warm frame: one mesh of every static-world material, everything else that is
+  // hidden or out of view shown, and every mesh that can cast a shadow at this quality casting one. Returns those
+  // casters and the way back. The shadow passes draw the casters with depth materials three keeps to itself; it
+  // only picks a program for one when the kind of mesh changes, by the sides and texture of the mesh that came by
+  // just then, so here every caster makes it pick again (needsUpdate) and every combination play can meet exists.
+  warmStage() {
+    const set = this.warmSet;
+    const undo = [];
+    const casters = [];
+    for (const o of set.userData.chars) o.traverse((m) => m.isSkinnedMesh && (m.castShadow = this.entities.charShadows));
+    // vegetation that can cast at this quality (InstancedSet.update: within castDist, never the near tree LOD)
+    const f = this.foliage;
+    for (const s of [f.trees, f.bushes, f.rocks]) {
+      if (!(s.castDist > 0)) continue;
+      for (const lods of s.meshes) {
+        lods.forEach((parts, l) => {
+          if (lods.length > 1 && l === 0) return;
+          for (const m of parts) {
+            if (m.castShadow) continue;
+            m.castShadow = true;
+            undo.push(() => (m.castShadow = false));
+          }
+        });
+      }
+    }
+    const show = (o) => {
+      if (!o.visible) {
+        o.visible = true;
+        undo.push(() => (o.visible = false));
+      }
+      if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
+      if (o.frustumCulled) {
+        o.frustumCulled = false;
+        undo.push(() => (o.frustumCulled = true));
+      }
+      if (o.castShadow) {
+        casters.push(o);
+        const own = Object.hasOwn(o, 'onBeforeShadow') && o.onBeforeShadow;
+        o.onBeforeShadow = function (...a) {
+          a[5].needsUpdate = true; // (the depth material this mesh is about to be drawn with)
+          if (own) own.apply(this, a);
+        };
+        undo.push(() => (own ? (o.onBeforeShadow = own) : delete o.onBeforeShadow));
+      }
+    };
+    // the static world: one mesh of each material will do (StaticWorld.update sets their visibility again), and
+    // one of its shadow casters for each shadow side - they are what the shadow passes draw of it. Their group is
+    // left as StaticWorld.setShadows has it: hidden when the quality has no shadows.
+    const statics = this.staticWorld.group;
+    const shade = this.staticWorld.casters;
+    const mats = new Set();
+    for (const m of [...statics.children, ...(shade.visible ? shade.children : [])]) {
+      if (m === shade) continue;
+      m.visible = !mats.has(m.material);
+      mats.add(m.material);
+      if (m.visible) show(m);
+    }
+    const showAll = (o) => {
+      if (o === statics) return;
+      show(o);
+      for (const c of o.children) showAll(c);
+    };
+    showAll(this.scene);
+    showAll(this.renderer.vmScene);
+    return { casters, undo: () => undo.forEach((u) => u()) };
+  }
+
+  // One frame through the whole pipeline that is never seen (the frame loop draws the real one over it before the
+  // browser presents), with one of everything in it and every post pass on: it uses each program once, so not
+  // even a program's first use is left for play.
+  warmFrame() {
+    const R = this.renderer;
+    this.camera.getWorldDirection(_v);
+    this.warmSet.position.copy(this.camera.position).addScaledVector(_v, 6);
+    const stage = this.warmStage();
+    const fl = this.lights.flashlight;
+    const flI = fl.intensity;
+    fl.intensity = 1; // the beam pass only runs with the flashlight on, the sun shafts with the sun on screen
+    R.render({ time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure, rays: { ...this.env.rays, sunDir: _v, strength: 1 }, beam: { light: fl, density: 0.001 }, adaptRef: 0.1, dt: 0.016 }, true);
+    R.adaptReset = true; // the eye adaptation does not start from this frame
+    fl.intensity = flI;
+    stage.undo();
+  }
+
+  // Ends a warm-up. If play has begun before it is done (a quick join, a new map or quality mid-game), the rest
+  // happens here in one go, as it used to on the first frame.
+  finishPrewarm() {
+    const w = this.warm;
+    const programs = this.renderer.renderer.info.programs;
+    w.sync = true;
+    while (!w.steps.next().done);
+    const n = programs.length;
+    const t = performance.now();
+    this.warmFrame();
+    this.scene.remove(this.warmSet);
+    this.warm = null;
+    console.log(`[client] shaders: ${programs.length} programs ${w.ready ? 'built' : 'built in one go (play had begun)'} ${(t - w.t0).toFixed(0)}ms after the world, warm frame ${(performance.now() - t).toFixed(0)}ms${programs.length > n ? `, which had to build ${programs.length - n} itself` : ''}`);
+  }
+
   // ---------------------------------------------------------------- connection
   async join(name) {
     this.audio.stinger?.('join');
@@ -323,13 +604,15 @@ export class Game {
     this.clientTick = info.tick;
     this.clockInit = false;
     this.interpExtra = 0;
+    this.introPending = true; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
+    this.runOn = false;
+    this.run = this.runReport = null;
     this.state = 'playing';
     this.input.enabled = true;
+    this.inputBuffer.clear();
     this.input.requestLock();
     this.discovered = new Set([ZONE.CAMP]);
-    this.renderer.canvas.addEventListener('click', () => {
-      if (this.state === 'playing' && !this.input.locked && !this.ui.inventoryOpen && !this.ui.isTyping()) this.input.requestLock();
-    });
+    this.waypoint = null;
     return info;
   }
 
@@ -340,13 +623,23 @@ export class Game {
     this.input.exitLock();
     this.entities.clear();
     this.voice.closeAll();
+    // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
+    this.ui.setInventoryOpen(false);
+    this.ui.showPause(false); // ("Leave game" is pressed on it)
+    this.ui.clearNotices();
     this.ui.hideOverlays();
+    this.overlay = null;
+    this.deathShown = false;
     this.ui.showSplash();
-    this.ui.setJoinError('Disconnected from server.');
+    // a player who pressed "Leave game" knows why they are back here: only a drop is an error
+    if (!this.leaving) this.ui.setJoinError('Disconnected from server.');
+    this.leaving = false;
   }
 
   leave() {
+    if (this.state !== 'playing') return;
+    this.leaving = true;
     this.conn.close();
   }
 
@@ -384,6 +677,43 @@ export class Game {
     if (sync) this.prediction.reconcile(ack, this.self);
     else this.prediction.confirm(ack);
     readEvents(r, this.eventHandler, flags, this.entities.ents);
+    // (after the events: a join that starts the run gets NEW_GAME in this same snapshot, and that is its introduction)
+    if (this.introPending && flags & SNAP.GLOBAL && (this.global.phase === PHASE.DAY || this.global.phase === PHASE.NIGHT)) this.lateJoinIntro();
+    if (flags & SNAP.GLOBAL) this.trackRun();
+  }
+
+  // The personal record (ui/records.js). A run goes on it when this player was in it from its first minute
+  // and is still connected when it ends: joining later or leaving early records nothing. It follows the
+  // replicated phase, not the NEW_GAME / VICTORY / GAME_OVER notifications: a client the server skips for a
+  // tick loses that tick's events, while the global state always catches up.
+  trackRun() {
+    const g = this.global;
+    if (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) {
+      if (this.runOn) return;
+      this.runOn = true;
+      // how much of the run was played before we saw it: nothing when it starts under us
+      const gone = g.phase === PHASE.DAY && g.day === 1 ? g.phaseLen - g.timeLeft : Infinity;
+      // kills0: our score when the run began. The server's count can carry over from the run before
+      this.run = gone <= RUN_JOIN_GRACE ? { tick: this.net.tick - gone * SERVER_TICK_RATE, kills0: this.players.get(this.myId)?.kills ?? Infinity } : null;
+    } else if (this.runOn) {
+      this.runOn = false;
+      const run = this.run;
+      this.run = null;
+      if (g.phase !== PHASE.VICTORY && g.phase !== PHASE.GAMEOVER) return;
+      if (!run) {
+        this.runReport = { late: true };
+        return;
+      }
+      this.runReport = recordRun({
+        t: Date.now(),
+        seed: this.seed,
+        result: g.phase === PHASE.VICTORY ? 'escaped' : 'wiped',
+        nights: g.day - 1, // night N closes day N: a run that ends on day N got through N - 1 of them
+        secs: (this.net.tick - run.tick) / SERVER_TICK_RATE, // the server's tick clock, which the day and night run on: a stalled tab or a laggy link cannot bend it
+        kills: (this.players.get(this.myId)?.kills ?? 0) - run.kills0,
+        team: this.players.size,
+      });
+    }
   }
 
   onInventory(r) {
@@ -430,7 +760,6 @@ export class Game {
   onPlayers(r) {
     const n = r.u8();
     const seen = new Set();
-    const list = [];
     for (let i = 0; i < n; i++) {
       const id = r.u16();
       const name = r.str();
@@ -442,9 +771,9 @@ export class Game {
       this.players.set(id, { name, status, walkie, kills, ping });
     }
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
-    const ST = ['alive', 'zombie', 'dead', 'downed'];
-    for (const [id, p] of this.players) list.push({ id, name: p.name, status: ST[p.status] === 'downed' ? 'alive' : ST[p.status] || 'alive', kills: p.kills, ping: id === this.myId ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self: id === this.myId });
-    this.ui.setPlayers(list);
+    // (a count that went down was reset by the server for the new run: the run's kills then count from there)
+    if (this.run) this.run.kills0 = Math.min(this.run.kills0, this.players.get(this.myId)?.kills ?? Infinity);
+    this.pushRoster();
     this.voice.syncPlayers([...this.players.keys()]);
     // who the walkie-talkie reaches
     const onRadio = !!this.players.get(this.myId)?.walkie;
@@ -459,6 +788,21 @@ export class Game {
     }
   }
 
+  // The survivors list of the inventory screen: the player list plus everyone's health. Health is not in the
+  // list message: a teammate's rides in their entity record (field 7, 0..255), our own in the self state.
+  pushRoster() {
+    const ST = ['alive', 'zombie', 'dead', 'downed'];
+    const list = [];
+    const turned = !this.self.alive || !!this.prediction.state.zombie; // the dead get no report on the living
+    for (const [id, p] of this.players) {
+      const self = id === this.myId;
+      const e = self || turned ? null : this.entities.ents.get(id);
+      const hp = self ? (this.self.maxHp ? this.self.hp / this.self.maxHp : 1) : e ? e.q[7] / 255 : -1; // -1: nothing to show
+      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self });
+    }
+    this.ui.setPlayers(list);
+  }
+
   // the peers you can hear talking right now (for the HUD)
   speakers() {
     return this.talkPeers.map((id) => ({ name: this.players.get(id)?.name || '?', radio: this.voice.overRadio(id) }));
@@ -468,12 +812,24 @@ export class Game {
     return this.players.get(id)?.name || 'Someone';
   }
 
+  // a death now lasts until sunrise (DAWN_RETURN) - unless there is none to come: the final stand stops the clock,
+  // and a wipe ends the run
+  dawnAhead() {
+    const g = this.global;
+    return DAWN_RETURN && !g.finale && (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT);
+  }
+
   // ---------------------------------------------------------------- events
   get eventHandler() {
     if (this._eh) return this._eh;
     const g = this;
     this._eh = {
       sound(snd, x, y, z) {
+        // a bulk craft is a tick's worth of craft events at one bench: one rummage, not twenty on top of each other
+        if (snd === SOUND.CRAFT) {
+          if (g.time - g.craftSoundT < 0.1) return;
+          g.craftSoundT = g.time;
+        }
         // (HORDE_HORN / DAWN / PLANE are always played 2D by the audio engine)
         g.audio.play(snd, { x, y, z });
       },
@@ -503,9 +859,12 @@ export class Game {
         g.audio.playLocal(g.self.zombie ? 'zombie_player_growl' : 'hurt', { volume: Math.min(1, 0.4 + amount / 40) });
       },
       killfeed(kk, killerId, victimId, weapon, flags) {
-        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : 'The world';
+        // a zombie the world killed is a boss that outlived the night: the dawn sun burnt it, and its loot with it
+        const sunKill = kk === KILLER.WORLD && !!(victimId & 0x8000);
+        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : 'The world';
         const victim = victimId & 0x8000 ? ZOMBIE_DEFS[victimId & 0xff]?.name || 'Zombie' : g.name(victimId);
         g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
+        if (sunKill) g.ui.notify(`${victim.startsWith('The ') ? victim : 'The ' + victim} burned in the sun, and what it carried with it. Kill a boss before sunrise to loot it.`, 'toast', 7);
       },
       notify(msg, arg) {
         g.onNotify(msg, arg);
@@ -539,7 +898,7 @@ export class Game {
       },
       summary(s) {
         // after the "DAY N" title card has faded
-        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1)), 4300);
+        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1), nightTheme(g.seed, s.night + 1)), 4300);
       },
     };
     return this._eh;
@@ -549,11 +908,14 @@ export class Game {
     const ui = this.ui;
     const a = this.audio;
     switch (msg) {
-      case NOTIFY.NIGHT_FALLS:
-        ui.notify(`NIGHT ${arg}`, 'big', 4);
-        ui.notify(arg <= 1 ? 'The horde is coming to wherever you are. Hold your shelter.' : `Horde ${arg}: more of them than last night.`, 'sub', 4);
+      case NOTIFY.NIGHT_FALLS: {
+        // a themed night says so (the same theme the server drew: both work it out from the seed)
+        const th = nightTheme(this.seed, arg);
+        ui.notify(th ? `NIGHT ${arg}: ${th.name.toUpperCase()}` : `NIGHT ${arg}`, 'big', th ? 6 : 4);
+        ui.notify(th ? th.warn : arg <= 1 ? 'The horde is coming to wherever you are. Hold your shelter.' : `Horde ${arg}: more of them than last night.`, 'sub', th ? 6 : 4);
         a.stinger?.('night');
         break;
+      }
       case NOTIFY.WAVE:
         ui.notify(`WAVE ${arg}`, 'danger', 3);
         a.playLocal('notify');
@@ -563,15 +925,21 @@ export class Game {
         ui.notify('You made it. The sun burns the horde - go find those supplies.', 'sub', 4);
         a.stinger?.('dawn');
         break;
-      case NOTIFY.HORDE_SOON:
+      case NOTIFY.HORDE_SOON: {
         ui.notify('THE HORDE IS COMING', 'danger', 5);
         ui.notify('Board up where you stand: door boards, barricades, a campfire.', 'toast', 6);
+        // the dawn card said it first; this is the reminder with 45 seconds left (arg = the coming night)
+        const th = nightTheme(this.seed, arg);
+        if (th) ui.notify(`${th.name} tonight. ${th.warn}`, 'warning', 9);
         break;
+      }
       case NOTIFY.BOSS: {
         const zd = ZOMBIE_DEFS[arg];
         ui.notify(zd ? (zd.boss ? '' : 'A ') + zd.name.toUpperCase() : 'SOMETHING', 'big', 4);
         ui.notify('has risen from the woods.', 'sub', 4);
         if (arg === ZTYPE.TANK) ui.notify('Listen for its footsteps. It charges, and it smashes straight through barricades.', 'toast', 7);
+        // (the final stand's boss never sees a sunrise: the clock is stopped)
+        if (!this.global.finale) ui.notify('Bring it down before sunrise and what it carries is yours. The sun leaves nothing.', 'toast', 7);
         a.stinger?.('boss');
         break;
       }
@@ -612,11 +980,12 @@ export class Game {
         break;
       case NOTIFY.ENGINE_START:
         ui.notify('THE FINAL STAND', 'big', 5);
-        ui.notify('The engine is warming up. Every corpse in the valley heard it. Hold the car!', 'sub', 6);
+        ui.notify('The engine is warming up. Every corpse in the valley heard it. Stay at the car: it stalls if nobody is there.', 'sub', 6);
         a.stinger?.('boss');
         break;
       case NOTIFY.ESCAPE_READY:
         ui.notify('GET IN THE CAR!', 'big', 5);
+        ui.notify('Hold [E] at the car to drive away. Whoever is not at the car is left behind.', 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.SCHEMATIC:
@@ -636,13 +1005,22 @@ export class Game {
         ui.notify(arg === this.myId ? "You're back on your feet." : `${this.name(arg)} is back up.`, 'good', 3);
         break;
       case NOTIFY.YOU_DIED:
-        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT };
+        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
         ui.showDeath(this.deathInfo);
         a.stinger?.('death');
         this.deathShown = true;
         break;
       case NOTIFY.PLAYER_DIED:
-        if (arg !== this.myId) ui.notify(`${this.name(arg)} has fallen... and will rise as one of them.`, 'danger', 5);
+        if (arg !== this.myId) ui.notify(`${this.name(arg)} has fallen... and will rise as one of them${this.dawnAhead() ? ' until dawn' : ''}.`, 'danger', 5);
+        break;
+      case NOTIFY.RETURNED:
+        if (arg === this.myId) {
+          // (the death card is still up if we died in the last seconds of the night)
+          if (this.deathShown) ui.hideOverlays();
+          this.deathShown = false;
+          ui.notify('The sun burns it out of you: you are a survivor again.', 'good', 6);
+          ui.notify('You wake with one pistol magazine and a bandage. Your old gear may still lie where you fell.', 'toast', 8);
+        } else ui.notify(`${this.name(arg)} is back among the living.`, 'good', 5);
         break;
       case NOTIFY.VICTORY:
         a.stinger?.('victory');
@@ -673,16 +1051,27 @@ export class Game {
       case NOTIFY.STRUCT_CAP:
         ui.notify('Too many structures - demolish some [X]', 'warning', 2.5);
         break;
-      case NOTIFY.NOT_ENOUGH:
-        ui.notify(arg ? `You need ${ITEM_DEFS[arg]?.name || 'materials'}` : 'Not enough materials', 'warning', 2.5);
+      case NOTIFY.NOT_ENOUGH: {
+        // The server names one item (arg) or nothing at all. What is short, by how much and where it comes from is
+        // worked out here: from that item, or from the cost of what was last asked for against what we carry.
+        const need = arg ? needLines({ [arg]: 1 }, {}) : needLines(this.askedCost, this.invCounts());
+        if (!need.length) ui.notify('Not enough materials', 'warning', 2.5);
+        need.forEach((line, i) => ui.notify(line, i ? 'toast' : 'warning', 4.5));
         a.playLocal('build_fail');
         break;
+      }
       case NOTIFY.SEARCH_EMPTY:
         ui.notify(arg === 1 ? 'This tree is stripped bare' : arg === 2 ? 'Nothing left to salvage' : 'Already searched', 'toast', 1.6);
         break;
-      case NOTIFY.INVENTORY_FULL:
-        ui.notify('Inventory full', 'warning', 2);
+      case NOTIFY.INVENTORY_FULL: {
+        // arg: the item a full backpack left lying where the survivor walked over it (0: a craft, a search, a swap)
+        const d = ITEM_DEFS[arg];
+        if (d?.cat === 'part') {
+          ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack [Tab].`, 'danger', 6);
+          a.playLocal('build_fail');
+        } else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
         break;
+      }
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;
@@ -692,7 +1081,9 @@ export class Game {
         this.deathShown = false;
         this.discovered = new Set([ZONE.CAMP]);
         this.pings = [];
+        this.waypoint = null;
         this.flyover?.clear();
+        this.introPending = false;
         ui.notify(`DAY ${arg}`, 'big', 5);
         ui.notify('Your car died on Route 9. Find the supplies to fix it - before the dark finds you.', 'sub', 6);
         break;
@@ -700,6 +1091,35 @@ export class Game {
       case NOTIFY.PLAYER_LEFT:
         break;
     }
+  }
+
+  // Joined a run that is already under way. NEW_GAME, the card that says what the game is, went out before we were
+  // here (and on a drop-in server that is how most first-time players arrive), so say it for the moment we arrive
+  // in: the goal in one line, the day and phase, and how far the team has got.
+  lateJoinIntro() {
+    this.introPending = false;
+    const g = this.global;
+    const ui = this.ui;
+    const night = g.phase === PHASE.NIGHT;
+    let need = 0;
+    let have = 0;
+    SUPPLY_NEED.forEach((n, i) => {
+      need += n;
+      have += Math.min(n, g.supplies[i]);
+    });
+    ui.notify(g.finale ? 'THE FINAL STAND' : `${night ? 'NIGHT' : 'DAY'} ${g.day}`, 'big', 5);
+    if (g.finale) {
+      ui.notify('The car is fixed and the engine is warming up. Defend it, then get in.', 'sub', 6);
+      ui.notify('You joined a run in progress: every supply is in. Your team is at the car.', 'toast', 8);
+      return;
+    }
+    ui.notify('Your car died on Route 9. Find the supplies, fix it, drive out.', 'sub', 6);
+    ui.notify(g.suppliesDone ? 'You joined a run in progress: every supply is in. Starting the engine is next.' : `You joined a run in progress: ${have} of ${need} car supplies are in.`, 'toast', 8);
+    let team = 'Your team is marked on the compass. Scavenge with them before dark.';
+    if (night) team = 'Night: the horde is out. Find your team on the compass and hold out until dawn.';
+    else if (g.suppliesDone) team = 'Your team is marked on the compass. Meet them at the car.';
+    else if (g.timeLeft <= DUSK_WARNING) team = 'Night is seconds away. Find your team on the compass and board up with them.';
+    ui.notify(team, 'toast', 8);
   }
 
   remoteShot(ev) {
@@ -835,8 +1255,7 @@ export class Game {
           a.playLocal('jump', { volume: 0.5 });
           break;
         case 'land':
-          a.playLocal('land');
-          this.landDip = 0.12;
+          a.playLocal('land'); // the view's dip comes with every landing, see the camera in update()
           break;
         case 'leap':
           a.playLocal('zombie_player_growl');
@@ -899,9 +1318,12 @@ export class Game {
       return;
     }
     if (code === 'Enter') {
-      if (!ui.isTyping()) {
+      // (not from the map: the chat box is hidden under it and could never take the focus, which left
+      // every key dead until a reload)
+      if (!ui.isTyping() && !ui.mapOpen) {
         ui.openChat();
         this.input.buttons = 0;
+        this.inputBuffer.clear();
       }
       return;
     }
@@ -976,8 +1398,9 @@ export class Game {
   toggleInventory(open) {
     const ui = this.ui;
     if (open === ui.inventoryOpen) return;
-    if (ui.mapOpen) this.toggleMap(false);
+    if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
     ui.setCraftContext(this.craftContext());
+    if (open) this.pushRoster(); // health as of now, not as of the last player list
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
     if (open) this.input.exitLock();
@@ -985,14 +1408,41 @@ export class Game {
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
-  toggleMap(open) {
+  // relock: false when something else that needs the cursor is taking over
+  toggleMap(open, relock = true) {
     const ui = this.ui;
     if (open === ui.mapOpen) return;
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.buttons = 0;
     this.endHold();
+    // the map takes clicks (your waypoint), so it frees the pointer the way the inventory does. Clicks made
+    // while it is free never reach the weapon: Input only counts a mouse button pressed under the lock.
+    if (open) this.input.exitLock();
+    else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // at: { x, z, zone } from a click on the field map (zone: the place it snapped to, or -1), null to clear
+  setWaypoint(at) {
+    const cur = this.waypoint;
+    // a second click on the place that holds it takes it back
+    if (!at || (cur && at.zone >= 0 && at.zone === cur.zone)) {
+      if (!cur) return;
+      this.waypoint = null;
+      this.audio.playLocal('ui_click', { volume: 0.35 });
+      return;
+    }
+    const zone = at.zone >= 0 ? this.world.zoneById[at.zone] : null;
+    // you have arrived inside a place's yard, or a few steps from a bare spot
+    this.waypoint = { x: at.x, y: this.world.heightAt(at.x, at.z), z: at.z, zone: at.zone, r: zone ? zone.flat : WAYPOINT_REACH, visited: !zone || this.discovered.has(at.zone), away: false };
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // a place lends the waypoint its name once you know it: discovered, or rumoured to hold a supply
+  waypointName() {
+    const z = this.waypoint.zone;
+    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z)) ? ZONE_NAMES[z] : 'Waypoint';
   }
 
   cycleBuild(dir) {
@@ -1024,12 +1474,29 @@ export class Game {
     return { fire: st.fire, bench: st.bench, unlocked: this.global.unlocked | 0 };
   }
 
+  // n more of a craft just asked for (a bulk click in the crafting panel, which has counted what the server will take)
+  craftRepeat(id, n) {
+    const q = this.craftQueue;
+    while (n-- > 0 && q.length < 4 * CRAFT_BURST) q.push(id);
+    this.sendCrafts(0);
+  }
+
+  // sends the waiting crafts the bucket has room for; called every frame to refill it
+  sendCrafts(dt) {
+    this.craftBudget = Math.min(CRAFT_BURST, this.craftBudget + dt * CRAFT_RATE);
+    const q = this.craftQueue;
+    while (q.length && this.craftBudget >= 1) {
+      this.conn.action(ACT.CRAFT, q.shift());
+      this.craftBudget--;
+    }
+  }
+
   interact() {
     const t = this.lookTarget;
     const g = this.global;
     if (!t) return;
     if (t === 'car') {
-      if (g.suppliesDone && !g.finale) this.beginHold(CAR_ID);
+      if (g.suppliesDone && (!g.finale || g.escapeReady)) this.beginHold(CAR_ID); // start the engine; once it is warm, get in and drive
       else this.conn.action(ACT.INTERACT, CAR_ID);
       return;
     }
@@ -1037,6 +1504,7 @@ export class Game {
       this.beginHold(t.id);
       return;
     }
+    if (t.kind === ENT.STRUCTURE) this.askedCost = REPAIR_COST;
     this.conn.action(ACT.INTERACT, t.id);
   }
 
@@ -1091,6 +1559,7 @@ export class Game {
   tryBuild() {
     const gh = this.ghostPlace;
     if (!gh) return;
+    this.askedCost = STRUCT_DEFS[this.buildType].cost; // for NOTIFY.NOT_ENOUGH, should the server refuse
     this.conn.action(ACT.BUILD, this.buildType, gh.x, gh.z, this.buildRot);
   }
 
@@ -1098,9 +1567,11 @@ export class Game {
   uiCallbacks() {
     return {
       onCraft: (id) => {
+        this.askedCost = RECIPES[id]?.cost;
         this.conn.action(ACT.CRAFT, id);
         this.audio.playLocal('craft', { volume: 0.6 });
       },
+      onCraftRepeat: (id, n) => this.craftRepeat(id, n),
       onUseItem: (i) => {
         const it = this.inventory.slots[i];
         this.conn.action(ACT.USE_ITEM, i);
@@ -1141,6 +1612,8 @@ export class Game {
     this.frame++;
     this.time += dt;
     const time = this.time;
+    // a warm-up ends here, ahead of this frame's draw: when its programs are built, or now if play has begun
+    if (this.warm && (this.warm.ready || this.state === 'playing')) this.finishPrewarm();
     if (this.state === 'menu' || !this.world) return this.updateMenu(dt);
     const s = this.prediction.state;
     const self = this.self;
@@ -1166,12 +1639,13 @@ export class Game {
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
     const buttons = self.alive ? inp.sample() : 0;
+    if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
       for (const ev of evs) if (ev.type === 'fire' || ev.type === 'melee') attacked = true;
       this.onLocalEvents(evs, st);
     };
-    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents) > 0) inp.clearLatch();
+    if (this.prediction.step(dt, buttons, inp.yaw, inp.pitch, onEvents, this.inputBuffer) > 0) inp.clearLatch();
     // a packet carries one render time, the one of the frame it leaves in, and the server rewinds its targets to
     // that for every command in the packet: a shot or a swing goes out in its own frame instead of waiting for
     // the batch to fill, or it would be judged against where things stood a frame or two after it was aimed
@@ -1180,6 +1654,7 @@ export class Game {
       const rti = Math.floor(rt);
       this.conn.sendInput(rti, rt - rti, out, this.prediction.hash(out));
     }
+    this.sendCrafts(dt);
     // interpolation clock: corrections are eased in (a step in the clock is a step in every remote entity),
     // and the render delay widens a little when snapshots arrive unevenly so entities don't stall and lurch
     const adj = this.clockAdj * Math.min(1, dt * 6);
@@ -1196,8 +1671,24 @@ export class Game {
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * (s.downed ? 5 : 12));
     const hspeed = Math.hypot(s.vx, s.vz);
     if (s.onGround && hspeed > 0.5) this.camBob += dt * hspeed * (s.downed ? 3.2 : 1.9);
-    this.landDip = Math.max(0, (this.landDip || 0) - dt * 0.6);
-    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - (this.landDip || 0);
+    // Every landing dips the view, by how hard it was: with the square of the fall speed (so with the height
+    // fallen) from 4 cm after a jump up to the 12 cm of a hard landing, the one the simulation calls `land`
+    // (9 m/s and up), which is this same dip and not another on top. "Weapon look sway" off is the one way a
+    // player has to ask for less motion, so then only that hard landing dips, as it always has.
+    if (!self.alive) this.fallV = 0;
+    else if (!s.onGround) this.fallV = -s.vy;
+    else {
+      if (this.fallV > 9 || (this.fallV > 0 && this.settings.weaponSway !== false)) this.landVel += 0.12 * Math.min(1, (this.fallV / 9) ** 2) * LAND_SPRING * Math.E;
+      this.fallV = 0;
+    }
+    // (a critically damped spring, solved exactly: a kick of d * LAND_SPRING * e bottoms out d below, 1 / LAND_SPRING s later)
+    const landA = (this.landVel + LAND_SPRING * this.landDip) * dt;
+    const landE = Math.exp(-LAND_SPRING * dt);
+    this.landDip = Math.min(0.12, (this.landDip + landA) * landE); // two touchdowns in a row (a correction) don't add up
+    this.landVel = (this.landVel - LAND_SPRING * landA) * landE;
+    // a step up or down reaches the eye over ~100 ms (Prediction.viewLag), with the eye kept 0.3 m clear of the floor
+    const stepLag = this.prediction.viewLag(dt, this.eyeH - 0.3);
+    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag;
     this.recoilKick *= Math.exp(-dt * 10);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
     const shake = this.camShake * 0.02 + this.effects.shake * 0.03;
@@ -1225,7 +1716,12 @@ export class Game {
       cam.fov = this.fovCur;
       cam.updateProjectionMatrix();
     }
-    inp.sensitivity = (this.settings.sensitivity || 1) * (aiming ? 0.6 : 1);
+    // look sensitivity follows the zoom as it eases in and out (see AIM_SENS), so the turn rate never steps mid-turn.
+    // The sprint fov is wider than the hip one and must not speed the turn up; settled at the hip it is the setting alone
+    this.aimT += ((aiming ? 1 : 0) - this.aimT) * Math.min(1, dt * 12);
+    if (!aiming && this.aimT < 0.001) this.aimT = 0;
+    const zoom = this.aimT > 0 ? Math.min(1, Math.tan((this.fovCur * Math.PI) / 360) / Math.tan((baseFov * Math.PI) / 360)) : 1;
+    inp.sensitivity = (this.settings.sensitivity || 1) * zoom * (1 + (AIM_SENS * (this.settings.aimSensitivity || 1) - 1) * this.aimT);
 
     // viewmodel
     const weaponNow = s.zombie ? -2 : self.alive ? currentWeapon(s) : 0;
@@ -1282,13 +1778,24 @@ export class Game {
         }
       }
     }
+    // the waypoint has done its job once you are there
+    const wp = this.waypoint;
+    if (wp && self.alive && !s.zombie) {
+      const d = Math.hypot(rp.x - wp.x, rp.z - wp.z);
+      if (d > wp.r + 2) wp.away = true; // (set where you already stand, it waits until you have left and come back)
+      else if (wp.away && d < wp.r) {
+        this.waypoint = null;
+        // a place seen for the first time has just said so itself ("Discovered")
+        if (wp.visited) this.ui.notify(wp.zone >= 0 ? `Arrived · ${ZONE_NAMES[wp.zone]}` : 'Waypoint reached', 'toast', 2.5);
+      }
+    }
     this.pings = this.pings.filter((p) => time - p.t < PING_LIFE);
 
     // environment
     const g = this.global;
     const cycle = this.debugCycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
     if (!g.finale) this.global.timeLeft = Math.max(0, g.timeLeft - dt);
-    else this.global.escapeT = Math.max(0, g.escapeT - dt);
+    else if (!g.escapeStalled) this.global.escapeT = Math.max(0, g.escapeT - dt); // a stalled warm-up stands still
     const weather = this.weather.update(dt, g, time, cam.position);
     if (weather.kind !== this.weatherKind) {
       this.weatherKind = weather.kind;
@@ -1360,6 +1867,7 @@ export class Game {
     this.updateOverlays();
     // HUD
     this.updateHud(dt, s, aiming, wdef);
+    this.keyHints.update(dt);
     if (this.ui.mapOpen) this.updateMap(s);
     // voice talking indicators
     if (this.frame % 6 === 0) {
@@ -1428,12 +1936,24 @@ export class Game {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT) });
+      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport });
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      this.ui.showVictory({ days: g.day, kills, reason: 'The engine roars. You tear down Route 9 and leave the valley behind.', restartIn: Math.ceil(g.restartT) });
+      // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
+      // when it left stayed in the valley, and so did the players who had already turned.
+      const car = this.world.car;
+      let title = 'You escaped';
+      let reason = 'The engine roars. You tear down Route 9 and leave the valley behind.';
+      if (!this.self.alive || this.prediction.state.zombie) {
+        title = 'They escaped';
+        reason = 'The engine roars and the car is gone down Route 9. You stay in the valley with the rest of the dead.';
+      } else if (Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z) > ESCAPE_RADIUS) {
+        title = 'Left behind';
+        reason = 'The car tears down Route 9 without you. The others made it out of the valley.';
+      }
+      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT), record: this.runReport });
     } else if ((g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) && (this.overlay === 'gameover' || this.overlay === 'victory')) {
       this.overlay = null;
       this.ui.hideOverlays();
@@ -1443,7 +1963,7 @@ export class Game {
       this.deathShown = false;
       this.ui.hideOverlays();
       this.ui.notify('YOU HAVE RISEN', 'big', 4);
-      this.ui.notify('Hunt the survivors. [RMB] to leap.', 'sub', 4);
+      this.ui.notify(this.dawnAhead() ? 'Hunt the survivors until dawn. [RMB] to leap.' : 'Hunt the survivors. [RMB] to leap.', 'sub', 4);
     }
   }
 
@@ -1475,7 +1995,7 @@ export class Game {
     const ox = cam.position.x;
     const oy = cam.position.y;
     const oz = cam.position.z;
-    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, 3.3, this.renderPos.y + EYE_HEIGHT);
+    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, INTERACT_REACH, this.renderPos.y + EYE_HEIGHT);
     const counts = this.invCounts();
     const g = this.global;
     if (e) {
@@ -1523,15 +2043,17 @@ export class Game {
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
-    if (dcar < 3.9) {
+    if (dcar < CAR_REACH) {
       this.lookTarget = 'car';
       const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
       const carrying = missing.filter((p) => counts[p]);
-      if (g.finale) this.prompt = g.escapeReady ? 'GET IN - the engine is running!' : 'Defend the car until the engine is warm';
+      if (g.finale) this.prompt = g.escapeReady ? '[E] Hold to get in and drive away' : 'Defend the car until the engine is warm';
       else if (!missing.length) this.prompt = '[E] Hold to start the engine (final stand)';
       else if (carrying.length) this.prompt = `[E] Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
       else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
+    // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
+    if (!this.prompt) this.prompt = harvestPrompt(this.world, s);
   }
 
   updateBuildGhost(s) {
@@ -1668,6 +2190,8 @@ export class Game {
     h.finale = g.finale;
     h.escapeT = g.escapeT;
     h.escapeReady = g.escapeReady;
+    h.escapeStalled = g.escapeStalled;
+    h.escapeLeaving = g.escapeLeaving;
     const boss = g.bossId ? this.entities.ents.get(g.bossId) : null;
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
     h.prompt = this.prompt;
@@ -1684,7 +2208,7 @@ export class Game {
     if (self.holdKind) {
       h.useProgress = self.holdProgress;
       const t = this.entities.ents.get(this.holding);
-      h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : 'Starting the engine…';
+      h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : 'Starting the engine…';
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
       h.useLabel = self.useItem ? `${CONSUMABLES[self.useItem]?.food ? 'Eating' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
@@ -1709,7 +2233,7 @@ export class Game {
         anyCarried = true;
       }
     });
-    h.objective = { supplies: g.supplies, hints: g.hints, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
+    h.objective = { supplies: g.supplies, hints: g.hints, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
     this.ui.setCamp({ supplies: g.supplies, hints: g.hints, carried });
     // downed overlay
     h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
@@ -1719,6 +2243,7 @@ export class Game {
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
+    if (this.ui.inventoryOpen && this.frame % 20 === 10) this.pushRoster(); // health moves between player lists
   }
 
   buildMarkers(h, rp) {
@@ -1743,14 +2268,26 @@ export class Game {
       hintSeen.add(zid + ':' + si);
       const d = dist(z.x, z.z);
       if (d < 25) return;
-      cm.push({ kind: 'hint', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: itemIcon(SUPPLIES[si]), label: `${Math.round(d)}m` });
+      hintSeen.add(zid);
+      // (the compass spells a marker's name out while you face it; a rumour keeps its question mark, as on the map)
+      cm.push({ kind: 'hint', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: itemIcon(SUPPLIES[si]), label: `${Math.round(d)}m`, name: ZONE_NAMES[zid] + '?', d });
     });
-    // discovered places nearby
+    // discovered places nearby (a place that already has a supply icon or the waypoint on it needs no flag too)
+    const wp = this.waypoint;
     for (const z of this.world.zones) {
-      if (!this.discovered.has(z.id) || z.id === ZONE.CAMP) continue;
+      if (!this.discovered.has(z.id) || z.id === ZONE.CAMP || hintSeen.has(z.id) || wp?.zone === z.id) continue;
       const d = dist(z.x, z.z);
       if (d < 30 || d > 260) continue;
-      cm.push({ kind: 'poi', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: glyph('flag'), label: '' });
+      cm.push({ kind: 'poi', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: glyph('flag'), label: '', name: `${ZONE_NAMES[z.id]} · ${Math.round(d)}m`, d });
+    }
+    // your waypoint: always on the tape (pinned to its end when behind you), and a marker standing on the spot
+    if (wp) {
+      const d = dist(wp.x, wp.z);
+      const name = this.waypointName();
+      const label = `${Math.round(d)}m`;
+      cm.push({ kind: 'way', bearing: bearing(wp.x - rp.x, wp.z - rp.z), icon: glyph('flag'), label, name, d, pinEdge: true });
+      // (raised with the distance, so that walking at it the marker floats over the crosshair and not on it)
+      if (d > 8 && this.project(wp.x, wp.y + 2.4 + d * 0.07, wp.z, _sc)) wm.push({ kind: 'way', x: _sc.x, y: _sc.y, icon: glyph('flag'), name, sub: label, scale: 0.95 });
     }
     // teammates
     const sc = { x: 0, y: 0 };
@@ -1761,16 +2298,23 @@ export class Game {
         if (zombie || dead) continue;
         const d = dist(e.rx, e.rz);
         const name = this.name(e.id);
-        cm.push({ kind: 'mate', bearing: bearing(e.rx - rp.x, e.rz - rp.z), icon: glyph(e.downed ? 'downed' : 'person'), label: name.slice(0, 10), cls: e.downed ? 'downed' : '', pinEdge: e.downed });
+        // health rides in every player's entity record (field 7, 0..255); a downed survivor has none left to show,
+        // and one who has turned is not told which of the living is the weakest
+        const hp = e.downed || h.zombie || !this.self.alive ? -1 : e.q[7] / 255;
+        cm.push({ kind: 'mate', bearing: bearing(e.rx - rp.x, e.rz - rp.z), icon: glyph(e.downed ? 'downed' : 'person'), label: name.slice(0, 10), cls: e.downed ? 'downed' : '', hp, pinEdge: e.downed });
         if (d < 250 && this.project(e.rx, e.ry + (e.downed ? 0.9 : 2.15), e.rz, sc)) {
           const near = d < 12;
+          // the bar is there when it says something: they are hurt, they are within reach, or we look their way
+          // (the nameplate within an eighth of the screen height of the crosshair). Unhurt and far off: just the name
+          const looked = Math.hypot(sc.x - window.innerWidth / 2, sc.y - window.innerHeight / 2) < window.innerHeight * 0.125;
           wm.push({
             kind: 'mate',
             x: sc.x,
             y: sc.y,
             icon: e.downed ? glyph('downed') : '',
             name,
-            sub: e.downed ? (e.beingRevived ? 'being revived' : near ? 'hold [E] to revive' : `down · ${Math.round(d)}m`) : d > 15 ? `${Math.round(d)}m` : '',
+            sub: e.downed ? `DOWN · ${e.beingRevived ? 'being revived' : near ? 'hold [E] to revive' : `${Math.round(d)}m`}` : d > 15 ? `${Math.round(d)}m` : '',
+            bar: hp >= 0 && (hp < 1 || near || looked) ? hp : -1,
             cls: e.downed ? 'downed' : near ? 'near' : '',
             scale: Math.max(0.75, 1.1 - d / 300),
           });
@@ -1790,7 +2334,7 @@ export class Game {
     }
     // the car when it matters (finale, or carrying supplies back)
     if ((g.finale || h.objective?.anyCarried || g.suppliesDone) && dCar > 10 && this.project(car.x, car.y + 2.2, car.z, sc)) {
-      wm.push({ kind: 'car', x: sc.x, y: sc.y, icon: carIcon, name: g.finale ? (g.escapeReady ? 'GET IN' : 'Defend the car') : 'Your car', sub: `${Math.round(dCar)}m`, cls: g.finale ? 'urgent' : '', scale: 0.95 });
+      wm.push({ kind: 'car', x: sc.x, y: sc.y, icon: carIcon, name: g.finale ? (g.escapeReady ? 'GET IN' : g.escapeStalled ? 'Engine stalled' : 'Defend the car') : 'Your car', sub: `${Math.round(dCar)}m`, cls: g.finale ? 'urgent' : '', scale: 0.95 });
     }
   }
 
@@ -1818,6 +2362,7 @@ export class Game {
       hints: g.hints,
       supplies: g.supplies,
       carried,
+      waypoint: this.waypoint,
     });
     void s;
   }

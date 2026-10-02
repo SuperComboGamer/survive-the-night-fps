@@ -12,17 +12,55 @@ let game = null;
 let joining = false;
 const audio = new AudioEngine();
 
+// The browser only lets audio start on a user gesture. The first key or pointer press on the splash is one (typing a
+// name) and comes seconds before the click on Join, so the engine starts there: its sound banks take about a second
+// to render (in workers) and are then ready when the player joins. Nothing waits for them: see onJoin.
+const GESTURES = ['keydown', 'pointerdown', 'pointerup'];
+let audioStarted = false;
+let joinCue = false; // a join asked for its stinger before the engine could play it
+function startAudio() {
+  if (audioStarted) return;
+  audioStarted = true;
+  for (const type of GESTURES) removeEventListener(type, onGesture, true);
+  audio
+    .init() // creates the context synchronously, inside the gesture
+    .then(() => {
+      applyAudioSettings(ui.getSettings());
+      if (joinCue) audio.stinger('join');
+      joinCue = false;
+    })
+    .catch((err) => console.error('[audio] failed to start', err)); // a game without sound, not a join that fails
+}
+function onGesture() {
+  // not every one of these counts with the browser (Escape, a finger going down): a context created on one that
+  // does not would start suspended, so wait for one that does
+  if (navigator.userActivation && !navigator.userActivation.isActive) return;
+  startAudio();
+}
+for (const type of GESTURES) addEventListener(type, onGesture, true);
+
 const callbacks = {
   async onJoin(name) {
     if (joining || !game) return;
     joining = true;
     try {
-      await audio.init();
-      applyAudioSettings(ui.getSettings());
+      // The click on Join is a gesture too, so the engine starts here at the latest - but the join does not wait
+      // for it. The socket opens at once, and if the banks are still rendering the game is silent until they are
+      // done (a sound asked for before that is dropped; ambience and music come in from the state of the moment).
+      startAudio();
+      // (a browser that did not count the earlier press as a gesture left the context suspended: this click is one)
+      const ctx = audio.context;
+      if (ctx && ctx.state !== 'running') {
+        try {
+          ctx.resume()?.catch?.(() => {});
+        } catch {}
+      }
+      joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
       await game.join(name);
       ui.hideSplash();
       document.activeElement?.blur?.(); // the name field must not keep eating gameplay keys
     } catch (err) {
+      joinCue = false;
       console.error(err);
       ui.setJoinError(err.message || 'Could not join');
     } finally {
@@ -30,6 +68,7 @@ const callbacks = {
     }
   },
   onCraft: (id) => game?.uiCallbacks().onCraft(id),
+  onCraftRepeat: (id, n) => game?.uiCallbacks().onCraftRepeat(id, n),
   onUseItem: (i) => game?.uiCallbacks().onUseItem(i),
   onDropItem: (i, n) => game?.uiCallbacks().onDropItem(i, n),
   onSwapItems: (a, b) => game?.uiCallbacks().onSwapItems(a, b),
@@ -107,17 +146,26 @@ function applySettings(s) {
   game.lights.setShadows(renderer.q.flashShadows);
   game.env.setShadows(renderer.q);
   game.setShadowQuality?.(renderer.q);
+  game.prewarm(); // (does nothing unless the quality changed)
   applyAudioSettings(s);
 }
 
 // build the world behind the splash screen as soon as we know the server's seed
 async function preload() {
+  // ...but not before the splash has had a frame on screen: the build holds the main thread for seconds, and on a
+  // fast link the seed can be here before the first frame is out
+  const painted = new Promise((done) => {
+    requestAnimationFrame(() => setTimeout(done, 0)); // (a timer set from a frame callback runs after that frame's paint)
+    setTimeout(done, 500); // a tab opened in the background gets no frame: build there anyway
+  });
   try {
     const res = await fetch('/status', { cache: 'no-store' });
     const st = await res.json();
+    await painted;
     if (typeof st.seed === 'number' && game.state === 'menu') game.loadWorld(st.seed);
   } catch {
     // server offline: the UI shows it; build a placeholder world so the menu has a backdrop
+    await painted;
     if (!game.world) game.loadWorld(1337);
   }
 }
@@ -154,7 +202,8 @@ function frame(now) {
     console.error('update error', err);
   }
   const t1 = performance.now();
-  if (game.post) renderer.render(game.post, game.state === 'playing');
+  // (nothing is drawn while the scene's shader programs are being built in the background: Game.prewarm)
+  if (game.post && !game.warm?.hold) renderer.render(game.post, game.state === 'playing');
   const t2 = performance.now();
   game.cpuUpdateMs = (game.cpuUpdateMs || 0) * 0.95 + (t1 - t0) * 0.05;
   game.cpuRenderMs = (game.cpuRenderMs || 0) * 0.95 + (t2 - t1) * 0.05;

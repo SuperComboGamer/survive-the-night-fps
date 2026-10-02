@@ -4,26 +4,16 @@ import * as THREE from 'three';
 import { ITEM, WEAPONS } from '../../../shared/defs.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
 import { atlasUV } from '../textures.js';
+import { createWorldWeapon } from './weapons.js'; // (static: a top-level await for it here holds every module up for one more request)
 
 const PI = Math.PI;
-
-// Weapon models come from weapons.js (other module). Loaded lazily and guarded so this module works without it.
-let createWorldWeapon = null;
-try {
-  const mods = import.meta.glob('./weapons.js');
-  const load = mods['./weapons.js'];
-  if (load) createWorldWeapon = (await load()).createWorldWeapon || null;
-} catch (e) {
-  console.warn('pickups: weapons.js unavailable, using fallback weapon shapes', e);
-  createWorldWeapon = null;
-}
 
 const cache = new Map();
 const weaponXform = new Map();
 
 /** @returns {THREE.Object3D} */
 export function createPickup(itemId) {
-  if (WEAPONS[itemId] && createWorldWeapon) return weaponPickup(itemId);
+  if (WEAPONS[itemId]) return weaponPickup(itemId);
   let parts = cache.get(itemId);
   if (!parts) {
     const b = new MeshBuilder(itemId * 131 + 7, { ao: false });
@@ -525,7 +515,7 @@ BUILD[ITEM.FAN_BELT] = (b) => {
   b.torus('rubber', 0.1, 0.008, 3, 20, PI * 2, { p: [0.03, 0.022, 0.01], r: [PI / 2 + 0.1, 0, 0.4], s: [1.3, 1, 1] });
 };
 
-// fallback weapon shapes (used only if weapons.js is unavailable)
+// fallback weapon shapes (used only for a weapon weapons.js has no model for)
 function FALLBACK_WEAPON(b, id) {
   const gun = (L, stock) => {
     b.box('steel', L, 0.05, 0.04, { p: [0, 0.03, 0] });

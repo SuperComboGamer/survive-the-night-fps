@@ -410,6 +410,8 @@ function buildShirt(mb, P, L, T) {
   if (!sh) return;
   const g = sh.thick || 1.07;
   const tear = sh.tear ?? 0.28;
+  // ragged hem and cuffs are part of the tearing: an intact garment (tear 0) ends in straight edges
+  const rag = tear > 0 ? 1 : 0;
   const reg = sh.region ?? CR.CLOTH;
   const chestY = P.chestY, spineY = P.spineY;
   const hemY = spineY - P.spineLen - (sh.hem ?? 0.04);
@@ -432,7 +434,7 @@ function buildShirt(mb, P, L, T) {
     rs: 12, sx: T.sxA * (sh.loose || 1.02), sz: T.szA * (sh.loose || 1.04), color: sh.color, region: reg, mottle: 0.2,
     tear: {
       amt: tear, f: 11, seed: (sh.seed || 1) + 5,
-      fn: (x, y, z) => fnC(x, y, z) || y < hemY + 0.06 * fbm3(x * 20, 0, z * 20, 2, 4),
+      fn: (x, y, z) => fnC(x, y, z) || y < hemY + rag * 0.06 * fbm3(x * 20, 0, z * 20, 2, 4),
     },
     tint: sh.tint,
   });
@@ -446,12 +448,12 @@ function buildShirt(mb, P, L, T) {
       const r = long ? (L.armR || 0.045) * 1.22 + 0.006 : (L.armR || 0.045) * 1.12 + 0.005;
       mb.seg('uarm' + n, [0, 0.02, 0], [0, -len, 0], r * (long ? 1.08 : 1.03), r * (long ? 0.95 : 1.0), {
         rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true, tint: sh.tint,
-        tear: { amt: tear * 0.8, f: 14, seed: (sh.seed || 1) + s * 3, fn: (x, y) => y < P.shoulderY - len + 0.05 * fbm3(x * 30, y, 0, 1, 6) },
+        tear: { amt: tear * 0.8, f: 14, seed: (sh.seed || 1) + s * 3, fn: (x, y) => y < P.shoulderY - len + rag * 0.05 * fbm3(x * 30, y, 0, 1, 6) },
       });
       if (long && L.missingArm !== n) {
         mb.seg('farm' + n, [0, 0.03, 0], [0, -P.farmLen * 0.85, 0], r * 0.9, r * 0.78, {
           rs: 8, hs: 2, caps: 0, color: sh.color, region: reg, mottle: 0.2, double: true, tint: sh.tint,
-          tear: { amt: tear * 0.9, f: 14, seed: (sh.seed || 1) + s * 5, fn: (x, y) => y < P.elbowY - P.farmLen * 0.85 + 0.06 * fbm3(x * 30, y * 3, 0, 1, 8) },
+          tear: { amt: tear * 0.9, f: 14, seed: (sh.seed || 1) + s * 5, fn: (x, y) => y < P.elbowY - P.farmLen * 0.85 + rag * 0.06 * fbm3(x * 30, y * 3, 0, 1, 8) },
         });
       }
     }
@@ -3297,7 +3299,9 @@ function survivorLook(v, zombie) {
     armR: 0.05,
     thighR: 0.082,
     shirt: {
-      color: jacket, region: CR.CANVAS, sleeves: 2, tear: zombie ? 0.25 : 0, seed: 300 + v, thick: 1.1, hem: 0.0,
+      color: jacket, region: CR.CANVAS, sleeves: 2, tear: zombie ? 0.25 : 0, seed: 300 + v, thick: 1.1,
+      // the belly shell ends 3 cm below the hip joint, proud of the trousers: a whole jacket hangs past it
+      hem: zombie ? 0.0 : 0.05,
       open: false, rags: zombie ? 3 : 0, loose: 1.06,
       tint(p, n, c) {
         // zipper line + pockets
@@ -3357,7 +3361,8 @@ function getSurvivorRig(v, zombie) {
   } else if (hw === 'hood') {
     mb.ellip('head', [0, hr * 0.92, hr * 0.12], [hr * 1.15, hr * 1.18, hr * 1.22], {
       ws: 12, hs: 8, color: mulColor(jc, 0.9), region: CR.CANVAS, double: true,
-      tear: { amt: 0, fn: (x, y, z) => z < -0.02 && y < P.headY + hr * 1.55 && y > P.headY - 0.08 && Math.abs(x) < hr * 0.8 },
+      // fn cuts the face opening; only the risen hood is holed as well
+      tear: { amt: zombie ? 0.3 : 0, fn: (x, y, z) => z < -0.02 && y < P.headY + hr * 1.55 && y > P.headY - 0.08 && Math.abs(x) < hr * 0.8 },
     });
   }
   if (L.backpack) {
