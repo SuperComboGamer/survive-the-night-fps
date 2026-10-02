@@ -513,7 +513,11 @@ export class GameRenderer {
     u.uExposure.value = post.exposure ?? 1;
     r.setRenderTarget(this.rt);
     r.autoClear = true;
+    // three resolves the MSAA target after every render into it. Only the world's depth is ever sampled
+    // (AO, sun shafts, beam), so the resolves after the in-place apply pass and the viewmodel are colour only.
+    this.rt.resolveDepthBuffer = this.rt.samples > 0;
     r.render(this.scene, this.camera);
+    this.rt.resolveDepthBuffer = false;
     this.stats.calls = r.info.render.calls;
     this.stats.tris = r.info.render.triangles;
     const q = this.q;
