@@ -5,7 +5,7 @@
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
-import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES } from '../shared/constants.js';
+import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
@@ -1172,6 +1172,53 @@ check('ping broadcast', B.pings > 0);
   game.spawnHordeGroup([ZTYPE.DOG, ZTYPE.DOG, ZTYPE.DOG]);
   const hd = game.zombies.slice(n0);
   check('horde dogs come as one pack', hd.length === 3 && hd.every((d) => d.ztype === ZTYPE.DOG && d.horde && d.pack === hd[0].pack));
+  // horde groups are placed where no survivor would watch them appear: out of every line of sight inside the range the
+  // haze leaves at that hour, still 58-84 m out and from all round; with no cover anywhere, far off and behind the team
+  // (the picks draw from a private rng and the clock is put back, so the rest of the run plays out as before)
+  {
+    const zm = game.zm;
+    const w = game.world;
+    const humans = game.humans();
+    const a = A.p().state;
+    const saved = { rng: game.rng, phase: game.phase, timeLeft: game.timeLeft };
+    let sd = 99;
+    game.rng = () => (sd = (Math.imul(sd, 1664525) + 1013904223) >>> 0) / 4294967296;
+    const N = 200;
+    const picks = () => Array.from({ length: N }, () => zm.pickSpawnAround(a.x, a.z, humans));
+    const dist = (s, p) => Math.hypot(s.x - p.x, s.z - p.z);
+    // a survivor's eyes have a clear line to a zombie's head at p, and it is near enough to make out
+    const inView = (p, sight) => humans.some((h) => dist(h.state, p) <= sight && zm.clearLine(h.state.x, h.state.y + EYE_HEIGHT, h.state.z, p.x, groundAt(w, p.x, p.z, 200, 0.2, false) + 1.7, p.z));
+    const inBand = (ps) => ps.every((p) => dist(a, p) >= HORDE_SPAWN_MIN - 0.01 && dist(a, p) <= HORDE_SPAWN_MAX + 0.01 && humans.every((h) => dist(h.state, p) >= HORDE_SPAWN_MIN * 0.75));
+    const octants = (ps) => new Set(ps.map((p) => Math.floor(((Math.atan2(p.x - a.x, p.z - a.z) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8)).size;
+    game.phase = PHASE.NIGHT;
+    game.timeLeft = game.nightLen / 2;
+    const dark = zm.sightRange();
+    const night = picks();
+    game.phase = PHASE.DAY;
+    game.timeLeft = game.dayLen / 2;
+    const noon = zm.sightRange();
+    check('how far off a spawn could be seen follows the clock', noon > 150 && dark > HORDE_SPAWN_MIN - 3 && dark < HORDE_SPAWN_MIN + 3, `${noon.toFixed(0)} m at noon, ${dark.toFixed(0)} m in the dark`);
+    zm.clearLine = () => false; // a picker that sees nothing takes the first usable spot, as it used to
+    const blind = picks();
+    delete zm.clearLine;
+    const n0 = zm.spawnsInView;
+    const day = picks();
+    const counted = zm.spawnsInView - n0;
+    const was = blind.filter((p) => inView(p, noon)).length;
+    const now = day.filter((p) => inView(p, noon)).length;
+    check('horde spawns are picked out of the survivors\' sight', now === counted && (was === 0 || now < was / 2), `by day ${was}/${N} picks in plain view unchecked, ${now}/${N} checked (${counted} of them counted as nowhere hidden)`);
+    check('...still 58-84 m out and from all round', inBand(night) && inBand(day) && octants(night) >= 6, `octants used: ${octants(night)} of 8 by night, ${octants(day)} by day (${octants(blind)} unchecked)`);
+    zm.clearLine = () => true; // not a scrap of cover anywhere
+    const open = Array.from({ length: 40 }, () => zm.pickSpawnAround(a.x, a.z, humans));
+    delete zm.clearLine;
+    // nobody is facing it: outside ~65 deg of where each survivor looks (forward is (-sin yaw, -cos yaw))
+    const unfaced = open.filter((p) => humans.every((h) => (h.state.x - p.x) * Math.sin(h.state.yaw) + (h.state.z - p.z) * Math.cos(h.state.yaw) <= dist(h.state, p) * Math.cos(1.13))).length;
+    const far = open.reduce((k, p) => k + dist(a, p), 0) / open.length;
+    check('with no cover anywhere a spawn is still picked: far off, where nobody is looking', inBand(open) && zm.spawnsInView - n0 - counted === 40 && unfaced >= 38 && far > 75, `${unfaced}/40 outside every view cone, ${far.toFixed(0)} m off on average`);
+    game.rng = saved.rng;
+    game.phase = saved.phase;
+    game.timeLeft = saved.timeLeft;
+  }
   run(20 * 10);
   const zs = game.zombies.filter((z) => z.horde && !z.dead);
   const near = zs.filter((z) => Math.hypot(z.x - A.p().state.x, z.z - A.p().state.z) < 110).length;

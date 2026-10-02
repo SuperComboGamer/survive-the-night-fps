@@ -23,6 +23,16 @@ const _ray = { t: -1, col: null, terrain: false };
 const SHADE_THAW = 0.15; // unbroken darkness (s) before a lit shade moves again, so a beam flickering across it still holds it
 const BEAM_TAN = Math.tan(FLASHLIGHT_CONE);
 const BODY_AT = [0.9, 0.55, 0.2]; // head, chest, shins (fractions of the body height) - light on any of them counts
+// the client's distance haze: fog density by sun height (KEYS s / fogD in client/render/environment.js), see sightRange()
+const HAZE_SUN = [-1, -0.12, 0.02, 0.18, 0.55, 1];
+const HAZE_DENSITY = [0.025, 0.025, 0.0195, 0.0108, 0.0074, 0.0072];
+// a zombie is lost in the haze once it has swallowed this much of it: what the dark of the night does at
+// HORDE_SPAWN_MIN, the nearest the horde has always appeared (so in full darkness the whole spawn band stays hidden)
+const HAZE_HIDES = 0.88;
+const SPAWN_TRIES = 18; // candidates a horde spawn pick looks at before settling for the least exposed one
+const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes have a clear line to this far above its ground (m)
+const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
+const SPAWN_VIEW_COS = Math.cos(1.13); // a survivor is looking at what lies within ~65 deg of dead ahead (the default FOV on a wide screen, and a margin)
 
 export class Zombies {
   constructor(game) {
@@ -35,6 +45,9 @@ export class Zombies {
     this.lights = []; // this tick's burning point lights, flat [x, y, z, radius, ...]
     this.lightTick = -1;
     this.packSeq = 0;
+    this.spawnPicks = 0; // horde spawn positions picked around the survivors (pickSpawnAround)...
+    this.spawnsScreened = 0; // ...how many of them found nowhere wholly out of sight and took a spot with only its middle hidden...
+    this.spawnsInView = 0; // ...and how many found nothing but spots in plain view
     this.treeGrid = null;
     this.dens = null;
     this.herds = new Herds(game, this);
@@ -328,15 +341,81 @@ export class Zombies {
     return best;
   }
 
-  // a walkable spot HORDE_SPAWN_MIN..MAX metres from (x,z) that no survivor is standing close to
+  // How far off a survivor could make out a zombie right now (m): where the client's distance haze (FogExp2,
+  // 1 - exp(-(density * d)^2)) has swallowed HAZE_HIDES of it. The haze follows the sun and the sun follows the
+  // phase clock (Environment.cycleFor, mirrored here): ~200 m at noon, ~72 m as the night falls, 58 m in the dark.
+  // The weather is not known here (clients derive it from the seed); a fog bank or rain only ever shortens this,
+  // so leaving it out errs towards calling a spot visible.
+  sightRange() {
+    const g = this.g;
+    const night = g.phase === PHASE.NIGHT;
+    const len = night ? g.nightLen : g.day <= 1 ? g.firstDayLen : g.dayLen;
+    const left = Math.max(0, Math.min(len, g.timeLeft));
+    const el = len - left;
+    let c; // position in the day/night cycle: the day on [0, 0.5), the night on [0.5, 1)
+    if (night) {
+      // 30 s of nightfall, the long dark, then 60 s of dawn
+      const tin = Math.min(30, len * 0.25);
+      const tout = Math.min(60, len * 0.35);
+      c = el < tin ? 0.5 + 0.02 * (el / tin) : left < tout ? 1.04 - 0.065 * (left / tout) : 0.52 + 0.455 * ((el - tin) / (len - tin - tout));
+    } else {
+      // light morning to late afternoon, then 75 s of dusk
+      const tout = Math.min(75, len * 0.35);
+      c = left < tout ? 0.5 - 0.05 * (left / tout) : 0.04 + 0.41 * (el / (len - tout));
+    }
+    const s = Math.sin(c * Math.PI * 2);
+    let k = 0;
+    while (k < HAZE_SUN.length - 2 && HAZE_SUN[k + 1] < s) k++;
+    const t = Math.max(0, Math.min(1, (s - HAZE_SUN[k]) / (HAZE_SUN[k + 1] - HAZE_SUN[k])));
+    return Math.sqrt(-Math.log(1 - HAZE_HIDES)) / (HAZE_DENSITY[k] + (HAZE_DENSITY[k + 1] - HAZE_DENSITY[k]) * t);
+  }
+
+  // Would the survivors watch a group of zombies appear around (x,z)? 2: one of them, within `sight` m, has a clear
+  // line to head height at the spot (in plain view). 1: nobody does, but someone has one SPAWN_SPREAD m to either
+  // side of it as they look at it - the group is scattered that far, so whatever hides its middle (a tree trunk,
+  // the corner of a house) does not hide all of it. 0: neither, the whole group comes up out of sight.
+  spawnExposure(x, z, humans, sight) {
+    const w = this.g.world;
+    const y = groundAt(w, x, z, 200, 0.2, false) + SPAWN_HEAD;
+    for (const h of humans) {
+      const s = h.state;
+      if (Math.hypot(x - s.x, z - s.z) > sight) continue;
+      if (this.clearLine(s.x, s.y + eyeHeight(s), s.z, x, y, z)) return 2;
+    }
+    for (const h of humans) {
+      const s = h.state;
+      const dx = x - s.x;
+      const dz = z - s.z;
+      const d = Math.hypot(dx, dz);
+      if (d > sight) continue;
+      for (let side = -1; side <= 1; side += 2) {
+        const px = x - (dz / d) * SPAWN_SPREAD * side;
+        const pz = z + (dx / d) * SPAWN_SPREAD * side;
+        if (this.clearLine(s.x, s.y + eyeHeight(s), s.z, px, groundAt(w, px, pz, 200, 0.2, false) + SPAWN_HEAD, pz)) return 1;
+      }
+    }
+    return 0;
+  }
+
+  // a walkable spot HORDE_SPAWN_MIN..MAX metres from (x,z) that no survivor is standing close to, and that none of
+  // them can see (spawnExposure): the first candidate wholly out of sight is taken. Failing that, after SPAWN_TRIES
+  // candidates (1-3 rays per survivor each), the first whose middle at least is hidden; and when every one of them
+  // is in plain view (open ground, a team looking all ways) the farthest of those nobody is facing, or else the
+  // farthest. spawnsScreened / spawnsInView count those two fallbacks.
   // (forest: the most wooded of the candidates - dog packs come out of the trees)
   pickSpawnAround(x, z, humans, minD = HORDE_SPAWN_MIN, maxD = HORDE_SPAWN_MAX, forest = false) {
     const g = this.g;
     const w = g.world;
     const lim = MAP_HALF - 14;
+    const sight = this.sightRange();
     let best = null;
     let bestF = -1;
-    for (let tries = 0; tries < 18; tries++) {
+    let part = null;
+    let partF = -1;
+    let seen = null;
+    let seenD = -1;
+    this.spawnPicks++;
+    for (let tries = 0; tries < SPAWN_TRIES; tries++) {
       const a = g.rng() * Math.PI * 2;
       const d = minD + g.rng() * (maxD - minD);
       const sx = x + Math.sin(a) * d;
@@ -344,17 +423,41 @@ export class Zombies {
       if (Math.abs(sx) > lim || Math.abs(sz) > lim) continue;
       if (w.isDeepWater(sx, sz) || g.nav.isBlocked(sx, sz)) continue;
       let ok = true;
-      for (const h of humans) if (Math.hypot(h.state.x - sx, h.state.z - sz) < minD * 0.75) ok = false;
+      let md = Infinity; // distance to the nearest survivor
+      let faced = false; // some survivor is looking this way (forward is (-sin yaw, -cos yaw))
+      for (const h of humans) {
+        const s = h.state;
+        const hd = Math.hypot(s.x - sx, s.z - sz);
+        if (hd < minD * 0.75) ok = false;
+        if (hd < md) md = hd;
+        if ((s.x - sx) * Math.sin(s.yaw) + (s.z - sz) * Math.cos(s.yaw) > hd * SPAWN_VIEW_COS) faced = true;
+      }
       if (!ok) continue;
-      if (!forest) return { x: sx, z: sz };
-      const f = this.forestAt(sx, sz);
-      if (f > bestF) {
+      const f = forest ? this.forestAt(sx, sz) : 0;
+      if (f <= bestF) continue; // no more wooded than the hidden one in hand: not worth the rays
+      const v = this.spawnExposure(sx, sz, humans, sight);
+      if (v === 0) {
+        if (!forest) return { x: sx, z: sz };
         bestF = f;
         best = { x: sx, z: sz };
+        if (f >= FOREST_DENS) break;
+      } else if (v === 1) {
+        if (f > partF) {
+          partF = f;
+          part = { x: sx, z: sz };
+        }
+      } else {
+        if (!faced) md += 1000;
+        if (md > seenD) {
+          seenD = md;
+          seen = { x: sx, z: sz };
+        }
       }
-      if (f >= FOREST_DENS) break;
     }
-    return best || this.pickSpawnPoint(humans, minD);
+    if (best) return best;
+    if (part) this.spawnsScreened++;
+    else if (seen) this.spawnsInView++;
+    return part || seen || this.pickSpawnPoint(humans, minD);
   }
 
   // the night horde comes to wherever the survivors are
