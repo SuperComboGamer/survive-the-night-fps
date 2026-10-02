@@ -48,10 +48,11 @@ function spawn(kind) {
       e.ztype = irnd(0, 11);
       e.variant = irnd(0, 255);
       e.yaw = rnd(0, 6.28);
-      e.anim = irnd(0, 9);
+      e.anim = irnd(0, 10);
       e.hp = 100;
       e.maxHp = 100;
       e.link = 0;
+      e.legs = 0;
       e.burnT = 0;
       break;
     case ENT.ITEM:
@@ -145,10 +146,11 @@ for (let tick = 1; tick <= TICKS; tick++) {
       if (!tiny) e.y += rnd(-0.3, 0.3);
     }
     if (e.kind === ENT.ZOMBIE && Math.random() < 0.2) {
-      e.anim = irnd(0, 9);
+      e.anim = irnd(0, 10);
       e.yaw = rnd(0, 6.28);
       e.hp = Math.max(0, e.hp - rnd(0, 10));
       e.link = Math.random() < 0.1 ? irnd(1, 60000) : 0;
+      if (Math.random() < 0.15) e.legs |= irnd(1, 2); // a leg shot off: it does not grow back
       e.burnT = Math.random() < 0.3 ? 3 : 0; // set alight / gone out
     }
     if (e.kind === ENT.PLAYER && Math.random() < 0.3) {

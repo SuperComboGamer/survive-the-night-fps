@@ -1,5 +1,6 @@
 // Combat: lag-compensated hitscan, melee, thrown/lobbed projectiles, explosions, damage areas.
 import { SERVER_TICK_RATE, MAX_REWIND, PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_CROUCH_HEIGHT, EYE_HEIGHT, PHASE, NOISE } from '../shared/constants.js';
+import { LEG_ZONE, LEG_BODY_DAMAGE, STUMBLE_TIME, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, CRAWL_RADIUS } from '../shared/constants.js';
 import { SOUND as _SOUND } from '../shared/defs.js';
 import {
   ITEM,
@@ -99,6 +100,8 @@ export class Combat {
     }
     const d = e.def;
     if (d.flying) return { r: 0.45, top: 0.5, headY: 0.1, headR: 0.3, hx: 0, hz: 0, flying: true };
+    // both legs gone: it lies on the ground, its head ahead of its body
+    if (e.legs === 3) return { r: CRAWL_RADIUS, top: CRAWL_HEIGHT, headY: CRAWL_HEAD_Y, headR: d.headR * 1.2, hx: -Math.sin(e.yaw) * CRAWL_HEAD_FWD, hz: -Math.cos(e.yaw) * CRAWL_HEAD_FWD };
     let headY = d.headY;
     let top = d.bodyTop ?? d.headY - d.headR;
     if (!d.headFwd && (e.anim === ZANIM.AIRBORNE || e.state === 3)) {
@@ -163,7 +166,11 @@ export class Combat {
         const lim = hb.r + hb.headY + 0.5;
         if (px * px + py * py + pz * pz > lim * lim) return;
         const tt = rayTarget(pos, hb, ox, oy, oz, dx, dy, dz, wallT);
-        if (tt >= 0) _hits.push({ e, isPlayer, t: tt, head: _head });
+        if (tt < 0) return;
+        // below the hip it is in a leg: the left or the right by which side of the body it struck
+        let leg = 0;
+        if (!isPlayer && !_head && this.legZone(e, pos.y, oy + dy * tt)) leg = (ox + dx * tt - pos.x) * Math.cos(e.yaw) - (oz + dz * tt - pos.z) * Math.sin(e.yaw) < 0 ? 1 : 2;
+        _hits.push({ e, isPlayer, t: tt, head: _head, leg });
       });
       _hits.sort((a, b) => a.t - b.t);
       const maxPierce = def.pierce || 1;
@@ -186,11 +193,16 @@ export class Combat {
           g.damagePlayer(h.e, d, { kind: KILLER.PLAYER, id: p.id, weapon: ev.weapon, headshot: h.head, x: ox, z: oz });
           killed = !h.e.alive;
         } else {
+          // a shot in the leg wears the leg down (hitLeg), and only a share of it is the body's
+          if (h.leg) {
+            this.hitLeg(h.e, d, h.leg, dx, dz);
+            d *= LEG_BODY_DAMAGE;
+          }
           // a blast kills with its first few pellets: the blow is all of them, the ones still to come are the overkill
           const lethal = def.pellets > 1 && d >= h.e.hp;
           const blow = lethal ? this.blastDamage(h.e, t, def, 0, n, ox, oy, oz) : d;
           const rest = lethal ? this.blastDamage(h.e, t, def, i + 1, n, ox, oy, oz) : 0;
-          killed = this.damageZombie(h.e, d, p, { weapon: ev.weapon, headshot: h.head, dirX: dx, dirZ: dz, blow, rest });
+          killed = this.damageZombie(h.e, d, p, { weapon: ev.weapon, headshot: h.head, leg: !!h.leg, dirX: dx, dirZ: dz, blow, rest });
         }
         hitFlags |= 8 | (h.head ? 1 : 0) | (killed ? 2 : 0);
         pierced++;
@@ -232,9 +244,56 @@ export class Combat {
     let sum = 0;
     for (let j = from; j < n; j++) {
       const tt = rayTarget(pos, hb, ox, oy, oz, _dirs[j * 3], _dirs[j * 3 + 1], _dirs[j * 3 + 2], def.range);
-      if (tt >= 0) sum += def.damage * pelletFalloff(tt) * (_head ? (z.boss ? 1.6 : def.headMul) : 1);
+      if (tt < 0) continue;
+      const leg = !_head && this.legZone(z, pos.y, oy + _dirs[j * 3 + 1] * tt);
+      sum += def.damage * pelletFalloff(tt) * (_head ? (z.boss ? 1.6 : def.headMul) : leg ? LEG_BODY_DAMAGE : 1);
     }
     return sum;
+  }
+
+  // ---------------------------------------------------------------- legs
+  // Does a bullet that struck this zombie's body at height y (its feet at feetY) go into a leg? Only what walks on two
+  // (ZOMBIE_DEFS[t].legs) and still has one: below the hip is leg, and a crawler has none left to hit.
+  legZone(z, feetY, y) {
+    return !!z.def.legs && z.legs !== 3 && y < feetY + z.def.height * LEG_ZONE;
+  }
+
+  // A bullet in a leg (bit: 1 the left, 2 the right; with that one gone already the other takes it). The leg takes
+  // all of it, and worn down to nothing it is blown off (EVT.ZOMBIE_LEG, replicated as ZF.LEGS): on one leg the
+  // zombie hobbles, on none it crawls (Zombies.updateOne), for good. Any hit trips it (ZANIM.STUMBLE) and costs it
+  // the swing it had started, unless it is in the middle of a special. A shade pinned by light is as hard in the
+  // leg as anywhere else, and does not trip. Returns the bit of the leg this hit took off.
+  hitLeg(z, amount, bit, dirX = 0, dirZ = 0) {
+    const g = this.g;
+    if (z.dead || !z.legHp || z.legs === 3) return 0;
+    const solid = z.lit && !z.onFire;
+    if (solid) amount *= z.def.litResist;
+    if (z.legs & bit) bit ^= 3;
+    const i = bit >> 1;
+    z.legHp[i] -= amount;
+    let off = 0;
+    if (z.legHp[i] <= 0) {
+      off = bit;
+      z.legs |= bit;
+      const yaw = Math.atan2(-dirX, -dirZ);
+      g.emit(
+        (w) => {
+          w.u8(EVT.ZOMBIE_LEG);
+          w.u16(z.id);
+          w.u8(off);
+          w.u8(Math.round(((yaw % (Math.PI * 2)) / (Math.PI * 2)) * 256) & 255);
+        },
+        { x: z.x, z: z.z, r: 130 },
+      );
+    }
+    if (z.state === 0 && !solid) {
+      z.stumbleT = STUMBLE_TIME;
+      z.anim = ZANIM.STUMBLE;
+      z.animT = STUMBLE_TIME;
+      z.pendingHit = 0;
+      z.attackCd = Math.max(z.attackCd, STUMBLE_TIME);
+    }
+    return off;
   }
 
   // ---------------------------------------------------------------- flamethrower
@@ -455,7 +514,7 @@ export class Combat {
         z.animT = 0.45;
         z.pendingHit = 0;
       }
-    } else if (!z.boss && z.ztype !== ZTYPE.TANK && amount > 40 && z.state === 0 && g.rng() < 0.4) {
+    } else if (!z.boss && z.ztype !== ZTYPE.TANK && !opts.leg && amount > 40 && z.state === 0 && g.rng() < 0.4) {
       z.anim = ZANIM.STAGGER;
       z.animT = 0.3;
     }

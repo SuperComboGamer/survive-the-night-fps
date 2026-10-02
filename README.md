@@ -36,7 +36,8 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <ztype> <n>` (`/spawn 10 3`: a zombie dog pack), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z>`,
 `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
-`/herd` (teleports 45 m from the wandering herd, just out of its sight)).
+`/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
+off every zombie within 30 m that has legs to lose)).
 
 ### Tests & tools
 
@@ -56,15 +57,17 @@ Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivor
 | `node scripts/e2e-stress.js` | ~120 zombies around the player, reports frame CPU time |
 | `node scripts/e2e-motion.js [url] [s] [jitterMs] [latencyMs]` | a zombie pack chases the player; reports motion jitter (stalls, velocity kinks, wobble, planted-foot slip, hip pops), optionally over a simulated bumpy connection |
 | `node scripts/e2e-night.js` | night shelter scene (torches, walls, traps) + proximity voice between two clients |
+| `node scripts/e2e-legs.js [url] [outdir]` | shoots a walker in the shins with the pistol until it has no legs left: the stumble, each leg coming off, the hobble, the crawl, a head shot where it lies, with a screenshot of each |
 | `node scripts/shot.js <url> <out.png>` | headless Chrome screenshot |
 
-Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night need a server
+Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night/legs need a server
 started with `GODMODE=1 DEBUG_COMMANDS=1`. Art/audio/UI modules also have standalone sandbox pages
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;
 `/sandbox/models-test.html?film=0` renders a walker's gait as a film strip and reports foot skating (`&anim=0` idle,
-`&hurt=1` a hit flinch, `&vox=0` a growl);
+`&hurt=1` a hit flinch, `&vox=0` a growl, `&legs=1` hopping on one leg, `&legs=3&speed=0.8&dist=2.8&ty=0.3` crawling,
+`&legs=3&fall=1` going down, `&anim=10` tripped by a shot in the leg);
 `/sandbox/models-test.html?cats=grid` shows the cat's poses; `?grid=10`, `?variants=10` and `?film=10` show the
 zombie dog's poses, coats and gait).
 
@@ -220,6 +223,14 @@ them off.
   and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
   the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
   cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
+- **Shoot the legs out from under them.** A bullet below the hip of a walker, runner, spitter, roper, boomer or
+  shade goes into that leg: the zombie **stumbles** - it trips, slows to a shuffle and loses the swing it had started
+  - and takes only 40% of the damage in the body. A leg that has taken 30% of the zombie's health is **shot off**
+  at the knee, shin and foot flying. On one leg it hops after you at half speed; with both gone it goes down on
+  its front and **crawls**, dragging itself along by its arms at walking pace or less, low in the grass, and still
+  bites at whatever it reaches. A crawler cannot spit or throw its rope any more, and its head is on the ground
+  ahead of it. A leg shot kills slower than a head shot; it buys time. Dogs, leapers, tanks, bats and bosses have
+  no legs to lose, and a Shade held by light is as hard in the leg as anywhere else.
 - **Arsenal:** pistol, pump shotgun, double-barrel (two heavier blasts back to back, then a break-open
   reload), MP5 (full-auto 9mm out of the pistol's reserve, the quietest gun that fires a bullet), AK-47,
   M4A1 (full-auto 5.56, accurate) and a scoped bolt-action hunting rifle (no bullet hits harder: one body

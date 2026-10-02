@@ -2481,6 +2481,15 @@ export class Game {
         for (let i = 0; i < n; i++) this.zm.spawn(t, s.x - Math.sin(s.yaw) * 12 + (this.rng() - 0.5) * 4, s.z - Math.cos(s.yaw) * 12 + (this.rng() - 0.5) * 4, { horde: true, boss: ZOMBIE_DEFS[t]?.boss, pack });
         break;
       }
+      case 'legs': {
+        // /legs [1|2]: shoot that many legs (default both) off every zombie within 30 m that has legs to lose
+        const n = args[1] === '1' ? 1 : 2;
+        for (const z of this.zombies) {
+          if (z.dead || !z.legHp || Math.hypot(z.x - s.x, z.z - s.z) > 30) continue;
+          for (let i = 0; i < n && z.legs !== 3; i++) this.combat.hitLeg(z, z.maxHp, 1, z.x - s.x, z.z - s.z);
+        }
+        break;
+      }
       case 'den': {
         // teleport 15 m from the nearest zombie dog pack's den (dense forest)
         let best = null;

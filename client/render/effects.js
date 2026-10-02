@@ -775,6 +775,26 @@ export class Effects {
     }
   }
 
+  // a leg shot off at the knee: the shin and foot it leaves, thrown along the shot (dx,dz) and tumbling like any other
+  // piece, a burst of blood out of the stump at (x,y,z) and a pool under it. len / thick = the size of the shin,
+  // (r,g,b) = what it wears
+  gibLeg(x, y, z, dx, dz, len, thick, r, g, b, green) {
+    for (let i = 0; i < 16; i++) {
+      const sp = this.rnd(1, 4.5);
+      this.drop(x, y, z, (dx * 0.5 + this.rnd(-0.7, 0.7)) * sp, this.rnd(-0.2, 1) * sp, (dz * 0.5 + this.rnd(-0.7, 0.7)) * sp, this.rnd(0.4, 0.85), this.rnd(0.08, 0.18), green, 12, 1);
+    }
+    this.mist(x, y, z, dx * 0.6 + this.rnd(-0.3, 0.3), this.rnd(0.2, 0.6), dz * 0.6 + this.rnd(-0.3, 0.3), 0.5, 0.25, 0.8, green);
+    const gy = this.world.heightAt(x, z);
+    if (y - gy < 2.5) (green ? this.acid : this.blood).add(x + dx * 0.2, gy + 0.03, z + dz * 0.2, this.rnd(1, 1.5));
+    const sp = this.rnd(2.5, 5);
+    this.gibLimbs.add(x, y - len * 0.4, z, dx * sp + this.rnd(-1.6, 1.6), this.rnd(2.2, 4.5), dz * sp + this.rnd(-1.6, 1.6), len, thick, thick, r, g, b, green);
+    // splinters of bone with it
+    for (let i = 0; i < 2; i++) {
+      const t = this.rnd(0.014, 0.022);
+      this.gibLimbs.add(x, y, z, dx * this.rnd(1, 4) + this.rnd(-2, 2), this.rnd(1.5, 4), dz * this.rnd(1, 4) + this.rnd(-2, 2), this.rnd(0.08, 0.16), t, t, 0.6, 0.57, 0.47, green);
+    }
+  }
+
   // a flying gib: the drops it trails, the smear where it lands
   gibDrip(x, y, z, green) {
     this.drop(x, y, z, this.rnd(-0.4, 0.4), this.rnd(-0.2, 0.6), this.rnd(-0.4, 0.4), this.rnd(0.35, 0.6), this.rnd(0.08, 0.15), green, 9, 1);

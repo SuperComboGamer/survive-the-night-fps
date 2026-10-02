@@ -4,6 +4,7 @@
 // writes bone rotations; state changes crossfade from a pose snapshot.
 import * as THREE from 'three';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, ITEM, WEAPONS } from '../../../shared/defs.js';
+import { CRAWL_HEAD_FWD } from '../../../shared/constants.js';
 import {
   MeshBuilder, instantiateRig, setFx, getCharacterMaterial, ikTwoBone, mulberry32, fbm3, noise3,
   clamp, lerp, smooth, color,
@@ -602,6 +603,20 @@ function buildLegs(mb, P, L) {
   }
 }
 
+/**
+ * What a leg shot off at the knee leaves: a stump under each thigh, on a bone of its own so that it can be kept
+ * scaled away until the shin goes (ZombieInstance.setLegs).
+ */
+function legStumps(mb, P, L) {
+  const r = (L.thighR || 0.078) * 0.7;
+  mb.shin = L.pants && !L.pants.shorts ? L.pants.color : L.skin; // what the shin that flies off is wearing
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    mb.addBone('stump' + n, 'thigh' + n, s * P.hipW, P.kneeY, 0);
+    stump(mb, 'stump' + n, r, 0.012);
+  }
+}
+
 // ------------------------------------------------------------------ zombie looks
 const SKINS = [0x7d8a6e, 0x93968a, 0x7a7488, 0x9c9870, 0x66725c, 0x8a8f86];
 const SHIRTS = [0xa8a290, 0x7a2a22, 0x3d4f6b, 0x4f5a3a, 0x6b6b66, 0x8a7440, 0x5a4632, 0x2a2a2a, 0x5b3a5e];
@@ -759,6 +774,7 @@ function standardHumanoid(mb, P, L) {
   hair(mb, P, L);
   buildArms(mb, P, L);
   buildLegs(mb, P, L);
+  legStumps(mb, P, L);
   return T;
 }
 
@@ -1433,6 +1449,7 @@ function getRig(type, variant) {
     r = mb.build();
     r.P = P;
     r.A = A || NO_EXTRAS; // per-variant animation quirks (e.g. dislocated jaw)
+    r.shin = mb.shin;
     r.type = type;
     rigCache.set(key, r);
   }
@@ -1675,6 +1692,7 @@ function roar(z, p, t) {
 
 function poseLoco(z, p, run) {
   const st = z.st;
+  if (z.legs) return poseHobble(z, p);
   if (run ? st.gRun : st.gWalk) return poseGait(z, p, run);
   if (st.quad) return poseQuad(z, p, run, false);
   if (st.knuckle) return poseTankLoco(z, p, run, false);
@@ -2681,6 +2699,266 @@ function poseEat(z, p) {
   arm(p, 1, 0.45 - 0.25 * pl, 0.3, 0.3, 0.7 + 0.5 * Math.max(0, -pl), 0.6);
 }
 
+// ------------------------------------------------------------------ legs shot off (ZombieInstance.setLegs)
+// A shot in the leg trips it (ZANIM.STUMBLE). With one leg gone it hops along on the other, with both gone it lies
+// prone and drags itself forward by its arms. The server's speeds (HOBBLE_SPEED, CRAWL_SPEED in constants.js) and its
+// crawler hitbox (CRAWL_HEAD_FWD) are what these poses are drawn to.
+const HOP_MIN = 0.42, HOP_MAX = 1.0; // ground one hop covers (m), by speed
+const CRAWL_CYCLE = 0.95; // ground one crawl cycle covers (m): a pull of each arm
+const CRAWL_REACH = 2.75, CRAWL_TUCK = 1.05; // upper arm swung out ahead of the shoulder / drawn back beside the ribs (rad)
+
+/** Ground covered by one cycle of the phase for a zombie that has lost legs. */
+function legCycleLen(z, speed) {
+  return z.legs === 3 ? CRAWL_CYCLE : clamp(0.34 + 0.2 * speed, HOP_MIN, HOP_MAX);
+}
+
+/** Tripped by a shot in the leg: that knee gives, the body pitches forward over it and the arms fly out to catch it. */
+function poseStumble(z, p) {
+  if (z.legs) return poseHobble(z, p);
+  const st = z.st, P = z.P, n = z.nb * 4, t = z.stateT;
+  const k = smooth(t / 0.1) * Math.exp(-Math.max(0, t - 0.1) * 3.4); // snaps in, then it catches itself
+  const w = Math.sin(t * 12) * Math.exp(-t * 3.5);
+  const b = z.limpSide; // the leg that gives way
+  const lean = (st.idleLean || 0) * 0.5;
+  const tB = 0.75 * k, kB = -1.35 * k - 0.1; // buckled: the knee drops forward
+  const tC = -0.3 * k, kC = -0.45 * k - 0.08; // the other is left behind, bent
+  if (b) legsStatic(z, p, tC, kC, tB, kB, 0.07);
+  else legsStatic(z, p, tB, kB, tC, kC, 0.07);
+  p[n + 1] -= (P.thighLen + P.shinLen) * 0.16 * k; // (legsStatic grounds the straighter leg; the trip drops it further)
+  R(p, HIPS, 0, (b ? -1 : 1) * 0.2 * k, (b ? 1 : -1) * 0.14 * k);
+  R(p, SPINE, lean - 0.38 * k + 0.05 * w, 0.14 * w, (b ? -1 : 1) * 0.12 * k);
+  R(p, CHEST, lean - 0.3 * k, 0.1 * w, 0);
+  posture(z, p);
+  arm(p, 0, 0.35 + 0.95 * k, 0.2 + 0.5 * k, 0.1, 0.45 - 0.2 * k, 0.4);
+  arm(p, 1, 0.3 + 1.1 * k, 0.2 + 0.4 * k, 0.1, 0.5 - 0.25 * k, 0.4);
+  headLook(p, st.headPitch - 0.35 * k + 0.12 * w, 0.2 * w, z.tilt * st.headTilt + 0.25 * w, 0.3);
+  R(p, JAW, -st.jaw - 0.45 * k, 0, 0);
+}
+
+/**
+ * One leg left: it hops. Each cycle of the phase is one hop - the foot lands ahead, the body vaults over it, the knee
+ * sinks and shoves off - while the stump swings and the arms flail for balance. A fresh hit (ZANIM.STUMBLE) nearly
+ * has it over.
+ */
+function poseHobble(z, p) {
+  const st = z.st, P = z.P, n = z.nb * 4, t = z.time + z.off;
+  const side = z.legs === 1 ? 1 : 0; // the leg it has left (legs: bit 0 = the left is gone)
+  const sg = side ? 1 : -1;
+  const good = side ? THIGH_R : THIGH_L, gone = side ? THIGH_L : THIGH_R;
+  const u = frac(z.phase / TAU);
+  const trip = z.state === ZANIM.STUMBLE ? smooth(z.stateT / 0.1) * Math.exp(-Math.max(0, z.stateT - 0.1) * 3.2) : 0;
+  const hops = Math.floor(z.phase / TAU);
+  if (z.hopN !== undefined && hops !== z.hopN) z.footfalls++;
+  z.hopN = hops;
+  z.hopOn = true;
+  // On the ground for the first ST of the cycle, in the air for the rest. The ankle is placed and the leg fitted to
+  // it: planted, it is left behind by exactly the ground the body covers meanwhile, so the foot does not skate
+  const ST = 0.62, L1 = P.thighLen, L2 = P.shinLen, L = L1 + L2;
+  const half = Math.min(L * 0.45, (legCycleLen(z, z.speed) * ST) / (2 * (z.rate || 1) * (z.gScale || 1))); // half the planted stretch (rig units)
+  const top = Math.sqrt(L * L * 0.96 - half * half); // hip height with the leg all but straight at either end of it
+  let fz, hip, foot = 0, toe = 0;
+  if (u < ST) {
+    const s = u / ST;
+    fz = -half * (1 - 2 * s); // lands ahead, is left behind
+    hip = top - L * (0.07 + 0.05 * trip) * Math.sin(PI * Math.min(1, s * 1.3)); // sinks on landing, straightens to shove off
+  } else {
+    const f = (u - ST) / (1 - ST), arc = Math.sin(PI * f);
+    fz = half * (1 - 2 * smooth(f));
+    hip = top + L * (0.045 + 0.03 * Math.min(1, z.speed / 2.5)) * arc;
+    foot = L * 0.09 * arc;
+    toe = 0.5 * arc;
+  }
+  // (the two-bone fit of legsIK, in the plane the leg swings in)
+  const vy = -(hip - foot);
+  const d = clamp(Math.hypot(fz, vy), Math.abs(L1 - L2) + 0.02, L * 0.9995);
+  const ck = clamp((d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2), -1, 1);
+  const kn = -Math.acos(ck);
+  let th = Math.atan2(fz, vy) - Math.atan2(-L2 * Math.sin(kn), -(L1 + L2 * ck));
+  if (th > PI) th -= TAU;
+  else if (th < -PI) th += TAU;
+  R(p, good, th, 0, sg * 0.04);
+  R(p, good + 1, kn, 0, 0);
+  R(p, good + 2, toe - (th + kn), 0, 0);
+  // the stump: held up in front, pumping against the hop
+  const pump = Math.sin(z.phase);
+  R(p, gone, 0.5 + 0.28 * pump, 0, -sg * 0.1);
+  R(p, gone + 1, -0.3, 0, 0);
+  p[n + 1] += hip - L;
+  // the weight is over the one foot: the hips shift across, the shoulders lean back out to balance
+  p[n] -= sg * P.hipW * 0.8;
+  const land = u < 0.25 ? Math.sin((u / 0.25) * PI) : 0; // the jolt of each landing
+  const lean = st.walkLean * 0.55;
+  R(p, HIPS, 0.04 * land, -sg * 0.1 + 0.08 * pump, -sg * (0.1 + 0.05 * land));
+  R(p, SPINE, lean * 0.5 - 0.06 * land - 0.3 * trip, 0.08 * pump, sg * (0.12 + 0.04 * land));
+  R(p, CHEST, lean * 0.5 - 0.05 * land - 0.25 * trip, 0.06 * pump, sg * 0.06);
+  posture(z, p);
+  const wave = n1(t * 1.6, z.seed + 17) * 0.2;
+  arm(p, side, 0.45 + 0.3 * pump + 0.6 * trip, 0.5 + 0.15 * land + wave, 0.1, 0.5 + 0.2 * land, 0.3);
+  arm(p, 1 - side, 0.75 - 0.3 * pump + 0.7 * trip, 0.75 + 0.2 * land - wave, 0.1, 0.35, 0.3);
+  headLook(p, st.headPitch - 0.08 * land - 0.3 * trip, n1(t * 0.5, z.seed + 4) * 0.25, z.tilt * st.headTilt - sg * 0.08, 0.3);
+  R(p, JAW, -st.jaw * (0.6 + 0.4 * Math.abs(Math.sin(t * 2.1))) - 0.3 * trip, 0, 0);
+}
+
+/** Standing (not hopping) on the one leg it has left: the hips shift across over that foot, the shoulders back out. */
+function oneLegged(z, p) {
+  if (z.hopOn) return;
+  const P = z.P, n = z.nb * 4, t = z.time + z.off;
+  const sg = z.legs === 1 ? 1 : -1;
+  const wob = n1(t * 0.9, z.seed + 31);
+  p[n] -= sg * P.hipW * 0.8 + wob * 0.02;
+  A(p, HIPS, 0, 0, -sg * 0.08);
+  A(p, SPINE, 0, 0, sg * (0.1 + 0.03 * wob));
+  A(p, UARM_L, 0, 0, -0.18 - 0.08 * wob);
+  A(p, UARM_R, 0, 0, 0.18 - 0.08 * wob);
+}
+
+/** Head centre (y up, z back) of the spine chain bent only about X, in the root's frame: rig units. */
+const _hc = { y: 0, z: 0 };
+function headYZ(z, p) {
+  const P = z.P;
+  let th = p[HIPS * 4];
+  let y = P.hipY + Math.cos(th) * P.spineLen, zz = Math.sin(th) * P.spineLen;
+  th += p[SPINE * 4];
+  y += Math.cos(th) * P.chestLen;
+  zz += Math.sin(th) * P.chestLen;
+  th += p[CHEST * 4];
+  y += Math.cos(th) * P.neckOff - Math.sin(th) * P.neckZ;
+  zz += Math.sin(th) * P.neckOff + Math.cos(th) * P.neckZ;
+  th += p[NECK * 4];
+  y += Math.cos(th) * P.neckLen - Math.sin(th) * (P.headZ - P.neckZ);
+  zz += Math.sin(th) * P.neckLen + Math.cos(th) * (P.headZ - P.neckZ);
+  th += p[HEAD * 4];
+  _hc.y = y + Math.cos(th) * P.headR * 0.9;
+  _hc.z = zz + Math.sin(th) * P.headR * 0.9;
+  return _hc;
+}
+
+/** Height over the entity's ground (rig units) of the point (0, ly, 0) of a bone, from the pose alone. */
+function boneHeight(z, p, b, ly) {
+  const par = z.parent, lp = z.localPos, n = z.nb * 4;
+  _v3.x = 0;
+  _v3.y = ly;
+  _v3.z = 0;
+  for (let i = b; i > 0; i = par[i]) {
+    rotXYZ(p[i * 4], p[i * 4 + 1], p[i * 4 + 2], false);
+    if (i === ROOT) _v3.y += p[n + 1];
+    else {
+      _v3.x += lp[i * 3];
+      _v3.y += lp[i * 3 + 1];
+      _v3.z += lp[i * 3 + 2];
+    }
+  }
+  return _v3.y;
+}
+
+/**
+ * An arm of a body lying prone, from _arm[side * 6..]: swung `out` from the ribs towards straight ahead, lifted, the
+ * elbow hitched `up` off the ground. The elbow then bends as far as it takes to put the hand `hand` above the ground
+ * (0: flat on it), or by `elbow` when hand < 0 (in the air).
+ */
+const _arm = new Float32Array(12);
+function crawlArm(z, p, side) {
+  const o = side * 6, sg = side ? 1 : -1, ua = side ? UARM_R : UARM_L;
+  const hand = _arm[o + 5];
+  let elbow = _arm[o + 3];
+  R(p, ua, _arm[o + 1], -sg * _arm[o + 2], sg * _arm[o]);
+  R(p, ua + 2, _arm[o + 4], 0, 0);
+  if (hand >= 0 && z.parent) {
+    // the forearm swings down towards the ground as the elbow bends: bisect for the bend that lands the palm
+    const tip = -z.P.handLen * 0.6, want = 0.035 + hand;
+    let lo = 0.05, hi = 2.1;
+    for (let i = 0; i < 9; i++) {
+      elbow = (lo + hi) * 0.5;
+      p[(ua + 1) * 4] = elbow;
+      if (boneHeight(z, p, ua + 2, tip) > want) lo = elbow;
+      else hi = elbow;
+    }
+  }
+  R(p, ua + 1, elbow, 0, 0);
+}
+
+/**
+ * Both legs gone: it lies on its front, chest propped up, and hauls itself along - one arm reaches out, plants and
+ * drags the body past it while the other comes forward, the stumps trailing. Every state is played from the ground:
+ * it rears and swipes to attack, drops flat when hit and goes limp when it dies. The root is placed so that the head
+ * is CRAWL_HEAD_FWD ahead of the entity, where the server's hitbox for a crawler has it.
+ */
+function poseCrawl(z, p) {
+  const st = z.st, P = z.P, n = z.nb * 4, t = z.time + z.off, s = z.state;
+  const dead = s === ZANIM.DEAD;
+  const limp = dead ? smooth(z.stateT / 0.5) : 0;
+  const hit = s === ZANIM.STUMBLE || s === ZANIM.STAGGER ? Math.exp(-z.stateT * 3.5) : 0;
+  const up = (1 - limp) * (1 - 0.75 * hit); // how much of its propped-up posture it is holding
+  const attack = s === ZANIM.ATTACK;
+  const drag = !dead && !attack && (s === ZANIM.WALK || s === ZANIM.RUN || z.speed > 0.3) ? Math.min(1, z.speed / 0.5) : 0;
+  const ph = z.phase;
+  const br = Math.sin(t * 1.5 * z.rate);
+  // the pull of each arm: 0..1 from its reach to its tuck while planted (the first PULL of its cycle), then back
+  const PULL = 0.58;
+  let rear = 0, lunge = 0, bite = 0;
+  if (attack) {
+    const per = (z.def.rate || 1) / z.rate;
+    const a = (z.stateT % per) / per;
+    rear = a < 0.3 ? smooth(a / 0.3) : 1 - smooth((a - 0.3) / 0.14); // rears up on one arm...
+    lunge = a < 0.3 ? 0 : a < 0.48 ? smooth((a - 0.3) / 0.18) : 1 - smooth((a - 0.48) / 0.4); // ...and throws itself at the ankles
+    bite = Math.max(0, Math.sin(a * TAU * 2 + 1));
+  }
+  const special = s === ZANIM.SPECIAL ? smooth(z.stateT / 0.3) : 0;
+  if (special) z.bellyPulse = 0.12;
+  // torso: prone, arched up off the ground from the hips to the head
+  const arch = (0.9 + 0.1 * br * (1 - drag) + 0.35 * rear - 0.25 * lunge + 0.2 * special) * up;
+  const sway = Math.sin(ph) * drag; // +1 while the right arm pulls
+  R(p, ROOT, -HALF, 0.1 * sway * up + 0.05 * limp * z.tilt, 0);
+  R(p, HIPS, 0.04 * arch, 0, 0.1 * sway * up);
+  R(p, SPINE, 0.14 * arch, 0.06 * sway, -0.12 * sway * up);
+  R(p, CHEST, 0.2 * arch, 0.1 * sway, -0.06 * sway * up);
+  const look = n1(t * 0.4, z.seed + 4) * 0.3 * up * (1 - drag * 0.5);
+  R(p, NECK, 0.3 * arch, look * 0.3, look * 0.5 + 0.9 * limp * z.tilt);
+  R(p, HEAD, 0.38 * arch + 0.1 * bite * up, look * 0.3, look * 0.6 + z.tilt * st.headTilt * 0.5 * up);
+  R(p, JAW, -(st.jaw * (0.6 + 0.4 * Math.abs(Math.sin(t * 1.9))) + 0.45 * bite + 0.3 * hit + 0.25 * special) * (1 - 0.6 * limp) - 0.2 * limp, 0, 0);
+  // the stumps trail behind, twitching with each pull
+  const kick = Math.sin(ph + 0.6) * drag;
+  R(p, THIGH_L, -0.06 - 0.1 * Math.max(0, kick) * up, 0, -0.1 - 0.05 * limp);
+  R(p, THIGH_R, -0.06 - 0.1 * Math.max(0, -kick) * up, 0, 0.1 + 0.16 * limp);
+  // arms
+  for (let side = 0; side < 2; side++) {
+    const a = frac(ph / TAU + (side ? 0 : 0.5));
+    const pull = a < PULL ? a / PULL : 1 - smooth((a - PULL) / (1 - PULL)); // 0 at full reach, 1 tucked
+    const swing = a < PULL ? 0 : Math.sin(((a - PULL) / (1 - PULL)) * PI); // off the ground on the way forward
+    // at rest it is propped on both hands, elbows out
+    let out = lerp(1.75 + 0.12 * br * (side ? 1 : -1), lerp(CRAWL_REACH, CRAWL_TUCK, pull), drag);
+    let lift = lerp(0.12, 0.1 + 0.3 * swing, drag);
+    let hitch = lerp(0.35, 0.5 * Math.sin(PI * pull) * (1 - swing), drag) * up; // elbows up and out, like a lizard's
+    let wrist = lerp(-0.45, -0.45 + 0.4 * swing, drag);
+    let hand = 0.16 * swing * drag; // how far off the ground the hand is carried
+    let elbow = 0;
+    if (attack && side === z.armSide) {
+      // the swiping arm: drawn back and up as it rears, flung out at the ankles
+      out = lerp(1.5, 2.7, lunge);
+      lift = 0.75 * rear + 0.25 * lunge;
+      hitch = 0;
+      elbow = 1.2 * rear * (1 - lunge) + 0.25;
+      wrist = 0.5 * lunge;
+      hand = -1;
+    } else if (attack) out = 1.6;
+    // hit: the arms splay and it drops onto its chest; dead: they lie where they fall
+    const o = side * 6;
+    _arm[o] = lerp(out, side === (z.seed & 8 ? 1 : 0) ? 2.5 : 1.1, limp) + 0.35 * hit * (side ? 1 : -1) * (z.flinchSide || 1);
+    _arm[o + 1] = lerp(lift, 0.02, limp);
+    _arm[o + 2] = hitch;
+    _arm[o + 3] = elbow;
+    _arm[o + 4] = lerp(wrist, -0.1, limp);
+    _arm[o + 5] = hand;
+  }
+  // on its belly, the hips on the ground; the head CRAWL_HEAD_FWD ahead of the entity
+  const h = headYZ(z, p);
+  p[n] = 0;
+  p[n + 1] = (P.depth || 0.12) * 1.12 - 0.015 * Math.abs(sway) * up;
+  p[n + 2] = -CRAWL_HEAD_FWD / (z.gScale || 1) + h.y - (z.cal ? z.cal.dz : 0);
+  // (the hands go down once the body is where it will be)
+  for (let side = 0; side < 2; side++) crawlArm(z, p, side);
+}
+
 function poseHumanoid(z) {
   const p = z.pose;
   clearPose(p, z.nb);
@@ -2689,7 +2967,10 @@ function poseHumanoid(z) {
   z.abdPulse = 0;
   z.gOn = false;
   z.standOn = false;
-  switch (z.state) {
+  z.hopOn = false;
+  if (z.legs === 3) poseCrawl(z, p);
+  else switch (z.state) {
+    case ZANIM.STUMBLE: poseStumble(z, p); break;
     case ZANIM.WALK: poseLoco(z, p, false); break;
     case ZANIM.RUN: poseLoco(z, p, true); break;
     case ZANIM.ATTACK: poseAttack(z, p); break;
@@ -2706,6 +2987,8 @@ function poseHumanoid(z) {
   const alive = z.state !== ZANIM.DEAD;
   if (alive && z.voxT < VOX[z.voxKind]?.dur) poseVocal(z, p);
   if (alive && z.state !== ZANIM.STAGGER && z.flinchT < 0.6) poseFlinch(z, p);
+  if (z.legs === 3) return; // prone: poseCrawl has put the head where the server's hitbox has it
+  if (z.legs && alive) oneLegged(z, p);
   if (z.gazeW > 0.01) applyGaze(z, p);
   if (z.state !== ZANIM.DEAD && z.state !== ZANIM.EAT) {
     // keep the head over the object origin (server head hitbox is centered on the entity axis)
@@ -2910,6 +3193,11 @@ class ZombieInstance {
       this.localPos[i * 3 + 2] = d.local.z;
     }
     this.world = new Float64Array(nb * 12); // per bone: 3x3 rotation*scale (column-major) + translation
+    // bones scaled away to nothing: a head shot off (setHeadless), a shin and foot (setLegs) - or the stump under
+    // each thigh, for as long as the shin is still there
+    this.gone = new Uint8Array(nb);
+    this.legs = 0;
+    if (this.X.stumpL !== undefined) this.gone[this.X.stumpL] = this.gone[this.X.stumpR] = 1;
     // The renderer calls skeleton.update() for every drawn skinned mesh every frame, which re-uploads the
     // bone texture. The bones are mesh-local (detached rig), so only a new pose or fx value changes them:
     // solve + upload then, and only for zombies that are actually drawn.
@@ -3026,13 +3314,13 @@ class ZombieInstance {
     const lp = this.localPos;
     const bp = this.bindPos;
     const bm = this.skeleton.boneMatrices;
-    const head = this.headless && !this.isBat ? this.X.head : -1;
+    const gone = this.gone;
     for (let i = 1; i < nb; i++) {
       const k = i * 4;
       const cx = Math.cos(p[k]), sx = Math.sin(p[k]);
       const cy = Math.cos(p[k + 1]), sy = Math.sin(p[k + 1]);
       const cz = Math.cos(p[k + 2]), sz = Math.sin(p[k + 2]);
-      const s = i === head ? 0.001 : p[k + 3];
+      const s = gone[i] ? 0.001 : p[k + 3];
       // local rotation * scale, column-major (same as Matrix4.makeRotationFromEuler, order XYZ)
       const l0 = cy * cz * s, l1 = (cx * sz + sx * cz * sy) * s, l2 = (sx * sz - cx * cz * sy) * s;
       const l3 = -cy * sz * s, l4 = (cx * cz - sx * sz * sy) * s, l5 = (sx * cz + cx * sz * sy) * s;
@@ -3094,6 +3382,14 @@ class ZombieInstance {
     return out.applyMatrix4(this.mesh.matrixWorld);
   }
 
+  /** World position of a knee (0 the left, 1 the right): where the shin parts from the leg when it is shot off. */
+  kneeWorld(side, out) {
+    if (this.poseDirty) this._solve();
+    const o = (side ? SHIN_R : SHIN_L) * 12, W = this.world;
+    this.mesh.updateWorldMatrix(true, false);
+    return out.set(W[o + 9], W[o + 10], W[o + 11]).applyMatrix4(this.mesh.matrixWorld);
+  }
+
   update(dt, anim, speed, time, inView = false) {
     if (dt > 0.1) dt = 0.1;
     if (anim === ZANIM.FROZEN) return this.hold(dt, time);
@@ -3114,7 +3410,14 @@ class ZombieInstance {
       this.state = anim;
       this.sub = sub;
       this.fadeT = 0;
-      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER || thawed ? 0.1 : 0.25;
+      this.fadeDur = anim === ZANIM.DEAD ? 0.12 : anim === ZANIM.STAGGER || anim === ZANIM.STUMBLE || thawed ? 0.1 : 0.25;
+    }
+    if (this.fell) {
+      // its second leg has just gone from under it (setLegs): it goes down onto its front rather than snapping there
+      this.fell = false;
+      this.snap.set(this.out);
+      this.fadeT = 0;
+      this.fadeDur = 0.42;
     }
     this.stateT += dt;
     this.fadeT += dt;
@@ -3125,7 +3428,7 @@ class ZombieInstance {
     if (this.isBat) {
       this.flapPh += dt * (7 + clamp(speed, 0, 10) * 0.5) * this.rate * (this.state === ZANIM.ATTACK ? 0 : 1);
     } else if (anim !== ZANIM.DEAD) {
-      const cyc = gaitLen(this, anim === ZANIM.RUN || (anim === ZANIM.ATTACK && sub === 2), speed);
+      const cyc = this.legs ? legCycleLen(this, speed) : gaitLen(this, anim === ZANIM.RUN || (anim === ZANIM.ATTACK && sub === 2), speed);
       this.phase += (dt * speed * TAU * this.rate) / cyc;
       if (this.phase > 1e4) this.phase -= TAU * 1000;
     }
@@ -3208,12 +3511,30 @@ class ZombieInstance {
   footfallCount() {
     // knuckle walk (tank): legCycle puts a foot down each half cycle, as its thigh reaches the front of the swing
     if (this.st.knuckle) return this.state === ZANIM.WALK || this.state === ZANIM.RUN ? Math.floor(this.phase / PI - 0.5) : -1;
-    return this.gOn && this.posedAt === this.time ? this.footfalls : -1;
+    return (this.gOn || this.hopOn) && this.posedAt === this.time ? this.footfalls : -1;
   }
 
   setHeadless(v) {
     this.headless = !!v;
-    this.applyPose(this.out, true);
+    if (!this.isBat) this.gone[this.X.head] = v ? 1 : 0;
+    this.poseDirty = true;
+  }
+
+  /**
+   * Legs shot off at the knee (bit 0 the left, bit 1 the right): the shin and foot go, the stump shows. On one leg it
+   * hops, with neither it crawls (poseHobble, poseCrawl). fall: it has just happened, so it goes down over a moment.
+   */
+  setLegs(bits, fall = false) {
+    bits &= 3;
+    if (bits === this.legs || this.X.stumpL === undefined) return;
+    if (bits === 3 && fall) this.fell = true;
+    this.legs = bits;
+    const g = this.gone;
+    g[SHIN_L] = bits & 1;
+    g[SHIN_R] = (bits >> 1) & 1;
+    g[this.X.stumpL] = bits & 1 ? 0 : 1;
+    g[this.X.stumpR] = bits & 2 ? 0 : 1;
+    this.poseDirty = true;
   }
 
   dispose() {
@@ -3247,6 +3568,9 @@ export function createZombie(ztype, seed = 0) {
     vocalize: (kind) => z.vocalize(kind),
     footfalls: () => z.footfallCount(),
     setHeadless: (v) => z.setHeadless(v),
+    setLegs: (bits, fall) => z.setLegs(bits, fall),
+    kneeWorld: (side, out) => z.kneeWorld(side, out),
+    shin: rig.shin === undefined ? null : { color: rig.shin, len: rig.P.shinLen * cal.k, thick: 0.06 * cal.k }, // the piece a shot-off leg leaves (Effects.gibLeg)
     anchorWorld: (a, out) => z.anchorWorld(a, out),
     dispose: () => z.dispose(),
     _inst: z,
