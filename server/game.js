@@ -405,6 +405,9 @@ export class Game {
     let base = name;
     let k = 2;
     while (names.has(name)) name = `${base.slice(0, 13)}#${k++}`;
+    // an emptied server rolls its next valley on the tick after (resetToWaiting): a join that beats that tick
+    // rolls it here, so the seed in WELCOME is the one this run is played on
+    if (this.phase === PHASE.WAITING) this.rollWorld();
 
     const p = this.createPlayer(session, name);
     session.player = p;
@@ -547,9 +550,12 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- game flow
+  // The last player has left. This runs inside their socket's close callback, so the next valley is not rolled
+  // here: generating one blocks the thread for a few hundred ms (seconds on a loaded machine), and the socket
+  // would stay open that long. The played world stays, cleared, until the next tick rolls its successor (update),
+  // or the next join if that comes first (handleJoin).
   resetToWaiting() {
     this.clearWorld();
-    this.rollWorld();
     this.phase = PHASE.WAITING;
     this.day = 0;
     this.globalDirty = true;
@@ -2216,6 +2222,7 @@ export class Game {
       this.quarantine.splice(0, 2);
     }
     if (this.phase === PHASE.WAITING) {
+      this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
       this.sendSnapshots();
       return;

@@ -1320,5 +1320,90 @@ check('ping broadcast', B.pings > 0);
   check('a new game counts kills and deaths from zero for everyone', scored && zeroed, `[kills, zkills, deaths] ${JSON.stringify(last)} -> ${JSON.stringify(next)}`);
 }
 
+// The last player leaving does not roll the next valley there and then (that is the socket's close callback, and
+// generating a world blocks the thread): the tick after does, or the next join if it gets in first.
+{
+  const g3 = new Game({ log: () => {} });
+  let rolls = 0; // worlds generated since the server booted
+  const setWorld = g3.setWorld.bind(g3);
+  g3.setWorld = (s) => (rolls++, setWorld(s));
+  const join = (name) => {
+    const c = { net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, handler: new Proxy({}, { get: () => () => {} }), seed: -1, resets: 0, snaps: 0, seq: 0 };
+    c.session = g3.onOpen({
+      send(bytes) {
+        const r = new Reader(bytes.slice().buffer);
+        const t = r.u8();
+        if (t === S2C.WELCOME) {
+          c.id = r.u16();
+          c.seed = r.u32();
+        } else if (t === S2C.WORLD_RESET) c.resets++;
+        else if (t === S2C.SNAPSHOT) {
+          readSnapshot(r, c);
+          if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing snapshot bytes`);
+          c.snaps++;
+        }
+      },
+    });
+    const w = new Writer(64);
+    w.u8(C2S.JOIN);
+    w.u8(PROTOCOL_VERSION);
+    w.str(name);
+    g3.onMessage(c.session, w.bytes().slice());
+    return c;
+  };
+  // the furthest the survivor gets from where they stand, walking each way in turn
+  const walk = (c) => {
+    const s = g3.players.get(c.id).state;
+    const [x0, z0] = [s.x, s.z];
+    let far = 0;
+    for (let dir = 0; dir < 4; dir++) {
+      for (let i = 0; i < 20; i++) {
+        const w = new Writer(64);
+        w.u8(C2S.INPUT);
+        w.u16(g3.tick & 0xffff);
+        w.u8(0);
+        const cmds = [];
+        for (let k = 0; k < 3; k++) cmds.push({ seq: (c.seq = (c.seq + 1) & 0xffff), buttons: BTN.FWD, qyaw: qangle16((dir * Math.PI) / 2), qpitch: qpitch(0), slot: 255 });
+        writeInput(w, cmds);
+        g3.onMessage(c.session, w.bytes().slice());
+        g3.update();
+        far = Math.max(far, Math.hypot(s.x - x0, s.z - z0));
+      }
+    }
+    return far;
+  };
+  // a run under way on the valley the server holds, with this survivor in it at the breakdown
+  const inRun = (c) => {
+    const p = g3.players.get(c.id);
+    const car = g3.world.car;
+    return g3.phase === PHASE.DAY && g3.world.seed === g3.seed && c.seed === g3.seed >>> 0 && c.resets === 0 && !!p && Math.hypot(p.state.x - car.x, p.state.z - car.z) < 14;
+  };
+
+  const a = join('A');
+  for (let i = 0; i < 10; i++) g3.update();
+  const first = g3.world;
+  g3.onClose(a.session);
+  check('the last player leaving does not roll the next valley in the close path', rolls === 0 && g3.phase === PHASE.WAITING && g3.players.size === 0 && g3.all.length === 0 && g3.world === first && first.seed === g3.seed, `rolls ${rolls}`);
+  g3.update();
+  const second = g3.world;
+  for (let i = 0; i < 5; i++) g3.update();
+  check('the tick after rolls it, once', rolls === 1 && second !== first && g3.world === second && second.seed === g3.seed && second.seed !== first.seed && g3.phase === PHASE.WAITING, `rolls ${rolls}, seed ${first.seed} -> ${g3.seed}`);
+  const b = join('B');
+  const stocked = g3.caches.length > 0 && g3.zombies.length > 0 && g3.items.length > 0 && new Set(g3.supplyHints).size === 7 && g3.supplyHints.every((z) => g3.world.zoneById[z]);
+  const ok = inRun(b) && g3.world === second && rolls === 1 && stocked;
+  const far = walk(b);
+  check('the next join gets that valley and can play on it', ok && far > 1 && b.snaps >= 80 && b.global.phase === PHASE.DAY, `walked ${far.toFixed(1)} m, ${b.snaps} snapshots`);
+
+  // ...and a join that gets in before that tick
+  g3.onClose(b.session);
+  const c = join('C');
+  const third = g3.world;
+  check('a join that beats the tick rolls the valley first: its WELCOME carries the new seed', rolls === 2 && third !== second && third.seed !== second.seed && inRun(c), `rolls ${rolls}, seed ${second.seed} -> ${g3.seed}`);
+  const d = join('D');
+  const both = inRun(c) && inRun(d) && d.seed === c.seed;
+  const far2 = Math.min(walk(c), walk(d));
+  check('...and one more in the same tick joins that run (no second roll)', both && rolls === 2 && g3.world === third && far2 > 1 && c.snaps >= 160 && d.snaps >= 160, `rolls ${rolls}, walked ${far2.toFixed(1)} m`);
+}
+
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);
 process.exit(fails.length ? 1 : 0);
