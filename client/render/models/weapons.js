@@ -1654,6 +1654,9 @@ const supportGrip = (roll, yaw, pitch = 0) => {
 // chargeTravel: how far the handle is pulled on reload (0 = the hand just slaps meta.chargeKnob, e.g. a bolt catch);
 // breakAction: break-open shotgun (barrels part hinges down to reload)
 // crossbow: limbs and string follow the cocked state (update() is told whether a bolt is loaded)
+// adsZ: how far down the view axis the sight point sits when aimed. The three guns that pivot on a front bead
+// (shotgun, double-barrel, crossbow) carry their grip a whole gun length behind it, so adsZ is set to bring that
+// grip back to the eye plane: any further out and the right fist rises into the frame under the point of aim.
 const VM = {
   [ITEM.AK47]: {
     kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2,
@@ -1661,7 +1664,7 @@ const VM = {
     recoil: { z: 0.028, rx: 0.045, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.SHOTGUN]: {
-    kind: 'shotgun', hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.95, adsPitch: 0.1,
+    kind: 'shotgun', hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.79, adsPitch: 0.1,
     rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.06, rx: 0.12, ry: 0.02 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
@@ -1681,12 +1684,12 @@ const VM = {
     recoil: { z: 0.016, rx: 0.026, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.DB_SHOTGUN]: {
-    kind: 'shotgun', breakAction: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.9, adsPitch: 0.1,
+    kind: 'shotgun', breakAction: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.68, adsPitch: 0.1,
     rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.07, rx: 0.14, ry: 0.025 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.CROSSBOW]: {
-    kind: 'rifle', crossbow: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.7, adsPitch: 0.1,
+    kind: 'rifle', crossbow: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.53, adsPitch: 0.1,
     rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.018, rx: 0.03, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
