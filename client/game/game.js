@@ -275,6 +275,7 @@ export class Game {
   setShadowQuality(q) {
     this.entities.setCharShadows(!!q.charShadows);
     if (this.terrain) this.terrain.castShadow = !!q.shadows;
+    this.staticWorld?.setShadows(!!q.shadows);
   }
 
   // ---------------------------------------------------------------- world
@@ -293,6 +294,7 @@ export class Game {
     this.scene.add(this.water);
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
+    this.staticWorld.setShadows(!!this.renderer.q.shadows);
     const t3 = performance.now();
     this.foliage = new Foliage(this.scene, this.world, this.renderer.q);
     const t4 = performance.now();
@@ -492,10 +494,14 @@ export class Game {
         undo.push(() => (own ? (o.onBeforeShadow = own) : delete o.onBeforeShadow));
       }
     };
-    // the static world: one mesh of each material will do (StaticWorld.update sets their visibility again)
+    // the static world: one mesh of each material will do (StaticWorld.update sets their visibility again), and
+    // one of its shadow casters for each shadow side - they are what the shadow passes draw of it. Their group is
+    // left as StaticWorld.setShadows has it: hidden when the quality has no shadows.
     const statics = this.staticWorld.group;
+    const shade = this.staticWorld.casters;
     const mats = new Set();
-    for (const m of statics.children) {
+    for (const m of [...statics.children, ...(shade.visible ? shade.children : [])]) {
+      if (m === shade) continue;
       m.visible = !mats.has(m.material);
       mats.add(m.material);
       if (m.visible) show(m);

@@ -140,7 +140,10 @@ more than its bytes**, so put things into the packets that already flow.
   horizon matches the fog.
 - **Sun/moon:** three's cascaded `SunLight` (`three/addons/lights/SunLight.js`, 2 cascades in one atlas,
   texel-snapped, Vogel PCF) - it lights every built-in material like a DirectionalLight. Casters: terrain,
-  static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The viewmodel scene has
+  static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The static world's
+  meshes do not cast themselves: each chunk has one shadow-only mesh per shadow side (`StaticWorld.casters`,
+  reading the chunk's own vertex buffer) that the shadow passes draw instead; only materials whose texture cuts
+  holes in the shadow (chain link, weeds, stencils) cast from their own mesh. The viewmodel scene has
   its own lights; `Game.updateViewmodelLight` rotates the key light into camera space and dims it by a
   ray/crown probe towards the light so hands are dark in shade.
 - **Time of day** is one palette table (`KEYS` in `render/environment.js`): colours, light levels, fog, mist,
