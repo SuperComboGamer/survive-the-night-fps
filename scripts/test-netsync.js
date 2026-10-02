@@ -6,6 +6,7 @@
 // about a round trip after each shove; the server rebases the client only during that window and never in between.
 // Then a link that hiccups (runStall): the commands that arrive late in one burst must not stay queued on the server.
 // Then the input buffer (runBuffer): early presses of fire, reload and jump are performed, and only those.
+// Last (runSteps), no server: the camera's step smoothing, which reads the prediction and must not be fooled by it.
 // usage: node scripts/test-netsync.js [lagMs=100] [jitterMs=30]
 import { Game } from '../server/game.js';
 import { C2S, S2C, SNAP, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
@@ -16,6 +17,7 @@ import { Connection } from '../client/net/connection.js';
 import { Prediction } from '../client/game/prediction.js';
 import { InputBuffer } from '../client/game/inputbuffer.js';
 import { createWorld } from '../shared/world.js';
+import { makeCyl } from '../shared/collision.js';
 import { createPlayerState, copyPlayerState, samePlayerState, simulatePlayer } from '../shared/playersim.js';
 
 function run(LAG, JIT) {
@@ -448,6 +450,128 @@ function runBuffer(LAG) {
   return ok;
 }
 
+// The camera's step smoothing (Prediction.viewLag) is presentation only, but it lives on the prediction and has to
+// keep out of its way. Walk a prediction onto a 0.3 m slab and back off it, at a steady 60 fps and at an uneven
+// frame rate (frames that run no command, or several). Expected: the feet take the step within one command while
+// the camera height (render feet - lag) takes it a few centimetres a frame, never moves against it and ends level;
+// on bare terrain and in a jump there is no lag at all, and neither a teleport nor a correction leaves any behind.
+function runSteps() {
+  const world = createWorld(4242);
+  const out = { x: 0, y: 0, z: 0 };
+  let rs = 99;
+  const rnd = () => ((rs = (Math.imul(rs, 1103515245) + 12345) | 0) >>> 0) / 4294967296;
+  const spawn = (x, z, y = world.heightAt(x, z)) => {
+    const pred = new Prediction(world);
+    const s = createPlayerState();
+    s.x = x;
+    s.z = z;
+    s.y = y;
+    pred.reconcile(0, s);
+    return pred;
+  };
+  // frames of dtOf() seconds; returns per frame the feet as drawn, the camera height under the eye and the lag
+  const run = (pred, seconds, dtOf, buttons, yaw) => {
+    const T = [];
+    for (let t = 0; t < seconds; ) {
+      const dt = dtOf();
+      t += dt;
+      pred.step(dt, typeof buttons === 'function' ? buttons(T.length) : buttons, yaw, 0, () => {});
+      pred.renderPos(dt, out);
+      const lag = pred.viewLag(dt);
+      T.push({ feet: out.y, cam: out.y - lag, lag, slab: pred.footing(pred.state) === 2, air: !pred.state.onGround });
+    }
+    return T;
+  };
+  // open ground by the car: a heading on which 2 s of walking meets nothing but terrain
+  const x0 = world.car.x + 9;
+  const z0 = world.car.z + 9;
+  let yaw = -1;
+  for (let k = 0; k < 16 && yaw < 0; k++) {
+    const pred = spawn(x0, z0);
+    const T = run(pred, 2, () => 1 / 60, BTN.FWD, k * 0.4);
+    if (Math.hypot(pred.state.x - x0, pred.state.z - z0) > 8 && T.every((f) => !f.slab && !f.air && f.lag === 0)) yaw = k * 0.4;
+  }
+  if (yaw < 0) {
+    console.log('FAIL  camera over a step: no open ground by the car to test on');
+    return false;
+  }
+  // the slab: a disc 0.3 m proud of the ground where its near edge is, 3 m ahead
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  const top = world.heightAt(x0 + fx * 3, z0 + fz * 3) + 0.3;
+  world.staticGrid.add(makeCyl(x0 + fx * 5, z0 + fz * 5, top - 2, top, 2));
+
+  const bad = [];
+  let report = '';
+  for (const [name, dtOf, perFrame] of [
+    ['60 fps', () => 1 / 60, 0.06],
+    ['uneven frames', () => (0.3 + 1.9 * rnd()) / 60, 0.12],
+  ]) {
+    const pred = spawn(x0, z0);
+    const up = run(pred, 1.2, dtOf, BTN.FWD, yaw);
+    up.push(...run(pred, 1, dtOf, 0, yaw)); // standing on it
+    const i0 = up.findIndex((f) => f.slab);
+    let feetUp = 0;
+    let camUp = 0;
+    let against = 0;
+    for (let i = 1; i < up.length; i++) {
+      feetUp = Math.max(feetUp, up[i].feet - up[i - 1].feet);
+      if (i < i0) continue;
+      camUp = Math.max(camUp, up[i].cam - up[i - 1].cam);
+      against = Math.min(against, up[i].cam - up[i - 1].cam);
+    }
+    if (i0 < 0 || up.slice(0, i0).some((f) => f.lag !== 0)) bad.push(`${name}: lag on bare terrain`);
+    if (feetUp < 0.15) bad.push(`${name}: the feet never stepped up (+${feetUp.toFixed(3)})`);
+    if (camUp > perFrame) bad.push(`${name}: the camera rose ${camUp.toFixed(3)} m in one frame`);
+    if (against < -0.005) bad.push(`${name}: the camera moved ${against.toFixed(3)} m against the step`);
+    if (Math.abs(up.at(-1).lag) > 1e-3 || Math.abs(up.at(-1).cam - top) > 1e-3) bad.push(`${name}: not level after the step (${up.at(-1).lag.toFixed(4)})`);
+    // a jump on the slab is not a step
+    const hop = run(pred, 1.2, dtOf, (i) => (i < 4 ? BTN.JUMP : 0), yaw);
+    if (!hop.some((f) => f.air) || hop.some((f) => Math.abs(f.lag) > 1e-3)) bad.push(`${name}: a jump was lagged`);
+    // and back off it
+    const down = run(pred, 1.2, dtOf, BTN.FWD, yaw + Math.PI);
+    down.push(...run(pred, 1, dtOf, 0, yaw));
+    let feetDown = 0;
+    let camDown = 0;
+    for (let i = 1; i < down.length; i++) {
+      feetDown = Math.min(feetDown, down[i].feet - down[i - 1].feet);
+      camDown = Math.min(camDown, down[i].cam - down[i - 1].cam);
+    }
+    if (feetDown > -0.15) bad.push(`${name}: the feet never stepped down (${feetDown.toFixed(3)})`);
+    if (camDown < -perFrame) bad.push(`${name}: the camera dropped ${camDown.toFixed(3)} m in one frame`);
+    if (Math.abs(down.at(-1).lag) > 1e-3) bad.push(`${name}: not level after stepping down`);
+    report += `${report ? '; ' : ''}${name}: feet +${feetUp.toFixed(3)} / ${feetDown.toFixed(3)} m in one frame, camera +${camUp.toFixed(3)} / ${camDown.toFixed(3)}`;
+  }
+  // a teleport in the frame of the step: nothing left to ease
+  {
+    const pred = spawn(x0, z0);
+    while (pred.footing(pred.state) !== 2 && pred.seq < 600) run(pred, 1 / 60, () => 1 / 60, BTN.FWD, yaw);
+    const lag = pred.lag;
+    const far = copyPlayerState(createPlayerState(), pred.state);
+    far.x = x0 - fx * 40;
+    far.z = z0 - fz * 40;
+    far.y = world.heightAt(far.x, far.z);
+    pred.reconcile(pred.seq, far);
+    const T = run(pred, 0.2, () => 1 / 30, 0, yaw);
+    if (lag < 0.15 || T.some((f) => f.lag !== 0)) bad.push(`teleport: lag ${lag.toFixed(3)} before, ${T[0].lag.toFixed(3)} after`);
+  }
+  // a correction that moves the feet from the slab to the ground beside it is not a step either
+  {
+    const pred = spawn(x0 + fx * 5, z0 + fz * 5, top);
+    run(pred, 0.3, () => 1 / 30, 0, yaw);
+    const off = copyPlayerState(createPlayerState(), pred.state);
+    off.x = x0 + fx * 2.4;
+    off.z = z0 + fz * 2.4;
+    off.y = world.heightAt(off.x, off.z);
+    pred.reconcile(pred.seq, off);
+    const T = run(pred, 0.3, () => 1 / 30, 0, yaw);
+    if (pred.corrections !== 1 || T.some((f) => f.slab || Math.abs(f.lag) > 1e-9)) bad.push(`correction: left a lag of ${Math.max(...T.map((f) => Math.abs(f.lag))).toFixed(3)}`);
+  }
+  const ok = !bad.length;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  camera over a 0.3 m step: ${ok ? report + '; none on terrain, in a jump, after a teleport or a correction' : bad.join('; ')}`);
+  return ok;
+}
+
 const args = process.argv.slice(2);
 const cases = args.length
   ? [[+args[0], +(args[1] ?? 30)]]
@@ -460,4 +584,5 @@ let ok = true;
 for (const [lag, jit] of cases) ok = run(lag, jit) && ok;
 if (!args.length) for (const hold of [300, 700, 1500]) ok = runStall(hold) && ok;
 if (!args.length) ok = runBuffer(100) && ok;
+if (!args.length) ok = runSteps() && ok;
 process.exit(ok ? 0 : 1);

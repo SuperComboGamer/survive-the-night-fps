@@ -107,6 +107,7 @@ const PING_LIFE = 12;
 // clicks pile up on top of that, the rest over the next ticks.
 const CRAFT_BURST = 20;
 const CRAFT_RATE = 40; // per second
+const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(48);
 const _v = new THREE.Vector3();
@@ -151,6 +152,9 @@ export class Game {
     this.hitFx = 0;
     this.recoilKick = 0;
     this.camBob = 0;
+    this.landDip = 0; // how far a landing has pushed the view down, a spring (landVel) kicked on touchdown
+    this.landVel = 0;
+    this.fallV = 0; // downward speed in the last frame in the air
     this.eyeH = 1.62;
     this.fovCur = settings.fov || 75;
     this.buildType = STRUCT.BARRICADE;
@@ -1121,8 +1125,7 @@ export class Game {
           a.playLocal('jump', { volume: 0.5 });
           break;
         case 'land':
-          a.playLocal('land');
-          this.landDip = 0.12;
+          a.playLocal('land'); // the view's dip comes with every landing, see the camera in update()
           break;
         case 'leap':
           a.playLocal('zombie_player_growl');
@@ -1505,8 +1508,24 @@ export class Game {
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * (s.downed ? 5 : 12));
     const hspeed = Math.hypot(s.vx, s.vz);
     if (s.onGround && hspeed > 0.5) this.camBob += dt * hspeed * (s.downed ? 3.2 : 1.9);
-    this.landDip = Math.max(0, (this.landDip || 0) - dt * 0.6);
-    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - (this.landDip || 0);
+    // Every landing dips the view, by how hard it was: with the square of the fall speed (so with the height
+    // fallen) from 4 cm after a jump up to the 12 cm of a hard landing, the one the simulation calls `land`
+    // (9 m/s and up), which is this same dip and not another on top. "Weapon look sway" off is the one way a
+    // player has to ask for less motion, so then only that hard landing dips, as it always has.
+    if (!self.alive) this.fallV = 0;
+    else if (!s.onGround) this.fallV = -s.vy;
+    else {
+      if (this.fallV > 9 || (this.fallV > 0 && this.settings.weaponSway !== false)) this.landVel += 0.12 * Math.min(1, (this.fallV / 9) ** 2) * LAND_SPRING * Math.E;
+      this.fallV = 0;
+    }
+    // (a critically damped spring, solved exactly: a kick of d * LAND_SPRING * e bottoms out d below, 1 / LAND_SPRING s later)
+    const landA = (this.landVel + LAND_SPRING * this.landDip) * dt;
+    const landE = Math.exp(-LAND_SPRING * dt);
+    this.landDip = Math.min(0.12, (this.landDip + landA) * landE); // two touchdowns in a row (a correction) don't add up
+    this.landVel = (this.landVel - LAND_SPRING * landA) * landE;
+    // a step up or down reaches the eye over ~100 ms (Prediction.viewLag), with the eye kept 0.3 m clear of the floor
+    const stepLag = this.prediction.viewLag(dt, this.eyeH - 0.3);
+    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag;
     this.recoilKick *= Math.exp(-dt * 10);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
     const shake = this.camShake * 0.02 + this.effects.shake * 0.03;
