@@ -70,6 +70,13 @@ more than its bytes**, so put things into the packets that already flow.
   hands it to `Combat.rewindTime` as each one runs), and the per-tick command allowance banks up while nothing
   arrives (`CMD_QUEUE_MAX`) and refills slightly faster than commands are issued (`CMD_CATCH_UP`), so a burst
   that arrives late after a hiccup is run at once instead of standing in the queue from then on.
+- **Early presses** (`client/game/inputbuffer.js`). The simulation acts on the press of fire, reload and jump,
+  not on the button being down, so a press that comes a moment before it can act would do nothing. The client
+  holds such a press out of its commands' buttons until the first command that can act on it (150 ms for fire
+  and jump, the weapon draw for reload), and presses R itself when an automatic runs dry with the trigger held.
+  Whether a press acts is asked of `simulatePlayer` on a scratch copy of the state, so a new rule in the
+  simulation needs no counterpart there. This only shapes what the client sends: `Prediction.step` simulates the
+  shaped command, and the server never knows.
 - **Down: one snapshot per tick** (`Game.sendTick`), corked together with the player list and inventory when
   those changed. A flags byte (`SNAP`) says which sections follow; tick and acked command are implied
   (+1, +`CMDS_PER_PACKET`) unless flagged. A client whose socket is backed up is skipped, never sent a snapshot
