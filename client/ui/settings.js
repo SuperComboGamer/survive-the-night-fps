@@ -7,6 +7,7 @@ const KEY = 'stn.settings';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   sensitivity: 1.0,
+  aimSensitivity: 1.0,
   fov: 75,
   masterVolume: 0.4,
   musicVolume: 0.6,
@@ -23,6 +24,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
 const NUM_RANGES = {
   sensitivity: [0.1, 3],
+  aimSensitivity: [0.25, 2],
   fov: [60, 100],
   masterVolume: [0, 1],
   musicVolume: [0, 1],
@@ -64,6 +66,7 @@ const SECTIONS = [
     title: 'Controls',
     rows: [
       { k: 'sensitivity', label: 'Mouse sensitivity', type: 'range', min: 0.1, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) + '×' },
+      { k: 'aimSensitivity', label: 'Aim sensitivity', type: 'range', min: 0.25, max: 2, step: 0.05, fmt: (v) => v.toFixed(2) + '×', hint: 'While aiming, on top of the zoom' },
       { k: 'invertY', label: 'Invert mouse Y', type: 'toggle' },
       { k: 'rawMouse', label: 'Raw mouse input', type: 'toggle', hint: 'Off = OS mouse acceleration applies' },
       { k: 'weaponSway', label: 'Weapon look sway', type: 'toggle', hint: 'Gun trails behind fast turns' },
