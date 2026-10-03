@@ -461,9 +461,9 @@ export function planRail(plan, { seed, depot, rawH, edgeRise }) {
     const far = -ds * 0.82;
     C(b, CONT.FREIGHT, far, -4.9, { prop: 'crate', ly: F, ry: 0.1 });
     P(b, 'crate_small', far + ds * 0.15, -3.75, 0.5, { ly: F });
-    P(b, 'pallet', far, 4.9, 0.2, { ly: F });
+    P(b, 'pallet', far * 0.8, 4.9, 0.2, { ly: F }); // (turned, it is wider than a crate: in from the wall a little more)
     if (k % 2) {
-      C(b, CONT.FREIGHT, far, 4.9, { prop: 'crate', ly: F + 0.15, ry: -0.2 });
+      C(b, CONT.FREIGHT, far * 0.8, 4.9, { prop: 'crate', ly: F + 0.15, ry: -0.2 });
       C(b, CONT.TOOLBOX, ds * 0.7, 5.2, { prop: 'toolbox', ly: F, ry: 0.9, nocollide: true });
       P(b, 'bones', far + ds * 0.3, 2.3, 1.2, { ly: F, nocollide: true });
     } else {
