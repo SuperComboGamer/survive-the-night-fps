@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   fullscreen: true,
   weaponSway: true,
   keyHints: true,
+  holdToDrop: true, // the drop key has to be held a moment (game/drophold.js), so a stray press keeps the gun
   showFps: true,
   minimap: false, // experimental
 });
@@ -54,7 +55,7 @@ export function sanitizeSettings(s) {
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
     if (['off', 'subtle', 'strong'].includes(s.highlight)) out.highlight = s.highlight;
-    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'showFps', 'ps1', 'minimap']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'holdToDrop', 'showFps', 'ps1', 'minimap']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -85,6 +86,7 @@ const SECTIONS = [
       { k: 'fullscreen', label: 'Fullscreen while playing', type: 'toggle', hint: 'Keeps Ctrl+W (crouch + forward) from closing the tab. Off = the tab asks before it closes' },
       { k: 'weaponSway', label: 'Weapon look sway', type: 'toggle', hint: 'Gun trails behind fast turns' },
       { k: 'keyHints', label: 'Key hints', type: 'toggle', hint: 'Names a key when it would help, until you have used it twice' },
+      { k: 'holdToDrop', label: 'Hold to drop weapon', type: 'toggle', hint: 'The drop key has to be held a moment, so a stray press in a fight keeps your gun. Off = a press drops it' },
       { k: 'fov', label: 'Field of view', type: 'range', min: 60, max: 100, step: 1, fmt: (v) => Math.round(v) + '°' },
     ],
   },

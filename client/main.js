@@ -196,7 +196,7 @@ ui.setControls(() => [
   [keysOf('players'), 'Player list (hold)'],
   [keysOf('chat'), 'Chat'],
   [keysOf('talk'), 'Push to talk'],
-  [keysOf('drop'), 'Drop weapon'],
+  [keysOf('drop'), 'Drop weapon (hold)'],
   [keysOf('demolish'), 'Demolish (build mode)'],
 ]);
 const settings = ui.getSettings();

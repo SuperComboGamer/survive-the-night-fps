@@ -12,6 +12,7 @@ import {
   SLOT_THROW,
   SLOT_BUILD,
   INVENTORY_MAX,
+  inventoryCap,
   WATER_LEVEL,
   MAX_PLAYERS,
   ESCAPE_RADIUS,
@@ -78,7 +79,8 @@ import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
 import { Highlight } from './highlight.js';
 import { Input } from './input.js';
-import { actionsOf, bindTag, bindPair } from './binds.js';
+import { actionsOf, bindTag, bindPair, bindLabel } from './binds.js';
+import { DropHold } from './drophold.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
@@ -222,6 +224,7 @@ export class Game {
     this.buildRot = 0;
     this.ghosts = {};
     this.lastSlot = SLOT_PISTOL;
+    this.dropHold = new DropHold(); // the drop key held, on its way to dropping the weapon in the hands (drophold.js)
     this.localFlash = false;
     this.localFlashT = 0;
     this.openness = 0;
@@ -1652,6 +1655,7 @@ export class Game {
           this.power.release();
           this.gun.keyUp();
         } else if (a === 'players') this.showRoster(false);
+        else if (a === 'drop') this.dropHold.release(cancelled); // (let go too soon: the HUD says to hold it)
       }
     };
     inp.handlers.onBlur = () => this.showRoster(false);
@@ -1768,8 +1772,7 @@ export class Game {
           this.ping();
           break;
         case 'drop':
-          if (s.hmg) this.gun.drop(); // the mounted gun in their arms goes down first
-          else if (!s.zombie && s.slot !== SLOT_THROW && s.weapons[s.slot]) this.conn.action(ACT.DROP_WEAPON, s.slot);
+          this.pressDrop();
           break;
         case 'heal':
           this.quickHeal();
@@ -1783,6 +1786,26 @@ export class Game {
           break;
       }
     }
+  }
+
+  // The drop key: the weapon in the hands goes on the ground once the key has been held a moment (drophold.js), or
+  // at once with "Hold to drop weapon" off. Never a throwable (those are thrown), never as a zombie.
+  pressDrop() {
+    const s = this.prediction.state;
+    if (s.hmg) return void this.gun.drop(); // the mounted gun in their arms goes down first, at a press (carrying it is all they do)
+    if (s.zombie || s.slot === SLOT_THROW || !s.weapons[s.slot]) return;
+    if (this.settings.holdToDrop === false) this.conn.action(ACT.DROP_WEAPON, s.slot);
+    else this.dropHold.start(s.slot);
+  }
+
+  // The weapon that picking up one for this slot would put down: the slot is taken and the pack has no room for a
+  // second (the server then swaps them: Game.interact on the server). 0 when it would just go in.
+  swapsOut(slot) {
+    const held = this.prediction.state.weapons[slot];
+    if (!held) return 0;
+    const cap = inventoryCap(this.inventory.backpack);
+    for (let i = 0; i < cap; i++) if (!this.inventory.slots[i]) return 0;
+    return held;
   }
 
   toggleInventory(open) {
@@ -2430,6 +2453,9 @@ export class Game {
     // HUD
     this.updateHud(dt, s, aiming, wdef);
     this.keyHints.update(dt);
+    // the drop key held long enough (and still able to: alive, on their feet, the controls live, the same weapon out)
+    const canDrop = !!self.alive && !s.zombie && !s.downed && this.input.enabled;
+    if (this.dropHold.update(dt, s.slot, canDrop) === 'drop' && s.weapons[s.slot] && s.slot !== SLOT_THROW) this.conn.action(ACT.DROP_WEAPON, s.slot);
     if (this.ui.mapOpen) this.updateMap(s);
     // the leaderboard is asked for while it is up: as it opens, then every few seconds (it moves as people play)
     if (this.ui.boardOpen && performance.now() >= this.boardT) {
@@ -2603,7 +2629,9 @@ export class Game {
         const d = ITEM_DEFS[e.item];
         this.lookTarget = e;
         const n = e.q[3];
-        this.prompt = `${bindTag('interact')} Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
+        // a weapon whose slot is taken, with no room in the pack for it: taking it puts the one in that slot down
+        const swap = d?.cat === 'weapon' && WEAPONS[e.item] ? this.swapsOut(WEAPONS[e.item].slot) : 0;
+        this.prompt = swap ? `${bindTag('interact')} Swap your ${ITEM_DEFS[swap].name} for the ${d.name}` : `${bindTag('interact')} Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
         return;
       }
       if (e.kind === ENT.CACHE) {
@@ -2786,6 +2814,8 @@ export class Game {
     for (let i = 0; i < 5; i++) h.weapons[i] = s.weapons[i];
     h.throwItem = s.weapons[SLOT_THROW];
     h.throwCount = s.throwCount;
+    h.dropHold = this.dropHold.progress; // the drop key's hold, 0..1 (-1: not held)
+    h.dropHint = this.dropHold.hint > 0 ? bindLabel('drop') : ''; // (let go too soon: "Hold G to drop")
     const w = currentWeapon(s);
     const def = WEAPONS[w];
     if (def && !def.melee) {
