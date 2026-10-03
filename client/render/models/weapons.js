@@ -1829,6 +1829,8 @@ const HAND_POSES = {
   xbowGrip: { curl: [[0.14, 0.16, 0.49], [0.17, 0.2, 0.14], [0.31, 1.06, 0.74], [0.37, 0.79, 0.74]], spread: 0, thumb: [[-0.71, -0.71, 0], [-0.21, -0.61, -0.77]], center: [-0.0378, -0.083, 0] }, // crossbow
   rifleGrip: { curl: [[0.41, 0.47, 0.86], [0.49, 1.02, 0.71], [0.48, 0.91, 0.64], [0.43, 0.49, 0.91]], spread: 0, thumb: [[0, -0.79, -0.61], [-0.07, -0.97, -0.25]], center: [-0.0415, -0.083, 0] }, // hunting rifle
   atGrip: { curl: [[0.25, 0.29, 0.2], [0.37, 0.43, 0.81], [0.62, 0.95, 0.66], [0.54, 0.62, 0.69]], spread: 0, thumb: [[-0.08, -0.79, -0.6], [-0.16, -0.97, -0.21]], center: [-0.0426, -0.083, 0] }, // anti-tank rifle
+  flareGunR: { curl: [[0.42, 0.2, 0.19], [0.73, 1.23, 0.53], [0.68, 1.13, 0.47], [0.65, 0.62, 0.74]], spread: 0, thumb: [[0.15, -0.92, -0.35], [-0.23, -0.92, -0.3]], center: [-0.0404, -0.0755, -0.0123] }, // the flare gun's grip, the index on its trigger
+  radioHold: { curl: [[0.31, 1.47, 0.22], [0.31, 1.58, 0.22], [0.38, 1.45, 0.26], [0.41, 1.04, 0.42]], spread: 0, thumb: [[0.18, -0.71, -0.68], [0, -0.71, -0.71]], center: [-0.0329, -0.083, 0] }, // the walkie-talkie, held by the case below the grille
   // melee handles (the bat and the spiked bat share one)
   batR: { curl: [[0.79, 1.32, 0.92], [0.82, 1.42, 0.99], [0.8, 1.35, 0.94], [0.75, 1.05, 0.73]], spread: 0, thumb: [[-0.69, -0.61, -0.4], [-0.77, -0.61, -0.21]], center: [-0.0319, -0.083, 0] },
   batL: { curl: [[0.87, 1.22, 0.85], [0.92, 1.35, 0.94], [0.89, 1.26, 0.88], [0.62, 0.96, 0.67]], spread: 0, thumb: [[-0.03, -0.97, -0.26], [0.38, -0.92, -0.05]], center: [-0.035, -0.083, 0] },
@@ -2602,7 +2604,7 @@ const VM = {
     // held as the pistol is (its grip and trigger sit where the pistol's do); breakPistol: the reload tips the barrel
     // down about its hinge pin, pulls the spent case, thumbs a fresh shell in, snaps it shut and cocks the hammer
     kind: 'pistol', breakPistol: true, hip: [0.11, -0.158, -0.29, 0.09, 0.18, -0.06], ads: 0.2, adsZ: -0.42,
-    rPose: 'trigger', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
+    rPose: 'flareGunR', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
     lGrip: { p: [0, -0.028, -0.03], q: handQ(-1, [0.05, -0.55, -0.83], [0.92, 0.3, 0.15]), pose: 'cup' },
     poleR: new THREE.Vector3(0.5, -1, 0.2), poleL: new THREE.Vector3(-0.6, -0.9, 0.2),
     recoil: { z: 0.045, rx: 0.17, ry: 0.02 }, sprint: [0.0, -0.015, 0.03, -0.3, 0.22, 0.28],
@@ -2627,7 +2629,7 @@ const VM = {
   // the walkie-talkie up in front of the chest, its face to the eye; keyed (talk: added as the key goes down), it
   // comes up and in toward the mouth
   // (held low on the case, below the grille, so the fingers leave the face clear)
-  [ITEM.WALKIE]: { kind: 'radio', hip: [0.12, -0.12, -0.3, 0.12, 0.7, 0.0], rPose: 'radio', rGrip: { p: [0, -0.04, 0], q: gunGrip(0.0) }, talk: [-0.04, 0.05, 0.06, 0.2, 0.15, 0], sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.WALKIE]: { kind: 'radio', hip: [0.12, -0.12, -0.3, 0.12, 0.7, 0.0], rPose: 'radioHold', rGrip: { p: [0, -0.04, 0], q: gunGrip(0.0) }, talk: [-0.04, 0.05, 0.06, 0.2, 0.15, 0], sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
 };
 
 // melee swing keyframes: [t, px,py,pz, rx,ry,rz, ease] (absolute weapon pose, Euler YXZ); ease 0 smooth,1 linear,2 out,3 in
