@@ -3981,11 +3981,12 @@ function getSurvivorRig(v, zombie) {
 }
 
 // weapon holding categories
-const HOLD_NONE = 0, HOLD_RIFLE = 1, HOLD_PISTOL = 2, HOLD_MELEE = 3, HOLD_THROW = 4;
+const HOLD_NONE = 0, HOLD_RIFLE = 1, HOLD_PISTOL = 2, HOLD_MELEE = 3, HOLD_THROW = 4, HOLD_RADIO = 5;
 // what the swimming pose (SurvivorInstance.poseSwim) moves, blended over the rest: torso, head, arms, legs
 const SWIM_BONES = [HIPS, SPINE, CHEST, NECK, HEAD, UARM_L, UARM_L + 1, UARM_L + 2, UARM_R, UARM_R + 1, UARM_R + 2, THIGH_L, THIGH_L + 1, THIGH_L + 2, THIGH_R, THIGH_R + 1, THIGH_R + 2];
 function holdFor(item) {
   if (!item) return HOLD_NONE;
+  if (item === ITEM.WALKIE) return HOLD_RADIO;
   const w = WEAPONS[item];
   if (w && !w.melee) return w.slot === 1 ? HOLD_PISTOL : HOLD_RIFLE;
   if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB || item === ITEM.GRENADE || item === ITEM.DECOY) return HOLD_THROW;
@@ -4079,6 +4080,7 @@ class SurvivorInstance {
     this.reloadW = 0;
     this.swimW = 0; // afloat in the water (shared/swim.js)
     this.swimPh = 0; // ...and the stroke's clock
+    this.talkW = 0; // on the air with the walkie-talkie (s.talk): raised to the mouth
     this.s = null;
     // zombie-mode animation shim (reuses humanoid zombie pose code)
     this.z = {
@@ -4182,6 +4184,7 @@ class SurvivorInstance {
     this.reloadW += ((s.reloading ? 1 : 0) - this.reloadW) * k;
     this.swimW += ((s.swim ? 1 : 0) - this.swimW) * (1 - Math.exp(-dt * 5));
     this.swimPh += dt * (1.8 + 1.6 * clamp(speed / 2, 0, 1));
+    this.talkW += ((s.talk ? 1 : 0) - this.talkW) * k;
     const z = this.z;
     let cyc = lerp(lerp(1.7, 2.5, clamp(speed / 7, 0, 1)), 1.1, this.crouchW);
     if (this.zombie) {
@@ -4443,6 +4446,12 @@ class SurvivorInstance {
         wy = lerp(-0.2, 1.2, clamp(sw, 0, 1));
         wz = lerp(-0.3, -1.4, clamp(sw, 0, 1));
       }
+    } else if (hold === HOLD_RADIO) {
+      // the walkie-talkie upright in front of the chest, its face turned in; keyed, it comes up beside the mouth
+      const tk = smooth(this.talkW);
+      _grip.set(lerp(0.17, 0.08, tk), cy + lerp(-0.14, 0.1, tk), lerp(-0.22, -0.14, tk));
+      wx = lerp(0.25, 0.1, tk);
+      wy = lerp(0.4, 1.0, tk);
     } else if (hold === HOLD_THROW) {
       _grip.set(0.2, cy - 0.12, -0.2);
       wx = 0.4;

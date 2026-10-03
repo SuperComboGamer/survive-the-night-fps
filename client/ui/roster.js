@@ -1,5 +1,5 @@
 // Player list, up for as long as [Tab] is held: who is in the game - on their feet, down, dead or turned - with
-// their health, their kills and their ping, who carries a walkie-talkie, who is talking and who is your friend
+// their health, their kills and their ping, who is on the walkie-talkie, who is talking and who is your friend
 // (by their account: friends.js). Nothing in it takes a click, so the pointer stays locked and the game goes on under it.
 import { el, svgEl, clamp } from './dom.js';
 import { glyph } from './icons.js';
@@ -54,7 +54,7 @@ export class Roster {
         const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
         if (p.radio) {
           rd.classList.add('on');
-          rd.title = 'Carries a walkie-talkie';
+          rd.title = 'On the walkie-talkie';
         }
         svgEl('i', 'sv-mic', li, glyph('mic'));
         const k = el('span', 'sv-kills', li);

@@ -1,8 +1,9 @@
 // Proximity voice chat: WebRTC peer-to-peer audio mesh; signaling is relayed through the game server
 // WebSocket. Remote voices are routed through positional panners so you only hear nearby players; a peer
-// you share a walkie-talkie link with also comes through the radio once they are out of earshot.
-// Push-to-talk (V) by default; the microphone track is enabled only while transmitting.
+// keying their walkie-talkie also comes through the radio once they are out of earshot (game/radio.js).
+// Push-to-talk (V) by default, or the walkie-talkie's key; the microphone track is enabled only while transmitting.
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+const RADIO_HANG_MS = 400; // the radio stays open this long after the key comes up: the last words are still on their way
 
 export class Voice {
   constructor(conn, audio) {
@@ -64,7 +65,7 @@ export class Voice {
 
   _createPeer(id, initiator) {
     const pc = new RTCPeerConnection({ iceServers: ICE });
-    const peer = { pc, source: null, stream: null, analyser: null, level: 0, talking: false, radio: false, seen: false, pendingIce: [] };
+    const peer = { pc, source: null, stream: null, analyser: null, level: 0, talking: false, radio: false, radioOff: 0, seen: false, pendingIce: [] };
     this.peers.set(id, peer);
     // only the initiator creates the audio transceiver; the answerer reuses the one negotiated
     // from the offer (adding its own would create an extra, unassociated m-line)
@@ -119,6 +120,7 @@ export class Voice {
   _closePeer(id) {
     const p = this.peers.get(id);
     if (!p) return;
+    clearTimeout(p.radioOff);
     try {
       p.pc.close();
     } catch {
@@ -171,12 +173,23 @@ export class Voice {
     p.source.setMuffled?.(!!zombie);
   }
 
-  // walkie-talkie link with this peer (both of you carry one): they reach you at any distance
+  // this peer is on the air (keying their walkie-talkie): they reach you at any distance
   setRadio(id, on) {
     const p = this.peers.get(id);
-    if (!p || p.radio === on) return;
-    p.radio = on;
-    p.source?.setRadio?.(on);
+    if (!p) return;
+    clearTimeout(p.radioOff);
+    p.radioOff = 0;
+    if (on) {
+      if (p.radio) return;
+      p.radio = true;
+      p.source?.setRadio?.(true);
+    } else if (p.radio) {
+      p.radioOff = setTimeout(() => {
+        p.radioOff = 0;
+        p.radio = false;
+        p.source?.setRadio?.(false);
+      }, RADIO_HANG_MS);
+    }
   }
 
   // true while this peer is coming through the radio rather than being heard directly

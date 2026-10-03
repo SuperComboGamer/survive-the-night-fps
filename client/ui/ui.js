@@ -261,10 +261,14 @@ export class UI {
     this.chat.open();
   }
 
-  // carrying a walkie-talkie: chat and voice reach every other survivor carrying one
-  setRadio(on) {
-    this.chat.setRadio(!!on);
-    this.hud.radio.hidden = !on;
+  // the walkie-talkie in hand: chat reaches every survivor; keyed (fire held), the voice does too (game/radio.js)
+  setRadio(inHand, keyed) {
+    const k = (inHand ? 1 : 0) | (keyed ? 2 : 0);
+    if (k === this._radioK) return;
+    this._radioK = k;
+    this.chat.setRadio(!!inHand);
+    this.hud.radio.hidden = !inHand;
+    this.hud.radio.classList.toggle('tx', !!keyed);
   }
 
   // extra: programmatically close chat without sending

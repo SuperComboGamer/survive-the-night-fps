@@ -181,7 +181,7 @@ ui.setControls(() => [
   [keysOf('crouch'), 'Crouch (stealth)'],
   [keysOf('fire'), 'Fire / attack'],
   [keysOf('aim'), 'Aim / heavy attack (hold)'],
-  [slotKeys(), 'Primary · Pistol · Melee · Throwable · Build'],
+  [slotKeys(), 'Primary · Pistol · Melee · Throwable · Build · Walkie-talkie'],
   [[...keysOf('lastWeapon'), 'Wheel'], `Last weapon / cycle (build: ${bindPair('buildPrev')} / ${bindPair('buildNext')} cycle structure)`],
   [keysOf('reload'), 'Reload'],
   [keysOf('interact'), 'Interact · hold: search, revive, start the car'],
@@ -196,6 +196,7 @@ ui.setControls(() => [
   [keysOf('players'), 'Player list (hold)'],
   [keysOf('chat'), 'Chat'],
   [keysOf('talk'), 'Push to talk'],
+  [keysOf('slot6'), 'Walkie-talkie: hold fire to talk to everyone, chat with it out reaches everyone'],
   [keysOf('drop'), 'Drop weapon (hold)'],
   [keysOf('demolish'), 'Demolish (build mode)'],
 ]);

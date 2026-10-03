@@ -1,6 +1,6 @@
 // Chat panel (lower-left). All user text goes through textContent - never innerHTML.
 // Chat only carries as far as a voice does: lines from the edge of earshot come in faint, lines from further
-// away arrive over the walkie-talkie (if you both carry one), and your own line says so when nobody heard it.
+// away arrive over the walkie-talkie (said with it in hand), and your own line says so when nobody heard it.
 import { el, svgEl } from './dom.js';
 import { glyph } from './icons.js';
 
@@ -97,7 +97,7 @@ export class Chat {
     this.ui.cb.onChatClosed?.();
   }
 
-  // with a walkie-talkie the message goes out over the radio as well
+  // with the walkie-talkie in hand the message goes out over the radio as well
   setRadio(on) {
     this.root.classList.toggle('on-radio', on);
     this.say.textContent = on ? 'Radio' : 'Say';

@@ -9,7 +9,7 @@
 // they do it is theirs (s.hmg in their simulated state, which slows them and empties their hands), the entity rides
 // along with them, and it goes down again where they set it up (ACT.GUN_PUT), where they drop it (a weapon switch,
 // [G]) or where they fall (down, dead, turned, pinned, roped, gone or dropped off the game).
-import { BTN, INTERACT_SLACK, HOLD_SLACK, SLOT_BUILD, SLOT_THROW, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
+import { BTN, INTERACT_SLACK, HOLD_SLACK, SLOT_BUILD, SLOT_THROW, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE, SLOT_RADIO } from '../shared/constants.js';
 import { AMMO, SOUND } from '../shared/defs.js';
 import { ENT, HOLD } from '../shared/protocol.js';
 import { groundAt } from '../shared/collision.js';
@@ -139,8 +139,8 @@ export class MountedGun {
     s.hmg = 1;
     s.reloadT = 0;
     s.recoil = 0;
-    // (a hammer or a throwable in the hand would still have the mouse: the hand goes back to a weapon)
-    if (s.slot === SLOT_BUILD || s.slot === SLOT_THROW) s.slot = s.weapons[SLOT_PRIMARY] ? SLOT_PRIMARY : s.weapons[SLOT_PISTOL] ? SLOT_PISTOL : SLOT_MELEE;
+    // (a hammer, a throwable or the walkie-talkie in the hand would still have the mouse: the hand goes back to a weapon)
+    if (s.slot === SLOT_BUILD || s.slot === SLOT_THROW || s.slot === SLOT_RADIO) s.slot = s.weapons[SLOT_PRIMARY] ? SLOT_PRIMARY : s.weapons[SLOT_PISTOL] ? SLOT_PISTOL : SLOT_MELEE;
     this.follow(p);
     this.g.sound(SOUND.METAL_HIT, s.x, s.y + 1, s.z, 25);
   }

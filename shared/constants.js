@@ -173,11 +173,11 @@ export const CRATE_FREEFALL = 1.2; // seconds before the parachute opens
 export const CRATE_FALL_SPEED = 5.5; // descent under the canopy (m/s)
 export const CRATE_DRAG = 1.5; // 1/s: the crate sheds the plane's forward speed (drifts PLANE_SPEED / CRATE_DRAG m)
 
-// Talking: voice and text chat only carry so far, so you hear the survivors around you and nobody else. A
-// walkie-talkie (ITEM.WALKIE) bridges any distance to every other survivor carrying one (radioLinked in defs.js)
+// Talking: voice and text chat only carry so far, so you hear the survivors around you and nobody else. Every
+// survivor carries a walkie-talkie in weapon slot 6 (SLOT_RADIO): with it in hand, chat goes out to every other
+// survivor, and holding the fire button keys it so the voice does too (radioKeyed in playersim.js)
 export const TALK_CLEAR = 25; // heard at full strength out to here (m)...
 export const TALK_RANGE = 35; // ...fading to nothing by here
-export const WALKIE_STASHES = 6; // walkie-talkies hidden in lockers / ammo crates / toolboxes every game: the only way to get one
 
 // Networking / relevance
 export const AOI_RADIUS = 115; // players, zombies, projectiles
@@ -187,13 +187,15 @@ export const AOI_CACHE_RADIUS = 60; // searchable containers
 export const LOD_NEAR = 45; // entities beyond this update every 2nd tick
 export const MAX_ENTITIES = 16384;
 
-// Slots (CS:GO style) - keys 1..5
+// Slots (CS:GO style) - keys 1..6. The first five hold what the player equips (state.weapons); the walkie-talkie in
+// slot 6 is everybody's and holds nothing (ITEM.WALKIE stands in for it wherever the item in hand is asked for)
 export const SLOT_PRIMARY = 0;
 export const SLOT_PISTOL = 1;
 export const SLOT_MELEE = 2;
 export const SLOT_THROW = 3;
 export const SLOT_BUILD = 4;
-export const NUM_SLOTS = 5;
+export const SLOT_RADIO = 5;
+export const NUM_SLOTS = 6;
 
 // The backpack grid. Every survivor has INVENTORY_SIZE slots; a Backpack worn (ITEM.BACKPACK, in an equipment slot of
 // its own like armor) opens BACKPACK_SLOTS more in the same grid. An inventory is always INVENTORY_MAX slots long:

@@ -20,10 +20,10 @@ function setBadge(b, n) {
 export const keysOf = (action) => bindsOf(action).filter(Boolean).map(keyName);
 // the four movement keys on one cap, 'W A S D' (each one's primary)
 export const moveKeys = () => ['forward', 'left', 'back', 'right'].map((a) => keysOf(a)[0] || '–').join(' ');
-// the weapon slots: '1 – 5' while they are the digits in a row, else each one's key
+// the weapon slots: '1 – 6' while they are the digits in a row, else each one's key
 export function slotKeys() {
-  const ks = [1, 2, 3, 4, 5].map((i) => keysOf('slot' + i)[0] || '–');
-  return ks.join('') === '12345' ? '1 – 5' : ks.join(' ');
+  const ks = [1, 2, 3, 4, 5, 6].map((i) => keysOf('slot' + i)[0] || '–');
+  return ks.join('') === '123456' ? '1 – 6' : ks.join(' ');
 }
 
 // the short list, behind the Controls button unless main.js gives a fuller one (ui.setControls). A function: the list
@@ -43,6 +43,7 @@ export const DEFAULT_CONTROLS = () => [
   [keysOf('players'), 'Player list (hold)'],
   [keysOf('chat'), 'Chat'],
   [keysOf('talk'), 'Push to talk'],
+  [keysOf('slot6'), 'Walkie-talkie: hold fire to talk to everyone'],
   ['Esc', 'Menu'],
 ];
 

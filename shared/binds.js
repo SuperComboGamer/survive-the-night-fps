@@ -57,6 +57,7 @@ export const ACTIONS = [
 
   { id: 'chat', label: 'Chat', group: 'Communication', keys: ['KeyY', 'Enter'] },
   { id: 'talk', label: 'Push to talk', group: 'Communication', keys: ['KeyV', null] },
+  { id: 'slot6', label: 'Walkie-talkie (fire held: talk to everyone)', group: 'Communication', keys: ['Digit6', null] },
   { id: 'ping', label: 'Ping', group: 'Communication', keys: ['KeyZ', 'Mouse1'] },
 
   { id: 'map', label: 'Field map', group: 'Interface', keys: ['KeyM', null], menu: true },

@@ -1253,6 +1253,12 @@ body {
   height: 100%;
 }
 
+.stn-ui .v-radio.tx {
+  opacity: 1;
+  filter: drop-shadow(0 0 5px rgba(120, 220, 120, 0.8));
+  animation: stn-talk 0.6s ease-in-out infinite alternate;
+}
+
 .stn-ui .v-mic {
   flex: none;
   width: calc(20 * var(--u));
@@ -1876,6 +1882,12 @@ body {
   text-transform: uppercase;
   color: var(--bone-2);
   text-shadow: var(--shadow-s);
+}
+
+/* the walkie-talkie keyed: on the air */
+.stn-ui .ammo.on-air .a-type {
+  color: var(--good);
+  animation: stn-warnpulse 0.9s infinite;
 }
 
 /* reloading: the pips fill back up in amber */

@@ -135,7 +135,7 @@ export const ITEM_DEFS = {
 
   [ITEM.BACKPACK]: { name: 'Backpack', cat: 'pack', stack: 1, color: 0x4a4430, desc: 'Canvas and leather, made at the workbench. Wear it for more room in the backpack grid.' },
 
-  [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Just carry it: your voice and chat reach every other survivor carrying one, however far apart you are.' },
+  [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Everyone carries one in slot [6]. With it in hand your chat reaches every survivor, however far apart you are; hold fire to talk over it.' },
 
   [ITEM.KNIFE]: { name: 'Knife', cat: 'weapon', stack: 1, color: 0xaaaaaa, desc: 'Fast. Quiet.' },
   [ITEM.BAT]: { name: 'Baseball Bat', cat: 'weapon', stack: 1, color: 0x9c7a4b, desc: 'Heavy swings, knockback.' },
@@ -184,9 +184,10 @@ export const ITEM_DEFS = {
 };
 
 // ---------------------------------------------------------------- talking
-// Voice and text chat reach TALK_RANGE (constants.js). Past that, a radio link carries them: both the speaker
-// and the listener have to be carrying a walkie-talkie.
-export const radioLinked = (speakerHasWalkie, listenerHasWalkie) => speakerHasWalkie && listenerHasWalkie;
+// Voice and text chat reach TALK_RANGE (constants.js). Past that, the walkie-talkie carries them: the speaker has to
+// be using theirs (in hand for chat, keyed for the voice), and the listener has to be a survivor (everybody alive
+// carries one; the dead and the turned do not).
+export const radioLinked = (speakerOnRadio, listenerHasWalkie) => speakerOnRadio && listenerHasWalkie;
 
 // ---------------------------------------------------------------- the escape
 // Your car broke down on Route 9. Install every supply, start the engine and survive the final stand.
@@ -840,8 +841,7 @@ export const LOOT_TABLES = {
 
 // ---------------------------------------------------------------- searchable containers
 // Every place (and many roadside / woodland sites) has containers: hold [E] to search.
-// table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic or one of the
-// game's hidden walkie-talkies (WALKIE_STASHES) on top of its loot.
+// table: loot table (null = the zone's table), rolls: [min, max] items, schem: may hold a schematic on top of its loot.
 export const CONT = { CRATE: 1, AMMO_BOX: 2, TRUNK: 3, DUFFEL: 4, LOCKER: 5, CABINET: 6, TOOLBOX: 7, SHELF: 8, DUMPSTER: 9, LOGPILE: 10, FRIDGE: 11, STRONGBOX: 12, FREIGHT: 13, CASKET: 15 };
 // Mercy Clinic's own (shared/clinic.js): the cabinets of its pharmacy and wards, and the one drug locker of a map
 CONT.MEDICINE = 16;

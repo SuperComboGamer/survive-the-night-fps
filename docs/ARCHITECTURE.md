@@ -899,14 +899,18 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   without its text, or becomes a tick on the tape; a label that would touch another is pushed a little
   sideways or dropped; the marker you face (and always the waypoint) spells out its `name`. Label widths come
   from a canvas `measureText` cache, so the pass never reads layout, and the DOM is only written on change.
-- **Talking.** Chat and voice reach `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it a walkie-talkie link
-  carries them (`radioLinked` in defs: both ends carry `ITEM.WALKIE`). Text is gated on the server:
-  `handleChat` sends each recipient its own `S2C.CHAT` flags (`CHATF`: radio / faint / unheard). Voice is a
-  peer-to-peer WebRTC mesh the server cannot gate, so the receiving client does it: `S2C.PLAYERS` carries who
-  holds a walkie (`PLF.WALKIE`), and each `VoiceSource` in `audio.js` mixes a positional path with a band-limited
-  radio path that takes over as the speaker leaves earshot (or the area of interest). The walkies themselves
-  are `WALKIE_STASHES` extra items hidden in schematic-type containers by `startGame` on their own random
-  stream (`cache.stash`), and never despawn once dropped.
+- **Talking.** Chat and voice reach `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it the walkie-talkie carries
+  them. Every survivor has one in weapon slot 6 (`SLOT_RADIO`), which holds no item of its own: `state.weapons`
+  stays five long, `currentWeapon` answers `ITEM.WALKIE` for it (the viewmodel, the snapshot's held item), and
+  `canSelectSlot` allows it even when down. Text is gated on the server: `handleChat` sends each recipient its
+  own `S2C.CHAT` flags (`CHATF`: radio / faint / unheard), radio when the speaker had it in hand
+  (`radioInHand`). Voice is a peer-to-peer WebRTC mesh the server cannot gate, so the receiving client does it:
+  fire held with it in hand keys it (`radioKeyed` in playersim.js, on the simulated `lastBtn`), the server's
+  `checkOnAir` puts the change in the player list the same tick (`PLF.ON_AIR`), and `game/radio.js` on each
+  client routes that peer through the radio (`Voice.setRadio`, held open 400 ms past the key coming up), plays
+  the squelch and keeps the static loop up (`AudioEngine.radioStatic`) while anybody is on the air. Keying it
+  opens the microphone as push-to-talk does. Each `VoiceSource` in `audio.js` mixes a positional path with a
+  band-limited radio path that takes over as the speaker leaves earshot (or the area of interest).
 - **Death lasts until dawn** (`DAWN_RETURN` in constants.js). A survivor who dies becomes a player-zombie
   (`killPlayer`, then `spawnPlayerZombie`). `startDay` calls `returnFallen`: every player who is dead or a zombie
   is a survivor again (`spawnHuman(p, RETURN_KIT, true)`), on the spot `pickJoinSpawn` picks beside the team as
@@ -918,7 +922,7 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   after it is a survivor with what the dead who stayed woke with.
 - **Items on the ground.** Everything that puts an item down goes through `Game.dropItem`, which marks it a
   loose drop (`e.drop`). At most `MAX_DROPS` of them lie around: one more and the oldest despawns (`spawnItem`).
-  Car supplies, schematics and walkie-talkies are permanent and not counted, loot points and hidden supplies are
+  Car supplies and schematics are permanent and not counted, loot points and hidden supplies are
   not drops. A survivor who dies drops all they carry (`dropAll`); one who leaves the game takes along what they
   were handed at the start (`p.kit`, recorded by `spawnHuman`) and drops only the rest (`parkKit`, see Joining a
   run in progress below), so a reconnect neither litters nor doubles the kit.

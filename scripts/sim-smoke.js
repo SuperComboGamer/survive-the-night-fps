@@ -7,10 +7,10 @@ import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
 import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
-import { PHASE, BTN, NOISE, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
+import { PHASE, BTN, NOISE, TALK_CLEAR, TALK_RANGE, SLOT_RADIO, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER, structPickRadius } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
-import { createPlayerState, copyPlayerState, simulatePlayer } from '../shared/playersim.js';
+import { createPlayerState, copyPlayerState, simulatePlayer, radioKeyed } from '../shared/playersim.js';
 import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
 import { COL, BOX, footprintContains } from '../shared/collision.js';
 import { HARVEST, harvestAt, harvestPrompt, strippedKey, needLines } from '../client/game/harvest.js';
@@ -71,11 +71,11 @@ function client(name) {
           r.str();
           const status = r.u8();
           const flags = r.u8();
-          const walkie = !!(flags & PLF.WALKIE);
+          const onAir = !!(flags & PLF.ON_AIR);
           const kills = r.u16();
           r.u16();
           const way = flags & PLF.WAYPOINT ? { x: r.i16() / 64, z: r.i16() / 64, zone: r.u8() } : null;
-          c.roster.set(id, { status, walkie, kills, way });
+          c.roster.set(id, { status, onAir, kills, way });
         }
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }
@@ -219,7 +219,6 @@ check('players spawned near car', Math.hypot(A.p().state.x - game.world.car.x, A
 check('supply hints sent', A.global.hints.slice(0, 7).every((z) => z !== 255), JSON.stringify(A.global.hints));
 check('every supply is hidden in a different place of this map', new Set(A.global.hints).size === 7 && A.global.hints.every((z) => game.world.zoneById[z] && z !== ZONE.CAMP));
 check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.CACHE));
-check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash === ITEM.WALKIE && !c.schem && CONT_DEFS[c.ctype].schem).length === WALKIE_STASHES);
 
 // joining a run in progress: the newcomer arrives beside the team instead of alone at the car, with a kit for the
 // day, and leaving and coming back does not turn into supplies for the team
@@ -1860,7 +1859,7 @@ const standOff = (c, e, d) => {
   check('door boards snap into doorway', game.structures.length === n1 + 1 && door && Math.hypot(door.x - o.x, door.z - o.z) < 0.01);
 }
 
-// talking: chat only carries to those in earshot; a walkie-talkie each bridges any distance
+// talking: chat only carries to those in earshot; the walkie-talkie everyone has in slot 6 bridges any distance
 // (no ticks and no game rng in here, so the rest of the run plays out as before)
 {
   const a = A.p();
@@ -1868,7 +1867,8 @@ const standOff = (c, e, d) => {
   const sa = a.state;
   const sb = b.state;
   const home = [sb.x, sb.y, sb.z];
-  const inv = [a, b].map((p) => p.inv.map((x) => x && { ...x }));
+  const slots = [sa.slot, sb.slot];
+  const btn = sa.lastBtn;
   const say = (c, text) => {
     A.chats.length = B.chats.length = 0;
     const w = new Writer(64);
@@ -1890,39 +1890,65 @@ const standOff = (c, e, d) => {
   at(TALK_RANGE + 40);
   say(A, 'far');
   check('chat does not carry out of earshot', B.chats.length === 0 && A.chats[0]?.flags === CHATF.UNHEARD);
-  game.giveItem(a, ITEM.WALKIE, 1);
-  say(A, 'anyone?');
-  check('one walkie-talkie reaches nobody', B.chats.length === 0 && A.chats[0]?.flags === CHATF.UNHEARD);
-  game.giveItem(b, ITEM.WALKIE, 1);
+  check('nobody has to find a walkie-talkie: none is hidden in any container', game.caches.every((c) => !c.stash));
+  sa.slot = SLOT_RADIO;
   say(A, 'come in');
-  check('walkie-talkies carry chat any distance', B.chats[0]?.flags === CHATF.RADIO && B.chats[0].text === 'come in' && A.chats[0]?.flags === 0);
+  check('chat said with the walkie-talkie in hand carries any distance', B.chats[0]?.flags === CHATF.RADIO && B.chats[0].text === 'come in' && A.chats[0]?.flags === 0);
   say(B, 'copy');
-  check('...both ways', A.chats[0]?.flags === CHATF.RADIO && A.chats[0].id === B.id);
-  // the player list says who is on the radio, as soon as an inventory changes
+  check('...but not back without theirs in hand', A.chats.length === 0 && B.chats[0]?.flags === CHATF.UNHEARD);
+  sb.slot = SLOT_RADIO;
+  say(B, 'copy');
+  check('...and back with it', A.chats[0]?.flags === CHATF.RADIO && A.chats[0].id === B.id);
+  // keying it (fire held with it in hand) puts you on the air: the player list tells everyone at once
+  game.sendPlayers();
+  check('in hand is not on the air', A.roster.get(A.id)?.onAir === false && A.roster.get(B.id)?.onAir === false);
+  sa.lastBtn = BTN.ATTACK;
   game.playersDirty = false;
-  game.sendInventory(a);
-  const dirty = game.playersDirty;
+  game.checkOnAir();
+  const keyed = game.playersDirty;
   game.sendPlayers();
-  check('player list says who is on the radio', dirty && A.roster.get(B.id)?.walkie === true && B.roster.get(A.id)?.walkie === true);
-  a.inv[a.inv.findIndex((x) => x && x.item === ITEM.WALKIE)] = null;
-  game.sendInventory(a);
+  check('keying the walkie-talkie puts you on the air for everyone', keyed && B.roster.get(A.id)?.onAir === true && A.roster.get(A.id)?.onAir === true && B.roster.get(B.id)?.onAir === false);
+  sa.lastBtn = 0;
+  game.playersDirty = false;
+  game.checkOnAir();
+  const off = game.playersDirty;
   game.sendPlayers();
-  check('losing it takes you off the radio', B.roster.get(A.id)?.walkie === false && B.roster.get(B.id)?.walkie === true);
+  check('...and letting go takes you off it', off && B.roster.get(A.id)?.onAir === false);
+  sa.slot = slots[0];
+  sa.lastBtn = BTN.ATTACK;
+  check('fire held with a weapon in hand is not the radio', !game.onAir(a));
+  sa.lastBtn = btn;
+  sb.slot = slots[1];
   say(B, 'hello?');
-  check('...and out of reach again', A.chats.length === 0 && B.chats[0]?.flags === CHATF.UNHEARD);
-  // a hidden one turns up when its container is searched (a stand-in container, searched on a throwaway rng)
-  const rng = game.rng;
-  game.rng = () => 0.5;
-  const stash = { ctype: CONT.LOGPILE, zone: ZONE.FOREST, x: sa.x, y: sa.y, z: sa.z, state: 0, schem: 0, stash: ITEM.WALKIE };
-  game.searchCache(a, stash);
-  game.rng = rng;
-  check('searching a stash turns up its walkie-talkie', stash.stash === 0 && a.inv.some((x) => x && x.item === ITEM.WALKIE));
+  check('...and out of reach again once it is put away', A.chats.length === 0 && B.chats[0]?.flags === CHATF.UNHEARD);
+  // slot 6 is everyone's, and a survivor who is down can still reach it to call for help
+  const ps = createPlayerState();
+  const cmd = { seq: 1, buttons: 0, yaw: 0, pitch: 0, slot: SLOT_RADIO };
+  simulatePlayer(ps, cmd, game.world, null);
+  check('[6] takes out the walkie-talkie', ps.slot === SLOT_RADIO);
+  ps.lastBtn = BTN.ATTACK;
+  const keyedFree = radioKeyed(ps);
+  ps.using = 1;
+  const keyedUsing = radioKeyed(ps);
+  ps.using = 0;
+  ps.hmg = 1;
+  const keyedCarrying = radioKeyed(ps);
+  check('...keyed by fire held, but not with a medkit in use or the mounted gun in both arms', keyedFree && !keyedUsing && !keyedCarrying);
+  ps.slot = SLOT_MELEE;
+  ps.lastBtn = 0;
+  cmd.slot = SLOT_RADIO;
+  simulatePlayer(ps, cmd, game.world, null);
+  check('...and reaching for it lets go of the mounted gun', ps.slot === SLOT_RADIO && ps.hmg === 0);
+  ps.downed = 1;
+  cmd.slot = 255;
+  simulatePlayer(ps, cmd, game.world, null);
+  check('...and going down does not put it away', ps.slot === SLOT_RADIO);
+  ps.zombie = 1;
+  simulatePlayer(ps, cmd, game.world, null);
+  check('...the turned have none', ps.slot !== SLOT_RADIO);
   // back to how things were
   [sb.x, sb.y, sb.z] = home;
-  [a, b].forEach((p, i) => {
-    p.inv.splice(0, p.inv.length, ...inv[i]);
-    p.invDirty = true;
-  });
+  game.sendPlayers();
 }
 
 // noise: the dead come to what they hear - the louder it is, the more of them come and the harder they run

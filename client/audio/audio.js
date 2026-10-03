@@ -890,6 +890,7 @@ class VoiceSource {
   }
 }
 
+const RADIO_STATIC_VOL = 0.28; // radioStatic(1) about -22 LUFS, a few dB under the forest and well under a voice; held (0.35), -31
 const NULL_LOOP = Object.freeze({ setPosition() {}, setVolume() {}, setRate() {}, stop() {} });
 const NULL_VOICE = Object.freeze({ setPosition() {}, setAbsent() {}, setRadio() {}, mode: () => 0, setVolume() {}, setMuffled() {}, disconnect() {} });
 const CALM_WIND = Object.freeze({ speed: 4, gust: 0.4, strength: 0.18 });
@@ -909,6 +910,8 @@ export class AudioEngine {
     this._waiters = new Map(); // bank -> callbacks waiting for the buffer
     this._loops = new Set();
     this._voices = new Set();
+    this._static = null; // the walkie-talkie hiss (radioStatic): { src, g }, made the first time it is wanted
+    this._staticLvl = 0;
     this._lx = 0;
     this._ly = 0;
     this._lz = 0;
@@ -1442,6 +1445,31 @@ export class AudioEngine {
     this._play2D(buf, vol, rate, dest, d.send ?? 0.06, 0);
   }
 
+  // The hiss of the walkie-talkie (game/radio.js), 0..1: faint while ours is in hand, up under a voice coming over
+  // it. One loop on the ui bus (heard the same alive or dying), started the first time it is wanted.
+  radioStatic(level) {
+    if (!this._ready) return;
+    level = this._state.menu ? 0 : Math.max(0, Math.min(1, +level || 0));
+    if (level === this._staticLvl) return;
+    if (!this._static) {
+      if (level <= 0) return;
+      const buf = this._pick('radio_static');
+      if (!buf) return this._need('radio_static');
+      const c = this._ctx;
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = c.createGain();
+      g.gain.value = 0;
+      src.connect(g);
+      g.connect(this._uiIn);
+      src.start(c.currentTime, Math.random() * buf.duration);
+      this._static = { src, g };
+    }
+    this._staticLvl = level;
+    this._static.g.gain.setTargetAtTime(level * RADIO_STATIC_VOL, this._ctx.currentTime, 0.03);
+  }
+
   // recorded foley (R_* defs): every layer must be decoded, otherwise false and the caller plays the procedural bank
   // (a recording that is only waiting to be decoded is asked for, so it is there the next time).
   // cat = positional category or null for 2D; pitch = the caller's own rate on top of the take's pitch range.
@@ -1779,6 +1807,7 @@ export class AudioEngine {
       console.warn('[audio] tick', err);
     }
     this._updateLoops(now);
+    if (this._staticLvl > 0 && s.menu) this.radioStatic(0); // (back to the menu: the radio goes quiet)
     for (const v of this._voices) v.updateFade(now);
     this._updateReverb(now);
     if (now - this._evictAt > 10) {

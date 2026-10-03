@@ -7,6 +7,7 @@ import { SERVER_TICK_RATE, MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, 
 import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qangle16, qlookYaw, qlookPitch, packLook, PFLAG, PRIDE_SHIFT, ZSTATUS, HCAR_AT } from '../shared/protocol.js';
 import { ZOMBIE_DEFS, PROJ } from '../shared/defs.js';
 import { GUN_CARRIED } from '../shared/mountedgun.js';
+import { currentWeapon } from '../shared/playersim.js';
 
 export const SLOTS = 9;
 
@@ -86,7 +87,7 @@ function quant(e) {
       q[3] = qlookYaw(s.yaw);
       q[4] = qlookPitch(s.pitch);
       q[5] = playerFlags(e);
-      q[6] = e.zombie ? 0 : s.weapons[s.slot] || 0;
+      q[6] = e.zombie ? 0 : currentWeapon(s); // (the walkie-talkie slot: ITEM.WALKIE)
       q[7] = Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255)));
       q[8] = s.fireCount & 255;
       break;

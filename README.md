@@ -226,7 +226,7 @@ hints and controls lists name whatever the keys are now.
 | Ctrl / C | Crouch (quieter - zombies notice you less) |
 | Mouse | Look · LMB fire / attack · RMB aim / heavy melee |
 | Left Alt (Option on a Mac) | Held, the same as RMB held: aim, heavy melee, a zombie's leap. For a trackpad, where right click can't be held while you click to fire |
-| 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
+| 1 2 3 4 5 6 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) · Walkie-talkie |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
 | E | Interact: pick up, install supplies, feed a campfire, pour fuel into a generator, repair, man the mounted gun. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm, switch a generator off or on, lift the mounted gun. Carrying the mounted gun: set it up where you face |
@@ -240,8 +240,9 @@ hints and controls lists name whatever the keys are now.
 | B | Quick drink: an energy drink from the backpack refills your stamina in 0.8 s, on the run (not at full stamina) |
 | I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop - or to salvage. In Equipment: click a weapon (or drag it onto the backpack) to put it in the backpack, right-click to drop it; drag a weapon, vest or throwable from the backpack onto Equipment to equip it, and drag anything out of the screen to drop it. Shift+click anything that can be torn down (a weapon, in the backpack or in its slot, armor, medicine, throwables) to salvage it for materials. On the armor and backpack you wear: click takes it off, right-click drops it, Shift+click salvages it. The Sort button merges part stacks and orders the backpack by kind |
 | Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
-| Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
+| Y / Enter | Chat (heard by survivors within 35 m - or by every survivor, with the walkie-talkie [6] in hand) |
 | V | Push-to-talk proximity voice (same reach as chat) |
+| LMB with the walkie-talkie | Held: talk over the radio to every survivor, however far (it opens the mic as V does) |
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
 | Zombie form | LMB claw · RMB (or Left Alt) leap |
 
@@ -293,11 +294,13 @@ them off.
   the backpack; the count beside the stamina line on the HUD says how many you have left.
 - **Talking carries only so far.** Voice and text chat reach the survivors around you: clear out to 25 m,
   fading to nothing by 35 m (a chat line from the edge of earshot shows up faint, and your own line tells you
-  when nobody was close enough to hear it). **Walkie-talkies** bridge the rest: six are hidden in lockers,
-  ammo crates and toolboxes every game - they cannot be crafted, only found. Just carry one, and your voice
-  and chat reach every other survivor carrying one, anywhere in the valley (a radio line is marked with a
-  handset, a radio voice crackles through the handset's speaker). Both ends need one; drop yours for a
-  teammate who has none, and you lose it when you die.
+  when nobody was close enough to hear it). The **walkie-talkie** bridges the rest: every survivor carries
+  one in weapon slot 6, and has to take it out to use it. With it in hand it hisses quietly, and chat typed
+  then reaches every survivor anywhere in the valley; hold fire to key it, and your voice does too (the
+  microphone opens as with V). Everyone else hears the squelch as you key up, the static while you are on the
+  air and your voice crackling through the handset's speaker, and sees you raise it to your mouth. A radio
+  line is marked with a handset. A survivor who is down can still reach theirs to call for help; the dead and
+  the turned have none.
 - **Night: board up where you stand.** A minute before dark the horn sounds. There is no base: the
   horde spawns around wherever the survivors are and comes in three waves (wave 1/3, 2/3, 3/3), so the
   team throws up a temporary shelter on the spot - door boards that snap into any doorway (survivors

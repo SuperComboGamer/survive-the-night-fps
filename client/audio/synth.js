@@ -1566,6 +1566,27 @@ export function loopFire(sr, rng, size = 1) {
   addNorm(out, crackles(sr, rng, L + X, [1, 2, 4][size], { hp: 500, bp: 1300, pow: 1.5, len: 0.003 }), sr, 0, 0.6);
   return finishLoop(out, sr, X);
 }
+// walkie-talkie static, as a seamless loop: band-limited hiss through a small speaker, a slow flutter of
+// fading signal on it, a faster grain, and the odd crackle
+export function loopRadioStatic(sr, rng) {
+  const L = 3;
+  const X = 0.3;
+  const n = Math.ceil((L + X) * sr);
+  const out = new Float32Array(n);
+  const hp = new Biquad().hp(sr, 650, 0.8);
+  const lp = new Biquad().lp(sr, 3600, 0.9);
+  const pres = new Biquad().bp(sr, 1900, 0.9);
+  const fade = new Wander(rng, sr, 0.9);
+  const grain = new Wander(rng, sr, 23);
+  for (let i = 0; i < n; i++) {
+    const w = rng() * 2 - 1;
+    const band = lp.run(hp.run(w));
+    out[i] = (band + pres.run(w) * 0.6) * (0.72 + 0.18 * fade.next() + 0.1 * grain.next());
+  }
+  normalize(out, 0.5);
+  addNorm(out, crackles(sr, rng, L + X, 9, { hp: 1100, bp: 2400, pow: 3, len: 0.002 }), sr, 0, 0.55);
+  return finishLoop(out, sr, X, 0.7);
+}
 export function loopAcid(sr, rng) {
   const L = 4;
   const X = 0.4;
@@ -2010,6 +2031,7 @@ export const SFX_DEFS = [
   { bank: 'notify', n: 1, sr: HI, gen: notifySnd },
   { bank: 'chat', n: 1, sr: HI, gen: chatBlip },
   { bank: 'radio', n: 2, sr: HI, gen: radioSquelch },
+  { bank: 'radio_static', n: 1, sr: MID, gen: loopRadioStatic },
   { bank: 'install_part', n: 1, sr: HI, gen: installPart },
   { bank: 'eat', n: 1, sr: HI, gen: eatSnd },
   { bank: 'can_open', n: 1, sr: HI, gen: canOpenSnd },

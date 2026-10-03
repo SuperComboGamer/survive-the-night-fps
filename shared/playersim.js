@@ -30,6 +30,8 @@ import {
   SLOT_MELEE,
   SLOT_PRIMARY,
   SLOT_PISTOL,
+  SLOT_RADIO,
+  NUM_SLOTS,
   DOWN_CRAWL_SPEED,
   EYE_HEIGHT_DOWNED,
   GUN_CARRY_SPEED,
@@ -236,17 +238,27 @@ export function eyeHeight(s) {
   return s.downed ? EYE_HEIGHT_DOWNED : s.crouch ? EYE_HEIGHT_CROUCH : EYE_HEIGHT;
 }
 
+// the item in hand (ITEM.WALKIE for the walkie-talkie slot, which holds nothing of its own)
 export function currentWeapon(s) {
   if (s.zombie) return 0;
+  if (s.slot === SLOT_RADIO) return ITEM.WALKIE;
   return s.weapons[s.slot] || 0;
 }
 
 export function canSelectSlot(s, slot) {
   if (s.zombie) return slot === SLOT_MELEE;
+  if (slot === SLOT_RADIO) return true; // every survivor's walkie-talkie: down, it is how you call for help
   if (s.downed) return slot === SLOT_PISTOL && s.weapons[SLOT_PISTOL] !== 0;
   if (slot === SLOT_THROW) return s.weapons[SLOT_THROW] !== 0 && s.throwCount > 0;
   if (slot === SLOT_BUILD) return true; // build mode works with bare hands too (hammer optional)
   return s.weapons[slot] !== 0;
+}
+
+// Keying the walkie-talkie: it in hand and the fire button held (not while both arms are round the mounted gun, nor
+// with an item being used in the hands). Voice then goes out to every survivor at any distance (the server lists
+// who is on the air, PLF.ON_AIR), and they hear the static of it.
+export function radioKeyed(s) {
+  return !s.zombie && !s.hmg && !s.using && s.slot === SLOT_RADIO && (s.lastBtn & BTN.ATTACK) !== 0;
 }
 
 const _pos = { x: 0, y: 0, z: 0 };
@@ -298,7 +310,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   // ------------------------------------------------ slot switching
   // (asking for a weapon puts away the item being used)
   if (s.using && cmd.slot !== 255) putAwayItem(s, events);
-  if (cmd.slot !== 255 && cmd.slot !== s.slot && cmd.slot < 5 && canSelectSlot(s, cmd.slot)) {
+  if (cmd.slot !== 255 && cmd.slot !== s.slot && cmd.slot < NUM_SLOTS && canSelectSlot(s, cmd.slot)) {
     s.slot = cmd.slot;
     s.switchT = s.zombie ? 0.1 : DRAW_TIME;
     s.reloadT = 0;
@@ -307,12 +319,12 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   }
   // carrying the mounted gun: reaching for any weapon lets go of it, and it drops where they stand (the server puts
   // it there: the event). The switch above goes ahead
-  if (s.hmg && cmd.slot !== 255 && cmd.slot < 5) {
+  if (s.hmg && cmd.slot !== 255 && cmd.slot < NUM_SLOTS) {
     s.hmg = 0;
     if (events) events.push({ type: 'gun_drop' });
   }
   if (s.zombie) s.slot = SLOT_MELEE;
-  if (s.downed && s.slot !== SLOT_PISTOL && s.weapons[SLOT_PISTOL]) {
+  if (s.downed && s.slot !== SLOT_PISTOL && s.slot !== SLOT_RADIO && s.weapons[SLOT_PISTOL]) {
     s.slot = SLOT_PISTOL;
     s.switchT = 0.3;
     s.reloadT = 0;

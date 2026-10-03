@@ -1605,6 +1605,47 @@ function buildDecoy(P) {
   P.meta.muzzle = null;
 }
 
+// Walkie-talkie (everyone's, weapon slot 6): a 13 cm olive handset held like a bottle (long axis +Y), the palm on its
+// back (+X) and the fingers round its far edge (-Z), so its face (-X) - speaker grille, the little lit display - is
+// turned to the eye. The push-to-talk key runs up its near edge (+Z) under the thumb; a stub antenna and the channel
+// knob stand on top.
+function buildWalkie(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const olive = { region: WR.PLAIN, color: [0.27, 0.31, 0.21], mottle: 0.08 };
+  const rubber = { ...M.polyDark, color: [0.55, 0.55, 0.55] };
+  const X0 = -0.015, X1 = 0.015, Y0 = -0.07, Y1 = 0.058, Z0 = -0.028, Z1 = 0.028;
+  // the case, rounded at its edges, with the battery's seam round its lower third
+  B.box(0, [0, (Y0 + Y1) / 2, 0], [X1 - X0, Y1 - Y0, Z1 - Z0], { ...olive, round: 0.22, seg: R(hi, 3, 2) });
+  boxR(B, X0 - 0.0004, X1 + 0.0004, -0.03, -0.028, Z0 - 0.0004, Z1 + 0.0004, { ...olive, color: [0.15, 0.17, 0.12] });
+  // the face: a recessed speaker grille (its slots), the display above it, and a strip of three keys between them
+  const fx = X0 - 0.0006;
+  boxR(B, fx, fx + 0.002, 0.004, 0.036, -0.021, 0.021, { ...rubber, color: [0.32, 0.32, 0.32] });
+  for (let k = 0; k < (hi ? 7 : 4); k++) {
+    const y = 0.008 + (k * 0.024) / (hi ? 6 : 3);
+    boxR(B, fx - 0.0004, fx + 0.001, y - 0.0011, y + 0.0011, -0.018, 0.018, { region: WR.PLAIN, color: 0x0b0b0b, mottle: 0 });
+  }
+  boxR(B, fx, fx + 0.0016, 0.041, 0.053, -0.017, 0.013, { region: WR.PLAIN, color: [0.12, 0.13, 0.1], mottle: 0.02 });
+  boxR(B, fx - 0.0005, fx + 0.001, 0.0425, 0.0515, -0.0155, 0.0115, { region: WR.PLAIN, color: [0.5, 0.66, 0.36], mottle: 0.04 });
+  for (const z of [-0.012, 0, 0.012]) boxR(B, fx - 0.0012, fx + 0.001, 0.0375, 0.0395, z - 0.004, z + 0.004, rubber);
+  // the push-to-talk key up the near edge (under the thumb), ribbed; the orange call key below it
+  boxR(B, -0.0085, 0.0085, 0.006, 0.04, Z1 - 0.001, Z1 + 0.0035, { ...rubber, round: 0.3, seg: 2 });
+  if (hi) for (let k = 0; k < 5; k++) boxR(B, -0.008, 0.008, 0.01 + k * 0.0066, 0.0114 + k * 0.0066, Z1 + 0.003, Z1 + 0.0042, rubber);
+  boxR(B, -0.005, 0.005, -0.004, 0.002, Z1 - 0.001, Z1 + 0.003, { region: WR.PLAIN, color: [0.85, 0.42, 0.1], mottle: 0.04 });
+  // on top: the stub antenna at the back corner (a collar, then the rubber whip with a ball tip), the ribbed channel
+  // knob at the far one, and the red transmit lamp between them
+  const rs = R(hi, 12, 7);
+  latheY(B, [[0, Y1 - 0.002], [0.0072, Y1 - 0.002], [0.0072, Y1 + 0.008], [0.0055, Y1 + 0.012], [0, Y1 + 0.012]], 0.003, 0.016, { ...rubber, rs, sharp: true });
+  latheY(B, [[0, Y1 + 0.011], [0.0048, Y1 + 0.011], [0.0042, Y1 + 0.06], [0.0034, Y1 + 0.076], [0, Y1 + 0.08]], 0.003, 0.016, { ...rubber, rs });
+  latheY(B, [[0, Y1 - 0.002], [0.0068, Y1 - 0.002], [0.0068, Y1 + 0.011], [0.006, Y1 + 0.013], [0, Y1 + 0.013]], 0.0, -0.014, { ...rubber, rs: R(hi, 14, 8), sharp: true });
+  if (hi) for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * PI * 2;
+    B.box(0, [Math.cos(a) * 0.0069, Y1 + 0.0055, -0.014 + Math.sin(a) * 0.0069], [0.0012, 0.011, 0.0012], { ...rubber, rot: [0, -a, 0] });
+  }
+  B.ellip(0, [-0.004, Y1 + 0.001, 0.0005], [0.0022, 0.0018, 0.0022], { region: WR.PLAIN, color: [0.75, 0.08, 0.05], mottle: 0, ws: 8, hs: 5 });
+  P.meta.muzzle = null;
+}
+
 const BUILDERS = {
   [ITEM.AK47]: buildAK,
   [ITEM.PISTOL]: buildPistol,
@@ -1628,6 +1669,7 @@ const BUILDERS = {
   [ITEM.FLARE]: buildFlare,
   [ITEM.GRENADE]: buildGrenade,
   [ITEM.DECOY]: buildDecoy,
+  [ITEM.WALKIE]: buildWalkie,
 };
 
 function finishParts(P) {
@@ -1749,6 +1791,8 @@ const HAND_POSES = {
   },
   support: { curl: [[0.95, 1.1, 0.7], [1.0, 1.15, 0.7], [1.05, 1.15, 0.7], [1.1, 1.1, 0.7]], spread: 0.02, thumb: [[-0.7, -0.45, -0.55], [-0.4, -0.9, 0.1]], center: [-0.042, -0.088, 0] },
   pinch: { curl: [[0.9, 1.2, 0.8], [1.1, 1.4, 0.9], [1.25, 1.45, 0.9], [1.35, 1.4, 0.9]], spread: 0.0, thumb: [[-0.55, -0.6, -0.55], [-0.2, -0.85, 0.45]], center: [-0.03, -0.1, -0.02] },
+  // the walkie-talkie: the grip, its thumb up the near edge on the push-to-talk key instead of over the face
+  radio: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.3, -0.55, -0.78], [0, -0.75, -0.66]], center: [-0.034, -0.083, 0] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
   claw: { curl: [[0.45, 0.55, 0.45], [0.4, 0.55, 0.45], [0.45, 0.6, 0.45], [0.55, 0.65, 0.5]], spread: 0.2, thumb: [[-0.55, -0.5, -0.67], [-0.35, -0.85, -0.3]], center: [-0.035, -0.11, 0] },
 };
@@ -2318,7 +2362,7 @@ class VMArm {
       this.shoulder.add(upper);
       this.elbow.add(fore);
       const hands = {};
-      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open', 'knife'];
+      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open', 'knife', 'radio'];
       for (const p of poses) {
         const h = new THREE.Mesh(getHandGeo(p, style === 'claw' ? 'claw' : 'glove', side), mat);
         h.visible = false;
@@ -2414,7 +2458,7 @@ const supportGrip = (roll, yaw, pitch = 0) => {
   return tw.multiply(base);
 };
 
-// kinds: rifle | shotgun | pistol | melee | throw
+// kinds: rifle | shotgun | pistol | melee | throw | radio
 // chargeFire: false = the charging handle stays put while firing; chargeQ: left-hand Euler on the charging handle;
 // chargeTravel: how far the handle is pulled on reload (0 = the hand just slaps meta.chargeKnob, e.g. a bolt catch);
 // breakAction: break-open shotgun (barrels part hinges down to reload)
@@ -2518,6 +2562,10 @@ const VM = {
   [ITEM.GRENADE]: { kind: 'throw', hip: [0.13, -0.12, -0.3, 0.3, 0.35, -0.12], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   // the alarm clock sits on the palm, the fingers cupped round its feet, its dial turned to the eye
   [ITEM.DECOY]: { kind: 'throw', hip: [0.15, -0.115, -0.34, 0.15, 0.35, -0.1], rPose: 'cup', rGrip: { p: [0, -0.058, 0], q: handQ(1, [-0.71, 0, -0.71], [0, 1, 0]) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  // the walkie-talkie up in front of the chest, its face to the eye; keyed (talk: added as the key goes down), it
+  // comes up and in toward the mouth
+  // (held low on the case, below the grille, so the fingers leave the face clear)
+  [ITEM.WALKIE]: { kind: 'radio', hip: [0.12, -0.12, -0.3, 0.12, 0.7, 0.0], rPose: 'radio', rGrip: { p: [0, -0.04, 0], q: gunGrip(0.0) }, talk: [-0.04, 0.05, 0.06, 0.2, 0.15, 0], sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
 };
 
 // melee swing keyframes: [t, px,py,pz, rx,ry,rz, ease] (absolute weapon pose, Euler YXZ); ease 0 smooth,1 linear,2 out,3 in
@@ -2768,6 +2816,7 @@ export class ViewModel {
     this.drawT = 1;
     this.adsT = 0;
     this.sprintT = 0;
+    this.talkT = 0; // the walkie-talkie keyed: raised toward the mouth (cfg.talk)
     this.crouchT = 0;
     this.moveT = 0;
     this.bobPhase = 0;
@@ -2853,6 +2902,7 @@ export class ViewModel {
     this.cocked = true;
     this.cockHold = 0;
     this.hammerDown = false;
+    this.talkT = 0;
     this.recZ.x = this.recX.x = this.recY.x = 0;
     this.recZ.v = this.recX.v = this.recY.v = 0;
     const style = claws ? 'claw' : 'normal';
@@ -3072,6 +3122,11 @@ export class ViewModel {
       P6[5] *= 1 - a;
     }
     if (this.sprintT > 0.001) for (let i = 0; i < 6; i++) P6[i] += cfg.sprint[i] * this.sprintT;
+    if (cfg.talk) {
+      this.talkT += ((s.talk ? 1 : 0) - this.talkT) * (1 - Math.exp(-dt * 11));
+      const tk = ease(this.talkT, 2);
+      if (tk > 0.001) for (let i = 0; i < 6; i++) P6[i] += cfg.talk[i] * tk;
+    }
     // draw (raise from below)
     const dr = 1 - ease(this.drawT, 2);
     P6[1] -= dr * 0.28;

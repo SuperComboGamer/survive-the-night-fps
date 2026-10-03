@@ -74,7 +74,7 @@ import {
   NOISE,
   TALK_CLEAR,
   TALK_RANGE,
-  WALKIE_STASHES,
+  SLOT_RADIO,
 } from '../shared/constants.js';
 import {
   ITEM,
@@ -120,7 +120,7 @@ const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
 import { MineNav } from './minenav.js';
-import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME } from '../shared/playersim.js';
+import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME, radioKeyed } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { swimming, DROWN_DPS } from '../shared/swim.js';
@@ -201,8 +201,8 @@ function starterKit(day = 1) {
   };
 }
 // A loose drop is an entity every client in range has to be told about, so there is a ceiling on them: once this
-// many lie around the valley, each new one takes the place of the oldest (spawnItem). Car supplies, schematics
-// and walkie-talkies never despawn and are not counted. (A whole lobby dying with full packs is under 300.)
+// many lie around the valley, each new one takes the place of the oldest (spawnItem). Car supplies and schematics
+// never despawn and are not counted. (A whole lobby dying with full packs is under 300.)
 const MAX_DROPS = 400;
 // Coming and going. An address may join twice the lobby in one go, then once every JOIN_EVERY seconds: more than
 // a household reloading its browsers gets near (admitJoin). The join / leave chat lines of everybody together
@@ -739,7 +739,7 @@ export class Game {
       hz: new Float32Array(HISTORY_TICKS),
       chatT: 0,
       chatCount: 0,
-      walkie: false, // on the radio, as last sent in the player list
+      onAir: false, // keying the walkie-talkie, as last sent in the player list
       interactT: 0,
       actionT: 0,
       pingT: 0,
@@ -927,7 +927,7 @@ export class Game {
     for (const lp of this.lootPoints) if (this.rng() < 0.8) this.spawnLoot(lp);
     // searchable containers
     for (const c of w.containers) {
-      const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0, stash: 0 };
+      const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0 };
       if (this.spawnEntity(e)) this.caches.push(e);
     }
     // hide the schematics in lockers / ammo crates / toolboxes around the map (one each, far from the start)
@@ -940,10 +940,6 @@ export class Game {
         break;
       }
     }
-    // ...and the game's walkie-talkies in the same kind of container, anywhere on the map (own random stream)
-    const lockers = this.caches.filter((c) => CONT_DEFS[c.ctype].schem && !c.schem);
-    const pick = mulberry32((this.seed ^ 0x57a1c1e) + this.tick);
-    for (let i = 0; i < WALKIE_STASHES && lockers.length; i++) lockers.splice(Math.floor(pick() * lockers.length), 1)[0].stash = ITEM.WALKIE;
     this.placeSupplies();
     this.cemetery.reset();
     this.gun.spawn();
@@ -1526,7 +1522,7 @@ export class Game {
       gy = groundAt(this.world, dx, dz, this.world.heightAt(dx, dz) + 1, 0.1, true);
     }
     const cat = ITEM_DEFS[item]?.cat;
-    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem' || cat === 'gear', noAuto: opts.noAuto, drop: true });
+    return this.spawnItem(item, count, dx, gy + 0.02, dz, { life: opts.life ?? 240, mag: opts.mag, permanent: cat === 'part' || cat === 'schem', noAuto: opts.noAuto, drop: true });
   }
 
   // everything a survivor carries goes on the ground around them (one who leaves the game has had what is left of
@@ -2200,10 +2196,6 @@ export class Game {
       this.pickupEvent(p, c.schem, 1);
       c.schem = 0;
     }
-    if (c.stash) {
-      this.giveOrDrop(p, c.stash, 1);
-      c.stash = 0;
-    }
     this.sound(SOUND.SEARCH, c.x, c.y, c.z, 20);
     if (c.ctype === CONT.TRUNK && this.rng() < CAR_ALARM_CHANCE) this.triggerCarAlarm(p, c);
   }
@@ -2818,7 +2810,7 @@ export class Game {
     const s = p.state;
     s.downed = 1;
     s.sprinting = 0;
-    if (s.weapons[SLOT_PISTOL] && s.slot !== SLOT_PISTOL) {
+    if (s.weapons[SLOT_PISTOL] && s.slot !== SLOT_PISTOL && s.slot !== SLOT_RADIO) {
       s.slot = SLOT_PISTOL;
       s.reloadT = 0; // a reload in progress was of the weapon just put away: left running it locks the pistol, then reloads it
     }
@@ -2914,9 +2906,9 @@ export class Game {
       p.chatCount = 0;
     }
     if (++p.chatCount > 6) return;
-    // only those in earshot hear it, and whoever a walkie-talkie reaches
+    // only those in earshot hear it, and everyone else too when it was said with the walkie-talkie in hand
     const base = p.zombie ? CHATF.ZOMBIE : 0;
-    const radio = this.hasWalkie(p);
+    const radio = this.radioInHand(p);
     const s = p.state;
     let heard = 0;
     for (const q of this.players.values()) {
@@ -2965,9 +2957,17 @@ export class Game {
     w.str(text);
     to.session.conn.send(w.bytes());
   }
-  // a survivor carrying a walkie-talkie is on the radio (the dead drop theirs, player-zombies carry nothing)
+  // every survivor carries a walkie-talkie (SLOT_RADIO; the dead and the turned have none)...
   hasWalkie(p) {
-    return p.alive && !p.zombie && countItem(p.inv, ITEM.WALKIE) > 0;
+    return p.alive && !p.zombie;
+  }
+  // ...chat said with it in hand goes out over it...
+  radioInHand(p) {
+    return this.hasWalkie(p) && p.state.slot === SLOT_RADIO;
+  }
+  // ...and while it is keyed, so does the voice (the clients route it, told by the player list: PLF.ON_AIR)
+  onAir(p) {
+    return this.hasWalkie(p) && radioKeyed(p.state);
   }
   debugCommand(p, args) {
     const s = p.state;
@@ -3964,7 +3964,6 @@ export class Game {
     this.stats.bytesOut += w.o;
     this.stats.msgsOut++;
     p.invDirty = false;
-    if (this.hasWalkie(p) !== p.walkie) this.playersDirty = true; // picked one up / lost it: tell everyone who is on the radio
   }
 
   // ---------------------------------------------------------------- leaderboard
@@ -4039,9 +4038,9 @@ export class Game {
       w.u16(p.id);
       w.str(p.name);
       w.u8(!p.alive ? 2 : p.zombie ? 1 : p.downed ? 3 : 0);
-      p.walkie = this.hasWalkie(p);
+      p.onAir = this.onAir(p);
       const wp = p.waypoint;
-      w.u8((p.walkie ? PLF.WALKIE : 0) | (wp ? PLF.WAYPOINT : 0));
+      w.u8((p.onAir ? PLF.ON_AIR : 0) | (wp ? PLF.WAYPOINT : 0));
       w.u16(p.kills + p.zkills);
       w.u16(Math.min(9999, Math.round(p.ping)));
       if (wp) {
@@ -4085,7 +4084,13 @@ export class Game {
     return true;
   }
 
+  // somebody keyed their walkie-talkie or let go of it: everyone has to know at once (their voice, the static)
+  checkOnAir() {
+    for (const p of this.players.values()) if (this.onAir(p) !== p.onAir) this.playersDirty = true;
+  }
+
   sendSnapshots() {
+    if (!this.playersDirty) this.checkOnAir();
     // the list is rebuilt on changes and every 2 s (kills, ping), and only goes out when it came out different
     if (this.playersDirty || this.tick - this.playersListT > 40) {
       this.playersListT = this.tick;

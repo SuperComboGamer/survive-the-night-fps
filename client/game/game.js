@@ -11,6 +11,7 @@ import {
   SLOT_MELEE,
   SLOT_THROW,
   SLOT_BUILD,
+  SLOT_RADIO,
   INVENTORY_MAX,
   inventoryCap,
   WATER_LEVEL,
@@ -54,7 +55,6 @@ import {
   CONSUMABLES,
   useWasted,
   PROJ,
-  radioLinked,
 } from '../../shared/defs.js';
 import { LEFT_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
@@ -94,6 +94,7 @@ import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
 import { Flyover } from '../render/flyover.js';
 import { FixtureUI } from './fixtures.js';
+import { RadioClient } from './radio.js';
 import { Lights } from '../render/lights.js';
 import { Atmosphere } from '../render/atmosphere.js';
 import { WeatherFX } from '../render/weatherfx.js';
@@ -250,7 +251,7 @@ export class Game {
     this.lastHudInvKey = '';
     this.talkPeers = [];
     this.talkKey = '';
-    this.onRadio = false; // carrying a walkie-talkie
+    this.pttHeld = false; // [V] held down (push-to-talk): the microphone is open
     this.lookTarget = null;
     this.menuAngle = 0;
     this.lowHpBeat = 0;
@@ -301,6 +302,7 @@ export class Game {
     this.vmItem = -1;
     this.entities = new Entities(this);
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
+    this.radio = new RadioClient(this); // the walkie-talkie in slot 6: keyed, on the air, its static
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
     this.rockets = new RocketsClient(this); // our own RPG grenades in flight
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
@@ -605,7 +607,7 @@ export class Game {
       set.add(this.flyover.planes.pop().obj);
     });
     // the viewmodel builds a weapon's mesh the first time it is held
-    for (const it of [...Object.keys(WEAPONS), ...THROW_ITEMS]) steps.push(() => this.vm.setItem(+it));
+    for (const it of [...Object.keys(WEAPONS), ...THROW_ITEMS, ITEM.WALKIE]) steps.push(() => this.vm.setItem(+it));
     steps.push(() => {
       this.vm.setItem(0);
       this.vmItem = -1;
@@ -774,6 +776,7 @@ export class Game {
     this.rockets.clear();
     this.skyflares.clear();
     this.voice.closeAll();
+    this.radio.reset();
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
@@ -926,7 +929,7 @@ export class Game {
       const name = r.str();
       const status = r.u8();
       const flags = r.u8();
-      const walkie = !!(flags & PLF.WALKIE);
+      const onAir = !!(flags & PLF.ON_AIR);
       const kills = r.u16();
       const ping = r.u16();
       let way = null;
@@ -938,7 +941,7 @@ export class Game {
       }
       seen.add(id);
       const prev = this.players.get(id);
-      this.players.set(id, { name, status, walkie, kills, ping, way });
+      this.players.set(id, { name, status, onAir, kills, ping, way });
       // a teammate's new waypoint (not one they already had when we first heard of them, nor one being cleared)
       if (way && prev && id !== this.myId && !(prev.way && prev.way.x === way.x && prev.way.z === way.z)) this.waypointSet(id, way);
     }
@@ -947,17 +950,7 @@ export class Game {
     if (this.run) this.run.kills0 = Math.min(this.run.kills0, this.players.get(this.myId)?.kills ?? Infinity);
     this.pushRoster();
     this.voice.syncPlayers([...this.players.keys()]);
-    // who the walkie-talkie reaches
-    const onRadio = !!this.players.get(this.myId)?.walkie;
-    for (const [id, p] of this.players) if (id !== this.myId) this.voice.setRadio(id, radioLinked(p.walkie, onRadio));
-    if (onRadio !== this.onRadio) {
-      this.onRadio = onRadio;
-      this.ui.setRadio(onRadio);
-      if (onRadio) {
-        this.ui.addChat('', 'Walkie-talkie: your voice and chat now reach every survivor carrying one.', { system: true });
-        this.audio.playLocal?.('radio', { volume: 0.6 });
-      }
-    }
+    this.radio.players(this.players, this.myId); // who is on the air: their voices come over the walkie-talkie
   }
 
   // What the player list [Tab] shows: the players as the server lists them, plus everyone's health. Health is not
@@ -970,7 +963,7 @@ export class Game {
       const self = id === this.myId;
       const e = self || turned ? null : this.entities.ents.get(id);
       const hp = self ? (this.self.maxHp ? this.self.hp / this.self.maxHp : 1) : e ? e.q[7] / 255 : -1; // -1: nothing to show
-      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.walkie, self });
+      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.onAir, self });
     }
     this.ui.setPlayers(list);
   }
@@ -1672,8 +1665,10 @@ export class Game {
     // acts: what the key went down as (rebound since or not: what was started by it is what stops)
     inp.handlers.onKeyUp = (code, acts, cancelled) => {
       for (const a of acts) {
-        if (a === 'talk' && this.settings.pushToTalk !== false) this.voice.setTransmit(false);
-        else if (a === 'interact') {
+        if (a === 'talk' && this.settings.pushToTalk !== false) {
+          this.pttHeld = false;
+          if (!this.radio.keyed) this.voice.setTransmit(false); // (still keying the walkie-talkie: still talking)
+        } else if (a === 'interact') {
           this.endHold();
           this.power.release();
           this.gun.keyUp();
@@ -1727,7 +1722,7 @@ export class Game {
       return;
     }
     if (!this.input.enabled) return;
-    const digit = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5'].findIndex(has);
+    const digit = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6'].findIndex(has);
     if (digit >= 0) {
       // (the mounted gun in their arms: any weapon key reaches for that weapon, and the gun drops where they stand)
       if (digit === SLOT_THROW && s.slot === SLOT_THROW && !s.hmg) {
@@ -1804,8 +1799,10 @@ export class Game {
           this.quickDrink();
           break;
         case 'talk':
-          if (this.settings.pushToTalk !== false) this.voice.setTransmit(true);
-          else this.voice.setTransmit(!this.voice.transmitting);
+          if (this.settings.pushToTalk !== false) {
+            this.pttHeld = true;
+            this.voice.setTransmit(true);
+          } else this.voice.setTransmit(!this.voice.transmitting);
           break;
       }
     }
@@ -2306,7 +2303,7 @@ export class Game {
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
-    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
+    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed });
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
       if (this.vmMuzzleT <= 0) this.renderer.vmMuzzle.intensity = 0;
@@ -2480,6 +2477,7 @@ export class Game {
 
     // overlays by phase
     this.updateOverlays();
+    this.radio.update(s);
     // HUD
     this.updateHud(dt, s, aiming, wdef);
     this.keyHints.update(dt);
@@ -2497,8 +2495,6 @@ export class Game {
       const talking = this.voice.poll();
       const key = talking.map((id) => (this.voice.overRadio(id) ? 'r' : '') + id).join();
       if (key !== this.talkKey) {
-        // squelch as somebody keys up on the radio
-        if (talking.some((id) => this.voice.overRadio(id) && !this.talkPeers.includes(id))) this.audio.playLocal?.('radio', { volume: 0.5 });
         this.talkKey = key;
         this.talkPeers = talking;
         this.ui.setVoiceState({ enabled: this.voice.enabled, transmitting: this.voice.transmitting, speakers: this.speakers() });
@@ -2829,7 +2825,7 @@ export class Game {
     const self = this.self;
     const g = this.global;
     const rp = this.renderPos;
-    const h = this.hud || (this.hud = { crosshair: { spread: 10, visible: true }, weapons: [0, 0, 0, 0, 0] });
+    const h = this.hud || (this.hud = { crosshair: { spread: 10, visible: true }, weapons: [0, 0, 0, 0, 0, 0] });
     h.hp = self.hp;
     h.maxHp = self.maxHp;
     h.armor = self.armor;
@@ -2842,6 +2838,8 @@ export class Game {
     h.ability = s.zombie ? Math.max(0, Math.min(1, 1 - s.leapCd / 4.5)) : 1;
     h.slot = s.slot;
     for (let i = 0; i < 5; i++) h.weapons[i] = s.weapons[i];
+    h.weapons[SLOT_RADIO] = s.zombie ? 0 : ITEM.WALKIE; // (everyone's)
+    h.radioKeyed = this.radio.keyed;
     h.throwItem = s.weapons[SLOT_THROW];
     h.throwCount = s.throwCount;
     h.dropHold = this.dropHold.progress; // the drop key's hold, 0..1 (-1: not held)

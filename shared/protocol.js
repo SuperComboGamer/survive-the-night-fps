@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 30; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10)
+export const PROTOCOL_VERSION = 31; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR
 
 // client -> server
 export const C2S = {
@@ -101,7 +101,7 @@ export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
 export const LEFT_CODE = 4001;
 
 // S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
-// speaker (TALK_RANGE), or anywhere over a walkie-talkie link, so the flags differ per recipient.
+// speaker (TALK_RANGE), or anywhere when it was said with the walkie-talkie in hand, so the flags differ per recipient.
 export const CHATF = {
   SYSTEM: 1,
   ZOMBIE: 2, // the speaker is a player-zombie
@@ -111,7 +111,7 @@ export const CHATF = {
 };
 // S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, and with
 // PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none)
-export const PLF = { WALKIE: 1, WAYPOINT: 2 }; // carries a walkie-talkie; has a waypoint set
+export const PLF = { ON_AIR: 1, WAYPOINT: 2 }; // keying the walkie-talkie (radioKeyed): heard by everyone; has a waypoint set
 
 export const ENT = {
   PLAYER: 1,

@@ -9,7 +9,8 @@ import { Compass, Objective, Markers, Downed, DamageDir } from './hud2.js';
 import { Minimap } from './minimap.js';
 import { bindLabel, bindTag, onBindsChange } from '../game/binds.js';
 
-const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build'];
+const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build', 'Radio'];
+const RADIO = 5; // the walkie-talkie's slot (SLOT_RADIO)
 const ARC = { cx: 120, cy: 70, rx: 100, ry: 56 };
 
 // deterministic treeline for the clock horizon
@@ -179,8 +180,8 @@ export class Hud {
     const comms = (this.comms = el('div', 'v-comms', vit)); // the voice speaker list is parked in here too (ui.js)
     this.mic = svgEl('div', 'v-mic', comms, glyph('mic'));
     this.mic.hidden = true;
-    this.radio = svgEl('div', 'v-radio', comms, glyph('radio')); // carrying a walkie-talkie
-    this.radio.title = 'Walkie-talkie';
+    this.radio = svgEl('div', 'v-radio', comms, glyph('radio')); // the walkie-talkie in hand (tx: keyed, on the air)
+    this.radio.title = 'Walkie-talkie: hold fire to talk to everyone';
     this.radio.hidden = true;
     const hp = (this.hpRow = el('div', 'vrow v-hp', vit));
     this.hpIco = svgEl('i', 'v-ico', hp, glyph('cross'));
@@ -508,7 +509,7 @@ export class Hud {
       c.slot = slot;
       this.slotEls.forEach((s, i) => s.row.classList.toggle('active', i === slot));
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < SLOT_LABELS.length; i++) {
       const s = this.slotEls[i];
       const id = i === 3 ? h.throwItem || weapons[3] || 0 : weapons[i] || 0;
       if (s.item !== id) {
@@ -543,13 +544,14 @@ export class Hud {
     }
     let mode;
     if (slot === 3 && id && !h.mounted) mode = 'throw';
+    else if (slot === RADIO && id && !h.mounted) mode = 'radio'; // (no rounds: how to use it, under its name)
     else if (h.mag == null) mode = 'none';
     else mode = 'gun';
     if (c.ammoMode !== mode) {
       c.ammoMode = mode;
-      this.ammoRow.hidden = mode === 'none';
+      this.ammoRow.hidden = mode === 'none' || mode === 'radio';
       this.aSep.hidden = this.aRes.hidden = mode === 'throw';
-      this.aType.hidden = mode !== 'gun';
+      this.aType.hidden = mode !== 'gun' && mode !== 'radio';
       const pips = mode === 'gun' && c.magMax > 0;
       this.aPips.hidden = !pips;
       if (pips) {
@@ -606,8 +608,10 @@ export class Hud {
       c.dp = dp;
       c.dh = dh;
     }
-    const lab = rl >= 0 ? 'Reloading' : c.aTypeStr;
+    const lab = rl >= 0 ? 'Reloading' : mode === 'radio' ? (h.radioKeyed ? 'On the air' : 'Hold fire to talk') : c.aTypeStr;
     if (c.aLab !== lab) this.aType.textContent = c.aLab = lab;
+    const air = mode === 'radio' && !!h.radioKeyed;
+    if (c.air !== air) this.ammo.classList.toggle('on-air', (c.air = air));
     if (mode === 'gun') {
       // lit pips: the rounds in the magazine, plus the ones sliding in as a reload runs (one shell at a
       // time for a shotgun, never more than the reserve holds)
