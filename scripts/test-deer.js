@@ -495,7 +495,7 @@ function run(seed) {
     const lone = fresh(1);
     const made = dm.dawn(game.humans());
     const news = dm.groups.filter((gr) => gr !== lone);
-    check('at sunrise new groups come, up to the valley\'s five and its cap of deer', made >= 3 && news.length <= DEER.groups && alive().length <= DEER.cap && news.every((gr) => gr.members.length >= DEER.groupMin && gr.members.length <= DEER.groupMax), `${made} groups, ${alive().length} deer`);
+    check('at sunrise new groups come, up to the valley\'s ten and its cap of deer', made >= 3 && news.length <= DEER.groups && alive().length <= DEER.cap && news.every((gr) => gr.members.length >= DEER.groupMin && gr.members.length <= DEER.groupMax), `${made} groups, ${alive().length} deer`);
     check('...in at the rim of the map, out of every survivor\'s sight', news.every((gr) => gr.members.every((m) => Math.max(Math.abs(m.x), Math.abs(m.z)) > MAP_HALF - 22 && dist(m, a.state) > 75)), news.map((gr) => Math.max(Math.abs(gr.cx), Math.abs(gr.cz)).toFixed(0)).join(' '));
     check('...walking, not running, to ground in the woods', news.every((gr) => gr.mode === 1));
     ticks(1500);
