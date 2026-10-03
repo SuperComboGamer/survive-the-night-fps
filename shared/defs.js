@@ -324,7 +324,7 @@ export const RECIPES = [
   { id: 16, out: ITEM.AMMO_308, n: 5, cost: { [ITEM.SCRAP]: 1, [ITEM.POWDER]: 3 }, station: 'bench' },
   { id: 17, out: ITEM.ROPE, n: 1, cost: { [ITEM.CLOTH]: 3 } },
   { id: 18, out: ITEM.WOOD, n: 1, cost: { [ITEM.STICK]: 3 } },
-  { id: 19, out: ITEM.POWDER, n: 4, cost: { [ITEM.CHEM]: 1, [ITEM.STICK]: 2 }, station: 'fire' },
+  { id: 19, out: ITEM.POWDER, n: 6, cost: { [ITEM.CHEM]: 1, [ITEM.STICK]: 2 }, station: 'fire' },
   { id: 20, out: ITEM.PAINKILLERS, n: 1, cost: { [ITEM.HERB]: 2, [ITEM.ALCOHOL]: 1 }, station: 'fire' },
   { id: 21, out: ITEM.NAILS, n: 10, cost: { [ITEM.SCRAP]: 1 }, station: 'bench' },
   { id: 22, out: ITEM.FLARE, n: 2, cost: { [ITEM.POWDER]: 2, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 } },
@@ -815,6 +815,19 @@ export function loadedAmmo(item, mags) {
 // zombie loot drops: [item, weight, min, max]
 export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 2, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
 export const SPECIAL_LOOT = [[ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_556, 4, 15, 30], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.MEDKIT, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.PLATE, 1, 1, 1], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 2, 1, 2], [ITEM.GRENADE, 1, 1, 1]];
+
+// More gunpowder (issue #89: ammunition was too scarce to craft). Every row of it in the tables above - the places',
+// the containers', the dead's - gives POWDER_MORE times as much as it was written with: its count, not its weight,
+// so no other find in the table gets rarer for it (the low end rounded down, the high end to the nearest, which keeps
+// each row's average close to POWDER_MORE times). With the campfire's 6 to a chemical (recipe 19, from 4).
+export const POWDER_MORE = 1.5;
+for (const t of [...Object.values(LOOT_TABLES), ...Object.values(CONT_TABLES), ZOMBIE_LOOT, SPECIAL_LOOT]) {
+  for (const row of t) {
+    if (row[0] !== ITEM.POWDER) continue;
+    row[2] = Math.floor(row[2] * POWDER_MORE);
+    row[3] = Math.round(row[3] * POWDER_MORE);
+  }
+}
 
 export function isFirearm(item) {
   const w = WEAPONS[item];
