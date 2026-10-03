@@ -723,6 +723,6 @@ export function getGrassPatch() {
     }
     S.quad(ids[0], ids[1], ids[3], ids[2]);
   }
-  _grass = { geometry: S.geometry(), material: MAT.grass };
+  _grass = { geometry: S.geometry(), material: MAT.grass, nearMaterial: MAT.grass_near };
   return _grass;
 }

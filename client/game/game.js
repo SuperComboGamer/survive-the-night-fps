@@ -99,6 +99,7 @@ import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
 import { KeyHints } from '../ui/keyhints.js';
+import { MenuTour } from './menutour.js';
 import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -389,7 +390,7 @@ export class Game {
     this.staticWorld = new StaticWorld(this.scene, this.world);
     this.staticWorld.setShadows(!!this.renderer.q.shadows);
     const t3 = performance.now();
-    this.foliage = new Foliage(this.scene, this.world, this.renderer.q);
+    this.foliage = new Foliage(this.scene, this.world, this.renderer.q, this.settings.grassDistance);
     const t4 = performance.now();
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
@@ -1919,7 +1920,9 @@ export class Game {
     const time = this.time;
     // a warm-up ends here, ahead of this frame's draw: when its programs are built, or now if play has begun
     if (this.warm && (this.warm.ready || this.state === 'playing')) this.finishPrewarm();
-    if (this.state === 'menu' || !this.world) return this.updateMenu(dt);
+    const menu = this.state === 'menu' || !this.world;
+    this.renderer.setCenter(menu ? this.ui.splash.sceneX : 0.5); // (beside the splash's menu, the scene is off-centre)
+    if (menu) return this.updateMenu(dt);
     const s = this.prediction.state;
     const self = this.self;
     const inp = this.input;
@@ -2234,15 +2237,22 @@ export class Game {
     };
   }
 
+  // Behind the splash: a walk around the valley at eye level (menutour.js), or, in one with no road to walk, a slow
+  // turn around the car
   updateMenu(dt) {
     if (!this.world) return;
-    this.menuAngle += dt * 0.04;
-    const car = this.world.car;
     const cam = this.camera;
-    const r = 15;
-    const gy = this.world.heightAt(car.x, car.z);
-    cam.position.set(car.x + Math.sin(this.menuAngle) * r, gy + 3.4, car.z + Math.cos(this.menuAngle) * r);
-    cam.lookAt(car.x, gy + 1.2, car.z);
+    if (this.tour?.world !== this.world) this.tour = new MenuTour(this.world);
+    let cut = 0;
+    if (this.tour.ready) cut = this.tour.update(dt, cam);
+    else {
+      this.menuAngle += dt * 0.04;
+      const car = this.world.car;
+      const gy = this.world.heightAt(car.x, car.z);
+      cam.position.set(car.x + Math.sin(this.menuAngle) * 15, gy + 3.4, car.z + Math.cos(this.menuAngle) * 15);
+      cam.lookAt(car.x, gy + 1.2, car.z);
+    }
+    this.ui.splash.setCut(cut);
     const weather = this.weather.update(dt, null, this.time, cam.position);
     this.env.update(dt, 0.49, cam.position, this.time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
@@ -2255,7 +2265,7 @@ export class Game {
     this.vm.setVisible(false);
     // (the state is set before the engine is ready too, so it fetches intro.mp3 first and opens on the splash's mix)
     this.audio.setAmbience({ night: 0.6, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, dead: false, menu: true });
-    if (this.audio.ready) this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
+    if (this.audio.ready) this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, cam.rotation.y, 0);
     this.post = { time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure, rays: this.env.rays };
   }
 

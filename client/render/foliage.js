@@ -10,6 +10,7 @@ import { getTreeVariants, getBushVariants, getRockVariants, getGrassPatch } from
 import { VEG } from './materials.js';
 import { G } from './globals.js';
 import { groundFields } from './terrain.js';
+import { grassRadius } from './renderer.js';
 
 const CELL = 32;
 
@@ -167,9 +168,13 @@ class InstancedSet {
 // Clumps on a jittered 0.78 m grid, density from the ground layers (meadows, road verges; sparse under
 // canopy). Generated per 8 m chunk once and cached, so a rebuild is only a few bulk copies. The shader thins
 // them out by seed towards uGrassFade (no hard edge) and widens the survivors.
+// Within GNEAR of the eye a second clump per cell (the infill, its own mesh) closes the cover: one clump a cell
+// looks full from a distance, where the clumps overlap, but leaves bare ground showing at your feet.
 const GCH = 8;
 const GSTEP = 0.78;
 const GMAX_CHUNKS = 1500;
+const GNEAR = 30;
+const GNEAR_CAP = 12288;
 
 class GrassField {
   constructor(scene, world) {
@@ -180,6 +185,7 @@ class GrassField {
     this.chunks = new Map();
     this.mesh = null;
     this.cap = 0;
+    this.near = this._mesh(this.patch.nearMaterial, GNEAR_CAP);
     this.R = 30;
     this.lastX = 1e9;
     this.lastZ = 1e9;
@@ -191,30 +197,41 @@ class GrassField {
     this._f = {};
   }
 
-  setQuality(q) {
-    this.R = 30 * Math.sqrt(q.grass);
-    const cap = Math.ceil(((Math.PI * (this.R + GCH) ** 2) / (GSTEP * GSTEP)) * 0.75);
+  // mul: the grass distance setting
+  setQuality(q, mul = 1) {
+    this.R = grassRadius(q, mul);
+    // (rounded up so dragging the slider does not reallocate the buffer at every step)
+    const cap = Math.ceil(((Math.PI * (this.R + GCH) ** 2) / (GSTEP * GSTEP)) * 0.75 / 2048) * 2048;
     if (cap > this.cap) {
       if (this.mesh) {
         this.scene.remove(this.mesh);
         this.mesh.dispose();
       }
       this.cap = cap;
-      this.mesh = new THREE.InstancedMesh(this.patch.geometry, this.patch.material, cap);
-      this.mesh.count = 0;
-      this.mesh.frustumCulled = false;
-      this.mesh.receiveShadow = true;
-      this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.scene.add(this.mesh);
+      this.mesh = this._mesh(this.patch.material, cap);
     }
     VEG.uGrassFade.value.set(this.R * 0.5, this.R);
+    this.nearR = Math.min(GNEAR, this.R);
+    VEG.uGrassNear.value.set(this.nearR * 0.5, this.nearR);
     this.lastX = 1e9;
   }
 
+  _mesh(material, cap) {
+    const mesh = new THREE.InstancedMesh(this.patch.geometry, material, cap);
+    mesh.count = 0;
+    mesh.frustumCulled = false;
+    mesh.receiveShadow = true;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(mesh);
+    return mesh;
+  }
+
   dispose() {
-    this.mesh?.removeFromParent();
-    this.mesh?.dispose();
-    this.mesh = null;
+    for (const mesh of [this.mesh, this.near]) {
+      mesh?.removeFromParent();
+      mesh?.dispose();
+    }
+    this.mesh = this.near = null;
   }
 
   density(x, z) {
@@ -232,58 +249,58 @@ class GrassField {
     return d * (0.8 + 0.22 * n + 0.12 * n2);
   }
 
+  // { base, near }: the clumps' instance matrices, one clump a cell and the near infill's second one
   chunk(ci, cj) {
     const key = ci * 8192 + cj;
     let c = this.chunks.get(key);
     if (c) return c;
-    const w = this.world;
-    const out = [];
+    const base = [], near = [];
     const x0 = ci * GCH, z0 = cj * GCH;
     const gi0 = Math.ceil(x0 / GSTEP), gi1 = Math.ceil((x0 + GCH) / GSTEP);
     const gj0 = Math.ceil(z0 / GSTEP), gj1 = Math.ceil((z0 + GCH) / GSTEP);
     for (let gi = gi0; gi < gi1; gi++) {
       for (let gj = gj0; gj < gj1; gj++) {
-        const x = (gi + hash2(gi, gj, 3) * 0.85) * GSTEP;
-        const z = (gj + hash2(gi, gj, 7) * 0.85) * GSTEP;
-        if (Math.abs(x) > MAP_HALF - 2 || Math.abs(z) > MAP_HALF - 2) continue;
-        const dens = this.density(x, z);
-        if (hash2(gi, gj, 91) > dens) continue;
-        const y = w.heightAt(x, z);
-        if (y < WATER_LEVEL + 0.25) continue;
-        if (Math.hypot(x - w.car.x, z - w.car.z) < 4) continue;
-        // skip building floors / props footprints
-        const cell = w.staticGrid.cellAt(x, z);
-        let blocked = false;
-        if (cell) {
-          for (const c of cell) {
-            if (c.flags & 16) continue; // trees fine
-            if (c.y1 < y - 0.5) continue; // (what stands down in the mine is not in the grass's way)
-            const lx = c.c * (x - c.x) - c.s * (z - c.z);
-            const lz = c.s * (x - c.x) + c.c * (z - c.z);
-            if (c.type === 0 ? Math.abs(lx) < c.hx + 0.2 && Math.abs(lz) < c.hz + 0.2 : lx * lx + lz * lz < (c.r + 0.2) ** 2) {
-              blocked = true;
-              break;
-            }
-          }
-        }
-        if (blocked) continue;
-        const lush = Math.min(1, dens * 1.3);
-        // rank patches: taller grass in broad swathes
-        const tall = 0.5 + 0.5 * Math.sin(x * 0.13 + Math.sin(z * 0.09) * 1.9) * Math.cos(z * 0.12 - x * 0.04);
-        const sc = (0.7 + hash2(gi, gj, 13) * 0.5) * (0.72 + 0.3 * lush) * (0.85 + 0.35 * tall);
-        this._q.setFromAxisAngle(this._up, hash2(gi, gj, 17) * 6.283);
-        this._p.set(x, y - 0.03, z);
-        this._s.set(sc, sc * (0.75 + hash2(gi, gj, 19) * 0.6) * (0.8 + 0.3 * lush), sc);
-        this._m.compose(this._p, this._q, this._s);
-        const o = out.length;
-        out.length += 16;
-        this._m.toArray(out, o);
+        this.clump(base, gi, gj, 0, (gi + hash2(gi, gj, 3) * 0.85) * GSTEP, (gj + hash2(gi, gj, 7) * 0.85) * GSTEP);
+        // (the infill sits half a cell over, between the clumps)
+        this.clump(near, gi, gj, 100, (gi + 0.5 + hash2(gi, gj, 23) * 0.85) * GSTEP, (gj + 0.5 + hash2(gi, gj, 29) * 0.85) * GSTEP);
       }
     }
-    c = new Float32Array(out);
-    if (this.chunks.size > GMAX_CHUNKS) this.chunks.clear();
+    c = { base: new Float32Array(base), near: new Float32Array(near) };
     this.chunks.set(key, c);
     return c;
+  }
+
+  // one clump at x, z (if the ground there grows one) onto out; salt keeps the infill's dice apart from the base's
+  clump(out, gi, gj, salt, x, z) {
+    const w = this.world;
+    if (Math.abs(x) > MAP_HALF - 2 || Math.abs(z) > MAP_HALF - 2) return;
+    const dens = this.density(x, z);
+    if (hash2(gi, gj, 91 + salt) > dens) return;
+    const y = w.heightAt(x, z);
+    if (y < WATER_LEVEL + 0.25) return;
+    if (Math.hypot(x - w.car.x, z - w.car.z) < 4) return;
+    // skip building floors / props footprints
+    const cell = w.staticGrid.cellAt(x, z);
+    if (cell) {
+      for (const c of cell) {
+        if (c.flags & 16) continue; // trees fine
+        if (c.y1 < y - 0.5) continue; // (what stands down in the mine is not in the grass's way)
+        const lx = c.c * (x - c.x) - c.s * (z - c.z);
+        const lz = c.s * (x - c.x) + c.c * (z - c.z);
+        if (c.type === 0 ? Math.abs(lx) < c.hx + 0.2 && Math.abs(lz) < c.hz + 0.2 : lx * lx + lz * lz < (c.r + 0.2) ** 2) return;
+      }
+    }
+    const lush = Math.min(1, dens * 1.3);
+    // rank patches: taller grass in broad swathes
+    const tall = 0.5 + 0.5 * Math.sin(x * 0.13 + Math.sin(z * 0.09) * 1.9) * Math.cos(z * 0.12 - x * 0.04);
+    const sc = (0.7 + hash2(gi, gj, 13 + salt) * 0.5) * (0.72 + 0.3 * lush) * (0.85 + 0.35 * tall);
+    this._q.setFromAxisAngle(this._up, hash2(gi, gj, 17 + salt) * 6.283);
+    this._p.set(x, y - 0.03, z);
+    this._s.set(sc, sc * (0.75 + hash2(gi, gj, 19 + salt) * 0.6) * (0.8 + 0.3 * lush), sc);
+    this._m.compose(this._p, this._q, this._s);
+    const o = out.length;
+    out.length += 16;
+    this._m.toArray(out, o);
   }
 
   update(cx, cz) {
@@ -301,12 +318,21 @@ class GrassField {
       }
     }
     list.sort((a, b) => a[0] - b[0]);
-    // generate at most a few new chunks per frame (nearest first) so walking never hitches
-    let budget = this.mesh.count ? 10 : 1e9;
+    // forget the chunks far behind (key = ci * 8192 + cj, |cj| < 4096), not the whole cache: clearing it all
+    // emptied the grass around you for a few frames
+    if (this.chunks.size > GMAX_CHUNKS) {
+      for (const key of this.chunks.keys()) {
+        const ci = Math.round(key / 8192), cj = key - ci * 8192;
+        if (Math.hypot((ci + 0.5) * GCH - cx, (cj + 0.5) * GCH - cz) > R + 4 * GCH) this.chunks.delete(key);
+      }
+    }
+    // generate at most a few new chunks per frame (nearest first) so walking never hitches; only the world's
+    // first fill makes them all at once (a bigger radius from the settings fills in over a few frames)
+    let budget = this.chunks.size ? 10 : 1e9;
     let pending = false;
-    const arr = this.mesh.instanceMatrix.array;
-    let n = 0;
-    for (const [, ci, cj] of list) {
+    const nearR2 = (this.nearR + 3) ** 2;
+    const fill = { base: [this.mesh, this.cap, 0], near: [this.near, GNEAR_CAP, 0] };
+    for (const [d2, ci, cj] of list) {
       const key = ci * 8192 + cj;
       if (!this.chunks.has(key)) {
         if (budget <= 0) {
@@ -316,29 +342,35 @@ class GrassField {
         budget--;
       }
       const c = this.chunk(ci, cj);
-      const k = Math.min(c.length / 16, this.cap - n);
-      if (k <= 0) break;
-      arr.set(k * 16 === c.length ? c : c.subarray(0, k * 16), n * 16);
-      n += k;
+      for (const layer of d2 < nearR2 ? ['base', 'near'] : ['base']) {
+        const f = fill[layer], src = c[layer];
+        const k = Math.min(src.length / 16, f[1] - f[2]);
+        if (k <= 0) continue;
+        f[0].instanceMatrix.array.set(k * 16 === src.length ? src : src.subarray(0, k * 16), f[2] * 16);
+        f[2] += k;
+      }
     }
     if (!pending) {
       this.lastX = cx;
       this.lastZ = cz;
     }
-    this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
+    for (const [mesh, , n] of Object.values(fill)) {
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 }
 
 export class Foliage {
-  constructor(scene, world, quality) {
+  // grassMul: the grass distance setting
+  constructor(scene, world, quality, grassMul = 1) {
     this.world = world;
     this.scene = scene;
     this.trees = new InstancedSet(scene, world.trees, getTreeVariants(), { radius: quality.treeDist, rebuildDist: 8, stretch: true, lod: true, receive: true });
     this.bushes = new InstancedSet(scene, world.bushes, getBushVariants(), { radius: 85, rebuildDist: 6, receive: true });
     this.rocks = new InstancedSet(scene, world.rocks, getRockVariants(), { radius: quality.treeDist, rebuildDist: 10, receive: true });
     this.grass = new GrassField(scene, world);
-    this.setQuality(quality);
+    this.setQuality(quality, grassMul);
   }
 
   dispose() {
@@ -346,7 +378,7 @@ export class Foliage {
     this.grass.dispose();
   }
 
-  setQuality(q) {
+  setQuality(q, grassMul = 1) {
     this.quality = q;
     const sd = q.shadows ? q.shadowDist : 0;
     // tall trees just outside the shadow range still throw shadows into it
@@ -356,7 +388,7 @@ export class Foliage {
     const mid = Math.max(35, q.treeDist * 0.25);
     this.trees.lodBand = [mid - 7, mid + 7];
     VEG.uTreeLod.value.set(mid - 7, mid + 7);
-    this.grass.setQuality(q);
+    this.grass.setQuality(q, grassMul);
     this.trees.lastX = this.bushes.lastX = this.rocks.lastX = 1e9;
   }
 

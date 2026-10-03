@@ -15,7 +15,7 @@ import { G } from './globals.js';
 // Quality presets. Knobs read by other modules:
 //  shadows / shadowMapSize (per cascade, 2 cascades) / shadowDist (m): cascaded sun shadows
 //  foliageShadows: bushes & rocks cast · charShadows: zombies & players cast · flashShadows: flashlight shadow map
-//  grass: density multiplier · treeDist: tree/rock draw radius (m) · ao: 0 off, 1 SSAO, 2 SSAO 12 taps · godrays
+//  grass: grass radius factor (see grassRadius) · treeDist: tree/rock draw radius (m) · ao: 0 off, 1 SSAO, 2 SSAO 12 taps · godrays
 //  maxPixelRatio: cap on the device pixel ratio (the render-scale setting multiplies it)
 const QUALITY = {
   low: { label: 'Low', maxPixelRatio: 0.75, samples: 0, shadows: false, shadowMapSize: 1024, shadowDist: 0, foliageShadows: false, charShadows: false, flashShadows: false, bloom: false, ao: 0, godrays: false, grass: 0.45, treeDist: 130 },
@@ -25,6 +25,11 @@ const QUALITY = {
 };
 // legacy alias used by older call sites
 for (const q of Object.values(QUALITY)) q.sunShadows = q.shadows;
+
+// how far out grass is drawn (m): the preset's radius times the player's grass distance setting
+export function grassRadius(q, mul = 1) {
+  return Math.min(100, Math.max(10, 30 * Math.sqrt(q.grass) * mul));
+}
 
 const PS1_LINES = 256; // frame height aimed for in PS1 mode at full intensity (the real one is the nearest whole-pixel scale: 240 at 720p, 270 at 1080p); PS1_LINES / intensity below that
 const PS1_FOG = 1.2; // extra fog in PS1 mode at full intensity: optical depth x2.2, so about two thirds of the view distance
@@ -391,6 +396,31 @@ export class GameRenderer {
     this.camera.updateProjectionMatrix();
   }
 
+  // The splash draws the scene off-centre, its middle (where the road ahead vanishes) cx of the way across the
+  // screen instead of half, so it sits in the open part beside the menu. 0.5: centred, as in play.
+  setCenter(cx) {
+    if (cx === this.centerX) return;
+    this.centerX = cx;
+    this._applyView();
+  }
+
+  // the camera's frustum for a screen this size (the main camera's middle at centerX: setCenter)
+  _applyView() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const cam = this.camera;
+    const cx = this.centerX ?? 0.5;
+    if (Math.abs(cx - 0.5) < 1e-3) {
+      cam.aspect = w / h;
+      cam.clearViewOffset();
+      return;
+    }
+    // the screen is the left (or right) part of a wider frame centred cx of the way across it
+    const full = w * 2 * Math.max(cx, 1 - cx);
+    cam.aspect = full / h;
+    cam.setViewOffset(full, h, cx > 0.5 ? 0 : full - w, 0, w, h);
+  }
+
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -401,8 +431,7 @@ export class GameRenderer {
     const pr = this.ps1 ? dpr / Math.max(1, Math.round((h * dpr * this.ps1Strength) / PS1_LINES), Math.ceil(dpr / qpr - 1e-6)) : qpr;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this._applyView();
     this.vmCamera.aspect = w / h;
     this.vmCamera.updateProjectionMatrix();
     const pw = Math.floor(w * pr);

@@ -12,8 +12,9 @@ import { renderMapCanvas, MAP_PX } from './mapcanvas.js';
 const TEAM_BESIDE = 14; // m: a teammate's waypoint on your own waypoint's spot is drawn this far east of it
 const MAX_ZOOM = 4; // the baked map is 2 px a metre: past this it is a blur
 const DRAG_PX = 5; // a press that moves this far is a pan, not a click for the waypoint
-const START_ZOOM = 2.5; // each opening starts this close in on you (about 256 m across), the wheel zooms out to all of it
+const START_ZOOM = 2.5; // the first opening starts this close in on you (about 256 m across), the wheel zooms out to all of it
 const HEADING_KEY = 'stn.mapHeadingUp';
+const ZOOM_KEY = 'stn.mapZoom';
 
 export class MapScreen {
   constructor(ui, parent) {
@@ -99,10 +100,11 @@ export class MapScreen {
     this.root.addEventListener('pointerdown', (e) => {
       if (e.button === 0 && (e.target === bg || e.target === this.root)) this.onClose?.();
     });
-    // zoom: how many times the view's width the map is, START_ZOOM again at each opening. It zooms about the focus, a
+    // zoom: how many times the view's width the map is, kept between openings, and games. It zooms about the focus, a
     // spot of the map (a fraction across / down) held in the middle of the view as far as the map's edges allow: you,
     // as you move, until a drag moves it somewhere else (an opening puts it back on you). cx / cy is the middle shown
-    this.zoom = START_ZOOM;
+    const z = parseFloat(lsGet(ZOOM_KEY, ''));
+    this.zoom = z >= 1 && z <= MAX_ZOOM ? z : START_ZOOM;
     this.fx = this.fy = 0.5;
     this.follow = true;
     this.cx = this.cy = 0.5;
@@ -313,8 +315,8 @@ export class MapScreen {
     if (open) {
       this._ensureCanvas();
       this.follow = true;
-      this.zoom = START_ZOOM;
     } else {
+      lsSet(ZOOM_KEY, String(this.zoom));
       this.ptrs.clear();
       this.press = null;
       this.gesture = null;

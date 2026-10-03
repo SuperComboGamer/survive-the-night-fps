@@ -24,14 +24,15 @@ const DEPTH_FUNCS = /* glsl */ `
 uniform sampler2D tDepth;
 uniform float uNear;
 uniform float uFar;
-uniform vec2 uTanFov; // tan(fovY/2) * aspect, tan(fovY/2)
+uniform vec2 uTanFov; // view x/-z and y/-z from the middle of the screen to its edge: tan(fovY/2) * aspect, tan(fovY/2)
+uniform vec2 uOff; // ...and at the middle of the screen: 0 unless the frustum is off-centre (the splash's: Renderer.setCenter)
 float viewZAt(vec2 uv) {
   float d = texture2D(tDepth, uv).r;
   // perspectiveDepthToViewZ (negative in front of the camera)
   return (uNear * uFar) / ((uFar - uNear) * d - uFar);
 }
 vec3 viewPosAt(vec2 uv, float vz) {
-  return vec3((uv * 2.0 - 1.0) * uTanFov * -vz, vz);
+  return vec3(((uv * 2.0 - 1.0) * uTanFov + uOff) * -vz, vz);
 }
 float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 `;
@@ -250,7 +251,7 @@ export class ScreenPasses {
     this.quad = quad;
     this.scene = postScene;
     this.camera = postCamera;
-    const depthU = () => ({ tDepth: { value: null }, uNear: { value: 0.05 }, uFar: { value: 500 }, uTanFov: { value: new THREE.Vector2(1, 1) } });
+    const depthU = () => ({ tDepth: { value: null }, uNear: { value: 0.05 }, uFar: { value: 500 }, uTanFov: { value: new THREE.Vector2(1, 1) }, uOff: { value: new THREE.Vector2() } });
     this.aoMat = pass(AO_FRAG, { ...depthU(), uTexel: { value: new THREE.Vector2() }, uRadius: { value: 0.9 }, uProjScale: { value: 500 }, uSamples: { value: 8 } });
     this.aoBlur = pass(AO_BLUR, { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } });
     this.maskMat = pass(RAY_MASK, { tDepth: { value: null }, tScene: { value: null }, uTexel: { value: new THREE.Vector2() }, uSunUv: { value: new THREE.Vector2() }, uAspect: { value: 1 }, uExposure: { value: 1 } });
@@ -312,8 +313,10 @@ export class ScreenPasses {
     u.tDepth.value = depth;
     u.uNear.value = camera.near;
     u.uFar.value = camera.far;
-    const ty = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
-    u.uTanFov.value.set(ty * camera.aspect, ty);
+    // (from the projection itself, which a view offset makes lopsided: x/-z = (ndc.x + e8) / e0, and y likewise)
+    const e = camera.projectionMatrix.elements;
+    u.uTanFov.value.set(1 / e[0], 1 / e[5]);
+    u.uOff.value.set(e[8] / e[0], e[9] / e[5]);
   }
 
   // Renders AO / sun shafts from the resolved world depth, then blends them into `sceneRT`.
@@ -360,7 +363,7 @@ export class ScreenPasses {
           m.tScene.value = sceneRT.texture;
           m.uTexel.value.set(1 / this.pw, 1 / this.ph);
           m.uSunUv.value.set(sx, sy);
-          m.uAspect.value = camera.aspect;
+          m.uAspect.value = this.pw / this.ph; // (the screen's: the camera's is wider when its frustum is off-centre)
           m.uExposure.value = opts.exposure ?? 1;
           this._run(this.maskMat, this.rayA);
           const b = this.rayBlur.uniforms;

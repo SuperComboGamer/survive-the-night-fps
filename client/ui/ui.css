@@ -4146,9 +4146,55 @@ body {
   pointer-events: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: rgba(5, 4, 4, 0.3);
+  justify-content: flex-start;
+  background: rgba(5, 4, 4, 0.12);
   overflow: hidden;
+}
+
+/* black between two shots of the walk behind (Splash.setCut) */
+.stn-ui .sp-cut {
+  position: absolute;
+  inset: 0;
+  background: #050404;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* the menu's side of the screen, darkened; the scene shows in the open part beside it */
+.stn-ui .sp-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(6, 5, 5, 0.97) 0,
+      rgba(6, 5, 5, 0.92) calc(var(--sp-x) + var(--sp-w) * 0.7),
+      rgba(6, 5, 5, 0.66) calc(var(--sp-x) + var(--sp-w) + 3vw),
+      rgba(6, 5, 5, 0.2) calc(var(--sp-x) + var(--sp-w) + 13vw),
+      rgba(6, 5, 5, 0) calc(var(--sp-x) + var(--sp-w) + 24vw)
+    ),
+    linear-gradient(0deg, rgba(6, 5, 5, 0.55), transparent 22%);
+  pointer-events: none;
+}
+
+.stn-ui .splash .ov-vignette {
+  background: radial-gradient(ellipse 80% 80% at 68% 48%, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.2) 55%, rgba(0, 0, 0, 0.8) 100%);
+}
+
+/* top left, level with the account button: what the game is */
+.stn-ui .sp-kicker {
+  position: absolute;
+  top: calc(30 * var(--u));
+  left: var(--sp-x);
+  height: calc(56 * var(--u));
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  font: max(9px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  text-shadow: var(--shadow);
 }
 
 .stn-ui .splash.in {
@@ -4166,13 +4212,22 @@ body {
   pointer-events: none;
 }
 
+.stn-ui .splash {
+  --sp-x: max(24px, 5vw); /* the menu's left edge */
+  --sp-w: max(min(calc(560 * var(--u)), 38vw), 430px); /* ...and its width */
+}
+
 .stn-ui .sp-main {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  margin-top: -8vh;
-  text-align: center;
+  align-items: flex-start;
+  box-sizing: border-box;
+  width: var(--sp-w);
+  max-height: 100%;
+  margin-left: var(--sp-x);
+  padding: calc(90 * var(--u)) 0 calc(36 * var(--u));
+  text-align: left;
 }
 
 .stn-ui .logo {
@@ -4181,13 +4236,14 @@ body {
   line-height: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   animation: stn-flicker 9s steps(1) infinite;
 }
 
 .stn-ui .logo-1 {
   display: flex;
-  font: 400 max(96px, calc(190 * var(--u))) / 0.82 var(--f-head);
+  margin-left: -0.04em;
+  font: 400 min(calc(190 * var(--u)), 12.9vw) / 0.82 var(--f-head);
   letter-spacing: 0.05em;
   padding-left: 0.05em;
   color: #ece4d3;
@@ -4207,29 +4263,30 @@ body {
 .stn-ui .logo-2 {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  margin-top: calc(10 * var(--u));
-  font: 400 max(34px, calc(64 * var(--u))) / 1 var(--f-head);
-  letter-spacing: 0.46em;
+  gap: 0.2em;
+  margin-top: calc(18 * var(--u));
+  font: 400 min(calc(60 * var(--u)), 4.1vw) / 1 var(--f-head);
+  letter-spacing: 0.5em;
   color: #cf2027;
   text-shadow: 0 0 24px rgba(200, 20, 20, 0.45), 0 2px 3px rgba(0, 0, 0, 0.8);
 }
 
 .stn-ui .logo-2t {
   position: relative;
-  padding-left: 0.46em;
   filter: url(#stn-rough);
 }
 
+/* a rule out from "THE NIGHT" to the end of "SURVIVE" */
 .stn-ui .logo-rule {
   display: block;
-  width: calc(90 * var(--u));
+  flex: 1;
   height: 2px;
-  background: linear-gradient(90deg, transparent, #a3161c);
+  background: linear-gradient(90deg, #a3161c, #c42a2a);
+  box-shadow: 0 0 10px rgba(200, 20, 20, 0.35);
 }
 
-.stn-ui .logo-rule:last-child {
-  background: linear-gradient(270deg, transparent, #a3161c);
+.stn-ui .logo-rule:first-child {
+  display: none;
 }
 
 .stn-ui .drip {
@@ -4258,53 +4315,60 @@ body {
 
 /* the goal, the same on every visit... */
 .stn-ui .sp-goal {
-  margin: calc(52 * var(--u)) 0 0;
-  font: max(14px, calc(20 * var(--u))) / 1.3 var(--f-type);
-  letter-spacing: 0.05em;
+  max-width: calc(360 * var(--u));
+  margin: calc(54 * var(--u)) 0 0; /* (clear of the drips off "THE NIGHT") */
+  font: max(13px, calc(19 * var(--u))) / 1.4 var(--f-type);
+  letter-spacing: 0.02em;
   color: var(--bone);
   text-shadow: var(--shadow);
 }
 
 /* ...and under it, smaller, the tagline drawn for this one */
 .stn-ui .sp-tag {
-  margin: calc(9 * var(--u)) 0 0;
-  font: max(12px, calc(15.5 * var(--u))) / 1.3 var(--f-type);
-  letter-spacing: 0.05em;
+  margin: calc(10 * var(--u)) 0 0;
+  font: max(11px, calc(14 * var(--u))) / 1.3 var(--f-type);
+  letter-spacing: 0.02em;
   color: var(--bone-2);
   text-shadow: var(--shadow);
-  opacity: 0.75;
+  opacity: 0.8;
 }
 
+/* the name, and the big way in beside it */
 .stn-ui .sp-join {
   display: flex;
   align-items: flex-end;
-  gap: calc(14 * var(--u));
-  margin-top: calc(40 * var(--u));
+  gap: calc(12 * var(--u));
+  align-self: stretch;
+  margin-top: calc(34 * var(--u));
 }
 
 .stn-ui .sp-field {
   display: flex;
+  flex: 0 0 calc(44% - 6 * var(--u));
   flex-direction: column;
-  align-items: flex-start;
-  gap: calc(6 * var(--u));
+  align-items: stretch;
+  gap: calc(9 * var(--u));
 }
 
 .stn-ui .sp-field-l {
-  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.34em;
+  font: max(9px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.4em;
   text-transform: uppercase;
   color: var(--bone-dim);
 }
 
 .stn-ui .sp-name {
-  width: calc(320 * var(--u));
-  min-width: 220px;
-  padding: calc(9 * var(--u)) calc(12 * var(--u)) calc(8 * var(--u));
-  background: rgba(0, 0, 0, 0.45);
-  border: 0;
-  border-bottom: 2px solid rgba(230, 223, 207, 0.55);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: calc(60 * var(--u));
+  min-height: 38px;
+  padding: 0 calc(15 * var(--u));
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+  border-bottom: 2px solid var(--blood-lite);
   outline: none;
-  font: 400 max(18px, calc(27 * var(--u))) / 1 var(--f-num);
+  font: 500 max(16px, calc(25 * var(--u))) / 1 var(--f-num);
   letter-spacing: 0.06em;
   color: var(--bone);
   caret-color: var(--blood-lite);
@@ -4321,9 +4385,27 @@ body {
 }
 
 .stn-ui .sp-joinbtn {
-  height: calc(56 * var(--u));
-  min-height: 42px;
-  min-width: calc(180 * var(--u));
+  flex: 1;
+  box-sizing: border-box;
+  height: calc(60 * var(--u));
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 calc(15 * var(--u)) 0 calc(15 * var(--u) + 0.3em);
+  gap: 0.6em;
+  font-size: max(16px, calc(29 * var(--u)));
+  background: linear-gradient(180deg, #c0362c, #a3271f 70%, #8c1f18);
+  border-color: #d04636;
+  clip-path: none;
+}
+
+.stn-ui .sp-joinbtn:hover {
+  background: linear-gradient(180deg, #d4402f, #b42d22 70%, #96231b);
+}
+
+.stn-ui .sp-joinbtn .sp-go {
+  width: 0.7em;
+  height: 0.7em;
+  margin-left: -0.15em;
 }
 
 .stn-ui .joining .sp-joinbtn {
@@ -4331,6 +4413,7 @@ body {
 }
 
 .stn-ui .sp-err {
+  align-self: flex-start;
   margin-top: calc(14 * var(--u));
   padding: calc(6 * var(--u)) calc(26 * var(--u));
   background: var(--brush-red) center / 100% 100% no-repeat;
@@ -4438,20 +4521,29 @@ body {
   gap: calc(12 * var(--u));
 }
 
-.stn-ui .sp-credit {
-  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: rgba(230, 223, 207, 0.35);
+/* the other ways into a game, under Quick join: as wide as it, in equal parts */
+.stn-ui .sp-alt {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: calc(12 * var(--u));
+  align-self: stretch;
+  margin-top: calc(12 * var(--u));
 }
 
-/* the other ways into a game, under Quick join */
-.stn-ui .sp-alt {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: calc(10 * var(--u));
-  margin-top: calc(16 * var(--u));
+.stn-ui .sp-alt .btn {
+  min-width: 0;
+  height: calc(46 * var(--u));
+  min-height: 32px;
+  padding: 0 calc(10 * var(--u));
+  font-size: max(11px, calc(14 * var(--u)));
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.stn-ui .sp-alt .btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stn-ui .sp-alt .btn[hidden] {
@@ -4460,10 +4552,10 @@ body {
 
 /* the invitation, on a page opened from a game's link */
 .stn-ui .sp-invite {
+  box-sizing: border-box;
+  align-self: stretch;
   margin-top: calc(34 * var(--u));
-  padding: calc(12 * var(--u)) calc(30 * var(--u)) calc(13 * var(--u));
-  min-width: calc(420 * var(--u));
-  max-width: 90vw;
+  padding: calc(12 * var(--u)) calc(24 * var(--u)) calc(13 * var(--u));
   background: rgba(0, 0, 0, 0.5);
   border-top: 2px solid var(--blood-lite);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
@@ -5538,18 +5630,47 @@ body {
 }
 
 .stn-ui .sp-record {
-  margin-top: calc(12 * var(--u));
-  font: max(11px, calc(13.5 * var(--u))) / 1.3 var(--f-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--bone-2);
+  display: flex;
+  align-items: center;
+  gap: calc(38 * var(--u));
+  align-self: stretch;
+  margin-top: calc(26 * var(--u));
+  padding-top: calc(20 * var(--u));
+  border-top: 1px solid rgba(230, 223, 207, 0.14);
   text-shadow: var(--shadow);
 }
 
-.stn-ui .sp-record b {
-  margin-right: 0.9em;
-  font-weight: 400;
+.stn-ui .sp-record[hidden] {
+  display: none;
+}
+
+.stn-ui .sp-rec-l {
+  font: 400 max(9px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
   color: var(--sun);
+}
+
+.stn-ui .sp-stat {
+  display: flex;
+  flex-direction: column;
+  gap: calc(5 * var(--u));
+}
+
+.stn-ui .sp-stat-v {
+  font: 500 max(18px, calc(36 * var(--u))) / 1 var(--f-num);
+  color: var(--bone);
+}
+
+.stn-ui .sp-stat.none .sp-stat-v {
+  color: var(--blood-lite);
+}
+
+.stn-ui .sp-stat-l {
+  font: max(8.5px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
 }
 
 .stn-ui .set-rec .btn {

@@ -2,7 +2,7 @@
 import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
-import { loadRecord, recordSummary } from './records.js';
+import { loadRecord } from './records.js';
 import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
 import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
 import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
@@ -61,12 +61,20 @@ export class Splash {
     this.ui = ui;
     const root = (this.root = el('div', 'splash', parent));
     root.hidden = true;
+    // the walk around the valley behind it (game/menutour.js) fades to black through this at every cut
+    this.cut = el('div', 'sp-cut', root);
+    this.cutK = 0;
+    el('div', 'sp-shade', root); // (the menu's side of the screen, darkened)
     el('div', 'ov-vignette', root);
     el('div', 'sp-fog', root);
     el('div', 'grain', root);
     el('div', 'scratches', root);
 
-    const main = el('div', 'sp-main', root);
+    // the menu down the left; the scene is drawn off-centre into the open part beside it (sceneX)
+    this.credit = el('div', 'sp-kicker', root, `Co-op survival horror · 1–${MAX_PLAYERS} players`);
+    const main = (this.main = el('div', 'sp-main', root));
+    this.sceneX = 0.5;
+    window.addEventListener('resize', () => this._measure());
     const logo = el('h1', 'logo', main);
     logo.setAttribute('aria-label', 'Survive the Night');
     const l1 = el('div', 'logo-1', logo);
@@ -108,7 +116,7 @@ export class Splash {
       this._join();
     });
     const field = el('label', 'sp-field', form);
-    this.nameL = el('span', 'sp-field-l', field, 'Your name');
+    this.nameL = el('span', 'sp-field-l', field, 'Playing as');
     this.name = el('input', 'sp-name', field);
     this.name.type = 'text';
     this.name.maxLength = 16;
@@ -122,6 +130,7 @@ export class Splash {
     this.joinBtn = el('button', 'btn btn-blood sp-joinbtn', form);
     this.joinBtn.type = 'submit';
     this.joinTxt = el('span', '', this.joinBtn, 'Quick join');
+    svgEl('i', 'btn-ico sp-go', this.joinBtn, glyph('arrowRight'));
 
     // the other ways in
     const alt = el('div', 'sp-alt', main);
@@ -134,9 +143,9 @@ export class Splash {
       return b;
     };
     this.quickAlt = altBtn('bolt', 'Quick join', () => this.join(''));
-    altBtn('people', 'Browse games', () => this.browser.show());
+    altBtn('search', 'Browse games', () => this.browser.show());
     altBtn('plus', 'Create game', () => this.creator.show());
-    this.friendsBtn = altBtn('star', 'Friends', () => this.ui.friends.show());
+    this.friendsBtn = altBtn('people', 'Friends', () => this.ui.friends.show());
     this.friendsTxt = this.friendsBtn.lastChild;
     this.friendsBadge = el('b', 'sp-badge', this.friendsBtn, '');
     this.friendsBadge.hidden = true;
@@ -173,7 +182,6 @@ export class Splash {
     svgEl('i', 'btn-ico', sb, glyph('gear'));
     el('span', '', sb, 'Settings');
     sb.addEventListener('click', () => this.ui.settingsPanel.show());
-    this.credit = el('div', 'sp-credit', foot, `Co-op survival horror · 1–${MAX_PLAYERS} players`);
 
     this.browser = new GameBrowser(ui, root, this);
     this.creator = new GameCreator(ui, root, this);
@@ -208,7 +216,7 @@ export class Splash {
       this.name.classList.remove('locked');
       this.name.title = '';
       this.name.value = (lsGet('stn.name', '') || this.guestName || '').slice(0, 16);
-      this.nameL.textContent = 'Your name';
+      this.nameL.textContent = 'Playing as';
     }
   }
 
@@ -331,12 +339,39 @@ export class Splash {
   }
 
   syncRecord() {
-    const parts = recordSummary(loadRecord());
+    const { total: t, best: b } = loadRecord();
     this.record.textContent = '';
-    this.record.hidden = !parts.length;
-    if (!parts.length) return;
-    el('b', '', this.record, 'Your record');
-    el('span', '', this.record, parts.join(' · '));
+    this.record.hidden = !t.runs;
+    if (!t.runs) return;
+    el('b', 'sp-rec-l', this.record, 'Your record');
+    const stat = (value, label, cls = '') => {
+      const d = el('div', 'sp-stat' + cls, this.record);
+      el('span', 'sp-stat-v', d, String(value));
+      el('span', 'sp-stat-l', d, label);
+    };
+    stat(t.runs, t.runs === 1 ? 'Run' : 'Runs');
+    stat(b.nights, 'Most nights');
+    if (t.escapes) {
+      stat(t.escapes, 'Escaped');
+      stat(fmtTime(b.secs), 'Fastest');
+    } else stat('Not yet', 'Escaped', ' none');
+  }
+
+  // How far across the screen the middle of the open part beside the menu is (where Renderer.setCenter puts the
+  // scene's): half way when the menu takes the whole width (a narrow screen: the scene is behind it)
+  _measure() {
+    if (this.root.hidden) return;
+    const w = window.innerWidth;
+    const right = this.main.getBoundingClientRect().right;
+    this.sceneX = right > 0 && right < w * 0.65 ? (right + w) / 2 / w : 0.5;
+  }
+
+  // the cut between two shots of the walk behind: 0 shows the scene, 1 is black
+  setCut(k) {
+    k = Math.round(k * 100) / 100;
+    if (k === this.cutK) return;
+    this.cutK = k;
+    this.cut.style.opacity = String(k);
   }
 
   show() {
@@ -354,6 +389,7 @@ export class Splash {
     this._syncAccount();
     this._syncFriends();
     this.syncRecord();
+    this._measure();
     this.root.classList.remove('in');
     void this.root.offsetWidth;
     this.root.classList.add('in');

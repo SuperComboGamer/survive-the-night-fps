@@ -68,6 +68,7 @@ export const VEG = {
   uVegCam: { value: new THREE.Vector3() },
   uTreeLod: { value: new THREE.Vector2(53, 67) },
   uGrassFade: { value: new THREE.Vector2(16, 34) },
+  uGrassNear: { value: new THREE.Vector2(12, 22) },
   tGroundNoise: { value: null },
 };
 
@@ -124,6 +125,7 @@ uniform vec4 uWind;
 uniform vec3 uVegCam;
 uniform vec2 uTreeLod;
 uniform vec2 uGrassFade;
+uniform vec2 uGrassNear;
 attribute vec4 aVeg;
 varying float vVegFade;
 varying float vVegSolid;
@@ -213,6 +215,11 @@ const VEG_VERT_MAIN = /* glsl */ `
     // distance thinning: instances drop out by seed, the survivors widen to keep the cover closed
     float th = smoothstep(uGrassFade.x, uGrassFade.y, vegD);
     vegDrop = vegSeed < th * 0.92 || vegD > uGrassFade.y;
+    #ifdef VEG_GRASS_NEAR
+      // the near infill (a second clump in every cell, so the cover is closed at your feet) drops out by seed
+      // across uGrassNear, where the clumps already overlap from the eye's low angle
+      vegDrop = vegDrop || vegSeed < smoothstep(uGrassNear.x, uGrassNear.y, vegD) || vegD > uGrassNear.y;
+    #endif
     transformed.xz *= 1.0 + 1.1 * th;
     vegOff = vegPlantWind(vegRoot, aVeg.y, 0.0, vegNW, aVeg.z + vegSeed, max(transformed.y, 0.0) * sqrt(vsc2.y));
   #endif
@@ -331,14 +338,16 @@ function vegDepthMaterial(defines) {
 /**
  * Vegetation material (Lambert). kind: 'tree' | 'trunk' | 'plant' | 'grass'. lod: 0 near tree LOD (dithers out
  * across uTreeLod), 1 far tree LOD (dithers in). trans: [r, g, b, forward lobe] translucency (null = opaque).
+ * near: the grass's near infill (fades out across uGrassNear).
  */
-function vegMaterial(o, { kind, trans = null, stiff = 0.5 }, lod = -1) {
+function vegMaterial(o, { kind, trans = null, stiff = 0.5, near = false }, lod = -1) {
   const opaque = kind === 'trunk';
   const mat = lambert(opaque ? o : { alphaTest: 0.5, side: THREE.DoubleSide, vertexColors: true, ...o });
   const defines = {};
   if (kind === 'tree' || kind === 'trunk') defines.VEG_TREE = '';
   if (kind === 'plant') defines.VEG_PLANT = '';
   if (kind === 'grass') defines.VEG_GRASS = '';
+  if (near) defines.VEG_GRASS_NEAR = '';
   if (opaque) defines.VEG_OPAQUE = '';
   if (trans) defines.VEG_TRANS = ''; // (program cache key: the translucency code is spliced in)
   if (lod === 0) defines.VEG_LOD_OUT = '';
@@ -504,6 +513,7 @@ const DEFS = {
   bush: () => vegMaterial({ map: getTexture('bush') }, { kind: 'plant', trans: [0.8, 0.9, 0.45, 7.0], stiff: 0.55 }),
   fern: () => vegMaterial({ map: getTexture('fern') }, { kind: 'plant', trans: [0.85, 1.0, 0.45, 8.0], stiff: 0.3 }),
   grass: () => vegMaterial({ map: getTexture('grass_blade') }, { kind: 'grass', trans: [0.9, 0.95, 0.5, 6.0] }),
+  grass_near: () => vegMaterial({ map: getTexture('grass_blade') }, { kind: 'grass', trans: [0.9, 0.95, 0.5, 6.0], near: true }),
   rock: () => mossPatch(lambert({ map: tileTex('rock') }), 1),
 };
 

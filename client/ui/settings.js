@@ -2,6 +2,7 @@
 import { el, svgEl, lsGet, lsSet, clamp } from './dom.js';
 import { glyph } from './icons.js';
 import { loadRecord, clearRecord } from './records.js';
+import { QUALITY, grassRadius } from '../render/renderer.js';
 
 const KEY = 'stn.settings';
 
@@ -15,6 +16,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   voiceVolume: 1, // 100% = the level the mix is balanced at (audio.js VOICE_BUS); the slider runs to 200%
   voiceDuck: true,
   quality: 'medium',
+  grassDistance: 1, // x the quality preset's grass radius
   renderScale: 1,
   ps1: false,
   ps1Strength: 0.5,
@@ -35,6 +37,7 @@ const NUM_RANGES = {
   sfxVolume: [0, 1],
   voiceVolume: [0, 2],
   renderScale: [0.5, 1],
+  grassDistance: [0.5, 3],
   ps1Strength: [0.1, 1],
 };
 
@@ -94,6 +97,16 @@ const SECTIONS = [
     title: 'Graphics',
     rows: [
       { k: 'quality', label: 'Quality', type: 'seg', options: ['low', 'medium', 'high', 'ultra'], hint: 'Shadows, sun rays, ambient occlusion, grass density, view distance' },
+      {
+        k: 'grassDistance',
+        label: 'Grass distance',
+        type: 'range',
+        min: 0.5,
+        max: 3,
+        step: 0.05,
+        fmt: (v, s) => Math.round(grassRadius(QUALITY[s.quality] || QUALITY.medium, v)) + ' m',
+        hint: 'How far out grass is drawn. Further costs frame rate',
+      },
       { k: 'renderScale', label: 'Render scale', type: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
       { k: 'ps1', label: 'PS1 shader', type: 'toggle', hint: 'Low resolution, wobbling polygons, dithered colour, thicker fog' },
       { k: 'ps1Strength', label: 'PS1 intensity', type: 'range', min: 0.1, max: 1, step: 0.05, fmt: pct, needs: 'ps1', hint: 'Pixel size, wobble, colour banding and fog' },
@@ -176,14 +189,14 @@ export class SettingsPanel {
       const val = el('output', 'set-val', ctl);
       inp.addEventListener('input', () => {
         const v = parseFloat(inp.value);
-        val.textContent = row.fmt(v);
+        val.textContent = row.fmt(v, this.ui.settings);
         this._paintRange(inp);
         this.ui._applySettings({ ...this.ui.settings, [row.k]: v });
       });
       this.inputs[row.k] = {
         sync: (s) => {
           inp.value = s[row.k];
-          val.textContent = row.fmt(s[row.k]);
+          val.textContent = row.fmt(s[row.k], s);
           this._paintRange(inp);
           // a row that only means something with another setting on is dimmed while that one is off
           if (row.needs) r.classList.toggle('set-off', (inp.disabled = !s[row.needs]));
