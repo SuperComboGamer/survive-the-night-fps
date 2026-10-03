@@ -4013,6 +4013,14 @@ const _grip = new THREE.Vector3();
 const _lh = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
+let STOCK_POCKET = -0.1; // (chest-bone space, z) where a shouldered butt ends: the front of the shoulder
+let RPG_LIFT = 0.14; // the RPG's grip raised so the tube clears the top of the shoulder instead of running through it
+// the throwables' radius across the palm (m), and where the survivor's fist's palm face is (x, hand-bone space; less a
+// few mm where the fingers wrap)
+const THROW_RADIUS = { [ITEM.GRENADE]: 0.032, [ITEM.MOLOTOV]: 0.0335, [ITEM.PIPEBOMB]: 0.0245, [ITEM.FLARE]: 0.017, [ITEM.DECOY]: 0.044 };
+const FIST_PALM_X = -0.025;
+const PACK_PIVOT = [0, 0.1, 0.145]; // (chest-bone space) the top of the worn pack's back panel, under the straps
+const PACK_HANG = [1, 0.5]; // how much of the chest's bend (and of the spine's, times the chest's share) the pack undoes
 const _mountW = new THREE.Vector3();
 
 class SurvivorInstance {
@@ -4043,6 +4051,7 @@ class SurvivorInstance {
     this.item = 0;
     this.hold = HOLD_NONE;
     this.weapon = null;
+    this.stockZ = 0;
     this.mount = new THREE.Object3D();
     this.mount.position.copy(MOUNT_POS);
     this.mount.rotation.set(-HALF, 0, 0);
@@ -4105,6 +4114,9 @@ class SurvivorInstance {
       this.weapon = null;
     }
     this.mount.rotation.set(this.hold === HOLD_MELEE ? 0 : -HALF, 0, 0);
+    // a throwable is wider than the fist: held against the palm, not through it
+    this.mount.position.copy(MOUNT_POS);
+    if (THROW_RADIUS[item]) this.mount.position.x = FIST_PALM_X - THROW_RADIUS[item];
     if (item && !this.zombie) {
       const w = createWorldWeapon(item);
       if (w) {
@@ -4112,6 +4124,10 @@ class SurvivorInstance {
         this.mount.add(w);
         this.muzzle = w.getObjectByName('muzzle') || null;
         this.leftGrip = w.userData && w.userData.leftHand ? w.userData.leftHand : null;
+        // how far the butt reaches behind the grip (weapon space +Z)
+        const wm = w.getObjectByName('weaponMesh');
+        if (wm && !wm.geometry.boundingBox) wm.geometry.computeBoundingBox();
+        this.stockZ = wm ? Math.max(0, wm.geometry.boundingBox.max.z) : 0;
       }
     }
   }
@@ -4238,10 +4254,26 @@ class SurvivorInstance {
     } else o.set(p);
     this.applyPose(o);
     if (ik) this.solveArms(s, time);
+    if (this.packOn) this.hangPack();
     // flashlight follows the full aim pitch (chest only carries part of it)
     const fl = this.flashlightAnchor;
     if (this.zombie || s.dead) fl.rotation.set(0, 0, 0);
     else fl.rotation.set(clamp(s.pitch || 0, -1.4, 1.4) - (o[HIPS * 4] + o[SPINE * 4] + o[CHEST * 4]), 0, 0);
+  }
+
+  /**
+   * The worn pack hangs from its shoulder straps: it is on the chest bone, but its bottom sits at the small of the back,
+   * where the chest's own bend doesn't reach. Turned with the chest, a look up or down (and the downed sprawl) swung
+   * the bottom into the lower back by up to 15 cm, so it is turned back by PACK_HANG of the chest's and the spine's
+   * bend, about the top of its back panel.
+   */
+  hangPack() {
+    const b = this.bones;
+    const a = -Math.max(0, b[CHEST].rotation.x + b[SPINE].rotation.x * PACK_HANG[1]) * PACK_HANG[0]; // (a lean forward takes the back with it)
+    const c = Math.cos(a), sn = Math.sin(a);
+    const dy = WORN_AT[1] - PACK_PIVOT[1], dz = WORN_AT[2] - PACK_PIVOT[2];
+    this.pack.position.set(WORN_AT[0], PACK_PIVOT[1] + dy * c - dz * sn, PACK_PIVOT[2] + dy * sn + dz * c);
+    this.pack.rotation.x = a;
   }
 
   /** Snapshot the CURRENT bone pose (including IK-driven arms) for crossfading. */
@@ -4405,7 +4437,9 @@ class SurvivorInstance {
     let wx = aimRel, wy = 0, wz = 0;
     _grip.set(0, 0, 0);
     if (hold === HOLD_RIFLE) {
-      _grip.set(0.1, cy - 0.12, -0.24);
+      // far enough forward that the butt ends at the front of the shoulder (STOCK_POCKET) instead of inside the arm
+      if (this.item === ITEM.RPG) _grip.set(0.1, cy - 0.12 + RPG_LIFT, -0.24); // (its tube rides on top of the shoulder)
+      else _grip.set(0.1, cy - 0.12, Math.min(-0.24, STOCK_POCKET - this.stockZ));
       if (run > 0.01) {
         // low-ready while sprinting
         wx = lerp(wx, -0.7, run);
@@ -4476,7 +4510,7 @@ class SurvivorInstance {
     _qW.setFromEuler(_e);
     // hand orientation = weapon * mount^-1 ; wrist target = grip - Qh * mountPos
     _qH.copy(_qW).multiply(hold === HOLD_MELEE ? _qMountInvMelee : _qMountInvGun);
-    _mountW.copy(MOUNT_POS).applyQuaternion(_qH);
+    _mountW.copy(this.mount.position).applyQuaternion(_qH);
     _T.copy(_grip).sub(_mountW);
     // right arm
     _S.set(P.shoulderW, cy, 0);
@@ -4559,3 +4593,8 @@ export function createSurvivor(seed = 0) {
 }
 
 export { SURVIVOR_LOOKS };
+/** Debug (models sandbox): where a shouldered butt ends. */
+export function setStockPocket(z, rpgLift = RPG_LIFT) {
+  STOCK_POCKET = z;
+  RPG_LIFT = rpgLift;
+}
