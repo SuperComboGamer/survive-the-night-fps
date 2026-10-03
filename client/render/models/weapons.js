@@ -2613,8 +2613,8 @@ const VM = {
     // wrist bent ~95 degrees).
     kind: 'melee', hip: [0.18, -0.13, -0.34, 0.651, 1.414, 2.646], poleR: new THREE.Vector3(0.3, -0.9, 0.3),
     rPose: 'knife', rGrip: { p: [0, 0, 0], q: handQ(1, [0, -Math.cos(KNIFE_GRIP.tilt), -Math.sin(KNIFE_GRIP.tilt)], [-1, 0, 0]) }, sprint: [0.02, -0.05, 0.05, -0.3, 0.1, 0] },
-  [ITEM.BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rPose: 'batR', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'batL' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
-  [ITEM.SPIKED_BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rPose: 'batR', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'batL' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
+  [ITEM.BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rPose: 'batR', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'batL' }, swingPoleL: new THREE.Vector3(0, -1, 0.5), sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
+  [ITEM.SPIKED_BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rPose: 'batR', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'batL' }, swingPoleL: new THREE.Vector3(0, -1, 0.5), sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
   [ITEM.MACHETE]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.95, 0.3, 0.1], rPose: 'macheteGrip', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
   [ITEM.HAMMER]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.85, 0.25, 0.0], rPose: 'hammerGrip', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
   [ITEM.MOLOTOV]: { kind: 'throw', hip: [0.17, -0.235, -0.38, 0.12, 0.2, -0.2], rPose: 'bottle', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
@@ -2691,6 +2691,9 @@ const SHOULDER_R = new THREE.Vector3(0.2, -0.29, 0.1);
 const SHOULDER_L = new THREE.Vector3(-0.12, -0.31, -0.06);
 const POLE_R = new THREE.Vector3(0.75, -0.65, 0.15);
 const POLE_L = new THREE.Vector3(-0.75, -0.65, 0.15);
+const DB_LOAD_ARC = new THREE.Vector3(-0.12, 0.03, 0.03);
+const DB_LOAD_POLE = new THREE.Vector3(-1, 0.5, 0.1);
+const RIFLE_RELOAD_ARC = new THREE.Vector3(-0.03, -0.07, 0.0);
 const PISTOL_RACK_POLE = new THREE.Vector3(-1, -0.3, 0.3);
 const PISTOL_RACK_ARC = new THREE.Vector3(-0.07, 0.02, 0.03);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
@@ -3403,7 +3406,9 @@ export class ViewModel {
         if (parts.pump) lp.z += parts.pump.position.z - parts.pump.userData.base.z;
         if (parts.barrels) lp.sub(parts.barrels.userData.base).applyQuaternion(parts.barrels.quaternion).add(parts.barrels.position);
         lp.applyQuaternion(wq).add(wp);
-        lq.copy(wq).multiply(cur.lGrip.q);
+        lq.copy(wq);
+        if (parts.barrels) lq.multiply(parts.barrels.quaternion); // (the hand turns with the fore-end it holds, as it closes)
+        lq.multiply(cur.lGrip.q);
       } else {
         lp.set(-0.2, -0.45, -0.1);
         lq.copy(wq);
@@ -3418,6 +3423,8 @@ export class ViewModel {
         // (arc: an offset, weapon space, at the middle of the A to B move, to take the hand round something between)
         if (rs.arc) _v2.add(_v3.copy(rs.arc).applyQuaternion(wq).multiplyScalar(Math.sin(PI * rs.m)));
         lp.lerp(_v2, altLw);
+        // ...and the same way round going back from B to the grip
+        if (rs.arc && rs.m > 0) lp.add(_v3.copy(rs.arc).applyQuaternion(wq).multiplyScalar(Math.sin(PI * altLw) * rs.m));
         if (rs.aCam) _q1.copy(rs.qa);
         else _q1.copy(wq).multiply(rs.qa);
         if (rs.bCam) _q2.copy(rs.qb);
@@ -3434,6 +3441,9 @@ export class ViewModel {
         lC = this.armL.gripCenter(_v5, cur.lGrip.pose).lerp(cr, altLw);
       }
       let poleL = cfg.poleL || POLE_L;
+      // two hands on a bat: through the swing the left elbow drops and goes back, so the left forearm passes under the
+      // right hand instead of through it
+      if (cfg.swingPoleL && act && act.type === 'melee') poleL = _v7.copy(poleL).lerp(cfg.swingPoleL, win(u, 0.36, 0.46, 0.76, 0.88));
       if (rs && rs.poleB && altLw > 0) poleL = _v7.copy(poleL).lerp(rs.poleB, altLw * rs.m);
       this._solveArm(this.armL, lp, lq, SHOULDER_L, poleL, lC);
       if (this._atFollow) {
@@ -3664,6 +3674,7 @@ export class ViewModel {
       st.poseA = cur.cfg.magPose || 'support';
       st.poseB = travel ? 'pinch' : 'open';
       st.pose = st.m > 0.5 ? st.poseB : st.poseA;
+      st.arc = RIFLE_RELOAD_ARC; // from the charging handle back to the handguard round under it, not through it
     } else if (kind === 'pistol') {
       // tilt and lift the gun toward the middle so the magazine change stays on screen
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
@@ -3726,12 +3737,14 @@ export class ViewModel {
       st.a.set(-0.02, -0.5, -0.32);
       st.aCam = true;
       st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
-      st.b.copy(ch).addScaledVector(back, 0.03 + (1 - push) * 0.07);
+      st.b.copy(ch).addScaledVector(back, 0.07 + (1 - push) * 0.07);
       st.b.y += 0.02;
       st.qb.setFromEuler(_e1.set(-0.2 - open * 0.62, 0.5, -PI / 2 - 0.4, 'YXZ'));
       st.m = smoothstep(0.3, 0.48, u);
       st.w = win(u, 0.12, 0.24, 0.7, 0.8);
       st.pose = 'pinch';
+      st.arc = DB_LOAD_ARC; // up from below round the left of the gun, not through it
+      st.poleB = DB_LOAD_POLE; // the elbow up and out: the forearm comes over the open breech, clear of the barrels
       sh.visible = st.m > 0.3 && push < 0.97 && st.w > 0.3;
       sh.position.copy(ch).addScaledVector(back, (1 - push) * 0.07);
       sh.quaternion.copy(br.quaternion);
