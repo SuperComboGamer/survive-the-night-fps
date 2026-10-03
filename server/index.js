@@ -20,6 +20,7 @@ import { MatchStore } from './matchstore.js';
 import { Auth, COOKIE, publicUser } from './auth.js';
 import { Social } from './social.js';
 import { Feedback } from './feedback.js';
+import { UserSettings } from './usersettings.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { REJECT_REASON } from '../shared/protocol.js';
@@ -93,6 +94,7 @@ const lobby = new Lobby({
 const auth = db ? new Auth({ db, stats, log }) : null;
 const social = db ? new Social({ db, auth, lobby, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
+const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds
 if (auth) setInterval(() => auth.sweep().catch(() => {}), 3600_000).unref();
 
 // ---------------------------------------------------------------- static files (prod build)
@@ -336,6 +338,22 @@ route('get', '/api/me/stats', async (ctx) => {
   const [mine, recent] = await Promise.all([stats.forUser(me.id), matches.recentFor(me.id)]);
   return { body: { stats: mine, recent } };
 });
+
+// your keybinds, as your account keeps them: { binds: { action: [primary, secondary] } | null, updatedAt: ms (0: never
+// saved) }. Only what differs from the defaults (shared/binds.js). Without accounts on this server: { accounts: false }
+// and no binds - the browser keeps its own.
+route('get', '/api/me/binds', async (ctx) => {
+  if (!auth) return { body: { accounts: false, binds: null, updatedAt: 0 } };
+  return { body: await userSettings.binds((await signedIn(ctx)).id) };
+});
+// { binds, updatedAt } -> what the account keeps afterwards, the same shape: yours, unless it already had newer ones
+// (usersettings.js). Junk - an action that isn't one, a key that isn't one - is a 400.
+const saveBinds = async (ctx, b) => {
+  const me = await signedIn(ctx);
+  return { body: await userSettings.saveBinds(me.id, b) };
+};
+route('put', '/api/me/binds', saveBinds, { body: true });
+route('post', '/api/me/binds', saveBinds, { body: true });
 
 // How hard the run that just ended was, from its end screen: { rating: 1 too easy .. 5 too hard, guestId? } ->
 // { mine, counts: [votes for 1..5], total }. Signed in, the vote is the account's; else guestId, the browser's

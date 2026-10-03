@@ -101,7 +101,7 @@ const decode = (v) => {
   }
 };
 
-// app: the uWS app. method: 'get' | 'post' | 'del'. opts: { body: read a JSON body, max: its most bytes,
+// app: the uWS app. method: 'get' | 'post' | 'put' | 'del'. opts: { body: read a JSON body, max: its most bytes,
 // address: (res, req) -> the client's address }
 export function api(app, method, path, fn, { body = false, max = 4096, address = () => '', log = console.error } = {}) {
   const nParams = (path.match(/:/g) || []).length;
