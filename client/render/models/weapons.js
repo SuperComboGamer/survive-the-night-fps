@@ -1847,6 +1847,7 @@ const HAND_POSES = {
   fuelBottle: { curl: [[0.26, 0.71, 0.5], [0.38, 0.86, 0.6], [0.57, 0.65, 0.59], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.8, -0.5, -0.33], [-0.84, -0.26, -0.48]], center: [-0.035, -0.088, 0] },
   rackPinch: { curl: [[0.4, 1.12, 0.78], [0.48, 1.36, 0.95], [0.68, 1.72, 1.2], [1.6, 1.72, 1.2]], spread: 0, thumb: [[-0.37, -0.92, 0.1], [-0.22, -0.5, 0.84]], center: [-0.0217, -0.1, -0.02] }, // the pistol's slide, racked
   pistolMag: { curl: [[0.91, 1.04, 0.72], [0.3, 1.48, 1.03], [0.21, 1.34, 0.93], [0.73, 0.84, 1.2]], spread: 0.02, thumb: [[-0.77, -0.61, -0.21], [0.03, -0.97, -0.26]], center: [-0.0135, -0.088, 0] }, // the pistol's new magazine
+  xbowString: { curl: [[0.6, 0.56, 0.39], [0.56, 0.6, 0.42], [0.48, 0.6, 0.42], [1.08, 0.88, 0.62]], spread: 0, thumb: [[0.1, -0.97, -0.24], [-0.1, -0.92, 0.37]], center: [-0.0268, -0.1, -0.02] }, // the crossbow's string, hauled back to the latch
   rpgWarhead: { curl: [[0.42, 0.48, 0.34], [0.51, 0.59, 0.41], [0.56, 0.64, 0.45], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.61, -0.71, -0.35], [0, -0.61, -0.79]], center: [-0.0418, -0.088, 0] },
 };
 // Knuckles sit on an arc (middle finger furthest out, pinky set back). r = proximal phalanx radius.
@@ -2678,6 +2679,7 @@ const _v4 = new THREE.Vector3();
 const _v5 = new THREE.Vector3();
 const _v6 = new THREE.Vector3();
 const _v7 = new THREE.Vector3();
+const _v8 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
@@ -2694,6 +2696,8 @@ const POLE_L = new THREE.Vector3(-0.75, -0.65, 0.15);
 const DB_LOAD_ARC = new THREE.Vector3(-0.12, 0.03, 0.03);
 const DB_LOAD_POLE = new THREE.Vector3(-1, 0.5, 0.1);
 const RIFLE_RELOAD_ARC = new THREE.Vector3(-0.03, -0.07, 0.0);
+const SHOVE_POLE_R = new THREE.Vector3(1, -0.2, 0.2);
+const XBOW_HAUL_POLE = new THREE.Vector3(-1, 0.4, 0.2);
 const PISTOL_RACK_POLE = new THREE.Vector3(-1, -0.3, 0.3);
 const PISTOL_RACK_ARC = new THREE.Vector3(-0.07, 0.02, 0.03);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
@@ -3389,7 +3393,10 @@ export class ViewModel {
     this.armR.setVisible(true);
     // (on the bolt the hand's grip center goes over to the pinch's with the blend, so the pose switch doesn't jump it)
     const rC = altR && altRw > 0 ? this._blendCenter(this.armR, cfg.rPose || 'grip', 'pinch', altRw) : cfg.kind === 'throw' ? cfg.rPose : undefined;
-    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R, rC);
+    // a long gun's butt swings across under the right forearm on a shove: the right elbow goes out to the side for it
+    let poleR = cfg.poleR || POLE_R;
+    if (act && act.type === 'melee' && (cfg.kind === 'rifle' || cfg.kind === 'shotgun')) poleR = _v8.copy(poleR).lerp(SHOVE_POLE_R, win(u, 0.0, 0.2, 0.7, 0.95));
+    this._solveArm(this.armR, rp, rq, SHOULDER_R, poleR, rC);
 
     // left
     if (act && act.type === 'use') {
@@ -3444,7 +3451,10 @@ export class ViewModel {
       // two hands on a bat: through the swing the left elbow drops and goes back, so the left forearm passes under the
       // right hand instead of through it
       if (cfg.swingPoleL && act && act.type === 'melee') poleL = _v7.copy(poleL).lerp(cfg.swingPoleL, win(u, 0.36, 0.46, 0.76, 0.88));
-      if (rs && rs.poleB && altLw > 0) poleL = _v7.copy(poleL).lerp(rs.poleB, altLw * rs.m);
+      if (rs && (rs.poleA || rs.poleB) && altLw > 0) {
+        _v8.copy(rs.poleA || poleL).lerp(rs.poleB || poleL, rs.m);
+        poleL = _v7.copy(poleL).lerp(_v8, altLw);
+      }
       this._solveArm(this.armL, lp, lq, SHOULDER_L, poleL, lC);
       if (this._atFollow) {
         // the anti-tank round in the left hand: weapon space, held by its middle
@@ -3540,13 +3550,13 @@ export class ViewModel {
     // left-hand override: blend weapon grip -> lerp(A, B, m) by weight w. A/B in weapon space unless *Cam.
     const st =
       this._rs ||
-      (this._rs = { w: 0, m: 0, a: new THREE.Vector3(), b: new THREE.Vector3(), qa: new THREE.Quaternion(), qb: new THREE.Quaternion(), aCam: false, bCam: false, pose: null, poseA: null, poseB: null, poleB: null, arc: null });
+      (this._rs = { w: 0, m: 0, a: new THREE.Vector3(), b: new THREE.Vector3(), qa: new THREE.Quaternion(), qb: new THREE.Quaternion(), aCam: false, bCam: false, pose: null, poseA: null, poseB: null, poleA: null, poleB: null, arc: null });
     st.w = 0;
     st.m = 0;
     st.aCam = st.bCam = false;
     st.pose = null;
     st.poseA = st.poseB = null; // the poses at A and at B, when they differ (their grip centers are blended by m)
-    st.poleB = null; // the left elbow's pole at B, when it isn't the grip's (blended in by m and the weight)
+    st.poleA = st.poleB = null; // the left elbow's pole at A / B, when it isn't the grip's (blended by m and the weight)
     st.arc = null;
     this._reloadState = st;
     if (cur.cfg.single) return this._animReloadSingle(u, P6, st, parts, meta);
@@ -3638,7 +3648,8 @@ export class ViewModel {
         ar.position.set(ar.userData.base.x, ar.userData.base.y + (1 - seat) * 0.03, ar.userData.base.z - (1 - seat) * 0.06);
       }
       st.w = win(u, 0.08, 0.18, 0.93, 0.99);
-      st.pose = 'pinch';
+      st.pose = u < 0.6 ? 'xbowString' : 'pinch';
+      st.poleA = XBOW_HAUL_POLE; // the elbow up and out while it hauls the string, the forearm off the tiller
     } else if (kind === 'rifle' && !cur.cfg.bolt) {
       // AK: tilt, mag rock out, new mag in, charge
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
