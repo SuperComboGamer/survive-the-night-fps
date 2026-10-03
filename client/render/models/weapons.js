@@ -842,6 +842,78 @@ function buildCrossbow(P) {
   P.meta.xbow = { pivot: sh(ROOT, SY, PROD), tip: new THREE.Vector3(tx, 0, tz), flex: FLEX, half, rail: sh(0, by, nock - 0.17) };
 }
 
+// ------------------------------------------------------------------ RPG (RPG-7 style: one grenade at a time)
+// A steel tube with a wooden heat shield round its middle, the pistol grip and trigger under the front third and a
+// second grip ahead of them, the sight off the left of the tube and a flared venturi at the back. The grenade is its
+// own part ('warhead', pivot on the muzzle): its bulb and nose stand out ahead of the tube, and in the viewmodel a
+// stub of its motor meta.rpg.stroke long sits in the bore, which is how far the reload pushes it in.
+function buildRPG(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const TY = 0.082; // bore axis, above the grip
+  const MZ = -0.37, VZ = 0.44, RZ = 0.58; // muzzle, front of the venturi, back end
+  const RT = 0.026, BORE = 0.021, STROKE = 0.1;
+  const SX = -0.078, SH = TY + 0.064; // the sight line, left of and above the bore
+  const rs = R(hi, 16, 8);
+  const OD = { region: WR.GUNMETAL, color: [1.18, 1.3, 0.62], mottle: 0.06 }; // olive-drab paint
+  const ODd = { ...OD, color: [0.72, 0.8, 0.4] };
+  const shield = { ...M.wood, color: [0.7, 0.58, 0.5] }; // varnished
+  // tube, with a ring round the muzzle and a dark bore
+  barrelZ(B, 0, TY, VZ + 0.005, MZ, RT, BORE, { ...M.gunDark, rs });
+  latheZ(B, [[RT - 0.001, -MZ - 0.02], [0.029, -MZ - 0.02], [0.029, -MZ + 0.001], [BORE, -MZ + 0.001], [BORE, -MZ - 0.02]], 0, TY, { ...M.gunDark, rs, sharp: true });
+  cylZ(B, 0, TY, MZ + 0.0295, MZ + 0.0285, BORE - 0.0005, { ...M.black, rs: R(hi, 12, 7) });
+  if (hi) {
+    // front sight folded down on top, behind the muzzle ring
+    boxR(B, -0.006, 0.006, TY + RT - 0.003, TY + RT + 0.006, MZ + 0.065, MZ + 0.035, M.gun);
+    boxR(B, -0.0016, 0.0016, TY + RT + 0.006, TY + RT + 0.0092, MZ + 0.062, MZ + 0.104, M.gunDark);
+  }
+  // trigger housing under the tube, pistol grip (runs up through the fist), guard and trigger
+  boxR(B, -0.0165, 0.0165, 0.026, TY - RT + 0.008, 0.04, -0.09, M.gun);
+  for (const z of [0.04, -0.09]) latheZ(B, [[RT, -z - 0.006], [RT + 0.0035, -z - 0.006], [RT + 0.0035, -z + 0.006], [RT, -z + 0.006]], 0, TY, { ...M.gunDark, rs, sharp: true });
+  profile(B, [[0.028, 0.029], [0.02, -0.01], [0.012, -0.045], [0.004, -0.072], [-0.03, -0.078], [-0.037, -0.062], [-0.024, -0.02], [-0.014, 0.029]], 0.029, { ...M.polyDark, bevel: 0.004 });
+  B.tube(0, [[0, 0.029, -0.012], [0, 0.004, -0.018], [0, -0.004, -0.045], [0, 0.0, -0.075], [0, 0.029, -0.086]], 0.0032, 0.0032, { ...M.gun, rs: 5, ts: R(hi, 12, 6), cap: false });
+  B.tube(0, [[0, 0.03, -0.04], [0, 0.017, -0.043], [0, 0.009, -0.037]], 0.0025, 0.002, { ...M.gunDark, rs: 5, ts: 4 });
+  if (hi) B.seg(0, [-0.017, 0.045, 0.012], [0.017, 0.045, 0.012], 0.004, 0.004, { ...M.gunDark, rs: 6, hs: 1 }); // safety
+  // front grip on a clamp band
+  latheZ(B, [[RT, 0.138], [RT + 0.0035, 0.138], [RT + 0.0035, 0.192], [RT, 0.192]], 0, TY, { ...M.gunDark, rs, sharp: true });
+  boxR(B, -0.011, 0.011, TY - RT - 0.012, TY - RT + 0.004, -0.142, -0.188, M.gun);
+  profile(B, [[0.146, 0.048], [0.186, 0.048], [0.19, 0.02], [0.196, -0.034], [0.19, -0.047], [0.158, -0.05], [0.15, -0.038], [0.145, 0.02]], 0.03, { ...M.polyDark, bevel: 0.004, curveSegs: 4 });
+  // wooden heat shield: two sleeves round the middle, steel bands at their ends
+  for (const [z0, z1] of [[0.06, 0.205], [0.215, 0.36]]) {
+    latheZ(B, [[0, -z1], [0.031, -z1], [0.0355, -z1 + 0.008], [0.0355, -z0 - 0.008], [0.031, -z0], [0, -z0]], 0, TY, { ...shield, rs });
+    if (hi || z0 > 0.1) for (const z of [z0 + 0.012, z1 - 0.012]) latheZ(B, [[0.0355, -z - 0.004], [0.0366, -z - 0.004], [0.0366, -z + 0.004], [0.0355, -z + 0.004]], 0, TY, { ...M.gun, rs, sharp: true });
+  }
+  // venturi: a cone flaring open at the back, dark inside
+  latheZ(B, [[0, -0.47], [0.019, -0.47], [0.024, -0.52], [0.04, -0.574], [0.046, -RZ], [0.0475, -RZ + 0.006], [0.042, -0.54], [0.033, -0.49], [0.0305, -VZ], [0, -VZ]], 0, TY, { ...M.gun, rs: R(hi, 18, 8), sharp: hi });
+  cylZ(B, 0, TY, 0.4725, 0.4715, 0.0188, { ...M.black, rs: R(hi, 12, 7) });
+  // sight: a bracket off the left of the tube, the optic (objective ahead, eyepiece behind), and a notch and post on
+  // top of it that the sight line runs through
+  const top = TY + 0.05; // top of the optic
+  boxR(B, -0.064, -0.018, TY - 0.012, TY + 0.012, 0.035, -0.03, M.gun);
+  boxR(B, SX - 0.016, SX + 0.016, TY + 0.004, top, 0.07, -0.058, ODd);
+  cylZ(B, SX, TY + 0.027, -0.056, -0.082, 0.0165, { ...ODd, rs: R(hi, 12, 7) });
+  cylZ(B, SX, TY + 0.027, -0.0815, -0.0825, 0.0138, { region: WR.GLASS, color: [0.3, 0.42, 0.5], mottle: 0.02, rs: R(hi, 12, 7) });
+  cylZ(B, SX - 0.003, TY + 0.022, 0.068, 0.082, 0.009, { ...M.polyDark, rs: R(hi, 10, 6) }); // eyepiece
+  if (hi) B.seg(0, [SX - 0.016, TY + 0.03, 0.012], [SX - 0.025, TY + 0.03, 0.012], 0.008, 0.008, { ...M.gunDark, rs: 10, hs: 1 }); // range drum
+  boxR(B, SX - 0.009, SX + 0.009, top, SH, 0.058, 0.05, M.gunDark); // rear notch
+  for (const s of [-1, 1]) boxR(B, SX + s * 0.0025, SX + s * 0.009, SH, SH + 0.008, 0.058, 0.05, M.gunDark);
+  boxR(B, SX - 0.009, SX + 0.009, top, top + 0.005, -0.03, -0.05, M.gunDark); // front post between two ears
+  for (const s of [-1, 1]) boxR(B, SX + s * 0.0065, SX + s * 0.009, top + 0.005, SH + 0.006, -0.038, -0.048, M.gunDark);
+  boxR(B, SX - 0.0013, SX + 0.0013, top + 0.005, SH, -0.0415, -0.0445, M.gunDark);
+  // the grenade: motor out of the muzzle, boat tail, bulb, ogive and fuze (the world model shows it loaded)
+  const W = P.get('warhead');
+  const f = -MZ;
+  cylZ(W, 0, TY, MZ + (P.split ? STROKE : 0.005), MZ - 0.04, 0.0195, { ...M.gunDark, rs: R(hi, 12, 7) });
+  latheZ(W, [[0, f + 0.038], [0.0195, f + 0.038], [0.024, f + 0.044], [0.0405, f + 0.088], [0.0425, f + 0.1], [0.0425, f + 0.165], [0.0412, f + 0.178], [0.035, f + 0.22], [0.025, f + 0.27], [0.0135, f + 0.322], [0.0095, f + 0.332], [0, f + 0.332]], 0, TY, { ...OD, rs });
+  if (hi) latheZ(W, [[0.0425, f + 0.118], [0.0429, f + 0.119], [0.0429, f + 0.131], [0.0425, f + 0.132]], 0, TY, { ...M.black, rs, sharp: true }); // painted band
+  latheZ(W, [[0, f + 0.33], [0.0082, f + 0.33], [0.0082, f + 0.356], [0.0062, f + 0.364], [0, f + 0.368]], 0, TY, { ...M.steel, color: [0.7, 0.7, 0.68], rs: R(hi, 10, 6) });
+  P.pivot('warhead', new THREE.Vector3(0, TY, MZ));
+  P.meta.muzzle = new THREE.Vector3(0, TY, MZ);
+  P.meta.leftHand = new THREE.Vector3(0, 0.002, -0.168);
+  P.meta.sight = new THREE.Vector3(SX, SH, -0.043); // front post
+  P.meta.rpg = { grab: new THREE.Vector3(0, -0.022, -0.1325), stroke: STROKE }; // grab: where the left hand holds the grenade (from its pivot)
+}
+
 // ------------------------------------------------------------------ Flamethrower (scrap-built: pipe lance, fuel bottle, gas bottle for a stock)
 // The fuel bottle screws in from below like a magazine ('mag': swapped on reload); the gas valve on the left
 // is the 'charge' part (the reload ends with a hand on it).
@@ -905,27 +977,265 @@ function buildFlamethrower(P) {
   P.meta.magGrab = new THREE.Vector3(0, -0.1, BZ);
 }
 
+// ------------------------------------------------------------------ Anti-tank rifle (PTRD-style: single shot, 14.5mm)
+// A long thin barrel with a two-port brake, a folded bipod and a carry handle; iron sights off to the left of the
+// bore; a tube stock to a padded shoulder piece. The loading port is the top right of the receiver, cut open: the
+// 'bolt' part slides back out of it (handle on the right), and in the viewmodel the 'round' is laid in it on the
+// reload and the spent 'case' thrown out of it (_animReloadSingle).
+const ATR = { BY: 0.085, RR: 0.0245, PORT0: -0.028, PORT1: -0.168, SEAT: -0.04 };
+// where the left hand holds a round (pinched over its middle) relative to its base, for the round turned by (tilt,
+// yaw) as its mesh is (Euler XYZ: nose down, then crosswise)
+const _atE = new THREE.Euler();
+function atHold(out, tilt, yaw) {
+  return out.set(0, 0.0175, -0.07).applyEuler(_atE.set(tilt, yaw, 0));
+}
+// a 14.5x114 round along -Z from its base at the origin (case only for the spent one)
+function atRound(mb, hi, bullet) {
+  const rs = R(hi, 8, 6);
+  latheZ(mb, [[0, 0], [0.0135, 0], [0.0135, 0.004], [0.0117, 0.0055], [0.0117, 0.008], [0.0134, 0.0095], [0.0124, 0.088], [0.0084, 0.097], [0.0083, 0.114], [0, 0.114]], 0, 0, { ...M.brass, rs });
+  if (!bullet) return;
+  latheZ(mb, [[0, 0.113], [0.0074, 0.113], [0.0074, 0.124], [0.0062, 0.138], [0, 0.155]], 0, 0, { region: WR.STEEL, color: [0.9, 0.6, 0.42], mottle: 0.05, rs }); // copper-washed jacket
+  latheZ(mb, [[0, 0.1428], [0.0047, 0.1428], [0, 0.1557]], 0, 0, { region: WR.PLAIN, color: 0x1a1a1a, mottle: 0.04, rs }); // black (armour-piercing) tip
+}
+function buildATRifle(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const { BY, RR } = ATR;
+  const OD = { region: WR.GUNMETAL, color: [1.18, 1.3, 0.62], mottle: 0.06 }; // olive-drab paint
+  const ODd = { ...OD, color: [0.92, 1.0, 0.5] };
+  const barrel = { ...M.gun, color: [0.95, 0.95, 0.92] }; // bare blued steel
+  const rs = R(hi, 12, 8);
+  const rb = R(hi, 10, 6); // (bands and clamps)
+  // part of a tube about the bore (or about (x, y)): radius r, z0 -> z1 (z0 behind), from phi0 round phiLen (phi 0 =
+  // up, pi/2 = right); inward: the inside face
+  const arcZ = (mb, x, y, r, z0, z1, phi0, phiLen, inward, o) => {
+    const pts = (inward ? [[r, -z1], [r, -z0]] : [[r, -z0], [r, -z1]]).map((p) => new THREE.Vector2(p[0], p[1]));
+    const geo = new THREE.LatheGeometry(pts, R(hi, 12, 7), phi0, phiLen);
+    geo.rotateX(-PI / 2);
+    geo.translate(x, y, 0);
+    return mb.geom(0, geo, o);
+  };
+  // ---- receiver: closed behind and ahead of the port, and under it a trough (the top right cut away)
+  // (far off, in the world model: one closed tube with a dark plate for the port)
+  if (!hi) {
+    cylZ(B, 0, BY, 0.036, -0.215, RR, { ...OD, rs });
+    boxR(B, 0.0, 0.022, BY + 0.016, BY + 0.0275, ATR.PORT0, ATR.PORT1, M.black);
+  } else {
+    cylZ(B, 0, BY, 0.036, ATR.PORT0, RR, { ...OD, rs });
+    cylZ(B, 0, BY, ATR.PORT1, -0.215, RR, { ...OD, rs });
+    const OPEN0 = 1.75, OPEN = 2.1; // the cut: from just below the right side over the top to a little left of it
+    arcZ(B, 0, BY, RR, ATR.PORT0, ATR.PORT1, OPEN0, 2 * PI - OPEN, false, OD);
+    arcZ(B, 0, BY, RR - 0.0025, ATR.PORT0, ATR.PORT1, OPEN0, 2 * PI - OPEN, true, { ...M.gunDark, color: [0.5, 0.5, 0.48] });
+    for (const a of [OPEN0, OPEN0 - OPEN + 2 * PI]) {
+      const x = Math.sin(a) * (RR - 0.00125), y = BY + Math.cos(a) * (RR - 0.00125);
+      B.seg(0, [x, y, ATR.PORT0], [x, y, ATR.PORT1], 0.0014, 0.0014, { ...OD, rs: 5, hs: 1 }); // the cut edges
+    }
+    cylZ(B, 0, BY, ATR.PORT1 + 0.0006, ATR.PORT1 - 0.0004, 0.0136, { ...M.black, rs: 10 }); // the chamber mouth
+  }
+  // trigger group and its housing, wooden pistol grip, guard, trigger
+  boxR(B, -0.012, 0.012, 0.028, BY - 0.02, 0.03, -0.1, OD);
+  profile(B, [[0.032, 0.04], [0.03, 0.02], [0.0, -0.07], [-0.006, -0.08], [-0.032, -0.083], [-0.042, -0.074], [-0.022, 0.04]], 0.032, {
+    ...M.walnut,
+    bevel: 0.006,
+    bevelSegs: hi ? 2 : 1,
+    curveSegs: 4,
+  });
+  B.tube(0, [[0, 0.03, -0.026], [0, 0.006, -0.03], [0, -0.004, -0.052], [0, 0.004, -0.076], [0, 0.03, -0.086]], 0.0034, 0.0034, { ...OD, rs: R(hi, 5, 4), ts: R(hi, 9, 5), cap: false });
+  B.tube(0, [[0, 0.03, -0.046], [0, 0.015, -0.049], [0, 0.006, -0.044]], 0.0026, 0.002, { ...M.gunDark, rs: 5, ts: 4 });
+  // ---- stock: a tube back to the shoulder piece, a cheek rest, the steel yoke and its padded leather cushion
+  const SY = 0.032;
+  cylZ(B, 0, SY, 0.37, -0.02, 0.019, { ...OD, rs: rb });
+  profile(B, [[-0.15, SY + 0.012], [-0.172, SY + 0.05], [-0.31, SY + 0.053], [-0.33, SY + 0.012]], 0.036, { ...M.walnut, bevel: 0.006, curveSegs: 3 });
+  profile(B, [[-0.238, SY - 0.012], [-0.244, -0.058], [-0.256, -0.068], [-0.282, -0.066], [-0.276, SY - 0.012]], 0.03, { ...M.walnut, bevel: 0.005, curveSegs: 3 }); // rear grip
+  boxR(B, -0.024, 0.024, -0.08, 0.108, 0.358, 0.378, { ...OD, round: 0.2, seg: 2 });
+  B.box(0, [0, 0.014, 0.408], [0.06, 0.21, 0.06], { ...M.leather, color: [0.78, 0.66, 0.52], round: 0.55, seg: R(hi, 3, 2) });
+  // ---- barrel: a heavy chamber section, the long taper, a wooden handguard over its back for the left hand
+  cylZ(B, 0, BY, -0.21, -0.32, 0.021, { ...OD, rs });
+  barrelZ(B, 0, BY, -0.32, -1.13, 0.0175, 0.0074, { ...barrel, r1: 0.0135, rs: R(hi, 10, 8) });
+  latheZ(B, [[0, 0.24], [0.0236, 0.24], [0.0266, 0.258], [0.0266, 0.452], [0.0236, 0.47], [0, 0.47]], 0, BY, { ...M.walnut, rs, swapUV: true });
+  if (hi) for (const z of [-0.236, -0.474]) latheZ(B, [[0.016, -z - 0.006], [0.0272, -z - 0.006], [0.0272, -z + 0.006], [0.016, -z + 0.006]], 0, BY, { ...OD, rs: rb });
+  // carry handle on two clamps, offset to the right, with a wooden grip
+  for (const z of [-0.6, -0.72]) latheZ(B, [[0.0155, -z - 0.008], [0.019, -z - 0.008], [0.019, -z + 0.008], [0.0155, -z + 0.008]], 0, BY, { ...OD, rs: rb });
+  B.tube(0, [[0.01, BY + 0.014, -0.6], [0.02, BY + 0.048, -0.612], [0.022, BY + 0.056, -0.64], [0.022, BY + 0.056, -0.68], [0.02, BY + 0.048, -0.708], [0.01, BY + 0.014, -0.72]], 0.005, 0.005, { ...OD, rs: 6, ts: R(hi, 10, 6), cap: false });
+  B.seg(0, [0.022, BY + 0.057, -0.636], [0.022, BY + 0.057, -0.684], 0.0085, 0.0085, { ...M.walnut, rs: R(hi, 10, 6), hs: 1 });
+  // folded bipod: hinge collar under the barrel, two legs lying back along it, spade feet
+  const HZ = -0.86;
+  if (hi) latheZ(B, [[0.0145, -HZ - 0.013], [0.0205, -HZ - 0.013], [0.0205, -HZ + 0.013], [0.0145, -HZ + 0.013]], 0, BY, { ...OD, rs: rb });
+  boxR(B, -0.017, 0.017, BY - 0.034, BY - 0.012, HZ + 0.013, HZ - 0.013, OD);
+  for (const s of [-1, 1]) {
+    B.seg(0, [s * 0.011, BY - 0.028, HZ], [s * 0.013, BY - 0.031, -0.52], 0.0058, 0.005, { ...ODd, rs: 6, hs: 1 });
+    boxR(B, s * 0.009, s * 0.017, BY - 0.046, BY - 0.02, -0.505, -0.535, ODd);
+  }
+  // front sight, off to the left on its own clamp: a post under a hood
+  const SX = -0.04, SH = 0.148;
+  if (hi) latheZ(B, [[0.0132, 1.068], [0.0168, 1.068], [0.0168, 1.092], [0.0132, 1.092]], 0, BY, { ...OD, rs: rb });
+  boxR(B, SX - 0.006, -0.012, BY - 0.006, BY + 0.008, -1.07, -1.09, OD);
+  boxR(B, SX - 0.006, SX + 0.006, BY + 0.008, SH - 0.016, -1.073, -1.087, OD);
+  boxR(B, SX - 0.0024, SX + 0.0024, SH - 0.016, SH, -1.077, -1.083, M.gunDark);
+  if (hi) {
+    arcZ(B, SX, SH - 0.004, 0.0115, -1.066, -1.094, -1.65, 3.3, false, OD);
+    arcZ(B, SX, SH - 0.004, 0.0095, -1.066, -1.094, -1.65, 3.3, true, ODd);
+  }
+  // rear sight: a leaf on a bracket off the left of the receiver, an aperture at the top
+  boxR(B, SX - 0.006, -0.0232, BY + 0.004, BY + 0.018, -0.088, -0.112, OD);
+  boxR(B, SX - 0.004, SX + 0.004, BY + 0.02, SH - 0.008, -0.096, -0.104, ODd);
+  if (hi) latheZ(B, [[0.0038, 0.097], [0.0085, 0.097], [0.0085, 0.103], [0.0038, 0.103]], SX, SH, { ...ODd, rs: 12, sharp: true });
+  else boxR(B, SX - 0.008, SX + 0.008, SH - 0.008, SH + 0.008, -0.097, -0.103, ODd);
+  // muzzle brake: three plates on straps - the two ports between them open right through
+  const MB0 = -1.128, MB1 = -1.236;
+  cylZ(B, 0, BY, -1.11, MB0, 0.0172, { ...barrel, rs: rb });
+  for (const z of [MB0, -1.176, MB1 + 0.012]) boxR(B, -0.029, 0.029, BY - 0.023, BY + 0.023, z, z - 0.012, ODd);
+  for (const s of [-1, 1]) boxR(B, -0.029, 0.029, BY + s * 0.017, BY + s * 0.0245, MB0, MB1, OD);
+  if (hi) cylZ(B, 0, BY, MB1 + 0.0004, MB1 - 0.0004, 0.008, { ...M.black, rs: 10 });
+  // bolt (separate): body, cocking piece out the back, the handle on the right with a ball knob
+  const BO = P.get('bolt');
+  cylZ(BO, 0, BY, 0.07, ATR.SEAT, 0.0195, { ...M.steel, color: [0.4, 0.4, 0.42], rs: R(hi, 10, 6) });
+  cylZ(BO, 0, BY, 0.09, 0.07, 0.0155, { ...OD, rs: R(hi, 10, 6) });
+  BO.tube(0, [[0.016, BY, 0.058], [0.044, BY - 0.012, 0.06], [0.068, BY - 0.03, 0.064]], 0.005, 0.0045, { ...M.gun, rs: R(hi, 6, 4), ts: R(hi, 6, 3) });
+  BO.ellip(0, [0.072, BY - 0.033, 0.064], [0.0105, 0.0105, 0.0105], { ...M.gunDark, ws: R(hi, 8, 6), hs: R(hi, 6, 4) });
+  P.pivot('bolt', new THREE.Vector3(0, BY, 0.06));
+  if (P.split) {
+    atRound(P.get('round'), hi, true);
+    atRound(P.get('case'), hi, false);
+  }
+  P.meta.muzzle = new THREE.Vector3(0, BY, -1.24);
+  P.meta.leftHand = new THREE.Vector3(0, BY - 0.002, -0.36);
+  P.meta.sight = new THREE.Vector3(SX, SH, -0.1); // the rear aperture
+  P.meta.boltKnob = new THREE.Vector3(0.072, BY - 0.033, 0.064);
+  P.meta.port = new THREE.Vector3(0.008, BY + 0.018, -0.1);
+  P.meta.seat = new THREE.Vector3(0, BY, ATR.SEAT); // the base of a chambered round
+}
+
 // ------------------------------------------------------------------ Melee
+/**
+ * Blade from cross-sections: rings[i] is a closed loop of [x, y, z] points (the same count in every ring),
+ * stations running along the blade. Each face between two neighbouring loop points is its own geometry with
+ * mats[k] (k = the face's first point), so grind lines, spine and edge stay crisp while every face shades
+ * smoothly along the length.
+ */
+function facetLoft(mb, rings, mats) {
+  const ns = rings.length, np = rings[0].length;
+  const z0 = rings[0][0][2], z1 = rings[ns - 1][0][2];
+  for (let k = 0; k < np; k++) {
+    const k1 = (k + 1) % np;
+    const pos = new Float32Array(ns * 6), uv = new Float32Array(ns * 4), idx = [];
+    for (let i = 0; i < ns; i++) {
+      for (let s = 0; s < 2; s++) {
+        const p = rings[i][s ? k1 : k];
+        pos.set(p, (i * 2 + s) * 3);
+        uv[(i * 2 + s) * 2] = (p[2] - z0) / (z1 - z0); // brushed grain along the blade
+        uv[(i * 2 + s) * 2 + 1] = (k + s) / np;
+      }
+      if (i < ns - 1) {
+        const a = i * 2;
+        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    mb.geom(0, geo, { ...mats[k], keepNormals: true });
+  }
+}
+
+// Knife handle cross-section: an oval, narrow across the flats (X) and tall from spine to edge (Y). The 'knife'
+// hand pose closes its fingers on this oval, so the two stay in step. tilt: how far the handle leans off square
+// across the palm (rad), which points the blade along the forearm the way a real knife hand holds it.
+const KNIFE_GRIP = { rx: 0.0122, ry: 0.015, tilt: 0.52 };
+
+// A Ka-Bar style fighting knife: stacked leather washers, oval steel guard and pommel, a clip-point blade
+// with a fuller, flat sides and a brighter ground edge.
 function buildKnife(P) {
   const hi = P.hi;
   const B = P.get('body');
-  // handle (ribbed)
-  const hp = [[0, -0.068], [0.0105, -0.068]];
-  const rings = hi ? 6 : 3;
-  for (let i = 0; i < rings; i++) {
-    const f = -0.062 + i * (0.106 / rings);
-    hp.push([0.0128, f + 0.004], [0.0118, f + 0.1 / rings]);
+  const { rx, ry } = KNIFE_GRIP;
+  const sx = rx / ry;
+  // handle: washers with a shallow seam between each, swelling a little under the palm
+  const H0 = -0.0505, H1 = 0.068; // guard face .. pommel (z)
+  const swell = (z) => 0.94 + 0.06 * Math.sin(PI * (z - H0) / (H1 - H0));
+  const hp = [[0, -H1], [ry * swell(H1) * 0.96, -H1]];
+  const washers = hi ? 16 : 1, seam = hi ? 0.0007 : 0;
+  for (let i = 0; i < washers; i++) {
+    const za = H1 - (i * (H1 - H0)) / washers, zb = H1 - ((i + 1) * (H1 - H0)) / washers;
+    hp.push([ry * swell(za) - seam, -za], [ry * swell(za), -za + 0.0012], [ry * swell(zb), -zb - 0.0012]);
   }
-  hp.push([0.0128, 0.046], [0.011, 0.05], [0, 0.05]);
-  latheZ(B, hp, 0, 0, { ...M.polyDark, rs: R(hi, 10, 6), sx: 0.82 });
-  cylZ(B, 0, 0, 0.068, 0.076, 0.0105, { ...M.gun, rs: R(hi, 10, 6), sx: 0.85 }); // pommel
-  boxR(B, -0.0055, 0.0055, -0.024, 0.02, -0.05, -0.058, M.gun); // guard
-  // blade
-  const bp = [[0.056, 0.011]];
-  if (hi) for (let i = 0; i < 6; i++) bp.push([0.066 + i * 0.008, 0.014], [0.07 + i * 0.008, 0.011]);
-  bp.push([0.165, 0.011], [0.2, 0.008], [0.236, -0.001], [0.21, -0.011], [0.17, -0.016], [0.1, -0.017], [0.058, -0.015]);
-  profile(B, bp, 0.0048, { ...M.blade, bevel: 0.0014, curveSegs: 3 });
-  if (hi) for (const s of [-1, 1]) boxR(B, s * 0.0024, s * 0.0028, -0.001, 0.003, -0.075, -0.16, M.gunDark); // fuller
+  hp.push([ry * swell(H0) - seam, -H0], [0, -H0]);
+  latheZ(B, hp, 0, 0, {
+    region: WR.PLAIN,
+    color: 0x5c3a24,
+    mottle: 0.14,
+    rs: R(hi, 14, 7),
+    sx,
+    tint: (p, n, c) => {
+      if (!hi) return;
+      const q = ((H1 - p.z) * washers) / (H1 - H0), fr = q - Math.floor(q);
+      if (Math.floor(q) % 2) c.multiplyScalar(0.86); // each washer a slightly different hide
+      if (fr < 0.1 || fr > 0.9) c.multiplyScalar(0.7); // dark seams
+    },
+  });
+  // pommel: an oval steel cap with the tang's peened nut
+  latheZ(B, [[0, -0.0838], [ry * 0.45, -0.0835], [ry * 0.78, -0.0815], [ry * 1.0, -0.077], [ry * 1.02, -0.0705], [ry * 0.95, -0.0675], [0, -0.0675]], 0, 0, { ...M.gunDark, rs: R(hi, 14, 7), sx });
+  if (hi) cylZ(B, 0, 0, 0.0832, 0.0858, 0.0042, { ...M.steel, rs: 6 });
+  // guard: an oval plate, longer below (it keeps the fingers off the edge); the quillon tips lean forward
+  const G = [[-0.0062, 0.0168], [-0.0062, 0.0218, 0, 0.0218], [0.0062, 0.0218, 0.0062, 0.0168], [0.0062, -0.0232], [0.0062, -0.0282, 0, -0.0282], [-0.0062, -0.0282, -0.0062, -0.0232]];
+  sectionZ(B, G, -0.0505, -0.0565, {
+    ...M.gunDark,
+    bevel: 0.0009,
+    curveSegs: R(hi, 5, 2),
+    shape: (p) => {
+      p.z -= Math.max(0, Math.abs(p.y + 0.003) - 0.016) * 0.22;
+    },
+  });
+
+  // blade: f = distance forward of the grip (-z), u = up (spine +Y, edge -Y)
+  const F0 = 0.054, PLUNGE = 0.068, CLIP = 0.153, TIP = 0.238, UT = -0.0018;
+  const top = (f) => {
+    if (f < CLIP) return 0.0112;
+    const t = (f - CLIP) / (TIP - CLIP);
+    return 0.0112 + (UT - 0.0112) * (t + 0.6 * t * (1 - t)); // a hollow clip
+  };
+  const edge = (f) => (f < 0.138 ? -0.0163 : -0.0163 + (UT + 0.0163) * ((f - 0.138) / (TIP - 0.138)) ** 1.8);
+  const rings = [];
+  const N = hi ? 36 : 12;
+  for (let i = 0; i <= N; i++) {
+    const f = F0 + (TIP - F0) * (i / N) ** 0.92;
+    const uT = top(f), uE = edge(f), z = -f;
+    // distal taper, pinching to the point
+    const w = 0.0024 * (1 - 0.3 * ((f - F0) / (TIP - F0))) * Math.min(1, (TIP - f) / 0.03) ** 0.6;
+    const ground = sstep(PLUNGE - 0.012, PLUNGE + 0.006, f); // 0 on the blunt ricasso by the guard
+    const uG = uE + 0.44 * (uT - uE) * ground; // grind line
+    const wE = w + (0.00022 - w) * ground; // edge half-thickness
+    const clip = sstep(CLIP - 0.008, CLIP + 0.03, f); // sharpened swedge along the clip
+    const uS = Math.max(uG, uT - clip * Math.min(0.0042, 0.5 * (uT - uG)));
+    const wS = w * (1 - 0.75 * clip);
+    const side = [[wS, uT], [w, uS]];
+    if (hi) {
+      // fuller: a flat-bottomed groove that follows the spine and fades out at both ends
+      const fr = sstep(0.07, 0.08, f) * (1 - sstep(0.148, 0.162, f));
+      const fc = uT - 0.0062, fh = 0.0021 * Math.sqrt(fr), fd = 0.0008 * fr;
+      const cl = (u) => Math.min(uS, Math.max(uG, u));
+      side.push([w, cl(fc + fh)], [w - fd, cl(fc + fh * 0.45)], [w - fd, cl(fc - fh * 0.45)], [w, cl(fc - fh)]);
+    }
+    side.push([w, uG], [wE, uE]);
+    const ring = side.map(([x, u]) => [x, u, z]);
+    for (let k = side.length - 1; k >= 0; k--) ring.push([-side[k][0], side[k][1], z]);
+    rings.push(ring);
+  }
+  const flat = { ...M.blade, mottle: 0.04 };
+  const bright = { ...M.blade, color: [1.08, 1.08, 1.13], mottle: 0.03 }; // freshly ground
+  const fuller = { ...M.blade, color: [0.66, 0.66, 0.7] };
+  const n = rings[0].length / 2, last = n - 1; // points per side
+  const mats = [];
+  for (let k = 0; k < n * 2; k++) {
+    const s = k < n ? k : n * 2 - 2 - k; // the matching face on the right side
+    if (k === n * 2 - 1) mats.push({ ...M.blade, color: [0.78, 0.78, 0.82] }); // spine
+    else if (s === 0 || s >= last - 1 || k === last) mats.push(bright); // swedge, edge bevel, edge
+    else if (hi && s >= 2 && s <= 4) mats.push(fuller);
+    else mats.push(flat);
+  }
+  facetLoft(B, rings, mats);
   P.meta.muzzle = null;
 }
 
@@ -1092,7 +1402,9 @@ const BUILDERS = {
   [ITEM.MP5]: buildMP5,
   [ITEM.DB_SHOTGUN]: buildDoubleBarrel,
   [ITEM.CROSSBOW]: buildCrossbow,
+  [ITEM.RPG]: buildRPG,
   [ITEM.FLAMETHROWER]: buildFlamethrower,
+  [ITEM.AT_RIFLE]: buildATRifle,
   [ITEM.KNIFE]: buildKnife,
   [ITEM.BAT]: buildBat,
   [ITEM.SPIKED_BAT]: buildSpikedBat,
@@ -1197,10 +1509,29 @@ function getVMData(itemId) {
 // Grip tunnel (fist) axis = local Z. Left hand = mirror in X.
 const HAND_POSES = {
   grip: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.62, -0.52, -0.58], [-0.25, -0.95, -0.2]], center: [-0.034, -0.083, 0] },
-  // pistol grip with the index finger on the trigger
-  trigger: { curl: [[0.4, 1.0, 0.55], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.6, -0.79, -0.09], [-0.1, -0.93, -0.34]], center: [-0.034, -0.083, 0] },
-  // pistol support hand wrapped around the gun hand, thumb forward along the frame
-  cup: { curl: [[1.05, 1.2, 0.8], [1.1, 1.25, 0.8], [1.15, 1.25, 0.8], [1.2, 1.2, 0.8]], spread: 0.0, thumb: [[-0.22, -0.77, -0.6], [-0.16, -0.8, -0.57]], center: [-0.03, -0.085, 0] },
+  // pistol grip, fitted to the pistol's grip with the hand placed by VM[PISTOL].rGrip: the grip runs diagonally
+  // across the palm, the middle, ring and little fingers close on the front strap, the index pad rests on the
+  // trigger face, and the thumb (its base swung round behind the beavertail, tmcp) lies along the frame
+  trigger: {
+    curl: [[0.8, 0.35, 0.355], [0.95, 1.0, 0.675], [0.955, 0.9, 0.63], [0.85, 0.455, 0.96]],
+    spreads: [-0.25, 0, 0, 0],
+    thumb: [[-0.352, -0.843, -0.407], [-0.388, -0.848, -0.361]],
+    tmcp: [-0.0474, -0.0267, -0.0328],
+    tback: [-0.808, 0.511, -0.28],
+    thumbL: [0.031, 0.026],
+    center: [-0.041, -0.0755, -0.0123],
+  },
+  // pistol support hand (VM[PISTOL].lGrip), fitted the same way: the palm on the left of the grip, the fingers
+  // closed over the gun hand's, the thumb forward along the frame under the gun hand's thumb
+  cup: {
+    curl: [[1.45, 0.315, 0.22], [1.55, 0.28, 0.35], [1.6, 0.045, 0.3], [1.65, 0.255, 0.175]],
+    spread: 0.0,
+    thumb: [[-0.242, -0.893, -0.379], [-0.217, -0.921, -0.323]],
+    tmcp: [-0.0169, -0.0294, -0.031],
+    tback: [0.9107, -0.0373, -0.373],
+    thumbL: [0.031, 0.026],
+    center: [-0.0475, -0.0447, -0.007],
+  },
   support: { curl: [[0.95, 1.1, 0.7], [1.0, 1.15, 0.7], [1.05, 1.15, 0.7], [1.1, 1.1, 0.7]], spread: 0.02, thumb: [[-0.7, -0.45, -0.55], [-0.4, -0.9, 0.1]], center: [-0.042, -0.088, 0] },
   pinch: { curl: [[0.9, 1.2, 0.8], [1.1, 1.4, 0.9], [1.25, 1.45, 0.9], [1.35, 1.4, 0.9]], spread: 0.0, thumb: [[-0.55, -0.6, -0.55], [-0.2, -0.85, 0.45]], center: [-0.03, -0.1, -0.02] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
@@ -1214,11 +1545,60 @@ const FINGERS = [
   { z: 0.0275, y: -0.0845, L: [0.035, 0.021, 0.018], r: 0.0081 },
 ];
 const PHALANX_R = [1.0, 0.9, 0.82];
+
+/**
+ * Finger curls (HAND_POSES format) that close the hand on an oval handle along the hand's Z axis, centred at
+ * (cx, cy) with half-widths rx (palm to back) and ry: each joint bends until its phalanx, or the rest of the
+ * finger beyond it (held slightly bent), sinks `squeeze` into the handle, the way a hand closes on a grip.
+ * Phalanx sizes match getHandGeo's gloved fingers (radius on the palm side = r * sx).
+ */
+function wrapCurls(cx, cy, rx, ry, squeeze, slope = 0) {
+  return FINGERS.map((F) => {
+    // a handle laid diagonally across the palm (rising `slope` toward the wrist per unit of z) cuts this finger's
+    // plane in a longer oval, further up the palm the nearer the little finger
+    const fy = cy + slope * F.z, fry = ry * Math.hypot(1, slope);
+    // approximate signed distance to the oval
+    const sd = (x, y) => {
+      const px = x - cx, py = y - fy;
+      const k0 = Math.hypot(px / rx, py / fry), k1 = Math.hypot(px / (rx * rx), py / (fry * fry));
+      return (k0 * (k0 - 1)) / k1;
+    };
+    const rad = [0, 1, 2].map((j) => F.r * PHALANX_R[j] * 1.06 * (j === 2 ? 0.84 : 0.9));
+    // does the finger from joint j on touch, with joint j at absolute angle a and the joints past it bent by 0.25?
+    const touches = (j, x, y, a) => {
+      for (let k = j; k < 3; k++, a += 0.25) {
+        const dx = -Math.sin(a) * F.L[k], dy = -Math.cos(a) * F.L[k];
+        for (let s = 0; s <= 6; s++) if (sd(x + (dx * s) / 6, y + (dy * s) / 6) < rad[k] * (1 - 0.07 * (s / 6)) - squeeze) return true;
+        x += dx;
+        y += dy;
+      }
+      return false;
+    };
+    const curl = [];
+    let x = 0, y = F.y, base = 0;
+    for (let j = 0; j < 3; j++) {
+      let a = base + 0.15;
+      while (a < base + 1.9 && !touches(j, x, y, a)) a += 0.005;
+      curl.push(a - base);
+      x -= Math.sin(a) * F.L[j];
+      y -= Math.cos(a) * F.L[j];
+      base = a;
+    }
+    return curl;
+  });
+}
+// knife: the handle laid diagonally across the palm (KNIFE_GRIP.tilt), from the heel of the hand to the base of the
+// index finger, every finger closed on it and the thumb lying along its spine toward the guard
+{
+  const c = [-0.027, -0.078, 0];
+  HAND_POSES.knife = { curl: wrapCurls(c[0], c[1], KNIFE_GRIP.rx, KNIFE_GRIP.ry, 0.0007, Math.tan(KNIFE_GRIP.tilt)), spread: 0.0, thumb: [[-0.4, -0.88, -0.22], [-0.45, -0.84, -0.3]], center: c };
+}
 // full-finger tactical gloves (tan synthetic, darker rubber knuckle guard / pads / strap) and an olive jacket
 const HAND_MAT = {
   glove: { region: WR.GLOVE, color: [1.3, 1.12, 0.88], mottle: 0.06 },
   finger: { region: WR.GLOVE, color: [1.25, 1.08, 0.85], mottle: 0.05 },
   trim: { region: WR.GLOVE, color: [0.5, 0.45, 0.4], mottle: 0.04 },
+  tip: { region: WR.GLOVE, color: [0.66, 0.52, 0.4], mottle: 0.05 }, // reinforced fingertips / thumb tip
   sleeve: { region: WR.SLEEVE, color: [0.34, 0.36, 0.26], mottle: 0.1 },
   hem: { region: WR.SLEEVE, color: [0.27, 0.29, 0.2], mottle: 0.06 },
 };
@@ -1313,6 +1693,116 @@ function loft(mb, nv, nu, fn, o = {}) {
 }
 
 /**
+ * One smooth tube through a chain of joints J[0..k] (a finger or the thumb): straight runs joined by rounded
+ * fillets at the joints and a dome at each end, so a bent digit has no collar where its segments meet. r[i] / sx[i]:
+ * radius and back-to-palm flattening at joint i; back[j]: the back of segment j; prof[j](t): radius multiplier
+ * along segment j. u = 0 / 0.5 run down the digit's sides (where the glove texture's seams are). o.flank: contact
+ * shadow on the sides facing the neighbouring digits (hand Z).
+ */
+function chainTube(mb, J, r, sx, back, prof, o = {}) {
+  const k = J.length - 1;
+  const V3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+  const P = J.map(V3), D = [], Ls = [], S0 = [0];
+  for (let j = 0; j < k; j++) {
+    const d = P[j + 1].clone().sub(P[j]);
+    Ls.push(d.length());
+    D.push(d.normalize());
+    S0.push(S0[j] + Ls[j]);
+  }
+  const f = [0];
+  for (let i = 1; i < k; i++) f.push(Math.min(0.35 * Ls[i - 1], 0.35 * Ls[i], 0.9 * r[i]));
+  f.push(0);
+  // centreline samples: position, tangent, back vector, arc position s (on the straight segments)
+  const smp = [];
+  const push = (c, t, b, s) => smp.push({ c, t: t.clone().normalize(), b: b.clone(), s });
+  const bk = back.map(V3);
+  for (let j = 0; j < k; j++) {
+    const a = P[j].clone().addScaledVector(D[j], f[j]), e = P[j + 1].clone().addScaledVector(D[j], -f[j + 1]);
+    const n = Math.max(2, Math.ceil(a.distanceTo(e) / 0.005));
+    for (let q = j === 0 ? 0 : 1; q <= n; q++) {
+      const t = q / n;
+      push(a.clone().lerp(e, t), D[j], bk[j], S0[j] + f[j] + (Ls[j] - f[j] - f[j + 1]) * t);
+    }
+    if (j < k - 1) {
+      // quadratic fillet from e through the joint to the start of the next run
+      const g = P[j + 1].clone().addScaledVector(D[j + 1], f[j + 1]);
+      for (let q = 1; q < 5; q++) {
+        const t = q / 5, m = 1 - t;
+        const c = e.clone().multiplyScalar(m * m).addScaledVector(P[j + 1], 2 * m * t).addScaledVector(g, t * t);
+        const tg = P[j + 1].clone().sub(e).multiplyScalar(2 * m).addScaledVector(g.clone().sub(P[j + 1]), 2 * t);
+        push(c, tg, bk[j].clone().lerp(bk[j + 1], t), S0[j + 1] + f[j + 1] * (2 * t - 1));
+      }
+    }
+  }
+  // radius / flattening at an arc position
+  const at = (s) => {
+    let j = 0;
+    while (j < k - 1 && s > S0[j + 1]) j++;
+    const t = Math.min(1, Math.max(0, (s - S0[j]) / Ls[j]));
+    return [(r[j] + (r[j + 1] - r[j]) * t) * (prof[j] ? prof[j](t) : 1), sx[j] + (sx[j + 1] - sx[j]) * t];
+  };
+  // o.tip = { from, color }: the last `from` metres of the digit in another colour, edged by two close rings
+  const sEnd = S0[k];
+  if (o.tip) {
+    const sb = sEnd - o.tip.from;
+    const i = smp.findIndex((p) => p.s > sb);
+    if (i > 0) {
+      const a = smp[i - 1], b = smp[i];
+      const mk = (s) => {
+        const t = (s - a.s) / (b.s - a.s);
+        return { c: a.c.clone().lerp(b.c, t), t: a.t.clone().lerp(b.t, t).normalize(), b: a.b.clone().lerp(b.b, t), s };
+      };
+      smp.splice(i, 0, mk(sb - 0.0002), mk(sb + 0.0002));
+    }
+  }
+  for (const p of smp) [p.r, p.sx] = at(p.s);
+  // domes: rings closing over each end
+  const cap = (p, dir, rings) => {
+    const out = [];
+    for (let q = 1; q <= rings; q++) {
+      const a = (q / rings) * (PI / 2);
+      out.push({ ...p, c: p.c.clone().addScaledVector(p.t, dir * Math.sin(a) * p.r * (o.capScale ?? 0.85)), r: p.r * Math.cos(a) });
+    }
+    return out;
+  };
+  const rings = [...cap(smp[0], -1, 3).reverse(), ...smp, ...cap(smp[smp.length - 1], 1, o.tipRings ?? 4)];
+  for (const p of rings) {
+    p.b.addScaledVector(p.t, -p.b.dot(p.t)).normalize();
+    p.l = new THREE.Vector3().crossVectors(p.b, p.t); // side
+  }
+  const nv = rings.length - 1, nu = o.rs || 12;
+  const joints = S0.slice(1, k);
+  const tipMul = o.tip && o.tip.color.map((c, i) => c / (o.color ? o.color[i] : 1));
+  let vi = 0; // the builder tints the loft's vertices in order, ring by ring
+  const tint = (Pt, N, C) => {
+    const best = rings[Math.min(nv, Math.floor(vi++ / (nu + 1)))];
+    if (tipMul && best.s > sEnd - o.tip.from) {
+      C.r *= tipMul[0];
+      C.g *= tipMul[1];
+      C.b *= tipMul[2];
+    }
+    const bdot = N.dot(best.b);
+    C.multiplyScalar(1 - 0.2 * Math.max(0, -bdot) - (o.flank ?? 0) * N.z * N.z);
+    let dj = Infinity;
+    for (const s of joints) dj = Math.min(dj, Math.abs(best.s - s));
+    const kc = (1 - sstep(0.002, 0.008, dj)) * Math.max(0, bdot); // creases across the back of each joint
+    C.multiplyScalar(1 - 0.16 * kc);
+    C.r *= 1 + 0.06 * kc;
+  };
+  return loft(
+    mb,
+    nv,
+    nu,
+    (v, u, out) => {
+      const p = rings[Math.round(v * nv)];
+      const ph = u * 2 * PI, cs = Math.cos(ph), sn = Math.sin(ph);
+      out.copy(p.c).addScaledVector(p.l, cs * p.r).addScaledVector(p.b, sn * p.r * p.sx);
+    },
+    { ...o, tint }
+  );
+}
+
+/**
  * Palm/back of the hand as a loft along -Y (wrist -> knuckles). Superellipse cross-sections: rounder
  * across the back, flatter on the palm, with thenar/hypothenar pads near the heel. Both ends are domed.
  */
@@ -1322,12 +1812,21 @@ function palmSurface(S) {
     if (v < S.d0) e = Math.sqrt(Math.max(0, 1 - ((S.d0 - v) / S.d0) ** 2));
     else if (v > 1 - S.d1) e = Math.sqrt(Math.max(0, 1 - ((v - 1 + S.d1) / S.d1) ** 2));
     const hz = S.hz0 + (S.hz1 - S.hz0) * sstep(0, 0.75, v);
-    const th = u * 2 * PI, c = Math.cos(th), s = Math.sin(th);
+    const th = (u + 0.25) * 2 * PI, c = Math.cos(th), s = Math.sin(th); // u = 0 / 0.5 (the glove's seams) on the sides
     const back = c >= 0;
-    const k = back ? 2 / 2.3 : 2 / 3.4;
+    const k = back ? 2 / 2.15 : 2 / 3.4;
     const ux = Math.sign(c) * Math.abs(c) ** k, uz = Math.sign(s) * Math.abs(s) ** k;
     let depth;
-    if (back) depth = S.xd0 + (S.xd1 - S.xd0) * v;
+    if (back) {
+      depth = S.xd0 + (S.xd1 - S.xd0) * v;
+      if (S.tendon) {
+        // the glove drapes over the four metacarpals: soft ridges fanning out from the wrist to the knuckles
+        const z = uz * hz * e, w = sstep(0.2, 0.8, v) * (1 - sstep(0.92, 1, v));
+        let rdg = 0;
+        for (const F of FINGERS) rdg = Math.max(rdg, Math.exp(-(((z - F.z * (0.55 + 0.45 * v)) / 0.0058) ** 2)));
+        depth += S.tendon * rdg * w * ux;
+      }
+    }
     else depth = S.xp0 + (S.xp1 - S.xp0) * v + (Math.max(0, -uz) * S.thenar + Math.max(0, uz) * S.hypo) * (1 - v) ** 0.7;
     out.set(S.cx + ux * depth * e, S.y0 + (S.y1 - S.y0) * v, S.cz + uz * hz * e);
   };
@@ -1368,43 +1867,58 @@ function getHandGeo(poseName, style, side) {
   // palm + back of the hand (a zombie's is thinner, with the tendons showing)
   loft(
     mb,
-    12,
-    20,
+    16,
+    claw ? 20 : 32,
     palmSurface({
       y0: 0.004, y1: -0.097, d0: 0.12, d1: 0.16, cx: -0.002, cz: -0.001,
       hz0: 0.026, hz1: claw ? 0.038 : 0.0405,
       xd0: claw ? 0.011 : 0.0135, xd1: claw ? 0.0085 : 0.0105,
       xp0: claw ? 0.013 : 0.016, xp1: claw ? 0.011 : 0.0135,
-      thenar: claw ? 0.003 : 0.006, hypo: claw ? 0.0015 : 0.0035,
+      thenar: claw ? 0.003 : 0.006, hypo: claw ? 0.0015 : 0.0035, tendon: claw ? 0 : 0.0014,
     }),
     { ...palmMat, tint: shade }
   );
   // knuckles (metacarpal heads)
   for (const F of FINGERS) {
     if (claw) mb.ellip(0, [0.001, F.y + 0.001, F.z], [0.0086, 0.0086, 0.009], { ...skin, color: [0.54, 0.57, 0.47], ws: 8, hs: 6, tint: shade });
-    else mb.ellip(0, [0.003, F.y + 0.001, F.z], [0.0098, 0.0092, 0.0094], { ...palmMat, ws: 8, hs: 5, tint: shade });
+    else mb.ellip(0, [0.003, F.y + 0.001, F.z], [0.0098, 0.0092, 0.0094], { ...palmMat, ws: 8, hs: 5, keepNormals: true, tint: shade });
   }
   // wrist: a rounded mass around the joint that keeps it filled however far the hand bends
   // (the sleeve / glove cuff belongs to the forearm, see getArmGeos)
-  mb.ellip(0, [-0.001, -0.003, 0], claw ? [0.0185, 0.02, 0.0235] : [0.021, 0.021, 0.0275], { ...palmMat, ws: 14, hs: 8, tint: shade });
+  // (keepNormals: the sphere's own normals, so a pole the wrist bend uncovers shades smoothly instead of dimpling)
+  mb.ellip(0, [-0.001, -0.003, 0], claw ? [0.0185, 0.02, 0.0235] : [0.021, 0.021, 0.0275], { ...palmMat, ws: 14, hs: 8, keepNormals: true, tint: shade });
   if (claw) {
     // tendons fanning out to the knuckles
     for (const F of FINGERS) {
       mb.seg(0, [0.009, -0.012, F.z * 0.45], [0.0105, F.y + 0.008, F.z * 0.95], 0.0026, 0.0022, { ...skin, color: [0.52, 0.56, 0.46], rs: 5, hs: 1, caps: 1, capScale: 0.5, tint: shade });
     }
   } else {
-    // padded knuckle guard
-    mb.box(0, [0.0135, -0.0835, -0.001], [0.0062, 0.015, 0.071], {
-      ...trim,
-      round: 0.65,
-      seg: 3,
-      shape: (p) => {
-        const w = p.z / 0.0355;
-        p.x -= w * w * 0.0035;
-        p.y += w * w * (w > 0 ? 0.004 : 0.0015);
+    // knuckle guard: one moulded strip along the knuckle arc, raised over each knuckle, domed at the ends
+    const z0 = FINGERS[0].z - 0.011, z1 = FINGERS[3].z + 0.009;
+    const knY = (z) => {
+      // knuckle line height, linear between the knuckles and carried on past the end ones
+      let i = 0;
+      while (i < 2 && z > FINGERS[i + 1].z) i++;
+      const a = FINGERS[i], b = FINGERS[i + 1];
+      return a.y + ((b.y - a.y) * (z - a.z)) / (b.z - a.z) + 0.0015;
+    };
+    loft(
+      mb,
+      22,
+      12,
+      (v, u, out) => {
+        const z = z0 + (z1 - z0) * v;
+        const s = Math.abs(2 * v - 1);
+        const e = s < 0.82 ? 1 : Math.sqrt(Math.max(0, 1 - ((s - 0.82) / 0.18) ** 2));
+        let b = 0;
+        for (const F of FINGERS) b = Math.max(b, Math.exp(-(((z - F.z) / 0.0058) ** 2)));
+        const w = (2 * (z - z0)) / (z1 - z0) - 1;
+        const th = u * 2 * PI, c = Math.cos(th), sn = Math.sin(th);
+        const ux = Math.sign(c) * Math.abs(c) ** 0.6, uy = Math.sign(sn) * Math.abs(sn) ** 0.6;
+        out.set(0.0108 + 0.0009 * b - 0.0035 * w * w + ux * (0.0024 + 0.0007 * b) * e, knY(z) + uy * (0.0064 + 0.0004 * b) * e, z);
       },
-      tint: shade,
-    });
+      { ...trim, tint: shade }
+    );
   }
 
   // fingers: three phalanges each, curled toward the palm (-X) by the pose
@@ -1412,10 +1926,11 @@ function getHandGeo(poseName, style, side) {
   for (let i = 0; i < 4; i++) {
     const F = FINGERS[i];
     const cz = pose.curl[i];
-    const spread = (i - 1.5) * pose.spread;
+    const spread = pose.spreads ? pose.spreads[i] : (i - 1.5) * pose.spread;
     const L = claw ? F.L.map((l) => l * 1.22) : F.L;
     let p = [0.0, F.y, F.z];
     let ang = 0;
+    const J = [p], backs = []; // glove: the joints, for one smooth tube down the finger (chainTube)
     for (let j = 0; j < 3; j++) {
       ang += cz[j] + (claw ? (rnd() - 0.5) * 0.15 : 0);
       const dl = Math.sqrt(1 + spread * spread);
@@ -1424,15 +1939,19 @@ function getHandGeo(poseName, style, side) {
       const q = [p[0] + d[0] * L[j], p[1] + d[1] * L[j], p[2] + d[2] * L[j]];
       const r0 = F.r * PHALANX_R[j] * (claw ? 0.8 : 1.06);
       const r1 = r0 * (j === 2 ? 0.88 : 0.93);
-      limb(mb, p, q, r0, r1, n, {
-        ...skin,
-        rs: 8,
-        hs: 2,
-        cap1: j === 2 ? 3 : 2,
-        sx: j === 2 ? 0.84 : 0.9,
-        prof: (t) => 1 - (claw ? 0.16 : 0.04) * Math.sin(PI * t), // joints stand out
-        tint: handShade(n, [p, d, L[j]], claw ? 0 : 0.3),
-      });
+      J.push(q);
+      backs.push(n);
+      if (claw) {
+        limb(mb, p, q, r0, r1, n, {
+          ...skin,
+          rs: 8,
+          hs: 2,
+          cap1: j === 2 ? 3 : 2,
+          sx: j === 2 ? 0.84 : 0.9,
+          prof: (t) => 1 - 0.16 * Math.sin(PI * t), // joints stand out
+          tint: handShade(n, [p, d, L[j]], 0),
+        });
+      }
       if (j === 0 && !claw) {
         // padded strip across the back of the first knuckle
         const c = [p[0] + d[0] * L[0] * 0.55 + n[0] * r0 * 0.72, p[1] + d[1] * L[0] * 0.55 + n[1] * r0 * 0.72, p[2] + d[2] * L[0] * 0.55];
@@ -1450,29 +1969,53 @@ function getHandGeo(poseName, style, side) {
       }
       p = q;
     }
+    if (!claw) {
+      // radii at the knuckle, the two finger joints (a little proud) and the tip
+      const rr = PHALANX_R.map((k) => F.r * k * 1.06);
+      chainTube(mb, J, [rr[0], rr[0] * 0.95, rr[1] * 0.95, rr[2] * 0.88], [0.9, 0.9, 0.87, 0.84], backs, [0, 1, 2].map(() => (t) => 1 - 0.04 * Math.sin(PI * t)), { ...skin, flank: 0.3, rs: 10, tipRings: 3, tip: { from: L[2] * 0.5, color: HAND_MAT.tip.color } }); // reinforced fingertip
+    }
   }
 
-  // thumb: metacarpal (with the thenar pad) from the heel of the hand to THUMB_MCP, then two phalanges
+  // thumb: metacarpal (with the thenar pad) from the heel of the hand to its MCP joint (pose.tmcp, THUMB_MCP by
+  // default), then two phalanges; tb = the back of the thumb
   {
     const c0 = [-0.004, -0.004, -0.019];
-    const tb = [0.5, 0, -0.85];
-    limb(mb, c0, THUMB_MCP, 0.0145, 0.0124, tb, { ...palmMat, rs: 10, hs: 1, sx: 0.85, tint: shade });
-    mb.ellip(0, [-0.0145, -0.029, -0.017], [0.0095, 0.021, 0.0125], { ...palmMat, ws: 10, hs: 6, rot: [0.52, 0, 0], tint: shade });
-    const L = claw ? [0.04, 0.034] : [0.036, 0.03];
-    const R = [
-      [0.0118, 0.0108],
-      [0.0112, 0.0096],
-    ];
-    let p = THUMB_MCP;
+    const tm = pose.tmcp || THUMB_MCP;
+    const tb = pose.tback || [0.5, 0, -0.85];
+    if (pose.tmcp) {
+      // thumb swung round a grip: the thenar pad lies along the metacarpal on its palm side, poles buried in it
+      _hy.set(tm[0] - c0[0], tm[1] - c0[1], tm[2] - c0[2]);
+      const len = _hy.length();
+      _hy.divideScalar(len);
+      _hx.set(tb[0], tb[1], tb[2]);
+      _hx.addScaledVector(_hy, -_hx.dot(_hy)).normalize();
+      _hz.crossVectors(_hx, _hy);
+      const q = new THREE.Quaternion().setFromRotationMatrix(_hm.makeBasis(_hx, _hy, _hz));
+      const c = [0, 1, 2].map((k) => c0[k] + (tm[k] - c0[k]) * 0.42 - [_hx.x, _hx.y, _hx.z][k] * 0.004);
+      mb.ellip(0, c, [0.0108, len * 0.42, 0.0128], { ...palmMat, ws: 12, hs: 8, q, keepNormals: true, tint: shade });
+    } else mb.ellip(0, [-0.0145, -0.029, -0.017], [0.0095, 0.021, 0.0125], { ...palmMat, ws: 10, hs: 6, rot: [0.52, 0, 0], keepNormals: true, tint: shade });
+    const L = claw ? [0.04, 0.034] : pose.thumbL || [0.036, 0.03];
+    const tj = [tm];
     for (let j = 0; j < 2; j++) {
-      const t = pose.thumb[j];
-      const l = Math.hypot(t[0], t[1], t[2]);
-      const d = [t[0] / l, t[1] / l, t[2] / l];
-      const q = [p[0] + d[0] * L[j], p[1] + d[1] * L[j], p[2] + d[2] * L[j]];
-      const r0 = R[j][0] * (claw ? 0.82 : 1.05), r1 = R[j][1] * (claw ? 0.82 : 1.05);
-      limb(mb, p, q, r0, r1, tb, { ...skin, rs: 8, hs: 2, cap1: j === 1 ? 3 : 2, sx: j === 1 ? 0.84 : 0.9, prof: (s) => 1 - (claw ? 0.14 : 0.04) * Math.sin(PI * s), tint: handShade(tb, [p, d, L[j]]) });
-      if (j === 1 && claw) mb.spike(0, q, [q[0] + d[0] * 0.03, q[1] + d[1] * 0.03, q[2] + d[2] * 0.03], 0.0065, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
-      p = q;
+      const t = pose.thumb[j], l = Math.hypot(t[0], t[1], t[2]), p = tj[j];
+      tj.push([p[0] + (t[0] / l) * L[j], p[1] + (t[1] / l) * L[j], p[2] + (t[2] / l) * L[j]]);
+    }
+    if (!claw) {
+      // glove: metacarpal and both phalanges as one smooth tube; the tip segment swells over the pad, and its last
+      // 60 % is the reinforced tip
+      chainTube(mb, [c0, ...tj], [0.0136, 0.0115, 0.0108, 0.0096], [0.85, 0.88, 0.87, 0.84], [tb, tb, tb], [null, (s) => 1 - 0.04 * Math.sin(PI * s), (s) => 1 + 0.07 * Math.sin(PI * Math.min(1, s * 1.25))], { ...skin, rs: 12, tipRings: 4, tip: { from: L[1] * 0.6, color: HAND_MAT.tip.color } });
+    } else {
+      limb(mb, c0, tm, 0.0145, 0.0112, tb, { ...palmMat, rs: 10, hs: 1, sx: 0.85, tint: shade });
+      const R = [
+        [0.0118, 0.0108],
+        [0.0108, 0.0096],
+      ];
+      for (let j = 0; j < 2; j++) {
+        const p = tj[j], q = tj[j + 1];
+        const d = [0, 1, 2].map((k) => (q[k] - p[k]) / L[j]);
+        limb(mb, p, q, R[j][0] * 0.82, R[j][1] * 0.82, tb, { ...skin, rs: 8, hs: 2, cap1: j === 1 ? 3 : 2, sx: j === 1 ? 0.84 : 0.9, prof: (s) => 1 - 0.14 * Math.sin(PI * s), tint: handShade(tb, [p, d, L[j]]) });
+        if (j === 1) mb.spike(0, q, [q[0] + d[0] * 0.03, q[1] + d[1] * 0.03, q[2] + d[2] * 0.03], 0.0065, { ...bone, color: [0.1, 0.085, 0.075], rs: 6 });
+      }
     }
   }
   if (claw) {
@@ -1507,11 +2050,13 @@ function getArmGeos(style, side) {
     fo.seg(0, [0, 0.03, 0], [0, W + 0.1, 0], 0.047, 0.041, { ...sleeve, rs: 14, hs: 4, caps: 2, capScale: 0.3, noise: 0.0015, nf: 30 });
     limb(fo, [0, W + 0.112, 0], [0, W + 0.094, 0], 0.0425, 0.0418, [1, 0, 0], { ...hem, rs: 14, hs: 1, cap0: 1, cap1: 2, capScale: 0.45 });
     const shade = handShade([1, 0, 0]);
-    // gauntlet (X = back of the hand, see VMArm.orient); its rounded end tucks around the hand's wrist
-    limb(fo, [0, W + 0.1, 0], [0, W - 0.002, 0], 0.0335, 0.0282, [1, 0, 0], { ...HAND_MAT.glove, rs: 14, hs: 3, sx: 0.86, sz: 1.12, cap0: 0, cap1: 3, capScale: 0.25, ao: false, tint: shade, prof: (t) => 1 + 0.03 * Math.sin(PI * t) });
+    // gauntlet (X = back of the hand, see VMArm.orient); its rounded end tucks around the hand's wrist. Its cross-
+    // section is set up from Z (n = [0, 0, 1], so sx is across the wrist and sz back to palm), which puts the glove
+    // texture's seams on the back and palm sides rather than along the top the camera looks down at
+    limb(fo, [0, W + 0.1, 0], [0, W - 0.002, 0], 0.031, 0.027, [0, 0, 1], { ...HAND_MAT.glove, rs: 14, hs: 3, sx: 1.06, sz: 0.84, cap0: 0, cap1: 3, capScale: 0.25, ao: false, tint: shade, prof: (t) => 1 + 0.03 * Math.sin(PI * t) });
     // velcro strap and tab around the cuff
-    limb(fo, [0, W + 0.047, 0], [0, W + 0.027, 0], 0.0322, 0.0305, [1, 0, 0], { ...HAND_MAT.trim, rs: 14, hs: 1, sx: 0.87, sz: 1.12, cap0: 1, cap1: 1, capScale: 0.25, ao: false, tint: shade });
-    fo.box(0, [0.0285, W + 0.037, 0.004], [0.0045, 0.02, 0.03], {
+    limb(fo, [0, W + 0.047, 0], [0, W + 0.027, 0], 0.0299, 0.0291, [0, 0, 1], { ...HAND_MAT.trim, rs: 14, hs: 1, sx: 1.07, sz: 0.85, cap0: 1, cap1: 1, capScale: 0.25, ao: false, tint: shade });
+    fo.box(0, [0.0262, W + 0.037, 0.004], [0.0045, 0.02, 0.03], {
       ...HAND_MAT.trim,
       round: 0.5,
       seg: 2,
@@ -1558,7 +2103,7 @@ class VMArm {
       this.shoulder.add(upper);
       this.elbow.add(fore);
       const hands = {};
-      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open'];
+      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open', 'knife'];
       for (const p of poses) {
         const h = new THREE.Mesh(getHandGeo(p, style === 'claw' ? 'claw' : 'glove', side), mat);
         h.visible = false;
@@ -1693,22 +2238,47 @@ const VM = {
     rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.018, rx: 0.03, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
+  [ITEM.RPG]: {
+    // shouldered: the tube rests on the right shoulder and runs forward down the right of the screen, the right hand on
+    // the pistol grip, the left round the front grip; aimed, the sight off the left of the tube comes up to the eye.
+    // rpg: the grenade in the muzzle follows the loaded state like the crossbow's bolt, and the reload carries a new
+    // one in (_animReloadRPG, the left hand under its bulb at holdQ). A heavy shove back, little climb
+    kind: 'rifle', rpg: true, hip: [0.21, -0.21, -0.3, 0.03, 0.0, 0.0], ads: 0.22, adsZ: -0.38, adsPitch: 0.12,
+    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: handQ(-1, [0.35, -0.2, -0.92], [1, 0, 0.35]), pose: 'grip' },
+    holdQ: supportGrip(-0.3, 0.5, 0.0),
+    recoil: { z: 0.08, rx: 0.03, ry: 0.012 }, sprint: [-0.03, -0.04, 0.02, -0.3, 0.35, 0.3],
+  },
   [ITEM.FLAMETHROWER]: {
     // reloads like a rifle: the fuel bottle is the magazine, the gas valve the charging handle (the hand just opens it)
     kind: 'rifle', hip: [0.19, -0.19, -0.27, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2, chargeFire: false, chargeTravel: 0, chargeQ: [1.3, 0.1, 0],
     rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
     recoil: { z: 0.004, rx: 0.004, ry: 0.006 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
+  [ITEM.AT_RIFLE]: {
+    // single: one round at a time, fed by hand into the open port (_animReloadSingle); the bolt is only worked on the
+    // reload (boltTravel: how far it comes back). Heavy: it sags off the shoulder and kicks hard
+    kind: 'rifle', bolt: true, single: true, boltTravel: 0.06, hip: [0.21, -0.225, -0.37, 0.035, 0.1, 0.0], ads: 0.22, adsZ: -0.3,
+    rGrip: { p: [0, 0, 0], q: gunGrip(0.32) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    recoil: { z: 0.09, rx: 0.17, ry: 0.03 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+  },
   [ITEM.PISTOL]: {
-    // CS-style: low on the right, angled in toward the crosshair; index finger on the trigger, the left hand
-    // cupping the right from below with its fingers wrapped over the front of the grip
+    // CS-style: low on the right, angled in toward the crosshair. Thumbs-forward two-hand grip: the right palm turned
+    // ~26 deg toward the muzzle so its wrist sits behind the backstrap, index pad on the trigger; the left palm on the
+    // left of the grip, its fingers over the right hand's, both thumbs along the frame. rGrip / lGrip and the
+    // 'trigger' / 'cup' poses were fitted together against this grip's outline (fingers resting on it, nothing inside)
     kind: 'pistol', hip: [0.11, -0.158, -0.29, 0.09, 0.18, -0.06], ads: 0.2, adsZ: -0.42,
-    rPose: 'trigger', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
-    lGrip: { p: [0, -0.028, -0.03], q: handQ(-1, [0.05, -0.55, -0.83], [0.92, 0.3, 0.15]), pose: 'cup' },
+    rPose: 'trigger', rGrip: { p: [0, 0, -0.007], q: handQ(1, [0.435, -0.325, -0.84], [-0.9, -0.157, -0.406]) },
+    lGrip: { p: [0, -0.02, -0.007], q: handQ(-1, [-0.199, -0.354, -0.914], [0.98, -0.072, -0.185]), pose: 'cup' },
     poleR: new THREE.Vector3(0.5, -1, 0.2), poleL: new THREE.Vector3(-0.6, -0.9, 0.2), // elbows down
     recoil: { z: 0.03, rx: 0.1, ry: 0.01 }, sprint: [0.0, -0.015, 0.03, -0.3, 0.22, 0.28],
   },
-  [ITEM.KNIFE]: { kind: 'melee', hip: [0.15, -0.16, -0.3, 0.55, 0.35, -0.35], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.02, -0.05, 0.05, -0.3, 0.1, 0] },
+  [ITEM.KNIFE]: {
+    // held up the way a hand actually holds a knife: the wrist straight in line with the forearm (the elbow dropped,
+    // poleR), the back of the hand toward the eye, the blade rising up and left out of the thumb side. The hip angles
+    // were solved for that hand (a hammer grip can't point the blade along the forearm; this one used to need the
+    // wrist bent ~95 degrees).
+    kind: 'melee', hip: [0.18, -0.13, -0.34, 0.651, 1.414, 2.646], poleR: new THREE.Vector3(0.3, -0.9, 0.3),
+    rPose: 'knife', rGrip: { p: [0, 0, 0], q: handQ(1, [0, -Math.cos(KNIFE_GRIP.tilt), -Math.sin(KNIFE_GRIP.tilt)], [-1, 0, 0]) }, sprint: [0.02, -0.05, 0.05, -0.3, 0.1, 0] },
   [ITEM.BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'grip' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
   [ITEM.SPIKED_BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'grip' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
   [ITEM.MACHETE]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.95, 0.3, 0.1], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
@@ -1720,8 +2290,9 @@ const VM = {
 
 // melee swing keyframes: [t, px,py,pz, rx,ry,rz, ease] (absolute weapon pose, Euler YXZ); ease 0 smooth,1 linear,2 out,3 in
 const SWINGS = {
-  knife: { dur: 0.36, keys: [[0.28, 0.2, 0.0, -0.28, 0.9, -0.4, -0.9, 0], [0.55, -0.12, -0.2, -0.4, 0.2, 0.9, 0.9, 1], [0.7, -0.14, -0.24, -0.36, 0.1, 1.0, 1.0, 2]] },
-  stab: { dur: 0.62, keys: [[0.3, 0.16, -0.17, -0.2, 0.3, 0.35, -1.3, 0], [0.48, 0.05, -0.11, -0.5, 0.15, 0.35, -1.4, 2], [0.66, 0.05, -0.11, -0.48, 0.15, 0.35, -1.4, 0]] },
+  // knife keys, like its hip, were solved for a hand that stays in line with the forearm
+  knife: { dur: 0.36, keys: [[0.28, 0.24, -0.04, -0.3, 0.901, 3.168, 2.304, 0], [0.55, -0.1, -0.22, -0.42, 0.084, 0.895, 2.987, 1], [0.7, -0.12, -0.25, -0.38, 0.045, 0.834, 3.166, 2]] },
+  stab: { dur: 0.62, keys: [[0.3, 0.21, -0.2, -0.29, 0.466, 1.691, 2.32, 0], [0.48, 0.06, -0.19, -0.54, 0.318, 0.912, 2.116, 2], [0.66, 0.06, -0.19, -0.52, 0.385, 0.959, 2.145, 0]] },
   bat: { dur: 0.62, keys: [[0.3, 0.26, -0.13, -0.34, 0.5, -1.7, 0.4, 0], [0.47, 0.08, -0.19, -0.45, 0.1, 0.5, 0.1, 1], [0.64, -0.2, -0.17, -0.36, 0.2, 1.8, -0.3, 2]] },
   machete: { dur: 0.5, keys: [[0.32, 0.21, 0.06, -0.3, 1.6, -0.3, -0.4, 0], [0.52, -0.02, -0.15, -0.42, -0.3, 0.9, 0.6, 1], [0.66, -0.12, -0.23, -0.36, -0.8, 1.1, 0.8, 2]] },
   hammer: { dur: 0.5, keys: [[0.32, 0.2, 0.05, -0.3, 1.8, 0.1, 0.0, 0], [0.52, 0.06, -0.16, -0.45, -0.2, 0.2, 0.0, 1], [0.64, 0.05, -0.18, -0.43, -0.3, 0.2, 0.0, 2]] },
@@ -1783,6 +2354,8 @@ const smoothstep = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 const win = (u, a, b, c, d) => smoothstep(a, b, u) * (1 - smoothstep(c, d, u)); // rise a..b, fall c..d
+// a drink at the mouth, on top of where a used item is held: up (m), towards the eye (m), tipped back (rad)
+const DRINK_LIFT = [0.06, 0.17, 1.6];
 
 // A damped spring, kicked through .v (recoil, landing dip, look lag). Its constants were tuned with one explicit
 // step per frame at 60 fps (v += a * dt, x += v * dt), and that step is part of the feel: it takes c / 60 off a
@@ -1895,6 +2468,20 @@ function makeCan() {
   return mb.build().geometry;
 }
 
+// energy drink (drink "use" prop): a tall black can with a lime band, held in both hands and tipped up to the mouth
+function makeDrink() {
+  const mb = new MeshBuilder({ skinned: false, atlas: 'weapon' });
+  const R = 0.03, H = 0.15;
+  mb.seg(0, [0, -H / 2, 0], [0, -H / 2 + 0.007, 0], R * 0.84, R, { region: WR.PLAIN, color: 0xb4b6b2, rs: 14, hs: 1, caps: 1, capScale: 0.02 });
+  mb.seg(0, [0, -H / 2 + 0.007, 0], [0, H * 0.42, 0], R, R, { region: WR.PLAIN, color: 0x141614, rs: 14, hs: 1, caps: 0 });
+  mb.seg(0, [0, -H * 0.12, 0], [0, H * 0.18, 0], R + 0.0006, R + 0.0006, { region: WR.PLAIN, color: 0x6cc228, rs: 14, hs: 1, caps: 0 });
+  mb.seg(0, [0, -H * 0.085, 0], [0, -H * 0.055, 0], R + 0.001, R + 0.001, { region: WR.PLAIN, color: 0xe6e6dc, rs: 14, hs: 1, caps: 0 });
+  // the shoulder narrowing into the lid, and the ring-pull bent up off it
+  mb.seg(0, [0, H * 0.42, 0], [0, H / 2, 0], R, R * 0.82, { region: WR.PLAIN, color: 0xb4b6b2, rs: 14, hs: 1, caps: 1, capScale: 0.02 });
+  mb.box(0, [R * 0.3, H / 2 + 0.002, 0], [0.012, 0.0016, 0.008], { region: WR.PLAIN, color: 0xc8cac6 });
+  return mb.build().geometry;
+}
+
 // a cut of venison on the bone (food "use" prop for meat): raw and red, or browned off the fire
 function makeMeat(cooked) {
   const mb = new MeshBuilder({ skinned: false, atlas: 'weapon' });
@@ -1927,7 +2514,9 @@ export class ViewModel {
     this.scoped = false;
     this.kitGeo = makeKit();
     this.canGeo = makeCan();
+    this.drinkGeo = makeDrink();
     this.meatGeo = [makeMeat(false), makeMeat(true)];
+    this.drinking = false; // the use is a drink: the can goes up to the mouth and tips
     this.kitGrip = 0.1; // half the distance between the hands holding it
     this.kit = new THREE.Mesh(this.kitGeo, getViewWeaponMaterial());
     this.kit.visible = false;
@@ -1962,7 +2551,7 @@ export class ViewModel {
     this.cycleT = 9; // bolt/pump cycle timer
     this.clawSide = 1;
     this.reloadHold = 0;
-    this.cocked = true; // crossbow: string latched with a bolt on the rail
+    this.cocked = true; // crossbow: string latched with a bolt on the rail (RPG: a grenade in the muzzle)
     this.cockHold = 0; // ...and how long to trust our own fire / reload over the caller's `loaded`
     this._nock = new THREE.Vector3(); // where the middle of the string is (weapon space)
     this.visible = true;
@@ -2069,8 +2658,8 @@ export class ViewModel {
     this.recX.v += rc.rx * 30 * ads;
     this.recY.v += (Math.random() - 0.5) * rc.ry * 40;
     this.fireT = 0;
-    if (this.cur.cfg.kind === 'shotgun' || this.cur.cfg.bolt) this.cycleT = 0;
-    if (this.cur.cfg.crossbow) {
+    if (this.cur.cfg.kind === 'shotgun' || (this.cur.cfg.bolt && !this.cur.cfg.single)) this.cycleT = 0; // (single: the reload works the bolt)
+    if (this.cur.cfg.crossbow || this.cur.cfg.rpg) {
       this.cocked = false;
       this.cockHold = 0.3;
     }
@@ -2108,8 +2697,9 @@ export class ViewModel {
   useItem(duration = 2, item = 0) {
     const food = !!CONSUMABLES[item]?.food;
     const meat = CONSUMABLES[item]?.meat || 0; // 1: a raw cut, 2: a cooked one
-    this.kit.geometry = meat ? this.meatGeo[meat - 1] : food ? this.canGeo : this.kitGeo;
-    this.kitGrip = food ? 0.068 : 0.1;
+    this.drinking = !!CONSUMABLES[item]?.drink;
+    this.kit.geometry = meat ? this.meatGeo[meat - 1] : food ? this.canGeo : this.drinking ? this.drinkGeo : this.kitGeo;
+    this.kitGrip = food ? 0.068 : this.drinking ? 0.055 : 0.1;
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
   }
 
@@ -2170,7 +2760,7 @@ export class ViewModel {
         const done = this.act;
         this.act = null;
         if (done.type === 'use') this.drawT = 0;
-        if (done.type === 'reload' && cur && cur.cfg.crossbow) {
+        if (done.type === 'reload' && cur && (cur.cfg.crossbow || cur.cfg.rpg)) {
           this.cocked = true;
           this.cockHold = 0.3;
         }
@@ -2286,13 +2876,18 @@ export class ViewModel {
         P6[0] -= rOnBolt * 0.035;
         P6[1] += rOnBolt * 0.025;
       }
-      if (act && act.type === 'reload') {
+      if (act && act.type === 'reload' && cfg.single) {
+        // opened as the reload starts, closed on the new round as it ends
+        rOnBolt = win(u, 0.0, 0.035, 0.12, 0.17) + win(u, 0.8, 0.85, 0.975, 1.0);
+        lift = smoothstep(0.035, 0.06, u) * (1 - smoothstep(0.93, 0.975, u));
+        back = smoothstep(0.06, 0.1, u) * (1 - smoothstep(0.86, 0.92, u));
+      } else if (act && act.type === 'reload') {
         rOnBolt = win(u, 0.0, 0.1, 0.86, 0.96);
         lift = smoothstep(0.08, 0.14, u) * (1 - smoothstep(0.78, 0.84, u));
         back = smoothstep(0.14, 0.22, u) * (1 - smoothstep(0.7, 0.78, u));
       }
       parts.bolt.rotation.z = lift * 1.2;
-      parts.bolt.position.z = parts.bolt.userData.base.z + back * 0.085;
+      parts.bolt.position.z = parts.bolt.userData.base.z + back * (cfg.boltTravel || 0.085);
       if (rOnBolt > 0.001) {
         altR = this._rBoltTarget || (this._rBoltTarget = new THREE.Vector3());
         // knob position follows the bolt transform
@@ -2316,11 +2911,26 @@ export class ViewModel {
       parts.arrow.visible = this.cocked && !reloading;
       parts.arrow.position.copy(parts.arrow.userData.base);
     }
+    if (cfg.rpg) {
+      // the grenade in the muzzle: fire() takes it away at once and the reload carries a new one in (_animReloadRPG);
+      // otherwise it follows the caller, like the crossbow's bolt
+      const reloading = !!act && act.type === 'reload';
+      if (this.cockHold > 0) this.cockHold -= dt;
+      else if (!reloading && s.loaded !== undefined) this.cocked = !!s.loaded;
+      const wh = parts.warhead;
+      wh.visible = this.cocked && !reloading;
+      wh.position.copy(wh.userData.base);
+      wh.quaternion.identity();
+      this._rpgFollow = false;
+    }
     if (parts.mag) {
       parts.mag.position.copy(parts.mag.userData.base);
       parts.mag.quaternion.identity();
       parts.mag.visible = true;
     }
+
+    this._atFollow = false;
+    if (cfg.single) parts.round.visible = parts.case.visible = false; // (shown by the reload only)
 
     // ---- actions
     if (act) {
@@ -2435,6 +3045,18 @@ export class ViewModel {
       this.armL.setPose(lPose);
       this.armL.setVisible(lVisible || altLw > 0.01);
       this._solveArm(this.armL, lp, lq, SHOULDER_L, cfg.poleL || POLE_L);
+      if (this._atFollow) {
+        // the anti-tank round in the left hand: weapon space, held by its middle
+        _q1.copy(wq).invert();
+        const rd = parts.round;
+        rd.position.copy(lp).sub(wp).applyQuaternion(_q1).sub(atHold(_v1, this._atTilt, this._atYaw));
+      }
+      if (cfg.rpg && this._rpgFollow) {
+        // the RPG grenade in the left hand: weapon space, held under its bulb (its tilt set by _animReloadRPG)
+        _q1.copy(wq).invert();
+        const wh = parts.warhead;
+        wh.position.copy(lp).sub(wp).applyQuaternion(_q1).sub(_v1.copy(meta.rpg.grab).applyQuaternion(wh.quaternion));
+      }
     } else {
       this.armL.setVisible(false);
     }
@@ -2461,6 +3083,42 @@ export class ViewModel {
     this._nock.set(0, x.pivot.y, nz);
   }
 
+  // RPG: the launcher comes down off the shoulder and swings its muzzle in toward the middle of the screen; the left
+  // hand lets go of the front grip, goes down for a grenade (below the screen by u 0.16), brings it up under and ahead
+  // of the muzzle (0.32..0.5), lifts it into line with the bore (0.5..0.6) and pushes it in tail first (seated at
+  // 0.74), then goes back to the grip. Until it is seated the grenade rides in the left hand (update places it after
+  // the arm is solved: this._rpgFollow).
+  _animReloadRPG(u, P6, st, parts, meta) {
+    const tilt = win(u, 0.0, 0.16, 0.84, 1.0);
+    const seat = win(u, 0.72, 0.74, 0.76, 0.82); // the launcher nods back as the grenade bottoms out
+    P6[0] -= tilt * 0.05;
+    P6[1] -= tilt * 0.045;
+    P6[2] += tilt * 0.1 + seat * 0.01;
+    P6[3] += tilt * 0.1;
+    P6[4] += tilt * 0.42;
+    P6[5] += tilt * 0.2;
+    const lift = smoothstep(0.5, 0.6, u);
+    const push = smoothstep(0.6, 0.74, u);
+    // the grenade relative to its seat: out along the bore by the stroke, and before it is lined up, lower, further
+    // out and nose up (tail down), clear of the tube
+    const wh = parts.warhead, g = meta.rpg, base = wh.userData.base;
+    wh.quaternion.setFromAxisAngle(X_AXIS, 0.3 * (1 - lift));
+    wh.position.set(base.x, base.y - 0.07 * (1 - lift), base.z - g.stroke * (1 - push) - 0.06 * (1 - lift));
+    if (u >= 0.32) {
+      wh.visible = true;
+      this._rpgFollow = push < 1;
+    }
+    // left hand: front grip -> down for a grenade (A, below the screen) -> under the grenade's bulb (B, riding on it)
+    st.a.set(-0.1, -0.55, -0.24);
+    st.aCam = true;
+    st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
+    st.b.copy(g.grab).applyQuaternion(wh.quaternion).add(wh.position);
+    st.qb.copy(wh.quaternion).multiply(this.cur.cfg.holdQ);
+    st.m = smoothstep(0.32, 0.5, u);
+    st.w = win(u, 0.04, 0.16, 0.8, 0.94);
+    st.pose = 'support';
+  }
+
   _solveArm(arm, gripPos, handQ, shoulderPos, pole) {
     // wrist = grip - handQ * gripCenter
     arm.gripCenter(_v3).applyQuaternion(handQ);
@@ -2480,6 +3138,8 @@ export class ViewModel {
     st.aCam = st.bCam = false;
     st.pose = null;
     this._reloadState = st;
+    if (cur.cfg.single) return this._animReloadSingle(u, P6, st, parts, meta);
+    if (cur.cfg.rpg) return this._animReloadRPG(u, P6, st, parts, meta);
     if (cur.cfg.crossbow) {
       // dip the nose, haul the string back to the latch (update() flexes the limbs to match), then fetch a
       // bolt from below, lay it in the groove and slide it back against the string
@@ -2664,6 +3324,57 @@ export class ViewModel {
     }
   }
 
+  // Anti-tank rifle (cfg.single): one big round fed by hand. The right hand throws the bolt open (the bolt block in
+  // update) and the spent case flies out; the left hand goes down to a pouch on the belt for a long beat, brings a
+  // round up over the port, lays it in and presses it home (seated at u 0.62), and goes back to the handguard while
+  // the right hand closes the bolt on it (0.86..0.98). Until it is laid in, the round rides in the left hand
+  // (update places it after the arm is solved: this._atFollow).
+  _animReloadSingle(u, P6, st, parts, meta) {
+    // the gun cants left to turn the port up, and sags while the left hand is away from it
+    const tilt = win(u, 0.0, 0.1, 0.86, 1.0);
+    const sag = win(u, 0.12, 0.24, 0.62, 0.74);
+    P6[5] += tilt * 0.32;
+    P6[3] -= tilt * 0.05 + sag * 0.05;
+    P6[1] -= tilt * 0.012 + sag * 0.025;
+    P6[0] -= tilt * 0.025;
+    const seat = meta.seat, travel = this.cur.cfg.boltTravel || 0.085;
+    // the spent case: drawn back with the bolt face, then flung up and out to the right
+    const c = parts.case;
+    if (u > 0.06 && u < 0.15) {
+      c.visible = true;
+      const e = Math.max(0, (u - 0.095) / 0.055);
+      c.position.set(seat.x + e * 0.28, seat.y + e * 0.4 - e * e * 0.6, seat.z + smoothstep(0.06, 0.1, u) * travel + e * 0.08);
+      c.rotation.set(-e * 4, e * 2.5, e * 1.5);
+    }
+    // the new round: in the hand (follow), then from over the port down into it, nose first
+    const rd = parts.round;
+    const lay = smoothstep(0.57, 0.615, u);
+    const press = win(u, 0.6, 0.62, 0.64, 0.665);
+    const AT = this._atAbove || (this._atAbove = new THREE.Vector3());
+    AT.set(seat.x + 0.014 * (1 - lay), seat.y + 0.07 * (1 - lay), seat.z + 0.03 * (1 - lay));
+    this._atTilt = -0.35 * (1 - lay);
+    this._atYaw = 1.35 * (1 - smoothstep(0.55, 0.6, u)); // carried crosswise in the fingers, turned to the bore over the port
+    if (u >= 0.57) {
+      rd.visible = u < 0.92;
+      rd.position.copy(AT);
+      rd.rotation.set(this._atTilt, this._atYaw, 0);
+    } else if (u > 0.45) {
+      rd.visible = true;
+      rd.rotation.set(this._atTilt, this._atYaw, 0);
+      this._atFollow = true;
+    }
+    // left hand: forend -> the pouch (A, below the screen) -> over the port with the round (B, riding on it) -> forend
+    st.a.set(-0.06, -0.55, -0.22);
+    st.aCam = true;
+    st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
+    atHold(st.b, this._atTilt, this._atYaw).add(AT);
+    st.b.y -= press * 0.006;
+    st.qb.setFromEuler(_e1.set(-0.9, 0.3, -PI / 2, 'YXZ'));
+    st.m = smoothstep(0.5, 0.57, u);
+    st.w = win(u, 0.1, 0.17, 0.66, 0.76);
+    st.pose = 'pinch';
+  }
+
   _animThrow(u, P6, cur) {
     // wind up (0..0.38), throw (0.38..0.5), release at ~0.46, lower (0.5..0.75), re-draw (0.75..1)
     const wind = smoothstep(0.0, 0.38, u) * (1 - smoothstep(0.38, 0.5, u));
@@ -2682,12 +3393,15 @@ export class ViewModel {
   }
 
   _animUse(u, t) {
-    // kit held in front with both hands on its sides; small fiddling motion while "using"
+    // kit held in front with both hands on its sides; small fiddling motion while "using". A drink goes up instead,
+    // its lid to the mouth under the eyes and tipped past level, so it is the side and the bottom that are seen
     const up = win(u, 0.05, 0.25, 0.78, 0.95);
-    const kitPos = _v2.set(0.0, -0.13 - (1 - up) * 0.3 + Math.sin(t * 5.3) * 0.004 * up, -0.38);
+    const sip = this.drinking ? win(u, 0.2, 0.42, 0.66, 0.84) : 0;
+    const fid = up * (1 - sip);
+    const kitPos = _v2.set(0.0, -0.13 - (1 - up) * 0.3 + sip * DRINK_LIFT[0] + Math.sin(t * 5.3) * 0.004 * fid, -0.38 + sip * DRINK_LIFT[1]);
     this.kit.visible = up > 0.02;
     this.kit.position.copy(kitPos);
-    this.kit.quaternion.setFromEuler(_e1.set(0.35 - (1 - up) * 0.6, Math.sin(t * 3.1) * 0.12 * up, Math.sin(t * 4.3) * 0.08 * up, 'YXZ'));
+    this.kit.quaternion.setFromEuler(_e1.set(0.35 - (1 - up) * 0.6 + sip * DRINK_LIFT[2], Math.sin(t * 3.1) * 0.12 * fid, Math.sin(t * 4.3) * 0.08 * fid, 'YXZ'));
     _q2.setFromAxisAngle(X_AXIS, PI / 2); // palm on the side, fingers forward, index up
     _q1.copy(this.kit.quaternion).multiply(_q2);
     for (let side = -1; side <= 1; side += 2) {
@@ -2749,7 +3463,7 @@ export function viewModelTris(itemId) {
 }
 export function handTris() {
   let n = 0;
-  for (const p of ['grip', 'support', 'pinch', 'open', 'claw']) {
+  for (const p of ['grip', 'support', 'pinch', 'open', 'claw', 'knife']) {
     const g = getHandGeo(p, p === 'claw' ? 'claw' : 'glove', 1);
     n = Math.max(n, g.index.count / 3);
   }

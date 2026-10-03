@@ -188,10 +188,13 @@ export class Connection {
         break;
       case ACT.DROP_SLOT:
       case ACT.SPLIT_INV:
+      case ACT.SALVAGE:
+      case ACT.DROP_AMMO:
         w.u8(args[0]);
         w.u16(args[1]);
         break;
       case ACT.SWAP_INV:
+      case ACT.UNEQUIP:
         w.u8(args[0]);
         w.u8(args[1]);
         break;

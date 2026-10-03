@@ -4,12 +4,12 @@
 // of Game.craft (server/game.js) and the slot rules of server/inventory.js craft by craft: paying frees slots and
 // stacks fill up, so the answer is not a division. No DOM in here: sim-smoke holds it against the server, so
 // change the two together.
-import { ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
+import { ITEM_DEFS, WEAPONS, AMMO_MAX } from '../../shared/defs.js';
 
 export const CRAFT_FEW = 5; // Shift+click
 export const CRAFT_MAX = 20; // Ctrl+click (Cmd on a Mac): as many as the materials allow, up to this
 
-// inv = { slots: [{ item, count } | null], ammo: [rounds per calibre in those slots], weapons: [item per weapon slot] }
+// inv = { slots: [{ item, count } | null], ammo: [reserve per calibre, carried apart from the slots], weapons: [item per weapon slot] }
 export const copyInv = (inv) => ({ slots: inv.slots.map((s) => (s ? { item: s.item, count: s.count } : null)), ammo: [...inv.ammo], weapons: [...inv.weapons] });
 
 const have = (slots, item) => slots.reduce((n, s) => n + (s && s.item === item ? s.count : 0), 0);
@@ -64,7 +64,13 @@ export function craftRun(rec, inv, want) {
   let done = 0;
   for (; done < want; done++) {
     for (const k in rec.cost) if (have(slots, +k) < rec.cost[k]) return done;
-    if (def.cat === 'weapon') {
+    if (def.cat === 'ammo') {
+      // The server takes a craft while the reserve has room for a single round, and puts the rest of that batch on
+      // the ground. A bulk craft stops at the last whole batch that fits, so nothing has to be picked up again
+      if (inv.ammo[def.ammo] + rec.n > AMMO_MAX[def.ammo]) return done;
+      pay(slots, rec.cost);
+      inv.ammo[def.ammo] += rec.n;
+    } else if (def.cat === 'weapon') {
       // its weapon slot when that is empty, else a backpack slot - which has to be free before the cost is paid
       const slot = WEAPONS[rec.out].slot;
       if (inv.weapons[slot] && slots.every(Boolean)) return done;
@@ -80,7 +86,6 @@ export function craftRun(rec, inv, want) {
       }
       pay(slots, rec.cost);
       add(slots, rec.out, rec.n);
-      if (def.cat === 'ammo') inv.ammo[def.ammo] += rec.n; // (the reserve is the count of what the backpack holds)
     }
   }
   return done;

@@ -543,7 +543,13 @@ export function getPropMaterial() {
 }
 /** Viewmodel arms material (char-style skin/sleeves live in the weapon atlas too). No fog. */
 export function getViewArmMaterial() {
-  if (!_vmArmMat) _vmArmMat = makeMat(getWeaponAtlas(), false);
+  if (!_vmArmMat) {
+    // a faint sheen on the glove's synthetic fabric and the jacket, so the hands' forms read under the flat
+    // viewmodel light instead of going matte like clay
+    _vmArmMat = new THREE.MeshPhongMaterial({ map: getWeaponAtlas(), vertexColors: true, fog: false, specular: 0x1e1b17, shininess: 16 });
+    _vmArmMat.onBeforeCompile = patchShader;
+    _vmArmMat.customProgramCacheKey = () => 'stn-vm-arm-v1';
+  }
   return _vmArmMat;
 }
 /** Viewmodel weapon material, no fog. */

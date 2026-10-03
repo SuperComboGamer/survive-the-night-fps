@@ -67,12 +67,26 @@ const rifleRound = (x, w = 6, h = 35) => {
   );
 };
 
+// RPG grenade standing on its tail (40 high): fuze, ogive, a bulb with a painted band, motor, tail boom and two fins
+const rocket = (x) =>
+  E(
+    `M${f(x - 1)} 3.4V1.6Q${f(x - 1)} 0.5 ${x} 0.5Q${f(x + 1)} 0.5 ${f(x + 1)} 1.6V3.4Q${f(x + 4.6)} 5.6 ${f(x + 4.6)} 12V16.4L${f(x + 2.2)} 19.6V30.4H${f(x + 1.2)}V39.4H${f(x - 1.2)}V30.4H${f(x - 2.2)}V19.6L${f(x - 4.6)} 16.4V12Q${f(x - 4.6)} 5.6 ${f(x - 1)} 3.4Z` +
+      rct(x - 4.6, 13.4, 9.2, 1.2),
+  ) +
+  P(`M${f(x - 1.2)} 32L${f(x - 4.4)} 35.6V39.4H${f(x - 1.2)}Z`) +
+  P(`M${f(x + 1.2)} 32L${f(x + 4.4)} 35.6V39.4H${f(x + 1.2)}Z`);
+
 // crossbow bolt standing on its nock (40 high): leaf head, thin shaft, two vanes
 const bolt = (x) =>
   P(`M${x} 0.6L${f(x + 2.6)} 8.4L${x} 10.6L${f(x - 2.6)} 8.4Z`) +
   P(rct(x - 0.8, 10, 1.6, 28.6)) +
   P(`M${f(x - 0.8)} 25.4L${f(x - 3.6)} 28.6V36.4L${f(x - 0.8)} 34Z`) +
   P(`M${f(x + 0.8)} 25.4L${f(x + 3.6)} 28.6V36.4L${f(x + 0.8)} 34Z`);
+
+// 14.5mm anti-tank round standing on its base (40 high): a fat bottlenecked case, a long bullet with a band at the tip
+const atRound = (x) =>
+  E(`M${x} 39V16L${f(x + 2.2)} 13V10.5H${f(x + 7.8)}V13L${x + 10} 16V39Z` + rct(x, 35.6, 10, 0.9)) +
+  E(`M${f(x + 2.6)} 10.5Q${f(x + 2.6)} 3.5 ${x + 5} 0.4Q${f(x + 7.4)} 3.5 ${f(x + 7.4)} 10.5Z` + rct(x + 3.4, 4.4, 3.2, 0.8));
 
 // rolled blueprint + unrolled sheet (40x32). `mark` = evenodd sub-paths cut out of the drawing area
 // (inner frame x 11..33.4, y 8.2..23.8)
@@ -203,6 +217,28 @@ const ITEM_ICONS = {
       P('M51 31.1H61L58 28.9H51Z') +
       S('M89 25Q101 28 89 31', 1.4), // stirrup
   ],
+  // RPG, loaded: flared venturi, tube with a two-piece heat shield, the sight standing above it, pistol grip and a
+  // front grip under the front third, the grenade's bulb and nose out past the muzzle
+  [ITEM.RPG]: [
+    160,
+    38,
+    P('M2 8.6Q8 9.6 18 12V20Q8 22.4 2 23.4Z') + // venturi
+      P('M17 12H115V20H17Z') + // tube
+      P('M29.4 10.6H44.6Q45.4 10.6 45.4 11.4V20.6Q45.4 21.4 44.6 21.4H29.4Q28.6 21.4 28.6 20.6V11.4Q28.6 10.6 29.4 10.6Z') + // heat shield
+      P('M47.4 10.6H62.6Q63.4 10.6 63.4 11.4V20.6Q63.4 21.4 62.6 21.4H47.4Q46.6 21.4 46.6 20.6V11.4Q46.6 10.6 47.4 10.6Z') +
+      P('M61.4 4.4H76.6V12H61.4Z') + // sight
+      P('M76.4 5.2H79.6V11.2H76.4Z') +
+      P(rct(62.6, 1.4, 1.6, 3.2)) +
+      P(rct(73.4, 2, 1.2, 2.6)) +
+      P('M65.8 20H81V23.4H65.8Z') + // trigger housing
+      P('M66 22.6H74.6L72 34Q71.6 35.4 70.2 35.4H65.6Q64.2 35.4 64.6 34Z') + // pistol grip
+      S('M74.6 23.2Q79.2 23.6 78.6 28.6Q78 30 74.8 29.9', 1.6) + // trigger guard
+      P('M86.4 11.4H94V20.6H86.4Z') + // clamp band
+      P('M87.4 20H93L94 32.4Q94 33.6 92.8 33.6H88.4Q87.2 33.6 87.2 32.4Z') + // front grip
+      P('M112 11.4H115.4V20.6H112Z') + // muzzle ring
+      P('M115 13.6H119.8V18.4H115Z') + // motor
+      E('M119.4 13.6L125.6 9.2H134.6Q146 10.6 154.6 14.8L158.4 15.4V16.6L154.6 17.2Q146 21.4 134.6 22.8H125.6L119.4 18.4Z' + rct(129.4, 9.2, 1.2, 13.6)), // grenade
+  ],
   // pipe lance with a finned shield and a flared nozzle, gas bottle for a stock, fuel flask hung underneath
   [ITEM.FLAMETHROWER]: [
     128,
@@ -218,6 +254,35 @@ const ITEM_ICONS = {
       [95, 99.2, 103.4, 107.6].map((x) => P(rct(x, 11, 2.2, 10.2))).join('') + // heat shield fins
       P('M112 13.2L123 10V22.2L112 19Z') + // nozzle
       S('M67 22.2H108L120 24', 1.2), // pilot line
+  ],
+  // anti-tank rifle: padded shoulder piece, tube stock, open-topped receiver, a long barrel with a carry handle and the
+  // bipod folded under it, a two-port brake
+  [ITEM.AT_RIFLE]: [
+    152,
+    40,
+    P('M4 9H7Q9.4 9 9.4 11.4V30.6Q9.4 33 7 33H4Q2 33 2 30.6V11.4Q2 9 4 9Z') + // shoulder pad
+      P('M9 19H46V24H9Z') + // stock tube
+      P('M14 19.4L16.4 14.6H33.6L36 19.4Z') + // cheek rest
+      P('M24 23.4H28.6V30Q28.6 31.6 27 31.6H25.6Q24 31.6 24 30Z') + // rear grip
+      P('M42 20.4H60V24H42Z') + // trigger housing
+      P('M43.6 23H51L48.6 35Q48.2 36.4 46.8 36.4H42.6Q41.2 36.4 41.6 35Z') + // pistol grip
+      S('M51.4 24.6Q55.8 25 55.6 28.6', 1.6) + // trigger guard
+      P('M34 13.6H38.4V19.6H34Z') + // bolt
+      S('M39.6 18.6L43 25.4', 1.8) + // bolt handle
+      P(circ(43.6, 26.6, 2)) +
+      E('M38 12H72V21H38Z' + rct(49, 13.2, 16, 2.6)) + // receiver, the port
+      E(circ(58, 5.4, 2.4) + circ(58, 5.4, 1.1)) + // rear aperture
+      P(rct(57.2, 7.6, 1.6, 4.6)) +
+      P('M72 13H82V20H72Z') + // chamber
+      P('M82 12.4H99Q100.6 12.4 100.6 14V19Q100.6 20.6 99 20.6H82Z') + // handguard
+      P('M100 13.8L136 14.6V18.6L100 19.2Z') + // barrel
+      S('M106.4 14.6Q107.4 8.6 111.4 8.6H116Q120 8.6 121 14.6', 1.6) + // carry handle
+      P(rct(126, 18, 3.4, 4.4)) + // bipod hinge and folded legs
+      S('M112 21.6H126.4', 1.6) +
+      P(rct(110, 20, 3, 3.6)) +
+      P(rct(131, 8.4, 1.6, 6.8)) + // front sight
+      S('M128.8 10.2Q131.8 5.6 134.8 10.2', 1.1) +
+      E(rct(136, 11.6, 13, 9.8) + rct(138.2, 13.4, 3.6, 6.2) + rct(143.4, 13.4, 3.6, 6.2)), // muzzle brake
   ],
   [ITEM.PISTOL]: [
     64,
@@ -506,6 +571,12 @@ const ITEM_ICONS = {
         circ(14.4, 20.7, 0.55),
     ),
   ],
+  // energy drink: a tall can standing up, the lid parted from it by its rim, a lightning bolt down the side
+  [ITEM.ENERGY_DRINK]: [
+    24,
+    36,
+    E('M7 2H17Q18 2 18 3V4.5L20 7.5V31L18.2 34H5.8L4 31V7.5L6 4.5V3Q6 2 7 2Z' + rct(6, 4.3, 12, 0.8) + 'M12 9.5H16.4L13.4 16.4H17L8.6 29.5L10.8 19.6H7.4Z'),
+  ],
   // venison: a haunch on the bone, a seam of fat through the raw one; the cooked one grill-marked and steaming
   [ITEM.VENISON_RAW]: [
     40,
@@ -528,6 +599,7 @@ const ITEM_ICONS = {
   [ITEM.AMMO_308]: [36, 40, rifleRound(8, 8, 39) + rifleRound(20, 8, 39)],
   [ITEM.AMMO_556]: [36, 36, [2.4, 10.6, 18.8, 27].map((x) => rifleRound(x, 5.4, 35)).join('')],
   [ITEM.AMMO_BOLTS]: [36, 40, bolt(7.5) + bolt(18) + bolt(28.5)],
+  [ITEM.AMMO_ROCKET]: [36, 40, rocket(10.5) + rocket(25.5)],
   // fuel flask: screw cap, a flame stencilled on the side
   [ITEM.AMMO_FUEL]: [
     36,
@@ -535,6 +607,7 @@ const ITEM_ICONS = {
     P(rct(14.5, 2.4, 7, 4.2)) +
       E('M11 7.6H25Q29 7.6 29 11.6V32Q29 36 25 36H11Q7 36 7 32V11.6Q7 7.6 11 7.6Z' + 'M18 13.6Q23.4 19 22.4 24.4Q21.6 28.6 18 28.6Q14.4 28.6 13.6 24.4Q13.2 21.2 15.4 19Q15.4 22.4 17.2 22.8Q16.2 18.2 18 13.6Z'),
   ],
+  [ITEM.AMMO_145]: [36, 40, atRound(5) + atRound(20)],
   // ---------------- car parts
   [ITEM.CAR_BATTERY]: [
     40,

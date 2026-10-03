@@ -80,6 +80,9 @@ export const REC = {
   exp_far: { sr: 32000, slices: [0,5.449, 5.51,4.349] },
   imp_glass: { slices: [0,1.197, 1.258,1.899, 3.218,1.433] },
   imp_wood_break: { slices: [0,1.565, 1.626,0.899, 2.586,1.029, 3.676,1.249] },
+  // a felled tree going over (creaks, crackling limbs) and crashing down: in every take the crash comes 2.55 s in,
+  // where the falling tree hits the ground (fallingtrees.js FALL_T)
+  tree_fall: { slices: [0,4.89, 4.95,3.585] },
   imp_metal: { slices: [0,0.316, 0.377,0.333, 0.77,0.319, 1.15,0.312, 1.523,0.677, 2.261,1.199] },
   imp_body: { sr: 32000, slices: [0,0.985, 1.046,0.624] },
   imp_acid: { sr: 32000, slices: [0,1.946] },

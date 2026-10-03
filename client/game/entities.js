@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import { ENT, PFLAG, ZSTATUS, HCAR_AT, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
-import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD } from '../../shared/constants.js';
+import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, WATER_LEVEL } from '../../shared/constants.js';
+import { afloatAt } from '../../shared/swim.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createDeerView, deerAnimChanged, removeDeerView, updateDeer } from './deer.js';
@@ -461,7 +462,8 @@ export class Entities {
           break;
         }
         case ENT.PROJECTILE: {
-          if (e.ptype !== PROJ.ROPE) {
+          // (an RPG grenade of our own is flown and drawn by game/rockets.js from the moment it was fired)
+          if (e.ptype !== PROJ.ROPE && !(e.ptype === PROJ.ROCKET && e.owner === g.myId)) {
             const v = createProjectile(e.ptype);
             v.position.set(e.rx, e.ry, e.rz);
             this.scene.add(v);
@@ -471,6 +473,17 @@ export class Entities {
               e.emitter = g.effects.createEmitter('flare', e.rx, e.ry, e.rz);
               e.fire = { x: e.rx, y: e.ry, z: e.rz, intensity: 1.25, color: 0xff3d22 };
               e.loop = g.audio.createLoop?.('torch', e.rx, e.ry, e.rz);
+            }
+            if (e.ptype === PROJ.ROCKET) {
+              e.loop = g.audio.createLoop?.('rocket', e.rx, e.ry, e.rz);
+              e.tx = e.rx; // where its trail was drawn up to
+              e.ty = e.ry;
+              e.tz = e.rz;
+              // where it was fired from, as near as we know: the shooter, or where it was first seen
+              const by = this.ents.get(e.owner);
+              e.lx = by ? by.rx : e.rx;
+              e.ly = by ? by.ry + 1.5 : e.ry;
+              e.lz = by ? by.rz : e.rz;
             }
           }
           break;
@@ -898,6 +911,7 @@ export class Entities {
           const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 10);
           if (e.seatK > 0 || carted) e.speed = 0; // (carried, not walking)
+          const fallVy = e.vy || 0; // (how fast they came down before this frame: a jump into the water splashes)
           e.vy = e.seatK > 0 || carted ? 0 : dy / Math.max(dt, 1e-3);
           e.rx = tmp.x;
           e.ry = tmp.y;
@@ -915,7 +929,14 @@ export class Entities {
             e.weapon = -1;
           }
           const grips = g.gun.gunner === e.id; // at the mounted gun: both hands on it, their own weapon put away
-          const weapon = zombie || grips ? 0 : e.q[6];
+          // afloat in the lake or a pond (shared/swim.js): swimming, the weapon put away; in with a splash from a jump
+          const afloat = !dead && !zombie && !carted && e.seatK === 0 && afloatAt(g.world, e.rx, e.ry, e.rz);
+          if (afloat && !e.afloat && fallVy < -3) {
+            g.effects.splash(e.rx, WATER_LEVEL, e.rz, Math.min(1, 0.3 - fallVy / 15));
+            g.audio.footstep('water', e.rx, WATER_LEVEL, e.rz, 1);
+          }
+          e.afloat = afloat;
+          const weapon = zombie || grips || afloat ? 0 : e.q[6];
           if (weapon !== e.weapon) {
             e.weapon = weapon;
             v.setWeapon(weapon);
@@ -928,7 +949,7 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, sit: e.seatK > 0.5 });
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, sit: e.seatK > 0.5, swim: afloat && !downed });
           v.object.visible = !(dead && zombie);
           // flashlight
           const flashOn = !!(flags & PFLAG.FLASHLIGHT) && !dead;
@@ -948,7 +969,8 @@ export class Entities {
             e.stepT -= dt * (e.speed * 0.55);
             if (e.stepT <= 0) {
               e.stepT = 1;
-              g.audio.footstep(g.surfaceAt(e.rx, e.ry, e.rz), e.rx, e.ry, e.rz, flags & PFLAG.CROUCH ? 0.3 : flags & PFLAG.SPRINT ? 1 : 0.65);
+              g.audio.footstep(afloat ? 'water' : g.surfaceAt(e.rx, e.ry, e.rz), e.rx, e.ry, e.rz, flags & PFLAG.CROUCH ? 0.3 : flags & PFLAG.SPRINT ? 1 : 0.65);
+              if (afloat) g.effects.splash(e.rx - Math.sin(e.ryaw) * 0.6, WATER_LEVEL, e.rz - Math.cos(e.ryaw) * 0.6, 0.12); // a stroke
             }
           }
           g.voice?.setPeerPosition(e.id, e.rx, e.ry + 1.6, e.rz, zombie);
@@ -985,7 +1007,17 @@ export class Entities {
           e.rx = tmp.x;
           e.ry = tmp.y;
           e.rz = tmp.z;
-          if (e.obj) {
+          if (e.obj && e.ptype === PROJ.ROCKET) {
+            // nose along its flight, smoke and flame behind it
+            if (moved) {
+              e.obj.lookAt(e.rx * 2 - e.obj.position.x, e.ry * 2 - e.obj.position.y, e.rz * 2 - e.obj.position.z);
+              g.effects.rocketTrail(e.tx, e.ty, e.tz, e.rx, e.ry, e.rz, e.lx, e.ly, e.lz);
+              e.tx = e.rx;
+              e.ty = e.ry;
+              e.tz = e.rz;
+            }
+            e.obj.position.set(e.rx, e.ry, e.rz);
+          } else if (e.obj) {
             e.obj.position.set(e.rx, e.ry, e.rz);
             if (moved) {
               e.obj.rotation.x += dt * 9;

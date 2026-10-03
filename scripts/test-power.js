@@ -7,7 +7,7 @@
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, ENT, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
 import { MAP_HALF, PHASE, SLOT_BUILD, SLOT_MELEE, MAX_STRUCTURES, NOISE } from '../shared/constants.js';
-import { ITEM, STRUCT, STRUCT_DEFS, STRUCT_ORDER, ZTYPE, ZANIM, NOTIFY, WEAPONS } from '../shared/defs.js';
+import { ITEM, ITEM_DEFS, STRUCT, STRUCT_DEFS, STRUCT_ORDER, ZTYPE, ZANIM, NOTIFY, WEAPONS } from '../shared/defs.js';
 import { groundAt, COL } from '../shared/collision.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { GEN_RANGE, GEN_POUR, GEN_FUEL_UNIT, GEN_TANK, GEN_HUM, GEN_HUM_EVERY, GEN_STEP, FLOOD_RANGE, FLOOD_HALF, genState, genOn, genFuel, genRunning, genPour, floodAim, inFloodCone } from '../shared/power.js';
@@ -110,12 +110,19 @@ const put = (spot) => {
   s.vx = s.vy = s.vz = 0;
   game.fillHistory(p);
 };
+// what the survivor carries: the backpack, and the fuel in its own reserve (ammunition is carried apart from the pack)
 const pack = (...list) => {
   p.inv.fill(null);
-  list.forEach(([item, count], i) => (p.inv[i] = { item, count }));
+  s.ammo.fill(0);
+  let i = 0;
+  for (const [item, count] of list) {
+    const def = ITEM_DEFS[item];
+    if (def.cat === 'ammo') s.ammo[def.ammo] += count;
+    else p.inv[i++] = { item, count };
+  }
   p.invDirty = true;
 };
-const has = (item) => p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0);
+const has = (item) => (ITEM_DEFS[item].cat === 'ammo' ? s.ammo[ITEM_DEFS[item].ammo] : p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0));
 const costOf = (type, n = 1) => Object.entries(STRUCT_DEFS[type].cost).map(([k, c]) => [+k, c * n]);
 // built by the survivor from 3 m off, with the hammer out (Game.build is what ACT.BUILD calls)
 const build = (type, spot, rot8 = FACING) => {
@@ -167,7 +174,7 @@ const gen = build(STRUCT.GENERATOR, at(-3, 3));
 const flood = build(STRUCT.FLOODLIGHT, at(0));
 const far = build(STRUCT.FLOODLIGHT, at(GEN_RANGE - 3 + 1.5, -3)); // further than GEN_RANGE from the generator, off the middle of the strip
 run(2);
-check('a generator and two floodlights are built for their cost and count towards the cap', !!gen && !!flood && !!far && game.structures.length === count0 + 3 && MAX_STRUCTURES >= game.structures.length && p.inv.filter(Boolean).length === 1 && has(ITEM.AMMO_FUEL) === 40, p.inv.filter(Boolean).map((x) => `${x.item}x${x.count}`).join(' '));
+check('a generator and two floodlights are built for their cost and count towards the cap', !!gen && !!flood && !!far && game.structures.length === count0 + 3 && MAX_STRUCTURES >= game.structures.length && p.inv.filter(Boolean).length === 0 && has(ITEM.AMMO_FUEL) === 40, p.inv.filter(Boolean).map((x) => `${x.item}x${x.count}`).join(' '));
 if (!gen || !flood || !far) {
   console.log('\nnothing to test: the structures could not be built');
   process.exit(1);
@@ -223,7 +230,7 @@ const lens = floodAim(flood.x, flood.y, flood.z, flood.rot8, {});
   const poured = gen.burnLeft - (tank - 4 * 0.05);
   act(ACT.INTERACT, gen.id);
   run(4);
-  check('a second [E] pours what is left in the backpack, a third says there is none', left === 0 && Math.abs(poured - (40 - GEN_POUR) * GEN_FUEL_UNIT) < 1e-6 && A.notes.some(([m, a]) => m === NOTIFY.NOT_ENOUGH && a === ITEM.AMMO_FUEL), `${poured.toFixed(1)} s more in the tank`);
+  check('a second [E] pours what is left of the fuel carried, a third says there is none', left === 0 && Math.abs(poured - (40 - GEN_POUR) * GEN_FUEL_UNIT) < 1e-6 && A.notes.some(([m, a]) => m === NOTIFY.NOT_ENOUGH && a === ITEM.AMMO_FUEL), `${poured.toFixed(1)} s more in the tank`);
 
   // the switch (the walker back up the strip, idle, to listen)
   move(near, UP);

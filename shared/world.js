@@ -2276,9 +2276,10 @@ export function createWorld(seed) {
     // a tree on a road is drawn and given its room like any other, then left out: the random stream and the occupancy
     // map stay as they were, so not one other tree, rock, bush or pick-up spot of the seed moves
     if (onRoadway(x, z, TREE_TYPES[v].r * scale)) return;
-    trees.push(x, y, z, scale, rot, v);
     const c = makeCyl(x, z, y - 1, y + 14 * scale, TREE_TYPES[v].r * scale, COL.STATIC | COL.TREE);
     c.tv = v;
+    c.ti = trees.length / 6; // (its record in world.trees: the one a client draws, and hides while it is felled)
+    trees.push(x, y, z, scale, rot, v);
     staticGrid.add(c);
   };
   for (const [x, z, v, s] of extraTrees) {

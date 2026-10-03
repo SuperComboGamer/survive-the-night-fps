@@ -84,13 +84,17 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `npm run report` | what the match records say, for tuning: the night-by-night funnel, outcomes by team size, bosses, what kills survivors, weapons, pacing of the car supplies, retention, how hard players say it is (the end screen's vote, split by outcome, nights, team size and experience), server health (`-- --days 7`, `--since 2026-10-01`, `--build <commit>`, `--only weapons`, `--json`) |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
 | `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
-| `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the backpack's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
+| `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the gunner's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
 | `node scripts/test-bosses.js [seed]` | the night bosses and the day's specials, against the real server in-process: The Brute plods and, once badly hurt, roars and comes on at a run, and drops its smaller share of loot; The Alpha howls dogs into its own pack, never more than six, and lunges as a dog does; The Bloater heaves a fan of bile and bursts when it dies, taking the dead and a barricade beside it, but only falls when the dawn sun burns it out; and by day no specials within 90 m of the car, more of them further out, leapers and ropers only well out, never a boss, Tank, bat or shade (part of `npm test`) |
 | `node scripts/test-leaper.js` | the leaper's pounce against the real server in-process, on three valleys: a survivor standing still, on rough ground, inside a ring of barricades (it clears them, it does not land on top), sprinting away, strafing and sidestepping as it leaves the ground, each pinned often enough and a well-timed sidestep still beating some of them; and a released survivor is not pinned again on the leaper's way off (part of `npm test`) |
-| `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
+| `node scripts/test-swim.js [seed ...]` | swimming against the real server in-process, in each valley's lake: wading in slows you and lets go of a crouch before the eyes go under, you float at the float height with your eyes out, swim at the swimming speeds with no jumping and no shots, stamina drains at the treading, swimming and sprinting rates, out of it you drown and the killfeed blames the water, you walk back out and get your stamina back, a long fall into the lake does not hurt (onto the shore it does), and a turned survivor stops at the edge of the deep water (part of `npm test`) |
+| `node scripts/test-unequip.js [seed]` | a weapon out of its slot into the backpack (`ACT.UNEQUIP`), against the real server in-process: with its magazine, into the cell it was dragged onto or the first free one, trading places with a weapon for the same slot, the pistol, knife and hammer too but not the throwable slot, nothing with the backpack full, and a reload under way ended (part of `npm test`) |
+| `node scripts/test-salvage.js [seed]` | tearing things down for materials (`ACT.SALVAGE`), against the real server in-process: from the backpack (part of a stack, a gun with rounds in it, which go back into the reserve), from a weapon slot and from the armor worn; raw materials, car supplies, food and the throwable slot refused; what does not fit lands at the survivor's feet; the `SALVAGE` table never gives back what a recipe takes; and a reconnect does not hand back the starting tools a survivor tore down (part of `npm test`) |
+| `node scripts/test-drink.js [seed]` | energy drinks (`ACT.USE_ITEM`, what [B] sends), against the real server in-process: a spent or half-spent survivor is topped up to full and no longer exhausted once the drink is down, one can goes, the crack is heard by the survivors around but not sent back to the drinker, a survivor at full stamina or downed is turned down and keeps the can, and the cans are in several places' loot and in containers (part of `npm test`) |
+| `node scripts/test-ammo.js [seed]` | ammunition carried apart from the backpack, against the real server in-process and decoded as a client does: the starting 9mm and every pickup go into the reserve and never a slot, up to the most of a calibre a survivor carries (the rest stays on the ground, without a "backpack full"), a reload takes its rounds out of it (a shotgun shell by shell), Drop half / Drop all (`ACT.DROP_AMMO`) put rounds down for a teammate who walks over them, counts past 255 survive the wire, crafting with a full reserve, dying drops each calibre, and every client is told its reserves after every tick (part of `npm test`) |
 | `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
 | `node scripts/test-deer.js [seed ...]` | the deer against the real server in-process: where the groups are put, what makes them bolt (a survivor standing or crouched, a noise, the dead) and how far and fast, a shot at a running one missing unless the server rewinds to the shooter's picture exactly as for a zombie dog, head shots on a grazing one, what a kill leaves and that it counts for nothing, that nothing that walks the zombie list meets them, the dawn's newcomers, venison, that none of it draws on the game's random stream, and half an hour of being chased about with none in the lake, the mine or a wall and none pushing at a fence (part of `npm test`; `VERBOSE=1` prints the passes) |
-| `node scripts/test-fair.js [seed]` | the Tri-County Fair against the real server in-process: the place, its rides and its generator are where a survivor can get at them and the dead can follow one in; the generator takes its fuel from the backpack, the drum fills the tank and no further, it runs dry, it shuts off; it is heard 150 m off and no further and its lights hold a Shade; a seat carries its rider round, Space gets them out with the fall damage of the height, a blow or a rope takes them out, a stopped wheel leaves them where they are, out of the reach of the dead below, the dead stay in their seat; and a rider at 0, 100 and 250 ms each way, whose prediction has to be the server's result to the bit, and is rebased only when they get on, the generator starts or stops under them and they get off (part of `npm test`) |
+| `node scripts/test-fair.js [seed]` | the Tri-County Fair against the real server in-process: the place, its rides and its generator are where a survivor can get at them and the dead can follow one in; the generator takes its fuel from what the survivor carries, the drum fills the tank and no further, it runs dry, it shuts off; it is heard 150 m off and no further and its lights hold a Shade; a seat carries its rider round, Space gets them out with the fall damage of the height, a blow or a rope takes them out, a stopped wheel leaves them where they are, out of the reach of the dead below, the dead stay in their seat; and a rider at 0, 100 and 250 ms each way, whose prediction has to be the server's result to the bit, and is rebased only when they get on, the generator starts or stops under them and they get off (part of `npm test`) |
 | `node scripts/worldstats.js [seed]` | world generation stats: places, roads, sites, containers, supply spots, doorways |
 | `node scripts/daytime.js [maps] [--floor] [--rows]` | how long a day has to be: walks the real player simulation from the spawn to the nearest place, round its containers, on to the next place and round that one, on 40 random valleys, sprinting and walking. `DAY_LENGTH` was set from it |
 | `node scripts/test-mine.js [seed ...]` | the workings under the mine on a dozen valleys: the drift is cut, roofed and dry; feet, rays and bodies take the right one of the two levels (a survivor walks in at the adit and out at the far portal by the real simulation, cannot walk into the rock, and stays on the ground when crossing over it); what the rooms hold can be reached; and in a running game the dead live down there, follow a survivor in and out by the portals, hear noise round by the mouths and are spared by the dawn. `VERBOSE=1` prints the passes too |
@@ -219,7 +223,8 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; a medkit gets you up when downed) |
-| I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop |
+| B | Quick drink: an energy drink from the backpack refills your stamina in 0.8 s, on the run (not at full stamina) |
+| I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop - or to salvage. In Equipment: click a weapon (or drag it onto the backpack) to put it in the backpack, right-click to drop it; drag a weapon, vest or throwable from the backpack onto Equipment to equip it, and drag anything out of the screen to drop it. Shift+click anything that can be torn down (a weapon, in the backpack or in its slot, armor, medicine, throwables) to salvage it for materials |
 | Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
 | Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
 | V | Push-to-talk proximity voice (same reach as chat) |
@@ -227,7 +232,8 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | Zombie form | LMB claw · RMB leap |
 
 The HUD names a key at the moment it answers something: the flashlight when night falls and the light is off,
-quick heal when you are under half health with something that heals in the pack, the build slot at the dusk
+quick heal when you are under half health with something that heals in the pack, a quick drink when you
+run yourself out of stamina with an energy drink in the pack, the build slot at the dusk
 warning if you carry enough to build, and the map and the inventory once each in the first minute. Each hint
 stops for good once you have done the thing twice (remembered in the browser); Settings -> Key hints turns
 them off.
@@ -255,16 +261,22 @@ them off.
   log piles; hold [E]) plus loot on the floor, and ~90 roadside and woodland sites (wrecks, abandoned
   camps, sheds, hunter stands, military stashes, burnt homesteads, roadblocks, graves) sit along the
   roads and in the woods between them, so every walk passes something worth searching. Melee a tree for
-  sticks and planks, or a wreck for scrap and nails. Materials, ammo and consumables are picked up
+  sticks and planks (the sixth hit fells it: it crashes down away from you and fades, and stands again at dawn),
+  or a wreck for scrap and nails. Materials, ammo and consumables are picked up
   automatically when you walk over them - except a stack you dropped yourself (right-click it in the
   backpack), which stays down until you have walked a few steps away, so you can clear a slot or leave
-  it for a teammate. A full backpack tells you what it left lying. **Ammunition** is carried in the
-  backpack like everything else, a stack per calibre (150 rounds of 9mm to a stack, 240 of 7.62, ...), and
-  the guns reload out of it: to share it, Shift+click the stack, pick how many, and drop them.
+  it for a teammate. A full backpack tells you what it left lying. **Ammunition** is not kept in the
+  backpack: it is carried apart, up to a limit per calibre (150 rounds of 9mm, 240 of 7.62, ...), and shown in
+  the Ammunition panel at the bottom left of the inventory [I]. What a full calibre has no room for stays where
+  it lies. To share it, click **Half** or **All** on a calibre's row there: that many rounds go on the ground
+  in front of you for a teammate.
   Searched containers partly restock at dawn. Supply planes
   drop crates marked by red smoke (often carrying a schematic). **Canned tuna** cannot be crafted, only
   found (fridges, cabinets, the dock, trailers, the campground): eating a tin heals 30 HP and restores
   your stamina.
+  **Energy drinks** cannot be crafted either (gas station, motel, drive-in, the fair, fridges, car trunks,
+  ...): one refills your stamina in 0.8 s, and you can keep running while you drink it. [B] downs one from
+  the backpack; the count beside the stamina line on the HUD says how many you have left.
 - **Talking carries only so far.** Voice and text chat reach the survivors around you: clear out to 25 m,
   fading to nothing by 35 m (a chat line from the edge of earshot shows up faint, and your own line tells you
   when nobody was close enough to hear it). **Walkie-talkies** bridge the rest: six are hidden in lockers,
@@ -311,8 +323,8 @@ them off.
   barricade, so close the ring and leave no gap."), the dusk horn repeats it and the night's title carries its name.
   The table is `NIGHT_THEMES` in `shared/nights.js`.
 - **Noise brings the dead.** Every zombie with nobody to chase heads for what it hears, and the louder the
-  noise the further it carries: an MP5 35 m, a pistol 45 m, rifles 70 m, shotguns 80-90 m, the hunting rifle 100 m,
-  a car alarm 140 m, a pipe bomb or a bursting boomer 170 m, the chapel bell 220 m. More carry means more of them coming - and the
+  noise the further it carries: an MP5 35 m, a pistol 45 m, rifles 70 m, shotguns and the RPG 80-90 m, the hunting rifle 100 m,
+  a car alarm 140 m, the anti-tank rifle 150 m, a pipe bomb, an RPG grenade or a bursting boomer 170 m, the chapel bell 220 m. More carry means more of them coming - and the
   louder it was where a zombie stood, the harder it runs, so a blast empties the whole neighbourhood onto you at
   a sprint while a distant pistol shot brings a few ambling over. They go to where the noise *was*: shoot and
   move, or throw a pipe bomb to pull a crowd off a place you want to search. Chopping, salvaging, hammering, a
@@ -378,7 +390,7 @@ them off.
   what is still under the grass cannot be hit, but a head above it can.
 - **The Tri-County Fair** is on every map: a midway of game stalls and food stands to search, a carousel, a Ferris
   wheel 18 m tall over the clearing, and a generator in a shed at the side. Hold [E] on the generator to start it: it
-  burns Flamethrower Fuel, 25 out of your backpack for two and a half minutes, and the drum beside it takes more [E],
+  burns Flamethrower Fuel, 25 of the fuel you carry for two and a half minutes, and the drum beside it takes more [E],
   up to ten minutes in the tank. Hold [E] again to shut it off; what is left stays in the tank. While it runs, the
   bulbs on the midway and on the rides light up - that light holds a Shade frozen the way torchlight does - the
   calliope plays, and every four seconds the fair is a noise that carries 150 m (a car alarm carries 140): every
@@ -426,26 +438,42 @@ them off.
   lights them the same way. Burnt bodies leave nothing to loot. It is built at the workbench once the team has
   the explosives schematic (or found at the crash site, in ammo crates and in supply drops), and drinks fuel
   brewed from alcohol and chemicals.
+  The **anti-tank rifle** is the one for the bosses: a single 14.5mm round that goes through five of the dead in a
+  line and hits a boss or a Tank three times as hard (1200 off one with a body shot), paid for with a six-second
+  reload after every shot - it starts by itself - and the loudest report in the valley. It is built at the
+  workbench once the team has the rifle schematic (or found at the army's places, in their ammo crates, in supply
+  drops and in the mine's strongbox); its rounds come two at a time from scrap and gunpowder, and off bosses.
+  The **RPG** is the one for a crowd you can see coming: a single rocket grenade that flies out fast (it drops a
+  little over a long shot) and bursts on the first thing it strikes - one of the dead, a wall, the ground - for 360
+  at the heart of the blast, tearing apart everything within 5.5 m of it. Survivors are not hurt by it. It re-arms by
+  itself, slowly, after every shot, and the blast carries as far as a pipe bomb's. It is built at the workbench once
+  the team has the explosives schematic (or found at the army's places, in their ammo crates, in supply drops and in
+  the mine's strongbox); each grenade takes gunpowder, scrap and chemicals.
 - **The mounted gun.** On a map with the Army Checkpoint, a heavy machine gun stands on a tripod in a horseshoe of
   sandbags beside the boom gate, covering the road out. It does not move: stand at its grips and press [E] to man
   it (one gunner at a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button
   is its trigger: 600 rounds a minute, each a little harder than an AK-47's and through one body into the next,
   out to 200 m in a tight cone, with no climb. It swivels with your view 70 degrees either side of the road and
   from 15 degrees down to 25 up; look further and it stays at its stop. Step away, press [E] again, go down or die
-  and you let go. It is the loudest gun in the valley - every shot carries 110 m - so using it brings the
+  and you let go. It is the loudest gun in the valley but for the anti-tank rifle - every shot carries 110 m - so using it brings the
   neighbourhood, and the sandbags only cover the front: the dead walk round into the open back. **One belt:** it
   has 250 rounds when the game starts, shown in place of your ammunition while you man it, and when they are gone
-  it clicks. Hold [R] (or [E]) at the grips to feed it 50 rounds a second from the 7.62 in your backpack - the
+  it clicks. Hold [R] (or [E]) at the grips to feed it 50 rounds a second from the 7.62 you carry - the
   same rounds the AK-47 eats - up to 250. Its belt and who mans it start over with every new game; its kills are
   the gunner's.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
   for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
-  rifle, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
+  and anti-tank rifles, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team. Two materials have to be looked for: **leather** (padded jacket,
   machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge - or off a deer - and **kevlar plates** (two
   to a vest) in ammo crates, which hold them in pairs.
+- **Salvage:** Shift+click a weapon, armor, medicine, a throwable or a walkie-talkie in the inventory - in the
+  backpack, in its weapon slot or worn - and tear it down for materials, by hand, anywhere: the knife you start with
+  gives scrap metal and leather, a gun gives gun parts and scrap, and any rounds in it go back into the pack. What has
+  a recipe gives about half of it back and never all of it (`SALVAGE` in `shared/defs.js`). The pistol, knife and
+  hammer everyone starts with come back after a death, but a reconnect brings back only the ones you still had.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
@@ -476,7 +504,12 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
 
 - **Route 9** crosses the map at a random heading - straight, on a bend or in an S - with The Breakdown
   (your car, a rest area) on it near the middle and the roadside places strung along it.
-- **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds.
+- **The lake** lies somewhere out towards the rim, away from the highway, with a handful of ponds. You can
+  swim in it (`shared/swim.js`): wading in slows you, a crouch won't put your eyes under, and where it is deeper
+  than you stand you float with your head out, swimming at 2.4 m/s (3.6 on sprint). Afloat, your hands are busy
+  (no weapon, no jumping) and stamina only drains - treading water, swimming, harder on sprint. Run out and you
+  drown, 12 HP a second, until your feet touch the bottom again: a way across and out of a tight spot, never
+  somewhere to sit out a night. The dead don't swim; they gather on the shore. A fall into deep water doesn't hurt.
 - **The railway** runs across the valley from a tunnel in the hillside on one rim to a tunnel on the other,
   on a course of its own: it crosses Route 9 once, on the level, a short walk from The Breakdown, keeps off the
   water and out of every other place, and bends in long easy curves, never steeper than 3% - the ground is cut
@@ -514,7 +547,7 @@ new seed and every client rebuilds the map from it; nothing but the seed crosses
   place (a different one on every map; the field map shows the workings dashed). Half way there is a junction
   with a few dead-end galleries off it, each ending in a room with crates nobody has come back for - and one
   of the car's supplies may be hidden down there. The deepest room holds the map's one strongbox: an M4A1, an
-  AK-47 or a flamethrower, loaded, with two magazines more and two pipe bombs. It is there once; it does not
+  AK-47, a flamethrower, an anti-tank rifle or an RPG, loaded, with two magazines more and two pipe bombs. It is there once; it does not
   refill at sunrise. It is pitch dark at noon, so bring a light: the dead live
   down there, the Shade among them from the second day, and the sun that burns the horde at dawn does not
   reach them. The horde follows a survivor in by either mouth (`shared/mine.js`, `node scripts/test-mine.js`).

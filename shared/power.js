@@ -24,7 +24,7 @@ export const genState = (on, fuel) => (on ? 1 : 0) | (Math.min(127, Math.ceil(Ma
 export const genOn = (state) => (state & 1) === 1;
 export const genFuel = (state) => (state >> 1) * GEN_STEP;
 export const genRunning = (state) => (state & 1) === 1 && state > 1;
-// what one [E] takes out of a backpack holding `have` units, for a tank with `fuel` seconds in it: whole units,
+// what one [E] takes from a survivor carrying `have` units, for a tank with `fuel` seconds in it: whole units,
 // and only those the tank has room for (none is spilt)
 export const genPour = (have, fuel) => Math.max(0, Math.min(GEN_POUR, have, Math.floor((GEN_TANK - fuel) / GEN_FUEL_UNIT + 1e-6)));
 

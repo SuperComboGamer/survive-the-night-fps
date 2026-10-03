@@ -26,9 +26,12 @@ const CALLBACKS = [
   'onUseItem',
   'onDropItem',
   'onSplitItem',
+  'onDropAmmo', // (calibre, rounds; 0 = all of it): the Ammunition panel's Half / All
+  'onSalvage',
   'onSwapItems',
   'onEquipArmor',
   'onDropWeapon',
+  'onUnequip', // (weapon slot, backpack index or 255): a weapon out of its slot into the backpack
   'onSelectStructure',
   'onSelectThrowable',
   'onCloseInventory',

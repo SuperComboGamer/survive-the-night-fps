@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 27;
 
 // client -> server
 export const C2S = {
@@ -70,7 +70,12 @@ export const ACT = {
   WAYPOINT: 28, // u8 on, then (on) i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none): your field-map waypoint, for the team
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
+  SALVAGE: 30, // u8 from (SALVAGE_FROM), u16 count: tear that many down for what they are made of (SALVAGE in defs.js)
+  DROP_AMMO: 31, // u8 calibre (AMMO in defs.js), u16 count (0 = all): rounds out of that reserve onto the ground
+  UNEQUIP: 32, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
 };
+// where ACT.SALVAGE takes from: a backpack index (below INVENTORY_SIZE), WEAPON + a weapon slot, or the armor worn
+export const SALVAGE_FROM = { WEAPON: 0x80, ARMOR: 0xff };
 
 // special interaction targets that are not entities
 export const CAR_ID = 0xfffe;

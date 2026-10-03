@@ -23,6 +23,7 @@ import {
   EYE_HEIGHT,
   INTERACT_REACH,
   CAR_REACH,
+  STAMINA_MAX,
 } from '../../shared/constants.js';
 import {
   ITEM,
@@ -55,8 +56,10 @@ import {
 } from '../../shared/defs.js';
 import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
+import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { swimming } from '../../shared/swim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
 import { deerHitbox } from '../../shared/deer.js';
@@ -68,6 +71,7 @@ import { InputBuffer } from './inputbuffer.js';
 import { harvestPrompt, strippedKey, needLines } from './harvest.js';
 import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
+import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
@@ -118,6 +122,8 @@ const SHOT_SOUND = {
   [ITEM.MP5]: SOUND.MP5,
   [ITEM.DB_SHOTGUN]: SOUND.DB_SHOTGUN,
   [ITEM.CROSSBOW]: SOUND.CROSSBOW,
+  [ITEM.RPG]: SOUND.RPG,
+  [ITEM.AT_RIFLE]: SOUND.AT_RIFLE,
 };
 // first-person muzzle flash scale + camera shake per shot (default [1, 0.06])
 const SHOT_KICK = {
@@ -126,7 +132,11 @@ const SHOT_KICK = {
   [ITEM.HUNTING_RIFLE]: [1.3, 0.3],
   [ITEM.MP5]: [0.8, 0.04],
   [ITEM.CROSSBOW]: [0, 0.1],
+  [ITEM.RPG]: [1.8, 0.45],
+  [ITEM.AT_RIFLE]: [2.2, 0.7],
 };
+// the anti-tank rifle's long reload: how far into it the round goes home (its bolt opens at the start, closes at the end)
+const AT_ROUND_IN = 0.62;
 // what [H] reaches for when not badly hurt, in that order; the HUD counts these as the healing left
 const HEAL_ITEMS = [ITEM.BANDAGE, ITEM.TUNA, ITEM.VENISON, ITEM.PAINKILLERS, ITEM.MEDKIT];
 const PING_LIFE = 12;
@@ -157,6 +167,7 @@ const DOWN_WEATHER = { rain: 0, wind: 0.2 }; // the weather as it is well down a
 const _v2 = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _qv = new THREE.Quaternion();
+const _jetCol = new THREE.Color(0xff9440); // a flamethrower stream's light
 const _sunRay = { t: -1, col: null, terrain: false };
 const _near = [];
 const _sc = { x: 0, y: 0 };
@@ -215,6 +226,11 @@ export class Game {
     this._envOver = { under: 0 };
     this._wxDown = {};
     this.stepAcc = 0;
+    this.swimming = false; // afloat in the lake or a pond (shared/swim.js), as of the last frame
+    this.swimK = 0; // ...eased 0..1: the view riding the water
+    this.treadT = 0; // till the next paddle treading water
+    this.swimTired = false; // told this time in the water that stamina is running low
+    this.swimTold = false; // told what swimming is, this page load
     this.deathShown = false;
     this.overlay = null;
     this.runOn = false; // a run is under way, as far as this client has seen (trackRun)
@@ -229,7 +245,8 @@ export class Game {
     this.menuAngle = 0;
     this.lowHpBeat = 0;
     this.holding = 0; // hold-to-interact target we told the server about
-    this.flames = new Map(); // flamethrowers spraying right now: shooter id (-1 = ours) -> { loop, t }
+    this.flames = new Map(); // flamethrowers spraying right now: shooter id (-1 = ours) -> { loop, t, glow, at, light }
+    this.flameLights = []; // their fire lights this frame, for the light pool
     this.pings = [];
     // your own waypoint, set on the field map; the server lists it for the team (shareWaypoint):
     // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
@@ -271,6 +288,7 @@ export class Game {
     this.entities = new Entities(this);
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
+    this.rockets = new RocketsClient(this); // our own RPG grenades in flight
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
     this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
     this.power = new PowerViews(this); // the generator and its floodlights: their lights, sound and [E]
@@ -318,7 +336,8 @@ export class Game {
     this.indoor = _sunRay.t >= 0 && !_sunRay.terrain ? 1 : 0;
   }
 
-  updateViewmodelLight(dt, cam, nearFire) {
+  // jet: how bright our own flamethrower's stream is burning (its fire light's intensity, 0 when it is out)
+  updateViewmodelLight(dt, cam, nearFire, jet = 0) {
     this.vmLightT = (this.vmLightT || 0) - dt;
     if (this.vmLightT <= 0) {
       this.vmLightT = 0.2;
@@ -331,6 +350,13 @@ export class Game {
     vmh.color.copy(c.hemiSky);
     vmh.groundColor.copy(c.hemiGround);
     vmh.intensity = (c.hemi * (0.75 + 0.15 * this.vmSun) + nearFire * 0.8) * 1.2;
+    // the world's fire lights never reach the view model's own scene: our stream washes the hands and the gun orange
+    if (jet > 0) {
+      const w = Math.min(1, jet * 0.6);
+      vmh.color.lerp(_jetCol, w);
+      vmh.groundColor.lerp(_jetCol, w * 0.7);
+      vmh.intensity += jet * 0.8;
+    }
     // the viewmodel camera never moves: bring the world light direction into camera space
     const d = this.renderer.vmDir;
     d.position.copy(this.env.lightDir).applyQuaternion(_qv.copy(cam.quaternion).invert());
@@ -552,6 +578,7 @@ export class Game {
       });
     }
     steps.push(() => set.add(...this.power.warm())); // a floodlight's lens, glow and beam
+    steps.push(() => set.add(...this.foliage.falling.warmViews())); // a felled tree coming down, in its fading twins
     steps.push(() => {
       // the supply plane, in the materials Flyover gives it
       this.flyover.start(0, 0, 0, 0, 0, this.time, null);
@@ -675,6 +702,7 @@ export class Game {
     this.voice.setMyId(info.id);
     this.loadWorld(info.seed);
     this.entities.clear();
+    this.rockets.clear();
     this.clientTick = info.tick;
     this.clockInit = false;
     this.interpExtra = 0;
@@ -687,8 +715,29 @@ export class Game {
     this.input.requestLock();
     this.discovered = new Set([ZONE.CAMP]);
     this.stripped.clear(); // (the first snapshot says which are)
+    this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
     this.waypoint = null;
     return info;
+  }
+
+  // A tree chopped down (EVT.FELL; yaw: the way it falls), or one that was down before we came (EVT.STRIPPED,
+  // yaw null): out of the world until dawn, and out of the forest - the one falling now crashes down first.
+  fellTree(qx, qy, qz, yaw = null) {
+    const col = this.world && treeAt(this.world, qx, qy, qz);
+    if (!col || !fellTree(this.world, col)) return;
+    this.foliage?.fell(col.ti, yaw);
+    if (yaw === null) return;
+    // heard from a little way out along its fall: between the creaking stump and where the crown comes down
+    const out = 0.3 * (col.y1 - col.y0);
+    const x = col.x - Math.sin(yaw) * out;
+    const z = col.z - Math.cos(yaw) * out;
+    this.audio.play(SOUND.TREE_FALL, { x, y: this.world.heightAt(x, z) + 1.5, z });
+  }
+
+  regrowTrees() {
+    if (!this.world) return;
+    regrowTrees(this.world);
+    this.foliage?.regrow();
   }
 
   onDisconnect() {
@@ -697,6 +746,7 @@ export class Game {
     this.input.enabled = false;
     this.input.exitLock();
     this.entities.clear();
+    this.rockets.clear();
     this.voice.closeAll();
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
@@ -819,9 +869,11 @@ export class Game {
     this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
   }
 
+  // what we carry, by item: the backpack, and the ammunition carried apart from it (the reserves we predict)
   invCounts() {
     const m = {};
     for (const it of this.inventory.slots) if (it) m[it.item] = (m[it.item] || 0) + it.count;
+    this.prediction.state.ammo.forEach((n, i) => n > 0 && (m[AMMO_ITEMS[i]] = n));
     return m;
   }
 
@@ -953,7 +1005,7 @@ export class Game {
       killfeed(kk, killerId, victimId, weapon, flags) {
         // a zombie the world killed is a boss that outlived the night: the dawn sun burnt it, and its loot with it
         const sunKill = kk === KILLER.WORLD && !!(victimId & 0x8000);
-        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : 'The world';
+        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : flags & 4 ? 'The water' : 'The world'; // (flags 4: drowned)
         const victim = victimId & 0x8000 ? ZOMBIE_DEFS[victimId & 0xff]?.name || 'Zombie' : g.name(victimId);
         g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
         if (sunKill) g.ui.notify(`${victim.startsWith('The ') ? victim : 'The ' + victim} burned in the sun, and what it carried with it. Kill a boss before sunrise to loot it.`, 'toast', 7);
@@ -962,6 +1014,7 @@ export class Game {
         g.onNotify(msg, arg);
       },
       explosion(x, y, z, radius, kind) {
+        g.rockets.burst(x, y, z); // (a grenade of ours that went off: it is not drawn flying on)
         g.effects.explosion(x, y, z, radius, kind);
         if (kind === 0 || kind === 2) g.lights.flashFx(x, y, z, kind === 2 ? 40 : 120, 0.5);
         const d = Math.hypot(x - g.renderPos.x, z - g.renderPos.z);
@@ -982,9 +1035,14 @@ export class Game {
       },
       stripped(qx, qy, qz) {
         g.stripped.add(strippedKey(qx, qy, qz));
+        g.fellTree(qx, qy, qz); // (a tree in the list was cut down before we came)
+      },
+      fell(qx, qy, qz, yaw) {
+        g.fellTree(qx, qy, qz, yaw);
       },
       regrown() {
         g.stripped.clear();
+        g.regrowTrees();
       },
       flyover(x, y, z, heading, eta) {
         g.flyover?.start(x, y, z, heading, eta, g.time, g.audio);
@@ -1180,7 +1238,8 @@ export class Game {
         if (d?.cat === 'part') {
           ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack [I].`, 'danger', 6);
           a.playLocal('build_fail');
-        } else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
+        } else if (d?.cat === 'ammo') ui.notify(`Can't carry more ${d.name}`, 'warning', 2);
+        else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
         break;
       }
       case NOTIFY.CAMPFIRE_LIT:
@@ -1199,6 +1258,7 @@ export class Game {
         this.deathShown = false;
         this.discovered = new Set([ZONE.CAMP]);
         this.stripped.clear();
+        this.regrowTrees();
         this.pings = [];
         this.waypoint = null;
         this.flyover?.clear();
@@ -1263,10 +1323,19 @@ export class Game {
     } else _v.set(mx, my, mz);
     if (def.flame) return this.flamePuff(ev.shooter, ev, mx, my, mz, def);
     if (!def.quiet) {
-      this.effects.worldMuzzle(_v, def.pellets > 1 ? 1.3 : 1);
+      this.effects.worldMuzzle(_v, def.rocket || def.bossMul ? 1.8 : def.pellets > 1 ? 1.3 : 1);
       this.lights.flashMuzzle(_v, 0.8);
     }
     this.audio.play(SHOT_SOUND[ev.weapon] || SOUND.PISTOL, { x: mx, y: my, z: mz });
+    if (def.rocket) {
+      // no tracer: the grenade is a projectile of its own (entities.js). The backblast out of the back of the tube
+      const cp = Math.cos(ev.pitch);
+      const fx = -Math.sin(ev.yaw) * cp;
+      const fy = Math.sin(ev.pitch);
+      const fz = -Math.cos(ev.yaw) * cp;
+      this.effects.backblast(mx - fx, my - fy, mz - fz, -fx, -fy, -fz);
+      return;
+    }
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     for (let i = 0; i < n; i++) {
       if (def.pellets > 1 && i % 2) continue;
@@ -1289,13 +1358,24 @@ export class Game {
     const dz = -Math.cos(ev.yaw) * cp;
     raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
     const ahead = (mx - ev.x) * dx + (my - ev.y) * dy + (mz - ev.z) * dz; // the nozzle is this far along the stream
-    this.effects.flameJet(mx, my, mz, dx, dy, dz, Math.max(0.3, (_ray.t >= 0 ? _ray.t : def.range) - ahead), def.flame.cone);
+    const dist = Math.max(0.3, (_ray.t >= 0 ? _ray.t : def.range) - ahead);
+    this.effects.flameJet(mx, my, mz, dx, dy, dz, dist, def.flame.cone);
     _v.set(mx + dx * 1.2, my + dy * 1.2 + 0.25, mz + dz * 1.2);
     this.lights.flashMuzzle(_v, 0.3, 0.12);
+    // the stream lights up everything round it like a big fire: its light sits well short of where the fire ends
+    // (a light right on the wall it splashes on burns that wall white), no more than 4.5 m out, so the shooter
+    // stands in it too. Sprayed point-blank into something, the fire is smothered and lights less
+    const k = Math.min(4.5, Math.max(dist * 0.4, dist - 1.8));
     let f = this.flames.get(id);
-    if (!f) this.flames.set(id, (f = { loop: this.audio.createLoop?.('flamethrower', mx, my, mz) || null, t: 0 }));
+    if (!f) {
+      _v.set(mx + dx * k, my + dy * k - 0.9, mz + dz * k); // (the light pool lifts a big fire's light 0.9 m)
+      this.flames.set(id, (f = { loop: undefined, t: 0, glow: 0, at: _v.clone(), light: { x: _v.x, y: _v.y, z: _v.z, intensity: 0, big: true, color: 0xff9440 } }));
+    }
+    if (f.loop === undefined) f.loop = this.audio.createLoop?.('flamethrower', mx, my, mz) || null;
     f.loop?.setPosition(mx, my, mz);
     f.t = 0.2;
+    f.glow = (1.05 + Math.random() * 0.4) * Math.min(1, 0.4 + dist * 0.2); // each puff a little brighter or dimmer than the last: it flickers
+    f.at.set(mx + dx * k, my + dy * k - 0.9, mz + dz * k);
   }
 
   // ---------------------------------------------------------------- local predicted events
@@ -1384,6 +1464,21 @@ export class Game {
     return true;
   }
 
+  // into the water or out of it (shared/swim.js). The hands go to swimming and the weapon out of sight; it is drawn
+  // again on the way out
+  onSwim(swim) {
+    this.swimming = swim;
+    if (!swim) {
+      this.vmItem = null;
+      return;
+    }
+    this.swimTired = false;
+    if (!this.swimTold) {
+      this.swimTold = true;
+      this.ui.notify('Swimming: your hands are busy, and stamina drains the whole time. Run out of it and you drown.', 'toast', 7);
+    }
+  }
+
   onLocalEvents(events, s) {
     const a = this.audio;
     for (const ev of events) {
@@ -1416,6 +1511,22 @@ export class Game {
             _v.set(ev.x + _v2.x * 0.8, ev.y - 0.1, ev.z + _v2.z * 0.8);
             this.lights.flashMuzzle(_v, 1);
           }
+          if (def.rocket) {
+            // No pellets: a grenade, flown on from here by game/rockets.js along the line the server flies it. It
+            // leaves the muzzle on the right shoulder, and the backblast leaves the back of the tube behind it
+            shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, 1, ev.seed, _dirs);
+            const cp = Math.cos(ev.pitch);
+            const fx = -Math.sin(ev.yaw) * cp;
+            const fy = Math.sin(ev.pitch);
+            const fz = -Math.cos(ev.yaw) * cp;
+            const rx = Math.cos(ev.yaw) * 0.16;
+            const rz = -Math.sin(ev.yaw) * 0.16;
+            this.rockets.fire(def, ev.x, ev.y, ev.z, _dirs[0], _dirs[1], _dirs[2], ev.x + rx + fx * 0.8, ev.y - 0.1 + fy * 0.8, ev.z + rz + fz * 0.8);
+            this.effects.backblast(ev.x + rx - fx * 0.5, ev.y - 0.1 - fy * 0.5, ev.z + rz - fz * 0.5, -fx, -fy, -fz);
+            this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+            this.camShake = Math.min(1, (this.camShake || 0) + kick[1]);
+            break;
+          }
           // Tracers from the gun, and what every pellet strikes (predictPellet): the blood or the puff off the wall is
           // shown now, not a round trip later. The damage and the hit marker are still the server's alone
           const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
@@ -1444,12 +1555,12 @@ export class Game {
         case 'reload': {
           this.vm.reload(ev.time, !!ev.each);
           if (ev.each) a.playLocal('shell_insert');
-          else a.playLocal(currentWeapon(s) === ITEM.CROSSBOW ? 'xbow_cock' : 'reload_start');
+          else a.playLocal(currentWeapon(s) === ITEM.CROSSBOW ? 'xbow_cock' : currentWeapon(s) === ITEM.AT_RIFLE ? 'at_bolt' : currentWeapon(s) === ITEM.RPG ? 'rpg_draw' : 'reload_start');
           break;
         }
         case 'reload_done': {
           const w = currentWeapon(s);
-          a.playLocal(w === ITEM.SHOTGUN ? 'pump' : w === ITEM.HUNTING_RIFLE ? 'bolt' : w === ITEM.CROSSBOW ? 'xbow_load' : 'reload_end');
+          a.playLocal(w === ITEM.SHOTGUN ? 'pump' : w === ITEM.HUNTING_RIFLE ? 'bolt' : w === ITEM.AT_RIFLE ? 'at_bolt' : w === ITEM.CROSSBOW ? 'xbow_load' : w === ITEM.RPG ? 'rpg_load' : 'reload_end');
           break;
         }
         case 'melee':
@@ -1469,6 +1580,13 @@ export class Game {
         case 'land':
           a.playLocal('land'); // the view's dip comes with every landing, see the camera in update()
           break;
+        case 'splash': {
+          // into the water (shared/swim.js), from a jump or off the end of the pier: the view dips as on a landing
+          const k = Math.min(1, ev.v / 12);
+          a.footstep('water', undefined, undefined, undefined, 0.7 + 0.3 * k, { run: true });
+          this.effects.splash(s.x - Math.sin(s.yaw) * 0.9, WATER_LEVEL, s.z - Math.cos(s.yaw) * 0.9, 0.3 + 0.5 * k);
+          break;
+        }
         case 'cart_bump':
           this.handcar.bump(); // our handcar run into the end of the line
           break;
@@ -1616,6 +1734,9 @@ export class Game {
         break;
       case 'KeyH':
         this.quickHeal();
+        break;
+      case 'KeyB':
+        this.quickDrink();
         break;
       case 'KeyR':
         if (s.slot === SLOT_BUILD) this.cycleBuild(1);
@@ -1768,6 +1889,18 @@ export class Game {
     this.ui.notify(down ? 'No medkit' : 'No healing items', 'warning', 1.5);
   }
 
+  // [B]: an energy drink from the backpack, stamina back in one go (the server turns one down at full stamina).
+  // idx: the backpack slot clicked, when it was not the key
+  quickDrink(idx = this.inventory.slots.findIndex((x) => x && x.item === ITEM.ENERGY_DRINK)) {
+    const s = this.prediction.state;
+    if (s.zombie || s.downed || this.self.useItem) return;
+    if (idx < 0) return void this.ui.notify('No energy drinks', 'warning', 1.5);
+    if (s.stamina >= STAMINA_MAX - 0.5 && !s.exhausted) return void this.ui.notify('Stamina is already full', 'info', 1.5);
+    this.conn.action(ACT.USE_ITEM, idx);
+    this.audio.playLocal('drink');
+    this.vm.useItem?.(CONSUMABLES[ITEM.ENERGY_DRINK].time, ITEM.ENERGY_DRINK);
+  }
+
   craftContext() {
     const rp = this.renderPos;
     const st = this.entities.stationsNear(rp.x, rp.z, CRAFT_STATION_RADIUS);
@@ -1879,6 +2012,7 @@ export class Game {
       onCraftRepeat: (id, n) => this.craftRepeat(id, n),
       onUseItem: (i) => {
         const it = this.inventory.slots[i];
+        if (it && CONSUMABLES[it.item]?.drink) return void this.quickDrink(i); // (that very can)
         this.conn.action(ACT.USE_ITEM, i);
         const c = it && CONSUMABLES[it.item];
         if (!c) return;
@@ -1887,9 +2021,15 @@ export class Game {
       },
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
       onSplitItem: (i, n) => this.conn.action(ACT.SPLIT_INV, i, n),
+      onDropAmmo: (cal, n) => this.conn.action(ACT.DROP_AMMO, cal, n),
+      onSalvage: (from, n) => {
+        this.conn.action(ACT.SALVAGE, from, n);
+        this.audio.playLocal('craft', { volume: 0.6 }); // (the server's sound leaves us out)
+      },
       onSwapItems: (a, b) => this.conn.action(ACT.SWAP_INV, a, b),
       onEquipArmor: (i) => this.conn.action(ACT.EQUIP_ARMOR, i),
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
+      onUnequip: (slot, to = 255) => this.conn.action(ACT.UNEQUIP, slot, to),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
@@ -1983,7 +2123,11 @@ export class Game {
     const targetEye = eyeHeight(s);
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * (s.downed ? 5 : 12));
     const hspeed = Math.hypot(s.vx, s.vz);
-    if (s.onGround && hspeed > 0.5) this.camBob += dt * hspeed * (s.downed ? 3.2 : 1.9);
+    // afloat (shared/swim.js): the hands are swimming, the view rides the water, the stride is a stroke
+    const swim = !!self.alive && swimming(this.world, s);
+    this.swimK += ((swim ? 1 : 0) - this.swimK) * Math.min(1, dt * 3);
+    if (swim !== this.swimming) this.onSwim(swim);
+    if (s.onGround && hspeed > 0.5) this.camBob += dt * hspeed * (s.downed ? 3.2 : swim ? 1.3 : 1.9);
     // Every landing dips the view, by how hard it was: with the square of the fall speed (so with the height
     // fallen) from 4 cm after a jump up to the 12 cm of a hard landing, the one the simulation calls `land`
     // (9 m/s and up), which is this same dip and not another on top. "Weapon look sway" off is the one way a
@@ -2004,7 +2148,7 @@ export class Game {
     // a heavy footfall drops the view and rattles it, then dies away in ~0.4 s however faint it was: far off it is a
     // tremor that lasts as long as the jolt of one landing beside you
     this.quake *= Math.exp(-dt * 6);
-    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag - this.quake * 0.03;
+    const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag - this.quake * 0.03 + this.swimK * (Math.sin(time * 1.7) * 0.035 + Math.sin(time * 0.63) * 0.02);
     this.recoilKick *= Math.exp(-dt * 10);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
     const shake = this.camShake * 0.02 + this.effects.shake * 0.03 + this.quake * 0.02;
@@ -2015,7 +2159,7 @@ export class Game {
       cam.rotation.set(d.pitch, d.yaw, 0);
     } else if (self.alive) {
       cam.position.set(rp.x, rp.y + this.eyeH + bobY, rp.z);
-      const roll = s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0;
+      const roll = (s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0) + this.swimK * Math.sin(time * 1.1) * 0.025;
       cam.rotation.set(inp.pitch + this.recoilKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
     } else {
       // death cam: slumped on the ground looking up
@@ -2024,14 +2168,21 @@ export class Game {
     }
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
-    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn; // (hands on a handcar's lever: no sights)
+    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !swim; // (hands on a handcar's lever, or swimming: no sights)
     const baseFov = this.settings.fov || 75;
-    const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
+    const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
     if (Math.abs(cam.fov - this.fovCur) > 0.01) {
       cam.fov = this.fovCur;
       cam.updateProjectionMatrix();
     }
+    // the anti-tank rifle's round going home, partway through its long reload
+    if (currentWeapon(s) === ITEM.AT_RIFLE && s.reloadT > 0) {
+      if (!this.atRoundIn && wdef.reload - s.reloadT >= wdef.reload * AT_ROUND_IN) {
+        this.atRoundIn = true;
+        this.audio.playLocal('at_round');
+      }
+    } else this.atRoundIn = false;
     // look sensitivity follows the zoom as it eases in and out (see AIM_SENS), so the turn rate never steps mid-turn.
     // The sprint fov is wider than the hip one and must not speed the turn up; settled at the hip it is the setting alone
     this.aimT += ((aiming ? 1 : 0) - this.aimT) * Math.min(1, dt * 12);
@@ -2047,28 +2198,50 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !this.handcar.handsOn);
+    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
       if (this.vmMuzzleT <= 0) this.renderer.vmMuzzle.intensity = 0;
     }
-    // a flamethrower's roar stops a moment after its last puff
+    // a flamethrower's roar stops a moment after its last puff; its light dies down with the fire it left
+    this.flameLights.length = 0;
     for (const [id, f] of this.flames) {
-      if ((f.t -= dt) > 0) continue;
-      f.loop?.stop();
-      this.flames.delete(id);
+      const L = f.light;
+      if (f.t > 0) {
+        L.intensity += (f.glow - L.intensity) * Math.min(1, dt * 18);
+        if ((f.t -= dt) <= 0) {
+          f.loop?.stop();
+          f.loop = undefined;
+        }
+      } else if ((L.intensity -= dt * 3.5) <= 0) {
+        this.flames.delete(id);
+        continue;
+      }
+      const m = Math.min(1, dt * 14); // (it follows the aim, not jumping puff to puff)
+      L.x += (f.at.x - L.x) * m;
+      L.y += (f.at.y - L.y) * m;
+      L.z += (f.at.z - L.z) * m;
+      this.flameLights.push(L);
     }
 
-    // local footsteps
+    // local footsteps (afloat: strokes, and a slow paddle treading water)
     if (self.alive && s.onGround && hspeed > 1) {
       this.stepAcc += hspeed * dt;
-      const stride = s.sprinting ? 2.6 : s.crouch ? 1.4 : 2.1;
+      const stride = swim ? (s.sprinting ? 2.4 : 1.9) : s.sprinting ? 2.6 : s.crouch ? 1.4 : 2.1;
       if (this.stepAcc > stride) {
         this.stepAcc = 0;
-        this.audio.footstep(this.surfaceAt(rp.x, rp.y, rp.z), undefined, undefined, undefined, s.crouch ? 0.25 : s.sprinting ? 0.8 : 0.5, { crouch: !!s.crouch, run: !!s.sprinting });
+        this.audio.footstep(swim ? 'water' : this.surfaceAt(rp.x, rp.y, rp.z), undefined, undefined, undefined, swim ? (s.sprinting ? 0.7 : 0.45) : s.crouch ? 0.25 : s.sprinting ? 0.8 : 0.5, { crouch: !!s.crouch, run: !!s.sprinting });
+        if (swim) this.effects.splash(rp.x - Math.sin(inp.yaw) * 0.7, WATER_LEVEL, rp.z - Math.cos(inp.yaw) * 0.7, s.sprinting ? 0.18 : 0.1);
       }
+    } else if (swim && (this.treadT -= dt) <= 0) {
+      this.treadT = 1.6 + Math.random() * 0.8;
+      this.audio.footstep('water', undefined, undefined, undefined, 0.2, { crouch: true });
+    }
+    if (swim && s.stamina < 30 && !this.swimTired) {
+      this.swimTired = true;
+      this.ui.notify(s.stamina > 0 ? 'Tiring in the water: get your feet on the bottom before you run out of stamina.' : 'Drowning! Get to shallow water.', 'toast', 5);
     }
 
     // flashlight: local prediction, server authoritative after a moment
@@ -2077,6 +2250,7 @@ export class Game {
 
     // entities
     this.entities.update(dt, this.renderTick, time, rp);
+    this.rockets.update(dt);
     this.gun.update(dt, ldx * lk, ldy * lk);
 
     // interaction target
@@ -2144,7 +2318,7 @@ export class Game {
       u.uSunCol.value.copy(this.env.cur.dir);
       u.uCam.value.copy(cam.position);
     }
-    const fires = this.entities.fireSources.concat(this.staticFires, this.fair.lights);
+    const fires = this.entities.fireSources.concat(this.staticFires, this.fair.lights, this.flameLights);
     this.lights.update(dt, time, cam.position, this.localFlash && self.alive && !s.zombie, fires, this.entities.remoteFlash, Math.max(this.env.night, this.under));
     this.power.update(dt, time, cam.position, Math.max(this.env.night, this.under));
     // nearest big fire warms the viewmodel & the ambience
@@ -2154,7 +2328,7 @@ export class Game {
       nearFire = Math.max(nearFire, Math.max(0, 1 - Math.hypot(rp.x - f.x, rp.z - f.z) / 14) * f.intensity);
     }
     // viewmodel lighting follows the world
-    this.updateViewmodelLight(dt, cam, Math.max(nearFire, this.power.eyeLit)); // (in a floodlight's cone the hands are lit too)
+    this.updateViewmodelLight(dt, cam, Math.max(nearFire, this.power.eyeLit), this.flames.get(-1)?.light.intensity || 0); // (in a floodlight's cone the hands are lit too)
     this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
 
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
@@ -2603,13 +2777,15 @@ export class Game {
       h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
     } else {
       h.useProgress = self.useItem ? self.useProgress : -1;
-      h.useLabel = self.useItem ? `${CONSUMABLES[self.useItem]?.food ? 'Eating' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
+      const c = CONSUMABLES[self.useItem];
+      h.useLabel = self.useItem ? `${c?.food ? 'Eating' : c?.drink ? 'Drinking' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
       this.power.hud(h); // ([E] held on a generator's switch)
     }
     // context panel
     const car = this.world.car;
     const counts = this.invCounts();
     h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
+    h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what [B] has left
     let partsMask = 0;
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };

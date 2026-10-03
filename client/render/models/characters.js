@@ -3991,6 +3991,8 @@ function getSurvivorRig(v, zombie) {
 
 // weapon holding categories
 const HOLD_NONE = 0, HOLD_RIFLE = 1, HOLD_PISTOL = 2, HOLD_MELEE = 3, HOLD_THROW = 4;
+// what the swimming pose (SurvivorInstance.poseSwim) moves, blended over the rest: torso, head, arms, legs
+const SWIM_BONES = [HIPS, SPINE, CHEST, NECK, HEAD, UARM_L, UARM_L + 1, UARM_L + 2, UARM_R, UARM_R + 1, UARM_R + 2, THIGH_L, THIGH_L + 1, THIGH_L + 2, THIGH_R, THIGH_R + 1, THIGH_R + 2];
 function holdFor(item) {
   if (!item) return HOLD_NONE;
   const w = WEAPONS[item];
@@ -4078,6 +4080,8 @@ class SurvivorInstance {
     this.airW = 0;
     this.runW = 0;
     this.reloadW = 0;
+    this.swimW = 0; // afloat in the water (shared/swim.js)
+    this.swimPh = 0; // ...and the stroke's clock
     this.s = null;
     // zombie-mode animation shim (reuses humanoid zombie pose code)
     this.z = {
@@ -4172,6 +4176,8 @@ class SurvivorInstance {
     this.airW += ((s.onGround === false ? 1 : 0) - this.airW) * (1 - Math.exp(-dt * 12));
     this.runW += ((s.sprint && speed > 4 ? 1 : 0) - this.runW) * k;
     this.reloadW += ((s.reloading ? 1 : 0) - this.reloadW) * k;
+    this.swimW += ((s.swim ? 1 : 0) - this.swimW) * (1 - Math.exp(-dt * 5));
+    this.swimPh += dt * (1.8 + 1.6 * clamp(speed / 2, 0, 1));
     const z = this.z;
     let cyc = lerp(lerp(1.7, 2.5, clamp(speed / 7, 0, 1)), 1.1, this.crouchW);
     if (this.zombie) {
@@ -4315,6 +4321,58 @@ class SurvivorInstance {
       const u = this.pulseMelee / 0.4;
       arm(p, 1, 1.4 * Math.sin(u * PI), 0.2, 0, 0.4, 0);
     }
+    if (this.swimW > 0.01) this.poseSwim(p, s, speed);
+  }
+
+  /** Afloat (shared/swim.js), blended over the rest by swimW: upright treading water, sculling at the surface, and
+   *  leaning into a breaststroke on the move. Only the head and shoulders are out of the water: what shows of it is
+   *  the arms sweeping out and in at the surface. Nothing is in the hands (Entities puts the weapon away). */
+  poseSwim(p, s, speed) {
+    const w = this.swimW;
+    const sv = this._swimSave || (this._swimSave = new Float32Array(SWIM_BONES.length * 3 + 1));
+    for (let i = 0; i < SWIM_BONES.length; i++) {
+      const k = SWIM_BONES[i] * 4;
+      sv[i * 3] = p[k];
+      sv[i * 3 + 1] = p[k + 1];
+      sv[i * 3 + 2] = p[k + 2];
+    }
+    sv[SWIM_BONES.length * 3] = p[this.nb * 4 + 1];
+    const mv = clamp(speed / 2, 0, 1);
+    const u = this.swimPh;
+    const sn = Math.sin(u), cs = Math.cos(u);
+    // legs: a slow frog kick under the water
+    for (let side = 0; side < 2; side++) {
+      const th = side ? THIGH_R : THIGH_L;
+      const sg = side ? 1 : -1;
+      R(p, th, 0.3 + 0.25 * sn * (0.5 + mv), 0, sg * (0.25 + 0.15 * cs));
+      R(p, th + 1, -0.7 - 0.5 * Math.max(0, cs), 0, 0);
+      R(p, th + 2, 0.6, 0, 0);
+    }
+    // torso: upright, leaning into the stroke as it goes; the head keeps the face out whatever they look at
+    R(p, HIPS, 0, 0, 0);
+    R(p, SPINE, 0.12 + 0.2 * mv + 0.04 * sn * mv, 0, 0);
+    R(p, CHEST, 0.06 + 0.1 * mv, 0, 0.03 * Math.sin(u * 0.5) * (1 - mv));
+    const cp = chestPitch(p);
+    const look = clamp(s.pitch || 0, -0.5, 0.6) - cp;
+    R(p, NECK, look * 0.4, 0, 0);
+    R(p, HEAD, look * 0.6, 0, 0);
+    // arms: treading, a sweep out and back at the sides; swimming, the breaststroke - reach, sweep out, elbows in
+    for (let side = 0; side < 2; side++) {
+      const pitch = lerp(0.95 + 0.1 * cs, 1.35 + 0.15 * cs - 0.3 * Math.max(0, -sn), mv);
+      const abd = lerp(0.75 + 0.25 * sn, 0.15 + 0.3 * (1 - cs), mv);
+      const elbow = lerp(1.0 + 0.25 * cs, 0.25 + 1.25 * Math.max(0, -sn), mv);
+      arm(p, side, pitch, abd, lerp(0.2 * sn, 0, mv), elbow, 0);
+    }
+    // the water holds the hips up: no foot on the ground to bend down to
+    p[this.nb * 4 + 1] = 0;
+    if (w >= 0.999) return;
+    for (let i = 0; i < SWIM_BONES.length; i++) {
+      const k = SWIM_BONES[i] * 4;
+      p[k] = sv[i * 3] + (p[k] - sv[i * 3]) * w;
+      p[k + 1] = sv[i * 3 + 1] + (p[k + 1] - sv[i * 3 + 1]) * w;
+      p[k + 2] = sv[i * 3 + 2] + (p[k + 2] - sv[i * 3 + 2]) * w;
+    }
+    p[this.nb * 4 + 1] = sv[SWIM_BONES.length * 3] * (1 - w);
   }
 
   /** Two-bone IK for weapon holds, in chest space. */

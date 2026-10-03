@@ -1,16 +1,15 @@
 // The Tri-County Fair on the server (the place itself and the ride geometry: shared/fair.js).
 // Its generator is a fixture of the shed there. A survivor holds [E] on it to start it: it runs on Flamethrower
-// Fuel poured in from their backpack, and holding [E] again shuts it off. While it runs the rides turn, the fair's
+// Fuel poured in from what they carry, and holding [E] again shuts it off. While it runs the rides turn, the fair's
 // lights hold Shades the way torchlight does (Zombies.isLit asks `lit`), and the music is a standing noise: every
 // few seconds the dead with nobody to chase hear it from NOISE.FAIR metres off and come to the midway.
 // The state the clients need rides in one entity (ENT.FAIR) that is in everybody's area of interest.
 import { SERVER_TICK_RATE, CMD_RATE, NOISE, INTERACT_REACH, INTERACT_SLACK, HOLD_SLACK, EYE_HEIGHT } from '../shared/constants.js';
-import { ITEM, NOTIFY, SOUND } from '../shared/defs.js';
+import { AMMO, NOTIFY, SOUND } from '../shared/defs.js';
 import { ENT, HOLD, FAIR_GEN_ID } from '../shared/protocol.js';
 import { GEN, RIDE_SEATS, SEAT_PICK, seatPos, seatLow, rideCarry } from '../shared/fair.js';
 import { canReach, raycastWorld, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
-import { countItem, removeItem } from './inventory.js';
 
 const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE;
 const BURN = GEN.burn * SERVER_TICK_RATE; // ticks a portion of fuel runs it for
@@ -128,7 +127,7 @@ export class Fair {
   holdBegin(p) {
     const g = this.g;
     if (!this.near(p, g.world.fair.gen, GEN.pick)) return;
-    if (!this.running && this.fuel <= 0 && countItem(p.inv, ITEM.AMMO_FUEL) < GEN.portion) return g.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
+    if (!this.running && this.fuel <= 0 && p.state.ammo[AMMO.FUEL] < GEN.portion) return g.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
     p.hold = { kind: this.running ? HOLD.FAIR_STOP : HOLD.FAIR_START, target: FAIR_GEN_ID, t: 0, need: GEN.hold };
   }
 
@@ -142,11 +141,10 @@ export class Fair {
     else this.start(p);
   }
 
-  // A portion of fuel from p's backpack into the tank. False if they have not got one.
+  // A portion of the fuel p carries into the tank. False if they have not got one.
   pour(p) {
-    if (countItem(p.inv, ITEM.AMMO_FUEL) < GEN.portion) return false;
-    removeItem(p.inv, ITEM.AMMO_FUEL, GEN.portion);
-    p.invDirty = true;
+    if (p.state.ammo[AMMO.FUEL] < GEN.portion) return false;
+    p.state.ammo[AMMO.FUEL] -= GEN.portion;
     this.fuel = Math.min(TANK, this.fuel + BURN);
     return true;
   }

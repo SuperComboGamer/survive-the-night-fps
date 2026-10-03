@@ -1,7 +1,8 @@
 // Contextual key hints: one line on the HUD naming the key that answers what is happening right now (it is
-// dark and the light is off, hurt with a bandage in the pack, dusk with planks to build with), plus the map
-// and the inventory once each in the first minute. A hint goes as soon as its moment has passed and is
-// retired for good once the player has done the thing twice. Only a change of hint touches the DOM.
+// dark and the light is off, hurt with a bandage in the pack, run out of stamina with an energy drink in it, dusk
+// with planks to build with), plus the map and the inventory once each in the first minute. A hint goes as soon
+// as its moment has passed and is retired for good once the player has done the thing twice. Only a change of
+// hint touches the DOM.
 import { PHASE, DUSK_WARNING, SLOT_BUILD } from '../../shared/constants.js';
 import { CONSUMABLES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT } from '../../shared/defs.js';
 import { ACTION_KEYS, keyLabel } from '../game/input.js';
@@ -11,6 +12,7 @@ const STORE = 'stn.keyhints'; // { flashlight: 2, heal: 1, ... }: how often each
 const RETIRE = 2;
 const DARK = 0.6; // Environment.night: dusk ends on 0.6, so anything above is the night itself
 const HURT = 0.5; // of full health
+const LOW_STAMINA = 15; // of 100
 const LOW_BATTERY = 10; // % - a light that would die within seconds is not worth pointing at
 const EARLY_FROM = 6; // seconds of daytime play: after the opening title card...
 const EARLY_UNTIL = 60; // ...and within the first minute, the map and the inventory get a mention,
@@ -22,6 +24,7 @@ const HINTS = [
   { id: 'throwoff', key: 'Space', text: 'Throw it off', always: true }, // pinned by a leaper (Zombies.throwOff)
   { id: 'flashlight', key: ACTION_KEYS.flashlight, text: 'Flashlight' },
   { id: 'heal', key: ACTION_KEYS.heal, text: 'Heal' },
+  { id: 'drink', key: ACTION_KEYS.drink, text: 'Energy drink' },
   { id: 'build', key: ACTION_KEYS.build, text: 'Build a shelter' },
   { id: 'map', key: ACTION_KEYS.map, text: 'Field map', early: true },
   { id: 'inventory', key: ACTION_KEYS.inventory, text: 'Inventory & crafting', early: true },
@@ -63,6 +66,7 @@ export class KeyHints {
     const now = this.now;
     now.flashlight = !!g.localFlash;
     now.heal = !!CONSUMABLES[self.useItem]?.heal;
+    now.drink = !!CONSUMABLES[self.useItem]?.drink;
     now.build = s.slot === SLOT_BUILD && !s.zombie;
     now.map = !!g.ui.mapOpen;
     now.inventory = !!g.ui.inventoryOpen;
@@ -70,7 +74,7 @@ export class KeyHints {
     if (this.was) {
       for (const h of HINTS) {
         if (!now[h.id] || this.was[h.id]) continue;
-        if (h.id === 'heal' && now.inventory) continue; // clicked in the backpack, not the heal key
+        if ((h.id === 'heal' || h.id === 'drink') && now.inventory) continue; // clicked in the backpack, not the key
         this.use(h.id);
         used = true;
       }
@@ -108,6 +112,9 @@ export class KeyHints {
         return g.env.night > DARK && !g.localFlash && self.battery > LOW_BATTERY;
       case 'heal':
         return self.hp < self.maxHp * HURT && !self.useItem && g.inventory.slots.some((it) => it && CONSUMABLES[it.item]?.heal);
+      case 'drink':
+        // spent, or nearly, with a can in the pack
+        return (g.prediction.state.exhausted || g.prediction.state.stamina < LOW_STAMINA) && !self.useItem && g.inventory.slots.some((it) => it && CONSUMABLES[it.item]?.drink);
       case 'build':
         return day && g.global.timeLeft <= DUSK_WARNING && g.prediction.state.slot !== SLOT_BUILD && this.canBuild();
       default:

@@ -5,6 +5,7 @@ import { ITEM, WEAPONS } from '../../../shared/defs.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
 import { atlasUV } from '../textures.js';
 import { createWorldWeapon } from './weapons.js'; // (static: a top-level await for it here holds every module up for one more request)
+import { rpgGrenade } from './misc.js';
 
 const PI = Math.PI;
 
@@ -33,12 +34,13 @@ function weaponPickup(itemId) {
   g.name = `pickup_${itemId}`;
   g.userData.itemId = itemId;
   // lay the weapon on its side, barrel along X, resting on the ground
-  // (a crossbow lies flat instead, nose down on its stirrup, or it would stand on one limb)
+  // (a crossbow lies flat instead, nose down on its stirrup, or it would stand on one limb; the RPG lies on its right
+  // side, or it would rest on the sight off its left)
   const flat = itemId === ITEM.CROSSBOW;
   const holder = new THREE.Group();
   holder.add(w);
   if (flat) holder.rotation.set(-0.16, PI / 2 - 0.35, 0, 'YXZ');
-  else holder.rotation.set(0, PI / 2 - 0.35, PI / 2);
+  else holder.rotation.set(0, PI / 2 - 0.35, itemId === ITEM.RPG ? -PI / 2 : PI / 2);
   g.add(holder);
   let x = weaponXform.get(itemId);
   if (!x) {
@@ -300,6 +302,24 @@ BUILD[ITEM.TUNA] = (b) => {
   b.group({ p: [0.014, H, 0.01], r: [0, -0.9, 0] }, () => tunaTin(b, R, H));
 };
 
+// energy drink: a tall black can with a lime band round it, tapered into a ring-pull lid; one stood up and one
+// fallen over beside it
+function drinkCan(b, R, H) {
+  b.cyl('chrome', R, R * 0.8, H * 0.05, 12, { p: [0, H * 0.025, 0], uvOff: TIN_UV });
+  b.cyl('paint', R, R, H * 0.84, 12, { p: [0, H * 0.47, 0], c: [0.06, 0.07, 0.06] });
+  b.cyl('paint', R + 0.0008, R + 0.0008, H * 0.3, 12, { p: [0, H * 0.5, 0], open: true, c: [0.42, 0.78, 0.16] });
+  b.cyl('paint', R + 0.0012, R + 0.0012, H * 0.035, 12, { p: [0, H * 0.43, 0], open: true, c: [0.9, 0.9, 0.84] });
+  b.cyl('chrome', R * 0.82, R, H * 0.075, 12, { p: [0, H * 0.9275, 0], uvOff: TIN_UV });
+  b.cyl('chrome', R * 0.82, R * 0.82, H * 0.01, 12, { p: [0, H * 0.97, 0], uvOff: TIN_UV });
+  b.torus('chrome', R * 0.8, 0.0018, 4, 12, PI * 2, { p: [0, H * 0.975, 0], r: [PI / 2, 0, 0], uvOff: TIN_UV });
+  b.box('steel', 0.013, 0.0015, 0.007, { p: [R * 0.25, H * 0.976, 0] });
+}
+BUILD[ITEM.ENERGY_DRINK] = (b) => {
+  const R = 0.03, H = 0.15;
+  b.group({ p: [-0.04, 0, -0.01], r: [0, 0.6, 0] }, () => drinkCan(b, R, H));
+  b.group({ p: [0.11, R, 0.06], r: [0, -0.35, PI / 2] }, () => drinkCan(b, R, H));
+};
+
 // a cut of venison on the bone, raw and red or browned off the fire; what lies on the ground is two of them
 function venisonCut(b, cooked) {
   b.sphere('paint', 0.07, 8, 6, { p: [0, 0.035, 0], s: [1.25, 0.5, 0.85], c: cooked ? [0.42, 0.24, 0.13] : [0.6, 0.16, 0.15] });
@@ -484,6 +504,25 @@ BUILD[ITEM.AMMO_FUEL] = (b) => {
     b.cyl('paint', 0.0388, 0.0388, 0.046, 12, { p: [0, -0.015, 0], c: [0.85, 0.8, 0.66], open: true });
     b.cyl('dark', 0.018, 0.018, 0.014, 8, { p: [0, 0.118, 0] });
   });
+};
+// RPG grenades: two lying head to tail, each bulb beside the other's motor, tipped a little onto the folded fins
+BUILD[ITEM.AMMO_ROCKET] = (b) => {
+  for (const s of [-1, 1]) {
+    b.group({ p: [s * 0.1, 0.0333, s * 0.034], r: [0, 0.12, -s * (PI / 2 - 0.044)] }, () => rpgGrenade(b, false));
+  }
+};
+
+// 14.5mm: three anti-tank rounds as long as a hand, side by side and a little fanned. Brass cases, copper-washed
+// bullets with black (armour-piercing) tips
+BUILD[ITEM.AMMO_145] = (b) => {
+  // (each lies along -X from its base, after the group's quarter turn)
+  for (const [z, x, yaw] of [[-0.03, 0.08, 0.1], [0, 0.072, -0.02], [0.03, 0.084, -0.12]]) {
+    b.group({ p: [x, 0.0135, z], r: [0, yaw, PI / 2] }, () => {
+      b.lathe('paint', [[0, 0], [0.0135, 0], [0.0124, 0.088], [0.0084, 0.097], [0.0083, 0.114], [0, 0.114]], 7, { c: brass });
+      b.lathe('paint', [[0.0083, 0.113], [0.0074, 0.124], [0.0049, 0.1425], [0, 0.1425]], 7, { c: [0.7, 0.42, 0.3] });
+      b.cyl('dark', 0.0003, 0.0049, 0.0127, 7, { p: [0, 0.1488, 0], open: true });
+    });
+  }
 };
 
 BUILD[ITEM.CAR_BATTERY] = (b) => {

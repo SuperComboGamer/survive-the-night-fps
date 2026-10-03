@@ -1,6 +1,6 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
 // hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|chat|icons   &bg=night|day|fire
-// &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=
+// &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
 import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
 import { PHASE, INVENTORY_SIZE } from '../../shared/constants.js';
@@ -96,9 +96,12 @@ const ui = new UI(document.getElementById('ui'), {
   onUseItem: (i) => log('use', i),
   onDropItem: (i, c) => log('drop', i, c),
   onSplitItem: (i, c) => log('split', i, c),
+  onDropAmmo: (cal, c) => log('dropAmmo', cal, c),
+  onSalvage: (from, c) => log('salvage', from, c),
   onSwapItems: (a, b) => log('swap', a, b),
   onEquipArmor: (i) => log('armor', i),
   onDropWeapon: (s) => log('dropWeapon', s),
+  onUnequip: (s, to) => log('unequip', s, to),
   onSelectStructure: (t) => log('struct', t),
   onSelectThrowable: (t) => log('throwable', t),
   onCloseInventory: () => {
@@ -124,6 +127,8 @@ const baseHud = {
   armorMax: 60,
   stamina: 64,
   exhausted: false,
+  heals: +(q.get('heals') ?? 3),
+  drinks: +(q.get('drinks') ?? 2),
   flashlight: 58,
   flashlightOn: false,
   zombie: false,
@@ -167,7 +172,7 @@ const baseHud = {
 const inv = {
   slots: Array.from({ length: INVENTORY_SIZE }, () => null),
   armor: { item: ITEM.JACKET, points: 42, max: 60 },
-  ammo: [46, 12, 90, 0],
+  ammo: [46, 12, 90, 0, 0, 7, 120],
   weapons: [ITEM.AK47, ITEM.PISTOL, ITEM.MACHETE, ITEM.MOLOTOV, ITEM.HAMMER],
   throwCounts: { [ITEM.MOLOTOV]: 2, [ITEM.PIPEBOMB]: 1 },
 };
@@ -191,9 +196,7 @@ const inv = {
   [ITEM.WIRE, 2],
   [ITEM.PAINKILLERS, 2],
   [ITEM.TUNA, 2],
-  [ITEM.AMMO_9MM, 46],
-  [ITEM.AMMO_SHELLS, 12],
-  [ITEM.AMMO_762, 90],
+  [ITEM.ENERGY_DRINK, 2],
 ].forEach(([item, count], i) => {
   inv.slots[i < 12 ? i : i + 1] = { item, count };
 });

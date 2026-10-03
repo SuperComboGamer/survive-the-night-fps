@@ -17,7 +17,7 @@ import { simulatePlayer, createPlayerState } from '../shared/playersim.js';
 import { BTN, CMD_RATE, PLAYER_RADIUS, PLAYER_HEIGHT, WATER_LEVEL, PHASE, SERVER_TICK_RATE, EYE_HEIGHT, SLOT_BUILD } from '../shared/constants.js';
 import { Game } from '../server/game.js';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
-import { ZTYPE, ITEM, STRUCT, CONT, CONT_TABLES, WEAPONS, AMMO_ITEMS } from '../shared/defs.js';
+import { ZTYPE, ITEM, STRUCT, CONT, CONT_TABLES, WEAPONS } from '../shared/defs.js';
 import { countItem } from '../server/inventory.js';
 
 const SEEDS = process.argv.length > 2 ? process.argv.slice(2).map(Number) : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
@@ -441,13 +441,14 @@ check('nearly every valley has the workings', cut >= SEEDS.length - 1, `${cut} o
     const p = A1.p();
     A1.put(box.x, box.y, box.z);
     p.inv.fill(null);
+    p.state.ammo.fill(0);
     p.state.weapons[0] = 0;
     game.searchCache(p, box);
     const gun = p.state.weapons[0];
     const w = WEAPONS[gun];
     const prize = CONT_TABLES.strongbox.some((row) => row[0] === gun);
     check(`${tag} the strongbox holds one of the rare guns, loaded`, prize && p.state.mags[0] === w?.mag, `weapon ${gun}, ${p.state.mags[0]} in it`);
-    check(`${tag} ...two magazines more for it and two pipe bombs`, prize && countItem(p.inv, AMMO_ITEMS[w.ammo]) === w.mag * 2 && countItem(p.inv, ITEM.PIPEBOMB) === 2, prize ? `${countItem(p.inv, AMMO_ITEMS[w.ammo])} rounds, ${countItem(p.inv, ITEM.PIPEBOMB)} pipe bombs` : '');
+    check(`${tag} ...two magazines more for it and two pipe bombs`, prize && p.state.ammo[w.ammo] === w.mag * 2 && countItem(p.inv, ITEM.PIPEBOMB) === 2, prize ? `${p.state.ammo[w.ammo]} rounds, ${countItem(p.inv, ITEM.PIPEBOMB)} pipe bombs` : '');
     A1.put(world.car.x, world.heightAt(world.car.x, world.car.z), world.car.z);
     let refilled = 0;
     for (let day = 0; day < 12; day++) {

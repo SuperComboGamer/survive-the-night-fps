@@ -188,11 +188,17 @@ export class Hud {
     const stb = el('div', 'v-bar', st);
     this.stFill = el('i', 'v-fill', stb);
     svgEl('i', 'v-ico', st, glyph('bolt'));
-    // healing items left (what [H] would use), red once there are none
-    this.meds = el('div', 'v-meds', hp);
+    // what the quick keys have left, each beside the bar it fills: healing items (what [H] would use) by the health
+    // bar, red once there are none; energy drinks ([B]) under it, by the stamina line, dimmed once there are none
+    const counts = el('div', 'v-counts', hp);
+    this.meds = el('div', 'v-meds', counts);
     this.meds.title = 'Healing items [H]';
     svgEl('i', 'v-meds-ico', this.meds, itemIcon(ITEM.MEDKIT));
     this.medsNum = el('span', 'v-meds-n', this.meds, '0');
+    this.drinks = el('div', 'v-meds v-drinks', counts);
+    this.drinks.title = 'Energy drinks [B]';
+    svgEl('i', 'v-meds-ico', this.drinks, itemIcon(ITEM.ENERGY_DRINK));
+    this.drinksNum = el('span', 'v-meds-n', this.drinks, '0');
     this.ecg = svgEl(
       'i',
       'v-ecg',
@@ -414,6 +420,14 @@ export class Hud {
       this.medsNum.textContent = String(meds);
       this.meds.classList.toggle('out', meds === 0);
       if (kick) this.meds.animate([{ transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 320, easing: 'ease-out' });
+    }
+    const drinks = h.drinks | 0;
+    if (c.drinks !== drinks) {
+      const kick = c.drinks !== undefined;
+      c.drinks = drinks;
+      this.drinksNum.textContent = String(drinks);
+      this.drinks.classList.toggle('none', drinks === 0);
+      if (kick) this.drinks.animate([{ transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 320, easing: 'ease-out' });
     }
 
     const armorMax = h.armorMax || 0;

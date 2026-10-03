@@ -11,6 +11,7 @@ import { VEG } from './materials.js';
 import { G } from './globals.js';
 import { groundFields } from './terrain.js';
 import { grassRadius } from './renderer.js';
+import { FallingTrees } from './fallingtrees.js';
 
 const CELL = 32;
 
@@ -82,6 +83,20 @@ class InstancedSet {
     this._idx = new Int32Array(this.n);
     this._d2 = new Float32Array(this.n);
     this._k = variants.map(() => [0, 0]);
+    this.gone = null; // per instance: 1 while it is left out (a felled tree)
+  }
+
+  // leave instance i out (on: true) or draw it again; the buffers are rebuilt with the next update
+  hide(i, on = true) {
+    if (!this.gone) this.gone = new Uint8Array(this.n);
+    this.gone[i] = on ? 1 : 0;
+    this.lastX = 1e9;
+  }
+
+  showAll() {
+    if (!this.gone) return;
+    this.gone.fill(0);
+    this.lastX = 1e9;
   }
 
   update(cx, cz, radius, force = false) {
@@ -95,6 +110,7 @@ class InstancedSet {
     const r = this.radius;
     const r2 = r * r;
     const data = this.data;
+    const gone = this.gone;
     let nc = 0;
     const c0 = Math.floor((cx - r + MAP_HALF) / CELL);
     const c1 = Math.floor((cx + r + MAP_HALF) / CELL);
@@ -105,6 +121,7 @@ class InstancedSet {
         const arr = this.cells.get(i * 1000 + j);
         if (!arr) continue;
         for (const idx of arr) {
+          if (gone && gone[idx]) continue;
           const dx = data[idx * 6] - cx;
           const dz = data[idx * 6 + 2] - cz;
           const dd = dx * dx + dz * dz;
@@ -370,12 +387,26 @@ export class Foliage {
     this.bushes = new InstancedSet(scene, world.bushes, getBushVariants(), { radius: 85, rebuildDist: 6, receive: true });
     this.rocks = new InstancedSet(scene, world.rocks, getRockVariants(), { radius: quality.treeDist, rebuildDist: 10, receive: true });
     this.grass = new GrassField(scene, world);
+    this.falling = new FallingTrees(scene, world, this.trees);
     this.setQuality(quality, grassMul);
   }
 
   dispose() {
+    this.falling.dispose();
     for (const set of [this.trees, this.bushes, this.rocks]) set.dispose();
     this.grass.dispose();
+  }
+
+  // Tree i felled (Game.fellTree): out of the forest - crashing down first, toward yaw, when that is given
+  fell(i, yaw = null) {
+    this.trees.hide(i);
+    if (yaw !== null) this.falling.fell(i, yaw, VEG.uVegCam.value.x, VEG.uVegCam.value.z);
+  }
+
+  // dawn: every felled tree stands again
+  regrow() {
+    this.falling.clear();
+    this.trees.showAll();
   }
 
   setQuality(q, grassMul = 1) {
@@ -411,5 +442,6 @@ export class Foliage {
     this.bushes.update(camPos.x, camPos.z, Math.min(85, fogVisibility + 10));
     this.rocks.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10);
     this.grass.update(camPos.x, camPos.z);
+    this.falling.update(dt);
   }
 }

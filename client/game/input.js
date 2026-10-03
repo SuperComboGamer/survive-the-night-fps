@@ -23,6 +23,7 @@ const KEYMAP = {
 export const ACTION_KEYS = {
   flashlight: 'KeyF',
   heal: 'KeyH',
+  drink: 'KeyB', // an energy drink: stamina back
   map: 'KeyM',
   board: 'KeyL',
   inventory: 'KeyI',

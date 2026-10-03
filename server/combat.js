@@ -1,6 +1,6 @@
 // Combat: lag-compensated hitscan, melee, thrown/lobbed projectiles, explosions, damage areas.
 import { SERVER_TICK_RATE, MAX_REWIND, HISTORY_TICKS, PLAYER_RADIUS, PLAYER_HEIGHT, PLAYER_CROUCH_HEIGHT, EYE_HEIGHT, PHASE, NOISE } from '../shared/constants.js';
-import { LEG_ZONE, LEG_BODY_DAMAGE, STUMBLE_TIME } from '../shared/constants.js';
+import { LEG_ZONE, LEG_BODY_DAMAGE, STUMBLE_TIME, INTERP_DELAY } from '../shared/constants.js';
 import { SOUND as _SOUND } from '../shared/defs.js';
 import {
   ITEM,
@@ -28,11 +28,16 @@ import { shotDirections, eyeHeight } from '../shared/playersim.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
 import { deerHitbox } from '../shared/deer.js';
+import { rocketStrikesWorld } from '../shared/rocket.js';
 
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(3 * 16);
 const _hits = [];
 const _bp = { x: 0, y: 0, z: 0 };
+
+// the most of its flight an RPG grenade is put ahead to make up for the shooter's lag (s; Combat.launch): a round trip
+// of 400 ms. Past that, what the shooter saw it strike and what it strikes part ways
+const ROCKET_AHEAD = 0.4;
 
 // buckshot loses its punch with distance
 const pelletFalloff = (t) => Math.max(0.25, Math.min(1, 1 - (t - 8) / 30));
@@ -122,6 +127,7 @@ export class Combat {
     // the dead come to the noise
     g.zm.noise(ox, oz, def.noise || NOISE.GUNSHOT, p.state.y);
     if (def.flame) return this.flame(p, ev, def);
+    if (def.rocket) return this.launch(p, ev, def);
     const t = this.rewindTime(p);
     let hitFlags = 0;
     const tmp = { x: 0, y: 0, z: 0 };
@@ -165,6 +171,8 @@ export class Combat {
         if (def.pellets > 1) d *= pelletFalloff(h.t);
         const headMul = h.head ? (h.isPlayer ? 2 : h.e.boss ? 1.6 : def.headMul) : 1;
         d *= headMul;
+        // the anti-tank rifle: made for the big ones
+        if (def.bossMul && !h.isPlayer && h.e.kind === ENT.ZOMBIE && (h.e.boss || h.e.ztype === ZTYPE.TANK)) d *= def.bossMul;
         const hx = ox + dx * h.t;
         const hy = oy + dy * h.t;
         const hz = oz + dz * h.t;
@@ -278,6 +286,20 @@ export class Combat {
       z.attackCd = Math.max(z.attackCd, STUMBLE_TIME);
     }
     return off;
+  }
+
+  // ---------------------------------------------------------------- RPG
+  // The grenade leaves the tube along the aim and flies on as a projectile (PROJ.ROCKET, updateProjectiles) until it
+  // strikes something. The shooter's client flies its own from the moment of the shot (client/game/rockets.js), so
+  // this one starts as far along as the round trip since then: the picture the shot was aimed at (rewindTime) less
+  // the interpolation the client draws the world behind by. Its blast, an event and not drawn behind, then reaches
+  // the shooter about when their own grenade gets there, among the dead about where they were drawn.
+  launch(p, ev, def) {
+    const g = this.g;
+    const r = def.rocket;
+    shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, 1, ev.seed, _dirs);
+    const e = this.spawnProjectile(PROJ.ROCKET, p, ev.x, ev.y, ev.z, _dirs[0] * r.speed, _dirs[1] * r.speed, _dirs[2] * r.speed, { grav: r.grav, range: def.range });
+    if (e) e.ahead = Math.max(0, Math.min(ROCKET_AHEAD, (g.tick - this.rewindTime(p)) / SERVER_TICK_RATE - INTERP_DELAY));
   }
 
   // ---------------------------------------------------------------- flamethrower
@@ -601,6 +623,7 @@ export class Combat {
         g.zm.knock(h, x, z, 9 * f, 4 * f, 0.3 * f);
       }
     }
+    let marks = 0;
     if (opts.zombies) {
       g.zm.forNear(x, z, radius, (zz) => {
         if (zz.dead || zz === opts.source) return;
@@ -608,14 +631,29 @@ export class Combat {
         if (d > radius) return;
         const f = 1 - d / radius;
         const dl = Math.hypot(zz.x - x, zz.z - z) || 1;
-        this.damageZombie(zz, opts.zombies * (0.35 + 0.65 * f), opts.owner || null, { weapon: opts.weapon, knock: 6 * f, dirX: (zz.x - x) / dl, dirZ: (zz.z - z) / dl });
+        const killed = this.damageZombie(zz, opts.zombies * (0.35 + 0.65 * f), opts.owner || null, { weapon: opts.weapon, knock: 6 * f, dirX: (zz.x - x) / dl, dirZ: (zz.z - z) / dl });
+        marks |= 8 | (killed ? 2 : 0);
       });
       g.dm.blast(x, y, z, radius, opts.zombies, opts.owner, opts.weapon);
       for (const h of g.players.values()) {
         if (!h.alive || !h.zombie || !opts.owner) continue;
         const d = Math.hypot(h.state.x - x, h.state.z - z);
-        if (d < radius) g.damagePlayer(h, opts.zombies * (1 - d / radius), { kind: KILLER.PLAYER, id: opts.owner.id, weapon: opts.weapon || 0, x, z });
+        if (d < radius) {
+          g.damagePlayer(h, opts.zombies * (1 - d / radius), { kind: KILLER.PLAYER, id: opts.owner.id, weapon: opts.weapon || 0, x, z });
+          marks |= 8 | (h.alive ? 0 : 2);
+        }
       }
+    }
+    // opts.mark: the one who set it off gets a hit marker for what it caught, as for a shot
+    if (opts.mark && marks && opts.owner?.kind === ENT.PLAYER) {
+      g.track?.hit(opts.owner, opts.weapon, 0);
+      g.emit(
+        (w) => {
+          w.u8(EVT.HITMARK);
+          w.u8(marks);
+        },
+        { to: opts.owner.id },
+      );
     }
     if (opts.structures) {
       for (const s of [...g.structures]) {
@@ -679,14 +717,17 @@ export class Combat {
     const list = g.projectiles;
     for (let i = list.length - 1; i >= 0; i--) {
       const e = list[i];
-      e.t += dt;
+      // (an RPG grenade's first step also covers the head start it was given: Combat.launch)
+      const step = e.ahead ? dt + e.ahead : dt;
+      e.ahead = 0;
+      e.t += step;
       const ox = e.x;
       const oy = e.y;
       const oz = e.z;
-      e.vy -= e.grav * dt;
-      const nx = e.x + e.vx * dt;
-      const ny = e.y + e.vy * dt;
-      const nz = e.z + e.vz * dt;
+      e.vy -= e.grav * step;
+      const nx = e.x + e.vx * step;
+      const ny = e.y + e.vy * step;
+      const nz = e.z + e.vz * step;
       let dx = nx - ox;
       let dy = ny - oy;
       let dz = nz - oz;
@@ -803,6 +844,37 @@ export class Combat {
             g.sound(SOUND.GLASS_BREAK, px, py, pz, 60);
             g.sound(SOUND.FIRE_WHOOSH, px, py, pz, 80);
             g.zm.noise(px, pz, NOISE.MOLOTOV, py);
+            done = true;
+          }
+          break;
+        }
+        case PROJ.ROCKET: {
+          // The first thing in its path sets it off: one of the dead (or a survivor turned), a deer, the world or
+          // the ground. Far enough out it goes off by itself
+          const owner = e.ownerRef;
+          const wt = rocketStrikesWorld(g.world, ox, oy, oz, dx, dy, dz, len, _ray);
+          let struck = wt >= 0;
+          let tHit = struck ? wt : len;
+          if (owner) {
+            this.forTargets(owner, (t, isPlayer) => {
+              const pos = isPlayer ? t.state : t;
+              const rx = pos.x - ox;
+              const rz = pos.z - oz;
+              if (rx * rx + rz * rz > (len + 4) * (len + 4)) return;
+              const tt = rayHitbox(pos, this.hitbox(t, isPlayer), ox, oy, oz, dx, dy, dz, tHit);
+              if (tt >= 0 && tt < tHit) {
+                tHit = tt;
+                struck = true;
+              }
+            });
+          }
+          if (struck || Math.hypot(nx - e.sx, nz - e.sz) > e.range) {
+            // (backed off the wall or the body it struck, and out of the ground, so the blast is not centred inside it)
+            const back = Math.max(0, tHit - 0.15);
+            const px = ox + dx * back;
+            const pz = oz + dz * back;
+            const py = Math.max(oy + dy * back, g.world.floorAt(px, pz, oy));
+            this.explode(px, py + 0.2, pz, WEAPONS[ITEM.RPG].rocket.radius, { zombies: WEAPONS[ITEM.RPG].damage, kind: 0, owner, weapon: ITEM.RPG, mark: true });
             done = true;
           }
           break;

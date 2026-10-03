@@ -1391,12 +1391,19 @@ body {
   display: block;
 }
 
-/* healing items left, beside the health bar; red once there are none */
+/* what the quick keys have left: healing items beside the health bar (red once there are none), energy drinks
+   under them beside the stamina line (dimmed once there are none) */
+.stn-ui .v-counts {
+  display: flex;
+  flex-direction: column;
+  gap: calc(1 * var(--u));
+  margin-left: calc(2 * var(--u));
+}
+
 .stn-ui .v-meds {
   display: flex;
   align-items: center;
   gap: calc(5 * var(--u));
-  margin-left: calc(2 * var(--u));
   font: 600 max(15px, calc(22 * var(--u))) / 1 var(--f-num);
   font-variant-numeric: tabular-nums;
   transition: color 0.3s;
@@ -1419,6 +1426,19 @@ body {
 
 .stn-ui .v-meds.out {
   color: #ff5a48;
+}
+
+.stn-ui .v-drinks {
+  font-size: max(13px, calc(18 * var(--u)));
+}
+
+.stn-ui .v-drinks .v-meds-ico {
+  height: calc(17 * var(--u));
+  min-height: 12px;
+}
+
+.stn-ui .v-drinks.none {
+  opacity: 0.4;
 }
 
 .stn-ui .v-ar .v-num {
@@ -2881,7 +2901,7 @@ body {
 
 .stn-ui .am {
   display: grid;
-  grid-template-columns: calc(26 * var(--u)) calc(56 * var(--u)) 1fr calc(40 * var(--u));
+  grid-template-columns: calc(26 * var(--u)) calc(56 * var(--u)) 1fr calc(40 * var(--u)) auto;
   align-items: center;
   gap: calc(8 * var(--u));
   height: calc(25 * var(--u));
@@ -2926,6 +2946,40 @@ body {
   text-align: right;
   font: max(10px, calc(13 * var(--u))) / 1 var(--f-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* drop half / drop all: quiet until the row is under the pointer */
+.stn-ui .am-act {
+  display: flex;
+  gap: calc(4 * var(--u));
+}
+
+.stn-ui .am-b {
+  padding: calc(4 * var(--u)) calc(7 * var(--u));
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+  font: max(9.5px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.stn-ui .am:hover .am-b:not(:disabled) {
+  border-color: rgba(230, 223, 207, 0.32);
+  color: var(--bone-2);
+}
+
+.stn-ui .am .am-b:not(:disabled):hover {
+  border-color: var(--blood-lite);
+  color: var(--bone);
+}
+
+.stn-ui .am-b:disabled {
+  cursor: default;
+  opacity: 0.5;
 }/* backpack grid */
 
 
@@ -2944,7 +2998,9 @@ body {
   aspect-ratio: 1;
   display: grid;
   place-items: center;
-  background: radial-gradient(ellipse at 50% 40%, rgba(44, 38, 33, 0.6), rgba(10, 8, 7, 0.8));
+  /* a faint wash of the item's category colour (--cat), deepest at the foot by the category line */
+  --wash: linear-gradient(to top, color-mix(in srgb, var(--cat, transparent) 24%, transparent), color-mix(in srgb, var(--cat, transparent) 7%, transparent) 70%);
+  background: var(--wash), radial-gradient(ellipse at 50% 40%, rgba(44, 38, 33, 0.6), rgba(10, 8, 7, 0.8));
   border: 1px solid rgba(230, 223, 207, 0.09);
   box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.65);
   cursor: grab;
@@ -2953,7 +3009,7 @@ body {
 
 .stn-ui .cell:hover {
   border-color: rgba(230, 223, 207, 0.5);
-  background: radial-gradient(ellipse at 50% 40%, rgba(64, 56, 48, 0.65), rgba(14, 12, 10, 0.8));
+  background: var(--wash), radial-gradient(ellipse at 50% 40%, rgba(64, 56, 48, 0.65), rgba(14, 12, 10, 0.8));
 }
 
 .stn-ui .cell.empty {
@@ -3035,6 +3091,19 @@ body {
 .stn-ui .cell.drop-t {
   border-color: var(--amber);
   box-shadow: inset 0 0 0 1px var(--amber), inset 0 0 18px rgba(232, 163, 61, 0.25);
+}
+
+/* a weapon dragged out of its slot (dimmed there) lights up the backpack; one dragged from the backpack lights up
+   the slot it would be equipped in */
+.stn-ui .eq.dragging {
+  opacity: 0.35;
+}
+
+.stn-ui .grid-wrap.drop-in,
+.stn-ui .eq.drop-in,
+.stn-ui .armor.drop-in {
+  border-color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber), inset 0 0 18px rgba(232, 163, 61, 0.2);
 }
 
 .stn-ui .drag-ghost {
@@ -3200,6 +3269,55 @@ body {
 
 .stn-ui .split-note:empty {
   display: none;
+}
+
+/* ...and tearing it down (salvage): what it comes apart into. Below the split controls, ruled off from them; on its
+   own (a single item, a weapon in its slot, the armor worn) straight under the name */
+.stn-ui .eq.splitting,
+.stn-ui .armor.splitting {
+  border-color: var(--amber);
+}
+
+.stn-ui .split [hidden] {
+  display: none;
+}
+
+.stn-ui .salv {
+  margin-top: calc(12 * var(--u));
+  padding-top: calc(11 * var(--u));
+  border-top: 1px solid rgba(230, 223, 207, 0.14);
+}
+
+.stn-ui .salv.alone {
+  margin-top: calc(10 * var(--u));
+  padding-top: 0;
+  border-top: 0;
+}
+
+.stn-ui .salv-h {
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .salv-yield {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6 * var(--u)) calc(14 * var(--u));
+  margin-top: calc(8 * var(--u));
+}
+
+.stn-ui .salv-ing .ing-ico svg {
+  height: calc(18 * var(--u));
+  min-height: 13px;
+  max-width: calc(28 * var(--u));
+}
+
+.stn-ui .salv-b {
+  display: flex;
+  width: 100%;
+  margin-top: calc(11 * var(--u));
 }
 
 .stn-ui .grid-hints {

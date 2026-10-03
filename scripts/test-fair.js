@@ -1,7 +1,7 @@
 // The Tri-County Fair, against the real server in-process (shared/fair.js, server/fair.js):
 //  - the place is on the map with its generator, its drum and both rides, and the seats are where a survivor can
 //    get at them
-//  - the generator: it takes a portion of Flamethrower Fuel from the backpack of whoever starts it, the drum takes
+//  - the generator: it takes a portion of Flamethrower Fuel from whoever starts it, the drum takes
 //    more up to a full tank, it runs dry, and holding [E] again shuts it off with what is left still in it
 //  - while it runs it is a noise the idle dead come to from NOISE.FAIR metres, and its light holds a Shade
 //  - the rides: a seat carries its rider round, a rider can jump out (the game's fall damage), a blow or a rope
@@ -12,7 +12,7 @@
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, SNAP, ENT, HOLD, FAIR_GEN_ID, FAIR_TANK_ID, PROTOCOL_VERSION, Writer, Reader, playerRide, qangle16, qpitch, writeInput } from '../shared/protocol.js';
 import { BTN, SERVER_TICK_RATE, CMD_RATE, NOISE, PHASE, PLAYER_MAX_HP, INTERACT_REACH } from '../shared/constants.js';
-import { ITEM, NOTIFY, ZONE, ZTYPE, ZANIM } from '../shared/defs.js';
+import { ITEM, AMMO, NOTIFY, ZONE, ZTYPE, ZANIM } from '../shared/defs.js';
 import { WHEEL, CAROUSEL, GEN, RIDE_SEATS, seatPos, seatRise, seatLow } from '../shared/fair.js';
 import { readSnapshot, readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { Connection } from '../client/net/connection.js';
@@ -96,10 +96,11 @@ const put = (game, p, x, z) => {
   s.vx = s.vy = s.vz = 0;
   s.onGround = 1;
 };
-const fuelOf = (p) => p.inv.reduce((n, x) => n + (x && x.item === ITEM.AMMO_FUEL ? x.count : 0), 0);
+// the fuel a survivor carries (ammunition, carried apart from the backpack: state.ammo)
+const fuelOf = (p) => p.state.ammo[AMMO.FUEL];
 const give = (p, n) => {
   p.inv.fill(null);
-  if (n) p.inv[0] = { item: ITEM.AMMO_FUEL, count: n };
+  p.state.ammo[AMMO.FUEL] = n;
   p.invDirty = true;
 };
 
@@ -185,7 +186,7 @@ const give = (p, n) => {
   A.notes.length = 0;
   A.act(ACT.HOLD_BEGIN, FAIR_GEN_ID, true);
   run(2);
-  check('a dry tank and no fuel in the backpack: no hold, and the survivor is told', !a.hold && A.noted(NOTIFY.NOT_ENOUGH) && !fair.running);
+  check('a dry tank and no fuel carried: no hold, and the survivor is told', !a.hold && A.noted(NOTIFY.NOT_ENOUGH) && !fair.running);
   give(a, GEN.portion + 5);
   A.act(ACT.HOLD_BEGIN, FAIR_GEN_ID, true);
   run(2);
@@ -193,7 +194,7 @@ const give = (p, n) => {
   run(Math.ceil(GEN.hold * SERVER_TICK_RATE) - 6);
   const early = fair.running;
   run(8);
-  check(`...and ${GEN.hold} s of it starts the generator on that portion`, !early && fair.running && fuelOf(a) === 5 && Math.abs(fair.fuel * TICK - GEN.burn) < 1 && A.noted(NOTIFY.FAIR_ON) && B.noted(NOTIFY.FAIR_ON), `${fuelOf(a)} fuel left in the backpack, ${f1(fair.fuel * TICK)} s in the tank`);
+  check(`...and ${GEN.hold} s of it starts the generator on that portion`, !early && fair.running && fuelOf(a) === 5 && Math.abs(fair.fuel * TICK - GEN.burn) < 1 && A.noted(NOTIFY.FAIR_ON) && B.noted(NOTIFY.FAIR_ON), `${fuelOf(a)} fuel left, ${f1(fair.fuel * TICK)} s in the tank`);
   // what a client makes of the entity: running, the ride clock, the fuel left
   const clockOf = (c) => {
     const q = c.fair().q;
@@ -236,7 +237,7 @@ const give = (p, n) => {
   give(a, 0);
   A.act(ACT.HOLD_BEGIN, FAIR_GEN_ID, true);
   run(Math.ceil(GEN.hold * SERVER_TICK_RATE) + 4);
-  check('fuel left in the tank starts it without any in the backpack', fair.running);
+  check('fuel left in the tank starts it without any carried', fair.running);
   fair.fuel = 40; // (two seconds of it)
   fair.sync();
   B.notes.length = 0;

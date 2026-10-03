@@ -525,7 +525,7 @@ strings of bulbs. The rides' frames, platform and deck are ordinary static parts
   commands stopped coming, or the server dropped some). They travel as the self state's `SELF.RIDE` chunk.
 - **The server** (`server/fair.js`, `Game.fair`) owns the wheel's clock (3 commands a tick while it runs), the fuel
   (in ticks) and the generator's rules: `HOLD.FAIR_START` / `FAIR_STOP` on `FAIR_GEN_ID` (a portion of
-  `ITEM.AMMO_FUEL` from the backpack if the tank is dry), `ACT.INTERACT` on `FAIR_TANK_ID` (a portion more), the
+  the fuel the player carries, `state.ammo[AMMO.FUEL]`, if the tank is dry), `ACT.INTERACT` on `FAIR_TANK_ID` (a portion more), the
   standing noise (`NOISE.FAIR`, every `GEN.noiseEvery` s) and `Fair.lit`, the one call `Zombies.isLit` makes for it.
   The dead in a seat stay in it and go round with it until they rise. Everything a client draws comes from one entity,
   `ENT.FAIR`, in everyone's area of interest: running or not, and the clock and the fuel as server ticks they read zero
@@ -626,6 +626,21 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   the crafts still on their way before it counts again (`Inventory._model`), the repeats leave through a bucket
   in `Game.sendCrafts` (the server drops what a client sends past 200 messages a second), and a listener plays
   one craft sound per 0.1 s however many `SOUND.CRAFT` events a tick brings.
+- **Salvage** (`ACT.SALVAGE`: u8 from, u16 count) tears something down for the materials `SALVAGE` in defs lists:
+  `from` is a backpack index, `SALVAGE_FROM.WEAPON` + a weapon slot, or `SALVAGE_FROM.ARMOR` (`Game.salvage`). A
+  gun's magazine goes back into the reserve as rounds; what does not fit is dropped at the survivor's feet. The table
+  gives back less than any recipe takes, so crafting and salvaging never loop into a gain (`test-salvage` holds it).
+  Because the starting pistol, knife and hammer are worth something torn down, a leaver's parked kit records which
+  of them they still had (`parkKit`'s `tools`), and a rejoin brings back only those.
+- **Unequip** (`ACT.UNEQUIP`: u8 weapon slot, u8 backpack index, 255 = the first free one) puts a weapon from its slot
+  into the backpack with its magazine (`Game.unequip`): a click on it in the Equipment panel, or a drag onto the grid.
+  Onto a weapon for the same slot it is `useItem`'s swap; a full backpack leaves it where it is. `test-unequip`.
+- **Ammunition** is not in the backpack: `state.ammo` (a reserve per `AMMO` calibre, up to `AMMO_MAX`) is the
+  server's record, the simulation reloads from it and the client predicts it. `Game.giveItem` puts a cat `ammo` item
+  there and returns what fit, so a full reserve leaves the rest lying; nothing ever puts one into `p.inv`. The
+  mounted gun's belt and both generators draw from it too. `ACT.DROP_AMMO` (u8 calibre, u16 count, 0 = all) puts
+  rounds on the ground from the inventory's Ammunition panel (Half / All); the client hears of the smaller reserve
+  in its next snapshot, as it does of a pickup.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
@@ -717,6 +732,23 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   `Combat.fire` hands its shots to `Combat.flame`: a lag-compensated cone test with a wall check per target
   instead of a ray. Clients draw every `EVT.SHOT` of it as one puff of the stream (`Game.flamePuff` ->
   `Effects.flameJet`) and keep one roar loop per shooter alive while the puffs keep coming.
+  `WEAPONS[w].bossMul` (the anti-tank rifle) multiplies a round's damage in `Combat.fire` when what it strikes is a
+  boss or a Tank, after the head multiplier; the rounds after the first in a pierce lose 30% each as any gun's do.
+- **The RPG** (`WEAPONS[ITEM.RPG].rocket`) is a predicted single-shot weapon like the crossbow (`autoReload`), but
+  its shot is no ray: `Combat.fire` hands it to `Combat.launch`, which spawns a `PROJ.ROCKET` projectile from the
+  eye along the shot's direction at `rocket.speed`, falling at `rocket.grav`. It is put as far along its flight at
+  once as the shooter's own has flown by then: the age of the picture it was aimed at (`rewindTime`) less
+  `INTERP_DELAY`, at most `ROCKET_AHEAD`. Its blast is an event, shown on arrival and not drawn behind, so it then
+  reaches the shooter about when their grenade gets there. `updateProjectiles` tests each step against the world
+  and the ground (`rocketStrikesWorld` in shared/rocket.js, which the client uses too) and the hitboxes of what the
+  shooter can damage (`forTargets`, where they are now), and on the first of them, or `range` metres out,
+  calls `Combat.explode` with `{ zombies: damage, mark }`: the pipe bomb's blast, plus a hit marker for the shooter.
+  Others see the replicated projectile (`Entities`: nose along its flight, `Effects.rocketTrail`, the `rocket`
+  loop) and the backblast from `EVT.SHOT`. The shooter's own is not drawn from the wire: `client/game/rockets.js`
+  flies it from the moment of the shot with the same numbers, drawn off the muzzle and closing onto the line of
+  flight, and ends it where it strikes the world or the dead as drawn, or at a server `EVT.EXPLOSION` on its line of
+  flight (its trail drawn on to the blast).
+  `scripts/test-rpg.js` holds it against the server.
 - **Legs.** `ZOMBIE_DEFS[t].legs` marks what walks on two; the numbers are `LEG_*`, `STUMBLE_*`, `HOBBLE_SPEED`
   and `CRAWL_*` in constants.js. `Combat.fire` calls a hit on the body cylinder below `LEG_ZONE` of the zombie's
   height a leg hit (`legZone`; the left or right leg by which side of the body it struck) and hands it to
@@ -764,7 +796,11 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   needs its radius in both `pick` and `reachOf`. sim-smoke takes each action from the edge of its prompt.
 - **Harvesting** is a melee swing that hits nobody: `Combat.melee` then traces the world to the weapon's range
   + 0.3 m and hands a tree (`COL.TREE`) or a wreck (`COL.SALVAGE`: props marked `salvage`) to `Game.gatherHit`
-  (6 / 5 hits each, refilled at dawn). The client knows none of that state; `client/game/harvest.js` repeats the
+  (6 / 5 hits each, refilled at dawn). The sixth hit fells a tree (`Game.fellTree`, `shared/felling.js`): its
+  collider leaves the static grid on the server and, by `EVT.FELL` (and `EVT.STRIPPED` for a late joiner), on
+  every client, until `EVT.REGROWN` puts them all back; the client hides its instance and `render/fallingtrees.js`
+  tips a copy over to land at `FALL_T`, where `SOUND.TREE_FALL`'s crash sits, then dithers it out. The client
+  knows none of the hit counts; `client/game/harvest.js` repeats the
   trace and the yields for the interaction prompt ("[LMB] Chop for Sticks and Planks") and for the "Need 2 more
   Planks" lines of a refused build or craft (the server only sends `NOTIFY.NOT_ENOUGH`). `sim-smoke` holds that
   file against the server's swing and yields, so change the two together.

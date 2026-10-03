@@ -93,14 +93,23 @@ const R_GUN = {
   m4a1: gunRec('gun_m4a1', [0.98, 1.04], [0.98, 1.06]),
   mp5: gunRec('gun_mp5', [0.98, 1.05], [1.08, 1.18]),
   dbshotgun: gunRec('gun_dbshotgun', [0.9, 0.96], [0.74, 0.8]),
+  // the anti-tank rifle: the hunting rifle's recording a long way down, over its own deeper procedural boom
+  atrifle: { key: 'gun_rifle', vol: 1.35, pitch: [0.74, 0.79], far: { key: 'gun_far', vol: 1.3, pitch: [0.64, 0.7] }, layer: true, layerVol: 0.6 },
 };
 // the survivors' voice (one performer for every grunt and scream)
 const R_P_HURT = { key: 'pv_hurt', vol: 1.5, pitch: [0.96, 1.04] };
 const R_P_DEATH = { key: 'pv_death', vol: 1.8, pitch: [0.95, 1.02] };
 // explosions: real blasts over the procedural sub thump; from far off the distant recordings take over
 const R_EXPLOSION = { key: 'exp_near', vol: 1.3, pitch: [0.92, 1.02], far: { key: 'exp_far', vol: 1.2, pitch: [0.9, 1.05] }, layer: true, layerVol: 0.6 };
+// the RPG (there is no recording of one): the double barrel's take a long way down brings the booster's bang, the
+// procedural layer under it the backblast's thump and the rocket motor tearing away; far off, the distant gunshots
+// deeper still. In first person the layer is the stereo one from behind the sights.
+const R_RPG = { key: 'gun_dbshotgun', vol: 1.2, pitch: [0.72, 0.78], far: { key: 'gun_far', vol: 1.1, pitch: [0.6, 0.66] }, layer: 'rpg_motor', layerVol: 0.7 };
+R_RPG.fp = { key: 'gun_dbshotgun', vol: 1.25, pitch: [0.72, 0.77], layer: 'fps_rpg', layerVol: 0.7 };
 const R_GLASS = { key: 'imp_glass', vol: 1.3, pitch: [0.95, 1.08] };
 const R_WOOD_BREAK = { key: 'imp_wood_break', vol: 1.3, pitch: [0.9, 1.05], layer: true, layerVol: 0.5 };
+// a felled tree: barely any pitch spread, so the crash stays where the tree lands (2.55 s in)
+const R_TREE_FALL = { key: 'tree_fall', vol: 1.4, pitch: [0.98, 1.02] };
 const R_METAL = { key: 'imp_metal', vol: 1.7, pitch: [0.9, 1.08] };
 const R_ACID = { key: 'imp_acid', vol: 0.55, pitch: [0.9, 1.1], layer: true, layerVol: 0.6 };
 // the horn before dark, the car
@@ -115,6 +124,8 @@ const R_BANDAGE = { layers: [{ key: 'fol_rip', vol: 0.7, pitch: [0.95, 1.05], at
 const R_CAN = { key: 'fol_can', vol: 1.5, pitch: [0.96, 1.05] };
 const R_CLICK = { key: 'fol_click', vol: 1.6, pitch: [0.95, 1.06] };
 const R_XBOW = { key: 'fol_xbow', vol: 0.9, pitch: [0.94, 1.04], layer: true, layerVol: 0.5 };
+// an RPG grenade out of its canvas bag: a hand in a pack, deeper (something heavy), over the procedural scrape
+const R_RPG_DRAW = { key: 'fol_bag', vol: 1.1, pitch: [0.8, 0.9], layer: true, layerVol: 0.7 };
 // weapon handling: real magazines, pumps, bolts and hammers
 const R_MAG_OUT = { key: 'fol_mag_out', vol: 0.95, pitch: [0.96, 1.04] };
 const R_MAG_IN = { key: 'fol_mag_in', vol: 0.7, pitch: [0.96, 1.04] };
@@ -123,6 +134,10 @@ const R_SHELL = { key: 'fol_shell', vol: 0.6, pitch: [0.95, 1.06] };
 const R_BOLT = { key: 'fol_bolt', vol: 1.4, pitch: [0.97, 1.04] };
 const R_DRY = { key: 'fol_dry', vol: 0.55, pitch: [0.96, 1.05] };
 const R_DRAW = { key: 'fol_draw', vol: 1.2, pitch: [0.94, 1.06] };
+R_GUN.atrifle.fp = { key: 'gun_rifle', vol: 1.4, pitch: [0.74, 0.78], layer: true, layerVol: 0.65 };
+// the anti-tank rifle's bolt and its round: the same foley, heavier
+const R_AT_BOLT = { key: 'fol_bolt', vol: 1.6, pitch: [0.8, 0.86] };
+const R_AT_ROUND = { key: 'fol_shell', vol: 0.8, pitch: [0.7, 0.78] };
 const FAR_NEAR = 35;
 const FAR_FULL = 110;
 
@@ -139,6 +154,7 @@ def(S.M4A1, 'gun_m4a1', 'gun', 0.8, 0.035, 0.15, R_GUN.m4a1);
 def(S.MP5, 'gun_mp5', 'gun', 0.75, 0.04, 0.15, R_GUN.mp5);
 def(S.DB_SHOTGUN, 'gun_dbshotgun', 'gun', 0.95, 0.03, 0.15, R_GUN.dbshotgun);
 def(S.CROSSBOW, 'xbow_shot', 'fx', 0.8, 0.05, 0.15, R_XBOW); // no blast: it carries about as far as a swing, not a gunshot
+def(S.RPG, 'rpg_launch', 'gun', 1, 0.03, 0.2, R_RPG); // carries as far as any rifle
 def(S.MELEE_SWING, 'swing', 'fx', 0.55, 0.08, 0.15, R_SWING);
 def(S.MELEE_HIT, 'flesh_heavy', 'fx', 0.85, 0.08, 0.15, R_FLESH);
 def(S.ZOMBIE_GROWL, 'z_growl', 'zombie', 0.75, 0.1, 0.15, R_Z_GROWL);
@@ -166,6 +182,8 @@ def(S.PICKUP, 'pickup', 'fx', 0.5, 0.08, 0.15, R_PICKUP);
 def(S.CRAFT, 'craft', 'fx', 0.6, 0.05);
 def(S.RELOAD, 'reload', 'fx', 0.55, 0.04, 0.15, R_MAG_IN);
 def(S.CROSSBOW_COCK, 'xbow_cock', 'fx', 0.5, 0.03);
+def(S.AT_RIFLE, 'gun_atrifle', 'gun', 1, 0.03, 0.2, R_GUN.atrifle);
+def(S.AT_RELOAD, 'bolt', 'fx', 0.7, 0.03, 0.15, R_AT_BOLT);
 def(S.DRY_FIRE, 'dry', 'fx', 0.55, 0.05, 0.15, R_DRY);
 def(S.PLAYER_HURT, 'hurt', 'fx', 0.8, 0.06, 0.15, R_P_HURT);
 def(S.PLAYER_DEATH, 'pdeath', 'fxfar', 1, 0.04, 0.15, R_P_DEATH);
@@ -187,6 +205,7 @@ def(S.SLAM, 'slam', 'explosion', 1, 0.05);
 def(S.SWITCH, 'switch', 'fx', 0.45, 0.06, 0.15, R_DRAW);
 def(S.CHOP, 'wood_hit', 'fx', 0.9, 0.1, 0.15, R_CHOP);
 def(S.SALVAGE, 'metal_hit', 'fx', 0.8, 0.1, 0.15, R_METAL);
+def(S.TREE_FALL, 'wood_break', 'big', 1, 0.02, 0.15, R_TREE_FALL);
 def(S.SEARCH, 'craft', 'fx', 0.4, 0.08, 0.15, R_SEARCH);
 def(S.PING, 'notify', 'fx', 0.6, 0.02);
 def(S.ENGINE_CRANK, 'car_start', 'big', 1, 0.02, 0.15, R_CAR_CRANK);
@@ -202,6 +221,7 @@ def(S.SHADE_WHISPER, 'z_shade_whisper', 'zombie', 0.8, 0.1, 0.15, R_Z_WHISPER);
 def(S.SHADE_FREEZE, 'z_shade_freeze', 'zombie', 1, 0.06);
 def(S.SHADE_SHRIEK, 'z_shade_shriek', 'zombie', 1, 0.06);
 def(S.EAT, 'eat', 'fx', 0.5, 0.05);
+def(S.DRINK, 'drink', 'fx', 0.4, 0.05); // (-2 dB: it measures that much hotter than can_open)
 def(S.BODY_FALL, 'land', 'fx', 0.9, 0.1, 0.15, R_BODY);
 // the chapel bell and the Relay Station's radio (synth-fixtures.js). The bell is one bell: no pitch jitter
 def(S.BELL_TOLL, 'bell_toll', 'bell', 0.6, 0);
@@ -239,15 +259,21 @@ const LOCAL = {
   m4a1: { bank: 'fp_m4a1', vol: 0.86, jit: 0.03, send: 0.13, rec: R_GUN.m4a1.fp },
   mp5: { bank: 'fp_mp5', vol: 0.8, jit: 0.035, send: 0.1, rec: R_GUN.mp5.fp },
   dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2, rec: R_GUN.dbshotgun.fp },
+  atrifle: { bank: 'fp_atrifle', vol: 1, jit: 0.02, send: 0.22, rec: R_GUN.atrifle.fp },
   crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05, rec: R_XBOW },
   hmg: { bank: 'fp_hmg', vol: 1, jit: 0.025, send: 0.18 }, // the mounted gun, from behind its grips
+  rpg: { bank: 'fp_rpg', vol: 1, jit: 0.02, send: 0.22, rec: R_RPG.fp },
   reload_start: { bank: 'reload_start', vol: 0.55, rec: R_MAG_OUT },
   reload_end: { bank: 'reload_end', vol: 0.6, rec: R_MAG_IN },
   shell_insert: { bank: 'shell_insert', vol: 0.55, rec: R_SHELL },
   bolt: { bank: 'bolt', vol: 0.6, rec: R_BOLT },
+  at_bolt: { bank: 'bolt', vol: 0.7, rec: R_AT_BOLT },
+  at_round: { bank: 'shell_insert', vol: 0.65, rec: R_AT_ROUND },
   pump: { bank: 'pump', vol: 0.7, rec: R_PUMP },
   xbow_cock: { bank: 'xbow_cock', vol: 0.6, jit: 0.02 },
   xbow_load: { bank: 'xbow_load', vol: 0.5 },
+  rpg_draw: { bank: 'rpg_draw', vol: 0.38, rec: R_RPG_DRAW }, // reload start: a grenade out of the bag
+  rpg_load: { bank: 'rpg_load', vol: 0.5 }, // reload end: slid into the tube, seated
   dry: { bank: 'dry', vol: 0.55, rec: R_DRY },
   swing: { bank: 'swing', vol: 0.5, jit: 0.08, rec: R_SWING },
   swing_heavy: { bank: 'swing_heavy', vol: 0.6, jit: 0.06, rec: R_SWING_HEAVY },
@@ -281,6 +307,7 @@ const LOCAL = {
   campfire_add: { bank: 'campfire_add', vol: 0.6, rec: R_CAMPFIRE },
   eat: { bank: 'eat', vol: 0.5 },
   can_open: { bank: 'can_open', vol: 0.5, rec: R_CAN },
+  drink: { bank: 'drink', vol: 0.4 },
 };
 
 // stinger(name): cinematic cues. bus 'music' follows the music volume, 'ui' is unaffected by the dead-muffle.
@@ -306,6 +333,8 @@ const LOOPS = {
   fire: { bank: 'loop_fire', ref: 3, max: 45, roll: 1.1, vol: 0.9, wet: 0.15, rec: [{ key: 'fire_roar', vol: 3 }, { key: 'fire_loop', vol: 2 }] },
   flamethrower: { bank: 'loop_fire', ref: 3, max: 55, roll: 1.1, vol: 1, wet: 0.15, rec: [{ key: 'fire_roar', vol: 3.4, rate: 1.45 }] }, // the jet: a fire's roar pitched up into a hiss
   burning: { bank: 'loop_torch', ref: 1.5, max: 24, roll: 1.3, vol: 0.6, wet: 0.1, cap: 4, rec: [{ key: 'fire_roar', vol: 2.4, lp: 5000, rate: 1.2 }] }, // a body on fire
+  // an RPG grenade's motor in flight: heard rushing past well before it lands, duller with distance
+  rocket: { bank: 'loop_rocket', ref: 4, max: 120, roll: 1.0, vol: 0.75, wet: 0.14, cap: 4, air: true, jit: 0.03 },
   acid: { bank: 'loop_acid', ref: 1.5, max: 18, roll: 1.4, vol: 0.5, wet: 0.08 },
   // every zombie carries one; only the nearest few are ever heard
   zombie_idle: { bank: 'loop_zombie_idle', ref: 1.5, max: 18, roll: 1.3, vol: 0.34, wet: 0.12, cap: 8, jit: 0.14, rec: [{ key: 'zv_idle', vol: 0.9, rate: 0.9, lp: 7000 }] },

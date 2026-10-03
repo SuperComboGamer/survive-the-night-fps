@@ -6,7 +6,7 @@
 //     and dying let go
 //   - a round: lag compensated like any gun's (a walker crossing 60 m out, aimed at where it was drawn 250 ms ago:
 //     150 ms of latency plus the interpolation delay), against the AK-47 through the same path; the gunner's kill
-//   - the belt: spent a round at a time, clicks when empty, fed from the 7.62 in the gunner's backpack, reset with
+//   - the belt: spent a round at a time, clicks when empty, fed from the 7.62 the gunner carries, reset with
 //     a new game
 // usage: node scripts/test-gun.js [seed with a checkpoint = 1]
 import { Game } from '../server/game.js';
@@ -154,6 +154,13 @@ const toGrips = (c, side = 0, back = GUN.back + 0.3) => {
 run(5);
 check('a new game on a map with the checkpoint has the gun on its tripod, the belt full and nobody at it', !!nest && !!gun() && gun().belt === GUN.mag && gun().gunner === 0, nest ? `belt ${gun()?.belt}` : `seed ${seed} has no checkpoint: pass one that does`);
 if (!nest || !gun()) process.exit(1);
+// The dead the valley put down at the start go: which of them wander up to the nest is down to the game's rolls (a
+// new loot row moves them), and one at the grips knocks the gunner off them. Every zombie below is put there.
+for (const z of game.zombies) {
+  z.dead = true;
+  game.removeEntity(z);
+}
+game.zombies.length = 0;
 
 // ---------------------------------------------------------------- manning it
 game.handleChat(a, '/gun');
@@ -371,26 +378,27 @@ function volley(weapon, back, shots, honest = true, aimed = false) {
   // nothing to feed it with
   A.act(ACT.GUN_FEED, 1);
   run(10);
-  check('with no 7.62 in the backpack there is nothing to feed it', gun().belt === 0 && !gun().feeding);
-  // 120 rounds in two stacks: 50 a second, last stack first, until the backpack is out
-  pack(a, [ITEM.AMMO_762, 100], [ITEM.BANDAGE, 1], [ITEM.AMMO_762, 20]);
+  check('with no 7.62 carried there is nothing to feed it', gun().belt === 0 && !gun().feeding);
+  // 120 rounds: 50 a second, until the 7.62 is out (ammunition is carried apart from the backpack)
+  pack(a, [ITEM.BANDAGE, 1]);
+  s.ammo[AMMO.R762] = 120;
   run(2);
   B.act(ACT.GUN_FEED, 1);
   run(5);
   const byBob = gun().belt;
   A.act(ACT.GUN_FEED, 1);
   run(20);
-  const one = [gun().belt, has(a, ITEM.AMMO_762), s.ammo[AMMO.R762], A.self.ammo[AMMO.R762]].join('/');
+  const one = [gun().belt, s.ammo[AMMO.R762], A.self.ammo[AMMO.R762]].join('/');
   // the trigger does nothing while the hand is on the belt
   run(4, () => BTN.GUN);
   const during = B.shots.length - before;
   run(60);
   check('only the gunner feeds it', byBob === 0);
-  check('fed from the gunner\'s 7.62 at 50 rounds a second, the reserve following the backpack', one === '50/70/70/70', `after a second: belt/backpack/reserve/told ${one}`);
+  check('fed from the gunner\'s 7.62 at 50 rounds a second, and the gunner told of what is left', one === '50/70/70', `after a second: belt/reserve/told ${one}`);
   check('...with the trigger dead while the hand is on the belt', during === 0);
-  check('...until the backpack is out', gun().belt === 120 && has(a, ITEM.AMMO_762) === 0 && !gun().feeding && a.inv[0] === null && a.inv[2] === null && seen(B).q[3] === 120, `belt ${gun().belt}, backpack ${has(a, ITEM.AMMO_762)}`);
+  check('...until the 7.62 is out', gun().belt === 120 && s.ammo[AMMO.R762] === 0 && A.self.ammo[AMMO.R762] === 0 && !gun().feeding && has(a, ITEM.BANDAGE) === 1 && seen(B).q[3] === 120, `belt ${gun().belt}, 7.62 ${s.ammo[AMMO.R762]}`);
   // more than it takes: the belt stops at 250
-  pack(a, [ITEM.AMMO_762, 240], [ITEM.AMMO_762, 60]);
+  s.ammo[AMMO.R762] = 240;
   run(2);
   A.act(ACT.GUN_FEED, 1);
   run(30);
@@ -401,7 +409,7 @@ function volley(weapon, back, shots, honest = true, aimed = false) {
   A.act(ACT.GUN_FEED, 1);
   run(100);
   check('letting go of [R] stops the feed where it is', part === 195 && held === 195, `belt ${part} then ${held}`);
-  check('...and it never takes more than the belt holds', gun().belt === GUN.mag && has(a, ITEM.AMMO_762) === 300 - (GUN.mag - 120) && !gun().feeding, `belt ${gun().belt}, backpack ${has(a, ITEM.AMMO_762)}`);
+  check('...and it never takes more than the belt holds', gun().belt === GUN.mag && s.ammo[AMMO.R762] === 240 - (GUN.mag - 120) && !gun().feeding, `belt ${gun().belt}, 7.62 ${s.ammo[AMMO.R762]}`);
   B.sounds.length = 0;
 }
 

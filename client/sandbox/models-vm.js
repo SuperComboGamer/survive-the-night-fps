@@ -4,7 +4,11 @@
 //   &use=ITEMID  with act=use: the consumable being used (food shows the tin instead of the medkit)
 //   &t=SECONDS   freeze the clock at this time after the action starts (deterministic screenshot)
 //   &orbit=yaw,pitch,dist[,tx,ty,tz]  view the viewmodel from an orbiting camera
-//   &hide=L|R|LR hide an arm (inspect the other hand's grip)
+//   &hide=L|R|LR hide an arm (inspect the other hand's grip); &hidegun hides the weapon
+//   &wcam=yaw,pitch,dist[,tx,ty,tz]  camera orbiting a point in WEAPON space (yaw 0 = from behind, pi/2 = gun's right side)
+//   &ortho=halfHeight  orthographic camera (with &wcam)
+//   &clip=nx,ny,nz,d   clip everything on the far side of a weapon-space plane (keeps n.p + d >= 0)
+//   &crop=x,y,h        magnify part of a 16:9 view: left, top and height in units of the screen height
 //   &light=game  in-game viewmodel lighting (midday) instead of the bright studio lights
 //   ?ww=1        world weapon lineup
 import * as THREE from 'three';
@@ -119,13 +123,14 @@ if (params.get('vm') === 'hands') {
   const { getHandGeoForDebug } = await import('../render/models/weapons.js');
   const mat = (await import('../render/models/skinning.js')).getViewArmMaterial();
   const cmat = (await import('../render/models/skinning.js')).getViewCharMaterial();
-  const poses = ['grip', 'support', 'pinch', 'open', 'claw'];
+  const poses = params.has('poses') ? params.get('poses').split(',') : ['grip', 'support', 'pinch', 'open', 'claw']; // &poses=a,b,...: which poses to line up
   const yaw = parseFloat(params.get('yaw') || '0');
+  const pitch = parseFloat(params.get('pitch') || '0'); // &pitch=: tip the hands toward the camera
   poses.forEach((p, i) => {
     for (const side of [1, -1]) {
       const m = new THREE.Mesh(getHandGeoForDebug(p, side), p === 'claw' ? cmat : mat);
-      m.position.set(-0.5 + i * 0.25, side > 0 ? 0.12 : -0.12, 0);
-      m.rotation.y = yaw;
+      m.position.set((i - (poses.length - 1) / 2) * 0.25, side > 0 ? 0.12 : -0.12, 0);
+      m.rotation.set(pitch, yaw, 0, 'YXZ');
       scene.add(m);
       // grip center marker
       const c = new THREE.Mesh(new THREE.SphereGeometry(0.005), new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
@@ -133,7 +138,7 @@ if (params.get('vm') === 'hands') {
       m.add(c);
     }
   });
-  cam.position.set(0, 0, 0.9);
+  cam.position.set(0, 0, parseFloat(params.get('cd') || '0.9')); // &cd=: camera distance
   cam.lookAt(0, 0, 0);
   info.textContent = 'hand poses: ' + poses.join(', ') + ' (top: right hand, bottom: left)';
   renderer.setViewport(0, 0, innerWidth, innerHeight);
@@ -149,7 +154,7 @@ if (params.get('vm') === 'hands') {
   table.position.y = -0.025;
   scene.add(table);
   const only = params.has('item') ? parseInt(params.get('item'), 10) : 0;
-  const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.BAT, ITEM.SPIKED_BAT];
+  const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.BAT, ITEM.SPIKED_BAT];
   const shortIds = [ITEM.PISTOL, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE];
   const lines = [];
   const place = (id, x, z) => {
@@ -203,14 +208,14 @@ if (params.get('vm') === 'hands') {
   const all = vmParam === 'all';
   const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
   const list = all
-    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
+    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
     : times
       ? times.map(() => single)
       : [single];
   const views = list.map((id, vi) => {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0c10);
-    const cam = new THREE.PerspectiveCamera(68, 1, 0.01, 100);
+    const cam = params.has('ortho') ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0.001, 100) : new THREE.PerspectiveCamera(68, 1, 0.01, 100);
     scene.add(cam);
     makeLights(scene, cam);
     backdrop(scene);
@@ -279,7 +284,7 @@ if (params.get('vm') === 'hands') {
     for (const v of views) {
       if (pulsed) {
         const since = simT - PRE;
-        const period = act === 'reload' || act === 'use' ? 3.4 : 1.2;
+        const period = act === 'use' ? 3.4 : act === 'reload' ? Math.max(3.4, (WEAPONS[v.id]?.reload || 0) + 0.6) : 1.2; // (the anti-tank rifle's reload is 6 s)
         const k = Math.floor(since / period);
         if (since >= 0 && k !== v.lastK) {
           v.lastK = k;
@@ -302,13 +307,58 @@ if (params.get('vm') === 'hands') {
       const c = i % cols, r = (i / cols) | 0;
       const x = c * tw, y = H - (r + 1) * th;
       v.cam.aspect = tw / th;
+      if (v.cam.isOrthographicCamera) {
+        const hh = +params.get('ortho') || 0.1;
+        v.cam.top = hh;
+        v.cam.bottom = -hh;
+        v.cam.left = -hh * v.cam.aspect;
+        v.cam.right = hh * v.cam.aspect;
+      }
+      if (crop) {
+        // the frame as a 16:9 screen would show it, magnified to the region (x, y, height; units of screen height)
+        const tileAspect = v.cam.aspect;
+        v.cam.aspect = 16 / 9;
+        v.cam.setViewOffset(1000 * v.cam.aspect, 1000, crop[0] * 1000, crop[1] * 1000, crop[2] * 1000 * tileAspect, crop[2] * 1000);
+      }
       v.cam.updateProjectionMatrix();
+      if (wcam) placeWeaponCam(v);
       renderer.setViewport(x, y, tw, th);
       renderer.setScissor(x, y, tw, th);
       if (hideArm === 'L' || hideArm === 'LR') v.vm.armL.setVisible(false);
       if (hideArm === 'R' || hideArm === 'LR') v.vm.armR.setVisible(false);
+      if (params.has('hidegun') && v.vm.cur) v.vm.cur.root.visible = false; // &hidegun: hands only
       renderer.render(v.scene, v.cam);
     });
+  }
+
+  // weapon-space inspection camera and clip plane (&wcam / &clip)
+  const crop = params.has('crop') ? params.get('crop').split(',').map(Number) : null; // &crop=x,y,size: magnify part of the frame (fractions)
+  const wcam = params.has('wcam') ? params.get('wcam').split(',').map(Number) : null;
+  const clipLocal = params.has('clip') ? params.get('clip').split(',').map(Number) : null;
+  const clipPlane = new THREE.Plane();
+  if (clipLocal) renderer.localClippingEnabled = true;
+  function placeWeaponCam(v) {
+    const [yaw, pitch, dist, tx = 0, ty = 0, tz = 0] = wcam;
+    const root = v.vm.weaponRoot;
+    v.vm.group.updateMatrixWorld(true);
+    const tgt = new THREE.Vector3(tx, ty, tz);
+    const pos = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(tgt);
+    root.localToWorld(tgt);
+    root.localToWorld(pos);
+    v.cam.position.copy(pos);
+    const up = Math.abs(Math.sin(pitch)) > 0.99 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0);
+    v.cam.up.copy(up.transformDirection(root.matrixWorld));
+    v.cam.lookAt(tgt);
+    if (clipLocal) {
+      clipPlane.set(new THREE.Vector3(clipLocal[0], clipLocal[1], clipLocal[2]).normalize(), clipLocal[3]).applyMatrix4(root.matrixWorld);
+      v.scene.traverse((o) => {
+        if (o.material && !o.material.clippingPlanes) {
+          o.material.clippingPlanes = [clipPlane];
+          o.material.side = THREE.DoubleSide;
+          o.material.needsUpdate = true;
+        }
+      });
+    }
   }
 
   const mz = new THREE.Vector3();

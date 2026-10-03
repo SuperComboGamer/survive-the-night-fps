@@ -274,6 +274,16 @@ export const GUNS = {
     tail: 0.13, tailLP: 720, tailDecay: 0.32,
     mech: [[0.05, 880, 0.15], [0.086, 1450, 0.08]], echoes: [[0.26, 0.09], [0.58, 0.05], [0.98, 0.028]], drive: 2.3,
   },
+  // the anti-tank rifle: a 14.5 mm round out of a muzzle brake. Against the hunting rifle the crack is as hard but
+  // the blast under it is an octave down and three times as long (the brake throws it out sideways), the thump is
+  // the deepest of any gun, and it rolls round the valley for three seconds
+  atrifle: {
+    dur: 3.6, crack: 1.0, crackHP: 2600, crackDecay: 0.0014, nwave: 1.0,
+    bodyHP: 110, bodyLP0: 6200, bodyLP1: 480, lpSweep: 0.05, bodyDecay: 0.075, bark: [460, 1.1, 7],
+    thump: 1.4, thumpF0: 85, thumpF1: 24, thumpSweep: 0.045, thumpDecay: 0.16,
+    tail: 0.17, tailLP: 650, tailDecay: 0.7,
+    mech: [], echoes: [[0.36, 0.22], [0.8, 0.14], [1.34, 0.085], [2.0, 0.05], [2.7, 0.028]], drive: 2.5,
+  },
 };
 
 // Layered gunshot: transient crack (+ supersonic N-wave), band-shaped noise body, pitch-dropping thump,
@@ -352,6 +362,124 @@ export function gunshot(sr, rng, P, fp, sweet = false) {
   normalize(fp ? outs : outs[0], 1);
   softclip(fp ? outs : outs[0], P.drive);
   return finish(fp ? outs : outs[0], sr, 0.95, 0.0001, 0.08);
+}
+
+// ------------------------------------------------------------------ RPG launcher
+// A rocket motor's exhaust: a ragged, tearing roar. Noise round a nozzle band that never holds still (the burn
+// flutters tens of times a second), sparse sharp crackle on it (the shocks in the jet), a low rumble under it and a
+// thin hiss over it. o: env(u) the level, f(u) a multiplier on every band (a source rushing away drops in pitch and
+// dulls), low: the rumble's share.
+export function rocketMotor(sr, rng, dur, o = {}) {
+  const n = Math.floor(dur * sr);
+  const out = new Float32Array(n);
+  const bp = new Biquad();
+  const bp2 = new Biquad();
+  const lp = new Biquad();
+  const hs = new Biquad().hp(sr, 5000, 0.7);
+  const rum = new Biquad().lp(sr, 240, 0.7);
+  const br = new Brown(rng);
+  const pk = new Pink(rng);
+  const fast = new Wander(rng, sr, 70);
+  const mid = new Wander(rng, sr, 13);
+  const slow = new Wander(rng, sr, 1.7);
+  const low = o.low ?? 1;
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
+    const s = slow.next();
+    if ((i & 15) === 0) {
+      const k = (o.f ? o.f(u) : 1) * (1 + 0.08 * s);
+      bp.bp(sr, 900 * k, 0.75);
+      bp2.bp(sr, 2400 * k, 1.1);
+      lp.lp(sr, Math.min(sr * 0.45, 6500 * k), 0.6);
+    }
+    const w = rng() * 2 - 1;
+    const fl = 0.6 + 0.4 * fast.next() * (0.55 + 0.45 * mid.next());
+    const band = bp.run(w) + bp2.run(w) * 0.55 + lp.run(pk.next()) * 0.5;
+    out[i] = (band * fl + rum.run(br.next()) * 0.35 * low + hs.run(w) * 0.12) * (o.env ? o.env(u) : 1);
+  }
+  addNorm(out, crackles(sr, rng, dur, 260, { hp: 1100, bp: 2600, pow: 2.2, len: 0.0007, env: o.env }), sr, 0, peakOf(out) * 0.7);
+  return out;
+}
+
+// The booster charge going off in the open tube (gunshot() parameters): less crack than a rifle (no bullet breaking
+// the sound barrier), a broad deep blast out of both ends, the backblast's thump, a long roll off the tree line
+export const RPG_BLAST = {
+  dur: 2.6, crack: 0.75, crackHP: 1700, crackDecay: 0.0016, nwave: 0.3,
+  bodyHP: 60, bodyLP0: 4200, bodyLP1: 300, lpSweep: 0.05, bodyDecay: 0.1, bark: [210, 1, 6],
+  thump: 1.35, thumpF0: 90, thumpF1: 26, thumpSweep: 0.045, thumpDecay: 0.17,
+  tail: 0.18, tailLP: 560, tailDecay: 0.5,
+  mech: [], echoes: [[0.3, 0.13], [0.68, 0.075], [1.14, 0.04], [1.72, 0.02]], drive: 2.2,
+};
+
+// The RPG's launch: the booster's bang (RPG_BLAST) and the rocket motor catching a few metres out and tearing away
+// for a second or so, falling in pitch as it goes. fp: stereo, from behind the sights: more low end, the motor
+// centred and a little wide, the steel tube ringing by the ear. sweet: only the thump, the roll and the motor, to lay
+// under a recorded blast.
+export function rpgLaunch(sr, rng, fp, sweet = false) {
+  const blast = gunshot(sr, rng, RPG_BLAST, fp, sweet);
+  const D = 1.6;
+  const env = (u) => {
+    const t = u * D;
+    return Math.min(1, t / 0.035, (1 - u) * 5) * (0.75 * Math.exp(-t / 0.3) + 0.25 * Math.exp(-t / 0.75));
+  };
+  const f = (u) => 0.6 + 0.4 * Math.exp(-(u * D) / 0.45);
+  const motor = rocketMotor(sr, rng, D, { env, f, low: fp ? 1.2 : 0.8 });
+  const side = fp ? rocketMotor(sr, rng, D, { env, f, low: 0 }) : null;
+  const ring = fp && !sweet ? modal(sr, rng, metalModes(rng, 410, 0.22), 0.7, 0.5, 2500) : null;
+  const outs = fp ? blast : [blast];
+  for (let ch = 0; ch < outs.length; ch++) {
+    const m = new Float32Array(motor.length);
+    for (let i = 0; i < m.length; i++) m[i] = motor[i] + (side ? side[i] * (ch ? -0.35 : 0.35) : 0);
+    addNorm(outs[ch], m, sr, 0.04, sweet ? 0.8 : 0.65);
+    if (ring) addNorm(outs[ch], ring, sr, 0.002, 0.07);
+  }
+  const x = fp ? outs : outs[0];
+  normalize(x, 1);
+  softclip(x, 1.3);
+  return finish(x, sr, 0.95, 0.0001, 0.1);
+}
+
+// RPG reload, start: a fresh grenade drawn out of a canvas carry bag. The flap thrown back, a hand in among the
+// rounds, the warhead scraping up past the canvas, its fins ticking free at the top.
+export function rpgDraw(sr, rng) {
+  const out = alloc(sr, 1.05);
+  addNorm(out, rustle(sr, rng, 0.22, 1300), sr, 0, 0.55);
+  addNorm(out, noise(sr, rng, 0.06, { bp: [700, 0.8], a: 0.003, d: 0.018 }), sr, 0.03, 0.4);
+  addNorm(out, rustle(sr, rng, 0.2, 2300), sr, 0.16, 0.4);
+  addNorm(out, noise(sr, rng, 0.48, { bp: [1100, 0.9], sweep: [800, 1700], env: (u) => hann(u) * (0.65 + 0.35 * Math.sin(u * 47)) }), sr, 0.34, 0.8);
+  addNorm(out, crackles(sr, rng, 0.45, 300, { hp: 1500, bp: 3000, pow: 2, env: hann }), sr, 0.36, 0.25);
+  addNorm(out, rustle(sr, rng, 0.18, 1700), sr, 0.8, 0.3);
+  addNorm(out, metalClick(sr, rng, 3100, 0.006), sr, 0.82, 0.22);
+  addNorm(out, metalClick(sr, rng, 2600, 0.007), sr, 0.88, 0.16);
+  return finish(out, sr);
+}
+
+// ...and its end: the grenade's tail tube slid down into the muzzle, steel on steel and quickening, then the warhead
+// seating against the tube with a solid clack and the catch snapping over behind it
+export function rpgLoad(sr, rng) {
+  const out = alloc(sr, 0.95);
+  const sl = 0.3;
+  const n = Math.floor(sl * sr);
+  const fr = new Float32Array(n);
+  const bp = new Biquad();
+  const grit = new Wander(rng, sr, 60);
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
+    if ((i & 15) === 0) bp.bp(sr, 1900 + 1500 * u, 1.3);
+    const g = 0.55 + 0.45 * grit.next();
+    fr[i] = bp.run(rng() * 2 - 1) * g * Math.min(1, u * 6, (1 - u) * 60) * (0.5 + 0.5 * u);
+  }
+  addNorm(out, fr, sr, 0, 0.55);
+  // the tube singing faintly under the slide
+  const ring = new ModeBank(sr, metalModes(rng, 640, 0.06));
+  const rs = new Float32Array(n);
+  for (let i = 0; i < n; i++) rs[i] = ring.run(fr[i]);
+  addNorm(out, rs, sr, 0, 0.1);
+  addNorm(out, metalClick(sr, rng, 1050, 0.022), sr, sl, 1);
+  addNorm(out, thump(sr, 170, 90, 0.01, 0.03), sr, sl, 0.55);
+  addNorm(out, modal(sr, rng, metalModes(rng, 470, 0.07), 0.6, 0.5, 3000), sr, sl, 0.4);
+  addNorm(out, metalClick(sr, rng, 2700, 0.009), sr, sl + 0.075, 0.45);
+  return finish(out, sr);
 }
 
 // ------------------------------------------------------------------ voices (zombies, players, creatures)
@@ -1320,6 +1448,20 @@ export function canOpenSnd(sr, rng) {
   addNorm(out, metalClick(sr, rng, rrange(rng, 1700, 2000), 0.03), sr, 0.5, 0.5);
   return finish(out, sr);
 }
+// a can of something fizzy: the tab cracks it, the gas hisses out, it fizzes, and two gulps go down (timed to the
+// can at the mouth in the first-person drink: ViewModel._animUse)
+export function drinkSnd(sr, rng) {
+  const out = alloc(sr, 1.0);
+  addNorm(out, metalClick(sr, rng, rrange(rng, 2600, 3000), 0.01), sr, 0, 0.55);
+  addNorm(out, noise(sr, rng, 0.22, { hp: 2500, bp: [5200, 0.8], env: (u) => Math.min(1, u * 30) * (1 - u) ** 2 }), sr, 0.008, 0.6);
+  addNorm(out, bubbles(sr, rng, 0.5, 90, 1800, 4200, { env: (u) => 1 - u }), sr, 0.06, 0.16);
+  for (const t of [0.45, 0.7]) {
+    const at = t + rng() * 0.03;
+    addNorm(out, thump(sr, 210, 95, 0.025, 0.045), sr, at, 0.55);
+    addNorm(out, noise(sr, rng, 0.07, { lp: 900, env: hann }), sr, at + 0.01, 0.25);
+  }
+  return finish(out, sr);
+}
 export function buildFail(sr, rng) {
   const out = alloc(sr, 0.45);
   addNorm(out, woodHit(sr, rng, 0.7), sr, 0, 0.6);
@@ -1596,6 +1738,13 @@ export function loopCalliope(sr, rng) {
   return finishLoop(out, sr, X, 0.85);
 }
 
+// an RPG grenade in flight: its motor, steady (the engine places it, turns it down with distance and shifts its pitch)
+export function loopRocket(sr, rng) {
+  const L = 3;
+  const X = 0.3;
+  return finishLoop(rocketMotor(sr, rng, L + X), sr, X, 0.8);
+}
+
 // ------------------------------------------------------------------ 2D event sounds
 export function plane(sr, rng) {
   const dur = 9;
@@ -1755,6 +1904,7 @@ export const SFX_DEFS = [
   { bank: 'gun_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, false) },
   { bank: 'xbow_shot', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, false) },
   { bank: 'gun_hmg', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.hmg, false) },
+  { bank: 'gun_atrifle', n: 2, sr: HI, group: 'late', gen: (sr, r) => gunshot(sr, r, G.atrifle, false) },
   // first-person (stereo)
   { bank: 'fp_pistol', n: 3, sr: HI, gen: (sr, r) => gunshot(sr, r, G.pistol, true) },
   { bank: 'fp_ak47', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.ak47, true) },
@@ -1765,6 +1915,7 @@ export const SFX_DEFS = [
   { bank: 'fp_dbshotgun', n: 2, sr: HI, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true) },
   { bank: 'fp_crossbow', n: 2, sr: HI, gen: (sr, r) => crossbowShot(sr, r, true) },
   { bank: 'fp_hmg', n: 4, sr: HI, gen: (sr, r) => gunshot(sr, r, G.hmg, true) },
+  { bank: 'fp_atrifle', n: 2, sr: HI, group: 'late', gen: (sr, r) => gunshot(sr, r, G.atrifle, true) },
   // sub thump + tree-line echoes layered under the recorded first-person shots
   { bank: 'gsw_pistol', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.pistol, true, true) },
   { bank: 'gsw_ak47', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.ak47, true, true) },
@@ -1773,6 +1924,14 @@ export const SFX_DEFS = [
   { bank: 'gsw_m4a1', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.m4a1, true, true) },
   { bank: 'gsw_mp5', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.mp5, true, true) },
   { bank: 'gsw_dbshotgun', n: 2, sr: MID, gen: (sr, r) => gunshot(sr, r, G.dbshotgun, true, true) },
+  // the RPG: its launch heard from elsewhere, from behind the sights, and the thump + motor laid under the recorded
+  // blast of each; a grenade drawn from the bag and slid into the tube
+  { bank: 'rpg_launch', n: 2, sr: HI, group: 'late', gen: (sr, r) => rpgLaunch(sr, r, false) },
+  { bank: 'fp_rpg', n: 2, sr: HI, group: 'late', gen: (sr, r) => rpgLaunch(sr, r, true) },
+  { bank: 'rpg_motor', n: 1, sr: MID, group: 'late', gen: (sr, r) => rpgLaunch(sr, r, false, true) },
+  { bank: 'fps_rpg', n: 2, sr: MID, group: 'late', gen: (sr, r) => rpgLaunch(sr, r, true, true) },
+  { bank: 'rpg_draw', n: 1, sr: HI, group: 'late', gen: rpgDraw },
+  { bank: 'rpg_load', n: 1, sr: HI, group: 'late', gen: rpgLoad },
   // zombies
   { bank: 'z_growl', n: 6, sr: MID, gen: zGrowl },
   { bank: 'z_attack', n: 3, sr: MID, gen: zAttack },
@@ -1854,6 +2013,7 @@ export const SFX_DEFS = [
   { bank: 'install_part', n: 1, sr: HI, gen: installPart },
   { bank: 'eat', n: 1, sr: HI, gen: eatSnd },
   { bank: 'can_open', n: 1, sr: HI, gen: canOpenSnd },
+  { bank: 'drink', n: 2, sr: HI, gen: drinkSnd },
   { bank: 'build_fail', n: 1, sr: HI, gen: buildFail },
   // footsteps
   { bank: 'step_dirt', n: 5, sr: MID, gen: (sr, r) => footstep(sr, r, 'dirt') },
@@ -1873,6 +2033,7 @@ export const SFX_DEFS = [
   { bank: 'loop_generator', n: 1, sr: LO, gen: loopGenerator },
   { bank: 'loop_plane', n: 1, sr: LO, gen: loopPlane },
   { bank: 'loop_calliope', n: 1, sr: LO, gen: loopCalliope },
+  { bank: 'loop_rocket', n: 1, sr: MID, group: 'late', gen: loopRocket },
   // 2D events (rendered after init; rendered on demand if requested earlier)
   { bank: 'plane', n: 1, sr: LO, group: 'late', gen: plane },
   { bank: 'horde_horn', n: 1, sr: LO, group: 'late', gen: hordeHorn },

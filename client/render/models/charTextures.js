@@ -664,11 +664,18 @@ const WEAPON_PAINTERS = {
     for (let i = 0; i < 3; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 2 + rnd() * 5, 'rgba(70,8,8,0.55)', 1);
   },
   [WR.GLOVE](ctx, rnd) {
-    // synthetic tactical-glove fabric: fine cross weave, soft mottling, a few scuffs
+    // synthetic tactical-glove fabric: fine cross weave, soft mottling, a few scuffs. Finger, thumb and palm shapes
+    // wrap the cell once around (u) and once along (v), so the columns at u = 0 and u = 0.5 run down both sides of
+    // every finger: stitched seams there, a sunk groove with a raised lip and a line of stitches beside it.
+    const u0 = 4, u1 = CELL - 4; // regionUV insets the cell by 4 px
     pixelFill(ctx, (x, y, o) => {
       const n = n2(x, y, 0.06, 341, 3);
       const weave = ((x + y) & 3) === 0 ? -7 : ((x - y) & 3) === 0 ? -4 : 0;
-      const v = 120 + weave + (n - 0.5) * 26;
+      let v = 120 + weave + (n - 0.5) * 26;
+      const ds = Math.min(Math.abs(x - CELL / 2), Math.abs(x - u0), Math.abs(x - u1));
+      if (ds < 1.6) v -= 42;
+      else if (ds < 3.2) v += 10;
+      else if (ds < 5.6 && y % 7 < 4) v += 26;
       o[0] = v; o[1] = v - 2; o[2] = v - 5;
     });
     scratches(ctx, rnd, 14, 'rgba(210,200,180,0.14)', 12, 0.7);

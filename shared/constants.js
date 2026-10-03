@@ -121,10 +121,10 @@ export const SECOND_DAY_LENGTH = 270;
 export const DAY_SHRINK = 15;
 export const DAY_LENGTH = 180; // the shortest a day gets (day 8 on)
 export const dayLength = (day) => (day <= 1 ? FIRST_DAY_LENGTH : Math.max(DAY_LENGTH, SECOND_DAY_LENGTH - DAY_SHRINK * (day - 2)));
-export const NIGHT_LENGTH = 180;
+export const NIGHT_LENGTH = 150;
 export const DUSK_WARNING = 60; // horn: pick a spot and build a shelter
 export const NIGHT_WAVES = 3; // each night's horde arrives in waves
-export const WAVE_TIMES = [4, 62, 120]; // seconds into the night each wave starts
+export const WAVE_TIMES = [4, 52, 100]; // seconds into the night each wave starts
 export const WAVE_SPREAD = 26; // a wave trickles in over this many seconds
 export const HORDE_SPAWN_MIN = 58; // horde groups appear this far from the survivors (around wherever they are)
 export const HORDE_SPAWN_MAX = 84;

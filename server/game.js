@@ -39,6 +39,7 @@ import {
   FLASHLIGHT_MAX,
   FLASHLIGHT_DRAIN,
   FLASHLIGHT_RECHARGE,
+  STAMINA_MAX,
   SLOT_PRIMARY,
   SLOT_PISTOL,
   SLOT_MELEE,
@@ -80,6 +81,7 @@ import {
   ITEM_DEFS,
   WEAPONS,
   RECIPES,
+  SALVAGE,
   STRUCT,
   STRUCT_DEFS,
   structPickRadius,
@@ -110,14 +112,16 @@ import {
   isFirearm,
   radioLinked,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
+import { fellTree, regrowTrees } from '../shared/felling.js';
 import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
+import { swimming, DROWN_DPS } from '../shared/swim.js';
 import { nightTheme, nightBoss } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
@@ -181,7 +185,7 @@ function starterKit(day = 1) {
   const d = Math.max(0, day - 1);
   return {
     mag: WEAPONS[ITEM.PISTOL].mag,
-    ammo: Math.min(AMMO_MAX[AMMO.P9], 36 + 24 * d), // 9mm in the pack
+    ammo: Math.min(AMMO_MAX[AMMO.P9], 36 + 24 * d), // 9mm in reserve
     items: [
       [ITEM.BANDAGE, 2 + Math.min(3, d)],
       [ITEM.TORCH, d ? 2 : 1],
@@ -241,6 +245,10 @@ const CRATE_TABLE = [
   [ITEM.DB_SHOTGUN, 1, 1, 1],
   [ITEM.FLAMETHROWER, 1, 1, 1],
   [ITEM.AMMO_FUEL, 2, 40, 80],
+  [ITEM.RPG, 1, 1, 1],
+  [ITEM.AMMO_ROCKET, 2, 2, 3],
+  [ITEM.AT_RIFLE, 1, 1, 1],
+  [ITEM.AMMO_145, 3, 3, 6],
   [ITEM.KEVLAR, 1, 1, 1],
   [ITEM.NAILS, 3, 10, 20],
   [ITEM.BATTERY, 2, 1, 2],
@@ -688,10 +696,18 @@ export class Game {
     const left = { mag: 0, ammo: 0, items: [] };
     const gone = p.zombie || !p.alive; // the dead dropped theirs where they fell
     if (!gone) {
-      left.ammo = removeItem(p.inv, AMMO_ITEMS[AMMO.P9], kit.ammo);
+      left.ammo = Math.min(s.ammo[AMMO.P9], kit.ammo);
+      s.ammo[AMMO.P9] -= left.ammo;
       if (s.weapons[SLOT_PISTOL] === ITEM.PISTOL) left.mag = Math.min(s.mags[1], kit.mag);
-      // (the pistol, knife and hammer everyone starts with: a rejoin brings its own)
-      for (const slot of [SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD]) if (s.weapons[slot] === STARTER_TOOLS[slot]) s.weapons[slot] = 0;
+      // The pistol, knife and hammer everyone starts with go along from the slots they are in, and a rejoin brings
+      // back those and no others: one dropped for the team or torn down for parts (salvage) stays gone, or a
+      // reconnect loop would pile pistols - or the gun parts in them - up at the team's feet
+      left.tools = [];
+      for (const slot of [SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD]) {
+        if (s.weapons[slot] !== STARTER_TOOLS[slot]) continue;
+        s.weapons[slot] = 0;
+        left.tools.push(slot);
+      }
     }
     for (const [item, n] of kit.items) left.items.push([item, gone ? 0 : removeItem(p.inv, item, n)]);
     this.leftKits.delete(p.name);
@@ -794,6 +810,7 @@ export class Game {
     this.bossPending = null;
     this.bossId = 0;
     this.gather.clear();
+    regrowTrees(this.world); // (a new game on the same valley: the trees the last one cut stand again)
     this.leftKits.clear();
     this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
     this.fixtures.reset();
@@ -954,7 +971,7 @@ export class Game {
     const s = p.state;
     const fresh = createPlayerState();
     Object.assign(s, fresh);
-    s.weapons = STARTER_TOOLS.slice();
+    s.weapons = kit.tools ? STARTER_TOOLS.map((t, slot) => (kit.tools.includes(slot) ? t : 0)) : STARTER_TOOLS.slice(); // (tools: parkKit)
     s.mags = [0, kit.mag];
     const sp = this.world.spawnPoints[Math.floor(this.rng() * this.world.spawnPoints.length)];
     s.x = sp.x + (this.rng() - 0.5) * 1.5;
@@ -981,8 +998,7 @@ export class Game {
     p.hold = null;
     p.inv = createInventory();
     for (const [item, n] of kit.items) addItem(p.inv, item, n);
-    addItem(p.inv, AMMO_ITEMS[AMMO.P9], kit.ammo);
-    this.syncAmmo(p);
+    s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? kit.ammo : 0));
     p.kit = kit; // what they were handed: it goes with them if they leave the game (parkKit)
     p.invDirty = true;
     this.fillHistory(p);
@@ -1201,6 +1217,7 @@ export class Game {
       if (c.state === 1 && !CONT_DEFS[c.ctype].once && this.rng() < 0.4) c.state = 0;
     }
     this.gather.clear();
+    regrowTrees(this.world);
     this.emit((w) => w.u8(EVT.REGROWN));
     this.globalDirty = true;
   }
@@ -1439,6 +1456,7 @@ export class Game {
         if (!wpn || slot === SLOT_THROW) continue;
         this.dropItem(wpn, 1, x, y, z, { spread: 1.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
       }
+      for (let i = 0; i < AMMO_ITEMS.length; i++) if (s.ammo[i] > 0) this.dropItem(AMMO_ITEMS[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
       if (p.armorItem && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
     }
     s.ammo = AMMO_ITEMS.map(() => 0);
@@ -1453,6 +1471,13 @@ export class Game {
     if (def.cat === 'schem') {
       this.unlockSchematic(item, p);
       return count;
+    }
+    // ammunition is carried apart from the backpack, up to AMMO_MAX of a calibre: what a full reserve has no room for
+    // is left where it is
+    if (def.cat === 'ammo') {
+      const take = Math.max(0, Math.min(AMMO_MAX[def.ammo] - s.ammo[def.ammo], count));
+      s.ammo[def.ammo] += take;
+      return take;
     }
     if (def.cat === 'weapon') {
       const slot = WEAPONS[item].slot;
@@ -1498,7 +1523,7 @@ export class Game {
     if (taken < count) {
       const s = p.state;
       this.dropItem(item, count - taken, s.x, s.y, s.z, { spread: 0.8 });
-      this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+      this.notify(NOTIFY.INVENTORY_FULL, ITEM_DEFS[item]?.cat === 'ammo' ? item : 0, p.id); // (ammo: that reserve is full)
     }
   }
 
@@ -1539,29 +1564,6 @@ export class Game {
     }
   }
 
-  // Ammunition is kept in the backpack, in stacks like anything else. state.ammo, which the simulation reloads from
-  // and the client predicts with, is the count of each calibre in there: it follows the backpack (a pickup, a craft,
-  // a stack dropped for a teammate), and what a reload takes out of it leaves the backpack (spendAmmo).
-  syncAmmo(p) {
-    const ammo = p.state.ammo;
-    ammo.fill(0);
-    for (const it of p.inv) {
-      const def = it && ITEM_DEFS[it.item];
-      if (def && def.cat === 'ammo') ammo[def.ammo] += it.count;
-    }
-  }
-
-  // the rounds a reload of the weapon in hand just put into its magazine come out of the backpack, last stack first
-  spendAmmo(p) {
-    const s = p.state;
-    const i = WEAPONS[currentWeapon(s)]?.ammo;
-    if (i == null) return;
-    const used = countItem(p.inv, AMMO_ITEMS[i]) - s.ammo[i];
-    if (used <= 0) return;
-    removeItem(p.inv, AMMO_ITEMS[i], used);
-    p.invDirty = true;
-  }
-
   // ---------------------------------------------------------------- input
   handleInput(p, r) {
     // where the client's interpolation clock stood when it sent these commands: what it had on screen, so what
@@ -1588,7 +1590,6 @@ export class Game {
       // as fast as it fills would delay everything that client does from then on: it would stand somewhere it left
       // a moment ago, for the dead to hit, and fire every shot late.
       p.cmdBudget = Math.min(p.cmdBudget + CMDS_PER_TICK * CMD_CATCH_UP, CMD_QUEUE_MAX);
-      this.syncAmmo(p); // whatever the backpack gained or lost since the last command is in the reserves before the next
       while (p.cmdQueue.length && p.cmdBudget >= 1) {
         const cmd = p.cmdQueue.shift();
         if (p.hasSeq && ((cmd.seq - p.lastSeq) & 0xffff) >= 0x8000) continue; // old/duplicate
@@ -1635,17 +1636,15 @@ export class Game {
         break;
       }
       case 'reload':
-        this.sound(currentWeapon(s) === ITEM.CROSSBOW ? SOUND.CROSSBOW_COCK : SOUND.RELOAD, s.x, s.y + 1.2, s.z, 20, p.id);
-        break;
-      case 'shell':
-      case 'reload_done':
-        this.spendAmmo(p);
+        this.sound(currentWeapon(s) === ITEM.CROSSBOW ? SOUND.CROSSBOW_COCK : currentWeapon(s) === ITEM.AT_RIFLE ? SOUND.AT_RELOAD : SOUND.RELOAD, s.x, s.y + 1.2, s.z, 20, p.id);
         break;
       case 'leap':
         this.sound(SOUND.ZPLAYER_GROWL, s.x, s.y + 1.5, s.z, 40, p.id);
         break;
       case 'land':
         if (!p.zombie && ev.v > 13) this.damagePlayer(p, (ev.v - 13) * 6, { kind: KILLER.WORLD, fall: true });
+        break;
+      case 'splash': // into the lake (shared/swim.js): the others hear it from what they see (client entities)
         break;
       case 'cart_bump':
         // a handcar run into the end of its stretch of line (shared/handcar.js)
@@ -1737,10 +1736,34 @@ export class Game {
         if (slot === SLOT_PISTOL) s.mags[1] = 0;
         return;
       }
+      case ACT.DROP_AMMO: {
+        // rounds out of a reserve onto the ground for a teammate: all of a calibre, or some (the Ammunition panel's
+        // Drop half). The client hears of the smaller reserve in its next snapshot, as of a reload
+        const cal = r.u8();
+        const cnt = r.u16();
+        const have = cal < AMMO_ITEMS.length ? s.ammo[cal] : 0;
+        if (have <= 0) return;
+        const n = cnt === 0 ? have : Math.min(cnt, have);
+        this.dropper = p.id; // (as a dropped stack: it does not hop straight back into the reserve)
+        const ex = s.x - Math.sin(s.yaw) * 1.1;
+        const ez = s.z - Math.cos(s.yaw) * 1.1;
+        const dropped = this.dropItem(AMMO_ITEMS[cal], n, ex, s.y, ez, { spread: 0.3, noAuto: 4, from: s });
+        this.dropper = 0;
+        if (dropped) s.ammo[cal] -= n;
+        return;
+      }
       case ACT.CRAFT:
         return this.craft(p, r.u8());
+      case ACT.SALVAGE: {
+        const from = r.u8();
+        return this.salvage(p, from, r.u16());
+      }
       case ACT.USE_ITEM:
         return this.useItem(p, r.u8());
+      case ACT.UNEQUIP: {
+        const slot = r.u8();
+        return this.unequip(p, slot, r.u8());
+      }
       case ACT.EQUIP_ARMOR:
         return this.useItem(p, r.u8());
       case ACT.BUILD: {
@@ -1890,7 +1913,7 @@ export class Game {
           this.removeItemEnt(e);
           this.pickupEvent(p, e.item, 1);
         } else {
-          this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+          this.notify(NOTIFY.INVENTORY_FULL, def?.cat === 'ammo' ? e.item : 0, p.id); // (ammo: that reserve is full)
         }
         return;
       }
@@ -2188,11 +2211,24 @@ export class Game {
       this.sound(SOUND.SALVAGE, x, y, z, 35);
       this.zm.noise(x, z, NOISE.SALVAGE);
     }
-    // that was the last of it: nobody's prompt offers the hit any more, and the one who took it is told
-    if (g.left <= 0) {
-      this.tellStripped([col]);
-      this.notify(NOTIFY.SEARCH_EMPTY, tree ? 1 : 2, p.id);
-    }
+    if (g.left > 0) return;
+    // that was the last of it. A tree comes down, away from whoever cut it, and is out of the world until dawn;
+    // a wreck stays where it is, and nobody's prompt offers the hit any more (the one who took it is told)
+    if (tree) return this.fellTree(col, Math.atan2(p.state.x - col.x, p.state.z - col.z));
+    this.tellStripped([col]);
+    this.notify(NOTIFY.SEARCH_EMPTY, 2, p.id);
+  }
+
+  // yaw: the way it falls (the game's yaw: toward -sin, -cos)
+  fellTree(col, yaw) {
+    if (!fellTree(this.world, col)) return;
+    this.emit((w) => {
+      w.u8(EVT.FELL);
+      w.i16(qpos(col.x));
+      w.i16(qpos(col.y0));
+      w.i16(qpos(col.z));
+      w.u8(qangle8(yaw));
+    });
   }
 
   // Which trees and wrecks are used up, to player id `to` (0: everybody). They are colliders of the static world,
@@ -2226,7 +2262,9 @@ export class Game {
     }
     const def = ITEM_DEFS[rec.out];
     // capacity check
-    if (def.cat === 'weapon') {
+    if (def.cat === 'ammo') {
+      if (p.state.ammo[def.ammo] >= AMMO_MAX[def.ammo]) return this.notify(NOTIFY.INVENTORY_FULL, rec.out, p.id);
+    } else if (def.cat === 'weapon') {
       const slot = WEAPONS[rec.out].slot;
       if (p.state.weapons[slot] && !p.inv.some((x) => !x)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     } else if (!canFit(p.inv, rec.out, rec.n)) {
@@ -2236,11 +2274,76 @@ export class Game {
       if (!canFit(copy, rec.out, rec.n)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
     payCost(p.inv, rec.cost);
-    this.giveItem(p, rec.out, rec.n);
+    const taken = this.giveItem(p, rec.out, rec.n);
+    // rounds the reserve has no room for were paid for all the same: they go on the ground instead of nowhere
+    if (def.cat === 'ammo' && taken < rec.n) {
+      this.dropItem(rec.out, rec.n - taken, p.state.x, p.state.y, p.state.z, { spread: 0.8 });
+      this.notify(NOTIFY.INVENTORY_FULL, rec.out, p.id);
+    }
     this.track.craft(p, rec);
     p.invDirty = true;
     this.syncThrow(p);
     this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
+  }
+
+  // Tear something down for what it is made of (SALVAGE): n of the stack at backpack index `from`, or what is in a
+  // weapon slot or worn (SALVAGE_FROM). What comes of it goes into the pack, and at their feet what does not fit.
+  salvage(p, from, n) {
+    const s = p.state;
+    let item = 0;
+    let mag = 0; // rounds in a gun's magazine: they go back into the pack
+    if (from < INVENTORY_SIZE) {
+      const it = p.inv[from];
+      if (!it || !SALVAGE[it.item] || n < 1) return;
+      item = it.item;
+      n = Math.min(n, it.count);
+      mag = it.mag || 0; // (a weapon is a stack of one)
+      it.count -= n;
+      if (it.count <= 0) p.inv[from] = null;
+    } else if (from === SALVAGE_FROM.ARMOR) {
+      if (!SALVAGE[p.armorItem]) return;
+      item = p.armorItem;
+      n = 1;
+      p.armorItem = 0;
+      p.armor = 0;
+      p.armorMax = 0;
+    } else {
+      // (the throwable slot only points at a stack in the backpack: that is torn down from there)
+      const slot = from - SALVAGE_FROM.WEAPON;
+      if (slot < 0 || slot > SLOT_BUILD || slot === SLOT_THROW || !SALVAGE[s.weapons[slot]]) return;
+      item = s.weapons[slot];
+      n = 1;
+      mag = slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0;
+      s.weapons[slot] = 0;
+      if (slot === SLOT_PRIMARY) s.mags[0] = 0;
+      if (slot === SLOT_PISTOL) s.mags[1] = 0;
+    }
+    p.invDirty = true;
+    for (const k in SALVAGE[item]) this.giveOrDrop(p, +k, SALVAGE[item][k] * n);
+    if (mag > 0 && isFirearm(item)) this.giveOrDrop(p, AMMO_ITEMS[WEAPONS[item].ammo], mag);
+    this.syncThrow(p);
+    this.sound(SOUND.CRAFT, s.x, s.y + 1, s.z, 15, p.id); // (they hear their own at once: Game.uiCallbacks)
+  }
+
+  // A weapon out of its slot into the backpack (the inventory's Equipment panel: a click, or a drag onto the grid):
+  // into backpack index `to` if that is free, else the first free one (255: any). Onto a weapon for the same slot it
+  // is the swap a click on that one makes (useItem). The throwable slot only points at a stack in the backpack: no.
+  unequip(p, slot, to) {
+    const s = p.state;
+    if (slot > SLOT_BUILD || slot === SLOT_THROW) return;
+    const wpn = s.weapons[slot];
+    if (!wpn) return;
+    const there = p.inv[to];
+    if (there && WEAPONS[there.item]?.slot === slot) return this.useItem(p, to);
+    const i = to < p.inv.length && !there ? to : p.inv.findIndex((x) => !x);
+    if (i < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+    // (it keeps its magazine, as a weapon stored in the backpack does)
+    p.inv[i] = { item: wpn, count: 1, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 };
+    s.weapons[slot] = 0;
+    if (slot === SLOT_PRIMARY) s.mags[0] = 0;
+    if (slot === SLOT_PISTOL) s.mags[1] = 0;
+    if (s.slot === slot) s.reloadT = 0; // (a reload under way must not finish on an empty hand)
+    p.invDirty = true;
   }
 
   useItem(p, idx) {
@@ -2255,8 +2358,11 @@ export class Game {
       if (!c) return;
       if (c.heal && p.hp >= p.maxHp && !c.stamina && !p.downed) return;
       if (c.flashlight && p.battery >= FLASHLIGHT_MAX - 1) return;
+      if (c.stamina && !c.heal && s.stamina >= STAMINA_MAX - 0.5 && !s.exhausted) return; // (an energy drink at full stamina)
       p.useItem = { item: it.item, t: 0, total: c.time };
       p.hold = null;
+      // a can is cracked as the drink starts; the drinker heard their own at once (Game.quickDrink)
+      if (c.drink) this.sound(SOUND.DRINK, s.x, s.y + 1.5, s.z, 12, p.id);
       return;
     }
     if (def.cat === 'armor') {
@@ -2309,7 +2415,7 @@ export class Game {
       p.state.exhausted = 0;
     }
     if (c.flashlight) p.battery = FLASHLIGHT_MAX;
-    this.sound(c.food ? SOUND.EAT : SOUND.HEAL, p.state.x, p.state.y + 1, p.state.z, 12);
+    if (!c.drink) this.sound(c.food ? SOUND.EAT : SOUND.HEAL, p.state.x, p.state.y + 1, p.state.z, 12);
   }
 
   // ---------------------------------------------------------------- building
@@ -2587,7 +2693,7 @@ export class Game {
         if (p.zombie) this.credit([k], 'kills'); // a turned player put down. (A survivor killed by one is on nobody's record)
       }
     }
-    this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0));
+    this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0) | (src.drown ? 4 : 0));
     if (!p.zombie) {
       this.nightStats.deaths++;
       this.dropAll(p);
@@ -3306,6 +3412,14 @@ export class Game {
         if (this.time - p.lastDamageT > 4) p.hp = Math.min(p.maxHp, p.hp + 4 * dt);
         continue;
       }
+      // afloat with no stamina left (shared/swim.js): drowning, in gulps, until the feet find the bottom
+      if (s.stamina <= 0 && swimming(this.world, s)) {
+        if ((p.drownT = (p.drownT || 0) + dt) >= 0.5) {
+          p.drownT -= 0.5;
+          this.damagePlayer(p, DROWN_DPS * 0.5, { kind: KILLER.WORLD, drown: true });
+          if (!p.alive) continue;
+        }
+      } else p.drownT = 0;
       if (p.downed) {
         if (!p.revivedBy) p.bleed -= dt;
         if (p.useItem) {
@@ -3389,11 +3503,11 @@ export class Game {
           const taken = this.giveItem(p, e.item, e.count, e.mag);
           if (taken <= 0) {
             e.noAutoUntil = this.time + 3;
-            // No room in the backpack. Say so, or the survivor walks on without knowing: always for a car supply,
-            // the run depends on those; for the rest only as they walk over it, not again and again while they
-            // stand in a pile of it.
+            // No room in the backpack (ammo is another matter: a full reserve). Say so, or the survivor walks on
+            // without knowing: always for a car supply, the run depends on those; for the rest only as they walk
+            // over it, not again and again while they stand in a pile of it.
             const part = cat === 'part';
-            if (this.time - (part ? p.partFullT : p.fullT) >= FULL_NOTICE_EVERY && (part || s.vx * s.vx + s.vz * s.vz > 1)) {
+            if (cat !== 'ammo' && this.time - (part ? p.partFullT : p.fullT) >= FULL_NOTICE_EVERY && (part || s.vx * s.vx + s.vz * s.vz > 1)) {
               p.fullT = this.time;
               if (part) p.partFullT = this.time;
               this.notify(NOTIFY.INVENTORY_FULL, e.item, p.id);
@@ -3622,7 +3736,6 @@ export class Game {
   }
 
   sendInventory(p) {
-    this.syncAmmo(p); // (the reserves go out in the snapshot that follows: they are told with the backpack they count)
     const w = this.w.reset();
     w.u8(S2C.INVENTORY);
     for (let i = 0; i < INVENTORY_SIZE; i++) {

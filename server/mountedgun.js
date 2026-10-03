@@ -5,10 +5,9 @@
 // fire it (BTN.GUN, see Game.processInputs), each round through Combat.fire like a round from any gun in the
 // hands - rewound to what the gunner had on screen, their kill, their hit marker - and louder than any of those.
 import { BTN, INTERACT_SLACK, HOLD_SLACK } from '../shared/constants.js';
-import { ITEM, SOUND } from '../shared/defs.js';
+import { AMMO, SOUND } from '../shared/defs.js';
 import { ENT } from '../shared/protocol.js';
 import { GUN, GUN_FIRED, GUN_DRY, gunNest, atGrips, gunAim, gunShot, stepGun } from '../shared/mountedgun.js';
-import { countItem, removeItem } from './inventory.js';
 
 const _shot = {};
 const _aim = { yaw: 0, pitch: 0 };
@@ -73,11 +72,11 @@ export class MountedGun {
     e.feeding = false;
   }
 
-  // ACT.GUN_FEED: the gunner starts or stops feeding the belt from their backpack
+  // ACT.GUN_FEED: the gunner starts or stops feeding the belt from their 7.62
   feed(p, on) {
     const e = this.gun;
     if (!e || e.gunner !== p.id) return;
-    e.feeding = !!on && e.belt < GUN.mag && countItem(p.inv, ITEM.AMMO_762) > 0;
+    e.feeding = !!on && e.belt < GUN.mag && p.state.ammo[AMMO.R762] > 0;
     if (!e.feeding) e.feed = 0;
   }
 
@@ -101,11 +100,10 @@ export class MountedGun {
     if (!p || !this.fit(p, INTERACT_SLACK + HOLD_SLACK)) return this.release();
     if (!e.feeding) return;
     e.feed += GUN.feed * dt;
-    const n = Math.min(Math.floor(e.feed), GUN.mag - e.belt, countItem(p.inv, ITEM.AMMO_762));
+    const n = Math.min(Math.floor(e.feed), GUN.mag - e.belt, p.state.ammo[AMMO.R762]);
     if (n > 0) {
-      // out of the backpack, last stack first, as a reload takes them (Game.syncAmmo then has the reserve follow)
-      removeItem(p.inv, ITEM.AMMO_762, n);
-      p.invDirty = true;
+      // out of the reserve, as a reload takes them (the client hears of it in its next snapshot)
+      p.state.ammo[AMMO.R762] -= n;
       e.belt += n;
       e.feed -= n;
       if (g.time >= e.feedT) {
@@ -113,7 +111,7 @@ export class MountedGun {
         g.sound(SOUND.GUN_FEED, e.x, e.y, e.z, 20);
       }
     }
-    if (e.belt >= GUN.mag || countItem(p.inv, ITEM.AMMO_762) <= 0) {
+    if (e.belt >= GUN.mag || p.state.ammo[AMMO.R762] <= 0) {
       e.feeding = false;
       e.feed = 0;
     }

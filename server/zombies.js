@@ -2,7 +2,7 @@
 // (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses,
 // zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
 // The herd that wanders the roads by day is in herd.js.
-import { MAP_HALF, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
+import { MAP_HALF, STEP_HEIGHT, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
 import { HISTORY_TICKS, LEG_HP, STUMBLE_SPEED, HOBBLE_SPEED, CRAWL_SPEED, CRAWL_SPEED_MIN, CRAWL_SPEED_MAX, CRAWL_SLOW, CRAWL_HEIGHT, CRAWL_HEAD_Y } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
@@ -22,6 +22,7 @@ const FOREST_DENS = 13; // ~ the densest 20% of the woods (median 9 trees per 24
 const _pos = { x: 0, y: 0, z: 0 };
 const _dir = { x: 0, z: 0, cost: 0 };
 const _ray = { t: -1, col: null, terrain: false };
+const _wq = []; // (wedgedOn)
 const SHADE_THAW = 0.15; // unbroken darkness (s) before a lit shade moves again, so a beam flickering across it still holds it
 const BEAM_TAN = Math.tan(FLASHLIGHT_CONE);
 const BODY_AT = [0.9, 0.55, 0.2]; // head, chest, shins (fractions of the body height) - light on any of them counts
@@ -75,6 +76,7 @@ export class Zombies {
     this.fieldRR = 0;
     this.maintainT = 0;
     this.humansCache = [];
+    this.crowdList = []; // the dead after someone, counted for the flow fields (nav.js setCrowd)
     this.lights = []; // this tick's burning point lights, flat [x, y, z, radius, ...]
     this.lightTick = -1;
     this.packSeq = 0;
@@ -653,11 +655,18 @@ export class Zombies {
     for (const h of humans) h.under = !!mn && mn.under(h.state);
     if (mn) mn.refresh();
     // flow fields: refresh 2 per tick round-robin (to a survivor down in the mine the valley's grid leads nowhere:
-    // the way to them is by a portal, steerLevels)
+    // the way to them is by a portal, steerLevels). The dead after someone are counted twice a second: a field
+    // solved with the crowd sends those behind a jam round to the next way in (nav.js setCrowd)
     if (humans.length) {
+      if (g.tick % 10 === 0) {
+        const chasing = this.crowdList;
+        chasing.length = 0;
+        for (const z of zs) if (!z.dead && z.target && !z.under && !z.def.flying) chasing.push(z);
+        g.nav.setCrowd(chasing);
+      }
       for (let k = 0; k < Math.min(2, humans.length); k++) {
         const h = humans[this.fieldRR++ % humans.length];
-        if (!h.under) g.nav.computeField(h.id, h.state.x, h.state.z);
+        if (!h.under) g.nav.computeField(h.id, h.state.x, h.state.z, true);
       }
     }
 
@@ -1330,8 +1339,12 @@ export class Zombies {
         _pos.z = h.state.z + (ddz / d) * min;
       }
     }
-    const hit = resolveBody(g.world, _pos, def.moveR ?? Math.min(rad, 0.65), def.moveH ?? def.height, false);
-    z.blockStruct = hit && hit.flags & COL.STRUCT ? hit.id : 0;
+    const moveR = def.moveR ?? Math.min(rad, 0.65);
+    const moveH = def.moveH ?? def.height;
+    const hit = resolveBody(g.world, _pos, moveR, moveH, false);
+    // wedged between the static world and a structure (a gate put up beside the end of a fence) the last push may have
+    // been the fence's: the structure is still what is in its way, and the one thing there it can claw down
+    z.blockStruct = !hit ? 0 : hit.flags & COL.STRUCT ? hit.id : this.wedgedOn(_pos, moveR, moveH);
     if (deepWaterAt(g.world, _pos.x, _pos.z, z.y, 0.2, false) && !this.wadeOut(z, ox, oz)) {
       _pos.x = ox;
       _pos.z = oz;
@@ -1348,6 +1361,15 @@ export class Zombies {
       z.y = gy;
       z.vy = 0;
     }
+  }
+
+  // the blocking structure a body of radius r and height h at pos is pressed against, if any (its id, or 0)
+  wedgedOn(pos, r, h) {
+    for (const c of this.g.world.structGrid.query(pos.x, pos.z, r + 0.1, _wq)) {
+      if (c.flags & COL.NOBLOCK || c.y1 <= pos.y + STEP_HEIGHT || c.y0 >= pos.y + h) continue;
+      if (footprintContains(c, pos.x, pos.z, r + 0.05)) return c.id;
+    }
+    return 0;
   }
 
   // integrate is about to refuse a step into the lake. One that is already in it (dropped off a deck by a

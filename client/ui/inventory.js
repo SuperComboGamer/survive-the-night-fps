@@ -1,8 +1,9 @@
 // Inventory / crafting screen (I). Equipment on the left, backpack grid in the centre,
 // crafting on the right; car checklist + campfire under the grid.
 import { usedIn, foundIn, sourcesOf } from '../game/itemguide.js';
-import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN, supplyRumours } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, SALVAGE, isFirearm, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN, supplyRumours } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
+import { SALVAGE_FROM } from '../../shared/protocol.js';
 import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -10,6 +11,11 @@ import { needLines } from '../game/harvest.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
+// Backpack order: weapons and whatever else is equipped (armor, throwables, gear) first, then consumables (ammo with
+// them), then crafting materials and car supplies; empty slots last. Only the grid is laid out that way - the server
+// keeps each stack in its slot - so within a tier stacks stay in slot order, which a drag onto another stack swaps.
+const BAG_TIER = { weapon: 0, armor: 0, throw: 0, gear: 0, cons: 1, ammo: 1 };
+const bagTier = (s) => (s ? (BAG_TIER[ITEM_DEFS[s.item]?.cat] ?? 2) : 3);
 // Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
 // icon: item shown on the tab; cat: item category whose colour marks the tab (defaults to the id).
 const CRAFT_TABS = [
@@ -121,6 +127,7 @@ function statLines(id) {
   const w = WEAPONS[id];
   if (w) {
     if (w.melee) out.push(`Damage ${w.damage}` + (w.altDamage !== w.damage ? ` · heavy ${w.altDamage}` : ''), `Swing ${w.rate.toFixed(2)}s`);
+    else if (w.rocket) out.push(`Blast ${w.damage} · ${w.rocket.radius}m radius`, `Single shot · ${AMMO_NAMES[w.ammo]}`, `Reload ${w.reload}s`);
     else if (w.flame) out.push(`Fire ${Math.round(w.damage / w.rate)}/s · ${w.range}m`, `Tank ${w.mag} · ${AMMO_NAMES[w.ammo]}`, `Sets alight: ${BURN.dps}/s for ${BURN.time}s`);
     else out.push(`Damage ${w.damage}${w.pellets > 1 ? ' × ' + w.pellets : ''}`, `Magazine ${w.mag} · ${AMMO_NAMES[w.ammo]}`, w.quiet ? 'Single shot · near-silent' : w.auto ? 'Full-auto' : 'Semi-auto');
   }
@@ -148,6 +155,9 @@ function hintFor(cat) {
   if (cat === 'armor') return 'LMB wear';
   return '';
 }
+
+// what n of an item come apart into (SALVAGE), as [[item, count]]; empty when it cannot be torn down
+const salvageOf = (item, n = 1) => Object.entries(SALVAGE[item] || {}).map(([id, k]) => [+id, k * n]);
 
 // ---------------------------------------------------------------- tooltip
 // A comma-separated line that wraps between its names and never inside one. list = [{ name, locked }], or the line
@@ -257,8 +267,10 @@ export class Inventory {
     this.bulk = 0; // crafts a click on a recipe asks for while a bulk key is held (CRAFT_FEW / CRAFT_MAX); 0: none held
     this.keys = { few: false, max: false }; // bulk keys pressed since the screen opened
     this.sent = []; // crafts asked for that the server has not answered yet: { r, n, t, had }
-    this.split = null; // the stack the split popover is open on, and how much of it is picked: { i, item, n }
-    this.splitShut = -1; // the stack whose popover the press now going on has just put away
+    // what the popover (Shift+LMB) is open on and how much of it is picked: { i, from, item, n, count, anchor }. i: the
+    // backpack index, or -1 for a weapon slot or the armor worn; from: the same as ACT.SALVAGE names it (SALVAGE_FROM)
+    this.split = null;
+    this.splitShut = -1; // `from` of the popover the press now going on has just put away
 
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
@@ -274,7 +286,7 @@ export class Inventory {
 
     // ---- left: equipment
     const left = el('section', 'inv-col inv-left paper', wrap);
-    this._h(left, 'Equipment', 'RMB drop');
+    this._h(left, 'Equipment', 'LMB unequip'); // (RMB drop, drag, Shift+LMB salvage: in each one's tooltip)
     const eqs = el('div', 'eq-list', left);
     this.eqEls = SLOT_LABELS.map((lab, i) => {
       const r = el('div', 'eq empty', eqs);
@@ -298,7 +310,9 @@ export class Inventory {
     this.armFill = el('i', '', ab);
     this.armPts = el('span', 'arm-pts', arm, '');
 
-    this._h(left, 'Ammunition', 'in pack');
+    // Ammunition is carried apart from the backpack, a reserve per calibre: from here half of one, or all of it, goes
+    // on the ground for a teammate
+    this._h(left, 'Ammunition', 'drop half / all');
     const ammo = el('div', 'ammo-list', left);
     this.ammoEls = AMMO_ITEMS.map((id, i) => {
       const r = el('div', 'am', ammo);
@@ -307,12 +321,26 @@ export class Inventory {
       const bar = el('div', 'am-bar', r);
       const fill = el('i', '', bar);
       const n = el('span', 'am-n', r, '0');
-      return { r, fill, n, v: -1 };
+      const act = el('span', 'am-act', r);
+      const half = el('button', 'am-b', act, 'Half');
+      const all = el('button', 'am-b', act, 'All');
+      for (const [b, part] of [[half, 2], [all, 1]]) {
+        b.type = 'button';
+        b.disabled = true;
+        // (all: 0, which the server reads as the whole reserve; half rounds up, so that a last round can go too)
+        b.addEventListener('click', () => {
+          const v = this.inv.ammo[i] | 0;
+          if (v <= 0) return;
+          this.ui.sound('ui_click');
+          this.ui.cb.onDropAmmo(i, part === 1 ? 0 : Math.ceil(v / 2));
+        });
+      }
+      return { r, fill, n, half, all, v: -1 };
     });
 
     // ---- centre: backpack grid + camp info
     const mid = el('section', 'inv-col inv-mid', wrap);
-    const gp = el('div', 'grid-wrap paper', mid);
+    const gp = (this.gridWrap = el('div', 'grid-wrap paper', mid));
     const gh = this._h(gp, 'Backpack');
     this.capEl = el('span', 'inv-cap', gh, '0 / ' + INVENTORY_SIZE);
     this.grid = el('div', 'grid', gp);
@@ -327,10 +355,10 @@ export class Inventory {
     const hints = el('div', 'grid-hints', gp);
     for (const [k, t] of [
       ['LMB', 'use / equip'],
-      ['Shift+LMB', 'split / drop some'],
+      ['Shift+LMB', 'split / salvage'],
       ['RMB', 'drop stack'],
       ['Shift+RMB', 'drop one'],
-      ['Drag', 'move · drag out to drop'],
+      ['Drag', 'swap · drag out to drop'],
     ]) {
       const s = el('span', 'gh', hints);
       el('span', 'kbd sm', s, k);
@@ -462,7 +490,7 @@ export class Inventory {
     splitX.type = 'button';
     splitX.title = 'Close (Esc)';
     splitX.addEventListener('click', () => this._closeSplit());
-    const sr = el('div', 'split-row', sp);
+    const sr = (this.splitRow = el('div', 'split-row', sp));
     const range = (this.splitRange = el('input', 'set-range split-range', sr));
     range.type = 'range';
     range.min = 1;
@@ -474,12 +502,19 @@ export class Inventory {
     num.maxLength = 4;
     num.autocomplete = 'off';
     num.setAttribute('aria-label', 'How many');
-    const sb = el('div', 'split-btns', sp);
+    const sb = (this.splitBtns = el('div', 'split-btns', sp));
     this.splitDrop = el('button', 'btn split-b', sb, 'Drop');
     this.splitDrop.type = 'button';
     this.splitKeep = el('button', 'btn split-b', sb, 'Split');
     this.splitKeep.type = 'button';
     this.splitNote = el('div', 'split-note', sp);
+    // ...and tearing it down, for anything SALVAGE lists: what the amount picked comes apart into
+    const sv = (this.salvEl = el('div', 'salv', sp));
+    el('div', 'salv-h', sv, 'Comes apart into');
+    this.salvYield = el('div', 'salv-yield', sv);
+    this.salvNote = el('div', 'split-note', sv);
+    this.salvBtn = el('button', 'btn split-b salv-b', sv, 'Salvage');
+    this.salvBtn.type = 'button';
 
     this._bind(root, wrap, bg);
     this._setTab(lsGet(TAB_KEY, 'all'));
@@ -507,7 +542,7 @@ export class Inventory {
       if (!s) return;
       if (e.button === 0) {
         e.preventDefault();
-        this.drag = { i, x: e.clientX, y: e.clientY, started: false, shut: this.splitShut === i };
+        this.drag = { i, eq: -1, x: e.clientX, y: e.clientY, started: false, shut: this.splitShut === i };
       } else if (e.button === 2) {
         e.preventDefault();
         this.ui.sound('ui_click');
@@ -520,15 +555,23 @@ export class Inventory {
         if (!d.started && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) this._startDrag(d);
         if (d.started) {
           this.ghost.style.transform = `translate(${e.clientX}px,${e.clientY}px) translate(-50%,-50%)`;
-          const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.cell');
+          const t = document.elementFromPoint(e.clientX, e.clientY);
+          const over = t?.closest('.cell');
           const oi = over ? +over.dataset.i : -1;
           if (d.over !== oi) {
             if (d.over >= 0) this.cells[d.over].c.classList.remove('drop-t');
             d.over = oi;
-            if (oi >= 0 && oi !== d.i) this.cells[oi].c.classList.add('drop-t');
+            if (this._canDrop(d, oi)) this.cells[oi].c.classList.add('drop-t');
           }
-          const outside = !document.elementFromPoint(e.clientX, e.clientY)?.closest('.inv-col');
-          this.ghost.classList.toggle('dropping', outside);
+          // where it would go besides a cell: the backpack as a whole (a weapon out of its slot), or the slot a
+          // weapon or vest from the backpack would be equipped in
+          const mark = this._dropMark(d, t);
+          if (d.mark !== mark) {
+            d.mark?.classList.remove('drop-in');
+            d.mark = mark;
+            mark?.classList.add('drop-in');
+          }
+          this.ghost.classList.toggle('dropping', !t?.closest('.inv-col'));
         }
       } else if (this.tipTarget) this.tip.move(e.clientX, e.clientY);
     };
@@ -537,15 +580,22 @@ export class Inventory {
       if (!d || e.button !== 0) return;
       this.drag = null;
       if (d.started) {
-        this.ghost.remove();
-        this.ghost = null;
-        this.cells[d.i].c.classList.remove('dragging');
-        if (d.over >= 0) this.cells[d.over].c.classList.remove('drop-t');
+        this._endDrag(d);
         const t = document.elementFromPoint(e.clientX, e.clientY);
         const over = t?.closest('.cell');
-        if (over) {
+        if (d.eq >= 0) {
+          // a weapon out of its slot: onto the backpack (that cell if it can take it, else the first free one), or
+          // out of the screen onto the ground
+          if (t?.closest('.grid-wrap')) {
+            this.ui.sound('ui_click');
+            cb.onUnequip(d.eq, over && this._canDrop(d, +over.dataset.i) ? +over.dataset.i : 255);
+          } else if (!t?.closest('.inv-col')) {
+            this.ui.sound('ui_click');
+            cb.onDropWeapon(d.eq);
+          }
+        } else if (over) {
           const b = +over.dataset.i;
-          if (b !== d.i) {
+          if (this._canSwap(d.i, b)) {
             this.ui.sound('ui_click');
             cb.onSwapItems(d.i, b);
             // optimistic local swap (server state will overwrite on the next setInventory)
@@ -554,9 +604,17 @@ export class Inventory {
             this._renderCell(d.i);
             this._renderCell(b);
           }
+        } else if (this._dropMark(d, t)) {
+          this._useSlot(d.i); // (a weapon, vest or throwable let go over the Equipment panel: equipped)
         } else if (!t?.closest('.inv-col')) {
           this.ui.sound('ui_click');
           cb.onDropItem(d.i, 0);
+        }
+      } else if (d.eq >= 0) {
+        // a click on a weapon in its slot puts it in the backpack (Shift+click is the salvage popover's)
+        if (!e.shiftKey) {
+          this.ui.sound('ui_click');
+          cb.onUnequip(d.eq, 255);
         }
       } else if (e.shiftKey) {
         // (not on the stack it was open on: that click only put it away. And a single item has nothing to split:
@@ -572,7 +630,8 @@ export class Inventory {
     // tooltips
     wrap.addEventListener('pointerover', (e) => {
       if (this.drag?.started || this.split) return;
-      const t = e.target.closest('.cell, .eq, .rc, .armor, .cp, .am, .schem');
+      // (not over an ammo row's drop buttons: they say what they do themselves)
+      const t = e.target.closest('.am-act') ? null : e.target.closest('.cell, .eq, .rc, .armor, .cp, .am, .schem');
       if (t === this.tipTarget) return;
       this.tipTarget = t;
       if (!t) return this.tip.hide();
@@ -592,7 +651,7 @@ export class Inventory {
       (e) => {
         this.splitShut = -1;
         if (!this.split || this.splitEl.contains(e.target)) return;
-        this.splitShut = this.split.i;
+        this.splitShut = this.split.from;
         this._closeSplit();
       },
       true,
@@ -614,25 +673,40 @@ export class Inventory {
     this.splitNum.addEventListener('focus', () => setTimeout(() => this.splitNum.select()));
     this.splitDrop.addEventListener('click', () => this._doSplit(true));
     this.splitKeep.addEventListener('click', () => this._doSplit(false));
-    // Enter splits, Escape puts it away. Captured, so that neither reaches the game (the chat, the pause menu)
+    this.salvBtn.addEventListener('click', () => this._doSalvage());
+    // Enter splits (or salvages, on what cannot be split), Escape puts it away. Captured, so that neither reaches the
+    // game (the chat, the pause menu)
     this._splitKey = (e) => {
       if (!this.split || (e.key !== 'Enter' && e.key !== 'Escape')) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.key === 'Escape') this._closeSplit();
-      else if (!e.repeat) this._doSplit(false);
+      else if (!e.repeat) this.splitRow.hidden ? this._doSalvage() : this._doSplit(false);
     };
     window.addEventListener('keydown', this._splitKey, true);
 
-    // equipment: RMB drops the weapon
+    // equipment: LMB puts the weapon in the backpack (a click, or dragged onto the grid: the window's pointerup above),
+    // RMB drops it, Shift+LMB opens the popover to tear it down (not on the press that has just put that same popover
+    // away). The throwable slot only points at a stack in the backpack: that is salvaged, or dragged, there
     this.eqEls.forEach((q, slot) => {
       q.r.addEventListener('pointerdown', (e) => {
         if (e.button === 2 && q.item > 0) {
           e.preventDefault();
           this.ui.sound('ui_click');
           cb.onDropWeapon(slot);
+        } else if (e.button === 0 && q.item > 0 && slot !== 3 && !e.shiftKey) {
+          e.preventDefault();
+          this.drag = { i: -1, eq: slot, x: e.clientX, y: e.clientY, started: false };
         }
       });
+      q.r.addEventListener('click', (e) => {
+        const from = SALVAGE_FROM.WEAPON + slot;
+        if (e.shiftKey && q.item > 0 && slot !== 3 && this.splitShut !== from) this._openSalvage(from, q.item, q.r);
+      });
+    });
+    this.armEl.addEventListener('click', (e) => {
+      const a = this.inv.armor;
+      if (e.shiftKey && a && this.splitShut !== SALVAGE_FROM.ARMOR) this._openSalvage(SALVAGE_FROM.ARMOR, a.item, this.armEl);
     });
     this.throwAlt.addEventListener('click', (e) => {
       const b = e.target.closest('.tw');
@@ -799,49 +873,100 @@ export class Inventory {
     }
   }
 
+  // d: a backpack stack (d.i) or a weapon in its slot (d.eq, d.i -1)
   _startDrag(d) {
     d.started = true;
     d.over = -1;
+    d.mark = null;
     this.tip.hide();
     this.tipTarget = null;
-    const s = this.inv.slots[d.i];
+    const s = d.eq >= 0 ? { item: this.inv.weapons[d.eq], count: 1 } : this.inv.slots[d.i];
     this.ghost = svgEl('div', 'drag-ghost', this.ui.root, itemIcon(s.item));
     if (s.count > 1) el('span', 'cell-n', this.ghost, String(s.count));
-    this.cells[d.i].c.classList.add('dragging');
+    (d.eq >= 0 ? this.eqEls[d.eq].r : this.cells[d.i].c).classList.add('dragging');
   }
 
-  // The split popover, on stack i: half of it picked to begin with. It sits above the stack, or below when there
-  // is no room there, and inside the screen either way.
+  _endDrag(d) {
+    if (!d.started) return;
+    this.ghost?.remove();
+    this.ghost = null;
+    (d.eq >= 0 ? this.eqEls[d.eq].r : this.cells[d.i].c).classList.remove('dragging');
+    if (d.over >= 0) this.cells[d.over].c.classList.remove('drop-t');
+    d.mark?.classList.remove('drop-in');
+  }
+
+  // A cell the drag would land on: a stack of the same tier to swap with (_canSwap), or - a weapon from its slot - an
+  // empty cell, or a weapon for that same slot (the two trade places)
+  _canDrop(d, b) {
+    if (d.eq < 0) return this._canSwap(d.i, b);
+    const s = this.inv.slots[b];
+    return b >= 0 && (!s || WEAPONS[s.item]?.slot === d.eq);
+  }
+
+  // Over t, what lights up besides a cell: the backpack, for a weapon from its slot; the slot (or the armor) a
+  // weapon, throwable or vest from the backpack would be equipped in, over the Equipment panel. Null: nothing
+  _dropMark(d, t) {
+    if (d.eq >= 0) return t?.closest('.grid-wrap') && !(d.over >= 0 && this._canDrop(d, d.over)) ? this.gridWrap : null;
+    if (!t?.closest('.inv-left')) return null;
+    const item = this.inv.slots[d.i]?.item;
+    const cat = ITEM_DEFS[item]?.cat;
+    if (cat === 'weapon') return this.eqEls[WEAPONS[item].slot]?.r || null;
+    if (cat === 'throw') return this.eqEls[3].r;
+    return cat === 'armor' ? this.armEl : null;
+  }
+
+  // The popover on stack i (Shift+LMB): how much of it to put in a slot of its own or down on the ground for a
+  // teammate, and - for anything SALVAGE lists - how much of it to tear down. A single item opens it only for that.
+  // Half the stack is picked to begin with.
   _openSplit(i) {
     const s = this.inv.slots[i];
-    if (!s || s.count < 2) return;
+    if (!s || (s.count < 2 && !SALVAGE[s.item])) return;
+    this._openPop({ i, from: i, item: s.item, n: Math.max(1, s.count >> 1) }, this.cells[i].c);
+  }
+
+  // ...on a weapon in its slot, or the armor worn (from: SALVAGE_FROM): those can only be torn down
+  _openSalvage(from, item, anchor) {
+    if (SALVAGE[item]) this._openPop({ i: -1, from, item, n: 1 }, anchor);
+  }
+
+  // It sits above what it is open on, or below when there is no room there, and inside the screen either way
+  _openPop(sp, anchor) {
     this._closeSplit();
     this.tip.hide();
     this.tipTarget = null;
-    this.split = { i, item: s.item, n: s.count >> 1 };
-    this.splitIco.innerHTML = itemIcon(s.item);
-    this.splitName.textContent = ITEM_DEFS[s.item]?.name || '';
+    this.split = { ...sp, count: 1, anchor };
+    this.splitIco.innerHTML = itemIcon(sp.item);
+    this.splitName.textContent = ITEM_DEFS[sp.item]?.name || '';
     this.splitEl.hidden = false;
-    this.cells[i].c.classList.add('splitting');
+    anchor.classList.add('splitting');
     this._syncSplit();
-    const c = this.cells[i].c.getBoundingClientRect();
+    if (!this.split) return;
+    const c = anchor.getBoundingClientRect();
     const o = this.root.getBoundingClientRect();
     const r = this.splitEl.getBoundingClientRect();
     const x = clamp(c.left + c.width / 2 - r.width / 2, o.left + 8, o.right - r.width - 8);
     const y = c.top - r.height - 8 >= o.top + 8 ? c.top - r.height - 8 : c.bottom + 8;
     this.splitEl.style.transform = `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px)`;
-    this.splitRange.focus({ preventScroll: true });
+    // (the Salvage button is never given the focus: Space - a jump - would press it)
+    if (!this.splitRow.hidden) this.splitRange.focus({ preventScroll: true });
   }
 
-  // the popover against its stack as the server last left it: put away when the stack is gone (or down to one),
-  // and never picking more than it holds
+  // the popover against what it is open on as the server last left it: put away when that is gone (or a stack of
+  // what cannot be salvaged is down to one), and never picking more than there is
   _syncSplit() {
     const sp = this.split;
     if (!sp) return;
-    const s = this.inv.slots[sp.i];
-    if (!s || s.item !== sp.item || s.count < 2) return this._closeSplit();
-    this.splitRange.max = s.count;
-    this.splitOf.textContent = 'of ' + s.count;
+    if (sp.i >= 0) {
+      const s = this.inv.slots[sp.i];
+      if (!s || s.item !== sp.item || (s.count < 2 && !SALVAGE[s.item])) return this._closeSplit();
+      sp.count = s.count;
+    } else if ((sp.from === SALVAGE_FROM.ARMOR ? this.inv.armor?.item : this.inv.weapons[sp.from - SALVAGE_FROM.WEAPON]) !== sp.item) return this._closeSplit();
+    const many = sp.count > 1;
+    this.splitRow.hidden = this.splitBtns.hidden = !many;
+    this.splitOf.textContent = many ? 'of ' + sp.count : '';
+    if (many) this.splitRange.max = sp.count;
+    this.salvEl.hidden = !SALVAGE[sp.item];
+    this.salvEl.classList.toggle('alone', !many);
     this._setSplit(sp.n);
   }
 
@@ -849,32 +974,52 @@ export class Inventory {
   _setSplit(n, typed = false) {
     const sp = this.split;
     if (!sp) return;
-    const max = this.inv.slots[sp.i].count;
-    const free = this.inv.slots.some((s) => !s);
+    const max = sp.count;
+    const salv = !!SALVAGE[sp.item];
     sp.n = clamp(n | 0, 1, max);
-    this.splitRange.value = sp.n;
-    this.splitRange.style.setProperty('--p', (((sp.n - 1) / (max - 1)) * 100).toFixed(1) + '%');
-    if (!typed) this.splitNum.value = String(sp.n);
-    this.splitDrop.textContent = 'Drop ' + sp.n;
-    this.splitKeep.textContent = 'Split ' + sp.n;
-    // nothing to split off a stack taken whole, and nowhere to put it with every slot taken
-    this.splitKeep.disabled = sp.n >= max || !free;
-    this.splitNote.textContent = sp.n >= max ? 'The whole stack: it can only be dropped' : free ? '' : 'No free slot to split into';
+    if (max > 1) {
+      const free = this.inv.slots.some((s) => !s);
+      this.splitRange.value = sp.n;
+      this.splitRange.style.setProperty('--p', (((sp.n - 1) / (max - 1)) * 100).toFixed(1) + '%');
+      if (!typed) this.splitNum.value = String(sp.n);
+      this.splitDrop.textContent = 'Drop ' + sp.n;
+      this.splitKeep.textContent = 'Split ' + sp.n;
+      // nothing to split off a stack taken whole, and nowhere to put it with every slot taken
+      this.splitKeep.disabled = sp.n >= max || !free;
+      this.splitNote.textContent = sp.n >= max ? (salv ? 'The whole stack: nothing left to split off' : 'The whole stack: it can only be dropped') : free ? '' : 'No free slot to split into';
+    } else this.splitNote.textContent = '';
+    if (!salv) return;
+    this.salvYield.textContent = '';
+    for (const [id, k] of salvageOf(sp.item, sp.n)) {
+      const chip = el('span', 'ing salv-ing', this.salvYield);
+      svgEl('i', 'ing-ico', chip, itemIcon(id));
+      el('span', 'ing-t', chip, `${ITEM_DEFS[id].name} ×${k}`);
+    }
+    this.salvBtn.textContent = max > 1 ? 'Salvage ' + sp.n : 'Salvage';
+    this.salvNote.textContent = isFirearm(sp.item) ? 'Any rounds still in it go back into the pack' : '';
   }
 
   // drop: the amount picked goes on the ground; else into a free slot of its own
   _doSplit(drop) {
     const sp = this.split;
-    if (!sp || (!drop && this.splitKeep.disabled)) return;
+    if (!sp || sp.i < 0 || (!drop && this.splitKeep.disabled)) return;
     this.ui.sound('ui_click');
     if (drop) this.ui.cb.onDropItem(sp.i, sp.n);
     else this.ui.cb.onSplitItem(sp.i, sp.n);
     this._closeSplit();
   }
 
+  // the amount picked torn down for what it is made of
+  _doSalvage() {
+    const sp = this.split;
+    if (!sp || !SALVAGE[sp.item]) return;
+    this.ui.cb.onSalvage(sp.from, sp.n);
+    this._closeSplit();
+  }
+
   _closeSplit() {
     if (!this.split) return;
-    this.cells[this.split.i].c.classList.remove('splitting');
+    this.split.anchor.classList.remove('splitting');
     this.split = null;
     this.splitEl.hidden = true;
     // (a focused number field would keep ui.isTyping() true and swallow gameplay keys)
@@ -910,16 +1055,19 @@ export class Inventory {
       if (!s) return null;
       id = s.item;
       const h = hintFor(ITEM_DEFS[id]?.cat);
-      hint = (h ? h + ' · ' : '') + 'RMB drop · Shift+RMB drop one' + (s.count > 1 ? '\nShift+LMB split, or drop some' : '');
+      const more = s.count < 2 ? (SALVAGE[id] ? 'salvage' : '') : SALVAGE[id] ? 'split, drop some or salvage' : 'split, or drop some';
+      hint = (h ? h + ' · ' : '') + 'RMB drop · Shift+RMB drop one' + (more ? '\nShift+LMB ' + more : '');
     } else if (t.classList.contains('eq')) {
       const q = this.eqEls[+t.dataset.slot];
       if (!(q.item > 0)) return null;
       id = q.item;
-      hint = 'RMB drop';
+      const slot = +t.dataset.slot;
+      hint = (slot !== 3 ? 'LMB or drag: into the backpack · ' : '') + 'RMB drop' + (SALVAGE[id] && slot !== 3 ? '\nShift+LMB salvage' : '');
     } else if (t.classList.contains('armor')) {
       if (!this.inv.armor) return null;
       id = this.inv.armor.item;
       extra = [`${Math.ceil(this.inv.armor.points)} / ${this.inv.armor.max} armor remaining`];
+      if (SALVAGE[id]) hint = 'Shift+LMB salvage';
     } else if (t.classList.contains('rc')) {
       const rec = this.recipeEls.find((x) => x.b === t);
       if (!rec) return null;
@@ -967,6 +1115,10 @@ export class Inventory {
       if (used) notes.push({ label: 'Used in', ...used });
       if (sourcesOf(id).length) notes.push({ label: 'Found in', list: foundIn(id, this.unlocked) });
     }
+    // ...and what it comes apart into, wherever it is kept (the backpack, a weapon slot, worn)
+    if ((t.classList.contains('cell') || t.classList.contains('eq') || t.classList.contains('armor')) && SALVAGE[id]) {
+      notes.push({ label: 'Salvages into', list: salvageOf(id).map(([k, n]) => ({ name: `${n} ${ITEM_DEFS[k].name}` })) });
+    }
     // A recipe: under each ingredient the player is short of, the same line (reqs opens with the ingredients, in
     // the recipe's order).
     if (t.classList.contains('rc')) {
@@ -1009,6 +1161,7 @@ export class Inventory {
 
   _renderAll() {
     for (let i = 0; i < INVENTORY_SIZE; i++) this._renderCell(i);
+    this._orderCells();
     const used = this.inv.slots.filter(Boolean).length;
     if (this._used !== used) {
       this._used = used;
@@ -1054,6 +1207,9 @@ export class Inventory {
         q.n.textContent = String(v);
         q.fill.style.transform = `scaleX(${clamp(v / AMMO_MAX[i], 0, 1)})`;
         q.r.classList.toggle('zero', v === 0);
+        q.half.disabled = q.all.disabled = v === 0;
+        q.half.title = v ? `Drop ${Math.ceil(v / 2)} of your ${AMMO_NAMES[i]} for a teammate` : '';
+        q.all.title = v ? `Drop all ${v} of your ${AMMO_NAMES[i]}` : '';
       }
     });
 
@@ -1099,6 +1255,24 @@ export class Inventory {
     cell.c.className = 'cell' + (s ? ' c-' + (ITEM_DEFS[s.item]?.cat || 'res') : ' empty') + (this.split?.i === i ? ' splitting' : '');
     cell.ico.innerHTML = s ? itemIcon(s.item) : '';
     cell.n.textContent = s && s.count > 1 ? String(s.count) : '';
+  }
+
+  // The cells laid out in BAG_TIER order. Each cell stays bound to its slot (dataset.i, this.cells[i]): only where it
+  // sits in the grid changes.
+  _orderCells() {
+    const sl = this.inv.slots;
+    const order = sl.map((_, i) => i).sort((a, b) => bagTier(sl[a]) - bagTier(sl[b]) || a - b);
+    const key = order.join(',');
+    if (this._orderKey === key) return;
+    this._orderKey = key;
+    for (const i of order) this.grid.appendChild(this.cells[i].c);
+  }
+
+  // A drag from slot a onto slot b swaps the two stacks (or tops up b, the same item) when both sit in the same tier.
+  // Anywhere else it would change nothing that can be seen, the grid keeping its order.
+  _canSwap(a, b) {
+    const sl = this.inv.slots;
+    return b >= 0 && a !== b && !!sl[a] && !!sl[b] && bagTier(sl[a]) === bagTier(sl[b]);
   }
 
   // Open a crafting tab. The search covers every tab, so picking one also ends it.
@@ -1282,11 +1456,7 @@ export class Inventory {
       this.tip.hide();
       this.tipTarget = null;
       if (this.drag) {
-        if (this.drag.started) {
-          this.ghost?.remove();
-          this.ghost = null;
-          this.cells[this.drag.i].c.classList.remove('dragging');
-        }
+        this._endDrag(this.drag);
         this.drag = null;
       }
       for (const c of this.cells) c.c.classList.remove('drop-t');

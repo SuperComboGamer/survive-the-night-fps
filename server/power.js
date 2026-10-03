@@ -6,12 +6,11 @@
 // Both are ordinary structures otherwise: they block, so the dead that walk into them break them, and a generator
 // that is broken, switched off or dry takes its lights with it on the next tick.
 import { SLOT_BUILD } from '../shared/constants.js';
-import { ITEM, STRUCT, STRUCT_DEFS, SOUND, NOTIFY } from '../shared/defs.js';
+import { ITEM, AMMO, STRUCT, STRUCT_DEFS, SOUND, NOTIFY } from '../shared/defs.js';
 import { ENT } from '../shared/protocol.js';
 import { mulberry32 } from '../shared/rng.js';
 import { eyeHeight } from '../shared/playersim.js';
 import { GEN_RANGE, GEN_FUEL_UNIT, GEN_TANK, GEN_LOW, GEN_HUM, GEN_HUM_EVERY, GEN_TOLD, FLOOD_RANGE, genState, genPour, floodAim, inFloodCone } from '../shared/power.js';
-import { countItem, removeItem } from './inventory.js';
 
 const BODY_AT = [0.9, 0.55, 0.2]; // head, chest, shins: light on any of them counts (as for every other light, zombies.js)
 const _aim = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0 };
@@ -117,16 +116,15 @@ export class Power {
     return true;
   }
 
-  // GEN_POUR units out of the backpack into the tank, or as many as the survivor has or the tank has room for.
+  // GEN_POUR units of the fuel carried into the tank, or as many as the survivor has or the tank has room for.
   // The switch is not touched: fuel into a dry tank with the switch on starts it, into one switched off does not.
   pour(p, e) {
     const g = this.g;
-    const have = countItem(p.inv, ITEM.AMMO_FUEL);
+    const have = p.state.ammo[AMMO.FUEL];
     if (!have) return g.notify(NOTIFY.NOT_ENOUGH, ITEM.AMMO_FUEL, p.id);
     const n = genPour(have, e.burnLeft);
     if (n <= 0) return; // (full)
-    removeItem(p.inv, ITEM.AMMO_FUEL, n);
-    p.invDirty = true;
+    p.state.ammo[AMMO.FUEL] -= n;
     const dry = e.burnLeft <= 0;
     e.burnLeft = Math.min(GEN_TANK, e.burnLeft + n * GEN_FUEL_UNIT);
     g.sound(SOUND.GEN_FUEL, e.x, e.y + 0.8, e.z, 20);

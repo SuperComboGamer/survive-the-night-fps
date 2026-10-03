@@ -25,6 +25,9 @@ the level they play at. Voices and foley are trimmed to their onsets, high-passe
 soft-limited; a few are resampled (the tank's snarl is pitched down in the file) or assembled from short takes (the
 spitter's hock-and-spit, the boomer's gurgles).
 
+The felled tree (`tree_fall`) was sourced the same way (October 2026): two real falls, each trimmed so its crash
+comes 2.55 s into the take (where the falling tree in the game hits the ground), high-passed and level-matched.
+
 Licence: https://creativecommons.org/publicdomain/zero/1.0/
 
 | File | Source recording(s) (Freesound id, title, author) |
@@ -115,6 +118,7 @@ Licence: https://creativecommons.org/publicdomain/zero/1.0/
 | `thunder_far.ogg` | [244053](https://freesound.org/people/lennyboy/sounds/244053/) Thunder.ogg by lennyboy<br>[581124](https://freesound.org/people/Fission9/sounds/581124/) Distant Thunder 3 by Fission9 |
 | `thunder_near.ogg` | [760214](https://freesound.org/people/Kinoton/sounds/760214/) Thunder Clap And Rumble #7 by Kinoton<br>[567945](https://freesound.org/people/TRP/sounds/567945/) 200817 Thunder, pretty close crack 4pm.flac by TRP<br>[2689](https://freesound.org/people/Pingel/sounds/2689/) th_loud.wav by Pingel |
 | `tree_creak.ogg` | [140047](https://freesound.org/people/felix.blume/sounds/140047/) A tree is creaking in the patagonian forest of Argentina in a deep creaky sound. (Argentina, Tierra del Fuego). by felix.blume<br>[726217](https://freesound.org/people/Sacha.Julien/sounds/726217/) Tree creaks by Sacha.Julien |
+| `tree_fall.ogg` | [494071](https://freesound.org/people/Kinoton/sounds/494071/) Big Tree Fall in Forest by Kinoton<br>[798282](https://freesound.org/people/Walking.With.Microphones/sounds/798282/) The fall of a small ten-meter pine tree by Walking.With.Microphones |
 | `wind_light.ogg` | [655501](https://freesound.org/people/felix.blume/sounds/655501/) Wind in a pine tree, constant, with some birds and cricket, slight gust of wind at the evening in a little woods in the forest in New Mexico by felix.blume |
 | `wind_mid.ogg` | [520183](https://freesound.org/people/bone666138/sounds/520183/) Wind in Trees by bone666138 |
 | `wind_strong.ogg` | [109485](https://freesound.org/people/BudJillett/sounds/109485/) Wind-Gusts-late-autumn.wav by BudJillett |

@@ -38,6 +38,7 @@ import { groundAt, resolveBody, deepWaterAt } from './collision.js';
 import { mulberry32 } from './rng.js';
 import { rideStep, rideCarry } from './fair.js';
 import { cartStep, cartCarry, CART_PUMP, LEVER_HANDS } from './handcar.js';
+import { swimming, waterFloor, wadeDepth, SWIM_HANDS, SWIM_SPEED, SWIM_FAST, SWIM_DOWNED, SWIM_ACCEL, SWIM_DRAG, SWIM_TREAD, SWIM_DRAIN, WADE_FROM, WADE_SLOW, CROUCH_WADE, SWIM_DEPTH } from './swim.js';
 
 export function createPlayerState() {
   return {
@@ -309,6 +310,13 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     b &= ~LEVER_HANDS;
     pressed &= ~LEVER_HANDS;
   }
+  // afloat in the lake or a pond (swim.js): both hands are swimming, and nothing in them works
+  const swim = !riding && !carted && swimming(world, s);
+  if (swim) {
+    b &= ~SWIM_HANDS;
+    pressed &= ~SWIM_HANDS;
+  }
+  const wade = swim || s.zombie ? 0 : wadeDepth(world, s.x, s.y, s.z);
   const disabled = s.pinned || s.stunT > 0 || riding || carted;
   let fwd = 0;
   let right = 0;
@@ -327,7 +335,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     wx /= wl;
     wz /= wl;
   }
-  s.crouch = !s.zombie && (s.downed || (b & BTN.CROUCH && !disabled)) ? 1 : 0;
+  s.crouch = !s.zombie && (s.downed || (b & BTN.CROUCH && !disabled && !swim && wade < CROUCH_WADE)) ? 1 : 0; // (never ducking the eyes under the water)
   const weapon = currentWeapon(s);
   const wdef = WEAPONS[weapon];
   const aiming = !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
@@ -336,6 +344,17 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   if (s.zombie) {
     s.stamina = STAMINA_MAX;
     s.exhausted = 0;
+  } else if (swim) {
+    // in deep water stamina only goes: treading water, swimming, hard strokes at the sprinting rate. Run out and the
+    // survivor is exhausted and drowning (the server: Game.updatePlayers) until their feet find the bottom again
+    sprint = b & BTN.SPRINT && fwd > 0 && !s.exhausted && s.stamina > 0 && !s.downed ? 1 : 0;
+    s.stamina -= (sprint && moving ? STAMINA_DRAIN : moving ? SWIM_DRAIN : SWIM_TREAD) * dt;
+    s.staminaDelay = STAMINA_REGEN_DELAY;
+    if (s.stamina <= 0) {
+      s.stamina = 0;
+      if (!s.exhausted && events) events.push({ type: 'exhausted' });
+      s.exhausted = 1;
+    }
   } else {
     sprint = b & BTN.SPRINT && fwd > 0 && !s.crouch && !s.exhausted && s.stamina > 0 && !aiming && !s.downed ? 1 : 0;
     if (sprint && moving) {
@@ -354,6 +373,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   }
   s.sprinting = sprint && moving ? 1 : 0;
   let wishSpeed = s.zombie ? ZOMBIE_PLAYER_SPEED : s.downed ? DOWN_CRAWL_SPEED : sprint ? SPRINT_SPEED : s.crouch ? CROUCH_SPEED : WALK_SPEED;
+  if (swim) wishSpeed = s.downed ? SWIM_DOWNED : sprint ? SWIM_FAST : SWIM_SPEED;
+  else if (wade > WADE_FROM) wishSpeed *= 1 - WADE_SLOW * Math.min(1, (wade - WADE_FROM) / (SWIM_DEPTH - WADE_FROM)); // wading in deeper
   if (aiming) wishSpeed *= 0.62;
   if (!moving) wishSpeed = 0;
 
@@ -374,7 +395,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   } else if (s.onGround) {
     const sp = Math.hypot(s.vx, s.vz);
     if (sp > 0) {
-      const drop = Math.max(sp, 1.6) * FRICTION * dt;
+      const drop = Math.max(sp, 1.6) * (swim ? SWIM_DRAG : FRICTION) * dt;
       const ns = Math.max(0, sp - drop);
       s.vx *= ns / sp;
       s.vz *= ns / sp;
@@ -382,7 +403,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     const cur = s.vx * wx + s.vz * wz;
     const add = wishSpeed - cur;
     if (add > 0 && moving) {
-      const acc = Math.min(GROUND_ACCEL * dt * wishSpeed, add);
+      const acc = Math.min((swim ? SWIM_ACCEL : GROUND_ACCEL) * dt * wishSpeed, add);
       s.vx += acc * wx;
       s.vz += acc * wz;
     }
@@ -396,8 +417,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     }
   }
 
-  // jumping / zombie leap
-  if (!disabled && s.onGround && !s.pulled && !s.downed) {
+  // jumping / zombie leap (not afloat: there is nothing to push off)
+  if (!disabled && s.onGround && !s.pulled && !s.downed && !swim) {
     if (s.zombie && b & BTN.ALT && s.leapCd <= 0) {
       const cp = Math.cos(Math.max(-0.2, s.pitch));
       s.vx = -sy * CLAWS.leapSpeed * cp;
@@ -426,7 +447,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   _pos.z = s.z + s.vz * dt;
   const human = !s.zombie;
   const hit = resolveBody(world, _pos, PLAYER_RADIUS, height, human);
-  if (deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) {
+  // a survivor swims where the water is deep (below); a turned one, like the rest of the dead, stops at its edge
+  if (!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) {
     _pos.x = ox;
     _pos.z = oz;
     s.vx = 0;
@@ -441,11 +463,17 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     s.vx = (_pos.x - ox) / dt;
     s.vz = (_pos.z - oz) / dt;
   }
-  const ground = groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human);
+  let ground = groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human);
+  // ...and where the water is deeper than they stand it holds them up (swim.js): a floor at the float height
+  const water = human && !riding && !carted ? waterFloor(world, s, _pos.x, _pos.z) : -Infinity;
+  const afloat = water > ground;
+  if (afloat) ground = water;
   let ny = s.y + s.vy * dt;
   const wasGround = s.onGround;
   if (ny <= ground) {
-    if (!wasGround && s.vy < -9 && events) events.push({ type: 'land', v: -s.vy });
+    if (!wasGround && afloat) {
+      if (s.vy < -3 && events) events.push({ type: 'splash', v: -s.vy }); // into the water: no fall hurts there
+    } else if (!wasGround && s.vy < -9 && events) events.push({ type: 'land', v: -s.vy });
     ny = ground;
     s.vy = 0;
     s.onGround = 1;

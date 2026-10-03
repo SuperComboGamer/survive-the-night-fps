@@ -14,6 +14,7 @@ export const TEX = { FIRE: 0, SMOKE: 1, SPARK: 2, BLOOD: 3, GLOW: 4, MUZZLE: 5, 
 // a dull grey-pink in the beam
 const LIT = 16;
 const TORCH_GAIN = 0.3; // how much of the flashlight a drop of blood throws back, next to a matt surface facing the lamp
+const ROCKET_ARM = 10; // m out from the tube an RPG grenade's motor lights (rocketTrail)
 const isSpot = (o) => o.isSpotLight;
 const ATLAS_NAMES = ['fx_fire', 'fx_smoke', 'fx_spark', 'fx_blood', 'fx_glow', 'fx_muzzle', 'fx_smoke'];
 
@@ -685,6 +686,19 @@ export class Effects {
     }
   }
 
+  // a body going into the water, or a stroke of someone swimming (shared/swim.js): a crown of spray thrown up and out
+  // round x,z from the surface at y, and a puff of white where it broke. strength 0..1: a stroke ~0.15, a dive 1
+  splash(x, y, z, strength = 1) {
+    const A = this.alpha;
+    const k = 0.5 + strength;
+    for (let i = 0, n = Math.round(4 + 16 * strength); i < n; i++) {
+      const a = this.rnd(0, Math.PI * 2);
+      const s = this.rnd(0.5, 2) * k;
+      A.emit(x + Math.sin(a) * 0.25, y, z + Math.cos(a) * 0.25, Math.sin(a) * s, this.rnd(1.2, 4) * k, Math.cos(a) * s, this.rnd(0.35, 0.7), 0.06, 0.03, 0.6, 0.66, 0.68, 0.8, 0.5, 0.56, 0.58, 0.3, 12, 0.6, TEX.BLOOD + LIT, this.rnd(-3, 3));
+    }
+    A.emit(x, y + 0.08, z, 0, 0.5 * k, 0, 0.6, 0.35 * k, 1.3 * k, 0.72, 0.76, 0.78, 0.45, 0.6, 0.64, 0.66, 0, 0, 2, TEX.SMOKE);
+  }
+
   explosion(x, y, z, radius, kind) {
     const A = this.alpha;
     const D = this.add;
@@ -861,6 +875,48 @@ export class Effects {
   boltTrail(x, y, z, dx, dy, dz, dist) {
     if (this.tracers.length >= this.tracerMax) this.tracers.shift();
     this.tracers.push({ x, y, z, dx, dy, dz, dist, t: 0, bright: 0.5, speed: 150, len: 1.6, bolt: true });
+  }
+
+  // An RPG going off: fire and a cloud of grey smoke blown out of the back of the tube at (x,y,z) along (dx,dy,dz),
+  // backwards from the aim
+  backblast(x, y, z, dx, dy, dz) {
+    const A = this.alpha;
+    const D = this.add;
+    for (let i = 0; i < 8; i++) {
+      const s = this.rnd(4, 10);
+      D.emit(x, y, z, dx * s + this.rnd(-1.5, 1.5), dy * s + this.rnd(-1, 1.5), dz * s + this.rnd(-1.5, 1.5), this.rnd(0.12, 0.25), this.rnd(0.4, 0.8), 1.2, 1, 0.7, 0.3, 0.9, 0.8, 0.25, 0.05, 0, 0, 3, TEX.FIRE, 3);
+    }
+    for (let i = 0; i < 18; i++) {
+      const s = this.rnd(2, 8);
+      const k = this.rnd(0, 1.5);
+      A.emit(x + dx * k, y + dy * k, z + dz * k, dx * s + this.rnd(-1.5, 1.5), dy * s + this.rnd(0, 1.2), dz * s + this.rnd(-1.5, 1.5), this.rnd(1.5, 3.2), 0.5, this.rnd(2.5, 4.5), 0.5, 0.48, 0.45, 0.55, 0.62, 0.6, 0.58, 0, -0.1, 2.2, TEX.SMOKE, 0.4);
+    }
+  }
+
+  // An RPG grenade's motor from where it was (x0,y0,z0) to where it is now: a puff of smoke every short way along it,
+  // so a fast one leaves an unbroken trail, and the flame at its tail. The motor lights ROCKET_ARM metres out from
+  // where it was fired (lx,ly,lz): short of that it flies dark, and the shooter's view down the line stays clear
+  rocketTrail(x0, y0, z0, x1, y1, z1, lx, ly, lz) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dz = z1 - z0;
+    const l = Math.hypot(dx, dy, dz);
+    if (l < 1e-4) return;
+    const lit = (x, y, z) => Math.hypot(x - lx, y - ly, z - lz) >= ROCKET_ARM;
+    const n = Math.min(10, Math.ceil(l / 0.45));
+    for (let i = 0; i < n; i++) {
+      const k = (i + Math.random()) / n;
+      const px = x0 + dx * k;
+      const py = y0 + dy * k;
+      const pz = z0 + dz * k;
+      if (lit(px, py, pz)) this.alpha.emit(px, py, pz, this.rnd(-0.25, 0.25), this.rnd(0.1, 0.4), this.rnd(-0.25, 0.25), this.rnd(1.1, 1.7), 0.2, this.rnd(0.7, 1.1), 0.55, 0.53, 0.5, 0.4, 0.6, 0.6, 0.6, 0, -0.05, 1.2, TEX.SMOKE, 0.3);
+    }
+    if (!lit(x1, y1, z1)) return;
+    const ux = dx / l;
+    const uy = dy / l;
+    const uz = dz / l;
+    this.add.emit(x1 - ux * 0.45, y1 - uy * 0.45, z1 - uz * 0.45, -ux * 4, -uy * 4, -uz * 4, 0.06, 0.35, 0.1, 1, 0.75, 0.35, 1, 1, 0.3, 0.05, 0, 0, 0, TEX.FIRE, 2);
+    this.add.emit(x1 - ux * 0.45, y1 - uy * 0.45, z1 - uz * 0.45, 0, 0, 0, 0.05, 0.6, 0.4, 1, 0.8, 0.5, 0.8, 1, 0.5, 0.2, 0, 0, 0, TEX.GLOW);
   }
 
   vmMuzzle(pos, scale = 1, time = 0.05) {

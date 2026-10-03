@@ -4,7 +4,7 @@
 // with light, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
-import { RECIPES, AMMO_MAX, AMMO_ITEMS } from '../shared/defs.js';
+import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
 import { PHASE, BTN, NOISE, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
@@ -31,12 +31,9 @@ const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`);
   if (!ok) fails.push(name);
 };
-// A survivor's reserve of a calibre is the rounds of it in their backpack: makes that n (in game g), as one stack.
-const setAmmo = (p, cal, n, g = game) => {
-  for (let i = 0; i < p.inv.length; i++) if (p.inv[i]?.item === AMMO_ITEMS[cal]) p.inv[i] = null;
-  if (n > 0) g.giveItem(p, AMMO_ITEMS[cal], n);
-  p.invDirty = true;
-  g.syncAmmo(p);
+// A survivor's reserve of a calibre (carried apart from the backpack): makes that n
+const setAmmo = (p, cal, n) => {
+  p.state.ammo[cal] = Math.max(0, n);
 };
 
 function client(name) {
@@ -291,7 +288,7 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   check('...with a kit for the day: more rounds and bandages than day 1, still no more than a pistol', s.ammo[AMMO.P9] > a.state.ammo[AMMO.P9] && has(c, ITEM.BANDAGE) > has(a, ITEM.BANDAGE) && s.weapons.join() === a.state.weapons.join() && c.armor === 0, `${kit(c)} against ${kit(a)}`);
   const fresh = kit(c);
   // they fire 30 rounds, use a bandage, find some scrap - and drop out
-  setAmmo(c, AMMO.P9, s.ammo[AMMO.P9] - 30, g);
+  setAmmo(c, AMMO.P9, s.ammo[AMMO.P9] - 30);
   c.inv.find((x) => x && x.item === ITEM.BANDAGE).count--;
   g.giveItem(c, ITEM.SCRAP, 5);
   const kept = kit(c);
@@ -1323,8 +1320,8 @@ const standOff = (c, e, d) => {
 {
   const g = new Game({ seed, godMode: true, log: () => {} });
   const join = (name) => {
-    const c = { id: 0, notes: [], stripped: new Set(), net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} } };
-    const on = { notify: (m, a) => c.notes.push([m, a]), stripped: (x, y, z) => c.stripped.add(strippedKey(x, y, z)), regrown: () => c.stripped.clear() };
+    const c = { id: 0, notes: [], stripped: new Set(), fell: [], net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} } };
+    const on = { notify: (m, a) => c.notes.push([m, a]), stripped: (x, y, z) => c.stripped.add(strippedKey(x, y, z)), regrown: () => c.stripped.clear(), fell: (x, y, z, yaw) => c.fell.push([strippedKey(x, y, z), yaw]) };
     c.handler = new Proxy({}, { get: (_, k) => on[k] || (() => {}) });
     c.session = g.onOpen({
       send(bytes) {
@@ -1402,6 +1399,39 @@ const standOff = (c, e, d) => {
   check('dawn brings them back, on every client', S.stripped.size === 0 && T.stripped.size === 0 && L.stripped.size === 0 && prompt(S).startsWith('[LMB] '), `"${prompt(S)}"`);
   swing();
   check('...and the wreck gives again', scrap() > had, `${had} -> ${scrap()}`);
+
+  // a tree takes six hits a day: the sixth brings it down, away from whoever cut it, and out of the world until dawn
+  g.gatherHit = (q, col) => (landed = col);
+  let tree = null;
+  for (const col of g.world.staticGrid.query(g.world.car.x, g.world.car.z, 400, []).filter((c) => c.flags & COL.TREE)) {
+    for (let d = col.r + 2.5; d > 0.3 && !tree; d -= 0.05) {
+      at = { x: col.x + d, z: col.z, pitch: 0 };
+      if (swing() === col) tree = col;
+    }
+    if (tree) break;
+  }
+  g.gatherHit = (q, col, ...rest) => ((landed = col), take.call(g, q, col, ...rest));
+  check('found a tree to chop', !!tree);
+  const tkey = strippedKey(Math.round(tree.x * 64), Math.round(tree.y0 * 64), Math.round(tree.z * 64));
+  const standing = () => g.world.staticGrid.query(tree.x, tree.z, 0.5, []).includes(tree);
+  for (let i = 0; i < 5; i++) swing();
+  ticks(1);
+  check('a tree with a hit left in it still stands', landed === tree && standing() && S.fell.length === 0 && T.fell.length === 0, `${S.fell.length}/${T.fell.length} told`);
+  swing();
+  ticks(1);
+  // (stand() faces -X from the +X side: it goes over toward -X, yaw PI/2)
+  check(
+    'the last hit fells it, and every client is told which way it falls: away from the one who cut it',
+    landed === tree && !standing() && [S, T].every((c) => c.fell.length === 1 && c.fell[0][0] === tkey && Math.abs(c.fell[0][1] - Math.PI / 2) < 0.03),
+    JSON.stringify([S.fell, T.fell]),
+  );
+  check('...and it is out of the world: the same swing meets nothing of it', swing() !== tree);
+  const M = join('Straggler');
+  ticks(2);
+  check('whoever joins later is told it is down', M.stripped.has(tkey) && M.fell.length === 0, `${M.stripped.size}`);
+  g.startDay();
+  ticks(1);
+  check('dawn stands it up again', standing() && swing() === tree);
 }
 
 // melee needs a clear line: no stabbing the dead through the wall you shelter behind, no claws through it either.
@@ -1620,7 +1650,6 @@ const standOff = (c, e, d) => {
       stacks.forEach(([item, count], i) => (p.inv[i] = { item, count }));
       set();
       game.syncThrow(p);
-      game.syncAmmo(p);
       const model = copyInv({ slots: p.inv, ammo: s.ammo, weapons: s.weapons });
       const n = craftRun(RECIPES[id], model, CRAFT_MAX);
       A.notes.length = 0;
@@ -1649,15 +1678,17 @@ const standOff = (c, e, d) => {
       [mats, stack, freed, bats, bat].every((c) => c.ok) && [mats.n, stack.n, freed.n, bats.n, bat.n].join() === '3,1,1,2,1' && [mats.next, stack.next, freed.next, bats.next, bat.next].join() === [NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.NOT_ENOUGH, NOTIFY.INVENTORY_FULL, NOTIFY.INVENTORY_FULL].join(),
       JSON.stringify({ mats, stack, freed, bats, bat }),
     );
-    // ammunition is a stack in the backpack like the nails: with every other slot taken, a bulk craft stops at the
-    // last whole batch that stack takes (120 + 2 x 12 of 150), and the reserve is what the stack holds
+    // ammunition is carried apart from the backpack, up to AMMO_MAX: the server takes a craft while the reserve has
+    // room for a single round and puts the rest of that batch on the ground. A bulk craft stops at the last whole
+    // batch that fits (120 + 2 x 12 of 150), so nothing is spilt - and every backpack slot taken does not matter
     const cap = AMMO_MAX[AMMO.P9];
-    const ammo = bulk(9, [[ITEM.SCRAP, 10], [ITEM.POWDER, 30], [ITEM.AMMO_9MM, cap - 30], ...full(21)]);
-    check('bulk ammunition stops at the last whole batch the backpack takes', ammo.n === 2 && ammo.ok && ammo.next === NOTIFY.INVENTORY_FULL && s.ammo[AMMO.P9] === cap - 30 + 2 * RECIPES[9].n && count(ITEM.AMMO_9MM) === s.ammo[AMMO.P9] && count(ITEM.SCRAP) === 8 && count(ITEM.POWDER) === 26, `${ammo.n} batches sent at ${cap - 30} of ${cap}: reserve ${s.ammo[AMMO.P9]}, ${count(ITEM.SCRAP)} scrap and ${count(ITEM.POWDER)} powder left`);
+    const had = s.ammo[AMMO.P9];
+    const ammo = bulk(9, [[ITEM.SCRAP, 10], [ITEM.POWDER, 30], ...full(22)], () => (s.ammo[AMMO.P9] = cap - 30), false);
+    check('bulk ammunition stops at the last whole batch the reserve takes', ammo.n === 2 && ammo.ok && s.ammo[AMMO.P9] === cap - 30 + 2 * RECIPES[9].n && count(ITEM.AMMO_9MM) === 0 && count(ITEM.SCRAP) === 8 && count(ITEM.POWDER) === 26, `${ammo.n} batches sent at ${cap - 30} of ${cap}: reserve ${s.ammo[AMMO.P9]}, ${count(ITEM.SCRAP)} scrap and ${count(ITEM.POWDER)} powder left`);
+    s.ammo[AMMO.P9] = had;
     p.inv.splice(0, p.inv.length, ...keep[0]);
     keep[1].forEach((v, i) => (s.weapons[i] = v));
     game.syncThrow(p);
-    game.syncAmmo(p);
     p.invDirty = true;
   }
   // locked recipe
@@ -1676,24 +1707,27 @@ const standOff = (c, e, d) => {
   A.act(ACT.CRAFT, 27);
   run(3);
   check('crafted crossbow + bolts at workbench', s.weapons[0] === ITEM.CROSSBOW && s.mags[0] === 1 && s.ammo[AMMO.BOLT] === 4, `bolts ${s.ammo[AMMO.BOLT]}`);
-  // four more bolts with room in the backpack for one (a stack one short of full, every other slot taken, and the
-  // materials not used up): the craft is refused whole - nothing paid, nothing spilt at her feet
+  // four more bolts with room for one in the reserve, and every backpack slot taken (ammunition needs none): the
+  // other three land at her feet, they were paid for
   {
     const inv = p.inv.slice();
+    const had = s.ammo[AMMO.BOLT];
     const cap = AMMO_MAX[AMMO.BOLT];
     const has = (item) => p.inv.reduce((n, x) => n + (x && x.item === item ? x.count : 0), 0);
     p.inv.fill(null);
-    [[ITEM.AMMO_BOLTS, cap - 1], [ITEM.STICK, 3], [ITEM.SCRAP, 2]].forEach(([item, count], i) => (p.inv[i] = { item, count }));
-    for (let i = 3; i < p.inv.length; i++) p.inv[i] = { item: ITEM.LEATHER, count: 10 };
+    [[ITEM.STICK, 3], [ITEM.SCRAP, 2]].forEach(([item, count], i) => (p.inv[i] = { item, count }));
+    for (let i = 2; i < p.inv.length; i++) p.inv[i] = { item: ITEM.LEATHER, count: 10 };
+    s.ammo[AMMO.BOLT] = cap - 1;
     const before = new Set(game.items);
-    A.notes.length = 0;
     A.act(ACT.CRAFT, 27);
     run(3);
     const spilt = game.items.filter((e) => !before.has(e) && e.item === ITEM.AMMO_BOLTS);
-    check('ammo the backpack has no room for is not crafted', A.notes.some(([m]) => m === NOTIFY.INVENTORY_FULL) && s.ammo[AMMO.BOLT] === cap - 1 && has(ITEM.STICK) === 3 && has(ITEM.SCRAP) === 2 && spilt.length === 0, `${s.ammo[AMMO.BOLT]} of ${cap} bolts, ${has(ITEM.STICK)} sticks, ${has(ITEM.SCRAP)} scrap, ${spilt.length} stacks on the ground`);
+    const n = spilt.reduce((k, e) => k + e.count, 0);
+    check('ammo crafted with the reserve nearly full is not lost', s.ammo[AMMO.BOLT] === cap && n === 3 && has(ITEM.STICK) === 1 && has(ITEM.SCRAP) === 1, `reserve ${cap - 1} -> ${s.ammo[AMMO.BOLT]} of ${cap}, ${n} on the ground, ${has(ITEM.STICK)} sticks, ${has(ITEM.SCRAP)} scrap`);
+    for (const e of spilt) game.removeItemEnt(e);
     p.inv.splice(0, p.inv.length, ...inv);
     p.invDirty = true;
-    game.syncAmmo(p);
+    s.ammo[AMMO.BOLT] = had;
   }
   const far = game.zm.spawn(ZTYPE.WALKER, s.x + 36, s.z);
   A.input(0, 0, 0, 0);
@@ -1741,11 +1775,12 @@ const standOff = (c, e, d) => {
   {
     const keep = [s.weapons[0], s.mags[0]];
     const inv = p.inv.slice();
-    // (a full backpack: six shells, five .308 rounds, and cloth)
+    const ammo = [...s.ammo];
+    // (a full backpack of cloth; six shells and five .308 rounds carried)
     p.inv.fill(null);
-    p.inv[0] = { item: ITEM.AMMO_SHELLS, count: 6 };
-    p.inv[1] = { item: ITEM.AMMO_308, count: 5 };
-    for (let i = 2; i < p.inv.length; i++) p.inv[i] = { item: ITEM.CLOTH, count: 1 };
+    for (let i = 0; i < p.inv.length; i++) p.inv[i] = { item: ITEM.CLOTH, count: 1 };
+    s.ammo[AMMO.SHELL] = 6;
+    s.ammo[AMMO.R308] = 5;
     s.weapons[0] = ITEM.SHOTGUN; // (the shortest reload there is: one shell)
     s.mags[0] = 2;
     A.input(BTN.RELOAD, 0, 0);
@@ -1760,7 +1795,7 @@ const standOff = (c, e, d) => {
     [s.weapons[0], s.mags[0]] = keep;
     p.inv.splice(0, p.inv.length, ...inv);
     p.invDirty = true;
-    game.syncAmmo(p);
+    ammo.forEach((v, i) => (s.ammo[i] = v));
   }
   // heavy melee (RMB): one harder blow, then a longer recovery - more in the blow, less per second, so that
   // neither button is always the right one. (no ticks and no game rng in here: the run plays out as before)
@@ -2285,7 +2320,7 @@ check('ping broadcast', B.pings > 0);
   check('...on open ground with a clear walk to them', back.every(({ state: s }) => open(s.x, s.z) && Math.abs(s.y - groundAt(w, s.x, s.z, s.y)) < 0.01 && [Ann, Cat].some((c) => g.zm.clearLine(s.x, s.y + 0.6, s.z, c.p().state.x, c.p().state.y + 0.6, c.p().state.z))));
   const near = Math.min(...back.flatMap((p) => dead.map((z) => from(z, p.state))));
   check('...on the side away from the dead', near > 8, `nearest zombie ${near.toFixed(1)} m (${Math.min(...dead.map((z) => from(z, Ann.p().state))).toFixed(1)} m from a teammate)`);
-  check('...with next to nothing: the tools, one pistol magazine and a bandage', back.every((p) => kit(p) === `${Ann.p().state.weapons.join()} / ${WEAPONS[ITEM.PISTOL].mag} / 0000000 / 1 / 1`) && Ben.self.mags[1] === WEAPONS[ITEM.PISTOL].mag && Ben.self.ammo.every((n) => n === 0), `${kit(back[0])} against the starting ${starter}`);
+  check('...with next to nothing: the tools, one pistol magazine and a bandage', back.every((p) => kit(p) === `${Ann.p().state.weapons.join()} / ${WEAPONS[ITEM.PISTOL].mag} / ${'0'.repeat(Object.keys(AMMO).length)} / 1 / 1`) && Ben.self.mags[1] === WEAPONS[ITEM.PISTOL].mag && Ben.self.ammo.every((n) => n === 0), `${kit(back[0])} against the starting ${starter}`);
   const ids = [Ben.id, Dee.id].sort().join();
   check('...and everyone is told who came back', [Ann, Cat, Ben, Dee].every((c) => returned(c) === ids), returned(Ann));
   // a wipe is still a loss: the last survivors fall with dawn due on the very next tick, Ben already one of the dead

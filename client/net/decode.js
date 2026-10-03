@@ -372,6 +372,12 @@ export function readEvents(r, handler, flags, ents) {
       case EVT.REGROWN:
         handler.regrown?.();
         break;
+      case EVT.FELL: {
+        // (the tree's name left quantized, as STRIPPED's)
+        const x = r.i16(), y = r.i16(), z = r.i16(), yaw = dqangle8(r.u8());
+        handler.fell?.(x, y, z, yaw);
+        break;
+      }
       case EVT.GRAVE: {
         const grave = r.u8();
         handler.grave?.(grave);

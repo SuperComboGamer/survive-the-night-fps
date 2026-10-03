@@ -226,7 +226,7 @@ export class GunClient {
     if (held) {
       // (the line sits under the crosshair: it says its piece as the grips are taken, and again when the belt is out)
       const have = g.prediction.state.ammo[AMMO.R762];
-      if (belt <= 0) g.prompt = have > 0 ? `Belt empty · hold [R] to feed it (${have} × 7.62)` : 'Belt empty · no 7.62 in your pack to feed it';
+      if (belt <= 0) g.prompt = have > 0 ? `Belt empty · hold [R] to feed it (${have} × 7.62)` : 'Belt empty · no 7.62 to feed it';
       else if (g.time - this.wantT < PROMPT_TIME) g.prompt = belt >= GUN.mag || !have ? '[E] Let go' : `[E] Let go · hold [R] to feed the belt (${have} × 7.62)`;
     } else if (this.gunner && this.gunner !== g.myId) g.prompt = `${g.name(this.gunner)} is on the gun · belt ${belt}/${GUN.mag}`;
     else g.prompt = `[E] Man the gun · belt ${belt}/${GUN.mag}`;

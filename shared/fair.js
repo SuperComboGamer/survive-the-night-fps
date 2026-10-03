@@ -29,7 +29,7 @@ export const RIDE_SEATS = WHEEL.n + CAROUSEL.n; // seats 0..7 are the wheel's go
 export const BOARD_RISE = 0.9;
 export const SEAT_PICK = { y: 0.75, r: 0.9 }; // [E] is offered on a seat when the view ray passes this near the point this far above its floor
 
-// The generator in the shed. A portion of Flamethrower Fuel out of the backpack runs it for `burn` seconds; the
+// The generator in the shed. A portion of the Flamethrower Fuel a survivor carries runs it for `burn` seconds; the
 // tank takes `tank` seconds' worth. While it runs the fair is a noise that carries `noise` metres, made again
 // every `noiseEvery` seconds (a car alarm carries 140, a pipe bomb 170).
 export const GEN = { portion: 25, burn: 150, tank: 600, hold: 1.5, noiseEvery: 4, pick: 0.9, tankPick: 0.7 };

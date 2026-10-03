@@ -81,7 +81,9 @@ function readBody(res, max) {
         done = true;
         return reject(new HttpError(413, 'Too much'));
       }
-      parts.push(Buffer.from(chunk)); // (copied: the chunk is only valid during this callback)
+      // (copied: the chunk is only valid during this callback. Buffer.from(chunk) would be a view of it, detached by
+      // the time a body of more than one chunk is joined, and that throw in uWS's callback ends the process)
+      parts.push(Buffer.from(new Uint8Array(chunk)));
       if (last) {
         done = true;
         resolve(Buffer.concat(parts));

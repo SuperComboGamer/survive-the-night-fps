@@ -8,8 +8,16 @@
 // A deck over the lake (the pier) is a second level the flat grid has to be told about: its cells are
 // walkable, the steps over its sides are cut where the ground is more than a step below the planks, and
 // flowDir takes the height of the feet to tell who is on it from who is in the water beside it.
+// The grid has to stop the dead where their bodies stop: a collider is a wall when its top is more than a step
+// above the ground (the physics' own STEP_HEIGHT) and its underside lower than a body is tall, and a gap between two
+// walls too narrow for a body is closed by a bridge (an invisible wall of the grid's own, never of the physics).
+// Without them the field leads into a slot a body cannot get through, and whoever follows it stands there all night.
+// A gap that narrow between a survivor's structure and the static world is priced like the structure itself:
+// the way through it is to claw the piece down. And a crowd costs: the field is solved with every cell that
+// holds more of the dead than fit in it made dearer, so a horde jammed at one corner of a barricade spreads
+// along it instead of queueing behind the few at the front.
 import { MAP_HALF, STEP_HEIGHT } from '../shared/constants.js';
-import { COL, BOX, CYL, groundAt, footprintContains } from '../shared/collision.js';
+import { COL, BOX, CYL, ColliderGrid, groundAt, footprintContains, overlapBoxes } from '../shared/collision.js';
 
 const SIZE = MAP_HALF * 2; // cells per side (1 m)
 const FIELD = 144; // flow field window size (cells): the horde spawns ~60-85 m out, inside the window
@@ -25,6 +33,10 @@ const PERCH_W = PERCH_R * 2 + 1;
 const PERCH_RING = 10; // ...and how much further off than the nearest of it still starts the field (x10 units; under a step's cost)
 const SLAB = 0.45; // a box thinner than this is a floor, a deck or a ceiling (the pier's planks are 0.22)
 const DECK_HEADROOM = 1.9; // a slab with less room than this under it is walked on, not under (a walker is 1.75 m, a lintel hangs at 2.2)
+const HEADROOM = 1.7; // what a body needs under something to walk beneath it (a walker is 1.75 m: anything lower stops it)
+const GAP = 0.76; // a gap between walls narrower than this takes no walker (radius 0.38) through: the grid closes it
+const CROWD_COST = 30; // extra cost (x10 units: 3 m) of a cell for each of the dead in it past the first...
+const CROWD_MAX = 5; // ...counting this many at most
 
 export class Nav {
   constructor(world) {
@@ -33,13 +45,20 @@ export class Nav {
     this.edge = new Uint8Array(SIZE * SIZE); // bit n: the step toward neighbor n crosses a static collider
     this.nearWall = new Uint8Array(SIZE * SIZE);
     this.solid = new Set(); // static colliders the grid treats as walls (for exact segment checks)
+    this.bridges = new Set(); // its own walls across gaps too narrow for a body (_bridge), in bridgeGrid
+    this.bridgeGrid = new ColliderGrid(MAP_HALF);
     this.decks = new Set(); // slabs that are a level of their own to walk on (a pier over the lake)
     this.deck = new Map(); // cell whose centre is under the planks of one -> their height
     this.rim = new Map(); // cell of the ground or water beside one, too far below to step up -> the deck's height
     this.deckBox = { i0: SIZE, j0: SIZE, i1: -1, j1: -1 }; // the cells all of that lies in (flowDir looks no further)
     this.structCost = new Uint16Array(SIZE * SIZE);
     this.structRef = new Map(); // cell -> count
+    this.crowd = new Uint8Array(SIZE * SIZE); // how many of the dead stand in each cell (setCrowd)
+    this.crowdCells = []; // the cells counted in it
+    this.crowdVer = 0; // bumped whenever the count is taken again (a field solved with the crowd before is stale)
+    this.jammed = false; // some cell held more than one at the last count
     this._q = [];
+    this._qb = [];
     this._buildStatic();
     this.fields = new Map(); // playerId -> field
     this.structVer = 0; // bumped whenever structure costs change (fields computed before are stale)
@@ -95,6 +114,7 @@ export class Nav {
     const seen = new Set();
     const slabs = [];
     const floors = [];
+    const walls = []; // everything that stops a body, trees too (the gaps between them: _bridgeGaps)
     for (const cell of grid.cells) {
       for (const c of cell) {
         if (seen.has(c)) continue;
@@ -108,20 +128,25 @@ export class Nav {
             slabs.push(c);
             continue;
           }
+          // low floors: walkable
           floors.push(c);
+          continue;
         }
-        // ignore elevated colliders (walkable platforms are handled: floors are thin & low)
-        if (c.y0 > gy + 1.2) continue;
-        if (c.y1 < gy + 0.5) continue; // low floors / decks: walkable
+        // something up off the ground that a body walks under (a lintel, an awning); lower than that it stops one
+        if (c.y0 > gy + HEADROOM) continue;
+        // a wall when its top is more than a step above the ground (the physics' own step: a 0.5 m kerb stops a body)
+        if (c.y1 <= gy + STEP_HEIGHT) continue;
         // thin building walls expand less so 1.3 m doorways stay open to the dead
         const thin = c.type === BOX && Math.min(c.hx, c.hz) < 0.2;
         this._raster(c, (k) => (this.blocked[k] = 1), c.flags & COL.TREE ? 0.05 : thin ? 0.06 : 0.25);
+        walls.push(c);
         if (c.flags & COL.TREE) continue;
         this.solid.add(c);
         this._cutEdges(c);
         this._raster(c, (k) => (this.nearWall[k] = 1), NEAR_WALL);
       }
     }
+    this._bridgeGaps(walls);
     this._markDecks(slabs, floors);
     for (let j = 0; j < SIZE; j++) {
       for (let i = 0; i < SIZE; i++) {
@@ -167,6 +192,42 @@ export class Nav {
         this.rim.set(nk, top);
       }
     }
+  }
+
+  // Close every gap between two walls that a body cannot get through. Two walls that touch leave none; a doorway
+  // (1.1 m and up) is left open. Between boxes every corner of one is measured to the other, so two walls side by side
+  // the whole way (a slot) are closed at both ends.
+  _bridgeGaps(walls) {
+    this.walls = new Set(walls);
+    const grid = this.world.staticGrid;
+    const index = new Map(walls.map((c, k) => [c, k]));
+    const q = [];
+    for (let k = 0; k < walls.length; k++) {
+      const a = walls[k];
+      grid.query(a.x, a.z, a.r + GAP, q);
+      for (const b of q) {
+        if (!(index.get(b) > k)) continue; // (each pair once; b is a wall)
+        gapsBetween(a, b, (x0, z0, x1, z1) => this._bridge(x0, z0, x1, z1));
+      }
+    }
+  }
+  // a wall of the grid's own along (x0,z0)-(x1,z1), across a gap too narrow for a body
+  _bridge(x0, z0, x1, z1) {
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const yaw = Math.atan2(-(z1 - z0), x1 - x0); // (makeBox's frame: local +x runs along (cos yaw, -sin yaw))
+    const hx = len / 2 + 0.05;
+    const hz = 0.04;
+    const c = { type: BOX, x: (x0 + x1) / 2, z: (z0 + z1) / 2, y0: 0, y1: 0, hx, hz, c: Math.cos(yaw), s: Math.sin(yaw), yaw, r: Math.hypot(hx, hz), flags: COL.STATIC, id: 0, stamp: 0, cells: null };
+    this.bridges.add(c);
+    this.bridgeGrid.add(c);
+    this._cutEdges(c);
+    this._raster(c, (k) => (this.nearWall[k] = 1), NEAR_WALL);
+  }
+  // the walls near (x,z) to test a step against: the static world's (filter by solid) and the grid's own bridges
+  _wallsNear(x, z, r, bridges = true) {
+    const q = this.world.staticGrid.query(x, z, r, this._q);
+    if (bridges) for (const b of this.bridgeGrid.query(x, z, r, this._qb)) q.push(b);
+    return q;
   }
 
   // is (x,z) under the planks of a deck
@@ -249,7 +310,7 @@ export class Nav {
   // down the side of a deck (player structures, trees and terrain are not considered)
   segClear(x0, z0, x1, z1) {
     const len = Math.hypot(x1 - x0, z1 - z0);
-    const q = this.world.staticGrid.query((x0 + x1) / 2, (z0 + z1) / 2, len / 2 + 0.1, this._q);
+    const q = this._wallsNear((x0 + x1) / 2, (z0 + z1) / 2, len / 2 + 0.1);
     if (!this._clearAmong(q, x0, z0, x1, z1)) return false;
     for (let i = 0; i < q.length; i++) if (this.decks.has(q[i]) && this._deckSide(q[i], x0, z0, x1, z1, len)) return false;
     return true;
@@ -274,8 +335,12 @@ export class Nav {
     }
     return false;
   }
+  // (the bridges in the list count as walls: _wallsNear leaves them out where they must not)
   _clearAmong(list, x0, z0, x1, z1) {
-    for (let i = 0; i < list.length; i++) if (this.solid.has(list[i]) && segHits(list[i], x0, z0, x1, z1, EDGE_PAD)) return false;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if ((this.solid.has(c) || this.bridges.has(c)) && segHits(c, x0, z0, x1, z1, EDGE_PAD)) return false;
+    }
     return true;
   }
   // Is the step from cell k toward neighbor n one up or down the side of a deck that the grid has cut? Beside a
@@ -293,7 +358,8 @@ export class Nav {
     const i = Math.floor(x + MAP_HALF);
     const j = Math.floor(z + MAP_HALF);
     if (i < 1 || j < 1 || i >= SIZE - 1 || j >= SIZE - 1 || !this.nearWall[j * SIZE + i]) return 1;
-    const q = this.world.staticGrid.query(x, z, 2, this._q);
+    // (no bridges: a survivor squeezed into a slot is still got at from either end of it, as near as a body comes)
+    const q = this._wallsNear(x, z, 2, false);
     const cx = i - MAP_HALF + 0.5;
     const cz = j - MAP_HALF + 0.5;
     let m = this._clearAmong(q, x, z, cx, cz) ? 1 : 0;
@@ -337,16 +403,35 @@ export class Nav {
 
   addStructure(c) {
     if (c.flags & COL.NOBLOCK) return;
-    this._raster(c, (k) => {
+    for (const k of this._structCells(c)) {
       const v = (this.structCost[k] += STRUCT_COST);
       if (v > this.maxStructCost) this.maxStructCost = v;
-    }, 0.35);
+    }
     this.structVer++;
   }
   removeStructure(c) {
     if (c.flags & COL.NOBLOCK) return;
-    this._raster(c, (k) => (this.structCost[k] = Math.max(0, this.structCost[k] - STRUCT_COST)), 0.35);
+    for (const k of this._structCells(c)) this.structCost[k] = Math.max(0, this.structCost[k] - STRUCT_COST);
     this.structVer++;
+  }
+  // The cells a structure makes dear: its own, and those of any gap too narrow for a body between it and the static
+  // world (a gate put up a hand's breadth from the end of a fence). Through such a gap the field would lead the dead
+  // to wedge against the fence, where there is nothing to claw at; priced like the piece, it is the piece they go
+  // for. (The static world never changes, so removing a structure finds the same cells again.)
+  _structCells(c) {
+    const cells = new Set();
+    const add = (k) => cells.add(k);
+    this._raster(c, add, 0.35);
+    for (const o of this.world.staticGrid.query(c.x, c.z, c.r + GAP, this._q)) {
+      if (!this.walls.has(o) || o.y1 <= c.y0 || o.y0 >= c.y1) continue; // (not on another level: over a drift of the mine)
+      gapsBetween(c, o, (x0, z0, x1, z1) => {
+        const len = Math.hypot(x1 - x0, z1 - z0);
+        const yaw = Math.atan2(-(z1 - z0), x1 - x0);
+        const s = { type: BOX, x: (x0 + x1) / 2, z: (z0 + z1) / 2, hx: len / 2, hz: 0.01, c: Math.cos(yaw), s: Math.sin(yaw), r: len / 2 + 0.01 };
+        this._raster(s, add, 0.35);
+      });
+    }
+    return cells;
   }
 
   isBlocked(x, z) {
@@ -354,29 +439,48 @@ export class Nav {
     return k < 0 || this.blocked[k] === 1;
   }
 
-  // (re)compute a flow field centered on (x,z) for playerId
-  computeField(playerId, x, z) {
+  // The dead on the valley's ground, counted per cell (each of list has x, z): what a crowded cell costs a field solved
+  // with crowd (computeField). Fields only go stale when some cell holds more than one, now or at the last count.
+  setCrowd(list) {
+    for (const k of this.crowdCells) this.crowd[k] = 0;
+    this.crowdCells.length = 0;
+    let jam = false;
+    for (const e of list) {
+      const k = this._cellIndex(e.x, e.z);
+      if (k < 0) continue;
+      if (!this.crowd[k]) this.crowdCells.push(k);
+      else jam = true;
+      if (this.crowd[k] < 255) this.crowd[k]++;
+    }
+    if (jam || this.jammed) this.crowdVer++;
+    this.jammed = jam;
+  }
+
+  // (re)compute a flow field centered on (x,z) for playerId; crowd: crowded cells cost extra (setCrowd)
+  computeField(playerId, x, z, crowd = false) {
     let f = this.fields.get(playerId);
     if (!f) {
-      f = { dist: new Int32Array(FIELD * FIELD), ox: 0, oz: 0, cx: x, cz: z, t: 0, ver: -1, src: 0, seeds: null };
+      f = { dist: new Int32Array(FIELD * FIELD), ox: 0, oz: 0, cx: x, cz: z, t: 0, ver: -1, cver: -1, src: 0, seeds: null };
       this.fields.set(playerId, f);
     }
+    const cver = crowd ? this.crowdVer : -1;
     // standing where they stood, nothing built since: the field is the one already there
-    if (f.ver === this.structVer && f.cx === x && f.cz === z) return f;
+    if (f.ver === this.structVer && f.cver === cver && f.cx === x && f.cz === z) return f;
     const ox = Math.floor(x + MAP_HALF) - HALF_FIELD; // global cell origin
     const oz = Math.floor(z + MAP_HALF) - HALF_FIELD;
     const src = this._sources(x, z);
     f.cx = x;
     f.cz = z;
     // a field only depends on the survivor's cell (and which neighbors they can step to) and the
-    // walkability / structure grids: when none changed since it was computed it is still exact
-    if (f.ver === this.structVer && f.ox === ox && f.oz === oz && f.src === src && (src !== PERCH || this._sameSeeds(f.seeds))) return f;
+    // walkability / structure / crowd grids: when none changed since it was computed it is still exact
+    if (f.ver === this.structVer && f.cver === cver && f.ox === ox && f.oz === oz && f.src === src && (src !== PERCH || this._sameSeeds(f.seeds))) return f;
     f.ox = ox;
     f.oz = oz;
     f.ver = this.structVer;
+    f.cver = cver;
     f.src = src;
     if (src === PERCH) f.seeds = this.seeds.slice(0, this.seedN);
-    this._solve(f.dist, ox, oz, src);
+    this._solve(f.dist, ox, oz, src, crowd);
     return f;
   }
   _sameSeeds(seeds) {
@@ -386,12 +490,13 @@ export class Nav {
   }
 
   // Dijkstra from the window center over 8-connected cells (10 straight, 14 diagonal, plus the entered
-  // cell's structure cost; no corner cutting, no step through a wall). Edge costs are small integers, so
-  // the priority queue is a circular bucket queue (Dial's algorithm): O(1) push/pop, same distances as a heap.
-  _solve(out, ox, oz, srcMask) {
+  // cell's structure cost, and its crowd's; no corner cutting, no step through a wall). Edge costs are small integers,
+  // so the priority queue is a circular bucket queue (Dial's algorithm): O(1) push/pop, same distances as a heap.
+  _solve(out, ox, oz, srcMask, crowd) {
     const blocked = this.blocked;
     const edge = this.edge;
     const scost = this.structCost;
+    const ccount = crowd ? this.crowd : null;
     const pb = this.pBlocked;
     const pe = this.pEdge;
     const pc = this.pCost;
@@ -408,6 +513,7 @@ export class Nav {
           pb[p] = blocked[gk];
           pe[p] = edge[gk];
           pc[p] = scost[gk] * 10;
+          if (ccount && ccount[gk] > 1) pc[p] += CROWD_COST * Math.min(CROWD_MAX, ccount[gk] - 1);
         } else {
           pb[p] = 1;
           pe[p] = 0;
@@ -417,7 +523,7 @@ export class Nav {
     }
     dist.fill(INF);
     let nb = 16;
-    while (nb <= 14 + this.maxStructCost * 10) nb *= 2; // every pending cost fits in [cur, cur + nb)
+    while (nb <= 14 + this.maxStructCost * 10 + (crowd ? CROWD_COST * CROWD_MAX : 0)) nb *= 2; // every pending cost fits in [cur, cur + nb)
     if (this.bucketHead.length < nb) this.bucketHead = new Int32Array(nb);
     const head = this.bucketHead;
     head.fill(-1, 0, nb);
@@ -509,7 +615,7 @@ export class Nav {
       else if (y > this.rim.get(gk) - 0.1) lvl = 1;
     }
     // beside a wall the cell center may be on the other side of it: test the actual steps from (x,z)
-    const q = this.nearWall[gk] ? this.world.staticGrid.query(x, z, 2, this._q) : null;
+    const q = this.nearWall[gk] ? this._wallsNear(x, z, 2) : null;
     const cx = gi - MAP_HALF + 0.5;
     const cz = gj - MAP_HALF + 0.5;
     const d0 = f.dist[lj * FIELD + li];
@@ -529,6 +635,18 @@ export class Nav {
       } else if (this.edge[gk] & (1 << n) || (n >= 4 && (this.blocked[gk + NDI[n]] || this.blocked[gk + NDJ[n] * SIZE]))) continue;
       best = d;
       bi = n;
+    }
+    // Beside a wall, off the middle of its cell, every way on can be round a corner from where it stands while the
+    // field (which steps from middle to middle) still runs on from this cell: to the middle first. Without it, it
+    // stops here and walks straight at whoever it is after, into the wall. (Not in the cells the field starts from.)
+    if (bi === -1 && q && d0 > 14) {
+      const l = Math.hypot(cx - x, cz - z);
+      if (l > 0.1) {
+        out.x = (cx - x) / l;
+        out.z = (cz - z) / l;
+        out.cost = d0;
+        return true;
+      }
     }
     // -1: the own cell is already the lowest (at the survivor); -2: nothing reachable from here
     if (bi < 0) return false;
@@ -585,6 +703,51 @@ function segHits(c, x0, z0, x1, z1, e) {
   let tb = (hz - az) / uz;
   if (ta > tb) [ta, tb] = [tb, ta];
   return Math.max(t0, ta) <= Math.min(t1, tb);
+}
+
+// Every gap too narrow for a body (GAP) between the footprints of colliders a and b: fn(x0, z0, x1, z1) from a point of
+// one to the nearest point of the other. Nothing where they touch or overlap. Box to box: from each corner of either.
+const _np = { x: 0, z: 0 };
+function gapsBetween(a, b, fn) {
+  if (a.type === CYL && b.type === CYL) {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const d = Math.hypot(dx, dz);
+    const gap = d - a.r - b.r;
+    if (gap > 0 && gap < GAP) fn(a.x + (dx / d) * a.r, a.z + (dz / d) * a.r, b.x - (dx / d) * b.r, b.z - (dz / d) * b.r);
+    return;
+  }
+  if (a.type === CYL) [a, b] = [b, a];
+  if (b.type === CYL) {
+    nearestOnBox(a, b.x, b.z, _np);
+    const dx = b.x - _np.x;
+    const dz = b.z - _np.z;
+    const d = Math.hypot(dx, dz);
+    if (d - b.r > 0 && d - b.r < GAP) fn(_np.x, _np.z, b.x - (dx / d) * b.r, b.z - (dz / d) * b.r);
+    return;
+  }
+  if (overlapBoxes(a, b)) return;
+  for (const [p, o] of [[a, b], [b, a]]) {
+    for (let n = 1; n < 5; n++) {
+      const la = CELL_X[n] * 2 * p.hx;
+      const lb = CELL_Z[n] * 2 * p.hz;
+      const x = p.x + p.c * la + p.s * lb;
+      const z = p.z - p.s * la + p.c * lb;
+      nearestOnBox(o, x, z, _np);
+      const gap = Math.hypot(_np.x - x, _np.z - z);
+      if (gap > 0.001 && gap < GAP) fn(x, z, _np.x, _np.z);
+    }
+  }
+}
+// the point of box c's footprint nearest (x,z) (itself, inside it)
+function nearestOnBox(c, x, z, out) {
+  const dx = x - c.x;
+  const dz = z - c.z;
+  const lx = Math.max(-c.hx, Math.min(c.hx, c.c * dx - c.s * dz));
+  const lz = Math.max(-c.hz, Math.min(c.hz, c.s * dx + c.c * dz));
+  out.x = c.x + c.c * lx + c.s * lz;
+  out.z = c.z - c.s * lx + c.c * lz;
+  return out;
 }
 
 const NDI = [1, -1, 0, 0, 1, 1, -1, -1];

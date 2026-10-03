@@ -27,7 +27,7 @@ export const GUN = {
   every: 6, // commands between two rounds: 600 a minute
   mag: 250, // the belt
   ammo: AMMO.R762,
-  feed: 50, // rounds a second into the belt from the gunner's backpack while they hold [R] / [E]
+  feed: 50, // rounds a second into the belt from the gunner's 7.62 while they hold [R] / [E]
   arc: 70 * DEG, // it swivels this far either side of where the nest faces...
   pitchMin: -15 * DEG, // ...and this far down and up
   pitchMax: 25 * DEG,

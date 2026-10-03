@@ -78,6 +78,26 @@ export function createSupplyCrate() {
   return g;
 }
 
+/**
+ * An RPG grenade (PG-7 style, 0.9 m) along +Y, nose up, centred on the origin: fuze, ogive and an 85 mm olive bulb, the
+ * motor tube, a thin tail boom and four fins at the tail, folded flat along the boom or (in flight) sprung out.
+ * Shared by the projectile and the ammo pickup.
+ */
+export function rpgGrenade(b, finsOut = false) {
+  b.lathe('olive', [[0, 0.118], [0.0195, 0.118], [0.024, 0.124], [0.0405, 0.168], [0.0425, 0.18], [0.0425, 0.245], [0.0412, 0.258], [0.035, 0.3], [0.025, 0.35], [0.0135, 0.402], [0.0095, 0.412], [0, 0.412]], 14);
+  b.cyl('dark', 0.0429, 0.0429, 0.012, 14, { p: [0, 0.205, 0], open: true }); // painted band
+  b.lathe('steel', [[0, 0.41], [0.0082, 0.41], [0.0082, 0.436], [0.0062, 0.444], [0, 0.45]], 8);
+  b.cyl('metal', 0.0195, 0.0195, 0.32, 10, { p: [0, -0.04, 0] });
+  b.cyl('metal', 0.0212, 0.0212, 0.014, 10, { p: [0, -0.195, 0] }); // joint with the tail
+  b.cyl('metal', 0.011, 0.011, 0.24, 8, { p: [0, -0.32, 0] });
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * PI * 2 + PI / 4;
+    if (finsOut) b.box('steel', 0.04, 0.09, 0.002, { p: [Math.cos(a) * 0.031, -0.39, Math.sin(a) * 0.031], r: [0, -a, 0] });
+    else b.box('steel', 0.003, 0.1, 0.014, { p: [Math.cos(a) * 0.0125, -0.385, Math.sin(a) * 0.0125], r: [0, -a, 0] });
+  }
+  b.cyl('dark', 0.0105, 0.009, 0.012, 8, { p: [0, -0.444, 0] }); // nozzle
+}
+
 /** Projectile model centred on its origin. PROJ.ROPE is drawn by the game (returns an empty Object3D). */
 export function createProjectile(projType) {
   let parts = projCache.get(projType);
@@ -121,6 +141,15 @@ export function createProjectile(projType) {
         b.cyl('paint', 0.018, 0.018, 0.22, 8, { r: [PI / 2, 0, 0], c: [0.7, 0.1, 0.06] });
         b.cyl('steel', 0.019, 0.019, 0.03, 8, { p: [0, 0, 0.11], r: [PI / 2, 0, 0] });
         b.cyl('flare', 0.014, 0.018, 0.03, 8, { raw: true, p: [0, 0, -0.125], r: [PI / 2, 0, 0] });
+        break;
+      }
+      case PROJ.ROCKET: {
+        // nose along +Z (the game points +Z down the velocity), fins sprung out, the motor burning at the -Z end
+        b.group({ r: [PI / 2, 0, 0] }, () => {
+          rpgGrenade(b, true);
+          b.cyl('flare', 0.009, 0.014, 0.022, 8, { raw: true, p: [0, -0.458, 0] });
+          b.sphere('flare', 0.012, 6, 4, { raw: true, p: [0, -0.47, 0] });
+        });
         break;
       }
       default:
