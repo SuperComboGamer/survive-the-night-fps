@@ -9,6 +9,8 @@
 //   ?deer=1      the deer in every coat (cycles DANIM states);  ?deer=grid -> one per DANIM state (&coat=N);
 //                ?deer=film&anim=2 -> six of them a sixth of a bound apart (&anim=1: of a walking stride);
 //                &hit=1 draws the server's hitbox on each and prints where the middle of the skull is
+//   ?pack=poses  survivors wearing the backpack: idle, walk, sprint, crouch, downed, seated (&cam=back|q|front, &yaw=deg)
+//   ?pack=ground the backpack as it lies on the ground, from four sides
 import * as THREE from 'three';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, CANIM, ITEM } from '../../shared/defs.js';
 import { createZombie, createSurvivor, modelStats, zombieVariants } from '../render/models/characters.js';
@@ -16,6 +18,7 @@ import { createCat, CAT_COATS } from '../render/models/cat.js';
 import { createDeer, DEER_COATS } from '../render/models/deer.js';
 import { DANIM, DEER, deerHitbox } from '../../shared/deer.js';
 import { MeshBuilder } from '../render/models/skinning.js';
+import { createPickup } from '../render/models/pickups.js';
 MeshBuilder.debugNaN = true;
 MeshBuilder.debugStats = new URLSearchParams(location.search).get('tstats') === '1';
 
@@ -179,6 +182,27 @@ if (q.has('deer')) {
   }
   target.set(0, 0.18, 0);
   dist = n * 0.62;
+} else if (q.get('pack') === 'poses') {
+  // the poses a worn backpack has to sit right in (entities.js: downed is crouched, raised and tipped forward)
+  const poses = ['idle', 'walk', 'sprint', 'crouch', 'downed', 'seated'];
+  const n = poses.length;
+  poses.forEach((pose, i) => {
+    const s = addSurvivor(i + 2, ITEM.PISTOL, (i - (n - 1) / 2) * 1.8, 0, false);
+    s.setBackpack(true);
+    actors[actors.length - 1].pose = pose;
+  });
+  target.set(0, 0.95, 0);
+  dist = 11;
+} else if (q.get('pack') === 'ground') {
+  for (let i = 0; i < 4; i++) {
+    const g = createPickup(ITEM.BACKPACK);
+    g.position.set((i - 1.5) * 0.7, 0, 0);
+    g.rotation.y = (i * Math.PI) / 2 + 0.5;
+    g.traverse((o) => o.isMesh && (o.castShadow = o.receiveShadow = true));
+    scene.add(g);
+  }
+  target.set(0, 0.22, 0);
+  dist = 3.2;
 } else if (q.get('surv') === '1' || only === 'surv') {
   const zombie = q.get('zombie') === '1';
   const list = q.has('items') ? q.get('items').split(',').map(Number) : only === 'surv' ? survWeapons.slice(0, 4) : survWeapons;
@@ -331,6 +355,14 @@ function frame() {
         sprint: anim === ZANIM.RUN, crouch: anim === ZANIM.EAT, pitch: anim === ZANIM.ATTACK ? 0.4 : anim === ZANIM.STAGGER ? -0.4 : 0,
         onGround: anim !== ZANIM.AIRBORNE, reloading: anim === ZANIM.SPECIAL, dead: anim === ZANIM.DEAD, time: T,
       };
+      if (a.pose) {
+        const p = a.pose;
+        Object.assign(st, { speed: p === 'walk' ? 4.3 : p === 'sprint' ? 7.5 : p === 'downed' ? 0.4 : 0, sprint: p === 'sprint', crouch: p === 'crouch' || p === 'downed', pitch: p === 'downed' ? 0.9 : 0, onGround: true, reloading: false, dead: false, sit: p === 'seated' });
+        s.object.rotation.order = 'YXZ';
+        s.object.rotation.x = p === 'downed' ? -1.3 : 0;
+        s.object.rotation.y = ((+q.get('yaw') || 0) * Math.PI) / 180; // (&yaw=90: side on to a front camera)
+        s.object.position.y = p === 'downed' ? 0.18 : p === 'seated' ? 0.45 : 0;
+      }
       if (anim === ZANIM.ATTACK && Math.floor(time * 1.5) !== a.lastF) {
         a.lastF = Math.floor(time * 1.5);
         s.fire();

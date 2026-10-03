@@ -383,21 +383,28 @@ const ITEM_ICONS = {
     ),
   ],
   // ---------------- worn
-  // backpack: carry loop, shoulder straps either side, a lid with its buckle, the front pocket
+  // backpack (the model in backpack.js, from the front): the blanket roll tied on top, the padded body under its lid
+  // and front flap with two straps to their buckles, the zipped front pocket, a bottle sleeve each side (the canteen
+  // in the left one)
   [ITEM.BACKPACK]: [
     40,
     40,
-    S('M15.6 6.6Q15.6 2.4 20 2.4Q24.4 2.4 24.4 6.6', 2) +
-      S('M10.4 12Q6.4 20 8.6 32', 1.6) +
-      S('M29.6 12Q33.6 20 31.4 32', 1.6) +
+    E('M8.4 2.6H31.6Q34 2.6 34 5.8Q34 9 31.6 9H8.4Q6 9 6 5.8Q6 2.6 8.4 2.6Z' + rct(11.6, 2.6, 1.2, 6.4) + rct(27.2, 2.6, 1.2, 6.4)) +
       E(
-        'M10.4 9.4Q10.4 6.4 13.4 6.4H26.6Q29.6 6.4 29.6 9.4V35.6Q29.6 38 27.2 38H12.8Q10.4 38 10.4 35.6Z' +
-          'M12 15.4Q20 19 28 15.4V16.6Q20 20.2 12 16.6Z' +
-          rct(18.8, 18.8, 2.4, 2.8) +
-          rct(13.4, 23.6, 13.2, 11.2) +
-          rct(14.6, 24.8, 10.8, 8.8) +
-          rct(14.6, 27.4, 10.8, 0.9),
-      ),
+        'M10.8 12.4Q10.8 9.8 13.6 9.8H26.4Q29.2 9.8 29.2 12.4L30.4 34.4Q30.4 37.8 27.2 37.8H12.8Q9.6 37.8 9.6 34.4Z' +
+          'M11.6 19.6Q20 22.2 28.4 19.6V20.9Q20 23.5 11.6 20.9Z' +
+          rct(15.1, 10.6, 1.3, 13.2) +
+          rct(23.6, 10.6, 1.3, 13.2) +
+          rct(14.5, 24.2, 2.5, 0.9) +
+          rct(23, 24.2, 2.5, 0.9) +
+          rct(13.4, 26.4, 13.2, 9.4) +
+          rct(14.6, 27.6, 10.8, 7) +
+          rct(14.6, 28.8, 10.8, 0.8),
+      ) +
+      P('M5 25.6H9V35.8Q9 37.4 7.4 37.4H6.6Q5 37.4 5 35.8Z') +
+      P('M31 25.6H35V35.8Q35 37.4 33.4 37.4H32.6Q31 37.4 31 35.8Z') +
+      P('M5.8 26V21.6Q5.8 20.6 7 20.6Q8.2 20.6 8.2 21.6V26Z') +
+      P(rct(6.2, 19, 1.6, 1.3)),
   ],
   // ---------------- gear
   // handset: stub antenna and channel knob on top, speaker grille, display, talk key on the side

@@ -12,7 +12,7 @@ import {
 } from './skinning.js';
 import { CR } from './charTextures.js';
 import { createWorldWeapon } from './weapons.js';
-import { createWornPack } from './pickups.js';
+import { createBackpack, WORN_AT } from './backpack.js';
 import { createZombieDog, dogStats, DOG_COATS } from './dog.js';
 
 const PI = Math.PI;
@@ -4048,8 +4048,8 @@ class SurvivorInstance {
     this.flashlightAnchor.position.set(0.16, this.P.shoulderY - this.P.chestY + 0.02, -0.16);
     this.bones[CHEST].add(this.flashlightAnchor);
     // the crafted backpack on the back of the chest, where the shoulder straps sit: shown while one is worn (setBackpack)
-    this.pack = createWornPack();
-    this.pack.position.set(0, -0.18, 0.095);
+    this.pack = createBackpack(true);
+    this.pack.position.set(WORN_AT[0], WORN_AT[1], WORN_AT[2]);
     this.pack.visible = false;
     this.bones[CHEST].add(this.pack);
     this.packOn = false;
