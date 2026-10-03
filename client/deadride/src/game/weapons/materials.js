@@ -268,7 +268,7 @@ export class GunMats {
    */
   async warm() {
     if (this.progReady) return; const r = this.renderer, sy = this.synth; const sc = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
-    try { for (const m of [sy._prog(false, GUN_GLSL), sy._conv(false)]) { const q = new THREE.Mesh(new THREE.PlaneGeometry(), m); q.frustumCulled = false; sc.add(q); } await r.compileAsync(sc, cam); } catch (e) { /* compile synchronously on first bake */ }
+    try { for (const m of [sy._prog(false, GUN_GLSL, 99), sy._conv(false)]) { const q = new THREE.Mesh(new THREE.PlaneGeometry(), m); q.frustumCulled = false; sc.add(q); } await r.compileAsync(sc, cam); } catch (e) { /* compile synchronously on first bake */ }
     this.progReady = true;
   }
   /** bake every deferred material (n per frame); resolves when done */

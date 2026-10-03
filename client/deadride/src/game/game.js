@@ -136,7 +136,7 @@ export class Game {
     switch (it.kind) {
       case 'perk': { const d = it.obj.def; if (this.perks.has(it.obj.kind)) return `${d.name} — owned`; return `Press ${F} to buy ${d.name} [Cost: ${d.price}]`; }
       case 'wall': { const info = it.obj.info; if (w.has(it.obj.gun)) return `Press ${F} to buy ${info?.name || it.obj.gun} ammo [Cost: ${Math.round((info?.wallPrice ?? 500) / 2)}]`; return `Press ${F} to buy ${info?.name || it.obj.gun} [Cost: ${it.obj.price}]`; }
-      case 'box': { const b = it.obj; if (b.state === 'closed') return `Press ${F} for Mystery Box [Cost: 950]`; if (b.state === 'ready') return b.result === 'teddy' ? '' : `Press ${F} to take ${this.d.weaponsApi?.WEAPONS?.[b.result]?.name || b.result}`; return ''; }
+      case 'box': { const b = it.obj; if (b.state === 'closed') return `Press ${F} for Mystery Box [Cost: 950]`; if (b.state === 'ready') { const nm = this.d.weaponsApi?.WEAPONS?.[b.result]?.name || b.result; if (b.result === 'teddy') return ''; if (this.net && this.boxOwner !== this.net.you) return `${this.net.names.get(this.boxOwner) || 'A teammate'}'s ${nm}`; return `Press ${F} to take ${nm}`; } return ''; }
       case 'barricade': return `Hold ${F} to rebuild barricade`;
     }
     return '';
@@ -147,16 +147,39 @@ export class Game {
     if (!this.input.pressed('KeyF')) return;
     if (it.kind === 'perk') { const m = it.obj, def = m.def; if (this.perks.has(m.kind)) return; if (this.points < def.price) return this.deny(); this.spend(def.price); this.perks.add(m.kind); m.dispense(); this.audio?.play?.(def.jingle, { vol: 0.9, bus: 'ui' }); this.applyPerks(); this.hud.setPerks(this.perks); this.hud.banner(def.name.toUpperCase(), def.desc); }
     else if (it.kind === 'wall') { const info = it.obj.info; const price = it.obj.price; if (w.has(it.obj.gun)) { const c = Math.round(price / 2); if (this.points < c) return this.deny(); this.spend(c); w.addAmmo(it.obj.gun); this.audio?.play?.('ui.buy', { vol: 0.8, bus: 'ui' }); } else { if (this.points < price) return this.deny(); this.spend(price); w.give(it.obj.gun); this.audio?.play?.('ui.buy', { vol: 0.8, bus: 'ui' }); } }
-    else if (it.kind === 'box') { const b = it.obj; if (b.state === 'closed') { if (this.points < 950) return this.deny(); this.spend(950); this.openBox(); } else if (b.state === 'ready' && b.result !== 'teddy') { const id = b.take(); w.give(id); this.audio?.play?.('ui.buy', { vol: 0.8, bus: 'ui' }); } }
+    else if (it.kind === 'box') { const b = it.obj; if (b.state === 'closed') { if (this.points < 950) return this.deny(); if (this.net) { /* (co-op: the host rolls the one box everyone sees; the points go when it opens for us) */ const now = performance.now(); if (now - (this.boxAskT || 0) > 1500) { this.boxAskT = now; this.net.toHost({ e: 'boxuse', w: this.weapons.current?.id || '' }); } return; } this.spend(950); this.openBox(); } else this.takeBox(); }
   }
   deny() { this.audio?.play?.('ui.deny', { vol: 0.7, bus: 'ui' }); this.hud.banner('NOT ENOUGH POINTS', ''); }
   applyPerks() { const p = this.player, pk = this.perks; const had = p.maxHp; p.maxHp = pk.has('juggernog') ? 250 : 100; if (p.maxHp > had) p.hp = p.maxHp; p.speedMul = pk.has('staminup') ? 1.15 : 1; this.weapons.setPerks({ speedCola: pk.has('speedcola'), doubleTap: pk.has('doubletap'), juggernog: pk.has('juggernog'), staminUp: pk.has('staminup') }); }
-  openBox() {
-    const W = this.d.weaponsApi?.WEAPONS || this.weapons.WEAPONS || {}; const pool = Object.values(W).filter((x) => x.box).map((x) => x.id); const cur = this.weapons.current?.id;
+  /** take the gun the box is offering (in co-op only the player who rolled it can) */
+  takeBox() { const b = this.box; if (!b || b.state !== 'ready' || b.result === 'teddy' || (this.net && this.boxOwner !== this.net.you)) return false; const id = b.take(); this.weapons.give(id); this.audio?.play?.('ui.buy', { vol: 0.8, bus: 'ui' }); this.net?.event(255, { e: 'boxtake' }); return id; }
+  /** one roll of the box: what it cycles through and what it lands on ('teddy': it moves on). cur: the roller's gun, never offered */
+  rollBox(cur) {
+    const W = this.d.weaponsApi?.WEAPONS || this.weapons.WEAPONS || {}; const pool = Object.values(W).filter((x) => x.box).map((x) => x.id);
     const teddy = this.boxUses >= 3 && rand() < 0.14 + 0.03 * this.boxUses; const choices = pool.filter((id) => id !== cur); const result = teddy ? 'teddy' : choices[(rand() * choices.length) | 0];
-    this.boxUses++; this.audio?.play?.('ui.box.open', { pos: this.box.worldPos, vol: 1 }); this.box.open([...choices, 'teddy'].filter((x) => x !== 'teddy' || teddy), result);
-    if (teddy) { this.box.onReady = () => { this.audio?.play?.('ui.box.teddy', { pos: this.box.worldPos, vol: 1 }); this.points += 950; this.hud.setPoints(this.points); this.hud.popup('+950'); setTimeout(() => { this.box.vanish(); this.relocateBox(); }, 1800); }; } else this.box.onReady = () => {};
+    return { choices, result, teddy };
   }
+  openBox() { const r = this.rollBox(this.weapons.current?.id); this.playBox(r.choices, r.result, r.teddy, true); }
+  /** the box opening (every machine in co-op): mine - this player paid for it and gets the gun or the refund */
+  playBox(choices, result, teddy, mine) {
+    this.boxUses++; this.audio?.play?.('ui.box.open', { pos: this.box.worldPos, vol: 1 }); this.box.open([...choices, 'teddy'].filter((x) => x !== 'teddy' || teddy), result);
+    if (teddy) { this.box.onReady = () => { this.audio?.play?.('ui.box.teddy', { pos: this.box.worldPos, vol: 1 }); if (mine) { this.points += 950; this.hud.setPoints(this.points); this.hud.popup('+950'); } setTimeout(() => { this.box.vanish(); if (!this.net || this.net.isHost) this.relocateBox(); }, 1800); }; } else this.box.onReady = () => {};
+  }
+  /** co-op, the host: a player asks to roll the box at the stop the team is at */
+  hostBoxUse(pid, cur) {
+    const b = this.box; if (!b || !b.group.visible || b.state !== 'closed' || this.boxStop !== this.stopIndex) return;
+    const r = this.rollBox(String(cur || '').slice(0, 32)); const m = { e: 'box', pid, c: r.choices, r: r.result, t: r.teddy ? 1 : 0 };
+    this.net.event(255, m); this.netBox(m);
+  }
+  /** co-op: the host rolled the box for player m.pid */
+  netBox(m) {
+    const b = this.box; if (!b || b.state !== 'closed') return; const W = this.d.weaponsApi?.WEAPONS || this.weapons.WEAPONS || {};
+    const choices = (Array.isArray(m.c) ? m.c : []).filter((id) => typeof id === 'string' && W[id]).slice(0, 64); const result = m.t ? 'teddy' : String(m.r); if (!choices.length || (!m.t && !W[result])) return;
+    const mine = m.pid === this.net.you; this.boxOwner = m.pid; if (mine) this.spend(Math.min(950, Math.max(0, this.points)));
+    this.playBox(choices, result, !!m.t, mine);
+  }
+  /** co-op: the player who rolled it took the gun */
+  netBoxTaken(pid) { if (pid === this.boxOwner && this.box?.state === 'ready') this.box.close(); }
   relocateBox() { const c = this.boxStops.filter((i) => i !== this.boxStop); if (c.length) this.boxStop = c[(this.rng() * c.length) | 0]; this.box.onGone = () => { this.box.state = 'closed'; }; this.net?.event(255, { e: 'boxmove', stop: this.boxStop }); }
 
   // ------------------------------------------------------------------ vehicle loop
@@ -167,12 +190,12 @@ export class Game {
   }
   async beginRide() {
     const v = this.world.vehicle, w = this.world; if (!v) return; if (this.net?.isHost) this.net.event(255, { e: 'ride' });
-    const from = this.stopIndex, to = (from + 1) % w.stops.length; this.state = 'riding';
+    const from = this.stopIndex, to = (from + 1) % w.stops.length; this.state = 'riding'; v.clock = 0; v.timeScale = 1;
     // (co-op: whoever is not aboard when it leaves is put aboard - nobody is left on a stop the vehicle has left)
     if (this.net && !this.playerInVehicle()) { const bb = v.bounds; v.frame.updateWorldMatrix(true, false); const c = V.set((bb.minX + bb.maxX) / 2 + (Math.random() - 0.5) * 0.6, v.floorY + 0.05, (bb.minZ + bb.maxZ) / 2 + (Math.random() - 0.5) * 0.6); v.localToWorld(c, this.player.pos); }
     this.syncVehicle(false); this.player.setPlatform(v); this.gfx.resetTAA(); this.audio?.setListenerVehicle?.(v.name); this.hud.prompt(null);
     const hooks = { progress: (k) => { this.rideProgress = k; w.setTransit(from, to, k); } };
-    await v.ride(w.stops[from], w.stops[to], hooks);
+    await v.ride(w.stops[from], w.stops[to], hooks); v.timeScale = 1;
     this.stopIndex = to; w.setActive(to); this.showStopProps(to); this.player.setPlatform(null); this.syncVehicle(true); this.gfx.resetTAA(); this.applyStopAudio(w.stops[to]); for (const b of this.barricades) b.reset(); this.audio?.setListenerVehicle?.(null);
     this.state = 'arrived'; this.exitT = 0; this.stateT = 25; this.hud.banner(w.stops[to].name.toUpperCase(), 'Exit and hold the line');
   }
@@ -289,7 +312,12 @@ export class Game {
   netPowerupTaken(m) {
     const i = this.powerups.findIndex((p) => p.netId === m.id); if (i < 0) return; const pu = this.powerups[i]; this.powerups.splice(i, 1); this.applyPowerup(pu);
   }
-  netBoxMove(stop) { if (this.boxStop === stop) return; if (this.box && this.boxStop === this.stopIndex && this.box.state === 'closed') this.box.vanish?.(); this.boxStop = stop; this.showStopProps(this.stopIndex); }
+  netBoxMove(stop) {
+    if (this.boxStop === stop || !this.box) return; const here = this.boxStop === this.stopIndex && this.box.group.visible; this.boxStop = stop;
+    // (the box at this stop flies off first - the teddy's own vanish is already under way - then the props follow the new stop)
+    if (here && this.box.state !== 'gone') { if (this.box.state !== 'leaving') this.box.vanish(); this.box.onGone = () => { this.box.state = 'closed'; this.showStopProps(this.stopIndex); }; return; }
+    this.showStopProps(this.stopIndex);
+  }
   netRevived(by) { this.state = this.netState_ && this.netState_ !== 'downed' ? this.netState_ : 'combat'; const p = this.player; p.alive = true; p.frozen = false; p.hp = Math.round(p.maxHp * 0.5); p.sinceHit = 0; this.hud.banner('REVIVED', `${by} picked you up`); this.audio?.play?.('ui.round.start', { vol: 0.5, bus: 'ui' }); }
   netBleedOut() { this.state = 'spectating'; this.player.frozen = true; this.hud.banner('YOU BLED OUT', 'Back at the start of the next round'); }
   // a new round: whoever is down or out is back on their feet at the stop's start, with a pistol, like a new survivor

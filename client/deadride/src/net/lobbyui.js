@@ -81,7 +81,8 @@ export class LobbyUI {
 
   get name() {
     try {
-      return localStorage.getItem('dr.name') || 'Survivor' + ((Math.random() * 900 + 100) | 0);
+      // (one name across the site: the Survive the Night splash keeps it as stn.name)
+      return localStorage.getItem('dr.name') || localStorage.getItem('stn.name') || 'Survivor' + ((Math.random() * 900 + 100) | 0);
     } catch {
       return 'Survivor';
     }
@@ -121,6 +122,7 @@ export class LobbyUI {
   setName(v) {
     try {
       localStorage.setItem('dr.name', v);
+      localStorage.setItem('stn.name', v);
     } catch {}
   }
 

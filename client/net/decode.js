@@ -89,23 +89,6 @@ export function readGlobal(r, prev) {
     benches: [],
   };
   for (let n = r.u8(); n > 0; n--) g.benches.push({ x: dqpos(r.i16()), z: dqpos(r.i16()) });
-  g.mode = r.u8();
-  if (g.mode === 1) {
-    // Zombies mode (server/mine.js writeGlobal)
-    g.stop = r.u8();
-    g.mstate = r.u8();
-    const ev = r.u8();
-    g.elev = ev & 0x7f;
-    g.elevAt = ev >> 7;
-    g.elevT = r.u8() / 255;
-    g.rideLen = r.u8() / 10;
-    g.left = r.u16();
-    g.round = r.u8();
-    g.doublePoints = r.u8();
-    g.instaKill = r.u8();
-    g.gates = r.u16();
-    g.box = r.u8();
-  }
   g.finale = !!(g.flags & 1);
   g.suppliesDone = !!(g.flags & 2);
   g.escapeReady = !!(g.flags & 4);
@@ -159,7 +142,6 @@ export function readSelf(r, out, flags) {
     out.mags[1] = r.u8();
     for (let i = 0; i < AMMO_ITEMS.length; i++) out.ammo[i] = r.u16();
     out.throwCount = r.u8();
-    out.perks = r.u8();
   }
   if (mask & 16) {
     out.leapCd = r.f32();
@@ -197,10 +179,6 @@ export function readSelf(r, out, flags) {
       out.holdProgress = r.u8() / 255;
     }
     if (m & 64) out.bleed = r.u8() / 4;
-    if (m & 128) {
-      out.points = r.u32();
-      out.perkBits = r.u8();
-    }
   }
   return !!(mask & SELF.SYNC);
 }

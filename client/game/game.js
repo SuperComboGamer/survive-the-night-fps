@@ -53,11 +53,6 @@ import {
 } from '../../shared/defs.js';
 import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
-import { createMineWorld, MINE_STOPS, PERKS, BOX_COST } from '../../shared/mine.js';
-import { MODE } from '../../shared/modes.js';
-import { MINE, MINE_CT } from '../../shared/minedefs.js';
-import { MineScene } from '../render/mine.js';
-import { MinerLamps } from '../render/minelamps.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
@@ -115,8 +110,6 @@ const SHOT_KICK = {
   [ITEM.MP5]: [0.8, 0.04],
   [ITEM.CROSSBOW]: [0, 0.1],
 };
-// the weather underground: none
-const MINE_WEATHER = { kind: 'clear', fog: 1, wind: 0.05, windBase: 0.05, windX: 1, windZ: 0, rain: 0, bolts: 0, cloud: 0, flash: 0, flashX: 0, flashY: 1, flashZ: 0, cover: true };
 const PING_LIFE = 12;
 const WAYPOINT_REACH = 10; // metres: this close to a waypoint that is not on a named place and it is reached
 // A bulk craft is one ACT.CRAFT per craft. The server drops whatever a client sends past 200 messages in a second,
@@ -152,8 +145,6 @@ export class Game {
     this.camera = renderer.camera;
     this.world = null;
     this.seed = null;
-    this.mode = MODE.SURVIVAL; // of the world that is loaded
-    this.mineScene = null; // Shaft Nine's meshes (Zombies mode)
     this.state = 'menu'; // menu | playing
     this.frame = 0;
     this.time = 0;
@@ -214,7 +205,6 @@ export class Game {
     // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
     this.waypoint = null;
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
-    ui.cb.onVote = (m) => this.conn.action(ACT.WANT_MODE, m); // the end screen's vote for the next run's mode
     this.discovered = new Set([ZONE.CAMP]);
     this.discoverT = 0;
     this.debugCam = null;
@@ -228,7 +218,7 @@ export class Game {
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
-      world: (seed, mode) => this.loadWorld(seed, mode),
+      world: (seed) => this.loadWorld(seed),
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
@@ -256,7 +246,6 @@ export class Game {
   // How much sun/moon reaches the camera: blocked by buildings/terrain (ray cast towards the light)
   // and partly by tree crowns along that ray. Keeps the hands dark in the shade and under the canopy.
   lightVisibility(pos) {
-    if (this.mineScene && this.mineScene.profile && !this.mineScene.profile.sky) return 0; // no sun underground
     const L = this.env.lightDir;
     const w = this.world;
     raycastWorld(w, pos.x, pos.y, pos.z, L.x, L.y, L.z, 45, _sunRay, COL.NOBULLET | COL.NOBLOCK | COL.TREE);
@@ -282,12 +271,6 @@ export class Game {
   // surroundings for the audio reverb: openness (few trees within 14 m) and a roof overhead
   probeSurroundings(pos) {
     const w = this.world;
-    if (this.mineScene) {
-      const open = !this.mineScene.profile; // the yard is open to the sky
-      this.openness = open ? 1 : 0;
-      this.indoor = open ? 0 : 1;
-      return;
-    }
     let trees = 0;
     for (const c of w.staticGrid.query(pos.x, pos.z, 14, _near)) if (c.flags & COL.TREE && (c.x - pos.x) ** 2 + (c.z - pos.z) ** 2 < 196) trees++;
     this.openness = Math.max(0, 1 - trees / 7);
@@ -339,44 +322,31 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- world
-  loadWorld(seed, mode = MODE.SURVIVAL) {
+  loadWorld(seed) {
     this.ensureViewModel();
-    if (this.seed === seed && this.mode === mode && this.world) return;
+    if (this.seed === seed && this.world) return;
     const t0 = performance.now();
     if (this.world) this.unloadWorld();
     this.seed = seed;
-    this.mode = mode;
-    this.ui.setMineMode(mode === MODE.MINE);
-    this.applyRenderMode();
     this.waypoint = null; // it pointed into the old valley
-    this.world = mode === MODE.MINE ? createMineWorld(seed) : createWorld(seed);
+    this.world = createWorld(seed);
     this.prediction.setWorld(this.world);
     const t1 = performance.now();
-    let t2 = t1;
-    let t3 = t1;
-    let t4 = t1;
-    if (mode === MODE.MINE) {
-      this.mineScene = new MineScene(this.scene, this.world);
-      this.mineLamps = new MinerLamps(this.scene);
-      t4 = performance.now();
-    } else {
-      this.terrain = buildTerrain(this.world);
-      this.terrain.castShadow = !!this.renderer.q.shadows; // hills shade the valleys at low sun
-      this.scene.add(this.terrain);
-      this.water = buildWater(this.world);
-      this.scene.add(this.water);
-      t2 = performance.now();
-      this.staticWorld = new StaticWorld(this.scene, this.world);
-      this.staticWorld.setShadows(!!this.renderer.q.shadows);
-      t3 = performance.now();
-      this.foliage = new Foliage(this.scene, this.world, this.renderer.q);
-      t4 = performance.now();
-    }
+    this.terrain = buildTerrain(this.world);
+    this.terrain.castShadow = !!this.renderer.q.shadows; // hills shade the valleys at low sun
+    this.scene.add(this.terrain);
+    this.water = buildWater(this.world);
+    this.scene.add(this.water);
+    const t2 = performance.now();
+    this.staticWorld = new StaticWorld(this.scene, this.world);
+    this.staticWorld.setShadows(!!this.renderer.q.shadows);
+    const t3 = performance.now();
+    this.foliage = new Foliage(this.scene, this.world, this.renderer.q);
+    const t4 = performance.now();
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
     if (!this.flyover) this.flyover = new Flyover(this.scene, this.effects.atlas);
     if (!this.atmosphere) this.atmosphere = new Atmosphere(this.scene);
-    this.atmosphere.mist.visible = mode !== MODE.MINE; // (no valley mist underground)
     this.weather.setWorld(this.world);
     if (!this.weatherFx) this.weatherFx = new WeatherFX(this.scene, this.renderer.quality);
     this.weatherFx.setWorld(this.world, this.weather);
@@ -389,44 +359,20 @@ export class Game {
         this.staticFires.push({ x: l.x, y: l.y - 0.4, z: l.z, intensity: 0.75 });
       }
     }
-    if (mode !== MODE.MINE) this.ui.map.setWorld(this.world);
-    else this.env.setMine(null);
+    this.ui.map.setWorld(this.world);
     this.prewarm();
-    console.log(`[client] world ${seed} (${mode === MODE.MINE ? 'shaft nine' : 'valley'}): gen ${(t1 - t0).toFixed(0)}ms, terrain ${(t2 - t1).toFixed(0)}ms, static ${(t3 - t2).toFixed(0)}ms, foliage ${(t4 - t3).toFixed(0)}ms, rest ${(performance.now() - t4).toFixed(0)}ms`);
-  }
-
-  // out of the cage: looking into the stop, not at the rock behind the shaft
-  faceStop() {
-    this.input.yaw = Math.PI;
-    this.input.pitch = 0;
-  }
-
-  // Zombies mode renders with its own preset (GameRenderer.setMine): the things that follow the preset are told
-  applyRenderMode() {
-    const R = this.renderer;
-    R.setMine(this.mode === MODE.MINE);
-    this.lights.setShadows(R.q.flashShadows);
-    this.env.setShadows(R.q);
-    this.setShadowQuality(R.q);
+    console.log(`[client] world ${seed}: gen ${(t1 - t0).toFixed(0)}ms, terrain ${(t2 - t1).toFixed(0)}ms, static ${(t3 - t2).toFixed(0)}ms, foliage ${(t4 - t3).toFixed(0)}ms, rest ${(performance.now() - t4).toFixed(0)}ms`);
   }
 
   // (the server deals a new map every playthrough, so worlds come and go for as long as the page is open)
   unloadWorld() {
     for (const mesh of [this.terrain, this.water]) {
-      if (!mesh) continue;
       this.scene.remove(mesh);
       mesh.geometry.dispose();
       mesh.material.dispose();
     }
-    this.terrain = this.water = null;
     this.staticWorld?.dispose();
     this.foliage?.dispose();
-    this.staticWorld = this.foliage = null;
-    this.mineScene?.dispose();
-    this.mineScene = null;
-    this.mineLamps?.dispose(this.scene);
-    this.mineLamps = null;
-    this.env.setMine(null);
     for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
     this.world = null;
@@ -440,7 +386,7 @@ export class Game {
   // everything (warmFrame). Runs again for a new map (other props, other materials) and when the quality changes
   // (other lights and shadows: another program for every lit material).
   prewarm() {
-    const key = `${this.renderer.quality}:${this.seed}:${this.mode}`;
+    const key = `${this.renderer.quality}:${this.seed}`;
     if (!this.world || key === this.warmKey) return;
     this.warmKey = key;
     this.warmTodo ||= this.warmViews();
@@ -560,7 +506,7 @@ export class Game {
     for (const o of set.userData.chars) o.traverse((m) => m.isSkinnedMesh && (m.castShadow = this.entities.charShadows));
     // vegetation that can cast at this quality (InstancedSet.update: within castDist, never the near tree LOD)
     const f = this.foliage;
-    for (const s of f ? [f.trees, f.bushes, f.rocks] : []) {
+    for (const s of [f.trees, f.bushes, f.rocks]) {
       if (!(s.castDist > 0)) continue;
       for (const lods of s.meshes) {
         lods.forEach((parts, l) => {
@@ -596,10 +542,10 @@ export class Game {
     // the static world: one mesh of each material will do (StaticWorld.update sets their visibility again), and
     // one of its shadow casters for each shadow side - they are what the shadow passes draw of it. Their group is
     // left as StaticWorld.setShadows has it: hidden when the quality has no shadows.
-    const statics = this.staticWorld?.group;
-    const shade = this.staticWorld?.casters;
+    const statics = this.staticWorld.group;
+    const shade = this.staticWorld.casters;
     const mats = new Set();
-    for (const m of statics ? [...statics.children, ...(shade.visible ? shade.children : [])] : []) {
+    for (const m of [...statics.children, ...(shade.visible ? shade.children : [])]) {
       if (m === shade) continue;
       m.visible = !mats.has(m.material);
       mats.add(m.material);
@@ -648,12 +594,12 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- connection
-  async join(name, mode = 0, room = 'main') {
+  async join(name, room) {
     this.audio.stinger?.('join');
-    const info = await this.conn.connect(name, mode, room);
+    const info = await this.conn.connect(name, room);
     this.myId = info.id;
     this.voice.setMyId(info.id);
-    this.loadWorld(info.seed, info.mode);
+    this.loadWorld(info.seed);
     this.entities.clear();
     this.clientTick = info.tick;
     this.clockInit = false;
@@ -742,7 +688,6 @@ export class Game {
   // tick loses that tick's events, while the global state always catches up.
   trackRun() {
     const g = this.global;
-    if (this.mode === MODE.MINE) return; // (the personal record is the valley's)
     if (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) {
       if (this.runOn) return;
       this.runOn = true;
@@ -1063,22 +1008,12 @@ export class Game {
         ui.notify(arg === this.myId ? "You're back on your feet." : `${this.name(arg)} is back up.`, 'good', 3);
         break;
       case NOTIFY.YOU_DIED:
-        if (this.mode === MODE.MINE) {
-          ui.notify('YOU FELL', 'danger', 4);
-          ui.notify('Your team can still win the round: you are back at the next one.', 'toast', 6);
-          a.stinger?.('death');
-          break;
-        }
         this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
         ui.showDeath(this.deathInfo);
         a.stinger?.('death');
         this.deathShown = true;
         break;
       case NOTIFY.PLAYER_DIED:
-        if (this.mode === MODE.MINE) {
-          if (arg !== this.myId) ui.notify(`${this.name(arg)} has fallen.`, 'danger', 4);
-          break;
-        }
         if (arg !== this.myId) ui.notify(`${this.name(arg)} has fallen... and will rise as one of them${this.dawnAhead() ? ' until dawn' : ''}.`, 'danger', 5);
         break;
       case NOTIFY.RETURNED:
@@ -1143,66 +1078,7 @@ export class Game {
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;
-      case NOTIFY.MINE_ROUND:
-        ui.notify(`ROUND ${arg}`, 'big', 3.5);
-        a.stinger?.('night');
-        break;
-      case NOTIFY.MINE_CLEAR:
-        ui.notify('ROUND CLEARED', 'good', 3);
-        ui.notify('The cage has come to the exit shaft, somewhere in this level. Find the green light.', 'toast', 8);
-        break;
-      case NOTIFY.MINE_RIDE:
-        this.rideTo = arg;
-        ui.notify(`Going down to ${MINE_STOPS[arg]?.name || 'the next level'}…`, 'toast', 5);
-        break;
-      case NOTIFY.MINE_STOP:
-        this.faceStop();
-        ui.notify(MINE_STOPS[arg]?.name?.toUpperCase() || '', 'big', 4);
-        ui.notify(`${MINE_STOPS[arg]?.depth || 0} m below the surface`, 'sub', 4);
-        break;
-      case NOTIFY.MINE_NEED:
-        ui.notify(`Not enough points (${arg})`, 'warning', 2);
-        a.playLocal('build_fail');
-        break;
-      case NOTIFY.MINE_OWNED:
-        ui.notify('You already have that perk', 'warning', 2);
-        break;
-      case NOTIFY.MINE_GUN:
-        ui.notify(`${ITEM_DEFS[arg]?.name || 'Weapon'}`, 'good', 2.5);
-        a.playLocal('notify');
-        break;
-      case NOTIFY.MINE_AMMO:
-        ui.notify('Ammo refilled', 'good', 2);
-        break;
-      case NOTIFY.MINE_PERK: {
-        const perk = PERKS.find((pk) => pk.bit === arg);
-        ui.notify(perk ? perk.name.toUpperCase() : 'PERK', 'big', 2.5);
-        if (perk) ui.notify(perk.tip, 'sub', 3);
-        a.playLocal('notify');
-        break;
-      }
-      case NOTIFY.MINE_POWER:
-        ui.notify(['MAX AMMO', 'INSTA-KILL', 'DOUBLE POINTS', 'KABOOM'][arg] || 'POWER-UP', 'big', 2.5);
-        a.playLocal('notify');
-        break;
-      case NOTIFY.MINE_TEDDY:
-        ui.notify('The box takes it back: points refunded', 'warning', 3);
-        break;
-      case NOTIFY.MINE_GATE:
-        ui.notify('The way is open', 'good', 2.5);
-        break;
       case NOTIFY.NEW_GAME:
-        if (this.mode === MODE.MINE) {
-          ui.hideOverlays();
-          this.overlay = null;
-          this.deathShown = false;
-          this.pings = [];
-          this.introPending = false;
-          this.faceStop();
-          ui.notify('SHAFT NINE', 'big', 5);
-          ui.notify('The cage goes down every round. Earn points. Buy guns off the walls. Stay together.', 'sub', 7);
-          break;
-        }
         ui.hideOverlays();
         this.overlay = null;
         this.deathShown = false;
@@ -1227,12 +1103,6 @@ export class Game {
     this.introPending = false;
     const g = this.global;
     const ui = this.ui;
-    if (this.mode === MODE.MINE) {
-      this.faceStop();
-      ui.notify('SHAFT NINE', 'big', 4);
-      ui.notify(`Round ${g.round | 0}. Your team is at the cage.`, 'sub', 5);
-      return;
-    }
     const night = g.phase === PHASE.NIGHT;
     let need = 0;
     let have = 0;
@@ -1442,7 +1312,7 @@ export class Game {
       return;
     }
     if (code === 'KeyM') {
-      if (ui.inventoryOpen || ui.isTyping() || this.mineScene) return;
+      if (ui.inventoryOpen || ui.isTyping()) return;
       this.toggleMap(!ui.mapOpen);
       return;
     }
@@ -1826,8 +1696,7 @@ export class Game {
     const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag;
     this.recoilKick *= Math.exp(-dt * 10);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
-    const rideShake = this.mode === MODE.MINE && this.global.elev === MINE.ELEV.RIDING ? 0.006 : 0; // the cage on its rope
-    const shake = this.camShake * 0.02 + this.effects.shake * 0.03 + rideShake;
+    const shake = this.camShake * 0.02 + this.effects.shake * 0.03;
     const cam = this.camera;
     if (this.debugCam) {
       const d = this.debugCam;
@@ -1929,12 +1798,10 @@ export class Game {
 
     // environment
     const g = this.global;
-    const cycle = this.debugCycle ?? (this.mineScene ? 0.8 : Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen));
+    const cycle = this.debugCycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
     if (!g.finale) this.global.timeLeft = Math.max(0, g.timeLeft - dt);
     else if (!g.escapeStalled) this.global.escapeT = Math.max(0, g.escapeT - dt); // a stalled warm-up stands still
-    const weather = this.mineScene ? MINE_WEATHER : this.weather.update(dt, g, time, cam.position);
-    const mineSrc = this.mineScene ? this.mineScene.update(dt, time, g, rp, this.boxOffer()) : null;
-    if (this.mineScene) this.env.setMine(this.mineScene.profile);
+    const weather = this.weather.update(dt, g, time, cam.position);
     if (weather.kind !== this.weatherKind) {
       this.weatherKind = weather.kind;
       const say = WEATHER_TOAST[weather.kind];
@@ -1944,8 +1811,8 @@ export class Game {
       }
     }
     this.env.update(dt, cycle, cam.position, time, weather);
-    this.staticWorld?.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage?.update(cam.position, this.env.fogVisibility, time, weather);
+    this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
+    this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
     if (this.water) {
       const u = this.water.material.uniforms;
       u.uTime.value = time;
@@ -1954,9 +1821,7 @@ export class Game {
       u.uSunCol.value.copy(this.env.cur.dir);
       u.uCam.value.copy(cam.position);
     }
-    if (this.mineScene) this.mineScene.powerups(this.entities.caches, time);
-    const lampSrc = this.mineLamps ? this.mineLamps.update(this.entities.ents, time) : null;
-    const fires = this.entities.fireSources.concat(mineSrc || this.staticFires, lampSrc || []);
+    const fires = this.entities.fireSources.concat(this.staticFires);
     this.lights.update(dt, time, cam.position, this.localFlash && self.alive && !s.zombie, fires, this.entities.remoteFlash, this.env.night);
     // nearest big fire warms the viewmodel & the ambience
     let nearFire = 0;
@@ -1973,7 +1838,7 @@ export class Game {
     this.flyover.update(dt, time, cam, this.env, weather);
     const flashOn = this.localFlash && self.alive && !s.zombie;
     this.atmosphere.update(dt, time, cam, this.env, flashOn, this.world.heightAt, weather);
-    if (!this.mineScene) this.weatherFx.update(dt, time, cam, weather, this.env, flashOn, this.renderer.renderer.domElement.height);
+    this.weatherFx.update(dt, time, cam, weather, this.env, flashOn, this.renderer.renderer.domElement.height);
 
     // audio
     const a = this.audio;
@@ -2046,29 +1911,16 @@ export class Game {
     const cam = this.camera;
     const r = 15;
     const gy = this.world.heightAt(car.x, car.z);
-    let weather;
-    let msrc = null;
-    if (this.mineScene) {
-      // Shaft Nine behind the splash: the yard under its headframe, swaying a little (the rock is at your back everywhere else)
-      const a = Math.sin(this.menuAngle * 6) * 0.7;
-      cam.position.set(car.x + Math.sin(a) * 22, 2.6, car.z + 4 + Math.cos(a) * 22);
-      cam.lookAt(car.x, 11, car.z - 2);
-      weather = MINE_WEATHER;
-      msrc = this.mineScene.update(dt, this.time, { elev: 0, elevT: 0, gates: 0, box: 0 }, cam.position, 0);
-      this.env.setMine(this.mineScene.profile);
-      this.env.update(dt, 0.8, cam.position, this.time, weather);
-    } else {
-      cam.position.set(car.x + Math.sin(this.menuAngle) * r, gy + 3.4, car.z + Math.cos(this.menuAngle) * r);
-      cam.lookAt(car.x, gy + 1.2, car.z);
-      weather = this.weather.update(dt, null, this.time, cam.position);
-      this.env.update(dt, 0.49, cam.position, this.time, weather);
-    }
-    this.staticWorld?.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage?.update(cam.position, this.env.fogVisibility, this.time, weather);
-    this.lights.update(dt, this.time, cam.position, false, msrc || this.staticFires, [], this.env.night);
+    cam.position.set(car.x + Math.sin(this.menuAngle) * r, gy + 3.4, car.z + Math.cos(this.menuAngle) * r);
+    cam.lookAt(car.x, gy + 1.2, car.z);
+    const weather = this.weather.update(dt, null, this.time, cam.position);
+    this.env.update(dt, 0.49, cam.position, this.time, weather);
+    this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
+    this.foliage.update(cam.position, this.env.fogVisibility, this.time, weather);
+    this.lights.update(dt, this.time, cam.position, false, this.staticFires, [], this.env.night);
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
     this.atmosphere.update(dt, this.time, cam, this.env, false, this.world.heightAt, weather);
-    if (!this.mineScene) this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
+    this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
     this.vm.setVisible(false);
     if (this.audio.ready) {
       this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
@@ -2089,8 +1941,7 @@ export class Game {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      const mine = this.mode === MODE.MINE;
-      this.ui.showGameOver({ days: mine ? (g.round | 0) + 1 : g.day, kills, mode: this.mode, unit: mine ? 'round' : '', title: mine ? 'The shaft claims you' : '', reason: mine ? `The dead overran Shaft Nine on round ${g.round | 0}.` : 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.mode === MODE.MINE ? null : this.runReport });
+      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport });
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
@@ -2139,44 +1990,6 @@ export class Game {
     return 'grass';
   }
 
-  // what the box is offering: the item in its entity's state (255 while it rolls)
-  boxOffer() {
-    const st = this.mineScene?.world.mine.stops[this.mineScene.cur];
-    if (!st || this.global.box !== 2) return 0;
-    const bi = st.buys.findIndex((b) => b.kind === 'box');
-    for (const e of this.entities.caches) if (e.kind === ENT.CACHE && e.ctype === MINE_CT.BUY + bi) return e.q[3] > 0 && e.q[3] < 255 ? e.q[3] : 0;
-    return 0;
-  }
-
-  // the line under the crosshair at a wall gun, perk machine, the box or a heap of debris
-  minePrompt(e, s) {
-    const st = this.world.mine.stops[this.mineScene.cur];
-    const g = this.global;
-    const pts = this.self.points | 0;
-    const price = (c) => `${c}${pts < c ? ' · not enough points' : ''}`;
-    if (e.ctype >= MINE_CT.GATE) {
-      const gt = st.gates[e.ctype - MINE_CT.GATE];
-      if (!gt || (g.gates >> (st.index * 3 + gt.index)) & 1) return '';
-      return `[E] Clear the debris to ${gt.name} · ${price(gt.cost)}`;
-    }
-    const b = st.buys[e.ctype - MINE_CT.BUY];
-    if (!b) return '';
-    if (b.kind === 'gun') {
-      const owned = s.weapons[WEAPONS[b.a].slot] === b.a;
-      return owned ? `[E] Refill ${ITEM_DEFS[b.a].name} ammo · ${price(Math.round(b.cost / 2))}` : `[E] Buy ${ITEM_DEFS[b.a].name} · ${price(b.cost)}`;
-    }
-    if (b.kind === 'perk') {
-      const perk = PERKS.find((p) => p.bit === b.a);
-      return (this.self.perkBits ?? 0) & perk.bit ? `${perk.name} · you have it` : `[E] ${perk.name} · ${price(perk.cost)} · ${perk.tip}`;
-    }
-    if (g.box === 1) return 'The box is turning…';
-    if (g.box === 2) {
-      const it = this.boxOffer();
-      return it ? `[E] Take the ${ITEM_DEFS[it].name}` : 'The box has offered a gun';
-    }
-    return `[E] Mystery Box · ${price(BOX_COST)}`;
-  }
-
   updateLookTarget() {
     const cam = this.camera;
     const s = this.prediction.state;
@@ -2196,12 +2009,6 @@ export class Game {
         this.lookTarget = e;
         const n = e.q[3];
         this.prompt = `[E] Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
-        return;
-      }
-      if (e.kind === ENT.CACHE && this.mineScene && e.ctype >= MINE.POWER_CT) return; // (a power-up is walked into)
-      if (e.kind === ENT.CACHE && this.mineScene && e.ctype >= MINE_CT.BUY) {
-        this.lookTarget = e;
-        this.prompt = this.minePrompt(e, s);
         return;
       }
       if (e.kind === ENT.CACHE) {
@@ -2241,7 +2048,7 @@ export class Game {
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
-    if (dcar < CAR_REACH && !this.mineScene) {
+    if (dcar < CAR_REACH) {
       this.lookTarget = 'car';
       const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
       const carrying = missing.filter((p) => counts[p]);
@@ -2251,7 +2058,7 @@ export class Game {
       else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
-    if (!this.prompt && !this.mineScene) this.prompt = harvestPrompt(this.world, s);
+    if (!this.prompt) this.prompt = harvestPrompt(this.world, s);
   }
 
   updateBuildGhost(s) {
@@ -2439,10 +2246,6 @@ export class Game {
     h.yaw = this.input.yaw;
     this.buildMarkers(h, rp);
     this.ui.updateHud(h);
-    if (this.mineScene) {
-      const stop = this.world.mine.stops[this.mineScene.cur];
-      this.ui.mineHud.update(dt, { active: true, round: g.round | 0, state: g.mstate, left: g.left | 0, timeLeft: g.timeLeft, elev: g.elev, points: this.self.points | 0, perks: this.self.perkBits | 0, doublePoints: g.doublePoints | 0, instaKill: g.instaKill | 0, stopName: g.elev >= MINE.ELEV.CLOSING ? MINE_STOPS[this.rideTo ?? (g.stop + 1) % MINE_STOPS.length]?.name || '' : '' });
-    } else if (this.ui.mineHud.root.hidden === false) this.ui.mineHud.update(dt, { active: false });
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
     if (this.ui.inventoryOpen && this.frame % 20 === 10) this.pushRoster(); // health moves between player lists

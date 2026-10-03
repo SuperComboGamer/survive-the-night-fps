@@ -46,17 +46,38 @@ export async function start(gfx, P) {
     try { const m = await import('./weapons/index.js'); if (m.WeaponSystem) { WS = m.WeaponSystem; wapi = m; } } catch (e) { console.warn('[boot] weapon system unavailable → stub:', e.message); }
     return { ZM, WS, wapi };
   }
+  // The player, the zombies (every variant's bodies built), combat and the weapons (guns built, textures baked) for a map's world.
+  // The menu starts this in the background once the map has loaded (see the interval below), so PLAY finds it done.
+  let pre = null; // { world, p: Promise<systems> }
+  function prepareSystems(id, w, progress = () => {}) {
+    if (pre && pre.world === w) return pre.p;
+    if (pre) { const old = pre.p; old.then((s2) => { gfx.scene.remove(s2.zombies.group); s2.weapons.vm?.root?.parent?.remove(s2.weapons.vm.root); }).catch(() => {}); } // (a set for another map: dropped)
+    const def = menu.defs[id];
+    const p = (async () => {
+      const { ZM, WS, wapi } = await loadSystems(def);
+      const pl = new Player(gfx, w, input); pl.fov = hFovToV(S.fov, gfx.aspect);
+      const zm = new ZM({ gfx, world: w, fx, audio }); zm.registerVariants?.(id, def.zombies?.variants || []); if (def.zombies?.register) def.zombies.register(zm);
+      try { const vm = await import('./zombies/variants/index.js'); await vm.registerAll?.(zm); } catch (e) { /* variant sets not available (yet) */ }
+      if (zm.prepare) { progress(0.88, 'Raising the dead…'); await new Promise((r) => setTimeout(r, 30)); try { await zm.prepare(id); } catch (e) { console.warn('zombie prepare failed', e); } }
+      const cb = new Combat({ world: w, fx, zombies: zm, audio, game: null }); const ws = new WS({ gfx, fx, audio, world: w, player: pl, input, combat: cb }); cb.game = null;
+      if (mode === 'menu' && ws.vm?.root) ws.vm.root.visible = false; // (the hands stay out of the menu)
+      try { await Promise.race([ws.ready, new Promise((r) => setTimeout(r, 20000))]); } catch (e) { /* the game waits again below */ }
+      return { ZM, WS, wapi, player: pl, zombies: zm, combat: cb, weapons: ws, voices: !!audio.ready };
+    })();
+    pre = { world: w, p };
+    p.catch(() => { if (pre?.p === p) pre = null; });
+    return p;
+  }
   async function play(id, online = null) {
     if (mode !== 'menu') return; mode = 'loading'; coop?.dispose(); coop = online ? new Coop(lobby, online) : null; try { await audio.init(); if (audio.master) audio.master.gain.value = S.vol; } catch (e) { console.warn('audio init failed', e); }
     const def = menu.defs[id]; menu.loading(def.name.toUpperCase(), 0.02, 'Preparing…');
     let hero = menu.heroes[id]; if (!hero) { menu.ensureHero(id, true); } while (!hero || hero.state === 'queued' || hero.state === 'loading') { await new Promise((r) => setTimeout(r, 60)); hero = menu.heroes[id]; } if (hero.state !== 'ready') { menu.loading('ERROR', 0, 'Map failed to build'); mode = 'menu'; return; }
     world = hero.world; await world.loadRest((p, m) => menu.loading(def.name.toUpperCase(), 0.1 + p * 0.7, m)); world.root.visible = true;
     menu.loading(def.name.toUpperCase(), 0.85, 'Arming systems…'); await new Promise((r) => setTimeout(r, 30));
-    const { ZM, WS, wapi } = await loadSystems(def);
-    player = new Player(gfx, world, input); player.fov = hFovToV(S.fov, gfx.aspect); zombies = new ZM({ gfx, world, fx, audio }); zombies.registerVariants?.(id, def.zombies?.variants || []); if (def.zombies?.register) def.zombies.register(zombies);
-    try { const vm = await import('./zombies/variants/index.js'); await vm.registerAll?.(zombies); } catch (e) { /* variant sets not available (yet) */ }
-    if (zombies.prepare) { menu.loading(def.name.toUpperCase(), 0.88, 'Raising the dead…'); await new Promise((r) => setTimeout(r, 30)); try { await zombies.prepare(id); } catch (e) { console.warn('zombie prepare failed', e); } }
-    combat = new Combat({ world, fx, zombies, audio, game: null }); weapons = new WS({ gfx, fx, audio, world, player, input, combat }); combat.game = null;
+    const sys = await prepareSystems(id, world, (k, msg) => menu.loading(def.name.toUpperCase(), k, msg)); pre = null; // (a system set is used once)
+    const { wapi } = sys; player = sys.player; zombies = sys.zombies; combat = sys.combat; weapons = sys.weapons; player.fov = hFovToV(S.fov, gfx.aspect); if (weapons.vm?.root) weapons.vm.root.visible = true;
+    // prepared on the menu before sound could start: the zombies' voices are built now that it has
+    if (!sys.voices && zombies.prepare && zombies.voiceSets) { zombies.voiceSets.clear(); try { await zombies.prepare(id); } catch (e) { /* silent dead */ } }
     game = new Game({ gfx, synth, fx, world, audio, input, hud, player, zombies, weapons, combat, weaponsApi: wapi, onGameOver: (st) => gameOver(st) }); combat.game = game; game.weaponsApi = wapi; window.__g.combat = combat;
     audio.attachPlayer?.(player); fx.setWorld(world); if (coop) coop.attach({ game, player, zombies, weapons, combat, world, fx, audio, gfx, hud, input }); game.buildProps(); game.newRun(); if (P.get('round')) game.debugSetRound(+P.get('round'));
     menu.loading(def.name.toUpperCase(), 0.92, 'Compiling shaders…'); await new Promise((r) => setTimeout(r, 30)); const tw = performance.now(); try { await world.warm(); } catch (e) { console.warn('warmup failed', e); } console.log('[boot] warm-up ms', (performance.now() - tw).toFixed(0));
@@ -87,18 +108,23 @@ export async function start(gfx, P) {
   perf.toggle(!!P.get('fps'));
 
   await menu.init(); menu.show(true); gfx.camera.position.set(0, 2, 0);
+  // from the Survive the Night splash: ?online=1 opens the lobby list, ?join=CODE goes straight into that game's lobby
+  if ((P.get('online') || P.get('join')) && !P.get('play')) { menu.show(false); lobbyUI.show().then(() => { const code = (P.get('join') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); if (code.length === 4 && lobby.open && !lobby.lobby) lobby.send({ t: 'join', code }); }); }
+  // while the player looks at the menu, the selected map's other stops, route and vehicle load in the background: PLAY then
+  // only waits for what is left (a map is a lot of building and shader compiling)
+  setInterval(() => { if (mode !== 'menu' || menu.building) return; const id = MAPS[menu.sel]?.id; const h = id && menu.heroes[id]; if (!h || h.state !== 'ready' || !h.world) return; if (!h.world.loadedAll) { if (!h.world._restP) h.world.loadRest().catch((e) => console.warn('background load', e)); } else if (!pre || pre.world !== h.world) prepareSystems(id, h.world).catch((e) => console.warn('background prepare', e)); }, 1000);
   // debug / test hooks
   window.__g.play = play; window.__g.hero = () => menu.hero; installBench(window.__g);
   let last = performance.now(), t = 0, running = true; window.__g.stop = () => { running = false; };
   const frame = (now) => {
-    if (!running) return; const raw = now - last; last = now; const dt = Math.min(0.05, raw / 1000); t += dt; perf.frame(raw, mode === 'play' ? `z ${zombies?.count ?? 0}\n` + Object.entries(window.__g.cpu).map(([k, v]) => `${k} ${v.toFixed(1)}`).join('  ') : ''); perf.adapt(dt);
+    if (!running) return; if (synth.queue?.length && !synth.defer) synth.flushSync(); /* (a deferred texture bake left over: draw it before anything shows it) */ const raw = now - last; last = now; const dt = Math.min(0.05, raw / 1000); t += dt; perf.frame(raw, mode === 'play' ? `z ${zombies?.count ?? 0}\n` + Object.entries(window.__g.cpu).map(([k, v]) => `${k} ${v.toFixed(1)}`).join('  ') : ''); perf.adapt(dt);
     if (mode === 'menu') { menu.update(dt, t); fx.update(dt, t, gfx.camera.position); gfx.render(dt, t); }
     else if (mode === 'play' && !paused) {
       const C = window.__g.cpu, T0 = performance.now(); let T1;
       const lap = (k) => { T1 = performance.now(); C[k] = (C[k] ?? T1 - T0) * 0.95 + (T1 - lapT) * 0.05; lapT = T1; }; let lapT = T0;
       gfx.fxShake = fx.shake; const asp = gfx.aspect || 16 / 9; player.fov = hFovToV(S.fov, asp);
       player.update(dt); lap('player'); weapons.update(dt, t); lap('weapons'); gfx.setFov(player.fov * (weapons.fovMul ?? 1) * (1 + (player.sprinting ? 0.04 : 0)));
-      game.update(dt, t); lap('game+zombies'); world.update(dt, t, gfx.camera.position); lap('world'); fx.update(dt, t, gfx.camera.position); gfx.shadowCenter.copy(gfx.camera.position); lap('fx');
+      game.update(dt, t); lap('game+zombies'); world.update(dt, t, gfx.camera.position); lap('world'); if (coop) { coop.lateUpdate(dt, t); lap('team'); } fx.update(dt, t, gfx.camera.position); gfx.shadowCenter.copy(gfx.camera.position); lap('fx');
       audio.update?.(dt, { pos: gfx.camera.position, forward: player.forward, up: { x: 0, y: 1, z: 0 } }, {}); lap('audio');
       gfx.render(dt, t); lap('render(cpu)');
     } else if (mode === 'play') gfx.render(0.0001, t); else { menu.update(dt, t); gfx.render(dt, t); }

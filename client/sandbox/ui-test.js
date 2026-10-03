@@ -81,6 +81,17 @@ window.fetch = async (url, opts) => {
     const body = statusMode === 'full' ? { players: 8, max: 8, phase: PHASE.NIGHT, day: 4 } : { players: 3, max: 8, phase: PHASE.NIGHT, day: 2 };
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   }
+  if (String(url).endsWith('/rooms')) {
+    await new Promise((r) => setTimeout(r, 120));
+    if (statusMode === 'offline') throw new TypeError('Failed to fetch');
+    const main = statusMode === 'full' ? { players: 8, max: 8, phase: PHASE.NIGHT, day: 4 } : { players: 3, max: 8, phase: PHASE.NIGHT, day: 2 };
+    const body = [{ id: 'main', name: 'Main', main: true, ...main, wait: false }, { id: 'g1-test', name: "Ada's game", main: false, players: 1, max: 8, phase: PHASE.WAITING, day: 1, wait: true }];
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (String(url).endsWith('/dr/status')) {
+    const body = { lobbies: 1, players: 2, browsing: 1, games: [{ code: 'KQZT', name: "Ada's game", map: 'whiteout', players: 2, max: 4, state: 'lobby', host: 'Ada' }] };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   return realFetch(url, opts);
 };
 

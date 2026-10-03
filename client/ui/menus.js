@@ -82,7 +82,8 @@ export class Splash {
     this.tag = el('p', 'sp-tag', main, TAGLINES[(Math.random() * TAGLINES.length) | 0]);
     this.tagSurvival = [this.goal.textContent, this.tag.textContent];
 
-    // the mode switcher: what an empty server will play (a run in progress is joined as it is)
+    // one front door for both games: Survival is played in this server's rooms, Dead Ride on its own page (same name,
+    // same server, its own lobbies). The list below shows the games of whichever is picked.
     this.mode = MODE_INFO[+lsGet('stn.mode', '0')] ? +lsGet('stn.mode', '0') : 0;
     const modes = el('div', 'sp-modes', main);
     this.modeBtns = MODE_INFO.map((m) => {
@@ -91,18 +92,16 @@ export class Splash {
       b.style.setProperty('--accent', m.accent);
       el('b', '', b, m.name);
       el('span', '', b, m.tag);
-      b.title = m.blurb;
       b.addEventListener('click', () => this.setMode(m.id));
       return b;
     });
     this.modeNote = el('div', 'sp-modenote', main, '');
-    this.running = -1; // the mode of the run in the selected game (-1: none, it is waiting for a first player)
-    // the games on this server: pick one to join, or open a new one in the mode picked above
     this.room = lsGet('stn.room', 'main');
-    this.roomList = [];
+    this.roomList = []; // Survival: this server's rooms (server/rooms.js)
+    this.drList = []; // Dead Ride: its open lobbies (server/lobby.js)
     const rooms = (this.roomsBox = el('div', 'sp-rooms', main));
     const rh = el('div', 'sp-rooms-h', rooms);
-    el('span', '', rh, 'Games');
+    this.roomsH = el('span', '', rh, 'Games');
     this.newBtn = el('button', 'btn btn-ghost sp-newgame', rh, 'New game');
     this.newBtn.type = 'button';
     this.newBtn.addEventListener('click', () => this._newGame());
@@ -151,26 +150,82 @@ export class Splash {
     this.joining = false;
   }
 
+  get dr() {
+    return !!MODE_INFO[this.mode]?.href;
+  }
+
   get sel() {
     return this.roomList.find((r) => r.id === this.room) || this.roomList[0] || null;
   }
 
+  _name() {
+    let name = this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
+    if (!name) {
+      name = 'Survivor' + String(100 + ((Math.random() * 900) | 0));
+      this.name.value = name;
+    }
+    lsSet('stn.name', name);
+    lsSet('dr.name', name); // (DEAD RIDE's lobby goes by the same name)
+    return name;
+  }
+
+  setMode(m, quiet = false) {
+    this.mode = m;
+    if (!quiet) lsSet('stn.mode', String(m));
+    this.modeBtns.forEach((b, i) => b.classList.toggle('on', i === m));
+    const info = MODE_INFO[m];
+    if (this.dr) {
+      this.goal.textContent = 'Clear the wave. Board the ride. Survive every stop.';
+      this.tag.textContent = info.tag;
+      // (fetch the page ahead, so the switch to it is quick)
+      if (!this._prefetched) {
+        this._prefetched = true;
+        const l = document.createElement('link');
+        l.rel = 'prefetch';
+        l.href = info.href;
+        document.head.appendChild(l);
+      }
+    } else [this.goal.textContent, this.tag.textContent] = this.tagSurvival;
+    this.modeNote.textContent = info.blurb;
+    this.roomsH.textContent = this.dr ? 'Dead Ride games' : 'Games';
+    this.newBtn.textContent = this.dr ? 'Open a lobby' : 'New game';
+    this._roomKey = '';
+    this._renderRooms();
+    this._syncBtn();
+    if (!quiet) this._poll();
+  }
+
   _renderRooms() {
     const box = this.roomEl;
-    const key = JSON.stringify([this.room, this.mode, this.roomList.map((r) => [r.id, r.players, r.phase, r.day])]);
+    const list = this.dr ? this.drList : this.roomList;
+    const key = JSON.stringify([this.dr, this.room, list]);
     if (key === this._roomKey) return;
     this._roomKey = key;
     box.textContent = '';
-    for (const r of this.roomList) {
+    const accent = MODE_INFO[this.mode].accent;
+    if (this.dr) {
+      const MAPN = { 'shaft-nine': 'Shaft Nine', whiteout: 'Whiteout', 'last-ferry': 'Last Ferry', 'after-hours': 'After Hours' };
+      if (!list.length) el('div', 'sp-roomnone', box, 'No open games right now. Play solo, or open a lobby and send the code.');
+      for (const g of list) {
+        const row = el('button', 'sp-room', box);
+        row.type = 'button';
+        row.style.setProperty('--accent', accent);
+        el('b', '', row, g.name);
+        el('i', '', row, MAPN[g.map] || g.map);
+        el('span', '', row, `${g.players}/${g.max} · ${g.state === 'lobby' ? 'in lobby' : 'playing'}`);
+        row.addEventListener('click', () => this._goDR(g.code));
+      }
+      return;
+    }
+    for (const r of list) {
       const row = el('button', 'sp-room' + (r.id === this.room ? ' on' : ''), box);
       row.type = 'button';
-      const shown = r.main && r.wait ? this.mode : r.mode; // (an empty main room plays what the switcher says)
-      row.style.setProperty('--accent', MODE_INFO[shown].accent);
+      row.style.setProperty('--accent', accent);
       el('b', '', row, r.name);
-      el('i', '', row, MODE_INFO[shown].name);
-      const state = r.wait ? 'waiting' : r.mode === 1 ? `round ${r.day}` : `${r.phase === PHASE.NIGHT ? 'night' : 'day'} ${r.day}`;
-      el('span', '', row, `${r.players}/${r.max} · ${state}`);
+      el('i', '', row, r.wait ? 'waiting' : `${r.phase === PHASE.NIGHT ? 'night' : 'day'} ${r.day}`);
+      el('span', '', row, `${r.players}/${r.max}`);
       row.addEventListener('click', () => this.selectRoom(r.id));
+      row.addEventListener('dblclick', () => this._join());
     }
   }
 
@@ -179,22 +234,24 @@ export class Splash {
     lsSet('stn.room', id);
     this._roomKey = '';
     this._renderRooms();
-    this._syncModes();
-    const r = this.sel;
-    if (r) this.ui.cb.onMode?.(this._shownMode(), r.seed);
+    this._poll();
   }
 
-  // the mode on show: the selected game's if it has one going (or was opened for one), else the switcher's
-  _shownMode() {
-    const r = this.sel;
-    return r && (!r.main || !r.wait) ? r.mode : this.mode;
+  // Dead Ride: to its page; with a code it goes straight into that game's lobby, online opens the lobby list
+  _goDR(code, online = false) {
+    this._name();
+    const q = code ? `?join=${encodeURIComponent(code)}` : online ? '?online=1' : '';
+    this.root.classList.add('joining');
+    this.joinTxt.textContent = 'Loading…';
+    location.href = MODE_INFO[this.mode].href + q;
   }
 
   async _newGame() {
     if (this.joining) return;
-    const name = this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16) || 'Survivor';
+    if (this.dr) return this._goDR(null, true);
+    const name = this._name();
     try {
-      const res = await (await fetch(`/rooms/new?mode=${this.mode}&name=${encodeURIComponent(name + "'s game")}`)).json();
+      const res = await (await fetch(`/rooms/new?name=${encodeURIComponent(name + "'s game")}`)).json();
       if (res.error) return this.setError(res.error);
       this.room = res.id;
       lsSet('stn.room', res.id);
@@ -205,58 +262,25 @@ export class Splash {
     }
   }
 
-  setMode(m, quiet = false) {
-    this.mode = m;
-    if (!quiet) lsSet('stn.mode', String(m));
-    this.modeBtns.forEach((b, i) => b.classList.toggle('on', i === m));
-    this._syncModes();
-    if (!quiet && !MODE_INFO[m].solo) this.ui.cb.onMode?.(this._shownMode(), this.sel?.seed);
-  }
-
-  _syncModes() {
-    const solo = MODE_INFO[this.mode]?.solo;
-    this.roomsBox.hidden = !!solo;
-    const locked = this.running >= 0 && !solo;
-    this.modeBtns.forEach((b, i) => {
-      b.classList.toggle('on', locked ? i === this.running : i === this.mode);
-      b.classList.toggle('lock', locked && i !== this.running && !MODE_INFO[i].solo);
-    });
-    this._syncBtn();
-    const shown = locked ? this.running : this.mode;
-    if (solo) {
-      this.goal.textContent = 'Four maps. Four vehicles. One long night.';
-      this.tag.textContent = MODE_INFO[this.mode].tag;
-    } else if (shown === 1) {
-      this.goal.textContent = 'Clear the round. Spend your points. Take the cage down.';
-      this.tag.textContent = MODE_INFO[1].tag;
-    } else [this.goal.textContent, this.tag.textContent] = this.tagSurvival;
-    this.modeNote.textContent = locked ? `A ${MODE_INFO[this.running].name} run is under way: you will join it.` : MODE_INFO[this.mode].blurb;
-  }
-
   _join() {
-    // DEAD RIDE is its own page
-    if (MODE_INFO[this.mode]?.solo) {
-      location.href = MODE_INFO[this.mode].href;
-      return;
-    }
+    if (this.dr) return this._goDR(null);
     if (this.joining || this.full) return;
-    let name = this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
-    if (!name) {
-      name = 'Survivor' + String(100 + ((Math.random() * 900) | 0));
-      this.name.value = name;
-    }
-    lsSet('stn.name', name);
+    const name = this._name();
     this.joining = true;
     this.err.hidden = true;
     this.root.classList.add('joining');
     this._syncBtn();
-    this.ui.cb.onJoin(name, this.running >= 0 ? this.running : this.mode, this.sel?.id || 'main');
+    this.ui.cb.onJoin(name, this.sel?.id || 'main');
   }
 
   _syncBtn() {
-    const solo = MODE_INFO[this.mode]?.solo;
-    this.joinBtn.disabled = !solo && (this.joining || this.full);
-    this.joinTxt.textContent = solo ? 'Play' : this.joining ? 'Joining…' : this.full ? 'Server full' : 'Join';
+    if (this.dr) {
+      this.joinBtn.disabled = false;
+      this.joinTxt.textContent = 'Play Dead Ride';
+      return;
+    }
+    this.joinBtn.disabled = this.joining || this.full;
+    this.joinTxt.textContent = this.joining ? 'Joining…' : this.full ? 'Game full' : 'Join';
   }
 
   setError(text) {
@@ -275,24 +299,27 @@ export class Splash {
     try {
       ctl = new AbortController();
       const to = setTimeout(() => ctl.abort(), 2500);
-      const r = await fetch('/status', { cache: 'no-store', signal: ctl.signal });
+      const dr = this.dr;
+      const r = await fetch(dr ? '/dr/status' : '/rooms', { cache: 'no-store', signal: ctl.signal });
       clearTimeout(to);
       if (!r.ok) throw new Error('bad status');
-      const s = await r.json();
-      if (this.root.hidden) return;
-      // (the selected game speaks for the server: its players, its phase)
-      try {
-        this.roomList = await (await fetch('/rooms', { cache: 'no-store' })).json();
-      } catch {
-        this.roomList = [];
+      const body = await r.json();
+      if (this.root.hidden || dr !== this.dr) return;
+      if (dr) {
+        this.drList = Array.isArray(body.games) ? body.games : [];
+        this._renderRooms();
+        const n = (body.players | 0) + (body.browsing | 0);
+        this.statusTxt.textContent = `Dead Ride · ${body.lobbies | 0} game${body.lobbies === 1 ? '' : 's'} · ${n} online`;
+        this.status.className = 'sp-status online';
+        this._syncBtn();
+        return;
       }
-      if (!this.roomList.some((r) => r.id === this.room)) this.room = 'main';
-      const sel = this.sel;
-      if (sel) Object.assign(s, { players: sel.players, max: sel.max, phase: sel.phase, day: sel.day, mode: sel.mode });
+      // (the selected game speaks for the server: its players, its phase)
+      this.roomList = Array.isArray(body) ? body : [];
+      if (!this.roomList.some((x) => x.id === this.room)) this.room = 'main';
       this._renderRooms();
+      const s = this.sel || {};
       const players = s.players | 0;
-      this.running = sel && !sel.main ? sel.mode : players > 0 && s.phase !== PHASE.WAITING ? s.mode | 0 : -1;
-      this._syncModes();
       const max = s.max | 0 || MAX_PLAYERS;
       this.full = players >= max;
       let phase = '';
@@ -302,7 +329,7 @@ export class Splash {
       else if (s.phase === PHASE.GAMEOVER) phase = 'Restarting';
       else if (s.phase === PHASE.VICTORY) phase = 'They escaped';
       const txt = this.full
-        ? `Server full · ${players} / ${max} survivors`
+        ? `Game full · ${players} / ${max} survivors`
         : `${players} / ${max} survivor${max === 1 ? '' : 's'}` + (phase ? ' · ' + phase : '');
       this.statusTxt.textContent = txt;
       this.status.className = 'sp-status ' + (this.full ? 'full' : s.phase === PHASE.NIGHT ? 'online night' : 'online');
@@ -475,25 +502,7 @@ export class EndScreen {
     const panels = el('div', 'end-panels', m);
     this.board = el('div', 'end-board paper', panels);
     this.record = el('div', 'end-board end-record paper', panels);
-    // the next run's mode: most votes wins, nobody voting keeps this one (server: Game.tallyVotes)
-    const vote = el('div', 'end-vote', m);
-    el('span', '', vote, 'Next run');
-    this.voteBtns = MODE_INFO.map((mi) => {
-      const b = el('button', 'btn btn-ghost end-votebtn', vote, mi.name);
-      b.type = 'button';
-      b.style.setProperty('--accent', mi.accent);
-      b.addEventListener('click', () => {
-        this.voted = mi.id;
-        this._syncVote();
-        this.ui.cb.onVote?.(mi.id);
-      });
-      return b;
-    });
     this.count = el('div', 'end-count', m);
-  }
-
-  _syncVote() {
-    this.voteBtns.forEach((b, i) => b.classList.toggle('on', i === this.voted));
   }
 
   // What this run did to the player's own record. rep: recordRun's report (records.js), { late: true } for a
@@ -544,9 +553,7 @@ export class EndScreen {
     // daylight or in its night - got through N - 1 nights (a wipe during the first night survived none)
     const n = Math.max(0, (stats.days | 0) - 1);
     this.nights.textContent = String(n);
-    this.nightsL.textContent = stats.unit ? (n === 1 ? stats.unit : stats.unit + 's') + ' survived' : n === 1 ? 'night survived' : 'nights survived';
-    this.voted = stats.mode ?? 0;
-    this._syncVote();
+    this.nightsL.textContent = n === 1 ? 'night survived' : 'nights survived';
 
     this.board.textContent = '';
     const kills = Array.isArray(stats.kills) ? [...stats.kills].sort((a, b) => (b.kills | 0) - (a.kills | 0)) : [];

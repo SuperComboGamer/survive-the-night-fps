@@ -111,10 +111,6 @@ import {
 } from '../shared/defs.js';
 import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { createWorld } from '../shared/world.js';
-import { createMineWorld } from '../shared/mine.js';
-import { MODE, validMode } from '../shared/modes.js';
-import { isMineCt } from '../shared/minedefs.js';
-import { MineMode } from './mine.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
@@ -262,11 +258,6 @@ export class Game {
     this.dawnReturn = opts.dawnReturn ?? DAWN_RETURN; // the dead are survivors again at sunrise (the option: tests)
     this.themes = opts.themes !== false; // night themes (shared/nights.js). false: every night is plain (tests, benchmarks)
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
-    this.lockMode = !!opts.lockMode; // a room opened for one mode keeps it (server/rooms.js): joins and votes cannot change it
-    this.mode = opts.mode === undefined ? MODE.SURVIVAL : validMode(opts.mode);
-    this.wantMode = this.mode; // what the players want the next run to be (JOIN's mode byte, ACT.WANT_MODE)
-    this.votes = new Map(); // player id -> the mode they asked for
-    this.mine = null; // the Zombies mode's state while one is being played (server/mine.js)
     this.setWorld(opts.seed ?? randomSeed());
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
@@ -509,7 +500,6 @@ export class Game {
     if (session.player) return;
     const version = r.u8();
     let name = r.str().replace(/[^\p{L}\p{N} _\-.]/gu, '').trim().slice(0, 16) || 'Survivor';
-    const wanted = r.left > 0 ? validMode(r.u8()) : MODE.SURVIVAL; // (optional: older senders end at the name)
     const reject = (reason) => {
       const w = new Writer(4);
       w.u8(S2C.REJECT);
@@ -526,10 +516,7 @@ export class Game {
     while (names.has(name)) name = `${base.slice(0, 13)}#${k++}`;
     // an emptied server rolls its next valley on the tick after (resetToWaiting): a join that beats that tick
     // rolls it here, so the seed in WELCOME is the one this run is played on
-    if (this.phase === PHASE.WAITING) {
-      if (!this.lockMode) this.wantMode = wanted; // an empty server plays what its first player picked
-      this.rollWorld();
-    }
+    if (this.phase === PHASE.WAITING) this.rollWorld();
 
     const p = this.createPlayer(session, name);
     // no entity id left for them: turned away like from a full server, to try again once ids have come back
@@ -542,10 +529,8 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
-    w.u8(this.mode);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
-    else if (this.mine) this.mine.onJoin(p);
     else if (this.fallen.delete(p.name) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
       // died in this run and came back in before sunrise: they are what they were, and wait for dawn with the rest
       // of the dead - a reload is no way round a death. (A JOIN carries nothing but a name, so under another name
@@ -667,10 +652,8 @@ export class Game {
 
   removePlayer(p) {
     this.releaseHolds(p);
-    this.mine?.onLeave(p);
-    this.votes.delete(p.id);
     this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
-    if (!this.mine) this.dropAll(p);
+    this.dropAll(p);
     this.players.delete(p.id);
     this.nav.removeField(p.id);
     if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(p.name); // left dead: dead if they rejoin before sunrise (handleJoin)
@@ -705,26 +688,21 @@ export class Game {
   setWorld(seed) {
     const t0 = Date.now();
     this.seed = seed;
-    this.world = this.mode === MODE.MINE ? createMineWorld(seed) : createWorld(seed);
+    this.world = createWorld(seed);
     this.nav = new Nav(this.world);
     this.worldPlayed = false;
     if (this.zm) this.zm.treeGrid = this.zm.dens = null; // (per-world caches)
-    this.log(`world seed ${seed} (${this.mode === MODE.MINE ? 'shaft nine' : 'valley'}) generated in ${Date.now() - t0}ms`);
+    this.log(`world seed ${seed} generated in ${Date.now() - t0}ms`);
   }
 
   // Every playthrough gets a valley of its own: once a game has been played on this one, generate the next
   // and tell the clients its seed. Call with the world cleared (structures live in the old world's grids).
   rollWorld() {
-    // (a run of another mode is needed whatever the seed policy is: the mine is not a valley)
-    const switching = this.wantMode !== this.mode;
-    if (!switching && (!this.worldPlayed || this.fixedSeed)) return;
-    this.mode = this.wantMode;
-    this.mine = this.mode === MODE.MINE ? new MineMode(this) : null;
-    this.setWorld(this.fixedSeed ? this.seed : randomSeed());
+    if (!this.worldPlayed || this.fixedSeed) return;
+    this.setWorld(randomSeed());
     const w = new Writer(8);
     w.u8(S2C.WORLD_RESET);
     w.u32(this.seed >>> 0);
-    w.u8(this.mode);
     this.broadcast(w.bytes());
   }
 
@@ -738,15 +716,6 @@ export class Game {
     this.phase = PHASE.WAITING;
     this.day = 0;
     this.globalDirty = true;
-  }
-
-  // The next run is the mode most of the players voted for (a tie keeps the one just played); nobody voting changes nothing
-  tallyVotes() {
-    if (!this.votes.size || this.lockMode) return;
-    const n = [0, 0];
-    for (const [id, m] of this.votes) if (this.players.has(id)) n[m]++;
-    if (n[0] !== n[1]) this.wantMode = n[1] > n[0] ? MODE.MINE : MODE.SURVIVAL;
-    this.votes.clear();
   }
 
   clearWorld() {
@@ -777,10 +746,8 @@ export class Game {
 
   startGame() {
     this.clearWorld();
-    this.tallyVotes();
     this.rollWorld();
     this.worldPlayed = true;
-    if (this.mine) return this.mine.start();
     this.phase = PHASE.DAY;
     this.day = this.startDayNum;
     this.timeLeft = this.firstDayLen;
@@ -1561,10 +1528,6 @@ export class Game {
   handleAction(p, r) {
     const act = r.u8();
     const s = p.state;
-    if (act === ACT.WANT_MODE) {
-      this.votes.set(p.id, validMode(r.u8()));
-      return;
-    }
     if (!p.alive) return;
     if (p.zombie && act !== ACT.FLASHLIGHT && act !== ACT.PING) return;
     if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.USE_ITEM && act !== ACT.HOLD_END) return;
@@ -1779,7 +1742,6 @@ export class Game {
       return;
     }
     if (e.kind === ENT.CACHE) {
-      if (e.mine) return this.mine?.buy(p, e);
       this.holdBegin(p, e.id);
       return;
     }
@@ -1847,11 +1809,6 @@ export class Game {
     const e = this.ents[id];
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     const d = Math.hypot(e.x - s.x, e.z - s.z);
-    if (e.kind === ENT.CACHE && e.mine) {
-      // (a buy is made on the press, not at the end of a hold)
-      if (d <= this.reachOf(e)) this.mine?.buy(p, e);
-      return;
-    }
     if (e.kind === ENT.CACHE) {
       if (d > this.reachOf(e) || e.state !== 0) {
         if (e.state !== 0) this.notify(NOTIFY.SEARCH_EMPTY, 0, p.id);
@@ -1863,7 +1820,7 @@ export class Game {
     }
     if (e.kind === ENT.PLAYER && e !== p && e.alive && e.downed && !e.zombie) {
       if (d > this.reachOf(e)) return;
-      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME * (p.perks & 8 ? 0.5 : 1) };
+      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME };
       e.revivedBy = p.id;
     }
   }
@@ -2372,7 +2329,6 @@ export class Game {
       s.reloadT = 0; // a reload in progress was of the weapon just put away: left running it locks the pistol, then reloads it
     }
     this.nightStats.downs++;
-    this.mine?.onDown(p);
     this.notify(NOTIFY.DOWNED, p.id);
     this.sound(SOUND.DOWNED, s.x, s.y + 0.6, s.z, 70);
     this.playersDirty = true;
@@ -2412,7 +2368,7 @@ export class Game {
     this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0));
     if (!p.zombie) {
       this.nightStats.deaths++;
-      if (!this.mine) this.dropAll(p); // (nothing to pick up off the dead in the mine)
+      this.dropAll(p);
       s.weapons = [0, 0, 0, 0, 0];
       p.armor = 0;
       p.armorItem = 0;
@@ -2487,10 +2443,6 @@ export class Game {
     switch (args[0]) {
       case 'kill':
         if (p.alive) this.killPlayer(p, { kind: KILLER.WORLD });
-        break;
-      case 'clear':
-      case 'round':
-        this.mine?.debug(args[0], +args[1]);
         break;
       case 'down':
         if (p.alive && !p.zombie && !p.downed) this.goDown(p);
@@ -2738,7 +2690,6 @@ export class Game {
   }
 
   updatePhase(dt) {
-    if (this.mine) return this.mine.update(dt);
     if (this.phase === PHASE.GAMEOVER || this.phase === PHASE.VICTORY) {
       this.restartT -= dt;
       if (this.restartT <= 0) this.startGame();
@@ -2969,7 +2920,6 @@ export class Game {
   updatePlayers(dt) {
     for (const p of this.players.values()) {
       if (!p.alive) {
-        if (this.mine) continue; // (the fallen wait for the next round: Mine.startRound)
         if (p.respawnT > 0) {
           p.respawnT -= dt;
           if (p.respawnT <= 0 && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
@@ -2985,12 +2935,6 @@ export class Game {
         continue;
       }
       if (p.downed) {
-        if (p.qrT > 0 && (p.qrT -= dt) <= 0) {
-          // Quick Revive on your own: back up after a few seconds
-          p.qrT = 0;
-          this.revive(p, null, 70);
-          continue;
-        }
         if (!p.revivedBy) p.bleed -= dt;
         if (p.useItem) {
           p.useItem.t += dt;
@@ -3004,13 +2948,13 @@ export class Game {
         continue;
       }
       // healing
-      if (this.time - p.lastDamageT > (this.mine ? 3.5 : HEAL_DELAY) && p.hp < p.maxHp) {
-        const nearFire = this.mine ? 0 : this.nearLitFire(s.x, s.z);
-        p.hp = Math.min(p.maxHp, p.hp + (this.mine ? 30 : nearFire ? HEAL_RATE_CAMPFIRE : HEAL_RATE) * dt);
+      if (this.time - p.lastDamageT > HEAL_DELAY && p.hp < p.maxHp) {
+        const nearFire = this.nearLitFire(s.x, s.z);
+        p.hp = Math.min(p.maxHp, p.hp + (nearFire ? HEAL_RATE_CAMPFIRE : HEAL_RATE) * dt);
       }
       // flashlight battery
       if (p.flashlight) {
-        p.battery -= (this.mine ? 0 : FLASHLIGHT_DRAIN) * dt; // (the mine is dark: the lamp does not run down there)
+        p.battery -= FLASHLIGHT_DRAIN * dt;
         if (p.battery <= 0) {
           p.battery = 0;
           p.flashlight = false;
@@ -3162,9 +3106,6 @@ export class Game {
       benches++;
     }
     w.patch8(at, benches);
-    // the mode, and for Zombies mode its own block (client/net/decode.js readGlobal)
-    w.u8(this.mode);
-    if (this.mine) this.mine.writeGlobal(w);
   }
 
   // Self state. The simulated part only goes out when the client has to rebase its prediction on it (SELF.SYNC):
@@ -3228,7 +3169,6 @@ export class Game {
             c.u8(s.mags[1]);
             for (let i = 0; i < AMMO_ITEMS.length; i++) c.u16(s.ammo[i]);
             c.u8(s.throwCount);
-            c.u8(s.perks | 0);
             break;
           case 4:
             c.f32(s.leapCd);
@@ -3244,11 +3184,10 @@ export class Game {
         if (put(chunk)) mask |= 1 << chunk;
       }
     }
-    // status: 8 field groups behind their own mask
+    // status: 7 field groups behind their own mask
     const subAt = w.reserve8();
     let sub = 0;
-    for (let g = 0; g < 8; g++) {
-      if (g === 7 && !this.mine) continue; // (Zombies mode's points and perks)
+    for (let g = 0; g < 7; g++) {
       c.reset();
       switch (g) {
         case 0:
@@ -3278,9 +3217,6 @@ export class Game {
         }
         case 6:
           c.u8(p.downed ? Math.max(0, Math.min(255, Math.ceil(p.bleed * 4))) : 0);
-          break;
-        case 7:
-          if (this.mine) this.mine.writePoints(c, p);
           break;
       }
       if (put(5 + g)) sub |= 1 << g;

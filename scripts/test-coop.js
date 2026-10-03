@@ -1,7 +1,9 @@
 // DEAD RIDE co-op in two real browsers against a real server: one creates a game in the lobby, the other joins it by code
 // and readies, the host starts, both load the map and begin together. Then: the guest mirrors the host's zombies (same net
 // ids), each sees the other as a survivor, a hit claimed by the guest is applied by the host and kills for both, the points
-// go to the guest, power-ups are shared, a downed guest is revived by the host, and when the host leaves the guest takes over.
+// go to the guest, power-ups are shared, a downed guest is revived by the host, the Mystery Box is one box for everyone (the
+// host rolls it, the guest who paid takes the gun), a guest's ride keeps time with the host's, a third player joins the game
+// under way, and when the host leaves a guest takes over.
 // Isolated: own profiles, off-screen, no pointer lock. Slow under software rendering (each browser builds the map).
 // usage: node scripts/test-coop.js [--base http://localhost:3000] [--map shaft-nine]
 import puppeteer from 'puppeteer-core';
@@ -149,6 +151,76 @@ try {
     c.revive([...c.remotes.keys()][0]);
   });
   check('the host revives the guest', await until(B.page, () => window.__g.game.state !== 'downed' && window.__g.player.alive, null, 5000, 200));
+  // the Mystery Box: one box, rolled by the host, the gun for the guest who paid
+  for (const P of [A, B]) {
+    await P.page.evaluate(() => {
+      const g = window.__g.game;
+      g.boxStop = g.stopIndex;
+      g.showStopProps(g.stopIndex);
+    });
+  }
+  const boxReady = await until(A.page, () => window.__g.game.box?.group.visible && window.__g.game.box.state === 'closed', null, 10000, 300);
+  const ptsBox = await B.page.evaluate(() => {
+    const g = window.__g.game;
+    g.points = 5000;
+    g.hud.setPoints(g.points);
+    g.net.toHost({ e: 'boxuse', w: g.weapons.current?.id || '' });
+    return g.points;
+  });
+  check('a guest uses the box: it opens for both', boxReady && (await until(A.page, () => window.__g.game.box.state !== 'closed', null, 10000, 200)) && (await until(B.page, () => window.__g.game.box.state !== 'closed', null, 10000, 200)));
+  const resA = await A.page.evaluate(() => [window.__g.game.box.result, window.__g.game.boxOwner]);
+  const resB = await B.page.evaluate(() => [window.__g.game.box.result, window.__g.coop.you, window.__g.game.points]);
+  check('...on the same gun, the guest\'s, paid by the guest', resA[0] === resB[0] && resA[1] === resB[1] && resB[2] === ptsBox - 950, `${resA[0]} / ${resB[0]}, owner ${resA[1]} = ${resB[1]}, points ${ptsBox} -> ${resB[2]}`);
+  const boxR = await until(B.page, () => window.__g.game.box.state === 'ready', null, 180000, 300); // (game time: slow under software rendering)
+  check('the host cannot take the guest\'s gun', (await A.page.evaluate(() => window.__g.game.takeBox())) === false);
+  const took = await B.page.evaluate(() => window.__g.game.takeBox());
+  check('the guest takes it, and the box closes for both', boxR && took === resB[0] && (await until(A.page, () => ['closing', 'closed'].includes(window.__g.game.box.state), null, 5000, 200)), String(took));
+  // the ride: the host calls the vehicle and leaves; the guest's ride is thrown off by 1.5 s and must catch up
+  await A.page.evaluate(() => {
+    const g = window.__g.game;
+    window.__g.zombies.clear();
+    g.toSpawn = 0;
+    g.state = 'cleared';
+    g.clearedT = 0;
+  });
+  check('the vehicle comes for both', (await until(A.page, () => window.__g.game.state === 'awaitBoard', null, 600000, 1000)) && (await until(B.page, () => ['awaitBoard', 'vehicleArriving'].includes(window.__g.game.state), null, 30000, 500)));
+  const stop0 = await A.page.evaluate(() => window.__g.game.stopIndex);
+  await A.page.evaluate(() => {
+    window.__g.game.beginRide(); // (not awaited: it resolves when the ride is over)
+  });
+  check('the host leaves: the guest rides too', await until(B.page, () => window.__g.game.state === 'riding', null, 10000, 100));
+  await B.page.evaluate(() => {
+    const v = window.__g.world.vehicle;
+    for (const a of v.anims) a.t += 1.5;
+    v.clock += 1.5;
+  });
+  await until(B.page, () => window.__g.coop.rideErr < -1, null, 3000, 100);
+  const err0 = await B.page.evaluate(() => window.__g.coop.rideErr);
+  let errs = [];
+  for (let k = 0; k < 180; k++) {
+    await sleep(500);
+    const e = await B.page.evaluate(() => (window.__g.game.state === 'riding' ? window.__g.coop.rideErr : null));
+    if (e === null) break;
+    errs.push(e);
+    if (errs.length > 4 && Math.abs(e) < 0.1) break;
+  }
+  const last = errs.length ? errs[errs.length - 1] : 0;
+  check('...and keeps time with the host\'s (a 1.5 s lead is worked off)', err0 < -1 && Math.abs(last) < 0.25, `error ${err0.toFixed(2)} s -> ${last.toFixed(2)} s over ${errs.length / 2} s`);
+  check('both arrive at the next stop', (await until(A.page, (s) => window.__g.game.stopIndex !== s, stop0, 600000, 1000)) && (await until(B.page, (s) => window.__g.game.stopIndex !== s, stop0, 120000, 1000)));
+  // a third player joins the game under way
+  var C = await open('Latey');
+  await until(C.page, () => !!window.__g?.lobby);
+  await C.page.evaluate(async (code) => {
+    const L = window.__g.lobby;
+    await L.connect('Latey');
+    L.send({ t: 'join', code });
+  }, code);
+  check('a player joins the game under way', await until(C.page, () => window.__g.mode === 'play', null, 600000), '');
+  const rA = await A.page.evaluate(() => [window.__g.game.round, window.__g.game.stopIndex]);
+  check('...at the host\'s round and stop', await until(C.page, (r) => window.__g.game.round === r[0] && window.__g.game.stopIndex === r[1], rA, 30000, 500), `host ${rA}`);
+  check('...and everyone sees everyone', (await until(A.page, () => window.__g.coop.remotes.size === 2, null, 15000, 500)) && (await until(C.page, () => window.__g.coop.remotes.size === 2, null, 15000, 500)));
+  check('...with the host\'s zombies', await until(C.page, () => window.__g.zombies.puppet === true, null, 5000, 500));
+  await C.page.screenshot({ path: `${out}/late.png` });
   // the host leaves: the guest runs the game
   await A.browser.close();
   check('the host leaves: the guest becomes the host', await until(B.page, () => window.__g.coop?.isHost === true, null, 15000, 300));
@@ -158,6 +230,10 @@ try {
 }
 console.log('host errors:', A.errors.slice(0, 5));
 console.log('guest errors:', B.errors.slice(0, 5));
+if (typeof C !== 'undefined' && C) {
+  console.log('late errors:', C.errors.slice(0, 5));
+  await C.browser.close().catch(() => {});
+}
 await B.browser.close().catch(() => {});
 await A.browser.close().catch(() => {});
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nall ok');

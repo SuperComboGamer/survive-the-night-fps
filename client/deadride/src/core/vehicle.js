@@ -19,6 +19,7 @@ export class Vehicle {
     this.floorY = 0; this.state = 'away'; this.doors = 0; this.time = 0; this.anims = []; this.stopIndex = -1; this.ridePhase = 0;
     this.vel = new THREE.Vector3(); this.accel = new THREE.Vector3(); this.accelLocal = new THREE.Vector3(); this.angVel = new THREE.Vector3();
     this._pp = new THREE.Vector3(); this._pv = new THREE.Vector3(); this._pq = new THREE.Quaternion(); this._init = false; this.soundKey = null;
+    this.timeScale = 1; this.clock = 0; // the vehicle's own clock (co-op: a teammate's ride is nudged to keep time with the host's)
     this.interiorLightIntensity = 1; this.onEvent = null; // (evt, data) — 'doors', 'departed', 'arrived', 'bump', 'creak', ...
   }
   emit(evt, data) { if (this.onEvent) this.onEvent(evt, data); }
@@ -27,9 +28,9 @@ export class Vehicle {
   animate(duration, fn, ease = null) { return new Promise((res) => this.anims.push({ t: 0, d: Math.max(1e-3, duration), fn, ease, res })); }
   wait(sec) { return this.animate(sec, () => {}); }
   update(dt, time) {
-    this.time = time;
-    for (let i = this.anims.length - 1; i >= 0; i--) { const a = this.anims[i]; a.t += dt; const k = clamp(a.t / a.d); a.fn(a.ease ? a.ease(k) : k, dt); if (k >= 1) { this.anims.splice(i, 1); a.res(); } }
-    this.simulate(dt, time);
+    this.time = time; const sdt = dt * this.timeScale; this.clock += sdt;
+    for (let i = this.anims.length - 1; i >= 0; i--) { const a = this.anims[i]; a.t += sdt; const k = clamp(a.t / a.d); a.fn(a.ease ? a.ease(k) : k, sdt); if (k >= 1) { this.anims.splice(i, 1); a.res(); } }
+    this.simulate(sdt, time);
     this.group.updateMatrixWorld(true); this._track(dt);
   }
   /** override: continuous physics (sway, engine vibration, wheel spin…) called every frame */

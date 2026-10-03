@@ -565,7 +565,7 @@ export class Zombies {
     }
 
     // day population maintenance (not during the final stand: its zombies are counted, and need the room under the cap)
-    if (g.phase === PHASE.DAY && !g.escape.active && !g.mine) {
+    if (g.phase === PHASE.DAY && !g.escape.active) {
       this.maintainT -= dt;
       if (this.maintainT <= 0) {
         this.maintainT = 4;
@@ -583,7 +583,7 @@ export class Zombies {
     }
 
     // horde stragglers stuck far from every survivor are brought back into the fight
-    if ((g.phase === PHASE.NIGHT || g.escape.active) && g.tick % 40 === 0 && humans.length && !g.mine) {
+    if ((g.phase === PHASE.NIGHT || g.escape.active) && g.tick % 40 === 0 && humans.length) {
       for (const z of g.zombies) {
         if (z.dead || !z.horde || z.boss) continue;
         let md = Infinity;
@@ -605,7 +605,7 @@ export class Zombies {
       }
     }
 
-    if (!g.mine) this.herds.update(dt, humans);
+    this.herds.update(dt, humans);
 
     for (let i = zs.length - 1; i >= 0; i--) {
       const z = zs[i];

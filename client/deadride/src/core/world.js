@@ -38,7 +38,12 @@ export class World {
     if (!heroOnly) await this._buildRest(onProgress); else this.setActive(0);
     return this;
   }
-  async loadRest(onProgress = () => {}) { if (this.loadedAll) return; const n = this.map.stops.length; await this._buildStops(this.stops.length, n, onProgress, n); await this._buildRest(onProgress); }
+  // (one load however many ask: the menu starts it in the background, and PLAY joins it with its progress bar)
+  loadRest(onProgress = null) {
+    if (onProgress) this._restCb = onProgress; if (this.loadedAll) return Promise.resolve();
+    if (!this._restP) { const cb = (p, m) => this._restCb?.(p, m); const n = this.map.stops.length; this._restP = (async () => { await this._buildStops(this.stops.length, n, cb, n); await this._buildRest(cb); })().finally(() => { this._restP = null; }); }
+    return this._restP;
+  }
   async _buildStops(from, to, onProgress, total) {
     const mapDef = this.map;
     for (let i = from; i < to; i++) {
@@ -72,7 +77,9 @@ export class World {
   async _buildStop(def, index) {
     const st = new StopRuntime(def, index, this); st.B = new Builder({ synth: this.synth, group: st.group, seed: index * 131 + 7 });
     const ctx = this._ctx(st.B, st);
-    const data = (await def.build(ctx)) || {}; st.B.finish(); st.data = data;
+    this.synth.defer = true; let data; try { data = (await def.build(ctx)) || {}; } finally { this.synth.defer = false; }
+    await this.synth.flush(); // (the stop's texture programs, compiled side by side)
+    st.B.finish(); st.data = data;
     st.atmoDef = data.atmo || {}; st.atmo = compileAtmo(st.atmoDef); st.atmo.envTex = data.envTex || this.gfx.makeEnv(st.atmoDef, data.envPatches || []); st.atmo.name = def.id;
     st.spawns = data.spawns || []; st.playerStart = data.playerStart || { pos: [0, 0, 0], yaw: 0 }; st.station = data.station || { pos: [0, 0, 0], yaw: 0 }; st.buys = data.buys || { walls: [], perks: [], box: null };
     st.ambient = data.ambient || null; st.update = data.update || null; st.zombieVariants = data.zombieVariants || null; st.landmark = data.landmark || null;

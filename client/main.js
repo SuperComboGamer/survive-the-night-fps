@@ -40,7 +40,7 @@ function onGesture() {
 for (const type of GESTURES) addEventListener(type, onGesture, true);
 
 const callbacks = {
-  async onJoin(name, mode = 0, room = 'main') {
+  async onJoin(name, room) {
     if (joining || !game) return;
     joining = true;
     try {
@@ -56,7 +56,7 @@ const callbacks = {
         } catch {}
       }
       joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
-      await game.join(name, mode, room);
+      await game.join(name, room);
       ui.hideSplash();
       document.activeElement?.blur?.(); // the name field must not keep eating gameplay keys
     } catch (err) {
@@ -85,11 +85,6 @@ const callbacks = {
     }
   },
   onSettings: (s) => applySettings(s),
-  // the splash's mode switcher: show that mode's world behind it
-  onMode: (m, seed) => {
-    const s = typeof seed === 'number' ? seed : game.statusSeed;
-    if (game.state === 'menu' && !joining && typeof s === 'number') requestAnimationFrame(() => setTimeout(() => game.loadWorld(s, m), 0));
-  },
   onResume: () => {
     if (!game) return;
     ui.showPause(false);
@@ -168,10 +163,7 @@ async function preload() {
     const res = await fetch('/status', { cache: 'no-store' });
     const st = await res.json();
     await painted;
-    // (the backdrop is the world the player would play on: the running one, else the one their switcher is on)
-    const wantMode = st.players > 0 && st.phase !== 0 ? st.mode | 0 : ui.splash.mode === 1 ? 1 : 0; // (Dead Ride has its own page: the valley behind it)
-    game.statusSeed = st.seed;
-    if (typeof st.seed === 'number' && game.state === 'menu') game.loadWorld(st.seed, wantMode);
+    if (typeof st.seed === 'number' && game.state === 'menu') game.loadWorld(st.seed);
   } catch {
     // server offline: the UI shows it; build a placeholder world so the menu has a backdrop
     await painted;

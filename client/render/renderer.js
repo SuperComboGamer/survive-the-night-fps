@@ -25,8 +25,6 @@ const QUALITY = {
 // legacy alias used by older call sites
 for (const q of Object.values(QUALITY)) q.sunShadows = q.shadows;
 
-// Zombies mode's own preset: everything on, full resolution
-const MINE_QUALITY = { label: 'Shaft Nine', maxPixelRatio: 2, samples: 4, shadows: true, shadowMapSize: 2048, shadowDist: 60, foliageShadows: false, charShadows: true, flashShadows: true, bloom: true, ao: 2, godrays: true, grass: 0, treeDist: 0 };
 const PS1_LINES = 256; // frame height aimed for in PS1 mode (the real one is the nearest whole-pixel scale: 240 at 720p, 270 at 1080p)
 const PS1_FOG = 1.2; // extra fog in PS1 mode: optical depth x2.2, so about two thirds of the view distance
 
@@ -119,7 +117,6 @@ uniform float uExposure;
 uniform sampler2D tAdapt;
 uniform vec2 uRes;
 uniform float uPs1;
-uniform float uClean; // Zombies mode: no grain, no colour fringing, no flicker, a gentler grade
 varying vec2 vUv;
 
 // the PlayStation's 4x4 dither offsets (in 8-bit steps), added before the colour is cut to 5 bits a channel
@@ -141,7 +138,7 @@ void main() {
   vec2 cc = uv - 0.5;
   float r2 = dot(cc, cc);
   // chromatic aberration at the edges (more when hurt)
-  float ca = (0.0015 * (1.0 - uClean) + uDamage * 0.008 + uDead * 0.004) * r2 * 4.0;
+  float ca = (0.0015 + uDamage * 0.008 + uDead * 0.004) * r2 * 4.0;
   vec3 col;
   col.r = texture2D(tScene, uv + cc * ca).r;
   col.g = texture2D(tScene, uv).g;
@@ -152,11 +149,11 @@ void main() {
   col = aces(col);
   // horror grade: desaturate, cold teal shadows, sickly highlights
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  float desat = (0.2 + uNight * 0.2) * (1.0 - 0.85 * uClean) + uLowHealth * 0.45 + uDead * 0.5;
+  float desat = 0.2 + uNight * 0.2 + uLowHealth * 0.45 + uDead * 0.5;
   col = mix(col, vec3(l), desat);
   vec3 shadowTint = vec3(0.86, 0.98, 1.06);
   vec3 highTint = vec3(1.04, 1.0, 0.9);
-  col *= mix(vec3(1.0), mix(shadowTint, highTint, smoothstep(0.1, 0.7, l)), 1.0 - 0.8 * uClean);
+  col *= mix(shadowTint, highTint, smoothstep(0.1, 0.7, l));
   col = pow(col, vec3(1.05)); // contrast
   // lift the deepest shadows a hair so night silhouettes still read
   col = col * 0.97 + vec3(0.006, 0.007, 0.009);
@@ -173,12 +170,12 @@ void main() {
   col = mix(col, vec3(0.5, 0.02, 0.02), edge * uDamage * 0.75);
   // vignette
   float vig = smoothstep(0.85, 0.2, r2 * (1.6 + uNight * 0.6));
-  col *= mix(mix(0.35, 0.8, uClean), 1.0, vig);
+  col *= mix(0.35, 1.0, vig);
   // film grain + subtle flicker
   float g = hash(uv * uRes + fract(uTime * 13.7) * 100.0) - 0.5;
   // (PS1 mode: far less of it. At that size a grain is a blob, and it would bury the dither pattern)
-  col += g * (0.022 + uNight * 0.012 + uLowHealth * 0.02) * (1.0 - l * 0.5) * (1.0 - 0.7 * uPs1) * (1.0 - uClean);
-  col *= 1.0 - 0.015 * (1.0 - uClean) * (0.5 - 0.5 * sin(uTime * 37.0));
+  col += g * (0.022 + uNight * 0.012 + uLowHealth * 0.02) * (1.0 - l * 0.5) * (1.0 - 0.7 * uPs1);
+  col *= 0.985 + 0.015 * sin(uTime * 37.0);
   // dead: fade to dark red
   col = mix(col, col * vec3(0.5, 0.1, 0.1), uDead * 0.6);
   col = toSRGB(clamp(col, 0.0, 1.0));
@@ -236,7 +233,6 @@ export class GameRenderer {
         tAdapt: { value: null },
         uRes: { value: new THREE.Vector2(1, 1) },
         uPs1: { value: 0 },
-        uClean: { value: 0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -300,26 +296,14 @@ export class GameRenderer {
   }
 
   get q() {
-    return this.mine ? MINE_QUALITY : QUALITY[this.quality];
-  }
-
-  // Zombies mode draws at the best the machine can do (full device resolution up to 2x, 4x MSAA, flashlight shadows,
-  // SSAO) with a clean image: no grain, fringing or flicker (the post pass's uClean)
-  setMine(on) {
-    on = !!on;
-    if (on === !!this.mine) return;
-    this.mine = on;
-    this.postMat.uniforms.uClean.value = on ? 1 : 0;
-    this.renderer.shadowMap.enabled = this.q.shadows;
-    this._makeTarget();
-    this.resize();
+    return QUALITY[this.quality];
   }
 
   setQuality(q) {
     if (!QUALITY[q]) q = 'medium';
     if (q === this.quality) return;
     this.quality = q;
-    this.renderer.shadowMap.enabled = this.q.shadows;
+    this.renderer.shadowMap.enabled = QUALITY[q].shadows;
     this._makeTarget();
     this.resize();
   }
@@ -374,7 +358,7 @@ export class GameRenderer {
   _makeTarget() {
     if (this.rt) this.rt.dispose();
     const isWebGL2 = this.renderer.capabilities.isWebGL2;
-    const samples = isWebGL2 && !this.ps1 ? this.q.samples : 0;
+    const samples = isWebGL2 && !this.ps1 ? QUALITY[this.quality].samples : 0;
     // The scene target never needs alpha, so it is packed-float HDR where supported: half the memory
     // traffic of RGBA16F, which dominates the cost of the 4x MSAA target (identical to within 2/255
     // after tone mapping).
@@ -404,7 +388,7 @@ export class GameRenderer {
     const h = window.innerHeight;
     const dpr = window.devicePixelRatio || 1;
     // PS1 mode: every pixel of the frame is a whole number of screen pixels, so the scaled-up image stays even
-    const pr = this.ps1 ? dpr / Math.max(1, Math.round((h * dpr) / PS1_LINES)) : Math.min(dpr, this.q.maxPixelRatio) * (this.mine ? 1 : this.renderScale);
+    const pr = this.ps1 ? dpr / Math.max(1, Math.round((h * dpr) / PS1_LINES)) : Math.min(dpr, QUALITY[this.quality].maxPixelRatio) * this.renderScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
@@ -587,7 +571,7 @@ export class GameRenderer {
       r.autoClear = true;
     }
     u.tAdapt.value = this.adaptTex;
-    if (this.q.bloom) this._bloom(post.exposure ?? 1, this.mine ? 0.1 : 0.32 + post.night * 0.18);
+    if (this.q.bloom) this._bloom(post.exposure ?? 1, 0.32 + post.night * 0.18);
     else {
       u.tBloom.value = this.black;
       u.uBloom.value = 0;

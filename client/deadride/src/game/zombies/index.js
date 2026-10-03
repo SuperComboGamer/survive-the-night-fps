@@ -46,12 +46,12 @@ class Zombie {
 }
 
 export class ZombieManager {
-  constructor({ gfx, world, fx, audio }) {
-    this.gfx = gfx; this.world = world; this.fx = fx; this.audio = audio;
+  constructor({ gfx, world, fx, audio, pool = POOL, silent = false }) {
+    this.gfx = gfx; this.world = world; this.fx = fx; this.audio = audio; this.silent = silent; // (silent: no voices or zombie foley - net/teammates.js)
     this.group = new THREE.Group(); this.group.name = 'zombies'; gfx.scene.add(this.group); gfx.vmSkip?.add(this.group);
-    this.pool = []; for (let i = 0; i < POOL; i++) { const z = new Zombie(i, this); this.pool.push(z); this.group.add(z.body.mesh); z.anim.onStep = (f, a) => this._onStep(z, f, a); }
+    this.pool = []; for (let i = 0; i < pool; i++) { const z = new Zombie(i, this); this.pool.push(z); this.group.add(z.body.mesh); z.anim.onStep = (f, a) => this._onStep(z, f, a); }
     this.alive = []; this.bodies = []; // alive: living zombies (API); bodies: every in-use body (alive + corpses)
-    this.round = 1; this.navT = 0; this.time = 0; this.mapId = null; this.sig = new Signature(this, POOL); this.windVec = new V3(); this.voiceSets = new Map(); this.voicesPlaying = 0; this._voiceEnd = [];
+    this.round = 1; this.navT = 0; this.time = 0; this.mapId = null; this.sig = new Signature(this, pool); this.windVec = new V3(); this.voiceSets = new Map(); this.voicesPlaying = 0; this._voiceEnd = [];
     this._stepNames = new Map(); this.onKill = null; this.onHit = null; this.onAttackPlayer = null; this.onSpawn = null; this.onSpawnRise = null; this.onBoardTorn = null;
     this.stats = { updateMs: 0, updateMsAvg: 0, visible: 0, budgetLeft: 0, draw: { tris: 0, calls: 0, sunTris: 0, sunCalls: 0, spotTris: 0, spotCalls: 0, total: 0, totalCalls: 0 } }; this.player = null; this.reach = 1.25;
     this.lodDist = [6, 12]; this.maxLod0 = 3; this.farShaderDist = 6; /* beyond this distance (m) the cheaper 'far' fragment shader is used even on LOD1 geometry: a close swarm of 24 with the full shader costs 5–7 ms GPU at 1080p */ this.animLodDist = 14; this.triBudget = 1100000; this._order = new Array(POOL).fill(null); this._orderN = 0; // LOD distances (m) + triangle budget for all zombie draws per frame (main + all shadow passes)
@@ -264,11 +264,16 @@ export class ZombieManager {
   _locomote(z, dt, w) {
     const A = z.anim;
     // predict next root position, push it out of solids, remove the velocity component into walls
+    // (net/teammates.js: a teammate already collided on their own machine - their height comes from there too - and while riding
+    // a moving vehicle the world's ground under them means nothing: feet stand at the body's height)
+    if (z.free) { A.pos.y += ((z.net?.y ?? A.pos.y) - A.pos.y) * Math.min(1, dt * 14); if (z.flat) w = null; }
+    else {
     const nx = A.pos.x + A.vel.x * dt, nz = A.pos.z + A.vel.z * dt; _v.set(nx, A.pos.y, nz);
     const r = 0.28 * z.pose.scale;
     if (w.push(_v, r, A.pos.y, 1.7 * z.pose.scale)) { const px = _v.x - nx, pz = _v.z - nz; const pl = Math.hypot(px, pz); if (pl > 1e-5) { const nxn = px / pl, nzn = pz / pl; const vn = A.vel.x * nxn + A.vel.z * nzn; if (vn < 0) { A.vel.x -= vn * nxn; A.vel.z -= vn * nzn; } A.pos.x += px; A.pos.z += pz; } }
     const g = w.groundAt(A.pos.x, A.pos.z, A.pos.y + 0.45, _g, 0.45); const gy = g.y; z.surface = g.surface;
     A.pos.y = Math.abs(gy - A.pos.y) > 0.6 ? gy : A.pos.y + (gy - A.pos.y) * Math.min(1, dt * 14);
+    }
     const PR = this._prof; let t1 = PR ? performance.now() : 0;
     // fast movers are sub-stepped when the frame is long (> 24 ms): stance lift-off timing stays exact, so planted feet never
     // stretch out of reach (without this a sprinter at 25 fps slips 1-4 cm)
@@ -456,13 +461,14 @@ export class ZombieManager {
     // audio engine names: step.<surface>.<walk|sprint>.<L|R> (cached per surface — no string building per step) + zombie foley layers
     let N = this._stepNames.get(surf); if (!N) { N = {}; for (const m of ['walk', 'sprint']) for (const s of ['L', 'R']) N[m + s] = `step.${surf}.${m}.${s}`; this._stepNames.set(surf, N); }
     const pos = f.heel || z.pos; this.audio.play(N[(z.speedClass === 'walk' ? 'walk' : 'sprint') + (f.s || 'L')], { pos, vol: heavy * (f.hand ? 0.6 : 1), pitch: 0.85 + rand() * 0.2 });
+    if (this.silent) return;
     if (z.speedClass === 'walk' && !f.hand && rand() < 0.5) this.audio.play(z.anim.idio.drag >= 0 && rand() < 0.6 ? 'zombie.drag' : 'zombie.step', { pos, vol: 0.5 });
     if (rand() < 0.12) this.audio.play('zombie.cloth', { pos: z.pos, vol: 0.4 });
     if ((z.def.wet || z.wetT > 0) && !f.hand && rand() < 0.5 && z.distCam < 12) this.fx.decals.add(_v.copy(f.heel).setY(f.heel.y + 0.004), _v2.set(0, 1, 0), 12, 0.22 + rand() * 0.1, 0.05, null, 1);
   }
   /** voice hooks: audio.zombieVoice(profile) → {idle, attack, pain, death, spawn, sprint} (arrays of AudioBuffers) */
   voice(z, kind, vol = 1) {
-    const a = this.audio; if (!a || !a.ready || !a.play) return;
+    const a = this.audio; if (!a || !a.ready || !a.play || this.silent) return;
     let set = this.voiceSets.get(z.def.id);
     if (set === undefined) { set = null; try { set = a.zombieVoice ? a.zombieVoice(z.def.voice) : null; } catch (e) { set = null; } this.voiceSets.set(z.def.id, set); }
     // budget: at most 5 concurrent voices, nearest first (rough)

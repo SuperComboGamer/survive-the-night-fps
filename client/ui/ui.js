@@ -9,7 +9,6 @@ import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
 import { Splash, Pause, Death, EndScreen, Banner, VoiceList, renderControls, DEFAULT_CONTROLS } from './menus.js';
-import { MineHud } from './minehud.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Summary } from './hud2.js';
@@ -29,8 +28,6 @@ const CALLBACKS = [
   'onCloseInventory',
   'onChatSend',
   'onSettings',
-  'onMode',
-  'onVote',
   'onResume',
   'onLeave',
   'onUiSound',
@@ -72,7 +69,6 @@ export class UI {
 
     this.hud = new Hud(this, hudL, topCenter, topRight);
     this.voiceList = new VoiceList(this.hud.comms); // who is talking, beside your own mic over the vitals
-    this.mineHud = new MineHud(hudL);
     this.kf = new Killfeed(hudL);
     this.pickups = new Pickups(hudL);
     this.chat = new Chat(this, hudL);
@@ -129,11 +125,6 @@ export class UI {
     } catch (e) {
       console.error(e);
     }
-  }
-
-  // Zombies mode swaps the survival HUD's clock and objective for its own
-  setMineMode(on) {
-    this.root.classList.toggle('mine-mode', !!on);
   }
 
   _menuState() {

@@ -58,7 +58,7 @@ export class Menu {
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     this.root = document.createElement('div'); this.root.id = 'menu'; ui.appendChild(this.root);
     this.root.innerHTML = `<div class="vig"></div><h1>DEAD<em> RIDE</em></h1><div class="sub">Four maps · Four vehicles · One long night</div>
-      <div class="tools"><button data-a="controls">Controls</button><button data-a="settings">Settings</button></div>
+      <div class="tools"><button data-a="home" title="Back to Survive the Night">◂ Survive the Night</button><button data-a="controls">Controls</button><button data-a="settings">Settings</button></div>
       <div class="info"></div><div class="cards"></div>
       <div class="modal" data-m="settings"><div class="box"><h3>SETTINGS</h3>
         <div class="row">Graphics quality<select id="s-q"><option>low</option><option>medium</option><option selected>high</option><option>ultra</option></select></div>
@@ -79,7 +79,7 @@ export class Menu {
         <div style="text-align:right;margin-top:18px"><button data-a="close">Close</button></div></div></div>
       <div class="load"><div class="t"></div><div class="bar"><i></i></div><div class="m"></div><div class="go">CLICK TO BEGIN</div></div>`;
     this.eInfo = this.root.querySelector('.info'); this.eCards = this.root.querySelector('.cards'); this.eLoad = this.root.querySelector('.load');
-    this.root.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a === 'settings' || a === 'controls') this.root.querySelector(`[data-m=${a}]`).style.display = 'flex'; else if (a === 'close') this.root.querySelectorAll('.modal').forEach((m) => (m.style.display = 'none')); });
+    this.root.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a === 'home') location.href = '/'; else if (a === 'settings' || a === 'controls') this.root.querySelector(`[data-m=${a}]`).style.display = 'flex'; else if (a === 'close') this.root.querySelectorAll('.modal').forEach((m) => (m.style.display = 'none')); });
     const q = (id) => this.root.querySelector(id); const S = this.settings = { quality: 'high', fov: 90, sens: 1, vol: 0.8, fps: false, dyn: true };
     q('#s-q').onchange = (e) => { S.quality = e.target.value; gfx.setQuality(S.quality); }; q('#s-fov').oninput = (e) => { S.fov = +e.target.value; q('#s-fov-v').textContent = S.fov; onSettings?.(S); };
     q('#s-sens').oninput = (e) => { S.sens = +e.target.value; q('#s-sens-v').textContent = S.sens.toFixed(1); onSettings?.(S); }; q('#s-vol').oninput = (e) => { S.vol = +e.target.value; onSettings?.(S); };
@@ -101,7 +101,7 @@ export class Menu {
     const stops = d.stops.map((s) => `<div class="n"><i></i>${s.name}</div>`).join('<div class="l"></div>');
     this.eInfo.innerHTML = `<h2>${d.name.toUpperCase()}</h2><p>${d.blurb}</p><div class="route">${stops}<span class="loop">↻</span></div>
       <div class="meta"><div>Vehicle<b>${d.vehicleName}</b></div><div>Undead<b>${d.zombieName}</b></div><div>Threat<b class="threat">${[1, 2, 3, 4, 5].map((k) => `<i class="${k <= d.threat ? 'on' : ''}"></i>`).join('')}</b></div></div>
-      <button class="play">PLAY ${d.name.toUpperCase()}</button> <button class="play online" style="margin-left:10px;background:#1b1a18;color:var(--acc,#c21f1f);border:2px solid var(--acc,#c21f1f);box-shadow:none">PLAY ONLINE</button>`;
+      <div style="display:flex;gap:12px;align-items:stretch;flex-wrap:nowrap"><button class="play">PLAY ${d.name.toUpperCase()}</button><button class="play online" style="padding:12px 22px;font-size:20px;background:rgba(10,9,8,.7);color:var(--acc,#c21f1f);border:2px solid var(--acc,#c21f1f);box-shadow:none;white-space:nowrap">PLAY ONLINE</button></div>`;
     this.eInfo.querySelector('.play').onclick = () => { this.uiSound('ui.buy', 0.7); this.onPlay(m.id); };
     this.eInfo.querySelector('.play.online').onclick = () => { this.uiSound('ui.click', 0.7); this.onOnline?.(m.id); };
     this.preview(i);

@@ -1,5 +1,5 @@
 // Several games on one server: opens a second room over HTTP, joins both over real WebSockets and checks they are separate
-// games (different mode, different players), that the list shows them, and that an emptied opened room is closed.
+// games (each its own seed and players), that the list shows them, and that others can join an existing game.
 // usage: node scripts/test-rooms.js   (starts its own server on a spare port)
 import { spawn } from 'node:child_process';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
@@ -18,7 +18,7 @@ for (let i = 0; i < 100 && !ready; i++) await sleep(100);
 const base = `http://localhost:${PORT}`;
 const get = async (p) => (await fetch(base + p)).json();
 
-function join(room, name, mode) {
+function join(room, name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=${room}`);
     ws.binaryType = 'arraybuffer';
@@ -27,18 +27,13 @@ function join(room, name, mode) {
       w.u8(C2S.JOIN);
       w.u8(PROTOCOL_VERSION);
       w.str(name);
-      w.u8(mode);
       ws.send(w.copy());
     };
     ws.onmessage = (m) => {
       const r = new Reader(m.data);
       if (r.u8() === S2C.WELCOME) {
         const id = r.u16();
-        r.u32();
-        r.u32();
-        r.u8();
-        r.u8();
-        resolve({ ws, id, mode: r.u8() });
+        resolve({ ws, id, seed: r.u32() });
       }
     };
     ws.onerror = reject;
@@ -49,22 +44,25 @@ function join(room, name, mode) {
 try {
   let list = await get('/rooms');
   check('the main room is listed', list.length === 1 && list[0].id === 'main' && list[0].main);
-  const made = await get('/rooms/new?mode=1&name=Deep%20Dive');
+  const made = await get('/rooms/new?name=Deep%20Dive');
   check('a second room can be opened', !!made.id && made.name === 'Deep Dive', JSON.stringify(made));
   list = await get('/rooms');
-  check('it is listed as a Zombies room', list.length === 2 && list.find((r) => r.id === made.id)?.mode === 1);
-  const a = await join('main', 'Ann', 0);
-  const b = await join(made.id, 'Bob', 0); // (asks for survival, but the room was opened for zombies)
-  check('the main room plays survival, the opened one zombies, whoever joins', a.mode === 0 && b.mode === 1, `${a.mode} ${b.mode}`);
+  check('it is listed', list.length === 2 && !!list.find((r) => r.id === made.id));
+  const a = await join('main', 'Ann');
+  const b = await join(made.id, 'Bob');
+  const seeds = Object.fromEntries(list.map((r) => [r.id, r.seed]));
+  check('each player is in their own game (its own world)', a.seed === seeds.main && b.seed === seeds[made.id], `${a.seed} ${b.seed}`);
   await sleep(300);
   list = await get('/rooms');
   check('each room has its own player', list.find((r) => r.id === 'main').players === 1 && list.find((r) => r.id === made.id).players === 1);
-  const c = await join(made.id, 'Cy', 1);
+  const c = await join(made.id, 'Cy');
   await sleep(300);
   list = await get('/rooms');
-  check('others can join an existing game', list.find((r) => r.id === made.id).players === 2 && c.mode === 1);
+  check('others can join an existing game', list.find((r) => r.id === made.id).players === 2 && c.seed === b.seed);
   const st = await get('/status');
-  check('/status is still the main room', st.mode === 0 && st.players === 1);
+  check('/status is still the main room', st.players === 1 && st.seed === seeds.main);
+  const dr = await get('/dr/status');
+  check('/dr/status lists the open Dead Ride games', Array.isArray(dr.games));
   for (const x of [a, b, c]) x.ws.close();
   await sleep(300);
   list = await get('/rooms');

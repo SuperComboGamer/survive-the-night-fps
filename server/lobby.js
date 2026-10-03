@@ -286,6 +286,6 @@ export class Lobbies {
   status() {
     let players = 0;
     for (const l of this.lobbies.values()) players += l.players.length;
-    return { lobbies: this.lobbies.size, players, browsing: this.clients.size - players };
+    return { lobbies: this.lobbies.size, players, browsing: this.clients.size - players, games: this.list() }; // (games: the open ones, for the splash)
   }
 }

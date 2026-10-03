@@ -160,16 +160,16 @@ app.get('/dr/status', (res) => json(res, lobbies.status()));
 
 app.get('/status', (res) => {
   // tick: the last 10 s window, the totals since boot and the last slow tick (timings only: this endpoint is public)
-  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, mode: game.mode, tick: game.tickStats.status(performance.now()) });
+  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()) });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
-// the list of games, and opening a new one: /rooms/new?mode=0|1&name=...  (answers { id } or { error })
+// the list of games, and opening a new one: /rooms/new?name=...  (answers { id } or { error })
 const json = (res, body) => res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(JSON.stringify(body));
 app.get('/rooms', (res) => json(res, rooms.list()));
 app.get('/rooms/new', (res, req) => {
   const q = new URLSearchParams(req.getQuery() || '');
-  const room = rooms.open(+q.get('mode'), q.get('name'));
+  const room = rooms.open(q.get('name'));
   json(res, room ? { id: room.id, name: room.name } : { error: 'Too many games open: join one' });
 });
 

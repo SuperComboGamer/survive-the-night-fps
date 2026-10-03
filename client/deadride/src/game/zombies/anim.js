@@ -76,6 +76,7 @@ export class Animator {
     this.slip = { max: 0, sum: 0, n: 0, last: 0 }; this.measure = false;
     this.lookW = 1; this.crouch = 0; this.stumble = 0; this.onStep = null; this.speedClass = 'walk';
     this.handPlant = null; // optional arm IK targets {L:V3|null, R:V3|null}
+    this.strafe = false; // face want.faceYaw even while moving (the living: co-op teammates walk one way and look another)
     this.scripted = null; this.mode = 'loco'; this.lost = null;
   }
   /** initialise at a world position/yaw with body scale */
@@ -123,7 +124,7 @@ export class Animator {
     this.acc.set((this.vel.x - this._pv.x) / Math.max(dt, 1e-4), 0, (this.vel.z - this._pv.z) / Math.max(dt, 1e-4));
     this.pos.x += this.vel.x * dt; this.pos.z += this.vel.z * dt;
     // facing: velocity direction when moving, else requested facing
-    let wantYaw = this.yaw; if (spd > 0.25 && this.stumble <= 0) wantYaw = Math.atan2(-this.vel.x, -this.vel.z); else if (W.faceYaw !== null) wantYaw = W.faceYaw;
+    let wantYaw = this.yaw; if (this.strafe && W.faceYaw !== null) wantYaw = W.faceYaw; else if (spd > 0.25 && this.stumble <= 0) wantYaw = Math.atan2(-this.vel.x, -this.vel.z); else if (W.faceYaw !== null) wantYaw = W.faceYaw;
     const maxTurn = Math.min(cls === 'sprint' ? 3.4 : cls === 'run' ? 3.0 : 1.8, 6.0 / Math.max(spd, 0.6));
     const dy = angleDelta(this.yaw, wantYaw); const tr = clamp(dy * 6, -maxTurn, maxTurn); this.yawRate = damp(this.yawRate, tr, 10, dt); this.yaw = wrapAngle(this.yaw + this.yawRate * dt);
     // ---- 2. gait params

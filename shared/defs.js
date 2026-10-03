@@ -520,19 +520,6 @@ export const NOTIFY = {
   SHADE: 39, // the first shade of the night is out there
   HERD: 40, // the wandering herd is onto you (sent to the survivor it noticed). arg = how many of them
   RETURNED: 41, // arg = player id: dead (or a player-zombie) since the last sunrise, a survivor again at this one
-  // Zombies mode (server/mine.js)
-  MINE_ROUND: 42, // arg = round number
-  MINE_CLEAR: 43, // the round is over: the cage is coming
-  MINE_RIDE: 44, // the cage is going down: arg = next stop
-  MINE_STOP: 45, // arrived: arg = stop
-  MINE_NEED: 46, // arg = points it costs (private)
-  MINE_OWNED: 47, // already has the perk (private)
-  MINE_GUN: 48, // arg = item bought / taken from the box (private)
-  MINE_AMMO: 49, // arg = item refilled (private)
-  MINE_PERK: 50, // arg = perk bit (private)
-  MINE_GATE: 51, // arg = gate index: debris cleared
-  MINE_POWER: 52, // arg = power-up kind (MINE.POWER)
-  MINE_TEDDY: 53, // the box took the points back (private)
 };
 
 // killer kinds for killfeed

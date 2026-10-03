@@ -34,14 +34,17 @@ export const PATTERNS = {
 };
 export const LAYERS = ['rust', 'moss', 'grime', 'scratch', 'edge', 'wet', 'frost', 'dust', 'streak', 'cracks', 'sparkle', 'oil'];
 
-export function buildFragment({ emissive = false, custom = '' } = {}) {
-  return /* glsl */`
+// pattern: with it, the program is built for that one pattern (uPattern a constant: the compiler drops every other pattern's
+// code). Windows browsers translate shaders through Direct3D's compiler, which takes tens of seconds over the program with all
+// 27 patterns in it; a program per pattern compiles in a fraction of a second.
+export function buildFragment({ emissive = false, custom = '', pattern = -1, layerMask = -1 } = {}) {
+  return gateLayers(/* glsl */`
 precision highp float; precision highp int;
 in vec2 vUv;
 layout(location = 0) out highp vec4 oAlb;
 layout(location = 1) out highp vec4 oOrm;
 ${emissive ? 'layout(location = 2) out highp vec4 oEmi;' : ''}
-uniform int uPattern; uniform float uSeed; uniform float uSize; uniform float uTileM; uniform float uBump; uniform float uAOAmt;
+${pattern >= 0 ? `const int uPattern = ${pattern | 0};` : 'uniform int uPattern;'} uniform float uSeed; uniform float uSize; uniform float uTileM; uniform float uBump; uniform float uAOAmt;
 uniform vec4 uP0; uniform vec4 uP1;
 uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3;
 uniform vec2 uRough; uniform float uMetal;
@@ -467,7 +470,20 @@ void main(){
   oAlb = vec4(max(s.a, 0.), s.h);
   oOrm = vec4(ao, clamp(s.r, .03, 1.), clamp(s.m, 0., 1.), 1.);
   ${emissive ? 'oEmi = vec4(max(s.e, 0.), 1.);' : ''}
-}`;
+}`, layerMask);
+}
+
+// The layers a material does not use are compiled out (each `if (uLX.c > 0.)` gets a constant in front): the compiler drops
+// their code, and a program with two layers in it compiles several times faster than one with all twelve.
+const LAYER_UNIFORMS = ['uLA.x', 'uLA.y', 'uLA.z', 'uLA.w', 'uLB.x', 'uLB.y', 'uLB.z', 'uLB.w', 'uLC.x', 'uLC.y', 'uLC.z', 'uLC.w'];
+function gateLayers(src, mask) {
+  if (mask < 0) return src;
+  let out = src;
+  LAYER_UNIFORMS.forEach((u, i) => {
+    const on = (mask >> i) & 1;
+    out = out.split(`if (${u} > 0.)`).join(`if (${on ? 'true' : 'false'} && ${u} > 0.)`);
+  });
+  return out;
 }
 
 

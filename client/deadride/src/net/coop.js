@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { createSurvivor } from '../../../render/models/characters.js';
 import { ITEM } from '../../../../shared/defs.js';
 import { TO_HOST, TO_ALL } from './lobby.js';
+import { Teammates } from './teammates.js';
 
 const T_EVENT = 1;
 const T_PLAYER = 2;
@@ -36,7 +37,7 @@ const dec = new TextDecoder();
 const r3 = (v) => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
 const v3 = (a, out = new THREE.Vector3()) => out.set(a[0], a[1], a[2]);
 // what may only come from the host (anyone else sending these is ignored), and what only the host acts on
-const FROM_HOST = new Set(['go', 'spawn', 'dmg', 'kill', 'atk', 'hurt', 'credit', 'round', 'cleared', 'arrive', 'ride', 'state', 'pu', 'put', 'boards', 'gameover', 'sync']);
+const FROM_HOST = new Set(['go', 'spawn', 'dmg', 'kill', 'atk', 'hurt', 'credit', 'round', 'cleared', 'arrive', 'ride', 'state', 'pu', 'put', 'boards', 'gameover', 'sync', 'box', 'boxmove', 'rp']);
 // the fields of each event that are vectors
 const VECS = { spawn: ['p'], dmg: ['d', 'pt'], hit: ['d', 'pt', 'n'], shot: ['o', 'd'], pu: ['p'], expl: ['p'] };
 const fin = (n, lo, hi) => typeof n === 'number' && Number.isFinite(n) && n >= lo && n <= hi;
@@ -104,6 +105,9 @@ export class Coop {
     this.zt = 0;
     this.st = 0;
     this.bt = 0;
+    this.rt = 0;
+    this.rpT = 0;
+    this.rideErr = 0;
     this.shooter = 0; // while the host applies a teammate's hit: who to credit
     this.downT = 0;
     this.reviveT = 0;
@@ -148,12 +152,25 @@ export class Coop {
     zombies.onAttackTarget = (z, tgt, dmg) => this.isHost && tgt.pid && this.event(tgt.pid, { e: 'hurt', dmg, x: z.pos.x, z: z.pos.z });
     zombies.targets = [];
     this.buildHud();
+    // teammates as DEAD RIDE people (net/teammates.js): the outfits build while the map loads; survivors stand in until then
+    this.mates = new Teammates({ gfx: sys.gfx, world: sys.world, fx: sys.fx, audio: sys.audio });
+    this.mates.prepare().catch((e) => console.warn('teammate models', e));
   }
 
   // ---------------------------------------------------------------- loading: everyone starts together
   // resolves when the host says go (the host waits for everyone who was in the lobby, at most 2 minutes)
   waitGo() {
-    if (this.late) return new Promise((res) => this.goWaiters.push(res)); // (a late joiner starts on the host's 'sync')
+    if (this.late) {
+      // a late joiner starts on the host's 'sync': it asks once its map is loaded (and again until the answer comes)
+      const ask = () => {
+        if (this.ready || !this.game) return;
+        this.event(TO_HOST, { e: 'loaded' });
+        setTimeout(ask, 4000);
+      };
+      this.wantSync = true;
+      ask();
+      return new Promise((res) => this.goWaiters.push(res));
+    }
     this.event(TO_ALL, { e: 'loaded' });
     this.loaded.add(this.you);
     return new Promise((res) => {
@@ -192,6 +209,7 @@ export class Coop {
   // ---------------------------------------------------------------- receiving
   onBinary(from, p) {
     const type = p[0];
+    if (!this.game && type !== T_EVENT) return; // (not attached yet: this machine is still loading the map)
     if (type === T_EVENT) {
       let m;
       try {
@@ -207,15 +225,18 @@ export class Coop {
   onEvent(from, m) {
     const g = this.game;
     if (!m || typeof m.e !== 'string') return;
+    if (!g && m.e !== 'loaded' && m.e !== 'go') return; // (still loading: only the start handshake counts)
     if (FROM_HOST.has(m.e) && from !== this.hostPid) return; // (only the host speaks for the game)
     for (const k of VECS[m.e] || []) if (m[k] != null && !vec(m[k])) return; // (positions and directions are three finite numbers)
     const z = m.id !== undefined ? this.zById.get(m.id) : null;
     switch (m.e) {
       case 'loaded':
         this.loaded.add(from);
+        if (this.isHost && this.ready && from !== this.you) this.event(from, this.syncMsg()); // (a late joiner is ready for the state of play)
         break;
       case 'go':
-        this.go();
+        if (!g) this.late = true; // (the team started while this machine was still loading: it joins as a late joiner)
+        else this.go();
         break;
       // -------- from the host
       case 'spawn':
@@ -271,7 +292,10 @@ export class Coop {
         g.netGameOver(m);
         break;
       case 'sync':
-        if (this.client) this.applySync(m);
+        if (this.client && this.wantSync) this.applySync(m);
+        break;
+      case 'rp':
+        if (this.client) this.onRideClock(m);
         break;
       // -------- from any player
       case 'repair': {
@@ -280,7 +304,13 @@ export class Coop {
         break;
       }
       case 'boxmove':
-        if (from !== this.you) g.netBoxMove(m.stop);
+        if (from !== this.you) g.netBoxMove(num(m.stop, -1, 99, -1));
+        break;
+      case 'box':
+        if (this.client) g.netBox(m);
+        break;
+      case 'boxtake':
+        if (from !== this.you) g.netBoxTaken(from);
         break;
       case 'revive':
         if (m.pid === this.you) this.revived(from);
@@ -301,6 +331,9 @@ export class Coop {
         break;
       case 'take':
         if (this.isHost) g.hostTakePowerup(m.id, from);
+        break;
+      case 'boxuse':
+        if (this.isHost) g.hostBoxUse(from, m.w);
         break;
     }
   }
@@ -498,16 +531,28 @@ export class Coop {
   remote(pid) {
     let r = this.remotes.get(pid);
     if (!r) {
-      const sv = createSurvivor(pid * 7 + 3);
-      sv.setWeapon(ITEM.PISTOL);
-      this.gfx.scene.add(sv.object);
       const tag = document.createElement('div');
       tag.className = 'coop-tag';
       this.hudRoot.appendChild(tag);
-      r = { pid, sv, tag, buf: [], gun: -1, speed: 0, flags: F_ALIVE, hp: 1, stop: 0, pos: new THREE.Vector3(), yaw: 0, pitch: 0, fire: 0, seen: performance.now() };
+      r = { pid, sv: null, stn: false, tag, buf: [], gun: -1, speed: 0, flags: F_ALIVE, hp: 1, stop: 0, pos: new THREE.Vector3(), yaw: 0, pitch: 0, fire: 0, seen: performance.now() };
+      this.model(r);
       this.remotes.set(pid, r);
     }
     return r;
+  }
+  // a teammate's body: a DEAD RIDE person in the outfit of their team slot once those are built, a Survive the Night survivor before
+  model(r) {
+    const slot = [...this.names.keys()].sort((a, b) => a - b).indexOf(r.pid);
+    const mate = this.mates?.make(slot >= 0 ? slot : r.pid, r.pid * 7919 + 1);
+    if (!mate && r.sv) return;
+    if (r.sv) {
+      this.gfx.scene.remove(r.sv.object);
+      r.sv.dispose?.();
+    }
+    r.sv = mate || createSurvivor(r.pid * 7 + 3);
+    r.stn = !mate;
+    if (r.stn) this.gfx.scene.add(r.sv.object);
+    r.sv.setWeapon(STN_GUN[GUNS[r.gun]] ?? ITEM.PISTOL);
   }
 
   onPlayer(from, d) {
@@ -562,6 +607,7 @@ export class Coop {
       r.hp = b.hp;
       r.stop = b.stop;
       r.speed = b.speed;
+      if (r.stn && this.mates?.ready) this.model(r);
       if (b.gun !== r.gun) {
         r.gun = b.gun;
         r.sv.setWeapon(STN_GUN[GUNS[b.gun]] ?? ITEM.PISTOL);
@@ -576,8 +622,9 @@ export class Coop {
         r.fire = 0;
       }
       const downed = !!(r.flags & F_DOWNED);
-      r.sv.update(dt, { speed: downed ? 0 : r.speed, sprint: !!(r.flags & F_SPRINT), crouch: !!(r.flags & F_CROUCH) || downed, pitch: downed ? 0.9 : -r.pitch, onGround: true, reloading: !!(r.flags & F_RELOAD), dead: !(r.flags & (F_ALIVE | F_DOWNED)), time });
+      r.sv.update(dt, { speed: downed ? 0 : r.speed, sprint: !!(r.flags & F_SPRINT), crouch: !!(r.flags & F_CROUCH) || downed, pitch: r.stn ? (downed ? 0.9 : -r.pitch) : r.pitch, onGround: true, reloading: !!(r.flags & F_RELOAD), dead: !(r.flags & (F_ALIVE | F_DOWNED)), downed, riding: !!riding, vehicle: v, time });
     }
+    this.mates?.update(dt, time);
     // the zombies' targets on the host: every player who is up
     if (this.isHost) {
       const T = this.zombies.targets;
@@ -673,10 +720,7 @@ export class Coop {
   onArrived(pid, name) {
     this.names.set(pid, name);
     this.hud.banner?.(`${safeName(name).toUpperCase()} JOINED`, '');
-    if (!this.isHost) return;
-    // the state of play for the newcomer, once it has loaded (it asks with 'loaded'... a late joiner just gets it now and again until it is ready)
-    const send = () => this.event(pid, this.syncMsg());
-    setTimeout(send, 500);
+    // (the host sends the newcomer the state of play when it says it has loaded: case 'loaded')
   }
   syncMsg() {
     const g = this.game;
@@ -696,6 +740,7 @@ export class Coop {
   }
   applySync(m) {
     const g = this.game;
+    this.wantSync = false;
     g.netSync(m);
     for (const s of m.zombies) {
       s.kind = 'walk';
@@ -729,10 +774,26 @@ export class Coop {
     this.hud.banner?.(`${safeName(name || 'A player').toUpperCase()} LEFT`, '');
   }
 
+  // ---------------------------------------------------------------- the ride: a teammate's vehicle keeps time with the host's
+  onRideClock(m) {
+    const g = this.game;
+    const v = this.world.vehicle;
+    if (!v || g.state !== 'riding' || m.s !== g.stopIndex || !fin(m.t, 0, 600)) return;
+    const err = m.t + 0.05 - v.clock; // (the host's clock now: about 50 ms more than when it sent it)
+    v.timeScale = Math.abs(err) < 0.03 ? 1 : Math.min(2, Math.max(0.5, 1 + err * 1.5));
+    this.rideErr = err;
+    this.rpT = performance.now();
+  }
+
   // ---------------------------------------------------------------- every frame
+  // after the world (and the vehicle) moved this frame: teammates are placed where they are now, then drawn (boot.js)
+  lateUpdate(dt, time) {
+    this.updateRemotes(dt, time);
+    this.drawHud();
+  }
+
   update(dt, time) {
     const now = performance.now();
-    this.updateRemotes(dt, time);
     if (now - this.pt > 1000 / PLAYER_HZ) {
       this.pt = now;
       this.sendPlayer();
@@ -751,6 +812,16 @@ export class Coop {
         this.bt = now;
         this.sendBoards();
       }
+      // the ride's clock, four times a second: everyone's vehicle keeps time with this one
+      const v = this.world.vehicle;
+      if (v && this.game.state === 'riding' && now - this.rt > 250) {
+        this.rt = now;
+        this.event(TO_ALL, { e: 'rp', t: Math.round(v.clock * 1000) / 1000, s: this.game.stopIndex });
+      }
+    } else if (this.rpT && now - this.rpT > 3000) {
+      // (no word from the host's ride for a few seconds: run at normal speed)
+      this.rpT = 0;
+      if (this.world.vehicle) this.world.vehicle.timeScale = 1;
     }
     // downed: bleeding out, or being picked up
     const g = this.game;
@@ -763,7 +834,6 @@ export class Coop {
       this.hudDowned.style.display = 'block';
       this.hudDowned.textContent = 'YOU BLED OUT — back at the start of the next round';
     } else this.hudDowned.style.display = 'none';
-    this.drawHud();
   }
 
   // revive: hold F on a downed teammate for REVIVE_TIME
@@ -852,6 +922,8 @@ export class Coop {
       r.sv.dispose?.();
     }
     this.remotes.clear();
+    this.mates?.dispose();
+    this.mates = null;
     this.hudRoot?.remove();
     if (this.zombies) {
       this.zombies.puppet = false;

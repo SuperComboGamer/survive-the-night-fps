@@ -196,7 +196,11 @@ S calcite(vec2 uv){
 }
 
 S p_custom(vec2 uv){
+#ifdef SYNTH_P0
+  int k = int(SYNTH_P0 + .5); // (the synth builds a program per pattern: the others' code is dropped - see core/synth.js)
+#else
   int k = int(uP0.x + .5);
+#endif
   if (k == 1) return tim(uv); if (k == 2) return strata(uv); if (k == 3) return shutter(uv); if (k == 4) return coalp(uv);
   if (k == 5) return cinder(uv); if (k == 6) return basalt(uv); if (k == 7) return calcite(uv);
   return mk();
