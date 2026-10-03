@@ -2672,6 +2672,28 @@ export class Game {
       case 'day':
         if (this.phase === PHASE.NIGHT) this.timeLeft = 0.05;
         break;
+      case 'dusk':
+        // /dusk [s]: to 5 s (or that many) before nightfall. The horn sounds at once; today's supply drops still to
+        // come are skipped rather than all landing together
+        if (this.phase === PHASE.DAY) {
+          this.timeLeft = Math.max(0.05, +args[1] || 5);
+          this.supplyAt.length = 0;
+          this.globalDirty = true;
+        }
+        break;
+      case 'dawn':
+        // /dawn [s]: to 5 s (or that many) before daybreak. Tonight's waves still to come are skipped rather than all
+        // starting together
+        if (this.phase === PHASE.NIGHT) {
+          this.timeLeft = Math.max(0.05, +args[1] || 5);
+          for (const wv of this.waves) {
+            if (wv.started) continue;
+            wv.started = true;
+            wv.queue.length = 0;
+          }
+          this.globalDirty = true;
+        }
+        break;
       case 'give': {
         // /give <item> [n]: the item by name or id (see findNamed); /items lists the names
         const words = args.slice(1);

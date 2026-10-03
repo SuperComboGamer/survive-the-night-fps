@@ -8,6 +8,12 @@ let URLS = {};
 try {
   // Vite rewrites this into { './samples/x.ogg': url }; outside Vite it throws and we simply stay procedural.
   URLS = import.meta.glob('./samples/*.ogg', { query: '?url', import: 'default', eager: true });
+  // the splash's theme is the game's own intro (an mp3 beside this file), played in place of the CC0 menu stem
+  const intro = import.meta.glob('./intro.mp3', { query: '?url', import: 'default', eager: true })['./intro.mp3'];
+  if (intro) URLS['./samples/mus_menu.ogg'] = intro;
+  // and the night's: threat.mp3, from nightfall to dawn
+  const threat = import.meta.glob('./threat.mp3', { query: '?url', import: 'default', eager: true })['./threat.mp3'];
+  if (threat) URLS['./samples/mus_threat.ogg'] = threat;
 } catch {}
 
 // sr: decode rate. The long ambience files are 32 kHz and decode at that rate (a third less memory than the context
@@ -133,9 +139,10 @@ export const REC = {
   bird_chickadee: { sr: 32000, lazy: true, slices: [0,1.952, 2.012,1.192, 3.264,1.902, 5.226,0.722, 6.008,1.142, 7.21,1.102, 8.372,0.462, 8.894,2.052, 11.006,2.052, 13.118,0.882] },
   // score stems (music.js): stereo loops cut on their bar lines, or crossfaded where there are none. Last, so the
   // big files queue behind everything the first minutes of play need (the one in use is asked for up front)
-  mus_menu: BED32,
+  mus_menu: BED32, // intro.mp3 (see URLS)
   mus_day: { sr: 24000, lazy: true },
   mus_night: BED32,
+  mus_threat: BED32, // threat.mp3 (see URLS)
   mus_dread: BED32,
   mus_horde: BED32,
   mus_boss: BED32,

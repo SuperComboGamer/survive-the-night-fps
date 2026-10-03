@@ -51,7 +51,8 @@ migrations when the server starts - `npm run migrate` does it), `DATABASE_POOL_M
 Testing only: `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
 may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
 load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
-`DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>` (the item by name:
+`DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/dusk [s]` / `/dawn [s]` (to 5 s, or that many, before
+nightfall / daybreak), `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
 dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`, `/engine`, `/unlock`, `/tp <x> <z> [y]`

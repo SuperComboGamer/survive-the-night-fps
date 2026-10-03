@@ -871,7 +871,7 @@ export class AudioEngine {
     this._lpitch = NaN;
     this._state = {
       night: 0, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, underCover: false, rain: 0, dead: false, menu: false,
-      cycle: NaN, wind: NaN, gust: NaN, open: 0, indoor: 0,
+      nightPhase: false, cycle: NaN, wind: NaN, gust: NaN, open: 0, indoor: 0,
     };
     this._vol = { master: 1, music: 1, sfx: 1, ambience: 1, voice: 1 };
     this._duck = { on: true, k: 0, set: 0, at: 0, timer: null, buf: null };
@@ -946,7 +946,7 @@ export class AudioEngine {
     this._tick();
     // recordings stream in behind the procedural sound (beds crossfade over once decoded)
     const night = this._state.night > 0.5;
-    const score = this._state.menu ? 'mus_menu' : night ? 'mus_night' : 'mus_day';
+    const score = this._state.menu ? 'mus_menu' : this._state.nightPhase ? 'mus_threat' : night ? 'mus_night' : 'mus_day';
     this._rec.start([night ? 'amb_night' : 'amb_day', score, night ? 'amb_crickets' : 'amb_day_wind', 'wind_light', 'wind_mid', 'fs_grass', 'fs_dirt', 'gun_pistol', 'hit_bullet', 'zv_growl', 'zv_attack', 'zv_pain', 'zv_death', 'cloth', 'fs_wood', 'fire_roar', 'fire_loop']);
   }
 
@@ -1653,7 +1653,7 @@ export class AudioEngine {
   // optional extras: cycle (the renderer's day cycle 0..1: day 0.055-0.485, night 0.5-0.99; gives real dawn / dusk
   // windows), wind (the weather's: 0.3 breeze .. ~1.2 gale) and gust 0..1 (to match visible wind; otherwise the engine wanders its own, readable via
   // `audio.wind`), open 0..1 (clearing / road: open-field reverb), indoor 0..1 (inside a building: room reverb and
-  // muffled outdoor beds, like underCover).
+  // muffled outdoor beds, like underCover), nightPhase (the game's night, nightfall to dawn: the night's theme plays).
   setAmbience(state) {
     if (!state) return;
     const s = this._state;
@@ -1671,6 +1671,7 @@ export class AudioEngine {
     s.dead = dead;
     s.menu = menu;
     // optional extras (see the setAmbience doc comment)
+    s.nightPhase = !!state.nightPhase;
     const cy = state.cycle == null ? NaN : +state.cycle;
     s.cycle = cy === cy && Number.isFinite(cy) ? cy - Math.floor(cy) : NaN;
     const wv = state.wind == null ? NaN : +state.wind;

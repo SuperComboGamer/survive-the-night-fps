@@ -2,6 +2,7 @@
 //  - recorded stems (CC0, samples.js): a menu theme, a few far-apart tones for the daylight hours, the night drone,
 //    a rising "dread" layer that follows how close the dead are, the horde's taiko and the boss theme, crossfaded
 //    by game state. All sit in or around D minor (the day's tones are D, A flat and C: notes of the scale below).
+//    From nightfall to dawn the night's own theme (threat.mp3, an A drone with a pulse of its own) takes over.
 //  - the generative score underneath: a handful of long-lived oscillators (drone, choir, tension strings) plus
 //    pre-rendered instrument buffers (piano, music box, taiko, bass, brass, swells) scheduled with a look-ahead.
 //    Never repeats identically: every choice is random. Each generative layer gives way to the stem cast for it
@@ -47,9 +48,10 @@ const LULLABY_BASS = [0, -4, -7, -5, 0];
 // in; at: where a fresh start enters the loop (s) - left out, it starts at a random phase so no two nights open
 // alike; tone: the stem runs through a low-pass that setTone() opens and closes.
 const STEMS = {
-  menu: { key: 'mus_menu', gain: 1, tc: 2.5, in: 1.2, at: 0 },
+  menu: { key: 'mus_menu', gain: 3.9, tc: 2.5, in: 1.2, at: 0 }, // intro.mp3: mastered ~12 dB under the stems
   day: { key: 'mus_day', gain: 1.25, tc: 5 },
   night: { key: 'mus_night', gain: 1, tc: 4 },
+  threat: { key: 'mus_threat', gain: 0.8, tc: 2, in: 0.5, at: 0 }, // threat.mp3: -15 LUFS, played ~2 dB under the horde stem
   dread: { key: 'mus_dread', gain: 0.8, tc: 2.5, in: 1 },
   horde: { key: 'mus_horde', gain: 1, tc: 2, in: 0.5, at: 0, tone: true },
   boss: { key: 'mus_boss', gain: 1, tc: 1.5, in: 0.08, at: 10 }, // comes in on the hit that opens the main theme
@@ -649,31 +651,37 @@ export class Music {
     // recorded stems. The boss theme is a full score of its own: under it the night drone drops back and the horde's
     // taiko makes way; the dread layer follows the nearest zombie, a little held back by day and beside a fire.
     const R = this.stems;
-    const boss = !menu && st.boss;
-    const horde = !menu && st.horde && !boss;
+    // the night's theme loops from nightfall until day comes, from the top each night. Once it has loaded it is the
+    // night's score: the night drone, the day's tones, the horde's drums and the boss theme (generative or recorded)
+    // all give way to it, as they would clash with its own drone and pulse; only the dread layer stays on top.
+    const nightPhase = !menu && st.nightPhase;
+    const threat = nightPhase && R.threat.on;
+    const boss = !menu && st.boss && !threat;
+    const horde = !menu && st.horde && !boss && !threat;
     const bossRec = boss && R.boss.on;
     const dark = clamp01((night - 0.12) / 0.55);
-    const nightLvl = menu ? 0 : dark * (bossRec ? 0.3 : horde ? 0.8 : 1) * fire;
+    const nightLvl = menu || threat ? 0 : dark * (bossRec ? 0.3 : horde ? 0.8 : 1) * fire;
     // by day: sparse tones, drawing back when something is close, when the fight is on, or once you are dead
-    const dayLvl = menu || boss ? 0 : (1 - dark) * (1 - 0.7 * this.danger) * (horde ? 0.3 : 1) * (st.dead ? 0.4 : 1);
+    const dayLvl = menu || boss || threat ? 0 : (1 - dark) * (1 - 0.7 * this.danger) * (horde ? 0.3 : 1) * (st.dead ? 0.4 : 1);
     R.menu.set(menu ? 1 : 0, now);
     R.day.set(dayLvl, now);
-    R.night.set(nightLvl + (st.dead && !menu ? 0.25 : 0), now);
+    R.night.set(nightLvl + (st.dead && !menu && !threat ? 0.25 : 0), now);
+    R.threat.set(nightPhase ? 1 : 0, now);
     R.dread.set(menu || bossRec ? 0 : clamp01(this.danger * 1.15 - 0.1) * (0.55 + 0.45 * night) * (1 - 0.35 * st.nearFire) * (st.dead ? 0.3 : 1), now);
     // the horde's drums: dull and distant while nothing is near, opening up and swelling as the dead close in
     const close = clamp01(this.danger * 1.5);
     R.horde.set(horde ? 0.6 + 0.4 * close : 0, now);
     R.horde.setTone(0.35 + 0.65 * close, now);
     R.boss.set(boss ? 1 : 0, now);
-    const menuRec = menu && R.menu.on;
-    this.genPiano = !menuRec && !bossRec;
-    this.genDrums = boss ? !bossRec : !R.horde.on;
+    const menuRec = menu; // the splash plays intro.mp3 alone: no generative stand-in while it loads
+    this.genPiano = !menuRec && !bossRec && !threat;
+    this.genDrums = boss ? !bossRec : !R.horde.on && !threat;
 
     // generative layers, each giving way to the stem that plays its part
-    const droneGen = menu ? (menuRec ? 0 : 1) : bossRec ? 0 : 1 - (R.night.on ? 0.85 * dark : 0);
+    const droneGen = menu ? (menuRec ? 0 : 1) : bossRec || threat ? 0 : 1 - (R.night.on ? 0.85 * dark : 0);
     const drone = (menu ? 0.42 : (0.14 + 0.24 * night + (st.boss ? 0.14 : 0) + (st.dead ? 0.12 : 0)) * fire) * droneGen;
     this._set('drone', this.droneG.gain, drone, 2.5, now);
-    const choir = menuRec || bossRec ? 0 : menu ? 0.05 : night * 0.09 * (0.4 + 0.6 * Math.max(0, Math.sin(now * 0.04)));
+    const choir = menuRec || bossRec || threat ? 0 : menu ? 0.05 : night * 0.09 * (0.4 + 0.6 * Math.max(0, Math.sin(now * 0.04)));
     this._set('choir', this.choirG.gain, choir, 3, now);
     this._set('dLp', this.dFilter.frequency, st.dead ? 160 : menu ? 380 : 240 + 140 * night + (st.boss ? 200 : 0), 3, now);
     // (under the day's tones the generative notes thin out to leave them room)

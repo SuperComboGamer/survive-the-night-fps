@@ -2187,6 +2187,7 @@ export class Game {
       underCover: weather.cover,
       dead: !self.alive,
       menu: false,
+      nightPhase: g.phase === PHASE.NIGHT,
       cycle: this.env.cycle,
       open: this.openness,
       indoor: Math.max(this.indoor, this.under),
@@ -2252,10 +2253,9 @@ export class Game {
     this.atmosphere.update(dt, this.time, cam, this.env, false, this.world.heightAt, weather);
     this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
     this.vm.setVisible(false);
-    if (this.audio.ready) {
-      this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
-      this.audio.setAmbience({ night: 0.6, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, dead: false, menu: true });
-    }
+    // (the state is set before the engine is ready too, so it fetches intro.mp3 first and opens on the splash's mix)
+    this.audio.setAmbience({ night: 0.6, horde: false, boss: false, danger: 0, lowHealth: 0, nearFire: 0, dead: false, menu: true });
+    if (this.audio.ready) this.audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.menuAngle + Math.PI, 0);
     this.post = { time: this.time, night: this.env.night, damage: 0, lowHealth: 0, infected: 0, dead: 0, exposure: this.env.exposure, rays: this.env.rays };
   }
 

@@ -24,16 +24,16 @@ const shelter = (s) => (1 - 0.85 * (s.rain || 0)) * (1 - 0.8 * smooth(0.5, 1, s.
 // Original procedural events. rate(s, day, night) -> events per minute. `by`: recordings that replace the event
 // (it is skipped while any of them is available).
 const PROC_EVENTS = [
-  { bank: 'amb_bird', by: ['bird_chickadee', 'bird_robin'], rate: (s, d) => 7 * d * (1 - 0.85 * s.danger) * (s.menu ? 0.15 : 1) * shelter(s), dist: [12, 45], elev: [3, 12], vol: 0.3, ref: 8, gap: 1.5 },
-  { bank: 'amb_crow', by: ['raven'], rate: (s, d, n) => (1.3 * d + 2.2 * smooth(0.1, 0.35, n) * (1 - smooth(0.5, 0.8, n))) * (s.menu ? 0.4 : 1) * shelter(s), dist: [30, 90], elev: [6, 16], vol: 0.45, ref: 16, gap: 9 },
+  { bank: 'amb_bird', by: ['bird_chickadee', 'bird_robin'], rate: (s, d) => 7 * d * (1 - 0.85 * s.danger) * (s.menu ? 0 : 1) * shelter(s), dist: [12, 45], elev: [3, 12], vol: 0.3, ref: 8, gap: 1.5 },
+  { bank: 'amb_crow', by: ['raven'], rate: (s, d, n) => (1.3 * d + 2.2 * smooth(0.1, 0.35, n) * (1 - smooth(0.5, 0.8, n))) * (s.menu ? 0 : 1) * shelter(s), dist: [30, 90], elev: [6, 16], vol: 0.45, ref: 16, gap: 9 },
   { bank: 'amb_woodpecker', by: ['woodpecker'], rate: (s, d) => 0.45 * d * (s.menu ? 0 : 1) * shelter(s), dist: [40, 90], elev: [2, 8], vol: 0.35, ref: 20, gap: 30 },
   { bank: 'amb_creak', by: ['tree_creak'], rate: (s, d, n) => 2 + 2.2 * n + 9 * smooth(0.4, 1.1, s.wind || 0), dist: [8, 35], elev: [3, 10], vol: 0.3, ref: 6, gap: 2 },
   { bank: 'amb_twig', by: ['branch_snap'], rate: (s, d, n) => (1.1 * n + 0.6 * s.danger) * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], vol: 0.35, ref: 4, gap: 10, hrtf: true },
-  { bank: 'amb_owl', by: ['owl_barred', 'owl_horned'], rate: (s, d, n) => 1.9 * n * (s.horde ? 0.4 : 1), dist: [25, 70], elev: [6, 14], vol: 0.42, ref: 15, gap: 12 },
-  { bank: 'amb_wolf', by: ['wolf_howl'], rate: (s, d, n) => 1.1 * smooth(0.4, 0.9, n) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [150, 260], elev: [0, 10], vol: 0.8, ref: 80, gap: 25 },
+  { bank: 'amb_owl', by: ['owl_barred', 'owl_horned'], rate: (s, d, n) => 1.9 * n * (s.horde ? 0.4 : 1) * (s.menu ? 0 : 1), dist: [25, 70], elev: [6, 14], vol: 0.42, ref: 15, gap: 12 },
+  { bank: 'amb_wolf', by: ['wolf_howl'], rate: (s, d, n) => 1.1 * smooth(0.4, 0.9, n) * (s.horde ? 0.5 : 1) * (s.menu ? 0 : 1), dist: [150, 260], elev: [0, 10], vol: 0.8, ref: 80, gap: 25 },
   { bank: 'amb_scream', by: ['zv_scream'], rate: (s, d, n) => (0.35 * smooth(0.5, 1, n) + (s.horde ? 0.8 : 0)) * (s.menu ? 0 : 1), dist: [120, 250], elev: [0, 5], vol: 0.55, ref: 70, gap: 30 },
   { bank: 'amb_whisper', by: ['zv_whisper'], rate: (s, d, n) => (0.22 * smooth(0.6, 1, n) + (s.dead ? 2 : 0) + s.lowHealth * 0.7) * (s.menu ? 0 : 1), dist: [2.5, 6], elev: [0, 1.5], vol: 0.2, ref: 2, gap: 20, hrtf: true },
-  { bank: 'amb_bell', rate: (s, d, n) => 0.2 * smooth(0.5, 1, n), dist: [220, 320], elev: [10, 30], vol: 0.65, ref: 120, gap: 90, tolls: true },
+  { bank: 'amb_bell', rate: (s, d, n) => 0.2 * smooth(0.5, 1, n) * (s.menu ? 0 : 1), dist: [220, 320], elev: [10, 30], vol: 0.65, ref: 120, gap: 90, tolls: true },
   { bank: 'z_growl', by: ['zv_moan'], rate: (s, d, n) => (2 * smooth(0.5, 1, n) + (s.horde ? 14 : 0)) * (s.menu ? 0 : 1), dist: [35, 80], elev: [0, 1], vol: 0.4, ref: 6, gap: 0.8, rateJit: 0.15 },
 ];
 
@@ -41,13 +41,13 @@ const PROC_EVENTS = [
 // bout: phrases sung from one perch, `gapIn` s apart; wet: reverb send at ref distance (falls off as (ref/d)^0.45);
 // ground: height relative to the ground under the listener instead of the ear.
 const REC_EVENTS = [
-  { key: 'bird_chickadee', rate: (s, t, q, w) => 0.8 * (0.9 * t.day + 0.4 * t.dawn) * q * (1 - 0.6 * smooth(9, 16, w)) * shelter(s), dist: [12, 45], elev: [3, 14], vol: 0.55, ref: 5, gap: 8, bout: [3, 7], gapIn: [1, 4], wet: 0.45, rj: 0.04 },
-  { key: 'bird_robin', rate: (s, t, q, w) => 0.7 * (t.dawn + 0.8 * t.dusk + 0.12 * t.day) * q * (1 - 0.6 * smooth(9, 16, w)) * shelter(s), dist: [25, 80], elev: [4, 14], vol: 0.6, ref: 8, gap: 10, bout: [2, 5], gapIn: [2.5, 6], wet: 0.5, rj: 0.03 },
-  { key: 'raven', rate: (s, t, q) => (0.5 * t.day + 0.3 * t.dawn + 1.4 * t.dusk + (s.menu ? 0.4 : 0)) * q * shelter(s), dist: [40, 140], elev: [10, 35], vol: 0.55, ref: 16, gap: 20, bout: [2, 5], gapIn: [1.5, 4.5], wet: 0.6, rj: 0.05 },
-  { key: 'woodpecker', rate: (s, t, q) => 0.45 * (t.day + 0.5 * t.dawn) * q * shelter(s), dist: [40, 110], elev: [3, 12], vol: 0.7, ref: 20, gap: 30, bout: [2, 4], gapIn: [4, 10], wet: 0.55, rj: 0.04 },
-  { key: 'owl_barred', rate: (s, t, q) => 0.8 * (t.night + 0.3 * t.dusk) * q * (s.horde ? 0.4 : 1), dist: [45, 150], elev: [6, 18], vol: 0.8, ref: 15, gap: 15, bout: [1, 2], gapIn: [6, 14], wet: 0.75, rj: 0.03 },
-  { key: 'owl_horned', rate: (s, t, q) => 0.7 * t.night * q * (s.horde ? 0.4 : 1), dist: [60, 180], elev: [8, 22], vol: 0.6, ref: 15, gap: 15, bout: [2, 4], gapIn: [3, 9], wet: 0.75, rj: 0.03 },
-  { key: 'wolf_howl', rate: (s, t) => 0.45 * smooth(0.4, 0.9, t.night) * (s.horde ? 0.5 : 1) * (s.menu ? 0.5 : 1), dist: [200, 320], elev: [0, 8], vol: 0.6, ref: 80, gap: 40, wet: 0.9, rj: 0.04, answer: 0.45 },
+  { key: 'bird_chickadee', rate: (s, t, q, w) => 0.8 * (0.9 * t.day + 0.4 * t.dawn) * q * (1 - 0.6 * smooth(9, 16, w)) * shelter(s) * (s.menu ? 0 : 1), dist: [12, 45], elev: [3, 14], vol: 0.55, ref: 5, gap: 8, bout: [3, 7], gapIn: [1, 4], wet: 0.45, rj: 0.04 },
+  { key: 'bird_robin', rate: (s, t, q, w) => 0.7 * (t.dawn + 0.8 * t.dusk + 0.12 * t.day) * q * (1 - 0.6 * smooth(9, 16, w)) * shelter(s) * (s.menu ? 0 : 1), dist: [25, 80], elev: [4, 14], vol: 0.6, ref: 8, gap: 10, bout: [2, 5], gapIn: [2.5, 6], wet: 0.5, rj: 0.03 },
+  { key: 'raven', rate: (s, t, q) => (0.5 * t.day + 0.3 * t.dawn + 1.4 * t.dusk) * q * shelter(s) * (s.menu ? 0 : 1), dist: [40, 140], elev: [10, 35], vol: 0.55, ref: 16, gap: 20, bout: [2, 5], gapIn: [1.5, 4.5], wet: 0.6, rj: 0.05 },
+  { key: 'woodpecker', rate: (s, t, q) => 0.45 * (t.day + 0.5 * t.dawn) * q * shelter(s) * (s.menu ? 0 : 1), dist: [40, 110], elev: [3, 12], vol: 0.7, ref: 20, gap: 30, bout: [2, 4], gapIn: [4, 10], wet: 0.55, rj: 0.04 },
+  { key: 'owl_barred', rate: (s, t, q) => 0.8 * (t.night + 0.3 * t.dusk) * q * (s.horde ? 0.4 : 1) * (s.menu ? 0 : 1), dist: [45, 150], elev: [6, 18], vol: 0.8, ref: 15, gap: 15, bout: [1, 2], gapIn: [6, 14], wet: 0.75, rj: 0.03 },
+  { key: 'owl_horned', rate: (s, t, q) => 0.7 * t.night * q * (s.horde ? 0.4 : 1) * (s.menu ? 0 : 1), dist: [60, 180], elev: [8, 22], vol: 0.6, ref: 15, gap: 15, bout: [2, 4], gapIn: [3, 9], wet: 0.75, rj: 0.03 },
+  { key: 'wolf_howl', rate: (s, t) => 0.45 * smooth(0.4, 0.9, t.night) * (s.horde ? 0.5 : 1) * (s.menu ? 0 : 1), dist: [200, 320], elev: [0, 8], vol: 0.6, ref: 80, gap: 40, wet: 0.9, rj: 0.04, answer: 0.45 },
   { key: 'tree_creak', rate: (s, t, q, w) => (1 + 1.4 * t.night + 3.5 * smooth(5, 14, w)) * (s.menu ? 0.6 : 1), dist: [8, 32], elev: [4, 14], vol: 1.2, ref: 6, gap: 4, wet: 0.5, rj: 0.15 },
   { key: 'branch_snap', rate: (s, t) => 0.9 * t.night * (s.menu ? 0 : 1), dist: [6, 20], elev: [0, 0.3], ground: true, vol: 0.7, ref: 4, gap: 10, hrtf: true, wet: 0.4, rj: 0.12 },
   // the dead, out in the dark: moans carried on the wind (a chorus of them once the horde is up), now and then a
@@ -563,9 +563,9 @@ export class Ambience {
       this._rl = rl;
       this.rainLP.frequency.setTargetAtTime(rl, now, 0.3);
     }
-    const cr = s.menu ? 0.18 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1) * weatherQuiet;
+    const cr = s.menu ? 0 : smooth(0.35, 0.85, n) * 0.38 * (1 - 0.75 * s.danger) * (s.horde ? 0.3 : 1) * weatherQuiet;
     this.beds.crickets.set(cr * (1 - recCrickets), now, 2.5);
-    this.beds.drone.set(s.menu ? 0.16 : n * 0.28 + (s.horde ? 0.1 : 0) + (s.dead ? 0.25 : 0), now, 3);
+    this.beds.drone.set(s.menu ? 0 : n * 0.28 + (s.horde ? 0.1 : 0) + (s.dead ? 0.25 : 0), now, 3);
     this.beds.horde.set(!s.menu && s.horde ? 0.32 * (1 - recHorde) : 0, now, 2.5);
     this.beds.fire.set(s.menu ? 0 : s.nearFire * 0.25 * (1 - recFire), now, 1);
     const wl = cover ? 900 : 1400 + 2600 * (this.gust - 0.6) + 1800 * Math.min(1, ww);
@@ -574,16 +574,17 @@ export class Ambience {
       this.windLP.frequency.setTargetAtTime(wl, now, 1.2);
     }
 
-    // ---- recorded beds
+    // ---- recorded beds (on the splash only the wind, over the intro theme: music.js)
     const L = this.lvl;
-    const birds = (1 - 0.6 * smooth(9, 16, w)) * (1 - 0.85 * this.threat) * (1 - 0.85 * rain);
+    const live = s.menu ? 0 : 1;
+    const birds = (1 - 0.6 * smooth(9, 16, w)) * (1 - 0.85 * this.threat) * (1 - 0.85 * rain) * live;
     const nn = tf.night;
     L.amb_day = (0.3 + 0.7 * tf.day) * (1 - nn) * (1 - 0.5 * tf.dawn) * birds;
-    L.amb_day_wind = (1 - nn) * smooth(2.5, 8, w) * (0.6 + 0.4 * gust);
+    L.amb_day_wind = (1 - nn) * smooth(2.5, 8, w) * (0.6 + 0.4 * gust) * live;
     L.amb_dawn = tf.dawn * birds;
-    L.amb_dusk = tf.dusk * (1 - 0.7 * this.threat);
-    L.amb_night = smooth(0.2, 0.7, nn) * (1 - 0.5 * this.threat);
-    L.amb_crickets = (s.menu ? 0.45 : smooth(0.35, 0.85, nn)) * (1 - 0.95 * this.threat) * (s.horde ? 0.3 : 1) * (1 - 0.7 * smooth(8, 14, w)) * (1 - 0.8 * rain);
+    L.amb_dusk = tf.dusk * (1 - 0.7 * this.threat) * live;
+    L.amb_night = smooth(0.2, 0.7, nn) * (1 - 0.5 * this.threat) * live;
+    L.amb_crickets = live * smooth(0.35, 0.85, nn) * (1 - 0.95 * this.threat) * (s.horde ? 0.3 : 1) * (1 - 0.7 * smooth(8, 14, w)) * (1 - 0.8 * rain);
     const gustAmp = 0.62 + 0.55 * gust;
     L.wind_light = bell(w, 3.5, 3.2) * gustAmp;
     L.wind_mid = bell(w, 8.5, 3.5) * gustAmp;
