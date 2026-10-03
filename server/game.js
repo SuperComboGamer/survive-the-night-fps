@@ -46,6 +46,7 @@ import {
   SLOT_THROW,
   SLOT_BUILD,
   INVENTORY_SIZE,
+  INVENTORY_MAX,
   PLAYER_RADIUS,
   PLAYER_HEIGHT,
   WATER_LEVEL,
@@ -111,8 +112,9 @@ import {
   THROW_ITEMS,
   isFirearm,
   radioLinked,
+  salvageOf,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
@@ -125,7 +127,7 @@ import { swimming, DROWN_DPS } from '../shared/swim.js';
 import { nightTheme, nightBoss } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
-import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
+import { createInventory, invCap, addItem, removeItem, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Deer } from './deer.js';
@@ -205,11 +207,16 @@ const MAX_DROPS = 400;
 // get two lobbies' worth, then one every GREET_EVERY seconds; past that, players come and go unannounced.
 const JOIN_EVERY = 4;
 const GREET_EVERY = 10;
+// A dropped player (connection lost, browser crashed or closed) keeps their place this long (onClose / hold / resume).
+// The client closes with LEFT_CODE when "Leave game" is pressed: that one goes at once. REJOIN_GRACE_SECONDS: tests.
+export const REJOIN_GRACE = +(process.env.REJOIN_GRACE_SECONDS || 60);
+const DEAD_CONN = { send() {}, close() {}, closed: true, slot: -1, user: null, ip: '' };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only. A zombie type goes the same way: its ZTYPE key (`boss_hivequeen`) or its name
 // (`hive queen`).
-const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
+const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', pack: 'backpacks', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
 const itemKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
 const ITEM_NAMES = Object.entries(ITEM)
   .filter(([, id]) => ITEM_DEFS[id])
@@ -234,6 +241,7 @@ const CRATE_TABLE = [
   [ITEM.AMMO_9MM, 4, 20, 40],
   [ITEM.MEDKIT, 4, 1, 2],
   [ITEM.PIPEBOMB, 2, 1, 2],
+  [ITEM.GRENADE, 2, 1, 2],
   [ITEM.MOLOTOV, 2, 1, 2],
   [ITEM.FLARE, 3, 2, 3],
   [ITEM.PLATE, 2, 1, 1],
@@ -320,7 +328,7 @@ export class Game {
     this.supplyHints = [255, 255, 255, 255, 255, 255, 255]; // zones: 4 parts + 3 jerry cans
     this.supplyFound = 0; // a bit per hint: that one has been taken from its hiding place (nothing left to search there)
     this.unlocked = 0; // schematics bitmask
-    this.fallen = new Set(); // names of players who left dead since the last sunrise (removePlayer, handleJoin)
+    this.fallen = new Set(); // who left dead since the last sunrise (leaverKey: removePlayer, handleJoin)
     this.waves = [];
     this.wave = 0;
     this.bossPending = null;
@@ -334,7 +342,7 @@ export class Game {
     this.playersDirty = true;
     this.playersListT = 0;
     this.gather = new Map(); // collider -> {left, day}
-    this.leftKits = new Map(); // name -> what is left of the starting kit of a player who left this run (parkKit)
+    this.leftKits = new Map(); // leaverKey -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
     this.lootPoints = [];
@@ -458,10 +466,67 @@ export class Game {
     this.sessions.add(session);
     return session;
   }
-  onClose(session) {
+  // code: the socket's close code. A player whose connection dropped (or whose browser crashed or closed) is held for
+  // REJOIN_GRACE seconds rather than removed: they stay where they were, safe - the dead don't go for them, nothing hurts
+  // them, a downed one doesn't bleed - and a JOIN from the same account or browser in that time puts them back in their
+  // own body with everything they had (handleJoin -> resume). Only "Leave game" (LEFT_CODE), or a player nobody could
+  // know again (no account, no browser id), leaves at once; the held are removed when their time is up (update).
+  onClose(session, code = 0) {
     this.sessions.delete(session);
     const p = session.player;
-    if (p) this.removePlayer(p);
+    if (!p) return;
+    if (code !== LEFT_CODE && p.rejoinKey && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) this.hold(p);
+    else this.removePlayer(p);
+  }
+
+  hold(p) {
+    p.away = { since: this.time };
+    p.session = { conn: DEAD_CONN, player: p, ip: '', msgCount: 0, msgWindow: 0 }; // (whatever the game still sends them goes nowhere)
+    p.cmdQueue.length = 0;
+    p.hold = null;
+    p.useItem = null;
+    this.releaseHolds(p); // (a leaper or a roper on them lets go)
+    this.playersDirty = true;
+    this.systemChat(`${p.name} lost connection - holding their place for ${REJOIN_GRACE} seconds.`);
+    this.log(`hold ${p.name}: dropped, ${REJOIN_GRACE} s to come back`);
+  }
+
+  // a held player is back (a JOIN from the same account or browser): this session takes over their body
+  resume(session, p) {
+    p.away = null;
+    p.session = session;
+    session.player = p;
+    // a new client: it knows nothing yet - everything is sent again as to a newcomer, and its commands count from 0
+    p.cmdQueue.length = 0;
+    p.lastSeq = 0;
+    p.hasSeq = false;
+    p.view = new ClientView();
+    p.selfSync = true;
+    // (what the old client was sent: writeSelf, writeGlobalFor and the player list only send what differs from it, and
+    // the new one starts from its defaults - a held zombie would come back to a survivor's HUD)
+    p.selfCache = null;
+    p.globalCache = null;
+    p.listVer = -1;
+    p.snapTick = -2;
+    p.ackSent = 0;
+    p.invDirty = true;
+    const w = new Writer(64);
+    w.u8(S2C.WELCOME);
+    w.u16(p.id);
+    w.u32(this.seed >>> 0);
+    w.u32(this.tick);
+    w.u8(SERVER_TICK_RATE);
+    w.u8(this.maxPlayers);
+    session.conn.send(w.bytes());
+    const spent = [];
+    for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
+    this.tellStripped(spent, p.id);
+    this.tellFriendCodes(p);
+    this.sendChat(p, 0, CHATF.SYSTEM, 'Reconnected: you are back where you were, with what you had.');
+    this.systemChat(`${p.name} reconnected.`);
+    this.playersDirty = true;
+    this.globalDirty = true;
+    this.log(`resume ${p.name}`);
   }
   onMessage(session, data) {
     // basic flood protection
@@ -551,6 +616,9 @@ export class Game {
       session.conn.send(w.bytes());
     };
     if (version !== PROTOCOL_VERSION) return reject(REJECT_REASON.VERSION);
+    // back from a drop inside the grace minute: their own body (onClose / hold)
+    const key = account ? `a:${account.id}` : UUID_RE.test(pid) ? `g:${pid}` : '';
+    if (key) for (const q of this.players.values()) if (q.away && q.rejoinKey === key) return this.resume(session, q);
     if (this.players.size >= this.maxPlayers) return reject(REJECT_REASON.FULL);
     if (!this.admitJoin(session)) return reject(REJECT_REASON.FULL); // (the one "try again later" the client knows)
     // unique names
@@ -566,6 +634,7 @@ export class Game {
     // no entity id left for them: turned away like from a full server, to try again once ids have come back
     if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
+    p.rejoinKey = key; // who can take this body back after a drop ('' : nobody - no account and no browser id)
     p.rec = this.records.enter(pid, base, account);
     p.account = account ? account.id : ''; // their account's id, '' for a guest
     p.guestKey = account ? '' : idKey(pid); // a guest's browser id as stats.js files it ('' without one): never the id itself
@@ -579,18 +648,17 @@ export class Game {
     w.u8(this.maxPlayers);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
-    else if (this.fallen.delete(p.name) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+    else if (this.fallen.delete(this.leaverKey(p)) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
       // died in this run and came back in before sunrise: they are what they were, and wait for dawn with the rest
-      // of the dead - a reload is no way round a death. (A JOIN carries nothing but a name, so under another name
-      // they are a newcomer: closing that takes an identity in the join message.) The kit parked under their name
+      // of the dead - a reload is no way round a death, and nor is another name (leaverKey). The kit parked for them
       // stays where it is: the dead carry nothing, and returnFallen replaces it at sunrise.
       this.spawnPlayerZombie(p);
       this.sendChat(p, 0, CHATF.SYSTEM, `You died in this run: you are one of them ${this.escape.active ? 'to the end of it' : 'until dawn'}.`);
     } else {
       // a run in progress: beside the team, with a kit for the day - or, back in the run they left, with what they
       // left with (parkKit)
-      const left = this.leftKits.get(p.name);
-      this.leftKits.delete(p.name);
+      const left = this.leftKits.get(this.leaverKey(p));
+      this.leftKits.delete(this.leaverKey(p));
       this.spawnHuman(p, left || starterKit(this.day), true);
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
@@ -619,6 +687,7 @@ export class Game {
       armor: 0,
       armorMax: 0,
       armorItem: 0,
+      backpackItem: 0, // the backpack worn (ITEM.BACKPACK), 0: none. Worn, it opens BACKPACK_SLOTS more slots (invCap)
       alive: true,
       zombie: false,
       downed: false,
@@ -666,8 +735,9 @@ export class Game {
       pinnedBy: 0,
       ropedBy: 0,
       ping: 0,
-      globalSent: false,
       ts: null, // the stint analytics.js is counting for them (null: none)
+      rejoinKey: '', // 'a:<account id>' or 'g:<browser id>': whose JOIN may take this player back after a drop (resume)
+      away: null, // dropped and held: { since } (hold), until they come back or REJOIN_GRACE runs out
       get x() {
         return this.state.x;
       },
@@ -684,11 +754,17 @@ export class Game {
     return p;
   }
 
+  // Who a leaver is to this run if they come back (fallen, leftKits): their account or browser (rejoinKey), so coming
+  // back under another name gets round neither a death nor a used-up kit. Only a player with neither - the test bots -
+  // is known by their name. (A key has a ':' in it and a name never does: the two cannot collide.)
+  leaverKey(p) {
+    return p.rejoinKey || p.name;
+  }
+
   // A leaver takes what is left of their starting kit with them - never more of anything than they were issued - and
-  // gets exactly that back if they rejoin this run under the same name. Only what they found on top of it is dropped
-  // for the team. Dropping the kit and issuing a fresh one on the way back in would let a reconnect loop pile rounds
-  // and bandages up at the team's feet, and refill anyone who had used theirs up (or lost them by dying).
-  // The name is all a JOIN identifies a player by: under a new one they are a newcomer.
+  // gets exactly that back if they rejoin this run (leaverKey). Only what they found on top of it is dropped for the
+  // team. Dropping the kit and issuing a fresh one on the way back in would let a reconnect loop pile rounds and
+  // bandages up at the team's feet, and refill anyone who had used theirs up (or lost them by dying).
   parkKit(p) {
     const kit = p.kit;
     if (!kit) return;
@@ -710,8 +786,8 @@ export class Game {
       }
     }
     for (const [item, n] of kit.items) left.items.push([item, gone ? 0 : removeItem(p.inv, item, n)]);
-    this.leftKits.delete(p.name);
-    this.leftKits.set(p.name, left);
+    this.leftKits.delete(this.leaverKey(p));
+    this.leftKits.set(this.leaverKey(p), left);
     if (this.leftKits.size > LEFT_KITS_MAX) this.leftKits.delete(this.leftKits.keys().next().value); // (the oldest)
   }
 
@@ -723,7 +799,7 @@ export class Game {
     this.players.delete(p.id);
     this.records.leave(p.rec);
     this.nav.removeField(p.id);
-    if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(p.name); // left dead: dead if they rejoin before sunrise (handleJoin)
+    if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(this.leaverKey(p)); // left dead: dead if they rejoin before sunrise (handleJoin)
     this.removeEntity(p);
     this.notify(NOTIFY.PLAYER_LEFT, 0);
     // (whoever arrived unannounced leaves unannounced; an announced one always gets their line, and it counts)
@@ -985,6 +1061,7 @@ export class Game {
     p.armor = 0;
     p.armorMax = 0;
     p.armorItem = 0;
+    p.backpackItem = 0;
     p.alive = true;
     p.zombie = false;
     p.downed = false;
@@ -1037,9 +1114,9 @@ export class Game {
   // there lasts to the end of the run.
   returnFallen() {
     // Whoever left dead has sat the night out. If they come back into this run now, they are a survivor, with what
-    // the dead who stayed wake with: handleJoin hands back the kit parked under their name (parkKit left it empty),
+    // the dead who stayed wake with: handleJoin hands back the kit parked for them (parkKit left it empty),
     // so waiting out a death offline is neither better nor worse than waiting it out as a zombie.
-    for (const name of this.fallen) if (this.leftKits.has(name)) this.leftKits.set(name, RETURN_KIT);
+    for (const who of this.fallen) if (this.leftKits.has(who)) this.leftKits.set(who, RETURN_KIT);
     this.fallen.clear();
     // Nobody alive to come back to: a wipe is a loss, never a second chance. checkAllDead ends the run on the death
     // that leaves nobody standing, in the tick it happens, so the clock does not reach dawn in that state - this
@@ -1458,7 +1535,10 @@ export class Game {
       }
       for (let i = 0; i < AMMO_ITEMS.length; i++) if (s.ammo[i] > 0) this.dropItem(AMMO_ITEMS[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
       if (p.armorItem && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
+      // the backpack goes down with what was in it (its pockets were emptied with the rest above)
+      if (p.backpackItem) this.dropItem(p.backpackItem, 1, x, y, z, { spread: 1.2 });
     }
+    p.backpackItem = 0;
     s.ammo = AMMO_ITEMS.map(() => 0);
     p.invDirty = true;
   }
@@ -1488,24 +1568,21 @@ export class Game {
         return 1;
       }
       // store in inventory (keeps its mag)
-      for (let i = 0; i < p.inv.length; i++) {
-        if (!p.inv[i]) {
-          p.inv[i] = { item, count: 1, mag: mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0) };
-          p.invDirty = true;
-          return 1;
-        }
-      }
-      return 0;
+      const i = freeSlot(p.inv, invCap(p));
+      if (i < 0) return 0;
+      p.inv[i] = { item, count: 1, mag: mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0) };
+      p.invDirty = true;
+      return 1;
     }
     if (def.cat === 'armor' && mag) {
       // a worn vest that was dropped comes back with the points it had left, not as a new one
-      const i = p.inv.findIndex((x) => !x);
+      const i = freeSlot(p.inv, invCap(p));
       if (i < 0) return 0;
       p.inv[i] = { item, count: 1, mag };
       p.invDirty = true;
       return 1;
     }
-    const left = addItem(p.inv, item, count);
+    const left = addItem(p.inv, item, count, invCap(p));
     const taken = count - left;
     if (taken > 0) {
       p.invDirty = true;
@@ -1766,6 +1843,10 @@ export class Game {
       }
       case ACT.EQUIP_ARMOR:
         return this.useItem(p, r.u8());
+      case ACT.WORN: {
+        const which = r.u8();
+        return this.wornGear(p, which, r.u8());
+      }
       case ACT.BUILD: {
         const type = r.u8();
         const x = r.i16() / 64;
@@ -1785,7 +1866,8 @@ export class Game {
       case ACT.SWAP_INV: {
         const a = r.u8();
         const b = r.u8();
-        if (a >= INVENTORY_SIZE || b >= INVENTORY_SIZE) return;
+        // (a locked slot - past the capacity - is neither taken from nor put into)
+        if (a >= invCap(p) || b >= invCap(p)) return;
         const A = p.inv[a];
         const B = p.inv[b];
         if (A && B && A.item === B.item && ITEM_DEFS[A.item].stack > 1) {
@@ -1801,12 +1883,17 @@ export class Game {
         p.invDirty = true;
         return;
       }
+      case ACT.SORT_INV:
+        // (the open slots only: the locked ones stay empty)
+        sortInventory(p.inv, invCap(p));
+        p.invDirty = true;
+        return;
       case ACT.SPLIT_INV: {
         // part of a stack into a slot of its own: to drop for a teammate, or to keep apart
         const it = p.inv[r.u8()];
         const n = r.u16();
         if (!it || n < 1 || n >= it.count) return;
-        const to = p.inv.findIndex((x) => !x);
+        const to = freeSlot(p.inv, invCap(p));
         if (to < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
         it.count -= n;
         p.inv[to] = { item: it.item, count: n };
@@ -2266,12 +2353,12 @@ export class Game {
       if (p.state.ammo[def.ammo] >= AMMO_MAX[def.ammo]) return this.notify(NOTIFY.INVENTORY_FULL, rec.out, p.id);
     } else if (def.cat === 'weapon') {
       const slot = WEAPONS[rec.out].slot;
-      if (p.state.weapons[slot] && !p.inv.some((x) => !x)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
-    } else if (!canFit(p.inv, rec.out, rec.n)) {
+      if (p.state.weapons[slot] && freeSlot(p.inv, invCap(p)) < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+    } else if (!canFit(p.inv, rec.out, rec.n, invCap(p))) {
       // paying may free slots; do a trial
       const copy = p.inv.map((x) => (x ? { ...x } : null));
       payCost(copy, rec.cost);
-      if (!canFit(copy, rec.out, rec.n)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+      if (!canFit(copy, rec.out, rec.n, invCap(p))) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
     payCost(p.inv, rec.cost);
     const taken = this.giveItem(p, rec.out, rec.n);
@@ -2292,8 +2379,8 @@ export class Game {
     const s = p.state;
     let item = 0;
     let mag = 0; // rounds in a gun's magazine: they go back into the pack
-    if (from < INVENTORY_SIZE) {
-      const it = p.inv[from];
+    if (from < INVENTORY_MAX) {
+      const it = from < invCap(p) ? p.inv[from] : null;
       if (!it || !SALVAGE[it.item] || n < 1) return;
       item = it.item;
       n = Math.min(n, it.count);
@@ -2335,7 +2422,8 @@ export class Game {
     if (!wpn) return;
     const there = p.inv[to];
     if (there && WEAPONS[there.item]?.slot === slot) return this.useItem(p, to);
-    const i = to < p.inv.length && !there ? to : p.inv.findIndex((x) => !x);
+    const cap = invCap(p); // (never into a locked slot: past the capacity)
+    const i = to < cap && !there ? to : freeSlot(p.inv, cap);
     if (i < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     // (it keeps its magazine, as a weapon stored in the backpack does)
     p.inv[i] = { item: wpn, count: 1, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 };
@@ -2347,7 +2435,7 @@ export class Game {
   }
 
   useItem(p, idx) {
-    const it = p.inv[idx];
+    const it = idx < invCap(p) ? p.inv[idx] : null;
     if (!it) return;
     const s = p.state;
     const def = ITEM_DEFS[it.item];
@@ -2375,6 +2463,13 @@ export class Game {
       p.invDirty = true;
       return;
     }
+    if (def.cat === 'pack') {
+      // on it goes; one worn till now takes its place in the grid (one for another: the capacity stays as it was)
+      p.inv[idx] = p.backpackItem ? { item: p.backpackItem, count: 1 } : null;
+      p.backpackItem = it.item;
+      p.invDirty = true;
+      return;
+    }
     if (def.cat === 'weapon') {
       const slot = WEAPONS[it.item].slot;
       const cur = s.weapons[slot];
@@ -2394,6 +2489,39 @@ export class Game {
       this.syncThrow(p);
       return;
     }
+  }
+
+  // ACT.WORN: the armor or the backpack being worn (which: WORN.*) taken off into the grid, dropped in front of the
+  // player, or salvaged (salvageOf: about half its recipe back). The backpack holds up its own pockets: while
+  // anything is in a slot past INVENTORY_SIZE it does not come off at all - spilling them on the ground would be
+  // easy to do by accident in a fight.
+  wornGear(p, which, what) {
+    const pack = which === WORN.BACKPACK;
+    const item = pack ? p.backpackItem : which === WORN.ARMOR ? p.armorItem : 0;
+    if (!item) return;
+    if (pack && p.inv.some((x, i) => x && i >= INVENTORY_SIZE)) return this.notify(NOTIFY.POCKETS, 0, p.id);
+    const s = p.state;
+    const mag = pack ? 0 : Math.ceil(p.armor); // (a vest keeps its points, as one taken off for another does)
+    if (what === WORN_DO.OFF) {
+      // into a slot it can stay in: with the backpack off, one past INVENTORY_SIZE is a locked one
+      const i = freeSlot(p.inv, pack ? INVENTORY_SIZE : invCap(p));
+      if (i < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+      p.inv[i] = pack ? { item, count: 1 } : { item, count: 1, mag };
+    } else if (what === WORN_DO.DROP) {
+      const ex = s.x - Math.sin(s.yaw) * 1.1;
+      const ez = s.z - Math.cos(s.yaw) * 1.1;
+      // (no entity id left for it on the ground: it stays on)
+      if (!this.dropItem(item, 1, ex, s.y, ez, { spread: 0.2, mag: mag || undefined, from: s })) return;
+    } else if (what !== WORN_DO.SALVAGE || !salvageOf(item)) return;
+    if (pack) p.backpackItem = 0;
+    else p.armorItem = p.armor = p.armorMax = 0;
+    // (taken off before what it gives back is handed over: none of it may land in pockets that are gone)
+    if (what === WORN_DO.SALVAGE) {
+      const back = salvageOf(item);
+      for (const k in back) this.giveOrDrop(p, +k, back[k]);
+      this.sound(SOUND.CRAFT, s.x, s.y + 1, s.z, 15);
+    }
+    p.invDirty = true;
   }
 
   finishUse(p) {
@@ -2589,7 +2717,7 @@ export class Game {
 
   // ---------------------------------------------------------------- damage (players)
   damagePlayer(p, amount, src) {
-    if (!p.alive || amount <= 0) return;
+    if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
     if (this.godMode && !p.zombie) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     if (p.downed) {
@@ -3072,6 +3200,13 @@ export class Game {
     }
     // forget the join allowances that have worn off (see allow)
     if (this.tick % 600 === 0) for (const [ip, a] of this.joins) if (this.time - a.t >= a.n * JOIN_EVERY) this.joins.delete(ip);
+    // the held whose minute is up are gone (hold)
+    if (this.tick % SERVER_TICK_RATE === 0)
+      for (const p of [...this.players.values()])
+        if (p.away && this.time - p.away.since >= REJOIN_GRACE) {
+          this.log(`hold ${p.name}: did not come back`);
+          this.removePlayer(p);
+        }
     if (this.phase === PHASE.WAITING) {
       if (this.rollWhenEmpty) this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
@@ -3421,7 +3556,7 @@ export class Game {
         }
       } else p.drownT = 0;
       if (p.downed) {
-        if (!p.revivedBy) p.bleed -= dt;
+        if (!p.revivedBy && !p.away) p.bleed -= dt; // (a held player's clock stops)
         if (p.useItem) {
           p.useItem.t += dt;
           if (p.useItem.t >= p.useItem.total) this.finishUse(p);
@@ -3738,7 +3873,7 @@ export class Game {
   sendInventory(p) {
     const w = this.w.reset();
     w.u8(S2C.INVENTORY);
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
+    for (let i = 0; i < INVENTORY_MAX; i++) {
       const it = p.inv[i];
       w.u8(it ? it.item : 0);
       w.u16(it ? it.count : 0);
@@ -3746,6 +3881,7 @@ export class Game {
     w.u8(p.armorItem);
     w.u8(Math.ceil(p.armor));
     w.u8(p.armorMax);
+    w.u8(p.backpackItem);
     p.session.conn.send(w.bytes());
     this.stats.bytesOut += w.o;
     this.stats.msgsOut++;

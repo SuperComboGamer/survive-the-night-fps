@@ -1,7 +1,8 @@
 // Supply drop crate (with detachable parachute) and thrown / spat projectile models.
 import * as THREE from 'three';
-import { PROJ } from '../../../shared/defs.js';
+import { PROJ, ITEM } from '../../../shared/defs.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
+import { createWorldWeapon } from './weapons.js';
 
 const PI = Math.PI;
 let crateParts = null, chuteParts = null;
@@ -100,6 +101,7 @@ export function rpgGrenade(b, finsOut = false) {
 
 /** Projectile model centred on its origin. PROJ.ROPE is drawn by the game (returns an empty Object3D). */
 export function createProjectile(projType) {
+  if (HELD[projType]) return heldProjectile(projType);
   let parts = projCache.get(projType);
   if (!parts) {
     const b = new MeshBuilder(600 + projType, { ao: false });
@@ -167,5 +169,23 @@ export function createProjectile(projType) {
     g.add(f);
     g.userData.flame = f;
   }
+  return g;
+}
+
+// The frag grenade and the noisemaker fly as the model in the hand (weapons.js). userData.rest: how each lies once it
+// is still (game/entities.js): its centre `y` above the ground (the server keeps a projectile 8 cm up), its tilt (YXZ).
+const HELD = {
+  [PROJ.GRENADE]: { item: ITEM.GRENADE, y: 0.033, rot: [0, 0, PI / 2 - 0.12] }, // on its side, rocked onto the spoon
+  [PROJ.DECOY]: { item: ITEM.DECOY, y: 0.052, rot: [0, 0, 0] }, // standing on its feet
+};
+function heldProjectile(projType) {
+  const h = HELD[projType];
+  const g = new THREE.Group();
+  g.name = `proj_${projType}`;
+  g.userData.projType = projType;
+  const m = createWorldWeapon(h.item);
+  g.add(m);
+  g.userData.model = m;
+  g.userData.rest = h;
   return g;
 }

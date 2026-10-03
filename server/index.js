@@ -226,7 +226,7 @@ app.ws('/ws', {
     }
     const room = d.room;
     d.room = null;
-    room?.detach(d.slot);
+    room?.detach(d.slot, closeCode);
   },
 });
 

@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   pushToTalk: true,
   invertY: false,
   rawMouse: true,
+  fullscreen: true,
   weaponSway: true,
   keyHints: true,
   showFps: true,
@@ -49,7 +50,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
-    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -77,6 +78,7 @@ const SECTIONS = [
       { k: 'aimSensitivity', label: 'Aim sensitivity', type: 'range', min: 0.25, max: 2, step: 0.05, fmt: (v) => v.toFixed(2) + '×', hint: 'While aiming, on top of the zoom' },
       { k: 'invertY', label: 'Invert mouse Y', type: 'toggle' },
       { k: 'rawMouse', label: 'Raw mouse input', type: 'toggle', hint: 'Off = OS mouse acceleration applies' },
+      { k: 'fullscreen', label: 'Fullscreen while playing', type: 'toggle', hint: 'Keeps Ctrl+W (crouch + forward) from closing the tab. Off = the tab asks before it closes' },
       { k: 'weaponSway', label: 'Weapon look sway', type: 'toggle', hint: 'Gun trails behind fast turns' },
       { k: 'keyHints', label: 'Key hints', type: 'toggle', hint: 'Names a key when it would help, until you have used it twice' },
       { k: 'fov', label: 'Field of view', type: 'range', min: 60, max: 100, step: 1, fmt: (v) => Math.round(v) + '°' },

@@ -11,7 +11,7 @@ import {
   SLOT_MELEE,
   SLOT_THROW,
   SLOT_BUILD,
-  INVENTORY_SIZE,
+  INVENTORY_MAX,
   WATER_LEVEL,
   MAX_PLAYERS,
   ESCAPE_RADIUS,
@@ -54,7 +54,7 @@ import {
   PROJ,
   radioLinked,
 } from '../../shared/defs.js';
-import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
@@ -75,7 +75,7 @@ import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
-import { Input } from './input.js';
+import { Input, AIM_KEY_LABEL } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
@@ -104,6 +104,7 @@ import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
 import { KeyHints } from '../ui/keyhints.js';
 import { MenuTour } from './menutour.js';
+import { KeyGuard } from './keyguard.js';
 import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -188,7 +189,7 @@ export class Game {
     this.myId = 0;
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
-    this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
+    this.inventory = { slots: new Array(INVENTORY_MAX).fill(null), armor: null, backpack: 0 };
     this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
     this.craftBudget = CRAFT_BURST;
     this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
@@ -266,6 +267,10 @@ export class Game {
     this.input.sensitivity = settings.sensitivity || 1;
     this.input.invertY = !!settings.invertY;
     this.input.rawInput = settings.rawMouse !== false;
+    // Ctrl+W (crouch + forward) must not close the tab: fullscreen with the keys locked, else a "Leave site?" prompt
+    this.keyGuard = new KeyGuard(() => this.state === 'playing');
+    this.keyGuard.fullscreen = settings.fullscreen !== false;
+    this.input.onRequestLock = () => this.keyGuard.engage();
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
@@ -745,6 +750,7 @@ export class Game {
     this.state = 'menu';
     this.input.enabled = false;
     this.input.exitLock();
+    this.keyGuard.release();
     this.entities.clear();
     this.rockets.clear();
     this.voice.closeAll();
@@ -760,15 +766,18 @@ export class Game {
     this.overlay = null;
     this.deathShown = false;
     this.ui.showSplash();
-    // a player who pressed "Leave game" knows why they are back here: only a drop is an error
-    if (!this.leaving) this.ui.setJoinError('Disconnected from server.');
+    // a player who pressed "Leave game" knows why they are back here: only a drop is an error - and the server holds
+    // the place of a dropped player for a minute, so main.js goes straight back in (onDrop)
+    const dropped = !this.leaving;
     this.leaving = false;
+    if (dropped && this.room && this.onDrop) this.onDrop(this.room.code);
+    else if (dropped) this.ui.setJoinError('Disconnected from server.');
   }
 
   leave() {
     if (this.state !== 'playing') return;
     this.leaving = true;
-    this.conn.close();
+    this.conn.close(LEFT_CODE);
   }
 
   onSnapshot(r) {
@@ -847,7 +856,7 @@ export class Game {
 
   onInventory(r) {
     const slots = this.inventory.slots;
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
+    for (let i = 0; i < INVENTORY_MAX; i++) {
       const item = r.u8();
       const count = r.u16();
       slots[i] = item ? { item, count } : null;
@@ -856,6 +865,7 @@ export class Game {
     const armor = r.u8();
     const armorMax = r.u8();
     this.inventory.armor = armorItem ? { item: armorItem, points: armor, max: armorMax } : null;
+    this.inventory.backpack = r.u8(); // the backpack worn (0: none): it opens the locked slots of the grid
     this.pushInventoryToUI(true);
   }
 
@@ -866,7 +876,7 @@ export class Game {
     this.lastHudInvKey = key;
     const throwCounts = {};
     for (const it of this.inventory.slots) if (it && THROW_ITEMS.includes(it.item)) throwCounts[it.item] = (throwCounts[it.item] || 0) + it.count;
-    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
+    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
   }
 
   // what we carry, by item: the backpack, and the ammunition carried apart from it (the reserves we predict)
@@ -1242,6 +1252,10 @@ export class Game {
         else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
         break;
       }
+      case NOTIFY.POCKETS:
+        ui.notify("Empty the backpack's extra pockets first", 'warning', 2.5);
+        a.playLocal('build_fail');
+        break;
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;
@@ -2030,6 +2044,8 @@ export class Game {
       onEquipArmor: (i) => this.conn.action(ACT.EQUIP_ARMOR, i),
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onUnequip: (slot, to = 255) => this.conn.action(ACT.UNEQUIP, slot, to),
+      onWorn: (which, what) => this.conn.action(ACT.WORN, which, what),
+      onSortItems: () => this.conn.action(ACT.SORT_INV),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
@@ -2501,7 +2517,7 @@ export class Game {
       this.deathShown = false;
       this.ui.hideOverlays();
       this.ui.notify('YOU HAVE RISEN', 'big', 4);
-      this.ui.notify(this.dawnAhead() ? 'Hunt the survivors until dawn. [RMB] to leap.' : 'Hunt the survivors. [RMB] to leap.', 'sub', 4);
+      this.ui.notify(this.dawnAhead() ? `Hunt the survivors until dawn. [RMB / ${AIM_KEY_LABEL}] to leap.` : `Hunt the survivors. [RMB / ${AIM_KEY_LABEL}] to leap.`, 'sub', 4);
     }
   }
 
@@ -2805,7 +2821,6 @@ export class Game {
       }
     });
     h.objective = { supplies: g.supplies, hints: g.hints, found: g.found, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
-    this.ui.setCamp({ supplies: g.supplies, hints: g.hints, found: g.found, carried });
     // downed overlay
     h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
     // compass + world markers

@@ -5,6 +5,7 @@ import { UI } from './ui/ui.js';
 import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
+import { AIM_KEY_LABEL } from './game/input.js';
 import { playerId } from './net/identity.js';
 import { refreshAccount } from './net/account.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
@@ -44,11 +45,48 @@ function onGesture() {
 }
 for (const type of GESTURES) addEventListener(type, onGesture, true);
 
+// ---------------------------------------------------------------- back in after a drop
+// The server holds a dropped player's place for a minute (server/game.js hold): their body stays where it was, safe,
+// and a JOIN from this browser in that time puts them back in it with everything they had. So a drop goes straight
+// back in, trying every few seconds for that minute; and a page reopened on the game it was playing (a crash, the tab
+// closed by accident) does the same. stn.playing: { code, t } of the game being played, renewed while playing.
+const REJOIN_MS = 60_000;
+let lastName = '';
+let rejoining = false;
+async function rejoin(code, name = lastName) {
+  if (rejoining || !code || !name) return;
+  rejoining = true;
+  const until = performance.now() + REJOIN_MS;
+  try {
+    while (game.state !== 'playing' && performance.now() < until) {
+      ui.setJoinError(`Connection lost - getting you back into game ${code} (${Math.ceil((until - performance.now()) / 1000)} s)...`);
+      await callbacks.onJoin(name, code);
+      if (game.state === 'playing') return;
+      await new Promise((done) => setTimeout(done, 3000));
+    }
+    if (game.state !== 'playing') ui.setJoinError('Connection lost, and the game could not be reached in time: your place there is gone.');
+  } finally {
+    rejoining = false;
+  }
+}
+const PLAYING_KEY = 'stn.playing';
+setInterval(() => {
+  try {
+    if (game?.state === 'playing' && game.room) localStorage.setItem(PLAYING_KEY, JSON.stringify({ code: game.room.code, name: lastName, t: Date.now() }));
+  } catch {}
+}, 5000);
+function forgetPlaying() {
+  try {
+    localStorage.removeItem(PLAYING_KEY);
+  } catch {}
+}
+
 const callbacks = {
   // code: the game to go into (an invite, a pick from the list, one just made); '' for a quick join
   async onJoin(name, code = '') {
     if (joining || !game) return;
     joining = true;
+    lastName = name;
     try {
       // The click on Join is a gesture too, so the engine starts here at the latest - but the join does not wait
       // for it. The socket opens at once, and if the banks are still rendering the game is silent until they are
@@ -93,6 +131,8 @@ const callbacks = {
   onEquipArmor: (i) => game?.uiCallbacks().onEquipArmor(i),
   onDropWeapon: (s) => game?.uiCallbacks().onDropWeapon(s),
   onUnequip: (s, to) => game?.uiCallbacks().onUnequip(s, to),
+  onWorn: (which, what) => game?.uiCallbacks().onWorn(which, what),
+  onSortItems: () => game?.uiCallbacks().onSortItems(),
   onSelectStructure: (t) => game?.uiCallbacks().onSelectStructure(t),
   onSelectThrowable: (it) => game?.uiCallbacks().onSelectThrowable(it),
   onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),
@@ -111,6 +151,7 @@ const callbacks = {
     game.input.requestLock();
   },
   onLeave: () => {
+    forgetPlaying();
     showCodeInAddress(''); // (back on the splash for any game, not this one's invitation)
     ui.setRoom(null);
     game?.leave();
@@ -131,7 +172,8 @@ ui.setControls([
   ['Shift', 'Sprint'],
   ['Space', 'Jump / vault barricades & windows'],
   ['Ctrl / C', 'Crouch (stealth)'],
-  ['LMB / RMB', 'Fire · Aim / heavy attack'],
+  ['LMB', 'Fire / attack'],
+  [`RMB / ${AIM_KEY_LABEL}`, 'Aim / heavy attack (hold)'],
   ['1 2 3 4 5', 'Primary · Pistol · Melee · Throwable · Build'],
   ['Q / Wheel', 'Last weapon / cycle (build: Q / E cycle structure)'],
   ['R', 'Reload'],
@@ -173,6 +215,7 @@ function applySettings(s) {
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;
   game.input.rawInput = s.rawMouse !== false;
+  game.keyGuard.fullscreen = s.fullscreen !== false;
   game.foliage?.setQuality(renderer.q, s.grassDistance);
   game.weatherFx?.setQuality(renderer.quality);
   game.lights.setShadows(renderer.q.flashShadows);
@@ -204,6 +247,13 @@ async function preload() {
   }
 }
 preload();
+
+// a page reopened on the game it was playing a moment ago (crash, tab closed): back in while the server holds the place
+game.onDrop = (code) => rejoin(code);
+try {
+  const was = JSON.parse(localStorage.getItem(PLAYING_KEY) || 'null');
+  if (was && was.code && was.code === linkedCode() && Date.now() - was.t < REJOIN_MS) setTimeout(() => rejoin(was.code, was.name), 300);
+} catch {}
 
 // ---------------------------------------------------------------- frame loop
 let last = performance.now();

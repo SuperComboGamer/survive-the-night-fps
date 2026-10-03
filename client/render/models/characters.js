@@ -12,6 +12,7 @@ import {
 } from './skinning.js';
 import { CR } from './charTextures.js';
 import { createWorldWeapon } from './weapons.js';
+import { createBackpack, WORN_AT } from './backpack.js';
 import { createZombieDog, dogStats, DOG_COATS } from './dog.js';
 
 const PI = Math.PI;
@@ -3922,7 +3923,6 @@ function survivorLook(v, zombie) {
     shoes: { color: v % 2 ? 0x2a2018 : 0x3a2c20 },
     hair: headwear === 'hair' || headwear === 'long' ? { color: HAIRC[(v + 1) % HAIRC.length], cover: 0.5, long: headwear === 'long', patchy: zombie ? 0.3 : 0 } : headwear === 'cap' ? { color: HAIRC[v % HAIRC.length], cover: 0.45 } : null,
     headwear,
-    backpack: v % 3 !== 1,
     hands: zombie ? null : v % 2 ? 0x2a2622 : null, // gloves
     handCol: zombie ? zskin : v % 2 ? 0x2a2622 : skinH,
     handRegion: zombie ? CR.GORE : v % 2 ? CR.LEATHER : CR.PLAIN,
@@ -3971,16 +3971,7 @@ function getSurvivorRig(v, zombie) {
       tear: { amt: zombie ? 0.3 : 0, fn: (x, y, z) => z < -0.02 && y < P.headY + hr * 1.55 && y > P.headY - 0.08 && Math.abs(x) < hr * 0.8 },
     });
   }
-  if (L.backpack) {
-    const bc = [0x3a3a2a, 0x2a3040, 0x4a3a28][v % 3];
-    mb.box('chest', [0, 0.02, 0.17], [0.3, 0.4, 0.15], { round: 0.3, seg: 2, color: bc, region: CR.CANVAS });
-    mb.box('chest', [0, -0.06, 0.26], [0.22, 0.16, 0.06], { round: 0.3, seg: 2, color: mulColor(bc, 0.85), region: CR.CANVAS });
-    mb.seg('chest', [-0.16, 0.25, 0.17], [0.16, 0.25, 0.17], 0.06, 0.06, { rs: 8, color: 0x5a4a30, region: CR.CANVAS, caps: 1 }); // bedroll
-    for (const s of [-1, 1]) {
-      mb.box('chest', [s * 0.11, 0.1, -0.12], [0.035, 0.26, 0.012], { color: 0x1e1e1a, region: CR.LEATHER, rot: [0.25, 0, 0] });
-      mb.box('chest', [s * 0.12, 0.2, 0.0], [0.035, 0.012, 0.24], { color: 0x1e1e1a, region: CR.LEATHER });
-    }
-  }
+  // (no backpack baked in: a survivor carries one only while wearing the crafted one - SurvivorInstance.setBackpack)
   // belt pouch / holster
   mb.box('hips', [0.16, -0.02, 0.02], [0.05, 0.12, 0.09], { color: 0x2a2018, region: CR.LEATHER });
   r = mb.build();
@@ -3997,7 +3988,7 @@ function holdFor(item) {
   if (!item) return HOLD_NONE;
   const w = WEAPONS[item];
   if (w && !w.melee) return w.slot === 1 ? HOLD_PISTOL : HOLD_RIFLE;
-  if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB) return HOLD_THROW;
+  if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB || item === ITEM.GRENADE || item === ITEM.DECOY) return HOLD_THROW;
   if (w && w.melee) return HOLD_MELEE;
   return HOLD_THROW; // generic held item
 }
@@ -4058,6 +4049,12 @@ class SurvivorInstance {
     this.flashlightAnchor = new THREE.Object3D();
     this.flashlightAnchor.position.set(0.16, this.P.shoulderY - this.P.chestY + 0.02, -0.16);
     this.bones[CHEST].add(this.flashlightAnchor);
+    // the crafted backpack on the back of the chest, where the shoulder straps sit: shown while one is worn (setBackpack)
+    this.pack = createBackpack(true);
+    this.pack.position.set(WORN_AT[0], WORN_AT[1], WORN_AT[2]);
+    this.pack.visible = false;
+    this.bones[CHEST].add(this.pack);
+    this.packOn = false;
     this.headCenter = new THREE.Object3D();
     this.headCenter.position.set(0, this.P.headR * 0.9, 0);
     this.bones[HEAD].add(this.headCenter);
@@ -4117,10 +4114,17 @@ class SurvivorInstance {
     }
   }
 
+  // wearing the crafted backpack (PFLAG.BACKPACK). (The dead carry none)
+  setBackpack(on) {
+    this.packOn = !!on;
+    this.pack.visible = this.packOn && !this.zombie;
+  }
+
   setZombie(v) {
     v = !!v;
     if (v === this.zombie) return;
     this.zombie = v;
+    this.pack.visible = this.packOn && !v;
     if (v && !this.rigZ) this.rigZ = getSurvivorRig(this.look, true);
     this.mesh.geometry = v ? this.rigZ.geometry : this.rigH.geometry;
     if (this.weapon) this.weapon.visible = !v;
@@ -4531,6 +4535,7 @@ export function createSurvivor(seed = 0) {
     melee: () => sv.melee(),
     throwAnim: () => sv.throwAnim(),
     setZombie: (v) => sv.setZombie(v),
+    setBackpack: (on) => sv.setBackpack(on),
     getMuzzleWorld: (out) => sv.getMuzzleWorld(out),
     flashlightAnchor: sv.flashlightAnchor,
     flash: (a) => sv.flash(a),

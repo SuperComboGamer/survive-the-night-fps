@@ -92,6 +92,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/test-salvage.js [seed]` | tearing things down for materials (`ACT.SALVAGE`), against the real server in-process: from the backpack (part of a stack, a gun with rounds in it, which go back into the reserve), from a weapon slot and from the armor worn; raw materials, car supplies, food and the throwable slot refused; what does not fit lands at the survivor's feet; the `SALVAGE` table never gives back what a recipe takes; and a reconnect does not hand back the starting tools a survivor tore down (part of `npm test`) |
 | `node scripts/test-drink.js [seed]` | energy drinks (`ACT.USE_ITEM`, what [B] sends), against the real server in-process: a spent or half-spent survivor is topped up to full and no longer exhausted once the drink is down, one can goes, the crack is heard by the survivors around but not sent back to the drinker, a survivor at full stamina or downed is turned down and keeps the can, and the cans are in several places' loot and in containers (part of `npm test`) |
 | `node scripts/test-ammo.js [seed]` | ammunition carried apart from the backpack, against the real server in-process and decoded as a client does: the starting 9mm and every pickup go into the reserve and never a slot, up to the most of a calibre a survivor carries (the rest stays on the ground, without a "backpack full"), a reload takes its rounds out of it (a shotgun shell by shell), Drop half / Drop all (`ACT.DROP_AMMO`) put rounds down for a teammate who walks over them, counts past 255 survive the wire, crafting with a full reserve, dying drops each calibre, and every client is told its reserves after every tick (part of `npm test`) |
+| `node scripts/test-backpack.js [seed]` | the craftable Backpack, against the real server in-process and decoded as a client does: crafted at a real workbench for its cost and salvaged for half, worn by a click in the grid (34 slots, and the others see it on your back); a pickup, a craft, a search, a split and a drag never put anything in the 10 locked slots without it and do with it; it does not come off while those slots hold anything; a death drops it with everything in it, a teammate takes it up and has 34 slots, and a dropped connection keeps it on; the Sort button merges part stacks and orders the open slots by kind, the same way every time; and pickups with reloads between never leave two part-used stacks (part of `npm test`) |
 | `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
 | `node scripts/test-deer.js [seed ...]` | the deer against the real server in-process: where the groups are put, what makes them bolt (a survivor standing or crouched, a noise, the dead) and how far and fast, a shot at a running one missing unless the server rewinds to the shooter's picture exactly as for a zombie dog, head shots on a grazing one, what a kill leaves and that it counts for nothing, that nothing that walks the zombie list meets them, the dawn's newcomers, venison, that none of it draws on the game's random stream, and half an hour of being chased about with none in the lake, the mine or a wall and none pushing at a fence (part of `npm test`; `VERBOSE=1` prints the passes) |
 | `node scripts/test-fair.js [seed]` | the Tri-County Fair against the real server in-process: the place, its rides and its generator are where a survivor can get at them and the dead can follow one in; the generator takes its fuel from what the survivor carries, the drum fills the tank and no further, it runs dry, it shuts off; it is heard 150 m off and no further and its lights hold a Shade; a seat carries its rider round, Space gets them out with the fall damage of the height, a blow or a rope takes them out, a stopped wheel leaves them where they are, out of the reach of the dead below, the dead stay in their seat; and a rider at 0, 100 and 250 ms each way, whose prediction has to be the server's result to the bit, and is rebased only when they get on, the generator starts or stops under them and they get off (part of `npm test`) |
@@ -212,6 +213,7 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | Space | Jump (vault barricades and windows) |
 | Ctrl / C | Crouch (quieter - zombies notice you less) |
 | Mouse | Look · LMB fire / attack · RMB aim / heavy melee |
+| Left Alt (Option on a Mac) | Held, the same as RMB held: aim, heavy melee, a zombie's leap. For a trackpad, where right click can't be held while you click to fire |
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
@@ -224,12 +226,12 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; a medkit gets you up when downed) |
 | B | Quick drink: an energy drink from the backpack refills your stamina in 0.8 s, on the run (not at full stamina) |
-| I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop - or to salvage. In Equipment: click a weapon (or drag it onto the backpack) to put it in the backpack, right-click to drop it; drag a weapon, vest or throwable from the backpack onto Equipment to equip it, and drag anything out of the screen to drop it. Shift+click anything that can be torn down (a weapon, in the backpack or in its slot, armor, medicine, throwables) to salvage it for materials |
+| I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop - or to salvage. In Equipment: click a weapon (or drag it onto the backpack) to put it in the backpack, right-click to drop it; drag a weapon, vest or throwable from the backpack onto Equipment to equip it, and drag anything out of the screen to drop it. Shift+click anything that can be torn down (a weapon, in the backpack or in its slot, armor, medicine, throwables) to salvage it for materials. On the armor and backpack you wear: click takes it off, right-click drops it, Shift+click salvages it. The Sort button merges part stacks and orders the backpack by kind |
 | Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
 | Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
 | V | Push-to-talk proximity voice (same reach as chat) |
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
-| Zombie form | LMB claw · RMB leap |
+| Zombie form | LMB claw · RMB (or Left Alt) leap |
 
 The HUD names a key at the moment it answers something: the flashlight when night falls and the light is off,
 quick heal when you are under half health with something that heals in the pack, a quick drink when you
@@ -449,6 +451,17 @@ them off.
   itself, slowly, after every shot, and the blast carries as far as a pipe bomb's. It is built at the workbench once
   the team has the explosives schematic (or found at the army's places, in their ammo crates, in supply drops and in
   the mine's strongbox); each grenade takes gunpowder, scrap and chemicals.
+- **Throwables** ([4], press it again to cycle through what you carry): the **molotov** sets an area ablaze; the
+  **pipe bomb** beeps for 2.6 s, pulling every zombie within 40 m onto it, then blows a 7 m hole in the crowd it
+  gathered; the **frag grenade** is the quick one - thrown further, it bounces, rolls and bursts 2.2 s after it
+  leaves your hand (5 m and 260 damage, to the pipe bomb's 7 m and 420), and lures nothing first, so it goes into a
+  crowd that is already there; the **noisemaker**, a wound-up alarm clock, does no harm at all - it rings for 15 s
+  where it lands and the dead within 45 m leave what they are doing and walk to it (all but those already on a
+  survivor), to clear a place to search or buy a moment; the **road flare** burns red for 40 s and pins Shades in
+  its light. A thrown bomb never hurts a survivor. The grenade is built at the workbench once the team has the
+  explosives schematic (scrap and gunpowder, less than a pipe bomb) and turns up in military stashes; the noisemaker
+  is built at the workbench from scrap, barbed wire and a battery, and found in houses, trailers and the motel. The
+  numbers are `THROWABLES` in `shared/defs.js`.
 - **The mounted gun.** On a map with the Army Checkpoint, a heavy machine gun stands on a tripod in a horseshoe of
   sandbags beside the boom gate, covering the road out. It does not move: stand at its grips and press [E] to man
   it (one gunner at a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button
@@ -464,16 +477,20 @@ them off.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station
-  for melee weapons, the crossbow, ammo, armor, nails, batteries and explosives. Five **schematics** (shotguns, hunting
+  for melee weapons, the crossbow, ammo, armor, the backpack, nails, batteries and explosives. Five **schematics** (shotguns, hunting
   and anti-tank rifles, kevlar, explosives, metal walls) are hidden in lockers, ammo crates and toolboxes around the map
   and unlock their recipes for the whole team. Two materials have to be looked for: **leather** (padded jacket,
-  machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge - or off a deer - and **kevlar plates** (two
+  backpack, machete) in car trunks and duffel bags, on the farm, in the cabins and at the lodge - or off a deer - and **kevlar plates** (two
   to a vest) in ammo crates, which hold them in pairs.
 - **Salvage:** Shift+click a weapon, armor, medicine, a throwable or a walkie-talkie in the inventory - in the
   backpack, in its weapon slot or worn - and tear it down for materials, by hand, anywhere: the knife you start with
   gives scrap metal and leather, a gun gives gun parts and scrap, and any rounds in it go back into the pack. What has
   a recipe gives about half of it back and never all of it (`SALVAGE` in `shared/defs.js`). The pistol, knife and
   hammer everyone starts with come back after a death, but a reconnect brings back only the ones you still had.
+- **The backpack grid** has 24 slots. A **Backpack** (4 leather, 6 cloth and 2 rope at the workbench) is worn in an
+  equipment slot of its own, under the armor, and opens 10 more in the same grid - shown locked until then. It
+  only comes off (or is dropped, or salvaged for about half its materials) once those 10 slots are empty, it goes
+  down with everything else when you die, and the others see it on your back.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered

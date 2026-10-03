@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9)
 
 // client -> server
 export const C2S = {
@@ -18,7 +18,7 @@ export const C2S = {
 export const S2C = {
   WELCOME: 1,
   SNAPSHOT: 2, // u8 flags (SNAP), [u32 tick, u16 ack], [varu ack step], [global], [self], [entities], [events]
-  INVENTORY: 3,
+  INVENTORY: 3, // INVENTORY_MAX x (u8 item, u16 count), u8 armor item, u8 armor points, u8 armor max, u8 backpack worn (item or 0)
   CHAT: 4,
   PLAYERS: 5,
   VOICE: 6,
@@ -70,11 +70,16 @@ export const ACT = {
   WAYPOINT: 28, // u8 on, then (on) i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none): your field-map waypoint, for the team
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
-  SALVAGE: 30, // u8 from (SALVAGE_FROM), u16 count: tear that many down for what they are made of (SALVAGE in defs.js)
-  DROP_AMMO: 31, // u8 calibre (AMMO in defs.js), u16 count (0 = all): rounds out of that reserve onto the ground
-  UNEQUIP: 32, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
+  WORN: 30, // u8 which (WORN), u8 what (WORN_DO): the armor or backpack being worn taken off into the grid, dropped or salvaged
+  SORT_INV: 31, // (nothing): tidy the backpack grid - partial stacks merged, the open slots ordered by BAG_TIER
+  SALVAGE: 32, // u8 from (SALVAGE_FROM), u16 count: tear that many down for what they are made of (SALVAGE in defs.js)
+  DROP_AMMO: 33, // u8 calibre (AMMO in defs.js), u16 count (0 = all): rounds out of that reserve onto the ground
+  UNEQUIP: 34, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
 };
-// where ACT.SALVAGE takes from: a backpack index (below INVENTORY_SIZE), WEAPON + a weapon slot, or the armor worn
+// ACT.WORN: which piece of worn gear, and what is done with it
+export const WORN = { ARMOR: 0, BACKPACK: 1 };
+export const WORN_DO = { OFF: 0, DROP: 1, SALVAGE: 2 };
+// where ACT.SALVAGE takes from: a backpack index (below INVENTORY_MAX), WEAPON + a weapon slot, or the armor worn
 export const SALVAGE_FROM = { WEAPON: 0x80, ARMOR: 0xff };
 
 // special interaction targets that are not entities
@@ -89,6 +94,9 @@ export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 
 
 // FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
 export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
+// The close code a client's socket goes with when the player pressed "Leave game". Any other close is a drop, and the
+// game holds the player's place for REJOIN_GRACE seconds (server/game.js hold).
+export const LEFT_CODE = 4001;
 
 // S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
 // speaker (TALK_RANGE), or anywhere over a walkie-talkie link, so the flags differ per recipient.
@@ -468,6 +476,7 @@ export const PFLAG = {
   PINNED: 128,
   DOWNED: 256,
   REVIVING: 512, // being revived by a teammate
+  BACKPACK: 1024, // wearing a backpack (ITEM.BACKPACK): the third-person model carries it
 };
 // ...and in the five bits above them, the seat of a ride the player sits in + 1 (fair.js; 0: on foot)
 export const PRIDE_SHIFT = 11;

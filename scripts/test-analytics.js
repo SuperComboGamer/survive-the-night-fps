@@ -11,7 +11,7 @@
 import { createHash } from 'node:crypto';
 import { Game } from '../server/game.js';
 import { SAMPLE_EVERY, itemName } from '../server/analytics.js';
-import { C2S, S2C, CAR_ID, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
+import { LEFT_CODE, C2S, S2C, CAR_ID, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
 import { PHASE, EYE_HEIGHT, SLOT_BUILD, ESCAPE_RADIUS, GAME_OVER_DELAY } from '../shared/constants.js';
 import { ITEM, ZTYPE, KILLER, STRUCT, SUPPLIES, SUPPLY_NEED } from '../shared/defs.js';
 import { raycastWorld } from '../shared/collision.js';
@@ -79,7 +79,7 @@ function connect(name, { user = null, pid = '' } = {}) {
   c.p = game.players.get(c.id);
   return c;
 }
-const leave = (c) => game.onClose(c.session);
+const leave = (c) => game.onClose(c.session, LEFT_CODE); // ("Leave game": a plain drop is held for REJOIN_GRACE)
 const of = (k, id) => recs.filter((r) => r.k === k && (id === undefined || r.matchId === id || r.id === id));
 const events = (id, type) => of('event', id).filter((e) => !type || e.type === type);
 const stints = (id, name) => of('player', id).filter((r) => !name || r.name === name);

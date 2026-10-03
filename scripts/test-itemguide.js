@@ -137,6 +137,8 @@ for (const [item, min, max] of DEER_LOOT) expected.get(item).set('hunt deer', (m
   const leatherIn = Object.values(CONT_DEFS).filter((d) => d.table && holders(ITEM.LEATHER, CONT_TABLES).includes(d.table)).map((d) => contName[d.name]);
   check('leather: the places and containers whose tables list it, the deer, and nothing else', leatherAt.length > 0 && sameSet(new Set(text(ITEM.LEATHER).toLowerCase().split(', ')), new Set([...leatherAt, ...leatherIn, 'hunt deer'].map((n) => n.toLowerCase()))), text(ITEM.LEATHER));
   check('hunting deer is a source of leather and of raw venison, and cooked venison is made from the raw', foundIn(ITEM.LEATHER).startsWith('Hunt deer') && foundIn(ITEM.VENISON_RAW) === 'Hunt deer' && foundIn(ITEM.VENISON) === 'Craft it' && usedIn(ITEM.VENISON_RAW).list.some((u) => u.name === nameOf(ITEM.VENISON) && !u.locked), `${foundIn(ITEM.LEATHER)} | ${foundIn(ITEM.VENISON_RAW)} | ${foundIn(ITEM.VENISON)}`);
+  const packCost = [ITEM.LEATHER, ITEM.CLOTH, ITEM.ROPE];
+  check('the backpack is made at the workbench, from leather, cloth and rope that say they go into it', foundIn(ITEM.BACKPACK) === 'Craft it' && RECIPES.find((r) => r.out === ITEM.BACKPACK)?.station === 'bench' && packCost.every((item) => usedIn(item, 0, 99).list.some((u) => u.name === nameOf(ITEM.BACKPACK) && !u.locked)), foundIn(ITEM.BACKPACK));
   const powderIn = Object.values(CONT_DEFS).filter((d) => d.table && holders(ITEM.POWDER, CONT_TABLES).includes(d.table)).map((d) => contName[d.name]);
   check('gunpowder: its containers, the zombies that drop it, and that it can be crafted', powderIn.length > 0 && powderIn.every((n) => text(ITEM.POWDER).toLowerCase().includes(n)) && text(ITEM.POWDER).includes('special zombies') === SPECIAL_LOOT.some((row) => row[0] === ITEM.POWDER) && foundIn(ITEM.POWDER).endsWith(', or craft it') === RECIPES.some((r) => r.out === ITEM.POWDER && !r.schem), foundIn(ITEM.POWDER));
   check('sticks come from trees and scrap from wrecks, before anything else', foundIn(ITEM.STICK).startsWith('Chop trees') && foundIn(ITEM.SCRAP).startsWith('Salvage wrecks'), `${foundIn(ITEM.STICK)} | ${foundIn(ITEM.SCRAP)}`);
@@ -190,7 +192,7 @@ for (const [item, min, max] of DEER_LOOT) expected.get(item).set('hunt deer', (m
   let got = {};
   game.giveOrDrop = (p, item, n) => (got[item] = (got[item] || 0) + n);
   game.notify = () => {};
-  const p = { id: 0 };
+  const p = { id: 0, state: { x: 0, y: 0, z: 0 } }; // (where a felled tree falls away from)
   const flags = [COL.TREE, COL.SALVAGE];
   GATHER.forEach((g, i) => {
     // a living tree of the plain kind (tv 0); a wreck has no kinds

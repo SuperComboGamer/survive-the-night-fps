@@ -133,8 +133,9 @@ export class Connection {
     });
   }
 
-  close() {
-    if (this.ws) this.ws.close();
+  // code: LEFT_CODE when the player chose to leave (the server lets their place go at once; any other close it holds)
+  close(code = 1000) {
+    if (this.ws) this.ws.close(code);
   }
 
   sendRaw(w) {
@@ -195,6 +196,7 @@ export class Connection {
         break;
       case ACT.SWAP_INV:
       case ACT.UNEQUIP:
+      case ACT.WORN:
         w.u8(args[0]);
         w.u8(args[1]);
         break;

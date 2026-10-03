@@ -5,7 +5,7 @@
 // usage: node scripts/test-ammo.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, qpitch, writeInput } from '../shared/protocol.js';
-import { BTN, INVENTORY_SIZE, SLOT_PRIMARY, SLOT_PISTOL } from '../shared/constants.js';
+import { BTN, INVENTORY_SIZE, INVENTORY_MAX, SLOT_PRIMARY, SLOT_PISTOL } from '../shared/constants.js';
 import { ITEM, ITEM_DEFS, WEAPONS, AMMO, AMMO_MAX, AMMO_ITEMS, NOTIFY, RECIPES } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 
@@ -30,14 +30,15 @@ function client(name) {
       else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
       else if (t === S2C.INVENTORY) {
         // (as Game.onInventory reads it, client/game/game.js)
-        for (let i = 0; i < INVENTORY_SIZE; i++) {
+        for (let i = 0; i < INVENTORY_MAX; i++) {
           const item = r.u8();
           const count = r.u16();
           c.slots[i] = item ? { item, count } : null;
         }
+        r.u8(); // armor: item, points, max
         r.u8();
         r.u8();
-        r.u8();
+        r.u8(); // the backpack worn
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing inventory bytes`);
       }
     },

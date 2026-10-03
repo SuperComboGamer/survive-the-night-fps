@@ -3,7 +3,7 @@
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
 import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
-import { PHASE, INVENTORY_SIZE } from '../../shared/constants.js';
+import { PHASE, INVENTORY_MAX } from '../../shared/constants.js';
 import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
 
 const q = new URLSearchParams(location.search);
@@ -102,6 +102,8 @@ const ui = new UI(document.getElementById('ui'), {
   onEquipArmor: (i) => log('armor', i),
   onDropWeapon: (s) => log('dropWeapon', s),
   onUnequip: (s, to) => log('unequip', s, to),
+  onWorn: (which, what) => log('worn', which, what),
+  onSortItems: () => log('sort'),
   onSelectStructure: (t) => log('struct', t),
   onSelectThrowable: (t) => log('throwable', t),
   onCloseInventory: () => {
@@ -169,9 +171,11 @@ const baseHud = {
   objective: { supplies: [1, 0, 1, 0, 2], hints: [3, 1, 6, 4, 2, 9, 13], carried: { [ITEM.SPARE_TIRE]: 1 }, anyCarried: true, phase: PHASE.DAY, timeLeft: 134, finale: false, escapeT: 0, escapeReady: false, suppliesDone: false, wave: 0, waves: 3 },
 };
 
+// ?pack=1: wearing a backpack (the grid's last cells open, two of them used)
 const inv = {
-  slots: Array.from({ length: INVENTORY_SIZE }, () => null),
+  slots: Array.from({ length: INVENTORY_MAX }, () => null),
   armor: { item: ITEM.JACKET, points: 42, max: 60 },
+  backpack: q.get('pack') ? ITEM.BACKPACK : 0,
   ammo: [46, 12, 90, 0, 0, 7, 120],
   weapons: [ITEM.AK47, ITEM.PISTOL, ITEM.MACHETE, ITEM.MOLOTOV, ITEM.HAMMER],
   throwCounts: { [ITEM.MOLOTOV]: 2, [ITEM.PIPEBOMB]: 1 },
@@ -200,6 +204,10 @@ const inv = {
 ].forEach(([item, count], i) => {
   inv.slots[i < 12 ? i : i + 1] = { item, count };
 });
+if (inv.backpack) {
+  inv.slots[24] = { item: ITEM.LEATHER, count: 3 };
+  inv.slots[25] = { item: ITEM.ROPE, count: 2 };
+}
 
 const players = [
   { id: 1, name: 'Survivor417', status: 'alive', hp: 1, kills: 23, ping: 42, talking: false, self: true },
@@ -247,7 +255,6 @@ function perfCheck(h) {
 ui.setInventory(inv);
 ui.setPlayers(players);
 ui.setCraftContext({ fire: true, bench: false, unlocked: 0b00101 });
-ui.setCamp({ supplies: [1, 0, 1, 0, 2], hints: [3, 1, 6, 4, 2, 9, 13], carried: { [ITEM.SPARE_TIRE]: 1 } });
 
 // ---------------------------------------------------------------- screens
 let bg = q.get('bg');

@@ -1,20 +1,23 @@
-// Inventory / crafting screen (I). Equipment on the left, backpack grid in the centre,
-// crafting on the right; car checklist + campfire under the grid.
+// Inventory / crafting screen (I). Equipment on the left (weapons, the armor and backpack worn, ammunition), the
+// backpack grid in the centre, crafting on the right. The grid always has INVENTORY_MAX cells: the last
+// BACKPACK_SLOTS of them are locked until a backpack is worn. (The car supplies are on the HUD's objective tracker
+// and the map, not in here.)
 import { usedIn, foundIn, sourcesOf } from '../game/itemguide.js';
-import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, SALVAGE, isFirearm, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SUPPLIES, SUPPLY_NEED, SCHEMATICS, SCHEM_BIT, STATION_NAMES, ZONE_NAMES, CONSUMABLES, THROWABLES, BURN, supplyRumours } from '../../shared/defs.js';
-import { INVENTORY_SIZE } from '../../shared/constants.js';
-import { SALVAGE_FROM } from '../../shared/protocol.js';
+import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, SALVAGE, isFirearm, AMMO_NAMES, AMMO_MAX, AMMO_ITEMS, SCHEM_BIT, STATION_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
+import { INVENTORY_SIZE, INVENTORY_MAX, BACKPACK_SLOTS, inventoryCap } from '../../shared/constants.js';
+import { SALVAGE_FROM, WORN, WORN_DO } from '../../shared/protocol.js';
 import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { needLines } from '../game/harvest.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
-const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
-// Backpack order: weapons and whatever else is equipped (armor, throwables, gear) first, then consumables (ammo with
+const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
+// Backpack order: weapons and whatever else is equipped (armor, the backpack, throwables, gear) first, then consumables (ammo with
 // them), then crafting materials and car supplies; empty slots last. Only the grid is laid out that way - the server
 // keeps each stack in its slot - so within a tier stacks stay in slot order, which a drag onto another stack swaps.
-const BAG_TIER = { weapon: 0, armor: 0, throw: 0, gear: 0, cons: 1, ammo: 1 };
+// (The Sort button has the server merge part stacks and reorder the slots themselves, by BAG_TIER in defs.js.)
+const BAG_TIER = { weapon: 0, armor: 0, pack: 0, throw: 0, gear: 0, cons: 1, ammo: 1 };
 const bagTier = (s) => (s ? (BAG_TIER[ITEM_DEFS[s.item]?.cat] ?? 2) : 3);
 // Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
 // icon: item shown on the tab; cat: item category whose colour marks the tab (defaults to the id).
@@ -37,12 +40,13 @@ const MAX_KEY = IS_MAC ? 'Cmd' : 'Ctrl';
 // ms a craft counts as on its way to the server before it is given up on: two slow round trips
 const SENT_TTL = 2500;
 
-// Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, and
-// consumables split into medicine (anything that heals) and utility (torches, batteries), which
-// shares a tab with the raw materials.
+// Which tab a recipe's output belongs to. The hammer is a build tool rather than a weapon, the
+// backpack is worn as armor is, and consumables split into medicine (anything that heals) and
+// utility (torches, batteries), which shares a tab with the raw materials.
 function craftTab(item) {
   const cat = ITEM_DEFS[item]?.cat;
   if (item === ITEM.HAMMER) return 'util';
+  if (cat === 'pack') return 'armor';
   if (cat === 'cons') return CONSUMABLES[item]?.heal ? 'med' : 'util';
   return CRAFT_TABS.some((t) => t.id === cat) ? cat : 'util';
 }
@@ -141,8 +145,15 @@ function statLines(id) {
   const t = THROWABLES[id];
   if (t) out.push(`Radius ${t.radius}m` + (t.damage ? ` · ${t.damage} dmg` : ` · burns ${t.burnTime}s`));
   if (d && d.cat === 'armor') out.push(`${d.armor} armor · absorbs ${Math.round(d.absorb * 100)}%`);
+  if (d && d.cat === 'pack') out.push(`+${BACKPACK_SLOTS} backpack slots`);
   return out;
 }
+
+// '4 Leather · 6 Cloth · 2 Rope': a cost, or what salvage gives back, in a line
+const costLine = (cost) => Object.entries(cost).map(([id, n]) => `${n} ${ITEM_DEFS[id].name}`).join(' · ');
+const PACK_RECIPE = RECIPES.find((r) => r.out === ITEM.BACKPACK);
+// the hint on a worn row: what a click does with it, and what salvaging it gives back
+const wornHint = (item) => `LMB take off · RMB drop` + (SALVAGE[item] ? `\nShift+LMB salvage for ${costLine(SALVAGE[item])}` : '');
 
 // how much of an item an inventory ({ slots, weapons }) holds, wherever it is kept: backpack or a weapon slot
 function carried(inv, item) {
@@ -152,7 +163,7 @@ function carried(inv, item) {
 function hintFor(cat) {
   if (cat === 'cons') return 'LMB use';
   if (cat === 'weapon' || cat === 'throw') return 'LMB equip';
-  if (cat === 'armor') return 'LMB wear';
+  if (cat === 'armor' || cat === 'pack') return 'LMB wear';
   return '';
 }
 
@@ -258,11 +269,10 @@ export class Inventory {
   constructor(ui, parent, tipParent) {
     this.ui = ui;
     this.open = false;
-    this.inv = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null, ammo: AMMO_ITEMS.map(() => 0), weapons: [0, 0, 0, 0, 0], throwCounts: {} };
+    this.inv = { slots: new Array(INVENTORY_MAX).fill(null), armor: null, backpack: 0, cap: INVENTORY_SIZE, ammo: AMMO_ITEMS.map(() => 0), weapons: [0, 0, 0, 0, 0], throwCounts: {} };
     this.counts = {};
     this.near = { fire: false, bench: false };
     this.unlocked = 0;
-    this.camp = { supplies: [0, 0, 0, 0, 0], hints: [], found: 0, carried: {} };
     this.tip = new Tooltip(tipParent);
     this.bulk = 0; // crafts a click on a recipe asks for while a bulk key is held (CRAFT_FEW / CRAFT_MAX); 0: none held
     this.keys = { few: false, max: false }; // bulk keys pressed since the screen opened
@@ -301,7 +311,8 @@ export class Inventory {
     });
     this.throwAlt = el('div', 'eq-throws', left);
 
-    this._h(left, 'Armor');
+    // what is worn: armor, and under it the backpack (its pockets are the grid's last BACKPACK_SLOTS cells)
+    this._h(left, 'Armor', 'RMB drop');
     const arm = (this.armEl = el('div', 'armor empty', left));
     this.armIco = el('i', 'arm-ico', arm);
     const at = el('div', 'arm-txt', arm);
@@ -309,6 +320,12 @@ export class Inventory {
     const ab = el('div', 'arm-bar', at);
     this.armFill = el('i', '', ab);
     this.armPts = el('span', 'arm-pts', arm, '');
+    const pk = (this.packEl = el('div', 'armor pack empty', left));
+    this.packIco = el('i', 'arm-ico', pk);
+    const pt = el('div', 'arm-txt', pk);
+    this.packName = el('span', 'arm-name', pt, 'No backpack');
+    this.packSub = el('span', 'arm-sub', pt, '');
+    this.packPts = el('span', 'arm-pts', pk, '');
 
     // Ammunition is carried apart from the backpack, a reserve per calibre: from here half of one, or all of it, goes
     // on the ground for a teammate
@@ -338,14 +355,19 @@ export class Inventory {
       return { r, fill, n, half, all, v: -1 };
     });
 
-    // ---- centre: backpack grid + camp info
+    // ---- centre: backpack grid
     const mid = el('section', 'inv-col inv-mid', wrap);
     const gp = (this.gridWrap = el('div', 'grid-wrap paper', mid));
     const gh = this._h(gp, 'Backpack');
-    this.capEl = el('span', 'inv-cap', gh, '0 / ' + INVENTORY_SIZE);
+    const ghr = el('span', 'inv-h-right', gh);
+    // Sort: stacks merged, the grid ordered by kind (BAG_TIER), the server's to do
+    const sort = (this.sortEl = el('button', 'inv-sort', ghr, 'Sort'));
+    sort.type = 'button';
+    sort.title = 'Merge stacks and order the backpack by kind';
+    this.capEl = el('span', 'inv-cap', ghr, '0 / ' + INVENTORY_SIZE);
     this.grid = el('div', 'grid', gp);
     this.cells = [];
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
+    for (let i = 0; i < INVENTORY_MAX; i++) {
       const c = el('div', 'cell empty', this.grid);
       c.dataset.i = i;
       const ico = el('i', 'cell-ico', c);
@@ -364,30 +386,6 @@ export class Inventory {
       el('span', 'kbd sm', s, k);
       el('span', '', s, t);
     }
-
-    const sub = el('div', 'inv-sub', mid);
-    const camp = el('div', 'camp-box paper', sub);
-    const cph = this._h(camp, 'Car supplies');
-    this.carCount = el('span', 'inv-cap', cph, '0 / 7');
-    const pl = el('ul', 'car-list', camp);
-    this.partEls = SUPPLIES.map((id, i) => {
-      const li = el('li', 'cp', pl);
-      svgEl('i', 'cp-ico', li, itemIcon(id));
-      el('span', 'cp-name', li, ITEM_DEFS[id].name + (SUPPLY_NEED[i] > 1 ? ` ×${SUPPLY_NEED[i]}` : ''));
-      const where = el('span', 'cp-where', li, '?');
-      svgEl('i', 'cp-chk', li, glyph('check'));
-      li.where = where;
-      return li;
-    });
-    const sch = el('div', 'schem-row', camp);
-    el('span', 'schem-lab', sch, 'Schematics');
-    this.schemEls = SCHEMATICS.map((id) => {
-      const b = el('span', 'schem locked', sch);
-      b.dataset.item = id;
-      svgEl('i', 'schem-ico', b, itemIcon(id));
-      svgEl('i', 'schem-lock', b, glyph('lock'));
-      return b;
-    });
 
     // ---- right: crafting
     const right = el('section', 'inv-col inv-right paper', wrap);
@@ -556,7 +554,7 @@ export class Inventory {
         if (d.started) {
           this.ghost.style.transform = `translate(${e.clientX}px,${e.clientY}px) translate(-50%,-50%)`;
           const t = document.elementFromPoint(e.clientX, e.clientY);
-          const over = t?.closest('.cell');
+          const over = t?.closest('.cell:not(.locked)');
           const oi = over ? +over.dataset.i : -1;
           if (d.over !== oi) {
             if (d.over >= 0) this.cells[d.over].c.classList.remove('drop-t');
@@ -582,7 +580,7 @@ export class Inventory {
       if (d.started) {
         this._endDrag(d);
         const t = document.elementFromPoint(e.clientX, e.clientY);
-        const over = t?.closest('.cell');
+        const over = t?.closest('.cell:not(.locked)');
         if (d.eq >= 0) {
           // a weapon out of its slot: onto the backpack (that cell if it can take it, else the first free one), or
           // out of the screen onto the ground
@@ -631,7 +629,7 @@ export class Inventory {
     wrap.addEventListener('pointerover', (e) => {
       if (this.drag?.started || this.split) return;
       // (not over an ammo row's drop buttons: they say what they do themselves)
-      const t = e.target.closest('.am-act') ? null : e.target.closest('.cell, .eq, .rc, .armor, .cp, .am, .schem');
+      const t = e.target.closest('.am-act') ? null : e.target.closest('.cell, .eq, .rc, .armor, .am');
       if (t === this.tipTarget) return;
       this.tipTarget = t;
       if (!t) return this.tip.hide();
@@ -684,6 +682,26 @@ export class Inventory {
       else if (!e.repeat) this.splitRow.hidden ? this._doSalvage() : this._doSplit(false);
     };
     window.addEventListener('keydown', this._splitKey, true);
+
+    this.sortEl.addEventListener('click', () => {
+      this._closeSplit(); // (its stack is about to move)
+      this.sortEl.blur(); // (or Space, the jump key, would press it again once the screen is shut)
+      this.ui.sound('ui_click');
+      cb.onSortItems();
+    });
+
+    // worn gear: LMB takes it off into the grid, RMB drops it, Shift+LMB salvages it (the server refuses the
+    // backpack while its pockets hold anything, and says so). Shift+LMB on the armor opens the salvage popover
+    // instead, as on a weapon (the armor row's click, below)
+    for (const [row, which] of [[this.armEl, WORN.ARMOR], [this.packEl, WORN.BACKPACK]]) {
+      row.addEventListener('pointerdown', (e) => {
+        const on = which === WORN.ARMOR ? !!this.inv.armor : !!this.inv.backpack;
+        if (!on || (e.button !== 0 && e.button !== 2) || (which === WORN.ARMOR && e.button === 0 && e.shiftKey)) return;
+        e.preventDefault();
+        this.ui.sound('ui_click');
+        cb.onWorn(which, e.button === 2 ? WORN_DO.DROP : e.shiftKey ? WORN_DO.SALVAGE : WORN_DO.OFF);
+      });
+    }
 
     // equipment: LMB puts the weapon in the backpack (a click, or dragged onto the grid: the window's pointerup above),
     // RMB drops it, Shift+LMB opens the popover to tear it down (not on the press that has just put that same popover
@@ -900,7 +918,7 @@ export class Inventory {
   _canDrop(d, b) {
     if (d.eq < 0) return this._canSwap(d.i, b);
     const s = this.inv.slots[b];
-    return b >= 0 && (!s || WEAPONS[s.item]?.slot === d.eq);
+    return b >= 0 && b < this.inv.cap && (!s || WEAPONS[s.item]?.slot === d.eq);
   }
 
   // Over t, what lights up besides a cell: the backpack, for a weapon from its slot; the slot (or the armor) a
@@ -978,7 +996,7 @@ export class Inventory {
     const salv = !!SALVAGE[sp.item];
     sp.n = clamp(n | 0, 1, max);
     if (max > 1) {
-      const free = this.inv.slots.some((s) => !s);
+      const free = this.inv.slots.some((s, i) => !s && i < this.inv.cap);
       this.splitRange.value = sp.n;
       this.splitRange.style.setProperty('--p', (((sp.n - 1) / (max - 1)) * 100).toFixed(1) + '%');
       if (!typed) this.splitNum.value = String(sp.n);
@@ -1031,7 +1049,7 @@ export class Inventory {
     if (!s) return;
     const cat = ITEM_DEFS[s.item]?.cat;
     const cb = this.ui.cb;
-    if (cat === 'armor') {
+    if (cat === 'armor' || cat === 'pack') {
       this.ui.sound('ui_click');
       cb.onEquipArmor(i);
     } else if (cat === 'cons' || cat === 'weapon' || cat === 'throw') {
@@ -1050,6 +1068,10 @@ export class Inventory {
     let hintCls = '';
     let extra = null;
     let reqs = null;
+    if (t.classList.contains('cell') && t.classList.contains('locked')) {
+      // a pocket of the backpack nobody is wearing: what opens it, and how to make one
+      return { icon: glyph('lock'), name: 'Unlocks with a backpack', cat: 'Locked slot', catCls: 'c-pack', desc: `Craft one at a workbench: ${costLine(PACK_RECIPE.cost)}`, anchor: t };
+    }
     if (t.classList.contains('cell')) {
       const s = this.inv.slots[+t.dataset.i];
       if (!s) return null;
@@ -1063,11 +1085,18 @@ export class Inventory {
       id = q.item;
       const slot = +t.dataset.slot;
       hint = (slot !== 3 ? 'LMB or drag: into the backpack · ' : '') + 'RMB drop' + (SALVAGE[id] && slot !== 3 ? '\nShift+LMB salvage' : '');
+    } else if (t === this.packEl) {
+      if (!this.inv.backpack) return null;
+      id = this.inv.backpack;
+      const used = this.inv.slots.filter((x, i) => x && i >= INVENTORY_SIZE).length;
+      extra = [`${used} / ${BACKPACK_SLOTS} of its slots in use`];
+      if (used) [hint, hintCls] = ['Empty its extra slots to take it off', 'bad'];
+      else hint = wornHint(id);
     } else if (t.classList.contains('armor')) {
       if (!this.inv.armor) return null;
       id = this.inv.armor.item;
       extra = [`${Math.ceil(this.inv.armor.points)} / ${this.inv.armor.max} armor remaining`];
-      if (SALVAGE[id]) hint = 'Shift+LMB salvage';
+      hint = wornHint(id);
     } else if (t.classList.contains('rc')) {
       const rec = this.recipeEls.find((x) => x.b === t);
       if (!rec) return null;
@@ -1092,15 +1121,6 @@ export class Inventory {
       if (todo.length) hintCls = 'bad';
       // it can be made: name the bulk keys, or - with one of them held - say what the click will make
       if (!todo.length) [hint, hintCls] = this._craftHint(r);
-    } else if (t.classList.contains('cp')) {
-      const i = this.partEls.indexOf(t);
-      id = SUPPLIES[i];
-      const rum = supplyRumours(i, this.camp.hints, this.camp.found);
-      extra = [rum.zones.length ? `Rumoured: ${rum.zones.map((z) => ZONE_NAMES[z]).join(', ')}` : rum.found ? 'Found - it only has to reach the car' : 'Nobody knows where'];
-      if (SUPPLY_NEED[i] > 1) extra.push(`${this.camp.supplies[i] | 0} / ${SUPPLY_NEED[i]} in the tank`);
-    } else if (t.classList.contains('schem')) {
-      id = +t.dataset.item;
-      extra = [this._schemOk(id) ? 'Found - unlocked for the whole team' : 'Not found yet. Hidden in a locker, ammo crate or toolbox somewhere - or in a supply drop.'];
     } else if (t.classList.contains('am')) {
       id = AMMO_ITEMS[this.ammoEls.findIndex((a) => a.r === t)];
     }
@@ -1147,8 +1167,10 @@ export class Inventory {
     if (!inv) return;
     const slots = inv.slots || [];
     this.inv = {
-      slots: Array.from({ length: INVENTORY_SIZE }, (_, i) => (slots[i] && slots[i].item ? { item: slots[i].item, count: slots[i].count | 0 } : null)),
+      slots: Array.from({ length: INVENTORY_MAX }, (_, i) => (slots[i] && slots[i].item ? { item: slots[i].item, count: slots[i].count | 0 } : null)),
       armor: inv.armor && inv.armor.item ? inv.armor : null,
+      backpack: inv.backpack | 0,
+      cap: inventoryCap(inv.backpack),
       ammo: inv.ammo || AMMO_ITEMS.map(() => 0),
       weapons: inv.weapons || [0, 0, 0, 0, 0],
       throwCounts: inv.throwCounts || {},
@@ -1160,13 +1182,14 @@ export class Inventory {
   }
 
   _renderAll() {
-    for (let i = 0; i < INVENTORY_SIZE; i++) this._renderCell(i);
+    for (let i = 0; i < INVENTORY_MAX; i++) this._renderCell(i);
     this._orderCells();
     const used = this.inv.slots.filter(Boolean).length;
-    if (this._used !== used) {
-      this._used = used;
-      this.capEl.textContent = used + ' / ' + INVENTORY_SIZE;
-      this.capEl.classList.toggle('full', used >= INVENTORY_SIZE);
+    const capKey = used + '/' + this.inv.cap;
+    if (this._capKey !== capKey) {
+      this._capKey = capKey;
+      this.capEl.textContent = used + ' / ' + this.inv.cap;
+      this.capEl.classList.toggle('full', used >= this.inv.cap);
     }
 
     // equipment
@@ -1197,6 +1220,12 @@ export class Inventory {
     if (this._armKey !== armKey) {
       this._armKey = armKey;
       this._renderArmor(a);
+    }
+    const pack = this.inv.backpack;
+    const packKey = pack + ':' + used;
+    if (this._packKey !== packKey) {
+      this._packKey = packKey;
+      this._renderPack(pack);
     }
 
     // ammo
@@ -1246,14 +1275,24 @@ export class Inventory {
     }
   }
 
+  // the backpack worn, under the armor: what it adds, and how many of its slots are taken
+  _renderPack(item) {
+    this.packEl.classList.toggle('empty', !item);
+    this.packIco.innerHTML = itemIcon(ITEM.BACKPACK);
+    this.packName.textContent = item ? ITEM_DEFS[item]?.name || 'Backpack' : 'No backpack';
+    this.packSub.textContent = item ? `+${BACKPACK_SLOTS} slots` : 'Craft one at a workbench';
+    this.packPts.textContent = item ? this.inv.slots.filter((x, i) => x && i >= INVENTORY_SIZE).length + '/' + BACKPACK_SLOTS : '';
+  }
+
   _renderCell(i) {
     const s = this.inv.slots[i];
     const cell = this.cells[i];
-    const key = s ? s.item + ':' + s.count : '';
+    const locked = i >= this.inv.cap; // (and so empty: nothing is ever put in one)
+    const key = locked ? 'locked' : s ? s.item + ':' + s.count : '';
     if (cell.key === key) return;
     cell.key = key;
-    cell.c.className = 'cell' + (s ? ' c-' + (ITEM_DEFS[s.item]?.cat || 'res') : ' empty') + (this.split?.i === i ? ' splitting' : '');
-    cell.ico.innerHTML = s ? itemIcon(s.item) : '';
+    cell.c.className = 'cell' + (locked ? ' empty locked' : s ? ' c-' + (ITEM_DEFS[s.item]?.cat || 'res') : ' empty') + (this.split?.i === i ? ' splitting' : '');
+    cell.ico.innerHTML = locked ? glyph('lock') : s ? itemIcon(s.item) : '';
     cell.n.textContent = s && s.count > 1 ? String(s.count) : '';
   }
 
@@ -1261,7 +1300,8 @@ export class Inventory {
   // sits in the grid changes.
   _orderCells() {
     const sl = this.inv.slots;
-    const order = sl.map((_, i) => i).sort((a, b) => bagTier(sl[a]) - bagTier(sl[b]) || a - b);
+    const tier = (i) => (i < this.inv.cap ? bagTier(sl[i]) : 4); // (the locked pockets last of all)
+    const order = sl.map((_, i) => i).sort((a, b) => tier(a) - tier(b) || a - b);
     const key = order.join(',');
     if (this._orderKey === key) return;
     this._orderKey = key;
@@ -1272,7 +1312,7 @@ export class Inventory {
   // Anywhere else it would change nothing that can be seen, the grid keeping its order.
   _canSwap(a, b) {
     const sl = this.inv.slots;
-    return b >= 0 && a !== b && !!sl[a] && !!sl[b] && bagTier(sl[a]) === bagTier(sl[b]);
+    return b >= 0 && b < this.inv.cap && a !== b && !!sl[a] && !!sl[b] && bagTier(sl[a]) === bagTier(sl[b]);
   }
 
   // Open a crafting tab. The search covers every tab, so picking one also ends it.
@@ -1401,41 +1441,8 @@ export class Inventory {
     const unlocked = ctx?.unlocked ?? this.unlocked;
     if (near.fire === this.near.fire && near.bench === this.near.bench && unlocked === this.unlocked) return;
     this.near = near;
-    if (unlocked !== this.unlocked) {
-      this.unlocked = unlocked;
-      this.schemEls.forEach((b) => b.classList.toggle('locked', !this._schemOk(+b.dataset.item)));
-    }
+    this.unlocked = unlocked;
     this._renderRecipes();
-  }
-
-  // info = { supplies:[n x5], hints:[zone x7], found:bits (a hint whose supply has been taken), carried:{item:n} }
-  // (any subset)
-  setCamp(info) {
-    if (!info) return;
-    const c = this.camp;
-    const key = JSON.stringify([info.supplies, info.hints, info.found, info.carried]);
-    if (key === this._campKey) return;
-    this._campKey = key;
-    if (info.supplies) c.supplies = info.supplies;
-    if (info.hints) c.hints = info.hints;
-    if (info.found != null) c.found = info.found;
-    if (info.carried) c.carried = info.carried;
-    let n = 0;
-    let tot = 0;
-    this.partEls.forEach((li, i) => {
-      const have = c.supplies[i] | 0;
-      const need = SUPPLY_NEED[i];
-      n += Math.min(have, need);
-      tot += need;
-      const done = have >= need;
-      li.classList.toggle('on', done);
-      li.classList.toggle('carried', !done && !!c.carried[SUPPLIES[i]]);
-      const rum = supplyRumours(i, c.hints, c.found);
-      const zs = rum.zones;
-      const gone = rum.found ? 'found' : '?'; // no place left to search: every one has been picked up, or none was rumoured
-      li.where.textContent = done ? 'installed' : c.carried[SUPPLIES[i]] ? 'carrying' : need > 1 ? `${have}/${need} · ${zs.map((z) => ZONE_NAMES[z]).join(', ') || gone}` : zs.length ? ZONE_NAMES[zs[0]] + '?' : gone;
-    });
-    this.carCount.textContent = n + ' / ' + tot;
   }
 
   setOpen(open) {

@@ -156,7 +156,7 @@ run(5);
   A.notes.length = 0;
   A.act(ACT.UNEQUIP, SLOT_PRIMARY, 255);
   run(2);
-  check('with the backpack full it stays in its slot, and the survivor is told', s.weapons[SLOT_PRIMARY] === ITEM.AK47 && s.mags[0] === 17 && a.inv.every((x) => x.item === ITEM.CLOTH) && A.notes.some(([m]) => m === NOTIFY.INVENTORY_FULL));
+  check('with the backpack full it stays in its slot, and the survivor is told', s.weapons[SLOT_PRIMARY] === ITEM.AK47 && s.mags[0] === 17 && a.inv.slice(0, INVENTORY_SIZE).every((x) => x.item === ITEM.CLOTH) && A.notes.some(([m]) => m === NOTIFY.INVENTORY_FULL));
 }
 
 // put away in the middle of a reload: the reload ends there, no rounds move

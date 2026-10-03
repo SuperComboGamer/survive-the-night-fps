@@ -5,7 +5,7 @@
 //   origin = center of the right hand's grip (palm wraps here), barrel / blade along -Z, up = +Y.
 //   Guns: pistol grip passes vertically (+Y) through the fist.
 //   Melee: the handle runs along Z through the fist, blade/bat toward -Z, cutting edge / hammer face toward -Y.
-//   Throwables (molotov, pipebomb, road flare): long axis along +Y (held like a bottle).
+//   Throwables (molotov, pipebomb, road flare, frag grenade, noisemaker): long axis along +Y (held like a bottle).
 import * as THREE from 'three';
 import { ITEM, CONSUMABLES } from '../../../shared/defs.js';
 import { WR, CR } from './charTextures.js';
@@ -1393,6 +1393,160 @@ function buildFlare(P) {
   P.meta.flame = new THREE.Vector3(0, 0.12, 0);
 }
 
+// Frag grenade: a Mk 2 "pineapple" at real size (6.4 cm across the body, 9.5 cm with the fuze). Cast-iron egg cut into
+// 8 columns x 5 rows of knobs by its grooves, olive drab worn back to dark iron on the knobs' corners; the fuze on top
+// with its striker housing, the spoon (safety lever) down the +Z side under the palm, the cotter pin through the fuze
+// and its pull ring hanging on the -X side, where the other hand finds it. Long axis +Y, the grip at the body's middle.
+const FRAG = { yc: -0.006, a: 0.037, R: 0.032, cols: 8, rows: 5, y0: -0.041, y1: 0.025 };
+const fragR = (y) => FRAG.R * Math.sqrt(Math.max(0, 1 - ((y - FRAG.yc) / FRAG.a) ** 2));
+// how much of a knob's face (1) or groove (0) is at (angle, height): the cast segments of the body
+function fragKnob(phi, y) {
+  const u = (((phi / (PI * 2)) * FRAG.cols) % 1 + 1) % 1;
+  const v = (y - FRAG.y0) / (FRAG.y1 - FRAG.y0);
+  if (v <= 0 || v >= 1) return 0.4;
+  const vr = (v * FRAG.rows) % 1;
+  const ss = (e0, e1, x) => {
+    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  };
+  return ss(0.0, 0.16, Math.min(u, 1 - u)) * ss(0.0, 0.16, Math.min(vr, 1 - vr));
+}
+function buildGrenade(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  // the cast body: a lathed egg, its radius pushed in along the grooves
+  // (8 columns: a ring of 3 or 6 to a column, its first vertex on a groove; each of the 5 rows sampled from its groove
+  // up, so every groove is a vertex line and stays crisp even on the 3rd-person model)
+  const ring = R(hi, 48, 24);
+  const ys = [FRAG.yc - FRAG.a, FRAG.yc - FRAG.a * 0.94, FRAG.yc - FRAG.a * 0.8];
+  const steps = hi ? [0, 0.1, 0.24, 0.5, 0.76, 0.9] : [0, 0.25, 0.75];
+  for (let k = 0; k < FRAG.rows; k++) for (const t of steps) ys.push(FRAG.y0 + ((k + t) / FRAG.rows) * (FRAG.y1 - FRAG.y0));
+  ys.push(FRAG.y1, 0.027, 0.0295);
+  const prof = ys.map((y, i) => new THREE.Vector2(i ? fragR(y) : 0, y));
+  const body = new THREE.LatheGeometry(prof, ring);
+  {
+    const p = body.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const r = Math.hypot(x, z);
+      if (r < 1e-6) continue;
+      const k = 1 - 0.13 * (1 - fragKnob(Math.atan2(z, x), y));
+      p.setXYZ(i, x * k, y, z * k);
+    }
+  }
+  B.geom(0, body, {
+    region: WR.PLAIN,
+    color: [0.2, 0.23, 0.12],
+    mottle: 0.14,
+    mf: 140,
+    // olive drab paint, darker down in the grooves, rubbed back to iron on the knobs' sharp corners
+    tint: (p, n, c) => {
+      const kn = fragKnob(Math.atan2(p.z, p.x), p.y);
+      c.multiplyScalar(0.62 + 0.38 * kn);
+      const wear = kn > 0.55 && kn < 0.9 ? (fbm3(p.x * 300, p.y * 300, p.z * 300, 2, 5) > 0.58 ? 1 : 0) : 0;
+      if (wear) c.lerp(new THREE.Color(0.2, 0.2, 0.19), 0.7);
+    },
+  });
+  // filler plug in the base
+  latheY(B, [[0, -0.0442], [0.0072, -0.0442], [0.0078, -0.0425], [0.0078, -0.039], [0, -0.039]], 0, 0, { ...M.gunDark, rs: R(hi, 12, 7), sharp: true });
+  // fuze: threaded collar, body, striker housing with the lever's pivot ears
+  const rs = R(hi, 14, 8);
+  latheY(B, [[0, 0.024], [0.0112, 0.024], [0.0116, 0.026], [0.0116, 0.031], [0.0098, 0.0325], [0, 0.0325]], 0, 0, { ...M.gun, rs, sharp: true });
+  latheY(B, [[0, 0.032], [0.0086, 0.032], [0.0086, 0.041], [0.0102, 0.0418], [0.0102, 0.0468], [0.0088, 0.0488], [0.004, 0.0505], [0, 0.0505]], 0, 0, { ...M.steel, color: [0.6, 0.62, 0.58], rs, sharp: true });
+  if (hi) for (let i = 0; i < 6; i++) latheY(B, [[0.0117, 0.0262 + i * 0.0008], [0.0121, 0.0265 + i * 0.0008], [0.0117, 0.0268 + i * 0.0008]], 0, 0, { ...M.gun, rs });
+  for (const s of [-1, 1]) boxR(B, s * 0.0058 - 0.0016, s * 0.0058 + 0.0016, 0.038, 0.0475, 0.006, 0.0128, { ...M.steel, color: [0.56, 0.58, 0.54], round: 0.3, seg: 2 });
+  // the spoon: a strip of pressed steel hooked over the striker, then down the side, hugging the body to its waist
+  // (its inner face: over the striker, down the fuze, then a millimetre off the knobs, flaring at the tip)
+  const spoonOuter = [[0.001, 0.0512], [0.0102, 0.051], [0.0118, 0.0488], [0.0122, 0.041], [0.0128, 0.0338]];
+  for (let y = 0.03; y > -0.017; y -= 0.0045) spoonOuter.push([Math.max(fragR(y), 0.0128) + 0.001, y]);
+  spoonOuter.push([fragR(-0.0195) + 0.0026, -0.0195]);
+  const th = 0.0016;
+  const spoonInner = spoonOuter.map(([z, y], i) => {
+    const a = spoonOuter[Math.max(0, i - 1)];
+    const b = spoonOuter[Math.min(spoonOuter.length - 1, i + 1)];
+    const tz = b[0] - a[0], ty = b[1] - a[1];
+    const l = Math.hypot(tz, ty) || 1;
+    return [z + (ty / l) * -th, y - (tz / l) * -th];
+  });
+  // (profile: f = -z, u = y; the strip is 1.3 cm wide, a little narrower where it hooks over the top)
+  const pts = [...spoonOuter.map(([z, y]) => [-z, y]), ...spoonInner.reverse().map(([z, y]) => [-z, y])];
+  profile(B, pts, 0.013, { region: WR.PLAIN, color: [0.24, 0.26, 0.15], mottle: 0.1, bevel: 0.0005, curveSegs: 2, widthFn: (f, u) => (u > 0.045 ? 0.72 : 1) });
+  // cotter pin through the fuze head, crimped over on the +X side, the pull ring on the -X side
+  const pinY = 0.0442, pinZ = 0.0066;
+  B.seg(0, [-0.0128, pinY, pinZ], [0.0118, pinY, pinZ], 0.0011, 0.0011, { ...M.steel, color: [1.05, 1.03, 0.96], rs: 5, hs: 1 });
+  B.tube(0, [[0.0118, pinY, pinZ], [0.0142, pinY - 0.0016, pinZ + 0.0012], [0.0152, pinY - 0.0052, pinZ + 0.0024]], 0.001, 0.001, { ...M.steel, color: [1.05, 1.03, 0.96], rs: 4, ts: R(hi, 6, 3) });
+  B.tube(0, [[0.0118, pinY, pinZ - 0.0004], [0.0138, pinY + 0.0018, pinZ - 0.002], [0.0145, pinY + 0.0048, pinZ - 0.0034]], 0.001, 0.001, { ...M.steel, color: [1.05, 1.03, 0.96], rs: 4, ts: R(hi, 6, 3) });
+  const pull = new THREE.TorusGeometry(0.0108, 0.0012, R(hi, 6, 4), R(hi, 22, 12));
+  B.geom(0, pull, { ...M.steel, color: [1.1, 1.08, 1.0], rot: [0.25, 0.35, 0], at: [-0.0236, pinY - 0.0036, pinZ - 0.001] });
+  P.meta.muzzle = null;
+}
+
+// Noisemaker: a wind-up twin-bell alarm clock (11 cm across the bells, 13 cm from its feet to the handle). Red enamel
+// drum case, chrome bezel round a cream dial with its hour marks and hands, two steel bells on posts with the hammer
+// between them, a wire carrying handle over the top, splayed ball feet, and the two winding keys on the back. Long
+// axis +Y; the dial faces +Z (the holder), the keys -Z.
+function buildDecoy(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const rs = R(hi, 28, 16);
+  const red = { region: WR.PLAIN, color: [0.62, 0.1, 0.07], mottle: 0.06 };
+  const chrome = { ...M.steel, color: [0.95, 0.95, 0.93] };
+  const dark = { region: WR.PLAIN, color: 0x141414, mottle: 0.02 };
+  // drum case (along Z): back plate, red drum, chrome bezel, dial (latheZ: [r, f], f forward = -Z)
+  latheZ(B, [[0, 0.0175], [0.034, 0.0175], [0.0392, 0.0158], [0.0418, 0.0128], [0.042, 0.0], [0.0418, -0.0118], [0, -0.0118]], 0, 0, { ...red, rs, sharp: true });
+  latheZ(B, [[0, 0.0182], [0.031, 0.0182], [0.0316, 0.0176], [0, 0.0176]], 0, 0, { ...chrome, color: [0.85, 0.85, 0.82], rs, sharp: true });
+  latheZ(B, [[0.0352, -0.0112], [0.0432, -0.0112], [0.0442, -0.0136], [0.0438, -0.0172], [0.0408, -0.0194], [0.0364, -0.019], [0.0352, -0.0172]], 0, 0, { ...chrome, rs, sharp: true });
+  latheZ(B, [[0, -0.0148], [0.0356, -0.0148], [0.0356, -0.0152], [0, -0.0152]], 0, 0, { region: WR.PLAIN, color: [0.93, 0.89, 0.76], mottle: 0.04, rs, sharp: true });
+  // hour marks (long at 12, 3, 6, 9), a centre boss, the hands at ten past ten and the red alarm hand
+  const dialZ = 0.0154;
+  for (let h = 0; h < 12; h++) {
+    const a = (h / 12) * PI * 2;
+    const big = h % 3 === 0;
+    const r0 = big ? 0.0262 : 0.0282;
+    const c = [Math.sin(a) * (r0 + 0.0315) / 2, Math.cos(a) * (r0 + 0.0315) / 2, dialZ];
+    B.box(0, c, [big ? 0.0026 : 0.0014, 0.0315 - r0, 0.0006], { ...dark, rot: [0, 0, -a] });
+  }
+  if (hi) for (let m = 0; m < 60; m++) if (m % 5) {
+    const a = (m / 60) * PI * 2;
+    B.box(0, [Math.sin(a) * 0.0305, Math.cos(a) * 0.0305, dialZ], [0.0006, 0.0018, 0.0004], { ...dark, rot: [0, 0, -a] });
+  }
+  const hand = (a, len, w, z, o) => B.box(0, [Math.sin(a) * len * 0.38, Math.cos(a) * len * 0.38, z], [w, len * 1.15, 0.0006], { ...o, rot: [0, 0, -a] });
+  hand((10.17 / 12) * PI * 2, 0.019, 0.0024, dialZ + 0.0006, dark);
+  hand((10 / 60) * PI * 2, 0.027, 0.0016, dialZ + 0.0012, dark);
+  hand((7 / 12) * PI * 2, 0.016, 0.0012, dialZ + 0.0018, { region: WR.PLAIN, color: [0.75, 0.12, 0.08], mottle: 0.02 });
+  latheZ(B, [[0, -dialZ - 0.0026], [0.0024, -dialZ - 0.0026], [0.0024, -dialZ], [0, -dialZ]], 0, 0, { ...chrome, rs: 10, sharp: true });
+  // the bells: thin steel cups on posts at +-40 degrees from the top, their mouths toward the hammer
+  const bellProf = [[0, 0.0178], [0.0088, 0.0156], [0.0148, 0.0102], [0.0178, 0.0036], [0.0186, 0.0004], [0.0204, 0.0], [0.0206, 0.0028], [0.0196, 0.0088], [0.0162, 0.0152], [0.0104, 0.0196], [0.0048, 0.0214], [0, 0.0216]];
+  for (const s of [-1, 1]) {
+    const a = s * 0.7;
+    const dx = Math.sin(a), dy = Math.cos(a);
+    const base = 0.0475;
+    latheY(B, bellProf, 0, 0, { ...chrome, rs: R(hi, 24, 10), rot: [0, 0, -a], at: [dx * base, dy * base, -0.003] });
+    B.seg(0, [dx * 0.04, dy * 0.04, -0.003], [dx * (base + 0.02), dy * (base + 0.02), -0.003], 0.0022, 0.0022, { ...chrome, rs: 6, hs: 1 });
+    B.ellip(0, [dx * (base + 0.0222), dy * (base + 0.0222), -0.003], [0.0034, 0.0034, 0.0034], { ...chrome, ws: R(hi, 8, 6), hs: R(hi, 6, 4) });
+  }
+  // the hammer between the bells, on its spring arm out of the case top
+  B.seg(0, [0, 0.0405, -0.004], [0, 0.0598, -0.004], 0.0013, 0.0011, { ...M.steel, color: [0.9, 0.88, 0.82], rs: 5, hs: 1 });
+  B.ellip(0, [0, 0.0612, -0.004], [0.0042, 0.0036, 0.0036], { ...M.brass, ws: R(hi, 10, 6), hs: R(hi, 7, 4) });
+  // carrying handle: a wire loop over the top, behind the hammer
+  B.tube(0, [[-0.0255, 0.0352, -0.0125], [-0.0225, 0.0665, -0.0125], [0, 0.0805, -0.0125], [0.0225, 0.0665, -0.0125], [0.0255, 0.0352, -0.0125]], 0.0017, 0.0017, { ...chrome, rs: R(hi, 6, 4), ts: R(hi, 18, 9) });
+  for (const s of [-1, 1]) B.ellip(0, [s * 0.0255, 0.0352, -0.0125], [0.0032, 0.0026, 0.0032], { ...chrome, ws: R(hi, 8, 6), hs: R(hi, 5, 4) });
+  // splayed feet with ball ends
+  for (const s of [-1, 1]) {
+    const a = s * 0.62;
+    B.seg(0, [Math.sin(a) * 0.036, -Math.cos(a) * 0.036, -0.002], [Math.sin(a) * 0.056, -Math.cos(a) * 0.056, -0.002], 0.0024, 0.0019, { ...chrome, rs: 6, hs: 1 });
+    B.ellip(0, [Math.sin(a) * 0.0575, -Math.cos(a) * 0.0575, -0.002], [0.0052, 0.0052, 0.0052], { ...chrome, ws: R(hi, 10, 6), hs: R(hi, 7, 4) });
+  }
+  // on the back: the two winding keys (alarm and time), their stems out of the back plate, and the setting knob on top
+  for (const s of [-1, 1]) {
+    const x = s * 0.0158, y = -0.006;
+    B.seg(0, [x, y, -0.0178], [x, y, -0.0262], 0.0018, 0.0018, { ...chrome, rs: 6, hs: 1 });
+    profile(B, [[0.0262, -0.006], [0.0262, 0.006], [0.0288, 0.0105], [0.0318, 0.0105], [0.0322, 0.0], [0.0318, -0.0105], [0.0288, -0.0105]].map(([f, u]) => [f, u + y]), 0.0024, { ...chrome, bevel: 0.0004, curveSegs: 2, x });
+  }
+  B.seg(0, [0.0, 0.041, 0.0], [0.0, 0.0445, 0.0], 0.0034, 0.0034, { ...chrome, rs: 10, hs: 1 });
+  P.meta.muzzle = null;
+}
+
 const BUILDERS = {
   [ITEM.AK47]: buildAK,
   [ITEM.PISTOL]: buildPistol,
@@ -1413,6 +1567,8 @@ const BUILDERS = {
   [ITEM.MOLOTOV]: buildMolotov,
   [ITEM.PIPEBOMB]: buildPipebomb,
   [ITEM.FLARE]: buildFlare,
+  [ITEM.GRENADE]: buildGrenade,
+  [ITEM.DECOY]: buildDecoy,
 };
 
 function finishParts(P) {
@@ -2286,6 +2442,9 @@ const VM = {
   [ITEM.MOLOTOV]: { kind: 'throw', hip: [0.17, -0.235, -0.38, 0.12, 0.2, -0.2], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   [ITEM.PIPEBOMB]: { kind: 'throw', hip: [0.16, -0.2, -0.34, 0.1, 0.2, -0.2], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   [ITEM.FLARE]: { kind: 'throw', hip: [0.16, -0.2, -0.35, 0.12, 0.2, -0.25], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.GRENADE]: { kind: 'throw', hip: [0.13, -0.12, -0.3, 0.3, 0.35, -0.12], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  // the alarm clock sits on the palm, the fingers cupped round its feet, its dial turned to the eye
+  [ITEM.DECOY]: { kind: 'throw', hip: [0.15, -0.115, -0.34, 0.15, 0.35, -0.1], rPose: 'cup', rGrip: { p: [0, -0.058, 0], q: handQ(1, [-0.71, 0, -0.71], [0, 1, 0]) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
 };
 
 // melee swing keyframes: [t, px,py,pz, rx,ry,rz, ease] (absolute weapon pose, Euler YXZ); ease 0 smooth,1 linear,2 out,3 in

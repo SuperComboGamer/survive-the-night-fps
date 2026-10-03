@@ -5,49 +5,59 @@
 // stacks fill up, so the answer is not a division. No DOM in here: sim-smoke holds it against the server, so
 // change the two together.
 import { ITEM_DEFS, WEAPONS, AMMO_MAX } from '../../shared/defs.js';
+import { INVENTORY_SIZE } from '../../shared/constants.js';
 
 export const CRAFT_FEW = 5; // Shift+click
 export const CRAFT_MAX = 20; // Ctrl+click (Cmd on a Mac): as many as the materials allow, up to this
 
-// inv = { slots: [{ item, count } | null], ammo: [reserve per calibre, carried apart from the slots], weapons: [item per weapon slot] }
-export const copyInv = (inv) => ({ slots: inv.slots.map((s) => (s ? { item: s.item, count: s.count } : null)), ammo: [...inv.ammo], weapons: [...inv.weapons] });
+// inv = { slots: [{ item, count } | null], ammo: [reserve per calibre, carried apart from the slots], weapons: [item per weapon slot],
+// cap: how many of the slots are open (inventoryCap: more with a backpack worn; INVENTORY_SIZE when left out) }
+export const copyInv = (inv) => ({ slots: inv.slots.map((s) => (s ? { item: s.item, count: s.count } : null)), ammo: [...inv.ammo], weapons: [...inv.weapons], cap: inv.cap ?? INVENTORY_SIZE });
 
 const have = (slots, item) => slots.reduce((n, s) => n + (s && s.item === item ? s.count : 0), 0);
 
-// room for n more of an item: free slots, and the stacks of it that are not full (canFit)
-function fits(slots, item, n) {
+// room for n more of an item in the open slots: free ones, and the stacks of it that are not full (canFit)
+function fits(slots, cap, item, n) {
   const max = ITEM_DEFS[item].stack;
   let room = 0;
-  for (const s of slots) room += !s ? max : s.item === item ? Math.max(0, max - s.count) : 0;
+  for (let i = 0; i < cap; i++) {
+    const s = slots[i];
+    room += !s ? max : s.item === item ? Math.max(0, max - s.count) : 0;
+  }
   return room >= n;
 }
 
-// taken from the last slot back (removeItem); a slot paid empty is free again
+// taken from the smallest stack of it first, the later of two the same size (removeItem); a slot paid empty is free again
 function pay(slots, cost) {
   for (const k in cost) {
     let left = cost[k];
-    for (let i = slots.length - 1; i >= 0 && left > 0; i--) {
-      const s = slots[i];
-      if (!s || s.item !== +k) continue;
+    while (left > 0) {
+      let at = -1;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        if (s && s.item === +k && (at < 0 || s.count <= slots[at].count)) at = i;
+      }
+      if (at < 0) break;
+      const s = slots[at];
       const take = Math.min(s.count, left);
       s.count -= take;
       left -= take;
-      if (s.count <= 0) slots[i] = null;
+      if (s.count <= 0) slots[at] = null;
     }
   }
 }
 
-// onto the stacks of it first, then into free slots (addItem)
-function add(slots, item, n) {
+// onto the stacks of it first, then into free slots (addItem), in the open slots
+function add(slots, cap, item, n) {
   const max = ITEM_DEFS[item].stack;
-  for (let i = 0; i < slots.length && n > 0; i++) {
+  for (let i = 0; i < cap && n > 0; i++) {
     const s = slots[i];
     if (!s || s.item !== item || s.count >= max) continue;
     const take = Math.min(max - s.count, n);
     s.count += take;
     n -= take;
   }
-  for (let i = 0; i < slots.length && n > 0; i++) {
+  for (let i = 0; i < cap && n > 0; i++) {
     if (slots[i]) continue;
     const take = Math.min(max, n);
     slots[i] = { item, count: take };
@@ -61,6 +71,8 @@ function add(slots, item, n) {
 export function craftRun(rec, inv, want) {
   const def = ITEM_DEFS[rec.out];
   const { slots } = inv;
+  const cap = Math.min(inv.cap ?? INVENTORY_SIZE, slots.length);
+  const free = () => slots.findIndex((s, i) => !s && i < cap);
   let done = 0;
   for (; done < want; done++) {
     for (const k in rec.cost) if (have(slots, +k) < rec.cost[k]) return done;
@@ -73,19 +85,19 @@ export function craftRun(rec, inv, want) {
     } else if (def.cat === 'weapon') {
       // its weapon slot when that is empty, else a backpack slot - which has to be free before the cost is paid
       const slot = WEAPONS[rec.out].slot;
-      if (inv.weapons[slot] && slots.every(Boolean)) return done;
+      if (inv.weapons[slot] && free() < 0) return done;
       pay(slots, rec.cost);
-      if (inv.weapons[slot]) slots[slots.findIndex((s) => !s)] = { item: rec.out, count: 1 };
+      if (inv.weapons[slot]) slots[free()] = { item: rec.out, count: 1 };
       else inv.weapons[slot] = rec.out;
     } else {
-      if (!fits(slots, rec.out, rec.n)) {
+      if (!fits(slots, cap, rec.out, rec.n)) {
         // paying may be what makes the room
         const trial = slots.map((s) => s && { ...s });
         pay(trial, rec.cost);
-        if (!fits(trial, rec.out, rec.n)) return done;
+        if (!fits(trial, cap, rec.out, rec.n)) return done;
       }
       pay(slots, rec.cost);
-      add(slots, rec.out, rec.n);
+      add(slots, cap, rec.out, rec.n);
     }
   }
   return done;
