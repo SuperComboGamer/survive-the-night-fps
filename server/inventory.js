@@ -4,6 +4,9 @@
 // can never fill a locked one.)
 import { INVENTORY_SIZE, INVENTORY_MAX, inventoryCap } from '../shared/constants.js';
 import { ITEM_DEFS, BAG_TIER } from '../shared/defs.js';
+import { consolidate, smallestStack } from '../shared/stacks.js';
+
+export { consolidate };
 
 export function createInventory() {
   return new Array(INVENTORY_MAX).fill(null);
@@ -25,6 +28,7 @@ export function countsMap(inv) {
 }
 
 // Adds as many as fit: onto the stacks of it that are not full first, then into free slots. Returns leftover count.
+// (Then consolidate: two part stacks a split kept apart are one again once the count changes.)
 export function addItem(inv, item, count, cap = INVENTORY_SIZE) {
   cap = Math.min(cap, inv.length);
   const def = ITEM_DEFS[item];
@@ -45,6 +49,7 @@ export function addItem(inv, item, count, cap = INVENTORY_SIZE) {
       left -= take;
     }
   }
+  if (left < count) consolidate(inv, item);
   return left;
 }
 
@@ -53,15 +58,12 @@ export function addItem(inv, item, count, cap = INVENTORY_SIZE) {
 // never carries more than one part-used stack of anything from play alone (a reload, a craft, the mounted gun's
 // belt). Taken from the last slot back, as it once was, a reload drained a full stack sitting behind the part-used
 // one whenever a new stack had gone into a free slot in front of it, and the part-used stacks piled up. (A split,
-// ACT.SPLIT_INV, still makes as many as the player asks for.)
+// ACT.SPLIT_INV, still makes as many as the player asks for, until that item's count changes: then consolidate
+// merges them again, as it does after anything taken from a stack of the player's choosing.)
 export function removeItem(inv, item, count) {
   let left = count;
   while (left > 0) {
-    let at = -1;
-    for (let i = 0; i < inv.length; i++) {
-      const s = inv[i];
-      if (s && s.item === item && (at < 0 || s.count <= inv[at].count)) at = i;
-    }
+    const at = smallestStack(inv, item);
     if (at < 0) break;
     const s = inv[at];
     const take = Math.min(s.count, left);
@@ -69,7 +71,49 @@ export function removeItem(inv, item, count) {
     left -= take;
     if (s.count <= 0) inv[at] = null;
   }
+  if (left < count) consolidate(inv, item);
   return count - left;
+}
+
+// n of the stack in slot idx taken out of it (a drop, salvage, the tin clicked in the grid: never more than that stack
+// holds). Off a full stack while the item has a part stack elsewhere, the part stack gives first: one tin off any
+// stack leaves the same as removeItem would, with only one cell changing. What is left is consolidated either way, so
+// the stack taken from never stays a second part stack. Returns how many were taken.
+export function takeFrom(inv, idx, n) {
+  const s = inv[idx];
+  if (!s || n <= 0) return 0;
+  const item = s.item;
+  const max = ITEM_DEFS[item]?.stack || 1;
+  n = Math.min(n, s.count);
+  let left = n;
+  const low = s.count >= max ? smallestStack(inv, item) : idx;
+  if (low !== idx && inv[low].count < max) {
+    const take = Math.min(left, inv[low].count);
+    inv[low].count -= take;
+    left -= take;
+    if (inv[low].count <= 0) inv[low] = null;
+  }
+  s.count -= left;
+  if (s.count <= 0) inv[idx] = null;
+  consolidate(inv, item);
+  return n;
+}
+
+// The safety net, for whatever changed the counts without going through the above: every item's part stacks merged
+// (consolidate), but those of an item split (ACT.SPLIT_INV) whose count is still what it was split at - `keep`, a
+// Map of item -> that count, which loses an item as soon as its count is something else.
+export function tidyStacks(inv, keep) {
+  let changed = false;
+  for (let i = 0; i < inv.length; i++) {
+    const s = inv[i];
+    if (!s || (ITEM_DEFS[s.item]?.stack || 1) <= 1) continue;
+    if (keep?.has(s.item)) {
+      if (keep.get(s.item) === countItem(inv, s.item)) continue;
+      keep.delete(s.item);
+    }
+    if (consolidate(inv, s.item)) changed = true;
+  }
+  return changed;
 }
 
 export function hasCost(inv, cost) {

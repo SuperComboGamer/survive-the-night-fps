@@ -599,9 +599,17 @@ export class Inventory {
           if (this._canSwap(d.i, b)) {
             this.ui.sound('ui_click');
             cb.onSwapItems(d.i, b);
-            // optimistic local swap (server state will overwrite on the next setInventory)
+            // shown at once as the server will do it (ACT.SWAP_INV; its inventory overwrites this on the next set):
+            // onto a stack of the same with room, that one is topped up; else the two trade places
             const sl = this.inv.slots;
-            [sl[d.i], sl[b]] = [sl[b], sl[d.i]];
+            const A = sl[d.i];
+            const B = sl[b];
+            const max = ITEM_DEFS[A.item]?.stack || 1;
+            if (A.item === B.item && max > 1 && B.count < max) {
+              const move = Math.min(max - B.count, A.count);
+              sl[b] = { item: B.item, count: B.count + move };
+              sl[d.i] = A.count > move ? { item: A.item, count: A.count - move } : null;
+            } else [sl[d.i], sl[b]] = [sl[b], sl[d.i]];
             this._renderCell(d.i);
             this._renderCell(b);
           }
