@@ -67,10 +67,11 @@ if (params.has('thumb')) {
   const n = v.split(',').map(Number);
   VM_DEBUG.HAND_POSES[k].thumb = [n.slice(0, 3), n.slice(3, 6)];
 }
-// &hp=pose:{"curl":[[..]x4],"thumb":[[..],[..]],"center":[x,y,z]} : override (part of) a hand pose
-if (params.has('hp')) {
-  const s = params.get('hp'), i = s.indexOf(':');
-  Object.assign(VM_DEBUG.HAND_POSES[s.slice(0, i)], JSON.parse(s.slice(i + 1)));
+// &hp=pose:{"curl":[[..]x4],"thumb":[[..],[..]],"center":[x,y,z]} : override (part of) a hand pose, or add one (with
+// &rpose= / &lpose= to put it on the item)
+for (const s of params.getAll('hp')) {
+  const i = s.indexOf(':'), k = s.slice(0, i);
+  VM_DEBUG.HAND_POSES[k] = { ...(VM_DEBUG.HAND_POSES[k] || VM_DEBUG.HAND_POSES.grip), ...JSON.parse(s.slice(i + 1)) };
 }
 // &mat=glove:r,g,b;trim:r,g,b;... : hand / sleeve material colors
 if (params.has('mat')) {
@@ -364,6 +365,15 @@ if (params.get('vm') === 'hands') {
         v.cam.fov = +fov || 24;
         v.cam.lookAt(c);
         v.cam.updateProjectionMatrix();
+      }
+      if (params.has('oh')) {
+        // &oh=R|L,yaw,pitch,dist: an outside camera orbiting that hand (the far side of a grip)
+        const [side, yaw, pitch, dist] = params.get('oh').split(',');
+        const arm = side === 'L' ? v.vm.armL : v.vm.armR;
+        v.scene.updateMatrixWorld(true);
+        const c = arm.wrist.localToWorld(arm.gripCenter(new THREE.Vector3()));
+        v.cam.position.set(Math.sin(+yaw) * Math.cos(+pitch), Math.sin(+pitch), Math.cos(+yaw) * Math.cos(+pitch)).multiplyScalar(+dist || 0.3).add(c);
+        v.cam.lookAt(c);
       }
       if (hideArm === 'L' || hideArm === 'LR') v.vm.armL.setVisible(false);
       if (hideArm === 'R' || hideArm === 'LR') v.vm.armR.setVisible(false);
