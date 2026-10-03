@@ -1,5 +1,5 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, ROOMF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
 
 export class Connection {
   constructor(handlers) {
@@ -13,18 +13,21 @@ export class Connection {
     this.bytesOut = 0;
     this.pingAt = 0; // when the ping that is still out was sent
     this.pingNext = 0; // when the next one is due
+    this.room = null; // the game we are in: { code, name, inviteOnly } (S2C.ROOM)
   }
 
-  url() {
+  // code: the game to join; none for a quick join (the server picks a public game, or makes one)
+  url(code = '') {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    return `${proto}://${location.host}/ws`;
+    return `${proto}://${location.host}/ws${code ? `?game=${encodeURIComponent(code)}` : ''}`;
   }
 
-  // pid: who this browser is to the leaderboard (identity.js)
-  connect(name, pid = '') {
+  // pid: who this browser is to the leaderboard (identity.js). code: as for url
+  connect(name, pid = '', code = '') {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const ws = new WebSocket(this.url());
+      this.room = null;
+      const ws = new WebSocket(this.url(code));
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
       ws.onopen = () => {
@@ -42,8 +45,11 @@ export class Connection {
         const r = this.r.set(buf);
         const type = r.u8();
         switch (type) {
+          case S2C.ROOM:
+            this.room = { code: r.str(), name: r.str(), inviteOnly: !!(r.u8() & ROOMF.INVITE_ONLY) };
+            break;
           case S2C.WELCOME: {
-            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8() };
+            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), room: this.room };
             settled = true;
             resolve(info);
             break;
@@ -51,7 +57,19 @@ export class Connection {
           case S2C.REJECT: {
             const reason = r.u8();
             settled = true;
-            reject(new Error(reason === REJECT_REASON.FULL ? 'Server is full' : reason === REJECT_REASON.VERSION ? 'Version mismatch - refresh the page' : 'Rejected'));
+            const text =
+              reason === REJECT_REASON.FULL
+                ? code
+                  ? 'That game is full.'
+                  : 'Every game is full right now. Try again in a minute.'
+                : reason === REJECT_REASON.NO_GAME
+                  ? 'That game has ended, or the link is wrong.'
+                  : reason === REJECT_REASON.VERSION
+                    ? 'Version mismatch - refresh the page'
+                    : 'Rejected';
+            const err = new Error(text);
+            err.reason = reason;
+            reject(err);
             break;
           }
           case S2C.SNAPSHOT:

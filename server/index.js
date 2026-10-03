@@ -1,16 +1,25 @@
-// Server entry: uWebSockets.js transport (binary WebSocket at /ws), static file serving of the
-// built client (dist/), a /status JSON endpoint, and a drift-corrected fixed-rate tick loop.
+// Server entry, the network thread: uWebSockets.js transport (binary WebSocket at /ws), the lobby's HTTP API
+// (/api/games), static file serving of the built client (dist/) and a /status JSON endpoint. The games themselves
+// run in worker threads, one game server each (rooms.js, room-worker.js); this thread routes every socket to its
+// game by the code in its URL (/ws?game=CODE), or with no code to whichever public game a quick join picks.
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
-import { Game } from './game.js';
+import { Lobby, rejectBytes, defaultMaxGames } from './rooms.js';
 import { PlayerStats } from './stats.js';
-import { SERVER_TICK_RATE, DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
+import { REJECT_REASON } from '../shared/protocol.js';
+import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PORT = +(process.env.PORT || DEFAULT_PORT);
-const MAX = +(process.env.MAX_PLAYERS || MAX_PLAYERS);
+const MAX = +(process.env.MAX_PLAYERS || MAX_PLAYERS); // seats in a game unless its maker picks: a quick join's
+// the most seats a game can be made with. The server carries far more (scripts/stress.js: 48 in one game is ~7% of
+// a core), but the game is balanced for 8 and the night's 120 zombies spread thin past about 16
+const ROOM_MAX = +(process.env.ROOM_MAX_PLAYERS || Math.max(MAX, 16));
+const MAX_GAMES = +(process.env.MAX_GAMES || defaultMaxGames()); // games at once on this box
+// sockets one address may have open over all the games (a household, a LAN party). 0: no limit (load tests)
+const CONN_PER_IP = +(process.env.CONN_PER_IP ?? 24);
 const SEED = process.env.SEED ? +process.env.SEED : undefined;
 const DIST = resolve(__dirname, '../dist');
 // The leaderboard's records (stats.js): STATS_FILE, or stats.json on the Railway volume if the service has one, or in
@@ -19,15 +28,23 @@ const DIST = resolve(__dirname, '../dist');
 const STATS_FILE = process.env.STATS_FILE ?? join(process.env.RAILWAY_VOLUME_MOUNT_PATH || resolve(__dirname, '../data'), 'stats.json');
 const stats = new PlayerStats({ file: STATS_FILE, log: (...a) => console.log('[server]', ...a) });
 
-const game = new Game({
+const lobby = new Lobby({
   stats,
-  seed: SEED,
+  maxGames: MAX_GAMES,
   maxPlayers: MAX,
-  dayLength: process.env.DAY_SECONDS ? +process.env.DAY_SECONDS : undefined,
-  nightLength: process.env.NIGHT_SECONDS ? +process.env.NIGHT_SECONDS : undefined,
-  startDay: process.env.START_DAY ? +process.env.START_DAY : undefined,
-  godMode: process.env.GODMODE === '1',
-  debugCommands: process.env.DEBUG_COMMANDS === '1',
+  roomMaxPlayers: ROOM_MAX,
+  limits: process.env.LOBBY_LIMITS !== '0', // 0: no per-address allowance on making games or asking for codes (load tests)
+  idleMs: process.env.GAME_IDLE_SECONDS ? +process.env.GAME_IDLE_SECONDS * 1000 : undefined, // an empty game lasts this long (tests)
+  log: (...a) => console.log('[server]', ...a),
+  // every game is made with these (all but the seed are for testing)
+  gameOpts: {
+    seed: SEED,
+    dayLength: process.env.DAY_SECONDS ? +process.env.DAY_SECONDS : undefined,
+    nightLength: process.env.NIGHT_SECONDS ? +process.env.NIGHT_SECONDS : undefined,
+    startDay: process.env.START_DAY ? +process.env.START_DAY : undefined,
+    godMode: process.env.GODMODE === '1',
+    debugCommands: process.env.DEBUG_COMMANDS === '1',
+  },
 });
 
 // ---------------------------------------------------------------- static files (prod build)
@@ -78,6 +95,7 @@ function clientAddress(res, req) {
 }
 
 const app = uWS.App();
+const perIp = new Map(); // address -> sockets it has open
 
 app.ws('/ws', {
   compression: uWS.DISABLED, // payloads are already tightly packed binary (measured: deflate only takes ~10% more off)
@@ -87,45 +105,124 @@ app.ws('/ws', {
   sendPingsAutomatically: true,
   upgrade: (res, req, context) => {
     const ip = clientAddress(res, req);
-    res.upgrade({ ip }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+    const code = String(req.getQuery('game') || '').trim().toUpperCase(); // none: a quick join
+    res.upgrade({ ip, code, room: null, slot: -1, counted: false, heard: false }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
   },
   open: (ws) => {
-    const conn = {
-      ip: ws.getUserData().ip,
-      closed: false,
-      send(bytes) {
-        if (this.closed) return;
-        // drop messages for badly backed-up clients rather than letting memory grow unbounded
-        if (ws.getBufferedAmount() > 256 * 1024) return;
-        ws.send(bytes, true, false);
-      },
-      // ...and tell the game, which holds that client's snapshots back instead (a dropped one would break its delta chain)
-      congested() {
-        return !this.closed && ws.getBufferedAmount() > 256 * 1024;
-      },
-      // batches every send inside fn into one syscall / TCP segment
-      cork(fn) {
-        if (!this.closed) ws.cork(fn);
-      },
-    };
-    ws.getUserData().session = game.onOpen(conn);
-    ws.getUserData().conn = conn;
+    const d = ws.getUserData();
+    let reason = 0;
+    if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
+    else {
+      const room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
+      const slot = room ? room.attach(ws) : -1;
+      if (slot >= 0) {
+        d.room = room;
+        d.slot = slot;
+      } else reason = room || !d.code ? REJECT_REASON.FULL : REJECT_REASON.NO_GAME;
+    }
+    if (reason) {
+      // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway)
+      ws.send(rejectBytes(reason), true, false);
+      ws.end(1000, 'rejected');
+      return;
+    }
+    perIp.set(d.ip, (perIp.get(d.ip) || 0) + 1);
+    d.counted = true;
   },
   message: (ws, message, isBinary) => {
     if (!isBinary) return;
-    // message buffer is only valid during this callback: copy it
-    game.onMessage(ws.getUserData().session, new Uint8Array(message.slice(0)));
+    const d = ws.getUserData();
+    if (!d.room) return;
+    d.room.deliver(d.slot, new Uint8Array(message), !d.heard); // (copied there: the buffer is only valid during this callback)
+    d.heard = true;
+  },
+  drain: (ws) => {
+    const d = ws.getUserData();
+    d.room?.drained(d.slot);
   },
   close: (ws) => {
     const d = ws.getUserData();
-    d.conn.closed = true;
-    game.onClose(d.session);
+    if (d.counted) {
+      const n = (perIp.get(d.ip) || 1) - 1;
+      if (n > 0) perIp.set(d.ip, n);
+      else perIp.delete(d.ip);
+      d.counted = false;
+    }
+    const room = d.room;
+    d.room = null;
+    room?.detach(d.slot);
   },
 });
 
+// ---------------------------------------------------------------- the lobby
+const STATUS_TEXT = { 200: '200 OK', 201: '201 Created', 400: '400 Bad Request', 404: '404 Not Found', 413: '413 Payload Too Large', 415: '415 Unsupported Media Type', 429: '429 Too Many Requests', 503: '503 Service Unavailable' };
+function json(res, status, obj) {
+  res.cork(() => {
+    res.writeStatus(STATUS_TEXT[status] || String(status)).writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').end(JSON.stringify(obj));
+  });
+}
+const lobbyInfo = () => ({ games: lobby.rooms.size, maxGames: lobby.maxGames, canCreate: lobby.rooms.size < lobby.maxGames, players: lobby.players(), defaultPlayers: lobby.maxPlayers, maxPlayers: lobby.roomMaxPlayers });
+
+// the public games, and what a new one can be
+app.get('/api/games', (res) => json(res, 200, { ...lobbyInfo(), list: lobby.list() }));
+
+// one game by its code (an invite link asks before joining: who is in it, is there a seat)
+app.get('/api/games/:code', (res, req) => {
+  const room = lobby.find(req.getParameter(0), clientAddress(res, req));
+  if (room) json(res, 200, room.info());
+  else json(res, 404, { error: 'No game goes by that code. It may have ended.' });
+});
+
+// makes a game: { name, host, inviteOnly, maxPlayers } -> its info, code included
+app.post('/api/games', (res, req) => {
+  const ip = clientAddress(res, req);
+  // (JSON only: a form on another site cannot post that without the browser asking this server first)
+  if (!/^application\/json\b/i.test(req.getHeader('content-type'))) return json(res, 415, { error: 'Send JSON' });
+  let body = Buffer.alloc(0);
+  let done = false;
+  res.onAborted(() => {
+    done = true;
+  });
+  res.onData((chunk, last) => {
+    if (done) return;
+    body = Buffer.concat([body, Buffer.from(chunk)]); // (copies it: chunk is only valid during this callback)
+    if (body.length > 2048) {
+      done = true;
+      return json(res, 413, { error: 'Too much' });
+    }
+    if (!last) return;
+    done = true;
+    let o;
+    try {
+      o = JSON.parse(body.toString('utf8') || '{}');
+    } catch {
+      return json(res, 400, { error: 'Bad request' });
+    }
+    if (!o || typeof o !== 'object') return json(res, 400, { error: 'Bad request' });
+    const made = lobby.create({ name: o.name, host: o.host, inviteOnly: o.inviteOnly === true, maxPlayers: o.maxPlayers }, ip);
+    if (made.error) return json(res, made.status, { error: made.error });
+    json(res, 201, made.room.info());
+  });
+});
+
+// ---------------------------------------------------------------- how the box is doing
+let mainCpuAt = process.threadCpuUsage();
+let mainElu = performance.eventLoopUtilization();
+let mainLoad = { cpuMs: 0, elu: 0 }; // this thread over the last second: CPU ms per second, share of time busy
+setInterval(() => {
+  const cpu = process.threadCpuUsage(mainCpuAt);
+  mainCpuAt = process.threadCpuUsage();
+  const e = performance.eventLoopUtilization(mainElu);
+  mainElu = performance.eventLoopUtilization();
+  mainLoad = { cpuMs: Math.round((cpu.user + cpu.system) / 10) / 100, elu: Math.round(e.utilization * 1000) / 1000 };
+}, 1000).unref();
+
 app.get('/status', (res) => {
-  // tick: the last 10 s window, the totals since boot and the last slow tick (timings only: this endpoint is public)
-  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()) });
+  // timings and counts only, no codes (this endpoint is public, and an invite-only game's code is its key).
+  // tick: per game, the last 10 s window, the totals since it started and its last slow tick
+  const mem = process.memoryUsage();
+  const games = [...lobby.rooms.values()].map((r) => ({ players: r.st.players, max: r.maxPlayers, public: !r.inviteOnly, phase: r.st.phase, day: r.st.day, load: r.st.load, heapMb: r.st.heapMb, tick: r.st.tick }));
+  const body = JSON.stringify({ ...lobbyInfo(), net: { ...mainLoad, sockets: [...perIp.values()].reduce((a, b) => a + b, 0) }, rssMb: Math.round(mem.rss / 1e6), list: games });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
@@ -147,49 +244,8 @@ app.listen(PORT, (token) => {
     console.error(`[server] failed to listen on port ${PORT}`);
     process.exit(1);
   }
-  console.log(`[server] listening on http://localhost:${PORT} (ws /ws) max players ${MAX}`);
+  console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
 });
-
-// ---------------------------------------------------------------- fixed-rate tick loop
-const TICK_MS = 1000 / SERVER_TICK_RATE;
-let next = performance.now();
-let due = next; // when the timer that wakes the loop was due
-function loop() {
-  const now = performance.now();
-  // a wake with a tick to run: how long after its timer was due did it come? That is the event loop or the host
-  // holding the server up, not the cost of a tick (after a slow tick the timer is armed late, so it is not counted)
-  if (now >= next) game.tickStats.late(now - due);
-  let steps = 0;
-  while (now >= next && steps < 4) {
-    try {
-      game.update();
-    } catch (err) {
-      console.error('[server] tick error', err);
-    }
-    next += TICK_MS;
-    steps++;
-  }
-  if (now - next > 1000) next = now; // way behind (debugger / sleep): resync
-  const armed = performance.now();
-  const wait = Math.max(0, next - armed);
-  due = armed + wait;
-  setTimeout(loop, wait > 2 ? wait - 1 : 0);
-}
-loop();
-
-// periodic stats
-setInterval(() => {
-  const s = game.stats;
-  const t = game.tickStats.roll(); // the ticks since the last line (closed with nobody on too: /status reads it)
-  if (game.players.size) {
-    const perClient = s.bytesOut / Math.max(1, game.players.size) / 10;
-    // tick: mean, 99th percentile and worst; over: ticks past the budget / ticks; late: how late the loop woke, mean and worst
-    const tick = `tick ${t.meanMs.toFixed(2)}ms p99 ${t.p99Ms.toFixed(2)}ms max ${t.maxMs.toFixed(2)}ms over ${t.over}/${t.ticks} late ${t.lateMeanMs.toFixed(2)}ms latemax ${t.lateMaxMs.toFixed(2)}ms`;
-    console.log(`[stats] players ${game.players.size} zombies ${game.zombies.length} ents ${game.all.length} ${tick} out ${(perClient / 1024).toFixed(1)} KB/s/client`);
-  }
-  s.bytesOut = 0;
-  s.msgsOut = 0;
-}, 10000);
 
 // the leaderboard goes to disk every half minute if it changed, and once more on the way out
 setInterval(() => stats.save(), 30000);

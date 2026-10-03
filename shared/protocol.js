@@ -26,7 +26,9 @@ export const S2C = {
   PONG: 8,
   WORLD_RESET: 9, // u32 seed: a new playthrough on a new map - rebuild the world from this seed
   BOARD: 10, // the leaderboard, as asked for (see writeBoard)
+  ROOM: 11, // str code, str name, u8 ROOMF: the game this socket was put in (before anything else; quick joins learn it here)
 };
+export const ROOMF = { INVITE_ONLY: 1 };
 
 // S2C.SNAPSHOT flags: a section is only on the wire when its bit is set. WebSocket delivery is reliable and ordered,
 // so the tick is the previous snapshot's + 1 and the acked command is the previous one + CMDS_PER_PACKET unless said
@@ -76,7 +78,8 @@ export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
 export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, FAIR_START: 9, FAIR_STOP: 10 };
 
-export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3 };
+// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
+export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
 
 // S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
 // speaker (TALK_RANGE), or anywhere over a walkie-talkie link, so the flags differ per recipient.

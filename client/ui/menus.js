@@ -3,6 +3,8 @@ import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
 import { loadRecord, recordSummary } from './records.js';
+import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
+import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
 
 export const DEFAULT_CONTROLS = [
   ['W A S D', 'Move'],
@@ -42,6 +44,9 @@ const TAGLINES = [
 ];
 
 // ---------------------------------------------------------------- splash
+// The title screen and the way into a game: a name, then Quick join (the busiest public game with a seat, or a new
+// one), Browse games or Create game (games.js). A page opened from a game's invite link (?game=CODE, lobby.js) is
+// that game's invitation instead, and Join goes straight into it - unless it is full or over.
 export class Splash {
   constructor(ui, parent) {
     this.ui = ui;
@@ -81,6 +86,13 @@ export class Splash {
     el('p', 'sp-goal', main, GOAL);
     el('p', 'sp-tag', main, TAGLINES[(Math.random() * TAGLINES.length) | 0]);
 
+    // the invitation, on a page opened from a game's link
+    const inv = (this.invite = el('div', 'sp-invite', main));
+    inv.hidden = true;
+    this.invKicker = el('div', 'sp-inv-k', inv, 'You are invited to');
+    this.invName = el('div', 'sp-inv-name', inv, '');
+    this.invMeta = el('div', 'sp-inv-meta', inv, '');
+
     const form = (this.form = el('form', 'sp-join', main));
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -100,7 +112,22 @@ export class Splash {
     this.name.addEventListener('input', () => lsSet('stn.name', this._typedName()));
     this.joinBtn = el('button', 'btn btn-blood sp-joinbtn', form);
     this.joinBtn.type = 'submit';
-    this.joinTxt = el('span', '', this.joinBtn, 'Join');
+    this.joinTxt = el('span', '', this.joinBtn, 'Quick join');
+
+    // the other ways in
+    const alt = el('div', 'sp-alt', main);
+    const altBtn = (icon, text, fn) => {
+      const b = el('button', 'btn btn-ghost', alt);
+      b.type = 'button';
+      svgEl('i', 'btn-ico', b, glyph(icon));
+      el('span', '', b, text);
+      b.addEventListener('click', fn);
+      return b;
+    };
+    this.quickAlt = altBtn('bolt', 'Quick join', () => this.join(''));
+    altBtn('people', 'Browse games', () => this.browser.show());
+    altBtn('plus', 'Create game', () => this.creator.show());
+
     this.err = el('div', 'sp-err', main, '');
     this.err.hidden = true;
     const st = (this.status = el('div', 'sp-status', main));
@@ -121,9 +148,14 @@ export class Splash {
     svgEl('i', 'btn-ico', sb, glyph('gear'));
     el('span', '', sb, 'Settings');
     sb.addEventListener('click', () => this.ui.settingsPanel.show());
-    el('div', 'sp-credit', foot, `Co-op survival horror · 1–${MAX_PLAYERS} players`);
+    this.credit = el('div', 'sp-credit', foot, `Co-op survival horror · 1–${MAX_PLAYERS} players`);
 
-    this.full = false;
+    this.browser = new GameBrowser(ui, root, this);
+    this.creator = new GameCreator(ui, root, this);
+    this.code = ''; // the game this page was opened for (its invite link)
+    this.game = null; // ...as the server last described it
+    this.gone = false; // ...and it is not there (any more)
+    this.offline = false;
     this.joining = false;
   }
 
@@ -131,24 +163,65 @@ export class Splash {
     return this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
   }
 
-  _join() {
-    if (this.joining || this.full) return;
+  // the name to play under (one is made up if the field is empty)
+  playerName() {
     let name = this._typedName();
     if (!name) {
       name = 'Survivor' + String(100 + ((Math.random() * 900) | 0));
       this.name.value = name;
     }
+    return name;
+  }
+
+  // the invited game, while there is one to go into
+  get invited() {
+    return !!this.code && !this.gone;
+  }
+
+  _join() {
+    this.join(this.invited ? this.code : '');
+  }
+
+  // code: the game to go into; '' for a quick join
+  join(code) {
+    if (this.joining) return;
+    if (code && code === this.code && this.game?.full) return;
+    const name = this.playerName();
     lsSet('stn.name', name);
     this.joining = true;
     this.err.hidden = true;
     this.root.classList.add('joining');
     this._syncBtn();
-    this.ui.cb.onJoin(name);
+    this.ui.cb.onJoin(name, code);
   }
 
   _syncBtn() {
-    this.joinBtn.disabled = this.joining || this.full;
-    this.joinTxt.textContent = this.joining ? 'Joining…' : this.full ? 'Server full' : 'Join';
+    const full = this.invited && !!this.game?.full;
+    this.joinBtn.disabled = this.joining || full;
+    this.joinTxt.textContent = this.joining ? 'Joining…' : !this.invited ? 'Quick join' : full ? 'Game full' : 'Join game';
+    this.quickAlt.hidden = !this.invited; // (without an invitation, the big button is the quick join)
+  }
+
+  _syncInvite() {
+    this.invite.hidden = !this.code;
+    if (!this.code) return;
+    const g = this.game;
+    this.invite.className = 'sp-invite' + (this.gone ? ' gone' : g?.full ? ' full' : '');
+    if (this.gone) {
+      this.invKicker.textContent = 'Your invitation';
+      this.invName.textContent = 'That game has ended';
+      this.invMeta.textContent = 'Quick join, or find another under Browse games.';
+    } else if (!g) {
+      this.invKicker.textContent = 'You are invited to';
+      this.invName.textContent = this.offline ? 'A game on this server' : 'Finding the game…';
+      this.invMeta.textContent = `Code ${this.code}`;
+    } else {
+      this.invKicker.textContent = 'You are invited to';
+      this.invName.textContent = g.name;
+      const parts = [`${seatsText(g)} survivors`, phaseText(g.phase, g.day)];
+      if (g.inviteOnly) parts.push('Invite only');
+      this.invMeta.textContent = g.full ? `Full · ${seatsText(g)} · a seat may free up, or pick another game` : parts.join(' · ');
+    }
   }
 
   setError(text) {
@@ -160,38 +233,37 @@ export class Splash {
     this.err.classList.remove('shake');
     void this.err.offsetWidth;
     this.err.classList.add('shake');
+    if (text) this._poll(); // (a full or ended game: show it as it is now)
   }
 
   async _poll() {
-    let ctl;
     try {
-      ctl = new AbortController();
-      const to = setTimeout(() => ctl.abort(), 2500);
-      const r = await fetch('/status', { cache: 'no-store', signal: ctl.signal });
-      clearTimeout(to);
-      if (!r.ok) throw new Error('bad status');
-      const s = await r.json();
+      if (this.code && !this.gone) {
+        // (a game that has ended does not come back: no asking again, which an address can only do so often)
+        try {
+          this.game = await gameInfo(this.code);
+          this.gone = false;
+        } catch (err) {
+          if (err.status !== 404) throw err;
+          this.game = null;
+          this.gone = true;
+        }
+      }
+      const lobby = await listGames();
       if (this.root.hidden) return;
-      const players = s.players | 0;
-      const max = s.max | 0 || MAX_PLAYERS;
-      this.full = players >= max;
-      let phase = '';
-      if (s.phase === PHASE.NIGHT) phase = 'Night ' + (s.day | 0);
-      else if (s.phase === PHASE.DAY) phase = 'Day ' + (s.day | 0);
-      else if (s.phase === PHASE.WAITING) phase = 'Waiting to begin';
-      else if (s.phase === PHASE.GAMEOVER) phase = 'Restarting';
-      else if (s.phase === PHASE.VICTORY) phase = 'They escaped';
-      const txt = this.full
-        ? `Server full · ${players} / ${max} survivors`
-        : `${players} / ${max} survivor${max === 1 ? '' : 's'}` + (phase ? ' · ' + phase : '');
-      this.statusTxt.textContent = txt;
-      this.status.className = 'sp-status ' + (this.full ? 'full' : s.phase === PHASE.NIGHT ? 'online night' : 'online');
+      this.offline = false;
+      this.creator.setLimits(lobby.maxPlayers, lobby.defaultPlayers);
+      this.credit.textContent = `Co-op survival horror · 1–${lobby.maxPlayers} players`;
+      const n = lobby.games;
+      this.statusTxt.textContent = n ? `${n} game${n === 1 ? '' : 's'} running · ${lobby.players} survivor${lobby.players === 1 ? '' : 's'} online` : 'No games running · start one';
+      this.status.className = 'sp-status online' + (this.invited && this.game?.phase === PHASE.NIGHT ? ' night' : '');
     } catch {
       if (this.root.hidden) return;
-      this.full = false;
+      this.offline = true;
       this.statusTxt.textContent = 'Server offline';
       this.status.className = 'sp-status offline';
     }
+    this._syncInvite();
     this._syncBtn();
   }
 
@@ -208,6 +280,13 @@ export class Splash {
     this.root.hidden = false;
     this.joining = false;
     this.root.classList.remove('joining');
+    const code = linkedCode();
+    if (code !== this.code) {
+      this.code = code;
+      this.game = null;
+      this.gone = false;
+    }
+    this._syncInvite();
     this._syncBtn();
     this.syncRecord();
     this.root.classList.remove('in');
@@ -226,6 +305,8 @@ export class Splash {
     clearInterval(this._iv);
     this._iv = 0;
     this.joining = false;
+    this.browser.hide();
+    this.creator.hide();
   }
 }
 
@@ -243,6 +324,25 @@ export class Pause {
     resume.type = 'button';
     el('span', 'pr-t', resume, 'Click to resume');
     el('p', 'pause-note', main, 'The night does not wait. The world keeps moving while you are away.');
+    // the game's invite link, for whoever should join (setRoom)
+    const inv = (this.inv = el('div', 'pause-invite', main));
+    inv.hidden = true;
+    this.invTitle = el('div', 'pi-title', inv, '');
+    const row = el('div', 'pi-row', inv);
+    this.invLink = el('input', 'pi-link', row);
+    this.invLink.type = 'text';
+    this.invLink.readOnly = true;
+    this.invLink.spellcheck = false;
+    this.invLink.addEventListener('focus', () => this.invLink.select());
+    const copy = el('button', 'btn btn-ghost pi-copy', row);
+    copy.type = 'button';
+    svgEl('i', 'btn-ico', copy, glyph('link'));
+    this.copyTxt = el('span', '', copy, 'Copy invite link');
+    copy.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.copy();
+    });
+    this.invNote = el('div', 'pi-note', inv, '');
     const btns = el('div', 'pause-btns', main);
     const cb = el('button', 'btn btn-ghost', btns);
     cb.type = 'button';
@@ -271,10 +371,39 @@ export class Pause {
     });
     // clicking anywhere that is not a control resumes (keeps the user gesture for pointer lock)
     root.addEventListener('click', (e) => {
-      if (e.target.closest('.pause-btns')) return;
+      if (e.target.closest('.pause-btns, .pause-invite')) return;
       this.ui.sound('ui_click');
       this.ui.cb.onResume();
     });
+  }
+
+  // the game we are in: { code, name, inviteOnly } (null: none), and its invite link
+  setRoom(room, link) {
+    this.inv.hidden = !room;
+    if (!room) return;
+    this.invTitle.textContent = `${room.name} · ${room.inviteOnly ? 'invite only' : 'public'} · code ${room.code}`;
+    this.invLink.value = link;
+    this.invNote.textContent = room.inviteOnly ? 'Only people with this link can join.' : 'Anyone can join from Browse games, or straight in with this link.';
+    this.copyTxt.textContent = 'Copy invite link';
+  }
+
+  async copy() {
+    const link = this.invLink.value;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(link);
+      ok = true;
+    } catch {
+      // (no clipboard API outside https / localhost: the old way, from the selected field)
+      this.invLink.focus();
+      this.invLink.select();
+      try {
+        ok = document.execCommand('copy');
+      } catch {}
+    }
+    this.copyTxt.textContent = ok ? 'Link copied' : 'Select it and copy';
+    clearTimeout(this._copyT);
+    this._copyT = setTimeout(() => (this.copyTxt.textContent = 'Copy invite link'), 2200);
   }
 
   show(on) {

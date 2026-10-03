@@ -160,6 +160,11 @@ export class UI {
     this.pause.show(show);
   }
 
+  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu
+  setRoom(room, link = '') {
+    this.pause.setRoom(room, link);
+  }
+
   getSettings() {
     return { ...this.settings };
   }

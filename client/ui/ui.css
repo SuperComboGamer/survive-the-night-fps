@@ -4398,6 +4398,226 @@ body {
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: rgba(230, 223, 207, 0.35);
+}
+
+/* the other ways into a game, under Quick join */
+.stn-ui .sp-alt {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(10 * var(--u));
+  margin-top: calc(16 * var(--u));
+}
+
+.stn-ui .sp-alt .btn[hidden] {
+  display: none;
+}
+
+/* the invitation, on a page opened from a game's link */
+.stn-ui .sp-invite {
+  margin-top: calc(34 * var(--u));
+  padding: calc(12 * var(--u)) calc(30 * var(--u)) calc(13 * var(--u));
+  min-width: calc(420 * var(--u));
+  max-width: 90vw;
+  background: rgba(0, 0, 0, 0.5);
+  border-top: 2px solid var(--blood-lite);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+}
+
+.stn-ui .sp-inv-k {
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+}
+
+.stn-ui .sp-inv-name {
+  margin-top: calc(8 * var(--u));
+  font: 400 max(22px, calc(36 * var(--u))) / 1.05 var(--f-head);
+  letter-spacing: 0.08em;
+  color: var(--bone);
+  overflow-wrap: anywhere;
+}
+
+.stn-ui .sp-inv-meta {
+  margin-top: calc(7 * var(--u));
+  font: max(11px, calc(13.5 * var(--u))) / 1.3 var(--f-mono);
+  letter-spacing: 0.1em;
+  color: var(--bone-2);
+}
+
+.stn-ui .sp-invite.full {
+  border-top-color: var(--amber);
+}
+
+.stn-ui .sp-invite.full .sp-inv-meta {
+  color: var(--amber);
+}
+
+.stn-ui .sp-invite.gone {
+  border-top-color: rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .sp-invite.gone .sp-inv-name {
+  color: var(--bone-dim);
+}
+
+/* Browse games */
+.stn-ui .gb-panel .set-body {
+  min-height: calc(220 * var(--u));
+  padding-top: calc(10 * var(--u));
+  padding-bottom: calc(10 * var(--u));
+}
+
+.stn-ui .gb-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .gb-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: calc(16 * var(--u));
+  padding: calc(9 * var(--u)) calc(12 * var(--u));
+  background: rgba(0, 0, 0, 0.28);
+  border-left: 2px solid rgba(230, 223, 207, 0.2);
+}
+
+.stn-ui .gb-row:hover {
+  border-left-color: var(--blood-lite);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.stn-ui .gb-row.full {
+  opacity: 0.6;
+}
+
+.stn-ui .gb-who {
+  min-width: 0;
+  text-align: left;
+}
+
+.stn-ui .gb-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 400 max(13px, calc(17 * var(--u))) / 1.2 var(--f-num);
+  letter-spacing: 0.04em;
+  color: var(--bone);
+}
+
+.stn-ui .gb-meta {
+  margin-top: 2px;
+  font: max(9.5px, calc(11.5 * var(--u))) / 1.2 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .gb-seats {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  font: max(11px, calc(13.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.stn-ui .gb-ico {
+  width: calc(16 * var(--u));
+  height: calc(16 * var(--u));
+  min-width: 12px;
+  min-height: 12px;
+  opacity: 0.7;
+}
+
+.stn-ui .gb-ico svg,
+.stn-ui .gc-seg-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .gb-join {
+  min-width: calc(92 * var(--u));
+  padding-top: calc(7 * var(--u));
+  padding-bottom: calc(7 * var(--u));
+}
+
+.stn-ui .gb-join:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.stn-ui .gb-empty {
+  padding: calc(40 * var(--u)) calc(10 * var(--u));
+  text-align: center;
+  font: max(12px, calc(15 * var(--u))) / 1.4 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .gb-empty p {
+  margin: 0;
+}
+
+.stn-ui .gb-empty .gb-empty-sub {
+  margin-top: calc(8 * var(--u));
+  font-size: max(10.5px, calc(12.5 * var(--u)));
+  color: var(--bone-dim);
+}
+
+.stn-ui .gb-panel .set-foot {
+  align-items: center;
+}
+
+.stn-ui .gb-gap {
+  flex: 1;
+}
+
+/* Create game */
+.stn-ui .gc-name {
+  width: calc(260 * var(--u));
+  min-width: 180px;
+  padding: calc(7 * var(--u)) calc(10 * var(--u)) calc(6 * var(--u));
+  background: rgba(0, 0, 0, 0.45);
+  border: 0;
+  border-bottom: 2px solid rgba(230, 223, 207, 0.45);
+  outline: none;
+  font: 400 max(13px, calc(17 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.04em;
+  color: var(--bone);
+  caret-color: var(--blood-lite);
+  pointer-events: auto;
+}
+
+.stn-ui .gc-name:focus {
+  border-bottom-color: var(--blood-lite);
+}
+
+.stn-ui .gc-name::placeholder {
+  color: rgba(230, 223, 207, 0.4);
+}
+
+.stn-ui .gc-panel .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .gc-seg-ico {
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+}
+
+.stn-ui .gc-err {
+  margin: calc(12 * var(--u)) 0 calc(4 * var(--u));
+  font: max(11px, calc(13.5 * var(--u))) / 1.3 var(--f-type);
+  color: #ff9d90;
+}
+
+.stn-ui .gc-panel .btn-blood:disabled {
+  cursor: progress;
 }/* ---------- settings */
 
 
@@ -4685,6 +4905,54 @@ body {
   gap: calc(12 * var(--u));
   margin-top: calc(34 * var(--u));
   cursor: default;
+}
+
+/* the game's invite link */
+.stn-ui .pause-invite {
+  margin-top: calc(30 * var(--u));
+  padding: calc(12 * var(--u)) calc(18 * var(--u)) calc(11 * var(--u));
+  background: rgba(0, 0, 0, 0.5);
+  border-top: 2px solid var(--blood-lite);
+  cursor: default;
+}
+
+.stn-ui .pi-title {
+  font: max(9.5px, calc(11 * var(--u))) / 1.2 var(--f-mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+}
+
+.stn-ui .pi-row {
+  display: flex;
+  gap: calc(8 * var(--u));
+  margin-top: calc(9 * var(--u));
+}
+
+.stn-ui .pi-link {
+  width: calc(380 * var(--u));
+  min-width: 240px;
+  padding: calc(7 * var(--u)) calc(10 * var(--u));
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(230, 223, 207, 0.22);
+  outline: none;
+  font: max(11px, calc(13.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone);
+  pointer-events: auto;
+}
+
+.stn-ui .pi-link:focus {
+  border-color: var(--bone-dim);
+}
+
+.stn-ui .pi-copy {
+  min-width: calc(200 * var(--u));
+}
+
+.stn-ui .pi-note {
+  margin-top: calc(8 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-type);
+  color: var(--bone-dim);
 }
 /* ---------- death */
 

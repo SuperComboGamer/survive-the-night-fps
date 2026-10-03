@@ -26,6 +26,11 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
                  it to the wave weights and the client announces it, each from the seed: nothing on the wire
 server/      authoritative game server (uWebSockets.js)
+  index.js       the network thread: sockets, the lobby's HTTP API, static files, /status (see Many games below)
+  rooms.js       the lobby: the games running, routing sockets to them, codes, allowances, the leaderboard's side
+  room-worker.js one game server: a worker thread running one Game and its tick loop
+  wire.js        the packed frames the two threads pass sockets' messages in
+  game.js        the simulation of one game (Game), and everything it sends
 client/      three.js client (Vite root)
   index.html, main.js
   net/        connection, snapshot decode, interpolation, prediction
@@ -118,6 +123,54 @@ more than its bytes**, so put things into the packets that already flow.
   second. **Events**: encoded once, filtered per client by radius / recipient; a shot carries no origin (the
   client uses the shooter's replicated position).
 - `compression` stays off: permessage-deflate was measured at ~10% of the remaining payload, not worth the CPU.
+
+## Many games on one server: the lobby
+
+One process runs every game. The **network thread** (`server/index.js`) owns the sockets, the HTTP routes and the
+leaderboard; **each game is a worker thread of its own** (`server/room-worker.js`: one `Game`, its own 20 Hz tick
+loop, its own valley). So the games share the box's cores, generating a valley (a few hundred ms) in one game holds
+up nobody else, and a game that crashes or runs out of its 512 MB heap ends alone: the network thread closes its
+sockets (1011) and lets go of its records. `server/rooms.js` keeps them (`Lobby`, `Room`).
+
+- **Codes and routing.** A game is known by its code: 6 characters for a public game, 10 for an invite-only one,
+  from 32 that cannot be misread. `/ws?game=CODE` is that game; `/ws` with none is a quick join (`Lobby.quick`: the
+  public game with the most people that has a seat, one in game over / victory last, else a new public game).
+  The network thread answers a socket's first message (its JOIN) with `S2C.ROOM` (code, name, `ROOMF`) before
+  passing it on, so the client knows its game - and its invite link - before WELCOME.
+- **Seats are sockets.** A game is full when `maxPlayers` sockets are open in it; the network thread turns the
+  next away itself (`REJECT_REASON.FULL`; an unknown code is `NO_GAME`). A socket that holds a seat for 15 s
+  without joining is closed (`JOIN_WAIT` in room-worker.js), so idle sockets cannot keep a public game full.
+- **Traffic between the threads** (`server/wire.js`): every message is a frame `[u16 slot][u32 length][bytes]`,
+  packed with the rest of its batch into one ArrayBuffer that is transferred, not copied: socket messages go in
+  once per turn of the event loop, a game's sends go out once per tick. A slot whose socket closed is only given
+  to a new one once the worker says it is done with it (`'closed'`), so nothing meant for the old socket can reach
+  the new. Backpressure crosses as a `SharedArrayBuffer` flag per slot: set by the network thread when a socket
+  has over 256 KB unsent, read by the game through `conn.congested()` (it holds that client's snapshots back).
+- **The leaderboard** (`PlayerStats`) stays on the network thread. A game's `records` is `RemoteRecords`, which
+  posts enter / leave / bump with tokens; asked for the board (`C2S.BOARD`), the game posts who is asking and who
+  is in the game and the network thread writes `S2C.BOARD` to the socket itself. The player id crosses to the
+  network thread for `PlayerStats.enter` and goes nowhere else.
+- **Lifecycle.** A game shuts down once it has been empty for 90 s (a reload, or a host getting the link out
+  before joining, keeps it). Making a game: `POST /api/games` (JSON only, so a form on another site cannot).
+- **Unlisted means unguessable.** Invite-only games are not in `/api/games` or `/status`. An address that asks for
+  over 20 codes that do not exist (one more every 10 s) is told every code is missing for a while, the real ones
+  included; an address may make 3 games in a row, then one a minute. `LOBBY_LIMITS=0` lifts both (load tests).
+- **HTTP:** `GET /api/games` (the public games and what a new one can be), `GET /api/games/:code` (one game,
+  invite-only too: the invite card), `POST /api/games` `{ name, host, inviteOnly, maxPlayers }`. `GET /status`
+  has per-game tick timings and CPU (`load.cpuMs`: ms of CPU that game's thread used per second), the network
+  thread's (`net`) and the process RSS; no codes.
+- **Client:** `client/net/lobby.js` (the API, and invite links: `?game=CODE`; while in a game the address bar
+  carries its link), the splash in `ui/menus.js` (Quick join, Browse games, Create game, or the invitation of the
+  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link on the pause menu.
+- **Capacity** (`npm run stress -- game|box`, scripts/stress.js; measured 2 Oct 2026 with bots at night 3 on a
+  shared 11-core Mac, so read CPU ms per second, not wall-clock ticks): an 8-player game at night uses ~17 ms of
+  CPU a second (45 in its worst second), ~62 MB of memory on a 70 MB base, ~2-2.6 KB/s down per player, and the
+  network thread ~0.4 ms of CPU a second per player. A game levels off once its 120 zombies are all up (from
+  ~24 players): 48 players in one game was 69 ms a second with a 7 ms tick p99. 64 games of 8 (512 players) ran
+  with every game's tick p99 at 1.6 ms and every bot getting 20 snapshots a second. Memory runs out first, then
+  the network thread (half a core at ~150 games): `defaultMaxGames` in rooms.js sizes `MAX_GAMES` from the memory
+  the process may use (a container's limit when it has one) and caps it at 150. An emptied game builds its next
+  valley only when someone joins it (`rollWhenEmpty: false`), not for nobody.
 
 ## Rendering pipeline
 

@@ -1,0 +1,211 @@
+// One game server: a worker thread running one Game (game.js) and its fixed-rate tick loop. The network thread
+// (index.js, rooms.js) owns the sockets and passes this room's traffic in and out as packed frames (wire.js); the
+// leaderboard lives there too, so a game's records are a stand-in that posts to it (RemoteRecords).
+//
+// From the network thread:
+//   { t: 'open', slot, ip }        a socket was put in this slot        { t: 'close', slot }  ...and closed
+//   { t: 'in', buf }               their messages (frames, in order)    { t: 'stop' }          shut down
+// To it:
+//   { t: 'ready', seed }           the game is built and ticking        { t: 'out', buf }      messages for sockets
+//   { t: 'closed', slot }          done with that slot's socket: nothing more will go out for it
+//   { t: 'kick', slot }            close that socket: it took a seat and never joined (JOIN_WAIT)
+//   { t: 'status', ... }           once a second, and when the number of players changes
+//   { t: 'rec', op, ... }          the leaderboard (RemoteRecords)      { t: 'board', ... }    a player asked for it
+import { parentPort, workerData } from 'node:worker_threads';
+import { Game } from './game.js';
+import { FramePacker, eachFrame } from './wire.js';
+import { SERVER_TICK_RATE } from '../shared/constants.js';
+
+const { code, opts, congestion } = workerData;
+// ms a socket may hold a seat without joining (a client sends its JOIN as soon as it is open). JOIN_WAIT_SECONDS: tests
+const JOIN_WAIT = (+process.env.JOIN_WAIT_SECONDS || 15) * 1000;
+const tag = `[game ${code}]`;
+const congested = new Int32Array(congestion); // per slot: the network thread is holding that socket's sends back
+const post = (m, transfer) => parentPort.postMessage(m, transfer);
+
+// ---------------------------------------------------------------- the leaderboard, kept by the network thread
+// What Game asks of PlayerStats (stats.js), posted on. A record here is a token the other side files the real one
+// under. The id is a bearer secret: it goes to the network thread for PlayerStats.enter and nowhere else.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+class RemoteRecords {
+  constructor() {
+    this.remote = true; // Game.sendBoard: the board is the network thread's to send
+    this.n = 0;
+  }
+  enter(id, name) {
+    if (typeof id !== 'string' || !UUID.test(id)) return null; // (nobody: nothing is kept, as PlayerStats.enter)
+    const rec = { tok: ++this.n };
+    post({ t: 'rec', op: 'enter', tok: rec.tok, id, name });
+    return rec;
+  }
+  leave(rec) {
+    if (rec) post({ t: 'rec', op: 'leave', tok: rec.tok });
+  }
+  bump(rec, stat, n = 1) {
+    if (rec) post({ t: 'rec', op: 'bump', tok: rec.tok, stat, n });
+  }
+  // me: the asking player's record, here: everybody's in this game
+  sendBoard(slot, me, here) {
+    post({ t: 'board', slot, me: me ? me.tok : 0, here: [...here].map((r) => r.tok) });
+  }
+}
+
+// (an emptied game builds its next valley when someone joins it, not for nobody: the lobby closes it if nobody does)
+const game = new Game({ ...opts, rollWhenEmpty: false, stats: new RemoteRecords(), log: (...a) => console.log(tag, ...a) });
+
+// ---------------------------------------------------------------- sockets
+// Everything the game sends between two turns of the event loop goes out in one batch.
+const out = new FramePacker(1 << 16);
+let flushing = false;
+function flush() {
+  flushing = false;
+  if (out.empty) return;
+  const buf = out.take();
+  post({ t: 'out', buf }, [buf]);
+}
+function queue(slot, bytes) {
+  out.push(slot, bytes);
+  if (!flushing) {
+    flushing = true;
+    setImmediate(flush);
+  }
+}
+
+const sessions = [];
+const conns = [];
+const openedAt = []; // per slot: when its socket came (performance.now()); 0 once it joined or was kicked
+function makeConn(slot, ip) {
+  return {
+    ip,
+    slot,
+    closed: false,
+    send(bytes) {
+      if (!this.closed) queue(slot, bytes);
+    },
+    congested() {
+      return !this.closed && Atomics.load(congested, slot) !== 0;
+    },
+    cork(fn) {
+      fn(); // (the network thread corks each socket's share of a batch)
+    },
+  };
+}
+
+parentPort.on('message', (m) => {
+  switch (m.t) {
+    case 'open': {
+      const conn = makeConn(m.slot, m.ip);
+      conns[m.slot] = conn;
+      sessions[m.slot] = game.onOpen(conn);
+      openedAt[m.slot] = performance.now();
+      break;
+    }
+    case 'in':
+      eachFrame(m.buf, (slot, bytes) => {
+        const s = sessions[slot];
+        if (s) game.onMessage(s, bytes);
+      });
+      break;
+    case 'close': {
+      const s = sessions[m.slot];
+      if (s) {
+        conns[m.slot].closed = true;
+        sessions[m.slot] = conns[m.slot] = null;
+        game.onClose(s);
+      }
+      flush(); // (whatever was still going to them is out of the way: the slot can have a new socket)
+      post({ t: 'closed', slot: m.slot });
+      break;
+    }
+    case 'stop':
+      clearTimeout(timer);
+      flush();
+      parentPort.close();
+      return;
+  }
+  if (game.players.size !== lastPlayers) status();
+});
+
+// ---------------------------------------------------------------- what the lobby shows, and how hard this room works
+let lastPlayers = -1;
+let cpuAt = process.threadCpuUsage();
+let cpuT = performance.now();
+let elu = performance.eventLoopUtilization();
+let load = { cpuMs: 0, elu: 0 }; // over the last second: CPU ms this thread used per second, share of time busy
+function status() {
+  lastPlayers = game.players.size;
+  let lead = '';
+  for (const p of game.players.values()) {
+    lead = p.name; // (the one who has been in longest: the map keeps join order)
+    break;
+  }
+  post({ t: 'status', players: game.players.size, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10 });
+}
+setInterval(() => {
+  const now = performance.now();
+  const cpu = process.threadCpuUsage(cpuAt);
+  cpuAt = process.threadCpuUsage();
+  const e = performance.eventLoopUtilization(elu);
+  elu = performance.eventLoopUtilization();
+  load = { cpuMs: Math.round((cpu.user + cpu.system) / 10 / ((now - cpuT) / 1000)) / 100, elu: Math.round(e.utilization * 1000) / 1000 };
+  cpuT = now;
+  status();
+  // a seat held by a socket that never joined goes back
+  for (let slot = 0; slot < sessions.length; slot++) {
+    const s = sessions[slot];
+    if (!s || !openedAt[slot]) continue;
+    if (s.player) openedAt[slot] = 0;
+    else if (now - openedAt[slot] > JOIN_WAIT) {
+      openedAt[slot] = 0;
+      post({ t: 'kick', slot });
+    }
+  }
+}, 1000).unref();
+
+// the [stats] line, every 10 s while anybody is on
+setInterval(() => {
+  const s = game.stats;
+  const t = game.tickStats.roll(); // (closed with nobody on too: status reads it)
+  if (game.players.size) {
+    const perClient = s.bytesOut / Math.max(1, game.players.size) / 10;
+    const tick = `tick ${t.meanMs.toFixed(2)}ms p99 ${t.p99Ms.toFixed(2)}ms max ${t.maxMs.toFixed(2)}ms over ${t.over}/${t.ticks} late ${t.lateMeanMs.toFixed(2)}ms latemax ${t.lateMaxMs.toFixed(2)}ms`;
+    console.log(`${tag} [stats] players ${game.players.size} zombies ${game.zombies.length} ents ${game.all.length} ${tick} cpu ${load.cpuMs}ms/s out ${(perClient / 1024).toFixed(1)} KB/s/client`);
+  }
+  s.bytesOut = 0;
+  s.msgsOut = 0;
+}, 10000).unref();
+
+// ---------------------------------------------------------------- fixed-rate tick loop
+const TICK_MS = 1000 / SERVER_TICK_RATE;
+let next = performance.now();
+let due = next; // when the timer that wakes the loop was due
+let timer = 0;
+function loop() {
+  const now = performance.now();
+  // a wake with a tick to run: how long after its timer was due did it come? That is the event loop or the host
+  // holding the server up, not the cost of a tick (after a slow tick the timer is armed late, so it is not counted)
+  if (now >= next) game.tickStats.late(now - due);
+  let steps = 0;
+  while (now >= next && steps < 4) {
+    try {
+      game.update();
+    } catch (err) {
+      console.error(tag, 'tick error', err);
+    }
+    next += TICK_MS;
+    steps++;
+  }
+  if (now - next > 1000) next = now; // way behind (debugger / sleep): resync
+  if (steps) {
+    flush(); // this tick's snapshots go now, not after whatever else is queued
+    if (game.players.size !== lastPlayers) status();
+  }
+  const armed = performance.now();
+  const wait = Math.max(0, next - armed);
+  due = armed + wait;
+  timer = setTimeout(loop, wait > 2 ? wait - 1 : 0);
+}
+
+post({ t: 'ready', seed: game.seed >>> 0 });
+status();
+loop();

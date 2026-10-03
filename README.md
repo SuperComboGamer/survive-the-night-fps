@@ -9,7 +9,9 @@ stand and drive away. Die, and you rise as one of them until the sun comes up.
 - **Client:** three.js (Vite), procedural art; procedural audio layered with ~16 MB of CC0 recordings
   (the score and stingers, ambience beds, weather, wildlife, footsteps, foley, gunshots, explosions, creature and survivor voices -
   see `client/audio/samples/CREDITS.md`), with a procedural fallback
-- **Server:** Node + [uWebSockets.js](https://github.com/uNetworking/uWebSockets.js), authoritative 20 Hz simulation
+- **Server:** Node + [uWebSockets.js](https://github.com/uNetworking/uWebSockets.js), authoritative 20 Hz simulation.
+  One server runs many games at once, each in a thread of its own: quick join, browse the public games, or
+  make one (public or invite-only) and send its link - whoever opens it lands in your game unless it is full
 - **Netcode:** custom binary protocol, per-client delta compression, client-side prediction with
   reconciliation, entity interpolation, server-side lag compensation for hitscan and melee
 
@@ -27,13 +29,18 @@ npm run build      # builds the client into dist/
 npm start          # serves dist/ + the WebSocket on http://localhost:3000
 ```
 
-Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8), `SEED` (pins the map: without it every
+Environment variables (server): `PORT` (3000), `MAX_PLAYERS` (8: the seats in a game unless its maker picks, a
+quick join's game included), `ROOM_MAX_PLAYERS` (the most seats a game can be made with: `MAX_PLAYERS` unless
+set), `MAX_GAMES` (games at once on the box: 4 per core unless set - see Capacity below), `CONN_PER_IP` (24: sockets
+one address may have open over all games; `0` for no limit), `SEED` (pins the map of every game: without it every
 playthrough is a new random valley), `TRUST_PROXY` (`1` / `0`: whether to take a player's address from the
 `X-Forwarded-For` / `X-Real-IP` header; unset, only a proxy on a private network is believed - see
 `clientAddress` in `server/index.js`. Joins are rate-limited per address), `STATS_FILE` (where the leaderboard is
 kept: `data/stats.json` by default, or `stats.json` on the Railway volume when the service has one; empty keeps
 nothing past the process).
-Testing only: `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
+Testing only: `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
+may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
+load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
 `DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
@@ -113,8 +120,10 @@ auto-deploys every push to `main` and is served at https://survivethenightgame.c
 https://www.survivethenightgame.com.
 
 - `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
-  `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Game state lives in
-  memory, so never scale it past one replica, and expect every deploy to start a fresh world.
+  `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Every game lives in the
+  memory of that one process, so never scale it past one replica (a second would not know the first one's game
+  codes), and expect every deploy to end every game. More games means a bigger box for the one replica: see
+  Capacity below.
 - The leaderboard (`server/stats.js`) is a JSON file, and a deploy starts from a fresh disk: attach a
   volume to the service and the file goes there by itself (`RAILWAY_VOLUME_MOUNT_PATH`). Without one
   every deploy empties the board.
@@ -128,11 +137,33 @@ https://www.survivethenightgame.com.
 - The custom domains are attached to the service in Railway (Settings -> Networking). Their DNS
   records (a CNAME to the Railway target plus a `_railway-verify` TXT record per host) are managed
   at the domain's DNS host.
-- Is it keeping up? With players on, a `[stats]` line every 10 s gives the tick time over those 10 s (`tick`
-  mean, `p99`, `max`), `over a/b` (ticks past the 50 ms budget: everyone rubber-bands) and `late` / `latemax`
-  (how late the loop woke: the host or the event loop was busy, not the tick itself). A tick over budget also logs
-  `slow tick` at once (at most one line per 5 s) with the ms per section (`phase=`, `zombies=`, `snapshots=`, ...)
-  and the player, zombie and entity counts. `GET /status` has the same under `tick`, with totals since boot.
+- Is it keeping up? Every game with players on logs a `[game CODE] [stats]` line every 10 s with the tick time
+  over those 10 s (`tick` mean, `p99`, `max`), `over a/b` (ticks past the 50 ms budget: everyone in that game
+  rubber-bands), `late` / `latemax` (how late its loop woke: the host was busy, not the tick itself) and `cpu`
+  (ms of CPU its thread used per second). A tick over budget also logs `slow tick` at once (at most one line per
+  5 s) with the ms per section (`phase=`, `zombies=`, `snapshots=`, ...) and the player, zombie and entity counts.
+  `GET /status` has the same per game under `list[].tick` and `list[].load`, the network thread's load under
+  `net`, and the process's memory (`rssMb`).
+- Games come and go in the log too: `game CODE made`, `game CODE closed: empty for 90 s`, and `game CODE crashed`
+  / `stopped` if a game's thread died (its players are disconnected; every other game carries on).
+
+### Capacity
+
+Measured with `npm run stress -- game` and `npm run stress -- box` (`scripts/stress.js`: bots at night 3, a
+server of its own on port 3931) on 2 Oct 2026:
+
+| | per game of 8 at night | notes |
+| --- | --- | --- |
+| CPU | ~17 ms a second (45 at worst) | plan on 50: ~14 games per core with 30% to spare |
+| memory | ~62 MB (+70 MB for the process) | plan on 80 MB |
+| bandwidth | ~2-2.6 KB/s down per player | |
+| network thread | ~0.4 ms a second per player | one thread: half a core at ~150 games |
+
+One game took 48 players at 7% of a core (its zombies cap at 120 from ~24 players, so it levels off), and 64 games
+of 8 ran without a tick past 2 ms. Memory runs out first, so `MAX_GAMES` defaults to what fits in 75% of the
+memory the container may use, at most 150: about 18 games (144 players) on 2 GB, 73 (580) on 8 GB, 150 (1,200)
+on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker may give it up to 16 seats
+(`ROOM_MAX_PLAYERS`); the game is balanced for 8.
 
 ## Controls
 

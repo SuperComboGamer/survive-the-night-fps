@@ -1,5 +1,5 @@
 // Runs the authoritative game server (auto-restart on change) and the Vite dev server together.
-// Open http://localhost:5173 (Vite proxies /ws and /status to the game server on :3000).
+// Open http://localhost:5173 (Vite proxies /ws, /api and /status to the game server on :3000).
 import { spawn } from 'node:child_process';
 
 const procs = [

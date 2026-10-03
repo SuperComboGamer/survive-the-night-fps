@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
 import { playerId } from './net/identity.js';
+import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
 
@@ -42,7 +43,8 @@ function onGesture() {
 for (const type of GESTURES) addEventListener(type, onGesture, true);
 
 const callbacks = {
-  async onJoin(name) {
+  // code: the game to go into (an invite, a pick from the list, one just made); '' for a quick join
+  async onJoin(name, code = '') {
     if (joining || !game) return;
     joining = true;
     try {
@@ -58,9 +60,18 @@ const callbacks = {
         } catch {}
       }
       joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
-      await game.join(name);
+      await game.join(name, code);
       ui.hideSplash();
       document.activeElement?.blur?.(); // the name field must not keep eating gameplay keys
+      // the game's link: in the address bar (a reload comes back here, and it can be copied from there), on the
+      // pause menu, and said once in the chat
+      const room = game.room;
+      if (room) {
+        const link = inviteLink(room.code);
+        showCodeInAddress(room.code);
+        ui.setRoom(room, link);
+        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (Esc to copy it).`, { system: true });
+      }
     } catch (err) {
       joinCue = false;
       console.error(err);
@@ -95,6 +106,8 @@ const callbacks = {
     game.input.requestLock();
   },
   onLeave: () => {
+    showCodeInAddress(''); // (back on the splash for any game, not this one's invitation)
+    ui.setRoom(null);
     game?.leave();
   },
   onUiSound: (name) => audio.ready && audio.playLocal(name, { volume: 0.5 }),
@@ -165,10 +178,12 @@ async function preload() {
     setTimeout(done, 500); // a tab opened in the background gets no frame: build there anyway
   });
   try {
-    const res = await fetch('/status', { cache: 'no-store' });
-    const st = await res.json();
+    // the valley of the game Join is likeliest to go into: the invited one, or the one a quick join would pick
+    const code = linkedCode();
+    const seed = code ? (await gameInfo(code)).seed : (await listGames()).list.find((g) => !g.full)?.seed;
     await painted;
-    if (typeof st.seed === 'number' && game.state === 'menu') game.loadWorld(st.seed);
+    if (seed && game.state === 'menu') game.loadWorld(seed);
+    else if (!game.world) game.loadWorld(1337); // (none running yet: a backdrop, and the join builds its own)
   } catch {
     // server offline: the UI shows it; build a placeholder world so the menu has a backdrop
     await painted;

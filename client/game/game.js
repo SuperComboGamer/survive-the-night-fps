@@ -655,9 +655,11 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- connection
-  async join(name) {
+  // code: the game to join (an invite, a pick from the list, one just made); none for a quick join
+  async join(name, code = '') {
     this.audio.stinger?.('join');
-    const info = await this.conn.connect(name, playerId());
+    const info = await this.conn.connect(name, playerId(), code);
+    this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
     this.voice.setMyId(info.id);
     this.loadWorld(info.seed);

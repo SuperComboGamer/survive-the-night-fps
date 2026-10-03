@@ -268,6 +268,9 @@ export class Game {
     this.debugCommands = !!opts.debugCommands; // testing only: /kill /night /day /give /items /spawn /tp /mine chat commands
     this.dawnReturn = opts.dawnReturn ?? DAWN_RETURN; // the dead are survivors again at sunrise (the option: tests)
     this.themes = opts.themes !== false; // night themes (shared/nights.js). false: every night is plain (tests, benchmarks)
+    // an emptied game rolls its next valley on the next tick (resetToWaiting). false: on the next join instead - a
+    // game in a worker of its own (room-worker.js), which closes if nobody comes, need not build one for nobody
+    this.rollWhenEmpty = opts.rollWhenEmpty !== false;
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.records = opts.stats ?? new PlayerStats(); // the leaderboard (stats.js): the server's is kept in a file, this one goes with the game
     this.setWorld(opts.seed ?? randomSeed());
@@ -2858,7 +2861,7 @@ export class Game {
     // forget the join allowances that have worn off (see allow)
     if (this.tick % 600 === 0) for (const [ip, a] of this.joins) if (this.time - a.t >= a.n * JOIN_EVERY) this.joins.delete(ip);
     if (this.phase === PHASE.WAITING) {
-      this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
+      if (this.rollWhenEmpty) this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
       ts.mark(T_INPUTS);
       this.sendSnapshots();
@@ -3540,6 +3543,8 @@ export class Game {
     p.boardT = this.time;
     const here = new Set();
     for (const q of this.players.values()) if (q.rec) here.add(q.rec);
+    // a game in a room's worker has its records on the network thread, which answers the player itself (rooms.js)
+    if (this.records.remote) return this.records.sendBoard(p.session.conn.slot, p.rec, here);
     const { total, rows } = this.records.board(p.rec, here);
     const w = new Writer(1024);
     w.u8(S2C.BOARD);
