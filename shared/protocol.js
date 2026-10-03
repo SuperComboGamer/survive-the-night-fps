@@ -23,7 +23,7 @@ export const S2C = {
   VOICE: 6,
   REJECT: 7,
   PONG: 8,
-  WORLD_RESET: 9, // u32 seed: a new playthrough on a new map - rebuild the world from this seed
+  WORLD_RESET: 9, // u32 seed, [u8 mode]: a new playthrough on a new map - rebuild the world from this seed
 };
 
 // S2C.SNAPSHOT flags: a section is only on the wire when its bit is set. WebSocket delivery is reliable and ordered,
@@ -56,6 +56,7 @@ export const ACT = {
   HOLD_BEGIN: 16, // u16 target (container / downed teammate / CAR_ID): hold-to-interact starts
   HOLD_END: 17, // released [E]
   PING: 18, // u8 kind, i16 x, i16 y, i16 z (1/64 m)
+  WANT_MODE: 19, // u8 mode: the run after this one (read before the alive check: the dead vote too)
 };
 
 // special interaction targets that are not entities

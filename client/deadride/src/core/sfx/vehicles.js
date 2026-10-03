@@ -1,0 +1,102 @@
+// Vehicle sounds for the four ride vehicles. Events: vehicle.<kind>.{start, stop, door, door.close, bump, creak, horn, bell, ...}; seamless loops for the speed-driven rigs
+// (see rigs.js): vehicle.<kind>.<layer>.  kinds: cage (mine winding cage), gondola (cable car), ferry (harbour ferry), monorail (amusement-park monorail).
+import * as dsp from '../dsp.js';
+import { BELL, PLATE, partialsFrom, grain, crunch, bubble, swish, creak, wander, circMix, loopNoise, loopTones, diesel } from './common.js';
+import { EVENTS } from './events.js';
+
+const SR = 32000, mh = dsp.midiHz;
+const clang = (K, f = 420, dur = 1.2, tau = 0.35, g = 1) => { const s = K.buf(dur); K.mix(s, K.ring(dur, partialsFrom(f, PLATE, tau), { soft: 0.0004, detune: 0.002 }), g, 0); K.mix(s, K.burst(0.01, { atk: 0.00005, tau: 0.0025, hp: 1200 }), 0.6 * g, 0); K.mix(s, K.ring(dur, [[f * 0.32, 1, tau * 0.6]], { soft: 0.002 }), 0.4 * g, 0); return s; };
+const hiss = (K, dur, { lo = 2500, hi = 9000, atk = 0.03, tau = 0.3 } = {}) => { const a = K.noise(dur, 'white'); K.env(a, { atk, tau }); K.hp(a, lo); K.lp(a, hi); return a; };
+const thunk = (K, f0 = 110, dur = 0.25, g = 1) => { const s = K.thump(dur, f0, f0 * 0.5, 0.03, dur * 0.3, { drive: 1.4 }); K.mix(s, K.burst(dur * 0.4, { color: 'pink', atk: 0.001, tau: 0.02, lp: 700 }), 0.5, 0); return s.map((v) => v * g); };
+const rattleTrain = (K, dur, rate0, rate1, fLo, fHi, tauR = 0.008, hump = null) => { const s = K.buf(dur); let t = 0; while (t < dur) { const u = t / dur, r = rate0 + (rate1 - rate0) * u, amp = hump ? hump(u) : 1; K.mix(s, K.ring(0.05, [[K.rng.range(fLo, fHi), 1, tauR * K.rng.range(0.6, 1.4)]], { soft: 0.0001 }), 0.6 * amp * K.rng.range(0.5, 1), t); K.mix(s, K.burst(0.004, { atk: 0.00005, tau: 0.001, hp: 900 }), 0.3 * amp, t); t += (1 / r) * K.rng.range(0.7, 1.3); } return s; };
+
+export function install(lib) {
+  const V = (extra) => ({ sr: SR, prio: 0, meta: { bus: 'sfx', prio: 7, refDist: 6, maxDist: 220, send: 1, ...(extra || {}) } });
+  const L = (extra) => ({ sr: 24000, prio: 0, loop: true, norm: 'rms', rms: 0.11, meta: { bus: 'sfx', prio: 6, refDist: 8, maxDist: 220, send: 0.7, ...(extra || {}) } });
+
+  // =================================================================================== CAGE (mine winding cage in a timbered shaft)
+  lib.def('vehicle.cage.hum', L(), (K) => { // winding drum + gearbox: 55 Hz stack with gear-mesh peaks, slow beating pair, structure-borne rumble
+    const Lsec = 4, t = loopTones(K, Lsec, 55, [[1, 0.7], [2, 0.8], [3, 0.6], [4, 0.7], [5, 0.5], [6, 0.6], [7, 0.5], [8, 0.6], [11, 0.6], [12, 0.7], [14, 0.4], [17, 0.35], [24, 0.3]], { beat: 0.5, beatAmp: 0.5 }), n = loopNoise(K, Lsec, 'brown', (a) => K.lp(a, 260), [{ cycles: 2, depth: 0.4 }]), gw = loopTones(K, Lsec, 738, [[1, 1], [2, 0.3]], { beat: 0.25, beatAmp: 0.3 }), gr = loopNoise(K, Lsec, 'pink', (a) => K.bp(a, 1500, 1.2), [{ cycles: 3, depth: 0.4 }]);
+    for (let i = 0; i < t.length; i++) t[i] = t[i] * 0.10 + n[i] * 0.30 + gw[i] * 0.03 + gr[i] * 0.10; return t;
+  });
+  lib.def('vehicle.cage.rope', L(), (K) => loopNoise(K, 6, 'pink', (a) => { K.bp(a, 1100, 0.7); }, [{ cycles: 3, depth: 0.5 }, { cycles: 11, depth: 0.3 }]));
+  lib.def('vehicle.cage.rail', L(), (K) => { // cage shoes chattering on the steel guide rails
+    const Ls = 3, n = K.n(Ls), s = new Float32Array(n), R = K.rng, N = 44; for (let k = 0; k < N; k++) { const t = (k + R.range(-0.3, 0.3)) / N * Ls; circMix(s, K.ring(0.06, [[R.range(700, 2600), 1, 0.008 * R.range(0.5, 1.5)], [R.range(3000, 5200), 0.3, 0.004]], { soft: 0.0001 }), R.range(0.3, 1) * (k % 5 === 0 ? 1.5 : 1), Math.round(t * K.sr)); circMix(s, K.burst(0.005, { atk: 0.00005, tau: 0.0012, hp: 1500 }), 0.3, Math.round(t * K.sr)); } return s;
+  });
+  lib.def('vehicle.cage.loop', L(), (K) => { const a = loopNoise(K, 5, 'brown', (x) => K.lp(x, 300)), b = loopNoise(K, 5, 'pink', (x) => K.bp(x, 1200, 0.8), [{ cycles: 3, depth: 0.5 }]), t = loopTones(K, 5, 55, [[1, 1], [2, 0.8], [3, 0.5], [4, 0.5], [6, 0.3]], { beat: 0.4, beatAmp: 0.5 }); return a.map((v, i) => v * 0.5 + b[i] * 0.16 + t[i] * 0.07); });
+  lib.def('vehicle.cage.start', V(), (K) => { const s = K.buf(2.6); K.mix(s, clang(K, 190, 0.9, 0.2), 0.8, 0.05); K.mix(s, thunk(K, 80, 0.4), 0.9, 0.06); K.mix(s, K.saw(2.4, (i) => 24 + 40 * Math.min(1, i / (1.8 * K.sr))).map((v) => v * 0.2), 1, 0.2); K.svf(s, 'lp', 900, 0.7); K.mix(s, creak(K, 1.3, 130, 190, { slip: 9, atk: 0.2, rel: 0.4 }), 0.35, 0.3); K.mix(s, K.low(4, (K2) => { const a = K2.noise(2.2, 'brown'); K2.env(a, { atk: 0.4, tau: 1.2 }); K2.lp(a, 200); return a; }), 0.6, 0.2); return s; });
+  lib.def('vehicle.cage.stop', V(), (K) => { // brake shoes squeal (stick-slip glide down), clunk, rope settling
+    const s = K.buf(2.6); K.mix(s, creak(K, 1.2, 2900, 1900, { slip: 70, harm: [1, 0.5, 0.3], noise: 0.25, atk: 0.1, rel: 0.4 }), 0.42, 0); K.mix(s, thunk(K, 95, 0.35), 1, 1.15); K.mix(s, clang(K, 260, 1.0, 0.25), 0.5, 1.16); K.mix(s, creak(K, 1.0, 150, 110, { slip: 7, atk: 0.1, rel: 0.4 }), 0.35, 1.35); return s;
+  });
+  lib.def('vehicle.cage.door', V(), (K) => { // collapsible steel gate dragged open: rattling lattice, end-stop clang
+    const s = K.buf(2.0); K.mix(s, rattleTrain(K, 1.4, 34, 18, 900, 3200, 0.01, (u) => Math.sin(Math.PI * Math.pow(u, 0.7))), 0.7, 0); K.mix(s, swish(K, 1.4, 700, 1500, 0.6, { atk: 0.4, tau: 0.5 }), 0.35, 0); K.mix(s, clang(K, 380, 1.0, 0.3), 0.9, 1.4); return s;
+  });
+  lib.def('vehicle.cage.door.close', V(), (K) => { const s = K.buf(2.0); K.mix(s, rattleTrain(K, 1.2, 18, 36, 900, 3200, 0.01, (u) => Math.sin(Math.PI * Math.pow(u, 1.3))), 0.7, 0); K.mix(s, clang(K, 340, 1.2, 0.35), 1, 1.2); K.mix(s, thunk(K, 130, 0.2), 0.6, 1.2); return s; });
+  lib.def('vehicle.cage.bump', V(), (K) => { const s = K.buf(1.0); K.mix(s, thunk(K, 90, 0.35), 1, 0); K.mix(s, rattleTrain(K, 0.6, 40, 25, 800, 2600, 0.01), 0.55, 0.02); K.mix(s, clang(K, 210, 0.6, 0.15), 0.35, 0.02); return s; });
+  lib.def('vehicle.cage.creak', V(), (K) => creak(K, 1.4, K.rng.range(180, 260), K.rng.range(300, 480), { slip: K.rng.range(12, 24), atk: 0.15, rel: 0.3 }));
+  lib.def('vehicle.cage.bell', V(), (K) => { const s = K.buf(2.6), f = 1250; for (const t of [0, 0.5]) K.mix(s, K.ring(2.2, partialsFrom(f, BELL, 0.5), { soft: 0.0002 }), 0.7, t); return s; });
+  lib.alias('vehicle.cage.clang', 'vehicle.cage.door.close');
+  lib.def('vehicle.cage.signal', V({ refDist: 8 }), (K) => { const s = K.buf(3.2); for (let k = 0; k < 3; k++) K.mix(s, K.ring(1.4, partialsFrom(1250, BELL, 0.55), { soft: 0.0002 }), 0.7, k * 0.62); return s; }); // shaft bell code: three strikes
+  lib.def('vehicle.cage.horn', V(), (K) => { const s = K.buf(1.4); for (let k = 0; k < 14; k++) K.mix(s, K.ring(0.3, partialsFrom(1400, BELL, 0.12), { soft: 0.0002 }), 0.4, k * 0.045); K.mix(s, K.burst(1.2, { atk: 0.01, tau: 0.5, bp: 3000, q: 1 }), 0.05, 0); return s; }); // signal bell rattle
+
+  // =================================================================================== GONDOLA (cable car between mountain stations)
+  lib.def('vehicle.gondola.hum', L(), (K) => { const t = loopTones(K, 4, 46, [[1, 1], [2, 0.5], [3, 0.4], [4, 0.2], [20, 0.05], [24, 0.04]], { beat: 0.25, beatAmp: 0.5 }), w = loopNoise(K, 4, 'pink', (a) => K.bp(a, 1150, 6), [{ cycles: 1, depth: 0.5 }]), r = loopNoise(K, 4, 'brown', (a) => K.lp(a, 140)); return t.map((v, i) => v * 0.09 + w[i] * 0.22 + r[i] * 0.4); });
+  lib.def('vehicle.gondola.wind', L({ send: 1 }), (K) => loopNoise(K, 8, 'pink', (a) => { K.lp(a, 900, 4); }, [{ cycles: 3, depth: 0.7 }, { cycles: 7, depth: 0.35 }]));
+  lib.def('vehicle.gondola.loop', L(), (K) => { const h = loopNoise(K, 6, 'brown', (a) => K.lp(a, 180)), w = loopNoise(K, 6, 'pink', (a) => K.lp(a, 900, 4), [{ cycles: 2, depth: 0.7 }]), r = loopNoise(K, 6, 'pink', (a) => K.bp(a, 1150, 6)); return h.map((v, i) => v * 0.35 + w[i] * 0.25 + r[i] * 0.1); });
+  lib.def('vehicle.gondola.tower', V({ refDist: 10 }), (K) => { // cabin passing the sheave train: roller battery clatter that swells and fades, thump of the grip through the rollers
+    const s = K.buf(2.4), hump = (u) => Math.sin(Math.PI * Math.pow(u, 0.75)); K.mix(s, rattleTrain(K, 2.0, 16, 21, 1000, 3800, 0.009, hump), 0.9, 0.1); K.mix(s, thunk(K, 100, 0.3), 0.7, 0.7); K.mix(s, thunk(K, 90, 0.3), 0.55, 0.92); K.mix(s, clang(K, 300, 0.8, 0.12), 0.3, 0.8); K.mix(s, K.svf(K.noise(2.0), 'bp', 1500, 0.8).map((v, i) => v * 0.05 * hump(i / (2 * K.sr))), 1, 0.1); return s;
+  });
+  lib.def('vehicle.gondola.start', V(), (K) => { const s = K.buf(2.4); K.mix(s, K.sweep(2.0, (u) => 120 + 900 * Math.pow(u, 1.5), { harm: [1, 0.3, 0.15], atk: 0.4, rel: 0.4, amp: (u) => 0.4 * u }), 0.6, 0.2); K.mix(s, thunk(K, 100, 0.3), 0.6, 0.15); K.mix(s, creak(K, 1.2, 300, 420, { slip: 22, atk: 0.2, rel: 0.4 }), 0.25, 0.4); K.mix(s, hiss(K, 0.5, { lo: 2000, hi: 7000, tau: 0.2 }), 0.15, 0); return s; });
+  lib.def('vehicle.gondola.stop', V(), (K) => { const s = K.buf(2.4); K.mix(s, creak(K, 1.1, 2400, 1500, { slip: 60, harm: [1, 0.5, 0.3], noise: 0.25, atk: 0.1, rel: 0.4 }), 0.3, 0); K.mix(s, K.sweep(1.6, (u) => 900 - 800 * u, { harm: [1, 0.3], atk: 0.05, rel: 0.5, amp: (u) => 0.3 * (1 - u) }), 0.5, 0); K.mix(s, thunk(K, 95, 0.35), 0.9, 1.0); K.mix(s, clang(K, 240, 0.8, 0.2), 0.3, 1.0); return s; });
+  const chime = (K, notes) => { const s = K.buf(1.8); notes.forEach((m, k) => K.mix(s, K.ring(1.3, partialsFrom(mh(m), BELL, 0.3), { soft: 0.0002 }), 0.6, k * 0.32)); return s; };
+  lib.def('vehicle.gondola.chime', V({ refDist: 3 }), (K) => chime(K, [76, 72]));
+  lib.def('vehicle.gondola.door', V(), (K) => { const s = K.buf(2.6); K.mix(s, hiss(K, 0.9, { lo: 2200, hi: 9000, atk: 0.04, tau: 0.35 }), 0.7, 0); K.mix(s, K.svf(K.noise(1.2), 'bp', 400, 1).map((v, i) => v * 0.15 * Math.sin(Math.PI * i / (1.2 * K.sr))), 1, 0.1); K.mix(s, thunk(K, 140, 0.15), 0.5, 1.15); K.mix(s, chime(K, [76, 72]), 0.8, 0.9); return s; });
+  lib.def('vehicle.gondola.door.close', V(), (K) => { const s = K.buf(2.0); K.mix(s, hiss(K, 0.8, { lo: 2200, hi: 9000, atk: 0.3, tau: 0.25 }), 0.6, 0); K.mix(s, thunk(K, 150, 0.18), 0.8, 0.7); K.mix(s, clang(K, 700, 0.3, 0.05), 0.3, 0.72); K.mix(s, hiss(K, 0.3, { lo: 3000, hi: 8000, tau: 0.05 }), 0.4, 0.72); return s; });
+  lib.def('vehicle.gondola.bump', V(), (K) => { const s = K.buf(1.0); K.mix(s, thunk(K, 100, 0.3), 1, 0); K.mix(s, rattleTrain(K, 0.5, 30, 20, 900, 3000, 0.01), 0.5, 0.03); K.mix(s, creak(K, 0.5, 350, 250, { slip: 30, atk: 0.05, rel: 0.2 }), 0.2, 0.05); return s; });
+  lib.def('vehicle.gondola.creak', V(), (K) => creak(K, 1.5, K.rng.range(260, 340), K.rng.range(420, 620), { slip: K.rng.range(22, 40), atk: 0.2, rel: 0.4 }));
+  lib.alias('vehicle.gondola.horn', 'vehicle.gondola.chime');
+  lib.def('vehicle.gondola.bell', V({ refDist: 3 }), (K) => chime(K, [79, 76, 72]));
+
+  // =================================================================================== FERRY (diesel harbour ferry)
+  lib.def('vehicle.ferry.engine.idle', L(), (K) => diesel(K, 4, 30));
+  lib.def('vehicle.ferry.engine.cruise', L(), (K) => diesel(K, 4, 48, 1.15));
+  lib.alias('vehicle.ferry.loop', 'vehicle.ferry.engine.cruise'); lib.alias('vehicle.ferry.hum', 'vehicle.ferry.engine.idle');
+  lib.def('vehicle.ferry.water', L({ send: 1 }), (K) => loopNoise(K, 6, 'pink', (a) => { K.bp(a, 500, 0.5); }, [{ cycles: 4, depth: 0.5 }, { cycles: 9, depth: 0.3 }]));
+  lib.def('vehicle.ferry.creak', V(), (K) => { const R = K.rng; return creak(K, R.range(1.6, 2.4), R.range(90, 130), R.range(150, 230), { slip: R.range(6, 12), harm: [1, 0.8, 0.6, 0.4, 0.3, 0.2], noise: 0.2, atk: 0.3, rel: 0.5, irregular: 0.8 }); }); // steel hull flexing on the swell
+  lib.def('vehicle.ferry.slap', V({ refDist: 4 }), (K) => { const s = K.buf(0.9); K.mix(s, K.thump(0.25, 150, 70, 0.03, 0.06, { drive: 1.3 }), 0.9, 0); K.mix(s, K.ring(0.4, [[125, 1, 0.09], [240, 0.5, 0.05], [420, 0.3, 0.03]], { soft: 0.002 }), 0.6, 0); K.mix(s, K.svf(K.burst(0.5, { color: 'pink', atk: 0.004, tau: 0.13 }), 'bp', 1800, 0.6), 0.6, 0.004); for (let k = 0; k < 6; k++) K.mix(s, bubble(K, K.rng.range(250, 900), 0.015), 0.2, 0.05 + k * 0.05); return s; });
+  lib.def('vehicle.ferry.horn', V({ refDist: 30, maxDist: 900, send: 1.4 }), (K) => { // two-tone foghorn: 110 + 165 Hz stacks (fifth) with slow onset, beating, breathy edge
+    const T = 3.4, s = K.buf(T); for (const [f, g] of [[110, 1], [110.9, 0.7], [165, 0.8], [166.2, 0.55]]) { const a = K.saw(T, f); K.svf(a, 'lp', (i) => 500 + 900 * Math.min(1, i / (0.4 * K.sr)) - 400 * Math.max(0, (i / K.sr - 2.6) / 0.8), 1.3); K.mix(s, a, g * 0.4, 0); } K.env(s, { atk: 0.22, hold: 2.3, tau: 0.35 }); K.mix(s, K.burst(3, { atk: 0.15, tau: 1.2, bp: 900, q: 0.6 }), 0.05, 0);
+    return K.verb(s, { rt: 1.6, wet: 0.2, damp: 0.5, tail: 1.4 });
+  });
+  lib.def('vehicle.ferry.door', V(), (K) => { const s = K.buf(2.2); K.mix(s, clang(K, 140, 1.6, 0.35), 1, 0.25); K.mix(s, thunk(K, 70, 0.4), 0.9, 0.25); K.mix(s, rattleTrain(K, 1.0, 22, 12, 700, 2400, 0.012), 0.5, 0.3); K.mix(s, creak(K, 0.9, 380, 620, { slip: 35, atk: 0.1, rel: 0.3 }), 0.25, 0); return s; }); // gangway ramp landing on the steel deck
+  lib.def('vehicle.ferry.door.close', V(), (K) => { const s = K.buf(2.0); K.mix(s, creak(K, 0.8, 620, 380, { slip: 35, atk: 0.1, rel: 0.3 }), 0.25, 0); K.mix(s, clang(K, 150, 1.2, 0.3), 0.8, 0.9); K.mix(s, rattleTrain(K, 0.8, 12, 26, 700, 2400, 0.012), 0.4, 0.1); K.mix(s, thunk(K, 75, 0.35), 0.8, 0.9); return s; });
+  lib.def('vehicle.ferry.mooring', V(), (K) => { const s = K.buf(2.2); K.mix(s, creak(K, 1.6, 280, 410, { slip: 17, atk: 0.2, rel: 0.4, noise: 0.25 }), 0.5, 0); for (let k = 0; k < 9; k++) K.mix(s, clang(K, K.rng.range(900, 1500), 0.14, 0.02), 0.22, 0.3 + k * 0.13); return s; }); // rope tensioning + winch pawl
+  lib.def('vehicle.ferry.start', V(), (K) => { const s = K.buf(3.0); K.mix(s, K.saw(0.9, (i) => 60 + 100 * (i / (0.9 * K.sr))).map((v) => v * 0.15), 1, 0); K.svf(s, 'lp', 1500, 0.8); for (let k = 0; k < 6; k++) K.mix(s, thunk(K, 90, 0.2), 0.6 - 0.05 * k, 0.85 + k * 0.17 * (1 - 0.06 * k)); K.mix(s, K.low(4, (K2) => { const a = K2.noise(2.4, 'brown'); K2.env(a, { atk: 0.3, tau: 1.0 }); K2.lp(a, 250); return a; }), 0.5, 0.8); K.mix(s, hiss(K, 0.4, { lo: 800, hi: 3000, tau: 0.12 }), 0.15, 0.85); return s; });
+  lib.def('vehicle.ferry.stop', V(), (K) => { const s = K.buf(2.6); for (let k = 0; k < 7; k++) K.mix(s, thunk(K, 90, 0.2), 0.55 * Math.pow(0.85, k), k * (0.12 + 0.03 * k)); K.mix(s, K.low(4, (K2) => { const a = K2.noise(1.8, 'brown'); K2.env(a, { atk: 0.05, tau: 0.8 }); K2.lp(a, 240); return a; }), 0.4, 0); K.mix(s, K.svf(K.burst(1.2, { color: 'pink', atk: 0.3, tau: 0.5 }), 'bp', 700, 0.6), 0.25, 0.2); return s; }); // reverse thrust, churn dying away
+  lib.def('vehicle.ferry.bump', V(), (K) => { const s = K.buf(1.1); K.mix(s, thunk(K, 75, 0.4), 1, 0); K.mix(s, creak(K, 0.5, 500, 300, { slip: 45, atk: 0.02, rel: 0.2 }), 0.25, 0.05); K.mix(s, clang(K, 130, 0.5, 0.1), 0.3, 0); return s; }); // rubber fender squeal + hull thud
+  lib.def('vehicle.ferry.bell', V(), (K) => { const s = K.buf(3.0); for (const t of [0, 0.7]) K.mix(s, K.ring(2.4, partialsFrom(620, BELL, 0.9), { soft: 0.0003 }), 0.7, t); return s; });
+
+  // =================================================================================== MONORAIL (elevated carnival monorail)
+  lib.def('vehicle.monorail.motor', L(), (K) => { // traction inverter whine (fundamental + inverter harmonics) with a touch of gear noise; pitch is driven by playbackRate in the rig
+    const t = loopTones(K, 3, 440, [[1, 1], [1.5, 0.35], [2, 0.5], [3, 0.25], [4.02, 0.12], [6, 0.08]], { beat: 0.33, beatAmp: 0.25 }), g = loopNoise(K, 3, 'pink', (a) => K.bp(a, 1600, 1.5), [{ cycles: 2, depth: 0.3 }]), r = loopNoise(K, 3, 'brown', (a) => K.lp(a, 200)); return t.map((v, i) => v * 0.1 + g[i] * 0.14 + r[i] * 0.2);
+  });
+  lib.def('vehicle.monorail.joint', L(), (K) => { // beam-joint / bogie clatter: "ta-dum, ta-dum" doublets of a two-axle bogie over expansion joints
+    const Ls = 2, n = K.n(Ls), s = new Float32Array(n), R = K.rng, N = 8; for (let k = 0; k < N; k++) { const t = k / N * Ls; for (const [dt, a] of [[0, 1], [0.052, 0.75]]) { const at = Math.round((t + dt + R.range(-0.004, 0.004)) * K.sr); circMix(s, K.thump(0.09, 180, 90, 0.015, 0.03), a * 0.7, at); circMix(s, K.ring(0.08, [[R.range(1400, 2200), 1, 0.01]], { soft: 0.0002 }), a * 0.3, at); circMix(s, K.burst(0.02, { atk: 0.0001, tau: 0.005, bp: 900, q: 0.8 }), a * 0.4, at); } } return s;
+  });
+  lib.def('vehicle.monorail.whoosh', L({ send: 1 }), (K) => loopNoise(K, 5, 'pink', (a) => { K.lp(a, 2200); K.hp(a, 150); }, [{ cycles: 2, depth: 0.25 }]));
+  lib.def('vehicle.monorail.loop', L(), (K) => { const m = loopTones(K, 3, 300, [[1, 1], [2, 0.4], [3, 0.25]], {}), w = loopNoise(K, 3, 'pink', (a) => { K.lp(a, 2200); }), j = loopNoise(K, 3, 'brown', (a) => K.lp(a, 180)); return m.map((v, i) => v * 0.05 + w[i] * 0.2 + j[i] * 0.35); });
+  const doorSeq = (K, open) => { const s = K.buf(2.6); const h = hiss(K, 0.8, { lo: 2500, hi: 9000, atk: open ? 0.03 : 0.4, tau: open ? 0.3 : 0.2 }); K.mix(s, h, 0.7, 0.05); K.mix(s, thunk(K, 140, 0.15), 0.6, open ? 0.05 : 0.8); K.mix(s, K.ring(0.3, [[1800, 1, 0.02], [3400, 0.4, 0.012]], { soft: 0.0002 }), 0.3, open ? 0.06 : 0.82); if (open) { K.mix(s, chime(K, [79, 74, 79]), 0.75, 0.6); } else { K.mix(s, chime(K, [74, 79]), 0.6, 0.9); } return s; };
+  lib.def('vehicle.monorail.door', V(), (K) => doorSeq(K, true)); lib.def('vehicle.monorail.door.close', V(), (K) => doorSeq(K, false));
+  lib.def('vehicle.monorail.start', V(), (K) => { const s = K.buf(2.8); K.mix(s, hiss(K, 0.7, { lo: 3000, hi: 10000, tau: 0.16 }), 0.4, 0); K.mix(s, thunk(K, 110, 0.2), 0.7, 0.55); K.mix(s, K.sweep(2.1, (u) => 200 + 900 * Math.pow(u, 1.4), { harm: [1, 0.4, 0.25, 0.12], atk: 0.3, rel: 0.5, amp: (u) => 0.15 + 0.6 * u }), 0.5, 0.6); return s; });
+  lib.def('vehicle.monorail.stop', V(), (K) => { const s = K.buf(2.6); K.mix(s, K.sweep(1.6, (u) => 1100 - 900 * u, { harm: [1, 0.4, 0.25], atk: 0.05, rel: 0.6, amp: (u) => 0.6 * (1 - u) }), 0.5, 0); K.mix(s, creak(K, 0.9, 3300, 2500, { slip: 90, harm: [1, 0.5], noise: 0.3, atk: 0.05, rel: 0.3 }), 0.2, 0.5); K.mix(s, hiss(K, 1.0, { lo: 3000, hi: 10000, atk: 0.05, tau: 0.35 }), 0.5, 1.2); K.mix(s, thunk(K, 100, 0.3), 0.8, 1.3); return s; });
+  lib.def('vehicle.monorail.bump', V(), (K) => { const s = K.buf(0.8); K.mix(s, thunk(K, 120, 0.25), 1, 0); K.mix(s, clang(K, 340, 0.5, 0.1), 0.4, 0); K.mix(s, rattleTrain(K, 0.4, 30, 22, 1000, 2800, 0.008), 0.4, 0.03); return s; });
+  lib.def('vehicle.monorail.creak', V(), (K) => creak(K, 1.2, K.rng.range(500, 700), K.rng.range(700, 1100), { slip: K.rng.range(25, 45), atk: 0.15, rel: 0.3 }));
+  lib.def('vehicle.monorail.horn', V({ refDist: 12 }), (K) => { const s = K.buf(1.2); for (const [f, g] of [[392, 1], [494, 0.8]]) { const a = K.pulse(1.1, f, { pw: 0.4 }); K.lp(a, 2400); K.env(a, { atk: 0.03, hold: 0.7, tau: 0.15 }); K.mix(s, a, g * 0.4, 0); } return s; });
+  lib.def('vehicle.monorail.pylon', V({ refDist: 10 }), (K) => { const s = K.buf(1.4); K.mix(s, thunk(K, 85, 0.35), 0.9, 0.05); K.mix(s, swish(K, 0.7, 350, 1400, 0.7, { atk: 0.25, tau: 0.2 }), 0.5, 0); K.mix(s, clang(K, 250, 0.7, 0.1), 0.3, 0.06); return s; }); // bogie passing under a support pylon: pressure whump + switch clang
+  lib.def('vehicle.monorail.jointkick', { sr: SR, prio: 0, n: 3, meta: { bus: 'sfx', prio: 5, refDist: 5, maxDist: 100, send: 0.8, cd: 0.25, max: 2 } }, (K) => { const R = K.rng, s = K.buf(0.5); for (const [dt, a] of [[0, 1], [0.052, 0.75]]) { K.mix(s, K.thump(0.12, 180, 90, 0.015, 0.035), a * 0.8, dt); K.mix(s, K.ring(0.1, [[R.range(900, 1600), 1, 0.012], [R.range(2400, 3400), 0.4, 0.008]], { soft: 0.0002 }), a * 0.3, dt); } return s; }); // a one-shot "ta-dum" for a visible joint jolt
+  lib.def('vehicle.monorail.pa', V({ refDist: 4, maxDist: 120 }), (K) => { // station PA: two-tone chime, then a garbled announcement through a small horn speaker
+    const s = K.buf(4.4); K.mix(s, K.ring(1.2, partialsFrom(mh(84), BELL, 0.35), { soft: 0.0002 }), 0.5, 0); K.mix(s, K.ring(1.4, partialsFrom(mh(79), BELL, 0.4), { soft: 0.0002 }), 0.5, 0.45);
+    const ann = EVENTS.radio.make(K); K.bp(ann, 1400, 0.5); K.mix(s, ann, 0.7, 1.05); return K.verb(s, { rt: 0.9, wet: 0.16, damp: 0.5 });
+  });
+  lib.alias('vehicle.monorail.chime', 'vehicle.monorail.door'); lib.def('vehicle.monorail.bell', V({ refDist: 3 }), (K) => chime(K, [79, 74, 79, 84]));
+}

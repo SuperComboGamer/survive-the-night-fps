@@ -15,15 +15,15 @@ export class Connection {
     this.pingNext = 0; // when the next one is due
   }
 
-  url() {
+  url(room = 'main') {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    return `${proto}://${location.host}/ws`;
+    return `${proto}://${location.host}/ws?room=${encodeURIComponent(room)}`;
   }
 
-  connect(name) {
+  connect(name, mode = 0, room = 'main') {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const ws = new WebSocket(this.url());
+      const ws = new WebSocket(this.url(room));
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
       ws.onopen = () => {
@@ -32,6 +32,7 @@ export class Connection {
         w.u8(C2S.JOIN);
         w.u8(PROTOCOL_VERSION);
         w.str(name);
+        w.u8(mode);
         ws.send(w.copy());
       };
       ws.onmessage = (m) => {
@@ -41,7 +42,7 @@ export class Connection {
         const type = r.u8();
         switch (type) {
           case S2C.WELCOME: {
-            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8() };
+            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), mode: r.left > 0 ? r.u8() : 0 };
             settled = true;
             resolve(info);
             break;
@@ -68,7 +69,7 @@ export class Connection {
             this.h.voice?.(r.u16(), r.str());
             break;
           case S2C.WORLD_RESET:
-            this.h.world?.(r.u32());
+            this.h.world?.(r.u32(), r.left > 0 ? r.u8() : 0);
             break;
         }
       };
@@ -132,6 +133,9 @@ export class Connection {
         w.i16(Math.max(-32768, Math.min(32767, Math.round(args[1] * 64))));
         w.i16(Math.max(-32768, Math.min(32767, Math.round(args[2] * 64))));
         w.i16(Math.max(-32768, Math.min(32767, Math.round(args[3] * 64))));
+        break;
+      case ACT.WANT_MODE:
+        w.u8(args[0]);
         break;
       case ACT.DROP_SLOT:
       case ACT.SWAP_INV:

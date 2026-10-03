@@ -488,6 +488,7 @@ export class Combat {
   damageZombie(z, amount, attacker, opts = {}) {
     const g = this.g;
     if (z.dead) return false;
+    if (g.mine) amount = g.mine.scaleDamage(attacker, z, amount, opts);
     // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
     const solid = z.lit && !z.onFire;
     if (solid) amount *= z.def.litResist;
@@ -524,8 +525,10 @@ export class Combat {
       const rest = opts.rest || 0;
       const gib = !solid && !opts.melee && (opts.blow || amount) >= GIB.minHit && rest - z.hp >= z.maxHp * GIB.overkill;
       this.killZombie(z, attacker, gib ? { ...opts, gib } : opts);
+      g.mine?.onHit(attacker, z, opts, true);
       return true;
     }
+    g.mine?.onHit(attacker, z, opts, false);
     // (a burn or a flame stream is many small hits a second: it cries out as often as it would for one)
     if (g.rng() < (opts.dot ? 0.02 : 0.15)) g.sound(z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
     return false;
@@ -567,7 +570,7 @@ export class Combat {
     }
     if (sunKill) g.killfeed(KILLER.WORLD, 0, 0x8000 | z.ztype, 0, 0); // the feed says the sun got it
     // loot
-    if ((!opts.fire || z.boss) && !sunKill) {
+    if ((!opts.fire || z.boss) && !sunKill && !g.mine) {
       if (z.boss) {
         for (let i = 0; i < 8; i++) {
           const [item, n] = g.rollTable(SPECIAL_LOOT);

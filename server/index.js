@@ -4,7 +4,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
-import { Game } from './game.js';
+import { Rooms } from './rooms.js';
+import { Lobbies } from './lobby.js';
 import { SERVER_TICK_RATE, DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -13,15 +14,16 @@ const MAX = +(process.env.MAX_PLAYERS || MAX_PLAYERS);
 const SEED = process.env.SEED ? +process.env.SEED : undefined;
 const DIST = resolve(__dirname, '../dist');
 
-const game = new Game({
+// The games: a main room that always exists plus any opened on request (server/rooms.js).
+const rooms = new Rooms({
   seed: SEED,
-  maxPlayers: MAX,
   dayLength: process.env.DAY_SECONDS ? +process.env.DAY_SECONDS : undefined,
   nightLength: process.env.NIGHT_SECONDS ? +process.env.NIGHT_SECONDS : undefined,
   startDay: process.env.START_DAY ? +process.env.START_DAY : undefined,
   godMode: process.env.GODMODE === '1',
   debugCommands: process.env.DEBUG_COMMANDS === '1',
-});
+}, MAX);
+const game = rooms.main.game; // (what /status and the stats line speak of)
 
 // ---------------------------------------------------------------- static files (prod build)
 const MIME = {
@@ -80,7 +82,8 @@ app.ws('/ws', {
   sendPingsAutomatically: true,
   upgrade: (res, req, context) => {
     const ip = clientAddress(res, req);
-    res.upgrade({ ip }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+    const room = new URLSearchParams(req.getQuery() || '').get('room') || 'main';
+    res.upgrade({ ip, room }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
   },
   open: (ws) => {
     const conn = {
@@ -101,29 +104,79 @@ app.ws('/ws', {
         if (!this.closed) ws.cork(fn);
       },
     };
-    ws.getUserData().session = game.onOpen(conn);
+    const g = rooms.get(ws.getUserData().room).game;
+    ws.getUserData().game = g;
+    ws.getUserData().session = g.onOpen(conn);
     ws.getUserData().conn = conn;
   },
   message: (ws, message, isBinary) => {
     if (!isBinary) return;
     // message buffer is only valid during this callback: copy it
-    game.onMessage(ws.getUserData().session, new Uint8Array(message.slice(0)));
+    ws.getUserData().game.onMessage(ws.getUserData().session, new Uint8Array(message.slice(0)));
   },
   close: (ws) => {
     const d = ws.getUserData();
     d.conn.closed = true;
-    game.onClose(d.session);
+    d.game.onClose(d.session);
   },
 });
 
+// DEAD RIDE's lobbies (server/lobby.js): JSON text frames for the lobby, binary frames relayed between the players of a game
+const lobbies = new Lobbies();
+app.ws('/dr', {
+  compression: uWS.DISABLED,
+  maxPayloadLength: 1024 * 1024, // (a late joiner's state of play is one frame from the host)
+  maxBackpressure: 2 * 1024 * 1024,
+  idleTimeout: 60,
+  sendPingsAutomatically: true,
+  upgrade: (res, req, context) => {
+    res.upgrade({ ip: clientAddress(res, req) }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+  },
+  open: (ws) => {
+    const conn = {
+      closed: false,
+      sendText(s) {
+        if (!this.closed) ws.send(s, false, false);
+      },
+      sendBinary(b) {
+        if (!this.closed && ws.getBufferedAmount() < 1024 * 1024) ws.send(b, true, false);
+      },
+    };
+    ws.getUserData().conn = conn;
+    ws.getUserData().client = lobbies.open(conn);
+  },
+  message: (ws, message, isBinary) => {
+    const c = ws.getUserData().client;
+    if (isBinary) lobbies.binary(c, new Uint8Array(message.slice(0)));
+    else lobbies.text(c, Buffer.from(message).toString('utf8'));
+  },
+  close: (ws) => {
+    const d = ws.getUserData();
+    d.conn.closed = true;
+    lobbies.close(d.client);
+  },
+});
+app.get('/dr/status', (res) => json(res, lobbies.status()));
+
 app.get('/status', (res) => {
   // tick: the last 10 s window, the totals since boot and the last slow tick (timings only: this endpoint is public)
-  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()) });
+  const body = JSON.stringify({ players: game.players.size, max: game.maxPlayers, phase: game.phase, day: game.day, seed: game.seed >>> 0, mode: game.mode, tick: game.tickStats.status(performance.now()) });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
+});
+
+// the list of games, and opening a new one: /rooms/new?mode=0|1&name=...  (answers { id } or { error })
+const json = (res, body) => res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(JSON.stringify(body));
+app.get('/rooms', (res) => json(res, rooms.list()));
+app.get('/rooms/new', (res, req) => {
+  const q = new URLSearchParams(req.getQuery() || '');
+  const room = rooms.open(+q.get('mode'), q.get('name'));
+  json(res, room ? { id: room.id, name: room.name } : { error: 'Too many games open: join one' });
 });
 
 app.get('/*', (res, req) => {
   let url = req.getUrl();
+  if (url.endsWith('/') && files.has(url + 'index.html')) url += 'index.html'; // (/deadride/ and the like)
+  else if (url === '/deadride') url = '/deadride/index.html';
   if (url === '/' || !files.has(url)) url = files.has(url) ? url : '/index.html';
   const f = files.get(url);
   if (!f) {
@@ -155,7 +208,7 @@ function loop() {
   let steps = 0;
   while (now >= next && steps < 4) {
     try {
-      game.update();
+      rooms.update();
     } catch (err) {
       console.error('[server] tick error', err);
     }
@@ -171,6 +224,7 @@ function loop() {
 loop();
 
 // periodic stats
+setInterval(() => rooms.sweep(), 5000);
 setInterval(() => {
   const s = game.stats;
   const t = game.tickStats.roll(); // the ticks since the last line (closed with nobody on too: /status reads it)

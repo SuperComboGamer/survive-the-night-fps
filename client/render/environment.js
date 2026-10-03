@@ -193,12 +193,73 @@ export class Environment {
     this.skyLightDir = new THREE.Vector3(0, 1, 0); // where the sun/moon really is (sky, haze, shafts)
     this.rays = { sunDir: this.skyLightDir, color: new THREE.Color(), strength: 0, sigma: 0.02 };
     this._grey = new THREE.Color();
+    // Zombies mode: an underground atmosphere replaces the sky's (setMine). mc is what it has eased to so far.
+    this.mine = null;
+    this.mc = null;
+  }
+
+  // profile: { fog, fogD, hemiSky, hemiGround, hemi, exposure } (hex colours) or null for the sky again
+  setMine(profile) {
+    if (profile === this.mine) return;
+    this.mine = profile;
+    if (profile && !this.mc) {
+      this.mc = { fog: new THREE.Color(profile.fog), fogD: profile.fogD, hemiSky: new THREE.Color(profile.hemiSky), hemiGround: new THREE.Color(profile.hemiGround), hemi: profile.hemi, exposure: profile.exposure };
+      this.mcTo = { fog: new THREE.Color(), hemiSky: new THREE.Color(), hemiGround: new THREE.Color() };
+    }
+    if (!profile) this.sky.visible = true;
+    const want = !!this._shadowsOn && !profile;
+    if (this.sun.castShadow !== want) this.sun.castShadow = want;
+  }
+
+  // the palette of the stop: eased over about a third of a second so a ride's end does not pop
+  applyMine(dt) {
+    const p = this.mine;
+    const m = this.mc;
+    const to = this.mcTo;
+    const k = Math.min(1, dt * 3);
+    m.fog.lerp(to.fog.set(p.fog), k);
+    m.hemiSky.lerp(to.hemiSky.set(p.hemiSky), k);
+    m.hemiGround.lerp(to.hemiGround.set(p.hemiGround), k);
+    m.fogD += (p.fogD - m.fogD) * k;
+    m.hemi += (p.hemi - m.hemi) * k;
+    m.exposure += (p.exposure - m.exposure) * k;
+    const c = this.cur;
+    const u = this.uniforms;
+    c.fog.copy(m.fog);
+    c.hemiSky.copy(m.hemiSky);
+    c.hemiGround.copy(m.hemiGround);
+    c.fogD = m.fogD;
+    c.hemi = m.hemi;
+    if (!p.sky) {
+      c.dirI = 0;
+      c.rays = 0;
+      this.night = 1;
+    }
+    c.mist = 0;
+    c.scatter = 0;
+    c.exposure = m.exposure;
+    this.hemi.color.copy(m.hemiSky);
+    this.hemi.groundColor.copy(m.hemiGround);
+    this.hemi.intensity = m.hemi * Math.PI;
+    if (!p.sky) this.sun.intensity = 0; // (the yard keeps the moon)
+    this.fog.color.copy(m.fog);
+    u.uFog.value.copy(m.fog);
+    this.fog.density = m.fogD;
+    this.fogVisibility = Math.sqrt(3) / m.fogD;
+    this.exposure = m.exposure;
+    this.sky.visible = !!p.sky; // (the yard keeps its night sky)
+    G.uMist.value.set(0, -1, 0.28, 0);
+    G.uFogSun.value.copy(m.fog);
+    const lum = (col) => 0.2126 * col.r + 0.7152 * col.g + 0.0722 * col.b;
+    this.adaptRef = 0.0267 * m.hemi * lum(m.hemiSky);
+    if (!p.sky) this.rays.strength = 0;
   }
 
   // quality: renderer.q (shadows, shadowMapSize, shadowDist)
   setShadows(q) {
     const on = typeof q === 'object' ? !!q.shadows : !!q;
-    this.sun.castShadow = on;
+    this._shadowsOn = on;
+    this.sun.castShadow = on && !this.mine; // (nothing to shadow with underground: its cascades are not drawn)
     if (!on || typeof q !== 'object') return;
     const sh = this.sun.shadow;
     if (sh.mapSize.x !== q.shadowMapSize) {
@@ -300,6 +361,7 @@ export class Environment {
     r.color.copy(c.dir).multiplyScalar(c.dirI * 0.3);
     r.strength = c.rays * handover * (useSun ? 1 : 0.5);
     r.sigma = Math.max(0.006, c.fogD * 2.2);
+    if (this.mine) this.applyMine(dt);
   }
 
   // weather on top of the time-of-day palette (mutates this.cur before it reaches the lights and fog)

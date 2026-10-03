@@ -18,6 +18,7 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     chunkSizeWarningLimit: 2000,
-    rollupOptions: { input: resolve(import.meta.dirname, 'client/index.html') },
+    // the main game, and DEAD RIDE (client/deadride: the four-map single-player zombies game, served at /deadride/)
+    rollupOptions: { input: { main: resolve(import.meta.dirname, 'client/index.html'), deadride: resolve(import.meta.dirname, 'client/deadride/index.html') } },
   },
 });

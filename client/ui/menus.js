@@ -3,6 +3,7 @@ import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
 import { loadRecord, recordSummary } from './records.js';
+import { MODE_INFO } from '../../shared/modes.js';
 
 export const DEFAULT_CONTROLS = [
   ['W A S D', 'Move'],
@@ -77,8 +78,35 @@ export class Splash {
       d.style.cssText = `left:${x}%;--w:${w};--len:${len};--d:${delay}s`;
     }
 
-    el('p', 'sp-goal', main, GOAL);
-    el('p', 'sp-tag', main, TAGLINES[(Math.random() * TAGLINES.length) | 0]);
+    this.goal = el('p', 'sp-goal', main, GOAL);
+    this.tag = el('p', 'sp-tag', main, TAGLINES[(Math.random() * TAGLINES.length) | 0]);
+    this.tagSurvival = [this.goal.textContent, this.tag.textContent];
+
+    // the mode switcher: what an empty server will play (a run in progress is joined as it is)
+    this.mode = MODE_INFO[+lsGet('stn.mode', '0')] ? +lsGet('stn.mode', '0') : 0;
+    const modes = el('div', 'sp-modes', main);
+    this.modeBtns = MODE_INFO.map((m) => {
+      const b = el('button', 'sp-mode', modes);
+      b.type = 'button';
+      b.style.setProperty('--accent', m.accent);
+      el('b', '', b, m.name);
+      el('span', '', b, m.tag);
+      b.title = m.blurb;
+      b.addEventListener('click', () => this.setMode(m.id));
+      return b;
+    });
+    this.modeNote = el('div', 'sp-modenote', main, '');
+    this.running = -1; // the mode of the run in the selected game (-1: none, it is waiting for a first player)
+    // the games on this server: pick one to join, or open a new one in the mode picked above
+    this.room = lsGet('stn.room', 'main');
+    this.roomList = [];
+    const rooms = (this.roomsBox = el('div', 'sp-rooms', main));
+    const rh = el('div', 'sp-rooms-h', rooms);
+    el('span', '', rh, 'Games');
+    this.newBtn = el('button', 'btn btn-ghost sp-newgame', rh, 'New game');
+    this.newBtn.type = 'button';
+    this.newBtn.addEventListener('click', () => this._newGame());
+    this.roomEl = el('div', 'sp-roomlist', rooms);
 
     const form = (this.form = el('form', 'sp-join', main));
     form.addEventListener('submit', (e) => {
@@ -123,7 +151,94 @@ export class Splash {
     this.joining = false;
   }
 
+  get sel() {
+    return this.roomList.find((r) => r.id === this.room) || this.roomList[0] || null;
+  }
+
+  _renderRooms() {
+    const box = this.roomEl;
+    const key = JSON.stringify([this.room, this.mode, this.roomList.map((r) => [r.id, r.players, r.phase, r.day])]);
+    if (key === this._roomKey) return;
+    this._roomKey = key;
+    box.textContent = '';
+    for (const r of this.roomList) {
+      const row = el('button', 'sp-room' + (r.id === this.room ? ' on' : ''), box);
+      row.type = 'button';
+      const shown = r.main && r.wait ? this.mode : r.mode; // (an empty main room plays what the switcher says)
+      row.style.setProperty('--accent', MODE_INFO[shown].accent);
+      el('b', '', row, r.name);
+      el('i', '', row, MODE_INFO[shown].name);
+      const state = r.wait ? 'waiting' : r.mode === 1 ? `round ${r.day}` : `${r.phase === PHASE.NIGHT ? 'night' : 'day'} ${r.day}`;
+      el('span', '', row, `${r.players}/${r.max} · ${state}`);
+      row.addEventListener('click', () => this.selectRoom(r.id));
+    }
+  }
+
+  selectRoom(id) {
+    this.room = id;
+    lsSet('stn.room', id);
+    this._roomKey = '';
+    this._renderRooms();
+    this._syncModes();
+    const r = this.sel;
+    if (r) this.ui.cb.onMode?.(this._shownMode(), r.seed);
+  }
+
+  // the mode on show: the selected game's if it has one going (or was opened for one), else the switcher's
+  _shownMode() {
+    const r = this.sel;
+    return r && (!r.main || !r.wait) ? r.mode : this.mode;
+  }
+
+  async _newGame() {
+    if (this.joining) return;
+    const name = this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16) || 'Survivor';
+    try {
+      const res = await (await fetch(`/rooms/new?mode=${this.mode}&name=${encodeURIComponent(name + "'s game")}`)).json();
+      if (res.error) return this.setError(res.error);
+      this.room = res.id;
+      lsSet('stn.room', res.id);
+      await this._poll();
+      this._join();
+    } catch {
+      this.setError('Could not open a game');
+    }
+  }
+
+  setMode(m, quiet = false) {
+    this.mode = m;
+    if (!quiet) lsSet('stn.mode', String(m));
+    this.modeBtns.forEach((b, i) => b.classList.toggle('on', i === m));
+    this._syncModes();
+    if (!quiet && !MODE_INFO[m].solo) this.ui.cb.onMode?.(this._shownMode(), this.sel?.seed);
+  }
+
+  _syncModes() {
+    const solo = MODE_INFO[this.mode]?.solo;
+    this.roomsBox.hidden = !!solo;
+    const locked = this.running >= 0 && !solo;
+    this.modeBtns.forEach((b, i) => {
+      b.classList.toggle('on', locked ? i === this.running : i === this.mode);
+      b.classList.toggle('lock', locked && i !== this.running && !MODE_INFO[i].solo);
+    });
+    this._syncBtn();
+    const shown = locked ? this.running : this.mode;
+    if (solo) {
+      this.goal.textContent = 'Four maps. Four vehicles. One long night.';
+      this.tag.textContent = MODE_INFO[this.mode].tag;
+    } else if (shown === 1) {
+      this.goal.textContent = 'Clear the round. Spend your points. Take the cage down.';
+      this.tag.textContent = MODE_INFO[1].tag;
+    } else [this.goal.textContent, this.tag.textContent] = this.tagSurvival;
+    this.modeNote.textContent = locked ? `A ${MODE_INFO[this.running].name} run is under way: you will join it.` : MODE_INFO[this.mode].blurb;
+  }
+
   _join() {
+    // DEAD RIDE is its own page
+    if (MODE_INFO[this.mode]?.solo) {
+      location.href = MODE_INFO[this.mode].href;
+      return;
+    }
     if (this.joining || this.full) return;
     let name = this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
     if (!name) {
@@ -135,12 +250,13 @@ export class Splash {
     this.err.hidden = true;
     this.root.classList.add('joining');
     this._syncBtn();
-    this.ui.cb.onJoin(name);
+    this.ui.cb.onJoin(name, this.running >= 0 ? this.running : this.mode, this.sel?.id || 'main');
   }
 
   _syncBtn() {
-    this.joinBtn.disabled = this.joining || this.full;
-    this.joinTxt.textContent = this.joining ? 'Joining…' : this.full ? 'Server full' : 'Join';
+    const solo = MODE_INFO[this.mode]?.solo;
+    this.joinBtn.disabled = !solo && (this.joining || this.full);
+    this.joinTxt.textContent = solo ? 'Play' : this.joining ? 'Joining…' : this.full ? 'Server full' : 'Join';
   }
 
   setError(text) {
@@ -164,7 +280,19 @@ export class Splash {
       if (!r.ok) throw new Error('bad status');
       const s = await r.json();
       if (this.root.hidden) return;
+      // (the selected game speaks for the server: its players, its phase)
+      try {
+        this.roomList = await (await fetch('/rooms', { cache: 'no-store' })).json();
+      } catch {
+        this.roomList = [];
+      }
+      if (!this.roomList.some((r) => r.id === this.room)) this.room = 'main';
+      const sel = this.sel;
+      if (sel) Object.assign(s, { players: sel.players, max: sel.max, phase: sel.phase, day: sel.day, mode: sel.mode });
+      this._renderRooms();
       const players = s.players | 0;
+      this.running = sel && !sel.main ? sel.mode : players > 0 && s.phase !== PHASE.WAITING ? s.mode | 0 : -1;
+      this._syncModes();
       const max = s.max | 0 || MAX_PLAYERS;
       this.full = players >= max;
       let phase = '';
@@ -202,6 +330,7 @@ export class Splash {
     this.root.classList.remove('joining');
     this._syncBtn();
     this.syncRecord();
+    this.setMode(this.mode, true);
     this.root.classList.remove('in');
     void this.root.offsetWidth;
     this.root.classList.add('in');
@@ -346,7 +475,25 @@ export class EndScreen {
     const panels = el('div', 'end-panels', m);
     this.board = el('div', 'end-board paper', panels);
     this.record = el('div', 'end-board end-record paper', panels);
+    // the next run's mode: most votes wins, nobody voting keeps this one (server: Game.tallyVotes)
+    const vote = el('div', 'end-vote', m);
+    el('span', '', vote, 'Next run');
+    this.voteBtns = MODE_INFO.map((mi) => {
+      const b = el('button', 'btn btn-ghost end-votebtn', vote, mi.name);
+      b.type = 'button';
+      b.style.setProperty('--accent', mi.accent);
+      b.addEventListener('click', () => {
+        this.voted = mi.id;
+        this._syncVote();
+        this.ui.cb.onVote?.(mi.id);
+      });
+      return b;
+    });
     this.count = el('div', 'end-count', m);
+  }
+
+  _syncVote() {
+    this.voteBtns.forEach((b, i) => b.classList.toggle('on', i === this.voted));
   }
 
   // What this run did to the player's own record. rep: recordRun's report (records.js), { late: true } for a
@@ -397,7 +544,9 @@ export class EndScreen {
     // daylight or in its night - got through N - 1 nights (a wipe during the first night survived none)
     const n = Math.max(0, (stats.days | 0) - 1);
     this.nights.textContent = String(n);
-    this.nightsL.textContent = n === 1 ? 'night survived' : 'nights survived';
+    this.nightsL.textContent = stats.unit ? (n === 1 ? stats.unit : stats.unit + 's') + ' survived' : n === 1 ? 'night survived' : 'nights survived';
+    this.voted = stats.mode ?? 0;
+    this._syncVote();
 
     this.board.textContent = '';
     const kills = Array.isArray(stats.kills) ? [...stats.kills].sort((a, b) => (b.kills | 0) - (a.kills | 0)) : [];

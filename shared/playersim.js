@@ -75,6 +75,7 @@ export function createPlayerState() {
     downed: 0, // incapacitated: crawl, pistol only, waiting for a teammate to revive
     lastBtn: 0,
     fireCount: 0,
+    perks: 0, // Zombies mode: perk bits (PERK in mine.js) - Speed Cola, Double Tap and Stamin-Up change the simulation
   };
 }
 
@@ -115,6 +116,7 @@ export function copyPlayerState(dst, src) {
   dst.downed = src.downed;
   dst.lastBtn = src.lastBtn;
   dst.fireCount = src.fireCount;
+  dst.perks = src.perks;
   return dst;
 }
 
@@ -129,7 +131,7 @@ export function samePlayerState(a, b) {
   if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
-  return a.downed === b.downed && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
+  return a.downed === b.downed && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount && a.perks === b.perks;
 }
 
 // Rounds every float of the state to float32, which is how the server puts it on the wire: after the server has
@@ -190,7 +192,7 @@ export function hashPlayerState(s) {
     mix(Math.round(s.pullY * 64));
     mix(Math.round(s.pullZ * 64));
   }
-  mix(s.lastBtn | (s.fireCount << 16));
+  mix(s.lastBtn | (s.fireCount << 16) | (s.perks << 24));
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
 
@@ -300,7 +302,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   } else {
     sprint = b & BTN.SPRINT && fwd > 0 && !s.crouch && !s.exhausted && s.stamina > 0 && !aiming && !s.downed ? 1 : 0;
     if (sprint && moving) {
-      s.stamina -= STAMINA_DRAIN * dt;
+      s.stamina -= STAMINA_DRAIN * (s.perks & 16 ? 0.5 : 1) * dt;
       s.staminaDelay = STAMINA_REGEN_DELAY;
       if (s.stamina <= 0) {
         s.stamina = 0;
@@ -470,8 +472,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
               if (events) events.push({ type: 'shell' });
             }
             if (s.mags[mi] < wdef.mag && s.ammo[wdef.ammo] > 0) {
-              s.reloadT = wdef.reload;
-              if (events) events.push({ type: 'reload', each: true, time: wdef.reload });
+              s.reloadT = wdef.reload * (s.perks & 2 ? 0.5 : 1);
+              if (events) events.push({ type: 'reload', each: true, time: wdef.reload * (s.perks & 2 ? 0.5 : 1) });
             } else if (events) events.push({ type: 'reload_done' });
           } else {
             const take = Math.min(wdef.mag - s.mags[mi], reserve);
@@ -485,13 +487,13 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     // an empty magazine reloads on the next trigger pull; autoReload weapons (crossbow) re-cock on their own
     const wantReload = (pressed & BTN.RELOAD) || (s.mags[mi] === 0 && (attackPressed || (wdef.autoReload && s.cooldown <= 0)));
     if (wantReload && s.reloadT <= 0 && s.switchT <= 0 && s.mags[mi] < wdef.mag && s.ammo[wdef.ammo] > 0) {
-      s.reloadT = wdef.reload;
+      s.reloadT = wdef.reload * (s.perks & 2 ? 0.5 : 1);
       s.recoil = 0;
-      if (events) events.push({ type: 'reload', each: !!wdef.reloadEach, time: wdef.reload });
+      if (events) events.push({ type: 'reload', each: !!wdef.reloadEach, time: wdef.reload * (s.perks & 2 ? 0.5 : 1) });
     } else if ((wdef.auto ? attack : attackPressed) && s.cooldown <= 0 && s.switchT <= 0 && s.reloadT <= 0) {
       if (s.mags[mi] > 0) {
         s.mags[mi]--;
-        s.cooldown = wdef.rate;
+        s.cooldown = wdef.rate * (s.perks & 4 ? 0.75 : 1);
         const spread = shotSpread(s, wdef, aiming);
         const recoilPitch = Math.min(s.recoil, 8) * wdef.recoil * 0.45;
         s.recoil += 1;

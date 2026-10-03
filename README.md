@@ -40,6 +40,45 @@ dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`,
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose)).
 
+### Modes
+
+The splash has a mode switcher (the choice is remembered; an empty server plays what its first joiner picked, and anyone
+who joins a run in progress plays what is running; on the end screen the players vote for the next run's mode).
+
+- **Survival** - the valley, as above.
+- **Zombies - Shaft Nine** - a round-based, Black Ops 2 style mode in an old mine (`shared/mine.js` the five stops and
+  their layout, `server/mine.js` the rules, `client/render/mine*.js` the look). Rounds of the dead, 500 starting points,
+  10 per hit and 60 / 100 / 130 per body / head / melee kill; guns off the walls (buy again for half to refill), the
+  Mystery Box, perks (Juggernog, Speed Cola, Double Tap, Quick Revive, Stamin-Up, Deadshot), debris to buy away. When a round
+  is cleared the cage elevator arrives; everyone steps in and it carries the team down to the next stop for the next round
+  (surface yard, timbered tunnels, flooded level, crystal cavern, magma chamber, then back up). Zombies are dead miners, many
+  with working helmet lamps. It renders with its own preset (full resolution, 4x MSAA, SSAO, flashlight shadows, a clean
+  image with no grain). `node scripts/test-mine.js` checks the layout, `node scripts/sim-mine.js` plays the rules,
+  `node scripts/shot-mine.js` screenshots the real client.
+
+- **Dead Ride** - the four-map zombies game (Shaft Nine, Whiteout, Last Ferry, After Hours; cage elevator, gondola,
+  ferry, monorail), single player, as it was built: `client/deadride/` (its own engine in `client/deadride/src/core`,
+  docs in `client/deadride/docs/API.md`), served at `/deadride/` and picked from the same splash.
+
+**DEAD RIDE online (1-5 players).** On DEAD RIDE's map screen, PLAY ONLINE opens its lobby (`server/lobby.js`,
+socket `/dr`): open games on the server, Quick Play, Create (map, 1-5 players, private), Join by the 4-letter code. In a
+game's room the host picks the map and size, everyone else readies up, there is chat, and the host starts it. Everyone
+loads the map and begins together. The host's browser runs the game - director, zombie AI and attacks, rounds, the
+vehicle, power-ups - and the others mirror it (`client/deadride/src/net/coop.js`); each player moves and shoots on their
+own machine, hits go to the host as claims, the host applies them for everyone and credits the points to whoever earned
+them. Zombies chase the nearest player; a player who goes down can be revived by a teammate (hold F) or bleeds out and is
+back at the next round; the run ends when nobody is up, and everyone returns to the lobby. If the host leaves, the
+longest-standing player takes over. A player can join a game under way. Teammates are drawn with Survive the Night's
+animated survivors. The server only relays game traffic within a lobby (`/dr/status` counts lobbies and players).
+`node scripts/test-lobby.js` checks the lobby (part of `npm test`); `npm run test:coop` plays two real browsers through
+it (slow: each builds the map); `npm run verify:deadride` walks every map and stop and reports errors.
+
+**Several games at once.** One server runs any number of games (`server/rooms.js`, `MAX_ROOMS`, default 8): the main
+room always exists, the splash lists the games under "Games", anyone can open a new one in the mode they picked
+("New game"), and others join it from the list. `GET /rooms` lists them, `GET /rooms/new?mode=0|1&name=...` opens one,
+the socket joins one with `/ws?room=<id>`. An opened room that stays empty for a minute is closed.
+`node scripts/test-rooms.js` checks it against a real server.
+
 ### Tests & tools
 
 | Command | What it does |

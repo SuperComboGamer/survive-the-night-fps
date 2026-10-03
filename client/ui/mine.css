@@ -1,0 +1,45 @@
+/* Zombies mode HUD (minehud.js) and the mode switcher on the splash */
+.stn-ui.mine-mode .clock,
+.stn-ui.mine-mode .obj,
+.stn-ui.mine-mode .hud-info .hi-surv { display: none !important; }
+.stn-ui .mine-hud { position: absolute; inset: 0; pointer-events: none; font-family: 'Bebas Neue', 'Oswald', sans-serif; color: #e8dcc0; }
+.stn-ui .mh-top { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); text-align: center; text-shadow: 0 2px 8px #000; }
+.stn-ui .mh-round-l { font-size: 14px; letter-spacing: 6px; color: #b0a088; }
+.stn-ui .mh-round { font-size: 76px; line-height: 0.9; color: #c4291f; text-shadow: 0 0 22px rgba(196, 41, 31, 0.55), 0 3px 8px #000; }
+.stn-ui .mh-left { font-size: 18px; letter-spacing: 3px; color: #d8c8a8; min-height: 22px; }
+.stn-ui .mh-banner { position: absolute; top: 24%; left: 0; right: 0; text-align: center; font-size: 54px; letter-spacing: 8px; color: #ff9a3c; text-shadow: 0 0 24px rgba(255, 154, 60, 0.45), 0 3px 10px #000; }
+.stn-ui .mh-sub { position: absolute; top: calc(24% + 66px); left: 0; right: 0; text-align: center; font-size: 24px; letter-spacing: 4px; color: #e8dcc0; text-shadow: 0 2px 8px #000; }
+.stn-ui .mh-pts { position: absolute; left: 26px; bottom: 150px; }
+.stn-ui .mh-perks { display: flex; gap: 6px; margin-bottom: 8px; }
+.stn-ui .mh-perk { width: 34px; height: 34px; display: grid; place-items: center; font-size: 22px; color: #fff; background: color-mix(in srgb, var(--c) 70%, #000); border: 2px solid var(--c); border-radius: 6px; box-shadow: 0 0 10px color-mix(in srgb, var(--c) 60%, transparent); }
+.stn-ui .mh-points { font-size: 58px; line-height: 1; color: #f2e6c4; text-shadow: 0 0 14px rgba(255, 210, 120, 0.35), 0 3px 8px #000; }
+.stn-ui .mh-gain { position: absolute; left: 4px; top: 100%; font-size: 24px; opacity: 0; transition: opacity 0.4s; }
+.stn-ui .mh-gain.up { opacity: 1; color: #ffd24a; }
+.stn-ui .mh-gain.down { opacity: 1; color: #d8503a; }
+.stn-ui .mh-power { position: absolute; top: 190px; left: 0; right: 0; text-align: center; font-size: 26px; letter-spacing: 4px; color: #ffd24a; text-shadow: 0 2px 8px #000; }
+
+/* the mode switcher */
+.stn-ui .sp-modes { display: flex; gap: 10px; margin: 0 0 14px; }
+.stn-ui .sp-mode { flex: 1; cursor: pointer; text-align: left; padding: 10px 12px; border-radius: 6px; background: rgba(12, 9, 8, 0.72); border: 1px solid rgba(180, 150, 110, 0.25); color: #cdbfa4; font-family: 'Oswald', sans-serif; transition: border-color 0.15s, background 0.15s, transform 0.15s; }
+.stn-ui .sp-mode:hover { border-color: var(--accent); transform: translateY(-1px); }
+.stn-ui .sp-mode.on { border-color: var(--accent); background: rgba(30, 20, 12, 0.88); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); color: #f2e6c4; }
+.stn-ui .sp-mode b { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; font-weight: normal; color: var(--accent); }
+.stn-ui .sp-mode span { display: block; font-size: 12px; line-height: 1.3; opacity: 0.85; }
+.stn-ui .sp-mode.lock { opacity: 0.55; cursor: default; }
+.stn-ui .sp-modenote { font-size: 12px; line-height: 1.35; color: #b0a088; margin: -4px auto 12px; min-height: 32px; max-width: 460px; text-align: center; font-family: 'Oswald', sans-serif; }
+
+.stn-ui .end-vote { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 14px 0 0; font-family: 'Oswald', sans-serif; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: #b0a088; }
+.stn-ui .end-votebtn { opacity: 0.6; }
+.stn-ui .end-votebtn.on { opacity: 1; border-color: var(--accent); color: var(--accent); }
+
+/* the games on this server */
+.stn-ui .sp-rooms { margin: 0 auto 14px; max-width: 460px; }
+.stn-ui .sp-rooms-h { display: flex; align-items: center; justify-content: space-between; font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: #b0a088; margin-bottom: 6px; }
+.stn-ui .sp-newgame { padding: 3px 10px; font-size: 12px; }
+.stn-ui .sp-roomlist { display: flex; flex-direction: column; gap: 4px; max-height: 132px; overflow-y: auto; }
+.stn-ui .sp-room { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; text-align: left; cursor: pointer; padding: 6px 10px; border-radius: 5px; background: rgba(12, 9, 8, 0.7); border: 1px solid rgba(180, 150, 110, 0.2); color: #cdbfa4; font-family: 'Oswald', sans-serif; font-size: 13px; }
+.stn-ui .sp-room:hover { border-color: var(--accent); }
+.stn-ui .sp-room.on { border-color: var(--accent); background: rgba(30, 20, 12, 0.88); color: #f2e6c4; }
+.stn-ui .sp-room b { font-weight: 500; }
+.stn-ui .sp-room i { font-style: normal; font-size: 11px; color: var(--accent); letter-spacing: 1px; }
+.stn-ui .sp-room span { font-size: 12px; opacity: 0.8; }
