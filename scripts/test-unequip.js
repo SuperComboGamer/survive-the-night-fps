@@ -6,7 +6,7 @@
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, qpitch, writeInput } from '../shared/protocol.js';
 import { BTN, INVENTORY_SIZE, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE, SLOT_THROW, SLOT_BUILD } from '../shared/constants.js';
-import { ITEM, WEAPONS, AMMO, NOTIFY } from '../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, AMMO, NOTIFY } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 
 const seed = +(process.argv[2] || 4242);
@@ -150,9 +150,10 @@ run(5);
   s.mags[0] = 17;
 }
 
-// a full backpack: it stays in its slot, and the survivor is told
+// a full backpack: it stays in its slot, and the survivor is told. (Full stacks of cloth: 24 single cloths would be
+// 24 part stacks of one thing, which no play leaves, and the inventory merges them into two as it goes out: tidyStacks)
 {
-  pack(...Array.from({ length: INVENTORY_SIZE }, () => ({ item: ITEM.CLOTH })));
+  pack(...Array.from({ length: INVENTORY_SIZE }, () => ({ item: ITEM.CLOTH, count: ITEM_DEFS[ITEM.CLOTH].stack })));
   A.notes.length = 0;
   A.act(ACT.UNEQUIP, SLOT_PRIMARY, 255);
   run(2);

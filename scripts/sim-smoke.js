@@ -1124,8 +1124,9 @@ const standOff = (c, e, d) => {
   m.u16(stack.id);
   g.onMessage(D.session, m.bytes().slice());
   check('...or at once with [E]', rope(d) === 3 && stack.removed);
-  // every slot taken, a car battery at the dropper's feet
-  for (let i = 0; i < d.inv.length; i++) d.inv[i] = { item: ITEM.CLOTH, count: 1 };
+  // every slot taken (full stacks: single cloths would be part stacks of one thing, merged as the inventory goes
+  // out - tidyStacks), a car battery at the dropper's feet
+  for (let i = 0; i < d.inv.length; i++) d.inv[i] = { item: ITEM.CLOTH, count: ITEM_DEFS[ITEM.CLOTH].stack };
   const told = (c, kind) => c.notes.filter(([msg, arg]) => msg === kind && arg === ITEM.CAR_BATTERY).length;
   const battery = g.spawnItem(ITEM.CAR_BATTERY, 1, s.x + 0.5, s.y + 0.02, s.z, { permanent: true });
   ticks(8);
@@ -1581,7 +1582,7 @@ const standOff = (c, e, d) => {
     const inv = p.inv.map((x) => x && { ...x });
     tryBuild(STRUCT.WALL);
     const wall = game.structures.find((e) => e.stype === STRUCT.WALL);
-    for (let i = 0; i < p.inv.length; i++) p.inv[i] = i ? { item: ITEM.CLOTH, count: 1 } : null;
+    for (let i = 0; i < p.inv.length; i++) p.inv[i] = i ? { item: ITEM.CLOTH, count: ITEM_DEFS[ITEM.CLOTH].stack } : null;
     game.giveItem(p, ITEM.WOOD, 999); // every slot taken, one of them a full stack of planks...
     const planks = --p.inv[0].count; // ...less one
     const before = new Set(game.items);
@@ -1780,7 +1781,7 @@ const standOff = (c, e, d) => {
     const ammo = [...s.ammo];
     // (a full backpack of cloth; six shells and five .308 rounds carried)
     p.inv.fill(null);
-    for (let i = 0; i < p.inv.length; i++) p.inv[i] = { item: ITEM.CLOTH, count: 1 };
+    for (let i = 0; i < p.inv.length; i++) p.inv[i] = { item: ITEM.CLOTH, count: ITEM_DEFS[ITEM.CLOTH].stack };
     s.ammo[AMMO.SHELL] = 6;
     s.ammo[AMMO.R308] = 5;
     s.weapons[0] = ITEM.SHOTGUN; // (the shortest reload there is: one shell)

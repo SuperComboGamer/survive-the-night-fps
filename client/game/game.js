@@ -75,6 +75,7 @@ import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
 import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
+import { smallestStack } from '../../shared/stacks.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
 import { Highlight } from './highlight.js';
@@ -1955,7 +1956,7 @@ export class Game {
     const down = !!this.prediction.state.downed;
     const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.VENISON, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : HEAL_ITEMS;
     for (const item of order) {
-      const idx = inv.findIndex((x) => x && x.item === item);
+      const idx = smallestStack(inv, item); // (the stack the server would take from: removeItem)
       if (idx >= 0) {
         if (this.useConsumable(idx, item)) this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : CONSUMABLES[item].meat ? 'eat' : CONSUMABLES[item].food ? 'can_open' : 'bandage');
         return;
@@ -1966,7 +1967,7 @@ export class Game {
 
   // The drink key ([B]): an energy drink from the backpack, stamina back in one go (the server turns one down at full stamina).
   // idx: the backpack slot clicked, when it was not the key
-  quickDrink(idx = this.inventory.slots.findIndex((x) => x && x.item === ITEM.ENERGY_DRINK)) {
+  quickDrink(idx = smallestStack(this.inventory.slots, ITEM.ENERGY_DRINK)) {
     const s = this.prediction.state;
     if (s.zombie || s.downed || s.using || this.self.useItem) return;
     if (idx < 0) return void this.ui.notify('No energy drinks', 'warning', 1.5);

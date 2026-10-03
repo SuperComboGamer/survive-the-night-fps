@@ -127,7 +127,7 @@ import { swimming, DROWN_DPS } from '../shared/swim.js';
 import { nightTheme, nightBoss } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
-import { createInventory, invCap, addItem, removeItem, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
+import { createInventory, invCap, addItem, removeItem, takeFrom, tidyStacks, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Deer } from './deer.js';
@@ -707,6 +707,7 @@ export class Game {
       respawnT: 0,
       inv: createInventory(),
       invDirty: true,
+      splitKeep: new Map(), // item -> its count when last split (ACT.SPLIT_INV): kept apart while it stays that (tidyStacks)
       kit: null, // the starting kit they were issued (spawnHuman)
       flashlight: false,
       battery: FLASHLIGHT_MAX,
@@ -1084,6 +1085,7 @@ export class Game {
     this.endUse(p);
     p.hold = null;
     p.inv = createInventory();
+    p.splitKeep.clear();
     for (const [item, n] of kit.items) addItem(p.inv, item, n);
     s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? kit.ammo : 0));
     p.kit = kit; // what they were handed: it goes with them if they leave the game (parkKit)
@@ -1814,8 +1816,7 @@ export class Game {
         this.dropper = 0;
         // (no entity id left for it on the ground: it stays in the pack)
         if (!dropped) return;
-        it.count -= n;
-        if (it.count <= 0) p.inv[idx] = null;
+        takeFrom(p.inv, idx, n); // (a few off a full stack: what is left of it merged with the part stack, consolidate)
         p.invDirty = true;
         this.syncThrow(p);
         return;
@@ -1890,7 +1891,9 @@ export class Game {
         if (a >= invCap(p) || b >= invCap(p)) return;
         const A = p.inv[a];
         const B = p.inv[b];
-        if (A && B && A.item === B.item && ITEM_DEFS[A.item].stack > 1) {
+        // onto a stack of the same that has room it tops that up; onto a full one the two trade places, as anything
+        // else does (and as the client shows a drag at once: InventoryScreen)
+        if (A && B && A !== B && A.item === B.item && ITEM_DEFS[A.item].stack > 1 && B.count < ITEM_DEFS[A.item].stack) {
           const max = ITEM_DEFS[A.item].stack;
           const move = Math.min(max - B.count, A.count);
           B.count += move;
@@ -1906,6 +1909,7 @@ export class Game {
       case ACT.SORT_INV:
         // (the open slots only: the locked ones stay empty)
         sortInventory(p.inv, invCap(p));
+        p.splitKeep.clear(); // (it merged them)
         p.invDirty = true;
         return;
       case ACT.SPLIT_INV: {
@@ -1917,6 +1921,9 @@ export class Game {
         if (to < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
         it.count -= n;
         p.inv[to] = { item: it.item, count: n };
+        // The one way to more than one part stack of a thing: asked for. They stay apart while they are only moved
+        // about; the next change to that item's count (a pickup, a use, a craft, a drop) merges them again, as Sort does
+        p.splitKeep.set(it.item, countItem(p.inv, it.item));
         p.invDirty = true;
         return;
       }
@@ -2405,10 +2412,8 @@ export class Game {
       const it = from < invCap(p) ? p.inv[from] : null;
       if (!it || !SALVAGE[it.item] || n < 1) return;
       item = it.item;
-      n = Math.min(n, it.count);
       mag = it.mag || 0; // (a weapon is a stack of one)
-      it.count -= n;
-      if (it.count <= 0) p.inv[from] = null;
+      n = takeFrom(p.inv, from, n); // (what is left of that item consolidated)
     } else if (from === SALVAGE_FROM.ARMOR) {
       if (!SALVAGE[p.armorItem]) return;
       item = p.armorItem;
@@ -2470,7 +2475,7 @@ export class Game {
       // client's next command on, which is where its prediction has them go: it sends every command it has made
       // before it asks (Game.useConsumable), so that is the one after the newest that has come in. Those still
       // waiting to be run are run without it (processInputs); with none waiting, that is now.
-      p.useItem = { item: it.item, t: 0, total: c.time, from: (p.recvSeq + 1) & 0xffff };
+      p.useItem = { item: it.item, t: 0, total: c.time, from: (p.recvSeq + 1) & 0xffff, idx };
       if (!p.cmdQueue.length) {
         s.using = 1;
         p.shadow.using = 1; // (the client did the same after the same command: nothing to rebase it on)
@@ -2565,7 +2570,10 @@ export class Game {
     p.state.switchT = DRAW_TIME; // the weapon comes back out
     if (countItem(p.inv, u.item) <= 0) return;
     const c = CONSUMABLES[u.item];
-    removeItem(p.inv, u.item, 1);
+    // from the stack it was taken from (the one clicked in the grid; [H] and [B] ask for the smallest, as removeItem
+    // takes), if that still holds it, and what is left consolidated either way
+    if (p.inv[u.idx]?.item === u.item) takeFrom(p.inv, u.idx, 1);
+    else removeItem(p.inv, u.item, 1);
     this.track.used(p, u.item);
     p.invDirty = true;
     if (p.downed) {
@@ -4132,7 +4140,10 @@ export class Game {
   sendTick(p, global) {
     const conn = p.session.conn;
     this.sendList(p);
-    if (p.invDirty) this.sendInventory(p);
+    if (p.invDirty) {
+      tidyStacks(p.inv, p.splitKeep); // (the safety net: any path that left two part stacks of a thing, split aside)
+      this.sendInventory(p);
+    }
     const w = this.w.reset();
     w.u8(S2C.SNAPSHOT);
     const flagsAt = w.reserve8();

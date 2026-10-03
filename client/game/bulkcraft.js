@@ -6,6 +6,7 @@
 // change the two together.
 import { ITEM_DEFS, WEAPONS, AMMO_MAX } from '../../shared/defs.js';
 import { INVENTORY_SIZE } from '../../shared/constants.js';
+import { consolidate, smallestStack } from '../../shared/stacks.js';
 
 export const CRAFT_FEW = 5; // Shift+click
 export const CRAFT_MAX = 20; // Ctrl+click (Cmd on a Mac): as many as the materials allow, up to this
@@ -27,16 +28,13 @@ function fits(slots, cap, item, n) {
   return room >= n;
 }
 
-// taken from the smallest stack of it first, the later of two the same size (removeItem); a slot paid empty is free again
+// taken from the smallest stack of it first, the later of two the same size (removeItem); a slot paid empty is free
+// again, and so is one the part stacks merged out of (consolidate: a split kept apart is merged once the count changes)
 function pay(slots, cost) {
   for (const k in cost) {
     let left = cost[k];
     while (left > 0) {
-      let at = -1;
-      for (let i = 0; i < slots.length; i++) {
-        const s = slots[i];
-        if (s && s.item === +k && (at < 0 || s.count <= slots[at].count)) at = i;
-      }
+      const at = smallestStack(slots, +k);
       if (at < 0) break;
       const s = slots[at];
       const take = Math.min(s.count, left);
@@ -44,11 +42,13 @@ function pay(slots, cost) {
       left -= take;
       if (s.count <= 0) slots[at] = null;
     }
+    if (left < cost[k]) consolidate(slots, +k);
   }
 }
 
-// onto the stacks of it first, then into free slots (addItem), in the open slots
+// onto the stacks of it first, then into free slots, then its part stacks merged (addItem), in the open slots
 function add(slots, cap, item, n) {
+  const want = n;
   const max = ITEM_DEFS[item].stack;
   for (let i = 0; i < cap && n > 0; i++) {
     const s = slots[i];
@@ -63,6 +63,7 @@ function add(slots, cap, item, n) {
     slots[i] = { item, count: take };
     n -= take;
   }
+  if (n < want) consolidate(slots, item);
 }
 
 // Crafts `rec` up to `want` times on `inv`, which is left as the server would leave it, and returns how many went
