@@ -273,6 +273,7 @@ if (params.get('vm') === 'hands') {
   }
   if (act === 'ads') state.aiming = true;
   if (act === 'talk') state.talk = true; // (the walkie-talkie keyed)
+  if (params.has('wall')) state.wallDist = +params.get('wall'); // &wall=m: a wall that far ahead (the tuck)
   if (act === 'crouch') {
     state.crouch = true;
     state.speed = 2;

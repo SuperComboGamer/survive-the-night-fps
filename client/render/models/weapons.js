@@ -2647,6 +2647,18 @@ const SWINGS = {
 const CLAW_IDLE = [0.18, -0.15, -0.38, -0.55, -0.35, 0.85];
 const CLAW_SWING = { dur: 0.5, keys: [[0.3, 0.3, 0.02, -0.22, 0.0, -0.9, 1.3, 0], [0.55, -0.16, -0.24, -0.44, -1.2, 0.5, -0.2, 1]] };
 
+// the tuck off a wall (update): per kind, the most it moves the item [px,py,pz, rx,ry,rz]; it starts TUCK_GAP short of
+// where the item's reach meets the wall and is all the way in TUCK_RANGE further
+const TUCK = {
+  rifle: [-0.03, -0.02, 0.13, 0.55, 0.3, 0.3], // high ready: the muzzle up and in, the gun back
+  shotgun: [-0.03, -0.02, 0.13, 0.55, 0.3, 0.3],
+  pistol: [-0.01, -0.03, 0.1, 0.65, 0.15, 0.1],
+  melee: [0.02, -0.04, 0.1, 0.35, 0.15, 0.0], // back and up
+  throw: [0.0, -0.05, 0.08, 0.2, 0.0, 0.0],
+  radio: [0.0, -0.02, 0.06, 0.0, 0.0, 0.0],
+};
+const TUCK_GAP = 0.06, TUCK_RANGE = 0.32;
+
 const THROW_RELEASE = 0.46; // (of the throw animation) the item leaves the hand
 
 const ease = (u, e) => (e === 1 ? u : e === 2 ? 1 - (1 - u) * (1 - u) : e === 3 ? u * u : u * u * (3 - 2 * u));
@@ -2896,6 +2908,7 @@ export class ViewModel {
     this.adsT = 0;
     this.sprintT = 0;
     this.talkT = 0; // the walkie-talkie keyed: raised toward the mouth (cfg.talk)
+    this.tuckT = 0; // pulled back off a wall, a car or a crate in front (update's s.wallDist)
     this.crouchT = 0;
     this.moveT = 0;
     this.bobPhase = 0;
@@ -3372,6 +3385,19 @@ export class ViewModel {
       return;
     }
 
+    // ---- tucked back off what is in front: the viewmodel is drawn over the world (its own pass, depth cleared), so
+    // nothing cuts into it; but a muzzle or a blade reaching further than the wall the player stands at reads as gone
+    // into it. s.wallDist (m, along the view; Game.weaponClearance) against how far the item reaches at the hip: the
+    // gun comes up and back to high ready, a blade or a throwable back and down, by as much as it would go in
+    if (cur.reach === undefined) cur.reach = this._itemReach(cur);
+    const tuckTo = Math.min(1, Math.max(0, (cur.reach + TUCK_GAP - (s.wallDist ?? 99)) / TUCK_RANGE));
+    this.tuckT += (tuckTo - this.tuckT) * (1 - Math.exp(-dt * 10));
+    const tk = TUCK[kind];
+    if (tk && this.tuckT > 0.001) {
+      const w = ease(this.tuckT, 0) * (1 - 0.6 * this.adsT) * (act && act.type === 'melee' ? 0.35 : 1);
+      for (let i = 0; i < 6; i++) P6[i] += tk[i] * w;
+    }
+
     // ---- final weapon transform (+ recoil)
     const wp = this._wp.set(P6[0], P6[1], P6[2] + this.recZ.x);
     _e1.set(P6[3] + this.recX.x, P6[4] + this.recY.x, P6[5], 'YXZ');
@@ -3535,6 +3561,23 @@ export class ViewModel {
   /** grip center of arm between poses a and b (weight k), into out */
   _blendCenter(arm, a, b, k, out = this._tmpP) {
     return arm.gripCenter(out, a).lerp(arm.gripCenter(_v6, b), k);
+  }
+
+  /** How far forward of the eye the item reaches at its hip pose (m): the furthest -z of its parts' bounds. */
+  _itemReach(cur) {
+    const h = cur.cfg.hip;
+    _m1.compose(_v1.set(h[0], h[1], h[2]), _q1.setFromEuler(_e1.set(h[3], h[4], h[5], 'YXZ')), _v2.set(1, 1, 1));
+    let reach = 0;
+    for (const m of cur.root.children) {
+      if (!m.isMesh) continue;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      const b = m.geometry.boundingBox;
+      for (let i = 0; i < 8; i++) {
+        _v3.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).add(m.userData.base).applyMatrix4(_m1);
+        reach = Math.max(reach, -_v3.z);
+      }
+    }
+    return reach;
   }
 
   _solveArm(arm, gripPos, handQ, shoulderPos, pole, centerPose) {
