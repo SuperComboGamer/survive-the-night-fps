@@ -103,7 +103,7 @@ export class MountedGun {
     e.feed += GUN.feed * dt;
     const n = Math.min(Math.floor(e.feed), GUN.mag - e.belt, countItem(p.inv, ITEM.AMMO_762));
     if (n > 0) {
-      // out of the backpack, last stack first, as a reload takes them (Game.syncAmmo then has the reserve follow)
+      // out of the backpack, smallest stack first, as a reload takes them (Game.syncAmmo then has the reserve follow)
       removeItem(p.inv, ITEM.AMMO_762, n);
       p.invDirty = true;
       e.belt += n;

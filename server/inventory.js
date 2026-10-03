@@ -18,7 +18,7 @@ export function countsMap(inv) {
   return m;
 }
 
-// Adds as many as fit. Returns leftover count.
+// Adds as many as fit: onto the stacks of it that are not full first, then into free slots. Returns leftover count.
 export function addItem(inv, item, count) {
   const def = ITEM_DEFS[item];
   const max = def ? def.stack : 1;
@@ -41,16 +41,26 @@ export function addItem(inv, item, count) {
   return left;
 }
 
+// Takes from the smallest stack of it first (of two the same size, the later one), so that what is left stays in as
+// few stacks as it can: with addItem topping up a stack that is not full before it starts a new one, a survivor
+// never carries more than one part-used stack of anything from play alone (a reload, a craft, the mounted gun's
+// belt). Taken from the last slot back, as it once was, a reload drained a full stack sitting behind the part-used
+// one whenever a new stack had gone into a free slot in front of it, and the part-used stacks piled up. (A split,
+// ACT.SPLIT_INV, still makes as many as the player asks for.)
 export function removeItem(inv, item, count) {
   let left = count;
-  for (let i = inv.length - 1; i >= 0 && left > 0; i--) {
-    const s = inv[i];
-    if (s && s.item === item) {
-      const take = Math.min(s.count, left);
-      s.count -= take;
-      left -= take;
-      if (s.count <= 0) inv[i] = null;
+  while (left > 0) {
+    let at = -1;
+    for (let i = 0; i < inv.length; i++) {
+      const s = inv[i];
+      if (s && s.item === item && (at < 0 || s.count <= inv[at].count)) at = i;
     }
+    if (at < 0) break;
+    const s = inv[at];
+    const take = Math.min(s.count, left);
+    s.count -= take;
+    left -= take;
+    if (s.count <= 0) inv[at] = null;
   }
   return count - left;
 }

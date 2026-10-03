@@ -1616,7 +1616,7 @@ export class Game {
     }
   }
 
-  // the rounds a reload of the weapon in hand just put into its magazine come out of the backpack, last stack first
+  // the rounds a reload of the weapon in hand just put into its magazine come out of the backpack, smallest stack first (removeItem)
   spendAmmo(p) {
     const s = p.state;
     const i = WEAPONS[currentWeapon(s)]?.ammo;

@@ -22,17 +22,22 @@ function fits(slots, item, n) {
   return room >= n;
 }
 
-// taken from the last slot back (removeItem); a slot paid empty is free again
+// taken from the smallest stack of it first, the later of two the same size (removeItem); a slot paid empty is free again
 function pay(slots, cost) {
   for (const k in cost) {
     let left = cost[k];
-    for (let i = slots.length - 1; i >= 0 && left > 0; i--) {
-      const s = slots[i];
-      if (!s || s.item !== +k) continue;
+    while (left > 0) {
+      let at = -1;
+      for (let i = 0; i < slots.length; i++) {
+        const s = slots[i];
+        if (s && s.item === +k && (at < 0 || s.count <= slots[at].count)) at = i;
+      }
+      if (at < 0) break;
+      const s = slots[at];
       const take = Math.min(s.count, left);
       s.count -= take;
       left -= take;
-      if (s.count <= 0) slots[i] = null;
+      if (s.count <= 0) slots[at] = null;
     }
   }
 }
