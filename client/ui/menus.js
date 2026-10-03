@@ -6,6 +6,7 @@ import { loadRecord, recordSummary } from './records.js';
 import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
 import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
 import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
+import { voteDifficulty } from '../net/feedback.js';
 import { playingFriends, unreadCount, onSocialChange } from '../net/friends.js';
 
 // the count on a button (unread messages): '' hides it
@@ -387,6 +388,12 @@ export class Pause {
     root.hidden = true;
     el('div', 'ov-vignette', root);
     el('div', 'grain', root);
+    // the inventory's close button, in the same corner: closing the pause is resuming (the click on root does it)
+    const close = el('button', 'inv-close', root);
+    close.type = 'button';
+    close.title = 'Resume';
+    el('span', 'inv-close-t', close, 'Close');
+    svgEl('i', 'inv-close-x', close, glyph('xmark'));
     const main = el('div', 'pause-main', root);
     el('div', 'pause-kicker', main, 'Paused');
     const resume = el('button', 'pause-resume', main);
@@ -610,6 +617,21 @@ export class Death {
 }
 
 // ---------------------------------------------------------------- game over / victory
+// the answers to "how hard was it?", 1..5 as the server counts them (server/feedback.js)
+const DIFFICULTY = ['Too easy', 'Easy', 'Just right', 'Hard', 'Too hard'];
+
+// whole percents of counts that add up to 100 (the largest remainders get the leftover points)
+function percents(counts) {
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (!total) return counts.map(() => 0);
+  const exact = counts.map((n) => (n * 100) / total);
+  const out = exact.map(Math.floor);
+  let left = 100 - out.reduce((a, b) => a + b, 0);
+  const order = exact.map((v, i) => [v - out[i], i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; left > 0; k++, left--) out[order[k % order.length][1]]++;
+  return out;
+}
+
 export class EndScreen {
   constructor(ui, parent) {
     this.ui = ui;
@@ -629,7 +651,77 @@ export class EndScreen {
     const panels = el('div', 'end-panels', m);
     this.board = el('div', 'end-board paper', panels);
     this.record = el('div', 'end-board end-record paper', panels);
+    // how hard the run was: a vote, and then how everyone has voted, as bars (the same rows, filled in)
+    this.poll = el('div', 'end-board end-poll paper', panels);
+    el('h3', 'panel-h', this.poll, 'How hard was it?');
+    const opts = el('div', 'ep-opts', this.poll);
+    this.pollOpts = DIFFICULTY.map((label, i) => {
+      const b = el('button', 'ep-opt', opts);
+      b.type = 'button';
+      el('span', 'ep-key', b, String(i + 1));
+      el('span', 'ep-label', b, label);
+      const pct = el('b', 'ep-pct', b, '');
+      const fill = el('i', '', el('span', 'ep-bar', b));
+      b.addEventListener('click', () => this._vote(i + 1));
+      return { b, pct, fill };
+    });
+    this.pollFoot = el('div', 'ep-foot', this.poll, '');
+    // 1-5 vote as well as a click (the keys of the answers)
+    window.addEventListener('keydown', (e) => {
+      if (this.root.hidden || !this.vote || e.repeat || e.ctrlKey || e.metaKey || e.altKey || this.ui.isTyping()) return;
+      const n = /^(?:Digit|Numpad)([1-5])$/.exec(e.code);
+      if (n) this._vote(+n[1]);
+    });
+    this.vote = null;
+    this.voteSeq = 0;
     this.count = el('div', 'end-count', m);
+  }
+
+  // A fresh poll for this run. vote: rating 1..5 -> a promise of { mine, counts, total } (net/feedback.js), or
+  // nothing for no poll
+  _poll(vote) {
+    this.vote = vote || null;
+    this.voteSeq++; // (an answer still on its way is for the run before)
+    this.poll.hidden = !this.vote;
+    this.poll.className = 'end-board end-poll paper';
+    for (const o of this.pollOpts) {
+      o.b.classList.remove('mine');
+      o.pct.textContent = '';
+      o.fill.style.width = '0%';
+    }
+    this.pollFoot.className = 'ep-foot';
+    this.pollFoot.textContent = 'Press 1-5 or click · it helps us tune the game';
+  }
+
+  async _vote(rating) {
+    if (!this.vote) return;
+    const seq = ++this.voteSeq;
+    this.poll.classList.add('sending');
+    this.pollOpts.forEach((o, i) => o.b.classList.toggle('mine', i === rating - 1));
+    this.pollFoot.className = 'ep-foot';
+    if (!this.poll.classList.contains('voted')) this.pollFoot.textContent = 'Counting your vote...';
+    let res;
+    try {
+      res = await this.vote(rating);
+    } catch (err) {
+      if (seq !== this.voteSeq) return;
+      this.poll.classList.remove('sending');
+      this.pollFoot.className = 'ep-foot bad';
+      this.pollFoot.textContent = err?.message || 'Your vote did not get through';
+      return;
+    }
+    if (seq !== this.voteSeq) return;
+    // everyone's votes, this one counted: each answer's share as a bar, ours lit
+    const counts = DIFFICULTY.map((_, i) => Math.max(0, (res?.counts?.[i] | 0)));
+    const total = counts.reduce((a, b) => a + b, 0);
+    const pcts = percents(counts);
+    this.poll.classList.remove('sending');
+    this.poll.classList.add('voted');
+    this.pollOpts.forEach((o, i) => {
+      o.pct.textContent = pcts[i] + '%';
+      o.fill.style.width = (total ? (counts[i] * 100) / total : 0) + '%';
+    });
+    this.pollFoot.textContent = `${total} vote${total === 1 ? '' : 's'} so far · click another to change yours`;
   }
 
   // What this run did to the player's own record. rep: recordRun's report (records.js), { late: true } for a
@@ -698,6 +790,8 @@ export class EndScreen {
     }
     this.board.hidden = !kills.length;
     this._record(stats.record);
+    // (no poll on a server that keeps no votes: one without a database has no accounts either)
+    this._poll(stats.vote || (accountState().accounts ? voteDifficulty : null));
 
     clearInterval(this._iv);
     this.count.textContent = '';

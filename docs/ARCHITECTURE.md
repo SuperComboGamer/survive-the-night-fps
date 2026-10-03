@@ -586,6 +586,32 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
 - `scripts/test-rail.js` holds the plan on any number of seeds (`--sweep`), and the bed, the tunnels, the
   boxcars, the dead and a running game on six.
 
+- **Handcars** (`shared/handcar.js`): a flat car with a see-saw pump lever, one or two to a valley
+  (`handcars(world)`): beside the depot's platform and 9 m off the Route 9 crossing, or at the end of the train,
+  on stretches of open line of `HANDCAR.minRun` or more. The train cuts the main line in two and a car never
+  passes it, or the cave-in of a tunnel; two cars on one stretch run into each other. A survivor on a car carries
+  it in the simulated state as a rider at the fair carries a seat: `cart` (car + 1), `cartS` (its point of
+  `rail.main`, fractional) and `cartV` (m/s along the line). `cartStep` at the start of a command works the lever
+  (W / S drive it towards or away from where the rider looks along the line, Shift harder on stamina, `rollCar`)
+  or takes them off (Space - [E] is sent as Space, `HandcarClient.press` - with the car's speed, over the side
+  they look to; any speed or air that something else gave them, going down, turning); while the lever is worked
+  `LEVER_HANDS` (fire, sights, reload) are masked out of the command. `cartCarry` stands the body on the deck behind
+  the lever. The fields travel in the self state's `SELF.RIDE` chunk with the fair's.
+- **The server** (`server/handcar.js`, `Game.handcars`) keeps one `ENT.HANDCAR` a car (`HCF`: its point of the line
+  in 1/32 m, who rides it; the car index in its create record), in everyone's area of interest. A ridden car follows
+  its rider's state; an empty one rolls on by itself (`rollCar` with nobody on the lever) until it stops. What the
+  rider's prediction cannot know is settled there and written into their state (a rebase, as a knockback is): two
+  cars meeting (`meet`: they part at two half-lengths and share the speed they met at, giving a little back) and
+  the dead on the line (`strike`: from 3 m/s up knocked aside for 9 damage per m/s, the car a little slower; a Tank
+  or a boss stops it dead). `ACT.HANDCAR` gets on a free car in reach; `/handcar [n]` puts you on one.
+- **The client** (`client/game/handcar.js`, `Game.handcar`; the model in `client/render/models/handcar.js`, its
+  rattle `loop_handcar` in `client/audio/synth-handcar.js`) draws the car we ride where our prediction has it and
+  every other at the interpolation time (its point of the line rides in the sample's pitch slot), with the lever
+  geared to the distance rolled (`leverAngle`: a stroke every `HANDCAR.stroke` m) and the wheels turning; a player
+  riding one is drawn on its deck. While we work the lever our hands on its bar replace the weapon in the view.
+- `scripts/test-handcar.js` holds the placement on ten valleys, the rules against the server, and a rider's
+  prediction on a laggy link.
+
 ## Gameplay systems (iteration 2)
 
 - **No base.** Structures can be built anywhere (within 7 m of the builder). `STRUCT.DOOR` snaps into the

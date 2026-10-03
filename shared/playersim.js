@@ -37,6 +37,7 @@ import { ITEM, WEAPONS, CLAWS, AMMO, AMMO_ITEMS } from './defs.js';
 import { groundAt, resolveBody, deepWaterAt } from './collision.js';
 import { mulberry32 } from './rng.js';
 import { rideStep, rideCarry } from './fair.js';
+import { cartStep, cartCarry, CART_PUMP, LEVER_HANDS } from './handcar.js';
 
 export function createPlayerState() {
   return {
@@ -80,6 +81,10 @@ export function createPlayerState() {
     ride: 0,
     rideT: 0,
     rideGo: 0,
+    // on a handcar on the railway (handcar.js): the car + 1, where it is on the line (a point of rail.main), its speed
+    cart: 0,
+    cartS: 0,
+    cartV: 0,
   };
 }
 
@@ -123,6 +128,9 @@ export function copyPlayerState(dst, src) {
   dst.ride = src.ride;
   dst.rideT = src.rideT;
   dst.rideGo = src.rideGo;
+  dst.cart = src.cart;
+  dst.cartS = src.cartS;
+  dst.cartV = src.cartV;
   return dst;
 }
 
@@ -138,6 +146,7 @@ export function samePlayerState(a, b) {
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
+  if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
   return a.downed === b.downed && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
 }
 
@@ -162,6 +171,8 @@ export function snapPlayerState(s) {
   s.pullX = fr(s.pullX);
   s.pullY = fr(s.pullY);
   s.pullZ = fr(s.pullZ);
+  s.cartS = fr(s.cartS);
+  s.cartV = fr(s.cartV);
   return s;
 }
 
@@ -203,6 +214,11 @@ export function hashPlayerState(s) {
   if (s.ride) {
     mix(s.ride | (s.rideGo << 8));
     mix(s.rideT | 0);
+  }
+  if (s.cart) {
+    mix(s.cart);
+    mix(Math.round(s.cartS * 512));
+    mix(Math.round(s.cartV * 128));
   }
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
@@ -256,8 +272,8 @@ export function shotDirections(yaw, pitch, recoilPitch, spread, pellets, seed, o
 // Simulate one command (fixed CMD_DT). events: array to push {type,...} into (may be null).
 // cmd = { seq, buttons, yaw, pitch, slot (255 = no change) }
 export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
-  const b = cmd.buttons;
-  const pressed = b & ~s.lastBtn;
+  let b = cmd.buttons;
+  let pressed = b & ~s.lastBtn;
   s.yaw = cmd.yaw;
   s.pitch = cmd.pitch;
 
@@ -286,7 +302,14 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   // in a seat of a ride the body goes where the seat does (fair.js): nothing below moves it, and it is put there
   // once the command is through
   const riding = s.ride !== 0 && rideStep(s, pressed, world, events);
-  const disabled = s.pinned || s.stunT > 0 || riding;
+  // ...and on a handcar where the car does (handcar.js). Working its lever takes both hands: the weapon in them
+  // does nothing while they do
+  const carted = s.cart !== 0 ? cartStep(s, b, pressed, world, events, dt) : 0;
+  if (carted === CART_PUMP) {
+    b &= ~LEVER_HANDS;
+    pressed &= ~LEVER_HANDS;
+  }
+  const disabled = s.pinned || s.stunT > 0 || riding || carted;
   let fwd = 0;
   let right = 0;
   if (!disabled) {
@@ -437,6 +460,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.y = ny;
   s.z = _pos.z;
   if (riding) rideCarry(s, world);
+  else if (carted) cartCarry(s, world);
 
   // ------------------------------------------------ weapons
   if (s.switchT > 0) s.switchT -= dt;
@@ -536,6 +560,6 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     if (!attack && s.recoil > 0) s.recoil = Math.max(0, s.recoil - dt * 9);
   }
 
-  s.lastBtn = b;
+  s.lastBtn = cmd.buttons; // (as held: hands that come off the lever onto a trigger held down have not clicked it)
   return s;
 }

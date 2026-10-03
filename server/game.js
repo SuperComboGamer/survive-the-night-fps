@@ -130,6 +130,7 @@ import { Fixtures } from './fixtures.js';
 import { Cemetery } from './cemetery.js';
 import { MountedGun } from './mountedgun.js';
 import { Fair } from './fair.js';
+import { Handcars } from './handcar.js';
 import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
@@ -340,6 +341,7 @@ export class Game {
     this.cemetery = new Cemetery(this); // the dead that come up out of the graves at St. Agnes (cemetery.js)
     this.gun = new MountedGun(this); // the mounted gun at the Army Checkpoint, on the maps that have one
     this.fair = new Fair(this); // the Tri-County Fair: its generator and who is on its rides
+    this.handcars = new Handcars(this); // the handcars on the railway: where they are on the line, who rides them
     this.power = new Power(this); // the buildable generator and its floodlights
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
@@ -837,6 +839,7 @@ export class Game {
     this.cemetery.reset();
     this.gun.spawn();
     this.fair.reset();
+    this.handcars.spawn();
     // zone guards + roaming dead
     this.zm.spawnInitial();
     this.cm.spawnInitial();
@@ -1640,6 +1643,10 @@ export class Game {
       case 'land':
         if (!p.zombie && ev.v > 13) this.damagePlayer(p, (ev.v - 13) * 6, { kind: KILLER.WORLD, fall: true });
         break;
+      case 'cart_bump':
+        // a handcar run into the end of its stretch of line (shared/handcar.js)
+        this.sound(SOUND.METAL_HIT, s.x, s.y, s.z, 40, p.id);
+        break;
     }
   }
 
@@ -1795,6 +1802,8 @@ export class Game {
         return this.gun.feed(p, r.u8());
       case ACT.RIDE:
         return this.fair.board(p, r.u8());
+      case ACT.HANDCAR:
+        return this.handcars.board(p, r.u8());
       case ACT.GEN_SWITCH:
         return this.power.flip(p, r.u16());
     }
@@ -2892,9 +2901,15 @@ export class Game {
         // the materials for one generator and two floodlights, and a full tank of fuel
         this.power.give(p);
         break;
+      case 'handcar':
+        // /handcar [n]: onto handcar n on the railway (1, 2), or the first one nobody is on
+        this.handcars.debug(p, args[1]);
+        break;
     }
     // a command that took the player somewhere takes them out of a fair ride's seat, or the ride carries them back
+    // (and off a handcar, which would too)
     if (s.ride && args[0] !== 'fair' && (s.x !== x0 || s.z !== z0)) s.ride = 0;
+    if (s.cart && args[0] !== 'handcar' && (s.x !== x0 || s.z !== z0)) s.cart = 0;
     this.systemChat(`[debug] ${args.join(' ')}`);
   }
 
@@ -2936,6 +2951,7 @@ export class Game {
     }
     this.processInputs();
     this.fair.update();
+    this.handcars.update();
     ts.mark(T_INPUTS);
     this.updatePhase(dt);
     this.cemetery.update(dt);
@@ -3520,11 +3536,14 @@ export class Game {
         }
         if (put(chunk)) mask |= 1 << chunk;
       }
-      // (the seat of a ride at the fair: fair.js)
+      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js)
       c.reset();
       c.u8(s.ride);
       c.u8(s.rideGo);
       c.u32(s.rideT);
+      c.u8(s.cart);
+      c.f32(s.cartS);
+      c.f32(s.cartV);
       if (put(12)) mask |= SELF.RIDE;
     }
     // status: 7 field groups behind their own mask

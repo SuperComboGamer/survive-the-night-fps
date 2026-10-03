@@ -1,7 +1,7 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
-import { ENT, PFLAG, ZSTATUS, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
+import { ENT, PFLAG, ZSTATUS, HCAR_AT, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD } from '../../shared/constants.js';
@@ -238,6 +238,7 @@ function wrapAngle(a) {
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _car = { x: 0, y: 0, z: 0 }; // where a player riding a handcar stands
 const _frustum = new THREE.Frustum();
 const _pv = new THREE.Matrix4();
 const _sph = new THREE.Sphere();
@@ -335,6 +336,7 @@ export class Entities {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
     } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT || e.kind === ENT.DEER) yaw = dqangle8(q[3]);
+    else if (e.kind === ENT.HANDCAR) pitch = q[3] / HCAR_AT; // (a handcar's place on the line, interpolated as a pitch is: game/handcar.js)
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
 
@@ -408,6 +410,9 @@ export class Entities {
         }
         case ENT.GUN:
           g.gun.attach(e); // the mounted gun: client/game/mountedgun.js draws and turns it
+          break;
+        case ENT.HANDCAR:
+          g.handcar.attach(e); // a handcar on the railway: client/game/handcar.js draws it on the line
           break;
         case ENT.DEER:
           createDeerView(this, e);
@@ -533,6 +538,7 @@ export class Entities {
         }
         break;
       case ENT.CAT:
+      case ENT.HANDCAR:
         if (!initial && mask & 0b11) this.pushSample(e, t);
         break;
       case ENT.DEER:
@@ -877,13 +883,22 @@ export class Entities {
           if (ride) e.seat = ride;
           e.seatK = Math.max(0, Math.min(1, (e.seatK || 0) + (ride ? dt : -dt) * 5));
           if (e.seatK > 0) g.fair.seatBlend(e.seat - 1, tmp, e.seatK);
+          // on a handcar they stand on its deck where the car is drawn (game/handcar.js), stepping onto it over a moment
+          const carted = g.handcar.riderAt(e.id, _car);
+          e.cartK = carted ? Math.min(1, (e.cartK || 0) + dt * 5) : 0;
+          if (carted) {
+            const u = e.cartK * e.cartK * (3 - 2 * e.cartK);
+            tmp.x += (_car.x - tmp.x) * u;
+            tmp.y += (_car.y - tmp.y) * u;
+            tmp.z += (_car.z - tmp.z) * u;
+          }
           const dx = tmp.x - e.rx;
           const dy = tmp.y - e.ry;
           const dz = tmp.z - e.rz;
           const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 10);
-          if (e.seatK > 0) e.speed = 0; // (carried, not walking)
-          e.vy = e.seatK > 0 ? 0 : dy / Math.max(dt, 1e-3);
+          if (e.seatK > 0 || carted) e.speed = 0; // (carried, not walking)
+          e.vy = e.seatK > 0 || carted ? 0 : dy / Math.max(dt, 1e-3);
           e.rx = tmp.x;
           e.ry = tmp.y;
           e.rz = tmp.z;

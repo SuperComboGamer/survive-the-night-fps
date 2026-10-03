@@ -164,7 +164,7 @@ function applySettings(s) {
   game.settings = s;
   renderer.setQuality(s.quality || 'medium');
   renderer.setRenderScale(s.renderScale ?? 1);
-  renderer.setPs1(s.ps1);
+  renderer.setPs1(s.ps1, s.ps1Strength);
   renderer.setFov(s.fov || 75);
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;

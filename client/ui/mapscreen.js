@@ -1,14 +1,19 @@
 // Field map overlay [M]: the baked survey map of the valley with live markers - you, your team, the
 // car, pings, where the car supplies are rumoured to be, and the places you have discovered.
 // A click sets your own waypoint (the game keeps it, shows it on the compass and in the world, and shares it:
-// the team's waypoints are flags here too, with who set them).
+// the team's waypoints are flags here too, with who set them). A pinch or the wheel zooms, a drag pans, and [R] turns
+// the map with you, the way you face up (a compass in its corner keeps north).
 import { ZONE, ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
 import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
-import { el, svgEl } from './dom.js';
+import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { renderMapCanvas, MAP_PX } from './mapcanvas.js';
 
 const TEAM_BESIDE = 14; // m: a teammate's waypoint on your own waypoint's spot is drawn this far east of it
+const MAX_ZOOM = 4; // the baked map is 2 px a metre: past this it is a blur
+const DRAG_PX = 5; // a press that moves this far is a pan, not a click for the waypoint
+const START_ZOOM = 2.5; // each opening starts this close in on you (about 256 m across), the wheel zooms out to all of it
+const HEADING_KEY = 'stn.mapHeadingUp';
 
 export class MapScreen {
   constructor(ui, parent) {
@@ -16,16 +21,38 @@ export class MapScreen {
     this.open = false;
     this.root = el('div', 'mapscr', parent);
     this.root.hidden = true;
-    el('div', 'map-bg', this.root);
+    const bg = el('div', 'map-bg', this.root);
     const frame = (this.frame = el('div', 'map-frame paper', this.root));
     const head = el('div', 'map-head', frame);
     el('span', 'map-title', head, 'Field map · Harlan Valley');
     this.coords = el('span', 'map-coords', head, '');
+    // north up, or turned with you so the way you face is up: kept between openings, and games
+    this.headingUp = lsGet(HEADING_KEY, '0') === '1';
+    this.rotBtn = el('button', 'map-rot', head);
+    this.rotBtn.type = 'button';
+    this.rotBtn.title = 'Turn the map with you (R)';
+    svgEl('i', 'map-rot-ico', this.rotBtn, glyph('compass'));
+    this.rotTxt = el('span', '', this.rotBtn);
+    this.rotBtn.addEventListener('click', () => this.setHeadingUp(!this.headingUp));
+    const close = svgEl('button', 'set-close btn-icon map-close', head, glyph('xmark'));
+    close.type = 'button';
+    close.title = 'Close (M)';
+    close.addEventListener('click', () => this.onClose?.());
     const body = el('div', 'map-body', frame);
     this.view = el('div', 'map-view', body);
-    this.canvasWrap = el('div', 'map-canvas', this.view);
-    this.labels = el('div', 'map-labels', this.view);
-    this.markers = el('div', 'map-markers', this.view);
+    // the map itself, zoomed and panned inside the view: the names and markers are placed in % of it, so a zoom
+    // spreads them apart without making them any bigger
+    this.pane = el('div', 'map-pane', this.view);
+    this.canvasWrap = el('div', 'map-canvas', this.pane);
+    this.labels = el('div', 'map-labels', this.pane);
+    this.markers = el('div', 'map-markers', this.pane);
+    // where north is, turned with the map; a click on it turns the map too
+    this.north = el('button', 'map-north', this.view);
+    this.north.type = 'button';
+    this.north.title = 'North up / facing up (R)';
+    const dial = svgEl('i', 'map-north-dial', this.north, glyph('compass'));
+    el('b', '', dial, 'N');
+    this.north.addEventListener('click', () => this.setHeadingUp(!this.headingUp));
     const side = el('div', 'map-side', body);
     el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Car supplies'));
     this.supList = el('div', 'map-sup', side);
@@ -50,6 +77,9 @@ export class MapScreen {
     for (const [k, t] of [
       ['LMB', 'set waypoint'],
       ['X', 'clear it'],
+      ['Wheel', 'zoom (or pinch)'],
+      ['Drag', 'pan'],
+      ['R', 'facing up / north up'],
       ['M', 'close'],
       ['Z', 'ping (in game)'],
     ]) {
@@ -64,26 +94,172 @@ export class MapScreen {
     // waypoint: the game sets onWaypoint and gets { x, z, zone } (zone: id of the place it snapped to, or -1),
     // or null to clear it
     this.onWaypoint = null;
-    this.view.addEventListener('pointerdown', (e) => {
-      if (!this.world || (e.button !== 0 && e.button !== 2)) return;
-      // the waypoint itself, or the right button anywhere: take it back
-      this.onWaypoint?.(e.button === 2 || e.target.closest('.mm.way') ? null : this._pick(e));
+    // the cross, or a left press outside the map's frame, closes it: the game sets onClose
+    this.onClose = null;
+    this.root.addEventListener('pointerdown', (e) => {
+      if (e.button === 0 && (e.target === bg || e.target === this.root)) this.onClose?.();
     });
+    // zoom: how many times the view's width the map is, START_ZOOM again at each opening. It zooms about the focus, a
+    // spot of the map (a fraction across / down) held in the middle of the view as far as the map's edges allow: you,
+    // as you move, until a drag moves it somewhere else (an opening puts it back on you). cx / cy is the middle shown
+    this.zoom = START_ZOOM;
+    this.fx = this.fy = 0.5;
+    this.follow = true;
+    this.cx = this.cy = 0.5;
+    // how far the map is turned clockwise on screen (rad): your yaw when it faces up, else 0
+    this.yaw = 0;
+    this.rot = 0;
+    this.ptrs = new Map(); // pointer id -> where it was last seen (two of them are a pinch)
+    this.press = null; // { id, x, y, target }: a press that has not moved far enough to be a pan; let go, it is a click
+    this.gesture = null; // Safari's trackpad pinch: the zoom when it began
+    this.view.addEventListener('pointerdown', (e) => {
+      if (!this.world || e.target.closest('.map-north')) return;
+      // the right button anywhere takes the waypoint back
+      if (e.button === 2) return this.onWaypoint?.(null);
+      if (e.button !== 0) return;
+      this.view.setPointerCapture(e.pointerId);
+      this.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.press = this.ptrs.size === 1 ? { id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target } : null;
+    });
+    this.view.addEventListener('pointermove', (e) => {
+      const p = this.ptrs.get(e.pointerId);
+      if (!p) return;
+      if (this.press) {
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_PX) return;
+        this.press = null;
+        this.view.classList.add('panning');
+      }
+      if (this.ptrs.size === 1) {
+        this._panBy(e.clientX - p.x, e.clientY - p.y);
+        p.x = e.clientX;
+        p.y = e.clientY;
+        return;
+      }
+      // two fingers: the map zooms with their spread (about the focus, like the wheel)
+      const a = this._spread();
+      p.x = e.clientX;
+      p.y = e.clientY;
+      this._zoomTo((this.zoom * this._spread().d) / a.d);
+    });
+    const release = (e) => {
+      if (!this.ptrs.delete(e.pointerId)) return;
+      if (!this.ptrs.size) this.view.classList.remove('panning');
+      const pr = this.press;
+      this.press = null;
+      // a click: on the waypoint itself it takes it back, anywhere else it sets it
+      if (e.type === 'pointerup' && pr?.id === e.pointerId) this.onWaypoint?.(pr.target.closest('.mm.way') ? null : this._pick(pr.x, pr.y, pr.target));
+    };
+    this.view.addEventListener('pointerup', release);
+    this.view.addEventListener('pointercancel', release);
     this.view.addEventListener('contextmenu', (e) => e.preventDefault());
+    // the wheel, and a trackpad pinch (Chrome and Firefox send that as the wheel with Ctrl held, in small steps)
+    this.view.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault(); // (Ctrl + wheel would zoom the whole page)
+        if (this.gesture !== null) return;
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.view.clientHeight : 1;
+        this._zoomTo(this.zoom * Math.exp(-e.deltaY * unit * (e.ctrlKey ? 0.01 : 0.002)));
+      },
+      { passive: false },
+    );
+    // Safari sends a trackpad pinch as gesture events instead (on a touch screen the pointers above have it)
+    this.view.addEventListener('gesturestart', (e) => {
+      e.preventDefault();
+      this.gesture = this.zoom;
+    });
+    this.view.addEventListener('gesturechange', (e) => {
+      e.preventDefault();
+      if (this.gesture !== null && this.ptrs.size < 2) this._zoomTo(this.gesture * e.scale);
+    });
+    this.view.addEventListener('gestureend', (e) => {
+      e.preventDefault();
+      this.gesture = null;
+    });
     // (the game's own key handling is off while the map is open, like the inventory's Q / E)
     window.addEventListener('keydown', (e) => {
-      if (this.open && e.code === 'KeyX' && !e.repeat && !this.ui.isTyping()) this.onWaypoint?.(null);
+      if (!this.open || e.repeat || this.ui.isTyping()) return;
+      if (e.code === 'KeyX') this.onWaypoint?.(null);
+      else if (e.code === 'KeyR') this.setHeadingUp(!this.headingUp);
     });
+    this._showHeading();
+  }
+
+  setHeadingUp(on) {
+    this.headingUp = !!on;
+    lsSet(HEADING_KEY, this.headingUp ? '1' : '0');
+    this._showHeading();
+    this._layout();
+  }
+
+  _showHeading() {
+    this.rotTxt.textContent = this.headingUp ? 'Facing up' : 'North up';
+    this.rotBtn.classList.toggle('on', this.headingUp);
+  }
+
+  // the middle of the first two pointers down and how far apart they are
+  _spread() {
+    const [a, b] = this.ptrs.values();
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
+  }
+
+  _zoomTo(z) {
+    this.zoom = Math.max(1, Math.min(MAX_ZOOM, z));
+    this._layout();
+  }
+
+  // a drag: the focus becomes the middle shown, moved with the pointer (all the map is in view at 1x north up:
+  // nothing to move). The move on screen is turned back onto the map when the map is turned
+  _panBy(dx, dy) {
+    if (this.zoom <= 1 && !this.headingUp) return;
+    this.follow = false;
+    const c = Math.cos(this.rot);
+    const s = Math.sin(this.rot);
+    const w = this.view.clientWidth * this.zoom; // (the view is square)
+    this.fx = this.cx - (dx * c + dy * s) / w;
+    this.fy = this.cy - (dy * c - dx * s) / w;
+    this._layout();
+    this.fx = this.cx;
+    this.fy = this.cy;
+  }
+
+  // the focus in the middle, but north up the map never pulls away from the view's edges. Turned, it turns about the
+  // middle and its corners come into view anyway: then only the focus stays on the map
+  _layout() {
+    const rot = this.headingUp ? this.yaw : 0;
+    const m = this.headingUp ? 0 : 0.5 / this.zoom;
+    this.cx = Math.max(m, Math.min(1 - m, this.fx));
+    this.cy = Math.max(m, Math.min(1 - m, this.fy));
+    const st = this.pane.style;
+    st.width = st.height = this.zoom * 100 + '%';
+    st.left = (0.5 - this.cx * this.zoom) * 100 + '%';
+    st.top = (0.5 - this.cy * this.zoom) * 100 + '%';
+    st.transformOrigin = `${this.cx * 100}% ${this.cy * 100}%`;
+    if (rot !== this.rot) {
+      this.rot = rot;
+      st.transform = rot ? `rotate(${rot}rad)` : '';
+      // the names and markers turn back the other way, so they stay upright; the compass turns with the map
+      st.setProperty('--unrot', -rot + 'rad');
+      this.north.style.setProperty('--rot', rot + 'rad');
+    }
   }
 
   // where a click on the map is in the world; on a place's name or inside its yard it is that place
-  _pick(e) {
-    const lab = e.target.closest('.map-lab');
+  _pick(px, py, target) {
+    const lab = target.closest('.map-lab');
     let zone = lab ? this.world.zoneById[lab.dataset.zone] : null;
+    // from the middle of the view, turned back onto the map
     const r = this.view.getBoundingClientRect();
+    const dx = px - (r.left + r.width / 2);
+    const dy = py - (r.top + r.height / 2);
+    const c = Math.cos(this.rot);
+    const s = Math.sin(this.rot);
+    const w = this.view.clientWidth * this.zoom;
+    const u = this.cx + (dx * c + dy * s) / w;
+    const v = this.cy + (dy * c - dx * s) / w;
     const lim = MAP_HALF - 3; // the playable ground stops short of the map's edge
-    const x = Math.max(-lim, Math.min(lim, ((e.clientX - r.left - this.view.clientLeft) / this.view.clientWidth) * MAP_SIZE - MAP_HALF));
-    const z = Math.max(-lim, Math.min(lim, ((e.clientY - r.top - this.view.clientTop) / this.view.clientHeight) * MAP_SIZE - MAP_HALF));
+    const x = Math.max(-lim, Math.min(lim, u * MAP_SIZE - MAP_HALF));
+    const z = Math.max(-lim, Math.min(lim, v * MAP_SIZE - MAP_HALF));
     if (!zone) {
       let best = Infinity;
       for (const zn of this.world.zones) {
@@ -134,7 +310,16 @@ export class MapScreen {
     open = !!open;
     if (open === this.open) return;
     this.open = open;
-    if (open) this._ensureCanvas();
+    if (open) {
+      this._ensureCanvas();
+      this.follow = true;
+      this.zoom = START_ZOOM;
+    } else {
+      this.ptrs.clear();
+      this.press = null;
+      this.gesture = null;
+      this.view.classList.remove('panning');
+    }
     this.root.hidden = !open;
     this.ui.root.classList.toggle('map-open', open);
   }
@@ -158,6 +343,12 @@ export class MapScreen {
   update(d) {
     if (!this.open || !this.world) return;
     const pct = (v) => ((v + MAP_HALF) / MAP_SIZE) * 100;
+    this.yaw = d.self.yaw;
+    if (this.follow) {
+      this.fx = (d.self.x + MAP_HALF) / MAP_SIZE;
+      this.fy = (d.self.z + MAP_HALF) / MAP_SIZE;
+    }
+    this._layout();
     const way = d.waypoint;
     const taken = (i) => !!(d.found & (1 << i));
     // place names: known once discovered. A rumour names its place too, and marks it while its supply is still there
@@ -209,7 +400,8 @@ export class MapScreen {
     for (const p of d.pings) put(p.x, p.z, 'ping k' + p.kind, glyph('ping'), p.name);
     put(d.car.x, d.car.z, 'car', glyph('car'), 'car');
     for (const m of d.mates) put(m.x, m.z, 'mate ' + m.status, glyph(m.status === 'downed' ? 'downed' : 'person'), m.name);
-    put(d.self.x, d.self.z, 'you', glyph('arrowUp'), '', -d.self.yaw);
+    // (the marker stands upright on screen, so its arrow turns with the map as well as with you)
+    put(d.self.x, d.self.z, 'you', glyph('arrowUp'), '', this.rot - d.self.yaw);
     for (let i = n; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;
     this.coords.textContent = `${Math.round(d.self.x)} E · ${Math.round(-d.self.z)} N`;
     // supply checklist

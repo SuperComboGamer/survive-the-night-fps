@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 
 // client -> server
 export const C2S = {
@@ -38,8 +38,9 @@ export const ROOMF = { INVITE_ONLY: 1 };
 export const SNAP = { GLOBAL: 1, SELF: 2, REMOVES: 4, CREATES: 8, UPDATES: 16, EVENTS: 32, TICK: 64, ACK: 128 };
 // self section: u8 mask, bits 0-4 = the simulated state in 5 chunks (only ever sent with SYNC), STATUS = the
 // server-driven status (hp, armor, battery, ...; its own u8 field mask follows), RIDE = the seat of a ride the
-// player is in (part of the simulated state like bits 0-4: only ever with SYNC), SYNC = "this is the authoritative
-// state after the acked command: rebase the prediction on it". Without SYNC the client's own prediction stands.
+// player is in and the handcar they are on (part of the simulated state like bits 0-4: only ever with SYNC),
+// SYNC = "this is the authoritative state after the acked command: rebase the prediction on it". Without SYNC the
+// client's own prediction stands.
 export const SELF = { SIM: 0x1f, STATUS: 0x20, RIDE: 0x40, SYNC: 0x80 };
 
 // discrete, non-predicted actions
@@ -67,6 +68,7 @@ export const ACT = {
   GUN_FEED: 26, // u8 on: the gunner starts (1) or stops (0) feeding 7.62 from their backpack into its belt
   RIDE: 27, // u8 seat (fair.js): get onto that seat of a ride at the fair
   WAYPOINT: 28, // u8 on, then (on) i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none): your field-map waypoint, for the team
+  HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
 };
 
@@ -109,6 +111,7 @@ export const ENT = {
   DEER: 10, // a deer (shared/deer.js): can be hunted, is no zombie
   GUN: 12, // the mounted gun at the Army Checkpoint (static position: the pintle; state = belt, gunner, where it was left pointing)
   FAIR: 11, // the fair's generator: whether it runs, the ride clock, the fuel left (FRF)
+  HANDCAR: 13, // a handcar on the railway (shared/handcar.js): where it is on the line, who rides it (HCF)
 };
 
 // ---------------------------------------------------------------- quantization
@@ -491,3 +494,7 @@ export const DF = { POS: 0, YAW: 1, ANIM: 2 };
 // zero (so the clock now is the tick now less that, and nothing has to be sent while it runs). FUEL: 16 bits of
 // ticks - stopped, what is left in the tank; running, the server tick it runs dry at.
 export const FRF = { POS: 0, STATE: 1, CLOCK: 2, FUEL: 3 };
+// HANDCAR fields (u16 each). AT: where it is on the main line, in 1/HCAR_AT metres (its point of rail.main: the
+// position is drawn from that, not from POS). RIDER: the player on it, 0 nobody
+export const HCF = { POS: 0, AT: 1, RIDER: 2 };
+export const HCAR_AT = 32;

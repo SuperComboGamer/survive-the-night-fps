@@ -33,11 +33,20 @@ export class Leaderboard {
 
     this.root = el('div', 'lbscr', parent);
     this.root.hidden = true;
-    el('div', 'map-bg', this.root);
+    const bg = el('div', 'map-bg', this.root);
     const frame = el('div', 'lb-frame paper', this.root);
     const head = el('div', 'map-head', frame);
     el('span', 'map-title', head, 'Leaderboard');
     this.count = el('span', 'map-coords', head, '');
+    // the cross, or a left press outside the frame, closes it: the game sets onClose
+    this.onClose = null;
+    const close = svgEl('button', 'set-close btn-icon map-close', head, glyph('xmark'));
+    close.type = 'button';
+    close.title = 'Close (L)';
+    close.addEventListener('click', () => this.onClose?.());
+    this.root.addEventListener('pointerdown', (e) => {
+      if (e.button === 0 && (e.target === bg || e.target === this.root)) this.onClose?.();
+    });
 
     const seg = el('div', 'set-seg lb-lists', frame);
     this.listBtns = LISTS.map(([id, label]) => {

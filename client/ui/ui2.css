@@ -1012,6 +1012,93 @@
   color: var(--bone-dim);
 }
 
+/* the close cross at the right of the map's and the leaderboard's head, after the coords / count */
+.stn-ui .map-head .map-coords {
+  margin-left: auto;
+}
+
+.stn-ui .map-close {
+  align-self: center;
+  margin-left: calc(14 * var(--u));
+  width: calc(28 * var(--u));
+  height: calc(28 * var(--u));
+  min-width: 24px;
+  min-height: 24px;
+  padding: calc(6 * var(--u));
+  color: var(--bone-dim);
+}
+
+.stn-ui .map-close:hover {
+  color: var(--blood-lite);
+}
+
+.stn-ui .map-rot {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  margin-left: calc(14 * var(--u));
+  padding: calc(4 * var(--u)) calc(10 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  background: transparent;
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  cursor: pointer;
+}
+.stn-ui .map-rot:hover {
+  color: var(--bone);
+  border-color: var(--bone);
+}
+.stn-ui .map-rot.on {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+.stn-ui .map-rot-ico svg {
+  display: block;
+  width: max(12px, calc(14 * var(--u)));
+  height: max(12px, calc(14 * var(--u)));
+}
+
+/* north, in the map's corner: the dial turns with the map, its N stays upright */
+.stn-ui .map-north {
+  position: absolute;
+  right: calc(10 * var(--u));
+  top: calc(10 * var(--u));
+  z-index: 2;
+  width: max(34px, calc(42 * var(--u)));
+  height: max(34px, calc(42 * var(--u)));
+  padding: 0;
+  color: #2a1c10;
+  background: rgba(232, 220, 192, 0.82);
+  border: 1px solid rgba(42, 28, 16, 0.5);
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.stn-ui .map-north:hover {
+  background: rgba(244, 236, 214, 0.95);
+}
+.stn-ui .map-north-dial {
+  position: absolute;
+  inset: 27%;
+  transform: rotate(var(--rot, 0rad));
+}
+.stn-ui .map-north-dial svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.stn-ui .map-north-dial b {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  font: 700 max(8px, calc(9 * var(--u))) / 1 Georgia, 'Times New Roman', serif;
+  color: #b31212;
+  transform: translateX(-50%) rotate(calc(-1 * var(--rot, 0rad)));
+}
+
 .stn-ui .map-body {
   display: flex;
   gap: calc(16 * var(--u));
@@ -1023,8 +1110,21 @@
   height: min(80vh, 62vw);
   overflow: hidden;
   cursor: crosshair; /* a click sets your waypoint */
+  touch-action: none; /* a pinch zooms the map, not the page */
   border: 1px solid rgba(0, 0, 0, 0.6);
   box-shadow: inset 0 0 40px rgba(40, 24, 10, 0.5);
+}
+.stn-ui .map-view.panning {
+  cursor: grabbing;
+}
+
+/* the map inside the view: sized and placed by the zoom */
+.stn-ui .map-pane {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .stn-ui .map-canvas,
@@ -1042,7 +1142,9 @@
 
 .stn-ui .map-lab {
   position: absolute;
-  transform: translate(-50%, 60%);
+  /* (turned about its spot, back against the map's turn when it faces your way: --unrot) */
+  transform-origin: 0 0;
+  transform: rotate(var(--unrot, 0rad)) translate(-50%, 60%);
   font: 700 max(10px, calc(13 * var(--u))) / 1 Georgia, 'Times New Roman', serif;
   letter-spacing: 0.04em;
   color: #2a1c10;
@@ -1087,7 +1189,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  transform: translate(-50%, -50%);
+  transform-origin: 0 0;
+  transform: rotate(var(--unrot, 0rad)) translate(-50%, -50%);
   color: #2a1c10;
 }
 

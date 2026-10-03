@@ -262,7 +262,7 @@ export class Inventory {
 
     const root = (this.root = el('div', 'inv', parent));
     root.hidden = true;
-    el('div', 'inv-bg', root);
+    const bg = el('div', 'inv-bg', root);
     const close = el('button', 'inv-close', root);
     close.type = 'button';
     close.title = 'Close inventory (I)';
@@ -458,6 +458,10 @@ export class Inventory {
     this.splitIco = el('i', 'split-ico', sh);
     this.splitName = el('span', 'split-name', sh);
     this.splitOf = el('span', 'split-of', sh);
+    const splitX = svgEl('button', 'btn-icon split-x', sh, glyph('xmark'));
+    splitX.type = 'button';
+    splitX.title = 'Close (Esc)';
+    splitX.addEventListener('click', () => this._closeSplit());
     const sr = el('div', 'split-row', sp);
     const range = (this.splitRange = el('input', 'set-range split-range', sr));
     range.type = 'range';
@@ -477,7 +481,7 @@ export class Inventory {
     this.splitKeep.type = 'button';
     this.splitNote = el('div', 'split-note', sp);
 
-    this._bind(root, wrap);
+    this._bind(root, wrap, bg);
     this._setTab(lsGet(TAB_KEY, 'all'));
     this._renderAll();
   }
@@ -490,7 +494,7 @@ export class Inventory {
   }
 
   // ------------------------------------------------------------ input
-  _bind(root, wrap) {
+  _bind(root, wrap, bg) {
     const cb = this.ui.cb;
     root.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -593,6 +597,12 @@ export class Inventory {
       },
       true,
     );
+    // a left press on the backdrop (around the panels, or in the gaps between them) closes the screen. Not the press
+    // that has just put the split popover away: that one only closes the popover
+    root.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || this.splitShut >= 0) return;
+      if (e.target === bg || e.target === wrap || e.target === root) this.ui.cb.onCloseInventory();
+    });
     this.splitRange.addEventListener('input', () => this._setSplit(+this.splitRange.value));
     this.splitNum.addEventListener('input', () => {
       const digits = this.splitNum.value.replace(/\D/g, '');

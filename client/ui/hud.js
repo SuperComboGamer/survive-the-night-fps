@@ -1,6 +1,6 @@
 // Per-frame HUD. update(h) is called every frame: it diffs against cached values and only
 // touches the DOM when a (rounded) value actually changed.
-import { ITEM_DEFS, WEAPONS, AMMO_NAMES, CAR_PARTS } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, AMMO_NAMES, CAR_PARTS } from '../../shared/defs.js';
 import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/constants.js';
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
@@ -188,6 +188,11 @@ export class Hud {
     const stb = el('div', 'v-bar', st);
     this.stFill = el('i', 'v-fill', stb);
     svgEl('i', 'v-ico', st, glyph('bolt'));
+    // healing items left (what [H] would use), red once there are none
+    this.meds = el('div', 'v-meds', hp);
+    this.meds.title = 'Healing items [H]';
+    svgEl('i', 'v-meds-ico', this.meds, itemIcon(ITEM.MEDKIT));
+    this.medsNum = el('span', 'v-meds-n', this.meds, '0');
     this.ecg = svgEl(
       'i',
       'v-ecg',
@@ -400,6 +405,15 @@ export class Hud {
     if (c.lowhp !== low) {
       c.lowhp = low;
       this.ui.root.classList.toggle('low-hp', low);
+    }
+
+    const meds = h.heals | 0;
+    if (c.meds !== meds) {
+      const kick = c.meds !== undefined;
+      c.meds = meds;
+      this.medsNum.textContent = String(meds);
+      this.meds.classList.toggle('out', meds === 0);
+      if (kick) this.meds.animate([{ transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 320, easing: 'ease-out' });
     }
 
     const armorMax = h.armorMax || 0;

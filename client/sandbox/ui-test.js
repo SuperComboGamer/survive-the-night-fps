@@ -484,9 +484,21 @@ switch (screen) {
       kills: players.map((p) => ({ name: p.name, kills: p.kills })),
       restartIn: 12,
       reason: screen === 'gameover' ? 'The last survivor fell on night 6.' : '',
+      // &record=1: the personal record panel too, as after a run that counted
+      record: q.get('record')
+        ? { run: { secs: 2710, nights: 5, kills: 31 }, news: [{ k: 'kills', label: 'New best', text: '31 kills', was: '24' }], record: { best: { secs: 0, nights: 5, kills: 31 }, total: { runs: 9, escapes: 0, streak: 0 } } }
+        : undefined,
+      // the difficulty poll, against made-up votes: &vote=1..5 casts one as the screen comes up
+      vote: (rating) =>
+        new Promise((done) => {
+          const counts = [4, 11, 23, 17, 6];
+          counts[rating - 1]++;
+          setTimeout(() => done({ mine: rating, counts, total: counts.reduce((a, b) => a + b, 0) }), 300);
+        }),
     };
     if (screen === 'gameover') ui.showGameOver(stats);
     else ui.showVictory(stats);
+    if (+q.get('vote')) ui.end._vote(+q.get('vote'));
     break;
   }
   case 'pause':

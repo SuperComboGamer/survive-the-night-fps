@@ -19,6 +19,8 @@ import { DbStats } from './dbstats.js';
 import { MatchStore } from './matchstore.js';
 import { Auth, COOKIE, publicUser } from './auth.js';
 import { Social } from './social.js';
+import { Feedback } from './feedback.js';
+import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { REJECT_REASON } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
@@ -90,6 +92,7 @@ const lobby = new Lobby({
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, log }) : null;
 const social = db ? new Social({ db, auth, lobby, log }) : null;
+const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 if (auth) setInterval(() => auth.sweep().catch(() => {}), 3600_000).unref();
 
 // ---------------------------------------------------------------- static files (prod build)
@@ -329,6 +332,20 @@ route('get', '/api/me/stats', async (ctx) => {
   const [mine, recent] = await Promise.all([stats.forUser(me.id), matches.recentFor(me.id)]);
   return { body: { stats: mine, recent } };
 });
+
+// How hard the run that just ended was, from its end screen: { rating: 1 too easy .. 5 too hard, guestId? } ->
+// { mine, counts: [votes for 1..5], total }. Signed in, the vote is the account's; else guestId, the browser's
+// leaderboard id, says whose it is (as it does in a JOIN). A 404 when they have no run that just ended.
+route(
+  'post',
+  '/api/feedback/difficulty',
+  async (ctx, b) => {
+    if (!feedback) throw new HttpError(503, 'Votes are not kept on this server.');
+    const user = await auth.userForToken(ctx.cookies[COOKIE]);
+    return { body: await feedback.voteDifficulty(user ? { userId: user.id } : { guestKey: idKey(b.guestId) }, b.rating) };
+  },
+  { body: true }
+);
 
 // { friends: [{ id, username, status: offline|online|playing, game, unread, lastSeen, since }], incoming, outgoing }
 route('get', '/api/friends', async (ctx) => ({ body: await S().list(await signedIn(ctx)) }));

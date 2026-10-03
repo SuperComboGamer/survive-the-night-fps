@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   quality: 'medium',
   renderScale: 1,
   ps1: false,
+  ps1Strength: 0.5,
   pushToTalk: true,
   invertY: false,
   rawMouse: true,
@@ -34,6 +35,7 @@ const NUM_RANGES = {
   sfxVolume: [0, 1],
   voiceVolume: [0, 2],
   renderScale: [0.5, 1],
+  ps1Strength: [0.1, 1],
 };
 
 export function sanitizeSettings(s) {
@@ -94,6 +96,7 @@ const SECTIONS = [
       { k: 'quality', label: 'Quality', type: 'seg', options: ['low', 'medium', 'high', 'ultra'], hint: 'Shadows, sun rays, ambient occlusion, grass density, view distance' },
       { k: 'renderScale', label: 'Render scale', type: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
       { k: 'ps1', label: 'PS1 shader', type: 'toggle', hint: 'Low resolution, wobbling polygons, dithered colour, thicker fog' },
+      { k: 'ps1Strength', label: 'PS1 intensity', type: 'range', min: 0.1, max: 1, step: 0.05, fmt: pct, needs: 'ps1', hint: 'Pixel size, wobble, colour banding and fog' },
       { k: 'showFps', label: 'Show FPS counter', type: 'toggle' },
     ],
   },
@@ -177,7 +180,15 @@ export class SettingsPanel {
         this._paintRange(inp);
         this.ui._applySettings({ ...this.ui.settings, [row.k]: v });
       });
-      this.inputs[row.k] = { sync: (s) => ((inp.value = s[row.k]), (val.textContent = row.fmt(s[row.k])), this._paintRange(inp)) };
+      this.inputs[row.k] = {
+        sync: (s) => {
+          inp.value = s[row.k];
+          val.textContent = row.fmt(s[row.k]);
+          this._paintRange(inp);
+          // a row that only means something with another setting on is dimmed while that one is off
+          if (row.needs) r.classList.toggle('set-off', (inp.disabled = !s[row.needs]));
+        },
+      };
     } else if (row.type === 'toggle') {
       const b = el('button', 'set-toggle', ctl);
       b.type = 'button';

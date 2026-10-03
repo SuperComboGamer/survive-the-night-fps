@@ -70,6 +70,7 @@ import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { FairClient } from './fair.js';
+import { HandcarClient } from './handcar.js';
 import { Input } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
@@ -125,6 +126,8 @@ const SHOT_KICK = {
   [ITEM.MP5]: [0.8, 0.04],
   [ITEM.CROSSBOW]: [0, 0.1],
 };
+// what [H] reaches for when not badly hurt, in that order; the HUD counts these as the healing left
+const HEAL_ITEMS = [ITEM.BANDAGE, ITEM.TUNA, ITEM.VENISON, ITEM.PAINKILLERS, ITEM.MEDKIT];
 const PING_LIFE = 12;
 const WAYPOINT_REACH = 10; // metres: this close to a waypoint that is not on a named place and it is reached
 // two waypoints on one spot: on the same place, or bare spots a few steps apart
@@ -231,6 +234,8 @@ export class Game {
     // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
     this.waypoint = null;
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
+    ui.map.onClose = () => this.toggleMap(false);
+    ui.board.onClose = () => this.toggleBoard(false);
     this.boardT = 0; // when the leaderboard is next asked for, while it is open (performance.now)
     this.discovered = new Set([ZONE.CAMP]);
     this.stripped = new Set(); // the trees and wrecks with nothing left to give today (harvest.js strippedKey)
@@ -266,6 +271,7 @@ export class Game {
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
+    this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
     this.power = new PowerViews(this); // the generator and its floodlights: their lights, sound and [E]
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
@@ -375,6 +381,7 @@ export class Game {
     this.clinic = buildClinic(this.world); // the lining of Mercy Clinic's dark wards and its signs (null on a map without it)
     if (this.clinic) this.scene.add(this.clinic);
     this.fair.setWorld(this.world);
+    this.handcar.setWorld(this.world);
     this.railway = buildRailway(this.world); // (the ballast, sleepers and rails of the line)
     if (this.railway) this.scene.add(this.railway);
     this.under = 0;
@@ -434,6 +441,7 @@ export class Game {
     this.staticWorld?.dispose();
     this.foliage?.dispose();
     this.fair.setWorld(null);
+    this.handcar.setWorld(null);
     for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
     this.world = null;
@@ -1185,6 +1193,7 @@ export class Game {
         break;
       case NOTIFY.NEW_GAME:
         ui.hideOverlays();
+        if (this.overlay === 'gameover' || this.overlay === 'victory') this.pointerAfterEnd();
         this.overlay = null;
         this.deathShown = false;
         this.discovered = new Set([ZONE.CAMP]);
@@ -1459,6 +1468,9 @@ export class Game {
         case 'land':
           a.playLocal('land'); // the view's dip comes with every landing, see the camera in update()
           break;
+        case 'cart_bump':
+          this.handcar.bump(); // our handcar run into the end of the line
+          break;
         case 'leap':
           a.playLocal('zombie_player_growl');
           break;
@@ -1475,7 +1487,9 @@ export class Game {
     inp.handlers.isTyping = () => this.ui.isTyping();
     inp.handlers.onLockChange = (locked) => {
       if (this.state !== 'playing') return;
-      if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen) {
+      if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
+        inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
+      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen) {
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
@@ -1740,7 +1754,7 @@ export class Game {
     const inv = this.inventory.slots;
     const hp = this.self.hp;
     const down = !!this.prediction.state.downed;
-    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.VENISON, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : [ITEM.BANDAGE, ITEM.TUNA, ITEM.VENISON, ITEM.PAINKILLERS, ITEM.MEDKIT];
+    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.VENISON, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : HEAL_ITEMS;
     for (const item of order) {
       const idx = inv.findIndex((x) => x && x.item === item);
       if (idx >= 0) {
@@ -1782,6 +1796,7 @@ export class Game {
     if (!t) return;
     if (t === 'gun') return this.gun.use();
     if (t.fair) return this.fair.interact(t);
+    if (t.handcar) return this.handcar.interact(t);
     if (t === 'car') {
       if (g.suppliesDone && (!g.finale || g.escapeReady)) this.beginHold(CAR_ID); // start the engine; once it is warm, get in and drive
       else this.conn.action(ACT.INTERACT, CAR_ID);
@@ -1928,7 +1943,7 @@ export class Game {
     }
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
-    const buttons = this.gun.shape(self.alive ? inp.sample() | this.fair.press : 0); // (manning the mounted gun: its trigger, not the weapon's. fair.press: [E] getting out of a seat)
+    const buttons = this.gun.shape(self.alive ? inp.sample() | this.fair.press | this.handcar.press : 0); // (manning the mounted gun: its trigger, not the weapon's. fair.press, handcar.press: [E] getting out of a seat, off a handcar)
     if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
@@ -1956,6 +1971,7 @@ export class Game {
     this.interpExtra += Math.max(-dt * 0.5, Math.min(dt * 0.5, extra - this.interpExtra));
     this.renderTick = this.clientTick - INTERP_DELAY * SERVER_TICK_RATE - this.interpExtra;
     this.fair.update(dt, time); // (the ride clock of this frame: riders, ourselves included, are placed by it)
+    this.handcar.update(dt); // (where each handcar is drawn this frame: their riders are placed on them)
 
     // camera
     this.prediction.renderPos(dt, this.renderPos);
@@ -2005,7 +2021,7 @@ export class Game {
     }
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
-    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0;
+    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn; // (hands on a handcar's lever: no sights)
     const baseFov = this.settings.fov || 75;
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
@@ -2028,7 +2044,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning);
+    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !this.handcar.handsOn);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
     if (this.vmMuzzleT > 0) {
@@ -2249,6 +2265,20 @@ export class Game {
     this.audio.thunder(s.x, s.z, s.dist, s.delay);
   }
 
+  // The end screen asks how hard the run was (ui/menus.js EndScreen): the pointer goes free so it can be clicked
+  freePointerForEnd() {
+    this.ui.showPause(false);
+    this.input.exitLock();
+    this.input.enabled = false;
+  }
+
+  // ...and once it is down and the next run is on, a pointer it let go is taken back as after any pause, with a click
+  pointerAfterEnd() {
+    if (this.state !== 'playing' || this.input.locked || this.ui.isTyping()) return;
+    this.ui.showPause(true);
+    this.input.enabled = false;
+  }
+
   updateOverlays() {
     const g = this.global;
     if (g.phase === PHASE.GAMEOVER && this.overlay !== 'gameover') {
@@ -2257,6 +2287,7 @@ export class Game {
       this.ui.setBoardOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport });
+      this.freePointerForEnd();
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
@@ -2275,9 +2306,11 @@ export class Game {
         reason = 'The car tears down Route 9 without you. The others made it out of the valley.';
       }
       this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT), record: this.runReport });
+      this.freePointerForEnd();
     } else if ((g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) && (this.overlay === 'gameover' || this.overlay === 'victory')) {
       this.overlay = null;
       this.ui.hideOverlays();
+      this.pointerAfterEnd();
     }
     // death overlay clears when we rise as a zombie
     if (this.deathShown && this.self.alive && this.self.zombie) {
@@ -2315,6 +2348,7 @@ export class Game {
     this.prompt = null;
     if (!this.self.alive || s.zombie || s.downed) return;
     if (s.ride) return this.fair.rideLook(s);
+    if (s.cart) return this.handcar.rideLook(s);
     if (this.gun.look(true)) return; // hands on the mounted gun: [E] is the gun's
     cam.getWorldDirection(_v);
     const ox = cam.position.x;
@@ -2371,6 +2405,7 @@ export class Game {
     // the bell rope, the radio set
     if (this.fixtures.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT, counts)) return;
     if (this.fair.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
+    if (this.handcar.look(ox, oy, oz, _v.x, _v.y, _v.z)) return;
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
@@ -2564,6 +2599,7 @@ export class Game {
     // context panel
     const car = this.world.car;
     const counts = this.invCounts();
+    h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
     let partsMask = 0;
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };

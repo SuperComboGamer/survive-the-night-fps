@@ -312,6 +312,8 @@ const LOOPS = {
   boss_breath: { bank: 'loop_boss_breath', ref: 5, max: 70, roll: 1.0, vol: 0.9, wet: 0.2, cap: 3 },
   generator: { bank: 'loop_generator', ref: 2.5, max: 40, roll: 1.2, vol: 0.6, wet: 0.1 },
   genset: { bank: 'loop_genset', ref: 3, max: 60, roll: 1.1, vol: 0.62, wet: 0.1, cap: 3 }, // a generator the survivors built, running
+  // a handcar rolling on the railway (synth-handcar.js): played at the car's speed, louder the faster it goes
+  handcar: { bank: 'loop_handcar', ref: 3, max: 70, roll: 1.1, vol: 0.7, wet: 0.12, cap: 2, jit: 0 },
   // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
   plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
   // the Tri-County Fair's calliope, while its generator runs: heard as far as the dead hear it (NOISE.FAIR), duller
