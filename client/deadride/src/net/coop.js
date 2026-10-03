@@ -35,6 +35,15 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 const r3 = (v) => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100];
 const v3 = (a, out = new THREE.Vector3()) => out.set(a[0], a[1], a[2]);
+// what may only come from the host (anyone else sending these is ignored), and what only the host acts on
+const FROM_HOST = new Set(['go', 'spawn', 'dmg', 'kill', 'atk', 'hurt', 'credit', 'round', 'cleared', 'arrive', 'ride', 'state', 'pu', 'put', 'boards', 'gameover', 'sync']);
+// the fields of each event that are vectors
+const VECS = { spawn: ['p'], dmg: ['d', 'pt'], hit: ['d', 'pt', 'n'], shot: ['o', 'd'], pu: ['p'], expl: ['p'] };
+const fin = (n, lo, hi) => typeof n === 'number' && Number.isFinite(n) && n >= lo && n <= hi;
+const vec = (a) => Array.isArray(a) && a.length === 3 && a.every((x) => fin(x, -1e5, 1e5));
+const num = (n, lo, hi, d = 0) => (fin(n, lo, hi) ? n : d);
+// player names go into the HUD's HTML (banners, prompts): nothing but plain characters (the server already filters them)
+export const safeName = (s) => String(s ?? '').replace(/[^\p{L}\p{N} _\-.!?]/gu, '').slice(0, 16) || 'Survivor';
 
 class Buf {
   constructor(n = 1024) {
@@ -197,6 +206,9 @@ export class Coop {
 
   onEvent(from, m) {
     const g = this.game;
+    if (!m || typeof m.e !== 'string') return;
+    if (FROM_HOST.has(m.e) && from !== this.hostPid) return; // (only the host speaks for the game)
+    for (const k of VECS[m.e] || []) if (m[k] != null && !vec(m[k])) return; // (positions and directions are three finite numbers)
     const z = m.id !== undefined ? this.zById.get(m.id) : null;
     switch (m.e) {
       case 'loaded':
@@ -219,10 +231,10 @@ export class Coop {
         if (this.client && z && !z.dead && !z.anim.attack) this.zombies._startAttack(z);
         break;
       case 'hurt':
-        if (!g.godMode && this.player.alive) this.player.damage(m.dmg, _v.set(m.x, this.player.pos.y, m.z));
+        if (!g.godMode && this.player.alive) this.player.damage(num(m.dmg, 0, 200), _v.set(num(m.x, -1e5, 1e5), this.player.pos.y, num(m.z, -1e5, 1e5)));
         break;
       case 'credit':
-        g.addPoints(m.n, !m.k);
+        g.addPoints(num(m.n, 0, 1000), !m.k);
         if (m.k) {
           g.kills++;
           if (m.h) g.headshots++;
@@ -231,7 +243,7 @@ export class Coop {
         g.hud.hitmarker(!!m.k);
         break;
       case 'round':
-        if (this.client) g.beginRound(m.n);
+        if (this.client) g.beginRound(num(m.n, 1, 9999, g.round + 1));
         this.respawnIfDead();
         break;
       case 'cleared':
@@ -278,12 +290,12 @@ export class Coop {
         break;
       // -------- to the host from a player
       case 'hit':
-        if (this.isHost && z) this.hostHit(from, z, m);
+        if (this.isHost && z && fin(m.a, 0, 1e5)) this.hostHit(from, z, m);
         break;
       case 'expl':
-        if (this.isHost) {
+        if (this.isHost && vec(m.p) && fin(m.r, 0, 12) && fin(m.d, 0, 5000)) {
           this.shooter = from;
-          this.zombies.explode(v3(m.p), m.r, m.d, { source: { weaponId: m.w } });
+          this.zombies.explode(v3(m.p), m.r, m.d, { source: { weaponId: String(m.w || '') } });
           this.shooter = 0;
         }
         break;
@@ -448,7 +460,7 @@ export class Coop {
     this.fx.tracers?.add(o, to, this.fx.time, { speed: 900, len: 6, width: 0.012, color: [1, 0.72, 0.3], a: 0.8 });
     this.fx.muzzleBlast?.(o, d, m.s ? 1.4 : 1, m.s);
     this.fx.pulseLight?.(o, 0xffb060, 30, 0.05, 8);
-    this.audio?.play?.(`gun.${m.w}.fire`, { pos: o, vol: 0.9 });
+    if (GUNS.includes(m.w)) this.audio?.play?.(`gun.${m.w}.fire`, { pos: o, vol: 0.9 });
     if (r) r.fire = 1;
   }
 
@@ -614,7 +626,7 @@ export class Coop {
     return best;
   }
   name(pid) {
-    return this.names.get(pid) || 'Survivor';
+    return safeName(this.names.get(pid));
   }
 
   // ---------------------------------------------------------------- downed, revived, back next round
@@ -660,7 +672,7 @@ export class Coop {
   // ---------------------------------------------------------------- joining a game under way, and the host changing
   onArrived(pid, name) {
     this.names.set(pid, name);
-    this.hud.banner?.(`${name.toUpperCase()} JOINED`, '');
+    this.hud.banner?.(`${safeName(name).toUpperCase()} JOINED`, '');
     if (!this.isHost) return;
     // the state of play for the newcomer, once it has loaded (it asks with 'loaded'... a late joiner just gets it now and again until it is ready)
     const send = () => this.event(pid, this.syncMsg());
@@ -714,7 +726,7 @@ export class Coop {
     }
     this.loaded.delete(pid);
     this.names.delete(pid);
-    this.hud.banner?.(`${String(name || 'A player').toUpperCase()} LEFT`, '');
+    this.hud.banner?.(`${safeName(name || 'A player').toUpperCase()} LEFT`, '');
   }
 
   // ---------------------------------------------------------------- every frame
