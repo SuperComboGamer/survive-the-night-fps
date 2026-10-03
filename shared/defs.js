@@ -813,8 +813,34 @@ export function loadedAmmo(item, mags) {
 }
 
 // zombie loot drops: [item, weight, min, max]
-export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 2, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
+export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 4, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
 export const SPECIAL_LOOT = [[ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_556, 4, 15, 30], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.MEDKIT, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.PLATE, 1, 1, 1], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 2, 1, 2], [ITEM.GRENADE, 1, 1, 1]];
+
+// Gunpowder where an ordinary day's looting goes (issue #89). It used to be kept only by the mine, the quarry, the
+// military places, the hunters' (lookout, cabins, lodge), ammo crates and freight crates: a day of seven searches in
+// three other places found none nine days in ten, whatever POWDER_MORE made of a find. A gun locker is the likeliest
+// place for it, a toolbox, a duffel or a car trunk less so; the places get it on their own table (their crates and
+// shelves, and what lies about), all but the farm, the woods, the camps, the church, the cemetery and the clinic. The
+// dead drop it twice as often too (ZOMBIE_LOOT, weight 2 -> 4). Written like every other row, so POWDER_MORE below
+// scales these as well. First-pass numbers.
+const POWDER_IN = [
+  [CONT_TABLES.locker, 5, 2, 4],
+  [CONT_TABLES.toolbox, 3, 2, 3],
+  [CONT_TABLES.duffel, 3, 2, 3],
+  [CONT_TABLES.trunk, 3, 1, 2],
+  [LOOT_TABLES[ZONE.GAS], 4, 2, 3],
+  [LOOT_TABLES[ZONE.TRAILERS], 4, 2, 3],
+  [LOOT_TABLES[ZONE.VILLAGE], 4, 2, 3],
+  [LOOT_TABLES[ZONE.STATION], 4, 2, 3],
+  [LOOT_TABLES[ZONE.SCRAPYARD], 4, 2, 3],
+  [LOOT_TABLES[ZONE.FAIR], 4, 2, 3],
+  [LOOT_TABLES[ZONE.RELAY], 3, 1, 3],
+  [LOOT_TABLES[ZONE.DRIVEIN], 3, 1, 3],
+  [LOOT_TABLES[ZONE.DOCK], 3, 1, 3],
+  [LOOT_TABLES[ZONE.ROADSIDE], 3, 1, 2],
+  [LOOT_TABLES[ZONE.MOTEL], 3, 1, 2],
+];
+for (const [t, weight, min, max] of POWDER_IN) t.push([ITEM.POWDER, weight, min, max]);
 
 // More gunpowder (issue #89: ammunition was too scarce to craft). Every row of it in the tables above - the places',
 // the containers', the dead's - gives POWDER_MORE times as much as it was written with: its count, not its weight,

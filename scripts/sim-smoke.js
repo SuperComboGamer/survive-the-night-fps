@@ -1078,6 +1078,8 @@ const standOff = (c, e, d) => {
   // (on open ground: a spawn point can be beside a post of the rest area, and /tp puts a survivor on top of that)
   for (let k = 0; k < 40 && groundAt(g.world, s.x, s.z, 200, 0.3) > g.world.heightAt(s.x, s.z) + 0.05; k++) tp(d, s.x + 0.5, s.z);
   const home = [s.x, s.z];
+  // (and nothing else lying about: a find in reach goes into the first free slot, the one `drop` puts the rope in)
+  for (const e of g.items.filter((e) => !e.removed && !(e.hint >= 0) && Math.hypot(e.x - home[0], e.z - home[1]) < 8)) g.removeItemEnt(e);
   const rope = (p) => p.inv.reduce((n, x) => n + (x && x.item === ITEM.ROPE ? x.count : 0), 0);
   const off = (e) => Math.hypot(e.x - s.x, e.z - s.z);
   // the dropper puts three rope down out of the first backpack slot; `drop` is the stack on the ground
