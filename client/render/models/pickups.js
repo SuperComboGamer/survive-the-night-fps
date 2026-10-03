@@ -12,6 +12,9 @@ const PI = Math.PI;
 
 const cache = new Map();
 const weaponXform = new Map();
+const restY = new Map(); // per item: how far its model is raised (or lowered) to rest on the ground
+// a ground item's lowest point may be this far in (m) or above the ground before it is set down on it, at REST_AT
+const REST_SINK = 0.004, REST_LIFT = 0.008, REST_AT = 0.002;
 
 /** @returns {THREE.Object3D} */
 export function createPickup(itemId) {
@@ -27,6 +30,15 @@ export function createPickup(itemId) {
   }
   const g = partsToGroup(parts, `pickup_${itemId}`);
   g.userData.itemId = itemId;
+  // resting on the ground: an item built a little into it (a bundle of sticks 24 mm, the planks 17 mm, the herbs and
+  // the flare 13 mm) or above it (the scrap metal and leather, 10-11 mm) is set down on it
+  let dy = restY.get(itemId);
+  if (dy === undefined) {
+    const min = new THREE.Box3().setFromObject(g, true).min.y;
+    dy = min < -REST_SINK || min > REST_LIFT ? REST_AT - min : 0;
+    restY.set(itemId, dy);
+  }
+  if (dy) for (const c of g.children) c.position.y += dy;
   return g;
 }
 
@@ -49,7 +61,8 @@ function weaponPickup(itemId) {
   let x = weaponXform.get(itemId);
   if (!x) {
     holder.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(holder, flat); // pitched: the loose (corner) bounds would reach below the model
+    // (the model's own vertices: the loose bounds of a turned part reach below it, and the grenade then hung 13 mm up)
+    const box = new THREE.Box3().setFromObject(holder, true);
     if (box.isEmpty()) box.set(new THREE.Vector3(), new THREE.Vector3());
     const c = box.getCenter(new THREE.Vector3());
     x = new THREE.Vector3(-c.x, -box.min.y + 0.005, -c.z);
@@ -338,7 +351,7 @@ function drinkCan(b, R, H) {
 BUILD[ITEM.ENERGY_DRINK] = (b) => {
   const R = 0.03, H = 0.15;
   b.group({ p: [-0.04, 0, -0.01], r: [0, 0.6, 0] }, () => drinkCan(b, R, H));
-  b.group({ p: [0.11, R, 0.06], r: [0, -0.35, PI / 2] }, () => drinkCan(b, R, H));
+  b.group({ p: [0.16, R, 0.075], r: [0, -0.35, PI / 2] }, () => drinkCan(b, R, H)); // (its lid clear of the standing can)
 };
 
 // a cut of venison on the bone, raw and red or browned off the fire; what lies on the ground is two of them
@@ -352,7 +365,7 @@ function venisonCut(b, cooked) {
 for (const item of [ITEM.VENISON_RAW, ITEM.VENISON]) {
   BUILD[item] = (b) => {
     b.group({ p: [-0.03, 0, -0.04], r: [0, 0.5, 0] }, () => venisonCut(b, item === ITEM.VENISON));
-    b.group({ p: [0.05, 0, 0.06], r: [0, -2.2, 0] }, () => venisonCut(b, item === ITEM.VENISON));
+    b.group({ p: [0.08, 0, 0.1], r: [0, -2.2, 0] }, () => venisonCut(b, item === ITEM.VENISON)); // (beside the other, not into it)
   };
 }
 
@@ -434,12 +447,13 @@ function schematic(b, r, id) {
 for (const id of [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL]) BUILD[id] = (b, r) => schematic(b, r, id);
 
 BUILD[ITEM.JACKET] = (b) => {
-  // folded padded jacket: quilted body, sleeves folded across, collar + zipper
+  // folded padded jacket: quilted body, sleeves folded in toward the collar (in a V: crossed, the two straight
+  // sleeves went through each other), collar + zipper
   const c = [0.42, 0.33, 0.22];
   b.frustum('cloth', 0.4, 0.34, 0.37, 0.31, 0, 0.06, { c });
   for (let k = 0; k < 4; k++) b.box('dark', 0.37, 0.004, 0.006, { p: [0, 0.061, -0.12 + k * 0.08] });
-  b.cylBetween('cloth', [-0.17, 0.075, -0.12], [0.12, 0.075, 0.09], 0.04, 0.045, 7, { c: c.map((x) => x * 0.92) });
-  b.cylBetween('cloth', [0.17, 0.09, -0.1], [-0.1, 0.09, 0.1], 0.04, 0.045, 7, { c: c.map((x) => x * 0.86) });
+  b.cylBetween('cloth', [-0.17, 0.075, -0.12], [-0.05, 0.075, 0.09], 0.04, 0.045, 7, { c: c.map((x) => x * 0.92) });
+  b.cylBetween('cloth', [0.17, 0.075, -0.1], [0.055, 0.075, 0.1], 0.04, 0.045, 7, { c: c.map((x) => x * 0.86) });
   b.torus('cloth', 0.09, 0.025, 4, 8, PI, { p: [0, 0.05, 0.16], r: [PI / 2, 0, PI], s: [1.3, 1, 1], c: [0.3, 0.24, 0.16] });
   b.box('steel', 0.008, 0.004, 0.3, { p: [0.02, 0.0625, 0] });
 };
@@ -547,7 +561,8 @@ BUILD[ITEM.AMMO_FUEL] = (b) => {
 // RPG grenades: two lying head to tail, each bulb beside the other's motor, tipped a little onto the folded fins
 BUILD[ITEM.AMMO_ROCKET] = (b) => {
   for (const s of [-1, 1]) {
-    b.group({ p: [s * 0.1, 0.0333, s * 0.034], r: [0, 0.12, -s * (PI / 2 - 0.044)] }, () => rpgGrenade(b, false));
+    // (side by side and parallel, each bulb by the other's motor tube: turned toward each other they crossed)
+    b.group({ p: [s * 0.1, 0.0333, s * 0.036], r: [0, 0, -s * (PI / 2 - 0.044)] }, () => rpgGrenade(b, false));
   }
 };
 
