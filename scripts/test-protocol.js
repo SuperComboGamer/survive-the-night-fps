@@ -67,7 +67,7 @@ function spawn(kind) {
       e.state = 1;
       break;
     case ENT.PROJECTILE:
-      e.ptype = irnd(1, 6);
+      e.ptype = irnd(1, 8);
       e.owner = irnd(0, 500);
       break;
     case ENT.CRATE:

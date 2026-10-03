@@ -13,7 +13,7 @@ const weaponXform = new Map();
 
 /** @returns {THREE.Object3D} */
 export function createPickup(itemId) {
-  if (WEAPONS[itemId]) return weaponPickup(itemId);
+  if (WEAPONS[itemId] || HELD_LAY[itemId]) return weaponPickup(itemId);
   let parts = cache.get(itemId);
   if (!parts) {
     const b = new MeshBuilder(itemId * 131 + 7, { ao: false });
@@ -37,7 +37,9 @@ function weaponPickup(itemId) {
   const flat = itemId === ITEM.CROSSBOW;
   const holder = new THREE.Group();
   holder.add(w);
-  if (flat) holder.rotation.set(-0.16, PI / 2 - 0.35, 0, 'YXZ');
+  const lay = HELD_LAY[itemId];
+  if (lay) holder.rotation.set(lay[0], lay[1], lay[2], 'YXZ');
+  else if (flat) holder.rotation.set(-0.16, PI / 2 - 0.35, 0, 'YXZ');
   else holder.rotation.set(0, PI / 2 - 0.35, PI / 2);
   g.add(holder);
   let x = weaponXform.get(itemId);
@@ -57,6 +59,10 @@ function weaponPickup(itemId) {
   }
   return g;
 }
+
+// Throwables that lie on the ground as the same model as the one in the hand (weapons.js), and how (Euler YXZ): the
+// frag grenade on its side, its spoon up; the noisemaker standing on its feet, its dial turned a little to one side
+const HELD_LAY = { [ITEM.GRENADE]: [0, 0.55, PI / 2 - 0.12], [ITEM.DECOY]: [0, PI + 0.6, 0] };
 
 function fallbackWeapon(itemId) {
   let parts = cache.get(`w${itemId}`);

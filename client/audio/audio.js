@@ -319,6 +319,8 @@ const LOOPS = {
   // the Tri-County Fair's calliope, while its generator runs: heard as far as the dead hear it (NOISE.FAIR), duller
   // with distance, in tune with itself on every client (no rate jitter)
   calliope: { bank: 'loop_calliope', ref: 9, max: 160, roll: 1.0, vol: 0.85, wet: 0.3, air: true, always: true, jit: 0 },
+  // a noisemaker ringing where it landed (synth-throw.js): shrill and carrying, never dropped for a zombie's breath
+  alarm: { bank: 'loop_alarm', ref: 3, max: 75, roll: 1.05, vol: 0.55, wet: 0.18, cap: 3, always: true, jit: 0.02 },
 };
 const LOOP_CAP_TOTAL = 28;
 

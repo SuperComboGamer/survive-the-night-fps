@@ -502,6 +502,40 @@ export class Entities {
     this.onUpdate(e, 0xff, t, true);
   }
 
+  // The frag grenade and the noisemaker (models/misc.js heldProjectile): tumbling while they fly or roll, then settling
+  // into how each lies still (userData.rest) - and the noisemaker, once down, rings: it rattles on its feet, and its
+  // bells are heard (the 'alarm' loop) until the server takes it away.
+  updateThrowable(e, moved, dt, time) {
+    const o = e.obj;
+    const r = o.userData.rest;
+    if (moved) {
+      e.stillT = 0;
+      o.rotation.x += dt * 9;
+      o.rotation.z += dt * 5;
+      o.position.set(e.rx, e.ry, e.rz);
+      return;
+    }
+    e.stillT = (e.stillT || 0) + dt;
+    if (e.stillT < 0.1) return o.position.set(e.rx, e.ry, e.rz); // (between two snapshots of a moving one)
+    if (!e.restQ) {
+      // where it settles: its rest tilt, turned to a yaw of its own
+      e.restQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(r.rot[0], ((e.id * 2.39996) % (Math.PI * 2)) + r.rot[1], r.rot[2], 'YXZ'));
+      e.settle = 0;
+    }
+    e.settle = Math.min(1, e.settle + dt / 0.18);
+    o.quaternion.slerp(e.restQ, e.settle);
+    let y = e.ry - 0.08 + r.y;
+    if (e.ptype === PROJ.DECOY) {
+      if (!e.loop) e.loop = this.g.audio.createLoop?.('alarm', e.rx, e.ry, e.rz);
+      // the hammer drumming on the bells shakes the whole clock on its feet
+      const k = 0.5 + 0.5 * Math.sin(time * 3.1 + e.id);
+      o.rotateZ(Math.sin(time * 118) * 0.05 * (0.6 + 0.4 * k));
+      o.rotateX(Math.sin(time * 93 + 1.3) * 0.025);
+      y += Math.abs(Math.sin(time * 59)) * 0.0035;
+    }
+    o.position.set(e.rx, y, e.rz);
+  }
+
   onUpdate(e, mask, t, initial = false) {
     const g = this.g;
     switch (e.kind) {
@@ -532,7 +566,7 @@ export class Entities {
             const def = WEAPONS[w];
             if (e.q[5] & PFLAG.ZOMBIE) e.view?.melee();
             else if (def && def.melee) e.view?.melee();
-            else if (w === ITEM.MOLOTOV || w === ITEM.PIPEBOMB) e.view?.throwAnim();
+            else if (w === ITEM.MOLOTOV || w === ITEM.PIPEBOMB || w === ITEM.GRENADE || w === ITEM.DECOY) e.view?.throwAnim();
             else e.view?.fire();
           }
         }
@@ -985,7 +1019,8 @@ export class Entities {
           e.rx = tmp.x;
           e.ry = tmp.y;
           e.rz = tmp.z;
-          if (e.obj) {
+          if (e.obj?.userData.rest) this.updateThrowable(e, moved, dt, time);
+          else if (e.obj) {
             e.obj.position.set(e.rx, e.ry, e.rz);
             if (moved) {
               e.obj.rotation.x += dt * 9;

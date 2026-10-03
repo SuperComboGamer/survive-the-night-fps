@@ -17,7 +17,7 @@ const NEW_ONLY = Q.get('new') === '1';
 // iteration-2 additions (for ?new=1)
 const NEW_PROPS = ['duffel_bag', 'locker', 'cabinet', 'toolbox', 'fridge', 'log_pile', 'jersey_barrier', 'camper', 'school_bus', 'dump_truck', 'boom_gate', 'saw_table', 'gravel_pile', 'hunting_stand', 'billboard', 'motel_sign', 'satellite_dish', 'fence_chain'];
 const NEW_STRUCTS = ['CAMPFIRE', 'WORKBENCH', 'DOOR'];
-const NEW_ITEMS = ['FLARE', 'SCHEM_SHOTGUN', 'SCHEM_RIFLE', 'SCHEM_KEVLAR', 'SCHEM_EXPLOSIVES', 'SCHEM_METAL', 'TUNA', 'WALKIE'];
+const NEW_ITEMS = ['FLARE', 'SCHEM_SHOTGUN', 'SCHEM_RIFLE', 'SCHEM_KEVLAR', 'SCHEM_EXPLOSIVES', 'SCHEM_METAL', 'TUNA', 'WALKIE', 'GRENADE', 'DECOY'];
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));

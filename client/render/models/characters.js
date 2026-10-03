@@ -3995,7 +3995,7 @@ function holdFor(item) {
   if (!item) return HOLD_NONE;
   const w = WEAPONS[item];
   if (w && !w.melee) return w.slot === 1 ? HOLD_PISTOL : HOLD_RIFLE;
-  if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB) return HOLD_THROW;
+  if (item === ITEM.MOLOTOV || item === ITEM.PIPEBOMB || item === ITEM.GRENADE || item === ITEM.DECOY) return HOLD_THROW;
   if (w && w.melee) return HOLD_MELEE;
   return HOLD_THROW; // generic held item
 }

@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8)
 
 // client -> server
 export const C2S = {

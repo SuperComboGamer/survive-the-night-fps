@@ -15,6 +15,7 @@ import {
   IMPACT,
   KILLER,
   PROJ,
+  PROJ_ITEM,
   AREA,
   ZOMBIE_LOOT,
   SPECIAL_LOOT,
@@ -28,6 +29,9 @@ import { shotDirections, eyeHeight } from '../shared/playersim.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
 import { deerHitbox } from '../shared/deer.js';
+
+// the projectile each throwable flies as
+const THROW_PROJ = Object.fromEntries(Object.entries(PROJ_ITEM).map(([ptype, item]) => [item, +ptype]));
 
 const _ray = { t: -1, col: null, terrain: false };
 const _dirs = new Float32Array(3 * 16);
@@ -624,7 +628,7 @@ export class Combat {
       }
     }
     // the loudest thing in the valley: whatever it did not kill comes running
-    g.zm.noise(x, z, NOISE.EXPLOSION, y);
+    g.zm.noise(x, z, opts.noise || NOISE.EXPLOSION, y);
   }
 
   // ---------------------------------------------------------------- projectiles
@@ -647,7 +651,7 @@ export class Combat {
     const ox = s.x + dx * 0.5;
     const oy = s.y + eyeHeight(s) - 0.1;
     const oz = s.z + dz * 0.5;
-    const ptype = item === ITEM.MOLOTOV ? PROJ.MOLOTOV : item === ITEM.FLARE ? PROJ.FLARE : PROJ.PIPEBOMB;
+    const ptype = THROW_PROJ[item] ?? PROJ.PIPEBOMB;
     const e = this.spawnProjectile(ptype, p, ox, oy, oz, dx * def.speed + s.vx * 0.5, dy * def.speed + 1.5, dz * def.speed + s.vz * 0.5, { fuse: def.fuse || 0 });
     if (e) this.g.sound(SOUND.THROW, ox, oy, oz, 20, p.id);
     if (e) this.g.track?.used(p, item);
@@ -808,32 +812,33 @@ export class Combat {
           break;
         }
         case PROJ.FLARE:
-        case PROJ.PIPEBOMB: {
-          e.fuse -= dt;
+        case PROJ.PIPEBOMB:
+        case PROJ.GRENADE:
+        case PROJ.DECOY: {
+          const item = PROJ_ITEM[e.ptype];
+          const def = THROWABLES[item];
           const flare = e.ptype === PROJ.FLARE;
+          // a noisemaker only starts its clock once it has landed and rings (its fuse is then the ringing left)
+          const live = e.ptype !== PROJ.DECOY || e.landed;
+          if (live) e.fuse -= dt;
           if (flare && g.tick % 60 === 0) g.sound(_SOUND.FLARE_BURN, e.x, e.y, e.z, 40);
-          // a pipe bomb lures zombies (a flare only gives light)
-          if (!flare && g.tick % 5 === 0) {
-            // (not through the rock between the mine and the ground above it)
-            const lu = !!g.mineNav && g.mineNav.under(e);
-            g.zm.forNear(e.x, e.z, 40, (z) => {
-              if (!z.boss && !z.dead && z.under === lu) {
-                z.lureX = e.x;
-                z.lureZ = e.z;
-                z.lureT = 1;
-              }
-            });
-          }
-          if (hitWorld || ny < g.world.floorAt(nx, nz, oy)) {
+          // a pipe bomb lures zombies all through its fuse, a noisemaker while it rings (a flare only gives light, and a
+          // frag grenade gives itself away to nothing)
+          if (def.lure && live && g.tick % 5 === 0) this.lure(e, def.lure);
+          if (e.rolling) {
+            this.roll(e, def, nx, nz, oy, dt);
+            if (e.fuse <= 0) done = true;
+            else continue;
+          } else if (hitWorld || ny < g.world.floorAt(nx, nz, oy)) {
             // bounce
             e.x = hx - dx * 0.05;
             e.y = Math.max(hy, g.world.floorAt(hx, hz, oy)) + 0.08;
             e.z = hz - dz * 0.05;
             const gh = g.world.floorAt(e.x, e.z, e.y);
             if (e.y - gh < 0.3) {
-              e.vy = Math.abs(e.vy) * 0.3;
-              e.vx *= 0.5;
-              e.vz *= 0.5;
+              e.vy = Math.abs(e.vy) * (def.bounce ?? 0.3);
+              e.vx *= def.roll ? 0.6 : 0.5;
+              e.vz *= def.roll ? 0.6 : 0.5;
             } else {
               e.vx *= -0.4;
               e.vz *= -0.4;
@@ -841,23 +846,24 @@ export class Combat {
             if (Math.abs(e.vy) < 1) {
               e.vy = 0;
               e.grav = 0;
-              e.vx = e.vz = 0;
               e.y = gh + 0.08;
+              // a frag grenade still going when it stops bouncing rolls on along the ground (Combat.roll)
+              if (def.roll && Math.hypot(e.vx, e.vz) > 0.4) e.rolling = true;
+              else e.vx = e.vz = 0;
+              if (e.ptype === PROJ.DECOY && !e.landed) {
+                e.landed = true;
+                e.fuse = def.lureTime;
+              }
             }
-            if (e.fuse <= 0) done = true;
+            if (e.fuse <= 0 && live) done = true;
             else continue;
           }
-          if (e.fuse <= 0) {
-            done = true;
-          }
-          if (done && !flare) {
-            const def = THROWABLES[ITEM.PIPEBOMB];
-            this.explode(e.x, e.y + 0.3, e.z, def.radius, { zombies: def.damage, kind: 0, owner: e.ownerRef, weapon: ITEM.PIPEBOMB });
-          }
+          if (e.fuse <= 0 && live) done = true;
+          if (done && def.damage) this.explode(e.x, e.y + 0.3, e.z, def.radius, { zombies: def.damage, kind: 0, owner: e.ownerRef, weapon: item, noise: def.noise });
           break;
         }
       }
-      if (e.t > (e.ptype === PROJ.FLARE ? 45 : 12)) done = true;
+      if (e.t > (e.ptype === PROJ.FLARE ? 45 : e.ptype === PROJ.DECOY ? THROWABLES[ITEM.DECOY].lureTime + 10 : 12)) done = true;
       if (done) {
         list.splice(i, 1);
         g.removeEntity(e);
@@ -867,6 +873,56 @@ export class Combat {
       e.y = ny;
       e.z = nz;
     }
+  }
+
+  // The dead within r (m) of a luring throwable walk to it (Zombies.updateOne: one already on a survivor keeps at them,
+  // and the bosses pay it no mind). Not through the rock between the mine and the ground above it.
+  lure(e, r) {
+    const g = this.g;
+    const lu = !!g.mineNav && g.mineNav.under(e);
+    g.zm.forNear(e.x, e.z, r, (z) => {
+      if (!z.boss && !z.dead && z.under === lu && Math.hypot(z.x - e.x, z.z - e.z) < r) {
+        z.lureX = e.x;
+        z.lureZ = e.z;
+        z.lureT = 1;
+      }
+    });
+  }
+
+  // A projectile rolling along the ground to (nx, nz) this tick: rolling friction (def.roll, m/s^2) and the slope
+  // under it change its speed, a wall or a step too high to roll up sends it back, an edge lets it fall again.
+  roll(e, def, nx, nz, oy, dt) {
+    const w = this.g.world;
+    const fl = w.floorAt(nx, nz, oy + 0.4);
+    if (_ray.col || fl > oy + 0.2) {
+      e.vx *= -0.4;
+      e.vz *= -0.4;
+      return;
+    }
+    if (fl < oy - 0.4) {
+      e.rolling = false;
+      e.grav = 16;
+      e.x = nx;
+      e.z = nz;
+      return;
+    }
+    // downhill it gathers speed (a rolling body: 5/7 of g along the slope)
+    const sx = (w.floorAt(nx + 0.25, nz, fl + 0.4) - w.floorAt(nx - 0.25, nz, fl + 0.4)) / 0.5;
+    const sz = (w.floorAt(nx, nz + 0.25, fl + 0.4) - w.floorAt(nx, nz - 0.25, fl + 0.4)) / 0.5;
+    e.vx -= sx * 16 * (5 / 7) * dt;
+    e.vz -= sz * 16 * (5 / 7) * dt;
+    const sp = Math.hypot(e.vx, e.vz);
+    const slow = def.roll * dt;
+    if (sp <= slow) {
+      e.vx = e.vz = 0;
+      e.rolling = false;
+    } else {
+      e.vx *= (sp - slow) / sp;
+      e.vz *= (sp - slow) / sp;
+    }
+    e.x = nx;
+    e.y = fl + 0.08;
+    e.z = nz;
   }
 
   spawnArea(atype, x, y, z, radius, life, owner, dps) {
