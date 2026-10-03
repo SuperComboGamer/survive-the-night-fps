@@ -355,6 +355,16 @@ if (params.get('vm') === 'hands') {
       if (wcam) placeWeaponCam(v);
       renderer.setViewport(x, y, tw, th);
       renderer.setScissor(x, y, tw, th);
+      if (params.has('zh')) {
+        // &zh=R|L,fov: from the eye, narrowed onto that hand (its grip center), wherever the animation has it
+        const [side, fov] = params.get('zh').split(',');
+        const arm = side === 'L' ? v.vm.armL : v.vm.armR;
+        v.scene.updateMatrixWorld(true);
+        const c = arm.wrist.localToWorld(arm.gripCenter(new THREE.Vector3()));
+        v.cam.fov = +fov || 24;
+        v.cam.lookAt(c);
+        v.cam.updateProjectionMatrix();
+      }
       if (hideArm === 'L' || hideArm === 'LR') v.vm.armL.setVisible(false);
       if (hideArm === 'R' || hideArm === 'LR') v.vm.armR.setVisible(false);
       if (params.has('hidegun') && v.vm.cur) v.vm.cur.root.visible = false; // &hidegun: hands only
@@ -408,6 +418,18 @@ if (params.get('vm') === 'hands') {
       // &clip=1: how far the hands and the item pass into each other (see clipReport)
       window.__clip = views.map((v) => clipReport(v));
       info.textContent += '\n' + window.__clip.map((c, i) => `clip[${i}] ` + c.text).join('\n');
+      // &dots=1: mark every vertex found inside the other model
+      if (params.get('dots') === '1') {
+        for (const v of views) {
+          if (!v.flagged) continue;
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(v.flagged, 3));
+          const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xff2020, size: 3, sizeAttenuation: false, depthTest: false }));
+          pts.renderOrder = 20;
+          v.scene.add(pts);
+        }
+        render();
+      }
     }
   } else {
     let last = performance.now();
@@ -462,6 +484,14 @@ function clipReport(v) {
   const ray = new THREE.Raycaster();
   const P = new THREE.Vector3(), N = new THREE.Vector3(), nm = new THREE.Matrix3();
   // deepest vertex of `from` inside the union of `into` (each entry: { name, m, p, box })
+  // only what the camera can see counts (the upper arms and the stocks reach behind the eye)
+  v.cam.updateMatrixWorld(true);
+  v.cam.updateProjectionMatrix();
+  const S = new THREE.Vector3();
+  const onScreen = (p) => {
+    S.copy(p).project(v.cam);
+    return S.z > -1 && S.z < 1 && Math.abs(S.x) <= 1 && Math.abs(S.y) <= 1;
+  };
   const probe = (from, into) => {
     let best = { d: 0, a: '', b: '', n: 0 };
     const targets = into.map((e) => e.p);
@@ -469,6 +499,7 @@ function clipReport(v) {
       const pos = f.m.geometry.attributes.position;
       for (let i = 0; i < pos.count; i++) {
         P.fromBufferAttribute(pos, i).applyMatrix4(f.m.matrixWorld);
+        if (!onScreen(P)) continue;
         const near = into.filter((e) => e.box.containsPoint(P));
         if (!near.length) continue;
         let back = 0, depth = Infinity, who = '';
@@ -490,13 +521,37 @@ function clipReport(v) {
         }
         if (back >= 3) {
           best.n++;
+          (v.flagged || (v.flagged = [])).push(P.x, P.y, P.z);
           if (depth > best.d) best = { d: depth, a: f.name, b: who, n: best.n, p: P.toArray().map((x) => +x.toFixed(3)) };
         }
       }
     }
     return best;
   };
+  // sanity: rays from far outside must meet a front face first; a part modelled inside out shows up here (and then
+  // the numbers above it can't be trusted)
+  let insideOut = 0;
+  {
+    const bb = new THREE.Box3();
+    for (const e of items) bb.union(e.box);
+    const c = bb.getCenter(new THREE.Vector3()), rad = bb.getSize(new THREE.Vector3()).length();
+    for (let i = 0; i < 400; i++) {
+      const u = (i + 0.5) / 400, th = i * 2.39996, z = 1 - 2 * u, s = Math.sqrt(1 - z * z);
+      const d = new THREE.Vector3(Math.cos(th) * s, z, Math.sin(th) * s);
+      const o = c.clone().addScaledVector(d, rad);
+      // aim at a jittered point inside the box
+      const tgt = new THREE.Vector3(bb.min.x + ((i * 0.618) % 1) * (bb.max.x - bb.min.x), bb.min.y + ((i * 0.381) % 1) * (bb.max.y - bb.min.y), bb.min.z + ((i * 0.7548) % 1) * (bb.max.z - bb.min.z));
+      ray.set(o, tgt.sub(o).normalize());
+      ray.near = 0;
+      ray.far = rad * 3;
+      const h = ray.intersectObjects(items.map((e) => e.p), false)[0];
+      if (!h) continue;
+      nm.getNormalMatrix(h.object.matrixWorld);
+      if (N.copy(h.face.normal).applyMatrix3(nm).dot(ray.ray.direction) > 0) insideOut++;
+    }
+  }
   const r = {
+    inverted: insideOut,
     handInItem: probe(arms, items),
     itemInHand: probe(items, arms),
     rInL: probe(arms.filter((e) => e.side === 'R'), arms.filter((e) => e.side === 'L')),
@@ -511,7 +566,7 @@ function clipReport(v) {
   }
   r.nearZ = nearZ;
   const mm = (b) => (b.n ? `${(b.d * 1000).toFixed(1)}mm ${b.a}>${b.b} (${b.n}v) @${b.p}` : '-');
-  r.text = `hand-in-item ${mm(r.handInItem)} | item-in-hand ${mm(r.itemInHand)} | R-in-L ${mm(r.rInL)} | near ${(-nearZ * 1000).toFixed(0)}mm`;
+  r.text = (insideOut ? `INSIDE-OUT FACES (${insideOut}/400 outside rays) | ` : '') + `hand-in-item ${mm(r.handInItem)} | item-in-hand ${mm(r.itemInHand)} | R-in-L ${mm(r.rInL)} | near ${(-nearZ * 1000).toFixed(0)}mm`;
   return r;
 }
 void ITEM_DEFS;
