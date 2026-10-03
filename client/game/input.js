@@ -1,53 +1,41 @@
-// Keyboard + mouse input with pointer lock. Gameplay keys only; the UI handles its own DOM input.
-import { BTN, SLOT_BUILD } from '../../shared/constants.js';
+// Keyboard + mouse input with pointer lock. Gameplay keys only; the UI handles its own DOM input. Which key does what
+// is the player's keybinds (binds.js): this only knows codes - a KeyboardEvent.code, or 'Mouse0'..'Mouse4' for a mouse
+// button - and asks binds.js which actions a code is.
+import { BTN } from '../../shared/constants.js';
+import { mouseCode } from '../../shared/binds.js';
+import { actionsOf, isBound } from './binds.js';
 
-export const AIM_KEY = 'AltLeft';
-// what the controls lists call it: the key is labelled Option on a Mac
-export const AIM_KEY_LABEL = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? 'Option' : 'Alt';
-
-const KEYMAP = {
-  KeyW: BTN.FWD,
-  ArrowUp: BTN.FWD,
-  KeyS: BTN.BACK,
-  ArrowDown: BTN.BACK,
-  KeyA: BTN.LEFT,
-  ArrowLeft: BTN.LEFT,
-  KeyD: BTN.RIGHT,
-  ArrowRight: BTN.RIGHT,
-  Space: BTN.JUMP,
-  ShiftLeft: BTN.SPRINT,
-  ShiftRight: BTN.SPRINT,
-  ControlLeft: BTN.CROUCH,
-  KeyC: BTN.CROUCH,
-  KeyR: BTN.RELOAD,
+// the held actions and the button each one holds down in a command
+const HOLD_BTN = {
+  forward: BTN.FWD,
+  back: BTN.BACK,
+  left: BTN.LEFT,
+  right: BTN.RIGHT,
+  jump: BTN.JUMP,
+  sprint: BTN.SPRINT,
+  crouch: BTN.CROUCH,
+  reload: BTN.RELOAD,
+  fire: BTN.ATTACK,
   // held, the same as right mouse held: aim, heavy swing, a zombie's leap. On a trackpad a right click can't be held
   // while you click to fire; the left thumb rests on Alt (Option on a Mac) with the fingers on WASD
-  [AIM_KEY]: BTN.ALT,
+  aim: BTN.ALT,
 };
 
-// The one-off action keys the HUD names in its key hints (ui/keyhints.js). Game.onKey is what acts on these
-// codes and still spells them out itself: a rebind has to change both.
-export const ACTION_KEYS = {
-  flashlight: 'KeyF',
-  heal: 'KeyH',
-  drink: 'KeyB', // an energy drink: stamina back
-  map: 'KeyM',
-  board: 'KeyL',
-  inventory: 'KeyI',
-  players: 'Tab', // held, not pressed: the player list is up from keydown to keyup
-  build: 'Digit' + (SLOT_BUILD + 1), // the weapon slots are on the digits, slot 0 on [1]
-};
-
-// what goes on the key cap: 'KeyF' -> 'F', 'Digit5' -> '5', 'Tab' -> 'Tab'
-export const keyLabel = (code) => code.replace(/^(Key|Digit)/, '');
+// a code that is still answered with the controls off (the inventory, the map, the pause menu): the key that opened
+// something shuts it, Esc backs out, and Enter opens the chat from the inventory and the pause menu (Y does not: as
+// in Half-Life, it is a key of play)
+const MENU_ACTIONS = new Set(['inventory', 'map', 'board', 'players']);
+function passesMenus(code) {
+  if (code === 'Escape') return true;
+  for (const a of actionsOf(code)) if (MENU_ACTIONS.has(a) || (a === 'chat' && code === 'Enter')) return true;
+  return false;
+}
 
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
     this.buttons = 0;
     this.latched = 0; // buttons pressed since the last sample (so sub-16ms taps are never lost)
-    this.mouseButtons = 0;
-    this.mouseLatched = 0;
     this.yaw = 0;
     this.pitch = 0;
     this.lookDX = 0; // accumulated this frame (for viewmodel sway)
@@ -59,9 +47,9 @@ export class Input {
     this.skipMove = false; // drop the first delta after locking
     this.locked = false;
     this.enabled = false; // gameplay input enabled (not typing / not in menus)
-    this.pressed = new Set(); // edge-triggered key codes since last consume
+    this.down = new Map(); // code held -> the actions it went down as (what letting it go lets go of, rebound since or not)
     this.wheel = 0;
-    this.handlers = {}; // onKey(code) for discrete actions
+    this.handlers = {}; // onKey(code, actions) for discrete actions, onKeyUp(code, actions, cancelled)
     this.buildMode = false;
 
     document.addEventListener('pointerlockchange', () => {
@@ -69,8 +57,8 @@ export class Input {
       // the first delta after locking can carry the cursor's jump to the lock point
       this.skipMove = this.locked;
       if (!this.locked) {
-        this.buttons &= ~(BTN.ATTACK | BTN.ALT);
-        this.mouseButtons = 0;
+        // (the mouse buttons, and fire / aim on whatever keys: nothing is fired or aimed with the pointer free)
+        for (const [code, acts] of [...this.down]) if (code.startsWith('Mouse') || acts.includes('fire') || acts.includes('aim')) this.release(code, true);
       }
       this.handlers.onLockChange?.(this.locked);
     });
@@ -96,17 +84,20 @@ export class Input {
       this.lookDX += mx;
       this.lookDY += my;
     });
+    // A mouse button only counts pressed under the lock: a click on the map or in the inventory never reaches the weapon
     document.addEventListener('mousedown', (e) => {
       if (!this.locked || !this.enabled) return;
-      if (e.button === 1) e.preventDefault();
-      if (e.button === 0) this.mouseButtons |= 1;
-      if (e.button === 2) this.mouseButtons |= 2;
-      this.mouseLatched |= e.button === 0 ? 1 : e.button === 2 ? 2 : 0;
-      this.handlers.onMouseDown?.(e.button);
+      if (e.button === 1 || e.button >= 3) e.preventDefault(); // (the wheel's autoscroll; the side buttons' back / forward)
+      const code = mouseCode(e.button);
+      if (code) this.press(code, false);
     });
     document.addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.mouseButtons &= ~1;
-      if (e.button === 2) this.mouseButtons &= ~2;
+      if (e.button >= 3 && this.locked) e.preventDefault(); // (Chrome goes back a page on the side button's release)
+      const code = mouseCode(e.button);
+      if (code && this.down.has(code)) this.release(code);
+    });
+    document.addEventListener('auxclick', (e) => {
+      if (this.locked && e.button >= 3) e.preventDefault();
     });
     document.addEventListener('contextmenu', (e) => {
       if (this.locked) e.preventDefault();
@@ -122,31 +113,73 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       const typing = this.handlers.isTyping?.();
       if (typing) return;
-      if (e.code === 'Tab') {
-        e.preventDefault();
-        if (!e.repeat) this.handlers.onKey?.('Tab');
-        return;
-      }
-      if (!this.enabled && e.code !== 'Enter' && e.code !== 'Escape' && e.code !== 'KeyM' && e.code !== 'KeyL' && e.code !== 'KeyI') return;
-      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'ControlLeft' || e.code === 'KeyF' || e.code === 'KeyM' || e.code === AIM_KEY || (e.ctrlKey && (e.code === 'KeyW' || e.code === 'KeyS' || e.code === 'KeyD'))) e.preventDefault();
-      const b = KEYMAP[e.code];
-      if (b) {
-        this.buttons |= b;
-        this.latched |= b;
-      }
-      if (!e.repeat) this.handlers.onKey?.(e.code);
+      if (e.code === 'Tab') e.preventDefault(); // (never the browser's focus hopping, whatever Tab is bound to)
+      if (!this.enabled && !passesMenus(e.code)) return;
+      // a key of the game is the game's, not the page's (Space scrolling, an arrow, Alt opening a menu bar, F finding)
+      if (this.enabled && (isBound(e.code) || e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'ControlLeft')) e.preventDefault();
+      this.press(e.code, e.repeat);
     });
     window.addEventListener('keyup', (e) => {
-      if (e.code === AIM_KEY && this.locked) e.preventDefault(); // (Firefox shows its menu bar when Alt is let go)
-      const b = KEYMAP[e.code];
-      if (b) this.buttons &= ~b;
-      this.handlers.onKeyUp?.(e.code);
+      if ((e.code === 'AltLeft' || e.code === 'AltRight') && this.locked) e.preventDefault(); // (Firefox shows its menu bar when Alt is let go)
+      this.release(e.code);
     });
     window.addEventListener('blur', () => {
-      this.buttons = 0;
-      this.mouseButtons = 0;
+      this.releaseAll();
       this.handlers.onBlur?.(); // (the keyup of a key held as the window lost the focus never comes)
     });
+  }
+
+  // A code goes down: the actions it is bound to now are the ones it holds until it comes up. A key's auto-repeat
+  // presses nothing again; it only keeps its held buttons latched (and picks a key up again after releaseAll, so a
+  // key still held when the map shuts moves you again).
+  press(code, repeat) {
+    let acts = this.down.get(code);
+    if (!acts) {
+      acts = actionsOf(code).slice();
+      this.down.set(code, acts);
+      this.recompute();
+    }
+    for (const a of acts) this.latched |= HOLD_BTN[a] || 0;
+    if (!repeat) this.handlers.onKey?.(code, acts);
+  }
+
+  // ...and comes up. cancelled: let go of by the game (the window lost the focus, a menu took over), not the player
+  release(code, cancelled = false) {
+    const acts = this.down.get(code);
+    if (!acts) return this.handlers.onKeyUp?.(code, [], cancelled);
+    this.down.delete(code);
+    this.recompute();
+    this.handlers.onKeyUp?.(code, acts, cancelled);
+  }
+
+  // everything held is let go (opening the chat, the map, the leaderboard: what the keys were doing stops)
+  releaseAll() {
+    for (const code of [...this.down.keys()]) this.release(code, true);
+    this.buttons = 0;
+  }
+
+  recompute() {
+    let b = 0;
+    for (const acts of this.down.values()) for (const a of acts) b |= HOLD_BTN[a] || 0;
+    this.buttons = b;
+  }
+
+  // The mouse buttons held, as a mask (1 left, 2 right): the e2e scripts hold the trigger down by setting it
+  get mouseButtons() {
+    return (this.down.has('Mouse0') ? 1 : 0) | (this.down.has('Mouse2') ? 2 : 0);
+  }
+  set mouseButtons(m) {
+    for (const [bit, code] of [[1, 'Mouse0'], [2, 'Mouse2']]) {
+      if (m & bit) {
+        if (!this.down.has(code)) this.press(code, true);
+      } else if (this.down.has(code)) this.release(code);
+    }
+  }
+
+  // is an action held down right now (by any of its keys)?
+  held(action) {
+    for (const acts of this.down.values()) if (acts.includes(action)) return true;
+    return false;
   }
 
   requestLock() {
@@ -176,24 +209,17 @@ export class Input {
   sample() {
     if (!this.enabled) {
       this.latched = 0;
-      this.mouseLatched = 0;
       return 0;
     }
     let b = this.buttons | this.latched;
-    const mb = this.mouseButtons | this.mouseLatched;
-    if (!this.buildMode) {
-      if (mb & 1) b |= BTN.ATTACK;
-      if (mb & 2) b |= BTN.ALT;
-    } else {
-      b &= ~(BTN.RELOAD | BTN.ALT); // R cycles structures in build mode, and the aim key does nothing there (RMB rotates)
-    }
+    // build mode: fire places and aim turns the piece (Game.onKey), and reload's key steps through the structures
+    if (this.buildMode) b &= ~(BTN.ATTACK | BTN.ALT | BTN.RELOAD);
     return b;
   }
 
   // call once the sampled buttons were used by at least one simulation step
   clearLatch() {
     this.latched = 0;
-    this.mouseLatched = 0;
   }
 
   consumeLook() {

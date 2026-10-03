@@ -6,6 +6,7 @@ import { PHASE, DUSK_WARNING } from '../../shared/constants.js';
 import { nightBoss } from '../../shared/nights.js';
 import { el, svgEl, fmtTime, clamp } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
+import { bindTag } from '../game/binds.js';
 
 const TAU = Math.PI * 2;
 const wrapA = (a) => ((a % TAU) + TAU + Math.PI) % TAU - Math.PI;
@@ -383,7 +384,7 @@ export class Objective {
     if (o.finale) {
       if (o.escapeReady) {
         // nothing ends the run but a survivor driving, and whoever is not at the car then stays behind
-        dir = o.escapeLeaving ? 'Someone is getting in: be at the car or be left behind!' : 'The engine is running. Hold [E] at the car to drive away.';
+        dir = o.escapeLeaving ? 'Someone is getting in: be at the car or be left behind!' : `The engine is running. Hold ${bindTag('interact')} at the car to drive away.`;
         tone = 'good';
       } else if (o.escapeStalled) {
         dir = 'The engine stalls: get back to the car';
@@ -393,7 +394,7 @@ export class Objective {
         tone = 'danger';
       }
     } else if (o.suppliesDone) {
-      dir = 'Every supply is in. Hold [E] at the car to start the engine - then survive the final stand.';
+      dir = `Every supply is in. Hold ${bindTag('interact')} at the car to start the engine - then survive the final stand.`;
       tone = 'good';
     } else if (o.phase === PHASE.NIGHT) {
       dir = `Survive the night · wave ${o.wave}/${o.waves}`;
@@ -486,7 +487,7 @@ export class Downed {
     this.key = key;
     this.fill.style.transform = `scaleX(${clamp(d.bleed / 30, 0, 1).toFixed(3)})`;
     this.time.textContent = d.reviving ? 'Being revived…' : `Bleeding out · ${fmtTime(d.bleed)}`;
-    this.sub.textContent = d.reviving ? 'Hold on. A teammate has you.' : d.medkit ? 'Use a medkit [H] to get back up, or wait for a teammate' : 'Crawl to cover. A teammate can revive you with [E]';
+    this.sub.textContent = d.reviving ? 'Hold on. A teammate has you.' : d.medkit ? `Use a medkit ${bindTag('heal')} to get back up, or wait for a teammate` : `Crawl to cover. A teammate can revive you with ${bindTag('interact')}`;
     this.root.classList.toggle('reviving', !!d.reviving);
   }
 }

@@ -7,6 +7,7 @@ import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
 import { Compass, Objective, Markers, Downed, DamageDir } from './hud2.js';
 import { Minimap } from './minimap.js';
+import { bindLabel, bindTag, onBindsChange } from '../game/binds.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build'];
 const ARC = { cx: 120, cy: 70, rx: 100, ry: 56 };
@@ -192,15 +193,14 @@ export class Hud {
     const stb = el('div', 'v-bar', st);
     this.stFill = el('i', 'v-fill', stb);
     svgEl('i', 'v-ico', st, glyph('bolt'));
-    // what the quick keys have left, each beside the bar it fills: healing items (what [H] would use) by the health
-    // bar, red once there are none; energy drinks ([B]) under it, by the stamina line, dimmed once there are none
+    // what the quick keys have left, each beside the bar it fills: healing items (what the heal key would use) by the
+    // health bar, red once there are none; energy drinks (the drink key's) under it, by the stamina line, dimmed once
+    // there are none. (Their tooltips name the keys: _keys)
     const counts = el('div', 'v-counts', hp);
     this.meds = el('div', 'v-meds', counts);
-    this.meds.title = 'Healing items [H]';
     svgEl('i', 'v-meds-ico', this.meds, itemIcon(ITEM.MEDKIT));
     this.medsNum = el('span', 'v-meds-n', this.meds, '0');
     this.drinks = el('div', 'v-meds v-drinks', counts);
-    this.drinks.title = 'Energy drinks [B]';
     svgEl('i', 'v-meds-ico', this.drinks, itemIcon(ITEM.ENERGY_DRINK));
     this.drinksNum = el('span', 'v-meds-n', this.drinks, '0');
     this.ecg = svgEl(
@@ -230,12 +230,17 @@ export class Hud {
       const ico = el('i', 'slot-ico', row);
       const name = el('span', 'slot-name', row, '');
       const cnt = el('span', 'slot-cnt', row, '');
-      el('span', 'slot-key', row, String(i + 1));
-      return { row, ico, name, cnt, item: -1 };
+      const key = el('span', 'slot-key', row, '');
+      return { row, ico, name, cnt, key, item: -1 };
     });
     const am = (this.ammo = el('div', 'ammo', wp));
     const wn = el('div', 'w-head', am);
     this.wIco = el('i', 'w-ico', wn);
+    // the drop key held: a ring filling up to the weapon going down (game/drophold.js), or, let go too soon, how
+    this.wDrop = el('span', 'w-drop', wn);
+    this.wDrop.hidden = true;
+    el('i', 'w-drop-ring', this.wDrop);
+    this.wDropT = el('span', 'w-drop-t', this.wDrop, '');
     this.wName = el('span', 'w-name', wn, '');
     const ar2 = (this.ammoRow = el('div', 'ammo-row', am));
     this.aMag = el('span', 'a-mag', ar2, '0');
@@ -261,6 +266,17 @@ export class Hud {
     const zlb = el('div', 'z-leap-bar', zl);
     this.zLeapFill = el('i', '', zlb);
     this.zLeapTxt = el('span', 'z-leap-t', zl, 'Ready');
+
+    this._keys();
+    onBindsChange(() => this._keys());
+  }
+
+  // what names a key here: the weapon slots' key caps, what the heal key would use
+  _keys() {
+    this.slotEls.forEach((s, i) => (s.key.textContent = bindLabel('slot' + (i + 1)).replace('unbound', '–')));
+    this.meds.title = `Healing items ${bindTag('heal')}`;
+    this.drinks.title = `Energy drinks ${bindTag('drink')}`;
+    this.c.dh = undefined;
   }
 
   // ------------------------------------------------------------ per-frame
@@ -576,6 +592,24 @@ export class Hud {
     if (c.rl !== rl) {
       if ((rl >= 0) !== (c.rl >= 0)) this.ammo.classList.toggle('reloading', rl >= 0);
       c.rl = rl;
+    }
+    // the drop key: held, the ring fills; let go too soon, "Hold G to drop" for a moment
+    const dp = h.dropHold >= 0 ? Math.round(h.dropHold * 40) / 40 : -1;
+    const dh = dp < 0 ? h.dropHint || '' : '';
+    if (c.dp !== dp || c.dh !== dh) {
+      if ((c.dp >= 0 || c.dh) !== (dp >= 0 || !!dh)) this.wDrop.hidden = !(dp >= 0 || dh);
+      if (c.dh !== dh || (c.dp >= 0) !== (dp >= 0)) {
+        this.wDrop.classList.toggle('tap', !!dh);
+        this.wDropT.textContent = '';
+        if (dh) {
+          el('span', '', this.wDropT, 'Hold ');
+          el('span', 'kbd sm', this.wDropT, dh);
+          el('span', '', this.wDropT, ' to drop');
+        } else this.wDropT.textContent = 'Drop';
+      }
+      this.wDrop.style.setProperty('--p', Math.max(0, dp));
+      c.dp = dp;
+      c.dh = dh;
     }
     const lab = rl >= 0 ? 'Reloading' : c.aTypeStr;
     if (c.aLab !== lab) this.aType.textContent = c.aLab = lab;

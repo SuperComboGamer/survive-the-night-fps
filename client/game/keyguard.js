@@ -4,9 +4,23 @@
 // (Ctrl+W, Ctrl+Shift+W, ...) then goes to the page instead. So while playing, the click that takes the mouse also takes
 // fullscreen with the game's keys locked (Settings > Controls > "Fullscreen while playing"), and when that is off or not
 // available (other browsers) the tab asks "Leave site?" before it closes. Esc is not locked: it still leaves fullscreen.
-const LOCK_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyF', 'KeyT', 'KeyN', 'KeyC', 'KeyV', 'KeyM', 'KeyH', 'KeyZ', 'KeyX', 'Tab', 'Space', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'AltLeft'];
+//
+// The keys locked are every key the player has bound to something (binds.js) - rebound in the pause menu, the lock is
+// taken again with the new ones - plus W, T and N always: Ctrl+W / T / N are the browser's own, and whatever crouch and
+// forward are on, a Ctrl+W must not close a game.
+import { boundKeyCodes, onBindsChange } from './binds.js';
+
+const ALWAYS = ['KeyW', 'KeyT', 'KeyN'];
+let lockKeys = [];
 // with Ctrl (or Cmd) held these do something to the page or the browser; in play they are the game's
-const GAME_KEYS = new Set(LOCK_KEYS);
+let gameKeys = new Set();
+function update() {
+  // (not Ctrl or Shift themselves: held, they are only ever half of a combination, and the other half is what is locked)
+  lockKeys = [...new Set([...ALWAYS, ...boundKeyCodes().filter((c) => !/^(Control|Shift)/.test(c))])];
+  gameKeys = new Set(lockKeys);
+}
+update();
+onBindsChange(update);
 
 export class KeyGuard {
   constructor(isPlaying) {
@@ -22,7 +36,7 @@ export class KeyGuard {
     addEventListener(
       'keydown',
       (e) => {
-        if (!(e.ctrlKey || e.metaKey) || !GAME_KEYS.has(e.code) || !this.isPlaying()) return;
+        if (!(e.ctrlKey || e.metaKey) || !gameKeys.has(e.code) || !this.isPlaying()) return;
         if (document.activeElement?.matches?.('input, textarea, [contenteditable="true"]')) return; // (chat: Ctrl+A, Ctrl+V work)
         e.preventDefault();
       },
@@ -30,6 +44,10 @@ export class KeyGuard {
     );
     document.addEventListener('fullscreenchange', () => {
       if (!document.fullscreenElement) this.ours = false;
+    });
+    // rebound while the lock is on (Settings over the pause menu, still in fullscreen): lock the keys of now
+    onBindsChange(() => {
+      if (this.ours && document.fullscreenElement && this.supported) navigator.keyboard.lock(lockKeys).catch(() => {});
     });
   }
 
@@ -40,7 +58,7 @@ export class KeyGuard {
   // from a click (it needs the user's gesture): fullscreen with the game's keys locked
   engage() {
     if (!this.fullscreen || !this.supported || !this.isPlaying()) return;
-    const lock = () => navigator.keyboard.lock(LOCK_KEYS).catch(() => {});
+    const lock = () => navigator.keyboard.lock(lockKeys).catch(() => {});
     if (document.fullscreenElement) {
       lock();
       return;

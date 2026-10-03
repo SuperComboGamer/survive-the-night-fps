@@ -2,7 +2,8 @@
 // while it is in reach and the prompt offers it, so what can be used reads at a glance without anything else in the
 // valley glowing.
 //
-// What: Game.lookTarget, the very target the prompt is about, and only while that prompt offers [E] or [X]. A
+// What: Game.lookTarget, the very target the prompt is about, and only while that prompt offers [E] or [X] (the
+// interact and demolish keys, whatever they are bound to: game/binds.js). A
 // searched container, the workbench or "the car needs ..." only say what they are and get none, so an outline
 // always means "this can be used". Nothing at a distance: finding loot from afar is the glints' job
 // (Entities.update), and the glint of whatever is outlined goes out while it is.
@@ -29,6 +30,7 @@ import { CONT } from '../../shared/defs.js';
 import { fixtureSpots } from '../../shared/fixtures.js';
 import { WHEEL } from '../../shared/fair.js';
 import { createProp } from '../render/models/props.js';
+import { bindTag } from './binds.js';
 
 // per setting: line width (CSS px on a 1080-line screen, scaled with the screen's height), opacity, and brightness
 // on screen before tone mapping (linear; the final pass's exposure is taken out)
@@ -40,7 +42,8 @@ const COLOR = [1.0, 0.92, 0.76]; // warm off-white, the glints' colour (entities
 const NIGHT_DIM = 0.3; // this much dimmer at full night, when the screen around it is near black
 const FADE_IN = 0.12; // s
 const FADE_OUT = 0.2; // s
-const ACTION = /\[[EX]\]/; // a prompt that offers something to do
+// a prompt that offers something to do: it names the interact key or the demolish key
+const offers = (prompt) => prompt.includes(bindTag('interact')) || prompt.includes(bindTag('demolish'));
 const PROP_CACHE = 24; // prop stand-ins kept for coming back to
 
 // ---------------------------------------------------------------- shells
@@ -257,7 +260,7 @@ export class Highlight {
   targetObject() {
     const g = this.g;
     const t = g.lookTarget;
-    if (!t || !ACTION.test(g.prompt || '')) return null;
+    if (!t || !offers(g.prompt || '')) return null;
     if (t === 'car') return this.propAt('car', g.world.car.x, g.world.car.z, 0.05);
     if (t === 'radio') {
       const r = fixtureSpots(g.world).radio;

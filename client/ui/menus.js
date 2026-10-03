@@ -2,7 +2,7 @@
 import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
-import { AIM_KEY_LABEL } from '../game/input.js';
+import { bindsOf, keyName } from '../game/binds.js';
 import { loadRecord } from './records.js';
 import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
 import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
@@ -16,30 +16,50 @@ function setBadge(b, n) {
   b.textContent = n > 99 ? '99+' : n ? String(n) : '';
 }
 
-export const DEFAULT_CONTROLS = [
-  ['W A S D', 'Move'],
-  ['Shift', 'Sprint'],
-  ['Space', 'Jump'],
-  ['Ctrl', 'Crouch'],
-  ['LMB', 'Attack · place'],
-  [`RMB / ${AIM_KEY_LABEL}`, 'Aim · heavy swing'],
-  ['R', 'Reload'],
-  ['E', 'Interact · pick up'],
-  ['F', 'Flashlight'],
-  ['1 – 5', 'Weapon slots'],
-  ['I', 'Inventory & crafting'],
-  ['Tab', 'Player list (hold)'],
-  ['Y / Enter', 'Chat'],
-  ['V', 'Push to talk'],
+// The keys of the controls lists, from the player's keybinds (game/binds.js): an action's key caps, each of its binds
+export const keysOf = (action) => bindsOf(action).filter(Boolean).map(keyName);
+// the four movement keys on one cap, 'W A S D' (each one's primary)
+export const moveKeys = () => ['forward', 'left', 'back', 'right'].map((a) => keysOf(a)[0] || '–').join(' ');
+// the weapon slots: '1 – 5' while they are the digits in a row, else each one's key
+export function slotKeys() {
+  const ks = [1, 2, 3, 4, 5].map((i) => keysOf('slot' + i)[0] || '–');
+  return ks.join('') === '12345' ? '1 – 5' : ks.join(' ');
+}
+
+// the short list, behind the Controls button unless main.js gives a fuller one (ui.setControls). A function: the list
+// is drawn afresh each time it is shown, with the keys as they are bound then
+export const DEFAULT_CONTROLS = () => [
+  [moveKeys(), 'Move'],
+  [keysOf('sprint'), 'Sprint'],
+  [keysOf('jump'), 'Jump'],
+  [keysOf('crouch'), 'Crouch'],
+  [keysOf('fire'), 'Attack · place'],
+  [keysOf('aim'), 'Aim · heavy swing'],
+  [keysOf('reload'), 'Reload'],
+  [keysOf('interact'), 'Interact · pick up'],
+  [keysOf('flashlight'), 'Flashlight'],
+  [slotKeys(), 'Weapon slots'],
+  [keysOf('inventory'), 'Inventory & crafting'],
+  [keysOf('players'), 'Player list (hold)'],
+  [keysOf('chat'), 'Chat'],
+  [keysOf('talk'), 'Push to talk'],
   ['Esc', 'Menu'],
 ];
 
+// list: [[keys, action], ...], or a function that makes one. keys: a string ('Shift+LMB': a cap each side of the +),
+// or an array of caps, one per bind ([] for an action left without a key)
 export function renderControls(parent, list) {
   parent.textContent = '';
-  for (const [k, a] of list) {
+  for (const [k, a] of typeof list === 'function' ? list() : list) {
     const r = el('div', 'ctl-row', parent);
     const keys = el('span', 'ctl-keys', r);
-    for (const part of String(k).split(/\s*\+\s*/)) el('span', 'kbd sm', keys, part);
+    if (Array.isArray(k)) {
+      k.forEach((cap, i) => {
+        if (i) el('span', 'ctl-or', keys, '/');
+        el('span', 'kbd sm', keys, cap);
+      });
+      if (!k.length) el('span', 'kbd sm ctl-none', keys, 'unbound');
+    } else for (const part of String(k).split(/\s*\+\s*/)) el('span', 'kbd sm', keys, part);
     el('span', 'ctl-act', r, a);
   }
 }
@@ -567,12 +587,12 @@ export class ControlsPanel {
     const card = el('div', 'set-card paper', this.root);
     const head = el('div', 'set-head', card);
     el('h2', 'set-title', head, 'Controls');
-    el('span', 'set-sub', head, 'field notes');
+    el('span', 'set-sub', head, 'field notes · rebind in Settings');
     const close = svgEl('button', 'set-close btn-icon', head, glyph('xmark'));
     close.title = 'Close';
     close.addEventListener('click', () => this.hide());
     this.list = el('div', 'ctl-grid', el('div', 'set-body', card));
-    renderControls(this.list, DEFAULT_CONTROLS);
+    this.source = DEFAULT_CONTROLS; // (ui.setControls) drawn as it is shown, with the keys bound then
     const done = el('button', 'btn btn-blood', el('div', 'set-foot', card), 'Done');
     done.addEventListener('click', () => this.hide());
 
@@ -592,6 +612,7 @@ export class ControlsPanel {
   }
 
   show() {
+    renderControls(this.list, this.source);
     this.root.hidden = false;
     this.root.classList.remove('in');
     void this.root.offsetWidth;

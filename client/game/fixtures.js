@@ -8,6 +8,7 @@ import { ITEM, NOTIFY } from '../../shared/defs.js';
 import { HOLD, BELL_ID, RADIO_ID } from '../../shared/protocol.js';
 import { canReach } from '../../shared/collision.js';
 import { fixtureSpots, FIXTURE_PICK, RADIO_BATTERIES, RADIO_NO } from '../../shared/fixtures.js';
+import { bindTag } from './binds.js';
 
 export class FixtureUI {
   constructor(game) {
@@ -39,7 +40,7 @@ export class FixtureUI {
     if (f.bell && this.aimed(f.bell.rope, ox, oy, oz, dx, dy, dz, reachTop)) {
       const wait = Math.ceil(this.bellUntil - g.time);
       g.lookTarget = 'bell';
-      g.prompt = wait > 0 ? `Bell rope · the bell is still swinging (${wait} s)` : '[E] Hold to ring the chapel bell';
+      g.prompt = wait > 0 ? `Bell rope · the bell is still swinging (${wait} s)` : `${bindTag('interact')} Hold to ring the chapel bell`;
       return true;
     }
     if (f.radio && this.aimed(f.radio, ox, oy, oz, dx, dy, dz, reachTop)) {
@@ -48,7 +49,7 @@ export class FixtureUI {
       if (this.calledDay === g.global.day) g.prompt = 'Radio · a supply drop was already called today';
       else if (g.global.phase !== PHASE.DAY) g.prompt = 'Radio · no plane flies at night';
       else if (have < RADIO_BATTERIES) g.prompt = `Radio · a supply drop needs ${RADIO_BATTERIES} Batteries (you have ${have})`;
-      else g.prompt = `[E] Hold to call a supply drop to where you stand (${RADIO_BATTERIES} Batteries)`;
+      else g.prompt = `${bindTag('interact')} Hold to call a supply drop to where you stand (${RADIO_BATTERIES} Batteries)`;
       return true;
     }
     return false;

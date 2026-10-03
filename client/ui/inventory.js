@@ -10,6 +10,7 @@ import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
 import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { needLines } from '../game/harvest.js';
+import { bindTag, bindLabel, liveText } from '../game/binds.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -287,8 +288,8 @@ export class Inventory {
     const bg = el('div', 'inv-bg', root);
     const close = el('button', 'inv-close', root);
     close.type = 'button';
-    close.title = 'Close inventory (I)';
-    el('span', 'kbd sm', close, 'I');
+    liveText(close, () => `Close inventory (${bindLabel('inventory')})`, 'title');
+    liveText(el('span', 'kbd sm', close), () => bindLabel('inventory'));
     el('span', 'inv-close-t', close, 'Close');
     svgEl('i', 'inv-close-x', close, glyph('xmark'));
     close.addEventListener('click', () => this.ui.cb.onCloseInventory());
@@ -1115,7 +1116,7 @@ export class Inventory {
       const unlocked = !r.schem || this._schemOk(r.schem);
       if (r.schem) reqs.push({ icon: glyph(unlocked ? 'unlock' : 'lock'), name: ITEM_DEFS[r.schem].name, val: unlocked ? 'found' : 'not found', ok: unlocked });
       const todo = needLines(r.cost, this.counts); // what is short, and where it comes from
-      if (!stationOk) todo.push(`Build a ${STATION_NAMES[st].toLowerCase()} [5] or find one`);
+      if (!stationOk) todo.push(`Build a ${STATION_NAMES[st].toLowerCase()} ${bindTag('slot5')} or find one`);
       if (!unlocked) todo.push('Find the schematic in lockers, crates or toolboxes');
       hint = todo.length ? todo.join('\n') : 'Click to craft';
       if (todo.length) hintCls = 'bad';

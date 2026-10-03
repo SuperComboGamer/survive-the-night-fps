@@ -6,6 +6,7 @@
 import { BOARD_STATS, BOARD_TOP } from '../../shared/protocol.js';
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { glyph } from './icons.js';
+import { bindLabel, liveText } from '../game/binds.js';
 
 const STORE = 'stn.board'; // 'all:kills': the list and the column last looked at
 // per stat: column head, its glyph, what it counts
@@ -77,11 +78,12 @@ export class Leaderboard {
 
     const keys = el('div', 'map-keys', frame);
     for (const [k, t] of [
-      ['L', 'close'],
+      [() => bindLabel('board'), 'close'], // (its keybind: game/binds.js)
       ['LMB', 'sort by a column'],
     ]) {
       const s = el('span', 'gh', keys);
-      el('span', 'kbd sm', s, k);
+      if (typeof k === 'function') liveText(el('span', 'kbd sm', s), k);
+      else el('span', 'kbd sm', s, k);
       el('span', '', s, t);
     }
     this._render();

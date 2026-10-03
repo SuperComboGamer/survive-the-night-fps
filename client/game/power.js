@@ -15,6 +15,7 @@ import { G } from '../render/globals.js';
 import { getTexture } from '../render/textures.js';
 import { TEX } from '../render/effects.js';
 import { FLOOD_LENS, GEN_EXHAUST, powerReachRing } from '../render/models/power.js';
+import { bindTag } from './binds.js';
 
 // How many floodlights light the world at once: the nearest lit ones to the eye. Every lit pixel pays for every
 // light in the scene, so the pool is small (the scene has 3 spot and 6 point lights besides).
@@ -319,10 +320,10 @@ export class PowerViews {
       const tank = fuel <= 0 ? 'tank empty' : `${mmss(fuel)} of fuel`;
       const state = !on ? 'Generator off' : fuel > 0 ? 'Generator running' : 'Generator out of fuel';
       const sw = `switch ${on ? 'off' : 'on'}`;
-      if (pour > 0) text = `[E] Pour in fuel (${pour} of ${have}) · hold to ${sw} · ${state}, ${tank}`;
-      else if (fuel > 0 || !on) text = `[E] Hold to ${sw} · ${state}, ${tank}${have && fuel >= GEN_TANK - 5 ? ' (full)' : ''}${fuel <= 0 ? ': it burns Flamethrower Fuel' : ''}`;
+      if (pour > 0) text = `${bindTag('interact')} Pour in fuel (${pour} of ${have}) · hold to ${sw} · ${state}, ${tank}`;
+      else if (fuel > 0 || !on) text = `${bindTag('interact')} Hold to ${sw} · ${state}, ${tank}${have && fuel >= GEN_TANK - 5 ? ' (full)' : ''}${fuel <= 0 ? ': it burns Flamethrower Fuel' : ''}`;
       else text = `${state} · it burns Flamethrower Fuel`;
     }
-    return building ? `${text} · [X] Remove` : text;
+    return building ? `${text} · ${bindTag('demolish')} Remove` : text;
   }
 }

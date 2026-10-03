@@ -19,6 +19,7 @@ import { ACT, ENT, FAIR_GEN_ID, FAIR_TANK_ID, playerRide } from '../../shared/pr
 import { GEN, RIDE_SEATS, SEAT_PICK, seatPos, seatLow, isWheelSeat } from '../../shared/fair.js';
 import { canReach } from '../../shared/collision.js';
 import { FairView } from '../render/fair.js';
+import { bindTag } from './binds.js';
 
 const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE;
 const M24 = 1 << 24;
@@ -200,8 +201,8 @@ export class FairClient {
     if (seatLow(f, s.ride - 1, s.rideT)) {
       this.target.fair = 'off';
       g.lookTarget = this.target;
-      g.prompt = '[E] Get off';
-    } else g.prompt = `[Space] Jump out · ${Math.round(s.y - g.world.heightAt(s.x, s.z))} m down`;
+      g.prompt = `${bindTag('interact')} Get off`;
+    } else g.prompt = `${bindTag('jump')} Jump out · ${Math.round(s.y - g.world.heightAt(s.x, s.z))} m down`;
   }
 
   // What of the fair the view ray (from o along d) is on, for a player on foot: the generator, its fuel drum, a
@@ -247,9 +248,9 @@ export class FairClient {
     t.seat = seat;
     g.lookTarget = t;
     if (best === 'gen') {
-      if (this.running) g.prompt = `[E] Hold to shut the generator off · ${mmss(this.fuel)} of fuel left`;
-      else if (this.fuel > 0) g.prompt = `[E] Hold to start the generator · ${mmss(this.fuel)} of fuel in the tank`;
-      else if (have >= GEN.portion) g.prompt = `[E] Hold to start the generator (${GEN.portion} Flamethrower Fuel)`;
+      if (this.running) g.prompt = `${bindTag('interact')} Hold to shut the generator off · ${mmss(this.fuel)} of fuel left`;
+      else if (this.fuel > 0) g.prompt = `${bindTag('interact')} Hold to start the generator · ${mmss(this.fuel)} of fuel in the tank`;
+      else if (have >= GEN.portion) g.prompt = `${bindTag('interact')} Hold to start the generator (${GEN.portion} Flamethrower Fuel)`;
       else {
         g.lookTarget = null;
         g.prompt = `The generator is dry · it burns Flamethrower Fuel, ${GEN.portion} for ${mmss(GEN.burn)}`;
@@ -258,7 +259,7 @@ export class FairClient {
       if (this.fuel + GEN.burn > GEN.tank) {
         g.lookTarget = null;
         g.prompt = `Fuel drum · full (${mmss(this.fuel)})`;
-      } else if (have >= GEN.portion) g.prompt = `[E] Pour in ${GEN.portion} Flamethrower Fuel (+${mmss(GEN.burn)}, you carry ${have})`;
+      } else if (have >= GEN.portion) g.prompt = `${bindTag('interact')} Pour in ${GEN.portion} Flamethrower Fuel (+${mmss(GEN.burn)}, you carry ${have})`;
       else {
         g.lookTarget = null;
         g.prompt = `Fuel drum · ${mmss(this.fuel)} in the tank · a portion is ${GEN.portion} Flamethrower Fuel${have ? ` (you carry ${have})` : ''}`;
@@ -266,7 +267,7 @@ export class FairClient {
     } else if (this.rider(seat)) {
       g.lookTarget = null;
       g.prompt = `${g.name(this.rider(seat))} has this seat`;
-    } else g.prompt = isWheelSeat(seat) ? '[E] Ride the Ferris wheel' : '[E] Ride the carousel';
+    } else g.prompt = isWheelSeat(seat) ? `${bindTag('interact')} Ride the Ferris wheel` : `${bindTag('interact')} Ride the carousel`;
     return true;
   }
 

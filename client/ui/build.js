@@ -2,6 +2,7 @@
 import { STRUCT_DEFS, STRUCT_ORDER, ITEM_DEFS, SCHEM_BIT } from '../../shared/defs.js';
 import { el, svgEl } from './dom.js';
 import { structIcon, itemIcon, glyph } from './icons.js';
+import { liveText, bindLabel, bindPair } from '../game/binds.js';
 
 export class BuildMenu {
   constructor(ui, parent) {
@@ -9,11 +10,11 @@ export class BuildMenu {
     this.root = el('div', 'build', parent);
     this.root.hidden = true;
     const head = el('div', 'build-head', this.root);
-    el('span', 'kbd sm bh-step', head, 'Q');
+    liveText(el('span', 'kbd sm bh-step', head), () => bindLabel('buildPrev'));
     el('span', 'bh-tag', head, 'Build');
     this.hName = el('span', 'bh-name', head, '');
     this.hRot = el('span', 'bh-rot', head, '');
-    el('span', 'kbd sm bh-step', head, 'E');
+    liveText(el('span', 'kbd sm bh-step', head), () => bindLabel('buildNext'));
     this.hBad = el('span', 'bh-bad', head, "Can't place here");
     this.hDesc = el('div', 'build-desc', this.root, '');
     const cards = el('div', 'build-cards', this.root);
@@ -39,14 +40,15 @@ export class BuildMenu {
       return { type, c, ings, lock, schem: d.schem };
     });
     const hint = el('div', 'build-hint', this.root);
+    // (the keybinds of now: game/binds.js)
     for (const [k, t] of [
-      ['Q / E', 'select'],
-      ['LMB', 'place'],
-      ['RMB', 'rotate'],
-      ['X', 'demolish'],
+      [() => `${bindLabel('buildPrev')} / ${bindLabel('buildNext')}`, 'select'],
+      [() => bindPair('fire'), 'place'],
+      [() => bindPair('aim'), 'rotate'],
+      [() => bindPair('demolish'), 'demolish'],
     ]) {
       const s = el('span', 'bh', hint);
-      el('span', 'kbd sm', s, k);
+      liveText(el('span', 'kbd sm', s), k);
       el('span', '', s, t);
     }
     this.key = '';

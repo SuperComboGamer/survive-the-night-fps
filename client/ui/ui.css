@@ -1680,11 +1680,13 @@ body {
 .stn-ui .slot-key {
   display: grid;
   place-items: center;
-  width: calc(19 * var(--u));
+  box-sizing: border-box;
+  min-width: max(15px, calc(19 * var(--u)));
   height: calc(19 * var(--u));
-  min-width: 15px;
   min-height: 15px;
+  padding: 0 calc(3 * var(--u));
   font: max(9px, calc(11.5 * var(--u))) / 1 var(--f-mono);
+  white-space: nowrap;
   border: 1px solid rgba(230, 223, 207, 0.7);
   text-shadow: none;
 }
@@ -1718,6 +1720,63 @@ body {
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--bone-2);
+}
+
+/* the drop key held (game/drophold.js): a ring filling up beside the weapon's name, or "Hold G to drop" */
+.stn-ui .w-drop {
+  --p: 0; /* how far the hold is, 0..1 (hud.js) */
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  font: 500 max(10px, calc(12 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.stn-ui .w-drop[hidden] {
+  display: none;
+}
+
+.stn-ui .w-drop-ring {
+  width: max(14px, calc(18 * var(--u)));
+  height: max(14px, calc(18 * var(--u)));
+  border-radius: 50%;
+  background: conic-gradient(var(--blood-hi) calc(var(--p) * 360deg), rgba(230, 223, 207, 0.22) 0);
+  -webkit-mask: radial-gradient(circle, transparent 46%, #000 50%);
+  mask: radial-gradient(circle, transparent 46%, #000 50%);
+}
+
+.stn-ui .w-drop.tap {
+  color: var(--bone-2);
+  letter-spacing: 0.08em;
+  text-transform: none;
+  animation: stn-dropTap 1.6s ease-out forwards;
+}
+
+.stn-ui .w-drop.tap .w-drop-ring {
+  display: none;
+}
+
+.stn-ui .w-drop .kbd {
+  margin: 0 0.3em;
+  letter-spacing: 0;
+}
+
+@keyframes stn-dropTap {
+  0% {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+  12%,
+  75% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 .stn-ui .ammo-row {
@@ -4620,25 +4679,37 @@ body {
   padding-bottom: calc(16 * var(--u));
 }
 
+/* one grid for every row, so the key column is as wide as its widest keys (rebound ones can be long) */
 .stn-ui .ctl-grid {
-  display: flex;
-  flex-direction: column;
-  gap: calc(5 * var(--u));
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: calc(5 * var(--u)) calc(10 * var(--u));
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.2 var(--f-type);
+  color: var(--bone-2);
 }
 
 .stn-ui .ctl-row {
-  display: grid;
-  grid-template-columns: calc(118 * var(--u)) 1fr;
-  align-items: center;
-  gap: calc(10 * var(--u));
-  font: max(10.5px, calc(12.5 * var(--u))) / 1.2 var(--f-type);
-  color: var(--bone-2);
+  display: contents;
 }
 
 .stn-ui .ctl-keys {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: calc(4 * var(--u));
+  min-width: calc(118 * var(--u));
+}
+
+/* between an action's two binds */
+.stn-ui .ctl-or {
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ctl-none {
+  opacity: 0.45;
+  font-style: italic;
 }
 
 .stn-ui .sp-foot {
@@ -5822,6 +5893,171 @@ body {
 .stn-ui .set-rec.armed .btn-danger {
   border-color: var(--blood-lite);
   color: #ff9d90;
+}
+
+/* ---------- settings: keybinds (keybinds.js) */
+.stn-ui .kb-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(12 * var(--u));
+}
+
+.stn-ui .kb-head .set-sec-title {
+  flex: 0 0 auto;
+}
+
+.stn-ui .kb-status {
+  flex: 1;
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .kb-status[data-where='account']::before {
+  content: '✓ ';
+  color: #8fc48a;
+}
+
+.stn-ui .kb-status[data-where='error'] {
+  color: #ff9d90;
+}
+
+.stn-ui .kb-btn {
+  padding: calc(6 * var(--u)) calc(12 * var(--u));
+  font-size: max(10px, calc(11.5 * var(--u)));
+  letter-spacing: 0.14em;
+}
+
+.stn-ui .kb-note {
+  min-height: 1.3em;
+  margin: calc(2 * var(--u)) 0 calc(4 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .kb-note.live {
+  color: var(--bone);
+}
+
+.stn-ui .kb-note.bad {
+  color: #ff9d90;
+}
+
+.stn-ui .kb-note.done {
+  color: #c9e2b8;
+}
+
+.stn-ui .kb-group {
+  margin: calc(12 * var(--u)) 0 calc(2 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .kb-row {
+  min-height: calc(34 * var(--u));
+  padding: calc(2 * var(--u)) 0;
+}
+
+.stn-ui .kb-ctl {
+  gap: calc(6 * var(--u));
+}
+
+/* one width for every key, so the two columns line up whatever is on them (a long name is cut short: its title has it) */
+.stn-ui .kb-key {
+  width: max(96px, calc(112 * var(--u)));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  height: calc(28 * var(--u));
+  min-height: 22px;
+  padding: 0 calc(10 * var(--u));
+  border: 1px solid rgba(230, 223, 207, 0.4);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.45);
+  font: max(10.5px, calc(12.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone);
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stn-ui .kb-key:hover {
+  border-color: var(--bone);
+}
+
+.stn-ui .kb-key.empty {
+  color: var(--bone-dim);
+  border-style: dashed;
+}
+
+.stn-ui .kb-key.listening {
+  border-color: var(--blood-lite);
+  background: rgba(157, 17, 23, 0.45);
+  color: var(--bone);
+  animation: stn-kbListen 1s ease-in-out infinite;
+}
+
+.stn-ui .kb-key.asking {
+  border-color: #e0b24a;
+  color: #f2d48a;
+}
+
+.stn-ui .kb-reset {
+  min-width: calc(62 * var(--u));
+}
+
+/* the reset is there only for a row off its defaults: the others keep its room, so the keys line up */
+.stn-ui .kb-reset.off {
+  visibility: hidden;
+}
+
+.stn-ui .kb-row.kb-flash {
+  animation: stn-kbFlash 1.1s ease-out;
+}
+
+.stn-ui .kb-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8 * var(--u)) calc(12 * var(--u));
+  margin: calc(2 * var(--u)) 0 calc(6 * var(--u));
+  padding: calc(9 * var(--u)) calc(12 * var(--u));
+  border: 1px solid rgba(224, 178, 74, 0.55);
+  border-left-width: 3px;
+  background: rgba(224, 178, 74, 0.09);
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .kb-conflict-t .kbd {
+  margin-right: 0.15em;
+}
+
+.stn-ui .kb-conflict-h {
+  color: var(--bone-dim);
+}
+
+.stn-ui .kb-conflict-b {
+  display: flex;
+  gap: calc(6 * var(--u));
+}
+
+@keyframes stn-kbListen {
+  50% {
+    background: rgba(157, 17, 23, 0.2);
+  }
+}
+
+@keyframes stn-kbFlash {
+  0% {
+    background: rgba(201, 226, 184, 0.16);
+  }
+  100% {
+    background: transparent;
+  }
 }/* ==================================================================== KEYFRAMES */
 
 

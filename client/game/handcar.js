@@ -15,6 +15,7 @@ import { ACT, HCAR_AT } from '../../shared/protocol.js';
 import { HANDCAR, carFrame, linePoint, leverAngle } from '../../shared/handcar.js';
 import { canReach } from '../../shared/collision.js';
 import { createHandcar, createHandcarView, WHEEL_R } from '../render/models/handcar.js';
+import { bindTag } from './binds.js';
 
 const PROMPT_TIME = 6; // seconds the full list of what the keys do stays up after getting on
 const BAR_Y = -0.2; // the handle bar in our view, with the lever level: this far below the eye...
@@ -150,8 +151,8 @@ export class HandcarClient {
     this.target.handcar = 'off';
     g.lookTarget = this.target;
     const kmh = Math.round(Math.abs(s.cartV) * 3.6);
-    if (g.time - this.boardT < PROMPT_TIME) g.prompt = '[W] Pump towards where you look · [S] Pump back / brake · [Shift] Pump hard · [E] Get off';
-    else g.prompt = `[E] Get off · ${kmh} km/h`;
+    if (g.time - this.boardT < PROMPT_TIME) g.prompt = `${bindTag('forward')} Pump towards where you look · ${bindTag('back')} Pump back / brake · ${bindTag('sprint')} Pump hard · ${bindTag('interact')} Get off`;
+    else g.prompt = `${bindTag('interact')} Get off · ${kmh} km/h`;
   }
 
   // A car the view ray (from o along d) is on, for a player on foot: sets Game.lookTarget / prompt and returns true.
@@ -193,7 +194,7 @@ export class HandcarClient {
     this.target.handcar = 'board';
     this.target.k = best;
     g.lookTarget = this.target;
-    g.prompt = '[E] Get on the handcar';
+    g.prompt = `${bindTag('interact')} Get on the handcar`;
     return true;
   }
 

@@ -5,7 +5,9 @@ import { UI } from './ui/ui.js';
 import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
-import { AIM_KEY_LABEL } from './game/input.js';
+import { loadBinds, askLayout, bindPair } from './game/binds.js';
+import { startBindsSync } from './net/accountbinds.js';
+import { keysOf, moveKeys, slotKeys } from './ui/menus.js';
 import { playerId } from './net/identity.js';
 import { refreshAccount } from './net/account.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
@@ -14,6 +16,9 @@ import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextu
 
 let game = null;
 let joining = false;
+loadBinds(); // the player's keybinds, as this browser keeps them (game/binds.js): before anything names a key
+askLayout(); // (and what this keyboard prints on its keys, when the browser says)
+startBindsSync(); // ...and kept on their account while they are signed in (net/accountbinds.js)
 playerId(); // who this browser is to the leaderboard: made up and stored on the first launch, sent with every join
 refreshAccount(); // ...and the account it is signed in to, if any (the cookie goes with every join: the server plays them as it)
 const audio = new AudioEngine();
@@ -167,28 +172,32 @@ const callbacks = {
 };
 
 const ui = new UI(document.getElementById('ui'), callbacks);
-ui.setControls([
-  ['WASD', 'Move'],
-  ['Shift', 'Sprint'],
-  ['Space', 'Jump / vault barricades & windows'],
-  ['Ctrl / C', 'Crouch (stealth)'],
-  ['LMB', 'Fire / attack'],
-  [`RMB / ${AIM_KEY_LABEL}`, 'Aim / heavy attack (hold)'],
-  ['1 2 3 4 5', 'Primary · Pistol · Melee · Throwable · Build'],
-  ['Q / Wheel', 'Last weapon / cycle (build: Q / E cycle structure)'],
-  ['R', 'Reload'],
-  ['E', 'Interact · hold: search, revive, start the car'],
+// the full controls list (the Controls button on the splash and the pause menu), from the keybinds as they are when it
+// is opened (Settings > Keybinds rebinds them)
+ui.setControls(() => [
+  [moveKeys(), 'Move'],
+  [keysOf('sprint'), 'Sprint'],
+  [keysOf('jump'), 'Jump / vault barricades & windows'],
+  [keysOf('crouch'), 'Crouch (stealth)'],
+  [keysOf('fire'), 'Fire / attack'],
+  [keysOf('aim'), 'Aim / heavy attack (hold)'],
+  [slotKeys(), 'Primary · Pistol · Melee · Throwable · Build'],
+  [[...keysOf('lastWeapon'), 'Wheel'], `Last weapon / cycle (build: ${bindPair('buildPrev')} / ${bindPair('buildNext')} cycle structure)`],
+  [keysOf('reload'), 'Reload'],
+  [keysOf('interact'), 'Interact · hold: search, revive, start the car'],
   ['Melee', 'Hit trees for wood, wrecks for scrap'],
-  ['Z / MMB', 'Ping (go · danger · loot)'],
-  ['M', 'Field map'],
-  ['L', 'Leaderboard'],
-  ['F', 'Flashlight'],
-  ['H', 'Quick heal'],
-  ['B', 'Energy drink (refills stamina)'],
-  ['I', 'Inventory & crafting'],
-  ['Tab', 'Player list (hold)'],
-  ['Y / Enter · V', 'Chat · push-to-talk'],
-  ['X', 'Demolish (build mode)'],
+  [keysOf('ping'), 'Ping (go · danger · loot)'],
+  [keysOf('map'), 'Field map'],
+  [keysOf('board'), 'Leaderboard'],
+  [keysOf('flashlight'), 'Flashlight'],
+  [keysOf('heal'), 'Quick heal'],
+  [keysOf('drink'), 'Energy drink (refills stamina)'],
+  [keysOf('inventory'), 'Inventory & crafting'],
+  [keysOf('players'), 'Player list (hold)'],
+  [keysOf('chat'), 'Chat'],
+  [keysOf('talk'), 'Push to talk'],
+  [keysOf('drop'), 'Drop weapon (hold)'],
+  [keysOf('demolish'), 'Demolish (build mode)'],
 ]);
 const settings = ui.getSettings();
 const renderer = new GameRenderer(document.getElementById('game'), settings.quality || 'medium');
