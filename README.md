@@ -426,6 +426,17 @@ them off.
   lights them the same way. Burnt bodies leave nothing to loot. It is built at the workbench once the team has
   the explosives schematic (or found at the crash site, in ammo crates and in supply drops), and drinks fuel
   brewed from alcohol and chemicals.
+- **Throwables** ([4], press it again to cycle through what you carry): the **molotov** sets an area ablaze; the
+  **pipe bomb** beeps for 2.6 s, pulling every zombie within 40 m onto it, then blows a 7 m hole in the crowd it
+  gathered; the **frag grenade** is the quick one - thrown further, it bounces, rolls and bursts 2.2 s after it
+  leaves your hand (5 m and 260 damage, to the pipe bomb's 7 m and 420), and lures nothing first, so it goes into a
+  crowd that is already there; the **noisemaker**, a wound-up alarm clock, does no harm at all - it rings for 15 s
+  where it lands and the dead within 45 m leave what they are doing and walk to it (all but those already on a
+  survivor), to clear a place to search or buy a moment; the **road flare** burns red for 40 s and pins Shades in
+  its light. A thrown bomb never hurts a survivor. The grenade is built at the workbench once the team has the
+  explosives schematic (scrap and gunpowder, less than a pipe bomb) and turns up in military stashes; the noisemaker
+  is built at the workbench from scrap, barbed wire and a battery, and found in houses, trailers and the motel. The
+  numbers are `THROWABLES` in `shared/defs.js`.
 - **The mounted gun.** On a map with the Army Checkpoint, a heavy machine gun stands on a tripod in a horseshoe of
   sandbags beside the boom gate, covering the road out. It does not move: stand at its grips and press [E] to man
   it (one gunner at a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button

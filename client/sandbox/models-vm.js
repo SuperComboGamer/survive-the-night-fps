@@ -150,11 +150,11 @@ if (params.get('vm') === 'hands') {
   scene.add(table);
   const only = params.has('item') ? parseInt(params.get('item'), 10) : 0;
   const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.BAT, ITEM.SPIKED_BAT];
-  const shortIds = [ITEM.PISTOL, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE];
+  const shortIds = [ITEM.PISTOL, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY];
   const lines = [];
   const place = (id, x, z) => {
     const w = createWorldWeapon(id);
-    if (id === ITEM.MOLOTOV || id === ITEM.PIPEBOMB || id === ITEM.FLARE) {
+    if (id === ITEM.MOLOTOV || id === ITEM.PIPEBOMB || id === ITEM.FLARE || id === ITEM.GRENADE || id === ITEM.DECOY) {
       w.rotation.set(-PI2, 0, 0); // lie down, top toward -Z
       w.position.set(x, 0.035, z);
     } else {
@@ -203,7 +203,7 @@ if (params.get('vm') === 'hands') {
   const all = vmParam === 'all';
   const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
   const list = all
-    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, 'claws']
+    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY, 'claws']
     : times
       ? times.map(() => single)
       : [single];

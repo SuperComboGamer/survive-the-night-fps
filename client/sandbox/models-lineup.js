@@ -96,7 +96,7 @@ function addZombie(type, seed, x, z, y = 0) {
   return zb;
 }
 
-const survWeapons = [ITEM.AK47, ITEM.SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.PISTOL, ITEM.BAT, ITEM.MACHETE, ITEM.KNIFE, ITEM.SPIKED_BAT, ITEM.HAMMER, ITEM.MOLOTOV, 0, ITEM.PIPEBOMB, ITEM.FLARE];
+const survWeapons = [ITEM.AK47, ITEM.SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.PISTOL, ITEM.BAT, ITEM.MACHETE, ITEM.KNIFE, ITEM.SPIKED_BAT, ITEM.HAMMER, ITEM.MOLOTOV, 0, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY];
 function addSurvivor(seed, item, x, z, zombie) {
   const s = createSurvivor(seed);
   s.setWeapon(item);
@@ -334,7 +334,7 @@ function frame() {
       if (anim === ZANIM.ATTACK && Math.floor(time * 1.5) !== a.lastF) {
         a.lastF = Math.floor(time * 1.5);
         s.fire();
-        if (a.item === ITEM.MOLOTOV || a.item === ITEM.PIPEBOMB) s.throwAnim();
+        if (a.item === ITEM.MOLOTOV || a.item === ITEM.PIPEBOMB || a.item === ITEM.GRENADE || a.item === ITEM.DECOY) s.throwAnim();
         else s.melee();
       }
       if (fixedT >= 0) {

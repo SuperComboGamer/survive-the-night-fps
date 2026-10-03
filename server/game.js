@@ -235,6 +235,7 @@ const CRATE_TABLE = [
   [ITEM.AMMO_9MM, 4, 20, 40],
   [ITEM.MEDKIT, 4, 1, 2],
   [ITEM.PIPEBOMB, 2, 1, 2],
+  [ITEM.GRENADE, 2, 1, 2],
   [ITEM.MOLOTOV, 2, 1, 2],
   [ITEM.FLARE, 3, 2, 3],
   [ITEM.PLATE, 2, 1, 1],
