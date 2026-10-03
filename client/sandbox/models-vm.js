@@ -9,8 +9,22 @@
 //   &ortho=halfHeight  orthographic camera (with &wcam)
 //   &clip=nx,ny,nz,d   clip everything on the far side of a weapon-space plane (keeps n.p + d >= 0)
 //   &crop=x,y,h        magnify part of a 16:9 view: left, top and height in units of the screen height
-//   &light=game  in-game viewmodel lighting (midday) instead of the bright studio lights
-//   ?ww=1        world weapon lineup
+//   &light=game  in-game viewmodel lighting (midday) instead of the bright studio lights (&ldir=x,y,z its direction)
+//   ?ww=1        world weapon lineup (&item=ID one of them, &view=back)
+//   ?vm=hands    the hand poses side by side (&poses=a,b,.. which, &yaw= &pitch= &cd= the camera)
+//   &ts=a,b,c    a grid of the same item frozen at several times
+//   &act=talk    the walkie-talkie keyed;  &wall=M  a wall that far ahead of the eye (the tuck off it, Game.weaponClearance)
+// clip checking (docs/object-clipping.md):
+//   &clip=1      measure how far the hands, the sleeves and the item pass into each other: window.__clip, one per view:
+//                { handInItem, itemInHand, rInL: { d (m), a, b (the parts), n (vertices inside), p (the deepest, view
+//                space) }, nearZ, inverted, text }. Counts only what the camera sees. (&clip=nx,ny,nz,d is the plane)
+//   &dots=1      with &clip=1: mark every vertex found inside
+//   &xray=1      the item (and a used prop) see-through, drawn over the hands
+//   &zoom=fov,x,y,z  from the eye, narrowed onto a point (view space)
+//   &zh=R|L,fov  from the eye, narrowed onto that hand wherever the animation has it
+//   &oh=R|L,yaw,pitch,dist  an outside camera orbiting that hand
+//   window.__hands  { R, L }: each hand's grip center (view space) once posed, for a camera fixed on a hand
+//   &hp=pose:{json}  override (part of) a hand pose, or add one (several allowed); with &rpose= / &lpose= to use it
 import * as THREE from 'three';
 import { ITEM, ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
 import { ViewModel, createWorldWeapon, worldWeaponTris, viewModelTris, handTris, VM_DEBUG } from '../render/models/weapons.js';
@@ -387,7 +401,8 @@ if (params.get('vm') === 'hands') {
   // weapon-space inspection camera and clip plane (&wcam / &clip)
   const crop = params.has('crop') ? params.get('crop').split(',').map(Number) : null; // &crop=x,y,size: magnify part of the frame (fractions)
   const wcam = params.has('wcam') ? params.get('wcam').split(',').map(Number) : null;
-  const clipLocal = params.has('clip') ? params.get('clip').split(',').map(Number) : null;
+  // (&clip=1 is the clip check below; four numbers are a plane)
+  const clipLocal = params.has('clip') && params.get('clip').split(',').length === 4 ? params.get('clip').split(',').map(Number) : null;
   const clipPlane = new THREE.Plane();
   if (clipLocal) renderer.localClippingEnabled = true;
   function placeWeaponCam(v) {

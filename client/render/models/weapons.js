@@ -3979,7 +3979,7 @@ export class ViewModel {
 }
 
 /** Debug/tuning access to pose tables (sandbox only). */
-export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ, FG_RELOAD };
+export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ, FG_RELOAD, FINGERS, PHALANX_R, THUMB_MCP };
 /** Debug: hand geometry. */
 export function getHandGeoForDebug(pose, side) {
   return getHandGeo(pose, pose === 'claw' ? 'claw' : 'glove', side);

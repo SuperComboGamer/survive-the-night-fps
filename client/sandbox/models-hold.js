@@ -6,7 +6,9 @@
 //   &pack=1             wearing the crafted backpack;  &seed=N  which survivor
 //   &cam=yaw,pitch,dist[,tx,ty,tz]   an orbit round the right hand (tx..: offset of the target from it, m), or
 //   &cam=body,yaw,pitch,dist          round the chest (the whole figure);  default: round the right hand from the front
-//   &clip=1             measure (window.__clip): the deepest item vertex inside the body, and body vertex inside the item
+//   &clip=1             measure (window.__clip): the deepest item vertex inside the body, body vertex inside the item,
+//                       body vertex inside the worn pack, and (on its own: a fist is a block closed round a handle)
+//                       item vertex inside a fist
 //   &dots=1             with clip=1: mark them;  &xray=1  the item see-through
 import * as THREE from 'three';
 import * as CHARS from '../render/models/characters.js';
@@ -114,13 +116,33 @@ if (q.get('clip') === '1') {
     sk[i * 3 + 1] = v.y;
     sk[i * 3 + 2] = v.z;
   }
-  const bg = new THREE.BufferGeometry();
-  bg.setAttribute('position', new THREE.BufferAttribute(sk, 3));
-  bg.setIndex(g.index);
-  bg.computeBoundingBox();
+  // which bone a body vertex mostly follows, for the report and to tell the fists from the rest
+  const si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+  const boneOf = (i) => {
+    let b = 0, w = -1;
+    for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > w) (w = sw.getComponent(i, k)), (b = si.getComponent(i, k));
+    return inst.bones[b] ? inst.bones[b].name || 'bone' + b : '?';
+  };
+  const FIST = /^hand[LR]$/;
+  const fistV = new Uint8Array(pos.count);
+  for (let i = 0; i < pos.count; i++) fistV[i] = FIST.test(boneOf(i)) ? 1 : 0;
+  // The fists are solid blocks closed round a handle, so a handle inside one is how it is held: item-in-fist is
+  // reported on its own, and the body (bg) is everything but the fists
+  const idx = g.index.array, bodyIdx = [], fistIdx = [];
+  for (let t = 0; t < idx.length; t += 3) (fistV[idx[t]] || fistV[idx[t + 1]] || fistV[idx[t + 2]] ? fistIdx : bodyIdx).push(idx[t], idx[t + 1], idx[t + 2]);
+  const meshOf = (index) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(sk, 3));
+    geo.setIndex(index);
+    geo.computeBoundingBox();
+    const m = new THREE.Mesh(geo, dbl);
+    m.updateMatrixWorld(true);
+    return m;
+  };
   const dbl = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
-  const bodyM = new THREE.Mesh(bg, dbl);
-  bodyM.updateMatrixWorld(true);
+  const bodyM = meshOf(bodyIdx), fistM = meshOf(fistIdx);
+  const bg = bodyM.geometry;
+  bg.boundingBox.union(fistM.geometry.boundingBox);
   const parts = [];
   if (inst.weapon) inst.weapon.traverse((m) => m.isMesh && m.visible && parts.push(m));
   if (inst.pack && inst.pack.visible) inst.pack.traverse((m) => m.isMesh && parts.push(m));
@@ -153,14 +175,7 @@ if (q.get('clip') === '1') {
     }
     return back >= 3 ? depth : 0;
   };
-  // which bone a body vertex mostly follows, for the report
-  const si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
-  const boneOf = (i) => {
-    let b = 0, w = -1;
-    for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > w) (w = sw.getComponent(i, k)), (b = si.getComponent(i, k));
-    return inst.bones[b] ? inst.bones[b].name || 'bone' + b : '?';
-  };
-  const res = { itemInBody: { d: 0, n: 0, what: '' }, bodyInItem: { d: 0, n: 0, what: '' }, bodyInPack: { d: 0, n: 0, what: '' } };
+  const res = { itemInBody: { d: 0, n: 0, what: '' }, bodyInItem: { d: 0, n: 0, what: '' }, bodyInPack: { d: 0, n: 0, what: '' }, itemInFist: { d: 0, n: 0, what: '' } };
   // item vertices inside the body
   for (const p of proxies) {
     const pp = p.geometry.attributes.position;
@@ -173,6 +188,13 @@ if (q.get('clip') === '1') {
         r.n++;
         flagged.push(v.x, v.y, v.z);
         if (d > r.d) Object.assign(r, { d, what: p.userData.pack ? 'pack' : 'item' });
+      } else if (!p.userData.pack) {
+        const df = inside(v, [fistM]);
+        const r = res.itemInFist;
+        if (df) {
+          r.n++;
+          if (df > r.d) Object.assign(r, { d: df, what: 'item' });
+        }
       }
     }
   }
@@ -180,6 +202,7 @@ if (q.get('clip') === '1') {
   for (const [key, list] of [['bodyInItem', proxies.filter((p) => !p.userData.pack)], ['bodyInPack', proxies.filter((p) => p.userData.pack)]]) {
     if (!list.length) continue;
     for (let i = 0; i < pos.count; i++) {
+      if (fistV[i]) continue; // (the fists: item-in-fist)
       v.set(sk[i * 3], sk[i * 3 + 1], sk[i * 3 + 2]);
       const near = list.filter((p) => p.userData.box.containsPoint(v));
       if (!near.length) continue;
@@ -193,7 +216,7 @@ if (q.get('clip') === '1') {
     }
   }
   const mm = (r) => (r.n ? `${(r.d * 1000).toFixed(1)}mm ${r.what} (${r.n}v)` : '-');
-  res.text = `item-in-body ${mm(res.itemInBody)} | body-in-item ${mm(res.bodyInItem)} | body-in-pack ${mm(res.bodyInPack)}`;
+  res.text = `item-in-body ${mm(res.itemInBody)} | body-in-item ${mm(res.bodyInItem)} | body-in-pack ${mm(res.bodyInPack)} | item-in-fist ${mm(res.itemInFist)}`;
   window.__clip = res;
   info.textContent += '\n' + res.text;
   if (q.get('dots') === '1' && flagged.length) {

@@ -1,0 +1,6 @@
+[
+  { "id": "01-grenade-idle", "title": "Frag grenade, first person, idle", "vm": "vm=33&t=1", "side": "R", "views": "eye zoom xray" },
+  { "id": "02-ak47-support-hand", "title": "AK-47, support hand on the handguard", "vm": "vm=61&t=1", "side": "L", "views": "eye xray far" },
+  { "id": "03-3p-ak47-shouldered", "title": "Third person: AK-47 shouldered", "hold": "hold=61&pose=idle&cam=body,1.3,0.25,1.7" },
+  { "id": "04-pickup-sticks", "title": "Ground item: sticks", "pickup": "STICK" }
+]
