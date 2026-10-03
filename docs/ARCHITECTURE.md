@@ -803,6 +803,19 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   the commands that moved the player there are still queued; a hold under way is broken off `HOLD_SLACK` further
   out. A refusal is silent, so the server must never be stricter than the prompt: something new to interact with
   needs its radius in both `pick` and `reachOf`. sim-smoke takes each action from the edge of its prompt.
+  The target already picked keeps `PICK_STICK` (x1.15) of its radius, so a crosshair on its edge does not flick
+  the prompt on and off; that is far inside `INTERACT_SLACK`.
+- **Interaction highlight** (`client/game/highlight.js`, `Game.highlight`, the "Interaction highlight" setting:
+  off / subtle / strong). A faint outline on `Game.lookTarget` while the prompt offers `[E]` or `[X]`, nothing
+  else: info-only prompts get none, and the glints stay the long-range cue (the outlined thing's glint goes out).
+  It is an inverted hull: every solid mesh of the target gets a back-face shell pushed out a fixed number of
+  pixels along normals smoothed by position, drawn depth-only and then in colour with `EqualDepth` so overlapping
+  shells blend once. Two draws per mesh while something is outlined and none otherwise; no stencil, depth
+  texture or extra pass, so Low and PS1 mode get it too (it snaps to the PS1 grid). Brightness is divided by the
+  exposure, so it reads the same by day and night. Containers, the radio, the car, the fair's generator and
+  drum are merged into the static world, so their shells come from a stand-in built from the same prop
+  (`createProp`) where world gen put it; a wreck's trunk outlines the wreck; the bell rope is rebuilt from its
+  world-gen cylinders. A new kind of [E] target needs a case in `Highlight.targetObject`.
 - **Harvesting** is a melee swing that hits nobody: `Combat.melee` then traces the world to the weapon's range
   + 0.3 m and hands a tree (`COL.TREE`) or a wreck (`COL.SALVAGE`: props marked `salvage`) to `Game.gatherHit`
   (6 / 5 hits each, refilled at dawn). The sixth hit fells a tree (`Game.fellTree`, `shared/felling.js`): its

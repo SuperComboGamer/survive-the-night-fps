@@ -75,6 +75,7 @@ import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
+import { Highlight } from './highlight.js';
 import { Input, AIM_KEY_LABEL } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
@@ -296,6 +297,7 @@ export class Game {
     this.rockets = new RocketsClient(this); // our own RPG grenades in flight
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
     this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
+    this.highlight = new Highlight(this); // the faint outline on what [E] would act on
     this.power = new PowerViews(this); // the generator and its floodlights: their lights, sound and [E]
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
@@ -476,6 +478,7 @@ export class Game {
     this.handcar.setWorld(null);
     for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
+    this.highlight.reset();
     this.world = null;
   }
 
@@ -564,6 +567,7 @@ export class Game {
       // (Entities draws these three with its own geometry: a teammate's flashlight cone, a roper's rope, the loot glints)
       const e = this.entities;
       set.add(sv.object, new THREE.Mesh(e.coneGeo, e.coneMat), new THREE.Mesh(e.ropeGeo, e.ropeMat), new THREE.Points(e.glints.geometry, e.glints.material));
+      set.add(...this.highlight.warm(sv.object.getObjectByProperty('isSkinnedMesh', true))); // the outline on what [E] would act on (a downed one too)
     });
     steps.push(() => set.add(createCat(0, 1).object));
     for (const v of [0, 2, 1]) steps.push(() => set.add(createDeer(v, 1).object)); // a doe of each coat, the buck
@@ -2271,6 +2275,7 @@ export class Game {
 
     // interaction target
     this.updateLookTarget();
+    this.highlight.update(dt);
     this.updateBuildGhost(s);
 
     // discovery of places
@@ -2443,6 +2448,7 @@ export class Game {
       cam.lookAt(car.x, gy + 1.2, car.z);
     }
     this.ui.splash.setCut(cut);
+    this.highlight.reset(); // (no outline left over from the game just left)
     const weather = this.weather.update(dt, null, this.time, cam.position);
     this.env.update(dt, 0.49, cam.position, this.time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
@@ -2544,6 +2550,7 @@ export class Game {
   updateLookTarget() {
     const cam = this.camera;
     const s = this.prediction.state;
+    const was = this.lookTarget;
     this.lookTarget = null;
     this.prompt = null;
     if (!this.self.alive || s.zombie || s.downed) return;
@@ -2554,7 +2561,7 @@ export class Game {
     const ox = cam.position.x;
     const oy = cam.position.y;
     const oz = cam.position.z;
-    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, INTERACT_REACH, this.renderPos.y + EYE_HEIGHT);
+    const e = this.entities.pick(ox, oy, oz, _v.x, _v.y, _v.z, INTERACT_REACH, this.renderPos.y + EYE_HEIGHT, was);
     const counts = this.invCounts();
     const g = this.global;
     if (e) {

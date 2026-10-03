@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   renderScale: 1,
   ps1: false,
   ps1Strength: 0.5,
+  highlight: 'subtle', // the outline on what [E] would act on (game/highlight.js): off / subtle / strong
   pushToTalk: true,
   invertY: false,
   rawMouse: true,
@@ -50,6 +51,7 @@ export function sanitizeSettings(s) {
       if (Number.isFinite(v)) out[k] = clamp(v, NUM_RANGES[k][0], NUM_RANGES[k][1]);
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
+    if (['off', 'subtle', 'strong'].includes(s.highlight)) out.highlight = s.highlight;
     for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
@@ -112,6 +114,7 @@ const SECTIONS = [
       { k: 'renderScale', label: 'Render scale', type: 'range', min: 0.5, max: 1, step: 0.05, fmt: pct },
       { k: 'ps1', label: 'PS1 shader', type: 'toggle', hint: 'Low resolution, wobbling polygons, dithered colour, thicker fog' },
       { k: 'ps1Strength', label: 'PS1 intensity', type: 'range', min: 0.1, max: 1, step: 0.05, fmt: pct, needs: 'ps1', hint: 'Pixel size, wobble, colour banding and fog' },
+      { k: 'highlight', label: 'Interaction highlight', type: 'seg', options: ['off', 'subtle', 'strong'], hint: 'A faint outline on what you can use, while you look at it up close' },
       { k: 'showFps', label: 'Show FPS counter', type: 'toggle' },
     ],
   },

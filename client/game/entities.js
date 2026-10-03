@@ -20,6 +20,7 @@ const MAX_GLINTS = 96;
 const ITEM_GLINT_RANGE = 13; // a loose item glints inside this distance (m), fading in over the last 3
 const ITEM_GLINT_GAIN = 0.9; // ...at up to this brightness by day, against 1 for a container or a car supply
 const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next one
+const PICK_STICK = 1.15; // the target already in the crosshair holds on inside this much more of its radius (pick)
 const HEAVY_STEP_SHAKE = 30; // a tank's footfall shakes the camera inside this distance (m), harder the nearer it lands
 const HEAVY_RUN_SHAKE = 42; // ... and from this far off, harder still, when it is charging
 
@@ -1150,12 +1151,13 @@ export class Entities {
     // hide unused ropes
     for (let i = this.ropeUsed || 0; i < this.ropes.length; i++) this.ropes[i].visible = false;
     this.ropeUsed = 0;
-    // loot glints on unsearched containers nearby
+    // loot glints on unsearched containers nearby (none on what is outlined: game/highlight.js)
+    const lit = g.highlight?.focus;
     let n = 0;
     for (const e of this.caches) {
       if (n >= MAX_GLINTS) break;
       const supply = e.kind === ENT.ITEM;
-      if (!supply && e.q[3] !== 0) continue;
+      if ((!supply && e.q[3] !== 0) || e === lit) continue;
       const x = dqpos(e.q[0]);
       const y = dqpos(e.q[1]);
       const z = dqpos(e.q[2]);
@@ -1177,6 +1179,7 @@ export class Entities {
     const first = n * 3;
     for (const e of this.loose) {
       if (n >= MAX_GLINTS) break;
+      if (e === lit) continue;
       const x = dqpos(e.q[0]);
       const z = dqpos(e.q[2]);
       const d2 = (x - camPos.x) * (x - camPos.x) + (z - camPos.z) * (z - camPos.z);
@@ -1264,8 +1267,10 @@ export class Entities {
   }
 
   // closest interactable along the view ray; with reachTop, only ones not behind a wall (see canReach). The radii
-  // are shared with the server, which works out from them how far away an interaction can come from (Game.reachOf)
-  pick(ox, oy, oz, dx, dy, dz, maxDist, reachTop) {
+  // are shared with the server, which works out from them how far away an interaction can come from (Game.reachOf).
+  // stick: the target picked last frame, held a little longer (PICK_STICK) so that a crosshair riding its edge does
+  // not flick the prompt and the outline on and off (well inside the server's INTERACT_SLACK)
+  pick(ox, oy, oz, dx, dy, dz, maxDist, reachTop, stick) {
     let best = null;
     let bestT = maxDist;
     for (const e of this.ents.values()) {
@@ -1299,6 +1304,7 @@ export class Entities {
         cz = e.rz;
         r = PICK_RADIUS.DOWNED;
       } else continue;
+      if (e === stick) r *= PICK_STICK;
       const rx = cx - ox;
       const ry = cy - oy;
       const rz = cz - oz;
