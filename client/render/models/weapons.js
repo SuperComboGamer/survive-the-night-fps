@@ -1795,6 +1795,14 @@ const HAND_POSES = {
   radio: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.3, -0.55, -0.78], [0, -0.75, -0.66]], center: [-0.034, -0.083, 0] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
   claw: { curl: [[0.45, 0.55, 0.45], [0.4, 0.55, 0.45], [0.45, 0.6, 0.45], [0.55, 0.65, 0.5]], spread: 0.2, thumb: [[-0.55, -0.5, -0.67], [-0.35, -0.85, -0.3]], center: [-0.035, -0.11, 0] },
+  // throwables, each closed round its own shape until the fingers touch (a fist made for a 3 cm handle buries its
+  // fingers in anything thicker), with the palm seated on the surface: the center is as far out as the item's radius
+  ball: { curl: [[0.87, 0.99, 0.69], [0.82, 0.94, 0.66], [0.76, 0.87, 0.6], [0.67, 0.77, 0.54]], spread: 0.0, thumb: [[-0.59, -0.26, -0.77], [-0.38, -0.92, -0.05]], center: [-0.0475, -0.075, 0] }, // frag grenade
+  pipe: { curl: [[0.79, 0.97, 0.67], [0.81, 1.09, 0.76], [0.79, 1.0, 0.7], [0.68, 0.78, 0.54]], spread: 0.0, thumb: [[-0.56, -0.38, -0.73], [-0.96, 0.13, -0.26]], center: [-0.0415, -0.08, 0] }, // pipe bomb
+  flare: { curl: [[0.8, 1.22, 0.85], [0.84, 1.33, 0.92], [0.81, 1.26, 0.88], [0.77, 0.94, 0.65]], spread: 0.0, thumb: [[-0.73, -0.61, -0.3], [-0.87, -0.5, 0]], center: [-0.0345, -0.083, 0] }, // road flare
+  bottle: { curl: [[0.67, 0.77, 0.54], [0.7, 0.88, 0.61], [0.69, 0.79, 0.55], [0.56, 0.64, 0.45]], spread: 0.0, thumb: [[-0.79, -0.13, -0.6], [-0.71, 0, -0.71]], center: [-0.05, -0.08, 0] }, // molotov
+  // noisemaker: the alarm clock's feet down on the palm, the fingers cupped up behind its case
+  clock: { curl: [[0.6, 0.68, 0.48], [0.56, 0.64, 0.44], [0.54, 0.71, 0.49], [0.34, 0.64, 1.2]], spread: 0.0, thumb: [[-0.22, -0.77, -0.6], [-0.16, -0.8, -0.57]], center: [-0.0115, -0.085, 0] },
 };
 // Knuckles sit on an arc (middle finger furthest out, pinky set back). r = proximal phalanx radius.
 const FINGERS = [
@@ -2362,7 +2370,8 @@ class VMArm {
       this.shoulder.add(upper);
       this.elbow.add(fore);
       const hands = {};
-      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open', 'knife', 'radio'];
+      // (the throwables' own poses: right hand only)
+      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open', 'knife', 'radio', ...(side > 0 ? ['ball', 'pipe', 'flare', 'bottle', 'clock'] : [])];
       for (const p of poses) {
         const h = new THREE.Mesh(getHandGeo(p, style === 'claw' ? 'claw' : 'glove', side), mat);
         h.visible = false;
@@ -2408,8 +2417,8 @@ class VMArm {
     }
     if (this.style === 'claw' && !this.sets.claw.hands[this.pose] && this.visible) this.sets.claw.hands.claw.visible = true;
   }
-  gripCenter(out) {
-    const pose = HAND_POSES[this.style === 'claw' ? (this.pose === 'open' ? 'open' : 'claw') : this.pose] || HAND_POSES.grip;
+  gripCenter(out, poseName = this.pose) {
+    const pose = HAND_POSES[this.style === 'claw' ? (poseName === 'open' ? 'open' : 'claw') : poseName] || HAND_POSES.grip;
     return out.set(pose.center[0] * this.side, pose.center[1], pose.center[2]);
   }
   /**
@@ -2556,12 +2565,12 @@ const VM = {
   [ITEM.SPIKED_BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'grip' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
   [ITEM.MACHETE]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.95, 0.3, 0.1], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
   [ITEM.HAMMER]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.85, 0.25, 0.0], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
-  [ITEM.MOLOTOV]: { kind: 'throw', hip: [0.17, -0.235, -0.38, 0.12, 0.2, -0.2], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
-  [ITEM.PIPEBOMB]: { kind: 'throw', hip: [0.16, -0.2, -0.34, 0.1, 0.2, -0.2], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
-  [ITEM.FLARE]: { kind: 'throw', hip: [0.16, -0.2, -0.35, 0.12, 0.2, -0.25], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
-  [ITEM.GRENADE]: { kind: 'throw', hip: [0.13, -0.12, -0.3, 0.3, 0.35, -0.12], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.MOLOTOV]: { kind: 'throw', hip: [0.17, -0.235, -0.38, 0.12, 0.2, -0.2], rPose: 'bottle', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.PIPEBOMB]: { kind: 'throw', hip: [0.16, -0.2, -0.34, 0.1, 0.2, -0.2], rPose: 'pipe', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.FLARE]: { kind: 'throw', hip: [0.16, -0.2, -0.35, 0.12, 0.2, -0.25], rPose: 'flare', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.GRENADE]: { kind: 'throw', hip: [0.13, -0.12, -0.3, 0.3, 0.35, -0.12], rPose: 'ball', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   // the alarm clock sits on the palm, the fingers cupped round its feet, its dial turned to the eye
-  [ITEM.DECOY]: { kind: 'throw', hip: [0.15, -0.115, -0.34, 0.15, 0.35, -0.1], rPose: 'cup', rGrip: { p: [0, -0.058, 0], q: handQ(1, [-0.71, 0, -0.71], [0, 1, 0]) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.DECOY]: { kind: 'throw', hip: [0.15, -0.115, -0.34, 0.15, 0.35, -0.1], rPose: 'clock', rGrip: { p: [0, -0.058, 0], q: handQ(1, [-0.71, 0, -0.71], [0, 1, 0]) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   // the walkie-talkie up in front of the chest, its face to the eye; keyed (talk: added as the key goes down), it
   // comes up and in toward the mouth
   // (held low on the case, below the grille, so the fingers leave the face clear)
@@ -2582,6 +2591,8 @@ const SWINGS = {
 // claws: wrist frames (camera space): [t, px,py,pz, rx,ry,rz, ease] for the swinging (right) hand; mirrored for left
 const CLAW_IDLE = [0.18, -0.15, -0.38, -0.55, -0.35, 0.85];
 const CLAW_SWING = { dur: 0.5, keys: [[0.3, 0.3, 0.02, -0.22, 0.0, -0.9, 1.3, 0], [0.55, -0.16, -0.24, -0.44, -1.2, 0.5, -0.2, 1]] };
+
+const THROW_RELEASE = 0.46; // (of the throw animation) the item leaves the hand
 
 const ease = (u, e) => (e === 1 ? u : e === 2 ? 1 - (1 - u) * (1 - u) : e === 3 ? u * u : u * u * (3 - 2 * u));
 function evalSwing(sw, idle, t, out) {
@@ -3246,7 +3257,9 @@ export class ViewModel {
         for (let i = 0; i < 6; i++) P6[i] = _pose6b[i];
       } else if (act.type === 'throw') {
         this._animThrow(u, P6, cur);
-        if (u > 0.4 && u < 0.72) rPose = 'open';
+        // the fingers open as the item leaves the hand (it is hidden from 0.46), not before: opened round it, they
+        // went straight through it
+        if (u >= THROW_RELEASE && u < 0.72) rPose = 'open';
       } else if (act.type === 'use') {
         const up = win(u, 0.0, 0.18, 0.82, 1.0);
         P6[1] -= up * 0.35;
@@ -3308,10 +3321,9 @@ export class ViewModel {
       _q1.copy(wq).multiply(_q2.setFromEuler(_e1.set(0.4, 0.2, -1.2, 'YXZ')));
       rq.slerp(_q1, altRw);
     }
-    if (cfg.kind === 'throw' && rPose === 'grip' && this.itemId === ITEM.MOLOTOV) rPose = 'support';
     this.armR.setPose(rPose);
     this.armR.setVisible(true);
-    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R);
+    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R, cfg.kind === 'throw' ? cfg.rPose : undefined);
 
     // left
     if (act && act.type === 'use') {
@@ -3425,9 +3437,10 @@ export class ViewModel {
     st.pose = 'support';
   }
 
-  _solveArm(arm, gripPos, handQ, shoulderPos, pole) {
-    // wrist = grip - handQ * gripCenter
-    arm.gripCenter(_v3).applyQuaternion(handQ);
+  _solveArm(arm, gripPos, handQ, shoulderPos, pole, centerPose) {
+    // wrist = grip - handQ * gripCenter (centerPose: place the wrist as that pose would, e.g. a hand opening as it lets
+    // go of a throwable stays where it held it)
+    arm.gripCenter(_v3, centerPose).applyQuaternion(handQ);
     _v1.copy(gripPos).sub(_v3);
     ikTwoBone(shoulderPos, _v1, ARM_L1, ARM_L2, pole, _qU, _qL);
     arm.orient(_qU, _qL, handQ);
@@ -3741,7 +3754,7 @@ export class ViewModel {
     P6[2] += wind * 0.1 - thr * 0.26;
     P6[3] += -wind * 0.6 + thr * 0.9 - low * 0.4;
     P6[5] += wind * 0.35 - thr * 0.2;
-    cur.root.visible = u < 0.46 || u > 0.8;
+    cur.root.visible = u < THROW_RELEASE || u > 0.8;
     if (u > 0.8) {
       const r = smoothstep(0.8, 1.0, u);
       P6[1] -= (1 - r) * 0.1;
