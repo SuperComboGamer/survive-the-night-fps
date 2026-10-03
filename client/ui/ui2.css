@@ -289,7 +289,8 @@
   transition: opacity 0.4s;
 }
 
-.stn-ui.inv-open .obj,
+/* (the slim one, under the minimap, stays up over the inventory as a strip: see below) */
+.stn-ui.inv-open .obj:not(.slim),
 .stn-ui.map-open .obj {
   display: none;
 }
@@ -510,6 +511,342 @@
     opacity: 1;
     transform: translate(10%, -14%) scale(1);
   }
+}
+
+/* ------------------------------------------------------------------ minimap (an experimental setting) */
+/* the field map in a disc in the top-left corner, turned so the way you face is up; the objective tracker sits under
+   it in its slim form */
+.stn-ui {
+  --mm: max(150px, calc(200 * var(--u)));
+}
+
+.stn-ui .mmap {
+  position: absolute;
+  top: calc(46 * var(--u));
+  left: calc(24 * var(--u));
+  width: var(--mm);
+  height: var(--mm);
+  border-radius: 50%;
+  overflow: hidden;
+  background: #3a2f22;
+  box-shadow: 0 0 0 2px rgba(11, 9, 8, 0.88), 0 0 0 3px rgba(230, 223, 207, 0.32), 0 3px 14px rgba(0, 0, 0, 0.55);
+}
+
+.stn-ui .mmap-cv {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* worn edges, and darker at night so the paper does not glare */
+.stn-ui .mmap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 50%;
+  background: rgba(6, 8, 14, calc(var(--night, 0) * 0.4));
+  box-shadow: inset 0 0 calc(18 * var(--u)) rgba(40, 26, 12, 0.7);
+  pointer-events: none;
+}
+
+/* what is in front of you */
+.stn-ui .mmap-fov {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: conic-gradient(from -38deg, rgba(255, 248, 228, 0.34) 0deg 76deg, transparent 76deg);
+  -webkit-mask: radial-gradient(circle, #000 8%, transparent 58%);
+  mask: radial-gradient(circle, #000 8%, transparent 58%);
+}
+
+.stn-ui .mmap-labs,
+.stn-ui .mmap-mks {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.stn-ui .mmap-lab {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  font: 700 max(8px, calc(10 * var(--u))) / 1 Georgia, 'Times New Roman', serif;
+  letter-spacing: 0.04em;
+  color: rgba(42, 28, 16, 0.85);
+  text-shadow: 0 0 3px rgba(232, 220, 192, 0.95);
+  white-space: nowrap;
+}
+
+.stn-ui .mmap-mk {
+  --s: max(11px, calc(14 * var(--u)));
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--s);
+  height: var(--s);
+  margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+  color: #2a1c10;
+  filter: drop-shadow(0 0 1.5px rgba(232, 220, 192, 0.95));
+}
+
+.stn-ui .mmap-mk svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* out of range: a pin on the rim, in its direction */
+.stn-ui .mmap-mk.edge {
+  --s: max(13px, calc(16 * var(--u)));
+  padding: max(2px, calc(2.5 * var(--u)));
+  border-radius: 50%;
+  background: rgba(232, 220, 192, 0.9);
+  box-shadow: 0 0 0 1px rgba(42, 28, 16, 0.45);
+  filter: none;
+}
+
+.stn-ui .mmap-mk.mate {
+  color: #1d3a5a;
+}
+.stn-ui .mmap-mk.mate.downed,
+.stn-ui .mmap-mk.ping.k1 {
+  color: #b31212;
+}
+.stn-ui .mmap-mk.car {
+  color: #111;
+}
+.stn-ui .mmap-mk.hint {
+  color: #8a3f06;
+}
+.stn-ui .mmap-mk.ping {
+  color: #3e6a14;
+}
+.stn-ui .mmap-mk.ping.k2 {
+  color: #7a5a06;
+}
+.stn-ui .mmap-mk.crate {
+  color: #c1201a;
+}
+.stn-ui .mmap-mk.bench {
+  color: #2f5a4a;
+}
+.stn-ui .mmap-mk.way {
+  color: #5b2a9d;
+}
+.stn-ui .mmap-mk.teamway {
+  color: #1d6478;
+}
+
+/* you, in the middle, always facing up */
+.stn-ui .mmap-you {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  width: max(15px, calc(19 * var(--u)));
+  height: max(15px, calc(19 * var(--u)));
+  transform: translate(-50%, -50%);
+  color: #b31212;
+  filter: drop-shadow(0 0 2px rgba(232, 220, 192, 0.95));
+}
+
+.stn-ui .mmap-you svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* north, on the rim */
+.stn-ui .mmap-n {
+  --s: max(14px, calc(16 * var(--u)));
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: var(--s);
+  height: var(--s);
+  margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+  border-radius: 50%;
+  background: rgba(11, 9, 8, 0.82);
+  font: 700 max(8px, calc(10 * var(--u))) / 1 Georgia, 'Times New Roman', serif;
+  color: #ff5446;
+}
+
+/* ---- the objective tracker under the minimap: the directive, and the supplies as a row of icons. A pointer over
+   one (with a menu up, the pointer is free) says what it is and where it is rumoured to be */
+.stn-ui .obj.slim {
+  top: calc(58 * var(--u) + var(--mm));
+  width: var(--mm);
+  min-width: 0;
+  padding: calc(8 * var(--u)) calc(9 * var(--u)) calc(8 * var(--u) + 6px);
+}
+
+.stn-ui .obj.slim .obj-title {
+  display: none;
+}
+
+.stn-ui .obj.slim .obj-head,
+.stn-ui .obj.slim .obj-row {
+  pointer-events: auto;
+  cursor: help;
+}
+
+.stn-ui .obj.slim .obj-dir {
+  margin-top: calc(6 * var(--u));
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-size: max(10px, calc(12 * var(--u)));
+}
+
+.stn-ui .obj.slim .obj-dir.dir-danger {
+  margin: calc(6 * var(--u)) calc(-5 * var(--u)) 0;
+  padding: calc(4 * var(--u)) calc(9 * var(--u)) calc(5 * var(--u));
+}
+
+/* (the row stays up at night too: it takes no room) */
+.stn-ui .obj.slim .obj-list {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: calc(4 * var(--u));
+  margin-top: calc(8 * var(--u));
+}
+
+.stn-ui .obj.slim .obj-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  width: calc(31 * var(--u));
+  min-width: 24px;
+  height: calc(28 * var(--u));
+  min-height: 22px;
+  border: 1px solid rgba(230, 223, 207, 0.26);
+  background: rgba(230, 223, 207, 0.05);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.stn-ui .obj.slim .obj-row:hover {
+  border-color: var(--bone-2);
+  background: rgba(230, 223, 207, 0.16);
+}
+
+.stn-ui .obj.slim .obj-name,
+.stn-ui .obj.slim .obj-where,
+.stn-ui .obj.slim .obj-row:not(.done) .obj-box {
+  display: none;
+}
+
+.stn-ui .obj.slim .obj-ico {
+  grid-area: 1 / 1;
+}
+
+.stn-ui .obj.slim .obj-ico svg {
+  height: calc(17 * var(--u));
+  min-height: 13px;
+}
+
+/* how many of a supply that takes more than one */
+.stn-ui .obj.slim .obj-st {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  padding: 1px 2px 0;
+  background: rgba(11, 9, 8, 0.92);
+  font-size: max(8.5px, calc(9.5 * var(--u)));
+  line-height: 1;
+}
+
+/* in the car: a tick in the corner */
+.stn-ui .obj.slim .obj-box {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: max(9px, calc(11 * var(--u)));
+  height: max(9px, calc(11 * var(--u)));
+  border: 0;
+  background: rgba(11, 9, 8, 0.92);
+  transform: none;
+}
+
+.stn-ui .obj.slim .obj-row.done .obj-box svg {
+  width: 100%;
+  height: 100%;
+  transform: none;
+  animation: none;
+}
+
+.stn-ui .obj.slim .obj-row.done {
+  border-color: rgba(182, 208, 138, 0.4);
+  background: rgba(182, 208, 138, 0.07);
+}
+
+.stn-ui .obj.slim .obj-row.carried {
+  border-color: var(--amber);
+  background: rgba(232, 163, 61, 0.12);
+}
+
+.stn-ui .obj.slim .obj-row.carried .obj-ico {
+  animation: stn-warnpulse 1.4s ease-in-out infinite;
+}
+
+/* over the inventory: one strip along the top-left corner, the directive left out (its words are on the car's hover) */
+.stn-ui.inv-open .obj.slim {
+  display: flex;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  top: calc(14 * var(--u));
+  width: auto;
+  padding: calc(6 * var(--u)) calc(12 * var(--u)) calc(6 * var(--u) + 6px);
+}
+
+.stn-ui.inv-open .obj.slim .obj-title {
+  display: inline;
+}
+
+.stn-ui.inv-open .obj.slim .obj-pips {
+  flex: none;
+}
+
+.stn-ui.inv-open .obj.slim .obj-dir {
+  display: none;
+}
+
+.stn-ui.inv-open .obj.slim .obj-list {
+  margin-top: 0;
+}
+
+.stn-ui .obj-tip {
+  position: absolute;
+  z-index: 1;
+  max-width: calc(260 * var(--u));
+  min-width: 170px;
+  padding: calc(8 * var(--u)) calc(11 * var(--u)) calc(9 * var(--u));
+  border-left: 2px solid var(--sun);
+  background: rgba(11, 9, 8, 0.95);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  color: var(--bone);
+  text-shadow: var(--shadow-s);
+  pointer-events: none;
+}
+
+.stn-ui .obj-tip-name {
+  display: block;
+  margin-bottom: calc(4 * var(--u));
+  font: 400 max(13px, calc(15 * var(--u))) / 1.1 var(--f-num);
+  letter-spacing: 0.04em;
+}
+
+.stn-ui .obj-tip-body {
+  display: block;
+  font: max(10.5px, calc(12 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone-2);
+  white-space: pre-line;
 }
 
 /* ------------------------------------------------------------------ world markers */
@@ -1485,6 +1822,7 @@
 
 /* map on top of the HUD: hide the cinematic titles / toasts behind it */
 .stn-ui.map-open .cine,
+.stn-ui.map-open .top-left,
 .stn-ui.map-open .top-center,
 .stn-ui.map-open .top-right,
 .stn-ui.map-open .layer-hud {
@@ -1685,6 +2023,7 @@
 .stn-ui.board-open .obj,
 .stn-ui.board-open .wmk-layer,
 .stn-ui.board-open .cine,
+.stn-ui.board-open .top-left,
 .stn-ui.board-open .top-center,
 .stn-ui.board-open .top-right,
 .stn-ui.board-open .layer-hud {

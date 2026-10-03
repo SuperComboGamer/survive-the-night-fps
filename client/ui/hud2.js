@@ -263,7 +263,7 @@ export class Compass {
 export class Objective {
   constructor(parent) {
     this.root = el('div', 'obj scrap', parent);
-    const head = el('div', 'obj-head', this.root);
+    const head = (this.head = el('div', 'obj-head', this.root));
     this.hIco = svgEl('i', 'obj-hico', head, glyph('car'));
     this.hTitle = el('span', 'obj-title', head, 'Escape');
     // one pip per supply the car still needs
@@ -279,10 +279,51 @@ export class Objective {
       const where = el('span', 'obj-where', r, '');
       const st = el('span', 'obj-st', r, '');
       svgEl('i', 'obj-box', r, glyph('check')); // ticked off once it is in the car
-      return { r, name, where, st, key: '' };
+      return { r, name, where, st, key: '', tip: null };
     });
     this.key = '';
     this.done = -1;
+    // slim (under the minimap): the supplies are a row of icons, and a pointer over one says what it is and where.
+    // (The pointer is only free with a menu up: the slim tracker stays over the inventory for that.) The tip sits
+    // outside the torn paper, whose mask would cut it off
+    this.slim = false;
+    this.headTip = { name: 'Escape', body: '' };
+    this.tip = el('div', 'obj-tip', parent);
+    this.tip.hidden = true;
+    this.tipName = el('b', 'obj-tip-name', this.tip);
+    this.tipBody = el('span', 'obj-tip-body', this.tip);
+    this.tipFor = null;
+    this.root.addEventListener('pointerover', (e) => this._hover(e.target.closest('.obj-row, .obj-head')));
+    this.root.addEventListener('pointerout', (e) => {
+      if (!this.root.contains(e.relatedTarget)) this._hover(null);
+    });
+  }
+
+  setSlim(on) {
+    this.slim = !!on;
+    this.root.classList.toggle('slim', this.slim);
+    if (!this.slim) this._hover(null);
+  }
+
+  // every frame: the tip goes when its icon does, or when the pointer is taken back (closing the inventory locks it
+  // where it stands, and no pointerout comes then)
+  syncTip() {
+    if (this.tipFor && (document.pointerLockElement || this.root.hidden || !this.tipFor.matches(':hover'))) this._hover(null);
+  }
+
+  _hover(row) {
+    const tip = !this.slim || !row ? null : row === this.head ? this.headTip : this.rows.find((x) => x.r === row)?.tip;
+    this.tipFor = tip ? row : null;
+    if (!tip) {
+      this.tip.hidden = true;
+      return;
+    }
+    this.tipName.textContent = tip.name;
+    this.tipBody.textContent = tip.body;
+    const r = row.getBoundingClientRect();
+    this.tip.style.left = r.left + 'px';
+    this.tip.style.top = r.bottom + 6 + 'px';
+    this.tip.hidden = false;
   }
 
   update(o) {
@@ -311,9 +352,20 @@ export class Objective {
         else where = need > 1 ? rum.zones.map((z) => ZONE_NAMES[z]).join(' · ') : ZONE_NAMES[rum.zones[0]] + '?';
       }
       const st = need > 1 && !complete ? `${have}/${need}` : '';
-      const k = where + '|' + st + '|' + complete + '|' + !!carried;
+      const k = where + '|' + st + '|' + complete + '|' + carried;
       if (row.key === k) return;
       row.key = k;
+      // the slim tracker's hover text: the name, then where it is in words
+      let body;
+      if (complete) body = 'Installed in the car.';
+      else if (carried) body = `In your pack: take ${carried > 1 ? 'them' : 'it'} to the car and install ${carried > 1 ? 'them' : 'it'}.`;
+      else {
+        const rum = supplyRumours(i, o.hints, o.found);
+        if (rum.zones.length) body = `Rumoured to be at ${rum.zones.map((z) => ZONE_NAMES[z]).join(', ')}.`;
+        else if (rum.found) body = 'Already picked up: a survivor has it, or it was dropped somewhere.';
+        else body = 'Nobody knows where yet. Search the valley.';
+      }
+      row.tip = { name: ITEM_DEFS[item].name + (need > 1 ? `s · ${Math.min(have, need)} of ${need} in the car` : ''), body };
       row.where.textContent = where;
       row.st.textContent = st;
       row.r.classList.toggle('done', complete);
@@ -359,6 +411,8 @@ export class Objective {
     this.directive.className = 'obj-dir' + (tone ? ' dir-' + tone : '');
     this.directive.hidden = !dir;
     this.root.classList.toggle('compact', o.phase === PHASE.NIGHT || o.finale);
+    this.headTip.body = `${done} of ${total} car supplies are in the car. Install them all, start the engine and drive away.` + (dir ? `\n\nNow: ${dir}` : '');
+    if (this.tipFor) this._hover(this.tipFor); // (what it says may just have changed)
   }
 }
 

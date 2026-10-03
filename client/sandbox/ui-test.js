@@ -256,6 +256,50 @@ ui.setInventory(inv);
 ui.setPlayers(players);
 ui.setCraftContext({ fire: true, bench: false, unlocked: 0b00101 });
 
+// ?minimap=1: the minimap setting on, over a real valley (&seed=), you by the car (&yaw=, &spin=1 turns you),
+// a teammate close by, a downed one, your waypoint and a supply drop out of range (on the rim)
+if (q.get('minimap')) {
+  const { createWorld } = await import('../../shared/world.js');
+  const world = createWorld(+(q.get('seed') || 1337));
+  ui.map.setWorld(world);
+  ui._applySettings({ ...ui.getSettings(), minimap: true });
+  const car = world.car;
+  const far = world.zones.map((z) => ({ z, d: Math.hypot(z.x - car.x, z.z - car.z) })).sort((a, b) => a.d - b.d);
+  const near = far[0].z; // the place nearest the car: you stand between them
+  const self = { x: (car.x + near.x) / 2, z: (car.z + near.z) / 2 };
+  const way = far[3].z;
+  const t0 = performance.now();
+  const upd = ui.updateHud.bind(ui);
+  ui.updateHud = (h) => {
+    if (!h || h.zombie) return upd(h);
+    const yaw = +(q.get('yaw') ?? 0.6) + (q.get('spin') ? ((performance.now() - t0) / 1000) * 0.6 : 0);
+    upd({
+      ...h,
+      yaw,
+      minimap: ui.inventoryOpen
+        ? null
+        : {
+            self: { ...self, yaw },
+            mates: [
+              { x: self.x + 18, z: self.z - 22, name: 'Marlowe', status: 'alive' },
+              { x: self.x - 160, z: self.z + 90, name: 'Old Hank', status: 'downed' },
+            ],
+            car,
+            pings: [{ x: self.x - 12, z: self.z - 30, kind: 2, name: 'Marlowe' }],
+            crates: [{ x: self.x + 200, z: self.z + 40 }],
+            benches: [],
+            discovered: new Set(world.zones.map((z) => z.id)),
+            hints: h.objective?.hints || [],
+            found: 0,
+            supplies: h.objective?.supplies || [0, 0, 0, 0, 0],
+            carried: h.objective?.carried || {},
+            waypoint: { x: way.x, z: way.z, zone: way.id },
+            teamWays: [],
+          },
+    });
+  };
+}
+
 // ---------------------------------------------------------------- screens
 let bg = q.get('bg');
 if (q.get('conn')) setTimeout(() => ui.setConnectionStatus('Reconnecting'), 300);

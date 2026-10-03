@@ -77,10 +77,11 @@ export class UI {
     const menuL = el('div', 'layer layer-menu', rootEl);
     const modalL = el('div', 'layer layer-modal', rootEl);
     const tipL = el('div', 'layer layer-tip', rootEl);
+    const topLeft = el('div', 'top-left', topL);
     const topCenter = el('div', 'top-center', topL);
     const topRight = el('div', 'top-right', topL);
 
-    this.hud = new Hud(this, hudL, topCenter, topRight);
+    this.hud = new Hud(this, hudL, topCenter, topRight, topLeft);
     this.voiceList = new VoiceList(this.hud.comms); // who is talking, beside your own mic over the vitals
     this.kf = new Killfeed(hudL);
     this.pickups = new Pickups(hudL);

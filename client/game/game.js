@@ -444,6 +444,7 @@ export class Game {
       }
     }
     this.ui.map.setWorld(this.world);
+    if (this.settings?.minimap) this.ui.map.baked(); // (the minimap draws from it at once: bake it here, in the load, not on the first frame)
     this.prewarm();
     console.log(`[client] world ${seed}: gen ${(t1 - t0).toFixed(0)}ms, terrain ${(t2 - t1).toFixed(0)}ms, static ${(t3 - t2).toFixed(0)}ms, foliage ${(t4 - t3).toFixed(0)}ms, rest ${(performance.now() - t4).toFixed(0)}ms`);
   }
@@ -2864,6 +2865,8 @@ export class Game {
     // compass + world markers
     h.yaw = this.input.yaw;
     this.buildMarkers(h, rp);
+    // the minimap (an experimental setting): only while it is on screen
+    h.minimap = this.settings?.minimap && !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen ? this.mapData(counts) : null;
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
@@ -2979,6 +2982,12 @@ export class Game {
   }
 
   updateMap(s) {
+    this.ui.map.update(this.mapData());
+    void s;
+  }
+
+  // what the field map [M] and the minimap show
+  mapData(counts = this.invCounts()) {
     const g = this.global;
     const mates = [];
     const crates = [];
@@ -2988,10 +2997,9 @@ export class Game {
         mates.push({ x: e.rx, z: e.rz, name: this.name(e.id), status: e.downed ? 'downed' : 'alive' });
       } else if (e.kind === ENT.CRATE && e.q[3] !== 2) crates.push({ x: e.rx, z: e.rz });
     }
-    const counts = this.invCounts();
     const carried = {};
     SUPPLIES.forEach((it) => counts[it] && (carried[it] = counts[it]));
-    this.ui.map.update({
+    return {
       self: { x: this.renderPos.x, z: this.renderPos.z, yaw: this.input.yaw },
       mates,
       car: this.world.car,
@@ -3005,8 +3013,7 @@ export class Game {
       carried,
       waypoint: this.waypoint,
       teamWays: this.teamWaypoints(),
-    });
-    void s;
+    };
   }
 }
 

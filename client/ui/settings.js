@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   weaponSway: true,
   keyHints: true,
   showFps: true,
+  minimap: false, // experimental
 });
 
 const NUM_RANGES = {
@@ -52,7 +53,7 @@ export function sanitizeSettings(s) {
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
     if (['off', 'subtle', 'strong'].includes(s.highlight)) out.highlight = s.highlight;
-    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'showFps', 'ps1', 'minimap']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -116,6 +117,7 @@ const SECTIONS = [
       { k: 'ps1Strength', label: 'PS1 intensity', type: 'range', min: 0.1, max: 1, step: 0.05, fmt: pct, needs: 'ps1', hint: 'Pixel size, wobble, colour banding and fog' },
       { k: 'highlight', label: 'Interaction highlight', type: 'seg', options: ['off', 'subtle', 'strong'], hint: 'A faint outline on what you can use, while you look at it up close' },
       { k: 'showFps', label: 'Show FPS counter', type: 'toggle' },
+      { k: 'minimap', label: 'Minimap (experimental)', type: 'toggle', hint: 'A map in the top-left corner that turns with you. The car supplies shrink to icons under it' },
     ],
   },
 ];

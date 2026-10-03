@@ -308,6 +308,12 @@ export class MapScreen {
     console.log(`[map] baked in ${(performance.now() - t0).toFixed(0)}ms (${MAP_PX}px)`);
   }
 
+  // the baked map, for the minimap to draw from (baked now if the map has not been opened yet), or null before a world
+  baked() {
+    this._ensureCanvas();
+    return this.canvas;
+  }
+
   setOpen(open) {
     open = !!open;
     if (open === this.open) return;

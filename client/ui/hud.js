@@ -6,6 +6,7 @@ import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
 import { Compass, Objective, Markers, Downed, DamageDir } from './hud2.js';
+import { Minimap } from './minimap.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build'];
 const ARC = { cx: 120, cy: 70, rx: 100, ry: 56 };
@@ -42,7 +43,9 @@ function stars() {
 }
 
 export class Hud {
-  constructor(ui, layer, topLayer, clockLayer) {
+  // leftLayer: the top-left corner over the inventory, where the objective tracker sits (its slim form stays up while
+  // the inventory is open)
+  constructor(ui, layer, topLayer, clockLayer, leftLayer = layer) {
     this.ui = ui;
     this.c = Object.create(null); // diff cache
     this.root = layer;
@@ -68,8 +71,9 @@ export class Hud {
     this.iFpsT = el('b', '', this.iFps, '');
     this.iFps.hidden = true;
 
-    // ---- objective tracker (left)
-    this.objective = new Objective(layer);
+    // ---- minimap (top-left, an experimental setting) and the objective tracker (left; under the minimap, slim)
+    this.minimap = new Minimap(layer);
+    this.objective = new Objective(leftLayer);
     // ---- top-centre compass
     this.compass = new Compass(topLayer);
     // ---- top-right day / night clock
@@ -286,12 +290,21 @@ export class Hud {
     this._center(h);
     this._info(h);
     this.compass.update(h.yaw || 0, h.compassMarks || []);
+    // with the minimap on, the objective tracker slims down to fit under it
+    const mm = !!this.ui.settings.minimap;
+    if (c.mm !== mm) {
+      c.mm = mm;
+      this.objective.setSlim(mm);
+    }
+    this.minimap.setVisible(!!h.minimap);
+    if (h.minimap) this.minimap.update(this.ui.map, h.minimap);
     this.objective.update(zombie ? null : h.objective);
     const showObj = !zombie && !!h.objective;
     if (c.objShow !== showObj) {
       c.objShow = showObj;
       this.objective.root.hidden = !showObj;
     }
+    this.objective.syncTip();
     this.markers.update(h.worldMarks || []);
     this.downed.update(h.downed || null);
   }

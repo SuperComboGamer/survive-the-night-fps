@@ -154,12 +154,15 @@ body {
 .stn-ui.paused .cine,
 .stn-ui.paused .toasts,
 .stn-ui.splash-on .layer-hud,
+.stn-ui.splash-on .top-left,
 .stn-ui.splash-on .top-center,
 .stn-ui.splash-on .top-right,
 .stn-ui.end-on .layer-hud,
+.stn-ui.end-on .top-left,
 .stn-ui.end-on .top-center,
 .stn-ui.end-on .top-right,
 .stn-ui.hud-hidden .layer-hud,
+.stn-ui.hud-hidden .top-left,
 .stn-ui.hud-hidden .top-center,
 .stn-ui.hud-hidden .top-right {
   visibility: hidden;
@@ -510,8 +513,15 @@ body {
   min-height: 11px;
   color: var(--good);
   animation: stn-talk 0.7s ease-in-out infinite alternate;
-}/* ---------- top-centre stack: compass + boss, top-right: clock */
+}/* ---------- top-left: the objective tracker (over the inventory, in its slim form), top-centre stack: compass + boss,
+   top-right: clock */
 
+
+.stn-ui .top-left {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
 
 .stn-ui .top-center {
   position: absolute;
