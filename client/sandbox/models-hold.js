@@ -9,7 +9,8 @@
 //   &clip=1             measure (window.__clip): the deepest item vertex inside the body, and body vertex inside the item
 //   &dots=1             with clip=1: mark them;  &xray=1  the item see-through
 import * as THREE from 'three';
-import { createSurvivor, setStockPocket } from '../render/models/characters.js';
+import * as CHARS from '../render/models/characters.js';
+const { createSurvivor } = CHARS;
 
 const q = new URLSearchParams(location.search);
 const info = document.getElementById('info');
@@ -30,7 +31,7 @@ const ground = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshLam
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
-if (q.has('pocket')) setStockPocket(...q.get('pocket').split(',').map(Number)); // &pocket=z[,rpgLift]: where a shouldered butt ends (tuning)
+if (q.has('pocket')) CHARS.setStockPocket?.(...q.get('pocket').split(',').map(Number)); // &pocket=z[,rpgLift]: where a shouldered butt ends (tuning)
 const item = +(q.get('hold') || 0);
 const pose = q.get('pose') || 'idle';
 const T = +(q.get('t') ?? 1);
