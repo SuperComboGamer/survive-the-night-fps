@@ -100,6 +100,7 @@ import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
 import { KeyHints } from '../ui/keyhints.js';
 import { MenuTour } from './menutour.js';
+import { KeyGuard } from './keyguard.js';
 import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -249,6 +250,10 @@ export class Game {
     this.input.sensitivity = settings.sensitivity || 1;
     this.input.invertY = !!settings.invertY;
     this.input.rawInput = settings.rawMouse !== false;
+    // Ctrl+W (crouch + forward) must not close the tab: fullscreen with the keys locked, else a "Leave site?" prompt
+    this.keyGuard = new KeyGuard(() => this.state === 'playing');
+    this.keyGuard.fullscreen = settings.fullscreen !== false;
+    this.input.onRequestLock = () => this.keyGuard.engage();
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
@@ -696,6 +701,7 @@ export class Game {
     this.state = 'menu';
     this.input.enabled = false;
     this.input.exitLock();
+    this.keyGuard.release();
     this.entities.clear();
     this.voice.closeAll();
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
