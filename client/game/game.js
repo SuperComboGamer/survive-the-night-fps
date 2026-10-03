@@ -71,7 +71,7 @@ import { GunClient } from './mountedgun.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
-import { Input } from './input.js';
+import { Input, AIM_KEY_LABEL } from './input.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
@@ -2343,7 +2343,7 @@ export class Game {
       this.deathShown = false;
       this.ui.hideOverlays();
       this.ui.notify('YOU HAVE RISEN', 'big', 4);
-      this.ui.notify(this.dawnAhead() ? 'Hunt the survivors until dawn. [RMB] to leap.' : 'Hunt the survivors. [RMB] to leap.', 'sub', 4);
+      this.ui.notify(this.dawnAhead() ? `Hunt the survivors until dawn. [RMB / ${AIM_KEY_LABEL}] to leap.` : `Hunt the survivors. [RMB / ${AIM_KEY_LABEL}] to leap.`, 'sub', 4);
     }
   }
 

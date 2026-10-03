@@ -1,6 +1,10 @@
 // Keyboard + mouse input with pointer lock. Gameplay keys only; the UI handles its own DOM input.
 import { BTN, SLOT_BUILD } from '../../shared/constants.js';
 
+export const AIM_KEY = 'AltLeft';
+// what the controls lists call it: the key is labelled Option on a Mac
+export const AIM_KEY_LABEL = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? 'Option' : 'Alt';
+
 const KEYMAP = {
   KeyW: BTN.FWD,
   ArrowUp: BTN.FWD,
@@ -16,6 +20,9 @@ const KEYMAP = {
   ControlLeft: BTN.CROUCH,
   KeyC: BTN.CROUCH,
   KeyR: BTN.RELOAD,
+  // held, the same as right mouse held: aim, heavy swing, a zombie's leap. On a trackpad a right click can't be held
+  // while you click to fire; the left thumb rests on Alt (Option on a Mac) with the fingers on WASD
+  [AIM_KEY]: BTN.ALT,
 };
 
 // The one-off action keys the HUD names in its key hints (ui/keyhints.js). Game.onKey is what acts on these
@@ -120,7 +127,7 @@ export class Input {
         return;
       }
       if (!this.enabled && e.code !== 'Enter' && e.code !== 'Escape' && e.code !== 'KeyM' && e.code !== 'KeyL' && e.code !== 'KeyI') return;
-      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'ControlLeft' || e.code === 'KeyF' || e.code === 'KeyM' || (e.ctrlKey && (e.code === 'KeyW' || e.code === 'KeyS' || e.code === 'KeyD'))) e.preventDefault();
+      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'ControlLeft' || e.code === 'KeyF' || e.code === 'KeyM' || e.code === AIM_KEY || (e.ctrlKey && (e.code === 'KeyW' || e.code === 'KeyS' || e.code === 'KeyD'))) e.preventDefault();
       const b = KEYMAP[e.code];
       if (b) {
         this.buttons |= b;
@@ -129,6 +136,7 @@ export class Input {
       if (!e.repeat) this.handlers.onKey?.(e.code);
     });
     window.addEventListener('keyup', (e) => {
+      if (e.code === AIM_KEY && this.locked) e.preventDefault(); // (Firefox shows its menu bar when Alt is let go)
       const b = KEYMAP[e.code];
       if (b) this.buttons &= ~b;
       this.handlers.onKeyUp?.(e.code);
@@ -176,7 +184,7 @@ export class Input {
       if (mb & 1) b |= BTN.ATTACK;
       if (mb & 2) b |= BTN.ALT;
     } else {
-      b &= ~BTN.RELOAD; // R cycles structures in build mode
+      b &= ~(BTN.RELOAD | BTN.ALT); // R cycles structures in build mode, and the aim key does nothing there (RMB rotates)
     }
     return b;
   }

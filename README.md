@@ -209,6 +209,7 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | Space | Jump (vault barricades and windows) |
 | Ctrl / C | Crouch (quieter - zombies notice you less) |
 | Mouse | Look · LMB fire / attack · RMB aim / heavy melee |
+| Left Alt (Option on a Mac) | Held, the same as RMB held: aim, heavy melee, a zombie's leap. For a trackpad, where right click can't be held while you click to fire |
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
@@ -225,7 +226,7 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | Y / Enter | Chat (heard by survivors within 35 m - or by everyone carrying a walkie-talkie, if you carry one too) |
 | V | Push-to-talk proximity voice (same reach as chat) |
 | Build mode | LMB place · RMB rotate · Q / E or wheel cycle structure · E repair (when aiming at a damaged structure) · X demolish |
-| Zombie form | LMB claw · RMB leap |
+| Zombie form | LMB claw · RMB (or Left Alt) leap |
 
 The HUD names a key at the moment it answers something: the flashlight when night falls and the light is off,
 quick heal when you are under half health with something that heals in the pack, the build slot at the dusk

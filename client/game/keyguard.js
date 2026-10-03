@@ -4,7 +4,7 @@
 // (Ctrl+W, Ctrl+Shift+W, ...) then goes to the page instead. So while playing, the click that takes the mouse also takes
 // fullscreen with the game's keys locked (Settings > Controls > "Fullscreen while playing"), and when that is off or not
 // available (other browsers) the tab asks "Leave site?" before it closes. Esc is not locked: it still leaves fullscreen.
-const LOCK_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyF', 'KeyT', 'KeyN', 'KeyC', 'KeyV', 'KeyM', 'KeyH', 'KeyZ', 'KeyX', 'Tab', 'Space', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'];
+const LOCK_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyF', 'KeyT', 'KeyN', 'KeyC', 'KeyV', 'KeyM', 'KeyH', 'KeyZ', 'KeyX', 'Tab', 'Space', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'AltLeft'];
 // with Ctrl (or Cmd) held these do something to the page or the browser; in play they are the game's
 const GAME_KEYS = new Set(LOCK_KEYS);
 

@@ -2,6 +2,7 @@
 import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
+import { AIM_KEY_LABEL } from '../game/input.js';
 import { loadRecord } from './records.js';
 import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
 import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
@@ -21,7 +22,7 @@ export const DEFAULT_CONTROLS = [
   ['Space', 'Jump'],
   ['Ctrl', 'Crouch'],
   ['LMB', 'Attack · place'],
-  ['RMB', 'Aim · heavy swing'],
+  [`RMB / ${AIM_KEY_LABEL}`, 'Aim · heavy swing'],
   ['R', 'Reload'],
   ['E', 'Interact · pick up'],
   ['F', 'Flashlight'],

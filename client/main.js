@@ -5,6 +5,7 @@ import { UI } from './ui/ui.js';
 import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
+import { AIM_KEY_LABEL } from './game/input.js';
 import { playerId } from './net/identity.js';
 import { refreshAccount } from './net/account.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
@@ -168,7 +169,8 @@ ui.setControls([
   ['Shift', 'Sprint'],
   ['Space', 'Jump / vault barricades & windows'],
   ['Ctrl / C', 'Crouch (stealth)'],
-  ['LMB / RMB', 'Fire · Aim / heavy attack'],
+  ['LMB', 'Fire / attack'],
+  [`RMB / ${AIM_KEY_LABEL}`, 'Aim / heavy attack (hold)'],
   ['1 2 3 4 5', 'Primary · Pistol · Melee · Throwable · Build'],
   ['Q / Wheel', 'Last weapon / cycle (build: Q / E cycle structure)'],
   ['R', 'Reload'],
