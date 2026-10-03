@@ -104,6 +104,16 @@ const rocket = (x) =>
   ) +
   P(`M${f(x - 1.2)} 32L${f(x - 4.4)} 35.6V39.4H${f(x - 1.2)}Z`) +
   P(`M${f(x + 1.2)} 32L${f(x + 4.4)} 35.6V39.4H${f(x + 1.2)}Z`);
+// 26.5mm flare shell standing on its head (34 high): fat crimped hull with a printed band, wide aluminium head and rim
+const flareShell = (x) =>
+  E(
+    `M${x} 6.4Q${x} 3.2 ${x + 3.2} 3.2H${x + 8.8}Q${x + 12} 3.2 ${x + 12} 6.4V24.4H${x}Z` +
+      rct(x, 8, 12, 1) +
+      rct(x, 21.6, 12, 1) +
+      `M${x + 6} 10.4Q${x + 9.6} 14 ${x + 8.8} 17.2Q${x + 8.2} 19.8 ${x + 6} 19.8Q${x + 3.8} 19.8 ${x + 3.2} 17.2Q${x + 2.8} 15 ${x + 4.6} 13.4Q${x + 4.8} 15.8 ${x + 6} 16Q${x + 5.2} 13 ${x + 6} 10.4Z`,
+  ) +
+  P(rct(x - 0.6, 25.3, 13.2, 3)) +
+  P(rct(x - 1.6, 29.1, 15.2, 2.6));
 
 // crossbow bolt standing on its nock (40 high): leaf head, thin shaft, two vanes
 const bolt = (x) =>
@@ -312,6 +322,18 @@ const ITEM_ICONS = {
       P(rct(131, 8.4, 1.6, 6.8)) + // front sight
       S('M128.8 10.2Q131.8 5.6 134.8 10.2', 1.1) +
       E(rct(136, 11.6, 13, 9.8) + rct(138.2, 13.4, 3.6, 6.2) + rct(143.4, 13.4, 3.6, 6.2)), // muzzle brake
+  ],
+  // break-open signal pistol: fat barrel with a lip at the muzzle, the hammer spur behind the breech, a round grip
+  [ITEM.FLARE_GUN]: [
+    64,
+    44,
+    E('M17 7.6H57Q58.6 7.6 58.6 9.2V9.4H60.6Q62 9.4 62 10.8V20.6Q62 22 60.6 22H58.6V22.2Q58.6 23.8 57 23.8H17Z' + rct(28, 13.6, 25, 1.3)) + // barrel
+      P('M7.6 10Q7.6 7 10.6 6.8L17.6 6.4V25H7.6Z') + // standing breech
+      P('M3.4 4.2L6.8 2.4L12.2 7.4L10 9.8Z') + // hammer spur
+      E('M17 23.4H40.4Q43.4 23.4 43.4 25.8Q43.4 28 40.4 28H17Z' + circ(40.2, 25.7, 1.1)) + // lug and hinge pin
+      P('M7.6 24.6H25L23.4 29.4L21.4 39.4Q21 41.6 18.8 41.6H6.6Q4.2 41.6 4.4 39.2L5.4 28Z') + // grip
+      S('M25.2 27Q25.2 34.6 31.4 34.2Q35.2 33.8 35.6 27.6', 1.8) + // trigger guard
+      S('M28.8 27.8Q29.6 30.2 28.4 32.2', 1.4), // trigger
   ],
   [ITEM.PISTOL]: [
     64,
@@ -670,6 +692,7 @@ const ITEM_ICONS = {
   [ITEM.AMMO_556]: [36, 36, [2.4, 10.6, 18.8, 27].map((x) => rifleRound(x, 5.4, 35)).join('')],
   [ITEM.AMMO_BOLTS]: [36, 40, bolt(7.5) + bolt(18) + bolt(28.5)],
   [ITEM.AMMO_ROCKET]: [36, 40, rocket(10.5) + rocket(25.5)],
+  [ITEM.AMMO_FLARE]: [36, 34, flareShell(3.4) + flareShell(20.6)],
   // fuel flask: screw cap, a flame stencilled on the side
   [ITEM.AMMO_FUEL]: [
     36,

@@ -81,6 +81,7 @@ import { Highlight } from './highlight.js';
 import { Input } from './input.js';
 import { actionsOf, bindTag, bindPair, bindLabel } from './binds.js';
 import { DropHold } from './drophold.js';
+import { SkyFlares } from './skyflares.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
@@ -130,6 +131,7 @@ const SHOT_SOUND = {
   [ITEM.CROSSBOW]: SOUND.CROSSBOW,
   [ITEM.RPG]: SOUND.RPG,
   [ITEM.AT_RIFLE]: SOUND.AT_RIFLE,
+  [ITEM.FLARE_GUN]: SOUND.FLARE_GUN,
 };
 // first-person muzzle flash scale + camera shake per shot (default [1, 0.06])
 const SHOT_KICK = {
@@ -140,6 +142,7 @@ const SHOT_KICK = {
   [ITEM.CROSSBOW]: [0, 0.1],
   [ITEM.RPG]: [1.8, 0.45],
   [ITEM.AT_RIFLE]: [2.2, 0.7],
+  [ITEM.FLARE_GUN]: [1.5, 0.12],
 };
 // the anti-tank rifle's long reload: how far into it the round goes home (its bolt opens at the start, closes at the end)
 const AT_ROUND_IN = 0.62;
@@ -304,6 +307,7 @@ export class Game {
     this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
     this.highlight = new Highlight(this); // the faint outline on what [E] would act on
     this.power = new PowerViews(this); // the generator and its floodlights: their lights, sound and [E]
+    this.skyflares = new SkyFlares(this); // flare gun flares: drawn, flown (our own), and their light on the world
     this.prediction = new Prediction(null);
     this.inputBuffer = new InputBuffer(); // holds a fire / reload / jump pressed a moment early until it can act
     this.setupInputHandlers();
@@ -594,6 +598,7 @@ export class Game {
     }
     steps.push(() => set.add(...this.power.warm())); // a floodlight's lens, glow and beam
     steps.push(() => set.add(...this.foliage.falling.warmViews())); // a felled tree coming down, in its fading twins
+    steps.push(() => set.add(this.skyflares.warm())); // a flare gun flare's glow
     steps.push(() => {
       // the supply plane, in the materials Flyover gives it
       this.flyover.start(0, 0, 0, 0, 0, this.time, null);
@@ -718,6 +723,7 @@ export class Game {
     this.loadWorld(info.seed);
     this.entities.clear();
     this.rockets.clear();
+    this.skyflares.clear();
     this.clientTick = info.tick;
     this.clockInit = false;
     this.interpExtra = 0;
@@ -763,6 +769,7 @@ export class Game {
     this.keyGuard.release();
     this.entities.clear();
     this.rockets.clear();
+    this.skyflares.clear();
     this.voice.closeAll();
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
@@ -1360,6 +1367,7 @@ export class Game {
       this.effects.backblast(mx - fx, my - fy, mz - fz, -fx, -fy, -fz);
       return;
     }
+    if (def.skyflare) return; // (no bullet: the flare is a projectile of its own, game/skyflares.js)
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     for (let i = 0; i < n; i++) {
       if (def.pellets > 1 && i % 2) continue;
@@ -1551,6 +1559,18 @@ export class Game {
             this.camShake = Math.min(1, (this.camShake || 0) + kick[1]);
             break;
           }
+          if (def.skyflare) {
+            // no bullet: the flare, flown from the eye along the aim (as the server will) and drawn off the gun's
+            // muzzle, low on the right ahead of the eye
+            shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, 1, ev.seed, _dirs);
+            const cp = Math.cos(ev.pitch);
+            const mx = ev.x + Math.cos(ev.yaw) * 0.12 - Math.sin(ev.yaw) * cp * 0.5;
+            const mz = ev.z - Math.sin(ev.yaw) * 0.12 - Math.cos(ev.yaw) * cp * 0.5;
+            this.skyflares.fire(ev, _dirs[0], _dirs[1], _dirs[2], mx, ev.y - 0.12 + Math.sin(ev.pitch) * 0.5, mz);
+            this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+            this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
+            break;
+          }
           // Tracers from the gun, and what every pellet strikes (predictPellet): the blood or the puff off the wall is
           // shown now, not a round trip later. The damage and the hit marker are still the server's alone
           const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
@@ -1579,12 +1599,12 @@ export class Game {
         case 'reload': {
           this.vm.reload(ev.time, !!ev.each);
           if (ev.each) a.playLocal('shell_insert');
-          else a.playLocal(currentWeapon(s) === ITEM.CROSSBOW ? 'xbow_cock' : currentWeapon(s) === ITEM.AT_RIFLE ? 'at_bolt' : currentWeapon(s) === ITEM.RPG ? 'rpg_draw' : 'reload_start');
+          else a.playLocal(currentWeapon(s) === ITEM.CROSSBOW ? 'xbow_cock' : currentWeapon(s) === ITEM.AT_RIFLE ? 'at_bolt' : currentWeapon(s) === ITEM.RPG ? 'rpg_draw' : currentWeapon(s) === ITEM.FLARE_GUN ? 'flare_open' : 'reload_start');
           break;
         }
         case 'reload_done': {
           const w = currentWeapon(s);
-          a.playLocal(w === ITEM.SHOTGUN ? 'pump' : w === ITEM.HUNTING_RIFLE ? 'bolt' : w === ITEM.AT_RIFLE ? 'at_bolt' : w === ITEM.CROSSBOW ? 'xbow_load' : w === ITEM.RPG ? 'rpg_load' : 'reload_end');
+          a.playLocal(w === ITEM.SHOTGUN ? 'pump' : w === ITEM.HUNTING_RIFLE ? 'bolt' : w === ITEM.AT_RIFLE ? 'at_bolt' : w === ITEM.CROSSBOW ? 'xbow_load' : w === ITEM.RPG ? 'rpg_load' : w === ITEM.FLARE_GUN ? 'flare_close' : 'reload_end');
           break;
         }
         case 'melee':
@@ -2328,6 +2348,7 @@ export class Game {
     // entities
     this.entities.update(dt, this.renderTick, time, rp);
     this.rockets.update(dt);
+    this.skyflares.update(dt, cam); // (after the entities: their fires are gathered; before the environment and the lights)
     this.gun.update(dt, ldx * lk, ldy * lk);
 
     // interaction target

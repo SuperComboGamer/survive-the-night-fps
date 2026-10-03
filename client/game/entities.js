@@ -464,6 +464,10 @@ export class Entities {
           break;
         }
         case ENT.PROJECTILE: {
+          if (e.ptype === PROJ.SKYFLARE) {
+            g.skyflares.addEntity(e); // (a flare gun's flare: drawn, lit and heard by game/skyflares.js)
+            break;
+          }
           // (an RPG grenade of our own is flown and drawn by game/rockets.js from the moment it was fired)
           if (e.ptype !== PROJ.ROPE && !(e.ptype === PROJ.ROCKET && e.owner === g.myId)) {
             const v = createProjectile(e.ptype);
@@ -704,6 +708,7 @@ export class Entities {
       this.scene.remove(e.obj);
     }
     if (e.col) g.world.structGrid.remove(e.col);
+    if (e.skyView) g.skyflares.removeEntity(e);
     if (e.emitter) g.effects.removeEmitter(e.emitter);
     if (e.loop) e.loop.stop();
     if (e.burnLoop) e.burnLoop.stop();

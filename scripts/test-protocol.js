@@ -7,6 +7,7 @@ import { ClientView, writeEntities, stageEntities, playerFlags } from '../server
 import { readEntities } from '../client/net/decode.js';
 import { createPlayerState, snapPlayerState } from '../shared/playersim.js';
 import { LOD_NEAR } from '../shared/constants.js';
+import { PROJ } from '../shared/defs.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const irnd = (a, b) => Math.floor(rnd(a, b + 1));
@@ -67,8 +68,12 @@ function spawn(kind) {
       e.state = 1;
       break;
     case ENT.PROJECTILE:
-      e.ptype = irnd(1, 8);
+      e.ptype = irnd(1, 9);
       e.owner = irnd(0, 500);
+      if (e.ptype === PROJ.SKYFLARE) {
+        e.t = rnd(0, 60);
+        e.flare = { tOpen: rnd(1, 4.3) };
+      }
       break;
     case ENT.CRATE:
       e.state = 0;

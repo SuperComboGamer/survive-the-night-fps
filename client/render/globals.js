@@ -11,6 +11,7 @@
 //    of density exp(-falloff * (y - base)) along the view ray),
 //  - forward sun/moon in-scattering: haze towards the light glows with the light colour
 //    (two-lobe Henyey-Greenstein), which is what makes backlit trees and dusk read as "real".
+//  - a flare gun's flare overhead (client/game/skyflares.js): the haze lit by it, all round and most of all towards it.
 // Custom ShaderMaterials only need `fog: true`, UniformsLib.fog merged in and the fog chunks included.
 //
 // PS1 mode (the "PS1 shader" setting, GameRenderer.setPs1): every fogged built-in material snaps its vertices
@@ -49,6 +50,10 @@ export const G = {
   // PS1 mode. xy: half the frame size in pixels (0 = off, vertices are not snapped), z: extra fog (added share
   // of the optical depth). GameRenderer drives it.
   uPs1: { value: new SharedVec4(0, 0, 0, 0) },
+  // a sky flare lighting the haze (linear, same units as fogColor; black: none) and the world-space unit vector from
+  // the eye towards it. SkyFlares drives both
+  uFlareFog: { value: new SharedColor(0, 0, 0) },
+  uFlareDirW: { value: new SharedVec3(0, 1, 0) },
 };
 
 const FOG_PARS_VERTEX = /* glsl */ `
@@ -79,6 +84,8 @@ export const FOG_FUNCS = /* glsl */ `
 uniform vec4 uMist;
 uniform vec3 uFogSun;
 uniform vec3 uSunDirW;
+uniform vec3 uFlareFog;
+uniform vec3 uFlareDirW;
 float stnHG01(float c, float g) {
   // Henyey-Greenstein normalised to 1 at c = 1
   float g2 = g * g;
@@ -87,7 +94,9 @@ float stnHG01(float c, float g) {
 vec3 stnFogColor(vec3 baseCol, vec3 dir) {
   float c = dot(dir, uSunDirW);
   float lobe = 0.75 * stnHG01(c, 0.8) + 0.25 * stnHG01(c, 0.35);
-  return mix(baseCol, uFogSun, clamp(lobe * uMist.w, 0.0, 1.0));
+  vec3 col = mix(baseCol, uFogSun, clamp(lobe * uMist.w, 0.0, 1.0));
+  // a flare overhead lights the haze all round, and most where the eye looks towards it
+  return col + uFlareFog * (0.3 + 0.7 * stnHG01(dot(dir, uFlareDirW), 0.7));
 }
 // optical depth of the mist layer between two heights along a ray of length L
 float stnMistOD(float y0, float y1, float L) {

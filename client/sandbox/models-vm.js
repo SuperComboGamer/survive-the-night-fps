@@ -48,6 +48,19 @@ if (params.has('cq')) {
   if (cfg && params.has('rpose')) cfg.rPose = params.get('rpose');
   if (cfg && params.has('lpose')) cfg.lGrip = { ...cfg.lGrip, pose: params.get('lpose') };
 }
+// &fgr=pitch,roll,yaw,x,y,z[,open] : the flare gun's reload pose change; &fgq=fx,fy,fz,px,py,pz : the loading hand (camera space)
+if (params.has('fgr')) {
+  const v = params.get('fgr').split(',').map(Number);
+  Object.assign(VM_DEBUG.FG_RELOAD, { pitch: v[0], roll: v[1], yaw: v[2], x: v[3], y: v[4], z: v[5] });
+  if (v.length > 6) {
+    // &fgr=...,open: how far the barrel tips
+    VM_DEBUG.FG_RELOAD.open = v[6];
+  }
+}
+if (params.has('fgq')) {
+  const v = params.get('fgq').split(',').map(Number);
+  VM_DEBUG.FG_RELOAD.q = VM_DEBUG.handQ(-1, v.slice(0, 3), v.slice(3, 6));
+}
 // &thumb=pose:x1,y1,z1,x2,y2,z2 : thumb segment directions (hand space) of a hand pose
 if (params.has('thumb')) {
   const [k, v] = params.get('thumb').split(':');
@@ -155,7 +168,7 @@ if (params.get('vm') === 'hands') {
   scene.add(table);
   const only = params.has('item') ? parseInt(params.get('item'), 10) : 0;
   const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.BAT, ITEM.SPIKED_BAT];
-  const shortIds = [ITEM.PISTOL, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY];
+  const shortIds = [ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY];
   const lines = [];
   const place = (id, x, z) => {
     const w = createWorldWeapon(id);
@@ -208,7 +221,7 @@ if (params.get('vm') === 'hands') {
   const all = vmParam === 'all';
   const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
   const list = all
-    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.PISTOL, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY, 'claws']
+    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY, 'claws']
     : times
       ? times.map(() => single)
       : [single];

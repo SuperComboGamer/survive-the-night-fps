@@ -294,6 +294,16 @@ JSON file (`server/stats.js`).
   dark gunmetal and polymer paint and sets the highlight strength, so metal shows its form while wood, tape
   and cloth stay matte. The arms and every world weapon (held by others, lying as pickups) stay Lambert on
   the paint as authored.
+- **Sky flares** (the flare gun: `client/game/skyflares.js`, the flight in `shared/skyflare.js`): one more light in
+  the pool, a downward `SpotLight` with decay 1 (`Lights.setSky`) that `SkyFlares` gives each frame to the flare
+  that lights the ground round the eye most. On the presets with sun shadows it casts one: its near plane follows
+  it down (a near plane at 1 m with the flare 80 m up turns any usable bias into metres of depth, and a roof lets
+  the light through), and its map is drawn only while one burns, every other frame. What it adds to the ambient,
+  the haze and the sky (`Environment.flare` -> `G.uFlareFog` / `uFlareDirW` in `stnFogColor` and the sky shader)
+  is kept low, because none of that is shadowed. The shooter's own flare is flown client-side from the shot and the
+  server's copy of it is not drawn; the server sends every flare to every client wherever it is (`e.everywhere`,
+  past the area of interest), with its age and chute time in the create so a late joiner draws it where it is in
+  its burn.
 - **Time of day** is one palette table (`KEYS` in `render/environment.js`): colours, light levels, fog, mist,
   haze scatter, shaft strength and base exposure per sun height. Eye adaptation only compensates relative to
   `Environment.adaptRef` (the log-average luminance an open scene has at that light level), clamped 0.7-1.6x.

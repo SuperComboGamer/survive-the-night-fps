@@ -865,6 +865,36 @@ export class Effects {
     if (Math.random() < 0.3) this.alpha.emit(ex, ey + 0.3, ez, dx * 1.5 + this.rnd(-0.4, 0.4), this.rnd(0.8, 1.6), dz * 1.5 + this.rnd(-0.4, 0.4), this.rnd(1.4, 2.2), 0.7, 2.6, 0.08, 0.07, 0.06, 0.4, 0.12, 0.12, 0.12, 0, -0.2, 0.6, TEX.SMOKE, 0.3);
   }
 
+  // A flare gun's flare over one frame, from (x0,y0,z0) to (x1,y1,z1) in dt s (client/game/skyflares.js); k: its own
+  // { acc } for the particle count, glow: how bright it burns (0..1). Climbing, it draws a hot spark trail and a line
+  // of smoke behind it; under its chute it drips sparks that fall away under it, and the smoke it gives off rises over
+  // it lit pink from underneath, leaving a trail up the sky the way it came down
+  skyflare(k, x0, y0, z0, x1, y1, z1, dt, climbing, glow) {
+    const D = this.add;
+    const A = this.alpha;
+    const rnd = (a, b) => this.rnd(a, b);
+    k.acc += dt * (climbing ? 110 : 32) * Math.max(0.3, glow);
+    while (k.acc >= 1) {
+      k.acc -= 1;
+      const f = Math.random();
+      const x = x0 + (x1 - x0) * f;
+      const y = y0 + (y1 - y0) * f;
+      const z = z0 + (z1 - z0) * f;
+      const r = Math.random();
+      if (climbing) {
+        if (r < 0.55) D.emit(x, y, z, rnd(-0.7, 0.7), rnd(-0.7, 0.7), rnd(-0.7, 0.7), rnd(0.3, 0.7), rnd(0.1, 0.18), 0.03, 1, 0.86, 0.78, 1, 1, 0.35, 0.25, 0, 3, 0.5, TEX.SPARK);
+        else if (r < 0.7) D.emit(x, y, z, 0, 0, 0, rnd(0.2, 0.4), rnd(0.5, 0.8), 1.3, 1, 0.55, 0.45, 0.5, 0.9, 0.25, 0.2, 0, 0, 1, TEX.GLOW);
+        else A.emit(x, y, z, rnd(-0.2, 0.2), rnd(0, 0.3), rnd(-0.2, 0.2), rnd(4, 7), rnd(0.35, 0.6), rnd(2.2, 3.4), 0.78, 0.74, 0.74, 0.5, 0.6, 0.58, 0.58, 0, 0, 0.6, TEX.SMOKE, 0.2);
+      } else if (r < 0.5) {
+        D.emit(x + rnd(-0.08, 0.08), y - 0.05, z + rnd(-0.08, 0.08), rnd(-0.6, 0.6), rnd(-1.5, 0.4), rnd(-0.6, 0.6), rnd(0.8, 1.8), rnd(0.08, 0.16), 0.02, 1, 0.9, 0.82, 1, 1, 0.4, 0.25, 0, 6, 0.4, TEX.SPARK);
+      } else if (r < 0.78) {
+        D.emit(x + rnd(-0.2, 0.2), y + 0.4, z + rnd(-0.2, 0.2), rnd(-0.2, 0.2), rnd(0.3, 0.8), rnd(-0.2, 0.2), rnd(2.5, 4.5), rnd(0.6, 1), rnd(3, 5), 1, 0.62, 0.55, 0.16 * glow, 0.6, 0.28, 0.28, 0, -0.1, 0.3, TEX.SMOKE, 0.2);
+      } else {
+        A.emit(x + rnd(-0.2, 0.2), y + 0.8, z + rnd(-0.2, 0.2), rnd(-0.15, 0.15), rnd(0.2, 0.5), rnd(-0.15, 0.15), rnd(8, 14), rnd(0.8, 1.2), rnd(4, 7), 0.62, 0.56, 0.56, 0.3, 0.5, 0.48, 0.48, 0, 0, 0.3, TEX.SMOKE, 0.15);
+      }
+    }
+  }
+
   // tracer from (x,y,z) along (dx,dy,dz) for dist meters
   tracer(x, y, z, dx, dy, dz, dist, bright = 1) {
     if (this.tracers.length >= this.tracerMax) this.tracers.shift();

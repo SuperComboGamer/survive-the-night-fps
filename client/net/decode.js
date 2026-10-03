@@ -1,7 +1,7 @@
 // Snapshot / message decoding. Pure JS (no DOM, no three.js) so it also runs in Node test bots.
 import { ENT, SNAP, SELF, PFLAG, UPOS, UEXT, UEXT_ABS, dqpos, dqangle16, dqangle8, dqpitch, unpackLookYaw, unpackLookPitch } from '../../shared/protocol.js';
-import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED } from '../../shared/constants.js';
-import { EVT, AMMO_ITEMS } from '../../shared/defs.js';
+import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED, SERVER_DT } from '../../shared/constants.js';
+import { EVT, AMMO_ITEMS, PROJ } from '../../shared/defs.js';
 
 const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 const BIT_SLOTS = {
@@ -237,6 +237,10 @@ export function readEntities(r, store, tick, flags) {
         case ENT.PROJECTILE:
           e.ptype = r.u8();
           e.owner = r.u16();
+          if (e.ptype === PROJ.SKYFLARE) {
+            e.age = r.u16() * SERVER_DT; // (s since the shot when this was written)
+            e.tOpen = r.u8() / 20;
+          }
           break;
         case ENT.AREA:
           e.atype = r.u8();

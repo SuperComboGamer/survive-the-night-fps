@@ -227,7 +227,7 @@ function applySettings(s) {
   game.keyGuard.fullscreen = s.fullscreen !== false;
   game.foliage?.setQuality(renderer.q, s.grassDistance);
   game.weatherFx?.setQuality(renderer.quality);
-  game.lights.setShadows(renderer.q.flashShadows);
+  game.lights.setShadows(renderer.q.flashShadows, renderer.q.shadows);
   game.env.setShadows(renderer.q);
   game.setShadowQuality?.(renderer.q);
   game.prewarm(); // (does nothing unless the quality changed)

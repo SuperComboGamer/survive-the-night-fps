@@ -34,6 +34,8 @@ const CATS = {
   // the chapel bell, heard from anywhere in the valley: fainter and duller with distance, and dry enough that what
   // arrives still comes from the chapel's side (the reverb is not panned, and falls off slower than the bell itself)
   bell: { ref: 30, max: 1000, roll: 0.6, air: 320, wet: 0.12, hrtf: 0, cap: 4, delay: true },
+  // high overhead: a parachute flare bursting alight 40-90 m up, heard all round the place it went up over
+  sky: { ref: 30, max: 380, roll: 0.9, air: 150, wet: 0.2, hrtf: 0, cap: 4, delay: true },
 };
 for (const k in CATS) CATS[k].sendExp = 0.45 * CATS[k].roll;
 
@@ -126,6 +128,8 @@ const R_CLICK = { key: 'fol_click', vol: 1.6, pitch: [0.95, 1.06] };
 const R_XBOW = { key: 'fol_xbow', vol: 0.9, pitch: [0.94, 1.04], layer: true, layerVol: 0.5 };
 // an RPG grenade out of its canvas bag: a hand in a pack, deeper (something heavy), over the procedural scrape
 const R_RPG_DRAW = { key: 'fol_bag', vol: 1.1, pitch: [0.8, 0.9], layer: true, layerVol: 0.7 };
+// a parachute flare catching: the recorded fire taking light, pitched up into a fizz, over the procedural pop
+const R_FLARE_POP = { key: 'fire_ignite', vol: 0.55, pitch: [1.2, 1.35], lp: 7000, layer: true, layerVol: 1 };
 // weapon handling: real magazines, pumps, bolts and hammers
 const R_MAG_OUT = { key: 'fol_mag_out', vol: 0.95, pitch: [0.96, 1.04] };
 const R_MAG_IN = { key: 'fol_mag_in', vol: 0.7, pitch: [0.96, 1.04] };
@@ -249,6 +253,10 @@ def(S.GEN_START, 'gen_start', 'fxfar', 0.5, 0.03);
 def(S.GEN_STOP, 'gen_stop', 'fxfar', 0.5, 0.03);
 def(S.GEN_FUEL, 'gen_fuel', 'fx', 0.5, 0.05);
 def(S.FLOOD_SWITCH, 'flood_switch', 'fx', 0.8, 0.05);
+// the flare gun (synth-flare.js): procedural only. The shot is a hollow pop, softer than a pistol's report and heard
+// about as far; the flare's burst at the top of its climb carries over the whole place below it (CATS.sky)
+def(S.FLARE_GUN, 'gun_flare', 'gun', 0.45, 0.04, 0.15);
+def(S.FLARE_POP, 'flare_pop', 'sky', 0.38, 0.05, 0.15, R_FLARE_POP);
 
 // playLocal(name): first-person / UI 2D sounds. bus: 'sfx' (world, muffled when dead) or 'ui' (always clear)
 const LOCAL = {
@@ -261,6 +269,9 @@ const LOCAL = {
   dbshotgun: { bank: 'fp_dbshotgun', vol: 1, jit: 0.025, send: 0.2, rec: R_GUN.dbshotgun.fp },
   atrifle: { bank: 'fp_atrifle', vol: 1, jit: 0.02, send: 0.22, rec: R_GUN.atrifle.fp },
   crossbow: { bank: 'fp_crossbow', vol: 0.7, jit: 0.03, send: 0.05, rec: R_XBOW },
+  flaregun: { bank: 'fp_flare', vol: 0.55, jit: 0.03, send: 0.16 },
+  flare_open: { bank: 'flare_open', vol: 0.75 }, // the flare gun broken open, the spent case out, a shell in...
+  flare_close: { bank: 'flare_close', vol: 0.65 }, // ...and snapped shut
   hmg: { bank: 'fp_hmg', vol: 1, jit: 0.025, send: 0.18 }, // the mounted gun, from behind its grips
   rpg: { bank: 'fp_rpg', vol: 1, jit: 0.02, send: 0.22, rec: R_RPG.fp },
   reload_start: { bank: 'reload_start', vol: 0.55, rec: R_MAG_OUT },
@@ -350,6 +361,9 @@ const LOOPS = {
   calliope: { bank: 'loop_calliope', ref: 9, max: 160, roll: 1.0, vol: 0.85, wet: 0.3, air: true, always: true, jit: 0 },
   // a noisemaker ringing where it landed (synth-throw.js): shrill and carrying, never dropped for a zombie's breath
   alarm: { bank: 'loop_alarm', ref: 3, max: 75, roll: 1.05, vol: 0.55, wet: 0.18, cap: 3, always: true, jit: 0.02 },
+  // a parachute flare burning (synth-flare.js): mostly high overhead, so a soft hiss that thins with height; one that
+  // has come down to the ground fizzes like a road flare's louder cousin
+  skyflare: { bank: 'loop_skyflare', ref: 10, max: 90, roll: 1.0, vol: 0.4, wet: 0.18, air: true, cap: 3 },
 };
 const LOOP_CAP_TOTAL = 28;
 

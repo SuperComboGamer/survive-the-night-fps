@@ -102,6 +102,7 @@ export function rpgGrenade(b, finsOut = false) {
 /** Projectile model centred on its origin. PROJ.ROPE is drawn by the game (returns an empty Object3D). */
 export function createProjectile(projType) {
   if (HELD[projType]) return heldProjectile(projType);
+  if (projType === PROJ.SKYFLARE) return skyFlare();
   let parts = projCache.get(projType);
   if (!parts) {
     const b = new MeshBuilder(600 + projType, { ao: false });
@@ -169,6 +170,49 @@ export function createProjectile(projType) {
     g.add(f);
     g.userData.flame = f;
   }
+  return g;
+}
+
+// A flare gun's parachute flare (PROJ.SKYFLARE): a little canister burning at its bottom end, under a pale chute.
+// The group's origin is the burning end (where the game puts its light and glow). userData.chute is the canopy and
+// its lines, with its origin where they tie onto the top of the canister: scale it from 0 (packed, while the flare
+// climbs) to 1 (open). Seen mostly from far below, so it is the silhouette that counts.
+let skyCanParts = null, skyChuteParts = null;
+const SKY_CAN = 0.16; // canister length (m)
+function skyFlare() {
+  if (!skyCanParts) {
+    const b = new MeshBuilder(611, { ao: false });
+    b.cyl('paint', 0.017, 0.017, SKY_CAN - 0.012, 8, { p: [0, 0.012 + (SKY_CAN - 0.012) / 2, 0], c: [0.62, 0.62, 0.6] });
+    b.cyl('paint', 0.0185, 0.0185, 0.02, 8, { p: [0, SKY_CAN - 0.03, 0], c: [0.55, 0.14, 0.1] }); // red band
+    b.cyl('paint', 0.012, 0.017, 0.012, 8, { p: [0, SKY_CAN + 0.006, 0], c: [0.4, 0.4, 0.4] }); // top cap
+    b.cyl('flare', 0.015, 0.0165, 0.014, 8, { raw: true, p: [0, 0.007, 0] }); // the burning end
+    b.sphere('flare', 0.013, 6, 3, { raw: true, p: [0, 0.0, 0], s: [1, 0.6, 1] });
+    skyCanParts = b.build();
+    const c = new MeshBuilder(612, { ao: false });
+    const R = 0.46, cap = 1.15, rimY = 0.86, riser = 0.16, n = 6;
+    const dome = new THREE.SphereGeometry(R, n * 2, 3, 0, PI * 2, 0, cap);
+    dome.scale(1, 0.68, 1);
+    // scalloped skirt: the hem pulls up between the lines
+    const pos = dome.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      if (y < R * 0.68 * Math.cos(cap) + 0.01) pos.setY(i, y + (1 - Math.abs(Math.cos(Math.atan2(pos.getZ(i), pos.getX(i)) * (n / 2)))) * 0.05);
+    }
+    dome.computeVertexNormals();
+    c.add('cloth', dome, { raw: true, p: [0, rimY - R * 0.68 * Math.cos(cap), 0], c: [0.9, 0.88, 0.82] });
+    c.cylBetween('rope', [0, 0, 0], [0, riser, 0], 0.004, 0.004, 3, { open: true });
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * PI * 2;
+      c.cylBetween('rope', [0, riser, 0], [Math.cos(a) * R * Math.sin(cap), rimY, Math.sin(a) * R * Math.sin(cap)], 0.003, 0.003, 3, { open: true });
+    }
+    skyChuteParts = c.build();
+  }
+  const g = partsToGroup(skyCanParts, `proj_${PROJ.SKYFLARE}`);
+  g.userData.projType = PROJ.SKYFLARE;
+  const chute = partsToGroup(skyChuteParts, 'chute');
+  chute.position.y = SKY_CAN + 0.012;
+  g.add(chute);
+  g.userData.chute = chute;
   return g;
 }
 

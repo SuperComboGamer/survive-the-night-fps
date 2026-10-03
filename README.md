@@ -76,6 +76,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | Command | What it does |
 | --- | --- |
 | `npm test` | syntax-checks every module, fuzzes the delta encoder/decoder (all entity kinds) and the command packets, checks that prediction and server stay in step on a laggy link (`test-netsync`), checks the layout of every place (`test-world`), the mine under the valley (`test-mine`), Mercy Clinic's dark wards (`test-clinic`), St. Agnes Cemetery (`test-cemetery`) the deer (`test-deer`) the generator and its floodlights (`test-power`) and the railway (`test-rail`) and runs `sim-smoke` |
+| `node scripts/test-flaregun.js [seed]` | the flare gun against the real server in-process and decoded as a client does: its recipes, that it takes the pistol's slot, that a shot straight up climbs to the top of its arc, opens its chute, drifts down at its fall speed where the shared closed-form flight puts it and burns out at its minute still in the air, that its shell re-loads from the backpack by itself, that a shot fired flat comes down and burns on the ground, that a survivor 300 m away has it while the area of interest still holds for everything else, and that at night it pins a Shade 30 m out from under it and not one 55 m out (part of `npm test`) |
 | `node scripts/test-power.js [seed]` | the generator and its floodlights against the real server in-process and decoded as a client does, on the flattest open strip of the valley: what they cost, [E] pouring fuel and holding it for the switch, which lamps a generator feeds, the hum and the idle dead it draws (from a random stream of its own), the dead breaking it - and a Shade walking at a survivor that freezes as it enters a powered cone, moves again when the generator runs dry, walks free behind a wall inside the cone and freezes again when it steps out of the wall's shadow (part of `npm test`) |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
@@ -381,7 +382,7 @@ them off.
   the horde, breaking from the treeline.
 - **The Shade only moves in the dark.** A fast, hard-hitting stalker that freezes solid the moment any light
   falls on it - a flashlight beam, the glow of a standing torch or campfire, a burning road flare or molotov
-  fire - and comes for you the moment the light is gone. Frozen, it shrugs off three quarters of all damage
+  fire, a flare gun's flare drifting down overhead - and comes for you the moment the light is gone. Frozen, it shrugs off three quarters of all damage
   and cannot be shoved, so someone holds a beam on it while the rest of the team wears it down, or you ring
   the shelter with torches and leave it standing at the edge of the light until dawn. Walls, trees and hills
   cast shadows it can move in. Listen for the whispering in the dark and the shriek when a light lets it go.
@@ -458,6 +459,13 @@ them off.
   itself, slowly, after every shot, and the blast carries as far as a pipe bomb's. It is built at the workbench once
   the team has the explosives schematic (or found at the army's places, in their ammo crates, in supply drops and in
   the mine's strongbox); each grenade takes gunpowder, scrap and chemicals.
+  The **flare gun** takes the pistol's place: a break-open signal pistol that hurts nothing and fires one parachute
+  flare at a time. Fired straight up, the flare climbs about 90 m, bursts alight as its chute opens and drifts back
+  down for a minute, lighting the ground for about 40 m round under it - and Shades in that circle cannot move -
+  and the sky and the haze round it, which everyone in the valley sees. Fired low, it comes down out in front and
+  burns on the ground for the rest of its minute like a big road flare. It is found loaded with one flare at the
+  docks, the ranger station, the army checkpoint, in military stashes and supply drops, and both it and its shells
+  are made at the workbench with no schematic. The numbers are `SKYFLARE` in `shared/skyflare.js`.
 - **Throwables** ([4], press it again to cycle through what you carry): the **molotov** sets an area ablaze; the
   **pipe bomb** beeps for 2.6 s, pulling every zombie within 40 m onto it, then blows a 7 m hole in the crowd it
   gathered; the **frag grenade** is the quick one - thrown further, it bounces, rolls and bursts 2.2 s after it

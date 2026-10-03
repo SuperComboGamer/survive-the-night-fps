@@ -49,6 +49,7 @@ export const ITEM = {
   MACHETE: 53,
   HAMMER: 54,
   PISTOL: 55,
+  FLARE_GUN: 56, // a sidearm (the pistol's slot): one parachute flare at a time, up into the sky (shared/skyflare.js)
   SHOTGUN: 60,
   AK47: 61,
   HUNTING_RIFLE: 62,
@@ -69,6 +70,7 @@ export const ITEM = {
   AMMO_FUEL: 76,
   AMMO_ROCKET: 77,
   AMMO_145: 78,
+  AMMO_FLARE: 79,
   // car parts (quest)
   CAR_BATTERY: 80,
   SPARE_TIRE: 81,
@@ -90,12 +92,12 @@ export const ITEM = {
 
 // ammo reserve indices: the rounds of a calibre a survivor carries (state.ammo). Ammunition is not kept in the
 // backpack: it is carried apart, in the inventory's Ammunition panel, and goes on the ground from there (ACT.DROP_AMMO)
-export const AMMO = { P9: 0, SHELL: 1, R762: 2, R308: 3, R556: 4, BOLT: 5, FUEL: 6, ROCKET: 7, R145: 8 };
-export const AMMO_NAMES = ['9mm', 'Shells', '7.62', '.308', '5.56', 'Bolts', 'Fuel', 'RPG', '14.5mm'];
+export const AMMO = { P9: 0, SHELL: 1, R762: 2, R308: 3, R556: 4, BOLT: 5, FUEL: 6, ROCKET: 7, R145: 8, FLARE: 9 };
+export const AMMO_NAMES = ['9mm', 'Shells', '7.62', '.308', '5.56', 'Bolts', 'Fuel', 'RPG', '14.5mm', 'Flares'];
 // the most of a calibre a survivor carries: a reserve that is full leaves the rest where it lies (also a ground stack's size)
-export const AMMO_MAX = [150, 48, 240, 40, 180, 30, 300, 8, 10];
+export const AMMO_MAX = [150, 48, 240, 40, 180, 30, 300, 8, 10, 12];
 // the item of each reserve index (same order as AMMO)
-export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556, ITEM.AMMO_BOLTS, ITEM.AMMO_FUEL, ITEM.AMMO_ROCKET, ITEM.AMMO_145];
+export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556, ITEM.AMMO_BOLTS, ITEM.AMMO_FUEL, ITEM.AMMO_ROCKET, ITEM.AMMO_145, ITEM.AMMO_FLARE];
 
 // category: res | cons | throw | armor | pack | gear | weapon | ammo | part | schem
 export const ITEM_DEFS = {
@@ -151,6 +153,7 @@ export const ITEM_DEFS = {
   [ITEM.FLAMETHROWER]: { name: 'Flamethrower', cat: 'weapon', stack: 1, color: 0xb5651d, desc: 'A short cone of fire. Whatever it touches keeps burning.' },
   [ITEM.AT_RIFLE]: { name: 'Anti-Tank Rifle', cat: 'weapon', stack: 1, color: 0x4f5232, desc: 'Single-shot 14.5mm. Goes through a whole line of them, and hits bosses and Tanks three times as hard. A very slow reload.' },
   [ITEM.RPG]: { name: 'RPG', cat: 'weapon', stack: 1, color: 0x4b5320, desc: 'Fires one rocket grenade at a time. It bursts on impact and tears apart everything around it. Slow to reload, and very loud.' },
+  [ITEM.FLARE_GUN]: { name: 'Flare Gun', cat: 'weapon', stack: 1, color: 0xe0601c, desc: 'Fires a parachute flare high into the sky. It lights the ground for a minute as it drifts back down, and Shades cannot move under it. Takes the pistol\'s place.' },
 
   [ITEM.AMMO_9MM]: { name: '9mm Ammo', cat: 'ammo', stack: AMMO_MAX[0], color: 0xc9a227, ammo: 0, desc: 'Pistol rounds.' },
   [ITEM.AMMO_SHELLS]: { name: 'Shotgun Shells', cat: 'ammo', stack: AMMO_MAX[1], color: 0xb03a2e, ammo: 1, desc: '12 gauge.' },
@@ -161,6 +164,7 @@ export const ITEM_DEFS = {
   [ITEM.AMMO_FUEL]: { name: 'Flamethrower Fuel', cat: 'ammo', stack: AMMO_MAX[6], color: 0xc0561a, ammo: 6, desc: 'A canister of thickened fuel.' },
   [ITEM.AMMO_145]: { name: '14.5mm Ammo', cat: 'ammo', stack: AMMO_MAX[8], color: 0x9c7a2e, ammo: 8, desc: 'Anti-tank rounds as long as your hand.' },
   [ITEM.AMMO_ROCKET]: { name: 'RPG Grenade', cat: 'ammo', stack: AMMO_MAX[7], color: 0x5d6b3a, ammo: 7, desc: 'A finned warhead for the RPG. Goes off on impact.' },
+  [ITEM.AMMO_FLARE]: { name: 'Flare Shells', cat: 'ammo', stack: AMMO_MAX[9], color: 0xd23a26, ammo: 9, desc: '26.5mm parachute flares for the flare gun.' },
 
   [ITEM.CAR_BATTERY]: { name: 'Car Battery', cat: 'part', stack: 1, color: 0x1f3a93, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
   [ITEM.SPARE_TIRE]: { name: 'Spare Tire', cat: 'part', stack: 1, color: 0x1b1b1b, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
@@ -218,6 +222,8 @@ export const SCHEM_BIT = { [ITEM.SCHEM_SHOTGUN]: 0, [ITEM.SCHEM_RIFLE]: 1, [ITEM
 // flame: no bullet - each shot is a puff of fire that scorches everything in a cone (half-angle `flame.cone`, rad)
 // out to `range` for `damage` and sets it alight (BURN); the magazine is the fuel tank
 // bossMul: damage x this against a boss or a Tank (on top of the head multiplier)
+// skyflare: no bullet - the shot is a parachute flare (PROJ.SKYFLARE) that flies up along the aim and lights the
+// ground under it while it drifts back down (the flight and its numbers: shared/skyflare.js)
 // Melee: altDamage / altRate = the heavy attack (RMB instead of LMB). The blow lands at once like a light one, so
 // what it costs is the recovery: it must hit harder and keep up less damage per second than the light attack,
 // or one of the two buttons is never worth pressing. (The hammer sits in the build slot and is never swung.)
@@ -240,6 +246,8 @@ export const WEAPONS = {
   // takes bossMul x of it. The loudest gun there is
   [ITEM.AT_RIFLE]: { slot: 0, damage: 400, rate: 1.0, mag: 1, reload: 6.0, autoReload: true, ammo: 8, pellets: 1, spread: 0.015, moveSpread: 0.09, recoil: 0.2, range: 260, headMul: 3.0, auto: false, noise: 150, pierce: 5, bossMul: 3, sound: 'atrifle' },
   [ITEM.RPG]: { slot: 0, damage: 360, rate: 0.5, mag: 1, reload: 3.4, autoReload: true, ammo: 7, pellets: 1, spread: 0.008, moveSpread: 0.03, recoil: 0.12, range: 200, headMul: 1, auto: false, noise: 90, sound: 'rpg', rocket: { speed: 48, grav: 3, radius: 5.5 } },
+  // a break-open single shot: it hurts nothing, the flare is the point. The pop carries about as far as a pistol shot
+  [ITEM.FLARE_GUN]: { slot: 1, damage: 0, rate: 0.6, mag: 1, reload: 1.7, autoReload: true, ammo: 9, pellets: 1, spread: 0.006, moveSpread: 0.02, recoil: 0.07, range: 0, headMul: 1, auto: false, noise: 50, sound: 'flaregun', skyflare: true },
 };
 
 // Burning: a status any zombie can be given (Combat.ignite) - the flamethrower and molotov fires do. It takes `dps`
@@ -378,6 +386,9 @@ export const RECIPES = [
   { id: 35, out: ITEM.AMMO_ROCKET, n: 1, cost: { [ITEM.SCRAP]: 1, [ITEM.POWDER]: 4, [ITEM.CHEM]: 1 }, station: 'bench', schem: ITEM.SCHEM_EXPLOSIVES },
   { id: 36, out: ITEM.AT_RIFLE, n: 1, cost: { [ITEM.GUNPARTS]: 4, [ITEM.SCRAP]: 6, [ITEM.TAPE]: 2 }, station: 'bench', schem: ITEM.SCHEM_RIFLE },
   { id: 37, out: ITEM.AMMO_145, n: 2, cost: { [ITEM.SCRAP]: 2, [ITEM.POWDER]: 5 }, station: 'bench' },
+  // the flare gun is a pipe and a hammer; a shell is a road flare's makings with a little chute packed on top
+  { id: 38, out: ITEM.FLARE_GUN, n: 1, cost: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 3, [ITEM.TAPE]: 1 }, station: 'bench' },
+  { id: 39, out: ITEM.AMMO_FLARE, n: 1, cost: { [ITEM.POWDER]: 3, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 }, station: 'bench' },
 ];
 
 // The order the Sort button puts the backpack grid in, by category: weapons, what is worn or carried for what it does
@@ -418,6 +429,7 @@ export const SALVAGE = {
   [ITEM.FLAMETHROWER]: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 2, [ITEM.TAPE]: 1 },
   [ITEM.AT_RIFLE]: { [ITEM.GUNPARTS]: 2, [ITEM.SCRAP]: 3 },
   [ITEM.RPG]: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 2, [ITEM.TAPE]: 1 },
+  [ITEM.FLARE_GUN]: { [ITEM.SCRAP]: 2 }, // (made of a gun part, 3 scrap and tape: the part is what is not got back)
   [ITEM.GRENADE]: { [ITEM.SCRAP]: 1, [ITEM.POWDER]: 1 },
   [ITEM.DECOY]: { [ITEM.BATTERY]: 1 },
   [ITEM.BACKPACK]: { [ITEM.LEATHER]: 2, [ITEM.CLOTH]: 3, [ITEM.ROPE]: 1 },
@@ -534,6 +546,7 @@ export const PROJ = {
   GRENADE: 7, // frag grenade: bounces, rolls, bursts on its fuse
   DECOY: 8, // noisemaker: lands and rings, luring the dead
   ROCKET: 9, // an RPG grenade in flight: bursts on impact
+  SKYFLARE: 10, // a flare gun's parachute flare: climbs, opens its chute, drifts down burning (shared/skyflare.js)
 };
 // the item each thrown projectile is (THROWABLES holds its numbers)
 export const PROJ_ITEM = { [PROJ.MOLOTOV]: ITEM.MOLOTOV, [PROJ.PIPEBOMB]: ITEM.PIPEBOMB, [PROJ.FLARE]: ITEM.FLARE, [PROJ.GRENADE]: ITEM.GRENADE, [PROJ.DECOY]: ITEM.DECOY };
@@ -642,6 +655,8 @@ export const SOUND = {
   AT_RELOAD: 119, // ...and its bolt worked to feed it another round
   TREE_FALL: 120, // a felled tree creaking over and crashing down (client-side, from EVT.FELL)
   DRINK: 121, // a can cracked open and gulped down (an energy drink)
+  FLARE_GUN: 122, // a flare gun's shot (client-side, from EVT.SHOT)
+  FLARE_POP: 123, // a parachute flare bursting alight at the top of its climb (client-side, from its flight)
 };
 
 export const EVT = {
@@ -797,9 +812,9 @@ export const LOOT_TABLES = {
   [ZONE.CAMP]: [[ITEM.CLOTH, 6, 2, 3], [ITEM.STICK, 4, 2, 4], [ITEM.WOOD, 3, 1, 3]],
   [ZONE.FOREST]: [[ITEM.STICK, 8, 2, 5], [ITEM.WOOD, 4, 1, 3], [ITEM.CLOTH, 7, 1, 3], [ITEM.HERB, 3, 1, 2], [ITEM.SCRAP, 1, 1, 2], [ITEM.AMMO_9MM, 1, 6, 12]],
   [ZONE.BARN]: [[ITEM.WOOD, 8, 2, 5], [ITEM.NAILS, 8, 4, 10], [ITEM.ROPE, 4, 1, 2], [ITEM.CLOTH, 5, 1, 3], [ITEM.WIRE, 4, 1, 2], [ITEM.LEATHER, 3, 1, 2], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.BAT, 1, 1, 1], [ITEM.ALCOHOL, 2, 1, 1], [ITEM.HAMMER, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1]],
-  [ZONE.DOCK]: [[ITEM.ROPE, 6, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.CLOTH, 4, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.CHEM, 2, 1, 2], [ITEM.NAILS, 3, 3, 8], [ITEM.TUNA, 4, 1, 2]],
+  [ZONE.DOCK]: [[ITEM.ROPE, 6, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.CLOTH, 4, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.CHEM, 2, 1, 2], [ITEM.NAILS, 3, 3, 8], [ITEM.TUNA, 4, 1, 2], [ITEM.AMMO_FLARE, 3, 1, 3], [ITEM.FLARE_GUN, 1, 1, 1]],
   [ZONE.GAS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.CHEM, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.NAILS, 3, 4, 10], [ITEM.PISTOL, 1, 1, 1], [ITEM.TUNA, 3, 1, 2], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.ENERGY_DRINK, 4, 1, 2]],
-  [ZONE.RANGER]: [[ITEM.GUNPARTS, 4, 1, 1], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.BATTERY, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.MEDKIT, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.AMMO_BOLTS, 3, 2, 5]],
+  [ZONE.RANGER]: [[ITEM.GUNPARTS, 4, 1, 1], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.BATTERY, 4, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.MEDKIT, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.AMMO_BOLTS, 3, 2, 5], [ITEM.AMMO_FLARE, 2, 1, 2], [ITEM.FLARE_GUN, 1, 1, 1]],
   [ZONE.CABINS]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.POWDER, 4, 2, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1], [ITEM.AMMO_BOLTS, 3, 2, 5], [ITEM.CROSSBOW, 1, 1, 1], [ITEM.TUNA, 3, 1, 2]],
   [ZONE.MILITARY]: [[ITEM.AMMO_762, 7, 15, 30], [ITEM.PLATE, 4, 1, 1], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.POWDER, 5, 3, 8], [ITEM.WIRE, 4, 1, 3], [ITEM.MEDKIT, 3, 1, 1], [ITEM.PIPEBOMB, 2, 1, 1], [ITEM.GRENADE, 1, 1, 2], [ITEM.SCRAP, 3, 2, 4], [ITEM.AMMO_556, 5, 20, 40], [ITEM.AK47, 1, 1, 1], [ITEM.M4A1, 1, 1, 1], [ITEM.KEVLAR, 1, 1, 1], [ITEM.AMMO_FUEL, 3, 30, 60], [ITEM.FLAMETHROWER, 1, 1, 1], [ITEM.AMMO_ROCKET, 2, 1, 2], [ITEM.RPG, 1, 1, 1], [ITEM.AMMO_145, 2, 2, 4], [ITEM.AT_RIFLE, 1, 1, 1]],
   [ZONE.CHURCH]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.HERB, 5, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.TORCH, 3, 1, 2], [ITEM.AMMO_9MM, 2, 6, 12]],
@@ -810,10 +825,10 @@ export const LOOT_TABLES = {
   [ZONE.VILLAGE]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.HERB, 2, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.TUNA, 3, 1, 2], [ITEM.ENERGY_DRINK, 3, 1, 2], [ITEM.DECOY, 1, 1, 1]],
   [ZONE.CLINIC]: [[ITEM.BANDAGE, 7, 1, 3], [ITEM.PAINKILLERS, 6, 1, 2], [ITEM.MEDKIT, 4, 1, 1], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.CLOTH, 5, 2, 4], [ITEM.HERB, 2, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.TAPE, 2, 1, 1]],
   [ZONE.CAMPGROUND]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ROPE, 5, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.STICK, 4, 2, 5], [ITEM.BATTERY, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.AMMO_SHELLS, 2, 4, 6], [ITEM.KNIFE, 1, 1, 1], [ITEM.AMMO_BOLTS, 2, 2, 4], [ITEM.TUNA, 4, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1]],
-  [ZONE.CHECKPOINT]: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 5, 10, 20], [ITEM.WIRE, 5, 1, 3], [ITEM.POWDER, 4, 2, 6], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.GRENADE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.AMMO_556, 5, 15, 30], [ITEM.M4A1, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 20, 40], [ITEM.AMMO_145, 1, 2, 3], [ITEM.ENERGY_DRINK, 2, 1, 2]],
+  [ZONE.CHECKPOINT]: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 5, 10, 20], [ITEM.WIRE, 5, 1, 3], [ITEM.POWDER, 4, 2, 6], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PLATE, 2, 1, 1], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.GRENADE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.AMMO_556, 5, 15, 30], [ITEM.M4A1, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 20, 40], [ITEM.AMMO_145, 1, 2, 3], [ITEM.ENERGY_DRINK, 2, 1, 2], [ITEM.AMMO_FLARE, 2, 1, 2], [ITEM.FLARE_GUN, 1, 1, 1]],
   [ZONE.STATION]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.NAILS, 5, 4, 10], [ITEM.WOOD, 5, 2, 4], [ITEM.ROPE, 4, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.AMMO_9MM, 3, 8, 16], [ITEM.FLARE, 3, 1, 2], [ITEM.TUNA, 2, 1, 2], [ITEM.HAMMER, 1, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1]],
   [ZONE.QUARRY]: [[ITEM.SCRAP, 8, 2, 4], [ITEM.POWDER, 6, 3, 8], [ITEM.CHEM, 4, 1, 2], [ITEM.WIRE, 4, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 3, 1, 2], [ITEM.HAMMER, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 20, 40]],
-  [ZONE.RELAY]: [[ITEM.BATTERY, 6, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_556, 2, 10, 20], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2]],
+  [ZONE.RELAY]: [[ITEM.BATTERY, 6, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_556, 2, 10, 20], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.AMMO_FLARE, 2, 1, 2]],
   [ZONE.ROADSIDE]: [[ITEM.SCRAP, 6, 1, 2], [ITEM.CLOTH, 8, 2, 3], [ITEM.TAPE, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.BANDAGE, 3, 1, 1], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.NAILS, 3, 3, 8], [ITEM.FLARE, 2, 1, 1], [ITEM.CHEM, 2, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1]],
   [ZONE.FAIR]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.SCRAP, 4, 1, 3], [ITEM.ROPE, 3, 1, 2], [ITEM.FLARE, 3, 1, 2], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.ENERGY_DRINK, 4, 1, 2]],
   [ZONE.SCRAPYARD]: [[ITEM.SCRAP, 10, 2, 5], [ITEM.WIRE, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.PLATE, 1, 1, 1], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.ALCOHOL, 2, 1, 1], [ITEM.HAMMER, 1, 1, 1], [ITEM.BAT, 1, 1, 1]],
@@ -836,10 +851,10 @@ CONT.DRUG_LOCKER = 17;
 // kevlar plates by the pair (a vest takes two), trunks and duffels hold leather. A new entry thins every other one in
 // its table, so these went in at weight 1 and the plates grew in count, not in weight. First-pass numbers.
 export const CONT_TABLES = {
-  military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 2, 2], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.GRENADE, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2], [ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 30, 60], [ITEM.FLAMETHROWER, 1, 1, 1], [ITEM.AMMO_ROCKET, 1, 1, 2], [ITEM.RPG, 1, 1, 1], [ITEM.AMMO_145, 2, 2, 4], [ITEM.AT_RIFLE, 1, 1, 1]],
-  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1]],
+  military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 2, 2], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.GRENADE, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2], [ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 30, 60], [ITEM.FLAMETHROWER, 1, 1, 1], [ITEM.AMMO_ROCKET, 1, 1, 2], [ITEM.RPG, 1, 1, 1], [ITEM.AMMO_145, 2, 2, 4], [ITEM.AT_RIFLE, 1, 1, 1], [ITEM.AMMO_FLARE, 2, 1, 3], [ITEM.FLARE_GUN, 1, 1, 1]],
+  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2]],
   duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.TUNA, 3, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1]],
-  locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1]],
+  locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2]],
   cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1], [ITEM.TUNA, 3, 1, 2]],
   toolbox: [[ITEM.NAILS, 8, 6, 14], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 3, 1, 2], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
   dumpster: [[ITEM.CLOTH, 8, 2, 4], [ITEM.SCRAP, 5, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.STICK, 3, 2, 4], [ITEM.TAPE, 2, 1, 1], [ITEM.BATTERY, 1, 1, 1]],

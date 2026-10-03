@@ -11,6 +11,7 @@ import { el, svgEl, clamp, fmtTime, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { needLines } from '../game/harvest.js';
 import { bindTag, bindLabel, liveText } from '../game/binds.js';
+import { SKYFLARE } from '../../shared/skyflare.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -134,6 +135,7 @@ function statLines(id) {
     if (w.melee) out.push(`Damage ${w.damage}` + (w.altDamage !== w.damage ? ` · heavy ${w.altDamage}` : ''), `Swing ${w.rate.toFixed(2)}s`);
     else if (w.rocket) out.push(`Blast ${w.damage} · ${w.rocket.radius}m radius`, `Single shot · ${AMMO_NAMES[w.ammo]}`, `Reload ${w.reload}s`);
     else if (w.flame) out.push(`Fire ${Math.round(w.damage / w.rate)}/s · ${w.range}m`, `Tank ${w.mag} · ${AMMO_NAMES[w.ammo]}`, `Sets alight: ${BURN.dps}/s for ${BURN.time}s`);
+    else if (w.skyflare) out.push(`Burns ${SKYFLARE.burn}s · lights ${SKYFLARE.reach}m around`, `Single shot · ${AMMO_NAMES[w.ammo]}`, 'Pins Shades under it');
     else out.push(`Damage ${w.damage}${w.pellets > 1 ? ' × ' + w.pellets : ''}`, `Magazine ${w.mag} · ${AMMO_NAMES[w.ammo]}`, w.quiet ? 'Single shot · near-silent' : w.auto ? 'Full-auto' : 'Semi-auto');
   }
   const c = CONSUMABLES[id];

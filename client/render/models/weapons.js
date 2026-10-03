@@ -387,6 +387,64 @@ function buildPistol(P) {
   P.meta.slideGrab = new THREE.Vector3(0, 0.065, 0.0);
 }
 
+// ------------------------------------------------------------------ Flare gun (26.5mm break-open signal pistol)
+// Moulded orange plastic, Orion style: a chunky grip and frame laid out like the pistol's (the same hands fit it),
+// a fat smooth-bore barrel over them that tips down about a pin in front of the trigger guard, an exposed hammer.
+// Parts (viewmodel): body, barrel (pivots on the hinge pin), hammer (pivots at its foot), shell (reload only).
+const FG_ORANGE = { region: WR.PLAIN, color: 0xe0601c, mottle: 0.06 };
+const FG_SEAM = { region: WR.PLAIN, color: 0xa8401a, mottle: 0.05 };
+function buildFlareGun(P) {
+  const hi = P.hi;
+  const B = P.get('body');
+  const rs = R(hi, 16, 9);
+  const BY = 0.058; // bore axis
+  // grip: the pistol's outline, rounder at the front and flared at the butt
+  profile(B, [[-0.03, 0.036], [-0.008, 0.03], [-0.047, -0.074], [-0.05, -0.085], [-0.044, -0.091], [0.004, -0.091], [0.009, -0.083], [0.013, -0.06], [0.022, -0.036], [0.03, -0.012], [0.038, 0.012], [0.044, 0.03]], 0.031, { ...FG_ORANGE, bevel: 0.004, curveSegs: 4 });
+  if (hi) {
+    // moulded grip panels + a lanyard loop at the butt
+    for (const s of [-1, 1]) profile(B, [[-0.01, 0.016], [-0.038, -0.07], [-0.006, -0.07], [0.017, -0.004]], 0.001, { ...FG_SEAM, bevel: 0, x: s * 0.0156 });
+    B.tube(0, [[-0.006, -0.092, 0.038], [-0.006, -0.102, 0.043], [0.006, -0.102, 0.043], [0.006, -0.092, 0.038]], 0.0018, 0.0018, { ...M.gunDark, rs: 5, ts: 6, cap: false });
+  }
+  // frame: standing breech over the hand, a lug under the barrel out to the hinge
+  // (its top stays under the barrel's, so the barrel is the line the eye follows)
+  profile(B, [[-0.034, 0.06], [-0.026, 0.07], [-0.003, 0.074], [-0.003, 0.038], [0.098, 0.036], [0.106, 0.029], [0.098, 0.02], [0.0, 0.022], [-0.034, 0.03]], 0.03, { ...FG_ORANGE, bevel: 0.003 });
+  if (hi) for (const s of [-1, 1]) profile(B, [[-0.03, 0.04], [-0.006, 0.04], [-0.006, 0.064], [-0.024, 0.062]], 0.001, { ...FG_SEAM, bevel: 0, x: s * 0.0151 }); // side plate seam
+  // trigger guard + trigger (where the pistol's are: the trigger finger finds it)
+  B.tube(0, [[0, 0.024, -0.04], [0, 0.004, -0.046], [0, -0.003, -0.066], [0, -0.001, -0.093], [0, 0.023, -0.1]], 0.0042, 0.0042, { ...FG_ORANGE, rs: 6, ts: R(hi, 12, 6), cap: false });
+  B.tube(0, [[0, 0.024, -0.062], [0, 0.013, -0.064], [0, 0.006, -0.058]], 0.003, 0.0024, { ...M.gunDark, rs: 5, ts: 4 });
+  // barrel latch: a thumb lever on the left of the frame
+  boxR(B, -0.0172, -0.0146, 0.061, 0.068, 0.002, 0.014, M.gunDark);
+  // hinge pin through the lug
+  B.seg(0, [-0.0158, 0.029, -0.106], [0.0158, 0.029, -0.106], 0.0042, 0.0042, { ...M.gunDark, rs: 8, hs: 1 });
+  // barrel: fat moulded tube, black bore, a rib with a bump of a front sight, its own lug round the pin
+  const BR = P.get('barrel');
+  barrelZ(BR, 0, BY, -0.002, -0.168, 0.0215, 0.0142, { ...FG_ORANGE, rs });
+  latheZ(BR, [[0.0215, 0.158], [0.0232, 0.16], [0.0232, 0.168], [0.0215, 0.169]], 0, BY, { ...FG_ORANGE, rs, sharp: true }); // muzzle lip
+  latheZ(BR, [[0.0215, 0.002], [0.0228, 0.004], [0.0228, 0.016], [0.0215, 0.018]], 0, BY, { ...FG_SEAM, rs, sharp: true }); // breech collar
+  cylZ(BR, 0, BY, -0.135, -0.163, 0.0141, { ...M.black, rs: R(hi, 12, 7) });
+  boxR(BR, -0.0042, 0.0042, 0.0775, 0.0832, -0.012, -0.156, FG_ORANGE);
+  boxR(BR, -0.0021, 0.0021, 0.0832, 0.0872, -0.148, -0.157, FG_SEAM);
+  boxR(BR, -0.0098, 0.0098, 0.021, 0.043, -0.094, -0.118, FG_ORANGE);
+  if (hi) for (const s of [-1, 1]) boxR(BR, s * 0.0214, s * 0.0219, 0.051, 0.065, -0.05, -0.11, FG_SEAM); // moulded flats
+  P.pivot('barrel', new THREE.Vector3(0, 0.029, -0.106));
+  // hammer, cocked: a broad ribbed spur standing up behind the breech
+  const HM = P.get('hammer');
+  profile(HM, [[-0.012, 0.062], [-0.004, 0.072], [-0.02, 0.09], [-0.036, 0.099], [-0.043, 0.094], [-0.03, 0.08], [-0.024, 0.06]], 0.009, { ...M.gunDark, bevel: 0.0015 });
+  if (hi) for (let i = 0; i < 3; i++) boxR(HM, -0.0052, 0.0052, 0.093 - i * 0.003, 0.0965 - i * 0.003, 0.033 - i * 0.004, 0.0355 - i * 0.004, M.black);
+  P.pivot('hammer', new THREE.Vector3(0, 0.064, 0.018));
+  // a fresh shell (loading animation only): red paper hull, aluminium head; origin at its head, hull toward -Z
+  if (P.split) {
+    const SH = P.get('shell');
+    cylZ(SH, 0, 0, -0.004, -0.094, 0.0128, { region: WR.PLAIN, color: 0xb0241a, rs: 12 });
+    cylZ(SH, 0, 0, 0.0, -0.016, 0.0136, { ...M.steel, color: [0.92, 0.9, 0.86], rs: 12 });
+    cylZ(SH, 0, 0, 0.0035, 0.0, 0.0152, { ...M.steel, color: [0.92, 0.9, 0.86], rs: 12 });
+  }
+  P.meta.muzzle = new THREE.Vector3(0, BY, -0.172);
+  P.meta.leftHand = new THREE.Vector3(-0.028, -0.02, -0.012);
+  P.meta.sight = new THREE.Vector3(0, 0.102, 0.0); // (no sights: the eye rides just over the hammer spur)
+  P.meta.chamber = new THREE.Vector3(0, BY, -0.002);
+}
+
 // ------------------------------------------------------------------ Pump shotgun
 function buildShotgun(P) {
   const hi = P.hi;
@@ -1550,6 +1608,7 @@ function buildDecoy(P) {
 const BUILDERS = {
   [ITEM.AK47]: buildAK,
   [ITEM.PISTOL]: buildPistol,
+  [ITEM.FLARE_GUN]: buildFlareGun,
   [ITEM.SHOTGUN]: buildShotgun,
   [ITEM.HUNTING_RIFLE]: buildRifle,
   [ITEM.M4A1]: buildM4,
@@ -2342,6 +2401,11 @@ function handQ(side, finger, palm) {
   const z = new THREE.Vector3().crossVectors(x, y);
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 }
+// flare gun reload (ViewModel._animReload, breakPistol): the gun's pose change (pitch down, roll, yaw, x/y/z shift),
+// how far the barrel tips open (rad), and the free hand pushing a shell into the open breech, set in camera space
+// (fingers forward and a little up, palm to the right) so that the arm comes in from the lower left whatever the gun does
+const FG_RELOAD = { pitch: 0.1, roll: 0.75, yaw: 0.05, x: 0.07, y: 0.06, z: 0.02, open: 0.55 };
+FG_RELOAD.q = handQ(-1, [0.25, 0.12, -0.96], [1, -0.3, 0]);
 // left support under a handguard: hand X -> weapon Y (palm up), fingers (-Y) -> weapon +X, tunnel Z along barrel
 const supportGrip = (roll, yaw, pitch = 0) => {
   // mirrored left hand (palm = +X_hand): X_hand -> weapon +Y (palm up), -Y_hand (fingers) -> weapon +X, Z_hand -> weapon +Z
@@ -2427,6 +2491,15 @@ const VM = {
     lGrip: { p: [0, -0.02, -0.007], q: handQ(-1, [-0.199, -0.354, -0.914], [0.98, -0.072, -0.185]), pose: 'cup' },
     poleR: new THREE.Vector3(0.5, -1, 0.2), poleL: new THREE.Vector3(-0.6, -0.9, 0.2), // elbows down
     recoil: { z: 0.03, rx: 0.1, ry: 0.01 }, sprint: [0.0, -0.015, 0.03, -0.3, 0.22, 0.28],
+  },
+  [ITEM.FLARE_GUN]: {
+    // held as the pistol is (its grip and trigger sit where the pistol's do); breakPistol: the reload tips the barrel
+    // down about its hinge pin, pulls the spent case, thumbs a fresh shell in, snaps it shut and cocks the hammer
+    kind: 'pistol', breakPistol: true, hip: [0.11, -0.158, -0.29, 0.09, 0.18, -0.06], ads: 0.2, adsZ: -0.42,
+    rPose: 'trigger', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
+    lGrip: { p: [0, -0.028, -0.03], q: handQ(-1, [0.05, -0.55, -0.83], [0.92, 0.3, 0.15]), pose: 'cup' },
+    poleR: new THREE.Vector3(0.5, -1, 0.2), poleL: new THREE.Vector3(-0.6, -0.9, 0.2),
+    recoil: { z: 0.045, rx: 0.17, ry: 0.02 }, sprint: [0.0, -0.015, 0.03, -0.3, 0.22, 0.28],
   },
   [ITEM.KNIFE]: {
     // held up the way a hand actually holds a knife: the wrist straight in line with the forearm (the elbow dropped,
@@ -2712,6 +2785,7 @@ export class ViewModel {
     this.reloadHold = 0;
     this.cocked = true; // crossbow: string latched with a bolt on the rail (RPG: a grenade in the muzzle)
     this.cockHold = 0; // ...and how long to trust our own fire / reload over the caller's `loaded`
+    this.hammerDown = false; // flare gun: the hammer has fallen and the reload has not cocked it yet
     this._nock = new THREE.Vector3(); // where the middle of the string is (weapon space)
     this.visible = true;
     this.muzzleLocal = new THREE.Vector3();
@@ -2778,6 +2852,7 @@ export class ViewModel {
     this.reloadHold = 0;
     this.cocked = true;
     this.cockHold = 0;
+    this.hammerDown = false;
     this.recZ.x = this.recX.x = this.recY.x = 0;
     this.recZ.v = this.recX.v = this.recY.v = 0;
     const style = claws ? 'claw' : 'normal';
@@ -2822,6 +2897,7 @@ export class ViewModel {
       this.cocked = false;
       this.cockHold = 0.3;
     }
+    if (this.cur.cfg.breakPistol) this.hammerDown = true;
   }
 
   reload(duration = 2, perShell = false) {
@@ -3066,6 +3142,13 @@ export class ViewModel {
       }
     }
     if (parts.barrels) parts.barrels.rotation.x = 0; // closed unless the reload opens it
+    if (parts.barrel) parts.barrel.rotation.x = 0; // (the flare gun's: the same)
+    if (parts.hammer) {
+      // falls the instant it is fired (a short swing past rest and back), stays down until the reload cocks it
+      let fall = this.hammerDown ? Math.min(1, this.fireT / 0.025) : 0;
+      if (act && act.type === 'reload' && cfg.breakPistol) fall *= 1 - smoothstep(0.86, 0.93, u); // thumbed back
+      parts.hammer.rotation.x = -0.62 * fall + (this.hammerDown && this.fireT < 0.08 ? -0.08 * Math.sin((this.fireT / 0.08) * PI) : 0);
+    }
     if (cfg.crossbow) {
       const reloading = !!act && act.type === 'reload';
       // fire() and the end of the reload animation flip `cocked` themselves; otherwise follow the caller
@@ -3308,7 +3391,57 @@ export class ViewModel {
     this._reloadState = st;
     if (cur.cfg.single) return this._animReloadSingle(u, P6, st, parts, meta);
     if (cur.cfg.rpg) return this._animReloadRPG(u, P6, st, parts, meta);
-    if (cur.cfg.crossbow) {
+    if (cur.cfg.breakPistol) {
+      // flare gun: muzzle down and canted in, the barrel tips open about its pin and the extractor kicks the spent case
+      // out; the free hand fetches a fresh shell from below, drops it into the breech and thumbs it home, then a flick
+      // of the wrist snaps the barrel shut and the hammer is thumbed back (update() eases it)
+      const tilt = win(u, 0.0, 0.12, 0.84, 0.98);
+      P6[3] -= tilt * FG_RELOAD.pitch;
+      P6[5] += tilt * FG_RELOAD.roll;
+      P6[4] += tilt * FG_RELOAD.yaw;
+      P6[0] -= tilt * FG_RELOAD.x;
+      P6[1] += tilt * FG_RELOAD.y;
+      P6[2] -= tilt * FG_RELOAD.z;
+      const open = smoothstep(0.08, 0.18, u) * (1 - smoothstep(0.76, 0.82, u));
+      const flick = win(u, 0.74, 0.79, 0.81, 0.88); // the wrist snaps up to close it
+      P6[3] += flick * 0.16;
+      P6[1] += flick * 0.012;
+      const br = parts.barrel;
+      br.rotation.x = -open * FG_RELOAD.open;
+      // the chamber mouth and the way into it (toward the muzzle), with the barrel as it is now
+      const ch = _v1.copy(meta.chamber).sub(br.userData.base).applyQuaternion(br.quaternion).add(br.position);
+      const fwd = _v3.set(0, 0, -1).applyQuaternion(br.quaternion);
+      const sh = parts.shell;
+      if (u < 0.4) {
+        // the spent case, kicked up out of the breech and off to the right
+        const kick = smoothstep(0.17, 0.22, u);
+        const fly = smoothstep(0.22, 0.36, u);
+        sh.visible = kick > 0.01 && fly < 0.98;
+        sh.position.copy(ch).addScaledVector(fwd, -0.05 * kick);
+        sh.position.x += fly * 0.12;
+        sh.position.y += fly * 0.05 - fly * fly * 0.22;
+        sh.position.z += fly * 0.04;
+        sh.quaternion.copy(br.quaternion);
+        sh.rotateZ(fly * 2.2);
+        sh.rotateX(fly * 1.6);
+      } else {
+        const push = smoothstep(0.56, 0.68, u); // dropped in, then thumbed home
+        sh.visible = true;
+        sh.position.copy(ch).addScaledVector(fwd, -(1 - push) * 0.085);
+        sh.quaternion.copy(br.quaternion);
+        sh.visible = smoothstep(0.38, 0.52, u) > 0.3 && push < 0.97;
+      }
+      // A: below the screen (camera space), B: pinching the fresh shell's head, fingers down the bore
+      st.a.set(-0.03, -0.5, -0.32);
+      st.aCam = true;
+      st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
+      st.b.copy(sh.position).addScaledVector(fwd, -0.012);
+      st.qb.copy(_q1.setFromEuler(_e1.set(P6[3], P6[4], P6[5], 'YXZ')).invert()).multiply(FG_RELOAD.q); // (camera -> weapon space)
+      st.m = smoothstep(0.38, 0.52, u);
+      st.w = win(u, 0.26, 0.38, 0.7, 0.8);
+      st.pose = 'pinch';
+      if (u > 0.93) this.hammerDown = false;
+    } else if (cur.cfg.crossbow) {
       // dip the nose, haul the string back to the latch (update() flexes the limbs to match), then fetch a
       // bolt from below, lay it in the groove and slide it back against the string
       const tilt = win(u, 0.0, 0.12, 0.9, 1.0);
@@ -3619,7 +3752,7 @@ export class ViewModel {
 }
 
 /** Debug/tuning access to pose tables (sandbox only). */
-export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ };
+export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ, FG_RELOAD };
 /** Debug: hand geometry. */
 export function getHandGeoForDebug(pose, side) {
   return getHandGeo(pose, pose === 'claw' ? 'claw' : 'glove', side);

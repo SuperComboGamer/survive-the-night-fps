@@ -8,6 +8,7 @@ import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
+import { flareReach } from '../shared/skyflare.js';
 import { Herds, HERD_RUSH } from './herd.js';
 import { Wards, WARD_DARK } from './clinic.js';
 import { ColliderGrid, makeBox, rayCollider, CYL } from '../shared/collision.js'; // (bat flight: flyCollide, roofBoxes)
@@ -1160,7 +1161,7 @@ export class Zombies {
   }
 
   // ---------------------------------------------------------------- light (what pins a shade)
-  // every burning point light this tick: torches, campfires, road flares, burning ground
+  // every burning point light this tick: torches, campfires, road flares, flare gun flares, burning ground
   lightSources() {
     const g = this.g;
     const out = this.lights;
@@ -1171,7 +1172,14 @@ export class Zombies {
       const def = STRUCT_DEFS[s.stype];
       if (def.light && s.burnLeft > 0) out.push(s.x, s.y + def.sy, s.z, def.light);
     }
-    for (const e of g.projectiles) if (e.ptype === PROJ.FLARE) out.push(e.x, e.y + 0.35, e.z, THROWABLES[ITEM.FLARE].light);
+    for (const e of g.projectiles) {
+      if (e.ptype === PROJ.FLARE) out.push(e.x, e.y + 0.35, e.z, THROWABLES[ITEM.FLARE].light);
+      else if (e.ptype === PROJ.SKYFLARE) {
+        // a flare gun's flare: from high up it lights a wide circle of the ground under it (shared/skyflare.js)
+        const r = flareReach(e.flare, e.t, e.y - g.world.floorAt(e.x, e.z, e.y));
+        if (r > 0) out.push(e.x, e.y + (e.flare.landed ? 0.35 : 0), e.z, r);
+      }
+    }
     for (const a of g.areas) if (a.atype === AREA.FIRE) out.push(a.x, a.y + 0.6, a.z, a.radius + FIRE_LIGHT_MARGIN);
     return out;
   }

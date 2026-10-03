@@ -3,9 +3,9 @@
 // creates carry full state, updates carry only the changed fields behind a one-byte head (ids as steps from the
 // previous update, positions as 1-3 byte deltas when small; layout in shared/protocol.js), far entities update at
 // half rate, and irrelevant/destroyed entities get a remove. Sections with nothing in them are not written at all.
-import { MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, AOI_STRUCTURE_RADIUS, AOI_CACHE_RADIUS } from '../shared/constants.js';
+import { SERVER_TICK_RATE, MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, AOI_STRUCTURE_RADIUS, AOI_CACHE_RADIUS } from '../shared/constants.js';
 import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qangle16, qlookYaw, qlookPitch, packLook, PFLAG, PRIDE_SHIFT, ZSTATUS, HCAR_AT } from '../shared/protocol.js';
-import { ZOMBIE_DEFS } from '../shared/defs.js';
+import { ZOMBIE_DEFS, PROJ } from '../shared/defs.js';
 import { GUN_CARRIED } from '../shared/mountedgun.js';
 
 export const SLOTS = 9;
@@ -185,6 +185,12 @@ function writeCreate(w, e) {
     case ENT.PROJECTILE:
       w.u8(e.ptype);
       w.u16(e.owner || 0);
+      // a flare gun's flare: the ticks since the shot and when its chute opens (1/20 s), so that a client draws it as
+      // far into its burn as it is (shared/skyflare.js)
+      if (e.ptype === PROJ.SKYFLARE) {
+        w.u16(Math.min(65535, Math.round(e.t * SERVER_TICK_RATE)));
+        w.u8(Math.min(255, Math.round(e.flare.tOpen * 20)));
+      }
       break;
     case ENT.AREA:
       w.u8(e.atype);
@@ -286,9 +292,10 @@ export function writeEntities(w, view, viewer, candidates, tick) {
     const dx = SX[id] - vx;
     const dz = SZ[id] - vz;
     const d2 = dx * dx + dz * dz;
-    // area of interest: a rough radius per kind (bosses are seen from anywhere)
+    // area of interest: a rough radius per kind (bosses are seen from anywhere, and so is anything marked everywhere:
+    // a flare gun's flare, high over the valley)
     const r2 = AOI2[kind];
-    if (r2 !== 0 && !(d2 <= r2) && !(kind === ENT.ZOMBIE && e.boss)) continue;
+    if (r2 !== 0 && !(d2 <= r2) && !(kind === ENT.ZOMBIE && e.boss) && !e.everywhere) continue;
     if (known[id] !== e.gen) {
       _cre[nc++] = e;
       continue; // not marked seen: a stale generation gets removed below before the create

@@ -30,6 +30,7 @@ import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } f
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
 import { deerHitbox } from '../shared/deer.js';
 import { rocketStrikesWorld } from '../shared/rocket.js';
+import { SKYFLARE, launchFlare, flareStep } from '../shared/skyflare.js';
 
 // the projectile each throwable flies as
 const THROW_PROJ = Object.fromEntries(Object.entries(PROJ_ITEM).map(([ptype, item]) => [item, +ptype]));
@@ -132,6 +133,7 @@ export class Combat {
     g.zm.noise(ox, oz, def.noise || NOISE.GUNSHOT, p.state.y);
     if (def.flame) return this.flame(p, ev, def);
     if (def.rocket) return this.launch(p, ev, def);
+    if (def.skyflare) return this.skyflare(p, ev);
     const t = this.rewindTime(p);
     let hitFlags = 0;
     const tmp = { x: 0, y: 0, z: 0 };
@@ -669,6 +671,18 @@ export class Combat {
     g.zm.noise(x, z, opts.noise || NOISE.EXPLOSION, y);
   }
 
+  // ---------------------------------------------------------------- the flare gun
+  // Its shot is a parachute flare (shared/skyflare.js) flown from the eye along the aim. The shooter's client flies
+  // its own from the moment of the shot (client/game/skyflares.js) and does not draw this one; everyone else sees
+  // this one, wherever they are in the valley (everywhere: snapshot.js)
+  skyflare(p, ev) {
+    shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, 1, ev.seed, _dirs);
+    const e = this.spawnProjectile(PROJ.SKYFLARE, p, ev.x, ev.y, ev.z, 0, 0, 0, { grav: 0 });
+    if (!e) return;
+    e.flare = launchFlare(ev.x, ev.y, ev.z, _dirs[0], _dirs[1], _dirs[2], ev.seed);
+    e.everywhere = true;
+  }
+
   // ---------------------------------------------------------------- projectiles
   spawnProjectile(ptype, owner, x, y, z, vx, vy, vz, extra = {}) {
     const g = this.g;
@@ -725,6 +739,18 @@ export class Combat {
       const step = e.ahead ? dt + e.ahead : dt;
       e.ahead = 0;
       e.t += step;
+      if (e.ptype === PROJ.SKYFLARE) {
+        // (its own flight: closed-form in e.t, stopped where it comes down)
+        const f = flareStep(e.flare, e.t, g.world, _ray);
+        e.x = f.x;
+        e.y = f.y;
+        e.z = f.z;
+        if (e.t >= SKYFLARE.burn) {
+          list.splice(i, 1);
+          g.removeEntity(e);
+        }
+        continue;
+      }
       const ox = e.x;
       const oy = e.y;
       const oz = e.z;

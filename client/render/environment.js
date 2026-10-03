@@ -3,7 +3,8 @@
 // with sun in-scattering (globals.js), and the sun-shaft parameters for the post passes - all driven
 // by the server's day/night phase, with the weather (client/game/weather.js) on top: fog banks, a storm
 // deck that hides the moon, wind-driven clouds and lightning that lights the clouds, the fog and the
-// whole scene for a moment.
+// whole scene for a moment. A flare gun's flare overhead (client/game/skyflares.js: this.flare) lights the sky round
+// it, the underside of the clouds and the haze, for as long as it burns.
 import * as THREE from 'three';
 import { SunLight } from 'three/addons/lights/SunLight.js';
 import { PHASE, dayLength, NIGHT_LENGTH } from '../../shared/constants.js';
@@ -89,6 +90,11 @@ void main() {
     float fd = max(dot(d, uFlashDir), 0.0);
     col += vec3(0.6, 0.66, 0.85) * uFlash * (0.1 + 0.45 * cov + (0.35 + cov) * 1.4 * pow(fd, 5.0)) * smoothstep(-0.12, 0.15, h);
   }
+  // a flare: a glow in the haze round it, and the clouds lit from underneath
+  if (dot(uFlareFog, vec3(1.0)) > 1e-4) {
+    float fd = max(dot(d, uFlareDirW), 0.0);
+    col += uFlareFog * (0.35 + 1.4 * cov + 1.2 * pow(fd, 4.0) + 5.0 * pow(fd, 40.0)) * smoothstep(-0.15, 0.1, h);
+  }
   // melt into the (sun-lit) haze at the horizon so distant terrain has no seam
   col = mix(col, stnFogColor(uFog, d), smoothstep(0.16, -0.02, h));
   gl_FragColor = vec4(col, 1.0);
@@ -96,6 +102,11 @@ void main() {
 `;
 
 const C = (hex) => new THREE.Color(hex);
+// a flare's light in the haze (x its colour, x how much of the sky it lights from here) and the sky's ambient it adds
+// at full strength (Environment.applyFlare). Kept low: the ambient reaches indoors, where its direct light (the sky
+// light's shadow) does not
+const FLARE_FOG = 0.06;
+const FLARE_HEMI = 0.12;
 const FLASH_SKY = C(0xb8c6ff);
 const FLASH_GROUND = C(0x4a5068);
 const FLASH_FOG = C(0x5a6278);
@@ -195,6 +206,11 @@ export class Environment {
     this.skyLightDir = new THREE.Vector3(0, 1, 0); // where the sun/moon really is (sky, haze, shafts)
     this.rays = { sunDir: this.skyLightDir, color: new THREE.Color(), strength: 0, sigma: 0.02 };
     this._grey = new THREE.Color();
+    // a flare gun's flare as it is seen from here (SkyFlares sets it before each update): ground: how lit the ground
+    // round the eye is by it, 0..~1; sky: how much of the sky and the haze it lights from where the eye is; dir: from
+    // the eye towards the one that lights the haze most; color: its light
+    this.flare = { ground: 0, sky: 0, dir: new THREE.Vector3(0, 1, 0), color: new THREE.Color(1, 1, 1) };
+    this._flareCol = new THREE.Color();
   }
 
   // quality: renderer.q (shadows, shadowMapSize, shadowDist)
@@ -255,6 +271,7 @@ export class Environment {
     this.night = 1 - Math.max(0, Math.min(1, (sunH + 0.12) / 0.3));
     const u = this.uniforms;
     if (w) this.applyWeather(dt, w);
+    this.applyFlare(overrides.under || 0);
     // down the mine none of it arrives: the sky's light and the sun go out, and the haze between the eye and
     // whatever a flashlight finds is dark (the sky itself is left alone: it is what shows in the mouth of the drift)
     const down = overrides.under || 0;
@@ -318,6 +335,25 @@ export class Environment {
     r.color.copy(c.dir).multiplyScalar(c.dirI * 0.3);
     r.strength = c.rays * handover * (useSun ? 1 : 0.5);
     r.sigma = Math.max(0.006, c.fogD * 2.2);
+  }
+
+  // A flare gun's flare (this.flare) on top of the palette and the weather: by night its light lifts the sky's ambient
+  // under it, thins the haze the eye sees through (a lit night is one you see further into) and lights the haze, the
+  // sky round it and the clouds (globals.js uFlareFog). By day it is all but lost. None of it gets down the mine.
+  applyFlare(down) {
+    const f = this.flare;
+    const k = (0.15 + 0.85 * this.night) * (1 - down);
+    const ground = Math.min(1.2, f.ground) * k;
+    const sky = Math.min(1.5, f.sky) * k;
+    G.uFlareDirW.value.copy(f.dir);
+    G.uFlareFog.value.copy(f.color).multiplyScalar(FLARE_FOG * sky);
+    if (ground < 0.002) return;
+    const c = this.cur;
+    const col = this._flareCol.copy(f.color);
+    c.hemiSky.lerp(col, Math.min(1, 0.3 * ground));
+    c.hemiGround.lerp(col.multiplyScalar(0.45), Math.min(1, 0.3 * ground));
+    c.hemi += FLARE_HEMI * ground;
+    c.fogD *= 1 - 0.3 * Math.min(1, ground);
   }
 
   // weather on top of the time-of-day palette (mutates this.cur before it reaches the lights and fog)

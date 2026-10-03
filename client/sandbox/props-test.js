@@ -17,7 +17,7 @@ const NEW_ONLY = Q.get('new') === '1';
 // iteration-2 additions (for ?new=1)
 const NEW_PROPS = ['duffel_bag', 'locker', 'cabinet', 'toolbox', 'fridge', 'log_pile', 'jersey_barrier', 'camper', 'school_bus', 'dump_truck', 'boom_gate', 'saw_table', 'gravel_pile', 'hunting_stand', 'billboard', 'motel_sign', 'satellite_dish', 'fence_chain'];
 const NEW_STRUCTS = ['CAMPFIRE', 'WORKBENCH', 'DOOR'];
-const NEW_ITEMS = ['FLARE', 'SCHEM_SHOTGUN', 'SCHEM_RIFLE', 'SCHEM_KEVLAR', 'SCHEM_EXPLOSIVES', 'SCHEM_METAL', 'TUNA', 'WALKIE', 'GRENADE', 'DECOY'];
+const NEW_ITEMS = ['FLARE', 'SCHEM_SHOTGUN', 'SCHEM_RIFLE', 'SCHEM_KEVLAR', 'SCHEM_EXPLOSIVES', 'SCHEM_METAL', 'TUNA', 'WALKIE', 'GRENADE', 'DECOY', 'FLARE_GUN', 'AMMO_FLARE'];
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
@@ -353,6 +353,18 @@ async function setupMisc() {
   }
   const { PROJ } = await import('../../shared/defs.js');
   const M = await import('../render/models/misc.js');
+  if (ONLY === 'skyflare') {
+    // ?cat=misc&only=skyflare : a flare gun's parachute flare hung 3 m up, chute open, and one with it half out, seen
+    // from below (&yaw / &pitch / &dist orbit as usual)
+    [1, 0.35].forEach((k, i) => {
+      const f = M.createProjectile(PROJ.SKYFLARE);
+      f.position.set(i * 1.4 - 0.7, 3, 0);
+      f.userData.chute.scale.setScalar(k);
+      scene.add(f);
+    });
+    frame(new THREE.Vector3(0, 3.4, 0), 3.2, 200, -35);
+    return;
+  }
   const crate = M.createSupplyCrate();
   crate.position.set(-3, 0, 0);
   shadowAll(crate);

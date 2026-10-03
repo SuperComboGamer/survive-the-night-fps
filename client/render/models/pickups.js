@@ -518,6 +518,24 @@ BUILD[ITEM.AMMO_BOLTS] = (b, r) => {
   }
   for (const x of [-0.05, 0.06]) b.torus('rope', 0.0145, 0.0022, 4, 10, PI * 2, { p: [x, 0.0095, 0], r: [0, PI / 2, 0], s: [1, 0.8, 1] });
 };
+// flare shells: three 26.5mm signal cartridges (red paper hulls, aluminium heads) banded together, a fourth lying loose
+function flareShell(b, r) {
+  b.cyl('paint', 0.0128, 0.0128, 0.082, 10, { p: [0, 0.009, 0], c: [0.66, 0.12, 0.08] });
+  b.cyl('paint', 0.0118, 0.0128, 0.004, 10, { p: [0, 0.052, 0], c: [0.5, 0.1, 0.07] }); // crimped top
+  b.cyl('paint', 0.0136, 0.0136, 0.014, 10, { p: [0, -0.039, 0], c: [0.78, 0.77, 0.74] });
+  b.cyl('paint', 0.0152, 0.0152, 0.0035, 10, { p: [0, -0.0475, 0], c: [0.78, 0.77, 0.74] }); // rim
+  b.cyl('dark', 0.0035, 0.0035, 0.001, 6, { p: [0, -0.0495, 0] }); // primer
+}
+BUILD[ITEM.AMMO_FLARE] = (b, r) => {
+  // two on the ground (resting on their rims), one in the groove between them
+  b.group({ p: [0, 0, 0], r: [0, 0.35, 0] }, () => {
+    for (const [z, y] of [[-0.0139, 0.0152], [0.0139, 0.0152], [0, 0.0367]]) b.group({ p: [0, y, z], r: [0, 0, PI / 2] }, () => flareShell(b, r));
+    // paper band round the bundle
+    b.group({ p: [0.004, 0.0224, 0], r: [0, 0, PI / 2] }, () => labelCyl(b, 'hazard_small', 0.0296, 0.024, 10, {}));
+  });
+  b.group({ p: [0.02, 0.0152, 0.075], r: [0, -0.9, PI / 2] }, () => flareShell(b, r));
+};
+
 // flamethrower fuel: the red steel flask that screws in under the lance, lying on its side
 BUILD[ITEM.AMMO_FUEL] = (b) => {
   b.group({ p: [0, 0.039, 0], r: [0, 0.5, PI / 2] }, () => {
