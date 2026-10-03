@@ -29,7 +29,6 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 function run(seed) {
   seedNow = seed;
   const game = new Game({ seed, godMode: true, dayLength: 3600, themes: false, log: () => {} });
-  game.debugCommands = true;
   // a client: what the server sends it, decoded as the real one decodes it
   const client = (name) => {
     const c = { name, id: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, notes: [], chat: [], events: [] };
@@ -55,6 +54,7 @@ function run(seed) {
     w.str(name);
     game.onMessage(c.session, w.bytes().slice());
     c.p = () => game.players.get(c.id);
+    if (c.p()) c.p().admin = true; // (the admin chat commands)
     c.act = (act, a) => {
       const w2 = new Writer(16);
       w2.u8(C2S.ACTION);
@@ -207,6 +207,8 @@ function run(seed) {
     const calm = gr.mode !== 2;
     check(`...nor one crouched ${(DEER.notice * DEER.crouch + 9).toFixed(0)} m off, where one standing would`, calm && gr.members.every((m) => dist(m, a.state) < DEER.notice + 9), `nearest ${Math.min(...gr.members.map((m) => dist(m, a.state))).toFixed(1)} m`);
     a.state.crouch = 0;
+    at = beside(gr, DEER.notice - 3);
+    put(a, at.x, at.z);
     sounds.length = 0;
     let top = 0;
     let boltTick = -1;
@@ -215,7 +217,7 @@ function run(seed) {
       for (const m of gr.members) top = Math.max(top, Math.hypot(m.vx, m.vz));
     });
     const c1 = mid(gr);
-    check('standing up there (inside 22 m) sends the whole group off at once, with a snort', boltTick >= 0 && boltTick <= 6 && sounds.includes(SOUND.DEER_SNORT), `bolted on tick ${boltTick}`);
+    check('standing up there (inside the notice range) sends the whole group off at once, with a snort', boltTick >= 0 && boltTick <= 6 && sounds.includes(SOUND.DEER_SNORT), `bolted on tick ${boltTick}`);
     check('...faster than a survivor sprints', top > SPRINT_SPEED + 0.8 && top <= DEER.run + 1.5, `${top.toFixed(1)} m/s against ${SPRINT_SPEED}`);
     check('...a good way off, away from the survivor, and there they stop', dist(c1, c0) > 35 && dist(c1, a.state) > dist(c0, a.state) + 25 && gr.mode !== 2 && gr.members.every((m) => Math.hypot(m.vx, m.vz) < 2 && m.anim !== DANIM.RUN), `${dist(c1, c0).toFixed(0)} m, now ${dist(c1, a.state).toFixed(0)} m from them, mode ${gr.mode}`);
     check('...still together', gr.members.every((m) => dist(m, c1) < 14), gr.members.map((m) => dist(m, c1).toFixed(0)).join(' '));

@@ -77,7 +77,6 @@ let bareSeed = 0; // a valley without a Relay Station
 // ---------------------------------------------------------------- a game, two clients
 function setup(seed) {
   const game = new Game({ seed, godMode: true, dayLength: 3600, nightLength: 3600, log: () => {} });
-  game.debugCommands = true;
   const client = (name) => {
     const c = { name, id: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, notes: [], sounds: [], chat: [], flyover: null, seq: 0 };
     const nop = () => {};
@@ -102,6 +101,7 @@ function setup(seed) {
     w.str(name);
     game.onMessage(c.session, w.bytes().slice());
     c.p = game.players.get(c.id);
+    if (c.p) c.p.admin = true; // (the admin chat commands)
     c.hold = (id) => {
       const w2 = new Writer(8);
       w2.u8(C2S.ACTION);

@@ -365,7 +365,7 @@ const toLens = () => Math.hypot(shade.x - lens.x, shade.y + 1 - lens.y, shade.z 
 
 // ---------------------------------------------------------------- /floodlight
 {
-  game.debugCommands = true;
+  p.admin = true; // (the admin chat commands)
   pack();
   game.handleChat(p, '/floodlight');
   const want = { [ITEM.AMMO_FUEL]: GEN_TANK / GEN_FUEL_UNIT };

@@ -1,4 +1,4 @@
-// Client stress test (server: GODMODE=1 DEBUG_COMMANDS=1): spawns ~120 zombies and reports frame CPU cost.
+// Client stress test (server: GODMODE=1 ADMIN_SECRET=dev): spawns ~120 zombies and reports frame CPU cost.
 // usage: node scripts/e2e-stress.js [url] [outdir]
 import puppeteer from 'puppeteer-core';
 const url = process.argv[2] || 'http://localhost:5173';
@@ -6,6 +6,8 @@ const out = process.argv[3];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage();
+// the admin commands (/give, /spawn, /tp...): the client says the server's ADMIN_SECRET on joining
+await page.evaluateOnNewDocument((k) => localStorage.setItem('stn.admin', k), process.env.ADMIN_SECRET || 'dev');
 await page.setViewport({ width: 1600, height: 900 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));

@@ -15,7 +15,8 @@
 //   night      when a night ends: at dawn, in a wipe, by escaping during it, or with the match abandoned
 //   event      the rare moments: join leave down death revive turned returned_at_dawn night_start dawn boss_spawn
 //              boss_kill supply_found supply_install schematic engine_start engine_ready crate_drop car_alarm
-//              radio_call bell, and the match's end as victory | wipe | abandoned | interrupted
+//              radio_call bell, admin (an admin chat command, data.command: Game.handleChat), and the match's end
+//              as victory | wipe | abandoned | interrupted
 //   sample     every SAMPLE_EVERY seconds of a running match
 //
 // Vocabularies
@@ -242,7 +243,7 @@ export class MatchTracker {
     const fixed = 'dayLenOverride' in g ? g.dayLenOverride || null : fin(g.dayLen) || null;
     const first = g.firstDayLen ?? g.dayLen; // (a getter: at the start of the run, the first day's)
     const sched = !fixed && typeof CONSTANTS.dayLength === 'function' ? Array.from({ length: 10 }, (_, i) => fin(CONSTANTS.dayLength(i + 1))) : null;
-    return { dayLen: fixed, firstDayLen: fin(first) || null, daySchedule: sched, nightLen: fin(g.nightLen) || null, godMode: !!g.godMode, debugCommands: !!g.debugCommands, themes: !!g.themes };
+    return { dayLen: fixed, firstDayLen: fin(first) || null, daySchedule: sched, nightLen: fin(g.nightLen) || null, godMode: !!g.godMode, adminCommands: !!g.adminHash, themes: !!g.themes };
   }
 
   // Ends the running match now, if there is one, with that outcome (see the vocabularies): its event, the open night,

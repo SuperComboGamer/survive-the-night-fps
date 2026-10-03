@@ -362,7 +362,7 @@ if (sweep) {
 // ---------------------------------------------------------------- a game on the first of them
 {
   const seed = SEEDS[0];
-  const game = new Game({ seed, godMode: true, dayLength: 3600, debugCommands: true, log: () => {} });
+  const game = new Game({ seed, godMode: true, dayLength: 3600, log: () => {} });
   const tag = `[game ${seed}]`;
   const c = { id: 0 };
   c.session = game.onOpen({

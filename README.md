@@ -47,11 +47,15 @@ without accounts and keeps the leaderboard in `STATS_FILE`), `MIGRATE_ON_START` 
 migrations when the server starts - `npm run migrate` does it), `DATABASE_POOL_MAX` (10 connections),
 `COOKIE_SECURE=1` (mark the sign-in cookie Secure even when the edge does not say the page came over https),
 `STATS_FILE` (where the leaderboard is kept when there is no database: `data/stats.json` by default, or
-`stats.json` on the Railway volume when the service has one; empty keeps nothing past the process).
+`stats.json` on the Railway volume when the service has one; empty keeps nothing past the process),
+`ADMIN_SECRET` (the admin password: a player who types `/admin <password>` in chat may run the admin commands below
+until they leave. The client keeps it in localStorage (`stn.admin`) and says it again on every join; `/admin` alone
+forgets it and turns them off. Unset, nobody can; a connection gets one try a second and five wrong ones).
 Testing only: `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
 may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
-load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
-`DEBUG_COMMANDS=1` (chat commands `/night`, `/day`, `/dusk [s]` / `/dawn [s]` (to 5 s, or that many, before
+load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage).
+
+Admin chat commands (`ADMIN_SECRET`): `/night`, `/day`, `/dusk [s]` / `/dawn [s]` (to 5 s, or that many, before
 nightfall / daybreak), `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
@@ -69,7 +73,7 @@ off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell to
 `/cemetery` (to the gate of St. Agnes Cemetery; `/cemetery rise [n]` makes the n graves nearest you give up their
 dead now), `/fair` (to the gate of the Tri-County Fair; `/fair on` starts its generator with a full tank, `/fair off`
 stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to the generator shed's door), `/floodlight` (what a generator and two floodlights cost, and a full tank of fuel),
-`/handcar [n]` (onto handcar n on the railway, or the first one nobody is on)).
+`/handcar [n]` (onto handcar n on the railway, or the first one nobody is on).
 
 ### Tests & tools
 
@@ -118,7 +122,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/shot.js <url> <out.png>` | headless Chrome screenshot |
 
 Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night/legs need a server
-started with `GODMODE=1 DEBUG_COMMANDS=1`. Art/audio/UI modules also have standalone sandbox pages
+started with `GODMODE=1 ADMIN_SECRET=dev` (they put `dev`, or their own `ADMIN_SECRET`, in the page's localStorage). Art/audio/UI modules also have standalone sandbox pages
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;

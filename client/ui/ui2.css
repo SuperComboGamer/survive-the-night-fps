@@ -513,7 +513,7 @@
   }
 }
 
-/* ------------------------------------------------------------------ minimap (an experimental setting) */
+/* ------------------------------------------------------------------ minimap */
 /* the field map in a disc in the top-left corner, turned so the way you face is up; the objective tracker sits under
    it in its slim form */
 .stn-ui {
@@ -567,6 +567,16 @@
   position: absolute;
   inset: 0;
   z-index: 2;
+}
+
+/* enemies in range (under the names and markers) */
+.stn-ui .mmap-en {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .stn-ui .mmap-lab {

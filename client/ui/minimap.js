@@ -1,6 +1,7 @@
-// The minimap (Settings: "Minimap", experimental, off by default): the field map in a disc in the top-left corner,
+// The minimap: the field map in a disc in the top-left corner,
 // turned with you so the way you face is always up, with the field map's markers on it. What matters wherever it is
 // (the car, waypoints, the team, pings, supply drops) waits on the rim, in its direction, while it is out of range.
+// Enemies in range are red dots on a canvas of their own, redrawn every frame (a horde is too many to be DOM markers).
 // The car supplies shrink to a row of icons under it (Objective's slim mode).
 import { SUPPLIES, SUPPLY_NEED, ZONE_NAMES } from '../../shared/defs.js';
 import { MAP_SIZE } from '../../shared/constants.js';
@@ -20,6 +21,9 @@ export class Minimap {
     this.cv = el('canvas', 'mmap-cv', this.root);
     this.g = this.cv.getContext('2d', { alpha: false });
     el('i', 'mmap-fov', this.root); // a faint wedge: what is in front of you
+    this.en = el('canvas', 'mmap-en', this.root);
+    this.eg = this.en.getContext('2d');
+    this.enN = 0; // dots drawn last frame, so an empty disc is not cleared every frame
     this.labels = el('div', 'mmap-labs', this.root);
     this.marks = el('div', 'mmap-mks', this.root);
     svgEl('i', 'mmap-you', this.root, glyph('arrowUp'));
@@ -37,6 +41,8 @@ export class Minimap {
     this.size = s;
     const n = Math.round(s * Math.min(2, window.devicePixelRatio || 1));
     if (this.cv.width !== n) this.cv.width = this.cv.height = n;
+    if (this.en.width !== n) this.en.width = this.en.height = n;
+    this.enN = -1;
     this.drawn = '';
   }
 
@@ -99,6 +105,27 @@ export class Minimap {
       if (l.e.hidden) l.e.hidden = false;
     }
     for (let i = li; i < this.labPool.length; i++) if (!this.labPool[i].e.hidden) this.labPool[i].e.hidden = true;
+
+    // enemies in range: red dots, a Tank's or a boss's bigger
+    const eg = this.eg;
+    const sc = n / this.size;
+    const dot = this.size * 0.018 * sc;
+    let en = 0;
+    if (this.enN) eg.clearRect(0, 0, n, n);
+    for (const e of d.enemies || []) {
+      const [px, py] = at(e.x, e.z);
+      if (px * px + py * py > (r - 2) * (r - 2)) continue;
+      if (!en++) {
+        eg.fillStyle = '#c41414';
+        eg.strokeStyle = 'rgba(232, 220, 192, 0.9)';
+        eg.lineWidth = Math.max(1, 1.2 * sc);
+      }
+      eg.beginPath();
+      eg.arc((px + r) * sc, (py + r) * sc, e.big ? dot * 1.7 : dot, 0, Math.PI * 2);
+      eg.fill();
+      eg.stroke();
+    }
+    this.enN = en;
 
     let mi = 0;
     // pin: out of range it waits on the rim, in its direction; otherwise it is only shown in range

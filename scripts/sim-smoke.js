@@ -88,6 +88,7 @@ function client(name) {
   w.str(name);
   game.onMessage(c.session, w.bytes().slice());
   c.p = () => game.players.get(c.id);
+  if (c.p()) c.p().admin = true; // (the admin chat commands: c.tp and the rest)
   c.act = (act, ...args) => {
     const w2 = new Writer(32);
     w2.u8(C2S.ACTION);
@@ -210,7 +211,6 @@ const treeBy = (x0, z0, x1, z1, m) => {
   check('every tick is timed, playing or waiting', g.phase === PHASE.WAITING && w.ticks === 4 && g.tick === 4 && w.over >= 2 && w.maxMs >= 60 && st.total.ticks === 4);
 }
 
-game.debugCommands = true;
 const A = client('Alice');
 const B = client('Bob');
 run(5);
@@ -719,7 +719,6 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
   // (A game of its own on a pinned map: the wall is looked for there, and the run above is left as it was.)
   {
     const g2 = new Game({ seed: 170, godMode: true, dayLength: 3600, log: () => {} });
-    g2.debugCommands = true;
     const session = g2.onOpen({ send() {} });
     const wj = new Writer(64);
     wj.u8(C2S.JOIN);
@@ -734,6 +733,7 @@ check('walkie-talkies hidden in containers', game.caches.filter((c) => c.stash =
     };
     run2(5);
     const p = [...g2.players.values()][0];
+    p.admin = true; // (/tp)
     const w = g2.world;
     const nav = g2.nav;
     const hs = g2.zm.herds;
@@ -1039,7 +1039,7 @@ const standOff = (c, e, d) => {
 // have walked off (a teammate's feet take it, and their own [E]); and a full backpack that leaves a car supply lying
 // says so (a game of its own: the one above is left as it was)
 {
-  const g = new Game({ seed, godMode: true, debugCommands: true, log: () => {} });
+  const g = new Game({ seed, godMode: true, log: () => {} });
   const join = (name) => {
     const c = { id: 0, notes: [], net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} } };
     c.handler = new Proxy({}, { get: (_, k) => (k === 'notify' ? (m, a) => c.notes.push([m, a]) : () => {}) });
@@ -1070,6 +1070,7 @@ const standOff = (c, e, d) => {
   }
   const d = g.players.get(D.id);
   const t = g.players.get(T.id);
+  d.admin = t.admin = true; // (/tp)
   const s = d.state;
   const tp = (p, x, z) => g.handleChat(p, `/tp ${x} ${z}`);
   // (on open ground: a spawn point can be beside a post of the rest area, and /tp puts a survivor on top of that)
@@ -2659,7 +2660,6 @@ check('ping broadcast', B.pings > 0);
 {
   const { makeBox } = await import('../shared/collision.js');
   const g = new Game({ seed, log: () => {} });
-  g.debugCommands = true;
   const session = g.onOpen({ send() {} });
   const jw = new Writer(64);
   jw.u8(C2S.JOIN);
@@ -2677,6 +2677,7 @@ check('ping broadcast', B.pings > 0);
   tick(2);
   g.zm.maintainT = g.zm.herds.spawnT = 1e9;
   const p = [...g.players.values()][0];
+  p.admin = true; // (/tp)
   const s = p.state;
   const w = g.world;
   const def = ZOMBIE_DEFS[ZTYPE.BOOMER];
@@ -3693,6 +3694,76 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   const both = inRun(c) && inRun(d) && d.seed === c.seed;
   const far2 = Math.min(walk(c), walk(d));
   check('...and one more in the same tick joins that run (no second roll)', both && rolls === 2 && g3.world === third && far2 > 1 && c.snaps >= 160 && d.snaps >= 160, `rolls ${rolls}, walked ${far2.toFixed(1)} m`);
+}
+
+// the admin commands: only for a player who has said the server's ADMIN_SECRET (`/admin <it>`), which nobody else
+// ever sees - not the right one, not a wrong one. `/admin` alone stops them; five wrong tries and that connection is
+// done trying; a server without a secret has none. (games of their own: the run above is left as it was)
+{
+  const setup = (adminSecret) => {
+    const g = new Game({ seed, dayLength: 3600, adminSecret, log: () => {} });
+    const join = (name) => {
+      const c = { heard: [], system: [] };
+      c.session = g.onOpen({
+        send(bytes) {
+          const r = new Reader(bytes.slice().buffer);
+          const t = r.u8();
+          if (t === S2C.WELCOME) c.id = r.u16();
+          else if (t === S2C.CHAT) {
+            r.u16();
+            const flags = r.u8();
+            (flags & CHATF.SYSTEM ? c.system : c.heard).push(r.str());
+          }
+        },
+      });
+      const w = new Writer(64);
+      w.u8(C2S.JOIN);
+      w.u8(PROTOCOL_VERSION);
+      w.str(name);
+      g.onMessage(c.session, w.bytes().slice());
+      c.p = g.players.get(c.id);
+      c.say = (text, wait = false) => {
+        if (!wait) c.p.adminT = 0; // (one try a second: these come faster)
+        const w2 = new Writer(160);
+        w2.u8(C2S.CHAT);
+        w2.str(text);
+        g.onMessage(c.session, w2.bytes().slice());
+        return c.system.at(-1) || '';
+      };
+      return c;
+    };
+    return { g, join };
+  };
+  const { g, join } = setup('hunter2 is long');
+  const A = join('Ann');
+  const B = join('Bob');
+  B.p.state.x = A.p.state.x + 1; // (in earshot: Bob would hear anything Ann's chat let out)
+  B.p.state.z = A.p.state.z;
+  g.update();
+  g.timeLeft = 500;
+  A.say('/night');
+  check('admin: without the password a command does nothing', g.timeLeft === 500 && !A.p.admin);
+  const wrong = A.say('/admin hunter3');
+  check('...a wrong password is refused, to them alone', !A.p.admin && /Wrong admin password/.test(wrong) && !B.heard.concat(B.system).some((t) => /hunter/.test(t)), wrong);
+  const right = A.say('/admin   hunter2 is long  ');
+  check('...the right one lets them run the commands', A.p.admin && /Admin commands on/.test(right) && !B.p.admin, right);
+  A.say('/night');
+  check('...which work', g.timeLeft === 0.05, `${g.timeLeft}`);
+  check('...and neither try reached anyone else, nor came back to them as chat', !B.heard.concat(B.system).some((t) => /admin|hunter/i.test(t)) && !A.heard.some((t) => /hunter/.test(t)), B.heard.join(' | '));
+  const off = A.say('/ADMIN');
+  g.timeLeft = 500;
+  A.say('/night');
+  check('...`/admin` alone turns them off', !A.p.admin && /Admin commands off/.test(off) && g.timeLeft === 500, off);
+  for (let i = 0; i < 5; i++) B.say(`/admin guess${i}`);
+  const locked = B.say('/admin hunter2 is long');
+  check('...five wrong tries and the right one is no good on that connection', !B.p.admin && B.p.adminFails === 5 && /Too many/.test(locked), locked);
+  A.say('/admin guess');
+  const soon = A.say('/admin hunter2 is long', true);
+  check('...and one try a second at most', !A.p.admin && /Wait a second/.test(soon), soon);
+  const bare = setup('');
+  const C = bare.join('Cal');
+  const none = C.say('/admin anything');
+  check('...a server without an ADMIN_SECRET has no admin commands', !C.p.admin && /no admin commands/.test(none) && !bare.g.adminHash, none);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);

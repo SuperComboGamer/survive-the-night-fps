@@ -15,7 +15,6 @@ import { readSnapshot } from '../client/net/decode.js';
 
 const seed = +(process.argv[2] || 4242);
 const game = new Game({ seed, godMode: true, dayLength: 3600, log: () => {} });
-game.debugCommands = true;
 const fails = [];
 const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`);
@@ -61,6 +60,7 @@ function client(name, pid = '') {
   };
   c.join();
   c.p = () => game.players.get(c.id);
+  if (c.p()) c.p().admin = true; // (the admin chat commands)
   // an action, as Connection.action writes it (client/net/connection.js)
   c.act = (act, a, b) => {
     const w2 = new Writer(16);

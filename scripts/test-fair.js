@@ -33,7 +33,6 @@ const EPS = 1e-4; // (a state the server has just sent is rounded to what went o
 
 function newGame(opts = {}) {
   const game = new Game({ seed, godMode: true, dayLength: 36000, themes: false, log: () => {}, ...opts });
-  game.debugCommands = true;
   return game;
 }
 

@@ -62,7 +62,6 @@ const check = (name, ok, info = '') => {
 
 // ---------------------------------------------------------------- a game
 const game = new Game({ seed, godMode: true, dayLength: 3600, themes: false, log: () => {} });
-game.debugCommands = true;
 
 function client(name) {
   const c = { name, id: 0, net: { tick: 0, ack: 0 }, global: null, self: {}, store: { ents: new Map(), onCreate() {}, onRemove() {}, onUpdate() {} }, shots: [], feed: [], sounds: [], chat: [], seq: 0 };
@@ -95,6 +94,7 @@ function client(name) {
   w.str(name);
   game.onMessage(c.session, w.bytes().slice());
   c.p = () => game.players.get(c.id);
+  if (c.p()) c.p().admin = true; // (the admin chat commands)
   c.yaw = 0;
   c.pitch = 0;
   c.act = (act, a) => {
@@ -835,7 +835,6 @@ function volley(weapon, back, shots, honest = true, aimed = false) {
   let none = 0;
   for (let sd = 1; sd < 60 && !none; sd++) if (!createWorld(sd).zoneById[ZONE.CHECKPOINT]) none = sd;
   const g2 = new Game({ seed: none, godMode: true, dayLength: 3600, themes: false, log: () => {} });
-  g2.debugCommands = true;
   const said = [];
   const conn = {
     send(bytes) {
@@ -855,6 +854,7 @@ function volley(weapon, back, shots, honest = true, aimed = false) {
   g2.onMessage(session, w.bytes().slice());
   for (let i = 0; i < 3; i++) g2.update();
   const p = [...g2.players.values()][0];
+  p.admin = true; // (/gun)
   const at = [p.state.x, p.state.z].join();
   g2.handleChat(p, '/gun');
   const w2 = new Writer(8);

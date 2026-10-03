@@ -79,16 +79,18 @@ const lobby = new Lobby({
   limits: process.env.LOBBY_LIMITS !== '0', // 0: no per-address allowance on making games or asking for codes (load tests)
   idleMs: process.env.GAME_IDLE_SECONDS ? +process.env.GAME_IDLE_SECONDS * 1000 : undefined, // an empty game lasts this long (tests)
   log: (...a) => console.log('[server]', ...a),
-  // every game is made with these (all but the seed are for testing)
+  // every game is made with these (all but the seed and the admin secret are for testing)
   gameOpts: {
     seed: SEED,
     dayLength: process.env.DAY_SECONDS ? +process.env.DAY_SECONDS : undefined,
     nightLength: process.env.NIGHT_SECONDS ? +process.env.NIGHT_SECONDS : undefined,
     startDay: process.env.START_DAY ? +process.env.START_DAY : undefined,
     godMode: process.env.GODMODE === '1',
-    debugCommands: process.env.DEBUG_COMMANDS === '1',
+    adminSecret: process.env.ADMIN_SECRET || '', // `/admin <it>` in chat lets that player run the admin commands
   },
 });
+
+if (process.env.ADMIN_SECRET) log('admin commands: on for whoever says /admin <ADMIN_SECRET> in chat');
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, log }) : null;

@@ -256,13 +256,13 @@ ui.setInventory(inv);
 ui.setPlayers(players);
 ui.setCraftContext({ fire: true, bench: false, unlocked: 0b00101 });
 
-// ?minimap=1: the minimap setting on, over a real valley (&seed=), you by the car (&yaw=, &spin=1 turns you),
-// a teammate close by, a downed one, your waypoint and a supply drop out of range (on the rim)
+// ?minimap=1: the minimap over a real valley (&seed=), you by the car (&yaw=, &spin=1 turns you),
+// a teammate close by, a downed one, your waypoint and a supply drop out of range (on the rim), zombies about you
+// (a Tank among them) and one too far off to show
 if (q.get('minimap')) {
   const { createWorld } = await import('../../shared/world.js');
   const world = createWorld(+(q.get('seed') || 1337));
   ui.map.setWorld(world);
-  ui._applySettings({ ...ui.getSettings(), minimap: true });
   const car = world.car;
   const far = world.zones.map((z) => ({ z, d: Math.hypot(z.x - car.x, z.z - car.z) })).sort((a, b) => a.d - b.d);
   const near = far[0].z; // the place nearest the car: you stand between them
@@ -283,6 +283,14 @@ if (q.get('minimap')) {
             mates: [
               { x: self.x + 18, z: self.z - 22, name: 'Marlowe', status: 'alive' },
               { x: self.x - 160, z: self.z + 90, name: 'Old Hank', status: 'downed' },
+            ],
+            enemies: [
+              { x: self.x + 10, z: self.z - 34, big: false },
+              { x: self.x + 14, z: self.z - 37, big: false },
+              { x: self.x + 7, z: self.z - 39, big: false },
+              { x: self.x - 40, z: self.z + 12, big: false },
+              { x: self.x - 25, z: self.z + 48, big: true },
+              { x: self.x + 120, z: self.z, big: false },
             ],
             car,
             pings: [{ x: self.x - 12, z: self.z - 30, kind: 2, name: 'Marlowe' }],

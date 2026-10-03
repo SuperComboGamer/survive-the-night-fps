@@ -130,7 +130,7 @@ async function startServer(env) {
 }
 
 try {
-  const { port, proc, base } = await startServer({ DATABASE_URL: `pglite:${join(dir, 'db')}`, LOBBY_LIMITS: '0', DEBUG_COMMANDS: '1' });
+  const { port, proc, base } = await startServer({ DATABASE_URL: `pglite:${join(dir, 'db')}`, LOBBY_LIMITS: '0', ADMIN_SECRET: 'test-admin' });
   const browser = () => {
     const b = { cookie: '', guestId: randomUUID() };
     b.post = async (path, body, headers = {}) => {
@@ -190,8 +190,10 @@ try {
   await sleep(500);
   const early = await gus.vote(3);
   check('a vote while the run is still going finds nothing to vote on', early.status === 404, JSON.stringify(early));
-  g1.say('/kill');
-  a1.say('/kill');
+  for (const c of [g1, a1]) {
+    c.say('/admin test-admin');
+    c.say('/kill');
+  }
   const ended = await until(() => /game over on day/.test(proc.log()), 8000);
   check('(the run ends with both dead)', ended, proc.log().slice(-600));
 

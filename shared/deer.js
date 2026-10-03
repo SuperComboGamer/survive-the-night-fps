@@ -21,7 +21,7 @@ export const DEER = {
   groupMax: 4,
   // how near a survivor may come before the group bolts (m), and what crouching, lying wounded or sprinting does to
   // it: the numbers the dead notice a survivor by (Zombies.chooseTarget)
-  notice: 22,
+  notice: 12, // (was 22)
   crouch: 0.6,
   downed: 0.5,
   sprint: 1.3,

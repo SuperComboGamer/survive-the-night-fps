@@ -304,7 +304,7 @@ if (worlds[0]?.clinic) {
     check(`${tag} ...and it is not there again at sunrise`, CONT_DEFS[CONT.DRUG_LOCKER].once && box.state === 1 && refilled === 0, `refilled ${refilled} of 12 mornings`);
   }
 
-  // ---- the debug commands (DEBUG_COMMANDS=1)
+  // ---- the admin commands (debugCommand)
   {
     const p = A1.p();
     const s = p.state;

@@ -1,4 +1,4 @@
-// Look-dev screenshots of the real game (server: GODMODE=1 DEBUG_COMMANDS=1).
+// Look-dev screenshots of the real game (server: GODMODE=1 ADMIN_SECRET=dev).
 // usage: node scripts/lookdev.js [--url http://localhost:5173] [--out /tmp/lookdev] [--quality high] [--size 1280x720] [--dpr 1]
 //        name:x,z,yawDeg,pitchDeg,cycle[,flashlight 0|1] [...]
 // cycle: 0.25 noon · 0.1 morning (sun east: yaw -90) · 0.46 dusk (sun west: yaw 90) · 0.75 midnight.
@@ -25,6 +25,8 @@ const browser = await puppeteer.launch({
   args: ['--use-angle=metal', '--enable-webgl', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', '--disable-gpu-vsync', '--disable-frame-rate-limit'],
 });
 const page = await browser.newPage();
+// the admin commands (/give, /spawn, /tp...): the client says the server's ADMIN_SECRET on joining
+await page.evaluateOnNewDocument((k) => localStorage.setItem('stn.admin', k), process.env.ADMIN_SECRET || 'dev');
 await page.setViewport({ width: W, height: H, deviceScaleFactor: +(opt.dpr || 1) });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));

@@ -76,7 +76,6 @@ const RIDER = 4;
 
 function newGame(opts = {}) {
   const game = new Game({ seed, godMode: true, dayLength: 36000, themes: false, log: () => {}, ...opts });
-  game.debugCommands = true;
   return game;
 }
 

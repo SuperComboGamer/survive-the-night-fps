@@ -595,6 +595,8 @@ export class Combat {
         const [item, n] = g.rollTable(z.def.common ? ZOMBIE_LOOT : SPECIAL_LOOT);
         g.dropItem(item, n, z.x, z.y, z.z, { spread: 0.5, life: 150 });
       }
+      // a dog's hide: its own chance, on top of the ordinary drop
+      if (z.def.leather && g.rng() < z.def.leather) g.dropItem(ITEM.LEATHER, 1, z.x, z.y, z.z, { spread: 0.5, life: 150 });
     }
     if (z.ztype === ZTYPE.BOOMER || opts.explode) {
       this.explode(z.x, z.y + 1, z.z, ZOMBIE_DEFS[ZTYPE.BOOMER].blastRadius, { humans: ZOMBIE_DEFS[ZTYPE.BOOMER].blastDmg, zombies: 80, structures: 260, kind: 2, source: z });

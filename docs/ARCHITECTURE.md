@@ -318,7 +318,7 @@ JSON file (`server/stats.js`).
   uses the same materials without the world noise. `/sandbox/surfaces-test.html?set=walls|roofs|floors|cars`
   shows every surface through the real `StaticWorld`.
 - **Look-dev:** `node scripts/lookdev.js --url <vite url> name:x,z,yaw,pitch,cycle[,flash] ...` screenshots the
-  real game (server with `GODMODE=1 DEBUG_COMMANDS=1`) and prints uncapped fps, draw calls, triangles and the
+  real game (server with `GODMODE=1 ADMIN_SECRET=dev`) and prints uncapped fps, draw calls, triangles and the
   adapted exposure; `--debug 1|2` shows only the sun shafts / only the SSAO.
 
 ## Audio
