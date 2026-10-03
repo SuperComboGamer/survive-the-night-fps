@@ -289,7 +289,8 @@ run(2);
   check('...its totals are the sums of the stints', e.kills === sum('kills') && e.kills === 4 && e.deaths === sum('deaths') && e.downs === sum('downs') && Math.abs(e.playerSeconds - sum('seconds')) < 0.5 && e.structuresBuilt === sum('built'), `kills ${e.kills} = ${sum('kills')}, playerSeconds ${e.playerSeconds} ~ ${sum('seconds').toFixed(1)}`);
   const sm = e.summary;
   const parts = {
-    pacing: sm.supplies.car_battery.firstInstalledS > 0 && sm.supplies.fuel_can.doneS > 0 && sm.supplies.car_battery.firstFoundS > 0,
+    // (the supply found is whichever hidden one Cy reached first: which that is follows the valley's layout)
+    pacing: sm.supplies.car_battery.firstInstalledS > 0 && sm.supplies.fuel_can.doneS > 0 && Object.values(sm.supplies).some((x) => x.firstFoundS > 0),
     log: sm.supplyLog.some((l) => l.e === 'found' && l.by === 'Cy') && sm.supplyLog.filter((l) => l.e === 'install').length === SUPPLIES.length,
     bosses: sm.bosses.length === 2 && sm.bosses[0].killed === true && sm.bosses[0].by === 'Bob' && sm.bosses[1].final === true && sm.bosses[1].killed === false,
     schematics: sm.schematics.length === 1 && sm.schematics[0].item === 'schem_shotgun' && sm.schematics[0].by === 'Ann',
