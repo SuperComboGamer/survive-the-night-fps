@@ -3,6 +3,7 @@ import { el, svgEl, lsGet, lsSet, clamp } from './dom.js';
 import { glyph } from './icons.js';
 import { loadRecord, clearRecord } from './records.js';
 import { QUALITY, grassRadius } from '../render/renderer.js';
+import { KeybindsSection } from './keybinds.js';
 
 const KEY = 'stn.settings';
 
@@ -142,6 +143,7 @@ export class SettingsPanel {
       const s = el('section', 'set-sec', body);
       el('h3', 'set-sec-title', s, sec.title);
       for (const row of sec.rows) this._row(s, row);
+      if (sec.title === 'Controls') this.keybinds = new KeybindsSection(this, body); // (keybinds.js: under the controls)
     }
     // not a setting, but this is where a player looks for it: wiping the personal record (records.js).
     // It takes two clicks: the first only arms the button.
@@ -275,6 +277,7 @@ export class SettingsPanel {
   }
 
   hide() {
+    this.keybinds.cancel(); // (a bind being listened for is not set by a key pressed after the panel shut)
     this.root.hidden = true;
   }
 
