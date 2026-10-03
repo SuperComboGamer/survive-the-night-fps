@@ -5,7 +5,7 @@
 // hint touches the DOM.
 import { PHASE, DUSK_WARNING, SLOT_BUILD } from '../../shared/constants.js';
 import { CONSUMABLES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT } from '../../shared/defs.js';
-import { ACTION_KEYS, keyLabel } from '../game/input.js';
+import { bindLabel, hasBind } from '../game/binds.js';
 import { el, replay, lsGet, lsSet } from './dom.js';
 
 const STORE = 'stn.keyhints'; // { flashlight: 2, heal: 1, ... }: how often each was done, counted up to RETIRE
@@ -19,15 +19,16 @@ const EARLY_UNTIL = 60; // ...and within the first minute, the map and the inven
 const EARLY_SHOW = 20; // this long each unless the key is pressed sooner
 const EVERY = 0.2; // seconds between looks at the situation
 
-// most urgent first: only the first one that applies is shown
+// most urgent first: only the first one that applies is shown. action: the keybind it names (game/binds.js) - a hint
+// for an action the player has left without a key is never shown
 const HINTS = [
-  { id: 'throwoff', key: 'Space', text: 'Throw it off', always: true }, // pinned by a leaper (Zombies.throwOff)
-  { id: 'flashlight', key: ACTION_KEYS.flashlight, text: 'Flashlight' },
-  { id: 'heal', key: ACTION_KEYS.heal, text: 'Heal' },
-  { id: 'drink', key: ACTION_KEYS.drink, text: 'Energy drink' },
-  { id: 'build', key: ACTION_KEYS.build, text: 'Build a shelter' },
-  { id: 'map', key: ACTION_KEYS.map, text: 'Field map', early: true },
-  { id: 'inventory', key: ACTION_KEYS.inventory, text: 'Inventory & crafting', early: true },
+  { id: 'throwoff', action: 'jump', text: 'Throw it off', always: true }, // pinned by a leaper (Zombies.throwOff)
+  { id: 'flashlight', action: 'flashlight', text: 'Flashlight' },
+  { id: 'heal', action: 'heal', text: 'Heal' },
+  { id: 'drink', action: 'drink', text: 'Energy drink' },
+  { id: 'build', action: 'slot' + (SLOT_BUILD + 1), text: 'Build a shelter' }, // (the weapon slots are on the digits, slot 0 on [1])
+  { id: 'map', action: 'map', text: 'Field map', early: true },
+  { id: 'inventory', action: 'inventory', text: 'Inventory & crafting', early: true },
 ];
 
 function loadCounts() {
@@ -93,7 +94,7 @@ export class KeyHints {
     let pick = null;
     if (active && g.settings.keyHints !== false) {
       for (const h of HINTS) {
-        if ((!h.always && (this.counts[h.id] | 0) >= RETIRE) || !this.applies(h, day)) continue;
+        if ((!h.always && (this.counts[h.id] | 0) >= RETIRE) || !hasBind(h.action) || !this.applies(h, day)) continue;
         pick = h;
         break;
       }
@@ -147,11 +148,15 @@ export class KeyHints {
   }
 
   show(h) {
-    if (h === this.shown) return;
+    const label = h ? bindLabel(h.action) : '';
+    if (h === this.shown && label === this.label) return;
+    const same = h === this.shown;
     this.shown = h;
+    this.label = label;
     this.root.hidden = !h;
     if (!h) return;
-    this.cap.textContent = keyLabel(h.key);
+    this.cap.textContent = label; // (the key it is on now: rebound in the pause menu, the hint up says so)
+    if (same) return;
     this.text.textContent = h.text;
     replay(this.root, 'in'); // fade in again when one hint takes over from another
   }

@@ -77,7 +77,8 @@ import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
 import { Highlight } from './highlight.js';
-import { Input, AIM_KEY_LABEL } from './input.js';
+import { Input } from './input.js';
+import { actionsOf, bindTag, bindPair } from './binds.js';
 import { Voice } from './voice.js';
 import { Environment } from '../render/environment.js';
 import { buildTerrain, buildWater } from '../render/terrain.js';
@@ -1147,7 +1148,7 @@ export class Game {
         break;
       case NOTIFY.SUPPLIES_DONE:
         ui.notify('EVERY SUPPLY IS IN', 'big', 5);
-        ui.notify('Fortify the car. Hold [E] at the car to start the engine - it takes 90 seconds to warm up.', 'sub', 7);
+        ui.notify(`Fortify the car. Hold ${bindTag('interact')} at the car to start the engine - it takes 90 seconds to warm up.`, 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.NEED_SUPPLIES:
@@ -1170,7 +1171,7 @@ export class Game {
         break;
       case NOTIFY.ESCAPE_READY:
         ui.notify('GET IN THE CAR!', 'big', 5);
-        ui.notify('Hold [E] at the car to drive away. Whoever is not at the car is left behind.', 'sub', 7);
+        ui.notify(`Hold ${bindTag('interact')} at the car to drive away. Whoever is not at the car is left behind.`, 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.SCHEMATIC:
@@ -1184,7 +1185,7 @@ export class Game {
       case NOTIFY.DOWNED:
         if (arg === this.myId) {
           a.stinger?.('death');
-        } else ui.notify(`${this.name(arg)} is down! Hold [E] on them to revive.`, 'danger', 5);
+        } else ui.notify(`${this.name(arg)} is down! Hold ${bindTag('interact')} on them to revive.`, 'danger', 5);
         break;
       case NOTIFY.REVIVED:
         ui.notify(arg === this.myId ? "You're back on your feet." : `${this.name(arg)} is back up.`, 'good', 3);
@@ -1214,11 +1215,11 @@ export class Game {
         a.stinger?.('gameover');
         break;
       case NOTIFY.NEED_FIRE:
-        ui.notify('Needs a lit campfire nearby (build one [5])', 'warning', 2.5);
+        ui.notify(`Needs a lit campfire nearby (build one ${bindTag('slot5')})`, 'warning', 2.5);
         a.playLocal('build_fail');
         break;
       case NOTIFY.NEED_BENCH:
-        ui.notify('Needs a workbench nearby (build one [5])', 'warning', 2.5);
+        ui.notify(`Needs a workbench nearby (build one ${bindTag('slot5')})`, 'warning', 2.5);
         a.playLocal('build_fail');
         break;
       case NOTIFY.NEED_STATION:
@@ -1234,7 +1235,7 @@ export class Game {
         a.playLocal('build_fail');
         break;
       case NOTIFY.STRUCT_CAP:
-        ui.notify('Too many structures - demolish some [X]', 'warning', 2.5);
+        ui.notify(`Too many structures - demolish some ${bindTag('demolish')}`, 'warning', 2.5);
         break;
       case NOTIFY.NOT_ENOUGH: {
         // The server names one item (arg) or nothing at all. What is short, by how much and where it comes from is
@@ -1252,7 +1253,7 @@ export class Game {
         // arg: the item a full backpack left lying where the survivor walked over it (0: a craft, a search, a swap)
         const d = ITEM_DEFS[arg];
         if (d?.cat === 'part') {
-          ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack [I].`, 'danger', 6);
+          ui.notify(`Inventory full - ${d.name} left on the ground! Drop something to make room: right-click a stack in the backpack ${bindTag('inventory')}.`, 'danger', 6);
           a.playLocal('build_fail');
         } else if (d?.cat === 'ammo') ui.notify(`Can't carry more ${d.name}`, 'warning', 2);
         else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
@@ -1641,76 +1642,66 @@ export class Game {
         inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen;
       }
     };
-    inp.handlers.onMouseDown = (button) => {
-      if (this.state !== 'playing') return;
-      const s = this.prediction.state;
-      if (button === 1) return this.ping();
-      if (s.slot === SLOT_BUILD && !s.zombie && this.self.alive && !s.downed) {
-        // (with an item in the hands the click puts it away, as it does with a weapon out: asking for the slot we
-        // are on is what does that here, the build mode's clicks being no fire button)
-        if (button === 0 && s.using) this.prediction.requestSlot(SLOT_BUILD);
-        else if (button === 0) this.tryBuild();
-        else if (button === 2) {
-          this.buildRot = (this.buildRot - 32) & 255; // 45deg clockwise seen from above (+yaw is counter-clockwise)
-          this.audio.playLocal('ui_click', { volume: 0.4 });
-        }
+    inp.handlers.onKey = (code, acts) => this.onKey(code, acts);
+    // acts: what the key went down as (rebound since or not: what was started by it is what stops)
+    inp.handlers.onKeyUp = (code, acts, cancelled) => {
+      for (const a of acts) {
+        if (a === 'talk' && this.settings.pushToTalk !== false) this.voice.setTransmit(false);
+        else if (a === 'interact') {
+          this.endHold();
+          this.power.release();
+          this.gun.keyUp();
+        } else if (a === 'players') this.showRoster(false);
       }
-    };
-    inp.handlers.onKey = (code) => this.onKey(code);
-    inp.handlers.onKeyUp = (code) => {
-      if (code === 'KeyV' && this.settings.pushToTalk !== false) this.voice.setTransmit(false);
-      if (code === 'KeyE') this.endHold();
-      if (code === 'KeyE') this.power.release();
-      if (code === 'Tab') this.showRoster(false);
     };
     inp.handlers.onBlur = () => this.showRoster(false);
   }
 
-  onKey(code) {
+  // A key (or mouse button) went down: code, and the actions it is bound to (binds.js). Most keys are one action; a key
+  // of the hands and a key of building can be the same one, and then which it is depends on the hammer being out.
+  onKey(code, acts = actionsOf(code)) {
     if (this.state !== 'playing') return;
     const s = this.prediction.state;
     const ui = this.ui;
-    if (code === 'Tab') {
+    const has = (a) => acts.includes(a);
+    if (code === 'Escape') {
+      if (ui.mapOpen) this.toggleMap(false);
+      else if (ui.boardOpen) this.toggleBoard(false);
+      return;
+    }
+    if (has('players')) {
       this.showRoster(true);
       return;
     }
-    if (code === 'KeyI') {
+    if (has('inventory')) {
       this.toggleInventory(!ui.inventoryOpen);
       return;
     }
-    if (code === 'KeyM') {
+    if (has('map')) {
       if (ui.inventoryOpen || ui.isTyping()) return;
       this.toggleMap(!ui.mapOpen);
       return;
     }
-    if (code === 'Escape' && ui.mapOpen) {
-      this.toggleMap(false);
-      return;
-    }
-    if (code === 'KeyL') {
+    if (has('board')) {
       if (ui.inventoryOpen || ui.isTyping()) return;
       this.toggleBoard(!ui.boardOpen);
       return;
     }
-    if (code === 'Escape' && ui.boardOpen) {
-      this.toggleBoard(false);
-      return;
-    }
     // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
     // and the pause menu.
-    if (code === 'Enter' || code === 'KeyY') {
+    if (has('chat')) {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
       if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen) {
         ui.openChat();
-        this.input.buttons = 0;
+        this.input.releaseAll();
         this.inputBuffer.clear();
       }
       return;
     }
     if (!this.input.enabled) return;
-    const digit = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 }[code];
-    if (digit !== undefined) {
+    const digit = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5'].findIndex(has);
+    if (digit >= 0) {
       // (the mounted gun in their arms: any weapon key reaches for that weapon, and the gun drops where they stand)
       if (digit === SLOT_THROW && s.slot === SLOT_THROW && !s.hmg) {
         // cycle to the next throwable we carry
@@ -1729,55 +1720,68 @@ export class Game {
       this.prediction.requestSlot(digit);
       return;
     }
-    // hammer out: Q / E step through the structures, but E still interacts whenever the prompt offers [E]
-    const building = s.slot === SLOT_BUILD && !s.zombie;
-    switch (code) {
-      case 'KeyQ': {
-        if (building) {
-          this.cycleBuild(-1);
+    // hammer out: the build keys step through the structures (Q back, R / E on), fire places and aim turns the piece -
+    // but the interact key still interacts whenever the prompt offers it
+    if (s.slot === SLOT_BUILD && !s.zombie) {
+      const offered = has('interact') && !!this.prompt?.startsWith(bindTag('interact'));
+      if (!offered) {
+        if (has('buildPrev')) return this.cycleBuild(-1);
+        if (has('buildNext')) return this.cycleBuild(1);
+        if (has('demolish')) {
+          if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) this.conn.action(ACT.DEMOLISH, this.lookTarget.id);
+          return;
+        }
+      }
+      if (this.self.alive && !s.downed && (has('fire') || has('aim'))) {
+        // (with an item in the hands the click puts it away, as it does with a weapon out: asking for the slot we are on is
+        // what does that here, the build mode's clicks being no fire button)
+        if (has('fire') && s.using) this.prediction.requestSlot(SLOT_BUILD);
+        else if (has('fire')) this.tryBuild();
+        else {
+          this.buildRot = (this.buildRot - 32) & 255; // 45deg clockwise seen from above (+yaw is counter-clockwise)
+          this.audio.playLocal('ui_click', { volume: 0.4 });
+        }
+        return;
+      }
+    }
+    for (const a of acts) {
+      switch (a) {
+        case 'lastWeapon': {
+          const t = this.lastSlot;
+          this.lastSlot = s.slot;
+          this.prediction.requestSlot(t);
           break;
         }
-        const t = this.lastSlot;
-        this.lastSlot = s.slot;
-        this.prediction.requestSlot(t);
-        break;
+        case 'flashlight': {
+          if (s.zombie) break;
+          this.localFlash = !this.localFlash;
+          if (this.localFlash && this.self.battery <= 1) this.localFlash = false;
+          this.localFlashT = 0.6;
+          this.conn.action(ACT.FLASHLIGHT, this.localFlash ? 1 : 0);
+          this.audio.playLocal('flashlight');
+          break;
+        }
+        case 'interact':
+          this.interact();
+          break;
+        case 'ping':
+          this.ping();
+          break;
+        case 'drop':
+          if (s.hmg) this.gun.drop(); // the mounted gun in their arms goes down first
+          else if (!s.zombie && s.slot !== SLOT_THROW && s.weapons[s.slot]) this.conn.action(ACT.DROP_WEAPON, s.slot);
+          break;
+        case 'heal':
+          this.quickHeal();
+          break;
+        case 'drink':
+          this.quickDrink();
+          break;
+        case 'talk':
+          if (this.settings.pushToTalk !== false) this.voice.setTransmit(true);
+          else this.voice.setTransmit(!this.voice.transmitting);
+          break;
       }
-      case 'KeyF': {
-        if (s.zombie) break;
-        this.localFlash = !this.localFlash;
-        if (this.localFlash && this.self.battery <= 1) this.localFlash = false;
-        this.localFlashT = 0.6;
-        this.conn.action(ACT.FLASHLIGHT, this.localFlash ? 1 : 0);
-        this.audio.playLocal('flashlight');
-        break;
-      }
-      case 'KeyE':
-        if (building && !this.prompt?.startsWith('[E]')) this.cycleBuild(1);
-        else this.interact();
-        break;
-      case 'KeyZ':
-        this.ping();
-        break;
-      case 'KeyG':
-        if (s.hmg) this.gun.drop(); // the mounted gun in their arms goes down first
-        else if (!s.zombie && s.slot !== SLOT_THROW && s.weapons[s.slot]) this.conn.action(ACT.DROP_WEAPON, s.slot);
-        break;
-      case 'KeyH':
-        this.quickHeal();
-        break;
-      case 'KeyB':
-        this.quickDrink();
-        break;
-      case 'KeyR':
-        if (s.slot === SLOT_BUILD) this.cycleBuild(1);
-        break;
-      case 'KeyX':
-        if (s.slot === SLOT_BUILD && this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) this.conn.action(ACT.DEMOLISH, this.lookTarget.id);
-        break;
-      case 'KeyV':
-        if (this.settings.pushToTalk !== false) this.voice.setTransmit(true);
-        else this.voice.setTransmit(!this.voice.transmitting);
-        break;
     }
   }
 
@@ -1810,7 +1814,7 @@ export class Game {
     if (open && ui.boardOpen) this.toggleBoard(false, false);
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
-    this.input.buttons = 0;
+    this.input.releaseAll();
     this.endHold();
     // the map takes clicks (your waypoint), so it frees the pointer the way the inventory does. Clicks made
     // while it is free never reach the weapon: Input only counts a mouse button pressed under the lock.
@@ -1827,7 +1831,7 @@ export class Game {
     if (open && ui.mapOpen) this.toggleMap(false, false);
     ui.setBoardOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
-    this.input.buttons = 0;
+    this.input.releaseAll();
     this.endHold();
     if (open) {
       this.boardT = 0; // ask the server at once (update)
@@ -1917,7 +1921,7 @@ export class Game {
     this.ui.notify(down ? 'No medkit' : 'No healing items', 'warning', 1.5);
   }
 
-  // [B]: an energy drink from the backpack, stamina back in one go (the server turns one down at full stamina).
+  // The drink key ([B]): an energy drink from the backpack, stamina back in one go (the server turns one down at full stamina).
   // idx: the backpack slot clicked, when it was not the key
   quickDrink(idx = this.inventory.slots.findIndex((x) => x && x.item === ITEM.ENERGY_DRINK)) {
     const s = this.prediction.state;
@@ -2553,7 +2557,7 @@ export class Game {
       this.deathShown = false;
       this.ui.hideOverlays();
       this.ui.notify('YOU HAVE RISEN', 'big', 4);
-      this.ui.notify(this.dawnAhead() ? `Hunt the survivors until dawn. [RMB / ${AIM_KEY_LABEL}] to leap.` : `Hunt the survivors. [RMB / ${AIM_KEY_LABEL}] to leap.`, 'sub', 4);
+      this.ui.notify(this.dawnAhead() ? `Hunt the survivors until dawn. [${bindPair('aim')}] to leap.` : `Hunt the survivors. [${bindPair('aim')}] to leap.`, 'sub', 4);
     }
   }
 
@@ -2599,23 +2603,23 @@ export class Game {
         const d = ITEM_DEFS[e.item];
         this.lookTarget = e;
         const n = e.q[3];
-        this.prompt = `[E] Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
+        this.prompt = `${bindTag('interact')} Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
         return;
       }
       if (e.kind === ENT.CACHE) {
         this.lookTarget = e;
         const name = CONT_DEFS[e.ctype]?.name || 'Container';
-        this.prompt = e.q[3] === 0 ? `[E] Hold to search ${name}` : `${name} · searched`;
+        this.prompt = e.q[3] === 0 ? `${bindTag('interact')} Hold to search ${name}` : `${name} · searched`;
         return;
       }
       if (e.kind === ENT.PLAYER && e.downed) {
         this.lookTarget = e;
-        this.prompt = `[E] Hold to revive ${this.name(e.id)}`;
+        this.prompt = `${bindTag('interact')} Hold to revive ${this.name(e.id)}`;
         return;
       }
       if (e.kind === ENT.CRATE) {
         this.lookTarget = e;
-        this.prompt = '[E] Open supply crate';
+        this.prompt = `${bindTag('interact')} Open supply crate`;
         return;
       }
       if (e.kind === ENT.STRUCTURE) {
@@ -2628,12 +2632,12 @@ export class Game {
           const lit = e.q[4] === 1;
           const w = counts[ITEM.WOOD] || 0;
           const st = counts[ITEM.STICK] || 0;
-          this.prompt = w || st ? `[E] ${lit ? 'Feed' : 'Relight'} the fire (${w ? `${w} Planks` : `${st} Sticks`})` : lit ? 'Campfire · feed it Planks or Sticks' : 'The fire is out · needs Planks or Sticks';
-          if (s.slot === SLOT_BUILD) this.prompt += ' · [X] Remove';
+          this.prompt = w || st ? `${bindTag('interact')} ${lit ? 'Feed' : 'Relight'} the fire (${w ? `${w} Planks` : `${st} Sticks`})` : lit ? 'Campfire · feed it Planks or Sticks' : 'The fire is out · needs Planks or Sticks';
+          if (s.slot === SLOT_BUILD) this.prompt += ` · ${bindTag('demolish')} Remove`;
         } else if (s.slot === SLOT_BUILD) {
-          if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? '[E] Relight torch (1 Cloth) · [X] Remove' : '[X] Remove torch';
-          else this.prompt = hp < 0.99 ? `[E] Repair ${def.name} (1 Planks, 1 Nails) · [X] Demolish` : `[X] Demolish ${def.name}`;
-        } else if (def.station === 'bench') this.prompt = 'Workbench · craft here [I]';
+          if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? `${bindTag('interact')} Relight torch (1 Cloth) · ${bindTag('demolish')} Remove` : `${bindTag('demolish')} Remove torch`;
+          else this.prompt = hp < 0.99 ? `${bindTag('interact')} Repair ${def.name} (1 Planks, 1 Nails) · ${bindTag('demolish')} Demolish` : `${bindTag('demolish')} Demolish ${def.name}`;
+        } else if (def.station === 'bench') this.prompt = `Workbench · craft here ${bindTag('inventory')}`;
         this.contextStructure = { name: def.name, hp };
         return;
       }
@@ -2650,9 +2654,9 @@ export class Game {
       this.lookTarget = 'car';
       const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
       const carrying = missing.filter((p) => counts[p]);
-      if (g.finale) this.prompt = g.escapeReady ? '[E] Hold to get in and drive away' : 'Defend the car until the engine is warm';
-      else if (!missing.length) this.prompt = '[E] Hold to start the engine (final stand)';
-      else if (carrying.length) this.prompt = `[E] Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
+      if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
+      else if (!missing.length) this.prompt = `${bindTag('interact')} Hold to start the engine (final stand)`;
+      else if (carrying.length) this.prompt = `${bindTag('interact')} Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
       else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
@@ -2840,7 +2844,7 @@ export class Game {
     const car = this.world.car;
     const counts = this.invCounts();
     h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
-    h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what [B] has left
+    h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what the drink key has left
     let partsMask = 0;
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };
@@ -2956,7 +2960,7 @@ export class Game {
             y: sc.y,
             icon: e.downed ? glyph('downed') : '',
             name,
-            sub: e.downed ? `DOWN · ${e.beingRevived ? 'being revived' : near ? 'hold [E] to revive' : `${Math.round(d)}m`}` : d > 15 ? `${Math.round(d)}m` : '',
+            sub: e.downed ? `DOWN · ${e.beingRevived ? 'being revived' : near ? `hold ${bindTag('interact')} to revive` : `${Math.round(d)}m`}` : d > 15 ? `${Math.round(d)}m` : '',
             bar: hp >= 0 && (hp < 1 || near || looked) ? hp : -1,
             cls: e.downed ? 'downed' : near ? 'near' : '',
             scale: Math.max(0.75, 1.1 - d / 300),

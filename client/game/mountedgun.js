@@ -23,6 +23,7 @@ import { shotDirections, canSelectSlot } from '../../shared/playersim.js';
 import { raycastWorld } from '../../shared/collision.js';
 import { GUN, GUN_FIRED, GUN_DRY, GUN_STANDS, GUN_CARRIED, GUN_LYING, atGrips, gunAim, gunMuzzle, gunShot, stepGun, setUpSpot, canLift } from '../../shared/mountedgun.js';
 import { createGunMount, createGunStand, createGunView } from '../render/models/mountedgun.js';
+import { bindTag } from './binds.js';
 
 const HOLD_TO_FEED = 0.3; // [E] held this long feeds the belt; let go sooner, it lets go of the gun
 const HOLD_TO_LIFT = 0.25; // [E] held this long at a gun nobody mans starts lifting it; let go sooner, it mans it
@@ -78,7 +79,6 @@ export class GunClient {
     this.swayX = 0;
     this.swayY = 0;
     this.stride = 0; // the carrier's step, for the sway of the gun in their arms
-    window.addEventListener('keyup', (e) => e.code === 'KeyE' && this.keyUp());
   }
 
   // what it is doing (GUN_STANDS / GUN_CARRIED / GUN_LYING)
@@ -170,6 +170,7 @@ export class GunClient {
     g.inputBuffer.clear(); // a press held for the weapon in the hands must not come out of it later
   }
 
+  // the interact key comes up (Game's onKeyUp)
   keyUp() {
     const t = this.eDown;
     this.eDown = -1;
@@ -304,7 +305,7 @@ export class GunClient {
       if (!held) return false;
       this.room = !!setUpSpot(g.world, g.prediction.state, _spot);
       g.lookTarget = 'gun';
-      g.prompt = this.room ? '[E] Set up the gun here · [G] Drop it' : 'No room to set the gun up here · [G] Drop it';
+      g.prompt = this.room ? `${bindTag('interact')} Set up the gun here · ${bindTag('drop')} Drop it` : `No room to set the gun up here · ${bindTag('drop')} Drop it`;
       return true;
     }
     if (held !== this.manning) return false;
@@ -316,21 +317,21 @@ export class GunClient {
       g.lookTarget = 'gun';
       // (the line sits under the crosshair: it says its piece as the grips are taken, and again when the belt is out)
       const have = g.prediction.state.ammo[AMMO.R762];
-      if (belt <= 0) g.prompt = have > 0 ? `Belt empty · hold [R] to feed it (${have} × 7.62)` : 'Belt empty · no 7.62 to feed it';
-      else if (g.time - this.wantT < PROMPT_TIME) g.prompt = belt >= GUN.mag || !have ? '[E] Let go' : `[E] Let go · hold [R] to feed the belt (${have} × 7.62)`;
+      if (belt <= 0) g.prompt = have > 0 ? `Belt empty · hold ${bindTag('reload')} to feed it (${have} × 7.62)` : 'Belt empty · no 7.62 to feed it';
+      else if (g.time - this.wantT < PROMPT_TIME) g.prompt = belt >= GUN.mag || !have ? `${bindTag('interact')} Let go` : `${bindTag('interact')} Let go · hold ${bindTag('reload')} to feed the belt (${have} × 7.62)`;
       return true;
     }
     if (this.mode === GUN_LYING) {
       if (!canLift(nest, true, rp.x, rp.y, rp.z)) return false;
       g.lookTarget = 'gun';
-      g.prompt = `[E] Hold to lift the mounted gun · belt ${belt}/${GUN.mag}`;
+      g.prompt = `${bindTag('interact')} Hold to lift the mounted gun · belt ${belt}/${GUN.mag}`;
       return true;
     }
     if (!atGrips(nest, rp.x, rp.y, rp.z) && !canLift(nest, false, rp.x, rp.y, rp.z)) return false;
     g.lookTarget = 'gun';
     if (this.gunner && this.gunner !== g.myId) g.prompt = `${g.name(this.gunner)} is on the gun · belt ${belt}/${GUN.mag}`;
-    else if (atGrips(nest, rp.x, rp.y, rp.z)) g.prompt = `[E] Man the gun · hold [E] to lift it · belt ${belt}/${GUN.mag}`;
-    else g.prompt = `[E] Hold to lift the mounted gun · belt ${belt}/${GUN.mag}`;
+    else if (atGrips(nest, rp.x, rp.y, rp.z)) g.prompt = `${bindTag('interact')} Man the gun · hold ${bindTag('interact')} to lift it · belt ${belt}/${GUN.mag}`;
+    else g.prompt = `${bindTag('interact')} Hold to lift the mounted gun · belt ${belt}/${GUN.mag}`;
     return true;
   }
 

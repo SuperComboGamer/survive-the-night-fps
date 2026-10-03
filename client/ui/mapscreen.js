@@ -8,6 +8,7 @@ import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { renderMapCanvas, MAP_PX } from './mapcanvas.js';
+import { bindLabel, liveText } from '../game/binds.js';
 
 const TEAM_BESIDE = 14; // m: a teammate's waypoint on your own waypoint's spot is drawn this far east of it
 const MAX_ZOOM = 4; // the baked map is 2 px a metre: past this it is a blur
@@ -81,11 +82,12 @@ export class MapScreen {
       ['Wheel', 'zoom (or pinch)'],
       ['Drag', 'pan'],
       ['R', 'facing up / north up'],
-      ['M', 'close'],
-      ['Z', 'ping (in game)'],
+      [() => bindLabel('map'), 'close'], // (keybinds, game/binds.js; X and R above are the map's own)
+      [() => bindLabel('ping'), 'ping (in game)'],
     ]) {
       const s = el('span', 'gh', keys);
-      el('span', 'kbd sm', s, k);
+      if (typeof k === 'function') liveText(el('span', 'kbd sm', s), k);
+      else el('span', 'kbd sm', s, k);
       el('span', '', s, t);
     }
     this.world = null;

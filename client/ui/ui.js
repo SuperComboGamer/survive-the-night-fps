@@ -8,7 +8,7 @@ import { Killfeed, Pickups, Notifier } from './feed.js';
 import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
-import { Splash, Pause, Death, EndScreen, Banner, VoiceList, ControlsPanel, renderControls, DEFAULT_CONTROLS } from './menus.js';
+import { Splash, Pause, Death, EndScreen, Banner, VoiceList, ControlsPanel, DEFAULT_CONTROLS } from './menus.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
@@ -184,9 +184,11 @@ export class UI {
     return { ...this.settings };
   }
 
-  // extra: override the controls reference behind the Controls button (splash + pause). list = [[keys, action], ...]
+  // extra: override the controls reference behind the Controls button (splash + pause). list = [[keys, action], ...],
+  // or a function that makes one (menus.js renderControls): it is drawn each time the panel opens
   setControls(list) {
-    renderControls(this.controlsPanel.list, Array.isArray(list) && list.length ? list : DEFAULT_CONTROLS);
+    this.controlsPanel.source = typeof list === 'function' || (Array.isArray(list) && list.length) ? list : DEFAULT_CONTROLS;
+    if (this.controlsPanel.visible) this.controlsPanel.show();
   }
 
   // ------------------------------------------------------------ per-frame

@@ -5,6 +5,7 @@ import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, LOOT_TABLES, CONT_TABLES } from '../
 import { raycastWorld, COL } from '../../shared/collision.js';
 import { eyeHeight } from '../../shared/playersim.js';
 import { qpos } from '../../shared/protocol.js';
+import { bindTag, onBindsChange } from './binds.js';
 
 // Mirrors Game.gatherHit (server/game.js), tree first as there. `gives`: what a hit is for - the first item comes
 // with every hit, the second now and then; the rare extras (herbs, tape, wire, batteries) stay a surprise.
@@ -50,6 +51,7 @@ const cap = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 // `stripped` (a Set of strippedKey), that there is nothing to be had. The few texts there are get built once each,
 // so a frame pays for harvestAt and a map lookup.
 const _prompts = new Map();
+onBindsChange(() => _prompts.clear()); // (they name keys)
 export function harvestPrompt(world, s, stripped) {
   const h = harvestAt(world, s);
   if (!h) return null;
@@ -61,8 +63,8 @@ export function harvestPrompt(world, s, stripped) {
   let text = _prompts.get(key);
   if (!text) {
     const what = `${h.verb} for ${list(h.gives.map(itemName))}`;
-    if (inHand) text = `[LMB] ${cap(what)}`;
-    else if (weapon) text = `[${SLOT_MELEE + 1}] Use the ${itemName(weapon)} to ${what}`;
+    if (inHand) text = `${bindTag('fire')} ${cap(what)}`;
+    else if (weapon) text = `${bindTag('slot' + (SLOT_MELEE + 1))} Use the ${itemName(weapon)} to ${what}`;
     else text = `Needs a melee weapon to ${what}`;
     _prompts.set(key, text);
   }
@@ -75,7 +77,7 @@ const looted = new Set();
 for (const tables of [LOOT_TABLES, CONT_TABLES]) for (const k in tables) for (const row of tables[k]) looted.add(row[0]);
 function foundOrCrafted(item) {
   if (ITEM_DEFS[item]?.cat === 'res' && looted.has(item)) return 'search containers';
-  return RECIPES.some((r) => r.out === item) ? `craft ${itemName(item)} [I]` : '';
+  return RECIPES.some((r) => r.out === item) ? `craft ${itemName(item)} ${bindTag('inventory')}` : '';
 }
 
 // What `counts` (item -> how many are carried) is short of for `cost` (item -> how many it takes), as lines to show:
