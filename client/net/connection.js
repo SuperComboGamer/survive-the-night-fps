@@ -193,6 +193,7 @@ export class Connection {
         w.u16(args[1]);
         break;
       case ACT.SWAP_INV:
+      case ACT.WORN:
         w.u8(args[0]);
         w.u8(args[1]);
         break;

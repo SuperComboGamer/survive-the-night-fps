@@ -420,6 +420,40 @@ BUILD[ITEM.KEVLAR] = (b) => {
   labelOn(b, 'numbers', 0.26, 0.08, [0, 0.0625, 0.05], [-PI / 2, 0, PI], 'stencil');
 };
 
+// The crafted backpack, standing: canvas body under a leather-strapped lid, a front pocket, a bedroll tied on top and
+// the two shoulder straps down its back (-Z). Its back panel is at z = 0 and its base at y = 0, so the same model
+// rides on a survivor's back while one is worn (createWornPack).
+function backpack(b) {
+  const can = [0.36, 0.33, 0.22];
+  const lid = can.map((v) => v * 0.84);
+  const lea = [0.3, 0.2, 0.12];
+  b.box('cloth', 0.3, 0.36, 0.15, { p: [0, 0.18, 0.075], c: can });
+  b.box('cloth', 0.31, 0.05, 0.16, { p: [0, 0.37, 0.078], c: lid });
+  b.box('cloth', 0.31, 0.1, 0.012, { p: [0, 0.33, 0.158], c: lid });
+  b.box('cloth', 0.22, 0.13, 0.05, { p: [0, 0.11, 0.17], c: can.map((v) => v * 0.92) });
+  for (const x of [-0.07, 0.07]) {
+    b.box('paint', 0.026, 0.1, 0.006, { p: [x, 0.315, 0.166], c: lea });
+    b.box('steel', 0.032, 0.02, 0.008, { p: [x, 0.27, 0.168] });
+  }
+  for (const x of [-0.09, 0.09]) b.box('paint', 0.04, 0.32, 0.012, { p: [x, 0.2, -0.006], c: lea });
+  b.cylBetween('cloth', [-0.16, 0.435, 0.07], [0.16, 0.435, 0.07], 0.042, 0.042, 8, { c: [0.33, 0.28, 0.19] });
+  for (const x of [-0.11, 0.11]) b.torus('rope', 0.044, 0.005, 3, 10, PI * 2, { p: [x, 0.435, 0.07], r: [0, PI / 2, 0] });
+}
+// (stood on the ground half turned, its straps to one side)
+BUILD[ITEM.BACKPACK] = (b) => b.group({ p: [0, 0, -0.06], r: [0, 0.6, 0] }, () => backpack(b));
+
+/** The backpack as a survivor wears it (PFLAG.BACKPACK): the ground model's own parts, back panel at the origin. */
+export function createWornPack() {
+  let parts = cache.get('worn_pack');
+  if (!parts) {
+    const b = new MeshBuilder(ITEM.BACKPACK * 131 + 7, { ao: false });
+    backpack(b);
+    parts = b.build();
+    cache.set('worn_pack', parts);
+  }
+  return partsToGroup(parts, 'worn_pack');
+}
+
 // handset on its back: olive body, stub antenna and channel knob at the top, speaker grille, display, orange talk key
 BUILD[ITEM.WALKIE] = (b) => {
   b.group({ p: [0, 0.019, 0.03], r: [0, 0.5, 0] }, () => {

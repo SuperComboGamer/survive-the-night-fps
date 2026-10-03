@@ -392,6 +392,7 @@ export class Entities {
           this.scene.add(v.object);
           e.weapon = -1;
           e.zombieForm = null;
+          e.packOn = false;
           e.fireCount = e.q[8];
           const cone = new THREE.Mesh(this.coneGeo, this.coneMat);
           cone.visible = false;
@@ -947,6 +948,11 @@ export class Entities {
             e.zombieForm = zombie;
             v.setZombie(zombie);
             e.weapon = -1;
+          }
+          const pack = !!(flags & PFLAG.BACKPACK); // wearing a backpack: it shows on their back
+          if (pack !== !!e.packOn) {
+            e.packOn = pack;
+            v.setBackpack?.(pack);
           }
           const grips = g.gun.gunner === e.id; // at the mounted gun: both hands on it, their own weapon put away
           const weapon = zombie || grips ? 0 : e.q[6];

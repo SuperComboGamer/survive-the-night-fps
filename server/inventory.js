@@ -1,10 +1,16 @@
-// Inventory helpers (server authoritative). Inventory = Array(INVENTORY_SIZE) of {item, count} | null
-import { INVENTORY_SIZE } from '../shared/constants.js';
+// Inventory helpers (server authoritative). Inventory = Array(INVENTORY_MAX) of {item, count} | null. Only the
+// first `cap` slots are open (invCap: INVENTORY_SIZE, more with a backpack worn); what puts something into a slot
+// takes the cap, and the rest stay empty. (It defaults to the slots every survivor has, so a call that forgets it
+// can never fill a locked one.)
+import { INVENTORY_SIZE, INVENTORY_MAX, inventoryCap } from '../shared/constants.js';
 import { ITEM_DEFS } from '../shared/defs.js';
 
 export function createInventory() {
-  return new Array(INVENTORY_SIZE).fill(null);
+  return new Array(INVENTORY_MAX).fill(null);
 }
+
+// the slots open to player p: the worn backpack's pockets on top of everyone's
+export const invCap = (p) => inventoryCap(p.backpackItem);
 
 export function countItem(inv, item) {
   let n = 0;
@@ -19,11 +25,12 @@ export function countsMap(inv) {
 }
 
 // Adds as many as fit: onto the stacks of it that are not full first, then into free slots. Returns leftover count.
-export function addItem(inv, item, count) {
+export function addItem(inv, item, count, cap = INVENTORY_SIZE) {
+  cap = Math.min(cap, inv.length);
   const def = ITEM_DEFS[item];
   const max = def ? def.stack : 1;
   let left = count;
-  for (let i = 0; i < inv.length && left > 0; i++) {
+  for (let i = 0; i < cap && left > 0; i++) {
     const s = inv[i];
     if (s && s.item === item && s.count < max) {
       const take = Math.min(max - s.count, left);
@@ -31,7 +38,7 @@ export function addItem(inv, item, count) {
       left -= take;
     }
   }
-  for (let i = 0; i < inv.length && left > 0; i++) {
+  for (let i = 0; i < cap && left > 0; i++) {
     if (!inv[i]) {
       const take = Math.min(max, left);
       inv[i] = { item, count: take };
@@ -74,17 +81,27 @@ export function payCost(inv, cost) {
   for (const k in cost) removeItem(inv, +k, cost[k]);
 }
 
-export function freeSlots(inv) {
+export function freeSlots(inv, cap = INVENTORY_SIZE) {
+  cap = Math.min(cap, inv.length);
   let n = 0;
-  for (const s of inv) if (!s) n++;
+  for (let i = 0; i < cap; i++) if (!inv[i]) n++;
   return n;
 }
 
-export function canFit(inv, item, count) {
+// the first free slot of the open ones, or -1
+export function freeSlot(inv, cap = INVENTORY_SIZE) {
+  cap = Math.min(cap, inv.length);
+  for (let i = 0; i < cap; i++) if (!inv[i]) return i;
+  return -1;
+}
+
+export function canFit(inv, item, count, cap = INVENTORY_SIZE) {
+  cap = Math.min(cap, inv.length);
   const def = ITEM_DEFS[item];
   const max = def ? def.stack : 1;
   let room = 0;
-  for (const s of inv) {
+  for (let i = 0; i < cap; i++) {
+    const s = inv[i];
     if (!s) room += max;
     else if (s.item === item) room += Math.max(0, max - s.count);
     if (room >= count) return true;

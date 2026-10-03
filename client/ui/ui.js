@@ -29,6 +29,7 @@ const CALLBACKS = [
   'onSwapItems',
   'onEquipArmor',
   'onDropWeapon',
+  'onWorn', // (which: WORN, what: WORN_DO) the armor or backpack being worn: taken off, dropped or salvaged
   'onSelectStructure',
   'onSelectThrowable',
   'onCloseInventory',
@@ -307,12 +308,6 @@ export class UI {
 
   get rosterOpen() {
     return this.roster.open;
-  }
-
-  // extra: camp status for the inventory screen. info = { fuel?: seconds, max?: seconds, parts?: bitmask }
-  // (also filled automatically from updateHud context when the player stands near the fire / car)
-  setCamp(info) {
-    this.inventory.setCamp(info);
   }
 
   setBuildMenu(state) {

@@ -382,6 +382,23 @@ const ITEM_ICONS = {
         rct(19.35, 16.3, 1.3, 19),
     ),
   ],
+  // ---------------- worn
+  // backpack: carry loop, shoulder straps either side, a lid with its buckle, the front pocket
+  [ITEM.BACKPACK]: [
+    40,
+    40,
+    S('M15.6 6.6Q15.6 2.4 20 2.4Q24.4 2.4 24.4 6.6', 2) +
+      S('M10.4 12Q6.4 20 8.6 32', 1.6) +
+      S('M29.6 12Q33.6 20 31.4 32', 1.6) +
+      E(
+        'M10.4 9.4Q10.4 6.4 13.4 6.4H26.6Q29.6 6.4 29.6 9.4V35.6Q29.6 38 27.2 38H12.8Q10.4 38 10.4 35.6Z' +
+          'M12 15.4Q20 19 28 15.4V16.6Q20 20.2 12 16.6Z' +
+          rct(18.8, 18.8, 2.4, 2.8) +
+          rct(13.4, 23.6, 13.2, 11.2) +
+          rct(14.6, 24.8, 10.8, 8.8) +
+          rct(14.6, 27.4, 10.8, 0.9),
+      ),
+  ],
   // ---------------- gear
   // handset: stub antenna and channel knob on top, speaker grille, display, talk key on the side
   [ITEM.WALKIE]: [

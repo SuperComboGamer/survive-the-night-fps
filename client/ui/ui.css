@@ -2833,6 +2833,29 @@ body {
   opacity: 0.42;
 }
 
+.stn-ui .armor:not(.empty) {
+  cursor: pointer;
+}
+
+.stn-ui .armor:not(.empty):hover {
+  border-color: rgba(230, 223, 207, 0.4);
+}
+
+/* the backpack worn, right under the armor: its pockets are the grid's last cells */
+.stn-ui .armor.pack {
+  margin-top: calc(5 * var(--u));
+}
+
+.stn-ui .armor.pack .arm-ico svg {
+  color: #b9a47a;
+}
+
+.stn-ui .arm-sub {
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+}
+
 .stn-ui .arm-ico svg {
   width: calc(34 * var(--u));
   height: calc(34 * var(--u));
@@ -2966,6 +2989,27 @@ body {
   background: rgba(6, 5, 4, 0.5);
 }
 
+/* a pocket of the backpack nobody is wearing: dimmed, a padlock, and nothing to click, drag or drop onto */
+.stn-ui .cell.locked,
+.stn-ui .cell.locked:hover {
+  cursor: not-allowed;
+  background: repeating-linear-gradient(135deg, rgba(6, 5, 4, 0.5) 0 6px, rgba(20, 17, 14, 0.5) 6px 12px);
+  border-style: dashed;
+  border-color: rgba(230, 223, 207, 0.1);
+  box-shadow: none;
+}
+
+.stn-ui .cell.locked .cell-ico {
+  width: 30%;
+  height: 30%;
+  color: rgba(230, 223, 207, 0.3);
+  filter: none;
+}
+
+.stn-ui .cell.locked:hover .cell-ico {
+  color: rgba(230, 223, 207, 0.55);
+}
+
 .stn-ui .cell::after {
   content: '';
   position: absolute;
@@ -2988,6 +3032,9 @@ body {
 }
 .stn-ui .c-armor {
   --cat: #87a36e;
+}
+.stn-ui .c-pack {
+  --cat: #b9a47a;
 }
 .stn-ui .c-gear {
   --cat: #6fb39a;
@@ -3212,16 +3259,7 @@ body {
   color: var(--bone-dim);
 }
 
-.stn-ui .inv-sub {
-  margin-top: calc(14 * var(--u));
-}
-
-.stn-ui .camp-box {
-  padding: calc(12 * var(--u)) calc(14 * var(--u)) calc(12 * var(--u));
-}
-
-.stn-ui .sv-list,
-.stn-ui .car-list {
+.stn-ui .sv-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -3394,64 +3432,6 @@ body {
   text-align: right;
   font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
   color: var(--bone-dim);
-}
-
-.stn-ui .cp {
-  display: grid;
-  grid-template-columns: calc(26 * var(--u)) 1fr auto calc(14 * var(--u));
-  align-items: center;
-  gap: calc(7 * var(--u));
-  height: calc(23 * var(--u));
-  min-height: 18px;
-  font: 400 max(11px, calc(13.5 * var(--u))) / 1 var(--f-num);
-  color: var(--bone-dim);
-}
-
-.stn-ui .cp .cp-ico {
-  display: flex;
-  justify-content: center;
-  opacity: 0.5;
-}
-
-.stn-ui .cp .cp-ico svg {
-  height: calc(17 * var(--u));
-  min-height: 13px;
-  width: auto;
-}
-
-.stn-ui .cp-where {
-  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-type);
-  color: rgba(230, 223, 207, 0.38);
-  white-space: nowrap;
-}
-
-.stn-ui .cp-chk {
-  opacity: 0;
-  color: var(--good);
-}
-
-.stn-ui .cp-chk svg {
-  width: calc(14 * var(--u));
-  height: calc(14 * var(--u));
-  min-width: 11px;
-  min-height: 11px;
-}
-
-.stn-ui .cp.on {
-  color: var(--bone);
-}
-
-.stn-ui .cp.on .cp-ico {
-  opacity: 1;
-  color: var(--sun);
-}
-
-.stn-ui .cp.on .cp-where {
-  visibility: hidden;
-}
-
-.stn-ui .cp.on .cp-chk {
-  opacity: 1;
 }
 
 .stn-ui .fire {

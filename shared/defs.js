@@ -39,6 +39,8 @@ export const ITEM = {
   KEVLAR: 41,
   // gear (works from the backpack, just by being carried)
   WALKIE: 45,
+  // worn in an equipment slot of its own, like armor: more slots in the backpack grid (INVENTORY_SIZE in constants.js)
+  BACKPACK: 46,
   // weapons
   KNIFE: 50,
   BAT: 51,
@@ -87,7 +89,7 @@ export const AMMO_MAX = [150, 48, 240, 40, 180, 30, 300];
 // the item of each reserve index (same order as AMMO)
 export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556, ITEM.AMMO_BOLTS, ITEM.AMMO_FUEL];
 
-// category: res | cons | throw | armor | gear | weapon | ammo | part | schem
+// category: res | cons | throw | armor | pack | gear | weapon | ammo | part | schem
 export const ITEM_DEFS = {
   [ITEM.WOOD]: { name: 'Planks', cat: 'res', stack: 20, color: 0x8a6a45, desc: 'Weathered wooden planks.' },
   [ITEM.STICK]: { name: 'Sticks', cat: 'res', stack: 20, color: 0x6b5236, desc: 'Dry branches.' },
@@ -120,6 +122,8 @@ export const ITEM_DEFS = {
 
   [ITEM.JACKET]: { name: 'Padded Jacket', cat: 'armor', stack: 1, color: 0x5d4e37, armor: 60, absorb: 0.3, desc: 'Absorbs 30% damage.' },
   [ITEM.KEVLAR]: { name: 'Kevlar Vest', cat: 'armor', stack: 1, color: 0x2f3b2f, armor: 120, absorb: 0.5, desc: 'Absorbs 50% damage.' },
+
+  [ITEM.BACKPACK]: { name: 'Backpack', cat: 'pack', stack: 1, color: 0x4a4430, desc: 'Canvas and leather, made at the workbench. Wear it for more room in the backpack grid.' },
 
   [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Just carry it: your voice and chat reach every other survivor carrying one, however far apart you are.' },
 
@@ -334,7 +338,25 @@ export const RECIPES = [
   { id: 30, out: ITEM.VENISON, n: 1, cost: { [ITEM.VENISON_RAW]: 1 }, station: 'fire' },
   { id: 31, out: ITEM.GRENADE, n: 1, cost: { [ITEM.SCRAP]: 2, [ITEM.POWDER]: 3 }, station: 'bench', schem: ITEM.SCHEM_EXPLOSIVES },
   { id: 32, out: ITEM.DECOY, n: 1, cost: { [ITEM.SCRAP]: 1, [ITEM.WIRE]: 1, [ITEM.BATTERY]: 1 }, station: 'bench' },
+  // a step past the Padded Jacket: the rope is 3 cloth apiece, and the leather is a trip out (barn, cabins, lodge, trunks)
+  { id: 33, out: ITEM.BACKPACK, n: 1, cost: { [ITEM.LEATHER]: 4, [ITEM.CLOTH]: 6, [ITEM.ROPE]: 2 }, station: 'bench' },
 ];
+
+// Salvage: worn gear (armor, the backpack) taken apart from its equipment row [Shift+LMB] gives back SALVAGE of each
+// ingredient of its recipe, rounded down - a backpack 2 Leather, 3 Cloth and 1 Rope. -> { item: count }, or null
+// for anything that is not worn or has no recipe.
+export const SALVAGE = 0.5;
+export function salvageOf(item) {
+  const cat = ITEM_DEFS[item]?.cat;
+  const r = (cat === 'armor' || cat === 'pack') && RECIPES.find((x) => x.out === item);
+  if (!r) return null;
+  const out = {};
+  for (const k in r.cost) {
+    const n = Math.floor(r.cost[k] * SALVAGE);
+    if (n > 0) out[k] = n;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- zombies
 export const ZTYPE = {
@@ -625,6 +647,7 @@ export const NOTIFY = {
   FAIR_FULL: 58, // (to the survivor at the drum) the tank takes no more
   GEN_LOW: 48, // a generator nearby has a minute of fuel left (sent to the survivors round it)
   GEN_OUT: 49, // ...it has run dry: its floodlights are out
+  POCKETS: 62, // (to whoever tried) the backpack cannot come off while its extra slots hold anything
 };
 
 // killer kinds for killfeed

@@ -1,6 +1,6 @@
 /* =====================================================================================
    Survive The Night - iteration 2 UI: compass, objective tracker, world markers, downed
-   overlay, damage direction, dawn summary, field map, supplies / schematics / stations.
+   overlay, damage direction, dawn summary, field map, crafting stations.
    Same scale unit (--u) and palette as ui.css.
    ===================================================================================== */
 
@@ -1429,85 +1429,7 @@
   gap: calc(5 * var(--u));
 }
 
-/* ------------------------------------------------------------------ inventory: supplies, schematics, stations */
-.stn-ui .cp.carried {
-  color: var(--bone);
-}
-.stn-ui .cp.carried .cp-ico {
-  opacity: 1;
-  color: var(--amber);
-}
-.stn-ui .cp.carried .cp-where {
-  color: var(--amber);
-}
-.stn-ui .cp.on .cp-where {
-  visibility: visible;
-  color: rgba(182, 208, 138, 0.6);
-}
-
-.stn-ui .schem-row {
-  display: flex;
-  align-items: center;
-  gap: calc(6 * var(--u));
-  margin-top: calc(10 * var(--u));
-  padding-top: calc(8 * var(--u));
-  border-top: 1px solid rgba(230, 223, 207, 0.08);
-}
-
-.stn-ui .schem-lab {
-  flex: 1;
-  font: 500 max(9.5px, calc(11 * var(--u))) / 1 var(--f-num);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
-}
-
-.stn-ui .schem {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: calc(30 * var(--u));
-  height: calc(30 * var(--u));
-  min-width: 22px;
-  min-height: 22px;
-  background: rgba(108, 143, 181, 0.16);
-  border: 1px solid rgba(108, 143, 181, 0.55);
-  color: #b7cde4;
-  pointer-events: auto;
-}
-
-.stn-ui .schem-ico svg {
-  width: calc(20 * var(--u));
-  height: calc(20 * var(--u));
-  min-width: 15px;
-  min-height: 15px;
-}
-
-.stn-ui .schem-lock {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  display: none;
-  color: var(--bone-2);
-}
-
-.stn-ui .schem-lock svg {
-  width: calc(12 * var(--u));
-  height: calc(12 * var(--u));
-  min-width: 9px;
-  min-height: 9px;
-}
-
-.stn-ui .schem.locked {
-  background: rgba(0, 0, 0, 0.3);
-  border-color: rgba(230, 223, 207, 0.12);
-  color: rgba(230, 223, 207, 0.3);
-}
-
-.stn-ui .schem.locked .schem-lock {
-  display: block;
-}
-
+/* ------------------------------------------------------------------ inventory: stations */
 .stn-ui .rc-station.st-bench {
   color: var(--steel);
 }
@@ -1567,19 +1489,6 @@
 .stn-ui.map-open .top-right,
 .stn-ui.map-open .layer-hud {
   visibility: hidden;
-}
-
-/* supplies list in the inventory: keep rumour text on one line */
-.stn-ui .camp-box .cp {
-  grid-template-columns: calc(26 * var(--u)) auto minmax(0, 1fr) calc(14 * var(--u));
-}
-.stn-ui .camp-box .cp-where {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-.stn-ui .schem-row {
-  flex-wrap: wrap;
 }
 
 /* ------------------------------------------------------------------ leaderboard */

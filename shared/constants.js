@@ -194,7 +194,13 @@ export const SLOT_THROW = 3;
 export const SLOT_BUILD = 4;
 export const NUM_SLOTS = 5;
 
+// The backpack grid. Every survivor has INVENTORY_SIZE slots; a Backpack worn (ITEM.BACKPACK, in an equipment slot of
+// its own like armor) opens BACKPACK_SLOTS more in the same grid. An inventory is always INVENTORY_MAX slots long:
+// the ones past its capacity (inventoryCap) are locked, and nothing ever goes into them.
 export const INVENTORY_SIZE = 24;
+export const BACKPACK_SLOTS = 10;
+export const INVENTORY_MAX = INVENTORY_SIZE + BACKPACK_SLOTS;
+export const inventoryCap = (backpack) => INVENTORY_SIZE + (backpack ? BACKPACK_SLOTS : 0);
 
 // Input buttons bitmask
 export const BTN = {
