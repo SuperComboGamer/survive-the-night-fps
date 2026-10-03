@@ -19,6 +19,7 @@ const EVERY = 0.2; // seconds between looks at the situation
 
 // most urgent first: only the first one that applies is shown
 const HINTS = [
+  { id: 'throwoff', key: 'Space', text: 'Throw it off', always: true }, // pinned by a leaper (Zombies.throwOff)
   { id: 'flashlight', key: ACTION_KEYS.flashlight, text: 'Flashlight' },
   { id: 'heal', key: ACTION_KEYS.heal, text: 'Heal' },
   { id: 'build', key: ACTION_KEYS.build, text: 'Build a shelter' },
@@ -88,7 +89,7 @@ export class KeyHints {
     let pick = null;
     if (active && g.settings.keyHints !== false) {
       for (const h of HINTS) {
-        if ((this.counts[h.id] | 0) >= RETIRE || !this.applies(h, day)) continue;
+        if ((!h.always && (this.counts[h.id] | 0) >= RETIRE) || !this.applies(h, day)) continue;
         pick = h;
         break;
       }
@@ -100,6 +101,8 @@ export class KeyHints {
     const g = this.game;
     const self = g.self;
     switch (h.id) {
+      case 'throwoff':
+        return !!g.prediction.state.pinned;
       case 'flashlight':
         // (it needs no battery item: it runs down while on and recharges by itself while off)
         return g.env.night > DARK && !g.localFlash && self.battery > LOW_BATTERY;

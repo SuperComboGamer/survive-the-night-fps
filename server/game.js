@@ -111,6 +111,8 @@ import {
   radioLinked,
 } from '../shared/defs.js';
 import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { BTN } from '../shared/constants.js';
+const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
 import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
@@ -1603,6 +1605,8 @@ export class Game {
         // The client predicts with the same simulation, so its state only needs sending when the two can differ:
         // something other than a command touched ours since the last one, or its fingerprint says it got elsewhere
         if (!samePlayerState(p.state, p.shadow)) p.selfSync = true;
+        // pinned by a leaper: Space throws it off (Zombies.throwOff)
+        if (p.state.pinned && cmd.buttons & BTN_JUMP & ~p.state.lastBtn && this.zm.throwOff(p)) p.selfSync = true;
         simulatePlayer(p.state, cmd, this.world, events);
         copyPlayerState(p.shadow, p.state);
         if (cmd.hash === NO_HASH || (cmd.hash >= 0 && cmd.hash !== hashPlayerState(p.state))) p.selfSync = true;

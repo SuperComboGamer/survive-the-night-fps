@@ -1,6 +1,11 @@
 // WebSocket connection + binary message framing.
 import { C2S, S2C, ACT, ROOMF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
 
+// A join whose socket closes before the server has answered it (no WELCOME, no REJECT) is tried again after these
+// waits (ms) before it fails. Seen in production (Oct 2026): now and then the socket is gone ~20 ms after the server
+// upgraded it, before it ever opened here, so the JOIN never went - and the same click again got straight in.
+const RETRY_MS = [250, 1000];
+
 export class Connection {
   constructor(handlers) {
     this.h = handlers;
@@ -23,12 +28,26 @@ export class Connection {
     return `${proto}://${location.host}/ws${code ? `?game=${encodeURIComponent(code)}` : ''}`;
   }
 
-  // pid: who this browser is to the leaderboard (identity.js). code: as for url
-  connect(name, pid = '', code = '') {
+  // pid: who this browser is to the leaderboard (identity.js). code: as for url. -> the WELCOME's info; throws the
+  // REJECT's reason, or 'Could not connect to server' once the retries (RETRY_MS) are spent
+  async connect(name, pid = '', code = '') {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.attempt(name, pid, code);
+      } catch (err) {
+        if (!err.unanswered || attempt >= RETRY_MS.length) throw err;
+        await new Promise((done) => setTimeout(done, RETRY_MS[attempt]));
+      }
+    }
+  }
+
+  // one socket's try at it
+  attempt(name, pid, code) {
     return new Promise((resolve, reject) => {
       let settled = false;
       this.room = null;
       this.accounts = new Map();
+      const t0 = performance.now();
       const ws = new WebSocket(this.url(code));
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
@@ -100,10 +119,15 @@ export class Connection {
             break;
         }
       };
-      ws.onclose = () => {
+      ws.onclose = (e) => {
+        const opened = this.open;
         this.open = false;
-        if (!settled) reject(new Error('Could not connect to server'));
-        else this.h.close?.();
+        if (settled) return this.h.close?.();
+        // (1006 without having opened: the handshake or the connection failed, here or on the way)
+        const err = new Error('Could not connect to server');
+        err.unanswered = true;
+        console.warn(`[net] socket closed before the server answered (code ${e.code}${e.reason ? ` ${e.reason}` : ''}, ${opened ? 'after it opened' : 'never opened'}, ${Math.round(performance.now() - t0)} ms)`);
+        reject(err);
       };
       ws.onerror = () => {};
     });

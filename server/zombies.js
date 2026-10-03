@@ -44,6 +44,7 @@ const LEAP_STEER = 5;
 const LEAP_PIN = 1.5;
 const LEAP_LAND = 1.7;
 const LEAP_MISS_CD = 2.5;
+const THROW_OFF_DAZE = 1; // s a leaper reels for once the survivor it pinned throws it off (throwOff)
 const _leap = { x: 0, y: 0, z: 0 };
 // the client's distance haze: fog density by sun height (KEYS s / fogD in client/render/environment.js), see sightRange()
 const HAZE_SUN = [-1, -0.12, 0.02, 0.18, 0.55, 1];
@@ -167,6 +168,7 @@ export class Zombies {
       link: 0,
       linkDmg: 0,
       linkT: 0,
+      dazedT: 0, // thrown off whoever it had pinned (throwOff): it reels, and does nothing else, until this runs out
       losT: 0,
       los: false,
       direct: false,
@@ -755,6 +757,19 @@ export class Zombies {
 
     // climbing out of a grave (cemetery.js): it does nothing else until it is out
     if (z.riseT > 0) return g.cemetery.climb(z, dt);
+
+    // thrown off a survivor it had pinned: it tumbles through the air (special state 2), then reels where it lands
+    if (z.dazedT > 0 && z.state !== 2) {
+      z.dazedT -= dt;
+      {
+        z.vx *= 0.7;
+        z.vz *= 0.7;
+        this.integrate(z, dt, 0, 0, this.humansCache);
+        z.anim = ZANIM.STAGGER;
+        z.animT = 0.2;
+        return;
+      }
+    }
 
     // the shade only moves in darkness: any light on it and it stands frozen where it was caught
     if (def.shade && this.holdShade(z, dt)) return;
@@ -1408,6 +1423,27 @@ export class Zombies {
       z.animT = 0;
     }
     z.specialCd = 6 + this.g.rng() * 3;
+  }
+
+  // A pinned survivor throws the leaper off (Space, Game.applyInputs): it is flung back the way it faces, away
+  // from them, and is dazed for THROW_OFF_DAZE s once it lands, long enough to get away
+  throwOff(p) {
+    const z = this.g.zombies.find((o) => o.id === p.pinnedBy && !o.dead);
+    if (!z || z.state !== 3 || z.link !== p.id) return false;
+    this.releaseLink(z);
+    const s = p.state;
+    const ax = z.x - s.x;
+    const az = z.z - s.z;
+    const l = Math.hypot(ax, az) || 1;
+    z.vx = (ax / l) * 6;
+    z.vz = (az / l) * 6;
+    z.vy = 3.5;
+    z.pounce = false;
+    z.dazedT = THROW_OFF_DAZE;
+    z.attackCd = Math.max(z.attackCd, THROW_OFF_DAZE);
+    z.specialCd = Math.max(z.specialCd, 4);
+    this.g.sound(SOUND.ZOMBIE_PAIN, z.x, z.y + 1, z.z, 30);
+    return true;
   }
 
   // ---------------------------------------------------------------- specials

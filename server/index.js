@@ -166,7 +166,7 @@ app.ws('/ws', {
     const key = req.getHeader('sec-websocket-key');
     const proto = req.getHeader('sec-websocket-protocol');
     const ext = req.getHeader('sec-websocket-extensions');
-    const go = (user) => res.cork(() => res.upgrade({ ip, code, user, room: null, slot: -1, counted: false, heard: false }, key, proto, ext, context));
+    const go = (user) => res.cork(() => res.upgrade({ ip, code, user, room: null, slot: -1, counted: false, heard: false, at: 0 }, key, proto, ext, context));
     if (!token) return go(null);
     let aborted = false;
     res.onAborted(() => {
@@ -200,6 +200,7 @@ app.ws('/ws', {
     }
     perIp.set(d.ip, (perIp.get(d.ip) || 0) + 1);
     d.counted = true;
+    d.at = Date.now();
   },
   message: (ws, message, isBinary) => {
     if (!isBinary) return;
@@ -212,8 +213,11 @@ app.ws('/ws', {
     const d = ws.getUserData();
     d.room?.drained(d.slot);
   },
-  close: (ws) => {
+  close: (ws, closeCode) => {
     const d = ws.getUserData();
+    // a seat taken by a socket that went before its JOIN came: how, and how soon (a browser that gave up on the
+    // handshake shows as 1006 a round trip in; the client tries again, connection.js)
+    if (d.room && !d.heard) log(`socket in game ${d.room.code} closed before it joined (code ${closeCode}, ${Date.now() - d.at} ms)`);
     if (d.counted) {
       const n = (perIp.get(d.ip) || 1) - 1;
       if (n > 0) perIp.set(d.ip, n);

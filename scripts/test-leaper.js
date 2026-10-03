@@ -9,6 +9,7 @@
 //     0.2-0.8 s of flight left), gets away from some of them and not all
 //   - a pinned survivor is let go when the pin runs out (5 s), when it is shoved off and when it has taken enough
 //     damage, and is not pinned again by the hop off (it used to be, 0.15 s after it let go)
+//   - one who presses Space throws it off: it is flung clear, reels for 1 s where it lands, and they get away
 // usage: node scripts/test-leaper.js [seed ...]   (VERBOSE=1 prints each scenario's numbers)
 import { Game } from '../server/game.js';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, qangle16, qpitch, writeInput } from '../shared/protocol.js';
@@ -215,6 +216,8 @@ let spots = 0;
 let pinChecks = 0;
 let letGo = 0;
 let pinnedAgain = 0;
+let throwChecks = 0;
+let thrown = 0;
 for (const seed of seeds) {
   const env = setup(seed);
   const flat = findSpot(env.game, 0, 0.6);
@@ -246,6 +249,30 @@ for (const seed of seeds) {
     }
     if (released >= 0 && released * DT < (how === 'time' ? 5.5 : 1)) letGo++;
     else if (process.env.VERBOSE) console.log(`      ${how}: let go after ${released < 0 ? 'never' : (released * DT).toFixed(2) + ' s'}`);
+  }
+  // Space throws it off: let go at once, flung clear, and dazed (no attack, no leap) for a second on the ground while
+  // the survivor runs for it
+  for (let k = 0; k < 2; k++) {
+    if (!trial(env, flat, 9, 'still', rng).pinned) continue;
+    throwChecks++;
+    const z = env.game.zombies.find((q) => q.ztype === ZTYPE.LEAPER && !q.dead);
+    const s = env.p.state;
+    let released = -1;
+    let landed = -1;
+    let dazedFor = 0;
+    let again = false;
+    for (let i = 0; i < 4 / DT; i++) {
+      // tap Space at i = 10, then run away from it
+      if (released >= 0) env.c.yaw = yawTo(z.x, z.z, s.x, s.z);
+      env.c.input(i === 10 ? BTN.JUMP : released >= 0 ? BTN.FWD | BTN.SPRINT : 0);
+      env.game.update();
+      if (released < 0 && i >= 10 && !s.pinned) released = i;
+      if (released >= 0 && landed < 0 && z.state !== 2) landed = i;
+      if (landed >= 0 && z.dazedT > 0) dazedFor += DT;
+      if (released >= 0 && (z.state === 3 || s.pinned)) again = true;
+    }
+    if (process.env.VERBOSE) console.log(`      throw: let go ${(((released - 10) * DT) | 0).toFixed(2)} s after Space, dazed ${dazedFor.toFixed(2)} s on the ground, ${Math.hypot(z.x - s.x, z.z - s.z).toFixed(1)} m apart at the end, pinned again: ${again}`);
+    if (released >= 10 && released - 10 <= 3 && dazedFor >= 0.9 && dazedFor <= 1.2 && !again) thrown++;
   }
   // the barricades stay up from here on
   if (ring(env, flat) === 4) for (let k = 0; k < TRIALS; k++) runs.ring.push(trial(env, flat, 7 + (k % 4) * 2, 'still', rng));
@@ -282,6 +309,7 @@ check('a survivor sprinting away is caught by most of them, and a miss is soon r
 check('one who strafes back and forth gets away from some of them, not all', S.strafe.share >= 0.15 && S.strafe.share <= 0.85, line('strafe'));
 check('one who sidesteps once it is in the air gets away from some of them, not all', [S.dodge, S.late].every((x) => x.share >= 0.25 && x.share <= 0.85), `as it leaves the ground: ${line('dodge')}; as it comes down: ${line('late')}`);
 check('a pinned survivor is let go (in 5 s, to a shove, to damage), and the hop off does not take them again', pinChecks >= seeds.length * 2 && letGo === pinChecks && pinnedAgain === 0, `${letGo} of ${pinChecks} let go in time, ${pinnedAgain} taken again within 1.5 s`);
+check('a pinned survivor throws it off with Space: let go at once, it reels for 1 s where it lands, and they get away', throwChecks >= seeds.length && thrown === throwChecks, `${thrown} of ${throwChecks}`);
 
 if (fails.length) {
   console.log(`\n${fails.length} check(s) failed`);
