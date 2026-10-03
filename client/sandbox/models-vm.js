@@ -67,6 +67,11 @@ if (params.has('thumb')) {
   const n = v.split(',').map(Number);
   VM_DEBUG.HAND_POSES[k].thumb = [n.slice(0, 3), n.slice(3, 6)];
 }
+// &hp=pose:{"curl":[[..]x4],"thumb":[[..],[..]],"center":[x,y,z]} : override (part of) a hand pose
+if (params.has('hp')) {
+  const s = params.get('hp'), i = s.indexOf(':');
+  Object.assign(VM_DEBUG.HAND_POSES[s.slice(0, i)], JSON.parse(s.slice(i + 1)));
+}
 // &mat=glove:r,g,b;trim:r,g,b;... : hand / sleeve material colors
 if (params.has('mat')) {
   for (const kv of params.get('mat').split(';')) {
@@ -240,9 +245,22 @@ if (params.get('vm') === 'hands') {
       const tgt = new THREE.Vector3(tx, ty, tz);
       cam.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(tgt);
       cam.lookAt(tgt);
+    } else if (params.has('zoom')) {
+      // &zoom=fov,tx,ty,tz: still from the player's eye, but narrowed onto a point (a close look at a grip)
+      const [fov, tx, ty, tz] = params.get('zoom').split(',').map(Number);
+      cam.fov = fov;
+      cam.lookAt(tx, ty, tz);
     }
     if (id === 'claws') vm.setItem(0, { claws: true });
     else vm.setItem(id);
+    if (params.get('xray') === '1') {
+      // &xray=1: the item (and the use prop) see-through, drawn over the hands, so a finger inside it shows
+      const glass = new THREE.MeshLambertMaterial({ color: 0x88aaff, transparent: true, opacity: 0.38, depthWrite: false });
+      for (const o of [...(vm.cur ? vm.cur.root.children : []), vm.kit]) {
+        o.material = glass;
+        o.renderOrder = 5;
+      }
+    }
     return { id, scene, cam, vm, acted: false, stopAt: times ? times[vi] : null };
   });
 
@@ -386,6 +404,11 @@ if (params.get('vm') === 'hands') {
     render();
     views[0].vm.getMuzzle(mz);
     info.textContent += `\nmuzzle(0): ${mz.x.toFixed(3)}, ${mz.y.toFixed(3)}, ${mz.z.toFixed(3)}`;
+    if (params.get('clip') === '1') {
+      // &clip=1: how far the hands and the item pass into each other (see clipReport)
+      window.__clip = views.map((v) => clipReport(v));
+      info.textContent += '\n' + window.__clip.map((c, i) => `clip[${i}] ` + c.text).join('\n');
+    }
   } else {
     let last = performance.now();
     const loop = (now) => {
@@ -398,5 +421,97 @@ if (params.get('vm') === 'hands') {
     requestAnimationFrame(loop);
   }
   window.__views = views;
+}
+
+// ------------------------------------------------------------------ clip check (&clip=1)
+// Every mesh here is a union of closed shells, so a vertex of one model is inside another when the first face a ray
+// from it meets is a back face. Each vertex casts four rays; three or more back faces = inside, and the shortest of
+// those exits is how deep it sits. Reports, in mm, the deepest hand / sleeve vertex inside the item, the deepest item
+// vertex inside a hand or sleeve, the hands inside each other, and how close anything comes to the camera.
+function clipReport(v) {
+  v.scene.updateMatrixWorld(true);
+  const shown = (o) => {
+    for (; o; o = o.parent) if (!o.visible) return false;
+    return true;
+  };
+  const arms = [];
+  for (const [side, arm] of [['R', v.vm.armR], ['L', v.vm.armL]]) {
+    for (const st in arm.sets) {
+      const s = arm.sets[st];
+      if (shown(s.upper)) arms.push({ name: side + '.upper', side, m: s.upper });
+      if (shown(s.fore)) arms.push({ name: side + '.fore', side, m: s.fore });
+      for (const p in s.hands) if (shown(s.hands[p])) arms.push({ name: side + '.hand', side, m: s.hands[p] });
+    }
+  }
+  const items = [];
+  if (v.vm.cur) for (const m of v.vm.cur.root.children) if (m.isMesh && shown(m)) items.push({ name: 'item.' + (Object.keys(v.vm.cur.parts).find((k) => v.vm.cur.parts[k] === m) || '?'), m });
+  if (shown(v.vm.kit)) items.push({ name: 'kit', m: v.vm.kit });
+  const dbl = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const proxy = (e) => {
+    const p = new THREE.Mesh(e.m.geometry, dbl);
+    p.matrixWorld.copy(e.m.matrixWorld);
+    p.matrixAutoUpdate = false;
+    p.updateMatrixWorld = () => {};
+    e.box = new THREE.Box3().setFromBufferAttribute(e.m.geometry.attributes.position).applyMatrix4(e.m.matrixWorld);
+    e.p = p;
+    return e;
+  };
+  arms.forEach(proxy);
+  items.forEach(proxy);
+  const DIRS = [new THREE.Vector3(1, 0.31, 0.17), new THREE.Vector3(-0.23, 1, 0.41), new THREE.Vector3(0.37, -0.29, 1), new THREE.Vector3(-0.6, -0.55, -0.58)].map((d) => d.normalize());
+  const ray = new THREE.Raycaster();
+  const P = new THREE.Vector3(), N = new THREE.Vector3(), nm = new THREE.Matrix3();
+  // deepest vertex of `from` inside the union of `into` (each entry: { name, m, p, box })
+  const probe = (from, into) => {
+    let best = { d: 0, a: '', b: '', n: 0 };
+    const targets = into.map((e) => e.p);
+    for (const f of from) {
+      const pos = f.m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        P.fromBufferAttribute(pos, i).applyMatrix4(f.m.matrixWorld);
+        const near = into.filter((e) => e.box.containsPoint(P));
+        if (!near.length) continue;
+        let back = 0, depth = Infinity, who = '';
+        for (const d of DIRS) {
+          ray.set(P, d);
+          ray.near = 1e-5;
+          ray.far = 1;
+          const h = ray.intersectObjects(near.map((e) => e.p), false)[0];
+          if (!h) continue;
+          nm.getNormalMatrix(h.object.matrixWorld);
+          N.copy(h.face.normal).applyMatrix3(nm);
+          if (N.dot(d) > 0) {
+            back++;
+            if (h.distance < depth) {
+              depth = h.distance;
+              who = into[targets.indexOf(h.object)].name;
+            }
+          }
+        }
+        if (back >= 3) {
+          best.n++;
+          if (depth > best.d) best = { d: depth, a: f.name, b: who, n: best.n, p: P.toArray().map((x) => +x.toFixed(3)) };
+        }
+      }
+    }
+    return best;
+  };
+  const r = {
+    handInItem: probe(arms, items),
+    itemInHand: probe(items, arms),
+    rInL: probe(arms.filter((e) => e.side === 'R'), arms.filter((e) => e.side === 'L')),
+  };
+  // nearest approach to the camera (view space z; the near plane is at -0.01)
+  let nearZ = -Infinity;
+  v.cam.updateMatrixWorld(true);
+  const inv = v.cam.matrixWorldInverse.copy(v.cam.matrixWorld).invert();
+  for (const e of [...arms.filter((a) => a.name.endsWith('hand')), ...items]) {
+    const pos = e.m.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) nearZ = Math.max(nearZ, P.fromBufferAttribute(pos, i).applyMatrix4(e.m.matrixWorld).applyMatrix4(inv).z);
+  }
+  r.nearZ = nearZ;
+  const mm = (b) => (b.n ? `${(b.d * 1000).toFixed(1)}mm ${b.a}>${b.b} (${b.n}v) @${b.p}` : '-');
+  r.text = `hand-in-item ${mm(r.handInItem)} | item-in-hand ${mm(r.itemInHand)} | R-in-L ${mm(r.rInL)} | near ${(-nearZ * 1000).toFixed(0)}mm`;
+  return r;
 }
 void ITEM_DEFS;
