@@ -180,7 +180,7 @@ export class Handcars {
     const g = this.g;
     const s = p.state;
     const e = this.cars[k];
-    if (!e || e.removed || e.rider || s.cart || s.ride || s.pinned || s.pulled) return;
+    if (!e || e.removed || e.rider || s.cart || s.ride || s.pinned || s.pulled || s.hmg) return; // (hmg: arms full of the mounted gun)
     if (g.time - p.interactT < 0.15) return;
     p.interactT = g.time;
     carFrame(g.world.rail.main, e.s, _f);

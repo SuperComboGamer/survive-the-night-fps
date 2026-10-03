@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 28; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9)
+export const PROTOCOL_VERSION = 29; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg)
 
 // client -> server
 export const C2S = {
@@ -38,7 +38,8 @@ export const ROOMF = { INVITE_ONLY: 1 };
 export const SNAP = { GLOBAL: 1, SELF: 2, REMOVES: 4, CREATES: 8, UPDATES: 16, EVENTS: 32, TICK: 64, ACK: 128 };
 // self section: u8 mask, bits 0-4 = the simulated state in 5 chunks (only ever sent with SYNC), STATUS = the
 // server-driven status (hp, armor, battery, ...; its own u8 field mask follows), RIDE = the seat of a ride the
-// player is in and the handcar they are on (part of the simulated state like bits 0-4: only ever with SYNC),
+// player is in, the handcar they are on and whether they carry the mounted gun (part of the simulated state like
+// bits 0-4: only ever with SYNC),
 // SYNC = "this is the authoritative state after the acked command: rebase the prediction on it". Without SYNC the
 // client's own prediction stands.
 export const SELF = { SIM: 0x1f, STATUS: 0x20, RIDE: 0x40, SYNC: 0x80 };
@@ -66,6 +67,7 @@ export const ACT = {
   SPLIT_INV: 19, // u8 inventory index, u16 count: that many leave the stack for a free slot of their own
   GUN_MAN: 25, // u8 on: take the grips of the mounted gun (1) or let go of them (0)
   GUN_FEED: 26, // u8 on: the gunner starts (1) or stops (0) feeding 7.62 from their backpack into its belt
+  GUN_PUT: 24, // u8 how: the mounted gun's carrier sets it up where they face (1) or drops it on its side (0). Lifting it is HOLD_BEGIN on it
   RIDE: 27, // u8 seat (fair.js): get onto that seat of a ride at the fair
   WAYPOINT: 28, // u8 on, then (on) i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none): your field-map waypoint, for the team
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
@@ -90,7 +92,7 @@ export const FAIR_GEN_ID = 0xffe0; // the fair's generator (HOLD_BEGIN: start it
 export const FAIR_TANK_ID = 0xffe1; // ...and its fuel drum (INTERACT: pour a portion in)
 export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
-export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, FAIR_START: 9, FAIR_STOP: 10 };
+export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, GUN_LIFT: 7, FAIR_START: 9, FAIR_STOP: 10 };
 
 // FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
 export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
@@ -122,7 +124,7 @@ export const ENT = {
   CACHE: 8, // searchable container (static position from world gen, state = searched)
   CAT: 9, // the stray cat (ambient, can't be hurt)
   DEER: 10, // a deer (shared/deer.js): can be hunted, is no zombie
-  GUN: 12, // the mounted gun at the Army Checkpoint (static position: the pintle; state = belt, gunner, where it was left pointing)
+  GUN: 12, // the mounted gun (position: the pintle, or under it; state = belt, gunner or carrier, where it was left pointing, the way its tripod faces, GUN_STANDS / CARRIED / LYING)
   FAIR: 11, // the fair's generator: whether it runs, the ride clock, the fuel left (FRF)
   HANDCAR: 13, // a handcar on the railway (shared/handcar.js): where it is on the line, who rides it (HCF)
 };

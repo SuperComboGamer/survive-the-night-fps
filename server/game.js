@@ -137,6 +137,7 @@ import { PlayerStats, idKey } from './stats.js';
 import { Fixtures } from './fixtures.js';
 import { Cemetery } from './cemetery.js';
 import { MountedGun } from './mountedgun.js';
+import { GUN, GUN_LYING } from '../shared/mountedgun.js';
 import { Fair } from './fair.js';
 import { Handcars } from './handcar.js';
 import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
@@ -1701,6 +1702,9 @@ export class Game {
   handleSimEvent(p, ev) {
     const s = p.state;
     switch (ev.type) {
+      case 'gun_drop':
+        this.gun.drop(p); // reached for a weapon with the mounted gun in their arms: it goes down where they stand
+        break;
       case 'fire':
         this.combat.fire(p, ev);
         break;
@@ -1923,6 +1927,8 @@ export class Game {
         return this.gun.man(p, r.u8());
       case ACT.GUN_FEED:
         return this.gun.feed(p, r.u8());
+      case ACT.GUN_PUT:
+        return this.gun.put(p, r.u8());
       case ACT.RIDE:
         return this.fair.board(p, r.u8());
       case ACT.HANDCAR:
@@ -2051,6 +2057,7 @@ export class Game {
     if (e.kind === ENT.CRATE) return e.y + 0.6;
     if (e.kind === ENT.STRUCTURE) return e.y + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
     if (e.kind === ENT.PLAYER) return e.y + 0.3;
+    if (e.kind === ENT.GUN && e.mode === GUN_LYING) return e.y - GUN.pivotY + 0.3; // (on its side on the ground)
     return e.y;
   }
 
@@ -2104,6 +2111,7 @@ export class Game {
     if (id === FAIR_GEN_ID) return this.fair.holdBegin(p);
     const e = this.ents[id];
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
+    if (e.kind === ENT.GUN) return this.gun.holdBegin(p); // lifting the mounted gun
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
       if (d > this.reachOf(e) || e.state !== 0) {
@@ -2139,6 +2147,7 @@ export class Game {
           const near = Math.hypot(tgt.x - s.x, tgt.z - s.z) < this.reachOf(tgt) + HOLD_SLACK;
           if (h.kind === HOLD.SEARCH) ok = near && tgt.state === 0;
           else if (h.kind === HOLD.REVIVE) ok = near && tgt.alive && tgt.downed && !tgt.zombie;
+          else if (h.kind === HOLD.GUN_LIFT) ok = this.gun.holdOk(p);
           ok = ok && this.canReachEnt(p, tgt);
         }
       }
@@ -2156,6 +2165,7 @@ export class Game {
     else if (h.kind === HOLD.REVIVE) this.revive(tgt, p);
     else if (h.kind === HOLD.ENGINE) this.startEngine(p);
     else if (h.kind === HOLD.DRIVE) this.driveOff(p);
+    else if (h.kind === HOLD.GUN_LIFT) this.gun.lift(p);
     else if (this.fixtures.owns(h.target)) this.fixtures.holdDone(p, h);
     else if (h.target === FAIR_GEN_ID) this.fair.holdDone(p, h);
   }
@@ -3117,7 +3127,7 @@ export class Game {
         break;
       }
       case 'gun':
-        // /gun: to the grips of the mounted gun at the Army Checkpoint
+        // /gun: to the grips of the mounted gun (at the Army Checkpoint, until somebody carries it off)
         if (this.gun.teleport(p)) this.fillHistory(p);
         else this.systemChat('this valley has no Army Checkpoint, so no mounted gun (a new game deals a new valley)');
         break;
@@ -3834,7 +3844,8 @@ export class Game {
         }
         if (put(chunk)) mask |= 1 << chunk;
       }
-      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js)
+      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js; the mounted gun in their
+      // arms: mountedgun.js)
       c.reset();
       c.u8(s.ride);
       c.u8(s.rideGo);
@@ -3842,6 +3853,7 @@ export class Game {
       c.u8(s.cart);
       c.f32(s.cartS);
       c.f32(s.cartV);
+      c.u8(s.hmg);
       if (put(12)) mask |= SELF.RIDE;
     }
     // status: 7 field groups behind their own mask

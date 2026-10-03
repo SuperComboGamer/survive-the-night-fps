@@ -3,7 +3,7 @@ import { ENT, SNAP, SELF, PFLAG, UPOS, UEXT, UEXT_ABS, dqpos, dqangle16, dqangle
 import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED } from '../../shared/constants.js';
 import { EVT, AMMO_ITEMS } from '../../shared/defs.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 6, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -14,7 +14,7 @@ const BIT_SLOTS = {
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
   [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
-  [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6]],
+  [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 8]],
   [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
   [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
   [ENT.HANDCAR]: [[0, 3], [3, 4], [4, 5]],
@@ -111,6 +111,7 @@ export function readSelf(r, out, flags) {
   if (!out.ammo) out.ammo = AMMO_ITEMS.map(() => 0);
   if (out.ride === undefined) out.ride = out.rideGo = out.rideT = 0;
   if (out.cart === undefined) out.cart = out.cartS = out.cartV = 0;
+  if (out.hmg === undefined) out.hmg = 0;
   if (!(flags & SNAP.SELF)) return false;
   const mask = r.u8();
   if (mask & 1) {
@@ -166,6 +167,7 @@ export function readSelf(r, out, flags) {
     out.cart = r.u8();
     out.cartS = r.f32();
     out.cartV = r.f32();
+    out.hmg = r.u8();
   }
   if (mask & SELF.STATUS) {
     const m = r.u8();

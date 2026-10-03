@@ -1,14 +1,19 @@
-// The mounted gun: a heavy machine gun on a tripod behind the sandbags of the Army Checkpoint, covering Route 9.
-// One to a map that has the place. It is fixed: a survivor at the grips mans it, and then their fire button is its
-// trigger and it swivels with their view, inside its arc. Nothing about it is in the player simulation - the
-// gunner walks as they always do, and letting go is stepping away - so the rules both ends need are here:
-// where the nest is, who is at the grips, where the gun points for a view, and which commands fire it.
+// The mounted gun: a heavy machine gun on a tripod, behind the sandbags of the Army Checkpoint when a run begins,
+// covering Route 9. One to a map that has the place. Standing on its tripod it is fixed: a survivor at the grips
+// mans it, and then their fire button is its trigger and it swivels with their view, inside its arc. A survivor can
+// also lift it, tripod and all (hold [E]), carry it off at half pace with nothing else in their hands, and set it
+// up somewhere else ([E]): the way they face is the way it covers. Switching weapons on the way drops it where
+// they stand, on its side, to be lifted again. Carrying it is in the player simulation (s.hmg: the pace, the hands
+// it takes, the switch that drops it); the rest both ends need is here: where it stands, who is at the grips,
+// where the gun points for a view, which commands fire it, and where a carrier would set it up.
 import { BTN } from './constants.js';
 import { AMMO } from './defs.js';
 import { eyeHeight } from './playersim.js';
+import { groundAt, raycastWorld, deepWaterAt } from './collision.js';
+import { qpos, dqpos, qangle16, dqangle16 } from './protocol.js';
 
 // The weapon id its shots and kills carry on the wire (EVT.SHOT, the killfeed): a number among the items that no
-// item has. It is not an item: it cannot be carried, dropped or given.
+// item has. It is not an item: it never goes in a backpack or a weapon slot, and it cannot be given.
 export const MOUNTED_GUN = 16;
 
 const DEG = Math.PI / 180;
@@ -36,16 +41,38 @@ export const GUN = {
   back: 0.62, // the grips are this far behind it
   barrel: 1.2, // the muzzle this far ahead of it
   dryWait: 15, // commands between two clicks of an empty gun
+  lift: 1.5, // seconds of [E] held to lift it off the ground, tripod and all
+  setOut: 0.92, // a carrier sets it up this far ahead of where they stand: their feet a step behind the grips...
+  setMin: 0.5, // ...or as little as this, up against what is in front of them
+  clear: 0.2, // its centre at least this far from anything solid in front
+  pickUp: 2, // metres from a gun lying on its side that it can be lifted from
 };
 
-// Where the gun of this map stands: { x, y, z, ry } of the tripod (ry: the way the nest faces, as a view yaw), or
-// null on a map without the checkpoint. The tripod is a prop of the place (world.js), so nothing else has to say.
+// What it is doing (the entity's mode): standing on its tripod, in a survivor's arms, or lying where it was dropped
+export const GUN_STANDS = 0;
+export const GUN_CARRIED = 1;
+export const GUN_LYING = 2;
+
+// A nest as the wire carries it: the pintle at 1/64 m and the facing at 1/65536 of a turn. Every nest the gun
+// stands in goes through here on the server, and the client reads it back off the entity, so both ends judge the
+// grips, the arc and the muzzle from identical numbers.
+export function snapNest(n) {
+  n.y = dqpos(qpos(n.y + GUN.pivotY)) - GUN.pivotY;
+  n.x = dqpos(qpos(n.x));
+  n.z = dqpos(qpos(n.z));
+  n.ry = dqangle16(qangle16(n.ry));
+  return n;
+}
+
+// Where the gun of this map stands when a run begins: { x, y, z, ry } of the tripod (ry: the way the nest faces, as
+// a view yaw), or null on a map without the checkpoint. The nest is a prop of the place (world.js), so nothing else
+// has to say. Once somebody has carried it off, where it stands is the entity's to say (snapNest).
 const nests = new WeakMap();
 export function gunNest(world) {
   let n = nests.get(world);
   if (n === undefined) {
     const p = world.props.find((q) => q.type === 'mg_tripod');
-    n = p ? { x: p.x, y: p.y, z: p.z, ry: p.ry } : null;
+    n = p ? snapNest({ x: p.x, y: p.y, z: p.z, ry: p.ry }) : null;
     nests.set(world, n);
   }
   return n;
@@ -117,4 +144,38 @@ export function gunShot(nest, s, cmd, out) {
   out.y = s.y + eyeHeight(s);
   out.z = s.z;
   return out;
+}
+
+// Where a carrier standing as s is would set the gun up: a step ahead of them along their view, facing the way they
+// look, its feet on the ground they stand on - or nearer, up against whatever stands in front of them (a barricade,
+// sandbags: what a gun is set up behind). -> out { x, y, z, ry } (snapped), or null when there is no room: a wall
+// or anything else solid right in front of them, ground that falls away or climbs, deep water.
+const _ray = { t: -1, col: null, terrain: false };
+export function setUpSpot(world, s, out) {
+  const fx = -Math.sin(s.yaw);
+  const fz = -Math.cos(s.yaw);
+  let d = GUN.setOut;
+  // (the tripod's centre stays a hand clear of anything hit from the waist or from the height of the gun)
+  for (const h of [0.6, GUN.pivotY]) {
+    raycastWorld(world, s.x, s.y + h, s.z, fx, 0, fz, GUN.setOut + GUN.clear, _ray);
+    if (_ray.t >= 0) d = Math.min(d, _ray.t - GUN.clear);
+  }
+  if (d < GUN.setMin) return null;
+  const x = s.x + fx * d;
+  const z = s.z + fz * d;
+  const y = groundAt(world, x, z, s.y + 0.1, 0.3);
+  if (Math.abs(y - s.y) > 0.4 || deepWaterAt(world, x, z, y, 0.3)) return null;
+  out.x = x;
+  out.y = y;
+  out.z = z;
+  out.ry = s.yaw;
+  return snapNest(out);
+}
+
+// Can a survivor standing at (x, y, z) lift the gun standing in `nest` (from its grips, or from beside it) or lying
+// at it (anywhere within reach)?
+export function canLift(nest, lying, x, y, z, slack = 0) {
+  if (Math.abs(y - nest.y) > 1.2) return false;
+  if (lying) return Math.hypot(x - nest.x, z - nest.z) <= GUN.pickUp + slack;
+  return atGrips(nest, x, y, z, GUN.reach + slack) || Math.hypot(x - nest.x, z - nest.z) <= 1.1 + slack;
 }

@@ -1710,7 +1710,8 @@ export class Game {
     if (!this.input.enabled) return;
     const digit = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 }[code];
     if (digit !== undefined) {
-      if (digit === SLOT_THROW && s.slot === SLOT_THROW) {
+      // (the mounted gun in their arms: any weapon key reaches for that weapon, and the gun drops where they stand)
+      if (digit === SLOT_THROW && s.slot === SLOT_THROW && !s.hmg) {
         // cycle to the next throwable we carry
         const counts = this.invCounts();
         const i = THROW_ITEMS.indexOf(s.weapons[SLOT_THROW]);
@@ -1757,7 +1758,8 @@ export class Game {
         this.ping();
         break;
       case 'KeyG':
-        if (!s.zombie && s.slot !== SLOT_THROW && s.weapons[s.slot]) this.conn.action(ACT.DROP_WEAPON, s.slot);
+        if (s.hmg) this.gun.drop(); // the mounted gun in their arms goes down first
+        else if (!s.zombie && s.slot !== SLOT_THROW && s.weapons[s.slot]) this.conn.action(ACT.DROP_WEAPON, s.slot);
         break;
       case 'KeyH':
         this.quickHeal();
@@ -2245,7 +2247,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !this.handcar.handsOn && !swim);
+    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0 });
     if (this.vmMuzzleT > 0) {
@@ -2583,7 +2585,7 @@ export class Game {
     if (!this.self.alive || s.zombie || s.downed) return;
     if (s.ride) return this.fair.rideLook(s);
     if (s.cart) return this.handcar.rideLook(s);
-    if (this.gun.look(true)) return; // hands on the mounted gun: [E] is the gun's
+    if (this.gun.look(true)) return; // hands on the mounted gun (at its grips, or carrying it): [E] is the gun's
     cam.getWorldDirection(_v);
     const ox = cam.position.x;
     const oy = cam.position.y;
@@ -2825,6 +2827,7 @@ export class Game {
       const t = this.entities.ents.get(this.holding);
       h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : self.holdKind === HOLD.FAIR_START ? 'Starting the generator…' : self.holdKind === HOLD.FAIR_STOP ? 'Shutting it off…' : 'Starting the engine…';
       h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
+      if (self.holdKind === HOLD.GUN_LIFT) h.useLabel = 'Lifting the gun…';
     } else {
       // (put away by a click, it is gone at once: the server's word on it is a round trip off)
       h.useProgress = self.useItem && this.prediction.state.using ? self.useProgress : -1;

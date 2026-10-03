@@ -4,8 +4,9 @@
 // previous update, positions as 1-3 byte deltas when small; layout in shared/protocol.js), far entities update at
 // half rate, and irrelevant/destroyed entities get a remove. Sections with nothing in them are not written at all.
 import { MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, AOI_STRUCTURE_RADIUS, AOI_CACHE_RADIUS } from '../shared/constants.js';
-import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qlookYaw, qlookPitch, packLook, PFLAG, PRIDE_SHIFT, ZSTATUS, HCAR_AT } from '../shared/protocol.js';
+import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qangle16, qlookYaw, qlookPitch, packLook, PFLAG, PRIDE_SHIFT, ZSTATUS, HCAR_AT } from '../shared/protocol.js';
 import { ZOMBIE_DEFS } from '../shared/defs.js';
+import { GUN_CARRIED } from '../shared/mountedgun.js';
 
 export const SLOTS = 9;
 
@@ -40,7 +41,7 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 6, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -52,7 +53,7 @@ const BIT_SLOTS = {
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
   [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
-  [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6]],
+  [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 8]],
   [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
   [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
   [ENT.HANDCAR]: [[0, 3], [3, 4], [4, 5]],
@@ -116,8 +117,10 @@ function quant(e) {
       break;
     case ENT.GUN:
       q[3] = e.belt;
-      q[4] = e.gunner;
+      q[4] = e.mode === GUN_CARRIED ? e.carrier : e.gunner;
       q[5] = packLook(qlookYaw(e.yaw), qlookPitch(e.pitch));
+      q[6] = qangle16(e.ry);
+      q[7] = e.mode;
       break;
     case ENT.FAIR:
       // (server/fair.js keeps clock and fuel as the wire wants them: see FRF in protocol.js)
@@ -240,6 +243,7 @@ AOI2[ENT.PLAYER] = 0;
 AOI2[ENT.CRATE] = 0;
 AOI2[ENT.FAIR] = 0; // (its lights and its music carry further than anything else in the valley)
 AOI2[ENT.HANDCAR] = 0; // (two of them, seen coming down the line from a long way off)
+AOI2[ENT.GUN] = 0; // (one, heard from further off than anything: wherever it is carried, it is somewhere)
 AOI2[ENT.ITEM] = AOI_ITEM_RADIUS * AOI_ITEM_RADIUS;
 AOI2[ENT.STRUCTURE] = AOI_STRUCTURE_RADIUS * AOI_STRUCTURE_RADIUS;
 AOI2[ENT.CACHE] = AOI_CACHE_RADIUS * AOI_CACHE_RADIUS;

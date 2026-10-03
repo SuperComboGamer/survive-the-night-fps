@@ -8,14 +8,19 @@
 //     150 ms of latency plus the interpolation delay), against the AK-47 through the same path; the gunner's kill
 //   - the belt: spent a round at a time, clicks when empty, fed from the 7.62 the gunner carries, reset with
 //     a new game
+//   - carrying it: lifted with [E] held (not from under a gunner), half pace walking and sprinting, nothing fired,
+//     thrown, swung or reloaded on the way; a weapon key or [G] drops it on its side where they stand, and it is
+//     lifted again from there; [E] sets it up a step ahead facing the way they look (not into a wall), where it is
+//     manned and fired as at the checkpoint; going down, dying, a dropped connection and leaving all drop it
 // usage: node scripts/test-gun.js [seed with a checkpoint = 1]
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, ENT, GF, PROTOCOL_VERSION, Writer, Reader, qangle16, qpitch, dqangle16, dqpitch, writeInput } from '../shared/protocol.js';
-import { BTN, SERVER_TICK_RATE, SLOT_PRIMARY, SLOT_MELEE, PLAYER_RADIUS, PLAYER_HEIGHT, EYE_HEIGHT, NOISE } from '../shared/constants.js';
+import { BTN, SERVER_TICK_RATE, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE, PLAYER_RADIUS, PLAYER_HEIGHT, EYE_HEIGHT, NOISE, WALK_SPEED, SPRINT_SPEED, GUN_CARRY_SPEED, WATER_LEVEL } from '../shared/constants.js';
 import { ITEM, WEAPONS, AMMO, ZTYPE, ZONE, KILLER, SOUND } from '../shared/defs.js';
-import { GUN, MOUNTED_GUN, gunNest, atGrips, gunAim } from '../shared/mountedgun.js';
+import { GUN, MOUNTED_GUN, GUN_STANDS, GUN_CARRIED, GUN_LYING, gunNest, atGrips, gunAim, setUpSpot, snapNest } from '../shared/mountedgun.js';
 import { createWorld } from '../shared/world.js';
-import { resolveBody, raycastWorld } from '../shared/collision.js';
+import { resolveBody, raycastWorld, groundAt } from '../shared/collision.js';
+import { swimming } from '../shared/swim.js';
 import { readSnapshot } from '../client/net/decode.js';
 
 const seed = +(process.argv[2] || 1);
@@ -97,6 +102,14 @@ function client(name) {
     w2.u8(C2S.ACTION);
     w2.u8(act);
     w2.u8(a);
+    game.onMessage(c.session, w2.bytes().slice());
+  };
+  // [E] held on an entity (HOLD_BEGIN), and let go (HOLD_END)
+  c.hold = (id) => {
+    const w2 = new Writer(16);
+    w2.u8(C2S.ACTION);
+    w2.u8(id ? ACT.HOLD_BEGIN : ACT.HOLD_END);
+    if (id) w2.u16(id);
     game.onMessage(c.session, w2.bytes().slice());
   };
   // a tick's worth of commands (3), looking along c.yaw / c.pitch; back: how many ticks ago the screen they were
@@ -504,6 +517,309 @@ function volley(weapon, back, shots, honest = true, aimed = false) {
   for (const z of pack0) z.hp = 0.1;
 }
 
+// ---------------------------------------------------------------- carrying it
+{
+  for (const z of game.zombies) {
+    z.dead = true;
+    game.removeEntity(z);
+  }
+  game.zombies.length = 0;
+  game.spawnHuman(a); // (Alice died above: a survivor again)
+  game.fillHistory(a);
+  const e = gun();
+  const ticks = (sec) => Math.ceil(sec * SERVER_TICK_RATE);
+  const lift = (c) => {
+    c.hold(e.id);
+    run(ticks(GUN.lift) + 2);
+    c.hold(0);
+    run(1);
+  };
+  // a gunner on it: nobody lifts it from under them
+  toGrips(B);
+  B.act(ACT.GUN_MAN, 1);
+  toGrips(A, 0.6);
+  run(2);
+  A.hold(e.id);
+  run(ticks(GUN.lift) + 2);
+  A.hold(0);
+  check('nobody lifts the gun from under its gunner', e.mode === GUN_STANDS && e.gunner === b.id && !s.hmg && !a.hold);
+  B.act(ACT.GUN_MAN, 0);
+  run(2);
+  // let go too soon, and it stays
+  A.hold(e.id);
+  run(ticks(GUN.lift / 2));
+  A.hold(0);
+  run(ticks(GUN.lift));
+  const early = e.mode;
+  // held long enough, from beside it (the grips are a step to the side)
+  B.sounds.length = 0;
+  s.reloadT = 0.5;
+  lift(A);
+  const g1 = seen(B);
+  check(`[E] held for ${GUN.lift} s lifts it, tripod and all; let go sooner and it stays`, early === GUN_STANDS && e.mode === GUN_CARRIED && e.carrier === a.id && s.hmg === 1 && A.self.hmg === 1 && !!g1 && g1.q[7] === GUN_CARRIED && g1.q[4] === a.id && s.reloadT === 0, `mode ${e.mode}, carrier ${e.carrier}, s.hmg ${s.hmg}, Alice told ${A.self.hmg}, Bob sees mode ${g1?.q[7]} carrier ${g1?.q[4]}`);
+  check('...with a clank the others hear', B.sounds.includes(SOUND.METAL_HIT));
+
+  // the pace: the same open stretch walked and sprinted by Bob empty-handed and by Alice carrying it
+  const open = (() => {
+    // somewhere flat and clear: along the road out of the nest, 30 m behind it
+    for (let k = 0; k < 40; k++) {
+      const ang = nest.ry + (k * Math.PI) / 20;
+      const x = nest.x + Math.sin(ang) * 30;
+      const z = nest.z + Math.cos(ang) * 30;
+      const y = groundAt(game.world, x, z, 200, 0.3);
+      const ray = { t: -1, col: null, terrain: false };
+      let clear = true;
+      for (const h of [0.3, 1]) {
+        raycastWorld(game.world, x, y + h, z, -Math.sin(ang), 0, -Math.cos(ang), 16, ray);
+        if (ray.t >= 0) clear = false;
+      }
+      if (clear && Math.abs(groundAt(game.world, x - Math.sin(ang) * 12, z - Math.cos(ang) * 12, 200, 0.3) - y) < 1.2) return { x, y, z, yaw: ang };
+    }
+    return null;
+  })();
+  const stretch = (c, buttons, secs) => {
+    const st = c.p().state;
+    st.x = open.x;
+    st.y = open.y;
+    st.z = open.z;
+    st.vx = st.vy = st.vz = 0;
+    st.stamina = 100;
+    st.exhausted = 0;
+    c.yaw = open.yaw;
+    c.pitch = 0;
+    for (let i = 0; i < ticks(secs); i++) {
+      c.input(buttons);
+      game.update();
+    }
+    return Math.hypot(st.x - open.x, st.z - open.z);
+  };
+  if (!open) check('an open stretch to walk', false, 'none found near the checkpoint');
+  else {
+    const walk = stretch(B, BTN.FWD, 2);
+    const walkC = stretch(A, BTN.FWD, 2);
+    const run2 = stretch(B, BTN.FWD | BTN.SPRINT, 2);
+    const runC = stretch(A, BTN.FWD | BTN.SPRINT, 2);
+    check(`carrying it, every pace is ${GUN_CARRY_SPEED * 100}%`, s.hmg === 1 && Math.abs(walkC / walk - GUN_CARRY_SPEED) < 0.03 && Math.abs(runC / run2 - GUN_CARRY_SPEED) < 0.03, `walking ${(walk / 2).toFixed(2)} -> ${(walkC / 2).toFixed(2)} m/s, sprinting ${(run2 / 2).toFixed(2)} -> ${(runC / 2).toFixed(2)} m/s (${WALK_SPEED} / ${SPRINT_SPEED} empty-handed)`);
+    check('...and the gun goes with its carrier (for everyone, from anywhere)', Math.hypot(e.x - s.x, e.z - s.z) < 0.01 && !!seen(B) && seen(B).q[7] === GUN_CARRIED);
+  }
+  // hands full: no shot, no swing, no reload, no aim
+  s.weapons[SLOT_PRIMARY] = ITEM.AK47;
+  s.mags[0] = 5;
+  s.ammo[AMMO.R762] = 60;
+  const fc = s.fireCount;
+  const before = B.shots.length;
+  run(15, () => BTN.ATTACK | BTN.ALT);
+  run(5, () => BTN.RELOAD);
+  run(15, (i) => (i % 2 ? BTN.ATTACK : 0));
+  check('carrying it, the fire button, the sights and [R] do nothing', s.hmg === 1 && s.fireCount === fc && s.mags[0] === 5 && s.reloadT === 0 && B.shots.length === before && e.belt === seen(B).q[3], `fired ${s.fireCount - fc}, mag ${s.mags[0]}`);
+
+  // a weapon key drops it where they stand, on its side, and the switch goes ahead
+  const slot0 = s.slot;
+  const want = slot0 === SLOT_PISTOL ? SLOT_MELEE : SLOT_PISTOL;
+  const at = { x: s.x, z: s.z, yaw: A.yaw };
+  B.sounds.length = 0;
+  A.input(0, 0, want);
+  game.update();
+  run(1);
+  const g2 = seen(B);
+  check('reaching for a weapon drops it on its side where they stand, and the weapon comes out', s.hmg === 0 && s.slot === want && e.mode === GUN_LYING && e.carrier === 0 && Math.hypot(e.x - at.x, e.z - at.z) < 0.05 && !!g2 && g2.q[7] === GUN_LYING && B.sounds.includes(SOUND.METAL_HIT) && A.self.hmg === 0, `mode ${e.mode}, ${Math.hypot(e.x - at.x, e.z - at.z).toFixed(2)} m from their feet, slot ${slot0} -> ${s.slot}`);
+  // a lying gun is not manned, but it is lifted again from beside it, and not from across the road
+  toGrips(B);
+  const lying = { x: e.x, z: e.z };
+  s.x = lying.x + 3.5;
+  s.z = lying.z;
+  game.fillHistory(a);
+  B.act(ACT.GUN_MAN, 1);
+  A.hold(e.id);
+  run(ticks(GUN.lift) + 2);
+  A.hold(0);
+  const far = e.mode;
+  s.x = lying.x + 1.4;
+  game.fillHistory(a);
+  run(1);
+  lift(A);
+  check('lying, nobody mans it; it is lifted again from beside it, not from 3.5 m off', far === GUN_LYING && e.gunner === 0 && e.mode === GUN_CARRIED && s.hmg === 1);
+  // [G] drops it too
+  A.act(ACT.GUN_PUT, 0);
+  run(1);
+  const gDrop = e.mode === GUN_LYING && s.hmg === 0;
+  lift(A);
+  check('[G] drops it as well', gDrop && e.mode === GUN_CARRIED);
+
+  // set up where they face: a step ahead, facing the way they look
+  if (open) {
+    s.x = open.x;
+    s.y = open.y;
+    s.z = open.z;
+    s.vx = s.vy = s.vz = 0;
+    A.yaw = open.yaw + 0.3;
+    game.fillHistory(a);
+    run(2);
+    const spot = setUpSpot(game.world, s, {});
+    // (Bob in earshot, behind Alice)
+    b.state.x = open.x + Math.sin(open.yaw) * 4;
+    b.state.y = open.y;
+    b.state.z = open.z + Math.cos(open.yaw) * 4;
+    game.fillHistory(b);
+    B.sounds.length = 0;
+    A.act(ACT.GUN_PUT, 1);
+    run(2);
+    const n2 = game.gun.nest;
+    const g3 = seen(B);
+    const ahead = n2 && (n2.x - s.x) * -Math.sin(A.yaw) + (n2.z - s.z) * -Math.cos(A.yaw);
+    check('[E] sets it up a step ahead of the carrier, facing the way they look, its feet on their ground', !!spot && e.mode === GUN_STANDS && s.hmg === 0 && !!n2 && Math.abs(ahead - GUN.setOut) < 0.05 && Math.abs(n2.ry - snapNest({ x: 0, y: 0, z: 0, ry: A.yaw }).ry) < 1e-9 && Math.abs(n2.y - s.y) < 0.4 && !!g3 && g3.q[7] === GUN_STANDS && B.sounds.includes(SOUND.GUN_MAN), n2 ? `${ahead.toFixed(2)} m ahead, facing ${((n2.ry * 180) / Math.PI).toFixed(1)} deg, ${(n2.y - s.y).toFixed(2)} m below their feet` : 'not set up');
+    // ...and there it is manned and fired like at the checkpoint, its arc about the new facing
+    A.act(ACT.GUN_MAN, 1);
+    run(2);
+    const belt = e.belt;
+    A.yaw = n2.ry + 2; // (past the arc: it fires from its stop)
+    const shots0 = B.shots.length;
+    run(10, () => BTN.GUN);
+    const last = B.shots[B.shots.length - 1];
+    check('...and manned there, it fires inside an arc about the way it was set up', e.gunner === a.id && belt - e.belt === 5 && B.shots.length - shots0 === 5 && !!last && Math.abs(((last.yaw - n2.ry + Math.PI * 3) % (Math.PI * 2)) - Math.PI - GUN.arc) < 0.01, `${belt - e.belt} rounds, the last ${last ? (((((last.yaw - n2.ry + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * 180) / Math.PI).toFixed(1) : '-'} deg off its facing`);
+    A.act(ACT.GUN_MAN, 0);
+    run(2);
+  }
+
+  // up against the checkpoint's own sandbags: it goes down behind them, nearer than a step
+  {
+    if (!s.hmg) lift(A);
+    const fx = -Math.sin(nest.ry);
+    const fz = -Math.cos(nest.ry);
+    const ray = { t: -1, col: null, terrain: false };
+    raycastWorld(game.world, nest.x, nest.y + 0.6, nest.z, fx, 0, fz, 4, ray);
+    const face = ray.t; // the front sandbags, from the pintle
+    s.x = nest.x + fx * (face - 0.85);
+    s.z = nest.z + fz * (face - 0.85);
+    s.y = nest.y;
+    s.vx = s.vy = s.vz = 0;
+    A.yaw = nest.ry;
+    game.fillHistory(a);
+    run(2);
+    A.act(ACT.GUN_PUT, 1);
+    run(2);
+    const n3 = game.gun.nest;
+    const d = n3 ? Math.hypot(n3.x - s.x, n3.z - s.z) : -1;
+    check('up against sandbags it goes down right behind them, nearer than a step', face > 0 && e.mode === GUN_STANDS && Math.abs(d - (0.85 - GUN.clear)) < 0.03, `the sandbags 0.85 m ahead of the carrier, the pintle ${d.toFixed(2)} m`);
+    lift(A);
+  }
+
+  // into a wall: no room, and it stays in their arms
+  {
+    let wall = null;
+    for (const pt of game.world.parts) {
+      if (pt.shape !== 'box' || pt.sy < 2.4 || pt.sz > 0.4 || pt.sx < 3) continue;
+      const nx = Math.sin(pt.ry || 0);
+      const nz = Math.cos(pt.ry || 0);
+      const d = pt.sz / 2 + PLAYER_RADIUS + 0.12;
+      for (const side of [1, -1]) {
+        const x = pt.x + nx * d * side;
+        const z = pt.z + nz * d * side;
+        const y = groundAt(game.world, x, z, pt.y + 0.5, 0.3);
+        if (Math.abs(y - pt.y) > 0.3 || game.world.isDeepWater(x, z)) continue;
+        const pos = { x, y, z };
+        resolveBody(game.world, pos, PLAYER_RADIUS, PLAYER_HEIGHT, true);
+        if (Math.hypot(pos.x - x, pos.z - z) > 0.01) continue;
+        wall = { x, y, z, yaw: Math.atan2(nx * side, nz * side) };
+        break;
+      }
+      if (wall) break;
+    }
+    lift(A);
+    if (!wall) check('a wall to face', false, 'no wall found');
+    else {
+      s.x = wall.x;
+      s.y = wall.y;
+      s.z = wall.z;
+      s.vx = s.vy = s.vz = 0;
+      A.yaw = wall.yaw;
+      game.fillHistory(a);
+      run(2);
+      A.act(ACT.GUN_PUT, 1);
+      run(2);
+      check('facing a wall a step off, there is no room to set it up: it stays in their arms', !setUpSpot(game.world, s, {}) && e.mode === GUN_CARRIED && s.hmg === 1, `mode ${e.mode}`);
+    }
+  }
+
+  // into the lake: nobody swims with it. They wade in as far as their feet keep the bottom, and stop there
+  {
+    const L = game.world.lake;
+    if (!s.hmg) lift(A);
+    if (!L) check('a lake to walk into', false, `seed ${seed} has none`);
+    else {
+      const ang = Math.atan2(-L.x, -L.z);
+      s.x = L.x + Math.sin(ang) * (L.r + 10);
+      s.z = L.z + Math.cos(ang) * (L.r + 10);
+      s.y = groundAt(game.world, s.x, s.z, 200, 0.3);
+      s.vx = s.vy = s.vz = 0;
+      A.yaw = Math.atan2(s.x - L.x, s.z - L.z); // facing the middle of the lake
+      game.fillHistory(a);
+      let afloat = 0;
+      let deepest = 0;
+      for (let t = 0; t < 25 * SERVER_TICK_RATE; t++) {
+        A.input(BTN.FWD | BTN.SPRINT);
+        game.update();
+        if (swimming(game.world, s)) afloat++;
+        deepest = Math.max(deepest, WATER_LEVEL - s.y);
+      }
+      check('carrying it, the deep water stops them where they would float: they wade in and no further', afloat === 0 && deepest > 0.5 && s.hmg === 1 && e.carrier === a.id, `${afloat} ticks afloat, waded ${deepest.toFixed(2)} m deep`);
+    }
+  }
+
+  // going down, dying, a dropped connection, leaving: it goes down where they fell
+  {
+    if (!s.hmg) lift(A);
+    const w0 = { x: s.x, z: s.z };
+    game.goDown(a);
+    run(2);
+    const down = e.mode === GUN_LYING && s.hmg === 0 && Math.hypot(e.x - w0.x, e.z - w0.z) < 0.05;
+    game.revive(a, b);
+    run(2);
+    lift(A);
+    game.killPlayer(a, {});
+    run(2);
+    const dead = e.mode === GUN_LYING && s.hmg === 0;
+    game.spawnHuman(a);
+    run(2);
+    check('going down or dying drops it where they fell', down && dead, `down ${down}, dead ${dead}`);
+  }
+  {
+    const C = client('Carol');
+    const c = C.p();
+    run(2);
+    const cs = c.state;
+    cs.x = e.x + 1;
+    cs.y = e.y - GUN.pivotY;
+    cs.z = e.z;
+    game.fillHistory(c);
+    run(1);
+    c.rejoinKey = 'carol';
+    lift(C);
+    const had = e.mode === GUN_CARRIED && e.carrier === c.id;
+    cs.x += 2;
+    run(2);
+    game.onClose(C.session, 1006); // dropped: their place is held
+    run(2);
+    const away = e.mode === GUN_LYING && Math.hypot(e.x - cs.x, e.z - cs.z) < 0.05;
+    check('a carrier whose connection drops lets it fall where they stood', had && away, `carried ${had}, then mode ${e.mode}`);
+    if (c) game.removePlayer(c);
+    const D = client('Dave');
+    const d = D.p();
+    run(2);
+    d.state.x = e.x + 1;
+    d.state.y = e.y - GUN.pivotY;
+    d.state.z = e.z;
+    game.fillHistory(d);
+    run(1);
+    lift(D);
+    const had2 = e.carrier === d.id;
+    const at2 = { x: d.state.x, z: d.state.z };
+    game.onClose(D.session, 4001); // "Leave game"
+    run(2);
+    check('...and so does one who leaves the game', had2 && e.mode === GUN_LYING && Math.hypot(e.x - at2.x, e.z - at2.z) < 0.05);
+  }
+}
+
 // ---------------------------------------------------------------- a new game
 {
   gun().belt = 33;
@@ -511,7 +827,7 @@ function volley(weapon, back, shots, honest = true, aimed = false) {
   game.startGame();
   game.handleChat(a, '/gun');
   run(3);
-  check('a new game resets it: a full belt, nobody at it', gun() && gun() !== old && old.removed && gun().belt === GUN.mag && gun().gunner === 0 && seen(A)?.q[3] === GUN.mag);
+  check('a new game resets it: back on its tripod at the checkpoint, a full belt, nobody at it, nobody carrying it', gun() && gun() !== old && old.removed && gun().belt === GUN.mag && gun().gunner === 0 && gun().mode === GUN_STANDS && gun().x === nest.x && gun().z === nest.z && !s.hmg && seen(A)?.q[3] === GUN.mag);
 }
 
 // ---------------------------------------------------------------- a map without the checkpoint

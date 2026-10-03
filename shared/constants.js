@@ -33,6 +33,7 @@ export const EYE_HEIGHT_CROUCH = 1.05;
 export const WALK_SPEED = 4.6;
 export const SPRINT_SPEED = 7.5;
 export const CROUCH_SPEED = 2.1;
+export const GUN_CARRY_SPEED = 0.5; // every pace while carrying the mounted gun (s.hmg: shared/mountedgun.js)
 export const ZOMBIE_PLAYER_SPEED = 6.4;
 export const GRAVITY = 16;
 export const JUMP_VELOCITY = 5.4;

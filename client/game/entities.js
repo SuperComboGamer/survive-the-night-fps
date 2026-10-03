@@ -977,7 +977,8 @@ export class Entities {
             g.audio.footstep('water', e.rx, WATER_LEVEL, e.rz, 1);
           }
           e.afloat = afloat;
-          const weapon = zombie || grips || afloat ? 0 : e.q[6];
+          const carry = !grips && g.gun.carrier === e.id; // ...or carrying it off in both arms (mountedgun.js draws it there)
+          const weapon = zombie || grips || afloat || carry ? 0 : e.q[6];
           if (weapon !== e.weapon) {
             e.weapon = weapon;
             v.setWeapon(weapon);
@@ -990,7 +991,7 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, sit: e.seatK > 0.5, swim: afloat && !downed });
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5, swim: afloat && !downed });
           v.object.visible = !(dead && zombie);
           // flashlight
           const flashOn = !!(flags & PFLAG.FLASHLIGHT) && !dead;

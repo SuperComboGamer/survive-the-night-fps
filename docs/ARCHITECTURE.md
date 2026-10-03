@@ -786,8 +786,10 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   `?film=0&legs=3` prints where the head ends up, which is what `CRAWL_HEAD_Y` / `CRAWL_HEAD_FWD` are set from.
 - **The mounted gun** (`shared/mountedgun.js`, `server/mountedgun.js`, `client/game/mountedgun.js`, the models in
   `client/render/models/mountedgun.js`). The nest is a prop of the Army Checkpoint (`mg_tripod`, found by
-  `gunNest`); the gun on it is one entity, `ENT.GUN` (belt, gunner, where it was left pointing), made by
-  `startGame`. Manning it is `ACT.GUN_MAN`, feeding the belt `ACT.GUN_FEED`; neither touches the player simulation,
+  `gunNest`: only the ammo cans and brass are static); the gun and its tripod are one entity, `ENT.GUN` (belt,
+  gunner or carrier, where it was left pointing, the way its tripod faces, and `GUN_STANDS` / `GUN_CARRIED` /
+  `GUN_LYING`), made by `startGame`, seen from anywhere. Where it stands is the entity's: every nest goes through
+  `snapNest` (the wire's 1/64 m and 1/65536 turn) so the client reads back exactly what the server judges by. Manning it is `ACT.GUN_MAN`, feeding the belt `ACT.GUN_FEED`; neither touches the player simulation,
   so the gunner walks as ever, and letting go is stepping away (`atGrips`, checked by the server every tick and by
   the gunner's own client). It is fired by commands like a gun in the hands, but not by the simulation: while
   manning, the client puts the fire button into its commands as `BTN.GUN` instead of `BTN.ATTACK` (so the weapon
@@ -798,7 +800,15 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   rewound, pierces and scores like any other. Remote clients draw it from the muzzle (`EVT.SHOT` with
   `MOUNTED_GUN`, id 16, which no item has); the gun turns with the gunner's replicated view, so it costs no
   traffic while it swivels. The gunner's client keeps its own count of the belt while its rounds are in flight
-  and takes the server's once they have all landed.
+  and takes the server's once they have all landed. Carrying it is in the player simulation, because it changes
+  how the carrier moves: `s.hmg` halves every pace (`GUN_CARRY_SPEED`), stops them where the water would float them
+  (`waterFloor`: nobody swims with it), skips the weapon block, and a slot request
+  clears it with a `gun_drop` event (the switch goes ahead), which the server turns into a gun on its side where
+  they stand. Lifting is a server hold (`HOLD.GUN_LIFT` on the gun's entity), setting it up or dropping it
+  `ACT.GUN_PUT` (`setUpSpot` finds where, the same on both ends for the prompt); both change `s.hmg` outside the
+  commands, so the carrier's client gets a rebase (it rides in the `SELF.RIDE` chunk). `MountedGun.update` drops
+  it for a carrier who is down, dead, turned, pinned, roped, away or gone, and clears a stray `s.hmg` on anyone
+  else.
 - **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
   (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
   fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a

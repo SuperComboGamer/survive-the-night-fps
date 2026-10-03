@@ -96,7 +96,7 @@ export class Fair {
   board(p, seat) {
     const g = this.g;
     const s = p.state;
-    if (!this.ent || !(seat < RIDE_SEATS) || s.ride || s.cart || s.pinned || s.pulled) return;
+    if (!this.ent || !(seat < RIDE_SEATS) || s.ride || s.cart || s.pinned || s.pulled || s.hmg) return; // (hmg: arms full of the mounted gun)
     if (g.time - p.interactT < 0.15) return;
     p.interactT = g.time;
     const f = g.world.fair;

@@ -4320,6 +4320,11 @@ class SurvivorInstance {
       arm(p, 0, 1.15, 0.1, 0, 0.45, 0);
       arm(p, 1, 1.15, 0.1, 0, 0.45, 0);
     }
+    // ...or carrying it off: upper arms down along the body, forearms out level under its weight (s.carry)
+    else if (s.carry) {
+      arm(p, 0, 0.45, 0.02, 0, 1.15, 0);
+      arm(p, 1, 0.45, 0.02, 0, 1.15, 0);
+    }
     // throw pulse without IK hold
     if (this.hold === HOLD_NONE && this.pulseMelee < 0.4) {
       const u = this.pulseMelee / 0.4;

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { PROPS } from '../../../shared/props.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
 import { FIXTURE_PROPS } from './fixtures.js';
-import { buildGunTripod } from './mountedgun.js';
+import { buildNestLitter } from './mountedgun.js';
 
 const PI = Math.PI;
 const cache = new Map();
@@ -2625,5 +2625,5 @@ BUILD.fence_chain = (b, r, v) => {
   weeds(b, r, [[-1.3, 0.05], [0.4, 0.0], [1.2, -0.05]], 0.5);
 };
 
-// the mounted gun's stand (the gun on it is an entity: models/mountedgun.js has both)
-BUILD.mg_tripod = buildGunTripod;
+// the mounted gun's nest: what lies at its feet (the gun and its tripod are an entity: models/mountedgun.js)
+BUILD.mg_tripod = buildNestLitter;

@@ -32,6 +32,7 @@ import {
   SLOT_PISTOL,
   DOWN_CRAWL_SPEED,
   EYE_HEIGHT_DOWNED,
+  GUN_CARRY_SPEED,
 } from './constants.js';
 import { ITEM, WEAPONS, CLAWS, AMMO, AMMO_ITEMS } from './defs.js';
 import { groundAt, resolveBody, deepWaterAt } from './collision.js';
@@ -87,6 +88,8 @@ export function createPlayerState() {
     cart: 0,
     cartS: 0,
     cartV: 0,
+    // carrying the mounted gun (mountedgun.js): both arms full, half pace, and a weapon switch drops it
+    hmg: 0,
   };
 }
 
@@ -134,6 +137,7 @@ export function copyPlayerState(dst, src) {
   dst.cart = src.cart;
   dst.cartS = src.cartS;
   dst.cartV = src.cartV;
+  dst.hmg = src.hmg;
   return dst;
 }
 
@@ -148,6 +152,7 @@ export function samePlayerState(a, b) {
   if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
+  if (a.hmg !== b.hmg) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
   return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
@@ -223,6 +228,7 @@ export function hashPlayerState(s) {
     mix(Math.round(s.cartS * 512));
     mix(Math.round(s.cartV * 128));
   }
+  if (s.hmg) mix(0x686d67);
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
 
@@ -299,6 +305,12 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     s.recoil = 0;
     if (events) events.push({ type: 'switch', slot: s.slot });
   }
+  // carrying the mounted gun: reaching for any weapon lets go of it, and it drops where they stand (the server puts
+  // it there: the event). The switch above goes ahead
+  if (s.hmg && cmd.slot !== 255 && cmd.slot < 5) {
+    s.hmg = 0;
+    if (events) events.push({ type: 'gun_drop' });
+  }
   if (s.zombie) s.slot = SLOT_MELEE;
   if (s.downed && s.slot !== SLOT_PISTOL && s.weapons[SLOT_PISTOL]) {
     s.slot = SLOT_PISTOL;
@@ -351,7 +363,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.crouch = !s.zombie && (s.downed || (b & BTN.CROUCH && !disabled && !swim && wade < CROUCH_WADE)) ? 1 : 0; // (never ducking the eyes under the water)
   const weapon = currentWeapon(s);
   const wdef = WEAPONS[weapon];
-  const aiming = !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
+  const aiming = !s.hmg && !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
   const moving = wl > 0;
   let sprint = 0;
   if (s.zombie) {
@@ -389,6 +401,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   if (swim) wishSpeed = s.downed ? SWIM_DOWNED : sprint ? SWIM_FAST : SWIM_SPEED;
   else if (wade > WADE_FROM) wishSpeed *= 1 - WADE_SLOW * Math.min(1, (wade - WADE_FROM) / (SWIM_DEPTH - WADE_FROM)); // wading in deeper
   if (aiming) wishSpeed *= 0.62;
+  if (s.hmg) wishSpeed *= GUN_CARRY_SPEED;
   if (!moving) wishSpeed = 0;
 
   if (s.stunT > 0) s.stunT -= dt;
@@ -460,8 +473,9 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   _pos.z = s.z + s.vz * dt;
   const human = !s.zombie;
   const hit = resolveBody(world, _pos, PLAYER_RADIUS, height, human);
-  // a survivor swims where the water is deep (below); a turned one, like the rest of the dead, stops at its edge
-  if (!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) {
+  // a survivor swims where the water is deep (below); a turned one, like the rest of the dead, stops at its edge, and
+  // so does one carrying the mounted gun, which nobody swims with (they wade as far as their feet keep the bottom)
+  if ((!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) || (s.hmg && waterFloor(world, s, _pos.x, _pos.z) > groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human))) {
     _pos.x = ox;
     _pos.z = oz;
     s.vx = 0;
@@ -502,6 +516,14 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.z = _pos.z;
   if (riding) rideCarry(s, world);
   else if (carted) cartCarry(s, world);
+
+  // both arms round the mounted gun: no weapon goes off, reloads, throws or swings (the clocks run on)
+  if (s.hmg) {
+    if (s.switchT > 0) s.switchT -= dt;
+    if (s.cooldown > 0) s.cooldown -= dt;
+    s.lastBtn = cmd.buttons;
+    return s;
+  }
 
   // ------------------------------------------------ weapons
   if (s.switchT > 0) s.switchT -= dt;

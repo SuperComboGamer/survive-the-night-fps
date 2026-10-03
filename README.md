@@ -59,8 +59,9 @@ dog pack, `/spawn hive queen`; `/zombies` lists the names), `/supply`, `/parts`,
 (with a height: onto what is under feet at it, down a drift of the mine), `/mine` (to the adit of Blackrock Mine;
 `/mine far` to the far portal, `/mine in` down to the junction), `/depot` (to the front of the station house at
 Whitlock Depot), `/train` (onto the loading bank beside the stalled freight train), `/clinic` (to the front door of Mercy Clinic;
-`/clinic ward` into its dark wards; says so on a map without it), `/gun` (to the grips of the mounted gun at the
-Army Checkpoint; it says so when the map has no checkpoint: seed 1 has one), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
+`/clinic ward` into its dark wards; says so on a map without it), `/gun` (to the grips of the mounted gun, at the
+Army Checkpoint until somebody carries it off, or beside it where it lies or whoever carries it; it says so when the
+map has no checkpoint: seed 1 has one), `/where`, `/cat` (brings the stray cat over), `/den` (teleports next to the nearest zombie dog pack),
 `/herd` (teleports 45 m from the wandering herd, just out of its sight), `/deer` (34 m from the nearest group of deer;
 `/deer spawn [m]` puts a group 20 m - or that many - ahead, and lets you stand there ten seconds before it notices you), `/legs [1|2]` (takes one or both legs
 off every zombie within 30 m that has legs to lose), `/bell` (the chapel bell tolls, wherever you are), `/radio`
@@ -84,7 +85,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `npm run report` | what the match records say, for tuning: the night-by-night funnel, outcomes by team size, bosses, what kills survivors, weapons, pacing of the car supplies, retention, how hard players say it is (the end screen's vote, split by outcome, nights, team size and experience), server health (`-- --days 7`, `--since 2026-10-01`, `--build <commit>`, `--only weapons`, `--json`) |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
 | `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
-| `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the gunner's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
+| `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the gunner's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, the dead getting round the sandbags to the gunner, and carrying it: lifted by [E] held (not from under a gunner), half pace walking and sprinting with nothing fired, swung or reloaded, dropped on its side by a weapon key or [G] and lifted again from there, set up a step ahead facing the carrier's view (right behind sandbags, not into a wall) and fired there inside an arc about its new facing, stopped by the lake where they would float, and dropped by going down, dying, a lost connection or leaving (part of `npm test`) |
 | `node scripts/test-bosses.js [seed]` | the night bosses and the day's specials, against the real server in-process: The Brute plods and, once badly hurt, roars and comes on at a run, and drops its smaller share of loot; The Alpha howls dogs into its own pack, never more than six, and lunges as a dog does; The Bloater heaves a fan of bile and bursts when it dies, taking the dead and a barricade beside it, but only falls when the dawn sun burns it out; and by day no specials within 90 m of the car, more of them further out, leapers and ropers only well out, never a boss, Tank, bat or shade (part of `npm test`) |
 | `node scripts/test-leaper.js` | the leaper's pounce against the real server in-process, on three valleys: a survivor standing still, on rough ground, inside a ring of barricades (it clears them, it does not land on top), sprinting away, strafing and sidestepping as it leaves the ground, each pinned often enough and a well-timed sidestep still beating some of them; and a released survivor is not pinned again on the leaper's way off (part of `npm test`) |
 | `node scripts/test-swim.js [seed ...]` | swimming against the real server in-process, in each valley's lake: wading in slows you and lets go of a crouch before the eyes go under, you float at the float height with your eyes out, swim at the swimming speeds with no jumping and no shots, stamina drains at the treading, swimming and sprinting rates, out of it you drown and the killfeed blames the water, you walk back out and get your stamina back, a long fall into the lake does not hurt (onto the shore it does), and a turned survivor stops at the edge of the deep water (part of `npm test`) |
@@ -217,7 +218,7 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | 1 2 3 4 5 | Primary · Pistol · Melee · Throwable (press again to cycle) · Build (hammer) |
 | Q / wheel | Last weapon / cycle weapons (build mode: Q / E cycle structure) |
 | R | Reload |
-| E | Interact: pick up, install supplies, feed a campfire, pour fuel into a generator, repair. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm, switch a generator off or on |
+| E | Interact: pick up, install supplies, feed a campfire, pour fuel into a generator, repair, man the mounted gun. **Hold** to search containers, revive a downed teammate, start the engine, drive away once it is warm, switch a generator off or on, lift the mounted gun. Carrying the mounted gun: set it up where you face |
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
 | L | Leaderboard: every player's kills, nights survived, wins and revives over all their games, and yours. Click a column to sort by it |
@@ -463,8 +464,8 @@ them off.
   is built at the workbench from scrap, barbed wire and a battery, and found in houses, trailers and the motel. The
   numbers are `THROWABLES` in `shared/defs.js`.
 - **The mounted gun.** On a map with the Army Checkpoint, a heavy machine gun stands on a tripod in a horseshoe of
-  sandbags beside the boom gate, covering the road out. It does not move: stand at its grips and press [E] to man
-  it (one gunner at a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button
+  sandbags beside the boom gate, covering the road out. Stand at its grips and press [E] to man it (one gunner at
+  a time; the prompt says how much belt is left). Your own weapon goes down, and your fire button
   is its trigger: 600 rounds a minute, each a little harder than an AK-47's and through one body into the next,
   out to 200 m in a tight cone, with no climb. It swivels with your view 70 degrees either side of the road and
   from 15 degrees down to 25 up; look further and it stays at its stop. Step away, press [E] again, go down or die
@@ -472,8 +473,17 @@ them off.
   neighbourhood, and the sandbags only cover the front: the dead walk round into the open back. **One belt:** it
   has 250 rounds when the game starts, shown in place of your ammunition while you man it, and when they are gone
   it clicks. Hold [R] (or [E]) at the grips to feed it 50 rounds a second from the 7.62 you carry - the
-  same rounds the AK-47 eats - up to 250. Its belt and who mans it start over with every new game; its kills are
-  the gunner's.
+  same rounds the AK-47 eats - up to 250. Its belt, who mans it and where it stands start over with every new game;
+  its kills are the gunner's.
+  **Taking it with you:** hold [E] at it for 1.5 s (at its grips or beside it, and not while somebody mans it) and
+  you lift it, tripod and all, belt and all. Carrying it takes both arms: you move at half pace (walking and
+  sprinting), and nothing in your hands fires, swings, throws, reloads or aims. Press [E] to set it up again where
+  you face: it goes down a step ahead of you, covering the way you look, or nearer if sandbags or a barricade
+  stand in front of you, so you can set it up right behind them (not into a wall). Reaching for a weapon (a number
+  key, the wheel, [Q]) or pressing [G] drops it on its side where you stand, and your weapon comes out; so does
+  going down, dying, being pinned or roped, or losing your connection. A gun lying on its side cannot be manned:
+  hold [E] beside it to lift it again. Nobody swims with it: you wade into the lake only as far as your feet keep
+  the bottom. While you carry it the HUD shows its belt in place of your ammunition.
 - **Crafting:** simple things by hand anywhere (torches, bandages, molotovs, road flares, planks from
   sticks, bats, hammers). A **campfire** (buildable anywhere) is the station for medicine, painkillers
   and gunpowder, and heals survivors resting nearby. A **workbench** (buildable anywhere) is the station

@@ -1,5 +1,7 @@
-// The mounted gun (shared/mountedgun.js): a belt-fed heavy machine gun with spade grips, in three pieces.
-//   buildGunTripod   the stand, a static prop of the nest ('mg_tripod' in models/props.js)
+// The mounted gun (shared/mountedgun.js): a belt-fed heavy machine gun with spade grips, in four pieces.
+//   buildNestLitter  what lies at the checkpoint's nest, a static prop ('mg_tripod' in models/props.js): ammo cans
+//                    and spent brass, which stay when the gun is carried off
+//   createGunStand   the tripod, which goes wherever the gun does (the gun is an entity)
 //   createGunMount   the gun that swivels on it, as everybody else sees it (the world's materials)
 //   createGunView    its rear end and the gunner's hands on the grips, for the gunner's own view (the viewmodel
 //                    scene, which is lit apart from the world: its own two materials)
@@ -32,8 +34,8 @@ function ammoCan(b, mat, steel, p, ry = 0, brass = null) {
   });
 }
 
-// The stand: three legs splayed from a head that carries the pintle socket, cans and spent brass at its feet.
-export function buildGunTripod(b, r) {
+// The stand: three legs splayed from a head that carries the pintle socket.
+function buildGunTripod(b) {
   const top = GUN.pivotY - 0.13;
   const feet = [[0, -0.72], [0.56, 0.5], [-0.56, 0.5]];
   for (const [x, z] of feet) {
@@ -45,6 +47,10 @@ export function buildGunTripod(b, r) {
   b.cyl('steel', 0.085, 0.07, 0.1, 8, { p: [0, top - 0.02, 0] }); // head
   b.cyl('steel', 0.036, 0.036, 0.09, 8, { p: [0, top + 0.07, 0] }); // socket
   b.cylBetween('steel', [0.09, top - 0.02, 0], [0.19, top - 0.02, 0], 0.012, 0.012, 4); // clamp lever
+}
+
+// Cans and spent brass at the feet of the stand at the checkpoint (the stand itself goes with the gun).
+export function buildNestLitter(b, r) {
   ammoCan(b, 'olive', 'steel', [0.5, 0, -0.18], 0.35);
   ammoCan(b, 'olive', 'steel', [0.72, 0, 0.02], -0.2);
   ammoCan(b, 'olive', 'steel', [0.58, 0.19, -0.1], 0.6);
@@ -97,6 +103,17 @@ function gunCradle(b, steel, paint, matte) {
   b.cyl(steel, 0.03, 0.03, 0.1, 8, { p: [0, -0.06, 0], c: WORN }); // pintle
   b.box(steel, 0.2, 0.012, 0.2, { p: [-0.19, -0.005, -0.02], c: WORN }); // can tray
   ammoCan(b, paint, steel, [-0.21, 0.0, -0.02], 0, matte);
+}
+
+let standParts = null;
+// The tripod, origin on the ground under the pintle, its front leg toward -Z.
+export function createGunStand() {
+  if (!standParts) {
+    const b = new MeshBuilder(1603, { ao: false });
+    buildGunTripod(b);
+    standParts = b.build();
+  }
+  return partsToGroup(standParts, 'mounted_gun_stand');
 }
 
 let mountParts = null;
