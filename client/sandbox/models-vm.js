@@ -272,6 +272,7 @@ if (params.get('vm') === 'hands') {
     state.sprint = true;
   }
   if (act === 'ads') state.aiming = true;
+  if (act === 'talk') state.talk = true; // (the walkie-talkie keyed)
   if (act === 'crouch') {
     state.crouch = true;
     state.speed = 2;
