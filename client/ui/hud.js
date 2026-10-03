@@ -651,7 +651,6 @@ export class Hud {
         this.ctx.classList.toggle('warn', fuel > 0 && r < 0.2);
         this.ctx.classList.toggle('dead', fuel <= 0);
       }
-      this.ui.inventory.setCamp({ fuel: ctx.fuel, max: ctx.max });
     } else if (type === 'car') {
       const parts = ctx.parts | 0;
       if (c.ctxA !== parts) {
@@ -665,7 +664,6 @@ export class Hud {
         this.ctxVal.textContent = n + ' / ' + CAR_PARTS.length;
         this.ctx.classList.toggle('good', n === CAR_PARTS.length);
       }
-      this.ui.inventory.setCamp({ parts });
     } else if (type === 'structure') {
       if (c.ctxB !== ctx.name) this.ctxTitle.textContent = c.ctxB = ctx.name || 'Structure';
       const r = Math.round(clamp(ctx.hp, 0, 1) * 100) / 100;

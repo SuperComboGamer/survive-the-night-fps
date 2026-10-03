@@ -39,6 +39,8 @@ export const ITEM = {
   KEVLAR: 41,
   // gear (works from the backpack, just by being carried)
   WALKIE: 45,
+  // worn in an equipment slot of its own, like armor: more slots in the backpack grid (INVENTORY_SIZE in constants.js)
+  BACKPACK: 46,
   // weapons
   KNIFE: 50,
   BAT: 51,
@@ -87,7 +89,7 @@ export const AMMO_MAX = [150, 48, 240, 40, 180, 30, 300];
 // the item of each reserve index (same order as AMMO)
 export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556, ITEM.AMMO_BOLTS, ITEM.AMMO_FUEL];
 
-// category: res | cons | throw | armor | gear | weapon | ammo | part | schem
+// category: res | cons | throw | armor | pack | gear | weapon | ammo | part | schem
 export const ITEM_DEFS = {
   [ITEM.WOOD]: { name: 'Planks', cat: 'res', stack: 20, color: 0x8a6a45, desc: 'Weathered wooden planks.' },
   [ITEM.STICK]: { name: 'Sticks', cat: 'res', stack: 20, color: 0x6b5236, desc: 'Dry branches.' },
@@ -120,6 +122,8 @@ export const ITEM_DEFS = {
 
   [ITEM.JACKET]: { name: 'Padded Jacket', cat: 'armor', stack: 1, color: 0x5d4e37, armor: 60, absorb: 0.3, desc: 'Absorbs 30% damage.' },
   [ITEM.KEVLAR]: { name: 'Kevlar Vest', cat: 'armor', stack: 1, color: 0x2f3b2f, armor: 120, absorb: 0.5, desc: 'Absorbs 50% damage.' },
+
+  [ITEM.BACKPACK]: { name: 'Backpack', cat: 'pack', stack: 1, color: 0x4a4430, desc: 'Canvas and leather, made at the workbench. Wear it for more room in the backpack grid.' },
 
   [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Just carry it: your voice and chat reach every other survivor carrying one, however far apart you are.' },
 
@@ -320,7 +324,7 @@ export const RECIPES = [
   { id: 16, out: ITEM.AMMO_308, n: 5, cost: { [ITEM.SCRAP]: 1, [ITEM.POWDER]: 3 }, station: 'bench' },
   { id: 17, out: ITEM.ROPE, n: 1, cost: { [ITEM.CLOTH]: 3 } },
   { id: 18, out: ITEM.WOOD, n: 1, cost: { [ITEM.STICK]: 3 } },
-  { id: 19, out: ITEM.POWDER, n: 4, cost: { [ITEM.CHEM]: 1, [ITEM.STICK]: 2 }, station: 'fire' },
+  { id: 19, out: ITEM.POWDER, n: 6, cost: { [ITEM.CHEM]: 1, [ITEM.STICK]: 2 }, station: 'fire' },
   { id: 20, out: ITEM.PAINKILLERS, n: 1, cost: { [ITEM.HERB]: 2, [ITEM.ALCOHOL]: 1 }, station: 'fire' },
   { id: 21, out: ITEM.NAILS, n: 10, cost: { [ITEM.SCRAP]: 1 }, station: 'bench' },
   { id: 22, out: ITEM.FLARE, n: 2, cost: { [ITEM.POWDER]: 2, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 } },
@@ -334,7 +338,30 @@ export const RECIPES = [
   { id: 30, out: ITEM.VENISON, n: 1, cost: { [ITEM.VENISON_RAW]: 1 }, station: 'fire' },
   { id: 31, out: ITEM.GRENADE, n: 1, cost: { [ITEM.SCRAP]: 2, [ITEM.POWDER]: 3 }, station: 'bench', schem: ITEM.SCHEM_EXPLOSIVES },
   { id: 32, out: ITEM.DECOY, n: 1, cost: { [ITEM.SCRAP]: 1, [ITEM.WIRE]: 1, [ITEM.BATTERY]: 1 }, station: 'bench' },
+  // a step past the Padded Jacket: the rope is 3 cloth apiece, and the leather is a trip out (barn, cabins, lodge, trunks)
+  { id: 33, out: ITEM.BACKPACK, n: 1, cost: { [ITEM.LEATHER]: 4, [ITEM.CLOTH]: 6, [ITEM.ROPE]: 2 }, station: 'bench' },
 ];
+
+// The order the Sort button puts the backpack grid in, by category: weapons, what is worn or carried for what it does
+// (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables, materials, car
+// supplies, schematics (Game.sortInventory). Empty slots come after them, and the locked ones last of all.
+export const BAG_TIER = { weapon: 0, armor: 1, pack: 1, gear: 1, ammo: 2, cons: 3, throw: 4, res: 5, part: 6, schem: 7 };
+
+// Salvage: worn gear (armor, the backpack) taken apart from its equipment row [Shift+LMB] gives back SALVAGE of each
+// ingredient of its recipe, rounded down - a backpack 2 Leather, 3 Cloth and 1 Rope. -> { item: count }, or null
+// for anything that is not worn or has no recipe.
+export const SALVAGE = 0.5;
+export function salvageOf(item) {
+  const cat = ITEM_DEFS[item]?.cat;
+  const r = (cat === 'armor' || cat === 'pack') && RECIPES.find((x) => x.out === item);
+  if (!r) return null;
+  const out = {};
+  for (const k in r.cost) {
+    const n = Math.floor(r.cost[k] * SALVAGE);
+    if (n > 0) out[k] = n;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- zombies
 export const ZTYPE = {
@@ -625,6 +652,7 @@ export const NOTIFY = {
   FAIR_FULL: 58, // (to the survivor at the drum) the tank takes no more
   GEN_LOW: 48, // a generator nearby has a minute of fuel left (sent to the survivors round it)
   GEN_OUT: 49, // ...it has run dry: its floodlights are out
+  POCKETS: 62, // (to whoever tried) the backpack cannot come off while its extra slots hold anything
 };
 
 // killer kinds for killfeed
@@ -787,6 +815,19 @@ export function loadedAmmo(item, mags) {
 // zombie loot drops: [item, weight, min, max]
 export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 2, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
 export const SPECIAL_LOOT = [[ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_556, 4, 15, 30], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.MEDKIT, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.PLATE, 1, 1, 1], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 2, 1, 2], [ITEM.GRENADE, 1, 1, 1]];
+
+// More gunpowder (issue #89: ammunition was too scarce to craft). Every row of it in the tables above - the places',
+// the containers', the dead's - gives POWDER_MORE times as much as it was written with: its count, not its weight,
+// so no other find in the table gets rarer for it (the low end rounded down, the high end to the nearest, which keeps
+// each row's average close to POWDER_MORE times). With the campfire's 6 to a chemical (recipe 19, from 4).
+export const POWDER_MORE = 1.5;
+for (const t of [...Object.values(LOOT_TABLES), ...Object.values(CONT_TABLES), ZOMBIE_LOOT, SPECIAL_LOOT]) {
+  for (const row of t) {
+    if (row[0] !== ITEM.POWDER) continue;
+    row[2] = Math.floor(row[2] * POWDER_MORE);
+    row[3] = Math.round(row[3] * POWDER_MORE);
+  }
+}
 
 export function isFirearm(item) {
   const w = WEAPONS[item];

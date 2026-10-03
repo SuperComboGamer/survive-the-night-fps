@@ -71,6 +71,7 @@ export function playerFlags(p) {
   if (s.pinned) f |= PFLAG.PINNED;
   if (p.downed) f |= PFLAG.DOWNED;
   if (p.revivedBy) f |= PFLAG.REVIVING;
+  if (p.backpackItem && p.alive && !p.zombie) f |= PFLAG.BACKPACK;
   return f | (s.ride << PRIDE_SHIFT); // (the seat of a ride at the fair: fair.js)
 }
 

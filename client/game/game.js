@@ -11,7 +11,7 @@ import {
   SLOT_MELEE,
   SLOT_THROW,
   SLOT_BUILD,
-  INVENTORY_SIZE,
+  INVENTORY_MAX,
   WATER_LEVEL,
   MAX_PLAYERS,
   ESCAPE_RADIUS,
@@ -178,7 +178,7 @@ export class Game {
     this.myId = 0;
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
-    this.inventory = { slots: new Array(INVENTORY_SIZE).fill(null), armor: null };
+    this.inventory = { slots: new Array(INVENTORY_MAX).fill(null), armor: null, backpack: 0 };
     this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
     this.craftBudget = CRAFT_BURST;
     this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
@@ -806,7 +806,7 @@ export class Game {
 
   onInventory(r) {
     const slots = this.inventory.slots;
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
+    for (let i = 0; i < INVENTORY_MAX; i++) {
       const item = r.u8();
       const count = r.u16();
       slots[i] = item ? { item, count } : null;
@@ -815,6 +815,7 @@ export class Game {
     const armor = r.u8();
     const armorMax = r.u8();
     this.inventory.armor = armorItem ? { item: armorItem, points: armor, max: armorMax } : null;
+    this.inventory.backpack = r.u8(); // the backpack worn (0: none): it opens the locked slots of the grid
     this.pushInventoryToUI(true);
   }
 
@@ -825,7 +826,7 @@ export class Game {
     this.lastHudInvKey = key;
     const throwCounts = {};
     for (const it of this.inventory.slots) if (it && THROW_ITEMS.includes(it.item)) throwCounts[it.item] = (throwCounts[it.item] || 0) + it.count;
-    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
+    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
   }
 
   invCounts() {
@@ -1192,6 +1193,10 @@ export class Game {
         } else ui.notify(d ? `Inventory full - no room for ${d.name}` : 'Inventory full', 'warning', 2);
         break;
       }
+      case NOTIFY.POCKETS:
+        ui.notify("Empty the backpack's extra pockets first", 'warning', 2.5);
+        a.playLocal('build_fail');
+        break;
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;
@@ -1899,6 +1904,8 @@ export class Game {
       onSwapItems: (a, b) => this.conn.action(ACT.SWAP_INV, a, b),
       onEquipArmor: (i) => this.conn.action(ACT.EQUIP_ARMOR, i),
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
+      onWorn: (which, what) => this.conn.action(ACT.WORN, which, what),
+      onSortItems: () => this.conn.action(ACT.SORT_INV),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
@@ -2638,7 +2645,6 @@ export class Game {
       }
     });
     h.objective = { supplies: g.supplies, hints: g.hints, found: g.found, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
-    this.ui.setCamp({ supplies: g.supplies, hints: g.hints, found: g.found, carried });
     // downed overlay
     h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
     // compass + world markers

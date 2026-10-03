@@ -5,6 +5,7 @@ import { ITEM, WEAPONS } from '../../../shared/defs.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
 import { atlasUV } from '../textures.js';
 import { createWorldWeapon } from './weapons.js'; // (static: a top-level await for it here holds every module up for one more request)
+import { createBackpack } from './backpack.js';
 
 const PI = Math.PI;
 
@@ -14,6 +15,7 @@ const weaponXform = new Map();
 /** @returns {THREE.Object3D} */
 export function createPickup(itemId) {
   if (WEAPONS[itemId] || HELD_LAY[itemId]) return weaponPickup(itemId);
+  if (itemId === ITEM.BACKPACK) return backpackPickup();
   let parts = cache.get(itemId);
   if (!parts) {
     const b = new MeshBuilder(itemId * 131 + 7, { ao: false });
@@ -63,6 +65,19 @@ function weaponPickup(itemId) {
 // Throwables that lie on the ground as the same model as the one in the hand (weapons.js), and how (Euler YXZ): the
 // frag grenade on its side, its spoon up; the noisemaker standing on its feet, its dial turned a little to one side
 const HELD_LAY = { [ITEM.GRENADE]: [0, 0.55, PI / 2 - 0.12], [ITEM.DECOY]: [0, PI + 0.6, 0] };
+
+// the backpack (backpack.js, the same model a survivor wears): stood on its base, leaning back a little against its
+// shoulder straps
+function backpackPickup() {
+  const g = new THREE.Group();
+  g.name = `pickup_${ITEM.BACKPACK}`;
+  g.userData.itemId = ITEM.BACKPACK;
+  const m = createBackpack(false);
+  m.position.set(0, 0.004, -0.1);
+  m.rotation.x = -0.12;
+  g.add(m);
+  return g;
+}
 
 function fallbackWeapon(itemId) {
   let parts = cache.get(`w${itemId}`);

@@ -5,7 +5,7 @@
 // usage: node scripts/test-ammo.js [seed]
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, qpitch, writeInput } from '../shared/protocol.js';
-import { BTN, INVENTORY_SIZE, SLOT_PRIMARY, SLOT_PISTOL } from '../shared/constants.js';
+import { BTN, INVENTORY_SIZE, INVENTORY_MAX, SLOT_PRIMARY, SLOT_PISTOL } from '../shared/constants.js';
 import { ITEM, ITEM_DEFS, WEAPONS, AMMO, AMMO_MAX, AMMO_ITEMS, NOTIFY } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 
@@ -30,14 +30,15 @@ function client(name) {
       else if (t === S2C.SNAPSHOT) readSnapshot(r, c);
       else if (t === S2C.INVENTORY) {
         // (as Game.onInventory reads it, client/game/game.js)
-        for (let i = 0; i < INVENTORY_SIZE; i++) {
+        for (let i = 0; i < INVENTORY_MAX; i++) {
           const item = r.u8();
           const count = r.u16();
           c.slots[i] = item ? { item, count } : null;
         }
+        r.u8(); // armor: item, points, max
         r.u8();
         r.u8();
-        r.u8();
+        r.u8(); // the backpack worn
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing inventory bytes`);
       }
     },
@@ -145,12 +146,31 @@ check('a survivor starts with their 9mm as a stack in the backpack', kit === 36 
   run(1, () => BTN.RELOAD);
   run(Math.ceil(WEAPONS[ITEM.PISTOL].reload * 20) + 4);
   check('a reload takes its rounds out of the backpack', fired === 5 && s.mags[1] === WEAPONS[ITEM.PISTOL].mag && has(a, ITEM.AMMO_9MM) === 31 && A.slots[1]?.count === 31 && A.self.ammo[AMMO.P9] === 31, `${fired} fired, magazine ${s.mags[1]}, backpack ${stacks(a, ITEM.AMMO_9MM)}`);
-  // split stacks: the last of them is used up first, and a stack used up leaves its slot free
-  pack(a, [ITEM.AMMO_9MM, 20], [ITEM.BANDAGE, 2], [ITEM.AMMO_9MM, 3]);
+  // split stacks: the smallest of them is used up first (here the first one: the full stack behind it is left
+  // alone), and a stack used up leaves its slot free
+  pack(a, [ITEM.AMMO_9MM, 3], [ITEM.BANDAGE, 2], [ITEM.AMMO_9MM, 20]);
   s.mags[1] = 0;
   run(1, () => BTN.RELOAD);
   run(Math.ceil(WEAPONS[ITEM.PISTOL].reload * 20) + 4);
-  check('...from the last stack of it first, and an emptied stack frees its slot', s.mags[1] === 12 && stacks(a, ITEM.AMMO_9MM) === '11' && a.inv[2] === null && A.slots[2] === null, `backpack ${stacks(a, ITEM.AMMO_9MM)}`);
+  check('...from the smallest stack of it first, and an emptied stack frees its slot', s.mags[1] === 12 && stacks(a, ITEM.AMMO_9MM) === '11' && a.inv[0] === null && A.slots[0] === null, `backpack ${stacks(a, ITEM.AMMO_9MM)}`);
+  // of two the same size, the later one
+  pack(a, [ITEM.AMMO_9MM, 20], [ITEM.AMMO_9MM, 20]);
+  s.mags[1] = 0;
+  run(1, () => BTN.RELOAD);
+  run(Math.ceil(WEAPONS[ITEM.PISTOL].reload * 20) + 4);
+  check('...the later of two the same size', s.mags[1] === 12 && a.inv[0]?.count === 20 && a.inv[1]?.count === 8, `backpack ${stacks(a, ITEM.AMMO_9MM)}`);
+  // play alone never leaves two part-used stacks: a full stack behind a free slot, pickups and reloads in turn
+  pack(a, [ITEM.BANDAGE, 2], [ITEM.AMMO_9MM, AMMO_MAX[AMMO.P9]]);
+  a.inv[0] = null;
+  let partials = 0;
+  for (let k = 0; k < 6; k++) {
+    game.giveItem(a, ITEM.AMMO_9MM, 40);
+    s.mags[1] = 0;
+    run(1, () => BTN.RELOAD);
+    run(Math.ceil(WEAPONS[ITEM.PISTOL].reload * 20) + 4);
+    partials = Math.max(partials, a.inv.filter((x) => x && x.item === ITEM.AMMO_9MM && x.count < AMMO_MAX[AMMO.P9]).length);
+  }
+  check('...so pickups and reloads in turn never leave two part-used stacks', partials <= 1, `backpack ${stacks(a, ITEM.AMMO_9MM)}`);
   // no more than there is
   pack(a, [ITEM.AMMO_9MM, 4]);
   s.mags[1] = 0;

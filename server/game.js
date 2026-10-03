@@ -45,6 +45,7 @@ import {
   SLOT_THROW,
   SLOT_BUILD,
   INVENTORY_SIZE,
+  INVENTORY_MAX,
   PLAYER_RADIUS,
   PLAYER_HEIGHT,
   WATER_LEVEL,
@@ -109,8 +110,9 @@ import {
   THROW_ITEMS,
   isFirearm,
   radioLinked,
+  salvageOf,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
@@ -121,7 +123,7 @@ import { mulberry32 } from '../shared/rng.js';
 import { nightTheme, nightBoss } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
-import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
+import { createInventory, invCap, addItem, removeItem, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Deer } from './deer.js';
@@ -210,7 +212,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only. A zombie type goes the same way: its ZTYPE key (`boss_hivequeen`) or its name
 // (`hive queen`).
-const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
+const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', pack: 'backpacks', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
 const itemKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
 const ITEM_NAMES = Object.entries(ITEM)
   .filter(([, id]) => ITEM_DEFS[id])
@@ -674,6 +676,7 @@ export class Game {
       armor: 0,
       armorMax: 0,
       armorItem: 0,
+      backpackItem: 0, // the backpack worn (ITEM.BACKPACK), 0: none. Worn, it opens BACKPACK_SLOTS more slots (invCap)
       alive: true,
       zombie: false,
       downed: false,
@@ -1033,6 +1036,7 @@ export class Game {
     p.armor = 0;
     p.armorMax = 0;
     p.armorItem = 0;
+    p.backpackItem = 0;
     p.alive = true;
     p.zombie = false;
     p.downed = false;
@@ -1505,7 +1509,10 @@ export class Game {
         this.dropItem(wpn, 1, x, y, z, { spread: 1.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
       }
       if (p.armorItem && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
+      // the backpack goes down with what was in it (its pockets were emptied with the rest above)
+      if (p.backpackItem) this.dropItem(p.backpackItem, 1, x, y, z, { spread: 1.2 });
     }
+    p.backpackItem = 0;
     s.ammo = AMMO_ITEMS.map(() => 0);
     p.invDirty = true;
   }
@@ -1528,24 +1535,21 @@ export class Game {
         return 1;
       }
       // store in inventory (keeps its mag)
-      for (let i = 0; i < p.inv.length; i++) {
-        if (!p.inv[i]) {
-          p.inv[i] = { item, count: 1, mag: mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0) };
-          p.invDirty = true;
-          return 1;
-        }
-      }
-      return 0;
+      const i = freeSlot(p.inv, invCap(p));
+      if (i < 0) return 0;
+      p.inv[i] = { item, count: 1, mag: mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0) };
+      p.invDirty = true;
+      return 1;
     }
     if (def.cat === 'armor' && mag) {
       // a worn vest that was dropped comes back with the points it had left, not as a new one
-      const i = p.inv.findIndex((x) => !x);
+      const i = freeSlot(p.inv, invCap(p));
       if (i < 0) return 0;
       p.inv[i] = { item, count: 1, mag };
       p.invDirty = true;
       return 1;
     }
-    const left = addItem(p.inv, item, count);
+    const left = addItem(p.inv, item, count, invCap(p));
     const taken = count - left;
     if (taken > 0) {
       p.invDirty = true;
@@ -1616,7 +1620,7 @@ export class Game {
     }
   }
 
-  // the rounds a reload of the weapon in hand just put into its magazine come out of the backpack, last stack first
+  // the rounds a reload of the weapon in hand just put into its magazine come out of the backpack, smallest stack first (removeItem)
   spendAmmo(p) {
     const s = p.state;
     const i = WEAPONS[currentWeapon(s)]?.ammo;
@@ -1808,6 +1812,10 @@ export class Game {
         return this.useItem(p, r.u8());
       case ACT.EQUIP_ARMOR:
         return this.useItem(p, r.u8());
+      case ACT.WORN: {
+        const which = r.u8();
+        return this.wornGear(p, which, r.u8());
+      }
       case ACT.BUILD: {
         const type = r.u8();
         const x = r.i16() / 64;
@@ -1827,7 +1835,8 @@ export class Game {
       case ACT.SWAP_INV: {
         const a = r.u8();
         const b = r.u8();
-        if (a >= INVENTORY_SIZE || b >= INVENTORY_SIZE) return;
+        // (a locked slot - past the capacity - is neither taken from nor put into)
+        if (a >= invCap(p) || b >= invCap(p)) return;
         const A = p.inv[a];
         const B = p.inv[b];
         if (A && B && A.item === B.item && ITEM_DEFS[A.item].stack > 1) {
@@ -1843,12 +1852,17 @@ export class Game {
         p.invDirty = true;
         return;
       }
+      case ACT.SORT_INV:
+        // (the open slots only: the locked ones stay empty)
+        sortInventory(p.inv, invCap(p));
+        p.invDirty = true;
+        return;
       case ACT.SPLIT_INV: {
         // part of a stack into a slot of its own: to drop for a teammate, or to keep apart
         const it = p.inv[r.u8()];
         const n = r.u16();
         if (!it || n < 1 || n >= it.count) return;
-        const to = p.inv.findIndex((x) => !x);
+        const to = freeSlot(p.inv, invCap(p));
         if (to < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
         it.count -= n;
         p.inv[to] = { item: it.item, count: n };
@@ -2293,12 +2307,12 @@ export class Game {
     // capacity check
     if (def.cat === 'weapon') {
       const slot = WEAPONS[rec.out].slot;
-      if (p.state.weapons[slot] && !p.inv.some((x) => !x)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
-    } else if (!canFit(p.inv, rec.out, rec.n)) {
+      if (p.state.weapons[slot] && freeSlot(p.inv, invCap(p)) < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+    } else if (!canFit(p.inv, rec.out, rec.n, invCap(p))) {
       // paying may free slots; do a trial
       const copy = p.inv.map((x) => (x ? { ...x } : null));
       payCost(copy, rec.cost);
-      if (!canFit(copy, rec.out, rec.n)) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+      if (!canFit(copy, rec.out, rec.n, invCap(p))) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
     payCost(p.inv, rec.cost);
     this.giveItem(p, rec.out, rec.n);
@@ -2309,7 +2323,7 @@ export class Game {
   }
 
   useItem(p, idx) {
-    const it = p.inv[idx];
+    const it = idx < invCap(p) ? p.inv[idx] : null;
     if (!it) return;
     const s = p.state;
     const def = ITEM_DEFS[it.item];
@@ -2334,6 +2348,13 @@ export class Game {
       p.invDirty = true;
       return;
     }
+    if (def.cat === 'pack') {
+      // on it goes; one worn till now takes its place in the grid (one for another: the capacity stays as it was)
+      p.inv[idx] = p.backpackItem ? { item: p.backpackItem, count: 1 } : null;
+      p.backpackItem = it.item;
+      p.invDirty = true;
+      return;
+    }
     if (def.cat === 'weapon') {
       const slot = WEAPONS[it.item].slot;
       const cur = s.weapons[slot];
@@ -2353,6 +2374,39 @@ export class Game {
       this.syncThrow(p);
       return;
     }
+  }
+
+  // ACT.WORN: the armor or the backpack being worn (which: WORN.*) taken off into the grid, dropped in front of the
+  // player, or salvaged (salvageOf: about half its recipe back). The backpack holds up its own pockets: while
+  // anything is in a slot past INVENTORY_SIZE it does not come off at all - spilling them on the ground would be
+  // easy to do by accident in a fight.
+  wornGear(p, which, what) {
+    const pack = which === WORN.BACKPACK;
+    const item = pack ? p.backpackItem : which === WORN.ARMOR ? p.armorItem : 0;
+    if (!item) return;
+    if (pack && p.inv.some((x, i) => x && i >= INVENTORY_SIZE)) return this.notify(NOTIFY.POCKETS, 0, p.id);
+    const s = p.state;
+    const mag = pack ? 0 : Math.ceil(p.armor); // (a vest keeps its points, as one taken off for another does)
+    if (what === WORN_DO.OFF) {
+      // into a slot it can stay in: with the backpack off, one past INVENTORY_SIZE is a locked one
+      const i = freeSlot(p.inv, pack ? INVENTORY_SIZE : invCap(p));
+      if (i < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
+      p.inv[i] = pack ? { item, count: 1 } : { item, count: 1, mag };
+    } else if (what === WORN_DO.DROP) {
+      const ex = s.x - Math.sin(s.yaw) * 1.1;
+      const ez = s.z - Math.cos(s.yaw) * 1.1;
+      // (no entity id left for it on the ground: it stays on)
+      if (!this.dropItem(item, 1, ex, s.y, ez, { spread: 0.2, mag: mag || undefined, from: s })) return;
+    } else if (what !== WORN_DO.SALVAGE || !salvageOf(item)) return;
+    if (pack) p.backpackItem = 0;
+    else p.armorItem = p.armor = p.armorMax = 0;
+    // (taken off before what it gives back is handed over: none of it may land in pockets that are gone)
+    if (what === WORN_DO.SALVAGE) {
+      const back = salvageOf(item);
+      for (const k in back) this.giveOrDrop(p, +k, back[k]);
+      this.sound(SOUND.CRAFT, s.x, s.y + 1, s.z, 15);
+    }
+    p.invDirty = true;
   }
 
   finishUse(p) {
@@ -3697,7 +3751,7 @@ export class Game {
     this.syncAmmo(p); // (the reserves go out in the snapshot that follows: they are told with the backpack they count)
     const w = this.w.reset();
     w.u8(S2C.INVENTORY);
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
+    for (let i = 0; i < INVENTORY_MAX; i++) {
       const it = p.inv[i];
       w.u8(it ? it.item : 0);
       w.u16(it ? it.count : 0);
@@ -3705,6 +3759,7 @@ export class Game {
     w.u8(p.armorItem);
     w.u8(Math.ceil(p.armor));
     w.u8(p.armorMax);
+    w.u8(p.backpackItem);
     p.session.conn.send(w.bytes());
     this.stats.bytesOut += w.o;
     this.stats.msgsOut++;

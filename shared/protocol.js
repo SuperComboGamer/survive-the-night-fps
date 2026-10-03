@@ -18,7 +18,7 @@ export const C2S = {
 export const S2C = {
   WELCOME: 1,
   SNAPSHOT: 2, // u8 flags (SNAP), [u32 tick, u16 ack], [varu ack step], [global], [self], [entities], [events]
-  INVENTORY: 3,
+  INVENTORY: 3, // INVENTORY_MAX x (u8 item, u16 count), u8 armor item, u8 armor points, u8 armor max, u8 backpack worn (item or 0)
   CHAT: 4,
   PLAYERS: 5,
   VOICE: 6,
@@ -70,7 +70,12 @@ export const ACT = {
   WAYPOINT: 28, // u8 on, then (on) i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none): your field-map waypoint, for the team
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
+  WORN: 30, // u8 which (WORN), u8 what (WORN_DO): the armor or backpack being worn taken off into the grid, dropped or salvaged
+  SORT_INV: 31, // (nothing): tidy the backpack grid - partial stacks merged, the open slots ordered by BAG_TIER
 };
+// ACT.WORN: which piece of worn gear, and what is done with it
+export const WORN = { ARMOR: 0, BACKPACK: 1 };
+export const WORN_DO = { OFF: 0, DROP: 1, SALVAGE: 2 };
 
 // special interaction targets that are not entities
 export const CAR_ID = 0xfffe;
@@ -466,6 +471,7 @@ export const PFLAG = {
   PINNED: 128,
   DOWNED: 256,
   REVIVING: 512, // being revived by a teammate
+  BACKPACK: 1024, // wearing a backpack (ITEM.BACKPACK): the third-person model carries it
 };
 // ...and in the five bits above them, the seat of a ride the player sits in + 1 (fair.js; 0: on foot)
 export const PRIDE_SHIFT = 11;
