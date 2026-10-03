@@ -169,6 +169,7 @@ function applySettings(s) {
   game.input.sensitivity = s.sensitivity || 1;
   game.input.invertY = !!s.invertY;
   game.input.rawInput = s.rawMouse !== false;
+  game.keyGuard.fullscreen = s.fullscreen !== false;
   game.foliage?.setQuality(renderer.q, s.grassDistance);
   game.weatherFx?.setQuality(renderer.quality);
   game.lights.setShadows(renderer.q.flashShadows);

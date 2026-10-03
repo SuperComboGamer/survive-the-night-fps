@@ -142,6 +142,7 @@ export class Input {
 
   requestLock() {
     if (this.locked) return;
+    this.onRequestLock?.(); // (game.js: the same click takes fullscreen + keyboard lock - keyguard.js)
     this.rawActive = false;
     if (!this.rawInput) {
       this.canvas.requestPointerLock?.();
