@@ -84,6 +84,9 @@ export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 
 
 // FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
 export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
+// The close code a client's socket goes with when the player pressed "Leave game". Any other close is a drop, and the
+// game holds the player's place for REJOIN_GRACE seconds (server/game.js hold).
+export const LEFT_CODE = 4001;
 
 // S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
 // speaker (TALK_RANGE), or anywhere over a walkie-talkie link, so the flags differ per recipient.

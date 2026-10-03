@@ -140,7 +140,8 @@ export class Room {
     return slot;
   }
 
-  detach(slot) {
+  // code: the socket's close code (LEFT_CODE: the player left on purpose; anything else is a drop the game holds them through)
+  detach(slot, code = 0) {
     if (this.socks[slot] === null) return;
     this.socks[slot] = null;
     const user = this.users[slot];
@@ -152,7 +153,7 @@ export class Room {
     if (this.closed) return;
     this.flushInbox(); // everything they sent goes in before they leave
     this.draining[slot] = 1;
-    this.worker.postMessage({ t: 'close', slot });
+    this.worker.postMessage({ t: 'close', slot, code });
   }
 
   // a message from a socket, for the game (copied: uWS reuses the buffer). first: it is the socket's first

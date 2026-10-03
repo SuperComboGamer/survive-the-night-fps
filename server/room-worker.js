@@ -4,7 +4,7 @@
 //
 // From the network thread:
 //   { t: 'open', slot, ip, user }  a socket was put in this slot (user: its account { id, name }, null for a guest)
-//   { t: 'close', slot }           ...and closed
+//   { t: 'close', slot, code }     ...and closed (code: the socket's close code - 4001 the player left on purpose)
 //   { t: 'in', buf }               their messages (frames, in order)    { t: 'stop' }          shut down
 //   { t: 'finish' }                the server is going down: end the match being played, and say when it is
 // To it:
@@ -118,7 +118,7 @@ parentPort.on('message', (m) => {
       if (s) {
         conns[m.slot].closed = true;
         sessions[m.slot] = conns[m.slot] = null;
-        game.onClose(s);
+        game.onClose(s, m.code);
       }
       flush(); // (whatever was still going to them is out of the way: the slot can have a new socket)
       post({ t: 'closed', slot: m.slot });
