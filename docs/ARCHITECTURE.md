@@ -36,13 +36,15 @@ client/      three.js client (Vite root)
   net/        connection, snapshot decode, interpolation, prediction
   game/       client game state, entity views, input, weather schedule (weather.js)
   render/     renderer, sky, terrain, vegetation, water, post, particles, weather fx, textures, materials, models/
+              (models, the viewmodel, held / worn items, pickups: read docs/object-clipping.md before changing them)
   audio/      WebAudio engine: procedural synthesis + CC0 recordings in audio/samples/ (samples.js loads
               them after init; any sound whose file fails to load/decode falls back to its procedural version)
   ui/         DOM HUD (hud.js + hud2.js: compass, objective, world markers, downed, summary), field map
               (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat,
               contextual key hints (keyhints.js: reads the game state once a frame, owns its one HUD line)
   sandbox/    standalone dev pages for visually testing modules (not shipped)
-scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js)
+scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js),
+             clip checking for models, held items, pickups and world props (scripts/clip/, docs/object-clipping.md)
 ```
 
 ## Conventions
