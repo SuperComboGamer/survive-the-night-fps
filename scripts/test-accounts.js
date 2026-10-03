@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, readBoard } from '../shared/protocol.js';
+import { LEFT_CODE, C2S, S2C, PROTOCOL_VERSION, Writer, Reader, readBoard } from '../shared/protocol.js';
 import { openDb } from '../server/db/index.js';
 import { migrate, pendingMigrations } from '../server/db/migrate.js';
 import { DbStats } from '../server/dbstats.js';
@@ -171,7 +171,7 @@ try {
         else if (t === S2C.REJECT) resolve(c);
       };
       ws.onclose = () => resolve(c);
-      c.close = () => new Promise((done) => ((ws.onclose = done), ws.close()));
+      c.close = () => new Promise((done) => ((ws.onclose = done), ws.close(LEFT_CODE))); // ("Leave game": a plain close would be a drop the game holds them through)
     });
 
   const ann = browser();

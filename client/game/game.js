@@ -53,7 +53,7 @@ import {
   PROJ,
   radioLinked,
 } from '../../shared/defs.js';
-import { ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
@@ -716,15 +716,18 @@ export class Game {
     this.overlay = null;
     this.deathShown = false;
     this.ui.showSplash();
-    // a player who pressed "Leave game" knows why they are back here: only a drop is an error
-    if (!this.leaving) this.ui.setJoinError('Disconnected from server.');
+    // a player who pressed "Leave game" knows why they are back here: only a drop is an error - and the server holds
+    // the place of a dropped player for a minute, so main.js goes straight back in (onDrop)
+    const dropped = !this.leaving;
     this.leaving = false;
+    if (dropped && this.room && this.onDrop) this.onDrop(this.room.code);
+    else if (dropped) this.ui.setJoinError('Disconnected from server.');
   }
 
   leave() {
     if (this.state !== 'playing') return;
     this.leaving = true;
-    this.conn.close();
+    this.conn.close(LEFT_CODE);
   }
 
   onSnapshot(r) {

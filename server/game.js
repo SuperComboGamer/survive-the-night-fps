@@ -110,7 +110,7 @@ import {
   isFirearm,
   radioLinked,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
@@ -201,6 +201,11 @@ const MAX_DROPS = 400;
 // get two lobbies' worth, then one every GREET_EVERY seconds; past that, players come and go unannounced.
 const JOIN_EVERY = 4;
 const GREET_EVERY = 10;
+// A dropped player (connection lost, browser crashed or closed) keeps their place this long (onClose / hold / resume).
+// The client closes with LEFT_CODE when "Leave game" is pressed: that one goes at once. REJOIN_GRACE_SECONDS: tests.
+export const REJOIN_GRACE = +(process.env.REJOIN_GRACE_SECONDS || 60);
+const DEAD_CONN = { send() {}, close() {}, closed: true, slot: -1, user: null, ip: '' };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only. A zombie type goes the same way: its ZTYPE key (`boss_hivequeen`) or its name
@@ -450,10 +455,63 @@ export class Game {
     this.sessions.add(session);
     return session;
   }
-  onClose(session) {
+  // code: the socket's close code. A player whose connection dropped (or whose browser crashed or closed) is held for
+  // REJOIN_GRACE seconds rather than removed: they stay where they were, safe - the dead don't go for them, nothing hurts
+  // them, a downed one doesn't bleed - and a JOIN from the same account or browser in that time puts them back in their
+  // own body with everything they had (handleJoin -> resume). Only "Leave game" (LEFT_CODE), or a player nobody could
+  // know again (no account, no browser id), leaves at once; the held are removed when their time is up (update).
+  onClose(session, code = 0) {
     this.sessions.delete(session);
     const p = session.player;
-    if (p) this.removePlayer(p);
+    if (!p) return;
+    if (code !== LEFT_CODE && p.rejoinKey && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) this.hold(p);
+    else this.removePlayer(p);
+  }
+
+  hold(p) {
+    p.away = { since: this.time };
+    p.session = { conn: DEAD_CONN, player: p, ip: '', msgCount: 0, msgWindow: 0 }; // (whatever the game still sends them goes nowhere)
+    p.cmdQueue.length = 0;
+    p.hold = null;
+    p.useItem = null;
+    this.releaseHolds(p); // (a leaper or a roper on them lets go)
+    this.playersDirty = true;
+    this.systemChat(`${p.name} lost connection - holding their place for ${REJOIN_GRACE} seconds.`);
+    this.log(`hold ${p.name}: dropped, ${REJOIN_GRACE} s to come back`);
+  }
+
+  // a held player is back (a JOIN from the same account or browser): this session takes over their body
+  resume(session, p) {
+    p.away = null;
+    p.session = session;
+    session.player = p;
+    // a new client: it knows nothing yet - everything is sent again as to a newcomer, and its commands count from 0
+    p.cmdQueue.length = 0;
+    p.lastSeq = 0;
+    p.hasSeq = false;
+    p.view = new ClientView();
+    p.selfSync = true;
+    p.snapTick = -2;
+    p.ackSent = 0;
+    p.invDirty = true;
+    p.globalSent = false;
+    const w = new Writer(64);
+    w.u8(S2C.WELCOME);
+    w.u16(p.id);
+    w.u32(this.seed >>> 0);
+    w.u32(this.tick);
+    w.u8(SERVER_TICK_RATE);
+    w.u8(this.maxPlayers);
+    session.conn.send(w.bytes());
+    const spent = [];
+    for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
+    this.tellStripped(spent, p.id);
+    this.tellFriendCodes(p);
+    this.sendChat(p, 0, CHATF.SYSTEM, 'Reconnected: you are back where you were, with what you had.');
+    this.systemChat(`${p.name} reconnected.`);
+    this.playersDirty = true;
+    this.globalDirty = true;
+    this.log(`resume ${p.name}`);
   }
   onMessage(session, data) {
     // basic flood protection
@@ -543,6 +601,9 @@ export class Game {
       session.conn.send(w.bytes());
     };
     if (version !== PROTOCOL_VERSION) return reject(REJECT_REASON.VERSION);
+    // back from a drop inside the grace minute: their own body (onClose / hold)
+    const key = account ? `a:${account.id}` : UUID_RE.test(pid) ? `g:${pid}` : '';
+    if (key) for (const q of this.players.values()) if (q.away && q.rejoinKey === key) return this.resume(session, q);
     if (this.players.size >= this.maxPlayers) return reject(REJECT_REASON.FULL);
     if (!this.admitJoin(session)) return reject(REJECT_REASON.FULL); // (the one "try again later" the client knows)
     // unique names
@@ -558,6 +619,7 @@ export class Game {
     // no entity id left for them: turned away like from a full server, to try again once ids have come back
     if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
+    p.rejoinKey = key; // who can take this body back after a drop ('' : nobody - no account and no browser id)
     p.rec = this.records.enter(pid, base, account);
     p.account = account ? account.id : ''; // their account's id, '' for a guest
     p.guestKey = account ? '' : idKey(pid); // a guest's browser id as stats.js files it ('' without one): never the id itself
@@ -660,6 +722,8 @@ export class Game {
       ping: 0,
       globalSent: false,
       ts: null, // the stint analytics.js is counting for them (null: none)
+      rejoinKey: '', // 'a:<account id>' or 'g:<browser id>': whose JOIN may take this player back after a drop (resume)
+      away: null, // dropped and held: { since } (hold), until they come back or REJOIN_GRACE runs out
       get x() {
         return this.state.x;
       },
@@ -2483,7 +2547,7 @@ export class Game {
 
   // ---------------------------------------------------------------- damage (players)
   damagePlayer(p, amount, src) {
-    if (!p.alive || amount <= 0) return;
+    if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
     if (this.godMode && !p.zombie) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     if (p.downed) {
@@ -2966,6 +3030,13 @@ export class Game {
     }
     // forget the join allowances that have worn off (see allow)
     if (this.tick % 600 === 0) for (const [ip, a] of this.joins) if (this.time - a.t >= a.n * JOIN_EVERY) this.joins.delete(ip);
+    // the held whose minute is up are gone (hold)
+    if (this.tick % SERVER_TICK_RATE === 0)
+      for (const p of [...this.players.values()])
+        if (p.away && this.time - p.away.since >= REJOIN_GRACE) {
+          this.log(`hold ${p.name}: did not come back`);
+          this.removePlayer(p);
+        }
     if (this.phase === PHASE.WAITING) {
       if (this.rollWhenEmpty) this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
@@ -3307,7 +3378,7 @@ export class Game {
         continue;
       }
       if (p.downed) {
-        if (!p.revivedBy) p.bleed -= dt;
+        if (!p.revivedBy && !p.away) p.bleed -= dt; // (a held player's clock stops)
         if (p.useItem) {
           p.useItem.t += dt;
           if (p.useItem.t >= p.useItem.total) this.finishUse(p);
