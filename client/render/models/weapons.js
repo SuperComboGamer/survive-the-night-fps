@@ -1816,6 +1816,13 @@ const HAND_POSES = {
   flamerSupport: { curl: [[0.49, 0.56, 0.39], [0.63, 0.72, 0.5], [0.71, 0.81, 0.56], [0.72, 0.83, 0.58]], spread: 0.02, thumb: [[-0.65, -0.71, 0.27], [0.05, -0.99, -0.12]], center: [-0.0548, -0.088, 0] }, // flamethrower
   atSupport: { curl: [[0.37, 0.43, 0.3], [0.5, 0.57, 0.4], [0.58, 0.67, 0.56], [0.6, 0.68, 0.48]], spread: 0.02, thumb: [[-0.56, -0.79, 0.23], [0, -0.92, -0.38]], center: [-0.0389, -0.088, 0] }, // anti-tank rifle
   rpgSupport: { curl: [[0.33, 1.39, 0.97], [0.11, 1.48, 1.03], [0.09, 1.35, 0.94], [0.05, 0.92, 0.64]], spread: 0, thumb: [[-0.98, -0.13, 0.13], [-0.73, -0.61, -0.3]], center: [-0.0342, -0.083, 0] }, // RPG front grip
+  // right hand on a pistol grip: lower on it than the old fist (its middle finger clears the trigger guard and the
+  // magazine to wrap the front of the grip), the index laid straight along the side of the guard
+  akGrip: { curl: [[0.1, 0.1, 0.08], [0.64, 1.2, 0.84], [0.64, 1.08, 0.76], [0.68, 0.72, 0.5]], spread: 0, thumb: [[0.03, -0.99, -0.13], [-0.09, -0.99, -0.09]], center: [-0.0394, -0.083, -0.025] }, // AK-47
+  m4Grip: { curl: [[0.1, 0.1, 0.08], [0.56, 0.88, 0.62], [1, 1, 0.7], [1.08, 0.48, 0.34]], spread: 0, thumb: [[0.23, -0.79, -0.56], [-0.3, -0.92, -0.23]], center: [-0.043, -0.068, -0.025] }, // M4A1
+  flamerGrip: { curl: [[0.1, 0.1, 0.08], [0.72, 1.08, 0.76], [0.72, 0.96, 0.67], [0.64, 0.68, 0.48]], spread: 0, thumb: [[0.18, -0.71, -0.68], [-0.25, -0.97, -0.07]], center: [-0.0432, -0.083, -0.025] }, // flamethrower
+  mp5Grip: { curl: [[0.1, 0.1, 0.08], [0.8, 1.2, 0.84], [0.96, 1, 0.7], [0.92, 0.64, 0.45]], spread: 0, thumb: [[0.07, -0.87, -0.5], [-0.12, -0.99, -0.05]], center: [-0.0415, -0.068, -0.025] }, // MP5
+  rpgGrip: { curl: [[0.1, 0.1, 0.08], [0.92, 1.36, 0.95], [0.96, 1.28, 0.9], [0.96, 0.92, 0.64]], spread: 0, thumb: [[0.33, -0.92, -0.19], [-0.27, -0.92, -0.27]], center: [-0.034, -0.068, -0.025] }, // RPG
   // right hand round a stock wrist or a rifle's grip
   wristGrip: { curl: [[0.14, 0.16, 0.4], [0.18, 0.2, 0.14], [0.31, 1.08, 0.75], [0.37, 0.72, 0.8]], spread: 0, thumb: [[-0.13, -0.87, -0.48], [0.37, -0.79, -0.48]], center: [-0.0378, -0.083, 0] }, // pump shotgun
   dbGrip: { curl: [[0.06, 0.07, 0.85], [0.11, 0.29, 0.2], [0.3, 0.34, 0.24], [0.37, 0.72, 0.8]], spread: 0, thumb: [[-0.56, -0.79, -0.23], [-0.3, -0.61, -0.73]], center: [-0.0378, -0.083, 0] }, // double-barrel
@@ -1833,6 +1840,14 @@ const HAND_POSES = {
   drinkHold: { curl: [[0.42, 0.67, 0.46], [0.43, 0.78, 0.54], [0.44, 0.69, 0.48], [0.41, 0.46, 0.4]], spread: 0.02, thumb: [[-0.92, -0.38, -0.12], [-0.96, -0.26, 0.13]], center: [0.0077, -0.088, 0] }, // (eased off the can by a fifth: round one this narrow the two hands' fingers met)
   meatR: { curl: [[0.56, 0.64, 0.5], [0.43, 0.83, 0.58], [0.59, 0.68, 0.47], [0.59, 0.68, 0.47]], spread: 0.02, thumb: [[-0.69, -0.61, -0.4], [-0.48, -0.87, -0.13]], center: [-0.006, -0.088, 0] },
   meatL: { curl: [[0.6, 1.31, 0.91], [0.62, 0.71, 0.5], [0.66, 0.76, 0.53], [0.66, 0.76, 0.53]], spread: 0.02, thumb: [[-0.48, -0.87, -0.13], [-0.56, -0.79, -0.23]], center: [-0.0577, -0.088, 0] },
+  // reloads: the left hand on the magazine as it comes out (the flamethrower's fuel bottle), under the RPG's grenade
+  akMag: { curl: [[0.89, 1.09, 0.76], [1, 1.2, 0.83], [0.91, 1.04, 0.72], [0.74, 0.85, 0.59]], spread: 0.02, thumb: [[-0.84, 0.26, -0.48], [-0.56, -0.71, -0.43]], center: [-0.022, -0.088, 0] },
+  m4Mag: { curl: [[0.35, 0.4, 1.2], [0.45, 1.22, 0.85], [0.52, 0.94, 1.1], [0.49, 0.56, 0.96]], spread: 0.02, thumb: [[-0.86, -0.5, -0.11], [-0.7, -0.71, -0.09]], center: [-0.0142, -0.088, 0] },
+  mp5Mag: { curl: [[0.4, 1.31, 0.91], [0.51, 1.46, 1.02], [0.58, 1.28, 0.89], [0.58, 0.66, 0.98]], spread: 0.02, thumb: [[-0.61, -0.71, -0.35], [-0.96, -0.26, 0.13]], center: [-0.0119, -0.088, 0] },
+  fuelBottle: { curl: [[0.26, 0.71, 0.5], [0.38, 0.86, 0.6], [0.57, 0.65, 0.59], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.8, -0.5, -0.33], [-0.84, -0.26, -0.48]], center: [-0.035, -0.088, 0] },
+  rackPinch: { curl: [[0.4, 1.12, 0.78], [0.48, 1.36, 0.95], [0.68, 1.72, 1.2], [1.6, 1.72, 1.2]], spread: 0, thumb: [[-0.37, -0.92, 0.1], [-0.22, -0.5, 0.84]], center: [-0.0217, -0.1, -0.02] }, // the pistol's slide, racked
+  pistolMag: { curl: [[0.91, 1.04, 0.72], [0.3, 1.48, 1.03], [0.21, 1.34, 0.93], [0.73, 0.84, 1.2]], spread: 0.02, thumb: [[-0.77, -0.61, -0.21], [0.03, -0.97, -0.26]], center: [-0.0135, -0.088, 0] }, // the pistol's new magazine
+  rpgWarhead: { curl: [[0.42, 0.48, 0.34], [0.51, 0.59, 0.41], [0.56, 0.64, 0.45], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.61, -0.71, -0.35], [0, -0.61, -0.79]], center: [-0.0418, -0.088, 0] },
 };
 // Knuckles sit on an arc (middle finger furthest out, pinky set back). r = proximal phalanx radius.
 const FINGERS = [
@@ -2515,8 +2530,8 @@ const supportGrip = (roll, yaw, pitch = 0) => {
 const VM = {
   [ITEM.AK47]: {
     kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'akSupport' },
-    recoil: { z: 0.028, rx: 0.045, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'akGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'akSupport' },
+    magPose: 'akMag', recoil: { z: 0.028, rx: 0.045, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.SHOTGUN]: {
     kind: 'shotgun', hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.79, adsPitch: 0.1,
@@ -2530,13 +2545,13 @@ const VM = {
   },
   [ITEM.M4A1]: {
     kind: 'rifle', hip: [0.18, -0.185, -0.27, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.16, chargeFire: false, chargeTravel: 0, chargeQ: [1.3, 0.1, 0],
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'm4Support' },
-    recoil: { z: 0.022, rx: 0.035, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'm4Grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'm4Support' },
+    magPose: 'm4Mag', recoil: { z: 0.022, rx: 0.035, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.MP5]: {
     kind: 'rifle', hip: [0.17, -0.18, -0.3, 0.03, 0.15, 0.0], ads: 0.2, adsZ: -0.2, chargeFire: false, chargeQ: [1.6, -0.3, 0.4],
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.2) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'mp5Support' },
-    recoil: { z: 0.016, rx: 0.026, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'mp5Grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.2) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'mp5Support' },
+    magPose: 'mp5Mag', recoil: { z: 0.016, rx: 0.026, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.DB_SHOTGUN]: {
     kind: 'shotgun', breakAction: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.68, adsPitch: 0.1,
@@ -2554,15 +2569,15 @@ const VM = {
     // rpg: the grenade in the muzzle follows the loaded state like the crossbow's bolt, and the reload carries a new
     // one in (_animReloadRPG, the left hand under its bulb at holdQ). A heavy shove back, little climb
     kind: 'rifle', rpg: true, hip: [0.21, -0.21, -0.3, 0.03, 0.0, 0.0], ads: 0.22, adsZ: -0.38, adsPitch: 0.12,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: handQ(-1, [0.35, -0.2, -0.92], [1, 0, 0.35]), pose: 'rpgSupport' },
+    rPose: 'rpgGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: handQ(-1, [0.35, -0.2, -0.92], [1, 0, 0.35]), pose: 'rpgSupport' },
     holdQ: supportGrip(-0.3, 0.5, 0.0),
     recoil: { z: 0.08, rx: 0.03, ry: 0.012 }, sprint: [-0.03, -0.04, 0.02, -0.3, 0.35, 0.3],
   },
   [ITEM.FLAMETHROWER]: {
     // reloads like a rifle: the fuel bottle is the magazine, the gas valve the charging handle (the hand just opens it)
     kind: 'rifle', hip: [0.19, -0.19, -0.27, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2, chargeFire: false, chargeTravel: 0, chargeQ: [1.3, 0.1, 0],
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'flamerSupport' },
-    recoil: { z: 0.004, rx: 0.004, ry: 0.006 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'flamerGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'flamerSupport' },
+    magPose: 'fuelBottle', recoil: { z: 0.004, rx: 0.004, ry: 0.006 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.AT_RIFLE]: {
     // single: one round at a time, fed by hand into the open port (_animReloadSingle); the bolt is only worked on the
@@ -2659,6 +2674,10 @@ function evalSwing(sw, idle, t, out) {
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const _v4 = new THREE.Vector3();
+const _v5 = new THREE.Vector3();
+const _v6 = new THREE.Vector3();
+const _v7 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
@@ -2672,6 +2691,8 @@ const SHOULDER_R = new THREE.Vector3(0.2, -0.29, 0.1);
 const SHOULDER_L = new THREE.Vector3(-0.12, -0.31, -0.06);
 const POLE_R = new THREE.Vector3(0.75, -0.65, 0.15);
 const POLE_L = new THREE.Vector3(-0.75, -0.65, 0.15);
+const PISTOL_RACK_POLE = new THREE.Vector3(-1, -0.3, 0.3);
+const PISTOL_RACK_ARC = new THREE.Vector3(-0.07, 0.02, 0.03);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const SWAY_PIVOT = new THREE.Vector3(0.1, -0.14, -0.32); // roughly between the hands
 const IDLE_RATE = 1.35; // breathing, rad/s (~4.7 s per breath)
@@ -3363,7 +3384,9 @@ export class ViewModel {
     }
     this.armR.setPose(rPose);
     this.armR.setVisible(true);
-    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R, cfg.kind === 'throw' ? cfg.rPose : undefined);
+    // (on the bolt the hand's grip center goes over to the pinch's with the blend, so the pose switch doesn't jump it)
+    const rC = altR && altRw > 0 ? this._blendCenter(this.armR, cfg.rPose || 'grip', 'pinch', altRw) : cfg.kind === 'throw' ? cfg.rPose : undefined;
+    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R, rC);
 
     // left
     if (act && act.type === 'use') {
@@ -3392,6 +3415,8 @@ export class ViewModel {
         if (rs.bCam) _v3.copy(rs.b);
         else _v3.copy(rs.b).applyQuaternion(wq).add(wp);
         _v2.lerp(_v3, rs.m);
+        // (arc: an offset, weapon space, at the middle of the A to B move, to take the hand round something between)
+        if (rs.arc) _v2.add(_v3.copy(rs.arc).applyQuaternion(wq).multiplyScalar(Math.sin(PI * rs.m)));
         lp.lerp(_v2, altLw);
         if (rs.aCam) _q1.copy(rs.qa);
         else _q1.copy(wq).multiply(rs.qa);
@@ -3402,7 +3427,15 @@ export class ViewModel {
       }
       this.armL.setPose(lPose);
       this.armL.setVisible(lVisible || altLw > 0.01);
-      this._solveArm(this.armL, lp, lq, SHOULDER_L, cfg.poleL || POLE_L);
+      // the grip center blends from the grip's to the reload's (A to B by m) with the weight, as the pose switches
+      let lC;
+      if (rs && altLw > 0 && cur.lGrip) {
+        const cr = this._blendCenter(this.armL, rs.poseA || rs.pose || lPose, rs.poseB || rs.pose || lPose, rs.m, _v4);
+        lC = this.armL.gripCenter(_v5, cur.lGrip.pose).lerp(cr, altLw);
+      }
+      let poleL = cfg.poleL || POLE_L;
+      if (rs && rs.poleB && altLw > 0) poleL = _v7.copy(poleL).lerp(rs.poleB, altLw * rs.m);
+      this._solveArm(this.armL, lp, lq, SHOULDER_L, poleL, lC);
       if (this._atFollow) {
         // the anti-tank round in the left hand: weapon space, held by its middle
         _q1.copy(wq).invert();
@@ -3474,13 +3507,19 @@ export class ViewModel {
     st.qb.copy(wh.quaternion).multiply(this.cur.cfg.holdQ);
     st.m = smoothstep(0.32, 0.5, u);
     st.w = win(u, 0.04, 0.16, 0.8, 0.94);
-    st.pose = 'support';
+    st.pose = 'rpgWarhead';
+  }
+
+  /** grip center of arm between poses a and b (weight k), into out */
+  _blendCenter(arm, a, b, k, out = this._tmpP) {
+    return arm.gripCenter(out, a).lerp(arm.gripCenter(_v6, b), k);
   }
 
   _solveArm(arm, gripPos, handQ, shoulderPos, pole, centerPose) {
     // wrist = grip - handQ * gripCenter (centerPose: place the wrist as that pose would, e.g. a hand opening as it lets
     // go of a throwable stays where it held it)
-    arm.gripCenter(_v3, centerPose).applyQuaternion(handQ);
+    if (centerPose && centerPose.isVector3) _v3.copy(centerPose).applyQuaternion(handQ);
+    else arm.gripCenter(_v3, centerPose).applyQuaternion(handQ);
     _v1.copy(gripPos).sub(_v3);
     ikTwoBone(shoulderPos, _v1, ARM_L1, ARM_L2, pole, _qU, _qL);
     arm.orient(_qU, _qL, handQ);
@@ -3491,11 +3530,14 @@ export class ViewModel {
     // left-hand override: blend weapon grip -> lerp(A, B, m) by weight w. A/B in weapon space unless *Cam.
     const st =
       this._rs ||
-      (this._rs = { w: 0, m: 0, a: new THREE.Vector3(), b: new THREE.Vector3(), qa: new THREE.Quaternion(), qb: new THREE.Quaternion(), aCam: false, bCam: false, pose: null });
+      (this._rs = { w: 0, m: 0, a: new THREE.Vector3(), b: new THREE.Vector3(), qa: new THREE.Quaternion(), qb: new THREE.Quaternion(), aCam: false, bCam: false, pose: null, poseA: null, poseB: null, poleB: null, arc: null });
     st.w = 0;
     st.m = 0;
     st.aCam = st.bCam = false;
     st.pose = null;
+    st.poseA = st.poseB = null; // the poses at A and at B, when they differ (their grip centers are blended by m)
+    st.poleB = null; // the left elbow's pole at B, when it isn't the grip's (blended in by m and the weight)
+    st.arc = null;
     this._reloadState = st;
     if (cur.cfg.single) return this._animReloadSingle(u, P6, st, parts, meta);
     if (cur.cfg.rpg) return this._animReloadRPG(u, P6, st, parts, meta);
@@ -3619,7 +3661,9 @@ export class ViewModel {
       st.qb.setFromEuler(cq ? _e1.set(cq[0], cq[1], cq[2], 'YXZ') : _e1.set(0.35, PI, 0.1, 'YXZ'));
       st.w = win(u, 0.06, 0.16, 0.9, 0.98);
       st.m = smoothstep(0.7, 0.78, u);
-      st.pose = st.m > 0.5 ? (travel ? 'pinch' : 'open') : 'support';
+      st.poseA = cur.cfg.magPose || 'support';
+      st.poseB = travel ? 'pinch' : 'open';
+      st.pose = st.m > 0.5 ? st.poseB : st.poseA;
     } else if (kind === 'pistol') {
       // tilt and lift the gun toward the middle so the magazine change stays on screen
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
@@ -3644,7 +3688,7 @@ export class ViewModel {
         st.b.x -= 0.02;
         st.qb.setFromEuler(_e1.set(0.3, 0.4, 0.5, 'YXZ'));
         st.m = smoothstep(0.4, 0.5, u);
-        st.pose = 'support';
+        st.pose = 'pistolMag';
       } else {
         // A: magazine, B: slide (overhand rack)
         st.a.copy(parts.mag.position).addScaledVector(ax, 0.1);
@@ -3653,7 +3697,13 @@ export class ViewModel {
         st.b.set(0, meta.slideGrab.y + 0.02, meta.slideGrab.z + 0.01 + pull * 0.03);
         st.qb.setFromEuler(_e1.set(-0.3, -0.2, -PI / 2 - 0.2, 'YXZ'));
         st.m = smoothstep(0.7, 0.76, u);
-        st.pose = st.m > 0.5 ? 'pinch' : 'support';
+        st.poseA = 'pistolMag';
+        st.poseB = 'rackPinch';
+        st.pose = st.m > 0.5 ? st.poseB : st.poseA;
+        // the elbow out to the left and up for the rack, so the forearm comes over the gun from the side instead of
+        // up through the right hand on the grip
+        st.poleB = PISTOL_RACK_POLE;
+        st.arc = PISTOL_RACK_ARC; // from the magazine up to the slide out round the left of the right hand
       }
       st.w = win(u, 0.08, 0.2, 0.88, 0.96);
     } else if (cur.cfg.breakAction) {
