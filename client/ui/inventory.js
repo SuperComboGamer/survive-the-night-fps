@@ -331,7 +331,12 @@ export class Inventory {
     const mid = el('section', 'inv-col inv-mid', wrap);
     const gp = el('div', 'grid-wrap paper', mid);
     const gh = this._h(gp, 'Backpack');
-    this.capEl = el('span', 'inv-cap', gh, '0 / ' + INVENTORY_SIZE);
+    const ghr = el('span', 'inv-h-right', gh);
+    // Sort: stacks merged, the grid ordered by kind (BAG_TIER), the server's to do
+    const sort = (this.sortEl = el('button', 'inv-sort', ghr, 'Sort'));
+    sort.type = 'button';
+    sort.title = 'Merge stacks and order the backpack by kind';
+    this.capEl = el('span', 'inv-cap', ghr, '0 / ' + INVENTORY_SIZE);
     this.grid = el('div', 'grid', gp);
     this.cells = [];
     for (let i = 0; i < INVENTORY_MAX; i++) {
@@ -617,6 +622,13 @@ export class Inventory {
       else if (!e.repeat) this._doSplit(false);
     };
     window.addEventListener('keydown', this._splitKey, true);
+
+    this.sortEl.addEventListener('click', () => {
+      this._closeSplit(); // (its stack is about to move)
+      this.sortEl.blur(); // (or Space, the jump key, would press it again once the screen is shut)
+      this.ui.sound('ui_click');
+      cb.onSortItems();
+    });
 
     // worn gear: LMB takes it off into the grid, RMB drops it, Shift+LMB salvages it (the server refuses the
     // backpack while its pockets hold anything, and says so)

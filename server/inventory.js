@@ -3,7 +3,7 @@
 // takes the cap, and the rest stay empty. (It defaults to the slots every survivor has, so a call that forgets it
 // can never fill a locked one.)
 import { INVENTORY_SIZE, INVENTORY_MAX, inventoryCap } from '../shared/constants.js';
-import { ITEM_DEFS } from '../shared/defs.js';
+import { ITEM_DEFS, BAG_TIER } from '../shared/defs.js';
 
 export function createInventory() {
   return new Array(INVENTORY_MAX).fill(null);
@@ -79,6 +79,29 @@ export function hasCost(inv, cost) {
 
 export function payCost(inv, cost) {
   for (const k in cost) removeItem(inv, +k, cost[k]);
+}
+
+// The Sort button (ACT.SORT_INV) on the open slots, in place: every item's stacks merged into as few as will hold
+// them (full ones, then what is left over), then ordered by BAG_TIER, item and size, and the empty slots after them.
+// The same inventory always comes out the same way. A stack of one that carries something of its own (a gun's
+// magazine, a vest's points: `mag`) is kept as it is.
+export function sortInventory(inv, cap = INVENTORY_SIZE) {
+  cap = Math.min(cap, inv.length);
+  const kept = [];
+  const totals = new Map();
+  for (let i = 0; i < cap; i++) {
+    const s = inv[i];
+    if (!s) continue;
+    if ((ITEM_DEFS[s.item]?.stack || 1) > 1) totals.set(s.item, (totals.get(s.item) || 0) + s.count);
+    else kept.push(s);
+  }
+  for (const [item, total] of totals) {
+    const max = ITEM_DEFS[item].stack;
+    for (let left = total; left > 0; left -= max) kept.push({ item, count: Math.min(max, left) });
+  }
+  const tier = (s) => BAG_TIER[ITEM_DEFS[s.item]?.cat] ?? 99;
+  kept.sort((a, b) => tier(a) - tier(b) || a.item - b.item || b.count - a.count || (b.mag || 0) - (a.mag || 0));
+  for (let i = 0; i < cap; i++) inv[i] = kept[i] || null;
 }
 
 export function freeSlots(inv, cap = INVENTORY_SIZE) {

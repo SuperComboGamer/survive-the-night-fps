@@ -633,6 +633,8 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   24, so a call that forgets it cannot fill a locked slot), as do the swap / split bounds and `craftRun`'s copy.
   The backpack does not come off (`ACT.WORN`) while a slot past 24 holds anything, so the locked slots stay empty.
   Worn, it sets `PFLAG.BACKPACK`, and the third-person survivor carries the item's own model on its back.
+  The Sort button (`ACT.SORT_INV`, `sortInventory`) merges each item's stacks and orders the open slots by
+  `BAG_TIER` (defs.js), then item id and size: deterministic, and the locked slots are never touched.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is

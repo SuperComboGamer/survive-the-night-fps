@@ -342,6 +342,11 @@ export const RECIPES = [
   { id: 33, out: ITEM.BACKPACK, n: 1, cost: { [ITEM.LEATHER]: 4, [ITEM.CLOTH]: 6, [ITEM.ROPE]: 2 }, station: 'bench' },
 ];
 
+// The order the Sort button puts the backpack grid in, by category: weapons, what is worn or carried for what it does
+// (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables, materials, car
+// supplies, schematics (Game.sortInventory). Empty slots come after them, and the locked ones last of all.
+export const BAG_TIER = { weapon: 0, armor: 1, pack: 1, gear: 1, ammo: 2, cons: 3, throw: 4, res: 5, part: 6, schem: 7 };
+
 // Salvage: worn gear (armor, the backpack) taken apart from its equipment row [Shift+LMB] gives back SALVAGE of each
 // ingredient of its recipe, rounded down - a backpack 2 Leather, 3 Cloth and 1 Rope. -> { item: count }, or null
 // for anything that is not worn or has no recipe.

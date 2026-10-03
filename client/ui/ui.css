@@ -2697,6 +2697,33 @@ body {
   color: var(--blood-lite);
 }
 
+/* the backpack grid's header: the Sort button beside the count */
+.stn-ui .inv-h-right {
+  display: inline-flex;
+  align-items: baseline;
+  gap: calc(12 * var(--u));
+}
+
+.stn-ui .inv-sort {
+  padding: calc(3 * var(--u)) calc(9 * var(--u));
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  color: var(--bone-dim);
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.stn-ui .inv-sort:hover,
+.stn-ui .inv-sort:focus-visible {
+  border-color: var(--bone);
+  color: var(--bone);
+}
+
 .stn-ui .inv-left .inv-h:not(:first-child) {
   margin-top: calc(16 * var(--u));
 }/* equipment */

@@ -71,6 +71,7 @@ export const ACT = {
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
   WORN: 30, // u8 which (WORN), u8 what (WORN_DO): the armor or backpack being worn taken off into the grid, dropped or salvaged
+  SORT_INV: 31, // (nothing): tidy the backpack grid - partial stacks merged, the open slots ordered by BAG_TIER
 };
 // ACT.WORN: which piece of worn gear, and what is done with it
 export const WORN = { ARMOR: 0, BACKPACK: 1 };

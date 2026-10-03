@@ -128,6 +128,7 @@ const callbacks = {
   onEquipArmor: (i) => game?.uiCallbacks().onEquipArmor(i),
   onDropWeapon: (s) => game?.uiCallbacks().onDropWeapon(s),
   onWorn: (which, what) => game?.uiCallbacks().onWorn(which, what),
+  onSortItems: () => game?.uiCallbacks().onSortItems(),
   onSelectStructure: (t) => game?.uiCallbacks().onSelectStructure(t),
   onSelectThrowable: (it) => game?.uiCallbacks().onSelectThrowable(it),
   onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),

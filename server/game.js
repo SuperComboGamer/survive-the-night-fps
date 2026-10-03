@@ -123,7 +123,7 @@ import { mulberry32 } from '../shared/rng.js';
 import { nightTheme, nightBoss } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
-import { createInventory, invCap, addItem, removeItem, countItem, hasCost, payCost, canFit, freeSlot } from './inventory.js';
+import { createInventory, invCap, addItem, removeItem, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Deer } from './deer.js';
@@ -1852,6 +1852,11 @@ export class Game {
         p.invDirty = true;
         return;
       }
+      case ACT.SORT_INV:
+        // (the open slots only: the locked ones stay empty)
+        sortInventory(p.inv, invCap(p));
+        p.invDirty = true;
+        return;
       case ACT.SPLIT_INV: {
         // part of a stack into a slot of its own: to drop for a teammate, or to keep apart
         const it = p.inv[r.u8()];

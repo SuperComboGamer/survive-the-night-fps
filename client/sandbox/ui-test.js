@@ -100,6 +100,7 @@ const ui = new UI(document.getElementById('ui'), {
   onEquipArmor: (i) => log('armor', i),
   onDropWeapon: (s) => log('dropWeapon', s),
   onWorn: (which, what) => log('worn', which, what),
+  onSortItems: () => log('sort'),
   onSelectStructure: (t) => log('struct', t),
   onSelectThrowable: (t) => log('throwable', t),
   onCloseInventory: () => {
