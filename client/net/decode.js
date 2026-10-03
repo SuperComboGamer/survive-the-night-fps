@@ -195,6 +195,9 @@ export function readSelf(r, out, flags) {
     }
     if (m & 64) out.bleed = r.u8() / 4;
   }
+  // (the simulation's hands-busy flag is not sent on its own: the server holds it up exactly while an item is in use,
+  // Game.endUse)
+  out.using = out.useItem ? 1 : 0;
   return !!(mask & SELF.SYNC);
 }
 

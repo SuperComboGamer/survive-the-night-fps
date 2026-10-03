@@ -42,6 +42,7 @@ export class GunClient {
     this.trig = { belt: 0, wait: 0, held: 0 }; // the gun as our commands leave it (stepGun)
     this.shotT = -1e9; // when we last fired it
     this.feeding = false; // we told the server to feed the belt
+    this.letGo = false; // the trigger is not the gun's until it is let go (an item came into the hands meanwhile)
     this.eDown = -1; // when [E] went down at the grips while manning (-1: it is up, or it was the press that took them)
     this.eFeed = false;
     this.kick = 0; // the gun jumping back, for everyone
@@ -135,7 +136,14 @@ export class GunClient {
       this.ask(ACT.GUN_FEED, feed);
     }
     let b = buttons & ~(BTN.ATTACK | BTN.ALT | BTN.RELOAD);
-    if (buttons & BTN.ATTACK && !feed) b |= BTN.GUN;
+    // An item being used (Game.useItem) has the hands off the grips. A click is the simulation's, which puts the
+    // item away (simulatePlayer) and fires nothing, and the gun waits for the trigger to be let go and pulled again
+    if (s.using) {
+      this.letGo = true;
+      return b | (buttons & BTN.ATTACK);
+    }
+    if (this.letGo && !(buttons & BTN.ATTACK)) this.letGo = false;
+    if (buttons & BTN.ATTACK && !feed && !this.letGo) b |= BTN.GUN;
     return b;
   }
 

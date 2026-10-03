@@ -1,5 +1,6 @@
 // Game content definitions shared by client and server.
 // Numeric ids are part of the wire protocol - do not renumber.
+import { FLASHLIGHT_MAX, STAMINA_MAX } from './constants.js';
 
 // ---------------------------------------------------------------- items
 export const ITEM = {
@@ -277,6 +278,18 @@ export const CONSUMABLES = {
   // drink: a can, cracked and downed (own sounds, first-person can tipped to the mouth); quick, to be had mid-chase
   [ITEM.ENERGY_DRINK]: { stamina: 100, time: 0.8, drink: true },
 };
+
+// Whether using consumable `item` now would be for nothing, so it is not done (Game.useItem; the client does not even
+// ask): anything but a medkit while down, healing at full health unless it restores stamina too, an energy drink at
+// full stamina, a battery for a flashlight that is (all but) full.
+// p: { hp, maxHp, battery, downed, stamina, exhausted }
+export function useWasted(item, p) {
+  const c = CONSUMABLES[item];
+  if (p.downed) return item !== ITEM.MEDKIT;
+  if (c.heal && !c.stamina && p.hp >= p.maxHp) return true;
+  if (c.stamina && !c.heal && p.stamina >= STAMINA_MAX - 0.5 && !p.exhausted) return true;
+  return !!c.flashlight && p.battery >= FLASHLIGHT_MAX - 1;
+}
 
 // ---------------------------------------------------------------- structures
 export const STRUCT = {

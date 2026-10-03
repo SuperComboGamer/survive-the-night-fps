@@ -26,6 +26,7 @@ export class Prediction {
     this.lagY = 0;
     this.lagFoot = 0;
     this.slotRequest = 255;
+    this.useFrom = -1; // the first command after an item use was asked for, until the server has run it
     this.hasServerState = false;
     this.corrections = 0;
     this.idleRun = 0; // commands in a row with no keys held and the view still
@@ -38,6 +39,13 @@ export class Prediction {
 
   requestSlot(slot) {
     this.slotRequest = slot;
+  }
+
+  // An item use was just asked of the server (ACT.USE_ITEM): the hands are on the item from the next command on.
+  // The server takes them off it again by itself, when the item is used up.
+  startUse() {
+    this.state.using = 1;
+    this.useFrom = (this.seq + 1) & 0xffff;
   }
 
   // advance fixed steps; returns number of commands generated.
@@ -103,6 +111,7 @@ export class Prediction {
     let k = 0;
     while (k < p.length && ((ack - p[k].seq) & 0xffff) < 0x8000) k++;
     if (k) p.splice(0, k);
+    if (this.useFrom >= 0 && ((ack - this.useFrom) & 0xffff) < 0x8000) this.useFrom = -1;
   }
 
   // The server sent its state after command `ack`: rebase on it and replay what it hasn't seen yet
@@ -116,7 +125,11 @@ export class Prediction {
     server.pitch = this.state.pitch;
     const first = !this.hasServerState;
     copyPlayerState(this.state, server);
-    for (let i = 0; i < p.length; i++) simulatePlayer(this.state, p[i], this.world, null);
+    for (let i = 0; i < p.length; i++) {
+      // a state from before the server had our item use (its answer is still on the way) has it start where it did here
+      if (p[i].seq === this.useFrom) this.state.using = 1;
+      simulatePlayer(this.state, p[i], this.world, null);
+    }
     // a correction is not a step: viewLag carries on from the rebased feet
     this.lagY = this.state.y;
     this.lagFoot = this.footing(this.state);

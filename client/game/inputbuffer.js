@@ -48,10 +48,11 @@ function sameEvents(a, b) {
   return true;
 }
 
-// What a press was made for: the weapon in hand (not for a jump) and being up, down or turned. A held press is
-// dropped when this changes under it, so a click never comes out of another weapon.
+// What a press was made for: the weapon in hand (not for a jump), whether an item is in the hands instead, and being
+// up, down or turned. A held press is dropped when this changes under it, so a click never comes out of another
+// weapon, and one made before an item came out does not put it away.
 function context(s, bit) {
-  return (bit === BTN.JUMP ? 0 : s.slot + 1 + (currentWeapon(s) << 3)) | (s.downed ? 1 << 20 : 0) | (s.zombie ? 1 << 21 : 0);
+  return (bit === BTN.JUMP ? 0 : s.slot + 1 + (currentWeapon(s) << 3) + (s.using ? 1 << 22 : 0)) | (s.downed ? 1 << 20 : 0) | (s.zombie ? 1 << 21 : 0);
 }
 
 export class InputBuffer {

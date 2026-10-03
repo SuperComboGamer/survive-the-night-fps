@@ -51,6 +51,7 @@ import {
   AMMO_NAMES,
   AMMO_ITEMS,
   CONSUMABLES,
+  useWasted,
   PROJ,
   radioLinked,
 } from '../../shared/defs.js';
@@ -1592,6 +1593,11 @@ export class Game {
         case 'switch':
           a.playLocal('switch', { volume: 0.6 });
           break;
+        case 'use_cancel':
+          // a click (or a weapon asked for) put the item away: the weapon comes straight back out
+          this.vm.cancelUse?.();
+          if (!events.some((e) => e.type === 'switch')) a.playLocal('switch', { volume: 0.6 });
+          break;
         case 'jump':
           a.playLocal('jump', { volume: 0.5 });
           break;
@@ -1639,7 +1645,10 @@ export class Game {
       const s = this.prediction.state;
       if (button === 1) return this.ping();
       if (s.slot === SLOT_BUILD && !s.zombie && this.self.alive && !s.downed) {
-        if (button === 0) this.tryBuild();
+        // (with an item in the hands the click puts it away, as it does with a weapon out: asking for the slot we
+        // are on is what does that here, the build mode's clicks being no fire button)
+        if (button === 0 && s.using) this.prediction.requestSlot(SLOT_BUILD);
+        else if (button === 0) this.tryBuild();
         else if (button === 2) {
           this.buildRot = (this.buildRot - 32) & 255; // 45deg clockwise seen from above (+yaw is counter-clockwise)
           this.audio.playLocal('ui_click', { volume: 0.4 });
@@ -1898,9 +1907,7 @@ export class Game {
     for (const item of order) {
       const idx = inv.findIndex((x) => x && x.item === item);
       if (idx >= 0) {
-        this.conn.action(ACT.USE_ITEM, idx);
-        this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : CONSUMABLES[item].meat ? 'eat' : CONSUMABLES[item].food ? 'can_open' : 'bandage');
-        this.vm.useItem?.(CONSUMABLES[item].time, item);
+        if (this.useConsumable(idx, item)) this.audio.playLocal(item === ITEM.MEDKIT ? 'heal' : CONSUMABLES[item].meat ? 'eat' : CONSUMABLES[item].food ? 'can_open' : 'bandage');
         return;
       }
     }
@@ -1911,12 +1918,38 @@ export class Game {
   // idx: the backpack slot clicked, when it was not the key
   quickDrink(idx = this.inventory.slots.findIndex((x) => x && x.item === ITEM.ENERGY_DRINK)) {
     const s = this.prediction.state;
-    if (s.zombie || s.downed || this.self.useItem) return;
+    if (s.zombie || s.downed || s.using || this.self.useItem) return;
     if (idx < 0) return void this.ui.notify('No energy drinks', 'warning', 1.5);
     if (s.stamina >= STAMINA_MAX - 0.5 && !s.exhausted) return void this.ui.notify('Stamina is already full', 'info', 1.5);
+    if (this.useConsumable(idx, ITEM.ENERGY_DRINK)) this.audio.playLocal('drink');
+  }
+
+  // the commands the prediction has made go out (force: now, not batched up for later; frameDt: Prediction.takeOutbox)
+  sendCommands(frameDt, force) {
+    for (let out; (out = this.prediction.takeOutbox(frameDt, force)); ) {
+      const rt = this.renderTick;
+      const rti = Math.floor(rt);
+      this.conn.sendInput(rti, rt - rti, out, this.prediction.hash(out));
+    }
+  }
+
+  // Starts using the consumable in backpack slot idx. The hands go onto it from the next command on (no weapon goes
+  // off until it is used up or a click puts it away: simulatePlayer), and the server has them go onto it there too:
+  // on the first command that reaches it after the request, so every one made before goes out ahead of it
+  // (Game.useItem on the server). A use the server would turn down is not asked for at all.
+  useConsumable(idx, item) {
+    const c = CONSUMABLES[item];
+    if (!c) return false;
+    const s = this.prediction.state;
+    if (useWasted(item, { hp: this.self.hp, maxHp: this.self.maxHp, battery: this.self.battery, downed: s.downed, stamina: s.stamina, exhausted: s.exhausted })) {
+      this.ui.notify(c.flashlight ? 'Flashlight battery is full' : s.downed ? 'Only a medkit gets you up' : c.heal ? 'Health is full' : 'Stamina is already full', 'toast', 1.5);
+      return false;
+    }
+    this.sendCommands(0, true);
     this.conn.action(ACT.USE_ITEM, idx);
-    this.audio.playLocal('drink');
-    this.vm.useItem?.(CONSUMABLES[ITEM.ENERGY_DRINK].time, ITEM.ENERGY_DRINK);
+    this.prediction.startUse();
+    this.vm.useItem?.(c.time, item);
+    return true;
   }
 
   craftContext() {
@@ -2031,11 +2064,9 @@ export class Game {
       onUseItem: (i) => {
         const it = this.inventory.slots[i];
         if (it && CONSUMABLES[it.item]?.drink) return void this.quickDrink(i); // (that very can)
-        this.conn.action(ACT.USE_ITEM, i);
         const c = it && CONSUMABLES[it.item];
-        if (!c) return;
-        if (c.food) this.audio.playLocal(c.meat ? 'eat' : 'can_open'); // (venison comes in no tin)
-        this.vm.useItem?.(c.time, it.item);
+        if (!c) return this.conn.action(ACT.USE_ITEM, i); // (armour, a schematic: taken at once)
+        if (this.useConsumable(i, it.item) && c.food) this.audio.playLocal(c.meat ? 'eat' : 'can_open'); // (venison comes in no tin)
       },
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
       onSplitItem: (i, n) => this.conn.action(ACT.SPLIT_INV, i, n),
@@ -2119,11 +2150,7 @@ export class Game {
     // a packet carries one render time, the one of the frame it leaves in, and the server rewinds its targets to
     // that for every command in the packet: a shot or a swing goes out in its own frame instead of waiting for
     // the batch to fill, or it would be judged against where things stood a frame or two after it was aimed
-    for (let out; (out = this.prediction.takeOutbox(dt, attacked)); ) {
-      const rt = this.renderTick;
-      const rti = Math.floor(rt);
-      this.conn.sendInput(rti, rt - rti, out, this.prediction.hash(out));
-    }
+    this.sendCommands(dt, attacked);
     this.sendCrafts(dt);
     // interpolation clock: corrections are eased in (a step in the clock is a step in every remote entity),
     // and the render delay widens a little when snapshots arrive unevenly so entities don't stall and lurch
@@ -2799,7 +2826,8 @@ export class Game {
       h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : self.holdKind === HOLD.FAIR_START ? 'Starting the generator…' : self.holdKind === HOLD.FAIR_STOP ? 'Shutting it off…' : 'Starting the engine…';
       h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
     } else {
-      h.useProgress = self.useItem ? self.useProgress : -1;
+      // (put away by a click, it is gone at once: the server's word on it is a round trip off)
+      h.useProgress = self.useItem && this.prediction.state.using ? self.useProgress : -1;
       const c = CONSUMABLES[self.useItem];
       h.useLabel = self.useItem ? `${c?.food ? 'Eating' : c?.drink ? 'Drinking' : 'Using'} ${ITEM_DEFS[self.useItem]?.name || ''}` : '';
       this.power.hud(h); // ([E] held on a generator's switch)

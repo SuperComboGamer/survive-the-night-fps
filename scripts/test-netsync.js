@@ -7,11 +7,12 @@
 // Then a link that hiccups (runStall): the commands that arrive late in one burst must not stay queued on the server.
 // Then lag compensation (runRewind): a shot aimed at a screen that is behind the server lands, as far back as MAX_REWIND.
 // Then the input buffer (runBuffer): early presses of fire, reload and jump are performed, and only those.
+// Then an item in the hands (runUse): nothing goes off while a medkit is being used, a click puts it away instead.
 // Last (runSteps), no server: the camera's step smoothing, which reads the prediction and must not be fooled by it.
 // usage: node scripts/test-netsync.js [lagMs=100] [jitterMs=30]
 import { Spring } from '../client/render/models/weapons.js';
 import { Game } from '../server/game.js';
-import { C2S, S2C, SNAP, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, ACT, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
 import { BTN, SERVER_TICK_RATE, MAX_REWIND, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
 import { ITEM, AMMO, ZTYPE } from '../shared/defs.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
@@ -549,19 +550,166 @@ function runBuffer(LAG) {
     for (let i = 0; i < 30; i++) {
       if (i === 1 && how === 'downed') st.downed = 1;
       if (i === 1 && how === 'menu') buf.clear();
+      if (i === 1 && how === 'use') st.using = 1; // [H] right after the click
       const cmd = { seq: i, buttons: how === 'menu' && i ? 0 : BTN.ATTACK, yaw: 0, pitch: 0, slot: 255 };
       cmd.buttons = buf.shape(cmd, st, c.pred.world);
       const evs = [];
       simulatePlayer(st, cmd, c.pred.world, evs);
-      n += evs.filter((ev) => ev.type === 'fire').length;
+      n += evs.filter((ev) => ev.type === 'fire' || ev.type === 'use_cancel').length;
     }
     return n;
   };
-  report(fires('') === 1 && fires('downed') === 0 && fires('menu') === 0, `an early click fires ${fires('')} time if nothing happens, ${fires('downed')} if the player goes down first, ${fires('menu')} if a menu takes the input first`);
+  report(fires('') === 1 && fires('downed') === 0 && fires('menu') === 0 && fires('use') === 0, `an early click fires ${fires('')} time if nothing happens, ${fires('downed')} if the player goes down first, ${fires('menu')} if a menu takes the input first, and neither fires nor puts away an item that comes into the hands first (${fires('use')})`);
 
   advance(settle + 30);
   const same = did.map((d) => d[1]).join() === ran.join();
   report(wrong === 0 && stray === 0 && same && checks > 300, `at ${LAG} ms each way the server agreed with ${checks - wrong} of ${checks} predictions, rebased the client ${stray} times and ran ${same ? 'the same' : 'OTHER'} ${ran.length} events`);
+  return ok;
+}
+
+// An item in the hands (simulatePlayer's `using`, Game.useItem): while a medkit is being used nothing goes off, a
+// click puts it away and brings the weapon back out instead (and is not a shot), a trigger held down since before
+// is no click, and asking for a weapon puts it away too. The client asks as the game does (Game.useConsumable: what
+// it has made goes out first, then the request, and the hands go onto the item from its next command), so on a laggy
+// link the server must have it in the hands from the very same command: no rebase for the use, none for a click
+// that puts it away, and the same events on both sides. Only the server finishing a use is news to the client.
+function runUse(LAG) {
+  const game = new Game({ seed: 4243, godMode: true, log: () => {} });
+  let now = 0;
+  const toClient = [];
+  const toServer = [];
+  const push = (q, bytes) => q.push([now + LAG, bytes]);
+  const c = { net: { tick: 0, ack: 0 }, self: {}, global: null, ents: new Map(), id: 0, pred: null };
+  const store = { ents: c.ents, onCreate() {}, onRemove() {}, onUpdate() {} };
+  const handler = new Proxy({}, { get: () => () => {} });
+  const session = game.onOpen({ send: (bytes) => push(toClient, bytes.slice()) });
+  const conn = new Connection({});
+  conn.open = true;
+  conn.ws = { readyState: 1, send: (bytes) => push(toServer, bytes.slice()), close() {} };
+  const w = new Writer(64);
+  w.u8(C2S.JOIN);
+  w.u8(PROTOCOL_VERSION);
+  w.str('medic');
+  game.onMessage(session, w.bytes().slice());
+
+  let rebases = 0;
+  function onClientMessage(buf) {
+    const r = new Reader(buf);
+    const t = r.u8();
+    if (t === S2C.WELCOME) {
+      c.id = r.u16();
+      c.pred = new Prediction(createWorld(r.u32()));
+    } else if (t === S2C.SNAPSHOT) {
+      const flags = readHeader(r, c.net);
+      if (flags & SNAP.GLOBAL) c.global = readGlobal(r, c.global);
+      const sync = readSelf(r, c.self, flags);
+      readEntities(r, store, c.net.tick, flags);
+      if (sync) {
+        if (c.pred.hasServerState) rebases++;
+        c.pred.reconcile(c.net.ack, c.self);
+      } else c.pred.confirm(c.net.ack);
+      readEvents(r, handler, flags, c.ents);
+    }
+  }
+  const ran = []; // the server's simulation events on our commands
+  const handleSimEvent = game.handleSimEvent.bind(game);
+  game.handleSimEvent = (p, ev) => {
+    ran.push(ev.type);
+    handleSimEvent(p, ev);
+  };
+  const buffer = new InputBuffer();
+  const did = []; // the prediction's (each command's first run)
+  let frame = 0;
+  const send = (force) => {
+    for (let out; (out = c.pred.takeOutbox(1 / 60, force)); ) conn.sendInput(c.net.tick - 2, 0, out, c.pred.hash(out));
+  };
+  const advance = (n, held = 0, slot = 255) => {
+    for (; n > 0; n--) {
+      now = (frame * 1000) / 60;
+      while (toClient.length && toClient[0][0] <= now) onClientMessage(toClient.shift()[1]);
+      while (toServer.length && toServer[0][0] <= now) game.onMessage(session, toServer.shift()[1]);
+      if (c.pred && c.pred.hasServerState) {
+        if (slot !== 255) c.pred.requestSlot(slot);
+        slot = 255;
+        c.pred.step(1 / 60, held, 0, 0, (evs) => evs.forEach((ev) => did.push(ev.type)), buffer);
+        send(false);
+      }
+      if (++frame % (60 / SERVER_TICK_RATE)) continue;
+      game.update();
+    }
+  };
+  const p = () => game.players.get(c.id);
+  const medkits = () => p().inv.reduce((n, it) => n + (it && it.item === ITEM.MEDKIT ? it.count : 0), 0);
+  // [H]: as Game.useConsumable
+  const useMedkit = () => {
+    send(true);
+    conn.action(ACT.USE_ITEM, p().inv.findIndex((it) => it && it.item === ITEM.MEDKIT));
+    c.pred.startUse();
+  };
+  const since = (list, mark, type) => list.slice(mark).filter((t) => t === type).length;
+  const settle = Math.ceil((2 * LAG * 60) / 1000) + 30;
+  let ok = true;
+  const report = (pass, what) => {
+    ok = ok && pass;
+    console.log(`${pass ? 'PASS' : 'FAIL'}  item in the hands: ${what}`);
+  };
+
+  advance(settle + 30); // joined, first state in
+  // hurt, three medkits, an AK-47 with rounds for it (and nothing healing them on its own)
+  const pl = p();
+  pl.hp = 30;
+  pl.lastDamageT = 1e9;
+  game.giveItem(pl, ITEM.MEDKIT, 3);
+  pl.state.weapons[SLOT_PRIMARY] = ITEM.AK47;
+  pl.state.mags[0] = 30;
+  game.giveItem(pl, ITEM.AMMO_762, 90);
+  advance(settle);
+  advance(40, 0, SLOT_PRIMARY);
+  advance(40);
+
+  // a click halfway through the medkit
+  let r0 = rebases;
+  let d0 = did.length;
+  let s0 = ran.length;
+  const kits = medkits();
+  useMedkit();
+  advance(90);
+  const inHands = pl.state.using === 1 && c.pred.state.using === 1 && !!pl.useItem;
+  advance(3, BTN.ATTACK);
+  advance(60);
+  report(inHands && !pl.useItem && !pl.state.using && !c.pred.state.using && medkits() === kits && pl.hp === 30 && since(did, d0, 'use_cancel') === 1 && since(ran, s0, 'use_cancel') === 1 && since(did, d0, 'fire') === 0 && since(ran, s0, 'fire') === 0, `a click 1.5 s into a medkit puts it away: ${since(ran, s0, 'use_cancel')} put away, ${since(ran, s0, 'fire')} shots, ${kits - medkits()} medkits used, hp ${pl.hp}`);
+  // ...and the next click is a shot
+  advance(3, BTN.ATTACK);
+  advance(30);
+  report(since(did, d0, 'fire') === 1 && since(ran, s0, 'fire') === 1 && rebases === r0, `the click after it fires (${since(ran, s0, 'fire')} shot); the use and the click that put it away were predicted exactly: ${rebases - r0} rebases`);
+
+  // the trigger held down from before the medkit, all the way through it and past it
+  d0 = did.length;
+  s0 = ran.length;
+  // (counted as the client made them: the server's come a round trip later, and are checked to be the same)
+  advance(12, BTN.ATTACK);
+  const firstShots = since(did, d0, 'fire');
+  const shotsAt = did.length;
+  useMedkit();
+  advance(200, BTN.ATTACK); // (3.5 s is 210 commands)
+  const during = since(did, shotsAt, 'fire');
+  advance(60, BTN.ATTACK);
+  advance(30);
+  const after = since(did, shotsAt, 'fire');
+  report(firstShots > 0 && during === 0 && after > 0 && since(ran, s0, 'use_cancel') === 0 && medkits() === kits - 1 && pl.hp === pl.maxHp && did.slice(d0).join() === ran.slice(s0).join(), `the trigger held through a medkit: ${firstShots} shots before it, ${during} while it is used, ${after} once it is used up (${kits - medkits()} used, hp ${pl.hp}), the same ${ran.length - s0} events on both sides`);
+
+  // asking for a weapon puts it away too
+  pl.hp = 30;
+  advance(settle);
+  d0 = did.length;
+  s0 = ran.length;
+  r0 = rebases;
+  useMedkit();
+  advance(60);
+  advance(1, 0, SLOT_PISTOL);
+  advance(60);
+  report(!pl.useItem && !pl.state.using && pl.state.slot === SLOT_PISTOL && medkits() === kits - 1 && pl.hp === 30 && since(ran, s0, 'use_cancel') === 1 && since(ran, s0, 'switch') === 1 && rebases === r0, `[2] during a medkit: ${since(ran, s0, 'use_cancel')} put away, the pistol out, ${rebases - r0} rebases`);
+  report(did.join() === ran.join(), `the prediction and the server ran the same ${ran.length} events`);
   return ok;
 }
 
@@ -701,5 +849,6 @@ for (const [lag, jit] of cases) ok = run(lag, jit) && ok;
 if (!args.length) for (const hold of [300, 700, 1500]) ok = runStall(hold) && ok;
 if (!args.length) ok = runRewind() && ok;
 if (!args.length) ok = runBuffer(100) && ok;
+if (!args.length) ok = runUse(100) && ok;
 if (!args.length) ok = runSteps() && ok;
 process.exit(ok ? 0 : 1);

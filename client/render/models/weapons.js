@@ -2862,6 +2862,15 @@ export class ViewModel {
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
   }
 
+  /** the item is put away before it is used up: the weapon is drawn again straight away */
+  cancelUse() {
+    if (!this.act || this.act.type !== 'use') return;
+    this.act = null;
+    this.kit.visible = false;
+    this.drawT = 0;
+    if (this.cur) this.cur.root.visible = true;
+  }
+
   getMuzzle(out) {
     if (!this.cur || !this.cur.meta.muzzle) {
       return out.set(0.12, -0.12, -0.5);

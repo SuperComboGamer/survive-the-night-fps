@@ -39,7 +39,6 @@ import {
   FLASHLIGHT_MAX,
   FLASHLIGHT_DRAIN,
   FLASHLIGHT_RECHARGE,
-  STAMINA_MAX,
   SLOT_PRIMARY,
   SLOT_PISTOL,
   SLOT_MELEE,
@@ -101,6 +100,7 @@ import {
   CONT_TABLES,
   loadedAmmo,
   CONSUMABLES,
+  useWasted,
   AMMO,
   AMMO_MAX,
   AMMO_ITEMS,
@@ -120,7 +120,7 @@ const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
 import { MineNav } from './minenav.js';
-import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
+import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { swimming, DROWN_DPS } from '../shared/swim.js';
@@ -484,7 +484,7 @@ export class Game {
     p.session = { conn: DEAD_CONN, player: p, ip: '', msgCount: 0, msgWindow: 0 }; // (whatever the game still sends them goes nowhere)
     p.cmdQueue.length = 0;
     p.hold = null;
-    p.useItem = null;
+    this.endUse(p);
     this.releaseHolds(p); // (a leaper or a roper on them lets go)
     this.playersDirty = true;
     this.systemChat(`${p.name} lost connection - holding their place for ${REJOIN_GRACE} seconds.`);
@@ -500,6 +500,7 @@ export class Game {
     p.cmdQueue.length = 0;
     p.lastSeq = 0;
     p.hasSeq = false;
+    p.recvSeq = 0;
     p.view = new ClientView();
     p.selfSync = true;
     // (what the old client was sent: writeSelf, writeGlobalFor and the player list only send what differs from it, and
@@ -712,6 +713,7 @@ export class Game {
       cmdBudget: 6,
       lastSeq: 0,
       hasSeq: false,
+      recvSeq: 0, // the newest command that has come in, run or not (useItem)
       renderTick: 0,
       renderFrac: 0,
       view: new ClientView(),
@@ -1071,7 +1073,7 @@ export class Game {
     p.becomeZombie = false;
     p.flashlight = false;
     p.battery = FLASHLIGHT_MAX;
-    p.useItem = null;
+    this.endUse(p);
     p.hold = null;
     p.inv = createInventory();
     for (const [item, n] of kit.items) addItem(p.inv, item, n);
@@ -1101,7 +1103,7 @@ export class Game {
     p.armor = 0;
     p.armorMax = 0;
     p.flashlight = false;
-    p.useItem = null;
+    this.endUse(p);
     p.hold = null;
     this.fillHistory(p);
     this.playersDirty = true;
@@ -1654,6 +1656,7 @@ export class Game {
       // the packet's last command carries the client's fingerprint of its predicted state after it (NO_HASH: none
       // to check against, so that client gets our state)
       p.cmdQueue.push({ seq: c.seq, buttons: c.buttons, yaw: dqangle16(c.qyaw), pitch: Math.max(-1.55, Math.min(1.55, dqpitch(c.qpitch))), slot: c.slot, hash: i < cmds.length - 1 ? -1 : hash < 0 ? NO_HASH : hash, renderTick, renderFrac });
+      p.recvSeq = c.seq;
     }
     if (p.cmdQueue.length > CMD_QUEUE_MAX) p.cmdQueue.splice(0, p.cmdQueue.length - CMD_QUEUE_MAX);
   }
@@ -1679,10 +1682,11 @@ export class Game {
         p.renderFrac = cmd.renderFrac;
         if (!p.alive) continue;
         const events = [];
-        if (p.useItem && cmd.slot !== 255) p.useItem = null; // switching cancels use
         // The client predicts with the same simulation, so its state only needs sending when the two can differ:
         // something other than a command touched ours since the last one, or its fingerprint says it got elsewhere
         if (!samePlayerState(p.state, p.shadow)) p.selfSync = true;
+        // an item asked for is in the hands from the client's first command after asking on (useItem)
+        if (p.useItem && !p.state.using && ((cmd.seq - p.useItem.from) & 0xffff) < 0x8000) p.state.using = 1;
         // pinned by a leaper: Space throws it off (Zombies.throwOff)
         if (p.state.pinned && cmd.buttons & BTN_JUMP & ~p.state.lastBtn && this.zm.throwOff(p)) p.selfSync = true;
         simulatePlayer(p.state, cmd, this.world, events);
@@ -1702,6 +1706,11 @@ export class Game {
         break;
       case 'melee':
         this.combat.melee(p, ev);
+        break;
+      case 'use_cancel':
+        // a click or a weapon asked for put the item in the hands away unused (the simulation has let go of it). (Not
+        // one asked for since, that the client has in its hands from a later command on)
+        if (p.useItem && ((p.lastSeq - p.useItem.from) & 0xffff) < 0x8000) p.useItem = null;
         break;
       case 'throw': {
         const item = ev.item;
@@ -2443,11 +2452,16 @@ export class Game {
     if (p.downed && it.item !== ITEM.MEDKIT) return;
     if (def.cat === 'cons') {
       const c = CONSUMABLES[it.item];
-      if (!c) return;
-      if (c.heal && p.hp >= p.maxHp && !c.stamina && !p.downed) return;
-      if (c.flashlight && p.battery >= FLASHLIGHT_MAX - 1) return;
-      if (c.stamina && !c.heal && s.stamina >= STAMINA_MAX - 0.5 && !s.exhausted) return; // (an energy drink at full stamina)
-      p.useItem = { item: it.item, t: 0, total: c.time };
+      if (!c || useWasted(it.item, { hp: p.hp, maxHp: p.maxHp, battery: p.battery, downed: p.downed, stamina: s.stamina, exhausted: s.exhausted })) return;
+      // The hands go onto it (s.using: no weapon goes off until it is used up or put away, simulatePlayer) from the
+      // client's next command on, which is where its prediction has them go: it sends every command it has made
+      // before it asks (Game.useConsumable), so that is the one after the newest that has come in. Those still
+      // waiting to be run are run without it (processInputs); with none waiting, that is now.
+      p.useItem = { item: it.item, t: 0, total: c.time, from: (p.recvSeq + 1) & 0xffff };
+      if (!p.cmdQueue.length) {
+        s.using = 1;
+        p.shadow.using = 1; // (the client did the same after the same command: nothing to rebase it on)
+      }
       p.hold = null;
       // a can is cracked as the drink starts; the drinker heard their own at once (Game.quickDrink)
       if (c.drink) this.sound(SOUND.DRINK, s.x, s.y + 1.5, s.z, 12, p.id);
@@ -2524,9 +2538,18 @@ export class Game {
     p.invDirty = true;
   }
 
+  // An item use over, done or not: the hands are free again. (The simulation's `using` is never sent on its own: the
+  // client reads it off the item in use in the status (writeSelf), which only names one while `using` is up. So the
+  // use is never dropped without it: here, or the simulation's 'use_cancel', which put it down first)
+  endUse(p) {
+    p.useItem = null;
+    p.state.using = 0;
+  }
+
   finishUse(p) {
     const u = p.useItem;
-    p.useItem = null;
+    this.endUse(p);
+    p.state.switchT = DRAW_TIME; // the weapon comes back out
     if (countItem(p.inv, u.item) <= 0) return;
     const c = CONSUMABLES[u.item];
     removeItem(p.inv, u.item, 1);
@@ -2767,7 +2790,7 @@ export class Game {
     p.downed = true;
     p.hp = 0;
     p.bleed = DOWN_TIME;
-    p.useItem = null;
+    this.endUse(p);
     p.hold = null;
     p.revivedBy = 0;
     this.releaseHolds(p);
@@ -2807,7 +2830,7 @@ export class Game {
     p.hp = 0;
     p.alive = false;
     p.deaths++;
-    p.useItem = null;
+    this.endUse(p);
     p.hold = null;
     p.downed = false;
     p.state.downed = 0;
@@ -3557,7 +3580,7 @@ export class Game {
       } else p.drownT = 0;
       if (p.downed) {
         if (!p.revivedBy && !p.away) p.bleed -= dt; // (a held player's clock stops)
-        if (p.useItem) {
+        if (p.useItem && s.using) {
           p.useItem.t += dt;
           if (p.useItem.t >= p.useItem.total) this.finishUse(p);
         }
@@ -3582,7 +3605,7 @@ export class Game {
         }
       } else p.battery = Math.min(FLASHLIGHT_MAX, p.battery + FLASHLIGHT_RECHARGE * dt);
       // item use
-      if (p.useItem) {
+      if (p.useItem && s.using) {
         p.useItem.t += dt;
         if (p.useItem.t >= p.useItem.total) this.finishUse(p);
       }
@@ -3840,8 +3863,9 @@ export class Game {
           c.u8(Math.round(p.battery));
           break;
         case 3:
-          c.u8(p.useItem ? p.useItem.item : 0);
-          c.u8(p.useItem ? Math.min(255, Math.round((p.useItem.t / p.useItem.total) * 255)) : 0);
+          // (only once it is in the hands: this is also what the client has the simulation's `using` from, endUse)
+          c.u8(p.useItem && s.using ? p.useItem.item : 0);
+          c.u8(p.useItem && s.using ? Math.min(255, Math.round((p.useItem.t / p.useItem.total) * 255)) : 0);
           break;
         case 4:
           c.u8(Math.max(0, Math.min(255, Math.ceil(p.respawnT))));

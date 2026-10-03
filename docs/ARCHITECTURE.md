@@ -107,6 +107,15 @@ more than its bytes**, so put things into the packets that already flow.
   Server-driven values the HUD shows (hp, armor, battery, hold progress...) are the status groups: sent when
   they change. `scripts/test-netsync.js` shoves a player on a laggy link and checks both ends agree again
   within a round trip.
+- **An item in the hands** (`state.using`, `Game.useItem`): while a medkit, a tin or a battery is being used,
+  `simulatePlayer` fires, swings, throws and reloads nothing, and a fresh click (or a weapon asked for) puts the
+  item away unused (`use_cancel`) and brings the weapon back out (`DRAW_TIME`); a button held since before is no
+  click. The server runs the use's clock (`updatePlayers`) and finishes it, which brings the weapon out too: that
+  covers the round trip it takes the client to hear of it. Starting one needs no rebase: the client sends every
+  command it has made before `ACT.USE_ITEM` (`Game.useConsumable`) and has the hands on the item from its next one
+  (`Prediction.startUse`), and the server raises `using` on that same command (`p.useItem.from`, the one after the
+  newest that had come in). It is the one field of the simulated state in no `writeSelf` chunk: `readSelf` takes it
+  from the status's item in use, which the server only names while `using` is up (`Game.endUse`).
 - **Entities** (`server/snapshot.js` / `client/net/decode.js`, tables `FIELD_COUNT` + `BIT_SLOTS` in both):
   area of interest per kind, creates in full, updates only for changed fields, sorted by id behind a one-byte
   head (id step, position as a 1 / 2 / 3-byte delta or absolute, which fields follow), far entities every other

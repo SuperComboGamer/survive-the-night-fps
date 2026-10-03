@@ -76,6 +76,7 @@ export function createPlayerState() {
     pinned: 0,
     stunT: 0,
     downed: 0, // incapacitated: crawl, pistol only, waiting for a teammate to revive
+    using: 0, // an item in the hands being used (a medkit, a tin: Game.useItem): set by the server, put away here
     lastBtn: 0,
     fireCount: 0,
     // on a ride at the fair (fair.js): the seat + 1, the ride clock as this player has it (commands), whether it turns
@@ -124,6 +125,7 @@ export function copyPlayerState(dst, src) {
   dst.pinned = src.pinned;
   dst.stunT = src.stunT;
   dst.downed = src.downed;
+  dst.using = src.using;
   dst.lastBtn = src.lastBtn;
   dst.fireCount = src.fireCount;
   dst.ride = src.ride;
@@ -148,7 +150,7 @@ export function samePlayerState(a, b) {
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
-  return a.downed === b.downed && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
+  return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
 }
 
 // Rounds every float of the state to float32, which is how the server puts it on the wire: after the server has
@@ -194,7 +196,7 @@ export function hashPlayerState(s) {
   mix(Math.round(s.vx * 128));
   mix(Math.round(s.vy * 128));
   mix(Math.round(s.vz * 128));
-  mix((s.onGround ? 1 : 0) | (s.crouch ? 2 : 0) | (s.exhausted ? 4 : 0) | (s.sprinting ? 8 : 0) | (s.zombie ? 16 : 0) | (s.pulled ? 32 : 0) | (s.pinned ? 64 : 0) | (s.downed ? 128 : 0));
+  mix((s.onGround ? 1 : 0) | (s.crouch ? 2 : 0) | (s.exhausted ? 4 : 0) | (s.sprinting ? 8 : 0) | (s.zombie ? 16 : 0) | (s.pulled ? 32 : 0) | (s.pinned ? 64 : 0) | (s.downed ? 128 : 0) | (s.using ? 256 : 0));
   mix(Math.round(s.stamina * 64));
   mix(Math.round(s.staminaDelay * 512));
   mix(s.slot | (s.mags[0] << 8) | (s.mags[1] << 16) | (s.throwCount << 24));
@@ -270,6 +272,15 @@ export function shotDirections(yaw, pitch, recoilPitch, spread, pellets, seed, o
   return pellets;
 }
 
+export const DRAW_TIME = 0.42; // a weapon being brought out, before it can be used
+
+// The item being used goes away unfinished, and the weapon in hand comes back out as from a switch
+function putAwayItem(s, events) {
+  s.using = 0;
+  s.switchT = DRAW_TIME;
+  if (events) events.push({ type: 'use_cancel' });
+}
+
 // Simulate one command (fixed CMD_DT). events: array to push {type,...} into (may be null).
 // cmd = { seq, buttons, yaw, pitch, slot (255 = no change) }
 export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
@@ -279,9 +290,11 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.pitch = cmd.pitch;
 
   // ------------------------------------------------ slot switching
+  // (asking for a weapon puts away the item being used)
+  if (s.using && cmd.slot !== 255) putAwayItem(s, events);
   if (cmd.slot !== 255 && cmd.slot !== s.slot && cmd.slot < 5 && canSelectSlot(s, cmd.slot)) {
     s.slot = cmd.slot;
-    s.switchT = s.zombie ? 0.1 : 0.42;
+    s.switchT = s.zombie ? 0.1 : DRAW_TIME;
     s.reloadT = 0;
     s.recoil = 0;
     if (events) events.push({ type: 'switch', slot: s.slot });
@@ -295,7 +308,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   // lost the item in the active slot (dropped / used up)
   if (!s.zombie && !s.downed && s.slot !== SLOT_BUILD && !canSelectSlot(s, s.slot)) {
     s.slot = s.weapons[SLOT_PRIMARY] ? SLOT_PRIMARY : s.weapons[SLOT_PISTOL] ? SLOT_PISTOL : SLOT_MELEE;
-    s.switchT = 0.42;
+    s.switchT = DRAW_TIME;
     s.reloadT = 0;
   }
 
@@ -496,7 +509,14 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   const attack = b & BTN.ATTACK;
   const attackPressed = pressed & BTN.ATTACK;
 
-  if (s.zombie) {
+  if (s.using) {
+    // The hands are busy with an item (Game.useItem) and nothing in them goes off: no shot, swing, throw or reload.
+    // A click puts the item away and brings the weapon back out instead, and that click is not a shot. A button
+    // held down since before the item came out is not a click.
+    s.reloadT = 0;
+    s.recoil = 0;
+    if (attackPressed) putAwayItem(s, events);
+  } else if (s.zombie) {
     if ((attack || attackPressed) && s.cooldown <= 0 && s.switchT <= 0) {
       s.cooldown = CLAWS.rate;
       s.fireCount = (s.fireCount + 1) & 255;
