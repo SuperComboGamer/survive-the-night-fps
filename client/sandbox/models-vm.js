@@ -424,6 +424,13 @@ if (params.get('vm') === 'hands') {
     for (let i = 0; i < n; i++) step(DT);
     render();
     views[0].vm.getMuzzle(mz);
+    // where each hand's grip center is (window.__hands: for a fixed camera on a hand, the same before and after a change)
+    {
+      const v = views[0];
+      v.scene.updateMatrixWorld(true);
+      const at = (arm) => (arm.visible ? arm.wrist.localToWorld(arm.gripCenter(new THREE.Vector3())).toArray().map((x) => +x.toFixed(4)) : null);
+      window.__hands = { R: at(v.vm.armR), L: at(v.vm.armL) };
+    }
     info.textContent += `\nmuzzle(0): ${mz.x.toFixed(3)}, ${mz.y.toFixed(3)}, ${mz.z.toFixed(3)}`;
     if (params.get('clip') === '1') {
       // &clip=1: how far the hands and the item pass into each other (see clipReport)
