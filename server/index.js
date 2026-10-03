@@ -37,9 +37,10 @@ const DIST = resolve(__dirname, '../dist');
 const log = (...a) => console.log('[server]', ...a);
 
 // ---------------------------------------------------------------- the database
-// Migrated on the way up (MIGRATE_ON_START=0: not): Railway's pre-deploy step has normally done it already (npm run
-// migrate, railway.json), and then this finds nothing to do. A database that cannot be reached leaves the games
-// running and the accounts failing until it can be.
+// Migrated on the way up (MIGRATE_ON_START=0: not); if a pre-deploy step did it already (npm run migrate,
+// railway.json) this finds nothing to do. A migration that fails stops a production server here: the deploy then fails
+// its health check and Railway keeps the one that is running, on the schema it knows. A database that cannot be
+// reached leaves the games running and the accounts failing until it can be.
 const db = await openDb(process.env.DATABASE_URL, { log }).catch((err) => {
   console.error('[server] database could not be opened:', err.message);
   return null;
@@ -52,6 +53,8 @@ if (db) {
       if (applied.length) log(`database: applied ${applied.join(', ')}`);
     } catch (err) {
       console.error('[server] database migrations failed:', err.message);
+      // (an SQL error carries its SQLSTATE: the migration is wrong, not the network)
+      if (process.env.NODE_ENV === 'production' && /^[0-9A-Z]{5}$/.test(err.code || '')) process.exit(1);
     }
   }
 }

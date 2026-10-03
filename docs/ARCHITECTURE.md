@@ -182,8 +182,9 @@ JSON file (`server/stats.js`).
 
 - **Migrations** (`server/db/migrate.js`, files in `server/db/migrations/NNN_name.sql`): applied in name order,
   each once (`schema_migrations`, with a checksum), all pending ones in one transaction under an advisory lock.
-  `npm run migrate` is Railway's pre-deploy command (`railway.json`); the server also migrates on start
-  (`MIGRATE_ON_START=0`: not). An applied migration is never edited: a change is a new file. 001: accounts,
+  The server migrates as it starts (`MIGRATE_ON_START=0`: not), and a production server whose migration fails
+  exits, so that deploy never goes live; `npm run migrate` does the same by hand (and is the pre-deploy command in
+  `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,

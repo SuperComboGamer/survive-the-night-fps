@@ -142,10 +142,13 @@ https://www.survivethenightgame.com.
 - **Postgres** is a second service in the project ("Postgres", Railway's template, on a volume of its own). The
   game service's `DATABASE_URL` is the reference `${{Postgres.DATABASE_URL}}`, which reaches it over Railway's
   private network (`postgres.railway.internal`); the database has no public address.
-- **Migrations run on every deploy:** `preDeployCommand` in `railway.json` is `npm run migrate`
-  (`scripts/migrate.js`), which runs in the new build before it goes live. Migrations that fail stop the deploy
-  there, and the running server stays up. The server also applies anything still pending when it starts (under
-  the same advisory lock, so it is never done twice); `MIGRATE_ON_START=0` turns that off. A new migration is a new
+- **Migrations run on every deploy,** by the new server as it starts (`server/index.js`, under an advisory lock, so
+  never twice): a migration that fails makes a production server exit, so the deploy fails its health check and
+  the running one stays up on the schema it knows. `railway.json` also asks for `npm run migrate`
+  (`scripts/migrate.js`) as the pre-deploy command, but Railway left it out of this service's deploys (2 Oct 2026:
+  the deploy manifest has `preDeployCommand: null`, and `railway environment edit` cannot set it); setting it in
+  the dashboard (Settings -> Deploy -> Pre-deploy command) would run them one step earlier. `MIGRATE_ON_START=0`
+  turns the start-up migration off. A new migration is a new
   file in `server/db/migrations` (`003_...sql`); one that has been applied is never edited. `npm run migrate --
   --status` lists what is pending.
 - The leaderboard, accounts and match records live in that database. (Without `DATABASE_URL` the server falls back
