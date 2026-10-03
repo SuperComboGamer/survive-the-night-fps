@@ -15,7 +15,6 @@ import { readSnapshot } from '../client/net/decode.js';
 
 const seed = +(process.argv[2] || 4242);
 const game = new Game({ seed, godMode: true, dayLength: 3600, log: () => {} });
-game.debugCommands = true;
 const fails = [];
 const check = (name, ok, info = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${info}`);
@@ -41,6 +40,7 @@ function client(name) {
   w.str(name);
   game.onMessage(c.session, w.bytes().slice());
   c.p = () => game.players.get(c.id);
+  if (c.p()) c.p().admin = true; // (the admin chat commands: c.tp)
   c.input = (buttons, yaw, pitch, slot = 255) => {
     const w2 = new Writer(64);
     w2.u8(C2S.INPUT);
