@@ -320,7 +320,7 @@ export class Game {
     this.supplyHints = [255, 255, 255, 255, 255, 255, 255]; // zones: 4 parts + 3 jerry cans
     this.supplyFound = 0; // a bit per hint: that one has been taken from its hiding place (nothing left to search there)
     this.unlocked = 0; // schematics bitmask
-    this.fallen = new Set(); // names of players who left dead since the last sunrise (removePlayer, handleJoin)
+    this.fallen = new Set(); // who left dead since the last sunrise (leaverKey: removePlayer, handleJoin)
     this.waves = [];
     this.wave = 0;
     this.bossPending = null;
@@ -334,7 +334,7 @@ export class Game {
     this.playersDirty = true;
     this.playersListT = 0;
     this.gather = new Map(); // collider -> {left, day}
-    this.leftKits = new Map(); // name -> what is left of the starting kit of a player who left this run (parkKit)
+    this.leftKits = new Map(); // leaverKey -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
     this.lootPoints = [];
@@ -494,10 +494,14 @@ export class Game {
     p.hasSeq = false;
     p.view = new ClientView();
     p.selfSync = true;
+    // (what the old client was sent: writeSelf, writeGlobalFor and the player list only send what differs from it, and
+    // the new one starts from its defaults - a held zombie would come back to a survivor's HUD)
+    p.selfCache = null;
+    p.globalCache = null;
+    p.listVer = -1;
     p.snapTick = -2;
     p.ackSent = 0;
     p.invDirty = true;
-    p.globalSent = false;
     const w = new Writer(64);
     w.u8(S2C.WELCOME);
     w.u16(p.id);
@@ -636,18 +640,17 @@ export class Game {
     w.u8(this.maxPlayers);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
-    else if (this.fallen.delete(p.name) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+    else if (this.fallen.delete(this.leaverKey(p)) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
       // died in this run and came back in before sunrise: they are what they were, and wait for dawn with the rest
-      // of the dead - a reload is no way round a death. (A JOIN carries nothing but a name, so under another name
-      // they are a newcomer: closing that takes an identity in the join message.) The kit parked under their name
+      // of the dead - a reload is no way round a death, and nor is another name (leaverKey). The kit parked for them
       // stays where it is: the dead carry nothing, and returnFallen replaces it at sunrise.
       this.spawnPlayerZombie(p);
       this.sendChat(p, 0, CHATF.SYSTEM, `You died in this run: you are one of them ${this.escape.active ? 'to the end of it' : 'until dawn'}.`);
     } else {
       // a run in progress: beside the team, with a kit for the day - or, back in the run they left, with what they
       // left with (parkKit)
-      const left = this.leftKits.get(p.name);
-      this.leftKits.delete(p.name);
+      const left = this.leftKits.get(this.leaverKey(p));
+      this.leftKits.delete(this.leaverKey(p));
       this.spawnHuman(p, left || starterKit(this.day), true);
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
@@ -724,7 +727,6 @@ export class Game {
       pinnedBy: 0,
       ropedBy: 0,
       ping: 0,
-      globalSent: false,
       ts: null, // the stint analytics.js is counting for them (null: none)
       rejoinKey: '', // 'a:<account id>' or 'g:<browser id>': whose JOIN may take this player back after a drop (resume)
       away: null, // dropped and held: { since } (hold), until they come back or REJOIN_GRACE runs out
@@ -744,11 +746,17 @@ export class Game {
     return p;
   }
 
+  // Who a leaver is to this run if they come back (fallen, leftKits): their account or browser (rejoinKey), so coming
+  // back under another name gets round neither a death nor a used-up kit. Only a player with neither - the test bots -
+  // is known by their name. (A key has a ':' in it and a name never does: the two cannot collide.)
+  leaverKey(p) {
+    return p.rejoinKey || p.name;
+  }
+
   // A leaver takes what is left of their starting kit with them - never more of anything than they were issued - and
-  // gets exactly that back if they rejoin this run under the same name. Only what they found on top of it is dropped
-  // for the team. Dropping the kit and issuing a fresh one on the way back in would let a reconnect loop pile rounds
-  // and bandages up at the team's feet, and refill anyone who had used theirs up (or lost them by dying).
-  // The name is all a JOIN identifies a player by: under a new one they are a newcomer.
+  // gets exactly that back if they rejoin this run (leaverKey). Only what they found on top of it is dropped for the
+  // team. Dropping the kit and issuing a fresh one on the way back in would let a reconnect loop pile rounds and
+  // bandages up at the team's feet, and refill anyone who had used theirs up (or lost them by dying).
   parkKit(p) {
     const kit = p.kit;
     if (!kit) return;
@@ -762,8 +770,8 @@ export class Game {
       for (const slot of [SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD]) if (s.weapons[slot] === STARTER_TOOLS[slot]) s.weapons[slot] = 0;
     }
     for (const [item, n] of kit.items) left.items.push([item, gone ? 0 : removeItem(p.inv, item, n)]);
-    this.leftKits.delete(p.name);
-    this.leftKits.set(p.name, left);
+    this.leftKits.delete(this.leaverKey(p));
+    this.leftKits.set(this.leaverKey(p), left);
     if (this.leftKits.size > LEFT_KITS_MAX) this.leftKits.delete(this.leftKits.keys().next().value); // (the oldest)
   }
 
@@ -775,7 +783,7 @@ export class Game {
     this.players.delete(p.id);
     this.records.leave(p.rec);
     this.nav.removeField(p.id);
-    if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(p.name); // left dead: dead if they rejoin before sunrise (handleJoin)
+    if (this.dawnReturn && (p.zombie || !p.alive)) this.fallen.add(this.leaverKey(p)); // left dead: dead if they rejoin before sunrise (handleJoin)
     this.removeEntity(p);
     this.notify(NOTIFY.PLAYER_LEFT, 0);
     // (whoever arrived unannounced leaves unannounced; an announced one always gets their line, and it counts)
@@ -1090,9 +1098,9 @@ export class Game {
   // there lasts to the end of the run.
   returnFallen() {
     // Whoever left dead has sat the night out. If they come back into this run now, they are a survivor, with what
-    // the dead who stayed wake with: handleJoin hands back the kit parked under their name (parkKit left it empty),
+    // the dead who stayed wake with: handleJoin hands back the kit parked for them (parkKit left it empty),
     // so waiting out a death offline is neither better nor worse than waiting it out as a zombie.
-    for (const name of this.fallen) if (this.leftKits.has(name)) this.leftKits.set(name, RETURN_KIT);
+    for (const who of this.fallen) if (this.leftKits.has(who)) this.leftKits.set(who, RETURN_KIT);
     this.fallen.clear();
     // Nobody alive to come back to: a wipe is a loss, never a second chance. checkAllDead ends the run on the death
     // that leaves nobody standing, in the tick it happens, so the clock does not reach dawn in that state - this
