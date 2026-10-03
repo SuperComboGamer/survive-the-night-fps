@@ -6,11 +6,11 @@
 // container is, takes the shortest way and meets nobody: the floor under what a person needs, not the figure.
 //   --floor   also pick up the loose loot lying about each place
 //   --rows    a line per map: the two places, metres and seconds
-// DAY_LENGTH and FIRST_DAY_LENGTH (shared/constants.js) were set from this.
+// DAY_LENGTH (shared/constants.js), the shortest a day gets, was set from this.
 import { createWorld } from '../shared/world.js';
 import { Nav } from '../server/nav.js';
 import { createPlayerState, simulatePlayer } from '../shared/playersim.js';
-import { BTN, CMD_DT, MAP_HALF, INTERACT_REACH, SEARCH_TIME, WALK_SPEED, DAY_LENGTH, FIRST_DAY_LENGTH, DUSK_WARNING } from '../shared/constants.js';
+import { BTN, CMD_DT, MAP_HALF, INTERACT_REACH, SEARCH_TIME, WALK_SPEED, DAY_LENGTH, dayLength, DUSK_WARNING } from '../shared/constants.js';
 import { ZONE, ZONE_NAMES } from '../shared/defs.js';
 
 const args = process.argv.slice(2);
@@ -245,7 +245,7 @@ for (const sprint of [true, false]) {
   stat('both trips, all of both places', R.map((r) => r.places[0].t + r.places[0].all + r.places[1].t + r.places[1].all));
 }
 console.log(`\n${legs} legs walked, ${stuck} the follower gave up on (charged at walking pace)`);
-console.log(`A day is ${DAY_LENGTH} s (the first ${FIRST_DAY_LENGTH} s): ${DAY_LENGTH - DUSK_WARNING} s (${FIRST_DAY_LENGTH - DUSK_WARNING} s) until the horn, ${DUSK_WARNING} s after it.`);
+console.log(`Days 1-8 are ${[1, 2, 3, 4, 5, 6, 7, 8].map(dayLength).join(', ')} s, then ${DAY_LENGTH} s: the horn sounds ${DUSK_WARNING} s before the end, so the shortest leaves ${DAY_LENGTH - DUSK_WARNING} s until it.`);
 if (ROWS) {
   console.log();
   for (const r of rows.filter((r) => r.sprint)) console.log(String(r.seed).padStart(7), r.places.map((p) => `${p.name}: ${p.m.toFixed(0)} m in ${p.t.toFixed(0)} s, ${p.n} searched in ${p.all.toFixed(0)} s`).join('  ->  '));

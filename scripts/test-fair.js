@@ -568,6 +568,12 @@ function laggy(LAG, JIT) {
   let placed = false;
   for (let tick = 0; tick < AT.end; tick++) {
     const p = game.players.get(c.id);
+    // (no dead about: what they do to a rider is checked above, and the specials of the valley's far places - a
+    // spitter's acid, a roper's rope - would be a fifth thing the client cannot know)
+    if (game.zombies.length) {
+      for (const z of [...game.zombies]) game.removeEntity(z);
+      game.zombies.length = 0;
+    }
     for (let fr = 0; fr < 60 / SERVER_TICK_RATE; fr++) {
       now = (frame * 1000) / 60;
       while (toClient.length && toClient[0][0] <= now) onClientMessage(toClient.shift()[1]);

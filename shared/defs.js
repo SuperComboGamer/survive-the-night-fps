@@ -334,6 +334,9 @@ export const ZTYPE = {
   BOSS_HIVEQUEEN: 9,
   DOG: 10,
   SHADE: 11,
+  BOSS_BRUTE: 12,
+  BOSS_ALPHA: 13,
+  BOSS_BLOATER: 14,
 };
 
 // speed m/s, hp, dmg per hit, attack rate s, radius, height (for hitboxes), headR, headY
@@ -341,30 +344,45 @@ export const ZTYPE = {
 // ahead of the body, bodyTop = top of the body cylinder (default headY - headR).
 // shade: only moves in darkness; while any light is on it, it is frozen and takes litResist x damage
 // legs: its legs can be shot (LEG_* in constants.js): a hit trips it, a leg can be blown off, with both gone it crawls
+// minNight: the night it joins the horde. One new kind a night (Game.startNight), each said on the dawn card before it
+// and at the dusk horn with its intro; by day the further a place is from the car, the more of the specials it holds,
+// whatever the night (ZombieManager.daySpecial). A boss's minNight is the first night it can be drawn (BOSS_POOL)
+// tip: a boss's one line on how to fight it, shown when it comes. bossLoot: the rolls it drops (default 8)
 export const ZOMBIE_DEFS = {
   [ZTYPE.WALKER]: { name: 'Walker', hp: 110, speed: 1.9, dmg: 11, rate: 1.1, range: 1.55, radius: 0.38, height: 1.75, headY: 1.58, headR: 0.17, structDmg: 22, loot: 0.28, common: true, minNight: 1, legs: true },
   [ZTYPE.RUNNER]: { name: 'Runner', hp: 75, speed: 5.6, dmg: 8, rate: 0.7, range: 1.5, radius: 0.34, height: 1.72, headY: 1.55, headR: 0.16, structDmg: 12, loot: 0.25, common: true, minNight: 1, legs: true },
-  // night 2's boss (TANK_BOSS_NIGHT), rank-and-file in the horde from night 4. One blow breaks a wood barricade
+  // a boss from night 2 (BOSS_POOL, at TANK_BOSS_HP of this health), rank-and-file in the horde from night 9. One blow
+  // breaks a wood barricade
   // moveR / moveH: the body it walks and charges into the world with. Smaller than radius / height (which stay the
   // size bullets, blows and the model go by) so that it fits a doorway (1.0-1.6 m wide, the lintel 2.08 m above the
   // floor): at its full size a survivor indoors is out of its reach for good. The model does not stoop: it clips
   // the door frame on the way through
-  [ZTYPE.TANK]: { name: 'Tank', hp: 2200, speed: 2.5, dmg: 38, rate: 1.6, range: 2.4, radius: 0.95, height: 2.8, headY: 2.45, headR: 0.3, moveR: 0.5, moveH: 1.9, structDmg: 520, loot: 1, knock: 11, minNight: 4 },
-  [ZTYPE.SPITTER]: { name: 'Spitter', hp: 95, speed: 2.3, dmg: 8, rate: 1.1, range: 1.5, radius: 0.36, height: 1.85, headY: 1.68, headR: 0.17, structDmg: 15, loot: 0.5, spitRange: 22, spitRate: 3.5, minNight: 2, legs: true },
-  [ZTYPE.LEAPER]: { name: 'Leaper', hp: 90, speed: 4.2, dmg: 9, rate: 0.5, range: 1.5, radius: 0.36, height: 1.3, headY: 1.1, headR: 0.17, structDmg: 12, loot: 0.5, leapRange: 14, minNight: 3 },
-  [ZTYPE.ROPER]: { name: 'Roper', hp: 150, speed: 2.1, dmg: 6, rate: 0.5, range: 1.6, radius: 0.37, height: 1.9, headY: 1.72, headR: 0.17, structDmg: 15, loot: 0.6, ropeRange: 24, minNight: 4, legs: true },
+  [ZTYPE.TANK]: { name: 'Tank', hp: 2200, speed: 2.5, dmg: 38, rate: 1.6, range: 2.4, radius: 0.95, height: 2.8, headY: 2.45, headR: 0.3, moveR: 0.5, moveH: 1.9, structDmg: 520, loot: 1, knock: 11, minNight: 9, intro: 'Tanks join the horde: they charge, and no barricade holds them. Listen for their footsteps.', tip: 'Listen for its footsteps. It charges, and it smashes straight through barricades.' },
+  [ZTYPE.SPITTER]: { name: 'Spitter', hp: 95, speed: 2.3, dmg: 8, rate: 1.1, range: 1.5, radius: 0.36, height: 1.85, headY: 1.68, headR: 0.17, structDmg: 15, loot: 0.5, spitRange: 22, spitRate: 3.5, minNight: 3, legs: true, intro: 'Spitters join the horde: acid from 20 m that eats barricades, not walls. Shoot them first.' },
+  [ZTYPE.LEAPER]: { name: 'Leaper', hp: 90, speed: 4.2, dmg: 9, rate: 0.5, range: 1.5, radius: 0.36, height: 1.3, headY: 1.1, headR: 0.17, structDmg: 12, loot: 0.5, leapRange: 14, minNight: 5, intro: 'Leapers join the horde: they pounce and pin. Stay close, so someone can shoot one off you.' },
+  [ZTYPE.ROPER]: { name: 'Roper', hp: 150, speed: 2.1, dmg: 6, rate: 0.5, range: 1.6, radius: 0.37, height: 1.9, headY: 1.72, headR: 0.17, structDmg: 15, loot: 0.6, ropeRange: 24, minNight: 8, legs: true, intro: 'Ropers join the horde: a rope needs line of sight, so keep to cover and shoot the roper to break it.' },
   // cannot claw at a structure: held up by one for breachHold s with a survivor within breachRange m, it swells for
   // breachWindup s and bursts against it. That piece takes breachDmg on top of the blast (with it, any wood piece
   // goes; a metal wall loses about 40%) - unless the boomer is shot first, which leaves only the blast
-  [ZTYPE.BOOMER]: { name: 'Boomer', hp: 70, speed: 1.7, dmg: 0, rate: 1, range: 2.2, radius: 0.6, height: 1.8, headY: 1.62, headR: 0.2, structDmg: 0, loot: 0.6, blastRadius: 5.5, blastDmg: 45, breachHold: 0.8, breachWindup: 1.2, breachRange: 12, breachDmg: 750, minNight: 2, legs: true },
-  [ZTYPE.BAT]: { name: 'Bat', hp: 28, speed: 7.5, dmg: 5, rate: 0.9, range: 1.3, radius: 0.3, height: 0.4, headY: 0.2, headR: 0.2, structDmg: 0, loot: 0.08, flying: true, common: true, minNight: 3 },
+  [ZTYPE.BOOMER]: { name: 'Boomer', hp: 70, speed: 1.7, dmg: 0, rate: 1, range: 2.2, radius: 0.6, height: 1.8, headY: 1.62, headR: 0.2, structDmg: 0, loot: 0.6, blastRadius: 5.5, blastDmg: 45, breachHold: 0.8, breachWindup: 1.2, breachRange: 12, breachDmg: 750, minNight: 4, legs: true, intro: 'Boomers join the horde: they burst against your walls. Shoot them far off.' },
+  [ZTYPE.BAT]: { name: 'Bat', hp: 28, speed: 7.5, dmg: 5, rate: 0.9, range: 1.3, radius: 0.3, height: 0.4, headY: 0.2, headR: 0.2, structDmg: 0, loot: 0.08, flying: true, common: true, minNight: 7, intro: 'Bats join the horde: they fly over every wall. Shotguns and melee.' },
   // night bosses: hp is what one survivor faces (+ BOSS_HP_PER_PLAYER of it per extra survivor, Game.spawnBosses),
   // sized so that the rounds a survivor has left once the horde has had its share can bring one down before sunrise
-  [ZTYPE.BOSS_ABOMINATION]: { name: 'The Abomination', hp: 4000, speed: 3.0, dmg: 55, rate: 1.8, range: 3.4, radius: 1.5, height: 4.2, headY: 3.7, headR: 0.5, structDmg: 600, loot: 1, knock: 16, boss: true, minNight: 3 },
-  [ZTYPE.BOSS_HIVEQUEEN]: { name: 'The Hive Queen', hp: 3400, speed: 2.4, dmg: 35, rate: 1.4, range: 3.0, radius: 1.3, height: 3.6, headY: 3.1, headR: 0.45, structDmg: 300, loot: 1, knock: 8, boss: true, spitRange: 30, spitRate: 1.6, minNight: 6 },
+  [ZTYPE.BOSS_ABOMINATION]: { name: 'The Abomination', hp: 4000, speed: 3.0, dmg: 55, rate: 1.8, range: 3.4, radius: 1.5, height: 4.2, headY: 3.7, headR: 0.5, structDmg: 600, loot: 1, knock: 16, boss: true, minNight: 4, tip: 'It slams the ground and throws boulders. Spread out and keep moving.' },
+  [ZTYPE.BOSS_HIVEQUEEN]: { name: 'The Hive Queen', hp: 3400, speed: 2.4, dmg: 35, rate: 1.4, range: 3.0, radius: 1.3, height: 3.6, headY: 3.1, headR: 0.45, structDmg: 300, loot: 1, knock: 8, boss: true, spitRange: 30, spitRate: 1.6, minNight: 5, tip: 'Acid barrages, and bats from its back. Keep to cover and shoot the bats off whoever they catch.' },
   // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier
-  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2 },
-  [ZTYPE.SHADE]: { name: 'Shade', hp: 240, speed: 6.6, dmg: 34, rate: 0.9, range: 1.7, radius: 0.36, height: 2.0, headY: 1.82, headR: 0.17, structDmg: 30, loot: 0.8, shade: true, litResist: 0.25, minNight: 2, legs: true },
+  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2, intro: 'Zombie dogs join the horde: fast and fragile, and they cannot jump a barricade. Leave no gap.' },
+  [ZTYPE.SHADE]: { name: 'Shade', hp: 240, speed: 6.6, dmg: 34, rate: 0.9, range: 1.7, radius: 0.36, height: 2.0, headY: 1.82, headR: 0.17, structDmg: 30, loot: 0.8, shade: true, litResist: 0.25, minNight: 6, legs: true, intro: 'Shades join the horde: they only move in the dark. Torches, a campfire, flashlights on them.' },
+  // night 1's boss: a hulking walker and nothing more, until it is badly hurt - below enrage of its health it roars and
+  // comes on at enrageSpeed x its pace. Its body fits a doorway (moveR / moveH, as the Tank's)
+  [ZTYPE.BOSS_BRUTE]: { name: 'The Brute', hp: 750, speed: 1.7, dmg: 24, rate: 1.5, range: 2.3, radius: 0.75, height: 2.55, headY: 2.22, headR: 0.25, moveR: 0.5, moveH: 1.9, structDmg: 240, loot: 1, bossLoot: 4, knock: 7, boss: true, minNight: 1, enrage: 0.5, enrageSpeed: 2.1, tip: 'Slow, until it is badly hurt: then it roars and comes at a run. Keep your distance.' },
+  // a dog the size of a pony that leads a pack: it hunts as the dogs do (fans out, lunges, bites and runs), and howls
+  // up summon dogs into its pack every summonRate s while it has a survivor to hunt (summonMax of its pack alive at once)
+  [ZTYPE.BOSS_ALPHA]: { name: 'The Alpha', hp: 1500, speed: 6.4, dmg: 20, rate: 0.9, range: 2.0, radius: 0.7, height: 1.65, headY: 1.2, headR: 0.26, headFwd: 1.0, bodyTop: 1.35, moveR: 0.5, moveH: 1.6, structDmg: 40, loot: 1, knock: 6, lungeRange: 9, sense: 2, pack: true, boss: true, minNight: 2, summon: 3, summonRate: 16, summonMax: 6, tip: 'It howls up more dogs. Shoot the pack off its heels, and leave no gap in the ring.' },
+  // a boomer three times over: it claws at what you built like any of the dead (it does not burst against it), heaves
+  // bile in a fan at whoever is within spewRange every spewRate s, and when it dies it bursts: blastRadius, blastDmg
+  // to survivors, blastStruct to what you built. Bring it down far from the walls
+  [ZTYPE.BOSS_BLOATER]: { name: 'The Bloater', hp: 2400, speed: 1.45, dmg: 22, rate: 1.4, range: 2.6, radius: 1.15, height: 2.9, headY: 2.55, headR: 0.32, moveR: 0.5, moveH: 1.9, structDmg: 160, loot: 1, knock: 6, boss: true, minNight: 3, spewRange: 13, spewRate: 7, blastRadius: 10, blastDmg: 70, blastStruct: 900, tip: 'When it dies it bursts and takes everything near it. Bring it down far from your walls.' },
 };
 
 // Overkill: a zombie killed by one heavy blow (a rifle round, a point-blank blast, an explosion) that drives it far

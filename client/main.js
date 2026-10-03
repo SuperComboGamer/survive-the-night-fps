@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
 import { playerId } from './net/identity.js';
+import { refreshAccount } from './net/account.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
@@ -13,6 +14,7 @@ import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextu
 let game = null;
 let joining = false;
 playerId(); // who this browser is to the leaderboard: made up and stored on the first launch, sent with every join
+refreshAccount(); // ...and the account it is signed in to, if any (the cookie goes with every join: the server plays them as it)
 const audio = new AudioEngine();
 
 // The browser only lets audio start on a user gesture. The first key or pointer press on the splash is one (typing a
@@ -111,6 +113,13 @@ const callbacks = {
     game?.leave();
   },
   onUiSound: (name) => audio.ready && audio.playLocal(name, { volume: 0.5 }),
+  // the friends panel: who is in this game with us, and the accounts they are signed in to (S2C.FRIENDS)
+  onPeers: () => {
+    if (!game || game.state !== 'playing') return null;
+    const accounts = game.conn.accounts;
+    return { room: game.room, players: [...game.players].map(([id, p]) => ({ id, name: p.name, account: accounts.get(id) || '', self: id === game.myId })) };
+  },
+  onAccountName: (id) => game?.conn.accounts.get(id) || '',
 };
 
 const ui = new UI(document.getElementById('ui'), callbacks);

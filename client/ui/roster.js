@@ -1,6 +1,6 @@
 // Player list, up for as long as [Tab] is held: who is in the game - on their feet, down, dead or turned - with
-// their health, their kills and their ping, who carries a walkie-talkie and who is talking. Nothing in it takes a
-// click, so the pointer stays locked and the game goes on under it.
+// their health, their kills and their ping, who carries a walkie-talkie, who is talking and who is your friend
+// (by their account: friends.js). Nothing in it takes a click, so the pointer stays locked and the game goes on under it.
 import { el, svgEl, clamp } from './dom.js';
 import { glyph } from './icons.js';
 import { healthTier } from './hud2.js';
@@ -33,14 +33,15 @@ export class Roster {
   // changed, and a change of health moves just that row's bar.
   set(list) {
     list = Array.isArray(list) ? list : [];
-    const key = list.map((p) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0].join('|')).join(';');
+    const friend = list.map((p) => !p.self && this.ui.isFriendId(p.id));
+    const key = list.map((p, i) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0, friend[i] ? 1 : 0].join('|')).join(';');
     if (key !== this.key) {
       this.key = key;
       this.list.textContent = '';
       this.rows = [];
       let alive = 0;
       let down = 0;
-      for (const p of list) {
+      for (const [i, p] of list.entries()) {
         const st = p.status || 'alive';
         if (st === 'alive' || st === 'downed') alive++; // as the HUD counts them: down is not dead yet
         if (st === 'downed') down++;
@@ -48,6 +49,7 @@ export class Roster {
         svgEl('i', 'sv-st', li, glyph(st === 'zombie' ? 'claw' : st === 'dead' ? 'skull' : st === 'downed' ? 'downed' : 'person'));
         const nm = el('span', 'sv-name', li, p.name || '???');
         if (p.self) el('small', 'sv-you', nm, 'you');
+        if (friend[i]) svgEl('i', 'sv-friend', nm, glyph('star')).title = 'Your friend';
         el('span', 'sv-tag', li, st === 'alive' ? '' : st === 'downed' ? 'down' : st); // the state in a word
         const rd = svgEl('i', 'sv-radio', li, glyph('radio'));
         if (p.radio) {

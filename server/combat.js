@@ -99,6 +99,7 @@ export class Combat {
     const g = this.g;
     const def = ev.def || WEAPONS[ev.weapon]; // (ev.def: a gun that is no item brings its own row, the mounted gun)
     if (!def) return;
+    g.track?.shot(p, ev.weapon);
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     const ox = ev.x;
     const oy = ev.y;
@@ -167,7 +168,7 @@ export class Combat {
         const hx = ox + dx * h.t;
         const hy = oy + dy * h.t;
         const hz = oz + dz * h.t;
-        const green = !h.isPlayer && (h.e.ztype === ZTYPE.SPITTER || h.e.ztype === ZTYPE.BOOMER || h.e.ztype === ZTYPE.BOSS_HIVEQUEEN);
+        const green = !h.isPlayer && (h.e.ztype === ZTYPE.SPITTER || h.e.ztype === ZTYPE.BOOMER || h.e.ztype === ZTYPE.BOSS_HIVEQUEEN || h.e.ztype === ZTYPE.BOSS_BLOATER);
         // a shade frozen by light is hard as stone: bullets chip it instead of drawing blood
         g.impact(h.e.lit ? IMPACT.DIRT : green ? IMPACT.GREEN_BLOOD : IMPACT.BLOOD, hx, hy, hz, -dx, -dy, -dz);
         let killed;
@@ -207,6 +208,7 @@ export class Combat {
       }
     }
     if (hitFlags) {
+      g.track?.hit(p, ev.weapon, hitFlags & 1);
       g.emit(
         (w) => {
           w.u8(EVT.HITMARK);
@@ -330,6 +332,7 @@ export class Combat {
       }
       hitFlags |= 8 | (killed ? 2 : 0);
     }
+    if (hitFlags) g.track?.hit(p, ev.weapon, 0);
     // a stream is many puffs a second: tick the hit marker a few times a second, and for every kill
     if (hitFlags && (hitFlags & 2 || g.tick - (p.flameMarkTick || 0) >= 4)) {
       p.flameMarkTick = g.tick;
@@ -437,6 +440,7 @@ export class Combat {
       }
     }
     g.sound(claws ? SOUND.ZPLAYER_GROWL : SOUND.MELEE_SWING, ox, oy, oz, 20, p.id);
+    g.track?.swing(p, hitAny);
   }
 
   // Is a swing's line to a target (a candidate of Combat.melee) open? No swing goes through a wall.
@@ -474,6 +478,7 @@ export class Combat {
     // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
     const solid = z.lit && !z.onFire;
     if (solid) amount *= z.def.litResist;
+    g.track?.dealt(attacker, z, amount);
     z.hp -= amount;
     if (z.link) {
       z.linkDmg += amount;
@@ -510,7 +515,7 @@ export class Combat {
       return true;
     }
     // (a burn or a flame stream is many small hits a second: it cries out as often as it would for one)
-    if (g.rng() < (opts.dot ? 0.02 : 0.15)) g.sound(z.ztype === ZTYPE.DOG ? SOUND.DOG_YELP : SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
+    if (g.rng() < (opts.dot ? 0.02 : 0.15)) g.sound(z.def.pack ? SOUND.DOG_YELP : SOUND.ZOMBIE_PAIN, z.x, z.y + z.def.headY, z.z, 30);
     return false;
   }
 
@@ -541,6 +546,7 @@ export class Combat {
     // carried burns with it. Its loot is for the team that brings it down before sunrise (a molotov or the
     // flamethrower is burnT, not onFire: that still pays out)
     const sunKill = z.boss && z.onFire;
+    g.track?.zombieDied(z, attacker && attacker.kind === ENT.PLAYER ? attacker : null, opts, sunKill);
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
       g.credit([attacker], 'kills');
@@ -553,7 +559,7 @@ export class Combat {
     // loot
     if ((!opts.fire || z.boss) && !sunKill) {
       if (z.boss) {
-        for (let i = 0; i < 8; i++) {
+        for (let i = 0; i < (z.def.bossLoot ?? 8); i++) {
           const [item, n] = g.rollTable(SPECIAL_LOOT);
           g.dropItem(item, n, z.x, z.y, z.z, { spread: 2 + g.rng() * 2, life: 400 });
         }
@@ -564,6 +570,9 @@ export class Combat {
     }
     if (z.ztype === ZTYPE.BOOMER || opts.explode) {
       this.explode(z.x, z.y + 1, z.z, ZOMBIE_DEFS[ZTYPE.BOOMER].blastRadius, { humans: ZOMBIE_DEFS[ZTYPE.BOOMER].blastDmg, zombies: 80, structures: 260, kind: 2, source: z });
+    } else if (z.def.blastStruct && !sunKill) {
+      // The Bloater bursts, and takes what stands near it along: the dead too. (Burnt out by the dawn sun, it only falls)
+      this.explode(z.x, z.y + 1.2, z.z, z.def.blastRadius, { humans: z.def.blastDmg, zombies: 160, structures: z.def.blastStruct, kind: 2, source: z });
     }
   }
 
@@ -641,6 +650,7 @@ export class Combat {
     const ptype = item === ITEM.MOLOTOV ? PROJ.MOLOTOV : item === ITEM.FLARE ? PROJ.FLARE : PROJ.PIPEBOMB;
     const e = this.spawnProjectile(ptype, p, ox, oy, oz, dx * def.speed + s.vx * 0.5, dy * def.speed + 1.5, dz * def.speed + s.vz * 0.5, { fuse: def.fuse || 0 });
     if (e) this.g.sound(SOUND.THROW, ox, oy, oz, 20, p.id);
+    if (e) this.g.track?.used(p, item);
     return e; // null: the entity registry is full, nothing was thrown
   }
 
@@ -719,6 +729,7 @@ export class Combat {
               s.pullY = roper.y;
               s.pullZ = roper.z;
               tp.ropedBy = roper.id;
+              g.track?.grabbed(tp, 'roped');
               g.sound(SOUND.ROPER_SHOOT, s.x, s.y + 1, s.z, 30);
               done = true;
               break;

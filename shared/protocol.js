@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 
 // client -> server
 export const C2S = {
@@ -27,6 +27,7 @@ export const S2C = {
   WORLD_RESET: 9, // u32 seed: a new playthrough on a new map - rebuild the world from this seed
   BOARD: 10, // the leaderboard, as asked for (see writeBoard)
   ROOM: 11, // str code, str name, u8 ROOMF: the game this socket was put in (before anything else; quick joins learn it here)
+  FRIENDS: 12, // u8 count, then per player u16 id, str account name ('' = a guest, not signed in): everyone's on joining, a newcomer's to the rest
 };
 export const ROOMF = { INVITE_ONLY: 1 };
 
@@ -65,6 +66,7 @@ export const ACT = {
   GUN_MAN: 25, // u8 on: take the grips of the mounted gun (1) or let go of them (0)
   GUN_FEED: 26, // u8 on: the gunner starts (1) or stops (0) feeding 7.62 from their backpack into its belt
   RIDE: 27, // u8 seat (fair.js): get onto that seat of a ride at the fair
+  WAYPOINT: 28, // u8 on, then (on) i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none): your field-map waypoint, for the team
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
 };
 
@@ -90,8 +92,9 @@ export const CHATF = {
   FAINT: 8, // only just in earshot
   UNHEARD: 16, // (to the speaker) nobody was close enough to hear it
 };
-// S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping
-export const PLF = { WALKIE: 1 }; // carries a walkie-talkie
+// S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, and with
+// PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none)
+export const PLF = { WALKIE: 1, WAYPOINT: 2 }; // carries a walkie-talkie; has a waypoint set
 
 export const ENT = {
   PLAYER: 1,

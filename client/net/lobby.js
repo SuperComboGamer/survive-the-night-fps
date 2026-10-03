@@ -31,7 +31,9 @@ export function showCodeInAddress(code) {
   } catch {}
 }
 
-async function call(path, init = {}, ms = 4000) {
+// The server's JSON API (also account.js, friends.js): the answer's body, or an Error with the server's own words,
+// its status and (for a form) the field it is about; 'Could not reach the server' when there was no answer
+export async function call(path, init = {}, ms = 4000) {
   const ctl = new AbortController();
   const to = setTimeout(() => ctl.abort(), ms);
   try {
@@ -43,6 +45,7 @@ async function call(path, init = {}, ms = 4000) {
     if (!res.ok) {
       const err = new Error(body?.error || (res.status === 404 ? 'Not found' : 'The server said no'));
       err.status = res.status;
+      err.field = typeof body?.field === 'string' ? body.field : '';
       throw err;
     }
     return body;
@@ -61,5 +64,8 @@ export const listGames = () => call('/api/games');
 // one game by its code (invite-only ones too); rejects with err.status 404 when there is none
 export const gameInfo = (code) => call(`/api/games/${encodeURIComponent(code)}`);
 
+// a JSON POST through call
+export const post = (path, body = {}, ms = 4000) => call(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, ms);
+
 // makes a game: { name, host, inviteOnly, maxPlayers } -> its info, code included
-export const createGame = (opts) => call('/api/games', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts) }, 8000);
+export const createGame = (opts) => post('/api/games', opts, 8000);

@@ -98,7 +98,7 @@ import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
 import { KeyHints } from '../ui/keyhints.js';
-import { bearing, nextNightText, PING_LABEL } from '../ui/hud2.js';
+import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
   fog: 'Fog is rolling in',
@@ -127,6 +127,8 @@ const SHOT_KICK = {
 };
 const PING_LIFE = 12;
 const WAYPOINT_REACH = 10; // metres: this close to a waypoint that is not on a named place and it is reached
+// two waypoints on one spot: on the same place, or bare spots a few steps apart
+const sameSpot = (a, b) => (a.zone >= 0 || b.zone >= 0 ? a.zone === b.zone : Math.hypot(a.x - b.x, a.z - b.z) < WAYPOINT_REACH);
 // A bulk craft is one ACT.CRAFT per craft. The server drops whatever a client sends past 200 messages in a second,
 // commands included (Game.onMessage), so the repeats leave through a bucket: a whole Ctrl+click at once, and when
 // clicks pile up on top of that, the rest over the next ticks.
@@ -175,7 +177,7 @@ export class Game {
     this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
     this.craftBudget = CRAFT_BURST;
     this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
-    this.players = new Map(); // id -> {name, status, kills, ping}
+    this.players = new Map(); // id -> {name, status, walkie, kills, ping, way: their waypoint {x, z, zone} | null}
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
     this.clockInit = false;
@@ -225,7 +227,7 @@ export class Game {
     this.holding = 0; // hold-to-interact target we told the server about
     this.flames = new Map(); // flamethrowers spraying right now: shooter id (-1 = ours) -> { loop, t }
     this.pings = [];
-    // your own waypoint, set on the field map and never sent anywhere:
+    // your own waypoint, set on the field map; the server lists it for the team (shareWaypoint):
     // { x, y, z, zone (id of the place it sits on, or -1), r (arrival radius), visited, away }
     this.waypoint = null;
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
@@ -832,11 +834,22 @@ export class Game {
       const id = r.u16();
       const name = r.str();
       const status = r.u8();
-      const walkie = !!(r.u8() & PLF.WALKIE);
+      const flags = r.u8();
+      const walkie = !!(flags & PLF.WALKIE);
       const kills = r.u16();
       const ping = r.u16();
+      let way = null;
+      if (flags & PLF.WAYPOINT) {
+        const x = dqpos(r.i16());
+        const z = dqpos(r.i16());
+        const zone = r.u8();
+        way = { x, z, zone: zone === 255 ? -1 : zone };
+      }
       seen.add(id);
-      this.players.set(id, { name, status, walkie, kills, ping });
+      const prev = this.players.get(id);
+      this.players.set(id, { name, status, walkie, kills, ping, way });
+      // a teammate's new waypoint (not one they already had when we first heard of them, nor one being cleared)
+      if (way && prev && id !== this.myId && !(prev.way && prev.way.x === way.x && prev.way.z === way.z)) this.waypointSet(id, way);
     }
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
     // (a count that went down was reset by the server for the new run: the run's kills then count from there)
@@ -980,7 +993,7 @@ export class Game {
       },
       summary(s) {
         // after the "DAY N" title card has faded
-        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1), nightTheme(g.seed, s.night + 1)), 4300);
+        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1), nightTheme(g.seed, s.night + 1), nightBossText(g.seed, s.night + 1)), 4300);
       },
     };
     return this._eh;
@@ -1012,16 +1025,21 @@ export class Game {
       case NOTIFY.HORDE_SOON: {
         ui.notify('THE HORDE IS COMING', 'danger', 5);
         ui.notify('Board up where you stand: door boards, barricades, a campfire.', 'toast', 6);
-        // the dawn card said it first; this is the reminder with 45 seconds left (arg = the coming night)
+        // the dawn card said it first; this is the reminder with DUSK_WARNING left (arg = the coming night)
         const th = nightTheme(this.seed, arg);
         if (th) ui.notify(`${th.name} tonight. ${th.warn}`, 'warning', 9);
+        // ...and the one new kind of the dead tonight brings (the dawn card said so too)
+        for (const d of Object.values(ZOMBIE_DEFS)) if (d.minNight === arg && !d.boss && d.intro) ui.notify(d.intro, 'warning', 9);
+        // ...and tonight's boss (on night 1, with no dawn card before it, this is the first word of The Brute)
+        const boss = nightBossText(this.seed, arg);
+        ui.notify(`${boss.name} tonight, with the second wave. ${boss.tip}`, 'warning', 9);
         break;
       }
       case NOTIFY.BOSS: {
         const zd = ZOMBIE_DEFS[arg];
         ui.notify(zd ? (zd.boss ? '' : 'A ') + zd.name.toUpperCase() : 'SOMETHING', 'big', 4);
         ui.notify('has risen from the woods.', 'sub', 4);
-        if (arg === ZTYPE.TANK) ui.notify('Listen for its footsteps. It charges, and it smashes straight through barricades.', 'toast', 7);
+        if (zd?.tip) ui.notify(zd.tip, 'toast', 7);
         // (the final stand's boss never sees a sunrise: the clock is stopped)
         if (!this.global.finale) ui.notify('Bring it down before sunrise and what it carries is yours. The sun leaves nothing.', 'toast', 7);
         a.stinger?.('boss');
@@ -1305,7 +1323,7 @@ export class Game {
     for (let k = 0; k < hits.length && k < pierce; k++) {
       const { t, e } = hits[k];
       const z = e.kind === ENT.ZOMBIE;
-      const green = z && (e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN);
+      const green = z && (e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN || e.ztype === ZTYPE.BOSS_BLOATER);
       // (a shade pinned by light is stone: the bullet chips it)
       this.ownImpact(z && e.q[4] === ZANIM.FROZEN ? IMPACT.DIRT : green ? IMPACT.GREEN_BLOOD : IMPACT.BLOOD, ev.x + dx * t, ev.y + dy * t, ev.z + dz * t, -dx, -dy, -dz);
     }
@@ -1659,19 +1677,57 @@ export class Game {
     if (!at || (cur && at.zone >= 0 && at.zone === cur.zone)) {
       if (!cur) return;
       this.waypoint = null;
+      this.shareWaypoint();
       this.audio.playLocal('ui_click', { volume: 0.35 });
       return;
     }
     const zone = at.zone >= 0 ? this.world.zoneById[at.zone] : null;
     // you have arrived inside a place's yard, or a few steps from a bare spot
     this.waypoint = { x: at.x, y: this.world.heightAt(at.x, at.z), z: at.z, zone: at.zone, r: zone ? zone.flat : WAYPOINT_REACH, visited: !zone || this.discovered.has(at.zone), away: false };
+    this.shareWaypoint();
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
-  // a place lends the waypoint its name once you know it: discovered, or rumoured to hold a supply
-  waypointName() {
-    const z = this.waypoint.zone;
-    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z)) ? ZONE_NAMES[z] : 'Waypoint';
+  // Tells the server where your waypoint is now (or that it is gone): it goes to everyone in the player list.
+  // (A new game and a new valley clear everyone's on the server as well, so those need not be sent.)
+  shareWaypoint() {
+    const wp = this.waypoint;
+    this.conn.action(ACT.WAYPOINT, wp && { x: wp.x, z: wp.z, zone: wp.zone });
+  }
+
+  // a place lends a waypoint its name once you know it: discovered, or rumoured to hold a supply
+  knowsPlace(z) {
+    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z));
+  }
+  waypointName(z = this.waypoint.zone) {
+    return this.knowsPlace(z) ? ZONE_NAMES[z] : 'Waypoint';
+  }
+
+  // a teammate has just set a waypoint: a word on screen, if it is one teamWaypoints shows us
+  waypointSet(id, way) {
+    const p = this.players.get(id);
+    if (!this.world || p.status === 2 || (p.status === 1) !== !!this.prediction.state.zombie) return;
+    this.ui.notify(`${p.name} marked ${this.knowsPlace(way.zone) ? ZONE_NAMES[way.zone] : 'a waypoint'}`, 'toast', 3);
+    this.audio.playLocal('ui_click', { volume: 0.4 });
+  }
+
+  // The team's waypoints, from the player list: a survivor sees the other survivors' (downed ones too), a turned
+  // player the other turned players'. One entry per spot (sameSpot), naming everyone headed there; `mine`: it is
+  // where your own waypoint is too. -> [{ x, y, z, zone, names: [...], mine }] (reused)
+  teamWaypoints() {
+    const out = this._teamWays || (this._teamWays = []);
+    out.length = 0;
+    if (!this.world) return out;
+    const turned = !!this.prediction.state.zombie;
+    for (const [id, p] of this.players) {
+      const w = p.way;
+      // (status: 0 alive, 1 zombie, 2 dead, 3 downed)
+      if (!w || id === this.myId || p.status === 2 || (p.status === 1) !== turned) continue;
+      const same = out.find((o) => sameSpot(o, w));
+      if (same) same.names.push(p.name);
+      else out.push({ x: w.x, y: this.world.heightAt(w.x, w.z), z: w.z, zone: w.zone, names: [p.name], mine: !!this.waypoint && sameSpot(this.waypoint, w) });
+    }
+    return out;
   }
 
   cycleBuild(dir) {
@@ -2028,6 +2084,7 @@ export class Game {
       if (d > wp.r + 2) wp.away = true; // (set where you already stand, it waits until you have left and come back)
       else if (wp.away && d < wp.r) {
         this.waypoint = null;
+        this.shareWaypoint();
         // a place seen for the first time has just said so itself ("Discovered")
         if (wp.visited) this.ui.notify(wp.zone >= 0 ? `Arrived · ${ZONE_NAMES[wp.zone]}` : 'Waypoint reached', 'toast', 2.5);
       }
@@ -2564,13 +2621,29 @@ export class Game {
       // (the compass spells a marker's name out while you face it; a rumour keeps its question mark, as on the map)
       cm.push({ kind: 'hint', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: itemIcon(SUPPLIES[si]), label: `${Math.round(d)}m`, name: ZONE_NAMES[zid] + '?', d });
     });
-    // discovered places nearby (a place that already has a supply icon or the waypoint on it needs no flag too)
+    // discovered places nearby (a place that already has a supply icon or a waypoint on it needs no flag too)
     const wp = this.waypoint;
+    const team = this.teamWaypoints();
     for (const z of this.world.zones) {
-      if (!this.discovered.has(z.id) || z.id === ZONE.CAMP || hintSeen.has(z.id) || wp?.zone === z.id) continue;
+      if (!this.discovered.has(z.id) || z.id === ZONE.CAMP || hintSeen.has(z.id) || wp?.zone === z.id || team.some((t) => t.zone === z.id)) continue;
       const d = dist(z.x, z.z);
       if (d < 30 || d > 260) continue;
       cm.push({ kind: 'poi', bearing: bearing(z.x - rp.x, z.z - rp.z), icon: glyph('flag'), label: '', name: `${ZONE_NAMES[z.id]} · ${Math.round(d)}m`, d });
+    }
+    // the team's waypoints: on the tape while in view, and a marker on the spot like yours (raised the same way). One
+    // on the spot of your own adds no flag: yours says who else is headed there
+    let along = '';
+    for (const t of team) {
+      const who = t.names.join(', ');
+      if (t.mine) {
+        along = who;
+        continue;
+      }
+      const d = dist(t.x, t.z);
+      const name = `${who}: ${this.waypointName(t.zone)}`;
+      const label = `${Math.round(d)}m`;
+      cm.push({ kind: 'teamway', bearing: bearing(t.x - rp.x, t.z - rp.z), icon: glyph('flag'), label, name, d });
+      if (d > 8 && this.project(t.x, t.y + 2.4 + d * 0.07, t.z, _sc)) wm.push({ kind: 'teamway', x: _sc.x, y: _sc.y, icon: glyph('flag'), name, sub: label, scale: 0.85 });
     }
     // your waypoint: always on the tape (pinned to its end when behind you), and a marker standing on the spot
     if (wp) {
@@ -2579,7 +2652,7 @@ export class Game {
       const label = `${Math.round(d)}m`;
       cm.push({ kind: 'way', bearing: bearing(wp.x - rp.x, wp.z - rp.z), icon: glyph('flag'), label, name, d, pinEdge: true });
       // (raised with the distance, so that walking at it the marker floats over the crosshair and not on it)
-      if (d > 8 && this.project(wp.x, wp.y + 2.4 + d * 0.07, wp.z, _sc)) wm.push({ kind: 'way', x: _sc.x, y: _sc.y, icon: glyph('flag'), name, sub: label, scale: 0.95 });
+      if (d > 8 && this.project(wp.x, wp.y + 2.4 + d * 0.07, wp.z, _sc)) wm.push({ kind: 'way', x: _sc.x, y: _sc.y, icon: glyph('flag'), name, sub: along ? `${label} · ${along} too` : label, scale: 0.95 });
     }
     // teammates
     const sc = { x: 0, y: 0 };
@@ -2656,6 +2729,7 @@ export class Game {
       supplies: g.supplies,
       carried,
       waypoint: this.waypoint,
+      teamWays: this.teamWaypoints(),
     });
     void s;
   }

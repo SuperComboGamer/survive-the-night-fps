@@ -7,7 +7,7 @@ import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
 import { RECIPES, AMMO_MAX, AMMO_ITEMS } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
-import { PHASE, BTN, NOISE, TANK_BOSS_NIGHT, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
+import { PHASE, BTN, NOISE, TALK_CLEAR, TALK_RANGE, WALKIE_STASHES, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER, structPickRadius } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { createPlayerState, copyPlayerState, simulatePlayer } from '../shared/playersim.js';
@@ -17,7 +17,7 @@ import { HARVEST, harvestAt, harvestPrompt, strippedKey, needLines } from '../cl
 import { SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
 import { ITEM_DEFS } from '../shared/defs.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
-import { NIGHT_THEMES, nightTheme } from '../shared/nights.js';
+import { NIGHT_THEMES, nightTheme, nightBoss, BOSS_POOL, FIRST_BOSS } from '../shared/nights.js';
 
 const seed = +(process.argv[2] || 4242);
 // The checks must pass on any seed, so none of them may lean on what the ones before it happened to leave behind.
@@ -73,10 +73,12 @@ function client(name) {
           const id = r.u16();
           r.str();
           const status = r.u8();
-          const walkie = !!(r.u8() & PLF.WALKIE);
+          const flags = r.u8();
+          const walkie = !!(flags & PLF.WALKIE);
           const kills = r.u16();
           r.u16();
-          c.roster.set(id, { status, walkie, kills });
+          const way = flags & PLF.WAYPOINT ? { x: r.i16() / 64, z: r.i16() / 64, zone: r.u8() } : null;
+          c.roster.set(id, { status, walkie, kills, way });
         }
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }
@@ -104,6 +106,13 @@ function client(name) {
       w2.i16(Math.round(args[1] * 64));
       w2.i16(Math.round(args[2] * 64));
       w2.i16(Math.round(args[3] * 64));
+    } else if (act === ACT.WAYPOINT) {
+      w2.u8(args[0] ? 1 : 0);
+      if (args[0]) {
+        w2.i16(Math.round(args[0].x * 64));
+        w2.i16(Math.round(args[0].z * 64));
+        w2.u8(args[0].zone);
+      }
     } else if (args.length) w2.u8(args[0]);
     game.onMessage(c.session, w2.bytes().slice());
   };
@@ -1946,8 +1955,10 @@ const standOff = (c, e, d) => {
     corpse.deadT = 2; // swept on the next tick...
     const bomb = game.combat.spawnProjectile(PROJ.PIPEBOMB, A.p(), spot.x, w.heightAt(spot.x, spot.z) + 0.1, spot.z, 0, 0, 0, { fuse: 0.01, grav: 0 }); // ...which is when this goes off
     run(1);
-    const hurt = pack.filter((z) => z.dead || z.hp < z.maxHp).length;
-    check('a blast on the tick a corpse is swept hits everything in range', !game.zombies.includes(corpse) && !game.projectiles.includes(bomb) && hurt === pack.length, `${hurt} of ${pack.length} hurt`);
+    // (in range: a spot of the ring something stands on has its walker nudged off it by spawn, maybe out of the blast)
+    const near = pack.filter((z) => Math.hypot(z.x - bomb.x, z.y + 1 - bomb.y, z.z - bomb.z) < THROWABLES[ITEM.PIPEBOMB].radius - 0.5);
+    const hurt = near.filter((z) => z.dead || z.hp < z.maxHp).length;
+    check('a blast on the tick a corpse is swept hits everything in range', !game.zombies.includes(corpse) && !game.projectiles.includes(bomb) && near.length >= 10 && hurt === near.length, `${hurt} of ${near.length} in range hurt (${pack.length} spawned)`);
     for (const z of pack) {
       z.dead = true;
       z.deadT = 2;
@@ -2093,6 +2104,23 @@ const standOff = (c, e, d) => {
 A.act(ACT.PING, 0, 10, 1, 10);
 run(2);
 check('ping broadcast', B.pings > 0);
+
+// a waypoint set on the field map: everyone's player list carries it (late joiners get the list whole), until it is
+// moved or cleared, and a bad place id is dropped rather than passed on
+{
+  const zid = game.world.zones[2].id;
+  A.act(ACT.WAYPOINT, { x: 40.5, z: -12.25, zone: zid });
+  run(1);
+  const seen = B.roster.get(A.id)?.way;
+  check('a waypoint reaches the team in the player list', !!seen && seen.x === 40.5 && seen.z === -12.25 && seen.zone === zid && A.roster.get(A.id)?.way?.zone === zid, JSON.stringify(seen));
+  A.act(ACT.WAYPOINT, { x: 500, z: 3, zone: 254 });
+  run(1);
+  const moved = B.roster.get(A.id)?.way;
+  check('...moves with it (kept on the map, no such place passed on)', !!moved && moved.x === MAP_HALF - 3 && moved.z === 3 && moved.zone === 255, JSON.stringify(moved));
+  A.act(ACT.WAYPOINT, null);
+  run(1);
+  check('...and is gone when cleared', B.roster.get(A.id)?.way === null && B.roster.has(A.id));
+}
 
 // downed + revive
 {
@@ -3176,16 +3204,27 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   check('the zombie cap holds through a stand of eight who do not shoot', eight.peak <= 120 && eight.sent > one.sent && eight.sent <= eight.size && eight.far === 0, `peak ${eight.peak} zombies, ${eight.sent} of ${eight.size} came`);
 }
 
-// shades join the horde from night 2
+// one new kind of the dead a night (ZOMBIE_DEFS minNight): none before its night, the new one there for certain on
+// its night, and from their night on at least one shade and never more than six
 {
-  const count = (n) => {
+  const early = [];
+  const missing = [];
+  const shades = [];
+  for (let n = 1; n <= 10; n++) {
     game.day = n;
     game.startNight();
-    return game.waves.reduce((k, wv) => k + wv.queue.filter((t) => t === ZTYPE.SHADE).length, 0);
-  };
-  const n1 = count(1);
-  const later = [2, 3, 5, 8].map(count);
-  check('shades in the horde from night 2', n1 === 0 && later.every((k) => k >= 1 && k <= 6), `night 1: ${n1}, nights 2/3/5/8: ${later.join('/')}`);
+    const q = game.waves.flatMap((wv) => wv.queue);
+    const kinds = new Set(q);
+    for (const t of kinds) if (ZOMBIE_DEFS[t].minNight > n) early.push(`${ZOMBIE_DEFS[t].name} on night ${n}`);
+    for (const [t, d] of Object.entries(ZOMBIE_DEFS)) if (!d.boss && d.minNight === n && !kinds.has(+t)) missing.push(`${d.name} on night ${n}`);
+    const k = q.filter((t) => t === ZTYPE.SHADE).length;
+    if (n >= ZOMBIE_DEFS[ZTYPE.SHADE].minNight) shades.push(k);
+  }
+  const fresh = [];
+  for (let n = 2; n <= 9; n++) fresh.push(Object.values(ZOMBIE_DEFS).filter((d) => !d.boss && d.minNight === n).length);
+  check('one new kind of the dead a night, and none before its night', fresh.every((k) => k === 1) && !early.length, early.join(', ') || `new on nights 2-9: ${fresh.join('/')}`);
+  check('...each one in the horde on its night', !missing.length, missing.join(', '));
+  check('...and from their night on, one to six shades', shades.every((k) => k >= 1 && k <= 6), `nights ${ZOMBIE_DEFS[ZTYPE.SHADE].minNight}-10: ${shades.join('/')}`);
 }
 
 // a full entity registry: a join that cannot get an id is turned away and leaves nothing behind, what a survivor
@@ -3273,17 +3312,39 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
 // the night boss: it comes in with the second wave (most of the night is left to fight it), its health follows the
 // size of the team, and it drops what it carries only if it is brought down before the dawn sun sets it alight
 {
-  const { BOSS_WAVE, BOSS_HP_PER_PLAYER } = await import('../shared/constants.js');
+  const { BOSS_WAVE, BOSS_HP_PER_PLAYER, BOSS_HP_PER_NIGHT, TANK_BOSS_HP } = await import('../shared/constants.js');
   const { KILLER } = await import('../shared/defs.js');
   const pending = (n) => {
     game.day = n;
     game.startNight();
     return game.bossPending;
   };
-  const [b2, b3, b4, b6] = [TANK_BOSS_NIGHT, 3, 4, 6].map(pending);
+  const drawn = [];
+  const due = [];
+  for (let n = 1; n <= 8; n++) {
+    const b = pending(n);
+    drawn.push(b && b.types.length === 1 && b.types[0] === nightBoss(game.seed, n) ? b.types[0] : -1);
+    due.push(b ? b.t : -1);
+  }
   const w2 = game.waves[BOSS_WAVE].start;
-  const due = [b2, b3, b6].map((b) => (b ? b.t : -1));
-  check('a night boss comes in with the second wave', !b4 && b2?.types[0] === ZTYPE.TANK && b3?.types[0] === ZTYPE.BOSS_ABOMINATION && b6?.types[0] === ZTYPE.BOSS_HIVEQUEEN && due.every((t) => t >= w2 && t < w2 + 15 && t < game.nightLen / 2), `due ${due.map((t) => t.toFixed(0)).join('/')} s of ${game.nightLen} (wave 2 at ${w2.toFixed(0)} s)`);
+  check('every night a boss comes in with the second wave, The Brute on the first', drawn[0] === ZTYPE.BOSS_BRUTE && !drawn.includes(-1) && due.every((t) => t >= w2 && t < w2 + 15 && t < game.nightLen / 2), `${drawn.map((t) => ZOMBIE_DEFS[t]?.name).join(', ')}; due ${due.map((t) => t.toFixed(0)).join('/')} s of ${game.nightLen} (wave 2 at ${w2.toFixed(0)} s)`);
+  // the draw, over many valleys: the same answer every time, nothing before its night, never the same boss two nights
+  // running, and every boss in the pool met somewhere
+  {
+    const bad = [];
+    const met = new Set();
+    for (let sd = 1; sd <= 300; sd++) {
+      let prev = -1;
+      for (let n = 1; n <= 9; n++) {
+        const b = nightBoss(sd, n);
+        const pb = BOSS_POOL.find((x) => x.type === b);
+        if (b !== nightBoss(sd, n) || (n === 1 ? b !== FIRST_BOSS : !pb || n < pb.from) || b === prev) bad.push(`seed ${sd} night ${n}: ${ZOMBIE_DEFS[b]?.name}`);
+        met.add(b);
+        prev = b;
+      }
+    }
+    check("...drawn from the pool by the seed and the night, never the night before's", !bad.length && BOSS_POOL.every((b) => met.has(b.type)), bad.slice(0, 4).join(', ') || `${met.size} bosses met over 300 valleys`);
+  }
   const feed = [];
   A.handler.killfeed = (kk, killer, victim) => feed.push([kk, victim]);
   const fed = (kk, type) => feed.some((f) => f[0] === kk && f[1] === (0x8000 | type));
@@ -3302,7 +3363,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   const abom = spawn(ZTYPE.BOSS_ABOMINATION);
   const tank = spawn(ZTYPE.TANK);
   const queen = spawn(ZTYPE.BOSS_HIVEQUEEN);
-  const hpOf = (z) => z.def.hp * (1 + BOSS_HP_PER_PLAYER * (team - 1) + 0.05 * 3);
+  const hpOf = (z) => z.def.hp * (1 + BOSS_HP_PER_PLAYER * (team - 1) + BOSS_HP_PER_NIGHT * (3 - 1)) * (z.ztype === ZTYPE.TANK ? TANK_BOSS_HP : 1);
   const bosses = [abom, tank, queen];
   check('boss health follows the size of the team', bosses.every((z) => z && z.boss && Math.abs(z.maxHp - hpOf(z)) < 1), `${bosses.map((z) => z?.maxHp.toFixed(0)).join('/')} hp for ${team}`);
   // killed in the night: its loot is on the ground and the feed names who did it
@@ -3498,9 +3559,13 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   const score = (p) => [p.kills, p.zkills, p.deaths];
   const board = () => [...A.roster.values()].map((r) => r.kills);
   const last = { a: score(pa), b: score(pb), board: board() };
+  A.act(ACT.WAYPOINT, { x: 5, z: 5, zone: 255 });
+  run(1);
+  const wayBefore = !!B.roster.get(A.id)?.way;
   game.gameOver();
   game.restartT = 0;
   game.update();
+  check("a new game clears everyone's waypoint", wayBefore && B.roster.get(A.id)?.way === null && pa.waypoint === null);
   check('a pinned seed keeps its map', game.phase === PHASE.DAY && game.seed === kept && game.world.seed === kept);
   const next = { a: score(pa), b: score(pb), board: board() };
   const scored = last.a[0] > 0 && last.a[1] > 0 && last.b[2] > 0 && last.board.some((k) => k > 0);

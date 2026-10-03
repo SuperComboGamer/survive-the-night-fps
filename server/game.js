@@ -13,17 +13,16 @@ import {
   MAX_ENTITIES,
   PHASE,
   CMDS_PER_PACKET,
-  DAY_LENGTH,
-  FIRST_DAY_LENGTH,
+  dayLength,
   NIGHT_LENGTH,
   DUSK_WARNING,
   NIGHT_WAVES,
   WAVE_TIMES,
   WAVE_SPREAD,
-  BOSS_EVERY,
-  TANK_BOSS_NIGHT,
+  TANK_BOSS_HP,
   BOSS_WAVE,
   BOSS_HP_PER_PLAYER,
+  BOSS_HP_PER_NIGHT,
   ESCAPE_TIME,
   ESCAPE_RADIUS,
   ESCAPE_DRIVE_TIME,
@@ -117,7 +116,7 @@ import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
-import { nightTheme } from '../shared/nights.js';
+import { nightTheme, nightBoss } from '../shared/nights.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
 import { createInventory, addItem, removeItem, countItem, hasCost, payCost, canFit } from './inventory.js';
@@ -126,13 +125,14 @@ import { Cats } from './cats.js';
 import { Deer } from './deer.js';
 import { Combat } from './combat.js';
 import { TickStats, T_INPUTS, T_PHASE, T_PLAYERS, T_ZOMBIES, T_CATS, T_COMBAT, T_UPKEEP, T_SNAPSHOTS } from './tickstats.js';
-import { PlayerStats } from './stats.js';
+import { PlayerStats, idKey } from './stats.js';
 import { Fixtures } from './fixtures.js';
 import { Cemetery } from './cemetery.js';
 import { MountedGun } from './mountedgun.js';
 import { Fair } from './fair.js';
 import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
+import { MatchTracker } from './analytics.js';
 
 const MAX_ZOMBIES_ALIVE = 120;
 // The final stand is sized from the night of the same number (hordeSize), so it follows the team the way the nightly
@@ -260,8 +260,7 @@ export class Game {
     this.fixedSeed = opts.seed !== undefined; // a given seed pins the map: every playthrough is the same valley
     this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
     // optional overrides (testing): DAY_SECONDS / NIGHT_SECONDS / START_DAY env vars
-    this.dayLen = opts.dayLength || DAY_LENGTH;
-    this.firstDayLen = opts.dayLength || FIRST_DAY_LENGTH;
+    this.dayLenOverride = opts.dayLength || 0; // every day this long (otherwise they shorten: dayLength)
     this.nightLen = opts.nightLength || NIGHT_LENGTH;
     this.startDayNum = opts.startDay || 1;
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
@@ -344,6 +343,7 @@ export class Game {
     this.power = new Power(this); // the buildable generator and its floodlights
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
+    this.track = new MatchTracker(this, opts.analytics); // match analytics (analytics.js): a no-op without opts.analytics
   }
 
   // ---------------------------------------------------------------- entity registry
@@ -528,6 +528,10 @@ export class Game {
     // who they are to the leaderboard: for PlayerStats.enter alone, never logged and never sent on. (A client that
     // sends none - the test bots - plays like anyone else, and nothing is kept for it.)
     const pid = r.left > 0 ? r.str() : '';
+    // signed in to an account (server/auth.js: the network thread knew them by their session cookie, and says so
+    // on the socket: room-worker.js), they play under its name whatever the JOIN says
+    const account = session.conn.user || null;
+    if (account) name = account.name;
     const reject = (reason) => {
       const w = new Writer(4);
       w.u8(S2C.REJECT);
@@ -550,7 +554,10 @@ export class Game {
     // no entity id left for them: turned away like from a full server, to try again once ids have come back
     if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
-    p.rec = this.records.enter(pid, base);
+    p.rec = this.records.enter(pid, base, account);
+    p.account = account ? account.id : ''; // their account's id, '' for a guest
+    p.guestKey = account ? '' : idKey(pid); // a guest's browser id as stats.js files it ('' without one): never the id itself
+    p.friend = account ? account.name : ''; // the account a friend request goes to (S2C.FRIENDS); '' for a guest
     const w = new Writer(64);
     w.u8(S2C.WELCOME);
     w.u16(p.id);
@@ -575,12 +582,14 @@ export class Game {
       this.spawnHuman(p, left || starterKit(this.day), true);
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
+    this.track.join(p);
     // what the team has used up before they came (a run this join started has cleared it: NEW_GAME says so)
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
     this.tellStripped(spent, p.id);
     this.notify(NOTIFY.PLAYER_JOINED, p.id);
-    p.greeted = this.allow(this.greets, 2 * this.maxPlayers, GREET_EVERY);
+    this.tellFriendCodes(p);
+    p.greeted =this.allow(this.greets, 2 * this.maxPlayers, GREET_EVERY);
     if (p.greeted) this.systemChat(p.zombie ? `${p.name} is back among the dead.` : `${p.name} joined the survivors.`);
     this.playersDirty = true;
     this.globalDirty = true;
@@ -639,12 +648,14 @@ export class Game {
       interactT: 0,
       actionT: 0,
       pingT: 0,
+      waypoint: null, // their field-map waypoint { x, z, zone } (zone 255: none), shown to the team in the player list
       fullT: -99, // when they were last told their backpack had no room for something lying there (updateItems)...
       partFullT: -99, // ...and when that something was a car supply
       pinnedBy: 0,
       ropedBy: 0,
       ping: 0,
       globalSent: false,
+      ts: null, // the stint analytics.js is counting for them (null: none)
       get x() {
         return this.state.x;
       },
@@ -685,6 +696,7 @@ export class Game {
   }
 
   removePlayer(p) {
+    this.track.leave(p); // (before anything of theirs is touched)
     this.releaseHolds(p);
     this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
     this.dropAll(p);
@@ -748,6 +760,7 @@ export class Game {
   // would stay open that long. The played world stays, cleared, until the next tick rolls its successor (update),
   // or the next join if that comes first (handleJoin).
   resetToWaiting() {
+    this.track.finish('abandoned'); // (a run still on: everybody left it)
     this.clearWorld();
     this.phase = PHASE.WAITING;
     this.day = 0;
@@ -783,12 +796,13 @@ export class Game {
   }
 
   startGame() {
+    this.track.finish('abandoned'); // (a run still being played as a new one begins: debug, tests)
     this.clearWorld();
     this.rollWorld();
     this.worldPlayed = true;
     this.phase = PHASE.DAY;
     this.day = this.startDayNum;
-    this.timeLeft = this.firstDayLen;
+    this.timeLeft = this.dayLen;
     this.supplies = [0, 0, 0, 0, 0];
     this.unlocked = 0;
     this.warned = false;
@@ -829,11 +843,13 @@ export class Game {
     this.dm.spawnInitial();
     for (const p of this.players.values()) {
       p.kills = p.zkills = p.deaths = 0; // the scoreboard counts this run only: whoever stayed on from the last one starts level
+      p.waypoint = null; // (it pointed into the old valley; the client drops its own on NEW_GAME)
       this.spawnHuman(p);
     }
     this.notify(NOTIFY.NEW_GAME, this.day);
     this.globalDirty = true;
     this.playersDirty = true;
+    this.track.start();
     this.log('new game started');
   }
 
@@ -991,6 +1007,7 @@ export class Game {
     p.hold = null;
     this.fillHistory(p);
     this.playersDirty = true;
+    this.track.turned(p);
   }
 
   // Sunrise, with DAWN_RETURN on: every player who died since the last one - risen as a zombie, or still lying
@@ -1010,6 +1027,7 @@ export class Game {
     for (const p of this.players.values()) {
       if (p.alive && !p.zombie) continue;
       this.spawnHuman(p, RETURN_KIT, true); // beside the team, as a late joiner is (pickJoinSpawn)
+      this.track.returned(p);
       const s = p.state;
       this.notify(NOTIFY.RETURNED, p.id);
       this.sound(SOUND.REVIVE, s.x, s.y + 1, s.z, 30);
@@ -1024,8 +1042,13 @@ export class Game {
     }
   }
 
+  // how long today is, horn included: the first two days are long, then they shorten (dayLength)
+  get dayLen() {
+    return this.dayLenOverride || dayLength(this.day);
+  }
+
   scheduleSupplyDrops() {
-    const len = this.day === 1 ? this.firstDayLen : this.dayLen;
+    const len = this.dayLen;
     const n = this.day >= 2 ? 2 : 1;
     this.supplyAt = [];
     for (let i = 0; i < n; i++) this.supplyAt.push(len * (0.2 + (i + this.rng()) * (0.6 / n))); // timeLeft thresholds
@@ -1037,7 +1060,8 @@ export class Game {
     return Math.round((10 + 6 * n + 1.3 * n * n) * (0.6 + 0.4 * humans));
   }
 
-  // Night N: the horde comes in waves to wherever the survivors are. Bigger, tougher and nastier every night.
+  // Night N: the horde comes in waves to wherever the survivors are. Bigger and tougher every night, with one new kind
+  // of the dead in it (ZOMBIE_DEFS minNight) and a boss with the second wave.
   startNight() {
     this.phase = PHASE.NIGHT;
     this.timeLeft = this.nightLen;
@@ -1050,7 +1074,7 @@ export class Game {
     const scale = this.nightLen / NIGHT_LENGTH;
     // tonight's theme re-weights the blend below (the client works out the same theme from the seed to warn the team)
     const theme = this.themes ? nightTheme(this.seed, n) : null;
-    const shadeCap = Math.min(6, (1 + Math.floor((n - 2) / 2) + Math.floor(humans / 2)) * (theme?.shadeCap ?? 1));
+    const shadeCap = Math.min(6, (1 + Math.floor((n - ZOMBIE_DEFS[ZTYPE.SHADE].minNight) / 2) + Math.floor(humans / 2)) * (theme?.shadeCap ?? 1));
     let shades = 0;
     this.waves = [];
     for (let k = 0; k < NIGHT_WAVES; k++) {
@@ -1059,15 +1083,17 @@ export class Game {
       const weights = [
         [ZTYPE.WALKER, 50 - sp * 12],
         [ZTYPE.RUNNER, 16 + n * 2 + sp * 6],
-        [ZTYPE.SPITTER, n >= 2 ? 6 + sp * 4 : 0],
-        [ZTYPE.BOOMER, n >= 2 ? 6 + sp * 3 : 0],
-        [ZTYPE.DOG, n >= 2 ? 3 + sp * 2 : 0], // each pick is a pack of 2-3
-        [ZTYPE.LEAPER, n >= 3 ? 6 + sp * 4 : 0],
-        [ZTYPE.BAT, n >= 3 ? 7 : 0],
-        [ZTYPE.ROPER, n >= 4 ? 5 + sp * 3 : 0],
-        [ZTYPE.TANK, n >= 4 ? (1 + n * 0.3) * (0.5 + sp) : 0],
-        [ZTYPE.SHADE, n >= 2 ? 2.5 + sp * 2.5 : 0],
+        [ZTYPE.SPITTER, 6 + sp * 4],
+        [ZTYPE.BOOMER, 6 + sp * 3],
+        [ZTYPE.DOG, 3 + sp * 2], // each pick is a pack of 2-3
+        [ZTYPE.LEAPER, 6 + sp * 4],
+        [ZTYPE.BAT, 7],
+        [ZTYPE.ROPER, 5 + sp * 3],
+        [ZTYPE.TANK, (1 + n * 0.3) * (0.5 + sp)],
+        [ZTYPE.SHADE, 2.5 + sp * 2.5],
       ];
+      // one new kind a night: each stays out of the horde until its night comes
+      for (const wt of weights) if (n < ZOMBIE_DEFS[wt[0]].minNight) wt[1] = 0;
       if (theme) for (const wt of weights) wt[1] *= theme.mul[wt[0]] ?? 1;
       const tot = weights.reduce((a, b) => a + b[1], 0);
       const q = [];
@@ -1090,10 +1116,15 @@ export class Game {
       }
       this.waves.push({ start: WAVE_TIMES[k] * scale, queue: q, started: false, spawnT: 0, interval: (WAVE_SPREAD * scale) / Math.max(1, Math.ceil(count / 3.5)) });
     }
-    // from night 2 on there is always at least one shade out there (it comes with the second wave)
-    if (n >= 2 && !shades) {
+    // the night's new kind is in it for certain (the dawn card and the dusk horn said it would be), and from their
+    // night on there is always at least one shade out there. Both come with the second wave, in a walker's place
+    const fresh = [];
+    for (const t of Object.values(ZTYPE)) if (ZOMBIE_DEFS[t].minNight === n && !ZOMBIE_DEFS[t].boss && !this.waves.some((wv) => wv.queue.includes(t))) fresh.push(t);
+    if (n >= ZOMBIE_DEFS[ZTYPE.SHADE].minNight && !shades && !fresh.includes(ZTYPE.SHADE)) fresh.push(ZTYPE.SHADE);
+    for (const t of fresh) {
       const q = this.waves[1].queue;
-      q[Math.floor(this.rng() * q.length)] = ZTYPE.SHADE;
+      const at = q.indexOf(ZTYPE.WALKER);
+      q[at >= 0 ? at : Math.floor(this.rng() * q.length)] = t;
     }
     this.shadeWarned = false;
     this.wave = 0;
@@ -1102,14 +1133,10 @@ export class Game {
     // a boss comes in with the second wave: early enough in the night that the survivors have to deal with it, and
     // can - at dawn the sun takes whatever is left of it, and what it carried (Combat.killZombie)
     const bossT = WAVE_TIMES[BOSS_WAVE] * scale + 8;
-    if (n === TANK_BOSS_NIGHT) {
-      // the first boss is a Tank
-      this.bossPending = { types: [ZTYPE.TANK], t: bossT };
-    } else if (n % BOSS_EVERY === 0) {
-      const type = (n / BOSS_EVERY) % 2 === 1 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN;
-      this.bossPending = { types: [type], t: bossT };
-    }
+    // every night has one: The Brute on the first, then one drawn from the seed (BOSS_POOL)
+    this.bossPending = { types: [nightBoss(this.seed, n)], t: bossT };
     this.notify(NOTIFY.NIGHT_FALLS, n);
+    this.track.nightfall();
     this.globalDirty = true;
     // day wanderers near the survivors join the hunt; the rest drift off into the dark
     const hs = this.humans();
@@ -1149,6 +1176,7 @@ export class Game {
     this.sound(SOUND.DAWN, 0, 0, 0, 0);
     // the night goes on the record of everyone who saw it through (the dead come back below: it was not theirs)
     this.credit(this.humans(), 'nights');
+    this.track.dawn(night);
     // horde burns in the sunlight (what is down in the mine burns when it comes up into it: Zombies.updateOne)
     for (const z of this.zombies) {
       if (z.dead || !(z.horde || z.def.flying)) continue;
@@ -1173,6 +1201,7 @@ export class Game {
   }
 
   victory() {
+    this.track.finish('victory'); // (first: who is where as the car leaves)
     this.phase = PHASE.VICTORY;
     this.restartT = GAME_OVER_DELAY + 6;
     this.escape.active = false;
@@ -1184,6 +1213,7 @@ export class Game {
   }
 
   gameOver() {
+    this.track.finish('wipe');
     this.phase = PHASE.GAMEOVER;
     this.restartT = GAME_OVER_DELAY;
     this.escape.active = false;
@@ -1246,6 +1276,7 @@ export class Game {
       }
     }
     this.globalDirty = true;
+    this.track.engineStart(p);
     this.log('engine started - final stand');
   }
 
@@ -1255,6 +1286,7 @@ export class Game {
   driveOff(p) {
     if (!this.escape.active || !this.escape.ready) return;
     this.log('drove off:', p.name);
+    this.track.drove(p);
     this.victory();
   }
 
@@ -1312,6 +1344,7 @@ export class Game {
     if (e.drop && !e.removed) this.drops--;
     // a hidden car supply only ever leaves its spot in someone's hands: that place needs no more searching
     if (e.hint >= 0 && !e.removed) {
+      this.track.supplyFound(e);
       this.supplyFound |= 1 << e.hint;
       this.globalDirty = true;
     }
@@ -1469,6 +1502,7 @@ export class Game {
     if (bit === undefined || this.unlocked & (1 << bit)) return;
     this.unlocked |= 1 << bit;
     this.notify(NOTIFY.SCHEMATIC, item);
+    this.track.schematic(item, p);
     if (p) this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 20);
     this.globalDirty = true;
   }
@@ -1604,15 +1638,34 @@ export class Game {
         this.sound(SOUND.ZPLAYER_GROWL, s.x, s.y + 1.5, s.z, 40, p.id);
         break;
       case 'land':
-        if (!p.zombie && ev.v > 13) this.damagePlayer(p, (ev.v - 13) * 6, { kind: KILLER.WORLD });
+        if (!p.zombie && ev.v > 13) this.damagePlayer(p, (ev.v - 13) * 6, { kind: KILLER.WORLD, fall: true });
         break;
     }
   }
 
   // ---------------------------------------------------------------- actions
+  // ACT.WAYPOINT: a player's field-map waypoint (or none), which the rest of the team sees through the player list.
+  // A burst of clicks costs one list a tick at most (playersDirty), so there is no rate limit to fall out of step with.
+  setWaypoint(p, r) {
+    let wp = null;
+    if (r.u8()) {
+      const lim = MAP_HALF - 3; // (as the map clamps a click)
+      const x = Math.max(-lim, Math.min(lim, r.i16() / 64));
+      const z = Math.max(-lim, Math.min(lim, r.i16() / 64));
+      const zone = r.u8();
+      wp = { x, z, zone: this.world.zoneById[zone] ? zone : 255 };
+    }
+    const cur = p.waypoint;
+    if (cur === wp || (cur && wp && cur.x === wp.x && cur.z === wp.z && cur.zone === wp.zone)) return;
+    p.waypoint = wp;
+    this.playersDirty = true;
+  }
+
   handleAction(p, r) {
     const act = r.u8();
     const s = p.state;
+    // (a waypoint is only a mark on the map: it is theirs to move whatever has become of them)
+    if (act === ACT.WAYPOINT) return this.setWaypoint(p, r);
     if (!p.alive) return;
     if (p.zombie && act !== ACT.FLASHLIGHT && act !== ACT.PING) return;
     if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.USE_ITEM && act !== ACT.HOLD_END) return;
@@ -1784,6 +1837,7 @@ export class Game {
         removeItem(p.inv, item, n);
         this.supplies[i] += n;
         installed += n;
+        this.track.install(p, item, n);
         this.notify(NOTIFY.CAR_PART, item);
       });
       const car = this.world.car;
@@ -1835,6 +1889,7 @@ export class Game {
     if (e.kind === ENT.CRATE) {
       if (e.state !== 1) return;
       e.state = 2;
+      this.track.crateOpened(p);
       e.despawnAt = this.time + 180;
       const n = 5 + Math.floor(this.rng() * 3);
       for (let i = 0; i < n; i++) {
@@ -1975,6 +2030,7 @@ export class Game {
 
   searchCache(p, c) {
     c.state = 1;
+    this.track.searched(p, c);
     const def = CONT_DEFS[c.ctype];
     const table = (def.table && CONT_TABLES[def.table]) || LOOT_TABLES[c.zone] || LOOT_TABLES[ZONE.ROADSIDE];
     const rolls = def.rolls[0] + Math.floor(this.rng() * (def.rolls[1] - def.rolls[0] + 1));
@@ -2026,6 +2082,7 @@ export class Game {
       z.alertRush = 1;
       spawned++;
     }
+    this.track.carAlarm(p, spawned);
     if (spawned) this.globalDirty = true;
   }
 
@@ -2167,6 +2224,7 @@ export class Game {
     }
     payCost(p.inv, rec.cost);
     this.giveItem(p, rec.out, rec.n);
+    this.track.craft(p, rec);
     p.invDirty = true;
     this.syncThrow(p);
     this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
@@ -2225,6 +2283,7 @@ export class Game {
     if (countItem(p.inv, u.item) <= 0) return;
     const c = CONSUMABLES[u.item];
     removeItem(p.inv, u.item, 1);
+    this.track.used(p, u.item);
     p.invDirty = true;
     if (p.downed) {
       // a medkit gets you back on your feet
@@ -2329,6 +2388,7 @@ export class Game {
     this.world.structGrid.add(e.collider);
     this.nav.addStructure(e.collider);
     this.structures.push(e);
+    this.track.build(p, type);
     if (type === STRUCT.WORKBENCH) this.globalDirty = true;
     this.sound(SOUND.BUILD, x, y + 0.8, z, 35);
     this.zm.noise(x, z, NOISE.BUILD, y);
@@ -2392,6 +2452,7 @@ export class Game {
     if (e.stype === STRUCT.WORKBENCH) this.globalDirty = true;
     if (broken) {
       if (this.phase === PHASE.NIGHT) this.nightStats.structLost++;
+      this.track.structureLost(e);
       this.emit(
         (w) => {
           w.u8(EVT.STRUCT_BREAK);
@@ -2432,6 +2493,7 @@ export class Game {
         p.armorMax = 0;
       }
     }
+    this.track.hurt(p, amount, src);
     p.hp -= amount;
     p.lastDamageT = this.time;
     p.lastSrc = src;
@@ -2470,6 +2532,7 @@ export class Game {
       s.reloadT = 0; // a reload in progress was of the weapon just put away: left running it locks the pistol, then reloads it
     }
     this.nightStats.downs++;
+    this.track.down(p);
     this.notify(NOTIFY.DOWNED, p.id);
     this.sound(SOUND.DOWNED, s.x, s.y + 0.6, s.z, 70);
     this.playersDirty = true;
@@ -2478,6 +2541,7 @@ export class Game {
 
   revive(p, by, hp = REVIVE_HP) {
     if (!p.downed) return;
+    this.track.revive(p, by);
     p.downed = false;
     p.state.downed = 0;
     p.hp = hp;
@@ -2492,6 +2556,7 @@ export class Game {
   }
 
   killPlayer(p, src, silent = false) {
+    this.track.death(p, src, silent); // (first: what they were when it came)
     p.hp = 0;
     p.alive = false;
     p.deaths++;
@@ -2891,6 +2956,7 @@ export class Game {
     this.updateCrates(dt);
     this.fixtures.update(dt);
     this.recordHistory();
+    this.track.tick();
     ts.mark(T_UPKEEP);
     this.sendSnapshots();
     ts.mark(T_SNAPSHOTS);
@@ -2996,9 +3062,11 @@ export class Game {
     const sp = anchor ? this.zm.pickSpawnAround(anchor.x, anchor.z, humans) : this.zm.pickHordeSpawn(humans);
     if (!sp) return;
     for (const type of types) {
-      const z = this.zm.spawn(type, sp.x, sp.z, { horde: true, hpMul: 1 + BOSS_HP_PER_PLAYER * (Math.max(1, this.humanCount()) - 1) + 0.05 * this.day, boss: true });
+      const hpMul = (1 + BOSS_HP_PER_PLAYER * (Math.max(1, this.humanCount()) - 1) + BOSS_HP_PER_NIGHT * (this.day - 1)) * (type === ZTYPE.TANK ? TANK_BOSS_HP : 1);
+      const z = this.zm.spawn(type, sp.x, sp.z, { horde: true, hpMul, boss: true });
       if (z) {
         this.bossId = z.id;
+        this.track.bossSpawn(z);
         this.notify(NOTIFY.BOSS, type);
         this.sound(type === ZTYPE.TANK ? SOUND.TANK_ROAR : SOUND.BOSS_ROAR, sp.x, 2, sp.z, 0);
       }
@@ -3072,6 +3140,7 @@ export class Game {
         e.t = 0;
         e.ready = true;
         this.notify(NOTIFY.ESCAPE_READY, 0);
+        this.track.engineReady();
         this.sound(SOUND.CAR_START, car.x, car.y + 0.8, car.z, 300);
         this.globalDirty = true;
       }
@@ -3123,6 +3192,7 @@ export class Game {
       w.u16(Math.round(eta * 1000));
     });
     this.notify(NOTIFY.SUPPLY_DROP, 0);
+    this.track.crateDrop(x, z);
   }
 
   updateCrates(dt) {
@@ -3362,7 +3432,7 @@ export class Game {
     w.u8(alive);
     w.u8(total);
     w.f32(this.restartT);
-    w.u16(Math.round(this.phase === PHASE.DAY ? (this.day <= 1 ? this.firstDayLen : this.dayLen) : this.nightLen));
+    w.u16(Math.round(this.phase === PHASE.DAY ? this.dayLen : this.nightLen));
     // workbenches, for the field map: structures themselves only replicate inside AOI_STRUCTURE_RADIUS
     const at = w.reserve8();
     let benches = 0;
@@ -3537,6 +3607,27 @@ export class Game {
     }
   }
 
+  // Who is signed in to an account (S2C.FRIENDS: its name, '' for a guest), for sending each other friend requests: a
+  // newcomer is told everyone's, their own among them, and everyone else is told theirs. (An id that comes back to
+  // someone else comes with its new account.)
+  tellFriendCodes(p) {
+    const w = new Writer(16 + 12 * this.players.size);
+    w.u8(S2C.FRIENDS);
+    w.u8(this.players.size);
+    for (const q of this.players.values()) {
+      w.u16(q.id);
+      w.str(q.friend || '');
+    }
+    p.session.conn.send(w.bytes());
+    const one = new Writer(16);
+    one.u8(S2C.FRIENDS);
+    one.u8(1);
+    one.u16(p.id);
+    one.str(p.friend || '');
+    const bytes = one.bytes();
+    for (const q of this.players.values()) if (q !== p) q.session.conn.send(bytes);
+  }
+
   // The leaderboard for the player who asked (C2S.BOARD), once a second at most
   sendBoard(p) {
     if (this.time - p.boardT < 1) return;
@@ -3577,9 +3668,15 @@ export class Game {
       w.str(p.name);
       w.u8(!p.alive ? 2 : p.zombie ? 1 : p.downed ? 3 : 0);
       p.walkie = this.hasWalkie(p);
-      w.u8(p.walkie ? PLF.WALKIE : 0);
+      const wp = p.waypoint;
+      w.u8((p.walkie ? PLF.WALKIE : 0) | (wp ? PLF.WAYPOINT : 0));
       w.u16(p.kills + p.zkills);
       w.u16(Math.min(9999, Math.round(p.ping)));
+      if (wp) {
+        w.i16(qpos(wp.x));
+        w.i16(qpos(wp.z));
+        w.u8(wp.zone);
+      }
     }
     this.playersDirty = false;
     const prev = this.listBytes;

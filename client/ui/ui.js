@@ -13,6 +13,9 @@ import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SE
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
 import { Roster } from './roster.js';
+import { FriendsPanel } from './friends.js';
+import { AccountPanel } from './account.js';
+import { isFriendName } from '../net/friends.js';
 import { Summary } from './hud2.js';
 
 const NOOP = () => {};
@@ -34,6 +37,8 @@ const CALLBACKS = [
   'onResume',
   'onLeave',
   'onUiSound',
+  'onPeers', // () -> { room, players: [{ id, name, account, self }] } while in a game, else null (the friends panel)
+  'onAccountName', // (player id) -> the account they are signed in to, '' for a guest
 ];
 
 const SVG_DEFS = `<svg class="stn-defs" width="0" height="0" aria-hidden="true" focusable="false">
@@ -89,6 +94,8 @@ export class UI {
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
     this.controlsPanel = new ControlsPanel(this, modalL);
+    this.friends = new FriendsPanel(this, modalL);
+    this.accountPanel = new AccountPanel(this, modalL);
 
     this._bindSounds();
     this._voice = { enabled: false, transmitting: false };
@@ -149,6 +156,8 @@ export class UI {
     this.splash.hide();
     if (this.settingsPanel.visible) this.settingsPanel.hide();
     if (this.controlsPanel.visible) this.controlsPanel.hide();
+    if (this.friends.visible) this.friends.hide();
+    if (this.accountPanel.visible) this.accountPanel.hide();
     this._menuState();
   }
 
@@ -193,8 +202,8 @@ export class UI {
     this.hud.damage(amount, angle);
   }
 
-  showSummary(stats, nextText, theme) {
-    this.summary.show(stats, nextText, theme);
+  showSummary(stats, nextText, theme, boss) {
+    this.summary.show(stats, nextText, theme, boss);
   }
 
   setMapOpen(open) {
@@ -276,6 +285,15 @@ export class UI {
 
   setCraftContext(ctx) {
     this.inventory.setCraftContext(ctx);
+  }
+
+  // whether this player in the game is a friend (by the account they are signed in to)
+  isFriendId(id) {
+    try {
+      return isFriendName(this.cb.onAccountName(id) || '');
+    } catch {
+      return false;
+    }
   }
 
   // the player list [Tab]

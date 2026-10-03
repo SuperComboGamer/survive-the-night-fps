@@ -695,6 +695,7 @@ export class Deer {
     d.hp -= amount;
     // the group runs from whoever did it, or back along the blow
     const from = attacker && attacker.state ? attacker.state : { x: d.x - (opts.dirX || 0) * 12, z: d.z - (opts.dirZ || 0) * 12 };
+    if (d.hp <= 0) g.track?.deerKilled(attacker);
     if (d.hp <= 0) this.kill(d);
     else if (!opts.dot || this.rng() < 0.05) g.sound(SOUND.DEER_BLEAT, d.x, d.y + 1, d.z, 45);
     gr.calm = 0;

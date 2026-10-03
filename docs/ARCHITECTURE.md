@@ -172,6 +172,75 @@ sockets (1011) and lets go of its records. `server/rooms.js` keeps them (`Lobby`
   the process may use (a container's limit when it has one) and caps it at 150. An emptied game builds its next
   valley only when someone joins it (`rollWhenEmpty: false`), not for nobody.
 
+## The database: accounts, friends, messages, stats and match records
+
+With `DATABASE_URL` set the server has a Postgres database (`server/db/index.js`: `pg` for a real server,
+`pglite:<folder>` / `pglite:memory` for PGlite - Postgres in WebAssembly, in the process - in development and the
+tests). **Only the network thread talks to it**; the games in their workers post what they have to say, as the
+leaderboard always has. Without `DATABASE_URL` the server runs as it did before: no accounts, the leaderboard in a
+JSON file (`server/stats.js`).
+
+- **Migrations** (`server/db/migrate.js`, files in `server/db/migrations/NNN_name.sql`): applied in name order,
+  each once (`schema_migrations`, with a checksum), all pending ones in one transaction under an advisory lock.
+  `npm run migrate` is Railway's pre-deploy command (`railway.json`); the server also migrates on start
+  (`MIGRATE_ON_START=0`: not). An applied migration is never edited: a change is a new file. 001: accounts,
+  sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions.
+- **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
+  the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
+  `SameSite=Lax` cookie (`stn_session`, `Secure` behind https), its SHA-256 in `sessions`, 30 days from last use.
+  `userForToken` caches what it found for a minute. Limits: 10 registrations an address then one per 5 min, 10
+  sign-ins an address then one per 20 s, 8 wrong passwords an account then one a minute; an unknown account costs a
+  scrypt too, and says no in the same words as a wrong password.
+- **The API's plumbing** (`server/http.js`): `api(app, method, path, async (ctx, body) => ({ status, body, cookies }))`
+  reads all it needs of uWS's request up front (it is only valid until the handler returns) and never writes to a
+  response whose client went away. A POST must be JSON and, if it has an Origin, from this host - a page on another
+  site cannot post with the player's cookie. The same Origin rule decides whether a WebSocket handshake's cookie is
+  believed (`sessionToken` in index.js).
+- **Playing signed in.** `/ws`'s upgrade looks the cookie up (async: the upgrade waits for it) and the socket's
+  user data carries `{ id, name }`; `Room.attach` passes it to the worker (`{ t: 'open', user }`), `conn.user`, and
+  `Game.handleJoin` makes the player's name the account's whatever the JOIN says, sets `p.account` (and
+  `p.guestKey`, the SHA-256 of a guest's browser id) and tells everyone in the game who is signed in as what
+  (`S2C.FRIENDS`: per player id the account name, '' for a guest), so the client can offer a friend request.
+- **Stats** (`server/dbstats.js`, `DbStats`, the same face as `PlayerStats`): an account's under `u:<user id>`, a
+  guest's under `g:<sha-256 of the browser id>`. The board's four stats are counted as they happen and written
+  every 2 s, one upsert for everyone who scored; `board()` is async (Room.board answers when it comes back). Each
+  stint of a match adds games, deaths, downs, headshots, boss kills, time and the furthest day
+  (`addStint`, from the match store). Registering or signing in with `guestId` (the browser's leaderboard id) moves
+  the guest record onto the account, and its match stints with it (`claimGuest`).
+- **Friends and messages** (`server/social.js`): a request until accepted, then a friendship stored both ways round.
+  Asking someone who asked you accepts them. A friend's presence is `playing` (with the game's info, **its code
+  included even for an invite-only game: friends may join friends**, and nobody else learns it), `online` (a
+  signed-in page open: its `/social` socket) or `offline` with when they were last seen. `Lobby.userIn/userOut`
+  track which accounts are in which room; a change reaches their online friends as `{ t: 'friends', why:
+  'presence' }`, coalesced over 400 ms. Messages are only between friends, 1-500 characters, 20 in a row then one
+  every 1.5 s; each goes to both accounts' `/social` sockets. The socket only pushes; everything is also in the
+  HTTP API, which the page asks again when it hears something changed. Signing out closes that browser's socket
+  (4001).
+- **Match records** (`server/analytics.js` in the game, `server/matchstore.js` on the network thread): a
+  `MatchTracker` in each `Game` (only when the server has a database: `analytics` in the worker's options) turns
+  what happens into records - `match`, `match_end`, a `player` per stint, a `night` per night, rare `event`s with
+  positions (downs, deaths, revives, bosses, supplies found and installed, the engine...) and a `sample` every 30 s.
+  The worker posts each (`{ t: 'an', rec }`); `MatchStore` queues them and writes once a second, one statement per
+  table (`jsonb_to_recordset`), a match before what hangs off it, retrying a failed batch one row at a time; past
+  50,000 queued it drops and says so. The hot paths (shots, hits, damage) only bump counters on the player's stint.
+  A deploy's SIGTERM ends every match being played as `interrupted` and writes it (`Lobby.finishAll`, the worker's
+  `finish`) before the process goes; a match a crash left open is closed once nothing was heard from it for 5
+  minutes (`closeStale`: not at once, since on a deploy the old server is still playing its matches while the new
+  one starts).
+- **Client:** `client/net/account.js` (who is signed in, register / sign in / out; `guestId` is `playerId()`),
+  `client/net/friends.js` (the `/social` socket with backoff, the friends list, requests, conversations, unread
+  counts, `isFriendName`), `client/ui/account.js` (the account panel: sign in / create account, lifetime stats with
+  ranks, the last games), `client/ui/friends.js` (requests, the signed-in players in this game to add, friends by
+  presence with Chat and Join / Leave & join - which asks `/api/friends/:id/game` first, so it goes where they are
+  now - and the conversation view). The splash has an account chip and locks the name field to the account's name;
+  a message or request arriving in a game is a system line in the chat, nothing more. `S2C.FRIENDS` fills
+  `conn.accounts` (player id -> account name) for the Tab-list star and "In this game".
+- **Asking the records** (`003_analytics.sql`): `analytics_overview`, `_daily`, `_by_team_size`, `_night_funnel`,
+  `_bosses`, `_death_causes`, `_damage_sources`, `_kills_by_type`, `_weapons`, `_supply_pacing`, `_retention`,
+  `_server_health`, each a function of when to count from. `npm run report` (`scripts/analytics-report.js`:
+  `--days`, `--since`, `--build <commit>`, `--only`, `--json`) prints them; each match carries the commit it was
+  played on (`build`, from `RAILWAY_GIT_COMMIT_SHA`), so a balance change can be judged by the matches since.
+
 ## Rendering pipeline
 
 - **Frame:** world -> `ScreenPasses` (`render/post.js`: SSAO, sun shafts, flashlight beam, applied in place into
@@ -556,9 +625,16 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   one with only its middle hidden, then for the farthest one nobody is facing (`spawnsScreened`, `spawnsInView`
   count those). Rays stop at trunks, walls and terrain; foliage is not modelled. Used by the night waves, the
   final stand, the car-alarm fallback and the straggler teleport.
-  A boss night's boss (`bossPending`) comes in with wave `BOSS_WAVE`; `Game.spawnBosses` scales its health by
-  `BOSS_HP_PER_PLAYER`. A boss drops its loot only if it dies before the dawn sun sets it alight (`z.onFire`,
-  `Combat.killZombie`); the sun's kill goes to the killfeed as `KILLER.WORLD`.
+  Every night's boss (`bossPending`, drawn by `nightBoss(seed, night)` in `shared/nights.js` from `BOSS_POOL`; night 1
+  is always The Brute) comes in with wave `BOSS_WAVE`; `Game.spawnBosses` scales its health by `BOSS_HP_PER_PLAYER`
+  and `BOSS_HP_PER_NIGHT` (a Tank by `TANK_BOSS_HP` as well). The client draws the same boss from the seed
+  (`nightBossText` in `client/ui/hud2.js`) and names it, with the def's `tip`, on the dawn card and at the dusk horn;
+  `NOTIFY.BOSS` says when it arrives. A day's length is `dayLength(day)` in `shared/constants.js` (`Game.dayLen`):
+  long on days 1 and 2, then `DAY_SHRINK` shorter each day down to `DAY_LENGTH`. A boss drops its loot (`bossLoot`, default 8 rolls) only if it dies before
+  the dawn sun sets it alight (`z.onFire`, `Combat.killZombie`); the sun's kill goes to the killfeed as `KILLER.WORLD`.
+  The horde takes one new kind a night: `startNight` zeroes the weight of every kind whose `ZOMBIE_DEFS[t].minNight`
+  is still to come, and puts the night's new one in the second wave if the draw left it out. By day the kinds are not
+  gated by night but by distance from the car (`Zombies.daySpecial`, `DAY_SPECIAL_*`).
 - **Noise.** `Zombies.noise(x, z, loud)` is the one entry point: `loud` is the radius (m) the noise carries
   (`NOISE` in constants.js; gunshots use `WEAPONS[w].noise`). Every zombie inside it with no target heads for
   the spot (`alertX/Z`, `alertT`), at a speed set by how loud it was where the zombie stood (`alertRush`,
@@ -693,11 +769,18 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   joined since; it sends the hold anyway, and the server answers a refusal with `NOTIFY.BELL_WAIT` /
   `NOTIFY.RADIO_NO` (reason in `RADIO_NO`). The item guide lists what a fixture costs (`FIXTURE_USES`) with the
   recipes. `/bell` and `/radio` (debug commands) ring it and go to it.
-- **Waypoint and compass.** The waypoint is client-side only and adds no network traffic (the mark the team
-  sees is the ping). A click on the field map sets `Game.waypoint` (`MapScreen._pick`: a place's name or yard
-  snaps to the place; the map frees the pointer while it is open, the way the inventory does), `Game.buildMarkers`
-  shows it as a compass marker and a world marker, and it clears on arrival, with a new game and with the
-  world. `Compass.update` (`ui/hud2.js`) lays the markers out in rank order (`RANK`, then the nearer one),
+- **Waypoint and compass.** A click on the field map sets `Game.waypoint` (`MapScreen._pick`: a place's name or
+  yard snaps to the place; the map frees the pointer while it is open, the way the inventory does),
+  `Game.buildMarkers` shows it as a compass marker and a world marker, and it clears on arrival, with a new game
+  and with the world. The team sees it: `Game.shareWaypoint` sends every change (set, moved, cleared, arrived) as
+  `ACT.WAYPOINT`, the server keeps it as `p.waypoint` (taken whatever state the player is in, clamped to the map,
+  an unknown place id dropped; `startGame` clears them all) and puts it in the player list behind `PLF.WAYPOINT`,
+  so a late joiner gets everyone's with the list and a burst of clicks costs one list a tick. `Game.teamWaypoints`
+  picks the ones to show - survivors see survivors' (downed too), turned players the turned - one per spot
+  (`sameSpot`: a place, or bare spots within `WAYPOINT_REACH`); one on your own spot adds no flag but names its
+  owners under yours (`mine`). They are `teamway` markers (teal, `--teamway`; ranked after teammates on the
+  compass, not pinned to its ends), flags on the map named for their owners, and a toast when a teammate sets
+  one. `Compass.update` (`ui/hud2.js`) lays the markers out in rank order (`RANK`, then the nearer one),
   each taking the room it needs: an icon that would touch one already placed stands aside by an icon's width
   without its text, or becomes a tick on the tape; a label that would touch another is pushed a little
   sideways or dropped; the marker you face (and always the waypoint) spells out its `name`. Label widths come

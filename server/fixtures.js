@@ -88,8 +88,9 @@ export class Fixtures {
   }
 
   holdDone(p, h) {
-    if (h.target === BELL_ID) this.ringBell();
-    else this.callPlane(p);
+    if (h.target === BELL_ID) {
+      if (this.ringBell()) this.g.track?.bell(p);
+    } else this.callPlane(p);
   }
 
   // The rope is pulled: the tolls follow from update, the first one at once
@@ -123,6 +124,7 @@ export class Fixtures {
     g.sound(SOUND.RADIO_CALL, sp.x, sp.y, sp.z, 70);
     g.zm.noise(sp.x, sp.z, NOISE.RADIO);
     g.notify(NOTIFY.RADIO_CALL, p.id);
+    g.track?.radioCall(p);
   }
 
   // every tick: the tolls of a pull under way

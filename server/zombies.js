@@ -25,12 +25,42 @@ const _ray = { t: -1, col: null, terrain: false };
 const SHADE_THAW = 0.15; // unbroken darkness (s) before a lit shade moves again, so a beam flickering across it still holds it
 const BEAM_TAN = Math.tan(FLASHLIGHT_CONE);
 const BODY_AT = [0.9, 0.55, 0.2]; // head, chest, shins (fractions of the body height) - light on any of them counts
+// The leaper's pounce (fireSpecial case 2, special state 2). It flies for T = LEAP_T0 + LEAP_TK s per metre (within
+// LEAP_TMIN-LEAP_TMAX), at where its prey will be after LEAP_LEAD of that flight on their present run (at most
+// LEAP_LEAD_MAX m ahead). The arc is raised, LEAP_RAISE s of flight at a time, until it clears what stands in between
+// with its feet LEAP_OVER m above it: a barricade in front of a survivor is what a leaper is for. In the air it twists towards its prey, LEAP_STEER m/s of
+// sideways speed per second at most, so a survivor who keeps running is caught and one who sidesteps late is not. It
+// pins whoever it passes over within LEAP_PIN m on the way down, or lands within LEAP_LAND m of. A miss is ready to
+// go again in LEAP_MISS_CD s (plus up to half as much again)
+const LEAP_T0 = 0.42;
+const LEAP_TK = 0.04;
+const LEAP_TMIN = 0.55;
+const LEAP_TMAX = 0.95;
+const LEAP_LEAD = 0.85;
+const LEAP_LEAD_MAX = 4.5;
+const LEAP_RAISE = 0.15;
+const LEAP_OVER = 0.25;
+const LEAP_STEER = 5;
+const LEAP_PIN = 1.5;
+const LEAP_LAND = 1.7;
+const LEAP_MISS_CD = 2.5;
+const _leap = { x: 0, y: 0, z: 0 };
 // the client's distance haze: fog density by sun height (KEYS s / fogD in client/render/environment.js), see sightRange()
 const HAZE_SUN = [-1, -0.12, 0.02, 0.18, 0.55, 1];
 const HAZE_DENSITY = [0.025, 0.025, 0.0195, 0.0108, 0.0074, 0.0072];
 // a zombie is lost in the haze once it has swallowed this much of it: what the dark of the night does at
 // HORDE_SPAWN_MIN, the nearest the horde has always appeared (so in full darkness the whole spawn band stays hidden)
 const HAZE_HIDES = 0.88;
+// By day the further out from the car (where every run starts), the stronger the dead, whatever the night: none of the
+// specials inside DAY_SPECIAL_NEAR, then a share of them that grows to DAY_SPECIAL_MAX at DAY_SPECIAL_FAR and beyond
+// (daySpecial). Places lie 115 m from the car at p10, 216 m at the median and 293 m at p90 (20 valleys). The kinds come
+// in by distance: spitters and boomers first, leapers from DAY_LEAPER of the ramp, ropers from DAY_ROPER. No shades
+// (the sun pins them out here), no bats and no Tanks: those, and every boss, only come at night
+const DAY_SPECIAL_NEAR = 90;
+const DAY_SPECIAL_FAR = 320;
+const DAY_SPECIAL_MAX = 0.4;
+const DAY_LEAPER = 0.35;
+const DAY_ROPER = 0.65;
 const SPAWN_TRIES = 18; // candidates a horde spawn pick looks at before settling for the least exposed one
 const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes have a clear line to this far above its ground (m)
 const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
@@ -121,8 +151,11 @@ export class Zombies {
       lureT: 0,
       attackCd: 0.5 + g.rng(),
       specialCd: 2 + g.rng() * 3,
+      pounce: false, // a leaper in the air on a pounce (not hopping off whoever it had pinned): it steers, and pins on landing
       rockCd: 3,
       summonCd: 8,
+      howlN: 0, // dogs The Alpha's howl brings
+      enraged: false, // The Brute, badly hurt (def.enrage): it comes on at def.enrageSpeed x its pace
       pendingHit: 0,
       pendingKind: 0,
       pendingTarget: 0,
@@ -186,6 +219,17 @@ export class Zombies {
     return e;
   }
 
+  // One of the specials for a day zombie standing at (x, z), or -1 for the plain dead: the further from the car, the
+  // likelier and the nastier (DAY_SPECIAL_*)
+  daySpecial(x, z) {
+    const g = this.g;
+    const car = g.world.car;
+    const k = Math.min(1, (Math.hypot(x - car.x, z - car.z) - DAY_SPECIAL_NEAR) / (DAY_SPECIAL_FAR - DAY_SPECIAL_NEAR));
+    if (k <= 0 || g.rng() >= DAY_SPECIAL_MAX * k) return -1;
+    const r = g.rng() * (k >= DAY_ROPER ? 4 : k >= DAY_LEAPER ? 3 : 2);
+    return r < 1 ? ZTYPE.SPITTER : r < 2 ? ZTYPE.BOOMER : r < 3 ? ZTYPE.LEAPER : ZTYPE.ROPER;
+  }
+
   spawnInitial() {
     const g = this.g;
     const w = g.world;
@@ -196,8 +240,10 @@ export class Zombies {
       for (let i = 0; i < n; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = 4 + g.rng() * (zn.flat * 0.8);
-        const type = g.rng() < 0.75 ? ZTYPE.WALKER : ZTYPE.RUNNER;
-        this.spawn(type, zn.x + Math.sin(a) * r, zn.z + Math.cos(a) * r);
+        const x = zn.x + Math.sin(a) * r;
+        const z = zn.z + Math.cos(a) * r;
+        const sp = this.daySpecial(x, z);
+        this.spawn(sp >= 0 ? sp : g.rng() < 0.75 ? ZTYPE.WALKER : ZTYPE.RUNNER, x, z);
       }
     }
     // the car supplies are guarded
@@ -205,7 +251,10 @@ export class Zombies {
       for (let i = 0; i < 3; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = 3 + g.rng() * 6;
-        this.spawn(i === 2 ? ZTYPE.RUNNER : ZTYPE.WALKER, sp.x + Math.sin(a) * r, sp.z + Math.cos(a) * r, { hpMul: 1.15 });
+        const x = sp.x + Math.sin(a) * r;
+        const z = sp.z + Math.cos(a) * r;
+        const t = i === 2 ? this.daySpecial(x, z) : -1;
+        this.spawn(t >= 0 ? t : i === 2 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1.15 });
       }
     }
     // roaming dead in the woods
@@ -339,8 +388,10 @@ export class Zombies {
       if (ok) {
         const a = g.rng() * Math.PI * 2;
         const r = 4 + g.rng() * zn.flat * 0.8;
-        const type = g.rng() < 0.7 ? ZTYPE.WALKER : g.day >= 3 && g.rng() < 0.4 ? ZTYPE.LEAPER : ZTYPE.RUNNER;
-        return this.spawn(type, zn.x + Math.sin(a) * r, zn.z + Math.cos(a) * r, { hpMul: 1 + 0.05 * g.day });
+        const x = zn.x + Math.sin(a) * r;
+        const z = zn.z + Math.cos(a) * r;
+        const sp = this.daySpecial(x, z);
+        return this.spawn(sp >= 0 ? sp : g.rng() < 0.7 ? ZTYPE.WALKER : ZTYPE.RUNNER, x, z, { hpMul: 1 + 0.05 * g.day });
       }
     }
     // wanderers along the roads and in the woods (never right on top of the start)
@@ -352,13 +403,10 @@ export class Zombies {
       let ok = true;
       for (const h of humans) if (Math.hypot(h.state.x - p.x, h.state.z - p.z) < 75) ok = false;
       if (!ok) continue;
-      let type = ZTYPE.WALKER;
-      const r = g.rng();
-      if (r < 0.2) type = ZTYPE.RUNNER;
-      else if (g.day >= 3 && r < 0.26) type = ZTYPE.SPITTER;
-      else if (g.day >= 3 && r < 0.3) type = ZTYPE.LEAPER;
-      else if (g.day >= 4 && r < 0.33) type = ZTYPE.BOOMER;
-      return this.spawn(type, p.x + (g.rng() - 0.5) * 4, p.z + (g.rng() - 0.5) * 4, { hpMul: 1 + 0.05 * g.day });
+      const x = p.x + (g.rng() - 0.5) * 4;
+      const z = p.z + (g.rng() - 0.5) * 4;
+      const sp = this.daySpecial(x, z);
+      return this.spawn(sp >= 0 ? sp : g.rng() < 0.2 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1 + 0.05 * g.day });
     }
     return null;
   }
@@ -389,7 +437,7 @@ export class Zombies {
   sightRange() {
     const g = this.g;
     const night = g.phase === PHASE.NIGHT;
-    const len = night ? g.nightLen : g.day <= 1 ? g.firstDayLen : g.dayLen;
+    const len = night ? g.nightLen : g.dayLen;
     const left = Math.max(0, Math.min(len, g.timeLeft));
     const el = len - left;
     let c; // position in the day/night cycle: the day on [0, 0.5), the night on [0.5, 1)
@@ -572,7 +620,7 @@ export class Zombies {
       // a couple of them answer: the survivors hear what they woke
       if (fresh && calls < 2 && rush > 0.3 && g.rng() < 0.5) {
         calls++;
-        g.sound(e.ztype === ZTYPE.RUNNER ? SOUND.RUNNER_SCREAM : e.ztype === ZTYPE.DOG ? SOUND.DOG_BARK : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : SOUND.ZOMBIE_GROWL, e.x, e.y + e.def.headY, e.z, 70);
+        g.sound(e.ztype === ZTYPE.RUNNER ? SOUND.RUNNER_SCREAM : e.def.pack ? SOUND.DOG_BARK : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : SOUND.ZOMBIE_GROWL, e.x, e.y + e.def.headY, e.z, 70);
       }
     }
     return heard;
@@ -753,7 +801,7 @@ export class Zombies {
     // ------------------------------------------------ desired direction
     let dx = 0;
     let dz = 0;
-    let speed = def.speed;
+    let speed = z.enraged ? def.speed * def.enrageSpeed : def.speed; // (The Brute, badly hurt)
     let chasing = false;
     if (z.state === 7) {
       // dog hit-and-run: peel off to one side after a lunge, then come back in
@@ -900,7 +948,7 @@ export class Zombies {
         z.pendingTarget = target.id;
         z.anim = ZANIM.ATTACK;
         z.animT = 0.6;
-        if (g.rng() < 0.5) g.sound(z.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : z.ztype === ZTYPE.DOG ? SOUND.DOG_SNARL : SOUND.ZOMBIE_ATTACK, z.x, z.y + Math.min(1.6, def.height), z.z, 35);
+        if (g.rng() < 0.5) g.sound(z.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : def.pack ? SOUND.DOG_SNARL : SOUND.ZOMBIE_ATTACK, z.x, z.y + Math.min(1.6, def.height), z.z, 35);
       }
     }
     // boomer: detonate near humans
@@ -1392,6 +1440,7 @@ export class Zombies {
     // leaper airborne / tank charge / pins / ropes
     if (z.state === 2) {
       z.anim = ZANIM.AIRBORNE;
+      if (z.pounce && target) this.leapSteer(z, target.state, dt);
       z.vy -= GRAV * dt;
       _pos.x = z.x + z.vx * dt;
       _pos.y = z.y;
@@ -1403,26 +1452,10 @@ export class Zombies {
       }
       z.y += z.vy * dt;
       const gy = groundAt(g.world, z.x, z.z, z.y, 0.2, false);
-      // pounce on a human
-      if (t === ZTYPE.LEAPER && z.vy < 3) {
-        for (const h of this.humansCache) {
-          const s = h.state;
-          if (Math.hypot(s.x - z.x, s.z - z.z) < 1.5 && Math.abs(s.y + 0.8 - z.y) < 1.6 && !s.pinned && !s.pulled && this.canReach(z, h)) {
-            z.state = 3;
-            z.link = h.id;
-            z.linkDmg = 0;
-            z.linkT = 0;
-            s.pinned = 1;
-            s.vx = s.vz = 0;
-            h.pinnedBy = z.id;
-            g.sound(SOUND.LEAPER_SCREECH, z.x, z.y + 1, z.z, 40);
-            g.damagePlayer(h, 10, { kind: KILLER.ZOMBIE, ztype: t, x: z.x, z: z.z });
-            return true;
-          }
-        }
-      }
-      // dog lunge: bite whoever it slams into, once
-      if (t === ZTYPE.DOG && !z.bit) {
+      // pounce on a human (not on the hop off whoever it had pinned: that took them again 0.15 s after it let go)
+      if (z.pounce && z.vy < 3 && this.leapPin(z, LEAP_PIN)) return true;
+      // dog lunge (and The Alpha's): bite whoever it slams into, once
+      if (def.lungeRange && !z.bit) {
         for (const h of this.humansCache) {
           const s = h.state;
           if (Math.hypot(s.x - z.x, s.z - z.z) < 1.3 && z.y > s.y - 0.4 && z.y < s.y + 1.3 && this.canReach(z, h)) {
@@ -1444,7 +1477,13 @@ export class Zombies {
         z.state = 0;
         z.anim = ZANIM.IDLE;
         z.animT = 0.3;
-        if (t === ZTYPE.DOG) {
+        if (z.pounce) {
+          // a leaper comes down beside its prey and has them; or it missed, and is soon ready to go again
+          z.pounce = false;
+          if (this.leapPin(z, LEAP_LAND)) return true;
+          z.specialCd = Math.min(z.specialCd, LEAP_MISS_CD * (1 + 0.5 * g.rng()));
+        }
+        if (def.lungeRange) {
           z.animT = 0.15;
           z.attackCd = Math.max(z.attackCd, 0.35);
           if (z.bit) {
@@ -1591,6 +1630,32 @@ export class Zombies {
           return true;
         }
         break;
+      case ZTYPE.BOSS_BRUTE:
+        // badly hurt, it stops to roar, and comes on at a run from then on
+        if (!z.enraged && z.hp <= z.maxHp * def.enrage) {
+          windup(1.2, 9, SOUND.BOSS_ROAR);
+          return true;
+        }
+        break;
+      case ZTYPE.BOSS_BLOATER:
+        if (z.specialCd <= 0 && z.los && dist < def.spewRange && Math.abs(ty - z.y) < 3) {
+          windup(0.8, 11, SOUND.BOOMER_GURGLE);
+          return true;
+        }
+        break;
+      case ZTYPE.BOSS_ALPHA:
+        // it howls up dogs into its pack while it hunts, then hunts as they do
+        if (z.summonCd <= 0) {
+          z.summonCd = def.summonRate;
+          let pack = 0;
+          for (const o of g.zombies) if (!o.dead && o !== z && o.pack === z.pack) pack++;
+          if (pack < def.summonMax && g.zombies.length < 115) {
+            z.howlN = Math.min(def.summon, def.summonMax - pack);
+            windup(1.0, 10, SOUND.DOG_HOWL);
+            return true;
+          }
+        }
+      // falls through
       case ZTYPE.DOG:
         if (z.specialCd <= 0 && z.los && dist < def.lungeRange && dist > 2.4 && z.vy > -1 && Math.abs(ty - z.y) < 2.5) {
           windup(0.3, 8, SOUND.DOG_BARK);
@@ -1628,6 +1693,73 @@ export class Zombies {
     return false;
   }
 
+  // the leaper's arc from where it stands to (ax, ay, az) in T s, flown as special state 2 flies it (the same body,
+  // resolveBody, and groundAt, which sets it down on whatever its feet come to): does anything stop it on the way?
+  leapClear(z, ax, ay, az, T) {
+    const w = this.g.world;
+    const vx = (ax - z.x) / T;
+    const vz = (az - z.z) / T;
+    const vy = (ay - z.y + 0.5 * GRAV * T * T) / T;
+    const n = Math.max(4, Math.ceil(T / 0.05));
+    for (let i = 1; i <= n; i++) {
+      const t = (i / n) * T;
+      _leap.x = z.x + vx * t;
+      _leap.y = z.y + vy * t - 0.5 * GRAV * t * t;
+      _leap.z = z.z + vz * t;
+      const px = _leap.x;
+      const pz = _leap.z;
+      const y = _leap.y;
+      if (resolveBody(w, _leap, 0.35, 1.2, false) && Math.hypot(_leap.x - px, _leap.z - pz) > 0.01) return false;
+      // ...or brings it down early, on the ground or on top of something (a barricade): it has to pass LEAP_OVER above
+      // them, away from the first and last tenth of a second (the ground it leaves and the ground it lands on)
+      if (t > 0.1 && t < T - 0.1 && groundAt(w, px, pz, y, 0.2, false) > y - LEAP_OVER) return false;
+    }
+    return true;
+  }
+
+  // a leaper in the air on a pounce twists towards its prey (LEAP_STEER): at the speed that would bring it down on
+  // them, as far as that much twisting gets it
+  leapSteer(z, s, dt) {
+    const disc = z.vy * z.vy + 2 * GRAV * (z.y - (s.y + 0.6));
+    if (disc < 0) return;
+    const left = (z.vy + Math.sqrt(disc)) / GRAV;
+    if (left < 0.05) return;
+    let dvx = (s.x - z.x) / left - z.vx;
+    let dvz = (s.z - z.z) / left - z.vz;
+    const l = Math.hypot(dvx, dvz);
+    const m = LEAP_STEER * dt;
+    if (l > m) {
+      dvx *= m / l;
+      dvz *= m / l;
+    }
+    z.vx += dvx;
+    z.vz += dvz;
+    z.yaw = Math.atan2(-z.vx, -z.vz);
+  }
+
+  // a leaper coming down takes whoever is within reach of it (LEAP_PIN on the way down, LEAP_LAND as it lands)
+  leapPin(z, reach) {
+    const g = this.g;
+    for (const h of this.humansCache) {
+      const s = h.state;
+      if (Math.hypot(s.x - z.x, s.z - z.z) < reach && Math.abs(s.y + 0.8 - z.y) < 1.6 && !s.pinned && !s.pulled && this.canReach(z, h)) {
+        z.state = 3;
+        z.pounce = false;
+        z.link = h.id;
+        z.linkDmg = 0;
+        z.linkT = 0;
+        s.pinned = 1;
+        s.vx = s.vz = 0;
+        h.pinnedBy = z.id;
+        g.track?.grabbed(h, 'pinned');
+        g.sound(SOUND.LEAPER_SCREECH, z.x, z.y + 1, z.z, 40);
+        g.damagePlayer(h, 10, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
+        return true;
+      }
+    }
+    return false;
+  }
+
   fireSpecial(z, target, tx, ty, tz, dist) {
     const g = this.g;
     const def = z.def;
@@ -1643,16 +1775,30 @@ export class Zombies {
         break;
       }
       case 2: {
-        // leap
+        // leap: at where its prey will be when it comes down, on an arc raised until it clears whatever stands in
+        // between (LEAP_*); with no arc that clears it, the lowest one, which runs into it
         if (!target) return;
         const s = target.state;
-        const T = Math.max(0.45, Math.min(1.1, dist / 11));
-        const aimX = s.x + s.vx * T * 0.4;
-        const aimZ = s.z + s.vz * T * 0.4;
-        z.vx = (aimX - z.x) / T;
-        z.vz = (aimZ - z.z) / T;
+        const T0 = Math.max(LEAP_TMIN, Math.min(LEAP_TMAX, LEAP_T0 + LEAP_TK * dist));
+        const aim = (T) => {
+          const k = LEAP_LEAD * T * Math.min(1, LEAP_LEAD_MAX / (Math.hypot(s.vx, s.vz) * LEAP_LEAD * T || 1));
+          _leap.x = s.x + s.vx * k;
+          _leap.z = s.z + s.vz * k;
+        };
+        let T = T0;
+        for (let k = 0; k < 4; k++) {
+          aim(T0 + k * LEAP_RAISE);
+          if (this.leapClear(z, _leap.x, s.y + 0.6, _leap.z, T0 + k * LEAP_RAISE)) {
+            T = T0 + k * LEAP_RAISE;
+            break;
+          }
+        }
+        aim(T);
+        z.vx = (_leap.x - z.x) / T;
+        z.vz = (_leap.z - z.z) / T;
         z.vy = (s.y + 0.6 - z.y + 0.5 * GRAV * T * T) / T;
         z.state = 2;
+        z.pounce = true;
         z.anim = ZANIM.AIRBORNE;
         z.specialCd = 5 + g.rng() * 3;
         g.sound(SOUND.LEAP, z.x, z.y + 1, z.z, 30);
@@ -1751,6 +1897,39 @@ export class Zombies {
         z.anim = ZANIM.AIRBORNE;
         z.bit = false;
         z.specialCd = 3 + g.rng() * 2.5;
+        break;
+      }
+      case 9:
+        // The Brute's temper
+        z.enraged = true;
+        break;
+      case 10: {
+        // The Alpha's howl: dogs come running out of the dark into its pack, from just out of the survivors' sight
+        const n = z.howlN;
+        const a = g.rng() * Math.PI * 2;
+        const r = 9 + g.rng() * 5;
+        const x = z.x + Math.sin(a) * r;
+        const zz = z.z + Math.cos(a) * r;
+        for (let i = 0; i < n; i++) {
+          const d = this.spawn(ZTYPE.DOG, x + (g.rng() - 0.5) * 3, zz + (g.rng() - 0.5) * 3, { horde: true, pack: z.pack, hpMul: g.hordeHpMul || 1 });
+          if (d) d.flank = (g.rng() - 0.5) * 1.5;
+        }
+        break;
+      }
+      case 11: {
+        // The Bloater heaves bile: a wide, low fan of acid at whoever is in front of it
+        if (!target) return;
+        const s = target.state;
+        for (let i = -3; i <= 3; i++) {
+          const a = i * 0.2 + (g.rng() - 0.5) * 0.08;
+          const dx = s.x - z.x;
+          const dz = s.z - z.z;
+          const k = 0.8 + g.rng() * 0.45;
+          const rx = (dx * Math.cos(a) - dz * Math.sin(a)) * k;
+          const rz = (dx * Math.sin(a) + dz * Math.cos(a)) * k;
+          c.lob(PROJ.ACID, z, z.x, z.y + def.headY - 0.4, z.z, z.x + rx, s.y, z.z + rz, Math.max(0.5, dist / 14), 12);
+        }
+        z.specialCd = def.spewRate + g.rng() * 2;
         break;
       }
       case 99: {

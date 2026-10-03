@@ -45,6 +45,10 @@ const COATS = [
   { name: 'pit', fur: 0xa89c86, belly: 0xc4baa6, ears: 'up', ribs: -1, tornEar: 1, stump: true },
 ];
 export const DOG_COATS = COATS.length;
+// The Alpha (ZTYPE.BOSS_ALPHA): the pack's leader, the same dog built heavier and drawn at ALPHA_SCALE. Near-black and
+// mangier still, a ridge of bone spurs down its spine, longer fangs, eyes that burn red
+const ALPHA = { name: 'alpha', fur: 0x24211e, saddle: 0x0c0b0a, belly: 0x45382e, ears: 'up', tornEar: 1, ribs: -1, alpha: true, bulk: 1.22, mange: 0.5 };
+export const ALPHA_SCALE = 2.0;
 
 const C_MANGE = new THREE.Color(0x7c6a64); // bald, diseased skin
 const C_SCAB = new THREE.Color(0x3a1410);
@@ -72,15 +76,17 @@ function coatTint(coat, part, seed) {
     // mange: bald, scabbed patches
     if (part !== 'paw') {
       const m = fbm3(P.x * 10 + seed, P.y * 10, P.z * 10, 3, 31);
-      if (m > 0.58) C.lerp(C_MANGE, clamp((m - 0.58) * 9, 0, 0.9));
-      if (m > 0.68) C.lerp(C_SCAB, clamp((m - 0.68) * 10, 0, 0.7));
+      const t = coat.mange ?? 0.58;
+      if (m > t) C.lerp(C_MANGE, clamp((m - t) * 9, 0, 0.9));
+      if (m > t + 0.1) C.lerp(C_SCAB, clamp((m - t - 0.1) * 10, 0, 0.7));
     }
   };
 }
 
 function buildDog(coatIdx) {
-  const coat = COATS[coatIdx % COATS.length];
-  const seed = coatIdx * 13.7;
+  const coat = coatIdx === 'alpha' ? ALPHA : COATS[coatIdx % COATS.length];
+  const seed = coatIdx === 'alpha' ? 77.3 : coatIdx * 13.7;
+  const bk = coat.bulk || 1; // a heavier build: body, neck and legs this much thicker
   const mb = new MeshBuilder();
   mb.addBone('root', null, 0, 0, 0);
   mb.addBone('hips', 'root', ...B.hips);
@@ -108,13 +114,13 @@ function buildDog(coatIdx) {
   const furs = {};
   const fur = (part) => furs[part] || (furs[part] = { color: coat.fur, region: CR.PLAIN, mottle: 0.22, mf: 40, tint: coatTint(coat, part, seed) });
   const ellip = (part, bone, c, r, o = {}) => mb.ellip(bone, rel(bone, c), r, { ...fur(part), ...o });
-  const seg = (part, bone, a, b, r0, r1, o = {}) => mb.seg(bone, rel(bone, a), rel(bone, b), r0, r1, { rs: 7, hs: 1, caps: 2, ...fur(part), ...o });
-  const joint = (part, bone, c, r) => ellip(part, bone, c, [r, r, r], { ws: 6, hs: 4 });
+  const seg = (part, bone, a, b, r0, r1, o = {}) => mb.seg(bone, rel(bone, a), rel(bone, b), r0 * (part === 'leg' || part === 'neck' ? bk : 1), r1 * (part === 'leg' || part === 'neck' ? bk : 1), { rs: 7, hs: 1, caps: 2, ...fur(part), ...o });
+  const joint = (part, bone, c, r) => ellip(part, bone, c, [r * bk, r * bk, r * bk], { ws: 6, hs: 4 });
   const plain = (color, o = {}) => ({ color, region: CR.PLAIN, mottle: 0.15, ao: false, ws: 6, hs: 4, ...o });
   // a horizontal body shell: lathe profile [radius, z] from rump to front, elliptical section (h = height / width)
   // around a centre line at height y that rises by lift(z)
   const shell = (part, bone, y, prof, h, lift) =>
-    mb.lathe(bone, rel(bone, [0, y, 0]), prof.map(([r, z]) => [r, -z]), {
+    mb.lathe(bone, rel(bone, [0, y, 0]), prof.map(([r, z]) => [r * bk, -z]), {
       rs: 12, sz: h, rot: [-Math.PI / 2, 0, 0], shape: lift ? (v) => (v.z += lift(-v.y)) : null, ...fur(part),
     });
 
@@ -164,14 +170,14 @@ function buildDog(coatIdx) {
       const z = -0.55 - i * 0.03;
       const x = s * (0.035 - i * 0.004);
       const fang = i === 3;
-      const h = fang ? 0.03 : 0.012 + (i % 2) * 0.004;
+      const h = fang ? (coat.alpha ? 0.045 : 0.03) : 0.012 + (i % 2) * 0.004;
       const tooth = plain(C_TEETH, { region: CR.BONE, blood: false, mottle: 0.25, rs: 4 });
       mb.spike('head', rel('head', [x, 0.592, z]), rel('head', [x * 0.97, 0.592 - h, z - (fang ? 0.004 : 0)]), fang ? 0.0065 : 0.0048, tooth);
       mb.spike('jaw', rel('jaw', [x * 0.9, 0.58, z + 0.005]), rel('jaw', [x * 0.88, 0.58 + h * 0.8, z + 0.005]), fang ? 0.0055 : 0.0042, tooth);
     }
     // clouded, faintly glowing eyes in bruised sockets
     mb.ellip('head', rel('head', [s * 0.041, 0.655, -0.548]), [0.014, 0.012, 0.01], plain(0x241010, { region: CR.GORE }));
-    mb.ellip('head', rel('head', [s * 0.043, 0.656, -0.553]), [0.0095, 0.0085, 0.007], plain(0xcfc47a, { glow: 0.45, mottle: 0, blood: false }));
+    mb.ellip('head', rel('head', [s * 0.043, 0.656, -0.553]), [0.0095, 0.0085, 0.007], coat.alpha ? plain(0xff3a18, { region: CR.GLOW, glow: 1, mottle: 0, blood: false }) : plain(0xcfc47a, { glow: 0.45, mottle: 0, blood: false }));
   }
   // ears: flattened four-sided cones; pricked or floppy, one torn short on some
   for (const s of [-1, 1]) {
@@ -217,6 +223,22 @@ function buildDog(coatIdx) {
     joint('leg', 'hh' + n, X(B.hh), 0.023);
     ellip('paw', 'hh' + n, X([0.1, 0.02, 0.305]), [0.027, 0.019, 0.038], { ws: 7, hs: 4 });
   }
+  if (coat.alpha) {
+    // bone spurs down the spine from the withers to the rump, raking back, the tallest over the shoulders
+    const bone = { color: 0xd4c6a6, region: CR.BONE, blood: false, mottle: 0.25, rs: 5 };
+    for (let i = 0; i < 9; i++) {
+      const z = -0.26 + i * 0.065;
+      const y = 0.6 + 0.085 * bk - 0.004 * i;
+      const h = 0.075 - i * 0.005 + (i % 2) * 0.012;
+      const b = z < -0.02 ? 'chest' : 'hips';
+      mb.spike(b, rel(b, [0, y - 0.01, z]), rel(b, [0, y + h, z + h * 0.7]), 0.013 + (i < 4 ? 0.004 : 0), bone);
+    }
+    // a ruff of matted fur over the neck and shoulders
+    ellip('neck', 'neck', [0, 0.6, -0.27], [0.085, 0.07, 0.1], { ws: 10, hs: 7, noise: 0.018, nf: 34 });
+    // old scars across the muzzle and flank
+    mb.blood([0.04, 0.64, -0.56], 0.04, 1);
+    mb.blood([-0.1, 0.55, -0.05], 0.08, 0.9);
+  }
   // blood: soaked muzzle and chest, a bite wound on the haunch
   mb.blood([0, 0.575, -0.6], 0.075, 1);
   mb.blood([0, 0.42, -0.24], 0.085, 0.8);
@@ -249,7 +271,9 @@ const BLEND = [9, 16, 14, 14, 18, 14, 6]; // 1/s towards each state
 class DogInstance {
   constructor(coat, seed) {
     const rig = getRig(coat);
-    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.3);
+    this.S = coat === 'alpha' ? ALPHA_SCALE : 1; // drawn at this size (the rig is a dog's)
+    this.alpha = coat === 'alpha';
+    const inst = instantiateRig(rig, getCharacterMaterial(), (rig.sphere.radius * 1.6 + 0.3) * this.S);
     this.mesh = inst.mesh;
     this.bones = inst.bones;
     this.skeleton = inst.skeleton;
@@ -262,6 +286,7 @@ class DogInstance {
     this.rz = new Float32Array(this.nb);
     this.object = new THREE.Group();
     this.object.name = 'zombie';
+    this.mesh.scale.setScalar(this.S);
     this.object.add(this.mesh);
     const r = (k) => noise3(seed * 0.618 + k * 7.1, k, 0.3, 29);
     this.seed = seed;
@@ -269,7 +294,7 @@ class DogInstance {
     this.side = r(1) < 0.5 ? 1 : -1; // side it falls on when it dies
     this.limpLeg = r(2) < 0.45 ? ['LF', 'RF', 'LH', 'RH'][Math.floor(r(3) * 4) & 3] : null;
     this.limp = 0.35 + r(4) * 0.4;
-    this.headLow = 0.15 + r(5) * 0.2;
+    this.headLow = this.alpha ? 0.06 : 0.15 + r(5) * 0.2; // (the Alpha carries its head up)
     this.state = ZANIM.IDLE;
     this.stateT = 0;
     this.w = new Float32Array(NS);
@@ -313,10 +338,10 @@ class DogInstance {
     const cur = STATE_OF[anim] ?? S_LOCO;
     for (let i = 0; i < NS; i++) this.w[i] += ((i === cur ? 1 : 0) - this.w[i]) * Math.min(1, dt * BLEND[cur]);
     const moving = anim === ZANIM.WALK || anim === ZANIM.RUN;
-    this.wRun += (clamp((speed - 2.4) / 2.2, 0, 1) - this.wRun) * Math.min(1, dt * 5);
+    this.wRun += (clamp((speed - 2.4 * Math.sqrt(this.S)) / 2.2, 0, 1) - this.wRun) * Math.min(1, dt * 5);
     this.wMove += ((moving ? clamp(speed / 0.8, 0, 1) : 0) - this.wMove) * Math.min(1, dt * 7);
     if (anim !== ZANIM.DEAD) {
-      const stride = lerp(1.08, 2.7, this.wRun); // ground covered per gait cycle (keeps planted paws from sliding)
+      const stride = lerp(1.08, 2.7, this.wRun) * this.S; // ground covered per gait cycle (keeps planted paws from sliding)
       this.phase = (this.phase + (dt * speed * TAU) / stride) % (TAU * 1000);
     }
     if (this.hit > 0) this.hit = Math.max(0, this.hit - dt * 5);
@@ -458,8 +483,13 @@ class DogInstance {
     for (let i = 0; i < TAIL_N; i++) this.add('tail' + i, W, i === 0 ? 0.35 : 0.05);
   }
 
-  // SPECIAL (lunge wind-up): crouched low on coiled legs, head down, snarling
+  // SPECIAL (lunge wind-up): crouched low on coiled legs, head down, snarling. The Alpha's, held past a wind-up, is
+  // its howl to the pack: it sits back on its haunches, throat to the sky
   poseCrouch(t, W, st) {
+    const howl = this.alpha ? smooth(clamp((this.stateT - 0.38) / 0.3, 0, 1)) : 0;
+    if (howl > 0.001) this.poseHowl(t, W * howl, st);
+    W *= 1 - howl;
+    if (W < 0.001) return;
     const quiver = Math.sin(t * 40 + this.sd) * 0.02;
     st.hy -= 0.08 * W;
     this.add('hips', W, -0.12);
@@ -478,6 +508,28 @@ class DogInstance {
     this.add('earL', W, 1.1, 0, -0.2);
     this.add('earR', W, 1.1, 0, 0.2);
     for (let i = 0; i < TAIL_N; i++) this.add('tail' + i, W, i === 0 ? 0.15 : 0, Math.sin(t * 22) * 0.05);
+  }
+
+  poseHowl(t, W, st) {
+    const u = this.stateT - 0.38;
+    const tr = Math.sin(t * 26) * 0.03 * smooth(clamp(u / 0.4, 0, 1)); // the throat quivers with it
+    st.hy -= 0.05 * W;
+    this.add('hips', W, 0.32);
+    this.add('chest', W, 0.18);
+    this.add('neck', W, 0.75 + tr, 0, tr);
+    this.add('head', W, 0.3);
+    this.add('jaw', W, -0.55 - Math.abs(tr) * 3);
+    for (const s of ['L', 'R']) {
+      this.add('fu' + s, W, -0.35);
+      this.add('fl' + s, W, 0.1);
+      this.add('fp' + s, W, 0.15);
+      this.add('hu' + s, W, 0.95);
+      this.add('hk' + s, W, -1.3);
+      this.add('hh' + s, W, 0.6);
+    }
+    this.add('earL', W, -0.2, 0, -0.1);
+    this.add('earR', W, -0.2, 0, 0.1);
+    for (let i = 0; i < TAIL_N; i++) this.add('tail' + i, W, i === 0 ? 0.4 : 0.1);
   }
 
   // AIRBORNE (lunge): stretched out flat, forelegs reaching, jaws wide
@@ -605,15 +657,17 @@ class DogInstance {
 
 /** Triangle counts per coat (models sandbox stats). */
 export function dogStats() {
-  return COATS.map((c, i) => ({ type: 'dog', variant: i, tris: getRig(i).tris, bones: getRig(i).bones.length }));
+  const out = COATS.map((c, i) => ({ type: 'dog', variant: i, tris: getRig(i).tris, bones: getRig(i).bones.length }));
+  out.push({ type: 'alpha', variant: 0, tris: getRig('alpha').tris, bones: getRig('alpha').bones.length });
+  return out;
 }
 
 /**
  * A zombie dog view with the createZombie() interface: { object, update(dt, anim, speed, time, inView), flash, hurt, vocalize, setHeadless,
  * anchorWorld, dispose }. seed picks the coat (same hash as the other zombie variants) + per-instance quirks.
  */
-export function createZombieDog(seed = 0) {
-  const coat = (((seed >>> 0) * 2654435761) >>> 0) % COATS.length;
+export function createZombieDog(seed = 0, alpha = false) {
+  const coat = alpha ? 'alpha' : (((seed >>> 0) * 2654435761) >>> 0) % COATS.length;
   const d = new DogInstance(coat, seed >>> 0);
   return {
     object: d.object,

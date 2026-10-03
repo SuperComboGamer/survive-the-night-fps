@@ -235,9 +235,10 @@ if (q.has('deer')) {
 } else {
   const row1 = [[ZTYPE.WALKER, 1], [ZTYPE.WALKER, 2], [ZTYPE.RUNNER, 3], [ZTYPE.SPITTER, 4], [ZTYPE.LEAPER, 5], [ZTYPE.ROPER, 6], [ZTYPE.BOOMER, 7], [ZTYPE.BAT, 8]];
   row1.forEach(([t, s], i) => addZombie(t, s, (i - 3.5) * 1.5, -1.5, t === ZTYPE.BAT ? 1.5 : 0));
-  const row2 = [[ZTYPE.TANK, 9], [ZTYPE.BOSS_ABOMINATION, 10], [ZTYPE.BOSS_HIVEQUEEN, 11]];
-  row2.forEach(([t, s], i) => addZombie(t, s, (i - 1) * 4.2, 3.5));
+  const row2 = [[ZTYPE.BOSS_BRUTE, 13], [ZTYPE.TANK, 9], [ZTYPE.BOSS_ABOMINATION, 10], [ZTYPE.BOSS_HIVEQUEEN, 11], [ZTYPE.BOSS_BLOATER, 14]];
+  row2.forEach(([t, s], i) => addZombie(t, s, (i - 2) * 3.8, 3.5));
   for (let i = 0; i < 2; i++) addZombie(ZTYPE.DOG, i * 3 + 1, 6.4 + i * 1.3, -1.5);
+  addZombie(ZTYPE.BOSS_ALPHA, 15, 11.5, 2.0);
   addZombie(ZTYPE.SHADE, 12, 9.2, -1.5);
   // front row: a survivor holding each weapon
   const wl = [ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.PISTOL, ITEM.SHOTGUN, ITEM.AK47, ITEM.HUNTING_RIFLE, ITEM.MOLOTOV, ITEM.PIPEBOMB];

@@ -1,7 +1,7 @@
 // Per-frame HUD. update(h) is called every frame: it diffs against cached values and only
 // touches the DOM when a (rounded) value actually changed.
 import { ITEM_DEFS, WEAPONS, AMMO_NAMES, CAR_PARTS } from '../../shared/defs.js';
-import { PHASE, DAY_LENGTH, FIRST_DAY_LENGTH, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/constants.js';
+import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/constants.js';
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
@@ -343,7 +343,7 @@ export class Hud {
     }
 
     // arc progress through the current phase
-    let len = phase === PHASE.NIGHT ? NIGHT_LENGTH : day <= 1 ? FIRST_DAY_LENGTH : DAY_LENGTH;
+    let len = phase === PHASE.NIGHT ? NIGHT_LENGTH : dayLength(day);
     if (h.timeLeft > len) len = h.timeLeft;
     let p = phase === PHASE.DAY || phase === PHASE.NIGHT ? 1 - (h.timeLeft || 0) / len : 0;
     p = Math.round(clamp(p, 0, 1) * 600) / 600;

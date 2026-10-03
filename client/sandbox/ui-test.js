@@ -353,7 +353,7 @@ switch (screen) {
     ui.updateHud(h);
     ui.notify('Dawn', 'big', 60);
     ui.notify('You made it through the night', 'sub', 60);
-    ui.showSummary({ night: 3, kills: 64, structLost: 5, downs: 2, revives: 1, deaths: 0 }, 'Horde 4: bigger and hungrier. New: ropers, tanks in the horde.');
+    ui.showSummary({ night: 3, kills: 64, structLost: 5, downs: 2, revives: 1, deaths: 0 }, 'Horde 4: bigger and hungrier. Boomers join the horde: they burst against your walls. Shoot them far off.', null, { name: 'The Bloater', tip: ZOMBIE_DEFS[ZTYPE.BOSS_BLOATER].tip });
     break;
   }
   case 'hud-finale': {

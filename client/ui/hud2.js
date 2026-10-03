@@ -1,8 +1,9 @@
 // Iteration 2 HUD pieces: compass strip, objective tracker ("field notes"), world markers (teammate
 // nameplates, pings, the car), downed overlay, damage direction arrows and the dawn summary card.
 // Same conventions as hud.js: update() is called every frame and only touches the DOM on change.
-import { ITEM_DEFS, SUPPLIES, SUPPLY_NEED, ZONE_NAMES, ITEM, supplyRumours } from '../../shared/defs.js';
+import { ITEM_DEFS, SUPPLIES, SUPPLY_NEED, ZONE_NAMES, ITEM, ZOMBIE_DEFS, supplyRumours } from '../../shared/defs.js';
 import { PHASE, DUSK_WARNING } from '../../shared/constants.js';
+import { nightBoss } from '../../shared/nights.js';
 import { el, svgEl, fmtTime, clamp } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 
@@ -32,8 +33,8 @@ export const healthTier = (f) => (f < 0 || f >= 0.6 ? '' : f < 0.3 ? ' crit' : '
 // waypoint), `d` (its distance in metres) and `pinEdge` (stays on the tape's end when out of view).
 // When two markers would print over each other the one that matters more keeps its place and its text:
 // a downed teammate or the car in the final stand, then by kind in this order - with whatever you are
-// facing just behind your teammates - and between two of a kind the nearer one.
-const RANK = { ping: 1, way: 2, mate: 3, crate: 5, car: 6, hint: 7, poi: 8 };
+// facing just behind your teammates - and between two of a kind the nearer one. (teamway: a teammate's waypoint)
+const RANK = { ping: 1, way: 2, mate: 3, teamway: 5, crate: 6, car: 7, hint: 8, poi: 9 };
 const RANK_FACING = 4;
 const LABEL_GAP = 6; // px kept clear between two labels
 const byRank = (a, b) => a.rank - b.rank || a.d - b.d;
@@ -182,7 +183,7 @@ export class Compass {
       r.mk = mk;
       r.x = x;
       r.edge = edge;
-      r.rank = mk.cls === 'downed' || mk.cls === 'urgent' ? 0 : (RANK[mk.kind] ?? 9);
+      r.rank = mk.cls === 'downed' || mk.cls === 'urgent' ? 0 : (RANK[mk.kind] ?? 10);
       r.d = mk.d || 0;
       if (mk.name && !edge && Math.abs(x - W / 2) < off) {
         off = Math.abs(x - W / 2);
@@ -465,10 +466,11 @@ export class Summary {
     this.title = el('div', 'sm-title', this.root, '');
     this.stats = el('div', 'sm-stats', this.root);
     this.theme = el('div', 'sm-theme', this.root);
+    this.boss = el('div', 'sm-theme sm-boss', this.root);
     this.next = el('div', 'sm-next', this.root, '');
   }
-  // theme: the coming night's theme (shared/nights.js), or null for a plain night
-  show(s, nextText, theme) {
+  // theme: the coming night's theme (shared/nights.js), or null for a plain night; boss: its boss (nightBossText)
+  show(s, nextText, theme, boss) {
     this.title.textContent = `Night ${s.night} survived`;
     this.stats.textContent = '';
     const stat = (label, v, cls = '') => {
@@ -487,6 +489,12 @@ export class Summary {
       el('b', '', this.theme, `Tonight: ${theme.name}`);
       el('span', '', this.theme, theme.warn);
     }
+    // ...and so does its boss: knowing which one is coming is what the day is for
+    this.boss.textContent = '';
+    if (boss) {
+      el('b', '', this.boss, `Boss: ${boss.name}`);
+      el('span', '', this.boss, `With the second wave. ${boss.tip}`);
+    }
     this.next.textContent = nextText || '';
     this.root.hidden = false;
     this.root.classList.remove('out');
@@ -500,16 +508,20 @@ export class Summary {
   }
 }
 
-// what the next night brings (shown on the dawn card)
+// what the next night brings (shown on the dawn card): its one new kind of the dead (ZOMBIE_DEFS minNight). Its boss
+// has a line of its own on the card (nightBossText)
 export function nextNightText(night) {
   const n = night;
-  const adds = [];
-  if (n === 2) adds.push('spitters', 'boomers', 'zombie dog packs', 'shades (they only move in the dark)', 'a Tank (it charges, and barricades will not hold it)');
-  if (n === 3) adds.push('leapers', 'bats', 'a boss (kill it before sunrise for what it carries)');
-  if (n === 4) adds.push('ropers', 'tanks in the horde');
-  if (n >= 5 && n % 3 === 0) adds.push('a boss (kill it before sunrise for what it carries)');
   const more = n <= 1 ? 'The next horde will be bigger.' : `Horde ${n}: bigger and hungrier.`;
-  return adds.length ? `${more} New: ${adds.join(', ')}.` : more;
+  const fresh = Object.values(ZOMBIE_DEFS).filter((d) => d.minNight === n && !d.boss && d.intro);
+  return [more, ...fresh.map((d) => d.intro)].join(' ');
+}
+
+// the boss that comes with night n, named on the dawn card and at the dusk horn so the team can get ready for it. The
+// server draws the same one from the seed (shared/nights.js nightBoss): nothing crosses the wire
+export function nightBossText(seed, night) {
+  const zd = ZOMBIE_DEFS[nightBoss(seed, night)];
+  return { name: (zd.boss ? '' : 'A ') + zd.name, tip: zd.tip || '' };
 }
 
 export { PING_LABEL, ITEM };

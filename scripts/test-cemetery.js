@@ -303,7 +303,8 @@ for (const seed of SEEDS) {
       const planned = game.waves.reduce((k, wv) => k + wv.queue.length, 0);
       const rank = game.waves.reduce((k, wv) => k + wv.queue.filter((t) => t === ZTYPE.WALKER || t === ZTYPE.RUNNER).length, 0);
       check(`${tag} night ${game.day} falls`, game.phase === PHASE.NIGHT && planned >= 30 && rank === planned, `a horde of ${planned}`);
-      const left = () => game.hordeAlive() + game.waves.reduce((k, wv) => k + wv.queue.length, 0);
+      // (the night's boss is not of the waves: every night has one, The Brute on the first)
+      const left = () => game.zombies.filter((z) => z.horde && !z.dead && !z.boss).length + game.waves.reduce((k, wv) => k + wv.queue.length, 0);
       const risers = new Map(); // zombie -> { inside, born (tick it started up), up (tick it was out), near (how close it got to a survivor while the ring was whole) }
       let lo = Infinity;
       let hi = 0;

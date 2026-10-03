@@ -25,6 +25,9 @@ const STAT_MAX = 0xffffffff; // (what a varu carries)
 // only exists once it has something on it, so this is 20000 players who scored, not 20000 joins.
 const MAX_RECORDS = 20000;
 
+// The key a browser's id is filed under: its SHA-256, hex. '' for anything that is not an id
+export const idKey = (id) => (typeof id === 'string' && ID.test((id = id.toLowerCase())) ? createHash('sha256').update(id).digest('hex') : '');
+
 const whole = (v) => (typeof v === 'number' && v > 0 ? Math.min(Math.floor(v), STAT_MAX) : 0);
 // a stored name, as handleJoin would have let it through
 const cleanName = (v) => (typeof v === 'string' ? v.replace(/[^\p{L}\p{N} _\-.#]/gu, '').trim().slice(0, 16) : '') || 'Survivor';
@@ -110,8 +113,8 @@ export class PlayerStats {
   // The record of the player joining with `id` under `name`: their own from before, or a new one. null for an id
   // that is not one - nothing is kept for that player and they are on no board.
   enter(id, name) {
-    if (typeof id !== 'string' || !ID.test((id = id.toLowerCase()))) return null;
-    const key = createHash('sha256').update(id).digest('hex');
+    const key = idKey(id);
+    if (!key) return null;
     let rec = this.recs.get(key);
     if (!rec) {
       rec = { key, name, seen: 0, on: 0 };

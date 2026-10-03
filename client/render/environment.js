@@ -6,7 +6,7 @@
 // whole scene for a moment.
 import * as THREE from 'three';
 import { SunLight } from 'three/addons/lights/SunLight.js';
-import { PHASE, DAY_LENGTH, FIRST_DAY_LENGTH, NIGHT_LENGTH } from '../../shared/constants.js';
+import { PHASE, dayLength, NIGHT_LENGTH } from '../../shared/constants.js';
 import { G, FOG_FUNCS } from './globals.js';
 
 const SKY_VERT = /* glsl */ `
@@ -216,7 +216,7 @@ export class Environment {
   // cycle position in [0,1): day = [0, 0.5), night = [0.5, 1)
   static cycleFor(phase, timeLeft, day, phaseLen) {
     if (phase === PHASE.DAY) {
-      const len = phaseLen || (day <= 1 ? FIRST_DAY_LENGTH : DAY_LENGTH);
+      const len = phaseLen || dayLength(day);
       return phaseCycle(timeLeft, len, MORNING, MORNING, 0.45, 0.5, 0, DUSK_SECS);
     }
     if (phase === PHASE.NIGHT) {

@@ -4618,6 +4618,186 @@ body {
 
 .stn-ui .gc-panel .btn-blood:disabled {
   cursor: progress;
+}
+
+/* Friends */
+.stn-ui .fr-panel .set-body {
+  min-height: calc(200 * var(--u));
+  padding-top: calc(6 * var(--u));
+  padding-bottom: calc(12 * var(--u));
+}
+
+.stn-ui .fr-sec[hidden] {
+  display: none;
+}
+
+.stn-ui .fr-h {
+  margin: calc(12 * var(--u)) 0 calc(7 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+  text-align: left;
+}
+
+.stn-ui .fr-row.off .gb-name {
+  color: var(--bone-dim);
+}
+
+.stn-ui .fr-row .gb-name {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .fr-row .gb-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stn-ui .fr-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(230, 223, 207, 0.25);
+}
+
+.stn-ui .fr-row.on .fr-dot {
+  background: var(--good);
+  box-shadow: 0 0 6px var(--good);
+}
+
+.stn-ui .fr-row.on {
+  border-left-color: var(--good);
+}
+
+.stn-ui .fr-acts {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .fr-rm {
+  min-width: 0;
+  padding: calc(6 * var(--u)) calc(8 * var(--u));
+  opacity: 0.6;
+}
+
+.stn-ui .fr-rm svg {
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+}
+
+.stn-ui .fr-rm:hover,
+.stn-ui .fr-rm.sure {
+  opacity: 1;
+}
+
+.stn-ui .fr-rm.sure {
+  color: #ff9d90;
+}
+
+.stn-ui .fr-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.stn-ui .fr-ico {
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+}
+
+.stn-ui .fr-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .fr-empty {
+  padding: calc(22 * var(--u)) calc(10 * var(--u));
+}
+
+.stn-ui .fr-add {
+  display: flex;
+  gap: calc(8 * var(--u));
+  margin-top: calc(16 * var(--u));
+}
+
+.stn-ui .fr-code-in {
+  flex: 1;
+  text-transform: uppercase;
+}
+
+.stn-ui .fr-code-in::placeholder {
+  text-transform: none;
+}
+
+.stn-ui .fr-said {
+  margin-top: calc(8 * var(--u));
+  font: max(11px, calc(13 * var(--u))) / 1.3 var(--f-type);
+  color: #ff9d90;
+  text-align: left;
+}
+
+.stn-ui .fr-said.ok {
+  color: var(--good);
+}
+
+.stn-ui .fr-panel .set-foot {
+  align-items: center;
+}
+
+.stn-ui .fr-mine {
+  display: flex;
+  align-items: baseline;
+  gap: calc(10 * var(--u));
+}
+
+.stn-ui .fr-mine-l {
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .fr-mine-code {
+  font: 400 max(15px, calc(20 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.12em;
+  color: var(--bone);
+  user-select: all;
+}
+
+/* a friend in the game, on the player list [Tab] */
+.stn-ui .sv-friend {
+  display: inline-block;
+  width: calc(12 * var(--u));
+  height: calc(12 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
+  margin-left: calc(6 * var(--u));
+  color: var(--amber);
+  vertical-align: -0.05em;
+}
+
+.stn-ui .sv-friend svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* the splash's Friends button, while any of them are playing */
+.stn-ui .sp-alt .btn.lit {
+  border-color: var(--good);
+  color: var(--good);
 }/* ---------- settings */
 
 

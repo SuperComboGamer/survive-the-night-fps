@@ -3,14 +3,18 @@
 // leaderboard lives there too, so a game's records are a stand-in that posts to it (RemoteRecords).
 //
 // From the network thread:
-//   { t: 'open', slot, ip }        a socket was put in this slot        { t: 'close', slot }  ...and closed
+//   { t: 'open', slot, ip, user }  a socket was put in this slot (user: its account { id, name }, null for a guest)
+//   { t: 'close', slot }           ...and closed
 //   { t: 'in', buf }               their messages (frames, in order)    { t: 'stop' }          shut down
+//   { t: 'finish' }                the server is going down: end the match being played, and say when it is
 // To it:
 //   { t: 'ready', seed }           the game is built and ticking        { t: 'out', buf }      messages for sockets
 //   { t: 'closed', slot }          done with that slot's socket: nothing more will go out for it
 //   { t: 'kick', slot }            close that socket: it took a seat and never joined (JOIN_WAIT)
 //   { t: 'status', ... }           once a second, and when the number of players changes
 //   { t: 'rec', op, ... }          the leaderboard (RemoteRecords)      { t: 'board', ... }    a player asked for it
+//   { t: 'an', rec }               a record of the match being played (analytics.js), for the database (matchstore.js)
+//   { t: 'finished' }              ...the match is ended and its records posted
 import { parentPort, workerData } from 'node:worker_threads';
 import { Game } from './game.js';
 import { FramePacker, eachFrame } from './wire.js';
@@ -32,10 +36,11 @@ class RemoteRecords {
     this.remote = true; // Game.sendBoard: the board is the network thread's to send
     this.n = 0;
   }
-  enter(id, name) {
-    if (typeof id !== 'string' || !UUID.test(id)) return null; // (nobody: nothing is kept, as PlayerStats.enter)
+  // account: the one the player is signed in to, or null - then only a browser id gets a record
+  enter(id, name, account = null) {
+    if (!account && (typeof id !== 'string' || !UUID.test(id))) return null; // (nobody: nothing is kept, as PlayerStats.enter)
     const rec = { tok: ++this.n };
-    post({ t: 'rec', op: 'enter', tok: rec.tok, id, name });
+    post({ t: 'rec', op: 'enter', tok: rec.tok, id: account ? '' : id, name, user: account ? account.id : '' });
     return rec;
   }
   leave(rec) {
@@ -51,7 +56,8 @@ class RemoteRecords {
 }
 
 // (an emptied game builds its next valley when someone joins it, not for nobody: the lobby closes it if nobody does)
-const game = new Game({ ...opts, rollWhenEmpty: false, stats: new RemoteRecords(), log: (...a) => console.log(tag, ...a) });
+// (the match records go to the network thread, which writes them if the server has a database and drops them if not)
+const game = new Game({ ...opts, rollWhenEmpty: false, stats: new RemoteRecords(), analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined, log: (...a) => console.log(tag, ...a) });
 
 // ---------------------------------------------------------------- sockets
 // Everything the game sends between two turns of the event loop goes out in one batch.
@@ -74,10 +80,11 @@ function queue(slot, bytes) {
 const sessions = [];
 const conns = [];
 const openedAt = []; // per slot: when its socket came (performance.now()); 0 once it joined or was kicked
-function makeConn(slot, ip) {
+function makeConn(slot, ip, user) {
   return {
     ip,
     slot,
+    user, // the account it is signed in to ({ id, name }), or null (Game.handleJoin)
     closed: false,
     send(bytes) {
       if (!this.closed) queue(slot, bytes);
@@ -94,7 +101,7 @@ function makeConn(slot, ip) {
 parentPort.on('message', (m) => {
   switch (m.t) {
     case 'open': {
-      const conn = makeConn(m.slot, m.ip);
+      const conn = makeConn(m.slot, m.ip, m.user || null);
       conns[m.slot] = conn;
       sessions[m.slot] = game.onOpen(conn);
       openedAt[m.slot] = performance.now();
@@ -117,6 +124,14 @@ parentPort.on('message', (m) => {
       post({ t: 'closed', slot: m.slot });
       break;
     }
+    case 'finish':
+      try {
+        game.track?.finish('interrupted');
+      } catch (err) {
+        console.error(tag, 'finish failed', err);
+      }
+      post({ t: 'finished' });
+      break;
     case 'stop':
       clearTimeout(timer);
       flush();

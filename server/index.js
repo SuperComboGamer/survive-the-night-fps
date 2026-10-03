@@ -2,12 +2,24 @@
 // (/api/games), static file serving of the built client (dist/) and a /status JSON endpoint. The games themselves
 // run in worker threads, one game server each (rooms.js, room-worker.js); this thread routes every socket to its
 // game by the code in its URL (/ws?game=CODE), or with no code to whichever public game a quick join picks.
+//
+// With a database (DATABASE_URL, db/index.js) it also has accounts (/api/auth, auth.js), friends and direct
+// messages (/api/friends, /api/messages and the /social socket, social.js), the leaderboard in Postgres
+// (dbstats.js) and a record of every match played (matchstore.js). Without one it runs as before: the leaderboard in
+// a file (stats.js), nobody signed in.
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
 import { Lobby, rejectBytes, defaultMaxGames } from './rooms.js';
 import { PlayerStats } from './stats.js';
+import { openDb, describeUrl } from './db/index.js';
+import { migrate } from './db/migrate.js';
+import { DbStats } from './dbstats.js';
+import { MatchStore } from './matchstore.js';
+import { Auth, COOKIE, publicUser } from './auth.js';
+import { Social } from './social.js';
+import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { REJECT_REASON } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 
@@ -22,14 +34,39 @@ const MAX_GAMES = +(process.env.MAX_GAMES || defaultMaxGames()); // games at onc
 const CONN_PER_IP = +(process.env.CONN_PER_IP ?? 24);
 const SEED = process.env.SEED ? +process.env.SEED : undefined;
 const DIST = resolve(__dirname, '../dist');
-// The leaderboard's records (stats.js): STATS_FILE, or stats.json on the Railway volume if the service has one, or in
-// data/ here. They are only as lasting as the disk that is on - a deploy without a volume starts from a fresh one.
-// STATS_FILE= (empty) keeps nothing past this process.
+const log = (...a) => console.log('[server]', ...a);
+
+// ---------------------------------------------------------------- the database
+// Migrated on the way up (MIGRATE_ON_START=0: not): Railway's pre-deploy step has normally done it already (npm run
+// migrate, railway.json), and then this finds nothing to do. A database that cannot be reached leaves the games
+// running and the accounts failing until it can be.
+const db = await openDb(process.env.DATABASE_URL, { log }).catch((err) => {
+  console.error('[server] database could not be opened:', err.message);
+  return null;
+});
+if (db) {
+  log(`database: ${describeUrl(process.env.DATABASE_URL)} (${db.kind})`);
+  if (process.env.MIGRATE_ON_START !== '0') {
+    try {
+      const { applied } = await migrate(db, { log });
+      if (applied.length) log(`database: applied ${applied.join(', ')}`);
+    } catch (err) {
+      console.error('[server] database migrations failed:', err.message);
+    }
+  }
+}
+
+// The leaderboard's records: in the database if there is one (dbstats.js), else in a file (stats.js): STATS_FILE, or
+// stats.json on the Railway volume if the service has one, or in data/ here. A file is only as lasting as the disk it
+// is on - a deploy without a volume starts from a fresh one. STATS_FILE= (empty) keeps nothing past this process.
 const STATS_FILE = process.env.STATS_FILE ?? join(process.env.RAILWAY_VOLUME_MOUNT_PATH || resolve(__dirname, '../data'), 'stats.json');
-const stats = new PlayerStats({ file: STATS_FILE, log: (...a) => console.log('[server]', ...a) });
+const stats = db ? new DbStats({ db, log }) : new PlayerStats({ file: STATS_FILE, log });
+const matches = db ? new MatchStore({ db, stats, build: process.env.RAILWAY_GIT_COMMIT_SHA || '', log }) : null;
+await matches?.closeStale().catch((err) => log(`matches: could not close the last run's (${err.message})`));
 
 const lobby = new Lobby({
   stats,
+  matches,
   maxGames: MAX_GAMES,
   maxPlayers: MAX,
   roomMaxPlayers: ROOM_MAX,
@@ -46,6 +83,11 @@ const lobby = new Lobby({
     debugCommands: process.env.DEBUG_COMMANDS === '1',
   },
 });
+
+// accounts, friends and messages: only with a database
+const auth = db ? new Auth({ db, stats, log }) : null;
+const social = db ? new Social({ db, auth, lobby, log }) : null;
+if (auth) setInterval(() => auth.sweep().catch(() => {}), 3600_000).unref();
 
 // ---------------------------------------------------------------- static files (prod build)
 const MIME = {
@@ -94,6 +136,13 @@ function clientAddress(res, req) {
   return address(req.getHeader('x-forwarded-for').split(',')[0]) || address(req.getHeader('x-real-ip')) || peer;
 }
 
+// The session token a socket's handshake carries (auth.js), '' for none - or for one sent by a page on another site,
+// which could otherwise have a signed-in player's browser play, or listen to their messages, as them
+function sessionToken(req) {
+  if (!auth || !sameOrigin(req.getHeader('origin'), req.getHeader('host'))) return '';
+  return parseCookies(req.getHeader('cookie'))[COOKIE] || '';
+}
+
 const app = uWS.App();
 const perIp = new Map(); // address -> sockets it has open
 
@@ -106,7 +155,24 @@ app.ws('/ws', {
   upgrade: (res, req, context) => {
     const ip = clientAddress(res, req);
     const code = String(req.getQuery('game') || '').trim().toUpperCase(); // none: a quick join
-    res.upgrade({ ip, code, room: null, slot: -1, counted: false, heard: false }, req.getHeader('sec-websocket-key'), req.getHeader('sec-websocket-protocol'), req.getHeader('sec-websocket-extensions'), context);
+    // signed in (the session cookie, from a page of ours): they play as their account (Game.handleJoin)
+    const token = sessionToken(req);
+    const key = req.getHeader('sec-websocket-key');
+    const proto = req.getHeader('sec-websocket-protocol');
+    const ext = req.getHeader('sec-websocket-extensions');
+    const go = (user) => res.cork(() => res.upgrade({ ip, code, user, room: null, slot: -1, counted: false, heard: false }, key, proto, ext, context));
+    if (!token) return go(null);
+    let aborted = false;
+    res.onAborted(() => {
+      aborted = true;
+    });
+    auth.userForToken(token).then(
+      (user) => aborted || go(user),
+      (err) => {
+        log(`session lookup failed (${err.message}): joining as a guest`);
+        if (!aborted) go(null);
+      }
+    );
   },
   open: (ws) => {
     const d = ws.getUserData();
@@ -205,6 +271,107 @@ app.post('/api/games', (res, req) => {
   });
 });
 
+// ---------------------------------------------------------------- accounts, friends, messages
+// All JSON; an error is { error } with its status (and a `field` it is about, for a form). Signed in is the
+// stn_session cookie. Without a database: /api/auth/me says { accounts: false } and the rest are 503s.
+const route = (method, path, fn, opts = {}) => api(app, method, path, fn, { address: clientAddress, ...opts });
+const noAccounts = () => {
+  throw new HttpError(503, 'Accounts are not set up on this server.');
+};
+const signedIn = (ctx) => (auth ? auth.need(ctx) : noAccounts());
+const S = () => social || noAccounts(); // (before anything else in a handler is looked at)
+
+// who this browser is signed in as: { accounts, user: { id, username, email, createdAt } | null }
+route('get', '/api/auth/me', async (ctx) => {
+  if (!auth) return { body: { accounts: false, user: null } };
+  const u = await auth.me(ctx);
+  return { body: { accounts: true, user: u ? publicUser(u) : null } };
+});
+// { email, username, password, guestId? } -> 201 { user }, signed in. guestId: the browser's leaderboard id, whose
+// stats move onto the account
+route(
+  'post',
+  '/api/auth/register',
+  async (ctx, b) => {
+    if (!auth) noAccounts();
+    const { user, cookie } = await auth.register(b, ctx);
+    return { status: 201, body: { user: publicUser(user) }, cookies: [cookie] };
+  },
+  { body: true }
+);
+// { login (email or name), password, guestId? } -> { user }, signed in
+route(
+  'post',
+  '/api/auth/login',
+  async (ctx, b) => {
+    if (!auth) noAccounts();
+    const { user, cookie } = await auth.login(b, ctx);
+    return { body: { user: publicUser(user) }, cookies: [cookie] };
+  },
+  { body: true }
+);
+route(
+  'post',
+  '/api/auth/logout',
+  async (ctx) => {
+    if (auth) await auth.logout(ctx);
+    return { body: { ok: true }, cookies: auth ? [auth.clearCookie(Auth.secure(ctx))] : [] };
+  },
+  { body: true }
+);
+
+// your lifetime stats and your last matches: { stats: { kills, ..., ranks } | null, recent: [match] }
+route('get', '/api/me/stats', async (ctx) => {
+  const me = await signedIn(ctx);
+  const [mine, recent] = await Promise.all([stats.forUser(me.id), matches.recentFor(me.id)]);
+  return { body: { stats: mine, recent } };
+});
+
+// { friends: [{ id, username, status: offline|online|playing, game, unread, lastSeen, since }], incoming, outgoing }
+route('get', '/api/friends', async (ctx) => ({ body: await S().list(await signedIn(ctx)) }));
+// { username } -> { result: sent|accepted|pending|already, friend }
+route('post', '/api/friends/request', async (ctx, b) => ({ body: await S().request(await signedIn(ctx), b.username) }), { body: true });
+// { id }: their request
+route('post', '/api/friends/accept', async (ctx, b) => ({ body: await S().accept(await signedIn(ctx), b.id) }), { body: true });
+// { id }: turns their request down, or takes yours back
+route('post', '/api/friends/decline', async (ctx, b) => ({ body: await S().decline(await signedIn(ctx), b.id) }), { body: true });
+route('post', '/api/friends/remove', async (ctx, b) => ({ body: await S().remove(await signedIn(ctx), b.id) }), { body: true });
+// the game a friend is in, to join them: its info, code included
+route('get', '/api/friends/:id/game', async (ctx) => ({ body: await S().findFriend(await signedIn(ctx), ctx.params[0]) }));
+// the conversation with a friend: ?before=<message id> for older -> { messages: [{ id, from, to, body, at, read }], more }
+route('get', '/api/messages/:id', async (ctx) => ({ body: await S().history(await signedIn(ctx), ctx.params[0], ctx.query.get('before')) }));
+// { to, body } -> 201 { message }
+route('post', '/api/messages', async (ctx, b) => ({ status: 201, body: await S().send(await signedIn(ctx), b.to, b.body) }), { body: true });
+// { friendId }: everything they sent you is read
+route('post', '/api/messages/read', async (ctx, b) => ({ body: await S().markRead(await signedIn(ctx), b.friendId) }), { body: true });
+
+// A signed-in page's line for what happens while it is open (social.js): text frames of JSON, server to page
+app.ws('/social', {
+  compression: uWS.DISABLED,
+  maxPayloadLength: 1024, // (it says nothing that matters: everything it does goes by the HTTP API)
+  idleTimeout: 120,
+  sendPingsAutomatically: true,
+  upgrade: (res, req, context) => {
+    const token = sessionToken(req);
+    const key = req.getHeader('sec-websocket-key');
+    const proto = req.getHeader('sec-websocket-protocol');
+    const ext = req.getHeader('sec-websocket-extensions');
+    const refuse = () => res.cork(() => res.writeStatus('401 Unauthorized').end('Sign in first'));
+    if (!token) return refuse();
+    let aborted = false;
+    res.onAborted(() => {
+      aborted = true;
+    });
+    auth.userForToken(token).then(
+      (user) => aborted || (user ? res.cork(() => res.upgrade({ user }, key, proto, ext, context)) : refuse()),
+      () => aborted || res.cork(() => res.writeStatus('503 Service Unavailable').end())
+    );
+  },
+  open: (ws) => social.socketOpened(ws),
+  message: () => {},
+  close: (ws) => social.socketClosed(ws),
+});
+
 // ---------------------------------------------------------------- how the box is doing
 let mainCpuAt = process.threadCpuUsage();
 let mainElu = performance.eventLoopUtilization();
@@ -222,7 +389,7 @@ app.get('/status', (res) => {
   // tick: per game, the last 10 s window, the totals since it started and its last slow tick
   const mem = process.memoryUsage();
   const games = [...lobby.rooms.values()].map((r) => ({ players: r.st.players, max: r.maxPlayers, public: !r.inviteOnly, phase: r.st.phase, day: r.st.day, load: r.st.load, heapMb: r.st.heapMb, tick: r.st.tick }));
-  const body = JSON.stringify({ ...lobbyInfo(), net: { ...mainLoad, sockets: [...perIp.values()].reduce((a, b) => a + b, 0) }, rssMb: Math.round(mem.rss / 1e6), list: games });
+  const body = JSON.stringify({ ...lobbyInfo(), db: db ? db.kind : null, net: { ...mainLoad, sockets: [...perIp.values()].reduce((a, b) => a + b, 0) }, rssMb: Math.round(mem.rss / 1e6), list: games });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
@@ -247,8 +414,30 @@ app.listen(PORT, (token) => {
   console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
 });
 
-// the leaderboard goes to disk every half minute if it changed, and once more on the way out
-setInterval(() => stats.save(), 30000);
-process.on('exit', () => stats.saveSync());
-process.on('SIGINT', () => process.exit(0));
-process.on('SIGTERM', () => process.exit(0));
+// a file-kept leaderboard goes to disk every half minute if it changed, and once more on the way out
+if (stats.save) setInterval(() => stats.save(), 30000);
+process.on('exit', () => stats.saveSync?.());
+
+// Going down (a deploy sends SIGTERM): every match being played is ended as it stands and written, with what was
+// still on its way to the database, before the process goes - within a few seconds, whatever happens.
+let stopping = false;
+async function shutdown(signal) {
+  if (stopping) return;
+  stopping = true;
+  setTimeout(() => process.exit(0), 5000).unref();
+  if (db) {
+    log(`${signal}: writing the matches being played`);
+    try {
+      await lobby.finishAll(1500);
+      await matches.close();
+      for (const room of lobby.rooms.values()) if (room.match) await matches.interrupt(room.match);
+      await stats.close();
+      await db.close();
+    } catch (err) {
+      console.error('[server] shutting down:', err.message);
+    }
+  }
+  process.exit(0);
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

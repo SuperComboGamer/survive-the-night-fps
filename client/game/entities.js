@@ -377,9 +377,9 @@ export class Entities {
           e.lastHp = e.q[5];
           e.dead = e.q[4] === ZANIM.DEAD;
           if (ZOMBIE_DEFS[e.ztype].boss) this.bossEnt = e;
-          if (e.ztype === ZTYPE.BOSS_ABOMINATION || e.ztype === ZTYPE.BOSS_HIVEQUEEN) e.loop = g.audio.createLoop?.('boss_breath', e.rx, e.ry + 2, e.rz);
+          if (e.ztype === ZTYPE.BOSS_ABOMINATION || e.ztype === ZTYPE.BOSS_HIVEQUEEN || e.ztype === ZTYPE.BOSS_BRUTE || e.ztype === ZTYPE.BOSS_BLOATER) e.loop = g.audio.createLoop?.('boss_breath', e.rx, e.ry + 2, e.rz);
           // the wet, rattling breath of the dead: only the nearest few are ever heard (the audio engine caps the loop)
-          else if (!e.dead && !ZOMBIE_DEFS[e.ztype].flying && e.ztype !== ZTYPE.DOG && e.ztype !== ZTYPE.SHADE) e.loop = g.audio.createLoop?.('zombie_idle', e.rx, e.ry + 1.5, e.rz);
+          else if (!e.dead && !ZOMBIE_DEFS[e.ztype].flying && e.ztype !== ZTYPE.DOG && e.ztype !== ZTYPE.BOSS_ALPHA && e.ztype !== ZTYPE.SHADE) e.loop = g.audio.createLoop?.('zombie_idle', e.rx, e.ry + 1.5, e.rz);
           this.zombieCount++;
           break;
         }
@@ -688,7 +688,7 @@ export class Entities {
     }
     const g = this.g;
     const def = ZOMBIE_DEFS[e.ztype];
-    const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN;
+    const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN || e.ztype === ZTYPE.BOSS_BLOATER;
     const crawl = e.q[7] === 3; // both legs shot off: it was lying on the ground, its head ahead of it
     if (flags & 8) {
       // overkill: the body is blown apart along the blow (yaw), nothing is left to fall over
@@ -709,7 +709,8 @@ export class Entities {
     // the body hits the ground a moment after the kill: a thud, heavier for the big ones, a light flop for a dog
     if (!def.flying && !crawl) {
       const big = def.height > 2.5;
-      g.audio.play(SOUND.BODY_FALL, { x: e.rx, y: e.ry + 0.2, z: e.rz, delay: big ? 0.8 : 0.5, volume: big ? 1.5 : def.headFwd ? 0.55 : 1, rate: big ? 0.72 : def.headFwd ? 1.25 : 1 });
+      const pup = def.headFwd && !def.boss; // a dog flops; the Alpha comes down like a horse
+      g.audio.play(SOUND.BODY_FALL, { x: e.rx, y: e.ry + 0.2, z: e.rz, delay: big ? 0.8 : 0.5, volume: big ? 1.5 : pup ? 0.55 : def.headFwd ? 1.2 : 1, rate: big ? 0.72 : pup ? 1.25 : def.headFwd ? 0.85 : 1 });
     }
   }
 
@@ -721,7 +722,7 @@ export class Entities {
     const v = e?.view;
     if (!v?.shin) return;
     const g = this.g;
-    const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN;
+    const green = e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN || e.ztype === ZTYPE.BOSS_BLOATER;
     const c = v.shin.color;
     for (let side = 0; side < 2; side++) {
       if (!(bits & (1 << side))) continue;
@@ -825,19 +826,20 @@ export class Entities {
             e.growlT -= dt;
             if (e.growlT <= 0) {
               e.growlT = shade ? 1.8 + Math.random() * 2.2 : 4 + Math.random() * 9;
-              const dog = e.ztype === ZTYPE.DOG;
-              const snd = shade ? SOUND.SHADE_WHISPER : dog ? (e.speed > 3 && Math.random() < 0.6 ? SOUND.DOG_BARK : SOUND.DOG_SNARL) : e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : ZOMBIE_DEFS[e.ztype].boss ? SOUND.BOSS_ROAR : e.speed < 1.2 && distC > 14 * 14 && e.q[4] !== ZANIM.ATTACK ? SOUND.ZOMBIE_MOAN : SOUND.ZOMBIE_GROWL; // shambling about somewhere off in the trees, it moans; on the hunt or on top of you, it growls
+              const alpha = e.ztype === ZTYPE.BOSS_ALPHA; // a dog's bark and snarl, from a chest the size of a pony's
+              const dog = e.ztype === ZTYPE.DOG || alpha;
+              const snd = shade ? SOUND.SHADE_WHISPER : dog ? (e.speed > 3 && Math.random() < 0.6 ? SOUND.DOG_BARK : SOUND.DOG_SNARL) : e.ztype === ZTYPE.BAT ? SOUND.BAT_SCREECH : e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_BLOATER ? SOUND.BOOMER_GURGLE : e.ztype === ZTYPE.TANK ? SOUND.TANK_ROAR : e.ztype === ZTYPE.RUNNER && e.speed > 3 ? SOUND.RUNNER_SCREAM : ZOMBIE_DEFS[e.ztype].boss ? SOUND.BOSS_ROAR : e.speed < 1.2 && distC > 14 * 14 && e.q[4] !== ZANIM.ATTACK ? SOUND.ZOMBIE_MOAN : SOUND.ZOMBIE_GROWL; // shambling about somewhere off in the trees, it moans; on the hunt or on top of you, it growls
               if (e.ztype === ZTYPE.TANK && Math.random() < 0.6) e.growlT += 4;
               if (dog) e.growlT *= 0.6;
-              g.audio.play(snd, { x: e.rx, y: e.ry + (dog ? 0.6 : 1.5), z: e.rz, volume: e.ztype === ZTYPE.BAT ? 0.6 : 0.9, rate: e.voice });
+              g.audio.play(snd, { x: e.rx, y: e.ry + (alpha ? 1.2 : dog ? 0.6 : 1.5), z: e.rz, volume: e.ztype === ZTYPE.BAT ? 0.6 : alpha ? 1.4 : 0.9, rate: e.voice * (alpha ? 0.66 : e.ztype === ZTYPE.BOSS_BLOATER ? 0.62 : 1) });
               v.vocalize?.(snd === SOUND.RUNNER_SCREAM || snd === SOUND.DOG_BARK ? 1 : snd === SOUND.TANK_ROAR || snd === SOUND.BOSS_ROAR ? 2 : 0);
             }
             // a tank's (or a boss's) footfalls thump: they carry as far as its voice, and close by they shake the ground
-            const heavy = e.ztype === ZTYPE.TANK || !!ZOMBIE_DEFS[e.ztype].boss;
+            const heavy = e.ztype === ZTYPE.TANK || (!!ZOMBIE_DEFS[e.ztype].boss && e.ztype !== ZTYPE.BOSS_ALPHA); // (the Alpha runs on pads: no quake)
             if (e.speed > 0.4 && !ZOMBIE_DEFS[e.ztype].flying && e.q[7] !== 3 && (heavy || distC < 22 * 22)) {
               // a visible planted-foot gait sounds its steps as the feet land; otherwise keep a cadence timer
-              const dog = e.ztype === ZTYPE.DOG;
-              const stepVol = heavy ? 1 : dog ? 0.25 : shade ? 0.2 : 0.45;
+              const dog = e.ztype === ZTYPE.DOG || e.ztype === ZTYPE.BOSS_ALPHA;
+              const stepVol = heavy ? 1 : e.ztype === ZTYPE.BOSS_ALPHA ? 0.7 : dog ? 0.25 : shade ? 0.2 : 0.45;
               const falls = v.footfalls ? v.footfalls() : -1;
               let stepped = false;
               if (falls >= 0) {

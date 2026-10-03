@@ -10,6 +10,7 @@ export default defineConfig({
     fs: { allow: ['..'] },
     proxy: {
       '/ws': { target: 'ws://localhost:3000', ws: true },
+      '/social': { target: 'ws://localhost:3000', ws: true },
       '/status': { target: 'http://localhost:3000' },
       '/api': { target: 'http://localhost:3000' },
     },

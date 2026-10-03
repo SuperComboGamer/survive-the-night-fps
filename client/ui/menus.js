@@ -5,6 +5,14 @@ import { glyph } from './icons.js';
 import { loadRecord, recordSummary } from './records.js';
 import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
 import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
+import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
+import { playingFriends, unreadCount, onSocialChange } from '../net/friends.js';
+
+// the count on a button (unread messages): '' hides it
+function setBadge(b, n) {
+  b.hidden = !n;
+  b.textContent = n > 99 ? '99+' : n ? String(n) : '';
+}
 
 export const DEFAULT_CONTROLS = [
   ['W A S D', 'Move'],
@@ -99,7 +107,7 @@ export class Splash {
       this._join();
     });
     const field = el('label', 'sp-field', form);
-    el('span', 'sp-field-l', field, 'Your name');
+    this.nameL = el('span', 'sp-field-l', field, 'Your name');
     this.name = el('input', 'sp-name', field);
     this.name.type = 'text';
     this.name.maxLength = 16;
@@ -127,6 +135,22 @@ export class Splash {
     this.quickAlt = altBtn('bolt', 'Quick join', () => this.join(''));
     altBtn('people', 'Browse games', () => this.browser.show());
     altBtn('plus', 'Create game', () => this.creator.show());
+    this.friendsBtn = altBtn('star', 'Friends', () => this.ui.friends.show());
+    this.friendsTxt = this.friendsBtn.lastChild;
+    this.friendsBadge = el('b', 'sp-badge', this.friendsBtn, '');
+    this.friendsBadge.hidden = true;
+    onSocialChange(() => this._syncFriends());
+
+    // the account (account.js), top right: Sign in, or who you are signed in as
+    const acct = (this.acctBtn = el('button', 'btn btn-ghost sp-acct', root));
+    acct.type = 'button';
+    svgEl('i', 'btn-ico', acct, glyph('person'));
+    this.acctTxt = el('span', '', acct, 'Sign in');
+    acct.addEventListener('click', () => this.ui.accountPanel.show());
+    onAccountChange(() => {
+      this._syncAccount();
+      this._syncFriends();
+    });
 
     this.err = el('div', 'sp-err', main, '');
     this.err.hidden = true;
@@ -157,10 +181,34 @@ export class Splash {
     this.gone = false; // ...and it is not there (any more)
     this.offline = false;
     this.joining = false;
+    this.next = ''; // a game to go on into once this is up (a friend's, picked in another game: FriendsPanel.join)
   }
 
   _typedName() {
     return this.name.value.replace(/\s+/g, ' ').trim().slice(0, 16);
+  }
+
+  // Signed in, the name is the account's (the server plays them under it whatever is typed): the field shows it and
+  // takes no typing. Signed out again, the name typed before comes back (it stayed in storage all along).
+  _syncAccount() {
+    const user = accountState().user;
+    this.acctTxt.textContent = user ? user.username : 'Sign in';
+    this.acctBtn.classList.toggle('on', !!user);
+    this.acctBtn.title = user ? 'Your account: stats, last games, signing out' : 'Sign in or make an account: stats kept on the server, friends';
+    if (user) {
+      if (!this.name.readOnly) this.guestName = this._typedName(); // (a made-up one is not in storage until a join)
+      this.name.value = user.username;
+      this.name.readOnly = true;
+      this.name.classList.add('locked');
+      this.name.title = "Your account's name. Sign out (top right) to play under another.";
+      this.nameL.textContent = 'Signed in as';
+    } else if (this.name.readOnly) {
+      this.name.readOnly = false;
+      this.name.classList.remove('locked');
+      this.name.title = '';
+      this.name.value = (lsGet('stn.name', '') || this.guestName || '').slice(0, 16);
+      this.nameL.textContent = 'Your name';
+    }
   }
 
   // the name to play under (one is made up if the field is empty)
@@ -187,7 +235,7 @@ export class Splash {
     if (this.joining) return;
     if (code && code === this.code && this.game?.full) return;
     const name = this.playerName();
-    lsSet('stn.name', name);
+    if (!accountState().user) lsSet('stn.name', name); // (the guest name: an account's own is not one to keep)
     this.joining = true;
     this.err.hidden = true;
     this.root.classList.add('joining');
@@ -200,6 +248,17 @@ export class Splash {
     this.joinBtn.disabled = this.joining || full;
     this.joinTxt.textContent = this.joining ? 'Joining…' : !this.invited ? 'Quick join' : full ? 'Game full' : 'Join game';
     this.quickAlt.hidden = !this.invited; // (without an invitation, the big button is the quick join)
+  }
+
+  // the Friends button says how many of them are in a game, and counts the messages nobody has read
+  _syncFriends() {
+    const on = !!accountState().user;
+    const n = on ? playingFriends().length : 0;
+    const unread = on ? unreadCount() : 0;
+    this.friendsTxt.textContent = n ? `Friends · ${n} playing` : 'Friends';
+    this.friendsBtn.classList.toggle('lit', n > 0);
+    setBadge(this.friendsBadge, unread);
+    this.friendsBtn.title = unread ? `${unread} new message${unread === 1 ? '' : 's'}` : '';
   }
 
   _syncInvite() {
@@ -250,6 +309,9 @@ export class Splash {
         }
       }
       const lobby = await listGames();
+      // (the server was not there when the page asked who it is signed in as: asked again now it is)
+      const acct = accountState();
+      if (!acct.ready || acct.offline) refreshAccount();
       if (this.root.hidden) return;
       this.offline = false;
       this.creator.setLimits(lobby.maxPlayers, lobby.defaultPlayers);
@@ -288,6 +350,8 @@ export class Splash {
     }
     this._syncInvite();
     this._syncBtn();
+    this._syncAccount();
+    this._syncFriends();
     this.syncRecord();
     this.root.classList.remove('in');
     void this.root.offsetWidth;
@@ -296,8 +360,13 @@ export class Splash {
     this._poll();
     this._iv = setInterval(() => this._poll(), 3000);
     setTimeout(() => {
-      if (!this.root.hidden && document.activeElement === document.body) this.name.focus({ preventScroll: true });
+      if (!this.root.hidden && !this.name.readOnly && document.activeElement === document.body) this.name.focus({ preventScroll: true });
     }, 50);
+    if (this.next) {
+      const code = this.next;
+      this.next = '';
+      setTimeout(() => !this.root.hidden && this.join(code), 0);
+    }
   }
 
   hide() {
@@ -352,6 +421,20 @@ export class Pause {
     sb.type = 'button';
     svgEl('i', 'btn-ico', sb, glyph('gear'));
     el('span', '', sb, 'Settings');
+    const fb = el('button', 'btn btn-ghost', btns);
+    fb.type = 'button';
+    svgEl('i', 'btn-ico', fb, glyph('star'));
+    el('span', '', fb, 'Friends');
+    // messages from friends nobody has read (friends.js)
+    const fBadge = el('b', 'sp-badge', fb, '');
+    fBadge.hidden = true;
+    const syncBadge = () => {
+      const n = accountState().user ? unreadCount() : 0;
+      setBadge(fBadge, n);
+      fb.title = n ? `${n} new message${n === 1 ? '' : 's'}` : '';
+    };
+    onSocialChange(syncBadge);
+    onAccountChange(syncBadge);
     const lb = el('button', 'btn btn-ghost btn-danger', btns);
     lb.type = 'button';
     svgEl('i', 'btn-ico', lb, glyph('exit'));
@@ -364,6 +447,10 @@ export class Pause {
     sb.addEventListener('click', (e) => {
       e.stopPropagation();
       this.ui.settingsPanel.show();
+    });
+    fb.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.ui.friends.show();
     });
     lb.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -418,6 +505,8 @@ export class Pause {
     } else if (this.ui.splash.root.hidden) {
       if (this.ui.settingsPanel.visible) this.ui.settingsPanel.hide();
       if (this.ui.controlsPanel.visible) this.ui.controlsPanel.hide();
+      if (this.ui.friends.visible) this.ui.friends.hide();
+      if (this.ui.accountPanel.visible) this.ui.accountPanel.hide();
     }
   }
 }

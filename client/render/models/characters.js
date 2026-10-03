@@ -1122,6 +1122,85 @@ function buildBoomer() {
   return { mb, P };
 }
 
+/** The Bloater: a boomer three times over. A gut swollen past its knees, laced with green veins and crusted with
+ * glowing pustules, a small head drowned in neck fat, stubby arms that cannot reach round it. */
+function buildBloater() {
+  const P = humanP({ hipY: 0.86, hipW: 0.15, thighLen: 0.4, shinLen: 0.4, spineLen: 0.16, chestLen: 0.22, neckOff: 0.2, neckLen: 0.05, headR: 0.115, shoulderW: 0.33, uarmLen: 0.3, farmLen: 0.28, handLen: 0.17, headZ: -0.04 });
+  const skin = 0x9ea262;
+  const sick = (p, n, c) => {
+    const m = fbm3(p.x * 7, p.y * 7, p.z * 7, 2, 23);
+    if (m > 0.58) c.lerp(color(0x587a22), 0.6);
+    if (m < 0.32) c.lerp(color(0x8a5a40), 0.35);
+  };
+  const L = {
+    skin, skinRegion: CR.SKIN, gaunt: 0, ribs: 0, wide: 1.5, chestR: 0.21, chestD: 1.35, armR: 0.1, thighR: 0.17, neckR: 0.1, deltoid: 1.8, farmMul: 0.9, wristMul: 0.7,
+    hipsW: 1.35, hipsD: 1.35, handScale: 1.3, footW: 1.45,
+    pants: { color: 0x34322a, region: CR.CLOTH, tearY: 0.3 },
+    shoes: null, eye: 0xe8e070, eyeGlow: 0.45, socket: 0.16, headSX: 0.95, jawScale: 1.15, missingTeeth: 0x52,
+    blood: [[[0, 1.45, -0.25], 0.12, 0.6]],
+    lumpy: true, torsoTint: sick,
+  };
+  const mb = new MeshBuilder();
+  standardHumanoid(mb, P, L);
+  // the gut, on its own bone so it heaves (poseExtras): hangs low and forward, nearly to the knees
+  mb.addBone('belly', 'spine', 0, P.spineY - 0.02, -0.1);
+  const gut = [0.56, 0.52, 0.52];
+  const gutC = [0, -0.1, -0.16];
+  mb.ellip('belly', gutC, gut, {
+    ws: 18, hs: 13, color: 0xb2b066, region: CR.SKIN, noise: 0.03, nf: 7, mottle: 0.32,
+    tint(p, n, c) {
+      sick(p, n, c);
+      const v = fbm3(p.x * 14, p.y * 3, p.z * 14, 2, 61); // veins running down the swell
+      if (Math.abs(v - 0.5) < 0.025) c.lerp(color(0x2a4a14), 0.7);
+      c.lerp(color(0x5a4a30), clamp(-n.y * 0.5, 0, 0.4)); // the stretched, bruised underside
+    },
+  });
+  // a second, lopsided swelling on one flank
+  mb.ellip('belly', [0.32, 0.12, -0.12], [0.3, 0.28, 0.3], { ws: 12, hs: 9, color: 0xa8a85e, region: CR.SKIN, noise: 0.02, nf: 8, mottle: 0.3, tint: sick });
+  mb.ellip('chest', [0, 0.02, 0.03], [0.36, 0.3, 0.3], { ws: 12, hs: 8, color: skin, region: CR.SKIN, noise: 0.02, nf: 10, torso: true, tint: sick });
+  // neck fat that swallows the jaw
+  mb.lathe('neck', [0, 0, 0], [[0.12, -0.08], [0.19, -0.02], [0.18, 0.04], [0.11, 0.08]], { rs: 12, sx: 1.25, sz: 1.1, color: skin, region: CR.SKIN, tint: sick });
+  // pustules: blisters facing out of the skin, a faintly glowing cap over an inflamed rim
+  const rnd = mulberry32(4817);
+  const C_RIM = color(0x8a3024);
+  const blister = (bone, c, nrm, r, cap, glow) => {
+    const nv = new THREE.Vector3(nrm[0], nrm[1], nrm[2]).normalize();
+    mb.ellip(bone, c, [r, r, r * 0.62], {
+      ws: 7, hs: 5, color: cap, region: CR.GLOW, glow, mottle: 0.15, blood: false,
+      q: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), nv),
+      tint(p, n, cc) {
+        cc.lerp(C_RIM, clamp((0.75 - (n.x * nv.x + n.y * nv.y + n.z * nv.z)) * 1.6, 0, 0.85));
+      },
+    });
+  };
+  for (let i = 0; i < 22; i++) {
+    // all round the gut, more of them in front
+    const a = (rnd() - 0.5) * (i < 14 ? 2.6 : 5.6), y = (rnd() - 0.5) * 0.75;
+    const k = Math.sqrt(Math.max(0.05, 1 - (y / gut[1]) ** 2));
+    const nx = Math.sin(a) * k, nz = -Math.cos(a) * k, ny = y / gut[1];
+    const r = 0.016 + rnd() * rnd() * 0.06;
+    blister('belly', [gutC[0] + nx * gut[0] * 0.97, gutC[1] + y, gutC[2] + nz * gut[2] * 0.97], [nx, ny, nz], r, rnd() < 0.5 ? 0xd8d070 : 0xc8c868, 0.18 + rnd() * 0.15);
+  }
+  for (let i = 0; i < 9; i++) {
+    const a = (rnd() - 0.5) * 5, y = 0.04 + rnd() * 0.22, r = 0.02 + rnd() * 0.03;
+    const x = Math.sin(a) * 0.36, z = -Math.cos(a) * 0.3 + 0.03;
+    blister('chest', [x, y, z], [x / 0.36, 0.25, (z - 0.03) / 0.3], r, 0xc8c060, 0.15);
+  }
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    for (let i = 0; i < 3; i++) blister('uarm' + n, [s * 0.07, -0.06 - i * 0.07, (rnd() - 0.5) * 0.08], [s, 0, (rnd() - 0.5) * 0.6], 0.02 + rnd() * 0.02, 0xc8c060, 0.12);
+  }
+  // tumour clusters over the shoulder blades
+  for (let i = 0; i < 6; i++) {
+    const s = i % 2 ? 1 : -1, r = 0.06 + rnd() * 0.05;
+    mb.ellip('chest', [s * (0.18 + rnd() * 0.12), 0.12 + rnd() * 0.1, 0.2 + rnd() * 0.08], [r, r * 0.85, r], { ws: 8, hs: 6, color: 0xa89068, region: CR.TUMOR, noise: r * 0.12, nf: 10, tint: sick });
+  }
+  // bile drooling off the chin
+  mb.tube('jaw', [[0, -P.headR * 0.45, -P.headR * 0.85], [0.01, -P.headR * 1.1, -P.headR * 0.95], [0.0, -P.headR * 1.9, -P.headR * 0.9]], 0.014, 0.006, { rs: 5, ts: 4, color: 0xa8c040, region: CR.GLOW, glow: 0.3, blood: false });
+  mb.aoStrength = 0.35;
+  return { mb, P };
+}
+
 /** Heavy muscular arm (tank/boss): deltoid, bulging bicep, huge forearm. */
 function bruteArm(mb, P, s, o) {
   const n = s < 0 ? 'L' : 'R';
@@ -1184,6 +1263,109 @@ function buildTank() {
   for (let i = 0; i < 5; i++) {
     const y = sy - 0.25 + i * 0.13;
     mb.spike('chest', [0, y, 0.5 - i * 0.02], [0, y + 0.12, 0.75 - i * 0.02], 0.05, { color: 0xd8ccb0, region: CR.BONE });
+  }
+  return { mb, P };
+}
+
+/** Night 1's boss: a slaughterhouse butcher gone huge. Sagging gut under a blood-soaked apron, slab arms, a small
+ * bald head sunk between the shoulders, a meat hook still through one shoulder. */
+function buildBrute() {
+  const P = humanP({
+    hipY: 1.08, hipW: 0.19, thighLen: 0.5, shinLen: 0.5, spineLen: 0.3, chestLen: 0.38, neckOff: 0.34, neckLen: 0.07,
+    headR: 0.125, shoulderW: 0.5, shoulderDrop: 0.06, uarmLen: 0.46, farmLen: 0.42, handLen: 0.22, headZ: -0.14, neckZ: -0.08, depth: 0.4,
+  });
+  const skin = 0xa28e84;
+  const torsoTint = (p, n, c) => {
+    const m = fbm3(p.x * 4, p.y * 4, p.z * 4, 2, 57);
+    if (m > 0.63) c.lerp(color(0x6a2a26), 0.45); // bruising
+    if (m < 0.3) c.lerp(color(0x7a7a6a), 0.3); // grey rot
+  };
+  const L = {
+    skin, skinRegion: CR.SKIN, gaunt: 0, ribs: 0, wide: 1.8, chestR: 0.25, chestD: 1.3, waistW: 1.0, bellyD: 1.5,
+    thighR: 0.2, neckR: 0.16, noDeltoid: true, hipsW: 1.6, hipsD: 1.5, footW: 1.8, footL: 1.45,
+    pants: { color: 0x37312a, region: CR.DENIM, tearY: 0.42 }, shoes: null,
+    eye: 0xffa040, eyeGlow: 0.65, socket: 0.2, jawScale: 1.3, headSX: 1.0, headSY: 0.95, nose: 0.3, missingTeeth: 0x24,
+    lumpy: true,
+    blood: [[[0, 2.13, -0.22], 0.09, 0.8], [[0.28, 1.9, -0.32], 0.2, 0.7], [[-0.35, 1.25, -0.4], 0.22, 0.6]],
+    wounds: [[0.42, 1.95, 0.12, 0.12], [-0.3, 1.55, 0.35, 0.14]],
+    torsoTint, dirt: { y0: 0.6, k: 0.6 },
+  };
+  const mb = new MeshBuilder();
+  addHumanoidBones(mb, P);
+  addBlood(mb, L);
+  buildTorso(mb, P, L);
+  buildHead(mb, P, L);
+  buildLegs(mb, P, L);
+  const sy = P.shoulderY - P.chestY;
+  const flesh = { region: CR.SKIN, mottle: 0.3, tint: torsoTint };
+  // trapezius piled up behind the sunken head, and a fat back
+  mb.ellip('chest', [0, sy + 0.0, 0.08], [0.46, 0.24, 0.32], { ws: 12, hs: 8, color: skin, noise: 0.02, nf: 6, ...flesh });
+  mb.ellip('chest', [0, sy - 0.24, 0.16], [0.52, 0.3, 0.3], { ws: 12, hs: 8, color: skin, noise: 0.02, nf: 5, ...flesh });
+  // sagging chest
+  for (const s of [-1, 1]) mb.ellip('chest', [s * 0.2, sy - 0.33, -0.17], [0.2, 0.17, 0.13], { ws: 10, hs: 7, color: skin, ...flesh, rot: [0.35, 0, s * 0.15] });
+  // the gut: its own bone so it heaves with the breathing (poseExtras)
+  mb.addBone('belly', 'spine', 0, P.spineY - 0.05, -0.1);
+  mb.ellip('belly', [0, -0.02, -0.08], [0.46, 0.42, 0.42], {
+    ws: 14, hs: 10, color: mulColor(skin, 1.04), noise: 0.015, nf: 9, region: CR.SKIN, mottle: 0.3,
+    tint(p, n, c) {
+      torsoTint(p, n, c);
+      c.lerp(color(0x6a4a44), clamp(-n.y * 0.4, 0, 0.35)); // the shadowed underside of the paunch
+    },
+  });
+  // blood-soaked butcher's apron hanging off the gut: one curved sheet on the spine, top at the chest, hem above the
+  // knees. Its front follows the body (z by height) and its edges wrap back round the flanks
+  {
+    const prof = [[0.56, -0.24, 0.17], [0.32, -0.34, 0.3], [0.1, -0.53, 0.42], [-0.07, -0.64, 0.47], [-0.3, -0.6, 0.46], [-0.5, -0.53, 0.45], [-0.77, -0.47, 0.43]];
+    const at = (y, k) => {
+      let i = 0;
+      while (i < prof.length - 2 && prof[i + 1][0] > y) i++;
+      const a = prof[i], b = prof[i + 1];
+      const t = clamp((y - a[0]) / (b[0] - a[0]), 0, 1);
+      return a[k] + (b[k] - a[k]) * t;
+    };
+    const W = 10, H = 14;
+    const geo = new THREE.PlaneGeometry(1, 1, W, H);
+    const pa = geo.attributes.position;
+    for (let i = 0; i < pa.count; i++) {
+      const u = pa.getX(i) * 2; // -1..1 across
+      const v = pa.getY(i) + 0.5; // 0 bottom .. 1 top
+      const y = prof[prof.length - 1][0] + (prof[0][0] - prof[prof.length - 1][0]) * v;
+      const hw = at(y, 2);
+      const sag = 0.012 * Math.sin(u * 7 + v * 3) * (1 - v); // cloth folds towards the hem
+      pa.setXYZ(i, u * hw, y, at(y, 1) + u * u * 0.17 * Math.min(1, hw / 0.3) + sag);
+    }
+    geo.computeVertexNormals();
+    mb.geom('spine', geo, {
+      color: 0xd8d0b8, region: CR.CANVAS, mottle: 0.25, double: true, keepNormals: true, blood: false,
+      tint(p, n, c) {
+        const m = fbm3(p.x * 5, p.y * 4, p.z * 5, 3, 91);
+        const smear = fbm3(p.x * 2.5, p.y * 9, p.z * 2.5, 2, 17); // streaks running down
+        c.lerp(color(0x5a0806), clamp((m - 0.4) * 3.5 + (smear - 0.55) * 2.5 + (1.45 - p.y) * 0.6, 0, 0.95)); // soaked from the belly down
+        c.lerp(color(0x2a0604), clamp((m - 0.62) * 4, 0, 0.6)); // dried black where it pooled
+        c.lerp(color(0x2a1c14), clamp((0.95 - p.y) * 1.2, 0, 0.4)); // filth at the hem
+      },
+    });
+    // neck strap and waist ties
+    for (const s of [-1, 1]) {
+      mb.tube('chest', [[s * 0.15, sy - 0.17, -0.27], [s * 0.18, sy + 0.08, -0.18], [s * 0.1, sy + 0.2, 0.0], [0, sy + 0.2, 0.12]], 0.014, 0.014, { rs: 4, ts: 6, color: 0x8a8270, region: CR.CANVAS, cap: false });
+      mb.tube('spine', [[s * 0.44, -0.12, -0.42], [s * 0.5, -0.12, -0.15], [s * 0.37, -0.12, 0.1], [s * 0.12, -0.12, 0.18]], 0.012, 0.012, { rs: 4, ts: 6, color: 0x8a8270, region: CR.CANVAS, cap: false });
+    }
+  }
+  // slab arms with meaty hands
+  for (const s of [-1, 1]) {
+    const n = s < 0 ? 'L' : 'R';
+    bruteArm(mb, P, s, { skin, region: CR.SKIN, ur: 0.16, fr: 0.16, tint: torsoTint });
+    // fists like hams: knuckles forward, a thumb wrapped over
+    mb.box('hand' + n, [0, -0.1, -0.01], [0.17, 0.2, 0.21], { round: 0.65, seg: 2, color: mulColor(skin, 0.95), region: CR.SKIN });
+    for (let k = 0; k < 4; k++) mb.ellip('hand' + n, [-s * 0.01, -0.19, -0.08 + k * 0.053], [0.05, 0.035, 0.03], { ws: 6, hs: 4, color: mulColor(skin, 0.8), region: CR.SKIN });
+    mb.ellip('hand' + n, [-s * 0.07, -0.1, -0.09], [0.035, 0.07, 0.035], { ws: 6, hs: 4, color: mulColor(skin, 0.9), region: CR.SKIN, rot: [0.5, 0, 0] });
+  }
+  // the meat hook it was hung on, still through the back of its left shoulder, a length of chain off it
+  const steel = { color: 0x5a5650, region: CR.PLAIN, mottle: 0.4, blood: false };
+  mb.tube('chest', [[-0.34, sy - 0.02, 0.36], [-0.34, sy + 0.16, 0.42], [-0.34, sy + 0.2, 0.3], [-0.34, sy + 0.08, 0.2]], 0.022, 0.016, { rs: 6, ts: 8, ...steel });
+  for (let i = 0; i < 5; i++) {
+    const g = new THREE.TorusGeometry(0.035, 0.009, 4, 8);
+    mb.geom('chest', g, { at: [-0.34, sy - 0.08 - i * 0.065, 0.4 + i * 0.008], rot: [0, i % 2 ? HALF : 0, 0], ...steel });
   }
   return { mb, P };
 }
@@ -1437,6 +1619,8 @@ const BUILDERS = {
   [ZTYPE.BOSS_ABOMINATION]: buildAbomination,
   [ZTYPE.BOSS_HIVEQUEEN]: buildHiveQueen,
   [ZTYPE.SHADE]: buildShade,
+  [ZTYPE.BOSS_BRUTE]: buildBrute,
+  [ZTYPE.BOSS_BLOATER]: buildBloater,
 };
 const VARIANTS = { [ZTYPE.WALKER]: WALKER_VARIANTS, [ZTYPE.RUNNER]: 3, [ZTYPE.DOG]: DOG_COATS };
 const NO_EXTRAS = {};
@@ -1525,6 +1709,18 @@ const ZS = {
     walkLean: -0.32, runLean: -0.6, cycleWalk: 1.7, cycleRun: 3.3, walkStride: 0.42, walkKnee: 0.6, runStride: 0.75, runKnee: 1.1,
     limp: 0, sway: 0.5, armWalk: 0.55, armDroop: 0.35, armSwing: 0.1, armRun: 1.05, armOut: 0.22, elbow: 0.4, headPitch: 0.3, headTilt: 0.3, jaw: 0.45, neckFwd: 0.45,
     idleLean: -0.28, shoulderRoll: 0.2,
+  },
+  [ZTYPE.BOSS_BRUTE]: {
+    // a heavy, rolling waddle under the gut, fists swinging wide of it; enraged (RUN) it lumbers in bent forward
+    walkLean: -0.16, runLean: -0.42, cycleWalk: 2.1, cycleRun: 3.1, walkStride: 0.3, walkKnee: 0.42, runStride: 0.5, runKnee: 0.85,
+    limp: 0, sway: 1.5, waddle: 1, armWalk: 0.2, armDroop: 0.08, armSwing: 0.3, armRun: 0.55, armOut: 0.34, elbow: 0.35, headPitch: 0.12, headTilt: 0.06, jaw: 0.3,
+    legSplay: 0.12, idleLean: -0.1, neckFwd: 0.1, shoulderRoll: 0.05,
+  },
+  [ZTYPE.BOSS_BLOATER]: {
+    // the boomer's waddle, slower and wider, leaning back to carry the gut
+    walkLean: 0.1, runLean: 0.0, cycleWalk: 1.75, cycleRun: 2.4, walkStride: 0.28, walkKnee: 0.4, runStride: 0.34, runKnee: 0.55,
+    limp: 0, sway: 2.6, waddle: 1, armWalk: 0.18, armDroop: 0.12, armSwing: 0.18, armRun: 0.35, armOut: 0.55, elbow: 0.3, headPitch: 0.05, headTilt: 0.12, jaw: 0.35,
+    legSplay: 0.16, idleLean: 0.08, neckFwd: 0.05,
   },
 };
 
@@ -2305,9 +2501,10 @@ function poseAttack(z, p) {
     else legsStatic(z, p, 0.35, -0.35, -0.15, -0.1, st.legSplay || 0.05);
     z.standOn = true;
   }
-  if (type === ZTYPE.TANK) return tankSmash(z, p, u);
+  if (type === ZTYPE.TANK || type === ZTYPE.BOSS_BRUTE) return tankSmash(z, p, u);
   if (type === ZTYPE.BOSS_ABOMINATION) return abomSweep(z, p, u);
   if (type === ZTYPE.BOSS_HIVEQUEEN) return queenSlash(z, p, u);
+  if (type === ZTYPE.BOSS_BLOATER) return bloaterSlap(z, p, u);
   if (type === ZTYPE.BOOMER) {
     // belly bump / lurch
     const k = Math.sin(u * TAU);
@@ -2358,6 +2555,19 @@ function abomSweep(z, p, u) {
   arm(p, 0, 0.6, 0.4, 0, 0.6, 0.2);
   headLook(p, 0.15, -w * 0.3, 0, 0.3);
   R(p, JAW, -0.35 - 0.25 * Math.abs(w), 0, 0);
+}
+
+function bloaterSlap(z, p, u) {
+  // one stubby arm swung out wide and back (0..0.45), slapped across the front (0.45..0.6), dragged back round
+  const w = u < 0.45 ? smooth(u / 0.45) : u < 0.6 ? 1 - smooth((u - 0.45) / 0.15) * 2 : -1 + smooth((u - 0.6) / 0.4);
+  const side = z.armSide, sg = side ? 1 : -1;
+  R(p, SPINE, 0.06, -sg * w * 0.28, 0);
+  R(p, CHEST, -0.02, -sg * w * 0.3, 0);
+  arm(p, side, 1.25 + 0.15 * Math.abs(w), 0.15 + 1.05 * w, 0.2, 0.25 + 0.35 * Math.max(0, w), 0.25);
+  arm(p, 1 - side, 0.45, 0.55, 0, 0.45, 0.2);
+  headLook(p, 0.08, sg * w * 0.25, 0, 0.3);
+  R(p, JAW, -0.3 - 0.35 * Math.abs(w), 0, 0);
+  z.bellyPulse = 0.05;
 }
 
 function queenSlash(z, p, u) {
@@ -2458,6 +2668,41 @@ function poseSpecial(z, p) {
       arm(p, 1, 0.5 + up * 2.3, 0.2, 0.2, 0.3 + 0.3 * Math.max(0, up), 0.2);
       headLook(p, 0.3 + up * 0.3, 0, 0, 0.3);
       R(p, JAW, -0.3 - 0.6 * Math.max(0, up), 0, 0);
+      return;
+    }
+    case ZTYPE.BOSS_BRUTE: {
+      // the enrage roar: rears up, chest out, fists spread wide and trembling, head thrown back
+      clearPose(p, z.nb);
+      const k = smooth(t / 0.35) * (1 - smooth((t - 1.05) / 0.3));
+      const sh = Math.sin(t * 38) * 0.035 * k;
+      legsStatic(z, p, 0.28 * k, -0.4 * k, -0.12 * k, -0.18 * k, 0.16);
+      z.standOn = true;
+      R(p, SPINE, -0.1 + 0.2 * k, 0, 0);
+      R(p, CHEST, 0.18 * k + sh, 0, 0);
+      arm(p, 0, 0.35 + 0.35 * k + sh, 0.15 + 1.05 * k, 0.3, 0.3 + 0.9 * k, 0.2);
+      arm(p, 1, 0.35 + 0.35 * k - sh, 0.15 + 1.05 * k, 0.3, 0.3 + 0.9 * k, 0.2);
+      headLook(p, 0.1 + 0.55 * k + sh, 0, 0, 0.4);
+      R(p, JAW, -0.25 - 0.75 * k, 0, 0);
+      z.bellyPulse = 0.1 * k;
+      return;
+    }
+    case ZTYPE.BOSS_BLOATER: {
+      // heaving bile: rears back with the gut swelling (0..0.45), then pitches forward and retches it out, loops ~0.8 s
+      const u = (t % 0.8) / 0.8;
+      clearPose(p, z.nb);
+      legsStatic(z, p, 0.3, -0.3, -0.12, -0.12, 0.16);
+      z.standOn = true;
+      const back = u < 0.45 ? smooth(u / 0.45) : 1 - smooth((u - 0.45) / 0.12);
+      const fwd = u < 0.45 ? 0 : u < 0.6 ? smooth((u - 0.45) / 0.15) : 1 - smooth((u - 0.6) / 0.4) * 0.7;
+      const q = Math.sin(t * 34) * 0.025 * fwd;
+      R(p, SPINE, 0.05 + back * 0.28 - fwd * 0.32 + q, 0, 0);
+      R(p, CHEST, back * 0.2 - fwd * 0.28, 0, 0);
+      R(p, NECK, back * 0.3 - fwd * 0.45, 0, 0);
+      R(p, HEAD, back * 0.25 - fwd * 0.15 + q, 0, 0);
+      R(p, JAW, -0.2 - back * 0.25 - fwd * 0.85, 0, 0);
+      arm(p, 0, 0.35 + back * 0.3 + fwd * 0.5, 0.45 + back * 0.5, 0, 0.5 - fwd * 0.2, 0.3);
+      arm(p, 1, 0.35 + back * 0.3 + fwd * 0.5, 0.45 + back * 0.5, 0, 0.5 - fwd * 0.2, 0.3);
+      z.bellyPulse = 0.14 * back + 0.2 * fwd;
       return;
     }
     case ZTYPE.BOSS_HIVEQUEEN: {
@@ -3472,6 +3717,7 @@ class ZombieInstance {
     }
     let glow = 1;
     if (this.type === ZTYPE.SPITTER || this.type === ZTYPE.BOSS_HIVEQUEEN) glow = 0.8 + 0.25 * Math.sin(time * 3.1 + this.off);
+    if (this.type === ZTYPE.BOSS_BLOATER) glow = 0.75 + 0.35 * Math.sin(time * 1.9 + this.off); // the pustules throb
     if (this.type === ZTYPE.SHADE) glow = 0.5 + 0.15 * Math.sin(time * 2.3 + this.off); // barely there while it stalks
     if (anim === ZANIM.DEAD) glow = Math.max(0.15, 1 - this.stateT * 0.6);
     if (setFx(this.fx, this.hit, glow)) this.fxDirty = true;
@@ -3588,6 +3834,7 @@ export function zombieVariants(ztype) {
  */
 export function createZombie(ztype, seed = 0) {
   if (ztype === ZTYPE.DOG) return createZombieDog(seed); // quadruped: its own rig + animation (dog.js)
+  if (ztype === ZTYPE.BOSS_ALPHA) return createZombieDog(seed, true); // the pack's leader: a dog, built heavier and drawn bigger
   const type = BUILDERS[ztype] ? ztype : ZTYPE.WALKER;
   const nv = VARIANTS[type] || 1;
   const variant = nv > 1 ? ((seed >>> 0) * 2654435761 >>> 0) % nv : 0;

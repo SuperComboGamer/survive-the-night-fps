@@ -108,27 +108,35 @@ export const FLASHLIGHT_CONE = 0.4; // half-angle of the beam (rad)
 export const FIRE_LIGHT_MARGIN = 5; // a burning patch of ground lights this far beyond its edge (m)
 
 // Day / night (seconds)
-// A day is a dash: out to a place, a look round it, on to a second one, and the horn. Timed with the player
-// simulation over 40 valleys (scripts/daytime.js), sprint held, by a survivor who knows where every container is:
-// 14 s from the breakdown to the nearest place (17 on a bad map), 15 s on to the next (20), and 25-30 s to search
-// every container in one (48); walking all the way, a third more. So a day allows 40 s on the road and 40 s in
-// each of two places before the horn - a team that keeps moving reaches both, and empties one of them - and
-// DUSK_WARNING after it. The first day has half a minute more, for finding your feet at the breakdown.
-export const DAY_LENGTH = 165;
-export const FIRST_DAY_LENGTH = 195;
+// The days get shorter as the run goes on (dayLength). The first is long: finding your feet at the breakdown and
+// stocking up before the first boss. The second is for finding somewhere to hold. Then each day is DAY_SHRINK
+// shorter than the one before, down to DAY_LENGTH: a dash out to a place, a look round it, on to a second one, and
+// the horn. That floor was timed with the player simulation over 40 valleys (scripts/daytime.js), sprint held, by a
+// survivor who knows where every container is: 14 s from the breakdown to the nearest place (17 on a bad map), 15 s
+// on to the next (20), and 25-30 s to search every container in one (48); walking all the way, a third more. So it
+// allows 40 s on the road and 40 s in each of two places before the horn, and DUSK_WARNING after it. Every day
+// length includes its DUSK_WARNING.
+export const FIRST_DAY_LENGTH = 360;
+export const SECOND_DAY_LENGTH = 270;
+export const DAY_SHRINK = 15;
+export const DAY_LENGTH = 180; // the shortest a day gets (day 8 on)
+export const dayLength = (day) => (day <= 1 ? FIRST_DAY_LENGTH : Math.max(DAY_LENGTH, SECOND_DAY_LENGTH - DAY_SHRINK * (day - 2)));
 export const NIGHT_LENGTH = 180;
-export const DUSK_WARNING = 45; // horn: pick a spot and build a shelter
+export const DUSK_WARNING = 60; // horn: pick a spot and build a shelter
 export const NIGHT_WAVES = 3; // each night's horde arrives in waves
 export const WAVE_TIMES = [4, 62, 120]; // seconds into the night each wave starts
 export const WAVE_SPREAD = 26; // a wave trickles in over this many seconds
 export const HORDE_SPAWN_MIN = 58; // horde groups appear this far from the survivors (around wherever they are)
 export const HORDE_SPAWN_MAX = 84;
-export const BOSS_EVERY = 3;
-export const TANK_BOSS_NIGHT = 2; // this night's boss is a Tank: it comes in with the second wave
+// Every night has a boss (shared/nights.js nightBoss). A Tank that comes as one has this share of a Tank's health.
+// It was halved while the days were short; with the long first two days it is back at full, which players have
+// brought down with guns and a prepared spot. Halve it again if a night-2 Tank proves too much.
+export const TANK_BOSS_HP = 1;
 // Every night boss comes in with this wave (index into WAVE_TIMES), not at the end of the night: the sun kills
 // whatever is left at dawn, so a boss has to arrive while there is still time to bring it down
 export const BOSS_WAVE = 1;
 export const BOSS_HP_PER_PLAYER = 0.6; // boss health: its base hp, plus this share of it for every survivor after the first
+export const BOSS_HP_PER_NIGHT = 0.1; // ...and this share of it for every night after the first
 
 // Noise: how far (m) each loud thing carries to the dead. Every zombie inside that radius with nobody to chase
 // comes to look, so a louder noise pulls in more of them - and the louder it was where a zombie stood, the

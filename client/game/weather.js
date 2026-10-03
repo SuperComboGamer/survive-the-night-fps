@@ -5,7 +5,7 @@
 //
 // Weather clock u: one day + night pair per unit, the day on [0, 0.5) and the night on [0.5, 1), linear in
 // time within each phase. An event may run past the end of its cycle into the next morning.
-import { PHASE, MAP_HALF, DAY_LENGTH, FIRST_DAY_LENGTH, NIGHT_LENGTH } from '../../shared/constants.js';
+import { PHASE, MAP_HALF, dayLength, NIGHT_LENGTH } from '../../shared/constants.js';
 import { mulberry32, hash2 } from '../../shared/rng.js';
 
 // fog: fog density multiplier, wind: 0 calm .. ~1.2 gale, rain: 0..1, bolts: lightning (1 = a strike every
@@ -158,7 +158,7 @@ export class Weather {
 
   static phaseLen(g) {
     if (g.phaseLen) return g.phaseLen;
-    return g.phase === PHASE.NIGHT ? NIGHT_LENGTH : g.day <= 1 ? FIRST_DAY_LENGTH : DAY_LENGTH;
+    return g.phase === PHASE.NIGHT ? NIGHT_LENGTH : dayLength(g.day);
   }
 
   // clock u for a phase-elapsed time; null outside the day/night loop

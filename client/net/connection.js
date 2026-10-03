@@ -14,6 +14,7 @@ export class Connection {
     this.pingAt = 0; // when the ping that is still out was sent
     this.pingNext = 0; // when the next one is due
     this.room = null; // the game we are in: { code, name, inviteOnly } (S2C.ROOM)
+    this.accounts = new Map(); // player id -> the account they are signed in to, for friend requests and the friend star (S2C.FRIENDS; '' = a guest)
   }
 
   // code: the game to join; none for a quick join (the server picks a public game, or makes one)
@@ -27,6 +28,7 @@ export class Connection {
     return new Promise((resolve, reject) => {
       let settled = false;
       this.room = null;
+      this.accounts = new Map();
       const ws = new WebSocket(this.url(code));
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
@@ -92,6 +94,9 @@ export class Connection {
             break;
           case S2C.BOARD:
             this.h.board?.(readBoard(r));
+            break;
+          case S2C.FRIENDS:
+            for (let n = r.u8(); n > 0; n--) this.accounts.set(r.u16(), r.str());
             break;
         }
       };
@@ -172,6 +177,17 @@ export class Connection {
         w.i16(Math.round(args[2] * 64));
         w.u8(args[3]);
         break;
+      case ACT.WAYPOINT: {
+        // ({ x, z, zone } or null to clear it)
+        const at = args[0];
+        w.u8(at ? 1 : 0);
+        if (at) {
+          w.i16(Math.max(-32768, Math.min(32767, Math.round(at.x * 64))));
+          w.i16(Math.max(-32768, Math.min(32767, Math.round(at.z * 64))));
+          w.u8(at.zone >= 0 ? at.zone : 255);
+        }
+        break;
+      }
       default:
         if (args.length) w.u8(args[0]);
     }

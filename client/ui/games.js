@@ -16,7 +16,7 @@ export function phaseText(phase, day) {
 export const seatsText = (g) => `${g.players} / ${g.max}`;
 
 // a card in the settings panel's style, with a head (title, sub line, close cross), a body and a foot
-class Panel {
+export class Panel {
   constructor(ui, parent, cls, title) {
     this.ui = ui;
     this.root = el('div', `stn-settings ${cls}`, parent);

@@ -1,11 +1,14 @@
 // Field map overlay [M]: the baked survey map of the valley with live markers - you, your team, the
 // car, pings, where the car supplies are rumoured to be, and the places you have discovered.
-// A click sets your own waypoint (the game keeps it and shows it on the compass and in the world).
+// A click sets your own waypoint (the game keeps it, shows it on the compass and in the world, and shares it:
+// the team's waypoints are flags here too, with who set them).
 import { ZONE, ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
 import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
 import { el, svgEl } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { renderMapCanvas, MAP_PX } from './mapcanvas.js';
+
+const TEAM_BESIDE = 14; // m: a teammate's waypoint on your own waypoint's spot is drawn this far east of it
 
 export class MapScreen {
   constructor(ui, parent) {
@@ -37,6 +40,7 @@ export class MapScreen {
       ['crate', 'hazard', 'Supply drop'],
       ['bench', 'wrench', 'Workbench'],
       ['way', 'flag', 'Your waypoint'],
+      ['teamway', 'flag', "A teammate's waypoint"],
     ]) {
       const r = el('div', 'lg ' + cls, lg);
       svgEl('i', 'lg-ico', r, glyph(ico));
@@ -149,7 +153,8 @@ export class MapScreen {
 
   // d: { self:{x,z,yaw}, mates:[{x,z,name,status}], car:{x,z}, pings:[{x,z,kind,name}], crates:[{x,z}],
   //      benches:[{x,z}], discovered:Set, hints:[zone...], found:bits (a hint whose supply has been taken),
-  //      supplies:[n...], carried:{item:n}, waypoint:{x,z,zone} | null }
+  //      supplies:[n...], carried:{item:n}, waypoint:{x,z,zone} | null,
+  //      teamWays:[{x,z,zone,names:[...],mine (on the spot of your own)}] }
   update(d) {
     if (!this.open || !this.world) return;
     const pct = (v) => ((v + MAP_HALF) / MAP_SIZE) * 100;
@@ -183,6 +188,8 @@ export class MapScreen {
     };
     // your waypoint goes under everything else (on a place its own name is the label, in the waypoint's colour)
     if (way) put(way.x, way.z, 'way', glyph('flag'), way.zone >= 0 ? '' : 'waypoint');
+    // the team's, named for who set them (one on your own spot stands just east of your ring)
+    for (const t of d.teamWays) put(t.x + (t.mine ? TEAM_BESIDE : 0), t.z, 'teamway', glyph('flag'), t.names.join(', '));
     // rumoured supply places: gone from the map once the supply has been picked up there, nothing left to look for
     const seen = new Set();
     d.hints.forEach((zid, i) => {

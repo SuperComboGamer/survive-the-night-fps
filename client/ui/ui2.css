@@ -4,9 +4,10 @@
    Same scale unit (--u) and palette as ui.css.
    ===================================================================================== */
 
-/* your own waypoint, wherever it shows (compass, world marker, map legend) */
+/* your own waypoint, wherever it shows (compass, world marker, map legend), and a teammate's */
 .stn-ui {
   --way: #c9a6ff;
+  --teamway: #7fd3e6;
 }
 
 /* ------------------------------------------------------------------ compass */
@@ -228,6 +229,10 @@
 }
 .stn-ui .cmp-mk.k-way .cmp-mk-lab {
   color: var(--way);
+}
+.stn-ui .cmp-mk.k-teamway,
+.stn-ui .cmp-mk.k-teamway .cmp-mk-lab {
+  color: var(--teamway);
 }
 
 /* out of view and pinned inside the end of the tape: a chevron points the way round */
@@ -661,6 +666,9 @@
 }
 .stn-ui .wmk.k-way {
   color: var(--way);
+}
+.stn-ui .wmk.k-teamway {
+  color: var(--teamway);
 }
 
 @keyframes stn-pingbob {
@@ -1176,6 +1184,23 @@
   top: calc(100% + 7 * var(--u));
   transform: translateX(-50%);
 }
+/* a teammate's: the flag on the spot, who set it to its right (a place's own name sits under its middle) */
+.stn-ui .mm.teamway {
+  color: #1d6478;
+  z-index: 1;
+}
+.stn-ui .mm.teamway .mm-ico svg {
+  width: calc(15 * var(--u));
+  height: calc(15 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+}
+.stn-ui .mm.teamway .mm-lab {
+  position: absolute;
+  left: calc(100% + 2 * var(--u));
+  top: 50%;
+  transform: translateY(-50%);
+}
 
 .stn-ui .map-side {
   display: flex;
@@ -1281,6 +1306,9 @@
 }
 .stn-ui .lg.way {
   color: var(--way);
+}
+.stn-ui .lg.teamway {
+  color: var(--teamway);
 }
 
 .stn-ui .map-keys {
@@ -1649,4 +1677,495 @@
 .stn-ui.board-open .top-right,
 .stn-ui.board-open .layer-hud {
   visibility: hidden;
+}
+
+/* ------------------------------------------------------------------ accounts and friends */
+/* (these set a display of their own, which would beat the hidden attribute) */
+.stn-ui .ac-form[hidden],
+.stn-ui .fr-conv[hidden],
+.stn-ui .fr-signin[hidden],
+.stn-ui .fr-signin-btns[hidden],
+.stn-ui .ac-panel .set-foot[hidden],
+.stn-ui .fr-panel .set-foot[hidden],
+.stn-ui .ac-panel .btn[hidden],
+.stn-ui .fr-panel .btn[hidden],
+.stn-ui .sp-badge[hidden] {
+  display: none;
+}
+
+/* the count of unread messages on a button */
+.stn-ui .sp-badge,
+.stn-ui .fr-badge {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 2px 5px 1px;
+  border-radius: 9px;
+  background: var(--blood-hi);
+  box-shadow: 0 0 8px rgba(212, 42, 42, 0.55);
+  font: 400 max(9.5px, calc(11 * var(--u))) / 1.2 var(--f-mono);
+  letter-spacing: 0;
+  text-align: center;
+  color: #fff;
+}
+
+.stn-ui .sp-badge {
+  margin-left: calc(-2 * var(--u));
+}
+
+/* the account, top right of the splash */
+.stn-ui .sp-acct {
+  position: absolute;
+  top: calc(30 * var(--u));
+  right: calc(38 * var(--u));
+  max-width: 40vw;
+  letter-spacing: 0.14em;
+}
+
+.stn-ui .sp-acct span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.stn-ui .sp-acct:not(.on) span {
+  text-transform: uppercase;
+}
+
+.stn-ui .sp-acct.on {
+  border-color: rgba(182, 208, 138, 0.55);
+}
+
+.stn-ui .sp-acct.on .btn-ico {
+  color: var(--good);
+}
+
+/* signed in, the name is the account's */
+.stn-ui .sp-name.locked {
+  border-bottom-color: rgba(182, 208, 138, 0.6);
+  color: var(--bone-2);
+  cursor: default;
+}
+
+.stn-ui .sp-name.locked:focus {
+  border-bottom-color: rgba(182, 208, 138, 0.6);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* Account */
+.stn-ui .ac-panel .set-body {
+  min-height: calc(240 * var(--u));
+  padding-bottom: calc(14 * var(--u));
+  text-align: left;
+}
+
+.stn-ui .ac-panel .set-foot {
+  align-items: center;
+}
+
+.stn-ui .ac-tabs {
+  width: fit-content;
+  margin: calc(12 * var(--u)) 0 calc(4 * var(--u));
+}
+
+.stn-ui .ac-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(12 * var(--u));
+  margin-top: calc(12 * var(--u));
+}
+
+.stn-ui .ac-field {
+  display: grid;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .ac-in {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stn-ui .ac-ferr {
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.3 var(--f-type);
+  color: #ff9d90;
+}
+
+.stn-ui .ac-err {
+  margin: 0;
+}
+
+.stn-ui .ac-go {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.stn-ui .ac-go .btn-blood {
+  font-size: max(16px, calc(22 * var(--u)));
+  padding: calc(8 * var(--u)) calc(28 * var(--u)) calc(6 * var(--u)) calc(28 * var(--u) + 0.3em);
+}
+
+.stn-ui .ac-go .btn-blood:disabled {
+  cursor: progress;
+}
+
+.stn-ui .ac-note {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(10 * var(--u));
+  margin: calc(16 * var(--u)) 0 0;
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.45 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ac-note[hidden] {
+  display: none;
+}
+
+.stn-ui .ac-note-ico {
+  flex: none;
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+  margin-top: 2px;
+  color: var(--amber);
+}
+
+.stn-ui .ac-note-ico svg,
+.stn-ui .ac-prof-ico svg,
+.stn-ui .ac-tile-ico svg,
+.stn-ui .fr-signin-ico svg,
+.stn-ui .fr-chat svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .ac-guest {
+  color: var(--amber);
+}
+
+.stn-ui .ac-prof {
+  display: flex;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  padding: calc(14 * var(--u)) 0 calc(4 * var(--u));
+}
+
+.stn-ui .ac-prof-ico {
+  flex: none;
+  box-sizing: content-box;
+  width: calc(30 * var(--u));
+  height: calc(30 * var(--u));
+  min-width: 24px;
+  min-height: 24px;
+  padding: calc(9 * var(--u));
+  border: 1px solid rgba(182, 208, 138, 0.5);
+  color: var(--good);
+}
+
+.stn-ui .ac-who {
+  min-width: 0;
+}
+
+.stn-ui .ac-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 max(22px, calc(34 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.1em;
+  color: var(--bone);
+}
+
+.stn-ui .ac-meta {
+  margin-top: calc(5 * var(--u));
+  overflow-wrap: anywhere;
+  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+}
+
+.stn-ui .ac-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .ac-tiles .ac-wait {
+  grid-column: 1 / -1;
+}
+
+.stn-ui .ac-tile {
+  display: flex;
+  flex-direction: column;
+  gap: calc(5 * var(--u));
+  padding: calc(9 * var(--u)) calc(12 * var(--u)) calc(10 * var(--u));
+  background: rgba(0, 0, 0, 0.28);
+  border-left: 2px solid rgba(230, 223, 207, 0.2);
+}
+
+.stn-ui .ac-tile-l {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+}
+
+.stn-ui .ac-tile-ico {
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
+  opacity: 0.75;
+}
+
+.stn-ui .ac-tile b {
+  font: 400 max(20px, calc(28 * var(--u))) / 1 var(--f-num);
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+}
+
+.stn-ui .ac-tile small {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ac-tile small.ranked {
+  color: var(--amber);
+}
+
+.stn-ui .ac-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6 * var(--u)) calc(18 * var(--u));
+  margin-top: calc(10 * var(--u));
+}
+
+.stn-ui .ac-more .ac-note {
+  margin-top: 0;
+}
+
+.stn-ui .ac-bit {
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.08em;
+  color: var(--bone-dim);
+}
+
+.stn-ui .ac-bit b {
+  margin-left: calc(6 * var(--u));
+  font: 400 max(12px, calc(14.5 * var(--u))) / 1 var(--f-num);
+  color: var(--bone-2);
+}
+
+.stn-ui .ac-match.good {
+  border-left-color: var(--good);
+}
+
+.stn-ui .ac-match.good .gb-name {
+  color: var(--good);
+}
+
+.stn-ui .ac-match.bad .gb-name {
+  color: #ff9d90;
+}
+
+.stn-ui .ac-none .ac-retry {
+  margin-top: calc(16 * var(--u));
+}
+
+/* Friends: signed out */
+.stn-ui .fr-signin {
+  padding: calc(30 * var(--u)) calc(20 * var(--u));
+}
+
+.stn-ui .fr-signin-ico {
+  display: block;
+  width: calc(40 * var(--u));
+  height: calc(40 * var(--u));
+  min-width: 30px;
+  min-height: 30px;
+  margin: 0 auto calc(14 * var(--u));
+  opacity: 0.45;
+}
+
+.stn-ui .fr-signin-btns {
+  display: flex;
+  justify-content: center;
+  gap: calc(10 * var(--u));
+  margin-top: calc(18 * var(--u));
+}
+
+/* Friends: the lists */
+.stn-ui .fr-row.idle .fr-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--good);
+}
+
+.stn-ui .fr-tag.dim {
+  color: var(--bone-dim);
+}
+
+.stn-ui .fr-note {
+  margin-top: calc(6 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone-dim);
+  text-align: left;
+}
+
+.stn-ui .fr-note:empty {
+  display: none;
+}
+
+.stn-ui .fr-name-in {
+  flex: 1;
+}
+
+.stn-ui .fr-chat {
+  position: relative;
+  min-width: 0;
+  padding: calc(6 * var(--u)) calc(9 * var(--u));
+}
+
+.stn-ui .fr-chat .btn-ico {
+  width: calc(15 * var(--u));
+  height: calc(15 * var(--u));
+  min-width: 12px;
+  min-height: 12px;
+}
+
+.stn-ui .fr-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+}
+
+.stn-ui .fr-req {
+  border-left-color: var(--amber);
+}
+
+.stn-ui .fr-mine-name {
+  font: 400 max(13px, calc(17 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.04em;
+  color: var(--bone);
+}
+
+/* Friends: a conversation */
+.stn-ui .fr-panel.conv .set-body {
+  overflow: hidden;
+}
+
+.stn-ui .fr-conv {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  padding-top: calc(8 * var(--u));
+}
+
+.stn-ui .fr-conv-head {
+  display: flex;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  padding-bottom: calc(8 * var(--u));
+  border-bottom: 1px dashed rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .fr-back {
+  min-width: 0;
+  padding: calc(7 * var(--u)) calc(12 * var(--u));
+}
+
+.stn-ui .fr-conv-who {
+  flex: 1;
+}
+
+.stn-ui .fr-conv-who .gb-name {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .fr-conv-who.on .fr-dot {
+  background: var(--good);
+  box-shadow: 0 0 6px var(--good);
+}
+
+.stn-ui .fr-conv-who.idle .fr-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--good);
+}
+
+.stn-ui .fr-msgs {
+  display: flex;
+  flex-direction: column;
+  height: min(46vh, calc(380 * var(--u)));
+  min-height: 180px;
+  overflow-y: auto;
+  padding: calc(8 * var(--u)) calc(10 * var(--u));
+  background: rgba(0, 0, 0, 0.25);
+  scrollbar-width: thin;
+}
+
+.stn-ui .fr-msgs .fr-empty {
+  margin: auto 0;
+}
+
+.stn-ui .fr-older {
+  align-self: center;
+  margin-bottom: calc(6 * var(--u));
+  padding: calc(5 * var(--u)) calc(12 * var(--u));
+  font-size: max(10px, calc(12 * var(--u)));
+}
+
+.stn-ui .fr-stamp {
+  margin: calc(10 * var(--u)) 0 calc(2 * var(--u));
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--bone-dim);
+}
+
+.stn-ui .fr-msg {
+  display: flex;
+  margin-top: calc(6 * var(--u));
+}
+
+.stn-ui .fr-msg.cont {
+  margin-top: calc(2 * var(--u));
+}
+
+.stn-ui .fr-msg.me {
+  justify-content: flex-end;
+}
+
+.stn-ui .fr-msg-b {
+  max-width: 76%;
+  padding: calc(7 * var(--u)) calc(11 * var(--u));
+  background: rgba(230, 223, 207, 0.08);
+  border-left: 2px solid rgba(230, 223, 207, 0.32);
+  font: max(11.5px, calc(14 * var(--u))) / 1.38 var(--f-type);
+  color: var(--bone);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.stn-ui .fr-msg.me .fr-msg-b {
+  background: rgba(157, 17, 23, 0.32);
+  border-left: 0;
+  border-right: 2px solid var(--blood-lite);
+}
+
+.stn-ui .fr-send {
+  display: flex;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .fr-msg-in {
+  flex: 1;
+  width: auto;
 }

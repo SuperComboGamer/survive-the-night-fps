@@ -81,6 +81,11 @@ export class Room {
     // still on its way out for the old socket can reach a new one): hence twice as many as the game has seats
     this.socks = new Array(maxPlayers * 2 + 2).fill(null);
     this.draining = new Uint8Array(this.socks.length);
+    // per slot: the account its socket is signed in to ({ id, name }, null for a guest: index.js found it by the
+    // session cookie), and the name its player joined under ('' before the JOIN)
+    this.users = new Array(this.socks.length).fill(null);
+    this.names = new Array(this.socks.length).fill('');
+    this.match = null; // the id of the match being played in it, while one is (matchstore.js)
     this.open = 0; // live sockets (a seat each, joined or about to)
     this.inbox = new FramePacker();
     this.congestion = new SharedArrayBuffer(4 * this.socks.length);
@@ -89,7 +94,8 @@ export class Room {
     this.st = { players: 0, lead: '', phase: PHASE.WAITING, day: 0, seed: 0, tick: null, load: { cpuMs: 0, elu: 0 }, heapMb: 0 };
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
-      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers }, congestion: this.congestion },
+      // (analytics: the game records its matches - only worth it with a database to write them to)
+      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, analytics: !!lobby.matches }, congestion: this.congestion },
       resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
     });
     this.worker.on('message', (m) => this.fromWorker(m));
@@ -126,13 +132,21 @@ export class Room {
     Atomics.store(this.congested, slot, 0);
     this.open++;
     this.emptySince = 0;
-    this.worker.postMessage({ t: 'open', slot, ip: ws.getUserData().ip });
+    const d = ws.getUserData();
+    const user = d.user ? { id: d.user.id, name: d.user.name } : null;
+    this.users[slot] = user;
+    if (user) this.lobby.userIn(user.id, this);
+    this.worker.postMessage({ t: 'open', slot, ip: d.ip, user });
     return slot;
   }
 
   detach(slot) {
     if (this.socks[slot] === null) return;
     this.socks[slot] = null;
+    const user = this.users[slot];
+    this.users[slot] = null;
+    this.names[slot] = '';
+    if (user) this.lobby.userOut(user.id, this);
     this.open--;
     if (!this.open) this.emptySince = Date.now();
     if (this.closed) return;
@@ -150,14 +164,17 @@ export class Room {
   }
 
   // Tells a socket which game it is in, before the game answers its first message (its JOIN): a quick join learns
-  // its code here, for its invite link. The game's first player names a quick join's game.
+  // its code here, for its invite link. The game's first player names a quick join's game. (A signed-in player
+  // plays under their account's name, as Game.handleJoin has it.)
   greet(slot, bytes) {
-    if (!this.first && bytes[0] === C2S.JOIN) {
+    if (bytes[0] === C2S.JOIN) {
       try {
         const r = new Reader(bytes);
         r.u8();
         r.u8();
-        this.first = cleanTitle(r.str(), 16);
+        const name = this.users[slot]?.name || cleanTitle(r.str(), 16);
+        if (!this.first) this.first = name;
+        this.names[slot] = name || 'Survivor';
       } catch {}
     }
     const w = new Writer(96);
@@ -231,12 +248,17 @@ export class Room {
         return this.record(m);
       case 'board':
         return this.board(m);
+      case 'an':
+        return this.lobby.matches?.push(m.rec, this);
+      case 'finished':
+        this.finished?.();
+        return;
     }
   }
 
   record(m) {
     const stats = this.lobby.stats;
-    if (m.op === 'enter') this.recs.set(m.tok, stats.enter(m.id, m.name));
+    if (m.op === 'enter') this.recs.set(m.tok, stats.enter(m.id, m.name, m.user || ''));
     else if (m.op === 'leave') {
       stats.leave(this.recs.get(m.tok));
       this.recs.delete(m.tok);
@@ -251,11 +273,32 @@ export class Room {
       const r = this.recs.get(tok);
       if (r) here.add(r);
     }
-    const { total, rows } = this.lobby.stats.board(this.recs.get(m.me) ?? null, here);
-    const w = new Writer(1024);
-    w.u8(S2C.BOARD);
-    writeBoard(w, total, rows);
-    if (ws.getBufferedAmount() <= SEND_LIMIT) ws.send(w.bytes(), true, false);
+    const send = ({ total, rows }) => {
+      if (this.socks[m.slot] !== ws) return; // (gone while the database was asked)
+      const w = new Writer(1024);
+      w.u8(S2C.BOARD);
+      writeBoard(w, total, rows);
+      if (ws.getBufferedAmount() <= SEND_LIMIT) ws.send(w.bytes(), true, false);
+    };
+    // the file-kept board answers at once, the database's (dbstats.js) in a moment
+    const board = this.lobby.stats.board(this.recs.get(m.me) ?? null, here);
+    if (typeof board?.then === 'function') board.then(send, (err) => this.lobby.log(`board failed (${err.message})`));
+    else send(board);
+  }
+
+  // Ends the match being played now, as a server going down does (Lobby.finishAll): the worker writes what it has of
+  // it and says when it has. -> a promise, done then or after `ms` regardless
+  finish(ms = 1500) {
+    if (this.closed || !this.match) return Promise.resolve();
+    return new Promise((done) => {
+      const t = setTimeout(done, ms);
+      this.finished = () => {
+        clearTimeout(t);
+        this.finished = null;
+        done();
+      };
+      this.worker.postMessage({ t: 'finish' });
+    });
   }
 
   // Ends the game: the worker goes, every socket is closed, and the records it had open are let go.
@@ -274,16 +317,27 @@ export class Room {
       } catch {}
     }
     this.open = 0;
+    for (let i = 0; i < this.users.length; i++) {
+      if (this.users[i]) this.lobby.userOut(this.users[i].id, this);
+      this.users[i] = null;
+    }
     for (const rec of this.recs.values()) this.lobby.stats.leave(rec);
     this.recs.clear();
+    // a match it was in the middle of stops where it was
+    if (this.match) this.lobby.matches?.interrupt(this.match);
+    this.match = null;
   }
 }
 
 export class Lobby {
-  // stats: the leaderboard (PlayerStats). gameOpts: what every Game is made with (the env's test switches)
+  // stats: the leaderboard (PlayerStats, or DbStats with a database). matches: where the matches played go
+  // (MatchStore; none without a database). gameOpts: what every Game is made with (the env's test switches)
   // limits: false lifts the per-address allowances (load tests make many games from one address)
-  constructor({ stats, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, log = console.log }) {
+  constructor({ stats, matches = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, log = console.log }) {
     this.stats = stats;
+    this.matches = matches;
+    this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
+    this.onPresence = null; // (account id) => void: they came into a game or left one (social.js)
     this.gameOpts = gameOpts;
     this.maxGames = maxGames;
     this.maxPlayers = maxPlayers; // seats in a game nobody chose the size of (a quick join's)
@@ -390,6 +444,39 @@ export class Lobby {
     let n = 0;
     for (const room of this.rooms.values()) n += room.st.players;
     return n;
+  }
+
+  // ---------------------------------------------------------------- where the signed-in are playing
+  // An account's socket came into a game, or went from one (Room.attach / detach). Its friends hear of it (social.js)
+  userIn(userId, room) {
+    let rooms = this.playing.get(userId);
+    if (!rooms) this.playing.set(userId, (rooms = new Map()));
+    rooms.set(room, (rooms.get(room) || 0) + 1);
+    this.onPresence?.(userId);
+  }
+  userOut(userId, room) {
+    const rooms = this.playing.get(userId);
+    const n = rooms?.get(room);
+    if (!n) return;
+    if (n > 1) rooms.set(room, n - 1);
+    else rooms.delete(room);
+    if (!rooms.size) this.playing.delete(userId);
+    this.onPresence?.(userId);
+  }
+
+  // The game an account is playing in (the one it came into last, if it is in two), or null. Friends are told it
+  // in full, its code included, to join them by - an invite-only game's too: friends only (social.js)
+  playingRoom(userId) {
+    const rooms = this.playing.get(userId);
+    if (!rooms) return null;
+    let last = null;
+    for (const room of rooms.keys()) if (!room.closed) last = room;
+    return last;
+  }
+
+  // The server is going down (a deploy): every match being played is ended as it stands and written (Room.finish)
+  finishAll(ms = 1500) {
+    return Promise.all([...this.rooms.values()].map((room) => room.finish(ms)));
   }
 }
 

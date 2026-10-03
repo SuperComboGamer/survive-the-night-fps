@@ -22,6 +22,11 @@ npm install
 npm run dev        # game server on :3000 + Vite dev server on :5173 -> open http://localhost:5173
 ```
 
+`npm run dev` gives the server a database of its own: PGlite (Postgres compiled to WebAssembly, run inside the
+server process) kept in `data/pglite`, migrated on start - accounts, friends, messages and match records all work
+with nothing to install. Point `DATABASE_URL` at a real Postgres to use that instead, or set it empty
+(`DATABASE_URL= npm run dev`) for no database at all.
+
 Production:
 
 ```bash
@@ -35,9 +40,14 @@ set), `MAX_GAMES` (games at once on the box: 4 per core unless set - see Capacit
 one address may have open over all games; `0` for no limit), `SEED` (pins the map of every game: without it every
 playthrough is a new random valley), `TRUST_PROXY` (`1` / `0`: whether to take a player's address from the
 `X-Forwarded-For` / `X-Real-IP` header; unset, only a proxy on a private network is believed - see
-`clientAddress` in `server/index.js`. Joins are rate-limited per address), `STATS_FILE` (where the leaderboard is
-kept: `data/stats.json` by default, or `stats.json` on the Railway volume when the service has one; empty keeps
-nothing past the process).
+`clientAddress` in `server/index.js`. Joins are rate-limited per address), `DATABASE_URL` (Postgres:
+`postgres://...`, or `pglite:<folder>` / `pglite:memory` for one inside the process. With one there are accounts,
+friends, direct messages, the leaderboard in the database and every match recorded; without one the server runs
+without accounts and keeps the leaderboard in `STATS_FILE`), `MIGRATE_ON_START` (`0`: do not apply pending
+migrations when the server starts - `npm run migrate` does it), `DATABASE_POOL_MAX` (10 connections),
+`COOKIE_SECURE=1` (mark the sign-in cookie Secure even when the edge does not say the page came over https),
+`STATS_FILE` (where the leaderboard is kept when there is no database: `data/stats.json` by default, or
+`stats.json` on the Railway volume when the service has one; empty keeps nothing past the process).
 Testing only: `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
 may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
 load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage),
@@ -66,9 +76,14 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/test-power.js [seed]` | the generator and its floodlights against the real server in-process and decoded as a client does, on the flattest open strip of the valley: what they cost, [E] pouring fuel and holding it for the switch, which lamps a generator feeds, the hum and the idle dead it draws (from a random stream of its own), the dead breaking it - and a Shade walking at a survivor that freezes as it enters a powered cone, moves again when the generator runs dry, walks free behind a wall inside the cone and freezes again when it steps out of the wall's shadow (part of `npm test`) |
 | `npm run bench:net` | network traffic benchmark: the real server against simulated clients (real encoder, prediction and decoder) through a seeded session - idle, roaming, a night's fight. Reports packets and bytes per client per second in both directions and where the snapshot bytes go (`--players 8`, `--seed n`, `--day n`, `--json out.json`) |
 | `node scripts/sim-smoke.js [seed]` | in-process server run with fake clients: the cat, zombie dog packs (forest dens, pack hunting, lunge bites, head hitbox), the wandering herd (slow walk together, roused by sight and by noise, losing a survivor), containers, chopping (and the client's harvest prompt: same reach and yields as the server), stations, schematic locks, door boards, pings, downed/revive, night waves, night themes, dawn summary, supplies, final stand, victory |
+| `node scripts/test-accounts.js` | accounts, friends, messages and match records against a real server on a PGlite database of its own: registering (and what it turns down), signing in by email or name, the wrong password, signing out; friend requests by name, accepting, taking back and removing, the `/social` socket hearing each; messages between friends only, unread and read, slowed down when flooded; a signed-in player playing under the account's name and the others told so; a friend's presence and the game to join them in, an invite-only one's code going to friends and nobody else; requests and sockets from another site turned away; a guest's stats moving onto the account; the board from the database; every match written with its players and events, and one cut short by the server going down ended as `interrupted` (part of `npm test`) |
+| `npm run migrate` | applies the pending database migrations to `DATABASE_URL` (`-- --status`: lists them); Railway's pre-deploy step |
+| `npm run report` | what the match records say, for tuning: the night-by-night funnel, outcomes by team size, bosses, what kills survivors, weapons, pacing of the car supplies, retention, server health (`-- --days 7`, `--since 2026-10-01`, `--build <commit>`, `--only weapons`, `--json`) |
 | `node scripts/test-records.js` | the personal record (`client/ui/records.js`) against a stand-in for `localStorage`: what a run does to the bests, junk in storage, storage that refuses or is not there (part of `npm test`) |
 | `node scripts/test-stats.js` | the leaderboard (`server/stats.js`) against the real server in-process: what goes on a player's record (kills, nights, wins, revives) and what does not, the stats file across a restart and with junk in it, the board a client is sent - and that the id a player joins with is in nothing sent to any client, logged or saved |
 | `node scripts/test-gun.js [seed]` | the mounted gun at the Army Checkpoint, against the real server in-process: the nest on every valley that has the checkpoint (its grips free, its field of fire clear of its own sandbags), one gunner at a time whose commands fire it and nobody else's, 600 rounds a minute heard 110 m off, a round lag compensated like any gun's (a walker crossing 60 m out, aimed where it was drawn 250 ms before: against the AK-47 through the same path), through one body into the next, the gunner's kills, the belt spent, clicking empty, fed from the backpack's 7.62 and reset by a new game, letting go by [E], stepping away, going down and dying, and the dead getting round the sandbags to the gunner (part of `npm test`) |
+| `node scripts/test-bosses.js [seed]` | the night bosses and the day's specials, against the real server in-process: The Brute plods and, once badly hurt, roars and comes on at a run, and drops its smaller share of loot; The Alpha howls dogs into its own pack, never more than six, and lunges as a dog does; The Bloater heaves a fan of bile and bursts when it dies, taking the dead and a barricade beside it, but only falls when the dawn sun burns it out; and by day no specials within 90 m of the car, more of them further out, leapers and ropers only well out, never a boss, Tank, bat or shade (part of `npm test`) |
+| `node scripts/test-leaper.js` | the leaper's pounce against the real server in-process, on three valleys: a survivor standing still, on rough ground, inside a ring of barricades (it clears them, it does not land on top), sprinting away, strafing and sidestepping as it leaves the ground, each pinned often enough and a well-timed sidestep still beating some of them; and a released survivor is not pinned again on the leaper's way off (part of `npm test`) |
 | `node scripts/test-ammo.js [seed]` | ammunition in the backpack, against the real server in-process and decoded as a client does: the starting 9mm is a stack, pickups stack up, a reload takes its rounds out of the backpack (last stack first, a shotgun shell by shell), a stack splits (`ACT.SPLIT_INV`) and part of it is dropped for a teammate who walks over it, counts past 255 survive the wire, and the reserve the guns reload from is the backpack's count after every tick (part of `npm test`) |
 | `node scripts/test-fixtures.js [seed]` | the chapel bell and the Relay Station's radio, against the real server in-process and decoded as a client does: the rope, the bell and the radio are where world generation drew them and can be reached (not through a wall); a pull rings three tolls everyone hears, the idle dead at 60, 150 and 210 m and the herd come and the ones at 240 m do not, and the rope waits 45 s; a call spends two batteries and drops the crate where the caller stood, once a day and by day only; the client's prompts say why not, and the server never refuses a prompt for distance (part of `npm test`) |
 | `node scripts/test-deer.js [seed ...]` | the deer against the real server in-process: where the groups are put, what makes them bolt (a survivor standing or crouched, a noise, the dead) and how far and fast, a shot at a running one missing unless the server rewinds to the shooter's picture exactly as for a zombie dog, head shots on a grazing one, what a kill leaves and that it counts for nothing, that nothing that walks the zombie list meets them, the dawn's newcomers, venison, that none of it draws on the game's random stream, and half an hour of being chased about with none in the lake, the mine or a wall and none pushing at a fence (part of `npm test`; `VERBOSE=1` prints the passes) |
@@ -124,9 +139,22 @@ https://www.survivethenightgame.com.
   memory of that one process, so never scale it past one replica (a second would not know the first one's game
   codes), and expect every deploy to end every game. More games means a bigger box for the one replica: see
   Capacity below.
-- The leaderboard (`server/stats.js`) is a JSON file, and a deploy starts from a fresh disk: attach a
-  volume to the service and the file goes there by itself (`RAILWAY_VOLUME_MOUNT_PATH`). Without one
-  every deploy empties the board.
+- **Postgres** is a second service in the project ("Postgres", Railway's template, on a volume of its own). The
+  game service's `DATABASE_URL` is the reference `${{Postgres.DATABASE_URL}}`, which reaches it over Railway's
+  private network (`postgres.railway.internal`); the database has no public address.
+- **Migrations run on every deploy:** `preDeployCommand` in `railway.json` is `npm run migrate`
+  (`scripts/migrate.js`), which runs in the new build before it goes live. Migrations that fail stop the deploy
+  there, and the running server stays up. The server also applies anything still pending when it starts (under
+  the same advisory lock, so it is never done twice); `MIGRATE_ON_START=0` turns that off. A new migration is a new
+  file in `server/db/migrations` (`003_...sql`); one that has been applied is never edited. `npm run migrate --
+  --status` lists what is pending.
+- The leaderboard, accounts and match records live in that database. (Without `DATABASE_URL` the server falls back
+  to the leaderboard in a JSON file, `server/stats.js`, which needs a volume to outlive a deploy.)
+- A deploy ends every game, as before - and first ends every match being played as `interrupted` and writes it
+  (SIGTERM, `shutdown` in `server/index.js`). A match whose server died without that is closed as `interrupted`
+  once nothing has been heard from it for 5 minutes.
+- Looking at the match records: `railway ssh` into the game service and `npm run report` there (it reads its
+  `DATABASE_URL`), or `railway connect Postgres` for a psql shell (needs `psql` installed locally).
 - Node 24 is pinned with `engines.node` in `package.json`. uWebSockets.js only ships prebuilt binaries
   for Node 20/22/23/24 on glibc Linux, so don't move to an Alpine/musl image.
 - One process serves the client, the WebSocket (`/ws`) and `/status` on `PORT` (set to `3000` on the
@@ -181,7 +209,7 @@ on 32 GB / 32 vCPU, where the network thread becomes the limit. A game's maker m
 | Melee | Hit trees for sticks & planks, wrecks for scrap |
 | Z / middle mouse | Ping: go here / danger (aim at a zombie) / loot (aim at an item or container) |
 | L | Leaderboard: every player's kills, nights survived, wins and revives over all their games, and yours. Click a column to sort by it |
-| M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there |
+| M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there, and your team sees it too: everyone's waypoint is a teal flag with their name on the compass, in the world and on the map |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G | Drop current weapon |
 | H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; a medkit gets you up when downed) |
@@ -213,8 +241,10 @@ them off.
   The day/night clock stops during the final stand, so the team chooses when to start it - fortify the
   car first. The stand is sized to the survivors still alive, the way a night's horde is: more of you,
   more of them.
-- **Day: scavenge & rebuild.** A clock shows the time until nightfall. A day is short - 2:45, the first
-  3:15 - sized for a dash to one place or two, a look round each, and the horn. Every place has searchable
+- **Day: scavenge & rebuild.** A clock shows the time until nightfall. The first day is long - 6:00, to find
+  your feet and stock up before the first boss - and the second 4:30, to find somewhere to hold. After that each
+  day is 15 s shorter than the last, down to 3:00 from day 8: a dash to one place or two, a look round each, and
+  the horn. Every place has searchable
   containers (lockers, ammo crates, toolboxes, cabinets, fridges, shelves, duffel bags, car trunks,
   log piles; hold [E]) plus loot on the floor, and ~90 roadside and woodland sites (wrecks, abandoned
   camps, sheds, hunter stands, military stashes, burnt homesteads, roadblocks, graves) sit along the
@@ -236,20 +266,31 @@ them off.
   and chat reach every other survivor carrying one, anywhere in the valley (a radio line is marked with a
   handset, a radio voice crackles through the handset's speaker). Both ends need one; drop yours for a
   teammate who has none, and you lose it when you die.
-- **Night: board up where you stand.** 45 seconds before dark the horn sounds. There is no base: the
+- **Night: board up where you stand.** A minute before dark the horn sounds. There is no base: the
   horde spawns around wherever the survivors are and comes in three waves (wave 1/3, 2/3, 3/3), so the
   team throws up a temporary shelter on the spot - door boards that snap into any doorway (survivors
   squeeze through, zombies must smash them; windows can still be vaulted), barricades, walls, gates,
   spike traps, barbed wire, torches and a campfire. At dawn the sun burns the horde and a card sums up
   the night (kills, walls lost, downed, revived, lost).
 - **Every horde is harder:** more zombies (scaled by night *and* player count), more health and damage,
-  and new specials: spitters, boomers, zombie dog packs & shades (night 2), leapers & bats (3), ropers & tanks (4),
-  and a boss every third night (The Abomination - ground slams and thrown boulders; The Hive Queen - acid barrages
-  and bat swarms). Night 2 has a boss of its own: a Tank. You hear its footfalls
-  thump long before you see it, and inside 30 m each one shakes the camera (a charge is a rumble); it charges, smacks survivors off their feet, breaks a wood barricade with one
-  blow and ploughs straight through whatever its charge breaks. Every boss comes in with the second wave, with
-  most of the night still ahead: bring it down before sunrise and it drops what it carries (ammunition, medkits,
-  gun parts). One that is still standing at dawn burns in the sun with the rest of the horde and leaves nothing.
+  and **one new kind of the dead a night**: zombie dog packs (night 2), spitters (3), boomers (4), leapers (5),
+  shades (6), bats (7), ropers (8) and tanks (9). The dawn card says what the next night brings and the dusk horn
+  repeats it. (Out in the valley by day you meet most of them sooner: see below.)
+- **Every night has a boss**, and it comes in with the second wave, with most of the night still ahead: bring it
+  down before sunrise and it drops what it carries (ammunition, medkits, gun parts). One that is still standing at
+  dawn burns in the sun with the rest of the horde and leaves nothing. Night 1's is always **The Brute**, a hulking
+  walker that plods - until it is badly hurt, when it stops to roar and comes on at a run. From night 2 the boss is
+  drawn from the map's seed, never the same one two nights running and more likely one the run has not met:
+  **The Alpha** (from night 2) - a dog the size of a pony that hunts as the packs do and howls more dogs into its
+  pack, six at most; a **Tank** (from night 2) - you hear its
+  footfalls thump long before you see it, and inside 30 m each one shakes the camera (a charge is a rumble); it
+  charges, smacks survivors off their feet, breaks a wood barricade with one blow and ploughs straight through
+  whatever its charge breaks; **The Bloater** (from night 3) - a boomer three times over that heaves a fan of bile
+  at whoever is in front of it, and bursts when it dies, taking the dead and whatever was built beside it along:
+  bring it down far from your walls (burnt out by the dawn sun, it only falls); **The Abomination** (from night 4) -
+  ground slams and thrown boulders; **The Hive Queen** (from night 5) - acid barrages and bat swarms. The table is
+  `BOSS_POOL` in `shared/nights.js`. The dawn card names the coming night's boss and how to fight it, and the dusk
+  horn says it again (on night 1, the horn is the first word of The Brute), so the day can go on getting ready.
   A boomer cannot claw at what you built: stopped
   by it with a survivor close behind, it swells for a second and bursts against it, taking that piece with it (a
   metal wall is dented). Shoot it before it gets there - or while it swells, and the piece only takes the blast.
@@ -257,8 +298,9 @@ them off.
 - **Some nights have a theme.** From night 2 on, about two nights in three draw a theme from the map's seed and
   the night number, never the same one two nights running; night 1 is always plain. A theme changes what the
   horde is made of, not how many come: **The Pack** (about a third of the horde are dogs),
-  **Sprinters** (half are runners), **Bile** (spitters and boomers), **Lights Out** (twice the shades the night
-  would allow, six at most), **Wings** (bats and leapers, from night 3) and **The Snare** (ropers, from night 4).
+  **Sprinters** (half are runners), **Bile** (spitters and boomers, from night 4), **Lights Out** (from night 6: twice
+  the shades the night would allow, six at most), **Wings** (bats and leapers, from night 7) and **The Snare** (ropers,
+  from night 8).
   The dawn card names the coming night's theme and what to do about it ("Dog packs: they cannot jump a
   barricade, so close the ring and leave no gap."), the dusk horn repeats it and the night's title carries its name.
   The table is `NIGHT_THEMES` in `shared/nights.js`.
@@ -282,6 +324,11 @@ them off.
   when the call went out - half a minute later, give or take. One call a day, by day only (the radio answers again
   after sunrise; no plane flies at night), the team is told who called, and the call is heard by the dead for 90 m.
   The prompt says what is missing: the batteries, the day's call, or the daylight.
+- **The further from the car, the nastier the dead.** By day, nothing but walkers, runners and dogs lives within
+  90 m of the car; past that a share of the dead in the places and along the roads are specials, whatever the night,
+  growing to two in five at 320 m and beyond: spitters and boomers first, leapers from about 170 m, ropers from
+  about 240 m. Bosses, tanks, bats and shades only come at night (shades also keep to the dark of the mine and the
+  clinic's wards). The numbers are `DAY_SPECIAL_*` in `server/zombies.js`.
 - **The wandering herd:** by day a crowd of ten to fifteen walkers and runners shuffles along the valley's roads
   together, from place to place, at a slow walk (it keeps clear of your car). Let one of them notice you - about
   26 m, less if you crouch - or let a noise reach any of them, and the whole herd comes at a run, walkers
@@ -396,7 +443,7 @@ them off.
 - **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
   to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
-  places) and a field map [M] keep the team together. A nameplate carries its owner's health bar while they
+  places, everyone's waypoints) and a field map [M] keep the team together. A nameplate carries its owner's health bar while they
   are hurt, within 12 m or in your crosshair (amber below 60%, red below 30%), a downed teammate's turns into
   a red DOWN plate, and the player list [Tab] shows everyone's health and who is down, dead
   or turned. Friendly fire is off, headshots deal bonus damage, health slowly regenerates.
