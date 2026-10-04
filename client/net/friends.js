@@ -165,6 +165,10 @@ export async function removeFriend(id) {
 // not in a game, 403 when they are not a friend)
 export const friendGame = (id) => call(`/api/friends/${encodeURIComponent(id)}/game`);
 
+// anyone's profile by the account name they play under: { username, since, xp, level, perks, stats } (rejects: 404
+// for nobody by that name, 503 on a server without accounts)
+export const fetchProfile = (username) => call(`/api/players/${encodeURIComponent(username)}`);
+
 // ---------------------------------------------------------------- conversations
 function conv(id) {
   const k = String(id);

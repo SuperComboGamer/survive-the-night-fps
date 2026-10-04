@@ -16,6 +16,7 @@ import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
 import { ProgressPanel } from './progress.js';
+import { ProfilePanel } from './profile.js';
 import { AchievementsPanel, AchievementToasts } from './achievements.js';
 import { isFriendName } from '../net/friends.js';
 import { onUnlock } from '../net/achievements.js';
@@ -108,6 +109,7 @@ export class UI {
     this.friends = new FriendsPanel(this, modalL);
     this.accountPanel = new AccountPanel(this, modalL);
     this.progress = new ProgressPanel(this, modalL);
+    this.profile = new ProfilePanel(this, modalL);
     this.achPanel = new AchievementsPanel(this, modalL);
     onUnlock((list) => this.achToasts.show(list));
 
@@ -173,6 +175,7 @@ export class UI {
     if (this.friends.visible) this.friends.hide();
     if (this.accountPanel.visible) this.accountPanel.hide();
     if (this.progress.visible) this.progress.hide();
+    if (this.profile.visible) this.profile.hide();
     if (this.achPanel.visible) this.achPanel.hide();
     this._menuState();
   }
@@ -329,6 +332,15 @@ export class UI {
 
   get rosterOpen() {
     return this.roster.open;
+  }
+
+  // pinned up with the pointer free, to click a player for their profile (closing the list lets go of it too)
+  setRosterPinned(pin) {
+    this.roster.setPinned(pin);
+  }
+
+  get rosterPinned() {
+    return this.roster.pinned;
   }
 
   setBuildMenu(state) {

@@ -348,7 +348,7 @@ export class Splash {
     this.perksTxt.textContent = v ? `Level ${v.level} · Perks` : 'Perks';
     this.perksBtn.classList.toggle('lit', !!v?.pending);
     setBadge(this.perksBadge, v?.pending || 0);
-    this.perksBtn.title = v?.pending ? 'A perk is waiting to be picked' : 'Your level and perks';
+    this.perksBtn.title = v?.pending ? 'A perk point is waiting to be spent' : 'Your level and the perk tree';
   }
 
   _syncInvite() {

@@ -232,6 +232,26 @@ export class DbStats {
     return { xp: r.xp, kills: r.kills, nights: r.nights, wins: r.wins, revives: r.revives, games: r.games, deaths: r.deaths, downs: r.downs, headshots: r.headshots, bossKills: r.boss_kills, bestDay: r.best_day, playSeconds: r.play_seconds, firstSeen: r.first_seen, ranks };
   }
 
+  // An account's public profile by its name (any case): what the board shows of it, its level and its perks. null for
+  // nobody by that name
+  async profile(username) {
+    const name = typeof username === 'string' ? username.trim().slice(0, 32) : '';
+    if (!name) return null;
+    await this.flush();
+    const r = (await this.db.query(`SELECT u.username, u.created_at, s.* FROM users u LEFT JOIN player_stats s ON s.key = 'u:' || u.id WHERE lower(u.username) = lower($1)`, [name])).rows[0];
+    if (!r) return null;
+    const xp = r.xp || 0;
+    const n = (v) => Math.max(0, v | 0);
+    return {
+      username: r.username,
+      since: r.created_at,
+      xp,
+      level: levelOf(xp),
+      perks: cleanPerks(r.perks, xp),
+      stats: { kills: n(r.kills), nights: n(r.nights), wins: n(r.wins), revives: n(r.revives), games: n(r.games), deaths: n(r.deaths), downs: n(r.downs), headshots: n(r.headshots), bossKills: n(r.boss_kills), bestDay: n(r.best_day), playSeconds: n(r.play_seconds) },
+    };
+  }
+
   async close() {
     clearInterval(this.timer);
     await this.flush();

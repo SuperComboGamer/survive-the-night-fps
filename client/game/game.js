@@ -274,6 +274,7 @@ export class Game {
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
     ui.map.onClose = () => this.toggleMap(false);
     ui.board.onClose = () => this.toggleBoard(false);
+    ui.roster.onClose = () => this.pinRoster(false);
     this.boardT = 0; // when the leaderboard is next asked for, while it is open (performance.now)
     this.discovered = new Set([ZONE.CAMP]);
     this.stripped = new Set(); // the trees and wrecks with nothing left to give today (harvest.js strippedKey)
@@ -988,6 +989,8 @@ export class Game {
     // each player's character, after them all (a server from before the roster sends none: the look picked from the id)
     const order = [...seen];
     for (const id of order) this.players.get(id).character = r.left > 0 ? characterFor(r.u8(), id) : defaultCharacter(id);
+    // ...then everyone's perks in force (a server from before them sends none)
+    for (const id of order) this.players.get(id).perks = r.left >= 4 ? r.u32() : 0;
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
     // (a count that went down was reset by the server for the new run: the run's kills then count from there)
     if (this.run) this.run.kills0 = Math.min(this.run.kills0, this.players.get(this.myId)?.kills ?? Infinity);
@@ -1006,7 +1009,7 @@ export class Game {
       const self = id === this.myId;
       const e = self || turned ? null : this.entities.ents.get(id);
       const hp = self ? (this.self.maxHp ? this.self.hp / this.self.maxHp : 1) : e ? e.q[7] / 255 : -1; // -1: nothing to show
-      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, level: p.level, talking: this.talkPeers.includes(id), radio: p.onAir, self });
+      list.push({ id, name: p.name, account: this.conn.accounts.get(id) || '', status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, level: p.level, perks: p.perks || 0, talking: this.talkPeers.includes(id), radio: p.onAir, self });
     }
     this.ui.setPlayers(list);
   }
@@ -1024,7 +1027,7 @@ export class Game {
       const now = levelOf(xp);
       if (now > before) {
         this.ui.notify(`LEVEL ${now}`, 'big', 3.5);
-        this.ui.notify(picksEarned(now) > picksEarned(before) ? `A perk is waiting: Perks, in the inventory (${bindLabel('inventory')})` : 'Keep going: more XP, more perks.', 'sub', 3.5);
+        this.ui.notify(picksEarned(now) > picksEarned(before) ? `A perk point to spend: Perks, in the inventory (${bindLabel('inventory')})` : 'Keep going: more XP, more perk points.', 'sub', 3.5);
         this.audio.stinger?.('car_part');
       }
     }
@@ -1734,12 +1737,12 @@ export class Game {
       if (this.state !== 'playing') return;
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
-      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen) {
+      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned) {
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
         this.ui.showPause(false);
-        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen;
+        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned;
       }
     };
     inp.handlers.onKey = (code, acts) => this.onKey(code, acts);
@@ -1753,11 +1756,11 @@ export class Game {
           this.endHold();
           this.power.release();
           this.gun.keyUp();
-        } else if (a === 'players') this.showRoster(false);
+        } else if (a === 'players' && !this.ui.rosterPinned) this.showRoster(false);
         else if (a === 'drop') this.dropHold.release(cancelled); // (let go too soon: the HUD says to hold it)
       }
     };
-    inp.handlers.onBlur = () => this.showRoster(false);
+    inp.handlers.onBlur = () => this.ui.rosterPinned || this.showRoster(false);
   }
 
   // A key (or mouse button) went down: code, and the actions it is bound to (binds.js). Most keys are one action; a key
@@ -1768,14 +1771,23 @@ export class Game {
     const ui = this.ui;
     const has = (a) => acts.includes(a);
     if (code === 'Escape') {
-      if (ui.mapOpen) this.toggleMap(false);
+      if (ui.rosterPinned) this.pinRoster(false);
+      else if (ui.mapOpen) this.toggleMap(false);
       else if (ui.boardOpen) this.toggleBoard(false);
       return;
     }
     if (has('players')) {
-      this.showRoster(true);
+      if (ui.rosterPinned) this.pinRoster(false);
+      else this.showRoster(true);
       return;
     }
+    // a click with the player list held up keeps it there, with the pointer free to pick someone out of it
+    if (ui.rosterOpen && !ui.rosterPinned && this.input.locked && (has('fire') || has('aim'))) {
+      this.pinRoster(true);
+      return;
+    }
+    // (whatever else takes the screen or the keys lets go of a pinned list first)
+    if (ui.rosterPinned && ['inventory', 'map', 'board', 'chat'].some(has)) this.pinRoster(false, false);
     if (has('inventory')) {
       this.toggleInventory(!ui.inventoryOpen);
       return;
@@ -1922,13 +1934,35 @@ export class Game {
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
-  // The player list, up for as long as [Tab] is held. Nothing in it takes a click: the pointer stays locked and
-  // the game goes on under it.
+  // The player list, up for as long as [Tab] is held, with the pointer still locked and the game going on under it...
   showRoster(open) {
     const ui = this.ui;
     if (open === ui.rosterOpen) return;
     if (open) this.pushRoster(); // health as of now, not as of the last player list
     ui.setRosterOpen(open);
+  }
+
+  // ...until a click pins it up with the pointer free, the way the map frees it: a click on a player opens their
+  // profile (ui/profile.js). Tab, Esc or its cross let it go. Clicks made while it is free never reach the weapon.
+  // relock: false when something else that needs the cursor is taking over
+  pinRoster(pin, relock = true) {
+    const ui = this.ui;
+    if (pin === ui.rosterPinned) return;
+    this.input.releaseAll();
+    this.inputBuffer.clear();
+    this.endHold();
+    if (pin) {
+      this.pushRoster();
+      ui.setRosterOpen(true);
+      ui.setRosterPinned(true);
+      this.input.enabled = false;
+      this.input.exitLock();
+    } else {
+      ui.setRosterOpen(false);
+      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen;
+      if (this.input.enabled && relock) this.input.requestLock();
+    }
+    this.audio.playLocal('ui_click', { volume: 0.4 });
   }
 
   // relock: false when something else that needs the cursor is taking over

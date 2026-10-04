@@ -12,6 +12,7 @@ import { el, svgEl } from './dom.js';
 import { glyph } from './icons.js';
 import { Panel, phaseText, seatsText } from './games.js';
 import { ago } from './account.js';
+import { bindLabel } from '../game/binds.js';
 import { accountState, onAccountChange } from '../net/account.js';
 import {
   socialState,
@@ -224,7 +225,11 @@ export class FriendsPanel extends Panel {
     if (ev.t === 'dm') {
       if (this.visible && sameId(this.convId, ev.from.id)) return; // (being read right now)
       this.ui.addChat('', `Message from ${ev.from.username}: "${clip(String(ev.message.body || ''), 90)}" · Esc, then Friends, to answer`, { system: true });
-    } else if (ev.t === 'request') this.ui.addChat('', `${ev.who.username} wants to be your friend · Esc, then Friends, to answer`, { system: true });
+    } else if (ev.t === 'request') {
+      // (someone in this game: their profile off the player list answers it without leaving the game)
+      const here = this.peers().players.some((p) => lower(p.account) === lower(ev.who.username));
+      this.ui.addChat('', `${ev.who.username} wants to be your friend · ${here ? `hold ${bindLabel('players')}, click, then click them` : 'Esc, then Friends'}, to answer`, { system: true });
+    }
     else if (ev.t === 'accepted') this.ui.addChat('', `${ev.who.username} accepted your friend request`, { system: true });
   }
 
