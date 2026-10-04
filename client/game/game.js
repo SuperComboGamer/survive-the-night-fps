@@ -56,7 +56,7 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
@@ -285,7 +285,8 @@ export class Game {
     this.input.invertY = !!settings.invertY;
     this.input.rawInput = settings.rawMouse !== false;
     // Ctrl+W (crouch + forward) must not close the tab: fullscreen with the keys locked, else a "Leave site?" prompt
-    this.keyGuard = new KeyGuard(() => this.state === 'playing');
+    // (not between two servers on a deploy: the place is kept there, and a new build reloads the page itself: moveBack)
+    this.keyGuard = new KeyGuard(() => this.state === 'playing' && !this.moving);
     this.keyGuard.fullscreen = settings.fullscreen !== false;
     this.input.onRequestLock = () => this.keyGuard.engage();
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
@@ -298,7 +299,7 @@ export class Game {
       progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
       voice: (from, payload) => this.voice.onSignal(from, payload),
-      close: () => this.onDisconnect(),
+      close: (code) => this.onDisconnect(code),
     });
     this.voice = new Voice(this.conn, audio);
     this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.speakers() });
@@ -723,9 +724,12 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- connection
-  // code: the game to join (an invite, a pick from the list, one just made); none for a quick join
-  async join(name, code = '') {
-    this.audio.stinger?.('join');
+  // code: the game to join (an invite, a pick from the list, one just made); none for a quick join. resume: back into
+  // the game we were playing a moment ago on the server before a deploy (onMoving): the same run on the same valley,
+  // so what this client knows of it - the places found, its waypoint, the run being recorded - stays, and there is no
+  // stinger or introduction
+  async join(name, code = '', { resume = false } = {}) {
+    if (!resume) this.audio.stinger?.('join');
     const info = await this.conn.connect(name, playerId(), code);
     this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
@@ -738,18 +742,22 @@ export class Game {
     this.clientTick = info.tick;
     this.clockInit = false;
     this.interpExtra = 0;
-    this.introPending = true; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
-    this.runOn = false;
-    this.run = this.runReport = null;
-    this.progress = null; // our XP (onProgress), once the server says
+    this.introPending = !resume; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
+    if (!resume) {
+      this.runOn = false;
+      this.run = this.runReport = null;
+      this.progress = null; // our XP (onProgress), once the server says
+    }
+    this.moving = false;
+    this.ui.setConnectionStatus('');
     this.state = 'playing';
     this.input.enabled = true;
     this.inputBuffer.clear();
     this.input.requestLock();
-    this.discovered = new Set([ZONE.CAMP]);
+    if (!resume) this.discovered = new Set([ZONE.CAMP]);
     this.stripped.clear(); // (the first snapshot says which are)
     this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
-    this.waypoint = null;
+    if (!resume) this.waypoint = null;
     // the admin password this browser was given (`/admin <password>`): said again, so the admin commands work here too
     const admin = adminKey();
     if (admin) this.conn.chat(`/admin ${admin}`);
@@ -777,8 +785,12 @@ export class Game {
     this.foliage?.regrow();
   }
 
-  onDisconnect() {
+  // code: the socket's close code. why: what the splash says (none: a drop, which main.js goes straight back in from)
+  onDisconnect(code = 0, why = '') {
     if (this.state !== 'playing') return;
+    if (code === MOVED_CODE && this.room && this.onMove && !this.leaving) return this.onMoving();
+    this.moving = false;
+    this.ui.setConnectionStatus('');
     this.state = 'menu';
     this.input.enabled = false;
     this.input.exitLock();
@@ -804,13 +816,28 @@ export class Game {
     // the place of a dropped player for a minute, so main.js goes straight back in (onDrop)
     const dropped = !this.leaving;
     this.leaving = false;
-    if (dropped && this.room && this.onDrop) this.onDrop(this.room.code);
+    if (why) this.ui.setJoinError(why);
+    else if (dropped && this.room && this.onDrop) this.onDrop(this.room.code);
     else if (dropped) this.ui.setJoinError('Disconnected from server.');
+  }
+
+  // The server went down for a deploy and handed this game to the next one (MOVED_CODE, server/handoff.js), where our
+  // body waits for us. The game stays on screen, still, with the pointer kept, while main.js joins the same code
+  // there (moveBack: join with resume); only if that cannot be done does it end here as a drop does (onDisconnect).
+  onMoving() {
+    this.moving = true;
+    this.input.enabled = false;
+    this.inputBuffer.clear();
+    this.voice.closeAll(); // (the peers find each other again through the next server)
+    this.radio.reset();
+    this.ui.setConnectionStatus('Server updating - bringing you back');
+    this.onMove(this.room.code);
   }
 
   leave() {
     if (this.state !== 'playing') return;
     this.leaving = true;
+    if (this.moving) return this.onDisconnect(); // (between two servers: nothing to close)
     this.conn.close(LEFT_CODE);
   }
 

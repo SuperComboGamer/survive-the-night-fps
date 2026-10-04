@@ -7,6 +7,10 @@
 // messages (/api/friends, /api/messages and the /social socket, social.js), the leaderboard in Postgres
 // (dbstats.js) and a record of every match played (matchstore.js). Without one it runs as before: the leaderboard in
 // a file (stats.js), nobody signed in.
+//
+// A deploy does not end the games (handoff.js): on SIGTERM each is saved into the store and its players are sent
+// HANDOFF_CLOSE, and the new server - up by then - restores it under the same code for them to reconnect to.
+import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +29,8 @@ import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
-import { REJECT_REASON } from '../shared/protocol.js';
+import { FileStore, PgStore, BUILD } from './handoff.js';
+import { REJECT_REASON, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -74,7 +79,17 @@ await matches?.closeStale().catch((err) => log(`matches: could not close the las
 // the accounts' achievements (a guest's are kept by their browser, database or not)
 const achievements = db ? new AchievementStore({ db, log }) : null;
 
+// Where a game waits between the server going down and the next one (handoff.js): Postgres when there is one (it is
+// what both servers of a deploy can reach), else files in HANDOFF_DIR or on the Railway volume (a restart on the
+// same disk: `npm run dev`, the tests). Neither: a deploy ends every game, as it does with HANDOFF=0.
+const HANDOFF_MAX_AGE = +(process.env.HANDOFF_MAX_AGE_SECONDS || 300); // a save nobody claimed in this long is dropped
+const HANDOFF_DIR = process.env.HANDOFF_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'handoff') : '');
+const store = process.env.HANDOFF === '0' ? null : db?.kind === 'postgres' ? new PgStore(db, { log }) : HANDOFF_DIR ? new FileStore(resolve(HANDOFF_DIR)) : null;
+if (store) log(`handoff: games are handed to the next server through ${store instanceof PgStore ? 'Postgres' : store.dir}`);
+
 const lobby = new Lobby({
+  store,
+  handoffMaxAge: HANDOFF_MAX_AGE,
   stats,
   matches,
   achievements,
@@ -96,6 +111,17 @@ const lobby = new Lobby({
 });
 
 if (process.env.ADMIN_SECRET) log('admin commands: on for whoever says /admin <ADMIN_SECRET> in chat');
+
+// The games the last server handed over: whatever is waiting already (a server that started after the last one went),
+// and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
+// stopping itself: it hears its own saves too.)
+let stopping = false;
+if (store) {
+  await store.sweep(HANDOFF_MAX_AGE).catch((err) => log(`handoff: could not sweep old saves (${err.message})`));
+  store.listen((code) => stopping || lobby.restore(code));
+  for (const code of await store.pending().catch(() => [])) lobby.restore(code);
+  setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
+}
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, log }) : null;
@@ -178,23 +204,26 @@ app.ws('/ws', {
     const proto = req.getHeader('sec-websocket-protocol');
     const ext = req.getHeader('sec-websocket-extensions');
     const go = (user) => res.cork(() => res.upgrade({ ip, code, user, room: null, slot: -1, counted: false, heard: false, at: 0 }, key, proto, ext, context));
-    if (!token) return go(null);
+    // (a game the last server handed over that is still in the store: brought back first, so the socket finds it)
+    const restoring = code && store && !lobby.rooms.has(code) ? lobby.restore(code).catch((err) => log(`game ${code} not restored (${err.message})`)) : null;
+    if (!token && !restoring) return go(null);
     let aborted = false;
     res.onAborted(() => {
       aborted = true;
     });
-    auth.userForToken(token).then(
-      (user) => aborted || go(user),
-      (err) => {
-        log(`session lookup failed (${err.message}): joining as a guest`);
-        if (!aborted) go(null);
-      }
-    );
+    const user = token
+      ? auth.userForToken(token).catch((err) => {
+          log(`session lookup failed (${err.message}): joining as a guest`);
+          return null;
+        })
+      : null;
+    Promise.all([user, restoring]).then(([u]) => aborted || go(u));
   },
   open: (ws) => {
     const d = ws.getUserData();
     let reason = 0;
-    if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
+    if (stopping) reason = REJECT_REASON.FULL; // (going down: new sockets belong on the next server)
+    else if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
     else {
       const room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
       const slot = room ? room.attach(ws) : -1;
@@ -255,10 +284,31 @@ app.get('/api/games', (res) => json(res, 200, { ...lobbyInfo(), list: lobby.list
 
 // one game by its code (an invite link asks before joining: who is in it, is there a seat)
 app.get('/api/games/:code', (res, req) => {
-  const room = lobby.find(req.getParameter(0), clientAddress(res, req));
-  if (room) json(res, 200, room.info());
-  else json(res, 404, { error: 'No game goes by that code. It may have ended.' });
+  const code = req.getParameter(0);
+  const ip = clientAddress(res, req);
+  const answer = () => {
+    const room = lobby.find(code, ip);
+    if (room) json(res, 200, room.info());
+    else json(res, 404, { error: 'No game goes by that code. It may have ended.' });
+  };
+  if (!store || lobby.rooms.has(String(code).toUpperCase())) return answer();
+  // (one the last server handed over and nobody has asked for yet)
+  let aborted = false;
+  res.onAborted(() => {
+    aborted = true;
+  });
+  lobby
+    .restore(code)
+    .catch(() => null)
+    .then(() => aborted || answer());
 });
+
+// What is deployed: the protocol and the client's build. A client dropped by a deploy (handoff.js) asks before
+// reconnecting: another build means the page has to be loaded again first (client/main.js). The build is the page
+// itself, which names the bundles by their content: it changes when the client does, not on every commit.
+// (CLIENT_BUILD: a build of another name, for the tests)
+const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
+app.get('/api/version', (res) => json(res, 200, { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD }));
 
 // makes a game: { name, host, inviteOnly, maxPlayers } -> its info, code included
 app.post('/api/games', (res, req) => {
@@ -484,7 +534,8 @@ app.get('/*', (res, req) => {
     return;
   }
   res.writeHeader('Content-Type', f.type);
-  if (url.startsWith('/assets/')) res.writeHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
+  res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
   res.end(f.body);
 });
 
@@ -500,13 +551,27 @@ app.listen(PORT, (token) => {
 if (stats.save) setInterval(() => stats.save(), 30000);
 process.on('exit', () => stats.saveSync?.());
 
-// Going down (a deploy sends SIGTERM): every match being played is ended as it stands and written, with what was
-// still on its way to the database, before the process goes - within a few seconds, whatever happens.
-let stopping = false;
+// Going down (a deploy sends SIGTERM; the next server is already taking the new connections): every game with players
+// in it is handed over to the next server (Lobby.handoffAll). Every match left - a game that could not be handed over,
+// one with nobody in it - is ended as it stands and written, with what was still on its way to the database, before
+// the process goes. All within HARD_EXIT_MS, whatever happens, which has to stay under the time Railway gives a
+// deployment to stop before it kills it (drainingSeconds in railway.json).
+const HARD_EXIT_MS = 20_000;
+const HANDOFF_WAIT_MS = 8000; // the most a game's worker may take to save it
 async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
-  setTimeout(() => process.exit(0), 5000).unref();
+  setTimeout(() => process.exit(0), HARD_EXIT_MS).unref();
+  if (store) {
+    log(`${signal}: handing the games over to the next server`);
+    const t0 = Date.now();
+    try {
+      const n = await lobby.handoffAll(store, HANDOFF_WAIT_MS);
+      log(`${signal}: ${n} game(s) handed over in ${Date.now() - t0} ms`);
+    } catch (err) {
+      console.error('[server] handing over:', err.message);
+    }
+  }
   if (db) {
     log(`${signal}: writing the matches being played`);
     try {
@@ -515,11 +580,12 @@ async function shutdown(signal) {
       for (const room of lobby.rooms.values()) if (room.match) await matches.interrupt(room.match);
       await stats.close();
       await achievements.close();
+      await store?.close();
       await db.close();
     } catch (err) {
       console.error('[server] shutting down:', err.message);
     }
-  }
+  } else await store?.close();
   process.exit(0);
 }
 process.on('SIGINT', () => shutdown('SIGINT'));

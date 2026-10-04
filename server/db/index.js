@@ -14,6 +14,7 @@
 //   db.query(text, params)  -> { rows, rowCount }      one statement, $1.. parameters
 //   db.exec(text)                                      any number of statements, no parameters (migrations)
 //   db.tx(async (t) => ...)                            t.query / t.exec inside one transaction
+//   db.listen(channel, fn)  -> stop()                  fn(payload) for every NOTIFY on that channel
 //   db.close()
 import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -68,6 +69,32 @@ export async function openDb(url = process.env.DATABASE_URL, { log = () => {} } 
         c.release();
       }
     },
+    // LISTEN holds a connection of its own for as long as it listens; one that is lost is made again a second later
+    async listen(channel, fn) {
+      if (!/^[a-z_]+$/.test(channel)) throw new Error(`bad channel ${channel}`);
+      let c = null;
+      let stopped = false;
+      const connect = async () => {
+        const conn = await pool.connect();
+        conn.on('notification', (m) => m.channel === channel && fn(m.payload));
+        conn.on('error', (err) => {
+          log(`db: lost the ${channel} listener (${err.message})`);
+          conn.release(true);
+          if (c === conn) c = null;
+          if (!stopped) setTimeout(() => connect().catch(() => {}), 1000).unref();
+        });
+        await conn.query(`LISTEN ${channel}`);
+        c = conn;
+      };
+      await connect();
+      return async () => {
+        stopped = true;
+        if (!c) return;
+        await c.query(`UNLISTEN ${channel}`).catch(() => {});
+        c.release();
+        c = null;
+      };
+    },
     close: () => pool.end(),
   };
 }
@@ -92,6 +119,7 @@ async function openPglite(where) {
     kind: 'pglite',
     ...wrap(db),
     tx: (fn) => db.transaction((t) => fn(wrap(t))),
+    listen: (channel, fn) => db.listen(channel, fn),
     close: () => db.close(),
   };
 }

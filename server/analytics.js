@@ -16,13 +16,15 @@
 //   event      the rare moments: join leave down death revive turned returned_at_dawn night_start dawn boss_spawn
 //              boss_kill supply_found supply_install schematic engine_start engine_ready crate_drop car_alarm
 //              radio_call bell, admin (an admin chat command, data.command: Game.handleChat), and the match's end
-//              as victory | wipe | abandoned | interrupted
+//              as victory | wipe | abandoned | interrupted | handoff
 //   sample     every SAMPLE_EVERY seconds of a running match
 //
 // Vocabularies
 //   phase                 day | night | final_stand (the engine is warming or warm: Game.escape.active)
 //   match outcome         victory | wipe | abandoned (the last player left, or a new run began over it) |
-//                         interrupted (finish('interrupted'): the server stopped with it running)
+//                         interrupted (finish('interrupted'): the server stopped with it running) |
+//                         handoff (finish('handoff'): a deploy, and the next server carries the run on as a new
+//                         match whose row names this one in `continues`: server/handoff.js)
 //   night outcome         dawn | wipe | escaped | abandoned (also for an interrupted match)
 //   player leftReason     left | match_end
 //   player outcome        escaped      victory, a living survivor within ESCAPE_RADIUS of the car (downed counts)

@@ -200,7 +200,9 @@ JSON file (`server/stats.js`).
   exits, so that deploy never goes live; `npm run migrate` does the same by hand (and is the pre-deploy command in
   `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
-  accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below).
+  accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below). 008:
+  `game_handoff` and `matches.continues` (Deploys below). A migration has to be additive: on a deploy the old server
+  is still running on the schema while the new one migrates it.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
   `SameSite=Lax` cookie (`stn_session`, `Secure` behind https), its SHA-256 in `sessions`, 30 days from last use.
@@ -239,10 +241,11 @@ JSON file (`server/stats.js`).
   The worker posts each (`{ t: 'an', rec }`); `MatchStore` queues them and writes once a second, one statement per
   table (`jsonb_to_recordset`), a match before what hangs off it, retrying a failed batch one row at a time; past
   50,000 queued it drops and says so. The hot paths (shots, hits, damage) only bump counters on the player's stint.
-  A deploy's SIGTERM ends every match being played as `interrupted` and writes it (`Lobby.finishAll`, the worker's
-  `finish`) before the process goes; a match a crash left open is closed once nothing was heard from it for 5
-  minutes (`closeStale`: not at once, since on a deploy the old server is still playing its matches while the new
-  one starts).
+  A deploy hands each game to the next server (see Deploys below): its match ends as `handoff`, and the next
+  server's first match in that game names it in `continues`. A match that could not be handed over is ended as
+  `interrupted` and written (`Lobby.finishAll`, the worker's `finish`) before the process goes; a match a crash left
+  open is closed once nothing was heard from it for 5 minutes (`closeStale`: not at once, since on a deploy the old
+  server is still playing its matches while the new one starts).
 - **Client:** `client/net/account.js` (who is signed in, register / sign in / out; `guestId` is `playerId()`),
   `client/net/friends.js` (the `/social` socket with backoff, the friends list, requests, conversations, unread
   counts, `isFriendName`), `client/ui/account.js` (the account panel: sign in / create account, lifetime stats with
@@ -325,6 +328,71 @@ what a set of perks does (`perkMods(mask)`: one frozen object per mask; no ordin
   level block in the inventory, the Progress panel (`client/ui/progress.js`: from the splash, the pause menu and the
   inventory) and the run's XP by source on the end screen. `scripts/test-progress.js` holds all of it, end to end
   through a real server's worker.
+
+## Deploys: handing the games to the next server
+
+A deploy does not end the games (`server/handoff.js`, `server/gamestate.js`). Railway starts the new deployment,
+sends new connections to it once its health check passes, then sends the old one SIGTERM (`drainingSeconds` in
+`railway.json` is how long it has before SIGKILL). On that signal the old server saves every game with players in
+it, and the new one carries each on under the same code; its players are away for a second or two.
+
+- **The old server** (`shutdown` in `index.js` -> `Lobby.handoffAll` -> `Room.handoff`): new sockets are turned away;
+  each room's worker is sent `save`, stops its tick loop, ends the match as `handoff` and posts the game saved
+  (`envelope(game)`: gzipped JSON). The network thread puts it into the store with the room's meta (name, host,
+  invite only, seats, when it was made, the match id) and only then closes every socket of the room with
+  `MOVED_CODE` (4002) - a client that came back before the save was in would find nothing. A room that does not
+  answer within 8 s, or whose save fails, ends as before (`interrupted`). All of it within a 20 s hard exit.
+- **The store.** Postgres in production (`PgStore`: a row per game in `game_handoff`, then `pg_notify('game_handoff',
+  code)`); files without it (`FileStore`: `HANDOFF_DIR`, which `npm run dev` sets so a restart on a change keeps
+  the games). A save is only ever claimed (`DELETE ... RETURNING` / a rename): one server gets it. Saves nobody
+  claims are swept after `HANDOFF_MAX_AGE_SECONDS`.
+- **The new server** restores a game (`Lobby.restore`: claim, then a `Room` under the same code with the save in
+  its `workerData`) as soon as the store says one is there (`listen`), for any already waiting when it starts, and
+  for a socket or an invite card asking for a code it does not have yet (the upgrade waits for it). The worker
+  makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes (its players
+  get `NO_GAME`, as every deploy used to end).
+- **What is saved** (`saveGame` / `loadGame`): the clock, phase, waves and the boss, the car's supplies, the
+  schematics, who left with what kit and who left dead, the trees felled and what is used up of the trees and
+  wrecks, the loot points' timers, the registry, the players, what was built (colliders and nav put back), the
+  containers, the items on the ground (car parts for good), the crates and planes, the zombies with their herds,
+  the mounted gun, the fair, the handcars, the bell and the cemetery, the achievements' progress (each player's
+  `p.ach`, the run's own in `AchievementTracker.save`) and each player's experience and perks (`xpBase`, `xpRun`: their
+  record's XP, looked up again when they come back, already holds this run's, so `setProgress` keeps what was saved).
+  Not saved, started again: bullets and rockets
+  in flight, burning ground, the deer and the cat, every random stream (reseeded from the seed and the tick), and
+  everything derived (nav fields, the zombies' spatial hash, the history buffers, the clients' views).
+- **Entities keep their ids.** Everything refers to everything else by id (a zombie's target, a structure's owner, an
+  item's dropper, the boss), so the registry - generations, free ids, quarantine - is saved, and each entity takes its
+  own id back (`Game.spawnEntityAt`). Ids of what is not brought back are freed.
+- **An entity is its plain fields** (`plain`: numbers, strings, booleans, arrays, Sets, Maps and plain objects of
+  them; not entities held by reference, typed arrays, class instances or getters). It is loaded by making a fresh one the way its kind is
+  made (`Zombies.make` for a zombie, `createPlayer` for a player) and copying the saved fields over it. So a field a
+  later build adds is saved without anyone writing code for it, and keeps its default when loading a save made
+  without it. A field that holds another object needs a line of its own (an index or an id, linked again on load).
+- **The players come back held** (`Game.hold` with `handoff`): their body waits where it was, nothing hurts it, the
+  dead pass it by, a leaper or roper on it lets go. The client's JOIN with the same account or browser id gets it
+  back (`handleJoin` -> `resume`): the same id, spot, health and backpack. A guest is known by the SHA-256 of their
+  browser id (`rejoinKey`), never the id: it is saved. Whoever has not come back within `HANDOFF_RESERVE_SECONDS`
+  (180) has left, as after any drop (`parkKit`, `dropAll`). Held places count towards the seats (`Room.noRoom`, the
+  worker's `held`), so a quick join does not fill them.
+- **Would the save mean the same here?** (`checkEnvelope`, the `worldHash` check in the `Game` constructor.)
+  `STATE_VERSION` (handoff.js) must match: bump it when a saved field is renamed or removed or changes meaning or
+  units, not when one is added. Every name -> number pair of the enums the save was made with (`ITEM`, `ZTYPE`,
+  `STRUCT`, ...) must hold: an entry appended since is fine, one renumbered is not. And the valley must be the one
+  this build makes of the seed (`worldHash`: colliders, loot spots, containers, places): positions and indices point
+  into it. Any of these failing drops the save; that game ends as before.
+- **The client** (`connection.js`, `Game.onMoving`, `moveBack` in `main.js`): a socket closed with `MOVED_CODE`
+  keeps the game on screen, input off and the pointer kept, under "Server updating" (`ui.setConnectionStatus`), and
+  joins the same code again at once, then every 0.5-2 s for 45 s (`join(..., { resume: true })` keeps the places
+  found, the waypoint and the run being recorded, and plays no intro). First it asks `GET /api/version`: when the
+  client build (a hash of `dist/index.html`, which names the bundles by content) or the protocol differs from what
+  the page was loaded from, it reloads, and the reloaded page goes back in as a reopened one does (`stn.playing`).
+  `index.html` is served `no-cache` so the reload gets the new build.
+- **Tests:** `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
+  whole, and a field that came back different and is not on its `TRANSIENT` list fails it - a field added and not
+  saved fails `npm test` instead of resetting on every deploy), `test-handoff` (two server processes and a third
+  that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
+  Chrome behind a stand-in for Railway's edge).
 
 ## Rendering pipeline
 

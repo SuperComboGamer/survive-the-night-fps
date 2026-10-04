@@ -48,6 +48,17 @@ export class Herds {
     return null;
   }
 
+  // ---------------------------------------------------------------- handoff (gamestate.js)
+  // A herd is its plain fields: who is in it is each zombie's own z.herd (members is gathered again every tick)
+  save() {
+    return { seq: this.seq, spawnT: this.spawnT, list: [...this.list.values()].map(({ members, ...h }) => h) };
+  }
+  load(s) {
+    this.seq = s.seq;
+    this.spawnT = s.spawnT;
+    for (const h of s.list) this.list.set(h.id, { ...h, members: [], fieldT: 0 }); // (its flow field is worked out again)
+  }
+
   // ---------------------------------------------------------------- spawning
   // a herd on a road, far from the car and out of every survivor's sight
   spawn(humans) {

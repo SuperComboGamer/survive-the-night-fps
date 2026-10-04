@@ -45,6 +45,7 @@ export class Connection {
   attempt(name, pid, code) {
     return new Promise((resolve, reject) => {
       let settled = false;
+      let joined = false; // (WELCOME: this socket is the game's; one that was turned away goes without a word)
       this.room = null;
       this.accounts = new Map();
       const t0 = performance.now();
@@ -71,7 +72,7 @@ export class Connection {
             break;
           case S2C.WELCOME: {
             const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), room: this.room };
-            settled = true;
+            settled = joined = true;
             resolve(info);
             break;
           }
@@ -124,8 +125,9 @@ export class Connection {
       };
       ws.onclose = (e) => {
         const opened = this.open;
-        this.open = false;
-        if (settled) return this.h.close?.();
+        if (this.ws === ws) this.open = false;
+        // (a join turned away - REJECT - is the caller's error already; the game only hears of the one it is in)
+        if (settled) return joined && this.ws === ws && this.h.close?.(e.code);
         // (1006 without having opened: the handshake or the connection failed, here or on the way)
         const err = new Error('Could not connect to server');
         err.unanswered = true;

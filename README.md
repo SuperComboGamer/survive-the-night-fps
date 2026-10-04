@@ -51,7 +51,11 @@ migrations when the server starts - `npm run migrate` does it), `DATABASE_POOL_M
 `ADMIN_SECRET` (the admin password: a player who types `/admin <password>` in chat may run the admin commands below
 until they leave. The client keeps it in localStorage (`stn.admin`) and says it again on every join; `/admin` alone
 forgets it and turns them off. Unset, nobody can; a connection gets one try a second and five wrong ones).
-Testing only: `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
+Deploys (`server/handoff.js`): `HANDOFF=0` (a deploy ends every game, as it used to), `HANDOFF_DIR` (hand games over
+through files in that folder when there is no Postgres: `npm run dev` uses `data/handoff`, so a restart on a change
+keeps the games), `HANDOFF_RESERVE_SECONDS` (180: how long a player brought over keeps their place),
+`HANDOFF_MAX_AGE_SECONDS` (300: an older save is not restored).
+Testing only: `HANDOFF_STATE_VERSION` and `CLIENT_BUILD` (a server of another build), `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
 may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
 load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage).
 
@@ -112,6 +116,10 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/test-world.js [seed ...]` | the authored places of four valleys (every place at least once), as a survivor meets them: every doorway can be walked through (the real player simulation), every container, floor-loot point and supply spot can be reached on foot from the place's front gate and is not inside something solid, no road runs into a building. A failure names the place, the spot in the place's own frame and a `/tp` to go and look |
 | `npm run test:bots` | headless bots join a running server, play, and report bandwidth + prediction error |
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
+| `node scripts/test-handoff-state.js` | a game saved for a deploy and restored into a new one (`server/gamestate.js`), in-process: a run played into its first night comes back with its clock, waves, players (where they stood, health, armour, weapons, backpack, kit), what was built, dropped, searched, felled and stripped, the dead where they were, the boss, the gun, the fair and the handcars; then both games are walked whole and any field that came back different and is not listed as transient fails it (a field added without being saved); players come back into their own bodies, one who does not is let go as a leaver, and saves this build cannot read are refused (part of `npm test`) |
+| `node scripts/test-handoff.js` | a deploy between two real server processes sharing a `HANDOFF_DIR`: an invite-only game into its first night, SIGTERM, every socket closed with 4002, the old server exiting, the same code, players and night on the new one, seats kept and let go after the reserve, a bot with no browser id a newcomer; and a third server of another `STATE_VERSION` ending the game instead (part of `npm test`) |
+| `node scripts/test-handoff-store.js` | the two stores a game waits in between servers (files, and Postgres on PGlite): heard, listed, claimed once, swept; and the match a deploy splits, ended as `handoff` and carried on by `continues` (part of `npm test`) |
+| `npm run test:e2e:handoff` | a deploy in headless Chrome behind a stand-in for Railway's edge (needs `npm run build`): the game stays on screen with the "Server updating" banner and is back as the same player where they were within a few seconds; with another client build the page reloads and goes back in by itself |
 | `node scripts/test-itemguide.js` | holds the "Used in" / "Found in" lines of the inventory tooltips against the recipe and loot tables they are derived from, generated worlds and the server's gathering (runs after `npm test`, as its `posttest`) |
 | `node scripts/e2e-weapons.js` | fires + reloads every gun, swings melee weapons, throws a molotov and a pipe bomb |
 | `node scripts/e2e-showcase.js` | spawns every zombie type + boss, screenshots, death -> zombie mode, voice peers |
@@ -152,8 +160,8 @@ https://www.survivethenightgame.com.
 - `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
   `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Every game lives in the
   memory of that one process, so never scale it past one replica (a second would not know the first one's game
-  codes), and expect every deploy to end every game. More games means a bigger box for the one replica: see
-  Capacity below.
+  codes). More games means a bigger box for the one replica: see Capacity below. `drainingSeconds: 30` gives the
+  old deployment that long between SIGTERM and SIGKILL to hand its games over (below); its own hard exit is 20 s.
 - **Postgres** is a second service in the project ("Postgres", Railway's template, on a volume of its own). The
   game service's `DATABASE_URL` is the reference `${{Postgres.DATABASE_URL}}`, which reaches it over Railway's
   private network (`postgres.railway.internal`); the database has no public address.
@@ -168,9 +176,16 @@ https://www.survivethenightgame.com.
   --status` lists what is pending.
 - The leaderboard, accounts and match records live in that database. (Without `DATABASE_URL` the server falls back
   to the leaderboard in a JSON file, `server/stats.js`, which needs a volume to outlive a deploy.)
-- A deploy ends every game, as before - and first ends every match being played as `interrupted` and writes it
-  (SIGTERM, `shutdown` in `server/index.js`). A match whose server died without that is closed as `interrupted`
-  once nothing has been heard from it for 5 minutes.
+- **A deploy does not end the games** (`server/handoff.js`, see "Deploys" in docs/ARCHITECTURE.md). On SIGTERM the
+  old server saves every game with players in it to the `game_handoff` table, closes their sockets with close code
+  4002, and the new one (up by then) restores each under the same code; the players' clients keep the game on screen
+  under a "Server updating" banner and are back in their own bodies a second or two later (a page whose client build
+  changed reloads first and goes back in by itself). Its match ends as `handoff` and the new server's next match
+  names it in `continues`. A game that cannot be brought over - a save the new build cannot read (another
+  `STATE_VERSION`, renumbered items, a valley world generation now makes differently), or one that took too long -
+  ends as every deploy used to: its match `interrupted`, its players back on the splash. A match whose server died
+  without any of that is closed as `interrupted` once nothing has been heard from it for 5 minutes. The first deploy
+  of this still ends every game: the server going down then does not know how to hand over.
 - Looking at the match records: `railway ssh` into the game service and `npm run report` there (it reads its
   `DATABASE_URL`), or `railway connect Postgres` for a psql shell (needs `psql` installed locally).
 - Node 24 is pinned with `engines.node` in `package.json`. uWebSockets.js only ships prebuilt binaries

@@ -146,6 +146,8 @@ import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
+import { checkEnvelope, worldHash, HandoffError } from './handoff.js';
+import { saveGame, loadGame } from './gamestate.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const MAX_ZOMBIES_ALIVE = 120;
@@ -285,7 +287,11 @@ const RETURN_KIT = { mag: WEAPONS[ITEM.PISTOL].mag, ammo: 0, items: [[ITEM.BANDA
 const randomSeed = () => (Math.random() * 0x7fffffff) | 0;
 
 export class Game {
+  // opts.restore: a game the last server saved as it went down (handoff.js envelope), to carry on from where it was.
+  // One this build cannot read throws a HandoffError, and nothing is made.
   constructor(opts = {}) {
+    const restore = opts.restore || null;
+    if (restore) checkEnvelope(restore);
     this.fixedSeed = opts.seed !== undefined; // a given seed pins the map: every playthrough is the same valley
     this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
     // optional overrides (testing): DAY_SECONDS / NIGHT_SECONDS / START_DAY env vars
@@ -303,7 +309,9 @@ export class Game {
     this.rollWhenEmpty = opts.rollWhenEmpty !== false;
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.records = opts.stats ?? new PlayerStats(); // the leaderboard (stats.js): the server's is kept in a file, this one goes with the game
-    this.setWorld(opts.seed ?? randomSeed());
+    // (a restored game's valley is the one it was played on: built from its seed, which pins nothing)
+    this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed());
+    if (restore && restore.worldHash !== this.worldHash) throw new HandoffError(`this build makes another valley of seed ${this.seed}`);
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
     this.ents = new Array(MAX_ENTITIES).fill(null);
@@ -379,6 +387,19 @@ export class Game {
     this.inviteOnly = !!opts.inviteOnly; // only its link gets anyone in (rooms.js): the Plus One achievement
     // achievements (achievements.js). opts.achieve: where an account's go (the network thread); none: no accounts
     this.ach = new AchievementTracker(this, opts.achieve);
+    if (restore) this.load(restore.game);
+  }
+
+  // ---------------------------------------------------------------- handoff (handoff.js, gamestate.js)
+  // The game as plain data, for the next server. Only between ticks: some systems swap this.rng inside one.
+  save() {
+    return saveGame(this);
+  }
+  // ...and back, into a game just made on the save's valley. The run's match goes on as a new one (analytics.js:
+  // the old server ended its own as 'handoff').
+  load(s) {
+    loadGame(this, s);
+    if (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT) this.track.start();
   }
 
   // ---------------------------------------------------------------- entity registry
@@ -396,6 +417,19 @@ export class Game {
     e.removed = false;
     this.ents[id] = e;
     this.all.push(e);
+    return e;
+  }
+  // An entity back under the id it had (gamestate.js: the registry's ids and generations are restored first). null when
+  // that id is no slot or is taken.
+  spawnEntityAt(e, id) {
+    if (!Number.isInteger(id) || id <= 0 || id >= MAX_ENTITIES || this.ents[id]) return null;
+    if (!this.gens[id]) this.gens[id] = 1;
+    e.id = id;
+    e.gen = this.gens[id];
+    e.removed = false;
+    this.ents[id] = e;
+    this.all.push(e);
+    if (id >= this.nextId) this.nextId = id + 1;
     return e;
   }
   removeEntity(e) {
@@ -494,20 +528,23 @@ export class Game {
     else this.removePlayer(p);
   }
 
-  hold(p) {
-    p.away = { since: this.time };
+  // grace: seconds they have to come back. handoff: they were brought over from the last server (gamestate.js), and
+  // quiet: nobody is told (everybody was moved).
+  hold(p, { grace = REJOIN_GRACE, quiet = false, handoff = false } = {}) {
+    p.away = { since: this.time, grace, handoff };
     p.session = { conn: DEAD_CONN, player: p, ip: '', msgCount: 0, msgWindow: 0 }; // (whatever the game still sends them goes nowhere)
     p.cmdQueue.length = 0;
     p.hold = null;
     this.endUse(p);
     this.releaseHolds(p); // (a leaper or a roper on them lets go)
     this.playersDirty = true;
-    this.systemChat(`${p.name} lost connection - holding their place for ${REJOIN_GRACE} seconds.`);
-    this.log(`hold ${p.name}: dropped, ${REJOIN_GRACE} s to come back`);
+    if (!quiet) this.systemChat(`${p.name} lost connection - holding their place for ${grace} seconds.`);
+    this.log(`hold ${p.name}: ${handoff ? 'from the last server' : 'dropped'}, ${grace} s to come back`);
   }
 
   // a held player is back (a JOIN from the same account or browser): this session takes over their body
   resume(session, p) {
+    const moved = p.away?.handoff;
     p.away = null;
     p.session = session;
     session.player = p;
@@ -527,6 +564,8 @@ export class Game {
     p.snapTick = -2;
     p.ackSent = 0;
     p.invDirty = true;
+    p.progDirty = true; // (their XP too)
+    p.progT = -99;
     const w = new Writer(64);
     w.u8(S2C.WELCOME);
     w.u16(p.id);
@@ -539,8 +578,8 @@ export class Game {
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
     this.tellStripped(spent, p.id);
     this.tellFriendCodes(p);
-    this.sendChat(p, 0, CHATF.SYSTEM, 'Reconnected: you are back where you were, with what you had.');
-    this.systemChat(`${p.name} reconnected.`);
+    this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
+    if (!moved) this.systemChat(`${p.name} reconnected.`);
     this.playersDirty = true;
     this.globalDirty = true;
     this.log(`resume ${p.name}`);
@@ -633,9 +672,16 @@ export class Game {
       session.conn.send(w.bytes());
     };
     if (version !== PROTOCOL_VERSION) return reject(REJECT_REASON.VERSION);
-    // back from a drop inside the grace minute: their own body (onClose / hold)
-    const key = account ? `a:${account.id}` : UUID_RE.test(pid) ? `g:${pid}` : '';
-    if (key) for (const q of this.players.values()) if (q.away && q.rejoinKey === key) return this.resume(session, q);
+    // back from a drop inside the grace minute, or from a deploy: their own body (onClose / hold). (A guest by the
+    // hash of their browser id, never the id: it is the key to their leaderboard record, and a deploy saves this.)
+    const key = account ? `a:${account.id}` : UUID_RE.test(pid) ? `g:${idKey(pid)}` : '';
+    if (key) {
+      for (const q of this.players.values()) {
+        if (!q.away || q.rejoinKey !== key) continue;
+        q.rec ||= this.records.enter(pid, q.name, account); // (one brought over from the last server has none here yet)
+        return this.resume(session, q);
+      }
+    }
     if (this.players.size >= this.maxPlayers) return reject(REJECT_REASON.FULL);
     if (!this.admitJoin(session)) return reject(REJECT_REASON.FULL); // (the one "try again later" the client knows)
     // unique names
@@ -695,7 +741,8 @@ export class Game {
     this.log(`join ${p.name} (${this.players.size}/${this.maxPlayers})`);
   }
 
-  createPlayer(session, name) {
+  // id: the one they had on the last server (gamestate.js), else the next free one
+  createPlayer(session, name, id = 0) {
     const p = {
       kind: ENT.PLAYER,
       session,
@@ -772,8 +819,8 @@ export class Game {
       ropedBy: 0,
       ping: 0,
       ts: null, // the stint analytics.js is counting for them (null: none)
-      rejoinKey: '', // 'a:<account id>' or 'g:<browser id>': whose JOIN may take this player back after a drop (resume)
-      away: null, // dropped and held: { since } (hold), until they come back or REJOIN_GRACE runs out
+      rejoinKey: '', // 'a:<account id>' or 'g:<sha-256 of the browser id>': whose JOIN may take this player back after a drop (resume)
+      away: null, // dropped and held: { since, grace, handoff } (hold), until they come back or their grace runs out
       get x() {
         return this.state.x;
       },
@@ -785,7 +832,7 @@ export class Game {
       },
     };
     // (a player without an id must never get into `players`: it would sit there under the key `undefined`)
-    if (!this.spawnEntity(p)) return null;
+    if (!(id ? this.spawnEntityAt(p, id) : this.spawnEntity(p))) return null;
     this.players.set(p.id, p);
     return p;
   }
@@ -807,6 +854,8 @@ export class Game {
   // m: { first, xp, perks, best } as they join, { perks } when they pick again (validated by whoever sent it:
   // stats.js cleanPerks, server/progress.js)
   setProgress(p, m) {
+    // (one brought over from the last server has theirs: the record already holds this run's XP, xpRun has it too)
+    if (m.first && p.xpLoaded) return;
     if (m.first) {
       p.xpBase = Math.max(0, m.xp | 0);
       p.best = Math.max(0, m.best | 0);
@@ -989,6 +1038,7 @@ export class Game {
     const t0 = Date.now();
     this.seed = seed;
     this.world = createWorld(seed);
+    this.worldHash = worldHash(this.world); // (what a save made on this valley is checked against: handoff.js)
     this.nav = new Nav(this.world);
     this.mineNav = this.world.mine ? new MineNav(this.world, this.nav) : null; // (a valley without the workings has none)
     this.worldPlayed = false;
@@ -3485,7 +3535,7 @@ export class Game {
     // the held whose minute is up are gone (hold)
     if (this.tick % SERVER_TICK_RATE === 0)
       for (const p of [...this.players.values()])
-        if (p.away && this.time - p.away.since >= REJOIN_GRACE) {
+        if (p.away && this.time - p.away.since >= p.away.grace) {
           this.log(`hold ${p.name}: did not come back`);
           this.removePlayer(p);
         }

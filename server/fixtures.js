@@ -32,6 +32,14 @@ export class Fixtures {
     this.calledDay = 0; // the day a plane was last called on the radio (one a day: a new day is a new number)
   }
 
+  // the handoff (gamestate.js)
+  save() {
+    return { bellReadyAt: this.bellReadyAt, tolls: this.tolls, tollT: this.tollT, calledDay: this.calledDay };
+  }
+  load(s) {
+    Object.assign(this, s);
+  }
+
   owns(id) {
     return id === BELL_ID || id === RADIO_ID;
   }

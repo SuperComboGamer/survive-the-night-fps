@@ -7,6 +7,7 @@
 //   { t: 'close', slot, code }     ...and closed (code: the socket's close code - 4001 the player left on purpose)
 //   { t: 'in', buf }               their messages (frames, in order)    { t: 'stop' }          shut down
 //   { t: 'finish' }                the server is going down: end the match being played, and say when it is
+//   { t: 'save' }                  ...and the next one takes the game over (handoff.js): stop, and send it saved
 //   { t: 'progress', tok, ... }    a player's progress (progress.js): { first, xp, perks, best } as they join, { perks } on a pick
 //   { t: 'achieved', user, ids }   an account's achievements unlocked (userachievements.js): tell the player
 // To it:
@@ -18,12 +19,18 @@
 //   { t: 'an', rec }               a record of the match being played (analytics.js), for the database (matchstore.js)
 //   { t: 'ach', user, add, feats, strangers }  what an account earned towards its achievements (achievements.js)
 //   { t: 'finished' }              ...the match is ended and its records posted
+//   { t: 'saved', buf }            the game, saved (gzipped: handoff.js), and its match ended as 'handoff'
+//   { t: 'saveFailed', error }     ...or it could not be, and its match ended as 'interrupted'
+//   { t: 'restoreFailed', why }    the save this game was to be made from cannot be used here: it ends
+//
+// workerData.restore: a game the last server saved (the gzipped envelope), to carry on with instead of a new one.
 import { parentPort, workerData } from 'node:worker_threads';
 import { Game } from './game.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { SERVER_TICK_RATE } from '../shared/constants.js';
+import { envelope, encode, decode } from './handoff.js';
 
-const { code, opts, congestion } = workerData;
+const { code, opts, congestion, restore } = workerData;
 // ms a socket may hold a seat without joining (a client sends its JOIN as soon as it is open). JOIN_WAIT_SECONDS: tests
 const JOIN_WAIT = (+process.env.JOIN_WAIT_SECONDS || 15) * 1000;
 const tag = `[game ${code}]`;
@@ -64,14 +71,23 @@ class RemoteRecords {
 // (an emptied game builds its next valley when someone joins it, not for nobody: the lobby closes it if nobody does)
 // (the match records go to the network thread, which writes them if the server has a database and drops them if not;
 // so does what an account earns towards its achievements, which the network thread answers with what that unlocked)
-const game = new Game({
-  ...opts,
-  rollWhenEmpty: false,
-  stats: new RemoteRecords(),
-  analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined,
-  achieve: opts.achievements ? (m) => post({ t: 'ach', ...m }) : undefined,
-  log: (...a) => console.log(tag, ...a),
-});
+// (a save that cannot be used ends this game where it started: the network thread closes it, and the code is gone)
+let game;
+try {
+  game = new Game({
+    ...opts,
+    restore: restore ? decode(Buffer.from(restore)) : null,
+    rollWhenEmpty: false,
+    stats: new RemoteRecords(),
+    analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined,
+    achieve: opts.achievements ? (m) => post({ t: 'ach', ...m }) : undefined,
+    log: (...a) => console.log(tag, ...a),
+  });
+} catch (err) {
+  if (!restore) throw err;
+  post({ t: 'restoreFailed', why: err.message });
+  throw err;
+}
 
 // ---------------------------------------------------------------- sockets
 // Everything the game sends between two turns of the event loop goes out in one batch.
@@ -152,6 +168,32 @@ parentPort.on('message', (m) => {
       }
       post({ t: 'finished' });
       break;
+    case 'save': {
+      // (between ticks, as Game.save needs: this runs between two turns of the loop, and the loop goes no further)
+      clearTimeout(timer);
+      flush();
+      let buf = null;
+      let error = '';
+      const t0 = performance.now();
+      try {
+        buf = encode(envelope(game));
+      } catch (err) {
+        error = err.stack || err.message;
+      }
+      try {
+        game.track?.finish(buf ? 'handoff' : 'interrupted');
+      } catch (err) {
+        console.error(tag, 'finish failed', err);
+      }
+      if (!buf) {
+        console.error(tag, 'save failed', error);
+        post({ t: 'saveFailed', error });
+        break;
+      }
+      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      post({ t: 'saved', buf: ab, ms: Math.round(performance.now() - t0) }, [ab]);
+      break;
+    }
     case 'stop':
       clearTimeout(timer);
       flush();
@@ -170,11 +212,12 @@ let load = { cpuMs: 0, elu: 0 }; // over the last second: CPU ms this thread use
 function status() {
   lastPlayers = game.players.size;
   let lead = '';
+  let held = 0; // (dropped, or brought over from the last server: their places are kept for them)
   for (const p of game.players.values()) {
-    lead = p.name; // (the one who has been in longest: the map keeps join order)
-    break;
+    lead ||= p.name; // (the one who has been in longest: the map keeps join order)
+    if (p.away) held++;
   }
-  post({ t: 'status', players: game.players.size, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10 });
+  post({ t: 'status', players: game.players.size, held, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10 });
 }
 setInterval(() => {
   const now = performance.now();

@@ -50,6 +50,24 @@ export class Fair {
     if (g.spawnEntity(e)) this.ent = e;
   }
 
+  // the handoff (gamestate.js): the generator, the clock and the tank. The entity's fields follow from them (sync)
+  save() {
+    return this.ent ? { id: this.ent.id, running: this.running, clock: this.clock, fuel: this.fuel, noiseT: this.noiseT } : null;
+  }
+  load(s) {
+    const f = this.g.world.fair;
+    this.ent = null;
+    if (!s || !f) return;
+    const e = this.g.spawnEntityAt({ kind: ENT.FAIR, x: f.gen.x, y: f.gen.y, z: f.gen.z, running: 0, clock: 0, fuel: 0 }, s.id);
+    if (!e) return;
+    this.ent = e;
+    this.running = s.running;
+    this.clock = s.clock;
+    this.fuel = s.fuel;
+    this.noiseT = s.noiseT;
+    this.sync();
+  }
+
   // The entity's fields as the wire wants them (FRF in protocol.js): while the generator runs, the tick at which
   // the clock read zero and the tick the tank runs dry at - both stand still, so a running fair costs no traffic.
   sync() {

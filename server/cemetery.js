@@ -44,6 +44,23 @@ export class Cemetery {
     this.draw();
   }
 
+  // the handoff (gamestate.js). Tonight's share of the horde is one of the game's waves: saved as which one it is.
+  save() {
+    const g = this.g;
+    return { pending: this.pending.map((p) => ({ ...p })), restless: [...this.restless], quiet: Array.from(this.quiet), share: this.share ? g.waves.indexOf(this.share) : -1, woke: this.woke, risen: this.risen };
+  }
+  // (after the game's waves are back)
+  load(s) {
+    const g = this.g;
+    this.rng = mulberry32((g.seed ^ g.tick ^ 0x9a7e5) >>> 0);
+    this.pending = s.pending;
+    this.restless = s.restless;
+    this.quiet = Float64Array.from(s.quiet);
+    this.share = g.waves[s.share] || null;
+    this.woke = s.woke;
+    this.risen = s.risen;
+  }
+
   // sunrise (Game.startDay): what had not stirred yet stays down, and other graves are restless today
   dawn() {
     this.pending = this.pending.filter((p) => p.stirred);

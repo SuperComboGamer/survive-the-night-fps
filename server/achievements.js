@@ -60,6 +60,18 @@ export class AchievementTracker {
     return p.ach || (p.ach = fresh());
   }
 
+  // the handoff (server/gamestate.js): the run's own record, the containers and players in it by id. A player's own
+  // (p.ach) goes with the player; the spots in the valley are found again (places)
+  save() {
+    return { runDeaths: this.runDeaths, town: [...this.town].map((c) => c.id), townBy: [...this.townBy].map((p) => p.id) };
+  }
+  load(s) {
+    const g = this.g;
+    this.runDeaths = s.runDeaths;
+    this.town = new Set(s.town.map((id) => g.ents[id]).filter(Boolean));
+    this.townBy = new Set(s.townBy.map((id) => g.ents[id]).filter(Boolean));
+  }
+
   // ---------------------------------------------------------------- plumbing
   bump(p, stat, n = 1) {
     if (!p || n <= 0) return;

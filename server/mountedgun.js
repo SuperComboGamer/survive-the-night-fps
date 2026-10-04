@@ -45,6 +45,22 @@ export class MountedGun {
     if (g.spawnEntity(e)) this.ent = e;
   }
 
+  // the handoff (gamestate.js): the gun as it is, where it stands (null while it is carried). Its gunner is let go of
+  // there: they are away until they come back
+  save() {
+    const e = this.gun;
+    return e ? { ent: { ...e }, nest: this.nest && { ...this.nest } } : null;
+  }
+  load(s) {
+    this.ent = null;
+    this.nest = null;
+    if (!s) return;
+    const e = this.g.spawnEntityAt({ ...s.ent }, s.ent.id);
+    if (!e) return;
+    this.ent = e;
+    this.nest = s.nest;
+  }
+
   // can this player be at the gun at all, standing where they are? (slack: how far past the grips' reach)
   fit(p, slack) {
     const s = p.state;

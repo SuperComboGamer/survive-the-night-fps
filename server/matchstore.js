@@ -14,7 +14,7 @@ const QUEUE_MAX = 50_000;
 const COLS = {
   match: {
     table: 'matches',
-    cols: { id: 'uuid', roomCode: 'text', quick: 'boolean', inviteOnly: 'boolean', seats: 'smallint', seed: 'bigint', startDay: 'smallint', protocol: 'smallint', build: 'text', settings: 'jsonb', startedAt: 'timestamptz' },
+    cols: { id: 'uuid', roomCode: 'text', quick: 'boolean', inviteOnly: 'boolean', seats: 'smallint', seed: 'bigint', startDay: 'smallint', protocol: 'smallint', build: 'text', settings: 'jsonb', startedAt: 'timestamptz', continues: 'uuid' },
 
     conflict: 'ON CONFLICT (id) DO NOTHING',
   },
@@ -105,8 +105,12 @@ export class MatchStore {
   push(rec, room = null) {
     if (!rec || !COLS[rec.k] && rec.k !== 'match_end') return;
     if (rec.k === 'match') {
-      rec = { ...rec, roomCode: room?.code ?? null, quick: room ? !!room.quick : null, inviteOnly: room ? !!room.inviteOnly : null, build: this.build || null };
-      if (room) room.match = rec.id;
+      // (the first match of a game brought over from the last server carries on the one that server ended as 'handoff')
+      rec = { ...rec, roomCode: room?.code ?? null, quick: room ? !!room.quick : null, inviteOnly: room ? !!room.inviteOnly : null, build: this.build || null, continues: room?.continues ?? null };
+      if (room) {
+        room.match = rec.id;
+        room.continues = null;
+      }
     } else if (rec.k === 'match_end' && room && room.match === rec.matchId) room.match = null;
     if (this.queue.length >= QUEUE_MAX) {
       if (!this.dropped++) this.log('matches: the database is not keeping up - dropping records');

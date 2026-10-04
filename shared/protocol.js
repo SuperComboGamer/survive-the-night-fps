@@ -103,6 +103,9 @@ export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
 // The close code a client's socket goes with when the player pressed "Leave game". Any other close is a drop, and the
 // game holds the player's place for REJOIN_GRACE seconds (server/game.js hold).
 export const LEFT_CODE = 4001;
+// ...and the one the server closes every socket of a game with when that game moves to the next server on a deploy
+// (server/handoff.js): the client keeps the game on screen and joins the same code again (client/main.js moveBack).
+export const MOVED_CODE = 4002;
 
 // S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
 // speaker (TALK_RANGE), or anywhere when it was said with the walkie-talkie in hand, so the flags differ per recipient.

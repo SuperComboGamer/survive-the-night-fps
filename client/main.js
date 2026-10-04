@@ -9,6 +9,7 @@ import { loadBinds, askLayout, bindPair } from './game/binds.js';
 import { startBindsSync } from './net/accountbinds.js';
 import { keysOf, moveKeys, slotKeys } from './ui/menus.js';
 import { playerId } from './net/identity.js';
+import { PROTOCOL_VERSION, REJECT_REASON } from '../shared/protocol.js';
 import { refreshAccount } from './net/account.js';
 import { startAchievementsSync } from './net/achievements.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
@@ -64,9 +65,14 @@ async function rejoin(code, name = lastName) {
   if (rejoining || !code || !name) return;
   rejoining = true;
   const until = performance.now() + REJOIN_MS;
+  let moved = false; // (this page was loaded again for a deploy's new build: moveBack)
+  try {
+    moved = sessionStorage.getItem(MOVED_KEY) === '1';
+    sessionStorage.removeItem(MOVED_KEY);
+  } catch {}
   try {
     while (game.state !== 'playing' && performance.now() < until) {
-      ui.setJoinError(`Connection lost - getting you back into game ${code} (${Math.ceil((until - performance.now()) / 1000)} s)...`);
+      ui.setJoinError(`${moved ? 'The game was updated' : 'Connection lost'} - getting you back into game ${code} (${Math.ceil((until - performance.now()) / 1000)} s)...`);
       await callbacks.onJoin(name, code);
       if (game.state === 'playing') return;
       await new Promise((done) => setTimeout(done, 3000));
@@ -76,6 +82,52 @@ async function rejoin(code, name = lastName) {
     rejoining = false;
   }
 }
+
+// ---------------------------------------------------------------- back in after a deploy
+// A deploy hands every game to the next server (server/handoff.js) and closes its sockets with MOVED_CODE. The game
+// stays on screen (Game.onMoving) while this joins the same code on the next server, where our body is waiting: at
+// once and then a little less often, for a while (the old server may still be taking connections that the edge sends
+// it). The game is in the store before our socket is closed, so a next server that says it has no such game three
+// times over means it could not bring it back. If the next server runs another build, this page is loaded again
+// first (and then goes back in as a reopened page does, below).
+const MOVE_MS = 45_000;
+const MOVE_NO_GAME = 3;
+const BUILD = fetch('/api/version')
+  .then((r) => r.json())
+  .catch(() => null); // what this page was loaded from
+const MOVED_KEY = 'stn.moved';
+async function moveBack(code) {
+  const name = lastName;
+  const until = performance.now() + MOVE_MS;
+  const loadedFrom = await BUILD;
+  let noGame = 0;
+  for (let wait = 250; game.moving && performance.now() < until && noGame < MOVE_NO_GAME; wait = Math.min(wait * 2, 2000)) {
+    const now = await fetch('/api/version', { cache: 'no-store' })
+      .then((r) => r.json())
+      .catch(() => null);
+    if (now && (now.protocol !== PROTOCOL_VERSION || (loadedFrom?.build && now.build !== loadedFrom.build))) {
+      try {
+        sessionStorage.setItem(MOVED_KEY, '1');
+        localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() })); // (the reloaded page goes back in by it)
+      } catch {}
+      location.reload();
+      return;
+    }
+    if (now) {
+      try {
+        await game.join(name, code, { resume: true });
+        return;
+      } catch (err) {
+        // (another build: load it)
+        if (err.reason === REJECT_REASON.VERSION) return location.reload();
+        if (err.reason === REJECT_REASON.NO_GAME) noGame++;
+      }
+    }
+    await new Promise((done) => setTimeout(done, wait));
+  }
+  if (game.moving) game.onDisconnect(0, 'The server was updated, but your game could not be brought back.');
+}
+
 const PLAYING_KEY = 'stn.playing';
 setInterval(() => {
   try {
@@ -262,6 +314,7 @@ preload();
 
 // a page reopened on the game it was playing a moment ago (crash, tab closed): back in while the server holds the place
 game.onDrop = (code) => rejoin(code);
+game.onMove = (code) => moveBack(code); // (a deploy: the game moved to the next server)
 try {
   const was = JSON.parse(localStorage.getItem(PLAYING_KEY) || 'null');
   if (was && was.code && was.code === linkedCode() && Date.now() - was.t < REJOIN_MS) setTimeout(() => rejoin(was.code, was.name), 300);

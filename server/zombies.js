@@ -118,8 +118,21 @@ export class Zombies {
     }
     let y = down ? opts.y : groundAt(w, x, z, 200, 0.2, false);
     if (def.flying) y += 3 + g.rng() * 2;
+    const e = this.make(type, x, y, z, opts);
+    if (!g.spawnEntity(e)) return null;
+    g.fillHistory(e);
+    g.zombies.push(e);
+    return e;
+  }
+
+  // A zombie of that type standing at x, y, z, not yet in the world (spawn puts it there; gamestate.js copies a saved
+  // one over it). opts: as for spawn.
+  make(type, x, y, z, opts = {}) {
+    const g = this.g;
+    const def = ZOMBIE_DEFS[type];
+    const down = opts.y !== undefined;
     const hp = def.hp * (opts.hpMul || 1);
-    const e = {
+    return {
       kind: ENT.ZOMBIE,
       ztype: type,
       def,
@@ -223,10 +236,16 @@ export class Zombies {
       hz: new Float32Array(HISTORY_TICKS),
       hitStruct: null,
     };
-    if (!g.spawnEntity(e)) return null;
-    g.fillHistory(e);
-    g.zombies.push(e);
-    return e;
+  }
+
+  // ---------------------------------------------------------------- handoff (gamestate.js: the zombies themselves are saved there)
+  save() {
+    return { packSeq: this.packSeq, maintainT: this.maintainT, herds: this.herds.save() };
+  }
+  load(s) {
+    this.packSeq = s.packSeq;
+    this.maintainT = s.maintainT;
+    this.herds.load(s.herds);
   }
 
   // One of the specials for a day zombie standing at (x, z), or -1 for the plain dead: the further from the car, the

@@ -14,6 +14,7 @@ import { availableParallelism, totalmem } from 'node:os';
 import { C2S, S2C, ROOMF, REJECT_REASON, Writer, Reader, writeBoard } from '../shared/protocol.js';
 import { PHASE, MAX_PLAYERS } from '../shared/constants.js';
 import { FramePacker, eachFrame } from './wire.js';
+import { HANDOFF_CLOSE } from './handoff.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // (no 0 / O, 1 / I: a code gets read out loud)
 const PUBLIC_CODE = 6;
@@ -64,17 +65,20 @@ const forgetSpent = (map) => {
 };
 
 export class Room {
-  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick }) {
+  // restore: the game the last server saved under this code (handoff.js), with first / created / continues from what
+  // that server knew of the room (Room.meta)
+  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, restore = null, first = '', created = Date.now(), continues = null }) {
     this.lobby = lobby;
     this.code = code;
     this.name = name; // as its maker called it ('' for one a quick join made)
     this.host = host; // who made it ('' for a quick join's: then whoever has been in it longest)
-    this.first = ''; // the name the first socket in it joined under (a quick join's game is theirs until it has a lead)
+    this.first = first; // the name the first socket in it joined under (a quick join's game is theirs until it has a lead)
     this.inviteOnly = inviteOnly;
     this.quick = quick;
     this.maxPlayers = maxPlayers;
-    this.created = Date.now();
-    this.emptySince = this.created;
+    this.created = created;
+    this.emptySince = Date.now(); // (a restored game nobody comes back to closes as any empty one does)
+    this.continues = continues; // the match the last server ended as 'handoff', which this game's next one carries on (matchstore.js)
     this.closed = false;
     this.ready = false;
     // sockets by slot. A slot whose socket closed stays taken until the worker says it is done with it (so nothing
@@ -91,12 +95,13 @@ export class Room {
     this.congestion = new SharedArrayBuffer(4 * this.socks.length);
     this.congested = new Int32Array(this.congestion);
     this.recs = new Map(); // the game's record tokens -> records (RemoteRecords in room-worker.js)
-    this.st = { players: 0, lead: '', phase: PHASE.WAITING, day: 0, seed: 0, tick: null, load: { cpuMs: 0, elu: 0 }, heapMb: 0 };
+    this.st = { players: 0, held: 0, lead: '', phase: PHASE.WAITING, day: 0, seed: 0, tick: null, load: { cpuMs: 0, elu: 0 }, heapMb: 0 };
+    this.saved = null; // (handoff: waiting for the worker's save)
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
       // (analytics: the game records its matches - only worth it with a database to write them to. achievements: an
       // account's go to the database too, and a guest's to their browser either way)
-      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, analytics: !!lobby.matches, achievements: !!lobby.achievements }, congestion: this.congestion },
+      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, analytics: !!lobby.matches, achievements: !!lobby.achievements }, congestion: this.congestion, restore },
       resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
     });
     this.worker.on('message', (m) => this.fromWorker(m));
@@ -112,14 +117,20 @@ export class Room {
     const who = this.host || this.st.lead || this.first;
     return who ? `${who}'s game` : 'Open game';
   }
+  // every socket a seat: no more can come in (attach)
   get full() {
     return this.open >= this.maxPlayers;
+  }
+  // ...or the seats left are kept for players who dropped, or who were brought over from the last server: no room for a
+  // newcomer (a quick join, the lobby's list). Their own sockets still come in: the game knows them (Game.handleJoin)
+  get noRoom() {
+    return this.full || this.open + (this.st.held || 0) >= this.maxPlayers;
   }
 
   // what the lobby shows of it (its code included: list() only hands out public games', find() only to whoever has it)
   info() {
     const s = this.st;
-    return { code: this.code, name: this.title, players: Math.max(s.players, 0), seats: this.open, max: this.maxPlayers, full: this.full, phase: s.phase, day: s.day, seed: s.seed, inviteOnly: this.inviteOnly, ready: this.ready, ageS: Math.round((Date.now() - this.created) / 1000) };
+    return { code: this.code, name: this.title, players: Math.max(s.players, 0), seats: this.open, max: this.maxPlayers, full: this.noRoom, phase: s.phase, day: s.day, seed: s.seed, inviteOnly: this.inviteOnly, ready: this.ready, ageS: Math.round((Date.now() - this.created) / 1000) };
   }
 
   // ---------------------------------------------------------------- sockets
@@ -257,6 +268,13 @@ export class Room {
       case 'finished':
         this.finished?.();
         return;
+      case 'saved':
+      case 'saveFailed':
+        this.saved?.(m);
+        return;
+      case 'restoreFailed':
+        this.lobby.log(`game ${this.code} not restored: ${m.why}`);
+        return;
     }
   }
 
@@ -327,8 +345,45 @@ export class Room {
     });
   }
 
-  // Ends the game: the worker goes, every socket is closed, and the records it had open are let go.
-  shut(code = 1001, why = 'Game closed') {
+  // What the next server needs of this room besides the game (Lobby.restore). match: the one being played as it was
+  // saved, which the next server's carries on.
+  meta(match) {
+    return { name: this.name, host: this.host, first: this.first, inviteOnly: this.inviteOnly, quick: this.quick, maxPlayers: this.maxPlayers, created: this.created, match };
+  }
+
+  // The server is going down and the next one takes this game over: the worker stops and saves it, the save goes into
+  // the store, and only then is every socket closed with HANDOFF_CLOSE (a client that came back sooner would find
+  // nothing to come back to). -> { bytes, ms } once it is handed over, or why it was not (a string): then nothing has
+  // been closed, and the match is still the caller's to end.
+  handoff(store, ms = 8000) {
+    if (this.closed) return Promise.resolve('closed');
+    if (!this.st.players) return Promise.resolve('nobody in it');
+    const match = this.match;
+    const t0 = Date.now();
+    return new Promise((done) => {
+      const timer = setTimeout(() => {
+        this.saved = null;
+        done(`no save from the game after ${ms} ms`);
+      }, ms);
+      this.saved = async (m) => {
+        clearTimeout(timer);
+        this.saved = null;
+        if (m.t === 'saveFailed') return done(`the save failed (${m.error.split('\n')[0]})`);
+        try {
+          await store.put(this.code, this.meta(match), new Uint8Array(m.buf));
+        } catch (err) {
+          return done(`the store would not take it (${err.message})`);
+        }
+        this.shut(HANDOFF_CLOSE, 'Server updating', { handedOff: true });
+        done({ bytes: m.buf.byteLength, ms: Date.now() - t0 });
+      };
+      this.worker.postMessage({ t: 'save' });
+    });
+  }
+
+  // Ends the game: the worker goes, every socket is closed, and the records it had open are let go. handedOff: the
+  // next server has the game, and its match (ended as 'handoff' by the worker) goes on there.
+  shut(code = 1001, why = 'Game closed', { handedOff = false } = {}) {
     if (this.closed) return;
     this.closed = true;
     this.lobby.rooms.delete(this.code);
@@ -350,7 +405,7 @@ export class Room {
     for (const rec of this.recs.values()) this.lobby.stats.leave(rec);
     this.recs.clear();
     // a match it was in the middle of stops where it was
-    if (this.match) this.lobby.matches?.interrupt(this.match);
+    if (this.match && !handedOff) this.lobby.matches?.interrupt(this.match);
     this.match = null;
   }
 }
@@ -359,11 +414,17 @@ export class Lobby {
   // stats: the leaderboard (PlayerStats, or DbStats with a database). matches: where the matches played go
   // (MatchStore; none without a database). achievements: the accounts' (AchievementStore; none without a database).
   // gameOpts: what every Game is made with (the env's test switches)
-  // limits: false lifts the per-address allowances (load tests make many games from one address)
-  constructor({ stats, matches = null, achievements = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, log = console.log }) {
+  // limits: false lifts the per-address allowances (load tests make many games from one address). store: where games
+  // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
+  // be and still be restored (s)
+  constructor({ stats, matches = null, achievements = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, log = console.log }) {
     this.stats = stats;
     this.matches = matches;
     this.achievements = achievements;
+    this.store = store;
+    this.handoffMaxAge = handoffMaxAge;
+    this.restoring = new Map(); // code -> the restore under way (restore)
+    this.stopping = false; // going down: nothing more is restored here
     this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
     this.onPresence = null; // (account id) => void: they came into a game or left one (social.js)
     this.gameOpts = gameOpts;
@@ -437,7 +498,7 @@ export class Lobby {
     let best = null;
     let bestKey = -1;
     for (const room of this.rooms.values()) {
-      if (room.inviteOnly || room.closed || room.full) continue;
+      if (room.inviteOnly || room.closed || room.noRoom) continue;
       const ending = room.st.phase === PHASE.GAMEOVER || room.st.phase === PHASE.VICTORY;
       const key = (ending ? 0 : 1000) + room.open;
       if (key > bestKey) {
@@ -514,6 +575,80 @@ export class Lobby {
   // The server is going down (a deploy): every match being played is ended as it stands and written (Room.finish)
   finishAll(ms = 1500) {
     return Promise.all([...this.rooms.values()].map((room) => room.finish(ms)));
+  }
+
+  // ---------------------------------------------------------------- deploys (handoff.js)
+  // The server is going down and the next one is up: every game with anybody in it is saved into the store for that
+  // one to carry on with, all at once. One that cannot be (it did not answer in time, the store failed) has its match
+  // ended as before (Room.finish) and stays here to go down with the process. -> how many were handed over
+  async handoffAll(store, ms = 8000) {
+    this.stopping = true;
+    const done = await Promise.all(
+      [...this.rooms.values()].map(async (room) => {
+        const players = room.st.players;
+        const r = await room.handoff(store, ms);
+        if (typeof r === 'object') {
+          this.log(`handoff ${room.code}: ${players} players, ${(r.bytes / 1024).toFixed(0)} KB, ${r.ms} ms`);
+          return true;
+        }
+        if (players) this.log(`handoff ${room.code}: not handed over - ${r}`);
+        await room.finish(1500);
+        return false;
+      })
+    );
+    return done.filter(Boolean).length;
+  }
+
+  // The game the last server saved under this code, if one is waiting in the store: claimed (so no other server takes
+  // it too) and started here under the same code, with the room as it was. -> the Room, or null (no save, it was
+  // taken, it is too old). Asked when the store says a save has come (index.js), at start-up for any already
+  // waiting, and by a socket or an invite card asking for a code this server does not have yet. A save this build
+  // cannot read is only found out in the room's worker: that room closes again (Room 'restoreFailed').
+  restore(code) {
+    code = String(code || '').toUpperCase();
+    if (this.rooms.has(code)) return Promise.resolve(this.rooms.get(code));
+    if (!this.store || this.stopping || !CODE_RE.test(code)) return Promise.resolve(null);
+    let p = this.restoring.get(code);
+    if (!p) {
+      p = this._restore(code).finally(() => this.restoring.delete(code));
+      this.restoring.set(code, p);
+    }
+    return p;
+  }
+  async _restore(code) {
+    let row;
+    try {
+      row = await this.store.claim(code);
+    } catch (err) {
+      this.log(`game ${code} not restored: the store failed (${err.message})`);
+      return null;
+    }
+    if (!row) return null;
+    const age = (Date.now() - row.savedAt) / 1000;
+    if (age > this.handoffMaxAge) {
+      this.log(`game ${code} not restored: saved ${Math.round(age)} s ago`);
+      return null;
+    }
+    if (this.rooms.has(code)) {
+      this.log(`game ${code} not restored: a game here has that code`);
+      return this.rooms.get(code);
+    }
+    const m = row.meta || {};
+    const room = new Room(this, {
+      code,
+      name: cleanTitle(m.name, 28),
+      host: cleanTitle(m.host, 16),
+      inviteOnly: !!m.inviteOnly,
+      maxPlayers: Math.max(1, Math.min(this.roomMaxPlayers, Math.floor(+m.maxPlayers) || this.maxPlayers)),
+      quick: !!m.quick,
+      first: cleanTitle(m.first, 16),
+      created: Number.isFinite(m.created) ? m.created : Date.now(),
+      continues: typeof m.match === 'string' ? m.match : null,
+      restore: row.body,
+    });
+    this.rooms.set(code, room);
+    this.log(`game ${code} restored from the last server (saved ${age.toFixed(1)} s ago, ${(row.body.byteLength / 1024).toFixed(0)} KB) (${this.rooms.size}/${this.maxGames} games)`);
+    return room;
   }
 }
 

@@ -38,6 +38,14 @@ export class Handcars {
     });
   }
 
+  // the handoff (gamestate.js): each car where it is on the line, its speed and its rider (null: no entity for it)
+  save() {
+    return this.cars.map((e) => (e && !e.removed ? { ...e } : null));
+  }
+  load(s) {
+    this.cars = s.map((c) => (c ? this.g.spawnEntityAt({ ...c }, c.id) : null));
+  }
+
   place(e, m) {
     carFrame(m, e.s, _f);
     e.x = _f.x;
