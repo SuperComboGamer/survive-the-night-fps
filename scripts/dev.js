@@ -5,7 +5,7 @@
 // the games being played over to the restarted server, as a deploy does (server/handoff.js), through data/handoff.
 import { spawn } from 'node:child_process';
 
-const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL ?? 'pglite:./data/pglite', HANDOFF_DIR: process.env.HANDOFF_DIR ?? './data/handoff' };
+const env = { ...process.env, NODE_ENV: process.env.NODE_ENV ?? 'development', DATABASE_URL: process.env.DATABASE_URL ?? 'pglite:./data/pglite', HANDOFF_DIR: process.env.HANDOFF_DIR ?? './data/handoff' };
 const procs = [
   spawn(process.execPath, ['--watch-path=server', '--watch-path=shared', 'server/index.js'], { stdio: 'inherit', env }),
   spawn(process.execPath, ['node_modules/vite/bin/vite.js'], { stdio: 'inherit', env: process.env }),

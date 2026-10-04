@@ -99,7 +99,8 @@ export class UI {
     this.death = new Death(this, ovL);
     this.end = new EndScreen(this, ovL);
     this.pause = new Pause(this, ovL);
-    this.board = new Leaderboard(this, ovL); // (over the end screen: between two runs is when the board gets looked at)
+    // A modal layer lets the same board sit over both the in-game/end overlays and the splash screen.
+    this.board = new Leaderboard(this, modalL);
     this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);

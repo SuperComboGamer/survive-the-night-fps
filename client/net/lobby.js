@@ -61,6 +61,10 @@ export async function call(path, init = {}, ms = 4000) {
 // game: { code, name, players, seats, max, full, phase, day, seed, inviteOnly, ready, ageS }
 export const listGames = () => call('/api/games');
 
+// The all-time board can be read before joining a game (the in-game board still comes over its game socket, where
+// it can also mark the player and everyone in that game).
+export const getLeaderboard = () => call('/api/leaderboard');
+
 // one game by its code (invite-only ones too); rejects with err.status 404 when there is none
 export const gameInfo = (code) => call(`/api/games/${encodeURIComponent(code)}`);
 

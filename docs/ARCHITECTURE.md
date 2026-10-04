@@ -201,7 +201,7 @@ JSON file (`server/stats.js`).
   `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
   accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below). 008:
-  `game_handoff` and `matches.continues` (Deploys below). A migration has to be additive: on a deploy the old server
+  `game_handoff` and `matches.continues` (Deploys below). 009: the account admin flag. A migration has to be additive: on a deploy the old server
   is still running on the schema while the new one migrates it.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
@@ -215,10 +215,12 @@ JSON file (`server/stats.js`).
   site cannot post with the player's cookie. The same Origin rule decides whether a WebSocket handshake's cookie is
   believed (`sessionToken` in index.js).
 - **Playing signed in.** `/ws`'s upgrade looks the cookie up (async: the upgrade waits for it) and the socket's
-  user data carries `{ id, name }`; `Room.attach` passes it to the worker (`{ t: 'open', user }`), `conn.user`, and
+  user data carries `{ id, name, isAdmin }`; `Room.attach` passes it to the worker (`{ t: 'open', user }`), `conn.user`, and
   `Game.handleJoin` makes the player's name the account's whatever the JOIN says, sets `p.account` (and
   `p.guestKey`, the SHA-256 of a guest's browser id) and tells everyone in the game who is signed in as what
   (`S2C.FRIENDS`: per player id the account name, '' for a guest), so the client can offer a friend request.
+  `isAdmin` stays server-side and authorizes the debug chat commands. `npm run admin -- <user> [on|off]` updates it
+  and revokes that account's sessions; the role is read again when they authenticate and open their next game socket.
 - **Stats** (`server/dbstats.js`, `DbStats`, the same face as `PlayerStats`): an account's under `u:<user id>`, a
   guest's under `g:<sha-256 of the browser id>`. The board's four stats are counted as they happen and written
   every 2 s, one upsert for everyone who scored; `board()` is async (Room.board answers when it comes back). Each
@@ -461,7 +463,7 @@ it, and the new one carries each on under the same code; its players are away fo
   uses the same materials without the world noise. `/sandbox/surfaces-test.html?set=walls|roofs|floors|cars`
   shows every surface through the real `StaticWorld`.
 - **Look-dev:** `node scripts/lookdev.js --url <vite url> name:x,z,yaw,pitch,cycle[,flash] ...` screenshots the
-  real game (server with `GODMODE=1 ADMIN_SECRET=dev`) and prints uncapped fps, draw calls, triangles and the
+  real game (non-production server with `GODMODE=1 DEV_ADMIN=1`) and prints uncapped fps, draw calls, triangles and the
   adapted exposure; `--debug 1|2` shows only the sun shafts / only the SSAO.
 
 ## Audio

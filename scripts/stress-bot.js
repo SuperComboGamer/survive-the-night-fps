@@ -27,7 +27,7 @@ function worldFor(seed) {
 
 const bots = new Map(); // id -> bot
 const noop = () => {};
-// a line of chat (the admin commands: /admin, /give)
+// a line of chat (the stress server starts with DEV_ADMIN=1, so /give is available)
 function say(ws, text) {
   const c = new Writer(64);
   c.u8(C2S.CHAT);
@@ -113,7 +113,6 @@ function makeBot({ id, url, name }) {
       b.pid = r.u16();
       b.w = worldFor(r.u32());
       b.joined = true;
-      if (process.env.ADMIN_SECRET) say(ws, `/admin ${process.env.ADMIN_SECRET}`); // (for /give: tick)
       b.interval = setInterval(() => tick(b), CMD_DT * 1000 * CMDS_PER_PACKET);
     } else if (type === S2C.REJECT) {
       b.err = `rejected ${r.u8()}`;
@@ -177,7 +176,7 @@ function tick(b) {
         target = { x: e.q[0] / 64, y: e.q[1] / 64, z: e.q[2] / 64, d };
       }
     }
-    // ammo for the night (an admin command: stress.js gives the server an ADMIN_SECRET): a real team at night fires a
+    // ammo for the night (an admin command: stress.js starts the server with DEV_ADMIN=1): a real team at night fires a
     // lot more than a starting kit holds
     const now = performance.now();
     if (now > b.giveAt) {

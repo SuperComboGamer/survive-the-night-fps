@@ -99,18 +99,17 @@ const lobby = new Lobby({
   limits: process.env.LOBBY_LIMITS !== '0', // 0: no per-address allowance on making games or asking for codes (load tests)
   idleMs: process.env.GAME_IDLE_SECONDS ? +process.env.GAME_IDLE_SECONDS * 1000 : undefined, // an empty game lasts this long (tests)
   log: (...a) => console.log('[server]', ...a),
-  // every game is made with these (all but the seed and the admin secret are for testing)
+  // every game is made with these (all but the seed are for testing)
   gameOpts: {
     seed: SEED,
     dayLength: process.env.DAY_SECONDS ? +process.env.DAY_SECONDS : undefined,
     nightLength: process.env.NIGHT_SECONDS ? +process.env.NIGHT_SECONDS : undefined,
     startDay: process.env.START_DAY ? +process.env.START_DAY : undefined,
     godMode: process.env.GODMODE === '1',
-    adminSecret: process.env.ADMIN_SECRET || '', // `/admin <it>` in chat lets that player run the admin commands
+    // Test and look-dev servers can authorize every player without accounts. Other environments ignore it.
+    devAdmin: ['development', 'test'].includes(process.env.NODE_ENV) && process.env.DEV_ADMIN === '1',
   },
 });
-
-if (process.env.ADMIN_SECRET) log('admin commands: on for whoever says /admin <ADMIN_SECRET> in chat');
 
 // The games the last server handed over: whatever is waiting already (a server that started after the last one went),
 // and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
@@ -211,8 +210,9 @@ app.ws('/ws', {
     res.onAborted(() => {
       aborted = true;
     });
+    // Always re-read a game connection: admin role changes and revoked sessions must not come from the minute cache.
     const user = token
-      ? auth.userForToken(token).catch((err) => {
+      ? auth.userForToken(token, true).catch((err) => {
           log(`session lookup failed (${err.message}): joining as a guest`);
           return null;
         })
@@ -351,6 +351,27 @@ const noAccounts = () => {
 };
 const signedIn = (ctx) => (auth ? auth.need(ctx) : noAccounts());
 const S = () => social || noAccounts(); // (before anything else in a handler is looked at)
+
+// The splash has no game socket yet, so it reads the public, all-time board here. Once in a game the binary board
+// message is still used: that version also includes the requesting player and everyone currently in their game.
+route('get', '/api/leaderboard', async () => {
+  const { total, rows } = await stats.board(null, new Set());
+  return {
+    body: {
+      total,
+      rows: rows.map((r) => ({
+        name: r.name,
+        me: false,
+        here: false,
+        kills: r.kills,
+        nights: r.nights,
+        wins: r.wins,
+        revives: r.revives,
+        ranks: null,
+      })),
+    },
+  };
+});
 
 // who this browser is signed in as: { accounts, user: { id, username, email, createdAt } | null }
 route('get', '/api/auth/me', async (ctx) => {

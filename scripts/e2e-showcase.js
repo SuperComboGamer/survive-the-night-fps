@@ -1,4 +1,4 @@
-// Showcase e2e (server: GODMODE=1 ADMIN_SECRET=dev): spawns every zombie type in front of the player
+// Showcase e2e (server: GODMODE=1 DEV_ADMIN=1): spawns every zombie type in front of the player
 // and screenshots it, then dies to test zombie mode, and tests voice peer connections between 2 clients.
 // usage: node scripts/e2e-showcase.js [url] [outdir] [cycle]
 import puppeteer from 'puppeteer-core';
@@ -17,8 +17,6 @@ const browser = await puppeteer.launch({
 const errors = [];
 async function openClient(name) {
   const page = await browser.newPage();
-  // the admin commands (/give, /spawn, /tp...): the client says the server's ADMIN_SECRET on joining
-  await page.evaluateOnNewDocument((k) => localStorage.setItem('stn.admin', k), process.env.ADMIN_SECRET || 'dev');
   await page.setViewport({ width: 1280, height: 720 });
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));

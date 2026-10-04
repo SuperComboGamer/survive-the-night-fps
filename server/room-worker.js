@@ -3,7 +3,7 @@
 // leaderboard lives there too, so a game's records are a stand-in that posts to it (RemoteRecords).
 //
 // From the network thread:
-//   { t: 'open', slot, ip, user }  a socket was put in this slot (user: its account { id, name }, null for a guest)
+//   { t: 'open', slot, ip, user }  a socket was put in this slot (user: its account { id, name, isAdmin }, null for a guest)
 //   { t: 'close', slot, code }     ...and closed (code: the socket's close code - 4001 the player left on purpose)
 //   { t: 'in', buf }               their messages (frames, in order)    { t: 'stop' }          shut down
 //   { t: 'finish' }                the server is going down: end the match being played, and say when it is
@@ -114,7 +114,7 @@ function makeConn(slot, ip, user) {
   return {
     ip,
     slot,
-    user, // the account it is signed in to ({ id, name }), or null (Game.handleJoin)
+    user, // the account it is signed in to ({ id, name, isAdmin }), or null (Game.handleJoin)
     closed: false,
     send(bytes) {
       if (!this.closed) queue(slot, bytes);

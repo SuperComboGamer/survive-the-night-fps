@@ -1,4 +1,16 @@
+> [!WARNING]
+> **Work in progress.** Survive The Night is built around one person's vision — mine — and it changes fast as I
+> iterate on it. Expect breaking changes between releases: controls that move, systems that get reworked, and
+> features that come and go without notice. If it is close to the game you want, fork or clone it and bend it into
+> what you need it to be.
+
+<div align="center">
+
+*"Whatever you do, work heartily, as for the Lord and not for men."* — Colossians 3:23 (ESV)
+
 # Survive The Night
+
+</div>
 
 A co-op multiplayer horror survival FPS in the browser. Your car broke down on Route 9 in the middle of
 a dead valley. By day, scavenge the valley's farms, motels, trailer parks and roadside wrecks for the
@@ -47,19 +59,25 @@ without accounts and keeps the leaderboard in `STATS_FILE`), `MIGRATE_ON_START` 
 migrations when the server starts - `npm run migrate` does it), `DATABASE_POOL_MAX` (10 connections),
 `COOKIE_SECURE=1` (mark the sign-in cookie Secure even when the edge does not say the page came over https),
 `STATS_FILE` (where the leaderboard is kept when there is no database: `data/stats.json` by default, or
-`stats.json` on the Railway volume when the service has one; empty keeps nothing past the process),
-`ADMIN_SECRET` (the admin password: a player who types `/admin <password>` in chat may run the admin commands below
-until they leave. The client keeps it in localStorage (`stn.admin`) and says it again on every join; `/admin` alone
-forgets it and turns them off. Unset, nobody can; a connection gets one try a second and five wrong ones).
+`stats.json` on the Railway volume when the service has one; empty keeps nothing past the process).
 Deploys (`server/handoff.js`): `HANDOFF=0` (a deploy ends every game, as it used to), `HANDOFF_DIR` (hand games over
 through files in that folder when there is no Postgres: `npm run dev` uses `data/handoff`, so a restart on a change
 keeps the games), `HANDOFF_RESERVE_SECONDS` (180: how long a player brought over keeps their place),
 `HANDOFF_MAX_AGE_SECONDS` (300: an older save is not restored).
 Testing only: `HANDOFF_STATE_VERSION` and `CLIENT_BUILD` (a server of another build), `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
 may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
-load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage).
+load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage), `DEV_ADMIN=1`
+(every player may use admin commands when `NODE_ENV` is `development` or `test`; other environments ignore it).
 
-Admin chat commands (`ADMIN_SECRET`): `/night`, `/day`, `/dusk [s]` / `/dawn [s]` (to 5 s, or that many, before
+Admin access belongs to signed-in accounts. With `DATABASE_URL` set, grant or remove it by username or email; the
+command revokes that account's existing sign-ins, so sign in again and reconnect to the game afterwards:
+
+```bash
+npm run admin -- Cody          # grant
+npm run admin -- Cody off      # remove
+```
+
+Admin chat commands: `/night`, `/day`, `/dusk [s]` / `/dawn [s]` (to 5 s, or that many, before
 nightfall / daybreak), `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),
 `/spawn <zombie> <n>` (the type by name, up to 20 at once, 12 m ahead: `/spawn tank`, `/spawn dog 3` for a zombie
@@ -129,8 +147,8 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/e2e-legs.js [url] [outdir]` | shoots a walker in the shins with the pistol until it has no legs left: the stumble, each leg coming off, the hobble, the crawl, a head shot where it lies, with a screenshot of each |
 | `node scripts/shot.js <url> <out.png>` | headless Chrome screenshot |
 
-Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night/legs need a server
-started with `GODMODE=1 ADMIN_SECRET=dev` (they put `dev`, or their own `ADMIN_SECRET`, in the page's localStorage). Art/audio/UI modules also have standalone sandbox pages
+Browser tests use the system Google Chrome via `puppeteer-core`. Showcase/stress/motion/night/legs need a
+non-production server started with `GODMODE=1 DEV_ADMIN=1`. Art/audio/UI modules also have standalone sandbox pages
 under `client/sandbox/` (e.g. `/sandbox/map-test.html?debug=1` renders the valley map with every site,
 container, supply spot and doorway, `/sandbox/props-test.html?new=1`, `/sandbox/icons-test.html`,
 `/sandbox/audio-test.html`, `/sandbox/ui-test.html` on the Vite dev server;

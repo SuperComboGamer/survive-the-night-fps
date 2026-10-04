@@ -72,7 +72,7 @@ export class Auth {
     this.db = db;
     this.stats = stats;
     this.log = log;
-    this.cache = new Map(); // token hash -> { user: { id, name } | null, at, until }
+    this.cache = new Map(); // token hash -> { user: { id, name, isAdmin } | null, until }
     this.registers = new Allowance(10, 300); // per address (a household, a LAN party): 10 accounts, then one every 5 minutes
     this.logins = new Allowance(10, 20); // per address: 10 tries, then one every 20 s
     this.failures = new Allowance(8, 60); // per account: 8 wrong passwords, then one try a minute
@@ -158,21 +158,21 @@ export class Auth {
     if (gone.rows[0]) this.onSignOut?.(gone.rows[0].user_id, h);
   }
 
-  // The account a cookie's token signs in, { id, name, hash } (hash: the session's), or null. Uses the session (and
-  // pushes its expiry on) at most once an hour.
-  async userForToken(token) {
+  // The account a cookie's token signs in, { id, name, isAdmin, hash } (hash: the session's), or null. Uses the
+  // session (and pushes its expiry on) at most once an hour.
+  async userForToken(token, fresh = false) {
     if (!token || typeof token !== 'string' || token.length > 100) return null;
     const h = sha(token);
     const now = Date.now();
     const hit = this.cache.get(h);
-    if (hit && hit.until > now) return hit.user;
+    if (!fresh && hit && hit.until > now) return hit.user;
     const row = (
       await this.db.query(
-        `SELECT s.user_id, s.last_used_at, u.username FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()`,
+        `SELECT s.user_id, s.last_used_at, u.username, u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()`,
         [h]
       )
     ).rows[0];
-    const user = row ? { id: row.user_id, name: row.username, hash: h } : null;
+    const user = row ? { id: row.user_id, name: row.username, isAdmin: row.is_admin === true, hash: h } : null;
     if (row && now - new Date(row.last_used_at).getTime() > 3600_000) {
       this.db
         .query(`UPDATE sessions SET last_used_at = now(), expires_at = now() + make_interval(days => $2) WHERE token_hash = $1`, [h, SESSION_DAYS])

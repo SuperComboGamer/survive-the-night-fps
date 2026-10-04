@@ -71,7 +71,7 @@ import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
 import { deerHitbox } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
-import { playerId, adminKey, setAdminKey } from '../net/identity.js';
+import { playerId } from '../net/identity.js';
 import { accountState } from '../net/account.js';
 import { achievementEvent, joinedGame } from '../net/achievements.js';
 import { Prediction } from './prediction.js';
@@ -758,9 +758,6 @@ export class Game {
     this.stripped.clear(); // (the first snapshot says which are)
     this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
     if (!resume) this.waypoint = null;
-    // the admin password this browser was given (`/admin <password>`): said again, so the admin commands work here too
-    const admin = adminKey();
-    if (admin) this.conn.chat(`/admin ${admin}`);
     joinedGame(!!accountState().user); // (a guest's achievements count the days played on here; an account's, the server)
     return info;
   }
@@ -2213,9 +2210,6 @@ export class Game {
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
       onChatSend: (text) => {
         if (this.devCommand(text)) return;
-        // `/admin <password>` is kept for the next join too (`/admin` alone forgets it); the server answers either way
-        const admin = /^\/admin(?:\s+(.*))?$/i.exec(text.trim());
-        if (admin) setAdminKey(admin[1] || '');
         this.conn.chat(text);
       },
     };

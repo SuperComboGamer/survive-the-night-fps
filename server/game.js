@@ -220,8 +220,6 @@ const GREET_EVERY = 10;
 export const REJOIN_GRACE = +(process.env.REJOIN_GRACE_SECONDS || 60);
 const DEAD_CONN = { send() {}, close() {}, closed: true, slot: -1, user: null, ip: '' };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ADMIN_TRIES = 5; // wrong admin passwords a connection gets (adminLogin)
-const sha256 = (text) => createHash('sha256').update(text).digest();
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only. A zombie type goes the same way: its ZTYPE key (`boss_hivequeen`) or its name
@@ -299,9 +297,9 @@ export class Game {
     this.nightLen = opts.nightLength || NIGHT_LENGTH;
     this.startDayNum = opts.startDay || 1;
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
-    // ADMIN_SECRET (server/index.js): a player who says `/admin <it>` in chat may run the admin chat commands
-    // (debugCommand: /kill /night /day /give /items /spawn /tp /mine ...). Kept only as its hash; none: nobody can
-    this.adminHash = opts.adminSecret ? sha256(String(opts.adminSecret)) : null;
+    // Signed-in accounts with users.is_admin may run the admin chat commands. DEV_ADMIN=1 grants the same access
+    // only on a non-production test/look-dev server without requiring accounts.
+    this.devAdmin = !!opts.devAdmin;
     this.dawnReturn = opts.dawnReturn ?? DAWN_RETURN; // the dead are survivors again at sunrise (the option: tests)
     this.themes = opts.themes !== false; // night themes (shared/nights.js). false: every night is plain (tests, benchmarks)
     // an emptied game rolls its next valley on the next tick (resetToWaiting). false: on the next join instead - a
@@ -548,7 +546,7 @@ export class Game {
     p.away = null;
     p.session = session;
     session.player = p;
-    p.admin = false; // (a new client says the password again if it has it: game.js join)
+    p.admin = !!session.conn.user?.isAdmin || this.devAdmin;
     // a new client: it knows nothing yet - everything is sent again as to a newcomer, and its commands count from 0
     p.cmdQueue.length = 0;
     p.lastSeq = 0;
@@ -697,6 +695,7 @@ export class Game {
     // no entity id left for them: turned away like from a full server, to try again once ids have come back
     if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
+    p.admin = !!account?.isAdmin || this.devAdmin;
     p.rejoinKey = key; // who can take this body back after a drop ('' : nobody - no account and no browser id)
     p.rec = this.records.enter(pid, base, account);
     p.account = account ? account.id : ''; // their account's id, '' for a guest
@@ -786,9 +785,7 @@ export class Game {
       lastChance: false, // Second Chance spent this night
       progDirty: true, // S2C.PROGRESS is out of date (sendProgress)
       progT: -99,
-      admin: false, // may run the admin chat commands: said the ADMIN_SECRET (adminLogin)
-      adminT: 0, // when they last tried (ms)
-      adminFails: 0,
+      admin: false, // may run admin chat commands: set from the signed-in account in handleJoin/resume
       boardT: -99, // when they were last sent the leaderboard
       cmdQueue: [],
       cmdBudget: 6,
@@ -3145,9 +3142,8 @@ export class Game {
   handleChat(p, text) {
     text = text.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 140);
     if (!text) return;
-    // the password never goes out as chat, right or wrong, admin commands or none
-    const login = /^\/admin(?:\s+(.*))?$/i.exec(text);
-    if (login) return this.adminLogin(p, login[1] || '');
+    // Old clients may still send `/admin <password>`; consume it so a former secret is never broadcast as chat.
+    if (/^\/admin(?:\s|$)/i.test(text)) return this.sendChat(p, 0, CHATF.SYSTEM, 'Admin access comes from your signed-in account.');
     if (p.admin && text.startsWith('/')) {
       const args = text.slice(1).split(/\s+/);
       this.track.event('admin', p, { command: args.join(' ').slice(0, 60) }); // (a match with these in it is no ordinary one)
@@ -3177,30 +3173,6 @@ export class Game {
       heard++;
     }
     this.sendChat(p, p.id, heard || this.players.size < 2 ? base : base | CHATF.UNHEARD, text);
-  }
-  // `/admin <password>`: right, and this player may run the admin commands until they leave; `/admin` alone, and they
-  // may not. A try a second at most, and ADMIN_TRIES wrong ones end it for the connection.
-  adminLogin(p, pw) {
-    const say = (text) => this.sendChat(p, 0, CHATF.SYSTEM, text);
-    if (!pw) {
-      if (!p.admin) return say('Usage: /admin <password>');
-      p.admin = false;
-      return say('Admin commands off.');
-    }
-    if (!this.adminHash) return say('There are no admin commands on this server (no ADMIN_SECRET).');
-    if (p.adminFails >= ADMIN_TRIES) return say('Too many wrong admin passwords: reconnect to try again.');
-    const now = Date.now();
-    if (now - p.adminT < 1000) return say('Wait a second before trying again.');
-    p.adminT = now;
-    if (timingSafeEqual(sha256(pw), this.adminHash)) {
-      p.admin = true;
-      p.adminFails = 0;
-      this.log(`admin ${p.name}`);
-      return say('Admin commands on.');
-    }
-    p.adminFails++;
-    this.log(`admin ${p.name}: wrong password (${p.adminFails}/${ADMIN_TRIES})`);
-    say('Wrong admin password.');
   }
   sendChat(to, id, flags, text) {
     const w = new Writer(text.length * 3 + 8);

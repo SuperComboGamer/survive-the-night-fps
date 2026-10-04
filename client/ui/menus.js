@@ -5,7 +5,7 @@ import { glyph } from './icons.js';
 import { bindsOf, keyName } from '../game/binds.js';
 import { loadRecord } from './records.js';
 import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
-import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
+import { linkedCode, gameInfo, listGames, getLeaderboard } from '../net/lobby.js';
 import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
 import { voteDifficulty } from '../net/feedback.js';
 import { playingFriends, unreadCount, onSocialChange } from '../net/friends.js';
@@ -211,6 +211,11 @@ export class Splash {
     svgEl('i', 'btn-ico', ab, glyph('trophy'));
     el('span', '', ab, 'Achievements');
     ab.addEventListener('click', () => this.ui.achPanel.show());
+    const lb = el('button', 'btn btn-ghost', btns);
+    lb.type = 'button';
+    svgEl('i', 'btn-ico', lb, glyph('skull'));
+    el('span', '', lb, 'Leaderboard');
+    lb.addEventListener('click', () => this._showLeaderboard());
     const cb = el('button', 'btn btn-ghost', btns);
     cb.type = 'button';
     svgEl('i', 'btn-ico', cb, glyph('keyboard'));
@@ -230,6 +235,33 @@ export class Splash {
     this.offline = false;
     this.joining = false;
     this.next = ''; // a game to go on into once this is up (a friend's, picked in another game: FriendsPanel.join)
+    this.boardRequest = 0;
+    this.boardClose = null;
+  }
+
+  async _showLeaderboard() {
+    if (this.ui.boardOpen) return;
+    const request = ++this.boardRequest;
+    this.boardClose = this.ui.board.onClose;
+    this.ui.board.onClose = () => this._hideLeaderboard();
+    this.ui.board.setLobbyMode(true);
+    this.ui.setBoard(null);
+    this.ui.setBoardOpen(true);
+    try {
+      const data = await getLeaderboard();
+      if (request === this.boardRequest && this.ui.boardOpen && !this.root.hidden) this.ui.setBoard(data);
+    } catch (err) {
+      if (request === this.boardRequest && this.ui.boardOpen && !this.root.hidden) this.ui.board.setError(err.message || 'Could not load the leaderboard.');
+    }
+  }
+
+  _hideLeaderboard() {
+    this.boardRequest++;
+    this.ui.setBoardOpen(false);
+    this.ui.setBoard(null);
+    this.ui.board.setLobbyMode(false);
+    this.ui.board.onClose = this.boardClose;
+    this.boardClose = null;
   }
 
   _typedName() {
@@ -455,6 +487,7 @@ export class Splash {
   }
 
   hide() {
+    if (this.ui.boardOpen && this.ui.board.lobbyMode) this._hideLeaderboard();
     this.root.hidden = true;
     clearInterval(this._iv);
     this._iv = 0;

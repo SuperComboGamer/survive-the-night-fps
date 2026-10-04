@@ -85,7 +85,7 @@ export class Room {
     // still on its way out for the old socket can reach a new one): hence twice as many as the game has seats
     this.socks = new Array(maxPlayers * 2 + 2).fill(null);
     this.draining = new Uint8Array(this.socks.length);
-    // per slot: the account its socket is signed in to ({ id, name }, null for a guest: index.js found it by the
+    // per slot: the account its socket is signed in to ({ id, name, isAdmin }, null for a guest: index.js found it by the
     // session cookie), and the name its player joined under ('' before the JOIN)
     this.users = new Array(this.socks.length).fill(null);
     this.names = new Array(this.socks.length).fill('');
@@ -145,7 +145,7 @@ export class Room {
     this.open++;
     this.emptySince = 0;
     const d = ws.getUserData();
-    const user = d.user ? { id: d.user.id, name: d.user.name } : null;
+    const user = d.user ? { id: d.user.id, name: d.user.name, isAdmin: d.user.isAdmin === true } : null;
     this.users[slot] = user;
     if (user) this.lobby.userIn(user.id, this);
     this.worker.postMessage({ t: 'open', slot, ip: d.ip, user });

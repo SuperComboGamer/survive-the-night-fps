@@ -3724,15 +3724,15 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   check('...and one more in the same tick joins that run (no second roll)', both && rolls === 2 && g3.world === third && far2 > 1 && c.snaps >= 160 && d.snaps >= 160, `rolls ${rolls}, walked ${far2.toFixed(1)} m`);
 }
 
-// the admin commands: only for a player who has said the server's ADMIN_SECRET (`/admin <it>`), which nobody else
-// ever sees - not the right one, not a wrong one. `/admin` alone stops them; five wrong tries and that connection is
-// done trying; a server without a secret has none. (games of their own: the run above is left as it was)
+// Admin commands come from a signed-in account's is_admin flag. A legacy `/admin <password>` is consumed rather
+// than broadcast, and DEV_ADMIN can explicitly authorize guests on non-production test servers.
 {
-  const setup = (adminSecret) => {
-    const g = new Game({ seed, dayLength: 3600, adminSecret, log: () => {} });
-    const join = (name) => {
+  const setup = (devAdmin = false) => {
+    const g = new Game({ seed, dayLength: 3600, devAdmin, log: () => {} });
+    const join = (name, { account = true, isAdmin = false } = {}) => {
       const c = { heard: [], system: [] };
       c.session = g.onOpen({
+        user: account ? { id: `${name}-account`, name, isAdmin } : null,
         send(bytes) {
           const r = new Reader(bytes.slice().buffer);
           const t = r.u8();
@@ -3750,8 +3750,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
       w.str(name);
       g.onMessage(c.session, w.bytes().slice());
       c.p = g.players.get(c.id);
-      c.say = (text, wait = false) => {
-        if (!wait) c.p.adminT = 0; // (one try a second: these come faster)
+      c.say = (text) => {
         const w2 = new Writer(160);
         w2.u8(C2S.CHAT);
         w2.str(text);
@@ -3762,36 +3761,26 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
     };
     return { g, join };
   };
-  const { g, join } = setup('hunter2 is long');
-  const A = join('Ann');
+  const { g, join } = setup();
+  const A = join('Ann', { isAdmin: true });
   const B = join('Bob');
   B.p.state.x = A.p.state.x + 1; // (in earshot: Bob would hear anything Ann's chat let out)
   B.p.state.z = A.p.state.z;
   g.update();
   g.timeLeft = 500;
+  B.say('/night');
+  check('admin: a regular account cannot run commands', g.timeLeft === 500 && !B.p.admin);
+  check('...an account flagged as admin is authorized on join', A.p.admin && !B.p.admin);
   A.say('/night');
-  check('admin: without the password a command does nothing', g.timeLeft === 500 && !A.p.admin);
-  const wrong = A.say('/admin hunter3');
-  check('...a wrong password is refused, to them alone', !A.p.admin && /Wrong admin password/.test(wrong) && !B.heard.concat(B.system).some((t) => /hunter/.test(t)), wrong);
-  const right = A.say('/admin   hunter2 is long  ');
-  check('...the right one lets them run the commands', A.p.admin && /Admin commands on/.test(right) && !B.p.admin, right);
-  A.say('/night');
-  check('...which work', g.timeLeft === 0.05, `${g.timeLeft}`);
-  check('...and neither try reached anyone else, nor came back to them as chat', !B.heard.concat(B.system).some((t) => /admin|hunter/i.test(t)) && !A.heard.some((t) => /hunter/.test(t)), B.heard.join(' | '));
-  const off = A.say('/ADMIN');
-  g.timeLeft = 500;
-  A.say('/night');
-  check('...`/admin` alone turns them off', !A.p.admin && /Admin commands off/.test(off) && g.timeLeft === 500, off);
-  for (let i = 0; i < 5; i++) B.say(`/admin guess${i}`);
-  const locked = B.say('/admin hunter2 is long');
-  check('...five wrong tries and the right one is no good on that connection', !B.p.admin && B.p.adminFails === 5 && /Too many/.test(locked), locked);
-  A.say('/admin guess');
-  const soon = A.say('/admin hunter2 is long', true);
-  check('...and one try a second at most', !A.p.admin && /Wait a second/.test(soon), soon);
-  const bare = setup('');
-  const C = bare.join('Cal');
-  const none = C.say('/admin anything');
-  check('...a server without an ADMIN_SECRET has no admin commands', !C.p.admin && /no admin commands/.test(none) && !bare.g.adminHash, none);
+  check('...and its commands work', g.timeLeft === 0.05, `${g.timeLeft}`);
+  const legacy = B.say('/admin hunter2 was old');
+  check('...a legacy password command is consumed and never broadcast', /signed-in account/.test(legacy) && !A.heard.concat(A.system).some((t) => /hunter2/.test(t)), legacy);
+  const dev = setup(true);
+  const C = dev.join('Cal', { account: false });
+  check('...DEV_ADMIN explicitly authorizes a guest test client', C.p.admin);
+  const bare = setup();
+  const D = bare.join('Dot', { account: false });
+  check('...a guest on an ordinary server is not an admin', !D.p.admin);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);

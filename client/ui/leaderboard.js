@@ -2,7 +2,7 @@
 // (server/stats.js) - the dead they put down, the nights they saw through, the runs they won, the teammates they
 // revived - with your own row picked out. Two lists: the best of everyone on record, and the players in this
 // game. A click on a column sorts by it. The game asks the server for the board while this is open and hands
-// each answer to set().
+// each answer to set(). On the splash, an HTTP request supplies the all-time list instead.
 import { BOARD_STATS, BOARD_TOP } from '../../shared/protocol.js';
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { glyph } from './icons.js';
@@ -31,9 +31,15 @@ export class Leaderboard {
     this.list = LISTS.some(([id]) => id === list) ? list : 'all';
     this.sort = BOARD_STATS.includes(sort) ? sort : BOARD_STATS[0];
     this.key = '';
+    this.error = '';
+    this.lobbyMode = false;
+    this.savedList = this.list;
 
     this.root = el('div', 'lbscr', parent);
     this.root.hidden = true;
+    this.root.setAttribute('role', 'dialog');
+    this.root.setAttribute('aria-modal', 'true');
+    this.root.setAttribute('aria-label', 'Leaderboard');
     const bg = el('div', 'map-bg', this.root);
     const frame = el('div', 'lb-frame paper', this.root);
     const head = el('div', 'map-head', frame);
@@ -41,10 +47,28 @@ export class Leaderboard {
     this.count = el('span', 'map-coords', head, '');
     // the cross, or a left press outside the frame, closes it: the game sets onClose
     this.onClose = null;
-    const close = svgEl('button', 'set-close btn-icon map-close', head, glyph('xmark'));
+    const close = (this.close = svgEl('button', 'set-close btn-icon map-close', head, glyph('xmark')));
     close.type = 'button';
     close.title = 'Close (L)';
+    close.setAttribute('aria-label', 'Close leaderboard');
     close.addEventListener('click', () => this.onClose?.());
+    this.root.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.onClose?.();
+      } else if (e.key === 'Tab') {
+        const focusable = [...this.root.querySelectorAll('button:not(:disabled):not([hidden])')].filter((b) => b.offsetParent !== null);
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    });
     this.root.addEventListener('pointerdown', (e) => {
       if (e.button === 0 && (e.target === bg || e.target === this.root)) this.onClose?.();
     });
@@ -77,15 +101,19 @@ export class Leaderboard {
     this.mine = el('div', 'lb-mine', table);
 
     const keys = el('div', 'map-keys', frame);
-    for (const [k, t] of [
+    for (const [k, t, lobbyOnly = false] of [
       [() => bindLabel('board'), 'close'], // (its keybind: game/binds.js)
+      ['Esc', 'close', true],
       ['LMB', 'sort by a column'],
     ]) {
       const s = el('span', 'gh', keys);
+      if (lobbyOnly) this.lobbyCloseHint = s;
+      else if (typeof k === 'function') this.gameCloseHint = s;
       if (typeof k === 'function') liveText(el('span', 'kbd sm', s), k);
       else el('span', 'kbd sm', s, k);
       el('span', '', s, t);
     }
+    this.lobbyCloseHint.hidden = true;
     this._render();
   }
 
@@ -95,11 +123,43 @@ export class Leaderboard {
     this.open = open;
     this.root.hidden = !open;
     this.ui.root.classList.toggle('board-open', open);
+    if (open) {
+      this.returnFocus = document.activeElement;
+      this.close.focus({ preventScroll: true });
+    } else if (this.returnFocus?.isConnected && !this.returnFocus.closest?.('[hidden]')) {
+      this.returnFocus.focus({ preventScroll: true });
+      this.returnFocus = null;
+    }
   }
 
   // data: { total, rows: [{ name, me, here, kills, nights, wins, revives, ranks | null }] }, null: none yet
   set(data) {
     this.data = data || null;
+    this.error = '';
+    this._render();
+  }
+
+  setError(text) {
+    this.data = null;
+    this.error = text || 'Could not load the leaderboard.';
+    this._render();
+  }
+
+  // On the splash there is no current game, so only the all-time list applies. The in-game choice is restored when
+  // the modal closes and the regular socket-backed board takes over again.
+  setLobbyMode(on) {
+    on = !!on;
+    if (on === this.lobbyMode) return;
+    this.lobbyMode = on;
+    if (on) {
+      this.savedList = this.list;
+      this.list = 'all';
+    } else this.list = this.savedList;
+    this.listBtns[1].hidden = on;
+    this.gameCloseHint.hidden = on;
+    this.lobbyCloseHint.hidden = !on;
+    this.close.title = on ? 'Close (Esc)' : `Close (${bindLabel('board')})`;
+    this.key = '';
     this._render();
   }
 
@@ -125,7 +185,7 @@ export class Leaderboard {
     const d = this.data;
     const k = this.sort;
     // (set() comes every few seconds while the board is open: the rows are only rebuilt when something on them moved)
-    const key = JSON.stringify([this.list, k, d]);
+    const key = JSON.stringify([this.list, k, d, this.error]);
     if (key === this.key) return;
     this.key = key;
     this.listBtns.forEach((b, i) => b.classList.toggle('on', LISTS[i][0] === this.list));
@@ -135,7 +195,7 @@ export class Leaderboard {
     this.mine.hidden = true;
     this.count.textContent = d ? `${num(d.total)} ${d.total === 1 ? 'player' : 'players'} on record` : '';
     if (!d) {
-      this.note.textContent = 'Asking the server…';
+      this.note.textContent = this.error || 'Asking the server…';
       this.note.hidden = false;
       return;
     }

@@ -1,4 +1,4 @@
-// Night camp scene + proximity voice check between two clients (server: GODMODE=1 ADMIN_SECRET=dev).
+// Night camp scene + proximity voice check between two clients (server: GODMODE=1 DEV_ADMIN=1).
 // usage: node scripts/e2e-night.js [url] [outdir]
 import puppeteer from 'puppeteer-core';
 const url = process.argv[2] || 'http://localhost:5173';
@@ -8,8 +8,6 @@ const browser = await puppeteer.launch({ executablePath: '/Applications/Google C
 const errors = [];
 async function client(name) {
   const page = await browser.newPage();
-  // the admin commands (/give, /spawn, /tp...): the client says the server's ADMIN_SECRET on joining
-  await page.evaluateOnNewDocument((k) => localStorage.setItem('stn.admin', k), process.env.ADMIN_SECRET || 'dev');
   await page.setViewport({ width: 1280, height: 720 });
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));

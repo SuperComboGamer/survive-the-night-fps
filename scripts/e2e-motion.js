@@ -1,4 +1,4 @@
-// Zombie motion quality (server: GODMODE=1 ADMIN_SECRET=dev): spawns a mixed pack that chases the player while it
+// Zombie motion quality (server: GODMODE=1 DEV_ADMIN=1): spawns a mixed pack that chases the player while it
 // backs off and strafes, records every posed zombie within 30 m each frame (bone world positions, interpolation and
 // gait state), and prints jitter metrics: stalls, velocity kinks, high-frequency wobble, planted-foot slip, hip pops.
 // Optionally delays snapshots like a bumpy connection (ordered, latency + uniform jitter + a rare stall).
@@ -11,8 +11,6 @@ const LAT = +(process.argv[5] || 0);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio'] });
 const page = await browser.newPage();
-// the admin commands (/give, /spawn, /tp...): the client says the server's ADMIN_SECRET on joining
-await page.evaluateOnNewDocument((k) => localStorage.setItem('stn.admin', k), process.env.ADMIN_SECRET || 'dev');
 await page.setViewport({ width: 960, height: 540 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));

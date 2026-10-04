@@ -147,6 +147,12 @@ try {
     for (let i = 0; i < 40 && !lb.board; i++) await sleep(25);
     const me = lb.board?.rows.find((r) => r.me);
     check('a player asking for the board gets it, with their own row in this game', !!me && me.name === 'Gus' && me.here, JSON.stringify(lb.board));
+    const publicBoard = await S.get('/api/leaderboard');
+    check(
+      'the splash can read the public all-time board without joining a game',
+      publicBoard.status === 200 && typeof publicBoard.body?.total === 'number' && Array.isArray(publicBoard.body?.rows) && publicBoard.body.rows.every((r) => r.me === false && r.here === false),
+      JSON.stringify(publicBoard),
+    );
     await lb.close();
   }
 

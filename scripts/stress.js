@@ -7,7 +7,7 @@
 //            --start-day N (3)  --out FILE (JSON results; default stress-<mode>-<time>.json in the temp dir)
 //
 // It starts a server of its own (server/index.js on --port) with GODMODE (bots never die, so every game keeps its
-// whole team in the fight), DAY_SECONDS=20 (night comes fast), an ADMIN_SECRET (bots /admin and /give themselves ammo at night)
+// whole team in the fight), DAY_SECONDS=20 (night comes fast), and DEV_ADMIN=1 (bots can give themselves ammo)
 // and no per-address limits, makes each step's games with POST /api/games, and puts protocol-level bots in them
 // (scripts/stress-bot.js, in worker threads). Each step waits for night, lets it run --warm seconds, then for
 // --measure seconds samples /status every second (each game thread's CPU and busy share, the network thread's,
@@ -58,7 +58,8 @@ if (busy) {
 const logFile = createWriteStream(LOG);
 const statsLines = []; // { at, code, players, zombies, ents, mean, p99, max, over, ticks, cpu, kbs }
 const STATS_RE = /^\[game (\w+)\] \[stats\] players (\d+) zombies (\d+) ents (\d+) tick ([\d.]+)ms p99 ([\d.]+)ms max ([\d.]+)ms over (\d+)\/(\d+) .*?cpu ([\d.]+)ms\/s out ([\d.]+) KB\/s\/client/;
-process.env.ADMIN_SECRET ||= 'stress-admin'; // the server's, and the bots' (their threads get this env)
+process.env.DEV_ADMIN = '1';
+process.env.NODE_ENV = 'test';
 const server = spawn(process.execPath, ['server/index.js'], {
   cwd: ROOT,
   env: { ...process.env, PORT: String(PORT), GODMODE: '1', DAY_SECONDS: '20', START_DAY: String(START_DAY), CONN_PER_IP: '0', LOBBY_LIMITS: '0', ROOM_MAX_PLAYERS: '64', MAX_GAMES: '400', STATS_FILE: '' },

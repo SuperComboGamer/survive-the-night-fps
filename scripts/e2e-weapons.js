@@ -1,4 +1,4 @@
-// Weapons e2e (server: GODMODE=1 ADMIN_SECRET=dev): fires/reloads every gun, swings every melee weapon,
+// Weapons e2e (server: GODMODE=1 DEV_ADMIN=1): fires/reloads every gun, swings every melee weapon,
 // throws a molotov + pipe bomb and checks the resulting fire area / explosion, screenshots each.
 // usage: node scripts/e2e-weapons.js [url] [outdir]
 import puppeteer from 'puppeteer-core';
@@ -9,8 +9,6 @@ mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage();
-// the admin commands (/give, /spawn, /tp...): the client says the server's ADMIN_SECRET on joining
-await page.evaluateOnNewDocument((k) => localStorage.setItem('stn.admin', k), process.env.ADMIN_SECRET || 'dev');
 await page.setViewport({ width: 1280, height: 720 });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));

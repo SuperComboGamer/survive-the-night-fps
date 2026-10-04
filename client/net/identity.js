@@ -37,25 +37,3 @@ export function playerId() {
   }
   return id;
 }
-
-// The server's admin password, as this browser was last told it by `/admin <password>` in chat (game.js): kept in
-// localStorage under 'stn.admin' and said to the server again in chat on every join, so whoever has it may run the
-// admin commands there (the server checks it against its ADMIN_SECRET). `/admin` alone forgets it.
-const ADMIN = 'stn.admin';
-
-export function adminKey() {
-  try {
-    return localStorage.getItem(ADMIN) || '';
-  } catch {
-    return '';
-  }
-}
-
-export function setAdminKey(key) {
-  try {
-    if (key) localStorage.setItem(ADMIN, key);
-    else localStorage.removeItem(ADMIN);
-  } catch {
-    /* storage unavailable */
-  }
-}
