@@ -32,7 +32,7 @@ const KEYS = {
   event: ['k', 'matchId', 'at', 't', 'day', 'phase', 'type', 'userId', 'name', 'x', 'z', 'data'],
   sample: ['k', 'matchId', 'at', 't', 'day', 'phase', 'players', 'survivors', 'downed', 'dead', 'zombies', 'tickMs', 'tickP99', 'pingAvg'],
 };
-const EVENT_TYPES = new Set(['join', 'leave', 'down', 'death', 'revive', 'turned', 'returned_at_dawn', 'night_start', 'dawn', 'boss_spawn', 'boss_kill', 'supply_found', 'supply_install', 'schematic', 'engine_start', 'engine_ready', 'crate_drop', 'car_alarm', 'radio_call', 'bell', 'victory', 'wipe', 'abandoned', 'interrupted']);
+const EVENT_TYPES = new Set(['join', 'leave', 'down', 'death', 'revive', 'turned', 'returned_at_dawn', 'night_start', 'dawn', 'boss_spawn', 'boss_kill', 'supply_found', 'supply_install', 'schematic', 'engine_start', 'engine_ready', 'crate_drop', 'car_alarm', 'radio_call', 'bell', 'crossing', 'arrival', 'victory', 'wipe', 'abandoned', 'interrupted']);
 const PHASES = new Set(['day', 'night', 'final_stand']);
 const shapeErrors = [];
 // undefined anywhere, or a number that is not finite (JSON would turn those into null or drop them unseen)

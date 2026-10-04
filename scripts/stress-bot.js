@@ -6,9 +6,9 @@
 //
 // From stress.js:  { t: 'spawn', bots: [{ id, url, name }] }   { t: 'sample' } -> { t: 'sample', ... }   { t: 'stop' }
 import { parentPort } from 'node:worker_threads';
-import { C2S, S2C, SNAP, ACT, ENT, PROTOCOL_VERSION, Writer, Reader, qangle16, dqangle16, qpitch, dqpitch, writeInput } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, ACT, ENT, PROTOCOL_VERSION, Writer, Reader, qangle16, dqangle16, qpitch, dqpitch, writeInput, usePos } from '../shared/protocol.js';
 import { BTN, CMD_DT, CMDS_PER_PACKET, PHASE } from '../shared/constants.js';
-import { createWorld } from '../shared/world.js';
+import { worldFor as buildWorld } from '../shared/worlds.js';
 import { createPlayerState, simulatePlayer, copyPlayerState, hashPlayerState } from '../shared/playersim.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { makeBox, COL } from '../shared/collision.js';
@@ -17,13 +17,17 @@ import { STRUCT_DEFS } from '../shared/defs.js';
 const WANDER_MAX = 60; // m from the car before a wandering bot turns back
 const GAP_SLOW = 150; // ms between two snapshots that counts as a hitch (they are due every 50)
 
-// seed -> { world, structs: id -> { col, refs } }: one world per seed for every bot of this thread
+// seed and act -> { world, structs: id -> { col, refs } }: one world per map for every bot of this thread (act: which
+// of a run's two maps the seed is built as, shared/acts.js - the island, or across the bridge the mainland)
 const worlds = new Map();
-function worldFor(seed) {
-  let w = worlds.get(seed);
-  if (!w) worlds.set(seed, (w = { world: createWorld(seed), structs: new Map() }));
+function worldFor(seed, act = 1) {
+  const key = `${seed}:${act}`;
+  let w = worlds.get(key);
+  if (!w) worlds.set(key, (w = { world: buildWorld(seed, act), structs: new Map() }));
   return w;
 }
+// what a WELCOME or a WORLD_RESET names after its seed (a server from before the mainland names none)
+const actOf = (r) => (r.left ? r.u8() : 1);
 
 const bots = new Map(); // id -> bot
 const noop = () => {};
@@ -111,14 +115,20 @@ function makeBot({ id, url, name }) {
     const type = r.u8();
     if (type === S2C.WELCOME) {
       b.pid = r.u16();
-      b.w = worldFor(r.u32());
+      const seed = r.u32();
+      r.u32(); // (the tick)
+      r.u8();
+      r.u8();
+      b.w = worldFor(seed, actOf(r));
       b.joined = true;
       b.interval = setInterval(() => tick(b), CMD_DT * 1000 * CMDS_PER_PACKET);
     } else if (type === S2C.REJECT) {
       b.err = `rejected ${r.u8()}`;
     } else if (type === S2C.WORLD_RESET) {
-      b.w = worldFor(r.u32());
+      const seed = r.u32();
+      b.w = worldFor(seed, actOf(r));
     } else if (type === S2C.SNAPSHOT) {
+      if (b.w) usePos(b.w.world); // (positions in it are in its world's units: protocol.js)
       const now = performance.now();
       if (b.lastSnap) {
         const gap = now - b.lastSnap;

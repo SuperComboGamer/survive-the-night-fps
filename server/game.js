@@ -1220,6 +1220,7 @@ export class Game {
   cross(by, night = false) {
     if (this.act !== WORLD.ISLAND || this.phase === PHASE.CROSSING) return;
     this.log('crossing to the mainland');
+    this.track.crossed(by, night); // (before the world is cleared: it reads who is alive, and at the car)
     // the escape from the island is paid as it always was: more to whoever was in the car than to those it left
     const car = this.world.car;
     for (const p of this.players.values()) {
@@ -1386,6 +1387,7 @@ export class Game {
     const back = this.crossing?.back || 0;
     this.crossing = null;
     this.phase = PHASE.DAY;
+    this.track.arrived(back);
     this.timeLeft = this.dayLen;
     this.notify(NOTIFY.ARRIVED, back);
     this.sound(SOUND.DAWN, 0, 0, 0, 0);

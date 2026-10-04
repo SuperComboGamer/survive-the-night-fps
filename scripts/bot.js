@@ -2,9 +2,9 @@
 // Each bot joins, runs the shared player simulation for prediction, wanders + shoots, decodes every
 // snapshot, and reports bandwidth and prediction error (validates client/server determinism): the server only
 // sends a bot its own state when the two disagree, so "rebased" counts the corrections and "pred err" their size.
-import { C2S, S2C, SNAP, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, dqangle16, qpitch, dqpitch, writeInput } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, ACT, PROTOCOL_VERSION, Writer, Reader, qangle16, dqangle16, qpitch, dqpitch, writeInput, usePos } from '../shared/protocol.js';
 import { BTN, CMD_DT, CMDS_PER_PACKET } from '../shared/constants.js';
-import { createWorld } from '../shared/world.js';
+import { worldFor } from '../shared/worlds.js';
 import { createPlayerState, simulatePlayer, copyPlayerState, hashPlayerState } from '../shared/playersim.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
 import { ENT } from '../shared/protocol.js';
@@ -14,7 +14,6 @@ import { STRUCT_DEFS } from '../shared/defs.js';
 const N = +(process.argv[2] || 2);
 const SECONDS = +(process.argv[3] || 20);
 const URL = process.argv[4] || 'ws://localhost:3000/ws';
-const worlds = new Map();
 
 function runBot(idx) {
   return new Promise((resolve) => {
@@ -87,12 +86,20 @@ function runBot(idx) {
       if (type === S2C.WELCOME) {
         st.id = r.u16();
         const seed = r.u32();
-        if (!worlds.has(seed)) worlds.set(seed, createWorld(seed));
-        st.world = createWorld(seed); // own copy (structure grid is per client)
+        r.u32(); // (the tick)
+        r.u8();
+        r.u8();
+        // (which of the run's two maps the seed is to be built as: shared/acts.js. A server from before the mainland says none)
+        st.world = worldFor(seed, r.left ? r.u8() : 1); // own copy (structure grid is per client)
+        usePos(st.world);
         interval = setInterval(tick, CMD_DT * 1000 * CMDS_PER_PACKET);
       } else if (type === S2C.WORLD_RESET) {
-        st.world = createWorld(r.u32()); // a new playthrough on a new map
+        // a new playthrough on a new map, or the crossing to the mainland (the act says which is to be built)
+        const seed = r.u32();
+        st.world = worldFor(seed, r.left ? r.u8() : 1);
+        usePos(st.world);
       } else if (type === S2C.SNAPSHOT) {
+        if (st.world) usePos(st.world); // (positions in it are in its world's units: protocol.js)
         st.snaps++;
         const flags = readHeader(r, st.net);
         const tick = st.net.tick;
