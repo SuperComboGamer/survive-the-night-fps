@@ -4023,6 +4023,47 @@ const PACK_PIVOT = [0, 0.1, 0.145]; // (chest-bone space) the top of the worn pa
 const PACK_HANG = [1, 0.5]; // how much of the chest's bend (and of the spine's, times the chest's share) the pack undoes
 const _mountW = new THREE.Vector3();
 
+// Talking (s.voice: how loud they are on voice chat, Voice.mouthLevel). The mouth pops open on each syllable and
+// relaxes shut a little slower; through the short gaps between words it stays a dark slit, and it goes 0.4 s after
+// the last one. Loudness is the RMS of the speaker's own stream: about 0.05-0.15 in speech, under 0.01 when silent.
+const MOUTH_FLOOR = 0.02; // the level the mouth starts to open at...
+const MOUTH_RANGE = 0.12; // ...and how much louder than that it is wide open
+const MOUTH_TALK = 0.03; // louder than this is a word: the mouth shows (for MOUTH_HOLD s after)
+const MOUTH_HOLD = 0.4;
+const MOUTH_SLIT = 0.08; // the mouth between words, as a fraction of wide open
+const MOUTH_JAW = 0.2; // the jaw drops this far (rad) wide open...
+const MOUTH_NOD = 0.04; // ...and the head lifts this much
+let _mouthGeo = null;
+/** The inside of the mouth, on the head bone: a thin dark lens laid on the face under the nose (bent round it and
+ *  leaning back with it), the tongue at its bottom. No teeth: a pale line along the top read as a grimace between
+ *  words. Its top edge is at the origin, so scaling it in Y opens it downward; the jaw (which drops with it) covers
+ *  its lower part. Fitted to the cranium of buildHead for a human (headSX 0.84, headSZ 1.06): at the upper lip the
+ *  face is 0.92 hr forward of the head bone, sloping back 0.5 hr per hr down and curving back 0.95 x^2 / hr to the
+ *  sides; set into it, the lens would break up against the facets. */
+function createMouth(P) {
+  const hr = P.headR;
+  if (!_mouthGeo) {
+    const mb = new MeshBuilder({ skinned: false });
+    const ry = hr * 0.13;
+    mb.ellip(0, [0, -ry, 0], [hr * 0.25, ry, hr * 0.025], {
+      ws: 14, hs: 6, color: 0x1e0907, region: CR.PLAIN, ao: false, blood: false, mottle: 0,
+      shape(v) {
+        v.z += (0.95 * v.x * v.x) / hr;
+      },
+      tint(p, n, c) {
+        if (-p.y > ry * 1.4) c.lerp(color(0x5a1c1a), 0.8); // the tongue
+      },
+    });
+    _mouthGeo = mb.build().geometry;
+  }
+  const m = new THREE.Mesh(_mouthGeo, getCharacterMaterial());
+  m.name = 'mouth';
+  m.position.set(0, hr * 0.53, -hr * 0.93);
+  m.rotation.x = -Math.atan(0.5);
+  m.visible = false;
+  return m;
+}
+
 class SurvivorInstance {
   constructor(seed) {
     this.seed = seed >>> 0;
@@ -4069,6 +4110,10 @@ class SurvivorInstance {
     this.headCenter.position.set(0, this.P.headR * 0.9, 0);
     this.bones[HEAD].add(this.headCenter);
     this.object.userData.head = this.headCenter;
+    this.mouth = createMouth(this.P);
+    this.bones[HEAD].add(this.mouth);
+    this.mouthOpen = 0; // 0 shut .. 1 wide open (updateMouth)
+    this.talkT = 0; // the mouth shows while this runs down: MOUTH_HOLD from the last word
     this.phase = rnd() * TAU;
     this.time = 0;
     this.off = rnd() * 50;
@@ -4201,6 +4246,9 @@ class SurvivorInstance {
     this.swimW += ((s.swim ? 1 : 0) - this.swimW) * (1 - Math.exp(-dt * 5));
     this.swimPh += dt * (1.8 + 1.6 * clamp(speed / 2, 0, 1));
     this.talkW += ((s.talk ? 1 : 0) - this.talkW) * k;
+    // talking on voice chat: nothing to do for anyone who is not (zombies and the dead are out of it)
+    const voice = this.zombie || s.dead ? 0 : s.voice || 0;
+    if (voice > 0 || this.talkT > 0) this.updateMouth(dt, voice);
     const z = this.z;
     let cyc = lerp(lerp(1.7, 2.5, clamp(speed / 7, 0, 1)), 1.1, this.crouchW);
     if (this.zombie) {
@@ -4259,6 +4307,19 @@ class SurvivorInstance {
     const fl = this.flashlightAnchor;
     if (this.zombie || s.dead) fl.rotation.set(0, 0, 0);
     else fl.rotation.set(clamp(s.pitch || 0, -1.4, 1.4) - (o[HIPS * 4] + o[SPINE * 4] + o[CHEST * 4]), 0, 0);
+  }
+
+  /** Voice chat loudness to the mouth (see MOUTH_*): called while they talk and through the hold after. */
+  updateMouth(dt, voice) {
+    const want = clamp((voice - MOUTH_FLOOR) / MOUTH_RANGE, 0, 1);
+    this.mouthOpen += (want - this.mouthOpen) * Math.min(1, dt * (want > this.mouthOpen ? 35 : 15));
+    if (voice > MOUTH_TALK) this.talkT = MOUTH_HOLD;
+    else this.talkT = Math.max(0, this.talkT - dt);
+    if (this.zombie || this.s.dead) this.talkT = 0; // (shut at once, not after the hold)
+    const on = this.talkT > 0;
+    if (!on) this.mouthOpen = 0;
+    this.mouth.visible = on;
+    if (on) this.mouth.scale.set(1 - 0.2 * this.mouthOpen, MOUTH_SLIT + (1 - MOUTH_SLIT) * this.mouthOpen, 1);
   }
 
   /**
@@ -4366,6 +4427,11 @@ class SurvivorInstance {
       arm(p, 1, 1.4 * Math.sin(u * PI), 0.2, 0, 0.4, 0);
     }
     if (this.swimW > 0.01) this.poseSwim(p, s, speed);
+    // talking: the jaw drops with the mouth and the head lifts a touch on each syllable
+    if (this.mouthOpen > 0) {
+      R(p, JAW, -MOUTH_JAW * this.mouthOpen, 0, 0);
+      A(p, HEAD, MOUTH_NOD * this.mouthOpen, 0, 0);
+    }
   }
 
   /** Afloat (shared/swim.js), blended over the rest by swimW: upright treading water, sculling at the surface, and

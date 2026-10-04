@@ -2510,7 +2510,8 @@ export class Game {
       this.boardT = performance.now() + BOARD_EVERY;
       this.conn.board();
     }
-    // voice talking indicators
+    // voice: how loud everyone is talking, for their mouths (entities.js), and the talking indicators
+    this.voice.sampleMouths(performance.now());
     if (this.frame % 6 === 0) {
       const talking = this.voice.poll();
       const key = talking.map((id) => (this.voice.overRadio(id) ? 'r' : '') + id).join();

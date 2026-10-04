@@ -11,6 +11,7 @@
 //                &hit=1 draws the server's hitbox on each and prints where the middle of the skull is
 //   ?pack=poses  survivors wearing the backpack: idle, walk, sprint, crouch, downed, seated (&cam=back|q|front, &yaw=deg)
 //   ?pack=ground the backpack as it lies on the ground, from four sides
+//   ?voice=L     survivors talking on voice chat at loudness L (0.02 shut .. 0.14 wide open); ?voice=talk -> a sentence
 import * as THREE from 'three';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, CANIM, ITEM } from '../../shared/defs.js';
 import { createZombie, createSurvivor, modelStats, zombieVariants } from '../render/models/characters.js';
@@ -287,6 +288,13 @@ const stats = modelStats();
 const statTxt = stats.map((s) => `${String(s.type).padEnd(10)} v${s.variant} tris=${s.tris}${s.cal ? ' k=' + s.cal.k.toFixed(3) + ' dz=' + s.cal.dz.toFixed(3) : ''}`).join('\n');
 console.log('model stats\n' + statTxt);
 
+// ?voice=talk: a loudness envelope like speech - syllables about 5 a second, words with short gaps, a pause every 4 s
+function sentence(t) {
+  if (t % 4 > 3) return 0;
+  const word = Math.sin(t * 2.3) + 0.6 * Math.sin(t * 3.7);
+  return word < -0.7 ? 0.004 : 0.035 + 0.1 * Math.max(0, Math.sin(t * 31)) * (0.6 + 0.4 * Math.sin(t * 1.7));
+}
+
 let lastNow = performance.now();
 const perf = { n: 0, upd: 0, rnd: 0 };
 let time = 0;
@@ -354,6 +362,7 @@ function frame() {
         speed: anim === ZANIM.WALK ? 4.3 : anim === ZANIM.RUN ? 7 : anim === ZANIM.EAT ? 2 : 0,
         sprint: anim === ZANIM.RUN, crouch: anim === ZANIM.EAT, pitch: anim === ZANIM.ATTACK ? 0.4 : anim === ZANIM.STAGGER ? -0.4 : 0,
         onGround: anim !== ZANIM.AIRBORNE, reloading: anim === ZANIM.SPECIAL, dead: anim === ZANIM.DEAD, time: T,
+        voice: q.get('voice') === 'talk' ? sentence(T) : +(q.get('voice') || 0),
       };
       if (a.pose) {
         const p = a.pose;
@@ -372,7 +381,7 @@ function frame() {
       if (fixedT >= 0) {
         if (!a.warm) {
           a.warm = true;
-          for (let i = 0; i < Math.round(fixedT * 60); i++) s.update(1 / 60, { ...st, time: i / 60 });
+          for (let i = 0; i < Math.round(fixedT * 60); i++) s.update(1 / 60, { ...st, time: i / 60, voice: q.get('voice') === 'talk' ? sentence(i / 60) : st.voice });
         }
         s.update(0, { ...st, time: fixedT });
       } else s.update(dt, st);

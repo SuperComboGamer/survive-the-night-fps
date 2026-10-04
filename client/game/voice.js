@@ -4,19 +4,32 @@
 // Push-to-talk (V) by default, or the walkie-talkie's key; the microphone track is enabled only while transmitting.
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
 const RADIO_HANG_MS = 400; // the radio stays open this long after the key comes up: the last words are still on their way
+const MOUTH_MS = 40; // how often each voice's loudness is read for the mouths: often enough to keep up with syllables
+
+// loudness (RMS, 0..1) of what is in an analyser's window right now
+function rms(an, buf) {
+  an.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = (buf[i] - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / buf.length);
+}
 
 export class Voice {
   constructor(conn, audio) {
     this.conn = conn;
     this.audio = audio;
     this.myId = 0;
-    this.peers = new Map(); // id -> {pc, source, stream, analyser, level, talking, radio, seen}
+    this.peers = new Map(); // id -> {pc, source, stream, analyser, level, mouth, talking, radio, seen}
     this.localStream = null;
     this.localTrack = null;
     this.transmitting = false;
     this.enabled = false;
     this.wantMic = false;
     this.onState = null;
+    this.mouthAt = 0;
   }
 
   setMyId(id) {
@@ -65,7 +78,7 @@ export class Voice {
 
   _createPeer(id, initiator) {
     const pc = new RTCPeerConnection({ iceServers: ICE });
-    const peer = { pc, source: null, stream: null, analyser: null, level: 0, talking: false, radio: false, radioOff: 0, seen: false, pendingIce: [] };
+    const peer = { pc, source: null, stream: null, analyser: null, level: 0, mouth: 0, talking: false, radio: false, radioOff: 0, seen: false, pendingIce: [] };
     this.peers.set(id, peer);
     // only the initiator creates the audio transceiver; the answerer reuses the one negotiated
     // from the offer (adding its own would create an extra, unassociated m-line)
@@ -108,7 +121,7 @@ export class Voice {
       const ctx = this.audio.context;
       const src = ctx.createMediaStreamSource(peer.stream);
       const an = ctx.createAnalyser();
-      an.fftSize = 256;
+      an.fftSize = 1024; // (a 21 ms window: a pitch period or two even of a deep voice, so a syllable reads steady)
       src.connect(an);
       peer.analyser = an;
       peer.buf = new Uint8Array(an.fftSize);
@@ -205,18 +218,25 @@ export class Voice {
       if (!p.seen) p.source?.setAbsent?.();
       p.seen = false;
       if (!p.analyser) continue;
-      p.analyser.getByteTimeDomainData(p.buf);
-      let sum = 0;
-      for (let i = 0; i < p.buf.length; i++) {
-        const v = (p.buf[i] - 128) / 128;
-        sum += v * v;
-      }
-      const rms = Math.sqrt(sum / p.buf.length);
-      p.level = p.level * 0.6 + rms * 0.4;
+      p.level = p.level * 0.6 + rms(p.analyser, p.buf) * 0.4;
       p.talking = p.level > 0.02 && p.source?.mode?.() !== 0;
       if (p.talking) talking.push(id);
     }
     return talking;
+  }
+
+  // Each voice's loudness for the mouths (call every frame; it reads them every MOUTH_MS). It is read off what the
+  // speaker sends, before distance or the radio, so whoever is talking moves their mouth wherever you hear them from.
+  // Not talking (the V key or the walkie-talkie's up) their mic track is off and it is 0: the mouth stays shut.
+  sampleMouths(now) {
+    if (now - this.mouthAt < MOUTH_MS) return;
+    this.mouthAt = now;
+    for (const p of this.peers.values()) p.mouth = p.analyser ? rms(p.analyser, p.buf) : 0;
+  }
+
+  // how loud this peer is talking right now (0 silent, about 0.05-0.15 in speech): what moves their mouth
+  mouthLevel(id) {
+    return this.peers.get(id)?.mouth || 0;
   }
 
   _emit() {
