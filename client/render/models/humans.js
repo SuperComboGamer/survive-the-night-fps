@@ -387,7 +387,7 @@ export function mouthAnchor(H) {
 const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
 /** A cross-section's point at angle t, pushed out by `push` (m): [x, z] about the section's middle. */
-function secXZ(r, t, push = 0) {
+export function secXZ(r, t, push = 0) {
   const s = Math.sin(t), c = Math.cos(t), e = 2 / (r.n || 2);
   const dz = c > 0 ? r.df : r.db;
   let x = Math.sign(s) * Math.pow(Math.abs(s), e) * r.w;
@@ -405,7 +405,7 @@ function secXZ(r, t, push = 0) {
 }
 
 /** Rings by height from a table of [y, w, df, db, n, cx, cz]: interpolated, so a surface can be cut anywhere. */
-function ringTable(rows) {
+export function ringTable(rows) {
   return (y) => {
     let i = 0;
     while (i < rows.length - 2 && rows[i + 1][0] < y) i++;

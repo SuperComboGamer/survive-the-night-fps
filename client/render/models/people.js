@@ -94,10 +94,12 @@ export function buildPerson(mb, P, L, detail = 1) {
   const pT = pP + thick; // the top over the trousers
   const nvT = (y0, y1) => Math.max(2, Math.round(((y1 - y0) / 0.034) * Math.min(1, detail * 1.2)));
   const nvL = (y0, y1) => Math.max(2, Math.round(((y1 - y0) / 0.048) * Math.min(1, detail * 1.2))); // (the limbs: long straight runs)
+  // (L.hole(x, y, z): a wound cut through the trunk's skin and whatever is worn over it: monsters.js tornOpen)
+  const holeO = L.hole && !FAR() ? { tear: { amt: 0, fn: L.hole } } : null;
   // the skin under torn clothes: a dead body's torso is drawn under its rags
   if (dead && !FAR() && ((top && top.tear) || (pants && pants.tear) || !top)) {
     const y1 = top ? collarY : T.yHi;
-    sheet(mb, T, 0, TAU, T.yLo, y1, Math.max(8, rs - 4), nvL(T.yLo, y1), 0, { ...skinO, cap0: 0.02 });
+    sheet(mb, T, 0, TAU, T.yLo, y1, Math.max(8, rs - 4), holeO ? nvT(T.yLo, y1) : nvL(T.yLo, y1), 0, { ...skinO, cap0: 0.02, ...holeO });
   }
   // ---- trousers (and a coverall's legs)
   const pantsCol = pants ? color(pants.color) : skin;
@@ -111,7 +113,8 @@ export function buildPerson(mb, P, L, detail = 1) {
   const topReg = top ? top.region ?? CR.COTTON : 0;
   const open = top && top.open ? top.open : 0;
   if (top) {
-    const fnTop = top.collar === 'v' ? (x, y, z) => z < 0 && Math.abs(x) < (y - (ySh - 0.075)) * 0.55 : top.backOpen ? (x, y, z) => z > 0.04 && Math.abs(x) < 0.03 + (yC + 0.1 - y) * 0.12 : null;
+    const fnTop0 = top.collar === 'v' ? (x, y, z) => z < 0 && Math.abs(x) < (y - (ySh - 0.075)) * 0.55 : top.backOpen ? (x, y, z) => z > 0.04 && Math.abs(x) < 0.03 + (yC + 0.1 - y) * 0.12 : null;
+    const fnTop = holeO ? (x, y, z) => L.hole(x, y, z) || (fnTop0 ? fnTop0(x, y, z) : false) : fnTop0;
     const topO = { color: topCol, region: topReg, mottle: 0.12, tint: top.tint, tear: tearOf(top, 31, fnTop) };
     const y0 = pants ? hem : T.yLo;
     if (open) {
@@ -151,7 +154,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     }
   } else if (!dead || !pants) {
     // bare-chested (a dead body): the skin from the trousers up
-    sheet(mb, T, 0, TAU, pants ? rise - 0.01 : T.yLo, T.yHi, rs, nvT(rise, T.yHi), 0, { ...skinO, cap1: 0.004 });
+    sheet(mb, T, 0, TAU, pants ? rise - 0.01 : T.yLo, T.yHi, rs, nvT(rise, T.yHi), 0, { ...skinO, cap1: 0.004, ...holeO });
   }
   if (top && (top.hem ?? 0) > 0.15) {
     // what hangs below the hips (a dress, a hospital gown, a long coat's tails): flared, so striding thighs stay inside
@@ -224,7 +227,7 @@ export function buildPerson(mb, P, L, detail = 1) {
       stump(mb, 'farm' + n, 0.034 * B.arm, 0.0);
       continue;
     }
-    hand(mb, P, L, side, skin, dead, detail);
+    if (!L.noHands) hand(mb, P, L, side, skin, dead, detail);
   }
   // ---- legs
   for (let i = 0; i < 2; i++) {
@@ -250,7 +253,7 @@ export function buildPerson(mb, P, L, detail = 1) {
       sheet(mb, Lg, 0, TAU, Lg.yLo, Lg.yHi, rsL, nvL(Lg.yLo, Lg.yHi), 0, { ...skinO, cap0: 0, cap1: 0 });
     }
     if (shoe) boot(mb, P, L, side, shoe);
-    else bareFoot(mb, P, L, side, skin);
+    else if (!L.noFeet) bareFoot(mb, P, L, side, skin);
   }
   // ---- overalls: the bib and its straps over the top, buttons
   if (L.overalls) overalls(mb, P, T, L, pT);
@@ -267,7 +270,7 @@ export function buildPerson(mb, P, L, detail = 1) {
   if (L.hat) hat(mb, P, H, L.hat, L);
   if (L.gear) gear(mb, P, T, L.gear, L, { pT, pP, rise, open, arms, legs, H });
   if (dead) deadExtras(mb, P, H, L, T);
-  return { H, T, arms, legs, B, pT, pP };
+  return { H, T, N, arms, legs, B, pT, pP };
 }
 
 const mulC = (c, k) => color(c).multiplyScalar(k);
@@ -1097,8 +1100,9 @@ function deadExtras(mb, P, H, L, T) {
  * For the bosses, whose trunks and arms are their own (characters.js): a dead face on the 'head' / 'jaw' bones (teeth,
  * injuries and all) and legs from the hips down - trousers to their ragged hems, bare shins and feet below.
  */
-export function deadHead(mb, P, L) {
-  const H = buildHumanHead(mb, P, L);
+export function deadHead(mb, P, L, detail = 1) {
+  D = detail; // (not the detail the last person happened to be built at: a boss built after a far copy had no teeth)
+  const H = buildHumanHead(mb, P, L, detail);
   const f = L.face || {};
   if ((f.brow || 1) > 1.8) {
     // a brute's brow: a shelf of bone over sunken eyes, and the cheekbones under them
@@ -1110,7 +1114,7 @@ export function deadHead(mb, P, L) {
       mb.ellip('head', [p.x - sd * 0.004 * H.s, p.y, p.z + 0.006 * H.s], [0.02 * H.s, 0.014 * H.s, 0.02 * H.s], { ws: 7, hs: 5, color: mulC(L.skin, 0.95), region: CR.ROT, mottle: 0.15, tint: skinTint(L) });
     }
   }
-  if (L.hair) hair(mb, P, H, L, 0.6);
+  if (L.hair) hair(mb, P, H, L, 0.6 * detail);
   deadExtras(mb, P, H, L, null);
   return H;
 }
