@@ -182,11 +182,13 @@ const smooth = (a, b, x) => {
 };
 
 export class MenuTour {
-  constructor(world) {
+  // open: the first shot starts on the picture, not out of black (the page's first: it fades in over the still)
+  constructor(world, open = false) {
     this.world = world;
     this.shots = planShots(world);
     this.k = 0;
     this.t = 0;
+    this.open = open;
     this.clock = 0;
     this.y = 0;
     this.yaw = 0;
@@ -208,6 +210,7 @@ export class MenuTour {
     if (this.t > SHOT) {
       this.t = 0;
       this.fresh = true;
+      this.open = false;
       if (++this.k >= this.shots.length) {
         this.k = 0;
         shuffle(this.shots);
@@ -239,6 +242,6 @@ export class MenuTour {
     const bob = Math.sin(this.clock * Math.PI * 2 * 0.85) * 0.022;
     cam.position.set(p.x, this.y + bob, p.z);
     cam.rotation.set(this.pitch, this.yaw, Math.sin(this.clock * 0.43) * 0.008);
-    return 1 - Math.min(smooth(0, FADE, this.t), smooth(SHOT, SHOT - FADE, this.t));
+    return 1 - Math.min(this.open ? 1 : smooth(0, FADE, this.t), smooth(SHOT, SHOT - FADE, this.t));
   }
 }

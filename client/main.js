@@ -265,6 +265,30 @@ try {
   if (was && was.code && was.code === linkedCode() && Date.now() - was.t < REJOIN_MS) setTimeout(() => rejoin(was.code, was.name), 300);
 } catch {}
 
+// ---------------------------------------------------------------- the still behind the splash
+// index.html shows a blurred still of the walk until the world is built and first drawn (seconds, on a slow machine);
+// it fades into the scene then. The still is the last one this browser drew: the valley at its own quality settings.
+const STILL_KEY = 'stn.still';
+const still = document.getElementById('still');
+let stillKept = false;
+function showScene() {
+  if (!still || still.classList.contains('gone')) return;
+  still.classList.add('gone');
+  still.addEventListener('transitionend', () => still.remove(), { once: true });
+}
+// (read back in the same task as the draw: the canvas does not keep its picture once it is on screen)
+function keepStill() {
+  stillKept = true;
+  try {
+    const src = renderer.canvas;
+    const c = document.createElement('canvas');
+    c.width = 384;
+    c.height = Math.round((384 * src.height) / src.width);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    localStorage.setItem(STILL_KEY, c.toDataURL('image/jpeg', 0.7));
+  } catch {}
+}
+
 // ---------------------------------------------------------------- frame loop
 let last = performance.now();
 let fpsAcc = 0;
@@ -297,7 +321,12 @@ function frame(now) {
   }
   const t1 = performance.now();
   // (nothing is drawn while the scene's shader programs are being built in the background: Game.prewarm)
-  if (game.post && !game.warm?.hold) renderer.render(game.post, game.state === 'playing');
+  if (game.post && !game.warm?.hold) {
+    renderer.render(game.post, game.state === 'playing');
+    showScene();
+    // a few seconds into a shot of the walk, faded all the way in, the shaders all built
+    if (!stillKept && game.state === 'menu' && !game.warm && game.tour?.t > 6 && ui.splash.cutK === 0) keepStill();
+  }
   const t2 = performance.now();
   game.cpuUpdateMs = (game.cpuUpdateMs || 0) * 0.95 + (t1 - t0) * 0.05;
   game.cpuRenderMs = (game.cpuRenderMs || 0) * 0.95 + (t2 - t1) * 0.05;

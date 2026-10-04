@@ -18,6 +18,13 @@
   </head>
   <body>
     <div id="game"></div>
+    <div id="still" aria-hidden="true"></div>
+    <script>
+      try {
+        const s = localStorage.getItem('stn.still');
+        if (s) document.getElementById('still').style.backgroundImage = `url(${s})`;
+      } catch {}
+    </script>
     <div id="ui"></div>
     <script type="module" src="./main.js"></script>
   </body>
