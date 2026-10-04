@@ -429,16 +429,24 @@ act 2, where the same loop is played with a plane and flying out wins.
   minimap follow the world. `worldFor(seed, act)` (`shared/worlds.js`) makes either from the run's one seed.
 - **The mainland** (`shared/mainland.js`) is 1280 m across, built with the island's kit (`shared/worldkit.js`: the
   Builder, the collider grids, the lists a world hands on): the Bridgehead, Port Calder, Kessler Ironworks,
-  Eastgate, a truck stop, Calder Field, and sixteen places out on the plain (`shared/mainland-places.js`: one entry
-  each in `OUTLYING` - how much ground it levels, what road it gets, and a `build`; its loot table is its zone's in
-  defs.js). `world.car` is the plane there (`plane: true`), so everything that asks for "the car" - the reach, the
+  Eastgate, a truck stop, Calder Field, and twenty-eight places out on the plain (`shared/mainland-places.js`: one
+  entry each in `OUTLYING` - how much ground it levels, what road it gets, and a `build`; its loot table is its
+  zone's in defs.js; `MAINLAND_ZONES` is the first and the last of them). `world.car` is the plane there (`plane: true`), so everything that asks for "the car" - the reach, the
   supplies, the final stand - asks for it. What the island has and it lacks (mine, railway, fair, clinic,
   cemetery) is `null`.
   - *The plan.* The bridge, the city, the airfield and what hangs off them are set first; the lake is dug where
     there is most room, the marina put on its shore; the rest are put down one at a time on the roomiest of a
     handful of spots (`room()`: `PLACE_GAP` of open country from every other, clear of the city, the airfield,
     Route 9, the lake and the farms' tracks), each weighted by what it wants (the mast high ground, the loggers the
-    rim). A farm that no straight track reaches the highway from is left to the county roads.
+    rim). A farm that no straight track reaches the highway from is left to the county roads. The third pass's
+    places go in last, where there is room between those, and a place that finds none takes less open country.
+  - *The river.* A line through a few points the seed moves: down out of the rim's hills on the bay's side, along
+    the city's edge there and into the bay, which is its mouth (`riverPts`, and `riverD`: how far every vertex of
+    the heightfield is from it). The terrain lets a valley down to the water and cuts a bed `RIVER_DEPTH` under it
+    (deep water: swum, or crossed). Two of the city's streets run on over it (`Ferry Street`, `Eastgate Road`), and
+    a county road may cross it squarely; a road's stretch over it is a `span`: level, `BRIDGE_UP` over the water,
+    not written into the heightfield, and carried on a thin deck (thin: server/nav.js walks the dead over a deck)
+    with girders and what is left of its railings. `world.river` is `{ pts, hw, bridges }`.
   - *The roads.* Route 9 runs bridge - checkpoint - Main Street - truck stop - airfield. Every other place is joined
     to the nearest road already there by a line that crosses no place and no water (round a corner if no straight
     one does), nearest place first, and turns its front to that road a quarter turn at a time (so its walls lie
@@ -447,11 +455,24 @@ act 2, where the same loop is played with a plane and flying out wins.
   - *Port Calder* is `GRID` x `GRID` blocks of lots. What the run needs and the landmarks (hospital, church,
     cinema, station, filling station, police, bus depot, a collapsed block, three towers) are dealt onto lots
     first; the seed deals the rest. No lot is empty. The upper floors of a walk-in building are solid and shut
-    (`sheared`: the top ones broken back, a floor slab hanging; `stairBlock`: the stairs under rubble). The streets
-    get wrecks, litter, heaved slabs and weeds everywhere, and a few stretches get more (`ROADBLOCKS`, `JAMS`,
-    `SINKHOLES`, and the top of the first tower across the street east of it, climbed by a `rubble_slope` either
-    side). `world.landmarks` names what the field map labels inside the city; `world.lights` of kind `smoke` and
-    `fire` are the columns over it (`SMOKES`, `FIRES`: drawn by effects.js as `column` and `blaze`).
+    (`block`: a box for every run of storeys on one footprint; `stairBlock`: the stairs under rubble). The streets
+    are dressed every few metres (traffic, kerb furniture, rubbish, the dead, heaved slabs, weeds; whatever is solid
+    goes through `fits`, which keeps it clear of walls, props, doorways and what is searched), and a few stretches
+    get more (`ROADBLOCKS`: a last stand of the army's; `JAMS`; `SINKHOLES`; and the shaft of the first tower lying
+    in three lengths across the street beside it and the block beyond - `fall` - broken apart over the roadway,
+    where the rubble is the way through; the lots under it are `crushed`). `world.landmarks` names what the field
+    map labels inside the city; `world.lights` of kind `smoke` and `fire` are the columns over it (`SMOKES`,
+    `FIRES`: drawn by effects.js as `column` and `blaze`).
+  - *What the city is drawn from.* The world does not build what is seen of a building out of boxes: it says what
+    stands there, and the client's kit builds it (`client/render/citykit.js`). `world.city` carries `buildings`
+    (a block of storeys: footprint, storeys, a style - walkup, shopflat, slab, office, glass, warehouse, stone - a
+    wall material, and `cut`: what is left of each storey that is not whole), `rooms` (a room that is walked into:
+    its openings as the Builder cut them, so the kit can line it, ceil it, frame its windows and hang its sign),
+    `shells` (walls with the sky behind them: lengths, each broken at its own height), `heaps` (rubble: solid in
+    steps a survivor climbs), `fallen`, `pancakes`, and `signs` (a board or a mark from the city's atlas, anywhere).
+    Their solids are parts flagged `hidden`: there for collision, the nav grid, the field map and the tests, drawn
+    by nobody as boxes. The same helpers (`K.block`, `K.groundRoom`, `K.signAt`, `K.extra`, `K.heap`) build the
+    airfield's terminal and tower and the third pass's places.
   - Props flagged `live` (the car, the plane) are drawn by the client's cutscene code, not the static world;
     `afloat` ones (boats) stand on water; parts flagged `across` are the one thing built in a road.
 - **Positions on the wire** stay int16: 1/64 m on the island (+-512 m), 1/32 m on the mainland (+-1024 m).
@@ -487,10 +508,25 @@ act 2, where the same loop is played with a plane and flying out wins.
   on, `Game.update` takes its camera, hides the HUD, the hands and the players' bodies, and runs no input.
 - **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
   the save's act.
-- **Debug**: `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff`, `/wipe`.
+- **Debug**: `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
+  `game.debugCam`, `debugCycle` and `debugFog` (a free camera, the hour, the haze: the shot scripts).
 - **Tests**: `scripts/test-mainland.js` (the map, on any seeds), `scripts/sim-act2.js` (the whole run in simulation,
   a wipe, late joiners, a drop and a deploy across the crossing, the nights, what a tick costs on each map);
-  `scripts/clip/act2-shots.js` and `act2-perf.js` (pictures and frame times, through `launchChrome`).
+  `scripts/clip/act2-shots.js`, `act2-look.js` and `act2-perf.js` (pictures, a look at a list of spots while
+  building, and frame times, through `launchChrome`).
+- **The city's kit** (`client/render/citykit.js`, called by `StaticWorld` for a world with `world.city`). It
+  writes triangles straight into the static world's merged buffers, in a building's own frame: a face is cut into
+  bays (`STYLE`), every window an opening with reveals and something in it (glass, shards, the dark, boards -
+  `windowState`, by a hash of the building's seed, so it is the same on every client), and from near its frame,
+  sill, lintel, curtain, an air conditioner; then what runs the height of a face (`trimOf`: cornice, fins, string
+  courses, a fire escape, balconies, a drainpipe, ivy, damp, cracks, a ghost sign), the roof (`roofOf`: parapet,
+  tank, plant, stair head, hoarding), a storey broken open (`openStorey`: slab edges with their steel, columns,
+  rooms papered each its own way) and a slab under the sky (`terrace`). Marks come from one atlas (`GEN.city`,
+  `CITY_ATLAS` in textures.js) through two materials: `citysign` (cut out: boards, lettering, ivy, graffiti) and
+  `citygrime` (blended: soot, rust, stains). The static world draws the city in **tiers** (`TIER`): what is read
+  from across the city always, a street's things out to 150 m, and the fine detail of a face and what stands in a
+  room out to 90 m and with no shadow; every plain colour is one vertex-coloured material (`flat`), and its chunks
+  are 128 m (the island's: 80 m, one tier, unchanged).
 
 ## Rendering pipeline
 
