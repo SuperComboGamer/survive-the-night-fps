@@ -120,7 +120,7 @@ export const CHATF = {
 // S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, u8 level
 // (progress.js), and with PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none);
 // then, after them all, a u8 character per player in the same order (shared/characters.js: a server from before the
-// roster sends none)
+// roster sends none), then a u32 per player of the perks in force (progress.js: a mask of ids; older servers send none)
 export const PLF = { ON_AIR: 1, WAYPOINT: 2 }; // keying the walkie-talkie (radioKeyed): heard by everyone; has a waypoint set
 
 export const ENT = {

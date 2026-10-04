@@ -1,18 +1,17 @@
-// Your level and perks (shared/progress.js, client/net/progress.js): the Progress panel, opened from the splash and
-// from the inventory screen - your level and how far to the next, the three perks on offer when a pick is waiting,
-// the perks you have, and starting them over. Picking here is allowed between fights only in effect: a perk picked
-// while a night is on comes into force at dawn (the server sees to it, Game.setProgress).
+// Your level and perks (shared/progress.js, client/net/progress.js): the Perks panel, opened from the splash, the pause
+// menu and the inventory screen - your level and how far to the next, how many of your perk points are spent, and the
+// whole perk tree (perktree.js) to spend them on, take one back, or start over. A perk taken while a night is on comes
+// into force at dawn (the server sees to it, Game.setProgress).
 //
 // Also the small pieces the rest of the UI shows it with: the level badge and the XP bar (xpBar).
-import { el, svgEl } from './dom.js';
-import { glyph } from './icons.js';
+import { el } from './dom.js';
 import { Panel } from './games.js';
-import { PERK_BY_ID, PERK_GROUPS, LEVEL_CAP, levelInfo } from '../../shared/progress.js';
-import { fetchProgress, pickPerk, respecPerks, onProgress, lastProgress } from '../net/progress.js';
+import { PerkTree } from './perktree.js';
+import { PERK_BY_ID, LEVEL_CAP, levelInfo } from '../../shared/progress.js';
+import { fetchProgress, pickPerk, unpickPerk, respecPerks, onProgress, lastProgress } from '../net/progress.js';
 import { accountState } from '../net/account.js';
 
 const num = (n) => (n | 0).toLocaleString('en-US');
-const GROUP_ICON = ['heart', 'headshot', 'search', 'cross', 'bolt', 'star'];
 
 // A level badge and a bar to the next level, kept up to date with set(xp)
 export function xpBar(parent, cls = '') {
@@ -36,38 +35,33 @@ export function xpBar(parent, cls = '') {
   };
 }
 
-// one perk as a card: its group, name and what it does. button: the label of a button on it (a pick), or none
-function perkCard(parent, id, button = '', onClick = null) {
-  const p = PERK_BY_ID[id];
-  if (!p) return null;
-  const card = el('div', 'pk-card' + (p.keystone ? ' key' : ''), parent);
-  const g = el('div', 'pk-group', card);
-  svgEl('i', 'pk-ico', g, glyph(GROUP_ICON[p.group] || 'star'));
-  el('span', '', g, PERK_GROUPS[p.group]);
-  el('div', 'pk-name', card, p.name);
-  el('div', 'pk-text', card, p.text);
-  if (button) {
-    const b = el('button', 'btn btn-blood pk-pick', card, button);
-    b.type = 'button';
-    b.addEventListener('click', () => onClick?.(id, b));
-  }
-  return card;
+// perk points as pips: spent, to spend, still to earn
+function pips(parent) {
+  const root = el('div', 'pg-pips', parent);
+  return {
+    root,
+    set(v) {
+      root.textContent = '';
+      for (let i = 0; i < v.points; i++) el('i', i < v.perks.length ? 'spent' : i < v.picks ? 'free' : '', root);
+    },
+  };
 }
 
 export class ProgressPanel extends Panel {
   constructor(ui, parent) {
-    super(ui, parent, 'pg-panel', 'Progress');
+    super(ui, parent, 'pg-panel', 'Perks');
     this.view = null;
     this.err = '';
     this.busy = false;
     this.confirmT = 0; // when "Start over" was pressed once: a second press inside 4 s does it
 
-    this.bar = xpBar(this.body, 'pg-xpb');
+    const top = (this.top = el('div', 'pg-top', this.body));
+    this.bar = xpBar(top, 'pg-xpb');
+    const pts = el('div', 'pg-pts', top);
+    this.ptsN = el('div', 'pg-pts-n', pts, '');
+    this.pips = pips(pts);
     this.note = el('p', 'ac-note pg-note', this.body, '');
-    this.pickH = el('div', 'fr-h', this.body, 'Pick a perk');
-    this.offer = el('div', 'pk-row', this.body);
-    this.mineH = el('div', 'fr-h', this.body, 'Your perks');
-    this.mine = el('div', 'pk-grid', this.body);
+    this.tree = new PerkTree(this.body, { onPick: (id) => this._pick(id), onUnpick: (id) => this._unpick(id) });
     this.empty = el('div', 'gb-empty pg-empty', this.body);
     this.emptyT = el('p', '', this.empty, '');
     this.emptySub = el('p', 'gb-empty-sub', this.empty, '');
@@ -75,7 +69,7 @@ export class ProgressPanel extends Panel {
     this.respec = el('button', 'btn btn-ghost btn-danger', this.foot);
     this.respec.type = 'button';
     this.respecT = el('span', '', this.respec, 'Start over');
-    this.respec.title = 'Undo every pick and choose again, from new offers';
+    this.respec.title = 'Every point back, to spend again';
     this.respec.addEventListener('click', () => this._respec());
     el('span', 'gb-gap', this.foot);
     const close = el('button', 'btn btn-ghost', this.foot, 'Close');
@@ -105,21 +99,34 @@ export class ProgressPanel extends Panel {
     }
   }
 
-  async _pick(id, btn) {
+  async _act(fn, done) {
     if (this.busy) return;
     this.busy = true;
-    btn.disabled = true;
+    this.tree.setBusy(true);
     try {
-      await pickPerk(id);
-      this.ui.sound('ui_click');
-      const p = PERK_BY_ID[id];
-      this.ui.notify?.(`Perk: ${p.name}`, 'toast', 3);
+      await fn();
+      done?.();
     } catch (err) {
       this.err = err.message || 'That did not go through';
       await this.refresh();
     }
     this.busy = false;
+    this.tree.setBusy(false);
     this.render();
+  }
+
+  _pick(id) {
+    this._act(
+      () => pickPerk(id),
+      () => {
+        this.ui.sound('ui_click');
+        this.ui.notify?.(`Perk: ${PERK_BY_ID[id].name}`, 'toast', 3);
+      }
+    );
+  }
+
+  _unpick(id) {
+    this._act(() => unpickPerk(id));
   }
 
   async _respec() {
@@ -127,7 +134,7 @@ export class ProgressPanel extends Panel {
     const now = performance.now();
     if (now - this.confirmT > 4000) {
       this.confirmT = now;
-      this.respecT.textContent = 'Undo every pick?';
+      this.respecT.textContent = 'Every point back?';
       setTimeout(() => {
         if (performance.now() - this.confirmT >= 4000) this.respecT.textContent = 'Start over';
       }, 4100);
@@ -135,50 +142,35 @@ export class ProgressPanel extends Panel {
     }
     this.confirmT = 0;
     this.respecT.textContent = 'Start over';
-    this.busy = true;
-    try {
-      await respecPerks();
-    } catch (err) {
-      this.err = err.message || 'That did not go through';
-    }
-    this.busy = false;
-    this.render();
+    this._act(() => respecPerks());
   }
 
   render() {
     const v = this.view;
     this.empty.hidden = !!v;
-    this.bar.root.hidden = !v;
+    this.top.hidden = this.tree.root.hidden = !v;
     if (!v) {
       this.sub.textContent = '';
-      this.note.hidden = this.pickH.hidden = this.offer.hidden = this.mineH.hidden = this.mine.hidden = true;
+      this.note.hidden = true;
       this.respec.hidden = true;
       this.emptyT.textContent = this.err || 'Asking the server…';
-      this.emptySub.textContent = this.err ? 'Your XP is kept on the server: it needs to be reachable to pick perks.' : '';
+      this.emptySub.textContent = this.err ? 'Your XP is kept on the server: it needs to be reachable to spend perk points.' : '';
       return;
     }
     this.bar.set(v.xp);
     this.sub.textContent = `Level ${v.level}${v.level >= LEVEL_CAP ? ' · top' : ''}`;
-    const signedIn = !!accountState().user;
+    this.ptsN.textContent = `${v.perks.length} of ${v.points} points spent` + (v.pending ? ` · ${v.pending} to spend` : v.nextPick ? ` · next at level ${v.nextPick}` : '');
+    this.ptsN.classList.toggle('lit', !!v.pending);
+    this.pips.set(v);
     const lines = [];
     if (this.err) lines.push(this.err);
-    if (v.pending) lines.push(`${v.pending === 1 ? 'A perk is' : `${v.pending} perks are`} waiting to be picked. A perk picked during a night comes into force at dawn.`);
-    else if (v.nextPick) lines.push(`Your next perk comes at level ${v.nextPick}.`);
-    else lines.push('Every perk pick is made.');
-    if (!signedIn) lines.push("As a guest your progress is kept for this browser, and moves onto your account when you sign in.");
+    if (v.pending) lines.push(`${v.pending === 1 ? 'A point is' : `${v.pending} points are`} waiting: click a bright perk, then spend it. One taken during a night comes into force at dawn.`);
+    else if (!v.picks) lines.push('Your first perk point comes at level 2: earn XP by killing the dead, reviving teammates and seeing the night through.');
+    if (!accountState().user) lines.push('As a guest your progress is kept for this browser, and moves onto your account when you sign in.');
     this.note.textContent = lines.join(' ');
-    this.note.hidden = false;
+    this.note.hidden = !lines.length;
     this.note.classList.toggle('bad', !!this.err);
-
-    this.pickH.hidden = this.offer.hidden = !v.pending;
-    this.offer.textContent = '';
-    for (const id of v.offer) perkCard(this.offer, id, 'Pick', (pid, b) => this._pick(pid, b));
-
-    this.mineH.hidden = false;
-    this.mine.hidden = false;
-    this.mine.textContent = '';
-    for (const id of v.perks) perkCard(this.mine, id);
-    if (!v.perks.length) el('p', 'pg-none', this.mine, v.picks ? 'None picked yet.' : `You pick your first perk at level 2: earn XP by killing the dead, reviving teammates and seeing the night through.`);
+    this.tree.set(v.perks, v.level);
     this.respec.hidden = !v.perks.length;
     this.respec.disabled = this.busy;
   }

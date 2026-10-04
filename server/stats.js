@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { writeFile, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { BOARD_STATS, BOARDF, BOARD_TOP } from '../shared/protocol.js';
-import { levelOf, perksValid, picksEarned } from '../shared/progress.js';
+import { levelOf, fitPerks } from '../shared/progress.js';
 
 // what a browser sends: a UUID, as crypto.randomUUID writes one. Anything else is nobody (bots, tests, junk)
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -36,12 +36,9 @@ const whole = (v) => (typeof v === 'number' && v > 0 ? Math.min(Math.floor(v), S
 const cleanName = (v) => (typeof v === 'string' ? v.replace(/[^\p{L}\p{N} _\-.#]/gu, '').trim().slice(0, 16) : '') || 'Survivor';
 const scored = (rec) => rec.xp > 0 || BOARD_STATS.some((k) => rec[k] > 0);
 
-// Stored picks as a player with this much XP may have them: as many as their level has earned (the curve may have
-// been retuned since), and none at all if what is left is not a set they could have picked
-export function cleanPerks(perks, xp) {
-  const ids = Array.isArray(perks) ? perks.map(Number).slice(0, picksEarned(levelOf(xp))) : [];
-  return perksValid(ids, xp) ? ids : [];
-}
+// Stored picks as a player with this much XP may have them: the curve or the tree may have changed since, so what
+// they could not have now (past their points, missing what it needs, junk) is left out and the rest kept
+export const cleanPerks = (perks, xp) => fitPerks(perks, xp);
 
 export class PlayerStats {
   constructor(opts = {}) {

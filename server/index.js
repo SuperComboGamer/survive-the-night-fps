@@ -469,16 +469,28 @@ route(
 
 // Your level and perks (server/progress.js). Signed in, they are the account's; else guestId, the browser's leaderboard
 // id, says whose (posted, never in a URL: it is what proves who a guest is).
-// { guestId? } -> { xp, level, into, need, frac, perks, picks, pending, nextPick, offer, respecs }
+// { guestId? } -> { xp, level, into, need, frac, perks, picks, points, pending, nextPick, respecs }
 const progressWho = async (ctx, b) => {
   const user = auth ? await auth.userForToken(ctx.cookies[COOKIE]) : null;
   return user ? { userId: user.id } : { guestId: typeof b?.guestId === 'string' ? b.guestId : '' };
 };
 route('post', '/api/progress', async (ctx, b) => ({ body: await progress.view(await progressWho(ctx, b)) }), { body: true });
-// { perk, guestId? }: one of the three on offer for your next pick -> the same as /api/progress afterwards
+// { perk, guestId? }: a point on a perk of the tree that is open to you -> the same as /api/progress afterwards
 route('post', '/api/progress/pick', async (ctx, b) => ({ body: await progress.pick(await progressWho(ctx, b), b.perk) }), { body: true });
-// { guestId? }: every pick undone, to be made again from new offers -> the same as /api/progress afterwards
+// { perk, guestId? }: the point on a perk back, when nothing else you have needs it -> the same afterwards
+route('post', '/api/progress/unpick', async (ctx, b) => ({ body: await progress.unpick(await progressWho(ctx, b), b.perk) }), { body: true });
+// { guestId? }: every point back, to be spent again -> the same as /api/progress afterwards
 route('post', '/api/progress/respec', async (ctx, b) => ({ body: await progress.respec(await progressWho(ctx, b)) }), { body: true });
+
+// An account's profile by the name it plays under, for the player list's profile card: { username, since, xp, level,
+// perks, stats: { kills, nights, wins, revives, games, deaths, downs, headshots, bossKills, bestDay, playSeconds } }.
+// What the leaderboard shows anyway, and their perks; nothing that says who they are beyond the name.
+route('get', '/api/players/:name', async (ctx) => {
+  if (!auth) noAccounts();
+  const p = await stats.profile(ctx.params[0]);
+  if (!p) throw new HttpError(404, 'Nobody plays under that name.');
+  return { body: p };
+});
 
 // { friends: [{ id, username, status: offline|online|playing, game, unread, lastSeen, since }], incoming, outgoing }
 route('get', '/api/friends', async (ctx) => ({ body: await S().list(await signedIn(ctx)) }));

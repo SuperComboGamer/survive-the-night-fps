@@ -80,6 +80,8 @@ function client(name) {
         }
         // then a character per player, in the same order (shared/characters.js)
         for (const p of c.roster.values()) p.character = r.u8();
+        // ...and their perks in force (shared/progress.js)
+        for (const p of c.roster.values()) p.perks = r.u32();
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }
     },

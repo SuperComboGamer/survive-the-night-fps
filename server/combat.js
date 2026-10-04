@@ -436,6 +436,7 @@ export class Combat {
       n++;
       let dmg = claws ? CLAWS.damage : heavy ? def.altDamage : def.damage;
       if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : perkMods(p.perks).headshot);
+      if (!c.isPlayer && !claws) dmg *= perkMods(p.perks).melee;
       hitAny = true;
       g.impact(c.e.lit ? IMPACT.DIRT : IMPACT.BLOOD, c.x, c.y, c.z, -fx, 0, -fz);
       let killed;

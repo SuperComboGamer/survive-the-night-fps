@@ -886,6 +886,7 @@ export class Game {
   applyPerks(p, mask) {
     p.perks = mask >>> 0;
     p.state.perks = p.perks;
+    this.playersDirty = true; // (the player list carries everyone's perks, for their profile)
     if (!p.alive || p.zombie) return;
     const max = PLAYER_MAX_HP + perkMods(p.perks).hp;
     if (!p.downed) p.hp = Math.max(1, Math.min(max, p.hp + Math.max(0, max - p.maxHp)));
@@ -901,8 +902,9 @@ export class Game {
   }
   // n XP for `src` (XPS): on this run's tally, and on their record with the leaderboard's stats
   award(p, src, n) {
-    n = Math.round(n);
-    if (!p || n <= 0) return;
+    if (!p) return;
+    n = Math.round(n * perkMods(p.perks).xp);
+    if (n <= 0) return;
     const was = this.levelOf(p);
     p.xpRun[src] += n;
     this.records.bump(p.rec, 'xp', n);
@@ -915,6 +917,7 @@ export class Game {
     if (p.zombie) return;
     const pm = perkMods(p.perks);
     if (pm.killStamina && p.alive && !p.downed) p.state.stamina = Math.min(STAMINA_MAX, p.state.stamina + pm.killStamina);
+    if (pm.killHeal && p.alive && !p.downed) p.hp = Math.min(p.maxHp, p.hp + pm.killHeal);
     if (z.wedgeT > WEDGED_FOR) return;
     if (z.boss) return this.award(p, XPS.bosses, XP.boss);
     const half = ++p.nightKills > XP.killsFull;
@@ -3001,6 +3004,7 @@ export class Game {
     if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
     if (this.godMode && !p.zombie) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
+    if (!p.zombie) amount *= perkMods(p.perks).hurt;
     if (p.downed) {
       // hits on a downed survivor drain what's left of their blood
       p.bleed -= amount * 0.12;
@@ -3081,6 +3085,7 @@ export class Game {
     p.state.downed = 0;
     p.hp = Math.min(p.maxHp, hp + (by ? perkMods(by.perks).reviveHp : 0));
     if (by && by !== p && ++by.nightRevives <= XP.revivesFull) this.award(by, XPS.revives, XP.revive * perkMods(by.perks).reviveXp);
+    if (by && by !== p && by.alive && !by.downed && !by.zombie) by.hp = Math.min(by.maxHp, by.hp + perkMods(by.perks).reviveSelf);
     p.bleed = 0;
     p.revivedBy = 0;
     p.lastDamageT = this.time;
@@ -4298,6 +4303,8 @@ export class Game {
     // each player's character, in the same order, after them all: a client from before the roster stops reading at the
     // end of the list and never sees these
     for (const p of this.players.values()) w.u8(p.character ?? defaultCharacter(p.id));
+    // ...then each one's perks in force (progress.js: a mask of ids), for their profile card
+    for (const p of this.players.values()) w.u32(p.perks >>> 0);
     this.playersDirty = false;
     const prev = this.listBytes;
     let same = !!prev && prev.length === w.o;

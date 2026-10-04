@@ -6,6 +6,7 @@ import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../..
 import { PHASE, INVENTORY_MAX } from '../../shared/constants.js';
 import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
 import { ACH_BY_ID } from '../../shared/achievements.js';
+import { perkMask, progressView, perkLock, perkDependents, levelOf, xpForLevel } from '../../shared/progress.js';
 
 const q = new URLSearchParams(location.search);
 const screen = q.get('screen') || 'hud';
@@ -211,11 +212,11 @@ if (inv.backpack) {
 }
 
 const players = [
-  { id: 1, name: 'Survivor417', status: 'alive', hp: 1, kills: 23, ping: 42, talking: false, self: true },
-  { id: 2, name: 'Marlowe', status: 'alive', hp: 0.45, kills: 31, ping: 67, talking: true, self: false },
-  { id: 3, name: 'deadeye_kat', status: 'zombie', kills: 12, ping: 88, talking: false, self: false },
-  { id: 4, name: 'Old Hank', status: 'downed', kills: 8, ping: 120, talking: false, self: false },
-  { id: 5, name: 'Ruth', status: 'dead', kills: 3, ping: 55, talking: false, self: false },
+  { id: 1, name: 'Survivor417', account: '', status: 'alive', hp: 1, kills: 23, ping: 42, level: 7, perks: perkMask([0, 3, 4, 11]), talking: false, self: true },
+  { id: 2, name: 'Marlowe', account: 'Marlowe', status: 'alive', hp: 0.45, kills: 31, ping: 67, level: 18, perks: perkMask([5, 6, 15, 26, 29, 0, 3]), talking: true, self: false },
+  { id: 3, name: 'deadeye_kat', account: 'deadeye_kat', status: 'zombie', kills: 12, ping: 88, level: 24, perks: perkMask([5, 6, 21, 18, 14, 16, 27, 4]), talking: false, self: false },
+  { id: 4, name: 'Old Hank', account: '', status: 'downed', kills: 8, ping: 120, level: 3, perks: perkMask([9]), talking: false, self: false },
+  { id: 5, name: 'Ruth', account: 'ruthless', status: 'dead', kills: 3, ping: 55, level: 1, perks: 0, talking: false, self: false },
 ];
 
 function feedSome() {
@@ -496,6 +497,41 @@ switch (screen) {
     ui.hideSplash();
     ui.updateHud({ ...baseHud });
     ui.setRosterOpen(true);
+    // &pin=1: pinned with the pointer free; &profile=<player id>: that player's profile over it, with a made-up record
+    if (q.get('pin') || q.get('profile')) ui.setRosterPinned(true);
+    if (q.get('profile')) {
+      ui.profile.load = async function (name) {
+        this.rec = { username: name, level: 18, stats: { kills: 4210, nights: 61, wins: 3, revives: 88, games: 47, deaths: 39, headshots: 1290, bossKills: 12, bestDay: 9, playSeconds: 151200 } };
+        this.render();
+      };
+      ui.roster.pick(players.findIndex((p) => p.id === +q.get('profile')));
+    }
+    break;
+  }
+  // the Perks panel against a made-up record: &level=<n> (default 16), &perks=0,3,20 (default a few); a point spent
+  // or taken back here only changes the page
+  case 'perks': {
+    buildScene(bg || 'fire');
+    ui.showSplash();
+    const xp = xpForLevel(+(q.get('level') || 16)) + 150;
+    let mine = (q.get('perks') ?? '0,3,1,9,8').split(',').filter(Boolean).map(Number);
+    const view = () => ({ ...progressView(xp, mine), respecs: 0 });
+    const p = ui.progress;
+    p.refresh = async () => {};
+    p._pick = (id) => {
+      if (!perkLock(mine, id, levelOf(xp))) mine = [...mine, id];
+      p.view = view();
+      p.render();
+    };
+    p._unpick = (id) => {
+      if (!perkDependents(mine, id).length) mine = mine.filter((o) => o !== id);
+      p.view = view();
+      p.render();
+    };
+    p.show();
+    p.view = view();
+    p.render();
+    if (q.get('sel')) p.tree.select(+q.get('sel'));
     break;
   }
   case 'inventory': {

@@ -114,7 +114,7 @@ try {
   check('a value out of range is clamped to the default for the id', charOf(ann, cy.id) === defaultCharacter(cy.id), `${charOf(ann, cy.id)} vs ${defaultCharacter(cy.id)}`);
   check('two players may be the same character (names tell them apart)', charOf(ann, dee.id) === 3 && ann.list.find((p) => p.id === dee.id).name !== ann.list.find((p) => p.id === ann.id).name);
   check('the last id in range is kept', charOf(ben, eve.id) === CHARACTER_COUNT - 1);
-  check('one character byte per player after the list', ann.trailing === ann.list.length, `${ann.trailing} for ${ann.list.length}`);
+  check('one character byte per player after the list (then four of perks)', ann.trailing === ann.list.length * 5, `${ann.trailing} for ${ann.list.length}`);
   check('a client from before the roster reads the same players, ignoring the bytes', JSON.stringify(ann.oldList) === JSON.stringify(ann.list.map(({ char, ...p }) => p)));
 
   // a drop and a rejoin: the same body, the same character, whatever the new JOIN asks for

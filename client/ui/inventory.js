@@ -314,7 +314,7 @@ export class Inventory {
     this.prog = null; // our XP as the game last heard it (setProgress)
     this.progAsked = -1e9; // when the server was last asked about our picks (fetchProgress)
     onProgress((v) => {
-      this.perksTxt.textContent = v?.pending ? 'Pick a perk' : 'Perks';
+      this.perksTxt.textContent = v?.pending ? 'Spend a perk point' : 'Perks';
       this.perksBtn.classList.toggle('lit', !!v?.pending);
       this.perksBadge.hidden = !v?.pending;
       this.perksBadge.textContent = v?.pending ? String(v.pending) : '';
