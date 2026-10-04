@@ -22,7 +22,7 @@
 //            and put back); without it a worktree of --ref is made in the temp folder and removed afterwards
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { REPO, OUT, parseArgs, startVite, launchChrome, shoot, composeSheets, lendSandbox, tempWorktree } from './lib.js';
+import { REPO, OUT, parseArgs, startVite, renewChrome, shoot, composeSheets, lendSandbox, tempWorktree } from './lib.js';
 
 const args = parseArgs(process.argv.slice(2), { ref: 'origin/main', out: join(OUT, 'pairs') });
 if (!args._.length) {
@@ -53,20 +53,44 @@ function views(p, at) {
   return v;
 }
 
-let wt = null, restore = () => {}, viteB = null, viteA = null, chrome = null;
+// One dev server and one browser at a time (lib.js's rules): every "before" shot first, then that server is stopped
+// and the "after" ones are taken, then the sheets are composed.
+let wt = null, restore = () => {}, vite = null, chrome = null;
 try {
   const before = args.before ? resolve(args.before) : (wt = tempWorktree(args.ref)).dir;
   restore = lendSandbox(before);
   console.log(`pairs: ${panels.length} panels, before = ${args.before ? before : `${args.ref} (a temporary worktree)`}, after = this tree`);
-  [viteB, viteA] = await Promise.all([startVite(before), startVite(REPO)]);
-  chrome = await launchChrome();
-  const page = chrome.page;
-  // where each first-person panel's hand is, in the before build (window.__hands, set by the sandbox once posed)
-  const at = {};
-  for (const p of panels) {
-    if (!p.vm) continue;
-    const h = await shoot(page, `${viteB.url}/${sb(p.vm)}`, { w: 400, h: 300, wait: 300, evaluate: () => window.__hands });
-    at[p.id] = h && (h[p.side || 'R'] || h.R);
+  const at = {}; // where each first-person panel's hand is, in the before build (window.__hands, set by the sandbox once posed)
+  const shots = {}; // id -> tag -> [file per view]
+  for (const [tag, tree] of [['before', before], ['after', REPO]]) {
+    vite = await startVite(tree);
+    try {
+      if (tag === 'before') {
+        for (const p of panels) {
+          if (!p.vm) continue;
+          chrome = await renewChrome(chrome);
+          const h = await shoot(chrome.page, `${vite.url}/${sb(p.vm)}`, { w: 400, h: 300, wait: 300, evaluate: () => window.__hands });
+          at[p.id] = h && (h[p.side || 'R'] || h.R);
+        }
+      }
+      const dir = join(out, tag);
+      mkdirSync(dir, { recursive: true });
+      for (const p of panels) {
+        const vs = views(p, at[p.id]);
+        const files = [];
+        for (const [i, v] of vs.entries()) {
+          chrome = await renewChrome(chrome);
+          const file = join(dir, `${p.id}-${i}.png`);
+          await shoot(chrome.page, `${vite.url}/${v.path}`, { file, w: v.w || 900, h: v.h || 600, wait: v.wait ?? 700, evaluate: () => document.getElementById('info') && (document.getElementById('info').style.display = 'none') });
+          files.push(file);
+        }
+        (shots[p.id] = shots[p.id] || {})[tag] = files;
+        process.stdout.write('.');
+      }
+    } finally {
+      vite.stop();
+      vite = null;
+    }
   }
   const sheets = [];
   const overview = [];
@@ -74,27 +98,21 @@ try {
     const vs = views(p, at[p.id]);
     const cells = [];
     for (const [i, v] of vs.entries()) {
-      for (const [tag, vite] of [['before', viteB], ['after', viteA]]) {
-        const dir = join(out, tag);
-        mkdirSync(dir, { recursive: true });
-        const file = join(dir, `${p.id}-${i}.png`);
-        await shoot(page, `${vite.url}/${v.path}`, { file, w: v.w || 900, h: v.h || 600, wait: v.wait ?? 700, evaluate: () => document.getElementById('info') && (document.getElementById('info').style.display = 'none') });
-        cells.push({ img: file, tag, label: v.label || '' });
-        if (tag === 'after' && i === 0) overview.push({ img: file, label: p.id });
-      }
+      for (const tag of ['before', 'after']) cells.push({ img: shots[p.id][tag][i], tag, label: v.label || '' });
     }
+    overview.push({ img: shots[p.id].after[0], label: p.id });
     const v0 = vs[0];
     const cw = v0.cw || 640;
     sheets.push({ out: join(out, `${p.id}.png`), title: p.title || p.id, cols: 2, cellW: cw, cellH: Math.round((cw * (v0.h || 600)) / (v0.w || 900)), cells });
-    process.stdout.write('.');
   }
   sheets.push({ out: join(out, '00-overview-after.png'), title: 'every after shot (the first view of each panel)', cols: Math.min(8, Math.max(2, Math.ceil(Math.sqrt(overview.length)))), cellW: 300, cellH: 200, cells: overview });
-  await composeSheets(page, sheets);
-  console.log(`\n${sheets.length} images in ${out}`);
+  chrome = await renewChrome(chrome);
+  await composeSheets(chrome.page, sheets);
+  console.log(`
+${sheets.length} images in ${out}`);
 } finally {
   if (chrome) await chrome.close();
-  if (viteA) viteA.stop();
-  if (viteB) viteB.stop();
+  if (vite) vite.stop();
   restore();
   if (wt) wt.remove();
 }

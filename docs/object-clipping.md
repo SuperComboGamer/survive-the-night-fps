@@ -128,16 +128,86 @@ their side by `weaponPickup` (`HELD_LAY`), placed by their own vertices.
 ## The tools
 
 All of these are in `scripts/clip/`, and each has its usage at the top of the file. They run headless and keep out
-of the way of whoever is using the machine:
+of the way of whoever is using the machine. **Every headless browser in this repo is started by `launchChrome` in
+`scripts/clip/lib.js`, and by nothing else: never launch Chrome (or puppeteer) yourself.** See
+[The headless browser's rules](#the-headless-browsers-rules) for what it does and why.
 
-- Chrome runs `headless: 'new'`, off screen and muted, with a fresh `stn-chrome-*` profile in the temp folder that is
-  deleted afterwards.
-- Pointer lock is stubbed out in every page.
-- Every browser, Vite server and game server a tool starts is stopped in a `finally`.
-- Each tool starts its own Vite or game server on a free port.
+Output goes to `shots/clip/`, which is gitignored. Set `CHROME` if Chrome is not where `lib.js` looks. Rendering is
+in software (ANGLE swiftshader) unless a tool is given `--gpu`.
 
-Output goes to `shots/clip/`, which is gitignored. Set `CHROME` if Chrome is not where `lib.js` looks, and `ANGLE`
-to `swiftshader` to force software rendering.
+### The headless browser's rules
+
+**Why: on 2026-10-04 an agent working on the character models locked a user out of their Windows account.** The
+Windows Security log shows 291 failed sign-ins made by `chrome.exe` for the user's account, and 25 lockouts (this PC
+locks an account for ten minutes after ten failures in ten minutes).
+
+**The cause.** About 40 seconds after it starts on a profile it has not seen before, Chromium asks Windows whether
+the user's password is blank, by signing in with an **empty password**: `CheckBlankPasswordWithPrefs` in
+`password_manager_util_win`, run from `DelayReportOsPassword`, calls `LogonUser(user, ".", "")`. It keeps the answer
+in the profile directory's `Local State` file, so a normal profile asks once. A headless test browser gets a new
+temporary profile every launch, so **every launch that lives past 40 seconds is one failed Windows sign-in**. The
+agent had launched Chrome some 150 times. (It had also run them all on the real GPU, up to six game clients at once,
+a horde of a hundred zombies in one and at one point an uncapped frame rate; and the game's own click that takes the
+mouse also asks for fullscreen and the keyboard lock, of which only pointer lock was stubbed.)
+
+Nothing an agent runs may take the screen, the keyboard, the machine or the account again. `launchChrome` enforces
+all of this, and `scripts/test-cliplib.js` (in `npm test`) holds it:
+
+- **The profile is seeded.** Before Chrome starts, `launchChrome` writes `<profile>/Local State` with
+  `{"password_manager":{"os_password_blank":false,"os_password_last_changed":"9000000000000000000"}}`
+  (`LOCAL_STATE_SEED`). Chromium finds its answer there and never makes the sign-in. (Checked: a 75 second headless
+  run with the seed made no sign-in attempt. Chrome rewrites the entry with what it reads from the account, which
+  shows the code ran and skipped `LogonUser`.) If the file cannot be written there is no launch. Never run a browser
+  without the seed "to compare".
+- **A guard on the account's failed sign-in counter.** `badPasswordAttempts()` reads it without elevation (PowerShell:
+  `([ADSI]"WinNT://./$env:USERNAME,user").BadPasswordAttempts.Value`; it clears ten minutes after the last
+  failure). Before every launch it is read, and **at 4 or more nothing is launched**. After the browser closes it is
+  read again, and if it rose, **everything stops**: `close()` throws, and a marker file, `stn-chrome.blocked` in the
+  temp folder, refuses every later launch until a person deletes it. If that happens, do not retry: report it. Where
+  the counter cannot be read (not Windows, a domain account) the launch carries on.
+- **It never takes input or the display.** Before any page script runs, every page gets stubs (`SAFE_STUBS`) for
+  pointer lock (`requestPointerLock`, `exitPointerLock`), fullscreen (`requestFullscreen` and the prefixed
+  variants, `exitFullscreen`), the keyboard lock (`navigator.keyboard.lock` / `unlock`) and the wake lock
+  (`navigator.wakeLock.request`): each does nothing and says it worked. The stubs are checked when the browser
+  starts, after every `page.goto` and before every `page.screenshot` (`pageIsSafe`: all in place, and the page holds
+  neither the screen nor the pointer); a page that fails is refused.
+- **Always headless.** `headless: 'new'`, off screen (`--window-position=-32000,-32000`), muted. Flags that show a
+  window or uncap the frame rate are refused (`FORBIDDEN_ARGS`: `--kiosk`, `--start-fullscreen`, `--app=`,
+  `--disable-gpu-vsync`, `--disable-frame-rate-limit`, ...).
+- **Software rendering by default.** ANGLE is `swiftshader` for sandboxes, turnarounds, pairs and game shots. The
+  real GPU is `gpu: true` (a tool's `--gpu`), for one short, bounded measurement and nothing else.
+- **One browser at a time, on the whole machine.** A lock file in the temp folder (`stn-chrome.lock`, the holder's
+  pid): a second launch waits for it, or is refused when its wait runs out. A process cannot open a second browser; a
+  second game client is a second window of the one browser (`newPage({ window: true })`). One Vite or game server at
+  a time too: `pairs.js` shoots every "before", stops that server, then shoots the "after".
+- **Low priority.** The browser and its children, and the Vite and game servers, run below normal priority.
+- **A watchdog.** A browser may live 5 minutes by default (`life`, 15 at most). A separate process kills its whole
+  process tree when the time is up, or when the script that started it is gone - even if that script hangs. It is
+  also killed on exit, `SIGINT`, `SIGTERM` and an uncaught error, and its `stn-chrome-*` profile is deleted. A long
+  job takes a new browser every few minutes (`renewChrome`: the survey and pairs do).
+- **Small and cheap.** A window of 1280 x 800 at most, device scale factor 1; game clients in tests use the low
+  quality preset (`CHEAP_SETTINGS`) unless a shot needs more.
+- **No credentials.** A new, empty `stn-chrome-*` profile every launch, never the user's own profile or a copy of it
+  (`--user-data-dir` and `--profile-directory` are refused as extra flags), with its preferences written first to turn
+  off the password manager and credential prompts (`SAFE_PREFS`); and `NO_CREDENTIALS`: `--password-store=basic`,
+  `--use-mock-keychain`, no sync, no background networking or component updates, and empty
+  `--auth-server-allowlist` / `--auth-negotiate-delegate-allowlist`, so Chrome never offers the Windows account to
+  any host. (The seeded `Local State` closes the way the lockout happened; these close every other way a test
+  browser could reach Windows credentials.)
+- **A switch.** With `STN_NO_BROWSER=1` in the environment `launchChrome` starts nothing and `test-cliplib` skips: set
+  it when no browser may run on the machine at all.
+- **A sweep on the way in.** A leftover `stn-chrome` browser older than the limit is killed and stale profiles are
+  removed before a new one starts.
+- Every browser, Vite server and game server a tool starts is still stopped in a `finally`, and each tool starts its
+  own server on a free port.
+
+**Measuring frame time** is the one use of the real GPU: one browser, `--gpu`, a 1280 x 720 window, vsync on, at most
+40 zombies and 20 seconds, no second client, and stop if three frames in a row take over 250 ms. If a step would need
+more than that, skip it and say so.
+
+The older scripts in `scripts/` that start puppeteer themselves (`e2e*.js`, `lookdev.js`, `shot.js`: written for
+the owner's Mac, some with an uncapped frame rate) are not to be run on a machine somebody is using until they go
+through `launchChrome` too.
 
 | Tool | npm script | What it does |
 | --- | --- | --- |
@@ -384,10 +454,14 @@ the seed moves. Run `npm run clip:props -- --seeds 1-100` and `node scripts/test
   the PR, and say how much changed (how many seeds, what moved).
 - **No version bumps.** Not `PROTOCOL_VERSION`, not package versions: the owner (Cody) does those. Clipping fixes need
   no wire changes.
-- **Strict headless isolation.** People use these machines while agents run. Use the tools as they are: headless
-  `new`, off screen, muted, a temporary profile deleted after, pointer lock stubbed out, every browser and server
-  stopped in a `finally`, and no processes or temporary worktrees left behind. Never open a visible browser window,
-  steal focus or lock the cursor.
+- **Strict headless isolation.** People use these machines while agents run, and on 2026-10-04 an agent locked a
+  user out of their Windows account: Chromium signs in to Windows with an empty password 40 seconds after it starts
+  on a new profile (see [The headless browser's rules](#the-headless-browsers-rules)). Any headless browser goes
+  through `scripts/clip/lib.js`'s `launchChrome`, which seeds the profile's `Local State` so that sign-in is never
+  made and watches the account's failed sign-in counter; never launch Chrome yourself. One browser at a time,
+  software rendering, no fullscreen, no keyboard or pointer lock, no uncapped frame rate, a watchdog on every launch,
+  every browser and server stopped in a `finally`, and no processes, profiles or temporary worktrees left behind. If
+  the counter rises or `stn-chrome.blocked` appears, stop and tell the user.
 - **Measure, then look.** The survey finds candidates and your eyes decide. A deep clip of a few vertices for one
   frame can be fine; a shallow one across a whole palm in every idle frame is not.
 
@@ -468,6 +542,7 @@ by hand rather than new grip poses.
 - [ ] Checked in the real game: first person, against a wall and a car, and a second client for the third person
 - [ ] `npm test` passes (or the failures are on origin/main too, and named)
 - [ ] No version numbers touched
+- [ ] Every browser through `launchChrome`, one at a time, software rendering (the GPU only for one bounded measurement)
 - [ ] No browser, server, temporary profile or worktree left behind
 - [ ] PR: images on a `pr-images-*` branch, a numbers table, "not fixed and why", "needs a human eye in motion", world
       changes named

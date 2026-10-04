@@ -4,7 +4,8 @@
 // look at a point, throw, and screenshot. A second client gives the third-person view of the first.
 // With --before it does the same in another checkout too and composes each pair (before | after).
 //
-// usage: node scripts/clip/game-shots.js <shots.json> [--seed 1] [--before <worktree>] [--build] [--out shots/clip/game]
+// usage: node scripts/clip/game-shots.js <shots.json> [--seed 1] [--before <worktree>] [--build] [--out shots/clip/game] [--gpu]
+//   --gpu     the real GPU and the player's own quality (default: software rendering, the low preset)
 // npm run clip:game -- scripts/clip/game-shots.example.json
 //   --build   build the client (npm run build) first even if the tree has a dist/ (it is built when it has none)
 //
@@ -21,7 +22,7 @@
 //   hideHud / hideVm / hideZombies: the HUD, the hands, the day's walkers (client side, for a clean still)
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { REPO, OUT, parseArgs, sleep, startGame, launchChrome, composeSheets } from './lib.js';
+import { REPO, OUT, parseArgs, sleep, startGame, launchChrome, composeSheets, LIFE_MAX, CHEAP_SETTINGS } from './lib.js';
 
 const args = parseArgs(process.argv.slice(2), { seed: '1', out: join(OUT, 'game') });
 if (!args._.length) {
@@ -36,11 +37,16 @@ async function run(root, dir) {
   const clients = [];
   try {
     game = await startGame(root, { seed: +args.seed, build: !!args.build });
+    // One browser (lib.js: one at a time), the second client in a window of its own: a page behind another tab stops
+    // drawing and sending. Software rendering and the cheap quality preset unless --gpu.
+    let chrome = null;
     const join_ = async () => {
-      // (a browser each: a page that is not the front tab of its browser stops drawing and sending)
-      const c = await launchChrome({ width: 1280, height: 800 });
-      clients.push(c);
-      const p = c.page;
+      let p;
+      if (!chrome) {
+        chrome = await launchChrome({ width: 1280, height: 720, gpu: !!args.gpu, life: LIFE_MAX, storage: args.gpu ? null : { 'stn.settings': CHEAP_SETTINGS } });
+        clients.push(chrome);
+        p = chrome.page;
+      } else p = await chrome.newPage({ window: true });
       await p.evaluateOnNewDocument((k) => {
         try {
           localStorage.setItem('stn.admin', k); // (the client says the admin secret on joining)
