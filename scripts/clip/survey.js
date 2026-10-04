@@ -32,7 +32,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { REPO, OUT, parseArgs, list, startVite, renewChrome, shoot, lendSandbox, tempWorktree } from './lib.js';
+import { REPO, OUT, parseArgs, list, startVite, renewChrome, LIFE_MAX, shoot, lendSandbox, tempWorktree } from './lib.js';
 
 const args = parseArgs(process.argv.slice(2), { sections: 'fp,tp,pickups', top: '40', tolerance: '1', out: join(OUT, 'survey') });
 const sections = list(args.sections);
@@ -125,7 +125,7 @@ async function measure(tree, fr, label) {
     if (args.shots) mkdirSync(dir, { recursive: true });
     let n = 0;
     for (const f of fr) {
-      chrome = await renewChrome(chrome); // (a browser lives a few minutes: lib.js's watchdog)
+      chrome = await renewChrome(chrome, { life: LIFE_MAX }); // (few, long-lived browsers: one every 9 minutes, under lib.js's watchdog)
       const r = await shoot(chrome.page, `${vite.url}/${f.path}`, {
         w: 640,
         h: 400,

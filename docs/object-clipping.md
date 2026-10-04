@@ -508,6 +508,13 @@ for every shouldered gun except the RPG, which is still 134 mm when downed. Most
 over 8 mm are the worn pack's straps against the jacket (30-50 mm, in every pose, as on origin/main) and long guns
 looking down or mid-stride.
 
+On the lofted bodies of the character roster (`models/people.js`; measured on Walt, the survey's default, against
+origin/main 4bd2e1c): third person 132 frames over 3 mm and 130 over 8 mm (origin/main: 134 and 128). Their shoulders
+are about 4 cm further out than the old boxes', so `STOCK_POCKET` moved from -0.10 to -0.14: shouldered guns idle,
+walking and looking down went from 30-67 mm to 0-25 mm on Walt, Earl, Maya and Dale. Still deeper than on
+origin/main: long guns carried at a sprint (shotguns and the crossbow 64-66 mm, were 57), the anti-tank rifle downed
+(36 mm, was 22) and the pack at a sprint (62 mm with a pistol, was 46).
+
 Fixed: every throwable's hand; every gun's support hand and right hand; every melee handle; the used items; every
 reload's hand holds and pose switches; the pistol rack; the bat swing; the double-barrel reload; the rifle reload
 returns; the long-gun shove; the crossbow haul; the flare gun and walkie-talkie; third-person shouldered guns, the

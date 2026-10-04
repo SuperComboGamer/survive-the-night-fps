@@ -54,7 +54,7 @@ async function run(root, dir) {
       }, game.secret);
       await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
       await sleep(3500);
-      await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /join/i.test(x.textContent))?.click());
+      await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click()); // (the way in: not the survivor card, whose text also says "join")
       for (let i = 0; i < 80 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
       await sleep(2500);
       await p.evaluate((k) => {

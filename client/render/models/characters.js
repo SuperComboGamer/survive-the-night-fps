@@ -3471,7 +3471,7 @@ const _grip = new THREE.Vector3();
 const _lh = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
-let STOCK_POCKET = -0.1; // (chest-bone space, z) where a shouldered butt ends: the front of the shoulder
+let STOCK_POCKET = -0.14; // (chest-bone space, z) where a shouldered butt ends: the front of the shoulder, in its clothes (the lofted bodies' shoulders are 4 cm further out than the old boxes': measured on four of them, scripts/clip/survey.js)
 let RPG_LIFT = 0.14; // the RPG's grip raised so the tube clears the top of the shoulder instead of running through it
 // the throwables' radius across the palm (m), and where the survivor's fist's palm face is (x, hand-bone space; less a
 // few mm where the fingers wrap)
