@@ -2,7 +2,8 @@
 // id reuse with new generations, LOD skipping and large/small position deltas, for several clients a tick off
 // one staging of the entities (each must get what quantizing for it alone would give; one that is skipped for a
 // tick catches up); then the varints and the command packets (writeInput / readInput).
-import { Writer, Reader, ENT, MAX_CMDS, POS_SCALE, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput } from '../shared/protocol.js';
+import { Writer, Reader, ENT, MAX_CMDS, POS_SCALE, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput, C2S, PROTOCOL_VERSION } from '../shared/protocol.js';
+import { Game } from '../server/game.js';
 import { ClientView, writeEntities, stageEntities, playerFlags } from '../server/snapshot.js';
 import { readEntities } from '../client/net/decode.js';
 import { createPlayerState, snapPlayerState } from '../shared/playersim.js';
@@ -309,13 +310,14 @@ console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one stagin
     }
     const hash = Math.random() < 0.1 ? -1 : irnd(0, 255);
     const ping = Math.random() < 0.1;
+    const rttMs = ping ? irnd(1, 9999) : 0;
     iw.reset();
-    writeInput(iw, cmds, hash, ping);
+    writeInput(iw, cmds, hash, ping, rttMs);
     inBytes += iw.o;
     const ir = new Reader(iw.copy());
     const got = readInput(ir);
     if (ir.left !== 0) throw new Error(`input packet ${k}: ${ir.left} trailing bytes`);
-    if (got.hash !== hash || got.ping !== ping) throw new Error(`input packet ${k}: hash ${got.hash} != ${hash} or ping ${got.ping} != ${ping}`);
+    if (got.hash !== hash || got.ping !== ping || got.rttMs !== rttMs) throw new Error(`input packet ${k}: hash ${got.hash} != ${hash}, ping ${got.ping} != ${ping}, or rtt ${got.rttMs} != ${rttMs}`);
     if (got.cmds.length !== n) throw new Error(`input packet ${k}: ${got.cmds.length} commands, sent ${n}`);
     for (let i = 0; i < n; i++) {
       const a = cmds[i];
@@ -324,4 +326,29 @@ console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one stagin
     }
   }
   console.log(`input codec OK: ${PACKETS} packets, avg ${(inBytes / PACKETS).toFixed(1)} B`);
+}
+
+{
+  const game = new Game({ seed: 42, godMode: true, log: () => {} });
+  const session = game.onOpen({ send: () => {}, congested: () => false });
+  const join = new Writer(64);
+  join.u8(C2S.JOIN);
+  join.u8(PROTOCOL_VERSION);
+  join.str('PingTest');
+  game.onMessage(session, join.bytes().slice());
+  const p = session.player;
+  const pingInput = (rttMs) => {
+    const iw = new Writer(64);
+    iw.u8(C2S.INPUT);
+    iw.u16(game.tick & 0xffff);
+    iw.u8(0);
+    writeInput(iw, [{ seq: 1, buttons: 0, qyaw: 0, qpitch: 0, slot: 255 }], -1, true, rttMs);
+    game.onMessage(session, iw.bytes().slice());
+  };
+  pingInput(120);
+  if (Math.round(p.ping) !== 120) throw new Error(`player list ping: expected 120, got ${p.ping}`);
+  pingInput(200);
+  const smoothed = Math.round(120 * 0.7 + 200 * 0.3);
+  if (Math.round(p.ping) !== smoothed) throw new Error(`player list ping: expected ${smoothed}, got ${Math.round(p.ping)}`);
+  console.log('player list ping OK');
 }

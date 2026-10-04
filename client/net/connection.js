@@ -162,7 +162,7 @@ export class Connection {
     w.u8(C2S.INPUT);
     w.u16(renderTick & 0xffff);
     w.u8(Math.max(0, Math.min(255, Math.round(renderFrac * 255))));
-    writeInput(w, cmds, hash, ping);
+    writeInput(w, cmds, hash, ping, ping ? this.rtt : 0);
     this.sendRaw(w);
   }
 

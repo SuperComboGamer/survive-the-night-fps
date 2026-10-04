@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 33; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows)
+export const PROTOCOL_VERSION = 34; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list
 
 // client -> server
 export const C2S = {
@@ -349,7 +349,8 @@ export class Reader {
 // (hashPlayerState; absent with IN_NOHASH), the first command in full (u16 buttons, u16 yaw, i16 pitch, [u8 slot]
 // with IN_SLOT) and, unless IN_SAME says the rest repeat it, per further command a u8 of CMDF bits and the fields
 // they announce. Every packet stands alone. IN_PING asks for an EVT.PONG in the next snapshot (round-trip time
-// without a packet of its own in either direction).
+// without a packet of its own in either direction) and carries u16 ms of the client's last measured RTT (for the
+// player list everyone sees).
 export const IN_SAME = 0x10;
 export const IN_SLOT = 0x20;
 export const IN_NOHASH = 0x40;
@@ -358,7 +359,7 @@ export const MAX_CMDS = 15; // per packet
 const CMDF = { BUTTONS: 1, YAW8: 2, YAW16: 4, PITCH8: 8, PITCH16: 16, SLOT: 32 };
 
 // cmds: [{seq, buttons, qyaw, qpitch, slot}] (1..MAX_CMDS of them, consecutive seqs); hash -1 = none
-export function writeInput(w, cmds, hash = -1, ping = false) {
+export function writeInput(w, cmds, hash = -1, ping = false, rttMs = 0) {
   const c0 = cmds[0];
   let same = true;
   for (let i = 1; i < cmds.length; i++) {
@@ -372,7 +373,10 @@ export function writeInput(w, cmds, hash = -1, ping = false) {
   w.u16(c0.qyaw);
   w.i16(c0.qpitch);
   if (c0.slot !== 255) w.u8(c0.slot);
-  if (same) return;
+  if (same) {
+    if (ping) w.u16(Math.min(9999, Math.round(rttMs)));
+    return;
+  }
   for (let i = 1; i < cmds.length; i++) {
     const p = cmds[i - 1];
     const c = cmds[i];
@@ -391,9 +395,10 @@ export function writeInput(w, cmds, hash = -1, ping = false) {
     else if (f & CMDF.PITCH16) w.i16(c.qpitch);
     if (f & CMDF.SLOT) w.u8(c.slot);
   }
+  if (ping) w.u16(Math.min(9999, Math.round(rttMs)));
 }
 
-// Reads what writeInput wrote: { cmds: [{seq, buttons, qyaw, qpitch, slot}], hash (-1 = none), ping }.
+// Reads what writeInput wrote: { cmds: [{seq, buttons, qyaw, qpitch, slot}], hash (-1 = none), ping, rttMs }.
 export function readInput(r) {
   const head = r.u8();
   const n = head & 15;
@@ -401,7 +406,7 @@ export function readInput(r) {
   const hash = head & IN_NOHASH ? -1 : r.u8();
   const cmds = [];
   const ping = !!(head & IN_PING);
-  if (!n) return { cmds, hash, ping };
+  if (!n) return { cmds, hash, ping, rttMs: ping ? r.u16() : 0 };
   let c = { seq, buttons: r.u16(), qyaw: r.u16(), qpitch: r.i16(), slot: head & IN_SLOT ? r.u8() : 255 };
   cmds.push(c);
   for (let i = 1; i < n; i++) {
@@ -418,7 +423,7 @@ export function readInput(r) {
     cmds.push(d);
     c = d;
   }
-  return { cmds, hash, ping };
+  return { cmds, hash, ping, rttMs: ping ? r.u16() : 0 };
 }
 
 // ---------------------------------------------------------------- leaderboard

@@ -1873,8 +1873,15 @@ export class Game {
     // their shots were aimed at. It stays with them: by the time a command is run, newer packets may have come in
     const renderTick = r.u16();
     const renderFrac = r.u8() / 255;
-    const { cmds, hash, ping } = readInput(r);
-    if (ping) p.pingAt = performance.now(); // answered in this player's next snapshot (sendSnapshots)
+    const { cmds, hash, ping, rttMs } = readInput(r);
+    if (ping) {
+      p.pingAt = performance.now(); // answered in this player's next snapshot (sendSnapshots)
+      if (rttMs > 0) {
+        const next = p.ping > 0 ? p.ping * 0.7 + rttMs * 0.3 : rttMs;
+        if (Math.round(next) !== Math.round(p.ping)) this.playersDirty = true;
+        p.ping = next;
+      }
+    }
     for (let i = 0; i < cmds.length; i++) {
       const c = cmds[i];
       // the packet's last command carries the client's fingerprint of its predicted state after it (NO_HASH: none
