@@ -111,7 +111,7 @@ for (const spec of subjects) {
     update(DT, time);
   }
   scene.updateMatrixWorld(true);
-  rows.push({ scene, obj, height, width, head: head(), label, tris });
+  rows.push({ scene, obj, height, width, head: head(), label, tris, headR: kind === 's' || kind === 'sz' ? 0 : ZOMBIE_DEFS[+a].headR });
 }
 
 const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 60);
@@ -126,7 +126,7 @@ rows.forEach((r, ri) => {
     if (v === 'head' || v === 'headside' || v === 'hips' || v === 'hand') {
       // yaw 0 = in front (the models face -Z). hips: a close look at the waist and the crotch; hand: at the right hand
       const yaw = v === 'head' ? -0.35 : v === 'headside' ? -Math.PI / 2 : v === 'hand' ? 0.9 : -0.25;
-      const d = v === 'hips' ? 1.4 : v === 'hand' ? 0.6 : Math.max(0.7, r.height * 0.42);
+      const d = v === 'hips' ? 1.4 : v === 'hand' ? 0.6 : Math.max(0.7, r.height * 0.42, (r.headR || 0) * 5); // (far enough for a boss's head, or a big dog's)
       const t = r.head.clone();
       t.y -= r.height * 0.02;
       if (v === 'hips') t.set(0, r.height * 0.5, 0);
@@ -144,7 +144,8 @@ rows.forEach((r, ri) => {
       ortho.top = half;
       ortho.bottom = -half;
       ortho.updateProjectionMatrix();
-      const c = new THREE.Vector3(r.obj.position.x, r.height * 0.5 + (r.obj.position.y || 0) * 0.5, r.obj.position.z);
+      // (what flies is framed where it flies)
+      const c = new THREE.Vector3(r.obj.position.x, r.obj.position.y ? r.obj.position.y - r.height * 0.1 : r.height * 0.5, r.obj.position.z);
       ortho.position.set(c.x - Math.sin(yaw) * Math.cos(pitch) * 20, c.y + Math.sin(pitch) * 20, c.z - Math.cos(yaw) * Math.cos(pitch) * 20);
       ortho.lookAt(c);
       cam = ortho;

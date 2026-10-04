@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
 import { CHARACTERS, CHARACTER_COUNT, CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
 
@@ -179,6 +179,83 @@ try {
   }
   check(`the humanoid dead within budget: ${near} tris near (<= ${DEAD_NEAR}), ${far} far (<= ${DEAD_FAR})`, near <= DEAD_NEAR && far > 0 && far <= DEAD_FAR);
   console.log(`  (survivors: up to ${worst} tris alive, ${worstZ} turned)`);
+
+  // ---- the specials, the bosses and the animals: rebuilt to look better, on the rigs and at the sizes they had. What
+  // the server's hitboxes (ZOMBIE_DEFS: radius, height, headY, headR) and every animation hang on is the skeleton, the
+  // calibration that puts the head at headY (k), and where the head's centre is on its bone. RIGS is origin/main's
+  // (4bd2e1c): per type the bones (how many; sig: a hash of each one's name, parent and bind position), k, the head
+  // anchor, and the bind pose's extents in the world (h: height, w: half width, d: half depth, m).
+  const { ZTYPE, ZOMBIE_DEFS } = await import('../shared/defs.js');
+  const RIGS = {
+    TANK: { bones: 21, sig: '531bca95ebf3', k: 1.089, headC: [0, 0.135, 0], h: 2.98, w: 1.07, d: 0.82 },
+    SPITTER: { bones: 24, sig: '13887c20f7a6', k: 0.966, headC: [0, 0.09, 0], h: 1.89, w: 0.21, d: 0.17 },
+    LEAPER: { bones: 23, sig: '48aa92b9c64c', k: 0.9857, headC: [0, 0.09, 0], h: 1.77, w: 0.22, d: 0.18 },
+    ROPER: { bones: 23, sig: '0b013614d8c4', k: 0.9882, headC: [0, 0.108, 0], h: 1.87, w: 0.3, d: 0.18 },
+    BOOMER: { bones: 24, sig: '1cecfe48e623', k: 1.0165, headC: [0, 0.108, 0], h: 1.76, w: 0.38, d: 0.49 },
+    BAT: { bones: 10, sig: '3b511595e234', k: 1, headC: [0, 0, 0], h: 0.17, w: 0.62, d: 0.26 },
+    BOSS_ABOMINATION: { bones: 25, sig: 'b29d1affcf38', k: 1.0826, headC: [0, 0.27, 0], h: 4.28, w: 1.41, d: 1.61 },
+    BOSS_HIVEQUEEN: { bones: 30, sig: '105e8a2f390d', k: 1.0529, headC: [0, 0.216, 0], h: 3.48, w: 1.59, d: 1.96 },
+    DOG: { bones: 23, sig: '29658d9bc6fe', k: 1, headC: [0, 0.015, -0.06], h: 0.75, w: 0.14, d: 0.67 },
+    SHADE: { bones: 23, sig: 'b1987450f3b7', k: 1.1332, headC: [0, 0.0882, 0], h: 2.19, w: 0.24, d: 0.2 },
+    BOSS_BRUTE: { bones: 22, sig: '25caaa306e41', k: 0.9915, headC: [0, 0.1125, 0], h: 2.38, w: 0.68, d: 0.62 },
+    BOSS_ALPHA: { bones: 23, sig: '29658d9bc6fe', k: 2, headC: [0, 0.015, -0.06], h: 1.56, w: 0.3, d: 1.34 },
+    BOSS_BLOATER: { bones: 24, sig: '1d303268902b', k: 1.6162, headC: [0, 0.1035, 0], h: 2.76, w: 1, d: 1.25 },
+  };
+  // triangles: a boss is alone on the screen, a special comes in threes and fours, dogs in packs and bats in swarms
+  const BOSS_TRIS = 12000, DOG_TRIS = 4500, ALPHA_TRIS = 7000, BAT_TRIS = 1500;
+  const r4 = (x) => +x.toFixed(4);
+  for (const [name, want] of Object.entries(RIGS)) {
+    const t = ZTYPE[name], def = ZOMBIE_DEFS[t];
+    const nv = C.zombieVariants(t);
+    const seen = new Map(); // each variant's geometry once (a dog's coat is picked by the seed)
+    for (let seed = 1; seen.size < nv && seed < 300; seed++) {
+      const z = C.createZombie(t, seed);
+      const meshes = [];
+      z.object.traverse((m) => m.isMesh && meshes.push(m));
+      if (!seen.has(meshes[0].geometry.uuid)) seen.set(meshes[0].geometry.uuid, { z, meshes });
+      else z.dispose();
+    }
+    let tris = 0, far = 0, h = 0, w = 0, d = 0, low = 0, rigOk = true, one = true, detail = '';
+    for (const { z, meshes } of seen.values()) {
+      const inst = z._inst;
+      const bones = inst.rig
+        ? inst.rig.bones.slice(1).map((b) => [b.name, b.parent > 0 ? inst.rig.bones[b.parent].name : '', ...b.local.toArray().map(r4)])
+        : inst.bones.slice(1).map((b) => [b.name, b.parent && b.parent.isBone ? b.parent.name : '', ...b.position.toArray().map(r4)]);
+      bones.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+      const sig = createHash('sha1').update(JSON.stringify(bones)).digest('hex').slice(0, 12);
+      const k = inst.cal ? inst.cal.k : inst.S;
+      const hc = inst.headCenter.position.toArray().map(r4);
+      if (bones.length !== want.bones || sig !== want.sig || Math.abs(k - want.k) > 2e-4 || hc.some((x, i) => Math.abs(x - want.headC[i]) > 1e-4)) {
+        rigOk = false;
+        detail = `${bones.length} bones, sig ${sig}, k ${r4(k)}, head ${hc}`;
+      }
+      one = one && meshes.length === 1 && meshes[0].isSkinnedMesh;
+      const g = meshes[0].geometry;
+      g.computeBoundingBox();
+      const bb = g.boundingBox;
+      tris = Math.max(tris, g.index.count / 3);
+      if (inst.rigFar) far = Math.max(far, inst.rigFar.tris);
+      h = Math.max(h, bb.max.y * k);
+      w = Math.max(w, Math.max(-bb.min.x, bb.max.x) * k);
+      d = Math.max(d, Math.max(-bb.min.z, bb.max.z) * k);
+      low = Math.min(low, bb.min.y * k);
+      z.dispose();
+    }
+    check(`${def.name}: the rig origin/main's animations and hitboxes hang on (bones, bind positions, head, calibration)`, rigOk, detail);
+    check(`${def.name}: one draw call`, one);
+    const budget = def.boss ? (t === ZTYPE.BOSS_ALPHA ? ALPHA_TRIS : BOSS_TRIS) : t === ZTYPE.DOG ? DOG_TRIS : t === ZTYPE.BAT ? BAT_TRIS : t === ZTYPE.TANK ? BOSS_TRIS : DEAD_NEAR;
+    const lod = [ZTYPE.SPITTER, ZTYPE.LEAPER, ZTYPE.ROPER, ZTYPE.BOOMER, ZTYPE.SHADE].includes(t);
+    check(`${def.name}: ${tris} tris (<= ${budget})${lod ? `, ${far} far (<= ${DEAD_FAR})` : ''}`, tris > 500 && tris <= budget && (!lod || (far > 0 && far <= DEAD_FAR)));
+    // the size it had: as tall (within 7%), no wider than 8% over (it is shot at its hitbox's width) nor 15% under, about as deep
+    check(`${def.name}: the size it was (${h.toFixed(2)} m tall, ${w.toFixed(2)} half wide, ${d.toFixed(2)} half deep; was ${want.h}, ${want.w}, ${want.d})`,
+      Math.abs(h / want.h - 1) <= 0.07 && w <= want.w * 1.08 + 0.01 && w >= want.w * 0.85 && d <= want.d + 0.15 && d >= want.d * 0.8 && (t === ZTYPE.BAT || low > -0.02));
+  }
+  // a boss's teeth do not depend on what was built before it (a far copy used to leave the next head built without them)
+  C.debugRig(ZTYPE.WALKER, 0, true);
+  const brute = C.createZombie(ZTYPE.BOSS_BRUTE, 1)._inst.rig.geometry;
+  let boneVerts = 0;
+  for (let i = 0; i < brute.attributes.position.count; i++) if (brute.attributes.position.getY(i) > 2.1 && brute.attributes.color.getX(i) > 0.35 && brute.attributes.color.getZ(i) > 0.2) boneVerts++;
+  check('a boss has its teeth whatever was built before it', boneVerts > 20, `${boneVerts}`);
 } catch (e) {
   check('the models build', false, String(e && e.stack));
 }
