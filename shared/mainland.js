@@ -7,7 +7,8 @@
 //   Port Calder, a ruined city of streets and blocks | the Mile 9 truck stop | Calder Field: a runway, hangars, a
 //   terminal with its tower, a fuel depot, and the plane
 //
-// with Kessler Ironworks on a spur north or south of the city and the houses of Eastgate on the other side. What a
+// with Kessler Ironworks on a spur north or south of the city, the houses of Eastgate on the other side and two farms
+// out on the plain. What a
 // seed changes: where the bridge lands, where the city, the ironworks and the airfield sit, what stands on every
 // lot of every block, the course of the roads between them, and everything that is scattered.
 //
@@ -17,6 +18,10 @@
 //   runway   the runway and what stands on it: { x, z0, z1, half (its half width), y, truck: { x, y, z, ry } }
 //   car      is the plane: the thing this act's supplies go into and its final stand is fought at (plane: true)
 //   partSpots[i].supply   which of the plane's parts lies there (an index into PLANE_PARTS): they are at set places
+//   props[i].live   set on the car at the bridgehead and on the plane: the client draws those two itself, because its
+//            cutscenes move them (the car drives to that very spot; the plane is swapped for the one that flies)
+//   city     { x, z, pitch, grid, lots: [{ x, z, w, d, ry, what }] }: what was built on every lot of Port Calder
+//   farms    [{ x, z, ry }]: the farms out on the plain (no place names them: their loot is a farm's)
 import { GRID_STEP, WATER_LEVEL } from './constants.js';
 import { ZONE, CONT } from './defs.js';
 import { PROPS } from './props.js';
@@ -42,6 +47,20 @@ const STREET = 12;
 const GRID = 4;
 const BLOCK = PITCH - STREET; // a block is this far across
 const CITY_R = (GRID * PITCH) / 2 + 18; // the levelled ground reaches this far from the middle of the city
+const BIG_BLOCKS = 2; // blocks that are one lot each, whatever the seed (the two tallest towers stand on them)...
+const QUAD_BLOCKS = 5; // ...and blocks of four small lots (the shops and stations the run needs go on those)
+const PAVE = 0.1; // a block's paving stands this far over the city's level (the roadway lies a little under it)
+const FLOOR_Y = 0.12; // ...and a room's floor this far (Builder.room's slab)
+const SETBACK = 1.2; // a building's front wall stands this far in from the edge of its lot
+const CARPARK_DECK = 3.2; // from one deck of the multi-storey car park to the next
+const FARMS = 2; // farms out on the plain, each FARM_R across its levelled yard
+const FARM_R = 30;
+const SITE_FLAT = 5.5; // the ground is levelled this far round a roadside site
+const ROADBLOCKS = 3; // stretches of street somebody barricaded
+// what is drawn for a lot nothing was dealt to, by weight: [kind, weight]
+const SMALL_LOTS = [['grocery', 2], ['diner', 1.2], ['pharmacy', 0.6], ['hardware', 0.8], ['flats', 3.4], ['ruin', 1.6], ['burnt', 1.3], ['green', 1]];
+const LONG_LOTS = [['terrace', 3], ['block', 2.5], ['carpark', 1.2], ['parking', 0.8]];
+const BIG_LOTS = [['collapse', 1], ['depot', 1], ['parking', 1]];
 
 // The airfield (local frame of the runway: it runs north-south, the plane at its south end facing north)
 const RUNWAY_LEN = 380;
@@ -75,6 +94,48 @@ export function createMainland(seed) {
   const terminal = { x: field.x - 96, z: field.z + 22 };
   const depot = { x: field.x - 104, z: field.z - 96 };
   const head = { x: COAST + 46, z: zb };
+  const G2 = (GRID * PITCH) / 2; // from the middle of the city to its edge streets
+  const gate = [field.x - 150, field.z + 22]; // where the road in meets the airfield
+  // Farms, out on the plain: a walk off Route 9, clear of every place and of every road and track planned below.
+  // Each faces the highway, and a dirt track joins it there.
+  const mainLine = [[head.x, head.z], [city.x - G2, city.z], [city.x + G2, city.z], [stop.x, stop.z], gate];
+  const lanes = [
+    [[city.x + PITCH, city.z + side * G2], [works.x, works.z]],
+    [[city.x + G2, city.z - side * G2], [suburb.x, suburb.z]],
+    [[head.x, head.z + 30], [city.x - G2 - 80, city.z + side * (G2 + 70)]],
+    [[works.x + 40, works.z], [stop.x, stop.z + side * 40]],
+  ];
+  // the point of the leg a -> b nearest (x, z)
+  const nearOn = ([ax, az], [bx, bz], x, z) => {
+    const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2 || 1), 0, 1);
+    return [ax + (bx - ax) * t, az + (bz - az) * t];
+  };
+  const farms = [];
+  for (let tries = 0; tries < 600 && farms.length < FARMS; tries++) {
+    const x = prng.range(COAST + 150, field.x - 260);
+    const z = prng.range(-HALF + 170, HALF - 170);
+    if (Math.abs(x - city.x) < G2 + 90 && Math.abs(z - city.z) < G2 + 90) continue;
+    if ([works, suburb, stop].some((p) => Math.hypot(p.x - x, p.z - z) < 150) || farms.some((f) => Math.hypot(f.x - x, f.z - z) < 260)) continue;
+    if (lanes.some(([a, b]) => Math.hypot(nearOn(a, b, x, z)[0] - x, nearOn(a, b, x, z)[1] - z) < 95)) continue;
+    // where its track meets the highway: the nearest point of an open stretch (not in the city, not at a place)
+    let to = null;
+    for (const k of [0, 2, 3]) {
+      const [a, b] = [mainLine[k], mainLine[k + 1]];
+      const p = nearOn([a[0] + (b[0] - a[0]) * 0.2, a[1] + (b[1] - a[1]) * 0.2], [a[0] + (b[0] - a[0]) * 0.8, a[1] + (b[1] - a[1]) * 0.8], x, z);
+      if (!to || Math.hypot(p[0] - x, p[1] - z) < Math.hypot(to[0] - x, to[1] - z)) to = p;
+    }
+    const d = Math.hypot(to[0] - x, to[1] - z);
+    if (d < 120 || d > 300) continue;
+    // ...by a line that crosses no place
+    let crosses = false;
+    for (let t = 0; t <= 1 && !crosses; t += 0.05) {
+      const [px, pz] = [x + (to[0] - x) * t, z + (to[1] - z) * t];
+      crosses = (Math.abs(px - city.x) < G2 + 40 && Math.abs(pz - city.z) < G2 + 40) || [works, suburb, stop].some((p) => Math.hypot(p.x - px, p.z - pz) < 90);
+    }
+    if (crosses) continue;
+    // (its front, local -Z, to the highway, a quarter turn at a time: the yard is levelled as a square)
+    farms.push({ x, z, to, ry: Math.round(Math.atan2(-(to[0] - x), -(to[1] - z)) / (PI / 2)) * (PI / 2) });
+  }
 
   const zones = [];
   const put = (id, x, z, ry, spec) => zones.push({ id, x, z, ry, h: 0, blend: 26, ...spec });
@@ -84,7 +145,7 @@ export function createMainland(seed) {
   put(ZONE.SUBURB, suburb.x, suburb.z, side > 0 ? PI : 0, { flat: 50, clear: 40, dirt: 0.15 });
   put(ZONE.TRUCKSTOP, stop.x, stop.z, 0, { flat: 30, clear: 34, dirt: 0.3 });
   put(ZONE.TERMINAL, terminal.x, terminal.z, PI / 2, { flat: 30, clear: 36 }); // (its front faces west: the road in)
-  put(ZONE.HANGARS, hangars.x, hangars.z, -PI / 2, { flat: 40, clear: 46 }); // (their doors face east: the apron)
+  put(ZONE.HANGARS, hangars.x, hangars.z, -PI / 2, { flat: 50, clear: 54 }); // (their doors face east: the apron)
   put(ZONE.FUEL_DEPOT, depot.x, depot.z, PI / 2, { flat: 28, clear: 32, dirt: 0.5 });
   const zoneById = {};
   for (const z of zones) zoneById[z.id] = z;
@@ -116,7 +177,12 @@ export function createMainland(seed) {
     [field.x - 6, field.z, RUNWAY_HALF + 18, RUNWAY_LEN / 2 + 16, fieldH, 30],
     [apron.x, apron.z, apron.hx + 6, apron.hz + 6, fieldH, 24],
     [COAST + 26, zb, 22, 9, BLUFF, 9], // the bluff out to the abutment: the road off the bridge
+    [city.x, city.z, G2 + 16, G2 + 16, cityH, 30], // the city, to its corners (they lie outside the circle of its zone)
   ];
+  for (const f of farms) {
+    f.h = Math.max(FLOOR + 1, H0(f.x, f.z) * 0.6 + 0.6);
+    flats.push([f.x, f.z, FARM_R, FARM_R, f.h, 18]);
+  }
   const H1 = (x, z) => {
     let h = H0(x, z);
     for (const zn of zones) {
@@ -193,7 +259,7 @@ export function createMainland(seed) {
       for (let i = 0; i < n; i++) {
         for (const zn of zones) {
           const d = Math.hypot(pts[i * 2] - zn.x, pts[i * 2 + 1] - zn.z);
-          if (d < zn.flat + 12) hs[i] = lerp(hs[i], zn.h, 1 - smoothstep(zn.flat * 0.75, zn.flat + 12, d));
+          if (d < zn.flat + 12) hs[i] = lerp(hs[i], zn.h, 1 - smoothstep(zn.flat, zn.flat + 12, d));
         }
       }
     }
@@ -221,16 +287,14 @@ export function createMainland(seed) {
   };
   const cityW = [city.x - (GRID * PITCH) / 2, city.z];
   const cityE = [city.x + (GRID * PITCH) / 2, city.z];
-  const gate = [field.x - 150, field.z + 22]; // where the road in meets the airfield
   // Route 9 carries on from the bridge: over the plain, down Main Street, past the truck stop and out to the airfield
   const highway = buildRoad(
-    [[head.x - 30, head.z], [head.x + 20, head.z], ...wander([head.x + 60, head.z], [cityW[0] - 40, city.z], 2, 0.07).slice(1), cityW, cityE, ...wander([cityE[0] + 40, city.z], [stop.x - 34, stop.z - 14], 1, 0.06), [stop.x + 34, stop.z - 14], ...wander([stop.x + 70, stop.z - 12], gate, 1, 0.05).slice(1), [terminal.x - 26, terminal.z]],
+    [[head.x - 30, head.z], [head.x + 20, head.z], ...wander([head.x + 60, head.z], [cityW[0] - 40, city.z], 2, 0.07).slice(1), cityW, cityE, ...wander([cityE[0] + 40, city.z], [stop.x - 34, stop.z - 26], 1, 0.06), [stop.x + 34, stop.z - 26], ...wander([stop.x + 70, stop.z - 24], gate, 1, 0.05).slice(1), [terminal.x - 26, terminal.z]],
     ROAD.ASPHALT,
     3.8,
     'Route 9',
   );
   // the city's streets (Main Street is Route 9 itself)
-  const G2 = (GRID * PITCH) / 2;
   for (let i = 0; i <= GRID; i++) {
     const o = -G2 + i * PITCH;
     buildRoad([[city.x + o, city.z - G2 - 8], [city.x + o, city.z + G2 + 8]], ROAD.ASPHALT, 3.4, '', cityH);
@@ -238,14 +302,21 @@ export function createMainland(seed) {
   }
   // the spur to the ironworks and the lane out to Eastgate, off the city's edge streets
   buildRoad(wander([city.x + PITCH, city.z + side * (G2 + 8)], [works.x, works.z - side * 44], 2, 0.08), ROAD.ASPHALT, 3, 'Kessler Road');
-  buildRoad(wander([city.x + G2, city.z - side * PITCH], [suburb.x - 40, suburb.z + side * 20], 1, 0.1), ROAD.DIRT, 2.6);
+  buildRoad(wander([city.x + G2, city.z - side * (G2 + 8)], [suburb.x - 46, suburb.z], 1, 0.06), ROAD.DIRT, 2.6);
   buildRoad([[suburb.x - 42, suburb.z], [suburb.x + 42, suburb.z]], ROAD.DIRT, 2.6);
   // the airfield: the runway, the taxi lane along the apron, the road on to the depot
   const runwayRoad = buildRoad([[field.x, field.z - RUNWAY_LEN / 2], [field.x, field.z + RUNWAY_LEN / 2]], ROAD.ASPHALT, RUNWAY_HALF, 'Runway 36', fieldH);
   buildRoad([[terminal.x - 26, terminal.z], [terminal.x - 28, hangars.z - 30], [hangars.x - 34, hangars.z + 4]], ROAD.ASPHALT, 2.8, '', fieldH);
   buildRoad([[terminal.x - 26, terminal.z], [depot.x - 30, depot.z + 40], [depot.x - 24, depot.z]], ROAD.DIRT, 2.6);
+  // a track from each farm down to the highway
+  for (const f of farms) {
+    const p = highway.pts;
+    let best = 0;
+    for (let i = 0; i < p.length / 2; i++) if (Math.hypot(p[i * 2] - f.to[0], p[i * 2 + 1] - f.to[1]) < Math.hypot(p[best * 2] - f.to[0], p[best * 2 + 1] - f.to[1])) best = i;
+    buildRoad(wander([f.x - Math.sin(f.ry) * (FARM_R - 4), f.z - Math.cos(f.ry) * (FARM_R - 4)], [p[best * 2], p[best * 2 + 1]], 1, 0.05), ROAD.DIRT, 2.4);
+  }
   // forest tracks over the plain: from the bridgehead along the shore, and round the back of the city
-  buildRoad(wander([head.x + 10, head.z + 30], [city.x - 60, city.z + side * (G2 + 60)], 3, 0.12), ROAD.TRAIL, 1.5);
+  buildRoad(wander([head.x + 10, head.z + 30], [city.x - G2 - 80, city.z + side * (G2 + 70)], 3, 0.06), ROAD.TRAIL, 1.5);
   buildRoad(wander([works.x + 40, works.z], [stop.x, stop.z + side * 40], 3, 0.12), ROAD.TRAIL, 1.5);
 
   // roads into the heightfield (as world.js does it)
@@ -328,10 +399,12 @@ export function createMainland(seed) {
   const bridge = planBridge({ seed, z: zb, shore: COAST, deckY: BLUFF });
   place(ZONE.BRIDGEHEAD, (b) => {
     // (local frame: -Z is east, inland; +Z is back out along the bridge; +X is north)
-    b.prop('car', 1.6, 15, PI + 0.12, { seed: 7 });
+    // (live: the client draws these two itself - the crossing's cutscene drives the car to this very spot)
+    b.prop('car', 0, 16, 0.08, { seed: 7 });
+    props[props.length - 1].live = true;
     for (let i = 0; i < 8; i++) spawnPoints.push({ x: b.wx(-5 + (i % 4) * 3.2, -2 - Math.floor(i / 4) * 3), z: b.wz(-5 + (i % 4) * 3.2, -2 - Math.floor(i / 4) * 3) });
     // what is left of the last span's end: the edge of the abutment, shut off
-    for (const lx of [-3.3, 0, 3.3]) b.prop('jersey_barrier', lx, 37.4, 0, { seed: 1 });
+    for (const lx of [-3.6, 3.6]) b.prop('jersey_barrier', lx, 37.4, 0, { seed: 1 }); // (the car came through between them)
     b.prop('road_sign', -6.4, 30, PI, { seed: 3 });
     // the checkpoint
     b.prop('military_tent', 13, -6, PI / 2, { seed: 1 });
@@ -356,136 +429,342 @@ export function createMainland(seed) {
   });
 
   // PORT CALDER -----------------------------------------------------------------------------------------------
-  // GRID x GRID blocks. Every block is paved and split into lots; what stands on a lot is drawn from the seed, with
-  // the places the run needs (the plane's magneto is in a parts shop) dealt out first.
+  // GRID x GRID blocks. Every block is paved and split into lots - four small ones round a cross of alleys, two long
+  // ones back to back, or one big one - and what stands on a lot is drawn from the seed, after the places the run
+  // needs have been dealt out (the plane's magneto is in a parts shop; two blocks are big, for the towers).
   const lots = [];
   {
-    const H = cityH;
+    const order = [];
+    for (let k = 0; k < GRID * GRID; k++) order.push(k);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = rng.int(0, i);
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    // (the first BIG_BLOCKS of the shuffle are one lot each, the next QUAD_BLOCKS four: the rest as the seed has it)
+    const layoutOf = new Map(order.map((k, n) => [k, n < BIG_BLOCKS ? 'big' : n < BIG_BLOCKS + QUAD_BLOCKS ? 'quad' : null]));
     for (let bi = 0; bi < GRID; bi++) {
       for (let bj = 0; bj < GRID; bj++) {
         const bx = city.x - G2 + (bi + 0.5) * PITCH;
         const bz = city.z - G2 + (bj + 0.5) * PITCH;
-        const b = new Builder(bx, bz, 0, H);
+        const b = new Builder(bx, bz, 0, cityH);
         b.zone = ZONE.CITY;
-        b.box(0, 0, 0, BLOCK, 0.1, BLOCK, 'concrete'); // the pavement
+        b.box(0, 0, 0, BLOCK, PAVE, BLOCK, 'concrete'); // the pavement
         b.clear(0, 0, BLOCK * 0.72);
         const r = rng();
+        const layout = layoutOf.get(bi * GRID + bj) || (r < 0.45 ? 'quad' : r < 0.9 ? 'long' : 'big');
         // which way a lot faces: out of the block, onto the street it stands on. face: the world direction [dx, dz]
-        const lot = (lx, lz, w, d, face) => lots.push({ x: bx + lx, z: bz + lz, w, d, ry: Math.atan2(-face[0], -face[1]), bi, bj });
-        if (r < 0.5) {
-          // four lots, an alley between them
+        const lot = (lx, lz, w, d, face) => lots.push({ x: bx + lx, z: bz + lz, w, d, ry: Math.atan2(-face[0], -face[1]), bi, bj, what: '' });
+        if (layout === 'quad') {
           for (const sx of [-1, 1]) for (const sz of [-1, 1]) lot(sx * 11.25, sz * 11.25, 19.5, 19.5, rng.chance(0.5) ? [sx, 0] : [0, sz]);
-        } else if (r < 0.8) {
-          // two long lots, back to back
+        } else if (layout === 'long') {
           if (rng.chance(0.5)) for (const sx of [-1, 1]) lot(sx * 11.25, 0, 42, 19.5, [sx, 0]);
           else for (const sz of [-1, 1]) lot(0, sz * 11.25, 42, 19.5, [0, sz]);
-        } else {
-          const f = [[1, 0], [-1, 0], [0, 1], [0, -1]][rng.int(0, 3)];
-          lot(0, 0, 42, 42, f);
-        }
+        } else lot(0, 0, 42, 42, [[1, 0], [-1, 0], [0, 1], [0, -1]][rng.int(0, 3)]);
       }
     }
   }
-  // the buildings. Each is given a builder at the middle of its lot, front (-Z) on the street, and the lot's size.
-  // The front wall stands SETBACK in from the lot's edge (the pavement in front of it).
-  const SETBACK = 1.2;
-  const bands = (b, cz, w, d, y0, floors, fh, mat = 'dark') => {
-    // rows of windows up a solid block: a dark band a floor, proud of each face (no collider: the block has one)
+  // The buildings. Each is given a builder at the middle of its lot, front (-Z) on the street, and the lot's size.
+  // A building's front wall stands SETBACK in from the lot's edge; a room's floor is FLOOR_Y over the pavement.
+  // F, the frame of a room: { w, d, cz, front, back, L, R } - its size, the middle of it, and where its walls are.
+  const frame = (L, w, d) => {
+    const cz = -L.d / 2 + SETBACK + d / 2;
+    return { w, d, cz, front: cz - d / 2, back: cz + d / 2, L: -w / 2, R: w / 2 };
+  };
+  const WALL = 0.125 + 0.06; // from a wall's line to the face of what stands against it (half the wall, and a gap)
+  const backZ = (F, depth) => F.back - WALL - depth / 2;
+  const leftX = (F, depth) => F.L + WALL + depth / 2;
+  const rightX = (F, depth) => F.R - WALL - depth / 2;
+  const inside = { ly: FLOOR_Y };
+  const cont = (b, ctype, prop, x, z, ry, o = {}) => b.cont(ctype, x, z, { prop, ry, ly: FLOOR_Y, ...o });
+  // rows of windows up a solid block: a dark band a floor, proud of each face (no collider: the block has one)
+  const bands = (b, cx, cz, w, d, y0, floors, fh) => {
     for (let f = 0; f < floors; f++) {
       const y = y0 + f * fh + 1.0;
-      b.box(0, y, cz - d / 2 - 0.03, w - 1.6, 1.3, 0.06, mat, { collide: false });
-      b.box(0, y, cz + d / 2 + 0.03, w - 1.6, 1.3, 0.06, mat, { collide: false });
-      b.box(-w / 2 - 0.03, y, cz, 0.06, 1.3, d - 1.6, mat, { collide: false });
-      b.box(w / 2 + 0.03, y, cz, 0.06, 1.3, d - 1.6, mat, { collide: false });
+      b.box(cx, y, cz - d / 2 - 0.03, w - 1.6, 1.3, 0.06, 'dark', { collide: false });
+      b.box(cx, y, cz + d / 2 + 0.03, w - 1.6, 1.3, 0.06, 'dark', { collide: false });
+      b.box(cx - w / 2 - 0.03, y, cz, 0.06, 1.3, d - 1.6, 'dark', { collide: false });
+      b.box(cx + w / 2 + 0.03, y, cz, 0.06, 1.3, d - 1.6, 'dark', { collide: false });
     }
   };
+  // the floors over a walk-in ground floor: shut, and solid. Returns the height of the roof
+  const storeys = (b, F, y0, floors, fh, mat) => {
+    b.box(0, y0, F.cz, F.w, floors * fh, F.d, mat);
+    bands(b, 0, F.cz, F.w, F.d, y0, floors, fh);
+    b.box(0, y0 + floors * fh, F.cz, F.w + 0.4, 0.5, F.d + 0.4, 'concrete', { collide: false }); // parapet
+    return y0 + floors * fh;
+  };
+  // what is behind a building: bins, a pallet, a dead tree come up through the paving
+  const yard = (b, F, L) => {
+    if (rng.chance(0.6)) b.cont(CONT.DUMPSTER, F.L + 2.2, F.back + 1.6, { prop: 'dumpster', ry: PI, ly: PAVE });
+    if (rng.chance(0.5)) b.prop('pallet', F.L + 5.2, F.back + 1.4, rng.range(0, 3), { ly: PAVE });
+    if (L.d / 2 - F.back > 4.5 && rng.chance(0.6)) b.tree(rng.range(-L.w / 2 + 2.5, L.w / 2 - 2.5), L.d / 2 - 2.2, rng.chance(0.5) ? 3 : 4, rng.range(0.8, 1.15));
+    if (rng.chance(0.3)) b.prop('corpse', rng.range(-3, 3), F.back + 3.2, rng.range(0, 6), { nocollide: true, ly: PAVE });
+  };
+  // A shop's room: a glass front with the door in the middle of it, a yard door at the back's right-hand end. x0:
+  // where its middle is along the lot (a terrace has three). Returns its frame, in a builder of its own.
+  const shopRoom = (b, L, w, d, mat, x0 = 0) => {
+    const s = b.sub(x0, 0);
+    const F = frame(L, w, d);
+    s.room(0, F.cz, w, d, 3.8, mat, { n: [door(w / 2, 1.6), win(w * 0.2, Math.min(3, w * 0.22), 0.8, 2.8), win(w * 0.8, Math.min(3, w * 0.22), 0.8, 2.8)], s: [door(2.4, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+    return [s, F];
+  };
+  // what is in a shop, by what it sold. Each fills a room of any width from 12 m up, clear of its two doors.
+  const FILL = {
+    grocery(b, F) {
+      b.box(F.L + 3, FLOOR_Y, F.front + 3.2, 3.4, 1.0, 0.7, 'planks'); // counter
+      b.loot(F.L + 3, F.front + 3.2, FLOOR_Y + 1.02);
+      for (const dx of [1.6, 3.9, 6.2]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI);
+      cont(b, CONT.SHELF, 'shelf', F.R - 4.6, F.cz + 0.4, PI / 2);
+      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.cz - 0.2, -PI / 2);
+      b.loot(F.R - 3, F.cz - 2.4, FLOOR_Y + 0.02);
+    },
+    pharmacy(b, F) {
+      b.box(F.L + 4.2, FLOOR_Y, F.cz + 0.4, 5, 1.0, 0.7, 'planks');
+      b.loot(F.L + 4.2, F.cz + 0.4, FLOOR_Y + 1.02);
+      for (const dx of [1.2, 2.3]) cont(b, CONT.MEDICINE, 'medicine_cabinet', F.L + dx, backZ(F, 0.45), PI);
+      cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), PI);
+      cont(b, CONT.SHELF, 'shelf', rightX(F, 0.5), F.cz - 1.4, -PI / 2);
+      b.prop('wheelchair', F.L + 1.6, F.front + 2.2, 0.6, { nocollide: true, ly: FLOOR_Y });
+      b.loot(F.R - 2.4, F.cz + 1.6, FLOOR_Y + 0.02);
+    },
+    hardware(b, F) {
+      b.box(F.L + 3, FLOOR_Y, F.front + 3.4, 3.6, 1.0, 0.7, 'planks');
+      b.cont(CONT.TOOLBOX, F.L + 3, F.front + 3.4, { prop: 'toolbox', ry: 0.3, nocollide: true, ly: FLOOR_Y + 1.0 });
+      for (const dx of [1.6, 3.9]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI);
+      cont(b, CONT.CRATE, 'crate', F.L + 6.6, backZ(F, 1), 0.1);
+      cont(b, CONT.SHELF, 'shelf', F.R - 4.6, F.cz, PI / 2);
+      b.prop('tire_pile', rightX(F, 1.4), F.cz - 2.6, 0, inside);
+      b.loot(F.R - 3, F.cz + 2, FLOOR_Y + 0.02);
+      b.loot(F.L + 1.4, F.cz - 1, FLOOR_Y + 0.02);
+    },
+    diner(b, F) {
+      const len = F.w - 8;
+      b.box(F.L + 1.2 + len / 2, FLOOR_Y, F.cz + 2.2, len, 1.05, 0.7, 'planks'); // the counter
+      b.loot(F.L + 2.4, F.cz + 2.2, FLOOR_Y + 1.07);
+      cont(b, CONT.FRIDGE, 'fridge', F.L + 1.1, backZ(F, 0.72), PI);
+      cont(b, CONT.CABINET, 'cabinet', F.L + 2.8, backZ(F, 0.55), PI);
+      for (const tx of [F.L + 2.2, F.R - 2.2]) {
+        b.prop('table', tx, F.front + 2.4, 0.05, inside);
+        b.prop('chair', tx - 1.2, F.front + 2.5, PI / 2, inside);
+        b.prop('chair', tx + 1.2, F.front + 2.3, -PI / 2, inside);
+      }
+      b.loot(F.R - 2.2, F.front + 2.4, FLOOR_Y + 0.82);
+    },
+    // Calder Aero Supply: where the plane's magneto is
+    aero(b, F) {
+      FILL.hardware(b, F);
+      part(b, 1, F.R - 1.4, F.cz - 0.6, FLOOR_Y + 0.02);
+    },
+  };
+  const SHOPS = [['grocery', 'brick'], ['pharmacy', 'concrete'], ['hardware', 'tin'], ['diner', 'clapboard'], ['grocery', 'concrete'], ['hardware', 'brick']];
   const BUILD = {
-    // a shop: one room behind a glass front, a counter, shelves along the back, a yard door
-    shop(b, L, o = {}) {
-      const w = Math.min(L.w - 2, 17);
-      const d = Math.min(L.d - SETBACK - 5, 11);
-      const cz = -L.d / 2 + SETBACK + d / 2;
-      const mat = o.mat || (rng.chance(0.6) ? 'brick' : 'concrete');
-      b.room(0, cz, w, d, 3.8, mat, { n: [door(w / 2, 1.6), win(w * 0.2, 3, 0.8, 2.8), win(w * 0.8, 3, 0.8, 2.8)], s: [door(w - 2.4, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-      b.box(-w / 4, 0.12, cz - 0.6, 3.4, 1.0, 0.7, 'planks'); // counter
-      b.loot(-w / 4, cz - 0.6, 1.14);
-      const back = cz + d / 2 - 0.75;
-      b.cont(CONT.SHELF, -w / 2 + 2.2, back, { prop: 'shelf', ry: PI, ly: 0.12 });
-      b.cont(CONT.SHELF, -w / 2 + 4.6, back, { prop: 'shelf', ry: PI, ly: 0.12 });
-      b.cont(o.fridge === false ? CONT.CABINET : CONT.FRIDGE, w / 2 - 0.8, cz + 0.5, { prop: o.fridge === false ? 'cabinet' : 'fridge', ry: -PI / 2, ly: 0.12 });
-      b.loot(w / 4, cz + 1.2, 0.14);
-      b.cont(CONT.DUMPSTER, -w / 2 + 2, cz + d / 2 + 2.2, { prop: 'dumpster', ry: PI });
-      return { cz, w, d };
+    shop(b, L, kind, mat) {
+      const [s, F] = shopRoom(b, L, 16, 11, mat);
+      FILL[kind](s, F);
+      yard(b, F, L);
+    },
+    // a row of three shops under one roof
+    terrace(b, L) {
+      const F = frame(L, 38.4, 11);
+      const U = F.w / 3;
+      const k0 = rng.int(0, SHOPS.length - 1);
+      for (let k = 0; k < 3; k++) {
+        const kind = SHOPS[(k0 + k * 2) % SHOPS.length][0];
+        const mat = SHOPS[k0][1]; // (one row, one wall)
+        const [s, Fu] = shopRoom(b, L, U, 11, mat, (k - 1) * U);
+        FILL[kind](s, Fu);
+      }
+      yard(b, F, L);
+      b.wreck(rng.chance(0.5) ? 'car_wreck' : 'car_burnt', F.R - 6, F.back + 3.4, PI / 2 + rng.range(-0.2, 0.2), { ly: PAVE, trunk: rng.chance(0.5) });
+    },
+    // the police station: a front office, and behind a door the armoury
+    police(b, L) {
+      const F = frame(L, 16, 12);
+      b.room(0, F.cz, F.w, F.d, 3.6, 'brick', { n: [door(F.w / 2, 1.5), win(F.w * 0.2, 1.6), win(F.w * 0.8, 1.6)], s: [door(2.4, 1.1)], w: [win(F.d * 0.7, 1.2, 1.5, 2.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+      b.wall(F.L, F.cz + 1.5, F.R, F.cz + 1.5, 3.6, 0.2, 'brick', [door(4, 1.2)]);
+      b.box(3, FLOOR_Y, F.cz - 1.4, 4, 1.05, 0.8, 'planks'); // the front desk
+      b.loot(3, F.cz - 1.4, FLOOR_Y + 1.07);
+      cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz - 3.4, -PI / 2);
+      for (const dz of [3, 4.3]) cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + dz, PI / 2, { seed: dz | 0 });
+      cont(b, CONT.AMMO_BOX, 'military_crate', -1, backZ(F, 0.8), PI);
+      cont(b, CONT.AMMO_BOX, 'military_crate', 1.6, backZ(F, 0.8), PI, { seed: 1 });
+      b.loot(-3, F.cz + 3.6, FLOOR_Y + 0.02);
+      b.prop('sandbags', -4.5, F.front - 0.55, 0, { ly: PAVE });
+      yard(b, F, L);
     },
     // flats over a ground floor that can be walked into: a hall, two rooms, what the people who lived there left
     flats(b, L) {
-      const w = Math.min(L.w - 2, 17);
-      const d = Math.min(L.d - SETBACK - 3, 13);
-      const cz = -L.d / 2 + SETBACK + d / 2;
+      const F = frame(L, 16, 12);
       const mat = rng.chance(0.5) ? 'brick' : 'concrete';
-      const floors = rng.int(2, 4);
-      b.room(0, cz, w, d, 3.2, mat, { n: [door(w / 2, 1.4), win(w * 0.2, 1.6), win(w * 0.8, 1.6)], s: [door(2.2, 1.1), win(w * 0.7, 1.4)], e: [win(d / 2, 1.4)], w: [win(d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
-      b.wall(1.4, cz - d / 2, 1.4, cz + d / 2, 3.2, 0.18, 'concrete', [door(d * 0.3, 1.2)]);
-      b.box(0, 3.5, cz, w, floors * 3, d, mat); // the floors above: shut, and solid
-      bands(b, cz, w, d, 3.5, floors, 3);
-      b.box(0, 3.5 + floors * 3, cz, w + 0.4, 0.5, d + 0.4, 'concrete', { collide: false }); // parapet
-      b.prop('bed', -w / 2 + 1.4, cz + d / 2 - 1.5, 0, { ly: 0.12 });
-      b.cont(CONT.CABINET, -w / 2 + 3.6, cz + d / 2 - 0.6, { prop: 'cabinet', ry: PI, ly: 0.12 });
-      b.prop('table', w / 2 - 3, cz + 1, 0.1, { ly: 0.12 });
-      b.loot(w / 2 - 3, cz + 1, 0.94);
-      b.cont(CONT.FRIDGE, w / 2 - 0.8, cz + d / 2 - 2.4, { prop: 'fridge', ry: -PI / 2, ly: 0.12 });
-      b.loot(-w / 4, cz - d / 4, 0.14);
-      return { cz, w, d };
+      b.room(0, F.cz, F.w, F.d, 3.2, mat, { n: [door(F.w / 2, 1.4), win(F.w * 0.2, 1.6), win(F.w * 0.8, 1.6)], s: [door(2.2, 1.1), win(F.w * 0.7, 1.4)], e: [win(F.d / 2, 1.4)], w: [win(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
+      b.wall(1.4, F.front, 1.4, F.back, 3.2, 0.18, 'concrete', [door(F.d * 0.6, 1.2)]);
+      storeys(b, F, 3.5, rng.int(2, 4), 3, mat);
+      b.prop('bed', F.L + 1.1, F.back - 1.4, 0, inside);
+      cont(b, CONT.CABINET, 'cabinet', F.L + 3.2, backZ(F, 0.55), PI);
+      b.prop('table', F.R - 4, F.cz - 2.4, 0.1, inside);
+      b.prop('chair', F.R - 4, F.cz - 1.5, PI, inside);
+      b.loot(F.R - 4, F.cz - 2.4, FLOOR_Y + 0.82);
+      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.cz + 0.4, -PI / 2);
+      b.loot(F.L + 3, F.cz - 2.5, FLOOR_Y + 0.02);
+      if (rng.chance(0.4)) b.cont(CONT.DUFFEL, F.L + 4.6, F.cz + 1.4, { prop: 'duffel_bag', ry: 0.8, nocollide: true, ly: FLOOR_Y });
+      yard(b, F, L);
     },
-    // an office tower: a lobby at street level and a shaft of floors over it, the tallest thing for a mile
-    tower(b, L) {
-      const w = Math.min(L.w - 4, 26);
-      const d = Math.min(L.d - SETBACK - 4, 24);
-      const cz = -L.d / 2 + SETBACK + d / 2;
-      const floors = rng.int(7, 12);
-      b.room(0, cz, w, d, 4.4, 'concrete', { n: [door(w / 2, 1.7), win(w * 0.22, 4.4, 0.6, 3.6), win(w * 0.78, 4.4, 0.6, 3.6)], s: [door(w - 3, 1.2)], e: [win(d / 2, 4, 0.6, 3.6)], w: [win(d / 2, 4, 0.6, 3.6)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-      // the core, with the lifts nobody will ride again
-      b.box(0, 0.12, cz + 2, 5, 4.28, 5, 'concrete');
-      b.box(-w / 4, 0.12, cz - d / 4, 4.2, 1.05, 0.9, 'planks'); // the front desk
-      b.loot(-w / 4, cz - d / 4, 1.19);
-      b.cont(CONT.CABINET, w / 2 - 0.8, cz + d / 4, { prop: 'cabinet', ry: -PI / 2, ly: 0.12 });
-      b.cont(CONT.LOCKER, -w / 2 + 0.7, cz + d / 2 - 2, { prop: 'locker', ry: PI / 2, ly: 0.12 });
-      b.loot(w / 4, cz + d / 2 - 2, 0.14);
-      const top = 4.7 + floors * 3.3;
-      b.box(0, 4.7, cz, w - 1, floors * 3.3, d - 1, 'concrete');
-      bands(b, cz, w - 1, d - 1, 4.7, floors, 3.3);
+    // a long block of flats: two halls, four rooms on the ground floor
+    block(b, L) {
+      const F = frame(L, 38, 12);
+      const mat = rng.chance(0.5) ? 'brick' : 'concrete';
+      b.room(0, F.cz, F.w, F.d, 3.2, mat, { n: [door(F.w * 0.25, 1.4), door(F.w * 0.75, 1.4), win(4, 1.6), win(15, 1.6), win(23, 1.6), win(34, 1.6)], s: [door(2.2, 1.1), door(F.w - 2.2, 1.1), win(12, 1.4), win(26, 1.4)], e: [win(F.d / 2, 1.4)], w: [win(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
+      for (const [wx, at] of [[-12.5, 0.65], [0, 0.3], [12.5, 0.65]]) b.wall(wx, F.front, wx, F.back, 3.2, 0.18, 'concrete', [door(F.d * at, 1.2)]);
+      storeys(b, F, 3.5, rng.int(3, 5), 3, mat);
+      for (const sx of [-1, 1]) {
+        b.prop('bed', sx * 14, F.back - 1.4, 0, inside);
+        cont(b, sx < 0 ? CONT.CABINET : CONT.FRIDGE, sx < 0 ? 'cabinet' : 'fridge', sx * (F.R - WALL - 0.36), F.cz - 1, sx < 0 ? PI / 2 : -PI / 2);
+        b.prop('table', sx * 4.5, F.cz + 2.6, 0.1, inside);
+        b.loot(sx * 4.5, F.cz + 2.6, FLOOR_Y + 0.82);
+        b.prop('bed', sx * 1.5, F.back - 1.4, 0, inside);
+        b.loot(sx * 16, F.cz - 2.6, FLOOR_Y + 0.02);
+      }
+      cont(b, CONT.LOCKER, 'locker', -7, backZ(F, 0.5), PI);
+      b.cont(CONT.DUFFEL, 7, F.cz + 3.4, { prop: 'duffel_bag', ry: 1.9, nocollide: true, ly: FLOOR_Y });
+      yard(b, F, L);
+    },
+    // an office tower. big: on a lot of its own, the tallest thing for a mile; otherwise a small one on a street lot
+    tower(b, L, big) {
+      const F = big ? frame(L, 26, 24) : frame(L, 15.5, 13);
+      const h = big ? 4.4 : 3.8;
+      const fh = big ? 3.3 : 3.2;
+      const floors = big ? rng.int(8, 11) : rng.int(5, 7);
+      b.room(0, F.cz, F.w, F.d, h, 'concrete', { n: [door(F.w / 2, 1.7), win(F.w * 0.22, F.w * 0.17, 0.6, h - 0.8), win(F.w * 0.78, F.w * 0.17, 0.6, h - 0.8)], s: [door(3, 1.2)], e: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)], w: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+      // the core, with the lifts nobody will ride again, and the front desk
+      const core = big ? 5 : 3;
+      b.box(-F.w / 6, FLOOR_Y, F.cz + F.d / 6, core, h - FLOOR_Y, core, 'concrete');
+      b.box(F.w / 4, FLOOR_Y, F.cz - F.d / 5, 3.6, 1.05, 0.9, 'planks');
+      b.loot(F.w / 4, F.cz - F.d / 5, FLOOR_Y + 1.07);
+      cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz + F.d / 5, -PI / 2);
+      cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + F.d / 2 - 2.4, PI / 2);
+      b.loot(F.L + 2, F.cz - F.d / 4, FLOOR_Y + 0.02);
+      if (big) {
+        cont(b, CONT.CABINET, 'cabinet', F.L + 6, backZ(F, 0.55), PI, { seed: 1 });
+        b.cont(CONT.DUFFEL, 3, F.cz + 6, { prop: 'duffel_bag', ry: 0.4, nocollide: true, ly: FLOOR_Y });
+        b.loot(6, F.cz + 8, FLOOR_Y + 0.02);
+      }
+      const shaft = { ...F, w: F.w - 1, d: F.d - 1 };
+      const top = h + 0.3 + floors * fh;
+      b.box(0, h + 0.3, F.cz, shaft.w, floors * fh, shaft.d, 'concrete');
+      bands(b, 0, F.cz, shaft.w, shaft.d, h + 0.3, floors, fh);
       // what the fire left of its top: a broken storey, steel standing out of it
-      b.box(-w / 6, top, cz + d / 8, w * 0.55, 2.4, d * 0.6, 'charred', { collide: false });
-      for (const [sx, sz, h] of [[-0.3, -0.3, 5.5], [0.25, -0.2, 3.8], [-0.1, 0.3, 6.6], [0.34, 0.28, 2.8]]) b.box(sx * w, top, cz + sz * d, 0.3, h, 0.3, 'rust', { collide: false });
-      return { cz, w, d };
+      b.box(-F.w / 6, top, F.cz + F.d / 8, F.w * 0.55, 2.4, F.d * 0.6, 'charred', { collide: false });
+      for (const [sx, sz, sh] of [[-0.3, -0.3, 5.5], [0.25, -0.2, 3.8], [-0.1, 0.3, 6.6], [0.34, 0.28, 2.8]]) b.box(sx * F.w, top, F.cz + sz * F.d, 0.3, sh, 0.3, 'rust', { collide: false });
+      if (!big) return yard(b, F, L);
+      // the plaza behind it: planters gone to dead wood, a shelter, the cars of people who never came down
+      for (const tx of [-14, -5, 5, 14]) b.tree(tx, L.d / 2 - 3.4, rng.chance(0.5) ? 3 : 4, rng.range(0.9, 1.2));
+      b.prop('bus_shelter', -15.5, F.back + 5, PI / 2, { ly: PAVE });
+      b.wreck('car_wreck', 8, F.back + 5.5, PI / 2 + 0.2, { ly: PAVE });
+      b.wreck('car_burnt', 16.5, F.cz + 3, 0.1, { ly: PAVE, trunk: false });
+      b.cont(CONT.DUMPSTER, -17, F.cz - 4, { prop: 'dumpster', ry: PI / 2, ly: PAVE });
+      b.loot(0, F.back + 4, PAVE + 0.02);
     },
-    // a block that came down: the corner of its ground floor still stands, the rest is a heap of slabs
+    // a block that came down: a corner of its ground floor still stands, the rest is heaps, one of them out in the street
     ruin(b, L) {
       const w = Math.min(L.w - 3, 16);
-      const d = Math.min(L.d - 4, 14);
-      b.box(-w / 2, 0.12, 0, 0.4, 3.4, d, 'brick');
-      b.box(-w / 4, 0.12, d / 2, w / 2, 2.2, 0.4, 'brick');
-      b.box(w / 2 - 1.5, 0.12, -d / 2, 3, 1.3, 0.4, 'brick');
-      b.box(0.6, 0.12, 0.6, w * 0.62, 1.5, d * 0.6, 'concrete'); // the heap: a block to climb round, not through
-      b.box(1.2, 1.5, 0.2, w * 0.5, 0.35, d * 0.5, 'concrete', { rz: 0.28, collide: false });
-      b.box(-1.5, 1.2, 1.4, w * 0.4, 0.3, d * 0.42, 'concrete', { rx: -0.3, collide: false });
-      b.box(2.2, 1.9, -1.2, 5, 0.22, 0.22, 'rust', { rz: 0.5, ry: 0.4, collide: false });
-      b.box(-0.6, 1.6, 2.2, 4.4, 0.2, 0.2, 'rust', { rz: -0.34, ry: -0.7, collide: false });
-      b.cont(CONT.DUFFEL, -w / 2 + 1.6, -d / 2 + 1.6, { prop: 'duffel_bag', ry: 0.5, nocollide: true, ly: 0.12 });
-      b.loot(w / 2 - 1.2, d / 2 - 1.2, 0.14);
-      b.prop('corpse', -w / 2 + 2.6, d / 2 - 2, 1.1, { nocollide: true, ly: 0.12 });
+      const d = 13;
+      const cz = -L.d / 2 + SETBACK + d / 2;
+      b.box(-w / 2, PAVE, cz, 0.4, 3.4, d, 'brick');
+      b.box(-w / 4, PAVE, cz + d / 2, w / 2, 2.2, 0.4, 'brick');
+      b.box(w / 2 - 1.5, PAVE, cz - d / 2, 3, 1.3, 0.4, 'brick');
+      b.prop('rubble_pile', 1.6, cz + 0.8, rng.range(0, 6), { ly: PAVE });
+      b.prop('rubble_pile', rng.range(-3, 3), -L.d / 2 - 3.1, rng.range(0, 6), { ground: true });
+      b.box(-2.4, 1.3, cz - 2.6, w * 0.4, 0.3, 4, 'concrete', { rz: 0.3, collide: false });
+      b.box(4.4, 0.9, cz + 4.4, 4.4, 0.2, 0.2, 'rust', { rz: -0.34, ry: -0.7, collide: false });
+      b.cont(CONT.DUFFEL, -w / 2 + 1.6, cz - d / 2 + 1.6, { prop: 'duffel_bag', ry: 0.5, nocollide: true, ly: PAVE });
+      b.loot(w / 2 - 1.2, cz + d / 2 - 1.2, PAVE + 0.02);
+      b.prop('corpse', -w / 2 + 2.6, cz + d / 2 - 2, 1.1, { nocollide: true, ly: PAVE });
+      b.tree(L.w / 2 - 2.4, L.d / 2 - 2.4, 4, 1);
     },
     // burnt out: the walls, black, with the sky over them
     burnt(b, L) {
-      const w = Math.min(L.w - 2, 15);
-      const d = Math.min(L.d - SETBACK - 4, 11);
-      const cz = -L.d / 2 + SETBACK + d / 2;
-      b.room(0, cz, w, d, 3.4, 'charred', { n: [gap(w / 2, 2.2, 2.6), gap(w * 0.2, 2.4, 2.4)], s: [gap(w * 0.7, 3, 3)], e: [gap(d / 2, 1.6, 2.2)] }, { floorMat: 'ash' });
-      b.box(1, 0.6, cz, w * 0.7, 0.22, 0.22, 'charred', { rz: 0.22, ry: 0.5, collide: false });
-      b.box(-2, 0.3, cz + 1.4, w * 0.5, 0.2, 0.2, 'charred', { rz: -0.1, ry: -0.8, collide: false });
-      b.cont(CONT.CABINET, -w / 2 + 1, cz + d / 2 - 0.7, { prop: 'cabinet', ry: PI, ly: 0.12 });
-      b.prop('bones', w / 4, cz + 1, 0.4, { nocollide: true, ly: 0.12 });
-      b.loot(0, cz, 0.14);
+      const F = frame(L, 15, 11);
+      b.room(0, F.cz, F.w, F.d, 3.4, 'charred', { n: [gap(F.w / 2, 2.2, 2.6), gap(F.w * 0.2, 2.4, 2.4)], s: [gap(F.w * 0.7, 3, 3)], e: [gap(F.d / 2, 1.6, 2.2)] }, { floorMat: 'ash' });
+      b.box(1, 0.6, F.cz, F.w * 0.7, 0.22, 0.22, 'charred', { rz: 0.22, ry: 0.5, collide: false });
+      b.box(-2, 0.3, F.cz + 1.4, F.w * 0.5, 0.2, 0.2, 'charred', { rz: -0.1, ry: -0.8, collide: false });
+      cont(b, CONT.CABINET, 'cabinet', F.L + 1.2, backZ(F, 0.55), PI);
+      b.prop('bones', F.w / 4, F.cz + 1, 0.4, { nocollide: true, ly: FLOOR_Y });
+      b.loot(0, F.cz, FLOOR_Y + 0.02);
+      b.wreck('car_burnt', F.R - 2, F.back + 4, 0.2, { ly: PAVE, trunk: false });
+    },
+    // a lot nobody built on: a bus shelter on the street, dead trees, what was dumped there
+    green(b, L) {
+      b.prop('bus_shelter', -3, -L.d / 2 + 1.4, 0, { ly: PAVE });
+      for (const [tx, tz] of [[-6, 2], [5, -3], [2, 6], [-4, 7]]) b.tree(tx + rng.range(-1, 1), tz + rng.range(-1, 1), rng.chance(0.5) ? 3 : 4, rng.range(0.8, 1.2));
+      b.wreck(rng.chance(0.5) ? 'car_burnt' : 'car_wreck', 5.5, 3.5, rng.range(0, 6), { ly: PAVE, trunk: rng.chance(0.5) });
+      b.cont(CONT.DUFFEL, -2.4, 3.4, { prop: 'duffel_bag', ry: 0.3, nocollide: true, ly: PAVE });
+      b.prop('bones', 0.6, -1.4, 1, { nocollide: true, ly: PAVE });
+      b.cont(CONT.CRATE, -6.5, -3.5, { prop: 'crate', ry: 0.3, ly: PAVE });
+      b.loot(1.5, 0.5, PAVE + 0.02);
+    },
+    // a multi-storey car park, or the frame of one: two decks on columns over a ground floor of cars
+    carpark(b, L) {
+      const F = frame(L, 38, 15);
+      for (const cx of [-18.7, -9.4, 0, 9.4, 18.7]) for (const dz of [-7.2, 0, 7.2]) b.box(cx, PAVE, F.cz + dz, 0.5, CARPARK_DECK * 2, 0.5, 'concrete');
+      for (const k of [1, 2]) {
+        b.box(0, CARPARK_DECK * k, F.cz, F.w, 0.3, F.d, 'concrete');
+        b.box(0, CARPARK_DECK * k + 0.3, F.front + 0.1, F.w, 0.9, 0.2, 'concrete', { collide: false });
+        b.box(0, CARPARK_DECK * k + 0.3, F.back - 0.1, F.w, 0.9, 0.2, 'concrete', { collide: false });
+      }
+      b.roofSpan(0, F.cz, F.w / 2, F.d / 2, CARPARK_DECK, 0.3);
+      b.box(15.4, 0.2, F.cz - 3.4, 6, 0.3, 3.2, 'concrete', { rz: 0.32, collide: false }); // what is left of the ramp
+      for (let k = 0; k < 6; k++) {
+        if (!rng.chance(0.55)) continue;
+        const t = rng();
+        b.wreck(t < 0.5 ? 'car_wreck' : t < 0.8 ? 'car_burnt' : 'pickup_truck', -16.2 + k * 4.7, F.cz + (k % 2 ? 3.6 : -3.6), rng.range(-0.12, 0.12), { ly: PAVE, trunk: rng.chance(0.5) });
+      }
+      b.cont(CONT.DUFFEL, -4.7, F.cz, { prop: 'duffel_bag', ry: 0.9, nocollide: true, ly: PAVE });
+      b.loot(4.7, F.cz, PAVE + 0.02);
+      b.loot(-14, F.cz, PAVE + 0.02);
+      yard(b, F, L);
+    },
+    // a whole block down: one corner of it still stands seven floors high, over a field of rubble
+    collapse(b, L) {
+      const floors = rng.int(4, 6);
+      b.box(-13, PAVE, -12, 11, floors * 3, 10, 'concrete');
+      bands(b, -13, -12, 11, 10, PAVE, floors, 3);
+      b.box(-12, PAVE + floors * 3, -11, 7, 2, 6, 'charred', { collide: false });
+      for (const [sx, sz, sh] of [[-17, -15.5, 4.4], [-9.5, -8.6, 3], [-15, -8.4, 5.2]]) b.box(sx, PAVE + floors * 3, sz, 0.3, sh, 0.3, 'rust', { collide: false });
+      for (const [px, pz] of [[-2, -10], [8, -4], [-8, 4], [2, 9], [13, 10], [12, -14]]) b.prop('rubble_pile', px + rng.range(-1, 1), pz + rng.range(-1, 1), rng.range(0, 6), { ly: PAVE });
+      b.prop('rubble_pile', rng.range(-6, 6), -L.d / 2 - 3.1, rng.range(0, 6), { ground: true });
+      b.box(3, 1.4, 1, 9, 0.35, 6, 'concrete', { rz: 0.24, ry: 0.4, collide: false });
+      b.box(-6, 1.0, 12, 7, 0.3, 5, 'concrete', { rx: -0.2, ry: -0.3, collide: false });
+      b.box(15, PAVE, 0, 0.4, 3, 9, 'brick');
+      b.box(4, PAVE, 18.6, 12, 2.2, 0.4, 'brick');
+      b.cont(CONT.DUFFEL, 16.4, 3, { prop: 'duffel_bag', ry: 0.5, nocollide: true, ly: PAVE });
+      b.cont(CONT.CRATE, 6, 16.6, { prop: 'crate', ry: 0.2, ly: PAVE });
+      b.cont(CONT.AMMO_BOX, -17, 2, { prop: 'military_crate', ry: 0.4, ly: PAVE });
+      b.prop('corpse', 3, -4, 2, { nocollide: true, ly: PAVE });
+      b.prop('bones', -3, 8, 0.4, { nocollide: true, ly: PAVE });
+      b.loot(8, 3, PAVE + 0.02);
+      b.loot(-12, 10, PAVE + 0.02);
+      for (const [tx, tz] of [[17, -17], [-17, 16]]) b.tree(tx, tz, 4, rng.range(0.9, 1.2));
+    },
+    // the bus depot: a roof on posts over the buses that never went out, and the dispatcher's office
+    depot(b, L) {
+      b.shelter(-4, -4, 30, 16, 5.4, 'tin', 'metal');
+      for (const px of [-9.5, -2, 6]) for (const pz of [-11.8, 3.8]) b.cyl(px, PAVE, pz, 0.14, 5.4 - PAVE, 'metal', { sides: 6 });
+      b.wreck('school_bus', -13, -4, 0.04, { ly: PAVE, trunk: false });
+      b.wreck('school_bus', -6, -4.4, PI - 0.03, { ly: PAVE, trunk: false, seed: 1 });
+      b.wreck('ambulance', 2, -3, 0.1, { ly: PAVE, trunk: false });
+      b.room(14, 12, 10, 8, 3.2, 'brick', { n: [door(5, 1.3), win(2, 1.4), win(8, 1.4)], w: [win(4, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+      b.cont(CONT.LOCKER, 18.56, 13, { prop: 'locker', ry: -PI / 2, ly: FLOOR_Y });
+      b.cont(CONT.CABINET, 11, 15.5, { prop: 'cabinet', ry: PI, ly: FLOOR_Y });
+      b.cont(CONT.TOOLBOX, 15.5, 14.6, { prop: 'toolbox', ry: 0.6, nocollide: true, ly: FLOOR_Y });
+      b.prop('table', 14, 10.4, 0, inside);
+      b.loot(14, 10.4, FLOOR_Y + 0.82);
+      b.prop('gas_pump', 9, -15, 0, { ly: PAVE });
+      b.prop('tire_pile', -17, 12, 0, { ly: PAVE });
+      b.cont(CONT.DUMPSTER, -10, 16, { prop: 'dumpster', ry: PI, ly: PAVE });
+      b.cont(CONT.CRATE, 2, 12, { prop: 'crate', ry: 0.2, ly: PAVE });
+      b.prop('corpse', 6, 6, 1.2, { nocollide: true, ly: PAVE });
+      b.loot(-2, 10, PAVE + 0.02);
+      b.loot(10, -8, PAVE + 0.02);
     },
     // a car park nobody drove out of
     parking(b, L) {
@@ -495,11 +774,11 @@ export function createMainland(seed) {
         for (let c = 0; c < cols; c++) {
           if (!rng.chance(0.42)) continue;
           const t = rng();
-          b.wreck(t < 0.72 ? 'car_wreck' : 'pickup_truck', -L.w / 2 + 2.6 + c * 3.4 + rng.range(-0.2, 0.2), -L.d / 2 + 5 + r * 7, (rng.chance(0.5) ? 0 : PI) + rng.range(-0.1, 0.1), { trunk: rng.chance(0.45), ly: 0.12 });
+          b.wreck(t < 0.55 ? 'car_wreck' : t < 0.8 ? 'car_burnt' : 'pickup_truck', -L.w / 2 + 2.6 + c * 3.4 + rng.range(-0.2, 0.2), -L.d / 2 + 5 + r * 7, (rng.chance(0.5) ? 0 : PI) + rng.range(-0.1, 0.1), { trunk: rng.chance(0.45), ly: PAVE });
         }
       }
-      b.prop('streetlight', L.w / 2 - 1, L.d / 2 - 1, PI, { ly: 0.12 });
-      b.loot(0, L.d / 2 - 2, 0.14);
+      b.prop('streetlight', L.w / 2 - 1, L.d / 2 - 1, PI, { ly: PAVE });
+      b.loot(0, L.d / 2 - 2, PAVE + 0.02);
     },
   };
   // the set places first, on lots drawn at random, then whatever the seed deals for the rest
@@ -510,35 +789,41 @@ export function createMainland(seed) {
       [order[i], order[j]] = [order[j], order[i]];
     }
     const big = order.filter((i) => lots[i].w > 40 && lots[i].d > 40);
-    const small = order.filter((i) => !big.includes(i));
+    const long = order.filter((i) => lots[i].w > 40 && lots[i].d < 40);
+    const small = order.filter((i) => lots[i].w < 40);
     const plan = new Map();
-    // Calder Aero Supply: the parts shop the plane's magneto is in (two of them, so two hiding places)
-    for (const i of small.splice(0, 2)) plan.set(i, 'aero');
-    for (const i of big.splice(0, 2)) plan.set(i, 'tower');
-    for (const i of small.splice(0, 2)) plan.set(i, 'tower');
-    const W = [['shop', 3], ['flats', 3.2], ['ruin', 1.6], ['burnt', 1.3], ['parking', 1.2]];
-    const pick = () => {
+    const deal = (from, list) => list.forEach((what) => from.length && plan.set(from.shift(), what));
+    // (two of each: the towers, and the parts shops the plane's magneto may be in)
+    deal(big, ['tower', 'tower', 'collapse', 'depot']);
+    deal(small, ['aero', 'aero', 'office', 'office', 'police', 'pharmacy', 'hardware']);
+    deal(long, ['terrace', 'block', 'carpark']);
+    const pick = (W) => {
       let r = rng() * W.reduce((s, e) => s + e[1], 0);
       for (const [t, wt] of W) if ((r -= wt) <= 0) return t;
-      return 'shop';
+      return W[0][0];
     };
     lots.forEach((L, i) => {
       const b = new Builder(L.x, L.z, L.ry, cityH);
       b.zone = ZONE.CITY;
-      const what = plan.get(i) || (L.w > 40 && L.d > 40 ? 'parking' : pick());
+      const what = plan.get(i) || (L.w < 40 ? pick(SMALL_LOTS) : L.d < 40 ? pick(LONG_LOTS) : pick(BIG_LOTS));
       L.what = what;
-      if (what === 'aero') {
-        const s = BUILD.shop(b, L, { mat: 'tin', fridge: false });
-        b.cont(CONT.TOOLBOX, s.w / 4, s.cz - 1.4, { prop: 'toolbox', ry: 0.4, nocollide: true, ly: 0.12 });
-        part(b, 1, s.w / 2 - 1.6, s.cz + s.d / 2 - 1.4, 0.14);
-      } else BUILD[what](b, L);
+      if (what === 'aero') BUILD.shop(b, L, 'aero', 'tin');
+      else if (FILL[what]) BUILD.shop(b, L, what, SHOPS.find((s) => s[0] === what)[1]);
+      else if (what === 'office') BUILD.tower(b, L, false);
+      else if (what === 'tower') BUILD.tower(b, L, true);
+      else BUILD[what](b, L);
     });
   }
-  // the streets: wrecks where they stopped, a bus across a junction, lamps along the kerbs, the odd barricade
+  // The streets: wrecks where they stopped, lamps along the kerbs, lights dead at the crossings, a bus across one of
+  // them, and a few roadblocks somebody held - barriers a car cannot pass and a survivor can. Whatever would stand
+  // in something already there (a heap of rubble out of a fallen block) is left out, after its draws.
   {
-    const H = cityH;
-    const b = new Builder(city.x, city.z, 0, H);
+    const b = new Builder(city.x, city.z, 0, cityH);
     b.zone = ZONE.CITY;
+    b.ground = true; // (the roadway lies a little under the city's level: what is on it stands on the ground)
+    const free = (type, lx, lz, ry) => !propBlocked(type, b.wx(lx, lz), b.wz(lx, lz), ry);
+    const blocks = new Set();
+    for (let n = 0; n < ROADBLOCKS; n++) blocks.add(`${rng.int(0, GRID)}:${rng.int(0, GRID - 1)}:${rng.chance(0.5) ? 1 : 0}`);
     for (let i = 0; i <= GRID; i++) {
       for (let k = 0; k < GRID; k++) {
         for (const ns of [true, false]) {
@@ -547,22 +832,45 @@ export function createMainland(seed) {
           const m = -G2 + (k + 0.5) * PITCH;
           const at = (along, across) => (ns ? [o + across, m + along] : [m + along, o + across]);
           const yaw = ns ? 0 : PI / 2;
+          if (blocks.has(`${i}:${k}:${ns ? 1 : 0}`)) {
+            // a roadblock: three barriers with a gap a body gets through, sandbags and a crate behind them
+            const s0 = rng.range(-8, 8);
+            for (const across of [-4.4, -1.3, 4.4]) {
+              const [x, z] = at(s0, across);
+              if (free('jersey_barrier', x, z, yaw)) b.prop('jersey_barrier', x, z, yaw);
+            }
+            const [sx, sz] = at(s0 + 2.2, -3.2);
+            if (free('sandbags', sx, sz, yaw)) b.prop('sandbags', sx, sz, yaw);
+            const [cx, cz] = at(s0 + 2.4, 3.8);
+            if (free('military_crate', cx, cz, yaw)) b.cont(CONT.AMMO_BOX, cx, cz, { prop: 'military_crate', ry: yaw, zone: ZONE.CHECKPOINT });
+            continue;
+          }
           for (const sgn of [-1, 1]) {
-            if (!rng.chance(0.55)) continue;
-            const [x, z] = at(rng.range(-16, 16), sgn * rng.range(1.6, 2.6));
+            const here = rng.chance(0.5);
+            const [x, z] = at(rng.range(-15, 15), sgn * rng.range(1.7, 2.6));
             const t = rng();
-            b.wreck(t < 0.7 ? 'car_wreck' : t < 0.9 ? 'pickup_truck' : 'ambulance', x, z, yaw + (sgn > 0 ? PI : 0) + rng.range(-0.25, 0.25), { trunk: rng.chance(0.4), zone: ZONE.ROADSIDE });
+            const ry = yaw + (sgn > 0 ? PI : 0) + rng.range(-0.25, 0.25);
+            const trunk = rng.chance(0.4);
+            const type = t < 0.5 ? 'car_wreck' : t < 0.75 ? 'car_burnt' : t < 0.92 ? 'pickup_truck' : 'ambulance';
+            if (here && free(type, x, z, ry)) b.wreck(type, x, z, ry, { trunk: trunk && type !== 'car_burnt' && type !== 'ambulance', zone: ZONE.ROADSIDE });
           }
           const [lx, lz] = at(-20, 5.1);
-          b.prop('streetlight', lx, lz, ns ? -PI / 2 : 0);
-          if (rng.chance(0.2)) {
-            const [cx, cz] = at(rng.range(-10, 10), 0);
-            b.prop('corpse', cx, cz, rng.range(0, 6), { nocollide: true });
-          }
+          if (free('streetlight', lx, lz, 0)) b.prop('streetlight', lx, lz, ns ? PI / 2 : 0); // (its arm out over the roadway)
+          const body = rng.chance(0.2);
+          const [cx, cz] = at(rng.range(-10, 10), rng.range(-1, 1));
+          if (body) b.prop('corpse', cx, cz, rng.range(0, 6), { nocollide: true });
         }
       }
     }
-    for (const [jx, jz] of [[rng.int(1, GRID - 1), rng.int(1, GRID - 1)]]) b.wreck('school_bus', -G2 + jx * PITCH + 1, -G2 + jz * PITCH - 0.5, 0.9, { trunk: false });
+    // traffic lights on the crossings of Main Street, a bus slewed across one of the others
+    for (let i = 1; i < GRID; i++) {
+      const x = -G2 + i * PITCH;
+      if (free('traffic_light', x + 5.2, -5.2, PI)) b.prop('traffic_light', x + 5.2, -5.2, PI); // (their arms out over Main Street)
+      if (free('traffic_light', x - 5.2, 5.2, 0)) b.prop('traffic_light', x - 5.2, 5.2, 0);
+    }
+    const jx = -G2 + rng.int(1, GRID - 1) * PITCH;
+    const jz = -G2 + [1, 3][rng.int(0, 1)] * PITCH;
+    if (free('school_bus', jx + 1, jz - 0.5, 0.9)) b.wreck('school_bus', jx + 1, jz - 0.5, 0.9, { trunk: false });
   }
 
   // KESSLER IRONWORKS: a fenced yard - the casting shed, a machine shop, stacks of steel, a gantry crane.
@@ -623,11 +931,11 @@ export function createMainland(seed) {
       const s = b.sub(hx, hz, front);
       s.room(0, 0, 10, 8, 3, k % 2 ? 'clapboard' : 'brick', { n: [door(5, 1.2), win(2, 1.4), win(8, 1.4)], s: [door(8, 1.1), win(3.4)], e: [win(4)], w: [win(4)] }, { roof: 'gableZ', roofH: 2.6, roofMat: 'shingles' });
       s.wall(-1, -4, -1, 4, 3, 0.18, 'clapboard', [door(5.4, 1.1)]);
-      s.prop('bed', -3.4, 2.2, 0);
+      s.prop('bed', -4.3, -2.2, 0); // (clear of the back door)
       s.cont(k % 2 ? CONT.CABINET : CONT.FRIDGE, 4.2, 3.3, { prop: k % 2 ? 'cabinet' : 'fridge', ry: PI });
       s.prop('table', 2, -1.6, 0.1);
       s.loot(2, -1.6, 0.82);
-      s.loot(-3, -2);
+      s.loot(-2.4, 2);
       if (k % 3 === 0) s.wreck('car_wreck', 7.6, -7.5, 0.1, { seed: k });
       if (k % 2 === 0) s.cont(CONT.DUMPSTER, -7.2, 2, { prop: 'dumpster', ry: PI / 2, seed: k });
     };
@@ -683,7 +991,7 @@ export function createMainland(seed) {
   // the plane, at the south end of the runway, its nose to the north; the fuel truck beside it on the apron's edge
   const planeY = fieldH;
   const car = { x: plane.x, y: planeY, z: plane.z, ry: 0, plane: true };
-  props.push({ type: 'plane_wreck', x: car.x, y: car.y, z: car.z, ry: car.ry, seed: 7 });
+  props.push({ type: 'plane_wreck', x: car.x, y: car.y, z: car.z, ry: car.ry, seed: 7, live: true }); // (live: as the car at the bridgehead - the take-off swaps it for the one that flies)
   addPropColliders('plane_wreck', car.x, car.y, car.z, car.ry);
   const truck = { x: plane.x - 17, y: fieldH, z: plane.z - 6, ry: 0.35 };
   props.push({ type: 'fuel_truck', x: truck.x, y: truck.y, z: truck.z, ry: truck.ry, seed: 3 });
@@ -696,36 +1004,45 @@ export function createMainland(seed) {
     // did not make it, the cones somebody set out
     const b = new Builder(field.x, field.z, 0, fieldH);
     b.zone = ZONE.HANGARS;
-    b.wreck('pickup_truck', RUNWAY_HALF - 2.5, -40, 0.4, { trunk: false });
-    b.wreck('car_wreck', -RUNWAY_HALF + 2, -110, 1.2);
+    b.wreck('pickup_truck', RUNWAY_HALF - 1.4, -40, 0.12, { trunk: false });
+    b.wreck('car_wreck', -RUNWAY_HALF + 1.4, -110, 0.2);
     b.prop('jersey_barrier', RUNWAY_HALF - 1.5, 60, PI / 2, { seed: 1 });
     b.prop('jersey_barrier', -RUNWAY_HALF + 1.5, 20, PI / 2, { seed: 2 });
     b.prop('corpse', 3, 90, 0.4, { nocollide: true });
+    // light aircraft that never got off: one ran off the side, one stands on the grass by the apron
+    b.prop('light_plane', RUNWAY_HALF + 15, -70, 0.8, { ground: true, seed: 0 });
+    b.prop('light_plane', -RUNWAY_HALF - 9, -20, -2.2, { ground: true, seed: 1 });
+    b.clear(RUNWAY_HALF + 15, -70, 8);
+    b.clear(-RUNWAY_HALF - 9, -20, 8);
   }
   place(ZONE.HANGARS, (b) => {
-    // two hangars, their doors (local -Z: east) open on the apron
+    // three hangars in a row, their doors (local -Z: east) open on the apron
     const hangar = (lx, k) => {
       const s = b.sub(lx, 6, 0);
-      s.room(0, 0, 26, 24, 8, 'tin', { n: [gap(13, 16, 6.4)], s: [door(22, 1.3)], e: [win(12, 2)], w: [win(12, 2)] }, { roof: 'gableZ', roofH: 3.6, roofMat: 'tin', floorMat: 'concrete' });
-      s.cont(CONT.SHELF, -9, 11, { prop: 'shelf', ry: PI, ly: 0.12, seed: k });
-      s.cont(CONT.TOOLBOX, -5.5, 9.4, { prop: 'toolbox', ry: 0.5, nocollide: true, ly: 0.12, seed: k });
-      s.cont(CONT.LOCKER, 12.1, 4, { prop: 'locker', ry: -PI / 2, ly: 0.12, seed: k });
-      s.cont(CONT.CRATE, 9, 9.6, { prop: 'crate', ry: 0.2, ly: 0.12, seed: k });
-      s.prop('barrel', -11.6, 3, 0, { ly: 0.12, seed: k });
-      s.loot(0, 6, 0.14);
-      s.loot(-8, -4, 0.14);
-      part(s, 0, -11.2, 9.6, 0.14); // the propeller, off the rack on the back wall
-      if (k) part(s, 4, 10.6, -6, 0.14);
+      s.room(0, 0, 24, 24, 8, 'tin', { n: [gap(12, 16, 6.4)], s: [door(20, 1.3)], e: [win(12, 2)], w: [win(12, 2)] }, { roof: 'gableZ', roofH: 3.6, roofMat: 'tin', floorMat: 'concrete' });
+      s.cont(CONT.SHELF, -4.6, 11.3, { prop: 'shelf', ry: PI, ly: FLOOR_Y, seed: k }); // (clear of the back door at x -8)
+      s.cont(CONT.TOOLBOX, -2.4, 9.4, { prop: 'toolbox', ry: 0.5, nocollide: true, ly: FLOOR_Y, seed: k });
+      s.cont(CONT.LOCKER, 11.56, 4, { prop: 'locker', ry: -PI / 2, ly: FLOOR_Y, seed: k });
+      s.cont(CONT.CRATE, 8.6, 10.4, { prop: 'crate', ry: 0.2, ly: FLOOR_Y, seed: k });
+      s.prop('barrel', -10.9, 3, 0, { ly: FLOOR_Y, seed: k });
+      s.loot(0, 8, FLOOR_Y + 0.02);
+      s.loot(-8, -4, FLOOR_Y + 0.02);
+      part(s, 0, -10.6, 9.6, FLOOR_Y + 0.02); // the propeller, off the rack on the back wall
+      if (k) part(s, 4, 10, -6, FLOOR_Y + 0.02);
       return s;
     };
-    hangar(-16, 0);
-    hangar(16, 1).wreck('pickup_truck', -4, 2, 0.3, { ly: 0.12, trunk: false });
+    hangar(-30, 0).prop('light_plane', 1.5, 0, 0.35, { ly: FLOOR_Y, seed: 1 });
+    hangar(0, 1).wreck('pickup_truck', -4, 2, 0.3, { ly: FLOOR_Y, trunk: false });
+    const h3 = hangar(30, 2);
+    h3.prop('pallet', 3, 2, 0.3, { ly: FLOOR_Y });
+    h3.cont(CONT.AMMO_BOX, -6, 4, { prop: 'military_crate', ry: 0.4, ly: FLOOR_Y });
     b.prop('generator', 0, 20.5, 0.2);
-    b.cont(CONT.DUMPSTER, 31, 20, { prop: 'dumpster', ry: PI });
-    b.wreck('car_wreck', -32, 14, 0.4);
-    b.prop('streetlight', 0, -8.5, 0);
+    b.cont(CONT.DUMPSTER, 45, 2, { prop: 'dumpster', ry: PI / 2 });
+    b.wreck('car_wreck', -46.5, 10, 0.4);
+    b.prop('streetlight', 15, -9, 0);
+    b.prop('streetlight', -15, -9, 0);
     b.prop('corpse', 3, -12, 2, { nocollide: true });
-    b.loot(-30, -6);
+    b.loot(-15, -11);
   });
   place(ZONE.TERMINAL, (b) => {
     // the terminal: a hall with a counter, a back office, and the tower over its north end
@@ -748,7 +1065,7 @@ export function createMainland(seed) {
     b.box(9.5, 16.7, 5.5, 0.12, 4, 0.12, 'metal', { collide: false });
     // out front: the forecourt, what the last flight out left behind
     b.box(0, -0.05, -13, 30, 0.1, 14, 'concrete', { collide: true });
-    b.wreck('ambulance', -8, -13, 1.4, { ly: 0.05 });
+    b.wreck('ambulance', -8, -13, 1.4, { ly: 0.05, trunk: false });
     b.wreck('car_wreck', 6, -15, 0.2, { ly: 0.05 });
     b.wreck('school_bus', 15, 22, 1.5, { trunk: false });
     b.cont(CONT.DUFFEL, -2, -8, { prop: 'duffel_bag', ry: 0.6, nocollide: true, ly: 0.05 });
@@ -796,11 +1113,64 @@ export function createMainland(seed) {
     b.loot(16, -4);
   });
 
+  // FARMS: a barn, the house, a silo, a fenced field gone to weed. They are not places of the map (nothing names
+  // them): what lies about them comes off a farm's table (the island's Miller Farm).
+  for (const f of farms) {
+    const b = new Builder(f.x, f.z, f.ry, f.h);
+    b.zone = ZONE.BARN;
+    b.yard = { x: f.x, z: f.z, flat: FARM_R - 2 };
+    b.clear(0, 0, FARM_R + 8);
+    b.clear(-46, 0, 26);
+    b.room(13, 8, 12, 18, 5.6, 'barn', { n: [gap(6, 4.4, 4.2)], w: [door(13, 1.4)] }, { roof: 'gable', roofH: 4, roofMat: 'tin', floorMat: 'planks' });
+    b.prop('hay_square', 17.5, 14.5, 0);
+    b.prop('hay_square', 17.5, 14.5, 0, { ly: 0.6 });
+    b.prop('hay_square', 17.5, 13.2, 0.1);
+    b.prop('hay_round', 9.6, 14, 0.3);
+    b.prop('cart', 16, 4, 0.4);
+    b.cont(CONT.SHELF, 18.5, 9, { prop: 'shelf', ry: -PI / 2 });
+    b.cont(CONT.TOOLBOX, 9, 9, { prop: 'toolbox', ry: 0.4, nocollide: true });
+    b.loot(12, 3);
+    b.loot(14, 10);
+    b.room(-14, 6, 10, 8, 3, 'clapboard', { n: [door(5, 1.2), win(2.2), win(7.8)], e: [win(4)], w: [win(4)], s: [win(3), door(8, 1.1)] }, { roof: 'gableZ', roofH: 2.6, roofMat: 'shingles' });
+    b.wall(-15.2, 2, -15.2, 10, 3, 0.18, 'clapboard', [door(5.4, 1.1)]);
+    b.box(-14, 0, 0.8, 10, 0.3, 2.2, 'planks'); // porch
+    b.prop('bed', -17.6, 4, 0);
+    b.prop('table', -11.6, 4, 0.1);
+    b.prop('chair', -11.2, 5.1, 2.5);
+    b.cont(CONT.CABINET, -10.4, 9.35, { prop: 'cabinet', ry: PI });
+    b.cont(CONT.FRIDGE, -17.9, 8.6, { prop: 'fridge', ry: PI / 2 });
+    b.loot(-11.6, 4, 0.82);
+    b.cyl(23, 0, -8, 2.6, 11, 'metal');
+    b.cone(23, 11, -8, 2.8, 2.2, 'tin', 14, { ry: 0 });
+    b.wreck('tractor', 2, -12, 0.5, { trunk: false });
+    b.wreck('pickup_truck', -7, -19, 1.7);
+    b.prop('well', -3, 16, 0);
+    b.prop('outhouse', -24, 14, PI / 2);
+    b.cont(CONT.LOGPILE, 2, 22, { prop: 'woodpile', ry: 0.2 });
+    b.prop('corpse', 4, -4, 2.2, { nocollide: true });
+    // the field, west of the yard: fenced, with a gap in each side
+    for (let i = 0; i < 8; i++) {
+      if (i !== 3) b.prop('fence', -58.5 + i * 3, -18, 0);
+      if (i !== 5) b.prop('fence', -58.5 + i * 3, 18, 0);
+    }
+    for (let i = 0; i < 12; i++) {
+      if (i !== 6) b.prop('fence', -60, -16.5 + i * 3, PI / 2);
+      if (i !== 2) b.prop('fence', -36, -16.5 + i * 3, PI / 2);
+    }
+    b.prop('scarecrow', -48, 2, 0.4);
+    b.prop('hay_round', -41, -12, 1.1);
+    b.prop('hay_round', -54, 10, 0.2);
+    for (let i = 0; i < 8; i++) b.prop('pumpkin', rng.range(-57, -39), rng.range(-15, 15), rng.range(0, 6), { nocollide: true });
+    b.loot(-48, -6);
+    f.hedge = [[-62, -20, -62, 20], [-62, -20, -34, -20], [-62, 20, -34, 20]].map(([x0, z0, x1, z1]) => [b.wx(x0, z0), b.wz(x0, z0), b.wx(x1, z1), b.wz(x1, z1)]);
+  }
+
   // ---------------------------------------------------------------- roadside & countryside sites
   // What stands along the roads and out on the plain between the places, as on the island: a wreck, a camp, a
   // stash, a shed.
   const sites = [];
-  const siteOk = (x, z) => Math.abs(x) < HALF - 60 && Math.abs(z) < HALF - 60 && !inWater(x, z) && !nearZone(x, z, 18) && !onField(x, z, 14) && x > COAST + 30;
+  const inCity = (x, z, pad) => Math.abs(x - city.x) < G2 + pad && Math.abs(z - city.z) < G2 + pad;
+  const siteOk = (x, z) => !inCity(x, z, 26) && farms.every((f) => Math.hypot(f.x - x, f.z - z) > FARM_R + 40) && Math.abs(x) < HALF - 60 && Math.abs(z) < HALF - 60 && !inWater(x, z) && !nearZone(x, z, 18) && !onField(x, z, 14) && x > COAST + 30;
   const siteFree = (x, z, gapTo) => sites.every((s) => Math.hypot(s.x - x, s.z - z) >= gapTo);
   for (const road of roads) {
     if (road.length < 90) continue;
@@ -829,8 +1199,21 @@ export function createMainland(seed) {
     if (!siteOk(x, z) || roadDistAt(x, z) < 22 || !siteFree(x, z, 46)) continue;
     sites.push({ x, z, ry: rng.range(0, PI * 2), type: ['camp', 'stash', 'shed', 'camp'][rng.int(0, 3)], road: 0 });
   }
+  // level the ground under each (not the roads beside them), so a shed's walls and what stands by them sit true
   for (const st of sites) {
-    const b = new Builder(st.x, st.z, st.ry, heightAt(st.x, st.z));
+    const h0 = heightAt(st.x, st.z);
+    const R = SITE_FLAT + 5;
+    for (let j = Math.max(0, Math.floor((st.z - R + HALF) / GRID_STEP)); j <= Math.min(N - 1, Math.ceil((st.z + R + HALF) / GRID_STEP)); j++) {
+      for (let i = Math.max(0, Math.floor((st.x - R + HALF) / GRID_STEP)); i <= Math.min(N - 1, Math.ceil((st.x + R + HALF) / GRID_STEP)); i++) {
+        const k = j * N + i;
+        if (roadDist[k] < 3.5) continue;
+        heights[k] = lerp(heights[k], h0, 1 - smoothstep(SITE_FLAT, R, Math.hypot(-HALF + i * GRID_STEP - st.x, -HALF + j * GRID_STEP - st.z)));
+      }
+    }
+    st.h = h0;
+  }
+  for (const st of sites) {
+    const b = new Builder(st.x, st.z, st.ry, st.h);
     b.zone = ZONE.FOREST;
     b.ground = true;
     if (st.type === 'wreck') {
@@ -906,11 +1289,46 @@ export function createMainland(seed) {
   const clearHit = (x, z, pad) => clears.some(([cx, cz, r]) => (x - cx) ** 2 + (z - cz) ** 2 < (r + pad) ** 2);
   const zoneClear = (x, z) => zones.some((zn) => (x - zn.x) ** 2 + (z - zn.z) ** 2 < zn.clear * zn.clear) || onField(x, z, 6);
   const onRoad = (x, z, r) => roadDistAt(x, z) < (roadKindAt(x, z) === ROAD.TRAIL ? 2.2 : 5.5) + r;
+  // does a trunk or a boulder of radius r at (x, z) stand in an upright piece somebody built (a wall, a post)?
+  let partCells = null;
+  const partBlocked = (x, z, r) => {
+    if (!partCells) {
+      partCells = new Map();
+      for (const p of parts) {
+        if (p.rx || p.rz || p.sy < 1 || (p.shape !== 'box' && p.shape !== 'cyl')) continue;
+        const e = Math.hypot(p.sx, p.sz) / 2;
+        for (let i = Math.floor((p.x - e) / 8); i <= Math.floor((p.x + e) / 8); i++) {
+          for (let j = Math.floor((p.z - e) / 8); j <= Math.floor((p.z + e) / 8); j++) {
+            const k = i * 65536 + j;
+            if (!partCells.has(k)) partCells.set(k, []);
+            partCells.get(k).push(p);
+          }
+        }
+      }
+    }
+    for (let i = Math.floor((x - r) / 8); i <= Math.floor((x + r) / 8); i++) {
+      for (let j = Math.floor((z - r) / 8); j <= Math.floor((z + r) / 8); j++) {
+        for (const p of partCells.get(i * 65536 + j) || []) {
+          if (p.shape === 'cyl') {
+            if (Math.hypot(p.x - x, p.z - z) < r + p.sx / 2) return true;
+          } else {
+            const c = Math.cos(p.ry);
+            const s = Math.sin(p.ry);
+            const lx = c * (x - p.x) - s * (z - p.z);
+            const lz = s * (x - p.x) + c * (z - p.z);
+            if (Math.hypot(Math.max(0, Math.abs(lx) - p.sx / 2), Math.max(0, Math.abs(lz) - p.sz / 2)) < r) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
   const trees = [];
   const pushTree = (x, z, v, scale) => {
     const y = heightAt(x, z);
     const rot = rng.range(0, PI * 2);
     occupy(x, z, 1.4 * scale);
+    if (partBlocked(x, z, TREE_R[v] * scale + 0.15)) return; // (left out after its draws, as on the island)
     const c = makeCyl(x, z, y - 1, y + 14 * scale, TREE_R[v] * scale, COL.STATIC | COL.TREE);
     c.tv = v;
     c.ti = trees.length / 6;
@@ -955,6 +1373,18 @@ export function createMainland(seed) {
     if (zn && rng() < (zn.id === ZONE.CITY ? 0.93 : 0.85)) continue; // (the city is overgrown, but it is still paving)
     if (clearHit(x, z, 0) || occupied(x, z, 0.4)) continue;
     bushes.push(x, heightAt(x, z), z, rng.range(0.7, 1.5), rng.range(0, PI * 2), rng.int(0, 2));
+  }
+
+  // hedgerows round the fields of the farms: a line of bushes, grown out
+  for (const f of farms) {
+    for (const [x0, z0, x1, z1] of f.hedge) {
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      for (let d = 0; d <= len; d += 1.1) {
+        const x = x0 + ((x1 - x0) * d) / len + rng.range(-0.3, 0.3);
+        const z = z0 + ((z1 - z0) * d) / len + rng.range(-0.3, 0.3);
+        bushes.push(x, heightAt(x, z), z, rng.range(1.1, 1.7), rng.range(0, PI * 2), rng.int(0, 2));
+      }
+    }
   }
 
   // ---------------------------------------------------------------- spawns
@@ -1077,5 +1507,6 @@ export function createMainland(seed) {
     bridge,
     runway,
     city: { x: city.x, z: city.z, pitch: PITCH, grid: GRID, lots },
+    farms: farms.map((f) => ({ x: f.x, z: f.z, ry: f.ry })),
   };
 }

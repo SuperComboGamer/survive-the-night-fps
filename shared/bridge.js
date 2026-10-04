@@ -8,6 +8,7 @@
 // client/render/bridge.js builds the steel from it and client/game/cutscene.js drives the car along carAt().
 import { mulberry32, smoothstep } from './rng.js';
 import { WATER_LEVEL } from './constants.js';
+import { PROPS } from './props.js';
 
 export const BRIDGE = {
   SPANS: 8,
@@ -22,6 +23,11 @@ export const BRIDGE = {
 
 // z: where it runs (it runs along x, west from the mainland). shore: x of the mainland's shoreline there.
 // deckY: the height of the roadway, which is the height of the bluff it lands on.
+// What is in the car's way is APART metres apart or more, and the car eases from one lane to the other over EASE:
+// less than the gap two of them leave between them, so it is wholly in the clear lane all the way past each.
+const APART = 38;
+const EASE = 16;
+
 export function planBridge({ seed, z, shore, deckY }) {
   const rng = mulberry32((seed ^ 0xb21d6e) >>> 0);
   const { SPANS, SPAN, LANE } = BRIDGE;
@@ -38,24 +44,31 @@ export function planBridge({ seed, z, shore, deckY }) {
   const wrecks = [];
   const holes = [];
   let side = rng.chance(0.5) ? 1 : -1;
-  for (let x = x0 + 70; x < x1 - SPAN - 20; x += rng.range(34, 52)) {
-    const sp = spans.find((s) => x >= s.x0 && x < s.x1);
-    if (sp.state === 'broken') continue; // (its own gap is the obstacle there)
+  const bs = spans[broken];
+  const bx = (bs.x0 + bs.x1) / 2;
+  for (let x = x0 + 70; x < x1 - SPAN - 20; x += rng.range(APART, APART + 16)) {
+    // (the broken span's own gap is the obstacle there, and the car needs room to line up for it)
+    if (Math.abs(x - bx) < SPAN / 2 + 7 + EASE + 9) continue;
     if (rng.chance(0.4)) {
       const len = rng.range(5, 9);
       holes.push({ x, lz: side * LANE, len, w: 3.6 });
       blocks.push({ x, side, len: len + 6 });
     } else {
+      // a wreck stands in its lane, slewed (the long ones less: they would reach across the deck), wholly on its half
+      // of the roadway and clear of the truss
       const type = ['car_wreck', 'car_wreck', 'pickup_truck', 'school_bus', 'ambulance'][rng.int(0, 4)];
-      const ry = Math.PI / 2 + rng.range(-0.45, 0.45) + (rng.chance(0.5) ? Math.PI : 0);
-      wrecks.push({ type, x, lz: side * (LANE + rng.range(-0.2, 0.5)), ry, burnt: rng.chance(0.5), seed: rng.int(0, 99) });
-      blocks.push({ x, side, len: type === 'school_bus' ? 16 : 10 });
+      const [wide, , long] = PROPS[type].size;
+      const slew = rng.range(-1, 1) * (long > 5.6 ? 0.06 : 0.4);
+      const ry = Math.PI / 2 + slew + (rng.chance(0.5) ? Math.PI : 0);
+      const reach = (wide / 2) * Math.cos(slew) + (long / 2) * Math.abs(Math.sin(slew)); // how far it reaches across
+      const lz = side * Math.min(BRIDGE.DECK / 2 - 0.25 - reach, Math.max(reach + 0.15, LANE + rng.range(-0.2, 0.5)));
+      wrecks.push({ type, x, lz, ry, burnt: rng.chance(0.5), seed: rng.int(0, 99) });
+      blocks.push({ x, side, len: long + 6 });
     }
     side = -side;
   }
   // the broken span: the car keeps to the side that still has a truss, all the way across it
-  const bs = spans[broken];
-  blocks.push({ x: (bs.x0 + bs.x1) / 2, side: lost, len: SPAN + 14 });
+  blocks.push({ x: bx, side: lost, len: SPAN + 14 });
   blocks.sort((a, b) => a.x - b.x);
 
   // the car's lateral offset at x: in the lane away from whatever is in the way, easing across between them
@@ -64,7 +77,7 @@ export function planBridge({ seed, z, shore, deckY }) {
     let w = 0;
     for (const b of blocks) {
       const d = Math.abs(x - b.x) - b.len / 2;
-      const k = 1 - smoothstep(0, 22, d);
+      const k = 1 - smoothstep(0, EASE, d);
       if (k <= 0) continue;
       lz += -b.side * LANE * k;
       w += k;

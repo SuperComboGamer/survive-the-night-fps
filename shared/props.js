@@ -10,15 +10,44 @@ export const PROPS = {
   car: { size: [1.9, 1.45, 4.6], boxes: [[0, 0.72, 0, 1.9, 1.44, 4.5]], desc: 'broken-down rusty sedan, hood propped open, one wheel missing (on a jack/blocks), shattered windows. The quest car at camp.' },
   // (the mainland, act 2: shared/mainland.js)
   plane_wreck: {
-    size: [15.8, 4.6, 12.4],
+    size: [15.8, 4.5, 12],
     boxes: [
-      [0, 1.55, 0.2, 1.9, 2.5, 11.6],
-      [0, 1.35, -1.1, 15.6, 0.6, 2.6],
-      [0, 3.0, 5.2, 5.4, 0.5, 1.6],
+      [0, 1.4, 0, 1.9, 2.8, 11.8], // the fuselage, down to the ground under it
+      [0, 1.2, -1.0, 15.6, 0.6, 2.9], // the wing
+      [-2.7, 0.95, -1.7, 1.3, 1.9, 3.8], // each engine, with the main wheel under it
+      [2.7, 0.95, -1.7, 1.3, 1.9, 3.8],
+      [0, 2.35, 5.0, 5.6, 0.5, 1.7], // the tailplane
+      [0, 3.4, 5.1, 0.4, 2.2, 1.9], // the fin
     ],
-    desc: 'a grounded twin-engine transport plane, nose to -Z: cowlings off both engines, one propeller missing, a main wheel flat, an access panel hanging open. The quest plane at Calder Field.',
+    desc: 'a grounded twin-engine transport plane (a ten-seater, low wing, twin radial engines), nose to -Z: bare metal gone dull, a faded blue cheat line, the cowling off the left engine and its propeller missing, a main wheel flat, an access panel hanging open, the cabin door open on the left behind the wing. The quest plane at Calder Field.',
   },
-  fuel_truck: { size: [2.5, 2.9, 7.6], boxes: [[0, 1.45, 0, 2.5, 2.9, 7.6]], desc: 'an airfield fuel bowser: a cab and a long elliptical tank, faded yellow, a hose reel at the back' },
+  fuel_truck: {
+    size: [2.5, 2.9, 7.6],
+    boxes: [[0, 1.45, 0, 2.5, 2.9, 7.6]],
+    salvage: true,
+    desc: 'an airfield fuel bowser, cab to -Z: a square cab and a long elliptical tank, faded yellow, FLAMMABLE stencils, a hose reel and a coiled hose at the back, one flat tyre',
+  },
+  light_plane: {
+    size: [10.8, 2.9, 7.6],
+    boxes: [
+      [0, 1.0, 0.3, 1.3, 2.0, 7.0],
+      [0, 2.15, -0.9, 10.6, 0.5, 1.7],
+    ],
+    salvage: true,
+    desc: 'the wreck of a four-seat high-wing light aircraft, nose to -Z and down on a collapsed nose wheel: one wing tip crumpled, the propeller bent, the windscreen gone, white paint with a red stripe, weeds through it',
+  },
+  rubble_pile: { size: [5.2, 1.7, 5.2], cyls: [[0, 0, 2.3, 1.4]], desc: 'a heap of what a building came down as: broken concrete slabs at all angles, bricks, bent rebar standing out of it, dust' },
+  car_burnt: { size: [1.9, 1.4, 4.5], boxes: [[0, 0.7, 0, 1.9, 1.4, 4.4]], salvage: true, desc: 'a burnt-out car: bare scorched steel, no glass, no tyres (down on its rims), the paint gone to rust and soot' },
+  traffic_light: { size: [0.5, 5.4, 3.2], cyls: [[0, 0, 0.14, 5.4]], desc: 'a traffic light: a pole with an arm out over the street (-Z) and a three-lamp head hanging from it, all dead; a second head on the pole' },
+  bus_shelter: {
+    size: [3.6, 2.5, 1.5],
+    boxes: [
+      [0, 1.2, 0.68, 3.6, 2.4, 0.1],
+      [-1.75, 1.2, 0.05, 0.1, 2.4, 1.2],
+      [1.75, 1.2, 0.05, 0.1, 2.4, 1.2],
+    ],
+    desc: 'a bus shelter, open to -Z: a steel frame, a back and two end panes (one smashed), a flat roof, a bench along the back',
+  },
   car_wreck: { size: [1.9, 1.5, 4.5], boxes: [[0, 0.75, 0, 1.9, 1.5, 4.4]], salvage: true, desc: 'abandoned rusted car, variant colors, doors open, weeds' },
   pickup_truck: { size: [2.1, 1.9, 5.4], boxes: [[0, 0.95, 0, 2.1, 1.9, 5.3]], salvage: true, desc: 'old farm pickup truck, rust, flat tire' },
   campfire: { size: [1.9, 0.55, 1.9], cyls: [[0, 0, 0.85, 0.5]], desc: 'ring of stones with charred logs in teepee (flames are added by the renderer at y~0.3)' },
