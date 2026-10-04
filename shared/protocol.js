@@ -5,7 +5,8 @@ export const PROTOCOL_VERSION = 34; // 26: the frag grenade and the noisemaker (
 
 // client -> server
 export const C2S = {
-  JOIN: 1, // u8 version, str name, str player id (the browser's own, see client/net/identity.js; '' or absent: nothing is kept for them)
+  JOIN: 1, // u8 version, str name, str player id (the browser's own, see client/net/identity.js; '' or absent: nothing is kept for them),
+  //          u8 character (shared/characters.js; absent or out of range: the server picks one from the player's id)
   INPUT: 2, // u16 renderTick, u8 renderFrac, u8 head, u16 seq, [u8 hash], cmds... (see writeInput)
   ACTION: 3, // u8 action, ...
   CHAT: 4, // str
@@ -117,7 +118,9 @@ export const CHATF = {
   UNHEARD: 16, // (to the speaker) nobody was close enough to hear it
 };
 // S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, u8 level
-// (progress.js), and with PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none)
+// (progress.js), and with PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none);
+// then, after them all, a u8 character per player in the same order (shared/characters.js: a server from before the
+// roster sends none)
 export const PLF = { ON_AIR: 1, WAYPOINT: 2 }; // keying the walkie-talkie (radioKeyed): heard by everyone; has a waypoint set
 
 export const ENT = {

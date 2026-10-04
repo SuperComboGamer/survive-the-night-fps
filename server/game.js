@@ -148,6 +148,7 @@ import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
 import { checkEnvelope, worldHash, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
+import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const MAX_ZOMBIES_ALIVE = 120;
@@ -659,6 +660,9 @@ export class Game {
     // who they are to the leaderboard: for PlayerStats.enter alone, never logged and never sent on. (A client that
     // sends none - the test bots - plays like anyone else, and nothing is kept for it.)
     const pid = r.left > 0 ? r.str() : '';
+    // the survivor they chose to be (shared/characters.js): a trailing byte an older client leaves off, which gets the
+    // look picked from their id as before; a value out of range is treated the same (characterFor)
+    const choice = r.left > 0 ? r.u8() : CHARACTER_NONE;
     // signed in to an account (server/auth.js: the network thread knew them by their session cookie, and says so
     // on the socket: room-worker.js), they play under its name whatever the JOIN says
     const account = session.conn.user || null;
@@ -696,6 +700,7 @@ export class Game {
     if (!p) return reject(REJECT_REASON.FULL);
     session.player = p;
     p.admin = !!account?.isAdmin || this.devAdmin;
+    p.character = characterFor(choice, p.id);
     p.rejoinKey = key; // who can take this body back after a drop ('' : nobody - no account and no browser id)
     p.rec = this.records.enter(pid, base, account);
     p.account = account ? account.id : ''; // their account's id, '' for a guest
@@ -4290,6 +4295,9 @@ export class Game {
         w.u8(wp.zone);
       }
     }
+    // each player's character, in the same order, after them all: a client from before the roster stops reading at the
+    // end of the list and never sees these
+    for (const p of this.players.values()) w.u8(p.character ?? defaultCharacter(p.id));
     this.playersDirty = false;
     const prev = this.listBytes;
     let same = !!prev && prev.length === w.o;

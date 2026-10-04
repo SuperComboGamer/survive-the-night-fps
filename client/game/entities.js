@@ -7,6 +7,7 @@ import { makeBox, COL, canReach } from '../../shared/collision.js';
 import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, WATER_LEVEL } from '../../shared/constants.js';
 import { afloatAt } from '../../shared/swim.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
+import { defaultCharacter } from '../../shared/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createDeerView, deerAnimChanged, removeDeerView, updateDeer } from './deer.js';
 import { createPickup } from '../render/models/pickups.js';
@@ -388,13 +389,7 @@ export class Entities {
           break;
         }
         case ENT.PLAYER: {
-          const v = createSurvivor(e.id * 31 + 7);
-          e.view = v;
-          setShadowFlags(v.object, this.charShadows, false);
-          this.scene.add(v.object);
-          e.weapon = -1;
-          e.zombieForm = null;
-          e.packOn = false;
+          this.survivorView(e);
           e.fireCount = e.q[8];
           const cone = new THREE.Mesh(this.coneGeo, this.coneMat);
           cone.visible = false;
@@ -519,6 +514,23 @@ export class Entities {
       console.error('entity view failed', e.kind, err);
     }
     this.onUpdate(e, 0xff, t, true);
+  }
+
+  // A player's body: the survivor they chose to be (the player list's character: Game.onPlayers), or, until the list
+  // has said, the one their id picks. A new one if the list says another (the list can come after the entity's create).
+  // What it held, whether it had turned and its backpack are put on it again by the next update.
+  survivorView(e) {
+    const ch = this.g.players.get(e.id)?.character ?? defaultCharacter(e.id);
+    if (e.view && e.char === ch) return;
+    if (e.view) e.view.dispose();
+    const v = createSurvivor(e.id * 31 + 7, ch);
+    e.view = v;
+    e.char = ch;
+    setShadowFlags(v.object, this.charShadows, false);
+    this.scene.add(v.object);
+    e.weapon = -1;
+    e.zombieForm = null;
+    e.packOn = false;
   }
 
   // The frag grenade and the noisemaker (models/misc.js heldProjectile): tumbling while they fly or roll, then settling
@@ -959,6 +971,7 @@ export class Entities {
           e.rz = tmp.z;
           e.ryaw = tmp.yaw;
           e.rpitch = tmp.pitch;
+          if (e.view && e.char !== (g.players.get(e.id)?.character ?? e.char)) this.survivorView(e);
           const v = e.view;
           if (!v) break;
           const flags = e.q[5];
