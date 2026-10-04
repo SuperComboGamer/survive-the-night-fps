@@ -834,6 +834,9 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   Worn, it sets `PFLAG.BACKPACK`, and the third-person survivor carries the item's own model on its back.
   The Sort button (`ACT.SORT_INV`, `sortInventory`) merges each item's stacks and orders the open slots by
   `BAG_TIER` (defs.js), then item id and size: deterministic, and the locked slots are never touched.
+  The same sort runs on its own whenever something is picked up (`giveItem`: the ground, searches, harvesting,
+  salvage's yield; not a craft, whose result the client predicts in place) or dropped (`ACT.DROP_SLOT`): `p.invSort`,
+  applied once in `sendTick` before the inventory goes out. The auto sort leaves a split (`p.splitKeep`) apart.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is

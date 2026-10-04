@@ -211,7 +211,8 @@ check('a survivor has 24 slots, and an inventory is always 34 long', invCap(a) =
   a.invDirty = true;
   lying.noAutoUntil = 0;
   run(12);
-  check('...and taken into slot 25 with one', lying.removed && a.inv[INVENTORY_SIZE]?.item === ITEM.BANDAGE && A.slots[INVENTORY_SIZE]?.count === 2, desc(a));
+  const at = a.inv.findIndex((x) => x && x.item === ITEM.BANDAGE);
+  check('...and taken with one, into a 25th slot (the grid sorted after it)', lying.removed && at >= 0 && A.slots[at]?.count === 2 && a.inv.filter(Boolean).length === INVENTORY_SIZE + 1, desc(a));
   unwear(a);
 }
 // what a craft makes

@@ -199,11 +199,11 @@ const s = a.state;
   a.inv[5] = { item: ITEM.TUNA, count: 5 };
   a.invDirty = true;
   walkOver(a, ITEM.TUNA, 2);
-  check('a walk-over pickup tops up a part stack in the backpack\'s slots before it takes a free slot', a.inv[30]?.count === 4 && of(a, ITEM.TUNA).length === 2 && same(A, a), show(a, ITEM.TUNA));
+  check('a walk-over pickup tops up a part stack in the backpack\'s slots, and the grid is sorted: the tins first', of(a, ITEM.TUNA).join('/') === '5/4' && a.inv[1]?.item === ITEM.TUNA && same(A, a), show(a, ITEM.TUNA));
   walkOver(a, ITEM.TUNA, 3);
-  check('...fills it and starts one new part stack with the rest', of(a, ITEM.TUNA).join('/') === '2/5/5' && a.inv[0]?.item === ITEM.TUNA && parts(a.inv, ITEM.TUNA) === 1, show(a, ITEM.TUNA));
+  check('...fills it and starts one new part stack with the rest', of(a, ITEM.TUNA).join('/') === '5/5/2' && a.inv[2]?.item === ITEM.TUNA && parts(a.inv, ITEM.TUNA) === 1, show(a, ITEM.TUNA));
   walkOver(a, ITEM.TUNA, 1);
-  check('...and the next pickup goes onto that one', of(a, ITEM.TUNA).join('/') === '3/5/5', show(a, ITEM.TUNA));
+  check('...and the next pickup goes onto that one', of(a, ITEM.TUNA).join('/') === '5/5/3', show(a, ITEM.TUNA));
   // a full grid: only what tops up the part stack is taken, the rest stays on the ground
   for (let i = 0; i < invCap(a); i++) if (!a.inv[i]) a.inv[i] = { item: ITEM.LEATHER, count: 10 };
   a.invDirty = true;
@@ -225,7 +225,7 @@ const s = a.state;
   a.interactT = -1;
   A.act(ACT.INTERACT, e.id);
   run(2);
-  check('...[E] on 3 tins tops it up and puts the other 2 in the free slot', e.removed && of(a, ITEM.TUNA).join('/') === '5/2/5' && a.inv[1]?.count === 2 && parts(a.inv, ITEM.TUNA) === 1, show(a, ITEM.TUNA));
+  check('...[E] on 3 tins tops it up and puts the other 2 in a stack of their own, the grid sorted', e.removed && of(a, ITEM.TUNA).join('/') === '5/5/2' && a.inv[2]?.count === 2 && parts(a.inv, ITEM.TUNA) === 1 && same(A, a), show(a, ITEM.TUNA));
   clearGround();
 }
 
@@ -259,7 +259,7 @@ const s = a.state;
   check('dropping 2 off a full stack while another is part-used takes them from the part stack', of(a, ITEM.BANDAGE).join('/') === '5/5/1' && same(A, a), show(a, ITEM.BANDAGE));
   A.act(ACT.SALVAGE, 0, 2);
   run(2);
-  check('salvaging 2 off a full stack likewise, and what is left is one part stack', of(a, ITEM.BANDAGE).join('/') === '4/5' && cnt(a, ITEM.CLOTH) === 2 && same(A, a), show(a, ITEM.BANDAGE));
+  check('salvaging 2 off a full stack likewise, and what is left is one part stack (the cloth it gives sorts the grid)', of(a, ITEM.BANDAGE).join('/') === '5/4' && cnt(a, ITEM.CLOTH) === 2 && same(A, a), show(a, ITEM.BANDAGE));
   clearGround();
   // a split is kept apart while nothing changes, then merged by the next pickup
   pack(a, [ITEM.TUNA, 5], [ITEM.TUNA, 4]);
@@ -290,6 +290,19 @@ const s = a.state;
   A.act(ACT.SORT_INV);
   run(2);
   check('Sort merges what a split left apart', of(a, ITEM.TUNA).join('/') === '5/2' && same(A, a), show(a, ITEM.TUNA));
+  // the auto sort: a pickup or a drop sorts the grid as Sort does, but leaves a split of something else apart
+  const gapless = (p) => p.inv.findIndex((x) => !x) === p.inv.filter(Boolean).length;
+  pack(a, [ITEM.CLOTH, 5], null, [ITEM.TUNA, 5], [ITEM.TUNA, 4]);
+  run(2);
+  A.act(ACT.SPLIT_INV, 2, 2);
+  run(2);
+  walkOver(a, ITEM.BANDAGE, 1);
+  const cloth = a.inv.findIndex((x) => x && x.item === ITEM.CLOTH);
+  check('a pickup sorts the grid: no gaps, the consumables before the cloth, and the tins split stay apart', gapless(a) && cloth === 4 && of(a, ITEM.TUNA).join('/') === '4/3/2' && cnt(a, ITEM.BANDAGE) === 1 && same(A, a), `${show(a, ITEM.TUNA)}, cloth in ${cloth}`);
+  A.act(ACT.DROP_SLOT, 0, 0);
+  run(2);
+  check('...and so does a drop: the slot it leaves is closed up', gapless(a) && a.inv.filter(Boolean).length === 4 && same(A, a), a.inv.slice(0, 6).map((x) => (x ? ITEM_DEFS[x.item].name + ' x' + x.count : '-')).join(', '));
+  clearGround();
 }
 
 // ---------------------------------------------------------------- crafting and searches

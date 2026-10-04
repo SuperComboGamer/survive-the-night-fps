@@ -19,9 +19,9 @@ import { xpBar } from './progress.js';
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
 // Backpack order: weapons and whatever else is equipped (armor, the backpack, throwables, gear) first, then consumables (ammo with
-// them), then crafting materials and car supplies; empty slots last. Only the grid is laid out that way - the server
-// keeps each stack in its slot - so within a tier stacks stay in slot order, which a drag onto another stack swaps.
-// (The Sort button has the server merge part stacks and reorder the slots themselves, by BAG_TIER in defs.js.)
+// them), then crafting materials and car supplies; empty slots last. Only the grid is laid out that way, so within a
+// tier stacks stay in slot order, which a drag onto another stack swaps. (The server merges part stacks and reorders
+// the slots themselves, by BAG_TIER in defs.js, on the Sort button and after every pickup or drop.)
 const BAG_TIER = { weapon: 0, armor: 0, pack: 0, throw: 0, gear: 0, cons: 1, ammo: 1 };
 const bagTier = (s) => (s ? (BAG_TIER[ITEM_DEFS[s.item]?.cat] ?? 2) : 3);
 // Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
