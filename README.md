@@ -136,6 +136,7 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `npm run test:e2e` | two headless Chrome clients: see each other, search a container, build, pick up, chat, drop weapon |
 | `node scripts/test-handoff-state.js` | a game saved for a deploy and restored into a new one (`server/gamestate.js`), in-process: a run played into its first night comes back with its clock, waves, players (where they stood, health, armour, weapons, backpack, kit), what was built, dropped, searched, felled and stripped, the dead where they were, the boss, the gun, the fair and the handcars; then both games are walked whole and any field that came back different and is not listed as transient fails it (a field added without being saved); players come back into their own bodies, one who does not is let go as a leaver, and saves this build cannot read are refused (part of `npm test`) |
 | `node scripts/test-handoff.js` | a deploy between two real server processes sharing a `HANDOFF_DIR`: an invite-only game into its first night, SIGTERM, every socket closed with 4002, the old server exiting, the same code, players and night on the new one, seats kept and let go after the reserve, a bot with no browser id a newcomer; and a third server of another `STATE_VERSION` ending the game instead (part of `npm test`) |
+| `node scripts/test-start-signal.js` | the server started as Railway starts it (`npm start`, under a script shell that never `exec`s its last command): a SIGTERM sent to npm reaches the server, which hands its games over and exits 0 (part of `npm test`) |
 | `node scripts/test-handoff-store.js` | the two stores a game waits in between servers (files, and Postgres on PGlite): heard, listed, claimed once, swept; and the match a deploy splits, ended as `handoff` and carried on by `continues` (part of `npm test`) |
 | `npm run test:e2e:handoff` | a deploy in headless Chrome behind a stand-in for Railway's edge (needs `npm run build`): the game stays on screen with the "Server updating" banner and is back as the same player where they were within a few seconds; with another client build the page reloads and goes back in by itself |
 | `node scripts/test-itemguide.js` | holds the "Used in" / "Found in" lines of the inventory tooltips against the recipe and loot tables they are derived from, generated worlds and the server's gathering (runs after `npm test`, as its `posttest`) |
@@ -180,6 +181,8 @@ https://www.survivethenightgame.com.
   memory of that one process, so never scale it past one replica (a second would not know the first one's game
   codes). More games means a bigger box for the one replica: see Capacity below. `drainingSeconds: 30` gives the
   old deployment that long between SIGTERM and SIGKILL to hand its games over (below); its own hard exit is 20 s.
+  The signal only reaches the server because `npm start` `exec`s node: npm forwards it to the `sh -c` it runs the
+  script in, and a shell with node as its child dies of it, node never told and no game handed over.
 - **Postgres** is a second service in the project ("Postgres", Railway's template, on a volume of its own). The
   game service's `DATABASE_URL` is the reference `${{Postgres.DATABASE_URL}}`, which reaches it over Railway's
   private network (`postgres.railway.internal`); the database has no public address.
