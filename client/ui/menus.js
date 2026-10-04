@@ -792,8 +792,10 @@ export class EndScreen {
     const st = el('div', 'end-stat', m);
     this.nights = el('b', '', st, '0');
     this.nightsL = el('span', '', st, 'nights survived');
+    // the panels' row and the poll under it, the poll as wide as the row
+    const body = el('div', 'end-body', m);
     // the team's board and the player's own record sit side by side, so the record costs the screen no height
-    const panels = el('div', 'end-panels', m);
+    const panels = el('div', 'end-panels', body);
     this.board = el('div', 'end-board paper', panels);
     this.record = el('div', 'end-board end-record paper', panels);
     // what the run earned (S2C.PROGRESS, the server's own tally): the bar to the next level, and where the XP came from
@@ -804,21 +806,22 @@ export class EndScreen {
     this.xpList = el('ul', 'ex-list', this.xp);
     this.xpFoot = el('div', 'er-foot', this.xp, '');
     this.xp.hidden = true;
-    // how hard the run was: a vote, and then how everyone has voted, as bars (the same rows, filled in)
-    this.poll = el('div', 'end-board end-poll paper', panels);
-    el('h3', 'panel-h', this.poll, 'How hard was it?');
+    // how hard the run was: a scale of five, and then how everyone has voted, as columns filling the same answers
+    this.poll = el('div', 'end-board end-poll paper', body);
+    const pollHead = el('h3', 'panel-h ep-head', this.poll, 'How hard was it?');
+    this.pollFoot = el('span', 'ep-foot', pollHead, '');
     const opts = el('div', 'ep-opts', this.poll);
     this.pollOpts = DIFFICULTY.map((label, i) => {
       const b = el('button', 'ep-opt', opts);
       b.type = 'button';
-      el('span', 'ep-key', b, String(i + 1));
-      el('span', 'ep-label', b, label);
-      const pct = el('b', 'ep-pct', b, '');
       const fill = el('i', '', el('span', 'ep-bar', b));
+      const row = el('span', 'ep-row', b);
+      el('span', 'ep-key', row, String(i + 1));
+      el('span', 'ep-label', row, label);
+      const pct = el('b', 'ep-pct', b, '');
       b.addEventListener('click', () => this._vote(i + 1));
       return { b, pct, fill };
     });
-    this.pollFoot = el('div', 'ep-foot', this.poll, '');
     // 1-5 vote as well as a click (the keys of the answers)
     window.addEventListener('keydown', (e) => {
       if (this.root.hidden || !this.vote || e.repeat || e.ctrlKey || e.metaKey || e.altKey || this.ui.isTyping()) return;
@@ -840,10 +843,10 @@ export class EndScreen {
     for (const o of this.pollOpts) {
       o.b.classList.remove('mine');
       o.pct.textContent = '';
-      o.fill.style.width = '0%';
+      o.fill.style.height = '0%';
     }
     this.pollFoot.className = 'ep-foot';
-    this.pollFoot.textContent = 'Press 1-5 or click · it helps us tune the game';
+    this.pollFoot.textContent = 'Press 1-5 or click · helps us tune the game';
   }
 
   async _vote(rating) {
@@ -864,15 +867,16 @@ export class EndScreen {
       return;
     }
     if (seq !== this.voteSeq) return;
-    // everyone's votes, this one counted: each answer's share as a bar, ours lit
+    // everyone's votes, this one counted: each answer's share as a column (the most picked one full), ours lit
     const counts = DIFFICULTY.map((_, i) => Math.max(0, (res?.counts?.[i] | 0)));
     const total = counts.reduce((a, b) => a + b, 0);
+    const most = Math.max(...counts);
     const pcts = percents(counts);
     this.poll.classList.remove('sending');
     this.poll.classList.add('voted');
     this.pollOpts.forEach((o, i) => {
       o.pct.textContent = pcts[i] + '%';
-      o.fill.style.width = (total ? (counts[i] * 100) / total : 0) + '%';
+      o.fill.style.height = (most ? (counts[i] * 100) / most : 0) + '%';
     });
     this.pollFoot.textContent = `${total} vote${total === 1 ? '' : 's'} so far · click another to change yours`;
   }
