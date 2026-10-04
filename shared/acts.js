@@ -29,7 +29,7 @@ export const MAINLAND_DAY_MORE = 60;
 // down and puts the mainland up, behind a cut to black (client/game/cutscene.js holds the shots). The server builds
 // its own mainland in the first tick of the phase. It can be skipped once every player who is connected has asked
 // to (ACT.SKIP), and not before SKIP_AFTER seconds of it, by which time every client has its mainland up.
-export const CROSSING = { TIME: 38, SWAP: 7, SKIP_AFTER: 12 };
+export const CROSSING = { TIME: 40, SWAP: 7, SKIP_AFTER: 12 };
 
 // [E] at the plane reaches this much further than at the car (CAR_REACH, and the server's own 5 m): it is a bigger
 // thing to stand beside, and its wings keep a survivor off its middle.

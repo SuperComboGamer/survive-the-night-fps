@@ -319,6 +319,11 @@ export class Entities {
     return this.g.renderer.scene;
   }
 
+  // a cutscene is on: the survivors are in its car or its plane, not standing where the server has their bodies
+  hidePlayers() {
+    for (const e of this.ents.values()) if (e.kind === ENT.PLAYER && e.view) e.view.object.visible = false;
+  }
+
   clear() {
     for (const e of this.ents.values()) this.destroyView(e, true);
     this.ents.clear();

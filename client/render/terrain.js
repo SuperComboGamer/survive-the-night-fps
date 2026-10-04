@@ -5,7 +5,7 @@
 // (signed offset from the nearest road's centre line and distance along it): dirt roads get tyre ruts, a
 // grassy crown and puddles, trails a worn footpath and Route 9 faded lane lines and gravel shoulders.
 import * as THREE from 'three';
-import { GRID_N, GRID_STEP, MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
+import { GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
 import { smoothstep } from '../../shared/rng.js';
 import { ROAD } from '../../shared/world.js';
 import { MINE_R, PORTAL } from '../../shared/mine.js';
@@ -13,6 +13,7 @@ import { getTexture } from './textures.js';
 import { GROUND_MACRO_GLSL, groundNoiseTexture, VEG } from './materials.js';
 
 
+const TERRAIN_CHUNK = 48; // cells a side of a piece of the terrain mesh (96 m): see buildTerrain
 // the road frame is kept this far (m) past a road's edge, so its fade-out stays well clear of the road
 const FRAME_REACH = 12;
 
@@ -22,7 +23,8 @@ const FRAME_REACH = 12;
  * road ends, switchbacks, out of reach) so the shader never interpolates across a discontinuity.
  */
 function roadFrame(world) {
-  const N = GRID_N;
+  const N = world.gridN;
+  const MAP_HALF = world.half;
   const cnt = N * N;
   const lat = new Float32Array(cnt).fill(FRAME_REACH * 4);
   const along = new Float32Array(cnt);
@@ -145,7 +147,8 @@ const CANOPY_W = [1, 1, 0.95, 0.12, 0.1, 0.55, 0.05];
 export function groundFields(world) {
   let f = FIELDS.get(world);
   if (f) return f;
-  const N = GRID_N;
+  const N = world.gridN;
+  const MAP_HALF = world.half;
   const H = world.heights;
   const count = N * N;
   const nrm = new Float32Array(count * 3);
@@ -268,7 +271,8 @@ export function groundFields(world) {
 }
 
 export function buildTerrain(world) {
-  const N = GRID_N;
+  const N = world.gridN;
+  const MAP_HALF = world.half;
   const H = world.heights;
   const count = N * N;
   const F = groundFields(world);
@@ -294,30 +298,51 @@ export function buildTerrain(world) {
       roadAttr[k * 4 + 3] = frame.conf[k];
     }
   }
-  const idx = new Uint32Array((N - 1) * (N - 1) * 6);
-  let o = 0;
-  for (let j = 0; j < N - 1; j++) {
-    for (let i = 0; i < N - 1; i++) {
-      const k00 = j * N + i;
-      const k10 = k00 + 1;
-      const k01 = k00 + N;
-      const k11 = k01 + 1;
-      idx[o++] = k00;
-      idx[o++] = k01;
-      idx[o++] = k10;
-      idx[o++] = k10;
-      idx[o++] = k01;
-      idx[o++] = k11;
+  // One vertex buffer for the whole heightfield, drawn as TERRAIN_CHUNK x TERRAIN_CHUNK-cell pieces with an index
+  // buffer and a bounding sphere each, so what is behind the camera or past the edge of a shadow cascade is not
+  // drawn: the mainland's field is four times the island's, and neither the frame nor the shadow passes should
+  // pay for the part of it nobody is looking at.
+  const attrs = {
+    position: new THREE.BufferAttribute(pos, 3),
+    normal: new THREE.BufferAttribute(F.nrm, 3),
+    aSplat: new THREE.BufferAttribute(F.base, 4),
+    aExtra: new THREE.BufferAttribute(extra, 4),
+    aRoad: new THREE.BufferAttribute(roadAttr, 4),
+  };
+  const geos = [];
+  for (let cj = 0; cj < N - 1; cj += TERRAIN_CHUNK) {
+    for (let ci = 0; ci < N - 1; ci += TERRAIN_CHUNK) {
+      const i1 = Math.min(N - 1, ci + TERRAIN_CHUNK);
+      const j1 = Math.min(N - 1, cj + TERRAIN_CHUNK);
+      const idx = new Uint32Array((i1 - ci) * (j1 - cj) * 6);
+      let o = 0;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let j = cj; j < j1; j++) {
+        for (let i = ci; i < i1; i++) {
+          const k00 = j * N + i;
+          const k10 = k00 + 1;
+          const k01 = k00 + N;
+          const k11 = k01 + 1;
+          idx[o++] = k00;
+          idx[o++] = k01;
+          idx[o++] = k10;
+          idx[o++] = k10;
+          idx[o++] = k01;
+          idx[o++] = k11;
+          lo = Math.min(lo, H[k00], H[k10], H[k01], H[k11]);
+          hi = Math.max(hi, H[k00], H[k10], H[k01], H[k11]);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      for (const name in attrs) geo.setAttribute(name, attrs[name]);
+      geo.setIndex(new THREE.BufferAttribute(idx, 1));
+      const sx = ((i1 - ci) * GRID_STEP) / 2;
+      const sz = ((j1 - cj) * GRID_STEP) / 2;
+      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(-MAP_HALF + ci * GRID_STEP + sx, (lo + hi) / 2, -MAP_HALF + cj * GRID_STEP + sz), Math.hypot(sx, sz, (hi - lo) / 2));
+      geos.push(geo);
     }
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(F.nrm, 3));
-  geo.setAttribute('aSplat', new THREE.BufferAttribute(F.base, 4));
-  geo.setAttribute('aExtra', new THREE.BufferAttribute(extra, 4));
-  geo.setAttribute('aRoad', new THREE.BufferAttribute(roadAttr, 4));
-  geo.setIndex(new THREE.BufferAttribute(idx, 1));
-  geo.computeBoundingSphere();
 
   const tex = (name) => {
     const t = getTexture(name);
@@ -498,18 +523,28 @@ export function buildTerrain(world) {
       );
   };
   mat.customProgramCacheKey = () => 'terrain-splat-4';
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  mesh.frustumCulled = false;
-  mesh.name = 'terrain';
-  return mesh;
+  const group = new THREE.Group();
+  group.name = 'terrain';
+  for (const geo of geos) {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  // (what Game does with it: the hills shade the valleys on the presets with sun shadows; a world comes and goes)
+  group.userData.setShadows = (on) => group.children.forEach((m) => (m.castShadow = on));
+  group.userData.dispose = () => {
+    for (const geo of geos) geo.dispose();
+    mat.dispose();
+  };
+  return group;
 }
 
 // Water surface (lake + ponds): dark murky water with animated ripples, fresnel sky reflection and
 // moon/sun glints. A sheet at the water line over every cell of the heightfield that dips below it, and nowhere
 // else: under dry ground it would show in the drifts of the mine, which run down through that level.
 export function buildWater(world) {
-  const N = GRID_N;
+  const N = world.gridN;
+  const MAP_HALF = world.half;
   const H = world.heights;
   const quads = [];
   for (let j = 0; j < N - 1; j++) {
@@ -520,6 +555,16 @@ export function buildWater(world) {
       const z = -MAP_HALF + j * GRID_STEP;
       quads.push(x, 0, z, x, 0, z + GRID_STEP, x + GRID_STEP, 0, z, x + GRID_STEP, 0, z, x, 0, z + GRID_STEP, x + GRID_STEP, 0, z + GRID_STEP);
     }
+  }
+  // the sea (the mainland's west shore): on out past the edge of the map, as far as anybody can see from the bridge
+  if (world.sea) {
+    const far = 2600;
+    const x1 = -MAP_HALF;
+    const z0 = -MAP_HALF - far;
+    const z1 = MAP_HALF + far;
+    quads.push(x1 - far, 0, z0, x1 - far, 0, z1, x1, 0, z0, x1, 0, z0, x1 - far, 0, z1, x1, 0, z1);
+    // (and round the corners of the map, where the shore runs out through its north and south edges)
+    for (const [za, zb] of [[z0, -MAP_HALF], [MAP_HALF, z1]]) quads.push(x1, 0, za, x1, 0, zb, world.sea.x, 0, za, world.sea.x, 0, za, x1, 0, zb, world.sea.x, 0, zb);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(quads, 3));

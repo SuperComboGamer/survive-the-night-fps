@@ -1261,6 +1261,7 @@ export class Game {
     }
     c.pending = 0;
     this.setWorld(this.seed, WORLD.MAINLAND);
+    this.worldPlayed = true; // (the run is on it: the next one gets an island of its own)
     // the morning after: whatever the hour was when the car left, the team comes off the bridge at the start of a
     // day - the next one, if it left in the night
     if (c.night) this.day++;
@@ -3676,10 +3677,21 @@ export class Game {
         for (const it of SCHEMATICS) this.unlockSchematic(it, null);
         break;
       case 'cross':
-        // /cross [skip]: the car is away - the crossing to the mainland, with its cutscene, or straight there
-        if (this.act === WORLD.ISLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+        // /cross [skip | hold | go]: the car is away - the crossing to the mainland, with its cutscene, or straight
+        // there. hold: the cutscene's clock stops (for looking at it) - first on the island, before the worlds
+        // change, then after /cross go short of its end, and after another it runs out
+        if (args[1] === 'go' && this.crossing) this.crossing.hold = Math.max(0, (this.crossing.hold | 0) - 1);
+        else if (this.act === WORLD.ISLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
           this.cross(p, this.phase === PHASE.NIGHT);
           if (args[1] === 'skip') this.arrive();
+          else if (args[1] === 'hold') this.crossing.hold = 2;
+        }
+        break;
+      case 'takeoff':
+        // /takeoff: the plane goes, now (the run's last shot, and the victory)
+        if (this.act === WORLD.MAINLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+          this.supplies = this.sup.need.slice();
+          this.victory();
         }
         break;
       case 'place': {
@@ -3896,6 +3908,7 @@ export class Game {
       ts.mark(T_INPUTS);
       const prev = Math.ceil(this.timeLeft);
       this.timeLeft -= dt;
+      if (this.crossing.hold) this.timeLeft = Math.max(this.timeLeft, this.crossing.hold === 2 ? CROSSING.TIME - 2 : 4); // (/cross hold: look-dev)
       if (Math.ceil(this.timeLeft) !== prev) this.globalDirty = true;
       const [got, need] = this.skipVotes();
       if (this.timeLeft <= 0 || (need > 0 && got >= need && CROSSING.TIME - this.timeLeft >= CROSSING.SKIP_AFTER)) this.arrive();

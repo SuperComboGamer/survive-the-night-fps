@@ -7,6 +7,8 @@ import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
 import { Compass, Objective, Markers, Downed, DamageDir } from './hud2.js';
 import { Minimap } from './minimap.js';
+import { SUPPLIES, W, ACT_NOW } from '../game/act.js'; // (this act's parts, and the words for what they go into)
+import { WORLD } from '../../shared/acts.js';
 import { bindLabel, bindTag, onBindsChange } from '../game/binds.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build', 'Radio'];
@@ -343,8 +345,9 @@ export class Hud {
     if (h.finale) {
       // a stalled warm-up keeps its time on show: it stopped there, it did not start over. (A title that fits one
       // line: a second one pushes the horde counter down into the kill feed.)
-      title = h.escapeReady ? 'Get in the car!' : h.escapeStalled ? 'Stalled' : 'Final stand';
-      label = h.escapeReady ? (h.escapeLeaving ? 'Someone is getting in' : 'The engine is running') : h.escapeStalled ? 'Get back to the car' : 'Engine ready in';
+      const plane = ACT_NOW === WORLD.MAINLAND;
+      title = h.escapeReady ? (h.runwayBlocked ? 'Clear the runway!' : W.getIn) : h.escapeStalled ? 'Stalled' : plane ? 'Runway stand' : 'Final stand';
+      label = h.escapeReady ? (h.runwayBlocked ? 'The dead are in its way' : h.escapeLeaving ? 'Someone is getting in' : plane ? 'The engines are running' : 'The engine is running') : h.escapeStalled ? (plane && !h.standWarm ? 'Get back to the fuel truck' : `Get back to the ${W.thing}`) : plane ? (h.standWarm ? 'Engines warm in' : 'Tanks full in') : 'Engine ready in';
       time = h.escapeReady ? '' : fmtTime(h.escapeT);
     } else if (state === 'night') {
       title = 'Night ' + day;
@@ -691,8 +694,8 @@ export class Hud {
         this.ctxIco.innerHTML = glyph('campfire');
         this.ctxTitle.textContent = 'Campfire';
       } else if (type === 'car') {
-        this.ctxIco.innerHTML = glyph('car');
-        this.ctxTitle.textContent = 'The car';
+        this.ctxIco.innerHTML = glyph(W.glyph);
+        this.ctxTitle.textContent = W.The;
       } else if (type === 'structure') {
         this.ctxIco.innerHTML = glyph('hammer');
       } else if (type === 'fair') {
@@ -713,6 +716,15 @@ export class Hud {
       }
     } else if (type === 'car') {
       const parts = ctx.parts | 0;
+      if (c.ctxAct !== ACT_NOW) {
+        // (the mainland: the plane's parts take the car's supplies' places)
+        c.ctxAct = ACT_NOW;
+        c.ctxA = -1;
+        this.ctxPartEls.forEach((p, i) => {
+          p.title = ITEM_DEFS[SUPPLIES[i]].name;
+          p.querySelector('.cp-ico').innerHTML = itemIcon(SUPPLIES[i]);
+        });
+      }
       if (c.ctxA !== parts) {
         c.ctxA = parts;
         let n = 0;

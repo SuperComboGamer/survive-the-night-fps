@@ -375,6 +375,7 @@ export class StaticWorld {
       addTrim(o.x, o.z, mat, m, [0, o.h + 0.07, 0, o.w + 0.32, 0.14, t + 0.06]);
     }
     for (const pr of world.props) {
+      if (pr.live) continue; // (drawn by the game itself: the car the team came in, the plane - they change, and a cutscene moves them)
       let obj;
       try {
         obj = createProp(pr.type, pr.seed);

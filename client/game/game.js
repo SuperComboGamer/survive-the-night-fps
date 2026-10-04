@@ -17,9 +17,8 @@ import {
   WATER_LEVEL,
   MAX_PLAYERS,
   ESCAPE_RADIUS,
-  MAP_HALF,
+  GAME_OVER_DELAY,
   GRID_STEP,
-  GRID_N,
   DUSK_WARNING,
   DAWN_RETURN,
   EYE_HEIGHT,
@@ -37,13 +36,12 @@ import {
   STRUCT_ORDER,
   REPAIR_COST,
   ZOMBIE_DEFS,
-  SUPPLIES,
-  SUPPLY_NEED,
   SCHEM_BIT,
   THROW_ITEMS,
   CONT_DEFS,
   SOUND,
   NOTIFY,
+  CACHE_GAVE,
   KILLER,
   ZTYPE,
   ZANIM,
@@ -57,7 +55,10 @@ import {
   PROJ,
 } from '../../shared/defs.js';
 import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
-import { createWorld } from '../../shared/world.js';
+import { worldFor } from '../../shared/worlds.js';
+import { WORLD, CROSSING, TAKEOFF_TIME, PLANE_REACH, RUNWAY } from '../../shared/acts.js';
+import { SUPPLIES, SUPPLY_NEED, W, setAct } from './act.js'; // (this act's supplies, and the words for what they go into)
+import { usePos } from '../../shared/protocol.js';
 import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
 import { chosenCharacter } from '../ui/picker.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
@@ -98,6 +99,8 @@ import { buildMine } from '../render/mine.js';
 import { buildClinic, disposeClinic } from '../render/clinic.js';
 import { Graves } from '../render/cemetery.js';
 import { buildRailway } from '../render/railway.js';
+import { BridgeView } from '../render/bridge.js';
+import { Crossing, Takeoff, liveProps } from './cutscene.js';
 import { StaticWorld } from '../render/staticworld.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
@@ -295,7 +298,7 @@ export class Game {
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
-      world: (seed) => this.loadWorld(seed),
+      world: (seed, act) => this.onWorld(seed, act),
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
@@ -404,7 +407,7 @@ export class Game {
 
   setShadowQuality(q) {
     this.entities.setCharShadows(!!q.charShadows);
-    if (this.terrain) this.terrain.castShadow = !!q.shadows;
+    this.terrain?.userData.setShadows(!!q.shadows);
     this.staticWorld?.setShadows(!!q.shadows);
   }
 
@@ -418,17 +421,30 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- world
-  loadWorld(seed) {
-    if (this.seed === seed && this.world) return;
+  // The server says which world the game is on now (S2C.WORLD_RESET): a new run's island, or - CROSSING.SWAP seconds
+  // into the crossing, as the cutscene cuts to black - the mainland. Entities that follow are that world's, and their
+  // positions are in its units from this message on.
+  onWorld(seed, act) {
+    this.loadWorld(seed, act);
+    this.stripped.clear();
+    this.cine?.worldChanged();
+  }
+
+  // act: which of the run's two maps to make of the seed (shared/acts.js)
+  loadWorld(seed, act = WORLD.ISLAND) {
+    if (this.seed === seed && this.act === act && this.world) return;
     const t0 = performance.now();
     if (this.world) this.unloadWorld();
     this.seed = seed;
+    this.act = act;
+    setAct(act);
     this.waypoint = null; // it pointed into the old valley
-    this.world = createWorld(seed);
+    this.world = worldFor(seed, act);
+    usePos(this.world); // (what a metre is in a position on the wire: protocol.js)
     this.prediction.setWorld(this.world);
     const t1 = performance.now();
     this.terrain = buildTerrain(this.world);
-    this.terrain.castShadow = !!this.renderer.q.shadows; // hills shade the valleys at low sun
+    this.terrain.userData.setShadows(!!this.renderer.q.shadows); // hills shade the valleys at low sun
     this.scene.add(this.terrain);
     this.water = buildWater(this.world);
     this.scene.add(this.water);
@@ -440,6 +456,8 @@ export class Game {
     this.handcar.setWorld(this.world);
     this.railway = buildRailway(this.world); // (the ballast, sleepers and rails of the line)
     if (this.railway) this.scene.add(this.railway);
+    this.bridge = this.world.bridge ? new BridgeView(this.scene, this.world) : null; // (the mainland: the bridge the car came over)
+    this.live = liveProps(this.scene, this.world); // (...the car they came in and the plane: the props a cutscene moves)
     this.under = 0;
     const t2 = performance.now();
     this.staticWorld = new StaticWorld(this.scene, this.world);
@@ -472,11 +490,14 @@ export class Game {
 
   // (the server deals a new map every playthrough, so worlds come and go for as long as the page is open)
   unloadWorld() {
-    for (const mesh of [this.terrain, this.water]) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      mesh.material.dispose();
-    }
+    this.scene.remove(this.terrain, this.water);
+    this.terrain.userData.dispose();
+    this.water.geometry.dispose();
+    this.water.material.dispose();
+    this.bridge?.dispose();
+    this.bridge = null;
+    this.live?.dispose();
+    this.live = null;
     if (this.mine) {
       this.scene.remove(this.mine);
       for (const mesh of this.mine.children) {
@@ -513,7 +534,7 @@ export class Game {
   // everything (warmFrame). Runs again for a new map (other props, other materials) and when the quality changes
   // (other lights and shadows: another program for every lit material).
   prewarm() {
-    const key = `${this.renderer.quality}:${this.seed}`;
+    const key = `${this.renderer.quality}:${this.seed}:${this.act}`;
     if (!this.world || key === this.warmKey) return;
     this.warmKey = key;
     this.warmTodo ||= this.warmViews();
@@ -740,7 +761,7 @@ export class Game {
     this.myId = info.id;
     this.voice.setMyId(info.id);
     this.ensureViewModel();
-    this.loadWorld(info.seed);
+    this.loadWorld(info.seed, info.act);
     this.entities.clear();
     this.rockets.clear();
     this.skyflares.clear();
@@ -759,7 +780,7 @@ export class Game {
     this.input.enabled = true;
     this.inputBuffer.clear();
     this.input.requestLock();
-    if (!resume) this.discovered = new Set([ZONE.CAMP]);
+    if (!resume) this.discovered = new Set([ZONE.CAMP, ZONE.BRIDGEHEAD]); // (where a run, and its second act, begin)
     this.stripped.clear(); // (the first snapshot says which are)
     this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
     if (!resume) this.waypoint = null;
@@ -889,7 +910,8 @@ export class Game {
   // tick loses that tick's events, while the global state always catches up.
   trackRun() {
     const g = this.global;
-    if (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) {
+    // (the crossing between the acts is part of the run: it goes on over the bridge)
+    if (g.phase === PHASE.DAY || g.phase === PHASE.NIGHT || g.phase === PHASE.CROSSING) {
       if (this.runOn) return;
       this.runOn = true;
       // how much of the run was played before we saw it: nothing when it starts under us
@@ -1214,20 +1236,21 @@ export class Game {
         a.stinger?.('supply');
         break;
       case NOTIFY.SUPPLY_FOUND:
-        ui.notify(`${ITEM_DEFS[arg]?.name || 'A supply'} found! Bring it to the car.`, 'good', 5);
+        ui.notify(`${ITEM_DEFS[arg]?.name || 'A supply'} found! Bring it to the ${W.thing}.`, 'good', 5);
         a.stinger?.('car_part');
         break;
       case NOTIFY.CAR_PART:
-        ui.notify(`${ITEM_DEFS[arg]?.name || 'Part'} installed in the car`, 'good', 4);
+        ui.notify(`${ITEM_DEFS[arg]?.name || 'Part'} installed in the ${W.thing}`, 'good', 4);
         a.playLocal('install_part');
         break;
       case NOTIFY.SUPPLIES_DONE:
-        ui.notify('EVERY SUPPLY IS IN', 'big', 5);
-        ui.notify(`Fortify the car. Hold ${bindTag('interact')} at the car to start the engine - it takes 90 seconds to warm up.`, 'sub', 7);
+        ui.notify(this.act === WORLD.MAINLAND ? 'THE PLANE IS FIXED' : 'EVERY SUPPLY IS IN', 'big', 5);
+        if (this.act === WORLD.MAINLAND) ui.notify(`Hold ${bindTag('interact')} at the plane to start fuelling. Hold the fuel truck for ${RUNWAY.FUEL_TIME} seconds, then the plane for ${RUNWAY.WARM_TIME}, and keep the runway clear.`, 'sub', 9);
+        else ui.notify(`Fortify the car. Hold ${bindTag('interact')} at the car to start the engine - it takes 90 seconds to warm up.`, 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.NEED_SUPPLIES:
-        ui.notify('The car still needs supplies', 'warning', 2.5);
+        ui.notify(`${W.The} still needs ${W.supplies}`, 'warning', 2.5);
         break;
       case NOTIFY.CAR_ALARM:
         ui.notify('CAR ALARM!', 'danger', 4);
@@ -1285,6 +1308,32 @@ export class Game {
         break;
       case NOTIFY.VICTORY:
         a.stinger?.('victory');
+        break;
+      // the two acts (shared/acts.js)
+      case NOTIFY.ARRIVED:
+        ui.notify('THE MAINLAND', 'big', 6);
+        ui.notify('The bridge is gone behind you. There is an airfield past the city: find the plane, find its parts, fly out.', 'sub', 9);
+        if (arg) ui.notify(`${arg === 1 ? 'One of the dead is' : `${arg} of the dead are`} a survivor again: the crossing is a checkpoint.`, 'good', 7);
+        this.discovered = new Set([ZONE.BRIDGEHEAD]);
+        break;
+      case NOTIFY.CACHE: {
+        const got = [arg & CACHE_GAVE.PISTOL && 'a pistol', arg & CACHE_GAVE.AMMO && 'ammunition', arg & CACHE_GAVE.BANDAGE && 'a bandage', arg & CACHE_GAVE.MELEE && 'a knife', arg & CACHE_GAVE.BUILD && 'a hammer'].filter(Boolean);
+        if (got.length) ui.notify(`From the checkpoint's cache at the bridgehead: ${got.join(', ')}.`, 'toast', 8);
+        break;
+      }
+      case NOTIFY.STAND_STAGE:
+        ui.notify('THE TANKS ARE FULL', 'big', 4);
+        ui.notify('The engines are turning over. Get to the plane and hold it.', 'sub', 6);
+        a.stinger?.('car_part');
+        break;
+      case NOTIFY.RUNWAY_BLOCKED:
+        ui.notify(`${arg} of the dead are on the runway. Clear it before you go.`, 'warning', 3);
+        a.playLocal('build_fail');
+        break;
+      case NOTIFY.CHECKPOINT:
+        ui.notify('BACK AT THE BRIDGEHEAD', 'big', 5);
+        ui.notify(`Day ${arg}, as you came off the bridge, with what you carried over it.`, 'sub', 7);
+        this.discovered = new Set([ZONE.BRIDGEHEAD]);
         break;
       case NOTIFY.GAME_OVER:
         a.stinger?.('gameover');
@@ -1393,8 +1442,13 @@ export class Game {
       ui.notify('You joined a run in progress: every supply is in. Your team is at the car.', 'toast', 8);
       return;
     }
-    ui.notify('Your car died on Route 9. Find the supplies, fix it, drive out.', 'sub', 6);
-    ui.notify(g.suppliesDone ? 'You joined a run in progress: every supply is in. Starting the engine is next.' : `You joined a run in progress: ${have} of ${need} car supplies are in.`, 'toast', 8);
+    if (this.act === WORLD.MAINLAND) {
+      ui.notify('The team crossed the bridge to the mainland. Find the parts of the plane, fix it, fly out.', 'sub', 6);
+      ui.notify(g.suppliesDone ? 'You joined a run in progress: every part is in. Fuelling the plane is next.' : `You joined a run in progress, in its second act: ${have} of ${need} plane parts are in.`, 'toast', 8);
+    } else {
+      ui.notify('Your car died on Route 9. Find the supplies, fix it, drive out.', 'sub', 6);
+      ui.notify(g.suppliesDone ? 'You joined a run in progress: every supply is in. Starting the engine is next.' : `You joined a run in progress: ${have} of ${need} car supplies are in.`, 'toast', 8);
+    }
     let team = 'Your team is marked on the compass. Scavenge with them before dark.';
     if (night) team = 'Night: the horde is out. Find your team on the compass and hold out until dawn.';
     else if (g.suppliesDone) team = 'Your team is marked on the compass. Meet them at the car.';
@@ -2281,7 +2335,11 @@ export class Game {
     if (this.warm && (this.warm.ready || this.state === 'playing')) this.finishPrewarm();
     const menu = this.state === 'menu' || !this.world;
     this.renderer.setCenter(menu ? this.ui.splash.sceneX : 0.5); // (beside the splash's menu, the scene is off-centre)
-    if (menu) return this.updateMenu(dt);
+    if (menu) {
+      this.endCine();
+      return this.updateMenu(dt);
+    }
+    const cine = this.updateCine();
     const s = this.prediction.state;
     const self = this.self;
     const inp = this.input;
@@ -2305,7 +2363,7 @@ export class Game {
     }
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
-    const buttons = this.gun.shape(self.alive ? inp.sample() | this.fair.press | this.handcar.press : 0); // (manning the mounted gun: its trigger, not the weapon's. fair.press, handcar.press: [E] getting out of a seat, off a handcar)
+    const buttons = cine ? 0 : this.gun.shape(self.alive ? inp.sample() | this.fair.press | this.handcar.press : 0); // (manning the mounted gun: its trigger, not the weapon's. fair.press, handcar.press: [E] getting out of a seat, off a handcar)
     if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
@@ -2368,7 +2426,10 @@ export class Game {
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
     const shake = this.camShake * 0.02 + this.effects.shake * 0.03 + this.quake * 0.02;
     const cam = this.camera;
-    if (this.debugCam) {
+    if (cine) {
+      cine.update(dt, cam); // (a cutscene: the shot's camera, and its own field of view)
+      cam.position.y += (Math.random() - 0.5) * shake;
+    } else if (this.debugCam) {
       const d = this.debugCam;
       cam.position.set(d.x, d.y, d.z);
       cam.rotation.set(d.pitch, d.yaw, 0);
@@ -2387,7 +2448,7 @@ export class Game {
     const baseFov = this.settings.fov || 75;
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
-    if (Math.abs(cam.fov - this.fovCur) > 0.01) {
+    if (!cine && Math.abs(cam.fov - this.fovCur) > 0.01) {
       cam.fov = this.fovCur;
       cam.updateProjectionMatrix();
     }
@@ -2414,7 +2475,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
+    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist });
@@ -2466,7 +2527,9 @@ export class Game {
     else this.localFlash = !!self.flashlight;
 
     // entities
-    this.entities.update(dt, this.renderTick, time, rp);
+    this.entities.update(dt, this.renderTick, time, cine ? cam.position : rp);
+    if (cine) this.entities.hidePlayers(); // (they are in the car, or the plane: the cutscene draws them there)
+    this.live?.update(dt, this.global, !!cine);
     this.rockets.update(dt);
     this.skyflares.update(dt, cam); // (after the entities: their fires are gathered; before the environment and the lights)
     this.gun.update(dt, ldx * lk, ldy * lk);
@@ -2479,7 +2542,7 @@ export class Game {
     // discovery of places
     this.discoverT -= dt;
     // (a drift of the mine runs under places it does not come up in)
-    if (this.discoverT <= 0 && self.alive && !s.zombie && !this.world.mine?.under(rp.x, rp.y + 0.3, rp.z)) {
+    if (this.discoverT <= 0 && self.alive && !cine && !s.zombie && !this.world.mine?.under(rp.x, rp.y + 0.3, rp.z)) {
       this.discoverT = 0.5;
       for (const z of this.world.zones) {
         if (this.discovered.has(z.id)) continue;
@@ -2505,7 +2568,7 @@ export class Game {
 
     // environment
     const g = this.global;
-    const cycle = this.debugCycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
+    const cycle = this.debugCycle ?? cine?.cycle ?? Environment.cycleFor(g.phase, g.timeLeft, g.day, g.phaseLen);
     if (!g.finale) this.global.timeLeft = Math.max(0, g.timeLeft - dt);
     else if (!g.escapeStalled) this.global.escapeT = Math.max(0, g.escapeT - dt); // a stalled warm-up stands still
     const weather = this.weather.update(dt, g, time, cam.position);
@@ -2526,8 +2589,9 @@ export class Game {
     this.under += (dark - this.under) * Math.min(1, dt * 4);
     if (this.under < 0.002) this.under = 0;
     this._envOver.under = this.under;
+    this._envOver.fogMul = cine ? cine.fogMul : 0; // (a cutscene's long shots see further than the day's haze lets a survivor)
     this.env.update(dt, cycle, cam.position, time, weather, this._envOver);
-    this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
+    this.staticWorld.update(cam.position, Math.max(cine ? cine.far : 0, this.env.fogVisibility + 40));
     this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
     if (this.water) {
       const u = this.water.material.uniforms;
@@ -2562,7 +2626,8 @@ export class Game {
 
     // audio
     const a = this.audio;
-    a.setListener(cam.position.x, cam.position.y, cam.position.z, inp.yaw, inp.pitch);
+    if (cine) a.setListener(cam.position.x, cam.position.y, cam.position.z, cam.rotation.y, cam.rotation.x);
+    else a.setListener(cam.position.x, cam.position.y, cam.position.z, inp.yaw, inp.pitch);
     let danger = 0;
     for (const e of this.entities.ents.values()) {
       if (e.kind !== ENT.ZOMBIE || e.dead) continue;
@@ -2633,6 +2698,47 @@ export class Game {
     };
   }
 
+  // The cutscene that is on, if one is (cutscene.js): the crossing while the server's phase is PHASE.CROSSING, the
+  // take-off for the first TAKEOFF_TIME seconds of a victory on the mainland. Started and ended here, off the global
+  // state, so a client that joins or comes back in the middle of one is in it at the right moment.
+  updateCine() {
+    const g = this.global;
+    if (g.phase === PHASE.CROSSING) {
+      if (!(this.cine instanceof Crossing)) {
+        this.endCine();
+        this.startCine(new Crossing(this));
+      }
+      this.cine.sync(CROSSING.TIME - g.timeLeft);
+    } else if (g.phase === PHASE.VICTORY && this.act === WORLD.MAINLAND && this.live?.plane) {
+      if (!this.cine && !this.tookOff) {
+        this.tookOff = true;
+        const left = g.restartT - (GAME_OVER_DELAY + 6);
+        if (left > 1) {
+          this.startCine(new Takeoff(this, this.live.plane));
+          this.cine.t = Math.max(0, TAKEOFF_TIME - left);
+        }
+      } else if (this.cine && this.cine.t >= TAKEOFF_TIME) this.endCine();
+    } else {
+      this.tookOff = false;
+      this.endCine();
+    }
+    return this.cine || null;
+  }
+  startCine(c) {
+    this.cine = c;
+    this.ui.setMapOpen(false);
+    this.ui.setBoardOpen(false);
+    this.ui.setRosterOpen(false);
+    if (this.ui.inventoryOpen) this.toggleInventory(false);
+    this.endHold();
+    this.inputBuffer.clear();
+  }
+  endCine() {
+    if (!this.cine) return;
+    this.cine.dispose();
+    this.cine = null;
+  }
+
   // Behind the splash: a walk around the valley at eye level (menutour.js), or, in one with no road to walk, a slow
   // turn around the car
   updateMenu(dt) {
@@ -2695,7 +2801,7 @@ export class Game {
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
-    } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
+    } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory' && !this.cine) {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
@@ -2705,14 +2811,16 @@ export class Game {
       const car = this.world.car;
       let title = 'You escaped';
       let reason = 'The engine roars. You tear down Route 9 and leave the valley behind.';
+      const plane = !!car.plane; // (the mainland: the run ends in the air)
+      if (plane) reason = 'The wheels leave the runway. Port Calder, the bridge and the island fall away behind you.';
       if (!this.self.alive || this.prediction.state.zombie) {
         title = 'They escaped';
-        reason = 'The engine roars and the car is gone down Route 9. You stay in the valley with the rest of the dead.';
+        reason = plane ? 'The plane is a speck over the hills. You stay on the mainland with the rest of the dead.' : 'The engine roars and the car is gone down Route 9. You stay in the valley with the rest of the dead.';
       } else if (Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z) > ESCAPE_RADIUS) {
         title = 'Left behind';
-        reason = 'The car tears down Route 9 without you. The others made it out of the valley.';
+        reason = plane ? 'The plane goes without you. The others made it off the mainland.' : 'The car tears down Route 9 without you. The others made it out of the valley.';
       }
-      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
+      this.ui.showVictory({ days: g.day, kills, title, reason, plane, restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
     } else if ((g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) && (this.overlay === 'gameover' || this.overlay === 'victory')) {
       this.overlay = null;
@@ -2736,9 +2844,7 @@ export class Game {
     if (th < WATER_LEVEL + 0.3) return 'water';
     if (th < WATER_LEVEL + 1.1) return 'mud';
     if (w.roadDistAt(x, z) < 2.8) {
-      const i = Math.round((x + MAP_HALF) / GRID_STEP);
-      const j = Math.round((z + MAP_HALF) / GRID_STEP);
-      const kind = w.roadKind[j * GRID_N + i];
+      const kind = w.roadKindAt(x, z);
       return kind === 2 ? 'road' : kind === 4 ? 'gravel' : 'dirt'; // (4: the bed of the railway, its ballast)
     }
     // needle / leaf litter under a crown
@@ -2819,14 +2925,15 @@ export class Game {
     // the car
     const car = this.world.car;
     const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
-    if (dcar < CAR_REACH) {
+    if (dcar < CAR_REACH + (car.plane ? PLANE_REACH : 0)) {
       this.lookTarget = 'car';
       const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
       const carrying = missing.filter((p) => counts[p]);
-      if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
-      else if (!missing.length) this.prompt = `${bindTag('interact')} Hold to start the engine (final stand)`;
+      if (g.finale && car.plane) this.prompt = g.escapeReady ? (g.runwayBlocked ? 'The dead are on the runway: clear it' : `${bindTag('interact')} Hold to get in and take off`) : g.standWarm ? 'Defend the plane until the engines are warm' : 'Hold the fuel truck until the tanks are full';
+      else if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
+      else if (!missing.length) this.prompt = car.plane ? `${bindTag('interact')} Hold to start fuelling (the runway stand)` : `${bindTag('interact')} Hold to start the engine (final stand)`;
       else if (carrying.length) this.prompt = `${bindTag('interact')} Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
-      else this.prompt = `The car needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
+      else this.prompt = `${W.The} needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
     if (!this.prompt) this.prompt = harvestPrompt(this.world, s, this.stripped);
@@ -2986,6 +3093,8 @@ export class Game {
     h.escapeT = g.escapeT;
     h.escapeReady = g.escapeReady;
     h.escapeStalled = g.escapeStalled;
+    h.standWarm = g.standWarm; // (the plane's stand: the truck is done, the engines are warming)
+    h.runwayBlocked = g.runwayBlocked;
     h.escapeLeaving = g.escapeLeaving;
     const boss = g.bossId ? this.entities.ents.get(g.bossId) : null;
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
@@ -3036,7 +3145,7 @@ export class Game {
         anyCarried = true;
       }
     });
-    h.objective = { supplies: g.supplies, hints: g.hints, found: g.found, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
+    h.objective = { supplies: g.supplies, hints: g.hints, found: g.found, carried, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, standWarm: g.standWarm, runwayBlocked: g.runwayBlocked, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
     // downed overlay
     h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
     // compass + world markers
@@ -3059,7 +3168,7 @@ export class Game {
     const dist = (x, z) => Math.hypot(x - rp.x, z - rp.z);
     const car = this.world.car;
     const dCar = dist(car.x, car.z);
-    const carIcon = glyph('car');
+    const carIcon = glyph(W.glyph);
     cm.push({ kind: 'car', bearing: bearing(car.x - rp.x, car.z - rp.z), icon: carIcon, label: dCar > 6 ? `${Math.round(dCar)}m` : '', pinEdge: g.finale, cls: g.finale ? 'urgent' : '' });
     // rumoured supply places still missing something (one already taken from its hiding place is no reason to go there)
     const done = (i) => g.supplies[i] >= SUPPLY_NEED[i];
@@ -3154,7 +3263,7 @@ export class Game {
     }
     // the car when it matters (finale, or carrying supplies back)
     if ((g.finale || h.objective?.anyCarried || g.suppliesDone) && dCar > 10 && this.project(car.x, car.y + 2.2, car.z, sc)) {
-      wm.push({ kind: 'car', x: sc.x, y: sc.y, icon: carIcon, name: g.finale ? (g.escapeReady ? 'GET IN' : g.escapeStalled ? 'Engine stalled' : 'Defend the car') : 'Your car', sub: `${Math.round(dCar)}m`, cls: g.finale ? 'urgent' : '', scale: 0.95 });
+      wm.push({ kind: 'car', x: sc.x, y: sc.y, icon: carIcon, name: g.finale ? (g.escapeReady ? 'GET IN' : g.escapeStalled ? 'Engine stalled' : `Defend the ${W.thing}`) : W.your, sub: `${Math.round(dCar)}m`, cls: g.finale ? 'urgent' : '', scale: 0.95 });
     }
   }
 

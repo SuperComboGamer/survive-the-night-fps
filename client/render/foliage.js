@@ -4,7 +4,7 @@
 // Trees: near LOD within uTreeLod, far LOD beyond, dither cross-faded in the shaders. Shadow casters are
 // written first in every instance buffer and the shadow passes draw only those (onBeforeShadow).
 import * as THREE from 'three';
-import { MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
+import { WATER_LEVEL } from '../../shared/constants.js';
 import { hash2 } from '../../shared/rng.js';
 import { getTreeVariants, getBushVariants, getRockVariants, getGrassPatch } from './models/vegetation.js';
 import { VEG } from './materials.js';
@@ -14,6 +14,7 @@ import { grassRadius } from './renderer.js';
 import { FallingTrees } from './fallingtrees.js';
 
 const CELL = 32;
+const CELL_OFF = 1024; // added to a coordinate before it is put in a cell, so that none is negative (the mainland reaches +-640 m)
 
 function limitShadowCasters(mesh) {
   mesh.castCount = 0;
@@ -40,7 +41,7 @@ class InstancedSet {
     this.lastZ = 1e9;
     this.cells = new Map();
     for (let i = 0; i < this.n; i++) {
-      const key = Math.floor((data[i * 6] + MAP_HALF) / CELL) * 1000 + Math.floor((data[i * 6 + 2] + MAP_HALF) / CELL);
+      const key = Math.floor((data[i * 6] + CELL_OFF) / CELL) * 1000 + Math.floor((data[i * 6 + 2] + CELL_OFF) / CELL);
       let arr = this.cells.get(key);
       if (!arr) this.cells.set(key, (arr = []));
       arr.push(i);
@@ -112,10 +113,10 @@ class InstancedSet {
     const data = this.data;
     const gone = this.gone;
     let nc = 0;
-    const c0 = Math.floor((cx - r + MAP_HALF) / CELL);
-    const c1 = Math.floor((cx + r + MAP_HALF) / CELL);
-    const d0 = Math.floor((cz - r + MAP_HALF) / CELL);
-    const d1 = Math.floor((cz + r + MAP_HALF) / CELL);
+    const c0 = Math.floor((cx - r + CELL_OFF) / CELL);
+    const c1 = Math.floor((cx + r + CELL_OFF) / CELL);
+    const d0 = Math.floor((cz - r + CELL_OFF) / CELL);
+    const d1 = Math.floor((cz + r + CELL_OFF) / CELL);
     for (let i = c0; i <= c1; i++) {
       for (let j = d0; j <= d1; j++) {
         const arr = this.cells.get(i * 1000 + j);
@@ -290,7 +291,7 @@ class GrassField {
   // one clump at x, z (if the ground there grows one) onto out; salt keeps the infill's dice apart from the base's
   clump(out, gi, gj, salt, x, z) {
     const w = this.world;
-    if (Math.abs(x) > MAP_HALF - 2 || Math.abs(z) > MAP_HALF - 2) return;
+    if (Math.abs(x) > w.half - 2 || Math.abs(z) > w.half - 2) return;
     const dens = this.density(x, z);
     if (hash2(gi, gj, 91 + salt) > dens) return;
     const y = w.heightAt(x, z);

@@ -942,7 +942,7 @@ export class EndScreen {
     this.root.className = 'end ' + (victory ? 'victory' : 'gameover');
     void this.root.offsetWidth;
     this.root.classList.add('in');
-    this.kicker.textContent = victory ? 'The engine turns over' : 'Game over';
+    this.kicker.textContent = victory ? (stats.plane ? 'Wheels up' : 'The engine turns over') : 'Game over';
     this.title.textContent = stats.title || (victory ? 'You escaped' : 'Everyone died');
     this.reason.textContent =
       stats.reason || (victory ? 'Headlights cut through the trees. The valley shrinks in the mirror.' : 'The valley is quiet again. The car never started.');

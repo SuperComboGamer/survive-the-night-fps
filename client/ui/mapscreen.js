@@ -3,8 +3,8 @@
 // A click sets your own waypoint (the game keeps it, shows it on the compass and in the world, and shares it:
 // the team's waypoints are flags here too, with who set them). A pinch or the wheel zooms, a drag pans, and [R] turns
 // the map with you, the way you face up (a compass in its corner keeps north).
-import { ZONE, ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
-import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
+import { ZONE, ZONE_NAMES, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
+import { SUPPLIES, SUPPLY_NEED, W } from '../game/act.js'; // (this act's)
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { renderMapCanvas, MAP_PX } from './mapcanvas.js';
@@ -26,7 +26,7 @@ export class MapScreen {
     const bg = el('div', 'map-bg', this.root);
     const frame = (this.frame = el('div', 'map-frame paper', this.root));
     const head = el('div', 'map-head', frame);
-    el('span', 'map-title', head, 'Field map · Harlan Valley');
+    this.title = el('span', 'map-title', head, 'Field map · Harlan Valley');
     this.coords = el('span', 'map-coords', head, '');
     // north up, or turned with you so the way you face is up: kept between openings, and games
     this.headingUp = lsGet(HEADING_KEY, '0') === '1';
@@ -56,7 +56,7 @@ export class MapScreen {
     el('b', '', dial, 'N');
     this.north.addEventListener('click', () => this.setHeadingUp(!this.headingUp));
     const side = el('div', 'map-side', body);
-    el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Car supplies'));
+    this.supHead = el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Car supplies'));
     this.supList = el('div', 'map-sup', side);
     el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Legend'));
     const lg = el('div', 'map-legend', side);
@@ -72,8 +72,9 @@ export class MapScreen {
       ['teamway', 'flag', "A teammate's waypoint"],
     ]) {
       const r = el('div', 'lg ' + cls, lg);
-      svgEl('i', 'lg-ico', r, glyph(ico));
-      el('span', '', r, t);
+      const i = svgEl('i', 'lg-ico', r, glyph(ico));
+      const name = el('span', '', r, t);
+      if (cls === 'car') this.carLegend = { i, name }; // (the plane, on the mainland: setWorld)
     }
     const keys = el('div', 'map-keys', side);
     for (const [k, t] of [
@@ -261,9 +262,9 @@ export class MapScreen {
     const w = this.view.clientWidth * this.zoom;
     const u = this.cx + (dx * c + dy * s) / w;
     const v = this.cy + (dy * c - dx * s) / w;
-    const lim = MAP_HALF - 3; // the playable ground stops short of the map's edge
-    const x = Math.max(-lim, Math.min(lim, u * MAP_SIZE - MAP_HALF));
-    const z = Math.max(-lim, Math.min(lim, v * MAP_SIZE - MAP_HALF));
+    const lim = this.world.half - 3; // the playable ground stops short of the map's edge
+    const x = Math.max(-lim, Math.min(lim, u * this.world.size - this.world.half));
+    const z = Math.max(-lim, Math.min(lim, v * this.world.size - this.world.half));
     if (!zone) {
       let best = Infinity;
       for (const zn of this.world.zones) {
@@ -281,13 +282,19 @@ export class MapScreen {
   setWorld(world) {
     if (this.world === world) return;
     this.world = world;
+    // the mainland has a plane where the island has a car (game/act.js: Game sets the act before the world)
+    const plane = !!world.car?.plane;
+    this.title.textContent = plane ? 'Field map · The Calder Coast' : 'Field map · Harlan Valley';
+    this.supHead.textContent = plane ? 'Plane parts' : 'Car supplies';
+    this.carLegend.i.innerHTML = glyph(W.glyph);
+    this.carLegend.name.textContent = W.your;
     this.canvasWrap.textContent = '';
     this.canvas = null;
     this.labels.textContent = '';
     this.labelEls = world.zones.map((z) => {
       const l = el('div', 'map-lab', this.labels);
-      l.style.left = ((z.x + MAP_HALF) / MAP_SIZE) * 100 + '%';
-      l.style.top = ((z.z + MAP_HALF) / MAP_SIZE) * 100 + '%';
+      l.style.left = ((z.x + this.world.half) / this.world.size) * 100 + '%';
+      l.style.top = ((z.z + this.world.half) / this.world.size) * 100 + '%';
       l.dataset.zone = z.id;
       return l;
     });
@@ -296,8 +303,8 @@ export class MapScreen {
     this.cemLab = null;
     if (world.cemetery) {
       this.cemLab = el('div', 'map-lab sub', this.labels);
-      this.cemLab.style.left = ((world.cemetery.x + MAP_HALF) / MAP_SIZE) * 100 + '%';
-      this.cemLab.style.top = ((world.cemetery.z + MAP_HALF) / MAP_SIZE) * 100 + '%';
+      this.cemLab.style.left = ((world.cemetery.x + world.half) / this.world.size) * 100 + '%';
+      this.cemLab.style.top = ((world.cemetery.z + world.half) / this.world.size) * 100 + '%';
     }
   }
 
@@ -352,11 +359,11 @@ export class MapScreen {
   //      teamWays:[{x,z,zone,names:[...],mine (on the spot of your own)}] }
   update(d) {
     if (!this.open || !this.world) return;
-    const pct = (v) => ((v + MAP_HALF) / MAP_SIZE) * 100;
+    const pct = (v) => ((v + this.world.half) / this.world.size) * 100;
     this.yaw = d.self.yaw;
     if (this.follow) {
-      this.fx = (d.self.x + MAP_HALF) / MAP_SIZE;
-      this.fy = (d.self.z + MAP_HALF) / MAP_SIZE;
+      this.fx = (d.self.x + this.world.half) / this.world.size;
+      this.fy = (d.self.z + this.world.half) / this.world.size;
     }
     this._layout();
     const way = d.waypoint;
@@ -408,7 +415,7 @@ export class MapScreen {
     for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), 'bench');
     for (const c of d.crates) put(c.x, c.z, 'crate', glyph('hazard'), 'drop');
     for (const p of d.pings) put(p.x, p.z, 'ping k' + p.kind, glyph('ping'), p.name);
-    put(d.car.x, d.car.z, 'car', glyph('car'), 'car');
+    put(d.car.x, d.car.z, 'car', glyph(W.glyph), W.thing);
     for (const m of d.mates) put(m.x, m.z, 'mate ' + m.status, glyph(m.status === 'downed' ? 'downed' : 'person'), m.name);
     // (the marker stands upright on screen, so its arrow turns with the map as well as with you)
     put(d.self.x, d.self.z, 'you', glyph('arrowUp'), '', this.rot - d.self.yaw);

@@ -1,16 +1,24 @@
 // Bakes the field map of the valley (an old sepia survey map: hill shading, contour lines, forest
 // stipple, water, roads, trails and building footprints) from the deterministic world once per world.
 // Names and live markers are drawn on top by the map screen / compass, never baked in.
-import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
+import { MAP_HALF, MAP_SIZE, GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
 import { WHEEL } from '../../shared/fair.js';
 
-export const MAP_PX = 1280; // baked canvas size (2 px per metre)
-const S = MAP_PX / MAP_SIZE;
+// The map is baked at MAP_PPM px per metre, whatever the size of the world: 1280 px for the island, 2560 for the
+// mainland (which is twice as far across). mapX / mapY are of the map baked last: the client has one world at a time.
+export const MAP_PPM = 2;
+const S = MAP_PPM;
+let half = MAP_HALF; // of the world the map was last baked for
+export let MAP_PX = MAP_SIZE * MAP_PPM; // ...and the size of its canvas
 
-export const mapX = (x) => (x + MAP_HALF) * S;
-export const mapY = (z) => (z + MAP_HALF) * S;
+export const mapX = (x) => (x + half) * S;
+export const mapY = (z) => (z + half) * S;
 
 export function renderMapCanvas(world) {
+  half = world.half;
+  MAP_PX = world.size * MAP_PPM;
+  const MAP_HALF = half;
+  const MAP_SIZE = world.size;
   const cv = document.createElement('canvas');
   cv.width = cv.height = MAP_PX;
   const g = cv.getContext('2d');
@@ -23,7 +31,7 @@ export function renderMapCanvas(world) {
   const img = rg.createImageData(R, R);
   const d = img.data;
   const H = world.heights;
-  const N = GRID_N;
+  const N = world.gridN;
   const hAt = (x, z) => {
     let fx = (x + MAP_HALF) / GRID_STEP;
     let fz = (z + MAP_HALF) / GRID_STEP;

@@ -623,6 +623,52 @@ BUILD[ITEM.FAN_BELT] = (b) => {
   b.torus('rubber', 0.1, 0.008, 3, 20, PI * 2, { p: [0.03, 0.022, 0.01], r: [PI / 2 + 0.1, 0, 0.4], s: [1.3, 1, 1] });
 };
 
+// ---- the plane's parts (the mainland: shared/acts.js). Real sizes: a propeller is two metres across.
+BUILD[ITEM.PROPELLER] = (b) => {
+  b.cyl('steel', 0.085, 0.085, 0.12, 10, { p: [0, 0.06, 0] });
+  b.cyl('chrome', 0.03, 0.05, 0.05, 8, { p: [0, 0.145, 0] });
+  for (const s of [-1, 1]) {
+    // a blade: broad at the root, fining to the tip, laid flat with a little twist
+    b.box('paint', 0.5, 0.022, 0.15, { p: [s * 0.33, 0.06, 0], r: [s * 0.22, 0, 0], c: [0.2, 0.2, 0.21] });
+    b.box('paint', 0.4, 0.016, 0.115, { p: [s * 0.76, 0.06, 0], r: [s * 0.1, 0, 0], c: [0.2, 0.2, 0.21] });
+    b.box('paint', 0.07, 0.017, 0.105, { p: [s * 0.975, 0.06, 0], r: [s * 0.1, 0, 0], c: [0.78, 0.62, 0.12] });
+  }
+};
+
+BUILD[ITEM.MAGNETO] = (b) => {
+  b.box('steel', 0.16, 0.12, 0.12, { p: [0, 0.06, 0] });
+  b.cyl('plastic', 0.055, 0.055, 0.07, 10, { p: [0.115, 0.07, 0], r: [0, 0, PI / 2] });
+  b.cyl('chrome', 0.014, 0.014, 0.05, 6, { p: [-0.105, 0.06, 0], r: [0, 0, PI / 2] });
+  b.box('steel', 0.2, 0.012, 0.15, { p: [0, 0.006, 0] });
+  for (const z of [-0.03, 0, 0.03]) b.tube('rubber', [[0.15, 0.09, z], [0.2, 0.11, z * 1.6], [0.25, 0.012, z * 2.6]], 0.006, 8, 4);
+};
+
+BUILD[ITEM.HYDRAULIC_PUMP] = (b) => {
+  const c = [0.55, 0.16, 0.1];
+  b.box('paint', 0.18, 0.15, 0.16, { p: [-0.05, 0.085, 0], c });
+  b.cyl('steel', 0.065, 0.065, 0.17, 10, { p: [0.125, 0.085, 0], r: [0, 0, PI / 2] });
+  b.cyl('chrome', 0.016, 0.016, 0.06, 6, { p: [0.24, 0.085, 0], r: [0, 0, PI / 2] });
+  b.box('steel', 0.22, 0.012, 0.19, { p: [-0.03, 0.006, 0] });
+  for (const x of [-0.09, -0.01]) b.cyl('chrome', 0.017, 0.017, 0.045, 6, { p: [x, 0.182, 0] });
+};
+
+BUILD[ITEM.FLIGHT_RADIO] = (b) => {
+  b.box('plastic', 0.32, 0.13, 0.24, { p: [0, 0.065, 0] });
+  b.box('dark', 0.13, 0.05, 0.004, { p: [-0.07, 0.085, -0.122] });
+  for (const x of [0.03, 0.08, 0.13]) b.cyl('steel', 0.014, 0.014, 0.018, 8, { p: [x, 0.09, -0.128], r: [PI / 2, 0, 0] });
+  b.cyl('steel', 0.02, 0.02, 0.02, 8, { p: [0.1, 0.045, -0.129], r: [PI / 2, 0, 0] });
+  b.tube('rubber', [[-0.13, 0.13, 0.05], [0, 0.175, 0.05], [0.13, 0.13, 0.05]], 0.008, 8, 4);
+  b.cyl('chrome', 0.004, 0.004, 0.3, 4, { p: [0.14, 0.28, 0.1] });
+};
+
+BUILD[ITEM.AVGAS] = (b) => {
+  const c = [0.16, 0.36, 0.6];
+  b.cyl('paint', 0.19, 0.19, 0.6, 14, { p: [0, 0.3, 0], c });
+  for (const y of [0.2, 0.4]) b.cyl('paint', 0.197, 0.197, 0.025, 14, { p: [0, y, 0], c });
+  for (const y of [0.012, 0.588]) b.cyl('paint', 0.196, 0.196, 0.024, 14, { p: [0, y, 0], c: [0.3, 0.3, 0.3] });
+  b.cyl('steel', 0.025, 0.025, 0.02, 6, { p: [0.11, 0.61, 0] });
+};
+
 // fallback weapon shapes (used only for a weapon weapons.js has no model for)
 function FALLBACK_WEAPON(b, id) {
   const gun = (L, stock) => {
