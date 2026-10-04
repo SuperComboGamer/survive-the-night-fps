@@ -74,8 +74,9 @@ function client(name) {
           const onAir = !!(flags & PLF.ON_AIR);
           const kills = r.u16();
           r.u16();
+          const level = r.u8();
           const way = flags & PLF.WAYPOINT ? { x: r.i16() / 64, z: r.i16() / 64, zone: r.u8() } : null;
-          c.roster.set(id, { status, onAir, kills, way });
+          c.roster.set(id, { status, onAir, kills, level, way });
         }
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }

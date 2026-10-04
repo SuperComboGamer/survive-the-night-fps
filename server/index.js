@@ -21,6 +21,7 @@ import { Auth, COOKIE, publicUser } from './auth.js';
 import { Social } from './social.js';
 import { Feedback } from './feedback.js';
 import { UserSettings } from './usersettings.js';
+import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
@@ -102,6 +103,8 @@ const social = db ? new Social({ db, auth, lobby, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds
 if (auth) setInterval(() => auth.sweep().catch(() => {}), 3600_000).unref();
+// levels and perks: kept with the stats, database or file (a pick reaches the games the player is in at once)
+const progress = new Progress({ stats, changed: (key, perks) => lobby.progressChanged(key, perks) });
 
 // ---------------------------------------------------------------- static files (prod build)
 const MIME = {
@@ -392,6 +395,19 @@ route(
   },
   { body: true }
 );
+
+// Your level and perks (server/progress.js). Signed in, they are the account's; else guestId, the browser's leaderboard
+// id, says whose (posted, never in a URL: it is what proves who a guest is).
+// { guestId? } -> { xp, level, into, need, frac, perks, picks, pending, nextPick, offer, respecs }
+const progressWho = async (ctx, b) => {
+  const user = auth ? await auth.userForToken(ctx.cookies[COOKIE]) : null;
+  return user ? { userId: user.id } : { guestId: typeof b?.guestId === 'string' ? b.guestId : '' };
+};
+route('post', '/api/progress', async (ctx, b) => ({ body: await progress.view(await progressWho(ctx, b)) }), { body: true });
+// { perk, guestId? }: one of the three on offer for your next pick -> the same as /api/progress afterwards
+route('post', '/api/progress/pick', async (ctx, b) => ({ body: await progress.pick(await progressWho(ctx, b), b.perk) }), { body: true });
+// { guestId? }: every pick undone, to be made again from new offers -> the same as /api/progress afterwards
+route('post', '/api/progress/respec', async (ctx, b) => ({ body: await progress.respec(await progressWho(ctx, b)) }), { body: true });
 
 // { friends: [{ id, username, status: offline|online|playing, game, unread, lastSeen, since }], incoming, outgoing }
 route('get', '/api/friends', async (ctx) => ({ body: await S().list(await signedIn(ctx)) }));

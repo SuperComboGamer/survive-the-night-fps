@@ -26,6 +26,7 @@ import {
 } from '../shared/defs.js';
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
+import { perkMods } from '../shared/progress.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
 import { deerHitbox } from '../shared/deer.js';
@@ -136,6 +137,7 @@ export class Combat {
     if (def.rocket) return this.launch(p, ev, def);
     if (def.skyflare) return this.skyflare(p, ev);
     const t = this.rewindTime(p);
+    const deadeye = perkMods(p.perks).headshot; // (on the dead only: a turned player is not what the perk is for)
     let hitFlags = 0;
     const tmp = { x: 0, y: 0, z: 0 };
     for (let i = 0; i < n; i++) {
@@ -176,7 +178,7 @@ export class Combat {
         if (pierced >= maxPierce) break;
         let d = dmg;
         if (def.pellets > 1) d *= pelletFalloff(h.t);
-        const headMul = h.head ? (h.isPlayer ? 2 : h.e.boss ? 1.6 : def.headMul) : 1;
+        const headMul = h.head ? (h.isPlayer ? 2 : (h.e.boss ? 1.6 : def.headMul) * deadeye) : 1;
         d *= headMul;
         // the anti-tank rifle: made for the big ones
         if (def.bossMul && !h.isPlayer && h.e.kind === ENT.ZOMBIE && (h.e.boss || h.e.ztype === ZTYPE.TANK)) d *= def.bossMul;
@@ -433,7 +435,7 @@ export class Combat {
       if (!this.meleeClear(p, c, ox, oy, oz)) continue;
       n++;
       let dmg = claws ? CLAWS.damage : heavy ? def.altDamage : def.damage;
-      if (c.head) dmg *= def.headMul;
+      if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : perkMods(p.perks).headshot);
       hitAny = true;
       g.impact(c.e.lit ? IMPACT.DIRT : IMPACT.BLOOD, c.x, c.y, c.z, -fx, 0, -fz);
       let killed;
@@ -580,6 +582,7 @@ export class Combat {
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
       g.credit([attacker], 'kills');
+      if (!sunKill) g.killXp(attacker, z, !!opts.headshot);
       if (!z.def.common && !sunKill) {
         g.killfeed(KILLER.PLAYER, attacker.id, 0x8000 | z.ztype, opts.weapon || 0, opts.headshot ? 1 : 0);
       }
@@ -593,7 +596,7 @@ export class Combat {
           const [item, n] = g.rollTable(SPECIAL_LOOT);
           g.dropItem(item, n, z.x, z.y, z.z, { spread: 2 + g.rng() * 2, life: 400 });
         }
-      } else if (g.rng() < z.def.loot) {
+      } else if (g.rng() < z.def.loot * (attacker && attacker.kind === ENT.PLAYER ? perkMods(attacker.perks).drops : 1)) {
         const [item, n] = g.rollTable(z.def.common ? ZOMBIE_LOOT : SPECIAL_LOOT);
         g.dropItem(item, n, z.x, z.y, z.z, { spread: 0.5, life: 150 });
       }

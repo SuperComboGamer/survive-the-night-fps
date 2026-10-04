@@ -117,6 +117,9 @@ export class Connection {
           case S2C.FRIENDS:
             for (let n = r.u8(); n > 0; n--) this.accounts.set(r.u16(), r.str());
             break;
+          case S2C.PROGRESS:
+            this.h.progress?.(r);
+            break;
         }
       };
       ws.onclose = (e) => {

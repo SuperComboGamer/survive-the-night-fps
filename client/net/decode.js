@@ -113,6 +113,7 @@ export function readSelf(r, out, flags) {
   if (out.ride === undefined) out.ride = out.rideGo = out.rideT = 0;
   if (out.cart === undefined) out.cart = out.cartS = out.cartV = 0;
   if (out.hmg === undefined) out.hmg = 0;
+  if (out.perks === undefined) out.perks = 0;
   if (!(flags & SNAP.SELF)) return false;
   const mask = r.u8();
   if (mask & 1) {
@@ -169,6 +170,7 @@ export function readSelf(r, out, flags) {
     out.cartS = r.f32();
     out.cartV = r.f32();
     out.hmg = r.u8();
+    out.perks = r.u32();
   }
   if (mask & SELF.STATUS) {
     const m = r.u8();

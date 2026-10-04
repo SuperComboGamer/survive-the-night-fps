@@ -1,7 +1,7 @@
 // Binary wire protocol. Everything is little-endian, tightly packed.
 // Positions are quantized to 1/64 m in int16 (range +-512 m).
 
-export const PROTOCOL_VERSION = 32; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE)
+export const PROTOCOL_VERSION = 33; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows)
 
 // client -> server
 export const C2S = {
@@ -28,8 +28,12 @@ export const S2C = {
   BOARD: 10, // the leaderboard, as asked for (see writeBoard)
   ROOM: 11, // str code, str name, u8 ROOMF: the game this socket was put in (before anything else; quick joins learn it here)
   FRIENDS: 12, // u8 count, then per player u16 id, str account name ('' = a guest, not signed in): everyone's on joining, a newcomer's to the rest
+  PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
 };
 export const ROOMF = { INVITE_ONLY: 1 };
+// S2C.PROGRESS flags. LOADED: the server has heard what is on your record (until then the XP is this run's alone);
+// KEPT: it is kept for you (signed in, or a guest with a browser id) - without it nothing earned outlives the game
+export const PROGF = { LOADED: 1, KEPT: 2 };
 
 // S2C.SNAPSHOT flags: a section is only on the wire when its bit is set. WebSocket delivery is reliable and ordered,
 // so the tick is the previous snapshot's + 1 and the acked command is the previous one + CMDS_PER_PACKET unless said
@@ -38,8 +42,8 @@ export const ROOMF = { INVITE_ONLY: 1 };
 export const SNAP = { GLOBAL: 1, SELF: 2, REMOVES: 4, CREATES: 8, UPDATES: 16, EVENTS: 32, TICK: 64, ACK: 128 };
 // self section: u8 mask, bits 0-4 = the simulated state in 5 chunks (only ever sent with SYNC), STATUS = the
 // server-driven status (hp, armor, battery, ...; its own u8 field mask follows), RIDE = the seat of a ride the
-// player is in, the handcar they are on and whether they carry the mounted gun (part of the simulated state like
-// bits 0-4: only ever with SYNC),
+// player is in, the handcar they are on, whether they carry the mounted gun and the perks they picked (part of the
+// simulated state like bits 0-4: only ever with SYNC),
 // SYNC = "this is the authoritative state after the acked command: rebase the prediction on it". Without SYNC the
 // client's own prediction stands.
 export const SELF = { SIM: 0x1f, STATUS: 0x20, RIDE: 0x40, SYNC: 0x80 };
@@ -109,8 +113,8 @@ export const CHATF = {
   FAINT: 8, // only just in earshot
   UNHEARD: 16, // (to the speaker) nobody was close enough to hear it
 };
-// S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, and with
-// PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none)
+// S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, u8 level
+// (progress.js), and with PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none)
 export const PLF = { ON_AIR: 1, WAYPOINT: 2 }; // keying the walkie-talkie (radioKeyed): heard by everyone; has a waypoint set
 
 export const ENT = {
@@ -415,28 +419,29 @@ export function readInput(r) {
 }
 
 // ---------------------------------------------------------------- leaderboard
-// S2C.BOARD: varu players on record, varu row count, then per row str name, u8 flags (BOARDF), one varu per
-// BOARD_STATS entry and, on the recipient's own row (BOARDF.ME), their place in each of those stats (varu; 0: none,
-// nothing scored there yet). The rows are the best BOARD_TOP by each stat, everybody in the game and the recipient,
+// S2C.BOARD: varu players on record, varu row count, then per row str name, u8 flags (BOARDF), u8 level (progress.js),
+// one varu per BOARD_STATS entry and, on the recipient's own row (BOARDF.ME), their place in each of those stats
+// (varu; 0: none, nothing scored there yet). The rows are the best BOARD_TOP by each stat, everybody in the game and the recipient,
 // in no order: the client sorts them. A row names nobody but by the name they play under - the id a player joins
 // with is what proves who they are, and no message carries it back out.
 export const BOARD_STATS = ['kills', 'nights', 'wins', 'revives'];
 export const BOARDF = { ME: 1, HERE: 2 }; // the recipient's own row; in this game right now
 export const BOARD_TOP = 20;
 
-// rows: [{ name, flags, kills, nights, wins, revives, ranks: [n per stat] (the ME row only) }]
+// rows: [{ name, flags, level, kills, nights, wins, revives, ranks: [n per stat] (the ME row only) }]
 export function writeBoard(w, total, rows) {
   w.varu(total);
   w.varu(rows.length);
   for (const row of rows) {
     w.str(row.name);
     w.u8(row.flags);
+    w.u8(Math.max(1, Math.min(255, row.level | 0)));
     for (const k of BOARD_STATS) w.varu(row[k]);
     if (row.flags & BOARDF.ME) for (const rank of row.ranks) w.varu(rank);
   }
 }
 
-// Reads what writeBoard wrote: { total, rows: [{ name, me, here, kills, nights, wins, revives, ranks | null }] }.
+// Reads what writeBoard wrote: { total, rows: [{ name, me, here, level, kills, nights, wins, revives, ranks | null }] }.
 export function readBoard(r) {
   const total = r.varu();
   const rows = [];
@@ -445,6 +450,7 @@ export function readBoard(r) {
     const flags = r.u8();
     row.me = !!(flags & BOARDF.ME);
     row.here = !!(flags & BOARDF.HERE);
+    row.level = r.u8();
     for (const k of BOARD_STATS) row[k] = r.varu();
     if (row.me) row.ranks = BOARD_STATS.map(() => r.varu());
     rows.push(row);

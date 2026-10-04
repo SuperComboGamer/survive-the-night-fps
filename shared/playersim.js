@@ -42,6 +42,7 @@ import { mulberry32 } from './rng.js';
 import { rideStep, rideCarry } from './fair.js';
 import { cartStep, cartCarry, CART_PUMP, LEVER_HANDS } from './handcar.js';
 import { swimming, waterFloor, wadeDepth, SWIM_HANDS, SWIM_SPEED, SWIM_FAST, SWIM_DOWNED, SWIM_ACCEL, SWIM_DRAG, SWIM_TREAD, SWIM_DRAIN, WADE_FROM, WADE_SLOW, CROUCH_WADE, SWIM_DEPTH } from './swim.js';
+import { perkMods } from './progress.js';
 
 export function createPlayerState() {
   return {
@@ -92,6 +93,8 @@ export function createPlayerState() {
     cartV: 0,
     // carrying the mounted gun (mountedgun.js): both arms full, half pace, and a weapon switch drops it
     hmg: 0,
+    // the perks they picked (progress.js: a bitmask of perk ids), set by the server. What they do here is perkMods
+    perks: 0,
   };
 }
 
@@ -140,6 +143,7 @@ export function copyPlayerState(dst, src) {
   dst.cartS = src.cartS;
   dst.cartV = src.cartV;
   dst.hmg = src.hmg;
+  dst.perks = src.perks;
   return dst;
 }
 
@@ -154,7 +158,7 @@ export function samePlayerState(a, b) {
   if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT) return false;
-  if (a.hmg !== b.hmg) return false;
+  if (a.hmg !== b.hmg || a.perks !== b.perks) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
   return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
@@ -231,6 +235,7 @@ export function hashPlayerState(s) {
     mix(Math.round(s.cartV * 128));
   }
   if (s.hmg) mix(0x686d67);
+  if (s.perks) mix(s.perks);
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
 
@@ -377,6 +382,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   const wdef = WEAPONS[weapon];
   const aiming = !s.hmg && !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
   const moving = wl > 0;
+  const pm = perkMods(s.zombie ? 0 : s.perks);
   let sprint = 0;
   if (s.zombie) {
     s.stamina = STAMINA_MAX;
@@ -385,7 +391,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     // in deep water stamina only goes: treading water, swimming, hard strokes at the sprinting rate. Run out and the
     // survivor is exhausted and drowning (the server: Game.updatePlayers) until their feet find the bottom again
     sprint = b & BTN.SPRINT && fwd > 0 && !s.exhausted && s.stamina > 0 && !s.downed ? 1 : 0;
-    s.stamina -= (sprint && moving ? STAMINA_DRAIN : moving ? SWIM_DRAIN : SWIM_TREAD) * dt;
+    s.stamina -= (sprint && moving ? STAMINA_DRAIN * pm.staminaDrain : (moving ? SWIM_DRAIN : SWIM_TREAD) * pm.swimDrain) * dt;
     s.staminaDelay = STAMINA_REGEN_DELAY;
     if (s.stamina <= 0) {
       s.stamina = 0;
@@ -395,7 +401,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   } else {
     sprint = b & BTN.SPRINT && fwd > 0 && !s.crouch && !s.exhausted && s.stamina > 0 && !aiming && !s.downed ? 1 : 0;
     if (sprint && moving) {
-      s.stamina -= STAMINA_DRAIN * dt;
+      s.stamina -= STAMINA_DRAIN * pm.staminaDrain * dt;
       s.staminaDelay = STAMINA_REGEN_DELAY;
       if (s.stamina <= 0) {
         s.stamina = 0;
@@ -409,8 +415,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     }
   }
   s.sprinting = sprint && moving ? 1 : 0;
-  let wishSpeed = s.zombie ? ZOMBIE_PLAYER_SPEED : s.downed ? DOWN_CRAWL_SPEED : sprint ? SPRINT_SPEED : s.crouch ? CROUCH_SPEED : WALK_SPEED;
-  if (swim) wishSpeed = s.downed ? SWIM_DOWNED : sprint ? SWIM_FAST : SWIM_SPEED;
+  let wishSpeed = s.zombie ? ZOMBIE_PLAYER_SPEED : s.downed ? DOWN_CRAWL_SPEED : sprint ? SPRINT_SPEED * pm.sprint : s.crouch ? CROUCH_SPEED : WALK_SPEED;
+  if (swim) wishSpeed = s.downed ? SWIM_DOWNED : (sprint ? SWIM_FAST : SWIM_SPEED) * pm.swim;
   else if (wade > WADE_FROM) wishSpeed *= 1 - WADE_SLOW * Math.min(1, (wade - WADE_FROM) / (SWIM_DEPTH - WADE_FROM)); // wading in deeper
   if (aiming) wishSpeed *= 0.62;
   if (s.hmg) wishSpeed *= GUN_CARRY_SPEED;
@@ -593,8 +599,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
               if (events) events.push({ type: 'shell' });
             }
             if (s.mags[mi] < wdef.mag && s.ammo[wdef.ammo] > 0) {
-              s.reloadT = wdef.reload;
-              if (events) events.push({ type: 'reload', each: true, time: wdef.reload });
+              s.reloadT = wdef.reload * pm.reload;
+              if (events) events.push({ type: 'reload', each: true, time: s.reloadT });
             } else if (events) events.push({ type: 'reload_done' });
           } else {
             const take = Math.min(wdef.mag - s.mags[mi], reserve);
@@ -608,16 +614,16 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     // an empty magazine reloads on the next trigger pull; autoReload weapons (crossbow) re-cock on their own
     const wantReload = (pressed & BTN.RELOAD) || (s.mags[mi] === 0 && (attackPressed || (wdef.autoReload && s.cooldown <= 0)));
     if (wantReload && s.reloadT <= 0 && s.switchT <= 0 && s.mags[mi] < wdef.mag && s.ammo[wdef.ammo] > 0) {
-      s.reloadT = wdef.reload;
+      s.reloadT = wdef.reload * pm.reload;
       s.recoil = 0;
-      if (events) events.push({ type: 'reload', each: !!wdef.reloadEach, time: wdef.reload });
+      if (events) events.push({ type: 'reload', each: !!wdef.reloadEach, time: s.reloadT });
     } else if ((wdef.auto ? attack : attackPressed) && s.cooldown <= 0 && s.switchT <= 0 && s.reloadT <= 0) {
       if (s.mags[mi] > 0) {
         s.mags[mi]--;
         s.cooldown = wdef.rate;
         const spread = shotSpread(s, wdef, aiming);
         const recoilPitch = Math.min(s.recoil, 8) * wdef.recoil * 0.45;
-        s.recoil += 1;
+        s.recoil += pm.recoil;
         s.fireCount = (s.fireCount + 1) & 255;
         if (events) {
           events.push({

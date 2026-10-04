@@ -25,6 +25,7 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
                  it to the wave weights and the client announces it, each from the seed: nothing on the wire
+  progress.js    XP, levels and perks: the rules both ends read (see Experience, levels and perks below)
   achievements.js the achievement list (ids, wire numbers, tiers, groups) and the rules on a player's progress
                  (see Achievements below)
 server/      authoritative game server (uWebSockets.js)
@@ -199,7 +200,7 @@ JSON file (`server/stats.js`).
   exits, so that deploy never goes live; `npm run migrate` does the same by hand (and is the pre-deploy command in
   `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
-  accounts' achievements.
+  accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below).
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
   `SameSite=Lax` cookie (`stn_session`, `Secure` behind https), its SHA-256 in `sessions`, 30 days from last use.
@@ -289,6 +290,41 @@ JSON file (`server/stats.js`).
   `/sandbox/ui-test.html?screen=achievements` and `?screen=hud&ach=kills_1000,kill_pistol` show them with made-up data.
 - `scripts/test-achievements.js` holds the rules, the hooks in a running game (decoded off the wire), the browser's
   record, the store and the merge on PGlite, and the API on a real server.
+
+## Experience, levels and perks
+
+A player earns XP over every game they play and picks a perk at set levels. The rules are `shared/progress.js`
+(both ends): the XP table (`XP`), the curve (`xpToNext(L) = 200 + 120 L` to `LEVEL_CAP` 30), the levels a perk is
+picked at (`PICK_LEVELS`: every second to 20, then every fifth), the pool (`PERKS`: five groups and the keystones) and
+what a set of perks does (`perkMods(mask)`: one frozen object per mask; no ordinary stat past `PERK_CAP`, 25%).
+
+- **XP is stored, the level is worked out** (`levelOf`), so the curve can be retuned without touching a record. It is
+  awarded on the server only, where the board's stats are bumped (`Game.award`): kills by kind (`killXp`: half past
+  `XP.killsFull` in one night or day, nothing for one of the dead that has been after a survivor for `WEDGED_FOR` without
+  getting anywhere or striking anything, `z.wedgeT`; nothing for a turned player), bosses, revives (`XP.revivesFull` a
+  night), being alive at dawn, a dawn past the furthest day on the record (`p.best`), and the escape (more in the car
+  than left behind). Dying keeps what was earned. `/xp <n>` (admin) adds to the record outside the run's tally.
+- **Where it is kept**: `player_stats.xp` / `perks` / `respecs` (007) or the stats file's `xp` / `perks` / `respecs` /
+  `best`, written with the board's stats (`records.bump(rec, 'xp')`, `records.best`). Stored picks are checked against
+  the level when read (`cleanPerks`). A guest's progress moves onto their account with the rest (`claimGuest`: XP adds
+  up, the account keeps its picks if it has any).
+- **Into a game**: a game in a worker hears a joining player's `{ xp, perks, best }` from the network thread
+  (`Room.record` asks `stats.progress(rec)`, posts `{ t: 'progress' }`; `Game.setProgress`); a file-kept store answers at
+  once. The perks in force are `p.perks`, and `s.perks` carries them into the player simulation: sprint speed, stamina,
+  swimming, reload and recoil are predicted, so the field is in `copyPlayerState` / `samePlayerState` /
+  `hashPlayerState` and the `SELF.RIDE` chunk like any other. The rest are the server's rules (max health, item use,
+  search and revive holds, extra finds, gathering, drops, headshots, noticing, knockdown stun, bleeding, Second Chance).
+- **Picking** is the API's (`server/progress.js`: `POST /api/progress`, `/pick`, `/respec`; a guest posts their browser
+  id): one of the three `perkOffer` deals for the next pick (different groups; a keystone from the level 20 pick until
+  they have one), dealt from the record's key and respec count (`perkSalt`), so a reload draws nothing new. A pick
+  reaches every game the record is being played in (`Lobby.progressChanged`); one made during a night (or the final
+  stand) waits for dawn (`p.perksNext`). Starting over is free and deals new offers.
+- **On the wire**: `S2C.PROGRESS` (XP on record with this run's in it, `PROGF`, this run's XP by `XP_SRC`) when it
+  changed, once a second at most, in the same write as the tick's snapshot; a level byte per player in `S2C.PLAYERS`
+  and per row in `S2C.BOARD`. The client shows a level-up as it happens, the level in the Tab list and on the board, a
+  level block in the inventory, the Progress panel (`client/ui/progress.js`: from the splash, the pause menu and the
+  inventory) and the run's XP by source on the end screen. `scripts/test-progress.js` holds all of it, end to end
+  through a real server's worker.
 
 ## Rendering pipeline
 

@@ -9,6 +9,9 @@ import { linkedCode, gameInfo, listGames } from '../net/lobby.js';
 import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
 import { voteDifficulty } from '../net/feedback.js';
 import { playingFriends, unreadCount, onSocialChange } from '../net/friends.js';
+import { fetchProgress, lastProgress, onProgress } from '../net/progress.js';
+import { xpBar } from './progress.js';
+import { XP_SRC_NAMES, levelInfo } from '../../shared/progress.js';
 
 // the count on a button (unread messages): '' hides it
 function setBadge(b, n) {
@@ -194,6 +197,15 @@ export class Splash {
 
     const foot = el('div', 'sp-foot', root);
     const btns = el('div', 'sp-btns', foot);
+    // your level, and the perks to pick (progress.js): lit while one is waiting
+    const pb = (this.perksBtn = el('button', 'btn btn-ghost sp-perks', btns));
+    pb.type = 'button';
+    svgEl('i', 'btn-ico', pb, glyph('arrowUp'));
+    this.perksTxt = el('span', '', pb, 'Perks');
+    this.perksBadge = el('b', 'sp-badge', pb, '');
+    this.perksBadge.hidden = true;
+    pb.addEventListener('click', () => this.ui.progress.show());
+    onProgress((v) => this._syncPerks(v));
     const ab = el('button', 'btn btn-ghost', btns);
     ab.type = 'button';
     svgEl('i', 'btn-ico', ab, glyph('trophy'));
@@ -295,6 +307,13 @@ export class Splash {
     this.friendsBtn.classList.toggle('lit', n > 0);
     setBadge(this.friendsBadge, unread);
     this.friendsBtn.title = unread ? `${unread} new message${unread === 1 ? '' : 's'}` : '';
+  }
+
+  _syncPerks(v) {
+    this.perksTxt.textContent = v ? `Level ${v.level} · Perks` : 'Perks';
+    this.perksBtn.classList.toggle('lit', !!v?.pending);
+    setBadge(this.perksBadge, v?.pending || 0);
+    this.perksBtn.title = v?.pending ? 'A perk is waiting to be picked' : 'Your level and perks';
   }
 
   _syncInvite() {
@@ -415,6 +434,8 @@ export class Splash {
     this._syncBtn();
     this._syncAccount();
     this._syncFriends();
+    this._syncPerks(lastProgress());
+    fetchProgress().catch(() => {}); // (what the run just played earned: the button says if a pick is waiting)
     this.syncRecord();
     this._measure();
     this.root.classList.remove('in');
@@ -505,6 +526,17 @@ export class Pause {
     };
     onSocialChange(syncBadge);
     onAccountChange(syncBadge);
+    const pb = el('button', 'btn btn-ghost', btns);
+    pb.type = 'button';
+    svgEl('i', 'btn-ico', pb, glyph('arrowUp'));
+    el('span', '', pb, 'Perks');
+    const pBadge = el('b', 'sp-badge', pb, '');
+    pBadge.hidden = true;
+    onProgress((v) => setBadge(pBadge, v?.pending || 0));
+    pb.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.ui.progress.show();
+    });
     const ab = el('button', 'btn btn-ghost', btns);
     ab.type = 'button';
     svgEl('i', 'btn-ico', ab, glyph('trophy'));
@@ -585,6 +617,7 @@ export class Pause {
       if (this.ui.controlsPanel.visible) this.ui.controlsPanel.hide();
       if (this.ui.friends.visible) this.ui.friends.hide();
       if (this.ui.accountPanel.visible) this.ui.accountPanel.hide();
+      if (this.ui.progress.visible && !this.ui.inventoryOpen) this.ui.progress.hide();
     }
   }
 }
@@ -723,6 +756,14 @@ export class EndScreen {
     const panels = el('div', 'end-panels', m);
     this.board = el('div', 'end-board paper', panels);
     this.record = el('div', 'end-board end-record paper', panels);
+    // what the run earned (S2C.PROGRESS, the server's own tally): the bar to the next level, and where the XP came from
+    this.xp = el('div', 'end-board end-xp paper', panels);
+    el('h3', 'panel-h', this.xp, 'Experience');
+    this.xpBar = xpBar(this.xp, 'end-xpb');
+    this.xpUp = el('div', 'ex-up', this.xp, '');
+    this.xpList = el('ul', 'ex-list', this.xp);
+    this.xpFoot = el('div', 'er-foot', this.xp, '');
+    this.xp.hidden = true;
     // how hard the run was: a vote, and then how everyone has voted, as bars (the same rows, filled in)
     this.poll = el('div', 'end-board end-poll paper', panels);
     el('h3', 'panel-h', this.poll, 'How hard was it?');
@@ -830,6 +871,27 @@ export class EndScreen {
     el('div', 'er-foot', box, `Run ${t.runs} · ${t.escapes} escape${t.escapes === 1 ? '' : 's'}` + (t.streak > 1 ? ` · ${t.streak} in a row` : ''));
   }
 
+  // p: { xp (on record, this run's in it), run: [XP by source, as XP_SRC], loaded, kept } or null (not heard yet).
+  // Called again while the screen is up when the server's last word on the run comes after it
+  setXp(p) {
+    this.xp.hidden = !p;
+    if (!p) return;
+    const got = p.run.reduce((a, b) => a + b, 0);
+    const now = this.xpBar.set(p.xp);
+    const was = levelInfo(p.xp - got).level;
+    this.xpUp.hidden = !(p.loaded && now.level > was);
+    this.xpUp.textContent = now.level > was ? `Level up · level ${now.level}` : '';
+    this.xpList.textContent = '';
+    p.run.forEach((v, i) => {
+      if (!v) return;
+      const li = el('li', '', this.xpList);
+      el('span', '', li, XP_SRC_NAMES[i]);
+      el('b', '', li, `+${v.toLocaleString('en-US')}`);
+    });
+    if (!got) el('li', 'none', this.xpList, 'Nothing this run');
+    this.xpFoot.textContent = !p.kept ? 'Not kept: this player has no record' : !p.loaded ? `+${got} XP this run · your record could not be read, so the level counts this run only` : `+${got.toLocaleString('en-US')} XP this run · pick perks from Perks on the menu`;
+  }
+
   show(kind, stats = {}) {
     const victory = kind === 'victory';
     this.root.hidden = false;
@@ -862,6 +924,7 @@ export class EndScreen {
     }
     this.board.hidden = !kills.length;
     this._record(stats.record);
+    this.setXp(stats.progress || null);
     // (no poll on a server that keeps no votes: one without a database has no accounts either)
     this._poll(stats.vote || (accountState().accounts ? voteDifficulty : null));
 

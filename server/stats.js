@@ -6,16 +6,19 @@
 // holds, and what a client is sent (board) names a player by the name they play under and nothing else.
 //
 // The file (STATS_FILE, see server/index.js), JSON:
-//   { v: 1, players: { <sha-256 of the id, hex>: { name, kills, nights, wins, revives, seen } } }
+//   { v: 1, players: { <sha-256 of the id, hex>: { name, kills, nights, wins, revives, seen, xp, perks, respecs, best } } }
 //   name    the name they last joined under          kills    the dead they put down (zombies, turned players)
 //   nights  nights they were alive at the end of     wins     runs their team escaped from, with them in the game
 //   revives teammates they got back on their feet    seen     when they were last in a game (ms since 1970)
+//   xp      experience earned (shared/progress.js)   perks    the perk ids they picked, in order (absent: none)
+//   respecs times they started their picks over      best     the furthest day they saw dawn on (absent: none)
 // Without a file the records last as long as the process does (tests, sims).
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { writeFile, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { BOARD_STATS, BOARDF, BOARD_TOP } from '../shared/protocol.js';
+import { levelOf, perksValid, picksEarned } from '../shared/progress.js';
 
 // what a browser sends: a UUID, as crypto.randomUUID writes one. Anything else is nobody (bots, tests, junk)
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -31,7 +34,14 @@ export const idKey = (id) => (typeof id === 'string' && ID.test((id = id.toLower
 const whole = (v) => (typeof v === 'number' && v > 0 ? Math.min(Math.floor(v), STAT_MAX) : 0);
 // a stored name, as handleJoin would have let it through
 const cleanName = (v) => (typeof v === 'string' ? v.replace(/[^\p{L}\p{N} _\-.#]/gu, '').trim().slice(0, 16) : '') || 'Survivor';
-const scored = (rec) => BOARD_STATS.some((k) => rec[k] > 0);
+const scored = (rec) => rec.xp > 0 || BOARD_STATS.some((k) => rec[k] > 0);
+
+// Stored picks as a player with this much XP may have them: as many as their level has earned (the curve may have
+// been retuned since), and none at all if what is left is not a set they could have picked
+export function cleanPerks(perks, xp) {
+  const ids = Array.isArray(perks) ? perks.map(Number).slice(0, picksEarned(levelOf(xp))) : [];
+  return perksValid(ids, xp) ? ids : [];
+}
 
 export class PlayerStats {
   constructor(opts = {}) {
@@ -59,6 +69,10 @@ export class PlayerStats {
       if (!KEY.test(key) || !r || typeof r !== 'object') continue;
       const rec = { key, name: cleanName(r.name), seen: Number.isFinite(r.seen) && r.seen > 0 ? Math.floor(r.seen) : 0, on: 0 };
       for (const k of BOARD_STATS) rec[k] = whole(r[k]);
+      rec.xp = whole(r.xp);
+      rec.perks = cleanPerks(r.perks, rec.xp);
+      rec.respecs = whole(r.respecs);
+      rec.best = whole(r.best);
       if (scored(rec)) this.recs.set(key, rec);
     }
     this.log(`stats: ${this.recs.size} players on record (${this.file})`);
@@ -76,6 +90,10 @@ export class PlayerStats {
       const out = (players[rec.key] = { name: rec.name });
       for (const k of BOARD_STATS) out[k] = rec[k];
       out.seen = rec.seen;
+      out.xp = rec.xp;
+      if (rec.perks.length) out.perks = rec.perks;
+      if (rec.respecs) out.respecs = rec.respecs;
+      if (rec.best) out.best = rec.best;
     }
     return JSON.stringify({ v: 1, players });
   }
@@ -117,7 +135,7 @@ export class PlayerStats {
     if (!key) return null;
     let rec = this.recs.get(key);
     if (!rec) {
-      rec = { key, name, seen: 0, on: 0 };
+      rec = { key, name, seen: 0, on: 0, xp: 0, perks: [], respecs: 0, best: 0 };
       for (const k of BOARD_STATS) rec[k] = 0;
       this.recs.set(key, rec);
     }
@@ -135,10 +153,43 @@ export class PlayerStats {
     if (--rec.on <= 0 && !scored(rec)) this.recs.delete(rec.key);
   }
 
+  // stat: one of BOARD_STATS, or 'xp'
   bump(rec, stat, n = 1) {
-    if (!rec) return;
+    if (!rec || !(stat === 'xp' || BOARD_STATS.includes(stat))) return;
     rec[stat] = Math.min(STAT_MAX, rec[stat] + n);
     this.dirty = true;
+  }
+
+  // they saw dawn on this day: the furthest they ever have, if it is
+  best(rec, day) {
+    if (!rec || !(day > rec.best)) return;
+    rec.best = whole(day);
+    this.dirty = true;
+  }
+
+  // ---------------------------------------------------------------- progress (shared/progress.js)
+  // What a game needs to know of a player as they join: { xp, perks, best }
+  progress(rec) {
+    return rec ? { xp: rec.xp, perks: rec.perks.slice(), best: rec.best } : null;
+  }
+
+  // A player's progress for the API, by who asks: { key, xp, perks, respecs } (a guest with nothing on record: all
+  // nothing). There are no accounts without a database: only a browser's id. null for nobody
+  progressOf({ guestId }) {
+    const key = idKey(guestId);
+    if (!key) return null;
+    const rec = this.recs.get(key);
+    return { key, xp: rec?.xp || 0, perks: rec ? rec.perks.slice() : [], respecs: rec?.respecs || 0 };
+  }
+
+  // Their picks are these now (checked by the caller: server/progress.js). false if the record is not there
+  setPerks(prog, perks, respecs) {
+    const rec = this.recs.get(prog.key);
+    if (!rec) return false;
+    rec.perks = perks.slice();
+    rec.respecs = whole(respecs);
+    this.dirty = true;
+    return true;
   }
 
   // The leaderboard as one player gets it: the best BOARD_TOP by each stat, everybody playing right now (`here`:
@@ -148,7 +199,7 @@ export class PlayerStats {
     const ahead = BOARD_STATS.map(() => 0); // per stat: how many have more than me
     let total = 0;
     for (const rec of this.recs.values()) {
-      if (!scored(rec)) continue;
+      if (!BOARD_STATS.some((k) => rec[k] > 0)) continue;
       total++;
       BOARD_STATS.forEach((k, i) => {
         const v = rec[k];
@@ -167,7 +218,7 @@ export class PlayerStats {
     if (me) picked.add(me);
     const rows = [];
     for (const rec of picked) {
-      const row = { name: rec.name, flags: (rec === me ? BOARDF.ME : 0) | (here.has(rec) ? BOARDF.HERE : 0) };
+      const row = { name: rec.name, flags: (rec === me ? BOARDF.ME : 0) | (here.has(rec) ? BOARDF.HERE : 0), level: levelOf(rec.xp) };
       for (const k of BOARD_STATS) row[k] = rec[k];
       if (rec === me) row.ranks = BOARD_STATS.map((k, i) => (me[k] ? ahead[i] + 1 : 0));
       rows.push(row);

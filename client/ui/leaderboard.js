@@ -114,6 +114,7 @@ export class Leaderboard {
     const r = el('div', 'lb-row' + (row.me ? ' me' : ''), parent);
     el('span', 'lb-rank', r, rank ? String(rank) : '–');
     const name = el('span', 'lb-name', r);
+    el('span', 'lb-lv', name, String(row.level || 1)).title = `Level ${row.level || 1}`;
     el('span', 'lb-nm', name, row.name);
     if (row.me) el('span', 'lb-tag', name, 'you');
     else if (row.here && this.list === 'all') el('span', 'lb-tag here', name, 'in this game');

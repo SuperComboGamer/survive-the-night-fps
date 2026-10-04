@@ -1,5 +1,5 @@
 // Player list, up for as long as [Tab] is held: who is in the game - on their feet, down, dead or turned - with
-// their health, their kills and their ping, who is on the walkie-talkie, who is talking and who is your friend
+// their level, their health, their kills and their ping, who is on the walkie-talkie, who is talking and who is your friend
 // (by their account: friends.js). Nothing in it takes a click, so the pointer stays locked and the game goes on under it.
 import { el, svgEl, clamp } from './dom.js';
 import { glyph } from './icons.js';
@@ -28,13 +28,13 @@ export class Roster {
     this.root.hidden = !open;
   }
 
-  // list: [{id, name, status: 'alive' | 'downed' | 'dead' | 'zombie', hp (0..1, -1 = unknown), kills, ping, talking,
-  // radio, self}]. Called often while the list is up: the rows are rebuilt only when something but health
+  // list: [{id, name, status: 'alive' | 'downed' | 'dead' | 'zombie', hp (0..1, -1 = unknown), kills, ping, level,
+  // talking, radio, self}]. Called often while the list is up: the rows are rebuilt only when something but health
   // changed, and a change of health moves just that row's bar.
   set(list) {
     list = Array.isArray(list) ? list : [];
     const friend = list.map((p) => !p.self && this.ui.isFriendId(p.id));
-    const key = list.map((p, i) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0, friend[i] ? 1 : 0].join('|')).join(';');
+    const key = list.map((p, i) => [p.id, p.name, p.status, p.kills | 0, Math.round((p.ping || 0) / 5), p.talking ? 1 : 0, p.radio ? 1 : 0, p.self ? 1 : 0, friend[i] ? 1 : 0, p.level | 0].join('|')).join(';');
     if (key !== this.key) {
       this.key = key;
       this.list.textContent = '';
@@ -47,6 +47,7 @@ export class Roster {
         if (st === 'downed') down++;
         const li = el('li', 'sv st-' + st + (p.self ? ' self' : '') + (p.talking ? ' talking' : ''), this.list);
         svgEl('i', 'sv-st', li, glyph(st === 'zombie' ? 'claw' : st === 'dead' ? 'skull' : st === 'downed' ? 'downed' : 'person'));
+        el('span', 'sv-lv', li, String(p.level || 1)).title = `Level ${p.level || 1}`;
         const nm = el('span', 'sv-name', li, p.name || '???');
         if (p.self) el('small', 'sv-you', nm, 'you');
         if (friend[i]) svgEl('i', 'sv-friend', nm, glyph('star')).title = 'Your friend';

@@ -28,6 +28,7 @@ import {
   ESCAPE_DRIVE_TIME,
   GAME_OVER_DELAY,
   PLAYER_MAX_HP,
+  STAMINA_MAX,
   ZOMBIE_PLAYER_MAX_HP,
   HEAL_DELAY,
   HEAL_RATE,
@@ -114,7 +115,8 @@ import {
   radioLinked,
   salvageOf,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { XP, XPS, XP_SRC, levelOf, perkMods, perkMask } from '../shared/progress.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
 import { createWorld } from '../shared/world.js';
@@ -158,6 +160,7 @@ const FINAL_STAND_JOIN_RANGE = 95; // wanderers this close to a survivor join th
 // Also a first pass:
 const ESCAPE_LINGER_PACE = 0.5; // once the engine is warm, groups keep coming at this share of the stand's pace until someone drives
 const NO_HASH = -2; // a command packet that came without a state fingerprint
+const WEDGED_FOR = 15; // s one of the dead has been after a survivor without getting anywhere (z.wedgeT): its kill earns no XP
 const CMDS_PER_TICK = CMD_RATE / SERVER_TICK_RATE; // commands a client issues per server tick
 const CMD_QUEUE_MAX = 24; // commands a client can have waiting (0.4 s of them); older ones are dropped
 const CMD_CATCH_UP = 1.05; // a client's command allowance refills this much faster than it issues them (processInputs)
@@ -653,6 +656,7 @@ export class Game {
     p.account = account ? account.id : ''; // their account's id, '' for a guest
     p.guestKey = account ? '' : idKey(pid); // a guest's browser id as stats.js files it ('' without one): never the id itself
     p.friend = account ? account.name : ''; // the account a friend request goes to (S2C.FRIENDS); '' for a guest
+    this.loadProgress(p);
     const w = new Writer(64);
     w.u8(S2C.WELCOME);
     w.u16(p.id);
@@ -723,6 +727,18 @@ export class Game {
       zkills: 0,
       deaths: 0,
       rec: null, // their record on the leaderboard (stats.js); null for a player who joined without an id
+      // experience and perks (shared/progress.js, setProgress). Their XP is xpBase + this run's, by source
+      xpBase: 0, // on their record before this run, once the stats have said (xpLoaded)
+      xpRun: new Array(XP_SRC.length).fill(0),
+      xpLoaded: false,
+      best: 0, // the furthest day they have ever seen dawn on (from the record)
+      perks: 0, // the perks in force (a bitmask of ids; s.perks carries it into the simulation)
+      perksNext: -1, // picked during a night: in force from dawn (-1: nothing waiting)
+      nightKills: 0, // kills this night (or day): past XP.killsFull they earn half
+      nightRevives: 0,
+      lastChance: false, // Second Chance spent this night
+      progDirty: true, // S2C.PROGRESS is out of date (sendProgress)
+      progT: -99,
       admin: false, // may run the admin chat commands: said the ADMIN_SECRET (adminLogin)
       adminT: 0, // when they last tried (ms)
       adminFails: 0,
@@ -772,6 +788,126 @@ export class Game {
     if (!this.spawnEntity(p)) return null;
     this.players.set(p.id, p);
     return p;
+  }
+
+  // ---------------------------------------------------------------- experience and perks (shared/progress.js)
+  // What a joining player has earned before: their XP, the furthest day they have seen and the perks they picked.
+  // The file-kept records answer at once; a game in a room's worker hears from the network thread (onProgress).
+  loadProgress(p) {
+    if (!p.rec) return this.setProgress(p, { first: true, xp: 0, perks: [], best: 0 }); // (nothing kept: nothing to load)
+    if (this.records.remote) return;
+    const got = this.records.progress?.(p.rec);
+    if (got && typeof got.then === 'function') got.then((v) => v && this.players.get(p.id) === p && this.setProgress(p, { first: true, ...v }));
+    else if (got) this.setProgress(p, { first: true, ...got });
+  }
+  // the network thread's answer for the record with this token (room-worker.js)
+  onProgress(tok, m) {
+    for (const p of this.players.values()) if (p.rec && p.rec.tok === tok) this.setProgress(p, m);
+  }
+  // m: { first, xp, perks, best } as they join, { perks } when they pick again (validated by whoever sent it:
+  // stats.js cleanPerks, server/progress.js)
+  setProgress(p, m) {
+    if (m.first) {
+      p.xpBase = Math.max(0, m.xp | 0);
+      p.best = Math.max(0, m.best | 0);
+      p.xpLoaded = true;
+      this.playersDirty = true;
+    }
+    if (Array.isArray(m.perks)) {
+      const mask = perkMask(m.perks);
+      // a pick made while the night is on waits for dawn: nobody changes their kit mid-fight
+      if (m.first || !this.fighting()) {
+        if (!m.first && mask !== p.perks) this.sendChat(p, 0, CHATF.SYSTEM, 'Your perks are in force.');
+        this.applyPerks(p, mask);
+        p.perksNext = -1;
+      } else if (mask !== p.perks) {
+        p.perksNext = mask;
+        this.sendChat(p, 0, CHATF.SYSTEM, 'Your new perks come into force at dawn.');
+      }
+    }
+    p.progDirty = true;
+  }
+  fighting() {
+    return this.phase === PHASE.NIGHT || this.escape.active;
+  }
+  // The perks in force for a player are these now: into the simulation (s.perks: the client hears of it as of any
+  // change to the state) and onto their health
+  applyPerks(p, mask) {
+    p.perks = mask >>> 0;
+    p.state.perks = p.perks;
+    if (!p.alive || p.zombie) return;
+    const max = PLAYER_MAX_HP + perkMods(p.perks).hp;
+    if (!p.downed) p.hp = Math.max(1, Math.min(max, p.hp + Math.max(0, max - p.maxHp)));
+    p.maxHp = max;
+  }
+  xpOf(p) {
+    let n = p.xpBase;
+    for (const v of p.xpRun) n += v;
+    return n;
+  }
+  levelOf(p) {
+    return levelOf(this.xpOf(p));
+  }
+  // n XP for `src` (XPS): on this run's tally, and on their record with the leaderboard's stats
+  award(p, src, n) {
+    n = Math.round(n);
+    if (!p || n <= 0) return;
+    const was = this.levelOf(p);
+    p.xpRun[src] += n;
+    this.records.bump(p.rec, 'xp', n);
+    p.progDirty = true;
+    if (this.levelOf(p) !== was) this.playersDirty = true;
+  }
+  // one of the dead put down by a survivor: what it was worth, less past the night's first XP.killsFull, and nothing
+  // for one that had been stuck for a while (z.wedgeT) - the dead piled up at a wall they will never get round
+  killXp(p, z, headshot) {
+    if (p.zombie) return;
+    const pm = perkMods(p.perks);
+    if (pm.killStamina && p.alive && !p.downed) p.state.stamina = Math.min(STAMINA_MAX, p.state.stamina + pm.killStamina);
+    if (z.wedgeT > WEDGED_FOR) return;
+    if (z.boss) return this.award(p, XPS.bosses, XP.boss);
+    const half = ++p.nightKills > XP.killsFull;
+    const base = XP.kinds[z.ztype] ?? XP.kill;
+    this.award(p, XPS.kills, half ? Math.ceil(base / 2) : base);
+    if (headshot) this.award(p, XPS.headshots, half ? Math.ceil(XP.headshot / 2) : XP.headshot);
+  }
+  // A new night or a new day: the diminishing returns start over. dawn: also what is earned for seeing it, and the
+  // perks picked during the night come into force
+  phaseXp(dawn, night = 0) {
+    for (const p of this.players.values()) {
+      p.nightKills = p.nightRevives = 0;
+      p.lastChance = false;
+      if (!dawn) continue;
+      if (p.alive && !p.zombie) {
+        this.award(p, XPS.nights, Math.min(XP.nightCap, XP.night * night));
+        if (p.xpLoaded && this.day > p.best) {
+          if (p.best > 0 || this.day > 2) this.award(p, XPS.best, XP.best); // (day 2 is everyone's first dawn: no record broken)
+          p.best = this.day;
+          this.records.best?.(p.rec, this.day);
+        }
+      }
+      if (p.perksNext >= 0) {
+        this.applyPerks(p, p.perksNext);
+        p.perksNext = -1;
+        this.sendChat(p, 0, CHATF.SYSTEM, 'Your new perks are in force.');
+      }
+    }
+  }
+
+  // S2C.PROGRESS: varu XP (on record, this run's in it), u8 PROGF, this run's XP by source. Sent when it changed,
+  // once a second at most - at once when the run has just ended, for the end screen
+  sendProgress(p) {
+    if (!p.progDirty || (this.time - p.progT < 1 && this.phase !== PHASE.GAMEOVER && this.phase !== PHASE.VICTORY)) return;
+    p.progDirty = false;
+    p.progT = this.time;
+    const w = new Writer(8 + 4 * XP_SRC.length);
+    w.u8(S2C.PROGRESS);
+    w.varu(this.xpOf(p));
+    w.u8((p.xpLoaded ? PROGF.LOADED : 0) | (p.rec ? PROGF.KEPT : 0));
+    for (const v of p.xpRun) w.varu(v);
+    p.session.conn.send(w.bytes());
+    this.stats.bytesOut += w.o;
+    this.stats.msgsOut++;
   }
 
   // Who a leaver is to this run if they come back (fallen, leftKits): their account or browser (rejoinKey), so coming
@@ -958,6 +1094,13 @@ export class Game {
     this.dm.spawnInitial();
     for (const p of this.players.values()) {
       p.kills = p.zkills = p.deaths = 0; // the scoreboard counts this run only: whoever stayed on from the last one starts level
+      p.xpBase = this.xpOf(p); // ...and so does the end screen's XP: the last run's is on their record now
+      p.xpRun.fill(0);
+      p.nightKills = p.nightRevives = 0;
+      p.lastChance = false;
+      if (p.perksNext >= 0) p.perks = p.perksNext; // (spawnHuman puts them in force)
+      p.perksNext = -1;
+      p.progDirty = true;
       p.waypoint = null; // (it pointed into the old valley; the client drops its own on NEW_GAME)
       this.spawnHuman(p);
     }
@@ -1074,8 +1217,9 @@ export class Game {
     const car = this.world.car;
     s.yaw = Math.atan2(-(car.x - s.x), -(car.z - s.z)) + Math.PI; // back to the car, facing the road
     if (beside) Object.assign(s, this.pickJoinSpawn(p)); // (x, y, z, yaw - or nothing: the car it is)
-    p.hp = PLAYER_MAX_HP;
-    p.maxHp = PLAYER_MAX_HP;
+    s.perks = p.perks;
+    p.maxHp = PLAYER_MAX_HP + perkMods(p.perks).hp;
+    p.hp = p.maxHp;
     p.armor = 0;
     p.armorMax = 0;
     p.armorItem = 0;
@@ -1105,6 +1249,7 @@ export class Game {
     const s = p.state;
     Object.assign(s, createPlayerState());
     s.zombie = 1;
+    s.perks = p.perks; // (the simulation leaves them out while turned: perkMods(0))
     s.weapons = [0, 0, 0, 0, 0];
     s.slot = 2;
     const humans = this.humans();
@@ -1184,6 +1329,7 @@ export class Game {
     this.timeLeft = this.nightLen;
     this.warned = false;
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
+    this.phaseXp(false);
     const n = this.day;
     const humans = Math.max(1, this.humanCount());
     const total = this.hordeSize(n, humans);
@@ -1294,6 +1440,7 @@ export class Game {
     this.sound(SOUND.DAWN, 0, 0, 0, 0);
     // the night goes on the record of everyone who saw it through (the dead come back below: it was not theirs)
     this.credit(this.humans(), 'nights');
+    this.phaseXp(true, night); // (...and so does its XP)
     this.track.dawn(night);
     this.ach.dawn();
     // horde burns in the sunlight (what is down in the mine burns when it comes up into it: Zombies.updateOne)
@@ -1327,6 +1474,12 @@ export class Game {
     this.restartT = GAME_OVER_DELAY + 6;
     this.escape.active = false;
     this.credit(this.players.values(), 'wins'); // the run is the team's: won by everybody in it, the turned and the left-behind too
+    // ...but the XP for the escape is for whoever is in the car (as the end screen tells it: ESCAPE_RADIUS)
+    const car = this.world.car;
+    for (const p of this.players.values()) {
+      const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
+      this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
+    }
     this.notify(NOTIFY.VICTORY, this.day);
     this.sound(SOUND.CAR_START, this.world.car.x, 0.5, this.world.car.z, 0);
     this.globalDirty = true;
@@ -2146,13 +2299,13 @@ export class Game {
         if (e.state !== 0) this.notify(NOTIFY.SEARCH_EMPTY, 0, p.id);
         return;
       }
-      p.hold = { kind: HOLD.SEARCH, target: id, t: 0, need: SEARCH_TIME };
+      p.hold = { kind: HOLD.SEARCH, target: id, t: 0, need: SEARCH_TIME * perkMods(p.perks).search };
       this.sound(SOUND.SEARCH, e.x, e.y, e.z, 18);
       return;
     }
     if (e.kind === ENT.PLAYER && e !== p && e.alive && e.downed && !e.zombie) {
       if (d > this.reachOf(e)) return;
-      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME };
+      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME * perkMods(p.perks).revive };
       e.revivedBy = p.id;
     }
   }
@@ -2204,7 +2357,9 @@ export class Game {
     this.ach.searched(p, c);
     const def = CONT_DEFS[c.ctype];
     const table = (def.table && CONT_TABLES[def.table]) || LOOT_TABLES[c.zone] || LOOT_TABLES[ZONE.ROADSIDE];
-    const rolls = def.rolls[0] + Math.floor(this.rng() * (def.rolls[1] - def.rolls[0] + 1));
+    let rolls = def.rolls[0] + Math.floor(this.rng() * (def.rolls[1] - def.rolls[0] + 1));
+    const extra = perkMods(p.perks).extraFind;
+    if (extra && this.rng() < extra) rolls++;
     for (let i = 0; i < rolls; i++) {
       const [item, n] = this.rollTable(table);
       this.giveOrDrop(p, item, n);
@@ -2324,6 +2479,8 @@ export class Game {
     }
     g.left--;
     const r = this.rng;
+    const more = perkMods(p.perks).gather;
+    if (more && r() < more) this.giveOrDrop(p, tree ? ITEM.STICK : ITEM.SCRAP, 1);
     if (tree) {
       const dead = col.tv === 3 || col.tv === 4 || col.tv === 6;
       let sticks = weapon === ITEM.KNIFE ? 1 : 2;
@@ -2496,7 +2653,7 @@ export class Game {
       // client's next command on, which is where its prediction has them go: it sends every command it has made
       // before it asks (Game.useConsumable), so that is the one after the newest that has come in. Those still
       // waiting to be run are run without it (processInputs); with none waiting, that is now.
-      p.useItem = { item: it.item, t: 0, total: c.time, from: (p.recvSeq + 1) & 0xffff, idx };
+      p.useItem = { item: it.item, t: 0, total: c.time * perkMods(p.perks).useTime, from: (p.recvSeq + 1) & 0xffff, idx };
       if (!p.cmdQueue.length) {
         s.using = 1;
         p.shadow.using = 1; // (the client did the same after the same command: nothing to rebase it on)
@@ -2809,6 +2966,12 @@ export class Game {
     p.hp -= amount;
     p.lastDamageT = this.time;
     p.lastSrc = src;
+    // Second Chance (a keystone perk): once a night the blow that would have put them down leaves them standing
+    if (p.hp <= 0 && !p.zombie && !p.lastChance && perkMods(p.perks).secondChance) {
+      p.lastChance = true;
+      p.hp = 1;
+      this.sendChat(p, 0, CHATF.SYSTEM, 'Second Chance: you are still standing. Get clear.');
+    }
     const s = p.state;
     const fx = src.x ?? s.x;
     const fz = src.z ?? s.z;
@@ -2857,7 +3020,8 @@ export class Game {
     this.ach.revive(p, by);
     p.downed = false;
     p.state.downed = 0;
-    p.hp = hp;
+    p.hp = Math.min(p.maxHp, hp + (by ? perkMods(by.perks).reviveHp : 0));
+    if (by && by !== p && ++by.nightRevives <= XP.revivesFull) this.award(by, XPS.revives, XP.revive * perkMods(by.perks).reviveXp);
     p.bleed = 0;
     p.revivedBy = 0;
     p.lastDamageT = this.time;
@@ -3011,6 +3175,17 @@ export class Game {
       case 'down':
         if (p.alive && !p.zombie && !p.downed) this.goDown(p);
         break;
+      case 'xp': {
+        // /xp <n>: that much XP onto their record (progress.js), outside this run's tally: for trying levels and perks
+        const n = Math.max(0, Math.min(1e6, Math.floor(+args[1] || 0)));
+        if (!n) return this.sendChat(p, 0, CHATF.SYSTEM, 'Usage: /xp <amount>');
+        p.xpBase += n;
+        this.records.bump(p.rec, 'xp', n);
+        p.progDirty = true;
+        this.playersDirty = true;
+        this.sendChat(p, 0, CHATF.SYSTEM, `+${n} XP: level ${this.levelOf(p)}${p.rec ? '' : ' (not kept: you have no record)'}.`);
+        break;
+      }
       case 'night':
         if (this.phase === PHASE.DAY) this.timeLeft = 0.05;
         break;
@@ -3665,7 +3840,7 @@ export class Game {
         }
       } else p.drownT = 0;
       if (p.downed) {
-        if (!p.revivedBy && !p.away) p.bleed -= dt; // (a held player's clock stops)
+        if (!p.revivedBy && !p.away) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
         if (p.useItem && s.using) {
           p.useItem.t += dt;
           if (p.useItem.t >= p.useItem.total) this.finishUse(p);
@@ -3921,7 +4096,7 @@ export class Game {
         if (put(chunk)) mask |= 1 << chunk;
       }
       // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js; the mounted gun in their
-      // arms: mountedgun.js)
+      // arms: mountedgun.js; the perks they picked: progress.js)
       c.reset();
       c.u8(s.ride);
       c.u8(s.rideGo);
@@ -3930,6 +4105,7 @@ export class Game {
       c.f32(s.cartS);
       c.f32(s.cartV);
       c.u8(s.hmg);
+      c.u32(s.perks);
       if (put(12)) mask |= SELF.RIDE;
     }
     // status: 7 field groups behind their own mask
@@ -4078,6 +4254,7 @@ export class Game {
       w.u8((p.onAir ? PLF.ON_AIR : 0) | (wp ? PLF.WAYPOINT : 0));
       w.u16(p.kills + p.zkills);
       w.u16(Math.min(9999, Math.round(p.ping)));
+      w.u8(this.levelOf(p));
       if (wp) {
         w.i16(qpos(wp.x));
         w.i16(qpos(wp.z));
@@ -4167,6 +4344,7 @@ export class Game {
   sendTick(p, global) {
     const conn = p.session.conn;
     this.sendList(p);
+    this.sendProgress(p);
     if (p.invDirty) {
       tidyStacks(p.inv, p.splitKeep); // (the safety net: any path that left two part stacks of a thing, split aside)
       this.sendInventory(p);

@@ -8,6 +8,7 @@ import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
+import { perkMods } from '../shared/progress.js';
 import { flareReach } from '../shared/skyflare.js';
 import { Herds, HERD_RUSH } from './herd.js';
 import { Wards, WARD_DARK } from './clinic.js';
@@ -47,6 +48,7 @@ const LEAP_PIN = 1.5;
 const LEAP_LAND = 1.7;
 const LEAP_MISS_CD = 2.5;
 const THROW_OFF_DAZE = 1; // s a leaper reels for once the survivor it pinned throws it off (throwOff)
+const WEDGE_MOVE = 1.5; // m a zombie after a survivor has to get from where it was to count as getting anywhere (z.wedgeT)
 const _leap = { x: 0, y: 0, z: 0 };
 // the client's distance haze: fog density by sun height (KEYS s / fogD in client/render/environment.js), see sightRange()
 const HAZE_SUN = [-1, -0.12, 0.02, 0.18, 0.55, 1];
@@ -181,6 +183,9 @@ export class Zombies {
       stuckT: 0,
       lastX: x,
       lastZ: z,
+      wedgeT: 0, // how long it has been after a survivor without getting anywhere or striking anything (killed, it earns no XP)
+      wedgeX: x,
+      wedgeZ: z,
       detourT: 0,
       detourX: 0,
       detourZ: 0,
@@ -1050,6 +1055,11 @@ export class Zombies {
         z.detourZ = dx * side + dz * 0.2;
       }
     }
+    if (attacking || z.blockStruct || !target || Math.hypot(z.x - z.wedgeX, z.z - z.wedgeZ) > WEDGE_MOVE) {
+      z.wedgeX = z.x;
+      z.wedgeZ = z.z;
+      z.wedgeT = 0;
+    } else z.wedgeT += dt;
     z.lastX = z.x;
     z.lastZ = z.z;
 
@@ -1085,6 +1095,7 @@ export class Zombies {
       else if (s.crouch) range *= 0.6;
       if (night && h.flashlight) range *= 1.5;
       if (s.sprinting) range *= 1.3;
+      range *= perkMods(s.perks).notice;
       if (!z.horde && z.def.sense) range *= z.def.sense; // dogs catch the scent from further off
       if (z.aggroId === h.id && z.aggroT > 0) range = 600;
       if (z.target === h.id) range *= 1.6; // hysteresis
@@ -1425,7 +1436,7 @@ export class Zombies {
     s.vz += dz * power;
     s.vy = Math.max(s.vy, up);
     s.onGround = 0;
-    s.stunT = Math.max(s.stunT, stun || 0);
+    s.stunT = Math.max(s.stunT, (stun || 0) * perkMods(s.perks).stun);
   }
 
   releaseLink(z) {

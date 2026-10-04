@@ -15,6 +15,7 @@ import { Leaderboard } from './leaderboard.js';
 import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
+import { ProgressPanel } from './progress.js';
 import { AchievementsPanel, AchievementToasts } from './achievements.js';
 import { isFriendName } from '../net/friends.js';
 import { onUnlock } from '../net/achievements.js';
@@ -105,6 +106,7 @@ export class UI {
     this.controlsPanel = new ControlsPanel(this, modalL);
     this.friends = new FriendsPanel(this, modalL);
     this.accountPanel = new AccountPanel(this, modalL);
+    this.progress = new ProgressPanel(this, modalL);
     this.achPanel = new AchievementsPanel(this, modalL);
     onUnlock((list) => this.achToasts.show(list));
 
@@ -169,6 +171,7 @@ export class UI {
     if (this.controlsPanel.visible) this.controlsPanel.hide();
     if (this.friends.visible) this.friends.hide();
     if (this.accountPanel.visible) this.accountPanel.hide();
+    if (this.progress.visible) this.progress.hide();
     if (this.achPanel.visible) this.achPanel.hide();
     this._menuState();
   }
@@ -349,6 +352,13 @@ export class UI {
     this.death.hide();
     this.end.show('victory', stats || {});
     this._menuState();
+  }
+
+  // our XP as the server counts it ({ xp, run, loaded, kept }: Game.onProgress): the inventory's level, and the end
+  // screen if the run is over
+  setProgress(p) {
+    this.inventory.setProgress(p);
+    if (!this.end.root.hidden) this.end.setXp(p);
   }
 
   hideOverlays() {

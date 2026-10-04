@@ -268,12 +268,27 @@ export class Room {
   record(m) {
     const stats = this.lobby.stats;
     if (m.op === 'enter') {
-      this.recs.set(m.tok, stats.enter(m.id, m.name, m.user || ''));
+      const rec = stats.enter(m.id, m.name, m.user || '');
+      this.recs.set(m.tok, rec);
+      // what they have earned before (progress.js): their level, and the perks they picked - the database's in a moment
+      if (rec && stats.progress) {
+        Promise.resolve(stats.progress(rec)).then(
+          (p) => p && !this.closed && this.recs.get(m.tok) === rec && this.worker.postMessage({ t: 'progress', tok: m.tok, first: true, ...p }),
+          (err) => this.lobby.log(`progress of a player could not be read (${err.message})`)
+        );
+      }
       if (m.user) this.lobby.achievements?.played(m.user, this); // (another day played on, if it is one)
     } else if (m.op === 'leave') {
       stats.leave(this.recs.get(m.tok));
       this.recs.delete(m.tok);
     } else if (m.op === 'bump') stats.bump(this.recs.get(m.tok), m.stat, m.n);
+    else if (m.op === 'best') stats.best?.(this.recs.get(m.tok), m.day);
+  }
+
+  // a player's picks changed (/api/progress/pick): whoever plays on that record in this game gets them
+  progressChanged(key, perks) {
+    if (this.closed) return;
+    for (const [tok, rec] of this.recs) if (rec && rec.key === key) this.worker.postMessage({ t: 'progress', tok, perks });
   }
 
   board(m) {
@@ -457,6 +472,11 @@ export class Lobby {
     let n = 0;
     for (const room of this.rooms.values()) n += room.st.players;
     return n;
+  }
+
+  // the record filed under `key` has these picks now (server/progress.js): every game it is being played in hears
+  progressChanged(key, perks) {
+    for (const room of this.rooms.values()) room.progressChanged(key, perks);
   }
 
   // ---------------------------------------------------------------- where the signed-in are playing

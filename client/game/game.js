@@ -56,11 +56,12 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { perkMods, levelOf, picksEarned, XP_SRC } from '../../shared/progress.js';
 import { swimming } from '../../shared/swim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
 const _wcF = new THREE.Vector3(), _wcR = new THREE.Vector3(), _wcU = new THREE.Vector3(), _wcD = new THREE.Vector3();
@@ -294,6 +295,7 @@ export class Game {
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
+      progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
       voice: (from, payload) => this.voice.onSignal(from, payload),
       close: () => this.onDisconnect(),
@@ -739,6 +741,7 @@ export class Game {
     this.introPending = true; // until NEW_GAME introduces the run this join started, or lateJoinIntro one already under way
     this.runOn = false;
     this.run = this.runReport = null;
+    this.progress = null; // our XP (onProgress), once the server says
     this.state = 'playing';
     this.input.enabled = true;
     this.inputBuffer.clear();
@@ -940,6 +943,7 @@ export class Game {
       const onAir = !!(flags & PLF.ON_AIR);
       const kills = r.u16();
       const ping = r.u16();
+      const level = r.u8();
       let way = null;
       if (flags & PLF.WAYPOINT) {
         const x = dqpos(r.i16());
@@ -949,7 +953,7 @@ export class Game {
       }
       seen.add(id);
       const prev = this.players.get(id);
-      this.players.set(id, { name, status, onAir, kills, ping, way });
+      this.players.set(id, { name, status, onAir, kills, ping, level, way });
       // a teammate's new waypoint (not one they already had when we first heard of them, nor one being cleared)
       if (way && prev && id !== this.myId && !(prev.way && prev.way.x === way.x && prev.way.z === way.z)) this.waypointSet(id, way);
     }
@@ -971,9 +975,29 @@ export class Game {
       const self = id === this.myId;
       const e = self || turned ? null : this.entities.ents.get(id);
       const hp = self ? (this.self.maxHp ? this.self.hp / this.self.maxHp : 1) : e ? e.q[7] / 255 : -1; // -1: nothing to show
-      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, talking: this.talkPeers.includes(id), radio: p.onAir, self });
+      list.push({ id, name: p.name, status: ST[p.status] || 'alive', hp, kills: p.kills, ping: self ? Math.round(this.conn.rtt) : p.ping, level: p.level, talking: this.talkPeers.includes(id), radio: p.onAir, self });
     }
     this.ui.setPlayers(list);
+  }
+
+  // S2C.PROGRESS: our XP as the server counts it (shared/progress.js), this run's by source. A level gained during
+  // the run is announced, with the perk it brings
+  onProgress(r) {
+    const xp = r.varu();
+    const f = r.u8();
+    const run = XP_SRC.map(() => r.varu());
+    const was = this.progress;
+    const p = (this.progress = { xp, run, loaded: !!(f & PROGF.LOADED), kept: !!(f & PROGF.KEPT) });
+    if (was?.loaded && p.loaded && p.kept) {
+      const before = levelOf(was.xp);
+      const now = levelOf(xp);
+      if (now > before) {
+        this.ui.notify(`LEVEL ${now}`, 'big', 3.5);
+        this.ui.notify(picksEarned(now) > picksEarned(before) ? `A perk is waiting: Perks, in the inventory (${bindLabel('inventory')})` : 'Keep going: more XP, more perks.', 'sub', 3.5);
+        this.audio.stinger?.('car_part');
+      }
+    }
+    this.ui.setProgress(p);
   }
 
   // the peers you can hear talking right now (for the HUD)
@@ -2024,7 +2048,7 @@ export class Game {
     this.sendCommands(0, true);
     this.conn.action(ACT.USE_ITEM, idx);
     this.prediction.startUse();
-    this.vm.useItem?.(c.time, item);
+    this.vm.useItem?.(c.time * perkMods(s.perks).useTime, item);
     return true;
   }
 
@@ -2307,7 +2331,8 @@ export class Game {
     }
     // the anti-tank rifle's round going home, partway through its long reload
     if (currentWeapon(s) === ITEM.AT_RIFLE && s.reloadT > 0) {
-      if (!this.atRoundIn && wdef.reload - s.reloadT >= wdef.reload * AT_ROUND_IN) {
+      const reload = wdef.reload * perkMods(s.perks).reload;
+      if (!this.atRoundIn && reload - s.reloadT >= reload * AT_ROUND_IN) {
         this.atRoundIn = true;
         this.audio.playLocal('at_round');
       }
@@ -2606,7 +2631,7 @@ export class Game {
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport });
+      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory') {
       this.overlay = 'victory';
@@ -2625,7 +2650,7 @@ export class Game {
         title = 'Left behind';
         reason = 'The car tears down Route 9 without you. The others made it out of the valley.';
       }
-      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT), record: this.runReport });
+      this.ui.showVictory({ days: g.day, kills, title, reason, restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
     } else if ((g.phase === PHASE.DAY || g.phase === PHASE.NIGHT) && (this.overlay === 'gameover' || this.overlay === 'victory')) {
       this.overlay = null;
@@ -2877,7 +2902,7 @@ export class Game {
     if (def && !def.melee) {
       h.mag = s.mags[s.slot === SLOT_PRIMARY ? 0 : 1];
       h.reserve = s.ammo[def.ammo];
-      h.reloading = s.reloadT > 0 ? 1 - s.reloadT / def.reload : -1;
+      h.reloading = s.reloadT > 0 ? 1 - s.reloadT / (def.reload * perkMods(s.perks).reload) : -1;
     } else if (s.slot === SLOT_THROW) {
       h.mag = s.throwCount;
       h.reserve = null;

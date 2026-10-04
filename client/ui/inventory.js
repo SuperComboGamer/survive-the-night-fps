@@ -12,6 +12,9 @@ import { itemIcon, glyph } from './icons.js';
 import { needLines } from '../game/harvest.js';
 import { bindTag, bindLabel, liveText } from '../game/binds.js';
 import { SKYFLARE } from '../../shared/skyflare.js';
+import { levelOf } from '../../shared/progress.js';
+import { fetchProgress, lastProgress, onProgress } from '../net/progress.js';
+import { xpBar } from './progress.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
 const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
@@ -297,8 +300,25 @@ export class Inventory {
     close.addEventListener('click', () => this.ui.cb.onCloseInventory());
     const wrap = el('div', 'inv-wrap', root);
 
-    // ---- left: equipment
+    // ---- left: your level (progress.js), the perks to pick, then the equipment
     const left = el('section', 'inv-col inv-left paper', wrap);
+    const lvl = el('div', 'inv-lvl', left);
+    this.lvlBar = xpBar(lvl, 'inv-xpb');
+    const perks = (this.perksBtn = el('button', 'inv-perks', lvl));
+    perks.type = 'button';
+    svgEl('i', 'inv-perks-ico', perks, glyph('arrowUp'));
+    this.perksTxt = el('span', '', perks, 'Perks');
+    this.perksBadge = el('b', 'sp-badge', perks, '');
+    this.perksBadge.hidden = true;
+    perks.addEventListener('click', () => this.ui.progress.show());
+    this.prog = null; // our XP as the game last heard it (setProgress)
+    this.progAsked = -1e9; // when the server was last asked about our picks (fetchProgress)
+    onProgress((v) => {
+      this.perksTxt.textContent = v?.pending ? 'Pick a perk' : 'Perks';
+      this.perksBtn.classList.toggle('lit', !!v?.pending);
+      this.perksBadge.hidden = !v?.pending;
+      this.perksBadge.textContent = v?.pending ? String(v.pending) : '';
+    });
     this._h(left, 'Equipment', 'LMB unequip'); // (RMB drop, drag, Shift+LMB salvage: in each one's tooltip)
     const eqs = el('div', 'eq-list', left);
     this.eqEls = SLOT_LABELS.map((lab, i) => {
@@ -1456,6 +1476,22 @@ export class Inventory {
     this._renderRecipes();
   }
 
+  // our XP ({ xp, run, loaded, kept }, Game.onProgress): the level at the top of the equipment column
+  setProgress(p) {
+    this.prog = p;
+    this.lvlBar.set(p ? p.xp : 0);
+    if (this.open) this._askPerks();
+  }
+  // whether a perk is waiting is the server's to say (the picks are kept there): asked as the screen opens, at most
+  // every 15 s unless the level moved on since
+  _askPerks() {
+    const now = performance.now();
+    const moved = this.prog && lastProgress() && lastProgress().level !== levelOf(this.prog.xp);
+    if (!moved && now - this.progAsked < 15000) return;
+    this.progAsked = now;
+    fetchProgress().catch(() => {});
+  }
+
   setOpen(open) {
     open = !!open;
     if (open === this.open) return;
@@ -1466,7 +1502,9 @@ export class Inventory {
       this.root.classList.remove('in');
       void this.root.offsetWidth;
       this.root.classList.add('in');
+      this._askPerks();
     } else {
+      if (this.ui.progress.visible) this.ui.progress.hide(); // (opened from here: it goes with the screen)
       // a focused search field would keep ui.isTyping() true and swallow gameplay keys
       if (document.activeElement === this.findInput) this.findInput.blur();
       this._dropBulk();
