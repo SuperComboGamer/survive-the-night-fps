@@ -577,7 +577,7 @@ export class Game {
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
     this.tellStripped(spent, p.id);
     this.tellFriendCodes(p);
-    this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
+    this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated while you played: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
     if (!moved) this.systemChat(`${p.name} reconnected.`);
     this.playersDirty = true;
     this.globalDirty = true;
