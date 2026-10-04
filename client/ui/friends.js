@@ -381,7 +381,7 @@ export class FriendsPanel extends Panel {
     this.outBtns.hidden = !a.accounts;
     if (!a.accounts) {
       this.outText.textContent = 'Friends need an account, and this server has none set up.';
-      this.outSub.textContent = 'You can still play together: send them the invite link from the pause menu.';
+      this.outSub.textContent = 'You can still play together: send them the invite link from the Esc menu.';
     } else {
       this.outText.textContent = 'Sign in to have friends.';
       this.outSub.textContent = 'Add people by their name, see who is playing and where, message them, and join their games - invite-only ones too.';
