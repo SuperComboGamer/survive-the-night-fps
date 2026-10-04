@@ -12,6 +12,7 @@ import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, Cont
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
+import { SpawnMenu } from './spawnmenu.js';
 import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
@@ -102,6 +103,7 @@ export class UI {
     this.pause = new Pause(this, ovL);
     // A modal layer lets the same board sit over both the in-game/end overlays and the splash screen.
     this.board = new Leaderboard(this, modalL);
+    this.spawn = new SpawnMenu(this, modalL); // (admins only: Game.toggleSpawn)
     this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
@@ -242,6 +244,14 @@ export class UI {
 
   get boardOpen() {
     return this.board.open;
+  }
+
+  setSpawnOpen(open) {
+    this.spawn.setOpen(open);
+  }
+
+  get spawnOpen() {
+    return this.spawn.open;
   }
 
   // the leaderboard as the server last sent it (shared/protocol.js readBoard); null: not heard from yet
