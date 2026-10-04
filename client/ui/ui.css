@@ -6421,3 +6421,222 @@ body {
     transition: none;
   }
 }
+
+/* ---------- who to play as: the splash's card and the picker (picker.js) */
+.stn-ui .cp-card {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: calc(9 * var(--u));
+  margin-top: calc(30 * var(--u));
+}
+
+.stn-ui .cp-row {
+  display: flex;
+  align-items: stretch;
+  gap: calc(10 * var(--u));
+}
+
+.stn-ui .cp-arrow {
+  flex: 0 0 auto;
+  width: calc(38 * var(--u));
+  min-width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
+.stn-ui .cp-arrow svg {
+  width: 0.9em;
+  height: 0.9em;
+}
+
+.stn-ui .cp-face {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(76 * var(--u));
+  min-width: 52px;
+  aspect-ratio: 4 / 5;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: radial-gradient(ellipse at 50% 35%, rgba(120, 110, 96, 0.35), rgba(0, 0, 0, 0.75) 70%);
+  border: 1px solid rgba(230, 223, 207, 0.14);
+  border-bottom: 2px solid var(--blood-lite);
+}
+
+.stn-ui .cp-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.stn-ui .cp-q {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font: 400 max(30px, calc(52 * var(--u))) / 1 var(--f-head);
+  color: var(--bone-dim);
+}
+
+.stn-ui .cp-txt {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: calc(4 * var(--u));
+  padding: calc(6 * var(--u)) calc(12 * var(--u));
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(230, 223, 207, 0.1);
+  text-align: left;
+  color: var(--bone);
+  cursor: pointer;
+}
+
+.stn-ui .cp-txt:hover,
+.stn-ui .cp-face:hover {
+  border-color: rgba(230, 223, 207, 0.3);
+  border-bottom-color: var(--blood-lite);
+}
+
+.stn-ui .cp-name {
+  font: 500 max(17px, calc(27 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.06em;
+}
+
+.stn-ui .cp-role {
+  font: max(9px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+}
+
+.stn-ui .cp-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font: max(10.5px, calc(13 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .cp-panel .set-card {
+  width: calc(1040 * var(--u));
+  min-width: min(740px, 96vw);
+}
+
+.stn-ui .cp-wrap {
+  display: grid;
+  grid-template-columns: 1fr minmax(220px, calc(330 * var(--u)));
+  gap: calc(20 * var(--u));
+  padding: calc(10 * var(--u)) 0;
+}
+
+.stn-ui .cp-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: calc(10 * var(--u));
+  align-content: start;
+}
+
+.stn-ui .cp-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(3 * var(--u));
+  padding: calc(5 * var(--u));
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(230, 223, 207, 0.1);
+  color: var(--bone);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stn-ui .cp-cell:hover {
+  border-color: rgba(230, 223, 207, 0.32);
+}
+
+.stn-ui .cp-cell.on {
+  border-color: var(--blood-lite);
+  box-shadow: 0 0 0 1px var(--blood-lite), 0 0 18px rgba(212, 42, 42, 0.35);
+}
+
+.stn-ui .cp-cface {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 35%, rgba(120, 110, 96, 0.32), rgba(0, 0, 0, 0.7) 70%);
+}
+
+.stn-ui .cp-cname {
+  font: 500 max(13px, calc(18 * var(--u))) / 1.1 var(--f-num);
+  letter-spacing: 0.05em;
+}
+
+.stn-ui .cp-crole {
+  font: max(8px, calc(10 * var(--u))) / 1.1 var(--f-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stn-ui .cp-side {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .cp-view {
+  position: relative;
+  height: min(calc(440 * var(--u)), 46vh);
+  min-height: 260px;
+  background: radial-gradient(ellipse at 50% 70%, rgba(110, 96, 80, 0.4), rgba(0, 0, 0, 0.6) 65%), linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.55));
+  border-bottom: 2px solid var(--blood-lite);
+}
+
+.stn-ui .cp-view .cp-stage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .cp-vname {
+  margin-top: calc(6 * var(--u));
+  font: 400 max(22px, calc(34 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.12em;
+}
+
+.stn-ui .cp-vrole {
+  font: max(9px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+}
+
+.stn-ui .cp-vline {
+  margin: calc(4 * var(--u)) 0 0;
+  font: max(11px, calc(14 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .cp-panel .set-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* (a short screen: square portraits, so the three rows of the grid fit) */
+@media (max-height: 860px) {
+  .stn-ui .cp-cface {
+    aspect-ratio: 1 / 1;
+  }
+  .stn-ui .cp-grid {
+    gap: calc(8 * var(--u));
+  }
+}

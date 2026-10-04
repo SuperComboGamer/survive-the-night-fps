@@ -12,6 +12,7 @@ import { playingFriends, unreadCount, onSocialChange } from '../net/friends.js';
 import { fetchProgress, lastProgress, onProgress } from '../net/progress.js';
 import { xpBar } from './progress.js';
 import { XP_SRC_NAMES, levelInfo } from '../../shared/progress.js';
+import { CharacterCard, releaseStage } from './picker.js';
 
 // the count on a button (unread messages): '' hides it
 function setBadge(b, n) {
@@ -135,7 +136,9 @@ export class Splash {
     this.invName = el('div', 'sp-inv-name', inv, '');
     this.invMeta = el('div', 'sp-inv-meta', inv, '');
 
+    // who to play as (picker.js): a card over the name and the way in
     const form = (this.form = el('form', 'sp-join', main));
+    this.character = new CharacterCard(ui, main, root, form);
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       this._join();
@@ -469,6 +472,7 @@ export class Splash {
     this._syncPerks(lastProgress());
     fetchProgress().catch(() => {}); // (what the run just played earned: the button says if a pick is waiting)
     this.syncRecord();
+    this.character.show();
     this._measure();
     this.root.classList.remove('in');
     void this.root.offsetWidth;
@@ -494,6 +498,8 @@ export class Splash {
     this.joining = false;
     this.browser.hide();
     this.creator.hide();
+    this.character.panel.hide();
+    releaseStage(); // (the picker's renderer: not needed in play)
   }
 }
 
