@@ -282,7 +282,8 @@ export class MeshBuilder {
     for (const part of this.parts) {
       const { geo, o } = part;
       const bw = world[part.bone];
-      const reg = regionUV(o.region ?? 15);
+      const reg = regionUV(o.region ?? 15, this.atlas === 'char');
+      const wts = this.skinned ? o.wts : null; // per vertex [bone a, weight a, bone b, weight b] (else all on part.bone)
       const uvScale = o.uv || [1, 1, 0, 0];
       const base = color(o.color ?? 0xffffff);
       const mottle = o.mottle ?? 0.18;
@@ -352,7 +353,8 @@ export class MeshBuilder {
         }
         col.push(C.r, C.g, C.b);
         glow.push(gl);
-        si.push(this.skinned ? part.bone : 0);
+        if (wts) si.push(wts[i * 4], wts[i * 4 + 1], wts[i * 4 + 2], wts[i * 4 + 3]);
+        else si.push(this.skinned ? part.bone : 0, 1, 0, 0);
       }
       if (MeshBuilder.debugStats) {
         const k = this.bones[part.bone].name + ':' + geo.type.replace('Geometry', '');
@@ -370,7 +372,8 @@ export class MeshBuilder {
           uvs.push(uvs[ku], uvs[ku + 1]);
           col.push(col[k] * 0.8, col[k + 1] * 0.8, col[k + 2] * 0.8);
           glow.push(glow[vbase + i]);
-          si.push(si[vbase + i]);
+          const ks = (vbase + i) * 4;
+          si.push(si[ks], si[ks + 1], si[ks + 2], si[ks + 3]);
         }
         for (let i = 0; i < index.length; i += 3) idx.push(index[i] + off, index[i + 2] + off, index[i + 1] + off);
         vbase = off + p.count;
@@ -390,8 +393,10 @@ export class MeshBuilder {
       const skinIndex = new Uint16Array(nv * 4);
       const skinWeight = new Float32Array(nv * 4);
       for (let i = 0; i < nv; i++) {
-        skinIndex[i * 4] = si[i];
-        skinWeight[i * 4] = 1;
+        skinIndex[i * 4] = si[i * 4];
+        skinWeight[i * 4] = si[i * 4 + 1];
+        skinIndex[i * 4 + 1] = si[i * 4 + 2];
+        skinWeight[i * 4 + 1] = si[i * 4 + 3];
       }
       g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndex, 4));
       g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
