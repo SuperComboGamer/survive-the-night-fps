@@ -39,7 +39,7 @@ export function flightPlane() {
 
 // Where a survivor sits in the car (its frame: front to -Z): the seat cushions, the driver's first. A seated
 // survivor's hips are SEAT_HIP over their feet (characters.js, the sitting pose), so they are put that far under one.
-const SEATS = PropModels.DRIVE_CAR_SEATS || [[-0.38, 0.44, -0.14], [0.38, 0.44, -0.14], [-0.38, 0.46, 0.62], [0.38, 0.46, 0.62]];
+const SEATS = PropModels.DRIVE_CAR_SEATS.map((p) => [p.x, p.y, p.z]);
 const SEAT_HIP = 0.42;
 const WHEEL_R = 0.32;
 const LETTERBOX = 0.115; // each bar, as a share of the screen's height
@@ -259,7 +259,7 @@ export class Crossing {
       const type = rnd(k) < 0.7 ? ZTYPE.RUNNER : ZTYPE.WALKER;
       const view = createZombie(type, k * 7 + 3);
       this.g.scene.add(view.object);
-      this.horde.push({ view, s0: -14 + rnd(k + 20) * 30, off: (rnd(k + 40) - 0.5) * 6.4, v: type === ZTYPE.RUNNER ? 5.4 + rnd(k + 60) * 1.4 : 2.1 + rnd(k + 60) * 0.5, anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
+      this.horde.push({ view, s0: -14 + rnd(k + 20) * 30, off: (rnd(k + 40) - 0.5) * 6.4, gap: 9 + rnd(k + 80) * 26, v: type === ZTYPE.RUNNER ? 5.4 + rnd(k + 60) * 1.4 : 2.1 + rnd(k + 60) * 0.5, anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
     }
   }
 
@@ -344,7 +344,8 @@ export class Crossing {
       fade = Math.max(smooth(0.6, 0, t), smooth(ISLAND_OUT - 0.7, ISLAND_OUT, t));
       this.far = 260;
       for (const z of this.horde) {
-        const zs = z.s0 + z.v * t;
+        // (in the second shot they are the ones still on its tail: the cut skips the stretch where it left the rest)
+        const zs = t < ISLAND_CUT ? z.s0 + z.v * t : s - z.gap - (17 - z.v) * (t - ISLAND_CUT) * 0.5;
         onPath(this.road, zs, z.off, c);
         z.view.object.position.set(c.x, w.heightAt(c.x, c.z), c.z);
         z.view.object.rotation.y = c.yaw;
@@ -379,7 +380,7 @@ export class Crossing {
         this.fov = 40;
       } else if (shot.name === 'below') {
         // from down by the water, beside a pier: the whole height of the thing, and the car small on top of it
-        cam.position.set(lerp(br.x0 + s0, br.x0 + s1, 0.42), WATER_LEVEL + 1.3, br.z + 44);
+        cam.position.set(lerp(br.x0 + s0, br.x0 + s1, 0.42), WATER_LEVEL + 1.3, br.z + (lz < 0 ? -44 : 44)); // (the side its lane is on)
         _look.set(P.x, br.deckY - 1, br.z);
         this.fov = 38;
       } else if (shot.name === 'gap') {
@@ -393,8 +394,8 @@ export class Crossing {
         cam.position.set(P.x - 7.5, P.y + 2.9 + u * 0.6, P.z + 1.4);
         _look.set(P.x + 60, P.y + 7, br.z + (w.city.z - br.z) * 0.25);
         this.fov = 47;
-        this.fogMul = lerp(0.42, 0.26, u);
-        this.far = 700;
+        this.fogMul = lerp(0.36, 0.17, u);
+        this.far = 900;
       } else {
         // from the bluff, beside the road off the bridge: the car comes off the last span and stops, and the span goes
         cam.position.set(br.x1 + 30, br.deckY + 1.5, br.z + 9.5);

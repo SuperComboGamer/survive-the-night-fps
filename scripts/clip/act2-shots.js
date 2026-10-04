@@ -192,10 +192,10 @@ try {
     await hud(true);
     const lot = await p.evaluate(() => {
       const c = window.__game.world.containers.find((k) => k.zone === 28 && k.ctype === 8);
-      return c ? [c.x, c.z] : null;
+      return c ? [c.x, c.z, c.y] : null;
     });
     if (lot) {
-      await chat(`/tp ${lot[0] + 2.5} ${lot[1] - 3}`);
+      await chat(`/tp ${lot[0] + 2.5} ${lot[1] - 3} ${lot[2] + 0.5}`);
       await sleep(1500);
       await p.evaluate((lot) => {
         const g = window.__game;

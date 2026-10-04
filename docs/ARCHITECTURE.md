@@ -416,6 +416,60 @@ node, else the shell dies of it and the container stops with node never told (`s
   that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
   Chrome behind a stand-in for Railway's edge).
 
+## The two acts: the island, the bridge, the mainland
+
+A run is two maps (issue #111, `shared/acts.js`). Act 1 is the island: fix the car, survive its final stand, drive
+off. That is no longer the victory: the car crosses a broken bridge (`PHASE.CROSSING`, a cutscene) to the mainland,
+act 2, where the same loop is played with a plane and flying out wins.
+
+- **A world has its own size.** `world.kind` (`WORLD.ISLAND` / `WORLD.MAINLAND`, which is also the act's number),
+  `world.size` / `half` / `gridN`, `world.start` (where a run on it begins) and `world.posScale`. Nothing that
+  walks, draws or maps a world reads `MAP_SIZE` any more (that constant is the island's 640 m): the nav grid, the
+  zombies' spatial hash, the deer, the herd, the player simulation's edge, the terrain, the field map and the
+  minimap follow the world. `worldFor(seed, act)` (`shared/worlds.js`) makes either from the run's one seed.
+- **The mainland** (`shared/mainland.js`) is 1280 m across, built with the island's kit (`shared/worldkit.js`: the
+  Builder, the collider grids, the lists a world hands on): the Bridgehead, Port Calder (a grid of blocks and lots
+  dealt from the seed), Kessler Ironworks, Eastgate, a truck stop, two farms, Calder Field. `world.car` is the plane
+  there (`plane: true`), so everything that asks for "the car" - the reach, the supplies, the final stand - asks for
+  it. What the island has and it lacks (mine, railway, fair, clinic, cemetery) is `null`.
+- **Positions on the wire** stay int16: 1/64 m on the island (+-512 m), 1/32 m on the mainland (+-1024 m).
+  `usePos(world)` (protocol.js) sets which; the server calls it as a tick starts, a message comes in or the world
+  changes, the client as it loads a world. Nothing on the wire says the scale: both ends know the world.
+- **The crossing** (`Game.cross`, `buildMainland`, `arrive`). `driveOff` on the island starts it: the world is
+  cleared, the phase is `CROSSING` with `CROSSING.TIME` on its clock, nobody's commands are run. `CROSSING.SWAP`
+  seconds in - when the cutscene cuts to black - the server sends `S2C.WORLD_RESET` (seed, act 2), and in the next
+  tick builds its own mainland (which holds that game's thread for a moment; the message has left by then),
+  populates it and puts the team down at the bridgehead. It can be skipped once everybody connected has asked
+  (`ACT.SKIP`) and it is `CROSSING.SKIP_AFTER` seconds old.
+- **The checkpoint** (`Game.checkpointAt`): everybody arrives alive - whoever was dead or turned comes back - with
+  what they carried, and at the least the bridgehead cache's floor (`Game.bridgehead`, `BRIDGEHEAD` in acts.js: a
+  pistol and magazine for whoever has no gun, two magazines in reserve per gun carried, a bandage, a knife, a
+  hammer; nothing for whoever has them). What each has then is kept (`game.checkpoint`), and a wipe on the mainland
+  starts the mainland again from it (`restartFromBridge`), not the island. A late joiner joins the act being played:
+  beside the team, or at the act's start, with `starterKit(day)`.
+- **The plane** (`suppliesOf(act)` in defs.js: `PLANE_PARTS` has the shape of `SUPPLIES`, four parts and the fuel by
+  threes, so the global state, the rumours and the objective tracker read either). Its parts lie at set places:
+  `world.partSpots[k].supply` says which part a spot is for (`placeSupplies`).
+- **The runway stand** (`RUNWAY` in acts.js, `updateEscape`): two things to hold in turn - the fuel truck while it
+  pumps (`escape.stage` 0), then the plane while its engines warm (1) - then the plane goes only while no more than
+  `RUNWAY.CLEAR` of the dead stand on the strip ahead of it (`onRunway`, `NOTIFY.RUNWAY_BLOCKED`). Its groups appear
+  round a point `RUNWAY.AHEAD` m down the runway; each stage brings one of the two late bosses.
+- **Nights** carry on across the bridge. On the mainland a night is made up as the fourth at the least
+  (`nightRank`), and its boss is one of the late ones (`nightBoss(seed, night, act)` in nights.js).
+- **The client** loads a world per act (`Game.loadWorld(seed, act)`); `client/game/act.js` holds the act's supply
+  list and words, live, for the HUD, the map and the prompts. The terrain is one vertex buffer drawn in culled
+  pieces. `client/render/bridge.js` builds the bridge from `shared/bridge.js`'s plan; the car the team came in and
+  the plane are `live` props, left out of the static world and drawn by `liveProps` (cutscene.js).
+- **The cutscenes** (`client/game/cutscene.js`): `Crossing` and `Takeoff`, sequences of camera shots in the real
+  world with the game's own models, off the server's clock (the crossing's is the phase's time left). While one is
+  on, `Game.update` takes its camera, hides the HUD, the hands and the players' bodies, and runs no input.
+- **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
+  the save's act.
+- **Debug**: `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff`, `/wipe`.
+- **Tests**: `scripts/test-mainland.js` (the map, on any seeds), `scripts/sim-act2.js` (the whole run in simulation,
+  a wipe, late joiners, a drop and a deploy across the crossing, the nights, what a tick costs on each map);
+  `scripts/clip/act2-shots.js` and `act2-perf.js` (pictures and frame times, through `launchChrome`).
+
 ## Rendering pipeline
 
 - **Frame:** world -> `ScreenPasses` (`render/post.js`: SSAO, sun shafts, flashlight beam, applied in place into
