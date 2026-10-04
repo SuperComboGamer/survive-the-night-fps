@@ -7,24 +7,29 @@
 // While one plays, Game hides the HUD and the hands, takes no input but the skip key, and puts its camera where the
 // shot says (Game.update). The world behind it is the real one: the island for the first shots of the crossing, then
 // - behind a cut to black, when the server says so - the mainland, which is how the mainland gets loaded without a
-// loading screen.
+// loading screen. Every camera is worked out from the world it is in (the road, the bridge's plan, where the city
+// and the runway are), so a shot holds for any seed.
 import * as THREE from 'three';
 import { CROSSING, TAKEOFF_TIME, WORLD } from '../../shared/acts.js';
-import { ZTYPE, ZANIM, SOUND } from '../../shared/defs.js';
+import { ZTYPE, ZANIM, ZOMBIE_DEFS, ZONE } from '../../shared/defs.js';
 import { WATER_LEVEL, PHASE } from '../../shared/constants.js';
-import { BRIDGE } from '../../shared/bridge.js';
+import { BRIDGE, DAMAGED } from '../../shared/bridge.js';
+import { PROPS } from '../../shared/props.js';
+import { COL, footprintContains } from '../../shared/collision.js';
 import { createProp } from '../render/models/props.js';
 import * as PropModels from '../render/models/props.js';
 import { createSurvivor, createZombie } from '../render/models/characters.js';
-import { ACT } from '../../shared/protocol.js';
+import { ACT, ENT } from '../../shared/protocol.js';
 
 const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
 const lerp = (a, b, t) => a + (b - a) * t;
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const _v = new THREE.Vector3();
 const _look = new THREE.Vector3();
+const _q = [];
 
 // The car as it drives: the quest car, repaired. { group, wheels } (wheels: what turns)
 function driveCar() {
@@ -39,18 +44,16 @@ export function flightPlane() {
 
 // Where a survivor sits in the car (its frame: front to -Z): the seat cushions, the driver's first. A seated
 // survivor's hips are SEAT_HIP over their feet (characters.js, the sitting pose), so they are put that far under one.
-const SEATS = PropModels.DRIVE_CAR_SEATS.map((p) => [p.x, p.y, p.z]);
+const SEATS = (PropModels.DRIVE_CAR_SEATS || [{ x: -0.38, y: 0.44, z: -0.14 }, { x: 0.38, y: 0.44, z: -0.14 }, { x: -0.38, y: 0.46, z: 0.62 }, { x: 0.38, y: 0.46, z: 0.62 }]).map((p) => [p.x, p.y, p.z]);
 const SEAT_HIP = 0.42;
 const WHEEL_R = 0.32;
 const LETTERBOX = 0.115; // each bar, as a share of the screen's height
 const ACT_SKIP = ACT.SKIP;
-// the last span coming down is heard with what the engine has: a great tree going over, and timber breaking
-const SPLASH_SOUND = SOUND.TREE_FALL;
-const GROAN_SOUND = SOUND.WOOD_BREAK;
 
 // The two props of the mainland that a cutscene moves, which the static world therefore leaves out (prop.live): the
-// car the team came in, parked where the crossing stops it, and the plane - a wreck until every part is in it,
-// then whole, its propellers turning once the engines are started. Game keeps one of these per world.
+// car the team came in, parked where the crossing stops it, and the plane - a wreck that the parts fitted to it
+// show on, whole once they are all in, its propellers turning once the engines are started. Game keeps one of these
+// per world.
 export function liveProps(scene, world) {
   if (world.kind !== WORLD.MAINLAND) return null;
   const root = new THREE.Group();
@@ -65,11 +68,22 @@ export function liveProps(scene, world) {
   const park = world.props.find((p) => p.type === 'car' && p.live);
   const car = park ? place(driveCar().group, park) : null;
   const at = world.props.find((p) => p.type === 'plane_wreck' && p.live);
-  const wreck = at ? place(createProp('plane_wreck', at.seed), at) : null;
-  const plane = at ? flightPlane() : null;
-  if (plane) place(plane.group, at).visible = false;
+  // one plane that is the wreck and, mended, the one that flies (props.js createQuestPlane); a build without it has
+  // the wreck and the whole plane as two models, one of them shown
+  const quest = at && PropModels.createQuestPlane ? PropModels.createQuestPlane(at.seed) : null;
+  let wreck = null;
+  let plane = null;
+  if (quest) {
+    place(quest.group, at);
+    plane = quest;
+  } else if (at) {
+    wreck = place(createProp('plane_wreck', at.seed), at);
+    plane = flightPlane();
+    place(plane.group, at).visible = false;
+  }
   scene.add(root);
   let spin = 0;
+  let fitted = '';
   return {
     plane,
     // g: the global state. cine: a cutscene is on (the crossing has a car of its own on the road)
@@ -77,8 +91,18 @@ export function liveProps(scene, world) {
       if (car) car.visible = !(cine && g.phase === PHASE.CROSSING);
       if (!plane) return;
       const whole = !!g.suppliesDone || g.phase === PHASE.VICTORY;
-      wreck.visible = !whole;
-      plane.group.visible = whole;
+      if (quest) {
+        // (what has been fitted so far is on it: the global state's five counts)
+        const key = `${g.supplies.join()}:${whole}`;
+        if (key !== fitted) {
+          fitted = key;
+          quest.setParts(g.supplies);
+          quest.setFixed(whole);
+        }
+      } else {
+        wreck.visible = !whole;
+        plane.group.visible = whole;
+      }
       // the engines: turning over from the moment they are started, flat out once they are warm
       if (g.finale && (g.standWarm || g.escapeReady) && !cine) {
         spin += dt * (g.escapeReady ? 40 : 22);
@@ -155,26 +179,77 @@ function onPath(path, s, off, out) {
   out.yaw = Math.atan2(-tx, -tz);
   return out;
 }
+// does anything solid (not a tree: none grows on a road) stand on the roadway at (x, z), where a car would hit it?
+function roadBlocked(world, x, z) {
+  const y = world.heightAt(x, z);
+  for (const c of world.staticGrid.query(x, z, 2.2, _q)) {
+    if (c.flags & (COL.NOBLOCK | COL.TREE)) continue;
+    if (c.y1 > y + 0.35 && c.y0 < y + 1.6 && footprintContains(c, x, z, 1.3)) return true;
+  }
+  return false;
+}
+
+// a gull: a body and two wings that flap about its spine. Its faces are drawn from both sides by being there twice,
+// so it takes the one-sided Lambert program the scene already has (nothing is compiled for it).
+let gullGeo = null;
+function gullParts() {
+  if (gullGeo) return gullGeo;
+  const wing = new THREE.BufferGeometry();
+  // (the right wing, out along +X: root chord 0.26, tip 0.1, span 0.62, a little swept)
+  const v = [0, 0, -0.12, 0.34, 0, -0.1, 0.62, 0, 0.02, 0.3, 0, 0.1, 0, 0, 0.14];
+  wing.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  wing.setIndex([0, 4, 3, 0, 3, 1, 1, 3, 2, 0, 3, 4, 0, 1, 3, 1, 2, 3]);
+  wing.computeVertexNormals();
+  const body = new THREE.BoxGeometry(0.09, 0.08, 0.4);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xc9cdcb });
+  return (gullGeo = { wing, body, mat });
+}
+function createGull() {
+  const { wing, body, mat } = gullParts();
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(body, mat));
+  const r = new THREE.Mesh(wing, mat);
+  const l = new THREE.Mesh(wing, mat);
+  l.scale.x = -1;
+  g.add(r, l);
+  return { group: g, r, l };
+}
 
 // ---------------------------------------------------------------- the crossing
-// Its shots, by the cutscene's clock (s). The first two are on the island; the cut to black between ISLAND_OUT and
-// MAINLAND_IN is where the worlds change (CROSSING.SWAP is inside it).
-const ISLAND_CUT = 3.4; // from the low shot behind the horde to the one the car drives up to
-const ISLAND_OUT = 6.4; // black by here
-const MAINLAND_IN = 9.2; // ...and the bridge from here
-// [from, to, the car's place on the bridge at each end (m from the island's end; see Crossing.plan), name]
+// Its clock (s). Two shots on the island, a cut to black over which the worlds change, six on the bridge.
+//   0          the dead pour down Route 9 after the car as it pulls away, seen from among them
+//   CUT        from the verge further on: the car goes by, and then all of them do
+//   OUT        black, on the thump of the tyres onto the bridge. The server sends the mainland CROSSING.SWAP s in
+//              (it is black by then), the client builds it, and the picture comes back IN_FADE after it is up - at
+//              BRIDGE_IN at the earliest, later on a machine that takes longer over the build. The shots after it run
+//              off the server's clock all the same, so every client is in the same one: a slow one just joins the
+//              first of them late.
+const CUT = 3.6;
+const OUT = 7.1;
+const OUT_FADE = 0.22;
+const BRIDGE_IN = CROSSING.SWAP + 0.9;
+const IN_FADE = 0.45;
 const SHOTS = [
-  { at: MAINLAND_IN, name: 'approach' },
-  { at: 14.2, name: 'deck' },
-  { at: 19.2, name: 'below' },
-  { at: 24.4, name: 'gap' },
-  { at: 31.4, name: 'skyline' },
-  { at: 34.6, name: 'arrival' },
+  { at: BRIDGE_IN, name: 'approach' }, // off the side, high: the first spans, the sea a long way down
+  { at: 13.4, name: 'damage' }, // on the deck: through the span whose top steel is down across a lane
+  { at: 18.2, name: 'below' }, // from the water, beside a pier
+  { at: 22.6, name: 'gap' }, // the broken span, from out over its missing side: the car creeps along what is left
+  { at: 28.8, name: 'skyline' }, // alongside, rising: the mainland and what is left of Port Calder, out of the haze
+  { at: 34.4, name: 'arrival' }, // from the bluff: off the last span, and it goes into the sea behind them
   { at: CROSSING.TIME, name: 'end' },
 ];
 const FALL_AT = 37.0; // the last span starts to go
-const FALL_FOR = 2.3;
-const HORDE = 14;
+const FALL_FOR = 2.4;
+const TOP_SPEED = 17; // m/s down Route 9
+const HORDE = 54;
+const CAM_BACK = 21; // shot one's camera starts this far behind the car, CAM_OFF m off the middle of the road
+const CAM_OFF = -0.9;
+const VERGE = 4.3; // ...and shot two's stands this far off it, on the verge
+const LENS_ROOM = 1; // none of the dead runs nearer than this past either
+const GULLS = 8;
+const ROAD_NEED = 130; // m of clear road the island's two shots take
+// what the horde after the car is made of: [type, how many of every HORDE]. The rest are runners.
+const HORDE_MIX = [[ZTYPE.WALKER, 14], [ZTYPE.DOG, 4], [ZTYPE.LEAPER, 3], [ZTYPE.SPITTER, 2], [ZTYPE.BOOMER, 2], [ZTYPE.BOSS_ABOMINATION, 1]];
 
 export class Crossing {
   constructor(game) {
@@ -187,6 +262,9 @@ export class Crossing {
     this.fogMul = 1;
     this.far = 0; // how far the static world is drawn (0: as the fog has it)
     this.skipSent = false;
+    this.frame = 0;
+    this.up = 0; // frames drawn since the mainland came up
+    this.reveal = 0; // how far the picture is back from black after the worlds changed (0..1)
     const car = (this.car = driveCar());
     car.group.traverse((o) => o.isMesh && (o.castShadow = true));
     game.scene.add(car.group);
@@ -206,7 +284,8 @@ export class Crossing {
       this.riders.push(sv);
     });
     this.horde = [];
-    this.engine = game.audio.createLoop?.('generator', 0, 0, 0) || null;
+    this.gulls = [];
+    this.engine = game.audio.createLoop?.('car', 0, 0, 0) || null;
     this.rattle = null;
     this.onKey = (e) => {
       if (e.code !== 'Space' && e.code !== 'Enter') return;
@@ -221,11 +300,7 @@ export class Crossing {
   // the world the shots are in: the island first, then (Game.onWorld) the mainland
   setWorld(world) {
     this.world = world;
-    for (const z of this.horde) {
-      this.g.scene.remove(z.view.object);
-      z.view.dispose();
-    }
-    this.horde.length = 0;
+    this.clearHorde();
     this.last = null;
     if (world.kind === WORLD.ISLAND) this.planIsland(world);
     else this.planMainland(world);
@@ -233,57 +308,121 @@ export class Crossing {
   worldChanged() {
     this.setWorld(this.g.world);
   }
+  clearHorde() {
+    for (const z of this.horde) {
+      this.g.scene.remove(z.view.object);
+      z.view.dispose();
+    }
+    this.horde.length = 0;
+  }
 
-  // The island's shots run down Route 9 from the breakdown, away from the car the team could not have fixed any
-  // sooner (it stays where it stood, behind the camera: the one in the shot is the same car, running).
+  // The island's shots run down Route 9, away from the breakdown: a stretch of ROAD_NEED m with nothing standing on
+  // it (a roadblock, a queue of wrecks at the checkpoint), on whichever side of the breakdown has one, starting far
+  // enough from the car the team could not have fixed any sooner that it is behind the camera (the one in the shot
+  // is the same car, running). The horde is put down on that stretch behind it.
   planIsland(world) {
     const hw = world.highway;
     const p = hw.pts;
+    const n = p.length / 2;
     let best = 0;
     let bd = Infinity;
-    for (let i = 0; i < p.length / 2; i++) {
+    for (let i = 0; i < n; i++) {
       const d = (p[i * 2] - world.car.x) ** 2 + (p[i * 2 + 1] - world.car.z) ** 2;
       if (d < bd) {
         bd = d;
         best = i;
       }
     }
-    // the way with more road ahead of it
-    const dir = best < p.length / 4 ? 1 : -1;
-    this.road = roadPath(hw, best, dir);
+    const c = { x: 0, z: 0, yaw: 0 };
+    let pick = null;
+    // (the way with more road ahead of it first)
+    for (const dir of best < n / 2 ? [1, -1] : [-1, 1]) {
+      const path = roadPath(hw, best, dir);
+      for (let start = 62; start <= 142 && !pick; start += 20) {
+        if (path.len < start + ROAD_NEED) break;
+        let clear = true;
+        for (let s = start - 30; s <= start + ROAD_NEED - 4 && clear; s += 2) clear = !roadBlocked(world, onPath(path, s, 0, c).x, c.z);
+        if (clear) pick = { path, start };
+      }
+      if (pick) break;
+    }
+    // (no such stretch on this island: the longer way, as it is)
+    if (!pick) pick = { path: roadPath(hw, best, best < n / 2 ? 1 : -1), start: 62 };
+    this.road = pick.path;
+    this.s0 = pick.start; // where the car is as the first shot opens
     const rnd = (k) => {
       const s = Math.sin((world.seed % 1000) * 12.9898 + k * 78.233) * 43758.5453;
       return s - Math.floor(s);
     };
-    for (let k = 0; k < HORDE; k++) {
-      const type = rnd(k) < 0.7 ? ZTYPE.RUNNER : ZTYPE.WALKER;
+    // who is in the crowd
+    const types = [];
+    for (const [type, count] of HORDE_MIX) for (let k = 0; k < count; k++) types.push(type);
+    while (types.length < HORDE) types.push(ZTYPE.RUNNER);
+    const half = hw.width + 2.4; // the roadway and its verges (no tree stands this near the highway)
+    // (not through either camera: whoever would run over one runs past it)
+    const keepOff = (off) => {
+      for (const at of [VERGE, CAM_OFF]) if (Math.abs(off - at) < LENS_ROOM) off = at + (off < at || at === VERGE ? -LENS_ROOM : LENS_ROOM);
+      return off;
+    };
+    types.forEach((type, k) => {
+      const def = ZOMBIE_DEFS[type];
+      const boss = !!def.boss;
+      const fast = def.speed > 3.5;
       const view = createZombie(type, k * 7 + 3);
+      view.object.traverse((o) => o.isMesh && (o.castShadow = true));
       this.g.scene.add(view.object);
-      this.horde.push({ view, s0: -14 + rnd(k + 20) * 30, off: (rnd(k + 40) - 0.5) * 6.4, gap: 9 + rnd(k + 80) * 26, v: type === ZTYPE.RUNNER ? 5.4 + rnd(k + 60) * 1.4 : 2.1 + rnd(k + 60) * 0.5, anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
-    }
+      this.horde.push({
+        view,
+        // shot one: where it is behind the car as it opens (the quick ones up at the bumper, the slow ones already
+        // dropping back, the big one a long way behind), and how fast it comes
+        back: boss ? 30 : fast ? 3.4 + rnd(k + 20) ** 1.3 * 21 : 10 + rnd(k + 20) * 20,
+        off: boss ? 0.4 : keepOff((rnd(k + 40) * 2 - 1) * half),
+        v: def.speed * (boss ? 1.3 : 0.94 + rnd(k + 60) * 0.16),
+        // shot two: how far behind the car it is at the cut
+        gap: boss ? 46 : fast ? 4 + rnd(k + 80) ** 1.4 * 24 : 24 + rnd(k + 80) * 22,
+        anim: def.speed > 3 || boss ? ZANIM.RUN : ZANIM.WALK,
+        weave: rnd(k + 100) * 6.28,
+      });
+    });
   }
 
   // The mainland's shots are on the bridge. Each drives the car over a stretch of it picked off the plan: the
-  // first spans out of the haze, past a wreck, over a pier, through the broken span, towards the skyline, and off
-  // the last span onto the bluff, where it stops beside the road and the span behind it goes into the water.
+  // first spans out of the haze, through the span whose top steel is down, past a pier seen from the water,
+  // along what is left of the broken span, towards the skyline, and off the last span onto the bluff, where it
+  // stops and the span behind it goes into the sea.
   planMainland(world) {
     const br = world.bridge;
-    const first = br.wrecks.find((w) => w.x - br.x0 > 110) || br.wrecks[0];
+    const S = BRIDGE.SPAN;
     const bs = br.spans[br.broken];
-    const park = world.props.find((pr) => pr.type === 'car') || { x: br.x1 + 26, y: br.deckY, z: br.z + 2, ry: -Math.PI / 2 };
+    const ds = br.spans[br.damaged] || br.spans[Math.min(br.spans.length - 1, br.broken + 2)];
+    const park = world.props.find((pr) => pr.type === 'car' && pr.live) || { x: br.x1 + 24, y: br.deckY, z: br.z, ry: -Math.PI / 2 };
     this.park = park;
+    const bx = bs.x0 - br.x0; // (how far along the bridge the broken span begins)
+    const dx = ds.x0 - br.x0;
     this.stretch = {
-      approach: [18, 78],
-      deck: [first ? first.x - br.x0 - 40 : 130, first ? first.x - br.x0 + 22 : 190],
-      below: [bs.x1 - br.x0 + 34, bs.x1 - br.x0 + 92], // (the span after the broken one, seen from the water)
-      gap: [bs.x0 - br.x0 - 6, bs.x1 - br.x0 + 8],
-      skyline: [br.len - 2 * BRIDGE.SPAN + 6, br.len - BRIDGE.SPAN - 6],
-      arrival: [br.len - BRIDGE.SPAN + 12, br.len + Math.hypot(park.x - br.x1, park.z - br.z)],
+      approach: [14, Math.max(60, dx - 6)],
+      damage: [dx - 4, dx + DAMAGED[1] * BRIDGE.PANEL + 18],
+      below: [bx - S + 6, bx - 8], // (the span before the broken one)
+      gap: [bx - 6, bx + S + 8],
+      skyline: [br.len - 2 * S + 4, br.len - S - 4],
+      arrival: [br.len - S + 10, br.len + Math.hypot(park.x - br.x1, park.z - br.z)],
     };
-    // (the broken span is seen from its lost side, across the gap)
     this.lost = br.lost;
+    this.fell = ds.lost || 1;
+    this.ds = ds;
+    const city = world.city || world.zoneById?.[ZONE.CITY] || { x: br.x1 + 380, z: br.z };
+    this.city = { x: city.x, y: world.heightAt(city.x, city.z), z: city.z };
     this.g.bridge?.setFall(0);
     this.rattle ||= this.g.audio.createLoop?.('handcar', 0, 0, 0) || null;
+    this.up = 0;
+    // gulls over the bridge
+    if (!this.gulls.length) {
+      for (let k = 0; k < GULLS; k++) {
+        const gull = createGull();
+        this.g.scene.add(gull.group);
+        this.gulls.push({ ...gull, r0: 9 + (k * 5.3) % 17, h: BRIDGE.TRUSS + 2.5 + ((k * 3.7) % 9), w: (k % 2 ? 1 : -1) * (0.3 + ((k * 0.17) % 0.3)), ph: k * 1.9 });
+      }
+    }
   }
 
   // the server's clock: how far into the crossing it is (Game reads it off the global state)
@@ -294,7 +433,7 @@ export class Crossing {
   // the car at s metres from the island's end of the bridge; past the abutment, on along the ground to where it parks
   carOnBridge(s, out) {
     const br = this.world.bridge;
-    if (s <= br.len) return br.carAt(s, out);
+    if (s <= br.len) return br.carAt(Math.max(0, s), out);
     const park = this.park;
     const run = Math.hypot(park.x - br.x1, park.z - br.z);
     const k = smooth(0, 1, (s - br.len) / run);
@@ -305,11 +444,31 @@ export class Crossing {
     return out;
   }
 
+  // is (x, z) on the deck clear of every wreck on it (with `pad` to spare)? A camera on the roadway asks.
+  deckClear(x, z, pad = 0.9) {
+    const br = this.world.bridge;
+    for (const w of br.wrecks) {
+      const [wide, , long] = PROPS[w.type]?.size || [2, 0, 5];
+      // (a wreck stands along the bridge, near enough: its length is along x)
+      if (Math.abs(x - w.x) < long / 2 + pad && Math.abs(z - (br.z + w.lz)) < wide / 2 + pad) return false;
+    }
+    return true;
+  }
+
+  // how far down Route 9 the car is, t seconds in (m from where it stood as the shot opened): it pulls away at
+  // 4 m/s and is doing TOP_SPEED by the cut
+  carRun(t) {
+    const ta = Math.min(t, 2.9);
+    return 4 * ta + 2.25 * ta * ta + Math.max(0, t - 2.9) * TOP_SPEED;
+  }
+
   // One frame: moves the clock on, puts the car where the shot has it and `cam` where the shot looks from.
   // (pin: look-dev - the clock held at that moment, whatever the server's says)
   update(dt, cam) {
     this.t += dt;
-    if (this.pin !== undefined) this.t = this.pin;
+    const pinned = this.pin !== undefined;
+    if (pinned) this.t = this.pin;
+    this.frame++;
     const t = this.t;
     const g = this.g;
     const w = this.world;
@@ -320,67 +479,90 @@ export class Crossing {
     this.fogMul = 1;
     this.far = 0;
     if (w.kind === WORLD.ISLAND) {
-      // the car pulls away: 4 m/s as the shot opens, up to 17
-      const ta = Math.min(t, 2.9);
-      const s = 16 + 4 * ta + 2.25 * ta * ta + Math.max(0, t - 2.9) * 17;
-      onPath(this.road, s, 0, P);
+      const run = this.carRun(t);
+      onPath(this.road, this.s0 + run, 0, P);
       P.y = w.heightAt(P.x, P.z);
       P.pitch = 0;
       const c = { x: 0, z: 0, yaw: 0 };
-      if (t < ISLAND_CUT) {
-        // low on the road just past where the car stood, the horde coming by on both sides
-        onPath(this.road, 5 + t * 0.5, -1.6, c);
-        cam.position.set(c.x, w.heightAt(c.x, c.z) + 0.55 + t * 0.05, c.z);
-        _look.set(P.x, P.y + 0.9, P.z);
-        this.fov = 52;
+      const cutRun = this.carRun(CUT);
+      const camS = this.s0 + cutRun + 12; // (shot two: the verge the car is about to pass)
+      if (t < CUT) {
+        // low on the road among them, moving up it: the dead come past the lens on both sides after the car
+        onPath(this.road, this.s0 - CAM_BACK + t * 1.4, CAM_OFF, c);
+        cam.position.set(c.x, w.heightAt(c.x, c.z) + 0.8 + t * 0.06, c.z);
+        _look.set(P.x, P.y + 1.1, P.z);
+        this.fov = 50;
       } else {
-        // on the verge well down the road: the car comes up to it, the dead a long way behind and not giving up
-        onPath(this.road, 122, 3.4, c);
-        cam.position.set(c.x, w.heightAt(c.x, c.z) + 1.25, c.z);
-        _look.set(P.x, P.y + 0.8, P.z);
-        this.fov = 34;
+        // down on the verge further on, looking back up the road: the car comes at it and is gone past, and behind it
+        // the whole road is full of them, the first of them going by as the picture cuts
+        onPath(this.road, camS, VERGE, c);
+        cam.position.set(c.x, w.heightAt(c.x, c.z) + 0.75, c.z);
+        const back = onPath(this.road, camS - 30, 0.4, { x: 0, z: 0, yaw: 0 });
+        _look.set(back.x, w.heightAt(back.x, back.z) + 1.25, back.z);
+        this.fov = 40;
       }
       cam.lookAt(_look);
-      fade = Math.max(smooth(0.6, 0, t), smooth(ISLAND_OUT - 0.7, ISLAND_OUT, t));
-      this.far = 260;
-      for (const z of this.horde) {
-        // (in the second shot they are the ones still on its tail: the cut skips the stretch where it left the rest)
-        const zs = t < ISLAND_CUT ? z.s0 + z.v * t : s - z.gap - (17 - z.v) * (t - ISLAND_CUT) * 0.5;
-        onPath(this.road, zs, z.off, c);
-        z.view.object.position.set(c.x, w.heightAt(c.x, c.z), c.z);
-        z.view.object.rotation.y = c.yaw;
-        z.view.update(dt, z.anim, z.v, t, true);
+      // (a hand-held camera: they are running past it)
+      cam.position.y += Math.sin(t * 23) * 0.012 + Math.sin(t * 13.7) * 0.01;
+      cam.rotation.z += Math.sin(t * 9.1) * 0.004;
+      fade = Math.max(smooth(0.5, 0, t), smooth(OUT - OUT_FADE, OUT, t));
+      this.far = 280;
+      const cx = cam.position.x;
+      const cz = cam.position.z;
+      this.horde.forEach((z, k) => {
+        // (in the second shot they are the ones on its tail as the picture cut: it skips where the car left the rest)
+        const zs = t < CUT ? this.s0 - z.back + z.v * t : this.s0 + cutRun - z.gap + z.v * (t - CUT);
+        onPath(this.road, zs, z.off + Math.sin(t * 1.3 + z.weave) * 0.35, c);
+        const o = z.view.object;
+        o.position.set(c.x, w.heightAt(c.x, c.z), c.z);
+        o.rotation.y = c.yaw;
+        // the far ones are posed every other frame
+        const farOff = (c.x - cx) ** 2 + (c.z - cz) ** 2 > 40 * 40;
+        if (!farOff || ((this.frame + k) & 1) === 0) z.view.update(farOff ? dt * 2 : dt, z.anim, z.v, t, true);
+      });
+      if (t >= OUT && !pinned && !this.thumped) {
+        // (the cut is on the sound of the tyres onto the bridge's first joint)
+        this.thumped = true;
+        g.audio.playLocal?.('deck_thump', { volume: 1.6 });
       }
     } else {
+      this.up++;
+      const br = w.bridge;
+      const D = BRIDGE.DECK;
       // the morning after: the sun is just up over the mainland as the car crosses, and climbs as it goes
-      this.cycle = lerp(0.008, 0.05, smooth(MAINLAND_IN, CROSSING.TIME, t));
+      this.cycle = lerp(0.008, 0.05, smooth(BRIDGE_IN, CROSSING.TIME, t));
       this.fogMul = 0.5;
       this.far = 520;
       let k = 0;
       while (k < SHOTS.length - 2 && SHOTS[k + 1].at <= t) k++;
       const shot = SHOTS[k];
-      const u = Math.max(0, Math.min(1, (t - shot.at) / (SHOTS[k + 1].at - shot.at)));
+      const u = clamp01((t - shot.at) / (SHOTS[k + 1].at - shot.at));
       const [s0, s1] = this.stretch[shot.name];
-      const br = w.bridge;
-      // (through the gap it slows to a crawl and picks up again; coming off the bridge it brakes to a stop)
+      // (along the broken span it slows to a crawl and picks up again; coming off the bridge it brakes to a stop)
       const ease = shot.name === 'gap' ? u * 0.55 + 0.45 * (u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u)) : shot.name === 'arrival' ? 1 - (1 - u) * (1 - u) : u;
       this.carOnBridge(lerp(s0, s1, ease), P);
       const lz = P.z - br.z;
-      const D = BRIDGE.DECK;
       if (shot.name === 'approach') {
         // high off the side of the bridge: the trusses going away into the haze, the sea a long way down
-        cam.position.set(br.x0 + 64 + u * 9, br.deckY + 12 - u * 2, br.z - 31);
-        _look.set(P.x + 22, br.deckY + 2.5, br.z);
+        const mid = br.x0 + (s0 + s1) / 2;
+        cam.position.set(mid - 6 + u * 9, br.deckY + 13 - u * 2.5, br.z - 33);
+        _look.set(P.x + 20, br.deckY + 2.5, br.z);
         this.fov = 44;
-      } else if (shot.name === 'deck') {
-        // on the roadway ahead of it, at the height of its bumper, as it comes round a wreck
-        const ahead = br.carAt(s1 + 9, { x: 0, y: 0, z: 0, yaw: 0 });
-        cam.position.set(ahead.x, ahead.y + 0.42, br.z - Math.sign(lz || 1) * (D / 2 - 0.9));
-        _look.set(P.x, P.y + 0.75, P.z);
-        this.fov = 40;
+      } else if (shot.name === 'damage') {
+        // on the roadway past the fallen steel, low, on the side it fell: the chord lying along the deck, the struts
+        // hanging, the car coming through under them in the lane that is left
+        const ds = this.ds;
+        let cx = ds.x0 + DAMAGED[1] * BRIDGE.PANEL + 9;
+        let cy = br.deckY + 0.55;
+        let czz = br.z + this.fell * 1.7;
+        if (!this.deckClear(cx, czz)) czz = br.z + this.fell * 0.2;
+        if (!this.deckClear(cx, czz)) cy = br.deckY + 3; // (a wreck stands there after all: look over it)
+        cam.position.set(cx + u * 1.5, cy + br.deckSag(cx), czz);
+        _look.set(lerp(ds.x0 + DAMAGED[0] * BRIDGE.PANEL, P.x, 0.6), br.deckY + 1.6, br.z + lz * 0.5);
+        this.fov = 43;
       } else if (shot.name === 'below') {
         // from down by the water, beside a pier: the whole height of the thing, and the car small on top of it
-        cam.position.set(lerp(br.x0 + s0, br.x0 + s1, 0.42), WATER_LEVEL + 1.3, br.z + (lz < 0 ? -44 : 44)); // (the side its lane is on)
+        cam.position.set(br.x0 + lerp(s0, s1, 0.45), WATER_LEVEL + 1.3, br.z + (lz < 0 ? -44 : 44)); // (the side its lane is on)
         _look.set(P.x, br.deckY - 1, br.z);
         this.fov = 38;
       } else if (shot.name === 'gap') {
@@ -390,44 +572,84 @@ export class Crossing {
         _look.set(P.x + 2, P.y + 0.5, P.z);
         this.fov = 36;
       } else if (shot.name === 'skyline') {
-        // over the roof from behind: the mainland, and what is left of Port Calder, coming up out of the fog
-        cam.position.set(P.x - 7.5, P.y + 2.9 + u * 0.6, P.z + 1.4);
-        _look.set(P.x + 60, P.y + 7, br.z + (w.city.z - br.z) * 0.25);
-        this.fov = 47;
-        this.fogMul = lerp(0.36, 0.17, u);
-        this.far = 900;
+        // alongside it, out off the bridge on the city's side and rising: the truss going by in front, and beyond it
+        // the mainland - what is left of Port Calder standing out of the haze, the smoke over it, the sun behind
+        const side = this.city.z >= br.z ? 1 : -1;
+        cam.position.set(P.x - 27 + u * 5, br.deckY + 3.4 + u * 7.5, br.z + side * (D / 2 + 5 + u * 3));
+        _look.set(this.city.x, this.city.y + 20 - u * 4, this.city.z);
+        // (the car kept in the picture, down in its corner)
+        _look.lerp(_v.set(P.x + 40, br.deckY + 2, br.z + side * 4), 0.1);
+        this.fov = lerp(35, 30, u);
+        this.fogMul = lerp(0.2, 0.075, smooth(0, 0.7, u));
+        this.far = 1100;
       } else {
         // from the bluff, beside the road off the bridge: the car comes off the last span and stops, and the span goes
-        cam.position.set(br.x1 + 30, br.deckY + 1.5, br.z + 9.5);
-        _look.set(lerp(P.x, br.x1 - 26, smooth(0.55, 0.8, u)), br.deckY + lerp(0.9, -1.5, smooth(0.6, 1, u)), br.z);
+        const ax = br.x1 + 30;
+        const az = br.z + 9.5;
+        cam.position.set(ax, Math.max(br.deckY, w.heightAt(ax, az)) + 1.5, az);
+        _look.set(lerp(P.x, br.x1 - 26, smooth(0.5, 0.75, u)), br.deckY + lerp(0.9, -1.5, smooth(0.6, 1, u)), br.z);
         this.fov = 41;
         this.fogMul = 0.34;
       }
       cam.lookAt(_look);
-      // the bridge moves under it: a judder on the roadway shots
-      if (shot.name === 'deck' || shot.name === 'skyline') cam.position.y += Math.sin(t * 31) * 0.006 + Math.sin(t * 17.3) * 0.004;
-      // cuts: out of black as the bridge comes up, and a few frames of it at the end
-      fade = Math.max(smooth(MAINLAND_IN + 1.3, MAINLAND_IN, t), smooth(CROSSING.TIME - 0.5, CROSSING.TIME, t));
-      // the last span: it hangs for a moment after the car is off it, then it goes, hinged on its pier
-      const fall = Math.max(0, Math.min(1, (t - FALL_AT) / FALL_FOR));
+      // the bridge moves under it: a judder on the shots that stand on it
+      if (shot.name === 'damage') cam.position.y += Math.sin(t * 31) * 0.006 + Math.sin(t * 17.3) * 0.004;
+      // out of black once the mainland is up and has drawn (a couple of frames), and not before the shot is due
+      if (pinned) this.reveal = t >= BRIDGE_IN ? 1 : 0;
+      else if (this.up > 3 && t >= BRIDGE_IN) this.reveal = Math.min(1, this.reveal + Math.min(dt, 0.05) / IN_FADE);
+      fade = Math.max(1 - this.reveal, smooth(CROSSING.TIME - 0.5, CROSSING.TIME, t));
+      if (this.reveal > 0 && !this.thumped2 && !pinned) {
+        this.thumped2 = true;
+        g.audio.playLocal?.('deck_thump', { volume: 1.2 });
+      }
+      // the last span: it hangs for a moment after the car is off it, groaning, then it goes, hinged on its pier
+      const fall = clamp01((t - FALL_AT) / FALL_FOR);
       g.bridge?.setFall(fall * fall);
+      if (!pinned && t >= FALL_AT - 1.1 && !this.groaned) {
+        this.groaned = true;
+        g.audio.playLocal?.('bridge_groan');
+      }
+      if (!pinned && t >= FALL_AT + 0.75 && !this.fellSound) {
+        // (the sound's own bang is the bearings going; a second on, as the deck meets the water, its crash)
+        this.fellSound = true;
+        g.audio.playLocal?.('bridge_fall');
+      }
       if (fall > 0 && fall < 1 && g.bridge) {
         const end = g.bridge.fallEnd(_v);
         if (end.y < WATER_LEVEL + 1 && !this.splashed) {
           this.splashed = true;
-          for (let i = -4; i <= 4; i++) g.effects.splash(end.x - 4, WATER_LEVEL, br.z + i * 1.2, 2.2);
-          g.audio.play?.(SPLASH_SOUND, { x: end.x, y: WATER_LEVEL, z: br.z });
-          g.camShake = 1.4;
-        }
-        if (!this.groaned) {
-          this.groaned = true;
-          g.audio.play?.(GROAN_SOUND, { x: br.x1 - 20, y: br.deckY, z: br.z });
+          for (let i = -5; i <= 5; i++) {
+            g.effects.splash(end.x - 4, WATER_LEVEL, br.z + i * 1.1, 2.4);
+            g.effects.splash(end.x - 22 + i * 3, WATER_LEVEL, br.z + (i % 2 ? 5.2 : -5.2), 1.8);
+          }
+          g.camShake = 1.6;
         }
       }
-      if (t < MAINLAND_IN + 2.6 && t > MAINLAND_IN - 0.4) title = 'THE NARROWS BRIDGE';
+      if (t < BRIDGE_IN + 3 && this.reveal > 0.5) title = 'THE NARROWS BRIDGE';
+      // the tyres over the joints in the deck (every other panel point, harder on the ones over a pier)
+      const joint = Math.floor((P.x - br.x0) / (BRIDGE.PANEL * 2));
+      if (this.joint !== undefined && joint === this.joint + 1 && P.x < br.x1 && fade < 0.5 && !pinned) {
+        const d = cam.position.distanceTo(_v.set(P.x, P.y, P.z));
+        const overPier = joint % (BRIDGE.SPAN / (BRIDGE.PANEL * 2)) === 0;
+        g.audio.playLocal?.('deck_thump', { volume: (overPier ? 1 : 0.5) * clamp01(1.15 - d / 70) });
+      }
+      this.joint = joint;
+      // the gulls, wheeling over where the car is
+      this.gulls.forEach((gl) => {
+        const a = t * gl.w + gl.ph;
+        const gx = P.x + 16 + Math.cos(a) * gl.r0;
+        const gz = br.z + Math.sin(a) * gl.r0 * 0.8;
+        gl.group.position.set(gx, br.deckY + gl.h + Math.sin(t * 0.6 + gl.ph) * 1.2, gz);
+        gl.group.rotation.set(0, Math.atan2(Math.sin(a) * gl.w, -Math.cos(a) * gl.w * 0.8), Math.sign(gl.w) * 0.3); // (nose along its circle, banked into it)
+        // a few beats, then a glide
+        const beat = Math.sin(t * 7.5 + gl.ph * 3) * (0.25 + 0.45 * smooth(-0.2, 0.4, Math.sin(t * 0.9 + gl.ph)));
+        gl.r.rotation.z = beat;
+        gl.l.rotation.z = -beat;
+        gl.group.visible = fade < 1;
+      });
     }
     // between the two worlds: black, the engine still running
-    if (t >= ISLAND_OUT && (w.kind === WORLD.ISLAND || t < MAINLAND_IN)) fade = 1;
+    if (w.kind === WORLD.ISLAND && t >= OUT) fade = 1;
     if (Math.abs(cam.fov - this.fov) > 0.01) {
       cam.fov = this.fov;
       cam.updateProjectionMatrix();
@@ -437,22 +659,22 @@ export class Crossing {
     car.position.set(P.x, P.y, P.z);
     car.rotation.set(0, P.yaw, 0);
     const moved = this.last ? Math.hypot(P.x - this.last.x, P.z - this.last.z) : 0;
-    const speed = dt > 0 ? Math.min(30, moved / dt) : 0;
+    const speed = dt > 0 && moved < 4 ? Math.min(30, moved / dt) : this.speed || 0; // (a cut is no burst of speed)
+    this.speed = speed;
     this.last = { x: P.x, z: P.z };
-    this.roll += moved / WHEEL_R;
+    if (moved < 4) this.roll += moved / WHEEL_R;
     for (const wl of this.car.wheels) wl.rotation.x = -this.roll;
     this.riders.forEach((sv, k) => sv.update(dt, { speed: 0, sit: true, onGround: true, pitch: 0, time: t + k * 0.37 }));
     // the engine, by how fast it is going; on the bridge, the deck plates under the wheels
-    const vol = fade >= 1 ? 0.5 : 1;
     if (this.engine) {
       this.engine.setPosition(P.x, P.y + 0.6, P.z);
-      this.engine.setRate(0.85 + speed * 0.055);
-      this.engine.setVolume(vol * (0.6 + speed * 0.03));
+      this.engine.setRate(0.62 + speed * 0.034);
+      this.engine.setVolume((fade >= 1 ? 0.45 : 1) * (0.55 + speed * 0.028));
     }
     if (this.rattle) {
       this.rattle.setPosition(P.x, P.y, P.z);
       this.rattle.setRate(0.7 + speed * 0.04);
-      this.rattle.setVolume(w.kind === WORLD.MAINLAND && fade < 1 && P.x < w.bridge.x1 ? Math.min(1, speed * 0.07) : 0);
+      this.rattle.setVolume(w.kind === WORLD.MAINLAND && fade < 1 && P.x < w.bridge.x1 ? Math.min(0.7, speed * 0.05) : 0);
     }
     const gl = g.global;
     const can = t >= CROSSING.SKIP_AFTER;
@@ -466,10 +688,8 @@ export class Crossing {
     this.screen.dispose();
     this.engine?.stop();
     this.rattle?.stop();
-    for (const z of this.horde) {
-      this.g.scene.remove(z.view.object);
-      z.view.dispose();
-    }
+    this.clearHorde();
+    for (const gl of this.gulls) this.g.scene.remove(gl.group);
     for (const sv of this.riders) {
       this.car.group.remove(sv.object);
       sv.dispose();
@@ -480,9 +700,18 @@ export class Crossing {
 }
 
 // ---------------------------------------------------------------- the take-off
-// The plane is warm and somebody has taken it up: it runs down the runway, lifts, and the airfield and the dead on
-// it fall away behind. Three shots in TAKEOFF_TIME seconds, then the end screen.
-const ROTATE_AT = 5.4; // s: the wheels leave the ground
+// The plane is warm and somebody has taken it up. Four shots in TAKEOFF_TIME seconds, then the end screen:
+//   0          off its nose as the engines come up and it starts to roll, the dead coming down the runway behind it
+//   RUN_CUT    beside the runway, tracking it as it gathers speed
+//   OVER_CUT   low on the centre line ahead: it rotates and goes over the lens, wheels up
+//   AWAY_CUT   from off its wing in the air: the airfield falling away under it, Port Calder beyond, and it banks
+//              away over the mainland
+const RUN_CUT = 3.2;
+const OVER_CUT = 6.0;
+const AWAY_CUT = 9.2;
+const ROTATE_AT = 7.4; // s: the wheels leave the ground
+const ACCEL = 4.2; // m/s2 down the runway
+const STRIP_DEAD = 10; // the dead drawn on the runway behind it, when the game has too few of its own there
 export class Takeoff {
   // plane: { group, props } (Game's own: the repaired plane, standing where the wreck stood)
   constructor(game, plane) {
@@ -497,48 +726,96 @@ export class Takeoff {
     this.spin = 0;
     this.home = plane.group.position.clone();
     this.loop = game.audio.createLoop?.('plane', this.home.x, this.home.y + 2, this.home.z) || null;
+    const w = game.world;
+    const city = w.city || w.zoneById?.[ZONE.CITY] || { x: this.home.x - 600, z: this.home.z };
+    this.city = { x: city.x, z: city.z };
+    // which way the city is from the runway: the last shot looks that way, and the plane banks towards it
+    this.west = Math.sign(city.x - this.home.x) || -1;
+    // the dead it leaves behind: the game's own, wherever the stand left them; a few more on the runway if those
+    // are not there (the plane is taken up with the runway clear, so there may be none in sight)
+    this.dead = [];
+    let near = 0;
+    for (const e of game.entities.ents.values()) if (e.kind === ENT.ZOMBIE && !e.dead && Math.hypot(e.rx - this.home.x, e.rz - this.home.z) < 90) near++;
+    if (near < 6) {
+      for (let k = 0; k < STRIP_DEAD; k++) {
+        const type = k % 3 ? ZTYPE.RUNNER : ZTYPE.WALKER;
+        const view = createZombie(type, k * 11 + 5);
+        game.scene.add(view.object);
+        // (behind the plane and off its line, both sides of the runway)
+        this.dead.push({ view, x: this.home.x + (k % 2 ? 1 : -1) * (5 + ((k * 2.3) % 6)), z: this.home.z + 12 + ((k * 7.7) % 34), v: ZOMBIE_DEFS[type].speed, anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
+      }
+    }
   }
   worldChanged() {}
   sync(t) {
-    if (Math.abs(t - this.t) > 0.35) this.t = t;
+    if (this.pin === undefined && Math.abs(t - this.t) > 0.35) this.t = t;
   }
   update(dt, cam) {
     this.t += dt;
     if (this.pin !== undefined) this.t = this.pin; // (look-dev)
     const t = Math.min(this.t, TAKEOFF_TIME);
     const p = this.plane.group;
-    const car = this.g.world.car;
-    // down the runway (north: -Z), faster and faster; then up
-    const run = 0.5 * 5.2 * Math.min(t, ROTATE_AT) ** 2 + Math.max(0, t - ROTATE_AT) * 5.2 * ROTATE_AT;
+    const w = this.g.world;
+    const car = w.car;
+    const H = this.home;
+    // down the runway (north: -Z), faster and faster; then up, and a bank away towards the city
+    const run = 0.5 * ACCEL * Math.min(t, ROTATE_AT) ** 2 + Math.max(0, t - ROTATE_AT) * ACCEL * ROTATE_AT;
     const air = Math.max(0, t - ROTATE_AT);
-    const climb = 1.4 * air * air + 2.2 * air;
-    p.position.set(this.home.x, this.home.y + climb, this.home.z - run);
-    p.rotation.set(Math.min(0.2, air * 0.13), car.ry, Math.sin(t * 1.9) * 0.012 * Math.min(1, air));
+    const climb = 1.1 * air * air + 2.4 * air;
+    const bank = smooth(1.6, 5, air) * 0.3 * -this.west; // (a left bank is a positive roll for a nose to -Z)
+    p.position.set(H.x + this.west * smooth(1.6, 6, air) * 9, H.y + climb, H.z - run);
+    p.rotation.set(Math.min(0.21, smooth(-0.5, 1.4, t - ROTATE_AT + 0.5) * 0.21), car.ry + bank * 0.35, bank + Math.sin(t * 1.9) * 0.012 * Math.min(1, air));
     this.spin += dt * 46;
     for (const pr of this.plane.props) pr.rotation.z = this.spin;
-    if (t < 3.6) {
-      // off the wing tip as it starts to roll
-      cam.position.set(this.home.x + 13, this.home.y + 1.6, this.home.z - 9 - t * 1.5);
-      _look.set(p.position.x, p.position.y + 1.8, p.position.z - 2);
-      this.fov = 42;
-    } else if (t < 7.2) {
-      // on the runway ahead of it, low: it comes at the camera and goes over it
-      cam.position.set(this.home.x + 4.5, this.home.y + 0.6, this.home.z - 128);
-      _look.set(p.position.x, p.position.y + 1.6, p.position.z);
-      this.fov = 36;
+    const P = p.position;
+    this.fogMul = 0.6;
+    this.far = 520;
+    if (t < RUN_CUT) {
+      // off its nose, low: the propellers, the whole of it, and behind it what is coming down the runway
+      cam.position.set(H.x + 7.5, H.y + 1.2, H.z - 17 - t * 0.8);
+      _look.set(P.x, P.y + 1.7, P.z + 2);
+      this.fov = 44;
+    } else if (t < OVER_CUT) {
+      // beside the runway, tracking: it gathers speed
+      const u = (t - RUN_CUT) / (OVER_CUT - RUN_CUT);
+      const cz = H.z - 38 - u * 20;
+      const sx = this.side ?? (this.side = roadBlocked(w, H.x - 16, H.z - 38) || roadBlocked(w, H.x - 16, H.z - 58) ? 1 : -1); // (the side nothing stands on)
+      cam.position.set(H.x + sx * 16, Math.max(H.y, w.heightAt(H.x + sx * 16, cz)) + 1.5, cz);
+      _look.set(P.x, P.y + 1.6, P.z - 3);
+      this.fov = 38;
+    } else if (t < AWAY_CUT) {
+      // on the runway ahead of it, down on the centre line: it comes at the lens, lifts, and goes over it
+      const over = 0.5 * ACCEL * ROTATE_AT ** 2 + 18; // (where it is a few metres up)
+      cam.position.set(H.x + 1.35, H.y + 0.45, H.z - over); // (between its nose wheel and a main wheel)
+      _look.set(P.x, P.y + 1.4, P.z);
+      this.fov = 40;
     } else {
-      // from behind and above: the runway, the airfield and the mainland going away under it
-      cam.position.set(p.position.x + 9, p.position.y + 5.5, p.position.z + 21);
-      _look.set(p.position.x, p.position.y + 1, p.position.z - 30);
-      this.fov = 50;
+      // from out off its wing and above it, on the side away from the city: the airfield going away below, the
+      // city and its smoke beyond, and the plane banking off over all of it
+      const u = (t - AWAY_CUT) / (TAKEOFF_TIME - AWAY_CUT);
+      cam.position.set(P.x - this.west * (24 + u * 6), P.y + 7 + u * 3, P.z + 16);
+      _look.set(P.x + this.west * 30, P.y - 5, P.z - 22);
+      this.fov = 46;
+      this.fogMul = 0.18;
+      this.far = 1100;
     }
     cam.lookAt(_look);
+    if (t < AWAY_CUT) cam.position.y += Math.sin(t * 29) * 0.008 * Math.min(1, run / 30); // (the ground shakes as it goes by)
     if (Math.abs(cam.fov - this.fov) > 0.01) {
       cam.fov = this.fov;
       cam.updateProjectionMatrix();
     }
+    // the dead: after it down the runway, and left there
+    this.dead.forEach((z, k) => {
+      const zz = z.z - z.v * t;
+      const o = z.view.object;
+      o.position.set(z.x, w.heightAt(z.x, zz), zz);
+      o.rotation.y = 0;
+      const farOff = (z.x - cam.position.x) ** 2 + (zz - cam.position.z) ** 2 > 40 * 40;
+      if (!farOff || ((k + Math.round(t * 60)) & 1) === 0) z.view.update(farOff ? dt * 2 : dt, z.anim, z.v, t, true);
+    });
     if (this.loop) {
-      this.loop.setPosition(p.position.x, p.position.y + 2, p.position.z);
+      this.loop.setPosition(P.x, P.y + 2, P.z);
       this.loop.setRate(0.9 + Math.min(1, t / ROTATE_AT) * 0.5);
       this.loop.setVolume(1);
     }
@@ -549,5 +826,9 @@ export class Takeoff {
   dispose() {
     this.screen.dispose();
     this.loop?.stop();
+    for (const z of this.dead) {
+      this.g.scene.remove(z.view.object);
+      z.view.dispose();
+    }
   }
 }

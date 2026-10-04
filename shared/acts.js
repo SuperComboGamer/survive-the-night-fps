@@ -27,9 +27,9 @@ export const MAINLAND_DAY_MORE = 60;
 // The crossing: the cutscene between the acts, played by every client off the server's clock (the phase's time
 // left). TIME: how long it runs. SWAP: the moment into it at which a client that was on the island takes the island
 // down and puts the mainland up, behind a cut to black (client/game/cutscene.js holds the shots). The server builds
-// its own mainland in the first tick of the phase. It can be skipped once every player who is connected has asked
+// its own mainland in the phase's second tick. It can be skipped once every player who is connected has asked
 // to (ACT.SKIP), and not before SKIP_AFTER seconds of it, by which time every client has its mainland up.
-export const CROSSING = { TIME: 40, SWAP: 7, SKIP_AFTER: 12 };
+export const CROSSING = { TIME: 40, SWAP: 7.4, SKIP_AFTER: 12 };
 
 // [E] at the plane reaches this much further than at the car (CAR_REACH, and the server's own 5 m): it is a bigger
 // thing to stand beside, and its wings keep a survivor off its middle.
@@ -37,7 +37,7 @@ export const PLANE_REACH = 4;
 
 // The take-off: the shot the run ends on, once the plane's engines are warm and somebody has taken it up. The end
 // screen comes up after it (the server's restart clock runs this much longer in act 2).
-export const TAKEOFF_TIME = 11;
+export const TAKEOFF_TIME = 13;
 
 // The plane's final stand, on the runway. It is not the car's: there are two things to hold, in turn, and then a
 // runway to keep clear.

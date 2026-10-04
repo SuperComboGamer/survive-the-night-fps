@@ -480,6 +480,15 @@ export class Game {
         // burning barrels / smouldering wrecks
         this.staticEmitters.push(this.effects.createEmitter('barrel', l.x, l.y, l.z));
         this.staticFires.push({ x: l.x, y: l.y - 0.4, z: l.z, intensity: 0.75 });
+      } else if (l.kind === 'smoke') {
+        // a column of smoke standing over a ruin (the mainland's city: it is what shows where it is from the bridge)
+        this.staticEmitters.push(this.effects.createEmitter('column', l.x, l.y, l.z, { radius: l.r || 1 }));
+      } else if (l.kind === 'fire') {
+        // a building burning: its flames, the smoke over them, its light on the street and its roar
+        const loop = this.audio.createLoop?.('blaze', l.x, l.y, l.z) || null;
+        this.staticEmitters.push(this.effects.createEmitter('blaze', l.x, l.y, l.z, { radius: l.r || 1, loop }));
+        this.staticEmitters.push(this.effects.createEmitter('column', l.x, l.y + 3, l.z, { radius: 0.8 }));
+        this.staticFires.push({ x: l.x, y: l.y - 0.4, z: l.z, intensity: 1, big: true });
       }
     }
     this.ui.map.setWorld(this.world);
