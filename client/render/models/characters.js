@@ -3398,6 +3398,8 @@ const survivorRigs = new Map();
 // where the worn backpack's back panel sits on the default body (chest-bone z of the jacket's back at the pack's
 // pivot): each character's pack is moved back or in by how far their own back is from this
 const PACK_BACK = 0.118;
+// how far the front of the default chest is (chest-bone y 0.1, in its clothes): the holds of solveArms were made on it
+const HOLD_FRONT = 0.125;
 function getSurvivorRig(v, zombie) {
   const key = v + (zombie ? 'z' : 'h');
   let r = survivorRigs.get(key);
@@ -3414,6 +3416,24 @@ function getSurvivorRig(v, zombie) {
   r.mouth = mouthAnchor(built.H);
   const back = surfPoint(built.T, PI, P.chestY + PACK_PIVOT[1], built.pT)[2];
   r.packDZ = back - PACK_BACK;
+  // the worn pack's straps on this body: a point of a strap (chest-bone space, the pack at WORN_AT) that would be
+  // inside the chest, the shoulder or the side is moved out onto the clothes there, a strap's thickness proud. The
+  // pack itself sits packDZ back, so a point is fitted where it ends up and handed back from where it started.
+  const T = built.T, pT = built.pT;
+  // ...and whatever is held comes forward as far as this chest is deeper than the one the holds were made on
+  r.holdDZ = Math.min(0, HOLD_FRONT + surfPoint(T, 0, P.chestY + 0.1, pT)[2]);
+  const strapOut = pT + 0.009;
+  r.strapFit = (x, y, z) => {
+    const ym = y + P.chestY, zm = z + r.packDZ;
+    if (zm > 0.05 || ym > T.yHi + 0.02) return [x, y, z]; // (the back panel's own end, and over the top: as made)
+    const ring = T.ring(Math.min(ym, T.yHi));
+    const t = Math.atan2(x, -(zm - ring.cz));
+    const s = surfPoint(T, t, Math.min(ym, T.yHi), strapOut);
+    const rs = Math.hypot(s[0], s[2] - ring.cz), rp = Math.hypot(x, zm - ring.cz);
+    if (rp >= rs) return [x, y, z];
+    const k = rs / (rp || 1);
+    return [x * k, y, (zm - ring.cz) * k + ring.cz - r.packDZ];
+  };
   survivorRigs.set(key, r);
   return r;
 }
@@ -3540,8 +3560,9 @@ class SurvivorInstance {
     this.flashlightAnchor.position.set(0.16, this.P.shoulderY - this.P.chestY + 0.02, -0.16);
     this.bones[CHEST].add(this.flashlightAnchor);
     // the crafted backpack on the back of the chest, where the shoulder straps sit: shown while one is worn (setBackpack)
-    this.pack = createBackpack(true);
-    this.packDZ = this.rigH.packDZ || 0; // (how far this body's back is from the default one's)
+    this.pack = createBackpack(true, this.rigH.strapFit);
+    this.packDZ = this.rigH.packDZ || 0;
+    this.holdDZ = this.rigH.holdDZ || 0; // (how far this body's back is from the default one's)
     this.pack.position.set(WORN_AT[0], WORN_AT[1], WORN_AT[2] + this.packDZ);
     this.pack.visible = false;
     this.bones[CHEST].add(this.pack);
@@ -4012,6 +4033,7 @@ class SurvivorInstance {
       _grip.x -= 0.08 * u;
       wy += 0.5 * u;
     }
+    _grip.z += this.holdDZ; // (a deeper chest: everything held comes out in front of it)
     _e.set(wx, wy, wz, 'YXZ');
     _qW.setFromEuler(_e);
     // hand orientation = weapon * mount^-1 ; wrist target = grip - Qh * mountPos

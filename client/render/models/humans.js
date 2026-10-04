@@ -537,6 +537,7 @@ export function torsoSurf(mb, P, B) {
   const yH = P.hipY, yS = P.spineY, yC = P.chestY, ySh = P.shoulderY;
   const f = B.f;
   const w = B.w, d = B.d * (1 + B.bloat * 0.3);
+  const dc = 1 + (d - 1) * 0.4; // (the chest and shoulders deepen less: what is held and worn sits there)
   const g = B.gaunt;
   const sh = B.sh * (1 - 0.08 * f);
   const hip = B.hips * (1 + 0.06 * f);
@@ -550,11 +551,11 @@ export function torsoSurf(mb, P, B) {
     [yH + 0.09, 0.15 * waist * w, 0.099 * d * (1 + 0.32 * B.belly + 0.25 * B.bloat) * (1 - 0.1 * g), 0.094 * d, 2.4],
     [yS + 0.03, 0.144 * waist * w, 0.101 * d * (1 + 0.36 * B.belly + 0.3 * B.bloat) * (1 - 0.12 * g), 0.091 * d, 2.4],
     [yC - 0.04, lerp(0.15, 0.145 * waist, 0.4) * w, 0.106 * d * (1 + 0.22 * B.belly), 0.096 * d, 2.4],
-    [yC + 0.03, (0.158 - 0.006 * f) * w * sh, 0.112 * d * (1 - 0.06 * f), 0.103 * d, 2.5],
-    [yC + 0.085, (0.168 - 0.01 * f) * w * sh, 0.114 * d * (1 - 0.07 * f), 0.106 * d, 2.6],
-    [ySh - 0.03, (0.184 - 0.012 * f) * sh, 0.103 * d, 0.102 * d, 2.8],
-    [ySh + 0.008, (0.192 - 0.016 * f) * sh, 0.088 * d, 0.09 * d, 2.5],
-    [ySh + 0.03, (0.17 - 0.014 * f) * sh, 0.072 * d, 0.08 * d, 2.5, 0, 0.004],
+    [yC + 0.03, (0.158 - 0.006 * f) * w * sh, 0.112 * dc * (1 - 0.06 * f), 0.103 * dc, 2.5],
+    [yC + 0.085, (0.168 - 0.01 * f) * w * sh, 0.114 * dc * (1 - 0.07 * f), 0.106 * dc, 2.6],
+    [ySh - 0.03, (0.184 - 0.012 * f) * sh, 0.103 * dc, 0.102 * dc, 2.8],
+    [ySh + 0.008, (0.192 - 0.016 * f) * sh, 0.088 * dc, 0.09 * dc, 2.5],
+    [ySh + 0.03, (0.17 - 0.014 * f) * sh, 0.072 * dc, 0.08 * dc, 2.5, 0, 0.004],
     [ySh + 0.05, (0.135 - 0.01 * f) * sh * B.neck ** 0.5, 0.064, 0.074, 2.3, 0, 0.007],
     [ySh + 0.066, 0.09 * B.neck, 0.056, 0.064, 2.1, 0, 0.009],
     [ySh + 0.078, 0.06 * B.neck, 0.052, 0.058, 2, 0, 0.01],

@@ -208,7 +208,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     const rsA = Math.max(10, rs - (dead ? 6 : 8));
     const tearS = top ? tearOf(top, 51 + i) : null;
     if (top && sleeves !== 'none' && top.kind !== 'tank') {
-      const pS = thick * 0.75 + 0.003;
+      const pS = thick * 0.45 + 0.003; // (a sleeve hugs the arm closer than the body: a long gun rides along the forearm)
       const ys = Math.max(sl, yEnd);
       sheet(mb, A, 0, TAU, ys, A.yHi, rsA, nvL(ys, A.yHi), pS, { color: topCol, region: topReg, mottle: 0.12, tint: top.tint, tear: tearS, cap0: 0, cap1: 0.003 });
       if (sleeves === 'rolled') sheet(mb, A, 0, TAU, sl, sl + 0.04, rsA, 2, pS + 0.008, { color: mulC(topCol, 0.92), region: topReg });

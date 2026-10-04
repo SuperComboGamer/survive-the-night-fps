@@ -91,7 +91,7 @@ export const LOOKS = [
   },
   // 4 Earl 'Bear' Tucker, trucker: big, a full beard, a mesh trucker cap, a canvas jacket open over a black tee
   {
-    sex: 'm', frame: { height: 1.02, head: 1.04 }, build: { w: 1.24, d: 1.22, belly: 1.0, arm: 1.2, leg: 1.16, neck: 1.25, sh: 1.06 },
+    sex: 'm', frame: { height: 1.02, head: 1.04 }, build: { w: 1.2, d: 1.14, belly: 0.6, arm: 1.1, leg: 1.16, neck: 1.25, sh: 1.06 },
     skin: 0xdcae92, eye: 0x4a3a2a, face: { w: 1.08, jaw: 1.2, cheek: 1.2, nose: 1.15, noseW: 1.3 },
     hair: { style: 'balding', color: 0x3e2e20 }, beard: { style: 'full', color: 0x3e2e20 }, brows: 0x3e2e20,
     hat: { kind: 'trucker', color: 0x2c3c5e, front: 0xe2ded2, bill: 0x2c3c5e },

@@ -288,14 +288,18 @@ function grabLoop(mb) {
 }
 
 // the shoulder straps: worn, over the shoulders and down the chest (in pack space, from the chest bone's: WORN_AT);
-// on the ground, lying loose down the back panel
-function shoulderStraps(mb, worn) {
+// on the ground, lying loose down the back panel. fit(x, y, z): a chest-bone-space point of a strap moved onto the
+// body that wears it (characters.js: the straps lie on each survivor's own chest and shoulders); none: as written
+function shoulderStraps(mb, worn, fit = null) {
   const pad = { region: CR.CANVAS, color: [0.16, 0.17, 0.12], mottle: 0.08 };
   const web = { region: CR.CANVAS, color: WEBBING, mottle: 0.06 };
   for (const s of [-1, 1]) {
     if (worn) {
       // (chest-bone space, less WORN_AT): off the back panel, over the shoulder, down the chest
-      const c = (x, y, z) => [x - WORN_AT[0], y - WORN_AT[1], z - WORN_AT[2]];
+      const c = (x, y, z) => {
+        const p = fit ? fit(x, y, z) : [x, y, z];
+        return [p[0] - WORN_AT[0], p[1] - WORN_AT[1], p[2] - WORN_AT[2]];
+      };
       const pts = [c(s * 0.075, 0.12, 0.148), c(s * 0.112, 0.205, 0.118), c(s * 0.122, 0.236, 0.02), c(s * 0.124, 0.205, -0.105), c(s * 0.124, 0.13, -0.142), c(s * 0.124, 0.02, -0.142), c(s * 0.122, -0.045, -0.14)];
       strap(mb, pts, 0.056, 0.016, [1, 0, 0], { ...pad, ts: 14, taper: (t) => 1 - 0.3 * Math.max(0, t - 0.7) / 0.3 });
       // the webbing on from the strap's foot, under the arm and back to the pack's bottom corner, with its buckle
@@ -308,7 +312,10 @@ function shoulderStraps(mb, worn) {
     }
   }
   if (worn) {
-    const c = (x, y, z) => [x - WORN_AT[0], y - WORN_AT[1], z - WORN_AT[2]];
+    const c = (x, y, z) => {
+      const p = fit ? fit(x, y, z) : [x, y, z];
+      return [p[0] - WORN_AT[0], p[1] - WORN_AT[1], p[2] - WORN_AT[2]];
+    };
     mb.box(0, c(0, 0.07, -0.162), [0.03, 0.022, 0.008], { round: 0.3, seg: 2, region: CR.PLAIN, color: [0.025, 0.025, 0.022], mottle: 0.04 });
   } else {
     // (the webbing ends hanging off the bottom corners)
@@ -316,7 +323,7 @@ function shoulderStraps(mb, worn) {
   }
 }
 
-function buildPack(worn) {
+function buildPack(worn, fit) {
   const mb = new MeshBuilder({ skinned: false });
   mb.aoStrength = 0.22;
   body(mb);
@@ -325,18 +332,20 @@ function buildPack(worn) {
   sides(mb);
   bedroll(mb);
   grabLoop(mb);
-  shoulderStraps(mb, worn);
+  shoulderStraps(mb, worn, fit);
   return mb.build();
 }
 
 const cache = new Map();
 /** The backpack as a mesh: worn (with its straps over the shoulders: put it at WORN_AT on the chest bone) or as
- *  it lies on the ground (resting on its base, back panel at z = 0). Geometry and material are shared. */
-export function createBackpack(worn) {
-  let built = cache.get(worn);
+ *  it lies on the ground (resting on its base, back panel at z = 0). Geometry and material are shared. fit: the
+ *  wearer's strap fit (shoulderStraps; one geometry per fit). */
+export function createBackpack(worn, fit = null) {
+  const key = worn ? fit || true : false;
+  let built = cache.get(key);
   if (!built) {
-    built = buildPack(worn);
-    cache.set(worn, built);
+    built = buildPack(worn, worn ? fit : null);
+    cache.set(key, built);
   }
   const mesh = new THREE.Mesh(built.geometry, getCharacterMaterial());
   mesh.name = worn ? 'worn_pack' : 'backpack';
