@@ -1026,7 +1026,7 @@ function deadExtras(mb, P, H, L, T) {
   const p = new THREE.Vector3();
   // teeth: an upper row under the lip line on the head, a lower row on the jaw (their mouths hang open)
   const rnd = mulberry32((L.missingTeeth || 0) + 17);
-  const C_TEETH = color(0xb8ab84);
+  const C_TEETH = color(0xcfc29a);
   const nT = 8;
   for (let i = 0; i < (FAR() ? 0 : nT); i++) {
     const phi = ((i + 0.5) / nT - 0.5) * 0.62 * (L.jawScale || 1);
@@ -1034,16 +1034,16 @@ function deadExtras(mb, P, H, L, T) {
     const fang = L.fang && (i === 1 || i === 6) ? 1.7 : 1;
     if (!((L.missingTeeth || 0) & (1 << i))) {
       headPoint(H, phi, -0.425, p, false);
-      const h = (0.009 + rnd() * 0.005) * H.s * fang;
-      mb.box('head', [p.x * 0.95, p.y - h * 0.5 + 0.001, p.z + 0.006 * H.s], [0.0068 * H.s, h, 0.005 * H.s], { color: tc, region: CR.BONE, ao: false, blood: false, rot: [-0.1, phi, (rnd() - 0.5) * 0.3], mottle: 0.25 });
+      const h = (0.012 + rnd() * 0.006) * H.s * fang;
+      mb.box('head', [p.x * 0.95, p.y - h * 0.5 + 0.001, p.z + 0.0035 * H.s], [0.0078 * H.s, h, 0.0055 * H.s], { color: tc, region: CR.BONE, ao: false, blood: false, rot: [-0.1, phi, (rnd() - 0.5) * 0.3], mottle: 0.25 });
     }
     if (!((L.missingTeeth || 0) & (1 << ((i + 3) % 8)))) {
       headPoint(H, phi, -0.462, p, false);
-      const h = (0.009 + rnd() * 0.006) * H.s * fang;
-      const g = new THREE.BoxGeometry(0.0068 * H.s, h, 0.005 * H.s);
+      const h = (0.012 + rnd() * 0.007) * H.s * fang;
+      const g = new THREE.BoxGeometry(0.0078 * H.s, h, 0.0055 * H.s);
       g.rotateX(0.1);
       g.rotateY(phi);
-      g.translate(p.x * 0.95, p.y + h * 0.5 - 0.001, p.z + 0.007 * H.s);
+      g.translate(p.x * 0.95, p.y + h * 0.5 - 0.001, p.z + 0.0045 * H.s);
       const hb = mb.bonePos('head');
       g.translate(hb[0], hb[1], hb[2]);
       const w = new Float32Array(g.attributes.position.count * 4);
