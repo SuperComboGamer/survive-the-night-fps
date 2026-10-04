@@ -58,6 +58,8 @@ import {
 } from '../../shared/defs.js';
 import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
 import { createWorld } from '../../shared/world.js';
+import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
+import { chosenCharacter } from '../ui/picker.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
@@ -109,7 +111,7 @@ import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
 import { createGhost, createStructure } from '../render/models/structures.js';
 import { PowerViews } from './power.js';
-import { createZombie, createSurvivor, zombieVariants } from '../render/models/characters.js';
+import { createZombie, createSurvivor, zombieVariants, warmSurvivor } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createDeer } from '../render/models/deer.js';
 import { createPickup } from '../render/models/pickups.js';
@@ -581,6 +583,8 @@ export class Game {
         });
       }
     }
+    // every survivor's model, and each one turned, built now rather than when a player picks them or dies
+    for (let v = 0; v < CHARACTER_COUNT; v++) steps.push(() => warmSurvivor(v));
     steps.push(() => {
       const sv = createSurvivor(1);
       sv.setWeapon(ITEM.PISTOL);
@@ -730,7 +734,7 @@ export class Game {
   // stinger or introduction
   async join(name, code = '', { resume = false } = {}) {
     if (!resume) this.audio.stinger?.('join');
-    const info = await this.conn.connect(name, playerId(), code);
+    const info = await this.conn.connect(name, playerId(), code, chosenCharacter());
     this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
     this.voice.setMyId(info.id);
@@ -981,6 +985,9 @@ export class Game {
       // a teammate's new waypoint (not one they already had when we first heard of them, nor one being cleared)
       if (way && prev && id !== this.myId && !(prev.way && prev.way.x === way.x && prev.way.z === way.z)) this.waypointSet(id, way);
     }
+    // each player's character, after them all (a server from before the roster sends none: the look picked from the id)
+    const order = [...seen];
+    for (const id of order) this.players.get(id).character = r.left > 0 ? characterFor(r.u8(), id) : defaultCharacter(id);
     for (const id of [...this.players.keys()]) if (!seen.has(id)) this.players.delete(id);
     // (a count that went down was reset by the server for the new run: the run's kills then count from there)
     if (this.run) this.run.kills0 = Math.min(this.run.kills0, this.players.get(this.myId)?.kills ?? Infinity);

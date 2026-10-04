@@ -69,7 +69,8 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
   `client/audio/samples/` (credited in its CREDITS.md; CC0 only) layered over it; every recording keeps its
   procedural fallback (see Audio below).
 - Performance budget: 60 fps on a mid-range laptop GPU with ~80 zombies on screen. One draw call per zombie
-  (single SkinnedMesh, rigid skinning), instanced vegetation, merged static geometry.
+  (single SkinnedMesh, at most two bones a vertex; the humanoid dead swap to a lighter copy of their mesh past
+  `LOD_FAR`), instanced vegetation, merged static geometry.
 
 ## Networking
 
@@ -1044,6 +1045,27 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   without its text, or becomes a tick on the tape; a label that would touch another is pushed a little
   sideways or dropped; the marker you face (and always the waypoint) spells out its `name`. Label widths come
   from a canvas `measureText` cache, so the pass never reads layout, and the DOM is only written on change.
+- **The people: who you play as, and how they are built.** Ten survivors to choose from (`shared/characters.js`:
+  ids on the wire, names, roles, one-liners). The splash's card and picker (`client/ui/picker.js`, under "Playing as")
+  keep the choice in `localStorage['stn.character']` (an id, or `random`: drawn afresh at each join) and draw the
+  portraits and a turntable with a small WebGL renderer of their own, let go of when the game starts. The choice is
+  a trailing u8 on `C2S.JOIN`; `Game.handleJoin` keeps it as `p.character` (`characterFor`: an older client that
+  sends none, or a value out of range, gets `defaultCharacter(id)`, the look its id picked before the roster), and
+  `S2C.PLAYERS` ends with a u8 character per player, after the list, where a client from before the roster stops
+  reading. A held player who comes back keeps theirs (resume never reads the new byte), and a turned one is the same
+  player, so the same character, dead. `Entities.survivorView` builds the body from the player list's character and
+  builds it again if the list says another (the list can arrive after the entity's create).
+  The models are procedural (`client/render/models/humans.js`: the head and the body's lofted surfaces;
+  `people.js`: a whole person from a look - clothes, hair, hats, kit, the dead's injuries; `looks.js`: the roster's
+  looks and `deadLook`, what turns one; `deadlooks.js`: the walkers' variants and the specials' bodies). A head is
+  one surface by azimuth and elevation with a painted face in the same layout (`CR.FACE` / `CR.FACE_Z`, 2 x 2 cells
+  of the now 4 x 8 character atlas); the torso, arms and legs are each one lofted surface weighted across the spine,
+  elbows and knees, and clothing is the visible surface of those lofts cut where a garment ends. Every survivor is
+  the same rig (bone names and order) at their own proportions: `SurvivorInstance` takes its `P` from the rig, and
+  moves the worn backpack by `packDZ`, how far that body's back is from the default one's.
+  `/sandbox/models-test.html?turn=s:3,z:0:1,zv:0:5` draws turnaround sheets (front, side, back, the face) of
+  survivors, the turned and zombie variants, and `scripts/test-characters.js` holds the wire rule and the models'
+  budgets.
 - **Talking.** Chat and voice reach `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it the walkie-talkie carries
   them. Every survivor has one in weapon slot 6 (`SLOT_RADIO`), which holds no item of its own: `state.weapons`
   stays five long, `currentWeapon` answers `ITEM.WALKIE` for it (the viewmodel, the snapshot's held item), and

@@ -53,9 +53,10 @@ export function fbm3(x, y, z, oct = 3, seed = 0) {
 
 // ------------------------------------------------------------------ atlas bookkeeping
 const CELL = 256;
-const GRID = 4;
+const GRID = 4; // cells across, in both atlases
 const SIZE = CELL * GRID;
 const INSET = 4 / SIZE;
+const CHAR_ROWS = 8; // the character atlas is 4 x 8 cells (1024 x 2048), the weapon atlas 4 x 4
 
 /** Character atlas regions. */
 export const CR = {
@@ -63,7 +64,14 @@ export const CR = {
   KNIT: 4, LEATHER: 5, FLESH: 6, BONE: 7,
   HAIR: 8, MEMBRANE: 9, CANVAS: 10, CHITIN: 11,
   GLOW: 12, PLAID: 13, TUMOR: 14, PLAIN: 15,
+  // the people (humans.js). FACE and FACE_Z take 2 x 2 cells each: a whole head's skin laid out by azimuth and
+  // elevation (humans.js), the face in the middle
+  FACE: 16, FACE_Z: 18,
+  SKIN_H: 24, ROT: 25, TWILL: 26, BOOT: 27,
+  HAIR_H: 28, FLEECE: 29, CAMO: 30, COTTON: 31,
 };
+// the regions that take more than one cell: [columns, rows]
+const BIG = { [CR.FACE]: [2, 2], [CR.FACE_Z]: [2, 2] };
 /** Weapon atlas regions. */
 export const WR = {
   WOOD: 0, WALNUT: 1, GUNMETAL: 2, STEEL: 3,
@@ -72,11 +80,15 @@ export const WR = {
   SKIN: 12, SLEEVE: 13, GLOVE: 14, PLAIN: 15,
 };
 
-/** UV rectangle [u0, v0, u1, v1] of an atlas cell (with a small inset against bleeding). */
-export function regionUV(region) {
+/** UV rectangle [u0, v0, u1, v1] of an atlas cell (with a small inset against bleeding). char: in the character
+ *  atlas (4 x 8 cells, FACE and FACE_Z 2 x 2), else the weapon atlas (4 x 4). */
+export function regionUV(region, char = false) {
+  const rows = char ? CHAR_ROWS : GRID;
   const col = region % GRID, row = (region / GRID) | 0;
-  const u0 = col / GRID + INSET, u1 = (col + 1) / GRID - INSET;
-  const v1 = 1 - row / GRID - INSET, v0 = 1 - (row + 1) / GRID + INSET;
+  const [cw, ch] = (char && BIG[region]) || [1, 1];
+  const iv = (INSET * GRID) / rows;
+  const u0 = col / GRID + INSET, u1 = (col + cw) / GRID - INSET;
+  const v1 = 1 - row / rows - iv, v0 = 1 - (row + ch) / rows + iv;
   return [u0, v0, u1, v1];
 }
 
@@ -294,7 +306,7 @@ const CHAR_PAINTERS = {
       o[2] = v + 10;
     });
     blotches(ctx, rnd, 12, '60,45,30', 0.4, 12, 40);
-    for (let i = 0; i < 6; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 3 + rnd() * 8, 'rgba(60,5,5,0.75)', 2);
+    // (no blood in the cloth: the living wear it too. The dead's blood is tinted on: L.blood, the looks' tints)
     ctx.strokeStyle = 'rgba(200,170,90,0.5)';
     ctx.setLineDash([3, 3]);
     ctx.lineWidth = 1.2;
@@ -414,8 +426,7 @@ const CHAR_PAINTERS = {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    blotches(ctx, rnd, 12, '60,50,35', 0.35, 15, 40);
-    for (let i = 0; i < 4; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 2 + rnd() * 6, 'rgba(70,8,8,0.6)', 1);
+    blotches(ctx, rnd, 12, '60,50,35', 0.3, 15, 40);
   },
   [CR.CHITIN](ctx, rnd) {
     pixelFill(ctx, (x, y, o) => {
@@ -455,8 +466,7 @@ const CHAR_PAINTERS = {
       o[1] = k;
       o[2] = k - 4;
     });
-    blotches(ctx, rnd, 10, '60,45,30', 0.35, 12, 40); // grime
-    for (let i = 0; i < 8; i++) splat(ctx, rnd, rnd() * CELL, rnd() * CELL, 3 + rnd() * 8, `rgba(${60 + rnd() * 40 | 0},5,5,0.8)`, 3);
+    blotches(ctx, rnd, 10, '60,45,30', 0.3, 12, 40); // grime
   },
   [CR.TUMOR](ctx, rnd) {
     // voronoi-ish bumps
@@ -495,7 +505,303 @@ const CHAR_PAINTERS = {
       o[2] = v;
     });
   },
+  // ---- the people (humans.js)
+  [CR.FACE](ctx, rnd, w, h) {
+    paintFace(ctx, rnd, w, h, false);
+  },
+  [CR.FACE_Z](ctx, rnd, w, h) {
+    paintFace(ctx, rnd, w, h, true);
+  },
+  [CR.SKIN_H](ctx) {
+    // living skin: fine pores and a soft unevenness, nothing more (the tone is the vertex colour)
+    pixelFill(ctx, (x, y, o) => {
+      const n = n2(x, y, 0.045, 401, 4);
+      const pore = noise3(x * 0.9, y * 0.9, 2, 403) > 0.8 ? -7 : 0;
+      const v = 214 + (n - 0.5) * 22 + pore;
+      o[0] = v + 4;
+      o[1] = v;
+      o[2] = v - 4;
+    });
+  },
+  [CR.ROT](ctx, rnd) {
+    // dead skin: livid patches where the blood settled, a marbling of dark veins, sores; dull rather than gory
+    pixelFill(ctx, (x, y, o) => {
+      const n = n2(x, y, 0.03, 411, 4);
+      const liv = n2(x, y, 0.012, 413, 3);
+      const grn = n2(x, y, 0.02, 415, 3);
+      let r = 180 + (n - 0.5) * 50, g = 178 + (n - 0.5) * 46, b = 168 + (n - 0.5) * 40;
+      if (liv > 0.55) {
+        const t = Math.min(1, (liv - 0.55) * 4);
+        r -= 30 * t;
+        g -= 62 * t;
+        b -= 30 * t;
+      }
+      if (grn > 0.58) {
+        const t = Math.min(1, (grn - 0.58) * 4);
+        r -= 30 * t;
+        b -= 30 * t;
+      }
+      o[0] = r;
+      o[1] = g;
+      o[2] = b;
+    });
+    veins(ctx, rnd, 22, 'rgba(60,40,80,0.45)', 1.3, 80);
+    veins(ctx, rnd, 10, 'rgba(40,60,40,0.35)', 1.0, 50);
+    for (let i = 0; i < 9; i++) {
+      // sores: a dark core in an inflamed rim
+      const x = rnd() * CELL, y = rnd() * CELL, r = 2 + rnd() * 5;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 2);
+      g.addColorStop(0, 'rgba(40,6,6,0.9)');
+      g.addColorStop(0.45, 'rgba(120,40,30,0.7)');
+      g.addColorStop(0.7, 'rgba(170,150,90,0.35)');
+      g.addColorStop(1, 'rgba(120,60,50,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+    }
+    scratches(ctx, rnd, 14, 'rgba(70,15,15,0.45)', 16, 1);
+  },
+  [CR.TWILL](ctx, rnd) {
+    // work cloth: a diagonal twill, worn paler along a few creases, a stitched seam or two
+    pixelFill(ctx, (x, y, o) => {
+      const tw = (x + y * 2) % 6 < 3 ? -7 : 4;
+      const n = n2(x, y, 0.03, 421, 4);
+      const crease = Math.pow(Math.max(0, Math.sin(y * 0.07 + n * 6)), 6) * 16;
+      const v = 186 + tw + (n - 0.5) * 34 + crease;
+      o[0] = v;
+      o[1] = v - 1;
+      o[2] = v - 5;
+    });
+    ctx.strokeStyle = 'rgba(30,25,20,0.5)';
+    ctx.lineWidth = 1.4;
+    for (const x of [64, 192]) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, CELL);
+      ctx.stroke();
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x + 4, 0);
+      ctx.lineTo(x + 4, CELL);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    blotches(ctx, rnd, 9, '60,50,35', 0.28, 12, 36);
+  },
+  [CR.BOOT](ctx, rnd) {
+    // leather boot uppers (v up the boot) over a rubber sole: the bottom eighth of the cell, a tread cut into its edge
+    pixelFill(ctx, (x, y, o) => {
+      const sole = y > CELL * 0.86;
+      if (sole) {
+        const tread = ((x >> 3) & 1) && y > CELL * 0.93 ? -26 : 0;
+        const v = 74 + tread + n2(x, y, 0.08, 431, 2) * 20;
+        o[0] = v;
+        o[1] = v - 2;
+        o[2] = v - 4;
+        return;
+      }
+      const n = n2(x, y, 0.12, 433, 3);
+      const crease = Math.pow(Math.max(0, Math.sin(y * 0.22 + n2(x, y, 0.02, 435, 2) * 8)), 8) * -22;
+      const welt = Math.abs(y - CELL * 0.84) < 2 ? -40 : 0;
+      const v = 178 + (n - 0.5) * 40 + crease + welt;
+      o[0] = v;
+      o[1] = v - 5;
+      o[2] = v - 12;
+    });
+    scratches(ctx, rnd, 18, 'rgba(230,215,190,0.25)', 14, 0.8);
+    blotches(ctx, rnd, 8, '50,40,25', 0.35, 10, 30);
+  },
+  [CR.HAIR_H](ctx, rnd) {
+    // hair: fine strands down the cell (v runs with the hair), clumped
+    pixelFill(ctx, (x, y, o) => {
+      const clump = n2(x * 1.0, y * 0.08, 0.06, 441, 3);
+      const strand = noise3(x * 0.9, y * 0.04, 1, 443);
+      const v = 205 + (clump - 0.5) * 70 + (strand - 0.5) * 60;
+      o[0] = v;
+      o[1] = v;
+      o[2] = v;
+    });
+    ctx.lineWidth = 0.8;
+    for (let i = 0; i < 260; i++) {
+      const x = rnd() * CELL, y = rnd() * CELL, l = 14 + rnd() * 40;
+      ctx.strokeStyle = rnd() < 0.5 ? 'rgba(255,245,230,0.18)' : 'rgba(10,8,6,0.3)';
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.quadraticCurveTo(x + (rnd() - 0.5) * 6, y + l / 2, x + (rnd() - 0.5) * 8, y + l);
+      ctx.stroke();
+    }
+  },
+  [CR.FLEECE](ctx, rnd) {
+    pixelFill(ctx, (x, y, o) => {
+      const n = n2(x, y, 0.09, 451, 4);
+      const m = n2(x, y, 0.02, 453, 2);
+      const v = 192 + (n - 0.5) * 44 + (m - 0.5) * 18;
+      o[0] = v;
+      o[1] = v;
+      o[2] = v - 3;
+    });
+    blotches(ctx, rnd, 7, '60,50,40', 0.22, 12, 34);
+  },
+  [CR.CAMO](ctx, rnd) {
+    // woodland pattern in three tones (the hue is the vertex colour): blotches over blotches
+    pixelFill(ctx, (x, y, o) => {
+      const a = n2(x, y, 0.018, 461, 3), b = n2(x + 90, y, 0.024, 463, 3), c = n2(x, y + 50, 0.03, 465, 2);
+      let v = 196;
+      if (a > 0.53) v = 140;
+      if (b > 0.58) v = 92;
+      if (c > 0.66) v = 228;
+      v += (n2(x, y, 0.2, 467, 2) - 0.5) * 16;
+      o[0] = v + (v < 120 ? -6 : 4);
+      o[1] = v;
+      o[2] = v - 8;
+    });
+    blotches(ctx, rnd, 8, '50,40,30', 0.25, 12, 30);
+  },
+  [CR.COTTON](ctx, rnd) {
+    // jersey knit: tees, scrubs, a hoodie's body
+    pixelFill(ctx, (x, y, o) => {
+      const knit = (x % 3 === 0 ? -6 : 0) + (y % 2 === 0 ? -3 : 0);
+      const n = n2(x, y, 0.035, 471, 4);
+      const wr = Math.pow(Math.max(0, Math.sin(x * 0.05 + y * 0.03 + n * 5)), 5) * -14;
+      const v = 200 + knit + (n - 0.5) * 28 + wr;
+      o[0] = v;
+      o[1] = v;
+      o[2] = v - 2;
+    });
+    blotches(ctx, rnd, 7, '70,60,45', 0.22, 12, 34);
+  },
 };
+
+/**
+ * A whole head's skin in its layout (humans.js headSurface: x = azimuth from -PI at the left edge through the face at
+ * the middle to PI, y = elevation from the crown at the top to under the chin). The tone is the vertex colour; this
+ * is the detail over it: lips, the lines round the eyes and mouth, a flush on the cheeks. dead: the corpse's -
+ * marbled with veins, sockets gone dark, cracked lips, blood from the mouth.
+ */
+function paintFace(ctx, rnd, w, h, dead) {
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  const g = (x) => Math.exp(-x * x);
+  for (let y = 0; y < h; y++) {
+    const lam = (0.5 - (y + 0.5) / h) * Math.PI;
+    for (let x = 0; x < w; x++) {
+      const phi = ((x + 0.5) / w - 0.5) * Math.PI * 2;
+      const ap = Math.abs(phi);
+      const n = fbm3(x * 0.03, y * 0.03, 0.5, 4, dead ? 501 : 481);
+      let r, gg, b;
+      if (!dead) {
+        let v = 214 + (n - 0.5) * 16 + (noise3(x * 0.7, y * 0.7, 3, 483) > 0.82 ? -5 : 0);
+        r = v + 5;
+        gg = v;
+        b = v - 5;
+        // flushed cheeks, nose and ears
+        const flush = 0.07 * g((ap - 0.62) / 0.22) * g((lam + 0.16) / 0.15) + 0.06 * g(phi / 0.12) * g((lam + 0.24) / 0.08) + 0.05 * g((ap - 1.62) / 0.15) * g((lam + 0.08) / 0.2);
+        gg *= 1 - flush;
+        b *= 1 - flush * 1.1;
+        // round the eyes: a little darker, the crease of the upper lid, a hint under
+        const eye = g((ap - 0.36) / 0.2) * g((lam - 0.1) / 0.12);
+        r *= 1 - 0.1 * eye;
+        gg *= 1 - 0.12 * eye;
+        b *= 1 - 0.08 * eye;
+        const crease = g((lam - 0.168 - 0.02 * g((ap - 0.36) / 0.12)) / 0.008) * g((ap - 0.36) / 0.15);
+        r *= 1 - 0.16 * crease;
+        gg *= 1 - 0.18 * crease;
+        b *= 1 - 0.16 * crease;
+        // the lines from the nose's wings to the corners of the mouth
+        const nl = g((ap - (0.26 + (-0.3 - lam) * 0.55)) / 0.025) * (lam < -0.26 && lam > -0.46 ? 1 : 0);
+        r *= 1 - 0.07 * nl;
+        gg *= 1 - 0.08 * nl;
+        b *= 1 - 0.08 * nl;
+        // lips: a cupid's bow on top, fuller below, the line between them dark
+        const top = -0.392 - 0.012 * g(phi / 0.045) + 0.01 * g((ap - 0.07) / 0.04);
+        const lipU = lam < top && lam > -0.442 ? sstep01((0.2 - ap) / 0.035) : 0;
+        const lipL = lam < -0.442 && lam > -0.5 + 0.03 * (ap / 0.2) ** 2 ? sstep01((0.185 - ap) / 0.04) : 0;
+        const lip = Math.max(lipU, lipL);
+        r *= 1 - 0.05 * lip;
+        gg *= 1 - 0.22 * lip;
+        b *= 1 - 0.2 * lip;
+        const line = g((lam + 0.442) / 0.007) * sstep01((0.2 - ap) / 0.03);
+        r *= 1 - 0.55 * line;
+        gg *= 1 - 0.6 * line;
+        b *= 1 - 0.6 * line;
+        // the scalp: a touch darker (it shows through short hair, and on a shaved head)
+        const scalp = sstep01((lam - 0.42) / 0.12) * (ap < 2.2 ? 1 : 1) + sstep01((ap - 1.9) / 0.3) * sstep01((lam + 0.1) / 0.2);
+        const k = 1 - 0.08 * Math.min(1, scalp);
+        r *= k;
+        gg *= k;
+        b *= k;
+      } else {
+        const m = fbm3(x * 0.012, y * 0.012, 2.5, 3, 503);
+        let v = 186 + (n - 0.5) * 46;
+        r = v;
+        gg = v + 2;
+        b = v - 4;
+        if (m > 0.56) {
+          // livid, bruised patches
+          const t = Math.min(1, (m - 0.56) * 5);
+          r -= 26 * t;
+          gg -= 58 * t;
+          b -= 24 * t;
+        }
+        // sockets sunk and dark, running into the cheek
+        const eye = g((ap - 0.36) / 0.2) * g((lam - 0.1) / 0.12) + 0.4 * g((ap - 0.42) / 0.16) * g((lam + 0.04) / 0.08);
+        r *= 1 - 0.6 * Math.min(1, eye);
+        gg *= 1 - 0.68 * Math.min(1, eye);
+        b *= 1 - 0.55 * Math.min(1, eye);
+        // the mouth: lips gone grey-brown and split, a wide dark line, the corners torn
+        const lip = (lam < -0.38 && lam > -0.52 ? 1 : 0) * sstep01((0.24 - ap) / 0.05);
+        r *= 1 - 0.25 * lip;
+        gg *= 1 - 0.4 * lip;
+        b *= 1 - 0.3 * lip;
+        const line = g((lam + 0.442) / 0.016) * sstep01((0.27 - ap) / 0.05);
+        r *= 1 - 0.75 * line;
+        gg *= 1 - 0.85 * line;
+        b *= 1 - 0.8 * line;
+        const scalp = sstep01((lam - 0.45) / 0.15);
+        r *= 1 - 0.1 * scalp;
+        gg *= 1 - 0.12 * scalp;
+        b *= 1 - 0.08 * scalp;
+      }
+      const i = (y * w + x) * 4;
+      d[i] = clampB(r);
+      d[i + 1] = clampB(gg);
+      d[i + 2] = clampB(b);
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  // where in the canvas a point of the head is
+  const at = (phi, lam) => [(phi / (Math.PI * 2) + 0.5) * w, (0.5 - lam / Math.PI) * h];
+  if (dead) {
+    // veins, scratches, and blood run down the chin from the corners of the mouth
+    const sc = w / CELL;
+    ctx.save();
+    ctx.scale(sc, sc);
+    veins(ctx, rnd, 26, 'rgba(50,25,60,0.5)', 1.0, 60);
+    veins(ctx, rnd, 10, 'rgba(30,50,30,0.35)', 0.8, 40);
+    scratches(ctx, rnd, 10, 'rgba(90,15,15,0.6)', 14, 0.8);
+    ctx.restore();
+    for (const s of [-1, 1, 0]) {
+      const [x0, y0] = at(s * 0.17, -0.45);
+      ctx.fillStyle = 'rgba(70,6,6,0.8)';
+      for (let k = 0; k < 3; k++) {
+        const dx = x0 + (rnd() - 0.5) * 10, len = 20 + rnd() * 50;
+        ctx.fillRect(dx, y0, 2 + rnd() * 3, len);
+        ctx.beginPath();
+        ctx.arc(dx + 1.5, y0 + len, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // dried blood round the mouth
+    const [mx, my] = at(0, -0.46);
+    const gr = ctx.createRadialGradient(mx, my, 0, mx, my, w * 0.06);
+    gr.addColorStop(0, 'rgba(60,5,5,0.55)');
+    gr.addColorStop(1, 'rgba(60,5,5,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(mx - w * 0.07, my - w * 0.07, w * 0.14, w * 0.14);
+  }
+}
+const clampB = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
+const sstep01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
 // ------------------------------------------------------------------ weapon atlas cells
 function woodGrain(x, y, seed, base, ring, dark) {
@@ -690,19 +996,34 @@ const WEAPON_PAINTERS = {
   },
 };
 
-function buildAtlas(painters, seed) {
-  const canvas = makeCanvas(SIZE, SIZE);
+function buildAtlas(painters, seed, rows = GRID, big = {}) {
+  const canvas = makeCanvas(SIZE, CELL * rows);
   const ctx = canvas.getContext('2d');
   const cell = makeCanvas(CELL, CELL);
   const cctx = cell.getContext('2d');
-  for (let r = 0; r < GRID * GRID; r++) {
+  const covered = new Set(); // the cells of a big region past its first
+  for (const [r, [cw, ch]] of Object.entries(big)) for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (x || y) covered.add(+r + x + y * GRID);
+  for (let r = 0; r < GRID * rows; r++) {
+    if (covered.has(r)) continue;
     const p = painters[r];
+    const x0 = (r % GRID) * CELL, y0 = ((r / GRID) | 0) * CELL;
+    if (big[r]) {
+      // a region of several cells is painted in one go, at its full size (the painter is told it)
+      const w = CELL * big[r][0], h = CELL * big[r][1];
+      const c = makeCanvas(w, h);
+      const bctx = c.getContext('2d');
+      bctx.fillStyle = '#ccc';
+      bctx.fillRect(0, 0, w, h);
+      if (p) p(bctx, mulberry32(seed + r * 7919), w, h);
+      ctx.drawImage(c, x0, y0);
+      continue;
+    }
     cctx.setTransform(1, 0, 0, 1, 0, 0);
     cctx.globalAlpha = 1;
     cctx.fillStyle = '#ccc';
     cctx.fillRect(0, 0, CELL, CELL);
     if (p) p(cctx, mulberry32(seed + r * 7919));
-    ctx.drawImage(cell, (r % GRID) * CELL, ((r / GRID) | 0) * CELL);
+    ctx.drawImage(cell, x0, y0);
   }
   return finishTexture(canvas);
 }
@@ -712,7 +1033,7 @@ let weaponAtlas = null;
 
 /** Shared character atlas (skin/cloth/flesh/...). Created lazily. */
 export function getCharAtlas() {
-  if (!charAtlas) charAtlas = buildAtlas(CHAR_PAINTERS, 1337);
+  if (!charAtlas) charAtlas = buildAtlas(CHAR_PAINTERS, 1337, CHAR_ROWS, BIG);
   return charAtlas;
 }
 

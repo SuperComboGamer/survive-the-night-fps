@@ -11,7 +11,7 @@
 //
 // shots.json: [{ "name": "machete-vs-car", "who": "A", "give": [53], "key": "Digit3", "tp": [x, z, (y)],
 //               "lookAt": [x, z, y] | "yaw": r, "pitch": r, "wait": 1500, "throwAt": ms, "hideHud": true,
-//               "hideVm": true, "hideZombies": true, "others": { "A": { "tp": [...], "give": [...], "key": "...",
+//               "hideVm": true, "hideZombies": true, "say": ["/spawn brute"], "others": { "A": { "tp": [...], "give": [...], "key": "...",
 //               "yaw": r, "pitch": r } }, "title": "..." }]
 //   who        the client that takes the shot (A, or B: B joins when any shot needs it); others: put the other
 //              client somewhere first (the third-person view of a player holding something)
@@ -20,6 +20,8 @@
 //   tp/lookAt  /tp to x z (onto the ground), then turn to face a world point (x, z, height)
 //   throwAt    click once and shoot this many ms later (a throw's wind-up or release)
 //   hideHud / hideVm / hideZombies: the HUD, the hands, the day's walkers (client side, for a clean still)
+//   say        chat (admin) commands said once in place, e.g. ["/spawn brute"]: the zombies there before are hidden;
+//              aimZombies: h turns the view to the new ones as they come, h m above their feet
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { REPO, OUT, parseArgs, sleep, startGame, launchChrome, composeSheets, LIFE_MAX, CHEAP_SETTINGS } from './lib.js';
@@ -54,7 +56,7 @@ async function run(root, dir) {
       }, game.secret);
       await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
       await sleep(3500);
-      await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /join/i.test(x.textContent))?.click());
+      await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click()); // (the way in: not the survivor card, whose text also says "join")
       for (let i = 0; i < 80 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
       await sleep(2500);
       await p.evaluate((k) => {
@@ -124,6 +126,46 @@ async function run(root, dir) {
       }
       if (s.tp) await tp(p, s.tp);
       await aim(p, s);
+      if (s.say) {
+        // admin commands once in place and facing (/spawn puts its zombies 12 m ahead of the player). The zombies already
+        // there are hidden for this shot, and with aimZombies the view turns to the new ones (their middle, that high)
+        await sleep(500);
+        await p.evaluate(() => {
+          const g = window.__game;
+          g.__clipOld = new Set([...g.entities.ents.entries()].filter(([, e]) => e.kind === 2).map(([id]) => id));
+        });
+        for (const t of s.say) {
+          await chat(p, t);
+          await sleep(150);
+        }
+        const turn = () =>
+          p.evaluate((up) => {
+            const g = window.__game;
+            let n = 0, x = 0, y = 0, z = 0;
+            for (const [id, e] of g.entities.ents) {
+              if (e.kind !== 2 || !e.view) continue;
+              if (g.__clipOld.has(id)) e.view.object.visible = false;
+              else {
+                n++;
+                x += e.view.object.position.x;
+                y += e.view.object.position.y;
+                z += e.view.object.position.z;
+              }
+            }
+            if (!n || up === undefined) return;
+            const c = g.renderer.camera.position;
+            const dx = x / n - c.x, dz = z / n - c.z, dy = y / n + up - c.y;
+            g.input.yaw = Math.atan2(-dx, -dz);
+            g.input.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+          }, s.aimZombies);
+        const t0 = Date.now();
+        while (Date.now() - t0 < (s.wait ?? 1500)) {
+          await sleep(200);
+          await turn();
+        }
+        await sleep(250);
+        await turn();
+      }
       await p.evaluate((s) => {
         document.body.classList.toggle('clip-nohud', !!s.hideHud);
         window.__game.renderer.vmScene.visible = !s.hideVm;
@@ -133,7 +175,7 @@ async function run(root, dir) {
         await sleep(80);
         await p.evaluate(() => (window.__game.input.mouseButtons = 0));
         await sleep(s.throwAt);
-      } else {
+      } else if (!s.say) {
         await sleep(s.wait ?? 1500);
         if (s.lookAt) await aim(p, s); // (settled: aim again)
         await sleep(300);

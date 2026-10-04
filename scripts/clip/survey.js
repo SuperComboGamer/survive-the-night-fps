@@ -13,13 +13,14 @@
 //
 // usage: node scripts/clip/survey.js [--sections fp,tp,pickups] [--item ak47,grenade] [--state reload,idle]
 //          [--against <worktree>] [--out shots/clip/survey] [--shots] [--top 40]
-//          [--save-baseline file.json] [--baseline file.json] [--tolerance 1]
+//          [--save-baseline file.json] [--baseline file.json] [--tolerance 1] [--seed N]
 //   --item / --state  only frames whose item / state name contains one of these (item names: ITEM keys in lower case,
 //                     e.g. ak47, hunting_rifle, grenade; state names as printed, e.g. reload-0.42, 3p-lookup)
 //   --against         also measure another checkout and print the two side by side: a path, or a git ref (origin/main)
 //                     to measure in a temporary worktree (removed after). Its client/sandbox files are swapped for
 //                     ours for the run and put back after.
 //   --shots           keep a screenshot of every frame (in --out/<tree>/)
+//   --seed            the survivor the third-person frames are measured on (?hold=&seed=: the character seed % 10)
 //   --save-baseline   write each frame's worst clip (mm) to a file, to be compared against later
 //   --baseline        compare against such a file: exits 1 when a frame that was clean enough gets worse
 //                     (more than --tolerance mm, default 1, and over 3 mm), so a PR can be gated on it
@@ -31,7 +32,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { REPO, OUT, parseArgs, list, startVite, renewChrome, shoot, lendSandbox, tempWorktree } from './lib.js';
+import { REPO, OUT, parseArgs, list, startVite, renewChrome, LIFE_MAX, shoot, lendSandbox, tempWorktree } from './lib.js';
 
 const args = parseArgs(process.argv.slice(2), { sections: 'fp,tp,pickups', top: '40', tolerance: '1', out: join(OUT, 'survey') });
 const sections = list(args.sections);
@@ -80,7 +81,7 @@ function frames() {
   if (sections.includes('tp')) {
     const tp = (item, pose, t = 1, extra = '') => {
       const state = `3p-${pose}${t !== 1 ? '-' + t : ''}${extra ? '-pack' : ''}`;
-      out.push({ section: 'tp', item: NAME[item] || 'none', state, name: `${NAME[item] || 'none'}-${state}`, path: `${sb}hold=${item}&pose=${pose}&t=${t}&clip=1${extra}` });
+      out.push({ section: 'tp', item: NAME[item] || 'none', state, name: `${NAME[item] || 'none'}-${state}`, path: `${sb}hold=${item}&pose=${pose}&t=${t}&clip=1${extra}${args.seed !== undefined ? `&seed=${args.seed}` : ''}` });
     };
     for (const id of [...guns, ...melee, ...throws]) {
       for (const p of ['idle', 'walk', 'sprint', 'crouch', 'lookup', 'lookdown', 'downed', 'seated']) tp(id, p, p === 'walk' || p === 'sprint' ? 1.15 : 1);
@@ -124,7 +125,7 @@ async function measure(tree, fr, label) {
     if (args.shots) mkdirSync(dir, { recursive: true });
     let n = 0;
     for (const f of fr) {
-      chrome = await renewChrome(chrome); // (a browser lives a few minutes: lib.js's watchdog)
+      chrome = await renewChrome(chrome, { life: LIFE_MAX }); // (few, long-lived browsers: one every 9 minutes, under lib.js's watchdog)
       const r = await shoot(chrome.page, `${vite.url}/${f.path}`, {
         w: 640,
         h: 400,

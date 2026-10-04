@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { ZANIM } from '../../../shared/defs.js';
 import { MeshBuilder, instantiateRig, setFx, getCharacterMaterial, fbm3, noise3, clamp, lerp, smooth } from './skinning.js';
 import { CR } from './charTextures.js';
+import { ringLoft, bound, chain } from './monsters.js';
 
 const TAU = Math.PI * 2;
 
@@ -38,16 +39,17 @@ export const DOG_SOLES = { fp: [0, -B.fp[1], B.fpaw[2] - 0.01 - B.fp[2]], hh: [0
 
 // coats: fur, darker saddle over the back, pale belly/muzzle, ears (up / floppy), zombie damage
 const COATS = [
-  { name: 'shepherd', fur: 0x6e4e2e, saddle: 0x1d1814, belly: 0x9a7a52, ears: 'up', ribs: 1, collar: 0x5a2a1c },
-  { name: 'husky', fur: 0x6f6c66, saddle: 0x3a3836, belly: 0xb4b0a6, ears: 'up', tornEar: -1, stump: true },
-  { name: 'black lab', fur: 0x201e1c, ears: 'flop', ribs: -1, collar: 0x8a1c14 },
-  { name: 'mutt', fur: 0x5e3c24, belly: 0x8c6a48, ears: 'flop', tornEar: 1 },
-  { name: 'pit', fur: 0xa89c86, belly: 0xc4baa6, ears: 'up', ribs: -1, tornEar: 1, stump: true },
+  { name: 'shepherd', fur: 0x6e4e2e, saddle: 0x1d1814, belly: 0x9a7a52, ears: 'up', ribs: 1, collar: 0x5a2a1c, tongue: -1 },
+  { name: 'husky', fur: 0x6f6c66, saddle: 0x3a3836, belly: 0xb4b0a6, ears: 'up', tornEar: -1, stump: true, oneEye: 1 },
+  { name: 'black lab', fur: 0x201e1c, ears: 'flop', ribs: -1, collar: 0x8a1c14, flay: 1 },
+  { name: 'mutt', fur: 0x5e3c24, belly: 0x8c6a48, ears: 'flop', tornEar: 1, tongue: 1, flay: -1 },
+  { name: 'pit', fur: 0xa89c86, belly: 0xc4baa6, ears: 'up', ribs: -1, tornEar: 1, stump: true, oneEye: -1 },
 ];
+// (tongue: lolling out of that side; oneEye: that socket empty; flay: that side of the muzzle bare to the bone)
 export const DOG_COATS = COATS.length;
 // The Alpha (ZTYPE.BOSS_ALPHA): the pack's leader, the same dog built heavier and drawn at ALPHA_SCALE. Near-black and
 // mangier still, a ridge of bone spurs down its spine, longer fangs, eyes that burn red
-const ALPHA = { name: 'alpha', fur: 0x24211e, saddle: 0x0c0b0a, belly: 0x45382e, ears: 'up', tornEar: 1, ribs: -1, alpha: true, bulk: 1.22, mange: 0.5 };
+const ALPHA = { name: 'alpha', fur: 0x24211e, saddle: 0x0c0b0a, belly: 0x45382e, ears: 'up', tornEar: 1, ribs: -1, alpha: true, bulk: 1.22, mange: 0.5, flay: 1 };
 export const ALPHA_SCALE = 2.0;
 
 const C_MANGE = new THREE.Color(0x7c6a64); // bald, diseased skin
@@ -87,6 +89,7 @@ function buildDog(coatIdx) {
   const coat = coatIdx === 'alpha' ? ALPHA : COATS[coatIdx % COATS.length];
   const seed = coatIdx === 'alpha' ? 77.3 : coatIdx * 13.7;
   const bk = coat.bulk || 1; // a heavier build: body, neck and legs this much thicker
+  const hi = coat.alpha ? 1.4 : 1.12; // the Alpha is seen close and alone: a finer mesh
   const mb = new MeshBuilder();
   mb.addBone('root', null, 0, 0, 0);
   mb.addBone('hips', 'root', ...B.hips);
@@ -106,78 +109,120 @@ function buildDog(coatIdx) {
     mb.addBone('hk' + n, 'hu' + n, s * B.hk[0], B.hk[1], B.hk[2]);
     mb.addBone('hh' + n, 'hk' + n, s * B.hh[0], B.hh[1], B.hh[2]);
   }
-  // parts are placed in model space; geom() takes bone-relative coordinates
-  const rel = (bone, p) => {
-    const b = mb.bonePos(bone);
-    return [p[0] - b[0], p[1] - b[1], p[2] - b[2]];
-  };
+  const bi = (n) => mb.bi(n);
   const furs = {};
   const fur = (part) => furs[part] || (furs[part] = { color: coat.fur, region: CR.PLAIN, mottle: 0.22, mf: 40, tint: coatTint(coat, part, seed) });
-  const ellip = (part, bone, c, r, o = {}) => mb.ellip(bone, rel(bone, c), r, { ...fur(part), ...o });
-  const seg = (part, bone, a, b, r0, r1, o = {}) => mb.seg(bone, rel(bone, a), rel(bone, b), r0 * (part === 'leg' || part === 'neck' ? bk : 1), r1 * (part === 'leg' || part === 'neck' ? bk : 1), { rs: 7, hs: 1, caps: 2, ...fur(part), ...o });
-  const joint = (part, bone, c, r) => ellip(part, bone, c, [r * bk, r * bk, r * bk], { ws: 6, hs: 4 });
   const plain = (color, o = {}) => ({ color, region: CR.PLAIN, mottle: 0.15, ao: false, ws: 6, hs: 4, ...o });
-  // a horizontal body shell: lathe profile [radius, z] from rump to front, elliptical section (h = height / width)
-  // around a centre line at height y that rises by lift(z)
-  const shell = (part, bone, y, prof, h, lift) =>
-    mb.lathe(bone, rel(bone, [0, y, 0]), prof.map(([r, z]) => [r * bk, -z]), {
-      rs: 12, sz: h, rot: [-Math.PI / 2, 0, 0], shape: lift ? (v) => (v.z += lift(-v.y)) : null, ...fur(part),
-    });
+  const on = (bone, fn) => bound(mb, [bi(bone), 1, 0, 0], fn);
+  const blend = (a, b, t) => (t <= 0 ? [a, 1, b, 0] : t >= 1 ? [b, 1, a, 0] : [a, 1 - t, b, t]);
+  const G = (x) => Math.exp(-x * x);
+  const raw = new THREE.Color(0x7a1c18);
 
-  // body: deep narrow ribcage on the chest, tucked-up starved loin and bony rump on the hips (the shells overlap
-  // at the waist so no gap opens when the spine flexes)
-  shell('body', 'chest', 0.5, [[0, 0.1], [0.06, 0.08], [0.078, 0.02], [0.088, -0.06], [0.092, -0.14], [0.088, -0.22], [0.072, -0.28], [0.042, -0.315], [0, -0.325]], 1.45);
-  const tuck = (z) => 0.03 * Math.exp(-(((z - 0.04) / 0.12) ** 2));
-  shell('body', 'hips', 0.55, [[0, 0.43], [0.045, 0.41], [0.074, 0.36], [0.082, 0.29], [0.074, 0.2], [0.06, 0.12], [0.054, 0.04], [0.058, -0.04], [0.064, -0.1], [0, -0.15]], 1.12, tuck);
-  // spine and hip bones pushing through the hide
-  for (let i = 0; i < 6; i++) {
-    const z = -0.22 + i * 0.085;
-    const bone = z < 0 ? 'chest' : 'hips';
-    ellip('body', bone, [0, z < -0.05 ? 0.628 : 0.614, z], [0.013, 0.011, 0.022], { ws: 6, hs: 4 });
+  // ---- the trunk: one hide from the rump to the back of the skull, over a deep narrow ribcage, a tucked-up starved
+  // loin and a bony rump; skinned across the loin, the shoulders and the neck so that it bends instead of telescoping
+  const hips = bi('hips'), chest = bi('chest'), neck = bi('neck'), head = bi('head');
+  const wz = (z) => (z > 0.14 ? [hips, 1, chest, 0] : z > -0.04 ? blend(hips, chest, (0.14 - z) / 0.18) : z > -0.23 ? [chest, 1, neck, 0] : z > -0.33 ? blend(chest, neck, (-0.23 - z) / 0.1) : z > -0.4 ? [neck, 1, head, 0] : blend(neck, head, (-0.4 - z) / 0.07));
+  const trunk = [
+    [0.445, 0.575, 0.026, 0.026, 0.034], [0.4, 0.568, 0.06, 0.05, 0.072], [0.32, 0.562, 0.078, 0.058, 0.098], [0.22, 0.556, 0.07, 0.056, 0.084],
+    [0.12, 0.55, 0.066, 0.056, 0.078], [0.02, 0.546, 0.078, 0.062, 0.112], [-0.08, 0.542, 0.09, 0.07, 0.152], [-0.17, 0.546, 0.092, 0.076, 0.162],
+    [-0.25, 0.56, 0.082, 0.076, 0.14], [-0.32, 0.586, 0.064, 0.066, 0.094], [-0.4, 0.616, 0.053, 0.055, 0.066], [-0.46, 0.636, 0.046, 0.046, 0.05],
+  ];
+  // the wound some of them carry: a flank torn open to the ribs (coat.ribs: which side)
+  const rs = coat.ribs || 0;
+  const inRip = (x, y, z) => (rs && x * rs > 0.03 ? 1 - Math.hypot((z + 0.13) / 0.105, (y - 0.5) / 0.085) - (fbm3(z * 14 + seed, y * 14, 2, 2, 5) - 0.5) * 0.5 : -1);
+  ringLoft(mb, 'chest', trunk.map(([z, y, rx, ru, rd]) => ({ c: [0, y, z], rx: rx * bk, ru: ru * bk, rd: rd * bk, n: 2.25 })), {
+    ...fur('body'), nu: Math.round(14 * hi), sub: 2, cap0: 0.02, wts: (p) => wz(p[2]),
+    tear: rs ? { amt: 0, fn: (x, y, z) => inRip(x, y, z) > 0.08 } : null,
+    dr: (s, a) => {
+      const z = lerp(0.445, -0.46, s);
+      const side = Math.abs(Math.sin(a));
+      let d = 0;
+      // ribs through the hide, the knobs of the spine, the points of the hips, the shoulder blades
+      if (z < 0.07 && z > -0.24) d += 0.0055 * (Math.pow(Math.abs(Math.sin((z + 0.24) * 34)), 2) - 0.45) * smooth((side - 0.35) * 3) * smooth((0.07 - z) * 14) * smooth((z + 0.24) * 14) * (Math.cos(a) < 0.75 ? 1 : 0);
+      d += 0.006 * G(a / 0.16) * (0.4 + 0.6 * Math.abs(Math.sin(z * 46))) * smooth((z + 0.3) * 8) + 0.006 * G((Math.PI * 2 - a) / 0.16) * (0.4 + 0.6 * Math.abs(Math.sin(z * 46))) * smooth((z + 0.3) * 8);
+      d += 0.012 * G((z - 0.3) / 0.035) * (G((a - 0.75) / 0.3) + G((a - Math.PI * 2 + 0.75) / 0.3));
+      d += 0.009 * G((z + 0.225) / 0.05) * (G((a - 0.6) / 0.35) + G((a - Math.PI * 2 + 0.6) / 0.35));
+      d -= 0.008 * G((z - 0.12) / 0.07) * G((side - 1) / 0.5) * (Math.cos(a) < 0 ? 1 : 0.3); // the hollow of the flank
+      return d * bk;
+    },
+    paint: (s, a, c, p) => {
+      const z = p.z;
+      if (z < 0.07 && z > -0.24 && Math.cos(a) < 0.75) c.multiplyScalar(0.82 + 0.3 * Math.pow(Math.abs(Math.sin((z + 0.24) * 34)), 2) * Math.abs(Math.sin(a)));
+      if (rs) {
+        const k = inRip(p.x, p.y, p.z);
+        if (k > -0.45) c.lerp(raw, clamp((k + 0.45) * 2, 0, 0.9));
+      }
+    },
+  });
+  if (rs) {
+    on('chest', () => {
+      mb.ellip('root', [rs * 0.06 * bk, 0.5, -0.13], [0.03 * bk, 0.085, 0.1], plain(0x3a0a08, { region: CR.GORE, mottle: 0.3, blood: false, ws: 8, hs: 6 }));
+      for (let i = 0; i < 5; i++) {
+        const z = -0.215 + i * 0.04;
+        mb.tube('root', [[rs * 0.062 * bk, 0.6, z], [rs * 0.094 * bk, 0.52, z + 0.008], [rs * 0.085 * bk, 0.425, z + 0.018]], 0.0072, 0.0058, { rs: 4, ts: 4, color: 0xd8ccb0, region: CR.BONE, blood: false, cap: false });
+      }
+    });
   }
-  for (const s of [-1, 1]) ellip('body', 'hips', [s * 0.058, 0.61, 0.29], [0.018, 0.016, 0.024], { ws: 6, hs: 4 });
-  // exposed ribs: a torn-open flank, dark cavity and bare bone
-  if (coat.ribs) {
-    const s = coat.ribs;
-    mb.ellip('chest', rel('chest', [s * 0.088, 0.5, -0.15]), [0.03, 0.085, 0.1], plain(0x3a0a08, { region: CR.GORE, mottle: 0.3, blood: false }));
-    for (let i = 0; i < 4; i++) {
-      const z = -0.225 + i * 0.045;
-      mb.tube('chest', [rel('chest', [s * 0.07, 0.6, z]), rel('chest', [s * 0.108, 0.52, z + 0.008]), rel('chest', [s * 0.098, 0.43, z + 0.018])], 0.0075, 0.006, { rs: 4, ts: 4, color: 0xd8ccb0, region: CR.BONE, blood: false, cap: false });
-    }
-  }
-  // neck, with a ragged ruff where it meets the chest
-  seg('neck', 'neck', [0, 0.54, -0.22], [0, 0.625, -0.46], 0.07, 0.05, { rs: 10, sx: 0.85 });
-  ellip('neck', 'neck', [0, 0.565, -0.3], [0.064, 0.074, 0.07], { ws: 10, hs: 7, noise: 0.01, nf: 30 });
   if (coat.collar != null) {
     // somebody's pet once
-    const g = new THREE.TorusGeometry(0.066, 0.011, 5, 14);
+    const g = new THREE.TorusGeometry(0.062 * bk, 0.011, 5, 14);
     g.rotateX(0.31);
-    mb.geom('neck', g, { at: rel('neck', [0, 0.588, -0.36]), color: coat.collar, region: CR.LEATHER, mottle: 0.2 });
-    mb.box('neck', rel('neck', [0, 0.51, -0.37]), [0.022, 0.028, 0.004], { color: 0xb09a58, region: CR.PLAIN, mottle: 0.1, glow: 0.08 });
+    g.translate(0, 0.598, -0.36);
+    on('neck', () => {
+      mb.geom('root', g, { color: coat.collar, region: CR.LEATHER, mottle: 0.2 });
+      mb.box('root', [0, 0.528, -0.372], [0.022, 0.028, 0.004], { color: 0xb09a58, region: CR.PLAIN, mottle: 0.1, glow: 0.08 });
+    });
   }
-  // head: skull, brow, muzzle, nose, lower jaw
-  ellip('head', 'head', [0, 0.64, -0.49], [0.066, 0.064, 0.08], { ws: 10, hs: 7 });
-  ellip('head', 'head', [0, 0.662, -0.525], [0.058, 0.03, 0.04], { ws: 8, hs: 5 });
-  ellip('head', 'head', [0, 0.608, -0.585], [0.04, 0.038, 0.075], { ws: 9, hs: 6 });
-  for (const s of [-1, 1]) ellip('head', 'head', [s * 0.045, 0.612, -0.51], [0.028, 0.036, 0.045], { ws: 7, hs: 5 });
-  mb.ellip('head', rel('head', [0, 0.626, -0.658]), [0.021, 0.017, 0.016], plain(0x141010, { mottle: 0.05 }));
-  ellip('head', 'jaw', [0, 0.574, -0.57], [0.032, 0.017, 0.072], { ws: 8, hs: 5 });
-  // lips peeled back: gums and teeth along both sides, long canines
+
+  // ---- the head: skull, stop and muzzle as one, the lips peeled back off the teeth
+  const skull = [
+    [-0.425, 0.64, 0.04, 0.042, 0.04], [-0.468, 0.645, 0.058, 0.056, 0.05], [-0.508, 0.646, 0.06, 0.048, 0.05], [-0.542, 0.636, 0.047, 0.036, 0.04],
+    [-0.585, 0.627, 0.036, 0.029, 0.03], [-0.632, 0.622, 0.03, 0.025, 0.024], [-0.662, 0.62, 0.024, 0.02, 0.018],
+  ];
+  const flay = coat.flay || 0; // the side of the muzzle with the hide gone
+  ringLoft(mb, 'head', skull.map(([z, y, rx, ru, rd]) => ({ c: [0, y, z], rx, ru, rd, n: 2.3 })), {
+    ...fur('head'), nu: Math.round(12 * hi), sub: 2, cap1: 0.008,
+    dr: (s, a) => {
+      const z = lerp(-0.425, -0.662, s);
+      const m = Math.PI * 2 - a;
+      return 0.008 * G((z + 0.52) / 0.02) * (G((a - 0.75) / 0.3) + G((m - 0.75) / 0.3)) // brows over the eyes
+        - 0.006 * G((z + 0.55) / 0.02) * (G((a - 1.2) / 0.3) + G((m - 1.2) / 0.3)) // the sockets
+        + 0.007 * G((z + 0.495) / 0.03) * (G((a - 1.75) / 0.35) + G((m - 1.75) / 0.35)) // cheeks
+        - 0.004 * G((z + 0.5) / 0.05) * G(a / 0.12) - 0.004 * G((z + 0.5) / 0.05) * G(m / 0.12); // the furrow up the forehead
+    },
+    paint: (s, a, c, p) => {
+      if (p.z < -0.55 && p.y < 0.612) c.lerp(new THREE.Color(C_GUM), 0.85); // the lips drawn back: gum
+      if (flay && p.x * flay > 0.012 && p.z < -0.5 && p.y < 0.65) c.lerp(raw, clamp((-0.5 - p.z) * 14, 0, 0.9) * (0.75 + 0.25 * Math.sin(p.y * 300)));
+    },
+  });
+  on('head', () => mb.ellip('root', [0, 0.626, -0.664], [0.021, 0.017, 0.016], plain(0x141010, { mottle: 0.05 })));
+  // the lower jaw (drops on its own bone)
+  ringLoft(mb, 'jaw', [[-0.488, 0.592, 0.036, 0.012, 0.022], [-0.54, 0.586, 0.034, 0.012, 0.022], [-0.6, 0.582, 0.028, 0.011, 0.018], [-0.648, 0.582, 0.022, 0.01, 0.014]].map(([z, y, rx, ru, rd]) => ({ c: [0, y, z], rx, ru, rd, n: 2.3 })), {
+    ...fur('head'), nu: Math.round(9 * hi), sub: 2, cap0: 0.006, cap1: 0.008,
+    paint: (s, a, c) => Math.cos(a) > 0.2 && c.lerp(new THREE.Color(0x3a0a0c), 0.9), // the floor of the mouth
+  });
+  on('jaw', () => {
+    // a tongue, lolling out of one side on some
+    if (coat.tongue) mb.tube('root', [[0, 0.592, -0.55], [coat.tongue * 0.016, 0.594, -0.62], [coat.tongue * 0.034, 0.58, -0.66], [coat.tongue * 0.04, 0.55, -0.672]], 0.012, 0.007, { rs: 5, ts: 6, color: 0x7a2a34, region: CR.FLESH, blood: false, sx: 1 });
+  });
+  const tooth = plain(C_TEETH, { region: CR.BONE, blood: false, mottle: 0.25, rs: 4 });
   for (const s of [-1, 1]) {
-    mb.ellip('head', rel('head', [s * 0.03, 0.59, -0.59]), [0.012, 0.012, 0.06], plain(C_GUM, { region: CR.GORE, blood: false }));
-    mb.ellip('jaw', rel('jaw', [s * 0.026, 0.583, -0.58]), [0.01, 0.009, 0.055], plain(C_GUM, { region: CR.GORE, blood: false }));
-    for (let i = 0; i < 4; i++) {
-      const z = -0.55 - i * 0.03;
-      const x = s * (0.035 - i * 0.004);
-      const fang = i === 3;
-      const h = fang ? (coat.alpha ? 0.045 : 0.03) : 0.012 + (i % 2) * 0.004;
-      const tooth = plain(C_TEETH, { region: CR.BONE, blood: false, mottle: 0.25, rs: 4 });
-      mb.spike('head', rel('head', [x, 0.592, z]), rel('head', [x * 0.97, 0.592 - h, z - (fang ? 0.004 : 0)]), fang ? 0.0065 : 0.0048, tooth);
-      mb.spike('jaw', rel('jaw', [x * 0.9, 0.58, z + 0.005]), rel('jaw', [x * 0.88, 0.58 + h * 0.8, z + 0.005]), fang ? 0.0055 : 0.0042, tooth);
+    // teeth along both jaws: incisors across the front, the long canines, a ragged row of cheek teeth
+    for (let i = 0; i < 6; i++) {
+      const z = -0.535 - i * 0.022;
+      const x = s * (0.034 - i * 0.0035);
+      const fang = i === 5;
+      const h = fang ? (coat.alpha ? 0.045 : 0.032) : 0.011 + (i % 2) * 0.005;
+      on('head', () => mb.spike('root', [x, 0.603, z], [x * 0.97, 0.603 - h, z - (fang ? 0.004 : 0)], fang ? 0.0065 : 0.0048, tooth));
+      if (i < 5) on('jaw', () => mb.spike('root', [x * 0.9, 0.588, z + 0.006], [x * 0.88, 0.588 + h * 0.85, z + 0.006], fang ? 0.0055 : 0.0042, tooth));
     }
-    // clouded, faintly glowing eyes in bruised sockets
-    mb.ellip('head', rel('head', [s * 0.041, 0.655, -0.548]), [0.014, 0.012, 0.01], plain(0x241010, { region: CR.GORE }));
-    mb.ellip('head', rel('head', [s * 0.043, 0.656, -0.553]), [0.0095, 0.0085, 0.007], coat.alpha ? plain(0xff3a18, { region: CR.GLOW, glow: 1, mottle: 0, blood: false }) : plain(0xcfc47a, { glow: 0.45, mottle: 0, blood: false }));
+    on('jaw', () => mb.spike('root', [s * 0.014, 0.588, -0.636], [s * 0.014, 0.588 + (coat.alpha ? 0.036 : 0.026), -0.64], 0.0052, tooth));
+    for (let i = 0; i < 3; i++) on('head', () => mb.spike('root', [s * (0.005 + i * 0.008), 0.606, -0.668 + i * 0.004], [s * (0.005 + i * 0.008), 0.596, -0.67 + i * 0.004], 0.0036, tooth));
+    // clouded, faintly glowing eyes in bruised sockets (one of them gone, on some)
+    on('head', () => {
+      mb.ellip('root', [s * 0.04, 0.656, -0.546], [0.015, 0.013, 0.011], plain(0x241010, { region: CR.GORE }));
+      if (coat.oneEye !== s) mb.ellip('root', [s * 0.042, 0.657, -0.552], [0.0098, 0.0088, 0.0072], coat.alpha ? plain(0xff3a18, { region: CR.GLOW, glow: 1, mottle: 0, blood: false }) : plain(0xcfc47a, { glow: 0.45, mottle: 0, blood: false }));
+    });
   }
   // ears: flattened four-sided cones; pricked or floppy, one torn short on some
   for (const s of [-1, 1]) {
@@ -193,48 +238,66 @@ function buildDog(coatIdx) {
       mb.geom('ear' + n, g, { rot, ...(inner ? plain(torn ? 0x4a1210 : 0x5c3a36, { region: CR.SKIN }) : fur('ear')) });
     }
   }
-  // tail: tapered segments, or a gnawed stump
-  const tailN = coat.stump ? 1 : TAIL_N;
-  for (let i = 0; i < tailN; i++) {
-    const a = B.tail[i];
-    const b = coat.stump ? [0, 0.59, 0.43] : i + 1 < TAIL_N ? B.tail[i + 1] : B.tailEnd;
-    const r0 = 0.03 - i * 0.007;
-    seg('tail', 'tail' + i, a, b, r0, r0 - 0.006, { rs: 6, hs: 1 });
-    joint('tail', 'tail' + i, a, r0);
+
+  // ---- the tail: one tapering loft down its bones, or a gnawed stump
+  {
+    const T = [B.tail[0], B.tail[1], B.tail[2], B.tailEnd];
+    const tb = [bi('tail0'), bi('tail1'), bi('tail2')];
+    if (coat.stump) {
+      ringLoft(mb, 'tail0', [{ c: [0, 0.6, 0.36], rx: 0.03 }, { c: [0, 0.593, 0.41], rx: 0.026 }, { c: [0, 0.59, 0.435], rx: 0.02 }], { ...fur('tail'), nu: 7, sub: 1 });
+      on('tail0', () => mb.ellip('root', [0, 0.59, 0.437], [0.02, 0.02, 0.012], plain(0x5a0c0a, { region: CR.GORE, blood: false })));
+    } else {
+      ringLoft(mb, 'tail0', [{ c: [0, 0.6, 0.35], rx: 0.032 }, { c: T[0], rx: 0.029 }, { c: T[1], rx: 0.023 }, { c: T[2], rx: 0.017 }, { c: T[3], rx: 0.008 }].map((r) => ({ ...r, rx: r.rx * bk })), {
+        ...fur('tail'), nu: 7, sub: 2, cap1: 0.012,
+        wts: (p) => (p[2] < T[1][2] - 0.02 ? [tb[0], 1, 0, 0] : p[2] < T[1][2] + 0.02 ? blend(tb[0], tb[1], (p[2] - T[1][2] + 0.02) / 0.04) : p[2] < T[2][2] - 0.02 ? [tb[1], 1, 0, 0] : p[2] < T[2][2] + 0.02 ? blend(tb[1], tb[2], (p[2] - T[2][2] + 0.02) / 0.04) : [tb[2], 1, 0, 0]),
+        dr: (s, a) => 0.004 * Math.sin(a * 5 + s * 30), // a ragged, half-bald brush
+      });
+    }
   }
-  if (coat.stump) mb.ellip('tail0', rel('tail0', [0, 0.59, 0.435]), [0.022, 0.022, 0.012], plain(0x5a0c0a, { region: CR.GORE, blood: false }));
-  // legs: thin, knobby joints, big paws
+
+  // ---- legs: thin and long, the joints knobby, blended at the elbow / stifle and the wrist / hock; big splayed paws
+  const mid = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
   for (const s of [-1, 1]) {
     const n = s < 0 ? 'L' : 'R';
     const X = (p) => [s * p[0], p[1], p[2]];
-    // front: shoulder blade + upper arm, forearm, pastern, paw
-    seg('leg', 'fu' + n, X([0.045, 0.565, -0.225]), X(B.fu), 0.036, 0.052, { sx: 0.6 });
-    seg('leg', 'fu' + n, X(B.fu), X(B.fl), 0.052, 0.034, { sx: 0.8 });
-    seg('leg', 'fl' + n, X(B.fl), X(B.fp), 0.031, 0.023);
-    joint('leg', 'fl' + n, X(B.fl), 0.033);
-    seg('leg', 'fp' + n, X(B.fp), X(B.fpaw), 0.022, 0.02);
-    joint('leg', 'fp' + n, X(B.fp), 0.024);
-    ellip('paw', 'fp' + n, X([0.1, 0.02, -0.232]), [0.028, 0.02, 0.04], { ws: 7, hs: 4 });
-    // hind: flat bony thigh, shin, hock, paw
-    seg('leg', 'hu' + n, X([0.055, 0.555, 0.3]), X(B.hk), 0.074, 0.038, { sx: 0.6, rs: 8 });
-    seg('leg', 'hk' + n, X(B.hk), X(B.hh), 0.033, 0.022, { sx: 0.8 });
-    joint('leg', 'hk' + n, X(B.hk), 0.034);
-    seg('leg', 'hh' + n, X(B.hh), X(B.hpaw), 0.021, 0.019);
-    joint('leg', 'hh' + n, X(B.hh), 0.023);
-    ellip('paw', 'hh' + n, X([0.1, 0.02, 0.305]), [0.027, 0.019, 0.038], { ws: 7, hs: 4 });
+    const jw = (a, b, c, y1, y2) => (p) => (p[1] > y1 + 0.028 ? [a, 1, b, 0] : p[1] > y1 - 0.028 ? blend(a, b, (y1 + 0.028 - p[1]) / 0.056) : p[1] > y2 + 0.02 ? [b, 1, c, 0] : p[1] > y2 - 0.02 ? blend(b, c, (y2 + 0.02 - p[1]) / 0.04) : [c, 1, 0, 0]);
+    const leg = (rings, bone, w) => ringLoft(mb, bone, rings.map((r) => ({ c: X(r[0]), rx: r[1] * bk, ry: r[2] * bk })), { ...fur('leg'), nu: Math.round(8 * hi), sub: 2, up: [0, 0, -1], wts: w, cap0: 0.01, cap1: 0.008 });
+    // front: the shoulder blade riding on the ribs, the upper arm, the forearm, the pastern
+    leg([
+      [[0.05, 0.6, -0.225], 0.022, 0.034], [mid([0.05, 0.6, -0.225], B.fu, 0.55), 0.03, 0.052], [B.fu, 0.036, 0.052], [mid(B.fu, B.fl, 0.5), 0.03, 0.042], [B.fl, 0.026, 0.033],
+      [mid(B.fl, B.fp, 0.3), 0.024, 0.028], [mid(B.fl, B.fp, 0.75), 0.018, 0.02], [B.fp, 0.021, 0.022], [mid(B.fp, B.fpaw, 0.75), 0.019, 0.021],
+    ], 'fu' + n, jw(bi('fu' + n), bi('fl' + n), bi('fp' + n), B.fl[1], B.fp[1]));
+    // hind: a flat slab of thigh, the stifle, the long shank, the hock standing out behind
+    leg([
+      [[0.06, 0.585, 0.3], 0.024, 0.05], [mid(B.hu, B.hk, 0.2), 0.04, 0.086], [mid(B.hu, B.hk, 0.6), 0.036, 0.066], [B.hk, 0.028, 0.038], [mid(B.hk, B.hh, 0.45), 0.021, 0.028],
+      [mid(B.hk, B.hh, 0.85), 0.018, 0.022], [B.hh, 0.02, 0.026], [mid(B.hh, B.hpaw, 0.5), 0.016, 0.018], [mid(B.hh, B.hpaw, 0.82), 0.018, 0.02],
+    ], 'hu' + n, jw(bi('hu' + n), bi('hk' + n), bi('hh' + n), B.hk[1], B.hh[1]));
+    for (const [bone, c, r] of [['fp' + n, [0.1, 0.02, -0.232], [0.028, 0.02, 0.04]], ['hh' + n, [0.1, 0.02, 0.305], [0.027, 0.019, 0.038]]]) {
+      on(bone, () => {
+        mb.ellip('root', X(c), [r[0] * bk, r[1], r[2] * bk], { ws: 7, hs: 4, ...fur('paw') });
+        // four toes, a claw on each
+        for (let t = 0; t < 4; t++) {
+          const tx = (t - 1.5) * 0.013 * bk, tz = c[2] - r[2] * bk * (0.72 + (t === 1 || t === 2 ? 0.16 : 0));
+          mb.ellip('root', [s * c[0] + tx, 0.014, tz], [0.0085 * bk, 0.011, 0.015 * bk], { ws: 5, hs: 3, ...fur('paw') });
+          mb.spike('root', [s * c[0] + tx, 0.013, tz - 0.011 * bk], [s * c[0] + tx * 1.05, 0.002, tz - 0.027 * bk], 0.0036 * bk, plain(0x1a1410, { region: CR.BONE, rs: 4 }));
+        }
+      });
+    }
   }
   if (coat.alpha) {
     // bone spurs down the spine from the withers to the rump, raking back, the tallest over the shoulders
-    const bone = { color: 0xd4c6a6, region: CR.BONE, blood: false, mottle: 0.25, rs: 5 };
-    for (let i = 0; i < 9; i++) {
-      const z = -0.26 + i * 0.065;
-      const y = 0.6 + 0.085 * bk - 0.004 * i;
-      const h = 0.075 - i * 0.005 + (i % 2) * 0.012;
-      const b = z < -0.02 ? 'chest' : 'hips';
-      mb.spike(b, rel(b, [0, y - 0.01, z]), rel(b, [0, y + h, z + h * 0.7]), 0.013 + (i < 4 ? 0.004 : 0), bone);
+    const bone = { color: 0xd4c6a6, region: CR.BONE, blood: false, mottle: 0.25, rs: 4 };
+    for (let i = 0; i < 7; i++) {
+      const z = -0.25 + i * 0.085 + (i % 2) * 0.012;
+      const y = 0.6 + 0.085 * bk - 0.004 * i - (z < -0.2 ? 0.0 : 0.012);
+      const h = [0.062, 0.04, 0.07, 0.03, 0.05, 0.026, 0.034][i]; // (broken off short, some of them)
+      bound(mb, wz(z), () => mb.spike('root', [0, y - 0.014, z], [(i % 3 - 1) * 0.012, y + h, z + h * 0.8], 0.016 + (i < 3 ? 0.004 : 0), bone));
     }
     // a ruff of matted fur over the neck and shoulders
-    ellip('neck', 'neck', [0, 0.6, -0.27], [0.085, 0.07, 0.1], { ws: 10, hs: 7, noise: 0.018, nf: 34 });
+    on('neck', () => mb.ellip('root', [0, 0.605, -0.27], [0.082, 0.066, 0.1], { ws: 10, hs: 7, noise: 0.018, nf: 34, ...fur('neck') }));
+    // the chain it broke: twice round its neck, the end dragging
+    chain(mb, (x, y, z) => wz(z), [[0, 0.668, -0.33], [0.066, 0.612, -0.345], [0, 0.532, -0.36], [-0.066, 0.606, -0.352], [0, 0.676, -0.36], [0.07, 0.62, -0.376], [0.01, 0.53, -0.386]], 0.017, { color: 0x56524a });
+    chain(mb, [bi('chest'), 1, 0, 0], [[0.01, 0.53, -0.386], [0.03, 0.44, -0.36], [0.05, 0.34, -0.33], [0.045, 0.25, -0.31]], 0.017, { color: 0x56524a });
     // old scars across the muzzle and flank
     mb.blood([0.04, 0.64, -0.56], 0.04, 1);
     mb.blood([-0.1, 0.55, -0.05], 0.08, 0.9);
