@@ -104,7 +104,7 @@ export function buildPerson(mb, P, L, detail = 1) {
   const pantsO = pants ? { color: pantsCol, region: pants.region ?? CR.DENIM, mottle: 0.12, tint: pants.tint, tear: tearOf(pants, 71) } : skinO;
   if (pants && !(dead && !top && !pants)) {
     const yTop = top ? Math.max(rise, Math.min(rise, hem + 0.04)) : rise;
-    sheet(mb, T, 0, TAU, T.yLo, yTop, rs, nvT(T.yLo, yTop), pP, { ...pantsO, cap0: 0.02, normY: (y) => clamp(0.15 + (y - yH + 0.09) * 12, 0.15, 1) });
+    sheet(mb, T, 0, TAU, T.yLo, yTop, rs, nvT(T.yLo, yTop), pP, { ...pantsO, cap0: 0.02, cap1: 0, normY: (y) => clamp(0.15 + (y - yH + 0.09) * 12, 0.15, 1) });
   }
   // the top over the trousers' waist
   const topCol = top ? color(top.color) : null;
@@ -132,6 +132,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     } else {
       sheet(mb, T, 0, TAU, y0, collarY, rs, nvT(y0, collarY), pT, {
         ...topO,
+        cap1: 0.004,
         tint: (p, n, c) => {
           if (top.zip && Math.abs(p.x) < 0.006 && p.z < 0 && p.y > y0 + 0.01) c.multiplyScalar(0.5); // the zip
           if (top.buttons && Math.abs(p.x) < 0.01 && p.z < 0) c.multiplyScalar(0.82); // the placket
@@ -150,7 +151,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     }
   } else if (!dead || !pants) {
     // bare-chested (a dead body): the skin from the trousers up
-    sheet(mb, T, 0, TAU, pants ? rise - 0.01 : T.yLo, T.yHi, rs, nvT(rise, T.yHi), 0, skinO);
+    sheet(mb, T, 0, TAU, pants ? rise - 0.01 : T.yLo, T.yHi, rs, nvT(rise, T.yHi), 0, { ...skinO, cap1: 0.004 });
   }
   if (top && (top.hem ?? 0) > 0.15) {
     // what hangs below the hips (a dress, a hospital gown, a long coat's tails): flared, so striding thighs stay inside
@@ -193,7 +194,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     sheet(mb, T, 0, TAU, yH + 0.05, yH + 0.075, rs, 1, pT + 0.003, { color: mulC(topCol, 0.85), region: topReg });
   }
   // ---- neck (skin), and a collar round it
-  sheet(mb, N, 0, TAU, N.yLo, N.yHi, Math.max(8, rs - 8), 4, 0, skinO);
+  sheet(mb, N, 0, TAU, N.yLo, N.yHi, Math.max(8, rs - 8), 4, 0, { ...skinO, cap0: 0.004, cap1: 0.004 });
   if (top) collar(mb, P, T, top, topCol, topReg, collarY, pT, open);
   // ---- arms
   for (let i = 0; i < 2; i++) {
@@ -209,15 +210,15 @@ export function buildPerson(mb, P, L, detail = 1) {
     if (top && sleeves !== 'none' && top.kind !== 'tank') {
       const pS = thick * 0.75 + 0.003;
       const ys = Math.max(sl, yEnd);
-      sheet(mb, A, 0, TAU, ys, A.yHi, rsA, nvL(ys, A.yHi), pS, { color: topCol, region: topReg, mottle: 0.12, tint: top.tint, tear: tearS });
+      sheet(mb, A, 0, TAU, ys, A.yHi, rsA, nvL(ys, A.yHi), pS, { color: topCol, region: topReg, mottle: 0.12, tint: top.tint, tear: tearS, cap0: 0, cap1: 0.003 });
       if (sleeves === 'rolled') sheet(mb, A, 0, TAU, sl, sl + 0.04, rsA, 2, pS + 0.008, { color: mulC(topCol, 0.92), region: topReg });
       else if (sleeves === 'long' && (top.kind === 'jacket' || top.kind === 'hoodie' || top.kind === 'fleece' || top.kind === 'coat')) sheet(mb, A, 0, TAU, sl, sl + 0.03, rsA, 1, pS + 0.004, { color: mulC(topCol, 0.85), region: topReg });
       else if (sleeves === 'short') sheet(mb, A, 0, TAU, sl, sl + 0.015, rsA, 1, pS + 0.002, { color: mulC(topCol, 0.9), region: topReg });
       // skin from inside the sleeve down
       const under = dead && top.tear && !FAR() ? A.yHi : Math.min(A.yHi, sl + 0.03); // (torn: the arm shows through the holes)
-      if (yEnd < under) sheet(mb, A, 0, TAU, yEnd, under, rsA - (dead ? 2 : 0), nvL(yEnd, under), 0, skinO);
+      if (yEnd < under) sheet(mb, A, 0, TAU, yEnd, under, rsA - (dead ? 2 : 0), nvL(yEnd, under), 0, { ...skinO, cap0: 0, cap1: 0 });
     } else {
-      sheet(mb, A, 0, TAU, yEnd, A.yHi, rsA, nvL(yEnd, A.yHi), 0, skinO);
+      sheet(mb, A, 0, TAU, yEnd, A.yHi, rsA, nvL(yEnd, A.yHi), 0, { ...skinO, cap0: 0, cap1: 0.003 });
     }
     if (missing) {
       stump(mb, 'farm' + n, 0.034 * B.arm, 0.0);
@@ -236,9 +237,9 @@ export function buildPerson(mb, P, L, detail = 1) {
       const yb = shorts ? Lg.yK + 0.08 : pants.tearY !== undefined && dead ? Lg.yA + 0.04 + pants.tearY : Lg.yA + (shoe ? 0.035 : 0.02);
       const flare = (t, y) => pP + (shorts ? 0.01 : 0) + (pants.cargo ? 0.004 : 0) + 0.007 * sstep(Lg.yK - 0.2, Lg.yA + 0.03, y) * (shoe && !shorts ? 1 : 0.3);
       const fnHem = dead && pants.tearY !== undefined ? (x, y, z) => y < yb + 0.05 * fbm3(x * 25, y * 4, z * 25, 2, 11 + i) : null;
-      sheet(mb, Lg, 0, TAU, yb, Lg.yHi, rsL, nvL(yb, Lg.yHi), flare, { ...pantsO, tear: tearOf(pants, 81 + i, fnHem) });
+      sheet(mb, Lg, 0, TAU, yb, Lg.yHi, rsL, nvL(yb, Lg.yHi), flare, { ...pantsO, tear: tearOf(pants, 81 + i, fnHem), cap0: fnHem ? undefined : 0, cap1: 0 });
       const under = dead && pants.tear && !FAR() ? Lg.yHi : yb + 0.04; // (torn: the leg shows through the holes)
-      if (shorts || dead) sheet(mb, Lg, 0, TAU, Lg.yLo, under, rsL - (dead ? 2 : 0), nvL(Lg.yLo, under), 0, skinO);
+      if (shorts || dead) sheet(mb, Lg, 0, TAU, Lg.yLo, under, rsL - (dead ? 2 : 0), nvL(Lg.yLo, under), 0, { ...skinO, cap0: 0, cap1: 0 });
       if (pants.cargo) {
         // a bellows pocket on the outside of each thigh, its flap over it
         const t0 = side * PI * 0.5;
@@ -246,7 +247,7 @@ export function buildPerson(mb, P, L, detail = 1) {
         pillow(mb, Lg, t0 - side * 0.6, t0 + side * 0.3, Lg.yT - 0.145, Lg.yT - 0.115, flare(0, Lg.yT - 0.13) + 0.006, 0.004, { color: mulC(pantsCol, 0.85), region: pantsO.region, nu: 4, nv: 1 });
       }
     } else {
-      sheet(mb, Lg, 0, TAU, Lg.yLo, Lg.yHi, rsL, nvL(Lg.yLo, Lg.yHi), 0, skinO);
+      sheet(mb, Lg, 0, TAU, Lg.yLo, Lg.yHi, rsL, nvL(Lg.yLo, Lg.yHi), 0, { ...skinO, cap0: 0, cap1: 0 });
     }
     if (shoe) boot(mb, P, L, side, shoe);
     else bareFoot(mb, P, L, side, skin);
