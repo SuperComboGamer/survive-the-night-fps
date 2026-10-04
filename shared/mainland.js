@@ -1044,9 +1044,9 @@ export function createMainland(seed) {
     const y0 = b.y0 + ly;
     const y1 = y0 + (PROPS[type]?.size[1] ?? 1);
     const reach = Math.hypot(PROPS[type].size[0], PROPS[type].size[2]) / 2;
-    for (const o of openings) if (Math.hypot(o.x - x, o.z - z) < reach + 1.25) return false;
-    for (const o of containers) if (Math.hypot(o.x - x, o.z - z) < reach + 1.0) return false;
-    for (const o of lootSpawns) if (Math.hypot(o.x - x, o.z - z) < reach + 0.9) return false;
+    for (const o of openings) if (Math.hypot(o.x - x, o.z - z) < reach + 1.15) return false;
+    for (const o of containers) if (Math.hypot(o.x - x, o.z - z) < reach + 0.85) return false;
+    for (const o of lootSpawns) if (Math.hypot(o.x - x, o.z - z) < reach + 0.75) return false;
     for (const o of partSpots) if (Math.hypot(o.x - x, o.z - z) < reach + 0.9) return false;
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
@@ -1066,6 +1066,7 @@ export function createMainland(seed) {
       const r = Math.hypot(PROPS[type].size[0], PROPS[type].size[2]) / 2;
       const [x, z] = [b.wx(lx, lz), b.wz(lx, lz)];
       const h0 = heightAt(x, z);
+      if (Math.abs(h0 - b.y0) > 0.07) return false; // (nor where the ground has left the place's own level)
       if (r > 0.6 && [[r, 0], [-r, 0], [0, r], [0, -r]].some(([dx, dz]) => Math.abs(heightAt(x + dx, z + dz) - h0) > (r > 2 ? 0.3 : 0.14))) return false;
     }
     b.prop(type, lx, lz, ry, { seed: sd, ...o, nocollide: !(PROPS[type]?.boxes || PROPS[type]?.cyls) });
@@ -1182,9 +1183,10 @@ export function createMainland(seed) {
   };
   // rows of shelving down the middle of a shop's floor, what they held swept off them, clear of its counter and doors
   const aisles = (b, F) => {
-    for (const dx of [4.2, 7.4]) {
-      if (F.L + dx > F.R - 6.6) continue;
+    for (const dx of [4.2, 7.4, 10.6]) {
+      if (F.L + dx > F.R - 4.4) continue;
       extra(b, 'shop_gondola', F.L + dx, F.cz + 1.2, PI / 2, inside);
+      extra(b, 'shop_gondola', F.L + dx, F.cz - 2.2, PI / 2, { ly: FLOOR_Y, seed: 1 });
       b.prop('stock_spill', F.L + dx + rng.range(-0.3, 1.4), F.cz + rng.range(-1.6, 2.2), rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
     }
   };
@@ -1203,6 +1205,8 @@ export function createMainland(seed) {
       b.loot(F.R - 3, F.cz - 2.4, FLOOR_Y + 0.02);
       aisles(b, F);
       extra(b, 'display_fridge', rightX(F, 0.75), F.cz + 2.2, -PI / 2, inside);
+      extra(b, 'display_fridge', rightX(F, 0.75), F.cz - 2.4, -PI / 2, { ly: FLOOR_Y, seed: 1 });
+      extra(b, 'vending_machine', leftX(F, 0.86), F.cz - 0.4, PI / 2, inside);
       b.prop('shopping_cart', F.R - 2.6, F.front + 2, 0.7, { nocollide: true, ly: FLOOR_Y });
     },
     pharmacy(b, F) {
@@ -1385,6 +1389,18 @@ export function createMainland(seed) {
       extra(b, 'armchair', F.R - 2.2, F.front + 2.2, -0.6, inside);
       b.prop('rug', F.L + 5.6, F.cz + 0.6, rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
       extra(b, 'door_barricade', 1.4 + 0.09 + 3.4, F.front + WALL + 0.45, PI, inside); // (somebody shut themselves in, at the front windows)
+      // (...the rest of it: a bed made up for two, a chest of drawers, the table they ate at, books, a bath)
+      extra(b, 'double_bed', F.L + 7.6, F.back - WALL - 1.05, 0, inside);
+      extra(b, 'dresser', F.L + 9.4, F.back - WALL - 0.47, PI, inside);
+      extra(b, 'kitchen_table', F.R - 4.4, F.cz + 2.6, rng.range(-0.3, 0.3), inside);
+      extra(b, 'bookshelf', leftX(F, 0.9), F.cz + 2.4, PI / 2, inside);
+      extra(b, 'bookshelf', 1.4 + 0.09 + 0.5, F.cz - 3.6, PI / 2, inside);
+      extra(b, 'armchair', F.L + 3.4, F.front + 1.3, 0.5, inside);
+      extra(b, 'bathtub', rightX(F, 0.8), F.back - WALL - 2.6, 0, inside);
+      extra(b, 'toilet', F.R - 2.2, F.back - WALL - 0.4, PI, inside);
+      extra(b, 'sofa', F.R - 5.6, F.front + WALL + 0.5, 0, { ly: FLOOR_Y, seed: 2 });
+      for (const [dx, dz, r] of [[-1.1, 0.1, PI / 2], [1.1, -0.2, -PI / 2], [0.1, 1, 0]]) b.prop('chair', F.R - 4.4 + dx, F.cz + 2.6 + dz, r + rng.range(-0.5, 0.5), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+      b.prop('rug', F.R - 4.6, F.cz - 0.2, PI / 2 + rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
       mess(b, F, 11, 3.2);
       yard(b, F, L);
     },
@@ -2277,14 +2293,15 @@ export function createMainland(seed) {
       const lx = xs - city.x;
       const lz = zc - city.z;
       const st = lot.shaft || { style: 'office', fh: 3.3 };
-      const length = (x0, x1, w, h, tilt) => {
+      // (each a little askew of the last, and none of them level: tilt - its far end up)
+      const length = (x0, x1, w, h, tilt, skew) => {
         const cx = lx + (dir * (x0 + x1)) / 2;
-        solid(b, cx, 0.02, lz, Math.abs(x1 - x0), h, w, 'concrete').across = true;
-        fallenBits.push({ x: b.wx(cx, lz), y: b.y0 + 0.02, z: b.wz(cx, lz), ry: dir > 0 ? 0 : PI, len: Math.abs(x1 - x0), w, h, fh: st.fh, style: st.style, mat: 'concrete', seed: rng.int(1, 99999), tilt });
+        solid(b, cx, 0.02, lz, Math.abs(x1 - x0), h, w, 'concrete', { ry: skew }).across = true;
+        fallenBits.push({ x: b.wx(cx, lz), y: b.y0 + 0.02, z: b.wz(cx, lz), ry: (dir > 0 ? 0 : PI) + skew, len: Math.abs(x1 - x0), w, h, fh: st.fh, style: st.style, mat: 'concrete', seed: rng.int(1, 99999), tilt });
       };
-      length((lot.x + dir * 17 - xs) * dir + 0.3, -1.8, 15, 7.6, 0.06); // (from the podium's flank: it is 34 m across)
-      length(1.8, 12.6, 15, 6.4, -0.03);
-      length(14.2, 22.6, 14, 4.6, 0.05);
+      length((lot.x + dir * 17 - xs) * dir + 0.5, -1.9, 15, 7.6, -0.14, 0.02); // (from the podium's flank, its end there up on what it broke off: it is 34 m across)
+      length(1.9, 12.4, 15, 6.4, 0.05, -0.05);
+      length(14.4, 22.6, 14, 4.6, -0.08, 0.07);
       // the break over the roadway: rubble to the height of a man, and at either mouth of it
       heap(b, lx, lz, 1.7, 6.6, 1.6, { across: true, ly: 0.02 });
       for (const sz of [-1, 1]) heap(b, lx + rng.range(-0.6, 0.6), lz + sz * 9.6, 3.2, 2.6, 1.3, { across: true, ly: 0.02, ry: rng.range(-0.3, 0.3) });
@@ -2860,11 +2877,11 @@ export function createMainland(seed) {
     let sideOf = rng.chance(0.5) ? 1 : -1;
     for (let i = 2; i < p.length / 2 - 2; i++) {
       acc += Math.hypot(p[i * 2] - p[i * 2 - 2], p[i * 2 + 1] - p[i * 2 - 1]);
-      if (acc < (road.kind === ROAD.TRAIL ? 70 : 52)) continue;
+      if (acc < (road.kind === ROAD.TRAIL ? 60 : 36)) continue;
       const tx = p[i * 2 + 2] - p[i * 2 - 2];
       const tz = p[i * 2 + 3] - p[i * 2 - 1];
       const tl = Math.hypot(tx, tz) || 1;
-      const type = ['wreck', 'wreck', 'camp', 'stash', 'shed', 'wreck'][rng.int(0, 5)];
+      const type = ['wreck', 'wreck', 'camp', 'stash', 'shed', 'wreck', 'crash', 'post', 'stop', 'graves'][rng.int(0, 9)];
       const off = road.width + (type === 'wreck' ? rng.range(2.5, 4) : rng.range(7, 10));
       const sx = p[i * 2] + (-tz / tl) * sideOf * off;
       const sz = p[i * 2 + 1] + (tx / tl) * sideOf * off;
@@ -2877,7 +2894,7 @@ export function createMainland(seed) {
       acc = rng.range(-10, 10);
     }
   }
-  for (let a = 0; a < 5000 && sites.length < 240; a++) {
+  for (let a = 0; a < 6000 && sites.length < 300; a++) {
     const x = rng.range(-HALF + 70, HALF - 70);
     const z = rng.range(-HALF + 70, HALF - 70);
     if (!siteOk(x, z) || roadDistAt(x, z) < 22 || !siteFree(x, z, 38)) continue;
@@ -2915,6 +2932,39 @@ export function createMainland(seed) {
       b.cont(CONT.DUFFEL, -1.9, -1.4, { prop: 'duffel_bag', ry: rng.range(0, 6), nocollide: true });
       b.loot(1.2, -3.8);
       b.clear(0, 0, 5);
+    } else if (st.type === 'crash') {
+      // two that met, off the road: one burnt, their people still by them
+      b.wreck(rng.chance(0.5) ? 'car_open' : 'van_wreck', -1.2, 0.4, PI / 2 + rng.range(-0.4, 0.4), { zone: ZONE.ROADSIDE, trunk: false, seed: rng.int(0, 3) });
+      extra(b, 'car_burnt', 2.4, -1.6, rng.range(0, 6));
+      b.prop('glass_shards', 0.6, -0.6, rng.range(0, 6), { nocollide: true });
+      b.prop(rng.chance(0.5) ? 'skeleton' : 'corpse', rng.range(-3, 3), 2.6, rng.range(0, 6), { nocollide: true, seed: rng.int(0, 2) });
+      b.prop('suitcases', rng.range(-3, 3), -3.2, rng.range(0, 6), { nocollide: true });
+      if (rng.chance(0.5)) b.cont(CONT.DUFFEL, 3.6, 2.4, { prop: 'duffel_bag', ry: rng.range(0, 6), nocollide: true, zone: ZONE.ROADSIDE });
+    } else if (st.type === 'post') {
+      // a post the army held on the road: a nest, wire, their order on a trestle, what is left of them
+      extra(b, 'sandbag_nest', 0, 0.6, PI);
+      b.prop('mg_tripod', 0, 0.8, PI, { nocollide: true });
+      extra(b, 'concertina', 0.4, -3.6, rng.range(-0.1, 0.1));
+      extra(b, 'checkpoint_sign', -3.6, -2, PI + rng.range(-0.3, 0.3));
+      b.cont(CONT.AMMO_BOX, 3.4, 1.2, { prop: 'military_crate', ry: 0.3, zone: ZONE.ROADBLOCK });
+      for (let k = 0; k < 3; k++) b.prop(['skeleton', 'corpse', 'blood_pool'][k], rng.range(-3.6, 3.6), rng.range(-2.6, 3.4), rng.range(0, 6), { nocollide: true, seed: k });
+      b.clear(0, 0, 5);
+    } else if (st.type === 'stop') {
+      // a bus stop out in the country: its shelter, a bench, what was left waiting
+      b.prop('bus_shelter', 0, 0.8, PI);
+      extra(b, 'trash_bin', 2.8, 0.4, 0);
+      extra(b, 'street_bench', -3.4, 0.6, PI);
+      for (let k = 0; k < 3; k++) b.prop(['suitcases', 'litter', 'skeleton'][k], rng.range(-3, 3), -1.6 - k * 0.6, rng.range(0, 6), { nocollide: true, seed: k });
+      if (rng.chance(0.4)) b.loot(1.2, -1.4);
+    } else if (st.type === 'graves') {
+      // somebody buried theirs by the road
+      for (let k = 0; k < 4; k++) {
+        const gx = -2.7 + k * 1.8;
+        b.prop('grave_cross', gx, 1.4 + rng.range(-0.2, 0.2), rng.range(-0.3, 0.3), { seed: k });
+        b.box(gx, 0, 0.2, 0.8, 0.06, 1.9, 'earth', { collide: false });
+      }
+      b.prop('bones', 3.6, -1.2, 0, { nocollide: true });
+      if (rng.chance(0.5)) b.cont(CONT.DUFFEL, -3.6, -1, { prop: 'duffel_bag', ry: 1, nocollide: true, zone: ZONE.ROADSIDE });
     } else if (st.type === 'stash') {
       b.cont(CONT.AMMO_BOX, 0, 0, { prop: 'military_crate', ry: 0.2 });
       b.prop('sandbags', 0.2, 1.4, 0.1);
@@ -2927,6 +2977,32 @@ export function createMainland(seed) {
       b.cont(CONT.TOOLBOX, 0.9, 0.9, { prop: 'toolbox', ry: 0.3, nocollide: true });
       b.cont(CONT.SHELF, -1.15, 0.4, { prop: 'crate', ry: 0, h: 0.6 });
       b.prop('woodpile', 2.8, 0, PI / 2);
+    }
+  }
+  // hoardings along Route 9 east of the city, on the side its power line is not: the army's, and what was being sold
+  {
+    const p = highway.pts;
+    const CELLS = ['evac', 'billboard_a', 'quarantine', 'billboard_b', 'evac'];
+    let acc = 60;
+    let n = 0;
+    for (let i = 12; i < p.length / 2 - 12; i++) {
+      acc += Math.hypot(p[i * 2] - p[i * 2 - 2], p[i * 2 + 1] - p[i * 2 - 1]);
+      const x = p[i * 2];
+      const z = p[i * 2 + 1];
+      if (acc < 96 || nearZone(x, z, 16) || inCity(x, z, 30) || onField(x, z, 10) || riverAt(x, z) < 30) continue;
+      const tx = p[i * 2 + 2] - p[i * 2 - 2];
+      const tz = p[i * 2 + 3] - p[i * 2 - 1];
+      const tl = Math.hypot(tx, tz) || 1;
+      const px = x - (-tz / tl) * (highway.width + 5.4);
+      const pz = z - (tx / tl) * (highway.width + 5.4);
+      const dir = Math.atan2(tx, tz) + 0.25; // (its face to what comes out of the city)
+      if (propBlocked('billboard', px, pz, dir) || sites.some((s) => Math.hypot(s.x - px, s.z - pz) < 9)) continue;
+      acc = 0;
+      const py = seatY('billboard', px, pz, dir);
+      props.push({ type: 'billboard', x: px, y: py, z: pz, ry: dir, seed: i });
+      addPropColliders('billboard', px, py, pz, dir);
+      const cell = CELLS[n++ % CELLS.length];
+      signs.push({ x: px - Math.sin(dir) * 0.3, y: py + 4.9, z: pz - Math.cos(dir) * 0.3, ry: dir, w: 5.4, h: 2.6, cell, far: true });
     }
   }
   // power poles along Route 9, where nothing stands in their way

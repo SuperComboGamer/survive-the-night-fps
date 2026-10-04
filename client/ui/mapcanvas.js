@@ -275,7 +275,7 @@ export function renderMapCanvas(world) {
     g.restore();
   }
   // big props (vehicles, tents)
-  const BIG = { car: 1, car_wreck: 1, pickup_truck: 1, school_bus: 1, camper: 1, dump_truck: 1, tractor: 1, military_tent: 1, tent: 1, heli_wreck: 1, log_pile: 1, fuel_tank: 1, car_burnt: 1, ambulance: 1, semi_truck: 1, fire_truck: 1, shipping_container: 1, airliner_wreck: 1, plane_wreck: 1, light_plane: 1, rubble_slope: 1, rubble_pile: 1 };
+  const BIG = { car: 1, car_wreck: 1, pickup_truck: 1, school_bus: 1, camper: 1, dump_truck: 1, tractor: 1, military_tent: 1, tent: 1, heli_wreck: 1, log_pile: 1, fuel_tank: 1, car_burnt: 1, ambulance: 1, semi_truck: 1, fire_truck: 1, shipping_container: 1, airliner_wreck: 1, plane_wreck: 1, light_plane: 1, rubble_slope: 1, rubble_pile: 1, car_open: 1, city_bus: 1, box_truck: 1, van_wreck: 1, apc_wreck: 1, army_truck: 1, triage_tent: 1 };
   g.fillStyle = 'rgba(60, 44, 34, 0.7)';
   for (const pr of world.props) {
     if (!BIG[pr.type]) continue;
@@ -330,4 +330,11 @@ const PROP_SIZE = {
   light_plane: [9, 7],
   rubble_slope: [6.4, 6.4],
   rubble_pile: [4.4, 4.4],
+  car_open: [1.9, 4.5],
+  city_bus: [2.6, 12],
+  box_truck: [2.5, 7.5],
+  van_wreck: [2, 5],
+  apc_wreck: [2.9, 7],
+  army_truck: [2.5, 7.5],
+  triage_tent: [5, 7],
 };
