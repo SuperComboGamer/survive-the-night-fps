@@ -565,8 +565,8 @@ export class Crossing {
         // from down by the water, beside a pier: the whole height of the thing, and the car small on top of it
         // (far enough out, and far enough up off the water, that the car is seen over the deck's edge)
         cam.position.set(br.x0 + lerp(s0, s1, 0.5), WATER_LEVEL + 5.5, br.z + (lz < 0 ? -42 : 42)); // (the side its lane is on)
-        _look.set(lerp(br.x0 + lerp(s0, s1, 0.5), P.x, 0.7), br.deckY - 2.2, br.z + lz);
-        this.fov = 30;
+        _look.set(lerp(br.x0 + lerp(s0, s1, 0.5), P.x, 0.85), br.deckY - 1.2, br.z + lz);
+        this.fov = 21;
       } else if (shot.name === 'gap') {
         // out over the missing side of the broken span, looking back across the hole at the lane that is left
         const bs = br.spans[br.broken];

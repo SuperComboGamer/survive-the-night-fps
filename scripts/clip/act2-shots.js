@@ -15,13 +15,13 @@
 // usage: node scripts/clip/act2-shots.js [--seed 1337] [--out docs/pr-images] [--only ...] [--frames 1] [--size 1280x720]
 //   --only    cutscene, map, city, ruin, landmarks, rooms, country, airfield, plane, takeoff (default: all - too long for one browser)
 //   --frames n   also save a frame of the crossing every n seconds (the motion, for judging the pacing): 0 = none
-//   --clear   how much of the day's haze the shots from above keep (default 0.3)
+//   --clear   how much of the day's haze the shots from above keep (default 0.12)
 //   --pick re   only the shots whose names match (a look at a few of them)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { REPO, parseArgs, sleep, startGame, launchChrome, LIFE_MAX, list } from './lib.js';
 
-const args = parseArgs(process.argv.slice(2), { seed: '1337', out: join(REPO, 'docs', 'pr-images'), frames: '0', size: '1280x720', clear: '0.3' });
+const args = parseArgs(process.argv.slice(2), { seed: '1337', out: join(REPO, 'docs', 'pr-images'), frames: '0', size: '1280x720', clear: '0.12' });
 const only = list(args.only);
 const want = (k) => !only || only.includes(k);
 const out = resolve(args.out);
@@ -261,13 +261,13 @@ try {
     await shot('city-01-from-above');
     await cam([city.x + 40, city.h + 45, city.z + 60], [city.x - 40, city.h + 6, city.z - 30], { fog: clear, far: 900, wait: 2500 });
     await shot('city-02-over-the-roofs');
-    await cam([city.x - G2 + 6, eye + 0.9, city.z + 5.4], [city.x - 40, city.h + 4, city.z - 2]);
+    await cam([city.x - G2 + 6, city.h + 4.4, city.z + 2.4], [city.x - 40, city.h + 3, city.z - 1]);
     await shot('street-01-main-street');
     await cam([city.x - 56 + 1.2, eye, city.z + G2 - 14], [city.x - 56, city.h + 5, city.z]);
     await shot('street-02-a-side-street');
     await cam([city.x + 56 - 1, eye, city.z - 56 - 26], [city.x + 56, city.h + 4, city.z + 100]);
     await shot('street-03-a-crossing');
-    await cam([city.x + 2, eye, city.z + 56 + 2.5], [city.x + 60, city.h + 3, city.z + 56]);
+    await cam([city.x + 2, eye + 1.2, city.z + 56 + 2.5], [city.x + 60, city.h + 3, city.z + 56], { cycle: 0.25 }); // (noon: the street runs east, in its south side's shadow)
     await shot('street-04-east-along-a-street');
     await cam([city.x + 112 + 2.6, eye, city.z - 20], [city.x + 112 - 6, city.h + 9, city.z - 60]);
     await shot('street-05-looking-up');
@@ -278,10 +278,11 @@ try {
       // (a tower of glass and steel, from the corner of it the sun is on)
       const [bx, bz, by, ry, w, d, h] = I.glass[0];
       const B = { x: bx, z: bz, ry };
-      const [x, z] = [bx + Math.sign(sun[0] || 1) * (w / 2 + 20), bz + Math.sign(sun[1] || 1) * (d / 2 + 20)];
+      // (from over the roofs beside it: the street at its foot is too narrow to see it from)
+      const [x, z] = [bx + Math.sign(sun[0] || 1) * (w / 2 + 34), bz + Math.sign(sun[1] || 1) * (d / 2 + 34)];
       void B;
       void ry;
-      await cam([x, city.h + 2.2, z], [bx, by + h * 0.55, bz]);
+      await cam([x, by + h * 0.75, z], [bx, by + h * 0.5, bz], { fog: 0.6 });
       await shot('street-09-a-glass-tower');
     }
   }
@@ -305,32 +306,34 @@ try {
       const [bx, bz, by, ry, w, d, h] = I.open[0];
       const B = { x: bx, z: bz, ry };
       for (const [sx, sz, name] of [[1, -1, 'ruin-04-a-building-cut-open'], [-1, -1, 'ruin-05-cut-open-the-other-end'], [1, 1, 'ruin-05b-cut-open-from-behind']]) {
-        const [x, z] = lw(B, sx * (w / 2 + 14), sz * (d / 2 + 12));
-        await cam([x, city.h + 7, z], [bx, by + h * 0.5, bz]);
+        const [x, z] = lw(B, sx * (w / 2 + 15), sz * (d / 2 + 13));
+        await cam([x, by + h * 0.9, z], [bx, by + h * 0.5, bz], { fog: 0.6 });
         await shot(name);
       }
     }
     await front('collapse', 'ruin-06-the-collapsed-block', 12, 3, 10, 5);
-    await front('burnt', 'ruin-07-a-burnt-block', 11, 1.8, 6, 4);
+    await front('burnt', 'ruin-07-a-burnt-block', 17, 6.5, 8, 4);
     await front('ruin', 'ruin-08-a-shell', 12, 1.8, 6, 5);
     const blocks = I.wire.filter(([x, z]) => Math.abs(x - city.x) < G2 - 20 && Math.abs(z - city.z) < G2 - 20);
     for (const [k, [wx, wz, ry]] of blocks.filter((_, i) => i % 2 === 0).slice(0, 2).entries()) {
       const ns = Math.abs(Math.sin(ry)) < 0.5; // (a street that runs north-south: the wire lies east-west)
-      await cam(ns ? [wx + 2.5, eye + 0.5, wz - 15] : [wx - 15, eye + 0.5, wz - 2.5], [wx, city.h + 1, wz + (ns ? 5 : 0)]);
+      await cam(ns ? [wx + 2.5, eye + 3.4, wz - 19] : [wx - 19, eye + 3.4, wz - 2.5], [wx, city.h + 1, wz + (ns ? 5 : 0)]);
       await shot(`ruin-${String(9 + k * 2).padStart(2, '0')}-a-roadblock`);
       await cam(ns ? [wx - 3, eye + 6, wz + 24] : [wx + 24, eye + 6, wz + 3], [wx, city.h + 1, wz]);
       await shot(`ruin-${String(10 + k * 2).padStart(2, '0')}-the-roadblock-from-behind`);
     }
-    const bus = I.bus.find(([x, z]) => Math.abs(x - city.x) < G2 && Math.abs(z - city.z) < G2 && Math.abs(((x - city.x + G2 + 28) % 56) - 28) > 9);
+    // (a bus in a street, not the depot's)
+    const depots = I.lots.filter((l) => l.what === 'depot');
+    const bus = I.bus.find(([x, z]) => Math.abs(x - city.x) < G2 && Math.abs(z - city.z) < G2 && depots.every((l) => Math.abs(x - l.x) > l.w / 2 + 2 || Math.abs(z - l.z) > l.d / 2 + 2));
     if (bus) {
       const ns = Math.abs(Math.sin(bus[2])) < 0.5;
-      await cam(ns ? [bus[0] + 1, eye + 2.6, bus[1] + 24] : [bus[0] + 24, eye + 2.6, bus[1] + 1], [bus[0], city.h + 1, bus[1]]);
+      await cam(ns ? [bus[0] + 1, eye + 4.5, bus[1] + 24] : [bus[0] + 24, eye + 4.5, bus[1] + 1], [bus[0], city.h + 1, bus[1]]);
       await shot('ruin-13-a-jam');
     }
   }
   // ---- the landmarks, each from the street in front of it
   if (want('landmarks')) {
-    for (const [what, name, back, up, side, lookUp] of [['hospital', 'landmark-01-calder-general', 10, 5, 12, 5], ['church', 'landmark-02-st-brendans', 14, 3, -9, 8], ['gas', 'landmark-03-the-filling-station', 13, 2.4, 9, 3], ['cinema', 'landmark-04-the-cinema', 16, 2.4, 9, 5], ['subway', 'landmark-05-the-subway-entrance', 11, 2.4, 7, 2], ['carpark', 'landmark-06-the-car-park', 15, 5, 14, 4], ['police', 'landmark-07-the-police-station', 12, 2.2, 6, 4], ['depot', 'landmark-08-the-bus-depot', 13, 5, 14, 3], ['warehouse', 'landmark-09-a-warehouse', 14, 3, 10, 5]]) await front(what, name, back, up, side, lookUp);
+    for (const [what, name, back, up, side, lookUp] of [['hospital', 'landmark-01-calder-general', 10, 5, 12, 5], ['church', 'landmark-02-st-brendans', 14, 3, -9, 8], ['gas', 'landmark-03-the-filling-station', 17, 7, 10, 2], ['cinema', 'landmark-04-the-cinema', 16, 2.4, 9, 5], ['subway', 'landmark-05-the-subway-entrance', 5, 3.2, 5, 1], ['carpark', 'landmark-06-the-car-park', 20, 11, -16, 4], ['police', 'landmark-07-the-police-station', 12, 2.2, 6, 4], ['depot', 'landmark-08-the-bus-depot', 13, 5, 14, 3], ['warehouse', 'landmark-09-a-warehouse', 14, 3, 10, 5]]) await front(what, name, back, up, side, lookUp);
     const hosp = lotOf('hospital');
     if (hosp) {
       const [x, z] = lw(hosp, 3, -17);

@@ -1759,7 +1759,7 @@ export function createMainland(seed) {
     church(b, L) {
       const F = frame(L, 9.6, 14);
       const R = groundRoom(b, 0, F.cz, F.w, F.d, 5.4, 'stone', { n: [door(4.8, 1.6)], s: [door(7.6, 1.1)] }, { roof: 'gable', roofH: 3.9, roofMat: 'shingles', floorMat: 'planks', tint: 3 });
-      R.ceiling = undefined;
+      R.ceiling = 'plaster'; // (a plastered ceiling over the nave: the roof's own inside is nothing to look up into)
       // the tower: over the door, a belfry with its louvres, a spire, a cross
       b.box(0, 5.4, F.front + 1.5, 3.3, 6.6, 3.3, 'stone', { collide: false });
       b.box(0, 12, F.front + 1.5, 3.7, 0.3, 3.7, 'stone', { collide: false });
@@ -2533,13 +2533,13 @@ export function createMainland(seed) {
     b.prop('light_plane', -RUNWAY_HALF - 11, -20, -2.2, { ground: true, seed: 1 });
     b.clear(RUNWAY_HALF + 15, -70, 8);
     b.clear(-RUNWAY_HALF - 11, -20, 8);
-    // the runway's paint: a dashed centre line, the bars of both thresholds, what is left of them
-    for (let z = -RUNWAY_LEN / 2 + 34; z < RUNWAY_LEN / 2 - 30; z += 24) if (rng.chance(0.8)) b.box(0, -0.045, z, 0.6, 0.03, 11, 'trim', { collide: false });
-    for (const end of [-1, 1]) for (let k = -3; k <= 3; k++) if (k) b.box(k * 2.6, -0.045, end * (RUNWAY_LEN / 2 - 14), 1.3, 0.03, 16, 'trim', { collide: false });
+    // the runway's paint: a dashed centre line, the bars of both thresholds, what is left of them (bone: the white of old paint)
+    for (let z = -RUNWAY_LEN / 2 + 34; z < RUNWAY_LEN / 2 - 30; z += 24) if (rng.chance(0.8)) b.box(0, -0.045, z, 0.6, 0.03, 11, 'bone', { collide: false });
+    for (const end of [-1, 1]) for (let k = -3; k <= 3; k++) if (k) b.box(k * 2.6, -0.045, end * (RUNWAY_LEN / 2 - 14), 1.3, 0.03, 16, 'bone', { collide: false });
     // ...its edge lights, most of them dark for good, and a windsock at either end
     for (let z = -RUNWAY_LEN / 2 + 6; z <= RUNWAY_LEN / 2 - 6; z += 28) for (const sx of [-1, 1]) b.prop('runway_light', sx * (RUNWAY_HALF + 0.9), z, 0, { nocollide: true, ground: true, seed: (z + sx) & 1 });
-    for (const sx of [-1, 1]) for (let z = -RUNWAY_LEN / 2 + 4; z < RUNWAY_LEN / 2 - 20; z += 22) if (rng.chance(0.82)) b.box(sx * (RUNWAY_HALF - 0.9), -0.045, z + 10, 0.4, 0.03, rng.range(14, 21), 'trim', { collide: false });
-    for (const end of [-1, 1]) for (const dz of [44, 62, 80]) for (const sx of [-1, 1]) if (rng.chance(0.8)) b.box(sx * 4.6, -0.045, end * (RUNWAY_LEN / 2 - dz), 2.2, 0.03, 9, 'trim', { collide: false });
+    for (const sx of [-1, 1]) for (let z = -RUNWAY_LEN / 2 + 4; z < RUNWAY_LEN / 2 - 20; z += 22) if (rng.chance(0.82)) b.box(sx * (RUNWAY_HALF - 0.9), -0.045, z + 10, 0.4, 0.03, rng.range(14, 21), 'bone', { collide: false });
+    for (const end of [-1, 1]) for (const dz of [44, 62, 80]) for (const sx of [-1, 1]) if (rng.chance(0.8)) b.box(sx * 4.6, -0.045, end * (RUNWAY_LEN / 2 - dz), 2.2, 0.03, 9, 'bone', { collide: false });
     // (...and beyond either end, what brought them in at night: bars of lamps on the grass)
     for (const end of [-1, 1]) for (const dz of [10, 24, 38]) for (let k = -2; k <= 2; k++) b.prop('runway_light', k * 2.4, end * (RUNWAY_LEN / 2 + dz), 0, { nocollide: true, ground: true, seed: (k + dz) & 1 });
     b.prop('windsock', RUNWAY_HALF + 9, RUNWAY_LEN / 2 - 40, 0.4, { ground: true });
