@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import { createMainland } from '../shared/mainland.js';
 import { worldFor } from '../shared/worlds.js';
 import { WORLD, MAINLAND_SIZE } from '../shared/acts.js';
-import { ZONE, ZONE_NAMES, PLANE_PARTS, PLANE_NEED } from '../shared/defs.js';
+import { ZONE, ZONE_NAMES, MAINLAND_ZONES, PLANE_PARTS, PLANE_NEED } from '../shared/defs.js';
 import { PROPS } from '../shared/props.js';
 import { BRIDGE } from '../shared/bridge.js';
 import { usePos, qpos, dqpos, POS_SCALE_WIDE } from '../shared/protocol.js';
@@ -45,7 +45,7 @@ function each(name, seed, ok, detail = '') {
 function fingerprint(w) {
   const h = createHash('sha256');
   for (const a of [w.heights, w.roadDist, w.roadKind, w.trees, w.rocks, w.bushes]) h.update(Buffer.from(a.buffer, a.byteOffset, a.byteLength));
-  for (const list of [w.parts, w.props, w.containers, w.lootSpawns, w.partSpots, w.openings, w.roofs, w.lights, w.resourceSpawns, w.hordeSpawns, w.spawnPoints, w.zones, w.sites, w.car, w.runway, w.bridge.spans, w.bridge.holes, w.bridge.wrecks]) h.update(JSON.stringify(list));
+  for (const list of [w.parts, w.props, w.containers, w.lootSpawns, w.partSpots, w.openings, w.roofs, w.lights, w.resourceSpawns, w.hordeSpawns, w.spawnPoints, w.zones, w.sites, w.car, w.runway, w.bridge.spans, w.bridge.holes, w.bridge.wrecks, w.city.buildings, w.city.rooms, w.city.shells, w.city.heaps, w.city.fallen, w.city.pancakes, w.city.signs, w.river.bridges]) h.update(JSON.stringify(list));
   const cols = [];
   const seen = new Set();
   for (const cell of w.staticGrid.cells) {
@@ -137,10 +137,10 @@ for (const seed of SEEDS) {
   each('it is 1280 m across, at 1/32 m on the wire', seed, w.kind === WORLD.MAINLAND && w.size === MAINLAND_SIZE && w.half === MAINLAND_SIZE / 2 && w.gridN === MAINLAND_SIZE / GRID_STEP + 1 && w.posScale === POS_SCALE_WIDE && w.heights.length === w.gridN ** 2);
   const need = [ZONE.BRIDGEHEAD, ZONE.CITY, ZONE.INDUSTRIAL, ZONE.SUBURB, ZONE.TRUCKSTOP, ZONE.TERMINAL, ZONE.HANGARS, ZONE.FUEL_DEPOT];
   // ...and what lies about the plain (mainland-places.js): every one of them, on every map
-  for (let id = ZONE.QUARANTINE; id <= ZONE.FARM_B; id++) need.push(id);
+  for (let id = ZONE.QUARANTINE; id <= MAINLAND_ZONES[1]; id++) need.push(id);
   const zoneOk = (zn) => zn && [zn.x, zn.z, zn.ry, zn.h, zn.flat, zn.blend, zn.clear].every(Number.isFinite) && Math.max(Math.abs(zn.x), Math.abs(zn.z)) + zn.flat < w.half - 20 && w.heightAt(zn.x, zn.z) > WATER_LEVEL + 0.5;
   each('every place is on it, inside the map and dry', seed, need.every((id) => zoneOk(w.zoneById[id])) && w.zones.length === need.length, need.filter((id) => !zoneOk(w.zoneById[id])).map((id) => ZONE_NAMES[id]).join(', '));
-  const fields = ['heightAt', 'floorAt', 'rayTerrain', 'isDeepWater', 'zoneAt', 'roadDistAt', 'roadKindAt', 'openingNear', 'darkAt', 'roads', 'highway', 'sea', 'trees', 'rocks', 'bushes', 'parts', 'props', 'lights', 'roofs', 'staticGrid', 'structGrid', 'colliderGrids', 'lootSpawns', 'containers', 'partSpots', 'openings', 'sites', 'resourceSpawns', 'hordeSpawns', 'spawnPoints', 'start', 'car', 'bridge', 'runway', 'city', 'lake', 'ponds', 'landmarks'];
+  const fields = ['heightAt', 'floorAt', 'rayTerrain', 'isDeepWater', 'zoneAt', 'roadDistAt', 'roadKindAt', 'openingNear', 'darkAt', 'roads', 'highway', 'sea', 'trees', 'rocks', 'bushes', 'parts', 'props', 'lights', 'roofs', 'staticGrid', 'structGrid', 'colliderGrids', 'lootSpawns', 'containers', 'partSpots', 'openings', 'sites', 'resourceSpawns', 'hordeSpawns', 'spawnPoints', 'start', 'car', 'bridge', 'runway', 'city', 'lake', 'ponds', 'river', 'landmarks'];
   each('every field the game reads of a world is there', seed, fields.every((k) => w[k] !== undefined && w[k] !== null) && w.mine === null && w.rail === null && w.fair === null && w.clinic === null && w.cemetery === null && w.darkAt(0, 0, 0) === 0, fields.filter((k) => w[k] === undefined || w[k] === null).join(', '));
   // the parts, at their set places
   const at = PLANE_PARTS.map((_, i) => w.partSpots.filter((sp) => sp.supply === i));
@@ -165,7 +165,7 @@ for (const seed of SEEDS) {
   each('the take-off run is level and clear, 7 m either side of its line', seed, !inWay, inWay);
   // the skyline
   const cityH = w.zoneById[ZONE.CITY].h;
-  const tall = w.parts.filter((p) => p.shape === 'box' && p.mat === 'concrete' && !p.rx && !p.rz && p.sx > 8 && p.sz > 8 && p.y + p.sy / 2 - cityH >= 20).map((p) => p.y + p.sy / 2 - cityH);
+  const tall = w.city.buildings.filter((B) => B.w > 8 && B.d > 8 && B.y + B.floors * B.fh - cityH >= 20).map((B) => B.y + B.floors * B.fh - cityH);
   each('the city has its skyline: five towers or more, the tallest 30 to 46 m', seed, tall.length >= 5 && Math.max(...tall) <= 46 && Math.max(...tall) >= 30, tall.map((h) => h.toFixed(0)).join(' '));
   const kinds = new Set(w.city.lots.map((l) => l.what));
   each('...and what the run needs of it: two parts shops, a police station, a pharmacy, a hardware store', seed, w.city.lots.filter((l) => l.what === 'aero').length === 2 && ['police', 'pharmacy', 'hardware', 'tower', 'office'].every((k) => kinds.has(k)), [...kinds].join(' '));
@@ -173,6 +173,18 @@ for (const seed of SEEDS) {
   // top across a street, smoke standing over it; and no lot of it left empty
   each('...its landmarks: a hospital, a church, a cinema, a station, a filling station, the bus depot, named on the map', seed, ['hospital', 'church', 'cinema', 'subway', 'gas', 'depot', 'collapse', 'carpark'].every((k) => kinds.has(k)) && w.landmarks.length >= 8 && w.landmarks.every((m) => m.name && Number.isFinite(m.x + m.z)), [...kinds].join(' ') + ' / ' + w.landmarks.map((m) => m.name).join(', '));
   each('...its ruin: a fallen tower across a street, smoke over it, every lot built on or fallen in', seed, w.parts.some((p) => p.across) && w.lights.filter((l) => l.kind === 'smoke').length >= 5 && w.lights.some((l) => l.kind === 'fire') && w.city.lots.every((l) => l.what), String(w.lights.filter((l) => l.kind === 'smoke').length));
+  // what the client's building kit draws the city from (client/render/citykit.js): every block of storeys with a
+  // style, its broken storeys inside its footprint, and solid where it says it stands
+  const C = w.city;
+  const STYLES = ['walkup', 'shopflat', 'slab', 'office', 'glass', 'warehouse', 'stone'];
+  const badB = C.buildings.filter((B) => !STYLES.includes(B.style) || !(B.floors >= 1) || !(B.fh > 2) || ![B.x, B.z, B.y, B.ry, B.w, B.d].every(Number.isFinite) || (B.cut || []).some((R) => R && (R[0] < -B.w / 2 - 0.01 || R[1] > B.w / 2 + 0.01 || R[2] < -B.d / 2 - 0.01 || R[3] > B.d / 2 + 0.01 || R[1] - R[0] < 2 || R[3] - R[2] < 2)) || (B.cut && B.cut.length !== B.floors));
+  const hidden = w.parts.filter((p) => p.hidden).length;
+  each('the city is said for the kit: blocks of storeys in its styles, rooms, shells, heaps, the fallen shaft, signs', seed, C.buildings.length >= 40 && !badB.length && C.rooms.length >= 40 && C.shells.length >= 10 && C.heaps.length >= 10 && C.fallen.length === 3 && C.signs.length >= 30 && hidden >= C.buildings.length && new Set(C.buildings.map((B) => B.style)).size >= 4 && C.rooms.every((R) => R.w > 2 && R.d > 2 && R.h > 2 && R.sides), `${C.buildings.length} blocks (${badB.length} bad), ${C.rooms.length} rooms, ${C.shells.length} shells, ${C.heaps.length} heaps, ${C.fallen.length} lengths, ${C.signs.length} signs`);
+  // the river
+  const rv = w.river;
+  let wetPts = 0;
+  for (let i = 0; rv && i < rv.pts.length; i += 2) if (w.isDeepWater(rv.pts[i], rv.pts[i + 1])) wetPts++;
+  each('a river runs from the hills to the sea past the city, with two bridges or more over it', seed, !!rv && rv.pts.length / 2 > 100 && wetPts > (rv.pts.length / 2) * 0.75 && rv.bridges.length >= 2 && rv.bridges.every((br) => br.y > WATER_LEVEL + 1.2) && rv.bridges.filter((br) => w.isDeepWater(br.x, br.z) && br.len > 12).length >= 2 && rv.pts[rv.pts.length - 2] < w.sea.x, rv ? `${rv.bridges.length} bridges, ${wetPts} of ${rv.pts.length / 2} points in deep water` : 'none');
   each('there is a lake, with the marina on its shore, and ponds', seed, !!w.lake && Math.abs(Math.hypot(w.zoneById[ZONE.MARINA].x - w.lake.x, w.zoneById[ZONE.MARINA].z - w.lake.z) - w.lake.r - 11.5) < 0.01 && w.isDeepWater(w.lake.x, w.lake.z) && w.ponds.length >= 2 && w.ponds.every((p) => w.isDeepWater(p.x, p.z)), JSON.stringify(w.lake));
   // (a road of the map comes within the place's own ground: its gate is on it, or it runs through)
   const roadTo = (zn) => w.roads.some((r) => { for (let k = 0; k < r.pts.length; k += 2) if (Math.hypot(r.pts[k] - zn.x, r.pts[k + 1] - zn.z) < zn.flat + 4) return true; return false; });
@@ -231,6 +243,8 @@ for (const seed of SEEDS) {
   }
   each('every part spot, container and loot point, and the plane, is walked to from the bridgehead on the nav grid', seed, !lost.length, `${lost.length}: ${lost.slice(0, 4).join('; ')}`);
   for (const zn of w.zones) if (!near(zn.x, zn.z, 12)) lost.push(ZONE_NAMES[zn.id]);
+  // (...and its bridges are ways over the river: the dead walk onto each)
+  each('every bridge over the river is walked onto on the nav grid', seed, w.river.bridges.every((br) => near(br.x, br.z, 3)), w.river.bridges.filter((br) => !near(br.x, br.z, 3)).map((br) => `/tp ${br.x.toFixed(0)} ${br.z.toFixed(0)}`).join('; '));
 
   // ---- the bridge
   const half = BRIDGE.DECK / 2;

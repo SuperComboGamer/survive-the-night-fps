@@ -751,6 +751,445 @@ export const OUTLYING = {
       b.loot(2, 21);
     },
   },
+
+  // ---- the third pass: more of what lies about. Each of these is built with the city's kit as well (K.block,
+  // K.groundRoom, K.signAt, K.extra, K.heap, K.weed: shared/mainland.js, "What the city is drawn from").
+
+  // CALDER BOAT WORKS: on the river's far bank, across from the city (its +Z is the water): a boathouse, a slip
+  // down into the river, hulls on the hard, one still afloat.
+  [ZONE.BOATWORKS]: {
+    flat: 20,
+    clear: 22,
+    dirt: 0.5,
+    road: ROAD.DIRT,
+    build(b, K) {
+      const { door, win, gap, afloat } = K;
+      K.groundRoom(b, -7, 2, 9, 12, 4.6, 'tin', { s: [gap(4.5, 5.4, 3.8)], n: [door(2, 1.2)], e: [win(6, 1.6)] }, { roof: 'gable', roofH: 2.4, roofMat: 'tin', floorMat: 'planks', plain: true });
+      b.prop('boat', -7, 3, PI, { ly: 0.12, seed: 1 });
+      b.cont(CONT.TOOLBOX, -10, -2.6, { prop: 'toolbox', ry: 0.4, nocollide: true, ly: 0.12 });
+      b.cont(CONT.SHELF, -10.9, 5, { prop: 'shelf', ry: PI / 2, ly: 0.12 });
+      b.loot(-4.6, -2, 0.14);
+      // the slip: timbers down the bank into the water, a hull half way down them
+      b.box(5, -0.6, 15, 3.4, 0.2, 13, 'dockwood', { rx: 0.12, collide: false });
+      for (const dx of [-1.4, 1.4]) b.box(5 + dx, -0.5, 15, 0.2, 0.25, 13.4, 'rust', { rx: 0.12, collide: false });
+      afloat(b.prop('boat', 5, 23.5, 0.1, { ground: true, nocollide: true, seed: 0 }));
+      b.prop('boat', 9.4, -3, 1.3, { seed: 1 });
+      b.prop('boat', 3, -8, -0.4, { seed: 0 });
+      K.extra(b, 'van_wreck', -3, -13, 1.2);
+      b.cont(CONT.CRATE, 12, 4, { prop: 'crate', ry: 0.3 });
+      b.prop('barrel', 11.4, 6.2, 0);
+      b.prop('barrel', 12.6, 6.6, 0, { seed: 1 });
+      b.prop('tire_pile', -13, -9, 0);
+      b.cont(CONT.DUFFEL, 0.6, -3.4, { prop: 'duffel_bag', ry: 1, nocollide: true });
+      b.prop('skeleton', 7.4, 4, 2, { nocollide: true, seed: 2 });
+      b.loot(8, -8);
+      b.loot(-12, 8.6);
+      for (const [x, z] of [[14, -6], [-14, 3], [1, 9], [10, 10]]) K.weed(b, x, z, 1.1);
+      for (const dq of [-0.9, 0.9]) b.cyl(-2 + dq, 0, -17, 0.06, 2.6, 'rust', { sides: 6 });
+      K.signAt(b, -2, 2.1, -17.07, 0, 2.2, 0.55, 'shop_hardware', { back: 0.05 });
+    },
+  },
+
+  // THE CALDER DRIVE-IN: the screen, torn, on its frame; rows of cars that came to watch something; the booth.
+  [ZONE.DRIVEIN_M]: {
+    flat: 38,
+    clear: 40,
+    dirt: 0.55,
+    road: ROAD.DIRT,
+    build(b, K) {
+      const { door, win, rng } = K;
+      // the screen, at the back, facing the gate
+      for (const px of [-9, -3, 3, 9]) {
+        b.box(px, 0, 31, 0.4, 14, 0.4, 'rust');
+        b.box(px, 0, 33.4, 0.3, 9, 0.3, 'rust', { rx: -0.26, collide: false });
+      }
+      b.box(-4, 5, 30.7, 12, 8.6, 0.16, 'clapboard', { collide: false });
+      b.box(6.6, 7.4, 30.7, 6, 5.6, 0.16, 'clapboard', { collide: false });
+      b.box(7.4, 3.4, 30.2, 5, 3.2, 0.1, 'clapboard', { rz: 0.4, rx: 0.3, collide: false }); // (a sheet of it hanging)
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 7; c++) {
+          const here = rng.chance(0.56);
+          const t = rng();
+          const turn = rng.range(-0.12, 0.12);
+          if (!here) continue;
+          K.extra(b, t < 0.4 ? 'car_wreck' : t < 0.62 ? 'car_open' : t < 0.82 ? 'car_burnt' : 'pickup_truck', -19.5 + c * 6.5, 20 - r * 8.4, PI + turn);
+        }
+        for (let c = 0; c < 8; c++) b.cyl(-22.8 + c * 6.5, 0, 17.4 - r * 8.4, 0.05, 1.3, 'rust', { sides: 5 }); // the speaker posts
+      }
+      // the booth: projection upstairs, the counter under it
+      const R = K.groundRoom(b, 0, -20, 9, 6, 3, 'brick', { s: [door(2, 1.2), win(6, 3, 1, 2.2)], n: [door(7, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true });
+      void R;
+      K.block(b, 0, -20, 5, 4, 3.3, 1, 2.8, 'walkup', 'brick', { wear: 0.9 });
+      b.prop('checkout_counter', -1.4, -19.6, PI, { ly: 0.12 });
+      b.loot(-1.4, -19.6, 1.1);
+      b.cont(CONT.FRIDGE, -3.9, -21.6, { prop: 'fridge', ry: PI / 2, ly: 0.12 });
+      b.cont(CONT.SHELF, 0, -22.6, { prop: 'shelf', ry: PI, ly: 0.12 });
+      b.prop('stock_spill', 0.6, -21, 1, { nocollide: true, ly: 0.12 });
+      b.cont(CONT.DUFFEL, 12, -14, { prop: 'duffel_bag', ry: 0.4, nocollide: true });
+      b.cont(CONT.DUMPSTER, 7.4, -21, { prop: 'dumpster', ry: -PI / 2 });
+      for (const [x, z] of [[-20, 8], [14, -2], [-6, 12], [22, 16], [-14, -12], [4, 2]]) b.prop(['skeleton', 'litter', 'corpse', 'suitcases', 'bones', 'litter'][((x + 20) / 7) | 0], x, z, x, { nocollide: true, seed: z & 1 });
+      b.loot(-16, -2);
+      b.loot(18, 6);
+      b.loot(8, -14);
+      // its board at the gate, what was showing
+      for (const dq of [-2.2, 2.2]) b.cyl(-9 + dq, 0, -33, 0.09, 5.4, 'rust', { sides: 6 });
+      K.signAt(b, -9, 4.4, -33.1, 0, 6, 1.5, 'marquee', { far: true, back: 0.12 });
+      for (let k = 0; k < 14; k++) K.weed(b, rng.range(-28, 28), rng.range(-26, 26), rng.range(0.7, 1.3));
+    },
+  },
+
+  // ENGINE COMPANY 9: a fire station out on the county road - two bays, a tender in one, the hose tower
+  [ZONE.FIREHOUSE]: {
+    flat: 24,
+    clear: 26,
+    dirt: 0.3,
+    road: ROAD.ASPHALT,
+    build(b, K) {
+      const { door, win, gap, hole } = K;
+      const R = K.groundRoom(b, 0, 4, 18, 13, 5, 'brick', { n: [gap(4.6, 4.6, 4.2), gap(10.6, 4.6, 4.2), door(15.6, 1.2)], s: [door(15, 1.1), win(5, 2), win(10, 2)], w: [win(6.5, 1.6)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', plain: true });
+      K.partition(b, R, 4.4, -2.5, 4.4, 10.5, 5, 'brick', [door(8, 1.3)]);
+      K.block(b, 0, 4, 18, 13, 5.3, 1, 3, 'walkup', 'brick', { lost: 0, wear: 0.6 });
+      K.block(b, 6.8, 8.3, 4, 4, 5.3 + 3, 3, 3, 'walkup', 'brick', { wear: 0.5, blank: 10 }); // the hose tower, on its roof
+      b.wreck('fire_truck', -4.4, 4.6, 0.02, { ly: 0.12, trunk: false });
+      b.wreck('fire_truck', 1.6, -12, 0.5, { trunk: false });
+      for (const dz of [0, 1.1, 2.2]) b.cont(CONT.LOCKER, 8.56, 6 + dz * 1.0, { prop: 'locker', ry: -PI / 2, ly: 0.12, seed: dz | 0 });
+      b.cont(CONT.CABINET, 6.4, 9.9, { prop: 'cabinet', ry: PI, ly: 0.12 });
+      b.cont(CONT.MEDICINE, 5.2, -1.2, { prop: 'medicine_cabinet', ry: PI / 2, ly: 0.12 });
+      b.prop('table', 6.8, 2, 0.1, { ly: 0.12 });
+      b.loot(6.8, 2, 0.94);
+      b.loot(-1.4, 8, 0.14);
+      b.prop('tire_pile', -8, 9, 0, { ly: 0.12 });
+      b.cont(CONT.DUMPSTER, -11.4, 2, { prop: 'dumpster', ry: PI / 2 });
+      b.prop('generator', 11.2, -2.6, 0);
+      K.extra(b, 'car_open', -9, -13, 2.2, { seed: 2 });
+      b.prop('skeleton', -2, -6, 1, { nocollide: true, seed: 2 });
+      b.prop('blood_pool', -3, -7, 0, { nocollide: true });
+      b.loot(8, -10);
+      K.signAt(b, -4.4, 5.6, -2.66, 0, 1.6, 1.6, 'redcross', { far: true });
+      void hole;
+    },
+  },
+
+  // HALVORSEN GRAIN: four bins and the leg that filled them, a scale house, a truck under the spout
+  [ZONE.GRAIN]: {
+    flat: 26,
+    clear: 28,
+    dirt: 0.6,
+    road: ROAD.DIRT,
+    build(b, K) {
+      const { door, win } = K;
+      for (const [x, z] of [[-9, 8], [-1.8, 8], [5.4, 8], [12.6, 8]]) {
+        b.cyl(x, 0, z, 3.4, 13, 'tin_rust', { sides: 14 });
+        b.cone(x, 13, z, 3.6, 2.4, 'tin', 14, { ry: 0 });
+        K.signAt(b, x, 7, z - 3.46, 0, 1, 5, x & 1 ? 'rust_a' : 'rust_b', { grime: true, far: true });
+      }
+      // the leg: a shaft up past the bins, the spouts down from its head to each
+      b.box(-14.6, 0, 8, 2.2, 19, 2.2, 'tin_rust');
+      b.box(-14.6, 19, 8, 3, 2.4, 3, 'tin', { collide: false });
+      for (const x of [-9, -1.8, 5.4, 12.6]) b.box((x - 14.6) / 2, 17.2, 8, Math.hypot(x + 14.6, 4) + 0.4, 0.4, 0.4, 'rust', { rz: -Math.atan2(4.6, x + 14.6), collide: false });
+      b.box(0, 15.5, 8, 26, 0.3, 1.2, 'rust', { collide: false }); // the catwalk over them
+      const R = K.groundRoom(b, 12, -9, 7, 5, 2.8, 'clapboard', { n: [door(2, 1.1), win(5, 1.4)], w: [win(2.5, 1.2)] }, { roof: 'flat', roofMat: 'tin' });
+      void R;
+      b.cont(CONT.CABINET, 14, -7.2, { prop: 'cabinet', ry: PI, ly: 0.12 });
+      b.prop('table', 10.6, -8.4, 0, { ly: 0.12 });
+      b.loot(10.6, -8.4, 0.94);
+      b.wreck('dump_truck', -4, -3, 1.5, { trunk: false });
+      b.wreck('pickup_truck', -15, -10, 0.3);
+      b.cont(CONT.CRATE, 3, -12, { prop: 'crate', ry: 0.2 });
+      b.cont(CONT.TOOLBOX, 0.6, 1.4, { prop: 'toolbox', ry: 0.5, nocollide: true });
+      b.prop('pallet', 5.4, -11, 0.4);
+      b.prop('hay_round', -19, 0, 0.3);
+      b.prop('hay_round', -18, -3.4, 1);
+      b.prop('corpse', 2, -4, 1, { nocollide: true });
+      b.loot(-10, -6);
+      b.loot(17, 2);
+      for (const [x, z] of [[-20, 12], [18, 14], [0, -16], [-8, 14.6]]) K.weed(b, x, z, 1.2);
+    },
+  },
+
+  // MILE 4 DINER: chrome and a sign on a pole, on the road in from the bridge
+  [ZONE.DINER_M]: {
+    flat: 18,
+    clear: 20,
+    dirt: 0.3,
+    road: ROAD.ASPHALT,
+    build(b, K) {
+      const { door, win, hole } = K;
+      const R = K.groundRoom(b, 0, 4, 15, 8, 3.2, 'tin', { n: [door(7.5, 1.4), hole(2.6, 3, 0.9, 2.4), win(12.4, 3, 0.9, 2.4)], s: [door(13, 1.1)], e: [win(4, 2.4, 0.9, 2.4)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'concrete', lino: true, tint: 4, sign: 'shop_diner' });
+      void R;
+      b.box(0, 0.12, 5.6, 9, 1.05, 0.7, 'planks'); // the counter
+      b.box(0, 1.17, 5.6, 9.1, 0.05, 0.86, 'metal', { collide: false });
+      b.loot(-3, 5.6, 1.24);
+      for (const x of [-3.6, -2.2, -0.8, 0.6, 2, 3.4]) b.prop('chair', x, 4.6, PI + (x & 1 ? 0.3 : -0.2), { nocollide: true, ly: 0.12, seed: x & 3 });
+      for (const x of [-5.6, -1.9, 1.9, 5.6]) b.prop('table', x, 1.4, 0, { ly: 0.12, seed: x & 1 });
+      b.cont(CONT.FRIDGE, -6.9, 7.2, { prop: 'fridge', ry: PI / 2, ly: 0.12 });
+      b.cont(CONT.CABINET, 3.4, 7.4, { prop: 'cabinet', ry: PI, ly: 0.12 });
+      K.extra(b, 'stove', 0.6, 7.36, PI, { ly: 0.12 });
+      b.loot(5.6, 1.4, 0.94);
+      b.prop('stock_spill', -4, 2.8, 1, { nocollide: true, ly: 0.12 });
+      b.prop('blood_pool', 2, 3, 0, { nocollide: true, ly: 0.12, seed: 1 });
+      for (const lx of [-4, 3]) b.prop('ceiling_lamp', lx, 3.6, 0, { nocollide: true, ly: 3.2, seed: lx & 1 });
+      K.extra(b, 'car_open', -5, -9, 0.3, { seed: 0 });
+      K.extra(b, 'pickup_truck', 3, -10, -0.2);
+      K.extra(b, 'box_truck', 12.6, -6, 0.1);
+      b.cont(CONT.DUMPSTER, -10.4, 6, { prop: 'dumpster', ry: PI / 2 });
+      b.prop('skeleton', 6, -4, 2, { nocollide: true });
+      b.cyl(-11, 0, -12, 0.12, 6.2, 'rust', { sides: 6 });
+      K.signAt(b, -11, 5.4, -12.14, 0.2, 3.6, 0.9, 'shop_diner', { far: true, back: 0.16, two: true });
+      b.loot(-8, -4);
+    },
+  },
+
+  // HONEST AL'S: a used-car lot. The cars are still for sale.
+  [ZONE.CARLOT]: {
+    flat: 24,
+    clear: 26,
+    dirt: 0.4,
+    road: ROAD.ASPHALT,
+    build(b, K) {
+      const { door, win, rng } = K;
+      b.box(0, -0.05, 0, 40, 0.1, 34, 'concrete', { collide: true });
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 8; c++) {
+          const here = rng.chance(0.7);
+          const t = rng();
+          const turn = rng.range(-0.08, 0.08);
+          if (!here || (r === 2 && c > 5)) continue;
+          K.extra(b, t < 0.5 ? 'car_wreck' : t < 0.75 ? 'car_open' : t < 0.9 ? 'pickup_truck' : 'car_burnt', -15.4 + c * 4.2, -9 + r * 8.4, turn, { ly: 0.05 });
+        }
+      }
+      const R = K.groundRoom(b, 14, 12, 8, 6, 3, 'clapboard', { n: [door(2, 1.2), win(5.6, 3, 0.9, 2.3)], w: [win(3, 1.6)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'concrete', lino: true });
+      void R;
+      K.extra(b, 'office_desk', 15.4, 13, PI, { ly: 0.12 });
+      b.cont(CONT.CABINET, 12, 14.4, { prop: 'cabinet', ry: PI, ly: 0.12 });
+      b.cont(CONT.STRONGBOX, 17.2, 14.2, { prop: 'strongbox', ry: -PI / 2, ly: 0.12 });
+      b.loot(13, 11.4, 0.14);
+      b.prop('paper_scatter', 14, 11.6, 1, { nocollide: true, ly: 0.12 });
+      // bunting on its poles, what is left of it; the board on the road
+      for (const px of [-19, -6.4, 6.4, 19]) b.cyl(px, 0, -15.6, 0.05, 4.4, 'rust', { sides: 5 });
+      for (const [x0, x1] of [[-19, -6.4], [-6.4, 6.4]]) b.box((x0 + x1) / 2, 4.1, -15.6, x1 - x0, 0.03, 0.03, 'rust', { collide: false });
+      for (const dq of [-2, 2]) b.cyl(12 + dq, 0, -15.6, 0.09, 6.2, 'rust', { sides: 6 });
+      K.signAt(b, 12, 5, -15.72, 0, 5.4, 2.6, 'billboard_a', { far: true, back: 0.12 });
+      b.prop('tire_pile', 18, 4, 0, { ly: 0.05 });
+      b.cont(CONT.TOOLBOX, 9, 6, { prop: 'toolbox', ry: 0.6, nocollide: true, ly: 0.05 });
+      b.prop('corpse', 4, 12, 2, { nocollide: true, ly: 0.05 });
+      b.loot(-12, 13.5, 0.07);
+      b.loot(2, -14, 0.07);
+    },
+  },
+
+  // U-STORE CALDER: rows of lock-ups, half of them broken into
+  [ZONE.STORAGE]: {
+    flat: 30,
+    clear: 32,
+    dirt: 0.3,
+    road: ROAD.ASPHALT,
+    build(b, K) {
+      const { gap, door, win, rng } = K;
+      fenced(b, 21, 19, 3.6);
+      let n = 0;
+      for (const z of [-9, 1.4, 11.8]) {
+        // a row: six units behind roll-up doors, the open ones with what was kept in them
+        const doors = [];
+        for (let k = 0; k < 6; k++) if (rng.chance(0.62)) doors.push(gap(2.25 + k * 4.5, 2.7, 2.3));
+        b.room(0, z, 27, 4.6, 2.8, 'tin', { n: doors }, { roof: 'flat', roofMat: 'tin', floorMat: 'concrete' });
+        for (let k = 1; k < 6; k++) b.wall(-13.5 + k * 4.5, z - 2.3, -13.5 + k * 4.5, z + 2.3, 2.8, 0.12, 'tin');
+        for (const d of doors) {
+          const x = -13.5 + d.at;
+          const what = n++ % 5;
+          if (what === 0) b.cont(CONT.CRATE, x - 0.6, z + 1.2, { prop: 'crate', ry: 0.2, ly: 0.12 });
+          else if (what === 1) b.cont(CONT.LOCKER, x + 1.0, z + 1.74, { prop: 'locker', ry: PI, ly: 0.12 });
+          else if (what === 2) b.cont(CONT.CABINET, x - 0.9, z + 1.7, { prop: 'cabinet', ry: PI, ly: 0.12 });
+          else if (what === 3) b.loot(x, z + 0.6, 0.14);
+          else b.cont(CONT.DUFFEL, x + 0.4, z + 0.8, { prop: 'duffel_bag', ry: 1, nocollide: true, ly: 0.12 });
+          b.prop(['suitcases', 'stock_spill', 'paper_scatter', 'litter'][n & 3], x + 0.2, z - 0.9, n, { nocollide: true, ly: 0.12, seed: n & 1 });
+        }
+      }
+      const R = K.groundRoom(b, -15.5, -15, 6, 4.4, 2.8, 'brick', { e: [door(2.2, 1.1)], n: [win(3, 1.6)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true });
+      void R;
+      b.cont(CONT.STRONGBOX, -17.6, -14, { prop: 'strongbox', ry: PI / 2, ly: 0.12 });
+      b.loot(-15, -15.6, 0.14);
+      K.extra(b, 'box_truck', 12, -14.4, 1.5);
+      K.extra(b, 'car_open', -6, -15.4, 1.7, { seed: 3 });
+      b.prop('skeleton', 6, -4.6, 1, { nocollide: true, seed: 0 });
+      b.prop('corpse', -6, 6.4, 2, { nocollide: true });
+      b.loot(16, 16);
+      void door;
+      void win;
+    },
+  },
+
+  // EVACUATION POINT BRAVO: where the buses were to take them from. The buses are still here.
+  [ZONE.EVAC]: {
+    flat: 38,
+    clear: 40,
+    dirt: 0.6,
+    road: ROAD.ASPHALT,
+    build(b, K) {
+      const { rng } = K;
+      fenced(b, 27, 25, 5);
+      for (const [x, z, r, t] of [[-19, 6, 0.04, 'city_bus'], [-14.6, 7, -0.03, 'city_bus'], [-10.2, 5.4, 0.02, 'school_bus'], [-5.8, 6.6, 0.05, 'city_bus'], [18, -6, 1.3, 'school_bus']]) K.extra(b, t, x, z, r, { seed: x & 1 });
+      for (const [x, z, sd] of [[8, 12, 0], [14.4, 13, 1], [20.6, 12.4, 0]]) {
+        b.prop('triage_tent', x, z, 0.03 * sd, { seed: sd });
+        b.prop('field_cot', x - 1.2, z - 1.4, 0, { seed: sd + 1 });
+        b.prop('field_cot', x + 1.2, z + 1.2, PI, { seed: sd });
+      }
+      K.extra(b, 'army_truck', 4, -14, 1.4);
+      K.extra(b, 'army_truck', 13, -17, 1.7, { seed: 1 });
+      K.extra(b, 'sandbag_nest', -6, -21.4, 0);
+      K.extra(b, 'sandbag_nest', 7, -21.4, 0, { seed: 1 });
+      K.extra(b, 'floodlight_tower', -23, -20, 0.6);
+      K.extra(b, 'floodlight_tower', 23, 20, 3.6);
+      K.extra(b, 'checkpoint_sign', 2.6, -27.4, 0);
+      b.cont(CONT.AMMO_BOX, -2.4, -18, { prop: 'military_crate', ry: 0.3 });
+      b.cont(CONT.CRATE, 22, -2, { prop: 'crate', ry: 0.2 });
+      b.cont(CONT.MEDICINE, 11.4, 18.6, { prop: 'medicine_cabinet', ry: PI });
+      b.cont(CONT.DUFFEL, -12, -6, { prop: 'duffel_bag', ry: 0.6, nocollide: true });
+      // what they were told to leave: a heap of it by the gate; and those who did not get on
+      for (let k = 0; k < 16; k++) b.prop(['suitcases', 'suitcases', 'stroller', 'suitcases', 'litter', 'paper_scatter'][k % 6], rng.range(-8, 2), rng.range(-12, -4), rng.range(0, 6), { nocollide: true, seed: k & 1 });
+      for (let i = 0; i < 9; i++) b.prop('body_bag', -22 + i * 1.3, -8, PI / 2 + 0.06 * i, { nocollide: true, seed: i });
+      for (let k = 0; k < 9; k++) b.prop(['skeleton', 'corpse', 'blood_pool'][k % 3], rng.range(-22, 22), rng.range(-16, 20), rng.range(0, 6), { nocollide: true, seed: k });
+      for (const dq of [-1.1, 1.1]) b.cyl(-9 + dq, 0, -26.4, 0.06, 3.2, 'rust', { sides: 6 });
+      K.signAt(b, -9, 2.5, -26.48, 0, 2.6, 1.3, 'evac', { far: true, back: 0.05 });
+      b.loot(0, 2);
+      b.loot(16, 4);
+      b.loot(-20, 16);
+    },
+  },
+
+  // GREENACRE NURSERY: glasshouses with the glass out of them, what was grown in them grown through the roof
+  [ZONE.NURSERY]: {
+    flat: 24,
+    clear: 26,
+    dirt: 0.5,
+    road: ROAD.DIRT,
+    build(b, K) {
+      const { door, win, rng } = K;
+      for (const hx of [-12, 0, 12]) {
+        // a glasshouse: hoops of steel, a few panes left in them, benches down both sides
+        for (let z = -4; z <= 14; z += 3) {
+          for (const sx of [-1, 1]) b.box(hx + sx * 4, 0, z, 0.08, 2.4, 0.08, 'rust', { collide: false });
+          b.box(hx - 2, 2.4, z, 4.3, 0.08, 0.08, 'rust', { rz: 0.42, collide: false });
+          b.box(hx + 2, 2.4, z, 4.3, 0.08, 0.08, 'rust', { rz: -0.42, collide: false });
+          for (const sx of [-1, 1]) if (z < 14 && rng.chance(0.4)) b.box(hx + sx * 4, 0.9, z + 1.5, 2.9, 1.4, 0.04, 'glass', { ry: PI / 2, collide: false });
+        }
+        b.box(hx, 3.26, 5, 0.1, 0.1, 18.4, 'rust', { collide: false });
+        for (const sx of [-1, 1]) b.box(hx + sx * 2.6, 0, 5, 1.2, 0.8, 16, 'planks');
+        for (let k = 0; k < 6; k++) K.weed(b, hx + rng.range(-3.4, 3.4), rng.range(-3, 13), rng.range(0.9, 1.6));
+        b.tree(hx + rng.range(-0.6, 0.6), rng.range(2, 9), 5, rng.range(0.5, 0.8));
+      }
+      const R = K.groundRoom(b, -14, -12, 9, 6, 3, 'clapboard', { n: [door(4.5, 1.3), win(1.8, 1.6), win(7.2, 1.6)], e: [door(3, 1.1)] }, { roof: 'gable', roofH: 2, roofMat: 'shingles', floorMat: 'planks' });
+      void R;
+      b.prop('checkout_counter', -15, -11, 0, { ly: 0.12 });
+      b.loot(-15, -11, 1.1);
+      b.cont(CONT.SHELF, -16, -9.4, { prop: 'shelf', ry: PI, ly: 0.12 });
+      b.cont(CONT.TOOLBOX, -11, -13.6, { prop: 'toolbox', ry: 0.3, nocollide: true, ly: 0.12 });
+      b.cont(CONT.CRATE, 4, -12, { prop: 'crate', ry: 0.3 });
+      K.extra(b, 'pickup_truck', 10, -13, 1.3);
+      b.prop('pallet', 0, -9.4, 0.2);
+      b.prop('barrel', 2, -9.6, 0);
+      b.prop('skeleton', -4, -5, 0, { nocollide: true, seed: 2 });
+      b.loot(12, 12, 0.02);
+      b.loot(0, 12.4, 0.02);
+    },
+  },
+
+  // THE GUARD MOTOR POOL: the trucks they did not take, a carrier with its wheels off, the watch tower
+  [ZONE.MOTORPOOL]: {
+    flat: 35,
+    clear: 37,
+    dirt: 0.7,
+    road: ROAD.ASPHALT,
+    build(b, K) {
+      fenced(b, 25, 23, 4.6);
+      b.shelter(-10, 10, 18, 10, 4.6, 'tin', 'metal');
+      K.extra(b, 'army_truck', -15, 10, 0.02);
+      K.extra(b, 'apc_wreck', -8.6, 10.4, 0.04);
+      b.cont(CONT.TOOLBOX, -4, 7, { prop: 'toolbox', ry: 0.4, nocollide: true });
+      b.prop('tire_pile', -3.4, 13.4, 0);
+      for (const [x, z, r, sd] of [[6, 14, 0.1, 1], [10.6, 13.4, -0.06, 0], [15.4, 14.2, 0.04, 1]]) K.extra(b, 'army_truck', x, z, r, { seed: sd });
+      K.extra(b, 'apc_wreck', 16, -10, 1.2);
+      b.prop('military_tent', -17, -10, PI / 2, { seed: 1 });
+      b.prop('military_tent', -17, -16.6, PI / 2, { seed: 0 });
+      b.prop('watchtower', 20.4, 18, 0);
+      b.prop('fuel_tank', 4, -17.6, PI / 2);
+      for (const [x, z, sd] of [[-6, -14, 0], [-3, -15, 1], [-8.4, -17.6, 2]]) b.cont(CONT.AMMO_BOX, x, z, { prop: 'military_crate', ry: 0.2 * sd, seed: sd });
+      b.cont(CONT.LOCKER, -19.2, -4, { prop: 'locker', ry: PI / 2 });
+      K.extra(b, 'sandbag_nest', -8, -20.4, 0);
+      K.extra(b, 'sandbag_nest', 9, -20.4, 0, { seed: 1 });
+      K.extra(b, 'concertina', 14, -25.4, 0.05);
+      K.extra(b, 'floodlight_tower', 22, -19, 2.2);
+      for (const [x, z] of [[0, -8], [8, 2], [-12, -2], [12, -2], [-2, 18]]) b.prop(['skeleton', 'corpse', 'blood_pool', 'body_bag', 'bones'][((x + 12) / 5) | 0], x, z, x, { nocollide: true, seed: z & 1 });
+      b.prop('barrel', 0.6, 4, 0);
+      b.light(0.6, 1, 4, 'embers');
+      b.loot(-12, 4);
+      b.loot(12, 6);
+      b.loot(2, -12);
+    },
+  },
+
+  // LANDING ZONE KILO: a pad the army poured in a field, and the last helicopter that came to it
+  [ZONE.HELIPAD]: {
+    flat: 22,
+    clear: 26,
+    dirt: 0.5,
+    road: ROAD.DIRT,
+    build(b, K) {
+      b.box(0, -0.05, 4, 20, 0.1, 20, 'concrete', { collide: true });
+      for (const [x, z, w, d] of [[-2.4, 4, 0.8, 7], [2.4, 4, 0.8, 7], [0, 4, 4.8, 0.8]]) b.box(x, 0.05, z, w, 0.02, d, 'trim', { collide: false });
+      for (const [x, z, w, d] of [[0, -5.4, 19, 0.4], [0, 13.4, 19, 0.4], [-9.4, 4, 0.4, 19], [9.4, 4, 0.4, 19]]) b.box(x, 0.05, z, w, 0.02, d, 'trim', { collide: false });
+      b.prop('heli_wreck', 1, 5, 0.6, { ly: 0.05 });
+      b.prop('military_tent', -15, -4, PI / 2, { seed: 1 });
+      K.extra(b, 'triage_tent', 15, -8, 0);
+      K.extra(b, 'field_cot', 14, -9, 0, { seed: 1 });
+      K.extra(b, 'field_cot', 16.2, -6.6, PI, { seed: 2 });
+      K.extra(b, 'floodlight_tower', -12, 15, 0.6);
+      K.extra(b, 'floodlight_tower', 12.6, 16, 2.6);
+      K.extra(b, 'army_truck', -4, -14, 1.5);
+      K.extra(b, 'sandbag_nest', 6, -17, 0);
+      b.cont(CONT.AMMO_BOX, -13, 4, { prop: 'military_crate', ry: 0.3 });
+      b.cont(CONT.AMMO_BOX, -12, 6.4, { prop: 'military_crate', ry: 1.1, seed: 1 });
+      b.cont(CONT.MEDICINE, 13, -11.6, { prop: 'medicine_cabinet', ry: 0 });
+      b.cont(CONT.DUFFEL, 5, -8, { prop: 'duffel_bag', ry: 0.4, nocollide: true });
+      b.prop('windsock', -16, 14, 0.3);
+      for (let i = 0; i < 6; i++) b.prop('body_bag', -8 + i * 1.3, -9.4, PI / 2 + 0.05 * i, { nocollide: true, seed: i });
+      for (const [x, z] of [[4, -4], [-6, 0], [9, 9], [-3, 12]]) b.prop(['skeleton', 'blood_pool', 'corpse', 'suitcases'][((x + 6) / 4) | 0], x, z, x, { nocollide: true, ly: 0.05 });
+      b.loot(-14, -9);
+      b.loot(8, -12);
+    },
+  },
+
+  // CALDER AGGREGATES: heaps of stone, the hopper they were loaded from, two trucks that never were
+  [ZONE.AGGREGATES]: {
+    flat: 28,
+    clear: 30,
+    dirt: 0.9,
+    road: ROAD.DIRT,
+    build(b, K) {
+      const { door, win } = K;
+      for (const [x, z, sd] of [[-14, 12, 0], [-4, 16, 1], [8, 14, 0], [17, 6, 1]]) b.prop('gravel_pile', x, z, sd, { seed: sd });
+      // the hopper, on its legs, a belt up to it from the ground
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(-12 + sx * 2, 0, -6 + sz * 2, 0.4, 6, 0.4, 'rust');
+      b.box(-12, 6, -6, 5, 3.4, 5, 'tin_rust', { collide: false });
+      b.box(-12, 4.4, -6, 2, 1.6, 2, 'rust', { collide: false });
+      b.box(-3.4, 4.2, -6, 15, 0.5, 1.2, 'rust', { rz: 0.5, collide: false });
+      for (const dx of [-7.4, 0.6]) b.box(dx, 0, -6, 0.3, dx < 0 ? 5.4 : 1.4, 0.3, 'rust');
+      const R = K.groundRoom(b, 12, -10, 8, 3.4, 2.6, 'tin', { n: [door(2, 1.1), win(5.6, 1.6)] }, { roof: 'flat', roofMat: 'tin', floorMat: 'planks' });
+      void R;
+      K.extra(b, 'office_desk', 13.6, -9.6, PI, { ly: 0.12 });
+      b.cont(CONT.LOCKER, 15.56, -10, { prop: 'locker', ry: -PI / 2, ly: 0.12 });
+      b.loot(10, -10, 0.14);
+      b.wreck('dump_truck', -12, -6.2, 0.02, { trunk: false });
+      b.wreck('dump_truck', 2, 4, 2.2, { trunk: false, seed: 1 });
+      b.prop('fuel_tank', 20, -8, 0);
+      b.cont(CONT.TOOLBOX, 4, -6, { prop: 'toolbox', ry: 0.2, nocollide: true });
+      b.cont(CONT.CRATE, 18.6, -14, { prop: 'crate', ry: 0.4 });
+      b.prop('tire_pile', -19, -12, 0);
+      b.prop('corpse', 6, -2, 1, { nocollide: true });
+      b.loot(-6, 6);
+      b.loot(12, 2);
+    },
+  },
 };
 
 // EASTGATE is the city's old suburb (shared/mainland.js places it): the same street of houses

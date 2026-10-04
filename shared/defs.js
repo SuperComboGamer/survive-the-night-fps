@@ -833,7 +833,21 @@ export const ZONE = {
   CONTAINERS: 50, // a freight yard of shipping containers
   FARM_A: 51,
   FARM_B: 52,
+  // ...and more of it (the third pass)
+  BOATWORKS: 53, // on the river's far bank, across from the city
+  DRIVEIN_M: 54,
+  FIREHOUSE: 55,
+  GRAIN: 56, // a grain elevator
+  DINER_M: 57,
+  CARLOT: 58,
+  STORAGE: 59, // rows of lock-ups
+  EVAC: 60, // where the buses were to take the city's people from
+  NURSERY: 61,
+  MOTORPOOL: 62, // the Guard's trucks
+  HELIPAD: 63,
+  AGGREGATES: 64, // a gravel works
 };
+export const MAINLAND_ZONES = [27, 64]; // the first and the last of the mainland's places
 // NOTIFY.CACHE: what the bridgehead cache handed a survivor (acts.js BRIDGEHEAD)
 export const CACHE_GAVE = { PISTOL: 1, AMMO: 2, BANDAGE: 4, MELEE: 8, BUILD: 16 };
 
@@ -891,6 +905,18 @@ export const ZONE_NAMES = [
   'Calder Freight Yard',
   'Hale Farm',
   'Pruitt Farm',
+  'Calder Boat Works',
+  'Calder Drive-In',
+  'Engine Company 9',
+  'Halvorsen Grain',
+  'Mile 4 Diner',
+  "Honest Al's Autos",
+  'U-Store Calder',
+  'Evacuation Point Bravo',
+  'Greenacre Nursery',
+  'Guard Motor Pool',
+  'Landing Zone Kilo',
+  'Calder Aggregates',
 ];
 
 // weighted loot tables per zone: [item, weight, min, max]
@@ -955,6 +981,18 @@ export const LOOT_TABLES = {
   [ZONE.CONTAINERS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.NAILS, 6, 6, 14], [ITEM.WOOD, 5, 2, 5], [ITEM.TAPE, 5, 1, 2], [ITEM.ROPE, 4, 1, 2], [ITEM.TUNA, 5, 1, 3], [ITEM.CHEM, 4, 1, 2], [ITEM.POWDER, 4, 3, 6], [ITEM.WIRE, 3, 1, 3], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.PLATE, 1, 1, 1]],
 };
 LOOT_TABLES[ZONE.WESTGATE] = LOOT_TABLES[ZONE.SUBURB]; // (houses are houses)
+// (the third pass's places: each has what a place like it has)
+LOOT_TABLES[ZONE.BOATWORKS] = LOOT_TABLES[ZONE.MARINA];
+LOOT_TABLES[ZONE.DRIVEIN_M] = LOOT_TABLES[ZONE.DRIVEIN];
+LOOT_TABLES[ZONE.FIREHOUSE] = LOOT_TABLES[ZONE.TERMINAL];
+LOOT_TABLES[ZONE.GRAIN] = LOOT_TABLES[ZONE.BARN];
+LOOT_TABLES[ZONE.DINER_M] = LOOT_TABLES[ZONE.TRUCKSTOP];
+LOOT_TABLES[ZONE.CARLOT] = LOOT_TABLES[ZONE.SALVAGE];
+LOOT_TABLES[ZONE.STORAGE] = LOOT_TABLES[ZONE.CONTAINERS];
+LOOT_TABLES[ZONE.EVAC] = LOOT_TABLES[ZONE.QUARANTINE];
+LOOT_TABLES[ZONE.NURSERY] = LOOT_TABLES[ZONE.BARN];
+LOOT_TABLES[ZONE.MOTORPOOL] = LOOT_TABLES[ZONE.HELIPAD] = LOOT_TABLES[ZONE.ROADBLOCK];
+LOOT_TABLES[ZONE.AGGREGATES] = LOOT_TABLES[ZONE.INDUSTRIAL];
 LOOT_TABLES[ZONE.FARM_A] = LOOT_TABLES[ZONE.FARM_B] = LOOT_TABLES[ZONE.BARN];
 
 // ---------------------------------------------------------------- searchable containers

@@ -20,8 +20,12 @@
 //   partSpots[i].supply   which of the plane's parts lies there (an index into PLANE_PARTS): they are at set places
 //   props[i].live   set on the car at the bridgehead and on the plane: the client draws those two itself, because its
 //            cutscenes move them (the car drives to that very spot; the plane is swapped for the one that flies)
-//   city     { x, z, pitch, grid, lots: [{ x, z, w, d, ry, what }] }: what was built on every lot of Port Calder
+//   city     { x, z, pitch, grid, lots: [{ x, z, w, d, ry, what }] }: what was built on every lot of Port Calder; and
+//            what its buildings are drawn from (buildings, rooms, shells, heaps, fallen, pancakes, signs: see
+//            "What the city is drawn from" below, and client/render/citykit.js)
+//   parts[i].hidden   a solid that is not drawn as the box it is (the kit draws that building, wall or heap)
 //   farms    [{ x, z, ry }]: the farms out on the plain (no place names them: their loot is a farm's)
+//   river    { pts, hw, bridges: [{ x, y, z, ry, len, w }] }: its middle line, half its width, and where roads cross it
 import { GRID_STEP, WATER_LEVEL } from './constants.js';
 import { ZONE, CONT } from './defs.js';
 import { PROPS } from './props.js';
@@ -58,17 +62,21 @@ const CARPARK_DECK = 3.2; // from one deck of the multi-storey car park to the n
 const FARMS = 2; // farms out on the plain, each FARM_R across its levelled yard
 const FARM_R = 30;
 const SITE_FLAT = 5.5; // the ground is levelled this far round a roadside site
-const ROADBLOCKS = 5; // stretches of street somebody barricaded
-const JAMS = 3; // ...and stretches where the traffic stopped for good, bumper to bumper
+const ROADBLOCKS = 5; // stretches of street the army barricaded, and died at
+const JAMS = 6; // ...and stretches where the traffic stopped for good, bumper to bumper
 const SINKHOLES = 2; // ...and where the street fell in
 const SMOKES = 9; // columns of smoke standing over the city (world.lights 'smoke'), and FIRES still burning under them
 const FIRES = 3;
 const PLACE_GAP = 62; // open country left between two places out on the plain (m, yard to yard)
 const PONDS = 4;
+const RIVER_HW = 8; // the river: this far from its middle to either bank,
+const RIVER_BANK = 28; // ...its valley this much wider again,
+const RIVER_DEPTH = 1.7; // ...and this deep (deep water: it is swum, or crossed by a bridge)
+const BRIDGE_UP = 1.8; // a bridge's deck over the water
 const JAM_EVERY = 120; // a pile-up on Route 9 about this often (m)
 // what is drawn for a lot nothing was dealt to, by weight: [kind, weight]
-const SMALL_LOTS = [['grocery', 1.6], ['diner', 1.2], ['pharmacy', 0.5], ['hardware', 0.8], ['flats', 3.6], ['office', 0.9], ['ruin', 2.2], ['burnt', 1.8], ['gas', 0.5], ['green', 0.5]];
-const LONG_LOTS = [['terrace', 3], ['block', 3], ['carpark', 1], ['parking', 0.5], ['cinema', 0.3]];
+const SMALL_LOTS = [['grocery', 0.9], ['diner', 0.7], ['pharmacy', 0.4], ['hardware', 0.5], ['liquor', 0.4], ['pawn', 0.3], ['laundry', 0.3], ['bakery', 0.3], ['bar', 0.4], ['books', 0.3], ['flats', 3.6], ['office', 0.9], ['ruin', 2.0], ['burnt', 1.6], ['gas', 0.4], ['green', 0.5]];
+const LONG_LOTS = [['terrace', 3], ['block', 3], ['carpark', 1], ['parking', 0.5], ['cinema', 0.3], ['warehouse', 1.2]];
 const BIG_LOTS = [['collapse', 1.4], ['tower', 1], ['depot', 0.5], ['parking', 0.5]];
 
 // The airfield (local frame of the runway: it runs north-south, the plane at its south end facing north)
@@ -94,7 +102,7 @@ export function createMainland(seed) {
   const side = prng.chance(0.5) ? 1 : -1; // the ironworks is north (-1) or south (1) of the city; Eastgate the other way
   const field = { x: HALF - 132, z: prng.range(-70, 70) }; // the middle of the runway
   const works = { x: city.x + prng.range(40, 110), z: city.z + side * (G2 + prng.range(150, 180)) };
-  const suburb = { x: city.x + prng.range(120, 170), z: city.z - side * (G2 + prng.range(100, 125)) };
+  const suburb = { x: city.x + prng.range(120, 170), z: city.z - side * (G2 + prng.range(165, 185)) }; // (across the river)
   const stop = { x: prng.range(170, 215), z: lerp(city.z, field.z + 60, 0.5) + prng.range(-30, 30) };
   // the airfield's places hang off the runway: the apron is west of its south half, with the hangars on it, the
   // terminal north of them and the fuel depot north of that, set back from everything
@@ -128,6 +136,53 @@ export function createMainland(seed) {
     return d;
   };
   const inCity = (x, z, pad) => Math.abs(x - city.x) < G2 + pad && Math.abs(z - city.z) < G2 + pad;
+  // The river. It comes down out of the hills of the rim on the bay's side (the side Eastgate is on), runs along the
+  // city's edge there and into the bay, which is its mouth. A line through a few points that the seed moves;
+  // riverD: how far every vertex of the heightfield is from that line (out to 110 m: further is 1e4).
+  const bside = -side;
+  const riverZ = city.z + bside * (G2 + 62); // (where it passes the city)
+  const bayZ = riverZ + bside * prng.range(0, 26);
+  const riverPts = [];
+  {
+    const ctrl = [
+      [cityE[0] + prng.range(330, 470), bside * (HALF - 24)],
+      [cityE[0] + prng.range(150, 210), riverZ + bside * prng.range(120, 170)],
+      [cityE[0] + prng.range(46, 70), riverZ + bside * prng.range(8, 30)],
+      [city.x + prng.range(-30, 30), riverZ + bside * prng.range(-6, 8)],
+      [cityW[0] - 36, riverZ + bside * prng.range(-4, 10)],
+      [COAST + 64, bayZ],
+      [COAST - 40, bayZ],
+    ];
+    for (let i = 0; i < ctrl.length - 1; i++) {
+      const [p0, p1, p2, p3] = [ctrl[Math.max(0, i - 1)], ctrl[i], ctrl[i + 1], ctrl[Math.min(ctrl.length - 1, i + 2)]];
+      const steps = Math.max(2, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / 4));
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        const f = (a, b, c, d) => 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
+        riverPts.push(f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1]));
+      }
+    }
+    riverPts.push(ctrl[ctrl.length - 1][0], ctrl[ctrl.length - 1][1]);
+  }
+  const riverD = new Float32Array(N * N).fill(1e4);
+  for (let s = 0; s < riverPts.length / 2 - 1; s++) {
+    const [ax, az, bx, bz] = [riverPts[s * 2], riverPts[s * 2 + 1], riverPts[s * 2 + 2], riverPts[s * 2 + 3]];
+    const el2 = (bx - ax) ** 2 + (bz - az) ** 2 || 1;
+    const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - 110 + HALF) / GRID_STEP));
+    const i1 = Math.min(N - 1, Math.ceil((Math.max(ax, bx) + 110 + HALF) / GRID_STEP));
+    const j0 = Math.max(0, Math.floor((Math.min(az, bz) - 110 + HALF) / GRID_STEP));
+    const j1 = Math.min(N - 1, Math.ceil((Math.max(az, bz) + 110 + HALF) / GRID_STEP));
+    for (let j = j0; j <= j1; j++) {
+      const z = -HALF + j * GRID_STEP;
+      for (let i = i0; i <= i1; i++) {
+        const x = -HALF + i * GRID_STEP;
+        const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / el2, 0, 1);
+        const d = Math.hypot(x - ax - (bx - ax) * t, z - az - (bz - az) * t);
+        if (d < 110 && d < riverD[j * N + i]) riverD[j * N + i] = d;
+      }
+    }
+  }
+  const riverAt = (x, z) => riverD[clamp(Math.round((z + HALF) / GRID_STEP), 0, N - 1) * N + clamp(Math.round((x + HALF) / GRID_STEP), 0, N - 1)];
   const onField = (x, z, pad) => Math.abs(x - (field.x - 30)) < 80 + pad && Math.abs(z - field.z) < RUNWAY_LEN / 2 + 30 + pad;
 
   // ---- what lies about: the places out on the plain (mainland-places.js), each on ground of its own
@@ -157,6 +212,7 @@ export function createMainland(seed) {
     !onField(x, z, flat + 40) &&
     lineDist(x, z) > flat + 36 &&
     lakeDist(x, z) > flat + 46 &&
+    riverAt(x, z) > flat + 42 &&
     trackDist(x, z) > flat + 30 &&
     spots.every((o) => Math.hypot(o.x - x, o.z - z) - o.flat - flat > gapTo);
   // (places with a spot of their own: on Route 9, beside the city, at the end of the runway)
@@ -169,6 +225,10 @@ export function createMainland(seed) {
     spot(ZONE.MOTORINN, lerp(stop.x, gate[0], 0.5), lerp(stop.z, gate[1], 0.5) - side * 76, OUTLYING[ZONE.MOTORINN].flat);
     spot(ZONE.CRASH, field.x + 8, field.z - RUNWAY_LEN / 2 - 96, OUTLYING[ZONE.CRASH].flat);
   }
+  // the boat works: on the river's far bank across from the city, its slip (+Z) down to the water
+  // (beside where Ferry Street comes over: the second or third of the city's streets from the west)
+  const ferry = prng.int(1, 2);
+  spot(ZONE.BOATWORKS, city.x - G2 + ferry * PITCH + 40, riverZ + bside * 52, OUTLYING[ZONE.BOATWORKS].flat, bside > 0 ? PI : 0, { fixed: true });
   // the lake: the roomiest of a handful of spots, and the marina on its shore nearest the city
   {
     let best = -Infinity;
@@ -199,7 +259,7 @@ export function createMainland(seed) {
     const z = prng.range(-HALF + 150, HALF - 150);
     // (the longer it takes, the less open country a farm asks for round it: there are always two)
     const ease = Math.min(1, tries / 2400);
-    if (!room(x, z, FARM_R + 34, lerp(PLACE_GAP, 2, ease))) continue; // (its field lies west of the yard: room for both)
+    if (!room(x, z, FARM_R + 58, lerp(PLACE_GAP, 2, ease))) continue; // (its field lies west of the yard: room for both, and for the ground levelled round them)
     // where its track meets the highway: the nearest point of an open stretch (not in the city, not at a place)
     let to = null;
     for (const k of [0, 1, 3, 4]) {
@@ -213,7 +273,7 @@ export function createMainland(seed) {
     let crosses = false;
     for (let s = FARM_R + 4; s <= d && !crosses; s += 6) {
       const [px, pz] = [x + ((to[0] - x) * s) / d, z + ((to[1] - z) * s) / d];
-      crosses = inCity(px, pz, 40) || onField(px, pz, 16) || lakeDist(px, pz) < 20 || trackDist(px, pz) < 12 || spots.some((o) => Math.hypot(o.x - px, o.z - pz) < o.flat + 26);
+      crosses = inCity(px, pz, 40) || onField(px, pz, 16) || lakeDist(px, pz) < 20 || riverAt(px, pz) < 24 || trackDist(px, pz) < 12 || spots.some((o) => Math.hypot(o.x - px, o.z - pz) < o.flat + 26);
     }
     if (crosses) continue;
     const ry = Math.round(Math.atan2(-(to[0] - x), -(to[1] - z)) / (PI / 2)) * (PI / 2);
@@ -225,7 +285,7 @@ export function createMainland(seed) {
   for (let tries = 0; tries < 6000 && farms.length < FARMS; tries++) {
     const x = prng.range(COAST + 170, HALF - 160);
     const z = prng.range(-HALF + 150, HALF - 150);
-    if (!room(x, z, FARM_R + 34, 2)) continue;
+    if (!room(x, z, FARM_R + 58, 2)) continue;
     const ry = Math.round(Math.atan2(-(city.x - x), -(city.z - z)) / (PI / 2)) * (PI / 2);
     farms.push({ x, z, to: null, ry });
     spot(farms.length === 1 ? ZONE.FARM_A : ZONE.FARM_B, x, z, FARM_R, ry, { fixed: true, road: ROAD.DIRT });
@@ -241,15 +301,29 @@ export function createMainland(seed) {
       [ZONE.CONTAINERS]: (x, z) => -Math.hypot(x - works.x, z - works.z) / 500,
       [ZONE.TRAILERPARK]: (x, z) => -lineDist(x, z) / 700,
     };
-    for (const id of [ZONE.SCHOOL, ZONE.CONTAINERS, ZONE.TRAILERPARK, ZONE.SALVAGE, ZONE.SUBSTATION, ZONE.WATERWORKS, ZONE.GRAVEYARD, ZONE.LOGGING, ZONE.MAST]) {
+    // (the first nine keep PLACE_GAP of open country round them; the rest - the third pass's - go where there is
+    // room between those, nearer each other and nearer the roads)
+    const FIRST = [ZONE.SCHOOL, ZONE.CONTAINERS, ZONE.TRAILERPARK, ZONE.SALVAGE, ZONE.SUBSTATION, ZONE.WATERWORKS, ZONE.GRAVEYARD, ZONE.LOGGING, ZONE.MAST];
+    const MORE = [ZONE.EVAC, ZONE.MOTORPOOL, ZONE.DRIVEIN_M, ZONE.AGGREGATES, ZONE.GRAIN, ZONE.STORAGE, ZONE.FIREHOUSE, ZONE.CARLOT, ZONE.NURSERY, ZONE.HELIPAD, ZONE.DINER_M];
+    Object.assign(WANT, {
+      [ZONE.EVAC]: (x, z) => -lineDist(x, z) / 500,
+      [ZONE.DINER_M]: (x, z) => -lineDist(x, z) / 300,
+      [ZONE.CARLOT]: (x, z) => -lineDist(x, z) / 400,
+      [ZONE.FIREHOUSE]: (x, z) => -Math.hypot(x - city.x, z - city.z) / 900,
+      [ZONE.STORAGE]: (x, z) => -Math.hypot(x - city.x, z - city.z) / 900,
+      [ZONE.HELIPAD]: (x, z) => -Math.hypot(x - field.x, z - field.z) / 900,
+    });
+    for (const id of [...FIRST, ...MORE]) {
       const flat = OUTLYING[id].flat;
+      const more = MORE.includes(id);
       let best = null;
       let bs = -Infinity;
-      for (let i = 0; i < 70; i++) {
+      // (where there is no room for it with open country all round, with less of that: every place is on every map)
+      for (let i = 0; i < 520 && (best === null || i < (more ? 160 : 70)); i++) {
         const x = prng.range(COAST + 150, HALF - 120);
         const z = prng.range(-HALF + 110, HALF - 110);
         const jit = prng() * 0.25;
-        if (!room(x, z, flat)) continue;
+        if (!room(x, z, flat, i < 160 ? (more ? 30 : PLACE_GAP) : i < 340 ? 22 : 6)) continue;
         let open = 160;
         for (const o of spots) open = Math.min(open, Math.hypot(o.x - x, o.z - z) - o.flat - flat);
         const sc = open / 160 + (WANT[id]?.(x, z) ?? 0) + jit;
@@ -300,7 +374,6 @@ export function createMainland(seed) {
   // (the shore wanders, but not where the bridge lands: the abutment stands on the line)
   const atBridge = (z) => 1 - smoothstep(34, 70, Math.abs(z - zb));
   // (...and it is no straight edge: a bay bites into it on one side of the bridge, a headland stands out on the other)
-  const bayZ = zb - side * prng.range(210, 300);
   const capZ = zb + side * prng.range(330, 430);
   const bump = (z, at, w) => Math.exp(-(((z - at) / w) ** 2));
   const shoreX = (z) => COAST + (nE(z * 0.011, 3.7) * 22 + nE(z * 0.045, 9.1) * 6 + bump(z, bayZ, 70) * 58 - bump(z, capZ, 46) * 30) * (1 - atBridge(z));
@@ -369,6 +442,13 @@ export function createMainland(seed) {
       h = lerp(h, Math.min(h, WATER_LEVEL + 1.0), (1 - smoothstep(pd.r - 3, pd.r + 22, dp)) * 0.85);
       h = lerp(h, WATER_LEVEL - pd.depth, 1 - smoothstep(pd.r * 0.2, pd.r - 1, dp));
     }
+    // the river: a valley let down to the water's edge, the bed cut below it (its banks wander a little)
+    const dRiver = riverAt(x, z);
+    if (dRiver < RIVER_HW + RIVER_BANK + 4) {
+      const dn = dRiver + nE(x * 0.04, z * 0.04) * 2.4;
+      h = lerp(h, Math.min(h, WATER_LEVEL + 0.9), 1 - smoothstep(RIVER_HW + 1.5, RIVER_HW + RIVER_BANK, dn));
+      h = lerp(h, WATER_LEVEL - RIVER_DEPTH, 1 - smoothstep(RIVER_HW * 0.72, RIVER_HW, dn)); // (the bed falls away steeply from the bank: no shallows under a bridge that a walker would rather take)
+    }
     // the sea: the land goes down to the beach and on under the water. The bluff at the bridge falls straight in.
     const s = x - shoreX(z);
     const bluff = atBridge(z);
@@ -430,6 +510,9 @@ export function createMainland(seed) {
     const n = pts.length / 2;
     const hs = new Float32Array(n);
     for (let i = 0; i < n; i++) hs[i] = level ?? rawH(pts[i * 2], pts[i * 2 + 1]);
+    // (over the river it is a bridge: the deck is this far over the water, whatever the bed does under it)
+    const wet = (i) => riverAt(pts[i * 2], pts[i * 2 + 1]);
+    if (level === null) for (let i = 0; i < n; i++) if (wet(i) < RIVER_HW + 12) hs[i] = Math.max(hs[i], WATER_LEVEL + BRIDGE_UP);
     if (level === null) {
       for (let pass = 0; pass < 3; pass++) {
         const src = hs.slice();
@@ -460,7 +543,26 @@ export function createMainland(seed) {
     }
     let length = 0;
     for (let i = 1; i < n; i++) length += Math.hypot(pts[i * 2] - pts[i * 2 - 2], pts[i * 2 + 1] - pts[i * 2 - 1]);
-    const road = { pts: new Float32Array(pts), hs, kind, width, name, length };
+    // spans: [first, last] points of each stretch of it that is over the river
+    const spans = [];
+    for (let i = 0; i < n; i++) {
+      if (level !== null || wet(i) >= RIVER_HW + 1) continue;
+      if (spans.length && spans[spans.length - 1][1] === i - 1) spans[spans.length - 1][1] = i;
+      else spans.push([i, i]);
+    }
+    // (its deck is level from bank to bank - one height, so it is one thing to walk on - and the road comes up to
+    // that over a few metres either side)
+    for (const [i0, i1] of spans) {
+      const [a, e] = [Math.max(0, i0 - 3), Math.min(n - 1, i1 + 3)];
+      let top = WATER_LEVEL + BRIDGE_UP;
+      for (let i = a; i <= e; i++) top = Math.max(top, hs[i]);
+      for (let i = a; i <= e; i++) hs[i] = top;
+      for (let k = 1; k <= 6; k++) {
+        if (a - k >= 0) hs[a - k] = lerp(top, hs[a - k], k / 7);
+        if (e + k < n) hs[e + k] = lerp(top, hs[e + k], k / 7);
+      }
+    }
+    const road = { pts: new Float32Array(pts), hs, kind, width, name, length, spans };
     roads.push(road);
     return road;
   };
@@ -496,6 +598,12 @@ export function createMainland(seed) {
     buildRoad([[city.x + o, city.z - G2 - 8], [city.x + o, city.z + G2 + 8]], ROAD.ASPHALT, 3.4, '', cityH);
     if (i !== GRID / 2) buildRoad([[city.x - G2 - 8, city.z + o], [city.x + G2 + 8, city.z + o]], ROAD.ASPHALT, 3.4, '', cityH);
   }
+  // ...and two of them run on over the river on the city's far side, to the bank beyond: Eastgate's road and the
+  // boat works' start from there
+  for (const i of [ferry, GRID - 1]) {
+    const sx = city.x - G2 + i * PITCH;
+    buildRoad([[sx, city.z + bside * (G2 + 8)], [sx + (i === ferry ? 3 : -4), riverZ + bside * 4], [sx, riverZ + bside * 48]], ROAD.ASPHALT, 3, i === ferry ? 'Ferry Street' : 'Eastgate Road');
+  }
   // the airfield: the runway, the taxi lane along the apron, the road on to the depot
   const runwayRoad = buildRoad([[field.x, field.z - RUNWAY_LEN / 2], [field.x, field.z + RUNWAY_LEN / 2]], ROAD.ASPHALT, RUNWAY_HALF, 'Runway 36', fieldH);
   buildRoad([[terminal.x - 26, terminal.z], [terminal.x - 28, hangars.z - 30], [hangars.x - 34, hangars.z + 4]], ROAD.ASPHALT, 2.8, '', fieldH);
@@ -522,13 +630,20 @@ export function createMainland(seed) {
       if (!skip && onNet(p[n * 2 - 2], p[n * 2 - 1])) net.push([p[n * 2 - 2], p[n * 2 - 1], road.hs[n - 1]]); // (its far end: a street of the city runs out to there)
     };
     for (const road of roads) if (road !== runwayRoad) feed(road);
-    const clear = (a, b, self) => {
+    const clear = (a, b, self, pad = 22) => {
       const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let inRiver = 0;
       for (let d = 6; d < len - 4; d += 6) {
         const x = a[0] + ((b[0] - a[0]) * d) / len;
         const z = a[1] + ((b[1] - a[1]) * d) / len;
         if (inCity(x, z, 6) || onField(x, z, 4) || lakeDist(x, z) < 14 || pondDist(x, z) < 10) return false;
-        for (const zn of zones) if (zn !== self && zn.id !== ZONE.CITY && Math.hypot(x - zn.x, z - zn.z) < zn.flat + 22) return false;
+        if (riverAt(x, z) < RIVER_HW + 6 && ++inRiver > 6) return false; // (it may cross the river, squarely: not run down it)
+        for (const zn of zones) {
+          // (not back through the yard it left by its gate, either)
+          // (...and a farm's field lies out past its yard)
+          const keep = zn.flat + (zn.id === ZONE.FARM_A || zn.id === ZONE.FARM_B ? 44 : pad);
+          if (zn === self ? d > 9 && Math.hypot(x - zn.x, z - zn.z) < zn.flat * 0.86 : zn.id !== ZONE.CITY && Math.hypot(x - zn.x, z - zn.z) < keep) return false;
+        }
       }
       return true;
     };
@@ -558,16 +673,33 @@ export function createMainland(seed) {
       let kind = zn.road;
       if (!to) {
         // (no straight line reaches it: round a corner, then - out of the gate to a point of open country, and on)
-        search: for (let k = 0; k < Math.min(byDist.length, 240); k += 4) {
+        search: for (let k = 0; k < Math.min(byDist.length, 400); k += 4) {
           const p = byDist[k];
           if (!far(p)) continue;
-          for (const r of [70, 130, 210]) {
-            for (let a = 0; a < 12; a++) {
-              const v = [zn.x + Math.sin((a * PI) / 6) * (zn.flat + r), zn.z + Math.cos((a * PI) / 6) * (zn.flat + r)];
+          for (const r of [40, 70, 130, 210, 300]) {
+            for (let a = 0; a < 16; a++) {
+              const v = [zn.x + Math.sin((a * PI) / 8) * (zn.flat + r), zn.z + Math.cos((a * PI) / 8) * (zn.flat + r)];
               if (Math.max(Math.abs(v[0]), Math.abs(v[1])) > HALF - 70 || v[0] < COAST + 60 || !clear(gateOf(v), v, zn) || !clear(v, p, null)) continue;
               to = p;
               via = v;
               break search;
+            }
+          }
+        }
+      }
+      if (!to) {
+        // (...or nearer the places it passes than a road likes to go)
+        to = byDist.slice(0, 200).find((p) => far(p) && clear(gateOf(p), p, zn, 7));
+        search2: for (let k = 0; !to && k < Math.min(byDist.length, 400); k += 4) {
+          const p = byDist[k];
+          if (!far(p)) continue;
+          for (const r of [40, 70, 130, 210, 300]) {
+            for (let a = 0; a < 16; a++) {
+              const v = [zn.x + Math.sin((a * PI) / 8) * (zn.flat + r), zn.z + Math.cos((a * PI) / 8) * (zn.flat + r)];
+              if (Math.max(Math.abs(v[0]), Math.abs(v[1])) > HALF - 70 || v[0] < COAST + 60 || !clear(gateOf(v), v, zn, 7) || !clear(v, p, null, 7)) continue;
+              to = p;
+              via = v;
+              break search2;
             }
           }
         }
@@ -614,6 +746,7 @@ export function createMainland(seed) {
           const t = clamp(((x - ax) * ex + (z - az) * ez) / el2, 0, 1);
           const d = Math.hypot(x - ax - ex * t, z - az - ez * t) - (road.width - 2.6);
           const k = j * N + i;
+          if (riverD[k] < RIVER_HW + 0.6) continue; // (the river runs on under its bridge)
           if (d < roadDist[k]) {
             roadDist[k] = d;
             roadKind[k] = road.kind;
@@ -655,7 +788,7 @@ export function createMainland(seed) {
     const zn = zoneById[id];
     const b = new Builder(zn.x, zn.z, zn.ry, zn.h);
     b.zone = id;
-    b.yard = zn;
+    b.yard = { x: zn.x, z: zn.z, flat: zn.flat - 2.5 }; // (what stands nearer the edge of the levelled ground than a cell of the heightfield stands on the ground as it is)
     build(b, zn);
   };
   // a hiding place of the plane's part `supply` (PLANE_PARTS[supply]) in the builder's frame
@@ -767,65 +900,181 @@ export function createMainland(seed) {
   const rightX = (F, depth) => F.R - WALL - depth / 2;
   const inside = { ly: FLOOR_Y };
   const cont = (b, ctype, prop, x, z, ry, o = {}) => b.cont(ctype, x, z, { prop, ry, ly: FLOOR_Y, ...o });
-  // rows of windows up a solid block: a dark band a floor, proud of each face (no collider: the block has one)
-  const bands = (b, cx, cz, w, d, y0, floors, fh) => {
-    for (let f = 0; f < floors; f++) {
-      const y = y0 + f * fh + 1.0;
-      b.box(cx, y, cz - d / 2 - 0.03, w - 1.6, 1.3, 0.06, 'dark', { collide: false });
-      b.box(cx, y, cz + d / 2 + 0.03, w - 1.6, 1.3, 0.06, 'dark', { collide: false });
-      b.box(cx - w / 2 - 0.03, y, cz, 0.06, 1.3, d - 1.6, 'dark', { collide: false });
-      b.box(cx + w / 2 + 0.03, y, cz, 0.06, 1.3, d - 1.6, 'dark', { collide: false });
-    }
+
+  // ---- What the city is drawn from. The storeys over a ground floor, the walls of a shell, a heap of rubble and
+  // the length of a tower lying in the street are solid here (boxes, hidden: nothing draws them as boxes) and are
+  // said here for the client's building kit (client/render/citykit.js), which builds what is seen of each: walls
+  // with their windows, cornices, fire escapes, storeys cut open on their rooms, rubble that looks like rubble.
+  const buildings = []; // a block of storeys: { x, z, ry, y, w, d, floors, fh, style, mat, seed, cut, wear, burnt, blank, ground, top }
+  const rooms = []; // a room that is walked into: its walls are parts; the kit lines them, ceils them, hangs its sign
+  const shells = []; // walls with the sky behind them: { x0, z0, x1, z1, y, t, mat, fh, heights, seed, soot, inner }
+  const heaps = []; // { x, y, z, ry, rx, rz, h, seed, brick }
+  const fallenBits = []; // a length of tower lying where it fell: { x, y, z, ry, len, w, h, fh, style, mat, seed }
+  const pancakes = []; // floors come down one on another: { x, y, z, ry, w, d, n, seed }
+  const signs = []; // a board or a mark from the city's atlas, anywhere: { x, y, z, ry, w, h, cell, ... }
+  const hide = () => (parts[parts.length - 1].hidden = true);
+  // a solid nothing draws as it is
+  const solid = (b, lx, ly, lz, sx, sy, sz, mat, o = {}) => {
+    b.box(lx, ly, lz, sx, sy, sz, mat, o);
+    hide();
+    return parts[parts.length - 1];
   };
-  // The floors over a walk-in ground floor: shut, and solid - their stairs are under what came down (the rubble in
-  // the stairwell: stairBlock). The top ones are broken: each stands on less of the footprint than the one under
-  // it, the floor slab it lost hangs out of it, steel stands out of the edge. lost: how many are (default: drawn).
+  // A block of storeys on (cx, cz) of a builder's frame, w by d, its foot at y0, `floors` of them fh high, in a
+  // style of the kit's (walkup, shopflat, slab, office, glass, warehouse, stone) and a wall material. o:
+  //   lost   how many of its top storeys are broken: each stands on less of the footprint than the one under it
+  //   open   a whole end of it fallen away from storey `from` up (-1 / 1: its -x / +x end), further with every storey
+  //   burnt  it burnt out: no glass, soot over every opening
+  //   blank  bits: which of its faces (front, right, back, left) are blind walls
+  //   top    'slab': its roof is gone, what is left on the slab is under the sky
   // Returns the height of what still stands whole.
-  const sheared = (b, cx, cz, w, d, y0, floors, fh, mat, lost = rng.int(0, Math.min(3, floors - 1))) => {
-    const keep = floors - lost;
-    b.box(cx, y0, cz, w, keep * fh, d, mat);
-    bands(b, cx, cz, w, d, y0, keep, fh);
+  const block = (b, cx, cz, w, d, y0, floors, fh, style, mat, o = {}) => {
+    const seed = rng.int(1, 99999);
+    const lost = Math.min(o.lost ?? 0, floors - 1);
     const sx = rng.chance(0.5) ? 1 : -1;
     const sz = rng.chance(0.5) ? 1 : -1;
-    let top = y0 + keep * fh;
-    for (let k = 0; k < lost; k++) {
-      const left = 1 - (k + 1) / (lost + 1.3); // the share of the floor still there
-      const pw = w * (0.42 + 0.5 * left);
-      const pd = d * (0.48 + 0.45 * left);
-      const px = cx + (sx * (w - pw)) / 2;
-      const pz = cz + (sz * (d - pd)) / 2;
-      b.box(px, top, pz, pw, fh, pd, mat, { collide: false });
-      b.box(px, top + 1, pz + sz * (pd / 2 + 0.03), pw - 1.6, 1.3, 0.06, 'dark', { collide: false });
-      b.box(px + sx * (pw / 2 + 0.03), top + 1, pz, 0.06, 1.3, pd - 1.6, 'dark', { collide: false });
-      b.box(cx - sx * w * 0.2, top + 0.2, cz - sz * d * 0.16, w * 0.46, 0.28, d * 0.5, 'concrete', { rz: sx * rng.range(0.14, 0.34), ry: rng.range(-0.2, 0.2), collide: false });
-      for (let j = 0; j < 3; j++) b.box(cx - sx * rng.range(0.04, 0.46) * w, top, cz - sz * rng.range(0.04, 0.46) * d, 0.2, rng.range(1.4, fh + 1.6), 0.2, 'rust', { collide: false });
-      top += fh;
+    const open = o.open || 0;
+    const from = o.from ?? 1;
+    const hw = w / 2;
+    const hd = d / 2;
+    const cut = [];
+    let gone = 0; // how much of the open end is gone at this storey
+    for (let f = 0; f < floors; f++) {
+      let R = [-hw, hw, -hd, hd];
+      const step = rng.range(2, 6.5);
+      const bite = rng.chance(0.5);
+      if (open && f >= from) {
+        if (bite || f === from) gone = Math.min(w * 0.62, gone + step); // (in bites: a storey or two stand on the same line, then more is gone)
+        R = open > 0 ? [-hw, hw - gone, -hd, hd] : [-hw + gone, hw, -hd, hd];
+      }
+      const k = f - (floors - lost);
+      if (k >= 0) {
+        const left = 1 - (k + 1) / (lost + 1.3); // the share of the floor still there
+        const pw = w * (0.42 + 0.5 * left);
+        const pd = d * (0.48 + 0.45 * left);
+        const S = [sx > 0 ? hw - pw : -hw, sx > 0 ? hw : -hw + pw, sz > 0 ? hd - pd : -hd, sz > 0 ? hd : -hd + pd];
+        R = [Math.max(R[0], S[0]), Math.min(R[1], S[1]), Math.max(R[2], S[2]), Math.min(R[3], S[3])];
+        if (R[1] - R[0] < 2.5 || R[3] - R[2] < 2.5) {
+          floors = f; // (nothing worth the name left of it: the building ends here)
+          break;
+        }
+      }
+      cut.push(R[0] === -hw && R[1] === hw && R[2] === -hd && R[3] === hd ? null : R.map((v) => Math.round(v * 100) / 100));
     }
-    if (lost) {
-      b.box(cx + (sx * w) / 6, top, cz + (sz * d) / 6, w * 0.5, 0.5, d * 0.5, 'charred', { collide: false });
-      // (the walls of the floors that went, still standing here and there along two sides of it)
-      const yk = y0 + keep * fh;
-      jagged(b, cx - sx * (w / 2 - 0.2), cz - d / 2, cx - sx * (w / 2 - 0.2), cz + d / 2, yk, fh * Math.min(2, lost), mat, false);
-      jagged(b, cx - w / 2, cz - sz * (d / 2 - 0.2), cx + w / 2, cz - sz * (d / 2 - 0.2), yk, fh * Math.min(2, lost), mat, false);
+    // (solid: one box for every run of storeys that stand on the same footprint)
+    for (let f = 0; f < floors; ) {
+      let g = f + 1;
+      while (g < floors && JSON.stringify(cut[g]) === JSON.stringify(cut[f])) g++;
+      const R = cut[f] || [-hw, hw, -hd, hd];
+      solid(b, cx + (R[0] + R[1]) / 2, y0 + f * fh, cz + (R[2] + R[3]) / 2, R[1] - R[0], (g - f) * fh, R[3] - R[2], mat);
+      f = g;
     }
-    else b.box(cx, top, cz, w + 0.4, 0.5, d + 0.4, 'concrete', { collide: false }); // parapet
-    scars(b, cx, cz, w, d, y0, keep * fh);
-    if (lost > 1 && rng.chance(0.5)) smoke(b, cx, top, cz);
-    return y0 + keep * fh;
+    const whole = cut.findIndex((R) => R);
+    buildings.push({ x: b.wx(cx, cz), z: b.wz(cx, cz), ry: b.ry, y: b.y0 + y0, w, d, floors, fh, style, mat, seed, cut: cut.some((R) => R) ? cut : undefined, wear: o.wear ?? rng.range(0.35, 0.9), burnt: o.burnt ? 1 : 0, blank: o.blank || 0, ground: y0 - PAVE, top: o.top });
+    if ((lost > 1 || open) && rng.chance(0.4)) smoke(b, cx, y0 + floors * fh, cz);
+    return y0 + (whole < 0 ? floors : whole) * fh;
   };
-  // soot up a wall from the windows a fire came out of, and what has grown up it since (ivy needs a wall 5 m high)
-  const scars = (b, cx, cz, w, d, y0, h) => {
-    for (let k = rng.int(2, 4); k > 0; k--) {
-      const face = rng.int(0, 3);
-      const sw = rng.range(2.4, 5);
-      const sh = Math.min(h, rng.range(2.5, 6));
-      // (not low on the front: the door and the shop's glass are there)
-      const sy = y0 + (face === 0 ? Math.min(Math.max(0, h - sh), 4.2 + rng.range(0, 3)) : rng.range(0, Math.max(0, h - sh)));
-      if (face === 0 && y0 + h < 6) continue;
-      if (face < 2) wound(b, cx + rng.range(-0.4, 0.4) * (w - sw), cz + (face ? 1 : -1) * (d / 2), 0, face ? 1 : -1, sy, sw, sh);
-      else wound(b, cx + (face === 2 ? 1 : -1) * (w / 2), cz + rng.range(-0.4, 0.4) * (d - sw), face === 2 ? 1 : -1, 0, sy, sw, sh);
+  // A room that is walked into, as Builder.room builds it, said for the kit as well: what its openings are, how it
+  // is lined. o (besides Builder.room's): tint (which of the kit's paints its walls have), lino (tile on its floor),
+  // sign (the board over its front: a cell of the city's atlas), plain (a shed: no lining). Returns what it said, for
+  // partition() to add the room's inner walls to.
+  const groundRoom = (b, cx, cz, w, d, h, mat, sides, o = {}) => {
+    b.room(cx, cz, w, d, h, mat, sides, o);
+    const R = { x: b.wx(cx, cz), z: b.wz(cx, cz), ry: b.ry, y: b.y0, w, d, h, t: o.t || 0.25, mat, sides, tint: o.tint ?? rng.int(0, 5), floor: o.lino ? 'lino' : undefined, ceiling: o.roof === 'flat' ? 'ceiling' : undefined, sign: o.sign, seed: rng.int(1, 99999), walls: [], cx, cz };
+    if (!o.plain) rooms.push(R);
+    return R;
+  };
+  // an inner wall of such a room (as Builder.wall), lined on both faces
+  const partition = (b, R, x0, z0, x1, z1, h, mat, ops = []) => {
+    b.wall(x0, z0, x1, z1, h, 0.18, mat, ops);
+    R.walls.push([x0 - R.cx, z0 - R.cz, x1 - R.cx, z1 - R.cz, h, ops]);
+  };
+  // What is left of a wall, from (x0, z0) to (x1, z1) along one axis of the builder's frame: lengths of it, each
+  // broken off at its own height (up to H), its window openings holes with the sky in them. soot: it burnt.
+  // inner: what its other face is made of (the plaster of the rooms that stood against it).
+  const jagged = (b, x0, z0, x1, z1, y0, H, mat, collide = true, o = {}) => {
+    const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const n = Math.max(2, Math.round(len / 2.6));
+    const seg = len / n;
+    const heights = [];
+    let h = H * rng.range(0.6, 1);
+    for (let k = 0; k < n; k++) {
+      h = clamp(h + rng.range(-0.4, 0.3) * H, H * 0.14, H);
+      const t = (k + 0.5) / n;
+      const [cx, cz] = [x0 + (x1 - x0) * t, z0 + (z1 - z0) * t];
+      solid(b, cx, y0, cz, alongX ? seg + 0.02 : 0.4, h, alongX ? 0.4 : seg + 0.02, mat, { collide });
+      heights.push(Math.round(h * 100) / 100);
     }
-    const here = rng.chance(0.6);
+    shells.push({ x0: b.wx(x0, z0), z0: b.wz(x0, z0), x1: b.wx(x1, z1), z1: b.wz(x1, z1), y: b.y0 + y0, t: 0.4, mat, fh: 3, heights, seed: rng.int(1, 99999), soot: o.soot ? 1 : 0, inner: o.inner });
+  };
+  // A heap of what a building came down as, rx by rz across and h high: solid in steps a survivor climbs (0.4 m
+  // each: under STEP_HEIGHT), drawn by the kit as rubble. across: it lies in a road (worldcheck.js lets it).
+  const heap = (b, lx, lz, rx, rz, h, o = {}) => {
+    const ry = o.ry ?? 0;
+    const ly = o.ly ?? PAVE;
+    const n = Math.max(1, Math.round(h / 0.4));
+    for (let k = 0; k < n; k++) {
+      // (the mound's own width at the top of this step: the kit's profile is h * (1 - t^2)^0.85)
+      const e = Math.sqrt(Math.max(0, 1 - Math.pow(((k + 1) * 0.4) / (h + 0.05), 1 / 0.85)));
+      if (e * Math.min(rx, rz) < 0.35) break;
+      solid(b, lx, ly, lz, rx * 2 * e * 0.86, (k + 1) * 0.4, rz * 2 * e * 0.86, 'concrete', { ry });
+      if (o.across) parts[parts.length - 1].across = true;
+    }
+    heaps.push({ x: b.wx(lx, lz), y: b.y0 + ly, z: b.wz(lx, lz), ry: b.ry + ry, rx, rz, h, seed: rng.int(1, 99999), brick: o.brick ?? 0.3 });
+    clears.push([b.wx(lx, lz), b.wz(lx, lz), Math.max(rx, rz) + 0.5]);
+  };
+  // a board or a mark of the city's atlas: its middle at (lx, ly, lz) of the builder's frame, facing the builder's
+  // -Z turned by ry
+  const signAt = (b, lx, ly, lz, ry, w, h, cell, o = {}) => signs.push({ x: b.wx(lx, lz), y: b.y0 + ly, z: b.wz(lx, lz), ry: b.ry + ry, w, h, cell, ...o });
+  // Does a prop of this type fit at (lx, lz) of a builder's frame: clear of every solid prop, of the walls and posts
+  // built so far, and of the doorways (a metre and a half of each is kept open), with room left to reach what is
+  // searched or picked up beside it? For what is added to a place after what it needs has been put down.
+  // (two long vehicles end to end can meet further apart than propBlocked looks - a bus, an articulated truck:
+  // none is put down in that band of another)
+  const LONG = { semi_truck: 1, school_bus: 1, city_bus: 1 };
+  const longClear = (type, x, z) => !LONG[type] || props.every((p) => !LONG[p.type] || Math.max(Math.abs(p.x - x), Math.abs(p.z - z)) <= 12 || Math.hypot(p.x - x, p.z - z) > 13.8);
+  const fits = (b, type, lx, lz, ry = 0, ly = 0) => {
+    if (!PROPS[type]) return false;
+    const x = b.wx(lx, lz);
+    const z = b.wz(lx, lz);
+    const wry = b.ry + ry;
+    if (propBlocked(type, x, z, wry) || !longClear(type, x, z)) return false;
+    const mine = kit.solidsOf(type, x, z, wry);
+    if (!mine.length) return true;
+    const y0 = b.y0 + ly;
+    const y1 = y0 + (PROPS[type]?.size[1] ?? 1);
+    const reach = Math.hypot(PROPS[type].size[0], PROPS[type].size[2]) / 2;
+    for (const o of openings) if (Math.hypot(o.x - x, o.z - z) < reach + 1.25) return false;
+    for (const o of containers) if (Math.hypot(o.x - x, o.z - z) < reach + 1.0) return false;
+    for (const o of lootSpawns) if (Math.hypot(o.x - x, o.z - z) < reach + 0.9) return false;
+    for (const o of partSpots) if (Math.hypot(o.x - x, o.z - z) < reach + 0.9) return false;
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      if (Math.abs(p.x - x) > 30 || Math.abs(p.z - z) > 30 || p.rx || p.rz || (p.shape !== 'box' && p.shape !== 'cyl')) continue;
+      if (p.y + p.sy / 2 < y0 + 0.2 || p.y - p.sy / 2 > y1 - 0.05) continue;
+      const q = { x: p.x, z: p.z, hx: p.shape === 'box' ? p.sx / 2 : 0, hz: p.shape === 'box' ? p.sz / 2 : 0, c: Math.cos(p.ry), s: Math.sin(p.ry), r: p.shape === 'box' ? 0 : p.sx / 2 };
+      for (const a of mine) if (kit.solidsMeet({ ...a, hx: a.hx + 0.02, hz: a.hz + 0.02 }, q)) return false;
+    }
+    return true;
+  };
+  // ...put there if it does (after its draws: what is left out moves nothing else)
+  const extra = (b, type, lx, lz, ry = 0, o = {}) => {
+    const sd = rng.int(0, 99);
+    if (PROPS[type] && (PROPS[type].boxes || PROPS[type].cyls) && !fits(b, type, lx, lz, ry, o.ly ?? 0)) return false;
+    if (PROPS[type] && o.ly === undefined && b.open(b.wx(lx, lz), b.wz(lx, lz))) {
+      // (out on the ground: not across a bank or a ditch - it would hang in the air at one end)
+      const r = Math.hypot(PROPS[type].size[0], PROPS[type].size[2]) / 2;
+      const [x, z] = [b.wx(lx, lz), b.wz(lx, lz)];
+      const h0 = heightAt(x, z);
+      if (r > 0.6 && [[r, 0], [-r, 0], [0, r], [0, -r]].some(([dx, dz]) => Math.abs(heightAt(x + dx, z + dz) - h0) > (r > 2 ? 0.3 : 0.14))) return false;
+    }
+    b.prop(type, lx, lz, ry, { seed: sd, ...o, nocollide: !(PROPS[type]?.boxes || PROPS[type]?.cyls) });
+    return true;
+  };
+
+  // soot up a wall from the windows a fire came out of, and what has grown up it since (ivy needs a wall 5 m high)
+  const ivyOn = (b, cx, cz, w, d, y0, h) => {
+    const here = rng.chance(0.45);
     const face = rng.int(0, 2); // (never the front: the door is in it)
     const at = rng.range(-0.3, 0.3);
     const sd = rng.int(0, 2);
@@ -833,52 +1082,10 @@ export function createMainland(seed) {
     if (face === 0) b.prop('ivy', cx + at * (w - 4), cz + d / 2 + 0.04, PI, { nocollide: true, seed: sd, ly: PAVE });
     else b.prop('ivy', cx + (face === 1 ? 1 : -1) * (w / 2 + 0.04), cz + at * (d - 4), face === 1 ? -PI / 2 : PI / 2, { nocollide: true, seed: sd, ly: PAVE });
   };
-  const storeys = (b, F, y0, floors, fh, mat) => sheared(b, 0, F.cz, F.w, F.d, y0, floors, fh, mat);
-  // What is left of a wall, from (x0, z0) to (x1, z1) along one axis of the builder's frame: lengths of it, each
-  // broken off at its own height (up to H), the window holes of each floor dark in what still stands.
-  const jagged = (b, x0, z0, x1, z1, y0, H, mat, collide = true) => {
-    const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
-    const len = Math.hypot(x1 - x0, z1 - z0);
-    const n = Math.max(2, Math.round(len / 2.6));
-    const seg = len / n;
-    let h = H * rng.range(0.6, 1);
-    for (let k = 0; k < n; k++) {
-      h = clamp(h + rng.range(-0.4, 0.3) * H, H * 0.14, H);
-      const t = (k + 0.5) / n;
-      const [cx, cz] = [x0 + (x1 - x0) * t, z0 + (z1 - z0) * t];
-      b.box(cx, y0, cz, alongX ? seg + 0.02 : 0.4, h, alongX ? 0.4 : seg + 0.02, mat, { collide });
-      for (let f = 0; f * 3 + 2.6 < h; f++) {
-        for (const sd of [-1, 1]) {
-          if (alongX) b.box(cx, y0 + f * 3 + 1.1, cz + sd * 0.22, seg - 1, 1.3, 0.04, 'dark', { collide: false });
-          else b.box(cx + sd * 0.22, y0 + f * 3 + 1.1, cz, 0.04, 1.3, seg - 1, 'dark', { collide: false });
-        }
-      }
-      if (rng.chance(0.3)) b.box(cx, y0 + h, cz, 0.14, rng.range(0.6, 1.8), 0.14, 'rust', { rz: rng.range(-0.4, 0.4), collide: false });
-    }
-  };
   // what fell out of a wall, at its foot: lumps and slabs on the pavement (nothing solid: it is walked over)
   const skirt = (b, x, z, ly = PAVE) => {
     b.prop('debris', x, z, rng.range(0, 6), { nocollide: true, ly, seed: rng.int(0, 2) });
-    for (let k = rng.int(2, 3); k > 0; k--) b.box(x + rng.range(-1.6, 1.6), ly + rng.range(0, 0.25), z + rng.range(-1, 1), rng.range(1.1, 2.4), 0.2, rng.range(0.9, 1.7), 'concrete', { ry: rng.range(0, 3), rz: rng.range(-0.55, 0.55), rx: rng.range(-0.2, 0.2), collide: false });
-  };
-  // a hole blown or burnt in a face of a building: a ragged dark patch sw wide and sh high, its middle at (fx, fz)
-  // on the face whose outward normal is (nx, nz), its foot at y; a slab of the floor hanging out of it, and under a
-  // low one what came out
-  const wound = (b, fx, fz, nx, nz, y, sw, sh) => {
-    for (let k = 0; k < 6; k++) {
-      const o = rng.range(-0.5, 0.5) * sw;
-      const bw = rng.range(0.3, 0.62) * sw;
-      const bh = rng.range(0.3, 0.6) * sh;
-      const by = y + rng.range(0, sh - bh);
-      const tilt = rng.range(-0.5, 0.5);
-      const mat = k % 3 ? 'dark' : 'charred';
-      if (nz) b.box(fx + o, by, fz + nz * (0.05 + k * 0.004), bw, bh, 0.05, mat, { rz: tilt, collide: false });
-      else b.box(fx + nx * (0.05 + k * 0.004), by, fz + o, bw, bh, 0.05, mat, { ry: PI / 2, rz: tilt, collide: false });
-    }
-    const hang = rng.range(-0.3, 0.3) * sw;
-    b.box(fx + (nz ? hang : nx * 0.7), y + rng.range(0, sh * 0.4), fz + (nz ? nz * 0.7 : hang), nz ? 2.2 : 1.5, 0.22, nz ? 1.5 : 2.2, 'concrete', { rx: nz ? nz * 0.6 : 0, rz: nz ? 0 : -nx * 0.6, collide: false });
-    b.box(fx + (nz ? -hang : nx * 0.4), y + sh * 0.5, fz + (nz ? nz * 0.4 : -hang), 0.1, rng.range(1, 2), 0.1, 'rust', { rx: nz ? nz * 1.1 : 0, rz: nz ? 0 : -nx * 1.1, collide: false });
-    if (y < 7.5) skirt(b, fx + nx * 1.5, fz + nz * 1.5);
+    for (let k = rng.int(1, 2); k > 0; k--) b.box(x + rng.range(-1.6, 1.6), ly + rng.range(0, 0.25), z + rng.range(-1, 1), rng.range(1.1, 2.4), 0.2, rng.range(0.9, 1.7), 'concrete', { ry: rng.range(0, 3), rz: rng.range(-0.55, 0.55), rx: rng.range(-0.2, 0.2), collide: false });
   };
   // the stairs up, in a corner of a ground floor: gone under what fell down them
   const stairBlock = (b, x, z) => {
@@ -887,35 +1094,38 @@ export function createMainland(seed) {
     b.box(x - 0.5, FLOOR_Y + 1.5, z + 0.2, 0.12, 1.4, 0.12, 'rust', { rz: -0.3, collide: false });
     b.prop('debris', x, z - 1.5, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y });
   };
-  // what came down off a lot into the street in front of it: a heap in the roadway (not where the tower's top lies:
+  // what came down off a lot into the street in front of it: a heap at the kerb (not where the tower's top lies:
   // that stretch has rubble of its own)
   let fallenAt = null; // [x, z] of the middle of the stretch of street the tower fell across
-  const streetPile = (b, L, lx, ry) => {
-    const [x, z] = [b.wx(lx, -L.d / 2 - 3.1), b.wz(lx, -L.d / 2 - 3.1)];
-    if (fallenAt && Math.abs(x - fallenAt[0]) < 9 && Math.abs(z - fallenAt[1]) < 18) return;
-    b.prop('rubble_pile', lx, -L.d / 2 - 3.1, ry, { ground: true });
+  const streetPile = (b, L, lx) => {
+    const [x, z] = [b.wx(lx, -L.d / 2 - 1.3), b.wz(lx, -L.d / 2 - 1.3)];
+    const [rx, h] = [rng.range(1.6, 2.4), rng.range(0.8, 1.3)];
+    if (fallenAt && Math.abs(x - fallenAt[0]) < 26 && Math.abs(z - fallenAt[1]) < 26) return;
+    heap(b, lx, -L.d / 2 - 1.3, rx, 1.2, h, { across: true, brick: 0.5 });
   };
   // what lies along the front of a lot, on the pavement: rubbish, what fell off the building, weeds at the wall's foot
   const frontage = (b, L, F, shop = false) => {
     const z = -L.d / 2 + 0.55;
-    const r = rng();
-    const x = rng.range(-L.w / 2 + 2, L.w / 2 - 2);
-    const ry = rng.range(0, 6);
-    b.prop(r < 0.45 ? 'litter' : r < 0.75 ? 'debris' : r < 0.9 ? 'suitcases' : 'shopping_cart', x, z, ry, { nocollide: true, ly: PAVE, seed: (r * 97) | 0 });
-    for (let k = rng.int(1, 3); k > 0; k--) weed(b, rng.range(-L.w / 2 + 0.6, L.w / 2 - 0.6), z + rng.range(-0.3, 0.4), rng.range(0.5, 0.9));
-    const sign = rng.chance(0.35);
+    for (let k = rng.int(2, 4); k > 0; k--) {
+      const r = rng();
+      const x = rng.range(-L.w / 2 + 2, L.w / 2 - 2);
+      b.prop(r < 0.4 ? 'litter' : r < 0.6 ? 'debris' : r < 0.72 ? 'suitcases' : r < 0.82 ? 'glass_shards' : r < 0.9 ? 'paper_scatter' : 'shopping_cart', x, z + rng.range(-0.2, 0.5), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: (r * 97) | 0 });
+    }
+    for (let k = rng.int(2, 5); k > 0; k--) weed(b, rng.range(-L.w / 2 + 0.6, L.w / 2 - 0.6), z + rng.range(-0.3, 0.4), rng.range(0.5, 0.9));
+    const sign = rng.chance(0.3);
     const sx = rng.range(-3, 3);
     if (shop && sign) b.prop('fallen_sign', sx, z + 0.1, rng.range(-0.3, 0.3), { nocollide: true, ly: PAVE });
     if (shop && F) {
       // (a window boarded up, as often as not)
-      const board = rng.chance(0.55);
+      const board = rng.chance(0.5);
       const side = rng.chance(0.5) ? 0.3 : -0.3;
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < 4; k++) {
         const tilt = rng.range(-0.12, 0.12);
-        if (board) b.box(F.w * side, 1.0 + k * 0.62, F.front - 0.17, Math.min(3.4, F.w * 0.24), 0.2, 0.04, 'planks', { rz: tilt, collide: false });
+        if (board) b.box(F.w * side, 0.9 + k * 0.5, F.front - 0.17, Math.min(3.4, F.w * 0.24), 0.2, 0.04, 'planks', { rz: tilt, collide: false });
       }
     }
     if (shop && F && rng.chance(0.6)) b.prop('awning', F.w * (rng.chance(0.5) ? 0.2 : -0.2), F.front - 0.14, 0, { nocollide: true, ly: 2.75, seed: rng.int(0, 1) });
+    if (F && rng.chance(0.3)) b.prop('skeleton', rng.range(-L.w / 2 + 2, L.w / 2 - 2), F.front - 0.75, PI, { nocollide: true, ly: PAVE, seed: 1 }); // (sat down against the wall, and stayed)
   };
 
   // what is behind a building: bins, a pallet, rubbish, and what has come up through the paving
@@ -924,33 +1134,18 @@ export function createMainland(seed) {
     if (rng.chance(0.5)) b.prop('pallet', F.L + 5.2, F.back + 1.4, rng.range(0, 3), { ly: PAVE });
     const deep = L.d / 2 - F.back;
     if (deep > 4.5 && rng.chance(0.75)) b.tree(rng.range(-L.w / 2 + 2.5, L.w / 2 - 2.5), L.d / 2 - 2.2, [3, 4, 5, 5][rng.int(0, 3)], rng.range(0.6, 1.15));
-    if (rng.chance(0.3)) b.prop('corpse', rng.range(-3, 3), F.back + 3.2, rng.range(0, 6), { nocollide: true, ly: PAVE });
-    b.prop(rng.chance(0.5) ? 'litter' : 'debris', rng.range(0, L.w / 2 - 2), F.back + rng.range(1.5, Math.max(1.6, deep - 1.5)), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: rng.int(0, 2) });
-    for (let k = rng.int(3, 6); k > 0; k--) weed(b, rng.range(-L.w / 2 + 0.5, L.w / 2 - 0.5), rng.range(F.back + 0.6, L.d / 2 - 0.4), rng.range(0.6, 1.3));
-    for (const sx of [-1, 1]) weed(b, sx * (L.w / 2 - 0.5), rng.range(F.front, F.back), rng.range(0.6, 1.1)); // (down the alleys)
+    if (rng.chance(0.3)) b.prop(rng.chance(0.5) ? 'corpse' : 'skeleton', rng.range(-3, 3), F.back + 3.2, rng.range(0, 6), { nocollide: true, ly: PAVE, seed: rng.int(0, 2) });
+    for (let k = rng.int(2, 3); k > 0; k--) b.prop(['litter', 'debris', 'glass_shards', 'bicycle', 'paper_scatter'][rng.int(0, 4)], rng.range(-L.w / 2 + 2, L.w / 2 - 2), F.back + rng.range(1.5, Math.max(1.6, deep - 1.5)), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: rng.int(0, 2) });
+    extra(b, 'trash_bin', F.R - 1.2, F.back + 1.1, 0, { ly: PAVE });
+    for (let k = rng.int(4, 8); k > 0; k--) weed(b, rng.range(-L.w / 2 + 0.5, L.w / 2 - 0.5), rng.range(F.back + 0.6, L.d / 2 - 0.4), rng.range(0.6, 1.3));
+    for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) weed(b, sx * (L.w / 2 - 0.5), rng.range(F.front, F.back), rng.range(0.6, 1.1)); // (down the alleys)
     frontage(b, L, F, true);
   };
-  // A shop's room: a glass front with the door in the middle of it, a yard door at the back's right-hand end. x0:
-  // where its middle is along the lot (a terrace has three). Returns its frame, in a builder of its own.
-  const shopRoom = (b, L, w, d, mat, x0 = 0, alone = true) => {
-    const s = b.sub(x0, 0);
-    const F = frame(L, w, d);
-    const ww = Math.min(3, w * 0.22);
-    // (a shop on a lot of its own may have had a wall blown in: one more way through it)
-    const breach = alone && rng.chance(0.4);
-    s.room(0, F.cz, w, d, 3.8, mat, { n: [door(w / 2, 1.6), cw(w * 0.2, ww, 0.8, 2.8), cw(w * 0.8, ww, 0.8, 2.8)], s: [door(2.4, 1.1)], w: breach ? [gap(d * 0.72, 2.6, 2.9)] : [] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-    // (the stock room behind: a door into it, and the wall down at its other end - the way to the yard door)
-    s.wall(F.L, F.cz + 4.2, F.R, F.cz + 4.2, 3.8, 0.18, 'concrete', [door(w * 0.3, 1.3), gap(w - 2.6, 2.2, 2.7)]);
-    if (breach) s.prop('debris', F.L + 1.2, F.cz + d * 0.22, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y });
-    scars(s, 0, F.cz, w, d, 0, 3.8);
-    s.prop('litter', rng.range(-2, 2), F.cz - 1.5, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
-    s.mess = () => mess(s, F, alone ? 9 : 6); // (after what the shop is furnished with: it lies round that)
-    return [s, F];
-  };
-  // The mess a room was left in: rubbish, luggage, chairs kicked over, a pallet, bones, what came down through the
-  // ceiling. None of it solid (it is walked over, and it blocks no door: kinds with no collider); none of it standing in furniture.
-  const MESS = ['litter', 'debris', 'litter', 'suitcases', 'wheelchair', 'shopping_cart', 'bones', 'litter', 'body_bag', 'suitcases', 'debris', 'corpse'];
-  const mess = (b, F, n) => {
+  // The mess a room was left in: rubbish, luggage, chairs kicked over, bones, what came down through the ceiling,
+  // blood. None of it solid (it is walked over, and it blocks no door: kinds with no collider); none of it standing
+  // in furniture. h: the room's ceiling (lamps hang from it).
+  const MESS = ['litter', 'debris', 'paper_scatter', 'suitcases', 'ceiling_debris', 'stock_spill', 'bones', 'litter', 'body_bag', 'blood_pool', 'glass_shards', 'corpse', 'office_chair', 'skeleton', 'rug', 'paper_scatter'];
+  const mess = (b, F, n, h = 0) => {
     for (let k = 0; k < n; k++) {
       const type = MESS[rng.int(0, MESS.length - 1)];
       const x = rng.range(F.L + 1, F.R - 1);
@@ -966,38 +1161,64 @@ export function createMainland(seed) {
       b.box(x, FLOOR_Y + 0.04, z, rng.range(1.2, 2.4), 0.12, rng.range(0.9, 1.6), 'concrete', { ry: rng.range(0, 3), rz: rng.range(-0.16, 0.16), collide: false });
       b.box(x + rng.range(-1, 1), FLOOR_Y + 1.2, z + rng.range(-1, 1), 0.08, rng.range(1.2, 2.2), 0.08, 'rust', { rz: rng.range(-0.5, 0.5), rx: rng.range(-0.3, 0.3), collide: false }); // (a conduit hanging out of the ceiling)
     }
+    if (h) for (let x = F.L + 3; x < F.R - 2; x += 5.5) for (const z of F.d > 10 ? [F.cz - F.d * 0.22, F.cz + F.d * 0.22] : [F.cz]) b.prop('ceiling_lamp', x, z, rng.chance(0.5) ? 0 : PI / 2, { nocollide: true, ly: h, seed: rng.int(0, 2) });
   };
-  // rows of shelving down the middle of a shop's floor (bare: what they held is gone), clear of its counter and doors
+  // a home's furniture round the walls of a part of a room (x0..x1 of the frame F), where there is room for it
+  const homely = (b, F, x0, x1) => {
+    const mid = (x0 + x1) / 2;
+    extra(b, 'sofa', mid, F.back - WALL - 0.47, PI, inside);
+    extra(b, 'tv_set', mid + rng.range(-0.5, 0.5), F.front + WALL + 0.27, 0, inside);
+    extra(b, 'bookshelf', x0 + WALL + 0.5, F.cz + rng.range(-1.5, 1.5), PI / 2, inside);
+    extra(b, 'wardrobe', x1 - WALL - 0.33, F.cz + rng.range(-2, 2), -PI / 2, inside);
+    extra(b, 'armchair', mid + 2.2, F.cz + 1, -2.2, inside);
+    extra(b, 'dresser', x0 + 2.6, F.back - WALL - 0.47, PI, inside);
+    b.prop('rug', mid, F.cz + 0.6, rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+  };
+  const kitchen = (b, F, x0, x1) => {
+    extra(b, 'kitchen_counter', x0 + 1.4, F.back - WALL - 0.33, PI, inside);
+    extra(b, 'stove', x0 + 3.0, F.back - WALL - 0.34, PI, inside);
+    extra(b, 'kitchen_table', (x0 + x1) / 2 + 0.6, F.cz - 0.4, rng.range(-0.3, 0.3), inside);
+    for (const [dx, dz, r] of [[-1.1, -0.2, PI / 2], [1.2, -0.5, -PI / 2]]) b.prop('chair', (x0 + x1) / 2 + 0.6 + dx, F.cz - 0.4 + dz, r + rng.range(-0.4, 0.4), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+  };
+  // rows of shelving down the middle of a shop's floor, what they held swept off them, clear of its counter and doors
   const aisles = (b, F) => {
-    for (const dx of [3.6, 6.2]) {
+    for (const dx of [4.2, 7.4]) {
       if (F.L + dx > F.R - 6.6) continue;
-      for (const dz of [0.6, 2.6]) b.prop('shelf', F.L + dx, F.cz + dz, PI / 2, { ly: FLOOR_Y, seed: (dx + dz) | 0 });
+      extra(b, 'shop_gondola', F.L + dx, F.cz + 1.2, PI / 2, inside);
+      b.prop('stock_spill', F.L + dx + rng.range(-0.3, 1.4), F.cz + rng.range(-1.6, 2.2), rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
     }
+  };
+  // a shop's counter: the till on it, what is searched for on its top
+  const counter = (b, x, z, ry = 0) => {
+    b.prop('checkout_counter', x, z, ry, inside);
+    b.loot(x, z, FLOOR_Y + 0.98);
   };
   // what is in a shop, by what it sold. Each fills a room of any width from 12 m up, clear of its two doors.
   const FILL = {
     grocery(b, F) {
-      b.box(F.L + 3, FLOOR_Y, F.front + 3.2, 3.4, 1.0, 0.7, 'planks'); // counter
-      b.loot(F.L + 3, F.front + 3.2, FLOOR_Y + 1.02);
+      counter(b, F.L + 3, F.front + 3.2);
       for (const dx of [1.6, 3.9, 6.2]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI);
       cont(b, CONT.SHELF, 'shelf', F.R - 4.6, F.cz + 0.4, PI / 2);
       cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.cz - 0.2, -PI / 2);
       b.loot(F.R - 3, F.cz - 2.4, FLOOR_Y + 0.02);
       aisles(b, F);
+      extra(b, 'display_fridge', rightX(F, 0.75), F.cz + 2.2, -PI / 2, inside);
       b.prop('shopping_cart', F.R - 2.6, F.front + 2, 0.7, { nocollide: true, ly: FLOOR_Y });
     },
     pharmacy(b, F) {
-      b.box(F.L + 4.2, FLOOR_Y, F.cz + 0.4, 5, 1.0, 0.7, 'planks');
-      b.loot(F.L + 4.2, F.cz + 0.4, FLOOR_Y + 1.02);
+      counter(b, F.L + 4.2, F.cz + 0.4);
       for (const dx of [1.2, 2.3]) cont(b, CONT.MEDICINE, 'medicine_cabinet', F.L + dx, backZ(F, 0.45), PI);
       cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), PI);
       cont(b, CONT.SHELF, 'shelf', rightX(F, 0.5), F.cz - 1.4, -PI / 2);
       b.prop('wheelchair', F.L + 1.6, F.front + 2.2, 0.6, { nocollide: true, ly: FLOOR_Y });
       b.loot(F.R - 2.4, F.cz + 1.6, FLOOR_Y + 0.02);
+      extra(b, 'shop_gondola', F.R - 5.4, F.cz - 2.4, 0, inside);
+      extra(b, 'waiting_chairs', F.R - 2.2, F.front + WALL + 0.4, 0, inside);
+      b.prop('stock_spill', F.R - 4.4, F.cz - 0.6, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
     },
     hardware(b, F) {
-      b.box(F.L + 3, FLOOR_Y, F.front + 3.4, 3.6, 1.0, 0.7, 'planks');
-      b.cont(CONT.TOOLBOX, F.L + 3, F.front + 3.4, { prop: 'toolbox', ry: 0.3, nocollide: true, ly: FLOOR_Y + 1.0 });
+      counter(b, F.L + 3, F.front + 3.4);
+      b.cont(CONT.TOOLBOX, F.L + 3.6, F.front + 3.4, { prop: 'toolbox', ry: 0.3, nocollide: true, ly: FLOOR_Y + 0.96 });
       for (const dx of [1.6, 3.9]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI);
       cont(b, CONT.CRATE, 'crate', F.L + 6.6, backZ(F, 1), 0.1);
       cont(b, CONT.SHELF, 'shelf', F.R - 4.6, F.cz, PI / 2);
@@ -1009,9 +1230,12 @@ export function createMainland(seed) {
     diner(b, F) {
       const len = F.w - 8;
       b.box(F.L + 1.2 + len / 2, FLOOR_Y, F.cz + 2.2, len, 1.05, 0.7, 'planks'); // the counter
-      b.loot(F.L + 2.4, F.cz + 2.2, FLOOR_Y + 1.07);
+      b.box(F.L + 1.2 + len / 2, FLOOR_Y + 1.05, F.cz + 2.2, len + 0.1, 0.05, 0.86, 'metal', { collide: false });
+      b.loot(F.L + 2.4, F.cz + 2.2, FLOOR_Y + 1.12);
       cont(b, CONT.FRIDGE, 'fridge', F.L + 1.1, backZ(F, 0.72), PI);
       cont(b, CONT.CABINET, 'cabinet', F.L + 2.8, backZ(F, 0.55), PI);
+      extra(b, 'stove', F.L + 4.4, backZ(F, 0.66), PI, inside);
+      extra(b, 'kitchen_counter', F.L + 6.2, backZ(F, 0.63), PI, inside);
       for (const tx of [F.L + 2.2, F.R - 2.2]) {
         b.prop('table', tx, F.front + 2.4, 0.05, inside);
         b.prop('chair', tx - 1.2, F.front + 2.5, PI / 2, inside);
@@ -1023,6 +1247,7 @@ export function createMainland(seed) {
         b.prop('table', tx, F.front + 2.4, 0.05, inside);
         b.prop('chair', tx, F.front + 3.5, 0.3, { nocollide: true, ly: FLOOR_Y });
       }
+      extra(b, 'vending_machine', rightX(F, 0.86), F.cz + 1.2, -PI / 2, inside);
     },
     // Calder Aero Supply: where the plane's magneto is
     aero(b, F) {
@@ -1030,58 +1255,115 @@ export function createMainland(seed) {
       part(b, 1, F.R - 1.4, F.cz - 0.6, FLOOR_Y + 0.02);
     },
   };
-  const SHOPS = [['grocery', 'brick'], ['pharmacy', 'concrete'], ['hardware', 'tin'], ['diner', 'clapboard'], ['grocery', 'concrete'], ['hardware', 'brick']];
+  // the shops of a street: [what it sells (a FILL), its wall, the board over its door]
+  const SHOP = {
+    grocery: ['grocery', 'brick', 'shop_grocery'],
+    pharmacy: ['pharmacy', 'plaster', 'shop_pharmacy'],
+    hardware: ['hardware', 'brick', 'shop_hardware'],
+    diner: ['diner', 'plaster', 'shop_diner'],
+    aero: ['aero', 'brick', 'shop_aero'],
+    liquor: ['grocery', 'brick', 'shop_liquor'],
+    pawn: ['hardware', 'plaster', 'shop_pawn'],
+    laundry: ['pharmacy', 'plaster', 'shop_laundry'],
+    bakery: ['diner', 'brick', 'shop_bakery'],
+    bar: ['diner', 'brick', 'shop_bar'],
+    books: ['hardware', 'plaster', 'shop_books'],
+  };
+  const TERRACE = ['grocery', 'liquor', 'laundry', 'bakery', 'bar', 'books', 'pawn', 'diner', 'hardware'];
+  // A shop's room: a glass front with the door in the middle of it, a yard door at the back's right-hand end. x0:
+  // where its middle is along the lot (a terrace has three). Returns its builder, its frame and what was said of it.
+  const shopRoom = (b, L, w, d, kind, x0 = 0, alone = true) => {
+    const [, mat, sign] = SHOP[kind];
+    const s = b.sub(x0, 0);
+    const F = frame(L, w, d);
+    const ww = Math.min(3, w * 0.22);
+    // (a shop on a lot of its own may have had a wall blown in: one more way through it)
+    const breach = alone && rng.chance(0.4);
+    const R = groundRoom(s, 0, F.cz, w, d, 3.8, mat === 'plaster' ? 'concrete' : mat, { n: [door(w / 2, 1.6), cw(w * 0.2, ww, 0.8, 2.8), cw(w * 0.8, ww, 0.8, 2.8)], s: [door(2.4, 1.1)], w: breach ? [gap(d * 0.72, 2.6, 2.9)] : [] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, sign });
+    // (the stock room behind: a door into it, and the wall down at its other end - the way to the yard door)
+    partition(s, R, F.L, F.cz + 4.2, F.R, F.cz + 4.2, 3.8, 'concrete', [door(w * 0.3, 1.3), gap(w - 2.6, 2.2, 2.7)]);
+    if (breach) {
+      s.prop('debris', F.L + 1.2, F.cz + d * 0.22, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y });
+      skirt(s, F.L - 1.2, F.cz + d * 0.22);
+    }
+    s.prop('glass_shards', -w * 0.3, F.front + 0.9, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    s.prop('litter', rng.range(-2, 2), F.cz - 1.5, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    s.mess = () => mess(s, F, alone ? 9 : 6, 3.8); // (after what the shop is furnished with: it lies round that)
+    return [s, F, mat];
+  };
+  // how a building has come through it: [lost, open] for block() - most have lost a storey or two off the top, one
+  // in four has an end fallen away
+  const ruinOf = (floors) => {
+    const r = rng();
+    const lost = r < 0.3 ? 0 : rng.int(1, Math.min(3, floors - 1));
+    const open = rng.chance(0.24) && floors > 2 ? (rng.chance(0.5) ? 1 : -1) : 0;
+    return { lost, open, from: rng.int(0, 1), top: !lost && rng.chance(0.25) ? 'slab' : undefined };
+  };
   const BUILD = {
-    shop(b, L, kind, mat) {
-      const [s, F] = shopRoom(b, L, 18.4, 13.5, mat);
-      FILL[kind](s, F);
+    shop(b, L, kind) {
+      const [s, F, mat] = shopRoom(b, L, 18.4, 13.5, kind);
+      FILL[SHOP[kind][0]](s, F);
       s.mess();
-      sheared(b, 0, F.cz, F.w, F.d, 4.1, rng.int(1, 4), 3, mat); // (flats over the shop: shut, as every upper floor is)
+      const floors = rng.int(1, 4);
+      block(b, 0, F.cz, F.w, F.d, 4.1, floors, 3, 'shopflat', mat, { ...ruinOf(floors), blank: rng.chance(0.5) ? 2 : rng.chance(0.5) ? 8 : 0 }); // (flats over the shop: shut, as every upper floor is)
+      ivyOn(b, 0, F.cz, F.w, F.d, 0, 4.1 + floors * 3);
       yard(b, F, L);
     },
     // a row of three shops under one roof
     terrace(b, L) {
       const F = frame(L, 41.1, 13.5);
       const U = F.w / 3;
-      const k0 = rng.int(0, SHOPS.length - 1);
-      sheared(b, 0, F.cz, F.w, F.d, 4.1, rng.int(1, 3), 3, SHOPS[k0][1]);
+      const k0 = rng.int(0, TERRACE.length - 1);
+      const floors = rng.int(1, 3);
+      const mat = rng.chance(0.5) ? 'brick' : 'plaster';
+      block(b, 0, F.cz, F.w, F.d, 4.1, floors, 3, 'shopflat', mat, ruinOf(floors));
       for (let k = 0; k < 3; k++) {
-        const kind = SHOPS[(k0 + k * 2) % SHOPS.length][0];
-        const mat = SHOPS[k0][1]; // (one row, one wall)
-        const [s, Fu] = shopRoom(b, L, U, 13.5, mat, (k - 1) * U, false);
-        FILL[kind](s, Fu);
+        const kind = TERRACE[(k0 + k * 2) % TERRACE.length];
+        const [s, Fu] = shopRoom(b, L, U, 13.5, kind, (k - 1) * U, false);
+        FILL[SHOP[kind][0]](s, Fu);
         s.mess();
       }
       yard(b, F, L);
       b.wreck(rng.chance(0.5) ? 'car_wreck' : 'car_burnt', F.R - 6, F.back + 3.4, PI / 2 + rng.range(-0.2, 0.2), { ly: PAVE, trunk: rng.chance(0.5) });
     },
-    // the police station: a front office, and behind a door the armoury
+    // the police station: a front office, the cells, and behind a door the armoury
     police(b, L) {
       const F = frame(L, 18.4, 13.5);
-      sheared(b, 0, F.cz, F.w, F.d, 3.9, rng.int(1, 2), 3, 'brick');
-      b.room(0, F.cz, F.w, F.d, 3.6, 'brick', { n: [door(F.w / 2, 1.5), win(F.w * 0.2, 1.6), win(F.w * 0.8, 1.6)], s: [door(2.4, 1.1)], w: [win(F.d * 0.7, 1.2, 1.5, 2.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-      b.wall(F.L, F.cz + 1.5, F.R, F.cz + 1.5, 3.6, 0.2, 'brick', [door(4, 1.2)]);
-      b.box(3, FLOOR_Y, F.cz - 1.4, 4, 1.05, 0.8, 'planks'); // the front desk
-      b.loot(3, F.cz - 1.4, FLOOR_Y + 1.07);
+      block(b, 0, F.cz, F.w, F.d, 3.9, rng.int(1, 2), 3, 'walkup', 'brick', { lost: 0, wear: 0.5 });
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.6, 'brick', { n: [door(F.w / 2, 1.5), win(F.w * 0.2, 1.6), win(F.w * 0.8, 1.6)], s: [door(2.4, 1.1)], w: [win(F.d * 0.7, 1.2, 1.5, 2.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, sign: 'police', tint: 2 });
+      partition(b, R, F.L, F.cz + 1.5, F.R, F.cz + 1.5, 3.6, 'brick', [door(4, 1.2)]);
+      b.prop('reception_desk', 3.4, F.cz - 1.4, 0, { ly: FLOOR_Y, seed: 1 }); // the front desk
+      b.loot(3.4, F.cz - 1.4, FLOOR_Y + 1.14);
       cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz - 3.4, -PI / 2);
-      for (const dz of [3, 4.3]) cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + dz, PI / 2, { seed: dz | 0 });
+      for (const dz of [2.25, 3.25]) cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + dz, PI / 2, { seed: dz | 0 });
       cont(b, CONT.AMMO_BOX, 'military_crate', -1, backZ(F, 0.8), PI);
       cont(b, CONT.AMMO_BOX, 'military_crate', 1.6, backZ(F, 0.8), PI, { seed: 1 });
       b.loot(-3, F.cz + 3.6, FLOOR_Y + 0.02);
       b.prop('sandbags', -4.5, F.front - 0.55, 0, { ly: PAVE });
       b.prop('table', -5, F.cz - 3.6, 0.1, inside);
       b.prop('chair', -5, F.cz - 2.6, 3, { nocollide: true, ly: FLOOR_Y });
-      mess(b, F, 9);
+      // the cell, in the back room's corner: its door standing open, whoever was in it still there
+      b.prop('cell_bars', F.L + 0.125 + 1.5, F.cz + 4.2, 0, inside);
+      partition(b, R, F.L + 3.2, F.cz + 4.2, F.L + 3.2, F.back, 3.6, 'brick');
+      b.prop('cell_bunk', F.L + 0.125 + 0.42, F.back - WALL - 1.0, 0, inside);
+      b.prop('skeleton', F.L + 2.3, F.back - 0.9, PI, { nocollide: true, ly: FLOOR_Y, seed: 1 });
+      extra(b, 'waiting_chairs', -6.6, F.front + WALL + 0.34, 0, inside);
+      extra(b, 'filing_cabinet', F.R - 1.6, F.cz + 1.5 - 0.09 - WALL - 0.6, PI, inside);
+      extra(b, 'office_desk', 6.4, F.cz - 3.8, PI, inside);
+      mess(b, F, 9, 3.6);
       yard(b, F, L);
+      signAt(b, F.L + 0.9, 3.0, F.front - 0.5, PI / 2, 1.0, 0.25, 'police', { back: 0.1, two: true });
     },
     // flats over a ground floor that can be walked into: a hall, two rooms, what the people who lived there left
     flats(b, L) {
       const F = frame(L, 18.4, 14);
-      const mat = rng.chance(0.5) ? 'brick' : 'concrete';
-      b.room(0, F.cz, F.w, F.d, 3.2, mat, { n: [door(F.w / 2, 1.4), cw(F.w * 0.2, 1.6), cw(F.w * 0.8, 1.6)], s: [door(2.2, 1.1), cw(F.w * 0.7, 1.4)], e: [cw(F.d / 2, 1.4)], w: [cw(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
-      b.wall(1.4, F.front, 1.4, F.back, 3.2, 0.18, 'concrete', [door(F.d * 0.6, 1.2)]);
+      const mat = rng.chance(0.55) ? 'brick' : rng.chance(0.5) ? 'concrete' : 'plaster';
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.2, mat === 'plaster' ? 'concrete' : mat, { n: [door(F.w / 2, 1.4), cw(F.w * 0.2, 1.6), cw(F.w * 0.8, 1.6)], s: [door(2.2, 1.1), cw(F.w * 0.7, 1.4)], e: [cw(F.d / 2, 1.4)], w: [cw(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
+      partition(b, R, 1.4, F.front, 1.4, F.back, 3.2, 'concrete', [door(F.d * 0.6, 1.2)]);
       stairBlock(b, 1.4 + 0.09 + 1.2, F.back - WALL - 0.75); // (against the hall's wall, clear of the yard door)
-      storeys(b, F, 3.5, rng.int(3, 6), 3, mat);
+      const floors = rng.int(3, 6);
+      block(b, 0, F.cz, F.w, F.d, 3.5, floors, 3, mat === 'concrete' ? 'slab' : mat === 'plaster' ? 'shopflat' : 'walkup', mat, { ...ruinOf(floors), blank: rng.chance(0.4) ? (rng.chance(0.5) ? 2 : 8) : 0 });
+      ivyOn(b, 0, F.cz, F.w, F.d, 0, 3.5 + floors * 3);
       b.prop('bed', F.L + 1.1, F.back - 1.4, 0, inside);
       cont(b, CONT.CABINET, 'cabinet', F.L + 3.2, backZ(F, 0.55), PI);
       b.prop('table', F.R - 4, F.cz - 2.4, 0.1, inside);
@@ -1093,16 +1375,28 @@ export function createMainland(seed) {
       b.prop('bed', F.L + 1.1, F.front + 2.6, 0, { ly: FLOOR_Y, seed: 1 });
       b.prop('table', F.L + 5.4, F.front + 1.4, 0, inside);
       b.prop('chair', F.L + 5.4, F.front + 2.4, 2.8, { nocollide: true, ly: FLOOR_Y });
-      mess(b, F, 11);
+      // what a home had in it: a sofa and the set it faced, shelves, a wardrobe; a kitchen along the far wall
+      extra(b, 'sofa', F.L + 5.6, F.cz + 3.4, PI + 0.1, inside);
+      extra(b, 'tv_set', F.L + 7.6, F.front + WALL + 0.3, 0, inside);
+      extra(b, 'wardrobe', leftX(F, 0.6), F.cz - 0.4, PI / 2, inside);
+      extra(b, 'bookshelf', 1.4 - 0.09 - 0.5, F.cz - 3.2, -PI / 2, inside);
+      extra(b, 'kitchen_counter', F.R - 3.6, backZ(F, 0.62), PI, inside);
+      extra(b, 'stove', F.R - 5.4, backZ(F, 0.65), PI, inside);
+      extra(b, 'armchair', F.R - 2.2, F.front + 2.2, -0.6, inside);
+      b.prop('rug', F.L + 5.6, F.cz + 0.6, rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+      extra(b, 'door_barricade', 1.4 + 0.09 + 3.4, F.front + WALL + 0.45, PI, inside); // (somebody shut themselves in, at the front windows)
+      mess(b, F, 11, 3.2);
       yard(b, F, L);
     },
     // a long block of flats: two halls, four rooms on the ground floor
     block(b, L) {
       const F = frame(L, 41, 14);
       const mat = rng.chance(0.5) ? 'brick' : 'concrete';
-      b.room(0, F.cz, F.w, F.d, 3.2, mat, { n: [door(F.w * 0.25, 1.4), door(F.w * 0.75, 1.4), cw(4, 1.6), cw(15, 1.6), cw(23, 1.6), cw(34, 1.6)], s: [door(2.2, 1.1), door(F.w - 2.2, 1.1), cw(12, 1.4), cw(26, 1.4)], e: [cw(F.d / 2, 1.4)], w: [cw(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
-      for (const [wx, at] of [[-12.5, 0.65], [0, 0.3], [12.5, 0.65]]) b.wall(wx, F.front, wx, F.back, 3.2, 0.18, 'concrete', [door(F.d * at, 1.2)]);
-      storeys(b, F, 3.5, rng.int(3, 6), 3, mat);
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.2, mat, { n: [door(F.w * 0.25, 1.4), door(F.w * 0.75, 1.4), cw(4, 1.6), cw(15, 1.6), cw(23, 1.6), cw(34, 1.6)], s: [door(2.2, 1.1), door(F.w - 2.2, 1.1), cw(12, 1.4), cw(26, 1.4)], e: [cw(F.d / 2, 1.4)], w: [cw(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
+      for (const [wx, at] of [[-12.5, 0.65], [0, 0.3], [12.5, 0.65]]) partition(b, R, wx, F.front, wx, F.back, 3.2, 'concrete', [door(F.d * at, 1.2)]);
+      const floors = rng.int(3, 6);
+      block(b, 0, F.cz, F.w, F.d, 3.5, floors, 3, mat === 'concrete' ? 'slab' : 'walkup', mat, ruinOf(floors));
+      ivyOn(b, 0, F.cz, F.w, F.d, 0, 3.5 + floors * 3);
       for (const sx of [-1, 1]) {
         b.prop('bed', sx * 14, F.back - 1.4, 0, inside);
         cont(b, sx < 0 ? CONT.CABINET : CONT.FRIDGE, sx < 0 ? 'cabinet' : 'fridge', sx * (F.R - WALL - 0.36), F.cz - 1, sx < 0 ? PI / 2 : -PI / 2);
@@ -1113,21 +1407,28 @@ export function createMainland(seed) {
       }
       cont(b, CONT.LOCKER, 'locker', -7, backZ(F, 0.5), PI);
       b.cont(CONT.DUFFEL, 7, F.cz + 3.4, { prop: 'duffel_bag', ry: 1.9, nocollide: true, ly: FLOOR_Y });
-      mess(b, F, 20);
+      homely(b, F, -20.5, -12.6);
+      kitchen(b, F, -12.4, -0.1);
+      homely(b, F, 0.1, 12.4);
+      kitchen(b, F, 12.6, 20.5);
+      mess(b, F, 20, 3.2);
       yard(b, F, L);
     },
-    // an office tower. big: on a lot of its own, the tallest thing for a mile; otherwise a small one on a street lot
+    // an office tower. big: on a lot of its own, the tallest thing for a mile; otherwise a small one on a street lot.
+    // fell: its shaft came down across the street (the streets put it there): what stands is its podium, and a stump
     tower(b, L, big) {
       const F = big ? frame(L, 34, 30) : frame(L, 18.4, 15);
       const h = big ? 4.4 : 3.8;
       const fh = big ? 3.3 : 3.2;
       const floors = big ? rng.int(8, 12) : rng.int(5, 7);
-      b.room(0, F.cz, F.w, F.d, h, 'concrete', { n: [door(F.w / 2, 1.7), win(F.w * 0.22, F.w * 0.17, 0.6, h - 0.8), win(F.w * 0.78, F.w * 0.17, 0.6, h - 0.8)], s: [door(3, 1.2)], e: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)], w: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+      const glassy = rng.chance(big ? 0.5 : 0.35);
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, h, 'concrete', { n: [door(F.w / 2, 1.7), win(F.w * 0.22, F.w * 0.17, 0.6, h - 0.8), win(F.w * 0.78, F.w * 0.17, 0.6, h - 0.8)], s: [door(3, 1.2)], e: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)], w: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, tint: 3 });
+      void R;
       // the core, with the lifts nobody will ride again, and the front desk
       const core = big ? 5 : 3;
       b.box(-F.w / 6, FLOOR_Y, F.cz + F.d / 6, core, h - FLOOR_Y, core, 'concrete');
-      b.box(F.w / 4, FLOOR_Y, F.cz - F.d / 5, 3.6, 1.05, 0.9, 'planks');
-      b.loot(F.w / 4, F.cz - F.d / 5, FLOOR_Y + 1.07);
+      b.prop('reception_desk', F.w / 4, F.cz - F.d / 5, 0, inside);
+      b.loot(F.w / 4, F.cz - F.d / 5, FLOOR_Y + 1.14);
       cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz + F.d / 5, -PI / 2);
       cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + F.d / 2 - 2.4, PI / 2);
       b.loot(F.L + 2, F.cz - F.d / 4, FLOOR_Y + 0.02);
@@ -1136,9 +1437,24 @@ export function createMainland(seed) {
         b.cont(CONT.DUFFEL, 3, F.cz + 6, { prop: 'duffel_bag', ry: 0.4, nocollide: true, ly: FLOOR_Y });
         b.loot(6, F.cz + 8, FLOOR_Y + 0.02);
       }
-      // the shaft: its top floors gone, or going
-      mess(b, F, big ? 22 : 9);
-      sheared(b, 0, F.cz, F.w - 1, F.d - 1, h + 0.3, floors, fh, 'concrete', rng.int(1, 3));
+      // the lobby: seats along the front, desks behind the lifts, what was in the drawers all over the floor
+      extra(b, 'waiting_chairs', F.L + 3.2, F.front + WALL + 0.34, 0, inside);
+      extra(b, 'waiting_chairs', F.L + 5.4, F.front + WALL + 0.34, 0, inside);
+      extra(b, 'vending_machine', leftX(F, 0.86), F.cz - 1, PI / 2, inside);
+      for (const [dx, dz] of big ? [[6, 6], [9.4, 6], [6, 10], [-10, -4]] : [[4.4, 3.4], [6.4, 0.4]]) {
+        extra(b, 'office_desk', dx, F.cz + dz, rng.chance(0.5) ? 0 : PI, inside);
+        b.prop('office_chair', dx + rng.range(-0.6, 0.6), F.cz + dz + 1.1, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 1) });
+      }
+      extra(b, 'filing_cabinet', rightX(F, 0.66), F.cz - F.d / 4, -PI / 2, inside);
+      extra(b, 'filing_cabinet', rightX(F, 0.66), F.cz - F.d / 4 - 0.7, -PI / 2, inside);
+      for (let k = big ? 5 : 2; k > 0; k--) b.prop('paper_scatter', rng.range(F.L + 2, F.R - 2), rng.range(F.front + 2, F.back - 2), rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+      mess(b, F, big ? 22 : 9, h);
+      if (L.fell) {
+        // the podium, its top storeys open to the sky; on it the stump of the shaft that went
+        const top = block(b, 0, F.cz, F.w, F.d, h + 0.3, 4, fh, glassy ? 'glass' : 'office', 'concrete', { top: 'slab', wear: 0.9 });
+        block(b, 0, F.cz, 16, 14, top, 3, fh, glassy ? 'glass' : 'office', 'concrete', { lost: 2, wear: 1 });
+        L.shaft = { style: glassy ? 'glass' : 'office', fh };
+      } else block(b, 0, F.cz, F.w, F.d, h + 0.3, floors, fh, glassy ? 'glass' : 'office', 'concrete', { lost: rng.int(big ? 1 : 0, 3), open: rng.chance(0.3) ? (rng.chance(0.5) ? 1 : -1) : 0, from: rng.int(2, 4) });
       stairBlock(b, -F.w / 6 + core / 2 + 1.4, F.cz + F.d / 6);
       if (big) landmarks.push({ x: b.wx(0, F.cz), z: b.wz(0, F.cz), name: ['Calder Trust Tower', 'Harbour House', 'Meridian Assurance', 'Dockside Exchange', 'Pacific & Northern', 'Customs House'][towers++ % 6] });
       if (!big) return yard(b, F, L);
@@ -1146,11 +1462,17 @@ export function createMainland(seed) {
       for (const tx of [-14, -5, 5, 14]) b.tree(tx, L.d / 2 - 3.4, rng.chance(0.5) ? 3 : 4, rng.range(0.9, 1.2));
       b.prop('bus_shelter', -15.5, F.back + 5, PI / 2, { ly: PAVE });
       b.wreck('car_wreck', 8, F.back + 5.5, PI / 2 + 0.2, { ly: PAVE });
-      b.wreck('car_burnt', F.R + 2.2, F.cz + 3, 0.1, { ly: PAVE, trunk: false });
-      b.cont(CONT.DUMPSTER, F.L - 1.8, F.cz - 4, { prop: 'dumpster', ry: PI / 2, ly: PAVE });
+      // (not down the flanks of the one whose shaft fell: it lies there)
+      if (!L.fell) b.wreck('car_burnt', F.R + 2.2, F.cz + 3, 0.1, { ly: PAVE, trunk: false });
+      if (!L.fell) b.cont(CONT.DUMPSTER, F.L - 1.8, F.cz - 4, { prop: 'dumpster', ry: PI / 2, ly: PAVE });
       b.loot(0, F.back + 4, PAVE + 0.02);
+      for (const [bx, bz] of [[-9, F.back + 2.2], [2, F.back + 2.2]]) extra(b, 'street_bench', bx, bz, PI, { ly: PAVE });
+      extra(b, 'trash_bin', -4, F.back + 2.0, 0, { ly: PAVE });
+      for (let k = 0; k < 9; k++) weed(b, rng.range(-19, 19), rng.range(F.back + 0.5, L.d / 2 - 0.5), rng.range(0.6, 1.3));
+      for (let k = 0; k < 4; k++) b.prop(['litter', 'paper_scatter', 'glass_shards', 'debris'][k], rng.range(-16, 16), F.front - rng.range(0.4, 1), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: k });
     },
-    // a block that came down: a corner of its ground floor still stands, the rest is heaps, one of them out in the street
+    // a block that came down: the walls of two sides of it stand, storeys high with the sky in their windows; the
+    // rest is heaps, one of them at the kerb
     ruin(b, L) {
       const w = Math.min(L.w - 3, 16);
       const d = 13;
@@ -1158,45 +1480,55 @@ export function createMainland(seed) {
       b.prop('debris', -3.5, cz - 1, 2, { nocollide: true, ly: PAVE });
       b.prop('debris', 5, cz + 5.5, 0.5, { nocollide: true, ly: PAVE, seed: 1 });
       b.tree(-4.6, cz + 3.4, 5, rng.range(0.5, 0.8));
-      for (let k = 0; k < 6; k++) weed(b, rng.range(-9, 9), rng.range(-8, 9), rng.range(0.7, 1.4));
+      for (let k = 0; k < 9; k++) weed(b, rng.range(-9, 9), rng.range(-8, 9), rng.range(0.7, 1.4));
       frontage(b, L, null);
       // (its shell: the back wall and one side of it stand, storeys high and broken off; stumps of the rest)
-      const mat = rng.chance(0.5) ? 'brick' : 'concrete';
+      const mat = rng.chance(0.6) ? 'brick' : 'concrete';
       const H = rng.range(7, 13);
-      jagged(b, -w / 2, cz - d / 2, -w / 2, cz + d / 2, PAVE, H, mat);
-      jagged(b, -w / 2, cz + d / 2, w / 2, cz + d / 2, PAVE, H, mat);
-      jagged(b, w / 2, cz + d / 2 - 5, w / 2, cz + d / 2, PAVE, H * 0.6, mat);
-      b.box(w / 2 - 1.5, PAVE, cz - d / 2, 3, 1.3, 0.4, mat);
-      // (its floors, where they landed)
-      for (let k = 0; k < 3; k++) b.box(rng.range(-3, 2), PAVE + 0.5 + k * 0.9, cz + rng.range(-1, 2.5), w * rng.range(0.5, 0.75), 0.3, d * rng.range(0.4, 0.6), 'concrete', { rz: rng.range(0.12, 0.42) * (k % 2 ? -1 : 1), rx: rng.range(-0.2, 0.2), ry: rng.range(-0.3, 0.3), collide: false });
+      jagged(b, -w / 2, cz - d / 2, -w / 2, cz + d / 2, PAVE, H, mat, true, { inner: 'plaster' });
+      jagged(b, -w / 2 + 0.4, cz + d / 2, w / 2, cz + d / 2, PAVE, H, mat, true, { inner: 'plaster' });
+      jagged(b, w / 2, cz + d / 2 - 5.2, w / 2, cz + d / 2 - 0.4, PAVE, H * 0.6, mat, true, { inner: 'plaster' });
+      jagged(b, w / 2 - 5.2, cz - d / 2, w / 2, cz - d / 2, PAVE, 2.4, mat);
+      // (what it came down as: a long heap where its floors landed, smaller ones round it)
+      heap(b, 1.8, cz + 1.2, 4.6, 3.6, rng.range(1.7, 2.3), { brick: 0.45, ry: rng.range(-0.3, 0.3) });
+      heap(b, -5.0, cz - 3.4, 2.2, 1.9, 1.1, { brick: 0.5 });
       skirt(b, -w / 2 - 1.4, cz + 1);
       skirt(b, 2, cz + d / 2 + 1.5);
-      b.prop('rubble_slope', 1.6, cz + 0.8, rng.range(0, 6), { ly: PAVE });
-      streetPile(b, L, rng.range(-3, 3), rng.range(0, 6));
-      b.box(-2.4, 1.3, cz - 2.6, w * 0.4, 0.3, 4, 'concrete', { rz: 0.3, collide: false });
-      b.box(4.4, 0.9, cz + 4.4, 4.4, 0.2, 0.2, 'rust', { rz: -0.34, ry: -0.7, collide: false });
+      streetPile(b, L, rng.range(-3, 3));
+      // (a floor of it still hanging from the back wall, the steel of another across the heap)
+      b.box(-2.4, 3.2, cz + d / 2 - 2.3, w * 0.5, 0.26, 4, 'concrete', { rx: -0.34, collide: false });
+      b.box(4.4, 1.9, cz + 3.4, 5.4, 0.2, 0.2, 'rust', { rz: -0.34, ry: -0.7, collide: false });
+      b.box(-1.4, 2.4, cz + 2.4, 0.2, 0.2, 6.4, 'rust', { rx: 0.3, ry: 0.2, collide: false });
       b.cont(CONT.DUFFEL, -w / 2 + 1.6, cz - d / 2 + 1.6, { prop: 'duffel_bag', ry: 0.5, nocollide: true, ly: PAVE });
-      b.loot(w / 2 - 1.2, cz + d / 2 - 1.2, PAVE + 0.02);
-      b.prop('corpse', -w / 2 + 2.6, cz + d / 2 - 2, 1.1, { nocollide: true, ly: PAVE });
+      b.loot(w / 2 - 1.2, cz + d / 2 - 1.6, PAVE + 0.02);
+      b.prop('skeleton', -w / 2 + 2.6, cz + d / 2 - 1.4, 1.1, { nocollide: true, ly: PAVE, seed: 2 });
       b.tree(L.w / 2 - 2.4, L.d / 2 - 2.4, 4, 1);
     },
-    // burnt out: the walls, black, with the sky over them
+    // burnt out: the walls, black, with the sky over them and soot up them from every opening
     burnt(b, L) {
       const F = frame(L, 18, 13);
       if (rng.chance(0.4)) fire(b, 1, 1.2, F.cz);
       else if (rng.chance(0.5)) smoke(b, 0, 3, F.cz);
       b.prop('debris', -3, F.cz - 2, 1, { nocollide: true, ly: FLOOR_Y });
-      for (let k = 0; k < 5; k++) weed(b, rng.range(-9, 9), rng.range(F.back + 0.6, L.d / 2 - 0.5), rng.range(0.7, 1.3));
+      for (let k = 0; k < 7; k++) weed(b, rng.range(-9, 9), rng.range(F.back + 0.6, L.d / 2 - 0.5), rng.range(0.7, 1.3));
       frontage(b, L, F);
       b.room(0, F.cz, F.w, F.d, 3.4, 'charred', { n: [gap(F.w / 2, 2.2, 2.6), gap(F.w * 0.2, 2.4, 2.4)], s: [gap(F.w * 0.7, 3, 3)], e: [gap(F.d / 2, 1.6, 2.2)] }, { floorMat: 'ash' });
-      jagged(b, F.L, F.back, F.R, F.back, 3.4, 4.5, 'charred', false);
-      jagged(b, F.L, F.front, F.L, F.back, 3.4, 4.5, 'charred', false);
-      jagged(b, F.L, F.front, F.R, F.front, 3.4, 2.6, 'charred', false);
+      const up = rng.range(4.5, 9);
+      jagged(b, F.L, F.back, F.R, F.back, 3.4, up, 'brick', false, { soot: true, inner: 'charred' });
+      jagged(b, F.L, F.front + 0.4, F.L, F.back - 0.4, 3.4, up, 'brick', false, { soot: true, inner: 'charred' });
+      jagged(b, F.L + 0.4, F.front, F.R, F.front, 3.4, up * 0.6, 'brick', false, { soot: true, inner: 'charred' });
+      jagged(b, F.R, F.front + 0.4, F.R, F.back - 0.4, 3.4, up * 0.4, 'brick', false, { soot: true, inner: 'charred' });
+      // soot over the openings of the ground floor, on the charred wall itself
+      for (const [sx, w] of [[0, 2.2], [-F.w * 0.3, 2.4]]) signAt(b, sx, 2.5 + 1.5, F.front - 0.14, 0, w * 1.5, 3.2, rng.chance(0.5) ? 'soot_a' : 'soot_b', { grime: true, far: true });
       skirt(b, F.R + 1.4, F.cz);
+      // (what the roof was hung on, down in the room)
       b.box(1, 0.6, F.cz, F.w * 0.7, 0.22, 0.22, 'charred', { rz: 0.22, ry: 0.5, collide: false });
       b.box(-2, 0.3, F.cz + 1.4, F.w * 0.5, 0.2, 0.2, 'charred', { rz: -0.1, ry: -0.8, collide: false });
+      b.box(3, 1.5, F.cz - 2, 0.2, 0.2, F.d * 0.8, 'charred', { rx: 0.36, ry: 0.3, collide: false });
+      b.box(-5, 1.9, F.cz + 2, 0.18, 0.18, F.d * 0.6, 'charred', { rx: -0.5, ry: -0.2, collide: false });
       cont(b, CONT.CABINET, 'cabinet', F.L + 1.2, backZ(F, 0.55), PI);
       b.prop('bones', F.w / 4, F.cz + 1, 0.4, { nocollide: true, ly: FLOOR_Y });
+      b.prop('skeleton', -F.w / 4, F.cz - 2, 2.2, { nocollide: true, ly: FLOOR_Y, seed: 0 });
       b.loot(0, F.cz, FLOOR_Y + 0.02);
       b.wreck('car_burnt', F.R - 2, F.back + 4, 0.2, { ly: PAVE, trunk: false });
     },
@@ -1209,78 +1541,103 @@ export function createMainland(seed) {
       b.prop('bones', 0.6, -1.4, 1, { nocollide: true, ly: PAVE });
       b.cont(CONT.CRATE, -6.5, -3.5, { prop: 'crate', ry: 0.3, ly: PAVE });
       b.loot(1.5, 0.5, PAVE + 0.02);
+      extra(b, 'street_bench', 4, -L.d / 2 + 1.6, 0, { ly: PAVE });
+      extra(b, 'street_bench', -7, 0, PI / 2, { ly: PAVE });
+      extra(b, 'trash_bin', 2.2, -L.d / 2 + 1.3, 0, { ly: PAVE });
+      b.prop('stroller', -1, 5, rng.range(0, 6), { nocollide: true, ly: PAVE });
+      b.prop('bicycle', 7, -5, rng.range(0, 6), { nocollide: true, ly: PAVE, seed: rng.int(0, 1) });
+      for (let k = 0; k < 16; k++) weed(b, rng.range(-9, 9), rng.range(-9, 9), rng.range(0.6, 1.4));
+      signAt(b, -3, 1.5, -L.d / 2 + 2.06, 0, 0.8, 1.2, 'poster_b', {});
     },
-    // a multi-storey car park, or the frame of one: two decks on columns over a ground floor of cars
+    // a multi-storey car park: two decks on columns over a ground floor of cars, a wall to each deck, the stair tower
     carpark(b, L) {
       const F = frame(L, 38, 15);
-      for (const cx of [-18.7, -9.4, 0, 9.4, 18.7]) for (const dz of [-7.2, 0, 7.2]) b.box(cx, PAVE, F.cz + dz, 0.5, CARPARK_DECK * 2, 0.5, 'concrete');
+      for (const cx of [-18.7, -9.4, 0, 9.4, 18.7]) for (const dz of [-7.2, 0, 7.2]) b.box(cx, PAVE, F.cz + dz, 0.5, CARPARK_DECK * 2 + 0.3, 0.5, 'concrete');
       for (const k of [1, 2]) {
         b.box(0, CARPARK_DECK * k, F.cz, F.w, 0.3, F.d, 'concrete');
-        b.box(0, CARPARK_DECK * k + 0.3, F.front + 0.1, F.w, 0.9, 0.2, 'concrete', { collide: false });
-        b.box(0, CARPARK_DECK * k + 0.3, F.back - 0.1, F.w, 0.9, 0.2, 'concrete', { collide: false });
+        for (const z of [F.front + 0.1, F.back - 0.1]) b.box(0, CARPARK_DECK * k + 0.3, z, F.w, 0.95, 0.2, 'concrete');
+        for (const x of [F.L + 0.1, F.R - 0.1]) b.box(x, CARPARK_DECK * k + 0.3, F.cz, 0.2, 0.95, F.d - 0.4, 'concrete');
+        // rust down from every joint of it, the level's number on the wall
+        for (let x = -15; x <= 15; x += 7.5) signAt(b, x + rng.range(-1, 1), CARPARK_DECK * k + 0.62, F.front - 0.02, 0, 0.7, 1.25, rng.chance(0.5) ? 'rust_a' : 'rust_b', { grime: true });
       }
       b.roofSpan(0, F.cz, F.w / 2, F.d / 2, CARPARK_DECK, 0.3);
       b.box(15.4, 0.2, F.cz - 3.4, 6, 0.3, 3.2, 'concrete', { rz: 0.32, collide: false }); // what is left of the ramp
+      // the stair tower at its end, the sign on it
+      b.box(F.R + 1.7, PAVE, F.cz + 4, 3, CARPARK_DECK * 2 + 3.2, 4.4, 'concrete');
+      signAt(b, F.R + 1.7, CARPARK_DECK * 2 + 2.1, F.cz + 1.76, 0, 2.8, 0.7, 'parking', { far: true });
       for (let k = 0; k < 6; k++) {
         if (!rng.chance(0.55)) continue;
         const t = rng();
-        b.wreck(t < 0.5 ? 'car_wreck' : t < 0.8 ? 'car_burnt' : 'pickup_truck', -16.2 + k * 4.7, F.cz + (k % 2 ? 3.6 : -3.6), rng.range(-0.12, 0.12), { ly: PAVE, trunk: rng.chance(0.5) });
+        b.wreck(t < 0.4 ? 'car_wreck' : t < 0.65 ? 'car_burnt' : t < 0.85 ? 'car_open' : 'pickup_truck', -16.2 + k * 4.7, F.cz + (k % 2 ? 3.6 : -3.6), rng.range(-0.12, 0.12), { ly: PAVE, trunk: rng.chance(0.5) });
+      }
+      // (...and those left on the decks: nobody is getting up to them)
+      for (const k of [1, 2]) {
+        for (let n = 0; n < 6; n++) {
+          const t = rng();
+          const here = rng.chance(0.5);
+          const ry = rng.range(-0.1, 0.1) + (n % 2 ? PI : 0);
+          if (here) b.prop(t < 0.5 ? 'car_wreck' : t < 0.8 ? 'car_burnt' : 'van_wreck', -15 + n * 5.8, F.cz + (n % 2 ? 3.4 : -3.4), ry, { ly: CARPARK_DECK * k + 0.3 });
+        }
       }
       b.cont(CONT.DUFFEL, -4.7, F.cz, { prop: 'duffel_bag', ry: 0.9, nocollide: true, ly: PAVE });
       b.loot(4.7, F.cz, PAVE + 0.02);
       b.loot(-14, F.cz, PAVE + 0.02);
       yard(b, F, L);
     },
-    // a whole block down: one corner of it still stands seven floors high, over a field of rubble
+    // a whole block down: its floors lie one on another where it stood, a corner of it still stands seven floors
+    // high and open on every room, over a field of rubble
     collapse(b, L) {
       const floors = rng.int(5, 8);
-      sheared(b, -13, -12, 11, 10, PAVE, floors, 3, 'concrete', rng.int(2, 3));
-      // its floors, pancaked: slabs one on another where the rest of it stood, a heap to be climbed at either end
-      for (let k = 0; k < 4; k++) b.box(4 + k * 0.5, PAVE + k * 0.42, -11 + k * 0.4, 20 - k * 2.2, 0.4, 12 - k * 1.6, 'concrete', { ry: 0.04 * (k - 1.5) });
-      b.box(6, PAVE + 1.7, -10, 14, 0.4, 9, 'concrete', { rz: 0.16, ry: 0.1, collide: false });
-      for (const [rx, rz] of [[1, -13], [9, -8], [13, -12]]) b.box(rx, PAVE + 1.6, rz, 0.16, rng.range(1.2, 2.6), 0.16, 'rust', { rz: rng.range(-0.4, 0.4), collide: false });
-      b.prop('rubble_slope', 5, 2, rng.range(0, 6), { ly: PAVE });
-      b.prop('rubble_slope', -13, 11.5, rng.range(0, 6), { ly: PAVE, seed: 1 });
+      block(b, -13, -12, 13, 12, PAVE, floors, 3, 'slab', 'concrete', { lost: rng.int(2, 3), open: 1, from: 1, wear: 1 });
+      // its floors, pancaked: slabs one on another where the rest of it stood (solid: a heap to be climbed)
+      for (let k = 0; k < 4; k++) solid(b, 6 + k * 0.5, PAVE + k * 0.42, -10 + k * 0.4, 18 - k * 2.2, 0.4, 12 - k * 1.6, 'concrete', { ry: 0.04 * (k - 1.5) });
+      pancakes.push({ x: b.wx(6, -10), y: b.y0 + PAVE, z: b.wz(6, -10), ry: b.ry, w: 18, d: 12, n: 4, seed: rng.int(1, 99999) });
+      heap(b, 7, 1.5, 4.4, 3.4, 2.0, { ry: rng.range(-0.4, 0.4) });
+      heap(b, -13, 10.5, 3.8, 3.2, 1.8);
+      heap(b, -3, 7, 3.0, 2.6, 1.4);
+      heap(b, 14.5, 9.5, 3.2, 3.6, 1.5);
       // (what is left of its walls: lengths of the back and one side, storeys high and broken off)
-      jagged(b, -20.4, 20.4, -6, 20.4, PAVE, 11, 'concrete');
-      jagged(b, 11, 20.4, 20.4, 20.4, PAVE, 8, 'concrete');
-      jagged(b, 20.4, 5.5, 20.4, 20.4, PAVE, 12, 'concrete');
-      jagged(b, -20.4, 0, -20.4, 6, PAVE, 6, 'concrete');
-      // (floors of it lying where they came down, one on another, tipped every way)
-      for (let k = 0; k < 9; k++) b.box(rng.range(-16, 16), PAVE + rng.range(0.3, 1.6), rng.range(-2, 17), rng.range(5, 9), 0.32, rng.range(4, 7), 'concrete', { rz: rng.range(-0.34, 0.34), rx: rng.range(-0.22, 0.22), ry: rng.range(0, 3), collide: false });
+      jagged(b, -20.4, 20.4, -6, 20.4, PAVE, 11, 'concrete', true, { inner: 'plaster' });
+      jagged(b, 11, 20.4, 20, 20.4, PAVE, 8, 'concrete', true, { inner: 'plaster' });
+      jagged(b, 20.4, 5.5, 20.4, 20.4, PAVE, 12, 'concrete', true, { inner: 'plaster' });
+      jagged(b, -20.4, 0.5, -20.4, 6, PAVE, 6, 'concrete');
+      // (floors of it lying where they came down, tipped every way)
+      for (let k = 0; k < 7; k++) b.box(rng.range(-16, 16), PAVE + rng.range(0.3, 1.2), rng.range(0, 17), rng.range(4, 7), 0.32, rng.range(3, 6), 'concrete', { rz: rng.range(-0.34, 0.34), rx: rng.range(-0.22, 0.22), ry: rng.range(0, 3), collide: false });
       for (let k = 0; k < 7; k++) skirt(b, rng.range(-18, 18), rng.range(-3, 18));
-      for (const [px, pz] of [[-8, 5], [15, 10], [-3, 15]]) b.prop('rubble_pile', px + rng.range(-1, 1), pz + rng.range(-1, 1), rng.range(0, 6), { ly: PAVE });
-      for (const [px, pz] of [[12, 0], [-14, 8], [4, 12], [17, -4], [-4, -3]]) b.prop('debris', px, pz, rng.range(0, 6), { nocollide: true, ly: PAVE, seed: px & 3 });
+      for (const [px, pz] of [[12, 0], [-14, 4], [4, 12], [17, -4], [-4, -3]]) b.prop('debris', px, pz, rng.range(0, 6), { nocollide: true, ly: PAVE, seed: px & 3 });
       smoke(b, 4, 3, -8);
-      for (let k = 0; k < 8; k++) weed(b, rng.range(-19, 19), rng.range(-4, 19), rng.range(0.7, 1.4));
-      for (const [tx, tz] of [[10, 5], [-10, 12]]) b.tree(tx, tz, 5, rng.range(0.5, 0.8));
-      streetPile(b, L, rng.range(-6, 6), rng.range(0, 6));
-      b.box(3, 1.4, 1, 9, 0.35, 6, 'concrete', { rz: 0.24, ry: 0.4, collide: false });
-      b.box(-6, 1.0, 12, 7, 0.3, 5, 'concrete', { rx: -0.2, ry: -0.3, collide: false });
-      b.box(15, PAVE, 0, 0.4, 3, 9, 'brick');
-      b.box(4, PAVE, 18.6, 12, 2.2, 0.4, 'brick');
+      for (let k = 0; k < 14; k++) weed(b, rng.range(-19, 19), rng.range(-4, 19), rng.range(0.7, 1.4));
+      for (const [tx, tz] of [[10.5, 15], [-8, 15.5]]) b.tree(tx, tz, 5, rng.range(0.5, 0.8));
+      streetPile(b, L, rng.range(-6, 6));
       b.cont(CONT.DUFFEL, 16.4, 3, { prop: 'duffel_bag', ry: 0.5, nocollide: true, ly: PAVE });
       b.cont(CONT.CRATE, 6, 16.6, { prop: 'crate', ry: 0.2, ly: PAVE });
       b.cont(CONT.AMMO_BOX, -17, 2, { prop: 'military_crate', ry: 0.4, ly: PAVE });
-      b.prop('corpse', 3, -4, 2, { nocollide: true, ly: PAVE });
-      b.prop('bones', -3, 8, 0.4, { nocollide: true, ly: PAVE });
+      b.prop('corpse', 3, -2.2, 2, { nocollide: true, ly: PAVE });
+      b.prop('skeleton', -8, 3, 0.4, { nocollide: true, ly: PAVE });
       b.loot(12.5, 5.5, PAVE + 0.02);
-      b.loot(-13.5, 5, PAVE + 0.02);
-      for (const [tx, tz] of [[17, -17], [-17, 16]]) b.tree(tx, tz, 4, rng.range(0.9, 1.2));
+      b.loot(-17.5, 6, PAVE + 0.02);
+      for (const [tx, tz] of [[17, -17], [-17, 17]]) b.tree(tx, tz, 4, rng.range(0.9, 1.2));
     },
     // the bus depot: a roof on posts over the buses that never went out, and the dispatcher's office
     depot(b, L) {
       b.shelter(-4, -4, 30, 16, 5.4, 'tin', 'metal');
       for (const px of [-9.5, -2, 6]) for (const pz of [-11.8, 3.8]) b.cyl(px, PAVE, pz, 0.14, 5.4 - PAVE, 'metal', { sides: 6 });
-      b.wreck('school_bus', -13, -4, 0.04, { ly: PAVE, trunk: false });
-      b.wreck('school_bus', -6, -4.4, PI - 0.03, { ly: PAVE, trunk: false, seed: 1 });
-      b.wreck('ambulance', 2, -3, 0.1, { ly: PAVE, trunk: false });
-      b.room(14, 12, 10, 8, 3.2, 'brick', { n: [door(5, 1.3), win(2, 1.4), win(8, 1.4)], w: [win(4, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
+      // (the roof's edge beam, the board on it)
+      b.box(-4, 4.9, -12.1, 30.4, 0.6, 0.2, 'rust', { collide: false });
+      signAt(b, -4, 5.2, -12.24, 0, 7.2, 1.8, 'depot', { far: true });
+      b.wreck('city_bus', -13, -4, 0.04, { ly: PAVE, trunk: false });
+      b.wreck('city_bus', -8.6, -4.4, PI - 0.03, { ly: PAVE, trunk: false, seed: 1 });
+      b.wreck('school_bus', -3.4, -4.6, 0.1, { ly: PAVE, trunk: false });
+      b.wreck('ambulance', 3.4, -3, 0.1, { ly: PAVE, trunk: false });
+      const R = groundRoom(b, 14, 12, 10, 8, 3.2, 'brick', { n: [door(5, 1.3), win(2, 1.4), win(8, 1.4)], w: [win(4, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true });
+      void R;
       b.cont(CONT.LOCKER, 18.56, 13, { prop: 'locker', ry: -PI / 2, ly: FLOOR_Y });
       b.cont(CONT.CABINET, 11, 15.5, { prop: 'cabinet', ry: PI, ly: FLOOR_Y });
       b.cont(CONT.TOOLBOX, 15.5, 14.6, { prop: 'toolbox', ry: 0.6, nocollide: true, ly: FLOOR_Y });
-      b.prop('table', 14, 10.4, 0, inside);
-      b.loot(14, 10.4, FLOOR_Y + 0.82);
+      extra(b, 'office_desk', 14, 10.4, PI, inside);
+      b.loot(14, 9.2, FLOOR_Y + 0.02);
+      b.prop('office_chair', 14.4, 11.6, 1, { nocollide: true, ly: FLOOR_Y });
+      b.prop('paper_scatter', 12.6, 12.6, 2, { nocollide: true, ly: FLOOR_Y });
       b.prop('gas_pump', 9, -15, 0, { ly: PAVE });
       b.prop('tire_pile', -17, 12, 0, { ly: PAVE });
       b.cont(CONT.DUMPSTER, -10, 16, { prop: 'dumpster', ry: PI, ly: PAVE });
@@ -1288,127 +1645,218 @@ export function createMainland(seed) {
       b.prop('corpse', 6, 6, 1.2, { nocollide: true, ly: PAVE });
       b.loot(-2, 10, PAVE + 0.02);
       b.loot(10, -8, PAVE + 0.02);
+      extra(b, 'street_bench', -16, 16.5, PI, { ly: PAVE });
+      for (let k = 0; k < 5; k++) b.prop(['litter', 'suitcases', 'paper_scatter', 'glass_shards', 'traffic_cones'][k], rng.range(-18, 18), rng.range(6, 18), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: k });
+      for (let k = 0; k < 12; k++) weed(b, rng.range(-20, 20), rng.range(5, 20), rng.range(0.6, 1.3));
     },
-    // CALDER GENERAL: an emergency room that can be walked into - the wards behind it, the pharmacy between them -
-    // under four floors that cannot. Ambulances under the canopy, a triage tent in the yard, the dead in rows.
+    // CALDER GENERAL: at the back of its block, four floors over an emergency room that can be walked into - the
+    // wards behind it, the pharmacy between them. Out front: the canopy with its sign, the ambulances that came in
+    // last, and the tents the wards overflowed into, cots and the dead in rows between them.
     hospital(b, L) {
-      const F = { w: 30, d: 16, cz: -4, front: -12, back: 4, L: -15, R: 15 };
-      b.room(0, F.cz, F.w, F.d, 4, 'concrete', { n: [gap(15, 4, 3), cw(5, 3, 0.8, 3), cw(25, 3, 0.8, 3)], s: [door(4, 1.2), door(26, 1.2)], e: [cw(4, 1.6), cw(12, 1.6)], w: [door(4, 1.3), cw(12, 1.6)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-      b.wall(F.L, F.cz + 2, F.R, F.cz + 2, 4, 0.2, 'concrete', [door(5, 1.3), door(15, 1.6), door(25, 1.3)]);
-      for (const wx of [-5, 5]) b.wall(wx, F.cz + 2, wx, F.back, 4, 0.18, 'concrete');
-      b.box(5, FLOOR_Y, F.cz - 3, 5, 1.05, 0.8, 'planks'); // reception
-      b.loot(5, F.cz - 3, FLOOR_Y + 1.07);
-      b.prop('bed', -11, F.cz - 0.6, PI / 2, inside);
-      b.prop('bed', -11, F.cz - 3.6, PI / 2, { ly: FLOOR_Y, seed: 1 });
-      b.prop('wheelchair', -6, F.cz - 5, 0.8, { nocollide: true, ly: FLOOR_Y });
-      b.prop('wheelchair', 11, F.cz - 1, 2.6, { nocollide: true, ly: FLOOR_Y });
-      b.prop('barricade', 5.2, F.cz + 1.1, 0.05, inside); // (between the doors of the wards and the pharmacy)
-      b.prop('litter', 0, F.cz - 4, 1, { nocollide: true, ly: FLOOR_Y });
+      const F = { w: 34, d: 14, cz: 12, front: 5, back: 19, L: -17, R: 17 };
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 4, 'concrete', { n: [gap(17, 4, 3), cw(5, 3, 0.8, 3), cw(29, 3, 0.8, 3), cw(10.5, 2.2, 0.8, 3), cw(23.5, 2.2, 0.8, 3)], s: [door(4, 1.2), door(30, 1.2)], e: [cw(4, 1.6)], w: [door(12.4, 1.3)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, tint: 2 });
+      partition(b, R, F.L, 13.5, F.R, 13.5, 4, 'concrete', [door(5, 1.3), door(17, 1.6), door(29, 1.3)]);
+      for (const wx of [-6, 6]) partition(b, R, wx, 13.5, wx, F.back, 4, 'concrete');
+      // the hall: the desk, the rows of seats, beds wheeled in wherever there was floor
+      b.prop('reception_desk', 6.6, 9.4, 0, inside);
+      b.loot(6.6, 9.4, FLOOR_Y + 1.14);
+      for (const sx of [-13.6, -11.6, 11.2, 13.2]) extra(b, 'waiting_chairs', sx, F.front + WALL + 0.34, PI, inside);
+      b.prop('hospital_bed', -14.6, 9.2, PI / 2, { ly: FLOOR_Y, seed: 1 });
+      b.prop('hospital_bed', -14.6, 11.8, PI / 2, { ly: FLOOR_Y, seed: 2 });
+      extra(b, 'hospital_bed', -9.6, 11.4, PI / 2 + 0.3, { ly: FLOOR_Y, seed: 0 });
+      b.prop('privacy_curtain', -13.6, 10.5, 0, { nocollide: true, ly: FLOOR_Y });
+      extra(b, 'gurney', -3.4, 8.2, 0.5, inside);
+      extra(b, 'gurney', 2.6, 11.4, -1.2, { ly: FLOOR_Y, seed: 1 });
+      extra(b, 'medical_cart', -11.2, 7.2, 0.4, inside);
+      b.prop('iv_stand', -12.6, 11.9, 0, { nocollide: true, ly: FLOOR_Y });
+      b.prop('iv_stand', -1.4, 9.6, 1, { nocollide: true, ly: FLOOR_Y, seed: 1 });
+      b.prop('wheelchair', -6, 7, 0.8, { nocollide: true, ly: FLOOR_Y });
+      b.prop('wheelchair', 12.6, 11.6, 2.6, { nocollide: true, ly: FLOOR_Y });
+      b.prop('barricade', 6.2, 12.6, 0.05, inside); // (between the doors of the wards and the pharmacy)
+      b.prop('blood_pool', -2, 7.4, 1, { nocollide: true, ly: FLOOR_Y, seed: 1 });
+      b.prop('blood_pool', 9, 11.4, 2, { nocollide: true, ly: FLOOR_Y, seed: 2 });
       stairBlock(b, F.R - 1.5, F.front + 1.1);
-      // the wards
+      // the wards: beds along the back wall, screens between them
       for (const sx of [-1, 1]) {
-        b.prop('bed', sx * 12.5, F.back - 1.4, 0, { ly: FLOOR_Y, seed: 2 });
-        b.prop('bed', sx * 8, F.back - 1.4, 0, { ly: FLOOR_Y, seed: 3 });
-        b.prop('body_bag', sx * 10.2, F.cz + 3.2, PI / 2, { nocollide: true, ly: FLOOR_Y });
-        b.loot(sx * 6.4, F.cz + 3.4, FLOOR_Y + 0.02);
+        b.prop('hospital_bed', sx * 15, F.back - WALL - 1.1, 0, { ly: FLOOR_Y, seed: 2 });
+        b.prop('hospital_bed', sx * 11.4, F.back - WALL - 1.1, 0, { ly: FLOOR_Y, seed: sx > 0 ? 1 : 0 });
+        extra(b, 'hospital_bed', sx * 7.8, F.back - WALL - 1.1, 0, { ly: FLOOR_Y, seed: 0 });
+        b.prop('privacy_curtain', sx * 13.2, F.back - 1.6, PI / 2, { nocollide: true, ly: FLOOR_Y, seed: sx > 0 ? 1 : 0 });
+        b.prop('body_bag', sx * 9.6, 14.6, PI / 2, { nocollide: true, ly: FLOOR_Y });
+        b.prop('iv_stand', sx * 16.2, 16, 0, { nocollide: true, ly: FLOOR_Y, seed: 1 });
+        b.loot(sx * 7, 15.2, FLOOR_Y + 0.02);
       }
-      cont(b, CONT.MEDICINE, 'medicine_cabinet', leftX(F, 0.45), F.cz + 4.6, PI / 2);
-      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), F.cz + 4.6, -PI / 2);
+      cont(b, CONT.MEDICINE, 'medicine_cabinet', leftX(F, 0.45), 15.4, PI / 2);
+      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), 15.4, -PI / 2);
       // the pharmacy
-      for (const dx of [-3.6, -2.4]) cont(b, CONT.MEDICINE, 'medicine_cabinet', dx, backZ(F, 0.45), PI, { seed: dx | 0 });
-      cont(b, CONT.DRUG_LOCKER, 'drug_locker', 3.4, backZ(F, 0.6), PI);
+      for (const dx of [-4.2, -3.0]) cont(b, CONT.MEDICINE, 'medicine_cabinet', dx, backZ(F, 0.45), PI, { seed: dx | 0 });
+      cont(b, CONT.DRUG_LOCKER, 'drug_locker', 4, backZ(F, 0.6), PI);
       cont(b, CONT.CABINET, 'cabinet', 0.6, backZ(F, 0.55), PI);
-      b.loot(-1, F.cz + 3.6, FLOOR_Y + 0.02);
-      mess(b, F, 24);
-      sheared(b, 0, F.cz, F.w, F.d, 4.3, 4, 3.2, 'concrete', rng.int(1, 2));
-      // the forecourt
-      for (const px of [-3.4, 3.4]) for (const pz of [-13.4, -17.6]) b.cyl(px, PAVE, pz, 0.16, 3.4, 'metal', { sides: 8 });
-      b.box(0, 3.5, -15.5, 8.4, 0.3, 5.6, 'concrete', { collide: false });
-      b.roofSpan(0, -15.5, 4.2, 2.8, 3.5, 0.3);
-      b.wreck('ambulance', -9.4, -16.4, PI / 2, { ly: PAVE, trunk: false });
-      b.wreck('ambulance', 10, -16.2, PI / 2 + 0.25, { ly: PAVE, trunk: false, seed: 1 });
-      for (let i = 0; i < 5; i++) b.prop('body_bag', -19 + i * 1.25, -13.4, 0.08 * i, { nocollide: true, ly: PAVE, seed: i });
-      b.prop('suitcases', 5.4, -18.6, 0.4, { nocollide: true, ly: PAVE });
-      // the yard: a triage tent, the generator, what was thrown out
-      b.prop('military_tent', -11, 12, PI / 2, { ly: PAVE });
-      b.cont(CONT.DUFFEL, -6.6, 11.4, { prop: 'duffel_bag', ry: 0.4, nocollide: true, ly: PAVE });
-      b.prop('generator', 9, 8, 0.2, { ly: PAVE });
-      b.cont(CONT.DUMPSTER, 17.5, 9, { prop: 'dumpster', ry: -PI / 2, ly: PAVE });
-      b.cont(CONT.CRATE, 2, 15.5, { prop: 'crate', ry: 0.3, ly: PAVE });
-      b.prop('barrel', 14, 15, 0, { ly: PAVE });
-      b.light(14, PAVE + 1.0, 15, 'embers');
-      for (const [tx, tz] of [[-18, 18], [0, 19], [18, 17.5]]) b.tree(tx, tz, [3, 5, 4][(tx + 18) / 18], rng.range(0.7, 1.1));
-      for (let k = 0; k < 9; k++) weed(b, rng.range(-20, 20), rng.range(5, 20), rng.range(0.7, 1.4));
-      b.loot(6, 12, PAVE + 0.02);
+      b.prop('stock_spill', 1.6, 15.8, 1, { nocollide: true, ly: FLOOR_Y, seed: 1 });
+      b.loot(-1.4, 15.4, FLOOR_Y + 0.02);
+      mess(b, F, 20, 4);
+      const floors = 4;
+      block(b, 0, F.cz, F.w, F.d, 4.3, floors, 3.2, 'office', 'concrete', { lost: rng.int(0, 1), open: rng.chance(0.5) ? 1 : 0, from: 2, wear: 0.7 });
+      // its name across the front, over the ground floor; a cross at either end of it
+      signAt(b, 0, 5.3, F.front - 0.36, 0, 14.4, 1.8, 'hospital', { far: true, back: 0.1 });
+      for (const sx of [-10, 10]) signAt(b, sx, 5.3, F.front - 0.34, 0, 1.7, 1.7, 'redcross', { far: true });
+      // the canopy over the door: a slab on four posts out over the drive, EMERGENCY on its edge
+      for (const px of [-4.6, 4.6]) for (const pz of [-1.6, 2.4]) b.cyl(px, PAVE, pz, 0.18, 3.5, 'metal', { sides: 8 });
+      b.box(0, 3.6, 1.4, 10.4, 0.34, 7.2, 'concrete', { collide: false });
+      b.box(0, 3.4, -2.2, 10.4, 1.3, 0.3, 'metal', { collide: false });
+      b.roofSpan(0, 1.4, 5.2, 3.6, 3.6, 0.34);
+      signAt(b, 0, 4.05, -2.37, 0, 5.2, 1.3, 'emergency', { far: true });
+      b.wreck('ambulance', -7.6, 1.2, 0.12, { ly: PAVE, trunk: false });
+      b.wreck('ambulance', 7.8, -0.4, PI + 0.3, { ly: PAVE, trunk: false, seed: 1 });
+      b.prop('gurney', 3.2, 0.6, 0.3, { ly: PAVE, seed: 1 });
+      // the forecourt: tents either side of the way in, the dead laid out by the kerb, the army's lamp over it all
+      for (const [tx, sd] of [[-15.4, 0], [-9.4, 1], [10, 0], [15.6, 1]]) {
+        b.prop('triage_tent', tx, -11.4, 0, { ly: PAVE, seed: sd });
+        b.prop('field_cot', tx - 1.2, -12.6, 0, { ly: PAVE, seed: (tx & 1) + 1 });
+        b.prop('field_cot', tx + 1.2, -10, PI, { ly: PAVE, seed: sd });
+        b.prop('iv_stand', tx + 0.3, -12.4, 0, { nocollide: true, ly: PAVE, seed: sd });
+      }
+      for (let i = 0; i < 7; i++) b.prop('body_bag', -5.4 + i * 1.3, -18.6, PI / 2 + 0.1 * Math.sin(i * 2.1), { nocollide: true, ly: PAVE, seed: i });
+      for (let i = 0; i < 4; i++) b.prop('body_bag', -3.8 + i * 1.3, -16.4, PI / 2 - 0.06 * i, { nocollide: true, ly: PAVE, seed: i + 2 });
+      b.prop('floodlight_tower', 19, -18.6, 0.6, { ly: PAVE });
+      b.prop('checkpoint_sign', 3.4, -19.6, 0, { ly: PAVE });
+      b.prop('sandbags', -4.4, -4.6, 0, { ly: PAVE });
+      b.prop('sandbags', 4.6, -4.8, 0.1, { ly: PAVE, seed: 1 });
+      b.prop('suitcases', 2.4, -7, 0.4, { nocollide: true, ly: PAVE });
+      b.prop('wheelchair', -2.4, -6.2, 2, { nocollide: true, ly: PAVE });
+      b.prop('stroller', 5.4, -14.4, 1, { nocollide: true, ly: PAVE });
+      for (let k = 0; k < 6; k++) b.prop(['litter', 'paper_scatter', 'blood_pool', 'skeleton', 'litter', 'glass_shards'][k], rng.range(-18, 18), rng.range(-19, -4), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: k });
+      // down its sides: the generator, what was thrown out
+      b.prop('generator', 19.3, 10, PI / 2, { ly: PAVE });
+      b.cont(CONT.DUMPSTER, -19.5, 14, { prop: 'dumpster', ry: PI / 2, ly: PAVE });
+      b.cont(CONT.DUFFEL, -12.4, -8.4, { prop: 'duffel_bag', ry: 0.4, nocollide: true, ly: PAVE });
+      b.cont(CONT.CRATE, 13.6, -5.4, { prop: 'crate', ry: 0.3, ly: PAVE });
+      b.prop('barrel', -18.6, -4, 0, { ly: PAVE });
+      b.light(-18.6, PAVE + 1.0, -4, 'embers');
+      for (const [tx, tz] of [[-19.4, 3], [19.6, 2]]) b.tree(tx, tz, 3, rng.range(0.7, 1.1));
+      for (let k = 0; k < 14; k++) weed(b, rng.range(-20, 20), rng.range(-20, 4), rng.range(0.6, 1.3));
+      b.loot(8, -6, PAVE + 0.02);
       landmarks.push({ x: b.wx(0, F.cz), z: b.wz(0, F.cz), name: 'Calder General' });
     },
-    // ST. BRENDAN'S: a stone church on a corner lot, its yard gone to weed
+    // ST. BRENDAN'S: a stone church on a corner lot - a nave under a steep roof, a tower at its door with a spire,
+    // coloured glass in what is left of its windows, its yard gone to weed
     church(b, L) {
-      const F = frame(L, 9, 14);
-      const tall = (at) => ({ at, w: 1.1, y0: 1.3, y1: 3.8, glass: rng.chance(0.5) });
-      b.room(0, F.cz, F.w, F.d, 5.2, 'stone', { n: [door(4.5, 1.6)], e: [tall(3.5), tall(9.5)], w: [tall(3.5), tall(9.5)], s: [door(7.2, 1.1)] }, { roof: 'gable', roofH: 3.6, roofMat: 'shingles', floorMat: 'planks' });
-      b.box(0, 5.2, F.front + 1.4, 2.8, 4.2, 2.8, 'stone', { collide: false });
-      b.cone(0, 9.4, F.front + 1.4, 2, 5.2, 'shingles', 4);
-      b.box(0, 14.6, F.front + 1.4, 0.12, 1.4, 0.12, 'trim', { collide: false });
-      b.box(0, 15.3, F.front + 1.4, 0.8, 0.12, 0.12, 'trim', { collide: false });
+      const F = frame(L, 9.6, 14);
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 5.4, 'stone', { n: [door(4.8, 1.6)], s: [door(7.6, 1.1)] }, { roof: 'gable', roofH: 3.9, roofMat: 'shingles', floorMat: 'planks', tint: 3 });
+      R.ceiling = undefined;
+      // the tower: over the door, a belfry with its louvres, a spire, a cross
+      b.box(0, 5.4, F.front + 1.5, 3.3, 6.6, 3.3, 'stone', { collide: false });
+      b.box(0, 12, F.front + 1.5, 3.7, 0.3, 3.7, 'stone', { collide: false });
+      for (const [dx, dz, w, d] of [[0, -1.66, 1.2, 0.04], [0, 1.66, 1.2, 0.04], [-1.66, 0, 0.04, 1.2], [1.66, 0, 0.04, 1.2]]) b.box(dx, 9.4, F.front + 1.5 + dz, w, 1.9, d, 'dark', { collide: false });
+      b.cone(0, 12.3, F.front + 1.5, 2.45, 7.2, 'shingles', 4);
+      b.box(0, 19.4, F.front + 1.5, 0.12, 1.6, 0.12, 'trim', { collide: false });
+      b.box(0, 20.3, F.front + 1.5, 0.84, 0.12, 0.12, 'trim', { collide: false });
+      // buttresses down both sides, and between them the windows: lead and coloured glass, panes of it gone
+      for (const sx of [-1, 1]) {
+        for (const dz of [-6.6, -2.2, 2.2, 6.6]) b.box(sx * (F.w / 2 + 0.3), 0, F.cz + dz, 0.6, 3.6, 0.7, 'stone');
+        for (const [dz, c] of [[-4.4, 'stained_a'], [0, 'stained_b'], [4.4, 'stained_a']]) {
+          signAt(b, sx * (F.w / 2 + 0.14), 2.9, F.cz + dz, sx > 0 ? -PI / 2 : PI / 2, 1.25, 2.5, c, { far: true });
+          signAt(b, sx * (F.w / 2 - 0.14), 2.9, F.cz + dz, sx > 0 ? PI / 2 : -PI / 2, 1.25, 2.5, c, {});
+          b.box(sx * (F.w / 2 + 0.16), 1.5, F.cz + dz, 0.12, 0.14, 1.6, 'stone', { collide: false });
+        }
+      }
+      signAt(b, 0, 8.0, F.front - 0.17, 0, 1.3, 2.6, 'stained_b', { far: true });
       for (let r = 0; r < 3; r++) {
-        b.prop('pew', -2.2, F.cz - 3.2 + r * 2.2, r === 1 ? 0.2 : 0, inside);
-        b.prop('pew', 2.2, F.cz - 3.2 + r * 2.2, 0, inside);
+        b.prop('pew', -2.3, F.cz - 3.2 + r * 2.2, r === 1 ? 0.2 : 0, inside);
+        b.prop('pew', 2.3, F.cz - 3.2 + r * 2.2, 0, inside);
       }
       b.prop('altar', -0.4, F.back - 1.6, 0, inside);
       b.loot(-0.4, F.back - 1.6, FLOOR_Y + 1.02);
       cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), PI); // (clear of the vestry door)
-      b.cont(CONT.DUFFEL, 3.2, F.cz - 5, { prop: 'duffel_bag', ry: 1.1, nocollide: true, ly: FLOOR_Y });
-      for (const [gx, gz, sd] of [[7, -5, 0], [8.4, -1.6, 1], [6.8, 2, 2], [-7.4, -3, 1], [-8.2, 1.4, 0]]) b.prop('grave_cross', gx, gz, rng.range(-0.3, 0.3), { ly: PAVE, seed: sd });
-      b.tree(-7, 7, 3, 1.1);
-      b.tree(7.6, 7.4, 4, 0.9);
-      b.prop('ivy', F.R + 0.04, F.cz + 2.6, -PI / 2, { nocollide: true, ly: PAVE });
-      for (let k = 0; k < 7; k++) weed(b, rng.range(-9, 9) < 0 ? rng.range(-9.2, -5.4) : rng.range(5.4, 9.2), rng.range(-8, 9), rng.range(0.7, 1.3));
+      b.cont(CONT.DUFFEL, 3.4, F.cz - 5, { prop: 'duffel_bag', ry: 1.1, nocollide: true, ly: FLOOR_Y });
+      // those who came here at the end: in the pews, on the floor before the altar
+      b.prop('skeleton', -2.3, F.cz - 3.0, PI, { nocollide: true, ly: FLOOR_Y + 0.42, seed: 1 });
+      b.prop('skeleton', 2.6, F.cz + 1.3, PI, { nocollide: true, ly: FLOOR_Y + 0.42, seed: 1 });
+      b.prop('skeleton', 0.6, F.back - 3.4, 0.5, { nocollide: true, ly: FLOOR_Y, seed: 2 });
+      b.prop('blood_pool', 0, F.cz - 1, 1, { nocollide: true, ly: FLOOR_Y });
+      b.prop('ceiling_debris', 1.5, F.cz + 3.6, 2, { nocollide: true, ly: FLOOR_Y, seed: 1 });
+      for (const [gx, gz, sd] of [[7.4, -5, 0], [8.6, -1.6, 1], [7.2, 2, 2], [-7.6, -3, 1], [-8.4, 1.4, 0], [7.8, 5.4, 1], [-7.4, 5, 2]]) b.prop('grave_cross', gx, gz, rng.range(-0.3, 0.3), { ly: PAVE, seed: sd });
+      b.tree(-7.4, 7.6, 3, 1.1);
+      b.tree(7.8, 8.2, 4, 0.9);
+      b.prop('ivy', F.R + 0.04, F.cz + 2.2, -PI / 2, { nocollide: true, ly: PAVE });
+      for (let k = 0; k < 14; k++) weed(b, rng.range(-9, 9) < 0 ? rng.range(-9.2, -5.8) : rng.range(5.8, 9.2), rng.range(-8, 9), rng.range(0.7, 1.3));
       frontage(b, L, F);
+      // its board by the gate
+      b.cyl(-7, PAVE, -L.d / 2 + 1.2, 0.07, 1.9, 'rust', { sides: 6 });
+      signAt(b, -6.2, 1.5, -L.d / 2 + 1.14, 0, 1.9, 0.48, 'church', { back: 0.05 });
       landmarks.push({ x: b.wx(0, F.cz), z: b.wz(0, F.cz), name: "St. Brendan's" });
     },
-    // a filling station: pumps under a canopy on the street, the kiosk behind them
+    // a filling station: pumps under a canopy on the street with the name on its edge, the kiosk behind them, the
+    // board of prices on its pole at the corner
     gas(b, L) {
-      b.room(0, 5.5, 10, 6, 3.2, 'brick', { n: [door(5, 1.4), cw(2, 2.4, 0.9, 2.4), cw(8, 2.4, 0.9, 2.4)], e: [door(3, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-      b.box(-2.6, FLOOR_Y, 4.6, 3.4, 1.0, 0.7, 'planks');
-      b.loot(-2.6, 4.6, FLOOR_Y + 1.02);
+      const R = groundRoom(b, 0, 5.5, 10, 6, 3.2, 'brick', { n: [door(5, 1.4), cw(2, 2.4, 0.9, 2.4), cw(8, 2.4, 0.9, 2.4)], e: [door(3, 1.1)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true });
+      void R;
+      b.prop('checkout_counter', -2.6, 4.6, 0, inside);
+      b.loot(-2.6, 4.6, FLOOR_Y + 0.98);
       b.cont(CONT.SHELF, -2.8, 8.065, { prop: 'shelf', ry: PI, ly: FLOOR_Y });
       b.cont(CONT.SHELF, 0.2, 8.065, { prop: 'shelf', ry: PI, ly: FLOOR_Y, seed: 1 });
       b.cont(CONT.FRIDGE, 3, 7.955, { prop: 'fridge', ry: PI, ly: FLOOR_Y });
-      for (const px of [-4.2, 4.2]) for (const pz of [-2.4, -6.6]) b.cyl(px, PAVE, pz, 0.18, 4.4, 'metal', { sides: 8 });
-      b.box(0, 4.5, -4.5, 10.6, 0.5, 6.6, 'metal', { collide: false });
-      b.roofSpan(0, -4.5, 5.3, 3.3, 4.5, 0.5);
-      b.prop('gas_pump', -1.7, -4.5, 0, { ly: PAVE });
-      b.prop('gas_pump', 1.7, -4.5, 0, { ly: PAVE, seed: 1 });
+      b.prop('stock_spill', 1.4, 5.4, 1, { nocollide: true, ly: FLOOR_Y });
+      b.prop('ceiling_lamp', 0, 5.5, 0, { nocollide: true, ly: 3.2, seed: 1 });
+      for (const px of [-4.2, 4.2]) for (const pz of [-2.4, -6.6]) b.cyl(px, PAVE, pz, 0.18, 4.3, 'metal', { sides: 8 });
+      b.box(0, 4.3, -4.5, 10.8, 0.95, 6.8, 'metal', { collide: false });
+      b.roofSpan(0, -4.5, 5.4, 3.4, 4.3, 0.95);
+      signAt(b, 0, 4.78, -7.92, 0, 3.6, 0.9, 'gas', { far: true });
+      signAt(b, -5.42, 4.78, -4.5, PI / 2, 3.6, 0.9, 'gas', { far: true });
+      signAt(b, 5.42, 4.78, -4.5, -PI / 2, 3.6, 0.9, 'gas', { far: true });
+      b.box(0, PAVE, -4.5, 5.2, 0.16, 1.3, 'concrete'); // the island the pumps stand on
+      b.prop('gas_pump', -1.7, -4.5, 0, { ly: PAVE + 0.16 });
+      b.prop('gas_pump', 1.7, -4.5, 0, { ly: PAVE + 0.16, seed: 1 });
       b.wreck('car_burnt', 7.2, -4.2, 0.1, { ly: PAVE, trunk: false });
-      b.wreck('car_wreck', -7.2, -3.6, PI - 0.15, { ly: PAVE });
+      b.wreck('car_open', -7.4, -3.6, PI - 0.15, { ly: PAVE });
       b.cont(CONT.DUMPSTER, -7.4, 6.6, { prop: 'dumpster', ry: PI / 2, ly: PAVE });
       b.prop('tire_pile', 8, 5, 0, { ly: PAVE });
       b.prop('litter', 0, -1, 1, { nocollide: true, ly: PAVE });
-      for (let k = 0; k < 4; k++) weed(b, rng.range(-9, 9), rng.range(8.9, 9.4), rng.range(0.7, 1.2));
+      b.prop('traffic_cones', 3.6, -7.2, 1, { nocollide: true, ly: PAVE });
+      // the prices, on a pole
+      b.cyl(-8.6, PAVE, -8.6, 0.13, 3.4, 'rust', { sides: 6 });
+      signAt(b, -8.6, 4.8, -8.72, 0.25, 1.4, 2.8, 'gasprice', { far: true, back: 0.2, two: true });
+      for (let k = 0; k < 8; k++) weed(b, rng.range(-9, 9), rng.range(8.9, 9.4), rng.range(0.7, 1.2));
       frontage(b, L, null, true);
     },
-    // THE RIALTO: a picture house - the lobby on the street, the hall behind it, the screen still up
+    // THE RIALTO: a picture house - the lobby on the street under its marquee, the hall behind it, the screen still up
     cinema(b, L) {
       const F = frame(L, 30, 15);
-      b.room(0, F.cz, F.w, F.d, 7, 'brick', { n: [gap(15, 5, 3)], s: [door(3, 1.2), door(27, 1.2)], w: [door(11, 1.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
-      b.wall(F.L, F.front + 4.6, F.R, F.front + 4.6, 7, 0.2, 'brick', [door(8, 1.6), door(22, 1.6)]);
-      b.box(0, 3.4, F.front - 0.95, 14, 1.5, 1.6, 'paint', { collide: false }); // the marquee
-      b.box(0, 4.9, F.front - 0.2, 5, 3.4, 0.3, 'paint', { collide: false });
-      b.box(-9, FLOOR_Y, F.front + 2.6, 5, 1.05, 0.8, 'planks');
-      b.loot(-9, F.front + 2.6, FLOOR_Y + 1.07);
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 7, 'brick', { n: [gap(15, 5, 3)], s: [door(3, 1.2), door(27, 1.2)], w: [door(11, 1.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks', tint: 4 });
+      partition(b, R, F.L, F.front + 4.6, F.R, F.front + 4.6, 7, 'brick', [door(8, 1.6), door(22, 1.6)]);
+      R.ceiling = 'plaster';
+      // its front: piers the height of it, a stepped head over the middle, a course under the parapet
+      for (const px of [-14.6, -9.4, -4.2, 4.2, 9.4, 14.6]) b.box(px, PAVE, F.front - 0.2, 0.7, 7.5, 0.3, 'brick', { collide: false });
+      b.box(0, 7.3, F.front + 0.1, 11, 1.5, 0.5, 'brick', { collide: false });
+      b.box(0, 8.8, F.front + 0.1, 5.4, 0.9, 0.5, 'brick', { collide: false });
+      b.box(0, 6.7, F.front - 0.24, 30.4, 0.3, 0.3, 'concrete', { collide: false });
+      // the marquee: a box out over the pavement, the letters that are left on it; the name down a blade above it
+      b.box(0, 3.3, F.front - 1.45, 6.6, 1.7, 2.6, 'metal', { collide: false });
+      signAt(b, 0, 4.15, F.front - 2.77, 0, 6.2, 1.55, 'marquee', { far: true });
+      signAt(b, -3.32, 4.15, F.front - 1.45, PI / 2, 2.4, 0.6, 'marquee', {});
+      signAt(b, 3.32, 4.15, F.front - 1.45, -PI / 2, 2.4, 0.6, 'marquee', {});
+      signAt(b, 0, 7.6, F.front - 0.9, PI / 2, 1.25, 5.0, 'rialto', { far: true, back: 0.3, two: true });
+      // what was showing, in its cases either side of the doors
+      for (const [px, c] of [[-6.8, 'poster_a'], [-5.2, 'poster_c'], [5.2, 'poster_b'], [6.8, 'poster_d']]) signAt(b, px, 1.75, F.front - 0.14, 0, 1.0, 1.5, c, {});
+      b.prop('checkout_counter', -9, F.front + 2.6, 0, inside); // the box office
+      b.loot(-9, F.front + 2.6, FLOOR_Y + 0.98);
       cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.front + 2.2, -PI / 2);
       cont(b, CONT.CABINET, 'cabinet', leftX(F, 0.55), F.front + 2, PI / 2);
+      extra(b, 'vending_machine', 9.4, F.front + 4.6 - 0.09 - WALL - 0.4, 0, inside);
+      extra(b, 'vending_machine', 10.6, F.front + 4.6 - 0.09 - WALL - 0.4, 0, { ly: FLOOR_Y, seed: 1 });
       b.prop('litter', 3, F.front + 2.4, 1, { nocollide: true, ly: FLOOR_Y });
-      for (let r = 0; r < 3; r++) for (const px of [-10.2, -7, -3.8, 3.8, 7, 10.2]) if ((r * 7 + px) % 5) b.prop('pew', px, F.front + 7 + r * 2.1, rng.range(-0.06, 0.06), { ly: FLOOR_Y, seed: r });
-      b.box(0, 1.6, F.back - 0.5, 20, 4.6, 0.12, 'clapboard', { collide: false }); // the screen
+      b.prop('stock_spill', -5, F.front + 2.2, 2, { nocollide: true, ly: FLOOR_Y });
+      // the hall: rows of seats facing the screen
+      for (let r = 0; r < 3; r++) for (const px of [-11, -8.6, -6.2, -3.8, 3.8, 6.2, 8.6, 11]) if ((r * 7 + ((px * 10) | 0)) % 5) b.prop('cinema_seats', px, F.front + 6.9 + r * 2.1, PI + rng.range(-0.03, 0.03), { ly: FLOOR_Y, seed: r });
+      b.box(-2, 1.6, F.back - 0.5, 16, 4.6, 0.12, 'clapboard', { collide: false }); // the screen, a corner of it torn down
+      b.box(7.4, 2.2, F.back - 0.6, 3.4, 3.4, 0.1, 'clapboard', { rz: -0.5, collide: false });
       b.cont(CONT.DUFFEL, 0, F.front + 8.2, { prop: 'duffel_bag', ry: 0.6, nocollide: true, ly: FLOOR_Y });
       b.cont(CONT.DUFFEL, -12.6, F.back - 1.6, { prop: 'duffel_bag', ry: 2, nocollide: true, ly: FLOOR_Y, seed: 1 });
       b.prop('corpse', 0.4, F.front + 11.4, 1, { nocollide: true, ly: FLOOR_Y });
+      b.prop('skeleton', -8.6, F.front + 8.9, 0, { nocollide: true, ly: FLOOR_Y + 0.4, seed: 1 });
       b.loot(12.6, F.back - 1.6, FLOOR_Y + 0.02);
       b.loot(0, F.back - 2, FLOOR_Y + 0.02);
       mess(b, F, 14);
-      scars(b, 0, F.cz, F.w, F.d, 0, 7);
       b.prop('fallen_sign', 4, F.front - 0.9, 0.2, { nocollide: true, ly: PAVE });
       b.wreck('car_wreck', 18.4, F.cz + 1, 0.05, { ly: PAVE });
       b.cont(CONT.DUMPSTER, -18.2, F.cz + 3, { prop: 'dumpster', ry: PI / 2, ly: PAVE });
@@ -1419,19 +1867,30 @@ export function createMainland(seed) {
     subway(b, L) {
       b.prop('subway_entrance', 0, -3, 0, { ly: PAVE });
       b.prop('bus_shelter', -6.2, -L.d / 2 + 1.4, 0, { ly: PAVE });
-      b.room(5.8, 5.4, 5, 4, 2.8, 'tin', { w: [door(2, 1.1)], n: [cw(2.5, 2, 1, 2)] }, { roof: 'flat', roofMat: 'tin' });
+      // the station's name over the head of the stairs, on two posts
+      for (const px of [-1.9, 1.9]) b.cyl(px, PAVE, -6.6, 0.07, 3.1, 'rust', { sides: 6 });
+      signAt(b, 0, 2.95, -6.66, 0, 3.6, 0.9, 'subway', { far: true, back: 0.08, two: true });
+      const R = groundRoom(b, 5.8, 5.4, 5, 4, 2.8, 'tin', { w: [door(2, 1.1)], n: [cw(2.5, 2, 1, 2)] }, { roof: 'flat', roofMat: 'tin', plain: true });
+      void R;
       b.cont(CONT.CABINET, 7.4, 6.4, { prop: 'cabinet', ry: -PI / 2, ly: FLOOR_Y });
       b.loot(5.4, 4.6, FLOOR_Y + 0.02);
-      b.prop('pew', -6.4, 4, PI / 2, { ly: PAVE });
-      b.prop('pew', 0.4, 7.8, 0, { ly: PAVE, seed: 1 });
-      for (const [tx, tz] of [[-7.4, 8], [-3.4, 3.4], [7.6, -4.6]]) b.tree(tx, tz, rng.chance(0.5) ? 3 : 5, rng.range(0.7, 1.1));
+      extra(b, 'turnstiles', -5.6, 1.6, PI / 2, { ly: PAVE });
+      extra(b, 'street_bench', -6.6, 6.4, PI / 2, { ly: PAVE });
+      extra(b, 'street_bench', 0.4, 8.2, PI, { ly: PAVE, seed: 1 });
+      extra(b, 'trash_bin', 2.6, 8.1, 0, { ly: PAVE });
+      extra(b, 'newspaper_box', 7.6, -7.6, 0, { ly: PAVE });
+      extra(b, 'phone_booth', -8.2, -3.4, PI / 2, { ly: PAVE });
+      for (const [tx, tz] of [[-7.4, 8.6], [-3.4, 3.8], [7.6, -4.6]]) b.tree(tx, tz, rng.chance(0.5) ? 3 : 5, rng.range(0.7, 1.1));
       b.prop('suitcases', 3.4, -6.4, 0.8, { nocollide: true, ly: PAVE });
       b.prop('litter', -3, -6.5, 2, { nocollide: true, ly: PAVE });
       b.prop('litter', 2, 2, 0.3, { nocollide: true, ly: PAVE, seed: 1 });
+      b.prop('paper_scatter', -1, 4.4, 1, { nocollide: true, ly: PAVE });
+      b.prop('stroller', 4.6, 2.4, 2.2, { nocollide: true, ly: PAVE });
       b.cont(CONT.DUFFEL, -3.2, 0.6, { prop: 'duffel_bag', ry: 0.3, nocollide: true, ly: PAVE });
       b.prop('streetlight', 8.6, -8.6, PI, { ly: PAVE });
       b.prop('corpse', 4.4, 0, 2, { nocollide: true, ly: PAVE });
-      for (let k = 0; k < 6; k++) weed(b, rng.range(-9, 9), rng.range(-9, 9), rng.range(0.6, 1.2));
+      b.prop('skeleton', -2.4, -8.4, 1, { nocollide: true, ly: PAVE, seed: 2 });
+      for (let k = 0; k < 10; k++) weed(b, rng.range(-9, 9), rng.range(-9, 9), rng.range(0.6, 1.2));
       landmarks.push({ x: b.wx(0, -3), z: b.wz(0, -3), name: 'Harbour Street Station' });
     },
     // a car park nobody drove out of
@@ -1440,40 +1899,128 @@ export function createMainland(seed) {
       const cols = Math.max(2, Math.floor((L.w - 3) / 3.4));
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          if (!rng.chance(0.42)) continue;
+          if (!rng.chance(0.5)) continue;
           const t = rng();
-          b.wreck(t < 0.55 ? 'car_wreck' : t < 0.8 ? 'car_burnt' : 'pickup_truck', -L.w / 2 + 2.6 + c * 3.4 + rng.range(-0.2, 0.2), -L.d / 2 + 5 + r * 7, (rng.chance(0.5) ? 0 : PI) + rng.range(-0.1, 0.1), { trunk: rng.chance(0.45), ly: PAVE });
+          b.wreck(t < 0.4 ? 'car_wreck' : t < 0.62 ? 'car_burnt' : t < 0.8 ? 'car_open' : t < 0.9 ? 'van_wreck' : 'pickup_truck', -L.w / 2 + 2.6 + c * 3.4 + rng.range(-0.2, 0.2), -L.d / 2 + 5 + r * 7, (rng.chance(0.5) ? 0 : PI) + rng.range(-0.1, 0.1), { trunk: t < 0.4 && rng.chance(0.45), ly: PAVE });
         }
       }
       b.prop('streetlight', L.w / 2 - 1, L.d / 2 - 1, PI, { ly: PAVE });
       b.loot(0, L.d / 2 - 2, PAVE + 0.02);
-      for (let k = 0; k < 6; k++) weed(b, rng.range(-L.w / 2 + 1, L.w / 2 - 1), rng.range(-L.d / 2 + 1, L.d / 2 - 1) * 0 + (k % 2 ? 1 : -1) * (L.d / 2 - 0.6), rng.range(0.6, 1.2));
-      b.prop('litter', -L.w / 4, 1.4, 1, { nocollide: true, ly: PAVE });
-      b.prop('shopping_cart', L.w / 4, 1.6, 2, { nocollide: true, ly: PAVE });
+      for (let k = 0; k < 12; k++) weed(b, rng.range(-L.w / 2 + 1, L.w / 2 - 1), (k % 2 ? 1 : -1) * (L.d / 2 - 0.6), rng.range(0.6, 1.2));
+      for (let k = 0; k < 5; k++) b.prop(['litter', 'shopping_cart', 'glass_shards', 'suitcases', 'skeleton'][k], rng.range(-L.w / 2 + 2, L.w / 2 - 2), 1.5 + rng.range(-0.4, 0.4), rng.range(0, 6), { nocollide: true, ly: PAVE, seed: k });
+      // the board at its way in
+      b.cyl(-L.w / 2 + 1, PAVE, -L.d / 2 + 0.8, 0.07, 2.7, 'rust', { sides: 6 });
+      signAt(b, -L.w / 2 + 2.1, 2.5, -L.d / 2 + 0.74, 0, 2.2, 0.55, 'parking', { back: 0.05 });
+    },
+    // a warehouse: one tall hall behind two loading doors, a loft of windows over it, the office in its corner
+    warehouse(b, L) {
+      const F = frame(L, 38, 15);
+      const hi = (at) => ({ at, w: 2.6, y0: 3.3, y1: 5.3, glass: rng.chance(0.4) });
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 6.2, 'brick', { n: [gap(8, 4.2, 4.4), door(19, 1.4), gap(30, 4.2, 4.4), hi(14), hi(24)], s: [door(3, 1.2), hi(12), hi(19), hi(26)], e: [hi(7.5)], w: [hi(7.5)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', plain: true });
+      partition(b, R, F.R - 7, F.back - 5.4, F.R, F.back - 5.4, 3, 'concrete', [door(2, 1.2)]);
+      partition(b, R, F.R - 7, F.back - 5.4, F.R - 7, F.back, 3, 'concrete');
+      block(b, 0, F.cz, F.w, F.d, 6.5, 1, 3.6, 'warehouse', 'brick', { top: rng.chance(0.4) ? 'slab' : undefined, wear: 0.9 });
+      // the doors, run up and stuck there
+      for (const dx of [-11, 11]) b.box(dx, 3.7, F.front - 0.05, 4.2, 0.9, 0.1, 'tin_rust', { collide: false });
+      // the hall: racks down one side, what was on them, a container nobody came back for
+      for (const dx of [2.2, 4.6, 7.0]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI, { seed: dx | 0 });
+      cont(b, CONT.CRATE, 'crate', F.L + 2, F.cz - 2, 0.3);
+      b.cont(CONT.FREIGHT, 4, F.cz + 3.4, { prop: 'crate', ry: 0.5, ly: FLOOR_Y, seed: 1 });
+      b.prop('shipping_container', -3, F.cz + 2.4, PI / 2 + 0.06, { ly: FLOOR_Y, seed: rng.int(0, 2) });
+      for (const [px, pz] of [[-13, F.cz - 3], [-12.4, F.cz + 0.6], [8, F.cz - 3.4], [10.4, F.cz + 3.8]]) b.prop('pallet', px, pz, rng.range(0, 3), inside);
+      b.prop('pallet', -13, F.cz - 3, 0.3, { ly: FLOOR_Y + 0.15 });
+      b.prop('barrel', 12.4, F.cz - 4.6, 0, inside);
+      b.prop('barrel', 13.4, F.cz - 4.4, 0, { ly: FLOOR_Y, seed: 1 });
+      b.prop('tire_pile', 6.4, backZ(F, 1.5), 0, inside);
+      b.loot(-8, F.cz - 3, FLOOR_Y + 0.02);
+      b.loot(2, F.cz - 4, FLOOR_Y + 0.02);
+      // the office
+      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), F.back - 3, -PI / 2);
+      extra(b, 'office_desk', F.R - 3.6, F.back - 1.2, PI, inside);
+      extra(b, 'filing_cabinet', F.R - 6.2, F.back - WALL - 0.6, PI, inside);
+      b.prop('office_chair', F.R - 3.4, F.back - 2.4, 2, { nocollide: true, ly: FLOOR_Y });
+      b.loot(F.R - 2, F.back - 4, FLOOR_Y + 0.02);
+      mess(b, F, 12);
+      // out front: a truck that was backing in
+      yard(b, F, L);
+      signAt(b, 0, 5.4, F.front - 0.14, 0, 9, 6.5, 'ghost', { far: true });
+    },
+    // What the tower's shaft fell on: the buildings that stood here are under it (the streets lay the shaft's
+    // lengths, and their rubble; inFall: where). What it missed of them: stumps of walls, heaps, what burnt after.
+    crushed(b, L, inFall) {
+      const pts = [];
+      for (let k = 0; k < 26; k++) pts.push([rng.range(-L.w / 2 + 2.6, L.w / 2 - 2.6), rng.range(-L.d / 2 + 2.6, L.d / 2 - 2.6), rng(), rng()]);
+      const clear = (lx, lz, r) => !inFall(b.wx(lx, lz), b.wz(lx, lz), r);
+      // walls along the lot's edges where the shaft did not land
+      for (const [x0, z0, x1, z1] of [[-L.w / 2 + 1.2, L.d / 2 - 1.2, L.w / 2 - 1.2, L.d / 2 - 1.2], [-L.w / 2 + 1.2, -L.d / 2 + 1.2, -L.w / 2 + 1.2, L.d / 2 - 1.6], [L.w / 2 - 1.2, -L.d / 2 + 1.2, L.w / 2 - 1.2, L.d / 2 - 1.6], [-L.w / 2 + 1.6, -L.d / 2 + 1.2, L.w / 2 - 1.6, -L.d / 2 + 1.2]]) {
+        const n = Math.max(1, Math.round(Math.hypot(x1 - x0, z1 - z0) / 7));
+        for (let k = 0; k < n; k++) {
+          const [a0, a1] = [k / n, (k + 0.86) / n];
+          const p = [x0 + (x1 - x0) * a0, z0 + (z1 - z0) * a0, x0 + (x1 - x0) * a1, z0 + (z1 - z0) * a1];
+          const H = rng.range(2.5, 8);
+          const keep = rng.chance(0.75);
+          if (!keep || !clear((p[0] + p[2]) / 2, (p[1] + p[3]) / 2, 4.5)) continue;
+          jagged(b, ...p, PAVE, H, 'brick', true, { inner: 'plaster', soot: rng.chance(0.4) });
+        }
+      }
+      let n = 0;
+      for (const [lx, lz, r1, r2] of pts) {
+        if (!clear(lx, lz, 3.4)) continue;
+        if (n < 3 && heaps.every((h) => Math.hypot(h.x - b.wx(lx, lz), h.z - b.wz(lx, lz)) > 7)) {
+          heap(b, lx, lz, 2 + r1 * 1.6, 1.8 + r2 * 1.4, 0.9 + r1 * 0.9, { brick: 0.6, ry: r2 * 3 });
+          n++;
+        } else b.prop(['debris', 'litter', 'glass_shards', 'skeleton', 'debris', 'bones'][(r1 * 6) | 0], lx, lz, r2 * 6, { nocollide: true, ly: PAVE, seed: (r2 * 3) | 0 });
+        weed(b, lx + 1, lz - 1, 0.7 + r1 * 0.6);
+      }
+      // (a bag somebody left, in whichever corner of it nothing came down on)
+      const corner = [[1, 1], [-1, 1], [1, -1], [-1, -1]].find(([sx, sz]) => clear(sx * (L.w / 2 - 2.6), sz * (L.d / 2 - 2.6), 1.5) && heaps.every((h) => Math.hypot(h.x - b.wx(sx * (L.w / 2 - 2.6), sz * (L.d / 2 - 2.6)), h.z - b.wz(sx * (L.w / 2 - 2.6), sz * (L.d / 2 - 2.6))) > Math.max(h.rx, h.rz) + 1.6));
+      if (corner) {
+        b.cont(CONT.DUFFEL, corner[0] * (L.w / 2 - 2.6), corner[1] * (L.d / 2 - 2.6), { prop: 'duffel_bag', ry: 0.5, nocollide: true, ly: PAVE });
+        b.loot(corner[0] * (L.w / 2 - 3.4), corner[1] * (L.d / 2 - 2.6), PAVE + 0.02);
+      }
+      smoke(b, 0, 2, 0);
     },
   };
   // the set places first, on lots drawn at random, then whatever the seed deals for the rest
+  let fall = null; // the tower that fell: { dir, xs, zc, lot, inFall(x, z, pad) }
   {
     const order = lots.map((_, i) => i);
     for (let i = order.length - 1; i > 0; i--) {
       const j = rng.int(0, i);
       [order[i], order[j]] = [order[j], order[i]];
     }
-    const big = order.filter((i) => lots[i].w > 40 && lots[i].d > 40);
-    const long = order.filter((i) => lots[i].w > 40 && lots[i].d < 40);
-    const small = order.filter((i) => lots[i].w < 40);
     const plan = new Map();
+    // (the tower whose shaft came down: the first big lot. It fell across the street beside its block - east, or
+    // west from the city's last column - onto what stood on the far side: those lots are under it.)
+    const fi = order.find((i) => lots[i].w > 40 && lots[i].d > 40);
+    if (fi !== undefined) {
+      const T = lots[fi];
+      const dir = T.bi < GRID - 1 ? 1 : -1;
+      const xs = city.x - G2 + (T.bi + (dir > 0 ? 1 : 0)) * PITCH;
+      if (Math.abs(Math.sin(T.ry)) > 0.5) T.ry = 0; // (it faces north or south: the shaft fell along its flank, clear of its doors)
+      // (the shaft stood in the middle of the tower: SETBACK and the tower's depth put that 4.8 m toward the lot's front)
+      const zc = T.z + Math.cos(T.ry) * -4.8;
+      T.fell = true;
+      plan.set(fi, 'tower');
+      fall = { dir, xs, zc, lot: T, bi: T.bi + (dir > 0 ? 1 : 0), bj: T.bj, inFall: (x, z, pad = 0) => (x - xs) * dir > 5 - pad && (x - xs) * dir < 28.5 + pad && Math.abs(z - zc) < 10.5 + pad };
+      fallenAt = [xs, city.z - G2 + (T.bj + 0.5) * PITCH];
+      lots.forEach((L, i) => {
+        if (L.bi !== T.bi + dir || L.bj !== T.bj) return;
+        // (does the lot reach into where the shaft lies?)
+        const [hx, hz] = Math.abs(Math.sin(L.ry)) > 0.5 ? [L.d / 2, L.w / 2] : [L.w / 2, L.d / 2];
+        const near = dir > 0 ? L.x - hx : L.x + hx;
+        if ((near - xs) * dir < 27 && L.z - hz < zc + 10.5 && L.z + hz > zc - 10.5) plan.set(i, 'crushed');
+      });
+    }
+    const left = order.filter((i) => !plan.has(i));
+    const big = left.filter((i) => lots[i].w > 40 && lots[i].d > 40);
+    const long = left.filter((i) => lots[i].w > 40 && lots[i].d < 40);
+    const small = left.filter((i) => lots[i].w < 40);
     const deal = (from, list) => list.forEach((what) => from.length && plan.set(from.shift(), what));
     // (two of each: the towers, and the parts shops the plane's magneto may be in)
-    deal(big, ['tower', 'tower', 'hospital', 'collapse', 'tower', 'depot']);
+    deal(big, ['hospital', 'collapse', 'depot', 'tower', 'tower']);
     deal(small, ['aero', 'aero', 'office', 'office', 'office', 'police', 'pharmacy', 'hardware', 'church', 'gas', 'subway']);
-    deal(long, ['terrace', 'block', 'carpark', 'cinema', 'terrace', 'block']);
-    // (the tower whose top came down: the first dealt. It lies across the street east of its block.)
-    const fallenLot = lots[Math.min(...[...plan].filter(([, what]) => what === 'tower').map(([i]) => i))] || null;
-    if (fallenLot) {
-      fallenLot.fell = true;
-      fallenAt = [city.x - G2 + (fallenLot.bi + 1) * PITCH, city.z - G2 + (fallenLot.bj + 0.5) * PITCH];
-    }
+    deal(long, ['carpark', 'cinema', 'terrace', 'block', 'warehouse', 'terrace', 'block']);
     const pick = (W) => {
       let r = rng() * W.reduce((s, e) => s + e[1], 0);
       for (const [t, wt] of W) if ((r -= wt) <= 0) return t;
@@ -1486,33 +2033,34 @@ export function createMainland(seed) {
       L.what = what;
       if (what === 'aero') landmarks.push({ x: L.x, z: L.z, name: 'Calder Aero Supply' });
       if (what === 'police') landmarks.push({ x: L.x, z: L.z, name: 'Port Calder Police' });
-      if (what === 'aero') BUILD.shop(b, L, 'aero', 'tin');
-      else if (FILL[what]) BUILD.shop(b, L, what, SHOPS.find((s) => s[0] === what)[1]);
+      if (SHOP[what]) BUILD.shop(b, L, what);
       else if (what === 'office') BUILD.tower(b, L, false);
       else if (what === 'tower') BUILD.tower(b, L, true);
+      else if (what === 'crushed') BUILD.crushed(b, L, fall.inFall);
       else BUILD[what](b, L);
     });
   }
-  // The streets. Wrecks where they stopped, burnt out as often as not; lamps along the kerbs; rubbish, luggage and
-  // what fell off the buildings; slabs of the roadway heaved up; weeds along every kerb and saplings in the cracks.
-  // A few stretches are worse: a roadblock somebody held (barriers a car cannot pass and a survivor can), a jam
-  // that never moved, a hole the street fell into, and the top of a tower lying across the road from kerb to
-  // kerb - climbed over by its rubble, or gone round. Whatever would stand in something already there is left out,
-  // after its draws.
+  // The streets. Every few metres of them: the traffic that stopped for good - wrecks nose to tail, doors standing
+  // open, burnt-out shells, one run up onto the pavement or into a shop front - lamps, hydrants, meters, bins,
+  // benches, letter boxes and booths along the kerbs, rubbish, paper and broken glass, what people carried and
+  // dropped, the dead where they fell, slabs of the roadway heaved up, weeds along every kerb and saplings in the
+  // cracks. A few stretches are worse: a roadblock the army held to the last (wire, sandbags, a knocked-out
+  // carrier, its dead), a jam that never moved, a hole the street fell into, and the shaft of a tower lying across
+  // the road and the block beyond - climbed through where it broke, or gone round. Whatever would stand in
+  // something already there is left out, after its draws.
   {
     const b = new Builder(city.x, city.z, 0, cityH);
     b.zone = ZONE.CITY;
     b.ground = true; // (the roadway lies a little under the city's level: what is on it stands on the ground)
     const free = (type, lx, lz, ry) => !propBlocked(type, b.wx(lx, lz), b.wz(lx, lz), ry);
-    const litter = (type, lx, lz, o = {}) => b.prop(type, lx, lz, rng.range(0, 6), { nocollide: true, seed: rng.int(0, 2), ...o });
     // which stretch is which: i, the street; k, the block along it; ns, which way it runs
     const key = (i, k, ns) => `${i}:${k}:${ns ? 1 : 0}`;
     const kinds = new Map();
     // (where a hole would be dug in a stretch: nothing that came down off a lot lies on its lip)
     const holeAt = (i, k, ns) => (ns ? [city.x - G2 + i * PITCH, city.z - G2 + (k + 0.5) * PITCH + 6] : [city.x - G2 + (k + 0.5) * PITCH + 6, city.z - G2 + i * PITCH]);
-    const heaped = (i, k, ns) => props.some((q) => q.type === 'rubble_pile' && Math.hypot(q.x - holeAt(i, k, ns)[0], q.z - holeAt(i, k, ns)[1]) < 12);
+    const heaped = (i, k, ns) => heaps.some((q) => Math.hypot(q.x - holeAt(i, k, ns)[0], q.z - holeAt(i, k, ns)[1]) < 14);
     const mark = (kind, n) => {
-      for (let tries = 0; n > 0 && tries < 60; tries++) {
+      for (let tries = 0; n > 0 && tries < 80; tries++) {
         const ns = rng.chance(0.5);
         const i = rng.int(0, GRID);
         const k = rng.int(0, GRID - 1);
@@ -1521,9 +2069,7 @@ export function createMainland(seed) {
         n--;
       }
     };
-    // the tower whose top came down: the street east of the first big tower's block
-    const tower = lots.find((L) => L.fell);
-    if (tower) kinds.set(key(tower.bi + 1, tower.bj, true), 'fallen');
+    if (fall) kinds.set(key(fall.bi, fall.bj, true), 'fallen');
     mark('block', ROADBLOCKS);
     mark('jam', JAMS);
     mark('hole', SINKHOLES);
@@ -1541,6 +2087,14 @@ export function createMainland(seed) {
         }
       }
     }
+    const pickW = (W) => {
+      let r = rng() * W.reduce((s, e) => s + e[1], 0);
+      for (const [t, wt] of W) if ((r -= wt) <= 0) return t;
+      return W[0][0];
+    };
+    const TRAFFIC = [['car_wreck', 3], ['car_burnt', 2.4], ['car_open', 2.8], ['pickup_truck', 1.1], ['van_wreck', 1.1], ['ambulance', 0.3], ['box_truck', 0.45]];
+    const LITTER = ['litter', 'litter', 'paper_scatter', 'paper_scatter', 'glass_shards', 'glass_shards', 'debris', 'suitcases', 'bicycle', 'stroller', 'skeleton', 'corpse', 'bones', 'traffic_cones', 'shopping_cart', 'blood_pool', 'litter', 'debris'];
+    const hasTrunk = (type) => type === 'car_wreck' || type === 'car_open';
     for (let i = 0; i <= GRID; i++) {
       for (let k = 0; k < GRID; k++) {
         for (const ns of [true, false]) {
@@ -1549,143 +2103,283 @@ export function createMainland(seed) {
           const m = -G2 + (k + 0.5) * PITCH;
           const at = (along, across) => (ns ? [o + across, m + along] : [m + along, o + across]);
           const yaw = ns ? 0 : PI / 2;
+          // which way a thing is turned for its front (-Z) to look down the street (sign of along), or across it
+          // toward its middle (from the side `sgn` of it)
+          const faceAlong = (sign) => (ns ? (sign > 0 ? PI : 0) : sign > 0 ? -PI / 2 : PI / 2);
+          const faceIn = (sgn) => (ns ? (sgn * PI) / 2 : sgn > 0 ? 0 : PI);
           const kind = kinds.get(key(i, k, ns));
-          // weeds along both kerbs, whatever else is here
-          for (let n = rng.int(4, 7); n > 0; n--) weed(b, ...at(rng.range(-21, 21), (rng.chance(0.5) ? 1 : -1) * rng.range(5.2, 5.9)), rng.range(0.5, 1.1));
-          const [lx, lz] = at(-20, 5.1);
-          if (free('streetlight', lx, lz, 0) && kind !== 'fallen') b.prop('streetlight', lx, lz, ns ? PI / 2 : 0); // (its arm out over the roadway)
-          if (kind === 'block') {
-            // a roadblock: three barriers with a gap a body gets through, wire, sandbags and a crate behind them
-            const s0 = rng.range(-8, 8);
-            for (const across of [-4.4, -1.3, 4.4]) {
-              const [x, z] = at(s0, across);
-              if (free('jersey_barrier', x, z, yaw)) b.prop('jersey_barrier', x, z, yaw);
+          // (the paving of a block stands PAVE over the city's level from 3.7 m off a street's middle - where there is
+          // a block: the outer side of an edge street is a verge. What is put on it stands on it.)
+          const onPave = (across) => (Math.abs(across) > 3.75 && (across > 0 ? i < GRID : i > 0) ? { ly: PAVE } : {});
+          const litter = (type, along, across, o2 = {}) => b.prop(type, ...at(along, across), rng.range(0, 6), { nocollide: true, seed: rng.int(0, 2), ...onPave(across), ...o2 });
+          const put = (type, along, across, ry, o2 = {}) => extra(b, type, ...at(along, across), ry, { ...onPave(across), ...o2 });
+          const car = (type, along, across, ry, trunk = false) => {
+            const [x, z] = at(along, across);
+            if (!PROPS[type] || !fits(b, type, x, z, ry, onPave(across).ly ?? 0)) return false;
+            b.wreck(type, x, z, ry, { trunk: trunk && hasTrunk(type), zone: ZONE.ROADSIDE, ...onPave(across) });
+            return true;
+          };
+          // weeds along both kerbs and up the middle of the road, whatever else is here
+          for (let n = rng.int(7, 11); n > 0; n--) weed(b, ...at(rng.range(-21, 21), (rng.chance(0.5) ? 1 : -1) * rng.range(3.5, 3.95)), rng.range(0.5, 1.1));
+          for (let n = rng.int(2, 4); n > 0; n--) weed(b, ...at(rng.range(-21, 21), rng.range(-0.5, 0.5)), rng.range(0.25, 0.45));
+          if (kind === 'fallen') continue; // (laid after the rest: below)
+          // the kerbs: a lamp at either end, meters down one side, and what a city sets along its pavements
+          {
+            const [lx, lz] = at(-20, 4.5);
+            if (free('streetlight', lx, lz, 0)) b.prop('streetlight', lx, lz, ns ? PI / 2 : 0, onPave(4.5)); // (its arm out over the roadway)
+            const [rx, rz] = at(14, -4.5);
+            const there = rng.chance(0.7);
+            if (there && free('streetlight', rx, rz, 0)) b.prop('streetlight', rx, rz, ns ? -PI / 2 : PI, onPave(-4.5));
+            const side = rng.chance(0.5) ? 1 : -1;
+            for (let a = -15; a <= 15; a += 6) {
+              const here = rng.chance(0.6);
+              if (here) put('parking_meter', a + rng.range(-0.4, 0.4), side * 4.15, faceIn(side) + rng.range(-0.2, 0.2));
             }
-            const [sx, sz] = at(s0 + 2.2, -3.2);
-            if (free('sandbags', sx, sz, yaw)) b.prop('sandbags', sx, sz, yaw);
-            const [wx, wz] = at(s0 - 2.4, 3.6);
-            if (free('razor_wire', wx, wz, yaw)) b.prop('razor_wire', wx, wz, yaw);
-            const [cx, cz] = at(s0 + 2.4, 3.8);
-            if (free('military_crate', cx, cz, yaw)) b.cont(CONT.AMMO_BOX, cx, cz, { prop: 'military_crate', ry: yaw, zone: ZONE.ROADBLOCK });
-            const [bx, bz] = at(s0 + 5, 0.4);
-            b.prop('body_bag', bx, bz, yaw + 0.3, { nocollide: true });
-            continue;
-          }
-          if (kind === 'fallen') {
-            // The top of the tower: three lumps of it from kerb to kerb, the middle one low enough to be climbed
-            // onto from the rubble heaped against it on either side. (across: they are the one thing built in a road)
-            for (const [across, w, h, len, turn] of [[-3.5, 4.4, 4.4, 9.5, 0.1], [0.8, 3.8, 2.4, 8.4, -0.06], [4.3, 2.9, 3.4, 7, 0.16]]) {
-              const [x, z] = at(0, across);
-              b.box(x, 0, z, ns ? w : len, h, ns ? len : w, 'concrete', { ry: turn });
-              parts[parts.length - 1].across = true;
-              for (const sd of [-1, 1]) for (let f = 0; (f + 1) * 1.5 < h; f++) b.box(...[x + (ns ? 0 : sd * (len / 2 + 0.03)), 0.5 + f * 1.5, z + (ns ? sd * (len / 2 + 0.03) : 0)], ns ? w - 0.8 : 0.05, 0.8, ns ? 0.05 : w - 0.8, 'dark', { ry: turn, collide: false });
-              // (its windows, looking at the sky)
-              for (const dl of [-2.4, 0, 2.4]) b.box(...[x + (ns ? 0 : dl), h, z + (ns ? dl : 0)], ns ? w - 1 : 1.3, 0.05, ns ? 1.3 : w - 1, 'dark', { ry: turn, collide: false });
-              for (let n = 0; n < 2; n++) {
-                const [rx, rz] = at(rng.range(-4, 4), across + rng.range(-1.2, 1.2));
-                b.box(rx, h, rz, 0.16, rng.range(0.8, 2.2), 0.16, 'rust', { rz: rng.range(-0.5, 0.5), collide: false });
+            for (const sgn of [-1, 1]) {
+              const row = [['fire_hydrant', 0.55], ['trash_bin', 0.8], ['street_bench', 0.5], ['mail_dropbox', 0.35], ['newspaper_box', 0.45], ['trash_bin', 0.35], ['phone_booth', 0.22], ['pole_leaning', 0.14]];
+              for (const [type, p] of row) {
+                const here = rng.chance(p);
+                const along = rng.range(-18, 18);
+                const across = sgn * (type === 'street_bench' || type === 'phone_booth' ? 5.2 : rng.range(4.3, 4.7));
+                const turn = rng.range(-0.15, 0.15);
+                if (here) put(type, along, across, (type === 'phone_booth' ? faceIn(-sgn) : faceIn(sgn)) + turn);
               }
             }
-            // (a wall of it leaning on what it fell with, its windows up; what broke off all round)
+          }
+          if (kind === 'block') {
+            // A roadblock, and the last stand made at it. d: which way it faced (what came, came from -d).
+            const s0 = rng.range(-5, 5);
+            const d = rng.chance(0.5) ? 1 : -1;
+            for (const across of [-2.1, 1.5]) put('jersey_barrier', s0, across, yaw);
+            for (const across of [-5.3, 5.3]) put('tank_trap', s0 - d * 0.4, across, rng.range(0, 3));
+            put('concertina', s0 - d * 3.4, 0.2, yaw + rng.range(-0.06, 0.06));
+            put('concertina', s0 - d * 6.6, -0.6, yaw + rng.range(-0.2, 0.2));
+            put('sandbag_nest', s0 + d * 3.3, -1.5, faceAlong(-d));
+            b.prop('mg_tripod', ...at(s0 + d * 3.6, -1.5), faceAlong(-d), { nocollide: true });
+            put('sandbags', s0 + d * 2.4, 2.4, yaw);
+            const carrier = rng.chance(0.6);
+            if (carrier) put('apc_wreck', s0 + d * 9.4, 0.3, yaw + PI / 2 + rng.range(-0.35, 0.35));
+            else put('army_truck', s0 + d * 10, -1.8, faceAlong(-d) + rng.range(-0.2, 0.2));
+            const second = rng.chance(0.6);
+            if (second) put('army_truck', s0 + d * 17, 1.8, faceAlong(d) + rng.range(-0.15, 0.15), { seed: 1 });
+            put('floodlight_tower', s0 + d * 5.4, -5.0, faceAlong(-d));
+            put('checkpoint_sign', s0 - d * 9, 2.2, faceAlong(-d) + rng.range(-0.2, 0.2));
+            // the order on its posts, facing what came
             {
-              const [x, z] = at(-1.5, -6.6);
-              b.box(x, 1.5, z, ns ? 3.4 : 12, 0.4, ns ? 12 : 3.4, 'concrete', { rz: ns ? -0.5 : 0, rx: ns ? 0 : 0.5, collide: false });
-              const [x2, z2] = at(2.5, 6.6);
-              b.box(x2, 0.9, z2, ns ? 3 : 9, 0.4, ns ? 9 : 3, 'concrete', { rz: ns ? 0.42 : 0, rx: ns ? 0 : -0.42, ry: 0.2, collide: false });
-              for (const [al, ac] of [[-5, -5], [5, 5.4], [-6, 3], [6, -3], [0, -7], [0, 7.2]]) skirt(b, ...at(al, ac), 0.02);
+              const [qx, qz] = at(s0 - d * 1.2, 5.6);
+              const posts = [-0.8, 0.8].map((dq) => (ns ? [qx + dq, qz] : [qx, qz + dq]));
+              if (posts.every(([px, pz]) => fits(b, 'parking_meter', px, pz, 0, PAVE))) {
+                for (const [px, pz] of posts) b.cyl(px, onPave(5.6).ly ?? 0, pz, 0.06, 2.9, 'rust', { sides: 6 });
+                signAt(b, qx, 2.3 + (onPave(5.6).ly ?? 0), qz, faceAlong(-d), 2.0, 1.0, 'quarantine', { far: true, back: 0.05 });
+              }
             }
-            for (const along of [-8.4, 8.4]) {
-              const [x, z] = at(along, 0.8);
-              b.prop('rubble_slope', x, z, along > 0 ? 0 : PI, { seed: along > 0 ? 1 : 0 });
+            const [cx, cz] = at(s0 + d * 4.6, 3.6);
+            if (fits(b, 'military_crate', cx, cz, yaw)) b.cont(CONT.AMMO_BOX, cx, cz, { prop: 'military_crate', ry: yaw, zone: ZONE.ROADBLOCK });
+            put('field_cot', s0 + d * 7, 5.4, yaw + PI / 2);
+            put('barrel', s0 + d * 6.2, -3.2, 0);
+            // those who held it, and those who came at it
+            for (let n = 0; n < 9; n++) {
+              const behind = n < 4;
+              litter(['corpse', 'skeleton', 'body_bag', 'skeleton', 'corpse', 'bones'][rng.int(0, 5)], s0 + d * (behind ? rng.range(1, 8) : -rng.range(1, 14)), rng.range(-6, 6));
             }
-            for (const [along, across] of [[-14, -3], [13, 3.4], [-12, 4], [15, -2]]) litter('debris', ...at(along, across));
-            const [sx, sz] = at(0, 0.8);
-            smoke(b, sx, 3, sz);
+            for (let n = 0; n < 4; n++) litter('blood_pool', s0 + rng.range(-9, 9), rng.range(-5, 5));
+            for (let n = 0; n < 3; n++) litter(['glass_shards', 'litter', 'suitcases'][n], s0 - d * rng.range(6, 16), rng.range(-5, 5));
+            // the last cars that tried it
+            for (const [dd, across, turn] of [[11, -1.8, 0.2], [13.4, 1.9, -0.5], [18, -1.6, 0.1]]) {
+              const type = pickW(TRAFFIC.slice(0, 4));
+              const ry = faceAlong(d) + turn * rng.range(0.4, 1.4);
+              car(type, s0 - d * dd, across, ry, rng.chance(0.5));
+            }
             continue;
           }
           if (kind === 'jam') {
-            // bumper to bumper, both lanes: the last traffic the street ever had
+            // bumper to bumper, both lanes, doors open where their people got out and ran: the last traffic the
+            // street ever had. A bus in the middle of it.
+            const busAt = rng.int(1, 4);
+            const busLane = rng.chance(0.5) ? 1 : -1;
             for (let n = 0; n < 7; n++) {
               for (const sgn of [-1, 1]) {
-                const t = rng();
-                const ry = yaw + (sgn > 0 ? PI : 0) + rng.range(-0.14, 0.14);
-                const gone = rng.chance(0.14);
-                const [x, z] = at(-19.5 + n * 6.4 + rng.range(-0.5, 0.5), sgn * rng.range(1.7, 2.3));
-                const type = t < 0.42 ? 'car_wreck' : t < 0.72 ? 'car_burnt' : t < 0.9 ? 'pickup_truck' : 'ambulance';
-                if (!gone && free(type, x, z, ry)) b.wreck(type, x, z, ry, { trunk: type === 'car_wreck' && rng.chance(0.5), zone: ZONE.ROADSIDE });
+                const type = pickW(TRAFFIC);
+                const ry = yaw + (sgn > 0 ? PI : 0) + rng.range(-0.12, 0.12);
+                const gone = rng.chance(0.1);
+                const along = -19.5 + n * 6.2 + rng.range(-0.4, 0.4);
+                const across = sgn * rng.range(1.75, 2.05);
+                const trunk = rng.chance(0.5);
+                if (sgn === busLane && n === busAt) car('city_bus', along + 3, sgn * 1.95, yaw + (sgn > 0 ? PI : 0) + rng.range(-0.04, 0.04));
+                else if (!gone) car(type, along, across, ry, trunk);
               }
             }
-            litter('suitcases', ...at(rng.range(-12, 12), rng.range(-0.6, 0.6)));
-            litter('litter', ...at(rng.range(-12, 12), 4.4));
-            b.prop('corpse', ...at(rng.range(-10, 10), -4.4), rng.range(0, 6), { nocollide: true });
+            for (let n = rng.int(10, 14); n > 0; n--) litter(['suitcases', 'litter', 'suitcases', 'paper_scatter', 'corpse', 'skeleton', 'stroller', 'glass_shards', 'bicycle'][rng.int(0, 8)], rng.range(-20, 20), rng.range(-6.4, 6.4));
             continue;
           }
           const hole = kind === 'hole';
-          for (const sgn of [-1, 1]) {
-            const here = rng.chance(0.85);
-            const [x, z] = at(hole ? rng.range(-20, -7) : rng.range(-15, 15), sgn * rng.range(1.7, 2.6)); // (a hole is at +6: clear of it)
-            const t = rng();
-            const ry = yaw + (sgn > 0 ? PI : 0) + rng.range(-0.3, 0.3);
+          // the roadway: what was driving down it
+          const nv = hole ? 2 : rng.int(3, 6);
+          for (let n = 0; n < nv; n++) {
+            const sgn = n % 2 ? 1 : -1;
+            const along = hole ? rng.range(-20, -7) : -19 + (n + rng.range(0.15, 0.85)) * (38 / nv); // (a hole is at +6: clear of it)
+            const type = pickW(TRAFFIC);
+            const crash = rng.chance(0.2);
+            const ry = yaw + (sgn > 0 ? PI : 0) + (crash ? rng.range(-0.9, 0.9) : rng.range(-0.22, 0.22));
+            const across = sgn * rng.range(1.5, 2.3);
             const trunk = rng.chance(0.4);
-            const type = t < 0.4 ? 'car_wreck' : t < 0.72 ? 'car_burnt' : t < 0.9 ? 'pickup_truck' : 'ambulance';
-            if (here && free(type, x, z, ry)) b.wreck(type, x, z, ry, { trunk: trunk && type === 'car_wreck', zone: ZONE.ROADSIDE });
+            const here = rng.chance(0.9);
+            if (here) car(type, along, across, ry, trunk);
           }
-          // (...and one more that ran up onto the pavement, as often as not)
+          // (...one more that ran up onto the pavement, or into the front of a shop: its glass all round it)
           {
-            const up = rng.chance(0.5);
+            const up = rng.chance(0.6);
             const sgn = rng.chance(0.5) ? 1 : -1;
-            const [x, z] = at(hole ? rng.range(-20, -7) : rng.range(-18, 18), sgn * rng.range(4.6, 5)); // (short of the walls: they stand 7.2 m from the middle of the street)
-            const ry = yaw + rng.range(-0.6, 0.6);
-            const type = rng.chance(0.5) ? 'car_burnt' : 'car_wreck';
-            if (up && free(type, x, z, ry)) b.wreck(type, x, z, ry, { trunk: false, zone: ZONE.ROADSIDE });
+            const into = rng.chance(0.45);
+            const along = hole ? rng.range(-20, -7) : rng.range(-17, 17);
+            const type = pickW(TRAFFIC.slice(0, 5));
+            const ry = into ? faceIn(-sgn) + rng.range(-0.45, 0.45) : yaw + rng.range(-0.5, 0.5);
+            const ok = up && car(type, along, sgn * (into ? 5.5 : rng.range(4.75, 4.95)), ry);
+            if (ok && into) {
+              litter('glass_shards', along + rng.range(-1, 1), sgn * 6.6);
+              litter('debris', along + rng.range(-1.5, 1.5), sgn * 6.4);
+            }
           }
           // what came down off the buildings either side: slabs and lumps along the kerbs
           for (let n = rng.int(2, 5); n > 0; n--) {
-            const [x, z] = at(rng.range(-20, 20), (rng.chance(0.5) ? 1 : -1) * rng.range(3.2, 5.6));
-            skirt(b, x, z, 0.02);
+            const across = (rng.chance(0.5) ? 1 : -1) * rng.range(4.2, 6.2);
+            const [x, z] = at(rng.range(-20, 20), across);
+            skirt(b, x, z, onPave(across).ly ?? 0.02);
           }
-          // what lies about
-          litter(rng.chance(0.6) ? 'litter' : 'debris', ...at(rng.range(-20, 20), rng.range(-4.6, 4.6)));
-          if (rng.chance(0.55)) litter('litter', ...at(rng.range(-20, 20), rng.range(-4.6, 4.6)));
-          litter(rng.chance(0.5) ? 'litter' : 'debris', ...at(rng.range(-20, 20), rng.range(-3, 3)));
-          if (rng.chance(0.5)) litter('suitcases', ...at(rng.range(-20, 20), rng.range(-4.6, 4.6)));
-          const r = rng();
-          const pa = rng.range(-18, 18);
-          const rim = hole && Math.abs(pa - 6) < 9; // (nothing solid on the lip of a hole)
-          const [px, pz] = at(pa, (rng.chance(0.5) ? 1 : -1) * rng.range(3.4, 4.8));
-          const pr = rng.range(0, 6);
-          if (r < 0.14) litter('shopping_cart', px, pz);
-          else if (r < 0.28) litter('suitcases', px, pz);
-          else if (r < 0.4) litter('pole_down', ...at(rng.range(-8, 8), rng.range(-1, 1)), { ry: undefined });
-          else if (r < 0.5 && !rim && free('dumpster_tipped', px, pz, pr)) b.cont(CONT.DUMPSTER, px, pz, { prop: 'dumpster_tipped', ry: pr });
-          else if (r < 0.58 && !rim && free('barricade', px, pz, yaw + PI / 2)) b.prop('barricade', px, pz, yaw + PI / 2);
+          // what lies about: every few metres of it
+          for (let n = rng.int(11, 16); n > 0; n--) litter(LITTER[rng.int(0, LITTER.length - 1)], rng.range(-21, 21), rng.range(-6.6, 6.6));
+          {
+            const r = rng();
+            const pa = rng.range(-18, 18);
+            const rim = hole && Math.abs(pa - 6) < 9; // (nothing solid on the lip of a hole)
+            const across = (rng.chance(0.5) ? 1 : -1) * rng.range(4.6, 5.2);
+            const pr = rng.range(0, 6);
+            const [px, pz] = at(pa, across);
+            if (r < 0.3) litter('pole_down', rng.range(-8, 8), rng.range(-1, 1), { ry: undefined });
+            else if (r < 0.5 && !rim && fits(b, 'dumpster_tipped', px, pz, pr, PAVE)) b.cont(CONT.DUMPSTER, px, pz, { prop: 'dumpster_tipped', ry: pr, ...onPave(across) });
+            else if (r < 0.62 && !rim) put('barricade', pa, across, yaw + PI / 2);
+          }
           // the roadway, heaved: slabs of it tipped up out of the street (round a hole, all of its rim)
-          for (let n = hole ? 7 : rng.int(0, 2); n > 0; n--) {
-            const [hx, hz] = hole ? at(6 + Math.sin(n * 0.9) * rng.range(4.4, 6.2), Math.cos(n * 0.9) * rng.range(3.6, 5.2)) : at(rng.range(-20, 20), rng.range(-4, 4));
+          for (let n = hole ? 7 : rng.int(1, 3); n > 0; n--) {
+            const [hx, hz] = hole ? at(6 + Math.sin(n * 0.9) * rng.range(4.4, 6.2), Math.cos(n * 0.9) * rng.range(3.6, 5.2)) : at(rng.range(-20, 20), rng.range(-3.4, 3.4));
             b.box(hx, -0.1, hz, rng.range(1.4, 2.6), 0.2, rng.range(1.2, 2.2), 'concrete', { ry: rng.range(0, 3), rz: rng.range(-0.34, 0.34), rx: rng.range(-0.2, 0.2), collide: false });
           }
-          if (rng.chance(0.28)) b.tree(...at(rng.range(-20, 20), (rng.chance(0.5) ? 1 : -1) * rng.range(4.2, 5)), 5, rng.range(0.45, 0.7)); // (a birch, out of a crack)
-          const body = rng.chance(0.25);
-          const [cx, cz] = at(rng.range(-10, 10), rng.range(-1, 1));
-          if (body) b.prop('corpse', cx, cz, rng.range(0, 6), { nocollide: true });
+          for (let n = rng.int(0, 2); n > 0; n--) b.tree(...at(rng.range(-20, 20), (rng.chance(0.5) ? 1 : -1) * rng.range(4.9, 5.6)), 5, rng.range(0.45, 0.75)); // (a birch, out of a crack)
         }
       }
     }
-    // traffic lights on the crossings of Main Street (one in three down), a bus slewed across one of the others,
-    // an articulated truck jack-knifed across another
-    for (let i = 1; i < GRID; i++) {
-      const x = -G2 + i * PITCH;
-      const down = i % 3 === 1;
-      if (down) b.prop('pole_down', x + 4.4, -4.6, 0.7, { nocollide: true, seed: 1 });
-      else if (free('traffic_light', x + 5.2, -5.2, PI)) b.prop('traffic_light', x + 5.2, -5.2, PI); // (their arms out over Main Street)
-      if (free('traffic_light', x - 5.2, 5.2, 0)) b.prop('traffic_light', x - 5.2, 5.2, 0);
+    // The shaft of the tower that fell, where it lies: three lengths of it end to end from the foot of what still
+    // stands - the first against the podium, the second across the far pavement and into the block beyond, the
+    // third on what it crushed there - broken apart over the roadway, where the rubble between them is the way
+    // through. (across: they are the one thing built in a road.)
+    if (fall) {
+      const { dir, xs, zc, lot } = fall;
+      const lx = xs - city.x;
+      const lz = zc - city.z;
+      const st = lot.shaft || { style: 'office', fh: 3.3 };
+      const length = (x0, x1, w, h, tilt) => {
+        const cx = lx + (dir * (x0 + x1)) / 2;
+        solid(b, cx, 0.02, lz, Math.abs(x1 - x0), h, w, 'concrete').across = true;
+        fallenBits.push({ x: b.wx(cx, lz), y: b.y0 + 0.02, z: b.wz(cx, lz), ry: dir > 0 ? 0 : PI, len: Math.abs(x1 - x0), w, h, fh: st.fh, style: st.style, mat: 'concrete', seed: rng.int(1, 99999), tilt });
+      };
+      length((lot.x + dir * 17 - xs) * dir + 0.3, -1.8, 15, 7.6, 0.06); // (from the podium's flank: it is 34 m across)
+      length(1.8, 12.6, 15, 6.4, -0.03);
+      length(14.2, 22.6, 14, 4.6, 0.05);
+      // the break over the roadway: rubble to the height of a man, and at either mouth of it
+      heap(b, lx, lz, 1.7, 6.6, 1.6, { across: true, ly: 0.02 });
+      for (const sz of [-1, 1]) heap(b, lx + rng.range(-0.6, 0.6), lz + sz * 9.6, 3.2, 2.6, 1.3, { across: true, ly: 0.02, ry: rng.range(-0.3, 0.3) });
+      // (...between the second length and the third, and the last of it beyond)
+      heap(b, lx + dir * 13.4, lz + rng.range(-3, 3), 1.2, 4.6, 2.2, { ly: PAVE });
+      heap(b, lx + dir * 25.4, lz + rng.range(-2, 2), 2.6, 5.0, 2.2, { ly: PAVE });
+      for (const [dx, dz] of [[7, -9.6], [8, 9.8], [18.6, -9.2], [19.4, 9.4], [11.6, -9.9], [12.4, 10], [22.6, 9.8], [23, -9.7]]) heap(b, lx + dir * dx, lz + dz, rng.range(2.2, 3), rng.range(1.7, 2.3), rng.range(0.9, 1.5), { ly: PAVE, ry: rng.range(-0.4, 0.4) });
+      // (slabs of its skin against it, where they slid off)
+      for (let n = 0; n < 10; n++) {
+        const sd = n % 2 ? 1 : -1;
+        b.box(lx + dir * rng.range(2, 22), PAVE + rng.range(0.5, 1.6), lz + sd * rng.range(7.9, 8.6), rng.range(2.4, 4.4), 0.28, rng.range(2, 3.4), 'concrete', { rx: sd * rng.range(0.7, 1.15), ry: rng.range(-0.3, 0.3), collide: false });
+      }
+      for (const [dx, dz] of [[-5, -9.4], [-5.4, 9.6], [-1, -13], [2, 13.4], [10, -12.4], [11, 12.6]]) skirt(b, lx + dir * dx, lz + dz, Math.abs(dx) < 3.7 ? 0.02 : PAVE);
+      // what it landed on, under its second length
+      b.prop('car_burnt', lx + dir * 4.6, lz + 10.6, 0.1, { nocollide: true, seed: 1 });
+      b.prop('pole_down', lx - dir * 3, lz - 11.6, 1.2, { nocollide: true });
+      for (let n = 0; n < 8; n++) b.prop(['debris', 'glass_shards', 'paper_scatter', 'litter'][n & 3], lx + rng.range(-6, 6), lz + (n % 2 ? 1 : -1) * rng.range(8.6, 16), rng.range(0, 6), { nocollide: true, seed: n & 1 });
+      smoke(b, lx + dir * 7, 5, lz);
     }
+    // the crossings: lights dead over them (one in three down), here and there the two that met in the middle
+    for (let i = 1; i < GRID; i++) {
+      for (let j = 1; j < GRID; j++) {
+        const x = -G2 + i * PITCH;
+        const z = -G2 + j * PITCH;
+        const main = j === GRID / 2;
+        const r = rng();
+        const crash = rng.chance(0.3);
+        const [t1, t2] = [rng.range(0, 6), rng.range(0, 6)];
+        if (main || r < 0.5) {
+          if ((i + j) % 3 === 1) b.prop('pole_down', x + 4.4, z - 4.6, 0.7, { nocollide: true, seed: 1 });
+          else if (fits(b, 'traffic_light', x + 5.2, z - 5.2, PI, PAVE)) b.prop('traffic_light', x + 5.2, z - 5.2, PI, { ly: PAVE }); // (their arms out over the cross street)
+          if (fits(b, 'traffic_light', x - 5.2, z + 5.2, 0, PAVE)) b.prop('traffic_light', x - 5.2, z + 5.2, 0, { ly: PAVE });
+        }
+        if (crash && !(fall && Math.hypot(x - (fall.xs - city.x), z - (fall.zc - city.z)) < 34)) {
+          const a = pickW(TRAFFIC.slice(0, 5));
+          const c2 = pickW(TRAFFIC.slice(0, 5));
+          if (fits(b, a, x - 1.4, z + 0.6, t1)) b.wreck(a, x - 1.4, z + 0.6, t1, { trunk: false, zone: ZONE.ROADSIDE });
+          if (fits(b, c2, x + 2.4, z - 1.6, t2)) b.wreck(c2, x + 2.4, z - 1.6, t2, { trunk: false, zone: ZONE.ROADSIDE });
+          b.prop('glass_shards', x + 0.4, z - 0.4, t1, { nocollide: true });
+        }
+        for (let n = rng.int(2, 4); n > 0; n--) b.prop(LITTER[rng.int(0, LITTER.length - 1)], x + rng.range(-5, 5), z + rng.range(-5, 5), rng.range(0, 6), { nocollide: true, seed: rng.int(0, 2) });
+      }
+    }
+    // a bus slewed across one of the crossings, an articulated truck jack-knifed across another
     const jx = -G2 + rng.int(1, GRID - 1) * PITCH;
     const jz = -G2 + [1, 2, 4, 5][rng.int(0, 3)] * PITCH;
-    if (free('school_bus', jx + 1, jz - 0.5, 0.9)) b.wreck('school_bus', jx + 1, jz - 0.5, 0.9, { trunk: false });
+    if (fits(b, 'city_bus', jx + 1, jz - 0.5, 0.9)) b.wreck('city_bus', jx + 1, jz - 0.5, 0.9, { trunk: false });
     const tx = -G2 + rng.int(1, GRID - 1) * PITCH;
     const tz = -G2 + [1, 2, 4, 5][rng.int(0, 3)] * PITCH;
-    if (free('semi_truck', tx - 1, tz + 0.5, 2.2)) b.wreck('semi_truck', tx - 1, tz + 0.5, 2.2, { trunk: false, seed: 1 });
+    if (fits(b, 'semi_truck', tx - 1, tz + 0.5, 2.2)) b.wreck('semi_truck', tx - 1, tz + 0.5, 2.2, { trunk: false, seed: 1 });
+  }
+
+  // THE BRIDGES: wherever a road crosses the river. A concrete deck on piers a little over the water, rusted
+  // girders down its sides, what is left of its railings. (A deck is thin: the dead walk over it - server/nav.js.)
+  const bridges = [];
+  {
+    const b = new Builder(0, 0, 0, 0);
+    b.zone = ZONE.FOREST;
+    for (const road of roads) {
+      for (const [i0, i1] of road.spans) {
+        const p = road.pts;
+        const [a, e] = [Math.max(0, i0 - 3), Math.min(p.length / 2 - 1, i1 + 3)];
+        // (only where it is over the water in fact: a footpath that keeps to the bank has none)
+        let over = false;
+        for (let i = i0; i <= i1; i++) over ||= heightAt(p[i * 2], p[i * 2 + 1]) < WATER_LEVEL - 0.95;
+        if (!over) continue;
+        const w = Math.max(5, road.width * 2 + 1.4);
+        for (let i = a; i < e; i++) {
+          const [x0, z0, x1, z1] = [p[i * 2], p[i * 2 + 1], p[i * 2 + 2], p[i * 2 + 3]];
+          const len = Math.hypot(x1 - x0, z1 - z0);
+          const ry = Math.atan2(-(z1 - z0), x1 - x0);
+          const top = road.hs[i] + 0.02;
+          const [cx, cz] = [(x0 + x1) / 2, (z0 + z1) / 2];
+          b.box(cx, top - 0.4, cz, len + 0.3, 0.4, w, 'concrete', { ry });
+          const [nx, nz] = [-(z1 - z0) / len, (x1 - x0) / len];
+          for (const sd of [-1, 1]) {
+            // the girder, and the railing over it: posts and a rail, lengths of it gone
+            b.box(cx + nx * sd * (w / 2 - 0.15), top - 1.0, cz + nz * sd * (w / 2 - 0.15), len + 0.3, 1.25, 0.3, 'rust', { ry, collide: false });
+            const gone = rng.chance(0.22);
+            if (gone) continue;
+            b.box(cx + nx * sd * (w / 2 - 0.15), top + 0.25, cz + nz * sd * (w / 2 - 0.15), 0.09, 0.9, 0.09, 'rust', { ry, collide: false });
+            b.box(cx + nx * sd * (w / 2 - 0.15), top + 1.08, cz + nz * sd * (w / 2 - 0.15), len + 0.3, 0.08, 0.08, 'rust', { ry, rz: rng.range(-0.05, 0.05), collide: false });
+            b.box(cx + nx * sd * (w / 2 - 0.15), top + 0.66, cz + nz * sd * (w / 2 - 0.15), len + 0.3, 0.05, 0.05, 'rust', { ry, collide: false });
+          }
+          // a pier under every fourth length of it that stands in the water
+          const bed = heightAt(cx, cz);
+          // (not solid: it stands in the water under the deck, and a solid there is a wall across the deck to the dead)
+          if ((i - a) % 4 === 2 && bed < WATER_LEVEL - 0.3) b.box(cx, bed - 0.3, cz, 0.9, top - 0.4 - bed + 0.3, w - 1.2, 'concrete', { ry, collide: false });
+        }
+        const m = (i0 + i1) >> 1;
+        const [dx, dz] = [p[e * 2] - p[a * 2], p[e * 2 + 1] - p[a * 2 + 1]];
+        bridges.push({ x: p[m * 2], y: road.hs[m], z: p[m * 2 + 1], ry: Math.atan2(-dz, dx), len: Math.hypot(dx, dz), w });
+        clears.push([p[m * 2], p[m * 2 + 1], Math.hypot(dx, dz) / 2 + 3]);
+      }
+    }
   }
 
   // KESSLER IRONWORKS: a fenced yard - the casting shed, a machine shop, stacks of steel, a gantry crane.
@@ -1752,6 +2446,7 @@ export function createMainland(seed) {
     smoke(b, -18, 9, 6);
   });
 
+  Object.assign(K, { block, groundRoom, partition, signAt, heap, extra, jagged, weed }); // (what the third pass's places are built with)
   // EASTGATE: a street of houses on the far side of the city.
   place(ZONE.SUBURB, (b) => SUBURB.build(b, K));
   // ...and what lies about the plain (mainland-places.js)
@@ -1826,6 +2521,10 @@ export function createMainland(seed) {
     for (const end of [-1, 1]) for (let k = -3; k <= 3; k++) if (k) b.box(k * 2.6, -0.045, end * (RUNWAY_LEN / 2 - 14), 1.3, 0.03, 16, 'trim', { collide: false });
     // ...its edge lights, most of them dark for good, and a windsock at either end
     for (let z = -RUNWAY_LEN / 2 + 6; z <= RUNWAY_LEN / 2 - 6; z += 28) for (const sx of [-1, 1]) b.prop('runway_light', sx * (RUNWAY_HALF + 0.9), z, 0, { nocollide: true, ground: true, seed: (z + sx) & 1 });
+    for (const sx of [-1, 1]) for (let z = -RUNWAY_LEN / 2 + 4; z < RUNWAY_LEN / 2 - 20; z += 22) if (rng.chance(0.82)) b.box(sx * (RUNWAY_HALF - 0.9), -0.045, z + 10, 0.4, 0.03, rng.range(14, 21), 'trim', { collide: false });
+    for (const end of [-1, 1]) for (const dz of [44, 62, 80]) for (const sx of [-1, 1]) if (rng.chance(0.8)) b.box(sx * 4.6, -0.045, end * (RUNWAY_LEN / 2 - dz), 2.2, 0.03, 9, 'trim', { collide: false });
+    // (...and beyond either end, what brought them in at night: bars of lamps on the grass)
+    for (const end of [-1, 1]) for (const dz of [10, 24, 38]) for (let k = -2; k <= 2; k++) b.prop('runway_light', k * 2.4, end * (RUNWAY_LEN / 2 + dz), 0, { nocollide: true, ground: true, seed: (k + dz) & 1 });
     b.prop('windsock', RUNWAY_HALF + 9, RUNWAY_LEN / 2 - 40, 0.4, { ground: true });
     b.prop('windsock', -RUNWAY_HALF - 8, -RUNWAY_LEN / 2 + 30, 2, { ground: true });
   }
@@ -1846,6 +2545,15 @@ export function createMainland(seed) {
     for (const [lx, lz] of [[2, -36], [12, 22], [-8, 50], [20, -8]]) b.prop('suitcases', lx, lz, lx, { nocollide: true, ly: 0.05, seed: lz & 1 });
     b.prop('litter', 0, 0, 1, { nocollide: true, ly: 0.05 });
     b.prop('corpse', 6, -18, 2, { nocollide: true, ly: 0.05 });
+    // (where the last flights were loaded: the army's trucks, tents for those who waited, the lamps over them)
+    b.prop('army_truck', 16, -34, 0.3, { ...on, seed: 0 });
+    b.prop('army_truck', 19.6, -46, -0.15, { ...on, seed: 1 });
+    b.prop('triage_tent', -18, 22, 0.05, { ...on, seed: 0 });
+    b.prop('triage_tent', -11.6, 23, -0.04, { ...on, seed: 1 });
+    for (const [cx, cz, r] of [[-19, 20, 0], [-16.8, 24, PI], [-12.6, 21, 0], [-10.4, 25, PI]]) extra(b, 'field_cot', cx, cz, r, { ...on, seed: (cx * 2) & 3 });
+    for (const [fx, fz, r] of [[22, 40, 2.4], [-24, -34, 0.6], [22, -64, 3.6]]) extra(b, 'floodlight_tower', fx, fz, r, on);
+    for (let i = 0; i < 6; i++) b.prop('body_bag', -6 + i * 1.3, 32.5, PI / 2 + 0.07 * i, { nocollide: true, ly: 0.05, seed: i });
+    for (const [lx, lz] of [[-4, 12], [6, -6], [12, 44], [-16, -8], [18, 14], [0, 60], [-10, -52], [8, -62]]) b.prop(['suitcases', 'paper_scatter', 'skeleton', 'litter', 'suitcases', 'traffic_cones', 'stroller', 'glass_shards'][(lx + 16) & 7], lx, lz, lx, { nocollide: true, ly: 0.05, seed: lz & 1 });
     b.loot(-16, 10, 0.07);
     b.loot(16, -50, 0.07);
   }
@@ -1864,6 +2572,15 @@ export function createMainland(seed) {
     b.prop('jersey_barrier', -3.4, 26, PI / 2, { seed: 1 });
     b.prop('razor_wire', -3.6, 31, PI / 2);
     b.prop('road_sign', -4.4, 12, PI / 2, { seed: 2 });
+    // (...and held it: a nest either side of the road, a carrier knocked out in front of it, their order on its posts)
+    extra(b, 'sandbag_nest', -5.4, 12.4, PI / 2);
+    extra(b, 'sandbag_nest', -5.4, 33, PI / 2, { seed: 1 });
+    extra(b, 'apc_wreck', -15, 26.4, 0.5);
+    extra(b, 'concertina', -9.4, 16.4, PI / 2 + 0.1);
+    extra(b, 'tank_trap', -9, 30, 0.4);
+    extra(b, 'tank_trap', -11.4, 11, 1.2);
+    extra(b, 'floodlight_tower', 4.6, 30.4, 1.2);
+    for (const [lx, lz] of [[-12, 20], [-18, 24], [-8, 23.6], [-21, 18], [-6.6, 27], [3, 24]]) b.prop(['corpse', 'skeleton', 'blood_pool', 'skeleton', 'body_bag', 'suitcases'][(lz * 2) % 6 | 0], lx, lz, lx, { nocollide: true, seed: lz & 1 });
   }
   place(ZONE.HANGARS, (b) => {
     // three hangars in a row, their doors (local -Z: east) open on the apron
@@ -1886,6 +2603,13 @@ export function createMainland(seed) {
       if (k) part(s, 4, 10, -6, FLOOR_Y + 0.02);
       return s;
     };
+    // (each: the frame showing down its flanks, rust run down its front from the door's rail, an engine hoist)
+    for (const lx of [-30, 0, 30]) {
+      for (const dz of [-6, 0, 6, 12, 18]) for (const sx of [-1, 1]) b.box(lx + sx * 12.24, 0, dz, 0.2, 8, 0.3, 'rust', { collide: false });
+      b.box(lx, 6.5, -6.4, 24.4, 0.3, 0.3, 'rust', { collide: false });
+      for (const dx of [-9, -3, 4, 9.5]) signAt(b, lx + dx, 6.4 - 1.4, -6.16, 0, 0.9, 2.8, dx > 0 ? 'rust_a' : 'rust_b', { grime: true, far: true });
+      signAt(b, lx + 8.6, 2.2, -6.16, 0, 1.4, 1.4, lx ? 'xcode_a' : 'xcode_b', {});
+    }
     hangar(-30, 0).prop('light_plane', 1.5, 0, 0.35, { ly: FLOOR_Y, seed: 1 });
     hangar(0, 1).wreck('pickup_truck', -4, 2, 0.3, { ly: FLOOR_Y, trunk: false });
     const h3 = hangar(30, 2);
@@ -1893,6 +2617,11 @@ export function createMainland(seed) {
     h3.cont(CONT.AMMO_BOX, -6, 4, { prop: 'military_crate', ry: 0.4, ly: FLOOR_Y });
     b.prop('generator', 0, 20.5, 0.2);
     b.cont(CONT.DUMPSTER, 45, 2, { prop: 'dumpster', ry: PI / 2 });
+    for (const [lx, lz, r] of [[-44, -8, 0.3], [44, -10, 2.2]]) extra(b, 'floodlight_tower', lx, lz, r);
+    extra(b, 'box_truck', -47, -14, 0.2);
+    extra(b, 'van_wreck', 46, 14, 2.9);
+    for (const [lx, lz] of [[-14, -9], [16, -11], [34, -9.4], [-36, -10]]) b.prop(['barrel', 'tire_pile', 'pallet', 'barrel'][(lx + 36) & 3], lx, lz, lx, { seed: lz & 1 });
+    for (const [lx, lz] of [[-6, -10], [22, -12], [-24, -11.4], [8, -13], [38, -13]]) b.prop(['litter', 'paper_scatter', 'skeleton', 'suitcases', 'debris'][(lx + 24) % 5 | 0], lx, lz, lx, { nocollide: true, seed: lz & 1 });
     b.wreck('car_wreck', -46.5, 10, 0.4);
     b.prop('streetlight', 15, -9, 0);
     b.prop('streetlight', -15, -9, 0);
@@ -1900,45 +2629,85 @@ export function createMainland(seed) {
     b.loot(-15, -11);
   });
   place(ZONE.TERMINAL, (b) => {
-    // the terminal: a hall with a counter, a back office, and the tower over its north end
-    b.room(0, 2, 26, 14, 4.4, 'concrete', { n: [door(13, 1.8), win(5, 5, 0.7, 3.4), win(21, 5, 0.7, 3.4)], s: [door(20, 1.3), win(8, 4, 0.9, 3)], w: [win(7, 3, 0.9, 3)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
-    b.wall(6, -5, 6, 9, 4.4, 0.2, 'concrete', [door(9, 1.3)]);
-    b.box(-4, 0.12, 0, 7, 1.05, 0.8, 'planks'); // the check-in desk
-    b.loot(-4, 0, 1.19);
-    for (const lx of [-9, -5, -1]) b.prop('pew', lx, 5.4, 0, { ly: 0.12 });
+    // The terminal: a hall with its desk and its rows of seats, a back office, a lounge of glass over half of it,
+    // a canopy the length of its front, CALDER FIELD on its roof - and the tower at its north end, the cab on top.
+    const R = groundRoom(b, 0, 2, 26, 14, 4.4, 'concrete', { n: [door(13, 1.8), win(5, 5, 0.7, 3.4), win(21, 5, 0.7, 3.4)], s: [door(20, 1.3), win(8, 4, 0.9, 3)], w: [win(7, 3, 0.9, 3)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, tint: 2 });
+    partition(b, R, 6, -5, 6, 9, 4.4, 'concrete', [door(9, 1.3)]);
+    b.prop('reception_desk', -4, 0, 0, { ly: 0.12 }); // the check-in desk
+    b.loot(-4, 0, 1.26);
+    for (const lx of [-9.6, -7.4, -3.6, -1.4]) b.prop('waiting_chairs', lx, 5.6, 0, { ly: 0.12, seed: lx & 1 });
     b.cont(CONT.LOCKER, 12.1, 6, { prop: 'locker', ry: -PI / 2, ly: 0.12 });
     b.cont(CONT.CABINET, 9.6, 8.2, { prop: 'cabinet', ry: PI, ly: 0.12 });
     b.cont(CONT.FRIDGE, -12.1, 6.4, { prop: 'fridge', ry: PI / 2, ly: 0.12 });
     b.prop('table', 9.4, 0, 0, { ly: 0.12 });
     b.loot(9.4, 0, 0.94);
     part(b, 3, 11.4, -3.6, 0.14); // the flight radio, in the back office...
-    // the tower: a shaft with the cab on top (shut: what was in it is down in the office)
-    b.box(9.5, 4.7, 5.5, 5, 9, 5, 'concrete');
-    b.box(9.5, 13.7, 5.5, 7, 0.3, 7, 'concrete', { collide: false });
-    b.box(9.5, 14, 5.5, 6.4, 2.4, 6.4, 'glass', { collide: false });
-    b.box(9.5, 14, 5.5, 3, 2.4, 3, 'dark', { collide: false });
-    for (const [cx, cz] of [[-3.1, -3.1], [3.1, -3.1], [-3.1, 3.1], [3.1, 3.1]]) b.box(9.5 + cx, 14, 5.5 + cz, 0.2, 2.4, 0.2, 'metal', { collide: false });
+    extra(b, 'office_desk', 10.6, 4.2, -PI / 2, { ly: 0.12 });
+    extra(b, 'filing_cabinet', 7.2, 8.2, PI, { ly: 0.12 });
+    extra(b, 'vending_machine', -12.2, 1.6, PI / 2, { ly: 0.12 });
+    extra(b, 'vending_machine', -12.2, 0.4, PI / 2, { ly: 0.12, seed: 1 });
+    for (const [lx, lz] of [[-6, 3], [2, -2], [-10, -3], [3, 6.5]]) b.prop(['paper_scatter', 'ceiling_debris', 'blood_pool', 'office_chair'][(lx + 10) & 3], lx, lz, lx, { nocollide: true, ly: 0.12, seed: lz & 1 });
+    for (const lx of [-8, 0]) b.prop('ceiling_lamp', lx, 2, 0, { nocollide: true, ly: 4.4, seed: lx & 1 });
     // the baggage hall: the belt, what never got claimed
     b.box(-8, 0.12, -3.2, 8, 0.6, 1.2, 'rust');
-    for (const [lx, lz, r] of [[-9, -1.6, 0.3], [-4, -4.6, 1.2], [1.6, 3, 2]]) b.prop('suitcases', lx, lz, r, { nocollide: true, ly: 0.12, seed: lz & 1 });
+    for (const [lx, lz, r] of [[-9, -1.6, 0.3], [-4, -4.6, 1.2], [1.6, 3, 2], [-11, -4.2, 2.6], [3.6, -3.4, 0.7]]) b.prop('suitcases', lx, lz, r, { nocollide: true, ly: 0.12, seed: lz & 1 });
     b.prop('litter', 0, -2, 1, { nocollide: true, ly: 0.12 });
     b.prop('barricade', 2.6, -2.9, PI / 2, { ly: 0.12 });
+    part(b, 3, -11, 5.2, 0.14); // ...or behind the desk
+    // the lounge over the hall, its glass mostly gone; the name on the roof's edge
+    block(b, -5, 3, 14, 9, 4.7, 1, 3.4, 'glass', 'concrete', { wear: 0.95 });
+    for (const px of [-5.4, 0, 5.4]) b.box(px, 4.7, -5.1, 0.14, 1.9, 0.14, 'rust', { collide: false });
+    signAt(b, 0, 5.75, -5.28, 0, 12.4, 1.55, 'terminal', { far: true, back: 0.1 });
+    // the canopy over the kerb, on its posts
+    for (const px of [-10, -3.4, 3.4, 10]) b.cyl(px, 0, -8.6, 0.13, 3.3, 'metal', { sides: 8 });
+    b.box(0, 3.3, -7.1, 23, 0.26, 4.2, 'concrete', { collide: false });
+    b.roofSpan(0, -7.1, 11.5, 2.1, 3.3, 0.26);
+    // the tower: a shaft of four floors over the hall's north end, a walkway round its head, the cab on that - its
+    // glass leaning out, half its panes gone - and on the cab's roof the aerials and the beacon
+    const top = block(b, 9.5, 5.5, 5, 5, 4.7, 3, 3.1, 'office', 'concrete', { wear: 0.6 });
+    b.box(9.5, top, 5.5, 7.4, 0.3, 7.4, 'concrete', { collide: false });
+    for (const [dx, dz, w, d] of [[0, -3.6, 7.3, 0.06], [0, 3.6, 7.3, 0.06], [-3.6, 0, 0.06, 7.3], [3.6, 0, 0.06, 7.3]]) {
+      b.box(9.5 + dx, top + 1.25, 5.5 + dz, w, 0.06, d, 'rust', { collide: false });
+      b.box(9.5 + dx, top + 0.8, 5.5 + dz, w, 0.04, d, 'rust', { collide: false });
+    }
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(9.5 + sx * 3.6, top + 0.3, 5.5 + sz * 3.6, 0.07, 1.0, 0.07, 'rust', { collide: false });
+    b.box(9.5, top + 0.3, 5.5, 4.6, 0.9, 4.6, 'metal', { collide: false });
+    for (const [nx, nz] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      for (let k = -1; k <= 1; k++) {
+        const here = rng.chance(0.62);
+        const [px, pz] = [9.5 + nx * 2.45 + (nz ? k * 1.55 : 0), 5.5 + nz * 2.45 + (nx ? k * 1.55 : 0)];
+        if (here) b.box(px, top + 1.2, pz, 1.45, 1.9, 0.04, 'glass', { collide: false, ry: nx ? PI / 2 : 0 });
+        b.box(9.5 + nx * 2.5 + (nz ? (k + 0.5) * 1.55 : 0), top + 1.2, 5.5 + nz * 2.5 + (nx ? (k + 0.5) * 1.55 : 0), 0.08, 1.95, 0.08, 'metal', { collide: false });
+      }
+    }
+    b.box(9.5, top + 1.2, 5.5, 2.6, 1.0, 2.6, 'dark', { collide: false }); // (the desks, in the dark of it)
+    b.box(9.5, top + 3.1, 5.5, 6.6, 0.3, 6.6, 'concrete', { collide: false });
+    b.box(9.5, top + 3.4, 5.5, 0.12, 4.4, 0.12, 'metal', { collide: false });
+    b.box(8, top + 3.4, 4.4, 0.06, 2.6, 0.06, 'rust', { collide: false, rz: 0.12 });
+    b.box(11, top + 3.4, 6.8, 0.06, 1.8, 0.06, 'rust', { collide: false });
+    b.box(10.6, top + 3.7, 4.2, 1.5, 0.5, 0.2, 'metal', { collide: false, ry: 0.6 }); // (the radar's bar, where it stopped)
+    b.cyl(10.6, top + 3.4, 4.2, 0.1, 0.3, 'rust', { sides: 6, collide: false });
     b.prop('baggage_cart', -18, 2, 0.1);
     b.prop('ivy', -13.16, 4, PI / 2, { nocollide: true });
-    b.box(9.5, 16.4, 5.5, 7.2, 0.3, 7.2, 'concrete', { collide: false });
-    b.box(9.5, 16.7, 5.5, 0.12, 4, 0.12, 'metal', { collide: false });
-    // out front: the forecourt, what the last flight out left behind
+    // out front: the forecourt, what the last flight out left behind, and the army's last order on its posts
     b.box(0, -0.05, -13, 30, 0.1, 14, 'concrete', { collide: true });
-    b.wreck('ambulance', -8, -13, 1.4, { ly: 0.05, trunk: false });
-    b.wreck('car_wreck', 6, -15, 0.2, { ly: 0.05 });
+    b.wreck('ambulance', -8, -13.6, 1.4, { ly: 0.05, trunk: false });
+    b.wreck('car_open', 6, -15, 0.2, { ly: 0.05, seed: 1 });
     b.wreck('school_bus', 15, 22, 1.5, { trunk: false });
     b.cont(CONT.DUFFEL, -2, -8, { prop: 'duffel_bag', ry: 0.6, nocollide: true, ly: 0.05 });
     b.cont(CONT.DUFFEL, 3.4, -10.5, { prop: 'duffel_bag', ry: 2.1, nocollide: true, ly: 0.05, seed: 1 });
-    part(b, 3, -11, 5.2, 0.14); // ...or behind the desk
     b.prop('streetlight', -13, -19, PI);
     b.prop('streetlight', 13, -19, PI);
     b.prop('corpse', 0, -16, 0.4, { nocollide: true, ly: 0.05 });
     b.loot(-10, -9, 0.07);
+    for (const [lx, lz] of [[-12, -9.6], [-4, -11], [9, -9.2], [12.6, -12], [1, -18], [-9, -18.4]]) b.prop(['suitcases', 'suitcases', 'paper_scatter', 'skeleton', 'stroller', 'litter'][(lx + 12) % 6 | 0], lx, lz, lx * 0.7, { nocollide: true, ly: 0.05, seed: (lz * 3) & 1 });
+    extra(b, 'street_bench', -6, -9.1, PI, { ly: 0.05 });
+    extra(b, 'street_bench', 6, -9.1, PI, { ly: 0.05, seed: 1 });
+    extra(b, 'trash_bin', 11.2, -9.2, 0, { ly: 0.05 });
+    extra(b, 'checkpoint_sign', 2.4, -19, 0, { ly: 0.05 });
+    extra(b, 'floodlight_tower', -13.4, -14.6, 0.4, { ly: 0.05 });
+    for (const dq of [-1.1, 1.1]) b.cyl(12.6 + dq, 0, -19.6, 0.06, 3.2, 'rust', { sides: 6 });
+    signAt(b, 12.6, 2.5, -19.68, 0, 2.6, 1.3, 'evac', { far: true, back: 0.05 });
   });
   place(ZONE.FUEL_DEPOT, (b) => {
     const FX = 22;
@@ -1957,6 +2726,14 @@ export function createMainland(seed) {
       b.cone(lx, 7.5, 9, 4.5, 1, 'tin', 16, { ry: 0 });
     }
     b.box(0, 0, 2.6, 36, 0.7, 0.4, 'concrete');
+    for (const lx of [-12, 0, 12]) {
+      for (const dx of [-0.25, 0.25]) b.box(lx + dx, 0, 4.5, 0.05, 8.2, 0.05, 'rust', { collide: false });
+      for (let y = 0.5; y < 8; y += 0.5) b.box(lx, y, 4.5, 0.5, 0.04, 0.04, 'rust', { collide: false });
+      b.box(lx, 7.6, 9, 9.2, 0.08, 0.08, 'rust', { collide: false }); // (the rail round its roof, seen as a line)
+      b.cyl(lx + 2.2, 0, 3.6, 0.14, 0.9, 'rust', { sides: 6, collide: false });
+    }
+    b.box(0, 0.35, 1.4, 30, 0.22, 0.22, 'rust', { collide: false }); // the main, along the bund
+    b.box(-12, 0.35, -3, 0.22, 0.22, 9, 'rust', { collide: false });
     // the pump house
     b.room(-12, -10, 8, 6, 3, 'concrete', { e: [door(3, 1.2)], n: [win(4, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete' });
     b.cont(CONT.LOCKER, -15.3, -9, { prop: 'locker', ry: PI / 2, ly: 0.12 });
@@ -2033,7 +2810,7 @@ export function createMainland(seed) {
   // stash, a shed.
   const sites = [];
   const atFence = (x, z, pad) => Math.abs(x - (field.x - 142)) < pad && z > field.z - 168 - pad && z < field.z + 196 + pad; // (the airfield's perimeter)
-  const siteOk = (x, z) => !atFence(x, z, SITE_FLAT + 12) && lakeDist(x, z) > 16 && pondDist(x, z) > 10 && !inCity(x, z, 26) && farms.every((f) => Math.hypot(f.x - x, f.z - z) > FARM_R + 54) && Math.abs(x) < HALF - 60 && Math.abs(z) < HALF - 60 && !inWater(x, z) && !nearZone(x, z, 26) && !onField(x, z, 14) && x > COAST + 30;
+  const siteOk = (x, z) => !atFence(x, z, SITE_FLAT + 12) && Math.hypot(x - gate[0], z - gate[1]) > 40 && lakeDist(x, z) > 16 && riverAt(x, z) > 18 && pondDist(x, z) > 10 && !inCity(x, z, 26) && farms.every((f) => Math.hypot(f.x - x, f.z - z) > FARM_R + 54) && Math.abs(x) < HALF - 60 && Math.abs(z) < HALF - 60 && !inWater(x, z) && !nearZone(x, z, 26) && !onField(x, z, 14) && x > COAST + 30;
   // is a road other than `road` within d of (x, z)? (At a junction the ground is two roads': nothing is seated there.)
   const otherRoad = (road, x, z, d) => roads.some((r) => r !== road && r.pts.some((v, k) => !(k & 1) && Math.abs(v - x) < d && Math.abs(r.pts[k + 1] - z) < d));
   const siteFree = (x, z, gapTo) => sites.every((s) => Math.hypot(s.x - x, s.z - z) >= (s.type === 'jam' ? Math.max(gapTo, 48) : gapTo)); // (a jam is 60 m of road)
@@ -2058,7 +2835,7 @@ export function createMainland(seed) {
       const tx0 = rng.range(-0.6, 0.6);
       const tr = rng.chance(0.5) ? 0.5 : PI - 0.4;
       const ts = rng.int(0, 1);
-      if (truck && !propBlocked('semi_truck', b.wx(tx0, 0), b.wz(tx0, 0), b.ry + tr) && !otherRoad(highway, x, z, 18)) b.wreck('semi_truck', tx0, 0, tr, { trunk: false, seed: ts, zone: ZONE.ROADSIDE });
+      if (truck && !propBlocked('semi_truck', b.wx(tx0, 0), b.wz(tx0, 0), b.ry + tr) && longClear('semi_truck', b.wx(tx0, 0), b.wz(tx0, 0)) && !otherRoad(highway, x, z, 18)) b.wreck('semi_truck', tx0, 0, tr, { trunk: false, seed: ts, zone: ZONE.ROADSIDE });
       // (both lanes, nose to tail: n lengths of it, a gap here and there where one got out)
       for (let n = rng.int(6, 9) * 2, k = 0; k < n; k++) {
         const along = ((k >> 1) - n / 4) * 6.3 + rng.range(-0.7, 0.7);
@@ -2067,7 +2844,7 @@ export function createMainland(seed) {
         const ry = (k % 2 ? PI : 0) + rng.range(-0.35, 0.35);
         const trunk = rng.chance(0.5);
         const type = t < 0.4 ? 'car_wreck' : t < 0.68 ? 'car_burnt' : t < 0.86 ? 'pickup_truck' : t < 0.95 ? 'ambulance' : 'school_bus';
-        if (propBlocked(type, b.wx(lane, along), b.wz(lane, along), b.ry + ry) || otherRoad(highway, b.wx(lane, along), b.wz(lane, along), 13)) continue;
+        if (propBlocked(type, b.wx(lane, along), b.wz(lane, along), b.ry + ry) || !longClear(type, b.wx(lane, along), b.wz(lane, along)) || otherRoad(highway, b.wx(lane, along), b.wz(lane, along), 13)) continue;
         b.wreck(type, lane, along, ry, { trunk: trunk && type !== 'car_burnt' && type !== 'ambulance' && type !== 'school_bus', zone: ZONE.ROADSIDE });
       }
       b.prop('suitcases', rng.range(-5, 5), rng.range(-12, 12), rng.range(0, 6), { nocollide: true });
@@ -2306,7 +3083,7 @@ export function createMainland(seed) {
   for (let a = 0; a < 8000 && resourceSpawns.length < 300; a++) {
     const x = rng.range(-LIM + 20, LIM - 20);
     const z = rng.range(-LIM + 20, LIM - 20);
-    if (zoneClear(x, z) || inWater(x, z) || occupied(x, z, 0.8)) continue;
+    if (zoneClear(x, z) || inCity(x, z, 12) || inWater(x, z) || occupied(x, z, 0.8)) continue;
     resourceSpawns.push({ x, y: heightAt(x, z) + 0.02, z, zone: ZONE.FOREST });
   }
   // fallback horde spawns (the horde normally appears round wherever the survivors are): a ring round the city
@@ -2395,6 +3172,7 @@ export function createMainland(seed) {
     highway,
     lake,
     ponds,
+    river: { pts: new Float32Array(riverPts), hw: RIVER_HW, bridges },
     landmarks, // what the field map names inside a place: { x, z, name }
     sea: { x: COAST, shoreX }, // everything west of the shore, out past the edge of the map (the client lays water there)
     trees: new Float32Array(trees),
@@ -2421,7 +3199,7 @@ export function createMainland(seed) {
     cemetery: null,
     bridge,
     runway,
-    city: { x: city.x, z: city.z, pitch: PITCH, grid: GRID, lots },
+    city: { x: city.x, z: city.z, pitch: PITCH, grid: GRID, lots, buildings, rooms, shells, heaps, fallen: fallenBits, pancakes, signs },
     farms: farms.map((f) => ({ x: f.x, z: f.z, ry: f.ry })),
   };
 }
