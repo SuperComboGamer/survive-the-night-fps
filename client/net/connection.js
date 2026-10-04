@@ -1,5 +1,5 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, ROOMF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, ROOMF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard, qpos } from '../../shared/protocol.js';
 import { CHARACTER_NONE } from '../../shared/characters.js';
 
 // A join whose socket closes before the server has answered it (no WELCOME, no REJECT) is tried again after these
@@ -74,7 +74,7 @@ export class Connection {
             this.room = { code: r.str(), name: r.str(), inviteOnly: !!(r.u8() & ROOMF.INVITE_ONLY) };
             break;
           case S2C.WELCOME: {
-            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), room: this.room };
+            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), act: r.left ? r.u8() : 1, room: this.room };
             settled = joined = true;
             resolve(info);
             break;
@@ -113,7 +113,7 @@ export class Connection {
             this.h.voice?.(r.u16(), r.str());
             break;
           case S2C.WORLD_RESET:
-            this.h.world?.(r.u32());
+            this.h.world?.(r.u32(), r.left ? r.u8() : 1);
             break;
           case S2C.BOARD:
             this.h.board?.(readBoard(r));
@@ -191,9 +191,9 @@ export class Connection {
         break;
       case ACT.PING:
         w.u8(args[0]);
-        w.i16(Math.max(-32768, Math.min(32767, Math.round(args[1] * 64))));
-        w.i16(Math.max(-32768, Math.min(32767, Math.round(args[2] * 64))));
-        w.i16(Math.max(-32768, Math.min(32767, Math.round(args[3] * 64))));
+        w.i16(qpos(args[1]));
+        w.i16(qpos(args[2]));
+        w.i16(qpos(args[3]));
         break;
       case ACT.DROP_SLOT:
       case ACT.SPLIT_INV:
@@ -210,8 +210,8 @@ export class Connection {
         break;
       case ACT.BUILD:
         w.u8(args[0]);
-        w.i16(Math.round(args[1] * 64));
-        w.i16(Math.round(args[2] * 64));
+        w.i16(qpos(args[1]));
+        w.i16(qpos(args[2]));
         w.u8(args[3]);
         break;
       case ACT.WAYPOINT: {
@@ -219,8 +219,8 @@ export class Connection {
         const at = args[0];
         w.u8(at ? 1 : 0);
         if (at) {
-          w.i16(Math.max(-32768, Math.min(32767, Math.round(at.x * 64))));
-          w.i16(Math.max(-32768, Math.min(32767, Math.round(at.z * 64))));
+          w.i16(qpos(at.x));
+          w.i16(qpos(at.z));
           w.u8(at.zone >= 0 ? at.zone : 255);
         }
         break;

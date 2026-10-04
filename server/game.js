@@ -62,7 +62,6 @@ import {
   INTERACT_SLACK,
   HOLD_SLACK,
   EYE_HEIGHT,
-  MAP_HALF,
   HORDE_SPAWN_MIN,
   HORDE_SPAWN_MAX,
   PLANE_SPEED,
@@ -92,8 +91,8 @@ import {
   ZTYPE,
   ZOMBIE_DEFS,
   LOOT_TABLES,
-  SUPPLIES,
-  SUPPLY_NEED,
+  suppliesOf,
+  CACHE_GAVE,
   SCHEMATICS,
   SCHEM_BIT,
   CONT,
@@ -115,11 +114,12 @@ import {
   radioLinked,
   salvageOf,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, dqpos, usePos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { XP, XPS, XP_SRC, levelOf, perkMods, perkMask } from '../shared/progress.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
-import { createWorld } from '../shared/world.js';
+import { worldFor } from '../shared/worlds.js';
+import { WORLD, nightRank, ARRIVAL_DAY, MAINLAND_DAY_MORE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, PLANE_REACH } from '../shared/acts.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
 import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME, radioKeyed } from '../shared/playersim.js';
@@ -309,7 +309,13 @@ export class Game {
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.records = opts.stats ?? new PlayerStats(); // the leaderboard (stats.js): the server's is kept in a file, this one goes with the game
     // (a restored game's valley is the one it was played on: built from its seed, which pins nothing)
-    this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed());
+    // The run's act (shared/acts.js): 1 on the island, 2 on the mainland. checkpoint: what the team crossed the
+    // bridge with (arrive), which a wipe on the mainland starts again from. crossing: the cutscene between the two,
+    // while it plays ({ pending: the mainland is still to be built, skip: who has asked to skip it }).
+    this.act = WORLD.ISLAND;
+    this.checkpoint = null;
+    this.crossing = null;
+    this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed(), restore?.game.act ?? WORLD.ISLAND);
     if (restore && restore.worldHash !== this.worldHash) throw new HandoffError(`this build makes another valley of seed ${this.seed}`);
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
@@ -354,7 +360,7 @@ export class Game {
     this.bossId = 0;
     this.warned = false;
     this.shadeWarned = false; // the "a shade is out there" notice went out tonight
-    this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
+    this.escape = this.noEscape();
     this.supplyAt = [];
     this.restartT = 0;
     this.globalDirty = true;
@@ -523,7 +529,7 @@ export class Game {
     this.sessions.delete(session);
     const p = session.player;
     if (!p) return;
-    if (code !== LEFT_CODE && p.rejoinKey && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) this.hold(p);
+    if (code !== LEFT_CODE && p.rejoinKey && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT || this.phase === PHASE.CROSSING)) this.hold(p);
     else this.removePlayer(p);
   }
 
@@ -572,6 +578,7 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
+    w.u8(this.act); // which of the run's two maps that seed is to be built as (shared/acts.js)
     session.conn.send(w.bytes());
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -584,6 +591,7 @@ export class Game {
     this.log(`resume ${p.name}`);
   }
   onMessage(session, data) {
+    usePos(this.world); // (positions in what this message says are in this world's units: protocol.js)
     // basic flood protection
     const now = this.time;
     if (now - session.msgWindow > 1) {
@@ -694,6 +702,7 @@ export class Game {
     // an emptied server rolls its next valley on the tick after (resetToWaiting): a join that beats that tick
     // rolls it here, so the seed in WELCOME is the one this run is played on
     if (this.phase === PHASE.WAITING) this.rollWorld();
+    this.buildMainland(true); // (a join during the crossing: the mainland it is put down on has to stand)
 
     const p = this.createPlayer(session, name);
     // no entity id left for them: turned away like from a full server, to try again once ids have come back
@@ -714,6 +723,7 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
+    w.u8(this.act); // which of the run's two maps that seed is to be built as (shared/acts.js)
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
     else if (this.fallen.delete(this.leaverKey(p)) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
@@ -1039,26 +1049,36 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- world
-  setWorld(seed) {
+  // act: which of the run's two maps to make of the seed (shared/acts.js): the island, or the mainland
+  setWorld(seed, act = WORLD.ISLAND) {
     const t0 = Date.now();
     this.seed = seed;
-    this.world = createWorld(seed);
+    this.act = act;
+    this.world = worldFor(seed, act);
+    usePos(this.world);
     this.worldHash = worldHash(this.world); // (what a save made on this valley is checked against: handoff.js)
     this.nav = new Nav(this.world);
     this.mineNav = this.world.mine ? new MineNav(this.world, this.nav) : null; // (a valley without the workings has none)
     this.worldPlayed = false;
-    if (this.zm) this.zm.treeGrid = this.zm.dens = null; // (per-world caches)
-    this.log(`world seed ${seed} generated in ${Date.now() - t0}ms`);
+    this.zm?.setWorld(); // (its grids and per-world caches)
+    this.log(`world seed ${seed}${act === WORLD.MAINLAND ? ' (the mainland)' : ''} generated in ${Date.now() - t0}ms`);
   }
 
   // Every playthrough gets a valley of its own: once a game has been played on this one, generate the next
   // and tell the clients its seed. Call with the world cleared (structures live in the old world's grids).
+  // A run always begins on the island: after one that ended on the mainland that is built again even where the seed
+  // is pinned.
   rollWorld() {
-    if (!this.worldPlayed || this.fixedSeed) return;
-    this.setWorld(randomSeed());
+    if (!this.worldPlayed || (this.fixedSeed && this.act === WORLD.ISLAND)) return;
+    this.setWorld(this.fixedSeed ? this.seed : randomSeed(), WORLD.ISLAND);
+    this.tellWorld();
+  }
+  // every client builds the world this game is now on (S2C.WORLD_RESET: its seed and its act)
+  tellWorld() {
     const w = new Writer(8);
     w.u8(S2C.WORLD_RESET);
     w.u32(this.seed >>> 0);
+    w.u8(this.act);
     this.broadcast(w.bytes());
   }
 
@@ -1070,6 +1090,8 @@ export class Game {
   resetToWaiting() {
     this.track.finish('abandoned'); // (a run still on: everybody left it)
     this.clearWorld();
+    this.checkpoint = null;
+    this.crossing = null;
     this.phase = PHASE.WAITING;
     this.day = 0;
     this.globalDirty = true;
@@ -1100,53 +1122,30 @@ export class Game {
     this.gather.clear();
     regrowTrees(this.world); // (a new game on the same valley: the trees the last one cut stand again)
     this.leftKits.clear();
-    this.escape = { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0 };
+    this.escape = this.noEscape();
     this.fixtures.reset();
+  }
+  // the final stand, not begun. stage: of the plane's stand, 0 fuelling, 1 warming up (acts.js RUNWAY); blocked: the
+  // dead stand on the runway ahead of the plane
+  noEscape() {
+    return { active: false, t: 0, ready: false, stalled: false, leaving: false, spawnT: 0, boss: false, sent: 0, tanks: 0, stage: 0, blocked: false };
   }
 
   startGame() {
+    // a wipe on the mainland costs the mainland, not the hour before it: the run starts again where the team came
+    // off the bridge, with what each of them crossed with (the checkpoint, arrive)
+    if (this.phase === PHASE.GAMEOVER && this.act === WORLD.MAINLAND && this.checkpoint) return this.restartFromBridge();
     this.track.finish('abandoned'); // (a run still being played as a new one begins: debug, tests)
     this.clearWorld();
+    this.checkpoint = null;
+    this.crossing = null;
     this.rollWorld();
     this.worldPlayed = true;
     this.phase = PHASE.DAY;
     this.day = this.startDayNum;
     this.timeLeft = this.dayLen;
-    this.supplies = [0, 0, 0, 0, 0];
     this.unlocked = 0;
-    this.warned = false;
-    this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
-    this.scheduleSupplyDrops();
-    const w = this.world;
-    // floor loot
-    this.lootPoints = [];
-    for (const sp of w.lootSpawns) this.lootPoints.push({ ...sp, ent: null, respawnAt: 0, table: LOOT_TABLES[sp.zone] || LOOT_TABLES[ZONE.FOREST] });
-    for (const sp of w.resourceSpawns) this.lootPoints.push({ ...sp, ent: null, respawnAt: 0, table: LOOT_TABLES[ZONE.FOREST] });
-    for (const lp of this.lootPoints) if (this.rng() < 0.8) this.spawnLoot(lp);
-    // searchable containers
-    for (const c of w.containers) {
-      const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0 };
-      if (this.spawnEntity(e)) this.caches.push(e);
-    }
-    // hide the schematics in lockers / ammo crates / toolboxes around the map (one each, far from the start)
-    const eligible = this.caches.filter((c) => CONT_DEFS[c.ctype].schem && Math.hypot(c.x - w.car.x, c.z - w.car.z) > 90);
-    for (const item of SCHEMATICS) {
-      for (let tries = 0; tries < 20 && eligible.length; tries++) {
-        const c = eligible[Math.floor(this.rng() * eligible.length)];
-        if (c.schem) continue;
-        c.schem = item;
-        break;
-      }
-    }
-    this.placeSupplies();
-    this.cemetery.reset();
-    this.gun.spawn();
-    this.fair.reset();
-    this.handcars.spawn();
-    // zone guards + roaming dead
-    this.zm.spawnInitial();
-    this.cm.spawnInitial();
-    this.dm.spawnInitial();
+    this.populate();
     for (const p of this.players.values()) {
       p.kills = p.zkills = p.deaths = 0; // the scoreboard counts this run only: whoever stayed on from the last one starts level
       p.xpBase = this.xpOf(p); // ...and so does the end screen's XP: the last run's is on their record now
@@ -1167,6 +1166,282 @@ export class Game {
     this.log('new game started');
   }
 
+  // What a map holds as an act begins on it: its loot, its containers and the schematics hidden in them, the act's
+  // supplies, and the dead that stand about by day. The world is cleared (clearWorld) and the day set before it.
+  populate() {
+    this.supplies = [0, 0, 0, 0, 0];
+    this.warned = false;
+    this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
+    this.scheduleSupplyDrops();
+    const w = this.world;
+    // floor loot
+    this.lootPoints = [];
+    for (const sp of w.lootSpawns) this.lootPoints.push({ ...sp, ent: null, respawnAt: 0, table: LOOT_TABLES[sp.zone] || LOOT_TABLES[ZONE.FOREST] });
+    for (const sp of w.resourceSpawns) this.lootPoints.push({ ...sp, ent: null, respawnAt: 0, table: LOOT_TABLES[ZONE.FOREST] });
+    for (const lp of this.lootPoints) if (this.rng() < 0.8) this.spawnLoot(lp);
+    // searchable containers
+    for (const c of w.containers) {
+      const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0 };
+      if (this.spawnEntity(e)) this.caches.push(e);
+    }
+    // hide the schematics in lockers / ammo crates / toolboxes around the map (one each, far from the start)
+    // (the ones the team has not found: the mainland hides what the island kept)
+    const eligible = this.caches.filter((c) => CONT_DEFS[c.ctype].schem && Math.hypot(c.x - w.start.x, c.z - w.start.z) > 90);
+    for (const item of SCHEMATICS) {
+      if (this.unlocked & (1 << SCHEM_BIT[item])) continue;
+      for (let tries = 0; tries < 20 && eligible.length; tries++) {
+        const c = eligible[Math.floor(this.rng() * eligible.length)];
+        if (c.schem) continue;
+        c.schem = item;
+        break;
+      }
+    }
+    this.placeSupplies();
+    this.cemetery.reset();
+    this.gun.spawn();
+    this.fair.reset();
+    this.handcars.spawn();
+    // zone guards + roaming dead
+    this.zm.spawnInitial();
+    this.cm.spawnInitial();
+    this.dm.spawnInitial();
+  }
+
+  // ---------------------------------------------------------------- the two acts (shared/acts.js)
+  // What this act's escape takes: the car's supplies on the island, the plane's parts on the mainland.
+  get sup() {
+    return suppliesOf(this.act);
+  }
+
+  // The car is away with the team in it: the island is done. The crossing begins - every client plays the cutscene
+  // off this phase's clock - and the mainland is built in the next tick (buildMainland), so that what tells the
+  // clients has left this thread before a world is generated on it. by: who drove.
+  // night: it left in the night.
+  cross(by, night = false) {
+    if (this.act !== WORLD.ISLAND || this.phase === PHASE.CROSSING) return;
+    this.log('crossing to the mainland');
+    // the escape from the island is paid as it always was: more to whoever was in the car than to those it left
+    const car = this.world.car;
+    for (const p of this.players.values()) {
+      const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
+      this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
+    }
+    this.clearWorld();
+    this.phase = PHASE.CROSSING;
+    this.timeLeft = CROSSING.TIME;
+    this.crossing = { pending: 2, skip: [], night, back: 0 };
+    this.waves = [];
+    this.wave = 0;
+    for (const p of this.players.values()) {
+      p.hold = null;
+      this.endUse(p);
+      this.releaseHolds(p);
+      p.cmdQueue.length = 0;
+      p.waypoint = null; // (it pointed into the island)
+    }
+    this.notify(NOTIFY.CROSSING, by ? by.id : 0);
+    this.sound(SOUND.CAR_START, car.x, car.y + 0.8, car.z, 0);
+    this.globalDirty = true;
+    this.playersDirty = true;
+  }
+
+  // The mainland, CROSSING.SWAP seconds into the crossing - the moment the cutscene cuts to black, which is when the
+  // clients take the island down. In two ticks: the first tells the clients which world to build (and everything a
+  // tick sends leaves the thread when the tick is done), the second builds ours, which holds this thread for a
+  // moment: nobody is acting. Then it is populated and the team is put down on it; they stand at the bridgehead
+  // from then on, behind the cutscene. now: both steps at once (a join that cannot wait, a skip, a save).
+  buildMainland(now = false) {
+    const c = this.crossing;
+    if (!c?.pending || (!now && CROSSING.TIME - this.timeLeft < CROSSING.SWAP)) return;
+    if (c.pending === 2) {
+      c.pending = 1;
+      this.act = WORLD.MAINLAND;
+      this.tellWorld();
+      if (!now) return;
+    }
+    c.pending = 0;
+    this.setWorld(this.seed, WORLD.MAINLAND);
+    // the morning after: whatever the hour was when the car left, the team comes off the bridge at the start of a
+    // day - the next one, if it left in the night
+    if (c.night) this.day++;
+    this.populate();
+    c.back = this.checkpointAt();
+    this.globalDirty = true;
+    this.playersDirty = true;
+  }
+
+  // The checkpoint at the bridge. Everybody is alive on the mainland - whoever was dead or turned at the end of the
+  // island comes back - with what they carried over and, at the least, the bridgehead cache's floor (bridgehead).
+  // What each of them has now is kept: a wipe on the mainland starts again from it (restartFromBridge). Returns how
+  // many it brought back from the dead.
+  checkpointAt() {
+    let back = 0;
+    for (const p of this.players.values()) {
+      if (!p.alive || p.zombie) {
+        // they dropped what they had where they fell, on the island: they cross with nothing but the floor
+        this.spawnHuman(p, { mag: 0, ammo: 0, items: [], tools: [] });
+        this.track.returned(p);
+        back++;
+      } else this.landOn(p);
+      this.bridgehead(p);
+    }
+    const kits = [];
+    for (const p of this.players.values()) kits.push([this.leaverKey(p), this.kitOf(p)]);
+    this.checkpoint = { day: this.day, unlocked: this.unlocked, kits };
+    return back;
+  }
+
+  // a survivor who crossed in the car, put down at the bridgehead as they are: on their feet, off whatever the
+  // island had them on, with everything they carried
+  landOn(p) {
+    const s = p.state;
+    if (p.downed) {
+      p.downed = false;
+      s.downed = 0;
+      p.bleed = 0;
+      p.revivedBy = 0;
+      p.hp = Math.max(p.hp, REVIVE_HP);
+    }
+    s.ride = s.cart = s.hmg = 0;
+    s.pinned = s.pulled = 0;
+    s.vx = s.vy = s.vz = 0;
+    this.putAtStart(s);
+    p.selfSync = true;
+    this.fillHistory(p);
+  }
+
+  // where a run on this map begins: one of its spawn points, facing away from what was left behind
+  putAtStart(s) {
+    const w = this.world;
+    const sp = w.spawnPoints[Math.floor(this.rng() * w.spawnPoints.length)];
+    s.x = sp.x + (this.rng() - 0.5) * 1.5;
+    s.z = sp.z + (this.rng() - 0.5) * 1.5;
+    s.y = groundAt(w, s.x, s.z, 50, 0.3);
+    const car = w.kind === WORLD.MAINLAND ? { x: w.bridge.x1 - 40, z: w.bridge.z } : w.car;
+    s.yaw = Math.atan2(-(car.x - s.x), -(car.z - s.z)) + Math.PI; // back to the car (or the bridge), facing the road
+  }
+
+  // The bridgehead cache (acts.js BRIDGEHEAD): what a survivor is short of the floor is made up, and nothing else. A
+  // team that crossed with empty guns can fight its way to the first building; one that crossed well stocked gets
+  // nothing. Returns what it gave (CACHE_GAVE), which the survivor is told.
+  bridgehead(p) {
+    const s = p.state;
+    let gave = 0;
+    const gun = (it) => isFirearm(it) && it !== ITEM.FLARE_GUN;
+    const guns = [s.weapons[SLOT_PRIMARY], s.weapons[SLOT_PISTOL]];
+    if (!guns.some(gun) && this.giveItem(p, BRIDGEHEAD.PISTOL, 1, WEAPONS[BRIDGEHEAD.PISTOL].mag)) {
+      gave |= CACHE_GAVE.PISTOL;
+      guns.push(BRIDGEHEAD.PISTOL); // (in the pistol's slot, or in the backpack if a flare gun has that)
+    }
+    for (const it of guns) {
+      if (!gun(it)) continue;
+      const def = WEAPONS[it];
+      const want = Math.min(BRIDGEHEAD.ROUNDS, def.mag * BRIDGEHEAD.MAGS, AMMO_MAX[def.ammo]);
+      if (s.ammo[def.ammo] >= want) continue;
+      s.ammo[def.ammo] = want;
+      gave |= CACHE_GAVE.AMMO;
+    }
+    const heals = countItem(p.inv, ITEM.BANDAGE) + countItem(p.inv, ITEM.MEDKIT);
+    if (heals < BRIDGEHEAD.BANDAGES && this.giveItem(p, ITEM.BANDAGE, BRIDGEHEAD.BANDAGES - heals)) gave |= CACHE_GAVE.BANDAGE;
+    if (!s.weapons[SLOT_MELEE]) {
+      s.weapons[SLOT_MELEE] = BRIDGEHEAD.MELEE;
+      gave |= CACHE_GAVE.MELEE;
+    }
+    if (!s.weapons[SLOT_BUILD]) {
+      s.weapons[SLOT_BUILD] = BRIDGEHEAD.BUILD;
+      gave |= CACHE_GAVE.BUILD;
+    }
+    if (gave) {
+      p.invDirty = true;
+      p.selfSync = true;
+      this.notify(NOTIFY.CACHE, gave, p.id);
+    }
+    return gave;
+  }
+
+  // what a survivor carries, as plain data (the checkpoint), and back
+  kitOf(p) {
+    const s = p.state;
+    return { weapons: s.weapons.slice(), mags: s.mags.slice(), ammo: s.ammo.slice(), inv: p.inv.map((it) => (it ? { ...it } : null)), armor: p.armor, armorMax: p.armorMax, armorItem: p.armorItem, backpackItem: p.backpackItem, kit: p.kit };
+  }
+  wear(p, k) {
+    const s = p.state;
+    s.weapons = k.weapons.slice();
+    s.mags = k.mags.slice();
+    s.ammo = k.ammo.slice();
+    p.inv = k.inv.map((it) => (it ? { ...it } : null));
+    p.armor = k.armor;
+    p.armorMax = k.armorMax;
+    p.armorItem = k.armorItem;
+    p.backpackItem = k.backpackItem;
+    p.kit = k.kit;
+    p.invDirty = true;
+    this.syncThrow(p);
+  }
+
+  // The crossing is over (its clock ran out, or everybody asked to skip it): the first day on the mainland begins.
+  arrive() {
+    this.buildMainland(true); // (a crossing cut short before its mainland was up)
+    const back = this.crossing?.back || 0;
+    this.crossing = null;
+    this.phase = PHASE.DAY;
+    this.timeLeft = this.dayLen;
+    this.notify(NOTIFY.ARRIVED, back);
+    this.sound(SOUND.DAWN, 0, 0, 0, 0);
+    this.globalDirty = true;
+    this.playersDirty = true;
+    this.log(`arrived on the mainland: day ${this.day}, ${back} back from the dead`);
+  }
+
+  // A player asks for the crossing to be skipped (ACT.SKIP). It is, once everybody who is connected has asked, and
+  // not before the clients have their mainland up (CROSSING.SKIP_AFTER).
+  skipCrossing(p) {
+    const c = this.crossing;
+    if (this.phase !== PHASE.CROSSING || !c || c.skip.includes(p.id)) return;
+    c.skip.push(p.id);
+    this.globalDirty = true;
+  }
+  skipVotes() {
+    const c = this.crossing;
+    let need = 0;
+    let got = 0;
+    for (const p of this.players.values()) {
+      if (p.away) continue;
+      need++;
+      if (c && c.skip.includes(p.id)) got++;
+    }
+    return [got, need];
+  }
+
+  // A wipe on the mainland: the same mainland again, as the team found it coming off the bridge, on the day they
+  // did, each with what they crossed with. Whoever joined since has a late joiner's kit for that day.
+  restartFromBridge() {
+    const cp = this.checkpoint;
+    this.track.finish('abandoned');
+    this.clearWorld();
+    this.phase = PHASE.DAY;
+    this.day = cp.day;
+    this.unlocked = cp.unlocked;
+    this.timeLeft = this.dayLen;
+    this.populate();
+    const kits = new Map(cp.kits);
+    for (const p of this.players.values()) {
+      p.nightKills = p.nightRevives = 0;
+      p.lastChance = false;
+      if (p.perksNext >= 0) p.perks = p.perksNext;
+      p.perksNext = -1;
+      p.waypoint = null;
+      const k = kits.get(this.leaverKey(p));
+      this.spawnHuman(p, k ? k.kit || { mag: 0, ammo: 0, items: [], tools: [] } : starterKit(this.day));
+      if (k) this.wear(p, k);
+    }
+    this.notify(NOTIFY.CHECKPOINT, this.day);
+    this.globalDirty = true;
+    this.playersDirty = true;
+    this.track.start();
+    this.log(`wiped on the mainland: back at the bridgehead, day ${this.day}`);
+  }
+
   // Hide the car supplies around the valley: each at a random hiding spot of a random place on this map, and
   // never two in the same place while there is a place left without one. The survivors are told which place
   // each is rumoured to be in.
@@ -1180,12 +1455,23 @@ export class Game {
     };
     const byPlace = new Map();
     for (const sp of this.world.partSpots) byPlace.set(sp.zone, [...(byPlace.get(sp.zone) || []), sp]);
-    const places = shuffle([...byPlace.values()].map(shuffle));
+    const places = this.act === WORLD.MAINLAND ? [] : shuffle([...byPlace.values()].map(shuffle));
     this.supplySpots = [];
     this.supplyFound = 0;
+    const { items, need } = this.sup;
+    // on the mainland a part is at one of its own set places (world.partSpots[k].supply: shared/mainland.js)
+    const own = (i) => shuffle(this.world.partSpots.filter((sp) => sp.supply === i));
+    const set = items.map((_, i) => own(i));
     // deal them out round the places: a place only gets a second one once every place has had one
     let turn = 0;
-    this.supplyHints = SUPPLIES.flatMap((item, i) => new Array(SUPPLY_NEED[i]).fill(item)).map((item, hint) => {
+    this.supplyHints = items.flatMap((item, i) => new Array(need[i]).fill(i)).map((i, hint) => {
+      const item = items[i];
+      const at = set[i].pop();
+      if (at) {
+        this.spawnItem(item, 1, at.x, at.y, at.z, { permanent: true, hint });
+        this.supplySpots.push(at);
+        return at.zone;
+      }
       for (let tries = 0; tries < places.length; tries++) {
         const sp = places[turn++ % places.length].pop();
         if (!sp) continue;
@@ -1214,12 +1500,12 @@ export class Game {
       }
     }
     const w = this.world;
-    if (!a || Math.hypot(a.x - w.car.x, a.z - w.car.z) < TALK_CLEAR) return null;
+    if (!a || Math.hypot(a.x - w.start.x, a.z - w.start.z) < TALK_CLEAR) return null;
     const ay = groundAt(w, a.x, a.z, a.y, PLAYER_RADIUS * 0.7);
     const dead = []; // zombies and player-zombies that could be near a spot
     for (const z of this.zombies) if (!z.dead && Math.hypot(z.x - a.x, z.z - a.z) < JOIN_FAR_MAX + JOIN_CLEAR) dead.push(z);
     for (const q of this.players.values()) if (q.zombie && q.alive) dead.push(q.state);
-    const lim = MAP_HALF - 3;
+    const lim = this.world.half - 3;
     const body = { x: 0, y: 0, z: 0 };
     const a0 = this.rng() * Math.PI * 2;
     let spot = null;
@@ -1265,12 +1551,7 @@ export class Game {
     Object.assign(s, fresh);
     s.weapons = kit.tools ? STARTER_TOOLS.map((t, slot) => (kit.tools.includes(slot) ? t : 0)) : STARTER_TOOLS.slice(); // (tools: parkKit)
     s.mags = [0, kit.mag];
-    const sp = this.world.spawnPoints[Math.floor(this.rng() * this.world.spawnPoints.length)];
-    s.x = sp.x + (this.rng() - 0.5) * 1.5;
-    s.z = sp.z + (this.rng() - 0.5) * 1.5;
-    s.y = groundAt(this.world, s.x, s.z, 50, 0.3);
-    const car = this.world.car;
-    s.yaw = Math.atan2(-(car.x - s.x), -(car.z - s.z)) + Math.PI; // back to the car, facing the road
+    this.putAtStart(s);
     if (beside) Object.assign(s, this.pickJoinSpawn(p)); // (x, y, z, yaw - or nothing: the car it is)
     s.perks = p.perks;
     p.maxHp = PLAYER_MAX_HP + perkMods(p.perks).hp;
@@ -1360,8 +1641,12 @@ export class Game {
   }
 
   // how long today is, horn included: the first two days are long, then they shorten (dayLength)
+  // (on the mainland every walk is twice as far: the day the team arrives is long, the rest a little longer than
+  // the island's - acts.js)
   get dayLen() {
-    return this.dayLenOverride || dayLength(this.day);
+    if (this.dayLenOverride) return this.dayLenOverride;
+    if (this.act === WORLD.MAINLAND) return this.checkpoint && this.day === this.checkpoint.day ? ARRIVAL_DAY : dayLength(this.day) + MAINLAND_DAY_MORE;
+    return dayLength(this.day);
   }
 
   scheduleSupplyDrops() {
@@ -1391,8 +1676,9 @@ export class Game {
     const shares = [0.3, 0.33, 0.37];
     const scale = this.nightLen / NIGHT_LENGTH;
     // tonight's theme re-weights the blend below (the client works out the same theme from the seed to warn the team)
-    const theme = this.themes ? nightTheme(this.seed, n) : null;
-    const shadeCap = Math.min(6, (1 + Math.floor((n - ZOMBIE_DEFS[ZTYPE.SHADE].minNight) / 2) + Math.floor(humans / 2)) * (theme?.shadeCap ?? 1));
+    const theme = this.themes ? nightTheme(this.seed, n, this.act) : null;
+    const rank = nightRank(this.act, n); // (which kinds have joined the horde: on the mainland, those of night 4 at the least)
+    const shadeCap = Math.min(6, (1 + Math.floor((rank - ZOMBIE_DEFS[ZTYPE.SHADE].minNight) / 2) + Math.floor(humans / 2)) * (theme?.shadeCap ?? 1));
     let shades = 0;
     this.waves = [];
     for (let k = 0; k < NIGHT_WAVES; k++) {
@@ -1411,7 +1697,7 @@ export class Game {
         [ZTYPE.SHADE, 2.5 + sp * 2.5],
       ];
       // one new kind a night: each stays out of the horde until its night comes
-      for (const wt of weights) if (n < ZOMBIE_DEFS[wt[0]].minNight) wt[1] = 0;
+      for (const wt of weights) if (rank < ZOMBIE_DEFS[wt[0]].minNight) wt[1] = 0;
       if (theme) for (const wt of weights) wt[1] *= theme.mul[wt[0]] ?? 1;
       const tot = weights.reduce((a, b) => a + b[1], 0);
       const q = [];
@@ -1437,8 +1723,8 @@ export class Game {
     // the night's new kind is in it for certain (the dawn card and the dusk horn said it would be), and from their
     // night on there is always at least one shade out there. Both come with the second wave, in a walker's place
     const fresh = [];
-    for (const t of Object.values(ZTYPE)) if (ZOMBIE_DEFS[t].minNight === n && !ZOMBIE_DEFS[t].boss && !this.waves.some((wv) => wv.queue.includes(t))) fresh.push(t);
-    if (n >= ZOMBIE_DEFS[ZTYPE.SHADE].minNight && !shades && !fresh.includes(ZTYPE.SHADE)) fresh.push(ZTYPE.SHADE);
+    for (const t of Object.values(ZTYPE)) if (ZOMBIE_DEFS[t].minNight === rank && !ZOMBIE_DEFS[t].boss && !this.waves.some((wv) => wv.queue.includes(t))) fresh.push(t);
+    if (rank >= ZOMBIE_DEFS[ZTYPE.SHADE].minNight && !shades && !fresh.includes(ZTYPE.SHADE)) fresh.push(ZTYPE.SHADE);
     for (const t of fresh) {
       const q = this.waves[1].queue;
       const at = q.indexOf(ZTYPE.WALKER);
@@ -1452,7 +1738,7 @@ export class Game {
     // can - at dawn the sun takes whatever is left of it, and what it carried (Combat.killZombie)
     const bossT = WAVE_TIMES[BOSS_WAVE] * scale + 8;
     // every night has one: The Brute on the first, then one drawn from the seed (BOSS_POOL)
-    this.bossPending = { types: [nightBoss(this.seed, n)], t: bossT };
+    this.bossPending = { types: [nightBoss(this.seed, n, this.act)], t: bossT };
     this.notify(NOTIFY.NIGHT_FALLS, n);
     this.track.nightfall();
     this.ach.nightfall();
@@ -1526,7 +1812,8 @@ export class Game {
     this.track.finish('victory'); // (first: who is where as the car leaves)
     this.ach.victory();
     this.phase = PHASE.VICTORY;
-    this.restartT = GAME_OVER_DELAY + 6;
+    this.restartT = GAME_OVER_DELAY + 6 + (this.act === WORLD.MAINLAND ? TAKEOFF_TIME : 0); // (the take-off is watched first)
+    this.checkpoint = null;
     this.escape.active = false;
     this.credit(this.players.values(), 'wins'); // the run is the team's: won by everybody in it, the turned and the left-behind too
     // ...but the XP for the escape is for whoever is in the car (as the end screen tells it: ESCAPE_RADIUS)
@@ -1567,20 +1854,21 @@ export class Game {
   }
 
   allSuppliesIn() {
-    for (let i = 0; i < SUPPLIES.length; i++) if (this.supplies[i] < SUPPLY_NEED[i]) return false;
+    const { items, need } = this.sup;
+    for (let i = 0; i < items.length; i++) if (this.supplies[i] < need[i]) return false;
     return true;
   }
 
   // How many of the dead the final stand brings in all. It is read whenever a group is due (updateEscape), so it
   // follows the survivors still alive: a death shrinks what is still to come, a late joiner adds to it.
   finalStandSize() {
-    return Math.round(FINAL_STAND_SIZE * this.hordeSize(this.day, Math.max(1, this.humanCount())));
+    return Math.round(FINAL_STAND_SIZE * (this.act === WORLD.MAINLAND ? RUNWAY.SIZE : 1) * this.hordeSize(this.day, Math.max(1, this.humanCount())));
   }
 
   startEngine(p) {
     if (this.escape.active || !this.allSuppliesIn()) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
-    this.escape = { active: true, t: ESCAPE_TIME, ready: false, stalled: false, leaving: false, spawnT: 3, boss: false, sent: 0, tanks: 0 };
+    this.escape = { ...this.noEscape(), active: true, t: this.act === WORLD.MAINLAND ? RUNWAY.FUEL_TIME : ESCAPE_TIME, spawnT: 3 };
     const car = this.world.car;
     this.notify(NOTIFY.ENGINE_START, p ? p.id : 0);
     this.sound(SOUND.ENGINE_CRANK, car.x, car.y + 0.8, car.z, 300);
@@ -1612,12 +1900,29 @@ export class Game {
   // A survivor got in and drove (HOLD.DRIVE at the car, once the engine is warm). That wins the run for the whole
   // team, as victory always has: one phase and one restart for everybody. Whoever is not at the car is left
   // behind, which each client works out for its own end screen from ESCAPE_RADIUS.
+  // On the island that is no longer the end: the car makes for the bridge, and the run goes on across it (cross).
+  // On the mainland it is the plane, and it does not go while the dead stand on the runway ahead of it.
   driveOff(p) {
     if (!this.escape.active || !this.escape.ready) return;
+    if (this.act === WORLD.MAINLAND) {
+      const n = this.onRunway();
+      if (n > RUNWAY.CLEAR) return this.notify(NOTIFY.RUNWAY_BLOCKED, n, p.id);
+      this.log('took off:', p.name);
+      this.track.drove(p);
+      this.ach.drove(p);
+      return this.victory();
+    }
     this.log('drove off:', p.name);
     this.track.drove(p);
-    this.ach.drove(p);
-    this.victory();
+    this.cross(p, this.phase === PHASE.NIGHT);
+  }
+
+  // how many of the dead stand on the runway ahead of the plane (acts.js RUNWAY: the strip it needs for its run)
+  onRunway() {
+    const car = this.world.car;
+    let n = 0;
+    for (const z of this.zombies) if (!z.dead && !z.def.flying && Math.abs(z.x - car.x) < RUNWAY.LANE && car.z - z.z > 4 && car.z - z.z < RUNWAY.STRIP) n++;
+    return n;
   }
 
   // ---------------------------------------------------------------- items / loot
@@ -1711,7 +2016,7 @@ export class Game {
   dropItem(item, count, x, y, z, opts = {}) {
     const a = this.rng() * Math.PI * 2;
     const r = opts.spread ?? 0.6 + this.rng() * 0.8;
-    const lim = MAP_HALF - 3; // as far out as a survivor gets (simulatePlayer)
+    const lim = this.world.half - 3; // as far out as a survivor gets (simulatePlayer)
     const inMap = (v) => Math.max(-lim, Math.min(lim, v));
     const hx = inMap(opts.from?.x ?? x);
     const hz = inMap(opts.from?.z ?? z);
@@ -1897,6 +2202,16 @@ export class Game {
     if (p.cmdQueue.length > CMD_QUEUE_MAX) p.cmdQueue.splice(0, p.cmdQueue.length - CMD_QUEUE_MAX);
   }
 
+  // a client's commands during the crossing: acknowledged, and not run (nobody acts while the cutscene plays)
+  drainInputs(p) {
+    for (const cmd of p.cmdQueue) {
+      p.lastSeq = cmd.seq;
+      p.hasSeq = true;
+    }
+    if (p.cmdQueue.length) p.selfSync = true; // (its prediction ran them: it takes our state back)
+    p.cmdQueue.length = 0;
+  }
+
   processInputs() {
     for (const p of this.players.values()) {
       // A client issues CMDS_PER_TICK commands a tick, and that is what it is allowed. They do not arrive that
@@ -1987,9 +2302,9 @@ export class Game {
   setWaypoint(p, r) {
     let wp = null;
     if (r.u8()) {
-      const lim = MAP_HALF - 3; // (as the map clamps a click)
-      const x = Math.max(-lim, Math.min(lim, r.i16() / 64));
-      const z = Math.max(-lim, Math.min(lim, r.i16() / 64));
+      const lim = this.world.half - 3; // (as the map clamps a click)
+      const x = Math.max(-lim, Math.min(lim, dqpos(r.i16())));
+      const z = Math.max(-lim, Math.min(lim, dqpos(r.i16())));
       const zone = r.u8();
       wp = { x, z, zone: this.world.zoneById[zone] ? zone : 255 };
     }
@@ -2004,6 +2319,8 @@ export class Game {
     const s = p.state;
     // (a waypoint is only a mark on the map: it is theirs to move whatever has become of them)
     if (act === ACT.WAYPOINT) return this.setWaypoint(p, r);
+    if (act === ACT.SKIP) return this.skipCrossing(p);
+    if (this.phase === PHASE.CROSSING) return; // (nobody acts while the cutscene plays)
     if (!p.alive) return;
     if (p.zombie && act !== ACT.FLASHLIGHT && act !== ACT.PING) return;
     if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.USE_ITEM && act !== ACT.HOLD_END) return;
@@ -2017,9 +2334,9 @@ export class Game {
         return;
       case ACT.PING: {
         const kind = r.u8();
-        const x = r.i16() / 64;
-        const y = r.i16() / 64;
-        const z = r.i16() / 64;
+        const x = dqpos(r.i16());
+        const y = dqpos(r.i16());
+        const z = dqpos(r.i16());
         if (this.time - p.pingT < 0.6) return;
         p.pingT = this.time;
         this.emit((w) => {
@@ -2099,8 +2416,8 @@ export class Game {
       }
       case ACT.BUILD: {
         const type = r.u8();
-        const x = r.i16() / 64;
-        const z = r.i16() / 64;
+        const x = dqpos(r.i16());
+        const z = dqpos(r.i16());
         const rot = r.u8();
         return this.build(p, type, x, z, rot);
       }
@@ -2181,10 +2498,11 @@ export class Game {
     }
   }
 
+  // (the plane is a bigger thing to stand beside than the car: PLANE_REACH further)
   nearCar(p, r = 5) {
     const s = p.state;
     const car = this.world.car;
-    return Math.hypot(s.x - car.x, s.z - car.z) <= r;
+    return Math.hypot(s.x - car.x, s.z - car.z) <= r + (car.plane ? PLANE_REACH : 0);
   }
 
   // nearest structure of a crafting station kind ('fire' needs to be lit)
@@ -2209,8 +2527,8 @@ export class Game {
     if (id === CAR_ID) {
       if (!this.nearCar(p)) return;
       let installed = 0;
-      SUPPLIES.forEach((item, i) => {
-        const need = SUPPLY_NEED[i] - this.supplies[i];
+      this.sup.items.forEach((item, i) => {
+        const need = this.sup.need[i] - this.supplies[i];
         if (need <= 0) return;
         const have = countItem(p.inv, item);
         const n = Math.min(need, have);
@@ -2493,7 +2811,7 @@ export class Game {
 
   pickCarAlarmSpawn(p, c, humans) {
     const s = p.state;
-    const lim = MAP_HALF - 14;
+    const lim = this.world.half - 14;
     const behind = s.yaw + Math.PI;
     for (let tries = 0; tries < 20; tries++) {
       const a = behind + (this.rng() - 0.5) * Math.PI;
@@ -3347,15 +3665,48 @@ export class Game {
         this.spawnSupplyDrop();
         break;
       case 'parts':
-        for (let i = 0; i < SUPPLIES.length; i++) this.supplies[i] = SUPPLY_NEED[i];
+        this.supplies = this.sup.need.slice();
         this.globalDirty = true;
         break;
       case 'engine':
-        for (let i = 0; i < SUPPLIES.length; i++) this.supplies[i] = SUPPLY_NEED[i];
+        this.supplies = this.sup.need.slice();
         this.startEngine(p);
         break;
       case 'unlock':
         for (const it of SCHEMATICS) this.unlockSchematic(it, null);
+        break;
+      case 'cross':
+        // /cross [skip]: the car is away - the crossing to the mainland, with its cutscene, or straight there
+        if (this.act === WORLD.ISLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+          this.cross(p, this.phase === PHASE.NIGHT);
+          if (args[1] === 'skip') this.arrive();
+        }
+        break;
+      case 'place': {
+        // /place <zone id>: to the middle of that place of this map (the mainland's: 27 the bridgehead .. 34)
+        const zn = this.world.zoneById[+args[1]];
+        if (zn) {
+          s.x = zn.x;
+          s.z = zn.z - 3;
+          s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+          s.vx = s.vy = s.vz = 0;
+          this.fillHistory(p);
+        }
+        break;
+      }
+      case 'plane':
+        // /plane: to the plane (the car, on the island), with every part of it in the backpack
+        s.x = this.world.car.x - 6;
+        s.z = this.world.car.z + 2;
+        s.y = groundAt(this.world, s.x, s.z, 200, 0.3);
+        s.vx = s.vy = s.vz = 0;
+        this.fillHistory(p);
+        this.sup.items.forEach((it, i) => this.giveItem(p, it, this.sup.need[i] - this.supplies[i]));
+        break;
+      case 'wipe':
+        // /wipe: every survivor dies (the checkpoint at the bridge is what a wipe on the mainland goes back to)
+        for (const q of [...this.players.values()]) if (q.alive && !q.zombie) this.killPlayer(q, { kind: KILLER.WORLD }, true);
+        this.checkAllDead();
         break;
       case 'tp': {
         // /tp x z [y]: onto whatever is highest there, or with a height onto what is under feet at it (down a drift)
@@ -3511,6 +3862,7 @@ export class Game {
   update() {
     const ts = this.tickStats;
     ts.begin();
+    usePos(this.world); // (positions in everything this tick sends are in this world's units: protocol.js)
     this.tick++;
     const dt = SERVER_DT;
     this.time += dt;
@@ -3532,6 +3884,23 @@ export class Game {
       if (this.rollWhenEmpty) this.rollWorld(); // (the valley for the next run, once the last one has emptied: see resetToWaiting)
       this.processInputs();
       ts.mark(T_INPUTS);
+      this.sendSnapshots();
+      ts.mark(T_SNAPSHOTS);
+      this.endTick();
+      return;
+    }
+    // the crossing: nobody acts, nothing walks. The mainland is built in its first tick, then the clock runs out
+    if (this.phase === PHASE.CROSSING) {
+      this.buildMainland();
+      for (const p of this.players.values()) this.drainInputs(p);
+      ts.mark(T_INPUTS);
+      const prev = Math.ceil(this.timeLeft);
+      this.timeLeft -= dt;
+      if (Math.ceil(this.timeLeft) !== prev) this.globalDirty = true;
+      const [got, need] = this.skipVotes();
+      if (this.timeLeft <= 0 || (need > 0 && got >= need && CROSSING.TIME - this.timeLeft >= CROSSING.SKIP_AFTER)) this.arrive();
+      this.recordHistory();
+      ts.mark(T_PHASE);
       this.sendSnapshots();
       ts.mark(T_SNAPSHOTS);
       this.endTick();
@@ -3697,12 +4066,23 @@ export class Game {
   updateEscape(dt) {
     const e = this.escape;
     const car = this.world.car;
-    let held = false; // somebody stands at the car
+    // The plane's stand (acts.js RUNWAY) has two things to hold, one after the other: the fuel truck while it pumps,
+    // then the plane while its engines warm. The car's has the one.
+    const plane = this.act === WORLD.MAINLAND;
+    const at = plane && e.stage === 0 ? this.world.runway.truck : car;
+    const reach = plane && e.stage === 0 ? RUNWAY.HOLD : ESCAPE_RADIUS;
+    let held = false; // somebody stands at it
     let leaving = false; // somebody is getting in
     for (const p of this.players.values()) {
       if (!p.alive || p.zombie || p.downed) continue;
-      if (Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS) held = true;
+      if (Math.hypot(p.state.x - at.x, p.state.z - at.z) <= reach) held = true;
       if (p.hold && p.hold.kind === HOLD.DRIVE) leaving = true;
+    }
+    // ...and once it is ready, a runway to keep clear: the plane does not go with the dead in its way (driveOff)
+    const blocked = plane && e.ready && this.tick % 5 === 0 ? this.onRunway() > RUNWAY.CLEAR : e.blocked;
+    if (blocked !== e.blocked) {
+      e.blocked = blocked;
+      this.globalDirty = true;
     }
     const stalled = !e.ready && !held;
     if (stalled !== e.stalled || leaving !== e.leaving) {
@@ -3723,7 +4103,8 @@ export class Game {
     // a warm engine goes on drawing them once the stand is spent, so every second the team lingers at the car costs
     const linger = e.ready && size > 0 && e.sent >= size;
     if ((e.sent < size || linger) && this.hordeAlive() < Math.min(MAX_ZOMBIES_ALIVE, Math.round(size * FINAL_STAND_ALIVE))) {
-      e.spawnT = ((FINAL_STAND_SPREAD / Math.ceil(size / 3.5)) * (0.7 + this.rng() * 0.6)) / (linger ? ESCAPE_LINGER_PACE : 1); // groups of 3-5, as a wave's
+      const spread = plane ? RUNWAY.FUEL_TIME + RUNWAY.WARM_TIME - 30 : FINAL_STAND_SPREAD;
+      e.spawnT = ((spread / Math.ceil(size / 3.5)) * (0.7 + this.rng() * 0.6)) / (linger ? ESCAPE_LINGER_PACE : 1); // groups of 3-5, as a wave's
       const n = this.day;
       const tanks = FINAL_STAND_TANKS * Math.max(1, this.humanCount());
       const q = [];
@@ -3733,15 +4114,25 @@ export class Game {
         if (type === ZTYPE.TANK) e.tanks++;
         q.push(type);
       }
-      e.sent += this.spawnHordeGroup(q, car);
+      // (the plane's comes down the runway: its groups appear round a point well along it)
+      e.sent += this.spawnHordeGroup(q, plane ? { x: car.x, z: car.z - RUNWAY.AHEAD } : car);
       for (const t of q) if (t === ZTYPE.TANK) e.tanks--; // rolled, but the group came out smaller: it was not sent
     }
     if (!e.ready) {
-      if (!e.boss && e.t <= ESCAPE_TIME * 0.5) {
+      if (!e.boss && e.t <= (plane ? RUNWAY.FUEL_TIME : ESCAPE_TIME) * 0.5) {
         e.boss = true;
         this.spawnBosses([this.day % 2 ? ZTYPE.BOSS_ABOMINATION : ZTYPE.BOSS_HIVEQUEEN], car);
       }
-      if (e.t <= 0) {
+      if (e.t <= 0 && plane && e.stage === 0) {
+        // the tanks are full: the engines start, and the stand moves from the truck to the plane. The other of the
+        // two late bosses comes with it
+        e.stage = 1;
+        e.t = RUNWAY.WARM_TIME;
+        this.notify(NOTIFY.STAND_STAGE, 1);
+        this.sound(SOUND.ENGINE_CRANK, car.x, car.y + 0.8, car.z, 300);
+        this.spawnBosses([this.day % 2 ? ZTYPE.BOSS_HIVEQUEEN : ZTYPE.BOSS_ABOMINATION], { x: car.x, z: car.z - RUNWAY.AHEAD });
+        this.globalDirty = true;
+      } else if (e.t <= 0) {
         e.t = 0;
         e.ready = true;
         this.notify(NOTIFY.ESCAPE_READY, 0);
@@ -4027,7 +4418,7 @@ export class Game {
     for (const wv of this.waves) hordeLeft += wv.queue.length;
     w.u16(this.phase === PHASE.NIGHT || this.escape.active ? Math.min(0xfffe, hordeLeft) : 0xffff);
     w.u16(this.bossId);
-    for (let i = 0; i < SUPPLIES.length; i++) w.u8(this.supplies[i]);
+    for (let i = 0; i < 5; i++) w.u8(this.supplies[i]); // (this act's: suppliesOf)
     for (let i = 0; i < 7; i++) w.u8(this.supplyHints[i] ?? 255);
     w.u8(this.supplyFound);
     w.u8(this.unlocked);
@@ -4036,7 +4427,8 @@ export class Game {
     w.u16(Math.round(Math.max(0, this.escape.t) * 10));
     const esc = this.escape;
     // 8: the warm-up has stalled (nobody on their feet at the car), 16: a survivor is getting in to drive
-    w.u8((esc.active ? 1 : 0) | (this.allSuppliesIn() ? 2 : 0) | (esc.ready ? 4 : 0) | (esc.active && esc.stalled ? 8 : 0) | (esc.active && esc.leaving ? 16 : 0));
+    // 32: (the plane's stand) the tanks are full and the engines are warming, 64: the dead are on the runway
+    w.u8((esc.active ? 1 : 0) | (this.allSuppliesIn() ? 2 : 0) | (esc.ready ? 4 : 0) | (esc.active && esc.stalled ? 8 : 0) | (esc.active && esc.leaving ? 16 : 0) | (esc.active && esc.stage ? 32 : 0) | (esc.active && esc.blocked ? 64 : 0));
     let alive = 0;
     let total = 0;
     for (const p of this.players.values()) {
@@ -4046,7 +4438,12 @@ export class Game {
     w.u8(alive);
     w.u8(total);
     w.f32(this.restartT);
-    w.u16(Math.round(this.phase === PHASE.DAY ? this.dayLen : this.nightLen));
+    w.u16(Math.round(this.phase === PHASE.DAY ? this.dayLen : this.phase === PHASE.CROSSING ? CROSSING.TIME : this.nightLen));
+    // the act being played (shared/acts.js), and who has asked to skip the crossing out of who would have to
+    w.u8(this.act);
+    const [got, need] = this.phase === PHASE.CROSSING ? this.skipVotes() : [0, 0];
+    w.u8(Math.min(255, got));
+    w.u8(Math.min(255, need));
     // workbenches, for the field map: structures themselves only replicate inside AOI_STRUCTURE_RADIUS
     const at = w.reserve8();
     let benches = 0;

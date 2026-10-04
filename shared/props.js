@@ -8,6 +8,17 @@
 
 export const PROPS = {
   car: { size: [1.9, 1.45, 4.6], boxes: [[0, 0.72, 0, 1.9, 1.44, 4.5]], desc: 'broken-down rusty sedan, hood propped open, one wheel missing (on a jack/blocks), shattered windows. The quest car at camp.' },
+  // (the mainland, act 2: shared/mainland.js)
+  plane_wreck: {
+    size: [15.8, 4.6, 12.4],
+    boxes: [
+      [0, 1.55, 0.2, 1.9, 2.5, 11.6],
+      [0, 1.35, -1.1, 15.6, 0.6, 2.6],
+      [0, 3.0, 5.2, 5.4, 0.5, 1.6],
+    ],
+    desc: 'a grounded twin-engine transport plane, nose to -Z: cowlings off both engines, one propeller missing, a main wheel flat, an access panel hanging open. The quest plane at Calder Field.',
+  },
+  fuel_truck: { size: [2.5, 2.9, 7.6], boxes: [[0, 1.45, 0, 2.5, 2.9, 7.6]], desc: 'an airfield fuel bowser: a cab and a long elliptical tank, faded yellow, a hose reel at the back' },
   car_wreck: { size: [1.9, 1.5, 4.5], boxes: [[0, 0.75, 0, 1.9, 1.5, 4.4]], salvage: true, desc: 'abandoned rusted car, variant colors, doors open, weeds' },
   pickup_truck: { size: [2.1, 1.9, 5.4], boxes: [[0, 0.95, 0, 2.1, 1.9, 5.3]], salvage: true, desc: 'old farm pickup truck, rust, flat tire' },
   campfire: { size: [1.9, 0.55, 1.9], cyls: [[0, 0, 0.85, 0.5]], desc: 'ring of stones with charred logs in teepee (flames are added by the renderer at y~0.3)' },

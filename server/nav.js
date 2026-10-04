@@ -16,10 +16,9 @@
 // the way through it is to claw the piece down. And a crowd costs: the field is solved with every cell that
 // holds more of the dead than fit in it made dearer, so a horde jammed at one corner of a barricade spreads
 // along it instead of queueing behind the few at the front.
-import { MAP_HALF, STEP_HEIGHT } from '../shared/constants.js';
+import { STEP_HEIGHT } from '../shared/constants.js';
 import { COL, BOX, CYL, ColliderGrid, groundAt, footprintContains, overlapBoxes } from '../shared/collision.js';
 
-const SIZE = MAP_HALF * 2; // cells per side (1 m)
 const FIELD = 144; // flow field window size (cells): the horde spawns ~60-85 m out, inside the window
 const HALF_FIELD = FIELD / 2;
 const PW = FIELD + 2; // padded window: a 1-cell blocked border replaces per-neighbor bounds checks
@@ -41,19 +40,21 @@ const CROWD_MAX = 5; // ...counting this many at most
 export class Nav {
   constructor(world) {
     this.world = world;
-    this.blocked = new Uint8Array(SIZE * SIZE);
-    this.edge = new Uint8Array(SIZE * SIZE); // bit n: the step toward neighbor n crosses a static collider
-    this.nearWall = new Uint8Array(SIZE * SIZE);
+    this.half = world.half; // the grid covers the world it was made for: 1 m cells, this.size a side
+    this.size = world.size;
+    this.blocked = new Uint8Array(this.size * this.size);
+    this.edge = new Uint8Array(this.size * this.size); // bit n: the step toward neighbor n crosses a static collider
+    this.nearWall = new Uint8Array(this.size * this.size);
     this.solid = new Set(); // static colliders the grid treats as walls (for exact segment checks)
     this.bridges = new Set(); // its own walls across gaps too narrow for a body (_bridge), in bridgeGrid
-    this.bridgeGrid = new ColliderGrid(MAP_HALF);
+    this.bridgeGrid = new ColliderGrid(this.half);
     this.decks = new Set(); // slabs that are a level of their own to walk on (a pier over the lake)
     this.deck = new Map(); // cell whose centre is under the planks of one -> their height
     this.rim = new Map(); // cell of the ground or water beside one, too far below to step up -> the deck's height
-    this.deckBox = { i0: SIZE, j0: SIZE, i1: -1, j1: -1 }; // the cells all of that lies in (flowDir looks no further)
-    this.structCost = new Uint16Array(SIZE * SIZE);
+    this.deckBox = { i0: this.size, j0: this.size, i1: -1, j1: -1 }; // the cells all of that lies in (flowDir looks no further)
+    this.structCost = new Uint16Array(this.size * this.size);
     this.structRef = new Map(); // cell -> count
-    this.crowd = new Uint8Array(SIZE * SIZE); // how many of the dead stand in each cell (setCrowd)
+    this.crowd = new Uint8Array(this.size * this.size); // how many of the dead stand in each cell (setCrowd)
     this.crowdCells = []; // the cells counted in it
     this.crowdVer = 0; // bumped whenever the count is taken again (a field solved with the crowd before is stale)
     this.jammed = false; // some cell held more than one at the last count
@@ -76,22 +77,22 @@ export class Nav {
   }
 
   _cellIndex(x, z) {
-    const i = Math.floor(x + MAP_HALF);
-    const j = Math.floor(z + MAP_HALF);
-    if (i < 0 || j < 0 || i >= SIZE || j >= SIZE) return -1;
-    return j * SIZE + i;
+    const i = Math.floor(x + this.half);
+    const j = Math.floor(z + this.half);
+    if (i < 0 || j < 0 || i >= this.size || j >= this.size) return -1;
+    return j * this.size + i;
   }
 
   _raster(c, fn, expand) {
     const r = c.r + expand;
-    const i0 = Math.max(0, Math.floor(c.x - r + MAP_HALF));
-    const i1 = Math.min(SIZE - 1, Math.floor(c.x + r + MAP_HALF));
-    const j0 = Math.max(0, Math.floor(c.z - r + MAP_HALF));
-    const j1 = Math.min(SIZE - 1, Math.floor(c.z + r + MAP_HALF));
+    const i0 = Math.max(0, Math.floor(c.x - r + this.half));
+    const i1 = Math.min(this.size - 1, Math.floor(c.x + r + this.half));
+    const j0 = Math.max(0, Math.floor(c.z - r + this.half));
+    const j1 = Math.min(this.size - 1, Math.floor(c.z + r + this.half));
     for (let j = j0; j <= j1; j++) {
-      const cz = j - MAP_HALF + 0.5;
+      const cz = j - this.half + 0.5;
       for (let i = i0; i <= i1; i++) {
-        const cx = i - MAP_HALF + 0.5;
+        const cx = i - this.half + 0.5;
         const dx = cx - c.x;
         const dz = cz - c.z;
         let inside;
@@ -103,7 +104,7 @@ export class Nav {
           const lz = c.s * dx + c.c * dz;
           inside = Math.abs(lx) <= c.hx + expand && Math.abs(lz) <= c.hz + expand;
         }
-        if (inside) fn(j * SIZE + i);
+        if (inside) fn(j * this.size + i);
       }
     }
   }
@@ -148,20 +149,20 @@ export class Nav {
     }
     this._bridgeGaps(walls);
     this._markDecks(slabs, floors);
-    for (let j = 0; j < SIZE; j++) {
-      for (let i = 0; i < SIZE; i++) {
-        const x = i - MAP_HALF + 0.5;
-        const z = j - MAP_HALF + 0.5;
+    for (let j = 0; j < this.size; j++) {
+      for (let i = 0; i < this.size; i++) {
+        const x = i - this.half + 0.5;
+        const z = j - this.half + 0.5;
         // decks over water stay walkable
-        if (w.isDeepWater(x, z) && !this.deck.has(j * SIZE + i)) this.blocked[j * SIZE + i] = 1;
+        if (w.isDeepWater(x, z) && !this.deck.has(j * this.size + i)) this.blocked[j * this.size + i] = 1;
       }
     }
     // inside a portal of the mine the ground is not there to walk on: the decline under it is the workings' own
     // level (minenav.js), and what is on this one walks in at the mouth
     for (const p of w.mine?.portals || []) {
-      for (let j = Math.max(0, Math.floor(p.z - 14 + MAP_HALF)); j <= Math.min(SIZE - 1, Math.floor(p.z + 14 + MAP_HALF)); j++) {
-        for (let i = Math.max(0, Math.floor(p.x - 14 + MAP_HALF)); i <= Math.min(SIZE - 1, Math.floor(p.x + 14 + MAP_HALF)); i++) {
-          if (w.mine.inHole(i - MAP_HALF + 0.5, j - MAP_HALF + 0.5)) this.blocked[j * SIZE + i] = 1;
+      for (let j = Math.max(0, Math.floor(p.z - 14 + this.half)); j <= Math.min(this.size - 1, Math.floor(p.z + 14 + this.half)); j++) {
+        for (let i = Math.max(0, Math.floor(p.x - 14 + this.half)); i <= Math.min(this.size - 1, Math.floor(p.x + 14 + this.half)); i++) {
+          if (w.mine.inHole(i - this.half + 0.5, j - this.half + 0.5)) this.blocked[j * this.size + i] = 1;
         }
       }
     }
@@ -173,8 +174,8 @@ export class Nav {
     // survivor in one, at the very edge of the deck, still has to flow onto it.)
     const box = this.deckBox;
     for (const [k, top] of this.deck) {
-      const i = k % SIZE;
-      const j = (k - i) / SIZE;
+      const i = k % this.size;
+      const j = (k - i) / this.size;
       box.i0 = Math.min(box.i0, i - 1);
       box.j0 = Math.min(box.j0, j - 1);
       box.i1 = Math.max(box.i1, i + 1);
@@ -183,8 +184,8 @@ export class Nav {
       for (let n = 0; n < 8; n++) {
         const ni = i + NDI[n];
         const nj = j + NDJ[n];
-        if (ni < 0 || nj < 0 || ni >= SIZE || nj >= SIZE) continue;
-        const nk = nj * SIZE + ni;
+        if (ni < 0 || nj < 0 || ni >= this.size || nj >= this.size) continue;
+        const nk = nj * this.size + ni;
         if (this.blocked[nk] || this.deck.has(nk)) continue;
         if (top - Math.min(open, this._lowest(nk, true)) <= STEP_HEIGHT) continue;
         this.edge[k] |= 1 << n;
@@ -238,8 +239,8 @@ export class Nav {
 
   // lowest terrain in cell k, sampled at its centre and corners; open: only where no deck is overhead
   _lowest(k, open) {
-    const cx = (k % SIZE) - MAP_HALF + 0.5;
-    const cz = Math.floor(k / SIZE) - MAP_HALF + 0.5;
+    const cx = (k % this.size) - this.half + 0.5;
+    const cz = Math.floor(k / this.size) - this.half + 0.5;
     let low = Infinity;
     for (let n = 0; n < 5; n++) {
       const x = cx + CELL_X[n];
@@ -262,8 +263,8 @@ export class Nav {
       // it stands more than a step above the ground
       let deck = false;
       this._raster(c, (k) => {
-        const x = (k % SIZE) - MAP_HALF + 0.5;
-        const z = Math.floor(k / SIZE) - MAP_HALF + 0.5;
+        const x = (k % this.size) - this.half + 0.5;
+        const z = Math.floor(k / this.size) - this.half + 0.5;
         deck = deck || ((c.y0 < w.heightAt(x, z) + DECK_HEADROOM || w.isDeepWater(x, z)) && c.y1 - this._lowest(k, false) > STEP_HEIGHT);
       }, 0);
       if (deck) add(c);
@@ -286,21 +287,21 @@ export class Nav {
   // cut every cell-to-cell step (center to center) that passes through collider c
   _cutEdges(c) {
     const r = c.r + 1.5;
-    const i0 = Math.max(0, Math.floor(c.x - r + MAP_HALF));
-    const i1 = Math.min(SIZE - 1, Math.floor(c.x + r + MAP_HALF));
-    const j0 = Math.max(0, Math.floor(c.z - r + MAP_HALF));
-    const j1 = Math.min(SIZE - 1, Math.floor(c.z + r + MAP_HALF));
+    const i0 = Math.max(0, Math.floor(c.x - r + this.half));
+    const i1 = Math.min(this.size - 1, Math.floor(c.x + r + this.half));
+    const j0 = Math.max(0, Math.floor(c.z - r + this.half));
+    const j1 = Math.min(this.size - 1, Math.floor(c.z + r + this.half));
     for (let j = j0; j <= j1; j++) {
-      const az = j - MAP_HALF + 0.5;
+      const az = j - this.half + 0.5;
       for (let i = i0; i <= i1; i++) {
-        const ax = i - MAP_HALF + 0.5;
+        const ax = i - this.half + 0.5;
         for (const n of HALF_DIRS) {
           const ni = i + NDI[n];
           const nj = j + NDJ[n];
-          if (ni < 0 || nj < 0 || ni >= SIZE || nj >= SIZE) continue;
+          if (ni < 0 || nj < 0 || ni >= this.size || nj >= this.size) continue;
           if (!segHits(c, ax, az, ax + NDI[n], az + NDJ[n], EDGE_PAD)) continue;
-          this.edge[j * SIZE + i] |= 1 << n;
-          this.edge[nj * SIZE + ni] |= 1 << OPP[n];
+          this.edge[j * this.size + i] |= 1 << n;
+          this.edge[nj * this.size + ni] |= 1 << OPP[n];
         }
       }
     }
@@ -348,24 +349,24 @@ export class Nav {
   // deck is no wall: without this the dead in the cut beside a boxcar, or on the track under a platform with a
   // post near its edge, are sent up a drop they cannot climb.
   _deckStep(k, n) {
-    return (this.edge[k] & (1 << n)) !== 0 && this.deck.has(k) !== this.deck.has(k + NDJ[n] * SIZE + NDI[n]);
+    return (this.edge[k] & (1 << n)) !== 0 && this.deck.has(k) !== this.deck.has(k + NDJ[n] * this.size + NDI[n]);
   }
 
   // which cells a flow field starts from for a survivor at (x,z): bit 0 their own cell, bit n+1 neighbor n.
   // Away from walls just the own cell; beside one, every nearby cell center the survivor can actually walk to.
   // PERCH when there is none (they stand on top of something): the cells are in this.seeds, see _perch.
   _sources(x, z) {
-    const i = Math.floor(x + MAP_HALF);
-    const j = Math.floor(z + MAP_HALF);
-    if (i < 1 || j < 1 || i >= SIZE - 1 || j >= SIZE - 1 || !this.nearWall[j * SIZE + i]) return 1;
+    const i = Math.floor(x + this.half);
+    const j = Math.floor(z + this.half);
+    if (i < 1 || j < 1 || i >= this.size - 1 || j >= this.size - 1 || !this.nearWall[j * this.size + i]) return 1;
     // (no bridges: a survivor squeezed into a slot is still got at from either end of it, as near as a body comes)
     const q = this._wallsNear(x, z, 2, false);
-    const cx = i - MAP_HALF + 0.5;
-    const cz = j - MAP_HALF + 0.5;
+    const cx = i - this.half + 0.5;
+    const cz = j - this.half + 0.5;
     let m = this._clearAmong(q, x, z, cx, cz) ? 1 : 0;
     for (let n = 0; n < 8; n++) {
-      if (this.blocked[(j + NDJ[n]) * SIZE + i + NDI[n]]) continue;
-      if (this._deckStep(j * SIZE + i, n)) continue; // (the ground under the side of the deck they stand on is no way to them)
+      if (this.blocked[(j + NDJ[n]) * this.size + i + NDI[n]]) continue;
+      if (this._deckStep(j * this.size + i, n)) continue; // (the ground under the side of the deck they stand on is no way to them)
       if (this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) m |= 2 << n;
     }
     if (!m && this._perch(x, z, i, j)) return PERCH;
@@ -392,8 +393,8 @@ export class Nav {
       if (d > near + PERCH_RING) break;
       const gi = i + di;
       const gj = j + dj;
-      if (gi < 0 || gj < 0 || gi >= SIZE || gj >= SIZE || this.blocked[gj * SIZE + gi]) continue;
-      if (!this._clearAmong(q, x, z, gi - MAP_HALF + 0.5, gj - MAP_HALF + 0.5)) continue;
+      if (gi < 0 || gj < 0 || gi >= this.size || gj >= this.size || this.blocked[gj * this.size + gi]) continue;
+      if (!this._clearAmong(q, x, z, gi - this.half + 0.5, gj - this.half + 0.5)) continue;
       if (near === INF) near = d;
       this.seeds[n++] = (((dj + PERCH_R) * PERCH_W + di + PERCH_R) << 8) | (d - near);
     }
@@ -466,8 +467,8 @@ export class Nav {
     const cver = crowd ? this.crowdVer : -1;
     // standing where they stood, nothing built since: the field is the one already there
     if (f.ver === this.structVer && f.cver === cver && f.cx === x && f.cz === z) return f;
-    const ox = Math.floor(x + MAP_HALF) - HALF_FIELD; // global cell origin
-    const oz = Math.floor(z + MAP_HALF) - HALF_FIELD;
+    const ox = Math.floor(x + this.half) - HALF_FIELD; // global cell origin
+    const oz = Math.floor(z + this.half) - HALF_FIELD;
     const src = this._sources(x, z);
     f.cx = x;
     f.cz = z;
@@ -504,12 +505,12 @@ export class Nav {
     // padded window: border cells and cells outside the map are blocked
     for (let pj = 0; pj < PW; pj++) {
       const gj = oz + pj - 1;
-      const rowIn = pj > 0 && pj < PW - 1 && gj >= 0 && gj < SIZE;
+      const rowIn = pj > 0 && pj < PW - 1 && gj >= 0 && gj < this.size;
       for (let pi = 0; pi < PW; pi++) {
         const p = pj * PW + pi;
         const gi = ox + pi - 1;
-        if (rowIn && pi > 0 && pi < PW - 1 && gi >= 0 && gi < SIZE) {
-          const gk = gj * SIZE + gi;
+        if (rowIn && pi > 0 && pi < PW - 1 && gi >= 0 && gi < this.size) {
+          const gk = gj * this.size + gi;
           pb[p] = blocked[gk];
           pe[p] = edge[gk];
           pc[p] = scost[gk] * 10;
@@ -598,12 +599,12 @@ export class Nav {
   flowDir(playerId, x, z, out, y) {
     const f = this.fields.get(playerId);
     if (!f) return false;
-    const gi = Math.floor(x + MAP_HALF);
-    const gj = Math.floor(z + MAP_HALF);
+    const gi = Math.floor(x + this.half);
+    const gj = Math.floor(z + this.half);
     const li = gi - f.ox;
     const lj = gj - f.oz;
     if (li < 1 || lj < 1 || li >= FIELD - 1 || lj >= FIELD - 1) return false;
-    const gk = gj * SIZE + gi;
+    const gk = gj * this.size + gi;
     // along the side of a deck two levels share a cell and the grid holds one of them. Feet on the other
     // (on the planks over a cell that belongs to the water beside them: 1, too far under a cell that belongs
     // to the deck to step up: -1) follow the field through cells of their own level only.
@@ -616,8 +617,8 @@ export class Nav {
     }
     // beside a wall the cell center may be on the other side of it: test the actual steps from (x,z)
     const q = this.nearWall[gk] ? this._wallsNear(x, z, 2) : null;
-    const cx = gi - MAP_HALF + 0.5;
-    const cz = gj - MAP_HALF + 0.5;
+    const cx = gi - this.half + 0.5;
+    const cz = gj - this.half + 0.5;
     const d0 = f.dist[lj * FIELD + li];
     let best = INF;
     let bi = -2;
@@ -629,10 +630,10 @@ export class Nav {
       const d = f.dist[(lj + NDJ[n]) * FIELD + li + NDI[n]];
       if (d >= best) continue;
       if (lvl) {
-        if (this.deck.has(gk + NDJ[n] * SIZE + NDI[n]) !== lvl > 0) continue;
+        if (this.deck.has(gk + NDJ[n] * this.size + NDI[n]) !== lvl > 0) continue;
       } else if (q) {
         if (this._deckStep(gk, n) || !this._clearAmong(q, x, z, cx + NDI[n], cz + NDJ[n])) continue;
-      } else if (this.edge[gk] & (1 << n) || (n >= 4 && (this.blocked[gk + NDI[n]] || this.blocked[gk + NDJ[n] * SIZE]))) continue;
+      } else if (this.edge[gk] & (1 << n) || (n >= 4 && (this.blocked[gk + NDI[n]] || this.blocked[gk + NDJ[n] * this.size]))) continue;
       best = d;
       bi = n;
     }

@@ -19,6 +19,8 @@ import { buildCemetery } from './cemetery.js';
 import { buildFair } from './fair.js';
 import { planRail } from './rail.js';
 import { createKit } from './worldkit.js';
+import { WORLD } from './acts.js';
+import { POS_SCALE } from './protocol.js';
 
 export { ROAD };
 
@@ -2267,6 +2269,11 @@ export function createWorld(seed) {
 
   return {
     seed,
+    kind: WORLD.ISLAND, // which of the run's two maps this is (acts.js): the island, where the car broke down
+    size: MAP_SIZE, // metres a side: everything that walks, draws or maps the world reads these, not the constants
+    half: MAP_HALF,
+    gridN: GRID_N, // heightfield vertices a side (GRID_STEP m apart)
+    posScale: POS_SCALE, // what a metre is in a position on the wire (protocol.js usePos)
     heights,
     roadDist,
     roadKind,
@@ -2309,6 +2316,7 @@ export function createWorld(seed) {
     resourceSpawns,
     hordeSpawns,
     spawnPoints,
+    start: car, // where a run on this map begins, and where someone who joins it with no team to join is put
     car,
     cemetery,
   };

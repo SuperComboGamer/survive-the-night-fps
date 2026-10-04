@@ -226,4 +226,5 @@ export const PHASE = {
   NIGHT: 2,
   GAMEOVER: 3,
   VICTORY: 4,
+  CROSSING: 5, // between the acts: the car is on the bridge to the mainland (shared/acts.js). Nobody acts; timeLeft is the cutscene's
 };

@@ -10,7 +10,7 @@
 //
 // Everything random here comes off the deer's own stream (this.rng), the scatter of a kill's drops included: the
 // game's stream is the same with deer in the valley as without.
-import { MAP_HALF, PLAYER_RADIUS, HISTORY_TICKS, WATER_LEVEL } from '../shared/constants.js';
+import { PLAYER_RADIUS, HISTORY_TICKS, WATER_LEVEL } from '../shared/constants.js';
 import { SOUND, ZONE } from '../shared/defs.js';
 import { ENT } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt } from '../shared/collision.js';
@@ -19,7 +19,7 @@ import { DEER, DANIM, DEER_LOOT } from '../shared/deer.js';
 
 const GRAV = 16;
 const TAU = Math.PI * 2;
-const LIM = MAP_HALF - 10; // as near the edge of the map as a deer goes
+const EDGE = 10; // as near the edge of the map as a deer goes (m): this.lim
 const SPREAD = 7; // a group grazes within this of the middle of its ground (m)
 const APART = 90; // groups are put down this far from each other (m)
 const CAR_CLEAR = 70; // ...and from the survivors' car
@@ -62,12 +62,17 @@ export class Deer {
     this.rng = mulberry32((g.seed ^ 0xdee4) >>> 0);
   }
 
+  // how far out from the middle of the map a deer goes: the world the game is on now (the mainland is twice the island)
+  get lim() {
+    return this.g.world.half - EDGE;
+  }
+
   // ---------------------------------------------------------------- ground
   // somewhere a deer can stand: inside the map, dry, clear of walls, trunks and rocks, not in a mouth of the mine
   open(x, z) {
     const g = this.g;
     const w = g.world;
-    if (Math.abs(x) > LIM || Math.abs(z) > LIM) return false;
+    if (Math.abs(x) > this.lim || Math.abs(z) > this.lim) return false;
     if (w.isDeepWater(x, z) || g.nav.isBlocked(x, z)) return false;
     return !(w.mine && w.mine.inHole(x, z));
   }
@@ -89,7 +94,7 @@ export class Deer {
     const w = this.g.world;
     if (this.spotsOf === w) return this.spots;
     const out = [];
-    const lim = LIM - 20;
+    const lim = this.lim - 20;
     for (let z = -lim; z <= lim; z += 14) for (let x = -lim; x <= lim; x += 14) if (this.fair(x, z)) out.push({ x, z });
     this.spotsOf = w;
     this.spots = out;
@@ -207,7 +212,7 @@ export class Deer {
   spawnInitial() {
     this.reset();
     const rng = this.rng;
-    const spots = this.grounds().filter((s) => Math.max(Math.abs(s.x), Math.abs(s.z)) < MAP_HALF - WALK_IN); // (the rim is where newcomers turn up: dawn)
+    const spots = this.grounds().filter((s) => Math.max(Math.abs(s.x), Math.abs(s.z)) < this.g.world.half - WALK_IN); // (the rim is where newcomers turn up: dawn)
     for (let i = spots.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
       [spots[i], spots[j]] = [spots[j], spots[i]];
@@ -230,13 +235,13 @@ export class Deer {
   dawn(humans) {
     const rng = this.rng;
     const full = () => this.groups.reduce((n, gr) => n + (gr.members.length >= DEER.groupMin ? 1 : 0), 0);
-    const near = this.grounds().filter((s) => Math.max(Math.abs(s.x), Math.abs(s.z)) > MAP_HALF - WALK_IN + RIM);
+    const near = this.grounds().filter((s) => Math.max(Math.abs(s.x), Math.abs(s.z)) > this.g.world.half - WALK_IN + RIM);
     let made = 0;
     for (let tries = 0; tries < 40 && near.length && full() < DEER.groups && this.count() + DEER.groupMin <= DEER.cap; tries++) {
       const s = near[Math.floor(rng() * near.length)];
       if (!this.apart(s.x, s.z, humans, APART * 0.6)) continue;
       // the nearest point of the rim, and a little along it if that one is in the water or in the rock
-      const edge = MAP_HALF - RIM;
+      const edge = this.g.world.half - RIM;
       const alongX = Math.abs(s.x) < Math.abs(s.z);
       let from = null;
       for (let k = 0; k < 6 && !from; k++) {
@@ -494,7 +499,7 @@ export class Deer {
     }
     if (spare) return spare;
     // cornered: as far straight away as the map goes
-    return { x: Math.max(-LIM, Math.min(LIM, gr.cx + Math.sin(base) * 25)), z: Math.max(-LIM, Math.min(LIM, gr.cz + Math.cos(base) * 25)) };
+    return { x: Math.max(-this.lim, Math.min(this.lim, gr.cx + Math.sin(base) * 25)), z: Math.max(-this.lim, Math.min(this.lim, gr.cz + Math.cos(base) * 25)) };
   }
 
   // ---------------------------------------------------------------- one deer
@@ -668,8 +673,8 @@ export class Deer {
         _pos.x = ox;
         _pos.z = oz;
       }
-      m.x = Math.max(-LIM, Math.min(LIM, _pos.x));
-      m.z = Math.max(-LIM, Math.min(LIM, _pos.z));
+      m.x = Math.max(-this.lim, Math.min(this.lim, _pos.x));
+      m.z = Math.max(-this.lim, Math.min(this.lim, _pos.z));
       // what it really moved (after collisions) drives the gait and the stuck test
       m.vx = (m.x - ox) / dt;
       m.vz = (m.z - oz) / dt;

@@ -77,6 +77,12 @@ export const ITEM = {
   SPARK_PLUGS: 82,
   FUEL_CAN: 83,
   FAN_BELT: 84,
+  // plane parts (act 2, the mainland: shared/acts.js)
+  PROPELLER: 85,
+  MAGNETO: 86,
+  HYDRAULIC_PUMP: 87,
+  FLIGHT_RADIO: 88,
+  AVGAS: 89,
   // schematics (picked up -> unlocks recipes for the whole team)
   SCHEM_SHOTGUN: 90,
   SCHEM_RIFLE: 91,
@@ -172,6 +178,12 @@ export const ITEM_DEFS = {
   [ITEM.FUEL_CAN]: { name: 'Jerry Can', cat: 'part', stack: 3, color: 0xb71c1c, desc: 'Fuel for the car. The tank needs three cans.' },
   [ITEM.FAN_BELT]: { name: 'Fan Belt', cat: 'part', stack: 1, color: 0x212121, desc: 'Car supply. Bring it to your broken-down car on Route 9.' },
 
+  [ITEM.PROPELLER]: { name: 'Propeller', cat: 'part', stack: 1, color: 0x8a8f94, desc: 'Plane part: a two-blade propeller off a hangar rack. Bring it to the plane at Calder Field.' },
+  [ITEM.MAGNETO]: { name: 'Magneto', cat: 'part', stack: 1, color: 0x30343a, desc: 'Plane part: the engine fires off it. Bring it to the plane at Calder Field.' },
+  [ITEM.HYDRAULIC_PUMP]: { name: 'Hydraulic Pump', cat: 'part', stack: 1, color: 0xa33a22, desc: 'Plane part: without it the flaps and the brakes are dead. Bring it to the plane at Calder Field.' },
+  [ITEM.FLIGHT_RADIO]: { name: 'Flight Radio', cat: 'part', stack: 1, color: 0x3a4a3c, desc: 'Plane part: the set out of a control tower. Bring it to the plane at Calder Field.' },
+  [ITEM.AVGAS]: { name: 'Avgas Drum', cat: 'part', stack: 3, color: 0x2f6fb0, desc: 'Aviation fuel for the plane. The tanks need three drums.' },
+
   [ITEM.SCHEM_SHOTGUN]: { name: 'Shotgun Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Shotgun and the Double-Barrel at the workbench for the whole team.' },
   [ITEM.SCHEM_RIFLE]: { name: 'Rifle Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Hunting Rifle and the Anti-Tank Rifle at the workbench for the whole team.' },
   [ITEM.SCHEM_KEVLAR]: { name: 'Armor Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Kevlar Vest at the workbench for the whole team.' },
@@ -194,6 +206,13 @@ export const radioLinked = (speakerOnRadio, listenerHasWalkie) => speakerOnRadio
 export const SUPPLIES = [ITEM.CAR_BATTERY, ITEM.SPARE_TIRE, ITEM.SPARK_PLUGS, ITEM.FAN_BELT, ITEM.FUEL_CAN];
 export const SUPPLY_NEED = [1, 1, 1, 1, 3];
 export const CAR_PARTS = SUPPLIES; // (legacy name)
+// ...and on the mainland (act 2, shared/acts.js) the same loop with a plane: its parts are at set places, the fuel at
+// the depot. The list has the car's shape - four single parts, then the fuel by threes - so the global state, the
+// rumours and the objective tracker read either the same way.
+export const PLANE_PARTS = [ITEM.PROPELLER, ITEM.MAGNETO, ITEM.HYDRAULIC_PUMP, ITEM.FLIGHT_RADIO, ITEM.AVGAS];
+export const PLANE_NEED = [1, 1, 1, 1, 3];
+// what the escape of an act takes: { items, need }
+export const suppliesOf = (act) => (act === 2 ? { items: PLANE_PARTS, need: PLANE_NEED } : { items: SUPPLIES, need: SUPPLY_NEED });
 
 // Where supply i is still worth looking for. hints: the place each hidden one is rumoured to be in (the 4 parts,
 // then the 3 jerry cans; 255: none); found: a bit per hint, set once that one has been taken from its hiding place.
@@ -745,6 +764,13 @@ export const NOTIFY = {
   GEN_LOW: 48, // a generator nearby has a minute of fuel left (sent to the survivors round it)
   GEN_OUT: 49, // ...it has run dry: its floodlights are out
   POCKETS: 62, // (to whoever tried) the backpack cannot come off while its extra slots hold anything
+  // the two acts (shared/acts.js)
+  CROSSING: 63, // the car is away: the crossing to the mainland has begun (the cutscene). arg = the driver's id
+  ARRIVED: 64, // the team is on the mainland. arg = how many the checkpoint at the bridge brought back from the dead
+  CACHE: 65, // (to one survivor) what the bridgehead cache gave them. arg = a CACHE_GAVE bitmask
+  STAND_STAGE: 66, // the runway stand moves on. arg = 1: the tanks are full, the engines are warming; 2: warm, get in
+  RUNWAY_BLOCKED: 67, // (to whoever tried to take off) the dead are on the runway. arg = how many
+  CHECKPOINT: 68, // a wipe on the mainland: the run starts again from the bridgehead. arg = the day it starts on
 };
 
 // killer kinds for killfeed
@@ -779,7 +805,18 @@ export const ZONE = {
   CEMETERY: 24, // the graveyard behind St. Agnes
   CLINIC: 25,
   FAIR: 26,
+  // the mainland (shared/mainland.js)
+  BRIDGEHEAD: 27, // where the bridge comes ashore: act 2 starts here
+  CITY: 28, // Port Calder, downtown
+  INDUSTRIAL: 29, // Kessler Ironworks
+  TERMINAL: 30, // Calder Field: the terminal and its tower
+  HANGARS: 31, // ...its hangars, and the plane
+  FUEL_DEPOT: 32, // ...its fuel depot
+  SUBURB: 33, // Eastgate: the houses on the city's far side
+  TRUCKSTOP: 34, // a truck stop on the road out to the airfield
 };
+// NOTIFY.CACHE: what the bridgehead cache handed a survivor (acts.js BRIDGEHEAD)
+export const CACHE_GAVE = { PISTOL: 1, AMMO: 2, BANDAGE: 4, MELEE: 8, BUILD: 16 };
 
 export const ZONE_NAMES = [
   'The Breakdown',
@@ -809,6 +846,14 @@ export const ZONE_NAMES = [
   'St. Agnes Cemetery',
   'Mercy Clinic',
   'Tri-County Fair',
+  'The Bridgehead',
+  'Port Calder',
+  'Kessler Ironworks',
+  'Calder Field Terminal',
+  'Calder Field Hangars',
+  'Calder Fuel Depot',
+  'Eastgate',
+  'Mile 9 Truck Stop',
 ];
 
 // weighted loot tables per zone: [item, weight, min, max]
@@ -840,6 +885,16 @@ export const LOOT_TABLES = {
   [ZONE.MINE]: [[ITEM.POWDER, 8, 3, 8], [ITEM.SCRAP, 6, 2, 4], [ITEM.WIRE, 5, 1, 3], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 4, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 3, 1, 2], [ITEM.TORCH, 2, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
   [ZONE.LODGE]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.AMMO_BOLTS, 3, 2, 5], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.ROPE, 3, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.JACKET, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.CROSSBOW, 1, 1, 1]],
   [ZONE.DRIVEIN]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.SCRAP, 4, 1, 3], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.BAT, 1, 1, 1], [ITEM.PISTOL, 1, 1, 1], [ITEM.ENERGY_DRINK, 4, 1, 2]],
+  // The mainland (act 2). The island is looted by about night 3: this is where the run restocks, so its tables are
+  // heavier on ammunition, medicine and gun parts than the island's places. First-pass numbers, not played.
+  [ZONE.BRIDGEHEAD]: [[ITEM.CLOTH, 6, 2, 3], [ITEM.STICK, 3, 2, 4], [ITEM.WOOD, 4, 2, 4], [ITEM.NAILS, 3, 4, 8], [ITEM.AMMO_9MM, 3, 8, 14], [ITEM.BANDAGE, 2, 1, 1]],
+  [ZONE.CITY]: [[ITEM.AMMO_9MM, 6, 10, 20], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_556, 3, 15, 30], [ITEM.AMMO_762, 3, 15, 30], [ITEM.BANDAGE, 5, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.TUNA, 5, 1, 2], [ITEM.ENERGY_DRINK, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.CLOTH, 5, 2, 4], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.POWDER, 4, 3, 6], [ITEM.FLARE, 2, 1, 2], [ITEM.DECOY, 1, 1, 1], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.SHOTGUN, 1, 1, 1]],
+  [ZONE.SUBURB]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.TUNA, 5, 1, 2], [ITEM.BANDAGE, 4, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_308, 2, 3, 6], [ITEM.NAILS, 4, 4, 10], [ITEM.WOOD, 3, 2, 4], [ITEM.TAPE, 3, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.POWDER, 3, 2, 4], [ITEM.BAT, 1, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1]],
+  [ZONE.INDUSTRIAL]: [[ITEM.SCRAP, 9, 2, 5], [ITEM.NAILS, 6, 6, 14], [ITEM.WIRE, 5, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.POWDER, 5, 3, 8], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.PLATE, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.AMMO_FUEL, 3, 30, 60], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.HAMMER, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1]],
+  [ZONE.TERMINAL]: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.TUNA, 5, 1, 2], [ITEM.ENERGY_DRINK, 5, 1, 2], [ITEM.BATTERY, 5, 1, 2], [ITEM.CLOTH, 4, 2, 4], [ITEM.ALCOHOL, 3, 1, 2], [ITEM.AMMO_9MM, 5, 10, 20], [ITEM.AMMO_556, 3, 15, 30], [ITEM.FLARE, 3, 1, 2], [ITEM.AMMO_FLARE, 3, 1, 3], [ITEM.TAPE, 3, 1, 2], [ITEM.FLARE_GUN, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
+  [ZONE.HANGARS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 4, 1, 3], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_FUEL, 3, 30, 60], [ITEM.PLATE, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.FLARE, 3, 1, 2], [ITEM.MEDKIT, 1, 1, 1]],
+  [ZONE.FUEL_DEPOT]: [[ITEM.AMMO_FUEL, 7, 30, 60], [ITEM.CHEM, 6, 1, 3], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.SCRAP, 5, 2, 4], [ITEM.CLOTH, 4, 2, 3], [ITEM.FLARE, 3, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.AMMO_9MM, 3, 8, 16]],
+  [ZONE.TRUCKSTOP]: [[ITEM.TUNA, 6, 1, 2], [ITEM.ENERGY_DRINK, 6, 1, 2], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.POWDER, 3, 2, 4], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.PISTOL, 1, 1, 1]],
 };
 
 // ---------------------------------------------------------------- searchable containers

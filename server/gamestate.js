@@ -16,7 +16,7 @@
 // a JOIN from the same account or browser puts the player back in it (Game.resume). Who has not come back after
 // HANDOFF_RESERVE seconds has left, as anyone who does not come back after a drop does.
 import { ZOMBIE_DEFS, LOOT_TABLES, ZONE } from '../shared/defs.js';
-import { ENT, qpos } from '../shared/protocol.js';
+import { ENT, qpos, dqpos } from '../shared/protocol.js';
 import { COL } from '../shared/collision.js';
 import { createPlayerState, copyPlayerState } from '../shared/playersim.js';
 import { fellTree, treeAt } from '../shared/felling.js';
@@ -25,7 +25,7 @@ import { mulberry32 } from '../shared/rng.js';
 export const HANDOFF_RESERVE = +(process.env.HANDOFF_RESERVE_SECONDS || 180); // s a restored player's place is kept
 
 // the run's own numbers (Game constructor and startGame), as they are
-const GAME_FIELDS = ['seed', 'worldPlayed', 'tick', 'time', 'phase', 'day', 'timeLeft', 'restartT', 'supplies', 'supplyHints', 'supplyFound', 'unlocked', 'wave', 'bossPending', 'bossId', 'warned', 'shadeWarned', 'escape', 'supplyAt', 'nightStats', 'dropSeq', 'hordeHpMul'];
+const GAME_FIELDS = ['seed', 'worldPlayed', 'tick', 'time', 'phase', 'day', 'timeLeft', 'restartT', 'supplies', 'supplyHints', 'supplyFound', 'unlocked', 'wave', 'bossPending', 'bossId', 'warned', 'shadeWarned', 'escape', 'supplyAt', 'nightStats', 'dropSeq', 'hordeHpMul', 'act', 'checkpoint', 'crossing'];
 // what of a player is the connection's or the leaderboard's, or is worked out again (resume starts a client afresh)
 const PLAYER_SKIP = new Set(['session', 'rec', 'view', 'shadow', 'cmdQueue', 'cmdBudget', 'lastSeq', 'hasSeq', 'recvSeq', 'renderTick', 'renderFrac', 'hx', 'hy', 'hz', 'selfSync', 'snapTick', 'ackSent', 'pingAt', 'ping', 'chatT', 'chatCount', 'onAir', 'pingT', 'boardT', 'ts', 'admin', 'adminT', 'adminFails', 'greeted', 'selfCache', 'globalCache', 'listVer', 'away', 'useItem', 'hold', 'invDirty', 'splitKeep', 'state']);
 const ZOMBIE_SKIP = new Set(['def', 'hx', 'hy', 'hz', 'hitStruct']);
@@ -86,7 +86,7 @@ const colKey = (c) => [c.flags & COL.TREE ? 1 : 0, qpos(c.x), qpos(c.y0), qpos(c
 const _near = [];
 function colAt(world, [tree, qx, qy, qz]) {
   if (tree) return treeAt(world, qx, qy, qz);
-  for (const c of world.staticGrid.query(qx / 64, qz / 64, 0.5, _near)) if (c.flags & COL.SALVAGE && qpos(c.x) === qx && qpos(c.y0) === qy && qpos(c.z) === qz) return c;
+  for (const c of world.staticGrid.query(dqpos(qx), dqpos(qz), 0.5, _near)) if (c.flags & COL.SALVAGE && qpos(c.x) === qx && qpos(c.y0) === qy && qpos(c.z) === qz) return c;
   return null;
 }
 
