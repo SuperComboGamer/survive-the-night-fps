@@ -354,7 +354,9 @@ does (`perkMods(mask)`: one frozen object per mask; no ordinary stat past `PERK_
 A deploy does not end the games (`server/handoff.js`, `server/gamestate.js`). Railway starts the new deployment,
 sends new connections to it once its health check passes, then sends the old one SIGTERM (`drainingSeconds` in
 `railway.json` is how long it has before SIGKILL). On that signal the old server saves every game with players in
-it, and the new one carries each on under the same code; its players are away for a second or two.
+it, and the new one carries each on under the same code; its players are away for a second or two. The signal goes to
+npm (`npm start`), which forwards it to the `sh -c` running the script: the script `exec`s node so that shell is
+node, else the shell dies of it and the container stops with node never told (`scripts/test-start-signal.js`).
 
 - **The old server** (`shutdown` in `index.js` -> `Lobby.handoffAll` -> `Room.handoff`): new sockets are turned away;
   each room's worker is sent `save`, stops its tick loop, ends the match as `handoff` and posts the game saved
