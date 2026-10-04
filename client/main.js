@@ -77,8 +77,12 @@ async function rejoin(code, name = lastName) {
       if (game.state === 'playing') return;
       await new Promise((done) => setTimeout(done, 3000));
     }
-    if (game.state !== 'playing') ui.setJoinError('Connection lost, and the game could not be reached in time: your place there is gone.');
+    if (game.state !== 'playing') {
+      ui.showSplash();
+      ui.setJoinError('Connection lost, and the game could not be reached in time: your place there is gone.');
+    }
   } finally {
+    ui.showUpdating(false);
     rejoining = false;
   }
 }
@@ -96,6 +100,16 @@ const BUILD = fetch('/api/version')
   .then((r) => r.json())
   .catch(() => null); // what this page was loaded from
 const MOVED_KEY = 'stn.moved';
+const UPDATING_READ_MS = 1500; // the "Game updated" modal is up this long over the game before the page reloads
+async function reloadInto(code, name) {
+  try {
+    sessionStorage.setItem(MOVED_KEY, '1');
+    localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() })); // (the reloaded page goes back in by it)
+  } catch {}
+  ui.showUpdating(true);
+  await new Promise((done) => setTimeout(done, UPDATING_READ_MS));
+  location.reload();
+}
 async function moveBack(code) {
   const name = lastName;
   const until = performance.now() + MOVE_MS;
@@ -105,21 +119,14 @@ async function moveBack(code) {
     const now = await fetch('/api/version', { cache: 'no-store' })
       .then((r) => r.json())
       .catch(() => null);
-    if (now && (now.protocol !== PROTOCOL_VERSION || (loadedFrom?.build && now.build !== loadedFrom.build))) {
-      try {
-        sessionStorage.setItem(MOVED_KEY, '1');
-        localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() })); // (the reloaded page goes back in by it)
-      } catch {}
-      location.reload();
-      return;
-    }
+    if (now && (now.protocol !== PROTOCOL_VERSION || (loadedFrom?.build && now.build !== loadedFrom.build))) return reloadInto(code, name);
     if (now) {
       try {
         await game.join(name, code, { resume: true });
         return;
       } catch (err) {
         // (another build: load it)
-        if (err.reason === REJECT_REASON.VERSION) return location.reload();
+        if (err.reason === REJECT_REASON.VERSION) return reloadInto(code, name);
         if (err.reason === REJECT_REASON.NO_GAME) noGame++;
       }
     }
@@ -317,7 +324,14 @@ game.onDrop = (code) => rejoin(code);
 game.onMove = (code) => moveBack(code); // (a deploy: the game moved to the next server)
 try {
   const was = JSON.parse(localStorage.getItem(PLAYING_KEY) || 'null');
-  if (was && was.code && was.code === linkedCode() && Date.now() - was.t < REJOIN_MS) setTimeout(() => rejoin(was.code, was.name), 300);
+  if (was && was.code && was.code === linkedCode() && Date.now() - was.t < REJOIN_MS) {
+    // reloaded for a deploy's new client: still "in the game" under the modal, not on the splash with a Join button
+    if (sessionStorage.getItem(MOVED_KEY) === '1') {
+      ui.hideSplash();
+      ui.showUpdating(true);
+    }
+    setTimeout(() => rejoin(was.code, was.name), 300);
+  }
 } catch {}
 
 // ---------------------------------------------------------------- the still behind the splash

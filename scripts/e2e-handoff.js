@@ -127,17 +127,33 @@ try {
   await loaded;
   let again = null;
   // (a page building its valley holds its main thread for a while: a look that does not come back is tried again)
-  const peek = () => Promise.race([page.evaluate(() => window.__game && { state: window.__game.state, id: window.__game.myId, code: window.__game.room?.code }), sleep(3000).then(() => null)]).catch(() => null);
+  const peek = () =>
+    Promise.race([
+      page.evaluate(() => {
+        const g = window.__game;
+        const shown = (sel) => !!document.querySelector(sel) && !document.querySelector(sel).hidden && document.querySelector(sel).offsetParent !== null;
+        return g && { state: g.state, id: g.myId, code: g.room?.code, splash: shown('.splash'), updating: shown('.stn-updating') };
+      }),
+      sleep(3000).then(() => null),
+    ]).catch(() => null);
+  let sawSplash = false;
+  let sawUpdating = false;
   for (let i = 0; i < 80; i++) {
     const s = await peek();
-    if (s?.state === 'playing') {
+    if (s?.splash) sawSplash = true;
+    if (s?.updating && !sawUpdating) {
+      sawUpdating = true;
+      await page.screenshot({ path: join(out, '4-updating.png') });
+    }
+    if (s?.state === 'playing' && !s.updating) {
       again = s;
       break;
     }
     await sleep(250);
   }
   check('another build: the page loads again and goes back into the same game, as the same player', again && again.code === before.code && again.id === before.id, JSON.stringify(again));
-  await page.screenshot({ path: join(out, '4-reloaded.png') });
+  check('...under the "Game updated" modal, never the splash', sawUpdating && !sawSplash, JSON.stringify({ sawUpdating, sawSplash }));
+  await page.screenshot({ path: join(out, '5-reloaded.png') });
 
   // ---------------------------------------------------------------- a server that cannot read the save: the splash, and why
   await sleep(1500);
@@ -155,7 +171,7 @@ try {
     if (s?.state === 'menu') ended = { ...s, text: text.match(/[^\n]*could not be brought back[^\n]*/i)?.[0], took: Date.now() - t1 };
   }
   check(`...the game ends on the splash, saying why, within seconds (${ended?.took} ms)`, ended && ended.text && ended.took < 15000, JSON.stringify(ended));
-  await page.screenshot({ path: join(out, '5-not-brought-back.png') });
+  await page.screenshot({ path: join(out, '6-not-brought-back.png') });
   check('no errors on the page', errors.length === 0, errors.join(' | '));
   await stop(B);
   await stop(C);

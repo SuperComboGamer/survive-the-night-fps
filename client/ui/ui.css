@@ -180,7 +180,11 @@ body {
 .stn-ui.hud-hidden .layer-hud,
 .stn-ui.hud-hidden .top-left,
 .stn-ui.hud-hidden .top-center,
-.stn-ui.hud-hidden .top-right {
+.stn-ui.hud-hidden .top-right,
+.stn-ui.updating-on .layer-hud,
+.stn-ui.updating-on .top-left,
+.stn-ui.updating-on .top-center,
+.stn-ui.updating-on .top-right {
   visibility: hidden;
 }
 
@@ -4705,6 +4709,17 @@ body {
 .stn-ui .stn-controls .set-body {
   padding-top: calc(16 * var(--u));
   padding-bottom: calc(16 * var(--u));
+}
+
+.stn-ui .stn-updating .set-card {
+  width: calc(460 * var(--u));
+  min-width: 340px;
+}
+
+.stn-ui .stn-updating .upd-text {
+  margin: calc(10 * var(--u)) 0 calc(14 * var(--u));
+  font: max(12px, calc(15 * var(--u))) / 1.5 var(--f-type);
+  color: var(--bone);
 }
 
 /* one grid for every row, so the key column is as wide as its widest keys (rebound ones can be long) */

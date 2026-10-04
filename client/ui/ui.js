@@ -8,7 +8,7 @@ import { Killfeed, Pickups, Notifier } from './feed.js';
 import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
-import { Splash, Pause, Death, EndScreen, Banner, VoiceList, ControlsPanel, DEFAULT_CONTROLS } from './menus.js';
+import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, DEFAULT_CONTROLS } from './menus.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
@@ -111,6 +111,7 @@ export class UI {
     this.progress = new ProgressPanel(this, modalL);
     this.profile = new ProfilePanel(this, modalL);
     this.achPanel = new AchievementsPanel(this, modalL);
+    this.updating = new UpdatingModal(modalL);
     onUnlock((list) => this.achToasts.show(list));
 
     this._bindSounds();
@@ -394,6 +395,12 @@ export class UI {
   setConnectionStatus(text) {
     this.banner.set(text || null);
     this.root.classList.toggle('conn-on', !!text);
+  }
+
+  // the page is reloading for a deploy's new client and going back into the game by itself
+  showUpdating(on) {
+    this.updating.show(on);
+    this.root.classList.toggle('updating-on', !!on);
   }
 }
 

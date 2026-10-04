@@ -1005,6 +1005,22 @@ export class Banner {
   }
 }
 
+// ---------------------------------------------------------------- a deploy with a new client: reloading, then back in
+export class UpdatingModal {
+  constructor(parent) {
+    this.root = el('div', 'stn-settings stn-updating', parent);
+    this.root.setAttribute('role', 'alertdialog');
+    this.root.hidden = true;
+    const card = el('div', 'set-card paper', this.root);
+    el('h2', 'set-title', el('div', 'set-head', card), 'Game updated');
+    el('p', 'upd-text', el('div', 'set-body', card), 'Refreshing to the new version. You will be put back in this game automatically.');
+  }
+
+  show(on) {
+    this.root.hidden = !on;
+  }
+}
+
 // ---------------------------------------------------------------- voice speakers (top-left)
 export class VoiceList {
   constructor(parent) {
