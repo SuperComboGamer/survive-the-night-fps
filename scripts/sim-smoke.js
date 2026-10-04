@@ -78,6 +78,8 @@ function client(name) {
           const way = flags & PLF.WAYPOINT ? { x: r.i16() / 64, z: r.i16() / 64, zone: r.u8() } : null;
           c.roster.set(id, { status, onAir, kills, level, way });
         }
+        // then a character per player, in the same order (shared/characters.js)
+        for (const p of c.roster.values()) p.character = r.u8();
         if (r.left !== 0) throw new Error(`${name}: ${r.left} trailing player list bytes`);
       }
     },
