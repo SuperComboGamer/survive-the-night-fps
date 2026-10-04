@@ -4,12 +4,12 @@
 // step). Starts from what a player reported: three part-used stacks of Canned Tuna (3, 4 and 2 tins, where 9 tins
 // are a 5 and a 4). Then every way into, out of and around the backpack: walk-over and [E] pickups (the backpack's
 // own slots too), eating from the stack clicked or with [H] / [B], partial drops (Shift+RMB, the popover's Drop n),
-// salvage, splits, drags, Sort, crafting, searches, leaving and coming back - and a randomized soak of thousands of
+// salvage, splits, drags, the auto sort, crafting, searches, leaving and coming back - and a randomized soak of thousands of
 // those, the invariant checked after every one of them.
 //
 // A deliberate split (ACT.SPLIT_INV) is the one exception: the player asked for two stacks, and keeps them while that
 // item's count stays as it is. The next change to it (a pickup, a use, a craft, a drop) merges the part stacks again
-// (consolidate, server/inventory.js); so does Sort.
+// (consolidate, server/inventory.js).
 // usage: node scripts/test-stacking.js [seed] [soak steps]
 import { randomUUID } from 'node:crypto';
 import { Game } from '../server/game.js';
@@ -287,10 +287,7 @@ const s = a.state;
   A.act(ACT.SWAP_INV, 2, 1);
   run(2);
   check('...and one part stack dragged onto another tops it up', of(a, ITEM.TUNA).join('/') === '3/4' || of(a, ITEM.TUNA).join('/') === '3/4/0', show(a, ITEM.TUNA));
-  A.act(ACT.SORT_INV);
-  run(2);
-  check('Sort merges what a split left apart', of(a, ITEM.TUNA).join('/') === '5/2' && same(A, a), show(a, ITEM.TUNA));
-  // the auto sort: a pickup or a drop sorts the grid as Sort does, but leaves a split of something else apart
+  // the auto sort: a pickup or a drop sorts the grid, but leaves a split of something else apart
   const gapless = (p) => p.inv.findIndex((x) => !x) === p.inv.filter(Boolean).length;
   pack(a, [ITEM.CLOTH, 5], null, [ITEM.TUNA, 5], [ITEM.TUNA, 4]);
   run(2);
@@ -388,7 +385,7 @@ const s = a.state;
 
 // ---------------------------------------------------------------- the soak
 // Thousands of random steps by one survivor over a handful of items: pickups (walked over, [E], searched, given),
-// eating from a stack clicked or with [H], crafts, whole and partial drops, salvage, splits, drags and Sort. After
+// eating from a stack clicked or with [H], crafts, whole and partial drops, salvage, splits and drags. After
 // every step, no item has two part stacks - but one split since its count last changed - and the client's grid is
 // the server's.
 {
@@ -408,7 +405,7 @@ const s = a.state;
     return at.length ? pick(at) : -1;
   };
   for (; steps < SOAK && !firstBad; steps++) {
-    const op = Math.floor(rnd() * 13);
+    const op = Math.floor(rnd() * 12);
     let what = '';
     if (op === 0 || op === 1) {
       const item = pick(ITEMS);
@@ -472,7 +469,7 @@ const s = a.state;
       A.act(ACT.SPLIT_INV, i, n);
       run(1);
       split.set(item, cnt(a, item));
-    } else if (op === 11) {
+    } else {
       const occ = occupied();
       if (occ.length < 2) continue;
       const i = pick(occ);
@@ -480,12 +477,6 @@ const s = a.state;
       what = `drag slot ${i} onto ${j}`;
       A.act(ACT.SWAP_INV, i, j);
       run(1);
-    } else {
-      if (rnd() < 0.5) continue;
-      what = 'Sort';
-      A.act(ACT.SORT_INV);
-      run(1);
-      split.clear();
     }
     run(1);
     // a split is exempt only while its item's count is what it was split at

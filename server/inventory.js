@@ -125,12 +125,11 @@ export function payCost(inv, cost) {
   for (const k in cost) removeItem(inv, +k, cost[k]);
 }
 
-// The Sort button (ACT.SORT_INV) on the open slots, in place: every item's stacks merged into as few as will hold
-// them (full ones, then what is left over), then ordered by BAG_TIER, item and size, and the empty slots after them.
-// The same inventory always comes out the same way. A stack of one that carries something of its own (a gun's
+// The auto sort after a pickup or a drop, on the open slots, in place: every item's stacks merged into as few as will
+// hold them (full ones, then what is left over), then ordered by BAG_TIER, item and size, and the empty slots after
+// them. The same inventory always comes out the same way. A stack of one that carries something of its own (a gun's
 // magazine, a vest's points: `mag`) is kept as it is. So are the stacks of an item split (ACT.SPLIT_INV) whose
-// count is still what it was split at, given `keep` (as tidyStacks takes it): the auto sort after a pickup or a
-// drop moves them, but leaves them apart.
+// count is still what it was split at, given `keep` (as tidyStacks takes it): moved, but left apart.
 export function sortInventory(inv, cap = INVENTORY_SIZE, keep) {
   cap = Math.min(cap, inv.length);
   if (keep) for (const [item, n] of keep) if (countItem(inv, item) !== n) keep.delete(item);

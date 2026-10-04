@@ -37,7 +37,6 @@ const CALLBACKS = [
   'onDropWeapon',
   'onUnequip', // (weapon slot, backpack index or 255): a weapon out of its slot into the backpack
   'onWorn', // (which: WORN, what: WORN_DO) the armor or backpack being worn: taken off, dropped or salvaged
-  'onSortItems', // the Sort button on the backpack grid
   'onSelectStructure',
   'onSelectThrowable',
   'onCloseInventory',

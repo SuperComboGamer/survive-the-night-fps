@@ -2245,7 +2245,6 @@ export class Game {
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onUnequip: (slot, to = 255) => this.conn.action(ACT.UNEQUIP, slot, to),
       onWorn: (which, what) => this.conn.action(ACT.WORN, which, what),
-      onSortItems: () => this.conn.action(ACT.SORT_INV),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),

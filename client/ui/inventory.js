@@ -21,7 +21,7 @@ const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', arm
 // Backpack order: weapons and whatever else is equipped (armor, the backpack, throwables, gear) first, then consumables (ammo with
 // them), then crafting materials and car supplies; empty slots last. Only the grid is laid out that way, so within a
 // tier stacks stay in slot order, which a drag onto another stack swaps. (The server merges part stacks and reorders
-// the slots themselves, by BAG_TIER in defs.js, on the Sort button and after every pickup or drop.)
+// the slots themselves, by BAG_TIER in defs.js, after every pickup or drop.)
 const BAG_TIER = { weapon: 0, armor: 0, pack: 0, throw: 0, gear: 0, cons: 1, ammo: 1 };
 const bagTier = (s) => (s ? (BAG_TIER[ITEM_DEFS[s.item]?.cat] ?? 2) : 3);
 // Crafting tabs, left to right (Q / E step through them). 'all' lists every recipe under its tab's header.
@@ -383,10 +383,6 @@ export class Inventory {
     const gp = (this.gridWrap = el('div', 'grid-wrap paper', mid));
     const gh = this._h(gp, 'Backpack');
     const ghr = el('span', 'inv-h-right', gh);
-    // Sort: stacks merged, the grid ordered by kind (BAG_TIER), the server's to do
-    const sort = (this.sortEl = el('button', 'inv-sort', ghr, 'Sort'));
-    sort.type = 'button';
-    sort.title = 'Merge stacks and order the backpack by kind';
     this.capEl = el('span', 'inv-cap', ghr, '0 / ' + INVENTORY_SIZE);
     this.grid = el('div', 'grid', gp);
     this.cells = [];
@@ -713,13 +709,6 @@ export class Inventory {
       else if (!e.repeat) this.splitRow.hidden ? this._doSalvage() : this._doSplit(false);
     };
     window.addEventListener('keydown', this._splitKey, true);
-
-    this.sortEl.addEventListener('click', () => {
-      this._closeSplit(); // (its stack is about to move)
-      this.sortEl.blur(); // (or Space, the jump key, would press it again once the screen is shut)
-      this.ui.sound('ui_click');
-      cb.onSortItems();
-    });
 
     // worn gear: LMB takes it off into the grid, RMB drops it, Shift+LMB salvages it (the server refuses the
     // backpack while its pockets hold anything, and says so). Shift+LMB on the armor opens the salvage popover

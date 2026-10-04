@@ -2136,12 +2136,6 @@ export class Game {
         p.invDirty = true;
         return;
       }
-      case ACT.SORT_INV:
-        // (the open slots only: the locked ones stay empty)
-        sortInventory(p.inv, invCap(p));
-        p.splitKeep.clear(); // (it merged them)
-        p.invDirty = true;
-        return;
       case ACT.SPLIT_INV: {
         // part of a stack into a slot of its own: to drop for a teammate, or to keep apart
         const it = p.inv[r.u8()];
@@ -2152,7 +2146,7 @@ export class Game {
         it.count -= n;
         p.inv[to] = { item: it.item, count: n };
         // The one way to more than one part stack of a thing: asked for. They stay apart while they are only moved
-        // about; the next change to that item's count (a pickup, a use, a craft, a drop) merges them again, as Sort does
+        // about; the next change to that item's count (a pickup, a use, a craft, a drop) merges them again
         p.splitKeep.set(it.item, countItem(p.inv, it.item));
         p.invDirty = true;
         return;
@@ -4393,8 +4387,8 @@ export class Game {
     this.sendList(p);
     this.sendProgress(p);
     if (p.invDirty) {
-      // picked up or dropped this tick: sorted as the Sort button does, a split left apart. Else the safety net, for
-      // any path that left two part stacks of a thing
+      // picked up or dropped this tick: sorted (sortInventory), a split left apart. Else the safety net, for any path
+      // that left two part stacks of a thing
       if (p.invSort) sortInventory(p.inv, invCap(p), p.splitKeep);
       else tidyStacks(p.inv, p.splitKeep);
       p.invSort = false;
