@@ -5,12 +5,12 @@
 // game as the same player, where it was, within a few seconds. Then C starts with another client build and B is
 // stopped: the page loads again (the new build) and goes back into the game by itself.
 // Needs the client built (npm run build). usage: node scripts/e2e-handoff.js [outdir]
-import puppeteer from 'puppeteer-core';
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { launchChrome, CHEAP_SETTINGS } from './clip/lib.js';
 
 const out = process.argv[2] || '/tmp/e2e-handoff';
 mkdirSync(out, { recursive: true });
@@ -54,18 +54,12 @@ const stop = async (s) => {
   for (let i = 0; i < 200 && !s.exit; i++) await sleep(50);
 };
 
-const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  headless: 'new',
-  args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
-});
+const errors = [];
+const chrome = await launchChrome({ width: 1280, height: 720, life: 10 * 60_000, storage: { 'stn.settings': CHEAP_SETTINGS }, onError: (m) => errors.push(m) });
 try {
   const A = server('A', base + 1);
   check('server A is up behind the edge', await up(A), A.log);
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 720 });
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
+  const page = chrome.page;
   // headless has no real pointer lock: the game is told it has it, as e2e-gameplay.js does
   const fakeLock = () =>
     page.evaluate(() => {
@@ -79,9 +73,9 @@ try {
     const inp = document.querySelector('input');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, 'Mover');
     inp.dispatchEvent(new Event('input', { bubbles: true }));
-    [...document.querySelectorAll('button')].find((b) => /join/i.test(b.textContent)).click();
+    [...document.querySelectorAll('button')].find((b) => /^\s*(quick )?join/i.test(b.textContent)).click(); // (not the survivor card, whose text also says "join")
   });
-  for (let i = 0; i < 60 && !(await page.evaluate(() => window.__game?.state === 'playing' && !!window.__game.global)); i++) await sleep(250);
+  for (let i = 0; i < 240 && !(await page.evaluate(() => window.__game?.state === 'playing' && !!window.__game.global)); i++) await sleep(250);
   await fakeLock();
   await sleep(1500);
   const look = () =>
@@ -169,7 +163,7 @@ try {
 } catch (e) {
   check('no error', false, String(e && e.stack));
 }
-await browser.close();
+await chrome.close().catch((e) => check('the browser closed cleanly', false, e.message));
 edge.close();
 for (const s of servers) if (!s.exit) s.proc.kill('SIGKILL');
 if (failed) for (const s of servers) console.log(`\n--- ${s.name} ---\n${s.log.split('\n').slice(-20).join('\n')}`);
