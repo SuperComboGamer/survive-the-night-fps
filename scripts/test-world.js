@@ -7,9 +7,11 @@
 //     place's front gate, by the server's own rules (within reach, a clear line from the eye)
 //   - none of them is inside something solid, where it can be taken but not seen
 //   - no road runs into a building
+//   - no solid prop stands in another (a street lamp up through a wreck, a crate through a shed's wall), anywhere on
+//     the map, nor a tree or a boulder in one or in a wall (sandbag walls are laid overlapping on purpose)
 // Roadside and woodland sites are not checked: they are scattered at random, this is about the authored layouts.
 // usage: node scripts/test-world.js [seed ...]
-import { createWorld } from '../shared/world.js';
+import { createWorld, TREE_TYPES, ROCK_TYPES } from '../shared/world.js';
 import { PLACES, gatePoint } from '../shared/layout.js';
 import { ZONE, ZONE_NAMES, CONT_DEFS } from '../shared/defs.js';
 import { PROPS } from '../shared/props.js';
@@ -215,15 +217,112 @@ function walksThrough(world, o, dir) {
   return false;
 }
 
+// ---------------------------------------------------------------- solids standing in each other
+// What stands on the ground as seen from above: a prop's collision boxes and cylinders, a tree's trunk, a boulder,
+// a place's upright pieces (walls, posts, machines). Each: { x, z, hx, hz, c, s, r, y0, y1, who }.
+function solidsOf(world) {
+  const out = [];
+  for (const p of world.props) {
+    const def = PROPS[p.type];
+    if (!def) continue;
+    const c = Math.cos(p.ry);
+    const s = Math.sin(p.ry);
+    for (const [lx, ly, lz, sx, sy, sz] of def.boxes || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: sx / 2, hz: sz / 2, c, s, r: 0, y0: p.y + ly - sy / 2, y1: p.y + ly + sy / 2, who: p.type, id: p });
+    for (const [lx, lz, r, h] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y, y1: p.y + h, who: p.type, id: p });
+  }
+  const t = world.trees;
+  for (let i = 0; i < t.length; i += 6) out.push({ x: t[i], z: t[i + 2], hx: 0, hz: 0, c: 1, s: 0, r: TREE_TYPES[t[i + 5]].r * t[i + 3], y0: t[i + 1], y1: t[i + 1] + 10, who: 'tree', id: 't' + i });
+  const k = world.rocks;
+  for (let i = 0; i < k.length; i += 6) out.push({ x: k[i], z: k[i + 2], hx: 0, hz: 0, c: 1, s: 0, r: ROCK_TYPES[k[i + 5]].r * k[i + 3] * 0.85, y0: k[i + 1], y1: k[i + 1] + 1, who: 'rock', id: 'r' + i });
+  for (const p of world.parts) {
+    if (p.rx || p.rz || p.sy < 1 || (p.shape !== 'box' && p.shape !== 'cyl')) continue;
+    const box = p.shape === 'box';
+    out.push({ x: p.x, z: p.z, hx: box ? p.sx / 2 : 0, hz: box ? p.sz / 2 : 0, c: Math.cos(p.ry), s: Math.sin(p.ry), r: box ? 0 : p.sx / 2, y0: p.y - p.sy / 2, y1: p.y + p.sy / 2, who: 'wall', id: 'wall' });
+  }
+  return out;
+}
+// how far two of them go into each other across (0 = apart), by separating axes (a cylinder: a box of no size grown by r)
+function overlap(a, b) {
+  if (Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) < 0.05) return 0;
+  if (!a.hx && !b.hx) return Math.max(0, a.r + b.r - Math.hypot(a.x - b.x, a.z - b.z));
+  let d = Infinity;
+  for (const o of [a, b]) {
+    if (!o.hx) continue;
+    for (const [ax, az] of [[o.c, -o.s], [o.s, o.c]]) {
+      const ext = (q) => q.hx * Math.abs(q.c * ax - q.s * az) + q.hz * Math.abs(q.s * ax + q.c * az) + q.r;
+      d = Math.min(d, ext(a) + ext(b) - Math.abs((a.x - b.x) * ax + (a.z - b.z) * az));
+      if (d <= 0) return 0;
+    }
+  }
+  if (!a.hx || !b.hx) {
+    // a cylinder against a box: the box's axes are not enough near a corner
+    const [cy, bx] = a.hx ? [b, a] : [a, b];
+    const dx = cy.x - bx.x, dz = cy.z - bx.z;
+    const lx = bx.c * dx - bx.s * dz, lz = bx.s * dx + bx.c * dz;
+    const out = Math.hypot(Math.max(0, Math.abs(lx) - bx.hx), Math.max(0, Math.abs(lz) - bx.hz));
+    d = Math.min(d, cy.r - out);
+  }
+  return Math.max(0, d);
+}
+const OVERLAP_OK = 0.1; // m: touching is fine
+const meant = (a, b) => a.who === 'sandbags' && b.who === 'sandbags'; // sandbag walls are laid overlapping
+function propOverlaps(world) {
+  const all = solidsOf(world);
+  const cells = new Map();
+  all.forEach((o, i) => {
+    const e = Math.hypot(o.hx, o.hz) + o.r;
+    for (let gx = Math.floor((o.x - e) / 8); gx <= Math.floor((o.x + e) / 8); gx++)
+      for (let gz = Math.floor((o.z - e) / 8); gz <= Math.floor((o.z + e) / 8); gz++) {
+        const key = gx * 65536 + gz;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(i);
+      }
+  });
+  const seen = new Set();
+  const out = [];
+  for (const list of cells.values()) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = all[list[i]], b = all[list[j]];
+        if (a.id === b.id || meant(a, b)) continue;
+        const veg = (o) => o.who === 'tree' || o.who === 'rock';
+        if (veg(a) && veg(b)) continue;
+        if (a.who === 'wall' && b.who === 'wall') continue;
+        if (a.who === 'wall' && !veg(b) || b.who === 'wall' && !veg(a)) {
+          // a prop against a place's own walls: only a crate or a pallet pushed through one (the place's furniture
+          // stands against its walls by design, a few millimetres in)
+          if (overlap(a, b) < 0.1) continue;
+        }
+        const key = list[i] < list[j] ? list[i] + ',' + list[j] : list[j] + ',' + list[i];
+        if (seen.has(key)) continue;
+        seen.add(key);
+        counts.props++;
+        const d = overlap(a, b);
+        if (d > OVERLAP_OK) out.push({ a: a.who, b: b.who, d, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 });
+      }
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- run
 const t0 = performance.now();
 const found = new Map(); // failures by place, check and spot: the same authored mistake is one entry however many maps have it
 const mapsWith = {}; // place -> how many of the maps have it
-const counts = { door: 0, reach: 0, solid: 0, road: 0 };
+const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0 };
 const round = (v) => Math.round(v * 10) / 10 + 0;
 
 for (const seed of SEEDS) {
   const world = createWorld(seed);
+  for (const o of propOverlaps(world)) {
+    // filed under the nearest place, in its frame, so the same authored mistake on every map is one entry
+    const zn = world.zones.reduce((m, z) => (Math.hypot(z.x - o.x, z.z - o.z) < Math.hypot(m.x - o.x, m.z - o.z) ? z : m));
+    const at = [Math.cos(zn.ry) * (o.x - zn.x) - Math.sin(zn.ry) * (o.z - zn.z), Math.sin(zn.ry) * (o.x - zn.x) + Math.cos(zn.ry) * (o.z - zn.z)];
+    const key = `${zn.id} props ${round(at[0])} ${round(at[1])}`;
+    const f = found.get(key) || { place: zn.id, check: 'props', at, text: `a ${o.a} stands ${Math.round(o.d * 100)} cm into a ${o.b}`, seeds: [], where: `seed ${seed}: /tp ${o.x.toFixed(1)} ${o.z.toFixed(1)}` };
+    f.seeds.push(seed);
+    found.set(key, f);
+  }
   for (const zn of world.zones) {
     mapsWith[zn.id] = (mapsWith[zn.id] || 0) + 1;
     const cos = Math.cos(zn.ry);
@@ -330,6 +429,7 @@ for (const [check, what] of [
   ['reach', 'containers, floor-loot points and supply spots can be reached on foot from the front gate'],
   ['solid', 'of them are clear of anything solid'],
   ['road', 'walls and posts stand clear of the middle of every road'],
+  ['props', 'pairs of solids that could meet (props, trees, boulders, walls) stand clear of each other'],
 ]) {
   const bad = fresh.filter((f) => f.check === check);
   const old = all.filter((f) => f.check === check && known(f));

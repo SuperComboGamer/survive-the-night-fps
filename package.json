@@ -22,7 +22,13 @@
     "test:e2e": "node scripts/e2e-gameplay.js",
     "posttest": "node scripts/test-itemguide.js",
     "test:sim": "node scripts/sim-smoke.js",
-    "stress": "node scripts/stress.js"
+    "stress": "node scripts/stress.js",
+    "clip:survey": "node scripts/clip/survey.js",
+    "clip:pairs": "node scripts/clip/pairs.js",
+    "clip:game": "node scripts/clip/game-shots.js",
+    "clip:fit": "node scripts/clip/fit-grip.js",
+    "clip:props": "node scripts/clip/props.js",
+    "clip:pickups": "node scripts/clip/pickups.js"
   },
   "dependencies": {
     "pg": "^8.23.1",

@@ -1795,6 +1795,62 @@ const HAND_POSES = {
   radio: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.3, -0.55, -0.78], [0, -0.75, -0.66]], center: [-0.034, -0.083, 0] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
   claw: { curl: [[0.45, 0.55, 0.45], [0.4, 0.55, 0.45], [0.45, 0.6, 0.45], [0.55, 0.65, 0.5]], spread: 0.2, thumb: [[-0.55, -0.5, -0.67], [-0.35, -0.85, -0.3]], center: [-0.035, -0.11, 0] },
+  // throwables, each closed round its own shape until the fingers touch (a fist made for a 3 cm handle buries its
+  // fingers in anything thicker), with the palm seated on the surface: the center is as far out as the item's radius
+  ball: { curl: [[0.87, 0.99, 0.69], [0.82, 0.94, 0.66], [0.76, 0.87, 0.6], [0.67, 0.77, 0.54]], spread: 0.0, thumb: [[-0.59, -0.26, -0.77], [-0.38, -0.92, -0.05]], center: [-0.0475, -0.075, 0] }, // frag grenade
+  pipe: { curl: [[0.79, 0.97, 0.67], [0.81, 1.09, 0.76], [0.79, 1.0, 0.7], [0.68, 0.78, 0.54]], spread: 0.0, thumb: [[-0.56, -0.38, -0.73], [-0.96, 0.13, -0.26]], center: [-0.0415, -0.08, 0] }, // pipe bomb
+  flare: { curl: [[0.8, 1.22, 0.85], [0.84, 1.33, 0.92], [0.81, 1.26, 0.88], [0.77, 0.94, 0.65]], spread: 0.0, thumb: [[-0.73, -0.61, -0.3], [-0.87, -0.5, 0]], center: [-0.0345, -0.083, 0] }, // road flare
+  bottle: { curl: [[0.67, 0.77, 0.54], [0.7, 0.88, 0.61], [0.69, 0.79, 0.55], [0.56, 0.64, 0.45]], spread: 0.0, thumb: [[-0.79, -0.13, -0.6], [-0.71, 0, -0.71]], center: [-0.05, -0.08, 0] }, // molotov
+  // noisemaker: the alarm clock's feet down on the palm, the fingers cupped up behind its case
+  clock: { curl: [[0.6, 0.68, 0.48], [0.56, 0.64, 0.44], [0.54, 0.71, 0.49], [0.34, 0.64, 1.2]], spread: 0.0, thumb: [[-0.22, -0.77, -0.6], [-0.16, -0.8, -0.57]], center: [-0.0115, -0.085, 0] },
+  // fitted to one item each against its own model (scratch grasp solver: the palm seated on the surface along its
+  // normal, every finger closed until it touches, the thumb laid along it), so nothing of the hand is inside it.
+  // support hands under a handguard / fore-end / the RPG's front grip
+  akSupport: { curl: [[0.37, 0.42, 0.29], [0.46, 0.53, 0.37], [0.56, 0.64, 0.45], [0.56, 0.64, 0.45]], spread: 0.02, thumb: [[-0.46, -0.87, 0.19], [0.1, -0.97, -0.24]], center: [-0.0708, -0.088, 0] }, // AK-47
+  m4Support: { curl: [[0.45, 0.52, 0.36], [0.62, 0.71, 0.64], [0.71, 0.82, 0.57], [0.72, 0.82, 0.57]], spread: 0.02, thumb: [[-0.48, -0.87, 0.13], [0.1, -0.92, -0.37]], center: [-0.0468, -0.088, 0] }, // M4A1
+  mp5Support: { curl: [[0.42, 0.48, 0.33], [0.56, 0.64, 0.79], [0.65, 0.75, 0.78], [0.69, 0.79, 0.55]], spread: 0.02, thumb: [[-0.65, -0.71, 0.27], [-0.3, -0.79, -0.53]], center: [-0.0573, -0.088, 0] }, // MP5
+  pumpSupport: { curl: [[0.45, 0.52, 0.36], [0.62, 0.71, 0.78], [0.74, 0.85, 0.65], [0.75, 0.86, 0.6]], spread: 0.02, thumb: [[-0.56, -0.79, 0.23], [0, -0.79, -0.61]], center: [-0.0443, -0.088, 0] }, // pump shotgun
+  dbSupport: { curl: [[0.42, 0.48, 0.33], [0.56, 0.64, 0.44], [0.65, 0.75, 0.72], [0.68, 0.78, 0.54]], spread: 0.02, thumb: [[-0.46, -0.87, 0.19], [0.15, -0.92, -0.35]], center: [-0.0531, -0.088, 0] }, // double-barrel
+  rifleSupport: { curl: [[0.46, 0.52, 0.36], [0.63, 0.72, 0.85], [0.76, 0.87, 0.74], [0.77, 0.89, 0.62]], spread: 0.02, thumb: [[-0.37, -0.92, 0.1], [0.13, -0.99, 0]], center: [-0.0438, -0.088, 0] }, // hunting rifle
+  xbowSupport: { curl: [[0.48, 0.55, 0.38], [0.66, 0.75, 0.84], [0.79, 0.9, 0.63], [0.8, 0.92, 0.64]], spread: 0.02, thumb: [[-0.56, -0.79, 0.23], [-0.43, -0.79, -0.43]], center: [-0.0476, -0.088, 0] }, // crossbow
+  flamerSupport: { curl: [[0.49, 0.56, 0.39], [0.63, 0.72, 0.5], [0.71, 0.81, 0.56], [0.72, 0.83, 0.58]], spread: 0.02, thumb: [[-0.65, -0.71, 0.27], [0.05, -0.99, -0.12]], center: [-0.0548, -0.088, 0] }, // flamethrower
+  atSupport: { curl: [[0.37, 0.43, 0.3], [0.5, 0.57, 0.4], [0.58, 0.67, 0.56], [0.6, 0.68, 0.48]], spread: 0.02, thumb: [[-0.56, -0.79, 0.23], [0, -0.92, -0.38]], center: [-0.0389, -0.088, 0] }, // anti-tank rifle
+  rpgSupport: { curl: [[0.33, 1.39, 0.97], [0.11, 1.48, 1.03], [0.09, 1.35, 0.94], [0.05, 0.92, 0.64]], spread: 0, thumb: [[-0.98, -0.13, 0.13], [-0.73, -0.61, -0.3]], center: [-0.0342, -0.083, 0] }, // RPG front grip
+  // right hand on a pistol grip: lower on it than the old fist (its middle finger clears the trigger guard and the
+  // magazine to wrap the front of the grip), the index laid straight along the side of the guard
+  akGrip: { curl: [[0.1, 0.1, 0.08], [0.64, 1.2, 0.84], [0.64, 1.08, 0.76], [0.68, 0.72, 0.5]], spread: 0, thumb: [[0.03, -0.99, -0.13], [-0.09, -0.99, -0.09]], center: [-0.0394, -0.083, -0.025] }, // AK-47
+  m4Grip: { curl: [[0.1, 0.1, 0.08], [0.56, 0.88, 0.62], [1, 1, 0.7], [1.08, 0.48, 0.34]], spread: 0, thumb: [[0.23, -0.79, -0.56], [-0.3, -0.92, -0.23]], center: [-0.043, -0.068, -0.025] }, // M4A1
+  flamerGrip: { curl: [[0.1, 0.1, 0.08], [0.72, 1.08, 0.76], [0.72, 0.96, 0.67], [0.64, 0.68, 0.48]], spread: 0, thumb: [[0.18, -0.71, -0.68], [-0.25, -0.97, -0.07]], center: [-0.0432, -0.083, -0.025] }, // flamethrower
+  mp5Grip: { curl: [[0.1, 0.1, 0.08], [0.8, 1.2, 0.84], [0.96, 1, 0.7], [0.92, 0.64, 0.45]], spread: 0, thumb: [[0.07, -0.87, -0.5], [-0.12, -0.99, -0.05]], center: [-0.0415, -0.068, -0.025] }, // MP5
+  rpgGrip: { curl: [[0.1, 0.1, 0.08], [0.92, 1.36, 0.95], [0.96, 1.28, 0.9], [0.96, 0.92, 0.64]], spread: 0, thumb: [[0.33, -0.92, -0.19], [-0.27, -0.92, -0.27]], center: [-0.034, -0.068, -0.025] }, // RPG
+  // right hand round a stock wrist or a rifle's grip
+  wristGrip: { curl: [[0.14, 0.16, 0.4], [0.18, 0.2, 0.14], [0.31, 1.08, 0.75], [0.37, 0.72, 0.8]], spread: 0, thumb: [[-0.13, -0.87, -0.48], [0.37, -0.79, -0.48]], center: [-0.0378, -0.083, 0] }, // pump shotgun
+  dbGrip: { curl: [[0.06, 0.07, 0.85], [0.11, 0.29, 0.2], [0.3, 0.34, 0.24], [0.37, 0.72, 0.8]], spread: 0, thumb: [[-0.56, -0.79, -0.23], [-0.3, -0.61, -0.73]], center: [-0.0378, -0.083, 0] }, // double-barrel
+  xbowGrip: { curl: [[0.14, 0.16, 0.49], [0.17, 0.2, 0.14], [0.31, 1.06, 0.74], [0.37, 0.79, 0.74]], spread: 0, thumb: [[-0.71, -0.71, 0], [-0.21, -0.61, -0.77]], center: [-0.0378, -0.083, 0] }, // crossbow
+  rifleGrip: { curl: [[0.41, 0.47, 0.86], [0.49, 1.02, 0.71], [0.48, 0.91, 0.64], [0.43, 0.49, 0.91]], spread: 0, thumb: [[0, -0.79, -0.61], [-0.07, -0.97, -0.25]], center: [-0.0415, -0.083, 0] }, // hunting rifle
+  atGrip: { curl: [[0.25, 0.29, 0.2], [0.37, 0.43, 0.81], [0.62, 0.95, 0.66], [0.54, 0.62, 0.69]], spread: 0, thumb: [[-0.08, -0.79, -0.6], [-0.16, -0.97, -0.21]], center: [-0.0426, -0.083, 0] }, // anti-tank rifle
+  flareGunR: { curl: [[0.42, 0.2, 0.19], [0.73, 1.23, 0.53], [0.68, 1.13, 0.47], [0.65, 0.62, 0.74]], spread: 0, thumb: [[0.15, -0.92, -0.35], [-0.23, -0.92, -0.3]], center: [-0.0404, -0.0755, -0.0123] }, // the flare gun's grip, the index on its trigger
+  radioHold: { curl: [[0.31, 1.47, 0.22], [0.31, 1.58, 0.22], [0.38, 1.45, 0.26], [0.41, 1.04, 0.42]], spread: 0, thumb: [[0.18, -0.71, -0.68], [0, -0.71, -0.71]], center: [-0.0329, -0.083, 0] }, // the walkie-talkie, held by the case below the grille
+  // melee handles (the bat and the spiked bat share one)
+  batR: { curl: [[0.79, 1.32, 0.92], [0.82, 1.42, 0.99], [0.8, 1.35, 0.94], [0.75, 1.05, 0.73]], spread: 0, thumb: [[-0.69, -0.61, -0.4], [-0.77, -0.61, -0.21]], center: [-0.0319, -0.083, 0] },
+  batL: { curl: [[0.87, 1.22, 0.85], [0.92, 1.35, 0.94], [0.89, 1.26, 0.88], [0.62, 0.96, 0.67]], spread: 0, thumb: [[-0.03, -0.97, -0.26], [0.38, -0.92, -0.05]], center: [-0.035, -0.083, 0] },
+  macheteGrip: { curl: [[0.49, 1.41, 0.98], [0.5, 1.52, 1.06], [0.5, 1.45, 1.01], [0.48, 1.14, 0.79]], spread: 0, thumb: [[-0.79, -0.61, -0.1], [-0.7, -0.71, -0.09]], center: [-0.0294, -0.083, 0] },
+  hammerGrip: { curl: [[0.78, 1.45, 1.01], [0.82, 1.53, 1.06], [0.75, 1.48, 1.03], [0.71, 1.2, 0.83]], spread: 0, thumb: [[-0.61, -0.71, -0.35], [-0.77, -0.61, -0.21]], center: [-0.0289, -0.083, 0] },
+  // a used item held in both hands, palms on its sides (the medkit, the tin and the can are the same either side)
+  kitHold: { curl: [[0.36, 1.02, 0.71], [0.21, 1.24, 0.86], [0.37, 1.03, 0.72], [0.38, 0.44, 1.2]], spread: 0.02, thumb: [[0.07, -0.87, -0.5], [0.08, -0.99, 0.1]], center: [0.0075, -0.088, 0] },
+  tinHold: { curl: [[0.42, 0.48, 0.76], [0.49, 0.68, 0.47], [0.51, 0.59, 0.51], [0.51, 0.59, 0.51]], spread: 0.02, thumb: [[-0.84, -0.5, -0.22], [-0.3, -0.92, -0.23]], center: [0.0075, -0.088, 0] },
+  drinkHold: { curl: [[0.42, 0.67, 0.46], [0.43, 0.78, 0.54], [0.44, 0.69, 0.48], [0.41, 0.46, 0.4]], spread: 0.02, thumb: [[-0.92, -0.38, -0.12], [-0.96, -0.26, 0.13]], center: [0.0077, -0.088, 0] }, // (eased off the can by a fifth: round one this narrow the two hands' fingers met)
+  meatR: { curl: [[0.56, 0.64, 0.5], [0.43, 0.83, 0.58], [0.59, 0.68, 0.47], [0.59, 0.68, 0.47]], spread: 0.02, thumb: [[-0.69, -0.61, -0.4], [-0.48, -0.87, -0.13]], center: [-0.006, -0.088, 0] },
+  meatL: { curl: [[0.6, 1.31, 0.91], [0.62, 0.71, 0.5], [0.66, 0.76, 0.53], [0.66, 0.76, 0.53]], spread: 0.02, thumb: [[-0.48, -0.87, -0.13], [-0.56, -0.79, -0.23]], center: [-0.0577, -0.088, 0] },
+  // reloads: the left hand on the magazine as it comes out (the flamethrower's fuel bottle), under the RPG's grenade
+  akMag: { curl: [[0.89, 1.09, 0.76], [1, 1.2, 0.83], [0.91, 1.04, 0.72], [0.74, 0.85, 0.59]], spread: 0.02, thumb: [[-0.84, 0.26, -0.48], [-0.56, -0.71, -0.43]], center: [-0.022, -0.088, 0] },
+  m4Mag: { curl: [[0.35, 0.4, 1.2], [0.45, 1.22, 0.85], [0.52, 0.94, 1.1], [0.49, 0.56, 0.96]], spread: 0.02, thumb: [[-0.86, -0.5, -0.11], [-0.7, -0.71, -0.09]], center: [-0.0142, -0.088, 0] },
+  mp5Mag: { curl: [[0.4, 1.31, 0.91], [0.51, 1.46, 1.02], [0.58, 1.28, 0.89], [0.58, 0.66, 0.98]], spread: 0.02, thumb: [[-0.61, -0.71, -0.35], [-0.96, -0.26, 0.13]], center: [-0.0119, -0.088, 0] },
+  fuelBottle: { curl: [[0.26, 0.71, 0.5], [0.38, 0.86, 0.6], [0.57, 0.65, 0.59], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.8, -0.5, -0.33], [-0.84, -0.26, -0.48]], center: [-0.035, -0.088, 0] },
+  rackPinch: { curl: [[0.4, 1.12, 0.78], [0.48, 1.36, 0.95], [0.68, 1.72, 1.2], [1.6, 1.72, 1.2]], spread: 0, thumb: [[-0.37, -0.92, 0.1], [-0.22, -0.5, 0.84]], center: [-0.0217, -0.1, -0.02] }, // the pistol's slide, racked
+  pistolMag: { curl: [[0.91, 1.04, 0.72], [0.3, 1.48, 1.03], [0.21, 1.34, 0.93], [0.73, 0.84, 1.2]], spread: 0.02, thumb: [[-0.77, -0.61, -0.21], [0.03, -0.97, -0.26]], center: [-0.0135, -0.088, 0] }, // the pistol's new magazine
+  xbowString: { curl: [[0.6, 0.56, 0.39], [0.56, 0.6, 0.42], [0.48, 0.6, 0.42], [1.08, 0.88, 0.62]], spread: 0, thumb: [[0.1, -0.97, -0.24], [-0.1, -0.92, 0.37]], center: [-0.0268, -0.1, -0.02] }, // the crossbow's string, hauled back to the latch
+  rpgWarhead: { curl: [[0.42, 0.48, 0.34], [0.51, 0.59, 0.41], [0.56, 0.64, 0.45], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.61, -0.71, -0.35], [0, -0.61, -0.79]], center: [-0.0418, -0.088, 0] },
 };
 // Knuckles sit on an arc (middle finger furthest out, pinky set back). r = proximal phalanx radius.
 const FINGERS = [
@@ -2361,24 +2417,31 @@ class VMArm {
       const fore = new THREE.Mesh(ag.fore, mat);
       this.shoulder.add(upper);
       this.elbow.add(fore);
-      const hands = {};
-      const poses = style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open', 'knife', 'radio'];
-      for (const p of poses) {
-        const h = new THREE.Mesh(getHandGeo(p, style === 'claw' ? 'claw' : 'glove', side), mat);
-        h.visible = false;
-        this.wrist.add(h);
-        hands[p] = h;
+      this.sets[style] = { upper, fore, hands: {}, mat };
+      for (const m of [upper, fore]) {
+        m.frustumCulled = false;
+        m.renderOrder = 1;
       }
-      this.sets[style] = { upper, fore, hands, meshes: [upper, fore, ...Object.values(hands)] };
-    }
-    for (const m of [...this.sets.normal.meshes, ...this.sets.claw.meshes]) {
-      m.frustumCulled = false;
-      m.renderOrder = 1;
+      // the poses every item shares; the rest (fitted to one item each) are built the first time they are shown
+      for (const p of style === 'claw' ? ['claw', 'open'] : ['grip', 'trigger', 'cup', 'support', 'pinch', 'open']) this.hand(style, p);
     }
     this.style = 'normal';
     this.pose = 'grip';
     this.visible = true;
     this.applyVis();
+  }
+  /** the mesh of a hand pose in a style, built on first use */
+  hand(style, p) {
+    const s = this.sets[style];
+    let h = s.hands[p];
+    if (!h && HAND_POSES[p]) {
+      h = s.hands[p] = new THREE.Mesh(getHandGeo(p, style === 'claw' ? 'claw' : 'glove', this.side), s.mat);
+      h.visible = false;
+      h.frustumCulled = false;
+      h.renderOrder = 1;
+      this.wrist.add(h);
+    }
+    return h;
   }
   setStyle(style) {
     if (style !== this.style) {
@@ -2404,12 +2467,13 @@ class VMArm {
       const on = this.visible && style === this.style;
       s.upper.visible = on;
       s.fore.visible = on;
+      if (on && style === 'normal') this.hand(style, this.pose);
       for (const p in s.hands) s.hands[p].visible = on && p === this.pose;
     }
     if (this.style === 'claw' && !this.sets.claw.hands[this.pose] && this.visible) this.sets.claw.hands.claw.visible = true;
   }
-  gripCenter(out) {
-    const pose = HAND_POSES[this.style === 'claw' ? (this.pose === 'open' ? 'open' : 'claw') : this.pose] || HAND_POSES.grip;
+  gripCenter(out, poseName = this.pose) {
+    const pose = HAND_POSES[this.style === 'claw' ? (poseName === 'open' ? 'open' : 'claw') : poseName] || HAND_POSES.grip;
     return out.set(pose.center[0] * this.side, pose.center[1], pose.center[2]);
   }
   /**
@@ -2469,37 +2533,37 @@ const supportGrip = (roll, yaw, pitch = 0) => {
 const VM = {
   [ITEM.AK47]: {
     kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
-    recoil: { z: 0.028, rx: 0.045, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'akGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'akSupport' },
+    magPose: 'akMag', recoil: { z: 0.028, rx: 0.045, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.SHOTGUN]: {
     kind: 'shotgun', hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.79, adsPitch: 0.1,
-    rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    rPose: 'wristGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'pumpSupport' },
     recoil: { z: 0.06, rx: 0.12, ry: 0.02 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.HUNTING_RIFLE]: {
     kind: 'rifle', bolt: true, scope: true, hip: [0.19, -0.205, -0.3, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.085,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.35) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    rPose: 'rifleGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.35) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'rifleSupport' },
     recoil: { z: 0.05, rx: 0.1, ry: 0.015 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.M4A1]: {
     kind: 'rifle', hip: [0.18, -0.185, -0.27, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.16, chargeFire: false, chargeTravel: 0, chargeQ: [1.3, 0.1, 0],
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
-    recoil: { z: 0.022, rx: 0.035, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'm4Grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'm4Support' },
+    magPose: 'm4Mag', recoil: { z: 0.022, rx: 0.035, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.MP5]: {
     kind: 'rifle', hip: [0.17, -0.18, -0.3, 0.03, 0.15, 0.0], ads: 0.2, adsZ: -0.2, chargeFire: false, chargeQ: [1.6, -0.3, 0.4],
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.2) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
-    recoil: { z: 0.016, rx: 0.026, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'mp5Grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.2) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'mp5Support' },
+    magPose: 'mp5Mag', recoil: { z: 0.016, rx: 0.026, ry: 0.008 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.DB_SHOTGUN]: {
     kind: 'shotgun', breakAction: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.68, adsPitch: 0.1,
-    rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    rPose: 'dbGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'dbSupport' },
     recoil: { z: 0.07, rx: 0.14, ry: 0.025 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.CROSSBOW]: {
     kind: 'rifle', crossbow: true, hip: [0.2, -0.19, -0.2, 0.03, 0.17, 0.0], ads: 0.22, adsZ: -0.53, adsPitch: 0.1,
-    rPose: 'grip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    rPose: 'xbowGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.75) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'xbowSupport' },
     recoil: { z: 0.018, rx: 0.03, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.RPG]: {
@@ -2508,21 +2572,21 @@ const VM = {
     // rpg: the grenade in the muzzle follows the loaded state like the crossbow's bolt, and the reload carries a new
     // one in (_animReloadRPG, the left hand under its bulb at holdQ). A heavy shove back, little climb
     kind: 'rifle', rpg: true, hip: [0.21, -0.21, -0.3, 0.03, 0.0, 0.0], ads: 0.22, adsZ: -0.38, adsPitch: 0.12,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: handQ(-1, [0.35, -0.2, -0.92], [1, 0, 0.35]), pose: 'grip' },
+    rPose: 'rpgGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: handQ(-1, [0.35, -0.2, -0.92], [1, 0, 0.35]), pose: 'rpgSupport' },
     holdQ: supportGrip(-0.3, 0.5, 0.0),
     recoil: { z: 0.08, rx: 0.03, ry: 0.012 }, sprint: [-0.03, -0.04, 0.02, -0.3, 0.35, 0.3],
   },
   [ITEM.FLAMETHROWER]: {
     // reloads like a rifle: the fuel bottle is the magazine, the gas valve the charging handle (the hand just opens it)
     kind: 'rifle', hip: [0.19, -0.19, -0.27, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.2, chargeFire: false, chargeTravel: 0, chargeQ: [1.3, 0.1, 0],
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
-    recoil: { z: 0.004, rx: 0.004, ry: 0.006 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
+    rPose: 'flamerGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'flamerSupport' },
+    magPose: 'fuelBottle', recoil: { z: 0.004, rx: 0.004, ry: 0.006 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.AT_RIFLE]: {
     // single: one round at a time, fed by hand into the open port (_animReloadSingle); the bolt is only worked on the
     // reload (boltTravel: how far it comes back). Heavy: it sags off the shoulder and kicks hard
     kind: 'rifle', bolt: true, single: true, boltTravel: 0.06, hip: [0.21, -0.225, -0.37, 0.035, 0.1, 0.0], ads: 0.22, adsZ: -0.3,
-    rGrip: { p: [0, 0, 0], q: gunGrip(0.32) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'support' },
+    rPose: 'atGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.32) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'atSupport' },
     recoil: { z: 0.09, rx: 0.17, ry: 0.03 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },
   [ITEM.PISTOL]: {
@@ -2540,7 +2604,7 @@ const VM = {
     // held as the pistol is (its grip and trigger sit where the pistol's do); breakPistol: the reload tips the barrel
     // down about its hinge pin, pulls the spent case, thumbs a fresh shell in, snaps it shut and cocks the hammer
     kind: 'pistol', breakPistol: true, hip: [0.11, -0.158, -0.29, 0.09, 0.18, -0.06], ads: 0.2, adsZ: -0.42,
-    rPose: 'trigger', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
+    rPose: 'flareGunR', rGrip: { p: [0, -0.004, -0.006], q: handQ(1, [0, -0.36, -0.93], [-1, 0, 0]) },
     lGrip: { p: [0, -0.028, -0.03], q: handQ(-1, [0.05, -0.55, -0.83], [0.92, 0.3, 0.15]), pose: 'cup' },
     poleR: new THREE.Vector3(0.5, -1, 0.2), poleL: new THREE.Vector3(-0.6, -0.9, 0.2),
     recoil: { z: 0.045, rx: 0.17, ry: 0.02 }, sprint: [0.0, -0.015, 0.03, -0.3, 0.22, 0.28],
@@ -2552,20 +2616,20 @@ const VM = {
     // wrist bent ~95 degrees).
     kind: 'melee', hip: [0.18, -0.13, -0.34, 0.651, 1.414, 2.646], poleR: new THREE.Vector3(0.3, -0.9, 0.3),
     rPose: 'knife', rGrip: { p: [0, 0, 0], q: handQ(1, [0, -Math.cos(KNIFE_GRIP.tilt), -Math.sin(KNIFE_GRIP.tilt)], [-1, 0, 0]) }, sprint: [0.02, -0.05, 0.05, -0.3, 0.1, 0] },
-  [ITEM.BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'grip' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
-  [ITEM.SPIKED_BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'grip' }, sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
-  [ITEM.MACHETE]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.95, 0.3, 0.1], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
-  [ITEM.HAMMER]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.85, 0.25, 0.0], rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
-  [ITEM.MOLOTOV]: { kind: 'throw', hip: [0.17, -0.235, -0.38, 0.12, 0.2, -0.2], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
-  [ITEM.PIPEBOMB]: { kind: 'throw', hip: [0.16, -0.2, -0.34, 0.1, 0.2, -0.2], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
-  [ITEM.FLARE]: { kind: 'throw', hip: [0.16, -0.2, -0.35, 0.12, 0.2, -0.25], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
-  [ITEM.GRENADE]: { kind: 'throw', hip: [0.13, -0.12, -0.3, 0.3, 0.35, -0.12], rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rPose: 'batR', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'batL' }, swingPoleL: new THREE.Vector3(0, -1, 0.5), sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
+  [ITEM.SPIKED_BAT]: { kind: 'melee', twoHand: true, hip: [0.17, -0.2, -0.3, 1.2, 0.3, 0.15], rPose: 'batR', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, lGrip: { q: Q(0, 0, 0), pose: 'batL' }, swingPoleL: new THREE.Vector3(0, -1, 0.5), sprint: [0.05, -0.05, 0.08, -0.4, 0.1, 0] },
+  [ITEM.MACHETE]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.95, 0.3, 0.1], rPose: 'macheteGrip', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
+  [ITEM.HAMMER]: { kind: 'melee', hip: [0.16, -0.19, -0.3, 0.85, 0.25, 0.0], rPose: 'hammerGrip', rGrip: { p: [0, 0, 0], q: Q(0, 0, 0) }, sprint: [0.03, -0.05, 0.06, -0.4, 0.1, 0] },
+  [ITEM.MOLOTOV]: { kind: 'throw', hip: [0.17, -0.235, -0.38, 0.12, 0.2, -0.2], rPose: 'bottle', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.PIPEBOMB]: { kind: 'throw', hip: [0.16, -0.2, -0.34, 0.1, 0.2, -0.2], rPose: 'pipe', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.FLARE]: { kind: 'throw', hip: [0.16, -0.2, -0.35, 0.12, 0.2, -0.25], rPose: 'flare', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.GRENADE]: { kind: 'throw', hip: [0.13, -0.12, -0.3, 0.3, 0.35, -0.12], rPose: 'ball', rGrip: { p: [0, 0, 0], q: gunGrip(0.0) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   // the alarm clock sits on the palm, the fingers cupped round its feet, its dial turned to the eye
-  [ITEM.DECOY]: { kind: 'throw', hip: [0.15, -0.115, -0.34, 0.15, 0.35, -0.1], rPose: 'cup', rGrip: { p: [0, -0.058, 0], q: handQ(1, [-0.71, 0, -0.71], [0, 1, 0]) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.DECOY]: { kind: 'throw', hip: [0.15, -0.115, -0.34, 0.15, 0.35, -0.1], rPose: 'clock', rGrip: { p: [0, -0.058, 0], q: handQ(1, [-0.71, 0, -0.71], [0, 1, 0]) }, sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
   // the walkie-talkie up in front of the chest, its face to the eye; keyed (talk: added as the key goes down), it
   // comes up and in toward the mouth
   // (held low on the case, below the grille, so the fingers leave the face clear)
-  [ITEM.WALKIE]: { kind: 'radio', hip: [0.12, -0.12, -0.3, 0.12, 0.7, 0.0], rPose: 'radio', rGrip: { p: [0, -0.04, 0], q: gunGrip(0.0) }, talk: [-0.04, 0.05, 0.06, 0.2, 0.15, 0], sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
+  [ITEM.WALKIE]: { kind: 'radio', hip: [0.12, -0.12, -0.3, 0.12, 0.7, 0.0], rPose: 'radioHold', rGrip: { p: [0, -0.04, 0], q: gunGrip(0.0) }, talk: [-0.04, 0.05, 0.06, 0.2, 0.15, 0], sprint: [0.0, -0.08, 0.05, -0.3, 0.1, 0] },
 };
 
 // melee swing keyframes: [t, px,py,pz, rx,ry,rz, ease] (absolute weapon pose, Euler YXZ); ease 0 smooth,1 linear,2 out,3 in
@@ -2582,6 +2646,20 @@ const SWINGS = {
 // claws: wrist frames (camera space): [t, px,py,pz, rx,ry,rz, ease] for the swinging (right) hand; mirrored for left
 const CLAW_IDLE = [0.18, -0.15, -0.38, -0.55, -0.35, 0.85];
 const CLAW_SWING = { dur: 0.5, keys: [[0.3, 0.3, 0.02, -0.22, 0.0, -0.9, 1.3, 0], [0.55, -0.16, -0.24, -0.44, -1.2, 0.5, -0.2, 1]] };
+
+// the tuck off a wall (update): per kind, the most it moves the item [px,py,pz, rx,ry,rz]; it starts TUCK_GAP short of
+// where the item's reach meets the wall and is all the way in TUCK_RANGE further
+const TUCK = {
+  rifle: [-0.03, -0.02, 0.13, 0.55, 0.3, 0.3], // high ready: the muzzle up and in, the gun back
+  shotgun: [-0.03, -0.02, 0.13, 0.55, 0.3, 0.3],
+  pistol: [-0.01, -0.03, 0.1, 0.65, 0.15, 0.1],
+  melee: [0.02, -0.04, 0.1, 0.35, 0.15, 0.0], // back and up
+  throw: [0.0, -0.05, 0.08, 0.2, 0.0, 0.0],
+  radio: [0.0, -0.02, 0.06, 0.0, 0.0, 0.0],
+};
+const TUCK_GAP = 0.06, TUCK_RANGE = 0.32;
+
+const THROW_RELEASE = 0.46; // (of the throw animation) the item leaves the hand
 
 const ease = (u, e) => (e === 1 ? u : e === 2 ? 1 - (1 - u) * (1 - u) : e === 3 ? u * u : u * u * (3 - 2 * u));
 function evalSwing(sw, idle, t, out) {
@@ -2611,6 +2689,11 @@ function evalSwing(sw, idle, t, out) {
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const _v4 = new THREE.Vector3();
+const _v5 = new THREE.Vector3();
+const _v6 = new THREE.Vector3();
+const _v7 = new THREE.Vector3();
+const _v8 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion();
@@ -2624,6 +2707,13 @@ const SHOULDER_R = new THREE.Vector3(0.2, -0.29, 0.1);
 const SHOULDER_L = new THREE.Vector3(-0.12, -0.31, -0.06);
 const POLE_R = new THREE.Vector3(0.75, -0.65, 0.15);
 const POLE_L = new THREE.Vector3(-0.75, -0.65, 0.15);
+const DB_LOAD_ARC = new THREE.Vector3(-0.12, 0.03, 0.03);
+const DB_LOAD_POLE = new THREE.Vector3(-1, 0.5, 0.1);
+const RIFLE_RELOAD_ARC = new THREE.Vector3(-0.03, -0.07, 0.0);
+const SHOVE_POLE_R = new THREE.Vector3(1, -0.2, 0.2);
+const XBOW_HAUL_POLE = new THREE.Vector3(-1, 0.4, 0.2);
+const PISTOL_RACK_POLE = new THREE.Vector3(-1, -0.3, 0.3);
+const PISTOL_RACK_ARC = new THREE.Vector3(-0.07, 0.02, 0.03);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const SWAY_PIVOT = new THREE.Vector3(0.1, -0.14, -0.32); // roughly between the hands
 const IDLE_RATE = 1.35; // breathing, rad/s (~4.7 s per breath)
@@ -2798,6 +2888,7 @@ export class ViewModel {
     this.meatGeo = [makeMeat(false), makeMeat(true)];
     this.drinking = false; // the use is a drink: the can goes up to the mouth and tips
     this.kitGrip = 0.1; // half the distance between the hands holding it
+    this.usePose = ['kitHold', 'kitHold'];
     this.kit = new THREE.Mesh(this.kitGeo, getViewWeaponMaterial());
     this.kit.visible = false;
     this.kit.frustumCulled = false;
@@ -2817,6 +2908,7 @@ export class ViewModel {
     this.adsT = 0;
     this.sprintT = 0;
     this.talkT = 0; // the walkie-talkie keyed: raised toward the mouth (cfg.talk)
+    this.tuckT = 0; // pulled back off a wall, a car or a crate in front (update's s.wallDist)
     this.crouchT = 0;
     this.moveT = 0;
     this.bobPhase = 0;
@@ -2925,7 +3017,7 @@ export class ViewModel {
     const armsOn = claws || !!this.cur;
     this.armR.setVisible(armsOn);
     this.armL.setVisible(claws || !!(this.cur && this.cur.lGrip));
-    this.armR.setPose(claws ? 'claw' : 'grip');
+    this.armR.setPose(claws ? 'claw' : (this.cur && this.cur.cfg.rPose) || 'grip'); // (builds an item's own hand pose now, not mid-update)
     this.armL.setPose(claws ? 'claw' : this.cur && this.cur.lGrip ? this.cur.lGrip.pose : 'grip');
   }
 
@@ -2985,6 +3077,8 @@ export class ViewModel {
     this.drinking = !!CONSUMABLES[item]?.drink;
     this.kit.geometry = meat ? this.meatGeo[meat - 1] : food ? this.canGeo : this.drinking ? this.drinkGeo : this.kitGeo;
     this.kitGrip = food ? 0.068 : this.drinking ? 0.055 : 0.1;
+    // the hand poses fitted to each prop's sides (left, right)
+    this.usePose = meat ? ['meatL', 'meatR'] : food ? ['tinHold', 'tinHold'] : this.drinking ? ['drinkHold', 'drinkHold'] : ['kitHold', 'kitHold'];
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
   }
 
@@ -3246,7 +3340,9 @@ export class ViewModel {
         for (let i = 0; i < 6; i++) P6[i] = _pose6b[i];
       } else if (act.type === 'throw') {
         this._animThrow(u, P6, cur);
-        if (u > 0.4 && u < 0.72) rPose = 'open';
+        // the fingers open as the item leaves the hand (it is hidden from 0.46), not before: opened round it, they
+        // went straight through it
+        if (u >= THROW_RELEASE && u < 0.72) rPose = 'open';
       } else if (act.type === 'use') {
         const up = win(u, 0.0, 0.18, 0.82, 1.0);
         P6[1] -= up * 0.35;
@@ -3289,6 +3385,19 @@ export class ViewModel {
       return;
     }
 
+    // ---- tucked back off what is in front: the viewmodel is drawn over the world (its own pass, depth cleared), so
+    // nothing cuts into it; but a muzzle or a blade reaching further than the wall the player stands at reads as gone
+    // into it. s.wallDist (m, along the view; Game.weaponClearance) against how far the item reaches at the hip: the
+    // gun comes up and back to high ready, a blade or a throwable back and down, by as much as it would go in
+    if (cur.reach === undefined) cur.reach = this._itemReach(cur);
+    const tuckTo = Math.min(1, Math.max(0, (cur.reach + TUCK_GAP - (s.wallDist ?? 99)) / TUCK_RANGE));
+    this.tuckT += (tuckTo - this.tuckT) * (1 - Math.exp(-dt * 10));
+    const tk = TUCK[kind];
+    if (tk && this.tuckT > 0.001) {
+      const w = ease(this.tuckT, 0) * (1 - 0.6 * this.adsT) * (act && act.type === 'melee' ? 0.35 : 1);
+      for (let i = 0; i < 6; i++) P6[i] += tk[i] * w;
+    }
+
     // ---- final weapon transform (+ recoil)
     const wp = this._wp.set(P6[0], P6[1], P6[2] + this.recZ.x);
     _e1.set(P6[3] + this.recX.x, P6[4] + this.recY.x, P6[5], 'YXZ');
@@ -3308,10 +3417,14 @@ export class ViewModel {
       _q1.copy(wq).multiply(_q2.setFromEuler(_e1.set(0.4, 0.2, -1.2, 'YXZ')));
       rq.slerp(_q1, altRw);
     }
-    if (cfg.kind === 'throw' && rPose === 'grip' && this.itemId === ITEM.MOLOTOV) rPose = 'support';
     this.armR.setPose(rPose);
     this.armR.setVisible(true);
-    this._solveArm(this.armR, rp, rq, SHOULDER_R, cfg.poleR || POLE_R);
+    // (on the bolt the hand's grip center goes over to the pinch's with the blend, so the pose switch doesn't jump it)
+    const rC = altR && altRw > 0 ? this._blendCenter(this.armR, cfg.rPose || 'grip', 'pinch', altRw) : cfg.kind === 'throw' ? cfg.rPose : undefined;
+    // a long gun's butt swings across under the right forearm on a shove: the right elbow goes out to the side for it
+    let poleR = cfg.poleR || POLE_R;
+    if (act && act.type === 'melee' && (cfg.kind === 'rifle' || cfg.kind === 'shotgun')) poleR = _v8.copy(poleR).lerp(SHOVE_POLE_R, win(u, 0.0, 0.2, 0.7, 0.95));
+    this._solveArm(this.armR, rp, rq, SHOULDER_R, poleR, rC);
 
     // left
     if (act && act.type === 'use') {
@@ -3328,7 +3441,9 @@ export class ViewModel {
         if (parts.pump) lp.z += parts.pump.position.z - parts.pump.userData.base.z;
         if (parts.barrels) lp.sub(parts.barrels.userData.base).applyQuaternion(parts.barrels.quaternion).add(parts.barrels.position);
         lp.applyQuaternion(wq).add(wp);
-        lq.copy(wq).multiply(cur.lGrip.q);
+        lq.copy(wq);
+        if (parts.barrels) lq.multiply(parts.barrels.quaternion); // (the hand turns with the fore-end it holds, as it closes)
+        lq.multiply(cur.lGrip.q);
       } else {
         lp.set(-0.2, -0.45, -0.1);
         lq.copy(wq);
@@ -3340,7 +3455,11 @@ export class ViewModel {
         if (rs.bCam) _v3.copy(rs.b);
         else _v3.copy(rs.b).applyQuaternion(wq).add(wp);
         _v2.lerp(_v3, rs.m);
+        // (arc: an offset, weapon space, at the middle of the A to B move, to take the hand round something between)
+        if (rs.arc) _v2.add(_v3.copy(rs.arc).applyQuaternion(wq).multiplyScalar(Math.sin(PI * rs.m)));
         lp.lerp(_v2, altLw);
+        // ...and the same way round going back from B to the grip
+        if (rs.arc && rs.m > 0) lp.add(_v3.copy(rs.arc).applyQuaternion(wq).multiplyScalar(Math.sin(PI * altLw) * rs.m));
         if (rs.aCam) _q1.copy(rs.qa);
         else _q1.copy(wq).multiply(rs.qa);
         if (rs.bCam) _q2.copy(rs.qb);
@@ -3350,7 +3469,21 @@ export class ViewModel {
       }
       this.armL.setPose(lPose);
       this.armL.setVisible(lVisible || altLw > 0.01);
-      this._solveArm(this.armL, lp, lq, SHOULDER_L, cfg.poleL || POLE_L);
+      // the grip center blends from the grip's to the reload's (A to B by m) with the weight, as the pose switches
+      let lC;
+      if (rs && altLw > 0 && cur.lGrip) {
+        const cr = this._blendCenter(this.armL, rs.poseA || rs.pose || lPose, rs.poseB || rs.pose || lPose, rs.m, _v4);
+        lC = this.armL.gripCenter(_v5, cur.lGrip.pose).lerp(cr, altLw);
+      }
+      let poleL = cfg.poleL || POLE_L;
+      // two hands on a bat: through the swing the left elbow drops and goes back, so the left forearm passes under the
+      // right hand instead of through it
+      if (cfg.swingPoleL && act && act.type === 'melee') poleL = _v7.copy(poleL).lerp(cfg.swingPoleL, win(u, 0.36, 0.46, 0.76, 0.88));
+      if (rs && (rs.poleA || rs.poleB) && altLw > 0) {
+        _v8.copy(rs.poleA || poleL).lerp(rs.poleB || poleL, rs.m);
+        poleL = _v7.copy(poleL).lerp(_v8, altLw);
+      }
+      this._solveArm(this.armL, lp, lq, SHOULDER_L, poleL, lC);
       if (this._atFollow) {
         // the anti-tank round in the left hand: weapon space, held by its middle
         _q1.copy(wq).invert();
@@ -3422,12 +3555,36 @@ export class ViewModel {
     st.qb.copy(wh.quaternion).multiply(this.cur.cfg.holdQ);
     st.m = smoothstep(0.32, 0.5, u);
     st.w = win(u, 0.04, 0.16, 0.8, 0.94);
-    st.pose = 'support';
+    st.pose = 'rpgWarhead';
   }
 
-  _solveArm(arm, gripPos, handQ, shoulderPos, pole) {
-    // wrist = grip - handQ * gripCenter
-    arm.gripCenter(_v3).applyQuaternion(handQ);
+  /** grip center of arm between poses a and b (weight k), into out */
+  _blendCenter(arm, a, b, k, out = this._tmpP) {
+    return arm.gripCenter(out, a).lerp(arm.gripCenter(_v6, b), k);
+  }
+
+  /** How far forward of the eye the item reaches at its hip pose (m): the furthest -z of its parts' bounds. */
+  _itemReach(cur) {
+    const h = cur.cfg.hip;
+    _m1.compose(_v1.set(h[0], h[1], h[2]), _q1.setFromEuler(_e1.set(h[3], h[4], h[5], 'YXZ')), _v2.set(1, 1, 1));
+    let reach = 0;
+    for (const m of cur.root.children) {
+      if (!m.isMesh) continue;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      const b = m.geometry.boundingBox;
+      for (let i = 0; i < 8; i++) {
+        _v3.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).add(m.userData.base).applyMatrix4(_m1);
+        reach = Math.max(reach, -_v3.z);
+      }
+    }
+    return reach;
+  }
+
+  _solveArm(arm, gripPos, handQ, shoulderPos, pole, centerPose) {
+    // wrist = grip - handQ * gripCenter (centerPose: place the wrist as that pose would, e.g. a hand opening as it lets
+    // go of a throwable stays where it held it)
+    if (centerPose && centerPose.isVector3) _v3.copy(centerPose).applyQuaternion(handQ);
+    else arm.gripCenter(_v3, centerPose).applyQuaternion(handQ);
     _v1.copy(gripPos).sub(_v3);
     ikTwoBone(shoulderPos, _v1, ARM_L1, ARM_L2, pole, _qU, _qL);
     arm.orient(_qU, _qL, handQ);
@@ -3438,11 +3595,14 @@ export class ViewModel {
     // left-hand override: blend weapon grip -> lerp(A, B, m) by weight w. A/B in weapon space unless *Cam.
     const st =
       this._rs ||
-      (this._rs = { w: 0, m: 0, a: new THREE.Vector3(), b: new THREE.Vector3(), qa: new THREE.Quaternion(), qb: new THREE.Quaternion(), aCam: false, bCam: false, pose: null });
+      (this._rs = { w: 0, m: 0, a: new THREE.Vector3(), b: new THREE.Vector3(), qa: new THREE.Quaternion(), qb: new THREE.Quaternion(), aCam: false, bCam: false, pose: null, poseA: null, poseB: null, poleA: null, poleB: null, arc: null });
     st.w = 0;
     st.m = 0;
     st.aCam = st.bCam = false;
     st.pose = null;
+    st.poseA = st.poseB = null; // the poses at A and at B, when they differ (their grip centers are blended by m)
+    st.poleA = st.poleB = null; // the left elbow's pole at A / B, when it isn't the grip's (blended by m and the weight)
+    st.arc = null;
     this._reloadState = st;
     if (cur.cfg.single) return this._animReloadSingle(u, P6, st, parts, meta);
     if (cur.cfg.rpg) return this._animReloadRPG(u, P6, st, parts, meta);
@@ -3533,7 +3693,8 @@ export class ViewModel {
         ar.position.set(ar.userData.base.x, ar.userData.base.y + (1 - seat) * 0.03, ar.userData.base.z - (1 - seat) * 0.06);
       }
       st.w = win(u, 0.08, 0.18, 0.93, 0.99);
-      st.pose = 'pinch';
+      st.pose = u < 0.6 ? 'xbowString' : 'pinch';
+      st.poleA = XBOW_HAUL_POLE; // the elbow up and out while it hauls the string, the forearm off the tiller
     } else if (kind === 'rifle' && !cur.cfg.bolt) {
       // AK: tilt, mag rock out, new mag in, charge
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
@@ -3566,7 +3727,10 @@ export class ViewModel {
       st.qb.setFromEuler(cq ? _e1.set(cq[0], cq[1], cq[2], 'YXZ') : _e1.set(0.35, PI, 0.1, 'YXZ'));
       st.w = win(u, 0.06, 0.16, 0.9, 0.98);
       st.m = smoothstep(0.7, 0.78, u);
-      st.pose = st.m > 0.5 ? (travel ? 'pinch' : 'open') : 'support';
+      st.poseA = cur.cfg.magPose || 'support';
+      st.poseB = travel ? 'pinch' : 'open';
+      st.pose = st.m > 0.5 ? st.poseB : st.poseA;
+      st.arc = RIFLE_RELOAD_ARC; // from the charging handle back to the handguard round under it, not through it
     } else if (kind === 'pistol') {
       // tilt and lift the gun toward the middle so the magazine change stays on screen
       const tilt = win(u, 0.0, 0.12, 0.86, 1.0);
@@ -3591,7 +3755,7 @@ export class ViewModel {
         st.b.x -= 0.02;
         st.qb.setFromEuler(_e1.set(0.3, 0.4, 0.5, 'YXZ'));
         st.m = smoothstep(0.4, 0.5, u);
-        st.pose = 'support';
+        st.pose = 'pistolMag';
       } else {
         // A: magazine, B: slide (overhand rack)
         st.a.copy(parts.mag.position).addScaledVector(ax, 0.1);
@@ -3600,7 +3764,13 @@ export class ViewModel {
         st.b.set(0, meta.slideGrab.y + 0.02, meta.slideGrab.z + 0.01 + pull * 0.03);
         st.qb.setFromEuler(_e1.set(-0.3, -0.2, -PI / 2 - 0.2, 'YXZ'));
         st.m = smoothstep(0.7, 0.76, u);
-        st.pose = st.m > 0.5 ? 'pinch' : 'support';
+        st.poseA = 'pistolMag';
+        st.poseB = 'rackPinch';
+        st.pose = st.m > 0.5 ? st.poseB : st.poseA;
+        // the elbow out to the left and up for the rack, so the forearm comes over the gun from the side instead of
+        // up through the right hand on the grip
+        st.poleB = PISTOL_RACK_POLE;
+        st.arc = PISTOL_RACK_ARC; // from the magazine up to the slide out round the left of the right hand
       }
       st.w = win(u, 0.08, 0.2, 0.88, 0.96);
     } else if (cur.cfg.breakAction) {
@@ -3623,12 +3793,14 @@ export class ViewModel {
       st.a.set(-0.02, -0.5, -0.32);
       st.aCam = true;
       st.qa.setFromEuler(_e1.set(1.2, 0.0, 0.0, 'YXZ'));
-      st.b.copy(ch).addScaledVector(back, 0.03 + (1 - push) * 0.07);
+      st.b.copy(ch).addScaledVector(back, 0.07 + (1 - push) * 0.07);
       st.b.y += 0.02;
       st.qb.setFromEuler(_e1.set(-0.2 - open * 0.62, 0.5, -PI / 2 - 0.4, 'YXZ'));
       st.m = smoothstep(0.3, 0.48, u);
       st.w = win(u, 0.12, 0.24, 0.7, 0.8);
       st.pose = 'pinch';
+      st.arc = DB_LOAD_ARC; // up from below round the left of the gun, not through it
+      st.poleB = DB_LOAD_POLE; // the elbow up and out: the forearm comes over the open breech, clear of the barrels
       sh.visible = st.m > 0.3 && push < 0.97 && st.w > 0.3;
       sh.position.copy(ch).addScaledVector(back, (1 - push) * 0.07);
       sh.quaternion.copy(br.quaternion);
@@ -3741,7 +3913,7 @@ export class ViewModel {
     P6[2] += wind * 0.1 - thr * 0.26;
     P6[3] += -wind * 0.6 + thr * 0.9 - low * 0.4;
     P6[5] += wind * 0.35 - thr * 0.2;
-    cur.root.visible = u < 0.46 || u > 0.8;
+    cur.root.visible = u < THROW_RELEASE || u > 0.8;
     if (u > 0.8) {
       const r = smoothstep(0.8, 1.0, u);
       P6[1] -= (1 - r) * 0.1;
@@ -3764,7 +3936,7 @@ export class ViewModel {
       const arm = side < 0 ? this.armL : this.armR;
       _v1.set(side * this.kitGrip, -0.012, 0.0).applyQuaternion(this.kit.quaternion).add(kitPos);
       arm.setVisible(up > 0.02);
-      arm.setPose('support');
+      arm.setPose(this.usePose[side < 0 ? 0 : 1]);
       this._solveArm(arm, _v1, _q1, side < 0 ? SHOULDER_L : SHOULDER_R, side < 0 ? POLE_L : POLE_R);
     }
   }
@@ -3807,7 +3979,7 @@ export class ViewModel {
 }
 
 /** Debug/tuning access to pose tables (sandbox only). */
-export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ, FG_RELOAD };
+export const VM_DEBUG = { VM, CLAW_IDLE, SWINGS, CLAW_SWING, HAND_POSES, HAND_MAT, handQ, FG_RELOAD, FINGERS, PHALANX_R, THUMB_MCP };
 /** Debug: hand geometry. */
 export function getHandGeoForDebug(pose, side) {
   return getHandGeo(pose, pose === 'claw' ? 'claw' : 'glove', side);

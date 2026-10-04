@@ -1,0 +1,6 @@
+[
+  { "name": "machete-vs-car", "title": "Machete held against a car boot (seed 1, Hollow Creek)", "give": [53], "key": "Digit3", "tp": [-209.47, 195.81], "lookAt": [-208.65, 196.47, 0.9], "wait": 2500, "hideZombies": true },
+  { "name": "ak47-vs-wall", "title": "AK-47 against a brick wall", "give": [61], "key": "Digit1", "tp": [-195.75, 195.68], "lookAt": [-195.04, 196.39, 1.9], "wait": 2500, "hideZombies": true },
+  { "name": "grenade-first-person", "title": "Frag grenade in first person", "give": [33], "key": "Digit4", "tp": [-218, 183], "yaw": 0.6, "pitch": -0.05, "wait": 2000, "hideZombies": true },
+  { "name": "other-player-ak47", "title": "A second client watching the first hold an AK-47", "who": "B", "others": { "A": { "tp": [-218, 183], "give": [61], "key": "Digit1", "yaw": 2.4, "pitch": 0 } }, "tp": [-219.0, 185.6], "lookAt": [-218, 183, 1.25], "wait": 2200, "hideHud": true, "hideVm": true, "hideZombies": true }
+]

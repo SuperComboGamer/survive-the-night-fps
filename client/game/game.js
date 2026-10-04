@@ -63,6 +63,9 @@ import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
 import { swimming } from '../../shared/swim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
+const _wcF = new THREE.Vector3(), _wcR = new THREE.Vector3(), _wcU = new THREE.Vector3(), _wcD = new THREE.Vector3();
+const _wcHit = { t: -1, col: null, terrain: false };
+const WC_RAYS = [[0, 0], [0.3, -0.25]]; // (right, up) of the view: straight on, and out past the right hand
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
 import { deerHitbox } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
@@ -1495,6 +1498,21 @@ export class Game {
 
   // into the water or out of it (shared/swim.js). The hands go to swimming and the weapon out of sight; it is drawn
   // again on the way out
+  // How far the world is in front of the held item (m, along the view): two short rays from the eye, straight ahead and
+  // out past the right hand where a gun's muzzle or a blade is, against walls, props, structures and the ground
+  weaponClearance(cam) {
+    const f = _wcF.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    const r = _wcR.set(1, 0, 0).applyQuaternion(cam.quaternion);
+    const u = _wcU.set(0, 1, 0).applyQuaternion(cam.quaternion);
+    let near = 99;
+    for (const [a, b] of WC_RAYS) {
+      const d = _wcD.copy(f).addScaledVector(r, a).addScaledVector(u, b).normalize();
+      raycastWorld(this.world, cam.position.x, cam.position.y, cam.position.z, d.x, d.y, d.z, 1.4, _wcHit);
+      if (_wcHit.t >= 0) near = Math.min(near, _wcHit.t * d.dot(f));
+    }
+    return near;
+  }
+
   onSwim(swim) {
     this.swimming = swim;
     if (!swim) {
@@ -2304,7 +2322,8 @@ export class Game {
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
-    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed });
+    const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
+    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist });
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
       if (this.vmMuzzleT <= 0) this.renderer.vmMuzzle.intensity = 0;

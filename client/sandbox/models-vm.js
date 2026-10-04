@@ -9,8 +9,22 @@
 //   &ortho=halfHeight  orthographic camera (with &wcam)
 //   &clip=nx,ny,nz,d   clip everything on the far side of a weapon-space plane (keeps n.p + d >= 0)
 //   &crop=x,y,h        magnify part of a 16:9 view: left, top and height in units of the screen height
-//   &light=game  in-game viewmodel lighting (midday) instead of the bright studio lights
-//   ?ww=1        world weapon lineup
+//   &light=game  in-game viewmodel lighting (midday) instead of the bright studio lights (&ldir=x,y,z its direction)
+//   ?ww=1        world weapon lineup (&item=ID one of them, &view=back)
+//   ?vm=hands    the hand poses side by side (&poses=a,b,.. which, &yaw= &pitch= &cd= the camera)
+//   &ts=a,b,c    a grid of the same item frozen at several times
+//   &act=talk    the walkie-talkie keyed;  &wall=M  a wall that far ahead of the eye (the tuck off it, Game.weaponClearance)
+// clip checking (docs/object-clipping.md):
+//   &clip=1      measure how far the hands, the sleeves and the item pass into each other: window.__clip, one per view:
+//                { handInItem, itemInHand, rInL: { d (m), a, b (the parts), n (vertices inside), p (the deepest, view
+//                space) }, nearZ, inverted, text }. Counts only what the camera sees. (&clip=nx,ny,nz,d is the plane)
+//   &dots=1      with &clip=1: mark every vertex found inside
+//   &xray=1      the item (and a used prop) see-through, drawn over the hands
+//   &zoom=fov,x,y,z  from the eye, narrowed onto a point (view space)
+//   &zh=R|L,fov  from the eye, narrowed onto that hand wherever the animation has it
+//   &oh=R|L,yaw,pitch,dist  an outside camera orbiting that hand
+//   window.__hands  { R, L }: each hand's grip center (view space) once posed, for a camera fixed on a hand
+//   &hp=pose:{json}  override (part of) a hand pose, or add one (several allowed); with &rpose= / &lpose= to use it
 import * as THREE from 'three';
 import { ITEM, ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
 import { ViewModel, createWorldWeapon, worldWeaponTris, viewModelTris, handTris, VM_DEBUG } from '../render/models/weapons.js';
@@ -66,6 +80,12 @@ if (params.has('thumb')) {
   const [k, v] = params.get('thumb').split(':');
   const n = v.split(',').map(Number);
   VM_DEBUG.HAND_POSES[k].thumb = [n.slice(0, 3), n.slice(3, 6)];
+}
+// &hp=pose:{"curl":[[..]x4],"thumb":[[..],[..]],"center":[x,y,z]} : override (part of) a hand pose, or add one (with
+// &rpose= / &lpose= to put it on the item)
+for (const s of params.getAll('hp')) {
+  const i = s.indexOf(':'), k = s.slice(0, i);
+  VM_DEBUG.HAND_POSES[k] = { ...(VM_DEBUG.HAND_POSES[k] || VM_DEBUG.HAND_POSES.grip), ...JSON.parse(s.slice(i + 1)) };
 }
 // &mat=glove:r,g,b;trim:r,g,b;... : hand / sleeve material colors
 if (params.has('mat')) {
@@ -240,9 +260,22 @@ if (params.get('vm') === 'hands') {
       const tgt = new THREE.Vector3(tx, ty, tz);
       cam.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(tgt);
       cam.lookAt(tgt);
+    } else if (params.has('zoom')) {
+      // &zoom=fov,tx,ty,tz: still from the player's eye, but narrowed onto a point (a close look at a grip)
+      const [fov, tx, ty, tz] = params.get('zoom').split(',').map(Number);
+      cam.fov = fov;
+      cam.lookAt(tx, ty, tz);
     }
     if (id === 'claws') vm.setItem(0, { claws: true });
     else vm.setItem(id);
+    if (params.get('xray') === '1') {
+      // &xray=1: the item (and the use prop) see-through, drawn over the hands, so a finger inside it shows
+      const glass = new THREE.MeshLambertMaterial({ color: 0x88aaff, transparent: true, opacity: 0.38, depthWrite: false });
+      for (const o of [...(vm.cur ? vm.cur.root.children : []), vm.kit]) {
+        o.material = glass;
+        o.renderOrder = 5;
+      }
+    }
     return { id, scene, cam, vm, acted: false, stopAt: times ? times[vi] : null };
   });
 
@@ -253,6 +286,8 @@ if (params.get('vm') === 'hands') {
     state.sprint = true;
   }
   if (act === 'ads') state.aiming = true;
+  if (act === 'talk') state.talk = true; // (the walkie-talkie keyed)
+  if (params.has('wall')) state.wallDist = +params.get('wall'); // &wall=m: a wall that far ahead (the tuck)
   if (act === 'crouch') {
     state.crouch = true;
     state.speed = 2;
@@ -337,6 +372,25 @@ if (params.get('vm') === 'hands') {
       if (wcam) placeWeaponCam(v);
       renderer.setViewport(x, y, tw, th);
       renderer.setScissor(x, y, tw, th);
+      if (params.has('zh')) {
+        // &zh=R|L,fov: from the eye, narrowed onto that hand (its grip center), wherever the animation has it
+        const [side, fov] = params.get('zh').split(',');
+        const arm = side === 'L' ? v.vm.armL : v.vm.armR;
+        v.scene.updateMatrixWorld(true);
+        const c = arm.wrist.localToWorld(arm.gripCenter(new THREE.Vector3()));
+        v.cam.fov = +fov || 24;
+        v.cam.lookAt(c);
+        v.cam.updateProjectionMatrix();
+      }
+      if (params.has('oh')) {
+        // &oh=R|L,yaw,pitch,dist: an outside camera orbiting that hand (the far side of a grip)
+        const [side, yaw, pitch, dist] = params.get('oh').split(',');
+        const arm = side === 'L' ? v.vm.armL : v.vm.armR;
+        v.scene.updateMatrixWorld(true);
+        const c = arm.wrist.localToWorld(arm.gripCenter(new THREE.Vector3()));
+        v.cam.position.set(Math.sin(+yaw) * Math.cos(+pitch), Math.sin(+pitch), Math.cos(+yaw) * Math.cos(+pitch)).multiplyScalar(+dist || 0.3).add(c);
+        v.cam.lookAt(c);
+      }
       if (hideArm === 'L' || hideArm === 'LR') v.vm.armL.setVisible(false);
       if (hideArm === 'R' || hideArm === 'LR') v.vm.armR.setVisible(false);
       if (params.has('hidegun') && v.vm.cur) v.vm.cur.root.visible = false; // &hidegun: hands only
@@ -347,7 +401,8 @@ if (params.get('vm') === 'hands') {
   // weapon-space inspection camera and clip plane (&wcam / &clip)
   const crop = params.has('crop') ? params.get('crop').split(',').map(Number) : null; // &crop=x,y,size: magnify part of the frame (fractions)
   const wcam = params.has('wcam') ? params.get('wcam').split(',').map(Number) : null;
-  const clipLocal = params.has('clip') ? params.get('clip').split(',').map(Number) : null;
+  // (&clip=1 is the clip check below; four numbers are a plane)
+  const clipLocal = params.has('clip') && params.get('clip').split(',').length === 4 ? params.get('clip').split(',').map(Number) : null;
   const clipPlane = new THREE.Plane();
   if (clipLocal) renderer.localClippingEnabled = true;
   function placeWeaponCam(v) {
@@ -385,7 +440,31 @@ if (params.get('vm') === 'hands') {
     for (let i = 0; i < n; i++) step(DT);
     render();
     views[0].vm.getMuzzle(mz);
+    // where each hand's grip center is (window.__hands: for a fixed camera on a hand, the same before and after a change)
+    {
+      const v = views[0];
+      v.scene.updateMatrixWorld(true);
+      const at = (arm) => (arm.visible ? arm.wrist.localToWorld(arm.gripCenter(new THREE.Vector3())).toArray().map((x) => +x.toFixed(4)) : null);
+      window.__hands = { R: at(v.vm.armR), L: at(v.vm.armL) };
+    }
     info.textContent += `\nmuzzle(0): ${mz.x.toFixed(3)}, ${mz.y.toFixed(3)}, ${mz.z.toFixed(3)}`;
+    if (params.get('clip') === '1') {
+      // &clip=1: how far the hands and the item pass into each other (see clipReport)
+      window.__clip = views.map((v) => clipReport(v));
+      info.textContent += '\n' + window.__clip.map((c, i) => `clip[${i}] ` + c.text).join('\n');
+      // &dots=1: mark every vertex found inside the other model
+      if (params.get('dots') === '1') {
+        for (const v of views) {
+          if (!v.flagged) continue;
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(v.flagged, 3));
+          const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xff2020, size: 3, sizeAttenuation: false, depthTest: false }));
+          pts.renderOrder = 20;
+          v.scene.add(pts);
+        }
+        render();
+      }
+    }
   } else {
     let last = performance.now();
     const loop = (now) => {
@@ -398,5 +477,130 @@ if (params.get('vm') === 'hands') {
     requestAnimationFrame(loop);
   }
   window.__views = views;
+}
+
+// ------------------------------------------------------------------ clip check (&clip=1)
+// Every mesh here is a union of closed shells, so a vertex of one model is inside another when the first face a ray
+// from it meets is a back face. Each vertex casts four rays; three or more back faces = inside, and the shortest of
+// those exits is how deep it sits. Reports, in mm, the deepest hand / sleeve vertex inside the item, the deepest item
+// vertex inside a hand or sleeve, the hands inside each other, and how close anything comes to the camera.
+function clipReport(v) {
+  v.scene.updateMatrixWorld(true);
+  const shown = (o) => {
+    for (; o; o = o.parent) if (!o.visible) return false;
+    return true;
+  };
+  const arms = [];
+  for (const [side, arm] of [['R', v.vm.armR], ['L', v.vm.armL]]) {
+    for (const st in arm.sets) {
+      const s = arm.sets[st];
+      if (shown(s.upper)) arms.push({ name: side + '.upper', side, m: s.upper });
+      if (shown(s.fore)) arms.push({ name: side + '.fore', side, m: s.fore });
+      for (const p in s.hands) if (shown(s.hands[p])) arms.push({ name: side + '.hand', side, m: s.hands[p] });
+    }
+  }
+  const items = [];
+  if (v.vm.cur) for (const m of v.vm.cur.root.children) if (m.isMesh && shown(m)) items.push({ name: 'item.' + (Object.keys(v.vm.cur.parts).find((k) => v.vm.cur.parts[k] === m) || '?'), m });
+  if (shown(v.vm.kit)) items.push({ name: 'kit', m: v.vm.kit });
+  const dbl = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const proxy = (e) => {
+    const p = new THREE.Mesh(e.m.geometry, dbl);
+    p.matrixWorld.copy(e.m.matrixWorld);
+    p.matrixAutoUpdate = false;
+    p.updateMatrixWorld = () => {};
+    e.box = new THREE.Box3().setFromBufferAttribute(e.m.geometry.attributes.position).applyMatrix4(e.m.matrixWorld);
+    e.p = p;
+    return e;
+  };
+  arms.forEach(proxy);
+  items.forEach(proxy);
+  const DIRS = [new THREE.Vector3(1, 0.31, 0.17), new THREE.Vector3(-0.23, 1, 0.41), new THREE.Vector3(0.37, -0.29, 1), new THREE.Vector3(-0.6, -0.55, -0.58)].map((d) => d.normalize());
+  const ray = new THREE.Raycaster();
+  const P = new THREE.Vector3(), N = new THREE.Vector3(), nm = new THREE.Matrix3();
+  // deepest vertex of `from` inside the union of `into` (each entry: { name, m, p, box })
+  // only what the camera can see counts (the upper arms and the stocks reach behind the eye)
+  v.cam.updateMatrixWorld(true);
+  v.cam.updateProjectionMatrix();
+  const S = new THREE.Vector3();
+  const onScreen = (p) => {
+    S.copy(p).project(v.cam);
+    return S.z > -1 && S.z < 1 && Math.abs(S.x) <= 1 && Math.abs(S.y) <= 1;
+  };
+  const probe = (from, into) => {
+    let best = { d: 0, a: '', b: '', n: 0 };
+    const targets = into.map((e) => e.p);
+    for (const f of from) {
+      const pos = f.m.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        P.fromBufferAttribute(pos, i).applyMatrix4(f.m.matrixWorld);
+        if (!onScreen(P)) continue;
+        const near = into.filter((e) => e.box.containsPoint(P));
+        if (!near.length) continue;
+        let back = 0, depth = Infinity, who = '';
+        for (const d of DIRS) {
+          ray.set(P, d);
+          ray.near = 1e-5;
+          ray.far = 1;
+          const h = ray.intersectObjects(near.map((e) => e.p), false)[0];
+          if (!h) continue;
+          nm.getNormalMatrix(h.object.matrixWorld);
+          N.copy(h.face.normal).applyMatrix3(nm);
+          if (N.dot(d) > 0) {
+            back++;
+            if (h.distance < depth) {
+              depth = h.distance;
+              who = into[targets.indexOf(h.object)].name;
+            }
+          }
+        }
+        if (back >= 3) {
+          best.n++;
+          (v.flagged || (v.flagged = [])).push(P.x, P.y, P.z);
+          if (depth > best.d) best = { d: depth, a: f.name, b: who, n: best.n, p: P.toArray().map((x) => +x.toFixed(3)) };
+        }
+      }
+    }
+    return best;
+  };
+  // sanity: rays from far outside must meet a front face first; a part modelled inside out shows up here (and then
+  // the numbers above it can't be trusted)
+  let insideOut = 0;
+  {
+    const bb = new THREE.Box3();
+    for (const e of items) bb.union(e.box);
+    const c = bb.getCenter(new THREE.Vector3()), rad = bb.getSize(new THREE.Vector3()).length();
+    for (let i = 0; i < 400; i++) {
+      const u = (i + 0.5) / 400, th = i * 2.39996, z = 1 - 2 * u, s = Math.sqrt(1 - z * z);
+      const d = new THREE.Vector3(Math.cos(th) * s, z, Math.sin(th) * s);
+      const o = c.clone().addScaledVector(d, rad);
+      // aim at a jittered point inside the box
+      const tgt = new THREE.Vector3(bb.min.x + ((i * 0.618) % 1) * (bb.max.x - bb.min.x), bb.min.y + ((i * 0.381) % 1) * (bb.max.y - bb.min.y), bb.min.z + ((i * 0.7548) % 1) * (bb.max.z - bb.min.z));
+      ray.set(o, tgt.sub(o).normalize());
+      ray.near = 0;
+      ray.far = rad * 3;
+      const h = ray.intersectObjects(items.map((e) => e.p), false)[0];
+      if (!h) continue;
+      nm.getNormalMatrix(h.object.matrixWorld);
+      if (N.copy(h.face.normal).applyMatrix3(nm).dot(ray.ray.direction) > 0) insideOut++;
+    }
+  }
+  const r = {
+    inverted: insideOut,
+    handInItem: probe(arms, items),
+    itemInHand: probe(items, arms),
+    rInL: probe(arms.filter((e) => e.side === 'R'), arms.filter((e) => e.side === 'L')),
+  };
+  // nearest approach to the camera (view space z; the near plane is at -0.01)
+  let nearZ = -Infinity;
+  v.cam.updateMatrixWorld(true);
+  const inv = v.cam.matrixWorldInverse.copy(v.cam.matrixWorld).invert();
+  for (const e of [...arms.filter((a) => a.name.endsWith('hand')), ...items]) {
+    const pos = e.m.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) nearZ = Math.max(nearZ, P.fromBufferAttribute(pos, i).applyMatrix4(e.m.matrixWorld).applyMatrix4(inv).z);
+  }
+  r.nearZ = nearZ;
+  const mm = (b) => (b.n ? `${(b.d * 1000).toFixed(1)}mm ${b.a}>${b.b} (${b.n}v) @${b.p}` : '-');
+  r.text = (insideOut ? `INSIDE-OUT FACES (${insideOut}/400 outside rays) | ` : '') + `hand-in-item ${mm(r.handInItem)} | item-in-hand ${mm(r.itemInHand)} | R-in-L ${mm(r.rInL)} | near ${(-nearZ * 1000).toFixed(0)}mm`;
+  return r;
 }
 void ITEM_DEFS;

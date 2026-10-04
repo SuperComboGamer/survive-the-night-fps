@@ -22,6 +22,7 @@ import { planRail } from './rail.js';
 export { ROAD };
 
 const PI = Math.PI;
+const SITE_ROOM = 5; // (m) how far a roadside or woodland site keeps from the nearest solid prop a place has built
 
 // Tree variants (must match client vegetation variants by index): collision radius at scale 1
 export const TREE_TYPES = [
@@ -693,6 +694,40 @@ export function createWorld(seed) {
     return y;
   };
 
+  // Does a prop of this type at (x, z, ry) stand in a solid prop already placed (their colliders, seen from above)?
+  // For what is scattered along the roads after the places and the sites are built: a power pole or a sign that
+  // would come up through a wreck, a crate or a shed is left out.
+  const solidsOf = (type, x, z, ry) => {
+    const def = PROPS[type];
+    if (!def) return [];
+    const c = Math.cos(ry);
+    const s = Math.sin(ry);
+    const out = [];
+    for (const [lx, , lz, sx, , sz] of def.boxes || []) out.push({ x: x + c * lx + s * lz, z: z - s * lx + c * lz, hx: sx / 2, hz: sz / 2, c, s, r: 0 });
+    for (const [lx, lz, r] of def.cyls || []) out.push({ x: x + c * lx + s * lz, z: z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r });
+    return out;
+  };
+  // separating axes for two boxes swept by a radius each (a cylinder is a box of no size and a radius)
+  const solidsMeet = (a, b) => {
+    for (const o of [a, b]) {
+      for (const [ax, az] of [[o.c, -o.s], [o.s, o.c]]) {
+        const ext = (q) => q.hx * Math.abs(q.c * ax - q.s * az) + q.hz * Math.abs(q.s * ax + q.c * az) + q.r;
+        if (Math.abs((a.x - b.x) * ax + (a.z - b.z) * az) >= ext(a) + ext(b)) return false;
+      }
+    }
+    // two cylinders: the axes above are only X and Z, measure them centre to centre
+    if (!a.hx && !b.hx) return Math.hypot(a.x - b.x, a.z - b.z) < a.r + b.r;
+    return true;
+  };
+  const propBlocked = (type, x, z, ry) => {
+    const mine = solidsOf(type, x, z, ry);
+    for (const p of props) {
+      if (Math.abs(p.x - x) > 12 || Math.abs(p.z - z) > 12) continue;
+      for (const b of solidsOf(p.type, p.x, p.z, p.ry)) for (const a of mine) if (solidsMeet(a, b)) return true;
+    }
+    return false;
+  };
+
   class Builder {
     constructor(ox, oz, ry, y0) {
       this.ox = ox;
@@ -1130,7 +1165,7 @@ export function createWorld(seed) {
     b.wreck('car_wreck', -12, -5, 0.8);
     b.wreck('car_wreck', 9, -17, 2.2);
     b.prop('road_sign', -14, -18, 0.3);
-    b.prop('streetlight', 10, -18, 0);
+    b.prop('streetlight', 12.5, -18.5, 0); // (clear of the wreck's tail, which reaches 10.8, -18.3)
     b.prop('streetlight', -10, -18, 0);
     b.prop('barrel', 12, 4, 0);
     b.prop('corpse', 3, -4, 0.8, { nocollide: true });
@@ -1167,7 +1202,7 @@ export function createWorld(seed) {
     b.light(7.8, 1.0, -8, 'embers');
     b.prop('body_bag', 14, -3, 0.2, { nocollide: true });
     b.prop('body_bag', 15, -2.2, 0.3, { nocollide: true });
-    b.wreck('pickup_truck', -9, 20, 0.1, { seed: 1 });
+    b.wreck('pickup_truck', -9, 21.8, 0.1, { seed: 1 }); // (its nose clear of the sandbag nest's curve, which reaches z = 18)
     // abandoned traffic queue in both directions
     for (let i = 0; i < 4; i++) {
       b.wreck('car_wreck', -1.9 + (i % 2) * 0.4, -22 - i * 7.5, 0.05 * (i - 1.5), { trunk: i % 2 === 0 });
@@ -1236,7 +1271,7 @@ export function createWorld(seed) {
   place(ZONE.RANGER, (b) => {
     b.prop('watchtower', 7, 7, 0.2);
     b.room(-6, 2, 8, 6, 3, 'logwall', { n: [door(4, 1.2), win(1.8), win(6.2)], e: [win(3)], w: [win(3)] }, { roof: 'gable', roofH: 2.2, roofMat: 'shingles' });
-    b.prop('bed', -8.5, 3.2, 0);
+    b.prop('bed', -8.5, 3.05, 0); // (its foot clear of the cabinet against the back wall)
     b.prop('table', -4, 3.6, 0);
     b.cont(CONT.LOCKER, -2.6, 1, { prop: 'locker', ry: -PI / 2 });
     b.cont(CONT.CABINET, -8.8, 4.35, { prop: 'cabinet', ry: PI });
@@ -1314,7 +1349,7 @@ export function createWorld(seed) {
     b.prop('body_bag', -3.8, -9.4, 0.25, { nocollide: true });
     b.prop('body_bag', -2.6, -9.2, 0.1, { nocollide: true });
     b.prop('radio_mast', 16, 10, 0);
-    b.prop('fuel_tank', -17, 14, 0.9);
+    b.prop('fuel_tank', -17.5, 5, 0); // (between the west tents, both ends inside the sandbag ring 23 m out)
     // (a tent is one solid box: what belongs to it lies in front of its open flap, where it can be seen)
     b.loot(-14.3, -6.6);
     b.loot(14.6, -8.6);
@@ -1483,7 +1518,7 @@ export function createWorld(seed) {
     b.wreck('car_wreck', -5.8, 6, 0.08, { seed: 2 });
     b.wreck('pickup_truck', 24, 2, PI / 2 + 0.1, { trunk: false });
     for (const [mx, mz] of [[-6, -24], [6, 20], [-6, 20]]) b.prop('mailbox', mx, mz, 0);
-    for (const [sx, sz] of [[-6, -6], [6, 6], [6, -30], [-6, 30]]) b.prop('streetlight', sx, sz, PI / 2);
+    for (const [sx, sz] of [[-6, -6], [6, 6], [6, -33.5], [-6, 30]]) b.prop('streetlight', sx, sz, PI / 2); // (6, -33.5: past the wreck parked at 5.5, -28)
     b.prop('corpse', 2.5, -6, 0.7, { nocollide: true });
     b.prop('corpse', -2, 12, 2.3, { nocollide: true });
     b.loot(-4, -34);
@@ -1546,7 +1581,7 @@ export function createWorld(seed) {
       const s = b.sub(sx, sz, ry);
       s.prop('tent', 0, 0, 0);
       s.prop('campfire', 0, -3.4, 0, { nocollide: true, seed: 1 });
-      s.prop('log_bench', 1.8, -3.4, PI / 2);
+      s.prop('log_bench', 2.05, -3.4, PI / 2); // (its end clear of the fire's ring of stones)
       s.prop('picnic_table', -3, -1.2, 0.2);
       s.cont(CONT.DUFFEL, 1.6, -1.2, { prop: 'duffel_bag', ry: 0.4, nocollide: true });
       if (withRv) s.wreck('camper', -5.5, 3, 0.15, { zone: ZONE.CAMPGROUND });
@@ -1872,7 +1907,7 @@ export function createWorld(seed) {
       b.prop('fence', -26, zz, PI / 2);
       b.prop('fence', 26, zz, PI / 2);
     }
-    b.prop('picnic_table', 8.6, -3, 0.2);
+    b.prop('picnic_table', 8.6, -2.4, 0.2); // (clear of a camper parked in the row behind it)
     b.prop('picnic_table', -8.6, -2.6, -0.3);
     b.cont(CONT.DUFFEL, -8.6, -1.1, { prop: 'duffel_bag', ry: 0.5, nocollide: true });
     b.cont(CONT.DUMPSTER, 7.6, 4.6, { prop: 'dumpster', ry: -PI / 2 });
@@ -2069,7 +2104,21 @@ export function createWorld(seed) {
 
   // ---------------------------------------------------------------- roadside & woodland sites
   const TRUNK_ZONE = ZONE.ROADSIDE;
+  const placeProps = props.length; // (what the places built, before any site)
+  let sitesSkipped = 0;
   for (const st of sites) {
+    // a site is kept clear of the places' own solid props: a traffic queue or a farm's fence can reach past the 16 m
+    // the site was kept from the place's middle, and its wreck or log pile then stood in theirs
+    let crowded = false;
+    for (let i = 0; i < placeProps && !crowded; i++) {
+      const p = props[i];
+      const def = PROPS[p.type];
+      if (def && (def.boxes || def.cyls) && Math.hypot(p.x - st.x, p.z - st.z) < SITE_ROOM) crowded = true;
+    }
+    if (crowded) {
+      sitesSkipped++;
+      continue;
+    }
     const b = new Builder(st.x, st.z, st.ry, st.h ?? heightAt(st.x, st.z));
     b.zone = ZONE.FOREST;
     b.ground = true;
@@ -2099,7 +2148,7 @@ export function createWorld(seed) {
     } else if (t === 'camp') {
       b.prop('tent', 0, 1.5, rng.range(-0.3, 0.3));
       b.prop('campfire', 0.3, -2.2, 0, { nocollide: true, seed: 1 });
-      b.prop('log_bench', 2.2, -2.2, PI / 2 + 0.2);
+      b.prop('log_bench', 2.65, -2.2, PI / 2 + 0.2); // (its end clear of the fire's ring of stones)
       b.cont(CONT.DUFFEL, -1.9, -1.4, { prop: 'duffel_bag', ry: rng.range(0, 6), nocollide: true });
       if (rng.chance(0.5)) b.prop('lantern_post', -2.6, 1.8, 0);
       if (rng.chance(0.35)) b.prop('corpse', 2.5, 0.5, rng.range(0, 6), { nocollide: true });
@@ -2116,7 +2165,7 @@ export function createWorld(seed) {
       b.ground = false;
       b.room(0, 0, 3.6, 3.2, 2.5, rng.chance(0.5) ? 'planks' : 'tin', { n: [door(1.8, 1.2)] }, { roof: 'flat', roofMat: 'tin' });
       b.cont(CONT.TOOLBOX, 0.9, 0.9, { prop: 'toolbox', ry: 0.3, nocollide: true });
-      b.cont(CONT.SHELF, -1.35, 0.4, { prop: 'crate', ry: 0, h: 0.6 });
+      b.cont(CONT.SHELF, -1.15, 0.4, { prop: 'crate', ry: 0, h: 0.6 }); // (in off the wall: a crate is a metre square)
       b.prop('woodpile', 2.8, 0, PI / 2);
     } else if (t === 'hunter') {
       b.prop('hunting_stand', 0, 0, rng.range(0, 6));
@@ -2179,17 +2228,20 @@ export function createWorld(seed) {
         const side = road.width + 3;
         const px = x + nx * side;
         const pz = z + nz * side;
-        const py = seatY('power_pole', px, pz, dir);
-        props.push({ type: 'power_pole', x: px, y: py, z: pz, ry: dir, seed: i });
-        addPropColliders('power_pole', px, py, pz, dir);
+        if (!propBlocked('power_pole', px, pz, dir)) {
+          const py = seatY('power_pole', px, pz, dir);
+          props.push({ type: 'power_pole', x: px, y: py, z: pz, ry: dir, seed: i });
+          addPropColliders('power_pole', px, py, pz, dir);
+        }
       } else if (i % 53 === 26) {
         const r = rng();
         const px = x + nx * (road.width + 2.2);
         const pz = z + nz * (road.width + 2.2);
         const type = r < 0.45 ? 'road_sign' : r < 0.7 ? 'mailbox' : null;
-        if (type) {
+        const seed = type ? rng.int(0, 99) : 0; // (drawn for a sign whether or not it is placed: the stream stays as it was)
+        if (type && !propBlocked(type, px, pz, dir)) {
           const py = seatY(type, px, pz, dir);
-          props.push({ type, x: px, y: py, z: pz, ry: dir, seed: rng.int(0, 99) });
+          props.push({ type, x: px, y: py, z: pz, ry: dir, seed });
           addPropColliders(type, px, py, pz, dir);
         }
       }
@@ -2233,7 +2285,7 @@ export function createWorld(seed) {
     arr.push(x, z, r);
   };
   // reserve prop / building footprints and site clearings
-  for (const p of props) occupy(p.x, p.z, p.type === 'school_bus' || p.type === 'camper' || p.type === 'dump_truck' || p.type === 'heli_wreck' ? 5 : 2.5);
+  for (const p of props) occupy(p.x, p.z, p.type === 'school_bus' || p.type === 'camper' || p.type === 'dump_truck' || p.type === 'heli_wreck' || p.type === 'fuel_tank' ? 5 : 2.5);
   for (const [x, z, r] of clears) occupy(x, z, Math.min(r, 6));
   const roadClear = (x, z, extra) => {
     const d = roadDistAt(x, z);
@@ -2268,6 +2320,37 @@ export function createWorld(seed) {
     return false;
   };
 
+  // Does a trunk / boulder of radius r at (x, z) stand in an upright piece a place built (a wall, a post, a machine)?
+  // (its grid is built on the first call: every place is up by then)
+  let partCells = null;
+  function partBlocked(x, z, r) {
+    if (!partCells) {
+      partCells = new Map();
+      for (const p of parts) {
+        if (p.rx || p.rz || p.sy < 1 || (p.shape !== 'box' && p.shape !== 'cyl')) continue;
+        const e = Math.hypot(p.sx, p.sz) / 2;
+        for (let i = Math.floor((p.x - e) / 8); i <= Math.floor((p.x + e) / 8); i++)
+          for (let j = Math.floor((p.z - e) / 8); j <= Math.floor((p.z + e) / 8); j++) {
+            const k = i * 65536 + j;
+            if (!partCells.has(k)) partCells.set(k, []);
+            partCells.get(k).push(p);
+          }
+      }
+    }
+    for (let i = Math.floor((x - r) / 8); i <= Math.floor((x + r) / 8); i++)
+      for (let j = Math.floor((z - r) / 8); j <= Math.floor((z + r) / 8); j++) {
+        for (const p of partCells.get(i * 65536 + j) || []) {
+          if (p.shape === 'cyl') {
+            if (Math.hypot(p.x - x, p.z - z) < r + p.sx / 2) return true;
+          } else {
+            const c = Math.cos(p.ry), s = Math.sin(p.ry), dx = x - p.x, dz = z - p.z;
+            const lx = c * dx - s * dz, lz = s * dx + c * dz;
+            if (Math.hypot(Math.max(0, Math.abs(lx) - p.sx / 2), Math.max(0, Math.abs(lz) - p.sz / 2)) < r) return true;
+          }
+        }
+      }
+    return false;
+  }
   const trees = [];
   const pushTree = (x, z, v, scale) => {
     const y = heightAt(x, z);
@@ -2275,7 +2358,7 @@ export function createWorld(seed) {
     occupy(x, z, 1.4 * scale);
     // a tree on a road is drawn and given its room like any other, then left out: the random stream and the occupancy
     // map stay as they were, so not one other tree, rock, bush or pick-up spot of the seed moves
-    if (onRoadway(x, z, TREE_TYPES[v].r * scale)) return;
+    if (onRoadway(x, z, TREE_TYPES[v].r * scale) || partBlocked(x, z, TREE_TYPES[v].r * scale)) return; // (nor up through a wall, a fence or a post)
     const c = makeCyl(x, z, y - 1, y + 14 * scale, TREE_TYPES[v].r * scale, COL.STATIC | COL.TREE);
     c.tv = v;
     c.ti = trees.length / 6; // (its record in world.trees: the one a client draws, and hides while it is felled)
@@ -2320,7 +2403,7 @@ export function createWorld(seed) {
     const y = heightAt(x, z) - 0.25 * scale;
     const rot = rng.range(0, PI * 2);
     occupy(x, z, r);
-    if (onRoadway(x, z, r * 0.85)) return; // (left out the way a tree is, above)
+    if (onRoadway(x, z, r * 0.85) || partBlocked(x, z, r * 0.85)) return; // (left out the way a tree is, above)
     rocks.push(x, y, z, scale, rot, v);
     staticGrid.add(makeCyl(x, z, y - 1, y + r * 0.9, r * 0.85, COL.STATIC));
   };
