@@ -692,7 +692,7 @@ export async function composeSheets(page, sheets) {
  * theirs and returns a function that puts theirs back (call it in a finally). Only the sandbox files are touched.
  */
 export function lendSandbox(tree) {
-  const files = ['models-vm.js', 'models-hold.js', 'models-test.js'];
+  const files = ['models-vm.js', 'models-hold.js', 'models-test.js', 'models-turn.js'];
   const saved = [];
   for (const f of files) {
     const theirs = join(tree, 'client', 'sandbox', f);

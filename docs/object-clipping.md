@@ -101,7 +101,10 @@ straight on, and out past the right hand) and passes the distance to `vm.update`
 - `solveArms` works out each hold: where the grip is in chest space, how the weapon points, and the two-bone IK for
   each arm. Shouldered guns go forward until the butt ends at `STOCK_POCKET`, measured from the model's reach behind
   the grip (`stockZ`). `RPG_LIFT` raises the RPG onto the shoulder.
-- `hangPack`, with `PACK_PIVOT` and `PACK_HANG`: the worn backpack hangs from its straps.
+- `hangPack`, with `PACK_PIVOT` and `PACK_HANG`: the worn backpack hangs from its straps. The survivors are ten
+  bodies of their own proportions (`models/people.js`, `looks.js`): the pack is moved by `packDZ`, how far that body's
+  back is from the default one's, and the holds are solved on each body's own `P`. Survey a few of them
+  (`--seed`: Earl is 4, the biggest; Maya 5, the smallest).
 - `poseSwim`, `sitW` and the downed pose (Entities tips the body): the poses the held item and the pack must survive.
 
 **Worn backpack: `client/render/models/backpack.js`.** `WORN_AT` is where it sits on the chest bone.
@@ -224,6 +227,7 @@ Examples:
 ```sh
 npm run clip:survey                                        # everything: about 700 frames, 10-15 minutes
 npm run clip:survey -- --item grenade,molotov --sections fp
+npm run clip:survey -- --sections tp --seed 4                # the third person on another survivor (seed % 10)
 npm run clip:survey -- --against origin/main              # and origin/main (a temporary worktree), side by side
 npm run clip:survey -- --against ../stn-main               # or another checkout
 npm run clip:survey -- --save-baseline shots/clip/base.json
@@ -332,6 +336,11 @@ Examples:
 ### Other sandboxes
 
 - `?surv=1` (the lineup): every survivor holding every item. `&items=61,60` picks them, `&zombie=1` zombifies them.
+- `?turn=s:3,sz:3,z:0:1,zv:0:5` (`models-turn.js`): turnaround sheets, a row per subject - a survivor (`s:` the
+  character seed % 10), the same one turned (`sz:`), a zombie by type and seed (`z:`) or by variant (`zv:`) - and a
+  column per view: `&views=front,q,side,back,head,headside,hips,hand`, `&cell=W,H`, `&anim=` (a ZANIM state), `&t=`,
+  `&item=`, `&night=1`. It uses only `createSurvivor` / `createZombie`, so `lendSandbox` lends it to an older tree for
+  before/after sheets (`pairs.js` with a `views` panel).
 - `?pack=poses` (`&cam=back`): the worn pack in six poses. `?pack=ground`: the pack on the ground.
 - `props-test.html?cat=sheet&set=pickups&names=STICK,GRENADE&cols=2&rows=1&pitch=6&bright=1&zoom=1.2`: ground items
   in a grid. Use `pitch=6` to look along the ground (sinking and floating show) and `pitch=35` from above (parts inside
