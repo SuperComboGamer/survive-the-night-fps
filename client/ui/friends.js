@@ -501,6 +501,11 @@ export class FriendsPanel extends Panel {
       const chat = button(acts, 'fr-chat', 'chat', '', () => this.openConv(f));
       chat.title = f.unread ? `${f.unread} new message${f.unread === 1 ? '' : 's'}` : `Message ${f.username}`;
       if (f.unread) el('b', 'fr-badge', chat, f.unread > 99 ? '99+' : String(f.unread));
+      const ach = button(acts, 'fr-chat', 'trophy', '', () => {
+        this.hide();
+        this.ui.achPanel.show({ friend: { id: f.id, name: f.username } });
+      });
+      ach.title = `${f.username}'s achievements`;
       if (g && !withYou) {
         const join = el('button', 'btn btn-ghost gb-join', acts);
         join.type = 'button';

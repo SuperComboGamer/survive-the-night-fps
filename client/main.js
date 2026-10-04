@@ -10,6 +10,7 @@ import { startBindsSync } from './net/accountbinds.js';
 import { keysOf, moveKeys, slotKeys } from './ui/menus.js';
 import { playerId } from './net/identity.js';
 import { refreshAccount } from './net/account.js';
+import { startAchievementsSync } from './net/achievements.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
@@ -21,6 +22,7 @@ askLayout(); // (and what this keyboard prints on its keys, when the browser say
 startBindsSync(); // ...and kept on their account while they are signed in (net/accountbinds.js)
 playerId(); // who this browser is to the leaderboard: made up and stored on the first launch, sent with every join
 refreshAccount(); // ...and the account it is signed in to, if any (the cookie goes with every join: the server plays them as it)
+startAchievementsSync(); // ...whose achievements this browser's guest ones are merged into on signing in (net/achievements.js)
 const audio = new AudioEngine();
 
 // The browser only lets audio start on a user gesture. The first key or pointer press on the splash is one (typing a

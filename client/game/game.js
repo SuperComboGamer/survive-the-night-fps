@@ -71,6 +71,8 @@ import { deerHitbox } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { playerId, adminKey, setAdminKey } from '../net/identity.js';
+import { accountState } from '../net/account.js';
+import { achievementEvent, joinedGame } from '../net/achievements.js';
 import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
 import { harvestPrompt, strippedKey, needLines } from './harvest.js';
@@ -748,6 +750,7 @@ export class Game {
     // the admin password this browser was given (`/admin <password>`): said again, so the admin commands work here too
     const admin = adminKey();
     if (admin) this.conn.chat(`/admin ${admin}`);
+    joinedGame(!!accountState().user); // (a guest's achievements count the days played on here; an account's, the server)
     return info;
   }
 
@@ -1077,6 +1080,9 @@ export class Game {
       },
       grave(i) {
         g.graves?.stir(i);
+      },
+      achieve(flags, add, ids) {
+        achievementEvent(flags, add, ids);
       },
       ping(pid, kind, x, y, z) {
         g.pings = g.pings.filter((p) => p.pid !== pid);

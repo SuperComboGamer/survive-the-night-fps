@@ -1336,6 +1336,24 @@ export function healChime(sr, rng) {
   addNorm(out, rustle(sr, rng, 0.2, 2000), sr, 0, 0.25);
   return finish(out, sr, 0.8);
 }
+// an achievement unlocked: a rising arpeggio of bell partials (rare: an octave more on top, and a shimmer of noise)
+export function achieveChime(sr, rng, rare = false) {
+  const len = rare ? 2.2 : 1.5;
+  const out = alloc(sr, len);
+  const notes = rare ? [293.66, 369.99, 440, 587.33, 739.99] : [293.66, 440, 587.33];
+  for (let k = 0; k < notes.length; k++) {
+    const f = notes[k];
+    const c = new Float32Array(Math.floor((len - k * 0.09) * sr));
+    for (let i = 0; i < c.length; i++) {
+      const t = i / sr;
+      const bell = Math.sin(TAU * f * t) + 0.35 * Math.sin(TAU * f * 2.01 * t) * Math.exp(-t / 0.25) + 0.15 * Math.sin(TAU * f * 3.02 * t) * Math.exp(-t / 0.12);
+      c[i] = bell * Math.min(1, t / 0.004) * Math.exp(-t / (rare ? 0.7 : 0.5));
+    }
+    addNorm(out, c, sr, k * 0.09, 0.42 - k * 0.04);
+  }
+  if (rare) addNorm(out, noise(sr, rng, 1.2, { hp: 5000, a: 0.3, d: 0.7 }), sr, 0.25, 0.1);
+  return finish(out, sr, 0.8);
+}
 export function uiClick(sr, rng) {
   const out = alloc(sr, 0.05);
   const c = new Float32Array(Math.floor(0.04 * sr));
@@ -2029,6 +2047,8 @@ export const SFX_DEFS = [
   { bank: 'flashlight', n: 1, sr: HI, gen: flashlightClick },
   { bank: 'claw', n: 2, sr: MID, gen: clawSnd },
   { bank: 'notify', n: 1, sr: HI, gen: notifySnd },
+  { bank: 'achieve', n: 1, sr: HI, gen: (sr, r) => achieveChime(sr, r, false) },
+  { bank: 'achieve_rare', n: 1, sr: HI, gen: (sr, r) => achieveChime(sr, r, true) },
   { bank: 'chat', n: 1, sr: HI, gen: chatBlip },
   { bank: 'radio', n: 2, sr: HI, gen: radioSquelch },
   { bank: 'radio_static', n: 1, sr: MID, gen: loopRadioStatic },

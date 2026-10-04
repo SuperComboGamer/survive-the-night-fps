@@ -983,6 +983,9 @@ const GLYPHS = {
   // a message to a friend, and back out of a conversation
   chat: E('M4.4 3.4H19.6Q21.8 3.4 21.8 5.6V14.6Q21.8 16.8 19.6 16.8H11.2L6 21V16.8H4.4Q2.2 16.8 2.2 14.6V5.6Q2.2 3.4 4.4 3.4Z' + rct(6.4, 7.4, 11.2, 1.6) + rct(6.4, 11, 7.6, 1.6)),
   arrowLeft: S('M20 12H5M11 6L5 12L11 18', 2.2),
+  // achievements: the cup, and an achievement still hidden
+  trophy: P('M6.4 2.6H17.6V7.8Q17.6 12.6 13.2 13.6V16.6H16.2V19.4H7.8V16.6H10.8V13.6Q6.4 12.6 6.4 7.8Z') + S('M6.4 4.6H3.2V6.8Q3.2 10 6.8 10.8M17.6 4.6H20.8V6.8Q20.8 10 17.2 10.8', 1.6) + P(rct(6, 20, 12, 2)),
+  question: S('M8.4 8.6Q8.4 4.6 12 4.6Q15.6 4.6 15.6 8Q15.6 10.2 13.4 11.4Q12 12.2 12 14.2', 2.4) + P(circ(12, 18.6, 1.6)),
 };
 
 // ---------------------------------------------------------------- public api
@@ -1015,6 +1018,11 @@ export function glyph(name, cls = '') {
 }
 
 export const GLYPH_NAMES = Object.keys(GLYPHS);
+
+// an achievement's icon (shared/achievements.js): a glyph by name, or 'item:<id>' for that item's
+export function achIcon(icon, cls = '') {
+  return typeof icon === 'string' && icon.startsWith('item:') ? itemIcon(+icon.slice(5), cls) : glyph(icon, cls);
+}
 
 // ---------------------------------------------------------------- blood splatters (procedural, seeded)
 function rng(seed) {

@@ -684,6 +684,9 @@ export const EVT = {
   REGROWN: 21, // every stripped tree and wreck gives again (dawn)
   FELL: 22, // a tree chopped to its last: its collider's x, y0, z (i16), the way it falls u8 (yaw). Out of the world until dawn
   GRAVE: 35, // grave u8 (index into world.cemetery.graves): its earth heaves, and CEMETERY.STIR later one of the dead climbs out
+  // (private) achievements (shared/achievements.js): u8 flags (ACHF), u8 n, n x (u8 stat, varu count to add), u8 m,
+  // m x u8 achievement number. A guest's: counts and feats for the browser to keep; an account's (ACHF.ACCOUNT): unlocks
+  ACHIEVE: 36,
 };
 
 export const IMPACT = { BLOOD: 1, DIRT: 2, WOOD: 3, METAL: 4, ACID: 5, GREEN_BLOOD: 6, SPARK: 7 };

@@ -30,6 +30,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   keyHints: true,
   holdToDrop: true, // the drop key has to be held a moment (game/drophold.js), so a stray press keeps the gun
   showFps: true,
+  achBanners: true, // a banner when an achievement unlocks (ui/achievements.js)...
+  achSound: true, // ...and its chime
 });
 
 const NUM_RANGES = {
@@ -54,7 +56,7 @@ export function sanitizeSettings(s) {
     }
     if (['low', 'medium', 'high', 'ultra'].includes(s.quality)) out.quality = s.quality;
     if (['off', 'subtle', 'strong'].includes(s.highlight)) out.highlight = s.highlight;
-    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'holdToDrop', 'showFps', 'ps1']) if (typeof s[k] === 'boolean') out[k] = s[k];
+    for (const k of ['pushToTalk', 'voiceDuck', 'invertY', 'rawMouse', 'fullscreen', 'weaponSway', 'keyHints', 'holdToDrop', 'showFps', 'ps1', 'achBanners', 'achSound']) if (typeof s[k] === 'boolean') out[k] = s[k];
   }
   return out;
 }
@@ -98,6 +100,13 @@ const SECTIONS = [
       { k: 'voiceVolume', label: 'Voice chat', type: 'range', min: 0, max: 2, step: 0.01, fmt: pct },
       { k: 'voiceDuck', label: 'Lower game for voices', type: 'toggle', hint: 'Music and effects step back while someone you can hear is talking' },
       { k: 'pushToTalk', label: 'Push to talk', type: 'toggle', hint: 'Off = open mic' },
+    ],
+  },
+  {
+    title: 'Achievements',
+    rows: [
+      { k: 'achBanners', label: 'Unlock banners', type: 'toggle', hint: 'A banner at the top of the screen when you unlock an achievement' },
+      { k: 'achSound', label: 'Unlock sound', type: 'toggle', hint: 'A chime when you unlock one' },
     ],
   },
   {

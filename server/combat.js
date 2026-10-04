@@ -110,6 +110,7 @@ export class Combat {
     const def = ev.def || WEAPONS[ev.weapon]; // (ev.def: a gun that is no item brings its own row, the mounted gun)
     if (!def) return;
     g.track?.shot(p, ev.weapon);
+    g.ach?.shot(p, ev.weapon);
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     const ox = ev.x;
     const oy = ev.y;
@@ -575,6 +576,7 @@ export class Combat {
     // flamethrower is burnT, not onFire: that still pays out)
     const sunKill = z.boss && z.onFire;
     g.track?.zombieDied(z, attacker && attacker.kind === ENT.PLAYER ? attacker : null, opts, sunKill);
+    g.ach?.kill(attacker && attacker.kind === ENT.PLAYER ? attacker : null, z, opts, sunKill);
     if (attacker && attacker.kind === ENT.PLAYER) {
       attacker.zkills++;
       g.credit([attacker], 'kills');
@@ -633,6 +635,7 @@ export class Combat {
     }
     let marks = 0;
     if (opts.zombies) {
+      let kills = 0;
       g.zm.forNear(x, z, radius, (zz) => {
         if (zz.dead || zz === opts.source) return;
         const d = Math.hypot(zz.x - x, zz.y + 1 - y, zz.z - z);
@@ -641,7 +644,9 @@ export class Combat {
         const dl = Math.hypot(zz.x - x, zz.z - z) || 1;
         const killed = this.damageZombie(zz, opts.zombies * (0.35 + 0.65 * f), opts.owner || null, { weapon: opts.weapon, knock: 6 * f, dirX: (zz.x - x) / dl, dirZ: (zz.z - z) / dl });
         marks |= 8 | (killed ? 2 : 0);
+        if (killed) kills++;
       });
+      if (opts.owner?.kind === ENT.PLAYER) g.ach?.blast(opts.owner, opts.weapon, kills);
       g.dm.blast(x, y, z, radius, opts.zombies, opts.owner, opts.weapon);
       for (const h of g.players.values()) {
         if (!h.alive || !h.zombie || !opts.owner) continue;
@@ -709,6 +714,7 @@ export class Combat {
     const e = this.spawnProjectile(ptype, p, ox, oy, oz, dx * def.speed + s.vx * 0.5, dy * def.speed + 1.5, dz * def.speed + s.vz * 0.5, { fuse: def.fuse || 0 });
     if (e) this.g.sound(SOUND.THROW, ox, oy, oz, 20, p.id);
     if (e) this.g.track?.used(p, item);
+    if (e) this.g.ach?.used(p, item);
     return e; // null: the entity registry is full, nothing was thrown
   }
 

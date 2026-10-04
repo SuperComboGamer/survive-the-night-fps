@@ -25,6 +25,8 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
                  it to the wave weights and the client announces it, each from the seed: nothing on the wire
+  achievements.js the achievement list (ids, wire numbers, tiers, groups) and the rules on a player's progress
+                 (see Achievements below)
 server/      authoritative game server (uWebSockets.js)
   index.js       the network thread: sockets, the lobby's HTTP API, static files, /status (see Many games below)
   rooms.js       the lobby: the games running, routing sockets to them, codes, allowances, the leaderboard's side
@@ -196,7 +198,8 @@ JSON file (`server/stats.js`).
   The server migrates as it starts (`MIGRATE_ON_START=0`: not), and a production server whose migration fails
   exits, so that deploy never goes live; `npm run migrate` does the same by hand (and is the pre-deploy command in
   `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
-  sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions.
+  sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
+  accounts' achievements.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
   `SameSite=Lax` cookie (`stn_session`, `Secure` behind https), its SHA-256 in `sessions`, 30 days from last use.
@@ -252,6 +255,40 @@ JSON file (`server/stats.js`).
   `_server_health`, each a function of when to count from. `npm run report` (`scripts/analytics-report.js`:
   `--days`, `--since`, `--build <commit>`, `--only`, `--json`) prints them; each match carries the commit it was
   played on (`build`, from `RAILWAY_GIT_COMMIT_SHA`), so a balance change can be judged by the matches since.
+
+## Achievements
+
+- **The list** is `shared/achievements.js`: each achievement has an `id` (its name in storage), an `n` (its number
+  on the wire, a u8), a group, a tier (bronze / silver / gold / platinum), an icon and maybe `secret`. Neither id
+  nor number is ever changed or reused. A **counter** has a `stat` and a `goal` and unlocks once the player's lifetime
+  count of that stat (`ACH_STATS`: kills, nights, escapes, headshots, revives, crafted, salvaged, trees, distance,
+  days) reaches it; a **feat** has none and unlocks when the server sees it happen. The pure rules are there too:
+  `applyAchievements` (counts and feats in, what newly unlocked out), `sanitizeProgress`, `mergeProgress`.
+- **In a game** (`server/achievements.js`, `Game.ach`) hooks sit beside the match tracker's (game.js, combat.js,
+  zombies.js, fixtures.js): they only add to the player's counts (`p.ach`) or note a feat. Once a second each
+  survivor's position is looked at (distance, the mine, every place in the valley, a swim, a handcar's whole line,
+  the Ferris wheel); nothing else is scanned. What a player earned goes out every 3 s, at once for a feat or at
+  sunrise. A new achievement is a hook calling `feat(p, id)` or `bump(p, stat)`, and a line in the list.
+- **A guest** gets `EVT.ACHIEVE` (a private event in the snapshot: the counts to add and the feats). The browser keeps
+  the record in `localStorage['stn.achievements']` (`client/net/achievements.js`), decides the counters, and counts
+  the calendar days it joins a game on. The server knows nothing of what it holds, so a feat goes once per connection.
+- **An account** is the server's: the worker posts what it earned to the network thread (`{ t: 'ach' }`,
+  `Room` -> `AchievementStore` in `server/userachievements.js`), which writes every account's in one transaction
+  every 2 s (a feat within 120 ms): the counts added and their totals back, the friendships asked about (a revive of
+  someone not on your list; a friend in the same game, from `Lobby.userIn`), and the unlocks, `ON CONFLICT DO NOTHING
+  RETURNING` saying which are new. Those go back to the room's worker (`{ t: 'achieved' }`), which tells the player
+  (`EVT.ACHIEVE` with `ACHF.ACCOUNT`) and the game, in the chat. Joining a game marks the day for the `days` count.
+- **Signing in** merges what the browser earned as a guest since its last merge into the account (`POST
+  /api/achievements/merge`: the greater of each count, every unlock of either, `source = 'guest'`). It is taken on
+  trust - a browser can say anything - so it only reaches the two achievement tables, never `player_stats`.
+  `GET /api/achievements` is your own record, `GET /api/achievements/:id` a friend's.
+- **On screen** (`client/ui/achievements.js`): the unlock banner (top right, where the killfeed steps down for it;
+  the tier's colour, a shine, confetti for gold, platinum and secrets; queued, ~4 s each; Settings turn banners and
+  the chime off; reduced motion takes the movement out), and the profile page from the splash, the pause menu, the
+  account panel and a friend's row: counts, the latest, and every achievement by group with its date or progress.
+  `/sandbox/ui-test.html?screen=achievements` and `?screen=hud&ach=kills_1000,kill_pistol` show them with made-up data.
+- `scripts/test-achievements.js` holds the rules, the hooks in a running game (decoded off the wire), the browser's
+  record, the store and the merge on PGlite, and the API on a real server.
 
 ## Rendering pipeline
 

@@ -2,6 +2,7 @@
 import { ENT, SNAP, SELF, PFLAG, UPOS, UEXT, UEXT_ABS, dqpos, dqangle16, dqangle8, dqpitch, unpackLookYaw, unpackLookPitch } from '../../shared/protocol.js';
 import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED, SERVER_DT } from '../../shared/constants.js';
 import { EVT, AMMO_ITEMS, PROJ } from '../../shared/defs.js';
+import { ACH_STATS } from '../../shared/achievements.js';
 
 const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 const BIT_SLOTS = {
@@ -390,6 +391,20 @@ export function readEvents(r, handler, flags, ents) {
       case EVT.GRAVE: {
         const grave = r.u8();
         handler.grave?.(grave);
+        break;
+      }
+      case EVT.ACHIEVE: {
+        // (read whole first: an optional call would skip its arguments, and the bytes with them)
+        const flags = r.u8();
+        const add = {};
+        for (let k = r.u8(); k > 0; k--) {
+          const stat = ACH_STATS[r.u8()];
+          const n = r.varu();
+          if (stat) add[stat] = n;
+        }
+        const ids = [];
+        for (let k = r.u8(); k > 0; k--) ids.push(r.u8());
+        handler.achieve?.(flags, add, ids);
         break;
       }
       default:

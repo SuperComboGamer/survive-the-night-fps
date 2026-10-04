@@ -21,6 +21,7 @@ import { Auth, COOKIE, publicUser } from './auth.js';
 import { Social } from './social.js';
 import { Feedback } from './feedback.js';
 import { UserSettings } from './usersettings.js';
+import { AchievementStore } from './userachievements.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { REJECT_REASON } from '../shared/protocol.js';
@@ -69,10 +70,13 @@ const STATS_FILE = process.env.STATS_FILE ?? join(process.env.RAILWAY_VOLUME_MOU
 const stats = db ? new DbStats({ db, log }) : new PlayerStats({ file: STATS_FILE, log });
 const matches = db ? new MatchStore({ db, stats, build: process.env.RAILWAY_GIT_COMMIT_SHA || '', log }) : null;
 await matches?.closeStale().catch((err) => log(`matches: could not close the last run's (${err.message})`));
+// the accounts' achievements (a guest's are kept by their browser, database or not)
+const achievements = db ? new AchievementStore({ db, log }) : null;
 
 const lobby = new Lobby({
   stats,
   matches,
+  achievements,
   maxGames: MAX_GAMES,
   maxPlayers: MAX,
   roomMaxPlayers: ROOM_MAX,
@@ -341,6 +345,24 @@ route('get', '/api/me/stats', async (ctx) => {
   return { body: { stats: mine, recent } };
 });
 
+// your achievements (shared/achievements.js): { stats: { kills, nights, ... }, unlocked: [{ id, at (ms), source }] }.
+// Without accounts on this server: { accounts: false } - the browser keeps its own
+route('get', '/api/achievements', async (ctx) => {
+  if (!auth) return { body: { accounts: false, stats: null, unlocked: [] } };
+  return { body: await achievements.forUser((await signedIn(ctx)).id) };
+});
+// a friend's, the same shape (anyone else's is a 403)
+route('get', '/api/achievements/:id', async (ctx) => {
+  const me = await signedIn(ctx);
+  const id = ctx.params[0].toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) throw new HttpError(404, 'No such player.');
+  if (id !== me.id && !(await S().areFriends(me.id, id))) throw new HttpError(403, "Only your friends' achievements can be seen.");
+  return { body: await achievements.forUser(id) };
+});
+// What this browser earned as a guest, { stats, unlocked: { id: ms } }, merged into your account (the greater of each
+// count, every unlock of either) -> your achievements, as GET. Taken on trust: it never touches the leaderboard
+route('post', '/api/achievements/merge', async (ctx, b) => ({ body: await achievements.merge((await signedIn(ctx)).id, b) }), { body: true, max: 16384 });
+
 // your keybinds, as your account keeps them: { binds: { action: [primary, secondary] } | null, updatedAt: ms (0: never
 // saved) }. Only what differs from the defaults (shared/binds.js). Without accounts on this server: { accounts: false }
 // and no binds - the browser keeps its own.
@@ -476,6 +498,7 @@ async function shutdown(signal) {
       await matches.close();
       for (const room of lobby.rooms.values()) if (room.match) await matches.interrupt(room.match);
       await stats.close();
+      await achievements.close();
       await db.close();
     } catch (err) {
       console.error('[server] shutting down:', err.message);

@@ -94,8 +94,9 @@ export class Room {
     this.st = { players: 0, lead: '', phase: PHASE.WAITING, day: 0, seed: 0, tick: null, load: { cpuMs: 0, elu: 0 }, heapMb: 0 };
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
-      // (analytics: the game records its matches - only worth it with a database to write them to)
-      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, analytics: !!lobby.matches }, congestion: this.congestion },
+      // (analytics: the game records its matches - only worth it with a database to write them to. achievements: an
+      // account's go to the database too, and a guest's to their browser either way)
+      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, analytics: !!lobby.matches, achievements: !!lobby.achievements }, congestion: this.congestion },
       resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
     });
     this.worker.on('message', (m) => this.fromWorker(m));
@@ -251,16 +252,25 @@ export class Room {
         return this.board(m);
       case 'an':
         return this.lobby.matches?.push(m.rec, this);
+      case 'ach':
+        return this.lobby.achievements?.add(m.user, m.add, m.feats, m.strangers, this);
       case 'finished':
         this.finished?.();
         return;
     }
   }
 
+  // an account's achievements unlocked (userachievements.js): the game tells its player
+  achieved(userId, ids) {
+    if (!this.closed && ids.length) this.worker.postMessage({ t: 'achieved', user: userId, ids });
+  }
+
   record(m) {
     const stats = this.lobby.stats;
-    if (m.op === 'enter') this.recs.set(m.tok, stats.enter(m.id, m.name, m.user || ''));
-    else if (m.op === 'leave') {
+    if (m.op === 'enter') {
+      this.recs.set(m.tok, stats.enter(m.id, m.name, m.user || ''));
+      if (m.user) this.lobby.achievements?.played(m.user, this); // (another day played on, if it is one)
+    } else if (m.op === 'leave') {
       stats.leave(this.recs.get(m.tok));
       this.recs.delete(m.tok);
     } else if (m.op === 'bump') stats.bump(this.recs.get(m.tok), m.stat, m.n);
@@ -332,11 +342,13 @@ export class Room {
 
 export class Lobby {
   // stats: the leaderboard (PlayerStats, or DbStats with a database). matches: where the matches played go
-  // (MatchStore; none without a database). gameOpts: what every Game is made with (the env's test switches)
+  // (MatchStore; none without a database). achievements: the accounts' (AchievementStore; none without a database).
+  // gameOpts: what every Game is made with (the env's test switches)
   // limits: false lifts the per-address allowances (load tests make many games from one address)
-  constructor({ stats, matches = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, log = console.log }) {
+  constructor({ stats, matches = null, achievements = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, log = console.log }) {
     this.stats = stats;
     this.matches = matches;
+    this.achievements = achievements;
     this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
     this.onPresence = null; // (account id) => void: they came into a game or left one (social.js)
     this.gameOpts = gameOpts;
@@ -454,6 +466,10 @@ export class Lobby {
     if (!rooms) this.playing.set(userId, (rooms = new Map()));
     rooms.set(room, (rooms.get(room) || 0) + 1);
     this.onPresence?.(userId);
+    // a friend in here already: Better Together, for both
+    const others = new Set();
+    for (const u of room.users) if (u && u.id !== userId) others.add(u.id);
+    if (others.size) this.achievements?.together(userId, [...others], room);
   }
   userOut(userId, room) {
     const rooms = this.playing.get(userId);

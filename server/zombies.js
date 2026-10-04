@@ -1657,10 +1657,13 @@ export class Zombies {
           g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
           g.sound(SOUND.MELEE_HIT, s.x, s.y + 1.2, s.z, 40);
           this.knock(h, z.x, z.z, 15, 6, 0.8);
+          z.chargeHit = true;
           end = true;
         }
       }
       if (end) {
+        if (!z.chargeHit && z.chargeOn) g.ach?.dodged(z, z.chargeOn);
+        z.chargeOn = 0;
         z.state = 0;
         z.vx = z.vz = 0;
         z.specialCd = 8 + g.rng() * 4;
@@ -1887,6 +1890,8 @@ export class Zombies {
         const l = Math.hypot(tx - z.x, tz - z.z) || 1;
         z.chargeX = (tx - z.x) / l;
         z.chargeZ = (tz - z.z) / l;
+        z.chargeOn = target.id; // (who it was after, and whether it got anyone: an achievement for a miss)
+        z.chargeHit = false;
         z.state = 6;
         z.stateT = 1.7;
         break;

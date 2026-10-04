@@ -142,6 +142,14 @@ export class AccountPanel extends Panel {
     this.outTxt = el('span', '', this.outBtn, 'Sign out');
     this.outBtn.addEventListener('click', () => this.signOut());
     el('span', 'gb-gap', this.foot);
+    this.achBtn = el('button', 'btn btn-ghost', this.foot);
+    this.achBtn.type = 'button';
+    svgEl('i', 'btn-ico', this.achBtn, glyph('trophy'));
+    el('span', '', this.achBtn, 'Achievements');
+    this.achBtn.addEventListener('click', () => {
+      this.hide();
+      this.ui.achPanel.show();
+    });
     this.friendsBtn = el('button', 'btn btn-ghost', this.foot);
     this.friendsBtn.type = 'button';
     svgEl('i', 'btn-ico', this.friendsBtn, glyph('star'));
@@ -315,6 +323,7 @@ export class AccountPanel extends Panel {
     this.inView.hidden = none || !user;
     this.outBtn.hidden = !user;
     this.friendsBtn.hidden = !user;
+    this.achBtn.hidden = !user;
     this.foot.hidden = !user;
     if (none) {
       this.sub.textContent = '';

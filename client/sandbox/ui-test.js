@@ -1,10 +1,11 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
-// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|chat|icons   &bg=night|day|fire
+// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|chat|icons   &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
 import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
 import { PHASE, INVENTORY_MAX } from '../../shared/constants.js';
 import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
+import { ACH_BY_ID } from '../../shared/achievements.js';
 
 const q = new URLSearchParams(location.search);
 const screen = q.get('screen') || 'hud';
@@ -313,6 +314,8 @@ let bg = q.get('bg');
 if (q.get('conn')) setTimeout(() => ui.setConnectionStatus('Reconnecting'), 300);
 if (q.get('tx')) setTimeout(() => ui.setVoiceState({ enabled: true, transmitting: true, speakers: ['Marlowe', 'Old Hank'] }), 300);
 if (q.get('fps')) ui._applySettings({ ...ui.getSettings(), showFps: true });
+// &ach=kills_1000,kill_pistol: those achievements' unlock banners, one after another
+if (q.get('ach')) setTimeout(() => ui.achToasts.show(q.get('ach').split(',').map((id) => ACH_BY_ID.get(id)).filter(Boolean)), 300);
 switch (screen) {
   case 'splash': {
     buildScene(bg || 'fire');
@@ -561,6 +564,21 @@ switch (screen) {
     if (screen === 'gameover') ui.showGameOver(stats);
     else ui.showVictory(stats);
     if (+q.get('vote')) ui.end._vote(+q.get('vote'));
+    break;
+  }
+  case 'achievements': {
+    // a guest's record, made up: some unlocked, some on their way (the panel reads this browser's record)
+    const day = 86400_000;
+    const now = Date.now();
+    const unlocked = {};
+    ['kills_10', 'kills_100', 'nights_1', 'escapes_1', 'headshots_25', 'revives_1', 'crafted_10', 'salvaged_10', 'trees_1', 'distance_1k', 'kill_pistol', 'kill_shotgun', 'kill_knife', 'kill_boss', 'mine_enter', 'radio_call', 'flare', 'leaper_off', 'invited', 'walkie', 'fall_death'].forEach((id, i) => (unlocked[id] = now - i * day * 0.7 - 3600_000));
+    localStorage.setItem('stn.achievements', JSON.stringify({ v: 1, stats: { kills: 340, nights: 7, escapes: 1, headshots: 61, revives: 3, crafted: 41, salvaged: 12, trees: 4, distance: 6300, days: 2 }, unlocked }));
+    buildScene(bg || 'night');
+    ui.hideSplash();
+    ui.updateHud(baseHud);
+    ui.showPause(true);
+    ui.achPanel.show();
+    if (q.get('scroll')) setTimeout(() => (ui.achPanel.body.scrollTop = +q.get('scroll')), 100);
     break;
   }
   case 'pause':

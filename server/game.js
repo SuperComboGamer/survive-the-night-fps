@@ -143,6 +143,7 @@ import { Handcars } from './handcar.js';
 import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
+import { AchievementTracker } from './achievements.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const MAX_ZOMBIES_ALIVE = 120;
@@ -372,6 +373,9 @@ export class Game {
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
     this.track = new MatchTracker(this, opts.analytics); // match analytics (analytics.js): a no-op without opts.analytics
+    this.inviteOnly = !!opts.inviteOnly; // only its link gets anyone in (rooms.js): the Plus One achievement
+    // achievements (achievements.js). opts.achieve: where an account's go (the network thread); none: no accounts
+    this.ach = new AchievementTracker(this, opts.achieve);
   }
 
   // ---------------------------------------------------------------- entity registry
@@ -673,6 +677,7 @@ export class Game {
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
     this.track.join(p);
+    this.ach.join(p);
     // what the team has used up before they came (a run this join started has cleared it: NEW_GAME says so)
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -808,6 +813,7 @@ export class Game {
 
   removePlayer(p) {
     this.track.leave(p); // (before anything of theirs is touched)
+    this.ach.leave(p);
     this.releaseHolds(p);
     this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
     this.dropAll(p);
@@ -959,6 +965,7 @@ export class Game {
     this.globalDirty = true;
     this.playersDirty = true;
     this.track.start();
+    this.ach.start();
     this.log('new game started');
   }
 
@@ -1247,6 +1254,7 @@ export class Game {
     this.bossPending = { types: [nightBoss(this.seed, n)], t: bossT };
     this.notify(NOTIFY.NIGHT_FALLS, n);
     this.track.nightfall();
+    this.ach.nightfall();
     this.globalDirty = true;
     // day wanderers near the survivors join the hunt; the rest drift off into the dark
     const hs = this.humans();
@@ -1287,6 +1295,7 @@ export class Game {
     // the night goes on the record of everyone who saw it through (the dead come back below: it was not theirs)
     this.credit(this.humans(), 'nights');
     this.track.dawn(night);
+    this.ach.dawn();
     // horde burns in the sunlight (what is down in the mine burns when it comes up into it: Zombies.updateOne)
     for (const z of this.zombies) {
       if (z.dead || !(z.horde || z.def.flying)) continue;
@@ -1313,6 +1322,7 @@ export class Game {
 
   victory() {
     this.track.finish('victory'); // (first: who is where as the car leaves)
+    this.ach.victory();
     this.phase = PHASE.VICTORY;
     this.restartT = GAME_OVER_DELAY + 6;
     this.escape.active = false;
@@ -1398,6 +1408,7 @@ export class Game {
     if (!this.escape.active || !this.escape.ready) return;
     this.log('drove off:', p.name);
     this.track.drove(p);
+    this.ach.drove(p);
     this.victory();
   }
 
@@ -1698,7 +1709,10 @@ export class Game {
         // an item asked for is in the hands from the client's first command after asking on (useItem)
         if (p.useItem && !p.state.using && ((cmd.seq - p.useItem.from) & 0xffff) < 0x8000) p.state.using = 1;
         // pinned by a leaper: Space throws it off (Zombies.throwOff)
-        if (p.state.pinned && cmd.buttons & BTN_JUMP & ~p.state.lastBtn && this.zm.throwOff(p)) p.selfSync = true;
+        if (p.state.pinned && cmd.buttons & BTN_JUMP & ~p.state.lastBtn && this.zm.throwOff(p)) {
+          p.selfSync = true;
+          this.ach.threwOff(p);
+        }
         simulatePlayer(p.state, cmd, this.world, events);
         copyPlayerState(p.shadow, p.state);
         if (cmd.hash === NO_HASH || (cmd.hash >= 0 && cmd.hash !== hashPlayerState(p.state))) p.selfSync = true;
@@ -2187,6 +2201,7 @@ export class Game {
   searchCache(p, c) {
     c.state = 1;
     this.track.searched(p, c);
+    this.ach.searched(p, c);
     const def = CONT_DEFS[c.ctype];
     const table = (def.table && CONT_TABLES[def.table]) || LOOT_TABLES[c.zone] || LOOT_TABLES[ZONE.ROADSIDE];
     const rolls = def.rolls[0] + Math.floor(this.rng() * (def.rolls[1] - def.rolls[0] + 1));
@@ -2235,6 +2250,7 @@ export class Game {
       spawned++;
     }
     this.track.carAlarm(p, spawned);
+    this.ach.carAlarm(p);
     if (spawned) this.globalDirty = true;
   }
 
@@ -2330,7 +2346,10 @@ export class Game {
     if (g.left > 0) return;
     // that was the last of it. A tree comes down, away from whoever cut it, and is out of the world until dawn;
     // a wreck stays where it is, and nobody's prompt offers the hit any more (the one who took it is told)
-    if (tree) return this.fellTree(col, Math.atan2(p.state.x - col.x, p.state.z - col.z));
+    if (tree) {
+      this.ach.felled(p);
+      return this.fellTree(col, Math.atan2(p.state.x - col.x, p.state.z - col.z));
+    }
     this.tellStripped([col]);
     this.notify(NOTIFY.SEARCH_EMPTY, 2, p.id);
   }
@@ -2397,6 +2416,7 @@ export class Game {
       this.notify(NOTIFY.INVENTORY_FULL, rec.out, p.id);
     }
     this.track.craft(p, rec);
+    this.ach.crafted(p);
     p.invDirty = true;
     this.syncThrow(p);
     this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
@@ -2433,6 +2453,7 @@ export class Game {
       if (slot === SLOT_PISTOL) s.mags[1] = 0;
     }
     p.invDirty = true;
+    this.ach.salvaged(p, n);
     for (const k in SALVAGE[item]) this.giveOrDrop(p, +k, SALVAGE[item][k] * n);
     if (mag > 0 && isFirearm(item)) this.giveOrDrop(p, AMMO_ITEMS[WEAPONS[item].ammo], mag);
     this.syncThrow(p);
@@ -2833,6 +2854,7 @@ export class Game {
   revive(p, by, hp = REVIVE_HP) {
     if (!p.downed) return;
     this.track.revive(p, by);
+    this.ach.revive(p, by);
     p.downed = false;
     p.state.downed = 0;
     p.hp = hp;
@@ -2848,6 +2870,7 @@ export class Game {
 
   killPlayer(p, src, silent = false) {
     this.track.death(p, src, silent); // (first: what they were when it came)
+    this.ach.death(p, src);
     p.hp = 0;
     p.alive = false;
     p.deaths++;
@@ -2917,6 +2940,7 @@ export class Game {
     // only those in earshot hear it, and everyone else too when it was said with the walkie-talkie in hand
     const base = p.zombie ? CHATF.ZOMBIE : 0;
     const radio = this.radioInHand(p);
+    if (radio) this.ach.onAir(p);
     const s = p.state;
     let heard = 0;
     for (const q of this.players.values()) {
@@ -3323,6 +3347,7 @@ export class Game {
     this.fixtures.update(dt);
     this.recordHistory();
     this.track.tick();
+    this.ach.tick();
     ts.mark(T_UPKEEP);
     this.sendSnapshots();
     ts.mark(T_SNAPSHOTS);
@@ -3636,6 +3661,7 @@ export class Game {
           p.drownT -= 0.5;
           this.damagePlayer(p, DROWN_DPS * 0.5, { kind: KILLER.WORLD, drown: true });
           if (!p.alive) continue;
+          this.ach.drowning(p);
         }
       } else p.drownT = 0;
       if (p.downed) {
@@ -4047,6 +4073,7 @@ export class Game {
       w.str(p.name);
       w.u8(!p.alive ? 2 : p.zombie ? 1 : p.downed ? 3 : 0);
       p.onAir = this.onAir(p);
+      if (p.onAir) this.ach.onAir(p);
       const wp = p.waypoint;
       w.u8((p.onAir ? PLF.ON_AIR : 0) | (wp ? PLF.WAYPOINT : 0));
       w.u16(p.kills + p.zkills);

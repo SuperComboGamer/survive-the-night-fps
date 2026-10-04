@@ -312,6 +312,8 @@ const LOCAL = {
   zombie_player_growl: { bank: 'zp_growl', vol: 0.65, jit: 0.07, rec: R_ZP_GROWL },
   death: { bank: 'death_local', vol: 0.9, bus: 'ui', send: 0 },
   notify: { bank: 'notify', vol: 0.3, bus: 'ui', jit: 0.02, send: 0 },
+  achieve: { bank: 'achieve', vol: 0.4, bus: 'ui', jit: 0, send: 0 },
+  achieve_rare: { bank: 'achieve_rare', vol: 0.45, bus: 'ui', jit: 0, send: 0 },
   chat: { bank: 'chat', vol: 0.25, bus: 'ui', jit: 0.02, send: 0 },
   radio: { bank: 'radio', vol: 0.3, bus: 'ui', jit: 0.03, send: 0 }, // walkie-talkie squelch: someone keys up / a radio message
   install_part: { bank: 'install_part', vol: 0.7 },

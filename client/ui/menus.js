@@ -194,6 +194,11 @@ export class Splash {
 
     const foot = el('div', 'sp-foot', root);
     const btns = el('div', 'sp-btns', foot);
+    const ab = el('button', 'btn btn-ghost', btns);
+    ab.type = 'button';
+    svgEl('i', 'btn-ico', ab, glyph('trophy'));
+    el('span', '', ab, 'Achievements');
+    ab.addEventListener('click', () => this.ui.achPanel.show());
     const cb = el('button', 'btn btn-ghost', btns);
     cb.type = 'button';
     svgEl('i', 'btn-ico', cb, glyph('keyboard'));
@@ -500,6 +505,14 @@ export class Pause {
     };
     onSocialChange(syncBadge);
     onAccountChange(syncBadge);
+    const ab = el('button', 'btn btn-ghost', btns);
+    ab.type = 'button';
+    svgEl('i', 'btn-ico', ab, glyph('trophy'));
+    el('span', '', ab, 'Achievements');
+    ab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.ui.achPanel.show();
+    });
     const lb = el('button', 'btn btn-ghost btn-danger', btns);
     lb.type = 'button';
     svgEl('i', 'btn-ico', lb, glyph('exit'));

@@ -2530,3 +2530,528 @@
   flex: 1;
   width: auto;
 }
+
+/* ------------------------------------------------------------------ achievements (ui/achievements.js) */
+/* each tier's colour, for the banner, the cards and the counts */
+.stn-ui .tier-bronze {
+  --tc: #c98a52;
+}
+.stn-ui .tier-silver {
+  --tc: #c9d2da;
+}
+.stn-ui .tier-gold {
+  --tc: #ecb94a;
+}
+.stn-ui .tier-platinum {
+  --tc: #9fe6f2;
+}
+
+/* the banner: top right under the clock, well clear of the crosshair. It takes the killfeed's place, and the
+   killfeed steps down out of its way while one is up */
+.stn-ui .ach-toasts {
+  position: absolute;
+  top: calc(196 * var(--u));
+  right: calc(20 * var(--u));
+  z-index: 5;
+}
+
+.stn-ui .killfeed {
+  transition: transform 0.3s ease-out;
+}
+
+.stn-ui.ach-on .killfeed {
+  transform: translateY(calc(100 * var(--u)));
+}
+
+.stn-ui .ach-toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(13 * var(--u));
+  width: calc(380 * var(--u));
+  min-width: 290px;
+  max-width: 88vw;
+  padding: calc(10 * var(--u)) calc(16 * var(--u)) calc(11 * var(--u)) calc(12 * var(--u));
+  background: linear-gradient(100deg, rgba(22, 17, 12, 0.96), rgba(9, 7, 6, 0.92));
+  border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent);
+  border-left: 3px solid var(--tc);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 22px color-mix(in srgb, var(--tc) 28%, transparent);
+  animation: stn-achIn 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.12) both;
+}
+
+.stn-ui .ach-toast.out {
+  animation: stn-achOut 0.45s ease-in forwards;
+}
+
+.stn-ui .ach-t-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(50 * var(--u));
+  height: calc(50 * var(--u));
+  min-width: 38px;
+  min-height: 38px;
+  border: 2px solid var(--tc);
+  color: var(--tc);
+  background: radial-gradient(circle, color-mix(in srgb, var(--tc) 26%, transparent), transparent 72%);
+}
+
+.stn-ui .ach-toast.rare .ach-t-ico {
+  animation: stn-achGlow 0.9s ease-in-out 0.3s 3 alternate;
+}
+
+.stn-ui .ach-t-ico i,
+.stn-ui .ach-t-ico svg {
+  display: block;
+  width: calc(32 * var(--u));
+  height: calc(32 * var(--u));
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.stn-ui .ach-t-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.stn-ui .ach-t-kick {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--tc);
+}
+
+.stn-ui .ach-t-name {
+  margin-top: calc(4 * var(--u));
+  font: 400 max(20px, calc(27 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.08em;
+  color: var(--bone);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--tc) 45%, transparent);
+}
+
+.stn-ui .ach-t-desc {
+  margin-top: calc(3 * var(--u));
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-dim);
+}
+
+/* a sweep of light across it as it lands */
+.stn-ui .ach-t-shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 250, 235, 0.2) 50%, transparent 62%) no-repeat;
+  background-size: 260% 100%;
+  animation: stn-achShine 1.3s 0.35s ease-out both;
+}
+
+/* the rare ones: a burst of confetti out of the icon */
+.stn-ui .ach-confetti {
+  position: absolute;
+  left: calc(37 * var(--u));
+  top: 50%;
+  pointer-events: none;
+}
+
+.stn-ui .ach-confetti i {
+  position: absolute;
+  width: 6px;
+  height: 10px;
+  margin: -5px 0 0 -3px;
+  background: hsl(var(--h) 85% 62%);
+  opacity: 0;
+  animation: stn-achPop var(--d) cubic-bezier(0.15, 0.7, 0.35, 1) forwards;
+}
+
+@keyframes stn-achIn {
+  from {
+    transform: translateX(115%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes stn-achOut {
+  to {
+    transform: translateX(115%);
+    opacity: 0;
+  }
+}
+
+@keyframes stn-achShine {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+
+@keyframes stn-achGlow {
+  to {
+    box-shadow: 0 0 18px color-mix(in srgb, var(--tc) 70%, transparent);
+  }
+}
+
+@keyframes stn-achPop {
+  0% {
+    transform: translate(0, 0) rotate(0);
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), calc(var(--dy) + 70px)) rotate(var(--r));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stn-ui .ach-toast,
+  .stn-ui .ach-toast.rare .ach-t-ico {
+    animation: none;
+  }
+  .stn-ui .ach-toast.out {
+    animation: none;
+    opacity: 0;
+  }
+  .stn-ui .ach-t-shine,
+  .stn-ui .ach-confetti {
+    display: none;
+  }
+}
+
+/* the profile page */
+.stn-ui .ach-panel .set-card {
+  width: calc(780 * var(--u));
+}
+
+.stn-ui .ach-panel .set-body {
+  min-height: calc(260 * var(--u));
+  padding-bottom: calc(16 * var(--u));
+  text-align: left;
+}
+
+.stn-ui .ach-panel .set-foot {
+  display: none;
+}
+
+.stn-ui .ach-sum {
+  padding-top: calc(14 * var(--u));
+}
+
+.stn-ui .ach-count {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(10 * var(--u)) calc(18 * var(--u));
+}
+
+.stn-ui .ach-count-ico svg {
+  display: block;
+  width: calc(38 * var(--u));
+  height: calc(38 * var(--u));
+  min-width: 28px;
+  min-height: 28px;
+  color: var(--brass);
+}
+
+.stn-ui .ach-count-n {
+  flex: 1;
+  min-width: 170px;
+}
+
+.stn-ui .ach-count-n b {
+  font: 400 max(28px, calc(40 * var(--u))) / 1 var(--f-num);
+  color: var(--bone);
+}
+
+.stn-ui .ach-count-n > span {
+  margin-left: calc(6 * var(--u));
+  font: max(11px, calc(14 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ach-bar-bg {
+  height: 6px;
+  margin-top: calc(7 * var(--u));
+  background: rgba(230, 223, 207, 0.12);
+  overflow: hidden;
+}
+
+.stn-ui .ach-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--blood-hi), var(--amber));
+  transition: width 0.4s;
+}
+
+.stn-ui .ach-tiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6 * var(--u)) calc(14 * var(--u));
+}
+
+.stn-ui .ach-tier {
+  display: flex;
+  align-items: center;
+  gap: calc(5 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .ach-tier b {
+  font: 400 max(13px, calc(16 * var(--u))) / 1 var(--f-num);
+  color: var(--tc);
+}
+
+.stn-ui .ach-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tc);
+}
+
+.stn-ui .ach-heads {
+  margin-top: calc(14 * var(--u));
+}
+
+.stn-ui .ach-recent {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .ach-recent .gb-empty {
+  grid-column: 1 / -1;
+}
+
+.stn-ui .ach-mini {
+  display: flex;
+  align-items: center;
+  gap: calc(9 * var(--u));
+  min-width: 0;
+  padding: calc(7 * var(--u)) calc(10 * var(--u));
+  background: rgba(0, 0, 0, 0.28);
+  border-left: 2px solid var(--tc);
+}
+
+.stn-ui .ach-mini-ico svg {
+  display: block;
+  width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+  min-width: 16px;
+  min-height: 16px;
+  color: var(--tc);
+}
+
+.stn-ui .ach-mini-t {
+  min-width: 0;
+}
+
+.stn-ui .ach-mini-t b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 max(12px, calc(14.5 * var(--u))) / 1.1 var(--f-num);
+}
+
+.stn-ui .ach-mini-t small {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ach-note {
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--u));
+  margin-top: calc(16 * var(--u));
+  padding: calc(9 * var(--u)) calc(12 * var(--u));
+  border: 1px dashed rgba(232, 163, 61, 0.45);
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.4 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .ach-note > span {
+  flex: 1;
+}
+
+.stn-ui .ach-wait {
+  margin-top: calc(30 * var(--u));
+}
+
+.stn-ui .ach-group-h {
+  display: flex;
+  justify-content: space-between;
+}
+
+.stn-ui .ach-group-n {
+  color: var(--bone-dim);
+}
+
+.stn-ui .ach-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .ach-card {
+  display: flex;
+  gap: calc(11 * var(--u));
+  min-width: 0;
+  padding: calc(9 * var(--u)) calc(11 * var(--u));
+  background: rgba(0, 0, 0, 0.28);
+  border-left: 2px solid var(--tc);
+}
+
+.stn-ui .ach-card.locked {
+  border-left-color: rgba(230, 223, 207, 0.15);
+}
+
+.stn-ui .ach-card-ico {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(42 * var(--u));
+  height: calc(42 * var(--u));
+  min-width: 32px;
+  min-height: 32px;
+  border: 1.5px solid var(--tc);
+  color: var(--tc);
+  background: radial-gradient(circle, color-mix(in srgb, var(--tc) 20%, transparent), transparent 72%);
+}
+
+.stn-ui .ach-card-ico > i:first-child svg {
+  display: block;
+  width: calc(26 * var(--u));
+  height: calc(26 * var(--u));
+  min-width: 20px;
+  min-height: 20px;
+}
+
+.stn-ui .ach-card.locked .ach-card-ico {
+  border-color: rgba(230, 223, 207, 0.22);
+  color: rgba(230, 223, 207, 0.4);
+  background: none;
+}
+
+.stn-ui .ach-lock {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--bone-2);
+}
+
+.stn-ui .ach-lock svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+}
+
+.stn-ui .ach-card-b {
+  flex: 1;
+  min-width: 0;
+}
+
+.stn-ui .ach-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .ach-card-name {
+  font: 400 max(12.5px, calc(15.5 * var(--u))) / 1.1 var(--f-num);
+  color: var(--bone);
+}
+
+.stn-ui .ach-card.locked .ach-card-name {
+  color: var(--bone-2);
+}
+
+.stn-ui .ach-card-tier {
+  flex: none;
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--tc);
+}
+
+.stn-ui .ach-card.locked .ach-card-tier {
+  opacity: 0.6;
+}
+
+.stn-ui .ach-card-desc {
+  margin: calc(3 * var(--u)) 0 0;
+  font: max(10px, calc(11.5 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ach-card-when {
+  display: block;
+  margin-top: calc(4 * var(--u));
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--good);
+}
+
+.stn-ui .ach-prog {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  margin-top: calc(6 * var(--u));
+}
+
+.stn-ui .ach-prog .ach-bar-bg {
+  flex: 1;
+  height: 4px;
+  margin: 0;
+}
+
+.stn-ui .ach-prog .ach-bar {
+  background: var(--tc);
+  opacity: 0.8;
+}
+
+.stn-ui .ach-prog small {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  white-space: nowrap;
+  color: var(--bone-dim);
+}
+
+/* a phone: one column, the card the whole screen */
+@media (max-width: 760px) {
+  .stn-ui .ach-grid,
+  .stn-ui .ach-recent {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .stn-ui .ach-panel .set-card {
+    width: 100vw;
+    min-width: 0;
+    max-height: 100vh;
+  }
+  .stn-ui .ach-heads {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .stn-ui .ach-toasts {
+    right: 4vw;
+    left: 4vw;
+  }
+  .stn-ui .ach-toast {
+    width: auto;
+    min-width: 0;
+  }
+}

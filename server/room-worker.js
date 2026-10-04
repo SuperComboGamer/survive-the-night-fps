@@ -7,6 +7,7 @@
 //   { t: 'close', slot, code }     ...and closed (code: the socket's close code - 4001 the player left on purpose)
 //   { t: 'in', buf }               their messages (frames, in order)    { t: 'stop' }          shut down
 //   { t: 'finish' }                the server is going down: end the match being played, and say when it is
+//   { t: 'achieved', user, ids }   an account's achievements unlocked (userachievements.js): tell the player
 // To it:
 //   { t: 'ready', seed }           the game is built and ticking        { t: 'out', buf }      messages for sockets
 //   { t: 'closed', slot }          done with that slot's socket: nothing more will go out for it
@@ -14,6 +15,7 @@
 //   { t: 'status', ... }           once a second, and when the number of players changes
 //   { t: 'rec', op, ... }          the leaderboard (RemoteRecords)      { t: 'board', ... }    a player asked for it
 //   { t: 'an', rec }               a record of the match being played (analytics.js), for the database (matchstore.js)
+//   { t: 'ach', user, add, feats, strangers }  what an account earned towards its achievements (achievements.js)
 //   { t: 'finished' }              ...the match is ended and its records posted
 import { parentPort, workerData } from 'node:worker_threads';
 import { Game } from './game.js';
@@ -56,8 +58,16 @@ class RemoteRecords {
 }
 
 // (an emptied game builds its next valley when someone joins it, not for nobody: the lobby closes it if nobody does)
-// (the match records go to the network thread, which writes them if the server has a database and drops them if not)
-const game = new Game({ ...opts, rollWhenEmpty: false, stats: new RemoteRecords(), analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined, log: (...a) => console.log(tag, ...a) });
+// (the match records go to the network thread, which writes them if the server has a database and drops them if not;
+// so does what an account earns towards its achievements, which the network thread answers with what that unlocked)
+const game = new Game({
+  ...opts,
+  rollWhenEmpty: false,
+  stats: new RemoteRecords(),
+  analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined,
+  achieve: opts.achievements ? (m) => post({ t: 'ach', ...m }) : undefined,
+  log: (...a) => console.log(tag, ...a),
+});
 
 // ---------------------------------------------------------------- sockets
 // Everything the game sends between two turns of the event loop goes out in one batch.
@@ -124,6 +134,9 @@ parentPort.on('message', (m) => {
       post({ t: 'closed', slot: m.slot });
       break;
     }
+    case 'achieved':
+      game.ach.achieved(m.user, m.ids);
+      break;
     case 'finish':
       try {
         game.track?.finish('interrupted');

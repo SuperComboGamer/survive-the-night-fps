@@ -89,7 +89,9 @@ export class Fixtures {
 
   holdDone(p, h) {
     if (h.target === BELL_ID) {
-      if (this.ringBell()) this.g.track?.bell(p);
+      if (!this.ringBell()) return;
+      this.g.track?.bell(p);
+      this.g.ach?.bell(p, this.g.phase === PHASE.NIGHT);
     } else this.callPlane(p);
   }
 
@@ -125,6 +127,7 @@ export class Fixtures {
     g.zm.noise(sp.x, sp.z, NOISE.RADIO);
     g.notify(NOTIFY.RADIO_CALL, p.id);
     g.track?.radioCall(p);
+    g.ach?.radioCall(p);
   }
 
   // every tick: the tolls of a pull under way
