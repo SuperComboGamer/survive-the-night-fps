@@ -5634,6 +5634,7 @@ body {
   position: absolute;
   inset: 0;
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   pointer-events: auto;
 }
@@ -5655,13 +5656,19 @@ body {
     #07060a;
 }
 
+/* taller than the screen, it scrolls from its top rather than losing the title off it */
 .stn-ui .end-main {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
+  box-sizing: border-box;
   max-width: 90vw;
+  max-height: 100%;
+  padding: calc(16 * var(--u)) 0;
+  overflow: hidden auto;
+  scrollbar-width: thin;
 }
 
 .stn-ui .end-kicker {
@@ -5799,13 +5806,33 @@ body {
 }/* ---------- personal record: end screen panel, splash line, settings row */
 
 
-/* beside the body count rather than under it: the end screen is no taller for it */
+/* the panels' row and the poll under it: as wide as the row, so the poll lines up with its edges */
+.stn-ui .end-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* beside the body count rather than under it: the end screen is no taller for it. One height for the row */
 .stn-ui .end-panels {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: center;
   gap: 0 calc(18 * var(--u));
+}
+
+/* narrower rather than a second row, which pushes the poll and the countdown off a small screen */
+.stn-ui .end-panels .end-board {
+  flex: 0 1 auto;
+  min-width: 250px;
+}
+
+@media (max-width: 860px) {
+  .stn-ui .end-panels {
+    flex-wrap: wrap;
+  }
 }
 
 .stn-ui .er-tiles {
@@ -6323,41 +6350,117 @@ body {
   }
 }
 
-/* ---------- end screen: how hard was it? A vote, then everyone's votes as bars on the same rows */
+/* ---------- end screen: how hard was it? A scale of five across, then everyone's votes as columns in the same answers */
 
 .stn-ui .end-poll {
-  width: calc(320 * var(--u));
-  min-width: 250px;
+  width: auto;
+  min-width: 0;
+  margin-top: calc(18 * var(--u));
+}
+
+/* the heading, with the hint (then the tally) on its right: the strip is one heading and one row tall */
+.stn-ui .ep-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(16 * var(--u));
+}
+
+.stn-ui .ep-foot {
+  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--bone-dim);
 }
 
 .stn-ui .ep-opts {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: calc(4 * var(--u));
 }
 
+/* --tone: where the answer sits from too easy to too hard, as the tick along its top */
 .stn-ui .ep-opt {
-  display: grid;
-  grid-template-columns: calc(22 * var(--u)) 1fr auto;
+  --tone: var(--bone-dim);
+  position: relative;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  column-gap: calc(10 * var(--u));
-  width: 100%;
-  min-width: 14px;
-  padding: calc(6 * var(--u)) calc(9 * var(--u));
+  justify-content: center;
+  gap: calc(6 * var(--u));
+  min-width: 0;
+  height: calc(78 * var(--u));
+  min-height: 54px;
+  padding: calc(4 * var(--u)) calc(10 * var(--u)) 0;
   border: 0;
   background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
   font: 400 max(13px, calc(17 * var(--u))) / 1.2 var(--f-num);
   letter-spacing: 0.04em;
-  text-align: left;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+}
+
+.stn-ui .ep-opt:nth-child(1) {
+  --tone: var(--steel);
+}
+
+.stn-ui .ep-opt:nth-child(2) {
+  --tone: #abc0a2;
+}
+
+.stn-ui .ep-opt:nth-child(3) {
+  --tone: var(--good);
+}
+
+.stn-ui .ep-opt:nth-child(4) {
+  --tone: #e0a05a;
+}
+
+.stn-ui .ep-opt:nth-child(5) {
+  --tone: var(--blood-hi);
+}
+
+.stn-ui .ep-opt::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--tone);
+  opacity: 0.5;
+  transition: opacity 0.15s;
 }
 
 .stn-ui .ep-opt:hover {
   background: rgba(243, 217, 164, 0.09);
 }
 
+.stn-ui .ep-opt:hover::before,
+.stn-ui .ep-opt.mine::before {
+  opacity: 1;
+}
+
+.stn-ui .ep-opt:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: -1px;
+}
+
+/* (over the column, which is positioned) */
+.stn-ui .ep-row,
+.stn-ui .ep-pct {
+  position: relative;
+}
+
+.stn-ui .ep-row {
+  display: flex;
+  align-items: center;
+  gap: calc(9 * var(--u));
+  max-width: 100%;
+}
+
 .stn-ui .ep-key {
+  min-width: 1.8em;
   padding: 2px 0;
   border: 1px solid rgba(230, 223, 207, 0.18);
   font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
@@ -6365,40 +6468,48 @@ body {
   color: var(--bone-dim);
 }
 
-.stn-ui .ep-pct {
-  min-width: 3em;
-  font: 400 max(11px, calc(14 * var(--u))) / 1 var(--f-mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  color: var(--bone-2);
+.stn-ui .ep-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-/* the line bar: room kept for it from the start, so the panel does not grow when the votes come in */
+.stn-ui .ep-pct {
+  font: 500 max(14px, calc(20 * var(--u))) / 1 var(--f-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--bone);
+}
+
+.stn-ui .ep-pct:empty {
+  display: none;
+}
+
+/* everyone's votes: a column rising behind the answer, so the strip reads as a histogram. Never takes room */
 .stn-ui .ep-bar {
-  grid-column: 2 / 4;
-  height: 3px;
-  margin-top: calc(5 * var(--u));
-  background: rgba(230, 223, 207, 0.1);
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity 0.3s;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  pointer-events: none;
 }
 
 .stn-ui .ep-bar i {
   display: block;
-  width: 0;
-  height: 100%;
-  background: var(--bone-dim);
-  transition: width 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  width: 100%;
+  height: 0;
+  background: rgba(230, 223, 207, 0.08);
+  box-shadow: inset 0 1px 0 rgba(230, 223, 207, 0.22);
+  transition: height 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-.stn-ui .end-poll.voted .ep-bar {
-  opacity: 1;
+.stn-ui .end-poll.voted .ep-opt:not(.mine) {
+  color: var(--bone-2);
 }
 
 .stn-ui .ep-opt.mine {
-  box-shadow: inset 2px 0 0 var(--sun);
   color: var(--sun);
+  box-shadow: inset 0 0 0 1px rgba(243, 217, 164, 0.5);
 }
 
 .stn-ui .ep-opt.mine .ep-key {
@@ -6411,19 +6522,12 @@ body {
 }
 
 .stn-ui .ep-opt.mine .ep-bar i {
-  background: var(--sun);
+  background: rgba(243, 217, 164, 0.15);
+  box-shadow: inset 0 1px 0 rgba(243, 217, 164, 0.55);
 }
 
 .stn-ui .end-poll.sending .ep-opt {
   cursor: progress;
-}
-
-.stn-ui .ep-foot {
-  margin-top: calc(10 * var(--u));
-  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
 }
 
 .stn-ui .ep-foot.bad {
