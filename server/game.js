@@ -1915,6 +1915,7 @@ export class Game {
     }
     this.log('drove off:', p.name);
     this.track.drove(p);
+    this.ach.drove(p); // (the driver's feat is the car's, as it was)
     this.cross(p, this.phase === PHASE.NIGHT);
   }
 
