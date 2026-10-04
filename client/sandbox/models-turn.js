@@ -101,7 +101,7 @@ for (const spec of subjects) {
     if (type === ZTYPE.BAT) obj.position.y = 1.2;
   }
   scene.add(obj);
-  obj.traverse((m) => {
+  obj.traverseVisible((m) => { // (what is drawn: not the hidden worn backpack)
     if (m.isMesh && m.geometry?.index) tris += m.geometry.index.count / 3;
   });
   // run the clock up to T so the pose is deterministic
