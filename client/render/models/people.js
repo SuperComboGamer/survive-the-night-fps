@@ -204,7 +204,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     const sleeves = top ? top.sleeves ?? 'long' : 'none';
     const sl = sleeves === 'long' ? A.yW + 0.03 : sleeves === 'rolled' ? A.yE - 0.035 : sleeves === 'short' ? A.yS - 0.12 : A.yS + 0.036;
     const yEnd = missing ? A.yE - 0.03 : A.yLo;
-    const rsA = Math.max(8, rs - 8);
+    const rsA = Math.max(10, rs - (dead ? 6 : 8));
     const tearS = top ? tearOf(top, 51 + i) : null;
     if (top && sleeves !== 'none' && top.kind !== 'tank') {
       const pS = thick * 0.75 + 0.003;
@@ -839,11 +839,11 @@ function hat(mb, P, H, h, L) {
     }
     for (let j = 0; j < nvC; j++) for (let i = 0; i < nuC; i++) {
       const a = j * (nuC + 1) + i, b = a + 1, c = a + nuC + 1, d = c + 1;
-      idx.push(a, b, c, b, d, c);
+      idx.push(a, c, b, b, c, d);
     }
     const ci = pos.length / 3;
     pos.push(0, top + (kind === 'ranger' ? 0.035 : 0.01), 0.004);
-    for (let i = 0; i < nuC; i++) idx.push(nvC * (nuC + 1) + i, nvC * (nuC + 1) + i + 1, ci);
+    for (let i = 0; i < nuC; i++) idx.push(nvC * (nuC + 1) + i + 1, nvC * (nuC + 1) + i, ci);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(idx);

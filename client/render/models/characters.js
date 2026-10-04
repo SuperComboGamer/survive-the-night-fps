@@ -1120,7 +1120,7 @@ const rigCache = new Map();
 // The detail a rig is built at (standardHumanoid reads it): 1 near, LOD_DETAIL for the far copy of the humanoid dead.
 let buildDetail = 1;
 const LOD_DETAIL = 0.5;
-const LOD_FAR = 26, LOD_NEAR = 22; // (m)
+const LOD_FAR = 15, LOD_NEAR = 12; // (m: at 15 m a walker is some 140 px tall on a 1080p screen)
 // (types whose far copy is worth having: everything people.js builds whole)
 const LOD_TYPES = new Set([ZTYPE.WALKER, ZTYPE.RUNNER, ZTYPE.SPITTER, ZTYPE.LEAPER, ZTYPE.ROPER, ZTYPE.BOOMER, ZTYPE.SHADE]);
 function getRig(type, variant, far = false) {
