@@ -6,21 +6,29 @@
 // A box/cyl top is walkable (players can stand on it) if they can step/jump onto it.
 // salvage: true -> hitting it with a melee weapon yields scrap (limited per day).
 
+import { STREET_PROP_DEFS } from './props-street.js';
+import { INTERIOR_PROP_DEFS } from './props-interior.js';
+
 export const PROPS = {
   car: { size: [1.9, 1.45, 4.6], boxes: [[0, 0.72, 0, 1.9, 1.44, 4.5]], desc: 'broken-down rusty sedan, hood propped open, one wheel missing (on a jack/blocks), shattered windows. The quest car at camp.' },
   // (the mainland, act 2: shared/mainland.js)
   plane_wreck: {
     size: [15.8, 4.6, 12],
     boxes: [
-      [0, 1.4, 0, 1.9, 2.8, 11.8], // the fuselage, down to the ground under it
-      [0, 1.25, -1.0, 15.6, 0.7, 3.0], // the wing
-      [-2.7, 1.4, -1.075, 2.7, 2.8, 5.65], // each engine with its propeller's disc, the main wheel under it, and the
-      [2.7, 1.4, -1.075, 2.7, 2.8, 5.65], // ground beside it under the wing (the cowling set down, the fuel drums)
-      [0, 2.42, 5.0, 5.6, 0.5, 1.8], // the tailplane
-      [0, 3.4, 5.1, 0.5, 2.3, 2.0], // the fin
-      [-1.2, 0.5, 1.0, 0.6, 1.0, 0.5], // the steps at the cabin door
+      [0, 1.4, -0.15, 1.6, 2.8, 11.3], // the fuselage, down to the ground under it
+      [0, 1.3, -0.72, 2.4, 0.7, 2.5], // the wing, where it leaves the fuselage
+      [-2.4, 1.4, -1.7, 2.4, 2.8, 5.2], // each engine with its propeller's disc, the main wheel under it, and the
+      [2.4, 1.4, -1.7, 2.4, 2.8, 5.2], // ground beside it under the wing (the cowling set down, the fuel drums)
+      [-4.65, 1.575, -0.72, 2.1, 0.65, 2.4], // the wings outboard of the engines, in two steps: they rise to the tips
+      [4.65, 1.575, -0.72, 2.1, 0.65, 2.4],
+      [-6.725, 1.785, -0.875, 2.05, 0.55, 1.75],
+      [6.725, 1.785, -0.875, 2.05, 0.55, 1.75],
+      [0, 2.25, 4.68, 5.5, 0.55, 1.6], // the tailplane
+      [0, 3.55, 4.12, 0.4, 1.95, 3.05], // the fin
+      [-1.2, 1.15, 1.19, 0.85, 2.3, 0.75], // the cabin door, down on its cables as the steps
+      [0, 2.95, -1.62, 0.1, 0.35, 0.3], // the radio's mast on the roof (its wire to the fin is not solid)
     ],
-    desc: 'a grounded twin-engine transport plane (a ten-seater, low wing, twin radial engines), nose to -Z: bare metal gone dull, a faded blue cheat line, a glazed cockpit, a row of cabin windows, flaps down. The left engine is bare (its cowling on the ground beside it) and has no propeller, a main wheel is flat, an access panel hangs open under the nose, the cabin door is open on its steps. The quest plane at Calder Field: what is fitted to it shows (createQuestPlane in models/props.js).',
+    desc: 'a grounded twin-engine light transport (an eight-seater of the 1960s: a long nose, a low wing with dihedral, a flat-six in a nacelle faired into each wing, the main wheels under the nacelles and a nose wheel, a swept fin), nose to -Z: bare metal gone dull, a faded blue cheat line, black de-icing boots, a raked windscreen, four cabin windows a side, flaps and elevators hanging. The left engine is bare (its cowling in two halves on the ground beside it) and has no propeller, the left main tyre is flat, an access panel hangs open under the nose, the cabin door is down as its steps; chocks, a step ladder and a tool tray. The quest plane at Calder Field: what is fitted to it shows (createQuestPlane in models/aircraft.js).',
   },
   fuel_truck: {
     size: [2.5, 2.9, 7.6],
@@ -29,15 +37,22 @@ export const PROPS = {
     desc: 'an airfield fuel bowser, cab to -Z: a square cab and a long elliptical tank, faded yellow, FLAMMABLE stencils, a hose reel and a coiled hose at the back, one flat tyre',
   },
   light_plane: {
-    size: [10.8, 2.9, 7.6],
+    size: [11.0, 3.7, 8.5],
     boxes: [
-      [0, 1.0, 0.3, 1.3, 2.0, 7.0],
-      [0, 2.1, -0.9, 10.8, 0.7, 1.9], // the wing
-      [0, 0.5, -0.5, 2.9, 1.0, 0.9], // the main wheels on their legs
-      [0, 1.15, 3.1, 3.4, 0.5, 1.2], // the tailplane
+      [0, 1.1, -1.45, 1.24, 2.2, 5.4], // the nose and the cabin, down to the ground
+      [0, 1.55, 2.8, 0.9, 1.6, 3.1], // the tail cone (level, or up in the air)
+      [0, 2.52, 3.32, 0.5, 2.25, 2.05], // the fin
+      [0, 1.8, 3.4, 3.6, 1.2, 1.5], // the tailplane
+      [0, 2.1, -1.12, 11.04, 0.8, 2.1], // the wing
+      [4.75, 1.65, -1.0, 1.15, 1.0, 1.9], // (its right tip, crumpled down)
+      [0, 0.35, -0.7, 2.8, 0.7, 1.1], // the main wheels on their legs
+      [-1.16, 1.05, -1.2, 1.08, 0.8, 0.6], // the wing's struts, in two steps a side
+      [1.16, 1.05, -1.2, 1.08, 0.8, 0.6],
+      [-2.25, 1.6, -1.2, 1.1, 0.8, 0.6],
+      [2.25, 1.6, -1.2, 1.1, 0.8, 0.6],
     ],
     salvage: true,
-    desc: 'the wreck of a four-seat high-wing light aircraft, nose to -Z and down on a collapsed nose wheel: one wing tip crumpled, the propeller bent, the windscreen gone, white paint with a red stripe, weeds through it',
+    desc: 'the wreck of a four-seat high-wing light aircraft (a strut-braced wing on the cabin roof, a flat-four behind a two-blade propeller, a swept fin, three wheels), nose to -Z: white gone grey with a stripe down its side, the windscreen broken, weeds through it. Variant 0 (red stripe) is down on a collapsed nose leg and a bent propeller, tail in the air, flaps down; variant 1 (blue stripe) sits level on three flat tyres, its cowling gone from round the engine, the right wing tip crumpled',
   },
   rubble_pile: { size: [5.2, 1.7, 5.2], cyls: [[0, 0, 2.3, 1.4]], desc: 'a heap of what a building came down as: broken concrete slabs at all angles, bricks, bent rebar standing out of it, dust' },
   car_burnt: { size: [1.9, 1.4, 4.5], boxes: [[0, 0.7, 0, 1.9, 1.4, 4.4]], salvage: true, desc: 'a burnt-out car: bare scorched steel, no glass, no tyres (down on its rims), the paint gone to rust and soot' },
@@ -231,6 +246,9 @@ export const PROPS = {
   radio_set: { size: [1.0, 2.5, 0.6], boxes: [[0, 0.43, 0, 1.0, 0.86, 0.56]], desc: 'field radio on a steel equipment cabinet: olive set with a tuning dial, knobs, speaker and a red power lamp, handset off its hook on a coiled cord, whip antenna; front faces -Z' },
   // the mounted gun's nest (shared/mountedgun.js finds it by this prop): what lies there. The gun and its tripod are
   // an entity that can be carried off, so nothing here collides
+  // the city's street furniture and what is in its rooms (files of their own)
+  ...STREET_PROP_DEFS,
+  ...INTERIOR_PROP_DEFS,
   mg_tripod: { size: [1.5, 0.4, 1.5], desc: 'where a machine-gun tripod stands (the tripod itself is not part of it): three olive ammo cans to the right of the spot and spent brass thrown out on the ground' },
 };
 

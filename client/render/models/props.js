@@ -6,6 +6,11 @@ import { PROPS } from '../../../shared/props.js';
 import { MeshBuilder, partsToGroup, makeRng } from '../materials.js';
 import { FIXTURE_PROPS } from './fixtures.js';
 import { buildNestLitter } from './mountedgun.js';
+import { STREET_PROPS, STREET_VARIANTS } from './props-street.js';
+import { INTERIOR_PROPS, INTERIOR_VARIANTS } from './props-interior.js';
+import { AIRCRAFT_PROPS } from './aircraft.js';
+
+export { createQuestPlane, createFlightPlane } from './aircraft.js';
 
 const PI = Math.PI;
 const cache = new Map();
@@ -27,6 +32,8 @@ const VARIANTS = {
   litter: 3, debris: 3, rubble_slope: 2, ivy: 3, shopping_cart: 2, suitcases: 1, razor_wire: 1, barricade: 1, fallen_sign: 2, pole_down: 1,
   dumpster_tipped: 1, semi_truck: 2, awning: 2, subway_entrance: 1, shipping_container: 3, power_transformer: 1, school_desk: 2,
   baggage_cart: 1, fire_truck: 1, windsock: 1, runway_light: 2, airliner_wreck: 1,
+  // the city's streets and rooms (props-street.js, props-interior.js)
+  ...STREET_VARIANTS, ...INTERIOR_VARIANTS,
 };
 
 export const PROP_TYPES = Object.keys(PROPS);
@@ -59,6 +66,9 @@ const rr = (r, a, b) => a + (b - a) * r();
 const pick = (r, arr) => arr[Math.floor(r() * arr.length)];
 
 // ------------------------------------------------------------------ shared parts
+// (exported for props-street.js and props-interior.js, which this file imports: they may call these inside their
+// builders, never while they load)
+export { rr, pick, WOODS, wheel, label, weeds, plank, CAR_COLORS, sedan, bigTire, loftCap };
 const WOODS = [[0.95, 0.9, 0.85], [0.8, 0.74, 0.68], [0.7, 0.66, 0.62], [1, 0.95, 0.88], [0.62, 0.56, 0.5]];
 
 /** wheel: axis along X, centred at origin. flat: 0..0.3 squash */
@@ -237,7 +247,7 @@ function cinderBlocks(b, x, z, h) {
   plank(b, 'wood', 0.3, h - 0.4, 0.3, { p: [x, 0.4 + (h - 0.4) / 2, z], c: WOODS[1] });
 }
 
-const BUILD = { ...FIXTURE_PROPS }; // (the chapel bell and the radio set have a file of their own)
+const BUILD = { ...FIXTURE_PROPS, ...STREET_PROPS, ...INTERIOR_PROPS, ...AIRCRAFT_PROPS }; // (the chapel bell and the radio set have a file of their own; so have the city's street furniture and what is in its rooms)
 
 BUILD.car = (b, r) => {
   b.push([0, 0, 0], [0, 0, 0], [1, 1, 0.952]);
@@ -2650,359 +2660,7 @@ function slab(b, mat, root, tip, o = {}, up = false) {
 }
 const roundProf = (t) => [Math.cos(t * PI * 2), Math.sin(t * PI * 2)];
 
-// The plane at Calder Field: a twin-engine ten-seater on its three wheels, nose to -Z. Bare metal gone dull with a
-// faded blue cheat line: a round fuselage with a glazed cockpit and a row of cabin windows, a low wing of real
-// section with flaps and ailerons, a radial in a cowling under each wing, a fin with its rudder and a tailplane with
-// elevators. It is built in pieces (PLANE_BITS), because what the team fits to it shows on it:
-//   the propeller   the left engine's is missing: a bare shaft until it is fitted
-//   the magneto     the left cowling lies on the ground beside the wheel and the engine stands bare, an empty mount
-//                   on its accessory case, until the magneto is on it and the cowling back
-//   the pump        a panel hangs open under the nose on an empty bracket, and shuts on the pump
-//   the radio       no aerial and a hole in the panel, until the set is in: then a mast and a wire to the fin
-//   the fuel        a drum stands under the right wing for every one poured in
-// As the prop ('plane_wreck') it is all of that with nothing fitted, the cabin door open on its steps, the left main
-// tyre flat, chocks and a tool tray on the ground. Every piece is a closed shell inside the colliders in props.js.
-const PLANE = { ENGINE_X: 2.7, ENGINE_Y: 1.42, HUB_Z: -3.5, FY: 1.82 };
-const PLANE_SKIN = [0.6, 0.61, 0.6], PLANE_BLUE = [0.2, 0.3, 0.46], PLANE_DULL = [0.42, 0.43, 0.42], PLANE_DIRT = [0.33, 0.32, 0.29];
-const PLANE_SECS = [
-  { z: -5.8, w: 0.14, h: 0.14, y: PLANE.FY - 0.24 },
-  { z: -5.62, w: 0.56, h: 0.56, y: PLANE.FY - 0.22 },
-  { z: -5.25, w: 1.0, h: 1.0, y: PLANE.FY - 0.16 },
-  { z: -4.7, w: 1.4, h: 1.42, y: PLANE.FY - 0.08 },
-  { z: -4.1, w: 1.62, h: 1.7, y: PLANE.FY - 0.02 },
-  { z: -3.5, w: 1.74, h: 1.84, y: PLANE.FY },
-  { z: -1.8, w: 1.8, h: 1.86, y: PLANE.FY },
-  { z: 1.6, w: 1.78, h: 1.84, y: PLANE.FY },
-  { z: 3.4, w: 1.3, h: 1.4, y: PLANE.FY + 0.14 },
-  { z: 5.0, w: 0.62, h: 0.74, y: PLANE.FY + 0.32 },
-  { z: 5.78, w: 0.1, h: 0.14, y: PLANE.FY + 0.4 },
-];
-// the point on the fuselage's skin at station z, angle a (0: the +x side, PI / 2: the top), `out` metres off it
-function planeSkin(z, a, out = 0.012) {
-  const S = PLANE_SECS;
-  let k = 0;
-  while (k < S.length - 2 && z > S[k + 1].z) k++;
-  const A = S[k], B = S[k + 1], f = Math.min(1, Math.max(0, (z - A.z) / (B.z - A.z)));
-  const w = A.w + (B.w - A.w) * f, h = A.h + (B.h - A.h) * f, y = A.y + (B.y - A.y) * f;
-  return [Math.cos(a) * (w / 2 + out), y + Math.sin(a) * (h / 2 + out), z];
-}
-// a patch laid on that skin between two stations and two angles, facing out whichever way round it is given
-function planePatch(b, mat, z0, z1, a0, a1, c, out = 0.012, na = 3) {
-  for (let j = 0; j < na; j++) {
-    const p = a0 + ((a1 - a0) * j) / na, q = a0 + ((a1 - a0) * (j + 1)) / na;
-    b.quadOut(mat, [planeSkin(z0, p, out), planeSkin(z1, p, out), planeSkin(z1, q, out), planeSkin(z0, q, out)], [0, PLANE.FY, (z0 + z1) / 2], c ? { c } : {});
-  }
-}
-// A lifting surface between two sections, with a wing's section: a round leading edge, the thickest a quarter of
-// the way back, fining to the trailing edge. A, B: { at: [x, y, z] of the leading edge, c: chord (along +Z), t:
-// thickness }. q.up: it stands (a fin: the thickness is across X). q.u0 / u1: only that part of the chord (a wing cut
-// short at its flap; the flap itself). q.droop: that part turned down (a fin's: to the side) about its front edge
-// by this angle. A closed shell.
-const FOIL_U = [0, 0.03, 0.15, 0.4, 0.75, 1];
-const FOIL_TOP = [0, 0.6, 1, 1, 0.5, 0.07];
-const FOIL_BOT = [0, -0.5, -0.8, -0.7, -0.35, -0.07];
-function foilAt(tab, u) {
-  let k = 0;
-  while (k < FOIL_U.length - 2 && u > FOIL_U[k + 1]) k++;
-  return tab[k] + ((tab[k + 1] - tab[k]) * (u - FOIL_U[k])) / (FOIL_U[k + 1] - FOIL_U[k]);
-}
-function foil(b, mat, A, B, o = {}, q = {}) {
-  const u0 = q.u0 ?? 0, u1 = q.u1 ?? 1, d = q.droop || 0;
-  const us = [u0, ...FOIL_U.filter((u) => u > u0 + 1e-6 && u < u1 - 1e-6), u1];
-  const ring = (S) => {
-    const pts = [];
-    const put = (u, v) => {
-      const dz = (u - u0) * S.c, dv = (v * S.t) / 2;
-      const z = S.at[2] + u0 * S.c + dz * Math.cos(d) + dv * Math.sin(d), w = dv * Math.cos(d) - dz * Math.sin(d);
-      pts.push(q.up ? [S.at[0] + w, S.at[1], z] : [S.at[0], S.at[1] + w, z]);
-    };
-    for (const u of us) put(u, foilAt(FOIL_TOP, u));
-    for (let k = us.length - 1; k >= 0; k--) if (us[k] > 0) put(us[k], foilAt(FOIL_BOT, us[k]));
-    return pts;
-  };
-  const ra = ring(A), rb = ring(B), n = ra.length;
-  const mid = (pts) => pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length, s[2] + p[2] / pts.length], [0, 0, 0]);
-  const ca = mid(ra), cb = mid(rb), cm = [(ca[0] + cb[0]) / 2, (ca[1] + cb[1]) / 2, (ca[2] + cb[2]) / 2];
-  const verts = [...ra, ...rb, ca, cb];
-  const faces = [];
-  // a triangle, wound so that it faces away from `from`
-  const tri = (i, j, k, from) => {
-    const [P, Q, R] = [verts[i], verts[j], verts[k]];
-    const e1 = [Q[0] - P[0], Q[1] - P[1], Q[2] - P[2]], e2 = [R[0] - P[0], R[1] - P[1], R[2] - P[2]];
-    const nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];
-    const out = nx * ((P[0] + Q[0] + R[0]) / 3 - from[0]) + ny * ((P[1] + Q[1] + R[1]) / 3 - from[1]) + nz * ((P[2] + Q[2] + R[2]) / 3 - from[2]);
-    faces.push(out >= 0 ? [i, j, k] : [i, k, j]);
-  };
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    tri(i, j, n + j, cm);
-    tri(i, n + j, n + i, cm);
-    tri(i, j, 2 * n, cb);
-    tri(n + i, n + j, 2 * n + 1, ca);
-  }
-  return b.poly(mat, verts, faces, o);
-}
-// the wing at span x: where its leading edge is, its chord and its thickness
-const wingAt = (x) => {
-  const f = Math.abs(x) / 7.75;
-  return { at: [x, 1.08 + 0.22 * f, -2.35 + 0.65 * f], c: 2.75 - 1.45 * f, t: 0.4 - 0.25 * f };
-};
-const tailAt = (x) => {
-  const f = Math.abs(x) / 2.75;
-  return { at: [x, PLANE.FY + 0.55 + 0.05 * f, 4.3 + 0.4 * f], c: 1.5 - 0.55 * f, t: 0.17 - 0.08 * f };
-};
-const finAt = (h) => {
-  const f = h / 2.1;
-  return { at: [0, PLANE.FY + 0.5 + h, 4.2 + 0.8 * f], c: 1.7 - 0.75 * f, t: 0.17 - 0.08 * f };
-};
-const COWL = [[0.001, -0.02], [0.3, 0], [0.56, 0.12], [0.6, 0.5], [0.6, 1.25], [0.5, 1.45], [0.001, 1.47]];
-function planeCowl(b, ex, c) {
-  const ey = PLANE.ENGINE_Y;
-  b.lathe('aircraft', COWL, 14, { p: [ex, ey, -3.42], r: [PI / 2, 0, 0], c });
-  b.cyl('dark', 0.42, 0.42, 0.03, 12, { p: [ex, ey, -3.4], r: [PI / 2, 0, 0] }); // the intake's shadow
-  // cooling gills round its back edge, an exhaust stack under it and the stain it left
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * PI * 2 + 0.39;
-    b.box('aircraft', 0.3, 0.03, 0.22, { p: [ex + Math.cos(a) * 0.59, ey + Math.sin(a) * 0.59, -2.08], r: [0.28, 0, a - PI / 2], order: 'ZXY', c: PLANE_DIRT });
-  }
-}
-// a propeller, hub at the origin, axis along Z
-function planeProp(b) {
-  b.lathe('aircraft', [[0.001, -0.3], [0.09, -0.24], [0.16, -0.1], [0.18, 0.06], [0.001, 0.08]], 10, { r: [PI / 2, 0, 0], c: PLANE_DULL });
-  for (let k = 0; k < 3; k++) {
-    b.group({ r: [0, 0, 0.4 + (k * PI * 2) / 3] }, () => {
-      b.cyl('steel', 0.05, 0.06, 0.2, 6, { p: [0, 0.2, 0] });
-      b.box('aircraft', 0.2, 0.62, 0.035, { p: [0, 0.56, 0], r: [0, 0.42, 0], c: [0.12, 0.12, 0.12] });
-      b.box('aircraft', 0.16, 0.4, 0.028, { p: [0, 1.04, 0], r: [0, 0.28, 0], c: [0.12, 0.12, 0.12] });
-      b.box('aircraft', 0.13, 0.1, 0.024, { p: [0, 1.28, 0], r: [0, 0.24, 0], c: [0.7, 0.56, 0.12] }); // the yellow tip
-    });
-  }
-}
-const PLANE_BITS = {
-  // what never changes: the airframe, the right engine, the left engine bare under where its cowling goes
-  base(b) {
-    const skin = PLANE_SKIN, blue = PLANE_BLUE, dull = PLANE_DULL, FY = PLANE.FY;
-    b.loft('aircraft', PLANE_SECS, roundProf, 16, { c: skin });
-    b.sphere('aircraft', 0.08, 6, 4, { p: [0, FY - 0.24, -5.8], c: dull });
-    b.sphere('aircraft', 0.07, 6, 4, { p: [0, FY + 0.4, 5.78], c: dull });
-    // the black anti-glare panel ahead of the windscreen, the windscreen in three panes between its pillars
-    planePatch(b, 'aircraft', -5.3, -4.62, PI * 0.3, PI * 0.7, [0.1, 0.1, 0.1], 0.012, 3);
-    for (const [a0, a1] of [[0.22, 0.4], [0.415, 0.585], [0.6, 0.78]]) planePatch(b, 'glass', -4.55, -3.78, PI * a0, PI * a1, null, 0.016, 2);
-    planePatch(b, 'aircraft', -4.6, -3.74, PI * 0.2, PI * 0.8, dull, 0.01, 5); // (the frame, under the panes)
-    for (const sgn of [0, 1]) {
-      const flip = (a) => (sgn ? PI - a : a);
-      planePatch(b, 'glass', -3.62, -3.02, flip(0.5), flip(0.13), null, 0.016, 2);
-      planePatch(b, 'aircraft', -3.68, -2.96, flip(0.55), flip(0.09), dull, 0.01, 2);
-      for (let k = 0; k < 4; k++) {
-        planePatch(b, 'glass', -2.3 + k * 1.05, -1.7 + k * 1.05, flip(0.44), flip(0.16), null, 0.016, 2);
-        planePatch(b, 'aircraft', -2.35 + k * 1.05, -1.65 + k * 1.05, flip(0.48), flip(0.12), dull, 0.01, 2);
-      }
-      planePatch(b, 'aircraft', -5.0, 3.4, flip(0.06), flip(-0.1), blue, 0.01, 1); // the cheat line
-      planePatch(b, 'aircraft', -4.2, 3.0, flip(-0.5), flip(-1.0), PLANE_DIRT, 0.008, 2); // the belly, grimed
-    }
-    // skin joints: a ring round the fuselage at each frame
-    for (const z of [-3.2, -0.6, 2.0, 3.4]) planePatch(b, 'aircraft', z - 0.012, z + 0.012, 0, PI * 2, PLANE_DIRT, 0.014, 12);
-    // ---- the wing: its section whole at the root and the tip, cut short where the flap and the aileron hang
-    for (const sx of [-1, 1]) {
-      foil(b, 'aircraft', wingAt(sx * 0.2), wingAt(sx * 3.4), { c: skin });
-      foil(b, 'aircraft', wingAt(sx * 3.4), wingAt(sx * 7.3), { c: skin }, { u1: 0.72 });
-      foil(b, 'aircraft', wingAt(sx * 7.3), wingAt(sx * 7.75), { c: skin });
-      foil(b, 'aircraft', wingAt(sx * 3.45), wingAt(sx * 4.95), { c: dull }, { u0: 0.74, droop: 0.42 }); // the flap, down
-      foil(b, 'aircraft', wingAt(sx * 5.0), wingAt(sx * 7.25), { c: dull }, { u0: 0.74, droop: sx * 0.12 }); // the aileron
-      // joints across the chord, and the walkway by the cabin
-      for (const x of [1.3, 2.05, 3.4, 5.0, 6.2]) {
-        const W = wingAt(sx * x);
-        b.box('aircraft', 0.02, 0.012, W.c * 0.25, { p: [sx * x, W.at[1] + W.t / 2 - 0.004, W.at[2] + W.c * 0.275], c: PLANE_DIRT });
-      }
-      b.box('rubber', 0.6, 0.012, 0.66, { p: [sx * 1.3, 1.3, -1.56], r: [0, 0, sx * 0.028] });
-      // the tailplane and its elevator
-      foil(b, 'aircraft', tailAt(sx * 0.1), tailAt(sx * 2.75), { c: skin }, { u1: 0.62 });
-      foil(b, 'aircraft', tailAt(sx * 0.3), tailAt(sx * 2.7), { c: dull }, { u0: 0.64, droop: 0.2 });
-    }
-    // the fin and its rudder (blue, a little over)
-    foil(b, 'aircraft', finAt(0), finAt(2.1), { c: skin }, { up: true, u1: 0.62 });
-    foil(b, 'aircraft', finAt(0.05), finAt(2.05), { c: blue }, { up: true, u0: 0.64, droop: 0.14 });
-    for (const sx of [-1, 1]) label(b, 'stencil', 'numbers', 0.46, 0.2, [sx * 0.072, FY + 1.35, 4.96], sx < 0 ? 'x-' : 'x+');
-    // ---- the engines' nacelles, the right engine cowled, the left one bare
-    for (const sx of [-1, 1]) {
-      const ex = sx * PLANE.ENGINE_X, ey = PLANE.ENGINE_Y;
-      b.loft('aircraft', [{ z: -2.05, w: 0.9, h: 0.92, y: ey }, { z: -0.4, w: 0.86, h: 0.84, y: ey - 0.06 }, { z: 1.4, w: 0.3, h: 0.3, y: ey - 0.16 }, { z: 1.7, w: 0.04, h: 0.04, y: ey - 0.18 }], roundProf, 10, { c: skin });
-      b.cyl('aircraft', 0.44, 0.44, 0.04, 12, { p: [ex, ey, -2.04], r: [PI / 2, 0, 0], c: dull }); // the firewall
-      b.cylBetween('rust', [ex + sx * 0.36, ey - 0.42, -2.0], [ex + sx * 0.4, ey - 0.5, -1.2], 0.05, 0.05, 6); // exhaust
-      // main gear: an oleo leg, its brace and scissor, doors hanging either side of the well
-      b.cylBetween('steel', [ex, 0.42, -1.5], [ex, ey - 0.5, -1.5], 0.045, 0.045, 6);
-      b.cylBetween('steel', [ex, 0.78, -1.5], [ex, ey - 0.3, -1.5], 0.07, 0.07, 6);
-      b.cylBetween('steel', [ex, 0.62, -1.5], [ex, ey - 0.38, -0.7], 0.035, 0.035, 5);
-      b.cylBetween('steel', [ex, 0.5, -1.38], [ex, 0.8, -1.3], 0.02, 0.02, 4);
-      for (const s2 of [-1, 1]) b.box('aircraft', 0.02, 0.4, 1.0, { p: [ex + s2 * 0.3, 0.86, -1.3], r: [0, 0, s2 * 0.25], c: skin });
-    }
-    planeCowl(b, PLANE.ENGINE_X, dull);
-    b.group({ p: [PLANE.ENGINE_X + 0.02, 0.42, -1.5] }, () => wheel(b, 0.42, 0.26, { flat: 0.04, rim: 'steel' }));
-    {
-      // the left engine, as it is under its cowling: crankcase, nine cylinders, the exhaust ring, the shaft, and on
-      // the accessory case behind it a bright empty mount where the magneto goes
-      const ex = -PLANE.ENGINE_X, ey = PLANE.ENGINE_Y;
-      b.cyl('rust', 0.26, 0.26, 0.6, 10, { p: [ex, ey, -2.4], r: [PI / 2, 0, 0] });
-      for (let k = 0; k < 9; k++) {
-        const a = (k / 9) * PI * 2;
-        b.cylBetween('steel', [ex + Math.cos(a) * 0.22, ey + Math.sin(a) * 0.22, -2.5], [ex + Math.cos(a) * 0.52, ey + Math.sin(a) * 0.52, -2.5], 0.085, 0.095, 6);
-      }
-      b.torus('rust', 0.44, 0.035, 5, 14, PI * 2, { p: [ex, ey, -2.18] });
-      b.cyl('steel', 0.05, 0.05, 0.62, 6, { p: [ex, ey, -2.95], r: [PI / 2, 0, 0] });
-      b.cyl('steel', 0.09, 0.09, 0.1, 8, { p: [ex, ey, -3.3], r: [PI / 2, 0, 0] }); // the propeller's flange
-      b.box('paint', 0.2, 0.16, 0.03, { p: [ex - 0.28, ey + 0.3, -2.12], c: [0.75, 0.2, 0.1] });
-    }
-    // nose gear, the pitot under the nose, a landing light
-    b.cylBetween('steel', [0, 0.3, -4.5], [0, FY - 0.9, -4.42], 0.035, 0.035, 6);
-    b.cylBetween('steel', [0, 0.62, -4.48], [0, FY - 0.75, -4.4], 0.06, 0.06, 6);
-    b.cylBetween('steel', [0, 0.4, -4.4], [0, 0.66, -4.32], 0.018, 0.018, 4);
-    b.group({ p: [0, 0.3, -4.5] }, () => wheel(b, 0.3, 0.2, { flat: 0.05, rim: 'steel' }));
-    b.cylBetween('steel', [0.5, FY - 0.62, -5.0], [0.5, FY - 0.62, -5.5], 0.012, 0.012, 4);
-    b.cyl('glass', 0.1, 0.1, 0.03, 8, { p: [0, FY - 0.52, -5.5], r: [PI / 2 - 0.5, 0, 0] });
-  },
-  cowlL: (b) => planeCowl(b, -PLANE.ENGINE_X, PLANE_DULL),
-  // ...the cowling set down on the ground beside the left wheel, open end up
-  cowlDown(b) {
-    // (a ring: its skin outside, then back down the inside)
-    b.lathe('aircraft', [[0.3, 0.0], [0.56, 0.12], [0.6, 0.5], [0.6, 1.25], [0.5, 1.45], [0.44, 1.45], [0.53, 1.22], [0.53, 0.5], [0.5, 0.16], [0.3, 0.06], [0.3, 0.0]], 14, { p: [-PLANE.ENGINE_X - 0.02, 0.0, -2.95], s: [1, 0.72, 1], c: PLANE_DULL });
-  },
-  magneto(b) {
-    const ex = -PLANE.ENGINE_X, ey = PLANE.ENGINE_Y;
-    b.box('steel', 0.16, 0.12, 0.12, { p: [ex - 0.28, ey + 0.3, -2.2] });
-    b.cyl('plastic', 0.055, 0.055, 0.07, 8, { p: [ex - 0.28, ey + 0.3, -2.3], r: [PI / 2, 0, 0] });
-  },
-  // the bay under the nose, open: its panel hanging by the hinge, the bracket in it empty
-  pumpOpen(b) {
-    planePatch(b, 'dark', -4.05, -3.4, PI * 1.36, PI * 1.64, null, 0.018, 2);
-    b.box('aircraft', 0.62, 0.03, 0.62, { p: [0.36, PLANE.FY - 1.22, -3.72], r: [0, 0, 1.25], c: PLANE_SKIN });
-    b.box('paint', 0.22, 0.03, 0.2, { p: [0, PLANE.FY - 0.9, -3.72], c: [0.75, 0.2, 0.1] });
-    for (const dx of [-0.12, 0.1]) b.tube('rubber', [[dx, PLANE.FY - 0.9, -3.6], [dx * 1.4, PLANE.FY - 1.08, -3.64], [dx * 1.2, PLANE.FY - 1.2, -3.7]], 0.012, 6, 4);
-  },
-  // the radio fitted: a mast on the roof with a wire back to the fin, a whip under the belly, the set's dial lit
-  // in the panel
-  radio(b) {
-    const FY = PLANE.FY;
-    b.cylBetween('steel', [0, FY + 0.93, -1.2], [0, FY + 1.42, -0.95], 0.02, 0.014, 5);
-    b.cylBetween('wire', [0, FY + 1.42, -0.95], [0, FY + 2.55, 5.0], 0.006, 0.006, 3);
-    b.cylBetween('steel', [0.2, FY - 0.9, 0.6], [0.2, FY - 1.3, 0.9], 0.012, 0.008, 4);
-    b.box('plastic', 0.34, 0.14, 0.2, { p: [0.3, FY + 0.42, -4.3] });
-    b.box('emissive_red', 0.05, 0.03, 0.01, { p: [0.3, FY + 0.44, -4.195] });
-  },
-  // a drum of avgas poured in, stood empty under the right wing
-  drum(b, r, i) {
-    const c = [0.16, 0.36, 0.6];
-    b.group({ p: [1.55, 0, -2.0 + i * 0.68], r: [0, i * 1.3, 0] }, () => {
-      b.cyl('paint', 0.28, 0.28, 0.84, 12, { p: [0, 0.42, 0], c });
-      for (const y of [0.28, 0.56]) b.cyl('paint', 0.288, 0.288, 0.03, 12, { p: [0, y, 0], c });
-      b.cyl('rust', 0.284, 0.284, 0.02, 12, { p: [0, 0.845, 0] });
-      b.cyl('dark', 0.035, 0.035, 0.012, 6, { p: [0.14, 0.857, 0] }); // the bung, out
-    });
-  },
-  doorOpen(b) {
-    const FY = PLANE.FY;
-    planePatch(b, 'dark', 0.5, 1.5, PI + 0.52, PI - 0.5, null, 0.018, 4);
-    b.box('aircraft', 0.05, 1.5, 0.95, { p: [-1.3, FY - 0.1, 0.1], r: [0, 0.5, 0], c: PLANE_SKIN });
-    for (let k = 0; k < 3; k++) b.box('steel', 0.5, 0.04, 0.24, { p: [-1.05 - k * 0.1, 0.72 - k * 0.24, 1.0] });
-    for (const z of [0.86, 1.14]) b.cylBetween('steel', [-0.95, 0.9, z], [-1.3, 0.2, z], 0.02, 0.02, 4);
-  },
-  doorShut: (b) => planePatch(b, 'aircraft', 0.5, 1.5, PI + 0.52, PI - 0.5, PLANE_DULL, 0.014, 4),
-  wheelFlat: (b) => b.group({ p: [-PLANE.ENGINE_X - 0.02, 0.42, -1.5] }, () => wheel(b, 0.42, 0.26, { flat: 0.34, rim: 'steel' })),
-  wheelSound: (b) => b.group({ p: [-PLANE.ENGINE_X - 0.02, 0.42, -1.5] }, () => wheel(b, 0.42, 0.26, { flat: 0.04, rim: 'steel' })),
-  // somebody was working on it: chocks, a tool tray, oil on the concrete, weeds through the cracks
-  ground(b, r) {
-    for (const sx of [-1, 1]) for (const dz of [-0.5, 0.5]) b.box('wood', 0.3, 0.14, 0.16, { p: [sx * 2.7, 0.07, -1.5 + dz], c: WOODS[1] });
-    b.box('rust', 0.5, 0.1, 0.32, { p: [-2.4, 0.05, -0.6], r: [0, 0.4, 0] });
-    b.box('dark', 1.1, 0.004, 0.9, { p: [-2.7, 0.003, -2.4], r: [0, 0.3, 0] });
-    weeds(b, r, [[0.7, -4.6], [-2.9, -0.9], [2.9, -1.0], [0.5, 4.6], [-0.6, 2.4]], 0.5);
-  },
-};
-// which pieces show: sup = [propeller, magneto, pump, radio, avgas 0..3] fitted; fixed: as it flies
-function planeShows(sup, fixed) {
-  const s = sup || [0, 0, 0, 0, 0];
-  return {
-    cowlL: fixed || s[1] > 0,
-    cowlDown: !fixed && !(s[1] > 0),
-    magneto: fixed || s[1] > 0,
-    pumpOpen: !fixed && !(s[2] > 0),
-    radio: fixed || s[3] > 0,
-    drum0: !fixed && s[4] > 0,
-    drum1: !fixed && s[4] > 1,
-    drum2: !fixed && s[4] > 2,
-    doorOpen: !fixed,
-    doorShut: fixed,
-    wheelFlat: !fixed,
-    wheelSound: fixed,
-    ground: !fixed,
-    propL: fixed || s[0] > 0,
-    propR: true,
-  };
-}
-const planeBit = (b, r, name) => (name.startsWith('drum') ? PLANE_BITS.drum(b, r, +name.slice(4)) : PLANE_BITS[name](b, r));
-// the prop: the plane with nothing fitted, in one piece
-BUILD.plane_wreck = (b, r) => {
-  PLANE_BITS.base(b, r);
-  const shows = planeShows(null, false);
-  for (const name in shows) {
-    if (!shows[name]) continue;
-    if (name === 'propR') b.group({ p: [PLANE.ENGINE_X, PLANE.ENGINE_Y, PLANE.HUB_Z] }, () => planeProp(b));
-    else if (name !== 'propL') planeBit(b, r, name);
-  }
-};
-
-// The quest plane as the game draws it (in place of the 'plane_wreck' prop, at the same origin): group, its two
-// propellers (props: [left, right], each a child with its origin on its hub and its axis along Z - spin rotation.z;
-// the left one is hidden until it is fitted), setParts(supplies) to show what has been fitted of [propeller,
-// magneto, pump, radio, avgas 0..3], and setFixed(true) for the aircraft whole and shut, as it flies.
-export function createQuestPlane(seed = 7) {
-  const h = hash('plane_wreck');
-  const r = makeRng(h * 31 + 5);
-  const b = new MeshBuilder(h);
-  PLANE_BITS.base(b, r);
-  const group = partsToGroup(b.build(), 'quest_plane');
-  const bits = {};
-  const pb = new MeshBuilder(h + 1);
-  planeProp(pb);
-  const propParts = pb.build();
-  for (const name in planeShows(null, false)) {
-    let g;
-    if (name === 'propL' || name === 'propR') {
-      g = partsToGroup(propParts, 'propeller');
-      g.position.set((name === 'propL' ? -1 : 1) * PLANE.ENGINE_X, PLANE.ENGINE_Y, PLANE.HUB_Z);
-    } else {
-      const sb = new MeshBuilder(h + 2 + Object.keys(bits).length);
-      planeBit(sb, r, name);
-      g = partsToGroup(sb.build(), name);
-    }
-    group.add(g);
-    bits[name] = g;
-  }
-  let sup = [0, 0, 0, 0, 0];
-  let fixed = false;
-  const show = () => {
-    const shows = planeShows(sup, fixed);
-    for (const name in shows) bits[name].visible = shows[name];
-  };
-  show();
-  void seed;
-  return {
-    group,
-    props: [bits.propL, bits.propR],
-    setParts(supplies) {
-      sup = Array.from(supplies || sup);
-      show();
-    },
-    setFixed(on) {
-      fixed = !!on;
-      show();
-    },
-  };
-}
-// (the take-off's: the same aircraft whole)
-export function createFlightPlane(seed = 7) {
-  const q = createQuestPlane(seed);
-  q.setFixed(true);
-  return q;
-}
+// (the plane at Calder Field, the wreck and the one that flies, and the light aircraft round it: aircraft.js)
 
 // The quest car repaired and running, for the crossing: the same sedan as the 'car' prop (its colour, its rust),
 // hood shut, all four wheels on, nothing under it, and no dark hull in the cabin, so survivors can be seated in it.
@@ -3077,51 +2735,6 @@ BUILD.fuel_truck = (b, r) => {
   weeds(b, r, [[1.1, -1.2], [-1.1, 0.4], [1.0, 3.4], [-0.5, -3.6]], 0.55);
 };
 
-// A light aircraft that did not get away: a four-seat high-wing single, nose to -Z, down on its collapsed nose
-// wheel with the tail in the air; the right wing tip is crumpled and the propeller bent.
-BUILD.light_plane = (b, r, v) => {
-  const white = [0.8, 0.79, 0.74], stripe = v ? [0.16, 0.3, 0.2] : [0.5, 0.16, 0.12];
-  b.push([0, 0.1, 0], [0.11, 0, 0]); // (nose down)
-  const secs = [
-    { z: -3.2, w: 0.5, h: 0.5, y: 0.82 },
-    { z: -2.95, w: 0.98, h: 0.92, y: 0.86 },
-    { z: -2.0, w: 1.14, h: 1.1, y: 0.95 },
-    { z: -1.3, w: 1.16, h: 1.36, y: 1.1 },
-    { z: 0.4, w: 1.12, h: 1.3, y: 1.12 },
-    { z: 2.0, w: 0.5, h: 0.6, y: 1.28 },
-    { z: 3.4, w: 0.12, h: 0.2, y: 1.4 },
-  ];
-  b.loft('aircraft', secs, roundProf, 10, { c: white });
-  b.cyl('dark', 0.25, 0.25, 0.03, 10, { p: [0, 0.82, -3.21], r: [PI / 2, 0, 0] });
-  b.cyl('aircraft', 0.06, 0.1, 0.03, 6, { p: [0, 1.4, 3.4], r: [PI / 2, 0, 0], c: white });
-  // spinner and the propeller, one blade bent back
-  b.sphere('aircraft', 0.14, 8, 5, { p: [0, 0.82, -3.26], s: [1, 1, 1.2], c: stripe });
-  b.box('aircraft', 0.14, 0.8, 0.03, { p: [0, 1.25, -3.3], r: [0.1, 0.3, 0], c: [0.1, 0.1, 0.1] });
-  b.box('aircraft', 0.14, 0.6, 0.03, { p: [0.05, 0.55, -3.2], r: [-0.7, 0.3, 0.15], c: [0.1, 0.1, 0.1] });
-  // the cabin: no windscreen left, dark inside, side windows
-  b.box('dark', 1.0, 0.5, 0.02, { p: [0, 1.5, -1.45], r: [-0.5, 0, 0] });
-  for (const sx of [-1, 1]) {
-    b.box('glass', 0.012, 0.4, 1.1, { p: [sx * 0.575, 1.45, -0.5] });
-    b.box('aircraft', 0.014, 0.16, 3.0, { p: [sx * 0.58, 1.0, -1.0], c: stripe });
-  }
-  // the wing on top, strutted to the cabin floor: the right tip crumpled down
-  slab(b, 'aircraft', { at: [-0.1, 1.84, -1.5], c: 1.5, t: 0.2 }, { at: [-5.2, 1.9, -1.4], c: 1.3, t: 0.14 }, { c: white });
-  slab(b, 'aircraft', { at: [0.1, 1.84, -1.5], c: 1.5, t: 0.2 }, { at: [4.0, 1.9, -1.42], c: 1.36, t: 0.15 }, { c: white });
-  slab(b, 'aircraft', { at: [4.0, 1.9, -1.42], c: 1.36, t: 0.15 }, { at: [5.1, 1.6, -1.2], c: 1.1, t: 0.1 }, { c: white });
-  for (const sx of [-1, 1]) b.cylBetween('steel', [sx * 0.55, 0.6, -0.9], [sx * 2.4, 1.78, -0.85], 0.03, 0.03, 5);
-  // tail
-  for (const sx of [-1, 1]) slab(b, 'aircraft', { at: [sx * 0.04, 1.4, 2.6], c: 0.8, t: 0.08 }, { at: [sx * 1.6, 1.42, 2.75], c: 0.55, t: 0.05 }, { c: white });
-  slab(b, 'aircraft', { at: [0, 1.4, 2.45], c: 0.95, t: 0.08 }, { at: [0, 2.3, 2.95], c: 0.45, t: 0.05 }, { c: stripe }, true);
-  // gear: the mains on their sprung legs, the nose leg folded under
-  for (const sx of [-1, 1]) {
-    b.cylBetween('steel', [sx * 0.45, 0.55, -0.6], [sx * 1.15, 0.2, -0.5], 0.035, 0.03, 5);
-    b.group({ p: [sx * 1.2, 0.2, -0.5] }, () => wheel(b, 0.2, 0.14, { flat: sx > 0 ? 0.3 : 0, rim: 'steel' }));
-  }
-  b.cylBetween('steel', [0, 0.45, -2.6], [0.25, 0.42, -2.0], 0.03, 0.03, 5);
-  b.pop();
-  weeds(b, r, [[0.6, -2.2], [-0.6, 0.6], [0.3, 2.6], [-2.4, -0.9], [3.2, -0.6]], 0.6);
-};
-
 // What a building came down as: broken slabs at all angles on a mound of bricks and dust, rebar standing out of it.
 BUILD.rubble_pile = (b, r) => {
   const prof = [[2.3, -0.02], [2.2, 0.12], [1.85, 0.42], [1.3, 0.8], [0.7, 1.08], [0.0, 1.16]];
@@ -3139,7 +2752,7 @@ BUILD.rubble_pile = (b, r) => {
   g.computeVertexNormals();
   const uv = g.attributes.uv;
   for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) * 0.7 + pos.getY(i) * 0.3, pos.getZ(i) * 0.7 - pos.getY(i) * 0.3);
-  b.add('concrete', g, { raw: true });
+  b.add('gravel', g, { raw: true });
   // what the heap is made of, where it shows: floor slabs on edge, standing out of it (inside the collider's circle)
   for (let k = 0; k < 5; k++) {
     const a = (k / 5) * PI * 2 + rr(r, -0.4, 0.4), d = rr(r, 0.5, 1.1);
@@ -3227,12 +2840,16 @@ BUILD.litter = (b, r, v) => {
 
 // What came off a building, small enough to step over: bricks, lumps of concrete, a bent bar.
 BUILD.debris = (b, r, v) => {
-  for (let k = 0; k < 4 + v; k++) b.rock('concrete', rr(r, 0.14, 0.24), { seed: 11 + k * 7 + v, scale: [1.3, 0.75, 1], p: [rr(r, -0.95, 0.95), 0.1, rr(r, -0.95, 0.95)] });
+  // broken concrete: lumps and bits of slab with their broken faces every way up, lying in their own grit
+  for (let k = 0; k < 6 + v * 2; k++) {
+    const sz = rr(r, 0.16, 0.42);
+    b.box(k % 4 === 3 ? 'brick' : 'concrete', sz * rr(r, 0.9, 1.5), sz * rr(r, 0.45, 0.8), sz * rr(r, 0.7, 1.2), { p: [rr(r, -0.95, 0.95), sz * 0.22, rr(r, -0.95, 0.95)], r: [rr(r, -0.7, 0.7), r() * PI, rr(r, -0.7, 0.7)] });
+  }
   for (let k = 0; k < 12; k++) b.box('brick', 0.22, 0.07, 0.1, { p: [rr(r, -1.15, 1.15), 0.04 + r() * 0.05, rr(r, -1.15, 1.15)], r: [rr(r, -0.3, 0.3), r() * PI, rr(r, -0.3, 0.3)] });
-  b.box('concrete', rr(r, 0.6, 0.9), 0.12, rr(r, 0.4, 0.6), { p: [rr(r, -0.6, 0.6), 0.1, rr(r, -0.6, 0.6)], r: [0.12, r() * PI, -0.1] });
+  b.box('concrete', rr(r, 0.7, 1.1), 0.13, rr(r, 0.45, 0.7), { p: [rr(r, -0.6, 0.6), 0.11, rr(r, -0.6, 0.6)], r: [0.14, r() * PI, -0.12] });
   const x = rr(r, -0.6, 0.6), z = rr(r, -0.6, 0.6);
   b.tube('rust', [[x - 0.6, 0.03, z], [x, 0.06, z + 0.15], [x + 0.4, 0.2, z + 0.1], [x + 0.55, 0.4, z + 0.3]], 0.012, 8, 4);
-  b.cyl('gravel', 1.25, 1.3, 0.02, 12, { p: [0, 0.01, 0] }); // the dust and grit it lies in
+  b.cyl('gravel', 1.25, 1.3, 0.02, 9, { p: [0, 0.01, 0], r: [0, r() * PI, 0] }); // the dust and grit it lies in
 };
 
 // A slope of rubble that can be walked up: what a storey came down as. Its colliders are six steps (props.js); the
@@ -3260,7 +2877,7 @@ BUILD.rubble_slope = (b, r, v) => {
   g.computeVertexNormals();
   const uv = g.attributes.uv;
   for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) * 0.6 + pos.getY(i) * 0.3, pos.getZ(i) * 0.6 - pos.getY(i) * 0.3);
-  b.add('concrete', g, { raw: true });
+  b.add('gravel', g, { raw: true });
   // floor slabs lying down its sides, as they slid (flat to the heap: a foot goes over them)
   for (let k = 0; k < 6; k++) {
     const a = (k / 6) * PI * 2 + rr(r, -0.3, 0.3);
