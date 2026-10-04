@@ -141,7 +141,7 @@ export class ProfilePanel extends Panel {
     const p = this.p;
     if (!p) return;
     this.sub.textContent = p.self ? 'you' : p.account ? 'signed in' : 'guest';
-    this.lv.textContent = String(this.rec?.level || p.level || 1);
+    this.lv.textContent = String(p.level || this.rec?.level || 1); // (this game's is the newer: it has this run's XP)
     this.nameEl.textContent = p.name;
     this.tags.textContent = '';
     const tag = (text, cls = '', icon = '') => {
