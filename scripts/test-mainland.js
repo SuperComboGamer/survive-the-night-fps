@@ -136,9 +136,11 @@ for (const seed of SEEDS) {
   // ---- what it is
   each('it is 1280 m across, at 1/32 m on the wire', seed, w.kind === WORLD.MAINLAND && w.size === MAINLAND_SIZE && w.half === MAINLAND_SIZE / 2 && w.gridN === MAINLAND_SIZE / GRID_STEP + 1 && w.posScale === POS_SCALE_WIDE && w.heights.length === w.gridN ** 2);
   const need = [ZONE.BRIDGEHEAD, ZONE.CITY, ZONE.INDUSTRIAL, ZONE.SUBURB, ZONE.TRUCKSTOP, ZONE.TERMINAL, ZONE.HANGARS, ZONE.FUEL_DEPOT];
+  // ...and what lies about the plain (mainland-places.js): every one of them, on every map
+  for (let id = ZONE.QUARANTINE; id <= ZONE.FARM_B; id++) need.push(id);
   const zoneOk = (zn) => zn && [zn.x, zn.z, zn.ry, zn.h, zn.flat, zn.blend, zn.clear].every(Number.isFinite) && Math.max(Math.abs(zn.x), Math.abs(zn.z)) + zn.flat < w.half - 20 && w.heightAt(zn.x, zn.z) > WATER_LEVEL + 0.5;
   each('every place is on it, inside the map and dry', seed, need.every((id) => zoneOk(w.zoneById[id])) && w.zones.length === need.length, need.filter((id) => !zoneOk(w.zoneById[id])).map((id) => ZONE_NAMES[id]).join(', '));
-  const fields = ['heightAt', 'floorAt', 'rayTerrain', 'isDeepWater', 'zoneAt', 'roadDistAt', 'roadKindAt', 'openingNear', 'darkAt', 'roads', 'highway', 'sea', 'trees', 'rocks', 'bushes', 'parts', 'props', 'lights', 'roofs', 'staticGrid', 'structGrid', 'colliderGrids', 'lootSpawns', 'containers', 'partSpots', 'openings', 'sites', 'resourceSpawns', 'hordeSpawns', 'spawnPoints', 'start', 'car', 'bridge', 'runway', 'city'];
+  const fields = ['heightAt', 'floorAt', 'rayTerrain', 'isDeepWater', 'zoneAt', 'roadDistAt', 'roadKindAt', 'openingNear', 'darkAt', 'roads', 'highway', 'sea', 'trees', 'rocks', 'bushes', 'parts', 'props', 'lights', 'roofs', 'staticGrid', 'structGrid', 'colliderGrids', 'lootSpawns', 'containers', 'partSpots', 'openings', 'sites', 'resourceSpawns', 'hordeSpawns', 'spawnPoints', 'start', 'car', 'bridge', 'runway', 'city', 'lake', 'ponds', 'landmarks'];
   each('every field the game reads of a world is there', seed, fields.every((k) => w[k] !== undefined && w[k] !== null) && w.mine === null && w.rail === null && w.fair === null && w.clinic === null && w.cemetery === null && w.darkAt(0, 0, 0) === 0, fields.filter((k) => w[k] === undefined || w[k] === null).join(', '));
   // the parts, at their set places
   const at = PLANE_PARTS.map((_, i) => w.partSpots.filter((sp) => sp.supply === i));
@@ -164,9 +166,17 @@ for (const seed of SEEDS) {
   // the skyline
   const cityH = w.zoneById[ZONE.CITY].h;
   const tall = w.parts.filter((p) => p.shape === 'box' && p.mat === 'concrete' && !p.rx && !p.rz && p.sx > 8 && p.sz > 8 && p.y + p.sy / 2 - cityH >= 20).map((p) => p.y + p.sy / 2 - cityH);
-  each('the city has its skyline: three to five towers, 20 to 42 m', seed, tall.length >= 3 && tall.length <= 5 && Math.max(...tall) <= 42 && Math.max(...tall) >= 30, tall.map((h) => h.toFixed(0)).join(' '));
+  each('the city has its skyline: five towers or more, the tallest 30 to 46 m', seed, tall.length >= 5 && Math.max(...tall) <= 46 && Math.max(...tall) >= 30, tall.map((h) => h.toFixed(0)).join(' '));
   const kinds = new Set(w.city.lots.map((l) => l.what));
   each('...and what the run needs of it: two parts shops, a police station, a pharmacy, a hardware store', seed, w.city.lots.filter((l) => l.what === 'aero').length === 2 && ['police', 'pharmacy', 'hardware', 'tower', 'office'].every((k) => kinds.has(k)), [...kinds].join(' '));
+  // what makes it a place: its landmarks, each on the field map by name; what it has come to: a block down, a tower's
+  // top across a street, smoke standing over it; and no lot of it left empty
+  each('...its landmarks: a hospital, a church, a cinema, a station, a filling station, the bus depot, named on the map', seed, ['hospital', 'church', 'cinema', 'subway', 'gas', 'depot', 'collapse', 'carpark'].every((k) => kinds.has(k)) && w.landmarks.length >= 8 && w.landmarks.every((m) => m.name && Number.isFinite(m.x + m.z)), [...kinds].join(' ') + ' / ' + w.landmarks.map((m) => m.name).join(', '));
+  each('...its ruin: a fallen tower across a street, smoke over it, every lot built on or fallen in', seed, w.parts.some((p) => p.across) && w.lights.filter((l) => l.kind === 'smoke').length >= 5 && w.lights.some((l) => l.kind === 'fire') && w.city.lots.every((l) => l.what), String(w.lights.filter((l) => l.kind === 'smoke').length));
+  each('there is a lake, with the marina on its shore, and ponds', seed, !!w.lake && Math.abs(Math.hypot(w.zoneById[ZONE.MARINA].x - w.lake.x, w.zoneById[ZONE.MARINA].z - w.lake.z) - w.lake.r - 11.5) < 0.01 && w.isDeepWater(w.lake.x, w.lake.z) && w.ponds.length >= 2 && w.ponds.every((p) => w.isDeepWater(p.x, p.z)), JSON.stringify(w.lake));
+  // (a road of the map comes within the place's own ground: its gate is on it, or it runs through)
+  const roadTo = (zn) => w.roads.some((r) => { for (let k = 0; k < r.pts.length; k += 2) if (Math.hypot(r.pts[k] - zn.x, r.pts[k + 1] - zn.z) < zn.flat + 4) return true; return false; });
+  each('a road reaches every place', seed, w.zones.every(roadTo), w.zones.filter((zn) => !roadTo(zn)).map((zn) => ZONE_NAMES[zn.id]).join(', '));
 
   // ---- quantisation: the far corners, and a walk across
   usePos(w);
@@ -194,7 +204,7 @@ for (const seed of SEEDS) {
   const adrift = [];
   for (const p of w.props) {
     const def = PROPS[p.type];
-    if (!def || !(def.boxes || def.cyls)) continue;
+    if (!def || !(def.boxes || def.cyls) || p.afloat) continue; // (afloat: a boat on the lake)
     let under = w.heightAt(p.x, p.z);
     for (const q of slabs) {
       const top = q.y + q.sy / 2;

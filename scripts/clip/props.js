@@ -5,11 +5,12 @@
 // each one with the /tp to stand at it in the game (as an admin: say `/admin <ADMIN_SECRET>` first).
 // scripts/test-world.js checks the same on its four valleys as part of npm test; this is the wide net.
 //
-// usage: node scripts/clip/props.js [--seeds 1-30] [--root <tree>] [--min 0.1] [--show car_wreck] [--all]
+// usage: node scripts/clip/props.js [--seeds 1-30] [--root <tree>] [--min 0.1] [--show car_wreck] [--all] [--world mainland]
 //   --seeds  a range a-b or a list (default 1-30)
 //   --min    how far into each other counts (m, default 0.1: touching is fine)
 //   --show   list each overlap whose pair names match (a regular expression)
 //   --all    count sandbag against sandbag too (walls of them are laid overlapping on purpose)
+//   --world  mainland: the run's second map (shared/mainland.js) instead of the island
 // npm run clip:props -- --seeds 1-100
 import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
@@ -17,7 +18,8 @@ import { parseArgs, REPO } from './lib.js';
 
 const args = parseArgs(process.argv.slice(2), { seeds: '1-30', min: '0.1' });
 const root = resolve(args.root || REPO);
-const { createWorld, TREE_TYPES, ROCK_TYPES } = await import(pathToFileURL(join(root, 'shared', 'world.js')).href);
+const { createWorld: createIsland, TREE_TYPES, ROCK_TYPES } = await import(pathToFileURL(join(root, 'shared', 'world.js')).href);
+const createWorld = args.world === 'mainland' ? (await import(pathToFileURL(join(root, 'shared', 'mainland.js')).href)).createMainland : createIsland;
 const { PROPS } = await import(pathToFileURL(join(root, 'shared', 'props.js')).href);
 const { ZONE_NAMES } = await import(pathToFileURL(join(root, 'shared', 'defs.js')).href);
 const seeds = String(args.seeds).includes('-') ? (([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i))(String(args.seeds).split('-').map(Number)) : String(args.seeds).split(',').map(Number);

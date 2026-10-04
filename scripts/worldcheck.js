@@ -360,7 +360,7 @@ export function checkWorld(world, seed, { found, mapsWith, counts }) {
     // (walls, posts, machines: world.parts; props are not in it. The timbering of a drift that runs under the road
     // is not in its way.)
     const R = zn.flat + 20;
-    const walls = world.parts.filter((p) => (p.shape === 'box' || p.shape === 'cyl') && !p.rx && !p.rz && p.sy >= 1.5 && p.y - p.sy / 2 < zn.h + 0.5 && p.y + p.sy / 2 > world.heightAt(p.x, p.z) && Math.hypot(p.x - zn.x, p.z - zn.z) < R);
+    const walls = world.parts.filter((p) => (p.shape === 'box' || p.shape === 'cyl') && !p.rx && !p.rz && !p.across && p.sy >= 1.5 && p.y - p.sy / 2 < zn.h + 0.5 && p.y + p.sy / 2 > world.heightAt(p.x, p.z) && Math.hypot(p.x - zn.x, p.z - zn.z) < R);
     let hit = []; // [piece, distance from the centre line]
     for (const p of walls) {
       counts.road++;

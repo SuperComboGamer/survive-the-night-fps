@@ -814,6 +814,25 @@ export const ZONE = {
   FUEL_DEPOT: 32, // ...its fuel depot
   SUBURB: 33, // Eastgate: the houses on the city's far side
   TRUCKSTOP: 34, // a truck stop on the road out to the airfield
+  // ...and what lies about it, out over the plain (shared/mainland-places.js)
+  QUARANTINE: 35, // a tent city behind wire, where the mainland's evacuees were held
+  ROADBLOCK: 36, // the army's last line on Route 9, between the bridge and the city
+  SUBSTATION: 37,
+  WATERWORKS: 38, // a pump house under a water tower
+  MARINA: 39, // on the lake
+  TRAILERPARK: 40,
+  SALVAGE: 41, // a breaker's yard
+  MALL: 42, // a big-box store and its car park
+  SCHOOL: 43,
+  MAST: 44, // a radio station under its mast, on high ground
+  MOTORINN: 45, // a motel on the highway
+  GRAVEYARD: 46,
+  LOGGING: 47,
+  CRASH: 48, // an airliner that came down short of the runway
+  WESTGATE: 49, // houses on the city's seaward side
+  CONTAINERS: 50, // a freight yard of shipping containers
+  FARM_A: 51,
+  FARM_B: 52,
 };
 // NOTIFY.CACHE: what the bridgehead cache handed a survivor (acts.js BRIDGEHEAD)
 export const CACHE_GAVE = { PISTOL: 1, AMMO: 2, BANDAGE: 4, MELEE: 8, BUILD: 16 };
@@ -854,6 +873,24 @@ export const ZONE_NAMES = [
   'Calder Fuel Depot',
   'Eastgate',
   'Mile 9 Truck Stop',
+  'Camp Hollis Quarantine',
+  'Route 9 Checkpoint',
+  'Calder Substation',
+  'Calder Waterworks',
+  'Lake Morrow Marina',
+  'Sunset Acres',
+  "Benny's Auto Salvage",
+  'Gateway Plaza',
+  'Calder Elementary',
+  'WKCL Radio Mast',
+  'Starlight Motor Inn',
+  'Hillside Cemetery',
+  'Dunmore Logging Camp',
+  'Flight 212',
+  'Westgate',
+  'Calder Freight Yard',
+  'Hale Farm',
+  'Pruitt Farm',
 ];
 
 // weighted loot tables per zone: [item, weight, min, max]
@@ -895,7 +932,30 @@ export const LOOT_TABLES = {
   [ZONE.HANGARS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 4, 1, 3], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_FUEL, 3, 30, 60], [ITEM.PLATE, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.FLARE, 3, 1, 2], [ITEM.MEDKIT, 1, 1, 1]],
   [ZONE.FUEL_DEPOT]: [[ITEM.AMMO_FUEL, 7, 30, 60], [ITEM.CHEM, 6, 1, 3], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.SCRAP, 5, 2, 4], [ITEM.CLOTH, 4, 2, 3], [ITEM.FLARE, 3, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.AMMO_9MM, 3, 8, 16]],
   [ZONE.TRUCKSTOP]: [[ITEM.TUNA, 6, 1, 2], [ITEM.ENERGY_DRINK, 6, 1, 2], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.POWDER, 3, 2, 4], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.PISTOL, 1, 1, 1]],
+  // the places out over the plain: each is worth the walk for something of its own (first-pass numbers, not played)
+  // medicine, behind the wire
+  [ZONE.QUARANTINE]: [[ITEM.BANDAGE, 8, 1, 3], [ITEM.MEDKIT, 4, 1, 1], [ITEM.PAINKILLERS, 6, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.CLOTH, 5, 2, 4], [ITEM.TUNA, 4, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.AMMO_556, 3, 15, 30], [ITEM.JACKET, 1, 1, 1]],
+  // the army's ammunition
+  [ZONE.ROADBLOCK]: [[ITEM.AMMO_556, 7, 20, 40], [ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.WIRE, 4, 1, 3], [ITEM.PLATE, 3, 1, 1], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.GRENADE, 2, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.M4A1, 1, 1, 1], [ITEM.AMMO_145, 1, 2, 3]],
+  // wire, batteries and scrap: what a generator and its floodlights are built of
+  [ZONE.SUBSTATION]: [[ITEM.WIRE, 8, 1, 3], [ITEM.BATTERY, 7, 1, 3], [ITEM.SCRAP, 6, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.CHEM, 3, 1, 2], [ITEM.NAILS, 3, 4, 10]],
+  [ZONE.WATERWORKS]: [[ITEM.CHEM, 7, 1, 3], [ITEM.SCRAP, 6, 2, 4], [ITEM.TAPE, 5, 1, 2], [ITEM.ROPE, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 3, 1, 2], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.HAMMER, 1, 1, 1]],
+  [ZONE.MARINA]: [[ITEM.ROPE, 7, 1, 3], [ITEM.AMMO_FLARE, 5, 1, 3], [ITEM.FLARE, 4, 1, 2], [ITEM.TUNA, 6, 1, 3], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.AMMO_FUEL, 4, 20, 40], [ITEM.BATTERY, 3, 1, 2], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.FLARE_GUN, 1, 1, 1], [ITEM.CROSSBOW, 1, 1, 1]],
+  [ZONE.TRAILERPARK]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.AMMO_SHELLS, 6, 4, 8], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.TUNA, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.POWDER, 4, 2, 4], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.DB_SHOTGUN, 1, 1, 1], [ITEM.BAT, 1, 1, 1]],
+  [ZONE.SALVAGE]: [[ITEM.SCRAP, 10, 2, 5], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.PLATE, 2, 1, 1], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.SPIKED_BAT, 1, 1, 1]],
+  // a bit of everything, by the shelf
+  [ZONE.MALL]: [[ITEM.TUNA, 7, 1, 3], [ITEM.ENERGY_DRINK, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.BATTERY, 6, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.NAILS, 5, 6, 14], [ITEM.ROPE, 3, 1, 2], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.POWDER, 4, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
+  [ZONE.SCHOOL]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 6, 1, 2], [ITEM.TUNA, 6, 1, 2], [ITEM.ENERGY_DRINK, 4, 1, 2], [ITEM.BATTERY, 5, 1, 2], [ITEM.TAPE, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BAT, 1, 1, 1]],
+  [ZONE.MAST]: [[ITEM.BATTERY, 7, 1, 3], [ITEM.WIRE, 6, 1, 3], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_556, 3, 10, 20], [ITEM.TAPE, 4, 1, 2], [ITEM.FLARE, 3, 1, 2], [ITEM.AMMO_FLARE, 3, 1, 3], [ITEM.HUNTING_RIFLE, 1, 1, 1]],
+  [ZONE.MOTORINN]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.ALCOHOL, 6, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.BANDAGE, 5, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.BATTERY, 4, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.ENERGY_DRINK, 3, 1, 2], [ITEM.POWDER, 3, 2, 4], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.DECOY, 1, 1, 1]],
+  [ZONE.GRAVEYARD]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.TORCH, 5, 1, 2], [ITEM.HERB, 5, 1, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.ROPE, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 3, 6], [ITEM.MEDKIT, 1, 1, 1]],
+  [ZONE.LOGGING]: [[ITEM.WOOD, 10, 3, 6], [ITEM.STICK, 6, 3, 6], [ITEM.NAILS, 7, 6, 12], [ITEM.ROPE, 5, 1, 2], [ITEM.AMMO_FUEL, 4, 20, 40], [ITEM.LEATHER, 3, 1, 2], [ITEM.AMMO_308, 3, 3, 6], [ITEM.MACHETE, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
+  // what two hundred people were carrying
+  [ZONE.CRASH]: [[ITEM.CLOTH, 8, 2, 4], [ITEM.PAINKILLERS, 6, 1, 2], [ITEM.BANDAGE, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.BATTERY, 5, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.ENERGY_DRINK, 4, 1, 2], [ITEM.TAPE, 3, 1, 1], [ITEM.MEDKIT, 2, 1, 1], [ITEM.AMMO_9MM, 3, 8, 16], [ITEM.FLARE, 3, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.KEVLAR, 1, 1, 1]],
+  [ZONE.CONTAINERS]: [[ITEM.SCRAP, 7, 2, 4], [ITEM.NAILS, 6, 6, 14], [ITEM.WOOD, 5, 2, 5], [ITEM.TAPE, 5, 1, 2], [ITEM.ROPE, 4, 1, 2], [ITEM.TUNA, 5, 1, 3], [ITEM.CHEM, 4, 1, 2], [ITEM.POWDER, 4, 3, 6], [ITEM.WIRE, 3, 1, 3], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.PLATE, 1, 1, 1]],
 };
+LOOT_TABLES[ZONE.WESTGATE] = LOOT_TABLES[ZONE.SUBURB]; // (houses are houses)
+LOOT_TABLES[ZONE.FARM_A] = LOOT_TABLES[ZONE.FARM_B] = LOOT_TABLES[ZONE.BARN];
 
 // ---------------------------------------------------------------- searchable containers
 // Every place (and many roadside / woodland sites) has containers: hold [E] to search.
