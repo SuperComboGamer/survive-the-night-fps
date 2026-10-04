@@ -148,7 +148,8 @@ export async function startVite(root = REPO) {
 
 /**
  * The real game: node server/index.js serving the tree's dist/ (built first if there is none, or with build: true),
- * NODE_ENV=production, an admin secret for the chat commands (/give, /tp, ...), godmode, a fixed seed and a long day.
+ * the admin chat commands (/give, /tp, ...) for every client (NODE_ENV=test with DEV_ADMIN=1; and an ADMIN_SECRET, for a
+ * tree from before admin accounts), godmode, a fixed seed and a long day.
  * Returns { url, secret, stop }.
  */
 export async function startGame(root = REPO, { seed = 1, build = false, env = {} } = {}) {
@@ -158,7 +159,7 @@ export async function startGame(root = REPO, { seed = 1, build = false, env = {}
   const secret = 'clip' + Math.random().toString(36).slice(2, 10);
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'production', ADMIN_SECRET: secret, GODMODE: '1', SEED: String(seed), START_DAY: '1', DAY_SECONDS: '3000', DATABASE_URL: '', DEBUG_COMMANDS: '1', ...env },
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', DEV_ADMIN: '1', ADMIN_SECRET: secret, GODMODE: '1', SEED: String(seed), START_DAY: '1', DAY_SECONDS: '3000', DATABASE_URL: '', DEBUG_COMMANDS: '1', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server = child;

@@ -28,11 +28,10 @@ check('none, or one out of range, is the default for the id', [CHARACTER_NONE, 1
 check('the default is the look the id picked before the roster ((id * 31 + 7) % 10)', [1, 2, 13, 400].every((id) => defaultCharacter(id) === (id * 31 + 7) % 10));
 
 // ---------------------------------------------------------------- on the wire, with a real server
-const SECRET = 'chars' + Math.random().toString(36).slice(2, 8);
 const port = 39700 + Math.floor(Math.random() * 90);
 const dir = mkdtempSync(join(tmpdir(), 'stn-chars-'));
 const proc = spawn(process.execPath, ['server/index.js'], {
-  env: { ...process.env, PORT: String(port), STATS_FILE: join(dir, 'stats.json'), REJOIN_GRACE_SECONDS: '20', GAME_IDLE_SECONDS: '30', ADMIN_SECRET: SECRET, DATABASE_URL: '', GODMODE: '' },
+  env: { ...process.env, PORT: String(port), STATS_FILE: join(dir, 'stats.json'), REJOIN_GRACE_SECONDS: '20', GAME_IDLE_SECONDS: '30', NODE_ENV: 'test', DEV_ADMIN: '1', DATABASE_URL: '', GODMODE: '' }, // (DEV_ADMIN: /kill below is an admin command)
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let log = '';
@@ -79,6 +78,7 @@ const client = (code, name, pid, char) =>
           const flags = r.u8();
           r.u16();
           r.u16();
+          r.u8(); // (their level)
           if (flags & 2) {
             r.i16();
             r.i16();
@@ -126,8 +126,6 @@ try {
   check('...and keeps their character', charOf(back, ann.id) === 3 && charOf(ben, ann.id) === 3, `${charOf(back, ann.id)}`);
 
   // dying and turning: the same character, a zombie now
-  back.say(`/admin ${SECRET}`);
-  await sleep(1200);
   back.say('/kill');
   await sleep(2500);
   const me = ben.list.find((p) => p.id === ann.id);
