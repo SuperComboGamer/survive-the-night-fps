@@ -5,14 +5,25 @@
 import * as THREE from 'three';
 import { getMaterial, staticSurface } from './materials.js';
 import { createProp } from './models/props.js';
+import { PROPS } from '../../shared/props.js';
+import { buildCity, TIER } from './citykit.js';
 
 const CHUNK = 80;
+const CHUNK_CITY = 112; // (the mainland's: its city is a great many materials, and every chunk draws each of them once)
 const IDENTITY = new THREE.Matrix4();
 // A (chunk, material) mesh whose largest piece has bounding radius r is drawn out to r * DETAIL_DIST
 // (never closer than DETAIL_MIN): bottles, cans and tail lights stop costing a draw call once they are a
 // few pixels wide, while anything with a building, wall or car in it keeps the full view distance.
 const DETAIL_DIST = 280;
 const DETAIL_MIN = 60;
+// In the city (a world with world.city) that rule is not enough: a bottle shares its material with a bus, and a
+// room's furniture is drawn from a mile off. There a (chunk, material) is split in tiers by how far its pieces need
+// to be seen: 0 as above; the others out to TIER_DIST and no further - the small things of a street, what stands in
+// a room, the fine detail of a building's face (citykit.js: frames, sills, railings).
+export { TIER };
+const TIER_DIST = [0, 170, 100];
+// A material that casts no shadow at all (userData.noShadow: stains and lettering laid on a wall).
+const NOSHADOW = 4;
 
 // Which faces of a material the depth pass draws into a shadow map (three's rule: the back faces of a
 // one-sided material, both of a two-sided one), or CUTOUT when its texture punches holes in the shadow (chain
@@ -21,6 +32,7 @@ const DETAIL_MIN = 60;
 const CUTOUT = 3;
 const SHADOW_SIDE = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide };
 function shadowSide(mat) {
+  if (mat.userData.noShadow) return NOSHADOW;
   if ((mat.alphaTest > 0 && (mat.map || mat.alphaMap)) || mat.alphaToCoverage || mat.displacementMap) return CUTOUT;
   return mat.shadowSide ?? SHADOW_SIDE[mat.side];
 }
@@ -271,13 +283,32 @@ export class StaticWorld {
     // wuv: [ax, az], the part's local x axis in the world - its UVs are then laid out in world space, so
     // courses of brick, boards and logs run unbroken across the pieces a wall is built from.
     // uvo: [du, dv] shifts the UVs (so every window pane shows a different part of the glass)
-    const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null) => {
-      const key = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
+    // tier: how far it is seen (TIER; 0: by its size, as everything on the island)
+    const tierKeys = new Map(); // material -> [the keys of its tiers]
+    const tierKey = (mat, tier) => {
+      if (!tier) return mat;
+      let keys = tierKeys.get(mat);
+      if (!keys) tierKeys.set(mat, (keys = []));
+      return (keys[tier] ||= { mat, tier });
+    };
+    // In the city every material that is one plain colour (the dark of a window, rubber, a tail light, a bottle) is
+    // drawn as one, the colour written into the vertices: a draw call a chunk, not one for each of them.
+    const size = (this.chunkSize = world.city ? CHUNK_CITY : CHUNK);
+    const FLAT = world.city ? getMaterial('flat') : null;
+    const plain = (mat) => FLAT && mat.isMeshLambertMaterial && !mat.map && !mat.vertexColors && !mat.transparent && !mat.alphaTest && !mat.userData.staticGrime;
+    const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null, tier = 0) => {
+      let flat = null;
+      if (plain(mat)) {
+        flat = mat.color;
+        mat = FLAT;
+      }
+      const key = `${Math.floor(x / size)},${Math.floor(z / size)}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = new Map()));
-      let list = b.get(mat);
-      if (!list) b.set(mat, (list = { entries: [], verts: 0, radius: 0 }));
-      list.entries.push({ tpl, m, tint, wuv, uvo });
+      const lk = tierKey(mat, tier);
+      let list = b.get(lk);
+      if (!list) b.set(lk, (list = { entries: [], verts: 0, radius: 0, mat, tier }));
+      list.entries.push({ tpl, m, tint, wuv, uvo, flat });
       list.verts += tpl.count;
       list.radius = Math.max(list.radius, tpl.radius * m.getMaxScaleOnAxis());
     };
@@ -331,6 +362,7 @@ export class StaticWorld {
       add(x, z, mat, tpl, new THREE.Matrix4().makeTranslation(lx, ly, lz).premultiply(m));
     };
     world.parts.forEach((part, pi) => {
+      if (part.hidden) return; // (a solid the city's kit draws in its own way: citykit.js)
       let g;
       // glass: a thin pane set back in the opening, framed by casings (the wall below it came just before)
       const glass = part.shape === 'box' && part.mat === 'glass';
@@ -374,8 +406,17 @@ export class StaticWorld {
       addTrim(o.x, o.z, mat, m, [o.w / 2 + 0.05, o.h / 2 + 0.03, 0, 0.1, o.h + 0.06, t + 0.05]);
       addTrim(o.x, o.z, mat, m, [0, o.h + 0.07, 0, o.w + 0.32, 0.14, t + 0.06]);
     }
+    // (the city: what is small is seen from near only - a room's furniture nearer still)
+    const propTier = (type) => {
+      if (!world.city) return 0;
+      const sz = PROPS[type]?.size;
+      if (!sz) return 0;
+      const r = Math.hypot(sz[0], sz[1], sz[2]) / 2;
+      return r < 1.25 ? TIER.ROOM : r < 4.6 ? TIER.STREET : 0; // (a car, a van, a truck are things of the street: a bus, a hangar's plane are seen from across the city)
+    };
     for (const pr of world.props) {
       if (pr.live) continue; // (drawn by the game itself: the car the team came in, the plane - they change, and a cutscene moves them)
+      const tier = propTier(pr.type);
       let obj;
       try {
         obj = createProp(pr.type, pr.seed);
@@ -396,27 +437,31 @@ export class StaticWorld {
           // multi-material mesh: split by groups
           o.geometry.groups.forEach((grp, gi) => {
             const mat = mats[grp.materialIndex];
-            add(pr.x, pr.z, mat, cachedTpl(o.geometry, !!mat.vertexColors, gi), m);
+            add(pr.x, pr.z, mat, cachedTpl(o.geometry, !!mat.vertexColors, gi), m, null, null, null, tier);
           });
           return;
         }
-        add(pr.x, pr.z, mats[0], cachedTpl(o.geometry, !!mats[0].vertexColors), m);
+        add(pr.x, pr.z, mats[0], cachedTpl(o.geometry, !!mats[0].vertexColors), m, null, null, null, tier);
       });
     }
+    // the city's buildings, built from what the world says of each (world.city.buildings)
+    if (world.city) buildCity(world, (x, z, matName, tpl, tier = 0) => add(x, z, staticSurface(getMaterial(matName)), tpl, IDENTITY, null, null, null, tier));
     const isShadowFrustum = shadowFrustumTest(scene);
     this.casters = new THREE.Group();
     this.casters.name = 'static-shadow-casters';
     const nm = new THREE.Matrix3();
     for (const [key, b] of buckets) {
       const [cx, cz] = key.split(',').map(Number);
-      const chunk = { cx: (cx + 0.5) * CHUNK, cz: (cz + 0.5) * CHUNK, meshes: [], casters: [] };
+      const chunk = { cx: (cx + 0.5) * size, cz: (cz + 0.5) * size, meshes: [], casters: [] };
       // The positions of a whole chunk live in one vertex buffer that its meshes and its casters all read (no
       // second copy for the shadows): every material owns a run of it. The runs are ordered by shadow side and,
       // within a side, from the pieces seen furthest away to the nearest, so a caster is a single run too and
       // can stop where the meshes it stands in for stop being drawn.
-      for (const [mat, list] of b) {
-        list.side = shadowSide(mat);
-        list.maxDist = Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
+      for (const list of b.values()) {
+        // (the fine detail of a face and what is small enough to stand in a room cast no shadow: they are near the
+        // wall or the floor they would cast it on, and there are a great many of them)
+        list.side = list.tier === TIER.DETAIL ? NOSHADOW : shadowSide(list.mat);
+        list.maxDist = list.tier ? TIER_DIST[list.tier] : Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
       }
       const runs = [...b.values()].sort((p, q) => p.side - q.side || q.maxDist - p.maxDist);
       let total = 0;
@@ -426,7 +471,8 @@ export class StaticWorld {
       }
       const chunkPos = new Float32Array(total * 3);
       const shared = new THREE.InterleavedBuffer(chunkPos, 3);
-      for (const [mat, list] of b) {
+      for (const list of b.values()) {
+        const mat = list.mat;
         const n = list.verts;
         const pos = chunkPos.subarray(list.base * 3, (list.base + n) * 3);
         const nrm = new Float32Array(n * 3);
@@ -435,7 +481,7 @@ export class StaticWorld {
         const ground = mat.userData.staticGrime ? new Float32Array(n) : null;
         const tints = mat.userData.staticPaint ? new Float32Array(n * 3).fill(1) : null;
         let o = 0;
-        for (const { tpl, m, tint, wuv, uvo } of list.entries) {
+        for (const { tpl, m, tint, wuv, uvo, flat } of list.entries) {
           const me = m.elements;
           nm.getNormalMatrix(m);
           const ne = nm.elements;
@@ -482,7 +528,9 @@ export class StaticWorld {
               tints[k + 2] = tint.b;
             }
           }
-          if (col) col.set(tpl.col, o * 3);
+          if (col && flat) for (let i = 0; i < tpl.count; i++) col.set([flat.r, flat.g, flat.b], (o + i) * 3);
+          else if (col && tpl.col) col.set(tpl.col, o * 3);
+          else if (col) col.fill(1, o * 3, (o + tpl.count) * 3);
           o += tpl.count;
         }
         const merged = new THREE.BufferGeometry();
@@ -506,7 +554,7 @@ export class StaticWorld {
         chunk.meshes.push(mesh);
       }
       // one caster per shadow side (nearly every chunk has one or two)
-      for (let i = 0; i < runs.length && runs[i].side !== CUTOUT; ) {
+      for (let i = 0; i < runs.length && runs[i].side < CUTOUT; ) {
         const first = runs[i];
         const dist = [];
         const end = [];
@@ -540,8 +588,8 @@ export class StaticWorld {
   }
 
   update(camPos, maxDist) {
-    const lim = (maxDist + CHUNK * 0.75) ** 2;
-    const half = CHUNK / 2;
+    const lim = (maxDist + this.chunkSize * 0.75) ** 2;
+    const half = this.chunkSize / 2;
     for (const c of this.chunks) {
       const dx = c.cx - camPos.x;
       const dz = c.cz - camPos.z;

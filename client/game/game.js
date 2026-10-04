@@ -2598,7 +2598,7 @@ export class Game {
     this.under += (dark - this.under) * Math.min(1, dt * 4);
     if (this.under < 0.002) this.under = 0;
     this._envOver.under = this.under;
-    this._envOver.fogMul = cine ? cine.fogMul : 0; // (a cutscene's long shots see further than the day's haze lets a survivor)
+    this._envOver.fogMul = this.debugFog ?? (cine ? cine.fogMul : 0); // (a cutscene's long shots see further than the day's haze lets a survivor; debugFog: a look-dev camera's)
     this.env.update(dt, cycle, cam.position, time, weather, this._envOver);
     this.staticWorld.update(cam.position, Math.max(cine ? cine.far : 0, this.env.fogVisibility + 40));
     this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
