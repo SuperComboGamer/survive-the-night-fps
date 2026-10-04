@@ -29,6 +29,8 @@ export const TEXTURE_WORLD_SIZE = {
   burlap: 0.6, bone: 0.3, charred: 1, skin: 0.6, mattress: 1, plastic: 1, pumpkin: 1, ash: 1, cardboard: 0.6,
   ground_grass: 4, ground_dirt: 4, ground_forest: 4, ground_road: 4, ground_asphalt: 4, ground_mud: 4, ground_sand: 4,
   aircraft: 4,
+  // the city's (citykit.js)
+  plaster: 2, lino: 2.4, ceiling: 4.8, roofing: 4,
 };
 
 function registerTex(t) {
@@ -3358,7 +3360,7 @@ GEN.lino = () => {
     const t = state[cy * n + cx];
     const lx = x - cx * cs, ly = y - cy * cs;
     const e = Math.min(lx, cs - lx, ly, cs - ly);
-    const v = ((cx + cy) % 2 ? 0.44 : 0.7) * t.k * (0.84 + a[p] * 0.3) * (0.92 + b[p] * 0.16);
+    const v = ((cx + cy) % 2 ? 0.56 : 0.68) * t.k * (0.84 + a[p] * 0.3) * (0.92 + b[p] * 0.16);
     let R = v * 190, G = v * 186, B = v * 168;
     if (t.gone) {
       const k2 = 0.16 + b[p] * 0.1;
@@ -3380,13 +3382,13 @@ GEN.lino = () => {
   return { canvas: c };
 };
 
-// Ceiling tiles on a grid, 0.6 m (2.4 m to the repeat): stained, some gone to the dark void above.
+// Ceiling tiles on a grid, 0.6 m (4.8 m to the repeat): stained, some gone to the dark void above.
 GEN.ceiling = () => {
-  const W = 512, n = 4, cs = W / n;
+  const W = 512, n = 8, cs = W / n;
   const r = rngf(1321);
   const a = fbm(W, W, 5, 5, 4, 1321), b = fbm(W, W, 60, 60, 2, 1322);
   const gone = [];
-  for (let k = 0; k < n * n; k++) gone.push(r() < 0.16);
+  for (let k = 0; k < n * n; k++) gone.push(r() < 0.13);
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;

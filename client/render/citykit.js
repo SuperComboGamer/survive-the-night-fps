@@ -45,12 +45,15 @@ class Soup {
     this.frame(0, 0, 0, 0);
   }
   // where what follows stands: origin (world), yaw (a Builder's ry)
-  frame(ox, oy, oz, ry) {
+  // tilt: tipped about its own z as well, its +x end up (a length of tower lying not quite level)
+  frame(ox, oy, oz, ry, tilt = 0) {
     this.ox = ox;
     this.oy = oy;
     this.oz = oz;
     this.c = Math.cos(ry);
     this.s = Math.sin(ry);
+    this.tc = Math.cos(tilt);
+    this.ts = Math.sin(tilt);
   }
   list(mat, tier) {
     const key = mat + '|' + tier;
@@ -61,7 +64,8 @@ class Soup {
   // a triangle of the frame's points [x, y, z], counter-clockwise from outside
   tri(mat, tier, a, b, c, ua, ub, uc, col = WHITE, nrm = null) {
     const l = this.list(mat, tier);
-    const { ox, oy, oz, c: cs, s: sn } = this;
+    const { ox, oy, oz, c: cs, s: sn, tc, ts } = this;
+    if (ts) [a, b, c] = [a, b, c].map((q) => [q[0] * tc - q[1] * ts, q[0] * ts + q[1] * tc, q[2]]);
     const ax = ox + cs * a[0] + sn * a[2], ay = oy + a[1], az = oz - sn * a[0] + cs * a[2];
     const bx = ox + cs * b[0] + sn * b[2], by = oy + b[1], bz = oz - sn * b[0] + cs * b[2];
     const cx = ox + cs * c[0] + sn * c[2], cy = oy + c[1], cz = oz - sn * c[0] + cs * c[2];
@@ -850,6 +854,11 @@ function rubble(S, x, y, z, rx, rz, h, rnd, tier = TIER.FAR, lumps = 0, brick = 
       S.tri('gravel', tier, p1, p2, p3, uv(p1), uv(p2), uv(p3));
     }
   }
+  // (what has grown on it since: weeds at its foot and up its sides)
+  if (!lumps) for (let k = 0; k < 3; k++) {
+    const an = rnd() * PI * 2, t = 0.5 + rnd() * 0.5;
+    weedsAt(S, x + Math.cos(an) * rx * t, y + hgt(t) * 0.7, z + Math.sin(an) * rz * t, 0.5 + rnd() * 0.5, rnd);
+  }
   const n = lumps || Math.round(14 + rx * rz * 3.2);
   for (let k = 0; k < n; k++) {
     const an = rnd() * PI * 2, t = Math.sqrt(rnd()) * 0.95;
@@ -1125,7 +1134,7 @@ function opening(S, In, o, a0, a1, t, R, rnd) {
 // way the tower fell) by w (local z) by h high: what was a side of the tower is its top now, its windows at the sky;
 // its two long flanks are the tower's other sides on their sides; its ends are broken storeys.
 function fallen(S, T) {
-  S.frame(T.x, T.y, T.z, T.ry);
+  S.frame(T.x, T.y, T.z, T.ry, T.tilt || 0);
   const st = STYLE[T.style] || STYLE.office;
   const B = { seed: T.seed, st, wall: st.curtain ? 'metal' : T.mat, tint: WHITE, wear: 1, burnt: 0, fh: T.fh };
   const hl = T.len / 2, hw = T.w / 2, h = T.h;
@@ -1172,6 +1181,10 @@ function fallen(S, T) {
   plane([-hl, h, hw], [1, 0, 0], [0, 0, -1], T.len, T.w, 1);
   plane([hl, 0, -hw], [-1, 0, 0], [0, 1, 0], T.len, h, 2);
   plane([-hl, 0, hw], [1, 0, 0], [0, 1, 0], T.len, h, 3);
+  // what came down on top of it; a slab of its own skin stove in
+  const rnd = rngOf(T.seed + 5);
+  for (let k = 0; k < 3; k++) rubble(S, (rnd() - 0.5) * T.len * 0.7, h, (rnd() - 0.5) * T.w * 0.6, 1.4 + rnd() * 1.6, 1.2 + rnd() * 1.4, 0.5 + rnd() * 0.6, rnd, TIER.FAR, 9);
+  for (let k = 0; k < 2; k++) S.box('concrete', TIER.FAR, (rnd() - 0.5) * T.len * 0.6, h - 0.1, (rnd() - 0.5) * T.w * 0.5, 3 + rnd() * 2, 0.3, 2.4 + rnd() * 2, { rz: (rnd() - 0.5) * 0.5, rx: (rnd() - 0.5) * 0.5, ry: rnd() * 3 });
   // the ends: a rim of wall, storeys seen end on - the slab that was a floor standing upright in the dark of it
   for (const sx of [-1, 1]) {
     const x = sx * hl;
@@ -1279,6 +1292,7 @@ export function buildCity(world, add) {
   for (const T of C.fallen || []) {
     fallen(S, T);
     S.flush(add, T.x, T.z);
+    S.frame(0, 0, 0, 0);
   }
   for (const P of C.pancakes || []) {
     pancake(S, P);

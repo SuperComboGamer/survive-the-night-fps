@@ -9,7 +9,7 @@ import { PROPS } from '../../shared/props.js';
 import { buildCity, TIER } from './citykit.js';
 
 const CHUNK = 80;
-const CHUNK_CITY = 112; // (the mainland's: its city is a great many materials, and every chunk draws each of them once)
+const CHUNK_CITY = 128; // (the mainland's: its city is a great many materials, and every chunk draws each of them once)
 const IDENTITY = new THREE.Matrix4();
 // A (chunk, material) mesh whose largest piece has bounding radius r is drawn out to r * DETAIL_DIST
 // (never closer than DETAIL_MIN): bottles, cans and tail lights stop costing a draw call once they are a
@@ -21,7 +21,7 @@ const DETAIL_MIN = 60;
 // to be seen: 0 as above; the others out to TIER_DIST and no further - the small things of a street, what stands in
 // a room, the fine detail of a building's face (citykit.js: frames, sills, railings).
 export { TIER };
-const TIER_DIST = [0, 170, 100];
+const TIER_DIST = [0, 150, 90];
 // A material that casts no shadow at all (userData.noShadow: stains and lettering laid on a wall).
 const NOSHADOW = 4;
 
