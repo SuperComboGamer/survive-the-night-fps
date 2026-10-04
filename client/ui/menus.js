@@ -514,14 +514,15 @@ export class Pause {
     // the inventory's close button, in the same corner: closing the pause is resuming (the click on root does it)
     const close = el('button', 'inv-close', root);
     close.type = 'button';
-    close.title = 'Resume';
+    close.title = 'Close';
     el('span', 'inv-close-t', close, 'Close');
     svgEl('i', 'inv-close-x', close, glyph('xmark'));
     const main = el('div', 'pause-main', root);
-    el('div', 'pause-kicker', main, 'Paused');
+    // the game never stops for this menu (the note under it says so): no "paused" or "resume" anywhere on it
+    el('div', 'pause-kicker', main, 'Menu');
     const resume = el('button', 'pause-resume', main);
     resume.type = 'button';
-    el('span', 'pr-t', resume, 'Click to resume');
+    el('span', 'pr-t', resume, 'Back to the game');
     el('p', 'pause-note', main, 'The night does not wait. The world keeps moving while you are away.');
     // the game's invite link, for whoever should join (setRoom)
     const inv = (this.inv = el('div', 'pause-invite', main));
