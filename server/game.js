@@ -3691,10 +3691,17 @@ export class Game {
         }
         break;
       case 'takeoff':
-        // /takeoff: the plane goes, now (the run's last shot, and the victory)
-        if (this.act === WORLD.MAINLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+        // /takeoff [hold | go]: the plane goes, now (the run's last shot, and the victory). hold: the clock that ends
+        // the game stops (for looking at it) - first at the start of the take-off, then after /takeoff go with the end
+        // screen up, and after another it runs out
+        if (args[1] === 'go' && this.takeoffHold) {
+          this.takeoffHold--;
+          if (this.takeoffHold) this.restartT = GAME_OVER_DELAY + 6; // (the take-off is over: the end screen)
+          this.globalDirty = true;
+        } else if (this.act === WORLD.MAINLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
           this.supplies = this.sup.need.slice();
           this.victory();
+          if (args[1] === 'hold') this.takeoffHold = 2;
         }
         break;
       case 'place': {
@@ -3998,6 +4005,7 @@ export class Game {
 
   updatePhase(dt) {
     if (this.phase === PHASE.GAMEOVER || this.phase === PHASE.VICTORY) {
+      if (this.takeoffHold) return; // (/takeoff hold: look-dev)
       this.restartT -= dt;
       if (this.restartT <= 0) this.startGame();
       return;

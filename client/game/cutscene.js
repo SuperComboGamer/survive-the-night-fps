@@ -19,7 +19,7 @@ import { COL, footprintContains } from '../../shared/collision.js';
 import { createProp } from '../render/models/props.js';
 import * as PropModels from '../render/models/props.js';
 import { createSurvivor, createZombie } from '../render/models/characters.js';
-import { ACT, ENT } from '../../shared/protocol.js';
+import { ACT } from '../../shared/protocol.js';
 
 const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -242,6 +242,10 @@ const FALL_AT = 37.0; // the last span starts to go
 const FALL_FOR = 2.4;
 const TOP_SPEED = 17; // m/s down Route 9
 const HORDE = 54;
+// The crossing is one morning from its first frame to its last, whatever hour the car left at: the sun well clear
+// of the hills as it pulls away, a little higher as it comes off the bridge (Environment's cycle: 0 sunrise, 0.25
+// noon). No shot of it is night, whichever way it looks.
+const DAWN = [0.05, 0.085];
 const CAM_BACK = 21; // shot one's camera starts this far behind the car, CAM_OFF m off the middle of the road
 const CAM_OFF = -0.9;
 const VERGE = 4.3; // ...and shot two's stands this far off it, on the verge
@@ -257,8 +261,7 @@ export class Crossing {
     this.t = 0;
     this.screen = new Screen();
     this.fov = 50;
-    this.cycle0 = game.env.cycle; // the hour the car left at: the island's shots keep it
-    this.cycle = this.cycle0; // the time of day the shot asks for (null: whatever the phase says)
+    this.cycle = DAWN[0]; // the time of day the shot asks for (null: whatever the phase says)
     this.fogMul = 1;
     this.far = 0; // how far the static world is drawn (0: as the fog has it)
     this.skipSent = false;
@@ -475,7 +478,7 @@ export class Crossing {
     const P = this.pose;
     let fade = 0;
     let title = '';
-    this.cycle = this.cycle0;
+    this.cycle = lerp(DAWN[0], DAWN[1], clamp01(t / CROSSING.TIME));
     this.fogMul = 1;
     this.far = 0;
     if (w.kind === WORLD.ISLAND) {
@@ -529,8 +532,6 @@ export class Crossing {
       this.up++;
       const br = w.bridge;
       const D = BRIDGE.DECK;
-      // the morning after: the sun is just up over the mainland as the car crosses, and climbs as it goes
-      this.cycle = lerp(0.008, 0.05, smooth(BRIDGE_IN, CROSSING.TIME, t));
       this.fogMul = 0.5;
       this.far = 520;
       let k = 0;
@@ -562,9 +563,9 @@ export class Crossing {
         this.fov = 43;
       } else if (shot.name === 'below') {
         // from down by the water, beside a pier: the whole height of the thing, and the car small on top of it
-        cam.position.set(br.x0 + lerp(s0, s1, 0.45), WATER_LEVEL + 1.3, br.z + (lz < 0 ? -44 : 44)); // (the side its lane is on)
-        _look.set(P.x, br.deckY - 1, br.z);
-        this.fov = 38;
+        cam.position.set(br.x0 + lerp(s0, s1, 0.5), WATER_LEVEL + 1.5, br.z + (lz < 0 ? -25 : 25)); // (the side its lane is on)
+        _look.set(P.x, br.deckY + 0.4, br.z + lz);
+        this.fov = 34;
       } else if (shot.name === 'gap') {
         // out over the missing side of the broken span, looking back across the hole at the lane that is left
         const bs = br.spans[br.broken];
@@ -702,7 +703,7 @@ export class Crossing {
 // ---------------------------------------------------------------- the take-off
 // The plane is warm and somebody has taken it up. Four shots in TAKEOFF_TIME seconds, then the end screen:
 //   0          off its nose as the engines come up and it starts to roll, the dead coming down the runway behind it
-//   RUN_CUT    beside the runway, tracking it as it gathers speed
+//   RUN_CUT    low on the runway behind it, among the dead as they go after it: it gathers speed, and leaves them
 //   OVER_CUT   low on the centre line ahead: it rotates and goes over the lens, wheels up
 //   AWAY_CUT   from off its wing in the air: the airfield falling away under it, Port Calder beyond, and it banks
 //              away over the mainland
@@ -711,7 +712,7 @@ const OVER_CUT = 6.0;
 const AWAY_CUT = 9.2;
 const ROTATE_AT = 7.4; // s: the wheels leave the ground
 const ACCEL = 4.2; // m/s2 down the runway
-const STRIP_DEAD = 10; // the dead drawn on the runway behind it, when the game has too few of its own there
+const STRIP_DEAD = 26; // the dead drawn on the runway behind it, whatever the stand left of the game's own
 export class Takeoff {
   // plane: { group, props } (Game's own: the repaired plane, standing where the wreck stood)
   constructor(game, plane) {
@@ -734,16 +735,13 @@ export class Takeoff {
     // the dead it leaves behind: the game's own, wherever the stand left them; a few more on the runway if those
     // are not there (the plane is taken up with the runway clear, so there may be none in sight)
     this.dead = [];
-    let near = 0;
-    for (const e of game.entities.ents.values()) if (e.kind === ENT.ZOMBIE && !e.dead && Math.hypot(e.rx - this.home.x, e.rz - this.home.z) < 90) near++;
-    if (near < 6) {
-      for (let k = 0; k < STRIP_DEAD; k++) {
-        const type = k % 3 ? ZTYPE.RUNNER : ZTYPE.WALKER;
-        const view = createZombie(type, k * 11 + 5);
-        game.scene.add(view.object);
-        // (behind the plane and off its line, both sides of the runway)
-        this.dead.push({ view, x: this.home.x + (k % 2 ? 1 : -1) * (5 + ((k * 2.3) % 6)), z: this.home.z + 12 + ((k * 7.7) % 34), v: ZOMBIE_DEFS[type].speed, anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
-      }
+    for (let k = 0; k < STRIP_DEAD; k++) {
+      const type = k % 3 ? ZTYPE.RUNNER : ZTYPE.WALKER;
+      const view = createZombie(type, k * 11 + 5);
+      view.object.traverse((o) => o.isMesh && (o.castShadow = true));
+      game.scene.add(view.object);
+      // (behind the plane, the width of the runway: the quick ones nearest its tail)
+      this.dead.push({ view, x: this.home.x + (k % 2 ? 1 : -1) * (0.8 + ((k * 2.3) % 8.4)), z: this.home.z + (type === ZTYPE.RUNNER ? 9 : 16) + ((k * 7.7) % 30), v: ZOMBIE_DEFS[type].speed * (0.9 + ((k * 0.37) % 0.3)), anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
     }
   }
   worldChanged() {}
@@ -776,13 +774,11 @@ export class Takeoff {
       _look.set(P.x, P.y + 1.7, P.z + 2);
       this.fov = 44;
     } else if (t < OVER_CUT) {
-      // beside the runway, tracking: it gathers speed
+      // down on the runway where it stood, among the dead: they go past the lens after it, and it is away from them
       const u = (t - RUN_CUT) / (OVER_CUT - RUN_CUT);
-      const cz = H.z - 38 - u * 20;
-      const sx = this.side ?? (this.side = roadBlocked(w, H.x - 16, H.z - 38) || roadBlocked(w, H.x - 16, H.z - 58) ? 1 : -1); // (the side nothing stands on)
-      cam.position.set(H.x + sx * 16, Math.max(H.y, w.heightAt(H.x + sx * 16, cz)) + 1.5, cz);
-      _look.set(P.x, P.y + 1.6, P.z - 3);
-      this.fov = 38;
+      cam.position.set(H.x - 3.4, H.y + 0.9 + u * 0.25, H.z + 13 - u * 5);
+      _look.set(P.x, P.y + 1.2, P.z);
+      this.fov = 46;
     } else if (t < AWAY_CUT) {
       // on the runway ahead of it, down on the centre line: it comes at the lens, lifts, and goes over it
       const over = 0.5 * ACCEL * ROTATE_AT ** 2 + 18; // (where it is a few metres up)
