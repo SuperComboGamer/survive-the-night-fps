@@ -176,7 +176,7 @@ const callbacks = {
         const link = inviteLink(room.code);
         showCodeInAddress(room.code);
         ui.setRoom(room, link);
-        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (press Esc to copy the link).`, { system: true });
+        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (or press Esc, then Invite friends).`, { system: true });
       }
     } catch (err) {
       joinCue = false;

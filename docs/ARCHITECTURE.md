@@ -176,7 +176,7 @@ sockets (1011) and lets go of its records. `server/rooms.js` keeps them (`Lobby`
   thread's (`net`) and the process RSS; no codes.
 - **Client:** `client/net/lobby.js` (the API, and invite links: `?game=CODE`; while in a game the address bar
   carries its link), the splash in `ui/menus.js` (Quick join, Browse games, Create game, or the invitation of the
-  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link on the pause menu.
+  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link behind "Invite friends" on the pause menu.
 - **Capacity** (`npm run stress -- game|box`, scripts/stress.js; measured 2 Oct 2026 with bots at night 3 on a
   shared 11-core Mac, so read CPU ms per second, not wall-clock ticks): an 8-player game at night uses ~17 ms of
   CPU a second (45 in its worst second), ~62 MB of memory on a 70 MB base, ~2-2.6 KB/s down per player, and the
