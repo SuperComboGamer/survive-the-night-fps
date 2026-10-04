@@ -275,7 +275,7 @@ export function renderMapCanvas(world) {
     g.restore();
   }
   // big props (vehicles, tents)
-  const BIG = { car: 1, car_wreck: 1, pickup_truck: 1, school_bus: 1, camper: 1, dump_truck: 1, tractor: 1, military_tent: 1, tent: 1, heli_wreck: 1, log_pile: 1, fuel_tank: 1 };
+  const BIG = { car: 1, car_wreck: 1, pickup_truck: 1, school_bus: 1, camper: 1, dump_truck: 1, tractor: 1, military_tent: 1, tent: 1, heli_wreck: 1, log_pile: 1, fuel_tank: 1, car_burnt: 1, ambulance: 1, semi_truck: 1, fire_truck: 1, shipping_container: 1, airliner_wreck: 1, plane_wreck: 1, light_plane: 1, rubble_slope: 1, rubble_pile: 1 };
   g.fillStyle = 'rgba(60, 44, 34, 0.7)';
   for (const pr of world.props) {
     if (!BIG[pr.type]) continue;
@@ -320,4 +320,14 @@ const PROP_SIZE = {
   heli_wreck: [3.2, 13],
   log_pile: [4.2, 2.4],
   fuel_tank: [2.2, 5],
+  car_burnt: [1.9, 4.5],
+  ambulance: [2.2, 5.6],
+  semi_truck: [2.8, 16],
+  fire_truck: [2.6, 8],
+  shipping_container: [2.5, 6.1],
+  airliner_wreck: [5, 28],
+  plane_wreck: [3, 12],
+  light_plane: [9, 7],
+  rubble_slope: [6.4, 6.4],
+  rubble_pile: [4.4, 4.4],
 };

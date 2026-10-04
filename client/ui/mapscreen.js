@@ -93,6 +93,7 @@ export class MapScreen {
     }
     this.world = null;
     this.labelEls = [];
+    this.markLabs = [];
     this.pool = [];
     this.supRows = [];
     // waypoint: the game sets onWaypoint and gets { x, z, zone } (zone: id of the place it snapped to, or -1),
@@ -300,6 +301,13 @@ export class MapScreen {
     });
     // St. Agnes Cemetery is part of the chapel's place: a name of its own on the map, in smaller letters (a click
     // on it is a click in the chapel's yard)
+    // ...and so are a city's landmarks (the mainland: world.landmarks), each where it stands
+    this.markLabs = (world.landmarks || []).map((m) => {
+      const l = el('div', 'map-lab sub', this.labels);
+      l.style.left = ((m.x + world.half) / world.size) * 100 + '%';
+      l.style.top = ((m.z + world.half) / world.size) * 100 + '%';
+      return l;
+    });
     this.cemLab = null;
     if (world.cemetery) {
       this.cemLab = el('div', 'map-lab sub', this.labels);
@@ -378,6 +386,12 @@ export class MapScreen {
       l.classList.toggle('hinted', d.hints.some((zid, k) => zid === z.id && !taken(k)));
       l.classList.toggle('way', !!way && way.zone === z.id);
     });
+    // (a city's landmarks: known once the city is)
+    const marks = this.world.landmarks || [];
+    for (let i = 0; i < this.markLabs.length; i++) {
+      const txt = d.discovered.has(ZONE.CITY) ? marks[i].name : '';
+      if (this.markLabs[i].textContent !== txt) this.markLabs[i].textContent = txt;
+    }
     if (this.cemLab) {
       // (known once you have been to it, or to the chapel it lies behind)
       const txt = d.discovered.has(ZONE.CEMETERY) || d.discovered.has(ZONE.CHURCH) ? ZONE_NAMES[ZONE.CEMETERY] : '';

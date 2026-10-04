@@ -41,8 +41,15 @@ try {
             slow = dt > 250 ? slow + 1 : 0;
             if (slow >= 3 || now - t0 > secs * 1000) {
               dts.sort((a, b) => a - b);
+              // (a frame is several passes, and the renderer's counters start again at each: count one whole frame)
               const info = g.renderer.renderer.info;
-              done({ aborted: slow >= 3, frames: dts.length, avg: dts.reduce((a, b) => a + b, 0) / dts.length, p50: dts[dts.length >> 1], p95: dts[Math.floor(dts.length * 0.95)], worst: dts[dts.length - 1], calls: info.render.calls, tris: info.render.triangles, quality: g.renderer.quality });
+              info.autoReset = false;
+              info.reset();
+              requestAnimationFrame(() => {
+                const [calls, tris] = [info.render.calls, info.render.triangles];
+                info.autoReset = true;
+                done({ aborted: slow >= 3, frames: dts.length, avg: dts.reduce((a, b) => a + b, 0) / dts.length, p50: dts[dts.length >> 1], p95: dts[Math.floor(dts.length * 0.95)], worst: dts[dts.length - 1], calls, tris, quality: g.renderer.quality });
+              });
             } else requestAnimationFrame(step);
           };
           requestAnimationFrame(step);

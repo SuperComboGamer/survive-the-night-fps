@@ -428,10 +428,32 @@ act 2, where the same loop is played with a plane and flying out wins.
   zombies' spatial hash, the deer, the herd, the player simulation's edge, the terrain, the field map and the
   minimap follow the world. `worldFor(seed, act)` (`shared/worlds.js`) makes either from the run's one seed.
 - **The mainland** (`shared/mainland.js`) is 1280 m across, built with the island's kit (`shared/worldkit.js`: the
-  Builder, the collider grids, the lists a world hands on): the Bridgehead, Port Calder (a grid of blocks and lots
-  dealt from the seed), Kessler Ironworks, Eastgate, a truck stop, two farms, Calder Field. `world.car` is the plane
-  there (`plane: true`), so everything that asks for "the car" - the reach, the supplies, the final stand - asks for
-  it. What the island has and it lacks (mine, railway, fair, clinic, cemetery) is `null`.
+  Builder, the collider grids, the lists a world hands on): the Bridgehead, Port Calder, Kessler Ironworks,
+  Eastgate, a truck stop, Calder Field, and sixteen places out on the plain (`shared/mainland-places.js`: one entry
+  each in `OUTLYING` - how much ground it levels, what road it gets, and a `build`; its loot table is its zone's in
+  defs.js). `world.car` is the plane there (`plane: true`), so everything that asks for "the car" - the reach, the
+  supplies, the final stand - asks for it. What the island has and it lacks (mine, railway, fair, clinic,
+  cemetery) is `null`.
+  - *The plan.* The bridge, the city, the airfield and what hangs off them are set first; the lake is dug where
+    there is most room, the marina put on its shore; the rest are put down one at a time on the roomiest of a
+    handful of spots (`room()`: `PLACE_GAP` of open country from every other, clear of the city, the airfield,
+    Route 9, the lake and the farms' tracks), each weighted by what it wants (the mast high ground, the loggers the
+    rim). A farm that no straight track reaches the highway from is left to the county roads.
+  - *The roads.* Route 9 runs bridge - checkpoint - Main Street - truck stop - airfield. Every other place is joined
+    to the nearest road already there by a line that crosses no place and no water (round a corner if no straight
+    one does), nearest place first, and turns its front to that road a quarter turn at a time (so its walls lie
+    along the nav grid). A road that ends on another comes to that road's height over its last 30 m. A road's
+    spline holds each leg's tangents to the leg's own length (no doubling back after a long leg).
+  - *Port Calder* is `GRID` x `GRID` blocks of lots. What the run needs and the landmarks (hospital, church,
+    cinema, station, filling station, police, bus depot, a collapsed block, three towers) are dealt onto lots
+    first; the seed deals the rest. No lot is empty. The upper floors of a walk-in building are solid and shut
+    (`sheared`: the top ones broken back, a floor slab hanging; `stairBlock`: the stairs under rubble). The streets
+    get wrecks, litter, heaved slabs and weeds everywhere, and a few stretches get more (`ROADBLOCKS`, `JAMS`,
+    `SINKHOLES`, and the top of the first tower across the street east of it, climbed by a `rubble_slope` either
+    side). `world.landmarks` names what the field map labels inside the city; `world.lights` of kind `smoke` and
+    `fire` are the columns over it (`SMOKES`, `FIRES`: drawn by effects.js as `column` and `blaze`).
+  - Props flagged `live` (the car, the plane) are drawn by the client's cutscene code, not the static world;
+    `afloat` ones (boats) stand on water; parts flagged `across` are the one thing built in a road.
 - **Positions on the wire** stay int16: 1/64 m on the island (+-512 m), 1/32 m on the mainland (+-1024 m).
   `usePos(world)` (protocol.js) sets which; the server calls it as a tick starts, a message comes in or the world
   changes, the client as it loads a world. Nothing on the wire says the scale: both ends know the world.
