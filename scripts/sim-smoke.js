@@ -16,7 +16,7 @@ import { MAP_HALF, WATER_LEVEL } from '../shared/constants.js';
 import { COL, BOX, footprintContains } from '../shared/collision.js';
 import { HARVEST, harvestAt, harvestPrompt, strippedKey, needLines } from '../client/game/harvest.js';
 import { SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
-import { ITEM_DEFS } from '../shared/defs.js';
+import { ITEM_DEFS, SCHEMATICS, SCHEM_BIT, schematicRumours } from '../shared/defs.js';
 import { raycastWorld, groundAt } from '../shared/collision.js';
 import { NIGHT_THEMES, nightTheme, nightBoss, BOSS_POOL, FIRST_BOSS } from '../shared/nights.js';
 
@@ -225,6 +225,13 @@ check('players spawned near car', Math.hypot(A.p().state.x - game.world.car.x, A
 check('supply hints sent', A.global.hints.slice(0, 7).every((z) => z !== 255), JSON.stringify(A.global.hints));
 check('every supply is hidden in a different place of this map', new Set(A.global.hints).size === 7 && A.global.hints.every((z) => game.world.zoneById[z] && z !== ZONE.CAMP));
 check('caches replicated', [...A.store.ents.values()].some((e) => e.kind === ENT.CACHE));
+{
+  const at = SCHEMATICS.map((it) => game.caches.filter((c) => c.schem === it));
+  const ok = at.every((cs, k) => cs.length === 1 && CONT_DEFS[cs[0].ctype].schem && cs[0].zone === game.schemHints[k]);
+  check('each schematic is hidden in one container of the place it is rumoured to be in', ok, JSON.stringify(at.map((cs) => cs.map((c) => [c.ctype, c.zone]))) + ' vs ' + JSON.stringify(game.schemHints));
+  check('...every schematic in a different place of this map, far from the car', new Set(game.schemHints).size === SCHEMATICS.length && game.schemHints.every((z) => game.world.zoneById[z]) && at.every(([c]) => Math.hypot(c.x - game.world.car.x, c.z - game.world.car.z) > 90));
+  check('...and the rumours reach the team, gone from the map once a schematic is unlocked', JSON.stringify(A.global.schemHints) === JSON.stringify(game.schemHints) && schematicRumours(A.global.schemHints, 1 << SCHEM_BIT[SCHEMATICS[0]]).length === SCHEMATICS.length - 1);
+}
 
 // joining a run in progress: the newcomer arrives beside the team instead of alone at the car, with a kit for the
 // day, and leaving and coming back does not turn into supplies for the team

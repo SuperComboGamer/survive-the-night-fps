@@ -310,6 +310,8 @@ if (q.get('minimap')) {
             discovered: new Set(world.zones.map((z) => z.id)),
             hints: h.objective?.hints || [],
             found: 0,
+            schemHints: world.zones.slice(0, 5).map((z) => z.id),
+            unlocked: 0b00100,
             supplies: h.objective?.supplies || [0, 0, 0, 0, 0],
             carried: h.objective?.carried || {},
             waypoint: { x: way.x, z: way.z, zone: way.id },

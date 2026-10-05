@@ -98,6 +98,14 @@ function put(game, p, type, d) {
   return z;
 }
 const masks = (list) => list.map((e) => `${e.flags}:${e.mask}`).join(' ');
+// Which spawn point the run's dice give p, and whether a post stands between it and the dead put to its side, is
+// luck: p is moved to one on the ground with a clear view along the line they are put on
+function inTheOpen(game, p) {
+  const w = game.world;
+  const eye = (x, z) => w.heightAt(x, z) + 1.6;
+  const sp = w.spawnPoints.find((q) => [-6, 5, 8, 10].every((d) => game.zm.clearLine(q.x, eye(q.x, q.z), q.z, q.x + d, eye(q.x + d, q.z) - 0.1, q.z)));
+  Object.assign(p.state, { x: sp.x, y: w.heightAt(sp.x, sp.z), z: sp.z });
+}
 
 {
   const game = new Game({ seed: 4242, godMode: true, dayLength: 3600, themes: false, log: () => {} });
@@ -106,6 +114,7 @@ const masks = (list) => list.map((e) => `${e.flags}:${e.mask}`).join(' ');
   const pid = randomUUID();
   const Ann = enter(game, 'Ann', { pid });
   const ann = Ann.p();
+  inTheOpen(game, ann);
   wait(game, 0.5);
   check('a guest who joins is told whose record it is: the whole of it, nothing yet, not an account', masks(got.of(ann)) === `${BESTF.ALL}:0`, masks(got.of(ann)));
   got.clear();
