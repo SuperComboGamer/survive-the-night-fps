@@ -46,6 +46,14 @@ Measured on an RTX 3070 at 1920 x 1080, High, before the pass (`perf:profile`, `
   - a zombie further off than 15 m (where its far copy is drawn) is posed at most 80 times a second; where it stands
     and faces is every frame's;
   - the shadow maps are drawn at most 160 times a second, and always in a frame the camera has jumped or swung in.
+- **What a blow leaves costs a fixed handful of draw calls, and nothing at rest** (ARCHITECTURE.md, "Blows on
+  the world"). Every mark in the world - slashes, dents, bullet holes - is a quad of one mesh (`render/marks.js`: a
+  ring of 400 that the newest overwrite, so a magazine into a wall costs what one round does), every flying bit an
+  instance of another (`render/strikefx.js`), and neither is drawn while it is empty. A prop that has to change - a
+  wreck being taken apart, a barrel rocking - is lifted out of the static world's runs (`MultiMesh.cut`) into the
+  `LiftBatch` (`render/liftbatch.js`): one mesh per material for every lifted prop there is, culled prop by prop,
+  written only when a shape changes. A wreck nobody has hit is still in the static world and costs what it always
+  did; a hit one is built when the eye is within 170 m; a light prop goes back the moment it settles.
 - **Nothing is drawn past the drawing distance** (`Game.viewDist`: the haze's reach plus 40 m, the rule the static
   world always had): the handcars, and the fair while its generator is off.
 

@@ -376,6 +376,15 @@ class Wreck extends Lifted {
       RN[o + 1] = e[1] * nx + e[5] * ny + e[9] * nz;
       RN[o + 2] = e[2] * nx + e[6] * ny + e[10] * nz;
     }
+    if (s.down) {
+      // a wheel on a flat tyre: all of it lower by `drop`, and what would be under the ground flat on it - the
+      // rim stays round, the tyre's foot spreads
+      const floor = this.prop.y + s.down.y0 + 0.004;
+      for (const v of s.verts) {
+        const o = v * 3 + 1;
+        R[o] = Math.max(floor, R[o] - s.down.drop);
+      }
+    }
     this.shape = true;
     // its marks go where it goes
     for (const k of this.kept) {
@@ -706,18 +715,19 @@ class Wreck extends Lifted {
     p.state = 1;
     const tyre = p.isles[0];
     const side = Math.sign(tyre.mid[0]) || 1, end = Math.sign(tyre.mid[2]) || 1;
-    // (a flat tyre lets its corner down a hand's breadth: the body leans to that side and that end)
-    const sag = 0.05 / Math.max(1, this.mass) ** 0.5;
+    // how far the wheel comes down: most of the depth of the tyre's wall (its radius less the rim's)
+    const R = (tyre.max[1] - tyre.min[1]) / 2;
+    let rim = 0;
+    for (const s of p.isles) if (s !== tyre) rim = Math.max(rim, (s.max[1] - s.min[1]) / 2);
+    if (!rim || rim > R * 0.85) rim = R * 0.62;
+    const drop = 0.62 * (R - rim);
+    // ...and the body with it: it leans to that side and that end by what the corner lost
     const from = { tx: this.tx, tz: this.tz, ty: this.ty };
-    const to = { tx: from.tx + end * sag * 0.45, tz: from.tz - side * sag, ty: from.ty - 0.012 };
+    const to = { tx: from.tx + end * Math.min(0.05, (drop * 0.5) / Math.max(1, this.half[2])), tz: from.tz - side * Math.min(0.11, (drop * 0.5) / Math.max(0.5, this.half[0])), ty: from.ty - drop * 0.2 };
     const y0 = tyre.min[1];
     const set = (k) => {
-      // the tyre goes down on its rim and spreads at the ground; the corner of the body comes down with it
-      const sq = 1 - 0.34 * k;
-      _m.makeTranslation(tyre.mid[0], y0, tyre.mid[2]).multiply(_m2.makeScale(1 + 0.08 * k, sq, 1 + 0.03 * k)).multiply(_m2.makeTranslation(-tyre.mid[0], -y0, -tyre.mid[2]));
-      _m2.multiplyMatrices(this.W, _m).multiply(this.Wi);
       for (const s of p.isles) {
-        (s.op ||= new THREE.Matrix4()).copy(_m2);
+        s.down = { y0, drop: drop * k };
         this.place(s);
       }
       this.tx = from.tx + (to.tx - from.tx) * k;

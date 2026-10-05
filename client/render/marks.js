@@ -486,8 +486,8 @@ const PAINT = {
   },
   [MARK.CRACK_GLASS](c, r) {
     soft(c, 64, 64, 2, 16, 'rgba(240,246,250,0.95)', 'rgba(240,246,250,0)');
-    cracks(c, r, 64, 64, 11, 4, 60, 'rgba(236,244,250,0.9)', 1.2);
-    cracks(c, r, 64, 64, 8, 6, 40, 'rgba(255,255,255,0.6)', 0.8);
+    cracks(c, r, 64, 64, 11, 4, 60, 'rgba(236,244,250,0.95)', 2);
+    cracks(c, r, 64, 64, 8, 6, 40, 'rgba(255,255,255,0.7)', 1.3);
     c.strokeStyle = 'rgba(236,244,250,0.55)';
     c.lineWidth = 0.9;
     for (const rad of [16, 30, 46]) {
@@ -588,9 +588,9 @@ const PAINT = {
     c.fill();
   },
   [MARK.HOLE_GLASS](c, r) {
-    cracks(c, r, 64, 64, 13, 8, 62, 'rgba(238,246,252,0.9)', 1.1);
-    c.strokeStyle = 'rgba(238,246,252,0.6)';
-    c.lineWidth = 0.9;
+    cracks(c, r, 64, 64, 13, 8, 62, 'rgba(238,246,252,0.95)', 2.2);
+    c.strokeStyle = 'rgba(238,246,252,0.7)';
+    c.lineWidth = 1.6;
     for (const rad of [14, 24]) {
       for (let k = 0; k < 6; k++) {
         const a = r() * 6.28;
@@ -599,8 +599,8 @@ const PAINT = {
         c.stroke();
       }
     }
-    soft(c, 64, 64, 5, 13, 'rgba(244,250,255,0.95)', 'rgba(244,250,255,0)');
-    blob(c, r, 64, 64, 6, 0.4, 9);
+    soft(c, 64, 64, 6, 20, 'rgba(244,250,255,0.95)', 'rgba(244,250,255,0)');
+    blob(c, r, 64, 64, 7, 0.4, 9);
     c.fillStyle = '#040506';
     c.fill();
   },
