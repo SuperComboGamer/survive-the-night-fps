@@ -71,6 +71,7 @@ export class BuildMenu {
       [() => bindPair('aim'), 'rotate'],
       [() => bindLabel('slot5'), 'build menu'],
       [() => bindPair('demolish'), 'demolish'],
+      [() => 'Esc', 'cancel'],
     ]);
 
     // ---- the ring, in the middle of the screen
@@ -107,7 +108,7 @@ export class BuildMenu {
     const legend = el('div', 'br-legend', foot);
     for (const [k, t] of [
       [() => bindPair('fire'), 'pick'],
-      [() => bindPair('aim'), 'close'],
+      [() => bindPair('aim') + ' / Esc', 'close'],
     ]) {
       const s = el('span', 'bh', legend);
       liveText(el('span', 'kbd sm', s), k);

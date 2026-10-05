@@ -3,14 +3,15 @@
 // hands them to the page. A page in fullscreen it asked for can, with the Keyboard Lock API: every combination of a locked key
 // (Ctrl+W, Ctrl+Shift+W, ...) then goes to the page instead. So while playing, the click that takes the mouse also takes
 // fullscreen with the game's keys locked (Settings > Controls > "Fullscreen while playing"), and when that is off or not
-// available (other browsers) the tab asks "Leave site?" before it closes. Esc is not locked: it still leaves fullscreen.
+// available (other browsers) the tab asks "Leave site?" before it closes.
 //
 // The keys locked are every key the player has bound to something (binds.js) - rebound in the pause menu, the lock is
 // taken again with the new ones - plus W, T and N always: Ctrl+W / T / N are the browser's own, and whatever crouch and
-// forward are on, a Ctrl+W must not close a game.
+// forward are on, a Ctrl+W must not close a game. Esc too: locked, a tap of it reaches the page with the mouse still
+// taken (Game.onKey backs out of building with it before it opens the menu), and only holding it leaves fullscreen.
 import { boundKeyCodes, onBindsChange } from './binds.js';
 
-const ALWAYS = ['KeyW', 'KeyT', 'KeyN'];
+const ALWAYS = ['KeyW', 'KeyT', 'KeyN', 'Escape'];
 let lockKeys = [];
 // with Ctrl (or Cmd) held these do something to the page or the browser; in play they are the game's
 let gameKeys = new Set();

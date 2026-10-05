@@ -510,7 +510,7 @@ const LEAVE_HOLD_MS = 900;
 
 // The Esc menu: a rail down the left edge, the rest of the screen left almost clear, because the game never stops for
 // it (no "paused" or "resume" anywhere on it). The arrow keys move through the rows and Enter opens one. Esc is not a
-// way back: the browser counts no Esc as a gesture (the mouse can't be taken back on one), and in fullscreen a second
+// way back: the browser counts no Esc as a gesture (the mouse can't be taken back on one), and in fullscreen holding
 // Esc leaves fullscreen.
 export class Pause {
   constructor(ui, parent) {
