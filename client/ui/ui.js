@@ -31,7 +31,8 @@ const CALLBACKS = [
   'onUseItem',
   'onDropItem',
   'onSplitItem',
-  'onDropAmmo', // (calibre, rounds; 0 = all of it): the Ammunition panel's Half / All
+  'onDropAmmo', // (calibre, rounds; 0 = all of it): the ammo pouch's popover and menu
+  'onUndoDrop', // the inventory's Undo, a few seconds after a drop: the server picks the last one up again
   'onSalvage',
   'onSwapItems',
   'onEquipArmor',

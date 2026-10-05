@@ -805,12 +805,13 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   doorways recorded by world generation (`world.openings`); campfires and workbenches are crafting stations
   (`STRUCT_DEFS[t].station`), recipes name the station they need (`RECIPES[i].station`) and optionally a
   schematic (`schem`, team-wide unlock bitmask in the global state).
-- **Crafting in bulk** (Shift / Ctrl+click a recipe) is not in the protocol: it is `ACT.CRAFT` sent n times. The
+- **Crafting in bulk** (the crafting panel's quantity and Craft ×N, or Shift / Ctrl+click a recipe) is not in the
+  protocol: it is `ACT.CRAFT` sent n times. The
   server refuses each craft it cannot do with a toast, so the client counts first: `craftRun` in
   `client/game/bulkcraft.js` repeats the checks of `Game.craft` and the slot rules of `server/inventory.js` on a
   copy of the inventory (and, stricter than the server, only counts ammunition while a whole batch fits the
   reserve). `sim-smoke` holds it against the server, so change the two together. The inventory screen replays
-  the crafts still on their way before it counts again (`Inventory._model`), the repeats leave through a bucket
+  the crafts still on their way before it counts again (`Crafting._model`), the repeats leave through a bucket
   in `Game.sendCrafts` (the server drops what a client sends past 200 messages a second), and a listener plays
   one craft sound per 0.1 s however many `SOUND.CRAFT` events a tick brings.
 - **Salvage** (`ACT.SALVAGE`: u8 from, u16 count) tears something down for the materials `SALVAGE` in defs lists:
@@ -820,14 +821,20 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   Because the starting pistol, knife and hammer are worth something torn down, a leaver's parked kit records which
   of them they still had (`parkKit`'s `tools`), and a rejoin brings back only those.
 - **Unequip** (`ACT.UNEQUIP`: u8 weapon slot, u8 backpack index, 255 = the first free one) puts a weapon from its slot
-  into the backpack with its magazine (`Game.unequip`): a click on it in the Equipment panel, or a drag onto the grid.
+  into the backpack with its magazine (`Game.unequip`): F or a double-click on it in the Loadout, or a drag onto the grid.
   Onto a weapon for the same slot it is `useItem`'s swap; a full backpack leaves it where it is. `test-unequip`.
 - **Ammunition** is not in the backpack: `state.ammo` (a reserve per `AMMO` calibre, up to `AMMO_MAX`) is the
   server's record, the simulation reloads from it and the client predicts it. `Game.giveItem` puts a cat `ammo` item
   there and returns what fit, so a full reserve leaves the rest lying; nothing ever puts one into `p.inv`. The
   mounted gun's belt and both generators draw from it too. `ACT.DROP_AMMO` (u8 calibre, u16 count, 0 = all) puts
-  rounds on the ground from the inventory's Ammunition panel (Half / All); the client hears of the smaller reserve
-  in its next snapshot, as it does of a pickup.
+  rounds on the ground from the inventory's ammo pouch (its popover or right-click menu, any amount); the client hears
+  of the smaller reserve in its next snapshot, as it does of a pickup.
+- **Undoing a drop** (`ACT.UNDO_DROP`, no arguments). Every drop from the inventory (a stack, rounds, a weapon out of
+  its slot, worn gear) records the item entity it made in `p.lastDrop`; the inventory's toast offers to take it back
+  for 5 s (Z), and `Game.undoDrop` gives it back as a pickup would, within `UNDO_DROP_TIME` of the drop, while it
+  still lies there and its dropper is within `UNDO_DROP_REACH`. Only the last drop, only the dropper's; what finds no
+  room stays down, and a refusal is `NOTIFY.UNDO_GONE` (`UNDO_NO`: gone, too late, too far). `lastDrop` is not carried
+  across a deploy (`PLAYER_SKIP`). `test-undodrop`.
 - **The backpack grid** is always `INVENTORY_MAX` (34) slots long, on the server, on the wire (`S2C.INVENTORY`,
   which ends with the worn backpack's byte) and in the inventory screen; only the first `invCap(p)` are open:
   `INVENTORY_SIZE` (24), and `BACKPACK_SLOTS` (10) more while a Backpack is worn (`p.backpackItem`, beside
@@ -1148,7 +1155,20 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   lightning light, wind (`Foliage.update` drives `G.uWind`: trees bend trunk and crown together, grass and bushes
   lean; the ambience plays the same wind), ground mist, the flashlight beam's haze (post.js, denser in rain), and
   rain streaks and splashes (`render/weatherfx.js`, kept out from under `world.roofs`).
-- **Item guide** (`client/game/itemguide.js`): the "Used in" and "Found in" lines of the inventory's tooltips are
+- **The inventory screen** (`client/ui/inventory.js`, the crafting column in `client/ui/crafting.js`). The game does
+  not pause under it, so every action is one click or one key: a click selects (the item card under the backpack
+  says what it is, with a button and key for each action), a double-click does the main thing, a right click opens a
+  menu of drop amounts, and F use · S split · G drop one (Shift+G all) · X salvage · Z undo act on what is under the
+  pointer, else what is selected. The keys are the screen's own listener: the game's input is off while it is open,
+  and a key bound to opening a screen (`MENU_KEYS`) is left to the game. The backpack is grouped into sections in
+  the order the server's Sort leaves it (`SECTIONS`, `BAG_TIER`), and a drag only swaps within one. Recipes are
+  grouped by what stops them (ready, needs a station, missing materials, locked); the one selected has a quantity
+  that `craftRun` caps.
+- **The tracked recipe** (`client/game/tracked.js`): one recipe at a time in `localStorage['stn.tracked']`, client
+  only. The HUD checklist under the objective tracker (`Tracked` in `ui/hud2.js`), the "needed for" line on pickup
+  prompts and the "may hold" line on containers whose table can roll a missing ingredient (`mayHold` in
+  `itemguide.js`) read it; the backpack marks the stacks it would use. Crafting it untracks it.
+- **Item guide** (`client/game/itemguide.js`): the "Used in" and "Found in" lines of the inventory's item card are
   derived at load from `RECIPES`, `STRUCT_DEFS`, the loot tables (`CONT_TABLES`, `LOOT_TABLES`, `ZOMBIE_LOOT`,
   `SPECIAL_LOOT`) and `PLACES`, so a new recipe, item or table needs no text written for it. The one thing it
   repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.
