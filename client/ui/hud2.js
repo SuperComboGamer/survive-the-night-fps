@@ -7,6 +7,7 @@ import { nightBoss } from '../../shared/nights.js';
 import { el, svgEl, fmtTime, clamp } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { bindTag } from '../game/binds.js';
+import { trackStatus } from '../game/tracked.js';
 
 const TAU = Math.PI * 2;
 const wrapA = (a) => ((a % TAU) + TAU + Math.PI) % TAU - Math.PI;
@@ -414,6 +415,68 @@ export class Objective {
     this.root.classList.toggle('compact', o.phase === PHASE.NIGHT || o.finale);
     this.headTip.body = `${done} of ${total} car supplies are in the car. Install them all, start the engine and drive away.` + (dir ? `\n\nNow: ${dir}` : '');
     if (this.tipFor) this._hover(this.tipFor); // (what it says may just have changed)
+  }
+}
+
+// ---------------------------------------------------------------- the recipe tracked from the crafting panel
+// Right under the objective tracker (however tall that is): its checklist, ticking off as things are picked up, and
+// where to get the first thing still short - or, with everything in hand, where to craft it.
+export class Tracked {
+  constructor(parent, above) {
+    this.root = el('div', 'trk scrap', parent);
+    this.root.hidden = true;
+    const head = el('div', 'trk-head', this.root);
+    svgEl('i', 'trk-flag', head, glyph('flag'));
+    this.name = el('span', 'trk-name', head);
+    el('span', 'trk-tag', head, 'Tracked');
+    this.list = el('div', 'trk-list', this.root);
+    this.foot = el('div', 'trk-foot', this.root);
+    this.key = '';
+    this.above = above;
+    new ResizeObserver(() => this._place()).observe(above);
+  }
+
+  _place() {
+    const a = this.above;
+    this.root.style.top = (a.hidden ? a.offsetTop : a.offsetTop + a.offsetHeight + 8) + 'px';
+  }
+
+  // t: { r (the recipe), counts (item -> carried), near ({ fire, bench }), unlocked } or null for nothing tracked
+  update(t) {
+    if (!t) {
+      if (!this.root.hidden) this.root.hidden = true;
+      this.key = '';
+      return;
+    }
+    const st = trackStatus(t.r, t.counts, t.near, t.unlocked);
+    const key = JSON.stringify([t.r.id, st.ings.map((g) => g.have), st.station?.ok, st.schem?.ok]);
+    if (key === this.key) return;
+    this.key = key;
+    this.name.textContent = ITEM_DEFS[t.r.out].name;
+    this.list.textContent = '';
+    const row = (ok, name, val) => {
+      const r = el('div', 'trk-row' + (ok ? ' ok' : ''), this.list);
+      svgEl('i', 'trk-box', r, ok ? glyph('check') : '');
+      el('span', 'trk-n', r, name);
+      el('span', 'trk-v', r, val);
+    };
+    for (const g of st.ings) row(g.ok, g.name, `${Math.min(g.have, 999)} / ${g.need}`);
+    if (st.station) row(st.station.ok, `At a ${st.station.name.toLowerCase()}`, st.station.ok ? 'here' : '—');
+    if (st.schem) row(st.schem.ok, st.schem.name, st.schem.ok ? 'found' : 'not found');
+    let foot;
+    let tone = '';
+    if (st.ready) {
+      foot = `Ready: craft it now ${bindTag('inventory')}`;
+      tone = 'good';
+    } else if (st.mats && st.schem?.ok !== false) {
+      foot = `Ready: craft at a ${st.station.name.toLowerCase()}`;
+      tone = 'good';
+    } else if (st.src) foot = `${st.src.name}: ${(st.src.where || 'nowhere known').replace(/^./, (c) => c.toLowerCase())}`;
+    else foot = 'Find the schematic in lockers, crates or toolboxes';
+    this.foot.textContent = foot;
+    this.foot.className = 'trk-foot' + (tone ? ' ' + tone : '');
+    this.root.hidden = false;
+    this._place();
   }
 }
 

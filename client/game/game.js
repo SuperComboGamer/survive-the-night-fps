@@ -56,10 +56,13 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
+import { trackedRecipe, trackedNeed } from './tracked.js';
+import { mayHold } from './itemguide.js';
 import { createWorld } from '../../shared/world.js';
 import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
 import { chosenCharacter } from '../ui/picker.js';
+import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
@@ -206,6 +209,7 @@ export class Game {
     this.frame = 0;
     this.time = 0;
     this.myId = 0;
+    this.admin = false; // the server lets us run the admin commands (WELCOMEF.ADMIN): the spawn menu [`] is ours
     this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_MAX).fill(null), armor: null, backpack: 0 };
@@ -275,6 +279,8 @@ export class Game {
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
     ui.map.onClose = () => this.toggleMap(false);
     ui.board.onClose = () => this.toggleBoard(false);
+    ui.spawn.onClose = () => this.toggleSpawn(false);
+    ui.spawn.onSpawn = (cmd) => this.conn.chat(cmd);
     ui.roster.onClose = () => this.pinRoster(false);
     this.boardT = 0; // when the leaderboard is next asked for, while it is open (performance.now)
     this.discovered = new Set([ZONE.CAMP]);
@@ -739,6 +745,7 @@ export class Game {
     const info = await this.conn.connect(name, playerId(), code, chosenCharacter());
     this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
+    this.admin = info.admin;
     this.voice.setMyId(info.id);
     this.ensureViewModel();
     this.loadWorld(info.seed);
@@ -764,6 +771,7 @@ export class Game {
     this.stripped.clear(); // (the first snapshot says which are)
     this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
     if (!resume) this.waypoint = null;
+    if (this.admin && !resume) this.ui.addChat('', 'Admin: the key under Esc ( ` ~ ) opens the spawn menu.', { system: true });
     joinedGame(!!accountState().user); // (a guest's achievements count the days played on here; an account's, the server)
     return info;
   }
@@ -807,6 +815,7 @@ export class Game {
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
     this.ui.setBoard(null); // (what it showed was that server's, as of then)
+    this.ui.setSpawnOpen(false);
     this.ui.setRosterOpen(false);
     this.ui.setInventoryOpen(false);
     this.ui.showPause(false); // ("Leave game" is pressed on it)
@@ -935,12 +944,13 @@ export class Game {
 
   pushInventoryToUI(force = false) {
     const s = this.prediction.state;
-    const key = `${s.weapons.join(',')}|${s.ammo.join(',')}|${s.throwCount}`;
+    // (the magazines move with every shot: only the open screen shows them)
+    const key = `${s.weapons.join(',')}|${s.ammo.join(',')}|${this.ui.inventoryOpen ? s.mags.join(',') : ''}|${s.throwCount}`;
     if (!force && key === this.lastHudInvKey) return;
     this.lastHudInvKey = key;
     const throwCounts = {};
     for (const it of this.inventory.slots) if (it && THROW_ITEMS.includes(it.item)) throwCounts[it.item] = (throwCounts[it.item] || 0) + it.count;
-    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
+    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], mags: [...s.mags], throwCounts });
   }
 
   // what we carry, by item: the backpack, and the ammunition carried apart from it (the reserves we predict)
@@ -953,8 +963,10 @@ export class Game {
 
   onChat(id, flags, text) {
     const radio = !!(flags & CHATF.RADIO);
-    if (flags & CHATF.SYSTEM) this.ui.addChat('', text, { system: true });
-    else {
+    if (flags & CHATF.SYSTEM) {
+      this.ui.addChat('', text, { system: true });
+      this.ui.spawn.serverSays(text);
+    } else {
       const p = this.players.get(id);
       const zombie = !!(flags & CHATF.ZOMBIE);
       this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined, radio, faint: !!(flags & CHATF.FAINT), unheard: !!(flags & CHATF.UNHEARD) });
@@ -1337,6 +1349,14 @@ export class Game {
       }
       case NOTIFY.POCKETS:
         ui.notify("Empty the backpack's extra pockets first", 'warning', 2.5);
+        a.playLocal('build_fail');
+        break;
+      case NOTIFY.NEED_HAMMER:
+        ui.notify(`Equip the hammer to repair ${bindTag('slot5')}`, 'warning', 2);
+        a.playLocal('build_fail');
+        break;
+      case NOTIFY.UNDO_GONE:
+        ui.notify(arg === UNDO_NO.LATE ? 'Too late to take it back: it is still on the ground' : arg === UNDO_NO.FAR ? 'Too far from it to take it back: it is still on the ground' : 'Somebody already picked it up', 'warning', 2.5);
         a.playLocal('build_fail');
         break;
       case NOTIFY.CAMPFIRE_LIT:
@@ -1738,12 +1758,12 @@ export class Game {
       if (this.state !== 'playing') return;
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
-      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned) {
+      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.spawnOpen && !this.ui.rosterPinned) {
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
         this.ui.showPause(false);
-        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned;
+        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.spawnOpen && !this.ui.rosterPinned;
       }
     };
     inp.handlers.onKey = (code, acts) => this.onKey(code, acts);
@@ -1775,6 +1795,12 @@ export class Game {
       if (ui.rosterPinned) this.pinRoster(false);
       else if (ui.mapOpen) this.toggleMap(false);
       else if (ui.boardOpen) this.toggleBoard(false);
+      else if (ui.spawnOpen) this.toggleSpawn(false);
+      return;
+    }
+    // (an admin's: it takes over the key from any bind on it)
+    if (code === SPAWN_KEY && this.admin) {
+      if (!ui.inventoryOpen && !ui.isTyping()) this.toggleSpawn(!ui.spawnOpen);
       return;
     }
     if (has('players')) {
@@ -1803,8 +1829,7 @@ export class Game {
       this.toggleBoard(!ui.boardOpen);
       return;
     }
-    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
-    // and the pause menu.
+    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory.
     if (has('chat')) {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
@@ -1996,6 +2021,25 @@ export class Game {
       this.boardT = 0; // ask the server at once (update)
       this.input.exitLock();
     } else if (relock) this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // The admin spawn menu [`] (ui/spawnmenu.js): a search box and a list to click, so it frees the pointer and keeps
+  // the keys while it is up. Only offered when the server says we are an admin; it checks every command anyway.
+  // relock: false when something else that needs the cursor is taking over
+  toggleSpawn(open, relock = true) {
+    const ui = this.ui;
+    if (open === ui.spawnOpen || (open && !this.admin)) return;
+    if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.rosterPinned) this.pinRoster(false, false);
+    ui.setSpawnOpen(open);
+    this.input.enabled = !open && !ui.inventoryOpen;
+    this.input.releaseAll();
+    this.inputBuffer.clear();
+    this.endHold();
+    if (open) this.input.exitLock();
+    else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
@@ -2237,6 +2281,7 @@ export class Game {
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
       onSplitItem: (i, n) => this.conn.action(ACT.SPLIT_INV, i, n),
       onDropAmmo: (cal, n) => this.conn.action(ACT.DROP_AMMO, cal, n),
+      onUndoDrop: () => this.conn.action(ACT.UNDO_DROP),
       onSalvage: (from, n) => {
         this.conn.action(ACT.SALVAGE, from, n);
         this.audio.playLocal('craft', { volume: 0.6 }); // (the server's sound leaves us out)
@@ -2246,7 +2291,6 @@ export class Game {
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onUnequip: (slot, to = 255) => this.conn.action(ACT.UNEQUIP, slot, to),
       onWorn: (which, what) => this.conn.action(ACT.WORN, which, what),
-      onSortItems: () => this.conn.action(ACT.SORT_INV),
       onSelectStructure: (t) => (this.buildType = t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
@@ -2693,6 +2737,7 @@ export class Game {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
+      this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
@@ -2700,6 +2745,7 @@ export class Game {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
+      this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
       // when it left stayed in the valley, and so did the players who had already turned.
@@ -2774,12 +2820,17 @@ export class Game {
         // a weapon whose slot is taken, with no room in the pack for it: taking it puts the one in that slot down
         const swap = d?.cat === 'weapon' && WEAPONS[e.item] ? this.swapsOut(WEAPONS[e.item].slot) : 0;
         this.prompt = swap ? `${bindTag('interact')} Swap your ${ITEM_DEFS[swap].name} for the ${d.name}` : `${bindTag('interact')} Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
+        // (something the recipe tracked on the HUD is still short of)
+        if (trackedNeed(e.item, counts)) this.prompt += ` · needed for ${ITEM_DEFS[trackedRecipe().out].name} (tracked)`;
         return;
       }
       if (e.kind === ENT.CACHE) {
         this.lookTarget = e;
         const name = CONT_DEFS[e.ctype]?.name || 'Container';
         this.prompt = e.q[3] === 0 ? `${bindTag('interact')} Hold to search ${name}` : `${name} · searched`;
+        const r = e.q[3] === 0 && trackedRecipe();
+        const want = r && Object.keys(r.cost).find((k) => trackedNeed(+k, counts) && mayHold(e.ctype, +k));
+        if (want) this.prompt += ` · may hold ${ITEM_DEFS[want].name} (tracked)`;
         return;
       }
       if (e.kind === ENT.PLAYER && e.downed) {
@@ -3019,6 +3070,10 @@ export class Game {
     const counts = this.invCounts();
     h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
     h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what the drink key has left
+    // the recipe tracked on the HUD (game/tracked.js), against what we carry and the stations in reach
+    const tracked = !s.zombie && self.alive ? trackedRecipe() : null;
+    if (tracked && (!this.trackNear || this.frame % 20 === 5)) this.trackNear = this.craftContext();
+    h.tracked = tracked ? { r: tracked, counts, near: this.trackNear, unlocked: g.unlocked | 0 } : null;
     let partsMask = 0;
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };

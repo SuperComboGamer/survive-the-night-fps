@@ -1,5 +1,5 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, ROOMF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, ROOMF, WELCOMEF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard } from '../../shared/protocol.js';
 import { NIGHTFALL } from '../../shared/difficulty.js';
 import { CHARACTER_NONE } from '../../shared/characters.js';
 
@@ -80,6 +80,7 @@ export class Connection {
           }
           case S2C.WELCOME: {
             const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), room: this.room };
+            info.admin = r.left > 0 && !!(r.u8() & WELCOMEF.ADMIN);
             settled = joined = true;
             resolve(info);
             break;

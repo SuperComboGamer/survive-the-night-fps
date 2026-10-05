@@ -4,9 +4,10 @@
 // with light, survive a night of waves and run the escape finale.
 // Decodes every snapshot with the real client decoder. usage: node scripts/sim-smoke.js [seed]
 import { CRAFT_MAX, craftRun, copyInv } from '../client/game/bulkcraft.js';
+import { spawnCatalog } from '../client/ui/spawnmenu.js';
 import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
-import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
+import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, WELCOMEF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
 import { PHASE, BTN, NOISE, TALK_CLEAR, TALK_RANGE, SLOT_RADIO, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER, structPickRadius } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
@@ -1142,7 +1143,7 @@ const standOff = (c, e, d) => {
   check('...again every few seconds while they stand by it, not on every try', said === 2, `${said} notices in 10 s`);
   d.inv[0] = null;
   ticks(70); // (it is tried again every 3 s)
-  check('...and it is picked up once there is room', battery.removed && d.inv[0]?.item === ITEM.CAR_BATTERY && told(D, NOTIFY.SUPPLY_FOUND) === 1 && told(D, NOTIFY.INVENTORY_FULL) === said);
+  check('...and it is picked up once there is room', battery.removed && d.inv.some((x) => x?.item === ITEM.CAR_BATTERY) && told(D, NOTIFY.SUPPLY_FOUND) === 1 && told(D, NOTIFY.INVENTORY_FULL) === said);
   // a car supply taken from its hiding place: the team is told that place needs no more searching (the battery
   // above lay loose, it was nobody's rumour), and putting it down again does not bring the rumour back
   ticks(2);
@@ -1163,7 +1164,7 @@ const standOff = (c, e, d) => {
   const put = new Writer(8);
   put.u8(C2S.ACTION);
   put.u8(ACT.DROP_SLOT);
-  put.u8(1);
+  put.u8(d.inv.findIndex((x) => x?.item === hidden.item)); // (wherever the sort put it)
   put.u16(0);
   g.onMessage(D.session, put.bytes().slice());
   ticks(2);
@@ -3740,8 +3741,13 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
         send(bytes) {
           const r = new Reader(bytes.slice().buffer);
           const t = r.u8();
-          if (t === S2C.WELCOME) c.id = r.u16();
-          else if (t === S2C.CHAT) {
+          if (t === S2C.WELCOME) {
+            c.id = r.u16();
+            r.u32();
+            r.u32();
+            r.u16();
+            c.welcomeAdmin = !!(r.u8() & WELCOMEF.ADMIN);
+          } else if (t === S2C.CHAT) {
             r.u16();
             const flags = r.u8();
             (flags & CHATF.SYSTEM ? c.system : c.heard).push(r.str());
@@ -3775,6 +3781,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   B.say('/night');
   check('admin: a regular account cannot run commands', g.timeLeft === 500 && !B.p.admin);
   check('...an account flagged as admin is authorized on join', A.p.admin && !B.p.admin);
+  check('...and its WELCOME says so (the spawn menu is offered to it alone)', A.welcomeAdmin === true && B.welcomeAdmin === false);
   A.say('/night');
   check('...and its commands work', g.timeLeft === 0.05, `${g.timeLeft}`);
   const legacy = B.say('/admin hunter2 was old');
@@ -3785,6 +3792,18 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   const bare = setup();
   const D = bare.join('Dot', { account: false });
   check('...a guest on an ordinary server is not an admin', !D.p.admin);
+  // every command the spawn menu sends is one the server understands: each item given, each zombie type spawned
+  const S = setup().join('Sid', { isAdmin: true });
+  const wrong = [];
+  for (const e of spawnCatalog()) {
+    S.p.inv.fill(null); // (room for whatever comes next)
+    S.system.length = 0;
+    S.say(e.cmd(e.auto));
+    const said = S.system.find((t) => !t.startsWith('[debug]')) || '';
+    if (e.kind === 'item' && !(/^gave [1-9]/.test(said) && said.endsWith(` x ${e.name}`))) wrong.push(`${e.name}: ${said}`);
+    if (e.kind === 'zombie' && said !== `spawned 1 x ${e.name}`) wrong.push(`${e.name}: ${said}`);
+  }
+  check('admin spawn menu: every item and zombie it offers is given or spawned by its command', !wrong.length, wrong.join('; '));
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}  (server tick avg ${game.stats.tickMs.toFixed(2)} ms)`);

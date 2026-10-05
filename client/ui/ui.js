@@ -8,10 +8,11 @@ import { Killfeed, Pickups, Notifier } from './feed.js';
 import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
-import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, DEFAULT_CONTROLS } from './menus.js';
+import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, InvitePanel, DEFAULT_CONTROLS } from './menus.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
+import { SpawnMenu } from './spawnmenu.js';
 import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
@@ -30,14 +31,14 @@ const CALLBACKS = [
   'onUseItem',
   'onDropItem',
   'onSplitItem',
-  'onDropAmmo', // (calibre, rounds; 0 = all of it): the Ammunition panel's Half / All
+  'onDropAmmo', // (calibre, rounds; 0 = all of it): the ammo pouch's popover and menu
+  'onUndoDrop', // the inventory's Undo, a few seconds after a drop: the server picks the last one up again
   'onSalvage',
   'onSwapItems',
   'onEquipArmor',
   'onDropWeapon',
   'onUnequip', // (weapon slot, backpack index or 255): a weapon out of its slot into the backpack
   'onWorn', // (which: WORN, what: WORN_DO) the armor or backpack being worn: taken off, dropped or salvaged
-  'onSortItems', // the Sort button on the backpack grid
   'onSelectStructure',
   'onSelectThrowable',
   'onCloseInventory',
@@ -102,10 +103,12 @@ export class UI {
     this.pause = new Pause(this, ovL);
     // A modal layer lets the same board sit over both the in-game/end overlays and the splash screen.
     this.board = new Leaderboard(this, modalL);
+    this.spawn = new SpawnMenu(this, modalL); // (admins only: Game.toggleSpawn)
     this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
     this.controlsPanel = new ControlsPanel(this, modalL);
+    this.invitePanel = new InvitePanel(this, modalL);
     this.friends = new FriendsPanel(this, modalL);
     this.accountPanel = new AccountPanel(this, modalL);
     this.progress = new ProgressPanel(this, modalL);
@@ -173,6 +176,7 @@ export class UI {
     this.splash.hide();
     if (this.settingsPanel.visible) this.settingsPanel.hide();
     if (this.controlsPanel.visible) this.controlsPanel.hide();
+    if (this.invitePanel.visible) this.invitePanel.hide();
     if (this.friends.visible) this.friends.hide();
     if (this.accountPanel.visible) this.accountPanel.hide();
     if (this.progress.visible) this.progress.hide();
@@ -189,7 +193,7 @@ export class UI {
     this.pause.show(show);
   }
 
-  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu
+  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu and its invite panel
   setRoom(room, link = '') {
     this.pause.setRoom(room, link);
   }
@@ -242,6 +246,14 @@ export class UI {
 
   get boardOpen() {
     return this.board.open;
+  }
+
+  setSpawnOpen(open) {
+    this.spawn.setOpen(open);
+  }
+
+  get spawnOpen() {
+    return this.spawn.open;
   }
 
   // the leaderboard as the server last sent it (shared/protocol.js readBoard); null: not heard from yet

@@ -4,12 +4,12 @@
 // step). Starts from what a player reported: three part-used stacks of Canned Tuna (3, 4 and 2 tins, where 9 tins
 // are a 5 and a 4). Then every way into, out of and around the backpack: walk-over and [E] pickups (the backpack's
 // own slots too), eating from the stack clicked or with [H] / [B], partial drops (Shift+RMB, the popover's Drop n),
-// salvage, splits, drags, Sort, crafting, searches, leaving and coming back - and a randomized soak of thousands of
+// salvage, splits, drags, the auto sort, crafting, searches, leaving and coming back - and a randomized soak of thousands of
 // those, the invariant checked after every one of them.
 //
 // A deliberate split (ACT.SPLIT_INV) is the one exception: the player asked for two stacks, and keeps them while that
 // item's count stays as it is. The next change to it (a pickup, a use, a craft, a drop) merges the part stacks again
-// (consolidate, server/inventory.js); so does Sort.
+// (consolidate, server/inventory.js).
 // usage: node scripts/test-stacking.js [seed] [soak steps]
 import { randomUUID } from 'node:crypto';
 import { Game } from '../server/game.js';
@@ -199,11 +199,11 @@ const s = a.state;
   a.inv[5] = { item: ITEM.TUNA, count: 5 };
   a.invDirty = true;
   walkOver(a, ITEM.TUNA, 2);
-  check('a walk-over pickup tops up a part stack in the backpack\'s slots before it takes a free slot', a.inv[30]?.count === 4 && of(a, ITEM.TUNA).length === 2 && same(A, a), show(a, ITEM.TUNA));
+  check('a walk-over pickup tops up a part stack in the backpack\'s slots, and the grid is sorted: the tins first', of(a, ITEM.TUNA).join('/') === '5/4' && a.inv[1]?.item === ITEM.TUNA && same(A, a), show(a, ITEM.TUNA));
   walkOver(a, ITEM.TUNA, 3);
-  check('...fills it and starts one new part stack with the rest', of(a, ITEM.TUNA).join('/') === '2/5/5' && a.inv[0]?.item === ITEM.TUNA && parts(a.inv, ITEM.TUNA) === 1, show(a, ITEM.TUNA));
+  check('...fills it and starts one new part stack with the rest', of(a, ITEM.TUNA).join('/') === '5/5/2' && a.inv[2]?.item === ITEM.TUNA && parts(a.inv, ITEM.TUNA) === 1, show(a, ITEM.TUNA));
   walkOver(a, ITEM.TUNA, 1);
-  check('...and the next pickup goes onto that one', of(a, ITEM.TUNA).join('/') === '3/5/5', show(a, ITEM.TUNA));
+  check('...and the next pickup goes onto that one', of(a, ITEM.TUNA).join('/') === '5/5/3', show(a, ITEM.TUNA));
   // a full grid: only what tops up the part stack is taken, the rest stays on the ground
   for (let i = 0; i < invCap(a); i++) if (!a.inv[i]) a.inv[i] = { item: ITEM.LEATHER, count: 10 };
   a.invDirty = true;
@@ -225,7 +225,7 @@ const s = a.state;
   a.interactT = -1;
   A.act(ACT.INTERACT, e.id);
   run(2);
-  check('...[E] on 3 tins tops it up and puts the other 2 in the free slot', e.removed && of(a, ITEM.TUNA).join('/') === '5/2/5' && a.inv[1]?.count === 2 && parts(a.inv, ITEM.TUNA) === 1, show(a, ITEM.TUNA));
+  check('...[E] on 3 tins tops it up and puts the other 2 in a stack of their own, the grid sorted', e.removed && of(a, ITEM.TUNA).join('/') === '5/5/2' && a.inv[2]?.count === 2 && parts(a.inv, ITEM.TUNA) === 1 && same(A, a), show(a, ITEM.TUNA));
   clearGround();
 }
 
@@ -259,7 +259,7 @@ const s = a.state;
   check('dropping 2 off a full stack while another is part-used takes them from the part stack', of(a, ITEM.BANDAGE).join('/') === '5/5/1' && same(A, a), show(a, ITEM.BANDAGE));
   A.act(ACT.SALVAGE, 0, 2);
   run(2);
-  check('salvaging 2 off a full stack likewise, and what is left is one part stack', of(a, ITEM.BANDAGE).join('/') === '4/5' && cnt(a, ITEM.CLOTH) === 2 && same(A, a), show(a, ITEM.BANDAGE));
+  check('salvaging 2 off a full stack likewise, and what is left is one part stack (the cloth it gives sorts the grid)', of(a, ITEM.BANDAGE).join('/') === '5/4' && cnt(a, ITEM.CLOTH) === 2 && same(A, a), show(a, ITEM.BANDAGE));
   clearGround();
   // a split is kept apart while nothing changes, then merged by the next pickup
   pack(a, [ITEM.TUNA, 5], [ITEM.TUNA, 4]);
@@ -287,9 +287,19 @@ const s = a.state;
   A.act(ACT.SWAP_INV, 2, 1);
   run(2);
   check('...and one part stack dragged onto another tops it up', of(a, ITEM.TUNA).join('/') === '3/4' || of(a, ITEM.TUNA).join('/') === '3/4/0', show(a, ITEM.TUNA));
-  A.act(ACT.SORT_INV);
+  // the auto sort: a pickup or a drop sorts the grid, but leaves a split of something else apart
+  const gapless = (p) => p.inv.findIndex((x) => !x) === p.inv.filter(Boolean).length;
+  pack(a, [ITEM.CLOTH, 5], null, [ITEM.TUNA, 5], [ITEM.TUNA, 4]);
   run(2);
-  check('Sort merges what a split left apart', of(a, ITEM.TUNA).join('/') === '5/2' && same(A, a), show(a, ITEM.TUNA));
+  A.act(ACT.SPLIT_INV, 2, 2);
+  run(2);
+  walkOver(a, ITEM.BANDAGE, 1);
+  const cloth = a.inv.findIndex((x) => x && x.item === ITEM.CLOTH);
+  check('a pickup sorts the grid: no gaps, the consumables before the cloth, and the tins split stay apart', gapless(a) && cloth === 4 && of(a, ITEM.TUNA).join('/') === '4/3/2' && cnt(a, ITEM.BANDAGE) === 1 && same(A, a), `${show(a, ITEM.TUNA)}, cloth in ${cloth}`);
+  A.act(ACT.DROP_SLOT, 0, 0);
+  run(2);
+  check('...and so does a drop: the slot it leaves is closed up', gapless(a) && a.inv.filter(Boolean).length === 4 && same(A, a), a.inv.slice(0, 6).map((x) => (x ? ITEM_DEFS[x.item].name + ' x' + x.count : '-')).join(', '));
+  clearGround();
 }
 
 // ---------------------------------------------------------------- crafting and searches
@@ -375,7 +385,7 @@ const s = a.state;
 
 // ---------------------------------------------------------------- the soak
 // Thousands of random steps by one survivor over a handful of items: pickups (walked over, [E], searched, given),
-// eating from a stack clicked or with [H], crafts, whole and partial drops, salvage, splits, drags and Sort. After
+// eating from a stack clicked or with [H], crafts, whole and partial drops, salvage, splits and drags. After
 // every step, no item has two part stacks - but one split since its count last changed - and the client's grid is
 // the server's.
 {
@@ -395,7 +405,7 @@ const s = a.state;
     return at.length ? pick(at) : -1;
   };
   for (; steps < SOAK && !firstBad; steps++) {
-    const op = Math.floor(rnd() * 13);
+    const op = Math.floor(rnd() * 12);
     let what = '';
     if (op === 0 || op === 1) {
       const item = pick(ITEMS);
@@ -459,7 +469,7 @@ const s = a.state;
       A.act(ACT.SPLIT_INV, i, n);
       run(1);
       split.set(item, cnt(a, item));
-    } else if (op === 11) {
+    } else {
       const occ = occupied();
       if (occ.length < 2) continue;
       const i = pick(occ);
@@ -467,12 +477,6 @@ const s = a.state;
       what = `drag slot ${i} onto ${j}`;
       A.act(ACT.SWAP_INV, i, j);
       run(1);
-    } else {
-      if (rnd() < 0.5) continue;
-      what = 'Sort';
-      A.act(ACT.SORT_INV);
-      run(1);
-      split.clear();
     }
     run(1);
     // a split is exempt only while its item's count is what it was split at

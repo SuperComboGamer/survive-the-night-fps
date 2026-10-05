@@ -112,6 +112,15 @@ for (const [item, s] of SOURCES) {
   ORDER.set(item, [...s.any.slice(0, LEAD), ...s.places, ...s.any.slice(LEAD)]);
 }
 
+// Whether a container of kind `ctype` can turn up `item` when searched: its own table, what is always in it, the rounds
+// its guns come with. False for a kind with no table of its own (it rolls its place's, which a client cannot tell)
+export function mayHold(ctype, item) {
+  const d = CONT_DEFS[ctype];
+  if (!d?.table) return false;
+  if ((d.also || []).some(([it]) => it === item)) return true;
+  return CONT_TABLES[d.table].some(([it]) => it === item || (d.loaded && loadedAmmo(it, d.loaded)?.[0] === item));
+}
+
 const EMPTY = [];
 // every source of `item` in the world, as [{ name, n, place }] in the order above ([] when it is never found)
 export const sourcesOf = (item) => ORDER.get(item) || EMPTY;

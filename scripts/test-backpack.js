@@ -2,7 +2,7 @@
 // in an equipment slot of its own like armor, it opens BACKPACK_SLOTS more slots in the same grid (INVENTORY_SIZE ->
 // INVENTORY_MAX). Without it those slots are locked: nothing a pickup, a craft, a search, a split or a drag does may
 // put anything in one. It does not come off while its own slots hold anything; it goes down with everything else
-// when its wearer dies, and stays on through a dropped connection. Also: the Sort button (ACT.SORT_INV), and that play
+// when its wearer dies, and stays on through a dropped connection. Also: the auto sort after a pickup, and that play
 // never leaves two part-used stacks of an item (removeItem takes from the smallest).
 // usage: node scripts/test-backpack.js [seed]
 import { randomUUID } from 'node:crypto';
@@ -211,7 +211,8 @@ check('a survivor has 24 slots, and an inventory is always 34 long', invCap(a) =
   a.invDirty = true;
   lying.noAutoUntil = 0;
   run(12);
-  check('...and taken into slot 25 with one', lying.removed && a.inv[INVENTORY_SIZE]?.item === ITEM.BANDAGE && A.slots[INVENTORY_SIZE]?.count === 2, desc(a));
+  const at = a.inv.findIndex((x) => x && x.item === ITEM.BANDAGE);
+  check('...and taken with one, into a 25th slot (the grid sorted after it)', lying.removed && at >= 0 && A.slots[at]?.count === 2 && a.inv.filter(Boolean).length === INVENTORY_SIZE + 1, desc(a));
   unwear(a);
 }
 // what a craft makes
@@ -298,39 +299,44 @@ check('a survivor has 24 slots, and an inventory is always 34 long', invCap(a) =
   for (const e of lying) game.removeItemEnt(e);
 }
 
-// ---------------------------------------------------------------- Sort
+// ---------------------------------------------------------------- the auto sort
 {
-  // a jumble, without a backpack: part stacks of one thing apart from each other, kinds mixed, gaps between
-  pack(a);
+  // a jumble, without a backpack: part stacks of one thing apart from each other, kinds mixed, gaps between. Laid out
+  // by hand, then one bandage picked up sorts it
   const lay = [[ITEM.CLOTH, 5], null, [ITEM.AMMO_9MM, 30], [ITEM.SPARK_PLUGS, 1], [ITEM.CLOTH, 7], [ITEM.BANDAGE, 2], null, [ITEM.AMMO_9MM, 100], [ITEM.MOLOTOV, 1], [ITEM.WALKIE, 1], [ITEM.CLOTH, 19], [ITEM.MEDKIT, 1], [ITEM.AMMO_9MM, 140]];
-  lay.forEach((x, i) => (a.inv[i] = x && { item: x[0], count: x[1] }));
-  a.inv[14] = { item: ITEM.JACKET, count: 1, mag: 33 };
-  a.inv[17] = { item: ITEM.SHOTGUN, count: 1, mag: 4 };
-  a.invDirty = true;
-  run(2);
+  const jumble = (list) => {
+    pack(a);
+    list.forEach((x, i) => (a.inv[i] = x && { item: x[0], count: x[1] }));
+    a.inv[14] = { item: ITEM.JACKET, count: 1, mag: 33 };
+    a.inv[17] = { item: ITEM.SHOTGUN, count: 1, mag: 4 };
+    a.invDirty = true;
+    run(2);
+  };
+  jumble(lay);
   const names = (slots) => slots.map((x) => (x ? `${ITEM_DEFS[x.item].name} x${x.count}` : '-')).join(', ');
   const before = names(A.slots.slice(0, 18));
-  A.act(ACT.SORT_INV);
+  game.giveItem(a, ITEM.BANDAGE, 1);
   run(2);
-  const want = ['Shotgun x1', 'Padded Jacket x1', 'Walkie-Talkie x1', '9mm Ammo x150', '9mm Ammo x120', 'Bandage x2', 'Medkit x1', 'Molotov x1', 'Cloth x20', 'Cloth x11', 'Spark Plugs x1'];
+  const want = ['Shotgun x1', 'Padded Jacket x1', 'Walkie-Talkie x1', '9mm Ammo x150', '9mm Ammo x120', 'Bandage x3', 'Medkit x1', 'Molotov x1', 'Cloth x20', 'Cloth x11', 'Spark Plugs x1'];
   const got = names(a.inv.slice(0, want.length));
   const kept = a.inv[0]?.mag === 4 && a.inv[1]?.mag === 33; // (the shotgun's magazine, the jacket's points)
-  check('Sort merges part stacks and orders the grid: weapons, worn gear, ammo, consumables, throwables, materials, supplies', got === want.join(', ') && kept && a.inv.slice(want.length).every((x) => !x) && names(A.slots.slice(0, want.length)) === got, `
+  check('a pickup merges part stacks and orders the grid: weapons, worn gear, ammo, consumables, throwables, materials, supplies', got === want.join(', ') && kept && a.inv.slice(want.length).every((x) => !x) && names(A.slots.slice(0, want.length)) === got, `
         before: ${before}
         after:  ${got}`);
   const once = JSON.stringify(a.inv);
-  A.act(ACT.SORT_INV);
+  jumble([...lay].reverse());
+  game.giveItem(a, ITEM.BANDAGE, 1);
   run(2);
-  check('...the same way every time, and never into a locked slot', JSON.stringify(a.inv) === once && lockedClean(a));
+  check('...the same way whatever order it was in, and never into a locked slot', JSON.stringify(a.inv) === once && lockedClean(a));
   // with a backpack on, its slots are sorted with the rest
   wear(A, 20);
   a.inv[30] = { item: ITEM.CLOTH, count: 3 };
   a.inv[33] = { item: ITEM.ROPE, count: 2 };
   a.invDirty = true;
-  A.act(ACT.SORT_INV);
+  game.giveItem(a, ITEM.ROPE, 1);
   run(2);
   const got2 = names(a.inv.slice(0, 12));
-  check('...and with a backpack on, its slots too: what was in them is merged in, and they are free again', got2 === [...want.slice(0, 8), 'Cloth x20', 'Cloth x14', 'Rope x2', 'Spark Plugs x1'].join(', ') && pockets(a) === 0 && a.backpackItem === ITEM.BACKPACK, got2);
+  check('...and with a backpack on, its slots too: what was in them is merged in, and they are free again', got2 === [...want.slice(0, 8), 'Cloth x20', 'Cloth x14', 'Rope x3', 'Spark Plugs x1'].join(', ') && pockets(a) === 0 && a.backpackItem === ITEM.BACKPACK, got2);
   pack(a);
   unwear(a);
   run(2);

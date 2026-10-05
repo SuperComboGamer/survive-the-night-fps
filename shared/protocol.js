@@ -17,7 +17,7 @@ export const C2S = {
 
 // server -> client
 export const S2C = {
-  WELCOME: 1,
+  WELCOME: 1, // u16 your id, u32 seed, u32 tick, u8 tick rate, u8 max players, u8 WELCOMEF (a server before it sends none: 0)
   SNAPSHOT: 2, // u8 flags (SNAP), [u32 tick, u16 ack], [varu ack step], [global], [self], [entities], [events]
   INVENTORY: 3, // INVENTORY_MAX x (u8 item, u16 count), u8 armor item, u8 armor points, u8 armor max, u8 backpack worn (item or 0)
   CHAT: 4,
@@ -34,6 +34,9 @@ export const S2C = {
   PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
 };
 export const ROOMF = { INVITE_ONLY: 1 };
+// S2C.WELCOME flags. ADMIN: this player may run the admin commands (the client offers the spawn menu); the server
+// still checks every command itself
+export const WELCOMEF = { ADMIN: 1 };
 // S2C.PROGRESS flags. LOADED: the server has heard what is on your record (until then the XP is this run's alone);
 // KEPT: it is kept for you (signed in, or a guest with a browser id) - without it nothing earned outlives the game
 export const PROGF = { LOADED: 1, KEPT: 2 };
@@ -80,11 +83,13 @@ export const ACT = {
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
   WORN: 30, // u8 which (WORN), u8 what (WORN_DO): the armor or backpack being worn taken off into the grid, dropped or salvaged
-  SORT_INV: 31, // (nothing): tidy the backpack grid - partial stacks merged, the open slots ordered by BAG_TIER
   SALVAGE: 32, // u8 from (SALVAGE_FROM), u16 count: tear that many down for what they are made of (SALVAGE in defs.js)
   DROP_AMMO: 33, // u8 calibre (AMMO in defs.js), u16 count (0 = all): rounds out of that reserve onto the ground
   UNEQUIP: 34, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
+  UNDO_DROP: 35, // (nothing): the last thing this survivor dropped picked up again, a few seconds after (the inventory's Undo)
 };
+// NOTIFY.UNDO_GONE: why an undo brought nothing back
+export const UNDO_NO = { GONE: 0, LATE: 1, FAR: 2 };
 // ACT.WORN: which piece of worn gear, and what is done with it
 export const WORN = { ARMOR: 0, BACKPACK: 1 };
 export const WORN_DO = { OFF: 0, DROP: 1, SALVAGE: 2 };

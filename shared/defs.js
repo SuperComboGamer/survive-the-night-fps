@@ -392,9 +392,9 @@ export const RECIPES = [
   { id: 39, out: ITEM.AMMO_FLARE, n: 1, cost: { [ITEM.POWDER]: 3, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 }, station: 'bench' },
 ];
 
-// The order the Sort button puts the backpack grid in, by category: weapons, what is worn or carried for what it does
-// (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables, materials, car
-// supplies, schematics (Game.sortInventory). Empty slots come after them, and the locked ones last of all.
+// The order the backpack grid is sorted in after a pickup or a drop, by category: weapons, what is worn or carried for
+// what it does (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables,
+// materials, car supplies, schematics (sortInventory, server/inventory.js). Empty slots come after them, and the locked ones last of all.
 export const BAG_TIER = { weapon: 0, armor: 1, pack: 1, gear: 1, ammo: 2, cons: 3, throw: 4, res: 5, part: 6, schem: 7 };
 
 // ---------------------------------------------------------------- salvage
@@ -492,8 +492,11 @@ export const ZOMBIE_DEFS = {
   // sized so that the rounds a survivor has left once the horde has had its share can bring one down before sunrise
   [ZTYPE.BOSS_ABOMINATION]: { name: 'The Abomination', hp: 4000, speed: 3.0, dmg: 55, rate: 1.8, range: 3.4, radius: 1.5, height: 4.2, headY: 3.7, headR: 0.5, structDmg: 600, loot: 1, knock: 16, boss: true, minNight: 4, tip: 'It slams the ground and throws boulders. Spread out and keep moving.' },
   [ZTYPE.BOSS_HIVEQUEEN]: { name: 'The Hive Queen', hp: 3400, speed: 2.4, dmg: 35, rate: 1.4, range: 3.0, radius: 1.3, height: 3.6, headY: 3.1, headR: 0.45, structDmg: 300, loot: 1, knock: 8, boss: true, spitRange: 30, spitRate: 1.6, minNight: 5, tip: 'Acid barrages, and bats from its back. Keep to cover and shoot the bats off whoever they catch.' },
-  // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier
-  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, leather: 0.3, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2, intro: 'Zombie dogs join the horde: fast and fragile, and they cannot jump a barricade. Leave no gap.' },
+  // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier.
+  // hitRun: it bites once and breaks off before it comes in again. Held up by what the survivors built it rams it:
+  // ramDmg to the piece (a metal one takes less, and gives ramRecoil back), then it reels, taking stunHurt x damage
+  // (DOG_* in server/zombies.js)
+  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, leather: 0.3, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2, hitRun: true, ramDmg: 180, ramRecoil: 15, stunHurt: 1.5, intro: 'Zombie dogs join the horde: they bite and run. They cannot jump a barricade, but they ram one down. Shoot them as they come in.' },
   [ZTYPE.SHADE]: { name: 'Shade', hp: 240, speed: 6.6, dmg: 34, rate: 0.9, range: 1.7, radius: 0.36, height: 2.0, headY: 1.82, headR: 0.17, structDmg: 30, loot: 0.8, shade: true, litResist: 0.25, minNight: 6, legs: true, intro: 'Shades join the horde: they only move in the dark. Torches, a campfire, flashlights on them.' },
   // night 1's boss: a hulking walker and nothing more, until it is badly hurt - below enrage of its health it roars and
   // comes on at enrageSpeed x its pace. Its body fits a doorway (moveR / moveH, as the Tank's)
@@ -745,6 +748,8 @@ export const NOTIFY = {
   GEN_LOW: 48, // a generator nearby has a minute of fuel left (sent to the survivors round it)
   GEN_OUT: 49, // ...it has run dry: its floodlights are out
   POCKETS: 62, // (to whoever tried) the backpack cannot come off while its extra slots hold anything
+  UNDO_GONE: 63, // (to whoever asked for an undo, ACT.UNDO_DROP) arg = why nothing came back (UNDO_NO in protocol.js)
+  NEED_HAMMER: 64, // (to whoever tried) a repair needs the hammer in hand
 };
 
 // killer kinds for killfeed

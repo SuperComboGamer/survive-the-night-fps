@@ -2,7 +2,7 @@
 // hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|chat|icons   &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
-import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
 import { PHASE, INVENTORY_MAX } from '../../shared/constants.js';
 import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
 import { ACH_BY_ID } from '../../shared/achievements.js';
@@ -99,13 +99,13 @@ const ui = new UI(document.getElementById('ui'), {
   onDropItem: (i, c) => log('drop', i, c),
   onSplitItem: (i, c) => log('split', i, c),
   onDropAmmo: (cal, c) => log('dropAmmo', cal, c),
+  onUndoDrop: () => log('undoDrop'),
   onSalvage: (from, c) => log('salvage', from, c),
   onSwapItems: (a, b) => log('swap', a, b),
   onEquipArmor: (i) => log('armor', i),
   onDropWeapon: (s) => log('dropWeapon', s),
   onUnequip: (s, to) => log('unequip', s, to),
   onWorn: (which, what) => log('worn', which, what),
-  onSortItems: () => log('sort'),
   onSelectStructure: (t) => log('struct', t),
   onSelectThrowable: (t) => log('throwable', t),
   onCloseInventory: () => {
@@ -119,6 +119,7 @@ const ui = new UI(document.getElementById('ui'), {
   onSettings: (s) => log('settings', JSON.stringify(s)),
   onResume: () => log('resume'),
   onLeave: () => log('leave'),
+  onPeers: () => ({ room: null, players: players.slice(0, 3) }),
   onUiSound: () => {},
 });
 window.ui = ui;
@@ -180,6 +181,7 @@ const inv = {
   backpack: q.get('pack') ? ITEM.BACKPACK : 0,
   ammo: [46, 12, 90, 0, 0, 7, 120],
   weapons: [ITEM.AK47, ITEM.PISTOL, ITEM.MACHETE, ITEM.MOLOTOV, ITEM.HAMMER],
+  mags: [22, 9],
   throwCounts: { [ITEM.MOLOTOV]: 2, [ITEM.PIPEBOMB]: 1 },
 };
 [
@@ -327,6 +329,12 @@ switch (screen) {
   case 'hud': {
     buildScene(bg || 'day');
     const h = { ...baseHud };
+    // &track=1: the Backpack tracked from the crafting panel, two Leather short of it, and some Leather in view
+    if (q.get('track')) {
+      const r = RECIPES.find((x) => x.out === ITEM.BACKPACK);
+      h.tracked = { r, counts: { [ITEM.CLOTH]: 7, [ITEM.LEATHER]: 2 }, near: { fire: false, bench: false }, unlocked: 0 };
+      h.prompt = '[E] Pick up Leather ×2 · needed for Backpack (tracked)';
+    }
     // &weapon=<item id>&mag=<n>&reserve=<n>&reload=<0..1>: try the ammo block with any primary
     if (q.get('weapon')) Object.assign(h, { weapons: [+q.get('weapon'), ...baseHud.weapons.slice(1)], mag: +q.get('mag') || 0, reserve: +(q.get('reserve') ?? 24), reloading: q.get('reload') == null ? -1 : +q.get('reload') });
     ui.hideSplash();
@@ -538,7 +546,9 @@ switch (screen) {
     buildScene(bg || 'fire');
     ui.hideSplash();
     ui.updateHud({ ...baseHud, crosshair: { spread: 7, visible: false } });
-    ui.setCraftContext({ fire: q.get('station') !== '0', bench: q.get('station') !== '0', unlocked: 0b00011 });
+    // &station=0: no crafting station near; &station=fire: a campfire, no workbench
+    const st = q.get('station');
+    ui.setCraftContext({ fire: st !== '0', bench: st !== '0' && st !== 'fire', unlocked: 0b00011 });
     ui.setInventoryOpen(true);
     if (q.get('tip')) {
       // simulate hover over a slot to show the tooltip
@@ -548,13 +558,8 @@ switch (screen) {
         cell.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
       }, 200);
     }
-    if (q.get('craft')) {
-      setTimeout(() => {
-        const rc = document.querySelectorAll('.rc')[2];
-        const r = rc.getBoundingClientRect();
-        rc.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
-      }, 200);
-    }
+    // &craft=1: a recipe picked in the crafting column (its detail panel, and the stacks it would use marked)
+    if (q.get('craft')) setTimeout(() => document.querySelectorAll('.rr')[2]?.click(), 200);
     break;
   }
   case 'build': {
@@ -620,12 +625,15 @@ switch (screen) {
     break;
   }
   case 'pause':
+  case 'invite':
   case 'settings': {
     buildScene(bg || 'night');
     ui.hideSplash();
     ui.updateHud({ ...baseHud, phase: PHASE.NIGHT, night: 1, hordeLeft: 30 });
+    ui.setRoom({ code: 'J68QMM', name: "Webdevcody's game", inviteOnly: false }, `${location.origin}/?game=J68QMM`);
     ui.showPause(true);
     if (screen === 'settings') ui.settingsPanel.show();
+    if (screen === 'invite') ui.invitePanel.show();
     break;
   }
   case 'chat': {
