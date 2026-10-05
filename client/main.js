@@ -176,7 +176,7 @@ const callbacks = {
         const link = inviteLink(room.code);
         showCodeInAddress(room.code);
         ui.setRoom(room, link);
-        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (press Esc to copy the link).`, { system: true });
+        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (or press Esc, then Invite friends).`, { system: true });
       }
     } catch (err) {
       joinCue = false;
@@ -192,6 +192,7 @@ const callbacks = {
   onDropItem: (i, n) => game?.uiCallbacks().onDropItem(i, n),
   onSplitItem: (i, n) => game?.uiCallbacks().onSplitItem(i, n),
   onDropAmmo: (cal, n) => game?.uiCallbacks().onDropAmmo(cal, n),
+  onUndoDrop: () => game?.uiCallbacks().onUndoDrop(),
   onSalvage: (from, n) => game?.uiCallbacks().onSalvage(from, n),
   onSwapItems: (a, b) => game?.uiCallbacks().onSwapItems(a, b),
   onEquipArmor: (i) => game?.uiCallbacks().onEquipArmor(i),

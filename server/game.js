@@ -115,7 +115,7 @@ import {
   radioLinked,
   salvageOf,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, UNDO_NO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { XP, XPS, XP_SRC, levelOf, perkMods, perkMask } from '../shared/progress.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
@@ -175,6 +175,10 @@ const CAR_ALARM_SPAWN_MAX = 86;
 // A stack a survivor put down on purpose (ACT.DROP_SLOT) is theirs to leave lying: walking over it does not put it
 // back in their backpack until they have been this far from it. A teammate's feet, and their own [E], take it as usual.
 const DROP_LEAVE_DIST = 3;
+// ACT.UNDO_DROP: how long after a drop (s) it can be taken back, and how far from it (m) its dropper may have moved.
+// The client offers it for 5 s; the rest is the round trip
+const UNDO_DROP_TIME = 6;
+const UNDO_DROP_REACH = 5;
 // seconds between two "no room for that" notices to a survivor whose full backpack keeps leaving things on the ground
 const FULL_NOTICE_EVERY = 6;
 const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
@@ -572,6 +576,7 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
+    w.u8(p.admin ? WELCOMEF.ADMIN : 0);
     session.conn.send(w.bytes());
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -714,6 +719,7 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
+    w.u8(p.admin ? WELCOMEF.ADMIN : 0);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
     else if (this.fallen.delete(this.leaverKey(p)) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
@@ -768,6 +774,7 @@ export class Game {
       inv: createInventory(),
       invDirty: true,
       splitKeep: new Map(), // item -> its count when last split (ACT.SPLIT_INV): kept apart while it stays that (tidyStacks)
+      lastDrop: null, // { e, t }: the item entity they last put down from the inventory, and when (ACT.UNDO_DROP)
       kit: null, // the starting kit they were issued (spawnHuman)
       flashlight: false,
       battery: FLASHLIGHT_MAX,
@@ -2045,6 +2052,7 @@ export class Game {
         this.dropper = 0;
         // (no entity id left for it on the ground: it stays in the pack)
         if (!dropped) return;
+        p.lastDrop = { e: dropped, t: this.time };
         takeFrom(p.inv, idx, n); // (a few off a full stack: what is left of it merged with the part stack, consolidate)
         p.invDirty = true;
         this.syncThrow(p);
@@ -2057,15 +2065,17 @@ export class Game {
         if (!wpn) return;
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
-        if (!this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s })) return;
+        const dropped = this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s });
+        if (!dropped) return;
+        p.lastDrop = { e: dropped, t: this.time };
         s.weapons[slot] = 0;
         if (slot === SLOT_PRIMARY) s.mags[0] = 0;
         if (slot === SLOT_PISTOL) s.mags[1] = 0;
         return;
       }
       case ACT.DROP_AMMO: {
-        // rounds out of a reserve onto the ground for a teammate: all of a calibre, or some (the Ammunition panel's
-        // Drop half). The client hears of the smaller reserve in its next snapshot, as of a reload
+        // rounds out of a reserve onto the ground for a teammate: all of a calibre, or some (the ammo pouch's popover
+        // and menu). The client hears of the smaller reserve in its next snapshot, as of a reload
         const cal = r.u8();
         const cnt = r.u16();
         const have = cal < AMMO_ITEMS.length ? s.ammo[cal] : 0;
@@ -2076,9 +2086,13 @@ export class Game {
         const ez = s.z - Math.cos(s.yaw) * 1.1;
         const dropped = this.dropItem(AMMO_ITEMS[cal], n, ex, s.y, ez, { spread: 0.3, noAuto: 4, from: s });
         this.dropper = 0;
-        if (dropped) s.ammo[cal] -= n;
+        if (!dropped) return;
+        s.ammo[cal] -= n;
+        p.lastDrop = { e: dropped, t: this.time };
         return;
       }
+      case ACT.UNDO_DROP:
+        return this.undoDrop(p);
       case ACT.CRAFT:
         return this.craft(p, r.u8());
       case ACT.SALVAGE: {
@@ -2783,7 +2797,9 @@ export class Game {
       const ex = s.x - Math.sin(s.yaw) * 1.1;
       const ez = s.z - Math.cos(s.yaw) * 1.1;
       // (no entity id left for it on the ground: it stays on)
-      if (!this.dropItem(item, 1, ex, s.y, ez, { spread: 0.2, mag: mag || undefined, from: s })) return;
+      const dropped = this.dropItem(item, 1, ex, s.y, ez, { spread: 0.2, mag: mag || undefined, from: s });
+      if (!dropped) return;
+      p.lastDrop = { e: dropped, t: this.time };
     } else if (what !== WORN_DO.SALVAGE || !salvageOf(item)) return;
     if (pack) p.backpackItem = 0;
     else p.armorItem = p.armor = p.armorMax = 0;
@@ -2794,6 +2810,25 @@ export class Game {
       this.sound(SOUND.CRAFT, s.x, s.y + 1, s.z, 15);
     }
     p.invDirty = true;
+  }
+
+  // ACT.UNDO_DROP: the last thing this survivor put down from the inventory (p.lastDrop) back in their hands, as a
+  // pickup of it would put it there. Only their own last drop, within UNDO_DROP_TIME, while it still lies there (a
+  // teammate may have taken it, or some of it) and they are within UNDO_DROP_REACH of it. What finds no room stays down.
+  undoDrop(p) {
+    const d = p.lastDrop;
+    p.lastDrop = null;
+    if (!d) return;
+    const e = d.e;
+    if (e.removed || e.count <= 0) return this.notify(NOTIFY.UNDO_GONE, UNDO_NO.GONE, p.id);
+    if (this.time - d.t > UNDO_DROP_TIME) return this.notify(NOTIFY.UNDO_GONE, UNDO_NO.LATE, p.id);
+    const s = p.state;
+    if (Math.hypot(e.x - s.x, e.z - s.z) > UNDO_DROP_REACH) return this.notify(NOTIFY.UNDO_GONE, UNDO_NO.FAR, p.id);
+    const taken = this.giveItem(p, e.item, e.count, e.mag);
+    if (taken <= 0) return this.notify(NOTIFY.INVENTORY_FULL, ITEM_DEFS[e.item]?.cat === 'ammo' ? e.item : 0, p.id);
+    this.pickupEvent(p, e.item, taken);
+    e.count -= taken;
+    if (e.count <= 0) this.removeItemEnt(e);
   }
 
   // An item use over, done or not: the hands are free again. (The simulation's `using` is never sent on its own: the
