@@ -585,6 +585,14 @@ export class Pause {
       e.stopPropagation();
       this.ui.achPanel.show();
     });
+    const bb = el('button', 'btn btn-ghost', btns);
+    bb.type = 'button';
+    svgEl('i', 'btn-ico', bb, glyph('skull'));
+    el('span', '', bb, 'Bestiary');
+    bb.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.ui.cb.onBestiary();
+    });
     const lb = el('button', 'btn btn-ghost btn-danger', btns);
     lb.type = 'button';
     svgEl('i', 'btn-ico', lb, glyph('exit'));

@@ -99,9 +99,9 @@ export class Room {
     this.saved = null; // (handoff: waiting for the worker's save)
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
-      // (analytics: the game records its matches - only worth it with a database to write them to. achievements: an
-      // account's go to the database too, and a guest's to their browser either way)
-      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, analytics: !!lobby.matches, achievements: !!lobby.achievements }, congestion: this.congestion, restore },
+      // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
+      // bestiary: an account's go to the database too, and a guest's to their browser either way)
+      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, analytics: !!lobby.matches, achievements: !!lobby.achievements, bestiary: !!lobby.bestiary }, congestion: this.congestion, restore },
       resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
     });
     this.worker.on('message', (m) => this.fromWorker(m));
@@ -265,6 +265,8 @@ export class Room {
         return this.lobby.matches?.push(m.rec, this);
       case 'ach':
         return this.lobby.achievements?.add(m.user, m.add, m.feats, m.strangers, this);
+      case 'seen':
+        return this.lobby.bestiary?.add(m.user, m.mask);
       case 'finished':
         this.finished?.();
         return;
@@ -296,6 +298,13 @@ export class Room {
         );
       }
       if (m.user) this.lobby.achievements?.played(m.user, this); // (another day played on, if it is one)
+      // the kinds of the dead the account has seen: read once, here, and held by the game from then on
+      if (m.user && this.lobby.bestiary) {
+        this.lobby.bestiary.load(m.user).then(
+          (mask) => !this.closed && this.recs.get(m.tok) === rec && this.worker.postMessage({ t: 'bestiary', tok: m.tok, mask }),
+          (err) => this.lobby.log(`bestiary of a player could not be read (${err.message})`)
+        );
+      }
     } else if (m.op === 'leave') {
       stats.leave(this.recs.get(m.tok));
       this.recs.delete(m.tok);
@@ -413,14 +422,16 @@ export class Room {
 export class Lobby {
   // stats: the leaderboard (PlayerStats, or DbStats with a database). matches: where the matches played go
   // (MatchStore; none without a database). achievements: the accounts' (AchievementStore; none without a database).
+  // bestiary: the kinds of the dead each account has seen (BestiaryStore; none without a database).
   // gameOpts: what every Game is made with (the env's test switches)
   // limits: false lifts the per-address allowances (load tests make many games from one address). store: where games
   // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
   // be and still be restored (s)
-  constructor({ stats, matches = null, achievements = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, log = console.log }) {
+  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, log = console.log }) {
     this.stats = stats;
     this.matches = matches;
     this.achievements = achievements;
+    this.bestiary = bestiary;
     this.store = store;
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)

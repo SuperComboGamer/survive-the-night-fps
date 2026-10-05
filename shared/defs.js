@@ -687,6 +687,9 @@ export const EVT = {
   // (private) achievements (shared/achievements.js): u8 flags (ACHF), u8 n, n x (u8 stat, varu count to add), u8 m,
   // m x u8 achievement number. A guest's: counts and feats for the browser to keep; an account's (ACHF.ACCOUNT): unlocks
   ACHIEVE: 36,
+  // (private) the bestiary (shared/bestiary.js): u8 flags (BESTF), u16 mask of ZTYPEs - the whole record (BESTF.ALL)
+  // or the kinds just seen
+  BESTIARY: 37,
 };
 
 export const IMPACT = { BLOOD: 1, DIRT: 2, WOOD: 3, METAL: 4, ACID: 5, GREEN_BLOOD: 6, SPARK: 7 };

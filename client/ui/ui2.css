@@ -2007,6 +2007,173 @@
   margin-top: calc(14 * var(--u));
 }
 
+/* ------------------------------------------------------------------ bestiary (ui/bestiary.js) */
+.stn-ui .bstscr {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  animation: stn-fadeIn 0.18s ease-out;
+}
+
+.stn-ui .bst-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(96vw, max(640px, calc(1120 * var(--u))));
+  max-height: 92vh;
+  padding: calc(12 * var(--u)) calc(16 * var(--u)) calc(14 * var(--u));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+.stn-ui .bst-rule {
+  margin: 0 0 calc(4 * var(--u));
+  font: italic max(11px, calc(13 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .bst-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: calc(4 * var(--u));
+}
+
+.stn-ui .bst-group-h {
+  display: flex;
+  justify-content: space-between;
+}
+
+.stn-ui .bst-group-n {
+  color: var(--bone-dim);
+}
+
+.stn-ui .bst-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(150px, calc(196 * var(--u))), 1fr));
+  gap: calc(10 * var(--u));
+}
+
+.stn-ui .bst-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 2px solid var(--bc);
+  --bc: rgba(230, 223, 207, 0.55);
+}
+
+.stn-ui .bst-card.seen:has(.tag-special) {
+  --bc: #e8a33d;
+}
+
+.stn-ui .bst-card.seen:has(.tag-boss) {
+  --bc: var(--blood-hi);
+}
+
+.stn-ui .bst-card.locked {
+  --bc: rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .bst-pic {
+  position: relative;
+  aspect-ratio: 6 / 5;
+  background: radial-gradient(ellipse at 50% 60%, rgba(120, 128, 120, 0.16), rgba(0, 0, 0, 0) 70%);
+}
+
+.stn-ui .bst-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.stn-ui .bst-pic img[hidden] {
+  display: none;
+}
+
+.stn-ui .bst-lock {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .bst-lock svg {
+  display: block;
+  width: calc(34 * var(--u));
+  height: calc(34 * var(--u));
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.stn-ui .bst-card.seen .bst-lock {
+  display: none;
+}
+
+.stn-ui .bst-card-b {
+  padding: calc(7 * var(--u)) calc(10 * var(--u)) calc(10 * var(--u));
+}
+
+.stn-ui .bst-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .bst-name {
+  font: 400 max(12.5px, calc(15.5 * var(--u))) / 1.1 var(--f-num);
+  color: var(--bone);
+}
+
+.stn-ui .bst-card.locked .bst-name {
+  letter-spacing: 0.2em;
+  color: var(--bone-dim);
+}
+
+.stn-ui .bst-tag {
+  flex: none;
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bc);
+}
+
+.stn-ui .bst-text {
+  margin: calc(5 * var(--u)) 0 0;
+  font: max(10px, calc(11.5 * var(--u))) / 1.4 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .bst-card.locked .bst-text {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.stn-ui .bst-keys {
+  align-items: center;
+  margin-top: calc(12 * var(--u));
+}
+
+.stn-ui .bst-kept {
+  margin-left: auto;
+}
+
+/* like the leaderboard: on top of the HUD, with the titles and toasts behind it hidden */
+.stn-ui.bestiary-open .obj,
+.stn-ui.bestiary-open .wmk-layer,
+.stn-ui.bestiary-open .cine,
+.stn-ui.bestiary-open .top-left,
+.stn-ui.bestiary-open .top-center,
+.stn-ui.bestiary-open .top-right,
+.stn-ui.bestiary-open .layer-hud {
+  visibility: hidden;
+}
+
 /* ------------------------------------------------------------------ player list */
 /* up while [Tab] is held, over a game that goes on: it takes no clicks (until pinned) and hides none of the HUD */
 .stn-ui .rosterscr {

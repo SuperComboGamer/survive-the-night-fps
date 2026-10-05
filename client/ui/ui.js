@@ -12,6 +12,7 @@ import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, Cont
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
+import { Bestiary } from './bestiary.js';
 import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
@@ -20,6 +21,8 @@ import { ProfilePanel } from './profile.js';
 import { AchievementsPanel, AchievementToasts } from './achievements.js';
 import { isFriendName } from '../net/friends.js';
 import { onUnlock } from '../net/achievements.js';
+import { onSeen } from '../net/bestiary.js';
+import { bindLabel } from '../game/binds.js';
 import { Summary } from './hud2.js';
 
 const NOOP = () => {};
@@ -48,6 +51,7 @@ const CALLBACKS = [
   'onUiSound',
   'onPeers', // () -> { room, players: [{ id, name, account, self }] } while in a game, else null (the friends panel)
   'onAccountName', // (player id) -> the account they are signed in to, '' for a guest
+  'onBestiary', // the pause menu's Bestiary button: the game opens it (it frees the pointer)
 ];
 
 const SVG_DEFS = `<svg class="stn-defs" width="0" height="0" aria-hidden="true" focusable="false">
@@ -102,6 +106,7 @@ export class UI {
     this.pause = new Pause(this, ovL);
     // A modal layer lets the same board sit over both the in-game/end overlays and the splash screen.
     this.board = new Leaderboard(this, modalL);
+    this.bestiary = new Bestiary(this, modalL);
     this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
@@ -113,6 +118,11 @@ export class UI {
     this.achPanel = new AchievementsPanel(this, modalL);
     this.updating = new UpdatingModal(modalL);
     onUnlock((list) => this.achToasts.show(list));
+    onSeen((list) => {
+      const key = bindLabel('bestiary');
+      const how = key === 'unbound' ? 'It is in the menu.' : `Press ${key} to read up on it.`;
+      for (const e of list) this.notify(`New in the bestiary: ${e.name}. ${how}`, 'good', 4.5);
+    });
 
     this._bindSounds();
     this._voice = { enabled: false, transmitting: false };
@@ -242,6 +252,14 @@ export class UI {
 
   get boardOpen() {
     return this.board.open;
+  }
+
+  setBestiaryOpen(open) {
+    this.bestiary.setOpen(open);
+  }
+
+  get bestiaryOpen() {
+    return this.bestiary.open;
   }
 
   // the leaderboard as the server last sent it (shared/protocol.js readBoard); null: not heard from yet

@@ -76,6 +76,7 @@ import { Connection } from '../net/connection.js';
 import { playerId } from '../net/identity.js';
 import { accountState } from '../net/account.js';
 import { achievementEvent, joinedGame } from '../net/achievements.js';
+import { bestiaryEvent, joinedBestiary } from '../net/bestiary.js';
 import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
 import { harvestPrompt, strippedKey, needLines } from './harvest.js';
@@ -274,6 +275,7 @@ export class Game {
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
     ui.map.onClose = () => this.toggleMap(false);
     ui.board.onClose = () => this.toggleBoard(false);
+    ui.bestiary.onClose = () => this.toggleBestiary(false);
     ui.roster.onClose = () => this.pinRoster(false);
     this.boardT = 0; // when the leaderboard is next asked for, while it is open (performance.now)
     this.discovered = new Set([ZONE.CAMP]);
@@ -764,6 +766,7 @@ export class Game {
     this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
     if (!resume) this.waypoint = null;
     joinedGame(!!accountState().user); // (a guest's achievements count the days played on here; an account's, the server)
+    joinedBestiary(); // (whose bestiary this game keeps: its first EVT.BESTIARY says)
     return info;
   }
 
@@ -805,6 +808,7 @@ export class Game {
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
+    this.ui.setBestiaryOpen(false);
     this.ui.setBoard(null); // (what it showed was that server's, as of then)
     this.ui.setRosterOpen(false);
     this.ui.setInventoryOpen(false);
@@ -1141,6 +1145,9 @@ export class Game {
       },
       achieve(flags, add, ids) {
         achievementEvent(flags, add, ids);
+      },
+      bestiary(flags, mask) {
+        bestiaryEvent(flags, mask);
       },
       ping(pid, kind, x, y, z) {
         g.pings = g.pings.filter((p) => p.pid !== pid);
@@ -1737,12 +1744,12 @@ export class Game {
       if (this.state !== 'playing') return;
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
-      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned) {
+      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.rosterPinned) {
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
         this.ui.showPause(false);
-        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned;
+        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.rosterPinned;
       }
     };
     inp.handlers.onKey = (code, acts) => this.onKey(code, acts);
@@ -1774,6 +1781,7 @@ export class Game {
       if (ui.rosterPinned) this.pinRoster(false);
       else if (ui.mapOpen) this.toggleMap(false);
       else if (ui.boardOpen) this.toggleBoard(false);
+      else if (ui.bestiaryOpen) this.toggleBestiary(false);
       return;
     }
     if (has('players')) {
@@ -1787,7 +1795,7 @@ export class Game {
       return;
     }
     // (whatever else takes the screen or the keys lets go of a pinned list first)
-    if (ui.rosterPinned && ['inventory', 'map', 'board', 'chat'].some(has)) this.pinRoster(false, false);
+    if (ui.rosterPinned && ['inventory', 'map', 'board', 'bestiary', 'chat'].some(has)) this.pinRoster(false, false);
     if (has('inventory')) {
       this.toggleInventory(!ui.inventoryOpen);
       return;
@@ -1802,12 +1810,17 @@ export class Game {
       this.toggleBoard(!ui.boardOpen);
       return;
     }
+    if (has('bestiary')) {
+      if (ui.inventoryOpen || ui.isTyping()) return;
+      this.toggleBestiary(!ui.bestiaryOpen);
+      return;
+    }
     // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
     // and the pause menu.
     if (has('chat')) {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
-      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen) {
+      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen) {
         ui.openChat();
         this.input.releaseAll();
         this.inputBuffer.clear();
@@ -1926,6 +1939,7 @@ export class Game {
     if (open === ui.inventoryOpen) return;
     if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
     if (ui.boardOpen) this.toggleBoard(false, false);
+    if (ui.bestiaryOpen) this.toggleBestiary(false, false);
     ui.setCraftContext(this.craftContext());
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
@@ -1959,7 +1973,7 @@ export class Game {
       this.input.exitLock();
     } else {
       ui.setRosterOpen(false);
-      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen;
+      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen;
       if (this.input.enabled && relock) this.input.requestLock();
     }
     this.audio.playLocal('ui_click', { volume: 0.4 });
@@ -1970,6 +1984,7 @@ export class Game {
     const ui = this.ui;
     if (open === ui.mapOpen) return;
     if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -1987,6 +2002,7 @@ export class Game {
     const ui = this.ui;
     if (open === ui.boardOpen) return;
     if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
     ui.setBoardOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -1995,6 +2011,23 @@ export class Game {
       this.boardT = 0; // ask the server at once (update)
       this.input.exitLock();
     } else if (relock) this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // The bestiary [J] (and the pause menu's button): it scrolls, so it frees the pointer as the leaderboard does.
+  // relock: false when something else that needs the cursor is taking over
+  toggleBestiary(open, relock = true) {
+    const ui = this.ui;
+    if (open === ui.bestiaryOpen || (open && this.state !== 'playing')) return;
+    if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.rosterPinned) this.pinRoster(false, false);
+    ui.setBestiaryOpen(open);
+    this.input.enabled = !open && !ui.inventoryOpen;
+    this.input.releaseAll();
+    this.endHold();
+    if (open) this.input.exitLock();
+    else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
@@ -2414,7 +2447,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
+    this.vm.setVisible(self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist });
@@ -2692,6 +2725,7 @@ export class Game {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
+      this.ui.setBestiaryOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
@@ -2699,6 +2733,7 @@ export class Game {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
+      this.ui.setBestiaryOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
       // when it left stayed in the valley, and so did the players who had already turned.
@@ -3043,7 +3078,7 @@ export class Game {
     h.yaw = this.input.yaw;
     this.buildMarkers(h, rp);
     // the minimap: only while it is on screen
-    h.minimap = !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen ? this.mapData(counts) : null;
+    h.minimap = !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen ? this.mapData(counts) : null;
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
