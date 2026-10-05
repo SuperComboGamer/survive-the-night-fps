@@ -25,9 +25,13 @@
 //   &oh=R|L,yaw,pitch,dist  an outside camera orbiting that hand
 //   window.__hands  { R, L }: each hand's grip center (view space) once posed, for a camera fixed on a hand
 //   &hp=pose:{json}  override (part of) a hand pose, or add one (several allowed); with &rpose= / &lpose= to use it
+// nunchucks (?vm=57): &nk=SCRIPT plays their moves instead of &act (nk-script.js: guard, draw, idle, whip, backhand,
+//   eight, smash, lunge, sweep, retreat, heavy1..3, combo, combo2, flourish, carry); &hit=flesh|bone|wood|metal|dirt
+//   lands every blow on that (default: they miss). &t / &ts are seconds after the script starts, as for an &act.
 import * as THREE from 'three';
 import { ITEM, ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
 import { ViewModel, createWorldWeapon, worldWeaponTris, viewModelTris, handTris, VM_DEBUG } from '../render/models/weapons.js';
+import { nkScript } from './nk-script.js';
 // tuning overrides: &hip=x,y,z,rx,ry,rz (current item hip pose) / &claw=x,y,z,rx,ry,rz / &cq=rx,ry,rz
 const params = new URLSearchParams(location.search);
 if (params.has('hip')) {
@@ -188,7 +192,7 @@ if (params.get('vm') === 'hands') {
   scene.add(table);
   const only = params.has('item') ? parseInt(params.get('item'), 10) : 0;
   const longIds = [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.BAT, ITEM.SPIKED_BAT];
-  const shortIds = [ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY];
+  const shortIds = [ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.MACHETE, ITEM.HAMMER, ITEM.NUNCHAKU, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY];
   const lines = [];
   const place = (id, x, z) => {
     const w = createWorldWeapon(id);
@@ -241,7 +245,7 @@ if (params.get('vm') === 'hands') {
   const all = vmParam === 'all';
   const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
   const list = all
-    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY, 'claws']
+    ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.NUNCHAKU, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY, 'claws']
     : times
       ? times.map(() => single)
       : [single];
@@ -319,6 +323,10 @@ if (params.get('vm') === 'hands') {
     }
   }
   const pulsed = ['fire', 'reload', 'melee', 'heavy', 'throw', 'use'].includes(act);
+  // &nk=: the nunchucks' moves, as the game would give them to the rig
+  const nk = params.has('nk') ? nkScript(params.get('nk'), params.get('hit') || '') : null;
+  if (nk && nk.crouch) state.crouch = true;
+  if (nk) for (const v of views) if (v.vm.nk) v.vm.nk.core.noIdle = params.get('nk') !== 'idle';
   const PRE = 0.6; // let the draw anim finish
   let simT = 0;
   let lastTrig = -1;
@@ -340,6 +348,17 @@ if (params.get('vm') === 'hands') {
         }
       }
       if (v.stopAt !== null && simT > PRE + v.stopAt) continue;
+      if (nk && v.vm.nk) {
+        const t = simT - PRE;
+        for (v.nkAt = v.nkAt || 0; v.nkAt < nk.events.length && nk.events[v.nkAt].t <= t + 1e-6; v.nkAt++) {
+          const e = nk.events[v.nkAt];
+          if (e.swing !== undefined) v.vm.nkSwing(e.swing);
+          if (e.hit) v.vm.nkHit(e.hit.kind, 0, 0.15, 1, e.hit.power);
+          if (e.flourish) v.vm.nkFlourish();
+          if (e.set) Object.assign(state, e.set);
+        }
+        state.nkWind = nk.wind(t);
+      }
       v.vm.update(dt, state);
     }
     void lastTrig;
@@ -391,6 +410,8 @@ if (params.get('vm') === 'hands') {
         v.cam.position.set(Math.sin(+yaw) * Math.cos(+pitch), Math.sin(+pitch), Math.cos(+yaw) * Math.cos(+pitch)).multiplyScalar(+dist || 0.3).add(c);
         v.cam.lookAt(c);
       }
+      // (nunchucks: the view goes with the strikes, as in the game)
+      if (nk && v.vm.nk && !params.has('orbit') && !params.has('zoom') && !wcam && !params.has('zh') && !params.has('oh')) v.cam.rotation.set(v.vm.nk.core.kick.x, v.vm.nk.core.kick.y, v.vm.nk.core.kick.z, 'YXZ');
       if (hideArm === 'L' || hideArm === 'LR') v.vm.armL.setVisible(false);
       if (hideArm === 'R' || hideArm === 'LR') v.vm.armR.setVisible(false);
       if (params.has('hidegun') && v.vm.cur) v.vm.cur.root.visible = false; // &hidegun: hands only

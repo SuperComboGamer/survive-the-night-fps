@@ -2328,6 +2328,10 @@ export class Game {
       case 'melee':
         this.combat.melee(p, ev);
         break;
+      case 'nk_swing':
+        // a move of the nunchucks begins: the others hear the swing now, its blows land later ('melee', with the move)
+        this.sound(SOUND.MELEE_SWING, s.x, s.y + eyeHeight(s), s.z, 20, p.id);
+        break;
       case 'use_cancel':
         // a click or a weapon asked for put the item in the hands away unused (the simulation has let go of it). (Not
         // one asked for since, that the client has in its hands from a later command on)
@@ -2949,7 +2953,7 @@ export class Game {
     if (more && r() < more) this.giveOrDrop(p, tree ? ITEM.STICK : ITEM.SCRAP, 1);
     if (tree) {
       const dead = col.tv === 3 || col.tv === 4 || col.tv === 6;
-      let sticks = weapon === ITEM.KNIFE ? 1 : 2;
+      let sticks = weapon === ITEM.KNIFE || weapon === ITEM.NUNCHAKU ? 1 : 2;
       if (dead) sticks++;
       this.giveOrDrop(p, ITEM.STICK, sticks);
       const plankChance = (weapon === ITEM.MACHETE ? 0.35 : weapon === ITEM.HAMMER ? 0.15 : 0.22) + (col.tv === 5 ? 0.15 : 0);

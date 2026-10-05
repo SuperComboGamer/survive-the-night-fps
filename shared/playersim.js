@@ -42,6 +42,7 @@ import { rideStep, rideCarry } from './fair.js';
 import { cartStep, cartCarry, CART_PUMP, LEVER_HANDS } from './handcar.js';
 import { swimming, waterFloor, wadeDepth, SWIM_HANDS, SWIM_SPEED, SWIM_FAST, SWIM_DOWNED, SWIM_ACCEL, SWIM_DRAG, SWIM_TREAD, SWIM_DRAIN, WADE_FROM, WADE_SLOW, CROUCH_WADE, SWIM_DEPTH } from './swim.js';
 import { perkMods } from './progress.js';
+import { simNunchaku } from './nunchaku.js';
 
 export function createPlayerState() {
   return {
@@ -544,6 +545,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
 
   // ------------------------------------------------ weapons
   if (s.switchT > 0) s.switchT -= dt;
+  const cd0 = s.cooldown;
   if (s.cooldown > 0) s.cooldown -= dt;
   const attack = b & BTN.ATTACK;
   const attackPressed = pressed & BTN.ATTACK;
@@ -572,6 +574,10 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
       s.fireCount = (s.fireCount + 1) & 255;
       if (events) events.push({ type: 'throw', item: s.weapons[SLOT_THROW] });
     }
+  } else if (wdef && wdef.nunchaku) {
+    // a moveset: combos, blows that land a set time into a move, a heavy attack that is wound up (shared/nunchaku.js).
+    // Its combo step, its window and its wind-up ride in recoil, cooldown (below zero) and reloadT
+    simNunchaku(s, b, cd0, weapon, events, dt);
   } else if (wdef && wdef.melee) {
     const alt = b & BTN.ALT;
     if ((attack || alt) && s.cooldown <= 0 && s.switchT <= 0) {

@@ -7,11 +7,11 @@ import { ZTYPE, ZOMBIE_DEFS, ZANIM, ITEM, WEAPONS } from '../../../shared/defs.j
 import { CRAWL_HEAD_FWD } from '../../../shared/constants.js';
 import { CEMETERY } from '../../../shared/cemetery.js';
 import {
-  MeshBuilder, instantiateRig, setFx, getCharacterMaterial, ikTwoBone, mulberry32, fbm3, noise3,
+  MeshBuilder, instantiateRig, setFx, getCharacterMaterial, getPropMaterial, ikTwoBone, mulberry32, fbm3, noise3,
   clamp, lerp, smooth, color,
 } from './skinning.js';
 import { CR } from './charTextures.js';
-import { createWorldWeapon } from './weapons.js';
+import { createWorldWeapon, getNunchakuGeo } from './weapons.js';
 import { createBackpack, WORN_AT } from './backpack.js';
 import { createZombieDog, dogStats, DOG_COATS } from './dog.js';
 import { buildPerson, deadHead } from './people.js';
@@ -22,6 +22,7 @@ import {
 } from './monsters.js';
 import { mouthAnchor, surfPoint, headPoint, sheet, headSurface, torsoSurf, bodyBuild } from './humans.js';
 import { LOOKS, deadLook, frameOf } from './looks.js';
+import { NunchakuTP } from './nunchaku.js';
 import { CHARACTERS, CHARACTER_COUNT } from '../../../shared/characters.js';
 
 const PI = Math.PI;
@@ -4132,6 +4133,7 @@ const _grip = new THREE.Vector3();
 const _lh = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
+const MOUNT_POS_L = new THREE.Vector3(0.025, -0.08, 0); // (the left fist's, for what a left hand holds: nunchucks)
 let STOCK_POCKET = -0.14; // (chest-bone space, z) where a shouldered butt ends: the front of the shoulder, in its clothes (the lofted bodies' shoulders are 4 cm further out than the old boxes': measured on four of them, scripts/clip/survey.js)
 let RPG_LIFT = 0.14; // the RPG's grip raised so the tube clears the top of the shoulder instead of running through it
 // the throwables' radius across the palm (m), and where the survivor's fist's palm face is (x, hand-bone space; less a
@@ -4277,13 +4279,29 @@ class SurvivorInstance {
     this.item = item;
     this.hold = holdFor(item);
     if (this.weapon) {
-      this.mount.remove(this.weapon);
+      if (this.weapon.parent === this.mount) this.mount.remove(this.weapon);
       this.weapon = null;
     }
     this.mount.rotation.set(this.hold === HOLD_MELEE ? 0 : -HALF, 0, 0);
     // a throwable is wider than the fist: held against the palm, not through it
     this.mount.position.copy(MOUNT_POS);
     if (THROW_RADIUS[item]) this.mount.position.x = FIST_PALM_X - THROW_RADIUS[item];
+    if (this.nk) this.nk.group.visible = false;
+    if (item === ITEM.NUNCHAKU && !this.zombie) {
+      // nunchucks: nothing rides in the fist as a fixed model. Both handles and the chain are the simulation's
+      // (models/nunchaku.js), drawn in the chest's space, and both arms are solved to where it has the hands
+      if (!this.nk) {
+        this.nk = new NunchakuTP(getNunchakuGeo(false), getPropMaterial(), this.P);
+        this.bones[CHEST].add(this.nk.group);
+      }
+      this.nk.group.visible = true;
+      this.nk.core.draw();
+      this.weapon = this.nk.group;
+      this.muzzle = null;
+      this.leftGrip = null;
+      this.stockZ = 0;
+      return;
+    }
     if (item && !this.zombie) {
       const w = createWorldWeapon(item);
       if (w) {
@@ -4323,6 +4341,15 @@ class SurvivorInstance {
   melee() {
     this.pulseMelee = 0;
     this.meleeSide ^= 1;
+    // (nunchucks: which move is not on the wire; the rig works it out the way the rules do)
+    if (this.nk && this.item === ITEM.NUNCHAKU && !this.zombie) this.nk.swing(-1, this.s || {});
+  }
+  /** Nunchucks: a move begins, named (ours); a blow of it landed. */
+  nkSwing(move) {
+    if (this.nk && this.item === ITEM.NUNCHAKU) this.nk.swing(move, this.s || {});
+  }
+  nkHit(kind, power = 1) {
+    if (this.nk && this.item === ITEM.NUNCHAKU) this.nk.core.hit(kind, 0, 0.1, 1, power);
   }
   throwAnim() {
     this.pulseThrow = 0;
@@ -4340,6 +4367,7 @@ class SurvivorInstance {
   update(dt, s) {
     if (dt > 0.1) dt = 0.1;
     this.s = s;
+    this._dt = dt;
     const time = s.time ?? this.time + dt;
     this.time = time;
     this.pulseFire += dt;
@@ -4503,7 +4531,10 @@ class SurvivorInstance {
     const sit = this.sitW;
     const baseT = lerp(cr * 0.95, 1.5, sit);
     const baseK = lerp(0.06 + cr * 1.5, 1.45, sit);
-    legCycle(z, p, ph, amp * (1 - sit), knee * (1 - sit), baseT, baseK, 0, 0.03 + 0.1 * sit);
+    // nunchucks: the trunk and the legs go with the move (the rig's body track: twist, lean, bend, knees, step)
+    const nb = this.nk && this.item === ITEM.NUNCHAKU && !this.zombie ? this.nk.core.bodyK : null;
+    const nkDrop = nb ? clamp(nb[4] / 0.3, 0, 0.6) * (1 - cr) : 0;
+    legCycle(z, p, ph, amp * (1 - sit), knee * (1 - sit), baseT + nkDrop * 0.95, baseK + nkDrop * 1.5, 0, 0.03 + 0.1 * sit);
     // air: tuck legs
     if (air > 0.01) {
       for (let side = 0; side < 2; side++) {
@@ -4521,10 +4552,26 @@ class SurvivorInstance {
     R(p, HIPS, 0, -0.1 * Math.sin(ph) * mv, 0);
     R(p, SPINE, lean * 0.6 + pitch * 0.25, 0.1 * Math.sin(ph) * mv * (1 - (this.hold ? 0.7 : 0)), 0);
     R(p, CHEST, lean * 0.4 + pitch * 0.3 + (1 - mv) * 0.012 * Math.sin(t * 1.6), 0.06 * Math.sin(ph) * mv * (this.hold ? 0.2 : 1), 0);
+    if (nb) {
+      // (a left-handed driver's move is the mirror: the twist, the bend and the step turn round)
+      const sd = this.nk.core.side, tw = nb[1] * sd, ln = nb[2], bd = nb[3] * sd, st = nb[5] * sd * (1 - mv * 0.8) * (1 - sit);
+      A(p, HIPS, -ln * 0.15, tw * 0.15, 0);
+      A(p, SPINE, -ln * 0.45, tw * 0.4, -bd * 0.5);
+      A(p, CHEST, -ln * 0.4, tw * 0.45, -bd * 0.5);
+      // a step into it: the leading leg forward and bent, the other back and straighter
+      const lead = st > 0 ? THIGH_R : THIGH_L, rear = st > 0 ? THIGH_L : THIGH_R, a = Math.abs(st);
+      A(p, lead, 0.5 * a, 0, 0);
+      A(p, lead + 1, -0.6 * a, 0, 0);
+      A(p, lead + 2, 0.1 * a, 0, 0);
+      A(p, rear, -0.42 * a, 0, 0);
+      A(p, rear + 1, -0.12 * a, 0, 0);
+      A(p, rear + 2, 0.5 * a, 0, 0);
+      p[this.nb * 4 + 1] -= 0.035 * a;
+    }
     // head: rest of the pitch
     const cp = chestPitch(p);
-    R(p, NECK, (pitch - cp) * 0.4, 0, 0);
-    R(p, HEAD, (pitch - cp) * 0.6, 0, 0);
+    R(p, NECK, (pitch - cp) * 0.4, nb ? -(p[SPINE * 4 + 1] + p[CHEST * 4 + 1] + p[HIPS * 4 + 1]) * 0.4 : 0, 0);
+    R(p, HEAD, (pitch - cp) * 0.6, nb ? -(p[SPINE * 4 + 1] + p[CHEST * 4 + 1] + p[HIPS * 4 + 1]) * 0.5 : 0, 0);
     // arms (FK baseline; IK overrides for held items)
     const aSw = mv * lerp(0.35, 0.8, run) * Math.sin(ph);
     arm(p, 0, 0.05 - aSw, 0.1, 0, 0.25 + run * 1.0 + 0.1 * mv, 0);
@@ -4607,8 +4654,32 @@ class SurvivorInstance {
     p[this.nb * 4 + 1] = sv[SWIM_BONES.length * 3] * (1 - w);
   }
 
+  /** Nunchucks: the rig's frame, and both arms to where it has the hands (chest space, as solveArms). */
+  solveNunchaku(s) {
+    const P = this.P, b = this.bones, nk = this.nk;
+    b[CHEST].updateWorldMatrix(true, false);
+    nk.update(this._dt || 0, s, b[CHEST]);
+    const cy = P.shoulderY - P.chestY;
+    for (const side of [1, -1]) {
+      const h = side > 0 ? nk.core.right : nk.core.left;
+      const U = side > 0 ? UARM_R : UARM_L, clav = b[side > 0 ? CLAV_R : CLAV_L].quaternion;
+      // the hand's frame is its handle's; the wrist is the grip less the fist's own offset to it
+      _qH.copy(h.q);
+      _mountW.copy(side > 0 ? MOUNT_POS : MOUNT_POS_L).applyQuaternion(_qH);
+      _T.copy(h.p).sub(_mountW);
+      _S.set(P.shoulderW * side, cy, 0);
+      ikTwoBone(_S, _T, P.uarmLen, P.farmLen, h.pole, _qU, _qL);
+      _qTmp.copy(clav).invert().multiply(_qU);
+      b[U].quaternion.copy(_qTmp);
+      b[U + 1].quaternion.copy(_qL);
+      _qTmp.copy(clav).multiply(b[U].quaternion).multiply(_qL).invert().multiply(_qH);
+      b[U + 2].quaternion.copy(_qTmp);
+    }
+  }
+
   /** Two-bone IK for weapon holds, in chest space. */
   solveArms(s, time) {
+    if (this.nk && this.item === ITEM.NUNCHAKU) return this.solveNunchaku(s);
     const P = this.P;
     const b = this.bones;
     const hold = this.hold;
@@ -4771,6 +4842,10 @@ export function createSurvivor(seed = 0, character = -1) {
     setWeapon: (id) => sv.setWeapon(id),
     fire: () => sv.fire(),
     melee: () => sv.melee(),
+    nkSwing: (move) => sv.nkSwing(move),
+    nkHit: (kind, power) => sv.nkHit(kind, power),
+    nkFlourish: () => !!(sv.nk && sv.item === ITEM.NUNCHAKU && sv.nk.core.flourish()),
+    nk: () => (sv.item === ITEM.NUNCHAKU ? sv.nk : null),
     throwAnim: () => sv.throwAnim(),
     setZombie: (v) => sv.setZombie(v),
     setBackpack: (on) => sv.setBackpack(on),
