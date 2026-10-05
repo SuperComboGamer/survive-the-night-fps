@@ -82,7 +82,10 @@ export const ACT = {
   SALVAGE: 32, // u8 from (SALVAGE_FROM), u16 count: tear that many down for what they are made of (SALVAGE in defs.js)
   DROP_AMMO: 33, // u8 calibre (AMMO in defs.js), u16 count (0 = all): rounds out of that reserve onto the ground
   UNEQUIP: 34, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
+  UNDO_DROP: 35, // (nothing): the last thing this survivor dropped picked up again, a few seconds after (the inventory's Undo)
 };
+// NOTIFY.UNDO_GONE: why an undo brought nothing back
+export const UNDO_NO = { GONE: 0, LATE: 1, FAR: 2 };
 // ACT.WORN: which piece of worn gear, and what is done with it
 export const WORN = { ARMOR: 0, BACKPACK: 1 };
 export const WORN_DO = { OFF: 0, DROP: 1, SALVAGE: 2 };
