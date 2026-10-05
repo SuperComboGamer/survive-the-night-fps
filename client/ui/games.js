@@ -2,6 +2,7 @@
 // (Create game). Both borrow the settings panel's card (settings.js) and close the same ways: the cross, Esc, or a
 // click outside the card. The lobby itself is client/net/lobby.js.
 import { PHASE, MAX_PLAYERS } from '../../shared/constants.js';
+import { DIFFICULTIES, NIGHTFALL, difficultyLabel } from '../../shared/difficulty.js';
 import { el, svgEl } from './dom.js';
 import { glyph } from './icons.js';
 import { listGames, createGame } from '../net/lobby.js';
@@ -14,6 +15,7 @@ export function phaseText(phase, day) {
   return 'Starting';
 }
 export const seatsText = (g) => `${g.players} / ${g.max}`;
+export const difficultyText = (id) => difficultyLabel(id);
 
 // a card in the settings panel's style, with a head (title, sub line, close cross), a body and a foot
 export class Panel {
@@ -128,7 +130,7 @@ export class GameBrowser extends Panel {
       const row = el('div', 'gb-row' + (g.full ? ' full' : ''), this.list);
       const who = el('div', 'gb-who', row);
       el('div', 'gb-name', who, g.name);
-      el('div', 'gb-meta', who, phaseText(g.phase, g.day) + (g.phase === PHASE.NIGHT ? ' · the horde is out' : ''));
+      el('div', 'gb-meta', who, `${difficultyText(g.difficulty)} · ${phaseText(g.phase, g.day)}${g.phase === PHASE.NIGHT ? ' · the horde is out' : ''}`);
       const seats = el('div', 'gb-seats', row);
       svgEl('i', 'gb-ico', seats, glyph('people'));
       el('span', '', seats, seatsText(g));
@@ -153,6 +155,7 @@ export class GameCreator extends Panel {
     this.splash = splash;
     this.sub.textContent = 'you get a link to send your friends';
     this.inviteOnly = false;
+    this.difficulty = NIGHTFALL.id;
     this.seats = MAX_PLAYERS;
     this.cap = MAX_PLAYERS;
 
@@ -164,6 +167,20 @@ export class GameCreator extends Panel {
     this.name.maxLength = 28;
     this.name.autocomplete = 'off';
     this.name.spellcheck = false;
+
+    const diffRow = el('div', 'set-row', this.body);
+    const dl = el('span', 'set-label', diffRow, 'Difficulty');
+    this.diffHint = el('span', 'set-hint', dl, '');
+    const diffSeg = el('div', 'set-seg gc-diff-seg', diffRow);
+    this.diffBtns = DIFFICULTIES.map((d) => {
+      const b = el('button', 'seg-btn', diffSeg, d.rank);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        this.difficulty = d.id;
+        this.sync();
+      });
+      return [d, b];
+    });
 
     const seatRow = el('div', 'set-row', this.body);
     const sl = el('span', 'set-label', seatRow, 'Players');
@@ -236,6 +253,9 @@ export class GameCreator extends Panel {
   }
 
   sync() {
+    for (const [d, b] of this.diffBtns) b.classList.toggle('on', d.id === this.difficulty);
+    const picked = DIFFICULTIES.find((d) => d.id === this.difficulty) || NIGHTFALL;
+    this.diffHint.textContent = `${picked.name}. ${picked.blurb}`;
     for (const [only, b] of this.whoBtns) b.classList.toggle('on', only === this.inviteOnly);
     this.whoHint.textContent = this.inviteOnly ? 'only people you send the link to' : 'listed under Browse games for anybody';
     this.go.disabled = this.busy;
@@ -256,7 +276,7 @@ export class GameCreator extends Panel {
     this.sync();
     try {
       const host = this.splash.playerName();
-      const g = await createGame({ name: this.name.value.trim() || `${host}'s game`, host, inviteOnly: this.inviteOnly, maxPlayers: this.seats });
+      const g = await createGame({ name: this.name.value.trim() || `${host}'s game`, host, inviteOnly: this.inviteOnly, maxPlayers: this.seats, difficulty: this.difficulty });
       this.hide();
       this.splash.join(g.code);
     } catch (err) {

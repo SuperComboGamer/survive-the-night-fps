@@ -10,7 +10,7 @@
 // the pointer and the keys stay with the game.
 import { el, svgEl } from './dom.js';
 import { glyph } from './icons.js';
-import { Panel, phaseText, seatsText } from './games.js';
+import { Panel, phaseText, seatsText, difficultyText } from './games.js';
 import { ago } from './account.js';
 import { bindLabel } from '../game/binds.js';
 import { accountState, onAccountChange } from '../net/account.js';
@@ -393,7 +393,7 @@ export class FriendsPanel extends Panel {
     const g = f.status === 'playing' ? f.game : null;
     if (g) {
       if (at?.room && g.code === at.room.code) return ['on', 'In this game with you'];
-      return ['on', `${phaseText(g.phase, g.day)} · ${g.name}${g.inviteOnly ? ' · invite only' : ''}`];
+      return ['on', `${phaseText(g.phase, g.day)} · ${g.name} · ${difficultyText(g.difficulty)}${g.inviteOnly ? ' · invite only' : ''}`];
     }
     if (f.status === 'online') return ['idle', 'Online · not in a game'];
     return ['off', f.lastSeen ? `Last seen ${ago(f.lastSeen)}` : 'Offline'];

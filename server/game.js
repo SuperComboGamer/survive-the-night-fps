@@ -127,6 +127,7 @@ import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, c
 import { mulberry32 } from '../shared/rng.js';
 import { swimming, DROWN_DPS } from '../shared/swim.js';
 import { nightTheme, nightBoss } from '../shared/nights.js';
+import { difficultyOf } from '../shared/difficulty.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
 import { createInventory, invCap, addItem, removeItem, takeFrom, tidyStacks, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
@@ -196,13 +197,15 @@ const LEFT_KITS_MAX = 64; // kits remembered for players who left this run (park
 // 9mm, bandages and light for each day gone by (first-pass numbers): enough to be of use that night, well short of
 // what those days of scavenging turn up - no primary, no armour, no medkit, nothing to throw.
 const STARTER_TOOLS = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER]; // by weapon slot
-function starterKit(day = 1) {
+function starterKit(day = 1, diff = null) {
   const d = Math.max(0, day - 1);
+  const ammo = diff?.ammo ?? 1;
+  const bandages = diff?.bandages ?? 1;
   return {
     mag: WEAPONS[ITEM.PISTOL].mag,
-    ammo: Math.min(AMMO_MAX[AMMO.P9], 36 + 24 * d), // 9mm in reserve
+    ammo: Math.min(AMMO_MAX[AMMO.P9], Math.max(0, Math.round((36 + 24 * d) * ammo))), // 9mm in reserve
     items: [
-      [ITEM.BANDAGE, 2 + Math.min(3, d)],
+      [ITEM.BANDAGE, Math.max(1, Math.round((2 + Math.min(3, d)) * bandages))],
       [ITEM.TORCH, d ? 2 : 1],
       [ITEM.WOOD, 6],
       [ITEM.NAILS, 8],
@@ -297,9 +300,11 @@ export class Game {
     if (restore) checkEnvelope(restore);
     this.fixedSeed = opts.seed !== undefined; // a given seed pins the map: every playthrough is the same valley
     this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
-    // optional overrides (testing): DAY_SECONDS / NIGHT_SECONDS / START_DAY env vars
+    this.diff = difficultyOf(opts.difficulty); // Ember / Nightfall / Blackout. Nightfall is every multiplier at 1.
+    // optional overrides (testing): DAY_SECONDS / NIGHT_SECONDS / START_DAY env vars. A fixed length is that length:
+    // the difficulty stretches the schedule, not a test that pinned the clock.
     this.dayLenOverride = opts.dayLength || 0; // every day this long (otherwise they shorten: dayLength)
-    this.nightLen = opts.nightLength || NIGHT_LENGTH;
+    this.nightLen = opts.nightLength || Math.round(NIGHT_LENGTH * this.diff.night);
     this.startDayNum = opts.startDay || 1;
     this.godMode = !!opts.godMode; // testing only: survivors take no damage
     // Signed-in accounts with users.is_admin may run the admin chat commands. DEV_ADMIN=1 grants the same access
@@ -733,7 +738,7 @@ export class Game {
       // left with (parkKit)
       const left = this.leftKits.get(this.leaverKey(p));
       this.leftKits.delete(this.leaverKey(p));
-      this.spawnHuman(p, left || starterKit(this.day), true);
+      this.spawnHuman(p, left || starterKit(this.day, this.diff), true);
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
     this.track.join(p);
@@ -1130,7 +1135,7 @@ export class Game {
     this.lootPoints = [];
     for (const sp of w.lootSpawns) this.lootPoints.push({ ...sp, ent: null, respawnAt: 0, table: LOOT_TABLES[sp.zone] || LOOT_TABLES[ZONE.FOREST] });
     for (const sp of w.resourceSpawns) this.lootPoints.push({ ...sp, ent: null, respawnAt: 0, table: LOOT_TABLES[ZONE.FOREST] });
-    for (const lp of this.lootPoints) if (this.rng() < 0.8) this.spawnLoot(lp);
+    for (const lp of this.lootPoints) if (this.rng() < Math.min(0.98, 0.8 * this.diff.loot)) this.spawnLoot(lp);
     // searchable containers
     for (const c of w.containers) {
       const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0 };
@@ -1267,7 +1272,7 @@ export class Game {
 
   // kit: what they start with (starterKit, or what a returning player left with); beside: put them with the team
   // if there is one to join. A respawn into a run in progress would pass both, as handleJoin does.
-  spawnHuman(p, kit = starterKit(), beside = false) {
+  spawnHuman(p, kit = starterKit(this.day, this.diff), beside = false) {
     const s = p.state;
     const fresh = createPlayerState();
     Object.assign(s, fresh);
@@ -1351,7 +1356,7 @@ export class Game {
     if (!this.humans().length) return;
     for (const p of this.players.values()) {
       if (p.alive && !p.zombie) continue;
-      this.spawnHuman(p, RETURN_KIT, true); // beside the team, as a late joiner is (pickJoinSpawn)
+      this.spawnHuman(p, this.dawnKit(), true); // beside the team, as a late joiner is (pickJoinSpawn)
       this.track.returned(p);
       const s = p.state;
       this.notify(NOTIFY.RETURNED, p.id);
@@ -1367,9 +1372,17 @@ export class Game {
     }
   }
 
-  // how long today is, horn included: the first two days are long, then they shorten (dayLength)
+  // how long today is, horn included: the first two days are long, then they shorten (dayLength).
+  // A pinned length (DAY_SECONDS, the tests) is not stretched. The horn itself stays a minute either way.
   get dayLen() {
-    return this.dayLenOverride || dayLength(this.day);
+    if (this.dayLenOverride) return this.dayLenOverride;
+    return Math.round(dayLength(this.day) * this.diff.day);
+  }
+
+  // What a death gives back at sunrise. Ember sends you back with a second bandage; the pistol is still one magazine.
+  dawnKit() {
+    if (this.diff.bandages <= 1) return RETURN_KIT;
+    return { mag: RETURN_KIT.mag, ammo: 0, items: [[ITEM.BANDAGE, 2]] };
   }
 
   scheduleSupplyDrops() {
@@ -1382,7 +1395,8 @@ export class Game {
   // How many of the dead night n brings for this many survivors. The final stand is sized from the same number
   // (finalStandSize), so a change here moves both.
   hordeSize(n, humans) {
-    return Math.round((10 + 6 * n + 1.3 * n * n) * (0.6 + 0.4 * humans));
+    const base = Math.round((10 + 6 * n + 1.3 * n * n) * (0.6 + 0.4 * humans));
+    return Math.max(NIGHT_WAVES, Math.round(base * this.diff.zombies));
   }
 
   // Night N: the horde comes in waves to wherever the survivors are. Bigger and tougher every night, with one new kind
@@ -1421,6 +1435,13 @@ export class Game {
       // one new kind a night: each stays out of the horde until its night comes
       for (const wt of weights) if (n < ZOMBIE_DEFS[wt[0]].minNight) wt[1] = 0;
       if (theme) for (const wt of weights) wt[1] *= theme.mul[wt[0]] ?? 1;
+      // Ember thins the kinds that punish movement. Blackout brings more of them. Walkers and tanks stay: one is
+      // the crowd, the other is a slow thing you can see coming. The night's guaranteed new kind is added below.
+      if (this.diff.specials !== 1) {
+        for (const wt of weights) {
+          if (wt[0] === ZTYPE.SPITTER || wt[0] === ZTYPE.BOOMER || wt[0] === ZTYPE.LEAPER || wt[0] === ZTYPE.ROPER || wt[0] === ZTYPE.SHADE || wt[0] === ZTYPE.BAT) wt[1] *= this.diff.specials;
+        }
+      }
       const tot = weights.reduce((a, b) => a + b[1], 0);
       const q = [];
       for (let i = 0; i < count; i++) {
@@ -2376,7 +2397,7 @@ export class Game {
     }
     if (e.kind === ENT.PLAYER && e !== p && e.alive && e.downed && !e.zombie) {
       if (d > this.reachOf(e)) return;
-      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME * perkMods(p.perks).revive };
+      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME * this.diff.revive * perkMods(p.perks).revive };
       e.revivedBy = p.id;
     }
   }
@@ -2429,6 +2450,7 @@ export class Game {
     const def = CONT_DEFS[c.ctype];
     const table = (def.table && CONT_TABLES[def.table]) || LOOT_TABLES[c.zone] || LOOT_TABLES[ZONE.ROADSIDE];
     let rolls = def.rolls[0] + Math.floor(this.rng() * (def.rolls[1] - def.rolls[0] + 1));
+    if (this.diff.loot > 1) rolls++; // Ember: the first cupboard still pays even if you do not know what you are looking for
     const extra = perkMods(p.perks).extraFind;
     if (extra && this.rng() < extra) rolls++;
     for (let i = 0; i < rolls; i++) {
@@ -2451,7 +2473,7 @@ export class Game {
   triggerCarAlarm(p, c) {
     const humans = this.humans();
     if (!p.alive || p.zombie || !humans.length) return;
-    const count = CAR_ALARM_MIN_ZOMBIES + Math.floor(this.rng() * (CAR_ALARM_MAX_ZOMBIES - CAR_ALARM_MIN_ZOMBIES + 1));
+    const count = Math.max(2, Math.round((CAR_ALARM_MIN_ZOMBIES + Math.floor(this.rng() * (CAR_ALARM_MAX_ZOMBIES - CAR_ALARM_MIN_ZOMBIES + 1))) * this.diff.zombies));
     this.makeZombieRoom(count, humans);
     if (this.zombies.length >= MAX_ZOMBIES_ALIVE) return;
     this.notify(NOTIFY.CAR_ALARM, 0);
@@ -3040,6 +3062,8 @@ export class Game {
     if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
     if (this.godMode && !p.zombie) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
+    // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
+    if (!p.zombie && src && (src.kind === KILLER.ZOMBIE || src.kind === KILLER.WORLD)) amount *= this.diff.hurt;
     if (!p.zombie) amount *= perkMods(p.perks).hurt;
     if (p.downed) {
       // hits on a downed survivor drain what's left of their blood
@@ -3093,7 +3117,7 @@ export class Game {
   goDown(p) {
     p.downed = true;
     p.hp = 0;
-    p.bleed = DOWN_TIME;
+    p.bleed = DOWN_TIME * this.diff.down;
     this.endUse(p);
     p.hold = null;
     p.revivedBy = 0;
@@ -3928,13 +3952,14 @@ export class Game {
         continue;
       }
       // healing
-      if (this.time - p.lastDamageT > HEAL_DELAY && p.hp < p.maxHp) {
+      if (this.time - p.lastDamageT > HEAL_DELAY * this.diff.healDelay && p.hp < p.maxHp) {
         const nearFire = this.nearLitFire(s.x, s.z);
-        p.hp = Math.min(p.maxHp, p.hp + (nearFire ? HEAL_RATE_CAMPFIRE : HEAL_RATE) * dt);
+        // a campfire heals what it always healed: building one is the same decision on every difficulty
+        p.hp = Math.min(p.maxHp, p.hp + (nearFire ? HEAL_RATE_CAMPFIRE : HEAL_RATE * this.diff.heal) * dt);
       }
       // flashlight battery
       if (p.flashlight) {
-        p.battery -= FLASHLIGHT_DRAIN * dt;
+        p.battery -= FLASHLIGHT_DRAIN * this.diff.light * dt;
         if (p.battery <= 0) {
           p.battery = 0;
           p.flashlight = false;
