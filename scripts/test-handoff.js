@@ -99,7 +99,7 @@ try {
   // ---------------------------------------------------------------- A: a game into its first night
   const A = server('A', base);
   check('server A is up', await up(A), A.log);
-  const made = await api(A, '/api/games', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Deploy night', inviteOnly: true, maxPlayers: 6 }) });
+  const made = await api(A, '/api/games', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Deploy night', inviteOnly: true, maxPlayers: 6, difficulty: 'ember' }) });
   const code = made.body?.code;
   check('an invite-only game to hand over', made.status === 201 && code?.length === 10, JSON.stringify(made));
   const pids = { ann: randomUUID(), ben: randomUUID(), cy: randomUUID() };
@@ -140,7 +140,7 @@ try {
   const bot2 = await rejoin(B, code, 'Bot', '');
   check('a bot with no browser id joins as a newcomer', bot2?.id && bot2.id !== bot.id, `${bot2?.id} vs ${bot.id}`);
   info = (await api(B, `/api/games/${code}`)).body;
-  check('the run carries on: still night 1, the invite-only game under its name', info?.phase === PHASE.NIGHT && info.day === 1 && info.inviteOnly && info.name === 'Deploy night', JSON.stringify(info));
+  check('the run carries on: still night 1, the invite-only game under its name, still Ember', info?.phase === PHASE.NIGHT && info.day === 1 && info.inviteOnly && info.name === 'Deploy night' && info.difficulty === 'ember', JSON.stringify(info));
   check('...with the seats of those not back yet kept (Cy, and the old Bot)', info?.players === 5, JSON.stringify(info));
   await sleep(1000);
   check('...and it streams to them', ann2?.snaps > 10 && ben2?.snaps > 10, `${ann2?.snaps} ${ben2?.snaps}`);

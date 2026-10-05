@@ -9,6 +9,7 @@ import { ENT, PFLAG } from '../../shared/protocol.js';
 import { PROJ, ZANIM, ZOMBIE_DEFS } from '../../shared/defs.js';
 import { rocketStrikesWorld } from '../../shared/rocket.js';
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
+import { difficultyOf } from '../../shared/difficulty.js';
 import { deerHitbox } from '../../shared/deer.js';
 import { createProjectile } from '../render/models/misc.js';
 
@@ -130,7 +131,7 @@ export class RocketsClient {
       const rx = e.rx - ox;
       const rz = e.rz - oz;
       if (rx * rx + rz * rz > (tHit + 4) * (tHit + 4)) continue;
-      const hb = deer ? deerHitbox(e.ryaw, e.q[4]) : zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
+      const hb = deer ? deerHitbox(e.ryaw, e.q[4]) : zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE, difficultyOf(g.room?.difficulty).aim) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
       _pos.x = e.rx;
       _pos.y = e.ry;
       _pos.z = e.rz;
