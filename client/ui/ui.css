@@ -2761,16 +2761,29 @@ body {
   animation: stn-invIn 0.24s ease-out;
 }
 
+/* one height for the three columns, the screen's own (to a limit): each scrolls inside itself rather than running off
+   the bottom of a small screen */
 .stn-ui .inv-wrap {
   position: relative;
   display: grid;
   grid-template-columns: calc(310 * var(--u)) auto calc(560 * var(--u));
+  grid-template-rows: 100%;
   gap: calc(16 * var(--u));
-  align-items: start;
+  height: 100%;
+  max-height: calc(940 * var(--u));
 }
 
 .stn-ui .inv-col {
-  padding: calc(14 * var(--u)) calc(16 * var(--u)) calc(16 * var(--u));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: calc(14 * var(--u)) calc(16 * var(--u)) calc(14 * var(--u));
+}
+
+.stn-ui .inv-left {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(230, 223, 207, 0.25) transparent;
 }
 
 .stn-ui .inv-mid {
@@ -2780,12 +2793,13 @@ body {
 }
 
 .stn-ui .inv-h {
+  flex: none;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: calc(10 * var(--u));
-  margin: 0 0 calc(10 * var(--u));
-  padding-bottom: calc(7 * var(--u));
+  margin: 0 0 calc(9 * var(--u));
+  padding-bottom: calc(6 * var(--u));
   border-bottom: 1px solid rgba(230, 223, 207, 0.12);
   position: relative;
 }
@@ -2814,11 +2828,51 @@ body {
   text-transform: uppercase;
 }
 
+.stn-ui .inv-cap.warn {
+  color: var(--amber);
+}
+
 .stn-ui .inv-cap.full {
   color: var(--blood-lite);
 }
 
-/* the backpack grid's header: the count on the right */
+/* how full the backpack is: a slot per tick, amber at 80%, red when full */
+.stn-ui .inv-capbar {
+  position: relative;
+  align-self: center;
+  width: calc(80 * var(--u));
+  min-width: 56px;
+  height: calc(8 * var(--u));
+  min-height: 6px;
+  background: rgba(230, 223, 207, 0.1);
+  overflow: hidden;
+}
+
+.stn-ui .inv-capbar i {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  transform: scaleX(0);
+  background: var(--bone-2);
+  transition: transform 0.2s;
+}
+
+.stn-ui .inv-capbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(100% / var(--segs, 24) - 1px), rgba(11, 9, 8, 0.9) calc(100% / var(--segs, 24) - 1px) calc(100% / var(--segs, 24)));
+}
+
+.stn-ui .inv-capbar.warn i {
+  background: var(--amber);
+}
+
+.stn-ui .inv-capbar.full i {
+  background: var(--blood-lite);
+}
+
+/* the backpack grid's header: the capacity on the right */
 .stn-ui .inv-h-right {
   display: inline-flex;
   align-items: baseline;
@@ -2826,23 +2880,22 @@ body {
 }
 
 .stn-ui .inv-left .inv-h:not(:first-child) {
-  margin-top: calc(16 * var(--u));
-}/* equipment */
+  margin-top: calc(13 * var(--u));
+}/* loadout */
 
 
 .stn-ui .eq-list {
   display: flex;
   flex-direction: column;
-  gap: calc(5 * var(--u));
+  gap: calc(4 * var(--u));
 }
 
 .stn-ui .eq {
   display: flex;
   align-items: center;
-  gap: calc(10 * var(--u));
-  height: calc(50 * var(--u));
-  min-height: 38px;
-  padding: 0 calc(10 * var(--u));
+  gap: calc(9 * var(--u));
+  min-height: max(36px, calc(48 * var(--u)));
+  padding: calc(4 * var(--u)) calc(9 * var(--u));
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(230, 223, 207, 0.07);
   transition: border-color 0.12s, background 0.12s;
@@ -2851,6 +2904,69 @@ body {
 .stn-ui .eq:not(.empty):hover {
   border-color: rgba(230, 223, 207, 0.4);
   background: rgba(230, 223, 207, 0.04);
+}
+
+.stn-ui .eq.sel,
+.stn-ui .armor.sel {
+  border-color: var(--bone);
+  background: rgba(230, 223, 207, 0.07);
+}
+
+/* a gun's own ammunition, under its name: calibre, the magazine (and a bar of it), what is carried besides */
+.stn-ui .eq-ammo {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-2);
+  white-space: nowrap;
+}
+
+.stn-ui .eq-ammo[hidden] {
+  display: none;
+}
+
+.stn-ui .eq-cal {
+  padding: calc(2 * var(--u)) calc(4 * var(--u));
+  border: 1px solid rgba(201, 165, 74, 0.6);
+  color: var(--brass);
+  letter-spacing: 0.04em;
+}
+
+.stn-ui .eq-mag {
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+}
+
+.stn-ui .eq-bar {
+  position: relative;
+  width: calc(26 * var(--u));
+  min-width: 18px;
+  height: calc(3 * var(--u));
+  min-height: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.stn-ui .eq-bar i {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  background: var(--brass);
+}
+
+.stn-ui .eq-spare {
+  color: var(--bone-dim);
+}
+
+/* less than a magazine left to reload with */
+.stn-ui .eq-ammo.low .eq-spare,
+.stn-ui .eq-ammo.low .eq-mag {
+  color: var(--blood-lite);
+}
+
+.stn-ui .eq-ammo.low .eq-bar i {
+  background: var(--blood-lite);
 }
 
 .stn-ui .eq.empty {
@@ -2875,10 +2991,10 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  width: calc(96 * var(--u));
-  height: calc(32 * var(--u));
-  min-width: 70px;
-  min-height: 24px;
+  width: calc(64 * var(--u));
+  height: calc(28 * var(--u));
+  min-width: 48px;
+  min-height: 20px;
 }
 
 .stn-ui .eq-ico svg {
@@ -2891,6 +3007,7 @@ body {
   flex-direction: column;
   gap: calc(4 * var(--u));
   min-width: 0;
+  flex: 1;
 }
 
 .stn-ui .eq-lab {
@@ -2916,18 +3033,18 @@ body {
 .stn-ui .eq-throws {
   display: flex;
   flex-wrap: wrap;
-  gap: calc(6 * var(--u));
+  gap: calc(5 * var(--u));
 }
 
-.stn-ui .eq-throws:not(:empty) {
-  margin-top: calc(6 * var(--u));
+.stn-ui .eq-throws:empty {
+  display: none;
 }
 
 .stn-ui .tw {
   display: inline-flex;
   align-items: center;
   gap: calc(5 * var(--u));
-  padding: calc(4 * var(--u)) calc(9 * var(--u));
+  padding: calc(2 * var(--u)) calc(6 * var(--u));
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(230, 223, 207, 0.14);
   font: max(10px, calc(11.5 * var(--u))) / 1 var(--f-mono);
@@ -2942,19 +3059,31 @@ body {
 }
 
 .stn-ui .tw-ico svg {
-  height: calc(16 * var(--u));
-  min-height: 12px;
+  height: calc(14 * var(--u));
+  min-height: 11px;
   width: auto;
-}/* armor */
+}/* worn: the armor and the backpack, side by side */
 
+
+.stn-ui .worn {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(6 * var(--u));
+}
 
 .stn-ui .armor {
   display: flex;
   align-items: center;
-  gap: calc(12 * var(--u));
-  padding: calc(8 * var(--u)) calc(12 * var(--u));
+  gap: calc(8 * var(--u));
+  min-width: 0;
+  padding: calc(7 * var(--u)) calc(8 * var(--u));
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(230, 223, 207, 0.07);
+}
+
+.stn-ui .armor.empty {
+  border-style: dashed;
+  border-color: rgba(230, 223, 207, 0.14);
 }
 
 .stn-ui .armor.empty {
@@ -2969,38 +3098,42 @@ body {
   border-color: rgba(230, 223, 207, 0.4);
 }
 
-/* the backpack worn, right under the armor: its pockets are the grid's last cells */
-.stn-ui .armor.pack {
-  margin-top: calc(5 * var(--u));
-}
-
+/* the backpack worn: its pockets are the grid's last cells */
 .stn-ui .armor.pack .arm-ico svg {
   color: #b9a47a;
 }
 
 .stn-ui .arm-sub {
-  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.06em;
+  font: max(9px, calc(10 * var(--u))) / 1.2 var(--f-mono);
+  letter-spacing: 0.04em;
   color: var(--bone-dim);
 }
 
+.stn-ui .arm-ico {
+  flex: none;
+}
+
 .stn-ui .arm-ico svg {
-  width: calc(34 * var(--u));
-  height: calc(34 * var(--u));
-  min-width: 26px;
-  min-height: 26px;
+  width: calc(30 * var(--u));
+  height: calc(30 * var(--u));
+  min-width: 22px;
+  min-height: 22px;
   color: var(--steel);
 }
 
 .stn-ui .arm-txt {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: calc(6 * var(--u));
+  gap: calc(4 * var(--u));
 }
 
 .stn-ui .arm-name {
-  font: 400 max(12px, calc(15 * var(--u))) / 1 var(--f-num);
+  font: 400 max(11.5px, calc(14 * var(--u))) / 1 var(--f-num);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stn-ui .arm-bar {
@@ -3018,110 +3151,276 @@ body {
   background: linear-gradient(90deg, #6d808c, #c9d6de);
 }
 
-.stn-ui .arm-pts {
-  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
-  color: var(--bone-2);
-}/* ammo */
+.stn-ui .arm-bar {
+  margin-top: calc(1 * var(--u));
+}/* the ammo pouch: the calibres carried, two to a row */
 
 
-.stn-ui .ammo-list {
-  display: flex;
-  flex-direction: column;
-  gap: calc(3 * var(--u));
-}
-
-.stn-ui .am {
+.stn-ui .pouch {
   display: grid;
-  grid-template-columns: calc(26 * var(--u)) calc(56 * var(--u)) 1fr calc(40 * var(--u)) auto;
-  align-items: center;
-  gap: calc(8 * var(--u));
-  height: calc(25 * var(--u));
-  min-height: 20px;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(5 * var(--u));
 }
 
-.stn-ui .am.zero {
+/* icon | calibre | rounds, and under them the gun that fires it */
+.stn-ui .pouch-cal {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'ico name n' 'ico who who';
+  align-items: center;
+  gap: calc(3 * var(--u)) calc(7 * var(--u));
+  min-width: 0;
+  padding: calc(5 * var(--u)) calc(8 * var(--u));
+  text-align: left;
+  color: var(--bone);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(230, 223, 207, 0.08);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stn-ui .pouch-cal[hidden] {
+  display: none;
+}
+
+.stn-ui .pouch-cal:hover,
+.stn-ui .pouch-cal.splitting {
+  border-color: rgba(230, 223, 207, 0.5);
+  background: rgba(230, 223, 207, 0.05);
+}
+
+.stn-ui .pouch-cal.splitting {
+  border-color: var(--amber);
+}
+
+.stn-ui .pouch-cal.zero {
   opacity: 0.4;
 }
 
-.stn-ui .am-ico {
+.stn-ui .pc-ico {
+  grid-area: ico;
   color: var(--brass);
 }
 
-.stn-ui .am-ico svg {
+.stn-ui .pc-ico svg {
+  display: block;
   height: calc(20 * var(--u));
   min-height: 15px;
   width: auto;
+  max-width: calc(22 * var(--u));
 }
 
-.stn-ui .am-name {
-  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.1em;
+.stn-ui .pc-name {
+  grid-area: name;
+  font: 400 max(11px, calc(13.5 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.03em;
 }
 
-.stn-ui .am-bar {
-  position: relative;
-  height: calc(3 * var(--u));
-  min-height: 2px;
-  background: rgba(255, 255, 255, 0.1);
+.stn-ui .pc-who {
+  grid-area: who;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: max(8.5px, calc(9.5 * var(--u))) / 1.1 var(--f-mono);
+  color: var(--bone-dim);
 }
 
-.stn-ui .am-bar i {
-  position: absolute;
-  inset: 0;
-  transform-origin: left;
-  background: linear-gradient(90deg, #7a5e1c, var(--brass));
+/* rounds no gun carried fires: the ones to hand a teammate */
+.stn-ui .pouch-cal.orphan .pc-who {
+  color: var(--amber);
 }
 
-.stn-ui .am-n {
-  text-align: right;
-  font: max(10px, calc(13 * var(--u))) / 1 var(--f-mono);
+.stn-ui .pc-n {
+  grid-area: n;
+  font: max(12px, calc(16 * var(--u))) / 1 var(--f-num);
   font-variant-numeric: tabular-nums;
 }
 
-/* drop half / drop all: quiet until the row is under the pointer */
-.stn-ui .am-act {
+.stn-ui .pouch-foot {
   display: flex;
-  gap: calc(4 * var(--u));
-}
-
-.stn-ui .am-b {
-  padding: calc(4 * var(--u)) calc(7 * var(--u));
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(230, 223, 207, 0.12);
-  font: max(9.5px, calc(10.5 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(8 * var(--u));
+  margin-top: calc(7 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.06em;
   color: var(--bone-dim);
-  cursor: pointer;
-  pointer-events: auto;
-  transition: border-color 0.12s, color 0.12s;
 }
 
-.stn-ui .am:hover .am-b:not(:disabled) {
-  border-color: rgba(230, 223, 207, 0.32);
+.stn-ui .pf-more {
+  padding: calc(2 * var(--u)) 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--bone-2);
+  cursor: pointer;
 }
 
-.stn-ui .am .am-b:not(:disabled):hover {
-  border-color: var(--blood-lite);
+.stn-ui .pf-more:hover {
   color: var(--bone);
 }
 
-.stn-ui .am-b:disabled {
-  cursor: default;
-  opacity: 0.5;
+.stn-ui .pf-more[hidden] {
+  display: none;
 }/* backpack grid */
 
 
 .stn-ui .grid-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
   padding: calc(14 * var(--u)) calc(16 * var(--u)) calc(12 * var(--u));
+}
+
+/* search and the category chips */
+.stn-ui .bp-find {
+  flex: none;
+  margin-bottom: calc(7 * var(--u));
+}
+
+.stn-ui .bp-count {
+  flex: none;
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.08em;
+  color: var(--amber);
+}
+
+.stn-ui .bp-count.none {
+  color: var(--blood-lite);
+}
+
+.stn-ui .bp-slash {
+  flex: none;
+  opacity: 0.6;
+}
+
+.stn-ui .bp-find.on .bp-slash,
+.stn-ui .bp-find:focus-within .bp-slash {
+  display: none;
+}
+
+.stn-ui .bp-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(5 * var(--u));
+  margin-bottom: calc(8 * var(--u));
+}
+
+.stn-ui .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5 * var(--u));
+  padding: calc(4 * var(--u)) calc(7 * var(--u));
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(230, 223, 207, 0.14);
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.stn-ui .chip:hover {
+  border-color: rgba(230, 223, 207, 0.45);
+  color: var(--bone);
+}
+
+.stn-ui .chip.on {
+  border-color: var(--bone);
+  background: rgba(230, 223, 207, 0.1);
+  color: var(--bone);
+}
+
+.stn-ui .chip.zero {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.stn-ui .chip-dot {
+  width: calc(6 * var(--u));
+  height: calc(6 * var(--u));
+  min-width: 5px;
+  min-height: 5px;
+  background: var(--cat, var(--bone-2));
+}
+
+.stn-ui .chip-n {
+  font-weight: 400;
+  color: var(--bone-dim);
+}
+
+.stn-ui .chip.c-all {
+  --cat: var(--bone-2);
+}
+.stn-ui .chip.c-gear {
+  --cat: #9fb0bb;
+}
+.stn-ui .chip.c-cons {
+  --cat: #c8392e;
+}
+.stn-ui .chip.c-throw {
+  --cat: #df7a2b;
+}
+.stn-ui .chip.c-res {
+  --cat: #8f7f63;
+}
+.stn-ui .chip.c-part {
+  --cat: #e8b640;
+}
+
+.stn-ui .grid-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-right: calc(-8 * var(--u));
+  padding-right: calc(8 * var(--u));
+  scrollbar-width: thin;
+  scrollbar-color: rgba(230, 223, 207, 0.25) transparent;
 }
 
 .stn-ui .grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: calc(6 * var(--u));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: calc(5 * var(--u));
+}
+
+/* a section of the backpack, across the whole grid: what is in it and how many */
+.stn-ui .bp-sec {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: calc(10 * var(--u));
+  margin-top: calc(4 * var(--u));
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .bp-sec:first-child {
+  margin-top: 0;
+}
+
+.stn-ui .bp-sec[hidden],
+.stn-ui .cell[hidden] {
+  display: none;
+}
+
+.stn-ui .bp-sec-note {
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--amber);
+}
+
+/* a drag let go where it cannot land: the section it may move in says so */
+.stn-ui .bp-sec.flash .bp-sec-t {
+  color: var(--amber);
+  animation: stn-warnpulse 0.6s ease-in-out 2;
 }
 
 .stn-ui .cell {
@@ -3153,36 +3452,74 @@ body {
   background: rgba(6, 5, 4, 0.5);
 }
 
-/* a pocket of the backpack nobody is wearing: dimmed, a padlock, and nothing to click, drag or drop onto */
-.stn-ui .cell.locked,
-.stn-ui .cell.locked:hover {
-  cursor: not-allowed;
-  background: repeating-linear-gradient(135deg, rgba(6, 5, 4, 0.5) 0 6px, rgba(20, 17, 14, 0.5) 6px 12px);
-  border-style: dashed;
-  border-color: rgba(230, 223, 207, 0.1);
-  box-shadow: none;
-}
-
-.stn-ui .cell.locked .cell-ico {
-  width: 30%;
-  height: 30%;
-  color: rgba(230, 223, 207, 0.3);
-  filter: none;
-}
-
-.stn-ui .cell.locked:hover .cell-ico {
-  color: rgba(230, 223, 207, 0.55);
-}
-
 .stn-ui .cell::after {
   content: '';
   position: absolute;
   left: 18%;
   right: 18%;
-  bottom: calc(5 * var(--u));
+  bottom: calc(3 * var(--u));
   height: 2px;
   background: var(--cat, transparent);
   opacity: 0.8;
+}
+
+/* what the cell holds, named under its icon */
+.stn-ui .cell-name {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: calc(7 * var(--u));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  font: max(7.5px, calc(9 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+
+/* how many of it the recipe in focus would use */
+.stn-ui .cell-use {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: calc(2 * var(--u)) calc(3 * var(--u));
+  font: 700 max(8.5px, calc(10 * var(--u))) / 1 var(--f-mono);
+  color: #14110e;
+  background: var(--amber);
+  pointer-events: none;
+}
+
+.stn-ui .cell-use:empty {
+  display: none;
+}
+
+.stn-ui .cell.sel {
+  border-color: var(--bone);
+  box-shadow: inset 0 0 0 1px var(--bone), inset 0 0 14px rgba(0, 0, 0, 0.65);
+}
+
+.stn-ui .cell.used {
+  border-color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber), inset 0 0 14px rgba(0, 0, 0, 0.65);
+}
+
+/* a search: the matches lit, the rest dimmed */
+.stn-ui .cell.hit {
+  border-color: var(--good);
+  box-shadow: inset 0 0 0 1px var(--good), 0 0 10px rgba(182, 208, 138, 0.25);
+}
+
+.stn-ui .cell.dim {
+  opacity: 0.28;
+}
+
+.stn-ui .cell.no-drop {
+  border-color: var(--blood-lite);
+  box-shadow: inset 0 0 0 1px rgba(255, 84, 70, 0.6);
 }
 
 .stn-ui .c-res {
@@ -3216,9 +3553,14 @@ body {
 .stn-ui .cell-ico {
   display: grid;
   place-items: center;
-  width: 76%;
-  height: 60%;
+  width: 70%;
+  height: 46%;
+  margin-bottom: 22%;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.8));
+}
+
+.stn-ui .cell.empty .cell-ico {
+  margin-bottom: 0;
 }
 
 .stn-ui .cell-ico svg {
@@ -3232,9 +3574,9 @@ body {
 
 .stn-ui .cell-n {
   position: absolute;
-  right: calc(5 * var(--u));
-  bottom: calc(8 * var(--u));
-  font: max(10px, calc(13 * var(--u))) / 1 var(--f-mono);
+  right: calc(4 * var(--u));
+  top: calc(3 * var(--u));
+  font: max(9.5px, calc(11.5 * var(--u))) / 1 var(--f-mono);
   color: var(--bone);
   text-shadow: 0 1px 2px #000, 0 0 4px #000;
 }
@@ -3281,6 +3623,7 @@ body {
 }
 
 .stn-ui .drag-ghost .cell-n {
+  top: auto;
   right: -4px;
   bottom: -6px;
 }
@@ -3475,14 +3818,436 @@ body {
   margin-top: calc(11 * var(--u));
 }
 
-.stn-ui .grid-hints {
+/* the pockets of a backpack nobody is wearing: one line, and what opens them */
+.stn-ui .bp-locked {
+  flex: none;
   display: flex;
-  flex-wrap: wrap;
-  gap: calc(6 * var(--u)) calc(16 * var(--u));
-  margin-top: calc(11 * var(--u));
+  align-items: center;
+  gap: calc(8 * var(--u));
+  margin-top: calc(8 * var(--u));
+  padding: calc(6 * var(--u)) calc(9 * var(--u));
+  background: repeating-linear-gradient(135deg, rgba(6, 5, 4, 0.5) 0 6px, rgba(20, 17, 14, 0.5) 6px 12px);
+  border: 1px dashed rgba(230, 223, 207, 0.16);
   font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
   letter-spacing: 0.06em;
+  color: var(--bone-2);
+  cursor: help;
+}
+
+.stn-ui .bp-locked[hidden] {
+  display: none;
+}
+
+.stn-ui .bp-lock-ico svg {
+  display: block;
+  width: calc(12 * var(--u));
+  height: calc(12 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
   color: var(--bone-dim);
+}
+
+.stn-ui .bp-lock-how {
+  margin-left: auto;
+  color: var(--bone-dim);
+}
+
+/* the item card under the grid: what is selected, what it is for, and a button with its key for each thing it can do */
+.stn-ui .card {
+  flex: none;
+  margin-top: calc(8 * var(--u));
+  padding: calc(9 * var(--u)) calc(11 * var(--u));
+  min-height: calc(108 * var(--u));
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .card-empty {
+  display: grid;
+  place-items: center;
+  min-height: calc(88 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1.4 var(--f-mono);
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--bone-dim);
+}
+
+.stn-ui .card [hidden] {
+  display: none;
+}
+
+.stn-ui .card-head {
+  display: flex;
+  gap: calc(10 * var(--u));
+  align-items: flex-start;
+}
+
+.stn-ui .card-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(48 * var(--u));
+  height: calc(40 * var(--u));
+  min-width: 36px;
+  min-height: 30px;
+  background: rgba(230, 223, 207, 0.05);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .card-ico svg {
+  width: 80%;
+  height: 80%;
+}
+
+.stn-ui .card-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.stn-ui .card-nameline {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .card-name {
+  font: 400 max(13px, calc(17 * var(--u))) / 1.1 var(--f-num);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.stn-ui .card-cat {
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cat, var(--bone-dim));
+}
+
+.stn-ui .card-key {
+  margin-left: auto;
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+  white-space: nowrap;
+}
+
+.stn-ui .card-desc {
+  margin-top: calc(4 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.stn-ui .card-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(5 * var(--u));
+  margin-top: calc(8 * var(--u));
+}
+
+.stn-ui .card-b {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  padding: calc(5 * var(--u)) calc(8 * var(--u));
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(230, 223, 207, 0.28);
+  font: 500 max(10px, calc(11.5 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bone);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.stn-ui .card-b:hover:not(:disabled) {
+  border-color: var(--bone);
+  background: rgba(230, 223, 207, 0.08);
+}
+
+.stn-ui .card-b:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+/* the double-click's action */
+.stn-ui .card-b.primary {
+  background: linear-gradient(180deg, #a8161d, #6c0a0f);
+  border-color: #c42a2a;
+}
+
+.stn-ui .card-b.primary:hover {
+  background: linear-gradient(180deg, #c21d24, #800d12);
+  border-color: var(--blood-lite);
+}
+
+.stn-ui .card-b.danger {
+  color: var(--blood-lite);
+  border-color: rgba(255, 84, 70, 0.45);
+}
+
+.stn-ui .card-b .kbd {
+  font-size: max(8.5px, calc(9.5 * var(--u)));
+}
+
+.stn-ui .card-foot {
+  margin-top: calc(7 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1.35 var(--f-mono);
+  color: var(--bone-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.stn-ui .card-foot b {
+  font-weight: 400;
+  color: var(--bone-2);
+}
+
+/* the right-click menu: what to do with it, the drop amounts last, dropping it all in red */
+.stn-ui .ctx {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  min-width: calc(190 * var(--u));
+  padding: calc(5 * var(--u)) 0;
+  background: linear-gradient(170deg, rgba(26, 22, 19, 0.98), rgba(10, 8, 7, 0.98));
+  border: 1px solid rgba(230, 223, 207, 0.3);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.7);
+}
+
+.stn-ui .ctx-head {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: calc(3 * var(--u)) calc(12 * var(--u)) calc(7 * var(--u));
+  margin-bottom: calc(3 * var(--u));
+  border-bottom: 1px solid rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .ctx-ico svg {
+  display: block;
+  height: calc(18 * var(--u));
+  min-height: 14px;
+  width: auto;
+  max-width: calc(34 * var(--u));
+}
+
+.stn-ui .ctx-name {
+  flex: 1;
+  font: 400 max(12px, calc(14 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.03em;
+}
+
+.stn-ui .ctx-n {
+  font: max(10px, calc(11 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(14 * var(--u));
+  width: 100%;
+  padding: calc(5 * var(--u)) calc(12 * var(--u));
+  background: none;
+  border: 0;
+  text-align: left;
+  font: max(10px, calc(12 * var(--u))) / 1.1 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--bone);
+  cursor: pointer;
+}
+
+.stn-ui .ctx-item:hover:not(:disabled) {
+  background: rgba(157, 17, 23, 0.45);
+}
+
+.stn-ui .ctx-item:disabled {
+  cursor: default;
+  color: rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .ctx-item.danger {
+  color: var(--blood-lite);
+}
+
+.stn-ui .ctx-item.danger:hover:not(:disabled) {
+  color: #fff;
+}
+
+.stn-ui .ctx-note {
+  font-size: 0.9em;
+  color: rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .ctx-sep {
+  height: 1px;
+  margin: calc(4 * var(--u)) 0;
+  background: rgba(230, 223, 207, 0.12);
+}
+
+/* while something is dragged: the strip to let go of it over to put it on the ground */
+.stn-ui .dropzone {
+  position: absolute;
+  left: calc(24 * var(--u));
+  right: calc(24 * var(--u));
+  bottom: calc(14 * var(--u));
+  z-index: 4;
+  display: none;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  height: calc(68 * var(--u));
+  min-height: 50px;
+  padding: 0 calc(24 * var(--u));
+  background: linear-gradient(180deg, rgba(74, 5, 8, 0.82), rgba(40, 3, 5, 0.92));
+  border: 1px dashed rgba(255, 84, 70, 0.6);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.stn-ui .inv.dragging .dropzone {
+  display: flex;
+}
+
+.stn-ui .dropzone.on {
+  border-style: solid;
+  border-color: var(--blood-lite);
+  background: linear-gradient(180deg, rgba(120, 10, 14, 0.9), rgba(60, 4, 6, 0.95));
+}
+
+.stn-ui .dz-ico svg {
+  display: block;
+  width: calc(20 * var(--u));
+  height: calc(20 * var(--u));
+  min-width: 16px;
+  min-height: 16px;
+  color: var(--blood-lite);
+}
+
+.stn-ui .dz-t {
+  font: 400 max(15px, calc(22 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.24em;
+  color: var(--bone);
+}
+
+.stn-ui .dz-what {
+  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
+  color: var(--bone-2);
+}
+
+/* after a drop: what went down, and the key that takes it back (the bar runs out with the offer) */
+.stn-ui .undo {
+  position: absolute;
+  top: calc(16 * var(--u));
+  left: 50%;
+  z-index: 5;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  padding: calc(8 * var(--u)) calc(12 * var(--u));
+  background: linear-gradient(170deg, rgba(26, 22, 19, 0.98), rgba(10, 8, 7, 0.98));
+  border: 1px solid var(--amber);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: stn-fadeIn 0.15s ease-out;
+}
+
+.stn-ui .undo[hidden] {
+  display: none;
+}
+
+.stn-ui .undo-ico svg {
+  display: block;
+  height: calc(20 * var(--u));
+  min-height: 15px;
+  width: auto;
+  max-width: calc(36 * var(--u));
+}
+
+.stn-ui .undo-t {
+  font: max(11px, calc(13 * var(--u))) / 1 var(--f-type);
+  color: var(--bone);
+  white-space: nowrap;
+}
+
+.stn-ui .undo-b {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  padding: calc(3 * var(--u)) calc(6 * var(--u));
+  background: none;
+  border: 0;
+  font: 500 max(11px, calc(13 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+  cursor: pointer;
+}
+
+.stn-ui .undo-b:hover {
+  color: var(--sun);
+}
+
+.stn-ui .undo-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--amber);
+  transform-origin: left;
+}
+
+/* the ammo popover: preset amounts over the slider, Drop and Craft side by side */
+.stn-ui .ap-pre {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: calc(5 * var(--u));
+  margin-top: calc(10 * var(--u));
+}
+
+.stn-ui .ap-p {
+  padding: calc(5 * var(--u)) 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  font: max(10px, calc(11.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+  cursor: pointer;
+}
+
+.stn-ui .ap-p:hover:not(:disabled),
+.stn-ui .ap-p.on {
+  border-color: var(--bone);
+  color: var(--bone);
+}
+
+.stn-ui .ap-p:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stn-ui .ap-drop {
+  gap: calc(8 * var(--u));
+  background: linear-gradient(180deg, #a8161d, #6c0a0f);
+  border-color: #c42a2a;
+}
+
+.stn-ui .ap-drop:hover {
+  background: linear-gradient(180deg, #c21d24, #800d12);
+}
+
+.stn-ui .apop .split-btns [hidden] {
+  display: none;
 }
 
 .stn-ui .sv-list {
@@ -3847,107 +4612,116 @@ body {
   min-height: 10px;
 }
 
-.stn-ui .craft-tabs {
+/* search, and the Ready only switch beside it */
+.stn-ui .craft-bar {
+  flex: none;
   display: flex;
-  align-items: stretch;
-  gap: calc(4 * var(--u));
-  margin-bottom: calc(12 * var(--u));
+  align-items: center;
+  gap: calc(10 * var(--u));
+  margin-bottom: calc(8 * var(--u));
 }
 
-.stn-ui .ct-key {
+.stn-ui .craft-bar .craft-find {
+  flex: 1;
+  margin: 0;
+}
+
+.stn-ui .craft-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7 * var(--u));
+  padding: 0;
+  background: none;
+  border: 0;
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.stn-ui .craft-ready:hover,
+.stn-ui .craft-ready.on {
+  color: var(--bone);
+}
+
+.stn-ui .cr-sw {
+  position: relative;
+  width: calc(26 * var(--u));
+  height: calc(13 * var(--u));
+  min-width: 22px;
+  min-height: 11px;
+  border-radius: 999px;
+  background: rgba(230, 223, 207, 0.16);
+  transition: background 0.15s;
+}
+
+.stn-ui .cr-sw::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: calc(100% - 4px);
+  border-radius: 50%;
+  background: var(--bone-2);
+  transition: transform 0.15s;
+}
+
+.stn-ui .craft-ready.on .cr-sw {
+  background: var(--amber);
+}
+
+.stn-ui .craft-ready.on .cr-sw::after {
+  transform: translateX(calc(100% - 2px));
+  background: #14110e;
+}
+
+/* text tabs, each with how many of its recipes can be crafted right now */
+.stn-ui .craft-tabs {
   flex: none;
-  align-self: center;
-  opacity: 0.5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4 * var(--u));
+  margin-bottom: calc(9 * var(--u));
 }
 
 .stn-ui .ct {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
   gap: calc(5 * var(--u));
-  padding: calc(7 * var(--u)) calc(2 * var(--u)) calc(6 * var(--u));
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(230, 223, 207, 0.08);
-  color: var(--bone-dim);
+  padding: calc(4 * var(--u)) calc(7 * var(--u));
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(230, 223, 207, 0.14);
+  color: var(--bone-2);
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, color 0.12s, opacity 0.12s;
 }
 
-/* category colour strip, like the backpack cells */
-.stn-ui .ct::after {
-  content: '';
-  position: absolute;
-  left: 30%;
-  right: 30%;
-  bottom: -1px;
-  height: 2px;
-  background: var(--cat, var(--bone));
-  opacity: 0.35;
-  transition: opacity 0.12s, left 0.12s, right 0.12s;
-}
-
 .stn-ui .ct:hover {
   color: var(--bone);
-  border-color: rgba(230, 223, 207, 0.3);
+  border-color: rgba(230, 223, 207, 0.4);
 }
 
 .stn-ui .ct.on {
-  color: #f4eddd;
-  background: rgba(230, 223, 207, 0.08);
-  border-color: rgba(230, 223, 207, 0.35);
+  color: var(--bone);
+  background: rgba(230, 223, 207, 0.1);
+  border-color: var(--bone);
 }
 
-.stn-ui .ct.on::after {
-  left: -1px;
-  right: -1px;
-  opacity: 1;
-}
-
-.stn-ui .ct-ico {
-  width: calc(36 * var(--u));
-  height: calc(26 * var(--u));
-  min-width: 27px;
-  min-height: 20px;
-  opacity: 0.6;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
-  transition: opacity 0.12s;
-}
-
-.stn-ui .ct-ico svg {
-  width: 100%;
-  height: 100%;
-}
-
-.stn-ui .ct:hover .ct-ico,
-.stn-ui .ct.on .ct-ico {
-  opacity: 1;
+.stn-ui .ct.zero:not(.on) {
+  opacity: 0.45;
 }
 
 .stn-ui .ct-lab {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: max(8px, calc(9.5 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.04em;
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
-/* how many recipes in the tab can be crafted right now */
 .stn-ui .ct-n {
-  position: absolute;
-  top: calc(3 * var(--u));
-  right: calc(3 * var(--u));
-  min-width: calc(15 * var(--u));
-  padding: calc(2 * var(--u)) calc(3 * var(--u));
-  border-radius: 999px;
-  background: rgba(232, 163, 61, 0.16);
-  border: 1px solid rgba(232, 163, 61, 0.5);
-  font: max(8px, calc(9.5 * var(--u))) / 1 var(--f-mono);
-  text-align: center;
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
   color: var(--amber);
 }
 
@@ -4026,91 +4800,403 @@ body {
   background: rgba(230, 223, 207, 0.1);
 }
 
-.stn-ui .craft-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: calc(6 * var(--u));
+.stn-ui .craft-group .cg-t {
+  white-space: nowrap;
 }
 
-.stn-ui .rc {
-  position: relative;
+.stn-ui .craft-group .cg-aside {
+  order: 2;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.stn-ui .craft-group[hidden],
+.stn-ui .craft-rows[hidden] {
+  display: none;
+}
+
+/* the group's colour: ready in amber, the rest quieter */
+.stn-ui .craft-rows + .craft-group,
+.stn-ui .craft-group {
+  color: var(--bone-dim);
+}
+
+.stn-ui .craft-group:has(+ .craft-rows .rr.g-ready) {
+  color: var(--amber);
+}
+
+.stn-ui .craft-rows {
   display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--u));
+}
+
+/* a recipe: its icon and name, then what it comes to (max N, the station, the first thing short, the schematic) */
+.stn-ui .rr {
+  position: relative;
+  display: grid;
+  grid-template-columns: calc(36 * var(--u)) minmax(0, 1fr) auto calc(14 * var(--u));
   align-items: center;
-  gap: calc(10 * var(--u));
+  gap: calc(9 * var(--u));
   min-width: 0;
-  padding: calc(7 * var(--u)) calc(10 * var(--u));
+  min-height: max(24px, calc(31 * var(--u)));
+  padding: calc(3 * var(--u)) calc(8 * var(--u));
   text-align: left;
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(230, 223, 207, 0.08);
+  color: var(--bone);
+  background: rgba(0, 0, 0, 0.26);
+  border: 1px solid transparent;
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, opacity 0.12s;
 }
 
-.stn-ui .rc.ok {
-  border-color: rgba(230, 223, 207, 0.2);
+.stn-ui .rr:hover {
+  border-color: rgba(230, 223, 207, 0.35);
+  background: rgba(230, 223, 207, 0.05);
 }
 
-.stn-ui .rc.ok:hover {
-  border-color: rgba(230, 223, 207, 0.75);
-  background: rgba(230, 223, 207, 0.06);
+.stn-ui .rr.sel {
+  border-color: var(--bone);
+  background: rgba(230, 223, 207, 0.09);
 }
 
-.stn-ui .rc.no-mat,
-.stn-ui .rc.no-station {
-  opacity: 0.55;
-  cursor: not-allowed;
+/* uses the item selected in the backpack */
+.stn-ui .rr.uses {
+  box-shadow: inset 2px 0 0 var(--amber);
 }
 
-.stn-ui .rc-ico {
-  flex: none;
-  width: calc(44 * var(--u));
-  height: calc(34 * var(--u));
-  min-width: 32px;
-  min-height: 25px;
+.stn-ui .rr.g-station,
+.stn-ui .rr.g-missing,
+.stn-ui .rr.g-locked {
+  color: var(--bone-2);
+}
+
+.stn-ui .rr.g-locked {
+  opacity: 0.6;
+}
+
+.stn-ui .rr-ico {
+  display: grid;
+  place-items: center;
+  height: calc(24 * var(--u));
+  min-height: 18px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
 }
 
-.stn-ui .rc-ico svg {
+.stn-ui .rr-ico svg {
   width: 100%;
   height: 100%;
 }
 
-.stn-ui .rc.ok .rc-ico {
+.stn-ui .rr.g-ready .rr-ico {
   color: #f4eddd;
 }
 
-.stn-ui .rc-main {
-  min-width: 0;
-  flex: 1;
+.stn-ui .rr:not(.g-ready) .rr-ico {
+  opacity: 0.6;
 }
 
-.stn-ui .rc-name {
-  font: 400 max(11.5px, calc(14.5 * var(--u))) / 1.1 var(--f-num);
-  letter-spacing: 0.03em;
-  white-space: nowrap;
+.stn-ui .rr-name {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
-  padding-right: calc(16 * var(--u));
+  font: 400 max(11.5px, calc(14 * var(--u))) / 1.1 var(--f-num);
+  letter-spacing: 0.03em;
 }
 
-.stn-ui .rc-n {
+.stn-ui .rr-n {
   margin-left: calc(5 * var(--u));
-  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  font: max(9.5px, calc(10.5 * var(--u))) / 1 var(--f-mono);
   color: var(--amber);
 }
 
-.stn-ui .rc-cost {
+.stn-ui .rr-aside {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+  white-space: nowrap;
+}
+
+.stn-ui .rr.g-ready .rr-aside {
+  color: var(--bone);
+}
+
+.stn-ui .rr.g-missing .rr-aside {
+  color: var(--blood-lite);
+}
+
+.stn-ui .rr-mark {
+  display: grid;
+  place-items: center;
+  color: var(--bone-dim);
+}
+
+.stn-ui .rr-mark svg {
+  width: 100%;
+  height: auto;
+  min-width: 10px;
+}
+
+.stn-ui .rr.tracked .rr-mark {
+  color: var(--amber);
+}
+
+/* the detail panel: the recipe selected, what it takes, how many, and Track on HUD */
+.stn-ui .cd {
+  flex: none;
+  margin-top: calc(9 * var(--u));
+  padding-top: calc(9 * var(--u));
+  border-top: 1px solid rgba(230, 223, 207, 0.14);
+}
+
+.stn-ui .cd [hidden] {
+  display: none;
+}
+
+.stn-ui .cd-empty {
+  padding: calc(20 * var(--u)) 0;
+  text-align: center;
+  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .cd-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: calc(3 * var(--u)) calc(9 * var(--u));
-  margin-top: calc(5 * var(--u));
+  gap: calc(10 * var(--u));
+  align-items: flex-start;
+}
+
+.stn-ui .cd-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(48 * var(--u));
+  height: calc(40 * var(--u));
+  min-width: 36px;
+  min-height: 30px;
+  background: rgba(230, 223, 207, 0.05);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .cd-ico svg {
+  width: 80%;
+  height: 80%;
+}
+
+.stn-ui .cd-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.stn-ui .cd-nameline {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .cd-name {
+  font: 400 max(13px, calc(17 * var(--u))) / 1.1 var(--f-num);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.stn-ui .cd-sub {
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cat, var(--bone-dim));
+  white-space: nowrap;
+}
+
+.stn-ui .cd-desc {
+  margin-top: calc(4 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.stn-ui .cd-reqs {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--u));
+  max-height: calc(150 * var(--u));
+  margin-top: calc(8 * var(--u));
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.stn-ui .cd-req {
+  display: grid;
+  grid-template-columns: calc(24 * var(--u)) 1fr auto calc(13 * var(--u));
+  align-items: center;
+  gap: calc(8 * var(--u));
+  padding: calc(3 * var(--u)) calc(4 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
+  color: var(--bone-2);
+}
+
+.stn-ui .cd-req-ico {
+  display: flex;
+  justify-content: center;
+}
+
+.stn-ui .cd-req-ico svg {
+  display: block;
+  height: calc(14 * var(--u));
+  min-height: 10px;
+  width: auto;
+  max-width: calc(22 * var(--u));
+}
+
+.stn-ui .cd-req-val {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stn-ui .cd-req-mark svg {
+  display: block;
+  width: 100%;
+  min-width: 10px;
+  height: auto;
+}
+
+.stn-ui .cd-req.ok .cd-req-mark {
+  color: var(--good);
+}
+
+.stn-ui .cd-req.lack .cd-req-val,
+.stn-ui .cd-req.lack .cd-req-mark {
+  color: var(--blood-lite);
+}
+
+/* under an ingredient that is short: where to get it (indented to start under its name) */
+.stn-ui .cd-req-src {
+  margin: calc(-1 * var(--u)) 0 calc(3 * var(--u));
+  padding-left: calc(36 * var(--u) + 4px);
+  font: max(9px, calc(10 * var(--u))) / 1.3 var(--f-mono);
+  color: var(--amber);
+}
+
+.stn-ui .cd-act {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: calc(6 * var(--u));
+  margin-top: calc(9 * var(--u));
+}
+
+/* nothing to craft yet: Track on HUD takes the room of the quantity */
+.stn-ui .cd-act:not(.ready) {
+  grid-template-columns: 1fr 1fr;
+}
+
+.stn-ui .cd-act:not(.ready) .cd-step,
+.stn-ui .cd-act:not(.ready) .cd-max {
+  display: none;
+}
+
+.stn-ui .cd-step {
+  display: flex;
+  border: 1px solid rgba(230, 223, 207, 0.25);
+}
+
+.stn-ui .cd-sb,
+.stn-ui .cd-max,
+.stn-ui .cd-track {
+  padding: 0 calc(10 * var(--u));
+  min-height: max(26px, calc(34 * var(--u)));
+  background: rgba(0, 0, 0, 0.35);
+  border: 0;
+  font: 500 max(10px, calc(12 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bone);
+  cursor: pointer;
+}
+
+.stn-ui .cd-sb:hover:not(:disabled),
+.stn-ui .cd-max:hover:not(:disabled),
+.stn-ui .cd-track:hover {
+  background: rgba(230, 223, 207, 0.1);
+}
+
+.stn-ui .cd-sb:disabled,
+.stn-ui .cd-max:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stn-ui .cd-qty {
+  display: grid;
+  place-items: center;
+  min-width: calc(30 * var(--u));
+  font: 400 max(13px, calc(17 * var(--u))) / 1 var(--f-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.stn-ui .cd-max,
+.stn-ui .cd-track {
+  border: 1px solid rgba(230, 223, 207, 0.25);
+}
+
+.stn-ui .cd-go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(9 * var(--u));
+  min-height: max(26px, calc(34 * var(--u)));
+  background: linear-gradient(180deg, #a8161d, #6c0a0f 70%, #520709);
+  border: 1px solid #c42a2a;
+  font: 500 max(11px, calc(13 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #f7ede2;
+  cursor: pointer;
+}
+
+.stn-ui .cd-go:hover:not(:disabled) {
+  background: linear-gradient(180deg, #c21d24, #800d12 70%, #5e080b);
+  border-color: var(--blood-lite);
+}
+
+.stn-ui .cd-go:disabled {
+  cursor: default;
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(230, 223, 207, 0.14);
+  color: var(--bone-dim);
+}
+
+.stn-ui .cd-track {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(7 * var(--u));
+}
+
+.stn-ui .cd-act.ready .cd-track-t {
+  display: none;
+}
+
+.stn-ui .cd-track-ico svg {
+  display: block;
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  min-width: 11px;
+  min-height: 11px;
+}
+
+.stn-ui .cd-track.on {
+  border-color: var(--amber);
+  color: var(--amber);
 }
 
 /* bulk crafting: what a click would add, on every recipe that can be made while Shift / Ctrl is held */
 .stn-ui .rc-bulk {
   position: absolute;
-  right: calc(5 * var(--u));
-  bottom: calc(5 * var(--u));
+  right: calc(30 * var(--u));
+  top: 50%;
+  transform: translateY(-50%);
   padding: calc(3 * var(--u)) calc(5 * var(--u)) calc(2 * var(--u));
   font: 700 max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
   color: #14110e;
@@ -4123,224 +5209,43 @@ body {
   background: rgba(0, 0, 0, 0.55);
 }
 
-.stn-ui .craft-hints {
-  flex: none;
-}
-
-.stn-ui .rc-station {
-  position: absolute;
-  top: calc(5 * var(--u));
-  right: calc(6 * var(--u));
-  width: calc(15 * var(--u));
-  height: calc(15 * var(--u));
-  min-width: 11px;
-  min-height: 11px;
-  color: var(--amber);
-  opacity: 0.85;
-}
-
-.stn-ui .rc-station svg {
-  width: 100%;
-  height: 100%;
-}
-
-.stn-ui .rc.no-station {
-  opacity: 0.62;
-}
-
-.stn-ui .rc.no-station .rc-station {
-  color: var(--blood-lite);
-  opacity: 1;
-}/* tooltip */
+/* tooltip: the name of what is under the pointer (the item card has the rest) */
 
 
 .stn-ui .tip {
   position: fixed;
   left: 0;
   top: 0;
-  width: calc(290 * var(--u));
-  min-width: 220px;
-  padding: calc(12 * var(--u)) calc(14 * var(--u));
+  max-width: calc(260 * var(--u));
+  padding: calc(7 * var(--u)) calc(10 * var(--u));
   background: linear-gradient(170deg, rgba(26, 22, 19, 0.97), rgba(10, 8, 7, 0.97));
   border: 1px solid rgba(230, 223, 207, 0.22);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.7);
   pointer-events: none;
 }
 
-.stn-ui .tip-head {
-  display: flex;
-  align-items: center;
-  gap: calc(10 * var(--u));
-}
-
-.stn-ui .tip-ico {
-  flex: none;
-  width: calc(52 * var(--u));
-  height: calc(38 * var(--u));
-  min-width: 38px;
-  min-height: 28px;
-}
-
-.stn-ui .tip-ico svg {
-  width: 100%;
-  height: 100%;
+.stn-ui .tip [hidden] {
+  display: none;
 }
 
 .stn-ui .tip-name {
-  font: 400 max(14px, calc(19 * var(--u))) / 1.1 var(--f-num);
+  font: 400 max(12px, calc(15 * var(--u))) / 1.1 var(--f-num);
   letter-spacing: 0.03em;
 }
 
 .stn-ui .tip-cat {
-  margin-top: calc(4 * var(--u));
-  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.26em;
+  margin-top: calc(3 * var(--u));
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--cat, var(--bone-dim));
 }
 
-.stn-ui .tip-desc {
-  margin-top: calc(9 * var(--u));
-  font: max(11px, calc(13.5 * var(--u))) / 1.35 var(--f-type);
-  color: var(--bone-2);
-}
-
-.stn-ui .tip-stats {
-  margin-top: calc(8 * var(--u));
-  display: flex;
-  flex-direction: column;
-  gap: calc(3 * var(--u));
-  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
-  color: var(--bone);
-}
-
-.stn-ui .tip-stat::before {
-  content: '— ';
-  opacity: 0.4;
-}
-
-/* what the item goes into and where more of it is found */
-.stn-ui .tip-notes {
-  margin-top: calc(10 * var(--u));
-  display: flex;
-  flex-direction: column;
-  gap: calc(7 * var(--u));
-  font: max(10px, calc(12 * var(--u))) / 1.35 var(--f-mono);
-  color: var(--bone-2);
-}
-
-.stn-ui .tip-note-h {
-  margin-bottom: calc(3 * var(--u));
-  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
-}
-
-/* a line of names: it wraps between them, never inside one */
-.stn-ui .tip-phrase {
-  white-space: nowrap;
-}
-
-/* waits on a schematic the team has not found: dimmed, with the crafting list's padlock */
-.stn-ui .tip-phrase.locked {
-  color: var(--bone-dim);
-}
-
-.stn-ui .tip-note-lock svg {
-  display: inline;
-  width: auto;
-  height: 0.85em;
-  margin-right: 0.3em;
-  vertical-align: -0.08em;
-  color: #9cb4cf;
-}
-
-.stn-ui .tip-reqs {
-  margin-top: calc(10 * var(--u));
-  display: flex;
-  flex-direction: column;
-  gap: calc(3 * var(--u));
-}
-
-.stn-ui .tip-reqs-h {
-  margin-bottom: calc(2 * var(--u));
-  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
-}
-
-.stn-ui .tip-req {
-  display: grid;
-  grid-template-columns: calc(24 * var(--u)) 1fr auto calc(13 * var(--u));
-  align-items: center;
-  gap: calc(8 * var(--u));
-  padding: calc(4 * var(--u)) calc(7 * var(--u));
-  border-left: 2px solid transparent;
-  background: rgba(230, 223, 207, 0.04);
-  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
-  color: var(--bone-2);
-}
-
-.stn-ui .tip-req-ico {
-  display: flex;
-  justify-content: center;
-}
-
-.stn-ui .tip-req-ico svg {
-  display: block;
-  height: calc(14 * var(--u));
-  min-height: 10px;
-  width: auto;
-  max-width: calc(22 * var(--u));
-}
-
-.stn-ui .tip-req-val {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.stn-ui .tip-req-mark svg {
-  display: block;
-  width: 100%;
-  min-width: 10px;
-  height: auto;
-}
-
-.stn-ui .tip-req.ok .tip-req-mark {
-  color: var(--good);
-}
-
-.stn-ui .tip-req.lack {
-  border-left-color: var(--blood-lite);
-  background: rgba(157, 17, 23, 0.26);
-  color: var(--blood-lite);
-}
-
-/* under an ingredient the player is short of: where to get it (indented to start under the ingredient's name) */
-.stn-ui .tip-req-src {
-  margin-bottom: calc(3 * var(--u));
-  padding: 0 calc(7 * var(--u)) 0 calc(2px + 39 * var(--u));
-  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
-  color: var(--bone-2);
-}
-
 .stn-ui .tip-hint {
-  margin-top: calc(10 * var(--u));
-  padding-top: calc(8 * var(--u));
-  border-top: 1px solid rgba(230, 223, 207, 0.1);
-  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
-  letter-spacing: 0.05em;
-  color: var(--amber);
-}
-
-.stn-ui .tip-hint > div + div {
-  margin-top: calc(4 * var(--u));
-}
-
-.stn-ui .tip-hint.bad {
-  color: var(--blood-lite);
+  margin-top: calc(5 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1.3 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--bone-dim);
 }/* ==================================================================== MENUS *//* ---------- splash */
 
 
@@ -5614,6 +6519,7 @@ body {
   position: absolute;
   inset: 0;
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   pointer-events: auto;
 }
@@ -5635,13 +6541,19 @@ body {
     #07060a;
 }
 
+/* taller than the screen, it scrolls from its top rather than losing the title off it */
 .stn-ui .end-main {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
+  box-sizing: border-box;
   max-width: 90vw;
+  max-height: 100%;
+  padding: calc(16 * var(--u)) 0;
+  overflow: hidden auto;
+  scrollbar-width: thin;
 }
 
 .stn-ui .end-kicker {
@@ -5779,13 +6691,33 @@ body {
 }/* ---------- personal record: end screen panel, splash line, settings row */
 
 
-/* beside the body count rather than under it: the end screen is no taller for it */
+/* the panels' row and the poll under it: as wide as the row, so the poll lines up with its edges */
+.stn-ui .end-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* beside the body count rather than under it: the end screen is no taller for it. One height for the row */
 .stn-ui .end-panels {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: center;
   gap: 0 calc(18 * var(--u));
+}
+
+/* narrower rather than a second row, which pushes the poll and the countdown off a small screen */
+.stn-ui .end-panels .end-board {
+  flex: 0 1 auto;
+  min-width: 250px;
+}
+
+@media (max-width: 860px) {
+  .stn-ui .end-panels {
+    flex-wrap: wrap;
+  }
 }
 
 .stn-ui .er-tiles {
@@ -6303,41 +7235,117 @@ body {
   }
 }
 
-/* ---------- end screen: how hard was it? A vote, then everyone's votes as bars on the same rows */
+/* ---------- end screen: how hard was it? A scale of five across, then everyone's votes as columns in the same answers */
 
 .stn-ui .end-poll {
-  width: calc(320 * var(--u));
-  min-width: 250px;
+  width: auto;
+  min-width: 0;
+  margin-top: calc(18 * var(--u));
+}
+
+/* the heading, with the hint (then the tally) on its right: the strip is one heading and one row tall */
+.stn-ui .ep-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(16 * var(--u));
+}
+
+.stn-ui .ep-foot {
+  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--bone-dim);
 }
 
 .stn-ui .ep-opts {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: calc(4 * var(--u));
 }
 
+/* --tone: where the answer sits from too easy to too hard, as the tick along its top */
 .stn-ui .ep-opt {
-  display: grid;
-  grid-template-columns: calc(22 * var(--u)) 1fr auto;
+  --tone: var(--bone-dim);
+  position: relative;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  column-gap: calc(10 * var(--u));
-  width: 100%;
-  min-width: 14px;
-  padding: calc(6 * var(--u)) calc(9 * var(--u));
+  justify-content: center;
+  gap: calc(6 * var(--u));
+  min-width: 0;
+  height: calc(78 * var(--u));
+  min-height: 54px;
+  padding: calc(4 * var(--u)) calc(10 * var(--u)) 0;
   border: 0;
   background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
   font: 400 max(13px, calc(17 * var(--u))) / 1.2 var(--f-num);
   letter-spacing: 0.04em;
-  text-align: left;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+}
+
+.stn-ui .ep-opt:nth-child(1) {
+  --tone: var(--steel);
+}
+
+.stn-ui .ep-opt:nth-child(2) {
+  --tone: #abc0a2;
+}
+
+.stn-ui .ep-opt:nth-child(3) {
+  --tone: var(--good);
+}
+
+.stn-ui .ep-opt:nth-child(4) {
+  --tone: #e0a05a;
+}
+
+.stn-ui .ep-opt:nth-child(5) {
+  --tone: var(--blood-hi);
+}
+
+.stn-ui .ep-opt::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--tone);
+  opacity: 0.5;
+  transition: opacity 0.15s;
 }
 
 .stn-ui .ep-opt:hover {
   background: rgba(243, 217, 164, 0.09);
 }
 
+.stn-ui .ep-opt:hover::before,
+.stn-ui .ep-opt.mine::before {
+  opacity: 1;
+}
+
+.stn-ui .ep-opt:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: -1px;
+}
+
+/* (over the column, which is positioned) */
+.stn-ui .ep-row,
+.stn-ui .ep-pct {
+  position: relative;
+}
+
+.stn-ui .ep-row {
+  display: flex;
+  align-items: center;
+  gap: calc(9 * var(--u));
+  max-width: 100%;
+}
+
 .stn-ui .ep-key {
+  min-width: 1.8em;
   padding: 2px 0;
   border: 1px solid rgba(230, 223, 207, 0.18);
   font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
@@ -6345,40 +7353,48 @@ body {
   color: var(--bone-dim);
 }
 
-.stn-ui .ep-pct {
-  min-width: 3em;
-  font: 400 max(11px, calc(14 * var(--u))) / 1 var(--f-mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  color: var(--bone-2);
+.stn-ui .ep-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-/* the line bar: room kept for it from the start, so the panel does not grow when the votes come in */
+.stn-ui .ep-pct {
+  font: 500 max(14px, calc(20 * var(--u))) / 1 var(--f-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--bone);
+}
+
+.stn-ui .ep-pct:empty {
+  display: none;
+}
+
+/* everyone's votes: a column rising behind the answer, so the strip reads as a histogram. Never takes room */
 .stn-ui .ep-bar {
-  grid-column: 2 / 4;
-  height: 3px;
-  margin-top: calc(5 * var(--u));
-  background: rgba(230, 223, 207, 0.1);
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity 0.3s;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  pointer-events: none;
 }
 
 .stn-ui .ep-bar i {
   display: block;
-  width: 0;
-  height: 100%;
-  background: var(--bone-dim);
-  transition: width 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  width: 100%;
+  height: 0;
+  background: rgba(230, 223, 207, 0.08);
+  box-shadow: inset 0 1px 0 rgba(230, 223, 207, 0.22);
+  transition: height 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-.stn-ui .end-poll.voted .ep-bar {
-  opacity: 1;
+.stn-ui .end-poll.voted .ep-opt:not(.mine) {
+  color: var(--bone-2);
 }
 
 .stn-ui .ep-opt.mine {
-  box-shadow: inset 2px 0 0 var(--sun);
   color: var(--sun);
+  box-shadow: inset 0 0 0 1px rgba(243, 217, 164, 0.5);
 }
 
 .stn-ui .ep-opt.mine .ep-key {
@@ -6391,19 +7407,12 @@ body {
 }
 
 .stn-ui .ep-opt.mine .ep-bar i {
-  background: var(--sun);
+  background: rgba(243, 217, 164, 0.15);
+  box-shadow: inset 0 1px 0 rgba(243, 217, 164, 0.55);
 }
 
 .stn-ui .end-poll.sending .ep-opt {
   cursor: progress;
-}
-
-.stn-ui .ep-foot {
-  margin-top: calc(10 * var(--u));
-  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
 }
 
 .stn-ui .ep-foot.bad {

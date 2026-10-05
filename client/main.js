@@ -192,6 +192,7 @@ const callbacks = {
   onDropItem: (i, n) => game?.uiCallbacks().onDropItem(i, n),
   onSplitItem: (i, n) => game?.uiCallbacks().onSplitItem(i, n),
   onDropAmmo: (cal, n) => game?.uiCallbacks().onDropAmmo(cal, n),
+  onUndoDrop: () => game?.uiCallbacks().onUndoDrop(),
   onSalvage: (from, n) => game?.uiCallbacks().onSalvage(from, n),
   onSwapItems: (a, b) => game?.uiCallbacks().onSwapItems(a, b),
   onEquipArmor: (i) => game?.uiCallbacks().onEquipArmor(i),

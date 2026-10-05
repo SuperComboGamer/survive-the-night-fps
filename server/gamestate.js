@@ -27,7 +27,7 @@ export const HANDOFF_RESERVE = +(process.env.HANDOFF_RESERVE_SECONDS || 180); //
 // the run's own numbers (Game constructor and startGame), as they are
 const GAME_FIELDS = ['seed', 'worldPlayed', 'tick', 'time', 'phase', 'day', 'timeLeft', 'restartT', 'supplies', 'supplyHints', 'supplyFound', 'unlocked', 'wave', 'bossPending', 'bossId', 'warned', 'shadeWarned', 'escape', 'supplyAt', 'nightStats', 'dropSeq', 'hordeHpMul'];
 // what of a player is the connection's or the leaderboard's, or is worked out again (resume starts a client afresh)
-const PLAYER_SKIP = new Set(['session', 'rec', 'view', 'shadow', 'cmdQueue', 'cmdBudget', 'lastSeq', 'hasSeq', 'recvSeq', 'renderTick', 'renderFrac', 'hx', 'hy', 'hz', 'selfSync', 'snapTick', 'ackSent', 'pingAt', 'ping', 'chatT', 'chatCount', 'onAir', 'pingT', 'boardT', 'ts', 'admin', 'adminT', 'adminFails', 'greeted', 'selfCache', 'globalCache', 'listVer', 'away', 'useItem', 'hold', 'invDirty', 'invSort', 'splitKeep', 'state']);
+const PLAYER_SKIP = new Set(['session', 'rec', 'view', 'shadow', 'cmdQueue', 'cmdBudget', 'lastSeq', 'hasSeq', 'recvSeq', 'renderTick', 'renderFrac', 'hx', 'hy', 'hz', 'selfSync', 'snapTick', 'ackSent', 'pingAt', 'ping', 'chatT', 'chatCount', 'onAir', 'pingT', 'boardT', 'ts', 'admin', 'adminT', 'adminFails', 'greeted', 'selfCache', 'globalCache', 'listVer', 'away', 'useItem', 'hold', 'invDirty', 'invSort', 'splitKeep', 'lastDrop', 'state']);
 const ZOMBIE_SKIP = new Set(['def', 'hx', 'hy', 'hz', 'hitStruct']);
 const KINDS = new Set(Object.values(ENT));
 
