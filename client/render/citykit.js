@@ -21,7 +21,7 @@ export const TIER = { FAR: 0, STREET: 1, DETAIL: 2, ROOM: 3 };
 const PI = Math.PI;
 const WHITE = [1, 1, 1];
 const CEIL_N = [0.62, -0.35, 0.7];
-const PLASTER_CEIL_N = [0.58, 0.3, 0.76]; // (a plastered ceiling: whitewash, the lightest thing in the room under it)
+const PLASTER_CEIL_N = [0.62, 0, 0.78]; // (a plastered ceiling takes the light as the walls under it do)
 
 // a number in 0..1 from up to four integers: the same on every client, whatever was drawn before it
 const hash = (a, b = 0, c = 0, d = 0) => {
@@ -1080,7 +1080,7 @@ function shell(S, W) {
 // board. No lamp burns in Port Calder, so a room's light is the day through its openings: it is laid into the
 // lining's own colour, brightest beside a window or a doorway and falling off into the room and behind each
 // partition (LIT), which is what makes a room read from its door.
-const LIT = [0.86, 2.05]; // how much of its colour a lining shows: where the day does not reach, and beside a window
+const LIT = [1.1, 3.1]; // how much of its colour a lining shows: where the day does not reach, and beside a window
 const LINO_TINT = [[1, 1, 0.96], [0.84, 0.94, 0.84], [1.0, 0.9, 0.78], [0.84, 0.9, 1.0], [0.98, 0.86, 0.78], [0.92, 0.92, 0.92]];
 const BOARD_TINT = [[1, 0.94, 0.84], [0.92, 0.84, 0.74], [1.02, 1.0, 0.94]];
 const CEIL_WHITE = [0.97, 0.96, 0.91];
@@ -1134,7 +1134,7 @@ function room(S, R) {
       for (const q of blocks) if (crosses(lx, lz, x, z, q)) k *= 0.42;
       sum += k;
     }
-    return LIT[0] + (LIT[1] - LIT[0]) * (sum / (sum + 1.25));
+    return LIT[0] + (LIT[1] - LIT[0]) * (sum / (sum + 1.0));
   };
   const zones = R.zones || [];
   const tintAt = (x, z) => {

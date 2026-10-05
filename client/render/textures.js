@@ -3348,7 +3348,7 @@ GEN.lino = () => {
   const r = rngf(1311);
   const a = fbm(W, W, 6, 6, 4, 1311), b = fbm(W, W, 40, 40, 3, 1312);
   const state = [];
-  for (let k = 0; k < n * n; k++) state.push({ gone: r() < 0.03, k: 0.9 + r() * 0.2 });
+  for (let k = 0; k < n * n; k++) state.push({ gone: r() < 0.03, k: 0.88 + r() * 0.24 });
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
@@ -3359,7 +3359,7 @@ GEN.lino = () => {
     const v = ((cx + cy) % 2 ? 0.63 : 0.7) * t.k * (0.84 + a[p] * 0.3) * (0.92 + b[p] * 0.16);
     let R = v * 196, G = v * 192, B = v * 176;
     if (t.gone) {
-      const k2 = 0.26 + b[p] * 0.1;
+      const k2 = 0.4 + b[p] * 0.1; // (a tile lifted: the grey of the screed under it, not a black square)
       R = 255 * k2 * 0.8;
       G = 255 * k2 * 0.74;
       B = 255 * k2 * 0.64;

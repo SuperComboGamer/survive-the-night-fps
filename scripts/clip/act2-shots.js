@@ -223,7 +223,7 @@ try {
   if (want('cutscene')) {
     await chat('/cross hold');
     await sleep(1500);
-    for (const [t, name] of [[1.6, 'cutscene-01-leaving-the-island'], [3.0, 'cutscene-02-the-horde-behind'], [4.6, 'cutscene-03-the-horde-second-angle'], [6.4, 'cutscene-04-onto-the-bridge']]) {
+    for (const [t, name] of [[1.6, 'cutscene-01-leaving-the-island'], [3.0, 'cutscene-02-the-horde-behind'], [4.6, 'cutscene-03-the-horde-second-angle'], [6.4, 'cutscene-04-the-horde-at-the-lens']]) {
       await pin(t);
       await sleep(1400);
       await shot(name);
@@ -475,10 +475,10 @@ try {
         const to = [T.x + ex[0] * (T.len / 2 - 1.5), T.y + T.h * 0.5, T.z + ex[1] * (T.len / 2 - 1.5)];
         const cands = [];
         const s0 = -ex[1] * sun[0] + ex[0] * sun[1] >= 0 ? 1 : -1; // (the side of it the sun is on)
-        for (const e of [1, -1]) for (const s of [s0, -s0]) for (const [al, off, up] of [[7, 6, 2.2], [9, 8, 3.2], [5.5, 9, 2.6], [11, 4, 2.4]]) cands.push([T.x + e * ex[0] * (T.len / 2 + al) - s * ex[1] * off, T.y + up, T.z + e * ex[1] * (T.len / 2 + al) + s * ex[0] * off, e]);
+        for (const e of [1, -1]) for (const s of [s0, -s0]) for (const [al, off, up] of [[8, 7, 5.5], [10, 9, 7], [7, 6, 2.2], [9, 8, 3.2]]) cands.push([T.x + e * ex[0] * (T.len / 2 + al) - s * ex[1] * off, T.y + up, T.z + e * ex[1] * (T.len / 2 + al) + s * ex[0] * off, e]);
         const at = pickCam('ruin-03c-a-break', cands, to, { short: 4, crowd: 3 });
         const end = [T.x + (at[3] || 1) * ex[0] * (T.len / 2 - 1.2), T.y + T.h * 0.5, T.z + (at[3] || 1) * ex[1] * (T.len / 2 - 1.2)];
-        await cam(at.slice(0, 3), end);
+        await cam(at.slice(0, 3), end, { cycle: 0.25 }); // (noon: it lies in a street, in the shadow of what still stands)
         await shot('ruin-03c-a-break');
       }
     }
@@ -487,7 +487,20 @@ try {
       // from its other end, and from behind)
       const B = I.open.slice().sort((a, b) => b[8] - a[8])[0];
       const e = B[7] || 1; // (which end is open)
-      await round('ruin-04-a-building-cut-open', B, [[e, -1], [e, 1]], { out: [9, 12, 6, 15], up: [0.6, 0.8, 0.45] });
+      // (the first from where its end was: out over what is left of its lower floors, facing the storeys that stand,
+      // their rooms open to it)
+      const Bm = M.city.buildings.find((q) => Math.abs(q.x - B[0]) < 0.1 && Math.abs(q.z - B[1]) < 0.1);
+      if (Bm && !(pick && !pick.test('ruin-04-a-building-cut-open'))) {
+        const f = Math.min(Bm.floors - 1, Math.ceil(Bm.floors * 0.5));
+        const R = Bm.cut[f] || [-Bm.w / 2, Bm.w / 2, -Bm.d / 2, Bm.d / 2];
+        const face = e < 0 ? R[0] : R[1]; // (the broken edge of that storey, in the building's frame)
+        const yf = B[2] + f * Bm.fh;
+        const to = [lw(Bm, face - e * 2, 0)[0], yf + Bm.fh * 0.3, lw(Bm, face - e * 2, 0)[1]];
+        const cands = [];
+        for (const out of [9, 12, 7, 15]) for (const lz of [-Bm.d * 0.3, Bm.d * 0.3, 0]) for (const up of [1.0, 1.6, 0.4]) cands.push([lw(Bm, face + e * out, lz)[0], yf + Bm.fh * up, lw(Bm, face + e * out, lz)[1]]);
+        await cam(pickCam('ruin-04-a-building-cut-open', cands, to, { short: 3, crowd: 0 }), to, { fog: 0.6 });
+        await shot('ruin-04-a-building-cut-open');
+      }
       await round('ruin-05-cut-open-the-other-end', B, [[-e, -1], [-e, 1]]);
       await round('ruin-05b-cut-open-from-behind', B, [[e, 1], [e, -1]], { out: [16, 20, 12], up: [0.9, 1.1] });
     }
