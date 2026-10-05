@@ -5,6 +5,7 @@
 // hint touches the DOM.
 import { PHASE, DUSK_WARNING, SLOT_BUILD } from '../../shared/constants.js';
 import { CONSUMABLES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT } from '../../shared/defs.js';
+import { planCost } from '../../shared/autocraft.js';
 import { bindLabel, hasBind } from '../game/binds.js';
 import { el, replay, lsGet, lsSet } from './dom.js';
 
@@ -129,12 +130,11 @@ export class KeyHints {
     const g = this.game;
     const counts = g.invCounts();
     const unlocked = g.global.unlocked | 0;
+    const ctx = g.craftContext();
     for (const type of STRUCT_ORDER) {
       const def = STRUCT_DEFS[type];
       if (def.schem && !(unlocked & (1 << SCHEM_BIT[def.schem]))) continue;
-      let afford = true;
-      for (const k in def.cost) if ((counts[k] || 0) < def.cost[k]) afford = false;
-      if (afford) return true;
+      if (planCost(counts, def.cost, ctx)) return true;
     }
     return false;
   }

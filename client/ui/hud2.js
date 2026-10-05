@@ -449,7 +449,7 @@ export class Tracked {
       return;
     }
     const st = trackStatus(t.r, t.counts, t.near, t.unlocked);
-    const key = JSON.stringify([t.r.id, st.ings.map((g) => g.have), st.station?.ok, st.schem?.ok]);
+    const key = JSON.stringify([t.r.id, st.ings.map((g) => [g.have, g.ok]), st.station?.ok, st.schem?.ok]);
     if (key === this.key) return;
     this.key = key;
     this.name.textContent = ITEM_DEFS[t.r.out].name;

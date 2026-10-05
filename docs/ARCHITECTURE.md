@@ -846,6 +846,14 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   the crafts still on their way before it counts again (`Crafting._model`), the repeats leave through a bucket
   in `Game.sendCrafts` (the server drops what a client sends past 200 messages a second), and a listener plays
   one craft sound per 0.1 s however many `SOUND.CRAFT` events a tick brings.
+- **Auto-crafting** (`shared/autocraft.js`). A build, a craft or a repair short of a material a recipe makes
+  (Planks from Sticks, Nails from Scrap Metal, Rope from Cloth, a Torch...) makes it from what that recipe takes,
+  when the recipe itself could be crafted there: its station in reach, its schematic found. `planCost(counts, cost,
+  ctx)` uses what is carried first and returns what is taken and what the batches made past the need (`give`: ten
+  Nails for a wall's four), or null. The server plans with `Game.planFor` (ctx from `Game.craftCtx`) in `build`,
+  `craft` and `repair`, pays `take`, and `Game.madeExtra` adds `give` with `addItem` (the overflow at the feet);
+  the client plans the same way with `Game.craftContext` in `craftRun`, the crafting panel, the build menu and
+  ghost, the build key hint and the tracked recipe. `test-autocraft` holds the two together.
 - **Salvage** (`ACT.SALVAGE`: u8 from, u16 count) tears something down for the materials `SALVAGE` in defs lists:
   `from` is a backpack index, `SALVAGE_FROM.WEAPON` + a weapon slot, or `SALVAGE_FROM.ARMOR` (`Game.salvage`). A
   gun's magazine goes back into the reserve as rounds; what does not fit is dropped at the survivor's feet. The table

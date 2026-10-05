@@ -2675,6 +2675,11 @@ body {
   color: var(--blood-lite);
 }
 
+/* short, but made from what is carried as it is built (shared/autocraft.js) */
+.stn-ui .bc .ing.auto {
+  color: var(--amber);
+}
+
 .stn-ui .build-hint {
   display: flex;
   gap: calc(16 * var(--u));

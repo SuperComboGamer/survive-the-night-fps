@@ -1,5 +1,6 @@
 // Build menu strip (bottom-centre) shown while holding the hammer.
 import { STRUCT_DEFS, STRUCT_ORDER, ITEM_DEFS, SCHEM_BIT } from '../../shared/defs.js';
+import { planCost } from '../../shared/autocraft.js';
 import { el, svgEl } from './dom.js';
 import { structIcon, itemIcon, glyph } from './icons.js';
 import { liveText, bindLabel, bindPair } from '../game/binds.js';
@@ -64,7 +65,8 @@ export class BuildMenu {
       return;
     }
     const counts = state.counts || {};
-    const key = [state.selected, state.rotate | 0, state.valid ? 1 : 0, state.reason || '', state.unlocked | 0, JSON.stringify(counts)].join('|');
+    const ctx = state.ctx;
+    const key = [state.selected, state.rotate | 0, state.valid ? 1 : 0, state.reason || '', state.unlocked | 0, JSON.stringify(counts), ctx?.fire ? 1 : 0, ctx?.bench ? 1 : 0].join('|');
     if (this.root.hidden) {
       this.root.hidden = false;
       this.ui.root.classList.add('build-open');
@@ -72,11 +74,14 @@ export class BuildMenu {
     if (key === this.key) return;
     this.key = key;
     for (const card of this.cards) {
-      let afford = true;
+      // (what is short but made on the way from what is carried, shared/autocraft.js, is not lacking)
+      const plan = planCost(counts, STRUCT_DEFS[card.type].cost, ctx);
+      const afford = !!plan;
       for (const ing of card.ings) {
-        const ok = (counts[ing.id] || 0) >= ing.need;
-        if (!ok) afford = false;
-        ing.chip.classList.toggle('lack', !ok);
+        const have = (counts[ing.id] || 0) >= ing.need;
+        ing.chip.classList.toggle('lack', !have && !afford);
+        ing.chip.classList.toggle('auto', !have && afford);
+        ing.chip.title = (ITEM_DEFS[ing.id]?.name || '') + (!have && afford ? ' · made from what you carry' : '');
       }
       const locked = !!card.schem && !((state.unlocked | 0) & (1 << SCHEM_BIT[card.schem]));
       card.c.classList.toggle('sel', card.type === state.selected);

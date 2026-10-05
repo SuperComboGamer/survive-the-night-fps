@@ -3,6 +3,7 @@
 // prompts (Game.updateLookTarget) and the inventory all read it from here. No DOM.
 import { RECIPES, ITEM_DEFS, STATION_NAMES, SCHEM_BIT } from '../../shared/defs.js';
 import { foundIn } from './itemguide.js';
+import { planCost } from '../../shared/autocraft.js';
 
 const KEY = 'stn.tracked';
 const subs = new Set();
@@ -44,10 +45,12 @@ const schemOk = (schem, unlocked) => !schem || !!(unlocked & (1 << SCHEM_BIT[sch
 // Where recipe r stands against what is carried (counts: item -> how many), the stations in reach (near: { fire,
 // bench }) and the team's schematics (unlocked): its ingredients as { item, name, have, need, ok }, then whether its
 // station is near and its schematic found, and `ready` when all of that holds. src: where to get the first short one.
+// An ingredient short of what is carried that the craft would make on the way (shared/autocraft.js) is ok.
 export function trackStatus(r, counts, near, unlocked) {
+  const plan = planCost(counts, r.cost, { fire: !!near?.fire, bench: !!near?.bench, unlocked });
   const ings = Object.entries(r.cost).map(([k, need]) => {
     const have = counts[k] || 0;
-    return { item: +k, name: ITEM_DEFS[k].name, have, need, ok: have >= need };
+    return { item: +k, name: ITEM_DEFS[k].name, have, need, ok: have >= need || !!plan };
   });
   const stationOk = !r.station || !!near?.[r.station];
   const unlockedOk = schemOk(r.schem, unlocked);

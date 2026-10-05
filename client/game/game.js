@@ -89,6 +89,7 @@ import { GunClient } from './mountedgun.js';
 import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { smallestStack } from '../../shared/stacks.js';
+import { planCost } from '../../shared/autocraft.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
 import { Highlight } from './highlight.js';
@@ -2979,8 +2980,8 @@ export class Game {
     gh.rotation.y = rotY;
     gh.visible = true;
     const counts = this.invCounts();
-    let afford = true;
-    for (const k in def.cost) if ((counts[k] || 0) < def.cost[k]) afford = false;
+    const ctx = this.craftContext();
+    const afford = !!planCost(counts, def.cost, ctx);
     const unlocked = this.global.unlocked | 0;
     const car = this.world.car;
     if (!reason && def.schem && !(unlocked & (1 << SCHEM_BIT[def.schem]))) reason = `Locked · find the ${ITEM_DEFS[def.schem].name}`;
@@ -2992,7 +2993,7 @@ export class Game {
     const valid = !reason;
     gh.userData.setValid?.(valid);
     this.ghostPlace = { x, z };
-    this.ui.setBuildMenu({ selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, valid, reason, unlocked });
+    this.ui.setBuildMenu({ selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, ctx, valid, reason, unlocked });
   }
 
   // same overlap rules the server applies when placing a structure
