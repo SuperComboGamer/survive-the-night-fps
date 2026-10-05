@@ -634,7 +634,13 @@ try {
     const term = I.places[30], hang = I.places[31];
     await cam([R.x - 130, R.y + 70, mid + 190], [R.x - 60, R.y, mid + 50], { fog: clear, far: 900, wait: 3000 });
     await shot('airfield-01-from-above');
-    await cam([term.x - 36, term.h + 2, term.z - 16], [term.x, term.h + 6, term.z + 4]);
+    {
+      // (from out in front of it, clear of the trees along its road: a birch stood in the lens of the spot first used)
+      const to = [term.x, term.h + 6, term.z + 4];
+      const cands = [];
+      for (const [dx, dz] of [[-36, -16], [-30, -24], [-24, -30], [-40, -6], [-16, -34], [20, -32], [30, -24]]) for (const up of [2, 4]) cands.push([term.x + dx, term.h + up, term.z + dz]);
+      await cam(pickCam('airfield-02-the-terminal-and-its-tower', cands, to, { short: 12 }), to);
+    }
     await shot('airfield-02-the-terminal-and-its-tower');
     await cam([term.x - 3, term.h + 1.8, term.z - 3.6], [term.x + 2, term.h + 1.3, term.z + 8]);
     await shot('airfield-03-inside-the-terminal');
