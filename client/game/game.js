@@ -56,7 +56,9 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
+import { trackedRecipe, trackedNeed } from './tracked.js';
+import { mayHold } from './itemguide.js';
 import { createWorld } from '../../shared/world.js';
 import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
 import { chosenCharacter } from '../ui/picker.js';
@@ -934,12 +936,13 @@ export class Game {
 
   pushInventoryToUI(force = false) {
     const s = this.prediction.state;
-    const key = `${s.weapons.join(',')}|${s.ammo.join(',')}|${s.throwCount}`;
+    // (the magazines move with every shot: only the open screen shows them)
+    const key = `${s.weapons.join(',')}|${s.ammo.join(',')}|${this.ui.inventoryOpen ? s.mags.join(',') : ''}|${s.throwCount}`;
     if (!force && key === this.lastHudInvKey) return;
     this.lastHudInvKey = key;
     const throwCounts = {};
     for (const it of this.inventory.slots) if (it && THROW_ITEMS.includes(it.item)) throwCounts[it.item] = (throwCounts[it.item] || 0) + it.count;
-    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
+    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], mags: [...s.mags], throwCounts });
   }
 
   // what we carry, by item: the backpack, and the ammunition carried apart from it (the reserves we predict)
@@ -1336,6 +1339,10 @@ export class Game {
       }
       case NOTIFY.POCKETS:
         ui.notify("Empty the backpack's extra pockets first", 'warning', 2.5);
+        a.playLocal('build_fail');
+        break;
+      case NOTIFY.UNDO_GONE:
+        ui.notify(arg === UNDO_NO.LATE ? 'Too late to take it back: it is still on the ground' : arg === UNDO_NO.FAR ? 'Too far from it to take it back: it is still on the ground' : 'Somebody already picked it up', 'warning', 2.5);
         a.playLocal('build_fail');
         break;
       case NOTIFY.CAMPFIRE_LIT:
@@ -2236,6 +2243,7 @@ export class Game {
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
       onSplitItem: (i, n) => this.conn.action(ACT.SPLIT_INV, i, n),
       onDropAmmo: (cal, n) => this.conn.action(ACT.DROP_AMMO, cal, n),
+      onUndoDrop: () => this.conn.action(ACT.UNDO_DROP),
       onSalvage: (from, n) => {
         this.conn.action(ACT.SALVAGE, from, n);
         this.audio.playLocal('craft', { volume: 0.6 }); // (the server's sound leaves us out)
@@ -2773,12 +2781,17 @@ export class Game {
         // a weapon whose slot is taken, with no room in the pack for it: taking it puts the one in that slot down
         const swap = d?.cat === 'weapon' && WEAPONS[e.item] ? this.swapsOut(WEAPONS[e.item].slot) : 0;
         this.prompt = swap ? `${bindTag('interact')} Swap your ${ITEM_DEFS[swap].name} for the ${d.name}` : `${bindTag('interact')} Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
+        // (something the recipe tracked on the HUD is still short of)
+        if (trackedNeed(e.item, counts)) this.prompt += ` · needed for ${ITEM_DEFS[trackedRecipe().out].name} (tracked)`;
         return;
       }
       if (e.kind === ENT.CACHE) {
         this.lookTarget = e;
         const name = CONT_DEFS[e.ctype]?.name || 'Container';
         this.prompt = e.q[3] === 0 ? `${bindTag('interact')} Hold to search ${name}` : `${name} · searched`;
+        const r = e.q[3] === 0 && trackedRecipe();
+        const want = r && Object.keys(r.cost).find((k) => trackedNeed(+k, counts) && mayHold(e.ctype, +k));
+        if (want) this.prompt += ` · may hold ${ITEM_DEFS[want].name} (tracked)`;
         return;
       }
       if (e.kind === ENT.PLAYER && e.downed) {
@@ -3018,6 +3031,10 @@ export class Game {
     const counts = this.invCounts();
     h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
     h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what the drink key has left
+    // the recipe tracked on the HUD (game/tracked.js), against what we carry and the stations in reach
+    const tracked = !s.zombie && self.alive ? trackedRecipe() : null;
+    if (tracked && (!this.trackNear || this.frame % 20 === 5)) this.trackNear = this.craftContext();
+    h.tracked = tracked ? { r: tracked, counts, near: this.trackNear, unlocked: g.unlocked | 0 } : null;
     let partsMask = 0;
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };
