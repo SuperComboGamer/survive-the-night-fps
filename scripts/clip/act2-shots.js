@@ -26,6 +26,7 @@ import { REPO, parseArgs, sleep, startGame, launchChrome, LIFE_MAX, list } from 
 import { worldFor } from '../../shared/worlds.js';
 import { WORLD } from '../../shared/acts.js';
 import { COL, footprintContains, raycastWorld } from '../../shared/collision.js';
+import { PROPS } from '../../shared/props.js';
 
 const args = parseArgs(process.argv.slice(2), { seed: '1337', out: join(REPO, 'docs', 'pr-images'), frames: '0', size: '1280x720', clear: '0.12', character: '3' });
 const only = list(args.only);
@@ -78,12 +79,41 @@ const crowded = (at, r) => M.props.some((pr) => BIG.test(pr.type) && Math.hypot(
 // The best of the candidate spots [x, y, z] for a camera whose subject is at `to`: the first that stands clear and
 // sees its subject (to within `short` m of it: a wall is seen, not seen through); failing that, whichever sees
 // furthest. o.room: a spot indoors (the roof over it is no tree, and the furniture round it no crowd).
+// ...or with something standing in the lens: a prop (a lamp post, a pole, a truck under the camera) or a tree's trunk
+// within LENS_NEAR m of the camera and inside the picture's middle (LENS_CONE of the line to its subject) - a pole up
+// the middle of the frame, a canopy across its corner
+const LENS_NEAR = 11, LENS_CONE = Math.cos((40 * Math.PI) / 180), LENS_CLOSE = 7, LENS_WIDE = Math.cos((62 * Math.PI) / 180);
+const inLens = (at, to) => {
+  const d = dist3(at, to) || 1;
+  const L = [(to[0] - at[0]) / d, (to[1] - at[1]) / d, (to[2] - at[2]) / d];
+  const hit = (x, y, z, reach) => {
+    const v = [x - at[0], y - at[1], z - at[2]];
+    const l = Math.hypot(v[0], v[1], v[2]);
+    if (l > LENS_NEAR + reach || l > d - 2) return false; // (far enough off, or the subject itself)
+    // (right by the camera it need only be in the picture at all: its corner is 60 degrees off the middle)
+    return (v[0] * L[0] + v[1] * L[1] + v[2] * L[2]) / (l || 1) > (l < LENS_CLOSE + reach ? LENS_WIDE : LENS_CONE);
+  };
+  for (const pr of M.props) {
+    const sz = PROPS[pr.type]?.size;
+    if (!sz || Math.max(sz[0], sz[1], sz[2]) < 1.2) continue;
+    if (Math.abs(pr.x - at[0]) > 16 || Math.abs(pr.z - at[2]) > 16) continue;
+    // (its middle, and for a tall thin thing its top as well: a pole is in the lens by whichever is)
+    if (hit(pr.x, pr.y + sz[1] / 2, pr.z, Math.hypot(sz[0], sz[2]) / 2) || hit(pr.x, Math.min(pr.y + sz[1], at[1]), pr.z, 0)) return true;
+  }
+  const t = M.trees;
+  for (let i = 0; i < t.length; i += 6) {
+    if (Math.abs(t[i] - at[0]) > 12 || Math.abs(t[i + 2] - at[2]) > 12) continue;
+    if (hit(t[i], Math.min(t[i + 1] + 6 * t[i + 3], at[1]), t[i + 2], 0)) return true;
+  }
+  return false;
+};
 const pickCam = (name, cands, to, o = {}) => {
   let best = null;
   let bs = -1;
   for (const at of cands) {
     if (inSolid(at, o.room ? 0.3 : 0.6) || (!o.room && inCrown(at))) continue;
     if (!o.room && crowded(at, o.crowd ?? 5)) continue;
+    if (!o.room && inLens(at, to)) continue;
     const d = dist3(at, to);
     const s = Math.min(1, (sees(at, to) + (o.short ?? 1.5)) / d);
     if (s >= 1) return at;
@@ -519,8 +549,8 @@ try {
       const along = ns ? [0, 1] : [1, 0];
       const lit = -(along[0] * sun[0] + along[1] * sun[1]) >= 0 ? 1 : -1; // (looking this way along it, the sun is behind)
       const to = [wx, city.h + 1.2, wz];
-      const spots = (sgn, backs, ups) => backs.flatMap((bk) => ups.flatMap((u) => [1.6, -1.6, 0].map((off) => [wx - sgn * along[0] * bk + along[1] * off, eye + u, wz - sgn * along[1] * bk + along[0] * off])));
-      await cam(pickCam(`roadblock ${k} front`, spots(lit, [17, 21, 13], [3.4, 5]), to, { crowd: 4 }), to);
+      const spots = (sgn, backs, ups) => backs.flatMap((bk) => ups.flatMap((u) => (sgn === lit ? [3.4, 1.6, 0, -1.6] : [1.6, -1.6, 0]).map((off) => [wx - sgn * along[0] * bk + along[1] * off, eye + u, wz - sgn * along[1] * bk + along[0] * off])));
+      await cam(pickCam(`roadblock ${k} front`, spots(lit, [13, 10, 17, 21], [2.6, 3.4, 5]), to, { crowd: 4 }), to);
       await shot(`ruin-${String(9 + k * 2).padStart(2, '0')}-a-roadblock`);
       await cam(pickCam(`roadblock ${k} back`, spots(-lit, [20, 24, 15], [6, 8]), to, { crowd: 4 }), to);
       await shot(`ruin-${String(10 + k * 2).padStart(2, '0')}-the-roadblock-from-behind`);
