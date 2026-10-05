@@ -508,8 +508,10 @@ export function buildTerrain(world) {
             float wear = smoothstep(0.25, 0.6, nFine.b) * smoothstep(0.2, 0.5, nMid.r) * smoothstep(0.3, 0.55, grit);
             float cl = (1.0 - smoothstep(0.055, 0.085, aLat)) * step(fract(vRoad.y / 12.0), 0.3);
             float el = 1.0 - smoothstep(0.05, 0.08, abs(aLat - (hw - 0.45)));
-            a = mix(a, vec3(0.22, 0.16, 0.05), cl * conf * wear * 0.75);
-            a = mix(a, vec3(0.27, 0.27, 0.25), el * conf * wear * 0.6);
+            // (a road's, not a runway's: that is four lanes wide and has its own paint)
+            float lanes = 1.0 - step(9.0, hw);
+            a = mix(a, vec3(0.22, 0.16, 0.05), cl * conf * wear * 0.75 * lanes);
+            a = mix(a, vec3(0.27, 0.27, 0.25), el * conf * wear * 0.6 * lanes);
             // crumbling edge and a gravel shoulder
             float sh = smoothstep(hw - 0.2, hw + 0.05, aLat + (nFine.g - 0.5) * 0.35);
             a = mix(a, dirt * vec3(1.02, 1.0, 0.97), sh * conf);
@@ -582,6 +584,8 @@ export function buildWater(world) {
         uSunDir: { value: new THREE.Vector3(0, 1, 0) },
         uSunCol: { value: new THREE.Color(0xffffff) },
         uCam: { value: new THREE.Vector3() },
+        // (the sea runs on past the edge of the map, where no sea bed is under it: uEdge is half the map, or 0)
+        uEdge: { value: world.sea ? MAP_HALF : 0 },
       },
     ]),
     vertexShader: /* glsl */ `
@@ -596,7 +600,7 @@ export function buildWater(world) {
       }`,
     fragmentShader: /* glsl */ `
       #include <fog_pars_fragment>
-      uniform float uTime; uniform vec3 uSky; uniform vec3 uDeep; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uCam;
+      uniform float uTime; uniform vec3 uSky; uniform vec3 uDeep; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform vec3 uCam; uniform float uEdge;
       varying vec3 vW;
       float h(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
       float n(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(h(i),h(i+vec2(1,0)),f.x), mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x), f.y); }
@@ -613,7 +617,12 @@ export function buildWater(world) {
         vec3 col = mix(uDeep, uSky * 0.8, 0.15 + fres * 0.75);
         vec3 R = reflect(-V, N);
         col += uSunCol * pow(max(dot(R, normalize(uSunDir)), 0.0), 120.0) * 0.9;
-        gl_FragColor = vec4(col, 0.9);
+        // The sheet lets a tenth of what is under it through. Inside the map that is the sea bed, dark; past the
+        // map's edge there is none, only the haze behind the horizon, pale - which drew the edge of the map on the
+        // sea as a straight line. So the sheet thickens to opaque over the last metres before the edge.
+        float alpha = 0.9;
+        if (uEdge > 0.0) alpha = mix(1.0, 0.9, smoothstep(0.0, 70.0, uEdge - max(abs(vW.x), abs(vW.z))));
+        gl_FragColor = vec4(col, alpha);
         #include <fog_fragment>
       }`,
   });

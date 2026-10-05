@@ -895,6 +895,8 @@ export function createMainland(seed) {
     return { w, d, cz, front: cz - d / 2, back: cz + d / 2, L: -w / 2, R: w / 2 };
   };
   const WALL = 0.125 + 0.06; // from a wall's line to the face of what stands against it (half the wall, and a gap)
+  // (What stands against a wall faces the room: a prop's front is its -Z, which a Builder's ry turns to (-sin ry,
+  // -cos ry) - so 0 against the back wall, PI against the front, -PI / 2 against the left, PI / 2 against the right.)
   const backZ = (F, depth) => F.back - WALL - depth / 2;
   const leftX = (F, depth) => F.L + WALL + depth / 2;
   const rightX = (F, depth) => F.R - WALL - depth / 2;
@@ -974,12 +976,14 @@ export function createMainland(seed) {
     return y0 + (whole < 0 ? floors : whole) * fh;
   };
   // A room that is walked into, as Builder.room builds it, said for the kit as well: what its openings are, how it
-  // is lined. o (besides Builder.room's): tint (which of the kit's paints its walls have), lino (tile on its floor),
-  // sign (the board over its front: a cell of the city's atlas), plain (a shed: no lining). Returns what it said, for
-  // partition() to add the room's inner walls to.
+  // is lined. o (besides Builder.room's): tint (which of the kit's paints its walls have), lino (tile on its floor)
+  // or boards (floorboards), ceiling ('plaster': a home's, not an office's tiles), ceil (how high it hangs, if lower
+  // than the slab), homely (a home: pictures on its walls), burnt (burnt out: sooted, no ceiling), sign (the board
+  // over its front: a cell of the city's atlas), plain (a shed: no lining). Returns what it said, for partition(),
+  // zone() and lino() to add to: the room's inner walls, the rooms they make of it, what is laid on its floor.
   const groundRoom = (b, cx, cz, w, d, h, mat, sides, o = {}) => {
     b.room(cx, cz, w, d, h, mat, sides, o);
-    const R = { x: b.wx(cx, cz), z: b.wz(cx, cz), ry: b.ry, y: b.y0, w, d, h, t: o.t || 0.25, mat, sides, tint: o.tint ?? rng.int(0, 5), floor: o.lino ? 'lino' : undefined, ceiling: o.roof === 'flat' ? 'ceiling' : undefined, sign: o.sign, seed: rng.int(1, 99999), walls: [], cx, cz };
+    const R = { x: b.wx(cx, cz), z: b.wz(cx, cz), ry: b.ry, y: b.y0, w, d, h, t: o.t || 0.25, mat, sides, tint: o.tint ?? rng.int(0, 5), floor: o.lino ? 'lino' : o.boards ? 'boards' : undefined, ceiling: o.burnt ? undefined : o.ceiling || (o.roof === 'flat' ? 'ceiling' : undefined), ceil: o.ceil, homely: o.homely ? 1 : undefined, burnt: o.burnt ? 1 : undefined, sign: o.sign, seed: rng.int(1, 99999), walls: [], zones: [], patches: [], cx, cz };
     if (!o.plain) rooms.push(R);
     return R;
   };
@@ -987,6 +991,28 @@ export function createMainland(seed) {
   const partition = (b, R, x0, z0, x1, z1, h, mat, ops = []) => {
     b.wall(x0, z0, x1, z1, h, 0.18, mat, ops);
     R.walls.push([x0 - R.cx, z0 - R.cz, x1 - R.cx, z1 - R.cz, h, ops]);
+  };
+  // one of the rooms the partitions make of it, x0..x1 by z0..z1 of the builder's frame: painted its own colour
+  // (tint: one of the kit's paints)
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const zone = (R, x0, z0, x1, z1, tint) => R.zones.push([r2(Math.min(x0, x1) - R.cx), r2(Math.min(z0, z1) - R.cz), r2(Math.max(x0, x1) - R.cx), r2(Math.max(z0, z1) - R.cz), tint]);
+  // ...and tile laid on that room's floor (a kitchen's, a bathroom's), a hand's width in from its walls
+  const lino = (R, x0, z0, x1, z1, tint) => R.patches.push([r2(Math.min(x0, x1) - R.cx + 0.13), r2(Math.min(z0, z1) - R.cz + 0.13), r2(Math.max(x0, x1) - R.cx - 0.13), r2(Math.max(z0, z1) - R.cz - 0.13), tint]);
+  // is (x, z) of the builder's frame within pad of one of the room's partitions? (What is scattered on a floor does
+  // not lie through a wall.)
+  const atPartition = (R, x, z, pad) => {
+    if (!R) return false;
+    for (const [x0, z0, x1, z1] of R.walls) {
+      const ax = x0 + R.cx, az = z0 + R.cz, dx = x1 - x0, dz = z1 - z0;
+      const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+      if (Math.hypot(x - ax - dx * t, z - az - dz * t) < pad) return true;
+    }
+    return false;
+  };
+  // a fire somebody keeps in a drum, in a room: the one light in it that is not the day's
+  const drumFire = (b, lx, lz) => {
+    b.prop('barrel', lx, lz, 0, { ly: FLOOR_Y, seed: 2 });
+    b.light(lx, FLOOR_Y + 1.0, lz, 'embers');
   };
   // What is left of a wall, from (x0, z0) to (x1, z1) along one axis of the builder's frame: lengths of it, each
   // broken off at its own height (up to H), its window openings holes with the sky in them. soot: it burnt.
@@ -1020,7 +1046,7 @@ export function createMainland(seed) {
       solid(b, lx, ly, lz, rx * 2 * e * 0.86, (k + 1) * 0.4, rz * 2 * e * 0.86, 'concrete', { ry });
       if (o.across) parts[parts.length - 1].across = true;
     }
-    heaps.push({ x: b.wx(lx, lz), y: b.y0 + ly, z: b.wz(lx, lz), ry: b.ry + ry, rx, rz, h, seed: rng.int(1, 99999), brick: o.brick ?? 0.3 });
+    heaps.push({ x: b.wx(lx, lz), y: b.y0 + ly, z: b.wz(lx, lz), ry: b.ry + ry, rx, rz, h, seed: rng.int(1, 99999), brick: o.brick ?? 0.3, ash: o.ash ? 1 : undefined });
     clears.push([b.wx(lx, lz), b.wz(lx, lz), Math.max(rx, rz) + 0.5]);
   };
   // a board or a mark of the city's atlas: its middle at (lx, ly, lz) of the builder's frame, facing the builder's
@@ -1146,44 +1172,126 @@ export function createMainland(seed) {
   // blood. None of it solid (it is walked over, and it blocks no door: kinds with no collider); none of it standing
   // in furniture. h: the room's ceiling (lamps hang from it).
   const MESS = ['litter', 'debris', 'paper_scatter', 'suitcases', 'ceiling_debris', 'stock_spill', 'bones', 'litter', 'body_bag', 'blood_pool', 'glass_shards', 'corpse', 'office_chair', 'skeleton', 'rug', 'paper_scatter'];
-  const mess = (b, F, n, h = 0) => {
+  // R: the room, if it has partitions (nothing lies through one, no lamp hangs in one)
+  const mess = (b, F, n, h = 0, R = null) => {
     for (let k = 0; k < n; k++) {
       const type = MESS[rng.int(0, MESS.length - 1)];
       const x = rng.range(F.L + 1, F.R - 1);
       const z = rng.range(F.front + 1, F.back - 1);
       const ry = rng.range(0, 6);
       const sd = rng.int(0, 3);
-      if (propBlocked('table', b.wx(x, z), b.wz(x, z), b.ry + ry)) continue;
+      if (propBlocked('table', b.wx(x, z), b.wz(x, z), b.ry + ry) || atPartition(R, x, z, 1.5)) continue;
       b.prop(type, x, z, ry, { nocollide: true, ly: FLOOR_Y, seed: sd });
     }
     for (let k = Math.max(1, Math.round(n / 4)); k > 0; k--) {
       const x = rng.range(F.L + 1.6, F.R - 1.6);
       const z = rng.range(F.front + 1.6, F.back - 1.6);
-      b.box(x, FLOOR_Y + 0.04, z, rng.range(1.2, 2.4), 0.12, rng.range(0.9, 1.6), 'concrete', { ry: rng.range(0, 3), rz: rng.range(-0.16, 0.16), collide: false });
-      b.box(x + rng.range(-1, 1), FLOOR_Y + 1.2, z + rng.range(-1, 1), 0.08, rng.range(1.2, 2.2), 0.08, 'rust', { rz: rng.range(-0.5, 0.5), rx: rng.range(-0.3, 0.3), collide: false }); // (a conduit hanging out of the ceiling)
+      const [sx, sz, ry, rz] = [rng.range(1.2, 2.4), rng.range(0.9, 1.6), rng.range(0, 3), rng.range(-0.16, 0.16)];
+      const [cx, cz, ch, crz, crx] = [x + rng.range(-1, 1), z + rng.range(-1, 1), rng.range(1.2, 2.2), rng.range(-0.5, 0.5), rng.range(-0.3, 0.3)];
+      if (atPartition(R, x, z, 1.5)) continue;
+      b.box(x, FLOOR_Y + 0.04, z, sx, 0.12, sz, 'concrete', { ry, rz, collide: false });
+      if (!atPartition(R, cx, cz, 0.7)) b.box(cx, FLOOR_Y + 1.2, cz, 0.08, ch, 0.08, 'rust', { rz: crz, rx: crx, collide: false }); // (a conduit hanging out of the ceiling)
     }
-    if (h) for (let x = F.L + 3; x < F.R - 2; x += 5.5) for (const z of F.d > 10 ? [F.cz - F.d * 0.22, F.cz + F.d * 0.22] : [F.cz]) b.prop('ceiling_lamp', x, z, rng.chance(0.5) ? 0 : PI / 2, { nocollide: true, ly: h, seed: rng.int(0, 2) });
+    if (h) for (let x = F.L + 3; x < F.R - 2; x += 5.5) for (const z of F.d > 10 ? [F.cz - F.d * 0.22, F.cz + F.d * 0.22] : [F.cz]) {
+      const [ry, sd] = [rng.chance(0.5) ? 0 : PI / 2, rng.int(0, 2)];
+      if (!atPartition(R, x, z, 0.9)) b.prop('ceiling_lamp', x, z, ry, { nocollide: true, ly: h, seed: sd });
+    }
   };
-  // a home's furniture round the walls of a part of a room (x0..x1 of the frame F), where there is room for it
-  const homely = (b, F, x0, x1) => {
-    const mid = (x0 + x1) / 2;
-    extra(b, 'sofa', mid, F.back - WALL - 0.47, PI, inside);
-    extra(b, 'tv_set', mid + rng.range(-0.5, 0.5), F.front + WALL + 0.27, 0, inside);
-    extra(b, 'bookshelf', x0 + WALL + 0.5, F.cz + rng.range(-1.5, 1.5), PI / 2, inside);
-    extra(b, 'wardrobe', x1 - WALL - 0.33, F.cz + rng.range(-2, 2), -PI / 2, inside);
-    extra(b, 'armchair', mid + 2.2, F.cz + 1, -2.2, inside);
-    extra(b, 'dresser', x0 + 2.6, F.back - WALL - 0.47, PI, inside);
-    b.prop('rug', mid, F.cz + 0.6, rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+  // ...the same in one room of a partitioned floor, x0..x1 by z0..z1: a few things, clear of its walls
+  const HOME_MESS = ['litter', 'paper_scatter', 'suitcases', 'litter', 'glass_shards', 'bones', 'ceiling_debris', 'paper_scatter', 'blood_pool', 'debris'];
+  const messIn = (b, x0, z0, x1, z1, n, lampAt = 0) => {
+    const [xa, xb, za, zb] = [Math.min(x0, x1) + 0.9, Math.max(x0, x1) - 0.9, Math.min(z0, z1) + 0.9, Math.max(z0, z1) - 0.9];
+    for (let k = 0; k < n; k++) {
+      const type = HOME_MESS[rng.int(0, HOME_MESS.length - 1)];
+      const [x, z, ry, sd] = [rng.range(xa, Math.max(xa, xb)), rng.range(za, Math.max(za, zb)), rng.range(0, 6), rng.int(0, 3)];
+      if (xb - xa < 0.6 || zb - za < 0.6 || type === 'ceiling_debris' && Math.min(xb - xa, zb - za) < 1.4) continue;
+      b.prop(type, x, z, ry, { nocollide: true, ly: FLOOR_Y, seed: sd });
+    }
+    if (lampAt) b.prop('ceiling_lamp', (x0 + x1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0) > Math.abs(z1 - z0) ? 0 : PI / 2, { nocollide: true, ly: lampAt, seed: rng.int(0, 2) });
   };
-  const kitchen = (b, F, x0, x1) => {
-    extra(b, 'kitchen_counter', x0 + 1.4, F.back - WALL - 0.33, PI, inside);
-    extra(b, 'stove', x0 + 3.0, F.back - WALL - 0.34, PI, inside);
-    extra(b, 'kitchen_table', (x0 + x1) / 2 + 0.6, F.cz - 0.4, rng.range(-0.3, 0.3), inside);
-    for (const [dx, dz, r] of [[-1.1, -0.2, PI / 2], [1.2, -0.5, -PI / 2]]) b.prop('chair', (x0 + x1) / 2 + 0.6 + dx, F.cz - 0.4 + dz, r + rng.range(-0.4, 0.4), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+  // ---- A flat. The ground floor of a block of flats is homes: off the common hall, between its wall (x = xh) and
+  // the wall the flat shares with next door or with the street's side (x = xo), two rows of rooms, front to back -
+  // by the far wall a living room on the street, the kitchen behind it and a bedroom at the back; by the hall a
+  // small room on the street, the flat's own passage, which every door of it opens off, and the bathroom. Each is
+  // painted its own way and has what was in it. o.stairs: the small front room is the block's stair well, open to
+  // the hall, under what came down it. o.keep: what is searched in it ('fridge', 'cabinet', 'locker', 'duffel').
+  const FLAT_CEIL = 2.7; // a home's ceiling (the slab is over it)
+  const flatUnit = (b, R, F, xh, xo, o = {}) => {
+    const sg = xo > xh ? 1 : -1;
+    const W = Math.abs(xo - xh);
+    const X = (u) => xh + sg * u;
+    const Z = (v) => F.front + v;
+    const C = 3.5; // (the wall between the two rows)
+    const H = R.h;
+    const rO = sg > 0 ? PI / 2 : -PI / 2; // (turned to stand against a wall on the far side of it, facing the room; rH: on the hall's)
+    const rH = -rO;
+    // its walls
+    if (o.stairs) {
+      partition(b, R, X(0), Z(3.5), X(0), F.back, H, 'concrete', [door(3.7, 1.3)]);
+      partition(b, R, X(0), Z(3.5), X(C), Z(3.5), H, 'concrete');
+      stairBlock(b, X(1.95), Z(2.6));
+    } else {
+      partition(b, R, X(0), F.front, X(0), F.back, H, 'concrete', [door(7.2, 1.3)]);
+      partition(b, R, X(0), Z(3.5), X(C), Z(3.5), H, 'concrete', [door(1.75, 1.2)]);
+    }
+    partition(b, R, X(C), F.front, X(C), F.back, H, 'concrete', [door(4.35, 1.2), door(7.2, 1.2), door(10.05, 1.2)]);
+    partition(b, R, X(C), Z(5.2), xo, Z(5.2), H, 'concrete');
+    partition(b, R, X(C), Z(9.2), xo, Z(9.2), H, 'concrete');
+    partition(b, R, X(0), Z(10.9), X(C), Z(10.9), H, 'concrete', [door(1.75, 1.2)]);
+    // its rooms: each its own paint; tile in the kitchen and the bathroom
+    const paint = () => rng.int(0, 5);
+    if (!o.stairs) zone(R, X(0), Z(0), X(C), Z(3.5), paint());
+    zone(R, X(0), Z(3.5), X(C), Z(10.9), paint());
+    zone(R, X(0), Z(10.9), X(C), Z(14), paint());
+    zone(R, X(C), Z(0), xo, Z(5.2), paint());
+    zone(R, X(C), Z(5.2), xo, Z(9.2), paint());
+    zone(R, X(C), Z(9.2), xo, Z(14), paint());
+    lino(R, X(C), Z(5.2), xo, Z(9.2), rng.int(0, 5));
+    lino(R, X(0), Z(10.9), X(C), Z(14), rng.int(0, 5));
+    const keep = o.keep || '';
+    // the living room: a sofa and the set it faced, an armchair, shelves
+    b.prop('sofa', X(5.75), Z(4.5), 0, { ly: FLOOR_Y, seed: rng.int(0, 2) });
+    extra(b, 'tv_set', X(5.9), Z(0.46), PI, inside);
+    extra(b, 'armchair', X(W - 0.72), Z(2.3), rO, inside);
+    extra(b, 'bookshelf', X(C + 0.62), Z(1.3), rH, inside);
+    b.prop('rug', X(5.8), Z(2.5), rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    // the kitchen: units and the stove along the far wall, the table they ate at, the fridge
+    extra(b, 'kitchen_counter', X(W - 0.52), Z(6.6), rO, inside);
+    extra(b, 'stove', X(W - 0.54), Z(8.2), rO, inside);
+    b.prop('kitchen_table', X(5.4), Z(7.3), rng.range(-0.15, 0.15), inside);
+    b.loot(X(5.4), Z(7.3), FLOOR_Y + 0.87);
+    for (const [du, dv, r] of [[0, -0.75, 0], [0.1, 0.8, PI]]) b.prop('chair', X(5.4 + du), Z(7.3 + dv), r + rng.range(-0.5, 0.5), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    if (keep.includes('fridge')) cont(b, CONT.FRIDGE, 'fridge', X(4.3), Z(8.68), 0);
+    // the bedroom: a bed made up for two, a wardrobe, a chest of drawers
+    b.prop('double_bed', X(W - 1.25), Z(12.78), 0, inside);
+    extra(b, 'wardrobe', X(5.9), Z(9.68), PI, inside);
+    extra(b, 'dresser', X(C + 0.62), Z(12.6), rH, inside);
+    if (keep.includes('cabinet')) cont(b, CONT.CABINET, 'cabinet', X(5.0), Z(13.52), 0);
+    b.prop('rug', X(5.2), Z(11.4), PI / 2 + rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    // the small room on the street: somebody's - a bed, a table under the window
+    if (!o.stairs) {
+      b.prop('bed', X(0.68), Z(1.42), 0, { ly: FLOOR_Y, seed: rng.int(0, 1) });
+      extra(b, 'table', X(C - 0.62), Z(1.25), rO, inside);
+      b.prop('chair', X(2.0), Z(1.3), rO + rng.range(-0.4, 0.4), { nocollide: true, ly: FLOOR_Y });
+      b.loot(X(1.75), Z(2.55), FLOOR_Y + 0.02);
+    } else b.loot(X(W - 2.9), Z(11.2), FLOOR_Y + 0.02);
+    // the passage: a chest against the hall's wall, what was dropped on the way out
+    extra(b, 'dresser', X(0.62), Z(5.3), rH, inside);
+    if (keep.includes('locker')) cont(b, CONT.LOCKER, 'locker', X(0.42), Z(9.3), rH);
+    if (keep.includes('duffel')) b.cont(CONT.DUFFEL, X(2.3), Z(8.9), { prop: 'duffel_bag', ry: 0.8, nocollide: true, ly: FLOOR_Y });
+    b.prop('rug', X(1.75), Z(7.2), PI / 2, { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    // the bathroom
+    extra(b, 'bathtub', X(0.58), Z(12.95), 0, inside);
+    extra(b, 'toilet', X(2.6), Z(13.45), 0, inside);
+    // what the years left on its floors; a lamp over each of the rooms that were lived in
+    messIn(b, X(C), Z(0), xo, Z(5.2), 2, FLAT_CEIL);
+    messIn(b, X(C), Z(5.2), xo, Z(9.2), 1, FLAT_CEIL);
+    messIn(b, X(C), Z(9.2), xo, Z(14), 2, FLAT_CEIL);
+    messIn(b, X(0), Z(3.5), X(C), Z(10.9), 2);
   };
   // rows of shelving down the middle of a shop's floor, what they held swept off them, clear of its counter and doors
   const aisles = (b, F) => {
-    for (const dx of [4.2, 7.4, 10.6]) {
+    for (const dx of [4.2, 7.4, 10.6, 13.6]) {
       if (F.L + dx > F.R - 4.4) continue;
       extra(b, 'shop_gondola', F.L + dx, F.cz + 1.2, PI / 2, inside);
       extra(b, 'shop_gondola', F.L + dx, F.cz - 2.2, PI / 2, { ly: FLOOR_Y, seed: 1 });
@@ -1199,31 +1307,31 @@ export function createMainland(seed) {
   const FILL = {
     grocery(b, F) {
       counter(b, F.L + 3, F.front + 3.2);
-      for (const dx of [1.6, 3.9, 6.2]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI);
+      for (const dx of [1.6, 3.9, 6.2]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), 0);
       cont(b, CONT.SHELF, 'shelf', F.R - 4.6, F.cz + 0.4, PI / 2);
-      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.cz - 0.2, -PI / 2);
+      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.cz - 0.2, PI / 2);
       b.loot(F.R - 3, F.cz - 2.4, FLOOR_Y + 0.02);
       aisles(b, F);
-      extra(b, 'display_fridge', rightX(F, 0.75), F.cz + 2.2, -PI / 2, inside);
-      extra(b, 'display_fridge', rightX(F, 0.75), F.cz - 2.4, -PI / 2, { ly: FLOOR_Y, seed: 1 });
-      extra(b, 'vending_machine', leftX(F, 0.86), F.cz - 0.4, PI / 2, inside);
+      extra(b, 'display_fridge', rightX(F, 0.75), F.cz + 2.2, PI / 2, inside);
+      extra(b, 'display_fridge', rightX(F, 0.75), F.cz - 2.4, PI / 2, { ly: FLOOR_Y, seed: 1 });
+      extra(b, 'vending_machine', leftX(F, 0.86), F.cz - 0.4, -PI / 2, inside);
       b.prop('shopping_cart', F.R - 2.6, F.front + 2, 0.7, { nocollide: true, ly: FLOOR_Y });
     },
     pharmacy(b, F) {
       counter(b, F.L + 4.2, F.cz + 0.4);
-      for (const dx of [1.2, 2.3]) cont(b, CONT.MEDICINE, 'medicine_cabinet', F.L + dx, backZ(F, 0.45), PI);
-      cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), PI);
-      cont(b, CONT.SHELF, 'shelf', rightX(F, 0.5), F.cz - 1.4, -PI / 2);
+      for (const dx of [1.2, 2.3]) cont(b, CONT.MEDICINE, 'medicine_cabinet', F.L + dx, backZ(F, 0.45), 0);
+      cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), 0);
+      cont(b, CONT.SHELF, 'shelf', rightX(F, 0.5), F.cz - 1.4, PI / 2);
       b.prop('wheelchair', F.L + 1.6, F.front + 2.2, 0.6, { nocollide: true, ly: FLOOR_Y });
       b.loot(F.R - 2.4, F.cz + 1.6, FLOOR_Y + 0.02);
       extra(b, 'shop_gondola', F.R - 5.4, F.cz - 2.4, 0, inside);
-      extra(b, 'waiting_chairs', F.R - 2.2, F.front + WALL + 0.4, 0, inside);
+      extra(b, 'waiting_chairs', F.R - 2.2, F.front + WALL + 0.4, PI, inside);
       b.prop('stock_spill', F.R - 4.4, F.cz - 0.6, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
     },
     hardware(b, F) {
       counter(b, F.L + 3, F.front + 3.4);
       b.cont(CONT.TOOLBOX, F.L + 3.6, F.front + 3.4, { prop: 'toolbox', ry: 0.3, nocollide: true, ly: FLOOR_Y + 0.96 });
-      for (const dx of [1.6, 3.9]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI);
+      for (const dx of [1.6, 3.9]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), 0);
       cont(b, CONT.CRATE, 'crate', F.L + 6.6, backZ(F, 1), 0.1);
       cont(b, CONT.SHELF, 'shelf', F.R - 4.6, F.cz, PI / 2);
       b.prop('tire_pile', rightX(F, 1.4), F.cz - 2.6, 0, inside);
@@ -1236,10 +1344,10 @@ export function createMainland(seed) {
       b.box(F.L + 1.2 + len / 2, FLOOR_Y, F.cz + 2.2, len, 1.05, 0.7, 'planks'); // the counter
       b.box(F.L + 1.2 + len / 2, FLOOR_Y + 1.05, F.cz + 2.2, len + 0.1, 0.05, 0.86, 'metal', { collide: false });
       b.loot(F.L + 2.4, F.cz + 2.2, FLOOR_Y + 1.12);
-      cont(b, CONT.FRIDGE, 'fridge', F.L + 1.1, backZ(F, 0.72), PI);
-      cont(b, CONT.CABINET, 'cabinet', F.L + 2.8, backZ(F, 0.55), PI);
-      extra(b, 'stove', F.L + 4.4, backZ(F, 0.66), PI, inside);
-      extra(b, 'kitchen_counter', F.L + 6.2, backZ(F, 0.63), PI, inside);
+      cont(b, CONT.FRIDGE, 'fridge', F.L + 1.1, backZ(F, 0.72), 0);
+      cont(b, CONT.CABINET, 'cabinet', F.L + 2.8, backZ(F, 0.55), 0);
+      extra(b, 'stove', F.L + 4.4, backZ(F, 0.66), 0, inside);
+      extra(b, 'kitchen_counter', F.L + 6.2, backZ(F, 0.63), 0, inside);
       for (const tx of [F.L + 2.2, F.R - 2.2]) {
         b.prop('table', tx, F.front + 2.4, 0.05, inside);
         b.prop('chair', tx - 1.2, F.front + 2.5, PI / 2, inside);
@@ -1251,7 +1359,7 @@ export function createMainland(seed) {
         b.prop('table', tx, F.front + 2.4, 0.05, inside);
         b.prop('chair', tx, F.front + 3.5, 0.3, { nocollide: true, ly: FLOOR_Y });
       }
-      extra(b, 'vending_machine', rightX(F, 0.86), F.cz + 1.2, -PI / 2, inside);
+      extra(b, 'vending_machine', rightX(F, 0.86), F.cz + 1.2, PI / 2, inside);
     },
     // Calder Aero Supply: where the plane's magneto is
     aero(b, F) {
@@ -1286,13 +1394,35 @@ export function createMainland(seed) {
     const R = groundRoom(s, 0, F.cz, w, d, 3.8, mat === 'plaster' ? 'concrete' : mat, { n: [door(w / 2, 1.6), cw(w * 0.2, ww, 0.8, 2.8), cw(w * 0.8, ww, 0.8, 2.8)], s: [door(2.4, 1.1)], w: breach ? [gap(d * 0.72, 2.6, 2.9)] : [] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, sign });
     // (the stock room behind: a door into it, and the wall down at its other end - the way to the yard door)
     partition(s, R, F.L, F.cz + 4.2, F.R, F.cz + 4.2, 3.8, 'concrete', [door(w * 0.3, 1.3), gap(w - 2.6, 2.2, 2.7)]);
+    // (...and between the two, behind a door off the stock room: the office of a shop on a lot of its own, a
+    // closet where three share a roof)
+    const [ox0, ox1] = [F.L + 7.7, F.R - 3.9];
+    partition(s, R, ox0, F.cz + 4.2, ox0, F.back, 3.8, 'concrete', [door(1.27, 1.2)]);
+    partition(s, R, ox1, F.cz + 4.2, ox1, F.back, 3.8, 'concrete');
+    zone(R, F.L, F.cz + 4.2, ox0, F.back, 5);
+    zone(R, ox0, F.cz + 4.2, ox1, F.back, rng.int(0, 4));
+    if (alone) {
+      extra(s, 'office_desk', (ox0 + ox1) / 2 + 0.6, backZ(F, 0.8), 0, inside);
+      s.prop('office_chair', (ox0 + ox1) / 2 + 0.5, F.back - 1.5, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 1) });
+      extra(s, 'filing_cabinet', ox1 - 0.09 - 0.06 - 0.3, F.back - WALL - 0.62, 0, inside);
+      s.prop('paper_scatter', (ox0 + ox1) / 2, F.cz + 5.4, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+    } else extra(s, 'toilet', ox1 - 0.09 - 0.06 - 0.26, F.back - WALL - 0.36, 0, inside);
     if (breach) {
       s.prop('debris', F.L + 1.2, F.cz + d * 0.22, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y });
       skirt(s, F.L - 1.2, F.cz + d * 0.22);
     }
     s.prop('glass_shards', -w * 0.3, F.front + 0.9, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
     s.prop('litter', rng.range(-2, 2), F.cz - 1.5, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
-    s.mess = () => mess(s, F, alone ? 9 : 6, 3.8); // (after what the shop is furnished with: it lies round that)
+    // (after what the shop is furnished with: what was left lies round that - and here and there somebody has kept a
+    // fire in a drum on the shop floor since)
+    s.mess = () => {
+      const fire = alone && rng.chance(0.3);
+      if (fire && fits(s, 'barrel', F.R - 3.2, F.front + 4.6, 0, FLOOR_Y)) drumFire(s, F.R - 3.2, F.front + 4.6);
+      // (more shelving down the side wall - not across a wall that was blown in)
+      if (!breach) extra(s, 'shelf', leftX(F, 0.5), F.cz - 3.6, -PI / 2, inside);
+      if (!breach) extra(s, 'shelf', leftX(F, 0.5), F.cz + 1.9, -PI / 2, { ly: FLOOR_Y, seed: 1 });
+      mess(s, { ...F, back: F.cz + 4.2 }, alone ? 9 : 6, 3.8, R);
+    };
     return [s, F, mat];
   };
   // how a building has come through it: [lost, open] for block() - most have lost a storey or two off the top, one
@@ -1336,13 +1466,25 @@ export function createMainland(seed) {
       block(b, 0, F.cz, F.w, F.d, 3.9, rng.int(1, 2), 3, 'walkup', 'brick', { lost: 0, wear: 0.5 });
       const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.6, 'brick', { n: [door(F.w / 2, 1.5), win(F.w * 0.2, 1.6), win(F.w * 0.8, 1.6)], s: [door(2.4, 1.1)], w: [win(F.d * 0.7, 1.2, 1.5, 2.2)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, sign: 'police', tint: 2 });
       partition(b, R, F.L, F.cz + 1.5, F.R, F.cz + 1.5, 3.6, 'brick', [door(4, 1.2)]);
+      // (behind it: the cells' own room, the armoury behind a door of its own, the back office by the yard door)
+      partition(b, R, -2.6, F.cz + 1.5, -2.6, F.back, 3.6, 'brick', [door(1.5, 1.2)]);
+      partition(b, R, 4, F.cz + 1.5, 4, F.back, 3.6, 'brick', [door(1.5, 1.2)]);
+      zone(R, F.L, F.cz + 1.5, -2.6, F.back, 5);
+      zone(R, -2.6, F.cz + 1.5, 4, F.back, 0);
+      zone(R, 4, F.cz + 1.5, F.R, F.back, 3);
+      extra(b, 'locker', 0.3, F.cz + 1.5 + 0.09 + 0.06 + 0.26, PI, inside);
+      extra(b, 'locker', 1.4, F.cz + 1.5 + 0.09 + 0.06 + 0.26, PI, { ly: FLOOR_Y, seed: 1 });
+      extra(b, 'office_desk', rightX(F, 0.8) - 0.05, F.cz + 3.7, PI / 2, inside);
+      b.prop('office_chair', F.R - 1.9, F.cz + 3.6, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 1) });
+      b.prop('paper_scatter', 6.4, F.cz + 4.4, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
+      drumFire(b, F.L + 0.9, F.cz - 1.3);
       b.prop('reception_desk', 3.4, F.cz - 1.4, 0, { ly: FLOOR_Y, seed: 1 }); // the front desk
       b.loot(3.4, F.cz - 1.4, FLOOR_Y + 1.14);
-      cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz - 3.4, -PI / 2);
-      for (const dz of [2.25, 3.25]) cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + dz, PI / 2, { seed: dz | 0 });
-      cont(b, CONT.AMMO_BOX, 'military_crate', -1, backZ(F, 0.8), PI);
-      cont(b, CONT.AMMO_BOX, 'military_crate', 1.6, backZ(F, 0.8), PI, { seed: 1 });
-      b.loot(-3, F.cz + 3.6, FLOOR_Y + 0.02);
+      cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz - 3.4, PI / 2);
+      for (const dz of [2.25, 3.25]) cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + dz, -PI / 2, { seed: dz | 0 });
+      cont(b, CONT.AMMO_BOX, 'military_crate', -1, backZ(F, 0.8), 0);
+      cont(b, CONT.AMMO_BOX, 'military_crate', 1.6, backZ(F, 0.8), 0, { seed: 1 });
+      b.loot(-4.4, F.cz + 3.2, FLOOR_Y + 0.02);
       b.prop('sandbags', -4.5, F.front - 0.55, 0, { ly: PAVE });
       b.prop('table', -5, F.cz - 3.6, 0.1, inside);
       b.prop('chair', -5, F.cz - 2.6, 3, { nocollide: true, ly: FLOOR_Y });
@@ -1351,83 +1493,55 @@ export function createMainland(seed) {
       partition(b, R, F.L + 3.2, F.cz + 4.2, F.L + 3.2, F.back, 3.6, 'brick');
       b.prop('cell_bunk', F.L + 0.125 + 0.42, F.back - WALL - 1.0, 0, inside);
       b.prop('skeleton', F.L + 2.3, F.back - 0.9, PI, { nocollide: true, ly: FLOOR_Y, seed: 1 });
-      extra(b, 'waiting_chairs', -6.6, F.front + WALL + 0.34, 0, inside);
+      extra(b, 'waiting_chairs', -6.6, F.front + WALL + 0.34, PI, inside);
       extra(b, 'filing_cabinet', F.R - 1.6, F.cz + 1.5 - 0.09 - WALL - 0.6, PI, inside);
       extra(b, 'office_desk', 6.4, F.cz - 3.8, PI, inside);
-      mess(b, F, 9, 3.6);
+      mess(b, F, 9, 3.6, R);
       yard(b, F, L);
       signAt(b, F.L + 0.9, 3.0, F.front - 0.5, PI / 2, 1.0, 0.25, 'police', { back: 0.1, two: true });
     },
-    // flats over a ground floor that can be walked into: a hall, two rooms, what the people who lived there left
+    // flats over a ground floor that can be walked into: the common hall from the street door to the yard door, the
+    // stairs up off it, and a flat either side of it (flatUnit: six rooms each, a home's size and a home's ceiling)
     flats(b, L) {
       const F = frame(L, 18.4, 14);
       const mat = rng.chance(0.55) ? 'brick' : rng.chance(0.5) ? 'concrete' : 'plaster';
-      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.2, mat === 'plaster' ? 'concrete' : mat, { n: [door(F.w / 2, 1.4), cw(F.w * 0.2, 1.6), cw(F.w * 0.8, 1.6)], s: [door(2.2, 1.1), cw(F.w * 0.7, 1.4)], e: [cw(F.d / 2, 1.4)], w: [cw(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
-      partition(b, R, 1.4, F.front, 1.4, F.back, 3.2, 'concrete', [door(F.d * 0.6, 1.2)]);
-      stairBlock(b, 1.4 + 0.09 + 1.2, F.back - WALL - 0.75); // (against the hall's wall, clear of the yard door)
+      const HW = 1.2; // (half the hall)
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.2, mat === 'plaster' ? 'concrete' : mat, { n: [door(F.w / 2, 1.4), cw(2.1, 1.6), cw(6.25, 1.2), cw(12.15, 1.2), cw(16.3, 1.6)], s: [door(F.w / 2, 1.1), cw(2.1, 1.4), cw(16.3, 1.4), hole(6.25, 0.8, 1.5, 2.1), hole(12.15, 0.8, 1.5, 2.1)], e: [cw(7.2, 1.4)], w: [cw(F.d - 7.2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks', boards: true, ceiling: 'plaster', ceil: FLAT_CEIL, homely: true });
+      zone(R, -HW, F.front, HW, F.back, 5);
+      const duffel = rng.chance(0.4);
+      flatUnit(b, R, F, -HW, F.L, { keep: 'fridge' });
+      flatUnit(b, R, F, HW, F.R, { stairs: true, keep: duffel ? 'cabinet duffel' : 'cabinet' });
       const floors = rng.int(3, 6);
       block(b, 0, F.cz, F.w, F.d, 3.5, floors, 3, mat === 'concrete' ? 'slab' : mat === 'plaster' ? 'shopflat' : 'walkup', mat, { ...ruinOf(floors), blank: rng.chance(0.4) ? (rng.chance(0.5) ? 2 : 8) : 0 });
       ivyOn(b, 0, F.cz, F.w, F.d, 0, 3.5 + floors * 3);
-      b.prop('bed', F.L + 1.1, F.back - 1.4, 0, inside);
-      cont(b, CONT.CABINET, 'cabinet', F.L + 3.2, backZ(F, 0.55), PI);
-      b.prop('table', F.R - 4, F.cz - 2.4, 0.1, inside);
-      b.prop('chair', F.R - 4, F.cz - 1.5, PI, inside);
-      b.loot(F.R - 4, F.cz - 2.4, FLOOR_Y + 0.82);
-      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.cz + 0.4, -PI / 2);
-      b.loot(F.L + 3, F.cz - 2.5, FLOOR_Y + 0.02);
-      if (rng.chance(0.4)) b.cont(CONT.DUFFEL, F.L + 4.6, F.cz + 1.4, { prop: 'duffel_bag', ry: 0.8, nocollide: true, ly: FLOOR_Y });
-      b.prop('bed', F.L + 1.1, F.front + 2.6, 0, { ly: FLOOR_Y, seed: 1 });
-      b.prop('table', F.L + 5.4, F.front + 1.4, 0, inside);
-      b.prop('chair', F.L + 5.4, F.front + 2.4, 2.8, { nocollide: true, ly: FLOOR_Y });
-      // what a home had in it: a sofa and the set it faced, shelves, a wardrobe; a kitchen along the far wall
-      extra(b, 'sofa', F.L + 5.6, F.cz + 3.4, PI + 0.1, inside);
-      extra(b, 'tv_set', F.L + 7.6, F.front + WALL + 0.3, 0, inside);
-      extra(b, 'wardrobe', leftX(F, 0.6), F.cz - 0.4, PI / 2, inside);
-      extra(b, 'bookshelf', 1.4 - 0.09 - 0.5, F.cz - 3.2, -PI / 2, inside);
-      extra(b, 'kitchen_counter', F.R - 3.6, backZ(F, 0.62), PI, inside);
-      extra(b, 'stove', F.R - 5.4, backZ(F, 0.65), PI, inside);
-      extra(b, 'armchair', F.R - 2.2, F.front + 2.2, -0.6, inside);
-      b.prop('rug', F.L + 5.6, F.cz + 0.6, rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
-      extra(b, 'door_barricade', 1.4 + 0.09 + 3.4, F.front + WALL + 0.45, PI, inside); // (somebody shut themselves in, at the front windows)
-      // (...the rest of it: a bed made up for two, a chest of drawers, the table they ate at, books, a bath)
-      extra(b, 'double_bed', F.L + 7.6, F.back - WALL - 1.05, 0, inside);
-      extra(b, 'dresser', F.L + 9.4, F.back - WALL - 0.47, PI, inside);
-      extra(b, 'kitchen_table', F.R - 4.4, F.cz + 2.6, rng.range(-0.3, 0.3), inside);
-      extra(b, 'bookshelf', leftX(F, 0.9), F.cz + 2.4, PI / 2, inside);
-      extra(b, 'bookshelf', 1.4 + 0.09 + 0.5, F.cz - 3.6, PI / 2, inside);
-      extra(b, 'armchair', F.L + 3.4, F.front + 1.3, 0.5, inside);
-      extra(b, 'bathtub', rightX(F, 0.8), F.back - WALL - 2.6, 0, inside);
-      extra(b, 'toilet', F.R - 2.2, F.back - WALL - 0.4, PI, inside);
-      extra(b, 'sofa', F.R - 5.6, F.front + WALL + 0.5, 0, { ly: FLOOR_Y, seed: 2 });
-      for (const [dx, dz, r] of [[-1.1, 0.1, PI / 2], [1.1, -0.2, -PI / 2], [0.1, 1, 0]]) b.prop('chair', F.R - 4.4 + dx, F.cz + 2.6 + dz, r + rng.range(-0.5, 0.5), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
-      b.prop('rug', F.R - 4.6, F.cz - 0.2, PI / 2 + rng.range(-0.2, 0.2), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
-      mess(b, F, 11, 3.2);
+      // the hall: what was left in it on the way out, the post nobody collected
+      for (const [lz, type] of [[2.2, 'paper_scatter'], [6.4, 'litter'], [10.6, 'suitcases']]) b.prop(type, rng.range(-0.4, 0.4), F.front + lz, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
       yard(b, F, L);
     },
-    // a long block of flats: two halls, four rooms on the ground floor
+    // a long block of flats: two halls, each with its stairs, and four flats on the ground floor
     block(b, L) {
       const F = frame(L, 41, 14);
       const mat = rng.chance(0.5) ? 'brick' : 'concrete';
-      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.2, mat, { n: [door(F.w * 0.25, 1.4), door(F.w * 0.75, 1.4), cw(4, 1.6), cw(15, 1.6), cw(23, 1.6), cw(34, 1.6)], s: [door(2.2, 1.1), door(F.w - 2.2, 1.1), cw(12, 1.4), cw(26, 1.4)], e: [cw(F.d / 2, 1.4)], w: [cw(F.d / 2, 1.4)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks' });
-      for (const [wx, at] of [[-12.5, 0.65], [0, 0.3], [12.5, 0.65]]) partition(b, R, wx, F.front, wx, F.back, 3.2, 'concrete', [door(F.d * at, 1.2)]);
+      const HW = 1.2;
+      const HX = F.w / 4; // (a hall's middle, either side of the block's)
+      const at = (x) => x + F.w / 2; // (along the front wall; the back wall runs the other way)
+      const back = (x) => F.w / 2 - x;
+      const R = groundRoom(b, 0, F.cz, F.w, F.d, 3.2, mat, {
+        n: [door(at(-HX), 1.4), door(at(HX), 1.4), ...[-HX - HW - 5.9, -HX + HW + 5.9, HX - HW - 5.9, HX + HW + 5.9].map((x) => cw(at(x), 1.6)), ...[-HX - HW - 1.75, -HX + HW + 1.75, HX - HW - 1.75, HX + HW + 1.75].map((x) => cw(at(x), 1.2))],
+        s: [door(back(-HX), 1.1), door(back(HX), 1.1), ...[-HX - HW - 5.9, -HX + HW + 5.9, HX - HW - 5.9, HX + HW + 5.9].map((x) => cw(back(x), 1.4)), ...[-HX - HW - 1.75, -HX + HW + 1.75, HX - HW - 1.75, HX + HW + 1.75].map((x) => hole(back(x), 0.8, 1.5, 2.1))],
+        e: [cw(7.2, 1.4)],
+        w: [cw(F.d - 7.2, 1.4)],
+      }, { roof: 'flat', roofMat: 'concrete', floorMat: 'planks', boards: true, ceiling: 'plaster', ceil: FLAT_CEIL, homely: true });
+      partition(b, R, 0, F.front, 0, F.back, 3.2, 'concrete'); // (the wall between the two stairs' flats)
+      for (const sx of [-1, 1]) zone(R, sx * HX - HW, F.front, sx * HX + HW, F.back, 5);
+      flatUnit(b, R, F, -HX - HW, F.L, { keep: 'cabinet' });
+      flatUnit(b, R, F, -HX + HW, 0, { stairs: true, keep: 'fridge' });
+      flatUnit(b, R, F, HX - HW, 0, { stairs: true, keep: 'locker' });
+      flatUnit(b, R, F, HX + HW, F.R, { keep: 'fridge duffel' });
       const floors = rng.int(3, 6);
       block(b, 0, F.cz, F.w, F.d, 3.5, floors, 3, mat === 'concrete' ? 'slab' : 'walkup', mat, ruinOf(floors));
       ivyOn(b, 0, F.cz, F.w, F.d, 0, 3.5 + floors * 3);
-      for (const sx of [-1, 1]) {
-        b.prop('bed', sx * 14, F.back - 1.4, 0, inside);
-        cont(b, sx < 0 ? CONT.CABINET : CONT.FRIDGE, sx < 0 ? 'cabinet' : 'fridge', sx * (F.R - WALL - 0.36), F.cz - 1, sx < 0 ? PI / 2 : -PI / 2);
-        b.prop('table', sx * 4.5, F.cz + 2.6, 0.1, inside);
-        b.loot(sx * 4.5, F.cz + 2.6, FLOOR_Y + 0.82);
-        b.prop('bed', sx * 1.5, F.back - 1.4, 0, inside);
-        b.loot(sx * 16, F.cz - 2.6, FLOOR_Y + 0.02);
-      }
-      cont(b, CONT.LOCKER, 'locker', -7, backZ(F, 0.5), PI);
-      b.cont(CONT.DUFFEL, 7, F.cz + 3.4, { prop: 'duffel_bag', ry: 1.9, nocollide: true, ly: FLOOR_Y });
-      homely(b, F, -20.5, -12.6);
-      kitchen(b, F, -12.4, -0.1);
-      homely(b, F, 0.1, 12.4);
-      kitchen(b, F, 12.6, 20.5);
-      mess(b, F, 20, 3.2);
+      for (const sx of [-1, 1]) for (const [lz, type] of [[2.4, 'litter'], [9.6, 'paper_scatter']]) b.prop(type, sx * HX + rng.range(-0.4, 0.4), F.front + lz, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
       yard(b, F, L);
     },
     // an office tower. big: on a lot of its own, the tallest thing for a mile; otherwise a small one on a street lot.
@@ -1439,32 +1553,63 @@ export function createMainland(seed) {
       const floors = big ? rng.int(8, 12) : rng.int(5, 7);
       const glassy = rng.chance(big ? 0.5 : 0.35);
       const R = groundRoom(b, 0, F.cz, F.w, F.d, h, 'concrete', { n: [door(F.w / 2, 1.7), win(F.w * 0.22, F.w * 0.17, 0.6, h - 0.8), win(F.w * 0.78, F.w * 0.17, 0.6, h - 0.8)], s: [door(3, 1.2)], e: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)], w: [win(F.d / 2, F.d * 0.3, 0.6, h - 0.8)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, tint: 3 });
-      void R;
       // the core, with the lifts nobody will ride again, and the front desk
       const core = big ? 5 : 3;
       b.box(-F.w / 6, FLOOR_Y, F.cz + F.d / 6, core, h - FLOOR_Y, core, 'concrete');
+      // Behind the lobby the floor is offices: a wall across it beside the core, the rooms behind that - the open
+      // office with its desks, the one behind it, and at the back of the core the post room - each through a door.
+      const [cl, cr, cb] = [-F.w / 6 - core / 2, -F.w / 6 + core / 2, F.cz + F.d / 6 + core / 2]; // (the core's left, right and back)
+      if (big) {
+        const [wx, wz, wz2] = [1.2, F.cz + 1.2, F.cz + 8.3];
+        partition(b, R, wx, wz, F.R, wz, h, 'concrete', [door(3, 1.3), door(12, 1.3)]);
+        partition(b, R, wx, wz, wx, F.back, h, 'concrete', [door(9.5, 1.3)]);
+        partition(b, R, wx, wz2, F.R, wz2, h, 'concrete', [door(11, 1.3)]);
+        partition(b, R, F.L, cb, cl, cb, h, 'concrete', [door(4, 1.3)]);
+        partition(b, R, cr, cb, wx, cb, h, 'concrete', [door(2.2, 1.3)]);
+        zone(R, wx, wz, F.R, wz2, 2);
+        zone(R, wx, wz2, F.R, F.back, 4);
+        zone(R, F.L, cb, wx, F.back, 1);
+        for (const [dx, dz, r] of [[12.6, 3.4, PI], [12.6, 6.4, 0], [4.2, 3.4, PI], [11.4, 11.2, PI], [13.6, 13.6, 0]]) {
+          extra(b, 'office_desk', dx, F.cz + dz, r, inside);
+          b.prop('office_chair', dx + rng.range(-0.5, 0.5), F.cz + dz + (r ? -1 : 1) * 1.05, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 1) });
+        }
+        extra(b, 'filing_cabinet', wx + 0.09 + 0.06 + 0.62, F.cz + 4.4, -PI / 2, inside);
+        extra(b, 'filing_cabinet', wx + 0.09 + 0.06 + 0.62, F.cz + 12.6, -PI / 2, { ly: FLOOR_Y, seed: 1 });
+        extra(b, 'bookshelf', -9.4, backZ(F, 0.9), 0, inside);
+        extra(b, 'office_desk', -5, F.cz + 11.4, 0, inside);
+        drumFire(b, 4.4, F.cz - 9.6); // (in the lobby, where somebody waited out a night)
+      } else {
+        const [wx, wz] = [1.6, F.cz - 0.9];
+        partition(b, R, wx, wz, F.R, wz, h, 'concrete', [door(2.5, 1.3)]);
+        partition(b, R, wx, wz, wx, F.back, h, 'concrete', [door(6.9, 1.3)]);
+        partition(b, R, F.L, cb, cl, cb, h, 'concrete', [door(2.3, 1.3)]);
+        partition(b, R, cr, cb, wx, cb, h, 'concrete');
+        zone(R, wx, wz, F.R, F.back, 2);
+        zone(R, F.L, cb, wx, F.back, 1);
+        extra(b, 'filing_cabinet', -0.4, F.back - WALL - 0.62, 0, inside);
+      }
       b.prop('reception_desk', F.w / 4, F.cz - F.d / 5, 0, inside);
       b.loot(F.w / 4, F.cz - F.d / 5, FLOOR_Y + 1.14);
-      cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz + F.d / 5, -PI / 2);
-      cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + F.d / 2 - 2.4, PI / 2);
+      cont(b, CONT.CABINET, 'cabinet', rightX(F, 0.55), F.cz + F.d / 5, PI / 2);
+      cont(b, CONT.LOCKER, 'locker', leftX(F, 0.5), F.cz + F.d / 2 - 2.4, -PI / 2);
       b.loot(F.L + 2, F.cz - F.d / 4, FLOOR_Y + 0.02);
       if (big) {
-        cont(b, CONT.CABINET, 'cabinet', F.L + 6, backZ(F, 0.55), PI, { seed: 1 });
+        cont(b, CONT.CABINET, 'cabinet', F.L + 6, backZ(F, 0.55), 0, { seed: 1 });
         b.cont(CONT.DUFFEL, 3, F.cz + 6, { prop: 'duffel_bag', ry: 0.4, nocollide: true, ly: FLOOR_Y });
         b.loot(6, F.cz + 8, FLOOR_Y + 0.02);
       }
       // the lobby: seats along the front, desks behind the lifts, what was in the drawers all over the floor
-      extra(b, 'waiting_chairs', F.L + 3.2, F.front + WALL + 0.34, 0, inside);
-      extra(b, 'waiting_chairs', F.L + 5.4, F.front + WALL + 0.34, 0, inside);
-      extra(b, 'vending_machine', leftX(F, 0.86), F.cz - 1, PI / 2, inside);
+      extra(b, 'waiting_chairs', F.L + 3.2, F.front + WALL + 0.34, PI, inside);
+      extra(b, 'waiting_chairs', F.L + 5.4, F.front + WALL + 0.34, PI, inside);
+      extra(b, 'vending_machine', leftX(F, 0.86), F.cz - 1, -PI / 2, inside);
       for (const [dx, dz] of big ? [[6, 6], [9.4, 6], [6, 10], [-10, -4]] : [[4.4, 3.4], [6.4, 0.4]]) {
         extra(b, 'office_desk', dx, F.cz + dz, rng.chance(0.5) ? 0 : PI, inside);
         b.prop('office_chair', dx + rng.range(-0.6, 0.6), F.cz + dz + 1.1, rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 1) });
       }
-      extra(b, 'filing_cabinet', rightX(F, 0.66), F.cz - F.d / 4, -PI / 2, inside);
-      extra(b, 'filing_cabinet', rightX(F, 0.66), F.cz - F.d / 4 - 0.7, -PI / 2, inside);
+      extra(b, 'filing_cabinet', rightX(F, 0.66), F.cz - F.d / 4, PI / 2, inside);
+      extra(b, 'filing_cabinet', rightX(F, 0.66), F.cz - F.d / 4 - 0.7, PI / 2, inside);
       for (let k = big ? 5 : 2; k > 0; k--) b.prop('paper_scatter', rng.range(F.L + 2, F.R - 2), rng.range(F.front + 2, F.back - 2), rng.range(0, 6), { nocollide: true, ly: FLOOR_Y, seed: rng.int(0, 2) });
-      mess(b, F, big ? 22 : 9, h);
+      mess(b, F, big ? 22 : 9, h, R);
       if (L.fell) {
         // the podium, its top storeys open to the sky; on it the stump of the shaft that went
         const top = block(b, 0, F.cz, F.w, F.d, h + 0.3, 4, fh, glassy ? 'glass' : 'office', 'concrete', { top: 'slab', wear: 0.9 });
@@ -1503,7 +1648,7 @@ export function createMainland(seed) {
       const H = rng.range(7, 13);
       jagged(b, -w / 2, cz - d / 2, -w / 2, cz + d / 2, PAVE, H, mat, true, { inner: 'plaster' });
       jagged(b, -w / 2 + 0.4, cz + d / 2, w / 2, cz + d / 2, PAVE, H, mat, true, { inner: 'plaster' });
-      jagged(b, w / 2, cz + d / 2 - 5.2, w / 2, cz + d / 2 - 0.4, PAVE, H * 0.6, mat, true, { inner: 'plaster' });
+      jagged(b, w / 2, cz + d / 2 - 0.4, w / 2, cz + d / 2 - 5.2, PAVE, H * 0.6, mat, true, { inner: 'plaster' });
       jagged(b, w / 2 - 5.2, cz - d / 2, w / 2, cz - d / 2, PAVE, 2.4, mat);
       // (what it came down as: a long heap where its floors landed, smaller ones round it)
       heap(b, 1.8, cz + 1.2, 4.6, 3.6, rng.range(1.7, 2.3), { brick: 0.45, ry: rng.range(-0.3, 0.3) });
@@ -1528,21 +1673,37 @@ export function createMainland(seed) {
       b.prop('debris', -3, F.cz - 2, 1, { nocollide: true, ly: FLOOR_Y });
       for (let k = 0; k < 7; k++) weed(b, rng.range(-9, 9), rng.range(F.back + 0.6, L.d / 2 - 0.5), rng.range(0.7, 1.3));
       frontage(b, L, F);
-      b.room(0, F.cz, F.w, F.d, 3.4, 'charred', { n: [gap(F.w / 2, 2.2, 2.6), gap(F.w * 0.2, 2.4, 2.4)], s: [gap(F.w * 0.7, 3, 3)], e: [gap(F.d / 2, 1.6, 2.2)] }, { floorMat: 'ash' });
+      // (its walls are what they were built of, brick or concrete, under the soot: the kit lays that over every
+      // opening the fire came out of, inside and out, and smokes what is left of the plaster)
+      const wall = rng.chance(0.65) ? 'brick' : 'concrete';
+      groundRoom(b, 0, F.cz, F.w, F.d, 3.4, wall, { n: [gap(F.w / 2, 2.2, 2.6), gap(F.w * 0.2, 2.4, 2.4)], s: [gap(F.w * 0.7, 3, 3)], e: [gap(F.d / 2, 1.6, 2.2)] }, { floorMat: 'ash', burnt: true });
       const up = rng.range(4.5, 9);
-      jagged(b, F.L, F.back, F.R, F.back, 3.4, up, 'brick', false, { soot: true, inner: 'charred' });
-      jagged(b, F.L, F.front + 0.4, F.L, F.back - 0.4, 3.4, up, 'brick', false, { soot: true, inner: 'charred' });
-      jagged(b, F.L + 0.4, F.front, F.R, F.front, 3.4, up * 0.6, 'brick', false, { soot: true, inner: 'charred' });
-      jagged(b, F.R, F.front + 0.4, F.R, F.back - 0.4, 3.4, up * 0.4, 'brick', false, { soot: true, inner: 'charred' });
-      // soot over the openings of the ground floor, on the charred wall itself
-      for (const [sx, w] of [[0, 2.2], [-F.w * 0.3, 2.4]]) signAt(b, sx, 2.5 + 1.5, F.front - 0.14, 0, w * 1.5, 3.2, rng.chance(0.5) ? 'soot_a' : 'soot_b', { grime: true, far: true });
+      // (each wall is laid so that its outer face looks out of the lot)
+      jagged(b, F.L, F.back, F.R, F.back, 3.4, up, wall, false, { soot: true, inner: 'charred' });
+      jagged(b, F.L, F.front + 0.4, F.L, F.back - 0.4, 3.4, up, wall, false, { soot: true, inner: 'charred' });
+      jagged(b, F.R, F.front, F.L + 0.4, F.front, 3.4, up * 0.6, wall, false, { soot: true, inner: 'charred' });
+      jagged(b, F.R, F.back - 0.4, F.R, F.front + 0.4, 3.4, up * 0.4, wall, false, { soot: true, inner: 'charred' });
       skirt(b, F.R + 1.4, F.cz);
-      // (what the roof was hung on, down in the room)
+      // what the roof and the floors were hung on, down in the room: joists and rafters burnt through, some still
+      // leaning where one end held, the rest lying on one another in the ash
       b.box(1, 0.6, F.cz, F.w * 0.7, 0.22, 0.22, 'charred', { rz: 0.22, ry: 0.5, collide: false });
       b.box(-2, 0.3, F.cz + 1.4, F.w * 0.5, 0.2, 0.2, 'charred', { rz: -0.1, ry: -0.8, collide: false });
       b.box(3, 1.5, F.cz - 2, 0.2, 0.2, F.d * 0.8, 'charred', { rx: 0.36, ry: 0.3, collide: false });
       b.box(-5, 1.9, F.cz + 2, 0.18, 0.18, F.d * 0.6, 'charred', { rx: -0.5, ry: -0.2, collide: false });
-      cont(b, CONT.CABINET, 'cabinet', F.L + 1.2, backZ(F, 0.55), PI);
+      for (let k = 0; k < 5; k++) {
+        // (a rafter with its head still on the back wall or the left one, its foot in the room)
+        const len = rng.range(4.6, 6.4);
+        const tip = rng.range(0.48, 0.66);
+        const at = rng.range(-0.38, 0.38);
+        const onBack = k % 2 === 0;
+        const mid = (Math.cos(tip) * len) / 2;
+        if (onBack) b.box(at * (F.w - 3), (Math.sin(tip) * len) / 2 + 0.1, F.back - 0.3 - mid, 0.2, 0.2, len, 'charred', { rx: -tip, ry: rng.range(-0.2, 0.2), collide: false });
+        else b.box(F.L + 0.3 + mid, (Math.sin(tip) * len) / 2 + 0.1, F.cz + at * (F.d - 3), len, 0.2, 0.2, 'charred', { rz: tip, ry: rng.range(-0.2, 0.2), collide: false });
+      }
+      for (let k = 0; k < 6; k++) b.box(rng.range(F.L + 2, F.R - 2), 0.22 + rng.range(0, 0.25), rng.range(F.front + 2, F.back - 2), rng.range(2.2, 4.4), 0.16, 0.18, 'charred', { ry: rng.range(0, 3), rz: rng.range(-0.12, 0.12), collide: false });
+      heap(b, F.L + 2.6, F.cz + 0.8, 1.5, 1.2, 0.42, { ash: true, ly: FLOOR_Y });
+      heap(b, 5.4, F.cz + 3.3, 1.7, 1.3, 0.45, { ash: true, ly: FLOOR_Y });
+      cont(b, CONT.CABINET, 'cabinet', F.L + 1.2, backZ(F, 0.55), 0);
       b.prop('bones', F.w / 4, F.cz + 1, 0.4, { nocollide: true, ly: FLOOR_Y });
       b.prop('skeleton', -F.w / 4, F.cz - 2, 2.2, { nocollide: true, ly: FLOOR_Y, seed: 0 });
       b.loot(0, F.cz, FLOOR_Y + 0.02);
@@ -1615,7 +1776,7 @@ export function createMainland(seed) {
       // (what is left of its walls: lengths of the back and one side, storeys high and broken off)
       jagged(b, -20.4, 20.4, -6, 20.4, PAVE, 11, 'concrete', true, { inner: 'plaster' });
       jagged(b, 11, 20.4, 20, 20.4, PAVE, 8, 'concrete', true, { inner: 'plaster' });
-      jagged(b, 20.4, 5.5, 20.4, 20.4, PAVE, 12, 'concrete', true, { inner: 'plaster' });
+      jagged(b, 20.4, 20.4, 20.4, 5.5, PAVE, 12, 'concrete', true, { inner: 'plaster' });
       jagged(b, -20.4, 0.5, -20.4, 6, PAVE, 6, 'concrete');
       // (floors of it lying where they came down, tipped every way)
       for (let k = 0; k < 7; k++) b.box(rng.range(-16, 16), PAVE + rng.range(0.3, 1.2), rng.range(0, 17), rng.range(4, 7), 0.32, rng.range(3, 6), 'concrete', { rz: rng.range(-0.34, 0.34), rx: rng.range(-0.22, 0.22), ry: rng.range(0, 3), collide: false });
@@ -1673,10 +1834,22 @@ export function createMainland(seed) {
       const R = groundRoom(b, 0, F.cz, F.w, F.d, 4, 'concrete', { n: [gap(17, 4, 3), cw(5, 3, 0.8, 3), cw(29, 3, 0.8, 3), cw(10.5, 2.2, 0.8, 3), cw(23.5, 2.2, 0.8, 3)], s: [door(4, 1.2), door(30, 1.2)], e: [cw(4, 1.6)], w: [door(12.4, 1.3)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, tint: 2 });
       partition(b, R, F.L, 13.5, F.R, 13.5, 4, 'concrete', [door(5, 1.3), door(17, 1.6), door(29, 1.3)]);
       for (const wx of [-6, 6]) partition(b, R, wx, 13.5, wx, F.back, 4, 'concrete');
+      // (the hall is three rooms: triage on the left of the way in, where the beds were wheeled, the waiting room
+      // on its right - each behind a wall that stops short of the corridor along the wards' doors - and between
+      // them the desk)
+      for (const wx of [-7.6, 10.6]) partition(b, R, wx, F.front, wx, 11.3, 4, 'concrete');
+      zone(R, F.L, F.front, -7.6, 13.5, 4);
+      zone(R, 10.6, F.front, F.R, 13.5, 1);
+      zone(R, F.L, 13.5, -6, F.back, 0);
+      zone(R, -6, 13.5, 6, F.back, 5);
+      zone(R, 6, 13.5, F.R, F.back, 0);
       // the hall: the desk, the rows of seats, beds wheeled in wherever there was floor
       b.prop('reception_desk', 6.6, 9.4, 0, inside);
       b.loot(6.6, 9.4, FLOOR_Y + 1.14);
-      for (const sx of [-13.6, -11.6, 11.2, 13.2]) extra(b, 'waiting_chairs', sx, F.front + WALL + 0.34, PI, inside);
+      for (const sx of [-13.6, -11.6, 12.6]) extra(b, 'waiting_chairs', sx, F.front + WALL + 0.34, PI, inside);
+      extra(b, 'waiting_chairs', 10.6 + 0.09 + 0.06 + 0.32, 8.4, -PI / 2, inside);
+      extra(b, 'waiting_chairs', rightX(F, 0.6), 10.6, PI / 2, { ly: FLOOR_Y, seed: 1 });
+      drumFire(b, 3.2, 6.4); // (the one light in the place: a drum somebody kept burning by the way in)
       b.prop('hospital_bed', -14.6, 9.2, PI / 2, { ly: FLOOR_Y, seed: 1 });
       b.prop('hospital_bed', -14.6, 11.8, PI / 2, { ly: FLOOR_Y, seed: 2 });
       extra(b, 'hospital_bed', -9.6, 11.4, PI / 2 + 0.3, { ly: FLOOR_Y, seed: 0 });
@@ -1702,15 +1875,15 @@ export function createMainland(seed) {
         b.prop('iv_stand', sx * 16.2, 16, 0, { nocollide: true, ly: FLOOR_Y, seed: 1 });
         b.loot(sx * 7, 15.2, FLOOR_Y + 0.02);
       }
-      cont(b, CONT.MEDICINE, 'medicine_cabinet', leftX(F, 0.45), 15.4, PI / 2);
-      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), 15.4, -PI / 2);
+      cont(b, CONT.MEDICINE, 'medicine_cabinet', leftX(F, 0.45), 15.4, -PI / 2);
+      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), 15.4, PI / 2);
       // the pharmacy
-      for (const dx of [-4.2, -3.0]) cont(b, CONT.MEDICINE, 'medicine_cabinet', dx, backZ(F, 0.45), PI, { seed: dx | 0 });
-      cont(b, CONT.DRUG_LOCKER, 'drug_locker', 4, backZ(F, 0.6), PI);
-      cont(b, CONT.CABINET, 'cabinet', 0.6, backZ(F, 0.55), PI);
+      for (const dx of [-4.2, -3.0]) cont(b, CONT.MEDICINE, 'medicine_cabinet', dx, backZ(F, 0.45), 0, { seed: dx | 0 });
+      cont(b, CONT.DRUG_LOCKER, 'drug_locker', 4, backZ(F, 0.6), 0);
+      cont(b, CONT.CABINET, 'cabinet', 0.6, backZ(F, 0.55), 0);
       b.prop('stock_spill', 1.6, 15.8, 1, { nocollide: true, ly: FLOOR_Y, seed: 1 });
       b.loot(-1.4, 15.4, FLOOR_Y + 0.02);
-      mess(b, F, 20, 4);
+      mess(b, F, 20, 4, R);
       const floors = 4;
       block(b, 0, F.cz, F.w, F.d, 4.3, floors, 3.2, 'office', 'concrete', { lost: rng.int(0, 1), open: rng.chance(0.5) ? 1 : 0, from: 2, wear: 0.7 });
       // its name across the front, over the ground floor; a cross at either end of it
@@ -1783,7 +1956,7 @@ export function createMainland(seed) {
       }
       b.prop('altar', -0.4, F.back - 1.6, 0, inside);
       b.loot(-0.4, F.back - 1.6, FLOOR_Y + 1.02);
-      cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), PI); // (clear of the vestry door)
+      cont(b, CONT.CABINET, 'cabinet', F.L + 4.2, backZ(F, 0.55), 0); // (clear of the vestry door)
       b.cont(CONT.DUFFEL, 3.4, F.cz - 5, { prop: 'duffel_bag', ry: 1.1, nocollide: true, ly: FLOOR_Y });
       // those who came here at the end: in the pews, on the floor before the altar
       b.prop('skeleton', -2.3, F.cz - 3.0, PI, { nocollide: true, ly: FLOOR_Y + 0.42, seed: 1 });
@@ -1856,8 +2029,8 @@ export function createMainland(seed) {
       for (const [px, c] of [[-6.8, 'poster_a'], [-5.2, 'poster_c'], [5.2, 'poster_b'], [6.8, 'poster_d']]) signAt(b, px, 1.75, F.front - 0.14, 0, 1.0, 1.5, c, {});
       b.prop('checkout_counter', -9, F.front + 2.6, 0, inside); // the box office
       b.loot(-9, F.front + 2.6, FLOOR_Y + 0.98);
-      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.front + 2.2, -PI / 2);
-      cont(b, CONT.CABINET, 'cabinet', leftX(F, 0.55), F.front + 2, PI / 2);
+      cont(b, CONT.FRIDGE, 'fridge', rightX(F, 0.72), F.front + 2.2, PI / 2);
+      cont(b, CONT.CABINET, 'cabinet', leftX(F, 0.55), F.front + 2, -PI / 2);
       extra(b, 'vending_machine', 9.4, F.front + 4.6 - 0.09 - WALL - 0.4, 0, inside);
       extra(b, 'vending_machine', 10.6, F.front + 4.6 - 0.09 - WALL - 0.4, 0, { ly: FLOOR_Y, seed: 1 });
       b.prop('litter', 3, F.front + 2.4, 1, { nocollide: true, ly: FLOOR_Y });
@@ -1939,7 +2112,7 @@ export function createMainland(seed) {
       // the doors, run up and stuck there
       for (const dx of [-11, 11]) b.box(dx, 3.7, F.front - 0.05, 4.2, 0.9, 0.1, 'tin_rust', { collide: false });
       // the hall: racks down one side, what was on them, a container nobody came back for
-      for (const dx of [2.2, 4.6, 7.0]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), PI, { seed: dx | 0 });
+      for (const dx of [2.2, 4.6, 7.0]) cont(b, CONT.SHELF, 'shelf', F.L + dx, backZ(F, 0.5), 0, { seed: dx | 0 });
       cont(b, CONT.CRATE, 'crate', F.L + 2, F.cz - 2, 0.3);
       b.cont(CONT.FREIGHT, 4, F.cz + 3.4, { prop: 'crate', ry: 0.5, ly: FLOOR_Y, seed: 1 });
       b.prop('shipping_container', -3, F.cz + 2.4, PI / 2 + 0.06, { ly: FLOOR_Y, seed: rng.int(0, 2) });
@@ -1951,9 +2124,9 @@ export function createMainland(seed) {
       b.loot(-8, F.cz - 3, FLOOR_Y + 0.02);
       b.loot(2, F.cz - 4, FLOOR_Y + 0.02);
       // the office
-      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), F.back - 3, -PI / 2);
+      cont(b, CONT.LOCKER, 'locker', rightX(F, 0.5), F.back - 3, PI / 2);
       extra(b, 'office_desk', F.R - 3.6, F.back - 1.2, PI, inside);
-      extra(b, 'filing_cabinet', F.R - 6.2, F.back - WALL - 0.6, PI, inside);
+      extra(b, 'filing_cabinet', F.R - 6.2, F.back - WALL - 0.6, 0, inside);
       b.prop('office_chair', F.R - 3.4, F.back - 2.4, 2, { nocollide: true, ly: FLOOR_Y });
       b.loot(F.R - 2, F.back - 4, FLOOR_Y + 0.02);
       mess(b, F, 12);
@@ -2533,13 +2706,34 @@ export function createMainland(seed) {
     b.prop('light_plane', -RUNWAY_HALF - 11, -20, -2.2, { ground: true, seed: 1 });
     b.clear(RUNWAY_HALF + 15, -70, 8);
     b.clear(-RUNWAY_HALF - 11, -20, 8);
-    // the runway's paint: a dashed centre line, the bars of both thresholds, what is left of them (bone: the white of old paint)
-    for (let z = -RUNWAY_LEN / 2 + 34; z < RUNWAY_LEN / 2 - 30; z += 24) if (rng.chance(0.8)) b.box(0, -0.045, z, 0.6, 0.03, 11, 'bone', { collide: false });
-    for (const end of [-1, 1]) for (let k = -3; k <= 3; k++) if (k) b.box(k * 2.6, -0.045, end * (RUNWAY_LEN / 2 - 14), 1.3, 0.03, 16, 'bone', { collide: false });
+    // The runway's paint, white once (roadpaint: faded, worn through to the asphalt): the bars of both thresholds,
+    // each end's number beyond them - 36 for whoever lands heading north, as the plane will leave, 18 from the other
+    // end - the dashed centre line between the two, the aiming marks, the edge lines.
+    const paint = (lx, lz, sx, sz) => b.box(lx, -0.045, lz, sx, 0.03, sz, 'roadpaint', { collide: false });
+    for (let z = -RUNWAY_LEN / 2 + 62; z < RUNWAY_LEN / 2 - 56; z += 24) if (rng.chance(0.8)) paint(0, z, 0.6, 11);
+    for (const end of [-1, 1]) for (let k = -4; k <= 4; k++) if (k) paint(k * 2.3 + (k > 0 ? 0.5 : -0.5), end * (RUNWAY_LEN / 2 - 12), 1.3, 14);
+    {
+      // the numbers, in strokes: [x, z, across, along] of a digit 3 m wide and 7 m tall, its foot towards the
+      // threshold (z = 0) and its head 7 m up the runway
+      const T = 0.75;
+      const NUMBERS = 37; // (from the runway's end to the foot of its number: past the nose of the plane that stands on the south one)
+      const SEG = { a: [0, 7 - T / 2, 3, T], g: [0, 3.5, 3, T], d: [0, T / 2, 3, T], f: [-1.5 + T / 2, 5.25, T, 3.5], b: [1.5 - T / 2, 5.25, T, 3.5], e: [-1.5 + T / 2, 1.75, T, 3.5], c: [1.5 - T / 2, 1.75, T, 3.5] };
+      const DIGIT = { 1: 'bc', 3: 'abgcd', 6: 'afgedc', 8: 'abcdefg' };
+      for (const [end, digits] of [[1, [3, 6]], [-1, [1, 8]]]) {
+        // (read from the approach: heading north at the south end, left is west; the other way at the north end)
+        digits.forEach((n, i) => {
+          const cx = (i ? 1 : -1) * 2.4 * end;
+          for (const s of DIGIT[n]) {
+            const [x, z, sx, sz] = SEG[s];
+            paint(cx + x * end, end * (RUNWAY_LEN / 2 - NUMBERS - z), sx, sz);
+          }
+        });
+      }
+    }
     // ...its edge lights, most of them dark for good, and a windsock at either end
     for (let z = -RUNWAY_LEN / 2 + 6; z <= RUNWAY_LEN / 2 - 6; z += 28) for (const sx of [-1, 1]) b.prop('runway_light', sx * (RUNWAY_HALF + 0.9), z, 0, { nocollide: true, ground: true, seed: (z + sx) & 1 });
-    for (const sx of [-1, 1]) for (let z = -RUNWAY_LEN / 2 + 4; z < RUNWAY_LEN / 2 - 20; z += 22) if (rng.chance(0.82)) b.box(sx * (RUNWAY_HALF - 0.9), -0.045, z + 10, 0.4, 0.03, rng.range(14, 21), 'bone', { collide: false });
-    for (const end of [-1, 1]) for (const dz of [44, 62, 80]) for (const sx of [-1, 1]) if (rng.chance(0.8)) b.box(sx * 4.6, -0.045, end * (RUNWAY_LEN / 2 - dz), 2.2, 0.03, 9, 'bone', { collide: false });
+    for (const sx of [-1, 1]) for (let z = -RUNWAY_LEN / 2 + 4; z < RUNWAY_LEN / 2 - 20; z += 22) if (rng.chance(0.82)) paint(sx * (RUNWAY_HALF - 0.9), z + 10, 0.4, rng.range(14, 21));
+    for (const end of [-1, 1]) for (const dz of [56, 74, 92]) for (const sx of [-1, 1]) if (rng.chance(0.8)) paint(sx * 4.6, end * (RUNWAY_LEN / 2 - dz), 2.2, 9);
     // (...and beyond either end, what brought them in at night: bars of lamps on the grass)
     for (const end of [-1, 1]) for (const dz of [10, 24, 38]) for (let k = -2; k <= 2; k++) b.prop('runway_light', k * 2.4, end * (RUNWAY_LEN / 2 + dz), 0, { nocollide: true, ground: true, seed: (k + dz) & 1 });
     b.prop('windsock', RUNWAY_HALF + 9, RUNWAY_LEN / 2 - 40, 0.4, { ground: true });
@@ -2650,6 +2844,14 @@ export function createMainland(seed) {
     // a canopy the length of its front, CALDER FIELD on its roof - and the tower at its north end, the cab on top.
     const R = groundRoom(b, 0, 2, 26, 14, 4.4, 'concrete', { n: [door(13, 1.8), win(5, 5, 0.7, 3.4), win(21, 5, 0.7, 3.4)], s: [door(20, 1.3), win(8, 4, 0.9, 3)], w: [win(7, 3, 0.9, 3)] }, { roof: 'flat', roofMat: 'concrete', floorMat: 'concrete', lino: true, tint: 2 });
     partition(b, R, 6, -5, 6, 9, 4.4, 'concrete', [door(9, 1.3)]);
+    // (the back of it is two rooms: the office, and through a door of that the radio room; and the hall has a wall
+    // between check-in and the baggage belt, open at its end)
+    partition(b, R, 6, 2, 13, 2, 4.4, 'concrete', [door(1.6, 1.2)]);
+    partition(b, R, -13, -1.7, -5, -1.7, 4.4, 'concrete');
+    zone(R, 6, 2, 13, 9, 4);
+    zone(R, 6, -5, 13, 2, 0);
+    zone(R, -13, -5, -5, -1.7, 5);
+    drumFire(b, 2.6, 0.9);
     b.prop('reception_desk', -4, 0, 0, { ly: 0.12 }); // the check-in desk
     b.loot(-4, 0, 1.26);
     for (const lx of [-9.6, -7.4, -3.6, -1.4]) b.prop('waiting_chairs', lx, 5.6, 0, { ly: 0.12, seed: lx & 1 });
@@ -2667,7 +2869,7 @@ export function createMainland(seed) {
     for (const lx of [-8, 0]) b.prop('ceiling_lamp', lx, 2, 0, { nocollide: true, ly: 4.4, seed: lx & 1 });
     // the baggage hall: the belt, what never got claimed
     b.box(-8, 0.12, -3.2, 8, 0.6, 1.2, 'rust');
-    for (const [lx, lz, r] of [[-9, -1.6, 0.3], [-4, -4.6, 1.2], [1.6, 3, 2], [-11, -4.2, 2.6], [3.6, -3.4, 0.7]]) b.prop('suitcases', lx, lz, r, { nocollide: true, ly: 0.12, seed: lz & 1 });
+    for (const [lx, lz, r] of [[-9.4, -0.4, 0.3], [-4, -4.6, 1.2], [1.6, 3, 2], [-11, -4.2, 2.6], [3.6, -3.4, 0.7]]) b.prop('suitcases', lx, lz, r, { nocollide: true, ly: 0.12, seed: lz & 1 });
     b.prop('litter', 0, -2, 1, { nocollide: true, ly: 0.12 });
     b.prop('barricade', 2.6, -2.9, PI / 2, { ly: 0.12 });
     part(b, 3, -11, 5.2, 0.14); // ...or behind the desk

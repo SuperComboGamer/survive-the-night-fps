@@ -30,7 +30,7 @@ export const TEXTURE_WORLD_SIZE = {
   ground_grass: 4, ground_dirt: 4, ground_forest: 4, ground_road: 4, ground_asphalt: 4, ground_mud: 4, ground_sand: 4,
   aircraft: 4,
   // the city's (citykit.js)
-  plaster: 2, lino: 2.4, ceiling: 4.8, roofing: 4,
+  plaster: 4, lino: 2.4, ceiling: 4.8, roofing: 4, roadpaint: 6,
 };
 
 function registerTex(t) {
@@ -3310,9 +3310,10 @@ GEN.atlas = () => {
 };
 
 // ================================================================== the city (citykit.js)
-// Walls and ceilings of a room that was lived in: plaster under paint or paper, 2 m to the tile. Pale and neutral
-// (the kit tints it per room by vertex colour): hairline cracks, flakes off down to the render and the lath, damp
-// tide marks.
+// Walls and ceilings of a room that was lived in: plaster under paint or paper, 4 m to the tile. Pale and neutral
+// (the kit tints it per room by vertex colour, and lays the stains, the damp and the cracks on each wall where that
+// wall has them: citykit.js room()). What is in the tile is only what no eye picks out twice along a wall: the
+// unevenness of old paint, hairline cracks, a few small flakes down to the render.
 GEN.plaster = () => {
   const W = 512;
   const r = rngf(1301);
@@ -3320,17 +3321,13 @@ GEN.plaster = () => {
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
-    const v = 0.78 + (a[p] - 0.5) * 0.22 + (b[p] - 0.5) * 0.1 + (fine[p] - 0.5) * 0.06;
-    // paint flaked off: the grey-brown render under it, lath showing through the worst of it
-    const flake = sstep(0.62, 0.66, fl[p] * 0.75 + b[p] * 0.25);
-    const lath = flake * sstep(0.74, 0.78, fl[p]) * (y % 14 < 9 ? 1 : 0.2);
+    const v = 0.8 + (a[p] - 0.5) * 0.14 + (b[p] - 0.5) * 0.07 + (fine[p] - 0.5) * 0.05;
+    // paint flaked off, here and there and never much of it: the grey-brown render under it
+    const flake = sstep(0.71, 0.75, fl[p] * 0.7 + b[p] * 0.3) * 0.7;
     let R = 226 * v, G = 222 * v, B = 208 * v;
-    R = lerp(R, 138 + b[p] * 30, flake);
-    G = lerp(G, 128 + b[p] * 26, flake);
-    B = lerp(B, 112 + b[p] * 22, flake);
-    R = lerp(R, 84, lath * 0.8);
-    G = lerp(G, 66, lath * 0.8);
-    B = lerp(B, 46, lath * 0.8);
+    R = lerp(R, 168 + b[p] * 24, flake);
+    G = lerp(G, 158 + b[p] * 22, flake);
+    B = lerp(B, 140 + b[p] * 20, flake);
     d[i] = R;
     d[i + 1] = G;
     d[i + 2] = B;
@@ -3338,21 +3335,20 @@ GEN.plaster = () => {
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  blotches(ctx, W, W, r, 22, [96, 86, 58], [0.08, 0.2], [20, 70]); // damp
-  blotches(ctx, W, W, r, 10, [40, 46, 34], [0.08, 0.2], [10, 36]); // mould
-  drips(ctx, W, W, r, 30, [70, 58, 38], [0.06, 0.2], [60, 300], [3, 14]);
-  drawCracks(ctx, W, W, r, 7, { len: [60, 240], width: [0.5, 1.1], col: 'rgba(40,34,28,0.6)', light: 'rgba(240,236,224,0.2)', branch: 0.6, wander: 0.6, step: 6 });
+  blotches(ctx, W, W, r, 14, [120, 110, 84], [0.04, 0.1], [30, 90]); // (the wall's own unevenness: nothing with an edge)
+  drawCracks(ctx, W, W, r, 5, { len: [40, 150], width: [0.4, 0.8], col: 'rgba(60,52,44,0.4)', light: 'rgba(240,236,224,0.15)', branch: 0.5, wander: 0.6, step: 6 });
   return { canvas: c };
 };
 
-// Vinyl tile, 0.3 m squares (2.4 m to the repeat): two faded colours laid chequered, lifted and missing tiles down
-// to the black adhesive, ground-in dirt along the joints, stains.
+// Vinyl tile, 0.3 m squares (2.4 m to the repeat): two faded tones of one colour laid chequered - near enough to
+// one another that the floor reads as a floor and not as a board to play on - every tile worn its own way, a few
+// lifted down to the adhesive, ground-in dirt along the joints. Its colour is the room's (the kit's vertex colour).
 GEN.lino = () => {
   const W = 512, n = 8, cs = W / n;
   const r = rngf(1311);
   const a = fbm(W, W, 6, 6, 4, 1311), b = fbm(W, W, 40, 40, 3, 1312);
   const state = [];
-  for (let k = 0; k < n * n; k++) state.push({ gone: r() < 0.07, k: 0.9 + r() * 0.2 });
+  for (let k = 0; k < n * n; k++) state.push({ gone: r() < 0.03, k: 0.9 + r() * 0.2 });
   const img = newImg(W, W);
   eachPx(img, (x, y, i, d) => {
     const p = i >> 2;
@@ -3360,25 +3356,49 @@ GEN.lino = () => {
     const t = state[cy * n + cx];
     const lx = x - cx * cs, ly = y - cy * cs;
     const e = Math.min(lx, cs - lx, ly, cs - ly);
-    const v = ((cx + cy) % 2 ? 0.56 : 0.68) * t.k * (0.84 + a[p] * 0.3) * (0.92 + b[p] * 0.16);
-    let R = v * 190, G = v * 186, B = v * 168;
+    const v = ((cx + cy) % 2 ? 0.63 : 0.7) * t.k * (0.84 + a[p] * 0.3) * (0.92 + b[p] * 0.16);
+    let R = v * 196, G = v * 192, B = v * 176;
     if (t.gone) {
-      const k2 = 0.16 + b[p] * 0.1;
+      const k2 = 0.26 + b[p] * 0.1;
       R = 255 * k2 * 0.8;
       G = 255 * k2 * 0.74;
       B = 255 * k2 * 0.64;
     }
     const joint = 1 - sstep(0.4, 2.2, e);
-    d[i] = R * (1 - joint * 0.55);
-    d[i + 1] = G * (1 - joint * 0.55);
-    d[i + 2] = B * (1 - joint * 0.55);
+    d[i] = R * (1 - joint * 0.34);
+    d[i + 1] = G * (1 - joint * 0.34);
+    d[i + 2] = B * (1 - joint * 0.34);
     d[i + 3] = 255;
   });
   const c = imgToCanvas(img);
   const ctx = ctx2d(c);
-  blotches(ctx, W, W, r, 26, [38, 32, 24], [0.1, 0.3], [14, 60]);
-  blotches(ctx, W, W, r, 6, [60, 18, 12], [0.1, 0.25], [10, 30]);
+  blotches(ctx, W, W, r, 20, [58, 50, 40], [0.06, 0.18], [20, 70]);
   drawCracks(ctx, W, W, r, 5, { len: [30, 120], width: [0.6, 1.2], col: 'rgba(20,18,16,0.6)', branch: 0.4, step: 5 });
+  return { canvas: c };
+};
+
+// Paint on asphalt, 6 m to the repeat: the white of a runway's markings after years of weather - greyed, crazed,
+// worn through to the black under it in patches and along the cracks.
+GEN.roadpaint = () => {
+  const W = 256;
+  const r = rngf(1341);
+  const a = fbm(W, W, 5, 5, 4, 1341), b = fbm(W, W, 26, 26, 3, 1342), fine = fbm(W, W, 80, 80, 2, 1343);
+  const img = newImg(W, W);
+  eachPx(img, (x, y, i, d) => {
+    const p = i >> 2;
+    const v = 0.9 + (a[p] - 0.5) * 0.24 + (fine[p] - 0.5) * 0.12;
+    // worn thin everywhere, the grain of the asphalt showing through it, and here and there worn off
+    const thin = sstep(0.35, 0.8, b[p]) * 0.3 + sstep(0.6, 0.9, fine[p]) * 0.25;
+    const worn = Math.max(thin, sstep(0.66, 0.76, a[p] * 0.5 + b[p] * 0.5) * 0.8);
+    const k = 52 + fine[p] * 26;
+    d[i] = lerp(186 * v, k, worn);
+    d[i + 1] = lerp(184 * v, k, worn);
+    d[i + 2] = lerp(174 * v, k * 1.04, worn);
+    d[i + 3] = 255;
+  });
+  const c = imgToCanvas(img);
+  const ctx = ctx2d(c);
+  drawCracks(ctx, W, W, r, 9, { len: [40, 160], width: [0.6, 1.2], col: 'rgba(40,40,42,0.6)', branch: 0.5, wander: 0.7, step: 5 });
   return { canvas: c };
 };
 

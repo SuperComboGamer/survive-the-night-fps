@@ -18,10 +18,12 @@ const DETAIL_DIST = 280;
 const DETAIL_MIN = 60;
 // In the city (a world with world.city) that rule is not enough: a bottle shares its material with a bus, and a
 // room's furniture is drawn from a mile off. There a (chunk, material) is split in tiers by how far its pieces need
-// to be seen: 0 as above; the others out to TIER_DIST and no further - the small things of a street, what stands in
-// a room, the fine detail of a building's face (citykit.js: frames, sills, railings).
+// to be seen: 0 as above; the others out to TIER_DIST and no further - the small things of a street, the fine detail
+// of a building's face (citykit.js: frames, sills, railings), and nearest of all what is inside a room that is
+// walked into (its lining, its furniture): that is drawn from the street outside it and from the room itself, and
+// from nowhere else.
 export { TIER };
-const TIER_DIST = [0, 150, 90];
+const TIER_DIST = [0, 150, 90, 55];
 // A material that casts no shadow at all (userData.noShadow: stains and lettering laid on a wall).
 const NOSHADOW = 4;
 
@@ -407,16 +409,27 @@ export class StaticWorld {
       addTrim(o.x, o.z, mat, m, [0, o.h + 0.07, 0, o.w + 0.32, 0.14, t + 0.06]);
     }
     // (the city: what is small is seen from near only - a room's furniture nearer still)
-    const propTier = (type) => {
+    // (...and what stands under a roof - a room's furniture, whatever its size - as near as the room's own lining)
+    const indoors = (pr) => {
+      for (const r of world.roofs) {
+        if (pr.y > r.y) continue;
+        const dx = pr.x - r.x, dz = pr.z - r.z;
+        if (Math.abs(dx) > r.hx + r.hz || Math.abs(dz) > r.hx + r.hz) continue;
+        if (Math.abs(dx * r.c - dz * r.s) < r.hx - 0.3 && Math.abs(dx * r.s + dz * r.c) < r.hz - 0.3) return true;
+      }
+      return false;
+    };
+    const propTier = (pr) => {
       if (!world.city) return 0;
-      const sz = PROPS[type]?.size;
+      const sz = PROPS[pr.type]?.size;
       if (!sz) return 0;
       const r = Math.hypot(sz[0], sz[1], sz[2]) / 2;
-      return r < 1.25 ? TIER.ROOM : r < 4.6 ? TIER.STREET : 0; // (a car, a van, a truck are things of the street: a bus, a hangar's plane are seen from across the city)
+      if (r < 4.6 && indoors(pr)) return TIER.ROOM;
+      return r < 1.25 ? TIER.DETAIL : r < 4.6 ? TIER.STREET : 0; // (a car, a van, a truck are things of the street: a bus, a hangar's plane are seen from across the city)
     };
     for (const pr of world.props) {
       if (pr.live) continue; // (drawn by the game itself: the car the team came in, the plane - they change, and a cutscene moves them)
-      const tier = propTier(pr.type);
+      const tier = propTier(pr);
       let obj;
       try {
         obj = createProp(pr.type, pr.seed);
@@ -460,7 +473,7 @@ export class StaticWorld {
       for (const list of b.values()) {
         // (the fine detail of a face and what is small enough to stand in a room cast no shadow: they are near the
         // wall or the floor they would cast it on, and there are a great many of them)
-        list.side = list.tier === TIER.DETAIL ? NOSHADOW : shadowSide(list.mat);
+        list.side = list.tier >= TIER.DETAIL ? NOSHADOW : shadowSide(list.mat);
         list.maxDist = list.tier ? TIER_DIST[list.tier] : Math.max(DETAIL_MIN, list.radius * DETAIL_DIST);
       }
       const runs = [...b.values()].sort((p, q) => p.side - q.side || q.maxDist - p.maxDist);
