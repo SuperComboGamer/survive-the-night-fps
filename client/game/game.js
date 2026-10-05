@@ -1809,8 +1809,7 @@ export class Game {
       this.toggleBoard(!ui.boardOpen);
       return;
     }
-    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
-    // and the pause menu.
+    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory.
     if (has('chat')) {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)

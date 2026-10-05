@@ -8,7 +8,7 @@ import { Killfeed, Pickups, Notifier } from './feed.js';
 import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
-import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, DEFAULT_CONTROLS } from './menus.js';
+import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, InvitePanel, DEFAULT_CONTROLS } from './menus.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
@@ -107,6 +107,7 @@ export class UI {
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
     this.controlsPanel = new ControlsPanel(this, modalL);
+    this.invitePanel = new InvitePanel(this, modalL);
     this.friends = new FriendsPanel(this, modalL);
     this.accountPanel = new AccountPanel(this, modalL);
     this.progress = new ProgressPanel(this, modalL);
@@ -174,6 +175,7 @@ export class UI {
     this.splash.hide();
     if (this.settingsPanel.visible) this.settingsPanel.hide();
     if (this.controlsPanel.visible) this.controlsPanel.hide();
+    if (this.invitePanel.visible) this.invitePanel.hide();
     if (this.friends.visible) this.friends.hide();
     if (this.accountPanel.visible) this.accountPanel.hide();
     if (this.progress.visible) this.progress.hide();
@@ -190,7 +192,7 @@ export class UI {
     this.pause.show(show);
   }
 
-  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu
+  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu and its invite panel
   setRoom(room, link = '') {
     this.pause.setRoom(room, link);
   }

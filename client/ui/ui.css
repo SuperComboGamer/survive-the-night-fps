@@ -6321,79 +6321,285 @@ body {
 }/* ---------- pause */
 
 
+/* a rail down the left edge; the right two thirds stay almost clear, since the world keeps moving */
 .stn-ui .pause {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
   pointer-events: auto;
   cursor: pointer;
-  background: rgba(4, 3, 3, 0.5);
 }
 
 .stn-ui .pause.in {
-  animation: stn-fadeIn 0.25s ease-out;
+  animation: stn-fadeIn 0.2s ease-out;
 }
 
-.stn-ui .pause-main {
-  position: relative;
+.stn-ui .pause.in .pause-rail {
+  animation: stn-slideInL 0.22s ease-out;
+}
+
+.stn-ui .pause-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(4, 3, 3, 0.9) 0, rgba(4, 3, 3, 0.8) calc(560 * var(--u)), rgba(4, 3, 3, 0.18) calc(900 * var(--u)), rgba(4, 3, 3, 0.08) 100%);
+}
+
+.stn-ui .pause-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(104 * var(--u));
+  width: calc(460 * var(--u));
+  min-width: 340px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
+  justify-content: center;
+  padding: calc(40 * var(--u)) 0;
+  box-sizing: border-box;
+  cursor: default;
 }
 
-.stn-ui .pause-kicker {
-  font: max(11px, calc(13 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.6em;
-  padding-left: 0.6em;
+.stn-ui .pause-live {
+  display: flex;
+  align-items: center;
+  gap: calc(9 * var(--u));
+  font: max(10px, calc(13 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--blood-lite);
 }
 
-.stn-ui .pause-resume {
-  margin-top: calc(10 * var(--u));
-  padding: calc(4 * var(--u)) calc(30 * var(--u));
-  background: none;
-  border: 0;
-  cursor: pointer;
-  font: 400 max(48px, calc(92 * var(--u))) / 1 var(--f-head);
-  letter-spacing: 0.16em;
+.stn-ui .pause-dot {
+  width: calc(9 * var(--u));
+  height: calc(9 * var(--u));
+  min-width: 7px;
+  min-height: 7px;
+  border-radius: 50%;
+  background: var(--blood-lite);
+  box-shadow: 0 0 8px var(--blood-hi);
+  animation: stn-pulse 1.6s ease-in-out infinite;
+}
+
+.stn-ui .pause-title {
+  margin-top: calc(14 * var(--u));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 max(28px, calc(46 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.12em;
   color: var(--bone);
-  text-shadow: 0 3px 20px rgba(0, 0, 0, 0.9);
-  animation: stn-breathe 2.6s ease-in-out infinite;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.8);
 }
 
-.stn-ui .pr-t {
-  display: inline-block;
-  padding-left: 0.16em;
-  filter: url(#stn-rough);
-}
-
-.stn-ui .pause:hover .pause-resume {
-  color: #fff;
-}
-
-.stn-ui .pause-note {
-  margin: calc(8 * var(--u)) 0 0;
-  font: max(12px, calc(15 * var(--u))) / 1.3 var(--f-type);
+.stn-ui .pause-sub {
+  min-height: 1em;
+  margin-top: calc(10 * var(--u));
+  font: max(9.5px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
   color: var(--bone-dim);
 }
 
-.stn-ui .pause-btns {
+.stn-ui .pause-list {
   display: flex;
-  gap: calc(12 * var(--u));
-  margin-top: calc(34 * var(--u));
-  cursor: default;
+  flex-direction: column;
+  margin-top: calc(40 * var(--u));
 }
 
-/* the game's invite link */
-.stn-ui .pause-invite {
-  margin-top: calc(30 * var(--u));
-  padding: calc(12 * var(--u)) calc(18 * var(--u)) calc(11 * var(--u));
-  background: rgba(0, 0, 0, 0.5);
-  border-top: 2px solid var(--blood-lite);
-  cursor: default;
+.stn-ui .pr-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(18 * var(--u));
+  height: calc(64 * var(--u));
+  min-height: 38px;
+  padding: 0 calc(18 * var(--u)) 0 calc(24 * var(--u));
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-left: calc(5 * var(--u)) solid transparent;
+  font: 400 max(20px, calc(36 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.12em;
+  text-align: left;
+  color: var(--bone);
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+}
+
+.stn-ui .pr-row[hidden] {
+  display: none;
+}
+
+.stn-ui .pr-row.on {
+  background: linear-gradient(90deg, rgba(150, 16, 22, 0.88), rgba(105, 10, 14, 0.62) 65%, rgba(74, 5, 8, 0.3));
+  border-left-color: var(--blood-lite);
+  color: #fff;
+}
+
+.stn-ui .pr-ico {
+  position: relative;
+  width: calc(20 * var(--u));
+  height: calc(20 * var(--u));
+  min-width: 14px;
+  min-height: 14px;
+  flex: none;
+  opacity: 0.85;
+}
+
+.stn-ui .pr-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .pr-label {
+  position: relative;
+  flex: 1;
+  padding-top: 0.08em;
+  white-space: nowrap;
+}
+
+.stn-ui .pr-hint {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  font: max(9.5px, calc(12 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  white-space: nowrap;
+}
+
+.stn-ui .pr-row.on .pr-hint {
+  color: var(--bone-2);
+}
+
+/* the key that opens the row, on the row it would open */
+.stn-ui .pr-key {
+  visibility: hidden;
+}
+
+.stn-ui .pr-row.on .pr-key {
+  visibility: visible;
+}
+
+.stn-ui .pr-n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 0.35em;
+  box-sizing: border-box;
+  border-radius: 0.8em;
+  background: var(--blood-hi);
+  font: 700 max(9.5px, calc(11 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0;
+  color: #fff;
+}
+
+.stn-ui .pause-sep {
+  height: 1px;
+  margin: calc(22 * var(--u)) 0;
+  background: rgba(230, 223, 207, 0.14);
+}
+
+.stn-ui .pr-leave {
+  color: var(--blood-lite);
+}
+
+.stn-ui .pr-leave.on {
+  background: linear-gradient(90deg, rgba(74, 5, 8, 0.7), rgba(74, 5, 8, 0.2));
+  color: #ff7a66;
+}
+
+/* the hold: a fill along the row, run as long as LEAVE_HOLD_MS (menus.js sets the duration); letting go drops it */
+.stn-ui .pr-leave > :not(.pr-fill) {
+  z-index: 1;
+}
+
+.stn-ui .pr-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(196, 30, 34, 0.75), rgba(150, 16, 22, 0.55));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition-property: transform;
+  transition-timing-function: linear;
+}
+
+.stn-ui .pr-leave:not(.holding) .pr-fill {
+  transition-duration: 0.15s !important;
+}
+
+.stn-ui .pr-leave.holding .pr-fill {
+  transform: scaleX(1);
+}
+
+.stn-ui .pr-leave.holding {
+  color: #fff;
+}
+
+.stn-ui .pause-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(10 * var(--u)) calc(18 * var(--u));
+  margin-top: calc(40 * var(--u));
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .pk {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .pk-t {
+  margin-left: calc(4 * var(--u));
+}
+
+@media (max-width: 760px) {
+  .stn-ui .pause-rail {
+    left: 16px;
+    right: 16px;
+    width: auto;
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stn-ui .pause-dot,
+  .stn-ui .pause.in .pause-rail {
+    animation: none;
+  }
+}
+
+/* the game's code and invite link (InvitePanel) */
+.stn-ui .stn-invite .set-card {
+  width: calc(600 * var(--u));
+  min-width: 420px;
+}
+
+.stn-ui .stn-invite .set-body {
+  padding-top: calc(18 * var(--u));
+  padding-bottom: calc(16 * var(--u));
+}
+
+.stn-ui .stn-invite .pi-link {
+  flex: 1;
+  width: auto;
+}
+
+.stn-ui .iv-code {
+  margin: calc(8 * var(--u)) 0 calc(20 * var(--u));
+  font: 400 max(34px, calc(56 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.3em;
+  color: var(--bone);
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .stn-ui .pi-title {
