@@ -3190,7 +3190,7 @@ export class Game {
     const tracked = !s.zombie && self.alive ? trackedRecipe() : null;
     if (tracked && (!this.trackNear || this.frame % 20 === 5)) this.trackNear = this.craftContext();
     h.tracked = tracked ? { r: tracked, counts, near: this.trackNear, unlocked: g.unlocked | 0 } : null;
-    if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
+    if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = !s.zombie && currentWeapon(s) === ITEM.HAMMER ? { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 } : null;
     else h.context = this.fair.hud();
     h.ping = Math.round(this.conn.rtt);
     h.stalled = performance.now() - (this.snapAt || 0) > 1000; // nothing from the server for a second
