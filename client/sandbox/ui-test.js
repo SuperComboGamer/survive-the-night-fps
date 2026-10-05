@@ -372,7 +372,6 @@ switch (screen) {
       flashlight: 12,
       boss: { name: ZOMBIE_DEFS[ZTYPE.BOSS_ABOMINATION].name, hp: 0.64 },
       prompt: '[E] Install Car Battery',
-      context: { type: 'car', parts: 0b01011 },
     };
     ui.hideSplash();
     feedSome();

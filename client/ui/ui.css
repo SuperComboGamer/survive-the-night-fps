@@ -1162,69 +1162,7 @@ body {
   background: linear-gradient(90deg, #8f877a, #e6dfcf);
 }
 
-.stn-ui .ctx-car {
-  border-left-color: var(--sun);
-}
-
-.stn-ui .ctx-car .ctx-ico svg {
-  color: var(--sun);
-}
-
-.stn-ui .ctx.good {
-  border-left-color: var(--good);
-}
-
-.stn-ui .ctx-parts {
-  display: flex;
-  justify-content: space-between;
-  margin-top: calc(8 * var(--u));
-}
-
-.stn-ui .ctx-part {
-  position: relative;
-  width: calc(34 * var(--u));
-  height: calc(28 * var(--u));
-  min-width: 24px;
-  min-height: 20px;
-  opacity: 0.28;
-}
-
-.stn-ui .ctx-part.on {
-  opacity: 1;
-}
-
-.stn-ui .cp-ico svg {
-  width: 100%;
-  height: 100%;
-}
-
-.stn-ui .ctx-part .cp-ico {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.stn-ui .ctx-part .cp-chk {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: calc(14 * var(--u));
-  height: calc(14 * var(--u));
-  min-width: 11px;
-  min-height: 11px;
-  color: var(--good);
-  display: none;
-  filter: drop-shadow(0 0 2px #000);
-}
-
-.stn-ui .ctx-part.on .cp-chk {
-  display: block;
-}
-
-.stn-ui .ctx-part .cp-chk svg {
-  width: 100%;
-  height: 100%;
-}/* ---------- vitals (bottom-left) */
+/* ---------- vitals (bottom-left) */
 
 
 .stn-ui .vitals {
