@@ -2688,7 +2688,7 @@ export class Game {
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
     const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !swim; // (hands on a handcar's lever, or swimming: no sights)
-    const baseFov = this.settings.fov || 75;
+    const baseFov = (this.debugCam && this.debugCam.fov) || this.settings.fov || 75; // (a debug camera may bring its own lens)
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
     if (!cine && Math.abs(cam.fov - this.fovCur) > 0.01) {

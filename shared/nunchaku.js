@@ -242,6 +242,7 @@ export class ChainSim {
     this.taut = 0; // 0..1, how hard the chain was pulled up short this frame (the rattle, the snap)
     this.knock = 0; // m/s the rod lost against something this frame (the clack of wood on wood, the slap)
     this.knockAt = -1; // ...the collider it was
+    this.touched = false;
     // where the rod's wood was after each step of the last frame (its chain end, its butt: 6 numbers a step), for a
     // streak drawn behind it
     this.trail = new Float32Array(NK_SIM.maxSteps * 6);
@@ -507,17 +508,43 @@ export class ChainSim {
         if (pin.w < 0.5) this._collide(dt, colF, it === S.iters - 1);
       }
       this._rod();
+      // pulled up by the chain against something it lies on: a few more turns of the two, so that it ends both clear
+      // of what it touches and within the chain's reach where it can be both
+      if (pin.w < 0.5 && this.touched) {
+        for (let it = 0; it < 4; it++) {
+          this._rope(false);
+          this._collide(dt, 0, false);
+          this._rod();
+        }
+      }
     }
     // the chain is never longer than itself: whatever is left over, the rod is brought in whole (its length is kept)
     {
       const tx = TOP_A * g[0] + TOP_B * g[3] - as[0], ty = TOP_A * g[1] + TOP_B * g[4] - as[1], tz = TOP_A * g[2] + TOP_B * g[5] - as[2];
       const d = Math.hypot(tx, ty, tz);
-      if (d > NK_CHAIN && !held) {
+      // (in a hand too: a hand that holds it further off than that is brought in with it - the views put the hand
+      // where the handle is, so two hands can never be shown pulling the chain longer)
+      if (d > NK_CHAIN) {
         const k = (d - NK_CHAIN) / d;
         for (let o = 0; o < 6; o += 3) {
           g[o] -= tx * k;
           g[o + 1] -= ty * k;
           g[o + 2] -= tz * k;
+        }
+      }
+    }
+    if (!held) {
+      // what it was pushed out of or pulled up by may have moved it further in the step than anything flies: its
+      // speed is kept to what a handle can have (a step's worth and a half), so one bad frame is never a launch
+      const lim = vmax * 1.5;
+      for (let o = 0; o < 6; o += 3) {
+        const vx = g[o] - h[o], vy = g[o + 1] - h[o + 1], vz = g[o + 2] - h[o + 2];
+        const v = Math.hypot(vx, vy, vz);
+        if (v > lim) {
+          const k = lim / v;
+          h[o] = g[o] - vx * k;
+          h[o + 1] = g[o + 1] - vy * k;
+          h[o + 2] = g[o + 2] - vz * k;
         }
       }
     }
@@ -573,6 +600,7 @@ export class ChainSim {
     const w0x = g[0] + ux * (X1 - X_WOOD0), w0y = g[1] + uy * (X1 - X_WOOD0), w0z = g[2] + uz * (X1 - X_WOOD0);
     const w1x = g[0] + ux * (X1 - X_WOOD1), w1y = g[1] + uy * (X1 - X_WOOD1), w1z = g[2] + uz * (X1 - X_WOOD1);
     const n = this.nCol;
+    if (last) this.touched = false;
     for (let i = -1; i < n; i++) {
       let cax, cay, caz, cbx, cby, cbz, cr, o = 0;
       if (i < 0) {
@@ -626,6 +654,7 @@ export class ChainSim {
         nz /= d;
       }
       const depth = R - d;
+      this.touched = true;
       // the struck point as a mix of the two masses
       const x = X_WOOD0 + (X_WOOD1 - X_WOOD0) * s;
       const c2 = (x - X1) / ROD, c1 = 1 - c2;
@@ -732,7 +761,9 @@ export class ChainSim {
       }
       passes += 3;
     }
-    for (let p = 0; p < passes; p++) {
+    for (let p = 0; p < passes + 12; p++) {
+      // (as many more as it takes to meet the rod's eye: slack and thrown about, a pass or two; nearly taut, more)
+      if (p >= passes && Math.hypot(j[last] - ex, j[last + 1] - ey, j[last + 2] - ez) < 2e-4) break;
       // back from the rod's eye
       j[last] = ex;
       j[last + 1] = ey;
@@ -779,7 +810,7 @@ export class ChainSim {
       // the anchor drawn is the frame's own, not the last step's: the rod comes with the chain if it must
       const tx = TOP_A * g[0] + TOP_B * g[3] - a[0], ty = TOP_A * g[1] + TOP_B * g[4] - a[1], tz = TOP_A * g[2] + TOP_B * g[5] - a[2];
       const d = Math.hypot(tx, ty, tz);
-      if (d > NK_CHAIN && this.pin.w < 1) {
+      if (d > NK_CHAIN) {
         const k = (d - NK_CHAIN) / d;
         for (let o = 0; o < 6; o += 3) {
           g[o] -= tx * k;

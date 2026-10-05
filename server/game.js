@@ -198,6 +198,7 @@ const LEFT_KITS_MAX = 64; // kits remembered for players who left this run (park
 // What a survivor starts with. Day 1's kit is the opening hand; someone who joins on a later day gets a little more
 // 9mm, bandages and light for each day gone by (first-pass numbers): enough to be of use that night, well short of
 // what those days of scavenging turn up - no primary, no armour, no medkit, nothing to throw.
+const STEP_IDLE = 20000; // ms: a clock held by /step is let go when nothing has been asked of it for this long
 const STARTER_TOOLS = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER]; // by weapon slot
 function starterKit(day = 1, diff = null) {
   const d = Math.max(0, day - 1);
@@ -379,6 +380,9 @@ export class Game {
     this.playersDirty = true;
     this.playersListT = 0;
     this.gather = new Map(); // collider -> {left, day}
+    this.stepMode = false; // the clock held by the admin /step (room-worker.js): ticks only as they are asked for
+    this.stepCredit = 0;
+    this.stepAsked = 0;
     this.leftKits = new Map(); // leaverKey -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
@@ -2316,6 +2320,14 @@ export class Game {
     }
   }
 
+  /** Held (the admin /step): how many ticks may run now. Takes them. */
+  takeSteps(now, max) {
+    if (now - this.stepAsked > STEP_IDLE) this.stepMode = false;
+    const n = Math.min(max, this.stepCredit);
+    this.stepCredit -= n;
+    return n;
+  }
+
   handleSimEvent(p, ev) {
     const s = p.state;
     switch (ev.type) {
@@ -3671,6 +3683,16 @@ export class Game {
       case 'night':
         if (this.phase === PHASE.DAY) this.timeLeft = 0.05;
         break;
+      case 'step':
+        // /step on | off | <n>: hold this game's clock (room-worker.js runs a tick only when one is asked for), let
+        // it go, or run n ticks while it is held. For filming a client frame by frame (scripts/clip/nunchaku-film.js):
+        // a frame can take a second to draw and save, and the world must not run on meanwhile. Let go by itself
+        // after 20 s with nothing asked (STEP_IDLE), so a game is never left standing
+        if (args[1] === 'on') this.stepMode = true;
+        else if (args[1] === 'off') this.stepMode = false;
+        else if (this.stepMode) this.stepCredit = Math.min(200, this.stepCredit + Math.max(1, Math.floor(+args[1] || 1)));
+        this.stepAsked = performance.now();
+        break;
       case 'day':
         if (this.phase === PHASE.NIGHT) this.timeLeft = 0.05;
         break;
@@ -3739,6 +3761,12 @@ export class Game {
         // the names /spawn takes
         this.sendChat(p, 0, CHATF.SYSTEM, `zombies: ${ZOMBIE_NAMES.map((it) => it.name).join(' ')}`);
         break;
+      case 'clear': {
+        // /clear [m]: every one of the dead within that many metres (default 80) drops where it stands, to nobody's credit
+        const r = +args[1] || 80;
+        for (const z of [...this.zombies]) if (!z.dead && Math.hypot(z.x - s.x, z.z - s.z) <= r) this.combat.killZombie(z, null);
+        break;
+      }
       case 'legs': {
         // /legs [1|2]: shoot that many legs (default both) off every zombie within 30 m that has legs to lose
         const n = args[1] === '1' ? 1 : 2;

@@ -24,7 +24,8 @@ const EYE = NK_GEOM.grip + NK_GEOM.eye; // from a hand's grip to its handle's ey
 const HAND_Y = 0.083, HAND_X = 0.032; // from the wrist to the middle of the grip: along the hand, and into the palm
 const COCK = 0.62, COCK_SIN = Math.sin(COCK), COCK_COS = Math.cos(COCK); // how far a wrist cocks sideways (rad)
 const LOOSE_SIN = Math.sin(1.0); // ...and how far a handle tips in a hand that has loosened on it to let it turn (the whirl)
-const EL_MIN = -0.25, EL_MAX = 1.9; // how far the elbow swings out and up from where it hangs (rad)
+const EL_MIN = -0.25, EL_MAX = 1.9;
+const ELBOW_COST = 0.11; // how far the elbow swings out and up from where it hangs (rad)
 
 // ---------------------------------------------------------------- small maths
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3(), _e = new THREE.Vector3();
@@ -169,7 +170,7 @@ const PS = (sx, sy, z, dx, dy, dz) => P6(sx * FP_TAN[0] * -z, sy * FP_TAN[1] * -
 // Where a first-person fist is on the screen is what matters, so these keys are written that way (KS, PS: across,
 // up, how far out). The guard: each fist low at the edge of the view, the handles leaning in to a taut chain.
 const G_D = PS(0.34, -0.86, -0.41, -0.4, 0.86, -0.3), G_O = PS(-0.34, -0.86, -0.41, 0.4, 0.86, -0.3);
-const FREE_O = PS(-0.5, -0.95, -0.3, 0.3, 0.75, -0.55); // the other hand with nothing in it: a loose guard, low on its side
+const FREE_O = PS(-0.78, -1.08, -0.27, 0.3, 0.75, -0.55); // the other hand with nothing in it: a loose guard, low on its side
 const END_L = [-0.3, -0.6, -0.42, -0.7, 0.3, 0.4], END_R = [0.6, -0.42, -0.36, 0.5, 0.6, 0.6]; // where a stroke to the left / right ends
 const fo = (t) => K(t, ...FREE_O, 0);
 export const FP = {
@@ -272,7 +273,7 @@ class Hand {
   }
 }
 
-const TRAIL_N = 40;
+const TRAIL_N = 30;
 export const NK_TRAIL_N = TRAIL_N;
 const MOVE_CLIP = ['whip', 'backhand', 'eight', 'smash', 'lunge', 'sweep', 'retreat', 'heavy', 'heavy', 'heavy'];
 
@@ -439,6 +440,14 @@ export class NunchakuCore {
   update(dt, env = {}) {
     if (this.events.length > 48) this.events.length = 0; // (nobody is listening)
     dt = Math.min(0.1, Math.max(0, dt));
+    // In pieces of at most 1/120 s: a strike turns the fist's handle through half a turn in a twentieth of a second,
+    // and a hand moved in a straight line from where one long frame had it to where the next has it would take its
+    // own handle through its own forearm. So the hands are worked out along the frame, and the chain is given every
+    // one of those hands - the same strike at 30 fps as at 144.
+    const n = Math.max(1, Math.ceil(dt * 120 - 1e-6));
+    for (let i = 0; i < n; i++) this._tick(dt / n, env);
+  }
+  _tick(dt, env) {
     // hit-stop: for a moment after a blow lands everything all but stands still
     let scale = 1;
     if (this.stop > 0) {
@@ -791,7 +800,8 @@ export class NunchakuCore {
       elbowOf(S, h.wrist, B.L1, B.L2, P, el * sgn, h.elbow, h.pole);
       h.f.subVectors(h.elbow, h.wrist).normalize();
       const c = h.d.dot(h.f);
-      return c * c + 0.015 * el * el;
+      // (the wrist's cock, and how far the elbow is out: an elbow hangs unless the handle needs it out)
+      return c * c + ELBOW_COST * el * el;
     };
     // from where it was: a few steps downhill, so it never jumps from one way of holding to another
     let el = h.el, step = 0.2, best = cost(el);
@@ -910,13 +920,22 @@ export class ChainMeshes {
     }
     this.trail = null;
     if (trail) {
+      // a ribbon three points across (its inner edge, its middle, the butt's path), a row a step: clear at both edges
+      // and at its tail. Lit like everything else (a normal straight up: it takes the sky's light), so it is as faint
+      // by night as the handle it follows - an unlit streak in a dark scene is a neon tube
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 6), 3));
-      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 8), 4));
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 9), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 12), 4));
+      const nrm = new Float32Array(TRAIL_N * 9);
+      for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
+      g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
       const idx = [];
-      for (let i = 0; i < TRAIL_N - 1; i++) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+      for (let i = 0; i < TRAIL_N - 1; i++) {
+        const a = i * 3, b = a + 3;
+        idx.push(a, a + 1, b, a + 1, b + 1, b, a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);
+      }
       g.setIndex(idx);
-      this.trail = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+      this.trail = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
       this.trail.frustumCulled = false;
       this.trail.renderOrder = 3;
       this.trail.name = 'nunchakuTrail';
@@ -951,25 +970,28 @@ export class ChainMeshes {
   _trail(core, gain) {
     const n = core.trailN, T = core.trail, g = this.trail.geometry;
     const pos = g.attributes.position.array, col = g.attributes.color.array;
-    const v = clamp((core.tipSpeed - 9) / 20, 0, 1) * gain;
+    const v = clamp((core.tipSpeed - 10) / 22, 0, 1) * gain;
     this.trail.visible = v > 0.02 && n > 4;
     if (!this.trail.visible) return;
     const first = (TRAIL_N - n) * 6;
     for (let i = 0; i < TRAIL_N; i++) {
-      const o = i * 6, live = i >= TRAIL_N - n, s = live ? o : first;
-      // from the handle's middle to its butt: the fast end
+      const o = i * 9, live = i >= TRAIL_N - n, s = live ? i * 6 : first;
+      // from two fifths of the way down the handle to its butt: the fast end
       for (let k = 0; k < 3; k++) {
-        pos[o + k] = T[s + k] * 0.45 + T[s + 3 + k] * 0.55;
-        pos[o + 3 + k] = T[s + 3 + k];
+        const top = T[s + k], butt = T[s + 3 + k];
+        pos[o + k] = top * 0.6 + butt * 0.4;
+        pos[o + 3 + k] = top * 0.22 + butt * 0.78;
+        pos[o + 6 + k] = butt;
       }
       const age = i / (TRAIL_N - 1);
-      const a = live ? v * 0.17 * age * age : 0;
-      for (let k = 0; k < 2; k++) {
-        const c = i * 8 + k * 4;
-        col[c] = 0.92;
-        col[c + 1] = 0.8;
-        col[c + 2] = 0.6;
-        col[c + 3] = k ? a : a * 0.35;
+      // (gone at its tail, and at its head too: the handle itself is there)
+      const a = live ? v * 0.42 * age * age * (1 - Math.max(0, (age - 0.82) / 0.18) ** 2) : 0;
+      for (let k = 0; k < 3; k++) {
+        const c = i * 12 + k * 4;
+        col[c] = 0.75;
+        col[c + 1] = 0.62;
+        col[c + 2] = 0.48;
+        col[c + 3] = k === 1 ? a : k === 2 ? a * 0.5 : 0;
       }
     }
     g.attributes.position.needsUpdate = true;
