@@ -30,7 +30,12 @@
     "clip:game": "node scripts/clip/game-shots.js",
     "clip:fit": "node scripts/clip/fit-grip.js",
     "clip:props": "node scripts/clip/props.js",
-    "clip:pickups": "node scripts/clip/pickups.js"
+    "clip:pickups": "node scripts/clip/pickups.js",
+    "perf:bench": "node scripts/perf/bench.js",
+    "perf:visual": "node scripts/perf/visual.js",
+    "perf:server": "node scripts/perf/server-bench.js",
+    "perf:profile": "node scripts/perf/profile.js",
+    "perf:report": "node scripts/perf/report.js"
   },
   "dependencies": {
     "pg": "^8.23.1",
