@@ -84,6 +84,8 @@ const SPOTS = [
   { name: 'city-crossing', act: 2, at: [-259, 12], yaw: 2.2, pitch: 0.1, cycle: 0.12 },
   { name: 'city-edge-from-the-bridgehead', act: 2, at: [-430, 0], yaw: -Math.PI / 2, pitch: 0.06, cycle: DAY },
   { name: 'shop-from-the-door', act: 2, at: [-354.2, -89.4], y: 2.2, yaw: Math.PI, pitch: -0.05, cycle: DAY },
+  { name: 'cinema-hall', act: 2, at: [-74.96, -141.86], y: 2.2, yaw: -1.943, pitch: -0.047, cycle: 0.22 },
+  { name: 'cinema-hall-looking-up', act: 2, at: [-62.96, -140.36], y: 2.2, yaw: -1.943, pitch: 0.9, cycle: 0.22 },
   { name: 'airfield-terminal', act: 2, at: [440, -20], yaw: 0.9, pitch: 0.03, cycle: DAY },
 ].filter((s) => !only || only.test(s.name));
 

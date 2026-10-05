@@ -1084,6 +1084,7 @@ const LIT = [1.1, 3.1]; // how much of its colour a lining shows: where the day 
 const LINO_TINT = [[1, 1, 0.96], [0.84, 0.94, 0.84], [1.0, 0.9, 0.78], [0.84, 0.9, 1.0], [0.98, 0.86, 0.78], [0.92, 0.92, 0.92]];
 const BOARD_TINT = [[1, 0.94, 0.84], [0.92, 0.84, 0.74], [1.02, 1.0, 0.94]];
 const CEIL_WHITE = [0.97, 0.96, 0.91];
+const CEIL_HANG = 0.35; // (m: see room's ceiling)
 const SOOTY = [0.33, 0.3, 0.27];
 const STAINS = ['damp_a', 'damp_b', 'stain_a', 'stain_b', 'crack_a', 'crack_b', 'damp_b', 'stain_a'];
 function room(S, R) {
@@ -1255,7 +1256,12 @@ function room(S, R) {
     // as light as the walls under it)
     const tiles = R.ceiling !== 'plaster';
     const uo = hash(R.seed, 621) * 3, vo = hash(R.seed, 622) * 3;
-    sheet(tiles ? 'ceiling' : 'plaster', y1 - 0.004, -ix, -iz, ix, iz, false, (x, z) => (tiles ? [x, z] : [x + uo, z + vo]), (x, z) => mul(tiles ? WHITE : CEIL_WHITE, lit(x, y1, z) * 0.94), tiles ? CEIL_N : PLASTER_CEIL_N);
+    // A plastered ceiling takes the sun as a wall does (its normal: PLASTER_CEIL_N), and what keeps the sun off it
+    // is the shadow of the roof over it. Laid right under that roof (a hall with no ceiling hung in it: the picture
+    // house, the nave) it is nearer the roof's underside than a shadow map can tell apart, the roof's shadow never
+    // falls on it, and it shines like an open sky over a dark room. There it hangs CEIL_HANG lower.
+    const hang = !tiles && !R.ceil ? CEIL_HANG : 0.004;
+    sheet(tiles ? 'ceiling' : 'plaster', y1 - hang, -ix, -iz, ix, iz, false, (x, z) => (tiles ? [x, z] : [x + uo, z + vo]), (x, z) => mul(tiles ? WHITE : CEIL_WHITE, lit(x, y1, z) * 0.94), tiles ? CEIL_N : PLASTER_CEIL_N);
   }
   const floorOf = (kind, y, x0, z0, x1, z1, ti) => {
     if (kind === 'boards') {

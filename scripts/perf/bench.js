@@ -35,6 +35,7 @@ const parts = list(args.part);
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const launches = { capped: 0, uncapped: 0, uncappedSeconds: 0 };
 const counter = [badPasswordAttempts()];
+let retakes = 0;
 
 const page0 = { quality: 'high', renderScale: 1 };
 const HORDE = [['walker', 20], ['walker', 20], ['runner', 20], ['walker', 20], ['walker', 20], ['runner', 20], ['walker', 20], ['walker', 20]]; // + scene 3's 40 = 200
@@ -89,8 +90,22 @@ async function cpuRate(page, rate) {
   await cdp.send('Emulation.setCPUThrottlingRate', { rate });
 }
 
-async function session(tree, label, round, part) {
-  const res = { label, round, part, seed: SEED, capped: CAPPED, seconds: SECONDS, started: new Date().toISOString(), scenes: {}, extra: {} };
+// How fast the machine is just now: a fixed piece of arithmetic timed in the page (ms). A session in which it took
+// much longer than in the others had the machine busy with something else, and is taken again.
+const cpuProbe = (page) =>
+  page.evaluate(() => {
+    const run = () => {
+      const t = performance.now();
+      let h = 1;
+      for (let i = 0; i < 30_000_000; i++) h = Math.imul(h ^ i, 2654435761) >>> 0;
+      return [performance.now() - t, h];
+    };
+    return Math.min(run()[0], run()[0], run()[0]);
+  });
+let bestProbe = Infinity;
+
+async function session(tree, label, round, part, retake = false) {
+  const res = { retake, label, round, part, seed: SEED, capped: CAPPED, seconds: SECONDS, started: new Date().toISOString(), scenes: {}, extra: {} };
   let game = null, chrome = null;
   const bots = [];
   const t0 = Date.now();
@@ -103,6 +118,7 @@ async function session(tree, label, round, part) {
     page.on('pageerror', (e) => errors.push(String(e).slice(0, 200)));
     await page.evaluateOnNewDocument(INSTRUMENT);
     res.extra.loadMs = await loadMenu(page, game.url);
+    res.probe = [await cpuProbe(page)];
     res.machine = await page.evaluate(() => {
       const gl = window.__game.renderer.renderer.getContext();
       const dbg = gl.getExtension('WEBGL_debug_renderer_info');
@@ -255,6 +271,7 @@ async function session(tree, label, round, part) {
       await sc('12 mainland, runway stand');
       res.extra.gpuMemMainland = await page.evaluate(() => window.__bench.gpuMem());
     }
+    res.probe.push(await cpuProbe(page));
     res.errors = errors;
   } catch (e) {
     res.error = String(e && e.stack ? e.stack : e).slice(0, 1500);
@@ -271,9 +288,22 @@ async function session(tree, label, round, part) {
     counter.push(badPasswordAttempts());
   }
   res.took = (Date.now() - t0) / 1000;
-  const file = pjoin(OUT, `${stamp}${args.label ? '-' + args.label : ''}-${label}-r${round}-${part}.json`);
-  writeFileSync(file, JSON.stringify(res));
   if (res.fatal) throw new Error(res.fatal); // (the failed sign-in counter rose: nothing more is launched)
+  // a session the machine was busy in (its arithmetic half as slow again as the quickest session's, or a run that
+  // failed) is not kept: it is taken again, once
+  const probe = res.probe?.length ? Math.max(...res.probe) : Infinity;
+  bestProbe = Math.min(bestProbe, probe);
+  res.busy = probe > bestProbe * 1.5;
+  const file = pjoin(OUT, `${stamp}${args.label ? '-' + args.label : ''}-${label}-r${round}-${part}.json`);
+  if ((res.busy || res.error) && !res.retake) {
+    console.log(`  ${label} r${round} ${part}: ${res.error ? 'failed' : `the machine was busy (probe ${probe.toFixed(0)} ms against ${bestProbe.toFixed(0)})`} - taken again`);
+    writeFileSync(file.replace(/\.json$/, '.discarded'), JSON.stringify(res));
+    retakes++;
+    await sleep(6000);
+    const again = await session(tree, label, round, part, true);
+    return again;
+  }
+  writeFileSync(file, JSON.stringify(res));
   return res;
 }
 
@@ -302,5 +332,5 @@ try {
 } finally {
   wt?.remove();
 }
-console.log(`\nbrowsers: ${launches.capped} capped, ${launches.uncapped} uncapped (${launches.uncappedSeconds.toFixed(0)} s of browser in all); the account's failed sign-in counter read ${counter.join(', ')}`);
+console.log(`\nbrowsers: ${launches.capped} capped, ${launches.uncapped} uncapped (${launches.uncappedSeconds.toFixed(0)} s of browser in all, ${retakes} sessions taken again); the account's failed sign-in counter read ${counter.join(', ')}`);
 console.log('\n' + report(OUT, { stamp: stamp + (args.label ? '-' + args.label : '') }));

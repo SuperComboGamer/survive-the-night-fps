@@ -90,6 +90,7 @@ export function report(dir, { stamp = null, label = null, server = null } = {}) 
     '### Limits',
     `- A headless browser on the machine of somebody who may have been using it: ${stalls ? stalls + ' timed stretch(es) still had a stall in them after two retakes' : 'no timed stretch had a stall left in it'}; the spread of the rounds is above.`,
     `- The dead move: the two builds do not have each of them on the same pixel, only the same number of them at the same place.`,
+    `- A fixed piece of arithmetic was timed in each session, to tell a session the machine was busy in (one half as slow again as the quickest is taken again): ${runs.map((r) => `${r.label[0]}${r.round}${r.part[0]} ${r.probe ? Math.max(...r.probe).toFixed(0) : '?'}`).join(', ')} ms.`,
     `- The 4x slower CPU is Chrome's own throttle (Emulation.setCPUThrottlingRate), on the page's main thread only.`,
   );
   if (errs.length) lines.push('', '**Runs that failed:**', ...errs.map((e) => `- ${e}`));
