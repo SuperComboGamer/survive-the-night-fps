@@ -100,23 +100,26 @@ const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes 
 const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
 const SPAWN_VIEW_COS = Math.cos(1.13); // a survivor is looking at what lies within ~65 deg of dead ahead (the default FOV on a wide screen, and a margin)
 // A crowd after a survivor fans out instead of trailing in after the one at the front (spreadOut). One of the dead
-// with others in its lane ahead (SPREAD_LANE m either side of its way, SPREAD_AHEAD m on at most) bends its way in
-// to the side they are not on (either, when they are within SPREAD_SIDE m of dead ahead on average), SPREAD_PER rad
-// for each of them up to SPREAD_MAX, turning into it at SPREAD_IN rad/s
-// and out of it at SPREAD_OUT rad/s (so it keeps its angle a while after its lane clears). The bend fades out from
-// SPREAD_FULL m to SPREAD_NEAR m off its prey: the crowd comes in from all round, not from behind. Only where its way
-// in runs within ~SPREAD_OPEN of straight at its prey (not where a field leads it round to a way in), and never into
-// a wall or the lake SPREAD_PROBE m on
+// within SPREAD_START m of its prey with others in its lane ahead (SPREAD_LANE m either side of the way it is moving,
+// SPREAD_AHEAD m on at most) picks a line of its own to come in on: SPREAD_MIN-SPREAD_MAX rad round its prey from
+// where it stands, to the side the others are not on (either, when they are within SPREAD_SIDE m of dead ahead on
+// average). It heads for the point of that line SPREAD_K of the way out to itself (SPREAD_R m at most), which slides
+// in as it closes, so it comes in along it. It keeps the line until it is within SPREAD_NEAR m, its prey changes, or
+// it falls back past SPREAD_DROP m. Only where its way in runs within ~SPREAD_OPEN of straight at its prey (not where
+// a field leads it round to a way in), and never into a wall or the lake SPREAD_PROBE m on, nor where that step gets it
+// less than SPREAD_GAIN (x10 units of the flow field) nearer by the way round (off the side of a pier)
+const SPREAD_START = 35;
+const SPREAD_GAIN = 4;
+const SPREAD_DROP = 45;
 const SPREAD_LANE = 1.1;
 const SPREAD_AHEAD = 5;
 const SPREAD_SIDE = 0.3;
-const SPREAD_PER = 0.35;
-const SPREAD_MAX = 0.95;
-const SPREAD_IN = 2.2;
-const SPREAD_OUT = 0.35;
-const SPREAD_FULL = 9;
+const SPREAD_MIN = 0.45;
+const SPREAD_MAX = 1.2;
+const SPREAD_K = 0.75;
+const SPREAD_R = 14;
 const SPREAD_NEAR = 2.5;
-const SPREAD_OPEN = Math.cos(0.6);
+const SPREAD_OPEN = Math.cos(1.2);
 const SPREAD_PROBE = 1.6;
 const _spr = { x: 0, z: 0 };
 
@@ -265,9 +268,8 @@ export class Zombies {
       bit: false, // dogs: this lunge already bit someone
       runD: 0, // dogs: how far it breaks off after a bite (state 7), or backs off to ram (state 8)
       runSide: 1, // dogs: which way round its prey it circles
-      spread: 0, // the bend (rad) in its way in, fanning out of a crowd (spreadOut)
-      spreadSide: 0, // ...to which side (0: none picked)
-      spreadN: 0, // ...and how crowded its lane ahead was at the last look
+      spreadFor: 0, // fanning out of a crowd (spreadOut): the survivor it picked a line of its own to come in on for
+      spreadB: 0, // ...that line's bearing round them (rad, as atan2(x, z))
       ramId: 0, // dogs: the structure it is backing off from to ram (state 8, then the windup)
       ramX: 0, // ...the way out from that piece on the dog's side
       ramZ: 0,
@@ -985,7 +987,7 @@ export class Zombies {
         dz = tz - z.z;
       }
       // a crowd fans out and comes in at angles (dogs flank on their own, a crawler drags itself straight on)
-      if (!z.pack && z.legs !== 3 && !zu && !target.under && this.spreadOut(z, tx, tz, dist, dx, dz, dt)) {
+      if (!z.pack && z.legs !== 3 && !zu && !target.under && this.spreadOut(z, tx, tz, dist, dx, dz)) {
         dx = _spr.x;
         dz = _spr.z;
       }
@@ -1188,17 +1190,18 @@ export class Zombies {
     }
   }
 
-  // z, after a survivor at (tx, tz) dist m off and on its way in along (dx, dz): bent out of the crowd in its lane
-  // (SPREAD_*). Writes _spr; false when it goes on as it was.
-  spreadOut(z, tx, tz, dist, dx, dz, dt) {
+  // z, after a survivor at (tx, tz) dist m off and on its way in along (dx, dz): out of the crowd in its lane and in
+  // on a line of its own (SPREAD_*). Writes _spr; false when it goes on as it was.
+  spreadOut(z, tx, tz, dist, dx, dz) {
     const g = this.g;
     const l = Math.hypot(dx, dz);
     if (l < 1e-4) return false;
     const fx = dx / l;
     const fz = dz / l;
-    // the others in its lane ahead (a look every third tick): how many, and to which side of the line to its prey.
-    // The lane runs the way it is moving: a field's steps aim at the middles of cells, so they swing from side to side
-    if ((g.tick + z.id) % 3 === 0) {
+    if (z.spreadFor && (z.spreadFor !== z.target || dist < SPREAD_NEAR || dist > SPREAD_DROP)) z.spreadFor = 0;
+    // the others in its lane ahead (a look every third tick): whether there are any, and to which side of the line to
+    // its prey. The lane runs the way it is moving: a field's steps aim at the middles of cells, so they swing about
+    if (!z.spreadFor && dist > SPREAD_NEAR * 2 && dist < SPREAD_START && (g.tick + z.id) % 3 === 0) {
       const v = Math.hypot(z.vx, z.vz);
       const lx = v > 0.3 ? z.vx / v : fx;
       const lz = v > 0.3 ? z.vz / v : fz;
@@ -1217,34 +1220,39 @@ export class Zombies {
         n += k;
         lat += (rz * ux - rx * uz) * k;
       });
-      z.spreadN = n;
-      // (in single file the ones ahead are all but dead ahead: either side will do, and a column splits both ways)
-      if (n > 0 && !z.spreadSide) z.spreadSide = lat > SPREAD_SIDE * n ? -1 : lat < -SPREAD_SIDE * n ? 1 : g.rng() < 0.5 ? 1 : -1;
+      if (n > 0) {
+        // (in single file the ones ahead are all but dead ahead: either side will do, and a column splits both ways)
+        const side = lat > SPREAD_SIDE * n ? -1 : lat < -SPREAD_SIDE * n ? 1 : g.rng() < 0.5 ? 1 : -1;
+        z.spreadFor = z.target;
+        z.spreadB = Math.atan2(z.x - tx, z.z - tz) + side * (SPREAD_MIN + g.rng() * (SPREAD_MAX - SPREAD_MIN));
+      }
     }
-    const want = z.spreadN > 0 && z.spreadSide ? z.spreadSide * Math.min(SPREAD_MAX, SPREAD_PER * z.spreadN) : 0;
-    const rate = Math.abs(want) > Math.abs(z.spread) ? SPREAD_IN : SPREAD_OUT;
-    z.spread += Math.max(-rate * dt, Math.min(rate * dt, want - z.spread));
-    if (!want && Math.abs(z.spread) < 0.02) {
-      z.spread = 0;
-      z.spreadSide = 0;
-      return false;
-    }
+    if (!z.spreadFor) return false;
     // (a field leading it round to a way in is followed as it is)
     if (fx * (tx - z.x) + fz * (tz - z.z) < SPREAD_OPEN * (dist || 1)) return false;
-    let a = z.spread * Math.min(1, Math.max(0, (dist - SPREAD_NEAR) / (SPREAD_FULL - SPREAD_NEAR)));
-    if (Math.abs(a) < 0.02) return false;
-    // as far round as is open ground: the full bend, half of it, or none
-    for (let i = 0; i < 2; i++, a *= 0.5) {
-      const c = Math.cos(a);
-      const s = Math.sin(a);
-      const bx = fx * c - fz * s;
-      const bz = fx * s + fz * c;
-      const px = z.x + bx * SPREAD_PROBE;
-      const pz = z.z + bz * SPREAD_PROBE;
-      if (g.nav.isBlocked(px, pz) || !g.nav.segClear(z.x, z.z, px, pz)) continue;
-      _spr.x = bx;
-      _spr.z = bz;
-      return true;
+    const d0 = g.nav.fieldDist(z.target, z.x, z.z);
+    if (d0 === Infinity) return false;
+    const r = Math.min(SPREAD_R, dist * SPREAD_K);
+    let ax = tx + Math.sin(z.spreadB) * r - z.x;
+    let az = tz + Math.cos(z.spreadB) * r - z.z;
+    const al = Math.hypot(ax, az) || 1;
+    ax /= al;
+    az /= al;
+    // as far round as is open ground that still gets it nearer by the way round (a step off the side of a pier or a
+    // bridge, or past a doorway, does not): straight at that point, halfway there from its way in, or its way in
+    for (let i = 0; i < 2; i++) {
+      const px = z.x + ax * SPREAD_PROBE;
+      const pz = z.z + az * SPREAD_PROBE;
+      if (!g.nav.isBlocked(px, pz) && g.nav.fieldDist(z.target, px, pz) <= d0 - SPREAD_GAIN && g.nav.segClear(z.x, z.z, px, pz)) {
+        _spr.x = ax;
+        _spr.z = az;
+        return true;
+      }
+      ax += fx;
+      az += fz;
+      const hl = Math.hypot(ax, az) || 1;
+      ax /= hl;
+      az /= hl;
     }
     return false;
   }
