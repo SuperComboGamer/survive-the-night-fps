@@ -337,6 +337,9 @@ export class FairView {
       }
     }
     this.signMat.emissiveIntensity = lit * 0.75;
+    // dark, and further off than anything is drawn (viewDist: the game's, with the haze): none of it is drawn. Lit,
+    // its bulbs and its sign carry through the haze from across the valley, and all of it stays.
+    this.group.visible = lit > 0 || !cam || Math.hypot(f.x - cam.x, f.z - cam.z) < (this.viewDist ?? 1e9) + 70;
   }
 
   dispose() {

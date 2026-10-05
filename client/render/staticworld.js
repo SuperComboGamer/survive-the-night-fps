@@ -461,10 +461,21 @@ export class StaticWorld {
         m.verts += list.verts;
       }
     }
+    // The materials in an order that puts those of one shader program side by side (three draws opaque meshes that
+    // are equally far in the order they were made): a change of program has every light's uniforms sent again, a
+    // change of material within one only the material's own.
+    const programOf = (mat) => [mat.type, mat.customProgramCacheKey?.() ?? '', Object.keys(mat.defines || {}).sort().join('+'), !!mat.map, !!mat.normalMap, !!mat.vertexColors, mat.side, mat.alphaTest > 0, !!mat.polygonOffset].join('|');
+    const mats = [...byMat.values()];
+    const firstOf = new Map();
+    mats.forEach((m, i) => {
+      m.program = programOf(m.mat);
+      if (!firstOf.has(m.program)) firstOf.set(m.program, i);
+    });
+    mats.sort((a, b) => firstOf.get(a.program) - firstOf.get(b.program));
     // pages of positions: materials are put in one until it holds PAGE_VERTS
     const pages = [];
     let page = null;
-    for (const m of byMat.values()) {
+    for (const m of mats) {
       // a see-through material is sorted by three among everything else that is see-through (smoke, water, the
       // other panes), each mesh by where it is: its lists stay meshes of their own, one per chunk, as before
       // (glass, chain link, blood and grime laid on a surface; there are few)
@@ -538,7 +549,7 @@ export class StaticWorld {
       list.entries = null;
     };
     const attr = (arr, n) => new THREE.BufferAttribute(arr, n).onUpload(dropArray);
-    for (const m of byMat.values()) {
+    for (const m of mats) {
       const mat = m.mat;
       const n = m.verts;
       const own = m.legacy ? new Float32Array(n * 3) : null;

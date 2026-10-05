@@ -148,6 +148,7 @@ export class FairClient {
       this.music = g.audio.createLoop?.('calliope', c.x, c.y + 1, c.z) || null;
       this.hum = g.audio.createLoop?.('generator', f.gen.x, f.gen.y, f.gen.z) || null;
     } else if (!this.running && this.music) this.stopLoops();
+    this.view.viewDist = g.viewDist;
     this.view.update(this.clock, this.lit, time, g.camera.position);
   }
 

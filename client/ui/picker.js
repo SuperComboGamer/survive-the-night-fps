@@ -55,7 +55,8 @@ class CharacterStage {
     this.scene.add(key, rim, fill);
     this.camera = new THREE.PerspectiveCamera(26, 0.7, 0.05, 30);
     this.people = new Map(); // id -> survivor (createSurvivor)
-    this.portraits = new Map(); // id -> data URL
+    this.portraits = new Map(); // id -> the picture's URL
+    this.blobs = []; // (the object URLs among them: let go of with the stage)
     this.time = 0;
   }
 
@@ -84,6 +85,31 @@ class CharacterStage {
   portrait(id) {
     let url = this.portraits.get(id);
     if (url) return url;
+    this.shoot(id);
+    url = this.canvas.toDataURL('image/png');
+    this.portraits.set(id, url);
+    return url;
+  }
+
+  /**
+   * The same into an <img>, without holding the frame for it: the picture is drawn now and encoded off the main
+   * thread (the picker's grid makes ten of these as it opens, one a frame: CharacterPanel.show).
+   */
+  portraitInto(id, img) {
+    const url = this.portraits.get(id);
+    if (url) return void (img.src = url);
+    this.shoot(id);
+    this.canvas.toBlob((blob) => {
+      if (!blob) return void (img.src = this.portrait(id));
+      const u = URL.createObjectURL(blob);
+      if (!this.portraits.has(id)) this.portraits.set(id, u);
+      this.blobs.push(u);
+      img.src = this.portraits.get(id);
+    }, 'image/png');
+  }
+
+  // draws the portrait of one into the canvas
+  shoot(id) {
     const W = 160, H = 200;
     this.renderer.setSize(W, H, false);
     this.time = 1.3;
@@ -96,9 +122,6 @@ class CharacterStage {
     this.camera.position.set(head.x + 0.12, head.y + 0.03, head.z - 0.95);
     this.camera.lookAt(head.x, head.y - 0.07, head.z);
     this.renderer.render(this.scene, this.camera);
-    url = this.canvas.toDataURL('image/png');
-    this.portraits.set(id, url);
-    return url;
   }
 
   /** The turntable: the whole figure, turning, into this.canvas at w x h (css px). */
@@ -118,6 +141,7 @@ class CharacterStage {
   dispose() {
     for (const s of this.people.values()) s.dispose();
     this.people.clear();
+    for (const u of this.blobs) URL.revokeObjectURL(u);
     this.renderer.dispose();
     this.renderer.forceContextLoss?.();
   }
@@ -281,14 +305,18 @@ export class CharacterPanel extends Panel {
     const st = await getStage();
     if (this.root.hidden) return;
     this.view.appendChild(st.canvas);
-    // the portraits, a few a frame
+    // the portraits, a step a frame: one frame a survivor's model is made, the next its picture is drawn (and
+    // encoded off the main thread) - two a frame of both held every frame of the panel's opening for 50 ms and more
     const ids = CHARACTERS.map((c) => c.id);
     const next = () => {
       if (this.root.hidden || !ids.length) return;
-      for (let k = 0; k < 2 && ids.length; k++) {
-        const id = ids.shift();
-        const b = this.cells.get(id);
-        if (b && !b.img.src) b.img.src = st.portrait(id);
+      const id = ids[0];
+      const b = this.cells.get(id);
+      if (!b || b.img.src) ids.shift();
+      else if (!st.people.has(id) && !st.portraits.has(id)) st.person(id);
+      else {
+        ids.shift();
+        st.portraitInto(id, b.img);
       }
       requestAnimationFrame(next);
     };
