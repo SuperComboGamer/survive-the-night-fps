@@ -18,7 +18,7 @@ let multiDraw; // WEBGL_multi_draw, or null where the browser has not got it (un
 // Whether a frustum is a shadow map's (a light's of the scene the mesh is in) and not a view's. Each frustum is
 // looked up among the lights once; the scene's lights are a fixed set (ARCHITECTURE.md).
 const known = new WeakMap(); // scene -> Map(frustum -> boolean)
-function isShadowFrustum(object, frustum) {
+export function isShadowFrustum(object, frustum) {
   let root = object;
   while (root.parent) root = root.parent;
   let map = known.get(root);

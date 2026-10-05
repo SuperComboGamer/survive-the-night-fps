@@ -102,6 +102,8 @@ import { buildRailway } from '../render/railway.js';
 import { BridgeView } from '../render/bridge.js';
 import { Crossing, Takeoff, liveProps } from './cutscene.js';
 import { StaticWorld } from '../render/staticworld.js';
+import { Crowd } from '../render/crowd.js';
+import { getCrowdMaterial, crowdBones } from '../render/models/skinning.js';
 import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
 import { Flyover } from '../render/flyover.js';
@@ -315,6 +317,8 @@ export class Game {
     this.lights = new Lights(this.scene, this.camera, renderer.q);
     this.vm = null; // built with the first world (ensureViewModel), not here: the splash has to paint first
     this.vmItem = -1;
+    // the dead are drawn as a crowd: one draw call for all of a kind, one texture for all their bones (render/crowd.js)
+    this.crowd = new Crowd(this.scene, getCrowdMaterial(), crowdBones, () => (this.renderer.q.shadowDist || 60) + 15);
     this.entities = new Entities(this);
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.radio = new RadioClient(this); // the walkie-talkie in slot 6: keyed, on the air, its static
@@ -606,6 +610,7 @@ export class Game {
           for (let fresh = false, tries = 0; !fresh && tries < 64; tries++) {
             const z = createZombie(t, seed++);
             const rig = z.object.getObjectByProperty('isSkinnedMesh', true).geometry;
+            if (z.member) this.crowd.batch(rig); // (its batch in the crowd, in the scene from now on: its programs are built with the scene's)
             fresh = !rigs.has(rig);
             rigs.add(rig);
             if (chars.length) z.dispose();

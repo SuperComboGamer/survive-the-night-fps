@@ -399,6 +399,7 @@ export class Crossing {
       const view = createZombie(type, k * 7 + 3);
       view.object.traverse((o) => o.isMesh && (o.castShadow = true));
       this.g.scene.add(view.object);
+      if (view.member) this.g.crowd?.add(view.member);
       this.horde.push({
         view,
         // shot one: where it is behind the car as it opens (the quick ones up at the bumper, the slow ones already
@@ -783,6 +784,7 @@ export class Takeoff {
       const view = createZombie(type, k * 11 + 5);
       view.object.traverse((o) => o.isMesh && (o.castShadow = true));
       game.scene.add(view.object);
+      if (view.member) game.crowd?.add(view.member);
       // (behind the plane, the width of the runway: the quick ones nearest its tail - and none of them down the line
       // the second shot looks along, from where the plane stood to where it has got to)
       let off = (k % 2 ? 1 : -1) * (0.8 + ((k * 2.3) % 8.4));

@@ -253,6 +253,7 @@ async function shoot(tree, label) {
             g.localFlashT = 1e9;
           }
           if (!s.at) g.debugCam = null;
+          V.seed(777); // (a zombie draws its first growl's moment as it is made)
           V.place(s.list || [], ENT);
           await V.stop();
           V.seed(12345);

@@ -23,6 +23,7 @@ const ITEM_GLINT_GAIN = 0.9; // ...at up to this brightness by day, against 1 fo
 const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next one
 const PICK_STICK = 1.15; // the target already in the crosshair holds on inside this much more of its radius (pick)
 const HEAVY_STEP_SHAKE = 30; // a tank's footfall shakes the camera inside this distance (m), harder the nearer it lands
+const POSE_NEAR = 15, POSE_HZ = 80; // a zombie further off than POSE_NEAR (m) is posed at most POSE_HZ times a second (update)
 const HEAVY_RUN_SHAKE = 42; // ... and from this far off, harder still, when it is charging
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
@@ -380,6 +381,7 @@ export class Entities {
           e.view = v;
           setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
+          if (v.member) g.crowd?.add(v.member); // (drawn with every other of its kind in one call: render/crowd.js)
           v.setLegs?.(e.q[7]); // legs it lost before it came into view
           e.growlT = e.ztype === ZTYPE.SHADE ? 0.5 + Math.random() * 2 : 2 + Math.random() * 8;
           e.voice = 0.92 + ((((e.id * 2654435761) >>> 0) % 997) / 997) * 0.2; // its own throat: everything it utters is pitched by this
@@ -866,12 +868,18 @@ export class Entities {
           const distC = (e.rx - camPos.x) ** 2 + (e.rz - camPos.z) ** 2;
           v.object.position.set(e.rx, e.ry, e.rz);
           v.object.rotation.y = e.ryaw;
-          // skip animation work for far zombies on alternate frames
-          if (distC < 60 * 60 || ((g.frame + e.id) & 1) === 0) {
+          // How often it is posed. Past 60 m: every other frame. Nearer, but past POSE_NEAR (where its far copy is
+          // drawn): no more than POSE_HZ times a second - at 80 frames a second or fewer that is every frame, as it
+          // always was; at 240 the horde's limbs are worked out a third as often, and where each body stands and
+          // which way it faces is still every frame's.
+          e.poseDt = (e.poseDt ?? ((e.id % 8) / 8) / POSE_HZ) + dt;
+          const far = distC >= 60 * 60;
+          if (far ? ((g.frame + e.id) & 1) === 0 : distC < POSE_NEAR * POSE_NEAR || e.poseDt >= 1 / POSE_HZ) {
             const def = ZOMBIE_DEFS[e.ztype];
             _sph.center.set(e.rx, e.ry + def.height * 0.5, e.rz);
             _sph.radius = def.height * 0.75 + 0.4;
-            v.update(distC < 60 * 60 ? dt : dt * 2, e.q[4], e.speed, time, _frustum.intersectsSphere(_sph));
+            v.update(far ? dt * 2 : Math.min(e.poseDt, 0.1), e.q[4], e.speed, time, _frustum.intersectsSphere(_sph));
+            e.poseDt = 0;
           }
           if (e.burning > 0) {
             e.burning -= dt;
