@@ -326,8 +326,8 @@ const PAINT = {
     g.addColorStop(1, '#e3cfa2');
     c.fillStyle = g;
     c.fill();
-    ticks(c, r, 16, 12, 116, 64, 9, 'rgba(226,208,164,0.9)', 1.2, 1.4);
-    ticks(c, r, 8, 12, 116, 64, 5, 'rgba(40,26,14,0.7)', 1, 1.2);
+    ticks(c, r, 7, 14, 114, 64, 4, 'rgba(226,208,164,0.85)', 1.1, 1.6);
+    ticks(c, r, 5, 14, 114, 64, 3, 'rgba(40,26,14,0.6)', 1, 1.2);
   },
   [MARK.GOUGE_WOOD](c, r) {
     lens(c, r, 8, 120, 15, 0.35, 5);
@@ -349,7 +349,7 @@ const PAINT = {
       c.closePath();
       c.fill();
     }
-    ticks(c, r, 14, 12, 116, 64, 14, 'rgba(232,214,170,0.85)', 1.3, 1.6);
+    ticks(c, r, 9, 12, 116, 64, 8, 'rgba(232,214,170,0.85)', 1.3, 1.8);
   },
   [MARK.BRUISE_WOOD](c, r) {
     soft(c, 64, 64, 4, 50, 'rgba(46,32,18,0.75)', 'rgba(60,44,26,0)');
@@ -544,7 +544,7 @@ const PAINT = {
       c.lineTo(64 + side * (8 + len), 64 + up);
       c.stroke();
     }
-    blob(c, r, 64, 64, 15, 0.45, 12);
+    blob(c, r, 64, 64, 20, 0.4, 12);
     c.fillStyle = '#060403';
     c.fill();
   },

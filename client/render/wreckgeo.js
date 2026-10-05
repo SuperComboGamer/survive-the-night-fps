@@ -160,7 +160,7 @@ export function boxDist(is, x, y, z) {
  * positions to test (the shape as it is now). Triangles of what is no surface (grass cards) and collapsed ones
  * are passed through.
  */
-export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out, only = null) {
+export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out, only = null, okTri = null) {
   out.t = -1;
   let best = maxT;
   for (let pi = 0; pi < pieces.length; pi++) {
@@ -185,7 +185,7 @@ export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out, only =
         const w = (dx * qx + dy * qy + dz * qz) * inv;
         if (w < 0 || u + w > 1) continue;
         const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
-        if (t < 0 || t >= best) continue;
+        if (t < 0 || t >= best || (okTri && !okTri(pi, v))) continue;
         best = t;
         out.t = t;
         out.piece = pi;
@@ -209,14 +209,14 @@ export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out, only =
  * to bend (nrm: not used, see below). ok(piece, vertex): may this vertex be bent (not a part
  * that has come off). room: see below. Returns how many moved.
  */
-export function dent(pieces, pos, nrm, ok, px, py, pz, dx, dy, dz, radius, depth, room = null) {
+export function dent(pieces, pos, nrm, ok, px, py, pz, dx, dy, dz, radius, depth, room = null, names = PANEL) {
   let moved = 0;
   void nrm;
   const r2 = radius * radius;
   for (let pi = 0; pi < pieces.length; pi++) {
     const P = pos(pi);
     for (const r of pieces[pi].names) {
-      if (!PANEL.has(r.name)) continue;
+      if (!names.has(r.name)) continue;
       for (let v = r.first, end = r.first + r.count; v < end; v++) {
         const o = v * 3;
         const rx = P[o] - px, ry = P[o + 1] - py, rz = P[o + 2] - pz;

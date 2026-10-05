@@ -396,7 +396,7 @@ tick(1);
   check('...and the gun: a pistol and an SMG small, rifles bigger, a shotgun pellet smallest, the anti-tank rifle a ragged hole several times a rifle\'s', size(ITEM.PISTOL) === size(ITEM.MP5) && size(ITEM.PISTOL) < size(ITEM.M4A1) && size(ITEM.M4A1) <= size(ITEM.AK47) && size(ITEM.AK47) < size(ITEM.HUNTING_RIFLE) && size(ITEM.SHOTGUN) < size(ITEM.PISTOL) && size(ITEM.AT_RIFLE) > 2 * size(ITEM.HUNTING_RIFLE) && hole(SURF.STONE, ITEM.AT_RIFLE).cell === MARK.HOLE_BIG && hole(SURF.WOOD, ITEM.AK47).cell !== MARK.HOLE_BIG && shotScale(16) > 1, [ITEM.PISTOL, ITEM.M4A1, ITEM.AK47, ITEM.HUNTING_RIFLE, ITEM.SHOTGUN, ITEM.AT_RIFLE].map(size).join());
   check('a shotgun is a pattern: every pellet its own hole', WEAPONS[ITEM.SHOTGUN].pellets >= 6 && WEAPONS[ITEM.DB_SHOTGUN].pellets >= 6);
   const sq = hole(SURF.WOOD, ITEM.AK47, 1), gr = hole(SURF.WOOD, ITEM.AK47, 0.4), flat = hole(SURF.WOOD, ITEM.AK47, 0.01);
-  check('square on, a hole is round and turned any way; oblique, a graze drawn out along the bullet\'s way, and no longer than three times', !sq.along && sq.w === sq.h && gr.along && Math.abs(gr.w / gr.h - 2.5) < 0.01 && flat.w / flat.h === GRAZE_MAX);
+  check('square on, a hole is round and turned any way; oblique, a graze drawn out along the bullet\'s way, and no longer than three times', !sq.along && sq.w === sq.h && gr.along && Math.abs(gr.w / gr.h - 2.5) < 0.01 && Math.abs(flat.w / flat.h - GRAZE_MAX) < 1e-9);
   check('no two holes of a burst are the same size', hole(SURF.STONE, ITEM.AK47, 1, 0).h < hole(SURF.STONE, ITEM.AK47, 1, 1).h && hole(SURF.STONE, ITEM.AK47, 1, 1).h / hole(SURF.STONE, ITEM.AK47, 1, 0).h < 1.4);
 }
 

@@ -40,6 +40,7 @@ const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new TH
 const _ray = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
 const _in = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
 const BEHIND = new Set(['dark']);
+const SKIN = new Set([...PANEL, 'dark']); // what a dent moves: the panels, and the seams drawn on them
 const _l = [0, 0, 0];
 
 function seeded(seed) {
@@ -531,14 +532,36 @@ class Wreck extends Lifted {
     // (into the panel: mostly the way the blow went, never out of it)
     // (no further in than what is behind the skin: the black of the wheel arches and the cabin are solids of the
     // model a finger's width inside it, and a panel pushed through one shows as a black patch)
+    // (a solid of black: not the hair's breadth of a seam drawn on the panel)
+    const thin = (s) => Math.min(s.max[0] - s.min[0], s.max[1] - s.min[1], s.max[2] - s.min[2]) < 0.06;
+    const solid = (pi, v) => !thin(this.isles[this.isleOf[pi][v]]);
+    // (...asked at the vertex and a triangle's reach to each side of it: a triangle with one corner held back by
+    // the wheel arch behind it and the others pushed in would cut through the arch's corner)
+    let ax = -dz, ay = 0, az = dx;
+    const al = Math.hypot(ax, az);
+    if (al < 0.3) {
+      ax = 1;
+      az = 0;
+    } else {
+      ax /= al;
+      az /= al;
+    }
+    const bx = dy * az - dz * ay, by = dz * ax - dx * az, bz = dx * ay - dy * ax;
+    const reach = FINE * 0.9;
     const inner = (vx, vy, vz, h) => {
-      rayPieces(this.pieces, (pi) => this.orig[pi], vx - dx * 0.004, vy - dy * 0.004, vz - dz * 0.004, dx, dy, dz, h + 0.02, _in, BEHIND);
-      return _in.t < 0 ? h : Math.max(0, _in.t - 0.012);
+      let room = h;
+      for (let i = 0; i < 5 && room > 0; i++) {
+        const u = i === 1 ? reach : i === 2 ? -reach : 0, w = i === 3 ? reach : i === 4 ? -reach : 0;
+        rayPieces(this.pieces, (pi) => this.orig[pi], vx + ax * u + bx * w - dx * 0.03, vy + ay * u + by * w - dy * 0.03, vz + az * u + bz * w - dz * 0.03, dx, dy, dz, room + 0.05, _in, BEHIND, solid);
+        if (_in.t >= 0) room = Math.min(room, Math.max(0, _in.t - 0.03 - 0.012));
+      }
+      return room;
     };
     const moved = dent(this.pieces, (pi) => this.orig[pi], (pi) => this.origN[pi], (pi, v) => {
       const s = this.isles[this.isleOf[pi][v]];
-      return s && !s.ground && !(s.part && s.part.kind === 'loose');
-    }, x, y, z, dx, dy, dz, radius, depth, inner);
+      // (the black of a door's seam is drawn on the panel, and goes in with it)
+      return s && !s.ground && !(s.part && s.part.kind === 'loose') && (s.name !== 'dark' || thin(s));
+    }, x, y, z, dx, dy, dz, radius, depth, inner, SKIN);
     if (!moved) return;
     // (the islands it bent, as they stand now)
     const seen = new Set();
@@ -546,7 +569,7 @@ class Wreck extends Lifted {
     for (let pi = 0; pi < this.pieces.length; pi++) {
       const P = this.orig[pi], map = this.isleOf[pi];
       for (const nm of this.pieces[pi].names) {
-        if (!PANEL.has(nm.name)) continue;
+        if (!SKIN.has(nm.name)) continue;
         for (let v = nm.first; v < nm.first + nm.count; v++) {
           const s = this.isles[map[v]];
           if (seen.has(s)) continue;
@@ -807,7 +830,11 @@ class Wreck extends Lifted {
     ox /= ol;
     oz /= ol;
     const v = new THREE.Vector3((ox * (1.3 + r() * 0.9) + dx * 1.6) * (0.5 + vigour), 1.4 + 1.8 * vigour * r(), (oz * (1.3 + r() * 0.9) + dz * 1.6) * (0.5 + vigour));
-    const floor = (x, z, y) => (world.floorAt ? world.floorAt(x, z, y + 0.3) : world.heightAt(x, z)) + lie;
+    // (the ground under the whole of it as it will lie, not only its middle: a bonnet on a slope rests on the high
+    // side, it does not sink into it)
+    const flatR = Math.hypot(...[ext[0], ext[1], ext[2]].filter((_, i) => i !== thin)) * 0.35;
+    const ground = (x, z, y) => (world.floorAt ? world.floorAt(x, z, y + 0.3) : world.heightAt(x, z));
+    const floor = (x, z, y) => Math.max(ground(x, z, y), ground(x + flatR, z, y), ground(x - flatR, z, y), ground(x, z + flatR, y), ground(x, z - flatR, y)) + lie;
     const path = [c0.x, c0.y, c0.z];
     const pos = c0.clone();
     let bounces = 0, land = -1;
