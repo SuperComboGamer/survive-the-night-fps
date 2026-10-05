@@ -21,11 +21,11 @@ const CELL_OFF = 1024; // added to a coordinate before it is put in a cell, so t
 // a forest is behind the eye or beside it, and was being drawn). The buffers are filled again when the eye has
 // turned VIEW_TURN of the VIEW_PAD the frustum is widened by, or moved VIEW_MOVE (every bounding sphere is that
 // much bigger), so nothing that could be in the picture is ever missing from them.
-const VIEW_PAD = (14 * Math.PI) / 180, VIEW_TURN = 0.6 * VIEW_PAD, VIEW_MOVE = 2.5;
+export const VIEW_PAD = (14 * Math.PI) / 180, VIEW_TURN = 0.6 * VIEW_PAD, VIEW_MOVE = 2.5;
 const _pm = new THREE.Matrix4();
 const BINS = 96; // the rings by distance the instances are put in order by (InstancedSet.update)
 
-class ViewCull {
+export class ViewCull {
   constructor() {
     this.frustum = new THREE.Frustum();
     this.quat = new THREE.Quaternion();

@@ -1,6 +1,7 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
+import { POSE_NEAR, POSE_HZ } from '../render/rates.js';
 import { ENT, PFLAG, ZSTATUS, HCAR_AT, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach } from '../../shared/collision.js';
@@ -23,7 +24,6 @@ const ITEM_GLINT_GAIN = 0.9; // ...at up to this brightness by day, against 1 fo
 const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next one
 const PICK_STICK = 1.15; // the target already in the crosshair holds on inside this much more of its radius (pick)
 const HEAVY_STEP_SHAKE = 30; // a tank's footfall shakes the camera inside this distance (m), harder the nearer it lands
-const POSE_NEAR = 15, POSE_HZ = 80; // a zombie further off than POSE_NEAR (m) is posed at most POSE_HZ times a second (update)
 const HEAVY_RUN_SHAKE = 42; // ... and from this far off, harder still, when it is charging
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
