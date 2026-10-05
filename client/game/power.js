@@ -266,9 +266,10 @@ export class PowerViews {
         this.held = 0;
       }
     }
-    // with the hammer out and one of the two picked, every generator shows how far its power reaches
+    // with the hammer out and one of the two picked (or pointed at in the ring), every generator shows how far its power reaches
     const s = g.prediction.state;
-    const planning = s.slot === SLOT_BUILD && !s.zombie && (g.buildType === STRUCT.GENERATOR || g.buildType === STRUCT.FLOODLIGHT);
+    const type = g.buildMenu ? g.buildMenu.hover : g.buildPicked ? g.buildType : 0;
+    const planning = s.slot === SLOT_BUILD && !s.zombie && (type === STRUCT.GENERATOR || type === STRUCT.FLOODLIGHT);
     if (planning !== this.planning) {
       this.planning = planning;
       for (const e of gens) if (e.obj) e.obj.userData.reach.visible = planning;

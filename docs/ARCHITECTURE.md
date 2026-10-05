@@ -888,7 +888,10 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   the client predicts in place) or dropped (`ACT.DROP_SLOT`): `p.invSort`, applied once in `sendTick` before the
   inventory goes out. A split (`p.splitKeep`) is left apart. There is no Sort button.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
-  places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
+  places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). The schematics go
+  the same way (`placeSchematics`): each into a locker, ammo crate or toolbox (`CONT_DEFS[t].schem`) of its own
+  random place far from the car, the place replicated as `global.schemHints` and drawn on the minimap and the
+  field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
   sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
   in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a

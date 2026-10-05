@@ -3472,10 +3472,14 @@ function poseBat(z) {
   const s = Math.sin(ph), c = Math.cos(ph);
   if (dead) {
     const k = smooth(z.stateT / 0.5);
-    R(p, X.body, 0.3 * k, 0, 2.6 * k * (z.seed & 1 ? 1 : -1));
+    // down on the ground (land): over onto its back, the head thrown back so the ears lie flat, the elbows on the
+    // ground and the hands up off it, the body the lowest of it (BAT_REST, entities.js)
+    const g = z.landT < 0 ? 0 : smooth(z.landT / 0.15);
+    R(p, X.body, 0.3 * k, 0, lerp(2.6 * k, PI, g) * (z.seed & 1 ? 1 : -1));
+    R(p, X.head, -0.9 * g, 0, 0);
     for (let side = 0; side < 2; side++) {
       const sg = side ? 1 : -1;
-      R(p, side ? X.w1R : X.w1L, 0, 0, sg * (0.2 + 0.4 * k));
+      R(p, side ? X.w1R : X.w1L, 0, 0, sg * lerp(0.2 + 0.4 * k, 0.25, g));
       R(p, side ? X.w2R : X.w2L, 0, sg * 1.2 * k, 0);
       R(p, side ? X.w3R : X.w3L, 0, sg * 1.0 * k, 0);
     }
@@ -3558,6 +3562,7 @@ class ZombieInstance {
     this.A = rig.A;
     this.st = ZS[type] || ZS[ZTYPE.WALKER];
     this.isBat = type === ZTYPE.BAT;
+    this.landT = -1; // s since a dead bat hit the ground (land), -1 while it is still in the air
     const rnd = mulberry32(this.seed * 2654435761 + type);
     this.off = rnd() * 100;
     this.rate = 0.9 + rnd() * 0.2;
@@ -3822,6 +3827,7 @@ class ZombieInstance {
       this.fadeDur = 0.42;
     }
     this.stateT += dt;
+    if (this.landT >= 0) this.landT += dt;
     this.fadeT += dt;
     this.flinchT += dt;
     this.voxT += dt;
@@ -3932,6 +3938,11 @@ class ZombieInstance {
     this.poseDirty = true;
   }
 
+  /** A dead bat has hit the ground: it settles there on its back (poseBat). */
+  land() {
+    if (this.landT < 0) this.landT = 0;
+  }
+
   /**
    * Legs shot off at the knee (bit 0 the left, bit 1 the right): the shin and foot go, the stump shows. On one leg it
    * hops, with neither it crawls (poseHobble, poseCrawl). fall: it has just happened, so it goes down over a moment.
@@ -3983,6 +3994,7 @@ export function createZombie(ztype, seed = 0) {
     footfalls: () => z.footfallCount(),
     setHeadless: (v) => z.setHeadless(v),
     setLegs: (bits, fall) => z.setLegs(bits, fall),
+    land: () => z.land(),
     kneeWorld: (side, out) => z.kneeWorld(side, out),
     shin: rig.shin === undefined ? null : { color: rig.shin, len: rig.P.shinLen * cal.k, thick: 0.06 * cal.k }, // the piece a shot-off leg leaves (Effects.gibLeg)
     anchorWorld: (a, out) => z.anchorWorld(a, out),

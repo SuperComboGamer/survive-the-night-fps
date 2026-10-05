@@ -84,6 +84,7 @@ export function readGlobal(r, prev) {
     hints: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8()],
     found: r.u8(), // a bit per hint: that supply has been taken from its hiding place
     unlocked: r.u8(),
+    schemHints: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()], // the place each schematic is rumoured to be in
     wave: r.u8(),
     waves: r.u8(),
     escapeT: r.u16() / 10,

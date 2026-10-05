@@ -2584,100 +2584,253 @@ body {
   color: var(--bone-dim);
 }
 
-.stn-ui .build-cards {
-  display: flex;
-  align-items: flex-end;
-  gap: calc(6 * var(--u));
-  max-width: 100%;
-  padding-top: calc(6 * var(--u));
+.stn-ui .build.idle .build-head .bh-name,
+.stn-ui .build.idle .build-desc {
+  display: none;
 }
 
-.stn-ui .bc {
-  position: relative;
-  flex: 0 1 calc(106 * var(--u));
-  min-width: 60px; /* (twelve of them fit a 1280 px window: a long name takes two lines, a long cost two rows) */
-  padding: calc(9 * var(--u)) calc(6 * var(--u)) calc(8 * var(--u));
+.stn-ui .build-cost {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(2 * var(--u)) calc(10 * var(--u));
+}
+
+.stn-ui .build .ing,
+.stn-ui .bradial .ing {
+  color: var(--bone-2);
+}
+
+.stn-ui .build .ing.lack,
+.stn-ui .bradial .ing.lack {
+  color: var(--blood-lite);
+}
+
+/* short, but made from what is carried as it is built (shared/autocraft.js) */
+.stn-ui .build .ing.auto,
+.stn-ui .bradial .ing.auto {
+  color: var(--amber);
+}
+
+/* ---------- build ring: in the middle of the screen while choosing what to build */
+.stn-ui .bradial {
+  --br-out: max(190px, calc(270 * var(--u)));
+  --br-in: max(80px, calc(112 * var(--u)));
+  --br-mid: calc((var(--br-out) + var(--br-in)) / 2);
+  --br-hi: rgba(232, 163, 61, 0.34);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--br-out) * 2);
+  height: calc(var(--br-out) * 2);
+  margin: calc(var(--br-out) * -1) 0 0 calc(var(--br-out) * -1);
+  color: var(--bone);
+  text-shadow: var(--shadow);
+  animation: stn-radialIn 0.14s ease-out;
+}
+
+.stn-ui .bradial.locked {
+  --br-hi: rgba(156, 180, 207, 0.26);
+}
+
+.stn-ui .br-ring,
+.stn-ui .br-wedge {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  -webkit-mask: radial-gradient(circle, transparent 0 var(--br-in), #000 calc(var(--br-in) + 1px) calc(var(--br-out) - 1px), transparent var(--br-out));
+  mask: radial-gradient(circle, transparent 0 var(--br-in), #000 calc(var(--br-in) + 1px) calc(var(--br-out) - 1px), transparent var(--br-out));
+}
+
+.stn-ui .br-ring {
+  background: radial-gradient(circle, rgba(8, 6, 5, 0.86) var(--br-in), rgba(20, 17, 15, 0.74) calc(var(--br-out) - 3px), rgba(230, 223, 207, 0.3) calc(var(--br-out) - 2px));
+}
+
+/* the spokes between the structures */
+.stn-ui .br-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-conic-gradient(from calc(180deg / var(--n)), rgba(230, 223, 207, 0.16) 0 0.5deg, transparent 0.5deg calc(360deg / var(--n)));
+}
+
+.stn-ui .br-wedge {
+  background: conic-gradient(from calc(var(--a, 0deg) - 180deg / var(--n)), var(--br-hi) 0 calc(360deg / var(--n)), transparent 0);
+}
+
+.stn-ui .br-seg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: rotate(var(--a)) translateY(calc(var(--br-mid) * -1)) rotate(calc(var(--a) * -1));
+}
+
+.stn-ui .br-seg-in {
+  position: absolute;
+  width: calc(var(--br-out) - var(--br-in) - 16px);
+  max-width: calc(104 * var(--u));
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: calc(5 * var(--u));
-  background: linear-gradient(180deg, rgba(20, 17, 15, 0.72), rgba(8, 6, 5, 0.78));
-  border: 1px solid rgba(230, 223, 207, 0.12);
-  opacity: 0.72;
+  transform: translate(-50%, -50%);
+  opacity: 0.66;
   pointer-events: auto;
   cursor: pointer;
-  transition: transform 0.15s, opacity 0.15s, border-color 0.15s;
+  transition: transform 0.12s, opacity 0.12s;
 }
 
-.stn-ui .bc.sel {
+.stn-ui .br-seg.sel .br-seg-in {
   opacity: 1;
-  border-color: rgba(230, 223, 207, 0.85);
-  background: linear-gradient(180deg, rgba(46, 40, 34, 0.86), rgba(16, 13, 11, 0.9));
-  transform: translateY(calc(-6 * var(--u)));
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  transform: translate(-50%, -50%) scale(1.14);
 }
 
-.stn-ui .bc.sel::after {
-  content: '';
-  position: absolute;
-  left: 20%;
-  right: 20%;
-  bottom: -1px;
-  height: 2px;
-  background: var(--amber);
-}
-
-.stn-ui .build.invalid .bc.sel {
-  border-color: var(--blood-lite);
-}
-
-.stn-ui .build.invalid .bc.sel::after {
-  background: var(--blood-lite);
-}
-
-.stn-ui .bc-key {
-  position: absolute;
-  top: calc(4 * var(--u));
-  left: calc(6 * var(--u));
-  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
-  color: var(--bone-dim);
-}
-
-.stn-ui .bc-ico svg {
-  height: calc(36 * var(--u));
-  min-height: 26px;
+.stn-ui .br-ico svg {
+  height: calc(40 * var(--u));
+  min-height: 28px;
   width: auto;
 }
 
-.stn-ui .bc.poor .bc-ico {
-  opacity: 0.4;
-}
-
-.stn-ui .bc-name {
-  font: 500 max(9px, calc(11.5 * var(--u))) / 1 var(--f-num);
+.stn-ui .br-name {
+  font: 500 max(9px, calc(11.5 * var(--u))) / 1.05 var(--f-num);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   text-align: center;
 }
 
-.stn-ui .bc-cost {
+.stn-ui .br-seg.poor .br-ico {
+  opacity: 0.4;
+}
+
+.stn-ui .br-seg.locked .br-ico,
+.stn-ui .br-seg.locked .br-name {
+  opacity: 0.35;
+}
+
+.stn-ui .br-lock {
+  position: absolute;
+  top: calc(-4 * var(--u));
+  right: calc(14 * var(--u));
+  color: #9cb4cf;
+}
+
+.stn-ui .br-lock svg {
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
+}
+
+.stn-ui .br-mid {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--br-in) * 2 - 10px);
+  height: calc(var(--br-in) * 2 - 10px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(18, 15, 13, 0.9), rgba(8, 6, 5, 0.82));
+  border: 1px solid rgba(230, 223, 207, 0.14);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(6 * var(--u));
+  padding: 0 calc(16 * var(--u));
+  text-align: center;
+}
+
+.stn-ui .br-mid-ico svg {
+  height: calc(34 * var(--u));
+  min-height: 24px;
+  width: auto;
+}
+
+.stn-ui .br-mid-name {
+  font: 400 max(15px, calc(23 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.12em;
+}
+
+.stn-ui .br-mid-cost {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: calc(2 * var(--u)) calc(6 * var(--u));
+  gap: calc(2 * var(--u)) calc(8 * var(--u));
 }
 
-.stn-ui .bc .ing {
-  color: var(--bone-2);
-}
-
-.stn-ui .bc .ing.lack {
+.stn-ui .br-mid-state {
+  font: max(9px, calc(10 * var(--u))) / 1.2 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--blood-lite);
 }
 
-/* short, but made from what is carried as it is built (shared/autocraft.js) */
-.stn-ui .bc .ing.auto {
-  color: var(--amber);
+.stn-ui .br-mid-state:empty {
+  display: none;
+}
+
+.stn-ui .bradial.locked .br-mid-state {
+  color: #9cb4cf;
+}
+
+/* where the mouse points, inside the hole of the ring */
+.stn-ui .br-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+}
+
+.stn-ui .br-foot {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 14px);
+  width: max(420px, calc(560 * var(--u)));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .br-desc {
+  font: max(11px, calc(14 * var(--u))) / 1.25 var(--f-type);
+  color: var(--bone-2);
+  text-align: center;
+}
+
+.stn-ui .br-legend {
+  display: flex;
+  gap: calc(16 * var(--u));
+  font: max(10px, calc(11.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.08em;
+  color: var(--bone-dim);
+}
+
+/* the ring is the aim while it is up: no crosshair or prompt over its middle, and no strip (its keys are under the
+   ring); a toast goes down into the strip's place, clear of the ring's caption */
+.stn-ui.radial-open .hud-center,
+.stn-ui.radial-open .build,
+.stn-ui.radial-open .keyhint {
+  visibility: hidden;
+}
+
+.stn-ui.radial-open .toasts {
+  bottom: calc(18 * var(--u));
+}
+
+@keyframes stn-radialIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
 }
 
 .stn-ui .build-hint {

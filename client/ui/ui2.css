@@ -631,6 +631,9 @@
 .stn-ui .mmap-mk.hint {
   color: #8a3f06;
 }
+.stn-ui .mmap-mk.schem {
+  color: #234f7a;
+}
 .stn-ui .mmap-mk.ping {
   color: #3e6a14;
 }
@@ -1689,6 +1692,13 @@
   width: auto;
   height: calc(16 * var(--u));
 }
+.stn-ui .mm.schem {
+  color: #234f7a;
+}
+.stn-ui .mm.schem .mm-ico svg {
+  width: auto;
+  height: calc(14 * var(--u));
+}
 .stn-ui .mm.ping {
   color: #3e6a14;
 }
@@ -1764,6 +1774,8 @@
   gap: calc(6 * var(--u));
   width: calc(250 * var(--u));
   min-width: 190px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .stn-ui .map-sup {
@@ -1851,6 +1863,9 @@
 .stn-ui .lg.hint {
   color: var(--amber);
 }
+.stn-ui .lg.schem {
+  color: #8fb4dc;
+}
 .stn-ui .lg.ping {
   color: var(--sick);
 }
@@ -1906,25 +1921,6 @@
 .stn-ui .rc.locked {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-.stn-ui .bc-lock {
-  position: absolute;
-  top: calc(4 * var(--u));
-  right: calc(6 * var(--u));
-  color: #9cb4cf;
-}
-
-.stn-ui .bc-lock svg {
-  width: calc(13 * var(--u));
-  height: calc(13 * var(--u));
-  min-width: 10px;
-  min-height: 10px;
-}
-
-.stn-ui .bc.locked .bc-ico,
-.stn-ui .bc.locked .bc-name {
-  opacity: 0.35;
 }
 
 @keyframes stn-fadeIn {

@@ -358,6 +358,7 @@ export class Game {
     this.supplyHints = [255, 255, 255, 255, 255, 255, 255]; // zones: 4 parts + 3 jerry cans
     this.supplyFound = 0; // a bit per hint: that one has been taken from its hiding place (nothing left to search there)
     this.unlocked = 0; // schematics bitmask
+    this.schemHints = [255, 255, 255, 255, 255]; // zones: where each schematic (SCHEMATICS order) is rumoured to be
     this.fallen = new Set(); // who left dead since the last sunrise (leaverKey: removePlayer, handleJoin)
     this.waves = [];
     this.wave = 0;
@@ -923,10 +924,11 @@ export class Game {
   levelOf(p) {
     return levelOf(this.xpOf(p));
   }
-  // n XP for `src` (XPS): on this run's tally, and on their record with the leaderboard's stats
+  // n XP for `src` (XPS), scaled by their perks and the difficulty: on this run's tally, and on their record with the
+  // leaderboard's stats
   award(p, src, n) {
     if (!p) return;
-    n = Math.round(n * perkMods(p.perks).xp);
+    n = Math.round(n * perkMods(p.perks).xp * this.diff.xp);
     if (n <= 0) return;
     const was = this.levelOf(p);
     p.xpRun[src] += n;
@@ -1151,16 +1153,7 @@ export class Game {
       const e = { kind: ENT.CACHE, ctype: c.ctype, x: c.x, y: c.y, z: c.z, zone: c.zone, state: 0, schem: 0 };
       if (this.spawnEntity(e)) this.caches.push(e);
     }
-    // hide the schematics in lockers / ammo crates / toolboxes around the map (one each, far from the start)
-    const eligible = this.caches.filter((c) => CONT_DEFS[c.ctype].schem && Math.hypot(c.x - w.car.x, c.z - w.car.z) > 90);
-    for (const item of SCHEMATICS) {
-      for (let tries = 0; tries < 20 && eligible.length; tries++) {
-        const c = eligible[Math.floor(this.rng() * eligible.length)];
-        if (c.schem) continue;
-        c.schem = item;
-        break;
-      }
-    }
+    this.placeSchematics();
     this.placeSupplies();
     this.cemetery.reset();
     this.gun.spawn();
@@ -1190,17 +1183,43 @@ export class Game {
     this.log('new game started');
   }
 
+  shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // Hide the schematics around the valley: each in a locker, ammo crate or toolbox (CONT_DEFS[t].schem) of a random
+  // place far from the start, never two in the same place while there is a place left without one. The survivors
+  // are told which place each is rumoured to be in, not which container: they have to search that place's.
+  placeSchematics() {
+    const w = this.world;
+    const byPlace = new Map();
+    for (const c of this.caches) {
+      if (!CONT_DEFS[c.ctype].schem || !w.zoneById[c.zone] || Math.hypot(c.x - w.car.x, c.z - w.car.z) <= 90) continue;
+      byPlace.set(c.zone, [...(byPlace.get(c.zone) || []), c]);
+    }
+    const places = this.shuffle([...byPlace.values()]);
+    let turn = 0;
+    this.schemHints = SCHEMATICS.map((item) => {
+      for (let tries = 0; tries < places.length; tries++) {
+        const free = places[turn++ % places.length].filter((c) => !c.schem);
+        if (!free.length) continue;
+        const c = free[Math.floor(this.rng() * free.length)];
+        c.schem = item;
+        return c.zone;
+      }
+      return 255;
+    });
+  }
+
   // Hide the car supplies around the valley: each at a random hiding spot of a random place on this map, and
   // never two in the same place while there is a place left without one. The survivors are told which place
   // each is rumoured to be in.
   placeSupplies() {
-    const shuffle = (a) => {
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(this.rng() * (i + 1));
-        [a[i], a[j]] = [a[j], a[i]];
-      }
-      return a;
-    };
+    const shuffle = (a) => this.shuffle(a);
     const byPlace = new Map();
     for (const sp of this.world.partSpots) byPlace.set(sp.zone, [...(byPlace.get(sp.zone) || []), sp]);
     const places = shuffle([...byPlace.values()].map(shuffle));
@@ -4129,6 +4148,7 @@ export class Game {
     for (let i = 0; i < 7; i++) w.u8(this.supplyHints[i] ?? 255);
     w.u8(this.supplyFound);
     w.u8(this.unlocked);
+    for (let i = 0; i < SCHEMATICS.length; i++) w.u8(this.schemHints[i] ?? 255);
     w.u8(this.phase === PHASE.NIGHT ? this.wave : 0);
     w.u8(NIGHT_WAVES);
     w.u16(Math.round(Math.max(0, this.escape.t) * 10));

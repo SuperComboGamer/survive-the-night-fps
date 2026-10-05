@@ -146,6 +146,13 @@ await A.evaluate((car) => {
 }, car);
 await A.keyboard.press('Digit5');
 await sleep(800);
+// a click opens the build ring on the last structure (the barricade), a click in it picks that
+await A.mouse.click(640, 360);
+await sleep(200);
+check('a click with the hammer out opens the build ring', await A.evaluate(() => !!window.__game.buildMenu && !window.__game.ui.build.radial.hidden));
+await A.mouse.click(640, 360);
+await sleep(300);
+check('a click in the ring picks the structure to place', await A.evaluate(() => !window.__game.buildMenu && window.__game.buildPicked));
 const structs0 = await A.evaluate(() => [...window.__game.entities.ents.values()].filter((e) => e.kind === 4).length);
 // turn until the ghost shows a free spot
 for (let k = 0; k < 12; k++) {

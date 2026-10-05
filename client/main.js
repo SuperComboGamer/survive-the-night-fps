@@ -200,6 +200,7 @@ const callbacks = {
   onUnequip: (s, to) => game?.uiCallbacks().onUnequip(s, to),
   onWorn: (which, what) => game?.uiCallbacks().onWorn(which, what),
   onSelectStructure: (t) => game?.uiCallbacks().onSelectStructure(t),
+  onHoverStructure: (t) => game?.uiCallbacks().onHoverStructure(t),
   onSelectThrowable: (it) => game?.uiCallbacks().onSelectThrowable(it),
   onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),
   onChatSend: (text) => {

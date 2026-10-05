@@ -1,7 +1,8 @@
 // The night bosses and the day's specials, in-process against a real Game:
 //   - The Brute (night 1's boss): plods, and once it is badly hurt stops to roar and comes on at a run; drops its
 //     bossLoot, not a full boss's
-//   - The Alpha: howls up dogs into its own pack, never past summonMax of them alive, and lunges as a dog does
+//   - The Alpha: howls up dogs into its own pack, never past summonMax of them alive, and hunts as a dog does: lunges,
+//     bites and breaks off, and rams its way out of a pen of barricades
 //   - The Bloater: heaves a fan of bile at whoever is in front of it; dies in a burst that takes the dead around it
 //     and what was built beside it - unless the dawn sun burnt it out
 //   - by day the further from the car, the more of the specials, and the nastier: none near the car, leapers and
@@ -10,7 +11,7 @@
 import { Game } from '../server/game.js';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, ENT } from '../shared/protocol.js';
 import { ZTYPE, ZOMBIE_DEFS, PROJ, STRUCT, STRUCT_DEFS } from '../shared/defs.js';
-import { PHASE } from '../shared/constants.js';
+import { PHASE, SERVER_TICK_RATE } from '../shared/constants.js';
 
 const seed = +(process.argv[2] || 1);
 const fails = [];
@@ -70,6 +71,20 @@ const place = () => {
   s.vx = s.vz = 0;
 };
 const boss = (type, dx, dz = 0) => game.zm.spawn(type, spot.x + dx, spot.z + dz, { horde: true, boss: true });
+// a piece of type stood at (x, z), turned rot8 / 256 of the way round
+const build = (type, x, z, rot8 = 0) => {
+  const y = game.world.heightAt(x, z);
+  const e = { kind: ENT.STRUCTURE, stype: type, rot8, x, y, z, hp: STRUCT_DEFS[type].hp, maxHp: STRUCT_DEFS[type].hp, state: 1, owner: p.id, burnLeft: 0, collider: null, trapTick: 0 };
+  game.spawnEntity(e);
+  e.collider = game.structCollider(type, x, y, z, rot8, e.id);
+  game.world.structGrid.add(e.collider);
+  game.nav.addStructure(e.collider);
+  game.structures.push(e);
+  return e;
+};
+const unbuild = () => {
+  for (const e of [...game.structures]) game.destroyStructure(e, false);
+};
 game.startNight();
 game.bossPending = null;
 for (const wv of game.waves) wv.queue.length = 0;
@@ -132,6 +147,45 @@ clear();
   let lunged = false;
   run(40, () => (lunged = lunged || z.state === 2));
   check('...and lunges at a survivor as a dog does', lunged);
+  // bites (a snap or a lunge) and breaks off before it comes in again, as a dog does
+  z.x = spot.x + 12;
+  z.z = spot.z;
+  const bites = [];
+  const damagePlayer = game.damagePlayer;
+  game.damagePlayer = (pl, amount, src) => {
+    if (src?.ztype === ZTYPE.BOSS_ALPHA) bites.push(game.time);
+  };
+  let brokeOff = 0;
+  let wasRun = false;
+  run(25 * SERVER_TICK_RATE, () => {
+    place();
+    if (z.state === 7 && !wasRun) brokeOff++;
+    wasRun = z.state === 7;
+  });
+  game.damagePlayer = damagePlayer;
+  const gaps = bites.slice(1).map((t, i) => t - bites[i]);
+  check('...bites and breaks off before it comes back: 1.5 s or more between bites', bites.length >= 3 && brokeOff >= bites.length - 1 && Math.min(...gaps) >= 1.5, `${bites.length} bites, ${brokeOff} break-offs, gaps ${gaps.map((g) => g.toFixed(1)).join(' ')} s`);
+  // shut in a pen of wood barricades with the survivor outside, it rams its way out
+  clear();
+  place();
+  const o = 1.52 + STRUCT_DEFS[STRUCT.BARRICADE].sz / 2;
+  const cx = spot.x + 12;
+  const cz = spot.z;
+  const pen = [build(STRUCT.BARRICADE, cx, cz + o), build(STRUCT.BARRICADE, cx, cz - o), build(STRUCT.BARRICADE, cx - o, cz, 64), build(STRUCT.BARRICADE, cx + o, cz, 64)];
+  const a = game.zm.spawn(ZTYPE.BOSS_ALPHA, cx, cz, { horde: true, boss: true });
+  a.summonCd = 99;
+  let rams = 0;
+  let wasRam = false;
+  let out = -1;
+  const t0 = game.time;
+  run(40 * SERVER_TICK_RATE, () => {
+    if (out >= 0) return;
+    if (a.state === 9 && !wasRam) rams++;
+    wasRam = a.state === 9;
+    if (pen.some((e) => e.removed)) out = game.time - t0;
+  });
+  check('...and shut in a pen of wood barricades rams its way out', out >= 0 && rams >= 1 && rams <= 3, out >= 0 ? `out after ${out.toFixed(1)} s and ${rams} rams` : `still in after ${rams} rams`);
+  unbuild();
   clear();
 }
 
@@ -147,15 +201,7 @@ clear();
   check('The Bloater heaves a fan of bile at whoever is in front of it', most >= 5, `${most} globs`);
   // a barricade beside it and walkers round it: it bursts, and takes them along
   run(60);
-  const bx = z.x + 3;
-  const bz = z.z;
-  const by = game.world.heightAt(bx, bz);
-  const wall = { kind: ENT.STRUCTURE, stype: STRUCT.BARRICADE, rot8: 0, x: bx, y: by, z: bz, hp: STRUCT_DEFS[STRUCT.BARRICADE].hp, maxHp: STRUCT_DEFS[STRUCT.BARRICADE].hp, state: 1, owner: p.id, burnLeft: 0, collider: null, trapTick: 0 };
-  game.spawnEntity(wall);
-  wall.collider = game.structCollider(STRUCT.BARRICADE, bx, by, bz, 0, wall.id);
-  game.world.structGrid.add(wall.collider);
-  game.nav.addStructure(wall.collider);
-  game.structures.push(wall);
+  const wall = build(STRUCT.BARRICADE, z.x + 3, z.z);
   const crowd = [];
   for (let i = 0; i < 4; i++) crowd.push(game.zm.spawn(ZTYPE.WALKER, z.x + Math.sin(i * 1.6) * 3, z.z + Math.cos(i * 1.6) * 3, { horde: true }));
   run(1); // (into the zombie grid the blast looks them up in)
