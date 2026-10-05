@@ -3194,7 +3194,7 @@ export class Game {
     let partsMask = 0;
     SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
     if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };
-    else if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
+    else if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = !s.zombie && currentWeapon(s) === ITEM.HAMMER ? { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 } : null;
     else h.context = this.fair.hud();
     h.ping = Math.round(this.conn.rtt);
     h.stalled = performance.now() - (this.snapAt || 0) > 1000; // nothing from the server for a second
