@@ -1,6 +1,6 @@
 // Per-frame HUD. update(h) is called every frame: it diffs against cached values and only
 // touches the DOM when a (rounded) value actually changed.
-import { ITEM, ITEM_DEFS, WEAPONS, AMMO_NAMES, CAR_PARTS } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, WEAPONS, AMMO_NAMES } from '../../shared/defs.js';
 import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/constants.js';
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
@@ -167,14 +167,6 @@ export class Hud {
     this.ctxVal = el('span', 'ctx-val', ch, '');
     this.ctxBar = el('div', 'ctx-bar', this.ctx);
     this.ctxFill = el('i', '', this.ctxBar);
-    this.ctxParts = el('div', 'ctx-parts', this.ctx);
-    this.ctxPartEls = CAR_PARTS.map((id) => {
-      const p = el('span', 'ctx-part', this.ctxParts);
-      p.title = ITEM_DEFS[id].name;
-      svgEl('i', 'cp-ico', p, itemIcon(id));
-      svgEl('i', 'cp-chk', p, glyph('check'));
-      return p;
-    });
 
     // ---- bottom-left vitals
     const vit = (this.vitals = el('div', 'vitals', layer));
@@ -687,14 +679,9 @@ export class Hud {
       c.ctxA = c.ctxB = c.ctxC = undefined;
       this.ctx.hidden = !type;
       this.ctx.className = 'ctx scrap' + (type ? ' ctx-' + type : '');
-      this.ctxBar.hidden = type === 'car';
-      this.ctxParts.hidden = type !== 'car';
       if (type === 'campfire') {
         this.ctxIco.innerHTML = glyph('campfire');
         this.ctxTitle.textContent = 'Campfire';
-      } else if (type === 'car') {
-        this.ctxIco.innerHTML = glyph('car');
-        this.ctxTitle.textContent = 'The car';
       } else if (type === 'structure') {
         this.ctxIco.innerHTML = glyph('hammer');
       } else if (type === 'fair') {
@@ -712,19 +699,6 @@ export class Hud {
         this.ctxFill.style.transform = `scaleX(${r})`;
         this.ctx.classList.toggle('warn', fuel > 0 && r < 0.2);
         this.ctx.classList.toggle('dead', fuel <= 0);
-      }
-    } else if (type === 'car') {
-      const parts = ctx.parts | 0;
-      if (c.ctxA !== parts) {
-        c.ctxA = parts;
-        let n = 0;
-        this.ctxPartEls.forEach((p, i) => {
-          const on = !!(parts & (1 << i));
-          if (on) n++;
-          p.classList.toggle('on', on);
-        });
-        this.ctxVal.textContent = n + ' / ' + CAR_PARTS.length;
-        this.ctx.classList.toggle('good', n === CAR_PARTS.length);
       }
     } else if (type === 'structure') {
       if (c.ctxB !== ctx.name) this.ctxTitle.textContent = c.ctxB = ctx.name || 'Structure';

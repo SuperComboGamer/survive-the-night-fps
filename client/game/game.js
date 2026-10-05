@@ -3183,7 +3183,6 @@ export class Game {
       this.power.hud(h); // ([E] held on a generator's switch)
     }
     // context panel
-    const car = this.world.car;
     const counts = this.invCounts();
     h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
     h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what the drink key has left
@@ -3191,10 +3190,7 @@ export class Game {
     const tracked = !s.zombie && self.alive ? trackedRecipe() : null;
     if (tracked && (!this.trackNear || this.frame % 20 === 5)) this.trackNear = this.craftContext();
     h.tracked = tracked ? { r: tracked, counts, near: this.trackNear, unlocked: g.unlocked | 0 } : null;
-    let partsMask = 0;
-    SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
-    if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };
-    else if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
+    if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
     else h.context = this.fair.hud();
     h.ping = Math.round(this.conn.rtt);
     h.stalled = performance.now() - (this.snapAt || 0) > 1000; // nothing from the server for a second
