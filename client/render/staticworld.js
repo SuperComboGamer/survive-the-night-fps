@@ -7,6 +7,7 @@ import { getMaterial, staticSurface } from './materials.js';
 import { createProp } from './models/props.js';
 import { PROPS } from '../../shared/props.js';
 import { buildCity, TIER } from './citykit.js';
+import { MultiMesh } from './multimesh.js';
 
 const CHUNK = 80;
 const CHUNK_CITY = 128; // (the mainland's: its city is a great many materials, and every chunk draws each of them once)
@@ -42,126 +43,11 @@ function shadowSide(mat) {
 // meant to reach the colour pass, and writes nothing if something (frustumCulled = false) puts it there.
 const CASTER_MAT = [THREE.FrontSide, THREE.BackSide, THREE.DoubleSide].map((side) => new THREE.MeshBasicMaterial({ shadowSide: side, colorWrite: false, depthWrite: false }));
 
-// (frustum) => whether it belongs to a light of the scene; each frustum is looked up among the lights once.
-// Made out here, not in the StaticWorld constructor: a closure from there would keep everything the build
-// had in scope alive for as long as the world is.
-function shadowFrustumTest(scene) {
-  const known = new Map();
-  return (f) => {
-    let yes = known.get(f);
-    if (yes === undefined) {
-      yes = false;
-      scene.traverse((o) => {
-        const sh = o.isLight && o.shadow;
-        for (let i = 0; sh && i < sh.getViewportCount(); i++) yes ||= sh.getFrustum(i) === f;
-      });
-      known.set(f, yes);
-    }
-    return yes;
-  };
-}
-
 // A page of positions holds the materials put in it until it has this many vertices (48 MB of them)
 const PAGE_VERTS = 4_000_000;
 // once a vertex buffer is on the graphics card its copy in memory is let go of (the mainland's are 600 MB of them)
 function dropArray() {
   this.array = null;
-}
-
-let multiDraw; // WEBGL_multi_draw, or null where the browser has not got it (undefined: not asked yet)
-
-// One material of the whole static world as one mesh (or, as a caster, the positions of a page of them). Its vertex
-// buffer holds a run of vertices for every chunk (and tier) the material is in; what is drawn of it is the runs
-// whose chunk is near enough (StaticWorld.update: chunk.on, chunk.near against the run's maxDist) and whose
-// bounding sphere is in the frustum being drawn - picked when three asks the mesh whether it is in that frustum
-// (the view's, or a shadow map's: each gets its own list, since the shadow maps are drawn between the view's
-// culling and its drawing). three then draws the first run itself and the rest follow in one multi-draw call, with
-// the program, the uniforms and the vertex arrays three has just set up.
-export class MultiMesh extends THREE.Mesh {
-  // casts(run): whether that run goes into shadow maps from this mesh; shadowOnly: a caster (in no view)
-  constructor(geometry, material, runs, casts, isShadowFrustum, shadowOnly = false) {
-    super(geometry, material);
-    this.matrixAutoUpdate = false;
-    this.runs = runs;
-    this.castRuns = runs.filter(casts);
-    this.isShadowFrustum = isShadowFrustum;
-    this.shadowOnly = shadowOnly;
-    const n = runs.length;
-    this.view = { first: new Int32Array(n), count: new Int32Array(n), n: 0, verts: 0 };
-    this.shadow = { first: new Int32Array(n), count: new Int32Array(n), n: 0, verts: 0 };
-    geometry.setDrawRange(0, 0);
-    // (three's own culling is by one sphere for the mesh: it asks, and the answer is whether any run is in sight)
-    this.frustumCulled = true;
-  }
-
-  pick(runs, frustum, out) {
-    const planes = frustum.planes;
-    let n = 0, verts = 0, end = -1;
-    for (let i = 0; i < runs.length; i++) {
-      const run = runs[i];
-      const c = run.chunk;
-      if (!c.on || c.near >= run.maxDist) continue;
-      let inside = true;
-      for (let p = 0; p < 6; p++) {
-        const pl = planes[p];
-        if (pl.normal.x * run.x + pl.normal.y * run.y + pl.normal.z * run.z + pl.constant < -run.r) {
-          inside = false;
-          break;
-        }
-      }
-      if (!inside) continue;
-      // (a run that starts where the last one ended is the same stretch of the buffer)
-      if (run.first === end) out.count[n - 1] += run.count;
-      else {
-        out.first[n] = run.first;
-        out.count[n++] = run.count;
-      }
-      end = run.first + run.count;
-      verts += run.count;
-    }
-    out.n = n;
-    out.verts = verts;
-    return n > 0;
-  }
-
-  intersectsFrustum(frustum) {
-    if (this.isShadowFrustum(frustum)) return this.pick(this.castRuns, frustum, this.shadow);
-    return !this.shadowOnly && this.pick(this.runs, frustum, this.view);
-  }
-
-  begin(list) {
-    const dr = this.geometry.drawRange;
-    dr.start = list.n ? list.first[0] : 0;
-    dr.count = list.n ? list.count[0] : 0;
-  }
-
-  // the runs after the first: one call for all of them
-  rest(renderer, list) {
-    if (list.n < 2) return;
-    const gl = renderer.getContext();
-    if (multiDraw === undefined) multiDraw = renderer.extensions.get('WEBGL_multi_draw') || null;
-    if (multiDraw) multiDraw.multiDrawArraysWEBGL(gl.TRIANGLES, list.first, 1, list.count, 1, list.n - 1);
-    else for (let i = 1; i < list.n; i++) gl.drawArrays(gl.TRIANGLES, list.first[i], list.count[i]);
-    // (the renderer's own counters know of the first run only)
-    renderer.info.render.triangles += (list.verts - list.count[0]) / 3;
-    if (!multiDraw) renderer.info.render.calls += list.n - 1;
-  }
-
-  onBeforeRender() {
-    this.begin(this.view);
-  }
-
-  onAfterRender(renderer) {
-    this.rest(renderer, this.view);
-  }
-
-  onBeforeShadow() {
-    this.begin(this.shadow);
-  }
-
-  onAfterShadow(renderer) {
-    this.rest(renderer, this.shadow);
-  }
 }
 
 // the bounding sphere a geometry made of just these positions would compute for itself
@@ -549,12 +435,11 @@ export class StaticWorld {
     if (world.city) buildCity(world, (x, z, matName, tpl, tier = 0) => add(x, z, staticSurface(getMaterial(matName)), tpl, IDENTITY, null, null, null, tier));
     // ---- the buffers. Every vertex of a material, whatever chunk it is in, is in one run of one vertex buffer, and
     // the material is ONE mesh: each frame it draws the runs of the chunks that are near enough and in the view,
-    // all of them in a single draw call (WEBGL_multi_draw; see MultiMesh). A valley's static world is then some
+    // all of them in a single draw call (multimesh.js). A valley's static world is then some
     // fifty draw calls, not one for every material of every chunk in sight (four to seven hundred).
     // The positions of every material are in a few large buffers ("pages") that the materials' meshes and the
     // shadow casters all read: a caster is one more mesh per page and shadow side, never seen, that draws the
     // positions of every material of that side at once (a shadow map takes no notice of materials).
-    const isShadowFrustum = shadowFrustumTest(scene);
     this.casters = new THREE.Group();
     this.casters.name = 'static-shadow-casters';
     const nm = new THREE.Matrix3();
@@ -694,7 +579,6 @@ export class StaticWorld {
         continue;
       }
       const g = new THREE.BufferGeometry();
-      g.boundingSphere = new THREE.Sphere(); // (never used to cull - MultiMesh.intersectsFrustum - and three must not make one from positions that are let go of)
       // this material's part of its page: a view that starts at its first vertex (the other attributes are the
       // mesh's own and start at 0, so the runs' firsts do too)
       g.setAttribute('position', new THREE.InterleavedBufferAttribute(m.page.buffer, 3, m.base * 3));
@@ -705,7 +589,7 @@ export class StaticWorld {
       if (tints) g.setAttribute('aTint', attr(tints, 3));
       // (what casts from this mesh itself: only a run whose texture cuts holes in its shadow - everything else is
       // in its page's caster)
-      const mesh = new MultiMesh(g, mat, m.runs, (run) => run.side === CUTOUT, isShadowFrustum);
+      const mesh = new MultiMesh(g, mat, m.runs, { casts: (run) => run.side === CUTOUT });
       mesh.castShadow = m.runs.some((run) => run.side === CUTOUT);
       mesh.receiveShadow = true;
       this.group.add(mesh);
@@ -718,9 +602,8 @@ export class StaticWorld {
         for (const m of pg.mats) for (const run of m.runs) if (run.side === side) runs.push({ ...run, first: run.first + m.base });
         if (!runs.length) continue;
         const g = new THREE.BufferGeometry();
-        g.boundingSphere = new THREE.Sphere();
         g.setAttribute('position', new THREE.InterleavedBufferAttribute(pg.buffer, 3, 0));
-        const caster = new MultiMesh(g, CASTER_MAT[side], runs, () => true, isShadowFrustum, true);
+        const caster = new MultiMesh(g, CASTER_MAT[side], runs, { shadowOnly: true });
         caster.name = 'static-shadow-caster';
         caster.castShadow = true;
         this.casters.add(caster);

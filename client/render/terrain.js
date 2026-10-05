@@ -10,6 +10,7 @@ import { smoothstep } from '../../shared/rng.js';
 import { ROAD } from '../../shared/world.js';
 import { MINE_R, PORTAL } from '../../shared/mine.js';
 import { getTexture } from './textures.js';
+import { MultiMesh, ALWAYS } from './multimesh.js';
 import { GROUND_MACRO_GLSL, groundNoiseTexture, VEG } from './materials.js';
 
 
@@ -309,13 +310,15 @@ export function buildTerrain(world) {
     aExtra: new THREE.BufferAttribute(extra, 4),
     aRoad: new THREE.BufferAttribute(roadAttr, 4),
   };
-  const geos = [];
+  // (the pieces are runs of one index buffer, and the terrain one mesh that draws those in sight in one call: multimesh.js)
+  const runs = [];
+  const idx = new Uint32Array((N - 1) * (N - 1) * 6);
+  let o = 0;
   for (let cj = 0; cj < N - 1; cj += TERRAIN_CHUNK) {
     for (let ci = 0; ci < N - 1; ci += TERRAIN_CHUNK) {
       const i1 = Math.min(N - 1, ci + TERRAIN_CHUNK);
       const j1 = Math.min(N - 1, cj + TERRAIN_CHUNK);
-      const idx = new Uint32Array((i1 - ci) * (j1 - cj) * 6);
-      let o = 0;
+      const first = o;
       let lo = Infinity;
       let hi = -Infinity;
       for (let j = cj; j < j1; j++) {
@@ -334,15 +337,14 @@ export function buildTerrain(world) {
           hi = Math.max(hi, H[k00], H[k10], H[k01], H[k11]);
         }
       }
-      const geo = new THREE.BufferGeometry();
-      for (const name in attrs) geo.setAttribute(name, attrs[name]);
-      geo.setIndex(new THREE.BufferAttribute(idx, 1));
       const sx = ((i1 - ci) * GRID_STEP) / 2;
       const sz = ((j1 - cj) * GRID_STEP) / 2;
-      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(-MAP_HALF + ci * GRID_STEP + sx, (lo + hi) / 2, -MAP_HALF + cj * GRID_STEP + sz), Math.hypot(sx, sz, (hi - lo) / 2));
-      geos.push(geo);
+      runs.push({ first, count: o - first, x: -MAP_HALF + ci * GRID_STEP + sx, y: (lo + hi) / 2, z: -MAP_HALF + cj * GRID_STEP + sz, r: Math.hypot(sx, sz, (hi - lo) / 2), chunk: ALWAYS, maxDist: Infinity });
     }
   }
+  const geo = new THREE.BufferGeometry();
+  for (const name in attrs) geo.setAttribute(name, attrs[name]);
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
 
   const tex = (name) => {
     const t = getTexture(name);
@@ -527,15 +529,13 @@ export function buildTerrain(world) {
   mat.customProgramCacheKey = () => 'terrain-splat-4';
   const group = new THREE.Group();
   group.name = 'terrain';
-  for (const geo of geos) {
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
+  const mesh = new MultiMesh(geo, mat, runs);
+  mesh.receiveShadow = true;
+  group.add(mesh);
   // (what Game does with it: the hills shade the valleys on the presets with sun shadows; a world comes and goes)
   group.userData.setShadows = (on) => group.children.forEach((m) => (m.castShadow = on));
   group.userData.dispose = () => {
-    for (const geo of geos) geo.dispose();
+    geo.dispose();
     mat.dispose();
   };
   return group;

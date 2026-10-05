@@ -99,6 +99,35 @@ try {
     writeFileSync(pjoin(REPO, 'shots', 'perf', `profile-${args.scene}.cpuprofile`), JSON.stringify(profile));
     await cdp.detach().catch(() => {});
   }
+  // ---- one frame's draw calls, by what is drawn and in which pass
+  await throttle(page, 0);
+  const who = await page.evaluate(
+    () =>
+      new Promise((done) => {
+        const r = window.__game.renderer.renderer;
+        const own = r.renderBufferDirect;
+        const tally = {};
+        r.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+          let top = object;
+          while (top.parent && !top.parent.isScene) top = top.parent;
+          const pass = scene === null ? 'shadow' : camera.isOrthographicCamera ? 'post' : camera === window.__game.renderer.vmCamera ? 'hands' : 'view';
+          const what = pass === 'post' ? material.type : top.name || (object.isInstancedMesh ? 'instanced:' + (object.material.name || object.geometry.type) : object.type + ':' + (material.name || material.type));
+          const k = pass + ' ' + what;
+          tally[k] = (tally[k] || 0) + 1;
+          return own.call(this, camera, scene, geometry, material, object, group);
+        };
+        requestAnimationFrame(() => {
+          for (const k in tally) delete tally[k];
+          requestAnimationFrame(() => {
+            r.renderBufferDirect = own;
+            done(tally);
+          });
+        });
+      }),
+  );
+  await throttle(page, 16);
+  const rowsW = Object.entries(who).sort((a, b) => b[1] - a[1]);
+  console.log(`\none frame's ${rowsW.reduce((a, r) => a + r[1], 0)} draw calls: ` + rowsW.map(([k, v]) => `${v} ${k}`).join(' | '));
   // ---- ablations
   console.log('\nwith one thing taken away:');
   const ab = async (label, on, off) => {
