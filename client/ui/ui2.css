@@ -4469,11 +4469,13 @@
 }
 
 /* ---------------------------------------------------------------- a cutscene (client/game/cutscene.js): the bars,
-   the fade to black between its shots, the skip line. The HUD is not there while one plays. */
+   the fade to black between its shots, the skip line. The HUD is not there while one plays.
+   (Its root hangs off the body. The HUD's title card is a .cine with a .cine-title of its own, in ui.css: these
+   rules must not reach it, or the card's title is transparent and its brush fills the screen.) */
 body.cine-on #ui > * {
   visibility: hidden !important;
 }
-.cine {
+body > .cine {
   position: fixed;
   inset: 0;
   z-index: 60;
@@ -4497,7 +4499,7 @@ body.cine-on #ui > * {
 .cine-bottom {
   bottom: 0;
 }
-.cine-title {
+body > .cine > .cine-title {
   position: absolute;
   left: 0;
   right: 0;
