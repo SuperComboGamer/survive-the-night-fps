@@ -1642,7 +1642,7 @@ export class Game {
     // nothing in the way but the world: the hole every pellet leaves in what it struck, the dust or the sparks off
     // it (Impacts.shot: by what that is made of), and the window it went through on its way. The server's word of
     // the same impact, a round trip later, is dropped (sameAsOwn).
-    this.impacts.shot(ev.weapon, ev.x, ev.y, ev.z, dx, dy, dz, wall, col, terrain, def.range);
+    this.impacts.shot(ev.weapon ?? MOUNTED_GUN, ev.x, ev.y, ev.z, dx, dy, dz, wall, col, terrain, def.range); // (a round with no weapon named is the mounted gun's)
     if (wall >= 0) {
       const list = this.ownImpacts || (this.ownImpacts = []);
       if (list.length >= 48) list.shift();

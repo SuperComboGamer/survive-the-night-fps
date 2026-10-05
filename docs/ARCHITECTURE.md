@@ -22,6 +22,9 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   clinic.js      Mercy Clinic and the rule that its wards are dark at noon (see Dark interiors below)
   rail.js        the railway: its heights, the cut and fill, Whitlock Depot, the stalled train (see The railway)
   collision.js   static/dynamic collider grids, ray casts
+  surfaces.js    what a blow or a bullet lands on (wood, stone, metal, glass, earth, cloth, rubber) and the mark,
+                 the bits and the sound each kind of blow makes on it (see Blows on the world below)
+  wrecks.js      a wreck's record of the blows it took, and its alarm (see Blows on the world below)
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
                  it to the wave weights and the client announces it, each from the seed: nothing on the wire
@@ -983,6 +986,79 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
 - `scripts/test-handcar.js` holds the placement on ten valleys, the rules against the server, and a rider's
   prediction on a laggy link.
 
+## Blows on the world: marks, bullet holes, wrecks taken apart
+
+Anything that strikes the world leaves something there: a knife a slash in a plank wall, a bat a dent in a car door,
+a bullet a hole that fits what it went into, a grenade a scorch. Light things rock, windows that are shot enough
+fall out, and a wreck that is hit for scrap comes apart blow by blow. Almost all of it is the client's own and
+nobody's state; the one thing the server keeps is each wreck's short record of the blows it took.
+
+- **What was struck** (`shared/surfaces.js`). World generation tags every collider it makes with what it is a solid
+  of (`col.tag`, set in `shared/worldkit.js`: the material name of a wall's part, or the prop itself), and
+  `surfaceOf` turns that - or a tree, a built structure's type, the ground's kind - into one of seven `SURF`s. A
+  prop is judged finer than its box: the ray is cast again at the triangles of its model (`Wrecks.ray`), and the
+  material of the triangle it strikes is the surface (a car's glass, its tyre, its paint). `'dark'`, the black of
+  an opening, and the grass cards round a wreck are passed through (`NO_STRIKE`). The weapon gives the `BLOW`
+  (slash, chop, blunt, hammer; a bullet and a blast are blows too). One table each, `[surface][blow]`: the mark
+  (`markFor`), what flies off (`bitsFor`), the sound (`soundFor`); a bullet's hole by the gun (`shotMark`: its
+  size, the ragged one for the anti-tank rifle, a graze drawn out along an oblique shot). A new material or prop
+  type wants a row in `MAT_SURF` / `PROP_SURF`; `scripts/test-wrecks.js` holds the tables.
+- **Where the client learns of it** (`client/game/impacts.js`, `Game.impacts`):
+  - a melee swing that hit no body is `EVT.STRIKE` from the server (who, the blow, where, which way: 12 bytes, to
+    whoever is within 90 m). It replaces the `EVT.IMPACT` and the `SOUND.CHOP` / `SOUND.SALVAGE` a swing used to
+    send; the client finds what it struck in its own copy of the world;
+  - a bullet is judged where it is fired (`Game.predictPellet`: ours as the trigger is pulled, anyone else's from
+    their `EVT.SHOT`, the mounted gun's too) - every pellet of a shotgun leaves its hole, nothing new is on the wire,
+    and the server's own `EVT.IMPACT` for the same round is dropped (`sameAsOwn`);
+  - a blast is `EVT.EXPLOSION`: rays out from it scorch and pit what stands round it.
+- **Marks** (`client/render/marks.js`). Every mark is a quad of one atlas (painted in code, a cell per kind) in one
+  mesh: one draw call, lit like the wall it lies on, no draw call at all while there are none. `MarkPool` (no
+  three.js in it) is a ring of `MARK_RING` (400) that the newest overwrite - a hundred rounds into one wall cost
+  what one does - each fading out after `MARK_LIFE`, plus `MARK_KEPT` slots that stay until given back (a wreck's
+  dents). At rest `update()` is one comparison. A mark has an owner - the collider of a structure or a tree, a prop,
+  a window pane - and goes with it (`removeOwner`: a wall torn down in `Entities.destroyView`, a tree felled) or
+  moves with it (`moveOwner`: a car rocking). A mark is made no bigger than the face has room for (`Impacts.mark`,
+  `roomAt` on a model), so it does not hang off an edge. Windows have no collider, so a shot or a swing is asked
+  against the panes themselves (`Impacts.paneAt`): `PANE_SHOTS` and one falls out (lifted out of the static world,
+  back at dawn).
+- **What flies off** (`client/render/strikefx.js`): sparks and dust through the particle pools Effects already
+  draws, and `Chips`, one instanced mesh of small solid bits (splinters, grit, flakes, clods, shards, the scrap a
+  wreck gives up, which flies to the hand of whoever earned it). Nothing is updated or drawn while nothing is in
+  the air.
+- **Props that react** (`client/render/wrecks.js`, `liftbatch.js`, `wreckgeo.js`). The static world is merged and
+  its vertices live on the card, so a prop that is to change is *lifted*: `StaticWorld.lift` cuts its stretch out
+  of every material's runs (and the shadow casters'; `MultiMesh.cut`), `StaticWorld.pieces` builds its triangles
+  again, and the `LiftBatch` draws them - one mesh per material for every lifted prop there is, culled prop by
+  prop by the rule its stretch of the static world had. Whoever owns a prop writes its run when its shape changes
+  and at no other time: a valley of wrecks at rest costs those few draw calls and no work. Only liftable props are
+  recorded when the world is built (`liftable`: what gives scrap, and `LIGHT_PROPS`). A light prop (a barrel, a
+  crate, a chair) rocks on its base from a blow and is put back the moment it settles.
+- **Wrecks** (`shared/wrecks.js`, `Game.wreckHit`, `Wreck` in `client/render/wrecks.js`). A blow on a wreck is put
+  on its record beside the salvage left in it (`Game.gather`: `hits`, up to `WRECK_HITS_MAX`, each where it landed,
+  which way and with what) and sent to everybody (`EVT.WRECK`); who joins or comes back is sent every record whole
+  (`WRECKF.REPLAY`, with `EVT.STRIPPED` as before); a save keeps them; dawn forgets them (`EVT.REGROWN`), and every
+  wreck is whole again as every tree stands again. A blast is a blow that takes no salvage (`Game.blastWrecks`).
+  **The server does not know what a blow did**: each client works the same wreck out of the same record. Its
+  triangles are sorted into the solid pieces the model was built from (`islands`), and those into parts by where
+  they are and what they are made of - panes and lamps, wheels, lids and tailgates on their hinges, a door that
+  stands ajar, and trim (whatever is small and on the outside). Each blow dents the panel it lands on (the panels
+  are cut finer for it, `refine`), leaves a kept mark, and moves the part it struck or is beside one step; a blow
+  that took salvage also strips the nearest part still on; at nothing left the wreck is picked clean. What comes
+  off is thrown, bounces and lies beside the wreck, clear of every collider - its whole flight worked out when it
+  leaves, so a client that was not watching puts it where the others saw it land, and a blow is always judged on
+  the wreck as it will stand once everything has come to rest (`Wreck.apply`). `scripts/test-wrecks.js` holds
+  watched and replayed wrecks equal to the vertex. The rocking on the springs, the sparks and the sounds are not on
+  record: each client's own, from `EVT.STRIKE`. A wreck on record is not built until the eye is within `BUILD_NEAR`.
+  A new vehicle needs nothing: the parts are found in its model (a new *kind* of part wants a rule in `Wreck.sort`).
+- **The alarm** (`WRECK_ALARM` in `shared/wrecks.js`: every number in one place; `alarmStep` is the whole rule).
+  About a fifth of the cars and vans still have a live battery (drawn at a wreck's first hard blow of the day).
+  That blow makes it chirp and blink (`EVT.WRECK_ALARM`), which is the warning: from then on a hard blow sets it
+  off 45% of the time. A knife never does either. Ringing, it calls the dead every 3 s with the noise any sound
+  makes (`Zombies.noise`, 85 m; it spawns nothing, unlike a trunk's alarm) for 18 s, or until a blow on the bonnet
+  end kills it. One alarm a wreck a day. The salvage a hit gives is untouched by any of this.
+- **Sounds** (`client/audio/synth-strike.js`, `STRIKE_MAP` in `audio.js`, `Audio.strike(name)`): a struck thing is
+  an exciter into a bank of modes, with the recorded impact laid over it where there is one, pitched by weapon.
+
 ## Gameplay systems (iteration 2)
 
 - **No base.** Structures can be built anywhere (within 7 m of the builder). `STRUCT.DOOR` snaps into the
@@ -1222,7 +1298,8 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   world-gen cylinders. A new kind of [E] target needs a case in `Highlight.targetObject`.
 - **Harvesting** is a melee swing that hits nobody: `Combat.melee` then traces the world to the weapon's range
   + 0.3 m and hands a tree (`COL.TREE`) or a wreck (`COL.SALVAGE`: props marked `salvage`) to `Game.gatherHit`
-  (6 / 5 hits each, refilled at dawn). The sixth hit fells a tree (`Game.fellTree`, `shared/felling.js`): its
+  (6 / 5 hits each, refilled at dawn). What the swing does to what it struck - the mark, the sound, a wreck coming apart -
+  is "Blows on the world" below. The sixth hit fells a tree (`Game.fellTree`, `shared/felling.js`): its
   collider leaves the static grid on the server and, by `EVT.FELL` (and `EVT.STRIPPED` for a late joiner), on
   every client, until `EVT.REGROWN` puts them all back; the client hides its instance and `render/fallingtrees.js`
   tips a copy over to land at `FALL_T`, where `SOUND.TREE_FALL`'s crash sits, then dithers it out. The client

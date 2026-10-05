@@ -397,7 +397,7 @@ const PAINT = {
     for (let i = 0; i < 7; i++) {
       const y = 57 + i * 2.2 + (r() - 0.5) * 2;
       const x0 = 6 + r() * 24, x1 = 122 - r() * 24;
-      c.strokeStyle = i % 3 === 1 ? rgba(70, 52, 40, 0.8) : rgba(206 + r() * 30, 210 + r() * 30, 214 + r() * 30, 0.6 + r() * 0.4);
+      c.strokeStyle = i % 3 === 1 ? rgba(70, 52, 40, 0.7) : rgba(160 + r() * 40, 164 + r() * 40, 168 + r() * 40, 0.5 + r() * 0.4);
       c.lineWidth = 0.8 + r() * 1.6;
       c.beginPath();
       c.moveTo(x0, y);
@@ -406,34 +406,32 @@ const PAINT = {
     }
   },
   [MARK.GASH_METAL](c, r) {
-    lens(c, r, 6, 122, 12, 0.3);
-    c.fillStyle = 'rgba(196,200,204,0.9)';
+    // a crease cut through the paint: a dark slit, a thin edge of bare steel under it, the paint flaked along it
+    soft(c, 64, 64, 4, 52, 'rgba(0,0,0,0.22)', 'rgba(0,0,0,0)');
+    lens(c, r, 6, 122, 9, 0.35);
+    c.fillStyle = 'rgba(150,154,158,0.85)';
     c.fill();
-    lens(c, r, 12, 116, 6, 0.4);
-    c.fillStyle = '#060606';
+    lens(c, r, 10, 118, 5, 0.4);
+    c.fillStyle = '#080808';
     c.fill();
-    c.strokeStyle = 'rgba(240,242,246,0.9)';
-    c.lineWidth = 1.4;
-    c.beginPath();
-    c.moveTo(12, 72);
-    c.quadraticCurveTo(64, 84, 116, 72);
-    c.stroke();
-    ticks(c, r, 10, 14, 114, 64, 10, 'rgba(120,70,40,0.7)', 1.5, 0.8);
+    ticks(c, r, 12, 14, 114, 64, 6, 'rgba(120,70,40,0.6)', 1.2, 0.7);
   },
   [MARK.DENT_METAL](c, r) {
     // a hollow, lit from above: dark under its upper lip, bright along its lower one
-    soft(c, 64, 64, 6, 60, 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0)');
+    soft(c, 64, 60, 4, 56, 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0)');
     c.lineCap = 'round';
-    c.strokeStyle = 'rgba(0,0,0,0.55)';
-    c.lineWidth = 9;
+    c.filter = 'blur(5px)';
+    c.strokeStyle = 'rgba(0,0,0,0.6)';
+    c.lineWidth = 15;
     c.beginPath();
-    c.arc(64, 68, 40, Math.PI * 1.12, Math.PI * 1.88);
+    c.arc(64, 70, 40, Math.PI * 1.14, Math.PI * 1.86);
     c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,0.4)';
-    c.lineWidth = 6;
+    c.strokeStyle = 'rgba(255,255,255,0.3)';
+    c.lineWidth = 11;
     c.beginPath();
-    c.arc(64, 58, 42, Math.PI * 0.14, Math.PI * 0.86);
+    c.arc(64, 56, 42, Math.PI * 0.16, Math.PI * 0.84);
     c.stroke();
+    c.filter = 'none';
     // the paint gone where the blow landed: bare steel, a rim of primer and rust
     blob(c, r, 62, 62, 17, 0.5, 13);
     c.fillStyle = 'rgba(118,72,44,0.9)';
@@ -610,7 +608,7 @@ const PAINT = {
     for (let i = 0; i < 70; i++) {
       const a = r() * 6.28, d = Math.sqrt(r()) * 58;
       const x = 64 + Math.cos(a) * d, y = 64 + Math.sin(a) * d, s = 2 + r() * 6;
-      c.fillStyle = r() < 0.3 ? rgba(240, 250, 252, 0.9) : rgba(150 + r() * 50, 190 + r() * 40, 196 + r() * 40, 0.5 + r() * 0.35);
+      c.fillStyle = r() < 0.2 ? rgba(214, 228, 230, 0.8) : rgba(110 + r() * 40, 150 + r() * 40, 150 + r() * 40, 0.4 + r() * 0.3);
       c.beginPath();
       c.moveTo(x, y);
       c.lineTo(x + s * (r() - 0.2), y + s * (r() - 0.5));
@@ -662,6 +660,7 @@ const PAINT = {
   },
 };
 
+const TALL = { [MARK.SLASH_WOOD]: 3.2, [MARK.GOUGE_WOOD]: 2.4, [MARK.SCRATCH_STONE]: 3.4, [MARK.SCRAPE_METAL]: 2.6, [MARK.GASH_METAL]: 1.8, [MARK.CUT_EARTH]: 2.6, [MARK.TEAR_CLOTH]: 3 };
 export function paintMarkAtlas(canvas = document.createElement('canvas')) {
   canvas.width = CELL * MARK_COLS;
   canvas.height = CELL * MARK_ROWS;
@@ -673,6 +672,12 @@ export function paintMarkAtlas(canvas = document.createElement('canvas')) {
     c.beginPath();
     c.rect(2, 2, CELL - 4, CELL - 4); // (a clear border: no cell bleeds into the next)
     c.clip();
+    // (a long mark's cell is laid on a quad several times as long as it is high: drawn that much taller here, it
+    // comes out the right thickness there)
+    const tall = TALL[cell] || 1;
+    c.translate(0, 64);
+    c.scale(1, tall);
+    c.translate(0, -64);
     PAINT[k](c, rng(977 + cell * 131));
     c.restore();
   }

@@ -29,7 +29,7 @@ import { refine, islands, boxDist, rayPieces, dent, PANEL } from './wreckgeo.js'
 
 const PAINTED = new Set(['carpaint', 'paint', 'aircraft']);
 const TRIM = new Set(['chrome', 'steel', 'taillight', 'metal', 'rust', 'wood', 'plastic', 'iron', 'olive', 'tin', 'rubber', 'wire', 'emissive_red', 'cloth']);
-const FINE = 0.3; // m: no edge of a panel is longer (a dent has vertices to move)
+const FINE = 0.27; // m: no edge of a panel is longer (a dent has vertices to move)
 const LOOSE_MAX = 14;
 const SIM_DT = 1 / 60;
 const BUILD_NEAR = 170; // m: a wreck on record is built when the eye is this near
@@ -38,6 +38,8 @@ const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _q = new THREE.Quater
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1);
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
 const _ray = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
+const _in = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
+const BEHIND = new Set(['dark']);
 const _l = [0, 0, 0];
 
 function seeded(seed) {
@@ -142,9 +144,10 @@ class Lifted {
         this.hy += this.vy * h;
       }
       const L = this.limit;
-      this.ax = Math.max(-L, Math.min(L, this.ax));
-      this.az = Math.max(-L, Math.min(L, this.az));
-      this.hy = Math.max(-0.05, Math.min(0.05, this.hy));
+      // (no further off where it rests than its springs travel)
+      this.ax = this.tx + Math.max(-L, Math.min(L, this.ax - this.tx));
+      this.az = this.tz + Math.max(-L, Math.min(L, this.az - this.tz));
+      this.hy = this.ty + Math.max(-0.05, Math.min(0.05, this.hy - this.ty));
       const e = Math.abs(this.ax - this.tx) + Math.abs(this.az - this.tz) + Math.abs(this.hy - this.ty) * 4 + (Math.abs(this.vx) + Math.abs(this.vz) + Math.abs(this.vy) * 4) * 0.06;
       if (e < 0.0006) {
         this.ax = this.tx;
@@ -466,8 +469,8 @@ class Wreck extends Lifted {
     const reach = blow === BLOW.BLAST ? 1.7 : blow === BLOW.SLASH ? 0.1 : blow === BLOW.BLUNT ? 0.34 : 0.24;
     if (blow === BLOW.BLAST) {
       // everything on that side: the glass goes, the trim is thrown off, the body is stove in
+      if (struck) this.markAt(blow, isle, hx, hy, hz, nx, ny, nz, dx, dy, dz, r, 1.1, 0.13);
       this.dent(hx, hy, hz, dx, dy, dz, 1.1, 0.13);
-      if (struck) this.markAt(blow, isle, hx, hy, hz, nx, ny, nz, dx, dy, dz, r);
       for (const p of this.parts) {
         if (boxDist(p, l[0], l[1], l[2]) > reach) continue;
         if (p.kind === 'pane' || p.kind === 'lamp') this.breakGlass(p, 2, live, dx, dy, dz);
@@ -482,7 +485,8 @@ class Wreck extends Lifted {
         let best = reach;
         for (const p of this.parts) {
           if (p.kind === 'wheel' && blow !== BLOW.SLASH && blow !== BLOW.CHOP) continue;
-          const d = boxDist(p, l[0], l[1], l[2]);
+          // (glass has to be struck, or all but: a blow on the door under a window leaves the window)
+          const d = boxDist(p, l[0], l[1], l[2]) * (p.kind === 'pane' ? 3 : 1);
           if (d < best && !this.spent(p)) {
             best = d;
             part = p;
@@ -492,8 +496,12 @@ class Wreck extends Lifted {
       const glass = isle && isle.name === 'glass';
       const tyre = isle && (isle.name === 'tire' || isle.name === 'rubber');
       if (struck && !glass) {
-        if (!tyre && blow !== BLOW.SLASH) this.dent(hx, hy, hz, dx, dy, dz, blow === BLOW.BLUNT ? 0.36 : 0.24, (blow === BLOW.CHOP ? 0.035 : 0.055) * (heavy ? 1.4 : 1));
-        this.markAt(blow, isle, hx, hy, hz, nx, ny, nz, dx, dy, dz, r);
+        // a bat stoves a panel in a hand's depth across half a metre; a machete leaves a crease, a hammer a deep small pit
+        const radius = blow === BLOW.BLUNT ? 0.36 : blow === BLOW.CHOP ? 0.24 : 0.2;
+        const depth = tyre || blow === BLOW.SLASH ? 0 : (blow === BLOW.BLUNT ? 0.085 : blow === BLOW.CHOP ? 0.05 : 0.06) * (heavy ? 1.35 : 1);
+        // (the mark first, on the panel while it is still flat; then the hollow, and the mark let down into it)
+        this.markAt(blow, isle, hx, hy, hz, nx, ny, nz, dx, dy, dz, r, radius, depth);
+        if (depth) this.dent(hx, hy, hz, dx, dy, dz, radius, depth);
       }
       if (part) this.react(part, blow, heavy, force, live, l, dx, dy, dz, r);
     }
@@ -502,7 +510,8 @@ class Wreck extends Lifted {
       let best = Infinity, pick = null;
       for (const p of this.parts) {
         if (p === part || this.spent(p) || p.kind === 'wheel' || p.kind === 'door') continue;
-        const d = boxDist(p, l[0], l[1], l[2]) + (p.kind === 'pane' ? 0.5 : 0) + (p.kind === 'lamp' ? 1 : 0);
+        // (trim first; glass is not worth taking, and goes when there is nothing else in arm's reach)
+        const d = boxDist(p, l[0], l[1], l[2]) + (p.kind === 'pane' ? 1.6 : 0) + (p.kind === 'lamp' ? 1 : 0);
         if (d < best) {
           best = d;
           pick = p;
@@ -520,10 +529,16 @@ class Wreck extends Lifted {
 
   dent(x, y, z, dx, dy, dz, radius, depth) {
     // (into the panel: mostly the way the blow went, never out of it)
+    // (no further in than what is behind the skin: the black of the wheel arches and the cabin are solids of the
+    // model a finger's width inside it, and a panel pushed through one shows as a black patch)
+    const inner = (vx, vy, vz, h) => {
+      rayPieces(this.pieces, (pi) => this.orig[pi], vx - dx * 0.004, vy - dy * 0.004, vz - dz * 0.004, dx, dy, dz, h + 0.02, _in, BEHIND);
+      return _in.t < 0 ? h : Math.max(0, _in.t - 0.012);
+    };
     const moved = dent(this.pieces, (pi) => this.orig[pi], (pi) => this.origN[pi], (pi, v) => {
       const s = this.isles[this.isleOf[pi][v]];
       return s && !s.ground && !(s.part && s.part.kind === 'loose');
-    }, x, y, z, dx, dy, dz, radius, depth);
+    }, x, y, z, dx, dy, dz, radius, depth, inner);
     if (!moved) return;
     // (the islands it bent, as they stand now)
     const seen = new Set();
@@ -543,12 +558,24 @@ class Wreck extends Lifted {
   }
 
   // the mark a blow leaves where it landed (it stays: part of what the wreck looks like)
-  markAt(blow, isle, x, y, z, nx, ny, nz, dx, dy, dz, r) {
+  // radius, depth: of the dent about to be pressed in there - the mark is let down to the hollow's depth at its own edge
+  markAt(blow, isle, x, y, z, nx, ny, nz, dx, dy, dz, r, radius = 1, depth = 0) {
     const surf = isle ? surfaceOfMat(isle.name) : SURF.METAL;
     if (surf === SURF.GLASS) return;
     const m = markFor(surf, blow);
-    const k = 0.85 + r() * 0.3;
-    const c = m.along ? strokeCorners(x, y, z, nx, ny, nz, m.w * k, m.h * k, dx, dy, dz, r()) : markCorners(x, y, z, nx, ny, nz, m.w * k, m.h * k, null, 0, 0, r() * 6.283);
+    const half = Math.max(m.w, m.h) / 2;
+    const room = roomAt((...a) => this.ray(...a), x, y, z, nx, ny, nz, half);
+    const k0 = 0.85 + r() * 0.3, spin = r(), turn = r();
+    if (room <= 0) return; // (no face there big enough to carry it: the dent itself is the mark)
+    const k = k0 * (room / half);
+    if (depth) {
+      const e = Math.min(1, (room * 0.8) / radius);
+      const sink = depth * (1 - e * e) ** 2;
+      x += dx * sink;
+      y += dy * sink;
+      z += dz * sink;
+    }
+    const c = m.along ? strokeCorners(x, y, z, nx, ny, nz, m.w * k, m.h * k, dx, dy, dz, spin) : markCorners(x, y, z, nx, ny, nz, m.w * k, m.h * k, null, 0, 0, turn * 6.283);
     this.keep(m.cell, c, nx, ny, nz, isle, 1, blow === BLOW.BLAST ? 0.7 : 1);
   }
 
@@ -656,13 +683,14 @@ class Wreck extends Lifted {
     p.state = 1;
     const tyre = p.isles[0];
     const side = Math.sign(tyre.mid[0]) || 1, end = Math.sign(tyre.mid[2]) || 1;
-    const sag = Math.min(0.02, 0.028 / Math.max(1, this.mass));
+    // (a flat tyre lets its corner down a hand's breadth: the body leans to that side and that end)
+    const sag = 0.05 / Math.max(1, this.mass) ** 0.5;
     const from = { tx: this.tx, tz: this.tz, ty: this.ty };
-    const to = { tx: from.tx + end * sag * 0.55, tz: from.tz - side * sag, ty: from.ty - 0.006 };
+    const to = { tx: from.tx + end * sag * 0.45, tz: from.tz - side * sag, ty: from.ty - 0.012 };
     const y0 = tyre.min[1];
     const set = (k) => {
       // the tyre goes down on its rim and spreads at the ground; the corner of the body comes down with it
-      const sq = 1 - 0.3 * k;
+      const sq = 1 - 0.34 * k;
       _m.makeTranslation(tyre.mid[0], y0, tyre.mid[2]).multiply(_m2.makeScale(1 + 0.08 * k, sq, 1 + 0.03 * k)).multiply(_m2.makeTranslation(-tyre.mid[0], -y0, -tyre.mid[2]));
       _m2.multiplyMatrices(this.W, _m).multiply(this.Wi);
       for (const s of p.isles) {
@@ -702,8 +730,19 @@ class Wreck extends Lifted {
       }
       p.dir = dir;
     }
-    p.state = Math.min(3, p.state + steps);
-    if (p.state >= 3) return this.throwOff(p, live, dx, dy, dz, 0.7, r);
+    // two stops; wide open it takes two more blows to tear it off its hinges
+    if (p.state >= 2) {
+      p.wear = (p.wear || 0) + steps;
+      if (p.wear >= 2) {
+        p.state = 3;
+        return this.throwOff(p, live, dx, dy, dz, 0.7, r);
+      }
+      // (it shudders on its hinges)
+      const a = p.angle || 0;
+      if (live) this.anim(p, 0.5, (k) => this.setOp(p, this.hingeM(p.hinge, p.axis, a + Math.sin(k * Math.PI * 3) * 0.07 * (1 - k), _m2)));
+      return;
+    }
+    p.state = Math.min(2, p.state + steps);
     this.swingTo(p, dir * p.stops[p.state - 1], live);
   }
   swingTo(p, to, live) {
@@ -929,6 +968,36 @@ class Wreck extends Lifted {
     if (!out.length) for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push(this.worldOf([sx * this.half[0] * 0.8, this.half[1] * 0.45, sz * this.half[2]], new THREE.Vector3()));
     return (this._lamps = out);
   }
+}
+
+/**
+ * How big a mark a model has room for at p (normal n): the half-size, of `half` or less, at which the four points
+ * round p still lie on the same face - a dent's mark must not hang off the edge of a pillar or float over a wheel
+ * arch. ray(ox, oy, oz, dx, dy, dz, maxT, out): the model's. 0: not even a third of it fits.
+ */
+const _probe = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
+export function roomAt(ray, px, py, pz, nx, ny, nz, half) {
+  let ax = -nz, ay = 0, az = nx;
+  let l = Math.hypot(ax, az);
+  if (l < 0.3) {
+    ax = 1;
+    az = 0;
+    l = 1;
+  }
+  ax /= l;
+  az /= l;
+  const bx = ny * az - nz * ay, by = nz * ax - nx * az, bz = nx * ay - ny * ax;
+  for (const k of [1, 0.7, 0.45, 0.3]) {
+    const s = half * k * 0.85;
+    let ok = true;
+    for (let i = 0; i < 4 && ok; i++) {
+      const u = i < 2 ? (i ? s : -s) : 0, v = i < 2 ? 0 : i === 2 ? s : -s;
+      ray(px + nx * 0.12 + ax * u + bx * v, py + ny * 0.12 + ay * u + by * v, pz + nz * 0.12 + az * u + bz * v, -nx, -ny, -nz, 0.3, _probe);
+      ok = _probe.t >= 0 && Math.abs(_probe.t - 0.12) < 0.06 && _probe.nx * nx + _probe.ny * ny + _probe.nz * nz > 0.7; // (a panel already bent is still a panel)
+    }
+    if (ok) return half * k;
+  }
+  return 0;
 }
 
 // a stroke's mark: its long side the way the weapon was drawn across the surface - across the swing's line, a

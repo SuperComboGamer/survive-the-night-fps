@@ -2,7 +2,7 @@
 // pieces the model was built from ("islands": a bumper, a pane, a wheel), panels cut finer so that a dent has
 // something to bend, a ray against the triangles themselves. No three.js scene here: typed arrays in, typed arrays
 // out, so scripts/test-wrecks.js can hold it.
-import { NO_SURFACE } from '../../shared/surfaces.js';
+import { NO_STRIKE } from '../../shared/surfaces.js';
 
 // ---------------------------------------------------------------- finer panels
 // The materials a blow dents: painted and bare sheet metal.
@@ -160,14 +160,15 @@ export function boxDist(is, x, y, z) {
  * positions to test (the shape as it is now). Triangles of what is no surface (grass cards) and collapsed ones
  * are passed through.
  */
-export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out) {
+export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out, only = null) {
   out.t = -1;
   let best = maxT;
   for (let pi = 0; pi < pieces.length; pi++) {
     const piece = pieces[pi];
     const P = pos(pi);
     for (const r of piece.names) {
-      if (NO_SURFACE.has(r.name)) continue;
+      // (only: just the materials of that set - what lies behind a panel)
+      if (only ? !only.has(r.name) : NO_STRIKE.has(r.name)) continue;
       for (let v = r.first, end = r.first + r.count; v < end; v += 3) {
         const o = v * 3;
         const ax = P[o], ay = P[o + 1], az = P[o + 2];
@@ -204,15 +205,16 @@ export function rayPieces(pieces, pos, ox, oy, oz, dx, dy, dz, maxT, out) {
 
 // ---------------------------------------------------------------- a dent
 /**
- * Pushes the PANEL vertices of `pieces` within `radius` of p in along d by up to `depth`, and leans their normals
- * into the hollow. pos / nrm (piece): the arrays to bend. ok(piece, vertex): may this vertex be bent (not a part
- * that has come off). Returns how many moved.
+ * Pushes the PANEL vertices of `pieces` within `radius` of p in along d by up to `depth`. pos (piece): the positions
+ * to bend (nrm: not used, see below). ok(piece, vertex): may this vertex be bent (not a part
+ * that has come off). room: see below. Returns how many moved.
  */
-export function dent(pieces, pos, nrm, ok, px, py, pz, dx, dy, dz, radius, depth) {
+export function dent(pieces, pos, nrm, ok, px, py, pz, dx, dy, dz, radius, depth, room = null) {
   let moved = 0;
+  void nrm;
   const r2 = radius * radius;
   for (let pi = 0; pi < pieces.length; pi++) {
-    const P = pos(pi), N = nrm(pi);
+    const P = pos(pi);
     for (const r of pieces[pi].names) {
       if (!PANEL.has(r.name)) continue;
       for (let v = r.first, end = r.first + r.count; v < end; v++) {
@@ -220,27 +222,19 @@ export function dent(pieces, pos, nrm, ok, px, py, pz, dx, dy, dz, radius, depth
         const rx = P[o] - px, ry = P[o + 1] - py, rz = P[o + 2] - pz;
         const q = rx * rx + ry * ry + rz * rz;
         if (q >= r2 || !ok(pi, v)) continue;
-        // (only what faces the blow: the far side of a thin panel is another sheet)
-        const facing = N[o] * dx + N[o + 1] * dy + N[o + 2] * dz;
-        if (facing > 0.25) continue;
+        // (how far a vertex goes depends on where it is and nothing else: the faces that meet at an edge - the side
+        // of a wing and the lip of its wheel arch - have a vertex each there, and they must stay together)
         const k = 1 - q / r2;
-        const h = depth * k * k;
+        let h = depth * k * k;
+        // (room(x, y, z, h): how far in a vertex can go before it is through what lies behind the panel)
+        if (room) h = Math.min(h, room(P[o], P[o + 1], P[o + 2], h));
+        if (h <= 0) continue;
         P[o] += dx * h;
         P[o + 1] += dy * h;
         P[o + 2] += dz * h;
-        // the hollow's wall leans towards its middle: n + h'(r) * (the way out along the surface)
-        const d = Math.sqrt(q);
-        if (d > 1e-4) {
-          const slope = (depth * 4 * d * k) / r2; // -h'(d)
-          const dn = (rx * N[o] + ry * N[o + 1] + rz * N[o + 2]) / d;
-          let tx = rx / d - N[o] * dn, ty = ry / d - N[o + 1] * dn, tz = rz / d - N[o + 2] * dn;
-          let nx = N[o] - tx * slope, ny = N[o + 1] - ty * slope, nz = N[o + 2] - tz * slope;
-          const l = Math.hypot(nx, ny, nz) || 1;
-          N[o] = nx / l;
-          N[o + 1] = ny / l;
-          N[o + 2] = nz / l;
-          void tx, ty, tz;
-        }
+        // (the normals are left as they are: the weathered paint finds its rust and its dirt by them and by where
+        // the vertex is in the world, and a normal leant into the hollow sends the whole pattern sliding across the
+        // panel. The light and shade of the hollow's lip is the mark's to draw: marks.js DENT_METAL)
         moved++;
       }
     }

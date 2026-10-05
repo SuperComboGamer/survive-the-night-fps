@@ -4120,6 +4120,28 @@ export class Game {
       case 'where':
         this.systemChat(`pos ${s.x.toFixed(1)} ${s.y.toFixed(1)} ${s.z.toFixed(1)} zone ${this.world.zoneAt(s.x, s.z)}`);
         break;
+      case 'alarm': {
+        // /alarm: the nearest wreck that can have one has a live battery (its next hard blow makes it chirp).
+        // /alarm ring: it goes off now
+        let best = null;
+        for (const col of this.world.staticGrid.query(s.x, s.z, 12, [])) {
+          const prop = wreckOf(col);
+          if (!prop || !WRECK_ALARM.types.includes(prop.type)) continue;
+          if (!best || Math.hypot(col.x - s.x, col.z - s.z) < Math.hypot(best.x - s.x, best.z - s.z)) best = col;
+        }
+        if (!best) break;
+        let g = this.gather.get(best);
+        if (!g) this.gather.set(best, (g = { left: WRECK_SALVAGE }));
+        g.alarm = ALARM.LIVE;
+        if (args[1] === 'ring') {
+          g.alarm = ALARM.RINGING;
+          g.ringT = WRECK_ALARM.ring;
+          g.pulseT = 0;
+          this.ringing.add(best);
+          this.tellAlarm(best, ALARM_SAY.RING, g);
+        }
+        break;
+      }
       case 'bell':
       case 'radio':
         // /bell: the chapel bell tolls now, wherever you are. /radio: to the Relay Station's radio, with the batteries

@@ -38,6 +38,9 @@ const MAT_SURF = {
 };
 // a model's materials that are not a surface at all (cards of grass round a wreck, a stain): a blow goes through them
 export const NO_SURFACE = new Set(['weeds', 'grass', 'bush', 'fern', 'leaves', 'pine', 'blood_decal', 'citygrime', 'citysign', 'chainlink', 'acid_glow']);
+// ...and 'dark' is the black of an opening - a window with no glass in it, the gap round a door, a wheel arch: a
+// blow there lands on whatever is behind it, or on nothing
+export const NO_STRIKE = new Set([...NO_SURFACE, 'dark']);
 export const surfaceOfMat = (mat) => MAT_SURF[mat] ?? SURF.STONE;
 
 // A prop's surface, by what it is. Named ones first; the rest by the words in their type; a vehicle (anything that
@@ -107,10 +110,10 @@ export const MARK_COLS = 4, MARK_ROWS = 6;
 const M = (cell, w, h, along = true) => ({ cell, w, h, along });
 // [surface][blow]: slash, chop, blunt, hammer, shot, blast
 const MARKS = [
-  /* earth  */ [M(MARK.CUT_EARTH, 0.5, 0.11), M(MARK.CUT_EARTH, 0.62, 0.16), M(MARK.DIVOT_EARTH, 0.4, 0.4, false), M(MARK.DIVOT_EARTH, 0.26, 0.26, false), M(MARK.DIVOT_EARTH, 0.15, 0.15, false), M(MARK.SCORCH, 2.2, 2.2, false)],
-  /* wood   */ [M(MARK.SLASH_WOOD, 0.42, 0.07), M(MARK.GOUGE_WOOD, 0.46, 0.13), M(MARK.BRUISE_WOOD, 0.3, 0.3, false), M(MARK.BRUISE_WOOD, 0.17, 0.17, false), M(MARK.HOLE_WOOD, 0.12, 0.12, false), M(MARK.SCORCH, 1.6, 1.6, false)],
-  /* stone  */ [M(MARK.SCRATCH_STONE, 0.4, 0.06), M(MARK.SCRATCH_STONE, 0.5, 0.1), M(MARK.CHIP_STONE, 0.24, 0.24, false), M(MARK.CHIP_STONE, 0.15, 0.15, false), M(MARK.HOLE_STONE, 0.16, 0.16, false), M(MARK.SCORCH, 1.8, 1.8, false)],
-  /* metal  */ [M(MARK.SCRAPE_METAL, 0.4, 0.07), M(MARK.GASH_METAL, 0.46, 0.12), M(MARK.DENT_METAL, 0.42, 0.42, false), M(MARK.DENT_METAL, 0.22, 0.22, false), M(MARK.HOLE_METAL, 0.1, 0.1, false), M(MARK.SCORCH, 1.4, 1.4, false)],
+  /* earth  */ [M(MARK.CUT_EARTH, 0.5, 0.11), M(MARK.CUT_EARTH, 0.62, 0.16), M(MARK.DIVOT_EARTH, 0.5, 0.5, false), M(MARK.DIVOT_EARTH, 0.32, 0.32, false), M(MARK.DIVOT_EARTH, 0.17, 0.17, false), M(MARK.SCORCH, 2.2, 2.2, false)],
+  /* wood   */ [M(MARK.SLASH_WOOD, 0.46, 0.09), M(MARK.GOUGE_WOOD, 0.5, 0.15), M(MARK.BRUISE_WOOD, 0.42, 0.42, false), M(MARK.BRUISE_WOOD, 0.24, 0.24, false), M(MARK.HOLE_WOOD, 0.15, 0.15, false), M(MARK.SCORCH, 1.6, 1.6, false)],
+  /* stone  */ [M(MARK.SCRATCH_STONE, 0.44, 0.08), M(MARK.SCRATCH_STONE, 0.54, 0.12), M(MARK.CHIP_STONE, 0.34, 0.34, false), M(MARK.CHIP_STONE, 0.2, 0.2, false), M(MARK.HOLE_STONE, 0.17, 0.17, false), M(MARK.SCORCH, 1.8, 1.8, false)],
+  /* metal  */ [M(MARK.SCRAPE_METAL, 0.44, 0.09), M(MARK.GASH_METAL, 0.48, 0.13), M(MARK.DENT_METAL, 0.5, 0.5, false), M(MARK.DENT_METAL, 0.27, 0.27, false), M(MARK.HOLE_METAL, 0.11, 0.11, false), M(MARK.SCORCH, 1.4, 1.4, false)],
   /* glass  */ [M(MARK.CRACK_GLASS, 0.3, 0.3, false), M(MARK.CRACK_GLASS, 0.44, 0.44, false), M(MARK.CRACK_GLASS, 0.6, 0.6, false), M(MARK.CRACK_GLASS, 0.4, 0.4, false), M(MARK.HOLE_GLASS, 0.3, 0.3, false), M(MARK.CRACK_GLASS, 0.8, 0.8, false)],
   /* cloth  */ [M(MARK.TEAR_CLOTH, 0.42, 0.1), M(MARK.TEAR_CLOTH, 0.56, 0.14), M(MARK.STAB, 0.2, 0.2, false), M(MARK.STAB, 0.14, 0.14, false), M(MARK.STAB, 0.09, 0.09, false), M(MARK.SCORCH, 1.6, 1.6, false)],
   /* rubber */ [M(MARK.STAB, 0.16, 0.16, false), M(MARK.TEAR_CLOTH, 0.3, 0.08), M(MARK.SCUFF_RUBBER, 0.26, 0.26, false), M(MARK.SCUFF_RUBBER, 0.16, 0.16, false), M(MARK.HOLE, 0.06, 0.06, false), M(MARK.SCORCH, 1.2, 1.2, false)],

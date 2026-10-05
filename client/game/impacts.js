@@ -15,7 +15,7 @@ import { SURF, BLOW, MARK, LIGHT_PROPS, surfaceOf, surfaceOfMat, surfaceOfProp, 
 import { WRECKF, WRECK_HITS_MAX, wreckOf, wreckColAt } from '../../shared/wrecks.js';
 import { Marks, markCorners } from '../render/marks.js';
 import { StrikeFx } from '../render/strikefx.js';
-import { Wrecks, strokeCorners } from '../render/wrecks.js';
+import { Wrecks, strokeCorners, roomAt } from '../render/wrecks.js';
 import { TEX } from '../render/effects.js';
 
 export const PANE_SHOTS = 4; // bullets a window pane takes before it falls out (a shotgun's pattern is that many)
@@ -39,7 +39,9 @@ export class Impacts {
       puff: (x, y, z) => g.effects.alpha.emit(x, y + 0.05, z, 0, 0.4, 0, 0.9, 0.25, 0.9, 0.36, 0.33, 0.29, 0.4, 0.36, 0.33, 0.29, 0, 0, 2, TEX.SMOKE),
       scrap: (x, y, z, nx, ny, nz) => this.fx.scrap(x, y, z, nx, ny, nz, 2, 1, g.time - this.mineT < 0.4 ? g.camera.position : null),
       flash: (x, y, z, k) => {
-        g.effects.add.emit(x, y, z, 0, 0, 0, 0.16, 0.9 * k, 0.5 * k, 1, 0.55, 0.12, 0.9, 1, 0.4, 0.05, 0, 0, 0, TEX.GLOW);
+        // a hazard lamp's blink: an amber glow round a hot middle
+        g.effects.add.emit(x, y, z, 0, 0, 0, 0.2, 1.7 * k, 1.1 * k, 1, 0.5, 0.08, 1, 1, 0.35, 0.03, 0, 0, 0, TEX.GLOW);
+        g.effects.add.emit(x, y, z, 0, 0, 0, 0.2, 0.5 * k, 0.4 * k, 1, 0.85, 0.55, 1, 1, 0.6, 0.2, 0, 0, 0, TEX.GLOW);
         if (Math.hypot(x - g.camera.position.x, z - g.camera.position.z) < 40) g.lights.flashMuzzle(_v.set(x, y, z), 0.35 * k, 0.12);
       },
     });
@@ -198,6 +200,9 @@ export class Impacts {
   // It is made no bigger than the face has room for, so that it does not hang off an edge or fold round a corner.
   mark(h, m, dx, dy, dz, r, stroke = false, life) {
     if (h.bare) return;
+    // (on a prop's model: no bigger than the face it struck - a pillar, a chair's leg, the rim of a barrel)
+    const half = Math.max(m.w, m.h) / 2;
+    if (h.prop && half > 0.08) h.fit = roomAt((...a) => this.wrecks.ray(h.prop, ...a), h.x, h.y, h.z, h.nx, h.ny, h.nz, half);
     const room = Math.max(0.04, h.fit) * 2 + 0.03;
     const k = Math.min(1, room / Math.max(m.w, m.h));
     if (k < 0.3) return;
