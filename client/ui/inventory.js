@@ -14,6 +14,7 @@ import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, SALVAGE, isFirearm, AMMO_NAMES, AMMO
 import { INVENTORY_SIZE, INVENTORY_MAX, BACKPACK_SLOTS, inventoryCap } from '../../shared/constants.js';
 import { SALVAGE_FROM, WORN, WORN_DO } from '../../shared/protocol.js';
 import { smallestStack } from '../../shared/stacks.js';
+import { planCost } from '../../shared/autocraft.js';
 import { el, svgEl, clamp } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { actionsOf, bindLabel, liveText } from '../game/binds.js';
@@ -1539,7 +1540,8 @@ export class Inventory {
   // many of it it takes
   renderUses() {
     const f = this.craft?.focus();
-    const takes = f ? takesOf(f.r.cost, f.n, this.inv.slots) : null;
+    const plan = f && planCost(this.counts, f.r.cost, this.craft.ctx(), f.n);
+    const takes = f ? (plan ? takesOf(plan.take, 1, this.inv.slots) : takesOf(f.r.cost, f.n, this.inv.slots)) : null;
     for (let i = 0; i < INVENTORY_MAX; i++) {
       const cell = this.cells[i];
       const t = takes?.get(i) || 0;

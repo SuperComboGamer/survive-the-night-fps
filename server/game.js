@@ -130,7 +130,8 @@ import { nightTheme, nightBoss } from '../shared/nights.js';
 import { difficultyOf } from '../shared/difficulty.js';
 import { Nav } from './nav.js';
 import { ClientView, writeEntities, stageEntities } from './snapshot.js';
-import { createInventory, invCap, addItem, removeItem, takeFrom, tidyStacks, countItem, hasCost, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
+import { createInventory, invCap, addItem, removeItem, takeFrom, tidyStacks, countItem, countsMap, payCost, canFit, freeSlot, sortInventory } from './inventory.js';
+import { planCost } from '../shared/autocraft.js';
 import { Zombies } from './zombies.js';
 import { Cats } from './cats.js';
 import { Deer } from './deer.js';
@@ -2257,6 +2258,26 @@ export class Game {
     return null;
   }
 
+  // what player p could craft with right here: { fire, bench, unlocked } (planCost, shared/autocraft.js)
+  craftCtx(p) {
+    return { fire: !!this.nearStation(p, 'fire'), bench: !!this.nearStation(p, 'bench'), unlocked: this.unlocked };
+  }
+
+  // how p pays `cost`, the materials short of it made from what they are made of (planCost); null: p cannot
+  planFor(p, cost) {
+    return planCost(countsMap(p.inv), cost, this.craftCtx(p));
+  }
+
+  // What a plan's batches made beyond what it took (ten Nails for the four a wall needs), once its `take` is paid and
+  // what was bought handed over: into the pack where addItem puts it (craftRun in client/game/bulkcraft.js puts it
+  // in the same place), and at p's feet what does not fit
+  madeExtra(p, plan) {
+    for (const k in plan.give) {
+      const left = addItem(p.inv, +k, plan.give[k], invCap(p));
+      if (left > 0) this.dropItem(+k, left, p.state.x, p.state.y, p.state.z, { spread: 0.8 });
+    }
+  }
+
   interact(p, id) {
     if (this.time - p.interactT < 0.15) return;
     p.interactT = this.time;
@@ -2669,7 +2690,8 @@ export class Game {
     if (!rec) return;
     if (rec.schem && !(this.unlocked & (1 << SCHEM_BIT[rec.schem]))) return this.notify(NOTIFY.LOCKED, rec.schem, p.id);
     if (rec.station && !this.nearStation(p, rec.station)) return this.notify(rec.station === 'fire' ? NOTIFY.NEED_FIRE : NOTIFY.NEED_BENCH, 0, p.id);
-    if (!hasCost(p.inv, rec.cost)) {
+    const plan = this.planFor(p, rec.cost);
+    if (!plan) {
       this.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
       return;
     }
@@ -2683,12 +2705,13 @@ export class Game {
     } else if (!canFit(p.inv, rec.out, rec.n, invCap(p))) {
       // paying may free slots; do a trial
       const copy = p.inv.map((x) => (x ? { ...x } : null));
-      payCost(copy, rec.cost);
+      payCost(copy, plan.take);
       if (!canFit(copy, rec.out, rec.n, invCap(p))) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
-    payCost(p.inv, rec.cost);
+    payCost(p.inv, plan.take);
     const sorting = p.invSort;
     const taken = this.giveItem(p, rec.out, rec.n);
+    this.madeExtra(p, plan);
     p.invSort = sorting; // (a craft lands where the client's model of it puts it, bulkcraft.js: it is not a pickup)
     // rounds the reserve has no room for were paid for all the same: they go on the ground instead of nowhere
     if (def.cat === 'ammo' && taken < rec.n) {
@@ -2954,7 +2977,8 @@ export class Game {
     const car = this.world.car;
     if (Math.hypot(x - car.x, z - car.z) < 3.2) return fail();
     if (this.world.isDeepWater(x, z)) return fail();
-    if (!hasCost(p.inv, def.cost)) return fail(NOTIFY.NOT_ENOUGH);
+    const plan = this.planFor(p, def.cost);
+    if (!plan) return fail(NOTIFY.NOT_ENOUGH);
     const col = this.structCollider(type, x, y, z, rot8, 0);
     // overlaps: static world, other blocking structures, players
     const tmp = [];
@@ -2995,7 +3019,8 @@ export class Game {
       trapTick: 0,
     };
     if (!this.spawnEntity(e)) return fail(); // (no entity id left: nothing is built, so nothing is paid)
-    payCost(p.inv, def.cost);
+    payCost(p.inv, plan.take);
+    this.madeExtra(p, plan);
     p.invDirty = true;
     e.collider = this.structCollider(type, x, y, z, rot8, e.id);
     this.world.structGrid.add(e.collider);
@@ -3044,8 +3069,10 @@ export class Game {
       e.burnLeft = STRUCT_DEFS[STRUCT.TORCH].burn;
       e.hp = e.maxHp;
     } else {
-      if (!hasCost(p.inv, REPAIR_COST)) return this.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
-      payCost(p.inv, REPAIR_COST);
+      const plan = this.planFor(p, REPAIR_COST);
+      if (!plan) return this.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
+      payCost(p.inv, plan.take);
+      this.madeExtra(p, plan);
       e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.35);
     }
     p.actionT = this.time;

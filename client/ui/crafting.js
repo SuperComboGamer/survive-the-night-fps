@@ -4,7 +4,8 @@
 // and Craft, and Track on HUD (game/tracked.js). Search covers every tab, Q / E step through the tabs, Space crafts,
 // and Shift / Ctrl (Cmd) + click on a recipe still crafts CRAFT_FEW / up to CRAFT_MAX at once.
 import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, STATION_NAMES, SCHEM_BIT, CONSUMABLES } from '../../shared/defs.js';
-import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv } from '../game/bulkcraft.js';
+import { CRAFT_FEW, CRAFT_MAX, craftRun, copyInv, planFor } from '../game/bulkcraft.js';
+import { planCost } from '../../shared/autocraft.js';
 import { trackedId, setTracked, onTracked } from '../game/tracked.js';
 import { foundIn, sourcesOf } from '../game/itemguide.js';
 import { el, svgEl, clamp, lsGet, lsSet } from './dom.js';
@@ -114,6 +115,8 @@ export function carried(inv, item) {
   if (d?.cat === 'ammo') return inv.ammo[d.ammo] | 0;
   return inv.slots.reduce((n, s) => n + (s && s.item === item ? s.count : 0), inv.weapons.includes(item) ? 1 : 0);
 }
+
+const scaled = (cost, n) => Object.fromEntries(Object.entries(cost).map(([k, v]) => [k, v * n]));
 
 // Where to get an ingredient that is short, in a line: the recipe that makes it (and where), then where it is found
 function whereFrom(item, unlocked) {
@@ -370,14 +373,21 @@ export class Crafting {
     });
     if (made) queueMicrotask(() => setTracked(-1));
     const m = copyInv(inv);
-    for (const e of this.sent) craftRun(e.r, m, e.n);
+    const ctx = this.ctx();
+    for (const e of this.sent) craftRun(e.r, m, e.n, ctx);
     return m;
+  }
+
+  // what a material short of a recipe can be made with on the way (shared/autocraft.js)
+  ctx() {
+    const o = this.o;
+    return { fire: o.near.fire, bench: o.near.bench, unlocked: o.unlocked };
   }
 
   // n crafts of a recipe, as many of them as the server will take (none: the row shakes)
   craft(rec, n) {
     const model = this._model();
-    const can = rec.group === 'ready' ? craftRun(rec.r, copyInv(model), Math.max(1, n)) : 0;
+    const can = rec.group === 'ready' ? craftRun(rec.r, copyInv(model), Math.max(1, n), this.ctx()) : 0;
     if (!can) return void this._shake(rec.b);
     const cb = this.ui.cb;
     this.ui.sound('ui_click');
@@ -404,9 +414,10 @@ export class Crafting {
   // backpack stop short of. full: it is room, not materials, that stops the next.
   _bulkRun(r, model = this._model()) {
     const inv = copyInv(model);
-    const n = craftRun(r, inv, this.bulk);
+    const ctx = this.ctx();
+    const n = craftRun(r, inv, this.bulk, ctx);
     // (`inv` is as the last craft left it)
-    return { n, full: n < this.bulk && Object.keys(r.cost).every((id) => carried(inv, +id) >= r.cost[id]) };
+    return { n, full: n < this.bulk && !!planFor(inv, r.cost, ctx) };
   }
 
   dropBulk() {
@@ -494,22 +505,26 @@ export class Crafting {
     const counts = o.counts;
     const model = this._model();
     const tracked = trackedId();
+    const ctx = this.ctx();
     const ready = { all: 0 };
     for (const rec of this.recs) {
       const { r } = rec;
       let short = null;
-      for (const k in r.cost) {
-        const have = counts[k] || 0;
-        if (have < r.cost[k]) {
-          short = [+k, have, r.cost[k]];
-          break;
+      // (a material that can be made on the way from what is carried is not short)
+      if (!planCost(counts, r.cost, ctx)) {
+        for (const k in r.cost) {
+          const have = counts[k] || 0;
+          if (have < r.cost[k]) {
+            short = [+k, have, r.cost[k]];
+            break;
+          }
         }
       }
       const stationOk = !r.station || o.near[r.station];
       const unlocked = !r.schem || o.schemOk(r.schem);
       const group = !unlocked ? 'locked' : short ? 'missing' : !stationOk ? 'station' : 'ready';
       rec.group = group;
-      rec.max = group === 'ready' ? craftRun(r, copyInv(model), CRAFT_MAX) : 0;
+      rec.max = group === 'ready' ? craftRun(r, copyInv(model), CRAFT_MAX, ctx) : 0;
       if (group === 'ready') {
         ready.all++;
         ready[rec.tab.id] = (ready[rec.tab.id] || 0) + 1;
@@ -630,7 +645,8 @@ export class Crafting {
     const qty = (this.qty = ready ? clamp(this.qty, 1, rec.max) : 1);
     const tracked = trackedId() === r.id;
     const counts = o.counts;
-    const key = [r.id, qty, rec.group, rec.max, tracked, this.picked, o.near.fire, o.near.bench, o.unlocked, ...Object.keys(r.cost).map((k) => counts[k] || 0)].join(',');
+    const plan = planCost(counts, r.cost, this.ctx(), qty);
+    const key = [r.id, qty, rec.group, rec.max, tracked, this.picked, o.near.fire, o.near.bench, o.unlocked, ...Object.keys(r.cost).map((k) => counts[k] || 0), JSON.stringify(plan?.take)].join(',');
     if (key === this.cdKey) return;
     this.cdKey = key;
     this.cdIco.innerHTML = itemIcon(r.out);
@@ -654,7 +670,9 @@ export class Crafting {
     for (const k in r.cost) {
       const need = r.cost[k] * qty;
       const have = counts[k] || 0;
-      row(itemIcon(+k), ITEM_DEFS[k].name, `${Math.min(have, 999)} / ${need}`, have >= need, have >= need ? '' : whereFrom(+k, o.unlocked));
+      const make = have < need && plan ? plan.made.find((m) => m.r.out === +k) : null;
+      const src = have >= need ? '' : make ? `Made on the way from ${costLine(scaled(make.r.cost, make.runs))}` : whereFrom(+k, o.unlocked);
+      row(itemIcon(+k), ITEM_DEFS[k].name, `${Math.min(have, 999)} / ${need}`, have >= need || !!make, src);
     }
     if (r.station) {
       const ok = !!o.near[r.station];

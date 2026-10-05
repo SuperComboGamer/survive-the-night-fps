@@ -89,6 +89,7 @@ import { GunClient } from './mountedgun.js';
 import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { smallestStack } from '../../shared/stacks.js';
+import { planCost } from '../../shared/autocraft.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
 import { Highlight } from './highlight.js';
@@ -2999,6 +3000,7 @@ export class Game {
     // (the pointer let go of - the pause menu, the inventory: the ring goes with it)
     if (this.buildMenu && (!this.input.enabled || !this.input.locked)) this.closeBuildMenu();
     const counts = this.invCounts();
+    const ctx = this.craftContext();
     const unlocked = this.global.unlocked | 0;
     let menu = null;
     if (this.buildMenu) {
@@ -3007,7 +3009,7 @@ export class Game {
       menu = { hover: this.buildMenu.hover, x: c.x / c.r, y: c.y / c.r };
     }
     if (!this.buildPicked) {
-      this.ui.setBuildMenu({ picked: false, counts, unlocked, menu });
+      this.ui.setBuildMenu({ picked: false, counts, ctx, unlocked, menu });
       return;
     }
     let gh = this.ghosts[this.buildType];
@@ -3059,8 +3061,7 @@ export class Game {
     gh.position.set(x, y, z);
     gh.rotation.y = rotY;
     gh.visible = true;
-    let afford = true;
-    for (const k in def.cost) if ((counts[k] || 0) < def.cost[k]) afford = false;
+    const afford = !!planCost(counts, def.cost, ctx);
     const car = this.world.car;
     if (!reason && def.schem && !(unlocked & (1 << SCHEM_BIT[def.schem]))) reason = `Locked · find the ${ITEM_DEFS[def.schem].name}`;
     if (!reason && Math.hypot(x - this.renderPos.x, z - this.renderPos.z) > BUILD_REACH + (def.snap ? 1 : 0)) reason = 'Too far';
@@ -3071,7 +3072,7 @@ export class Game {
     const valid = !reason;
     gh.userData.setValid?.(valid);
     this.ghostPlace = { x, z };
-    this.ui.setBuildMenu({ picked: true, selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, valid, reason, unlocked, menu });
+    this.ui.setBuildMenu({ picked: true, selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, ctx, valid, reason, unlocked, menu });
   }
 
   // same overlap rules the server applies when placing a structure

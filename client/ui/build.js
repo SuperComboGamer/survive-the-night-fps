@@ -1,6 +1,7 @@
 // Build mode's HUD while holding the hammer: the radial menu of structures (a click with the hammer out opens it, the
 // mouse points at a structure, a click picks it), and the strip at the bottom with the picked piece being placed.
 import { STRUCT_DEFS, STRUCT_ORDER, ITEM_DEFS, SCHEM_BIT } from '../../shared/defs.js';
+import { planCost } from '../../shared/autocraft.js';
 import { el, svgEl } from './dom.js';
 import { structIcon, itemIcon, glyph } from './icons.js';
 import { liveText, bindLabel, bindPair } from '../game/binds.js';
@@ -24,6 +25,16 @@ function costChips(parent, cost) {
     chip.title = ITEM_DEFS[id]?.name || '';
     return { id: +id, need, chip };
   });
+}
+
+// (what is short but made on the way from what is carried, shared/autocraft.js, is not lacking)
+function markChips(ings, counts, afford) {
+  for (const ing of ings) {
+    const have = (counts[ing.id] || 0) >= ing.need;
+    ing.chip.classList.toggle('lack', !have && !afford);
+    ing.chip.classList.toggle('auto', !have && afford);
+    ing.chip.title = (ITEM_DEFS[ing.id]?.name || '') + (!have && afford ? ' · made from what you carry' : '');
+  }
 }
 
 export class BuildMenu {
@@ -122,11 +133,12 @@ export class BuildMenu {
       this.ui.root.classList.add('build-open');
     }
     const counts = state.counts || {};
+    const ctx = state.ctx;
     const unlocked = state.unlocked | 0;
     const menu = state.menu || null;
-    this.setRadial(menu, counts, unlocked);
+    this.setRadial(menu, counts, unlocked, ctx);
     const picked = !!state.picked;
-    const key = [picked ? 1 : 0, state.selected, state.rotate | 0, state.valid ? 1 : 0, state.reason || '', unlocked, JSON.stringify(counts)].join('|');
+    const key = [picked ? 1 : 0, state.selected, state.rotate | 0, state.valid ? 1 : 0, state.reason || '', unlocked, JSON.stringify(counts), ctx?.fire ? 1 : 0, ctx?.bench ? 1 : 0].join('|');
     if (key === this.key) return;
     this.key = key;
     this.root.classList.toggle('idle', !picked);
@@ -144,10 +156,10 @@ export class BuildMenu {
       this.costIngs = costChips(this.hCost, d.cost);
     }
     this.hCost.hidden = !d;
-    for (const ing of this.costIngs) ing.chip.classList.toggle('lack', (counts[ing.id] || 0) < ing.need);
+    if (d) markChips(this.costIngs, counts, !!planCost(counts, d.cost, ctx));
   }
 
-  setRadial(menu, counts = {}, unlocked = 0) {
+  setRadial(menu, counts = {}, unlocked = 0, ctx) {
     const open = !!menu;
     if (open !== !this.radial.hidden) {
       this.radial.hidden = !open;
@@ -156,14 +168,13 @@ export class BuildMenu {
     }
     if (!open) return;
     this.dot.style.transform = `translate(calc(${menu.x} * var(--br-in)), calc(${menu.y} * var(--br-in)))`;
-    const rkey = [menu.hover, unlocked, JSON.stringify(counts)].join('|');
+    const rkey = [menu.hover, unlocked, JSON.stringify(counts), ctx?.fire ? 1 : 0, ctx?.bench ? 1 : 0].join('|');
     if (rkey === this.rkey) return;
     this.rkey = rkey;
     const hi = STRUCT_ORDER.indexOf(menu.hover);
     this.wedge.style.setProperty('--a', `${(hi * 360) / STRUCT_ORDER.length}deg`);
     for (const s of this.segs) {
-      let afford = true;
-      for (const k in s.cost) if ((counts[k] || 0) < s.cost[k]) afford = false;
+      const afford = !!planCost(counts, s.cost, ctx);
       const locked = isLocked(s.type, unlocked);
       s.seg.classList.toggle('sel', s.type === menu.hover);
       s.seg.classList.toggle('poor', !afford);
@@ -180,12 +191,8 @@ export class BuildMenu {
       this.mCost.textContent = '';
       this.mIngs = costChips(this.mCost, d.cost);
     }
-    let afford = true;
-    for (const ing of this.mIngs) {
-      const ok = (counts[ing.id] || 0) >= ing.need;
-      if (!ok) afford = false;
-      ing.chip.classList.toggle('lack', !ok);
-    }
+    const afford = !!planCost(counts, d.cost, ctx);
+    markChips(this.mIngs, counts, afford);
     const locked = isLocked(menu.hover, unlocked);
     this.mState.textContent = locked ? `Locked · find the ${ITEM_DEFS[d.schem].name}` : afford ? '' : 'Not enough materials';
     this.radial.classList.toggle('locked', locked);

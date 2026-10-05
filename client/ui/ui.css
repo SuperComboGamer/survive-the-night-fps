@@ -2606,6 +2606,12 @@ body {
   color: var(--blood-lite);
 }
 
+/* short, but made from what is carried as it is built (shared/autocraft.js) */
+.stn-ui .build .ing.auto,
+.stn-ui .bradial .ing.auto {
+  color: var(--amber);
+}
+
 /* ---------- build ring: in the middle of the screen while choosing what to build */
 .stn-ui .bradial {
   --br-out: max(190px, calc(270 * var(--u)));
