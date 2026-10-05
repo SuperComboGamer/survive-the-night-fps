@@ -40,7 +40,7 @@ export const DEFAULT_CONTROLS = () => [
   [keysOf('crouch'), 'Crouch'],
   [keysOf('fire'), 'Attack · place'],
   [keysOf('aim'), 'Aim · heavy swing'],
-  [keysOf('reload'), 'Reload'],
+  [keysOf('reload'), 'Reload · nunchucks flourish'],
   [keysOf('interact'), 'Interact · pick up'],
   [keysOf('flashlight'), 'Flashlight'],
   [slotKeys(), 'Weapon slots'],

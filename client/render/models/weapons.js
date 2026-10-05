@@ -1409,7 +1409,7 @@ function nkRing(z, r) {
   }
   return ring;
 }
-const _nkPale = new THREE.Color(0.86, 0.7, 0.5);
+const _nkPale = new THREE.Color(0.92, 0.78, 0.58);
 function nunchakuHandle(B, hi, at = null) {
   const { handle, grip, eye, rTop } = NK_GEOM;
   const Z0 = -grip, Z1 = handle - grip; // chain end .. butt
@@ -1427,10 +1427,9 @@ function nunchakuHandle(B, hi, at = null) {
   const rnd = mulberry32(57);
   const faceTone = Array.from({ length: NK_OCT }, () => 0.92 + rnd() * 0.16);
   const wood = (k) => ({
-    region: WR.WALNUT,
-    color: [1.02 * faceTone[k], 0.76 * faceTone[k], 0.56 * faceTone[k]],
+    region: WR.ASH,
+    color: [0.74 * faceTone[k], 0.5 * faceTone[k], 0.33 * faceTone[k]],
     mottle: 0.07,
-    uv: [1, 0.5, 0, 0.25],
     tint: (p, n, c) => {
       if (!hi) return;
       // long dark streaks of grain, dents toward the butt (the striking end), the butt and the chain end rubbed pale
@@ -1445,7 +1444,7 @@ function nunchakuHandle(B, hi, at = null) {
   });
   facetLoft(B, rings, Array.from({ length: NK_OCT }, (_, k) => wood(k)));
   // the butt: closed with a shallow dome of end grain
-  latheZ(B, [[0, -Z1 - 0.0022], [nkR(Z1) * 0.6, -Z1 - 0.0016], [nkR(Z1) * 0.93, -Z1 + 0.0004], [nkR(Z1) * 0.93, -Z1 + 0.004], [0, -Z1 + 0.004]], 0, 0, { region: WR.WALNUT, color: [0.78, 0.56, 0.4], mottle: 0.1, rs: NK_OCT, sharp: true });
+  latheZ(B, [[0, -Z1 - 0.0022], [nkR(Z1) * 0.6, -Z1 - 0.0016], [nkR(Z1) * 0.93, -Z1 + 0.0004], [nkR(Z1) * 0.93, -Z1 + 0.004], [0, -Z1 + 0.004]], 0, 0, { region: WR.ASH, color: [0.6, 0.42, 0.28], mottle: 0.1, rs: NK_OCT, sharp: true });
   // friction tape round the grip: wound on in turns, each lapping the last
   const T0 = -0.058, T1 = 0.072, turns = hi ? 13 : 1, TN = turns * (hi ? 3 : 1);
   const trings = [];
@@ -3151,6 +3150,16 @@ export class ViewModel {
   }
 
   setItem(itemId, opts = {}) {
+    // nunchucks put away with a tuck (opts.tuck: the game's own change of weapon, not a warm-up or a sandbox): the
+    // fold takes a fifth of a second, then whatever is next comes out - a little way into its draw already, so that
+    // it is up by the time it can be used (DRAW_TIME in playersim.js)
+    if (opts && opts.tuck && this.cur && this.cur.cfg.nunchaku && this.nk && this.visible && (itemId | 0) !== this.itemId && !(this.act && this.act.type === 'use')) {
+      if (!this._nkAway) this.nk.core.holster();
+      this._nkAway = { itemId, opts: { ...opts, tuck: false }, t: 0.19 };
+      return;
+    }
+    const lead = this._nkAway ? 0.45 : 0;
+    this._nkAway = null;
     const claws = !!(opts && opts.claws);
     if (this.cur) this.cur.root.visible = false;
     if (this.flameAnchor.parent) this.flameAnchor.parent.remove(this.flameAnchor);
@@ -3162,7 +3171,7 @@ export class ViewModel {
     this.cur = claws ? null : this._getItemView(this.itemId);
     this.act = null;
     this.kit.visible = false;
-    this.drawT = 0;
+    this.drawT = lead;
     this.fireT = 9;
     this.cycleT = 9;
     this.reloadHold = 0;
@@ -3308,6 +3317,7 @@ export class ViewModel {
   // ---------------------------------------------------------------- update
   update(dt, s = {}) {
     dt = Math.min(0.1, Math.max(0, dt || 0));
+    if (this._nkAway && (this._nkAway.t -= dt) <= 0) this.setItem(this._nkAway.itemId, this._nkAway.opts);
     // molotov rag flame: game shows its fire sprite at userData.flameAnchor while this is true
     this.group.userData.flameVisible = !!(this.cur && this.flameAnchor.parent && this.cur.root.visible && this.group.visible);
     this.time = s.time !== undefined ? s.time : this.time + dt;

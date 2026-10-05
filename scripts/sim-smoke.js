@@ -1258,7 +1258,8 @@ const standOff = (c, e, d) => {
         stand(col, d);
         s.pitch = pitch;
         landed = null;
-        game.combat.melee(p, { weapon: weapon || ITEM.KNIFE, heavy: false });
+        // (nothing carried: the prompt answers for the shortest reach there is - the nunchucks', whose blow names its move)
+        game.combat.melee(p, weapon ? { weapon, heavy: false } : { weapon: SHORTEST, heavy: false, move: WEAPONS[SHORTEST].nunchaku ? 0 : undefined, hit: 0 });
         const hit = landed ? HARVEST.find((h) => landed.flags & h.flag) : null;
         const offered = harvestAt(game.world, s);
         if (offered !== hit) n.wrong++;
@@ -1269,9 +1270,10 @@ const standOff = (c, e, d) => {
     return n;
   };
   const agrees = (n) => n.wrong === 0 && n.offered > 0 && n.refused > 0;
+  const SHORTEST = Object.keys(WEAPONS).map(Number).filter((id) => WEAPONS[id].melee && WEAPONS[id].slot === SLOT_MELEE).reduce((a, b) => (WEAPONS[b].range < WEAPONS[a].range ? b : a));
   const knife = sweep(treeCol, ITEM.KNIFE, SLOT_MELEE);
   const bat = sweep(treeCol, ITEM.BAT, SLOT_PISTOL); // a longer weapon, and not in hand: the prompt answers for the swap
-  const bare = sweep(treeCol, 0, SLOT_PISTOL); // no melee weapon: it assumes the shortest reach (the knife's)
+  const bare = sweep(treeCol, 0, SLOT_PISTOL); // no melee weapon: it assumes the shortest reach there is
   const wreck = sweep(wreckCol, ITEM.KNIFE, SLOT_MELEE);
   check('harvest prompt reaches exactly as far as a swing (tree)', agrees(knife) && agrees(bat) && agrees(bare) && bat.offered > knife.offered, JSON.stringify({ knife, bat, bare }));
   check('harvest prompt reaches exactly as far as a swing (wreck)', agrees(wreck), JSON.stringify(wreck));

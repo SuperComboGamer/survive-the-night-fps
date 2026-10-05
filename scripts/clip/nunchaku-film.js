@@ -80,6 +80,7 @@ const SHOTS = [
     async run(f) {
       await f.put(ITEM.PISTOL, 1);
       await f.frames(20, {});
+      f.mark('draw');
       await f.frames(80, { slot: 2 });
     },
   },
@@ -102,6 +103,7 @@ const SHOTS = [
     async run(f) {
       await f.until(() => f.nearest() < 1.75, 400, (i) => ({ ...f.aimNearest(1.45) }));
       await f.frames(8, () => ({ ...f.aimNearest(1.45) }));
+      f.mark('chain');
       await f.frames(Math.round((COMBO + 0.05) * FPS), () => ({ buttons: A, ...f.aimNearest(1.45) }));
       await f.frames(70, () => ({}));
     },
@@ -114,8 +116,10 @@ const SHOTS = [
     },
     async run(f) {
       await f.frames(10, () => ({ ...f.aimNearest(1.45) }));
-      await f.until(() => f.nearest() < 1.9 && f.n > 70, 300, () => ({ buttons: ALT, ...f.aimNearest(1.45) }));
+      f.mark('wind');
+      await f.until(() => f.nearest() < 1.9 && f.n > 100, 300, () => ({ buttons: ALT, ...f.aimNearest(1.45) }));
       await f.frames(8, () => ({ buttons: ALT, ...f.aimNearest(1.45) }));
+      f.mark('release');
       await f.frames(100, () => ({ ...f.aimNearest(1.45) }));
     },
   },
@@ -124,18 +128,21 @@ const SHOTS = [
     about: 'the flourish (the reload key): figure-eights and the passes from hand to hand, first person',
     async run(f) {
       await f.frames(20, {});
+      f.mark('flourish');
       await f.frames(4, { buttons: BTN.RELOAD });
-      await f.frames(420, {});
+      await f.frames(300, {});
     },
   },
   {
     name: 'tp-front',
     about: 'third person, from the front: the draw, the guard, the light chain twice',
     async run(f) {
-      const cam = (i) => orbit(f, 0.35 + 0.0008 * i, 3.1, 1.25, 1.1, 40);
+      const cam = (i) => orbit(f, 0.4 + 0.0008 * i, 2.5, 0.75, 1.2, 46);
       await f.put(ITEM.PISTOL, 1);
+      await f.skip(6, { cam: cam(0) });
       await f.frames(20, (i) => ({ cam: cam(i) }));
       await f.frames(70, (i) => ({ slot: 2, cam: cam(i + 20) }));
+      f.mark('chain');
       await f.frames(Math.round(COMBO * 2 * FPS), (i) => ({ buttons: A, cam: cam(i + 90) }));
       await f.frames(80, (i) => ({ cam: cam(i + 90 + COMBO * 2 * FPS) }));
     },
@@ -144,7 +151,8 @@ const SHOTS = [
     name: 'tp-side',
     about: 'third person, from the side and low: the heavy wind-up and release, then the openers',
     async run(f) {
-      const cam = (i) => orbit(f, 1.45 - 0.0012 * i, 3.4, 0.9, 1.1, 38);
+      const cam = (i) => orbit(f, 1.3 - 0.0012 * i, 2.7, 0.6, 1.2, 46);
+      await f.skip(6, { cam: cam(0) });
       await f.frames(20, (i) => ({ cam: cam(i) }));
       await f.frames(85, (i) => ({ buttons: ALT, cam: cam(i + 20) }));
       await f.frames(90, (i) => ({ cam: cam(i + 105) }));
@@ -159,8 +167,10 @@ const SHOTS = [
     about: 'third person, quarter speed: the light chain, the chain and the free handle through every stroke',
     dt: 1 / (FPS * 4),
     async run(f) {
-      const cam = (i) => orbit(f, -0.55 + 0.0004 * i, 2.5, 1.35, 1.2, 36);
+      const cam = (i) => orbit(f, -0.6 + 0.0004 * i, 2.1, 0.9, 1.25, 44);
+      await f.skip(6, { cam: cam(0) });
       await f.frames(24, (i) => ({ cam: cam(i) }));
+      f.mark('chain');
       await f.frames(Math.round((COMBO + 0.3) * FPS * 4), (i) => ({ buttons: i < COMBO * FPS * 4 ? A : 0, cam: cam(i + 24) }));
     },
   },
@@ -168,10 +178,12 @@ const SHOTS = [
     name: 'tp-flourish',
     about: 'third person, circling: the flourish with its passes',
     async run(f) {
-      const cam = (i) => orbit(f, 0.2 + 0.006 * i, 2.9, 1.3, 1.1, 40);
+      const cam = (i) => orbit(f, 0.2 + 0.0105 * i, 2.5, 0.85, 1.15, 46);
+      await f.skip(6, { cam: cam(0) });
       await f.frames(20, (i) => ({ cam: cam(i) }));
+      f.mark('flourish');
       await f.frames(4, (i) => ({ buttons: BTN.RELOAD, cam: cam(i + 20) }));
-      await f.frames(420, (i) => ({ cam: cam(i + 24) }));
+      await f.frames(300, (i) => ({ cam: cam(i + 24) }));
     },
   },
   {
@@ -198,7 +210,8 @@ const SHOTS = [
     name: 'finish',
     about: 'the finish: third person, low, a last flourish and the guard',
     async run(f) {
-      const cam = (i) => orbit(f, 0.5 - 0.002 * i, 2.6 - 0.002 * i, 0.55, 1.2, 44);
+      const cam = (i) => orbit(f, 0.5 - 0.002 * i, 2.6 - 0.002 * i, 0.5, 1.2, 46);
+      await f.skip(6, { cam: cam(0) });
       await f.frames(20, (i) => ({ cam: cam(i) }));
       await f.frames(Math.round(COMBO * FPS), (i) => ({ buttons: A, cam: cam(i + 20) }));
       await f.frames(150, (i) => ({ cam: cam(i + 20 + COMBO * FPS) }));
@@ -320,11 +333,16 @@ try {
       return Math.min(99, ...(this.info?.ents || []).map((e) => e.d));
     },
     count() {
-      return (this.info?.ents || []).length;
+      return (this.info?.ents || []).filter((e) => e.d < 14).length;
+    },
+    marks: {},
+    /** Remember this frame of the shot by a name (the reel cuts its strips from them). */
+    mark(name) {
+      this.marks[name] = this.saved;
     },
     /** The view turned onto the nearest of the dead, `h` m above its feet (eased, as a hand on a mouse would). */
     aimNearest(h) {
-      const es = this.info?.ents || [];
+      const es = (this.info?.ents || []).filter((e) => e.d < 9); // (not the walkers of the day, off in the trees)
       if (!es.length) return {};
       const e = es.reduce((a, b) => (a.d < b.d ? a : b));
       const dx = e.x - this.info.x, dz = e.z - this.info.z, dy = e.y + h - (this.info.y + 1.62);
@@ -388,6 +406,7 @@ try {
     rmSync(film.dir, { recursive: true, force: true });
     mkdirSync(film.dir, { recursive: true });
     film.n = film.saved = 0;
+    film.marks = {};
     film.dt = s.dt || 1 / FPS;
     film.tickAcc = 0;
     film.state = { buttons: 0, yaw: film.yaw0, pitch: 0, cam: null };
@@ -425,7 +444,7 @@ try {
     await chat('/step off');
     const secs = (Date.now() - ts) / 1000;
     console.log(`  ${s.name.padEnd(12)} ${String(film.saved).padStart(4)} frames (${(film.saved / FPS / (s.dt ? 1 : 1)).toFixed(1)} s) in ${secs.toFixed(0)} s: ${(secs / Math.max(1, film.n)).toFixed(2)} s a frame`);
-    done.push({ name: s.name, about: s.about, frames: film.saved, slow: s.dt ? Math.round(1 / (s.dt * FPS)) : 1 });
+    done.push({ name: s.name, about: s.about, frames: film.saved, slow: s.dt ? Math.round(1 / (s.dt * FPS)) : 1, marks: film.marks });
     writeFileSync(join(film.dir, 'shot.json'), JSON.stringify(done[done.length - 1]));
   }
   console.log(`${done.length} shots in ${out} (renderer: ${chrome.angle})`);

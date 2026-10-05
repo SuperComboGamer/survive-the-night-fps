@@ -229,6 +229,8 @@ through `launchChrome` too.
 | `fit-grip.js` | `clip:fit` | Fits a hand pose to an item's mesh and prints the pose to paste into `HAND_POSES`. |
 | `props.js` | `clip:props` | World props, trees, boulders and walls inside each other, over many seeds, with the `/tp` to each. |
 | `pickups.js` | `clip:pickups` | Every ground item's lowest point: sunk or floating. |
+| `nunchaku-shots.js` | | Stills and strips of the nunchucks out of the sandbox, a list of them in one browser. |
+| `nunchaku-film.js`, `nunchaku-reel.js` | | Footage of the nunchucks in the real game, a frame at a time with both clocks held, and the reel, contact sheets and strips cut from it (ffmpeg). |
 | `lib.js` | | The shared plumbing: arguments, servers, headless Chrome, image sheets, worktrees, lending the sandbox to an older tree. |
 
 Examples:
@@ -302,6 +304,7 @@ by hand.
 | `&dots=1` | with `&clip=1`: mark every vertex found inside, in red |
 | `&xray=1` | the item and a used prop see-through, drawn over the hands: a buried finger shows |
 | `window.__hands` | `{ R, L }`: each hand's grip center (view space) once posed. `pairs.js` reads it to aim at the hand where the before build has it. |
+| `&nk=SCRIPT` | with `?vm=57` (the nunchucks): plays their moves instead of `&act` - `guard`, `draw`, `idle`, `whip`, `backhand`, `eight`, `smash`, `lunge`, `sweep`, `retreat`, `heavy1`..`heavy3`, `combo`, `combo2`, `flourish`, `carry` (`client/sandbox/nk-script.js`). `&t` / `&ts` are seconds into the script. `&hit=flesh\|bone\|wood\|metal\|dirt` lands every blow on that (default: they miss). The other handle and the links are measured with the first (they are the item's meshes); the streak behind them is not. |
 
 Tuning overrides, to try a change without editing weapons.js (the item is `?vm=`'s):
 
@@ -341,6 +344,8 @@ Examples:
 | `&cam=body,yaw,pitch,dist` | orbit the chest (the whole figure) |
 | `&clip=1` | `window.__clip = { itemInBody, bodyInItem, bodyInPack, itemInFist, text }`, each `{ d, n, what }`. `what` is the bone a body vertex follows (`chest`, `spine`, `farmR`, ...). The third-person fists are solid blocks closed round a handle, so a handle inside one is how it is held: `itemInFist` is reported on its own and the survey leaves it out of a frame's worst. Look at a fist by eye (`&xray=1`): an item much wider than the fist (a grenade) should sit against its palm side, not through it. |
 | `&dots=1`, `&xray=1` | as in `?vm=` |
+| `&nk=SCRIPT`, `&hit=` | with `?hold=57`: the nunchucks' moves on the body (the same scripts as `?vm=`), starting at t = 1 like the pulses |
+| `&ts=a,b,c`, `&cols=N` | a strip: one tile at each of those times (no clip check). With `&nk=` it is a move frame by frame |
 
 ### Other sandboxes
 

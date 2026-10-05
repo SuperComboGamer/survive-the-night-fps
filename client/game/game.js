@@ -2674,7 +2674,7 @@ export class Game {
       cam.rotation.set(inp.pitch + this.recoilKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
       // nunchucks: the view goes with the strikes - a sprung nod, turn and roll from the moves and from what they hit
       // (ViewModel's rig, as of last frame). "Weapon look sway" off leaves the view still
-      const nk = this.vmItem === ITEM.NUNCHAKU && this.settings.weaponSway !== false ? this.vm.nk?.core : null;
+      const nk = this.vm.itemId === ITEM.NUNCHAKU && this.settings.weaponSway !== false ? this.vm.nk?.core : null;
       if (nk) {
         cam.rotation.x += nk.kick.x;
         cam.rotation.y += nk.kick.y;
@@ -2715,14 +2715,16 @@ export class Game {
     if (weaponNow !== this.vmItem) {
       this.vmItem = weaponNow;
       if (weaponNow === -2) this.vm.setItem(0, { claws: true });
-      else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
+      else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow, { tuck: self.alive }); // (tuck: nunchucks are folded away first)
     }
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist };
-    if (weaponNow === ITEM.NUNCHAKU) {
+    if (this.vm.itemId === ITEM.NUNCHAKU) {
+      // (asked of the view itself: for a moment after another weapon is asked for they are still in the hands, being
+      // folded away)
       // nunchucks: their chain hangs in the world, not in the view - it needs which way the eye looks and how the
       // eye is being carried (so it swings as the view turns and trails as the body starts and stops); and the
       // heavy attack's wind-up clock, straight from the predicted state
@@ -2732,15 +2734,15 @@ export class Game {
       this.nkVz = s.vz;
       vmState.camQ = cam.quaternion;
       vmState.acc = _nkAcc;
-      vmState.nkWind = s.reloadT;
+      vmState.nkWind = weaponNow === ITEM.NUNCHAKU ? s.reloadT : 0;
       // (the reload key has nothing to reload: it asks for the flourish)
-      if (buttons & BTN.RELOAD && !(this.nkBtn & BTN.RELOAD) && self.alive) {
+      if (weaponNow === ITEM.NUNCHAKU && buttons & BTN.RELOAD && !(this.nkBtn & BTN.RELOAD) && self.alive) {
         if (this.vm.nkFlourish()) this.selfBody?.nkFlourish();
       }
       this.nkBtn = buttons;
     }
     this.vm.update(dt, vmState);
-    if (weaponNow === ITEM.NUNCHAKU && this.vm.nk) nkSounds(this.audio, this.vm.nk.core, null, this.nkSt, time);
+    if (this.vm.itemId === ITEM.NUNCHAKU && this.vm.nk) nkSounds(this.audio, this.vm.nk.core, null, this.nkSt, time);
     this.updateSelfBody(dt, s, rp, time, hspeed);
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;

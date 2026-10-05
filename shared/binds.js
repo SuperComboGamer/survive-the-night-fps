@@ -36,7 +36,7 @@ export const ACTIONS = [
   { id: 'fire', label: 'Fire · attack · place', group: 'Combat', keys: ['Mouse0', null], hold: true },
   // (on a trackpad a right click can't be held while you click to fire: the left thumb rests on Alt, the fingers on WASD)
   { id: 'aim', label: 'Aim · heavy swing · leap', group: 'Combat', keys: ['Mouse2', 'AltLeft'], hold: true },
-  { id: 'reload', label: 'Reload', group: 'Combat', keys: ['KeyR', null], hold: true, ctx: CTX_HANDS },
+  { id: 'reload', label: 'Reload · flourish (nunchucks)', group: 'Combat', keys: ['KeyR', null], hold: true, ctx: CTX_HANDS },
   { id: 'slot1', label: 'Primary weapon', group: 'Combat', keys: ['Digit1', null] },
   { id: 'slot2', label: 'Pistol', group: 'Combat', keys: ['Digit2', null] },
   { id: 'slot3', label: 'Melee', group: 'Combat', keys: ['Digit3', null] },

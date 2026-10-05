@@ -170,8 +170,8 @@ const PS = (sx, sy, z, dx, dy, dz) => P6(sx * FP_TAN[0] * -z, sy * FP_TAN[1] * -
 // Where a first-person fist is on the screen is what matters, so these keys are written that way (KS, PS: across,
 // up, how far out). The guard: each fist low at the edge of the view, the handles leaning in to a taut chain.
 const G_D = PS(0.34, -0.86, -0.41, -0.4, 0.86, -0.3), G_O = PS(-0.34, -0.86, -0.41, 0.4, 0.86, -0.3);
-const FREE_O = PS(-0.78, -1.08, -0.27, 0.3, 0.75, -0.55); // the other hand with nothing in it: a loose guard, low on its side
-const END_L = [-0.3, -0.6, -0.42, -0.7, 0.3, 0.4], END_R = [0.6, -0.42, -0.36, 0.5, 0.6, 0.6]; // where a stroke to the left / right ends
+const FREE_O = PS(-0.8, -1.45, -0.24, 0.3, 0.75, -0.55); // the other hand with nothing in it: a loose guard, low on its side
+const END_L = [-0.36, -0.28, -0.4, -0.5, 0.75, 0.4], END_R = [0.56, -0.22, -0.38, 0.5, 0.75, 0.4]; // where a stroke to the left / right ends
 const fo = (t) => K(t, ...FREE_O, 0);
 export const FP = {
   L1: 0.34, L2: 0.3,
@@ -187,7 +187,7 @@ export const FP = {
   // the heavy wind-up's whirl: the middle of the fist's circle, its radius, the whirl's axis (leaning forward: the
   // free handle passes low across the view in front and clear over the head behind), how far the fist's own handle
   // leans out, where the elbow stays, the other hand, and the turns a second it is taken up to at each tier
-  spin: { d: PS(0.67, 0.15, -0.3, 0, 1, 0), r: 0.03, n: [-0.05, 1, -0.3], tilt: 0.6, el: 0.7, o: FREE_O, rate: [2.6, 3.8, 5.0] },
+  spin: { d: PS(0.62, 0.04, -0.32, 0, 1, 0), r: 0.03, n: [-0.1, 1, -0.45], tilt: 0.6, el: 0.7, o: FREE_O, rate: [2.6, 3.8, 5.0] },
   clips: {},
 };
 {
@@ -195,8 +195,17 @@ export const FP = {
   C.draw = {
     dur: 0.42, from: { d: PS(0.5, -1.5, -0.3, 0.1, 0.5, -0.85), o: PS(-0.7, -1.6, -0.25, 0.3, 0.75, -0.55), who: 'fold' },
     d: [KS(0.12, 0.55, -0.7, -0.34, 0.5, 0.3, -0.8, 2), KS(0.2, 0.45, -0.35, -0.42, -0.2, 0.9, -0.3, 4), K(0.42, ...G_D, 0)],
-    o: [KS(0.2, -0.6, -1.2, -0.3, 0.3, 0.75, -0.55, 0), KS(0.42, -0.4, -0.9, -0.38, 0.4, 0.8, -0.4, 2)],
-    release: 0.1, kick: [[0.2, -0.008, 0.004, 0.006]],
+    o: [KS(0.24, -0.5, -1.0, -0.34, 0.3, 0.75, -0.55, 0)],
+    oc: [K(0.42, ...G_O, 2)],
+    // (let go as the hand snaps up: the free handle flips open over the top, and is caught as it comes down)
+    release: 0.1, catch: [0.25, 0.39, 'o'], kick: [[0.2, -0.008, 0.004, 0.006]],
+  };
+  // put away: the other hand lets go, the free handle is flipped back against the first, and both drop out of view
+  C.holster = {
+    dur: 0.2,
+    d: [KS(0.08, 0.5, -0.62, -0.4, -0.2, 0.9, -0.3, 2), KS(0.2, 0.5, -1.5, -0.3, 0.1, 0.5, -0.85, 3)],
+    o: [KS(0.2, -0.7, -1.6, -0.25, 0.3, 0.75, -0.55, 3)],
+    release: 0, catch: [0.02, 0.11, 'fold'],
   };
   // ---- the light chain. Each is the fist's handle swept round like a flail's haft, the free handle strung out
   // beyond it: cocked back, through the upright, down across the front, and on round to where the next begins
@@ -400,6 +409,11 @@ export class NunchakuCore {
     this.setRest(this.body.clips.draw.from);
     this.play('draw');
     this.event('draw');
+  }
+  /** Put away: folded in the one hand and down out of sight (the view then brings the next thing out). */
+  holster() {
+    this.windT = 0;
+    this.play('holster');
   }
   /** A move of the moveset begins (NK_MOVE). */
   swing(move) {
@@ -631,7 +645,7 @@ export class NunchakuCore {
       ot.d.lerp(fd, reach).normalize();
       this._arm(ot, -this.side, 0);
       ot.pose = pw >= 1 ? 'nkGrip' : pw > 0.6 ? 'nkHalf' : 'open';
-    } else ot.pose = 'nkHalf';
+    } else ot.pose = 'grip'; // (nothing in it: a loose fist)
     dr.pose = this.spin > 0.3 ? 'nkSpin' : 'nkGrip';
     if (this.who === 'o' && pw >= 1) {
       this.stickQ[F].copy(ot.q);
@@ -1219,6 +1233,6 @@ export class NunchakuTP {
         }
       },
     });
-    this.meshes.place(core, this.handle0, 0.8);
+    this.meshes.place(core, this.handle0, 0.55);
   }
 }

@@ -3,6 +3,7 @@
 import { ITEM, ITEM_DEFS, WEAPONS, SALVAGE, AMMO_NAMES, CONSUMABLES, THROWABLES, BURN } from '../../shared/defs.js';
 import { BACKPACK_SLOTS } from '../../shared/constants.js';
 import { SKYFLARE } from '../../shared/skyflare.js';
+import { NK_MOVES, NK_MOVE } from '../../shared/nunchaku.js';
 
 export const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
 
@@ -11,7 +12,11 @@ export function statLines(id) {
   const out = [];
   const w = WEAPONS[id];
   if (w) {
-    if (w.melee) out.push(`Damage ${w.damage}` + (w.altDamage !== w.damage ? ` · heavy ${w.altDamage}` : ''), `Swing ${w.rate.toFixed(2)}s`);
+    if (w.nunchaku) {
+      // a moveset, not one swing: the light chain blow by blow, the heavy attack by how long it is wound up
+      const chain = [NK_MOVE.WHIP, NK_MOVE.BACKHAND, NK_MOVE.EIGHT, NK_MOVE.SMASH].map((m) => (NK_MOVES[m].hits.length > 1 ? NK_MOVES[m].hits.length + '×' : '') + NK_MOVES[m].damage);
+      out.push(`Combo ${chain.join(' · ')}`, `Heavy ${[NK_MOVE.HEAVY1, NK_MOVE.HEAVY2, NK_MOVE.HEAVY3].map((m) => NK_MOVES[m].damage).join(' / ')}, wound up`, 'Every move costs stamina');
+    } else if (w.melee) out.push(`Damage ${w.damage}` + (w.altDamage !== w.damage ? ` · heavy ${w.altDamage}` : ''), `Swing ${w.rate.toFixed(2)}s`);
     else if (w.rocket) out.push(`Blast ${w.damage} · ${w.rocket.radius}m radius`, `Single shot · ${AMMO_NAMES[w.ammo]}`, `Reload ${w.reload}s`);
     else if (w.flame) out.push(`Fire ${Math.round(w.damage / w.rate)}/s · ${w.range}m`, `Tank ${w.mag} · ${AMMO_NAMES[w.ammo]}`, `Sets alight: ${BURN.dps}/s for ${BURN.time}s`);
     else if (w.skyflare) out.push(`Burns ${SKYFLARE.burn}s · lights ${SKYFLARE.reach}m around`, `Single shot · ${AMMO_NAMES[w.ammo]}`, 'Pins Shades under it');
