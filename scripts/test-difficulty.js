@@ -7,6 +7,7 @@ import { chosenDifficulty } from '../shared/difficulty.js';
 import { zombieHitbox } from '../shared/hitbox.js';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader } from '../shared/protocol.js';
 import { countItem } from '../server/inventory.js';
+import { XPS } from '../shared/progress.js';
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -85,6 +86,13 @@ ember.damagePlayer(en.p, 10, { kind: KILLER.PLAYER, id: en.p.id, x: 0, z: 0 });
 check('your own bomb is not softened on Ember', near(own - en.p.hp, 10), String(own - en.p.hp));
 
 check('coming back at dawn on Ember is two bandages, and one on the others', ember.dawnKit().items[0][1] === 2 && night.dawnKit().items[0][1] === 1 && black.dawnKit() === night.dawnKit());
+
+const nightXp = (g, p) => {
+  const was = p.xpRun[XPS.nights];
+  g.award(p, XPS.nights, 100);
+  return p.xpRun[XPS.nights] - was;
+};
+check('Ember earns half the XP, Nightfall all of it, Blackout half again', nightXp(ember, en.p) === 50 && nightXp(night, nt.p) === 100 && nightXp(black, bl.p) === 150, `${nightXp(ember, en.p)} ${nightXp(night, nt.p)} ${nightXp(black, bl.p)}`);
 
 if (failed) {
   console.log(`${failed} failed`);

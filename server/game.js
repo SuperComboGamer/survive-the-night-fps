@@ -922,10 +922,11 @@ export class Game {
   levelOf(p) {
     return levelOf(this.xpOf(p));
   }
-  // n XP for `src` (XPS): on this run's tally, and on their record with the leaderboard's stats
+  // n XP for `src` (XPS), scaled by their perks and the difficulty: on this run's tally, and on their record with the
+  // leaderboard's stats
   award(p, src, n) {
     if (!p) return;
-    n = Math.round(n * perkMods(p.perks).xp);
+    n = Math.round(n * perkMods(p.perks).xp * this.diff.xp);
     if (n <= 0) return;
     const was = this.levelOf(p);
     p.xpRun[src] += n;
