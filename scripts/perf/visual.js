@@ -227,7 +227,8 @@ async function shoot(tree, label) {
     game = await startGame(tree, { seed: SEED, env: { NODE_ENV: 'test', DEV_ADMIN: '1' } });
     chrome = await launchChrome({ width: W, height: H, gpu: true, life: LIFE_MAX, storage: { 'stn.settings': JSON.stringify({ quality: 'high', renderScale: 1 }), 'stn.character': '3', 'stn.name': 'visual' } });
     const page = chrome.page;
-    page.on('pageerror', (e) => console.error('  page:', String(e).slice(0, 200)));
+    let nerr = 0;
+    page.on('pageerror', (e) => nerr++ < 3 && console.error('  page:', String(e.stack || e).slice(0, 900)));
     await page.evaluateOnNewDocument(VIS);
     await page.goto(game.url, { waitUntil: 'load', timeout: 60000 });
     for (let i = 0; i < 600 && !(await page.evaluate(() => !!(window.__game && window.__game.state === 'menu' && window.__game.world && !window.__game.warm))); i++) await sleep(100);
@@ -423,7 +424,7 @@ async function compare(dirA, dirB) {
 }
 
 const c0 = badPasswordAttempts();
-const build = (dir) => execFileSync(process.execPath, [pjoin(dir, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], { cwd: dir, stdio: 'ignore' });
+const build = (dir) => process.env.PERF_NO_BUILD || execFileSync(process.execPath, [pjoin(dir, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], { cwd: dir, stdio: 'ignore' });
 let wt = null;
 try {
   build(REPO);
