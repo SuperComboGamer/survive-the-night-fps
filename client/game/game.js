@@ -211,7 +211,7 @@ export class Game {
     this.time = 0;
     this.myId = 0;
     this.admin = false; // the server lets us run the admin commands (WELCOMEF.ADMIN): the spawn menu [`] is ours
-    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
+    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, schemHints: [255, 255, 255, 255, 255], wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_MAX).fill(null), armor: null, backpack: 0 };
     this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
@@ -2103,9 +2103,9 @@ export class Game {
     this.conn.action(ACT.WAYPOINT, wp && { x: wp.x, z: wp.z, zone: wp.zone });
   }
 
-  // a place lends a waypoint its name once you know it: discovered, or rumoured to hold a supply
+  // a place lends a waypoint its name once you know it: discovered, or rumoured to hold a supply or a schematic
   knowsPlace(z) {
-    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z));
+    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z) || this.global.schemHints.includes(z));
   }
   waypointName(z = this.waypoint.zone) {
     return this.knowsPlace(z) ? ZONE_NAMES[z] : 'Waypoint';
@@ -3284,6 +3284,8 @@ export class Game {
       discovered: this.discovered,
       hints: g.hints,
       found: g.found,
+      schemHints: g.schemHints,
+      unlocked: g.unlocked | 0,
       supplies: g.supplies,
       carried,
       waypoint: this.waypoint,

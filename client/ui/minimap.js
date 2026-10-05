@@ -1,9 +1,10 @@
 // The minimap: the field map in a disc in the top-left corner,
 // turned with you so the way you face is always up, with the field map's markers on it. What matters wherever it is
-// (the car, waypoints, the team, pings, supply drops) waits on the rim, in its direction, while it is out of range.
+// (the car, waypoints, the team, pings, supply drops) waits on the rim, in its direction, while it is out of range;
+// the places a car supply or a schematic is rumoured to be in only show once they are in range.
 // Enemies in range are red dots on a canvas of their own, redrawn every frame (a horde is too many to be DOM markers).
 // The car supplies shrink to a row of icons under it (Objective's slim mode).
-import { SUPPLIES, SUPPLY_NEED, ZONE_NAMES } from '../../shared/defs.js';
+import { SUPPLIES, SUPPLY_NEED, ZONE_NAMES, schematicRumours } from '../../shared/defs.js';
 import { MAP_SIZE } from '../../shared/constants.js';
 import { el, svgEl } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -160,6 +161,15 @@ export class Minimap {
       const zn = world.zoneById[zid];
       if (zn) put(zn.x, zn.z, 'hint', itemIcon(SUPPLIES[si]), false);
     });
+    // rumoured schematics, beside a supply rumoured to the same place and side by side with each other
+    const perPlace = new Map();
+    for (const rm of schematicRumours(d.schemHints, d.unlocked)) {
+      const zn = world.zoneById[rm.zone];
+      if (!zn) continue;
+      const n = perPlace.get(rm.zone) || 0;
+      perPlace.set(rm.zone, n + 1);
+      put(zn.x + 8 + n * 6, zn.z + 4, 'schem', itemIcon(rm.item), false);
+    }
     for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), false);
     for (const t of d.teamWays) put(t.x, t.z, 'teamway', glyph('flag'), true);
     if (d.waypoint) put(d.waypoint.x, d.waypoint.z, 'way', glyph('flag'), true);

@@ -213,6 +213,18 @@ export function supplyRumours(i, hints, found = 0) {
 export const SCHEMATICS = [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL];
 export const SCHEM_BIT = { [ITEM.SCHEM_SHOTGUN]: 0, [ITEM.SCHEM_RIFLE]: 1, [ITEM.SCHEM_KEVLAR]: 2, [ITEM.SCHEM_EXPLOSIVES]: 3, [ITEM.SCHEM_METAL]: 4 };
 
+// Where the schematics the team still lacks are rumoured to be. hints: the place each SCHEMATICS entry is hidden
+// in (255: none); unlocked: the team's mask. -> [{ item, zone }]
+export function schematicRumours(hints, unlocked = 0) {
+  const out = [];
+  SCHEMATICS.forEach((item, k) => {
+    const zone = hints?.[k];
+    if (zone == null || zone === 255 || unlocked & (1 << SCHEM_BIT[item])) return;
+    out.push({ item, zone });
+  });
+  return out;
+}
+
 // ---------------------------------------------------------------- weapons
 // slot: 0 primary, 1 pistol, 2 melee, 4 build (hammer)
 // Firearms: damage per pellet, rate = seconds between shots, spread (radians) hip / moving penalty,

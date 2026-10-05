@@ -1,9 +1,9 @@
 // Field map overlay [M]: the baked survey map of the valley with live markers - you, your team, the
-// car, pings, where the car supplies are rumoured to be, and the places you have discovered.
+// car, pings, where the car supplies and the schematics are rumoured to be, and the places you have discovered.
 // A click sets your own waypoint (the game keeps it, shows it on the compass and in the world, and shares it:
 // the team's waypoints are flags here too, with who set them). A pinch or the wheel zooms, a drag pans, and [R] turns
 // the map with you, the way you face up (a compass in its corner keeps north).
-import { ZONE, ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM_DEFS, supplyRumours } from '../../shared/defs.js';
+import { ZONE, ZONE_NAMES, SUPPLIES, SUPPLY_NEED, ITEM, ITEM_DEFS, SCHEMATICS, SCHEM_BIT, supplyRumours, schematicRumours } from '../../shared/defs.js';
 import { MAP_HALF, MAP_SIZE } from '../../shared/constants.js';
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -58,13 +58,17 @@ export class MapScreen {
     const side = el('div', 'map-side', body);
     el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Car supplies'));
     this.supList = el('div', 'map-sup', side);
+    el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Schematics'));
+    this.schemList = el('div', 'map-sup', side);
     el('h3', 'inv-h', side).appendChild(el('span', 'inv-h-t', null, 'Legend'));
     const lg = el('div', 'map-legend', side);
+    // (an icon: a glyph's name, or an item's icon as it is)
     for (const [cls, ico, t] of [
       ['you', 'arrowUp', 'You'],
       ['mate', 'person', 'Survivor'],
       ['car', 'car', 'Your car'],
       ['hint', 'fuel', 'Rumoured supply'],
+      ['schem', itemIcon(ITEM.SCHEM_SHOTGUN), 'Rumoured schematic'],
       ['ping', 'ping', 'Ping'],
       ['crate', 'hazard', 'Supply drop'],
       ['bench', 'wrench', 'Workbench'],
@@ -72,7 +76,7 @@ export class MapScreen {
       ['teamway', 'flag', "A teammate's waypoint"],
     ]) {
       const r = el('div', 'lg ' + cls, lg);
-      svgEl('i', 'lg-ico', r, glyph(ico));
+      svgEl('i', 'lg-ico', r, ico.startsWith('<') ? ico : glyph(ico));
       el('span', '', r, t);
     }
     const keys = el('div', 'map-keys', side);
@@ -348,6 +352,7 @@ export class MapScreen {
 
   // d: { self:{x,z,yaw}, mates:[{x,z,name,status}], car:{x,z}, pings:[{x,z,kind,name}], crates:[{x,z}],
   //      benches:[{x,z}], discovered:Set, hints:[zone...], found:bits (a hint whose supply has been taken),
+  //      schemHints:[zone per schematic], unlocked:bits (the schematics the team has),
   //      supplies:[n...], carried:{item:n}, waypoint:{x,z,zone} | null,
   //      teamWays:[{x,z,zone,names:[...],mine (on the spot of your own)}] }
   update(d) {
@@ -361,14 +366,15 @@ export class MapScreen {
     this._layout();
     const way = d.waypoint;
     const taken = (i) => !!(d.found & (1 << i));
-    // place names: known once discovered. A rumour names its place too, and marks it while its supply is still there
+    const schems = schematicRumours(d.schemHints, d.unlocked);
+    // place names: known once discovered. A rumour names its place too, and marks it while what it hides is still there
     this.labelEls.forEach((l, i) => {
       const z = this.world.zones[i];
       const known = d.discovered.has(z.id);
-      const txt = known ? ZONE_NAMES[z.id] : d.hints.includes(z.id) ? ZONE_NAMES[z.id] + '?' : '?';
+      const txt = known ? ZONE_NAMES[z.id] : d.hints.includes(z.id) || d.schemHints.includes(z.id) ? ZONE_NAMES[z.id] + '?' : '?';
       if (l.textContent !== txt) l.textContent = txt;
       l.classList.toggle('unknown', !known);
-      l.classList.toggle('hinted', d.hints.some((zid, k) => zid === z.id && !taken(k)));
+      l.classList.toggle('hinted', d.hints.some((zid, k) => zid === z.id && !taken(k)) || schems.some((rm) => rm.zone === z.id));
       l.classList.toggle('way', !!way && way.zone === z.id);
     });
     if (this.cemLab) {
@@ -405,6 +411,16 @@ export class MapScreen {
       const off = seen.size % 3;
       put(z.x + (off - 1) * 6, z.z - 14, 'hint', itemIcon(SUPPLIES[si]));
     });
+    // rumoured schematics: under the place's name (the supplies are over it), gone once the team has that one.
+    // Which container of the place holds it is not known: they all have to be searched
+    const perPlace = new Map();
+    for (const rm of schems) {
+      const z = this.world.zoneById[rm.zone];
+      if (!z) continue;
+      const n = perPlace.get(rm.zone) || 0;
+      perPlace.set(rm.zone, n + 1);
+      put(z.x + n * 10, z.z + 26, 'schem', itemIcon(rm.item));
+    }
     for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), 'bench');
     for (const c of d.crates) put(c.x, c.z, 'crate', glyph('hazard'), 'drop');
     for (const p of d.pings) put(p.x, p.z, 'ping k' + p.kind, glyph('ping'), p.name);
@@ -426,6 +442,21 @@ export class MapScreen {
         el('b', '', t, ITEM_DEFS[item].name + (SUPPLY_NEED[i] > 1 ? ` ${d.supplies[i]}/${SUPPLY_NEED[i]}` : ''));
         const rum = supplyRumours(i, d.hints, d.found);
         el('span', '', t, d.supplies[i] >= SUPPLY_NEED[i] ? 'installed' : rum.zones.map((z) => ZONE_NAMES[z]).join(' · ') || (rum.found ? 'found' : 'unknown'));
+      });
+    }
+    // schematic checklist
+    const sKey = JSON.stringify([d.schemHints, d.unlocked]);
+    if (sKey !== this._schemKey) {
+      this._schemKey = sKey;
+      this.schemList.textContent = '';
+      SCHEMATICS.forEach((item, k) => {
+        const got = !!(d.unlocked & (1 << SCHEM_BIT[item]));
+        const zid = d.schemHints[k];
+        const r = el('div', 'ms-row' + (got ? ' done' : ''), this.schemList);
+        svgEl('i', 'ms-ico', r, itemIcon(item));
+        const t = el('div', 'ms-t', r);
+        el('b', '', t, ITEM_DEFS[item].name);
+        el('span', '', t, got ? 'found' : zid !== 255 && ZONE_NAMES[zid] ? `${ZONE_NAMES[zid]}? · search its containers` : 'unknown');
       });
     }
   }
