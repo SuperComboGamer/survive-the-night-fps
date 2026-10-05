@@ -68,9 +68,13 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
 - Textures are procedural canvas textures. Audio is synthesized, with CC0 recordings in
   `client/audio/samples/` (credited in its CREDITS.md; CC0 only) layered over it; every recording keeps its
   procedural fallback (see Audio below).
-- Performance budget: 60 fps on a mid-range laptop GPU with ~80 zombies on screen. One draw call per zombie
-  (single SkinnedMesh, at most two bones a vertex; the humanoid dead swap to a lighter copy of their mesh past
-  `LOD_FAR`), instanced vegetation, merged static geometry.
+- Performance budget: 60 fps on a mid-range laptop GPU with ~80 zombies on screen. What a frame costs is mostly the
+  number of draw calls it issues, so the big populations are each drawn in a handful: the dead as a crowd (one
+  instanced call for all of one body, their bones in one texture: `render/crowd.js`; at most two bones a vertex;
+  the humanoid dead swap to a lighter copy of their mesh past `LOD_FAR`), the static world one call a material
+  and the terrain one call, each drawing the pieces in sight with a multi-draw (`render/multimesh.js`), instanced
+  vegetation culled to the view. How it is measured, the rules that keep it, and what was tried:
+  [docs/performance.md](performance.md).
 
 ## Networking
 
@@ -592,7 +596,10 @@ act 2, where the same loop is played with a plane and flying out wins.
   static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The static world's
   meshes do not cast themselves: each chunk has one shadow-only mesh per shadow side (`StaticWorld.casters`,
   reading the chunk's own vertex buffer) that the shadow passes draw instead; only materials whose texture cuts
-  holes in the shadow (chain link, weeds, stencils) cast from their own mesh. The viewmodel scene has
+  holes in the shadow (chain link, weeds, stencils) cast from their own mesh. (Since the performance pass a
+  material is one `MultiMesh` for the whole world and a caster one per page of positions and shadow side, each
+  drawing the runs of the chunks in the frustum being drawn: `render/multimesh.js`, `StaticWorld`.) The shadow
+  maps are drawn at most 160 times a second (`render/rates.js`): every frame at ordinary frame rates. The viewmodel scene has
   its own lights; `Game.updateViewmodelLight` rotates the key light into camera space and dims it by a
   ray/crown probe towards the light so hands are dark in shade. Those lights are about a quarter of the
   world's (no factor PI), so the weapon in the hands has its own material, the one Phong material
