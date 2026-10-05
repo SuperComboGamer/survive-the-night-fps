@@ -8,11 +8,12 @@ import { Killfeed, Pickups, Notifier } from './feed.js';
 import { Chat } from './chat.js';
 import { Inventory } from './inventory.js';
 import { BuildMenu } from './build.js';
-import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, DEFAULT_CONTROLS } from './menus.js';
+import { Splash, Pause, Death, EndScreen, Banner, UpdatingModal, VoiceList, ControlsPanel, InvitePanel, DEFAULT_CONTROLS } from './menus.js';
 import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SETTINGS } from './settings.js';
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
 import { Bestiary } from './bestiary.js';
+import { SpawnMenu } from './spawnmenu.js';
 import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
@@ -108,10 +109,12 @@ export class UI {
     // A modal layer lets the same board sit over both the in-game/end overlays and the splash screen.
     this.board = new Leaderboard(this, modalL);
     this.bestiary = new Bestiary(this, modalL);
+    this.spawn = new SpawnMenu(this, modalL); // (admins only: Game.toggleSpawn)
     this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
     this.settingsPanel = new SettingsPanel(this, modalL);
     this.controlsPanel = new ControlsPanel(this, modalL);
+    this.invitePanel = new InvitePanel(this, modalL);
     this.friends = new FriendsPanel(this, modalL);
     this.accountPanel = new AccountPanel(this, modalL);
     this.progress = new ProgressPanel(this, modalL);
@@ -184,6 +187,7 @@ export class UI {
     this.splash.hide();
     if (this.settingsPanel.visible) this.settingsPanel.hide();
     if (this.controlsPanel.visible) this.controlsPanel.hide();
+    if (this.invitePanel.visible) this.invitePanel.hide();
     if (this.friends.visible) this.friends.hide();
     if (this.accountPanel.visible) this.accountPanel.hide();
     if (this.progress.visible) this.progress.hide();
@@ -200,7 +204,7 @@ export class UI {
     this.pause.show(show);
   }
 
-  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu
+  // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu and its invite panel
   setRoom(room, link = '') {
     this.pause.setRoom(room, link);
   }
@@ -261,6 +265,14 @@ export class UI {
 
   get bestiaryOpen() {
     return this.bestiary.open;
+  }
+
+  setSpawnOpen(open) {
+    this.spawn.setOpen(open);
+  }
+
+  get spawnOpen() {
+    return this.spawn.open;
   }
 
   // the leaderboard as the server last sent it (shared/protocol.js readBoard); null: not heard from yet

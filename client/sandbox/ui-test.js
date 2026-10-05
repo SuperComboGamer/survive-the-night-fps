@@ -121,6 +121,7 @@ const ui = new UI(document.getElementById('ui'), {
   onSettings: (s) => log('settings', JSON.stringify(s)),
   onResume: () => log('resume'),
   onLeave: () => log('leave'),
+  onPeers: () => ({ room: null, players: players.slice(0, 3) }),
   onUiSound: () => {},
 });
 window.ui = ui;
@@ -642,12 +643,15 @@ switch (screen) {
     break;
   }
   case 'pause':
+  case 'invite':
   case 'settings': {
     buildScene(bg || 'night');
     ui.hideSplash();
     ui.updateHud({ ...baseHud, phase: PHASE.NIGHT, night: 1, hordeLeft: 30 });
+    ui.setRoom({ code: 'J68QMM', name: "Webdevcody's game", inviteOnly: false }, `${location.origin}/?game=J68QMM`);
     ui.showPause(true);
     if (screen === 'settings') ui.settingsPanel.show();
+    if (screen === 'invite') ui.invitePanel.show();
     break;
   }
   case 'chat': {
