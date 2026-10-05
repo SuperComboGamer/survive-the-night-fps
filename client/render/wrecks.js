@@ -833,7 +833,15 @@ class Wreck extends Lifted {
     // (the ground under the whole of it as it will lie, not only its middle: a bonnet on a slope rests on the high
     // side, it does not sink into it)
     const flatR = Math.hypot(...[ext[0], ext[1], ext[2]].filter((_, i) => i !== thin)) * 0.35;
-    const ground = (x, z, y) => (world.floorAt ? world.floorAt(x, z, y + 0.3) : world.heightAt(x, z));
+    // (the ground: the terrain, or what is laid on it there - a forecourt's slab, a platform a step high. Only
+    // what the world was built with: something a survivor nailed up is not where everybody's copy has it)
+    const near = world.staticGrid.query(c0.x, c0.z, 9, []).filter((col) => !(col.flags & (COL.NOBLOCK | COL.TREE)));
+    const ground = (x, z, y) => {
+      let h = world.floorAt ? world.floorAt(x, z, y + 0.3) : world.heightAt(x, z);
+      const base = h;
+      for (const col of near) if (col.y1 > h && col.y1 <= base + 0.45 && col.tag !== this.prop && footprintContains(col, x, z, 0)) h = col.y1;
+      return h;
+    };
     const floor = (x, z, y) => Math.max(ground(x, z, y), ground(x + flatR, z, y), ground(x - flatR, z, y), ground(x, z + flatR, y), ground(x, z - flatR, y)) + lie;
     const path = [c0.x, c0.y, c0.z];
     const pos = c0.clone();
@@ -865,10 +873,9 @@ class Wreck extends Lifted {
     const end = pos.clone();
     const flat = [ext[0], ext[1], ext[2]].filter((_, i) => i !== thin);
     const rad = Math.min(1.3, Math.hypot(flat[0], flat[1]) / 2); // (how far it reaches as it lies)
-    const near = world.staticGrid.query(c0.x, c0.z, 9, []).filter((col) => !(col.flags & (COL.NOBLOCK | COL.TREE)));
     // in its own wreck (all of it clear of the wreck's box), or in anything else (its middle in a wall, a crate, the next car)
     const inOwn = (x, z) => near.some((col) => col.tag === this.prop && footprintContains(col, x, z, rad + 0.06));
-    const inOther = (x, z, y) => near.some((col) => col.tag !== this.prop && col.y1 > y - 0.05 && col.y0 < y + 0.3 && footprintContains(col, x, z, 0.12));
+    const inOther = (x, z, y) => near.some((col) => col.tag !== this.prop && col.y1 > y + 0.02 && col.y0 < y + 0.3 && footprintContains(col, x, z, 0.12));
     // (the nearest place out from the wreck where it is clear of the wreck: there, at the worst)
     const safe = new THREE.Vector3(c0.x, 0, c0.z);
     for (let k = 0; k < 60 && inOwn(safe.x, safe.z); k++) {

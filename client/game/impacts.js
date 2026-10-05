@@ -46,6 +46,15 @@ export class Impacts {
       },
     });
     this.panes = [];
+    // a ray against the world for roomAt: how far, and (near enough for a flat face) the normal it was asked along
+    this.worldRay = (ox, oy, oz, dx, dy, dz, maxT, out) => {
+      raycastWorld(g.world, ox, oy, oz, dx, dy, dz, maxT, _ray);
+      out.t = _ray.t;
+      out.nx = -dx;
+      out.ny = -dy;
+      out.nz = -dz;
+      return out;
+    };
     this.mineT = -9;
     this.soundT = 0;
     this.told = false;
@@ -200,15 +209,19 @@ export class Impacts {
   // It is made no bigger than the face has room for, so that it does not hang off an edge or fold round a corner.
   mark(h, m, dx, dy, dz, r, stroke = false, life) {
     if (h.bare) return;
-    // (on a prop's model: no bigger than the face it struck - a pillar, a chair's leg, the rim of a barrel)
+    // (on a prop's model: no bigger than the face it struck - a pillar, a chair's leg, the rim of a barrel. On a
+    // wall: a wall is often several boxes laid flush - courses of stone, the planks either side of a window - and
+    // the room a big mark has is the flat round where it landed, not the one box it happened to strike)
     const half = Math.max(m.w, m.h) / 2;
     if (h.prop && half > 0.08) h.fit = roomAt((...a) => this.wrecks.ray(h.prop, ...a), h.x, h.y, h.z, h.nx, h.ny, h.nz, half);
+    else if (!h.prop && half > 0.1 && h.fit < half) h.fit = Math.max(h.fit, roomAt(this.worldRay, h.x, h.y, h.z, h.nx, h.ny, h.nz, half));
     const room = Math.max(0.04, h.fit) * 2 + 0.03;
     const k = Math.min(1, room / Math.max(m.w, m.h));
     if (k < 0.3) return;
     const w = m.w * k, hh = m.h * k;
     const c = !m.along ? markCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, null, 0, 0, r * 6.283) : stroke ? strokeCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, dx, dy, dz, r) : markCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, dx, dy, dz);
-    const shade = 0.85 + 0.15 * r;
+    // (cracks in glass catch the light: brighter than the pane they are in)
+    const shade = h.surf === SURF.GLASS ? 2.2 : 0.85 + 0.15 * r;
     this.marks.pool.add(c, h.nx, h.ny, h.nz, m.cell, shade, shade, shade, 1, h.owner, this.g.time, life);
   }
 
