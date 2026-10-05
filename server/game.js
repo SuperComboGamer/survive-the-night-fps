@@ -2982,11 +2982,15 @@ export class Game {
     const e = this.ents[id];
     if (!e || e.kind !== ENT.STRUCTURE) return;
     const s = p.state;
-    if (s.weapons[SLOT_BUILD] !== ITEM.HAMMER) return;
+    const hammer = s.weapons[SLOT_BUILD] === ITEM.HAMMER;
     if (Math.hypot(e.x - s.x, e.z - s.z) > 4.5) return;
-    if (e.stype === STRUCT.CAMPFIRE) return this.feedFire(p, e);
+    if (e.stype === STRUCT.CAMPFIRE) {
+      if (hammer) this.feedFire(p, e);
+      return;
+    }
     if (e.hp >= e.maxHp && !(e.stype === STRUCT.TORCH && e.burnLeft <= 0)) return;
     if (this.time - p.actionT < 0.6) return;
+    if (!hammer || s.slot !== SLOT_BUILD) return this.notify(NOTIFY.NEED_HAMMER, 0, p.id); // (the hammer in hand, not just carried)
     if (e.stype === STRUCT.TORCH) {
       if (countItem(p.inv, ITEM.CLOTH) < 1) return this.notify(NOTIFY.NOT_ENOUGH, ITEM.CLOTH, p.id);
       removeItem(p.inv, ITEM.CLOTH, 1);

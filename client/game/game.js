@@ -1350,6 +1350,10 @@ export class Game {
         ui.notify("Empty the backpack's extra pockets first", 'warning', 2.5);
         a.playLocal('build_fail');
         break;
+      case NOTIFY.NEED_HAMMER:
+        ui.notify(`Equip the hammer to repair ${bindTag('slot5')}`, 'warning', 2);
+        a.playLocal('build_fail');
+        break;
       case NOTIFY.UNDO_GONE:
         ui.notify(arg === UNDO_NO.LATE ? 'Too late to take it back: it is still on the ground' : arg === UNDO_NO.FAR ? 'Too far from it to take it back: it is still on the ground' : 'Somebody already picked it up', 'warning', 2.5);
         a.playLocal('build_fail');
