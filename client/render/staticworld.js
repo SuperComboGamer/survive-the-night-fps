@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { getMaterial, staticSurface } from './materials.js';
 import { createProp } from './models/props.js';
 import { PROPS } from '../../shared/props.js';
+import { LIGHT_PROPS } from '../../shared/surfaces.js';
 import { buildCity, TIER } from './citykit.js';
 import { MultiMesh } from './multimesh.js';
 
@@ -244,12 +245,46 @@ function prep(geo, needColor) {
   return g;
 }
 
+// a material that is one plain colour (in the city those are all drawn as one, the colour in the vertices)
+const plainMaterial = (mat) => mat.isMeshLambertMaterial && !mat.map && !mat.vertexColors && !mat.transparent && !mat.alphaTest && !mat.userData.staticGrime;
+// What can be lifted out of the merged world (StaticWorld.lift): a wreck, and what a blow can rock.
+const liftable = (pr) => !!(PROPS[pr.type]?.salvage || LIGHT_PROPS[pr.type]);
+// A see-through material's run is a mesh of its own: a hole in it is made by drawing it as the groups either side
+// (its material in an array, which is what makes three draw by groups).
+function holeSingle(run, first, count, cut) {
+  const mesh = run.single;
+  const holes = (run.holes ||= []);
+  const rel = first - run.first;
+  if (cut) holes.push([rel, count]);
+  else {
+    const i = holes.findIndex((h) => h[0] === rel && h[1] === count);
+    if (i >= 0) holes.splice(i, 1);
+  }
+  const g = mesh.geometry;
+  g.clearGroups();
+  if (!holes.length) {
+    if (Array.isArray(mesh.material)) mesh.material = mesh.material[0];
+    return;
+  }
+  if (!Array.isArray(mesh.material)) mesh.material = [mesh.material];
+  let at = 0;
+  for (const [f, c] of holes.slice().sort((a, b) => a[0] - b[0])) {
+    if (f > at) g.addGroup(at, f - at, 0);
+    at = Math.max(at, f + c);
+  }
+  if (at < run.count) g.addGroup(at, run.count - at, 0);
+  if (!g.groups.length) g.addGroup(0, 0, 0); // (everything in it is out: nothing to draw)
+}
+
 export class StaticWorld {
   constructor(scene, world) {
     this.scene = scene;
     this.group = new THREE.Group();
     this.group.name = 'static-world';
     this.chunks = [];
+    this.world = world;
+    this.lifts = new Map(); // prop or pane -> [{ m, run, first, count }]: where its vertices are, of each material
+    this.lifted = new Set();
     this.multi = []; // the MultiMeshes: one per material, and the shadow casters
     this.single = []; // { mesh, chunk, maxDist }: the few runs that are still meshes of their own
     // Geometry is written straight into one vertex buffer per (chunk, material): every source geometry is
@@ -270,9 +305,11 @@ export class StaticWorld {
     // In the city every material that is one plain colour (the dark of a window, rubber, a tail light, a bottle) is
     // drawn as one, the colour written into the vertices: a draw call a chunk, not one for each of them.
     const size = (this.chunkSize = world.city ? CHUNK_CITY : CHUNK);
-    const FLAT = world.city ? getMaterial('flat') : null;
-    const plain = (mat) => FLAT && mat.isMeshLambertMaterial && !mat.map && !mat.vertexColors && !mat.transparent && !mat.alphaTest && !mat.userData.staticGrime;
-    const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null, tier = 0) => {
+    const FLAT = (this.flat = world.city ? getMaterial('flat') : null);
+    const plain = (mat) => FLAT && plainMaterial(mat);
+    // lift: what it is a piece of when that can be taken out of the world again (lift): a prop a blow can rock or a
+    // wreck that is taken apart, a window pane that can be shot out
+    const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null, tier = 0, lift = null) => {
       let flat = null;
       if (plain(mat)) {
         flat = mat.color;
@@ -284,7 +321,7 @@ export class StaticWorld {
       const lk = tierKey(mat, tier);
       let list = b.get(lk);
       if (!list) b.set(lk, (list = { entries: [], verts: 0, radius: 0, mat, tier }));
-      list.entries.push({ tpl, m, tint, wuv, uvo, flat });
+      list.entries.push({ tpl, m, tint, wuv, uvo, flat, key: lift });
       list.verts += tpl.count;
       list.radius = Math.max(list.radius, tpl.radius * m.getMaxScaleOnAxis());
     };
@@ -354,7 +391,7 @@ export class StaticWorld {
       const mat = staticSurface(getMaterial(part.mat) || getMaterial('planks'));
       const upright = part.shape === 'box' && !glass && !part.rx && !part.rz;
       const h = Math.abs(Math.sin(part.x * 12.9898 + part.z * 78.233 + part.y * 37.719) * 43758.5453);
-      add(part.x, part.z, mat, makeTpl(g, !!mat.vertexColors), m, paint.get(pi), upright ? [Math.cos(part.ry || 0), -Math.sin(part.ry || 0)] : null, glass ? [(h % 1) * 2, ((h * 7.13) % 1) * 2] : null);
+      add(part.x, part.z, mat, makeTpl(g, !!mat.vertexColors), m, paint.get(pi), upright ? [Math.cos(part.ry || 0), -Math.sin(part.ry || 0)] : null, glass ? [(h % 1) * 2, ((h * 7.13) % 1) * 2] : null, 0, glass ? part : null);
       g.dispose();
       if (glass) {
         const trimMat = getMaterial(world.parts[pi - 1]?.mat === 'clapboard' ? 'sash' : 'trim');
@@ -404,6 +441,7 @@ export class StaticWorld {
     for (const pr of world.props) {
       if (pr.live) continue; // (drawn by the game itself: the car the team came in, the plane - they change, and a cutscene moves them)
       const tier = propTier(pr);
+      const key = liftable(pr) ? pr : null;
       let obj;
       try {
         obj = createProp(pr.type, pr.seed);
@@ -424,11 +462,11 @@ export class StaticWorld {
           // multi-material mesh: split by groups
           o.geometry.groups.forEach((grp, gi) => {
             const mat = mats[grp.materialIndex];
-            add(pr.x, pr.z, mat, cachedTpl(o.geometry, !!mat.vertexColors, gi), m, null, null, null, tier);
+            add(pr.x, pr.z, mat, cachedTpl(o.geometry, !!mat.vertexColors, gi), m, null, null, null, tier, key);
           });
           return;
         }
-        add(pr.x, pr.z, mats[0], cachedTpl(o.geometry, !!mats[0].vertexColors), m, null, null, null, tier);
+        add(pr.x, pr.z, mats[0], cachedTpl(o.geometry, !!mats[0].vertexColors), m, null, null, null, tier, key);
       });
     }
     // the city's buildings, built from what the world says of each (world.city.buildings)
@@ -494,7 +532,14 @@ export class StaticWorld {
     }
     const fill = (list, pos, nrm, uv, col, ground, tints, o0) => {
       let o = o0;
-      for (const { tpl, m, tint, wuv, uvo, flat } of list.entries) {
+      list.keyed = null;
+      for (const { tpl, m, tint, wuv, uvo, flat, key } of list.entries) {
+        if (key) {
+          // (the pieces of one prop follow one another: one stretch of the run)
+          const last = list.keyed && list.keyed[list.keyed.length - 1];
+          if (last && last.key === key && last.first + last.count === o) last.count += tpl.count;
+          else (list.keyed ||= []).push({ key, first: o, count: tpl.count });
+        }
         const me = m.elements;
         nm.getNormalMatrix(m);
         const ne = nm.elements;
@@ -564,7 +609,13 @@ export class StaticWorld {
       for (const list of m.lists) {
         fill(list, pos, nrm, uv, col, ground, tints, o);
         const sp = boundsOf(pos.subarray(o * 3, (o + list.verts) * 3));
-        m.runs.push({ chunk: list.chunk, first: o, count: list.verts, maxDist: list.maxDist, side: list.side, x: sp.center.x, y: sp.center.y, z: sp.center.z, r: sp.radius });
+        const run = { chunk: list.chunk, first: o, count: list.verts, maxDist: list.maxDist, side: list.side, x: sp.center.x, y: sp.center.y, z: sp.center.z, r: sp.radius };
+        m.runs.push(run);
+        for (const k of list.keyed || []) {
+          let l = this.lifts.get(k.key);
+          if (!l) this.lifts.set(k.key, (l = []));
+          l.push({ m, run, first: k.first, count: k.count });
+        }
         o += list.verts;
       }
       m.lists = null;
@@ -586,6 +637,7 @@ export class StaticWorld {
           mesh.updateMatrix();
           this.group.add(mesh);
           this.single.push({ mesh, chunk: run.chunk, maxDist: run.maxDist });
+          run.single = mesh;
         }
         continue;
       }
@@ -605,18 +657,26 @@ export class StaticWorld {
       mesh.receiveShadow = true;
       this.group.add(mesh);
       this.multi.push(mesh);
+      m.mesh = mesh;
     }
     // one caster per page and shadow side
     for (const pg of pages) {
       for (const side of [THREE.FrontSide, THREE.BackSide, THREE.DoubleSide]) {
         const runs = [];
-        for (const m of pg.mats) for (const run of m.runs) if (run.side === side) runs.push({ ...run, first: run.first + m.base });
+        const mine = [];
+        for (const m of pg.mats)
+          for (const run of m.runs)
+            if (run.side === side) {
+              runs.push({ ...run, first: run.first + m.base });
+              mine.push(run);
+            }
         if (!runs.length) continue;
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.InterleavedBufferAttribute(pg.buffer, 3, 0));
         const caster = new MultiMesh(g, CASTER_MAT[side], runs, { shadowOnly: true });
         caster.name = 'static-shadow-caster';
         caster.castShadow = true;
+        mine.forEach((run, i) => (run.cast = { mesh: caster, run: runs[i] })); // (where its shadow is drawn from: lift)
         this.casters.add(caster);
         this.multi.push(caster);
       }
@@ -628,6 +688,115 @@ export class StaticWorld {
     // (nothing in it ever moves: once its matrices are made, the scene's matrix pass does not walk it)
     this.group.updateMatrixWorld(true);
     this.group.matrixWorldAutoUpdate = false;
+  }
+
+  // ---------------------------------------------------------------- pieces taken out and put back
+  // A prop (or a window pane) leaves the merged world: its vertices are no longer drawn, nor its shadow. Whoever
+  // lifts it draws it instead (render/wrecks.js, from pieces()). False when it is not one that can be.
+  lift(key) {
+    const l = this.lifts.get(key);
+    if (!l || this.lifted.has(key)) return false;
+    this.lifted.add(key);
+    for (const { m, run, first, count } of l) {
+      if (run.single) holeSingle(run, first, count, true);
+      else {
+        m.mesh.cut(run, first, count);
+        if (run.cast) run.cast.mesh.cut(run.cast.run, first + m.base, count);
+      }
+    }
+    return true;
+  }
+  // ...and is in it again, as it was built.
+  drop(key) {
+    const l = this.lifts.get(key);
+    if (!l || !this.lifted.delete(key)) return;
+    for (const { m, run, first, count } of l) {
+      if (run.single) holeSingle(run, first, count, false);
+      else {
+        m.mesh.mend(run, first, count);
+        if (run.cast) run.cast.mesh.mend(run.cast.run, first + m.base, count);
+      }
+    }
+  }
+  // The triangles of a prop as the static world drew them, built again (the buffers they were written into are on
+  // the card and nowhere else): [{ name (the model's material), mat (the one it is drawn with), chunk, maxDist,
+  // side (its shadow side), count, pos, nrm, uv, col, ground, tint (the vertex data, in the world) }], one per
+  // material, in the order they were built in.
+  pieces(pr) {
+    const l = this.lifts.get(pr) || null; // (one that cannot be lifted still has triangles to cast a ray at)
+    let obj;
+    try {
+      obj = createProp(pr.type, pr.seed);
+    } catch {
+      return null;
+    }
+    const base = new THREE.Matrix4().compose(new THREE.Vector3(pr.x, pr.y, pr.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), pr.ry), new THREE.Vector3(1, 1, 1));
+    const byMat = new Map();
+    const push = (mat0, geo, gi, m) => {
+      let mat = staticSurface(mat0);
+      let flat = null;
+      if (this.flat && plainMaterial(mat)) {
+        flat = mat.color;
+        mat = this.flat;
+      }
+      let p = byMat.get(mat);
+      if (!p) byMat.set(mat, (p = { mat, parts: [], count: 0 }));
+      let src = geo;
+      if (gi >= 0) {
+        const grp = geo.groups[gi];
+        src = geo.clone();
+        src.clearGroups();
+        if (src.index) src.setIndex(Array.from(src.index.array.slice(grp.start, grp.start + grp.count)));
+      }
+      const g = prep(src, !!mat.vertexColors);
+      if (src !== geo) src.dispose();
+      p.parts.push({ g, m, flat, name: mat0.name });
+      p.count += g.attributes.position.count;
+    };
+    obj.traverse((o) => {
+      if (!o.isMesh || !o.geometry) return;
+      o.updateMatrix();
+      const m = o.matrix.equals(IDENTITY) && o.parent === obj ? base : new THREE.Matrix4().multiplyMatrices(base, localMatrix(o, obj));
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      if (mats.length !== 1) o.geometry.groups.forEach((grp, gi) => push(mats[grp.materialIndex], o.geometry, gi, m));
+      else push(mats[0], o.geometry, -1, m);
+    });
+    const world = this.world;
+    const nm = new THREE.Matrix3();
+    const v = new THREE.Vector3();
+    const out = [];
+    for (const p of byMat.values()) {
+      const n = p.count;
+      const mat = p.mat;
+      const piece = { mat, count: n, names: [], pos: new Float32Array(n * 3), nrm: new Float32Array(n * 3), uv: new Float32Array(n * 2), col: mat.vertexColors ? new Float32Array(n * 3).fill(1) : null, ground: mat.userData.staticGrime ? new Float32Array(n) : null, tint: mat.userData.staticPaint ? new Float32Array(n * 3).fill(1) : null };
+      let o = 0;
+      for (const { g, m, flat, name } of p.parts) {
+        const sp = g.attributes.position, sn = g.attributes.normal, su = g.attributes.uv, sc = g.attributes.color;
+        nm.getNormalMatrix(m);
+        piece.names.push({ name, first: o, count: sp.count });
+        for (let i = 0; i < sp.count; i++, o++) {
+          v.fromBufferAttribute(sp, i).applyMatrix4(m);
+          piece.pos.set([v.x, v.y, v.z], o * 3);
+          if (piece.ground) piece.ground[o] = v.y - (world.floorAt ? world.floorAt(v.x, v.z, v.y + 0.3) : world.heightAt(v.x, v.z));
+          v.fromBufferAttribute(sn, i).applyMatrix3(nm).normalize();
+          piece.nrm.set([v.x, v.y, v.z], o * 3);
+          piece.uv[o * 2] = su.getX(i);
+          piece.uv[o * 2 + 1] = su.getY(i);
+          if (piece.col && flat) piece.col.set([flat.r, flat.g, flat.b], o * 3);
+          else if (piece.col && sc) piece.col.set([sc.getX(i), sc.getY(i), sc.getZ(i)], o * 3);
+        }
+        g.dispose();
+      }
+      // (drawn by the rule its stretch of the static world was: the same chunk, the same distance, the same shadow side)
+      const at = l && (l.find((r) => r.m.mat === mat) || l[0]);
+      if (at) {
+        piece.chunk = at.run.chunk;
+        piece.maxDist = at.run.maxDist;
+        piece.side = at.run.side;
+      }
+      out.push(piece);
+    }
+    return out;
   }
 
   // with shadows off in the quality settings the casters are not even walked

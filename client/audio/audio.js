@@ -147,6 +147,39 @@ const FAR_FULL = 110;
 
 // SOUND id -> { bank, cat ('2d' = always non-positional), vol, jit (rate jitter), send (2D reverb send), rec }
 const SOUND_MAP = [];
+// Blows on the world, by what was struck and with what (shared/surfaces.js soundFor), and a wreck coming apart
+// (render/wrecks.js): the procedural banks of synth-strike.js, with the recorded impact over them where there is
+// one - pitched down for a bat's thud on a panel, up for a machete's clang. rate: the bank played faster or slower
+const strikeDef = (bank, cat, vol, jit = 0.07, rate = 1, rec = null) => ({ bank, cat, vol, jit, send: 0.15, rec, rate });
+const STRIKE_MAP = {
+  metal_thud: strikeDef('strike_panel', 'fx', 0.95, 0.06, 1, { key: 'imp_metal', vol: 1.5, pitch: [0.6, 0.74], layer: true, layerVol: 1 }),
+  metal_bang: strikeDef('strike_panel', 'fx', 0.9, 0.05, 1.3, { key: 'imp_metal', vol: 1.9, pitch: [0.84, 0.98], layer: true, layerVol: 0.7 }),
+  metal_clang: strikeDef('strike_blade', 'fx', 0.8, 0.05, 1, { key: 'imp_metal', vol: 1.5, pitch: [1.16, 1.34], layer: true, layerVol: 0.8 }),
+  metal_tink: strikeDef('strike_tink', 'fx', 0.6, 0.1),
+  wood_slash: strikeDef('strike_cloth', 'fx', 0.35, 0.1, 0.7, { key: 'chop', vol: 0.8, pitch: [1.35, 1.6] }),
+  wood_chop: strikeDef('strike_earth', 'fx', 0.5, 0.08, 1.2, { key: 'chop', vol: 1.9, pitch: [0.93, 1.07] }),
+  wood_thud: strikeDef('strike_earth', 'fx', 0.7, 0.08, 1.1, { key: 'chop', vol: 1.5, pitch: [0.66, 0.78], layer: true, layerVol: 0.8 }),
+  wood_knock: strikeDef('strike_earth', 'fx', 0.5, 0.08, 1.6, { key: 'chop', vol: 1.3, pitch: [1.05, 1.2] }),
+  stone_scrape: strikeDef('strike_stone', 'fx', 0.5, 0.1, 1.25),
+  stone_chink: strikeDef('strike_stone', 'fx', 0.7, 0.08, 1),
+  stone_crack: strikeDef('strike_stone', 'fx', 0.9, 0.08, 0.72),
+  earth_cut: strikeDef('strike_earth', 'fx', 0.5, 0.1, 1.35),
+  earth_thud: strikeDef('strike_earth', 'fx', 0.8, 0.1, 0.9),
+  cloth_rip: strikeDef('strike_cloth', 'fx', 0.6, 0.1),
+  cloth_whump: strikeDef('strike_tyre', 'fx', 0.6, 0.1, 1.3),
+  glass_tick: strikeDef('strike_glass', 'fx', 0.6, 0.1),
+  glass_crack: strikeDef('strike_glass', 'fx', 0.9, 0.08, 0.8),
+  tyre_stab: strikeDef('strike_tyre', 'fx', 0.7, 0.08, 1.2),
+  tyre_thump: strikeDef('strike_tyre', 'fx', 0.9, 0.08, 0.9),
+  tyre_hiss: strikeDef('tyre_hiss', 'fx', 0.7, 0.05),
+  hinge_creak: strikeDef('hinge_creak', 'fx', 0.7, 0.1),
+  trim_rattle: strikeDef('part_drop', 'fx', 0.4, 0.1, 1.5),
+  part_drop: strikeDef('part_drop', 'fx', 0.8, 0.1, 1.1),
+  part_drop_big: strikeDef('part_drop', 'fxfar', 1, 0.08, 0.66),
+  car_chirp: strikeDef('car_chirp', 'fxfar', 0.7, 0.01),
+  car_alarm: strikeDef('car_alarm', 'big', 0.85, 0.005),
+};
+export const STRIKE_NAMES = Object.keys(STRIKE_MAP);
 function def(id, bank, cat, vol = 1, jit = 0.04, send = 0.15, rec = null) {
   if (id !== undefined) SOUND_MAP[id] = { bank, cat, vol, jit, send, rec };
 }
@@ -1402,8 +1435,14 @@ export class AudioEngine {
 
   // ---------------------------------------------------------------- one-shots
   play(soundId, opts = EMPTY) {
+    this._playDef(SOUND_MAP[soundId], opts);
+  }
+  // a blow on the world, or a wreck coming apart: by name (STRIKE_MAP; shared/surfaces.js soundFor)
+  strike(name, opts = EMPTY) {
+    this._playDef(STRIKE_MAP[name], opts);
+  }
+  _playDef(d, opts) {
     if (!this._ready) return;
-    const d = SOUND_MAP[soundId];
     if (!d) return;
     const o = opts || EMPTY;
     const pos = !(d.cat === '2d' || o.x === undefined || o.x === null);
@@ -1422,7 +1461,7 @@ export class AudioEngine {
     }
     this._resume();
     const vol = (o.volume ?? 1) * d.vol * lv * (0.92 + Math.random() * 0.16);
-    const rate = (o.rate ?? 1) * (1 + (Math.random() - 0.5) * 2 * d.jit) * this._rateMul;
+    const rate = (o.rate ?? 1) * (d.rate ?? 1) * (1 + (Math.random() - 0.5) * 2 * d.jit) * this._rateMul;
     if (!pos) {
       this._play2D(buf, vol, rate, this._sfxIn, d.send, delay ? this._ctx.currentTime + delay : 0);
       return;

@@ -36,11 +36,12 @@ export function makeBox(x, z, y0, y1, sx, sz, yaw, flags = COL.STATIC, id = 0) {
     id,
     stamp: 0,
     cells: null,
+    tag: null, // what it is a solid of: a part's material name, or the prop (shared/surfaces.js; worldkit.js sets it)
   };
 }
 
 export function makeCyl(x, z, y0, y1, r, flags = COL.STATIC, id = 0) {
-  return { type: CYL, x, z, y0, y1, hx: r, hz: r, c: 1, s: 0, yaw: 0, r, flags, id, stamp: 0, cells: null };
+  return { type: CYL, x, z, y0, y1, hx: r, hz: r, c: 1, s: 0, yaw: 0, r, flags, id, stamp: 0, cells: null, tag: null };
 }
 
 export class ColliderGrid {

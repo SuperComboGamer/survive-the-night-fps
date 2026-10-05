@@ -719,6 +719,15 @@ export const EVT = {
   STRIPPED: 20, // u8 n, then n trees / wrecks by their collider's x, y0, z (i16): nothing left to gather from them
   REGROWN: 21, // every stripped tree and wreck gives again (dawn)
   FELL: 22, // a tree chopped to its last: its collider's x, y0, z (i16), the way it falls u8 (yaw). Out of the world until dawn
+  // a melee swing that struck the world (not a body): attackerId u16, u8 the BLOW (shared/surfaces.js; +8: the heavy
+  // swing), x,y,z (i16), the way the blow went (i8 x 3, unit / 127). Clients work out what it struck - the surface,
+  // the mark it leaves, the bits and the sound - from their own copy of the world
+  STRIKE: 23,
+  // a wreck's record (shared/wrecks.js): u8 flags (WRECKF), u8 n, then n x [its collider's x, y0, z (i16), u8 salvage
+  // hits left in it, u8 m, m x (x,y,z i16, yaw u8, pitch i8, u8 bits: HITF)]. Without REPLAY the hits are new ones,
+  // added to what is known; with it they are the whole record (to a client that joins)
+  WRECK: 24,
+  WRECK_ALARM: 25, // a wreck's alarm: its collider's x, y0, z (i16), u8 what (ALARM_SAY), u8 seconds it will ring for
   GRAVE: 35, // grave u8 (index into world.cemetery.graves): its earth heaves, and CEMETERY.STIR later one of the dead climbs out
   // (private) achievements (shared/achievements.js): u8 flags (ACHF), u8 n, n x (u8 stat, varu count to add), u8 m,
   // m x u8 achievement number. A guest's: counts and feats for the browser to keep; an account's (ACHF.ACCOUNT): unlocks

@@ -23,9 +23,13 @@ export function createKit({ rng, heightAt, half }) {
   const roofs = []; // roof footprints (client keeps rain out): {x,z, c,s (local->world like Builder), hx,hz, y (eaves), rise (+ ridge along local z, - along local x)}
   const clears = []; // [x, z, r] keep vegetation out
 
-  const addPropColliders = (type, x, y, z, ry) => {
+  // prop: the entry of `props` these are the solids of (a collider's tag: what a blow or a bullet struck, and which
+  // wreck is being taken apart - shared/surfaces.js, shared/wrecks.js); a prop put down without one is named by type
+  const bare = {};
+  const addPropColliders = (type, x, y, z, ry, prop = null) => {
     const def = PROPS[type];
     if (!def) return;
+    const tag = prop || (bare[type] ||= { type, bare: true });
     const c = Math.cos(ry);
     const s = Math.sin(ry);
     const flags = COL.STATIC | (def.salvage ? COL.SALVAGE : 0);
@@ -34,7 +38,9 @@ export function createKit({ rng, heightAt, half }) {
         const [lx, ly, lz, sx, sy, sz] = b;
         const wx = x + c * lx + s * lz;
         const wz = z - s * lx + c * lz;
-        staticGrid.add(makeBox(wx, wz, y + ly - sy / 2, y + ly + sy / 2, sx, sz, ry, flags));
+        const col = makeBox(wx, wz, y + ly - sy / 2, y + ly + sy / 2, sx, sz, ry, flags);
+        col.tag = tag;
+        staticGrid.add(col);
       }
     }
     if (def.cyls) {
@@ -42,7 +48,9 @@ export function createKit({ rng, heightAt, half }) {
         const [lx, lz, r, h] = cy;
         const wx = x + c * lx + s * lz;
         const wz = z - s * lx + c * lz;
-        staticGrid.add(makeCyl(wx, wz, y, y + h, r, flags));
+        const col = makeCyl(wx, wz, y, y + h, r, flags);
+        col.tag = tag;
+        staticGrid.add(col);
       }
     }
   };
@@ -140,7 +148,9 @@ export function createKit({ rng, heightAt, half }) {
       const ry = this.ry + (o.ry || 0);
       parts.push({ shape: 'box', x, y: y + sy / 2, z, sx, sy, sz, rx: o.rx || 0, ry, rz: o.rz || 0, mat });
       if (o.collide !== false && !o.rx && !o.rz) {
-        staticGrid.add(makeBox(x, z, y, y + sy, sx, sz, ry, o.flags || COL.STATIC));
+        const col = makeBox(x, z, y, y + sy, sx, sz, ry, o.flags || COL.STATIC);
+        col.tag = mat;
+        staticGrid.add(col);
       }
     }
     cyl(lx, ly, lz, r, h, mat, o = {}) {
@@ -148,7 +158,11 @@ export function createKit({ rng, heightAt, half }) {
       const z = this.wz(lx, lz);
       const y = this.y0 + ly;
       parts.push({ shape: 'cyl', x, y: y + h / 2, z, sx: r * 2, sy: h, sz: r * 2, rx: o.rx || 0, ry: this.ry + (o.ry || 0), rz: o.rz || 0, mat, sides: o.sides || 14 });
-      if (o.collide !== false && !o.rx && !o.rz) staticGrid.add(makeCyl(x, z, y, y + h, r, COL.STATIC));
+      if (o.collide !== false && !o.rx && !o.rz) {
+        const col = makeCyl(x, z, y, y + h, r, COL.STATIC);
+        col.tag = mat;
+        staticGrid.add(col);
+      }
     }
     cone(lx, ly, lz, r, h, mat, sides = 4, o = {}) {
       const x = this.wx(lx, lz);
@@ -176,8 +190,9 @@ export function createKit({ rng, heightAt, half }) {
       const z = this.wz(lx, lz);
       const wry = this.ry + ry;
       const y = this.baseY(type, x, z, wry, o);
-      props.push({ type, x, y, z, ry: wry, seed: o.seed ?? rng.int(0, 9999) });
-      if (!o.nocollide) addPropColliders(type, x, y, z, wry);
+      const pr = { type, x, y, z, ry: wry, seed: o.seed ?? rng.int(0, 9999) };
+      props.push(pr);
+      if (!o.nocollide) addPropColliders(type, x, y, z, wry, pr);
       return { x, y, z, ry: wry };
     }
     loot(lx, lz, ly = 0.02) {

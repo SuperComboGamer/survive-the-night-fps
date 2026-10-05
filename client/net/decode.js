@@ -396,6 +396,30 @@ export function readEvents(r, handler, flags, ents) {
         handler.fell?.(x, y, z, yaw);
         break;
       }
+      case EVT.STRIKE: {
+        const id = r.u16(), bits = r.u8();
+        const x = dqpos(r.i16()), y = dqpos(r.i16()), z = dqpos(r.i16());
+        const dx = r.i8() / 127, dy = r.i8() / 127, dz = r.i8() / 127;
+        const l = Math.hypot(dx, dy, dz) || 1;
+        handler.strike?.(id, bits & 7, !!(bits & 8), x, y, z, dx / l, dy / l, dz / l);
+        break;
+      }
+      case EVT.WRECK: {
+        // (its name and its hits left quantized, as the server keeps them: shared/wrecks.js)
+        const flags = r.u8();
+        for (let n = r.u8(); n > 0; n--) {
+          const qx = r.i16(), qy = r.i16(), qz = r.i16(), left = r.u8();
+          const hits = [];
+          for (let m = r.u8(); m > 0; m--) hits.push([r.i16(), r.i16(), r.i16(), r.u8(), r.i8(), r.u8()]);
+          handler.wreck?.(flags, qx, qy, qz, left, hits);
+        }
+        break;
+      }
+      case EVT.WRECK_ALARM: {
+        const qx = r.i16(), qy = r.i16(), qz = r.i16(), say = r.u8(), secs = r.u8();
+        handler.wreckAlarm?.(qx, qy, qz, say, secs);
+        break;
+      }
       case EVT.GRAVE: {
         const grave = r.u8();
         handler.grave?.(grave);

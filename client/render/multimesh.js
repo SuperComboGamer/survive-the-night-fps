@@ -44,22 +44,65 @@ export class MultiMesh extends THREE.Mesh {
   constructor(geometry, material, runs, { casts = () => true, shadowOnly = false } = {}) {
     super(geometry, material);
     this.matrixAutoUpdate = false;
-    this.runs = runs;
-    this.castRuns = runs.filter(casts);
     this.shadowOnly = shadowOnly;
-    const n = runs.length;
-    const list = () => ({ first: new Int32Array(n), count: new Int32Array(n), n: 0, total: 0 });
-    this.view = list();
-    this.shadow = list();
+    this.casts = casts;
     // (an indexed geometry: the multi-draw wants byte offsets into the index buffer)
     this.indexBytes = geometry.index ? geometry.index.array.BYTES_PER_ELEMENT : 0;
     this.indexType = this.indexBytes === 4 ? 5125 : this.indexBytes === 2 ? 5123 : 5121; // UNSIGNED_INT / _SHORT / _BYTE
-    if (this.indexBytes) this.offsets = new Int32Array(n);
+    this.setRuns(runs);
     geometry.setDrawRange(0, 0);
     // never used to cull (intersectsFrustum is the mesh's own), and three must not make one from an array that
     // was let go of once it was on the card
     if (!geometry.boundingSphere) geometry.boundingSphere = new THREE.Sphere();
     this.frustumCulled = true; // (so that three asks)
+  }
+
+  // The runs it draws from now on (the same buffer: a piece taken out of the world, or put back).
+  setRuns(runs) {
+    this.whole = runs; // (as given: the runs with nothing cut out of them)
+    this.runs = runs;
+    this.castRuns = runs.filter(this.casts);
+    const n = runs.length;
+    if (!this.view || this.view.first.length < n) {
+      const list = () => ({ first: new Int32Array(n), count: new Int32Array(n), n: 0, total: 0 });
+      this.view = list();
+      this.shadow = list();
+      if (this.indexBytes) this.offsets = new Int32Array(n);
+    }
+  }
+
+  // Leave `count` vertices from `first` of one of its runs out of what is drawn (cut), or draw them again (mend):
+  // a prop lifted out of the static world while something is done to it. A run with holes is drawn as the stretches
+  // between them, each by the run's own rule (its chunk, its distance, its sphere).
+  cut(run, first, count) {
+    (run.holes ||= []).push([first, count]);
+    this.recut();
+  }
+  mend(run, first, count) {
+    const i = run.holes ? run.holes.findIndex((h) => h[0] === first && h[1] === count) : -1;
+    if (i < 0) return;
+    run.holes.splice(i, 1);
+    this.recut();
+  }
+  recut() {
+    const out = [];
+    for (const run of this.whole) {
+      if (!run.holes || !run.holes.length) {
+        out.push(run);
+        continue;
+      }
+      const holes = run.holes.slice().sort((a, b) => a[0] - b[0]);
+      let at = run.first;
+      const end = run.first + run.count;
+      for (const [f, c] of holes) {
+        if (f > at) out.push({ ...run, first: at, count: f - at, holes: null });
+        at = Math.max(at, f + c);
+      }
+      if (at < end) out.push({ ...run, first: at, count: end - at, holes: null });
+    }
+    const whole = this.whole;
+    this.setRuns(out);
+    this.whole = whole;
   }
 
   pick(runs, frustum, out) {
