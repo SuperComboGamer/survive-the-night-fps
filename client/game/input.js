@@ -24,7 +24,7 @@ const HOLD_BTN = {
 // a code that is still answered with the controls off (the inventory, the map, the pause menu): the key that opened
 // something shuts it, Esc backs out, and Enter opens the chat from the inventory (Y does not: as in Half-Life, it is a
 // key of play). The pause menu keeps Enter for its own rows (menus.js Pause).
-const MENU_ACTIONS = new Set(['inventory', 'map', 'board', 'players']);
+const MENU_ACTIONS = new Set(['inventory', 'map', 'board', 'bestiary', 'players']);
 function passesMenus(code) {
   if (code === 'Escape') return true;
   for (const a of actionsOf(code)) if (MENU_ACTIONS.has(a) || (a === 'chat' && code === 'Enter')) return true;

@@ -230,6 +230,7 @@ const callbacks = {
     return { room: game.room, players: [...game.players].map(([id, p]) => ({ id, name: p.name, account: accounts.get(id) || '', self: id === game.myId })) };
   },
   onAccountName: (id) => game?.conn.accounts.get(id) || '',
+  onBestiary: () => game?.toggleBestiary(true),
 };
 
 const ui = new UI(document.getElementById('ui'), callbacks);
@@ -250,6 +251,7 @@ ui.setControls(() => [
   [keysOf('ping'), 'Ping (go · danger · loot)'],
   [keysOf('map'), 'Field map'],
   [keysOf('board'), 'Leaderboard'],
+  [keysOf('bestiary'), 'Bestiary: the monsters you have seen'],
   [keysOf('flashlight'), 'Flashlight'],
   [keysOf('heal'), 'Quick heal'],
   [keysOf('drink'), 'Energy drink (refills stamina)'],

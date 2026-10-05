@@ -28,6 +28,7 @@ import { Feedback } from './feedback.js';
 import { UserSettings } from './usersettings.js';
 import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
+import { BestiaryStore } from './userbestiary.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
@@ -79,6 +80,8 @@ const matches = db ? new MatchStore({ db, stats, build: process.env.RAILWAY_GIT_
 await matches?.closeStale().catch((err) => log(`matches: could not close the last run's (${err.message})`));
 // the accounts' achievements (a guest's are kept by their browser, database or not)
 const achievements = db ? new AchievementStore({ db, log }) : null;
+// ...and their bestiaries (the same: a guest's is their browser's)
+const bestiary = db ? new BestiaryStore({ db, log }) : null;
 
 // Where a game waits between the server going down and the next one (handoff.js): Postgres when there is one (it is
 // what both servers of a deploy can reach), else files in HANDOFF_DIR or on the Railway volume (a restart on the
@@ -94,6 +97,7 @@ const lobby = new Lobby({
   stats,
   matches,
   achievements,
+  bestiary,
   maxGames: MAX_GAMES,
   maxPlayers: MAX,
   roomMaxPlayers: ROOM_MAX,
@@ -617,6 +621,7 @@ async function shutdown(signal) {
       for (const room of lobby.rooms.values()) if (room.match) await matches.interrupt(room.match);
       await stats.close();
       await achievements.close();
+      await bestiary.close();
       await store?.close();
       await db.close();
     } catch (err) {

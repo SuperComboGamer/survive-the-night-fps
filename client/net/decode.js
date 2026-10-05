@@ -409,6 +409,12 @@ export function readEvents(r, handler, flags, ents) {
         handler.achieve?.(flags, add, ids);
         break;
       }
+      case EVT.BESTIARY: {
+        const flags = r.u8();
+        const mask = r.u16();
+        handler.bestiary?.(flags, mask);
+        break;
+      }
       default:
         throw new Error(`unknown event ${type}`);
     }

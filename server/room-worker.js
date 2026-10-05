@@ -10,6 +10,7 @@
 //   { t: 'save' }                  ...and the next one takes the game over (handoff.js): stop, and send it saved
 //   { t: 'progress', tok, ... }    a player's progress (progress.js): { first, xp, perks, best } as they join, { perks } on a pick
 //   { t: 'achieved', user, ids }   an account's achievements unlocked (userachievements.js): tell the player
+//   { t: 'bestiary', tok, mask }   the kinds of the dead an account has seen (userbestiary.js), as they join
 // To it:
 //   { t: 'ready', seed }           the game is built and ticking        { t: 'out', buf }      messages for sockets
 //   { t: 'closed', slot }          done with that slot's socket: nothing more will go out for it
@@ -18,6 +19,7 @@
 //   { t: 'rec', op, ... }          the leaderboard and XP (RemoteRecords) { t: 'board', ... }  a player asked for it
 //   { t: 'an', rec }               a record of the match being played (analytics.js), for the database (matchstore.js)
 //   { t: 'ach', user, add, feats, strangers }  what an account earned towards its achievements (achievements.js)
+//   { t: 'seen', user, mask }      kinds of the dead an account saw for the first time (bestiary.js), to be written
 //   { t: 'finished' }              ...the match is ended and its records posted
 //   { t: 'saved', buf }            the game, saved (gzipped: handoff.js), and its match ended as 'handoff'
 //   { t: 'saveFailed', error }     ...or it could not be, and its match ended as 'interrupted'
@@ -81,6 +83,7 @@ try {
     stats: new RemoteRecords(),
     analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined,
     achieve: opts.achievements ? (m) => post({ t: 'ach', ...m }) : undefined,
+    bestiary: opts.bestiary ? (m) => post({ t: 'seen', ...m }) : undefined,
     log: (...a) => console.log(tag, ...a),
   });
 } catch (err) {
@@ -159,6 +162,9 @@ parentPort.on('message', (m) => {
       break;
     case 'achieved':
       game.ach.achieved(m.user, m.ids);
+      break;
+    case 'bestiary':
+      game.onBestiary(m.tok, m.mask);
       break;
     case 'finish':
       try {

@@ -62,6 +62,7 @@ export const ACTIONS = [
 
   { id: 'map', label: 'Field map', group: 'Interface', keys: ['KeyM', null], menu: true },
   { id: 'board', label: 'Leaderboard', group: 'Interface', keys: ['KeyL', null], menu: true },
+  { id: 'bestiary', label: 'Bestiary', group: 'Interface', keys: ['KeyJ', null], menu: true },
   { id: 'players', label: 'Player list (hold)', group: 'Interface', keys: ['Tab', null], menu: true },
 ].map((a) => Object.freeze({ ctx: CTX_ANY, hold: false, menu: false, ...a, keys: Object.freeze(a.keys) }));
 

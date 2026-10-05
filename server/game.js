@@ -147,6 +147,7 @@ import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
+import { BestiaryTracker } from './bestiary.js';
 import { checkEnvelope, worldHash, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
 import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
@@ -395,6 +396,8 @@ export class Game {
     this.inviteOnly = !!opts.inviteOnly; // only its link gets anyone in (rooms.js): the Plus One achievement
     // achievements (achievements.js). opts.achieve: where an account's go (the network thread); none: no accounts
     this.ach = new AchievementTracker(this, opts.achieve);
+    // the kinds of the dead each player has seen (bestiary.js). opts.bestiary: where an account's go (the network thread)
+    this.bestiary = new BestiaryTracker(this, opts.bestiary);
     if (restore) this.load(restore.game);
   }
 
@@ -587,6 +590,7 @@ export class Game {
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
     this.tellStripped(spent, p.id);
     this.tellFriendCodes(p);
+    this.bestiary.join(p);
     this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated while you played: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
     if (!moved) this.systemChat(`${p.name} reconnected.`);
     this.playersDirty = true;
@@ -743,6 +747,7 @@ export class Game {
     }
     this.track.join(p);
     this.ach.join(p);
+    this.bestiary.join(p);
     // what the team has used up before they came (a run this join started has cleared it: NEW_GAME says so)
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -865,6 +870,10 @@ export class Game {
   // the network thread's answer for the record with this token (room-worker.js)
   onProgress(tok, m) {
     for (const p of this.players.values()) if (p.rec && p.rec.tok === tok) this.setProgress(p, m);
+  }
+  // ...and its bestiary (an account's: userbestiary.js)
+  onBestiary(tok, mask) {
+    this.bestiary.loaded(tok, mask);
   }
   // m: { first, xp, perks, best } as they join, { perks } when they pick again (validated by whoever sent it:
   // stats.js cleanPerks, server/progress.js)
@@ -3622,6 +3631,7 @@ export class Game {
     this.recordHistory();
     this.track.tick();
     this.ach.tick();
+    this.bestiary.tick();
     ts.mark(T_UPKEEP);
     this.sendSnapshots();
     ts.mark(T_SNAPSHOTS);

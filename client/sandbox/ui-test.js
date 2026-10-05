@@ -1,5 +1,6 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
-// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|chat|icons   &bg=night|day|fire
+// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|bestiary|chat|icons
+// &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
 import { ITEM, ITEM_DEFS, RECIPES, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
@@ -622,6 +623,22 @@ switch (screen) {
     ui.showPause(true);
     ui.achPanel.show();
     if (q.get('scroll')) setTimeout(() => (ui.achPanel.body.scrollTop = +q.get('scroll')), 100);
+    break;
+  }
+  case 'bestiary': {
+    // a guest's record, made up: &seen=0,1,10 (ZTYPEs; default the walker, the runner, the spitter, the dog and the
+    // Brute), &seen= (empty) for none. &toast=1: the unlock toast for the spitter
+    const seen = (q.get('seen') ?? `${ZTYPE.WALKER},${ZTYPE.RUNNER},${ZTYPE.SPITTER},${ZTYPE.DOG},${ZTYPE.BOSS_BRUTE}`).split(',').filter(Boolean).map(Number);
+    localStorage.setItem('stn.bestiary', JSON.stringify({ v: 1, seen: seen.reduce((m, t) => m | (1 << t), 0) }));
+    buildScene(bg || 'night');
+    ui.hideSplash();
+    ui.updateHud(baseHud);
+    ui.setBestiaryOpen(true);
+    if (q.get('scroll')) setTimeout(() => (ui.bestiary.body.scrollTop = +q.get('scroll')), 100);
+    if (q.get('toast')) {
+      ui.setBestiaryOpen(false);
+      setTimeout(() => ui.notify(`New in the bestiary: ${ZOMBIE_DEFS[ZTYPE.SPITTER].name}. Press J to read up on it.`, 'good', 30), 300);
+    }
     break;
   }
   case 'pause':

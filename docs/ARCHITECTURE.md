@@ -28,6 +28,8 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   progress.js    XP, levels and perks: the rules both ends read (see Experience, levels and perks below)
   achievements.js the achievement list (ids, wire numbers, tiers, groups) and the rules on a player's progress
                  (see Achievements below)
+  bestiary.js    the bestiary: every kind of the dead, its vague line and its tip, and what seeing one is (see The
+                 bestiary below)
 server/      authoritative game server (uWebSockets.js)
   index.js       the network thread: sockets, the lobby's HTTP API, static files, /status (see Many games below)
   rooms.js       the lobby: the games running, routing sockets to them, codes, allowances, the leaderboard's side
@@ -202,7 +204,8 @@ JSON file (`server/stats.js`).
   `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
   accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below). 008:
-  `game_handoff` and `matches.continues` (Deploys below). 009: the account admin flag. A migration has to be additive: on a deploy the old server
+  `game_handoff` and `matches.continues` (Deploys below). 009: the account admin flag. 010: the accounts' bestiaries
+  (`user_bestiary`, The bestiary below). A migration has to be additive: on a deploy the old server
   is still running on the schema while the new one migrates it.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
@@ -299,6 +302,35 @@ JSON file (`server/stats.js`).
   `/sandbox/ui-test.html?screen=achievements` and `?screen=hud&ach=kills_1000,kill_pistol` show them with made-up data.
 - `scripts/test-achievements.js` holds the rules, the hooks in a running game (decoded off the wire), the browser's
   record, the store and the merge on PGlite, and the API on a real server.
+
+## The bestiary
+
+A book of every kind of the dead, opened with J (`bestiary` in shared/binds.js) or from the pause menu. A kind the player
+has never seen is a blurred smudge, "???" and a vague line; once seen, its portrait, name and a tip on how to fight it.
+
+- **The book** is `shared/bestiary.js`: every `ZTYPE` once, in the order shown, each with a group, a `vague` line and a
+  `tip` (a boss's and the Tank's is its `ZOMBIE_DEFS` tip). A player's record is a bitmask of `ZTYPE`s (u16 on the wire).
+- **Seeing one** (`server/bestiary.js`, `Game.bestiary`): one of that kind, alive, within `SEEN_RANGE` (35 m) of the
+  survivor's eye with a clear line to its head (`Zombies.clearLine`: walls, trees, the terrain and the mine's rock
+  block it; the dark and the fog do not). Each survivor is looked round four times a second through the zombies'
+  spatial hash (`forNear`), only for kinds not on their record, at most `LOOK_RAYS` lines of sight a look; a player with
+  every kind costs nothing. The record is on the player (`p.bst`), so the handoff carries it.
+- **On the wire**: `EVT.BESTIARY` (private): `BESTF.ALL` with the whole record as a player joins and again on a rejoin,
+  then each kind as it is first seen; `BESTF.ACCOUNT` says the record is the account's. Held back from a client whose
+  socket is backed up (its snapshots, and their events, would be dropped) and sent once it clears.
+- **An account's** record is `user_bestiary` (010: a row per account and kind, with when it was first seen), kept on the
+  network thread (`server/userbestiary.js`, `BestiaryStore`). It is read once, when the player's record enters a room
+  (`Room.record` -> `{ t: 'bestiary', tok, mask }` -> `Game.onBestiary`); until it comes nothing is looked for on their
+  behalf. A kind first seen is posted (`{ t: 'seen', user, mask }`) and written within 150 ms, `ON CONFLICT DO
+  NOTHING`, retried 5 s later if the write fails. Nothing is read during play.
+- **A guest's** is their browser's: `localStorage['stn.bestiary']` (`client/net/bestiary.js`). The server starts each
+  connection knowing nothing of it, so a kind the browser has may be told again; the browser only toasts what is new to
+  it. Signing in does not move a guest's bestiary onto the account.
+- **On screen** (`client/ui/bestiary.js`): the portraits are the game's own models, drawn the first time the book opens by
+  a short-lived WebGL renderer of its own, kept as images; a locked card only ever gets the smudge. A toast says when a
+  kind is added. `/sandbox/ui-test.html?screen=bestiary` (`&seen=0,1,10`, `&scroll=`, `&toast=1`) shows it with a
+  made-up record. `scripts/test-bestiary.js` holds the book, the tracker in a running game, the browser's record, the
+  store on PGlite, and an account's record surviving a restart of a real server.
 
 ## Experience, levels and perks
 
