@@ -540,6 +540,10 @@ act 2, where the same loop is played with a plane and flying out wins.
   hammer; nothing for whoever has them). What each has then is kept (`game.checkpoint`), and a wipe on the mainland
   starts the mainland again from it (`restartFromBridge`), not the island. A late joiner joins the act being played:
   beside the team, or at the act's start, with `starterKit(day)`.
+- **Difficulty** (shared/difficulty.js) is the game's, so it holds on both maps: the mainland's days (`dayLen`: the
+  arrival day and the longer days after it, times `diff.day`), its hordes and the runway stand (`hordeSize`), the dead
+  themselves, the loot, and the bridgehead's floor, whose rounds and bandages move as the starting kit's do
+  (`diff.ammo`, `diff.bandages`: 48 rounds and 2 bandages on Ember, 24 and 1 on Nightfall, 16 and 1 on Blackout).
 - **The plane** (`suppliesOf(act)` in defs.js: `PLANE_PARTS` has the shape of `SUPPLIES`, four parts and the fuel by
   threes, so the global state, the rumours and the objective tracker read either). Its parts lie at set places:
   `world.partSpots[k].supply` says which part a spot is for (`placeSupplies`).
@@ -1039,7 +1043,9 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). The schematics go
   the same way (`placeSchematics`): each into a locker, ammo crate or toolbox (`CONT_DEFS[t].schem`) of its own
   random place far from the car, the place replicated as `global.schemHints` and drawn on the minimap and the
-  field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. Installing all
+  field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. (Each act's map
+  is stocked the same way, `Game.populate`: the mainland hides the ones the team still lacks in its own places, far
+  from the bridgehead, and one the team has is rumoured nowhere - 255.) Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
   sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
   in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a
