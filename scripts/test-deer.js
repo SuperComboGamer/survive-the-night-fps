@@ -113,17 +113,24 @@ function run(seed) {
     }
     return { x: c.x + d, z: c.z };
   };
-  // a group of n on ground of its own with open ground all round, far from the valley's groups
+  // a group of n on ground of its own with open ground all round, far from the valley's groups (in a crowded valley,
+  // the valley's groups near the first such ground are hunted out to make room)
+  const crowds = (gr, s) => gr.members.length && (Math.hypot(gr.cx - s.x, gr.cz - s.z) < 110 || Math.hypot(gr.x - s.x, gr.z - s.z) < 110);
+  const ours = new Set(); // the groups put down here
   const fresh = (n = 3, calm = 0) => {
-    const spots = dm.grounds();
-    for (const s of spots) {
-      if (dm.groups.some((gr) => gr.members.length && (Math.hypot(gr.cx - s.x, gr.cz - s.z) < 110 || Math.hypot(gr.x - s.x, gr.z - s.z) < 110))) continue;
-      if (Math.hypot(s.x - w.car.x, s.z - w.car.z) < 80 || Math.max(Math.abs(s.x), Math.abs(s.z)) > MAP_HALF - 90) continue;
-      const gr = dm.spawnGroup(s.x, s.z, n);
-      if (gr) gr.calm = calm;
-      return gr;
+    const spots = dm.grounds().filter((s) => Math.hypot(s.x - w.car.x, s.z - w.car.z) >= 80 && Math.max(Math.abs(s.x), Math.abs(s.z)) <= MAP_HALF - 90);
+    let s = spots.find((t) => !dm.groups.some((gr) => crowds(gr, t)));
+    if (!s) {
+      s = spots.find((t) => ![...ours].some((gr) => crowds(gr, t)));
+      if (!s) throw new Error('no ground for a test group');
+      for (const gr of [...dm.groups]) if (crowds(gr, s)) drop(gr);
     }
-    throw new Error('no ground for a test group');
+    const gr = dm.spawnGroup(s.x, s.z, n);
+    if (gr) {
+      gr.calm = calm;
+      ours.add(gr);
+    }
+    return gr;
   };
   const drop = (gr) => {
     for (const m of [...gr.members]) {
@@ -273,6 +280,7 @@ function run(seed) {
   const inLane = (anim) => {
     for (const o of dm.groups) if (o.members.length && Math.hypot(o.cx - lane.x, o.cz - lane.z) < 60) drop(o);
     const gr = dm.spawnGroup(lane.x + 3, lane.z, 1);
+    ours.add(gr);
     const d = gr.members[0];
     gr.calm = 1e9;
     d.x = lane.x + 3;
@@ -497,7 +505,7 @@ function run(seed) {
     const lone = fresh(1);
     const made = dm.dawn(game.humans());
     const news = dm.groups.filter((gr) => gr !== lone);
-    check('at sunrise new groups come, up to the valley\'s ten and its cap of deer', made >= 3 && news.length <= DEER.groups && alive().length <= DEER.cap && news.every((gr) => gr.members.length >= DEER.groupMin && gr.members.length <= DEER.groupMax), `${made} groups, ${alive().length} deer`);
+    check('at sunrise new groups come, up to the valley\'s twenty and its cap of deer', made >= 3 && news.length <= DEER.groups && alive().length <= DEER.cap && news.every((gr) => gr.members.length >= DEER.groupMin && gr.members.length <= DEER.groupMax), `${made} groups, ${alive().length} deer`);
     check('...in at the rim of the map, out of every survivor\'s sight', news.every((gr) => gr.members.every((m) => Math.max(Math.abs(m.x), Math.abs(m.z)) > MAP_HALF - 22 && dist(m, a.state) > 75)), news.map((gr) => Math.max(Math.abs(gr.cx), Math.abs(gr.cz)).toFixed(0)).join(' '));
     check('...walking, not running, to ground in the woods', news.every((gr) => gr.mode === 1));
     ticks(1500);
