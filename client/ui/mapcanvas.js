@@ -1,16 +1,24 @@
 // Bakes the field map of the valley (an old sepia survey map: hill shading, contour lines, forest
 // stipple, water, roads, trails and building footprints) from the deterministic world once per world.
 // Names and live markers are drawn on top by the map screen / compass, never baked in.
-import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
+import { MAP_HALF, MAP_SIZE, GRID_STEP, WATER_LEVEL } from '../../shared/constants.js';
 import { WHEEL } from '../../shared/fair.js';
 
-export const MAP_PX = 1280; // baked canvas size (2 px per metre)
-const S = MAP_PX / MAP_SIZE;
+// The map is baked at MAP_PPM px per metre, whatever the size of the world: 1280 px for the island, 2560 for the
+// mainland (which is twice as far across). mapX / mapY are of the map baked last: the client has one world at a time.
+export const MAP_PPM = 2;
+const S = MAP_PPM;
+let half = MAP_HALF; // of the world the map was last baked for
+export let MAP_PX = MAP_SIZE * MAP_PPM; // ...and the size of its canvas
 
-export const mapX = (x) => (x + MAP_HALF) * S;
-export const mapY = (z) => (z + MAP_HALF) * S;
+export const mapX = (x) => (x + half) * S;
+export const mapY = (z) => (z + half) * S;
 
 export function renderMapCanvas(world) {
+  half = world.half;
+  MAP_PX = world.size * MAP_PPM;
+  const MAP_HALF = half;
+  const MAP_SIZE = world.size;
   const cv = document.createElement('canvas');
   cv.width = cv.height = MAP_PX;
   const g = cv.getContext('2d');
@@ -23,7 +31,7 @@ export function renderMapCanvas(world) {
   const img = rg.createImageData(R, R);
   const d = img.data;
   const H = world.heights;
-  const N = GRID_N;
+  const N = world.gridN;
   const hAt = (x, z) => {
     let fx = (x + MAP_HALF) / GRID_STEP;
     let fz = (z + MAP_HALF) / GRID_STEP;
@@ -267,7 +275,7 @@ export function renderMapCanvas(world) {
     g.restore();
   }
   // big props (vehicles, tents)
-  const BIG = { car: 1, car_wreck: 1, pickup_truck: 1, school_bus: 1, camper: 1, dump_truck: 1, tractor: 1, military_tent: 1, tent: 1, heli_wreck: 1, log_pile: 1, fuel_tank: 1 };
+  const BIG = { car: 1, car_wreck: 1, pickup_truck: 1, school_bus: 1, camper: 1, dump_truck: 1, tractor: 1, military_tent: 1, tent: 1, heli_wreck: 1, log_pile: 1, fuel_tank: 1, car_burnt: 1, ambulance: 1, semi_truck: 1, fire_truck: 1, shipping_container: 1, airliner_wreck: 1, plane_wreck: 1, light_plane: 1, rubble_slope: 1, rubble_pile: 1, car_open: 1, city_bus: 1, box_truck: 1, van_wreck: 1, apc_wreck: 1, army_truck: 1, triage_tent: 1 };
   g.fillStyle = 'rgba(60, 44, 34, 0.7)';
   for (const pr of world.props) {
     if (!BIG[pr.type]) continue;
@@ -312,4 +320,21 @@ const PROP_SIZE = {
   heli_wreck: [3.2, 13],
   log_pile: [4.2, 2.4],
   fuel_tank: [2.2, 5],
+  car_burnt: [1.9, 4.5],
+  ambulance: [2.2, 5.6],
+  semi_truck: [2.8, 16],
+  fire_truck: [2.6, 8],
+  shipping_container: [2.5, 6.1],
+  airliner_wreck: [5, 28],
+  plane_wreck: [3, 12],
+  light_plane: [9, 7],
+  rubble_slope: [6.4, 6.4],
+  rubble_pile: [4.4, 4.4],
+  car_open: [1.9, 4.5],
+  city_bus: [2.6, 12],
+  box_truck: [2.5, 7.5],
+  van_wreck: [2, 5],
+  apc_wreck: [2.9, 7],
+  army_truck: [2.5, 7.5],
+  triage_tent: [5, 7],
 };

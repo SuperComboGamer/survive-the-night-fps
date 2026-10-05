@@ -570,6 +570,12 @@ class GibPool {
   }
 }
 
+// A smoke column over a ruin: a puff every 1 / rate s that lives `life` s, rising `rise` m/s (so the column stands
+// life * rise m high: 84 m) and growing from size0 to size1 m across as it leans with the wind. 21 particles a column.
+const COLUMN = { rate: 0.5, life: 42, rise: 2, size0: 5, size1: 34, alpha: 0.6, wind: [0.9, 0.35] };
+const BLAZE_SEEN = 260; // m: a building fire's flames are emitted for an eye this close
+const lerp = (a, b, t) => a + (b - a) * t;
+
 export class Effects {
   constructor(scene, vmScene, world) {
     this.scene = scene;
@@ -968,14 +974,37 @@ export class Effects {
   }
 
   // ---------------------------------------------------------------- emitters
-  // kind: 'campfire' | 'torch' | 'fire' | 'acid' | 'smoke_red' | 'embers' | 'flare' | 'barrel'
+  // kind: 'campfire' | 'torch' | 'fire' | 'acid' | 'smoke_red' | 'embers' | 'flare' | 'barrel', and the two a ruined
+  // city has (the mainland's world.lights): 'column', a pillar of dark smoke standing over it that is seen from the
+  // bridge, and 'blaze', a building on fire. em.loop: a sound that goes with it, stopped when it is removed.
   createEmitter(kind, x, y, z, opts = {}) {
-    const em = { kind, x, y, z, acc: 0, intensity: opts.intensity ?? 1, radius: opts.radius ?? 1, active: true };
+    const em = { kind, x, y, z, acc: 0, intensity: opts.intensity ?? 1, radius: opts.radius ?? 1, active: true, loop: opts.loop || null };
+    // (a column that has stood for a while: its smoke is already up there when the world appears)
+    if (kind === 'column') for (let age = COLUMN.life; age > 0; age -= 1 / COLUMN.rate) this._column(em, age);
     this.emitters.add(em);
     return em;
   }
   removeEmitter(em) {
+    em.loop?.stop();
     this.emitters.delete(em);
+  }
+
+  // one puff of a smoke column, `age` seconds after it left the fire: it rises at COLUMN.rise, leans downwind and
+  // spreads as it goes, and thins out to nothing at the top
+  _column(em, age = 0) {
+    const C = COLUMN;
+    const k = em.radius;
+    const life = C.life - age;
+    const u = age / C.life;
+    const vx = C.wind[0] * this.rnd(0.7, 1.3);
+    const vz = C.wind[1] * this.rnd(0.7, 1.3);
+    // (the wind takes it more the higher it is: the lean is a curve, not a straight line)
+    const x = em.x + vx * age * (0.4 + 0.6 * u) + this.rnd(-1.5, 1.5) * k;
+    const z = em.z + vz * age * (0.4 + 0.6 * u) + this.rnd(-1.5, 1.5) * k;
+    const size = lerp(C.size0, C.size1, u) * k;
+    const a = lerp(C.alpha, 0, u * u);
+    const g = this.rnd(0.035, 0.07);
+    this.alpha.emit(x, em.y + C.rise * age, z, vx * (0.4 + 1.2 * u), C.rise, vz * (0.4 + 1.2 * u), life, size, C.size1 * k, g, g, g * 1.05, a, 0.16, 0.16, 0.17, 0, 0, 0, TEX.SMOKE, this.rnd(-0.04, 0.04));
   }
 
   _runEmitter(em, dt) {
@@ -1009,6 +1038,16 @@ export class Effects {
       case 'barrel':
         rate = 22;
         break;
+      case 'column':
+        rate = COLUMN.rate;
+        break;
+      case 'blaze': {
+        // (its flames are not drawn for an eye too far off to see them through the haze: the column over it is)
+        const e = this.eye;
+        if (e && (e.x - em.x) ** 2 + (e.z - em.z) ** 2 > BLAZE_SEEN * BLAZE_SEEN) return;
+        rate = 16 * em.radius * I;
+        break;
+      }
       default:
         rate = 10;
     }
@@ -1060,6 +1099,18 @@ export class Effects {
           else if (r < 0.78) D.emit(em.x, em.y + 0.05, em.z, this.rnd(-1.4, 1.4), this.rnd(1, 3), this.rnd(-1.4, 1.4), this.rnd(0.3, 0.8), 0.04, 0.01, 1, 0.55, 0.3, 1, 1, 0.3, 0.1, 0, -4, 0.3, TEX.SPARK);
           else A.emit(em.x + this.rnd(-0.1, 0.1), em.y + 0.3, em.z + this.rnd(-0.1, 0.1), this.rnd(-0.2, 0.2) + 0.2, this.rnd(0.8, 1.4), this.rnd(-0.2, 0.2), this.rnd(3, 5), 0.3, 2.6, 0.9, 0.35, 0.35, 0.45, 0.4, 0.2, 0.2, 0, -0.15, 0.3, TEX.SMOKE, 0.3);
           break;
+        case 'column':
+          this._column(em);
+          break;
+        case 'blaze': {
+          // tongues of flame out of the windows of a storey, and the black smoke they make
+          const px = em.x + this.rnd(-1, 1) * em.radius * 2.2;
+          const pz = em.z + this.rnd(-1, 1) * em.radius * 2.2;
+          if (r < 0.7) D.emit(px, em.y + this.rnd(-0.6, 0.4), pz, this.rnd(-0.3, 0.3), this.rnd(2.2, 4.2), this.rnd(-0.3, 0.3), this.rnd(0.6, 1.1), this.rnd(1.6, 2.8) * em.radius, 0.5, 0.95, 0.38, 0.08, 0.8, 0.75, 0.1, 0.02, 0, -1.6, 0.9, TEX.FIRE, this.rnd(-1.5, 1.5));
+          else if (r < 0.9) A.emit(px, em.y + 2, pz, COLUMN.wind[0] * 0.5, this.rnd(2, 3), COLUMN.wind[1] * 0.5, this.rnd(4, 6), 1.6 * em.radius, 6 * em.radius, 0.05, 0.045, 0.04, 0.7, 0.1, 0.1, 0.1, 0, -0.2, 0.25, TEX.SMOKE, 0.2);
+          else D.emit(px, em.y + 0.5, pz, this.rnd(-1.5, 1.5), this.rnd(3, 6), this.rnd(-1.5, 1.5), this.rnd(1.5, 3.5), 0.09, 0.03, 1, 0.6, 0.2, 1, 0.9, 0.3, 0.05, 0, -0.4, 0.4, TEX.SPARK);
+          break;
+        }
         case 'barrel':
           if (r < 0.75) D.emit(em.x + this.rnd(-0.22, 0.22), em.y, em.z + this.rnd(-0.22, 0.22), this.rnd(-0.1, 0.1), this.rnd(0.9, 1.7), this.rnd(-0.1, 0.1), this.rnd(0.3, 0.55), this.rnd(0.4, 0.6), 0.08, 0.95, 0.42, 0.12, 0.7, 0.75, 0.12, 0.02, 0, -1.1, 1.1, TEX.FIRE, 2);
           else A.emit(em.x, em.y + 0.8, em.z, this.rnd(-0.1, 0.1), 1.1, this.rnd(-0.1, 0.1), 3, 0.3, 1.8, 0.1, 0.1, 0.1, 0.4, 0.15, 0.15, 0.15, 0, -0.1, 0.4, TEX.SMOKE, 0.3);

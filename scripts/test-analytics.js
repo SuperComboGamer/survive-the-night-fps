@@ -32,7 +32,7 @@ const KEYS = {
   event: ['k', 'matchId', 'at', 't', 'day', 'phase', 'type', 'userId', 'name', 'x', 'z', 'data'],
   sample: ['k', 'matchId', 'at', 't', 'day', 'phase', 'players', 'survivors', 'downed', 'dead', 'zombies', 'tickMs', 'tickP99', 'pingAvg'],
 };
-const EVENT_TYPES = new Set(['join', 'leave', 'down', 'death', 'revive', 'turned', 'returned_at_dawn', 'night_start', 'dawn', 'boss_spawn', 'boss_kill', 'supply_found', 'supply_install', 'schematic', 'engine_start', 'engine_ready', 'crate_drop', 'car_alarm', 'radio_call', 'bell', 'victory', 'wipe', 'abandoned', 'interrupted']);
+const EVENT_TYPES = new Set(['join', 'leave', 'down', 'death', 'revive', 'turned', 'returned_at_dawn', 'night_start', 'dawn', 'boss_spawn', 'boss_kill', 'supply_found', 'supply_install', 'schematic', 'engine_start', 'engine_ready', 'crate_drop', 'car_alarm', 'radio_call', 'bell', 'crossing', 'arrival', 'victory', 'wipe', 'abandoned', 'interrupted']);
 const PHASES = new Set(['day', 'night', 'final_stand']);
 const shapeErrors = [];
 // undefined anywhere, or a number that is not finite (JSON would turn those into null or drop them unseen)
@@ -278,7 +278,10 @@ run(2);
   bob.p.state.z = car.z + 10;
   game.killPlayer(cy.p, zsrc(ZTYPE.WALKER, cy.p));
   run(2);
-  game.driveOff(p);
+  // (driving off is the crossing to the mainland now, and the run's victory the plane's: scripts/sim-act2.js. What a
+  // victory leaves on the record is what is held here, so the match is ended as one where the car leaves)
+  game.track.drove(p);
+  game.victory();
 }
 {
   const end = of('match_end', m1.id);

@@ -70,9 +70,13 @@ scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev 
 - Textures are procedural canvas textures. Audio is synthesized, with CC0 recordings in
   `client/audio/samples/` (credited in its CREDITS.md; CC0 only) layered over it; every recording keeps its
   procedural fallback (see Audio below).
-- Performance budget: 60 fps on a mid-range laptop GPU with ~80 zombies on screen. One draw call per zombie
-  (single SkinnedMesh, at most two bones a vertex; the humanoid dead swap to a lighter copy of their mesh past
-  `LOD_FAR`), instanced vegetation, merged static geometry.
+- Performance budget: 60 fps on a mid-range laptop GPU with ~80 zombies on screen. What a frame costs is mostly the
+  number of draw calls it issues, so the big populations are each drawn in a handful: the dead as a crowd (one
+  instanced call for all of one body, their bones in one texture: `render/crowd.js`; at most two bones a vertex;
+  the humanoid dead swap to a lighter copy of their mesh past `LOD_FAR`), the static world one call a material
+  and the terrain one call, each drawing the pieces in sight with a multi-draw (`render/multimesh.js`), instanced
+  vegetation culled to the view. How it is measured, the rules that keep it, and what was tried:
+  [docs/performance.md](performance.md).
 
 ## Networking
 
@@ -451,6 +455,151 @@ node, else the shell dies of it and the container stops with node never told (`s
   that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
   Chrome behind a stand-in for Railway's edge).
 
+## The two acts: the island, the bridge, the mainland
+
+A run is two maps (issue #111, `shared/acts.js`). Act 1 is the island: fix the car, survive its final stand, drive
+off. That is no longer the victory: the car crosses a broken bridge (`PHASE.CROSSING`, a cutscene) to the mainland,
+act 2, where the same loop is played with a plane and flying out wins.
+
+- **A world has its own size.** `world.kind` (`WORLD.ISLAND` / `WORLD.MAINLAND`, which is also the act's number),
+  `world.size` / `half` / `gridN`, `world.start` (where a run on it begins) and `world.posScale`. Nothing that
+  walks, draws or maps a world reads `MAP_SIZE` any more (that constant is the island's 640 m): the nav grid, the
+  zombies' spatial hash, the deer, the herd, the player simulation's edge, the terrain, the field map and the
+  minimap follow the world. `worldFor(seed, act)` (`shared/worlds.js`) makes either from the run's one seed.
+- **The mainland** (`shared/mainland.js`) is 1280 m across, built with the island's kit (`shared/worldkit.js`: the
+  Builder, the collider grids, the lists a world hands on): the Bridgehead, Port Calder, Kessler Ironworks,
+  Eastgate, a truck stop, Calder Field, and twenty-eight places out on the plain (`shared/mainland-places.js`: one
+  entry each in `OUTLYING` - how much ground it levels, what road it gets, and a `build`; its loot table is its
+  zone's in defs.js; `MAINLAND_ZONES` is the first and the last of them). `world.car` is the plane there (`plane: true`), so everything that asks for "the car" - the reach, the
+  supplies, the final stand - asks for it. What the island has and it lacks (mine, railway, fair, clinic,
+  cemetery) is `null`.
+  - *The plan.* The bridge, the city, the airfield and what hangs off them are set first; the lake is dug where
+    there is most room, the marina put on its shore; the rest are put down one at a time on the roomiest of a
+    handful of spots (`room()`: `PLACE_GAP` of open country from every other, clear of the city, the airfield,
+    Route 9, the lake and the farms' tracks), each weighted by what it wants (the mast high ground, the loggers the
+    rim). A farm that no straight track reaches the highway from is left to the county roads. The third pass's
+    places go in last, where there is room between those, and a place that finds none takes less open country.
+  - *The river.* A line through a few points the seed moves: down out of the rim's hills on the bay's side, along
+    the city's edge there and into the bay, which is its mouth (`riverPts`, and `riverD`: how far every vertex of
+    the heightfield is from it). The terrain lets a valley down to the water and cuts a bed `RIVER_DEPTH` under it
+    (deep water: swum, or crossed). Two of the city's streets run on over it (`Ferry Street`, `Eastgate Road`), and
+    a county road may cross it squarely; a road's stretch over it is a `span`: level, `BRIDGE_UP` over the water,
+    not written into the heightfield, and carried on a thin deck (thin: server/nav.js walks the dead over a deck)
+    with girders and what is left of its railings. `world.river` is `{ pts, hw, bridges }`.
+  - *The roads.* Route 9 runs bridge - checkpoint - Main Street - truck stop - airfield. Every other place is joined
+    to the nearest road already there by a line that crosses no place and no water (round a corner if no straight
+    one does), nearest place first, and turns its front to that road a quarter turn at a time (so its walls lie
+    along the nav grid). A road that ends on another comes to that road's height over its last 30 m. A road's
+    spline holds each leg's tangents to the leg's own length (no doubling back after a long leg).
+  - *Port Calder* is `GRID` x `GRID` blocks of lots. What the run needs and the landmarks (hospital, church,
+    cinema, station, filling station, police, bus depot, a collapsed block, three towers) are dealt onto lots
+    first; the seed deals the rest. No lot is empty. The upper floors of a walk-in building are solid and shut
+    (`block`: a box for every run of storeys on one footprint; `stairBlock`: the stairs under rubble). The streets
+    are dressed every few metres (traffic, kerb furniture, rubbish, the dead, heaved slabs, weeds; whatever is solid
+    goes through `fits`, which keeps it clear of walls, props, doorways and what is searched), and a few stretches
+    get more (`ROADBLOCKS`: a last stand of the army's; `JAMS`; `SINKHOLES`; and the shaft of the first tower lying
+    in three lengths across the street beside it and the block beyond - `fall` - broken apart over the roadway,
+    where the rubble is the way through; the lots under it are `crushed`). `world.landmarks` names what the field
+    map labels inside the city; `world.lights` of kind `smoke` and `fire` are the columns over it (`SMOKES`,
+    `FIRES`: drawn by effects.js as `column` and `blaze`).
+  - *What the city is drawn from.* The world does not build what is seen of a building out of boxes: it says what
+    stands there, and the client's kit builds it (`client/render/citykit.js`). `world.city` carries `buildings`
+    (a block of storeys: footprint, storeys, a style - walkup, shopflat, slab, office, glass, warehouse, stone - a
+    wall material, and `cut`: what is left of each storey that is not whole), `rooms` (a room that is walked into:
+    its openings as the Builder cut them, its partitions, the `zones` those make of it - each painted its own
+    colour - the `patches` of tile on its floor, how high its ceiling hangs and of what, so the kit can line it,
+    ceil it, floor it, frame its windows, hang its doors and its sign),
+    `shells` (walls with the sky behind them: lengths, each broken at its own height), `heaps` (rubble: solid in
+    steps a survivor climbs), `fallen`, `pancakes`, and `signs` (a board or a mark from the city's atlas, anywhere).
+    Their solids are parts flagged `hidden`: there for collision, the nav grid, the field map and the tests, drawn
+    by nobody as boxes. The same helpers (`K.block`, `K.groundRoom`, `K.signAt`, `K.extra`, `K.heap`) build the
+    airfield's terminal and tower and the third pass's places.
+  - *Its rooms.* A ground floor is not one hall. A block of flats' is its common hall, the stairs up (under what
+    came down them) and a flat either side (`flatUnit`: a passage, a living room, a kitchen, a bedroom, a bathroom
+    and a small room, at a home's size under a plaster ceiling at `FLAT_CEIL`, each with what was in it); a shop
+    has its stock room and an office or a closet behind the floor; the police station its cells' room, its armoury
+    and a back office; an office tower's lobby the offices and the post room behind it; Calder General's hall
+    triage and a waiting room either side of the desk; the terminal a radio room behind its office. What stands
+    against a wall faces the room (a prop's front is its -Z: `ry` 0 against the back wall, PI against the front,
+    -PI / 2 against the left, PI / 2 against the right). `drumFire` is the one light in a room that is not the
+    day's: a drum somebody keeps burning (a `barrel` and an `embers` light).
+  - Props flagged `live` (the car, the plane) are drawn by the client's cutscene code, not the static world;
+    `afloat` ones (boats) stand on water; parts flagged `across` are the one thing built in a road.
+- **Positions on the wire** stay int16: 1/64 m on the island (+-512 m), 1/32 m on the mainland (+-1024 m).
+  `usePos(world)` (protocol.js) sets which; the server calls it as a tick starts, a message comes in or the world
+  changes, the client as it loads a world. Nothing on the wire says the scale: both ends know the world.
+- **The crossing** (`Game.cross`, `buildMainland`, `arrive`). `driveOff` on the island starts it: the world is
+  cleared, the phase is `CROSSING` with `CROSSING.TIME` on its clock, nobody's commands are run. `CROSSING.SWAP`
+  seconds in - when the cutscene cuts to black - the server sends `S2C.WORLD_RESET` (seed, act 2), and in the next
+  tick builds its own mainland (which holds that game's thread for a moment; the message has left by then),
+  populates it and puts the team down at the bridgehead. It can be skipped once everybody connected has asked
+  (`ACT.SKIP`) and it is `CROSSING.SKIP_AFTER` seconds old.
+- **The checkpoint** (`Game.checkpointAt`): everybody arrives alive - whoever was dead or turned comes back - with
+  what they carried, and at the least the bridgehead cache's floor (`Game.bridgehead`, `BRIDGEHEAD` in acts.js: a
+  pistol and magazine for whoever has no gun, two magazines in reserve per gun carried, a bandage, a knife, a
+  hammer; nothing for whoever has them). What each has then is kept (`game.checkpoint`), and a wipe on the mainland
+  starts the mainland again from it (`restartFromBridge`), not the island. A late joiner joins the act being played:
+  beside the team, or at the act's start, with `starterKit(day)`.
+- **Difficulty** (shared/difficulty.js) is the game's, so it holds on both maps: the mainland's days (`dayLen`: the
+  arrival day and the longer days after it, times `diff.day`), its hordes and the runway stand (`hordeSize`), the dead
+  themselves, the loot, and the bridgehead's floor, whose rounds and bandages move as the starting kit's do
+  (`diff.ammo`, `diff.bandages`: 48 rounds and 2 bandages on Ember, 24 and 1 on Nightfall, 16 and 1 on Blackout).
+- **The plane** (`suppliesOf(act)` in defs.js: `PLANE_PARTS` has the shape of `SUPPLIES`, four parts and the fuel by
+  threes, so the global state, the rumours and the objective tracker read either). Its parts lie at set places:
+  `world.partSpots[k].supply` says which part a spot is for (`placeSupplies`).
+- **The runway stand** (`RUNWAY` in acts.js, `updateEscape`): two things to hold in turn - the fuel truck while it
+  pumps (`escape.stage` 0), then the plane while its engines warm (1) - then the plane goes only while no more than
+  `RUNWAY.CLEAR` of the dead stand on the strip ahead of it (`onRunway`, `NOTIFY.RUNWAY_BLOCKED`). Its groups appear
+  round a point `RUNWAY.AHEAD` m down the runway; each stage brings one of the two late bosses.
+- **Nights** carry on across the bridge. On the mainland a night is made up as the fourth at the least
+  (`nightRank`), and its boss is one of the late ones (`nightBoss(seed, night, act)` in nights.js).
+- **The client** loads a world per act (`Game.loadWorld(seed, act)`); `client/game/act.js` holds the act's supply
+  list and words, live, for the HUD, the map and the prompts. The terrain is one vertex buffer drawn in culled
+  pieces. `client/render/bridge.js` builds the bridge from `shared/bridge.js`'s plan; the car the team came in and
+  the plane are `live` props, left out of the static world and drawn by `liveProps` (cutscene.js).
+- **The cutscenes** (`client/game/cutscene.js`): `Crossing` and `Takeoff`, sequences of camera shots in the real
+  world with the game's own models, off the server's clock (the crossing's is the phase's time left). While one is
+  on, `Game.update` takes its camera, hides the HUD, the hands and the players' bodies, and runs no input. The
+  survivors in the car are the players as the player list has them - each the character they chose
+  (shared/characters.js), seated, this client's own at the wheel - and the dead behind the car and on the runway
+  are the game's own models, near or far copy by the shot's camera (`setZombieViewer`).
+- **Who a player is** does not change with the map: `p.character` is set once, from the JOIN, and the crossing, the
+  checkpoint's revival, a wipe's restart from the bridge, a rejoin into a held body and a deploy's handoff all keep
+  the player (sim-act2.js holds each).
+- **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
+  the save's act.
+- **Debug**: `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
+  `game.debugCam`, `debugCycle` and `debugFog` (a free camera, the hour, the haze: the shot scripts).
+- **Tests**: `scripts/test-mainland.js` (the map, on any seeds), `scripts/sim-act2.js` (the whole run in simulation,
+  a wipe, late joiners, a drop and a deploy across the crossing, the nights, what a tick costs on each map);
+  `scripts/clip/act2-shots.js`, `act2-look.js` and `act2-perf.js` (pictures, a look at a list of spots while
+  building, and frame times, through `launchChrome`). act2-shots builds the same mainland in node and checks every
+  camera against it before the shot is taken (`pickCam`: in nothing solid, in no tree's crown, nothing between it
+  and its subject); a run of it is one section or two (`--only`), well inside a browser's life.
+- **The city's kit** (`client/render/citykit.js`, called by `StaticWorld` for a world with `world.city`). It
+  writes triangles straight into the static world's merged buffers, in a building's own frame: a face is cut into
+  bays (`STYLE`), every window an opening with reveals and something in it (glass, shards, the dark, boards -
+  `windowState`, by a hash of the building's seed, so it is the same on every client), and from near its frame,
+  sill, lintel, curtain, an air conditioner; then what runs the height of a face (`trimOf`: cornice, fins, string
+  courses, a fire escape, balconies, a drainpipe, ivy, damp, cracks, a ghost sign), the roof (`roofOf`: parapet,
+  tank, plant, stair head, hoarding), a storey broken open (`openStorey`: slab edges with their steel, columns,
+  rooms papered each its own way) and a slab under the sky (`terrace`). Marks come from one atlas (`GEN.city`,
+  `CITY_ATLAS` in textures.js) through two materials: `citysign` (cut out: boards, lettering, ivy, graffiti) and
+  `citygrime` (blended: soot, rust, stains). A glass tower is a curtain wall (`curtainWall`): a band of steel at
+  each slab, glass from mullion to mullion over it - whole, hanging broken, or gone, and through the gone ones the
+  storey behind (its floor, the slab over it, columns, a desk); a burnt-out place is its own brick or concrete
+  under soot laid over each opening, its plaster smoked (`burnt`), its rafters down in the ash; a length of fallen
+  tower is torn at its ends (`fallen`: the skin of its last storey off bay by bay, the floor behind end on, beams
+  and bars out of it), all of it inside the box the world made solid. A room that is walked into is lined by
+  `room()`: there are no lamps, so the day through each opening of its outer walls is laid into the lining's vertex
+  colours (`LIT`: brightest by a window, falling off into the room and behind each partition), over plaster that
+  carries no mark an eye would pick out twice - the damp, stains, cracks and pictures are decals put on each wall
+  by a hash of the room's seed. The static world draws the city in **tiers** (`TIER`): what is read
+  from across the city always, a street's things out to 150 m, the fine detail of a face out to 90 m, and what is
+  inside a room - its lining and whatever stands under a roof - out to 55 m, the last two with no shadow; every
+  plain colour is one vertex-coloured material (`flat`), and its chunks are 128 m (the island's: 80 m, one tier,
+  unchanged).
+
 ## Rendering pipeline
 
 - **Frame:** world -> `ScreenPasses` (`render/post.js`: SSAO, sun shafts, flashlight beam, applied in place into
@@ -486,7 +635,10 @@ node, else the shell dies of it and the container stops with node never told (`s
   static world, trees (+ bushes/rocks and characters on high/ultra), built structures. The static world's
   meshes do not cast themselves: each chunk has one shadow-only mesh per shadow side (`StaticWorld.casters`,
   reading the chunk's own vertex buffer) that the shadow passes draw instead; only materials whose texture cuts
-  holes in the shadow (chain link, weeds, stencils) cast from their own mesh. The viewmodel scene has
+  holes in the shadow (chain link, weeds, stencils) cast from their own mesh. (Since the performance pass a
+  material is one `MultiMesh` for the whole world and a caster one per page of positions and shadow side, each
+  drawing the runs of the chunks in the frustum being drawn: `render/multimesh.js`, `StaticWorld`.) The shadow
+  maps are drawn at most 160 times a second (`render/rates.js`): every frame at ordinary frame rates. The viewmodel scene has
   its own lights; `Game.updateViewmodelLight` rotates the key light into camera space and dims it by a
   ray/crown probe towards the light so hands are dark in shade. Those lights are about a quarter of the
   world's (no factor PI), so the weapon in the hands has its own material, the one Phong material
@@ -891,7 +1043,9 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). The schematics go
   the same way (`placeSchematics`): each into a locker, ammo crate or toolbox (`CONT_DEFS[t].schem`) of its own
   random place far from the car, the place replicated as `global.schemHints` and drawn on the minimap and the
-  field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. Installing all
+  field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. (Each act's map
+  is stocked the same way, `Game.populate`: the mainland hides the ones the team still lacks in its own places, far
+  from the bridgehead, and one the team has is rumoured nowhere - 255.) Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
   sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
   in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a

@@ -4,7 +4,7 @@
 // Trees: near LOD within uTreeLod, far LOD beyond, dither cross-faded in the shaders. Shadow casters are
 // written first in every instance buffer and the shadow passes draw only those (onBeforeShadow).
 import * as THREE from 'three';
-import { MAP_HALF, WATER_LEVEL } from '../../shared/constants.js';
+import { WATER_LEVEL } from '../../shared/constants.js';
 import { hash2 } from '../../shared/rng.js';
 import { getTreeVariants, getBushVariants, getRockVariants, getGrassPatch } from './models/vegetation.js';
 import { VEG } from './materials.js';
@@ -12,19 +12,81 @@ import { G } from './globals.js';
 import { groundFields } from './terrain.js';
 import { grassRadius } from './renderer.js';
 import { FallingTrees } from './fallingtrees.js';
+import { isShadowFrustum } from './multimesh.js';
 
 const CELL = 32;
+const CELL_OFF = 1024; // added to a coordinate before it is put in a cell, so that none is negative (the mainland reaches +-640 m)
 
-function limitShadowCasters(mesh) {
-  mesh.castCount = 0;
-  mesh.onBeforeShadow = function () {
-    this._drawCount = this.count;
-    this.count = this.castCount;
-  };
-  mesh.onAfterShadow = function () {
-    this.count = this._drawCount;
-  };
+// The view the instance buffers were last filled for, padded: what is outside it is not drawn at all (two thirds of
+// a forest is behind the eye or beside it, and was being drawn). The buffers are filled again when the eye has
+// turned VIEW_TURN of the VIEW_PAD the frustum is widened by, or moved VIEW_MOVE (every bounding sphere is that
+// much bigger), so nothing that could be in the picture is ever missing from them.
+export const VIEW_PAD = (14 * Math.PI) / 180, VIEW_TURN = 0.6 * VIEW_PAD, VIEW_MOVE = 2.5;
+const _pm = new THREE.Matrix4();
+const BINS = 96; // the rings by distance the instances are put in order by (InstancedSet.update)
+
+export class ViewCull {
+  constructor() {
+    this.frustum = new THREE.Frustum();
+    this.quat = new THREE.Quaternion();
+    this.pos = new THREE.Vector3(1e9, 0, 0);
+    this.fov = 0;
+    this.aspect = 0;
+    this.on = false;
+    this.stamp = 0; // (goes up when the frustum is made anew: who fills buffers from it does so again)
+  }
+
+  // the frustum for this camera, made anew if the camera has left what the last one covers. camera: null for none
+  // (everything within range is drawn, as before)
+  update(camera) {
+    const was = this.on;
+    // (a frustum that is off-centre - the splash's - is not worth the arithmetic: no culling there)
+    this.on = !!camera && !camera.view?.enabled;
+    if (!this.on) {
+      if (was) this.stamp++;
+      return;
+    }
+    camera.updateMatrixWorld();
+    const q = camera.quaternion, p = camera.position;
+    if (was && this.quat.angleTo(q) < VIEW_TURN && this.pos.distanceToSquared(p) < VIEW_MOVE * VIEW_MOVE && camera.fov <= this.fov + 0.5 && camera.aspect === this.aspect) return;
+    this.quat.copy(q);
+    this.pos.copy(p);
+    this.fov = camera.fov;
+    this.aspect = camera.aspect;
+    const v = (camera.fov * Math.PI) / 360;
+    const top = Math.tan(Math.min(1.53, v + VIEW_PAD));
+    const right = Math.tan(Math.min(1.53, Math.atan(Math.tan(v) * camera.aspect) + VIEW_PAD));
+    _pm.makePerspective(-right, right, top, -top, 1, 2000);
+    this.frustum.setFromProjectionMatrix(_pm.multiply(camera.matrixWorldInverse));
+    this.stamp++;
+  }
+
+  // is a sphere (in the padded view, allowing for the eye's moving) in it? The far plane is left to the caller's range.
+  sees(x, y, z, r) {
+    if (!this.on) return true;
+    const pl = this.frustum.planes;
+    r += VIEW_MOVE;
+    for (let i = 0; i < 4; i++) if (pl[i].normal.x * x + pl[i].normal.y * y + pl[i].normal.z * z + pl[i].constant < -r) return false;
+    return true;
+  }
 }
+
+// an instanced mesh that is only ever in shadow maps (the casters near the eye, whichever way it looks)
+class VegCaster extends THREE.InstancedMesh {
+  intersectsFrustum(frustum) {
+    return this.count > 0 && isShadowFrustum(this, frustum);
+  }
+}
+
+const upload = (mesh, n) => {
+  mesh.count = n;
+  mesh.visible = n > 0;
+  if (!n) return;
+  const im = mesh.instanceMatrix;
+  im.clearUpdateRanges();
+  im.addUpdateRange(0, n * 16);
+  im.needsUpdate = true;
+};
 
 class InstancedSet {
   // data: Float32Array stride 6 [x,y,z,scale,rot,variant]
@@ -38,9 +100,10 @@ class InstancedSet {
     this.lodBand = null;
     this.lastX = 1e9;
     this.lastZ = 1e9;
+    this.stamp = -1;
     this.cells = new Map();
     for (let i = 0; i < this.n; i++) {
-      const key = Math.floor((data[i * 6] + MAP_HALF) / CELL) * 1000 + Math.floor((data[i * 6 + 2] + MAP_HALF) / CELL);
+      const key = Math.floor((data[i * 6] + CELL_OFF) / CELL) * 1000 + Math.floor((data[i * 6 + 2] + CELL_OFF) / CELL);
       let arr = this.cells.get(key);
       if (!arr) this.cells.set(key, (arr = []));
       arr.push(i);
@@ -52,37 +115,60 @@ class InstancedSet {
     const up = new THREE.Vector3(0, 1, 0);
     const p = new THREE.Vector3();
     const s = new THREE.Vector3();
+    const stretch = (i) => (opts.stretch ? 0.9 + ((i * 7919) % 100) / 400 : 1);
     for (let i = 0; i < this.n; i++) {
       const o = i * 6;
       q.setFromAxisAngle(up, data[o + 4]);
       p.set(data[o], data[o + 1], data[o + 2]);
       const sc = data[o + 3];
-      s.set(sc, sc * (opts.stretch ? 0.9 + ((i * 7919) % 100) / 400 : 1), sc);
+      s.set(sc, sc * stretch(i), sc);
       m.compose(p, q, s);
       m.toArray(this.mats, i * 16);
     }
+    // how far a variant's model reaches from its foot, at scale 1 (an instance's bounding sphere is about its foot)
+    this.reach = variants.map((v) => {
+      let r = 0;
+      for (const parts of [v.parts, ...(opts.lod && v.far ? [v.far] : [])]) {
+        for (const part of parts) {
+          const g = part.geometry;
+          if (!g.boundingSphere) g.computeBoundingSphere();
+          r = Math.max(r, g.boundingSphere.center.length() + g.boundingSphere.radius);
+        }
+      }
+      return r * (opts.stretch ? 1.15 : 1);
+    });
     const counts = new Array(variants.length).fill(0);
     for (let i = 0; i < this.n; i++) counts[data[i * 6 + 5] | 0]++;
-    // meshes[variant][lod] = one InstancedMesh per part
-    this.meshes = variants.map((v, vi) =>
-      [v.parts, ...(opts.lod && v.far ? [v.far] : [])].map((parts) =>
-        parts.map((part) => {
-          const mesh = new THREE.InstancedMesh(part.geometry, part.material, Math.max(1, counts[vi]));
-          mesh.count = 0;
-          mesh.frustumCulled = false;
-          mesh.castShadow = false;
-          mesh.receiveShadow = !!opts.receive;
-          if (part.material.userData.depth) mesh.customDepthMaterial = part.material.userData.depth;
-          mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-          limitShadowCasters(mesh);
-          scene.add(mesh);
-          return mesh;
-        }),
-      ),
+    const make = (Cls, part, cap) => {
+      const mesh = new Cls(part.geometry, part.material, Math.max(1, cap));
+      mesh.count = 0;
+      mesh.frustumCulled = false;
+      mesh.castShadow = false;
+      mesh.receiveShadow = !!opts.receive;
+      if (part.material.userData.depth) mesh.customDepthMaterial = part.material.userData.depth;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.matrixAutoUpdate = false;
+      scene.add(mesh);
+      return mesh;
+    };
+    // meshes[variant][lod] = one InstancedMesh per part: what the view draws
+    this.meshes = variants.map((v, vi) => [v.parts, ...(opts.lod && v.far ? [v.far] : [])].map((parts) => parts.map((part) => make(THREE.InstancedMesh, part, counts[vi]))));
+    // casters[variant] = one more per part of the copy that casts (trees cast from the far copy only): what the
+    // shadow maps draw - the instances near the eye, in view or not
+    this.casters = variants.map((v, vi) =>
+      (opts.lod && v.far ? v.far : v.parts).map((part) => {
+        const mesh = make(VegCaster, part, counts[vi]);
+        mesh.frustumCulled = true; // (so that three asks: only in a shadow map's frustum)
+        mesh.castShadow = true;
+        mesh.visible = false;
+        return mesh;
+      }),
     );
     this._idx = new Int32Array(this.n);
     this._d2 = new Float32Array(this.n);
-    this._k = variants.map(() => [0, 0]);
+    this._order = new Int32Array(this.n);
+    this._bins = new Int32Array(BINS + 1);
+    this._k = variants.map(() => [0, 0, 0]);
     this.gone = null; // per instance: 1 while it is left out (a felled tree)
   }
 
@@ -99,23 +185,33 @@ class InstancedSet {
     this.lastX = 1e9;
   }
 
-  update(cx, cz, radius, force = false) {
+  // view: the ViewCull of this frame (what is outside it is left out of the view's meshes)
+  update(cx, cz, radius, view, force = false) {
     if (radius !== this.radius) {
       this.radius = radius;
       force = true;
     }
-    if (!force && Math.hypot(cx - this.lastX, cz - this.lastZ) < this.rebuildDist) return;
-    this.lastX = cx;
-    this.lastZ = cz;
+    const moved = Math.hypot(cx - this.lastX, cz - this.lastZ) >= this.rebuildDist;
+    if (!force && !moved && view.stamp === this.stamp) return;
+    this.stamp = view.stamp;
+    // (who is in range, in which copy and whether it casts is settled where the eye stood at the last full
+    // rebuild, as before: the shaders fade by the live distance, with a margin of one rebuild step)
+    if (force || moved) {
+      this.lastX = cx;
+      this.lastZ = cz;
+    } else {
+      cx = this.lastX;
+      cz = this.lastZ;
+    }
     const r = this.radius;
     const r2 = r * r;
     const data = this.data;
     const gone = this.gone;
     let nc = 0;
-    const c0 = Math.floor((cx - r + MAP_HALF) / CELL);
-    const c1 = Math.floor((cx + r + MAP_HALF) / CELL);
-    const d0 = Math.floor((cz - r + MAP_HALF) / CELL);
-    const d1 = Math.floor((cz + r + MAP_HALF) / CELL);
+    const c0 = Math.floor((cx - r + CELL_OFF) / CELL);
+    const c1 = Math.floor((cx + r + CELL_OFF) / CELL);
+    const d0 = Math.floor((cz - r + CELL_OFF) / CELL);
+    const d1 = Math.floor((cz + r + CELL_OFF) / CELL);
     for (let i = c0; i <= c1; i++) {
       for (let j = d0; j <= d1; j++) {
         const arr = this.cells.get(i * 1000 + j);
@@ -136,45 +232,47 @@ class InstancedSet {
     const nearMax = this.lodBand ? (this.lodBand[1] + m) ** 2 : Infinity;
     const farMin = this.lodBand ? Math.max(0, this.lodBand[0] - m) ** 2 : Infinity;
     const cast2 = this.castDist > 0 ? (this.castDist + m) ** 2 : -1;
-    for (const k of this._k) k[0] = k[1] = 0;
-    // pass 0 writes the shadow casters, pass 1 the rest: the shadow passes draw only the first castCount.
-    // Trees cast from the far LOD only (its shader collapses the near-range copies in the main pass).
-    for (let pass = 0; pass < 2; pass++) {
-      for (let c = 0; c < nc; c++) {
-        const dd = this._d2[c];
-        const caster = dd <= cast2;
-        if (caster !== (pass === 0)) continue;
-        const idx = this._idx[c];
-        const v = data[idx * 6 + 5] | 0;
-        const lods = this.meshes[v];
-        const src = this.mats.subarray(idx * 16, idx * 16 + 16);
-        for (let l = 0; l < lods.length; l++) {
-          if (lods.length > 1 && (l === 0 ? dd > nearMax : dd < farMin && !caster)) continue;
-          const k = this._k[v][l]++;
-          for (const mesh of lods[l]) mesh.instanceMatrix.array.set(src, k * 16);
-        }
+    for (const k of this._k) k[0] = k[1] = k[2] = 0;
+    const reach = this.reach;
+    // nearest first: what is behind a nearer tree is then not shaded at all (they are opaque where they are not cut
+    // away, so the picture is the same whatever the order). A counting sort into rings by distance.
+    const order = this._order, bins = this._bins;
+    bins.fill(0);
+    const ringOf = (BINS - 1) / (r || 1);
+    for (let c = 0; c < nc; c++) bins[Math.min(BINS - 1, (Math.sqrt(this._d2[c]) * ringOf) | 0) + 1]++;
+    for (let i = 1; i <= BINS; i++) bins[i] += bins[i - 1];
+    for (let c = 0; c < nc; c++) order[bins[Math.min(BINS - 1, (Math.sqrt(this._d2[c]) * ringOf) | 0)]++] = c;
+    for (let n = 0; n < nc; n++) {
+      const c = order[n];
+      const dd = this._d2[c];
+      const idx = this._idx[c];
+      const o = idx * 6;
+      const v = data[o + 5] | 0;
+      const lods = this.meshes[v];
+      const src = this.mats.subarray(idx * 16, idx * 16 + 16);
+      const k = this._k[v];
+      // into the shadow maps: every one near enough, wherever the eye looks
+      if (dd <= cast2) {
+        const at = k[2]++ * 16;
+        for (const mesh of this.casters[v]) mesh.instanceMatrix.array.set(src, at);
       }
-      if (pass === 0) {
-        for (let v = 0; v < this.meshes.length; v++) {
-          const lods = this.meshes[v];
-          for (let l = 0; l < lods.length; l++) for (const mesh of lods[l]) mesh.castCount = lods.length > 1 && l === 0 ? 0 : this._k[v][l];
-        }
+      // into the view: those it can see, the near copy inside the band, the far one outside it
+      if (!view.sees(data[o], data[o + 1], data[o + 2], reach[v] * data[o + 3])) continue;
+      for (let l = 0; l < lods.length; l++) {
+        if (lods.length > 1 && (l === 0 ? dd > nearMax : dd < farMin)) continue;
+        const at = k[l]++ * 16;
+        for (const mesh of lods[l]) mesh.instanceMatrix.array.set(src, at);
       }
     }
     for (let v = 0; v < this.meshes.length; v++) {
-      for (let l = 0; l < this.meshes[v].length; l++) {
-        for (const mesh of this.meshes[v][l]) {
-          mesh.count = this._k[v][l];
-          mesh.castShadow = mesh.castCount > 0;
-          mesh.instanceMatrix.needsUpdate = true;
-        }
-      }
+      for (let l = 0; l < this.meshes[v].length; l++) for (const mesh of this.meshes[v][l]) upload(mesh, this._k[v][l]);
+      for (const mesh of this.casters[v]) upload(mesh, this._k[v][2]);
     }
   }
 
   // (geometries and materials belong to the shared variants: only the instance buffers go)
   dispose() {
-    for (const mesh of this.meshes.flat(2)) {
+    for (const mesh of [...this.meshes.flat(2), ...this.casters.flat()]) {
       mesh.removeFromParent();
       mesh.dispose();
     }
@@ -206,6 +304,7 @@ class GrassField {
     this.R = 30;
     this.lastX = 1e9;
     this.lastZ = 1e9;
+    this.stamp = -1;
     this._m = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
     this._p = new THREE.Vector3();
@@ -290,7 +389,7 @@ class GrassField {
   // one clump at x, z (if the ground there grows one) onto out; salt keeps the infill's dice apart from the base's
   clump(out, gi, gj, salt, x, z) {
     const w = this.world;
-    if (Math.abs(x) > MAP_HALF - 2 || Math.abs(z) > MAP_HALF - 2) return;
+    if (Math.abs(x) > w.half - 2 || Math.abs(z) > w.half - 2) return;
     const dens = this.density(x, z);
     if (hash2(gi, gj, 91 + salt) > dens) return;
     const y = w.heightAt(x, z);
@@ -320,8 +419,9 @@ class GrassField {
     this._m.toArray(out, o);
   }
 
-  update(cx, cz) {
-    if (!this.mesh || Math.hypot(cx - this.lastX, cz - this.lastZ) < 2) return;
+  update(cx, cz, view) {
+    if (!this.mesh || (Math.hypot(cx - this.lastX, cz - this.lastZ) < 2 && view.stamp === this.stamp)) return;
+    this.stamp = view.stamp;
     const R = this.R + 3;
     const list = [];
     const ci0 = Math.floor((cx - R) / GCH), ci1 = Math.floor((cx + R) / GCH);
@@ -331,7 +431,9 @@ class GrassField {
         const dx = Math.max(0, Math.abs(cx - (ci + 0.5) * GCH) - GCH / 2);
         const dz = Math.max(0, Math.abs(cz - (cj + 0.5) * GCH) - GCH / 2);
         const d2 = dx * dx + dz * dz;
-        if (d2 < R * R) list.push([d2, ci, cj]);
+        // (a chunk the view cannot see is not drawn; one never made yet is still made, in its turn, so that
+        // turning round finds it there)
+        if (d2 < R * R) list.push([d2, ci, cj, view.sees((ci + 0.5) * GCH, this.world.heightAt((ci + 0.5) * GCH, (cj + 0.5) * GCH), (cj + 0.5) * GCH, GCH * 0.75 + 1.5)]);
       }
     }
     list.sort((a, b) => a[0] - b[0]);
@@ -349,7 +451,7 @@ class GrassField {
     let pending = false;
     const nearR2 = (this.nearR + 3) ** 2;
     const fill = { base: [this.mesh, this.cap, 0], near: [this.near, GNEAR_CAP, 0] };
-    for (const [d2, ci, cj] of list) {
+    for (const [d2, ci, cj, seen] of list) {
       const key = ci * 8192 + cj;
       if (!this.chunks.has(key)) {
         if (budget <= 0) {
@@ -359,6 +461,7 @@ class GrassField {
         budget--;
       }
       const c = this.chunk(ci, cj);
+      if (!seen) continue;
       for (const layer of d2 < nearR2 ? ['base', 'near'] : ['base']) {
         const f = fill[layer], src = c[layer];
         const k = Math.min(src.length / 16, f[1] - f[2]);
@@ -371,10 +474,7 @@ class GrassField {
       this.lastX = cx;
       this.lastZ = cz;
     }
-    for (const [mesh, , n] of Object.values(fill)) {
-      mesh.count = n;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+    for (const [mesh, , n] of Object.values(fill)) upload(mesh, n);
   }
 }
 
@@ -383,6 +483,7 @@ export class Foliage {
   constructor(scene, world, quality, grassMul = 1) {
     this.world = world;
     this.scene = scene;
+    this.view = new ViewCull();
     this.trees = new InstancedSet(scene, world.trees, getTreeVariants(), { radius: quality.treeDist, rebuildDist: 8, stretch: true, lod: true, receive: true });
     this.bushes = new InstancedSet(scene, world.bushes, getBushVariants(), { radius: 85, rebuildDist: 6, receive: true });
     this.rocks = new InstancedSet(scene, world.rocks, getRockVariants(), { radius: quality.treeDist, rebuildDist: 10, receive: true });
@@ -425,8 +526,11 @@ export class Foliage {
 
   // weather: { wind, windX, windZ } (optional). Drives the global wind: 0.3 is the everyday breeze, ~1.2 a gale
   // (gusts included); the sway clock runs faster in strong wind.
-  update(camPos, fogVisibility, time, weather) {
+  // camera: what is drawn is culled to its view (none: everything within range, as the sandbox pages draw it)
+  update(camPos, fogVisibility, time, weather, camera = null) {
     VEG.uVegCam.value.copy(camPos);
+    const view = this.view;
+    view.update(camera);
     const dt = Math.min(0.1, Math.max(0, time - (this.lastTime ?? time)));
     this.lastTime = time;
     const wind = weather ? weather.wind : 0.3;
@@ -438,10 +542,10 @@ export class Foliage {
       W.w = weather.windZ;
     }
     const treeR = Math.min(this.quality.treeDist, fogVisibility + 30);
-    this.trees.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10);
-    this.bushes.update(camPos.x, camPos.z, Math.min(85, fogVisibility + 10));
-    this.rocks.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10);
-    this.grass.update(camPos.x, camPos.z);
+    this.trees.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10, view);
+    this.bushes.update(camPos.x, camPos.z, Math.min(85, fogVisibility + 10), view);
+    this.rocks.update(camPos.x, camPos.z, Math.round(treeR / 10) * 10, view);
+    this.grass.update(camPos.x, camPos.z, view);
     this.falling.update(dt);
   }
 }

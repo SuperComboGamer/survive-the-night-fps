@@ -4,14 +4,13 @@
 // the places a car supply or a schematic is rumoured to be in only show once they are in range.
 // Enemies in range are red dots on a canvas of their own, redrawn every frame (a horde is too many to be DOM markers).
 // The car supplies shrink to a row of icons under it (Objective's slim mode).
-import { SUPPLIES, SUPPLY_NEED, ZONE_NAMES, schematicRumours } from '../../shared/defs.js';
-import { MAP_SIZE } from '../../shared/constants.js';
+import { ZONE_NAMES, schematicRumours } from '../../shared/defs.js';
+import { SUPPLIES, SUPPLY_NEED, W } from '../game/act.js'; // (this act's)
 import { el, svgEl } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
-import { MAP_PX, mapX, mapY } from './mapcanvas.js';
+import { MAP_PPM, mapX, mapY } from './mapcanvas.js';
 
 const RANGE = 70; // m from you to the rim
-const MAP_PPM = MAP_PX / MAP_SIZE; // the baked map's pixels per metre
 const RIM = 9; // px: a pinned marker sits this far inside the rim
 const LABEL_IN = 0.82; // a place's name shows while it is inside this much of the radius
 
@@ -175,7 +174,7 @@ export class Minimap {
     if (d.waypoint) put(d.waypoint.x, d.waypoint.z, 'way', glyph('flag'), true);
     for (const cr of d.crates) put(cr.x, cr.z, 'crate', glyph('hazard'), true);
     for (const p of d.pings) put(p.x, p.z, 'ping k' + p.kind, glyph('ping'), true);
-    put(d.car.x, d.car.z, 'car', glyph('car'), true);
+    put(d.car.x, d.car.z, 'car', glyph(W.glyph), true);
     for (const m of d.mates) put(m.x, m.z, 'mate ' + m.status, glyph(m.status === 'downed' ? 'downed' : 'person'), true);
     for (let i = mi; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;
   }

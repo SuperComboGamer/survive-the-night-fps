@@ -293,6 +293,11 @@ const LOCAL = {
   switch: { bank: 'switch', vol: 0.45, rec: R_DRAW },
   pickup: { bank: 'pickup', vol: 0.5, jit: 0.06, rec: R_PICKUP },
   craft: { bank: 'craft', vol: 0.55 },
+  // the crossing (synth-bridge.js; game/cutscene.js plays them, the camera being the listener): the last span of the
+  // bridge letting go and going into the sea, and the car's tyres over a joint in the deck
+  bridge_groan: { bank: 'bridge_groan', vol: 0.6, jit: 0.01, send: 0.3 },
+  bridge_fall: { bank: 'bridge_fall', vol: 1, jit: 0.01, send: 0.35 },
+  deck_thump: { bank: 'deck_thump', vol: 0.5, jit: 0.06, send: 0.12 },
   build: { bank: 'build', vol: 0.65, rec: R_HAMMER },
   build_fail: { bank: 'build_fail', vol: 0.45, bus: 'ui' },
   hitmarker: { bank: 'flesh', vol: 0.1, bus: 'ui', jit: 0.06, send: 0, rec: R_HIT_CONFIRM },
@@ -356,6 +361,10 @@ const LOOPS = {
   genset: { bank: 'loop_genset', ref: 3, max: 60, roll: 1.1, vol: 0.62, wet: 0.1, cap: 3 }, // a generator the survivors built, running
   // a handcar rolling on the railway (synth-handcar.js): played at the car's speed, louder the faster it goes
   handcar: { bank: 'loop_handcar', ref: 3, max: 70, roll: 1.1, vol: 0.7, wet: 0.12, cap: 2, jit: 0 },
+  // the car on the crossing (synth-bridge.js): played at its speed, heard from every camera the cutscene cuts to
+  car: { bank: 'loop_car', ref: 9, max: 220, roll: 1.0, vol: 0.75, wet: 0.14, always: true, jit: 0 },
+  // a building burning in Port Calder (the mainland's world.lights 'fire'): a fire's roar, carrying down the street
+  blaze: { bank: 'loop_fire', ref: 8, max: 110, roll: 1.0, vol: 1, wet: 0.2, cap: 2, rec: [{ key: 'fire_roar', vol: 3 }, { key: 'fire_loop', vol: 2 }] },
   // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
   plane: { bank: 'loop_plane', ref: 45, max: 950, roll: 1.0, vol: 1.1, wet: 0.25, air: true, always: true },
   // the Tri-County Fair's calliope, while its generator runs: heard as far as the dead hear it (NOISE.FAIR), duller

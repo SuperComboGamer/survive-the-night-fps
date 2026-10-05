@@ -2,7 +2,7 @@
 // (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses,
 // zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
 // The herd that wanders the roads by day is in herd.js.
-import { MAP_HALF, STEP_HEIGHT, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
+import { STEP_HEIGHT, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
 import { HISTORY_TICKS, LEG_HP, STUMBLE_SPEED, HOBBLE_SPEED, CRAWL_SPEED, CRAWL_SPEED_MIN, CRAWL_SPEED_MAX, CRAWL_SLOW, CRAWL_HEIGHT, CRAWL_HEAD_Y } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
@@ -16,10 +16,8 @@ import { ColliderGrid, makeBox, rayCollider, CYL } from '../shared/collision.js'
 
 const GRAV = 16;
 const CELL = 4;
-const HN = Math.ceil((MAP_HALF * 2) / CELL);
 // forest: trees are counted per FCELL m cell; a spot's density is the tree count of the 3x3 cells around it
 const FCELL = 8;
-const FN = Math.ceil((MAP_HALF * 2) / FCELL);
 const FOREST_DENS = 13; // ~ the densest 20% of the woods (median 9 trees per 24 m square)
 const _pos = { x: 0, y: 0, z: 0 };
 const _dir = { x: 0, z: 0, cost: 0 };
@@ -126,7 +124,7 @@ const _spr = { x: 0, z: 0 };
 export class Zombies {
   constructor(game) {
     this.g = game;
-    this.head = new Int32Array(HN * HN).fill(-1);
+    this.setWorld();
     this.next = new Int32Array(MAX_ENTITIES).fill(-1);
     this.fieldRR = 0;
     this.maintainT = 0;
@@ -151,7 +149,7 @@ export class Zombies {
     const def = ZOMBIE_DEFS[type];
     if (!def) return null;
     const w = g.world;
-    const lim = MAP_HALF - 6;
+    const lim = this.g.world.half - 6;
     x = Math.max(-lim, Math.min(lim, x));
     z = Math.max(-lim, Math.min(lim, z));
     const down = opts.y !== undefined; // a spot down in the mine: given with its floor, and the valley's grid is not asked
@@ -430,23 +428,33 @@ export class Zombies {
     return 0;
   }
 
+  // The grids below cover the world the game is played on: made again whenever it gets another (Game.setWorld), since
+  // the mainland is twice the island across. hn / fn: cells a side of the spatial hash and of the tree count.
+  setWorld() {
+    const size = this.g.world.size;
+    this.hn = Math.ceil(size / CELL);
+    this.fn = Math.ceil(size / FCELL);
+    this.head = new Int32Array(this.hn * this.hn).fill(-1);
+    this.treeGrid = this.dens = null; // (per-world caches)
+  }
+
   // ---------------------------------------------------------------- forest
   // trees in the 24 m square around (x,z)
   forestAt(x, z) {
     if (!this.treeGrid) {
       const t = this.g.world.trees;
-      this.treeGrid = new Uint16Array(FN * FN);
+      this.treeGrid = new Uint16Array(this.fn * this.fn);
       for (let i = 0; i < t.length; i += 6) {
-        const ci = Math.max(0, Math.min(FN - 1, Math.floor((t[i] + MAP_HALF) / FCELL)));
-        const cj = Math.max(0, Math.min(FN - 1, Math.floor((t[i + 2] + MAP_HALF) / FCELL)));
-        this.treeGrid[cj * FN + ci]++;
+        const ci = Math.max(0, Math.min(this.fn - 1, Math.floor((t[i] + this.g.world.half) / FCELL)));
+        const cj = Math.max(0, Math.min(this.fn - 1, Math.floor((t[i + 2] + this.g.world.half) / FCELL)));
+        this.treeGrid[cj * this.fn + ci]++;
       }
     }
-    const ci = Math.floor((x + MAP_HALF) / FCELL);
-    const cj = Math.floor((z + MAP_HALF) / FCELL);
+    const ci = Math.floor((x + this.g.world.half) / FCELL);
+    const cj = Math.floor((z + this.g.world.half) / FCELL);
     let n = 0;
-    for (let j = Math.max(0, cj - 1); j <= Math.min(FN - 1, cj + 1); j++) {
-      for (let i = Math.max(0, ci - 1); i <= Math.min(FN - 1, ci + 1); i++) n += this.treeGrid[j * FN + i];
+    for (let j = Math.max(0, cj - 1); j <= Math.min(this.fn - 1, cj + 1); j++) {
+      for (let i = Math.max(0, ci - 1); i <= Math.min(this.fn - 1, ci + 1); i++) n += this.treeGrid[j * this.fn + i];
     }
     return n;
   }
@@ -457,7 +465,7 @@ export class Zombies {
     const g = this.g;
     const w = g.world;
     const out = [];
-    const lim = MAP_HALF - 24;
+    const lim = this.g.world.half - 24;
     for (let z = -lim; z <= lim; z += 12) {
       for (let x = -lim; x <= lim; x += 12) {
         if (this.forestAt(x, z) < FOREST_DENS) continue;
@@ -587,7 +595,7 @@ export class Zombies {
   pickSpawnAround(x, z, humans, minD = HORDE_SPAWN_MIN, maxD = HORDE_SPAWN_MAX, forest = false) {
     const g = this.g;
     const w = g.world;
-    const lim = MAP_HALF - 14;
+    const lim = this.g.world.half - 14;
     const sight = this.sightRange();
     let best = null;
     let bestF = -1;
@@ -655,9 +663,9 @@ export class Zombies {
     const zs = this.g.zombies;
     for (let i = 0; i < zs.length; i++) {
       const z = zs[i];
-      const ci = Math.max(0, Math.min(HN - 1, Math.floor((z.x + MAP_HALF) / CELL)));
-      const cj = Math.max(0, Math.min(HN - 1, Math.floor((z.z + MAP_HALF) / CELL)));
-      const c = cj * HN + ci;
+      const ci = Math.max(0, Math.min(this.hn - 1, Math.floor((z.x + this.g.world.half) / CELL)));
+      const cj = Math.max(0, Math.min(this.hn - 1, Math.floor((z.z + this.g.world.half) / CELL)));
+      const c = cj * this.hn + ci;
       this.next[i] = this.head[c];
       this.head[c] = i;
     }
@@ -665,13 +673,13 @@ export class Zombies {
   // iterate zombie indices near (x,z) within r
   forNear(x, z, r, fn) {
     const zs = this.g.zombies;
-    const i0 = Math.max(0, Math.floor((x - r + MAP_HALF) / CELL));
-    const i1 = Math.min(HN - 1, Math.floor((x + r + MAP_HALF) / CELL));
-    const j0 = Math.max(0, Math.floor((z - r + MAP_HALF) / CELL));
-    const j1 = Math.min(HN - 1, Math.floor((z + r + MAP_HALF) / CELL));
+    const i0 = Math.max(0, Math.floor((x - r + this.g.world.half) / CELL));
+    const i1 = Math.min(this.hn - 1, Math.floor((x + r + this.g.world.half) / CELL));
+    const j0 = Math.max(0, Math.floor((z - r + this.g.world.half) / CELL));
+    const j1 = Math.min(this.hn - 1, Math.floor((z + r + this.g.world.half) / CELL));
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
-        for (let k = this.head[j * HN + i]; k >= 0; k = this.next[k]) {
+        for (let k = this.head[j * this.hn + i]; k >= 0; k = this.next[k]) {
           const e = zs[k];
           if (e) fn(e);
         }
@@ -1549,7 +1557,7 @@ export class Zombies {
       _pos.x = ox;
       _pos.z = oz;
     }
-    const lim = MAP_HALF - 4;
+    const lim = this.g.world.half - 4;
     z.x = Math.max(-lim, Math.min(lim, _pos.x));
     z.z = Math.max(-lim, Math.min(lim, _pos.z));
     const gy = groundAt(g.world, z.x, z.z, z.y, 0.2, false);
@@ -2494,7 +2502,7 @@ export class Zombies {
     z.x += z.vx * dt;
     z.y += z.vy * dt + Math.sin(time * 9) * 0.03;
     z.z += z.vz * dt;
-    const lim = MAP_HALF - 4;
+    const lim = this.g.world.half - 4;
     z.x = Math.max(-lim, Math.min(lim, z.x));
     z.z = Math.max(-lim, Math.min(lim, z.z));
     const gr = g.world.heightAt(z.x, z.z);
@@ -2660,7 +2668,7 @@ const _roofs = new WeakMap();
 function roofBoxes(w) {
   let grid = _roofs.get(w);
   if (!grid) {
-    grid = new ColliderGrid(MAP_HALF + 20, 8);
+    grid = new ColliderGrid(w.half + 20, 8);
     for (const r of w.roofs) grid.add(makeBox(r.x, r.z, r.y, r.y + Math.abs(r.rise), r.hx * 2, r.hz * 2, Math.atan2(r.s, r.c)));
     _roofs.set(w, grid);
   }

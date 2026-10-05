@@ -177,6 +177,14 @@ all of this, and `scripts/test-cliplib.js` (in `npm test`) holds it:
 - **Always headless.** `headless: 'new'`, off screen (`--window-position=-32000,-32000`), muted. Flags that show a
   window or uncap the frame rate are refused (`FORBIDDEN_ARGS`: `--kiosk`, `--start-fullscreen`, `--app=`,
   `--disable-gpu-vsync`, `--disable-frame-rate-limit`, ...).
+- **One bounded exception: the frame-rate benchmark.** A frame rate can only be measured uncapped, so the launcher
+  itself has `perf: true` (`perfPlan` in lib.js; used by `scripts/perf/bench.js` and `scripts/perf/ablate.js` and
+  by nothing else): it adds `--disable-gpu-vsync` and `--disable-frame-rate-limit` (a tool still cannot pass them),
+  only together with `gpu: true`, for a browser that lives **6 minutes at the most**, at 1920 x 1080 at the most,
+  still one on the whole machine (the same lock), still below normal priority, and it says so on stderr as it
+  starts. Everything else is as for any launch: the seeded `Local State`, the counter's guard, the stubs. The
+  machine is sluggish while one runs: keep the runs short and few (docs/performance.md), and do the working
+  iterations capped (`perf:profile`, `bench.js --capped`).
 - **Software rendering by default.** ANGLE is `swiftshader` for sandboxes, turnarounds, pairs and game shots. The
   real GPU is `gpu: true` (a tool's `--gpu`), for one short, bounded measurement and nothing else.
 - **One browser at a time, on the whole machine.** A lock file in the temp folder (`stn-chrome.lock`, the holder's
@@ -206,7 +214,8 @@ all of this, and `scripts/test-cliplib.js` (in `npm test`) holds it:
 
 **Measuring frame time** is the one use of the real GPU: one browser, `--gpu`, a 1280 x 720 window, vsync on, at most
 40 zombies and 20 seconds, no second client, and stop if three frames in a row take over 250 ms. If a step would need
-more than that, skip it and say so.
+more than that, skip it and say so. (The performance tools in `scripts/perf/` are the exception to those numbers and
+have their own rules: [docs/performance.md](performance.md).)
 
 The older scripts in `scripts/` that start puppeteer themselves (`e2e*.js`, `lookdev.js`, `shot.js`: written for
 the owner's Mac, some with an uncapped frame rate) are not to be run on a machine somebody is using until they go

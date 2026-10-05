@@ -18,7 +18,9 @@
 //     before any page script runs (SAFE_STUBS); the stubs are checked when the browser starts, after every page.goto
 //     and before every screenshot, and a page without them is refused;
 //   - is always headless ('new'), off screen and muted, and refuses flags that would show a window or uncap the frame
-//     rate (FORBIDDEN_ARGS);
+//     rate (FORBIDDEN_ARGS). The one way to an uncapped frame rate is the launcher's own perf: true (perfPlan below,
+//     scripts/perf/bench.js): the real GPU at up to 1920 x 1080 with vsync and the frame limit off, for a browser that
+//     lives 6 minutes at the most, still one on the whole machine, still below normal priority, and said so on stderr;
 //   - renders in software (ANGLE swiftshader) unless the caller passes gpu: true (a tool's own --gpu flag), which is for
 //     one short, bounded measurement;
 //   - runs one browser at a time on the whole machine (a lock file in the temp folder), and one dev / game server at a
@@ -200,6 +202,24 @@ export const BAD_ATTEMPTS_MAX = 4; // no launch at this many failed sign-ins on 
 export const LOCAL_STATE_SEED = '{"password_manager":{"os_password_blank":false,"os_password_last_changed":"9000000000000000000"}}';
 // flags no tool may pass: anything that shows a window, takes the screen or uncaps the frame rate
 export const FORBIDDEN_ARGS = /^--(kiosk|start-fullscreen|start-maximized|app=|disable-gpu-vsync|disable-frame-rate-limit|headless=(false|old)|new-window|user-data-dir|profile-directory|auth-server-allowlist=.|auth-negotiate-delegate-allowlist=.)/;
+// The one uncapped measurement (launchChrome's perf: true, for scripts/perf/bench.js): the flags the launcher adds
+// itself (a tool still cannot pass them), the most such a browser may live and the largest frame it may draw.
+export const PERF_ARGS = ['--disable-gpu-vsync', '--disable-frame-rate-limit'];
+export const PERF_LIFE_MAX = 6 * 60_000;
+export const PERF_SIZE = [1920, 1080], SIZE_MAX = [1280, 800];
+/**
+ * What a launch may be: its lifetime, its size and the flags the launcher adds for it. perf: true is the bounded
+ * exception to "no uncapped frame rate" - only with gpu: true, 6 minutes at the most, up to 1920 x 1080. Throws on a
+ * flag no tool may pass and on perf without the GPU (an uncapped frame rate in software measures nothing).
+ */
+export function perfPlan({ perf = false, gpu = false, life = LIFE_DEFAULT, width = 900, height = 600, extraArgs = [] } = {}) {
+  const bad = extraArgs.find((a) => FORBIDDEN_ARGS.test(a));
+  if (bad) throw new Error(`launchChrome: ${bad} is not allowed (it shows a window, takes the screen or uncaps the frame rate)`);
+  if (perf && !gpu) throw new Error('launchChrome: perf: true is for a measurement on the real GPU (pass gpu: true with it)');
+  if (perf && process.env.ANGLE === 'swiftshader') throw new Error('launchChrome: perf: true with ANGLE=swiftshader would measure the software renderer');
+  const [w, h] = perf ? PERF_SIZE : SIZE_MAX;
+  return { life: Math.min(perf ? PERF_LIFE_MAX : LIFE_MAX, Math.max(1000, life)), width: Math.min(width, w), height: Math.min(height, h), args: perf ? PERF_ARGS.slice() : [] };
+}
 // Nothing of Chrome's may touch the machine's credentials: no OS password store or keychain, no sync, no background
 // services, no password manager, and no integrated Windows (NTLM / Negotiate) sign-in to any host - a failed one counts
 // against the Windows account, and ten of those lock it.
@@ -491,18 +511,17 @@ function hookExit() {
 
 /**
  * Launch the one isolated headless Chrome (see the rules at the top of this file). Software rendering unless gpu: true.
+ * perf: true (with gpu: true): the one uncapped measurement - see perfPlan.
  * life: the most it may live (ms; LIFE_DEFAULT, at most LIFE_MAX). storage: localStorage keys every page starts with.
  * Returns { browser, page (a first page, set up), newPage({ window }) (window: in a window of its own, so it keeps
  * drawing while another page is in front), close(), angle, pid }. Call close() in a finally.
  */
-export async function launchChrome({ width = 900, height = 600, extraArgs = [], onError = (m) => console.error('  page:', m), gpu = false, life = LIFE_DEFAULT, wait = 10 * 60_000, storage = null } = {}) {
-  const bad = extraArgs.find((a) => FORBIDDEN_ARGS.test(a));
-  if (bad) throw new Error(`launchChrome: ${bad} is not allowed (it shows a window, takes the screen or uncaps the frame rate)`);
+export async function launchChrome({ width = 900, height = 600, extraArgs = [], onError = (m) => console.error('  page:', m), gpu = false, perf = false, life = LIFE_DEFAULT, wait = 10 * 60_000, storage = null } = {}) {
+  const plan = perfPlan({ perf, gpu, life, width, height, extraArgs });
   if (process.env.STN_NO_BROWSER === '1') throw new Error('launchChrome: STN_NO_BROWSER=1 is set - no browser may be started on this machine now');
   if (current) throw new Error('launchChrome: this process already has a browser open (one at a time: close it first, or use newPage({ window: true }))');
-  life = Math.min(LIFE_MAX, Math.max(1000, life));
-  width = Math.min(width, 1280);
-  height = Math.min(height, 800);
+  ({ life, width, height } = plan);
+  if (perf) console.error(`launchChrome: an UNCAPPED frame-rate measurement is running on the real GPU (${width} x ${height}, vsync and the frame limit off, ${Math.round(life / 1000)} s at the most): the machine will be sluggish until it closes`);
   const badBefore = badPasswordAttempts();
   guardBefore(badBefore);
   hookExit();
@@ -558,7 +577,7 @@ export async function launchChrome({ width = 900, height = 600, extraArgs = [], 
       headless: 'new',
       userDataDir: profile,
       defaultViewport: { width, height, deviceScaleFactor: 1 },
-      args: ['--window-position=-32000,-32000', `--window-size=${width},${height}`, '--mute-audio', `--use-angle=${angle}`, '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-first-run', '--no-default-browser-check', '--allow-file-access-from-files', '--force-device-scale-factor=1', ...NO_CREDENTIALS, ...extraArgs],
+      args: ['--window-position=-32000,-32000', `--window-size=${width},${height}`, '--mute-audio', `--use-angle=${angle}`, '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-first-run', '--no-default-browser-check', '--allow-file-access-from-files', '--force-device-scale-factor=1', ...NO_CREDENTIALS, ...plan.args, ...extraArgs],
     });
     pid = browser.process()?.pid || 0;
     current = { killNow };
@@ -605,7 +624,7 @@ export async function launchChrome({ width = 900, height = 600, extraArgs = [], 
     };
     const page = await setUp((await browser.pages())[0] || (await browser.newPage()));
     await page.goto('data:text/html,<title>stn</title>'); // (the self-check: the stubs are in a page of this browser, or there is no browser)
-    return { browser, page, newPage, close, angle, pid, profile, born: Date.now(), life, badBefore };
+    return { browser, page, newPage, close, angle, pid, profile, born: Date.now(), life, badBefore, perf: !!perf };
   } catch (e) {
     await close().catch((e2) => console.error(e2.message));
     throw e;

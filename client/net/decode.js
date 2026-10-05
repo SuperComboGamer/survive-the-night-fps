@@ -93,6 +93,9 @@ export function readGlobal(r, prev) {
     playersTotal: r.u8(),
     restartT: r.f32(),
     phaseLen: r.u16(),
+    act: r.u8(), // which of the run's two maps is being played (shared/acts.js)
+    skips: r.u8(), // the crossing: how many have asked to skip it...
+    skipNeed: r.u8(), // ...out of how many would have to
     benches: [],
   };
   for (let n = r.u8(); n > 0; n--) g.benches.push({ x: dqpos(r.i16()), z: dqpos(r.i16()) });
@@ -101,6 +104,8 @@ export function readGlobal(r, prev) {
   g.escapeReady = !!(g.flags & 4);
   g.escapeStalled = !!(g.flags & 8); // nobody on their feet at the car: the warm-up has stopped where it is
   g.escapeLeaving = !!(g.flags & 16); // a survivor is getting in to drive
+  g.standWarm = !!(g.flags & 32); // the plane's stand: the tanks are full, the engines are warming (acts.js RUNWAY)
+  g.runwayBlocked = !!(g.flags & 64); // ...and warm, but the dead stand on the runway ahead of it
   return g;
 }
 

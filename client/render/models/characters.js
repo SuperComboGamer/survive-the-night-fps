@@ -3663,6 +3663,34 @@ class ZombieInstance {
     this.mesh.onBeforeRender = () => {
       this._seen = true;
     };
+    // In a crowd (render/crowd.js: the game's scene) it is not drawn by its own mesh: it is a row of the crowd's bone
+    // texture and an instance of its geometry's batch. The crowd asks for the bones of those it draws.
+    this.member = {
+      root: this.object,
+      body: this.body,
+      mesh: this.mesh,
+      geometry: rig.geometry,
+      crowd: null,
+      row: 0,
+      fresh: false,
+      solve: (out, at, force) => {
+        let changed = force;
+        if (this.poseDirty) {
+          this._solve();
+          changed = true;
+        }
+        if (this.fxDirty) {
+          skeleton.boneMatrices.set(this.fx.matrixWorld.elements, 0);
+          this.fxDirty = false;
+          changed = true;
+        }
+        if (changed) out.set(skeleton.boneMatrices, at);
+        return changed;
+      },
+      seen: () => {
+        this._seen = true;
+      },
+    };
     // head center marker (for calibration/debug) + mouth anchor
     const headBone = this.bones[this.X.head];
     this.headCenter = new THREE.Object3D();
@@ -3864,7 +3892,7 @@ class ZombieInstance {
       const far = d2 > (this.far ? LOD_NEAR * LOD_NEAR : LOD_FAR * LOD_FAR);
       if (far !== this.far) {
         this.far = far;
-        this.mesh.geometry = far ? this.rigFar.geometry : this.rig.geometry;
+        this.mesh.geometry = this.member.geometry = far ? this.rigFar.geometry : this.rig.geometry;
       }
     }
     this.posedAt = time;
@@ -3961,6 +3989,7 @@ class ZombieInstance {
   }
 
   dispose() {
+    this.member.crowd?.remove(this.member);
     this.skeleton.dispose();
     if (this.object.parent) this.object.parent.remove(this.object);
   }
@@ -3999,6 +4028,7 @@ export function createZombie(ztype, seed = 0) {
     shin: rig.shin === undefined ? null : { color: rig.shin, len: rig.P.shinLen * cal.k, thick: 0.06 * cal.k }, // the piece a shot-off leg leaves (Effects.gibLeg)
     anchorWorld: (a, out) => z.anchorWorld(a, out),
     dispose: () => z.dispose(),
+    member: z.member, // (for a Crowd to draw it: render/crowd.js)
     _inst: z,
   };
 }

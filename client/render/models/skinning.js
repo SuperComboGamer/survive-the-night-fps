@@ -11,6 +11,7 @@
 // and the skinning vertex shader reads getBoneMatrix(0.0)[3].xyz. No material clones, no per-draw
 // uniform uploads (MeshLambertMaterial does not honor uniformsNeedUpdate).
 import * as THREE from 'three';
+import { patchCrowdShader } from '../crowd.js';
 import { WR, regionUV, getCharAtlas, getWeaponAtlas, fbm3, noise3, mulberry32 } from './charTextures.js';
 
 export { fbm3, noise3, mulberry32 };
@@ -535,7 +536,28 @@ function makeMat(map, fog) {
   return m;
 }
 
-let _charMat = null, _propMat = null, _vmArmMat = null, _vmWeaponMat = null;
+let _charMat = null, _propMat = null, _vmArmMat = null, _vmWeaponMat = null, _crowdMat = null;
+/** The bone texture of the crowd (render/crowd.js fills it; the crowd's material reads it). */
+export const crowdBones = { value: null };
+/**
+ * The characters' material for the dead drawn as a crowd (render/crowd.js): the same paint, lights and effects, the
+ * bones read from a row of the crowd's texture instead of a skeleton's own (the hit flash and glow are in bone 0 of
+ * the row, as they are in a skeleton's).
+ */
+export function getCrowdMaterial() {
+  if (!_crowdMat) {
+    _crowdMat = new THREE.MeshLambertMaterial({ map: getCharAtlas(), vertexColors: true, fog: true });
+    _crowdMat.onBeforeCompile = (shader) => {
+      patchShader(shader);
+      const still = 'vFx = vec3( 0.0, 1.0, 0.0 );';
+      if (!shader.vertexShader.includes(still)) throw new Error('getCrowdMaterial: patchShader changed');
+      shader.vertexShader = shader.vertexShader.replace(still, 'vFx = crowdBone( 0.0 )[3].xyz;');
+      patchCrowdShader(shader, crowdBones);
+    };
+    _crowdMat.customProgramCacheKey = () => 'stn-char-crowd-v1';
+  }
+  return _crowdMat;
+}
 /** Shared material for all skinned characters (char atlas). */
 export function getCharacterMaterial() {
   if (!_charMat) _charMat = makeMat(getCharAtlas(), true);

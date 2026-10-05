@@ -15,8 +15,9 @@
 //   night      when a night ends: at dawn, in a wipe, by escaping during it, or with the match abandoned
 //   event      the rare moments: join leave down death revive turned returned_at_dawn night_start dawn boss_spawn
 //              boss_kill supply_found supply_install schematic engine_start engine_ready crate_drop car_alarm
-//              radio_call bell, admin (an admin chat command, data.command: Game.handleChat), and the match's end
-//              as victory | wipe | abandoned | interrupted | handoff
+//              radio_call bell, admin (an admin chat command, data.command: Game.handleChat), crossing (the car
+//              left the island for the mainland: Game.cross) and arrival (the team is off the bridge: Game.arrive),
+//              and the match's end as victory | wipe | abandoned | interrupted | handoff
 //   sample     every SAMPLE_EVERY seconds of a running match
 //
 // Vocabularies
@@ -41,6 +42,16 @@
 //                         metal_wall...); the mounted gun is mounted_gun; a kill without a weapon is fire,
 //                         explosion or unknown
 //
+// The two acts (shared/acts.js): a run that drives off the island goes on across the bridge as the same match, and
+// its victory is the plane's. A wipe on the mainland ends the match, and the run from the checkpoint at the bridge
+// is a new one that begins on the mainland (summary.startAct 2). In the match_end record suppliesInstalled /
+// suppliesNeeded and engineStartedS are of the act the match ended in (the engine: the last one started);
+// summary.supplies is always the car's, summary.planeParts the plane's (the same shape; null for a match that never
+// saw the mainland), every supplyLog entry names its act, summary.act is the act it ended in, and summary.crossing
+// is how the island was left (null: it was not): { t, day, phase, night, driver, players, alive, downed, dead,
+// turned, aboard (alive and at the car), back (the dead and turned the checkpoint brought back), arrivedS,
+// arrivedDay, engineStartedS, engineStartedDay, engineReadyS (the car's) }.
+//
 // Counting rules: shots / hits / headshots are rounds fired through Combat.fire by everything but the flamethrower
 // (a shotgun blast is one shot; a hit is a shot that struck something, a headshot one that struck a head); the
 // flamethrower's puffs are only in shotsByWeapon / hitsByWeapon. Melee swings are stats.swings / stats.swingHits.
@@ -52,7 +63,7 @@
 import { randomUUID } from 'node:crypto';
 import { PHASE, ESCAPE_RADIUS, SERVER_TICK_RATE } from '../shared/constants.js';
 import * as CONSTANTS from '../shared/constants.js';
-import { ITEM, ZTYPE, STRUCT, CONT, ZONE, KILLER, SUPPLIES, SUPPLY_NEED } from '../shared/defs.js';
+import { ITEM, ZTYPE, STRUCT, CONT, ZONE, KILLER, suppliesOf } from '../shared/defs.js';
 import { PROTOCOL_VERSION } from '../shared/protocol.js';
 import { MOUNTED_GUN } from '../shared/mountedgun.js';
 import { nightTheme } from '../shared/nights.js';
@@ -75,7 +86,14 @@ const CNAME = names(CONT);
 const ZONE_NAME = names(ZONE);
 export const itemName = (id) => ITEM_NAME[id] || (id ? `item_${id}` : 'unknown');
 export const zombieName = (t) => ZNAME[t] || 'zombie';
-const SUPPLY_TOTAL = SUPPLY_NEED.reduce((a, b) => a + b, 0);
+// what an act's escape takes, as the summary keeps it: a row per item (act 2: the plane's parts)
+const supplyRows = (act) => {
+  const { items, need } = suppliesOf(act);
+  const rows = {};
+  items.forEach((item, i) => (rows[itemName(item)] = { need: need[i], found: 0, installed: 0, firstFoundS: null, firstFoundDay: null, firstInstalledS: null, doneS: null, doneDay: null }));
+  return rows;
+};
+const total = (list) => list.reduce((a, b) => a + b, 0);
 
 const fin = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const r1 = (v) => Math.round(fin(v) * 10) / 10;
@@ -175,8 +193,7 @@ export class MatchTracker {
     if (!this.sink) return;
     if (this.m) this.finish('abandoned');
     const g = this.g;
-    const supplies = {};
-    SUPPLIES.forEach((item, i) => (supplies[itemName(item)] = { need: SUPPLY_NEED[i], found: 0, installed: 0, firstFoundS: null, firstFoundDay: null, firstInstalledS: null, doneS: null, doneDay: null }));
+    const act = g.act === 2 ? 2 : 1; // (2: a run from the checkpoint at the bridge)
     const m = (this.m = {
       id: randomUUID(),
       t0: g.time,
@@ -202,7 +219,12 @@ export class MatchTracker {
       phaseS: { day: 0, night: 0, final_stand: 0 },
       bosses: [],
       bossOf: new Map(), // zombie -> its entry in bosses
-      supplies,
+      supplies: supplyRows(1),
+      planeParts: act === 2 ? supplyRows(2) : null,
+      startAct: act,
+      crossing: null,
+      moving: false, // the crossing is being played: the island is being taken down
+      fallen: [], // who was dead or turned as the car left (the checkpoint brings them back)
       supplyLog: [],
       schematics: [],
       crates: { dropped: 0, opened: 0 },
@@ -270,6 +292,7 @@ export class MatchTracker {
       }
       const t = this.t();
       const installed = g.supplies.reduce((a, b) => a + b, 0);
+      const act = g.act === 2 ? 2 : 1;
       this.emit({
         k: 'match_end',
         matchId: m.id,
@@ -283,7 +306,7 @@ export class MatchTracker {
         uniquePlayers: m.ids.size,
         playerSeconds: r1(m.playerSeconds),
         suppliesInstalled: installed,
-        suppliesNeeded: SUPPLY_TOTAL,
+        suppliesNeeded: total(suppliesOf(act).need),
         engineStartedS: m.engineS,
         escaped,
         kills: m.kills,
@@ -293,7 +316,11 @@ export class MatchTracker {
         structuresBuilt: m.built,
         structuresLost: m.lost,
         summary: {
+          act,
+          startAct: m.startAct,
+          crossing: m.crossing,
           supplies: m.supplies,
+          planeParts: m.planeParts,
           supplyLog: m.supplyLog,
           bosses: m.bosses,
           schematics: m.schematics,
@@ -877,7 +904,7 @@ export class MatchTracker {
   // it is the survivor nearest it: it only ever leaves that spot in someone's hands.
   supplyFound(e) {
     const m = this.m;
-    if (!m) return;
+    if (!m || m.moving) return; // (moving: nobody took it - the island went with it still hidden)
     const g = this.g;
     let by = null;
     let best = 6;
@@ -893,7 +920,8 @@ export class MatchTracker {
     const item = itemName(e.item);
     const zone = ZONE_NAME[g.supplyHints[e.hint]] ?? null;
     const t = this.t();
-    const sp = m.supplies[item];
+    const act = g.act === 2 ? 2 : 1;
+    const sp = (act === 2 ? m.planeParts : m.supplies)?.[item];
     if (sp) {
       sp.found++;
       if (sp.firstFoundS === null) {
@@ -901,30 +929,33 @@ export class MatchTracker {
         sp.firstFoundDay = g.day;
       }
     }
-    m.supplyLog.push({ e: 'found', item, n: 1, t, day: g.day, phase: this.phase(), by: by ? by.name : null, zone });
-    this.event('supply_found', by, { item, zone }, e.x, e.z);
+    m.supplyLog.push({ e: 'found', item, n: 1, t, day: g.day, phase: this.phase(), by: by ? by.name : null, zone, act });
+    this.event('supply_found', by, { item, zone, act }, e.x, e.z);
   }
-  // Game.interact at the car: n of a supply put in
+  // Game.interact at the car (on the mainland, the plane): n of a supply put in
   install(p, item, n) {
     const m = this.m;
     if (!m) return;
     const g = this.g;
     if (p.ts) p.ts.suppliesInstalled += n;
     const name = itemName(item);
-    const i = SUPPLIES.indexOf(item);
+    const act = g.act === 2 ? 2 : 1;
+    const { items, need } = suppliesOf(act);
+    const i = items.indexOf(item);
     const t = this.t();
-    const sp = m.supplies[name];
+    const sp = (act === 2 ? m.planeParts : m.supplies)?.[name];
     if (sp && i >= 0) {
       sp.installed = g.supplies[i];
       if (sp.firstInstalledS === null) sp.firstInstalledS = t;
-      if (g.supplies[i] >= SUPPLY_NEED[i] && sp.doneS === null) {
+      if (g.supplies[i] >= need[i] && sp.doneS === null) {
         sp.doneS = t;
         sp.doneDay = g.day;
       }
     }
-    m.supplyLog.push({ e: 'install', item: name, n, t, day: g.day, phase: this.phase(), by: p.name, zone: null });
+    m.supplyLog.push({ e: 'install', item: name, n, t, day: g.day, phase: this.phase(), by: p.name, zone: null, act });
     const installed = g.supplies.reduce((a, b) => a + b, 0);
-    this.event('supply_install', p, { item: name, n, installed, needed: SUPPLY_TOTAL, complete: installed >= SUPPLY_TOTAL });
+    const needed = total(need);
+    this.event('supply_install', p, { item: name, n, installed, needed, complete: installed >= needed, act });
   }
   // Game.unlockSchematic, for a new one (p: who found it, null for /unlock)
   schematic(item, p) {
@@ -951,9 +982,52 @@ export class MatchTracker {
     m.engineReadyS = this.t();
     this.event('engine_ready', null, { survivors: this.survivors(), warmupS: m.engineS === null ? null : r1(m.engineReadyS - m.engineS) });
   }
-  // Game.driveOff: p got in and drove (victory follows)
+  // Game.driveOff: p got in and drove (the crossing follows, or on the mainland victory)
   drove(p) {
     if (this.m) this.m.driver = p;
+  }
+  // Game.cross, before the island is cleared: the car is away to the mainland (by: who drove, or null; night: it
+  // left in the night). Who was what as it left is the crossing's record; a night it left in ends here, escaped.
+  // What the car's engine was is kept with it: the match's engine times are the plane's from here on.
+  crossed(by, night = false) {
+    const m = this.m;
+    if (!m || m.crossing) return;
+    const g = this.g;
+    this.account();
+    const car = g.world.car;
+    const c = { t: this.t(), day: g.day, phase: this.phase(), night: !!night, driver: by ? by.name : null, players: g.players.size, alive: 0, downed: 0, dead: 0, turned: 0, aboard: 0, back: null, arrivedS: null, arrivedDay: null, engineStartedS: m.engineS, engineStartedDay: m.engineDay, engineReadyS: m.engineReadyS };
+    for (const p of g.players.values()) {
+      if (!p.alive || p.zombie) m.fallen.push(p);
+      if (!p.alive) c.dead++;
+      else if (p.zombie) c.turned++;
+      else {
+        c.alive++;
+        if (p.downed) c.downed++;
+        if (Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS) c.aboard++;
+      }
+    }
+    this.event('crossing', by && g.players.get(by.id) === by ? by : null, { ...c });
+    if (m.night) this.endNight('escaped');
+    m.crossing = c;
+    m.planeParts = supplyRows(2);
+    m.engineS = m.engineDay = m.engineReadyS = null;
+    m.driver = null;
+    m.moving = true;
+  }
+  // Game.arrive: the team is off the bridge and the first day on the mainland begins. back: how many of the dead and
+  // the turned the checkpoint brought back
+  arrived(back = 0) {
+    const m = this.m;
+    if (!m) return;
+    m.moving = false;
+    const c = m.crossing;
+    if (!c || c.arrivedS !== null) return;
+    c.back = back;
+    c.arrivedS = this.t();
+    c.arrivedDay = this.g.day;
+    for (const p of m.fallen) if (p.ts && p.alive && !p.zombie) p.ts.lifeT = this.g.time; // (a survivor again)
+    m.fallen = [];
+    this.event('arrival', null, { back, day: c.arrivedDay, survivors: this.survivors(), players: this.g.players.size, crossingS: r1(c.arrivedS - c.t) });
   }
   // Game.flySupplyDrop: a plane is on its way with a crate for (x, z)
   crateDrop(x, z) {

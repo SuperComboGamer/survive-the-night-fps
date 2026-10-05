@@ -3,6 +3,7 @@
 // line (the train, the depot, the tunnel mouths) is part of the static world. None of this has a collider: the
 // ground under it is the bed the heightfield was cut to, and that is what is walked on.
 import * as THREE from 'three';
+import { MultiMesh, ALWAYS } from './multimesh.js';
 import { RAIL } from '../../shared/rail.js';
 import { getMaterial } from './materials.js';
 
@@ -46,16 +47,34 @@ function quad(to, a, b, c, d, n, ua, ub, uc, ud) {
     to.uv.push(u[0], u[1]);
   }
 }
-function mesh(name, s, material) {
+// One mesh of a material for the whole line: every stretch's triangles are a run of its buffer, and the runs in
+// sight are drawn in one call (multimesh.js), not a mesh a stretch.
+function mesh(name, stretches, material) {
+  const n = stretches.reduce((a, s) => a + s.pos.length, 0) / 3;
+  const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+  const runs = [];
+  const sphere = new THREE.Sphere();
+  let o = 0;
+  for (const s of stretches) {
+    const count = s.pos.length / 3;
+    if (!count) continue;
+    pos.set(s.pos, o * 3);
+    nrm.set(s.nrm, o * 3);
+    uv.set(s.uv, o * 2);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos.subarray(o * 3, (o + count) * 3), 3));
+    g.computeBoundingSphere();
+    sphere.copy(g.boundingSphere);
+    runs.push({ first: o, count, x: sphere.center.x, y: sphere.center.y, z: sphere.center.z, r: sphere.radius, chunk: ALWAYS, maxDist: Infinity });
+    o += count;
+  }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(s.pos), 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(s.nrm), 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(s.uv), 2));
-  geo.computeBoundingSphere();
-  const m = new THREE.Mesh(geo, material);
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  const m = new MultiMesh(geo, material, runs);
   m.name = `railway-${name}`;
   m.receiveShadow = true;
-  m.matrixAutoUpdate = false;
   return m;
 }
 
@@ -66,6 +85,7 @@ export function buildRailway(world) {
   const group = new THREE.Group();
   group.name = 'railway';
   group.matrixAutoUpdate = false;
+  const all = { ballast: [], ties: [], rails: [] };
   const P = { x: 0, y: 0, z: 0, tx: 0, tz: 1 };
   const g = RAIL.GAUGE / 2;
   rail.tracks.forEach((t, ti) => {
@@ -141,8 +161,11 @@ export function buildRailway(world) {
         quad(ties, c(1, 1, y0), c(1, -1, y0), c(1, -1, y1), c(1, 1, y1), [nx, 0, nz], [0, 0], [0.22, 0], [0.22, 0.15], [0, 0.15]);
         quad(ties, c(-1, -1, y0), c(-1, 1, y0), c(-1, 1, y1), c(-1, -1, y1), [-nx, 0, -nz], [0, 0], [0.22, 0], [0.22, 0.15], [0, 0.15]);
       }
-      group.add(mesh('ballast', ballast, getMaterial('gravel')), mesh('ties', ties, getMaterial('trim')), mesh('rails', rails, getMaterial('rust')));
+      all.ballast.push(ballast);
+      all.ties.push(ties);
+      all.rails.push(rails);
     }
   });
+  group.add(mesh('ballast', all.ballast, getMaterial('gravel')), mesh('ties', all.ties, getMaterial('trim')), mesh('rails', all.rails, getMaterial('rust')));
   return group;
 }

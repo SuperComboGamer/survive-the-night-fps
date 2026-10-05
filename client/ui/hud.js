@@ -7,6 +7,8 @@ import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
 import { Compass, Objective, Tracked, Markers, Downed, DamageDir } from './hud2.js';
 import { Minimap } from './minimap.js';
+import { W, ACT_NOW } from '../game/act.js'; // (this act, and the words for what its parts go into)
+import { WORLD } from '../../shared/acts.js';
 import { bindLabel, bindTag, onBindsChange } from '../game/binds.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build', 'Radio'];
@@ -337,8 +339,9 @@ export class Hud {
     if (h.finale) {
       // a stalled warm-up keeps its time on show: it stopped there, it did not start over. (A title that fits one
       // line: a second one pushes the horde counter down into the kill feed.)
-      title = h.escapeReady ? 'Get in the car!' : h.escapeStalled ? 'Stalled' : 'Final stand';
-      label = h.escapeReady ? (h.escapeLeaving ? 'Someone is getting in' : 'The engine is running') : h.escapeStalled ? 'Get back to the car' : 'Engine ready in';
+      const plane = ACT_NOW === WORLD.MAINLAND;
+      title = h.escapeReady ? (h.runwayBlocked ? 'Clear the runway!' : W.getIn) : h.escapeStalled ? 'Stalled' : plane ? 'Runway stand' : 'Final stand';
+      label = h.escapeReady ? (h.runwayBlocked ? 'The dead are in its way' : h.escapeLeaving ? 'Someone is getting in' : plane ? 'The engines are running' : 'The engine is running') : h.escapeStalled ? (plane && !h.standWarm ? 'Get back to the fuel truck' : `Get back to the ${W.thing}`) : plane ? (h.standWarm ? 'Engines warm in' : 'Tanks full in') : 'Engine ready in';
       time = h.escapeReady ? '' : fmtTime(h.escapeT);
     } else if (state === 'night') {
       title = 'Night ' + day;

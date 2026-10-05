@@ -3161,7 +3161,8 @@ check('ping broadcast', B.pings > 0);
   run(20);
   check('getting in is a hold the whole team is told about', A.self.holdKind === HOLD.DRIVE && A.self.holdProgress > 0.2 && B.global.escapeLeaving && game.phase !== PHASE.VICTORY, `kind ${A.self.holdKind}, progress ${A.self.holdProgress?.toFixed(2)}`);
   run(Math.round(20 * ESCAPE_DRIVE_TIME));
-  check('victory when a survivor drives off', game.phase === PHASE.VICTORY && A.notes.some((n) => n[0] === NOTIFY.VICTORY));
+  // (driving off is no longer the end of the run: the car makes for the bridge to the mainland - scripts/sim-act2.js)
+  check('the island is left when a survivor drives off: the crossing begins', game.phase === PHASE.CROSSING && A.notes.some((n) => n[0] === NOTIFY.CROSSING) && !A.notes.some((n) => n[0] === NOTIFY.VICTORY), `phase ${game.phase}`);
 }
 
 // the escape is the team's to make (a game of its own, two survivors, day 3)
@@ -3241,7 +3242,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   check('getting in needs the whole hold, at the car', !fromAfar && leaving && !e.leaving && g.phase !== PHASE.VICTORY, `phase ${g.phase}`);
   tick(1, 2, far, () => !a.hold && hold(sa, ACT.HOLD_BEGIN));
   tick(ESCAPE_DRIVE_TIME, 2, far);
-  check('a survivor drives off: victory, whoever is still out there', g.phase === PHASE.VICTORY && !e.active && b.alive && Math.hypot(b.state.x - car.x, b.state.z - car.z) > 200, `phase ${g.phase}`);
+  check('a survivor drives off: the island is left, whoever is still out there', g.phase === PHASE.CROSSING && !g.escape.active && b.alive && Math.hypot(b.state.x - car.x, b.state.z - car.z) > 200, `phase ${g.phase}`);
 }
 
 // the final stand is sized to the team from the same sum as a night's horde (games of their own, on day 3)

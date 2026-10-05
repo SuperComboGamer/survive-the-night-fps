@@ -1,6 +1,6 @@
 // The stray cat: ambient wildlife that pads around the broken-down car, naps in the sun, wanders over
 // to survivors who stand still and bolts from anything dead. Zombies ignore it and nothing can hurt it.
-import { MAP_HALF, PLAYER_RADIUS } from '../shared/constants.js';
+import { PLAYER_RADIUS } from '../shared/constants.js';
 import { CANIM } from '../shared/defs.js';
 import { ENT } from '../shared/protocol.js';
 import { resolveBody, groundAt } from '../shared/collision.js';
@@ -286,7 +286,7 @@ export class Cats {
   pickWanderTarget(c) {
     const g = this.g;
     const w = g.world;
-    const lim = MAP_HALF - 6;
+    const lim = g.world.half - 6;
     const hd = Math.hypot(c.homeX - c.x, c.homeZ - c.z);
     for (let tries = 0; tries < 8; tries++) {
       let a = g.rng() * TAU;
@@ -331,7 +331,7 @@ export class Cats {
       _pos.x = ox;
       _pos.z = oz;
     }
-    const lim = MAP_HALF - 4;
+    const lim = g.world.half - 4;
     c.x = Math.max(-lim, Math.min(lim, _pos.x));
     c.z = Math.max(-lim, Math.min(lim, _pos.z));
     // actual velocity (after collisions) drives the animation and stuck detection

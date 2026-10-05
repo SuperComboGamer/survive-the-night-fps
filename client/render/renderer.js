@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { ScreenPasses } from './post.js';
 import { G } from './globals.js';
+import { ShadowRate } from './rates.js';
 
 // Quality presets. Knobs read by other modules:
 //  shadows / shadowMapSize (per cascade, 2 cascades) / shadowDist (m): cascaded sun shadows
@@ -303,6 +304,14 @@ export class GameRenderer {
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.stats = { calls: 0, tris: 0 };
+    this.shadowRate = new ShadowRate(); // (the shadow maps are not drawn in every frame of a very high frame rate: rates.js)
+    this._lights = null;
+  }
+
+  // whether this frame draws the shadow maps
+  _shadowsDue(dt) {
+    this._lights ??= this.scene.children.filter((o) => o.isLight && o.shadow);
+    return this.shadowRate.due(dt, this.camera, this._lights);
   }
 
   get q() {
@@ -593,6 +602,8 @@ export class GameRenderer {
     // three resolves the MSAA target after every render into it. Only the world's depth is ever sampled
     // (AO, sun shafts, beam), so the resolves after the in-place apply pass and the viewmodel are colour only.
     this.rt.resolveDepthBuffer = this.rt.samples > 0;
+    r.shadowMap.autoUpdate = false;
+    r.shadowMap.needsUpdate = this._shadowsDue(post.dt);
     r.render(this.scene, this.camera);
     this.rt.resolveDepthBuffer = false;
     this.stats.calls = r.info.render.calls;

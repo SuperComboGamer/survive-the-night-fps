@@ -1,6 +1,7 @@
 // Client entity store: decodes into records, keeps per-entity interpolation sample rings, and owns
 // the three.js views (zombies, remote survivors, the cat, items, structures, projectiles, crates, areas).
 import * as THREE from 'three';
+import { POSE_NEAR, POSE_HZ } from '../render/rates.js';
 import { ENT, PFLAG, ZSTATUS, HCAR_AT, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach, groundAt } from '../../shared/collision.js';
@@ -321,6 +322,11 @@ export class Entities {
     return this.g.renderer.scene;
   }
 
+  // a cutscene is on: the survivors are in its car or its plane, not standing where the server has their bodies
+  hidePlayers() {
+    for (const e of this.ents.values()) if (e.kind === ENT.PLAYER && e.view) e.view.object.visible = false;
+  }
+
   clear() {
     for (const e of this.ents.values()) this.destroyView(e, true);
     this.ents.clear();
@@ -377,6 +383,7 @@ export class Entities {
           e.view = v;
           setShadowFlags(v.object, this.charShadows, false);
           this.scene.add(v.object);
+          if (v.member) g.crowd?.add(v.member); // (drawn with every other of its kind in one call: render/crowd.js)
           v.setLegs?.(e.q[7]); // legs it lost before it came into view
           e.growlT = e.ztype === ZTYPE.SHADE ? 0.5 + Math.random() * 2 : 2 + Math.random() * 8;
           e.voice = 0.92 + ((((e.id * 2654435761) >>> 0) % 997) / 997) * 0.2; // its own throat: everything it utters is pitched by this
@@ -884,12 +891,18 @@ export class Entities {
           const distC = (e.rx - camPos.x) ** 2 + (e.rz - camPos.z) ** 2;
           v.object.position.set(e.rx, e.ry, e.rz);
           v.object.rotation.y = e.ryaw;
-          // skip animation work for far zombies on alternate frames
-          if (distC < 60 * 60 || ((g.frame + e.id) & 1) === 0) {
+          // How often it is posed. Past 60 m: every other frame. Nearer, but past POSE_NEAR (where its far copy is
+          // drawn): no more than POSE_HZ times a second - at 80 frames a second or fewer that is every frame, as it
+          // always was; at 240 the horde's limbs are worked out a third as often, and where each body stands and
+          // which way it faces is still every frame's.
+          e.poseDt = (e.poseDt ?? ((e.id % 8) / 8) / POSE_HZ) + dt;
+          const far = distC >= 60 * 60;
+          if (far ? ((g.frame + e.id) & 1) === 0 : distC < POSE_NEAR * POSE_NEAR || e.poseDt >= 1 / POSE_HZ) {
             const def = ZOMBIE_DEFS[e.ztype];
             _sph.center.set(e.rx, e.ry + def.height * 0.5, e.rz);
             _sph.radius = def.height * 0.75 + 0.4;
-            v.update(distC < 60 * 60 ? dt : dt * 2, e.q[4], e.speed, time, _frustum.intersectsSphere(_sph));
+            v.update(far ? dt * 2 : Math.min(e.poseDt, 0.1), e.q[4], e.speed, time, _frustum.intersectsSphere(_sph));
+            e.poseDt = 0;
           }
           if (e.burning > 0) {
             e.burning -= dt;

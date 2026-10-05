@@ -15,7 +15,7 @@ import { getTexture, getNormalMap, TEXTURE_WORLD_SIZE, atlasUV } from './texture
 /** Legacy wind clock (vegetation now sways with the global uWind uniform, see globals.js). */
 export const vegetationTime = { value: 0 };
 
-export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'aircraft', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds']);
+export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'aircraft', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds', 'plaster', 'lino', 'ceiling', 'floorboards']);
 
 function tileTex(name, tile) {
   const t = tile ?? TEXTURE_WORLD_SIZE[name] ?? 1;
@@ -31,6 +31,11 @@ function tileNormal(name) {
 
 function lambert(o) {
   return new THREE.MeshLambertMaterial(o);
+}
+// (the static world leaves it out of every shadow map: staticworld.js)
+function noShadow(mat) {
+  mat.userData.noShadow = true;
+  return mat;
 }
 
 // moss on upward-facing surfaces (object-space normal.y, robust for yaw-only instancing & merged world geometry)
@@ -524,6 +529,20 @@ const DEFS = {
   // iteration 2
   gravel: () => lambert({ map: tileTex('gravel', 1.6), color: 0xc4c0b8 }),
   chainlink: () => lambert({ map: tileTex('chainlink', 0.3), transparent: true, alphaTest: 0.08, depthWrite: false, side: THREE.DoubleSide }),
+  // the city (citykit.js): the inside of its rooms, its roofs, and what is laid on its walls from the city's atlas -
+  // boards, lettering and ivy cut out at half alpha, soot, rust and damp blended on (neither casts a shadow)
+  // (the lining of a room takes the day that reaches it as its vertex colour: citykit.js room())
+  plaster: () => lambert({ map: tileTex('plaster'), vertexColors: true }),
+  lino: () => lambert({ map: tileTex('lino'), vertexColors: true }),
+  floorboards: () => lambert({ map: tileTex('planks'), vertexColors: true }),
+  // paint on a road: the runway's markings, white once
+  roadpaint: () => noShadow(lambert({ map: tileTex('roadpaint'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })),
+  // every plain colour of the static city in one material: the colour is the vertex's (staticworld.js)
+  flat: () => lambert({ vertexColors: true }),
+  ceiling: () => lambert({ map: tileTex('ceiling'), vertexColors: true }),
+  roofing: () => lambert({ map: tileTex('roofing') }),
+  citysign: () => noShadow(lambert({ map: getTexture('city'), alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })),
+  citygrime: () => noShadow(lambert({ map: getTexture('city'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
 
   // ------------------------------------------------ vegetation
   // (bark / bark_dead are also used by props; instanced trees use the tree_* twins, which sway)

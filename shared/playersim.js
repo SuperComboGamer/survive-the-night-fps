@@ -4,7 +4,6 @@
 import {
   BTN,
   CMD_DT,
-  MAP_HALF,
   PLAYER_RADIUS,
   PLAYER_HEIGHT,
   PLAYER_CROUCH_HEIGHT,
@@ -499,7 +498,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     s.vx = 0;
     s.vz = 0;
   }
-  const lim = MAP_HALF - 3;
+  const lim = world.half - 3; // (the world being played: the mainland is twice the island across)
   if (_pos.x < -lim) _pos.x = -lim;
   if (_pos.x > lim) _pos.x = lim;
   if (_pos.z < -lim) _pos.z = -lim;

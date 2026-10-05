@@ -12,6 +12,7 @@ export function phaseText(phase, day) {
   if (phase === PHASE.NIGHT) return `Night ${day}`;
   if (phase === PHASE.GAMEOVER) return 'Restarting';
   if (phase === PHASE.VICTORY) return 'They escaped';
+  if (phase === PHASE.CROSSING) return 'Crossing the bridge';
   return 'Starting';
 }
 export const seatsText = (g) => `${g.players} / ${g.max}`;

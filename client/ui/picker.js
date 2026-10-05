@@ -55,7 +55,7 @@ class CharacterStage {
     this.scene.add(key, rim, fill);
     this.camera = new THREE.PerspectiveCamera(26, 0.7, 0.05, 30);
     this.people = new Map(); // id -> survivor (createSurvivor)
-    this.portraits = new Map(); // id -> data URL
+    this.portraits = new Map(); // id -> the picture's URL
     this.time = 0;
   }
 
@@ -84,8 +84,60 @@ class CharacterStage {
   portrait(id) {
     let url = this.portraits.get(id);
     if (url) return url;
+    this.shoot(id);
+    url = this.canvas.toDataURL('image/png');
+    this.portraits.set(id, url);
+    return url;
+  }
+
+  /**
+   * The portraits of several at once, for the picker's grid: all of them drawn side by side into the one canvas and
+   * read back from the graphics card ONCE. (Reading a picture back waits for the card to finish everything it has
+   * been sent, the game's own frames included: ten portraits read one after another were ten such waits, and they
+   * were most of the freeze as the picker opened.) Returns a sheet to cut the pictures from: sheet.cut(id) is that
+   * one's URL, encoded then, from memory.
+   */
+  sheet(ids) {
     const W = 160, H = 200;
-    this.renderer.setSize(W, H, false);
+    ids = ids.filter((id) => !this.portraits.has(id));
+    const r = this.renderer;
+    const pr = r.getPixelRatio();
+    r.setSize(W * Math.max(1, ids.length), H, false);
+    r.setScissorTest(true);
+    ids.forEach((id, k) => {
+      r.setViewport(k * W, 0, W, H);
+      r.setScissor(k * W, 0, W, H);
+      this.shoot(id, false);
+    });
+    r.setScissorTest(false);
+    r.setViewport(0, 0, W * Math.max(1, ids.length), H);
+    // (a canvas kept in memory, not on the card: cutting from it and encoding its pieces waits for nothing)
+    const all = document.createElement('canvas');
+    all.width = this.canvas.width;
+    all.height = this.canvas.height;
+    const ax = all.getContext('2d', { willReadFrequently: true });
+    if (ids.length) ax.drawImage(this.canvas, 0, 0);
+    const one = document.createElement('canvas');
+    one.width = Math.round(W * pr);
+    one.height = Math.round(H * pr);
+    const ox = one.getContext('2d', { willReadFrequently: true });
+    return {
+      cut: (id) => {
+        const k = ids.indexOf(id);
+        if (k >= 0 && !this.portraits.has(id)) {
+          ox.clearRect(0, 0, one.width, one.height);
+          ox.drawImage(all, Math.round(k * W * pr), 0, one.width, one.height, 0, 0, one.width, one.height);
+          this.portraits.set(id, one.toDataURL('image/png'));
+        }
+        return this.portrait(id);
+      },
+    };
+  }
+
+  // draws the portrait of one into the canvas (sized: the canvas made its size first; the sheet sizes its own)
+  shoot(id, sized = true) {
+    const W = 160, H = 200;
+    if (sized) this.renderer.setSize(W, H, false);
     this.time = 1.3;
     const s = this.pose(id, -0.35); // (they face -Z: toward the camera, turned a little)
     s.object.updateMatrixWorld(true);
@@ -96,9 +148,6 @@ class CharacterStage {
     this.camera.position.set(head.x + 0.12, head.y + 0.03, head.z - 0.95);
     this.camera.lookAt(head.x, head.y - 0.07, head.z);
     this.renderer.render(this.scene, this.camera);
-    url = this.canvas.toDataURL('image/png');
-    this.portraits.set(id, url);
-    return url;
   }
 
   /** The turntable: the whole figure, turning, into this.canvas at w x h (css px). */
@@ -281,14 +330,19 @@ export class CharacterPanel extends Panel {
     const st = await getStage();
     if (this.root.hidden) return;
     this.view.appendChild(st.canvas);
-    // the portraits, a few a frame
-    const ids = CHARACTERS.map((c) => c.id);
+    // The portraits, a step a frame, so that no frame of the panel's opening is held long: first a survivor's model
+    // a frame, then all their pictures drawn in one go and read back once (CharacterStage.sheet), then a picture cut
+    // and put in its cell a frame.
+    const ids = CHARACTERS.map((c) => c.id).filter((id) => this.cells.get(id) && !this.cells.get(id).img.src);
+    let sheet = null;
     const next = () => {
       if (this.root.hidden || !ids.length) return;
-      for (let k = 0; k < 2 && ids.length; k++) {
+      const need = ids.find((id) => !st.people.has(id) && !st.portraits.has(id));
+      if (need !== undefined) st.person(need);
+      else if (!sheet) sheet = st.sheet(ids);
+      else {
         const id = ids.shift();
-        const b = this.cells.get(id);
-        if (b && !b.img.src) b.img.src = st.portrait(id);
+        this.cells.get(id).img.src = sheet.cut(id);
       }
       requestAnimationFrame(next);
     };

@@ -1,7 +1,7 @@
 // The wandering herd: a crowd of the dead that shuffles along the valley's roads together by day. It keeps to a slow
 // walk until one of them notices a survivor, or a noise reaches any of them (Zombies.noise) - then the whole herd
 // comes at a run. Lose them and they search the spot for a while, then drift back to the road.
-import { MAP_HALF, PHASE } from '../shared/constants.js';
+import { PHASE } from '../shared/constants.js';
 import { ZTYPE, SOUND, NOTIFY } from '../shared/defs.js';
 import { groundAt } from '../shared/collision.js';
 
@@ -25,7 +25,7 @@ const SEARCH = 12; // s it mills about where the noise came from / where it lost
 const RESPAWN = 90; // s of daylight after the last of a herd is gone before another one turns up
 const CAR_CLEAR = 60; // the herd's route keeps this far from the survivors' car (m)
 const SPAWN_CLEAR = 110; // a herd turns up at least this far from the car and from every survivor (m)
-const LIM = MAP_HALF - 20;
+const EDGE = 20; // a herd keeps this far inside the edge of the map (m)
 
 export class Herds {
   constructor(game, zm) {
@@ -122,7 +122,7 @@ export class Herds {
   // may the herd walk here? Inside the map and clear of the car (a herd trampling the base every lap is no fun)
   routeOk(x, z) {
     const car = this.g.world.car;
-    return Math.abs(x) < LIM && Math.abs(z) < LIM && Math.hypot(x - car.x, z - car.z) > CAR_CLEAR;
+    return Math.abs(x) < this.g.world.half - EDGE && Math.abs(z) < this.g.world.half - EDGE && Math.hypot(x - car.x, z - car.z) > CAR_CLEAR;
   }
 
   // road points the herd can walk from point `at` of a road in direction dir (counted up to max)

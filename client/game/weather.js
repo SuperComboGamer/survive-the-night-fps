@@ -5,7 +5,7 @@
 //
 // Weather clock u: one day + night pair per unit, the day on [0, 0.5) and the night on [0.5, 1), linear in
 // time within each phase. An event may run past the end of its cycle into the next morning.
-import { PHASE, MAP_HALF, dayLength, NIGHT_LENGTH } from '../../shared/constants.js';
+import { PHASE, dayLength, NIGHT_LENGTH } from '../../shared/constants.js';
 import { mulberry32, hash2 } from '../../shared/rng.js';
 
 // fog: fog density multiplier, wind: 0 calm .. ~1.2 gale, rain: 0..1, bolts: lightning (1 = a strike every
@@ -104,6 +104,7 @@ export class Weather {
 
   setWorld(world) {
     this.seed = world.seed | 0;
+    this.half = world.half; // (how far out a distant strike can land)
     this.roofs = world.roofs || [];
     this.mine = world.mine || null;
     this.world = world;
@@ -269,8 +270,8 @@ export class Weather {
       }
       const ang = r(1) * Math.PI * 2;
       const rad = far ? 380 + r(2) * 260 : 40 + Math.sqrt(r(2)) * 240;
-      const x = Math.max(-MAP_HALF - 400, Math.min(MAP_HALF + 400, cx + Math.sin(ang) * rad));
-      const z = Math.max(-MAP_HALF - 400, Math.min(MAP_HALF + 400, cz + Math.cos(ang) * rad));
+      const x = Math.max(-this.half - 400, Math.min(this.half + 400, cx + Math.sin(ang) * rad));
+      const z = Math.max(-this.half - 400, Math.min(this.half + 400, cz + Math.cos(ang) * rad));
       this.pending.push({ at: this.time + Math.max(0, te + r(3) * STRIKE_SLOT - elapsed), x, z, bolt: r(4) < 0.62, pulses: 2 + Math.floor(r(5) * 3), seed: Math.floor(r(6) * 1e6) });
     }
     this.lastSlot = slot;

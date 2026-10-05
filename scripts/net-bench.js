@@ -26,13 +26,15 @@ const MORTAL = argv.includes('--mortal'); // survivors take damage (they get kno
 const imp = (p) => import(pathToFileURL(join(ROOT, p)).href);
 
 const { Game } = await imp('server/game.js');
-const { C2S, S2C, SNAP, ACT, ENT, PROTOCOL_VERSION, Writer, Reader } = await imp('shared/protocol.js');
+const { C2S, S2C, SNAP, ACT, ENT, PROTOCOL_VERSION, Writer, Reader, usePos = () => {} } = await imp('shared/protocol.js');
 const { BTN, PHASE, SERVER_TICK_RATE, INTERP_DELAY } = await imp('shared/constants.js');
 const { ITEM, WEAPONS, AMMO_ITEMS, AMMO_MAX, STRUCT_DEFS } = await imp('shared/defs.js');
 const decode = await imp('client/net/decode.js');
 const { Connection } = await imp('client/net/connection.js');
 const { Prediction } = await imp('client/game/prediction.js');
 const { createWorld } = await imp('shared/world.js');
+// (a tree with the mainland builds the map of the act the server names; one from before it has only the island)
+const worldFor = await imp('shared/worlds.js').then((m) => m.worldFor, () => (seed) => createWorld(seed));
 const { makeBox, COL } = await imp('shared/collision.js');
 
 const TR = SERVER_TICK_RATE;
@@ -242,13 +244,20 @@ function makeClient(idx) {
       if (t === S2C.WELCOME) {
         c.id = r.u16();
         const seed = r.u32();
-        c.world = createWorld(seed);
+        r.u32(); // (the tick)
+        r.u8();
+        r.u8();
+        if (r.left) r.u8(); // (WELCOMEF)
+        c.world = worldFor(seed, r.left ? r.u8() : 1);
+        usePos(c.world);
         c.pred = new Prediction(c.world);
         add(s.sec, 'welcome', len);
       } else if (t === S2C.SNAPSHOT) onSnapshot(r, len);
       else if (t === S2C.WORLD_RESET) {
-        // a new playthrough on a new map
-        c.world = createWorld(r.u32());
+        // a new playthrough on a new map, or the crossing to the mainland
+        const seed = r.u32();
+        c.world = worldFor(seed, r.left ? r.u8() : 1);
+        usePos(c.world);
         c.pred.setWorld(c.world);
         add(s.sec, 'msg.other', len);
       }

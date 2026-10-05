@@ -3,6 +3,7 @@
 // card, at the dusk horn and on the night's title) each work it out for themselves: nothing crosses the wire.
 import { ZTYPE } from './defs.js';
 import { mulberry32 } from './rng.js';
+import { WORLD, nightRank } from './acts.js';
 
 // mul: multipliers on startNight's spawn weights. A theme changes what the horde is made of, not how many come
 // (the head count is untouched), and a type the night has not unlocked has weight 0 and stays out.
@@ -24,14 +25,15 @@ export const NIGHT_THEMES = [
 export const THEME_CHANCE = 0.65; // share of nights (from night 2) that draw a theme; the rest are plain
 
 // The theme of a night, or null on a plain one. Night 1 is always plain (a first night is the baseline), and no
-// theme comes two nights running.
-export function nightTheme(seed, night) {
+// theme comes two nights running. act: the map it is played on (acts.js): on the mainland a night counts as the
+// fourth at the least (nightRank), so the later themes can be drawn there however early the team crossed.
+export function nightTheme(seed, night, act = WORLD.ISLAND) {
   let prev = null;
   for (let n = 2; n <= night; n++) {
     const rng = mulberry32((Math.imul(seed | 0, 2654435761) ^ Math.imul(n + 101, 40503)) >>> 0);
     let t = null;
     if (rng() < THEME_CHANCE) {
-      const pool = NIGHT_THEMES.filter((th) => n >= th.from && th !== prev);
+      const pool = NIGHT_THEMES.filter((th) => nightRank(act, n) >= th.from && th !== prev);
       t = pool[Math.floor(rng() * pool.length)];
     }
     prev = t;
@@ -53,7 +55,24 @@ export const BOSS_POOL = [
   { type: ZTYPE.BOSS_HIVEQUEEN, from: 5 },
 ];
 
-export function nightBoss(seed, night) {
+// The mainland is where the two late bosses live (issue #111: nobody reached them on the island). Up to its fifth
+// night they take turns - The Abomination on the even nights, The Hive Queen on the odd ones, so the fourth has the
+// one and the fifth the other, as on the island they would first have come - and from the sixth the boss is drawn
+// from MAINLAND_BOSSES off the seed, never the one of the night before.
+export const MAINLAND_BOSSES = [ZTYPE.BOSS_ABOMINATION, ZTYPE.BOSS_HIVEQUEEN, ZTYPE.BOSS_BLOATER];
+function mainlandBoss(seed, night) {
+  if (night <= 5) return night % 2 ? ZTYPE.BOSS_HIVEQUEEN : ZTYPE.BOSS_ABOMINATION;
+  let prev = ZTYPE.BOSS_HIVEQUEEN;
+  for (let n = 6; n <= night; n++) {
+    const rng = mulberry32((Math.imul(seed | 0, 2246822519) ^ Math.imul(n + 911, 69069)) >>> 0);
+    const pool = MAINLAND_BOSSES.filter((t) => t !== prev);
+    prev = pool[Math.floor(rng() * pool.length)];
+  }
+  return prev;
+}
+
+export function nightBoss(seed, night, act = WORLD.ISLAND) {
+  if (act === WORLD.MAINLAND) return mainlandBoss(seed, night);
   let prev = FIRST_BOSS;
   const met = new Set([prev]);
   for (let n = 2; n <= night; n++) {

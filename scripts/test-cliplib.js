@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   REPO, sleep, startVite, launchChrome, pageIsSafe, chromePath, LOCK_FILE, BLOCK_FILE, BAD_ATTEMPTS_MAX, LOCAL_STATE_SEED, FORBIDDEN_ARGS, NO_CREDENTIALS, SAFE_PREFS,
-  LIFE_DEFAULT, LIFE_MAX, badPasswordAttempts, guardBefore, guardAfter, takeLock, dropLock, startWatchdog,
+  LIFE_DEFAULT, LIFE_MAX, PERF_ARGS, PERF_LIFE_MAX, perfPlan, badPasswordAttempts, guardBefore, guardAfter, takeLock, dropLock, startWatchdog,
 } from './clip/lib.js';
 
 let failed = 0;
@@ -60,6 +60,14 @@ try {
   check('flags that show a window or uncap the frame rate are refused', ['--kiosk', '--start-fullscreen', '--app=http://x', '--disable-gpu-vsync', '--disable-frame-rate-limit', '--headless=false'].every((a) => FORBIDDEN_ARGS.test(a)) && !FORBIDDEN_ARGS.test('--mute-audio'));
   check('...by the launcher itself, before anything is started', /not allowed/.test(await rejects(launchChrome({ extraArgs: ['--disable-gpu-vsync'] }))));
   check('a browser lives 5 minutes unless told, 15 at most', LIFE_DEFAULT === 5 * 60_000 && LIFE_MAX === 15 * 60_000);
+  // the one bounded exception: the launcher's own perf: true (scripts/perf/bench.js)
+  const plain = perfPlan({ width: 4000, height: 4000, life: 99 * 60_000 });
+  check('a launch without perf adds no flag, is 1280 x 800 at the most and lives 15 minutes at the most', plain.args.length === 0 && plain.width === 1280 && plain.height === 800 && plain.life === LIFE_MAX);
+  const pp = perfPlan({ perf: true, gpu: true, width: 4000, height: 4000, life: 99 * 60_000 });
+  check('perf: true is the only way to an uncapped frame rate: the launcher adds the two flags itself', PERF_ARGS.join() === '--disable-gpu-vsync,--disable-frame-rate-limit' && pp.args.join() === PERF_ARGS.join());
+  check('...for 6 minutes at the most, at 1920 x 1080 at the most', PERF_LIFE_MAX === 6 * 60_000 && pp.life === PERF_LIFE_MAX && pp.width === 1920 && pp.height === 1080 && perfPlan({ perf: true, gpu: true, life: 60_000 }).life === 60_000);
+  check('...only on the real GPU', /real GPU/.test(throws(() => perfPlan({ perf: true }))) && /real GPU/.test(await rejects(launchChrome({ perf: true }))));
+  check('...and a tool still cannot pass the flags itself, with perf or without', /not allowed/.test(throws(() => perfPlan({ perf: true, gpu: true, extraArgs: ['--disable-frame-rate-limit'] }))) && /not allowed/.test(throws(() => perfPlan({ gpu: true, extraArgs: ['--disable-gpu-vsync'] }))));
 
   // ------------------------------------------------------------ no browser: the failed sign-in counter's guard
   const marker = join(work, 'blocked');

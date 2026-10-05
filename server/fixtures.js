@@ -6,7 +6,7 @@
 // it, or to bring everything onto the chapel.
 // The radio: two batteries and a supply plane drops its crate where the caller stands - the scheduled planes'
 // machinery (Game.flySupplyDrop), aimed. Once a day, and by day: no plane flies at night.
-import { PHASE, NOISE, HOLD_SLACK, EYE_HEIGHT, MAP_HALF } from '../shared/constants.js';
+import { PHASE, NOISE, HOLD_SLACK, EYE_HEIGHT } from '../shared/constants.js';
 import { ITEM, SOUND, NOTIFY, ZONE } from '../shared/defs.js';
 import { HOLD, BELL_ID, RADIO_ID } from '../shared/protocol.js';
 import { canReach, resolveBody, groundAt } from '../shared/collision.js';
@@ -127,7 +127,7 @@ export class Fixtures {
     _pos.y = s.y;
     _pos.z = s.z;
     resolveBody(g.world, _pos, CRATE_ROOM, 1.2);
-    const lim = MAP_HALF - 2;
+    const lim = g.world.half - 2;
     // the plane's heading comes off a stream of its own: the game's is not drawn from, so nothing else moves
     const heading = mulberry32((g.seed ^ 0x7ad10) + g.tick)() * Math.PI * 2;
     g.flySupplyDrop(Math.max(-lim, Math.min(lim, _pos.x)), Math.max(-lim, Math.min(lim, _pos.z)), heading, s.y);
