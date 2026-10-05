@@ -232,6 +232,18 @@ export function supplyRumours(i, hints, found = 0) {
 export const SCHEMATICS = [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL];
 export const SCHEM_BIT = { [ITEM.SCHEM_SHOTGUN]: 0, [ITEM.SCHEM_RIFLE]: 1, [ITEM.SCHEM_KEVLAR]: 2, [ITEM.SCHEM_EXPLOSIVES]: 3, [ITEM.SCHEM_METAL]: 4 };
 
+// Where the schematics the team still lacks are rumoured to be. hints: the place each SCHEMATICS entry is hidden
+// in (255: none); unlocked: the team's mask. -> [{ item, zone }]
+export function schematicRumours(hints, unlocked = 0) {
+  const out = [];
+  SCHEMATICS.forEach((item, k) => {
+    const zone = hints?.[k];
+    if (zone == null || zone === 255 || unlocked & (1 << SCHEM_BIT[item])) return;
+    out.push({ item, zone });
+  });
+  return out;
+}
+
 // ---------------------------------------------------------------- weapons
 // slot: 0 primary, 1 pistol, 2 melee, 4 build (hammer)
 // Firearms: damage per pellet, rate = seconds between shots, spread (radians) hip / moving penalty,
@@ -411,9 +423,9 @@ export const RECIPES = [
   { id: 39, out: ITEM.AMMO_FLARE, n: 1, cost: { [ITEM.POWDER]: 3, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 }, station: 'bench' },
 ];
 
-// The order the Sort button puts the backpack grid in, by category: weapons, what is worn or carried for what it does
-// (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables, materials, car
-// supplies, schematics (Game.sortInventory). Empty slots come after them, and the locked ones last of all.
+// The order the backpack grid is sorted in after a pickup or a drop, by category: weapons, what is worn or carried for
+// what it does (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables,
+// materials, car supplies, schematics (sortInventory, server/inventory.js). Empty slots come after them, and the locked ones last of all.
 export const BAG_TIER = { weapon: 0, armor: 1, pack: 1, gear: 1, ammo: 2, cons: 3, throw: 4, res: 5, part: 6, schem: 7 };
 
 // ---------------------------------------------------------------- salvage
@@ -511,15 +523,20 @@ export const ZOMBIE_DEFS = {
   // sized so that the rounds a survivor has left once the horde has had its share can bring one down before sunrise
   [ZTYPE.BOSS_ABOMINATION]: { name: 'The Abomination', hp: 4000, speed: 3.0, dmg: 55, rate: 1.8, range: 3.4, radius: 1.5, height: 4.2, headY: 3.7, headR: 0.5, structDmg: 600, loot: 1, knock: 16, boss: true, minNight: 4, tip: 'It slams the ground and throws boulders. Spread out and keep moving.' },
   [ZTYPE.BOSS_HIVEQUEEN]: { name: 'The Hive Queen', hp: 3400, speed: 2.4, dmg: 35, rate: 1.4, range: 3.0, radius: 1.3, height: 3.6, headY: 3.1, headR: 0.45, structDmg: 300, loot: 1, knock: 8, boss: true, spitRange: 30, spitRate: 1.6, minNight: 5, tip: 'Acid barrages, and bats from its back. Keep to cover and shoot the bats off whoever they catch.' },
-  // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier
-  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, leather: 0.3, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2, intro: 'Zombie dogs join the horde: fast and fragile, and they cannot jump a barricade. Leave no gap.' },
+  // hunts in packs: dens in the thick woods by day, with the horde from night 2. sense = scent range multiplier.
+  // hitRun: it bites once and breaks off before it comes in again. Held up by what the survivors built it rams it:
+  // ramDmg to the piece (a metal one takes less, and gives ramRecoil back), then it reels, taking stunHurt x damage.
+  // ramWindup: s it snarls before the ram (DOG_RAM_WINDUP when unset) (DOG_* in server/zombies.js)
+  [ZTYPE.DOG]: { name: 'Zombie Dog', hp: 60, speed: 6.2, dmg: 7, rate: 0.7, range: 1.3, radius: 0.36, height: 0.85, headY: 0.58, headR: 0.14, headFwd: 0.5, bodyTop: 0.66, structDmg: 5, loot: 0.15, leather: 0.3, lungeRange: 6, sense: 1.5, pack: true, common: true, minNight: 2, hitRun: true, ramDmg: 180, ramRecoil: 15, stunHurt: 1.5, intro: 'Zombie dogs join the horde: they bite and run. They cannot jump a barricade, but they ram one down. Shoot them as they come in.' },
   [ZTYPE.SHADE]: { name: 'Shade', hp: 240, speed: 6.6, dmg: 34, rate: 0.9, range: 1.7, radius: 0.36, height: 2.0, headY: 1.82, headR: 0.17, structDmg: 30, loot: 0.8, shade: true, litResist: 0.25, minNight: 6, legs: true, intro: 'Shades join the horde: they only move in the dark. Torches, a campfire, flashlights on them.' },
   // night 1's boss: a hulking walker and nothing more, until it is badly hurt - below enrage of its health it roars and
   // comes on at enrageSpeed x its pace. Its body fits a doorway (moveR / moveH, as the Tank's)
   [ZTYPE.BOSS_BRUTE]: { name: 'The Brute', hp: 750, speed: 1.7, dmg: 24, rate: 1.5, range: 2.3, radius: 0.75, height: 2.55, headY: 2.22, headR: 0.25, moveR: 0.5, moveH: 1.9, structDmg: 240, loot: 1, bossLoot: 4, knock: 7, boss: true, minNight: 1, enrage: 0.5, enrageSpeed: 2.1, tip: 'Slow, until it is badly hurt: then it roars and comes at a run. Keep your distance.' },
-  // a dog the size of a pony that leads a pack: it hunts as the dogs do (fans out, lunges, bites and runs), and howls
-  // up summon dogs into its pack every summonRate s while it has a survivor to hunt (summonMax of its pack alive at once)
-  [ZTYPE.BOSS_ALPHA]: { name: 'The Alpha', hp: 750, speed: 6.4, dmg: 20, rate: 0.9, range: 2.0, radius: 0.7, height: 1.65, headY: 1.2, headR: 0.26, headFwd: 1.0, bodyTop: 1.35, moveR: 0.5, moveH: 1.6, structDmg: 40, loot: 1, knock: 6, lungeRange: 9, sense: 2, pack: true, boss: true, minNight: 2, summon: 3, summonRate: 16, summonMax: 6, tip: 'It howls up more dogs. Shoot the pack off its heels, and leave no gap in the ring.' },
+  // a dog the size of a pony that leads a pack: it hunts as the dogs do (fans out, lunges, bites and runs, rams down
+  // what was built), and howls up summon dogs into its pack every summonRate s while it has a survivor to hunt
+  // (summonMax of its pack alive at once). Its ram windup stays under the 0.38 s the client's crouch takes to become
+  // its howl (client/render/models/dog.js poseCrouch)
+  [ZTYPE.BOSS_ALPHA]: { name: 'The Alpha', hp: 750, speed: 6.4, dmg: 20, rate: 0.9, range: 2.0, radius: 0.7, height: 1.65, headY: 1.2, headR: 0.26, headFwd: 1.0, bodyTop: 1.35, moveR: 0.5, moveH: 1.6, structDmg: 40, loot: 1, knock: 6, lungeRange: 9, sense: 2, pack: true, boss: true, minNight: 2, summon: 3, summonRate: 16, summonMax: 6, hitRun: true, ramDmg: 450, ramRecoil: 40, ramWindup: 0.35, stunHurt: 1.5, tip: 'It howls up more dogs, bites and runs, and rams down what you built. Shoot it while it reels.' },
   // a boomer three times over: it claws at what you built like any of the dead (it does not burst against it), heaves
   // bile in a fan at whoever is within spewRange every spewRate s, and when it dies it bursts: blastRadius, blastDmg
   // to survivors, blastStruct to what you built. Bring it down far from the walls
@@ -706,6 +723,9 @@ export const EVT = {
   // (private) achievements (shared/achievements.js): u8 flags (ACHF), u8 n, n x (u8 stat, varu count to add), u8 m,
   // m x u8 achievement number. A guest's: counts and feats for the browser to keep; an account's (ACHF.ACCOUNT): unlocks
   ACHIEVE: 36,
+  // (private) the bestiary (shared/bestiary.js): u8 flags (BESTF), u16 mask of ZTYPEs - the whole record (BESTF.ALL)
+  // or the kinds just seen
+  BESTIARY: 37,
 };
 
 export const IMPACT = { BLOOD: 1, DIRT: 2, WOOD: 3, METAL: 4, ACID: 5, GREEN_BLOOD: 6, SPARK: 7 };
@@ -764,13 +784,15 @@ export const NOTIFY = {
   GEN_LOW: 48, // a generator nearby has a minute of fuel left (sent to the survivors round it)
   GEN_OUT: 49, // ...it has run dry: its floodlights are out
   POCKETS: 62, // (to whoever tried) the backpack cannot come off while its extra slots hold anything
+  UNDO_GONE: 63, // (to whoever asked for an undo, ACT.UNDO_DROP) arg = why nothing came back (UNDO_NO in protocol.js)
+  NEED_HAMMER: 64, // (to whoever tried) a repair needs the hammer in hand
   // the two acts (shared/acts.js)
-  CROSSING: 63, // the car is away: the crossing to the mainland has begun (the cutscene). arg = the driver's id
-  ARRIVED: 64, // the team is on the mainland. arg = how many the checkpoint at the bridge brought back from the dead
-  CACHE: 65, // (to one survivor) what the bridgehead cache gave them. arg = a CACHE_GAVE bitmask
-  STAND_STAGE: 66, // the runway stand moves on. arg = 1: the tanks are full, the engines are warming; 2: warm, get in
-  RUNWAY_BLOCKED: 67, // (to whoever tried to take off) the dead are on the runway. arg = how many
-  CHECKPOINT: 68, // a wipe on the mainland: the run starts again from the bridgehead. arg = the day it starts on
+  CROSSING: 65, // the car is away: the crossing to the mainland has begun (the cutscene). arg = the driver's id
+  ARRIVED: 66, // the team is on the mainland. arg = how many the checkpoint at the bridge brought back from the dead
+  CACHE: 67, // (to one survivor) what the bridgehead cache gave them. arg = a CACHE_GAVE bitmask
+  STAND_STAGE: 68, // the runway stand moves on. arg = 1: the tanks are full, the engines are warming; 2: warm, get in
+  RUNWAY_BLOCKED: 69, // (to whoever tried to take off) the dead are on the runway. arg = how many
+  CHECKPOINT: 70, // a wipe on the mainland: the run starts again from the bridgehead. arg = the day it starts on
 };
 
 // killer kinds for killfeed

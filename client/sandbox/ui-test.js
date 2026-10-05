@@ -1,8 +1,9 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
-// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|chat|icons   &bg=night|day|fire
+// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|bestiary|chat|icons
+// &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
-import { ITEM, ITEM_DEFS, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT, STRUCT_ORDER, ZTYPE, ZOMBIE_DEFS } from '../../shared/defs.js';
 import { PHASE, INVENTORY_MAX } from '../../shared/constants.js';
 import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
 import { ACH_BY_ID } from '../../shared/achievements.js';
@@ -11,6 +12,7 @@ import { perkMask, progressView, perkLock, perkDependents, levelOf, xpForLevel }
 const q = new URLSearchParams(location.search);
 const screen = q.get('screen') || 'hud';
 const statusMode = q.get('status') || 'ok';
+let buildState = null; // screen=build: what the build menu is showing
 
 // ---------------------------------------------------------------- fake 3D scene background
 function pines(seed, h, color, count) {
@@ -99,14 +101,19 @@ const ui = new UI(document.getElementById('ui'), {
   onDropItem: (i, c) => log('drop', i, c),
   onSplitItem: (i, c) => log('split', i, c),
   onDropAmmo: (cal, c) => log('dropAmmo', cal, c),
+  onUndoDrop: () => log('undoDrop'),
   onSalvage: (from, c) => log('salvage', from, c),
   onSwapItems: (a, b) => log('swap', a, b),
   onEquipArmor: (i) => log('armor', i),
   onDropWeapon: (s) => log('dropWeapon', s),
   onUnequip: (s, to) => log('unequip', s, to),
   onWorn: (which, what) => log('worn', which, what),
-  onSortItems: () => log('sort'),
   onSelectStructure: (t) => log('struct', t),
+  onHoverStructure: (t) => {
+    if (!buildState?.menu) return;
+    buildState.menu.hover = t;
+    ui.setBuildMenu(buildState);
+  },
   onSelectThrowable: (t) => log('throwable', t),
   onCloseInventory: () => {
     log('closeInventory');
@@ -119,6 +126,7 @@ const ui = new UI(document.getElementById('ui'), {
   onSettings: (s) => log('settings', JSON.stringify(s)),
   onResume: () => log('resume'),
   onLeave: () => log('leave'),
+  onPeers: () => ({ room: null, players: players.slice(0, 3) }),
   onUiSound: () => {},
 });
 window.ui = ui;
@@ -180,6 +188,7 @@ const inv = {
   backpack: q.get('pack') ? ITEM.BACKPACK : 0,
   ammo: [46, 12, 90, 0, 0, 7, 120],
   weapons: [ITEM.AK47, ITEM.PISTOL, ITEM.MACHETE, ITEM.MOLOTOV, ITEM.HAMMER],
+  mags: [22, 9],
   throwCounts: { [ITEM.MOLOTOV]: 2, [ITEM.PIPEBOMB]: 1 },
 };
 [
@@ -301,6 +310,8 @@ if (q.get('minimap')) {
             discovered: new Set(world.zones.map((z) => z.id)),
             hints: h.objective?.hints || [],
             found: 0,
+            schemHints: world.zones.slice(0, 5).map((z) => z.id),
+            unlocked: 0b00100,
             supplies: h.objective?.supplies || [0, 0, 0, 0, 0],
             carried: h.objective?.carried || {},
             waypoint: { x: way.x, z: way.z, zone: way.id },
@@ -327,6 +338,12 @@ switch (screen) {
   case 'hud': {
     buildScene(bg || 'day');
     const h = { ...baseHud };
+    // &track=1: the Backpack tracked from the crafting panel, two Leather short of it, and some Leather in view
+    if (q.get('track')) {
+      const r = RECIPES.find((x) => x.out === ITEM.BACKPACK);
+      h.tracked = { r, counts: { [ITEM.CLOTH]: 7, [ITEM.LEATHER]: 2 }, near: { fire: false, bench: false }, unlocked: 0 };
+      h.prompt = '[E] Pick up Leather ×2 · needed for Backpack (tracked)';
+    }
     // &weapon=<item id>&mag=<n>&reserve=<n>&reload=<0..1>: try the ammo block with any primary
     if (q.get('weapon')) Object.assign(h, { weapons: [+q.get('weapon'), ...baseHud.weapons.slice(1)], mag: +q.get('mag') || 0, reserve: +(q.get('reserve') ?? 24), reloading: q.get('reload') == null ? -1 : +q.get('reload') });
     ui.hideSplash();
@@ -355,7 +372,6 @@ switch (screen) {
       flashlight: 12,
       boss: { name: ZOMBIE_DEFS[ZTYPE.BOSS_ABOMINATION].name, hp: 0.64 },
       prompt: '[E] Install Car Battery',
-      context: { type: 'car', parts: 0b01011 },
     };
     ui.hideSplash();
     feedSome();
@@ -538,7 +554,9 @@ switch (screen) {
     buildScene(bg || 'fire');
     ui.hideSplash();
     ui.updateHud({ ...baseHud, crosshair: { spread: 7, visible: false } });
-    ui.setCraftContext({ fire: q.get('station') !== '0', bench: q.get('station') !== '0', unlocked: 0b00011 });
+    // &station=0: no crafting station near; &station=fire: a campfire, no workbench
+    const st = q.get('station');
+    ui.setCraftContext({ fire: st !== '0', bench: st !== '0' && st !== 'fire', unlocked: 0b00011 });
     ui.setInventoryOpen(true);
     if (q.get('tip')) {
       // simulate hover over a slot to show the tooltip
@@ -548,13 +566,8 @@ switch (screen) {
         cell.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
       }, 200);
     }
-    if (q.get('craft')) {
-      setTimeout(() => {
-        const rc = document.querySelectorAll('.rc')[2];
-        const r = rc.getBoundingClientRect();
-        rc.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
-      }, 200);
-    }
+    // &craft=1: a recipe picked in the crafting column (its detail panel, and the stacks it would use marked)
+    if (q.get('craft')) setTimeout(() => document.querySelectorAll('.rr')[2]?.click(), 200);
     break;
   }
   case 'build': {
@@ -564,8 +577,24 @@ switch (screen) {
     ui.updateHud(h);
     const counts = {};
     for (const s of inv.slots) if (s) counts[s.item] = (counts[s.item] || 0) + s.count;
-    ui.setBuildMenu({ selected: STRUCT.WALL, rotate: 90, counts, valid: q.get('valid') !== '0' });
-    ui.notify('Wood Wall built', 'toast', 60);
+    // &menu=<struct id>: the ring open, pointing at that structure (&unlocked=<mask> of found schematics);
+    // &picked=0: the hammer out with nothing picked yet; else the Wood Wall being placed
+    const menu = q.get('menu');
+    const picked = q.get('picked') !== '0';
+    const hover = +menu || STRUCT.WALL;
+    const a = (STRUCT_ORDER.indexOf(hover) / STRUCT_ORDER.length) * Math.PI * 2;
+    buildState = {
+      picked,
+      selected: STRUCT.WALL,
+      rotate: 90,
+      counts,
+      unlocked: +(q.get('unlocked') ?? 0),
+      valid: q.get('valid') !== '0',
+      reason: q.get('valid') === '0' ? 'Obstructed' : '',
+      menu: menu ? { hover, x: Math.sin(a) * 0.7, y: -Math.cos(a) * 0.7 } : null,
+    };
+    ui.setBuildMenu(buildState);
+    if (!menu) ui.notify('Wood Wall built', 'toast', 60);
     break;
   }
   case 'death': {
@@ -619,13 +648,32 @@ switch (screen) {
     if (q.get('scroll')) setTimeout(() => (ui.achPanel.body.scrollTop = +q.get('scroll')), 100);
     break;
   }
+  case 'bestiary': {
+    // a guest's record, made up: &seen=0,1,10 (ZTYPEs; default the walker, the runner, the spitter, the dog and the
+    // Brute), &seen= (empty) for none. &toast=1: the unlock toast for the spitter
+    const seen = (q.get('seen') ?? `${ZTYPE.WALKER},${ZTYPE.RUNNER},${ZTYPE.SPITTER},${ZTYPE.DOG},${ZTYPE.BOSS_BRUTE}`).split(',').filter(Boolean).map(Number);
+    localStorage.setItem('stn.bestiary', JSON.stringify({ v: 1, seen: seen.reduce((m, t) => m | (1 << t), 0) }));
+    buildScene(bg || 'night');
+    ui.hideSplash();
+    ui.updateHud(baseHud);
+    ui.setBestiaryOpen(true);
+    if (q.get('scroll')) setTimeout(() => (ui.bestiary.body.scrollTop = +q.get('scroll')), 100);
+    if (q.get('toast')) {
+      ui.setBestiaryOpen(false);
+      setTimeout(() => ui.notify(`New in the bestiary: ${ZOMBIE_DEFS[ZTYPE.SPITTER].name}. Press J to read up on it.`, 'good', 30), 300);
+    }
+    break;
+  }
   case 'pause':
+  case 'invite':
   case 'settings': {
     buildScene(bg || 'night');
     ui.hideSplash();
     ui.updateHud({ ...baseHud, phase: PHASE.NIGHT, night: 1, hordeLeft: 30 });
+    ui.setRoom({ code: 'J68QMM', name: "Webdevcody's game", inviteOnly: false }, `${location.origin}/?game=J68QMM`);
     ui.showPause(true);
     if (screen === 'settings') ui.settingsPanel.show();
+    if (screen === 'invite') ui.invitePanel.show();
     break;
   }
   case 'chat': {

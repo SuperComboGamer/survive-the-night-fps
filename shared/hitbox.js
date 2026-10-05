@@ -10,11 +10,14 @@ export function playerHitbox(zombie, crouch) {
 }
 
 // a zombie of ZOMBIE_DEFS entry `def` facing `yaw`. legs: the legs shot off it (bit 0 the left, bit 1 the right);
-// low: it is in the air or down on a survivor it has pinned, and its head with it
-export function zombieHitbox(def, yaw, legs, low) {
-  if (def.flying) return { r: 0.45, top: 0.5, headY: 0.1, headR: 0.3, hx: 0, hz: 0, flying: true };
+// low: it is in the air or down on a survivor it has pinned, and its head with it.
+// aim: Ember widens the body only (shared/difficulty.js). The head stays the size it is drawn, so a headshot
+// is still a shot that hit the head. Nightfall and Blackout pass 1, and so does any caller that omits it.
+export function zombieHitbox(def, yaw, legs, low, aim = 1) {
+  const body = aim > 0 ? aim : 1;
+  if (def.flying) return { r: 0.45 * body, top: 0.5, headY: 0.1, headR: 0.3, hx: 0, hz: 0, flying: true };
   // both legs gone: it lies on the ground, its head ahead of its body
-  if (legs === 3) return { r: CRAWL_RADIUS, top: CRAWL_HEIGHT, headY: CRAWL_HEAD_Y, headR: def.headR * 1.2, hx: -Math.sin(yaw) * CRAWL_HEAD_FWD, hz: -Math.cos(yaw) * CRAWL_HEAD_FWD };
+  if (legs === 3) return { r: CRAWL_RADIUS * body, top: CRAWL_HEIGHT, headY: CRAWL_HEAD_Y, headR: def.headR * 1.2, hx: -Math.sin(yaw) * CRAWL_HEAD_FWD, hz: -Math.cos(yaw) * CRAWL_HEAD_FWD };
   let headY = def.headY;
   let top = def.bodyTop ?? def.headY - def.headR;
   if (!def.headFwd && low) {
@@ -22,7 +25,7 @@ export function zombieHitbox(def, yaw, legs, low) {
     top *= 0.7;
   }
   const f = def.headFwd || 0;
-  return { r: def.radius * 0.88, top, headY, headR: def.headR * 1.2, hx: -Math.sin(yaw) * f, hz: -Math.cos(yaw) * f };
+  return { r: def.radius * 0.88 * body, top, headY, headR: def.headR * 1.2, hx: -Math.sin(yaw) * f, hz: -Math.cos(yaw) * f };
 }
 
 // Ray against a hitbox standing at pos: distance to the hit or -1, headHit = it took the head.

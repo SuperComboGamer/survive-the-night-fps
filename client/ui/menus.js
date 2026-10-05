@@ -4,11 +4,12 @@ import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
 import { bindsOf, keyName } from '../game/binds.js';
 import { loadRecord } from './records.js';
-import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
+import { GameBrowser, GameCreator, phaseText, seatsText, difficultyText } from './games.js';
 import { linkedCode, gameInfo, listGames, getLeaderboard } from '../net/lobby.js';
 import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
 import { voteDifficulty } from '../net/feedback.js';
-import { playingFriends, unreadCount, onSocialChange } from '../net/friends.js';
+import { playingFriends, unreadCount, onSocialChange, socialState } from '../net/friends.js';
+import { achievementsView, onAchievements, ACH_TOTAL } from '../net/achievements.js';
 import { fetchProgress, lastProgress, onProgress } from '../net/progress.js';
 import { xpBar } from './progress.js';
 import { XP_SRC_NAMES, levelInfo } from '../../shared/progress.js';
@@ -367,7 +368,7 @@ export class Splash {
     } else {
       this.invKicker.textContent = 'You are invited to';
       this.invName.textContent = g.name;
-      const parts = [`${seatsText(g)} survivors`, phaseText(g.phase, g.day)];
+      const parts = [`${seatsText(g)} survivors`, difficultyText(g.difficulty), phaseText(g.phase, g.day)];
       if (g.inviteOnly) parts.push('Invite only');
       this.invMeta.textContent = g.full ? `Full · ${seatsText(g)} · a seat may free up, or pick another game` : parts.join(' · ');
     }
@@ -504,136 +505,294 @@ export class Splash {
 }
 
 // ---------------------------------------------------------------- pause
+// how long "Leave game" is held before it leaves (a stray click can't end a run)
+const LEAVE_HOLD_MS = 900;
+
+// The Esc menu: a rail down the left edge, the rest of the screen left almost clear, because the game never stops for
+// it (no "paused" or "resume" anywhere on it). The arrow keys move through the rows and Enter opens one. Esc is not a
+// way back: the browser counts no Esc as a gesture (the mouse can't be taken back on one), and in fullscreen a second
+// Esc leaves fullscreen.
 export class Pause {
   constructor(ui, parent) {
     this.ui = ui;
+    this.room = null;
+    this.sel = 0;
     const root = (this.root = el('div', 'pause', parent));
     root.hidden = true;
-    el('div', 'ov-vignette', root);
-    el('div', 'grain', root);
-    // the inventory's close button, in the same corner: closing the pause is resuming (the click on root does it)
-    const close = el('button', 'inv-close', root);
-    close.type = 'button';
-    close.title = 'Close';
-    el('span', 'inv-close-t', close, 'Close');
-    svgEl('i', 'inv-close-x', close, glyph('xmark'));
-    const main = el('div', 'pause-main', root);
-    // the game never stops for this menu (the note under it says so): no "paused" or "resume" anywhere on it
-    el('div', 'pause-kicker', main, 'Menu');
-    const resume = el('button', 'pause-resume', main);
-    resume.type = 'button';
-    el('span', 'pr-t', resume, 'Back to the game');
-    el('p', 'pause-note', main, 'The night does not wait. The world keeps moving while you are away.');
-    // the game's invite link, for whoever should join (setRoom)
-    const inv = (this.inv = el('div', 'pause-invite', main));
-    inv.hidden = true;
-    this.invTitle = el('div', 'pi-title', inv, '');
-    const row = el('div', 'pi-row', inv);
-    this.invLink = el('input', 'pi-link', row);
-    this.invLink.type = 'text';
-    this.invLink.readOnly = true;
-    this.invLink.spellcheck = false;
-    this.invLink.addEventListener('focus', () => this.invLink.select());
-    const copy = el('button', 'btn btn-ghost pi-copy', row);
-    copy.type = 'button';
-    svgEl('i', 'btn-ico', copy, glyph('link'));
-    this.copyTxt = el('span', '', copy, 'Copy invite link');
-    copy.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.copy();
-    });
-    this.invNote = el('div', 'pi-note', inv, '');
-    const btns = el('div', 'pause-btns', main);
-    const cb = el('button', 'btn btn-ghost', btns);
-    cb.type = 'button';
-    svgEl('i', 'btn-ico', cb, glyph('keyboard'));
-    el('span', '', cb, 'Controls');
-    const sb = el('button', 'btn btn-ghost', btns);
-    sb.type = 'button';
-    svgEl('i', 'btn-ico', sb, glyph('gear'));
-    el('span', '', sb, 'Settings');
-    const fb = el('button', 'btn btn-ghost', btns);
-    fb.type = 'button';
-    svgEl('i', 'btn-ico', fb, glyph('star'));
-    el('span', '', fb, 'Friends');
-    // messages from friends nobody has read (friends.js)
-    const fBadge = el('b', 'sp-badge', fb, '');
-    fBadge.hidden = true;
-    const syncBadge = () => {
-      const n = accountState().user ? unreadCount() : 0;
-      setBadge(fBadge, n);
-      fb.title = n ? `${n} new message${n === 1 ? '' : 's'}` : '';
-    };
-    onSocialChange(syncBadge);
-    onAccountChange(syncBadge);
-    const pb = el('button', 'btn btn-ghost', btns);
-    pb.type = 'button';
-    svgEl('i', 'btn-ico', pb, glyph('arrowUp'));
-    el('span', '', pb, 'Perks');
-    const pBadge = el('b', 'sp-badge', pb, '');
-    pBadge.hidden = true;
-    onProgress((v) => setBadge(pBadge, v?.pending || 0));
-    pb.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.ui.progress.show();
-    });
-    const ab = el('button', 'btn btn-ghost', btns);
-    ab.type = 'button';
-    svgEl('i', 'btn-ico', ab, glyph('trophy'));
-    el('span', '', ab, 'Achievements');
-    ab.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.ui.achPanel.show();
-    });
-    const lb = el('button', 'btn btn-ghost btn-danger', btns);
-    lb.type = 'button';
-    svgEl('i', 'btn-ico', lb, glyph('exit'));
-    el('span', '', lb, 'Leave game');
+    el('div', 'pause-shade', root);
+    const rail = el('div', 'pause-rail', root);
+    const live = el('div', 'pause-live', rail);
+    el('i', 'pause-dot', live);
+    el('span', '', live, 'Live · the world keeps moving');
+    this.title = el('div', 'pause-title', rail, 'Menu');
+    this.sub = el('div', 'pause-sub', rail, '');
 
-    cb.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.ui.controlsPanel.show();
-    });
-    sb.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.ui.settingsPanel.show();
-    });
-    fb.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.ui.friends.show();
-    });
-    lb.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.ui.cb.onLeave();
-    });
-    // clicking anywhere that is not a control resumes (keeps the user gesture for pointer lock)
+    const list = el('div', 'pause-list', rail);
+    list.setAttribute('role', 'menu');
+    this.rows = [];
+    const row = (into, icon, label, run, cls = '') => {
+      const b = el('button', 'pr-row' + cls, into);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      svgEl('i', 'pr-ico', b, glyph(icon));
+      el('span', 'pr-label', b, label);
+      const hint = el('span', 'pr-hint', b);
+      const r = { b, hint, run };
+      b.addEventListener('pointerenter', () => this.select(this.rows.indexOf(r), false));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!r.run) return;
+        this.ui.sound('ui_click');
+        r.run();
+      });
+      this.rows.push(r);
+      return r;
+    };
+    const back = row(list, 'arrowRight', 'Back to the game', () => this.ui.cb.onResume(), ' pr-back');
+    el('span', 'kbd sm pr-key', back.hint, 'Enter');
+    this.invite = row(list, 'personPlus', 'Invite friends', () => this.ui.invitePanel.show());
+    this.perks = row(list, 'arrowUp', 'Perks', () => this.ui.progress.show());
+    this.ach = row(list, 'trophy', 'Achievements', () => this.ui.achPanel.show());
+    row(list, 'skull', 'Bestiary', () => this.ui.cb.onBestiary());
+    this.fr = row(list, 'star', 'Friends', () => this.ui.friends.show());
+    row(list, 'gear', 'Settings', () => this.ui.settingsPanel.show());
+    row(list, 'keyboard', 'Controls', () => this.ui.controlsPanel.show());
+
+    // held, not clicked: the fill runs along the row while it is held, and letting go early cancels
+    el('div', 'pause-sep', rail);
+    const leave = row(rail, 'exit', 'Leave game', null, ' pr-leave');
+    this.leave = leave;
+    this.fill = el('i', 'pr-fill', leave.b);
+    this.fill.style.transitionDuration = `${LEAVE_HOLD_MS}ms`;
+    this.leaveTxt = el('span', '', leave.hint, 'Hold');
+    el('span', 'kbd sm', leave.hint, 'Enter');
+    leave.b.addEventListener('pointerdown', (e) => e.button === 0 && this._hold());
+    for (const t of ['pointerup', 'pointerleave', 'pointercancel']) leave.b.addEventListener(t, () => this._release());
+
+    const keys = el('div', 'pause-keys', rail);
+    const key = (caps, what) => {
+      const k = el('span', 'pk', keys);
+      for (const c of caps) el('span', 'kbd sm', k, c);
+      el('span', 'pk-t', k, what);
+    };
+    key(['↑', '↓'], 'Select');
+    key(['Enter'], 'Open');
+    el('span', 'pk pk-t', keys, 'Click away to go back');
+
+    // the hints on the right of the rows, kept as what they stand for changes
+    const sync = () => this._syncHints();
+    onProgress(sync);
+    onAchievements(sync);
+    onSocialChange(sync);
+    onAccountChange(sync);
+
+    // captured before input.js, which would otherwise take Enter for the chat
+    window.addEventListener('keydown', (e) => this._key(e), true);
+    window.addEventListener('keyup', (e) => (e.code === 'Enter' || e.code === 'NumpadEnter') && this._release(), true);
+    // clicking anywhere off the rail resumes (keeps the user gesture for pointer lock)
     root.addEventListener('click', (e) => {
-      if (e.target.closest('.pause-btns, .pause-invite')) return;
+      if (e.target.closest('.pause-rail')) return;
       this.ui.sound('ui_click');
       this.ui.cb.onResume();
     });
   }
 
-  // the game we are in: { code, name, inviteOnly } (null: none), and its invite link
+  // the game we are in: { code, name, inviteOnly, difficulty } (null: none), and its invite link
   setRoom(room, link) {
-    this.inv.hidden = !room;
-    if (!room) return;
-    this.invTitle.textContent = `${room.name} · ${room.inviteOnly ? 'invite only' : 'public'} · code ${room.code}`;
-    this.invLink.value = link;
-    this.invNote.textContent = room.inviteOnly ? 'Only people with this link can join.' : 'Anyone can join from Browse games, or straight in with this link.';
+    this.room = room;
+    this.ui.invitePanel.set(room, link);
+    this.invite.b.hidden = !room;
+    this.title.textContent = room ? room.name : 'Menu';
+    this._syncSub();
+    this._syncHints();
+  }
+
+  _syncSub() {
+    const room = this.room;
+    if (!room) return void (this.sub.textContent = '');
+    const n = this.ui.cb.onPeers?.()?.players?.length || 0;
+    const parts = [difficultyText(room.difficulty), room.inviteOnly ? 'Invite only' : 'Public', `Code ${room.code}`];
+    if (n) parts.push(`${n} survivor${n === 1 ? '' : 's'}`);
+    this.sub.textContent = parts.join(' · ');
+  }
+
+  _syncHints() {
+    const count = (hint, n, text) => {
+      hint.textContent = '';
+      if (n) el('b', 'pr-n', hint, n > 99 ? '99+' : String(n));
+      el('span', '', hint, text);
+    };
+    this.invite.hint.textContent = this.room?.code || '';
+    const pending = lastProgress()?.pending || 0;
+    count(this.perks.hint, pending, pending ? 'to spend' : '');
+    const a = achievementsView();
+    this.ach.hint.textContent = a.loading || a.error ? '' : `${Object.keys(a.unlocked).length} / ${ACH_TOTAL}`;
+    const s = socialState();
+    const unread = accountState().user ? unreadCount() : 0;
+    if (unread) count(this.fr.hint, unread, 'new');
+    else this.fr.hint.textContent = accountState().user && s.loaded ? `${s.friends.filter((f) => f.status !== 'offline').length} online` : '';
+  }
+
+  // the row that Enter opens: hovered, or moved to with the arrow keys (hidden rows are stepped over)
+  select(i, sound = true) {
+    if (i < 0 || i === this.sel) return;
+    this.rows[this.sel]?.b.classList.remove('on');
+    this.sel = i;
+    this.rows[i].b.classList.add('on');
+    if (sound) this.ui.sound('ui_hover');
+  }
+
+  _step(d) {
+    const n = this.rows.length;
+    for (let k = 1; k < n; k++) {
+      const i = (this.sel + d * k + n * k) % n;
+      if (!this.rows[i].b.hidden) return this.select(i);
+    }
+  }
+
+  // a panel opened from here, or the chat, has the keys
+  get _covered() {
+    return this.ui.isTyping() || !!this.ui.root.querySelector('.layer-modal > :not([hidden])');
+  }
+
+  _key(e) {
+    if (this.root.hidden || this._covered) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      this._step(e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Enter') {
+      const r = this.rows[this.sel];
+      if (e.repeat) {
+        // (a repeat only keeps a hold going)
+      } else if (r === this.leave) this._hold();
+      else {
+        this.ui.sound('ui_click');
+        r.run();
+      }
+    } else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  _hold() {
+    if (this._holdT) return;
+    this.leave.b.classList.add('holding');
+    this.leaveTxt.textContent = 'Hold';
+    this._holdT = setTimeout(() => {
+      this._holdT = 0;
+      this.leave.b.classList.remove('holding');
+      this.ui.cb.onLeave();
+    }, LEAVE_HOLD_MS);
+  }
+
+  _release() {
+    if (!this._holdT) return;
+    clearTimeout(this._holdT);
+    this._holdT = 0;
+    this.leave.b.classList.remove('holding');
+    this.leaveTxt.textContent = 'Keep holding';
+    clearTimeout(this._nudgeT);
+    this._nudgeT = setTimeout(() => (this.leaveTxt.textContent = 'Hold'), 1800);
+  }
+
+  show(on) {
+    on = !!on;
+    if (on === !this.root.hidden) return;
+    this.root.hidden = !on;
+    this.ui.root.classList.toggle('paused', on);
+    clearInterval(this._iv);
+    if (on) {
+      this.sel = -1;
+      this.rows.forEach((r) => r.b.classList.remove('on'));
+      this.select(0, false);
+      this._syncSub();
+      this._syncHints();
+      this._iv = setInterval(() => this._syncSub(), 1000); // (survivors joining and leaving while it is up)
+      this.root.classList.remove('in');
+      void this.root.offsetWidth;
+      this.root.classList.add('in');
+    } else {
+      this._release();
+      if (this.ui.splash.root.hidden) {
+        if (this.ui.settingsPanel.visible) this.ui.settingsPanel.hide();
+        if (this.ui.controlsPanel.visible) this.ui.controlsPanel.hide();
+        if (this.ui.invitePanel.visible) this.ui.invitePanel.hide();
+        if (this.ui.friends.visible) this.ui.friends.hide();
+        if (this.ui.accountPanel.visible) this.ui.accountPanel.hide();
+        if (this.ui.progress.visible && !this.ui.inventoryOpen) this.ui.progress.hide();
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- invite
+// The game's code and invite link, opened from "Invite friends" on the pause menu. It borrows the settings panel's
+// card and closes the same ways as the controls list.
+export class InvitePanel {
+  constructor(ui, parent) {
+    this.ui = ui;
+    this.root = el('div', 'stn-settings stn-invite', parent);
+    this.root.setAttribute('role', 'dialog');
+    this.root.hidden = true;
+    const card = el('div', 'set-card paper', this.root);
+    const head = el('div', 'set-head', card);
+    el('h2', 'set-title', head, 'Invite friends');
+    this.sub = el('span', 'set-sub', head, '');
+    const close = svgEl('button', 'set-close btn-icon', head, glyph('xmark'));
+    close.title = 'Close';
+    close.addEventListener('click', () => this.hide());
+    const body = el('div', 'set-body', card);
+    el('div', 'pi-title', body, 'Game code');
+    this.code = el('div', 'iv-code', body, '');
+    el('div', 'pi-title', body, 'Invite link');
+    const row = el('div', 'pi-row', body);
+    this.link = el('input', 'pi-link', row);
+    this.link.type = 'text';
+    this.link.readOnly = true;
+    this.link.spellcheck = false;
+    this.link.addEventListener('focus', () => this.link.select());
+    const copy = el('button', 'btn btn-ghost pi-copy', row);
+    copy.type = 'button';
+    svgEl('i', 'btn-ico', copy, glyph('link'));
+    this.copyTxt = el('span', '', copy, 'Copy invite link');
+    copy.addEventListener('click', () => this.copy());
+    this.note = el('div', 'pi-note', body, '');
+    const done = el('button', 'btn btn-blood', el('div', 'set-foot', card), 'Done');
+    done.addEventListener('click', () => this.hide());
+
+    this.root.addEventListener('pointerdown', (e) => {
+      if (e.target === this.root) this.hide();
+    });
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (this.root.hidden || e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.hide();
+      },
+      true
+    );
+  }
+
+  set(room, link) {
+    if (!room) return this.hide();
+    this.sub.textContent = `${room.name} · ${difficultyText(room.difficulty)} · ${room.inviteOnly ? 'invite only' : 'public'}`;
+    this.code.textContent = room.code;
+    this.link.value = link;
+    this.note.textContent = room.inviteOnly ? 'Only people with this link can join.' : 'Anyone can join from Browse games, or straight in with this link.';
     this.copyTxt.textContent = 'Copy invite link';
   }
 
   async copy() {
-    const link = this.invLink.value;
+    const link = this.link.value;
     let ok = false;
     try {
       await navigator.clipboard.writeText(link);
       ok = true;
     } catch {
       // (no clipboard API outside https / localhost: the old way, from the selected field)
-      this.invLink.focus();
-      this.invLink.select();
+      this.link.focus();
+      this.link.select();
       try {
         ok = document.execCommand('copy');
       } catch {}
@@ -643,22 +802,20 @@ export class Pause {
     this._copyT = setTimeout(() => (this.copyTxt.textContent = 'Copy invite link'), 2200);
   }
 
-  show(on) {
-    on = !!on;
-    if (on === !this.root.hidden) return;
-    this.root.hidden = !on;
-    this.ui.root.classList.toggle('paused', on);
-    if (on) {
-      this.root.classList.remove('in');
-      void this.root.offsetWidth;
-      this.root.classList.add('in');
-    } else if (this.ui.splash.root.hidden) {
-      if (this.ui.settingsPanel.visible) this.ui.settingsPanel.hide();
-      if (this.ui.controlsPanel.visible) this.ui.controlsPanel.hide();
-      if (this.ui.friends.visible) this.ui.friends.hide();
-      if (this.ui.accountPanel.visible) this.ui.accountPanel.hide();
-      if (this.ui.progress.visible && !this.ui.inventoryOpen) this.ui.progress.hide();
-    }
+  show() {
+    this.copyTxt.textContent = 'Copy invite link';
+    this.root.hidden = false;
+    this.root.classList.remove('in');
+    void this.root.offsetWidth;
+    this.root.classList.add('in');
+  }
+
+  hide() {
+    this.root.hidden = true;
+  }
+
+  get visible() {
+    return !this.root.hidden;
   }
 }
 

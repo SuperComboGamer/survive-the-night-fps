@@ -4,8 +4,8 @@ import * as THREE from 'three';
 import { POSE_NEAR, POSE_HZ } from '../render/rates.js';
 import { ENT, PFLAG, ZSTATUS, HCAR_AT, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
-import { makeBox, COL, canReach } from '../../shared/collision.js';
-import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, WATER_LEVEL } from '../../shared/constants.js';
+import { makeBox, COL, canReach, groundAt } from '../../shared/collision.js';
+import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, WATER_LEVEL, GRAVITY } from '../../shared/constants.js';
 import { afloatAt } from '../../shared/swim.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { defaultCharacter } from '../../shared/characters.js';
@@ -25,6 +25,8 @@ const ITEM_GLINT_SPACING = 0.75; // ...and no closer than this (m) to the next o
 const PICK_STICK = 1.15; // the target already in the crosshair holds on inside this much more of its radius (pick)
 const HEAVY_STEP_SHAKE = 30; // a tank's footfall shakes the camera inside this distance (m), harder the nearer it lands
 const HEAVY_RUN_SHAKE = 42; // ... and from this far off, harder still, when it is charging
+const BAT_REST = 0.075; // m from a dead bat's origin down to its back, lying on the ground (poseBat once it lands)
+const BAT_SOAK = 0.04; // ...and how far that back sits under the surface when it comes down on the water
 
 // soft star-shaped sparkle for unsearched containers ("loot glint")
 function glintTexture() {
@@ -687,7 +689,7 @@ export class Entities {
   onRemove(e) {
     if (e.kind === ENT.ZOMBIE && e.dead && e.view) {
       // keep the corpse around for a while
-      this.corpses.push({ view: e.view, t: 0, x: e.rx, y: e.ry, z: e.rz, yaw: e.ryaw, burning: e.burning });
+      this.corpses.push({ view: e.view, t: 0, x: e.rx, y: e.ry, z: e.rz, yaw: e.ryaw, burning: e.burning, fall: e.fall });
       e.view = null;
       this.zombieCount--;
       if (e.loop) e.loop.stop();
@@ -793,6 +795,26 @@ export class Entities {
     }
   }
 
+  // A bat shot out of the air drops: the server leaves the dead where they died, so the fall is drawn here, under
+  // GRAVITY from a standstill onto the floor under it (on the water it floats). f: { y, v, landed }, carried from the
+  // live entity on into its corpse. Returns the height to draw it at.
+  batDrop(f, x, z, view, dt) {
+    const g = this.g;
+    const floor = Math.max(groundAt(g.world, x, z, f.y - BAT_REST, 0.2, false), WATER_LEVEL - BAT_SOAK);
+    if (f.landed) return (f.y = floor + BAT_REST); // (the drawn path can still carry it a little way after it lands)
+    f.v += GRAVITY * dt;
+    f.y -= f.v * dt;
+    if (f.y - BAT_REST > floor) return f.y;
+    f.y = floor + BAT_REST;
+    f.landed = true;
+    view.land();
+    if (floor < WATER_LEVEL) {
+      g.effects.splash(x, WATER_LEVEL, z, 0.2);
+      g.audio.footstep('water', x, WATER_LEVEL, z, 0.5);
+    } else g.audio.play(SOUND.BODY_FALL, { x, y: floor, z, volume: 0.35, rate: 1.6 });
+    return f.y;
+  }
+
   // A leg shot off (EVT.ZOMBIE_LEG; bits: 1 the left, 2 the right): the shin and foot fly off along the shot (yaw),
   // blood bursts from the knee. The model itself changes with the replicated ZF.LEGS field (onUpdate), which is
   // also what a client that was not there to see it gets.
@@ -865,6 +887,7 @@ export class Entities {
           e.ryaw += wrapAngle(tmp.yaw - e.ryaw) * Math.min(1, dt * 12);
           const v = e.view;
           if (!v) break;
+          if (e.dead && ZOMBIE_DEFS[e.ztype].flying) e.ry = this.batDrop(e.fall || (e.fall = { y: e.ry, v: 0, landed: false }), e.rx, e.rz, v, dt);
           const distC = (e.rx - camPos.x) ** 2 + (e.rz - camPos.z) ** 2;
           v.object.position.set(e.rx, e.ry, e.rz);
           v.object.rotation.y = e.ryaw;
@@ -1163,6 +1186,7 @@ export class Entities {
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const c = this.corpses[i];
       c.t += dt;
+      if (c.fall && !c.fall.landed) c.view.object.position.y = c.y = this.batDrop(c.fall, c.x, c.z, c.view, dt);
       c.view.update(dt, ZANIM.DEAD, 0, time);
       if (c.burning > 0) {
         c.burning -= dt;

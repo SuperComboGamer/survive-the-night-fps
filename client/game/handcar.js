@@ -115,7 +115,7 @@ export class HandcarClient {
     this.hands += ((working ? 1 : 0) - this.hands) * Math.min(1, dt * 9);
     if (this.hands < 0.01) this.hands = 0;
     const v = this.view;
-    v.visible = this.hands > 0 && !g.ui.inventoryOpen && !g.ui.mapOpen && !g.ui.boardOpen && !g.debugCam;
+    v.visible = this.hands > 0 && !g.ui.inventoryOpen && !g.ui.mapOpen && !g.ui.boardOpen && !g.ui.bestiaryOpen && !g.debugCam;
     const c = this.onCar ? this.cars[this.onCar - 1] : null;
     if (v.visible && c) {
       const a = leverAngle(c.s);

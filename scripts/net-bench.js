@@ -247,6 +247,7 @@ function makeClient(idx) {
         r.u32(); // (the tick)
         r.u8();
         r.u8();
+        if (r.left) r.u8(); // (WELCOMEF)
         c.world = worldFor(seed, r.left ? r.u8() : 1);
         usePos(c.world);
         c.pred = new Prediction(c.world);

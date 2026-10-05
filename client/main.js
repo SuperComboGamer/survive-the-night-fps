@@ -176,7 +176,7 @@ const callbacks = {
         const link = inviteLink(room.code);
         showCodeInAddress(room.code);
         ui.setRoom(room, link);
-        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (press Esc to copy the link).`, { system: true });
+        ui.addChat('', `${room.inviteOnly ? 'Invite only' : 'Public'} game ${room.code}. Invite friends with ${link} (or press Esc, then Invite friends).`, { system: true });
       }
     } catch (err) {
       joinCue = false;
@@ -192,14 +192,15 @@ const callbacks = {
   onDropItem: (i, n) => game?.uiCallbacks().onDropItem(i, n),
   onSplitItem: (i, n) => game?.uiCallbacks().onSplitItem(i, n),
   onDropAmmo: (cal, n) => game?.uiCallbacks().onDropAmmo(cal, n),
+  onUndoDrop: () => game?.uiCallbacks().onUndoDrop(),
   onSalvage: (from, n) => game?.uiCallbacks().onSalvage(from, n),
   onSwapItems: (a, b) => game?.uiCallbacks().onSwapItems(a, b),
   onEquipArmor: (i) => game?.uiCallbacks().onEquipArmor(i),
   onDropWeapon: (s) => game?.uiCallbacks().onDropWeapon(s),
   onUnequip: (s, to) => game?.uiCallbacks().onUnequip(s, to),
   onWorn: (which, what) => game?.uiCallbacks().onWorn(which, what),
-  onSortItems: () => game?.uiCallbacks().onSortItems(),
   onSelectStructure: (t) => game?.uiCallbacks().onSelectStructure(t),
+  onHoverStructure: (t) => game?.uiCallbacks().onHoverStructure(t),
   onSelectThrowable: (it) => game?.uiCallbacks().onSelectThrowable(it),
   onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),
   onChatSend: (text) => {
@@ -230,6 +231,7 @@ const callbacks = {
     return { room: game.room, players: [...game.players].map(([id, p]) => ({ id, name: p.name, account: accounts.get(id) || '', self: id === game.myId })) };
   },
   onAccountName: (id) => game?.conn.accounts.get(id) || '',
+  onBestiary: () => game?.toggleBestiary(true),
 };
 
 const ui = new UI(document.getElementById('ui'), callbacks);
@@ -250,6 +252,7 @@ ui.setControls(() => [
   [keysOf('ping'), 'Ping (go · danger · loot)'],
   [keysOf('map'), 'Field map'],
   [keysOf('board'), 'Leaderboard'],
+  [keysOf('bestiary'), 'Bestiary: the monsters you have seen'],
   [keysOf('flashlight'), 'Flashlight'],
   [keysOf('heal'), 'Quick heal'],
   [keysOf('drink'), 'Energy drink (refills stamina)'],

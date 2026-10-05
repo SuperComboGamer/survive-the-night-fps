@@ -2,7 +2,7 @@
 // Positions are quantized in int16: to 1/64 m on the island (range +-512 m) and to 1/32 m on the mainland, which is
 // twice as far across (range +-1024 m). See usePos below.
 
-export const PROTOCOL_VERSION = 34; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list
+export const PROTOCOL_VERSION = 36; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state)
 
 // client -> server
 export const C2S = {
@@ -18,7 +18,8 @@ export const C2S = {
 
 // server -> client
 export const S2C = {
-  WELCOME: 1, // u16 your id, u32 seed, u32 tick, u8 tick rate, u8 max players, u8 act (which map the seed is to be built as)
+  WELCOME: 1, // u16 your id, u32 seed, u32 tick, u8 tick rate, u8 max players, u8 WELCOMEF (a server before it sends none: 0),
+  //             u8 act (which map the seed is to be built as: shared/acts.js; a server before the two acts sends none: 1)
   SNAPSHOT: 2, // u8 flags (SNAP), [u32 tick, u16 ack], [varu ack step], [global], [self], [entities], [events]
   INVENTORY: 3, // INVENTORY_MAX x (u8 item, u16 count), u8 armor item, u8 armor points, u8 armor max, u8 backpack worn (item or 0)
   CHAT: 4,
@@ -28,11 +29,16 @@ export const S2C = {
   PONG: 8,
   WORLD_RESET: 9, // u32 seed, u8 act: another map - build the world of that act from this seed (shared/worlds.js): a new playthrough, or the crossing to the mainland
   BOARD: 10, // the leaderboard, as asked for (see writeBoard)
-  ROOM: 11, // str code, str name, u8 ROOMF: the game this socket was put in (before anything else; quick joins learn it here)
+  ROOM: 11, // str code, str name, u8 ROOMF, then str difficulty id (shared/difficulty.js). The id is extra on the end so a
+  //          client from before difficulties still stops after the flags byte. An older server sends no id: the
+  //          reader treats a packet that ends there as Nightfall. Not a protocol bump: the join check is equality.
   FRIENDS: 12, // u8 count, then per player u16 id, str account name ('' = a guest, not signed in): everyone's on joining, a newcomer's to the rest
   PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
 };
 export const ROOMF = { INVITE_ONLY: 1 };
+// S2C.WELCOME flags. ADMIN: this player may run the admin commands (the client offers the spawn menu); the server
+// still checks every command itself
+export const WELCOMEF = { ADMIN: 1 };
 // S2C.PROGRESS flags. LOADED: the server has heard what is on your record (until then the XP is this run's alone);
 // KEPT: it is kept for you (signed in, or a guest with a browser id) - without it nothing earned outlives the game
 export const PROGF = { LOADED: 1, KEPT: 2 };
@@ -79,12 +85,14 @@ export const ACT = {
   HANDCAR: 29, // u8 car (handcar.js): get onto that handcar on the railway
   GEN_SWITCH: 23, // u16 entity id: a generator's switch, on or off ([E] held; a tap is ACT.INTERACT and pours fuel)
   WORN: 30, // u8 which (WORN), u8 what (WORN_DO): the armor or backpack being worn taken off into the grid, dropped or salvaged
-  SORT_INV: 31, // (nothing): tidy the backpack grid - partial stacks merged, the open slots ordered by BAG_TIER
   SALVAGE: 32, // u8 from (SALVAGE_FROM), u16 count: tear that many down for what they are made of (SALVAGE in defs.js)
   DROP_AMMO: 33, // u8 calibre (AMMO in defs.js), u16 count (0 = all): rounds out of that reserve onto the ground
   UNEQUIP: 34, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
-  SKIP: 35, // (nothing): skip the crossing's cutscene, once everyone connected has asked (PHASE.CROSSING, shared/acts.js)
+  UNDO_DROP: 35, // (nothing): the last thing this survivor dropped picked up again, a few seconds after (the inventory's Undo)
+  SKIP: 36, // (nothing): skip the crossing's cutscene, once everyone connected has asked (PHASE.CROSSING, shared/acts.js)
 };
+// NOTIFY.UNDO_GONE: why an undo brought nothing back
+export const UNDO_NO = { GONE: 0, LATE: 1, FAR: 2 };
 // ACT.WORN: which piece of worn gear, and what is done with it
 export const WORN = { ARMOR: 0, BACKPACK: 1 };
 export const WORN_DO = { OFF: 0, DROP: 1, SALVAGE: 2 };

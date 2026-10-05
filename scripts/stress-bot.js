@@ -119,6 +119,7 @@ function makeBot({ id, url, name }) {
       r.u32(); // (the tick)
       r.u8();
       r.u8();
+      if (r.left) r.u8(); // (WELCOMEF)
       b.w = worldFor(seed, actOf(r));
       b.joined = true;
       b.interval = setInterval(() => tick(b), CMD_DT * 1000 * CMDS_PER_PACKET);

@@ -593,6 +593,17 @@ export class Nav {
     this.fields.delete(playerId);
   }
 
+  // how far (x10 units) the field of playerId puts (x,z) from them, the way round: Infinity outside its window or unreachable
+  fieldDist(playerId, x, z) {
+    const f = this.fields.get(playerId);
+    if (!f) return Infinity;
+    const li = Math.floor(x + this.half) - f.ox;
+    const lj = Math.floor(z + this.half) - f.oz;
+    if (li < 0 || lj < 0 || li >= FIELD || lj >= FIELD) return Infinity;
+    const d = f.dist[lj * FIELD + li];
+    return d === INF ? Infinity : d;
+  }
+
   // Direction (writes out.x,out.z normalized) following the field of playerId from (x,z).
   // Returns false if outside the field window, unreachable, or already in the survivor's cell.
   // y (optional): the height of the feet there, which tells a deck from the water under it.

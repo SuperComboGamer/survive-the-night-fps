@@ -48,6 +48,35 @@ const LEAP_MISS_CD = 2.5;
 const THROW_OFF_DAZE = 1; // s a leaper reels for once the survivor it pinned throws it off (throwOff)
 const WEDGE_MOVE = 1.5; // m a zombie after a survivor has to get from where it was to count as getting anywhere (z.wedgeT)
 const _leap = { x: 0, y: 0, z: 0 };
+// The zombie dog's hunt (def.hitRun). It runs in, bites once (a snap or a lunge), and breaks off (special state 7,
+// breakOff) to DOG_RUN_MIN-MAX m from its prey, circles there at DOG_CIRCLE of its pace, and comes back in DOG_CD_MIN-MAX s
+// after the bite. No dog goes in within DOG_PACK_GAP s of a packmate (packFree), so a pack comes in one at a time. A
+// lunge never crosses anything the survivors built (lungeClear): a dog does not jump a barricade.
+const DOG_RUN_MIN = 6;
+const DOG_RUN_MAX = 10;
+const DOG_CIRCLE = 0.55;
+const DOG_CD_MIN = 2;
+const DOG_CD_MAX = 4;
+const DOG_PACK_GAP = 0.45;
+const lungeT = (dist) => Math.max(0.28, Math.min(0.5, dist / 11)); // s a dog's lunge from dist m off is in the air (fireSpecial case 8)
+// Its ram (def.ramDmg, startRam). Held up by a piece the survivors built while after one of them, or shut in for
+// DOG_PENNED s with one in DOG_PEN_R m, it backs off DOG_BACK_MIN-MAX m square from it (special state 8; as far as it
+// gets), snarls for def.ramWindup (or DOG_RAM_WINDUP) s, and sprints at it at DOG_RAM_SPEED m/s (special state 9, DOG_RAM_T s at most).
+// The blow deals ramDmg x the night's claw multiplier; a metal piece takes DOG_RAM_METAL of that and deals ramRecoil
+// back. Then it reels (z.dazedT) for DOG_RAM_STUN s, or DOG_RAM_STUN_MISS after running into the static world, and
+// rams again no sooner than DOG_RAM_CD s
+const DOG_PENNED = 2;
+const DOG_PEN_R = 3;
+const DOG_BACK_MIN = 8;
+const DOG_BACK_MAX = 12;
+const DOG_RAM_WINDUP = 0.6;
+const DOG_RAM_SPEED = 11;
+const DOG_RAM_T = 1.6;
+const DOG_RAM_METAL = 0.35;
+const DOG_RAM_STUN = 1;
+const DOG_RAM_STUN_MISS = 0.5;
+const DOG_RAM_CD = 0.8;
+const _lq = [];
 // the client's distance haze: fog density by sun height (KEYS s / fogD in client/render/environment.js), see sightRange()
 const HAZE_SUN = [-1, -0.12, 0.02, 0.18, 0.55, 1];
 const HAZE_DENSITY = [0.025, 0.025, 0.0195, 0.0108, 0.0074, 0.0072];
@@ -68,6 +97,29 @@ const SPAWN_TRIES = 18; // candidates a horde spawn pick looks at before settlin
 const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes have a clear line to this far above its ground (m)
 const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
 const SPAWN_VIEW_COS = Math.cos(1.13); // a survivor is looking at what lies within ~65 deg of dead ahead (the default FOV on a wide screen, and a margin)
+// A crowd after a survivor fans out instead of trailing in after the one at the front (spreadOut). One of the dead
+// within SPREAD_START m of its prey with others in its lane ahead (SPREAD_LANE m either side of the way it is moving,
+// SPREAD_AHEAD m on at most) picks a line of its own to come in on: SPREAD_MIN-SPREAD_MAX rad round its prey from
+// where it stands, to the side the others are not on (either, when they are within SPREAD_SIDE m of dead ahead on
+// average). It heads for the point of that line SPREAD_K of the way out to itself (SPREAD_R m at most), which slides
+// in as it closes, so it comes in along it. It keeps the line until it is within SPREAD_NEAR m, its prey changes, or
+// it falls back past SPREAD_DROP m. Only where its way in runs within ~SPREAD_OPEN of straight at its prey (not where
+// a field leads it round to a way in), and never into a wall or the lake SPREAD_PROBE m on, nor where that step gets it
+// less than SPREAD_GAIN (x10 units of the flow field) nearer by the way round (off the side of a pier)
+const SPREAD_START = 35;
+const SPREAD_GAIN = 4;
+const SPREAD_DROP = 45;
+const SPREAD_LANE = 1.1;
+const SPREAD_AHEAD = 5;
+const SPREAD_SIDE = 0.3;
+const SPREAD_MIN = 0.45;
+const SPREAD_MAX = 1.2;
+const SPREAD_K = 0.75;
+const SPREAD_R = 14;
+const SPREAD_NEAR = 2.5;
+const SPREAD_OPEN = Math.cos(1.2);
+const SPREAD_PROBE = 1.6;
+const _spr = { x: 0, z: 0 };
 
 export class Zombies {
   constructor(game) {
@@ -81,6 +133,7 @@ export class Zombies {
     this.lights = []; // this tick's burning point lights, flat [x, y, z, radius, ...]
     this.lightTick = -1;
     this.packSeq = 0;
+    this.packGo = new Map(); // dog pack id -> game time the latest bite one of them went in for gets home (packFree)
     this.spawnPicks = 0; // horde spawn positions picked around the survivors (pickSpawnAround)...
     this.spawnsScreened = 0; // ...how many of them found nowhere wholly out of sight and took a spot with only its middle hidden...
     this.spawnsInView = 0; // ...and how many found nothing but spots in plain view
@@ -129,7 +182,7 @@ export class Zombies {
     const g = this.g;
     const def = ZOMBIE_DEFS[type];
     const down = opts.y !== undefined;
-    const hp = def.hp * (opts.hpMul || 1);
+    const hp = def.hp * (opts.hpMul || 1) * g.diff.zombieHp;
     return {
       kind: ENT.ZOMBIE,
       ztype: type,
@@ -176,7 +229,7 @@ export class Zombies {
       pendingHit: 0,
       pendingKind: 0,
       pendingTarget: 0,
-      state: 0, // 0 move, 1 windup, 2 air, 3 pin, 4 rope-flying, 5 pulling, 6 charge, 7 retreat
+      state: 0, // 0 move, 1 windup, 2 air, 3 pin, 4 rope-flying, 5 pulling, 6 charge, 7 retreat, 8 dog backing off to ram, 9 dog ram
       stateT: 0,
       stateAct: 0,
       chargeX: 0,
@@ -211,6 +264,14 @@ export class Zombies {
       flank: def.pack ? (g.rng() - 0.5) * 1.5 : 0, // dogs: approach angle offset (rad) so a pack fans out
       howlT: 0,
       bit: false, // dogs: this lunge already bit someone
+      runD: 0, // dogs: how far it breaks off after a bite (state 7), or backs off to ram (state 8)
+      runSide: 1, // dogs: which way round its prey it circles
+      spreadFor: 0, // fanning out of a crowd (spreadOut): the survivor it picked a line of its own to come in on for
+      spreadB: 0, // ...that line's bearing round them (rad, as atan2(x, z))
+      ramId: 0, // dogs: the structure it is backing off from to ram (state 8, then the windup)
+      ramX: 0, // ...the way out from that piece on the dog's side
+      ramZ: 0,
+      ramCd: 0,
       herd: 0, // wandering herd it walks with (herd.js)
       herdX: 0, // its place in the crowd, relative to the herd's waypoint
       herdZ: 0,
@@ -252,7 +313,7 @@ export class Zombies {
     const g = this.g;
     const car = g.world.car;
     const k = Math.min(1, (Math.hypot(x - car.x, z - car.z) - DAY_SPECIAL_NEAR) / (DAY_SPECIAL_FAR - DAY_SPECIAL_NEAR));
-    if (k <= 0 || g.rng() >= DAY_SPECIAL_MAX * k) return -1;
+    if (k <= 0 || g.rng() >= DAY_SPECIAL_MAX * k * g.diff.specials) return -1;
     const r = g.rng() * (k >= DAY_ROPER ? 4 : k >= DAY_LEAPER ? 3 : 2);
     return r < 1 ? ZTYPE.SPITTER : r < 2 ? ZTYPE.BOOMER : r < 3 ? ZTYPE.LEAPER : ZTYPE.ROPER;
   }
@@ -260,10 +321,12 @@ export class Zombies {
   spawnInitial() {
     const g = this.g;
     const w = g.world;
+    const pop = g.diff.zombies;
     // zone guards (bigger places, bigger crowds)
     for (const zn of w.zones) {
       if (zn.id === 0) continue;
-      const n = Math.round(zn.flat / 12) + Math.floor(g.rng() * 3) + (zn.id === 6 ? 3 : 0);
+      const n0 = Math.round(zn.flat / 12) + Math.floor(g.rng() * 3) + (zn.id === 6 ? 3 : 0);
+      const n = Math.max(n0 > 0 ? 1 : 0, Math.round(n0 * pop));
       for (let i = 0; i < n; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = 4 + g.rng() * (zn.flat * 0.8);
@@ -275,19 +338,20 @@ export class Zombies {
     }
     // the car supplies are guarded
     for (const sp of g.supplySpots || []) {
-      for (let i = 0; i < 3; i++) {
+      const guards = Math.max(1, Math.round(3 * pop));
+      for (let i = 0; i < guards; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = 3 + g.rng() * 6;
         const x = sp.x + Math.sin(a) * r;
         const z = sp.z + Math.cos(a) * r;
-        const t = i === 2 ? this.daySpecial(x, z) : -1;
-        this.spawn(t >= 0 ? t : i === 2 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1.15 });
+        const t = i === guards - 1 ? this.daySpecial(x, z) : -1;
+        this.spawn(t >= 0 ? t : i === guards - 1 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1.15 });
       }
     }
     // roaming dead in the woods
-    for (let i = 0; i < 22; i++) this.spawnRoamer([]);
+    for (let i = 0; i < Math.max(1, Math.round(22 * pop)); i++) this.spawnRoamer([]);
     // zombie dog packs in the thick woods
-    for (let i = 0; i < 3; i++) this.spawnForestPack([]);
+    for (let i = 0; i < Math.max(1, Math.round(3 * pop)); i++) this.spawnForestPack([]);
     // a herd wandering the roads
     this.herds.reset();
     this.herds.spawn([]);
@@ -715,9 +779,10 @@ export class Zombies {
           if (z.pack) dogs++;
           else if (!z.herd) alive++;
         }
-        const target = Math.min(62, 22 + g.day * 4 + humans.length * 2);
+        const pop = g.diff.zombies;
+        const target = Math.min(Math.max(8, Math.round(62 * pop)), Math.round((22 + g.day * 4 + humans.length * 2) * pop));
         if (alive < target) this.spawnRoamer(humans);
-        if (dogs < Math.min(18, 4 + g.day * 2)) this.spawnForestPack(humans);
+        if (dogs < Math.min(Math.max(2, Math.round(18 * pop)), Math.round((4 + g.day * 2) * pop))) this.spawnForestPack(humans);
       }
     }
 
@@ -767,6 +832,7 @@ export class Zombies {
     z.lureT -= dt;
     z.losT -= dt;
     z.howlT -= dt;
+    z.ramCd -= dt;
     if (z.animT > 0) z.animT -= dt;
     if (z.stumbleT > 0) z.stumbleT -= dt;
     z.trapSlow = Math.min(1, z.trapSlow + dt * 2);
@@ -858,13 +924,29 @@ export class Zombies {
     // ------------------------------------------------ desired direction
     let dx = 0;
     let dz = 0;
-    let speed = z.enraged ? def.speed * def.enrageSpeed : def.speed; // (The Brute, badly hurt)
+    let speed = (z.enraged ? def.speed * def.enrageSpeed : def.speed) * g.diff.speed; // (The Brute, badly hurt)
     let chasing = false;
     if (z.state === 7) {
       // dog hit-and-run: peel off to one side after a lunge, then come back in
       z.stateT -= dt;
       if (z.stateT <= 0 || !target) z.state = 0;
-      if (target) {
+      if (target && def.hitRun) {
+        // out to runD at an angle, then round its prey there, easing in or out to hold that far off
+        const l = dist || 1;
+        const ax = (z.x - tx) / l;
+        const az = (z.z - tz) / l;
+        const s = z.runSide;
+        if (dist < z.runD) {
+          dx = ax * 0.8 - az * s * 0.6;
+          dz = az * 0.8 + ax * s * 0.6;
+        } else {
+          const k = Math.max(-0.6, Math.min(0.6, (z.runD - dist) * 0.3));
+          dx = -az * s + ax * k;
+          dz = ax * s + az * k;
+          speed *= DOG_CIRCLE;
+        }
+        chasing = true;
+      } else if (target) {
         const l = dist || 1;
         const side = z.flank >= 0 ? 1 : -1;
         dx = (-(tz - z.z) * side - (tx - z.x) * 0.5) / l;
@@ -911,6 +993,11 @@ export class Zombies {
       } else {
         dx = tx - z.x;
         dz = tz - z.z;
+      }
+      // a crowd fans out and comes in at angles (dogs flank on their own, a crawler drags itself straight on)
+      if (!z.pack && z.legs !== 3 && !zu && !target.under && this.spreadOut(z, tx, tz, dist, dx, dz)) {
+        dx = _spr.x;
+        dz = _spr.z;
       }
       // spitters keep their distance
       if (z.ztype === ZTYPE.SPITTER && z.los && dist < 11 && z.legs !== 3) {
@@ -986,7 +1073,7 @@ export class Zombies {
     }
     if (!chasing && z.ztype === ZTYPE.RUNNER && !z.herd) speed = 1.2;
     // legs (Combat.hitLeg): on one it hobbles, on none it drags itself along by its arms, and a fresh hit trips it
-    if (z.legs === 3) speed = crawlSpeed(def) * (chasing ? 1 : CRAWL_SLOW);
+    if (z.legs === 3) speed = crawlSpeed(def) * g.diff.speed * (chasing ? 1 : CRAWL_SLOW);
     else if (z.legs) speed *= HOBBLE_SPEED;
     if (z.stumbleT > 0) speed *= STUMBLE_SPEED;
     speed *= z.trapSlow;
@@ -998,7 +1085,8 @@ export class Zombies {
       attacking = true;
       dx = tx - z.x;
       dz = tz - z.z;
-      if (z.attackCd <= 0 && z.pendingHit <= 0) {
+      if (z.attackCd <= 0 && z.pendingHit <= 0 && this.packFree(z, 0.32)) {
+        this.packMark(z, 0.32);
         z.attackCd = def.rate;
         z.pendingHit = 0.32;
         z.pendingKind = 1;
@@ -1061,7 +1149,8 @@ export class Zombies {
     // attack blocking structure
     if (!attacking && z.blockStruct && moveSpeed > 0 && def.structDmg > 0) {
       const s = g.ents[z.blockStruct];
-      if (s && s.kind === ENT.STRUCTURE && z.attackCd <= 0 && z.pendingHit <= 0) {
+      if (def.ramDmg && target && z.ramCd <= 0 && s && s.kind === ENT.STRUCTURE) this.startRam(z, s);
+      else if (s && s.kind === ENT.STRUCTURE && z.attackCd <= 0 && z.pendingHit <= 0) {
         z.attackCd = def.rate;
         z.pendingHit = 0.35;
         z.pendingKind = 2;
@@ -1087,6 +1176,11 @@ export class Zombies {
       z.wedgeZ = z.z;
       z.wedgeT = 0;
     } else z.wedgeT += dt;
+    // a dog getting nowhere near its prey, shut in (or out) by what was built: it rams the nearest piece
+    if (def.ramDmg && target && z.ramCd <= 0 && z.wedgeT > DOG_PENNED && (z.state === 0 || z.state === 7)) {
+      const s = this.nearStruct(z, DOG_PEN_R);
+      if (s) this.startRam(z, s);
+    }
     z.lastX = z.x;
     z.lastZ = z.z;
 
@@ -1102,6 +1196,73 @@ export class Zombies {
       const walk = sp > (was === ZANIM.WALK || was === ZANIM.RUN ? 0.12 : 0.3);
       z.anim = run ? ZANIM.RUN : walk ? ZANIM.WALK : !chasing && z.idleEat ? ZANIM.EAT : ZANIM.IDLE;
     }
+  }
+
+  // z, after a survivor at (tx, tz) dist m off and on its way in along (dx, dz): out of the crowd in its lane and in
+  // on a line of its own (SPREAD_*). Writes _spr; false when it goes on as it was.
+  spreadOut(z, tx, tz, dist, dx, dz) {
+    const g = this.g;
+    const l = Math.hypot(dx, dz);
+    if (l < 1e-4) return false;
+    const fx = dx / l;
+    const fz = dz / l;
+    if (z.spreadFor && (z.spreadFor !== z.target || dist < SPREAD_NEAR || dist > SPREAD_DROP)) z.spreadFor = 0;
+    // the others in its lane ahead (a look every third tick): whether there are any, and to which side of the line to
+    // its prey. The lane runs the way it is moving: a field's steps aim at the middles of cells, so they swing about
+    if (!z.spreadFor && dist > SPREAD_NEAR * 2 && dist < SPREAD_START && (g.tick + z.id) % 3 === 0) {
+      const v = Math.hypot(z.vx, z.vz);
+      const lx = v > 0.3 ? z.vx / v : fx;
+      const lz = v > 0.3 ? z.vz / v : fz;
+      const ux = (tx - z.x) / (dist || 1);
+      const uz = (tz - z.z) / (dist || 1);
+      let n = 0;
+      let lat = 0;
+      this.forNear(z.x, z.z, SPREAD_AHEAD, (o) => {
+        if (o === z || o.dead || o.def.flying) return;
+        const rx = o.x - z.x;
+        const rz = o.z - z.z;
+        const a = rx * lx + rz * lz;
+        if (a <= 0.2 || a > SPREAD_AHEAD) return;
+        if (Math.abs(rz * lx - rx * lz) > SPREAD_LANE + o.def.radius) return;
+        const k = 1 - (a / SPREAD_AHEAD) * 0.5;
+        n += k;
+        lat += (rz * ux - rx * uz) * k;
+      });
+      if (n > 0) {
+        // (in single file the ones ahead are all but dead ahead: either side will do, and a column splits both ways)
+        const side = lat > SPREAD_SIDE * n ? -1 : lat < -SPREAD_SIDE * n ? 1 : g.rng() < 0.5 ? 1 : -1;
+        z.spreadFor = z.target;
+        z.spreadB = Math.atan2(z.x - tx, z.z - tz) + side * (SPREAD_MIN + g.rng() * (SPREAD_MAX - SPREAD_MIN));
+      }
+    }
+    if (!z.spreadFor) return false;
+    // (a field leading it round to a way in is followed as it is)
+    if (fx * (tx - z.x) + fz * (tz - z.z) < SPREAD_OPEN * (dist || 1)) return false;
+    const d0 = g.nav.fieldDist(z.target, z.x, z.z);
+    if (d0 === Infinity) return false;
+    const r = Math.min(SPREAD_R, dist * SPREAD_K);
+    let ax = tx + Math.sin(z.spreadB) * r - z.x;
+    let az = tz + Math.cos(z.spreadB) * r - z.z;
+    const al = Math.hypot(ax, az) || 1;
+    ax /= al;
+    az /= al;
+    // as far round as is open ground that still gets it nearer by the way round (a step off the side of a pier or a
+    // bridge, or past a doorway, does not): straight at that point, halfway there from its way in, or its way in
+    for (let i = 0; i < 2; i++) {
+      const px = z.x + ax * SPREAD_PROBE;
+      const pz = z.z + az * SPREAD_PROBE;
+      if (!g.nav.isBlocked(px, pz) && g.nav.fieldDist(z.target, px, pz) <= d0 - SPREAD_GAIN && g.nav.segClear(z.x, z.z, px, pz)) {
+        _spr.x = ax;
+        _spr.z = az;
+        return true;
+      }
+      ax += fx;
+      az += fz;
+      const hl = Math.hypot(ax, az) || 1;
+      ax /= hl;
+      az /= hl;
+    }
+    return false;
   }
 
   chooseTarget(z, humans) {
@@ -1433,6 +1594,8 @@ export class Zombies {
     const def = z.def;
     const dmgMul = 1 + 0.07 * (g.day - 1);
     if (z.pendingKind === 1) {
+      // (a dog's snap, got home or not, is all it stays for)
+      if (def.hitRun && z.state === 0) this.breakOff(z);
       const p = g.players.get(z.pendingTarget);
       if (!p || !p.alive || p.zombie) return;
       const s = p.state;
@@ -1441,15 +1604,152 @@ export class Zombies {
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
-      if (def.lungeRange && z.state === 0 && g.rng() < 0.3) {
-        // dog hit-and-run: snap, peel away, come back in with a lunge
-        z.state = 7;
-        z.stateT = 0.6 + g.rng() * 0.5;
-      }
     } else if (z.pendingKind === 2) {
       const s = g.ents[z.pendingTarget];
-      if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul);
+      if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul * g.diff.hurt);
     }
+  }
+
+  // ---------------------------------------------------------------- dogs (DOG_*)
+  // a dog that has bitten (or snapped and missed) breaks off, circles, and comes back in later
+  breakOff(z) {
+    const g = this.g;
+    z.state = 7;
+    z.stateT = DOG_CD_MIN + g.rng() * (DOG_CD_MAX - DOG_CD_MIN);
+    z.runD = DOG_RUN_MIN + g.rng() * (DOG_RUN_MAX - DOG_RUN_MIN);
+    z.runSide = g.rng() < 0.5 ? 1 : -1;
+    z.pendingHit = 0;
+  }
+
+  // may this dog go in for a bite that gets home in lead s? Not within DOG_PACK_GAP s of a packmate's
+  packFree(z, lead) {
+    if (!z.def.hitRun) return true;
+    const t = this.packGo.get(z.pack);
+    return t === undefined || Math.abs(this.g.time + lead - t) >= DOG_PACK_GAP;
+  }
+  packMark(z, lead) {
+    if (!z.def.hitRun) return;
+    const now = this.g.time;
+    if (this.packGo.size > 64) for (const [k, t] of this.packGo) if (now - t > DOG_PACK_GAP) this.packGo.delete(k);
+    this.packGo.set(z.pack, Math.max(this.packGo.get(z.pack) ?? 0, now + lead));
+  }
+
+  // a lunge from where the dog stands to (ax, az) crosses nothing the survivors built, across the width of its body
+  lungeClear(z, ax, az) {
+    const dx = ax - z.x;
+    const dz = az - z.z;
+    const l = Math.hypot(dx, dz);
+    if (l < 0.05) return true;
+    const ux = dx / l;
+    const uz = dz / l;
+    const r = z.def.radius;
+    for (const c of this.g.world.structGrid.query((z.x + ax) / 2, (z.z + az) / 2, l / 2 + r + 0.2, _lq)) {
+      if (c.flags & COL.NOBLOCK) continue;
+      for (let k = -1; k <= 1; k++) if (rayCollider(c, z.x - uz * r * k, z.y + 0.3, z.z + ux * r * k, ux, 0, uz, l + r) >= 0) return false;
+    }
+    return true;
+  }
+
+  // the nearest piece the survivors built that blocks the dead, within r m of z (its entity), or null
+  nearStruct(z, r) {
+    const g = this.g;
+    let best = null;
+    let bd = Infinity;
+    for (const c of g.world.structGrid.query(z.x, z.z, r, _lq)) {
+      if (c.flags & COL.NOBLOCK) continue;
+      const s = g.ents[c.id];
+      if (!s || s.kind !== ENT.STRUCTURE || s.removed) continue;
+      const d = Math.hypot(c.x - z.x, c.z - z.z);
+      if (d < bd) {
+        bd = d;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  // a dog sets out to ram structure s: it backs off square from it, on its own side (special state 8)
+  startRam(z, s) {
+    const g = this.g;
+    const c = s.collider;
+    if (!c) return;
+    // (a box's thin side faces (sin yaw, cos yaw), shared/collision.js makeBox)
+    const side = (z.x - c.x) * c.s + (z.z - c.z) * c.c >= 0 ? 1 : -1;
+    z.ramId = s.id;
+    z.ramX = c.s * side;
+    z.ramZ = c.c * side;
+    z.runD = DOG_BACK_MIN + g.rng() * (DOG_BACK_MAX - DOG_BACK_MIN);
+    z.state = 8;
+    z.stateT = z.runD / z.def.speed + 0.5;
+    z.stuckT = 0;
+    z.detourT = 0;
+    z.pendingHit = 0;
+  }
+
+  // a dog's ram in flight (special state 9): straight on until it hits something, bites someone or runs out
+  ram(z, dt) {
+    const g = this.g;
+    const def = z.def;
+    z.stateT -= dt;
+    z.anim = ZANIM.RUN;
+    z.yaw = Math.atan2(-z.chargeX, -z.chargeZ);
+    z.vx = z.chargeX * DOG_RAM_SPEED;
+    z.vz = z.chargeZ * DOG_RAM_SPEED;
+    // in steps no longer than a wall is thick, so it never comes out on the far side of one
+    const step = DOG_RAM_SPEED * dt;
+    const n = Math.ceil(step / 0.25);
+    let hit = null;
+    let wet = false;
+    for (let i = 0; i < n && !hit; i++) {
+      _pos.x = z.x + (z.chargeX * step) / n;
+      _pos.y = z.y;
+      _pos.z = z.z + (z.chargeZ * step) / n;
+      if (deepWaterAt(g.world, _pos.x, _pos.z, z.y, 0.2, false)) {
+        wet = true;
+        break;
+      }
+      hit = resolveBody(g.world, _pos, def.moveR ?? Math.min(def.radius, 0.65), def.moveH ?? def.height, false);
+      z.x = _pos.x;
+      z.z = _pos.z;
+      z.y = groundAt(g.world, z.x, z.z, z.y, 0.2, false);
+    }
+    const dmgMul = 1 + 0.07 * (g.day - 1);
+    // a survivor in the way takes the bite, and the dog breaks off as from any other
+    for (const h of this.humansCache) {
+      const s = h.state;
+      if (Math.hypot(s.x - z.x, s.z - z.z) < 1.2 && Math.abs(s.y - z.y) < 1.3 && this.canReach(z, h)) {
+        g.damagePlayer(h, def.dmg * 1.5 * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
+        g.impact(IMPACT.BLOOD, s.x, s.y + 0.7, s.z);
+        g.sound(SOUND.DOG_SNARL, z.x, z.y + 0.6, z.z, 30);
+        z.vx = z.vz = 0;
+        z.ramCd = DOG_RAM_CD;
+        this.breakOff(z);
+        return true;
+      }
+    }
+    let stun = 0;
+    if (hit && hit.flags & COL.STRUCT) {
+      const s = g.ents[hit.id];
+      const metal = !!(s && STRUCT_DEFS[s.stype].metal);
+      const fx = z.x + z.chargeX * def.radius;
+      const fz = z.z + z.chargeZ * def.radius;
+      for (let k = 0; k < 3; k++) g.impact(metal ? IMPACT.METAL : IMPACT.WOOD, fx, z.y + 0.3 + k * 0.25, fz, -z.chargeX, 0.4, -z.chargeZ);
+      g.impact(IMPACT.DIRT, fx, z.y + 0.1, fz);
+      g.sound(SOUND.SLAM, fx, z.y + 0.5, fz, 50);
+      if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.ramDmg * dmgMul * g.diff.hurt * (metal ? DOG_RAM_METAL : 1));
+      if (metal && g.combat.damageZombie(z, def.ramRecoil, null, {})) return true;
+      stun = DOG_RAM_STUN;
+    } else if (hit) stun = DOG_RAM_STUN_MISS;
+    if (!hit && !wet && z.stateT > 0) return true;
+    z.state = 0;
+    z.vx = z.vz = 0;
+    z.ramCd = DOG_RAM_CD;
+    if (stun) {
+      z.dazedT = stun;
+      z.attackCd = Math.max(z.attackCd, stun);
+      z.pendingHit = 0;
+    }
+    return true;
   }
 
   knock(p, fromX, fromZ, power, up, stun) {
@@ -1534,7 +1834,8 @@ export class Zombies {
     if (z.state === 1) {
       z.stateT -= dt;
       z.anim = ZANIM.SPECIAL;
-      face();
+      if (z.stateAct === 12) z.yaw = turn(z.yaw, Math.atan2(z.ramX, z.ramZ), dt * 10); // (a dog squaring up to the piece it rams)
+      else face();
       hold();
       if (z.stateT <= 0) {
         z.state = 0;
@@ -1591,10 +1892,7 @@ export class Zombies {
         if (def.lungeRange) {
           z.animT = 0.15;
           z.attackCd = Math.max(z.attackCd, 0.35);
-          if (z.bit) {
-            z.state = 7;
-            z.stateT = 0.5 + g.rng() * 0.6;
-          }
+          if (z.bit && def.hitRun) this.breakOff(z);
         }
       }
       return true;
@@ -1683,7 +1981,7 @@ export class Zombies {
       let end = z.stateT <= 0;
       if (hit && hit.flags & COL.STRUCT) {
         const s = g.ents[hit.id];
-        if (s) g.damageStructure(s, 700);
+        if (s) g.damageStructure(s, 700 * g.diff.hurt);
         g.sound(SOUND.SLAM, z.x, z.y, z.z, 60);
         // what the blow breaks (a barricade, door boards) it ploughs straight through; anything that holds stops it
         if (s && !s.removed) end = true;
@@ -1708,6 +2006,34 @@ export class Zombies {
       }
       return true;
     }
+    if (z.state === 8) {
+      // a dog backing off from the piece it is about to ram, as far as it gets: then it squares up and snarls
+      const s = g.ents[z.ramId];
+      if (!s || s.kind !== ENT.STRUCTURE || s.removed) {
+        z.state = 0;
+        return false;
+      }
+      z.stateT -= dt;
+      const ox = z.x;
+      const oz = z.z;
+      this.integrate(z, dt, z.ramX * def.speed, z.ramZ * def.speed, this.humansCache);
+      if (Math.hypot(z.x - ox, z.z - oz) < def.speed * dt * 0.25) z.stuckT += dt;
+      else z.stuckT = 0;
+      z.yaw = turn(z.yaw, Math.atan2(-z.vx, -z.vz), dt * 8);
+      z.anim = ZANIM.RUN;
+      const out = (z.x - s.collider.x) * z.ramX + (z.z - s.collider.z) * z.ramZ;
+      if (out >= z.runD || z.stateT <= 0 || z.stuckT > 0.3) {
+        z.stuckT = 0;
+        z.vx = z.vz = 0;
+        z.state = 1;
+        z.stateT = def.ramWindup ?? DOG_RAM_WINDUP;
+        z.stateAct = 12;
+        z.anim = ZANIM.SPECIAL;
+        g.sound(SOUND.DOG_SNARL, z.x, z.y + def.headY, z.z, 45);
+      }
+      return true;
+    }
+    if (z.state === 9) return this.ram(z, dt);
     if (z.state === 7) return false; // dog hit-and-run: normal movement
 
     // ---- trigger specials (state 0). A crawler has none left: it cannot rear up to spit or to throw its rope
@@ -1765,7 +2091,8 @@ export class Zombies {
         }
       // falls through
       case ZTYPE.DOG:
-        if (z.specialCd <= 0 && z.los && dist < def.lungeRange && dist > 2.4 && z.vy > -1 && Math.abs(ty - z.y) < 2.5) {
+        if (z.specialCd <= 0 && z.los && dist < def.lungeRange && dist > 2.4 && z.vy > -1 && Math.abs(ty - z.y) < 2.5 && this.packFree(z, 0.3 + lungeT(dist)) && this.lungeClear(z, tx, tz)) {
+          this.packMark(z, 0.3 + lungeT(dist));
           windup(0.3, 8, SOUND.DOG_BARK);
           return true;
         }
@@ -1958,7 +2285,7 @@ export class Zombies {
         }
         for (const s of [...g.structures]) {
           const d = Math.hypot(s.x - z.x, s.z - z.z);
-          if (d < 6.5) g.damageStructure(s, 450 * (1 - d / 8));
+          if (d < 6.5) g.damageStructure(s, 450 * (1 - d / 8) * g.diff.hurt);
         }
         z.specialCd = 5 + g.rng() * 2;
         break;
@@ -1992,13 +2319,18 @@ export class Zombies {
         // dog lunge: a low, fast leap that lands at the survivor's feet
         if (!target) return;
         const s = target.state;
-        const T = Math.max(0.28, Math.min(0.5, dist / 11));
+        const T = lungeT(dist);
         let ax = s.x + s.vx * T * 0.5 - z.x;
         let az = s.z + s.vz * T * 0.5 - z.z;
         const l = Math.hypot(ax, az) || 1;
         const k = Math.max(0, l - 0.6) / l;
         ax *= k;
         az *= k;
+        // (its prey stepped behind a barricade during the windup: no lunge)
+        if (!this.lungeClear(z, z.x + ax, z.z + az)) {
+          z.specialCd = 0.5;
+          break;
+        }
         z.vx = ax / T;
         z.vz = az / T;
         z.vy = (s.y - z.y + 0.5 * GRAV * T * T) / T;
@@ -2013,6 +2345,22 @@ export class Zombies {
         // The Brute's temper
         z.enraged = true;
         break;
+      case 12: {
+        // a dog's ram: at the nearest stretch of the piece, square on (special state 9, ram)
+        const s = g.ents[z.ramId];
+        if (!s || s.kind !== ENT.STRUCTURE || s.removed) break;
+        const c = s.collider;
+        const lim = Math.max(0, c.hx - 0.3);
+        const along = Math.max(-lim, Math.min(lim, (z.x - c.x) * c.c - (z.z - c.z) * c.s));
+        const ax = c.x + c.c * along - z.x;
+        const az = c.z - c.s * along - z.z;
+        const l = Math.hypot(ax, az) || 1;
+        z.chargeX = ax / l;
+        z.chargeZ = az / l;
+        z.state = 9;
+        z.stateT = DOG_RAM_T;
+        break;
+      }
       case 10: {
         // The Alpha's howl: dogs come running out of the dark into its pack, from just out of the survivors' sight
         const n = z.howlN;
@@ -2046,7 +2394,7 @@ export class Zombies {
         // boomer detonation. Bursting against a structure, that piece takes the brunt: the blast alone falls off so
         // gently that a number big enough to open a wall would level its neighbours too
         const s = z.breachId ? g.ents[z.breachId] : null;
-        if (s && s.kind === ENT.STRUCTURE && Math.hypot(s.x - z.x, s.z - z.z) < def.blastRadius) g.damageStructure(s, def.breachDmg);
+        if (s && s.kind === ENT.STRUCTURE && Math.hypot(s.x - z.x, s.z - z.z) < def.blastRadius) g.damageStructure(s, def.breachDmg * g.diff.hurt);
         g.combat.killZombie(z, null, { explode: true });
         break;
       }
@@ -2092,9 +2440,10 @@ export class Zombies {
           z.detourT = Math.min(z.detourT, 0);
           z.wanderT = 0;
           const l = d3 || 1;
-          z.vx = ((tx - z.x) / l) * def.speed;
-          z.vy = ((ty + 1.3 - z.y) / l) * def.speed;
-          z.vz = ((tz - z.z) / l) * def.speed;
+          const dive = def.speed * g.diff.speed;
+          z.vx = ((tx - z.x) / l) * dive;
+          z.vy = ((ty + 1.3 - z.y) / l) * dive;
+          z.vz = ((tz - z.z) / l) * dive;
         }
         if (z.detourT > 0) {
           gx = tx + Math.sin(time * 1.25) * 6;
@@ -2142,7 +2491,7 @@ export class Zombies {
     let dy = gy - z.y;
     let dz = gz - z.z;
     const l = Math.hypot(dx, dy, dz) || 1;
-    const sp = def.speed * (z.state === 7 ? 1.2 : 1);
+    const sp = def.speed * g.diff.speed * (z.state === 7 ? 1.2 : 1);
     const k = Math.min(1, dt * 3);
     z.vx += ((dx / l) * sp - z.vx) * k;
     z.vy += ((dy / l) * sp - z.vy) * k;

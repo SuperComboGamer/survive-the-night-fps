@@ -40,7 +40,7 @@ function client(game, name, pid = '', character = CHARACTER_NONE) {
       const t = r.u8();
       if (t === S2C.WELCOME) {
         c.id = r.u16();
-        c.welcome = { seed: r.u32(), tick: r.u32(), rate: r.u8(), max: r.u8(), act: r.u8() };
+        c.welcome = { seed: r.u32(), tick: r.u32(), rate: r.u8(), max: r.u8(), flags: r.u8(), act: r.u8() };
       } else if (t === S2C.WORLD_RESET) c.resets.push({ seed: r.u32(), act: r.u8() });
       else if (t === S2C.PLAYERS) {
         // the player list: who is who, and after them all the character of each (what every client draws them as)

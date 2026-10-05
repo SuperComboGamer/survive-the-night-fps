@@ -391,7 +391,7 @@ export class GunClient {
     // the gunner's view of it, and the carrier's
     const carrying = this.carrying && !!g.self.alive;
     const v = this.view;
-    v.visible = (this.manning || carrying) && !g.ui.inventoryOpen && !g.ui.mapOpen && !g.ui.boardOpen && !g.debugCam;
+    v.visible = (this.manning || carrying) && !g.ui.inventoryOpen && !g.ui.mapOpen && !g.ui.boardOpen && !g.ui.bestiaryOpen && !g.debugCam;
     if (!v.visible) return;
     const lag = Math.min(1, dt * 10);
     this.swayX += (lookDX - this.swayX) * lag;

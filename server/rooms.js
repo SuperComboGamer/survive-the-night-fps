@@ -12,6 +12,7 @@ import { Worker } from 'node:worker_threads';
 import { randomInt } from 'node:crypto';
 import { availableParallelism, totalmem } from 'node:os';
 import { C2S, S2C, ROOMF, REJECT_REASON, Writer, Reader, writeBoard } from '../shared/protocol.js';
+import { difficultyOf } from '../shared/difficulty.js';
 import { PHASE, MAX_PLAYERS } from '../shared/constants.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { HANDOFF_CLOSE } from './handoff.js';
@@ -67,7 +68,7 @@ const forgetSpent = (map) => {
 export class Room {
   // restore: the game the last server saved under this code (handoff.js), with first / created / continues from what
   // that server knew of the room (Room.meta)
-  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, restore = null, first = '', created = Date.now(), continues = null }) {
+  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, restore = null, first = '', created = Date.now(), continues = null }) {
     this.lobby = lobby;
     this.code = code;
     this.name = name; // as its maker called it ('' for one a quick join made)
@@ -75,6 +76,7 @@ export class Room {
     this.first = first; // the name the first socket in it joined under (a quick join's game is theirs until it has a lead)
     this.inviteOnly = inviteOnly;
     this.quick = quick;
+    this.difficulty = difficultyOf(difficulty).id; // Ember, Nightfall or Blackout (a quick join, and a save from before this, is Nightfall)
     this.maxPlayers = maxPlayers;
     this.created = created;
     this.emptySince = Date.now(); // (a restored game nobody comes back to closes as any empty one does)
@@ -99,9 +101,9 @@ export class Room {
     this.saved = null; // (handoff: waiting for the worker's save)
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
-      // (analytics: the game records its matches - only worth it with a database to write them to. achievements: an
-      // account's go to the database too, and a guest's to their browser either way)
-      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, analytics: !!lobby.matches, achievements: !!lobby.achievements }, congestion: this.congestion, restore },
+      // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
+      // bestiary: an account's go to the database too, and a guest's to their browser either way)
+      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, difficulty: this.difficulty, analytics: !!lobby.matches, achievements: !!lobby.achievements, bestiary: !!lobby.bestiary }, congestion: this.congestion, restore },
       resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
     });
     this.worker.on('message', (m) => this.fromWorker(m));
@@ -130,7 +132,7 @@ export class Room {
   // what the lobby shows of it (its code included: list() only hands out public games', find() only to whoever has it)
   info() {
     const s = this.st;
-    return { code: this.code, name: this.title, players: Math.max(s.players, 0), seats: this.open, max: this.maxPlayers, full: this.noRoom, phase: s.phase, day: s.day, seed: s.seed, inviteOnly: this.inviteOnly, ready: this.ready, ageS: Math.round((Date.now() - this.created) / 1000) };
+    return { code: this.code, name: this.title, players: Math.max(s.players, 0), seats: this.open, max: this.maxPlayers, full: this.noRoom, phase: s.phase, day: s.day, seed: s.seed, inviteOnly: this.inviteOnly, difficulty: this.difficulty, ready: this.ready, ageS: Math.round((Date.now() - this.created) / 1000) };
   }
 
   // ---------------------------------------------------------------- sockets
@@ -190,11 +192,12 @@ export class Room {
         this.names[slot] = name || 'Survivor';
       } catch {}
     }
-    const w = new Writer(96);
+    const w = new Writer(128);
     w.u8(S2C.ROOM);
     w.str(this.code);
     w.str(this.title);
     w.u8(this.inviteOnly ? ROOMF.INVITE_ONLY : 0);
+    w.str(this.difficulty); // after the flags, so a client from before difficulties never reads it
     this.socks[slot]?.send(w.bytes(), true, false);
   }
   flushInbox() {
@@ -265,6 +268,8 @@ export class Room {
         return this.lobby.matches?.push(m.rec, this);
       case 'ach':
         return this.lobby.achievements?.add(m.user, m.add, m.feats, m.strangers, this);
+      case 'seen':
+        return this.lobby.bestiary?.add(m.user, m.mask);
       case 'finished':
         this.finished?.();
         return;
@@ -296,6 +301,13 @@ export class Room {
         );
       }
       if (m.user) this.lobby.achievements?.played(m.user, this); // (another day played on, if it is one)
+      // the kinds of the dead the account has seen: read once, here, and held by the game from then on
+      if (m.user && this.lobby.bestiary) {
+        this.lobby.bestiary.load(m.user).then(
+          (mask) => !this.closed && this.recs.get(m.tok) === rec && this.worker.postMessage({ t: 'bestiary', tok: m.tok, mask }),
+          (err) => this.lobby.log(`bestiary of a player could not be read (${err.message})`)
+        );
+      }
     } else if (m.op === 'leave') {
       stats.leave(this.recs.get(m.tok));
       this.recs.delete(m.tok);
@@ -348,7 +360,7 @@ export class Room {
   // What the next server needs of this room besides the game (Lobby.restore). match: the one being played as it was
   // saved, which the next server's carries on.
   meta(match) {
-    return { name: this.name, host: this.host, first: this.first, inviteOnly: this.inviteOnly, quick: this.quick, maxPlayers: this.maxPlayers, created: this.created, match };
+    return { name: this.name, host: this.host, first: this.first, inviteOnly: this.inviteOnly, quick: this.quick, maxPlayers: this.maxPlayers, difficulty: this.difficulty, created: this.created, match };
   }
 
   // The server is going down and the next one takes this game over: the worker stops and saves it, the save goes into
@@ -413,14 +425,16 @@ export class Room {
 export class Lobby {
   // stats: the leaderboard (PlayerStats, or DbStats with a database). matches: where the matches played go
   // (MatchStore; none without a database). achievements: the accounts' (AchievementStore; none without a database).
+  // bestiary: the kinds of the dead each account has seen (BestiaryStore; none without a database).
   // gameOpts: what every Game is made with (the env's test switches)
   // limits: false lifts the per-address allowances (load tests make many games from one address). store: where games
   // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
   // be and still be restored (s)
-  constructor({ stats, matches = null, achievements = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, log = console.log }) {
+  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, log = console.log }) {
     this.stats = stats;
     this.matches = matches;
     this.achievements = achievements;
+    this.bestiary = bestiary;
     this.store = store;
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)
@@ -464,7 +478,7 @@ export class Lobby {
   }
 
   // A new game: { room } or { error, status } (HTTP status). ip: whoever asked, for the allowance (none: no limit)
-  create({ name = '', host = '', inviteOnly = false, maxPlayers = this.maxPlayers, quick = false } = {}, ip = '') {
+  create({ name = '', host = '', inviteOnly = false, maxPlayers = this.maxPlayers, difficulty, quick = false } = {}, ip = '') {
     if (this.rooms.size >= this.maxGames) return { error: 'Every game server is busy right now. Join a game that is already running, or try again in a minute.', status: 503 };
     if (ip && this.limits && !allow(this.creates, ip, CREATE_BURST, CREATE_EVERY)) return { error: 'You have made several games just now. Wait a minute before making another.', status: 429 };
     const seats = Math.max(1, Math.min(this.roomMaxPlayers, Math.floor(+maxPlayers) || this.maxPlayers));
@@ -474,10 +488,11 @@ export class Lobby {
       host: cleanTitle(host, 16),
       inviteOnly: !!inviteOnly,
       maxPlayers: seats,
+      difficulty,
       quick,
     });
     this.rooms.set(room.code, room);
-    this.log(`game ${room.code} made: ${room.inviteOnly ? 'invite only' : 'public'}, ${seats} seats${room.quick ? ' (quick join)' : ''} (${this.rooms.size}/${this.maxGames} games)`);
+    this.log(`game ${room.code} made: ${room.inviteOnly ? 'invite only' : 'public'}, ${seats} seats, ${room.difficulty}${room.quick ? ' (quick join)' : ''} (${this.rooms.size}/${this.maxGames} games)`);
     return { room };
   }
 
@@ -640,6 +655,7 @@ export class Lobby {
       host: cleanTitle(m.host, 16),
       inviteOnly: !!m.inviteOnly,
       maxPlayers: Math.max(1, Math.min(this.roomMaxPlayers, Math.floor(+m.maxPlayers) || this.maxPlayers)),
+      difficulty: m.difficulty, // absent on a save from before difficulties: the room treats that as Nightfall
       quick: !!m.quick,
       first: cleanTitle(m.first, 16),
       created: Number.isFinite(m.created) ? m.created : Date.now(),

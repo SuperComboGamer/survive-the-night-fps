@@ -54,13 +54,16 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
+import { trackedRecipe, trackedNeed } from './tracked.js';
+import { mayHold } from './itemguide.js';
 import { worldFor } from '../../shared/worlds.js';
 import { WORLD, CROSSING, TAKEOFF_TIME, PLANE_REACH, RUNWAY } from '../../shared/acts.js';
 import { SUPPLIES, SUPPLY_NEED, W, setAct } from './act.js'; // (this act's supplies, and the words for what they go into)
 import { usePos } from '../../shared/protocol.js';
 import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
 import { chosenCharacter } from '../ui/picker.js';
+import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
@@ -71,12 +74,14 @@ const _wcF = new THREE.Vector3(), _wcR = new THREE.Vector3(), _wcU = new THREE.V
 const _wcHit = { t: -1, col: null, terrain: false };
 const WC_RAYS = [[0, 0], [0.3, -0.25]]; // (right, up) of the view: straight on, and out past the right hand
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
+import { difficultyOf } from '../../shared/difficulty.js';
 import { deerHitbox } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { playerId } from '../net/identity.js';
 import { accountState } from '../net/account.js';
 import { achievementEvent, joinedGame } from '../net/achievements.js';
+import { bestiaryEvent, joinedBestiary } from '../net/bestiary.js';
 import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
 import { harvestPrompt, strippedKey, needLines } from './harvest.js';
@@ -85,6 +90,7 @@ import { GunClient } from './mountedgun.js';
 import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { smallestStack } from '../../shared/stacks.js';
+import { planCost } from '../../shared/autocraft.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
 import { Highlight } from './highlight.js';
@@ -124,6 +130,7 @@ import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
 import { KeyHints } from '../ui/keyhints.js';
+import { radialIndex } from '../ui/build.js';
 import { MenuTour } from './menutour.js';
 import { KeyGuard } from './keyguard.js';
 import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
@@ -172,6 +179,9 @@ const sameSpot = (a, b) => (a.zone >= 0 || b.zone >= 0 ? a.zone === b.zone : Mat
 // clicks pile up on top of that, the rest over the next ticks.
 const CRAFT_BURST = 20;
 const CRAFT_RATE = 40; // per second
+// the build ring's pointer (mouse px): how far out it goes, and how far it must be pushed to point at a structure
+const BUILD_MENU_REACH = 120;
+const BUILD_MENU_DEAD = 26;
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
 const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
 const BOARD_EVERY = 4000; // ms between two requests for the leaderboard while it is open
@@ -210,7 +220,8 @@ export class Game {
     this.frame = 0;
     this.time = 0;
     this.myId = 0;
-    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
+    this.admin = false; // the server lets us run the admin commands (WELCOMEF.ADMIN): the spawn menu [`] is ours
+    this.global = { phase: PHASE.WAITING, day: 0, timeLeft: 0, hordeLeft: -1, bossId: 0, supplies: [0, 0, 0, 0, 0], hints: [255, 255, 255, 255, 255, 255, 255], found: 0, unlocked: 0, schemHints: [255, 255, 255, 255, 255], wave: 0, waves: 3, escapeT: 0, flags: 0, finale: false, suppliesDone: false, escapeReady: false, humansAlive: 0, playersTotal: 0, restartT: 0, benches: [] };
     this.self = { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) };
     this.inventory = { slots: new Array(INVENTORY_MAX).fill(null), armor: null, backpack: 0 };
     this.craftQueue = []; // recipe ids of bulk crafts waiting to be sent (sendCrafts)
@@ -239,6 +250,8 @@ export class Game {
     this.fovCur = settings.fov || 75;
     this.aimT = 0; // 0 hip .. 1 aimed, eased with the zoom (look sensitivity)
     this.buildType = STRUCT.BARRICADE;
+    this.buildPicked = false; // a structure picked from the ring since the hammer came out: its ghost is up to place
+    this.buildMenu = null; // { hover }: the ring of structures is open (the mouse points in it: Input.cursor)
     this.buildRot = 0;
     this.ghosts = {};
     this.lastSlot = SLOT_PISTOL;
@@ -279,6 +292,9 @@ export class Game {
     ui.map.onWaypoint = (at) => this.setWaypoint(at);
     ui.map.onClose = () => this.toggleMap(false);
     ui.board.onClose = () => this.toggleBoard(false);
+    ui.bestiary.onClose = () => this.toggleBestiary(false);
+    ui.spawn.onClose = () => this.toggleSpawn(false);
+    ui.spawn.onSpawn = (cmd) => this.conn.chat(cmd);
     ui.roster.onClose = () => this.pinRoster(false);
     this.boardT = 0; // when the leaderboard is next asked for, while it is open (performance.now)
     this.discovered = new Set([ZONE.CAMP]);
@@ -773,6 +789,7 @@ export class Game {
     const info = await this.conn.connect(name, playerId(), code, chosenCharacter());
     this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
+    this.admin = info.admin;
     this.voice.setMyId(info.id);
     this.ensureViewModel();
     this.loadWorld(info.seed, info.act);
@@ -798,7 +815,9 @@ export class Game {
     this.stripped.clear(); // (the first snapshot says which are)
     this.regrowTrees(); // (and which trees are down: on a rejoin the valley is the one we left)
     if (!resume) this.waypoint = null;
+    if (this.admin && !resume) this.ui.addChat('', 'Admin: the key under Esc ( ` ~ ) opens the spawn menu.', { system: true });
     joinedGame(!!accountState().user); // (a guest's achievements count the days played on here; an account's, the server)
+    joinedBestiary(); // (whose bestiary this game keeps: its first EVT.BESTIARY says)
     return info;
   }
 
@@ -840,7 +859,9 @@ export class Game {
     // the splash is see-through and the next join starts from this UI: take down whatever the game had up
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
+    this.ui.setBestiaryOpen(false);
     this.ui.setBoard(null); // (what it showed was that server's, as of then)
+    this.ui.setSpawnOpen(false);
     this.ui.setRosterOpen(false);
     this.ui.setInventoryOpen(false);
     this.ui.showPause(false); // ("Leave game" is pressed on it)
@@ -970,12 +991,13 @@ export class Game {
 
   pushInventoryToUI(force = false) {
     const s = this.prediction.state;
-    const key = `${s.weapons.join(',')}|${s.ammo.join(',')}|${s.throwCount}`;
+    // (the magazines move with every shot: only the open screen shows them)
+    const key = `${s.weapons.join(',')}|${s.ammo.join(',')}|${this.ui.inventoryOpen ? s.mags.join(',') : ''}|${s.throwCount}`;
     if (!force && key === this.lastHudInvKey) return;
     this.lastHudInvKey = key;
     const throwCounts = {};
     for (const it of this.inventory.slots) if (it && THROW_ITEMS.includes(it.item)) throwCounts[it.item] = (throwCounts[it.item] || 0) + it.count;
-    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], throwCounts });
+    this.ui.setInventory({ slots: this.inventory.slots, armor: this.inventory.armor, backpack: this.inventory.backpack, ammo: [...s.ammo], weapons: [...s.weapons], mags: [...s.mags], throwCounts });
   }
 
   // what we carry, by item: the backpack, and the ammunition carried apart from it (the reserves we predict)
@@ -988,8 +1010,10 @@ export class Game {
 
   onChat(id, flags, text) {
     const radio = !!(flags & CHATF.RADIO);
-    if (flags & CHATF.SYSTEM) this.ui.addChat('', text, { system: true });
-    else {
+    if (flags & CHATF.SYSTEM) {
+      this.ui.addChat('', text, { system: true });
+      this.ui.spawn.serverSays(text);
+    } else {
       const p = this.players.get(id);
       const zombie = !!(flags & CHATF.ZOMBIE);
       this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined, radio, faint: !!(flags & CHATF.FAINT), unheard: !!(flags & CHATF.UNHEARD) });
@@ -1177,6 +1201,9 @@ export class Game {
       },
       achieve(flags, add, ids) {
         achievementEvent(flags, add, ids);
+      },
+      bestiary(flags, mask) {
+        bestiaryEvent(flags, mask);
       },
       ping(pid, kind, x, y, z) {
         g.pings = g.pings.filter((p) => p.pid !== pid);
@@ -1401,6 +1428,14 @@ export class Game {
         ui.notify("Empty the backpack's extra pockets first", 'warning', 2.5);
         a.playLocal('build_fail');
         break;
+      case NOTIFY.NEED_HAMMER:
+        ui.notify(`Equip the hammer to repair ${bindTag('slot5')}`, 'warning', 2);
+        a.playLocal('build_fail');
+        break;
+      case NOTIFY.UNDO_GONE:
+        ui.notify(arg === UNDO_NO.LATE ? 'Too late to take it back: it is still on the ground' : arg === UNDO_NO.FAR ? 'Too far from it to take it back: it is still on the ground' : 'Somebody already picked it up', 'warning', 2.5);
+        a.playLocal('build_fail');
+        break;
       case NOTIFY.CAMPFIRE_LIT:
         ui.notify('The fire roars back to life.', 'good', 2);
         break;
@@ -1566,7 +1601,7 @@ export class Game {
       const rz = e.rz - ev.z;
       const along = rx * dx + ry * dy + rz * dz;
       if (along < -1 || along > wallT + 2 || rx * rx + ry * ry + rz * rz - along * along > 16) continue;
-      const hb = deer ? deerHitbox(e.ryaw, e.q[4]) : zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
+      const hb = deer ? deerHitbox(e.ryaw, e.q[4]) : zdef ? zombieHitbox(zdef, e.ryaw, e.q[7], e.q[4] === ZANIM.AIRBORNE, difficultyOf(this.room?.difficulty).aim) : playerHitbox(true, !!(e.q[5] & PFLAG.CROUCH));
       _hbPos.x = e.rx;
       _hbPos.y = e.ry;
       _hbPos.z = e.rz;
@@ -1805,12 +1840,12 @@ export class Game {
       if (this.state !== 'playing') return;
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
-      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned) {
+      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.spawnOpen && !this.ui.rosterPinned) {
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
         this.ui.showPause(false);
-        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.rosterPinned;
+        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.spawnOpen && !this.ui.rosterPinned;
       }
     };
     inp.handlers.onKey = (code, acts) => this.onKey(code, acts);
@@ -1842,6 +1877,13 @@ export class Game {
       if (ui.rosterPinned) this.pinRoster(false);
       else if (ui.mapOpen) this.toggleMap(false);
       else if (ui.boardOpen) this.toggleBoard(false);
+      else if (ui.bestiaryOpen) this.toggleBestiary(false);
+      else if (ui.spawnOpen) this.toggleSpawn(false);
+      return;
+    }
+    // (an admin's: it takes over the key from any bind on it)
+    if (code === SPAWN_KEY && this.admin) {
+      if (!ui.inventoryOpen && !ui.isTyping()) this.toggleSpawn(!ui.spawnOpen);
       return;
     }
     if (has('players')) {
@@ -1855,7 +1897,7 @@ export class Game {
       return;
     }
     // (whatever else takes the screen or the keys lets go of a pinned list first)
-    if (ui.rosterPinned && ['inventory', 'map', 'board', 'chat'].some(has)) this.pinRoster(false, false);
+    if (ui.rosterPinned && ['inventory', 'map', 'board', 'bestiary', 'chat'].some(has)) this.pinRoster(false, false);
     if (has('inventory')) {
       this.toggleInventory(!ui.inventoryOpen);
       return;
@@ -1870,12 +1912,16 @@ export class Game {
       this.toggleBoard(!ui.boardOpen);
       return;
     }
-    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory
-    // and the pause menu.
+    if (has('bestiary')) {
+      if (ui.inventoryOpen || ui.isTyping()) return;
+      this.toggleBestiary(!ui.bestiaryOpen);
+      return;
+    }
+    // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory.
     if (has('chat')) {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
-      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen) {
+      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen) {
         ui.openChat();
         this.input.releaseAll();
         this.inputBuffer.clear();
@@ -1899,14 +1945,22 @@ export class Game {
         }
         return;
       }
+      // the hammer's key again with the hammer out: the ring of structures, to pick another (or put it away again)
+      if (digit === SLOT_BUILD && s.slot === SLOT_BUILD && !s.zombie && !s.hmg && !s.using && this.self.alive && !s.downed) {
+        if (this.buildMenu) this.closeBuildMenu(true);
+        else this.openBuildMenu();
+        return;
+      }
       if (digit !== s.slot) this.lastSlot = s.slot;
       this.prediction.requestSlot(digit);
       return;
     }
-    // hammer out: the build keys step through the structures (Q back, R / E on), fire places and aim turns the piece -
-    // but the interact key still interacts whenever the prompt offers it
+    // hammer out: fire opens the ring of structures and fire in it picks the one pointed at (aim shuts it). With one
+    // picked, fire places it and aim turns the piece. The build keys step through the structures (Q back, R / E on) -
+    // but the interact key still interacts whenever the prompt offers it, and the ring is not up
     if (s.slot === SLOT_BUILD && !s.zombie) {
-      const offered = has('interact') && !!this.prompt?.startsWith(bindTag('interact'));
+      const menu = this.buildMenu;
+      const offered = !menu && has('interact') && !!this.prompt?.startsWith(bindTag('interact'));
       if (!offered) {
         if (has('buildPrev')) return this.cycleBuild(-1);
         if (has('buildNext')) return this.cycleBuild(1);
@@ -1918,9 +1972,14 @@ export class Game {
       if (this.self.alive && !s.downed && (has('fire') || has('aim'))) {
         // (with an item in the hands the click puts it away, as it does with a weapon out: asking for the slot we are on is
         // what does that here, the build mode's clicks being no fire button)
-        if (has('fire') && s.using) this.prediction.requestSlot(SLOT_BUILD);
-        else if (has('fire')) this.tryBuild();
-        else {
+        if (menu) {
+          if (has('fire')) this.pickStructure(menu.hover);
+          else this.closeBuildMenu(true);
+        } else if (has('fire') && s.using) this.prediction.requestSlot(SLOT_BUILD);
+        else if (has('fire')) {
+          if (this.buildPicked) this.tryBuild();
+          else this.openBuildMenu();
+        } else if (this.buildPicked) {
           this.buildRot = (this.buildRot - 32) & 255; // 45deg clockwise seen from above (+yaw is counter-clockwise)
           this.audio.playLocal('ui_click', { volume: 0.4 });
         }
@@ -1994,6 +2053,7 @@ export class Game {
     if (open === ui.inventoryOpen) return;
     if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
     if (ui.boardOpen) this.toggleBoard(false, false);
+    if (ui.bestiaryOpen) this.toggleBestiary(false, false);
     ui.setCraftContext(this.craftContext());
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
@@ -2027,7 +2087,7 @@ export class Game {
       this.input.exitLock();
     } else {
       ui.setRosterOpen(false);
-      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen;
+      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen;
       if (this.input.enabled && relock) this.input.requestLock();
     }
     this.audio.playLocal('ui_click', { volume: 0.4 });
@@ -2038,6 +2098,7 @@ export class Game {
     const ui = this.ui;
     if (open === ui.mapOpen) return;
     if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -2055,6 +2116,7 @@ export class Game {
     const ui = this.ui;
     if (open === ui.boardOpen) return;
     if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
     ui.setBoardOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -2063,6 +2125,44 @@ export class Game {
       this.boardT = 0; // ask the server at once (update)
       this.input.exitLock();
     } else if (relock) this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // The bestiary [J] (and the pause menu's button): it scrolls, so it frees the pointer as the leaderboard does.
+  // relock: false when something else that needs the cursor is taking over
+  toggleBestiary(open, relock = true) {
+    const ui = this.ui;
+    if (open === ui.bestiaryOpen || (open && this.state !== 'playing')) return;
+    if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.rosterPinned) this.pinRoster(false, false);
+    if (open && ui.spawnOpen) this.toggleSpawn(false, false);
+    ui.setBestiaryOpen(open);
+    this.input.enabled = !open && !ui.inventoryOpen;
+    this.input.releaseAll();
+    this.endHold();
+    if (open) this.input.exitLock();
+    else if (relock) this.input.requestLock();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // The admin spawn menu [`] (ui/spawnmenu.js): a search box and a list to click, so it frees the pointer and keeps
+  // the keys while it is up. Only offered when the server says we are an admin; it checks every command anyway.
+  // relock: false when something else that needs the cursor is taking over
+  toggleSpawn(open, relock = true) {
+    const ui = this.ui;
+    if (open === ui.spawnOpen || (open && !this.admin)) return;
+    if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.rosterPinned) this.pinRoster(false, false);
+    if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
+    ui.setSpawnOpen(open);
+    this.input.enabled = !open && !ui.inventoryOpen;
+    this.input.releaseAll();
+    this.inputBuffer.clear();
+    this.endHold();
+    if (open) this.input.exitLock();
+    else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
@@ -2091,9 +2191,9 @@ export class Game {
     this.conn.action(ACT.WAYPOINT, wp && { x: wp.x, z: wp.z, zone: wp.zone });
   }
 
-  // a place lends a waypoint its name once you know it: discovered, or rumoured to hold a supply
+  // a place lends a waypoint its name once you know it: discovered, or rumoured to hold a supply or a schematic
   knowsPlace(z) {
-    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z));
+    return z >= 0 && (this.discovered.has(z) || this.global.hints.includes(z) || this.global.schemHints.includes(z));
   }
   waypointName(z = this.waypoint.zone) {
     return this.knowsPlace(z) ? ZONE_NAMES[z] : 'Waypoint';
@@ -2126,10 +2226,55 @@ export class Game {
     return out;
   }
 
+  // the build keys and the wheel: the next structure round the ring (opening it while none is picked yet), or with one
+  // picked and the ring shut, the next one to place
   cycleBuild(dir) {
-    const i = STRUCT_ORDER.indexOf(this.buildType);
-    this.buildType = STRUCT_ORDER[(i + dir + STRUCT_ORDER.length) % STRUCT_ORDER.length];
+    const step = (t) => STRUCT_ORDER[(STRUCT_ORDER.indexOf(t) + dir + STRUCT_ORDER.length) % STRUCT_ORDER.length];
+    if (!this.buildMenu && !this.buildPicked) this.openBuildMenu(false);
+    const menu = this.buildMenu;
+    if (menu) {
+      menu.hover = step(menu.hover);
+      const c = this.input.cursor;
+      c.x = c.y = 0; // (or the pointer, still out over the old one, takes it straight back)
+      this.audio.playLocal('ui_hover', { volume: 0.6 });
+      return;
+    }
+    this.buildType = step(this.buildType);
     this.audio.playLocal('ui_click', { volume: 0.4 });
+  }
+
+  openBuildMenu(sound = true) {
+    this.buildMenu = { hover: this.buildType };
+    this.input.cursor = { x: 0, y: 0, r: BUILD_MENU_REACH };
+    if (sound) this.audio.playLocal('ui_click', { volume: 0.4 });
+  }
+
+  closeBuildMenu(sound = false) {
+    if (!this.buildMenu) return;
+    this.buildMenu = null;
+    this.input.cursor = null;
+    if (sound) this.audio.playLocal('ui_click', { volume: 0.3 });
+  }
+
+  pointBuildMenu(type) {
+    const menu = this.buildMenu;
+    if (!menu || menu.hover === type) return;
+    menu.hover = type;
+    this.audio.playLocal('ui_hover', { volume: 0.6 });
+  }
+
+  // a structure picked in the ring: its ghost goes up, to be placed. One whose schematic nobody has found stays shut.
+  pickStructure(type) {
+    const schem = STRUCT_DEFS[type]?.schem;
+    if (schem && !((this.global.unlocked | 0) & (1 << SCHEM_BIT[schem]))) {
+      this.ui.notify(`Locked · find the ${ITEM_DEFS[schem].name}`, 'warning', 1.5);
+      this.audio.playLocal('build_fail', { volume: 0.5 });
+      return;
+    }
+    this.buildType = type;
+    this.buildPicked = true;
+    this.closeBuildMenu();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
   quickHeal() {
@@ -2304,6 +2449,7 @@ export class Game {
       onDropItem: (i, n) => this.conn.action(ACT.DROP_SLOT, i, n),
       onSplitItem: (i, n) => this.conn.action(ACT.SPLIT_INV, i, n),
       onDropAmmo: (cal, n) => this.conn.action(ACT.DROP_AMMO, cal, n),
+      onUndoDrop: () => this.conn.action(ACT.UNDO_DROP),
       onSalvage: (from, n) => {
         this.conn.action(ACT.SALVAGE, from, n);
         this.audio.playLocal('craft', { volume: 0.6 }); // (the server's sound leaves us out)
@@ -2313,8 +2459,8 @@ export class Game {
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onUnequip: (slot, to = 255) => this.conn.action(ACT.UNEQUIP, slot, to),
       onWorn: (which, what) => this.conn.action(ACT.WORN, which, what),
-      onSortItems: () => this.conn.action(ACT.SORT_INV),
-      onSelectStructure: (t) => (this.buildType = t),
+      onSelectStructure: (t) => this.buildMenu && this.pickStructure(t),
+      onHoverStructure: (t) => this.pointBuildMenu(t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
       onChatSend: (text) => {
@@ -2489,7 +2635,7 @@ export class Game {
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
     }
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
+    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist });
@@ -2743,6 +2889,9 @@ export class Game {
     this.cine = c;
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
+    this.ui.setBestiaryOpen(false);
+    this.ui.setSpawnOpen(false);
+    this.closeBuildMenu();
     this.ui.setRosterOpen(false);
     if (this.ui.inventoryOpen) this.toggleInventory(false);
     this.endHold();
@@ -2813,6 +2962,8 @@ export class Game {
       this.overlay = 'gameover';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
+      this.ui.setBestiaryOpen(false);
+      this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
@@ -2820,6 +2971,8 @@ export class Game {
       this.overlay = 'victory';
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
+      this.ui.setBestiaryOpen(false);
+      this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
       // when it left stayed in the valley, and so did the players who had already turned.
@@ -2894,12 +3047,17 @@ export class Game {
         // a weapon whose slot is taken, with no room in the pack for it: taking it puts the one in that slot down
         const swap = d?.cat === 'weapon' && WEAPONS[e.item] ? this.swapsOut(WEAPONS[e.item].slot) : 0;
         this.prompt = swap ? `${bindTag('interact')} Swap your ${ITEM_DEFS[swap].name} for the ${d.name}` : `${bindTag('interact')} Pick up ${d?.name || 'item'}${n > 1 ? ` ×${n}` : ''}`;
+        // (something the recipe tracked on the HUD is still short of)
+        if (trackedNeed(e.item, counts)) this.prompt += ` · needed for ${ITEM_DEFS[trackedRecipe().out].name} (tracked)`;
         return;
       }
       if (e.kind === ENT.CACHE) {
         this.lookTarget = e;
         const name = CONT_DEFS[e.ctype]?.name || 'Container';
         this.prompt = e.q[3] === 0 ? `${bindTag('interact')} Hold to search ${name}` : `${name} · searched`;
+        const r = e.q[3] === 0 && trackedRecipe();
+        const want = r && Object.keys(r.cost).find((k) => trackedNeed(+k, counts) && mayHold(e.ctype, +k));
+        if (want) this.prompt += ` · may hold ${ITEM_DEFS[want].name} (tracked)`;
         return;
       }
       if (e.kind === ENT.PLAYER && e.downed) {
@@ -2959,7 +3117,24 @@ export class Game {
     for (const k in this.ghosts) this.ghosts[k].visible = false;
     this.ghostPlace = null;
     if (!active) {
+      this.buildPicked = false; // (the hammer drawn again starts at the ring)
+      this.closeBuildMenu();
       this.ui.setBuildMenu(null);
+      return;
+    }
+    // (the pointer let go of - the pause menu, the inventory: the ring goes with it)
+    if (this.buildMenu && (!this.input.enabled || !this.input.locked)) this.closeBuildMenu();
+    const counts = this.invCounts();
+    const ctx = this.craftContext();
+    const unlocked = this.global.unlocked | 0;
+    let menu = null;
+    if (this.buildMenu) {
+      const c = this.input.cursor;
+      if (Math.hypot(c.x, c.y) > BUILD_MENU_DEAD) this.pointBuildMenu(STRUCT_ORDER[radialIndex(c.x, c.y)]);
+      menu = { hover: this.buildMenu.hover, x: c.x / c.r, y: c.y / c.r };
+    }
+    if (!this.buildPicked) {
+      this.ui.setBuildMenu({ picked: false, counts, ctx, unlocked, menu });
       return;
     }
     let gh = this.ghosts[this.buildType];
@@ -3011,10 +3186,7 @@ export class Game {
     gh.position.set(x, y, z);
     gh.rotation.y = rotY;
     gh.visible = true;
-    const counts = this.invCounts();
-    let afford = true;
-    for (const k in def.cost) if ((counts[k] || 0) < def.cost[k]) afford = false;
-    const unlocked = this.global.unlocked | 0;
+    const afford = !!planCost(counts, def.cost, ctx);
     const car = this.world.car;
     if (!reason && def.schem && !(unlocked & (1 << SCHEM_BIT[def.schem]))) reason = `Locked · find the ${ITEM_DEFS[def.schem].name}`;
     if (!reason && Math.hypot(x - this.renderPos.x, z - this.renderPos.z) > BUILD_REACH + (def.snap ? 1 : 0)) reason = 'Too far';
@@ -3025,7 +3197,7 @@ export class Game {
     const valid = !reason;
     gh.userData.setValid?.(valid);
     this.ghostPlace = { x, z };
-    this.ui.setBuildMenu({ selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, valid, reason, unlocked });
+    this.ui.setBuildMenu({ picked: true, selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, ctx, valid, reason, unlocked, menu });
   }
 
   // same overlap rules the server applies when placing a structure
@@ -3138,14 +3310,14 @@ export class Game {
       this.power.hud(h); // ([E] held on a generator's switch)
     }
     // context panel
-    const car = this.world.car;
     const counts = this.invCounts();
     h.heals = HEAL_ITEMS.reduce((n, it) => n + (counts[it] || 0), 0);
     h.drinks = counts[ITEM.ENERGY_DRINK] || 0; // what the drink key has left
-    let partsMask = 0;
-    SUPPLIES.forEach((_, i) => g.supplies[i] >= SUPPLY_NEED[i] && (partsMask |= 1 << i));
-    if (this.lookTarget === 'car') h.context = { type: 'car', parts: partsMask };
-    else if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 };
+    // the recipe tracked on the HUD (game/tracked.js), against what we carry and the stations in reach
+    const tracked = !s.zombie && self.alive ? trackedRecipe() : null;
+    if (tracked && (!this.trackNear || this.frame % 20 === 5)) this.trackNear = this.craftContext();
+    h.tracked = tracked ? { r: tracked, counts, near: this.trackNear, unlocked: g.unlocked | 0 } : null;
+    if (this.lookTarget && this.lookTarget.kind === ENT.STRUCTURE) h.context = !s.zombie && currentWeapon(s) === ITEM.HAMMER ? { type: 'structure', name: STRUCT_DEFS[this.lookTarget.stype].name, hp: this.lookTarget.q[3] / 255 } : null;
     else h.context = this.fair.hud();
     h.ping = Math.round(this.conn.rtt);
     h.stalled = performance.now() - (this.snapAt || 0) > 1000; // nothing from the server for a second
@@ -3167,7 +3339,7 @@ export class Game {
     h.yaw = this.input.yaw;
     this.buildMarkers(h, rp);
     // the minimap: only while it is on screen
-    h.minimap = !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen ? this.mapData(counts) : null;
+    h.minimap = !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen ? this.mapData(counts) : null;
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());
@@ -3315,6 +3487,8 @@ export class Game {
       discovered: this.discovered,
       hints: g.hints,
       found: g.found,
+      schemHints: g.schemHints,
+      unlocked: g.unlocked | 0,
       supplies: g.supplies,
       carried,
       waypoint: this.waypoint,

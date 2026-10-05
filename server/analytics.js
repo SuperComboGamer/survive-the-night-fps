@@ -267,7 +267,7 @@ export class MatchTracker {
     const fixed = 'dayLenOverride' in g ? g.dayLenOverride || null : fin(g.dayLen) || null;
     const first = g.firstDayLen ?? g.dayLen; // (a getter: at the start of the run, the first day's)
     const sched = !fixed && typeof CONSTANTS.dayLength === 'function' ? Array.from({ length: 10 }, (_, i) => fin(CONSTANTS.dayLength(i + 1))) : null;
-    return { dayLen: fixed, firstDayLen: fin(first) || null, daySchedule: sched, nightLen: fin(g.nightLen) || null, godMode: !!g.godMode, adminCommands: !!g.devAdmin, themes: !!g.themes };
+    return { dayLen: fixed, firstDayLen: fin(first) || null, daySchedule: sched, nightLen: fin(g.nightLen) || null, godMode: !!g.godMode, adminCommands: !!g.devAdmin, themes: !!g.themes, difficulty: g.diff?.id || 'nightfall' };
   }
 
   // Ends the running match now, if there is one, with that outcome (see the vocabularies): its event, the open night,

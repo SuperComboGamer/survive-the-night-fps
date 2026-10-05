@@ -84,6 +84,7 @@ export function readGlobal(r, prev) {
     hints: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8(), r.u8()],
     found: r.u8(), // a bit per hint: that supply has been taken from its hiding place
     unlocked: r.u8(),
+    schemHints: [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()], // the place each schematic is rumoured to be in
     wave: r.u8(),
     waves: r.u8(),
     escapeT: r.u16() / 10,
@@ -412,6 +413,12 @@ export function readEvents(r, handler, flags, ents) {
         const ids = [];
         for (let k = r.u8(); k > 0; k--) ids.push(r.u8());
         handler.achieve?.(flags, add, ids);
+        break;
+      }
+      case EVT.BESTIARY: {
+        const flags = r.u8();
+        const mask = r.u16();
+        handler.bestiary?.(flags, mask);
         break;
       }
       default:

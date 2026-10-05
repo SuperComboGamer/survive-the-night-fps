@@ -22,9 +22,9 @@ const HOLD_BTN = {
 };
 
 // a code that is still answered with the controls off (the inventory, the map, the pause menu): the key that opened
-// something shuts it, Esc backs out, and Enter opens the chat from the inventory and the pause menu (Y does not: as
-// in Half-Life, it is a key of play)
-const MENU_ACTIONS = new Set(['inventory', 'map', 'board', 'players']);
+// something shuts it, Esc backs out, and Enter opens the chat from the inventory (Y does not: as in Half-Life, it is a
+// key of play). The pause menu keeps Enter for its own rows (menus.js Pause).
+const MENU_ACTIONS = new Set(['inventory', 'map', 'board', 'bestiary', 'players']);
 function passesMenus(code) {
   if (code === 'Escape') return true;
   for (const a of actionsOf(code)) if (MENU_ACTIONS.has(a) || (a === 'chat' && code === 'Enter')) return true;
@@ -51,6 +51,7 @@ export class Input {
     this.wheel = 0;
     this.handlers = {}; // onKey(code, actions) for discrete actions, onKeyUp(code, actions, cancelled)
     this.buildMode = false;
+    this.cursor = null; // { x, y, r }: a menu has the mouse (the build ring), its moves point there and the view stays put
 
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === canvas;
@@ -75,6 +76,18 @@ export class Input {
       if (!this.rawActive) {
         mx = Math.max(-300, Math.min(300, mx));
         my = Math.max(-300, Math.min(300, my));
+      }
+      const c = this.cursor;
+      if (c) {
+        // (held to a circle, so turning the pointer the other way answers at once however far it was pushed)
+        c.x += mx;
+        c.y += my;
+        const l = Math.hypot(c.x, c.y);
+        if (l > c.r) {
+          c.x *= c.r / l;
+          c.y *= c.r / l;
+        }
+        return;
       }
       const k = 0.0022 * this.sensitivity;
       this.yaw -= mx * k;

@@ -28,6 +28,8 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   progress.js    XP, levels and perks: the rules both ends read (see Experience, levels and perks below)
   achievements.js the achievement list (ids, wire numbers, tiers, groups) and the rules on a player's progress
                  (see Achievements below)
+  bestiary.js    the bestiary: every kind of the dead, its vague line and its tip, and what seeing one is (see The
+                 bestiary below)
 server/      authoritative game server (uWebSockets.js)
   index.js       the network thread: sockets, the lobby's HTTP API, static files, /status (see Many games below)
   rooms.js       the lobby: the games running, routing sockets to them, codes, allowances, the leaderboard's side
@@ -180,7 +182,7 @@ sockets (1011) and lets go of its records. `server/rooms.js` keeps them (`Lobby`
   thread's (`net`) and the process RSS; no codes.
 - **Client:** `client/net/lobby.js` (the API, and invite links: `?game=CODE`; while in a game the address bar
   carries its link), the splash in `ui/menus.js` (Quick join, Browse games, Create game, or the invitation of the
-  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link on the pause menu.
+  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link behind "Invite friends" on the pause menu.
 - **Capacity** (`npm run stress -- game|box`, scripts/stress.js; measured 2 Oct 2026 with bots at night 3 on a
   shared 11-core Mac, so read CPU ms per second, not wall-clock ticks): an 8-player game at night uses ~17 ms of
   CPU a second (45 in its worst second), ~62 MB of memory on a 70 MB base, ~2-2.6 KB/s down per player, and the
@@ -206,7 +208,8 @@ JSON file (`server/stats.js`).
   `railway.json`, which Railway has not been applying). An applied migration is never edited: a change is a new file. 001: accounts,
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
   accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below). 008:
-  `game_handoff` and `matches.continues` (Deploys below). 009: the account admin flag. A migration has to be additive: on a deploy the old server
+  `game_handoff` and `matches.continues` (Deploys below). 009: the account admin flag. 010: the accounts' bestiaries
+  (`user_bestiary`, The bestiary below). A migration has to be additive: on a deploy the old server
   is still running on the schema while the new one migrates it.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
@@ -224,7 +227,10 @@ JSON file (`server/stats.js`).
   `Game.handleJoin` makes the player's name the account's whatever the JOIN says, sets `p.account` (and
   `p.guestKey`, the SHA-256 of a guest's browser id) and tells everyone in the game who is signed in as what
   (`S2C.FRIENDS`: per player id the account name, '' for a guest), so the client can offer a friend request.
-  `isAdmin` stays server-side and authorizes the debug chat commands. `npm run admin -- <user> [on|off]` updates it
+  `isAdmin` authorizes the debug chat commands on the server; the client only hears it as `WELCOMEF.ADMIN` on
+  `S2C.WELCOME`, which offers the spawn menu (`client/ui/spawnmenu.js`, the `` ` `` key: a searchable list of every
+  item, zombie type and world event that sends `/give`, `/spawn` and the rest as chat, each checked by the server
+  as any typed command is). `npm run admin -- <user> [on|off]` updates it
   and revokes that account's sessions; the role is read again when they authenticate and open their next game socket.
 - **Stats** (`server/dbstats.js`, `DbStats`, the same face as `PlayerStats`): an account's under `u:<user id>`, a
   guest's under `g:<sha-256 of the browser id>`. The board's four stats are counted as they happen and written
@@ -300,6 +306,35 @@ JSON file (`server/stats.js`).
   `/sandbox/ui-test.html?screen=achievements` and `?screen=hud&ach=kills_1000,kill_pistol` show them with made-up data.
 - `scripts/test-achievements.js` holds the rules, the hooks in a running game (decoded off the wire), the browser's
   record, the store and the merge on PGlite, and the API on a real server.
+
+## The bestiary
+
+A book of every kind of the dead, opened with J (`bestiary` in shared/binds.js) or from the pause menu. A kind the player
+has never seen is a blurred smudge, "???" and a vague line; once seen, its portrait, name and a tip on how to fight it.
+
+- **The book** is `shared/bestiary.js`: every `ZTYPE` once, in the order shown, each with a group, a `vague` line and a
+  `tip` (a boss's and the Tank's is its `ZOMBIE_DEFS` tip). A player's record is a bitmask of `ZTYPE`s (u16 on the wire).
+- **Seeing one** (`server/bestiary.js`, `Game.bestiary`): one of that kind, alive, within `SEEN_RANGE` (35 m) of the
+  survivor's eye with a clear line to its head (`Zombies.clearLine`: walls, trees, the terrain and the mine's rock
+  block it; the dark and the fog do not). Each survivor is looked round four times a second through the zombies'
+  spatial hash (`forNear`), only for kinds not on their record, at most `LOOK_RAYS` lines of sight a look; a player with
+  every kind costs nothing. The record is on the player (`p.bst`), so the handoff carries it.
+- **On the wire**: `EVT.BESTIARY` (private): `BESTF.ALL` with the whole record as a player joins and again on a rejoin,
+  then each kind as it is first seen; `BESTF.ACCOUNT` says the record is the account's. Held back from a client whose
+  socket is backed up (its snapshots, and their events, would be dropped) and sent once it clears.
+- **An account's** record is `user_bestiary` (010: a row per account and kind, with when it was first seen), kept on the
+  network thread (`server/userbestiary.js`, `BestiaryStore`). It is read once, when the player's record enters a room
+  (`Room.record` -> `{ t: 'bestiary', tok, mask }` -> `Game.onBestiary`); until it comes nothing is looked for on their
+  behalf. A kind first seen is posted (`{ t: 'seen', user, mask }`) and written within 150 ms, `ON CONFLICT DO
+  NOTHING`, retried 5 s later if the write fails. Nothing is read during play.
+- **A guest's** is their browser's: `localStorage['stn.bestiary']` (`client/net/bestiary.js`). The server starts each
+  connection knowing nothing of it, so a kind the browser has may be told again; the browser only toasts what is new to
+  it. Signing in does not move a guest's bestiary onto the account.
+- **On screen** (`client/ui/bestiary.js`): the portraits are the game's own models, drawn the first time the book opens by
+  a short-lived WebGL renderer of its own, kept as images; a locked card only ever gets the smudge. A toast says when a
+  kind is added. `/sandbox/ui-test.html?screen=bestiary` (`&seen=0,1,10`, `&scroll=`, `&toast=1`) shows it with a
+  made-up record. `scripts/test-bestiary.js` holds the book, the tracker in a running game, the browser's record, the
+  store on PGlite, and an account's record surviving a restart of a real server.
 
 ## Experience, levels and perks
 
@@ -950,14 +985,23 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   doorways recorded by world generation (`world.openings`); campfires and workbenches are crafting stations
   (`STRUCT_DEFS[t].station`), recipes name the station they need (`RECIPES[i].station`) and optionally a
   schematic (`schem`, team-wide unlock bitmask in the global state).
-- **Crafting in bulk** (Shift / Ctrl+click a recipe) is not in the protocol: it is `ACT.CRAFT` sent n times. The
+- **Crafting in bulk** (the crafting panel's quantity and Craft ×N, or Shift / Ctrl+click a recipe) is not in the
+  protocol: it is `ACT.CRAFT` sent n times. The
   server refuses each craft it cannot do with a toast, so the client counts first: `craftRun` in
   `client/game/bulkcraft.js` repeats the checks of `Game.craft` and the slot rules of `server/inventory.js` on a
   copy of the inventory (and, stricter than the server, only counts ammunition while a whole batch fits the
   reserve). `sim-smoke` holds it against the server, so change the two together. The inventory screen replays
-  the crafts still on their way before it counts again (`Inventory._model`), the repeats leave through a bucket
+  the crafts still on their way before it counts again (`Crafting._model`), the repeats leave through a bucket
   in `Game.sendCrafts` (the server drops what a client sends past 200 messages a second), and a listener plays
   one craft sound per 0.1 s however many `SOUND.CRAFT` events a tick brings.
+- **Auto-crafting** (`shared/autocraft.js`). A build, a craft or a repair short of a material a recipe makes
+  (Planks from Sticks, Nails from Scrap Metal, Rope from Cloth, a Torch...) makes it from what that recipe takes,
+  when the recipe itself could be crafted there: its station in reach, its schematic found. `planCost(counts, cost,
+  ctx)` uses what is carried first and returns what is taken and what the batches made past the need (`give`: ten
+  Nails for a wall's four), or null. The server plans with `Game.planFor` (ctx from `Game.craftCtx`) in `build`,
+  `craft` and `repair`, pays `take`, and `Game.madeExtra` adds `give` with `addItem` (the overflow at the feet);
+  the client plans the same way with `Game.craftContext` in `craftRun`, the crafting panel, the build menu and
+  ghost, the build key hint and the tracked recipe. `test-autocraft` holds the two together.
 - **Salvage** (`ACT.SALVAGE`: u8 from, u16 count) tears something down for the materials `SALVAGE` in defs lists:
   `from` is a backpack index, `SALVAGE_FROM.WEAPON` + a weapon slot, or `SALVAGE_FROM.ARMOR` (`Game.salvage`). A
   gun's magazine goes back into the reserve as rounds; what does not fit is dropped at the survivor's feet. The table
@@ -965,14 +1009,20 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   Because the starting pistol, knife and hammer are worth something torn down, a leaver's parked kit records which
   of them they still had (`parkKit`'s `tools`), and a rejoin brings back only those.
 - **Unequip** (`ACT.UNEQUIP`: u8 weapon slot, u8 backpack index, 255 = the first free one) puts a weapon from its slot
-  into the backpack with its magazine (`Game.unequip`): a click on it in the Equipment panel, or a drag onto the grid.
+  into the backpack with its magazine (`Game.unequip`): F or a double-click on it in the Loadout, or a drag onto the grid.
   Onto a weapon for the same slot it is `useItem`'s swap; a full backpack leaves it where it is. `test-unequip`.
 - **Ammunition** is not in the backpack: `state.ammo` (a reserve per `AMMO` calibre, up to `AMMO_MAX`) is the
   server's record, the simulation reloads from it and the client predicts it. `Game.giveItem` puts a cat `ammo` item
   there and returns what fit, so a full reserve leaves the rest lying; nothing ever puts one into `p.inv`. The
   mounted gun's belt and both generators draw from it too. `ACT.DROP_AMMO` (u8 calibre, u16 count, 0 = all) puts
-  rounds on the ground from the inventory's Ammunition panel (Half / All); the client hears of the smaller reserve
-  in its next snapshot, as it does of a pickup.
+  rounds on the ground from the inventory's ammo pouch (its popover or right-click menu, any amount); the client hears
+  of the smaller reserve in its next snapshot, as it does of a pickup.
+- **Undoing a drop** (`ACT.UNDO_DROP`, no arguments). Every drop from the inventory (a stack, rounds, a weapon out of
+  its slot, worn gear) records the item entity it made in `p.lastDrop`; the inventory's toast offers to take it back
+  for 5 s (Z), and `Game.undoDrop` gives it back as a pickup would, within `UNDO_DROP_TIME` of the drop, while it
+  still lies there and its dropper is within `UNDO_DROP_REACH`. Only the last drop, only the dropper's; what finds no
+  room stays down, and a refusal is `NOTIFY.UNDO_GONE` (`UNDO_NO`: gone, too late, too far). `lastDrop` is not carried
+  across a deploy (`PLAYER_SKIP`). `test-undodrop`.
 - **The backpack grid** is always `INVENTORY_MAX` (34) slots long, on the server, on the wire (`S2C.INVENTORY`,
   which ends with the worn backpack's byte) and in the inventory screen; only the first `invCap(p)` are open:
   `INVENTORY_SIZE` (24), and `BACKPACK_SLOTS` (10) more while a Backpack is worn (`p.backpackItem`, beside
@@ -980,10 +1030,16 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   24, so a call that forgets it cannot fill a locked slot), as do the swap / split bounds and `craftRun`'s copy.
   The backpack does not come off (`ACT.WORN`) while a slot past 24 holds anything, so the locked slots stay empty.
   Worn, it sets `PFLAG.BACKPACK`, and the third-person survivor carries the item's own model on its back.
-  The Sort button (`ACT.SORT_INV`, `sortInventory`) merges each item's stacks and orders the open slots by
-  `BAG_TIER` (defs.js), then item id and size: deterministic, and the locked slots are never touched.
+  The backpack sorts itself (`sortInventory`): each item's stacks merged and the open slots ordered by `BAG_TIER`
+  (defs.js), then item id and size: deterministic, and the locked slots are never touched. It runs whenever
+  something is picked up (`giveItem`: the ground, searches, harvesting, salvage's yield; not a craft, whose result
+  the client predicts in place) or dropped (`ACT.DROP_SLOT`): `p.invSort`, applied once in `sendTick` before the
+  inventory goes out. A split (`p.splitKeep`) is left apart. There is no Sort button.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
-  places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). Installing all
+  places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). The schematics go
+  the same way (`placeSchematics`): each into a locker, ammo crate or toolbox (`CONT_DEFS[t].schem`) of its own
+  random place far from the car, the place replicated as `global.schemHints` and drawn on the minimap and the
+  field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. Installing all
   of them enables the engine hold-interaction, which starts the final stand (`game.escape`). The stand is
   sized from the night of the same number (`hordeSize()` × `FINAL_STAND_SIZE`, the `FINAL_STAND_*` constants
   in `server/game.js`) and re-read from the survivors still alive whenever a group is due; wanderers near a
@@ -1293,7 +1349,20 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   lightning light, wind (`Foliage.update` drives `G.uWind`: trees bend trunk and crown together, grass and bushes
   lean; the ambience plays the same wind), ground mist, the flashlight beam's haze (post.js, denser in rain), and
   rain streaks and splashes (`render/weatherfx.js`, kept out from under `world.roofs`).
-- **Item guide** (`client/game/itemguide.js`): the "Used in" and "Found in" lines of the inventory's tooltips are
+- **The inventory screen** (`client/ui/inventory.js`, the crafting column in `client/ui/crafting.js`). The game does
+  not pause under it, so every action is one click or one key: a click selects (the item card under the backpack
+  says what it is, with a button and key for each action), a double-click does the main thing, a right click opens a
+  menu of drop amounts, and F use · S split · G drop one (Shift+G all) · X salvage · Z undo act on what is under the
+  pointer, else what is selected. The keys are the screen's own listener: the game's input is off while it is open,
+  and a key bound to opening a screen (`MENU_KEYS`) is left to the game. The backpack is grouped into sections in
+  the order the server's Sort leaves it (`SECTIONS`, `BAG_TIER`), and a drag only swaps within one. Recipes are
+  grouped by what stops them (ready, needs a station, missing materials, locked); the one selected has a quantity
+  that `craftRun` caps.
+- **The tracked recipe** (`client/game/tracked.js`): one recipe at a time in `localStorage['stn.tracked']`, client
+  only. The HUD checklist under the objective tracker (`Tracked` in `ui/hud2.js`), the "needed for" line on pickup
+  prompts and the "may hold" line on containers whose table can roll a missing ingredient (`mayHold` in
+  `itemguide.js`) read it; the backpack marks the stacks it would use. Crafting it untracks it.
+- **Item guide** (`client/game/itemguide.js`): the "Used in" and "Found in" lines of the inventory's item card are
   derived at load from `RECIPES`, `STRUCT_DEFS`, the loot tables (`CONT_TABLES`, `LOOT_TABLES`, `ZOMBIE_LOOT`,
   `SPECIAL_LOOT`) and `PLACES`, so a new recipe, item or table needs no text written for it. The one thing it
   repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.

@@ -1,5 +1,6 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, ROOMF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard, qpos } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, ROOMF, WELCOMEF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard, qpos } from '../../shared/protocol.js';
+import { NIGHTFALL } from '../../shared/difficulty.js';
 import { CHARACTER_NONE } from '../../shared/characters.js';
 
 // A join whose socket closes before the server has answered it (no WELCOME, no REJECT) is tried again after these
@@ -19,7 +20,7 @@ export class Connection {
     this.bytesOut = 0;
     this.pingAt = 0; // when the ping that is still out was sent
     this.pingNext = 0; // when the next one is due
-    this.room = null; // the game we are in: { code, name, inviteOnly } (S2C.ROOM)
+    this.room = null; // the game we are in: { code, name, inviteOnly, difficulty } (S2C.ROOM)
     this.accounts = new Map(); // player id -> the account they are signed in to, for friend requests and the friend star (S2C.FRIENDS; '' = a guest)
   }
 
@@ -70,11 +71,17 @@ export class Connection {
         const r = this.r.set(buf);
         const type = r.u8();
         switch (type) {
-          case S2C.ROOM:
-            this.room = { code: r.str(), name: r.str(), inviteOnly: !!(r.u8() & ROOMF.INVITE_ONLY) };
+          case S2C.ROOM: {
+            // the difficulty id was added on the end. A server from before it sends a packet that ends at the flags.
+            const room = { code: r.str(), name: r.str(), inviteOnly: !!(r.u8() & ROOMF.INVITE_ONLY), difficulty: NIGHTFALL.id };
+            if (r.left) room.difficulty = r.str();
+            this.room = room;
             break;
+          }
           case S2C.WELCOME: {
-            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), act: r.left ? r.u8() : 1, room: this.room };
+            const info = { id: r.u16(), seed: r.u32(), tick: r.u32(), tickRate: r.u8(), maxPlayers: r.u8(), room: this.room };
+            info.admin = r.left > 0 && !!(r.u8() & WELCOMEF.ADMIN);
+            info.act = r.left > 0 ? r.u8() : 1; // (which of the run's two maps: after the flags, which main's servers send too)
             settled = joined = true;
             resolve(info);
             break;

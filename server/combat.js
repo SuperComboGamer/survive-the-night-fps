@@ -102,7 +102,7 @@ export class Combat {
   hitbox(e, isPlayer) {
     if (isPlayer) return playerHitbox(e.zombie, e.state.crouch);
     if (e.kind === ENT.DEER) return deerHitbox(e.yaw, e.anim);
-    return zombieHitbox(e.def, e.yaw, e.legs, e.anim === ZANIM.AIRBORNE || e.state === 3);
+    return zombieHitbox(e.def, e.yaw, e.legs, e.anim === ZANIM.AIRBORNE || e.state === 3, this.g.diff.aim);
   }
 
   // ---------------------------------------------------------------- guns
@@ -395,7 +395,7 @@ export class Combat {
     const claws = p.zombie;
     const def = claws ? CLAWS : WEAPONS[ev.weapon];
     if (!def) return;
-    const range = def.range;
+    const range = claws ? def.range : def.range * g.diff.melee;
     const ox = s.x;
     const oy = s.y + eyeHeight(s);
     const oz = s.z;
@@ -510,6 +510,7 @@ export class Combat {
     // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
     const solid = z.lit && !z.onFire;
     if (solid) amount *= z.def.litResist;
+    if (z.dazedT > 0 && z.def.stunHurt) amount *= z.def.stunHurt; // (a dog reeling from its ram)
     g.track?.dealt(attacker, z, amount);
     z.hp -= amount;
     if (z.link) {
@@ -855,7 +856,7 @@ export class Combat {
                   g.zm.knock(h, px, pz, 8, 4, 0.4);
                 }
               }
-              for (const s of [...g.structures]) if (Math.hypot(s.x - px, s.z - pz) < 3.5) g.damageStructure(s, 350);
+              for (const s of [...g.structures]) if (Math.hypot(s.x - px, s.z - pz) < 3.5) g.damageStructure(s, 350 * g.diff.hurt);
               g.emit(
                 (w) => {
                   w.u8(EVT.EXPLOSION);

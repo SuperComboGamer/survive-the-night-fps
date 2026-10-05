@@ -89,6 +89,7 @@ function runBot(idx) {
         r.u32(); // (the tick)
         r.u8();
         r.u8();
+        if (r.left) r.u8(); // (WELCOMEF)
         // (which of the run's two maps the seed is to be built as: shared/acts.js. A server from before the mainland says none)
         st.world = worldFor(seed, r.left ? r.u8() : 1); // own copy (structure grid is per client)
         usePos(st.world);

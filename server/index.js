@@ -16,6 +16,7 @@ import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
 import { Lobby, rejectBytes, defaultMaxGames } from './rooms.js';
+import { chosenDifficulty } from '../shared/difficulty.js';
 import { PlayerStats } from './stats.js';
 import { openDb, describeUrl } from './db/index.js';
 import { migrate } from './db/migrate.js';
@@ -27,6 +28,7 @@ import { Feedback } from './feedback.js';
 import { UserSettings } from './usersettings.js';
 import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
+import { BestiaryStore } from './userbestiary.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
@@ -78,6 +80,8 @@ const matches = db ? new MatchStore({ db, stats, build: process.env.RAILWAY_GIT_
 await matches?.closeStale().catch((err) => log(`matches: could not close the last run's (${err.message})`));
 // the accounts' achievements (a guest's are kept by their browser, database or not)
 const achievements = db ? new AchievementStore({ db, log }) : null;
+// ...and their bestiaries (the same: a guest's is their browser's)
+const bestiary = db ? new BestiaryStore({ db, log }) : null;
 
 // Where a game waits between the server going down and the next one (handoff.js): Postgres when there is one (it is
 // what both servers of a deploy can reach), else files in HANDOFF_DIR or on the Railway volume (a restart on the
@@ -93,6 +97,7 @@ const lobby = new Lobby({
   stats,
   matches,
   achievements,
+  bestiary,
   maxGames: MAX_GAMES,
   maxPlayers: MAX,
   roomMaxPlayers: ROOM_MAX,
@@ -310,7 +315,8 @@ app.get('/api/games/:code', (res, req) => {
 const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
 app.get('/api/version', (res) => json(res, 200, { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD }));
 
-// makes a game: { name, host, inviteOnly, maxPlayers } -> its info, code included
+// makes a game: { name, host, inviteOnly, maxPlayers, difficulty } -> its info, code included.
+// difficulty is ember, nightfall or blackout (shared/difficulty.js). Left off, it is Nightfall, which plays as the valley always has.
 app.post('/api/games', (res, req) => {
   const ip = clientAddress(res, req);
   // (JSON only: a form on another site cannot post that without the browser asking this server first)
@@ -336,7 +342,9 @@ app.post('/api/games', (res, req) => {
       return json(res, 400, { error: 'Bad request' });
     }
     if (!o || typeof o !== 'object') return json(res, 400, { error: 'Bad request' });
-    const made = lobby.create({ name: o.name, host: o.host, inviteOnly: o.inviteOnly === true, maxPlayers: o.maxPlayers }, ip);
+    const difficulty = chosenDifficulty(o.difficulty);
+    if (!difficulty) return json(res, 400, { error: 'Pick easy, standard, or hard.' });
+    const made = lobby.create({ name: o.name, host: o.host, inviteOnly: o.inviteOnly === true, maxPlayers: o.maxPlayers, difficulty }, ip);
     if (made.error) return json(res, made.status, { error: made.error });
     json(res, 201, made.room.info());
   });
@@ -613,6 +621,7 @@ async function shutdown(signal) {
       for (const room of lobby.rooms.values()) if (room.match) await matches.interrupt(room.match);
       await stats.close();
       await achievements.close();
+      await bestiary.close();
       await store?.close();
       await db.close();
     } catch (err) {

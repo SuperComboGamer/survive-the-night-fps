@@ -100,7 +100,7 @@ export class Herds {
         stallT: 0,
         fieldT: 0,
       };
-      const n = HERD_MIN + Math.floor(g.rng() * (HERD_MAX - HERD_MIN + 1));
+      const n = Math.max(4, Math.round((HERD_MIN + Math.floor(g.rng() * (HERD_MAX - HERD_MIN + 1))) * g.diff.zombies));
       for (let i = 0; i < n * 3 && h.members.length < n; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = Math.sqrt(g.rng()) * SPREAD;
@@ -392,9 +392,9 @@ export class Herds {
     // runs off again at half speed, like stuckT: one clear look between two walls does not start it over.
     if (lost && lead < -LAG) z.farT = Math.min(LOST + 1, z.farT + dt);
     else z.farT = Math.max(0, z.farT - dt * 0.5);
-    if (h.hot) return Math.max(z.def.speed, HERD_RUSH);
+    if (h.hot) return Math.max(z.def.speed, HERD_RUSH) * this.g.diff.speed;
     // keep together: the ones out in front dawdle, stragglers hurry
-    return PACE * Math.max(0.45, Math.min(1.7, 1 - lead / 8));
+    return PACE * this.g.diff.speed * Math.max(0.45, Math.min(1.7, 1 - lead / 8));
   }
 
   // nothing between a member and its place that it would have to go round: no wall the nav grid knows, no deep water
