@@ -6298,6 +6298,134 @@ body {
 .stn-ui .set-foot .btn-blood {
   font-size: max(16px, calc(22 * var(--u)));
   padding: calc(8 * var(--u)) calc(28 * var(--u)) calc(6 * var(--u)) calc(28 * var(--u) + 0.3em);
+}
+
+/* ---------- settings: the tabs down the left, one category at a time on the right (settings.js) */
+/* (one height for every tab, so the card does not jump as they are switched) */
+.stn-ui .stn-settings .set-card {
+  width: calc(900 * var(--u));
+  min-width: 660px;
+  max-width: 96vw;
+  height: min(88vh, max(480px, calc(800 * var(--u))));
+}
+
+.stn-ui .set-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  padding: 0;
+  overflow: hidden;
+}
+
+.stn-ui .set-nav {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--u));
+  width: calc(196 * var(--u));
+  min-width: 150px;
+  padding: calc(14 * var(--u)) 0;
+  border-right: 1px solid rgba(230, 223, 207, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.stn-ui .set-tab {
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--u));
+  height: calc(44 * var(--u));
+  min-height: 32px;
+  padding: 0 calc(16 * var(--u)) 0 calc(18 * var(--u));
+  background: transparent;
+  border: 0;
+  border-left: calc(4 * var(--u)) solid transparent;
+  font: 400 max(13px, calc(19 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.12em;
+  text-align: left;
+  color: var(--bone-dim);
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+  transition: color 0.12s, background 0.12s;
+}
+
+.stn-ui .set-tab:hover,
+.stn-ui .set-tab:focus-visible {
+  color: var(--bone);
+  background: rgba(230, 223, 207, 0.05);
+}
+
+.stn-ui .set-tab.on {
+  background: linear-gradient(90deg, rgba(150, 16, 22, 0.88), rgba(105, 10, 14, 0.62) 65%, rgba(74, 5, 8, 0.3));
+  border-left-color: var(--blood-lite);
+  color: #fff;
+}
+
+.stn-ui .set-tab-ico {
+  flex: none;
+  width: calc(18 * var(--u));
+  height: calc(18 * var(--u));
+  min-width: 13px;
+  min-height: 13px;
+  fill: currentColor;
+  opacity: 0.85;
+}
+
+.stn-ui .set-main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: calc(4 * var(--u)) calc(24 * var(--u)) calc(14 * var(--u));
+  scrollbar-width: thin;
+}
+
+.stn-ui .set-pane[hidden] {
+  display: none;
+}
+
+.stn-ui .set-pane > .set-sec-title,
+.stn-ui .set-pane > .kb-head .set-sec-title {
+  margin-top: calc(14 * var(--u));
+  font-size: max(11px, calc(13 * var(--u)));
+}
+
+.stn-ui .set-group {
+  margin: calc(16 * var(--u)) 0 calc(2 * var(--u));
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+/* a narrow window: the tabs go in a row along the top */
+@media (max-width: 720px) {
+  .stn-ui .stn-settings .set-card {
+    min-width: 0;
+    width: 96vw;
+  }
+
+  .stn-ui .set-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .stn-ui .set-nav {
+    flex-direction: row;
+    width: auto;
+    padding: 0;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(230, 223, 207, 0.1);
+  }
+
+  .stn-ui .set-tab {
+    flex: none;
+    border-left: 0;
+    border-bottom: 3px solid transparent;
+  }
+
+  .stn-ui .set-tab.on {
+    border-bottom-color: var(--blood-lite);
+  }
 }/* ---------- pause */
 
 
