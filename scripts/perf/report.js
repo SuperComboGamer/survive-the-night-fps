@@ -61,8 +61,19 @@ export function report(dir, { stamp = null, label = null, server = null } = {}) 
   };
   row('Load to the menu (page opened to the splash scene drawn, shaders built)', (e) => e.loadMs / 1000, 2, ' s');
   row('Join (click to playing)', (e) => e.joinMs / 1000, 2, ' s');
-  row('Survivor picker opening: longest frame', (e) => e.picker?.worstFrameMs, 0, ' ms');
-  row('Survivor picker opening: longest JavaScript', (e) => e.picker?.worstJsMs, 0, ' ms');
+  // (the picker's opening measured on its own - picker-shot.js --perf - takes the place of the sessions' figure)
+  let picker = null;
+  try {
+    picker = JSON.parse(readFileSync(join(dir, 'picker.json'), 'utf8'));
+  } catch {}
+  if (picker && (picker.before || !has)) {
+    const pr = (name, k) => lines.push(has ? `| ${name} | ${f1(picker.before[k], 0)} ms | ${f1(picker.after[k], 0)} ms |` : `| ${name} | ${f1(picker.after[k], 0)} ms |`);
+    pr(`Survivor picker opening: longest frame (${picker.rounds} rounds of its own)`, 'worstFrameMs');
+    pr('Survivor picker opening: longest JavaScript', 'worstJsMs');
+  } else {
+    row('Survivor picker opening: longest frame', (e) => e.picker?.worstFrameMs, 0, ' ms');
+    row('Survivor picker opening: longest JavaScript', (e) => e.picker?.worstJsMs, 0, ' ms');
+  }
   row("The crossing's world swap: longest frame", (e) => e.swapHitchMs, 0, ' ms');
   row('Worst frame of JavaScript while 200 of the dead spawn', (e) => e.spawnWorstJsMs, 1, ' ms');
   row('JS heap, island, after the horde scenes', (e) => e.heapIslandMB?.heapMB, 0, ' MB');

@@ -56,7 +56,6 @@ class CharacterStage {
     this.camera = new THREE.PerspectiveCamera(26, 0.7, 0.05, 30);
     this.people = new Map(); // id -> survivor (createSurvivor)
     this.portraits = new Map(); // id -> the picture's URL
-    this.blobs = []; // (the object URLs among them: let go of with the stage)
     this.time = 0;
   }
 
@@ -92,26 +91,53 @@ class CharacterStage {
   }
 
   /**
-   * The same into an <img>, without holding the frame for it: the picture is drawn now and encoded off the main
-   * thread (the picker's grid makes ten of these as it opens, one a frame: CharacterPanel.show).
+   * The portraits of several at once, for the picker's grid: all of them drawn side by side into the one canvas and
+   * read back from the graphics card ONCE. (Reading a picture back waits for the card to finish everything it has
+   * been sent, the game's own frames included: ten portraits read one after another were ten such waits, and they
+   * were most of the freeze as the picker opened.) Returns a sheet to cut the pictures from: sheet.cut(id) is that
+   * one's URL, encoded then, from memory.
    */
-  portraitInto(id, img) {
-    const url = this.portraits.get(id);
-    if (url) return void (img.src = url);
-    this.shoot(id);
-    this.canvas.toBlob((blob) => {
-      if (!blob) return void (img.src = this.portrait(id));
-      const u = URL.createObjectURL(blob);
-      if (!this.portraits.has(id)) this.portraits.set(id, u);
-      this.blobs.push(u);
-      img.src = this.portraits.get(id);
-    }, 'image/png');
+  sheet(ids) {
+    const W = 160, H = 200;
+    ids = ids.filter((id) => !this.portraits.has(id));
+    const r = this.renderer;
+    const pr = r.getPixelRatio();
+    r.setSize(W * Math.max(1, ids.length), H, false);
+    r.setScissorTest(true);
+    ids.forEach((id, k) => {
+      r.setViewport(k * W, 0, W, H);
+      r.setScissor(k * W, 0, W, H);
+      this.shoot(id, false);
+    });
+    r.setScissorTest(false);
+    r.setViewport(0, 0, W * Math.max(1, ids.length), H);
+    // (a canvas kept in memory, not on the card: cutting from it and encoding its pieces waits for nothing)
+    const all = document.createElement('canvas');
+    all.width = this.canvas.width;
+    all.height = this.canvas.height;
+    const ax = all.getContext('2d', { willReadFrequently: true });
+    if (ids.length) ax.drawImage(this.canvas, 0, 0);
+    const one = document.createElement('canvas');
+    one.width = Math.round(W * pr);
+    one.height = Math.round(H * pr);
+    const ox = one.getContext('2d', { willReadFrequently: true });
+    return {
+      cut: (id) => {
+        const k = ids.indexOf(id);
+        if (k >= 0 && !this.portraits.has(id)) {
+          ox.clearRect(0, 0, one.width, one.height);
+          ox.drawImage(all, Math.round(k * W * pr), 0, one.width, one.height, 0, 0, one.width, one.height);
+          this.portraits.set(id, one.toDataURL('image/png'));
+        }
+        return this.portrait(id);
+      },
+    };
   }
 
-  // draws the portrait of one into the canvas
-  shoot(id) {
+  // draws the portrait of one into the canvas (sized: the canvas made its size first; the sheet sizes its own)
+  shoot(id, sized = true) {
     const W = 160, H = 200;
-    this.renderer.setSize(W, H, false);
+    if (sized) this.renderer.setSize(W, H, false);
     this.time = 1.3;
     const s = this.pose(id, -0.35); // (they face -Z: toward the camera, turned a little)
     s.object.updateMatrixWorld(true);
@@ -141,7 +167,6 @@ class CharacterStage {
   dispose() {
     for (const s of this.people.values()) s.dispose();
     this.people.clear();
-    for (const u of this.blobs) URL.revokeObjectURL(u);
     this.renderer.dispose();
     this.renderer.forceContextLoss?.();
   }
@@ -305,18 +330,19 @@ export class CharacterPanel extends Panel {
     const st = await getStage();
     if (this.root.hidden) return;
     this.view.appendChild(st.canvas);
-    // the portraits, a step a frame: one frame a survivor's model is made, the next its picture is drawn (and
-    // encoded off the main thread) - two a frame of both held every frame of the panel's opening for 50 ms and more
-    const ids = CHARACTERS.map((c) => c.id);
+    // The portraits, a step a frame, so that no frame of the panel's opening is held long: first a survivor's model
+    // a frame, then all their pictures drawn in one go and read back once (CharacterStage.sheet), then a picture cut
+    // and put in its cell a frame.
+    const ids = CHARACTERS.map((c) => c.id).filter((id) => this.cells.get(id) && !this.cells.get(id).img.src);
+    let sheet = null;
     const next = () => {
       if (this.root.hidden || !ids.length) return;
-      const id = ids[0];
-      const b = this.cells.get(id);
-      if (!b || b.img.src) ids.shift();
-      else if (!st.people.has(id) && !st.portraits.has(id)) st.person(id);
+      const need = ids.find((id) => !st.people.has(id) && !st.portraits.has(id));
+      if (need !== undefined) st.person(need);
+      else if (!sheet) sheet = st.sheet(ids);
       else {
-        ids.shift();
-        st.portraitInto(id, b.img);
+        const id = ids.shift();
+        this.cells.get(id).img.src = sheet.cut(id);
       }
       requestAnimationFrame(next);
     };
