@@ -18,7 +18,8 @@ import { PROPS } from '../../shared/props.js';
 import { COL, footprintContains } from '../../shared/collision.js';
 import { createProp } from '../render/models/props.js';
 import * as PropModels from '../render/models/props.js';
-import { createSurvivor, createZombie } from '../render/models/characters.js';
+import { createSurvivor, createZombie, setZombieViewer } from '../render/models/characters.js';
+import { defaultCharacter } from '../../shared/characters.js';
 import { ACT } from '../../shared/protocol.js';
 
 const smooth = (a, b, x) => {
@@ -232,7 +233,7 @@ const IN_FADE = 0.45;
 const SHOTS = [
   { at: BRIDGE_IN, name: 'approach' }, // off the side, high: the first spans, the sea a long way down
   { at: 13.4, name: 'damage' }, // on the deck: through the span whose top steel is down across a lane
-  { at: 18.2, name: 'below' }, // from the water, beside a pier
+  { at: 18.2, name: 'below' }, // from off its side and under it, coming up through the truss as the car goes by
   { at: 22.6, name: 'gap' }, // the broken span, from out over its missing side: the car creeps along what is left
   { at: 28.8, name: 'skyline' }, // alongside, rising: the mainland and what is left of Port Calder, out of the haze
   { at: 34.4, name: 'arrival' }, // from the bluff: off the last span, and it goes into the sea behind them
@@ -252,6 +253,8 @@ const VERGE = 4.3; // ...and shot two's stands this far off it, on the verge
 const LENS_ROOM = 1; // none of the dead runs nearer than this past either
 const GULLS = 8;
 const ROAD_NEED = 130; // m of clear road the island's two shots take
+// what could be taken for the car in a shot the car has just left: no wreck of these stands by the second camera
+const CAR_LIKE = new Set(['car', 'car_wreck', 'car_burnt', 'car_open', 'pickup_truck', 'van_wreck', 'camper', 'ambulance', 'police_car', 'taxi']);
 // what the horde after the car is made of: [type, how many of every HORDE]. The rest are runners.
 const HORDE_MIX = [[ZTYPE.WALKER, 14], [ZTYPE.DOG, 4], [ZTYPE.LEAPER, 3], [ZTYPE.SPITTER, 2], [ZTYPE.BOOMER, 2], [ZTYPE.BOSS_ABOMINATION, 1]];
 
@@ -274,18 +277,12 @@ export class Crossing {
     this.pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
     this.roll = 0; // how far the wheels have turned
     this.last = null; // where the car was a frame ago (its speed, for the wheels and the engine)
-    // the survivors in it: everybody in the game, as the others see them (Entities draws a player by their id)
+    // the survivors in it: everybody in the game as the others see them - the survivor each chose to be (the player
+    // list's character, as Entities draws a player's body), seated, this client's own at the wheel
     this.riders = [];
     const ids = [...game.players.keys()].sort((a, b) => (a === game.myId ? -1 : b === game.myId ? 1 : a - b)).slice(0, SEATS.length);
     if (!ids.length) ids.push(game.myId || 1);
-    ids.forEach((id, k) => {
-      const sv = createSurvivor(id * 31 + 7);
-      sv.setWeapon(0);
-      const [x, y, z] = SEATS[k];
-      sv.object.position.set(x, y - SEAT_HIP, z);
-      car.group.add(sv.object);
-      this.riders.push(sv);
-    });
+    ids.forEach((id, k) => this.riders.push(this.seat(id, k)));
     this.horde = [];
     this.gulls = [];
     this.engine = game.audio.createLoop?.('car', 0, 0, 0) || null;
@@ -298,6 +295,19 @@ export class Crossing {
     };
     window.addEventListener('keydown', this.onKey, true);
     this.setWorld(game.world);
+  }
+
+  // a survivor in seat k of the car: player `id` as the character the player list says they are (the one their id
+  // picks until it has said)
+  seat(id, k) {
+    const ch = this.g.players.get(id)?.character ?? defaultCharacter(id);
+    const sv = createSurvivor(id * 31 + 7, ch);
+    sv.setWeapon(0);
+    const [x, y, z] = SEATS[k];
+    sv.object.position.set(x, y - SEAT_HIP, z);
+    if (sv._inst) sv._inst.sitW = 1; // (seated from its first frame: the pose is eased into, and nobody stands up through the roof)
+    this.car.group.add(sv.object);
+    return { sv, id, ch };
   }
 
   // the world the shots are in: the island first, then (Game.onWorld) the mainland
@@ -337,22 +347,36 @@ export class Crossing {
       }
     }
     const c = { x: 0, z: 0, yaw: 0 };
+    // (a wreck on the verge beside the second camera reads as the car, stopped, once the car has gone by: the
+    // stretch, and the verge that camera stands on, are picked so that none is in its picture)
+    const wrecks = world.props.filter((pr) => CAR_LIKE.has(pr.type) && Math.hypot(pr.x - world.car.x, pr.z - world.car.z) > 4);
+    const wreckBy = (x, z, r) => wrecks.some((pr) => (pr.x - x) ** 2 + (pr.z - z) ** 2 < r * r);
+    const cutRun = this.carRun(CUT);
     let pick = null;
+    let first = null;
     // (the way with more road ahead of it first)
     for (const dir of best < n / 2 ? [1, -1] : [-1, 1]) {
       const path = roadPath(hw, best, dir);
-      for (let start = 62; start <= 142 && !pick; start += 20) {
+      for (let start = 62; start <= 182 && !pick; start += 10) {
         if (path.len < start + ROAD_NEED) break;
         let clear = true;
         for (let s = start - 30; s <= start + ROAD_NEED - 4 && clear; s += 2) clear = !roadBlocked(world, onPath(path, s, 0, c).x, c.z);
-        if (clear) pick = { path, start };
+        if (!clear) continue;
+        first ||= { path, start, verge: VERGE };
+        for (const verge of [VERGE, -VERGE]) {
+          const at = onPath(path, start + cutRun + 12, verge, c);
+          if (wreckBy(at.x, at.z, 24)) continue;
+          const back = onPath(path, start + cutRun - 8, verge * 0.6, c);
+          if (!wreckBy(back.x, back.z, 17)) pick ||= { path, start, verge };
+        }
       }
       if (pick) break;
     }
-    // (no such stretch on this island: the longer way, as it is)
-    if (!pick) pick = { path: roadPath(hw, best, best < n / 2 ? 1 : -1), start: 62 };
+    // (no such stretch on this island: the first clear one; none of those either: the longer way, as it is)
+    pick ||= first || { path: roadPath(hw, best, best < n / 2 ? 1 : -1), start: 62, verge: VERGE };
     this.road = pick.path;
     this.s0 = pick.start; // where the car is as the first shot opens
+    this.verge = pick.verge; // which verge the second camera stands on
     const rnd = (k) => {
       const s = Math.sin((world.seed % 1000) * 12.9898 + k * 78.233) * 43758.5453;
       return s - Math.floor(s);
@@ -363,8 +387,9 @@ export class Crossing {
     while (types.length < HORDE) types.push(ZTYPE.RUNNER);
     const half = hw.width + 2.4; // the roadway and its verges (no tree stands this near the highway)
     // (not through either camera: whoever would run over one runs past it)
+    const verge = this.verge;
     const keepOff = (off) => {
-      for (const at of [VERGE, CAM_OFF]) if (Math.abs(off - at) < LENS_ROOM) off = at + (off < at || at === VERGE ? -LENS_ROOM : LENS_ROOM);
+      for (const at of [verge, CAM_OFF]) if (Math.abs(off - at) < LENS_ROOM) off = at + (at === verge ? -Math.sign(verge) * LENS_ROOM : off < at ? -LENS_ROOM : LENS_ROOM);
       return off;
     };
     types.forEach((type, k) => {
@@ -498,9 +523,9 @@ export class Crossing {
       } else {
         // down on the verge further on, looking back up the road: the car comes at it and is gone past, and behind it
         // the whole road is full of them, the first of them going by as the picture cuts
-        onPath(this.road, camS, VERGE, c);
+        onPath(this.road, camS, this.verge, c);
         cam.position.set(c.x, w.heightAt(c.x, c.z) + 0.75, c.z);
-        const back = onPath(this.road, camS - 30, 0.4, { x: 0, z: 0, yaw: 0 });
+        const back = onPath(this.road, camS - 30, Math.sign(this.verge) * 0.4, { x: 0, z: 0, yaw: 0 });
         _look.set(back.x, w.heightAt(back.x, back.z) + 1.25, back.z);
         this.fov = 40;
       }
@@ -512,6 +537,8 @@ export class Crossing {
       this.far = 280;
       const cx = cam.position.x;
       const cz = cam.position.z;
+      // (the dead are drawn as this shot's camera sees them: the far copy of a body past its range, the near one by the lens)
+      setZombieViewer(cx, cam.position.y, cz);
       this.horde.forEach((z, k) => {
         // (in the second shot they are the ones on its tail as the picture cut: it skips where the car left the rest)
         const zs = t < CUT ? this.s0 - z.back + z.v * t : this.s0 + cutRun - z.gap + z.v * (t - CUT);
@@ -562,11 +589,16 @@ export class Crossing {
         _look.set(lerp(ds.x0 + DAMAGED[0] * BRIDGE.PANEL, P.x, 0.6), br.deckY + 1.6, br.z + lz * 0.5);
         this.fov = 43;
       } else if (shot.name === 'below') {
-        // from down by the water, beside a pier: the whole height of the thing, and the car small on top of it
-        // (far enough out, and far enough up off the water, that the car is seen over the deck's edge)
-        cam.position.set(br.x0 + lerp(s0, s1, 0.5), WATER_LEVEL + 5.5, br.z + (lz < 0 ? -42 : 42)); // (the side its lane is on)
-        _look.set(lerp(br.x0 + lerp(s0, s1, 0.5), P.x, 0.85), br.deckY - 1.2, br.z + lz);
-        this.fov = 21;
+        // From off the side its lane is on, close in, and from under the deck: the girders and the floor beams over
+        // the lens, the pier behind, the car a long way up the span - and the camera comes up past the level of the
+        // roadway as the car comes on, so that it goes by whole, through the truss, the far truss and the sea beyond
+        // it. (From down at the water the kerb and the bottom chord hid all of it but its roof.)
+        const side = lz < 0 ? -1 : 1;
+        const rise = smooth(0.05, 0.62, u);
+        cam.position.set(br.x0 + lerp(s0, s1, 0.7), br.deckY + lerp(-3.4, 1.15, rise), br.z + side * (D / 2 + 8.5));
+        _look.set(P.x + 1.2, br.deckY + lerp(0.1, 0.75, rise), br.z + lz);
+        this.fov = 34;
+        this.fogMul = 1.5; // (the island it has come from is a shape in the haze behind it, no more)
       } else if (shot.name === 'gap') {
         // out over the missing side of the broken span, looking back across the hole at the lane that is left
         const bs = br.spans[br.broken];
@@ -666,7 +698,16 @@ export class Crossing {
     this.last = { x: P.x, z: P.z };
     if (moved < 4) this.roll += moved / WHEEL_R;
     for (const wl of this.car.wheels) wl.rotation.x = -this.roll;
-    this.riders.forEach((sv, k) => sv.update(dt, { speed: 0, sit: true, onGround: true, pitch: 0, time: t + k * 0.37 }));
+    this.riders.forEach((r, k) => {
+      // (the player list can say who somebody is after the cutscene began: a list that came late, a rejoin)
+      const ch = g.players.get(r.id)?.character ?? r.ch;
+      if (ch !== r.ch) {
+        this.car.group.remove(r.sv.object);
+        r.sv.dispose();
+        r = this.riders[k] = this.seat(r.id, k);
+      }
+      r.sv.update(dt, { speed: 0, sit: true, onGround: true, pitch: 0, time: t + k * 0.37 });
+    });
     // the engine, by how fast it is going; on the bridge, the deck plates under the wheels
     if (this.engine) {
       this.engine.setPosition(P.x, P.y + 0.6, P.z);
@@ -692,9 +733,9 @@ export class Crossing {
     this.rattle?.stop();
     this.clearHorde();
     for (const gl of this.gulls) this.g.scene.remove(gl.group);
-    for (const sv of this.riders) {
-      this.car.group.remove(sv.object);
-      sv.dispose();
+    for (const r of this.riders) {
+      this.car.group.remove(r.sv.object);
+      r.sv.dispose();
     }
     this.g.scene.remove(this.car.group);
     this.g.bridge?.setFall(1);
@@ -714,6 +755,7 @@ const AWAY_CUT = 9.2;
 const ROTATE_AT = 7.4; // s: the wheels leave the ground
 const ACCEL = 4.2; // m/s2 down the runway
 const STRIP_DEAD = 26; // the dead drawn on the runway behind it, whatever the stand left of the game's own
+const RUN_CAM = -3.4; // the second shot's camera: this far off the runway's centre line
 export class Takeoff {
   // plane: { group, props } (Game's own: the repaired plane, standing where the wreck stood)
   constructor(game, plane) {
@@ -741,8 +783,11 @@ export class Takeoff {
       const view = createZombie(type, k * 11 + 5);
       view.object.traverse((o) => o.isMesh && (o.castShadow = true));
       game.scene.add(view.object);
-      // (behind the plane, the width of the runway: the quick ones nearest its tail)
-      this.dead.push({ view, x: this.home.x + (k % 2 ? 1 : -1) * (0.8 + ((k * 2.3) % 8.4)), z: this.home.z + (type === ZTYPE.RUNNER ? 9 : 16) + ((k * 7.7) % 30), v: ZOMBIE_DEFS[type].speed * (0.9 + ((k * 0.37) % 0.3)), anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
+      // (behind the plane, the width of the runway: the quick ones nearest its tail - and none of them down the line
+      // the second shot looks along, from where the plane stood to where it has got to)
+      let off = (k % 2 ? 1 : -1) * (0.8 + ((k * 2.3) % 8.4));
+      if (off > RUN_CAM - 1.5 && off < 0.4) off = off < RUN_CAM / 2 ? RUN_CAM - 1.5 - (RUN_CAM / 2 - off) : 0.4 + (off - RUN_CAM / 2) * 0.6;
+      this.dead.push({ view, x: this.home.x + off, z: this.home.z + (type === ZTYPE.RUNNER ? 9 : 16) + ((k * 7.7) % 30), v: ZOMBIE_DEFS[type].speed * (0.9 + ((k * 0.37) % 0.3)), anim: type === ZTYPE.RUNNER ? ZANIM.RUN : ZANIM.WALK });
     }
   }
   worldChanged() {}
@@ -775,11 +820,12 @@ export class Takeoff {
       _look.set(P.x, P.y + 1.7, P.z + 2);
       this.fov = 44;
     } else if (t < OVER_CUT) {
-      // down on the runway where it stood, among the dead: they go past the lens after it, and it is away from them
+      // on the runway where it stood, among the dead, at the height of their heads: they go past the lens after it
+      // on both sides, and over them it is away down the strip
       const u = (t - RUN_CUT) / (OVER_CUT - RUN_CUT);
-      cam.position.set(H.x - 3.4, H.y + 0.9 + u * 0.25, H.z + 13 - u * 5);
-      _look.set(P.x, P.y + 1.2, P.z);
-      this.fov = 46;
+      cam.position.set(H.x + RUN_CAM, H.y + 1.95 + u * 0.35, H.z + 13 - u * 5);
+      _look.set(P.x, P.y + 1.5, P.z);
+      this.fov = 42;
     } else if (t < AWAY_CUT) {
       // on the runway ahead of it, down on the centre line: it comes at the lens, lifts, and goes over it
       const over = 0.5 * ACCEL * ROTATE_AT ** 2 + 18; // (where it is a few metres up)
@@ -802,7 +848,8 @@ export class Takeoff {
       cam.fov = this.fov;
       cam.updateProjectionMatrix();
     }
-    // the dead: after it down the runway, and left there
+    // the dead: after it down the runway, and left there (near or far copies by this shot's camera)
+    setZombieViewer(cam.position.x, cam.position.y, cam.position.z);
     this.dead.forEach((z, k) => {
       const zz = z.z - z.v * t;
       const o = z.view.object;

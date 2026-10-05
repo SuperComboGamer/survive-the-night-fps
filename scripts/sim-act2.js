@@ -5,11 +5,12 @@
 //   cache makes up the floor and nothing more -> the plane's parts are at their set places, are found and fitted ->
 //   the runway stand: the fuel truck, then the plane, then a runway to keep clear -> the take-off is the victory
 // and round it: a wipe on the mainland starts again from the bridge, a late joiner lands in the act being played,
-// a dropped player and a deploy both get across the crossing, and the mainland's nights have the late bosses.
+// a dropped player and a deploy both get across the crossing, and the mainland's nights have the late bosses. The
+// survivor each player chose to be (shared/characters.js) is the same one through all of it.
 // It ends with what a tick costs with a night's horde up on each of the two maps.
 process.env.REJOIN_GRACE_SECONDS = '600';
 const { Game } = await import('../server/game.js');
-const { C2S, S2C, ACT, CAR_ID, HOLD, SNAP, PROTOCOL_VERSION, Writer, Reader, qpos, dqpos, usePos, POS_SCALE, POS_SCALE_WIDE } = await import('../shared/protocol.js');
+const { C2S, S2C, ACT, CAR_ID, HOLD, SNAP, PLF, PROTOCOL_VERSION, Writer, Reader, qpos, dqpos, usePos, POS_SCALE, POS_SCALE_WIDE } = await import('../shared/protocol.js');
 const { PHASE, ESCAPE_DRIVE_TIME, ENGINE_START_TIME, GAME_OVER_DELAY, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD, dayLength, MAP_SIZE } = await import('../shared/constants.js');
 const { ITEM, WEAPONS, AMMO, AMMO_ITEMS, ZTYPE, ZONE, NOTIFY, EVT, CACHE_GAVE, PLANE_PARTS, PLANE_NEED, SUPPLIES, ZOMBIE_DEFS } = await import('../shared/defs.js');
 const { WORLD, MAINLAND_SIZE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, ARRIVAL_DAY, MAINLAND_DAY_MORE, MAINLAND_NIGHT } = await import('../shared/acts.js');
@@ -18,6 +19,7 @@ const { readHeader, readGlobal, readSelf } = await import('../client/net/decode.
 const { envelope, encode, decode } = await import('../server/handoff.js');
 const { countItem } = await import('../server/inventory.js');
 const { randomUUID } = await import('node:crypto');
+const { CHARACTER_COUNT, CHARACTER_NONE, defaultCharacter } = await import('../shared/characters.js');
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -28,8 +30,9 @@ const quiet = () => {};
 const SEED = 4242;
 
 // a client: what it is told, read as the client reads it (global state, own state, the notices among its events)
-function client(game, name, pid = '') {
-  const c = { id: 0, name, net: {}, global: null, notes: [], resets: [], welcome: null, self: { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) } };
+// (character: the survivor chosen on the splash, the JOIN's last byte; none: the byte is left off, as an older client does)
+function client(game, name, pid = '', character = CHARACTER_NONE) {
+  const c = { id: 0, name, net: {}, global: null, notes: [], resets: [], welcome: null, chars: new Map(), self: { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) } };
   c.conn = {
     ip: name,
     send(bytes) {
@@ -39,7 +42,25 @@ function client(game, name, pid = '') {
         c.id = r.u16();
         c.welcome = { seed: r.u32(), tick: r.u32(), rate: r.u8(), max: r.u8(), act: r.u8() };
       } else if (t === S2C.WORLD_RESET) c.resets.push({ seed: r.u32(), act: r.u8() });
-      else if (t === S2C.SNAPSHOT) {
+      else if (t === S2C.PLAYERS) {
+        // the player list: who is who, and after them all the character of each (what every client draws them as)
+        const ids = [];
+        for (let n = r.u8(); n > 0; n--) {
+          ids.push(r.u16());
+          r.str();
+          r.u8();
+          const flags = r.u8();
+          r.u16();
+          r.u16();
+          r.u8();
+          if (flags & PLF.WAYPOINT) {
+            r.i16();
+            r.i16();
+            r.u8();
+          }
+        }
+        c.chars = new Map(ids.map((id) => [id, r.left > 0 ? r.u8() : -1]));
+      } else if (t === S2C.SNAPSHOT) {
         const flags = readHeader(r, c.net);
         if (flags & SNAP.GLOBAL) c.global = readGlobal(r, c.global);
         readSelf(r, c.self, flags);
@@ -55,6 +76,7 @@ function client(game, name, pid = '') {
   w.u8(PROTOCOL_VERSION);
   w.str(name);
   w.str(pid);
+  if (character !== CHARACTER_NONE) w.u8(character);
   game.onMessage(c.session, w.bytes());
   c.p = () => game.players.get(c.id);
   c.act = (a, ...args) => {
@@ -89,16 +111,23 @@ const put = (game, p, x, z) => {
   p.state.vx = p.state.vy = p.state.vz = 0;
 };
 const kitOf = (p) => JSON.stringify({ w: p.state.weapons, m: p.state.mags, a: p.state.ammo, inv: p.inv, armor: [p.armorItem, p.armor, p.armorMax], pack: p.backpackItem });
+// who each player is, as the server holds it and as every client in `cs` was last told it (the player list's bytes)
+const whoIs = (game, cs) => [...game.players.values()].map((p) => `${p.id}:${p.character}`).join() + ' | ' + cs.map((c) => [...c.chars].map(([id, ch]) => `${id}:${ch}`).join()).join(' | ');
+const isChar = (game, cs, id, ch) => game.players.get(id)?.character === ch && cs.every((c) => c.chars.get(id) === ch);
 const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
 
 // ================================================================ the run
 {
   const game = new Game({ seed: SEED, log: quiet, godMode: true, themes: false });
   const notes = notices(game);
-  const ann = client(game, 'Ann', randomUUID());
-  const ben = client(game, 'Ben', randomUUID());
-  const cy = client(game, 'Cy', randomUUID());
+  const ann = client(game, 'Ann', randomUUID(), 3);
+  const ben = client(game, 'Ben', randomUUID(), CHARACTER_COUNT - 1);
+  const cy = client(game, 'Cy', randomUUID()); // (chose nobody: the survivor his id picks)
   ticks(game, 1);
+  const trio = [ann, ben, cy];
+  const chose = [[ann.id, 3], [ben.id, CHARACTER_COUNT - 1], [cy.id, defaultCharacter(cy.id)]];
+  const same = (g = game, cs = trio) => chose.every(([id, ch]) => isChar(g, cs, id, ch));
+  check('each is the survivor they chose to be, and everybody is told', same(), whoIs(game, trio));
   check('a run begins on the island: act 1, 640 m, positions at 1/64 m', game.act === WORLD.ISLAND && game.world.kind === WORLD.ISLAND && game.world.size === MAP_SIZE && game.world.posScale === POS_SCALE && ann.welcome.act === 1 && ann.global.act === 1, `act ${game.act} size ${game.world.size}`);
   // Ann is well stocked, Ben has spent everything he had, Cy is dead and turned
   const a = ann.p();
@@ -138,6 +167,7 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   const at0 = [a.state.x, a.state.z];
   ann.act(ACT.DROP_SLOT, 0, 0);
   ticks(game, 1);
+  check('...and they are who they were, in the car', same(), whoIs(game, trio));
   check('nobody acts while it plays', kitOf(a) === before && a.state.x === at0[0] && a.state.z === at0[1]);
   let built = null;
   ticks(game, CROSSING.SWAP + 1, () => {
@@ -174,6 +204,7 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   const all = CACHE_GAVE.PISTOL | CACHE_GAVE.AMMO | CACHE_GAVE.BANDAGE | CACHE_GAVE.MELEE | CACHE_GAVE.BUILD;
   check('one who crossed with nothing has the floor: a pistol, two magazines, a bandage, a knife, a hammer', floor(b) && notes.some((n) => n[0] === NOTIFY.CACHE && n[1] === all && n[2] === b.id), kitOf(b));
   check('the checkpoint: whoever was dead or turned is a survivor again, with the floor', c.alive && !c.zombie && floor(c) && cy.self.alive === 1 && notes.some((n) => n[0] === NOTIFY.ARRIVED && n[1] === 1), `alive ${c.alive} zombie ${c.zombie} ${kitOf(c)}`);
+  check("the crossing changes nobody's character: not the survivors', not the one the checkpoint brought back from the dead", same() && !c.zombie, whoIs(game, trio));
   check('the day the team arrives on is long, whatever the hour was when the car left', game.day === 1 && Math.abs(game.timeLeft - ARRIVAL_DAY) < 2 && ann.global.phaseLen === ARRIVAL_DAY, `day ${game.day}, ${game.timeLeft} s`);
   check('the mainland is stocked: loot, containers, the dead by day', game.items.length > 200 && game.caches.length > 200 && game.zombies.length > 40, `${game.items.length} items, ${game.caches.length} containers, ${game.zombies.length} zombies`);
 
@@ -256,6 +287,7 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   check('the runway clear, a survivor takes it up: that is the victory', game.phase === PHASE.VICTORY && ann.global.phase === PHASE.VICTORY && notes.some((n) => n[0] === NOTIFY.VICTORY), `phase ${game.phase}`);
   check('...and the end screen waits for the take-off to be watched', Math.abs(game.restartT - (GAME_OVER_DELAY + 6 + TAKEOFF_TIME)) < 1, String(game.restartT));
   ticks(game, GAME_OVER_DELAY + 6 + TAKEOFF_TIME + 1);
+  check('...and after the take-off, on the next island, they are still who they chose to be', same(), whoIs(game, trio));
   check('the next run begins on the island again', game.phase === PHASE.DAY && game.act === WORLD.ISLAND && game.world.kind === WORLD.ISLAND && game.day === 1 && ann.resets.at(-1).act === WORLD.ISLAND && !game.checkpoint, `act ${game.act} day ${game.day} resets ${JSON.stringify(ann.resets)}`);
 }
 
@@ -263,11 +295,12 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
 {
   const game = new Game({ seed: SEED, log: quiet, themes: false });
   const notes = notices(game);
-  const ann = client(game, 'Ann', randomUUID());
+  const ann = client(game, 'Ann', randomUUID(), 6);
   const ben = client(game, 'Ben', randomUUID());
   ticks(game, 1);
   const a = ann.p();
   const b = ben.p();
+  const benIs = defaultCharacter(ben.id);
   game.giveItem(a, ITEM.SHOTGUN, 1);
   game.giveItem(a, ITEM.AMMO_SHELLS, 30);
   // the car leaves at night, three nights in
@@ -290,15 +323,18 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   ticks(game, GAME_OVER_DELAY + 0.5);
   check('...and the run starts again from the bridge, not from the island', game.phase === PHASE.DAY && game.act === WORLD.MAINLAND && game.world.kind === WORLD.MAINLAND && game.day === 4 && notes.some((n) => n[0] === NOTIFY.CHECKPOINT && n[1] === 4) && !ann.resets.some((r) => r.act === WORLD.ISLAND), `phase ${game.phase} act ${game.act} day ${game.day}`);
   check('...everybody alive at the bridgehead with what they crossed with', [a, b].every((p) => p.alive && !p.zombie && near(p, game.world.start, 16)) && kitOf(a) === kits[0] && kitOf(b) === kits[1] && game.unlocked === 0, `${kitOf(a)}\n      ${kits[0]}`);
+  ticks(game, 0.2);
+  check('...and as the survivors they chose to be', isChar(game, [ann, ben], ann.id, 6) && isChar(game, [ann, ben], ben.id, benIs), whoIs(game, [ann, ben]));
   check('...on a mainland stocked afresh, the plane as they first found it', game.supplies.every((n) => n === 0) && game.items.filter((e) => PLANE_PARTS.includes(e.item)).length === 7 && game.zombies.length > 40);
   check('...and its first day is the long one again', Math.abs(game.timeLeft - ARRIVAL_DAY) < 2 && game.checkpoint?.day === 4);
   game.day = 5;
   check('the days after are a minute longer than the island\'s', game.dayLen === dayLength(5) + MAINLAND_DAY_MORE, String(game.dayLen));
   game.day = 4;
   // late joiners: into the act being played
-  const dee = client(game, 'Dee', randomUUID());
+  const dee = client(game, 'Dee', randomUUID(), 1);
   ticks(game, 0.5);
   const d = dee.p();
+  check('a late joiner on the mainland is the survivor they chose', isChar(game, [ann, ben, dee], dee.id, 1) && dee.chars.get(ann.id) === 6, whoIs(game, [ann, ben, dee]));
   check('a late joiner lands in act 2: told the mainland, put down at its start with that day\'s kit', dee.welcome.act === WORLD.MAINLAND && dee.global.act === WORLD.MAINLAND && near(d, game.world.start, 16) && d.state.weapons[SLOT_PISTOL] === ITEM.PISTOL && d.state.ammo[AMMO.P9] > 36 && countItem(d.inv, ITEM.BANDAGE) >= 3, `act ${dee.welcome.act} at ${d.state.x | 0},${d.state.z | 0} ammo ${d.state.ammo[AMMO.P9]}`);
   const city = game.world.zoneById[ZONE.CITY];
   put(game, a, city.x - 140, city.z - 4);
@@ -311,6 +347,8 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   for (const p of [a, b, d, eve.p()]) game.killPlayer(p, { kind: 3 });
   game.checkAllDead();
   ticks(game, GAME_OVER_DELAY + 0.5);
+  ticks(game, 0.2);
+  check('...everybody still who they chose to be', isChar(game, [ann, ben, dee], ann.id, 6) && isChar(game, [ann, ben, dee], ben.id, benIs) && isChar(game, [ann, ben, dee], dee.id, 1), whoIs(game, [ann, ben, dee]));
   check('a second wipe goes back to the bridge again; whoever joined since has a late joiner\'s kit', game.phase === PHASE.DAY && game.act === WORLD.MAINLAND && kitOf(a) === kits[0] && d.alive && d.state.weapons[SLOT_PISTOL] === ITEM.PISTOL && near(d, game.world.start, 16));
 }
 
@@ -318,8 +356,8 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
 {
   const game = new Game({ seed: SEED, log: quiet, themes: false });
   const annId = randomUUID();
-  const ann = client(game, 'Ann', annId);
-  const ben = client(game, 'Ben', randomUUID());
+  const ann = client(game, 'Ann', annId, 2);
+  const ben = client(game, 'Ben', randomUUID(), 7);
   ticks(game, 1);
   const a = ann.p();
   game.giveItem(a, ITEM.MP5, 1);
@@ -332,10 +370,16 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   // the deploy: saved on the island side of the crossing, carried on by the next server
   const B = new Game({ log: quiet, themes: false, restore: decode(encode(envelope(game))) });
   check('a deploy in the middle of the crossing: the next server carries it on, the island still up', B.phase === PHASE.CROSSING && B.act === WORLD.ISLAND && B.crossing?.pending === 2 && Math.abs(B.timeLeft - game.timeLeft) < 0.1 && B.players.size === 2, `phase ${B.phase} act ${B.act} ${JSON.stringify(B.crossing)}`);
-  const back = client(B, 'Ann', annId);
+  check('...each held player the survivor they chose', B.players.get(ann.id)?.character === 2 && B.players.get(ben.id)?.character === 7, whoIs(B, []));
+  // (she comes back asking to be somebody else - a client that picked another on its splash: the body held for her is
+  // the one she left, so she is who she was)
+  const back = client(B, 'Ann', annId, 5);
   const a2 = back.p();
+  ticks(B, 0.2);
+  check('...a player who comes back into a held body is the survivor that body is, whatever the rejoin asks for', isChar(B, [back], ann.id, 2) && back.chars.get(ben.id) === 7, whoIs(B, [back]));
   check('...its players come back into their own bodies, and are told which map', back.id === ann.id && back.welcome.act === WORLD.ISLAND && kitOf(a2) === kit, `${back.id} vs ${ann.id}`);
   ticks(B, CROSSING.TIME);
+  check('...and is still that survivor off the bridge', isChar(B, [back], ann.id, 2) && isChar(B, [back], ben.id, 7), whoIs(B, [back]));
   check('...and it arrives on the mainland with what was carried', B.phase === PHASE.DAY && B.act === WORLD.MAINLAND && back.resets.some((r) => r.act === WORLD.MAINLAND) && kitOf(a2) === kit && near(a2, B.world.start, 16), `phase ${B.phase} act ${B.act}`);
   // ...and a deploy on the mainland: the act, the mainland and the checkpoint survive it
   ticks(B, 2);
@@ -345,6 +389,8 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   check('a deploy on the mainland: act 2, the mainland of the same seed, the checkpoint', C.act === WORLD.MAINLAND && C.world.kind === WORLD.MAINLAND && C.world.size === MAINLAND_SIZE && C.worldHash === B.worldHash && C.checkpoint?.kits.length === 2 && C.checkpoint.day === B.checkpoint.day && C.items.length === B.items.length && C.zombies.length === B.zombies.length, `act ${C.act} hash ${C.worldHash}/${B.worldHash} cp ${JSON.stringify(C.checkpoint)?.length}`);
   const again = client(C, 'Ann', annId);
   const a3 = again.p();
+  ticks(C, 0.2);
+  check('...and who they chose to be (a rejoin that names nobody keeps it too)', isChar(C, [again], ann.id, 2) && isChar(C, [again], ben.id, 7), whoIs(C, [again]));
   check('...the players where they stood, told it is the mainland', again.welcome.act === WORLD.MAINLAND && Math.abs(a3.state.x - a2.state.x) < 0.01 && kitOf(a3) === kitOf(a2));
   for (const p of C.players.values()) {
     p.away = null;
@@ -352,6 +398,8 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   }
   C.checkAllDead();
   ticks(C, GAME_OVER_DELAY + 0.5);
+  ticks(C, 0.2);
+  check('...as the same survivors', isChar(C, [again], ann.id, 2) && isChar(C, [again], ben.id, 7), whoIs(C, [again]));
   check('...and a wipe after it still goes back to the bridge, with what was carried over it', C.phase === PHASE.DAY && C.act === WORLD.MAINLAND && kitOf(a3) === kit && near(a3, C.world.start, 16), `phase ${C.phase} ${kitOf(a3)}`);
 }
 
