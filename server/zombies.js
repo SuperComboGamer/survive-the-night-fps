@@ -63,7 +63,7 @@ const DOG_PACK_GAP = 0.45;
 const lungeT = (dist) => Math.max(0.28, Math.min(0.5, dist / 11)); // s a dog's lunge from dist m off is in the air (fireSpecial case 8)
 // Its ram (def.ramDmg, startRam). Held up by a piece the survivors built while after one of them, or shut in for
 // DOG_PENNED s with one in DOG_PEN_R m, it backs off DOG_BACK_MIN-MAX m square from it (special state 8; as far as it
-// gets), snarls for DOG_RAM_WINDUP s, and sprints at it at DOG_RAM_SPEED m/s (special state 9, DOG_RAM_T s at most).
+// gets), snarls for def.ramWindup (or DOG_RAM_WINDUP) s, and sprints at it at DOG_RAM_SPEED m/s (special state 9, DOG_RAM_T s at most).
 // The blow deals ramDmg x the night's claw multiplier; a metal piece takes DOG_RAM_METAL of that and deals ramRecoil
 // back. Then it reels (z.dazedT) for DOG_RAM_STUN s, or DOG_RAM_STUN_MISS after running into the static world, and
 // rams again no sooner than DOG_RAM_CD s
@@ -1499,11 +1499,6 @@ export class Zombies {
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
       if (def.knock) this.knock(p, z.x, z.z, def.knock, 4, 0.35);
-      if (def.lungeRange && !def.hitRun && z.state === 0 && g.rng() < 0.3) {
-        // The Alpha's hit-and-run: snap, peel away, come back in with a lunge
-        z.state = 7;
-        z.stateT = 0.6 + g.rng() * 0.5;
-      }
     } else if (z.pendingKind === 2) {
       const s = g.ents[z.pendingTarget];
       if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul * g.diff.hurt);
@@ -1793,10 +1788,6 @@ export class Zombies {
           z.animT = 0.15;
           z.attackCd = Math.max(z.attackCd, 0.35);
           if (z.bit && def.hitRun) this.breakOff(z);
-          else if (z.bit) {
-            z.state = 7;
-            z.stateT = 0.5 + g.rng() * 0.6;
-          }
         }
       }
       return true;
@@ -1930,7 +1921,7 @@ export class Zombies {
         z.stuckT = 0;
         z.vx = z.vz = 0;
         z.state = 1;
-        z.stateT = DOG_RAM_WINDUP;
+        z.stateT = def.ramWindup ?? DOG_RAM_WINDUP;
         z.stateAct = 12;
         z.anim = ZANIM.SPECIAL;
         g.sound(SOUND.DOG_SNARL, z.x, z.y + def.headY, z.z, 45);
