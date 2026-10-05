@@ -773,6 +773,7 @@ export class Game {
       respawnT: 0,
       inv: createInventory(),
       invDirty: true,
+      invSort: false, // something picked up or dropped: the grid is sorted before it goes out (sendTick)
       splitKeep: new Map(), // item -> its count when last split (ACT.SPLIT_INV): kept apart while it stays that (tidyStacks)
       lastDrop: null, // { e, t }: the item entity they last put down from the inventory, and when (ACT.UNDO_DROP)
       kit: null, // the starting kit they were issued (spawnHuman)
@@ -1809,7 +1810,7 @@ export class Game {
       const i = freeSlot(p.inv, invCap(p));
       if (i < 0) return 0;
       p.inv[i] = { item, count: 1, mag: mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0) };
-      p.invDirty = true;
+      p.invDirty = p.invSort = true;
       return 1;
     }
     if (def.cat === 'armor' && mag) {
@@ -1817,13 +1818,13 @@ export class Game {
       const i = freeSlot(p.inv, invCap(p));
       if (i < 0) return 0;
       p.inv[i] = { item, count: 1, mag };
-      p.invDirty = true;
+      p.invDirty = p.invSort = true;
       return 1;
     }
     const left = addItem(p.inv, item, count, invCap(p));
     const taken = count - left;
     if (taken > 0) {
-      p.invDirty = true;
+      p.invDirty = p.invSort = true;
       if (THROW_ITEMS.includes(item) && !s.weapons[SLOT_THROW]) s.weapons[SLOT_THROW] = item;
       this.syncThrow(p);
       if (def.cat === 'part') this.notify(NOTIFY.SUPPLY_FOUND, item);
@@ -2054,7 +2055,7 @@ export class Game {
         if (!dropped) return;
         p.lastDrop = { e: dropped, t: this.time };
         takeFrom(p.inv, idx, n); // (a few off a full stack: what is left of it merged with the part stack, consolidate)
-        p.invDirty = true;
+        p.invDirty = p.invSort = true;
         this.syncThrow(p);
         return;
       }
@@ -2149,12 +2150,6 @@ export class Game {
         p.invDirty = true;
         return;
       }
-      case ACT.SORT_INV:
-        // (the open slots only: the locked ones stay empty)
-        sortInventory(p.inv, invCap(p));
-        p.splitKeep.clear(); // (it merged them)
-        p.invDirty = true;
-        return;
       case ACT.SPLIT_INV: {
         // part of a stack into a slot of its own: to drop for a teammate, or to keep apart
         const it = p.inv[r.u8()];
@@ -2165,7 +2160,7 @@ export class Game {
         it.count -= n;
         p.inv[to] = { item: it.item, count: n };
         // The one way to more than one part stack of a thing: asked for. They stay apart while they are only moved
-        // about; the next change to that item's count (a pickup, a use, a craft, a drop) merges them again, as Sort does
+        // about; the next change to that item's count (a pickup, a use, a craft, a drop) merges them again
         p.splitKeep.set(it.item, countItem(p.inv, it.item));
         p.invDirty = true;
         return;
@@ -2642,7 +2637,9 @@ export class Game {
       if (!canFit(copy, rec.out, rec.n, invCap(p))) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     }
     payCost(p.inv, rec.cost);
+    const sorting = p.invSort;
     const taken = this.giveItem(p, rec.out, rec.n);
+    p.invSort = sorting; // (a craft lands where the client's model of it puts it, bulkcraft.js: it is not a pickup)
     // rounds the reserve has no room for were paid for all the same: they go on the ground instead of nowhere
     if (def.cat === 'ammo' && taken < rec.n) {
       this.dropItem(rec.out, rec.n - taken, p.state.x, p.state.y, p.state.z, { spread: 0.8 });
@@ -4429,7 +4426,11 @@ export class Game {
     this.sendList(p);
     this.sendProgress(p);
     if (p.invDirty) {
-      tidyStacks(p.inv, p.splitKeep); // (the safety net: any path that left two part stacks of a thing, split aside)
+      // picked up or dropped this tick: sorted (sortInventory), a split left apart. Else the safety net, for any path
+      // that left two part stacks of a thing
+      if (p.invSort) sortInventory(p.inv, invCap(p), p.splitKeep);
+      else tidyStacks(p.inv, p.splitKeep);
+      p.invSort = false;
       this.sendInventory(p);
     }
     const w = this.w.reset();

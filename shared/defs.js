@@ -392,9 +392,9 @@ export const RECIPES = [
   { id: 39, out: ITEM.AMMO_FLARE, n: 1, cost: { [ITEM.POWDER]: 3, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 }, station: 'bench' },
 ];
 
-// The order the Sort button puts the backpack grid in, by category: weapons, what is worn or carried for what it does
-// (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables, materials, car
-// supplies, schematics (Game.sortInventory). Empty slots come after them, and the locked ones last of all.
+// The order the backpack grid is sorted in after a pickup or a drop, by category: weapons, what is worn or carried for
+// what it does (armor, the backpack, the walkie-talkie), ammunition, medicine and the other consumables, throwables,
+// materials, car supplies, schematics (sortInventory, server/inventory.js). Empty slots come after them, and the locked ones last of all.
 export const BAG_TIER = { weapon: 0, armor: 1, pack: 1, gear: 1, ammo: 2, cons: 3, throw: 4, res: 5, part: 6, schem: 7 };
 
 // ---------------------------------------------------------------- salvage

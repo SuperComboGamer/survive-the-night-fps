@@ -188,7 +188,7 @@ run(5);
   pack(...Array.from({ length: INVENTORY_SIZE }, () => ({ item: ITEM.CLOTH, count: ITEM_DEFS[ITEM.CLOTH].stack })));
   A.act(ACT.DROP_SLOT, 0, 0);
   run(2);
-  a.inv[0] = { item: ITEM.WOOD, count: ITEM_DEFS[ITEM.WOOD].stack }; // (the slot it came from is taken again)
+  a.inv[a.inv.indexOf(null)] = { item: ITEM.WOOD, count: ITEM_DEFS[ITEM.WOOD].stack }; // (the slot it left is taken again, wherever the sort moved it)
   noted.length = 0;
   A.act(ACT.UNDO_DROP);
   run(2);

@@ -25,7 +25,7 @@ import { CAT_LABEL, statLines, costLine, salvageOf, shortName } from './iteminfo
 import { Crafting } from './crafting.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throwable', 'Build tool'];
-// The backpack's sections, in the order the server's Sort leaves them (BAG_TIER in defs.js), each with its filter chip.
+// The backpack's sections, in the order the server's auto sort leaves them (BAG_TIER in defs.js), each with its filter chip.
 // Only the grid is laid out that way - the server keeps each stack in its slot - so within a section stacks stay in
 // slot order, which a drag onto another stack of the section swaps.
 const SECTIONS = [
@@ -264,10 +264,6 @@ export class Inventory {
     const capBar = (this.capBar = el('i', 'inv-capbar', ghr));
     this.capFill = el('i', '', capBar);
     this.capEl = el('span', 'inv-cap', ghr, '0 / ' + INVENTORY_SIZE);
-    // Sort: stacks merged, the slots ordered by kind (BAG_TIER), the server's to do
-    const sort = (this.sortEl = el('button', 'inv-sort', ghr, 'Sort'));
-    sort.type = 'button';
-    sort.title = 'Merge stacks and order the backpack by kind';
 
     // search: matches light up and the rest dims
     const find = (this.bpFind = el('label', 'craft-find bp-find', gp));
@@ -625,11 +621,6 @@ export class Inventory {
       if (it && ref) it.run();
     });
 
-    this.sortEl.addEventListener('click', () => {
-      this._closeSplit(); // (its stack is about to move)
-      this.ui.sound('ui_click');
-      cb.onSortItems();
-    });
     this.throwAlt.addEventListener('click', (e) => {
       const b = e.target.closest('.tw');
       if (b) {
@@ -1119,7 +1110,7 @@ export class Inventory {
     const s = this.secEls[from];
     if (!s) return;
     const label = SECTIONS.find((x) => x.id === from).label;
-    s.note.textContent = this.inv.slots[b] ? `${label} stay together: swap within this section` : 'Sort keeps the free slots last';
+    s.note.textContent = this.inv.slots[b] ? `${label} stay together: swap within this section` : 'The backpack keeps the free slots last';
     s.h.classList.remove('flash');
     void s.h.offsetWidth;
     s.h.classList.add('flash');
