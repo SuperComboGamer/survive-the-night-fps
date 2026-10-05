@@ -467,12 +467,23 @@ act 2, where the same loop is played with a plane and flying out wins.
     stands there, and the client's kit builds it (`client/render/citykit.js`). `world.city` carries `buildings`
     (a block of storeys: footprint, storeys, a style - walkup, shopflat, slab, office, glass, warehouse, stone - a
     wall material, and `cut`: what is left of each storey that is not whole), `rooms` (a room that is walked into:
-    its openings as the Builder cut them, so the kit can line it, ceil it, frame its windows and hang its sign),
+    its openings as the Builder cut them, its partitions, the `zones` those make of it - each painted its own
+    colour - the `patches` of tile on its floor, how high its ceiling hangs and of what, so the kit can line it,
+    ceil it, floor it, frame its windows, hang its doors and its sign),
     `shells` (walls with the sky behind them: lengths, each broken at its own height), `heaps` (rubble: solid in
     steps a survivor climbs), `fallen`, `pancakes`, and `signs` (a board or a mark from the city's atlas, anywhere).
     Their solids are parts flagged `hidden`: there for collision, the nav grid, the field map and the tests, drawn
     by nobody as boxes. The same helpers (`K.block`, `K.groundRoom`, `K.signAt`, `K.extra`, `K.heap`) build the
     airfield's terminal and tower and the third pass's places.
+  - *Its rooms.* A ground floor is not one hall. A block of flats' is its common hall, the stairs up (under what
+    came down them) and a flat either side (`flatUnit`: a passage, a living room, a kitchen, a bedroom, a bathroom
+    and a small room, at a home's size under a plaster ceiling at `FLAT_CEIL`, each with what was in it); a shop
+    has its stock room and an office or a closet behind the floor; the police station its cells' room, its armoury
+    and a back office; an office tower's lobby the offices and the post room behind it; Calder General's hall
+    triage and a waiting room either side of the desk; the terminal a radio room behind its office. What stands
+    against a wall faces the room (a prop's front is its -Z: `ry` 0 against the back wall, PI against the front,
+    -PI / 2 against the left, PI / 2 against the right). `drumFire` is the one light in a room that is not the
+    day's: a drum somebody keeps burning (a `barrel` and an `embers` light).
   - Props flagged `live` (the car, the plane) are drawn by the client's cutscene code, not the static world;
     `afloat` ones (boats) stand on water; parts flagged `across` are the one thing built in a road.
 - **Positions on the wire** stay int16: 1/64 m on the island (+-512 m), 1/32 m on the mainland (+-1024 m).
@@ -505,7 +516,13 @@ act 2, where the same loop is played with a plane and flying out wins.
   the plane are `live` props, left out of the static world and drawn by `liveProps` (cutscene.js).
 - **The cutscenes** (`client/game/cutscene.js`): `Crossing` and `Takeoff`, sequences of camera shots in the real
   world with the game's own models, off the server's clock (the crossing's is the phase's time left). While one is
-  on, `Game.update` takes its camera, hides the HUD, the hands and the players' bodies, and runs no input.
+  on, `Game.update` takes its camera, hides the HUD, the hands and the players' bodies, and runs no input. The
+  survivors in the car are the players as the player list has them - each the character they chose
+  (shared/characters.js), seated, this client's own at the wheel - and the dead behind the car and on the runway
+  are the game's own models, near or far copy by the shot's camera (`setZombieViewer`).
+- **Who a player is** does not change with the map: `p.character` is set once, from the JOIN, and the crossing, the
+  checkpoint's revival, a wipe's restart from the bridge, a rejoin into a held body and a deploy's handoff all keep
+  the player (sim-act2.js holds each).
 - **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
   the save's act.
 - **Debug**: `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
@@ -513,7 +530,9 @@ act 2, where the same loop is played with a plane and flying out wins.
 - **Tests**: `scripts/test-mainland.js` (the map, on any seeds), `scripts/sim-act2.js` (the whole run in simulation,
   a wipe, late joiners, a drop and a deploy across the crossing, the nights, what a tick costs on each map);
   `scripts/clip/act2-shots.js`, `act2-look.js` and `act2-perf.js` (pictures, a look at a list of spots while
-  building, and frame times, through `launchChrome`).
+  building, and frame times, through `launchChrome`). act2-shots builds the same mainland in node and checks every
+  camera against it before the shot is taken (`pickCam`: in nothing solid, in no tree's crown, nothing between it
+  and its subject); a run of it is one section or two (`--only`), well inside a browser's life.
 - **The city's kit** (`client/render/citykit.js`, called by `StaticWorld` for a world with `world.city`). It
   writes triangles straight into the static world's merged buffers, in a building's own frame: a face is cut into
   bays (`STYLE`), every window an opening with reveals and something in it (glass, shards, the dark, boards -
@@ -523,10 +542,20 @@ act 2, where the same loop is played with a plane and flying out wins.
   tank, plant, stair head, hoarding), a storey broken open (`openStorey`: slab edges with their steel, columns,
   rooms papered each its own way) and a slab under the sky (`terrace`). Marks come from one atlas (`GEN.city`,
   `CITY_ATLAS` in textures.js) through two materials: `citysign` (cut out: boards, lettering, ivy, graffiti) and
-  `citygrime` (blended: soot, rust, stains). The static world draws the city in **tiers** (`TIER`): what is read
-  from across the city always, a street's things out to 150 m, and the fine detail of a face and what stands in a
-  room out to 90 m and with no shadow; every plain colour is one vertex-coloured material (`flat`), and its chunks
-  are 128 m (the island's: 80 m, one tier, unchanged).
+  `citygrime` (blended: soot, rust, stains). A glass tower is a curtain wall (`curtainWall`): a band of steel at
+  each slab, glass from mullion to mullion over it - whole, hanging broken, or gone, and through the gone ones the
+  storey behind (its floor, the slab over it, columns, a desk); a burnt-out place is its own brick or concrete
+  under soot laid over each opening, its plaster smoked (`burnt`), its rafters down in the ash; a length of fallen
+  tower is torn at its ends (`fallen`: the skin of its last storey off bay by bay, the floor behind end on, beams
+  and bars out of it), all of it inside the box the world made solid. A room that is walked into is lined by
+  `room()`: there are no lamps, so the day through each opening of its outer walls is laid into the lining's vertex
+  colours (`LIT`: brightest by a window, falling off into the room and behind each partition), over plaster that
+  carries no mark an eye would pick out twice - the damp, stains, cracks and pictures are decals put on each wall
+  by a hash of the room's seed. The static world draws the city in **tiers** (`TIER`): what is read
+  from across the city always, a street's things out to 150 m, the fine detail of a face out to 90 m, and what is
+  inside a room - its lining and whatever stands under a roof - out to 55 m, the last two with no shadow; every
+  plain colour is one vertex-coloured material (`flat`), and its chunks are 128 m (the island's: 80 m, one tier,
+  unchanged).
 
 ## Rendering pipeline
 

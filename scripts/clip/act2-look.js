@@ -28,7 +28,7 @@ try {
   p.on('console', (m) => (m.type() === 'warning' || m.type() === 'error') && /prop failed|citykit|unknown material|Error/.test(m.text()) && errors.push(m.text().slice(0, 300)));
   await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
   await sleep(3500);
-  await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /join/i.test(x.textContent))?.click());
+  await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click());
   for (let i = 0; i < 120 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
   await sleep(2000);
   await p.evaluate(() => {

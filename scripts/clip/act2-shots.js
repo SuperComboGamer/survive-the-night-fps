@@ -6,22 +6,28 @@
 // chat commands (/cross hold, /place, /plane, /takeoff hold). Every shot's draw calls and triangles are printed at
 // the end.
 //
-// A browser lives fifteen minutes (lib.js LIFE_MAX) and a shot of the city takes fifteen to twenty seconds in
-// software: the whole list is three runs of this, each well inside that -
-//   --only cutscene --frames 1        the crossing, and a frame of it every second
-//   --only city,ruin,landmarks,rooms  Port Calder
-//   --only map,country,airfield,plane,takeoff   the rest
+// A browser lives fifteen minutes (lib.js LIFE_MAX) and a shot of the city takes ten to fifteen seconds in software
+// (about forty shots is a run): the whole list is five runs of this, each well inside that -
+//   --only cutscene --frames 1            the crossing, and a frame of it every second
+//   --only city,ruin                      Port Calder's streets and its ruin
+//   --only landmarks,rooms                its landmarks, and its rooms from inside
+//   --only map,country,airfield,takeoff   the rest
+//   --only plane                          the plane, as found and as mended
 //
 // usage: node scripts/clip/act2-shots.js [--seed 1337] [--out docs/pr-images] [--only ...] [--frames 1] [--size 1280x720]
 //   --only    cutscene, map, city, ruin, landmarks, rooms, country, airfield, plane, takeoff (default: all - too long for one browser)
 //   --frames n   also save a frame of the crossing every n seconds (the motion, for judging the pacing): 0 = none
 //   --clear   how much of the day's haze the shots from above keep (default 0.12)
 //   --pick re   only the shots whose names match (a look at a few of them)
+//   --character n   the survivor the client joins as (shared/characters.js; default 3): who is at the wheel in the crossing
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { REPO, parseArgs, sleep, startGame, launchChrome, LIFE_MAX, list } from './lib.js';
+import { worldFor } from '../../shared/worlds.js';
+import { WORLD } from '../../shared/acts.js';
+import { COL, footprintContains, raycastWorld } from '../../shared/collision.js';
 
-const args = parseArgs(process.argv.slice(2), { seed: '1337', out: join(REPO, 'docs', 'pr-images'), frames: '0', size: '1280x720', clear: '0.12' });
+const args = parseArgs(process.argv.slice(2), { seed: '1337', out: join(REPO, 'docs', 'pr-images'), frames: '0', size: '1280x720', clear: '0.12', character: '3' });
 const only = list(args.only);
 const want = (k) => !only || only.includes(k);
 const out = resolve(args.out);
@@ -30,19 +36,79 @@ const [W, H] = String(args.size).split('x').map(Number);
 const clear = +args.clear;
 const pick = args.pick ? new RegExp(String(args.pick)) : null;
 
+// ---- Where a camera can stand. The mainland of this seed is built here as well (it is the same world: shared/
+// worlds.js), so that every shot's camera is checked before it is taken - that it stands in nothing solid, that it is
+// not in the crown of a tree, that nothing stands between it and what it is there to show - and the best of a
+// handful of spots is the one used. (A picture taken from inside a building, or with a bus across half of it, or
+// through a birch, is how the earlier lists went wrong.)
+const M = worldFor(+args.seed, WORLD.MAINLAND);
+const _hit = { t: -1, col: null, terrain: false };
+const _q = [];
+const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+// how far a camera at `at` sees towards `to` before something solid is in the way (m)
+const sees = (at, to) => {
+  const d = dist3(at, to) || 1;
+  raycastWorld(M, at[0], at[1], at[2], (to[0] - at[0]) / d, (to[1] - at[1]) / d, (to[2] - at[2]) / d, d, _hit);
+  return _hit.t < 0 ? d : _hit.t;
+};
+// does it stand in (or within pad of) something solid?
+const inSolid = (at, pad = 0.6) => {
+  for (const c of M.staticGrid.query(at[0], at[2], pad + 1, _q)) {
+    if (c.flags & (COL.NOBLOCK | COL.TREE)) continue;
+    if (c.y0 < at[1] + 0.3 && c.y1 > at[1] - 0.3 && footprintContains(c, at[0], at[2], pad)) return true;
+  }
+  return false;
+};
+// ...or in the crown of a tree? (How far each kind's branches reach from its trunk at full size, and from what height:
+// measured off the models - a birch's leaves are out to 12.8 m.)
+const CROWN = [[4.9, 0], [3.6, 0], [4.2, 5.8], [6.9, 1], [3.8, 2], [12.8, 4.8], [1.1, 0]];
+const inCrown = (at) => {
+  const t = M.trees;
+  for (let i = 0; i < t.length; i += 6) {
+    const [reach, from] = CROWN[t[i + 5]] || [4, 0];
+    const s = t[i + 3];
+    if (Math.abs(t[i] - at[0]) > reach * s || Math.abs(t[i + 2] - at[2]) > reach * s) continue;
+    if (Math.hypot(t[i] - at[0], t[i + 2] - at[2]) < reach * s * 0.92 && at[1] > t[i + 1] + from * s - 0.5) return true;
+  }
+  return false;
+};
+// is a vehicle (or anything else as big) standing within r of it? (A camera at a bus's flank has the bus for a picture.)
+const BIG = /bus|truck|van|car|ambulance|carrier|tank|container|camper|tent/;
+const crowded = (at, r) => M.props.some((pr) => BIG.test(pr.type) && Math.hypot(pr.x - at[0], pr.z - at[2]) < r);
+// The best of the candidate spots [x, y, z] for a camera whose subject is at `to`: the first that stands clear and
+// sees its subject (to within `short` m of it: a wall is seen, not seen through); failing that, whichever sees
+// furthest. o.room: a spot indoors (the roof over it is no tree, and the furniture round it no crowd).
+const pickCam = (name, cands, to, o = {}) => {
+  let best = null;
+  let bs = -1;
+  for (const at of cands) {
+    if (inSolid(at, o.room ? 0.3 : 0.6) || (!o.room && inCrown(at))) continue;
+    if (!o.room && crowded(at, o.crowd ?? 5)) continue;
+    const d = dist3(at, to);
+    const s = Math.min(1, (sees(at, to) + (o.short ?? 1.5)) / d);
+    if (s >= 1) return at;
+    if (s > bs) {
+      bs = s;
+      best = at;
+    }
+  }
+  console.log(`\n(${name}: no clear spot of ${cands.length}; the best ${best ? `sees ${(bs * 100) | 0}% of the way` : 'is the first, such as it is'})`);
+  return best || cands[0];
+};
+
 let game = null;
 let chrome = null;
 const t0 = Date.now();
 try {
   game = await startGame(REPO, { seed: +args.seed, build: true, env: { NODE_ENV: 'test', DEV_ADMIN: '1' } });
-  chrome = await launchChrome({ width: W, height: H, life: LIFE_MAX, storage: { 'stn.settings': JSON.stringify({ quality: 'medium', renderScale: 1 }) } });
+  chrome = await launchChrome({ width: W, height: H, life: LIFE_MAX, storage: { 'stn.settings': JSON.stringify({ quality: 'medium', renderScale: 1 }), 'stn.character': String(+args.character) } });
   const p = chrome.page;
   const errors = [];
   p.on('pageerror', (e) => errors.push(String(e).slice(0, 300)));
   p.on('console', (m) => (m.type() === 'warning' || m.type() === 'error') && /prop failed|citykit|unknown material/.test(m.text()) && errors.push(m.text().slice(0, 300)));
   await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
   await sleep(3500);
-  await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /join/i.test(x.textContent))?.click());
+  await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click());
   for (let i = 0; i < 120 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
   await sleep(2500);
   await p.evaluate(() => {
@@ -128,7 +194,21 @@ try {
         wire: (w.props || []).filter((q) => q.type === 'concertina').map((q) => [q.x, q.z, q.ry]),
         bus: (w.props || []).filter((q) => q.type === 'city_bus').map((q) => [q.x, q.z, q.ry]),
         glass: C ? (C.buildings || []).filter((B) => B.style === 'glass' && B.floors >= 6).map((B) => [B.x, B.z, B.y, B.ry, B.w, B.d, B.floors * B.fh]) : [],
-        open: C ? (C.buildings || []).filter((B) => (B.cut || []).filter((R) => R).length >= 3 && B.floors >= 4).map((B) => [B.x, B.z, B.y, B.ry, B.w, B.d, B.floors * B.fh]) : [],
+        // (a building cut open: [.., which end of it is gone (-1 / 1 along its own x), how much of its floor area])
+        open: C
+          ? (C.buildings || [])
+              .filter((B) => (B.cut || []).filter((R) => R).length >= 3 && B.floors >= 4)
+              .map((B) => {
+                let gone = 0;
+                let end = 0;
+                for (const R of B.cut) {
+                  if (!R) continue;
+                  gone += B.w * B.d - (R[1] - R[0]) * (R[3] - R[2]);
+                  end += R[1] < B.w / 2 - 0.5 ? 1 : R[0] > -B.w / 2 + 0.5 ? -1 : 0;
+                }
+                return [B.x, B.z, B.y, B.ry, B.w, B.d, B.floors * B.fh, Math.sign(end) || 1, gone];
+              })
+          : [],
         river: w.river ? w.river.bridges : [],
         sea: w.sea ? w.sea.x : 0,
         runway: w.runway,
@@ -148,6 +228,8 @@ try {
       await sleep(1400);
       await shot(name);
     }
+    // (who is in the car: each rider's player id and the character drawn for them, beside what the player list says)
+    console.log('\nriders', JSON.stringify(await p.evaluate(() => (window.__game.cine?.riders || []).map((r) => ({ id: r.id, drawn: r.sv?.character?.id ?? r.ch, list: window.__game.players.get(r.id)?.character })))), 'asked for', +args.character);
     const dir = join(out, 'cutscene-frames');
     if (+args.frames > 0) {
       mkdirSync(dir, { recursive: true });
@@ -161,7 +243,7 @@ try {
     // (the server puts the mainland up CROSSING.SWAP seconds in)
     for (let i = 0; i < 160 && (await p.evaluate(() => window.__game.act)) !== 2; i++) await sleep(250);
     await sleep(4000);
-    for (const [t, name] of [[10.6, 'cutscene-05-the-approach'], [14.6, 'cutscene-06-the-damage'], [17.0, 'cutscene-07-the-damage-wrecks'], [20.2, 'cutscene-08-from-below'], [24.2, 'cutscene-09-the-gap'], [27.4, 'cutscene-10-past-the-gap'], [30.2, 'cutscene-11-the-skyline'], [33.2, 'cutscene-12-the-skyline-late'], [35.6, 'cutscene-13-arrival'], [37.9, 'cutscene-14-the-span-goes'], [38.9, 'cutscene-15-the-span-falls']]) {
+    for (const [t, name] of [[10.6, 'cutscene-05-the-approach'], [14.6, 'cutscene-06-the-damage'], [17.0, 'cutscene-07-the-damage-wrecks'], [18.8, 'cutscene-08-from-below'], [20.5, 'cutscene-08b-up-through-the-truss'], [21.9, 'cutscene-08c-going-by'], [24.2, 'cutscene-09-the-gap'], [27.4, 'cutscene-10-past-the-gap'], [30.2, 'cutscene-11-the-skyline'], [33.2, 'cutscene-12-the-skyline-late'], [35.6, 'cutscene-13-arrival'], [37.9, 'cutscene-14-the-span-goes'], [38.9, 'cutscene-15-the-span-falls']]) {
       await pin(t);
       await sleep(1800);
       await shot(name);
@@ -193,28 +275,95 @@ try {
   // front is -Z), a place by its id
   // (of the lots a thing stands on, the one whose front the sun is on at the hour the shots are taken)
   await cam([city.x, city.h + 60, city.z], [city.x + 1, city.h, city.z], { wait: 800 });
-  const sun = await p.evaluate(() => {
+  const sun3 = await p.evaluate(() => {
     const v = window.__game.env.uniforms.uSunDir.value;
-    return [v.x, v.z];
+    return [v.x, v.y, v.z];
   });
+  const sun = [sun3[0], sun3[2]];
+  // is a spot in the sun at the hour the shots are taken (nothing solid between it and the sun)?
+  const sunlit = (at) => sun3[1] > 0.05 && sees(at, [at[0] + sun3[0] * 160, at[1] + sun3[1] * 160, at[2] + sun3[2] * 160]) > 150;
   const lit = (l) => -Math.sin(l.ry) * sun[0] - Math.cos(l.ry) * sun[1];
   const lotOf = (what, n = 0) => I.lots.filter((l) => l.what === what).sort((a, b) => lit(b) - lit(a))[n] || null;
   const lw = (L, lx, lz) => [L.x + Math.cos(L.ry) * lx + Math.sin(L.ry) * lz, L.z - Math.sin(L.ry) * lx + Math.cos(L.ry) * lz];
   // a lot from the street in front of it: back m off its front edge, up m over the pavement, side m to its right,
   // looking lookUp m up its front
   const front = async (what, name, back, up, side = 7, lookUp = 5, n = 0) => {
+    if (pick && !pick.test(name)) return;
     const L = lotOf(what, n);
     if (!L) return console.log(`\n(no ${what} on this map)`);
-    const [x, z] = lw(L, side, -L.d / 2 - back);
-    const [tx, tz] = lw(L, 0, -L.d / 2 + 6);
-    await cam([x, city.h + up, z], [tx, city.h + lookUp, tz]);
+    // (what it looks at: its front wall, lookUp over the pavement; from where: the spot asked for, then others near
+    // it - the other side of its front, nearer, further off, higher)
+    const [tx, tz] = lw(L, 0, -L.d / 2 + 1.2);
+    const to = [tx, city.h + lookUp, tz];
+    const cands = [];
+    for (const bk of [back, back + 3, back - 3, back + 6]) {
+      for (const sd of [side, -side, side * 0.4, -side * 0.4]) {
+        const [x, z] = lw(L, sd, -L.d / 2 - bk);
+        for (const u of [up, up + 2]) cands.push([x, city.h + u, z]);
+      }
+    }
+    await cam(pickCam(name, cands, to, { short: 2.5 }), to);
     await shot(name);
   };
+  // a picture taken in a room of a lot: where the camera stands and what it looks at, in the lot's frame (the spot
+  // asked for, then a step to each side of it if something stands there)
   const room = async (L, at, look, name, h = 1.7) => {
-    if (!L) return;
-    const [x, z] = lw(L, at[0], at[1]);
-    const [tx, tz] = lw(L, look[0], look[1]);
-    await cam([x, city.h + h, z], [tx, city.h + 1.2, tz]);
+    if (!L || (pick && !pick.test(name))) return;
+    const to = [lw(L, look[0], look[1])[0], city.h + 1.2, lw(L, look[0], look[1])[1]];
+    const cands = [[0, 0], [0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5], [0.8, 0.8], [-0.8, -0.8]].map(([dx, dz]) => [lw(L, at[0] + dx, at[1] + dz)[0], city.h + h, lw(L, at[0] + dx, at[1] + dz)[1]]);
+    await cam(pickCam(name, cands, to, { room: true, short: 1 }), to, { wait: 2200 });
+    await shot(name);
+  };
+  // down a street: of every stretch of the grid's streets (from each crossing, each way), the one that is clear
+  // furthest ahead of the camera, has nothing big beside it and has the sun most nearly behind it. n: the n-th best
+  // (another picture of another street); at: 'cross' - standing back from a crossing, looking through it
+  const streetView = (n = 0, at = '') => {
+    const out = [];
+    for (let i = 0; i <= 6; i++) {
+      for (let j = 0; j <= 6; j++) {
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const back = at === 'cross' ? 22 : 6;
+          const px = city.x - G2 + i * 56 - dx * back + dz * 1.3, pz = city.z - G2 + j * 56 - dz * back - dx * 1.3;
+          if (Math.abs(px - city.x) > G2 - 4 || Math.abs(pz - city.z) > G2 - 4) continue;
+          const c = [px, eye + 1.1, pz];
+          if (inSolid(c, 1.2) || inCrown(c) || crowded(c, 9)) continue;
+          const far = sees(c, [px + dx * 110, eye + 1.1, pz + dz * 110]);
+          if (far < 50) continue;
+          // (a street in the sun: where the camera stands, and twenty and forty metres on)
+          const lit = [0, 20, 40].filter((s) => sunlit([px + dx * s, city.h + 1.5, pz + dz * s])).length;
+          out.push({ c, to: [px + dx * 60, city.h + 3.5, pz + dz * 60], score: Math.min(far, 100) + 45 * -(dx * sun[0] + dz * sun[1]) + 22 * lit });
+        }
+      }
+    }
+    out.sort((a, b) => b.score - a.score);
+    // (not the same street twice: the n-th best that is a block or more from the ones before it)
+    const taken = [];
+    for (const v of out) {
+      if (taken.some((q) => Math.hypot(q.c[0] - v.c[0], q.c[2] - v.c[2]) < 70)) continue;
+      taken.push(v);
+      if (taken.length > n) return v;
+    }
+    return out[0] || null;
+  };
+  // round a building [x, z, y, ry, w, d, h]: the camera off one of its corners, of a handful of distances and heights
+  const round = async (name, B, corners, o = {}) => {
+    if (pick && !pick.test(name)) return;
+    const [bx, bz, by, ry, w, d, h] = B;
+    const F = { x: bx, z: bz, ry };
+    const to = [bx, by + h * (o.aim ?? 0.5), bz];
+    const cands = [];
+    // (of the corners it may be seen from, the one the sun is behind first)
+    const sunny = ([sx, sz]) => {
+      const [x, z] = lw(F, sx * 10, sz * 10);
+      return (x - bx) * sun[0] + (z - bz) * sun[1];
+    };
+    for (const [sx, sz] of corners.slice().sort((a, b) => sunny(b) - sunny(a))) {
+      for (const out of o.out || [10, 14, 7, 18]) {
+        const [x, z] = lw(F, sx * (w / 2 + out), sz * (d / 2 + out * 0.8));
+        for (const up of o.up || [0.7, 0.95, 0.5]) cands.push([x, by + h * up, z]);
+      }
+    }
+    await cam(pickCam(name, cands, to, { short: Math.max(w, d) * 0.75 }), to, { fog: 0.6 });
     await shot(name);
   };
   const ground = (x, z) => p.evaluate((x, z) => window.__game.world.heightAt(x, z), x, z);
@@ -250,7 +399,14 @@ try {
     process.stdout.write('map-island-and-mainland ');
     await hud(true);
     await p.evaluate(() => window.__game.toggleMap(true));
-    await sleep(2500);
+    await sleep(1500);
+    // (zoomed all the way out: the whole of the mainland on the sheet, not the corner the team stands in)
+    await p.evaluate(() => {
+      const m = window.__game.ui.map;
+      m._zoomTo(1);
+      m.draw?.();
+    });
+    await sleep(1500);
     await shot('map-screen-mainland');
     await p.evaluate(() => window.__game.toggleMap(false));
     await hud(false);
@@ -265,25 +421,36 @@ try {
     await shot('street-01-main-street');
     await cam([city.x - 56 + 1.2, eye, city.z + G2 - 14], [city.x - 56, city.h + 5, city.z]);
     await shot('street-02-a-side-street');
-    await cam([city.x + 56 - 1, eye, city.z - 56 - 26], [city.x + 56, city.h + 4, city.z + 100]);
-    await shot('street-03-a-crossing');
-    await cam([city.x + 2, eye + 1.2, city.z + 56 + 2.5], [city.x + 60, city.h + 3, city.z + 56], { cycle: 0.25 }); // (noon: the street runs east, in its south side's shadow)
-    await shot('street-04-east-along-a-street');
+    {
+      // (a crossing, from back up the street that runs into it; and the length of another street, the sun behind)
+      const a = streetView(0, 'cross'), b2 = streetView(1);
+      if (a) await cam(a.c, a.to);
+      await shot('street-03-a-crossing');
+      if (b2) await cam(b2.c, b2.to);
+      await shot('street-04-east-along-a-street');
+    }
     await cam([city.x + 112 + 2.6, eye, city.z - 20], [city.x + 112 - 6, city.h + 9, city.z - 60]);
     await shot('street-05-looking-up');
     await front('terrace', 'street-06-a-row-of-shops', 14, 3, 10, 5);
     await front('flats', 'street-07-a-walk-up', 13, 4, 8, 8);
     await front('office', 'street-08-an-office-block', 15, 3, 9, 10);
     if (I.glass.length) {
-      // (a tower of glass and steel, from the corner of it the sun is on)
-      const [bx, bz, by, ry, w, d, h] = I.glass[0];
-      const B = { x: bx, z: bz, ry };
-      // (from over the roofs beside it: the street at its foot is too narrow to see it from)
-      const [x, z] = [bx + Math.sign(sun[0] || 1) * (w / 2 + 34), bz + Math.sign(sun[1] || 1) * (d / 2 + 34)];
-      void B;
+      // (a tower of glass and steel, from off the corner of it the sun is on, over the roofs beside it - the street
+      // at its foot is too narrow to see it from - and again from that street, looking up it)
+      const T = I.glass.slice().sort((a, b) => b[6] - a[6])[0];
+      const [bx, bz, by, ry, w, d, h] = T;
+      const sgn = [Math.sign(sun[0] || 1), Math.sign(sun[1] || 1)];
+      const to = [bx, by + h * 0.5, bz];
+      const cands = [];
+      for (const out of [26, 32, 20, 38]) for (const [sx, sz] of [sgn, [sgn[0], -sgn[1]], [-sgn[0], sgn[1]], [-sgn[0], -sgn[1]]]) for (const up of [0.6, 0.8]) cands.push([bx + sx * (w / 2 + out), by + h * up, bz + sz * (d / 2 + out)]);
       void ry;
-      await cam([x, by + h * 0.75, z], [bx, by + h * 0.5, bz], { fog: 0.6 });
+      await cam(pickCam('street-09-a-glass-tower', cands, to, { short: Math.max(w, d) }), to, { fog: 0.6 });
       await shot('street-09-a-glass-tower');
+      const low = [];
+      for (const out of [9, 12, 6]) for (const [sx, sz] of [sgn, [sgn[0], -sgn[1]], [-sgn[0], sgn[1]], [-sgn[0], -sgn[1]]]) low.push([bx + sx * (w / 2 + out), city.h + 2.2, bz + sz * (d / 2 + out)]);
+      const up = [bx, by + h * 0.62, bz];
+      await cam(pickCam('street-09b-the-glass-tower-from-its-foot', low, up, { short: Math.max(w, d) }), up);
+      await shot('street-09b-the-glass-tower-from-its-foot');
     }
   }
   // ---- its ruin: the tower across the street, a building cut open, a burnt block, the army's last stands, a jam
@@ -301,25 +468,48 @@ try {
       await shot('ruin-03-through-the-break');
       await cam([ax + dir * 20, city.h + 5, az + sd * 20], [ax, city.h + 2.5, az]);
       await shot('ruin-03b-what-it-fell-on');
-    }
-    if (I.open.length) {
-      const [bx, bz, by, ry, w, d, h] = I.open[0];
-      const B = { x: bx, z: bz, ry };
-      for (const [sx, sz, name] of [[1, -1, 'ruin-04-a-building-cut-open'], [-1, -1, 'ruin-05-cut-open-the-other-end'], [1, 1, 'ruin-05b-cut-open-from-behind']]) {
-        const [x, z] = lw(B, sx * (w / 2 + 15), sz * (d / 2 + 13));
-        await cam([x, by + h * 0.9, z], [bx, by + h * 0.5, bz], { fog: 0.6 });
-        await shot(name);
+      // (a break, from near: the torn end of the length that lies furthest out, from off its corner on the sunny side)
+      const T = M.city.fallen.slice().sort((a, b) => b.len - a.len)[0];
+      if (T && !(pick && !pick.test('ruin-03c-a-break'))) {
+        const ex = [Math.cos(T.ry), -Math.sin(T.ry)]; // (the way it lies)
+        const to = [T.x + ex[0] * (T.len / 2 - 1.5), T.y + T.h * 0.5, T.z + ex[1] * (T.len / 2 - 1.5)];
+        const cands = [];
+        const s0 = -ex[1] * sun[0] + ex[0] * sun[1] >= 0 ? 1 : -1; // (the side of it the sun is on)
+        for (const e of [1, -1]) for (const s of [s0, -s0]) for (const [al, off, up] of [[7, 6, 2.2], [9, 8, 3.2], [5.5, 9, 2.6], [11, 4, 2.4]]) cands.push([T.x + e * ex[0] * (T.len / 2 + al) - s * ex[1] * off, T.y + up, T.z + e * ex[1] * (T.len / 2 + al) + s * ex[0] * off, e]);
+        const at = pickCam('ruin-03c-a-break', cands, to, { short: 4, crowd: 3 });
+        const end = [T.x + (at[3] || 1) * ex[0] * (T.len / 2 - 1.2), T.y + T.h * 0.5, T.z + (at[3] || 1) * ex[1] * (T.len / 2 - 1.2)];
+        await cam(at.slice(0, 3), end);
+        await shot('ruin-03c-a-break');
       }
     }
+    if (I.open.length) {
+      // (the building with most of an end fallen away, from off that end: near enough to see into its rooms; then
+      // from its other end, and from behind)
+      const B = I.open.slice().sort((a, b) => b[8] - a[8])[0];
+      const e = B[7] || 1; // (which end is open)
+      await round('ruin-04-a-building-cut-open', B, [[e, -1], [e, 1]], { out: [9, 12, 6, 15], up: [0.6, 0.8, 0.45] });
+      await round('ruin-05-cut-open-the-other-end', B, [[-e, -1], [-e, 1]]);
+      await round('ruin-05b-cut-open-from-behind', B, [[e, 1], [e, -1]], { out: [16, 20, 12], up: [0.9, 1.1] });
+    }
     await front('collapse', 'ruin-06-the-collapsed-block', 12, 3, 10, 5);
-    await front('burnt', 'ruin-07-a-burnt-block', 17, 6.5, 8, 4);
+    await front('burnt', 'ruin-07-a-burnt-block', 15, 4.5, 8, 4);
+    {
+      // (...and from inside it, through the gap in its front wall: the rafters, the ash)
+      const L = lotOf('burnt');
+      if (L) await room(L, [0.6, -L.d / 2 + 2.4], [-3, -L.d / 2 + 9], 'ruin-07b-inside-the-burnt-block', 1.7);
+    }
     await front('ruin', 'ruin-08-a-shell', 12, 1.8, 6, 5);
     const blocks = I.wire.filter(([x, z]) => Math.abs(x - city.x) < G2 - 20 && Math.abs(z - city.z) < G2 - 20);
     for (const [k, [wx, wz, ry]] of blocks.filter((_, i) => i % 2 === 0).slice(0, 2).entries()) {
       const ns = Math.abs(Math.sin(ry)) < 0.5; // (a street that runs north-south: the wire lies east-west)
-      await cam(ns ? [wx + 2.5, eye + 3.4, wz - 19] : [wx - 19, eye + 3.4, wz - 2.5], [wx, city.h + 1, wz + (ns ? 5 : 0)]);
+      // (from up the street on the side the sun is behind, then from the other: over the roadway, clear of what stands in it)
+      const along = ns ? [0, 1] : [1, 0];
+      const lit = -(along[0] * sun[0] + along[1] * sun[1]) >= 0 ? 1 : -1; // (looking this way along it, the sun is behind)
+      const to = [wx, city.h + 1.2, wz];
+      const spots = (sgn, backs, ups) => backs.flatMap((bk) => ups.flatMap((u) => [1.6, -1.6, 0].map((off) => [wx - sgn * along[0] * bk + along[1] * off, eye + u, wz - sgn * along[1] * bk + along[0] * off])));
+      await cam(pickCam(`roadblock ${k} front`, spots(lit, [17, 21, 13], [3.4, 5]), to, { crowd: 4 }), to);
       await shot(`ruin-${String(9 + k * 2).padStart(2, '0')}-a-roadblock`);
-      await cam(ns ? [wx - 3, eye + 6, wz + 24] : [wx + 24, eye + 6, wz + 3], [wx, city.h + 1, wz]);
+      await cam(pickCam(`roadblock ${k} back`, spots(-lit, [20, 24, 15], [6, 8]), to, { crowd: 4 }), to);
       await shot(`ruin-${String(10 + k * 2).padStart(2, '0')}-the-roadblock-from-behind`);
     }
     // (a bus in a street, not the depot's)
@@ -333,7 +523,17 @@ try {
   }
   // ---- the landmarks, each from the street in front of it
   if (want('landmarks')) {
-    for (const [what, name, back, up, side, lookUp] of [['hospital', 'landmark-01-calder-general', 10, 5, 12, 5], ['church', 'landmark-02-st-brendans', 14, 3, -9, 8], ['gas', 'landmark-03-the-filling-station', 17, 7, 10, 2], ['cinema', 'landmark-04-the-cinema', 16, 2.4, 9, 5], ['subway', 'landmark-05-the-subway-entrance', 5, 3.2, 5, 1], ['carpark', 'landmark-06-the-car-park', 20, 11, -16, 4], ['police', 'landmark-07-the-police-station', 12, 2.2, 6, 4], ['depot', 'landmark-08-the-bus-depot', 13, 5, 14, 3], ['warehouse', 'landmark-09-a-warehouse', 14, 3, 10, 5]]) await front(what, name, back, up, side, lookUp);
+    for (const [what, name, back, up, side, lookUp] of [['hospital', 'landmark-01-calder-general', 10, 5, 12, 5], ['church', 'landmark-02-st-brendans', 14, 3, -9, 8], ['gas', 'landmark-03-the-filling-station', 17, 7, 10, 2], ['cinema', 'landmark-04-the-cinema', 16, 2.4, 9, 5], ['subway', 'landmark-05-the-subway-entrance', 5, 3.2, 5, 1], ['police', 'landmark-07-the-police-station', 12, 2.2, 6, 4], ['depot', 'landmark-08-the-bus-depot', 13, 5, 14, 3], ['warehouse', 'landmark-09-a-warehouse', 14, 3, 10, 5]]) await front(what, name, back, up, side, lookUp);
+    const park = lotOf('carpark');
+    if (park && !(pick && !pick.test('landmark-06-the-car-park'))) {
+      // (its decks, from off whichever of its corners sees them: a shell stood in front of the one first tried)
+      const to = [lw(park, 0, -park.d / 2 + 8.7)[0], city.h + 4.6, lw(park, 0, -park.d / 2 + 8.7)[1]];
+      const cands = [];
+      for (const [sx, bk] of [[-1, 16], [1, 16], [-1, 22], [1, 22], [0, 20], [-1, 11], [1, 11]]) for (const up of [8, 11, 5]) cands.push([lw(park, sx * 17, -park.d / 2 - bk)[0], city.h + up, lw(park, sx * 17, -park.d / 2 - bk)[1]]);
+      for (const [sx, bk] of [[-1, 14], [1, 14]]) for (const up of [9, 12]) cands.push([lw(park, sx * 24, -park.d / 2 + 16.4 + bk)[0], city.h + up, lw(park, sx * 24, -park.d / 2 + 16.4 + bk)[1]]);
+      await cam(pickCam('landmark-06-the-car-park', cands, to, { short: 9 }), to);
+      await shot('landmark-06-the-car-park');
+    }
     const hosp = lotOf('hospital');
     if (hosp) {
       const [x, z] = lw(hosp, 3, -17);
@@ -346,17 +546,33 @@ try {
   if (want('rooms')) {
     const shop = lotOf('grocery') || lotOf('hardware');
     if (shop) await room(shop, [6.4, -shop.d / 2 + 2.4], [-5, -shop.d / 2 + 10], 'interior-01-a-shop');
+    if (shop) await room(shop, [-6.6, -shop.d / 2 + 13.6], [-0.5, -shop.d / 2 + 13.8], 'interior-01b-its-stock-room');
     const hosp = lotOf('hospital');
-    await room(hosp, [13, 6.4], [-10, 11], 'interior-02-the-emergency-room');
+    await room(hosp, [8.6, 6.2], [-6, 11.6], 'interior-02-the-emergency-room');
+    await room(hosp, [-8.6, 6], [-15.5, 11.5], 'interior-02b-triage');
     await room(hosp, [-7.2, 14.4], [-14, 18], 'interior-03-a-ward');
+    // a flat (the left-hand one of a walk-up's ground floor: its rooms are laid out from the hall's wall, x = -1.2,
+    // and the front wall, z = f)
     const flat = lotOf('flats');
-    if (flat) await room(flat, [-7.6, -flat.d / 2 + 2.2], [-3, -flat.d / 2 + 12], 'interior-04-a-flat');
-    if (flat) await room(flat, [8.2, -flat.d / 2 + 2.4], [5, -flat.d / 2 + 13], 'interior-05-a-kitchen');
+    if (flat) {
+      const f = -flat.d / 2 + 1.2;
+      const X = (u) => -1.2 - u;
+      await room(flat, [0.3, f + 0.9], [0, f + 13], 'interior-04-the-hall-of-a-walk-up');
+      await room(flat, [X(1.75), f + 4.0], [X(1.9), f + 10.5], 'interior-04b-a-flat-its-passage', 1.6);
+      await room(flat, [X(4.5), f + 3.3], [X(7.0), f + 0.7], 'interior-04c-a-flat-the-living-room', 1.6);
+      await room(flat, [X(7.3), f + 0.9], [X(5.4), f + 4.6], 'interior-04d-a-flat-the-living-room-from-the-window', 1.6);
+      await room(flat, [X(4.0), f + 5.7], [X(7.2), f + 8.4], 'interior-05-a-flat-the-kitchen', 1.6);
+      await room(flat, [X(4.0), f + 9.7], [X(6.9), f + 13.2], 'interior-05b-a-flat-the-bedroom', 1.6);
+      await room(flat, [X(3.0), f + 11.4], [X(0.6), f + 13.4], 'interior-05c-a-flat-the-bathroom', 1.6);
+      await room(flat, [X(2.9), f + 3.0], [X(0.7), f + 0.8], 'interior-05d-a-flat-the-small-room', 1.6);
+    }
     const pol = lotOf('police');
     if (pol) await room(pol, [-6.5, -pol.d / 2 + 2.2], [5, -pol.d / 2 + 7], 'interior-06-the-police-station');
-    if (pol) await room(pol, [-2.4, -pol.d / 2 + 12], [-8, -pol.d / 2 + 13.4], 'interior-07-the-cell');
+    if (pol) await room(pol, [-7.2, -pol.d / 2 + 10.1], [-7.6, -pol.d / 2 + 14.2], 'interior-07-the-cell');
+    if (pol) await room(pol, [3.2, -pol.d / 2 + 10.1], [-1.4, -pol.d / 2 + 14.2], 'interior-07b-the-armoury');
     const off = lotOf('office');
     if (off) await room(off, [-7, -off.d / 2 + 2.4], [5, -off.d / 2 + 9], 'interior-08-an-office-lobby');
+    if (off) await room(off, [2.5, -off.d / 2 + 8.7], [7.6, -off.d / 2 + 13.4], 'interior-08b-an-office');
     const cin = lotOf('cinema');
     if (cin) await room(cin, [-12, -cin.d / 2 + 7.2], [8, -cin.d / 2 + 15], 'interior-09-the-picture-house', 2.2);
     const ch = lotOf('church');
@@ -387,11 +603,15 @@ try {
     for (const id of Object.keys(NAMES)) {
       const zn = I.places[id];
       if (!zn) continue;
-      const back = zn.flat + 16;
-      const side = zn.flat * 0.5;
-      const at = [zn.x - Math.sin(zn.ry) * back + Math.cos(zn.ry) * side, zn.h + 10 + zn.flat * 0.3, zn.z - Math.cos(zn.ry) * back - Math.sin(zn.ry) * side];
-      await cam(at, [zn.x, zn.h + 2, zn.z], { fog: 0.6, wait: 2000 });
-      await shot(`place-${String(++n).padStart(2, '0')}-${NAMES[id]}`);
+      // (from in front of it and to one side, near enough to read: the first of a ring of spots round it that is
+      // out of the trees and sees its middle)
+      const name = `place-${String(++n).padStart(2, '0')}-${NAMES[id]}`;
+      if (pick && !pick.test(name)) continue;
+      const to = [zn.x, zn.h + 2.5, zn.z];
+      const cands = [];
+      for (const k of [0.75, 1, 0.55, 1.3]) for (const a of [0.5, -0.5, 0, 1.1, -1.1, 1.8, -1.8, Math.PI]) for (const up of [0.22, 0.34]) cands.push([zn.x - Math.sin(zn.ry + a) * (zn.flat * k + 9), zn.h + 4 + zn.flat * up, zn.z - Math.cos(zn.ry + a) * (zn.flat * k + 9)]);
+      await cam(pickCam(name, cands, to, { short: zn.flat * 0.7 }), to, { fog: 0.6, wait: 2000 });
+      await shot(name);
     }
   }
   // ---- the airfield

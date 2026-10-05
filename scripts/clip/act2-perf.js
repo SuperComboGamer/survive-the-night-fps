@@ -15,7 +15,7 @@ try {
   const p = chrome.page;
   await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
   await sleep(3000);
-  await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /join/i.test(x.textContent))?.click());
+  await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click());
   for (let i = 0; i < 120 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
   await sleep(4000);
   await p.evaluate(() => {
