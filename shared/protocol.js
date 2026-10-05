@@ -17,7 +17,7 @@ export const C2S = {
 
 // server -> client
 export const S2C = {
-  WELCOME: 1,
+  WELCOME: 1, // u16 your id, u32 seed, u32 tick, u8 tick rate, u8 max players, u8 WELCOMEF (a server before it sends none: 0)
   SNAPSHOT: 2, // u8 flags (SNAP), [u32 tick, u16 ack], [varu ack step], [global], [self], [entities], [events]
   INVENTORY: 3, // INVENTORY_MAX x (u8 item, u16 count), u8 armor item, u8 armor points, u8 armor max, u8 backpack worn (item or 0)
   CHAT: 4,
@@ -32,6 +32,9 @@ export const S2C = {
   PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
 };
 export const ROOMF = { INVITE_ONLY: 1 };
+// S2C.WELCOME flags. ADMIN: this player may run the admin commands (the client offers the spawn menu); the server
+// still checks every command itself
+export const WELCOMEF = { ADMIN: 1 };
 // S2C.PROGRESS flags. LOADED: the server has heard what is on your record (until then the XP is this run's alone);
 // KEPT: it is kept for you (signed in, or a guest with a browser id) - without it nothing earned outlives the game
 export const PROGF = { LOADED: 1, KEPT: 2 };

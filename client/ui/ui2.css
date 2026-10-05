@@ -2176,6 +2176,301 @@
   visibility: hidden;
 }
 
+/* ------------------------------------------------------------------ admin spawn menu */
+/* over a game that goes on: the backdrop is light, so what was spawned can be seen arriving behind it */
+.stn-ui .spawnscr {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  animation: stn-fadeIn 0.12s ease-out;
+}
+
+.stn-ui .spawn-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.stn-ui .spawn-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(94vw, max(640px, calc(900 * var(--u))));
+  height: min(88vh, max(440px, calc(700 * var(--u))));
+  padding: calc(12 * var(--u)) calc(16 * var(--u)) calc(12 * var(--u));
+  background: linear-gradient(175deg, rgba(30, 26, 23, 0.97), rgba(13, 11, 10, 0.97));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+.stn-ui .spawn-tag {
+  align-self: center;
+  margin-left: calc(12 * var(--u));
+  padding: 0.2em 0.55em;
+  border: 1px solid rgba(232, 163, 61, 0.6);
+  font: 500 max(8.5px, calc(10 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.stn-ui .spawn-top {
+  display: flex;
+  align-items: stretch;
+  gap: calc(10 * var(--u));
+  margin-bottom: calc(10 * var(--u));
+}
+
+.stn-ui .spawn-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  min-width: 0;
+  padding: 0 calc(12 * var(--u));
+  border: 1px solid rgba(230, 223, 207, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  cursor: text;
+}
+
+.stn-ui .spawn-search:focus-within {
+  border-color: rgba(232, 163, 61, 0.7);
+}
+
+.stn-ui .spawn-search-ico {
+  flex: none;
+  width: max(14px, calc(18 * var(--u)));
+  height: max(14px, calc(18 * var(--u)));
+  color: var(--bone-dim);
+}
+
+.stn-ui .spawn-search-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .spawn-field {
+  flex: 1;
+  min-width: 0;
+  padding: calc(11 * var(--u)) 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font: max(13px, calc(17 * var(--u))) / 1.2 var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .spawn-field::placeholder {
+  color: rgba(230, 223, 207, 0.38);
+}
+
+.stn-ui .spawn-qty {
+  flex: none;
+}
+
+.stn-ui .spawn-qty .seg-btn {
+  min-width: calc(42 * var(--u));
+  padding: 0 calc(12 * var(--u));
+}
+
+.stn-ui .spawn-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: calc(12 * var(--u));
+}
+
+.stn-ui .spawn-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: max(140px, calc(178 * var(--u)));
+  overflow-y: auto;
+}
+
+.stn-ui .spawn-cat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(8 * var(--u));
+  padding: calc(7 * var(--u)) calc(10 * var(--u));
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  font: 500 max(10.5px, calc(12.5 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--bone-dim);
+  cursor: pointer;
+}
+
+.stn-ui .spawn-cat:hover {
+  color: var(--bone);
+  background: rgba(230, 223, 207, 0.05);
+}
+
+.stn-ui .spawn-cat.on {
+  color: var(--bone);
+  border-left-color: var(--blood-hi);
+  background: rgba(212, 42, 42, 0.14);
+}
+
+.stn-ui .spawn-cat.none:not(.on) {
+  opacity: 0.35;
+}
+
+.stn-ui .spawn-n {
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0;
+  color: var(--bone-dim);
+}
+
+.stn-ui .spawn-list {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(max(190px, calc(232 * var(--u))), 1fr));
+  align-content: start;
+  gap: calc(4 * var(--u));
+  padding-right: calc(4 * var(--u));
+  overflow-y: auto;
+}
+
+.stn-ui .spawn-sec {
+  grid-column: 1 / -1;
+  margin-top: calc(10 * var(--u));
+  padding-bottom: calc(4 * var(--u));
+  border-bottom: 1px solid rgba(230, 223, 207, 0.1);
+  font: 500 max(9.5px, calc(11 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .spawn-sec:first-child {
+  margin-top: 0;
+}
+
+.stn-ui .spawn-row {
+  display: grid;
+  grid-template-columns: max(26px, calc(36 * var(--u))) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: calc(10 * var(--u));
+  padding: calc(6 * var(--u)) calc(10 * var(--u));
+  border: 1px solid transparent;
+  background: rgba(230, 223, 207, 0.035);
+  cursor: pointer;
+}
+
+.stn-ui .spawn-row.on {
+  border-color: rgba(232, 163, 61, 0.65);
+  background: rgba(232, 163, 61, 0.13);
+}
+
+.stn-ui .spawn-row.fired {
+  animation: spawn-fired 0.6s ease-out;
+}
+
+@keyframes spawn-fired {
+  from {
+    background: rgba(182, 208, 138, 0.42);
+  }
+}
+
+.stn-ui .spawn-ico {
+  display: grid;
+  place-items: center;
+  height: max(22px, calc(30 * var(--u)));
+  color: var(--bone-2);
+}
+
+.stn-ui .spawn-ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .spawn-row.zombie .spawn-ico {
+  color: var(--sick);
+}
+
+.stn-ui .spawn-row.cat-boss .spawn-ico {
+  color: var(--blood-lite);
+}
+
+.stn-ui .spawn-row.world .spawn-ico {
+  color: var(--amber);
+}
+
+.stn-ui .spawn-txt {
+  display: flex;
+  flex-direction: column;
+  gap: calc(3 * var(--u));
+  min-width: 0;
+}
+
+.stn-ui .spawn-name,
+.stn-ui .spawn-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stn-ui .spawn-name {
+  font: max(11.5px, calc(14 * var(--u))) / 1.15 var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .spawn-sub {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .spawn-amt {
+  font: 500 max(11px, calc(13 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+
+.stn-ui .spawn-note {
+  grid-column: 1 / -1;
+  padding: calc(36 * var(--u)) calc(10 * var(--u));
+  text-align: center;
+  font: max(11px, calc(13 * var(--u))) / 1.4 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .spawn-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  margin-top: calc(10 * var(--u));
+  padding-top: calc(9 * var(--u));
+  border-top: 1px solid rgba(230, 223, 207, 0.1);
+}
+
+.stn-ui .spawn-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: max(10px, calc(12 * var(--u))) / 1.2 var(--f-mono);
+  color: var(--good);
+}
+
+.stn-ui .spawn-status.err {
+  color: var(--blood-lite);
+}
+
+.stn-ui .spawn-foot .map-keys {
+  flex: none;
+  margin-top: 0;
+}
+
 /* ------------------------------------------------------------------ accounts and friends */
 /* (these set a display of their own, which would beat the hidden attribute) */
 .stn-ui .ac-form[hidden],
