@@ -12,6 +12,7 @@ import { perkMask, progressView, perkLock, perkDependents, levelOf, xpForLevel }
 const q = new URLSearchParams(location.search);
 const screen = q.get('screen') || 'hud';
 const statusMode = q.get('status') || 'ok';
+let buildState = null; // screen=build: what the build menu is showing
 
 // ---------------------------------------------------------------- fake 3D scene background
 function pines(seed, h, color, count) {
@@ -108,6 +109,11 @@ const ui = new UI(document.getElementById('ui'), {
   onUnequip: (s, to) => log('unequip', s, to),
   onWorn: (which, what) => log('worn', which, what),
   onSelectStructure: (t) => log('struct', t),
+  onHoverStructure: (t) => {
+    if (!buildState?.menu) return;
+    buildState.menu.hover = t;
+    ui.setBuildMenu(buildState);
+  },
   onSelectThrowable: (t) => log('throwable', t),
   onCloseInventory: () => {
     log('closeInventory');
@@ -570,8 +576,24 @@ switch (screen) {
     ui.updateHud(h);
     const counts = {};
     for (const s of inv.slots) if (s) counts[s.item] = (counts[s.item] || 0) + s.count;
-    ui.setBuildMenu({ selected: STRUCT.WALL, rotate: 90, counts, valid: q.get('valid') !== '0' });
-    ui.notify('Wood Wall built', 'toast', 60);
+    // &menu=<struct id>: the ring open, pointing at that structure (&unlocked=<mask> of found schematics);
+    // &picked=0: the hammer out with nothing picked yet; else the Wood Wall being placed
+    const menu = q.get('menu');
+    const picked = q.get('picked') !== '0';
+    const hover = +menu || STRUCT.WALL;
+    const a = (STRUCT_ORDER.indexOf(hover) / STRUCT_ORDER.length) * Math.PI * 2;
+    buildState = {
+      picked,
+      selected: STRUCT.WALL,
+      rotate: 90,
+      counts,
+      unlocked: +(q.get('unlocked') ?? 0),
+      valid: q.get('valid') !== '0',
+      reason: q.get('valid') === '0' ? 'Obstructed' : '',
+      menu: menu ? { hover, x: Math.sin(a) * 0.7, y: -Math.cos(a) * 0.7 } : null,
+    };
+    ui.setBuildMenu(buildState);
+    if (!menu) ui.notify('Wood Wall built', 'toast', 60);
     break;
   }
   case 'death': {

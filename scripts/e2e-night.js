@@ -26,7 +26,7 @@ await A.keyboard.press('Digit5');
 await sleep(500);
 // place torches and walls around
 const place = async (type, yaw, pitch, rot) => {
-  await A.evaluate((type, yaw, pitch, rot) => { const g = window.__game; g.buildType = type; g.buildRot = rot; g.input.yaw = yaw; g.input.pitch = pitch; }, type, yaw, pitch, rot);
+  await A.evaluate((type, yaw, pitch, rot) => { const g = window.__game; g.buildType = type; g.buildPicked = true; g.buildRot = rot; g.input.yaw = yaw; g.input.pitch = pitch; }, type, yaw, pitch, rot);
   await sleep(250);
   await A.evaluate(() => window.__game.tryBuild());
   await sleep(350);
