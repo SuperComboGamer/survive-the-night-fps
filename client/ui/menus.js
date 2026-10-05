@@ -4,7 +4,7 @@ import { el, svgEl, lsGet, lsSet, fmtTime } from './dom.js';
 import { glyph } from './icons.js';
 import { bindsOf, keyName } from '../game/binds.js';
 import { loadRecord } from './records.js';
-import { GameBrowser, GameCreator, phaseText, seatsText } from './games.js';
+import { GameBrowser, GameCreator, phaseText, seatsText, difficultyText } from './games.js';
 import { linkedCode, gameInfo, listGames, getLeaderboard } from '../net/lobby.js';
 import { accountState, onAccountChange, refreshAccount } from '../net/account.js';
 import { voteDifficulty } from '../net/feedback.js';
@@ -367,7 +367,7 @@ export class Splash {
     } else {
       this.invKicker.textContent = 'You are invited to';
       this.invName.textContent = g.name;
-      const parts = [`${seatsText(g)} survivors`, phaseText(g.phase, g.day)];
+      const parts = [`${seatsText(g)} survivors`, difficultyText(g.difficulty), phaseText(g.phase, g.day)];
       if (g.inviteOnly) parts.push('Invite only');
       this.invMeta.textContent = g.full ? `Full · ${seatsText(g)} · a seat may free up, or pick another game` : parts.join(' · ');
     }
@@ -614,11 +614,11 @@ export class Pause {
     });
   }
 
-  // the game we are in: { code, name, inviteOnly } (null: none), and its invite link
+  // the game we are in: { code, name, inviteOnly, difficulty } (null: none), and its invite link
   setRoom(room, link) {
     this.inv.hidden = !room;
     if (!room) return;
-    this.invTitle.textContent = `${room.name} · ${room.inviteOnly ? 'invite only' : 'public'} · code ${room.code}`;
+    this.invTitle.textContent = `${room.name} · ${difficultyText(room.difficulty)} · ${room.inviteOnly ? 'invite only' : 'public'} · code ${room.code}`;
     this.invLink.value = link;
     this.invNote.textContent = room.inviteOnly ? 'Only people with this link can join.' : 'Anyone can join from Browse games, or straight in with this link.';
     this.copyTxt.textContent = 'Copy invite link';

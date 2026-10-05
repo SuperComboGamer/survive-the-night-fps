@@ -92,13 +92,13 @@ try {
   {
     const { body } = await S.get('/api/games');
     const g = body.list.find((x) => x.code === q1.room.code);
-    check('the quick game is listed with its players, named after the first in', g && g.players === 2 && g.max === 8 && g.name === "Ann's game", JSON.stringify(body.list));
+    check('the quick game is listed with its players, named after the first in', g && g.players === 2 && g.max === 8 && g.name === "Ann's game" && g.difficulty === 'nightfall', JSON.stringify(body.list));
   }
 
   // ---- an invite-only game
   const made = await S.post({ name: 'The <b>Crypt</b>', host: 'Cat', inviteOnly: true, maxPlayers: 2 });
   const code = made.body?.code;
-  check('an invite-only game gets a long code', made.status === 201 && /^[A-Z2-9]{10}$/.test(code) && made.body.inviteOnly && made.body.max === 2, JSON.stringify(made));
+  check('an invite-only game gets a long code', made.status === 201 && /^[A-Z2-9]{10}$/.test(code) && made.body.inviteOnly && made.body.max === 2 && made.body.difficulty === 'nightfall', JSON.stringify(made));
   check('...and a clean name', made.body?.name === 'The bCryptb', made.body?.name);
   {
     const { body } = await S.get('/api/games');
@@ -158,9 +158,10 @@ try {
 
   // ---- making games: what is asked for, and what is refused
   {
-    const big = await S.post({ name: 'Big', maxPlayers: 99 });
-    check('a game asked for with too many seats gets the most there may be', big.status === 201 && big.body.max === 16 && !big.body.inviteOnly && /^[A-Z2-9]{6}$/.test(big.body.code), JSON.stringify(big));
+    const big = await S.post({ name: 'Big', maxPlayers: 99, difficulty: 'blackout' });
+    check('a game asked for with too many seats gets the most there may be', big.status === 201 && big.body.max === 16 && !big.body.inviteOnly && big.body.difficulty === 'blackout' && /^[A-Z2-9]{6}$/.test(big.body.code), JSON.stringify(big));
     check('a form post is refused', (await S.post('name=x', 'application/x-www-form-urlencoded')).status === 415);
+    check('a difficulty the game does not have is refused', (await S.post({ name: 'Nope', difficulty: 'god' })).status === 400);
     check('so is bad JSON', (await S.post('{nope')).status === 400);
     // a seat comes free for a new socket only once the old one's traffic is done with: nothing meant for the old
     // socket reaches the new one, so every newcomer hears of its game, then is welcomed, then gets snapshots

@@ -58,7 +58,7 @@ export async function call(path, init = {}, ms = 4000) {
 }
 
 // { list: [game], games, maxGames, canCreate, players, defaultPlayers, maxPlayers }
-// game: { code, name, players, seats, max, full, phase, day, seed, inviteOnly, ready, ageS }
+// game: { code, name, players, seats, max, full, phase, day, seed, inviteOnly, difficulty, ready, ageS }
 export const listGames = () => call('/api/games');
 
 // The all-time board can be read before joining a game (the in-game board still comes over its game socket, where
@@ -71,5 +71,5 @@ export const gameInfo = (code) => call(`/api/games/${encodeURIComponent(code)}`)
 // a JSON POST through call
 export const post = (path, body = {}, ms = 4000) => call(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, ms);
 
-// makes a game: { name, host, inviteOnly, maxPlayers } -> its info, code included
+// makes a game: { name, host, inviteOnly, maxPlayers, difficulty } -> its info, code included
 export const createGame = (opts) => post('/api/games', opts, 8000);

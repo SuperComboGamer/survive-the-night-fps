@@ -4983,10 +4983,20 @@ body {
   color: rgba(230, 223, 207, 0.4);
 }
 
+.stn-ui .gc-panel .set-hint {
+  max-width: calc(280 * var(--u));
+}
+
 .stn-ui .gc-panel .seg-btn {
   display: inline-flex;
   align-items: center;
   gap: calc(6 * var(--u));
+}
+
+.stn-ui .gc-diff-seg .seg-btn {
+  letter-spacing: 0.08em;
+  padding-left: calc(11 * var(--u));
+  padding-right: calc(11 * var(--u));
 }
 
 .stn-ui .gc-seg-ico {

@@ -27,7 +27,9 @@ export const S2C = {
   PONG: 8,
   WORLD_RESET: 9, // u32 seed: a new playthrough on a new map - rebuild the world from this seed
   BOARD: 10, // the leaderboard, as asked for (see writeBoard)
-  ROOM: 11, // str code, str name, u8 ROOMF: the game this socket was put in (before anything else; quick joins learn it here)
+  ROOM: 11, // str code, str name, u8 ROOMF, then str difficulty id (shared/difficulty.js). The id is extra on the end so a
+  //          client from before difficulties still stops after the flags byte. An older server sends no id: the
+  //          reader treats a packet that ends there as Nightfall. Not a protocol bump: the join check is equality.
   FRIENDS: 12, // u8 count, then per player u16 id, str account name ('' = a guest, not signed in): everyone's on joining, a newcomer's to the rest
   PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
 };

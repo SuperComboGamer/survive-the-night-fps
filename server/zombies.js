@@ -131,7 +131,7 @@ export class Zombies {
     const g = this.g;
     const def = ZOMBIE_DEFS[type];
     const down = opts.y !== undefined;
-    const hp = def.hp * (opts.hpMul || 1);
+    const hp = def.hp * (opts.hpMul || 1) * g.diff.zombieHp;
     return {
       kind: ENT.ZOMBIE,
       ztype: type,
@@ -254,7 +254,7 @@ export class Zombies {
     const g = this.g;
     const car = g.world.car;
     const k = Math.min(1, (Math.hypot(x - car.x, z - car.z) - DAY_SPECIAL_NEAR) / (DAY_SPECIAL_FAR - DAY_SPECIAL_NEAR));
-    if (k <= 0 || g.rng() >= DAY_SPECIAL_MAX * k) return -1;
+    if (k <= 0 || g.rng() >= DAY_SPECIAL_MAX * k * g.diff.specials) return -1;
     const r = g.rng() * (k >= DAY_ROPER ? 4 : k >= DAY_LEAPER ? 3 : 2);
     return r < 1 ? ZTYPE.SPITTER : r < 2 ? ZTYPE.BOOMER : r < 3 ? ZTYPE.LEAPER : ZTYPE.ROPER;
   }
@@ -262,10 +262,12 @@ export class Zombies {
   spawnInitial() {
     const g = this.g;
     const w = g.world;
+    const pop = g.diff.zombies;
     // zone guards (bigger places, bigger crowds)
     for (const zn of w.zones) {
       if (zn.id === 0) continue;
-      const n = Math.round(zn.flat / 12) + Math.floor(g.rng() * 3) + (zn.id === 6 ? 3 : 0);
+      const n0 = Math.round(zn.flat / 12) + Math.floor(g.rng() * 3) + (zn.id === 6 ? 3 : 0);
+      const n = Math.max(n0 > 0 ? 1 : 0, Math.round(n0 * pop));
       for (let i = 0; i < n; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = 4 + g.rng() * (zn.flat * 0.8);
@@ -277,19 +279,20 @@ export class Zombies {
     }
     // the car supplies are guarded
     for (const sp of g.supplySpots || []) {
-      for (let i = 0; i < 3; i++) {
+      const guards = Math.max(1, Math.round(3 * pop));
+      for (let i = 0; i < guards; i++) {
         const a = g.rng() * Math.PI * 2;
         const r = 3 + g.rng() * 6;
         const x = sp.x + Math.sin(a) * r;
         const z = sp.z + Math.cos(a) * r;
-        const t = i === 2 ? this.daySpecial(x, z) : -1;
-        this.spawn(t >= 0 ? t : i === 2 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1.15 });
+        const t = i === guards - 1 ? this.daySpecial(x, z) : -1;
+        this.spawn(t >= 0 ? t : i === guards - 1 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1.15 });
       }
     }
     // roaming dead in the woods
-    for (let i = 0; i < 22; i++) this.spawnRoamer([]);
+    for (let i = 0; i < Math.max(1, Math.round(22 * pop)); i++) this.spawnRoamer([]);
     // zombie dog packs in the thick woods
-    for (let i = 0; i < 3; i++) this.spawnForestPack([]);
+    for (let i = 0; i < Math.max(1, Math.round(3 * pop)); i++) this.spawnForestPack([]);
     // a herd wandering the roads
     this.herds.reset();
     this.herds.spawn([]);
@@ -707,9 +710,10 @@ export class Zombies {
           if (z.pack) dogs++;
           else if (!z.herd) alive++;
         }
-        const target = Math.min(62, 22 + g.day * 4 + humans.length * 2);
+        const pop = g.diff.zombies;
+        const target = Math.min(Math.max(8, Math.round(62 * pop)), Math.round((22 + g.day * 4 + humans.length * 2) * pop));
         if (alive < target) this.spawnRoamer(humans);
-        if (dogs < Math.min(18, 4 + g.day * 2)) this.spawnForestPack(humans);
+        if (dogs < Math.min(Math.max(2, Math.round(18 * pop)), Math.round((4 + g.day * 2) * pop))) this.spawnForestPack(humans);
       }
     }
 
@@ -850,7 +854,7 @@ export class Zombies {
     // ------------------------------------------------ desired direction
     let dx = 0;
     let dz = 0;
-    let speed = z.enraged ? def.speed * def.enrageSpeed : def.speed; // (The Brute, badly hurt)
+    let speed = (z.enraged ? def.speed * def.enrageSpeed : def.speed) * g.diff.speed; // (The Brute, badly hurt)
     let chasing = false;
     if (z.state === 7) {
       // dog hit-and-run: peel off to one side after a lunge, then come back in
@@ -978,7 +982,7 @@ export class Zombies {
     }
     if (!chasing && z.ztype === ZTYPE.RUNNER && !z.herd) speed = 1.2;
     // legs (Combat.hitLeg): on one it hobbles, on none it drags itself along by its arms, and a fresh hit trips it
-    if (z.legs === 3) speed = crawlSpeed(def) * (chasing ? 1 : CRAWL_SLOW);
+    if (z.legs === 3) speed = crawlSpeed(def) * g.diff.speed * (chasing ? 1 : CRAWL_SLOW);
     else if (z.legs) speed *= HOBBLE_SPEED;
     if (z.stumbleT > 0) speed *= STUMBLE_SPEED;
     speed *= z.trapSlow;
@@ -1440,7 +1444,7 @@ export class Zombies {
       }
     } else if (z.pendingKind === 2) {
       const s = g.ents[z.pendingTarget];
-      if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul);
+      if (s && s.kind === ENT.STRUCTURE) g.damageStructure(s, def.structDmg * dmgMul * g.diff.hurt);
     }
   }
 
@@ -1675,7 +1679,7 @@ export class Zombies {
       let end = z.stateT <= 0;
       if (hit && hit.flags & COL.STRUCT) {
         const s = g.ents[hit.id];
-        if (s) g.damageStructure(s, 700);
+        if (s) g.damageStructure(s, 700 * g.diff.hurt);
         g.sound(SOUND.SLAM, z.x, z.y, z.z, 60);
         // what the blow breaks (a barricade, door boards) it ploughs straight through; anything that holds stops it
         if (s && !s.removed) end = true;
@@ -1950,7 +1954,7 @@ export class Zombies {
         }
         for (const s of [...g.structures]) {
           const d = Math.hypot(s.x - z.x, s.z - z.z);
-          if (d < 6.5) g.damageStructure(s, 450 * (1 - d / 8));
+          if (d < 6.5) g.damageStructure(s, 450 * (1 - d / 8) * g.diff.hurt);
         }
         z.specialCd = 5 + g.rng() * 2;
         break;
@@ -2038,7 +2042,7 @@ export class Zombies {
         // boomer detonation. Bursting against a structure, that piece takes the brunt: the blast alone falls off so
         // gently that a number big enough to open a wall would level its neighbours too
         const s = z.breachId ? g.ents[z.breachId] : null;
-        if (s && s.kind === ENT.STRUCTURE && Math.hypot(s.x - z.x, s.z - z.z) < def.blastRadius) g.damageStructure(s, def.breachDmg);
+        if (s && s.kind === ENT.STRUCTURE && Math.hypot(s.x - z.x, s.z - z.z) < def.blastRadius) g.damageStructure(s, def.breachDmg * g.diff.hurt);
         g.combat.killZombie(z, null, { explode: true });
         break;
       }
@@ -2084,9 +2088,10 @@ export class Zombies {
           z.detourT = Math.min(z.detourT, 0);
           z.wanderT = 0;
           const l = d3 || 1;
-          z.vx = ((tx - z.x) / l) * def.speed;
-          z.vy = ((ty + 1.3 - z.y) / l) * def.speed;
-          z.vz = ((tz - z.z) / l) * def.speed;
+          const dive = def.speed * g.diff.speed;
+          z.vx = ((tx - z.x) / l) * dive;
+          z.vy = ((ty + 1.3 - z.y) / l) * dive;
+          z.vz = ((tz - z.z) / l) * dive;
         }
         if (z.detourT > 0) {
           gx = tx + Math.sin(time * 1.25) * 6;
@@ -2134,7 +2139,7 @@ export class Zombies {
     let dy = gy - z.y;
     let dz = gz - z.z;
     const l = Math.hypot(dx, dy, dz) || 1;
-    const sp = def.speed * (z.state === 7 ? 1.2 : 1);
+    const sp = def.speed * g.diff.speed * (z.state === 7 ? 1.2 : 1);
     const k = Math.min(1, dt * 3);
     z.vx += ((dx / l) * sp - z.vx) * k;
     z.vy += ((dy / l) * sp - z.vy) * k;
