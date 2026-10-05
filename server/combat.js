@@ -510,6 +510,7 @@ export class Combat {
     // a shade pinned by light shrugs off most of what hits it and cannot be shoved (the dawn sun still burns it)
     const solid = z.lit && !z.onFire;
     if (solid) amount *= z.def.litResist;
+    if (z.dazedT > 0 && z.def.stunHurt) amount *= z.def.stunHurt; // (a dog reeling from its ram)
     g.track?.dealt(attacker, z, amount);
     z.hp -= amount;
     if (z.link) {
