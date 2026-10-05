@@ -82,9 +82,9 @@ export function report(dir, { stamp = null, label = null, server = null } = {}) 
   row('...with its typed arrays', (e) => e.heapAfterCrossingMB?.withBuffersMB, 0, ' MB');
   row('JS heap, mainland, just arrived (crossing skipped)', (e) => e.heapMainlandMB?.heapMB, 0, ' MB');
   row('...with its typed arrays', (e) => e.heapMainlandMB?.withBuffersMB, 0, ' MB');
-  row('Vertex + index buffers, island with the horde (estimate)', (e) => e.gpuMemIsland?.geometryMB, 0, ' MB');
+  row("Vertex and index data held in the page's memory, island with the horde (the card's own copy is the 'before' figure in both)", (e) => e.gpuMemIsland?.geometryMB, 0, ' MB');
   row('Textures, island (estimate)', (e) => e.gpuMemIsland?.textureMB, 0, ' MB');
-  row('Vertex + index buffers, mainland (estimate)', (e) => e.gpuMemMainland?.geometryMB, 0, ' MB');
+  row("Vertex and index data held in the page's memory, mainland (the card's own copy is the 'before' figure in both)", (e) => e.gpuMemMainland?.geometryMB, 0, ' MB');
   row('Textures, mainland (estimate)', (e) => e.gpuMemMainland?.textureMB, 0, ' MB');
   if (server) lines.push('', server);
   const gpuOk = runs.some((r) => Object.values(r.scenes).some((m) => m.gpuMs !== null && m.gpuMs !== undefined));

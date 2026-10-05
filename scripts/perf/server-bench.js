@@ -173,8 +173,8 @@ for (const k of keys) {
   lines.push(`| ...zombies / entities in it | ${has ? `${T(runs.before[0]).zombies} / ${T(runs.before[0]).ents} | ` : ''}${T(runs.after[0]).zombies} / ${T(runs.after[0]).ents} |`);
 }
 for (const w of ['island', 'mainland']) lines.push(`| World generation, ${w} | ${pair((r) => r.gen[w], 0, ' ms')} |`);
-lines.push(`| A game's memory once started, island: JS heap / typed arrays | ${pair((r) => r.tick['island, 4 players'].heapMB, 0, ' MB')} / ${pair((r) => r.tick['island, 4 players'].buffersMB, 0, ' MB')} |`);
-lines.push(`| A game's memory after the crossing: JS heap / typed arrays | ${pair((r) => r.tick['mainland, 4 players'].heapMB, 0, ' MB')} / ${pair((r) => r.tick['mainland, 4 players'].buffersMB, 0, ' MB')} |`);
+lines.push(`| A game's JS heap once started on the island | ${pair((r) => r.tick['island, 4 players'].heapMB, 0, ' MB')} |`);
+lines.push(`| ...and after the crossing (the mainland's world as well) | ${pair((r) => r.tick['mainland, 4 players'].heapMB, 0, ' MB')} |`);
 if (has) {
   const same = keys.every((k) => runs.before.every((b) => b.tick[k].hash === runs.after[0].tick[k].hash) && runs.after.every((a) => a.tick[k].hash === runs.after[0].tick[k].hash));
   lines.push('', same ? `The simulation is the same in both builds: every zombie's place, facing, state and health and every player's place, hashed after each of ${112 * 20 + 1200} ticks of each of the four runs, give the same fingerprints (${keys.map((k) => runs.after[0].tick[k].hash.slice(0, 8)).join(', ')}).` : `**The simulation differs between the builds:** ${keys.map((k) => `${k}: ${runs.before[0].tick[k].hash.slice(0, 8)} / ${runs.after[0].tick[k].hash.slice(0, 8)}`).join('; ')}.`);
