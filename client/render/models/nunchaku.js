@@ -104,7 +104,7 @@ function evalTrack(keys, t, start, out) {
   while (i < n - 1 && t > keys[i][0]) i++;
   const k2 = keys[i];
   const k1 = i > 0 ? keys[i - 1] : start;
-  const t1 = i > 0 ? k1[0] : 0;
+  const t1 = i > 0 ? k1[0] : start[0] || 0; // (a track taken up part way through a clip starts when it was taken up)
   const u = k2[0] > t1 ? clamp((t - t1) / (k2[0] - t1), 0, 1) : 1;
   const w = ease(u, k2[7]);
   const k0 = i > 1 ? keys[i - 2] : i === 1 ? start : null;
@@ -242,6 +242,61 @@ export const FP = {
     d: [KS(0.04, -0.42, -0.45, -0.32, -0.8, 0.2, 0.55, 2), KS(0.08, -0.15, -0.4, -0.4, -0.5, 0.8, -0.2, 3), KS(0.12, 0.15, -0.38, -0.43, 0.3, 0.5, -0.8, 1), KS(0.16, 0.45, -0.42, -0.4, 0.8, 0.2, -0.55, 1), KS(0.22, 0.62, -0.45, -0.34, 0.8, 0.3, 0.5, 2), KS(0.38, ...END_R, 0)],
     o: [fo(0.38)],
     release: 0, kick: [[0.12, 0.006, 0.014, 0.01]],
+  };
+  // ---- at rest, now and then: a lazy figure-eight in the one hand; the free handle laid over the shoulder a while
+  C.fig8 = {
+    dur: 1.5,
+    d: [KS(0.18, 0.55, -0.5, -0.36, 0.3, 0.8, 0.4, 0), KS(0.42, 0.1, -0.45, -0.45, -0.5, 0.4, -0.7, 1), KS(0.62, -0.25, -0.6, -0.42, -0.8, -0.3, -0.3, 1), KS(0.82, -0.35, -0.35, -0.38, -0.5, 0.6, 0.5, 1), KS(1.02, 0, -0.4, -0.45, 0.2, 0.6, -0.75, 1), KS(1.22, 0.4, -0.6, -0.42, 0.8, -0.2, -0.5, 1), KS(1.5, 0.55, -0.5, -0.38, 0.5, 0.7, 0.4, 2)],
+    o: [fo(1.5)],
+    release: 0,
+    body: [[0.4, 0.15, 0.02, 0, 0, 0, 0], [0.9, -0.15, 0.02, 0, 0, 0, 0], [1.5, 0, 0, 0, 0, 0, 0]],
+  };
+  C.rest1 = {
+    dur: 2.9,
+    d: [KS(0.4, 0.82, -0.2, -0.25, 0.3, 0.5, 0.8, 0), KS(2.5, 0.84, -0.22, -0.25, 0.3, 0.45, 0.85, 0), KS(2.9, 0.5, -0.5, -0.36, -0.2, 0.9, -0.3, 3)],
+    o: [fo(2.9)],
+    release: 0,
+  };
+  // ---- the flourish (asked for): a figure-eight, and the handle passed from hand to hand - across the front, behind
+  // the back, over the shoulder, and back across the front. Each clip ends with both hands on it and the hands change
+  // over (swap): the next is written, like every clip, for the hand that now drives.
+  // across the front: a stroke down to the left and up, and the free handle swung into the other hand
+  C.show1 = {
+    dur: 0.98,
+    d: [KS(0.14, 0.7, -0.2, -0.3, 0.3, 0.6, 0.75, 2), KS(0.3, 0.1, -0.4, -0.47, -0.4, 0.3, -0.85, 1), KS(0.42, -0.25, -0.6, -0.44, -0.8, -0.4, -0.3, 1), KS(0.56, -0.38, -0.3, -0.38, -0.6, 0.6, 0.5, 1), KS(0.72, 0, -0.45, -0.44, 0.1, 0.9, -0.3, 1), KS(0.98, 0.16, -0.62, -0.43, -0.45, 0.8, -0.4, 2)],
+    o: [KS(0.6, -0.5, -0.9, -0.34, 0.3, 0.8, -0.5, 0)],
+    oc: [KS(0.98, -0.16, -0.62, -0.43, 0.45, 0.8, -0.4, 2)],
+    release: 0, catch: [0.74, 0.92, 'o'], swap: true, then: 'show2',
+    body: [[0.14, -0.3, 0, 0, 0.02, 0.2, 2], [0.42, 0.35, 0.1, 0, 0.05, 0.3, 1], [0.98, 0, 0.03, 0, 0.02, 0.2, 0]],
+  };
+  // behind the back: down past the hip and round behind, the handles end to end across the small of the back, and the
+  // other hand takes it there
+  C.show2 = {
+    dur: 1.0,
+    d: [KS(0.16, 0.6, -0.3, -0.34, 0.5, 0.6, 0.6, 2), KS(0.34, 0.2, -0.5, -0.46, -0.3, 0.2, -0.93, 1), K(0.52, 0.34, -0.5, -0.12, 0.2, -0.75, 0.6, 1), K(0.7, 0.33, -0.6, 0.2, -0.3, -0.35, 0.89, 1), K(1.0, 0.275, -0.62, 0.35, -1, 0, 0.12, 2)],
+    o: [K(0.5, -0.3, -0.5, -0.1, 0.3, 0.6, -0.7, 0), K(0.76, -0.34, -0.6, 0.2, 0.4, 0, 0.9, 0)],
+    oc: [K(1.0, -0.275, -0.62, 0.35, 1, 0, 0.12, 2)],
+    release: 0, catch: [0.78, 0.96, 'o'], swap: true, then: 'show3',
+    body: [[0.34, 0.3, 0.05, 0, 0.03, 0.2, 1], [0.7, -0.25, -0.08, 0, 0.02, 0, 1], [1.0, 0, -0.06, 0, 0.02, 0, 0]],
+  };
+  // over the shoulder: out from behind and up, the free handle thrown over the driver's own shoulder to hang down
+  // the back, where the other hand reaches up behind for it
+  C.show3 = {
+    dur: 1.05,
+    d: [K(0.18, 0.36, -0.55, 0.05, 0.3, -0.3, 0.9, 2), KS(0.4, 0.5, -0.5, -0.42, 0.2, 0.3, -0.93, 1), KS(0.58, 0.6, 0.05, -0.34, 0.1, 0.99, 0.1, 1), K(0.76, 0.25, 0.02, -0.03, 0.1, 0.2, 0.97, 2), K(1.05, 0.25, 0.03, -0.02, 0.05, -0.25, 0.97, 0)],
+    o: [K(0.5, -0.3, -0.5, -0.05, 0.3, 0.5, -0.8, 0), K(0.8, -0.05, -0.5, 0.3, 0.6, 0.6, 0.5, 0)],
+    oc: [K(1.05, 0.22, -0.4, 0.3, 0.1, 1, -0.2, 2)],
+    release: 0, catch: [0.84, 1.02, 'o'], swap: true, then: 'show4',
+    body: [[0.4, -0.3, 0.05, 0, 0.02, 0, 1], [0.76, 0.1, -0.05, -0.05, 0, 0, 1], [1.05, 0.2, -0.04, -0.05, 0, 0, 0]],
+  };
+  // ...drawn down and out from behind, whipped up across the front, and passed back to the hand it started in
+  C.show4 = {
+    dur: 1.1,
+    d: [K(0.2, 0.36, -0.58, 0.16, 0.3, -0.5, 0.8, 2), KS(0.42, 0.6, -0.55, -0.4, 0.5, 0.2, -0.85, 1), KS(0.6, 0.2, -0.3, -0.47, -0.3, 0.7, -0.65, 1), KS(0.78, -0.2, -0.55, -0.44, -0.8, 0.1, -0.6, 1), KS(1.1, 0.16, -0.62, -0.43, -0.45, 0.8, -0.4, 2)],
+    o: [K(0.3, -0.3, -0.3, -0.1, 0.3, 0.7, -0.6, 0), KS(0.8, -0.5, -0.9, -0.34, 0.3, 0.8, -0.5, 0)],
+    oc: [KS(1.1, -0.16, -0.62, -0.43, 0.45, 0.8, -0.4, 2)],
+    release: 0, catch: [0.86, 1.04, 'o'], swap: true,
+    body: [[0.42, 0.3, 0, 0, 0.02, 0.2, 1], [0.78, -0.3, 0.08, 0, 0.04, 0.3, 1], [1.1, 0, 0.02, 0, 0.01, 0.1, 0]],
   };
   // ---- the heavy attack: the wind-up is not a clip but a whirl (Core._spin); this is the strike it is let go as
   C.heavy = {
@@ -488,16 +543,24 @@ export class NunchakuCore {
     this._pose(dr, this.side);
     dr.p.add(this.give);
     this._pose(ot, -this.side);
-    if (this.who === 'o') {
-      // in (or coming into) the other hand: its eye is never further from the driver's than the chain is long
-      _c.copy(ot.p).addScaledVector(ot.d, EYE);
-      _d.copy(dr.p).addScaledVector(dr.d, EYE);
-      _e.subVectors(_c, _d);
-      const l = _e.length();
-      if (l > NK_CHAIN * 0.999) ot.p.addScaledVector(_e, -(l - NK_CHAIN * 0.999) / l);
-    }
     this._arm(dr, this.side, d);
     this._arm(ot, -this.side, d);
+    if (this.who === 'o' && this.pinW >= 1) {
+      // both hands on it: their handles' eyes are never further apart than the chain is long. Each hand gives half
+      // (and its arm is worked out again where it then is)
+      for (let i = 0; i < 2; i++) {
+        _c.copy(ot.p).addScaledVector(ot.d, EYE);
+        _d.copy(dr.p).addScaledVector(dr.d, EYE);
+        _e.subVectors(_c, _d);
+        const l = _e.length();
+        if (l <= NK_CHAIN * 0.999) break;
+        const k = (l - NK_CHAIN * 0.998) / l / 2;
+        ot.p.addScaledVector(_e, -k);
+        dr.p.addScaledVector(_e, k);
+        this._arm(dr, this.side, 0);
+        this._arm(ot, -this.side, 0);
+      }
+    }
 
     // ---- the chain
     const sim = this.sim, qW = this.qW;
@@ -760,12 +823,18 @@ export class NunchakuCore {
     this.anchor = 1 - this.anchor;
     this.side = -this.side;
     // each hand's track value becomes the other's, in the mirrored terms (a track is written with the driver's x to
-    // the right and the other hand's to the left: both turn round)
+    // the right and the other hand's to the left: both turn round). Taken from where the hands really are - two
+    // hands on one chain are not always where their tracks would have them - so nothing jumps as the next clip starts
+    const s = -this.side; // (the side as it was: this.side is already the new one)
     const a = dr.k.slice(), b = ot.k.slice();
-    a[1] = -a[1];
-    a[4] = -a[4];
-    b[1] = -b[1];
-    b[4] = -b[4];
+    for (const [k, h] of [[a, dr], [b, ot]]) {
+      k[1] = -h.p.x * s;
+      k[2] = h.p.y;
+      k[3] = h.p.z;
+      k[4] = -h.d.x * s;
+      k[5] = h.d.y;
+      k[6] = h.d.z;
+    }
     dr.k = b;
     ot.k = a;
     const e = dr.el;
@@ -1150,6 +1219,6 @@ export class NunchakuTP {
         }
       },
     });
-    this.meshes.place(core, this.handle0, 1.3);
+    this.meshes.place(core, this.handle0, 0.8);
   }
 }

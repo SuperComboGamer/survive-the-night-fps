@@ -221,10 +221,11 @@ mkdirSync(out, { recursive: true });
 
 // ---------------------------------------------------------------- run
 let game = null, chrome = null;
-const t0 = Date.now();
+let t0 = Date.now();
 try {
-  game = await startGame(REPO, { seed: +args.seed, build: true });
-  chrome = await launchChrome({ width: 1280, height: 720, gpu: !!args.gpu, life: LIFE_MAX, storage: { 'stn.settings': JSON.stringify({ quality: args.quality, renderScale: 1, weaponSway: true }) } });
+  // (the browser first: there is one on the whole machine, and this waits its turn for it - up to --wait minutes)
+  chrome = await launchChrome({ width: 1280, height: 720, gpu: !!args.gpu, life: LIFE_MAX, wait: (+args.wait || 45) * 60_000, storage: { 'stn.settings': JSON.stringify({ quality: args.quality, renderScale: 1, weaponSway: true }) } });
+  game = await startGame(REPO, { seed: +args.seed, build: !args.nobuild });
   const p = chrome.page;
   await p.evaluateOnNewDocument(VIRTUAL_CLOCK);
   await p.evaluateOnNewDocument((k) => {
@@ -232,6 +233,7 @@ try {
       localStorage.setItem('stn.admin', k);
     } catch {}
   }, game.secret);
+  t0 = Date.now(); // (the browser's life runs from here)
   await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
   await sleep(3500);
   await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click());

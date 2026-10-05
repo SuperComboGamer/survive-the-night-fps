@@ -1404,7 +1404,7 @@ const nkR = (z) => {
 function nkRing(z, r) {
   const ring = [];
   for (let k = 0; k < NK_OCT; k++) {
-    const a = -((k + 0.5) / NK_OCT) * PI * 2; // (clockwise seen from +Z: facetLoft's faces then point out)
+    const a = ((k + 0.5) / NK_OCT) * PI * 2; // (anticlockwise seen from +Z: facetLoft's faces then point out)
     ring.push([Math.cos(a) * r, Math.sin(a) * r, z]);
   }
   return ring;
@@ -2001,11 +2001,12 @@ const HAND_POSES = {
   batR: { curl: [[0.79, 1.32, 0.92], [0.82, 1.42, 0.99], [0.8, 1.35, 0.94], [0.75, 1.05, 0.73]], spread: 0, thumb: [[-0.69, -0.61, -0.4], [-0.77, -0.61, -0.21]], center: [-0.0319, -0.083, 0] },
   batL: { curl: [[0.87, 1.22, 0.85], [0.92, 1.35, 0.94], [0.89, 1.26, 0.88], [0.62, 0.96, 0.67]], spread: 0, thumb: [[-0.03, -0.97, -0.26], [0.38, -0.92, -0.05]], center: [-0.035, -0.083, 0] },
   macheteGrip: { curl: [[0.49, 1.41, 0.98], [0.5, 1.52, 1.06], [0.5, 1.45, 1.01], [0.48, 1.14, 0.79]], spread: 0, thumb: [[-0.79, -0.61, -0.1], [-0.7, -0.71, -0.09]], center: [-0.0294, -0.083, 0] },
-  // nunchucks: a fist on the taped octagon (either hand: the handle is the same either way round), the same hand
-  // eased open to take a catch, and loosened to let the handle turn in it through a spin
-  nkGrip: { curl: [[0.79, 1.32, 0.92], [0.82, 1.42, 0.99], [0.8, 1.35, 0.94], [0.75, 1.05, 0.73]], spread: 0, thumb: [[-0.69, -0.61, -0.4], [-0.77, -0.61, -0.21]], center: [-0.0319, -0.083, 0] },
-  nkHalf: { curl: [[0.5, 0.8, 0.5], [0.52, 0.85, 0.55], [0.5, 0.8, 0.5], [0.5, 0.7, 0.45]], spread: 0.03, thumb: [[-0.55, -0.6, -0.58], [-0.4, -0.75, -0.5]], center: [-0.0319, -0.083, 0] },
-  nkSpin: { curl: [[0.79, 1.32, 0.92], [0.7, 1.2, 0.8], [0.6, 1.0, 0.7], [0.55, 0.85, 0.6]], spread: 0.01, thumb: [[-0.69, -0.61, -0.4], [-0.77, -0.61, -0.21]], center: [-0.0319, -0.083, 0] },
+  // nunchucks: a fist fitted to the taped octagon (clip:fit; either hand - the handle is the same either way round),
+  // the same hand eased open to take a catch, and loosened to let the handle turn in it through the whirl (the
+  // index finger and thumb keep it, the other fingers ride it)
+  nkGrip: { curl: [[0.83, 1.34, 0.93], [0.86, 1.44, 1], [0.81, 1.39, 0.96], [0.74, 1.08, 0.75]], spread: 0, thumb: [[-0.7, -0.71, -0.09], [-0.84, -0.5, -0.22]], center: [-0.0313, -0.083, 0] },
+  nkHalf: { curl: [[0.5, 0.8, 0.5], [0.52, 0.85, 0.55], [0.5, 0.8, 0.5], [0.5, 0.7, 0.45]], spread: 0.03, thumb: [[-0.55, -0.6, -0.58], [-0.4, -0.75, -0.5]], center: [-0.0313, -0.083, 0] },
+  nkSpin: { curl: [[0.83, 1.34, 0.93], [0.74, 1.24, 0.82], [0.62, 1.04, 0.7], [0.55, 0.85, 0.6]], spread: 0.01, thumb: [[-0.7, -0.71, -0.09], [-0.84, -0.5, -0.22]], center: [-0.0313, -0.083, 0] },
   hammerGrip: { curl: [[0.78, 1.45, 1.01], [0.82, 1.53, 1.06], [0.75, 1.48, 1.03], [0.71, 1.2, 0.83]], spread: 0, thumb: [[-0.61, -0.71, -0.35], [-0.77, -0.61, -0.21]], center: [-0.0289, -0.083, 0] },
   // a used item held in both hands, palms on its sides (the medkit, the tin and the can are the same either side)
   kitHold: { curl: [[0.36, 1.02, 0.71], [0.21, 1.24, 0.86], [0.37, 1.03, 0.72], [0.38, 0.44, 1.2]], spread: 0.02, thumb: [[0.07, -0.87, -0.5], [0.08, -0.99, 0.1]], center: [0.0075, -0.088, 0] },

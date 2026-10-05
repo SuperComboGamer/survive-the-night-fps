@@ -18,8 +18,9 @@ const out = resolve(args.out);
 mkdirSync(out, { recursive: true });
 let vite = null, chrome = null;
 try {
+  // (the browser first: there is one on the whole machine, and this waits its turn for it - up to --wait minutes)
+  chrome = await launchChrome({ width: 1280, height: 800, life: LIFE_MAX, wait: (+args.wait || 45) * 60_000 });
   vite = await startVite(REPO);
-  chrome = await launchChrome({ width: 1280, height: 800, life: LIFE_MAX });
   for (const s of list) {
     const r = await shoot(chrome.page, `${vite.url}/sandbox/${s.page === 'props' ? 'props-test.html' : 'models-test.html'}?${s.q}`, { w: s.w || 1280, h: s.h || 720, wait: s.wait ?? 400, file: join(out, s.name + '.png'), evaluate: s.clip ? () => (window.__clip && (Array.isArray(window.__clip) ? window.__clip.map((c) => c.text) : window.__clip.text)) || null : null });
     if (s.clip) console.log(s.name + ': ' + JSON.stringify(r));
