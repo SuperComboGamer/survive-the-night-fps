@@ -124,6 +124,7 @@ import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { itemIcon, glyph } from '../ui/icons.js';
 import { recordRun } from '../ui/records.js';
 import { KeyHints } from '../ui/keyhints.js';
+import { radialIndex } from '../ui/build.js';
 import { MenuTour } from './menutour.js';
 import { KeyGuard } from './keyguard.js';
 import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
@@ -172,6 +173,9 @@ const sameSpot = (a, b) => (a.zone >= 0 || b.zone >= 0 ? a.zone === b.zone : Mat
 // clicks pile up on top of that, the rest over the next ticks.
 const CRAFT_BURST = 20;
 const CRAFT_RATE = 40; // per second
+// the build ring's pointer (mouse px): how far out it goes, and how far it must be pushed to point at a structure
+const BUILD_MENU_REACH = 120;
+const BUILD_MENU_DEAD = 26;
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
 const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
 const BOARD_EVERY = 4000; // ms between two requests for the leaderboard while it is open
@@ -240,6 +244,8 @@ export class Game {
     this.fovCur = settings.fov || 75;
     this.aimT = 0; // 0 hip .. 1 aimed, eased with the zoom (look sensitivity)
     this.buildType = STRUCT.BARRICADE;
+    this.buildPicked = false; // a structure picked from the ring since the hammer came out: its ghost is up to place
+    this.buildMenu = null; // { hover }: the ring of structures is open (the mouse points in it: Input.cursor)
     this.buildRot = 0;
     this.ghosts = {};
     this.lastSlot = SLOT_PISTOL;
@@ -1870,14 +1876,22 @@ export class Game {
         }
         return;
       }
+      // the hammer's key again with the hammer out: the ring of structures, to pick another (or put it away again)
+      if (digit === SLOT_BUILD && s.slot === SLOT_BUILD && !s.zombie && !s.hmg && !s.using && this.self.alive && !s.downed) {
+        if (this.buildMenu) this.closeBuildMenu(true);
+        else this.openBuildMenu();
+        return;
+      }
       if (digit !== s.slot) this.lastSlot = s.slot;
       this.prediction.requestSlot(digit);
       return;
     }
-    // hammer out: the build keys step through the structures (Q back, R / E on), fire places and aim turns the piece -
-    // but the interact key still interacts whenever the prompt offers it
+    // hammer out: fire opens the ring of structures and fire in it picks the one pointed at (aim shuts it). With one
+    // picked, fire places it and aim turns the piece. The build keys step through the structures (Q back, R / E on) -
+    // but the interact key still interacts whenever the prompt offers it, and the ring is not up
     if (s.slot === SLOT_BUILD && !s.zombie) {
-      const offered = has('interact') && !!this.prompt?.startsWith(bindTag('interact'));
+      const menu = this.buildMenu;
+      const offered = !menu && has('interact') && !!this.prompt?.startsWith(bindTag('interact'));
       if (!offered) {
         if (has('buildPrev')) return this.cycleBuild(-1);
         if (has('buildNext')) return this.cycleBuild(1);
@@ -1889,9 +1903,14 @@ export class Game {
       if (this.self.alive && !s.downed && (has('fire') || has('aim'))) {
         // (with an item in the hands the click puts it away, as it does with a weapon out: asking for the slot we are on is
         // what does that here, the build mode's clicks being no fire button)
-        if (has('fire') && s.using) this.prediction.requestSlot(SLOT_BUILD);
-        else if (has('fire')) this.tryBuild();
-        else {
+        if (menu) {
+          if (has('fire')) this.pickStructure(menu.hover);
+          else this.closeBuildMenu(true);
+        } else if (has('fire') && s.using) this.prediction.requestSlot(SLOT_BUILD);
+        else if (has('fire')) {
+          if (this.buildPicked) this.tryBuild();
+          else this.openBuildMenu();
+        } else if (this.buildPicked) {
           this.buildRot = (this.buildRot - 32) & 255; // 45deg clockwise seen from above (+yaw is counter-clockwise)
           this.audio.playLocal('ui_click', { volume: 0.4 });
         }
@@ -2138,10 +2157,55 @@ export class Game {
     return out;
   }
 
+  // the build keys and the wheel: the next structure round the ring (opening it while none is picked yet), or with one
+  // picked and the ring shut, the next one to place
   cycleBuild(dir) {
-    const i = STRUCT_ORDER.indexOf(this.buildType);
-    this.buildType = STRUCT_ORDER[(i + dir + STRUCT_ORDER.length) % STRUCT_ORDER.length];
+    const step = (t) => STRUCT_ORDER[(STRUCT_ORDER.indexOf(t) + dir + STRUCT_ORDER.length) % STRUCT_ORDER.length];
+    if (!this.buildMenu && !this.buildPicked) this.openBuildMenu(false);
+    const menu = this.buildMenu;
+    if (menu) {
+      menu.hover = step(menu.hover);
+      const c = this.input.cursor;
+      c.x = c.y = 0; // (or the pointer, still out over the old one, takes it straight back)
+      this.audio.playLocal('ui_hover', { volume: 0.6 });
+      return;
+    }
+    this.buildType = step(this.buildType);
     this.audio.playLocal('ui_click', { volume: 0.4 });
+  }
+
+  openBuildMenu(sound = true) {
+    this.buildMenu = { hover: this.buildType };
+    this.input.cursor = { x: 0, y: 0, r: BUILD_MENU_REACH };
+    if (sound) this.audio.playLocal('ui_click', { volume: 0.4 });
+  }
+
+  closeBuildMenu(sound = false) {
+    if (!this.buildMenu) return;
+    this.buildMenu = null;
+    this.input.cursor = null;
+    if (sound) this.audio.playLocal('ui_click', { volume: 0.3 });
+  }
+
+  pointBuildMenu(type) {
+    const menu = this.buildMenu;
+    if (!menu || menu.hover === type) return;
+    menu.hover = type;
+    this.audio.playLocal('ui_hover', { volume: 0.6 });
+  }
+
+  // a structure picked in the ring: its ghost goes up, to be placed. One whose schematic nobody has found stays shut.
+  pickStructure(type) {
+    const schem = STRUCT_DEFS[type]?.schem;
+    if (schem && !((this.global.unlocked | 0) & (1 << SCHEM_BIT[schem]))) {
+      this.ui.notify(`Locked · find the ${ITEM_DEFS[schem].name}`, 'warning', 1.5);
+      this.audio.playLocal('build_fail', { volume: 0.5 });
+      return;
+    }
+    this.buildType = type;
+    this.buildPicked = true;
+    this.closeBuildMenu();
+    this.audio.playLocal('ui_click', { volume: 0.5 });
   }
 
   quickHeal() {
@@ -2326,7 +2390,8 @@ export class Game {
       onDropWeapon: (slot) => this.conn.action(ACT.DROP_WEAPON, slot),
       onUnequip: (slot, to = 255) => this.conn.action(ACT.UNEQUIP, slot, to),
       onWorn: (which, what) => this.conn.action(ACT.WORN, which, what),
-      onSelectStructure: (t) => (this.buildType = t),
+      onSelectStructure: (t) => this.buildMenu && this.pickStructure(t),
+      onHoverStructure: (t) => this.pointBuildMenu(t),
       onSelectThrowable: (item) => this.conn.action(ACT.SELECT_THROWABLE, item),
       onCloseInventory: () => this.state === 'playing' && this.toggleInventory(false),
       onChatSend: (text) => {
@@ -2926,7 +2991,23 @@ export class Game {
     for (const k in this.ghosts) this.ghosts[k].visible = false;
     this.ghostPlace = null;
     if (!active) {
+      this.buildPicked = false; // (the hammer drawn again starts at the ring)
+      this.closeBuildMenu();
       this.ui.setBuildMenu(null);
+      return;
+    }
+    // (the pointer let go of - the pause menu, the inventory: the ring goes with it)
+    if (this.buildMenu && (!this.input.enabled || !this.input.locked)) this.closeBuildMenu();
+    const counts = this.invCounts();
+    const unlocked = this.global.unlocked | 0;
+    let menu = null;
+    if (this.buildMenu) {
+      const c = this.input.cursor;
+      if (Math.hypot(c.x, c.y) > BUILD_MENU_DEAD) this.pointBuildMenu(STRUCT_ORDER[radialIndex(c.x, c.y)]);
+      menu = { hover: this.buildMenu.hover, x: c.x / c.r, y: c.y / c.r };
+    }
+    if (!this.buildPicked) {
+      this.ui.setBuildMenu({ picked: false, counts, unlocked, menu });
       return;
     }
     let gh = this.ghosts[this.buildType];
@@ -2978,10 +3059,8 @@ export class Game {
     gh.position.set(x, y, z);
     gh.rotation.y = rotY;
     gh.visible = true;
-    const counts = this.invCounts();
     let afford = true;
     for (const k in def.cost) if ((counts[k] || 0) < def.cost[k]) afford = false;
-    const unlocked = this.global.unlocked | 0;
     const car = this.world.car;
     if (!reason && def.schem && !(unlocked & (1 << SCHEM_BIT[def.schem]))) reason = `Locked · find the ${ITEM_DEFS[def.schem].name}`;
     if (!reason && Math.hypot(x - this.renderPos.x, z - this.renderPos.z) > BUILD_REACH + (def.snap ? 1 : 0)) reason = 'Too far';
@@ -2992,7 +3071,7 @@ export class Game {
     const valid = !reason;
     gh.userData.setValid?.(valid);
     this.ghostPlace = { x, z };
-    this.ui.setBuildMenu({ selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, valid, reason, unlocked });
+    this.ui.setBuildMenu({ picked: true, selected: this.buildType, rotate: Math.round((((256 - this.buildRot) & 255) / 256) * 360), counts, valid, reason, unlocked, menu });
   }
 
   // same overlap rules the server applies when placing a structure

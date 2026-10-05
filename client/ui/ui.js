@@ -42,7 +42,8 @@ const CALLBACKS = [
   'onDropWeapon',
   'onUnequip', // (weapon slot, backpack index or 255): a weapon out of its slot into the backpack
   'onWorn', // (which: WORN, what: WORN_DO) the armor or backpack being worn: taken off, dropped or salvaged
-  'onSelectStructure',
+  'onSelectStructure', // a structure picked in the build menu's ring
+  'onHoverStructure', // ...and pointed at, with a free pointer
   'onSelectThrowable',
   'onCloseInventory',
   'onChatSend',
@@ -143,7 +144,7 @@ export class UI {
   _bindSounds() {
     let last = null;
     let lastT = 0;
-    const HOVER = 'button:not(:disabled), .cell:not(.empty), .eq:not(.empty), .bc, input[type=range]';
+    const HOVER = 'button:not(:disabled), .cell:not(.empty), .eq:not(.empty), .br-seg, input[type=range]';
     this.root.addEventListener('pointerover', (e) => {
       const t = e.target.closest?.(HOVER);
       if (t === last) return;

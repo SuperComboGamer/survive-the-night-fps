@@ -1908,25 +1908,6 @@
   cursor: not-allowed;
 }
 
-.stn-ui .bc-lock {
-  position: absolute;
-  top: calc(4 * var(--u));
-  right: calc(6 * var(--u));
-  color: #9cb4cf;
-}
-
-.stn-ui .bc-lock svg {
-  width: calc(13 * var(--u));
-  height: calc(13 * var(--u));
-  min-width: 10px;
-  min-height: 10px;
-}
-
-.stn-ui .bc.locked .bc-ico,
-.stn-ui .bc.locked .bc-name {
-  opacity: 0.35;
-}
-
 @keyframes stn-fadeIn {
   from {
     opacity: 0;
