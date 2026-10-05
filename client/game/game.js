@@ -2605,8 +2605,9 @@ export class Game {
     this._envOver.under = this.under;
     this._envOver.fogMul = this.debugFog ?? (cine ? cine.fogMul : 0); // (a cutscene's long shots see further than the day's haze lets a survivor; debugFog: a look-dev camera's)
     this.env.update(dt, cycle, cam.position, time, weather, this._envOver);
-    this.staticWorld.update(cam.position, Math.max(cine ? cine.far : 0, this.env.fogVisibility + 40));
-    this.foliage.update(cam.position, this.env.fogVisibility, time, weather);
+    this.viewDist = Math.max(cine ? cine.far : 0, this.env.fogVisibility + 40); // how far anything is drawn: past it the haze has it
+    this.staticWorld.update(cam.position, this.viewDist);
+    this.foliage.update(cam.position, this.env.fogVisibility, time, weather, cam);
     if (this.water) {
       const u = this.water.material.uniforms;
       u.uTime.value = time;
@@ -2773,7 +2774,7 @@ export class Game {
     const weather = this.weather.update(dt, null, this.time, cam.position);
     this.env.update(dt, 0.49, cam.position, this.time, weather);
     this.staticWorld.update(cam.position, this.env.fogVisibility + 40);
-    this.foliage.update(cam.position, this.env.fogVisibility, this.time, weather);
+    this.foliage.update(cam.position, this.env.fogVisibility, this.time, weather, cam);
     this.lights.update(dt, this.time, cam.position, false, this.staticFires, [], this.env.night);
     this.power.update(dt, this.time, cam.position, this.env.night); // (no floodlight is left lit from the game before)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);

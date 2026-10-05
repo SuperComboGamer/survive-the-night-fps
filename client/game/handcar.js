@@ -136,6 +136,9 @@ export class HandcarClient {
     model.rotation.set(-_f.pitch, _f.yaw, 0);
     model.userData.lever.rotation.x = -leverAngle(s);
     model.userData.near.visible = c !== this.cars[this.onCar - 1]; // (our own hands have one of their own: update)
+    // (no further than the static world is drawn: past that the haze has it, and it is thirty draw calls a frame)
+    const eye = this.g.camera.position;
+    model.visible = (_f.x - eye.x) ** 2 + (_f.z - eye.z) ** 2 < (this.g.viewDist ?? 1e9) ** 2;
     for (const w of model.userData.wheels) w.rotation.x = s / WHEEL_R;
     const loop = c.e.loop;
     if (loop) {
