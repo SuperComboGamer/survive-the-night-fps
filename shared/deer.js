@@ -15,8 +15,8 @@ export const DANIM = {
 
 export const DEER = {
   hp: 70,
-  groups: 10, // groups in the valley
-  cap: 32, // ...and deer, at most
+  groups: 20, // groups in the valley
+  cap: 64, // ...and deer, at most
   groupMin: 2,
   groupMax: 4,
   // how near a survivor may come before the group bolts (m), and what crouching, lying wounded or sprinting does to

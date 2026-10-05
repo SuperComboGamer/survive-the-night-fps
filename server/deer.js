@@ -252,9 +252,25 @@ export class Deer {
       }
       if (!from) continue;
       const n = Math.min(DEER.groupMin + Math.floor(rng() * (DEER.groupMax - DEER.groupMin + 1)), DEER.cap - this.count());
-      if (this.spawnGroup(s.x, s.z, n, from)) made++;
+      const gr = this.spawnGroup(s.x, s.z, n, from);
+      if (!gr) continue;
+      // (a cramped bit of the rim leaves room for fewer than a group: that is no group)
+      if (gr.members.length < DEER.groupMin) this.discard(gr);
+      else made++;
     }
     return made;
+  }
+
+  // a group taken back the moment it was put down
+  discard(gr) {
+    const g = this.g;
+    for (const m of gr.members) {
+      g.deer.splice(g.deer.indexOf(m), 1);
+      g.removeEntity(m);
+    }
+    gr.members.length = 0;
+    g.nav.removeField(gr.key);
+    this.groups.splice(this.groups.indexOf(gr), 1);
   }
 
   // ---------------------------------------------------------------- update

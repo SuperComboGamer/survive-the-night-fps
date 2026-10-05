@@ -1841,6 +1841,8 @@ export class Game {
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
       } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.spawnOpen && !this.ui.rosterPinned) {
+        // (the browser kept the Esc for itself: back from the menu, the hammer is out with no piece up)
+        this.dropBuildPick();
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
@@ -1879,6 +1881,12 @@ export class Game {
       else if (ui.boardOpen) this.toggleBoard(false);
       else if (ui.bestiaryOpen) this.toggleBestiary(false);
       else if (ui.spawnOpen) this.toggleSpawn(false);
+      // (Esc only gets here with the mouse still taken under fullscreen's keyboard lock, keyguard.js: it shuts the ring,
+      // then puts the piece down, and only then lets go of the mouse for the menu)
+      else if (this.input.locked && this.input.enabled) {
+        if (this.buildMenu) this.closeBuildMenu(true);
+        else if (!this.dropBuildPick(true)) this.input.exitLock();
+      }
       return;
     }
     // (an admin's: it takes over the key from any bind on it)
@@ -2254,6 +2262,14 @@ export class Game {
     this.buildMenu = null;
     this.input.cursor = null;
     if (sound) this.audio.playLocal('ui_click', { volume: 0.3 });
+  }
+
+  // the piece picked put down, the hammer still out (a click opens the ring again): false with none up
+  dropBuildPick(sound = false) {
+    if (!this.buildPicked) return false;
+    this.buildPicked = false;
+    if (sound) this.audio.playLocal('ui_click', { volume: 0.3 });
+    return true;
   }
 
   pointBuildMenu(type) {
