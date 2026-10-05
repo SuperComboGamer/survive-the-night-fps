@@ -145,7 +145,7 @@ try {
   await ab('no static shadow casters', () => (window.__game.staticWorld.casters.visible = false), () => (window.__game.staticWorld.casters.visible = true));
   await ab('no trees, bushes, rocks, grass', () => { const s = window.__game.renderer.scene; window.__hid = s.children.filter((o) => o.isInstancedMesh && o.visible); window.__hid.forEach((o) => (o.visible = false)); }, () => window.__hid.forEach((o) => (o.visible = true)));
   await ab('no terrain', () => { const s = window.__game.renderer.scene; window.__hid = s.children.filter((o) => /terrain/i.test(o.name) && o.visible); window.__hid.forEach((o) => (o.visible = false)); window.__hidN = window.__hid.length; }, () => window.__hid.forEach((o) => (o.visible = true)));
-  await ab('no shadow maps at all', () => (window.__game.renderer.renderer.shadowMap.autoUpdate = false), () => { const r = window.__game.renderer.renderer; r.shadowMap.autoUpdate = true; r.shadowMap.needsUpdate = true; });
+  await ab('no shadow maps at all', () => { const R = window.__game.renderer; R.__sd = R._shadowsDue; R._shadowsDue = () => false; }, () => { const R = window.__game.renderer; R._shadowsDue = R.__sd; });
   await ab('no hands', () => (window.__game.renderer.vmScene.visible = false), () => (window.__game.renderer.vmScene.visible = true));
   await ab('half the pixels each way', () => window.__game.renderer.setRenderScale(0.5), () => window.__game.renderer.setRenderScale(1));
   await ab('quality Low (no MSAA, AO, shafts, bloom, shadows)', () => { const g = window.__game; g.renderer.setQuality('low'); g.env.setShadows(g.renderer.q); g.lights.setShadows(false, false); }, () => { const g = window.__game; g.renderer.setQuality('high'); g.env.setShadows(g.renderer.q); g.lights.setShadows(true, true); });

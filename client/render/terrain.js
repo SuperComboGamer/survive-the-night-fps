@@ -531,6 +531,9 @@ export function buildTerrain(world) {
   group.name = 'terrain';
   const mesh = new MultiMesh(geo, mat, runs);
   mesh.receiveShadow = true;
+  // (after everything else that is opaque: what stands on the ground hides most of it, and its shader - five layers
+  // of texture - is then run only where the ground shows)
+  mesh.renderOrder = 1;
   group.add(mesh);
   // (what Game does with it: the hills shade the valleys on the presets with sun shadows; a world comes and goes)
   group.userData.setShadows = (on) => group.children.forEach((m) => (m.castShadow = on));

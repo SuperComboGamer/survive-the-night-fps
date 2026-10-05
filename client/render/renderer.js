@@ -31,6 +31,13 @@ export function grassRadius(q, mul = 1) {
   return Math.min(100, Math.max(10, 30 * Math.sqrt(q.grass) * mul));
 }
 
+// The shadow maps are drawn again no more than this many times a second. A frame that comes sooner than that after
+// the last one that drew them uses them as they are: a map and its matrices are of one moment, so its shadows stay
+// where they fall in the world, only the casters that moved are a few milliseconds behind. At 160 frames a second or
+// fewer that is every frame, as before; and a frame the camera has jumped or swung round in (a cut) always draws them.
+const SHADOW_HZ = 160;
+const SHADOW_JUMP = 2, SHADOW_SWING = 0.12; // m, rad
+
 const PS1_LINES = 256; // frame height aimed for in PS1 mode at full intensity (the real one is the nearest whole-pixel scale: 240 at 720p, 270 at 1080p); PS1_LINES / intensity below that
 const PS1_FOG = 1.2; // extra fog in PS1 mode at full intensity: optical depth x2.2, so about two thirds of the view distance
 
@@ -303,6 +310,26 @@ export class GameRenderer {
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.stats = { calls: 0, tris: 0 };
+    this._shadowAcc = 1;
+    this._shadowPos = new THREE.Vector3();
+    this._shadowQuat = new THREE.Quaternion();
+    this._lights = null;
+  }
+
+  // Whether this frame draws the shadow maps (see SHADOW_HZ). Always when a light that casts has no map yet.
+  // dt: the frame's length (s; none: draw them)
+  _shadowsDue(dt) {
+    const cam = this.camera;
+    this._shadowAcc = dt > 0 ? this._shadowAcc + dt : 1;
+    this._lights ??= this.scene.children.filter((o) => o.isLight && o.shadow);
+    let due = this._shadowAcc >= 1 / SHADOW_HZ - 0.0003 || cam.position.distanceToSquared(this._shadowPos) > SHADOW_JUMP * SHADOW_JUMP || cam.quaternion.angleTo(this._shadowQuat) > SHADOW_SWING;
+    for (let i = 0; !due && i < this._lights.length; i++) due = this._lights[i].castShadow && !this._lights[i].shadow.map;
+    if (due) {
+      this._shadowAcc = 0;
+      this._shadowPos.copy(cam.position);
+      this._shadowQuat.copy(cam.quaternion);
+    }
+    return due;
   }
 
   get q() {
@@ -593,6 +620,8 @@ export class GameRenderer {
     // three resolves the MSAA target after every render into it. Only the world's depth is ever sampled
     // (AO, sun shafts, beam), so the resolves after the in-place apply pass and the viewmodel are colour only.
     this.rt.resolveDepthBuffer = this.rt.samples > 0;
+    r.shadowMap.autoUpdate = false;
+    r.shadowMap.needsUpdate = this._shadowsDue(post.dt);
     r.render(this.scene, this.camera);
     this.rt.resolveDepthBuffer = false;
     this.stats.calls = r.info.render.calls;

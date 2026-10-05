@@ -44,7 +44,8 @@ try {
   console.log(`scene ${args.scene}, 1920 x 1080, High, uncapped`);
   await frames('the scene as it is');
   await ab('no drawing at all (update only)', () => { const r = window.__game.renderer; r.__r = r.render; r.render = () => {}; }, () => { const r = window.__game.renderer; r.render = r.__r; });
-  await ab('no shadow maps', () => (window.__game.renderer.renderer.shadowMap.autoUpdate = false), () => { const r = window.__game.renderer.renderer; r.shadowMap.autoUpdate = true; r.shadowMap.needsUpdate = true; });
+  await ab('no shadow maps', () => { const R = window.__game.renderer; R.__sd = R._shadowsDue; R._shadowsDue = () => false; }, () => { const R = window.__game.renderer; R._shadowsDue = R.__sd; });
+  await ab('shadow maps every frame', () => { const R = window.__game.renderer; R.__sd = R._shadowsDue; R._shadowsDue = () => true; }, () => { const R = window.__game.renderer; R._shadowsDue = R.__sd; });
   await ab('no trees, bushes, rocks, grass', () => { const s = window.__game.renderer.scene; window.__hid = s.children.filter((o) => o.isInstancedMesh && o.visible); window.__hid.forEach((o) => (o.visible = false)); }, () => window.__hid.forEach((o) => (o.visible = true)));
   await ab('no grass', () => { const s = window.__game.renderer.scene; window.__hid = s.children.filter((o) => o.isInstancedMesh && o.visible && /grass/.test(o.material.name)); window.__hid.forEach((o) => (o.visible = false)); }, () => window.__hid.forEach((o) => (o.visible = true)));
   await ab('no static world', () => (window.__game.staticWorld.group.visible = false), () => (window.__game.staticWorld.group.visible = true));

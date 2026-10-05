@@ -23,6 +23,7 @@ const CELL_OFF = 1024; // added to a coordinate before it is put in a cell, so t
 // much bigger), so nothing that could be in the picture is ever missing from them.
 const VIEW_PAD = (14 * Math.PI) / 180, VIEW_TURN = 0.6 * VIEW_PAD, VIEW_MOVE = 2.5;
 const _pm = new THREE.Matrix4();
+const BINS = 96; // the rings by distance the instances are put in order by (InstancedSet.update)
 
 class ViewCull {
   constructor() {
@@ -165,6 +166,8 @@ class InstancedSet {
     );
     this._idx = new Int32Array(this.n);
     this._d2 = new Float32Array(this.n);
+    this._order = new Int32Array(this.n);
+    this._bins = new Int32Array(BINS + 1);
     this._k = variants.map(() => [0, 0, 0]);
     this.gone = null; // per instance: 1 while it is left out (a felled tree)
   }
@@ -231,7 +234,16 @@ class InstancedSet {
     const cast2 = this.castDist > 0 ? (this.castDist + m) ** 2 : -1;
     for (const k of this._k) k[0] = k[1] = k[2] = 0;
     const reach = this.reach;
-    for (let c = 0; c < nc; c++) {
+    // nearest first: what is behind a nearer tree is then not shaded at all (they are opaque where they are not cut
+    // away, so the picture is the same whatever the order). A counting sort into rings by distance.
+    const order = this._order, bins = this._bins;
+    bins.fill(0);
+    const ringOf = (BINS - 1) / (r || 1);
+    for (let c = 0; c < nc; c++) bins[Math.min(BINS - 1, (Math.sqrt(this._d2[c]) * ringOf) | 0) + 1]++;
+    for (let i = 1; i <= BINS; i++) bins[i] += bins[i - 1];
+    for (let c = 0; c < nc; c++) order[bins[Math.min(BINS - 1, (Math.sqrt(this._d2[c]) * ringOf) | 0)]++] = c;
+    for (let n = 0; n < nc; n++) {
+      const c = order[n];
       const dd = this._d2[c];
       const idx = this._idx[c];
       const o = idx * 6;

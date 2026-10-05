@@ -221,6 +221,7 @@ export function INSTRUMENT() {
       // Call it with the throttle off: a throttled callback is put off on a timer and the order is not kept.)
       requestAnimationFrame(() => {
         info.reset();
+        g.renderer._shadowAcc = 1; // (the frame counted is one that draws its shadow maps: not every frame does)
         requestAnimationFrame(() => {
           const o = { calls: info.render.calls, tris: info.render.triangles, world: { calls: g.renderer.stats.calls, tris: g.renderer.stats.tris }, programs: info.programs.length, geometries: info.memory.geometries, textures: info.memory.textures };
           info.autoReset = true;

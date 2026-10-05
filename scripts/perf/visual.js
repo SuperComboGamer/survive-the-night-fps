@@ -273,7 +273,7 @@ async function shoot(tree, label) {
         ENT,
         STEPS,
         DT,
-        [ENT.ZOMBIE, ENT.CAT, ENT.DEER, ENT.PLAYER],
+        [ENT.ZOMBIE, ENT.CAT, ENT.DEER, ENT.PLAYER, ENT.PROJECTILE, ENT.AREA],
       );
       if (!png[1] && !info.warned) console.log((info.warned = '(no handle on the wind uniform: foliage will differ between runs)'));
       writeFileSync(pjoin(dir, `${s.name}.png`), Buffer.from(png[0].split(',')[1], 'base64'));
