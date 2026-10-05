@@ -5,7 +5,7 @@ import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/const
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
-import { Compass, Objective, Markers, Downed, DamageDir } from './hud2.js';
+import { Compass, Objective, Tracked, Markers, Downed, DamageDir } from './hud2.js';
 import { Minimap } from './minimap.js';
 import { bindLabel, bindTag, onBindsChange } from '../game/binds.js';
 
@@ -77,6 +77,7 @@ export class Hud {
     this.minimap = new Minimap(layer);
     this.objective = new Objective(leftLayer);
     this.objective.setSlim(true);
+    this.tracked = new Tracked(leftLayer, this.objective.root); // (the recipe tracked from the crafting panel, under it)
     // ---- top-centre compass
     this.compass = new Compass(topLayer);
     // ---- top-right day / night clock
@@ -317,6 +318,7 @@ export class Hud {
       this.objective.root.hidden = !showObj;
     }
     this.objective.syncTip();
+    this.tracked.update(zombie ? null : h.tracked || null);
     this.markers.update(h.worldMarks || []);
     this.downed.update(h.downed || null);
   }

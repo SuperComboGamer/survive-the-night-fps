@@ -859,6 +859,112 @@
   white-space: pre-line;
 }
 
+/* ------------------------------------------------------------------ the recipe tracked from the crafting panel */
+/* right under the objective tracker (its top is set from there): a checklist that ticks off as things are picked up */
+.stn-ui .trk {
+  position: absolute;
+  left: calc(24 * var(--u));
+  width: max(var(--mm, 0px), calc(250 * var(--u)));
+  min-width: 200px;
+  padding: calc(8 * var(--u)) calc(11 * var(--u)) calc(9 * var(--u) + 6px);
+  border-left: 2px solid var(--amber);
+  color: var(--bone);
+}
+
+.stn-ui .trk[hidden],
+.stn-ui.inv-open .trk,
+.stn-ui.map-open .trk {
+  display: none;
+}
+
+.stn-ui .trk-head {
+  display: flex;
+  align-items: center;
+  gap: calc(7 * var(--u));
+}
+
+.stn-ui .trk-flag svg {
+  display: block;
+  width: calc(13 * var(--u));
+  height: calc(13 * var(--u));
+  min-width: 10px;
+  min-height: 10px;
+  color: var(--amber);
+}
+
+.stn-ui .trk-name {
+  flex: 1;
+  font: 400 max(13px, calc(17 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.16em;
+}
+
+.stn-ui .trk-tag {
+  font: max(8.5px, calc(9.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.stn-ui .trk-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--u));
+  margin-top: calc(6 * var(--u));
+}
+
+.stn-ui .trk-row {
+  display: grid;
+  grid-template-columns: max(10px, calc(12 * var(--u))) 1fr auto;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  font: max(10.5px, calc(13 * var(--u))) / 1.15 var(--f-num);
+  letter-spacing: 0.02em;
+}
+
+.stn-ui .trk-box {
+  display: grid;
+  place-items: center;
+  width: max(10px, calc(12 * var(--u)));
+  height: max(10px, calc(12 * var(--u)));
+  border: 1px solid rgba(230, 223, 207, 0.55);
+}
+
+.stn-ui .trk-box svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .trk-row.ok {
+  color: var(--bone-2);
+}
+
+.stn-ui .trk-row.ok .trk-box {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.stn-ui .trk-v {
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--amber);
+}
+
+.stn-ui .trk-row.ok .trk-v {
+  color: var(--good);
+}
+
+.stn-ui .trk-foot {
+  margin-top: calc(6 * var(--u));
+  padding-top: calc(5 * var(--u));
+  border-top: 1px dashed rgba(230, 223, 207, 0.18);
+  font: max(9.5px, calc(11 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .trk-foot.good {
+  color: var(--good);
+}
+
 /* ------------------------------------------------------------------ world markers */
 .stn-ui .wmk-layer {
   position: absolute;
