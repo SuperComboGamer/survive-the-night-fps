@@ -176,7 +176,7 @@ sockets (1011) and lets go of its records. `server/rooms.js` keeps them (`Lobby`
   thread's (`net`) and the process RSS; no codes.
 - **Client:** `client/net/lobby.js` (the API, and invite links: `?game=CODE`; while in a game the address bar
   carries its link), the splash in `ui/menus.js` (Quick join, Browse games, Create game, or the invitation of the
-  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link on the pause menu.
+  game whose link opened the page), `ui/games.js` (the Browse and Create panels), the invite link behind "Invite friends" on the pause menu.
 - **Capacity** (`npm run stress -- game|box`, scripts/stress.js; measured 2 Oct 2026 with bots at night 3 on a
   shared 11-core Mac, so read CPU ms per second, not wall-clock ticks): an 8-player game at night uses ~17 ms of
   CPU a second (45 in its worst second), ~62 MB of memory on a 70 MB base, ~2-2.6 KB/s down per player, and the
@@ -220,7 +220,10 @@ JSON file (`server/stats.js`).
   `Game.handleJoin` makes the player's name the account's whatever the JOIN says, sets `p.account` (and
   `p.guestKey`, the SHA-256 of a guest's browser id) and tells everyone in the game who is signed in as what
   (`S2C.FRIENDS`: per player id the account name, '' for a guest), so the client can offer a friend request.
-  `isAdmin` stays server-side and authorizes the debug chat commands. `npm run admin -- <user> [on|off]` updates it
+  `isAdmin` authorizes the debug chat commands on the server; the client only hears it as `WELCOMEF.ADMIN` on
+  `S2C.WELCOME`, which offers the spawn menu (`client/ui/spawnmenu.js`, the `` ` `` key: a searchable list of every
+  item, zombie type and world event that sends `/give`, `/spawn` and the rest as chat, each checked by the server
+  as any typed command is). `npm run admin -- <user> [on|off]` updates it
   and revokes that account's sessions; the role is read again when they authenticate and open their next game socket.
 - **Stats** (`server/dbstats.js`, `DbStats`, the same face as `PlayerStats`): an account's under `u:<user id>`, a
   guest's under `g:<sha-256 of the browser id>`. The board's four stats are counted as they happen and written

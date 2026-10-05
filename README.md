@@ -77,6 +77,12 @@ npm run admin -- Cody          # grant
 npm run admin -- Cody off      # remove
 ```
 
+In a game an admin presses `` ` `` for the spawn menu: every weapon, item, zombie, boss and a few world events
+(supply crate, airdrop, deer, the stray cat). Type a few letters (`ak`, `hq` for The Hive Queen, `walker 5` for five
+of them) and Enter spawns the best fit and closes it; Shift+Enter or a click spawns and keeps it open. Tab steps
+through the categories, the arrows through the list; how many comes from the count picked beside the search (Auto:
+a full stack, a full ammo reserve, one weapon or zombie) or a number typed after the name. It sends the commands below.
+
 Admin chat commands: `/night`, `/day`, `/dusk [s]` / `/dawn [s]` (to 5 s, or that many, before
 nightfall / daybreak), `/kill`, `/down`, `/give <item> <n>` (the item by name:
 `/give flamethrower`, `/give flamethrower fuel 200`; `/items` lists the names, `/items ammo` the matching ones),

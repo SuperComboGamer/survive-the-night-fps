@@ -115,7 +115,7 @@ import {
   radioLinked,
   salvageOf,
 } from '../shared/defs.js';
-import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, UNDO_NO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
+import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, UNDO_NO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { XP, XPS, XP_SRC, levelOf, perkMods, perkMask } from '../shared/progress.js';
 import { BTN } from '../shared/constants.js';
 const BTN_JUMP = BTN.JUMP;
@@ -576,6 +576,7 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
+    w.u8(p.admin ? WELCOMEF.ADMIN : 0);
     session.conn.send(w.bytes());
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -718,6 +719,7 @@ export class Game {
     w.u32(this.tick);
     w.u8(SERVER_TICK_RATE);
     w.u8(this.maxPlayers);
+    w.u8(p.admin ? WELCOMEF.ADMIN : 0);
     session.conn.send(w.bytes());
     if (this.phase === PHASE.WAITING) this.startGame();
     else if (this.fallen.delete(this.leaverKey(p)) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
@@ -2977,11 +2979,15 @@ export class Game {
     const e = this.ents[id];
     if (!e || e.kind !== ENT.STRUCTURE) return;
     const s = p.state;
-    if (s.weapons[SLOT_BUILD] !== ITEM.HAMMER) return;
+    const hammer = s.weapons[SLOT_BUILD] === ITEM.HAMMER;
     if (Math.hypot(e.x - s.x, e.z - s.z) > 4.5) return;
-    if (e.stype === STRUCT.CAMPFIRE) return this.feedFire(p, e);
+    if (e.stype === STRUCT.CAMPFIRE) {
+      if (hammer) this.feedFire(p, e);
+      return;
+    }
     if (e.hp >= e.maxHp && !(e.stype === STRUCT.TORCH && e.burnLeft <= 0)) return;
     if (this.time - p.actionT < 0.6) return;
+    if (!hammer || s.slot !== SLOT_BUILD) return this.notify(NOTIFY.NEED_HAMMER, 0, p.id); // (the hammer in hand, not just carried)
     if (e.stype === STRUCT.TORCH) {
       if (countItem(p.inv, ITEM.CLOTH) < 1) return this.notify(NOTIFY.NOT_ENOUGH, ITEM.CLOTH, p.id);
       removeItem(p.inv, ITEM.CLOTH, 1);
