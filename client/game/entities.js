@@ -730,7 +730,10 @@ export class Entities {
     } else if (e.obj) {
       this.scene.remove(e.obj);
     }
-    if (e.col) g.world.structGrid.remove(e.col);
+    if (e.col) {
+      g.world.structGrid.remove(e.col);
+      g.impacts?.gone(e.col); // (what was scratched or shot into it goes with it)
+    }
     if (e.skyView) g.skyflares.removeEntity(e);
     if (e.emitter) g.effects.removeEmitter(e.emitter);
     if (e.loop) e.loop.stop();

@@ -8,10 +8,11 @@ import { HANDCAR_DEFS } from './synth-handcar.js';
 import { THROW_DEFS } from './synth-throw.js';
 import { FLARE_DEFS } from './synth-flare.js';
 import { BRIDGE_DEFS } from './synth-bridge.js';
+import { STRIKE_DEFS } from './synth-strike.js';
 import { NUNCHAKU_DEFS } from './synth-nunchaku.js';
 import { mulberry32, hashString, forestIR, hallIR, openIR, roomIR, chans } from './dsp.js';
 
-export const ALL_DEFS = [...SFX_DEFS, ...AMB_DEFS, ...MUSIC_DEFS, ...STINGER_DEFS, ...FIXTURE_DEFS, ...POWER_DEFS, ...HANDCAR_DEFS, ...THROW_DEFS, ...FLARE_DEFS, ...BRIDGE_DEFS, ...NUNCHAKU_DEFS];
+export const ALL_DEFS = [...SFX_DEFS, ...AMB_DEFS, ...MUSIC_DEFS, ...STINGER_DEFS, ...FIXTURE_DEFS, ...POWER_DEFS, ...HANDCAR_DEFS, ...THROW_DEFS, ...FLARE_DEFS, ...BRIDGE_DEFS, ...STRIKE_DEFS, ...NUNCHAKU_DEFS];
 export const DEF_BY_BANK = new Map(ALL_DEFS.map((d) => [d.bank, d]));
 
 // Render one variant. Returns { chans: Float32Array[], sr }.

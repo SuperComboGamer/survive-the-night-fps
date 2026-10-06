@@ -2687,7 +2687,7 @@ export function createMainland(seed) {
   addPropColliders('plane_wreck', car.x, car.y, car.z, car.ry);
   const truck = { x: plane.x - 17, y: fieldH, z: plane.z - 6, ry: 0.35 };
   props.push({ type: 'fuel_truck', x: truck.x, y: truck.y, z: truck.z, ry: truck.ry, seed: 3 });
-  addPropColliders('fuel_truck', truck.x, truck.y, truck.z, truck.ry);
+  addPropColliders('fuel_truck', truck.x, truck.y, truck.z, truck.ry, props[props.length - 1]);
   clears.push([car.x, car.z, 12], [truck.x, truck.z, 7]);
   const runway = { x: field.x, z0: field.z - RUNWAY_LEN / 2, z1: field.z + RUNWAY_LEN / 2, half: RUNWAY_HALF, y: fieldH, truck };
   void runwayRoad;
@@ -3202,7 +3202,7 @@ export function createMainland(seed) {
       acc = 0;
       const py = seatY('billboard', px, pz, dir);
       props.push({ type: 'billboard', x: px, y: py, z: pz, ry: dir, seed: i });
-      addPropColliders('billboard', px, py, pz, dir);
+      addPropColliders('billboard', px, py, pz, dir, props[props.length - 1]);
       const cell = CELLS[n++ % CELLS.length];
       signs.push({ x: px - Math.sin(dir) * 0.3, y: py + 4.9, z: pz - Math.cos(dir) * 0.3, ry: dir, w: 5.4, h: 2.6, cell, far: true });
     }
@@ -3223,7 +3223,7 @@ export function createMainland(seed) {
       if (propBlocked('power_pole', px, pz, dir) || sites.some((s) => Math.hypot(s.x - px, s.z - pz) < 8)) continue;
       const py = seatY('power_pole', px, pz, dir);
       props.push({ type: 'power_pole', x: px, y: py, z: pz, ry: dir, seed: i });
-      addPropColliders('power_pole', px, py, pz, dir);
+      addPropColliders('power_pole', px, py, pz, dir, props[props.length - 1]);
     }
   }
 

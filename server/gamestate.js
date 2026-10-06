@@ -144,6 +144,7 @@ export function loadGame(g, s) {
   for (const [key, v] of s.gather) {
     const col = colAt(w, key);
     if (col) g.gather.set(col, v);
+    if (col && v.alarm === 4) g.ringing.add(col); // (ALARM.RINGING: it goes on ringing)
   }
   g.supplySpots = s.supplySpots.map((i) => w.partSpots[i]).filter(Boolean);
   // the loot points as startGame lays them out, with when each comes back (the item on one is linked below)

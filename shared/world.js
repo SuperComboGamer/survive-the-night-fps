@@ -1935,7 +1935,7 @@ export function createWorld(seed) {
         if (!propBlocked('power_pole', px, pz, dir)) {
           const py = seatY('power_pole', px, pz, dir);
           props.push({ type: 'power_pole', x: px, y: py, z: pz, ry: dir, seed: i });
-          addPropColliders('power_pole', px, py, pz, dir);
+          addPropColliders('power_pole', px, py, pz, dir, props[props.length - 1]);
         }
       } else if (i % 53 === 26) {
         const r = rng();
@@ -1946,7 +1946,7 @@ export function createWorld(seed) {
         if (type && !propBlocked(type, px, pz, dir)) {
           const py = seatY(type, px, pz, dir);
           props.push({ type, x: px, y: py, z: pz, ry: dir, seed });
-          addPropColliders(type, px, py, pz, dir);
+          addPropColliders(type, px, py, pz, dir, props[props.length - 1]);
         }
       }
     }

@@ -12,7 +12,7 @@ export const TEX = { FIRE: 0, SMOKE: 1, SPARK: 2, BLOOD: 3, GLOW: 4, MUZZLE: 5, 
 // added to a cell: the particle is lit like a body (by the sky's light level, or by the local flashlight when its beam
 // is on it) instead of getting the smoke's night tint. Blood uses it: under that tint it glowed in the dark and went
 // a dull grey-pink in the beam
-const LIT = 16;
+export const LIT = 16;
 const TORCH_GAIN = 0.3; // how much of the flashlight a drop of blood throws back, next to a matt surface facing the lamp
 const ROCKET_ARM = 10; // m out from the tube an RPG grenade's motor lights (rocketTrail)
 const isSpot = (o) => o.isSpotLight;

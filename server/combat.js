@@ -33,6 +33,8 @@ import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox
 import { deerHitbox } from '../shared/deer.js';
 import { rocketStrikesWorld } from '../shared/rocket.js';
 import { SKYFLARE, launchFlare, flareStep } from '../shared/skyflare.js';
+import { blowOf } from '../shared/surfaces.js';
+import { WRECK_SALVAGE } from '../shared/wrecks.js';
 
 // the projectile each throwable flies as
 const THROW_PROJ = Object.fromEntries(Object.entries(PROJ_ITEM).map(([ptype, item]) => [item, +ptype]));
@@ -471,8 +473,15 @@ export class Combat {
         const hz = oz + fz * _ray.t;
         const tree = col && col.flags & COL.TREE;
         const wreck = col && col.flags & COL.SALVAGE;
-        g.impact(tree ? IMPACT.WOOD : wreck ? IMPACT.SPARK : col && col.flags & COL.STRUCT ? IMPACT.WOOD : IMPACT.DIRT, hx, hy, hz, -fx, -fy, -fz);
-        if (!claws && (tree || wreck)) g.gatherHit(p, col, hx, hy, hz, ev.weapon);
+        // what a weapon does to what it struck is the clients' to draw, each from its own copy of the world (EVT.STRIKE);
+        // a wreck besides keeps a record of the blow (Game.wreckHit). Claws just scuff it
+        if (claws) g.impact(tree ? IMPACT.WOOD : wreck ? IMPACT.SPARK : col && col.flags & COL.STRUCT ? IMPACT.WOOD : IMPACT.DIRT, hx, hy, hz, -fx, -fy, -fz);
+        else {
+          g.strike(p, ev.weapon, heavy, hx, hy, hz, fx, fy, fz);
+          const had = wreck ? (g.gather.get(col)?.left ?? WRECK_SALVAGE) : 0;
+          if (tree || wreck) g.gatherHit(p, col, hx, hy, hz, ev.weapon);
+          if (wreck) g.wreckHit(col, hx, hy, hz, fx, fy, fz, blowOf(ev.weapon), heavy, (g.gather.get(col)?.left ?? had) < had);
+        }
       }
     }
     // (a move of the nunchucks was heard as it started, and is one swing however many blows it lands: Game.handleSimEvent)
@@ -632,6 +641,7 @@ export class Combat {
       { x, z, r: 260 },
     );
     g.sound(SOUND.EXPLOSION, x, y, z, 260);
+    g.blastWrecks(x, y, z, radius);
     if (opts.humans) {
       for (const h of g.players.values()) {
         if (!h.alive || h.zombie) continue;

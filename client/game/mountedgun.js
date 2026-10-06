@@ -292,6 +292,7 @@ export class GunClient {
     shotDirections(ev.yaw, ev.pitch, 0, ev.spread, 1, ev.seed, _dirs);
     raycastWorld(g.world, ev.x, ev.y, ev.z, _dirs[0], _dirs[1], _dirs[2], GUN.range, _ray);
     const dist = _ray.t >= 0 ? _ray.t : Math.min(GUN.range, 90);
+    g.predictPellet(ev, GUN, 0, _dirs[0], _dirs[1], _dirs[2], false); // (the hole it leaves, if nobody stood in its way)
     this.trace(_muz.x, _muz.y, _muz.z, ev.x + _dirs[0] * dist, ev.y + _dirs[1] * dist, ev.z + _dirs[2] * dist);
     this.kick = 1;
   }

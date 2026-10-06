@@ -43,6 +43,9 @@ export function harvestAt(world, s) {
   return null;
 }
 
+// the collider harvestAt last found (what the prompt is about)
+export const harvestTarget = () => _ray.col;
+
 const itemName = (item) => ITEM_DEFS[item]?.name || 'materials';
 const list = (words) => (words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0] || '');
 const cap = (text) => text.charAt(0).toUpperCase() + text.slice(1);

@@ -85,7 +85,8 @@ import { achievementEvent, joinedGame } from '../net/achievements.js';
 import { bestiaryEvent, joinedBestiary } from '../net/bestiary.js';
 import { Prediction } from './prediction.js';
 import { InputBuffer } from './inputbuffer.js';
-import { harvestPrompt, strippedKey, needLines } from './harvest.js';
+import { harvestPrompt, harvestTarget, strippedKey, needLines } from './harvest.js';
+import { Impacts } from './impacts.js';
 import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
 import { RocketsClient } from './rockets.js';
@@ -438,6 +439,7 @@ export class Game {
     this.entities.setCharShadows(!!q.charShadows);
     this.terrain?.userData.setShadows(!!q.shadows);
     this.staticWorld?.setShadows(!!q.shadows);
+    this.impacts?.wrecks.setShadows(!!q.shadows);
   }
 
   // The first-person arms and weapons. Baking their two 1024 px atlases holds the main thread for ~0.3 s, so it is
@@ -496,6 +498,9 @@ export class Game {
     const t4 = performance.now();
     if (!this.effects) this.effects = new Effects(this.scene, this.renderer.vmScene, this.world);
     else this.effects.world = this.world;
+    // the marks blows and bullets leave, and the wrecks taken apart (none of the old world's are left)
+    if (!this.impacts) this.impacts = new Impacts(this);
+    else this.impacts.setWorld();
     if (!this.flyover) this.flyover = new Flyover(this.scene, this.effects.atlas);
     (this.graves ||= new Graves(this)).setWorld(this.world); // the earth of St. Agnes Cemetery, when it breaks open
     if (!this.atmosphere) this.atmosphere = new Atmosphere(this.scene);
@@ -554,6 +559,7 @@ export class Game {
       for (const mesh of this.railway.children) mesh.geometry.dispose(); // (its materials are the shared ones)
       this.railway = null;
     }
+    this.impacts?.wrecks.clear(); // (what it lifted out of the static world goes with that world)
     this.staticWorld?.dispose();
     this.foliage?.dispose();
     this.fair.setWorld(null);
@@ -835,6 +841,7 @@ export class Game {
   fellTree(qx, qy, qz, yaw = null) {
     const col = this.world && treeAt(this.world, qx, qy, qz);
     if (!col || !fellTree(this.world, col)) return;
+    this.impacts?.gone(col); // (the cuts in its bark go down with it)
     this.foliage?.fell(col.ti, yaw);
     if (yaw === null) return;
     // heard from a little way out along its fall: between the creaking stump and where the crown comes down
@@ -1175,6 +1182,7 @@ export class Game {
       explosion(x, y, z, radius, kind) {
         g.rockets.burst(x, y, z); // (a grenade of ours that went off: it is not drawn flying on)
         g.effects.explosion(x, y, z, radius, kind);
+        if (kind === 0 || kind === 2) g.impacts.blast(x, y, z, radius);
         if (kind === 0 || kind === 2) g.lights.flashFx(x, y, z, kind === 2 ? 40 : 120, 0.5);
         const d = Math.hypot(x - g.renderPos.x, z - g.renderPos.z);
         g.camShake = Math.min(1.5, (g.camShake || 0) + Math.max(0, 1 - d / (radius * 5)) * 1.2);
@@ -1199,9 +1207,19 @@ export class Game {
       fell(qx, qy, qz, yaw) {
         g.fellTree(qx, qy, qz, yaw);
       },
+      strike(id, blow, heavy, x, y, z, dx, dy, dz) {
+        g.impacts.strike(id, blow, heavy, x, y, z, dx, dy, dz);
+      },
+      wreck(flags, qx, qy, qz, left, hits) {
+        g.impacts.wreck(flags, qx, qy, qz, left, hits);
+      },
+      wreckAlarm(qx, qy, qz, say, secs) {
+        g.impacts.wreckAlarm(qx, qy, qz, say, secs);
+      },
       regrown() {
         g.stripped.clear();
         g.regrowTrees();
+        g.impacts.regrown();
       },
       flyover(x, y, z, heading, eta) {
         g.flyover?.start(x, y, z, heading, eta, g.time, g.audio);
@@ -1548,12 +1566,13 @@ export class Game {
     if (def.skyflare) return; // (no bullet: the flare is a projectile of its own, game/skyflares.js)
     const n = shotDirections(ev.yaw, ev.pitch, ev.recoilPitch, ev.spread, def.pellets, ev.seed, _dirs);
     for (let i = 0; i < n; i++) {
-      if (def.pellets > 1 && i % 2) continue;
       const dx = _dirs[i * 3];
       const dy = _dirs[i * 3 + 1];
       const dz = _dirs[i * 3 + 2];
       raycastWorld(this.world, ev.x, ev.y, ev.z, dx, dy, dz, def.range, _ray);
       const dist = _ray.t >= 0 ? _ray.t : Math.min(def.range, 80);
+      this.predictPellet(ev, def, i, dx, dy, dz, false); // (the hole each pellet leaves, if no body stopped it)
+      if (def.pellets > 1 && i % 2) continue;
       if (def.quiet) this.effects.boltTrail(mx, my, mz, dx, dy, dz, dist);
       else this.effects.tracer(mx, my, mz, dx, dy, dz, dist, 0.8);
     }
@@ -1594,7 +1613,9 @@ export class Game {
   // moment, so the two agree. What the pellet strikes is shown now (ownImpact) instead of a round trip later, when
   // the server says so. Only the look of it: the damage and the hit marker wait for the server.
   // Returns how far the pellet flies before something stops it, -1 if nothing does.
-  predictPellet(ev, def, i, dx, dy, dz) {
+  // own: false for somebody else's pellet (EVT.SHOT): the server tells of the bodies it struck, so only what it
+  // does to the world is shown - the hole it leaves, where no body stood in its way.
+  predictPellet(ev, def, i, dx, dy, dz, own = true) {
     const wall = _ray.t;
     const wallT = wall >= 0 ? wall : def.range;
     const col = _ray.col;
@@ -1604,7 +1625,7 @@ export class Game {
     for (const e of this.entities.ents.values()) {
       const zdef = e.kind === ENT.ZOMBIE ? ZOMBIE_DEFS[e.ztype] : null;
       const deer = e.kind === ENT.DEER; // (hunted through the same path as the dead are shot: shared/deer.js)
-      if (zdef || deer ? e.dead : e.kind !== ENT.PLAYER || e.id === this.myId || (e.q[5] & (PFLAG.ZOMBIE | PFLAG.DEAD)) !== PFLAG.ZOMBIE) continue;
+      if (zdef || deer ? e.dead : e.kind !== ENT.PLAYER || e.id === (own ? this.myId : ev.shooter) || (e.q[5] & (PFLAG.ZOMBIE | PFLAG.DEAD)) !== PFLAG.ZOMBIE) continue;
       // (first by how far the ray passes from it: most of them are nowhere near)
       const rx = e.rx - ev.x;
       const ry = e.ry + 0.8 - ev.y;
@@ -1620,7 +1641,7 @@ export class Game {
     }
     hits.sort((a, b) => a.t - b.t);
     const pierce = def.pierce || 1;
-    for (let k = 0; k < hits.length && k < pierce; k++) {
+    for (let k = 0; own && k < hits.length && k < pierce; k++) {
       const { t, e } = hits[k];
       const z = e.kind === ENT.ZOMBIE;
       const green = z && (e.ztype === ZTYPE.SPITTER || e.ztype === ZTYPE.BOOMER || e.ztype === ZTYPE.BOSS_HIVEQUEEN || e.ztype === ZTYPE.BOSS_BLOATER);
@@ -1628,11 +1649,14 @@ export class Game {
       this.ownImpact(z && e.q[4] === ZANIM.FROZEN ? IMPACT.DIRT : green ? IMPACT.GREEN_BLOOD : IMPACT.BLOOD, ev.x + dx * t, ev.y + dy * t, ev.z + dz * t, -dx, -dy, -dz);
     }
     if (hits.length) return hits.length >= pierce ? hits[pierce - 1].t : wall;
-    // nothing in the way but the world (of a spread, only every third pellet shows there, as the server sends them)
-    if (wall >= 0 && (def.pellets === 1 || i % 3 === 0)) {
-      let kind = IMPACT.DIRT;
-      if (col && !terrain) kind = col.flags & COL.TREE ? IMPACT.WOOD : col.flags & COL.STRUCT ? (STRUCT_DEFS[this.entities.ents.get(col.id)?.stype]?.metal ? IMPACT.METAL : IMPACT.WOOD) : IMPACT.SPARK;
-      this.ownImpact(kind, ev.x + dx * wall, ev.y + dy * wall, ev.z + dz * wall, -dx, -dy, -dz);
+    // nothing in the way but the world: the hole every pellet leaves in what it struck, the dust or the sparks off
+    // it (Impacts.shot: by what that is made of), and the window it went through on its way. The server's word of
+    // the same impact, a round trip later, is dropped (sameAsOwn).
+    this.impacts.shot(ev.weapon ?? MOUNTED_GUN, ev.x, ev.y, ev.z, dx, dy, dz, wall, col, terrain, def.range); // (a round with no weapon named is the mounted gun's)
+    if (wall >= 0) {
+      const list = this.ownImpacts || (this.ownImpacts = []);
+      if (list.length >= 48) list.shift();
+      list.push({ x: ev.x + dx * wall, y: ev.y + dy * wall, z: ev.z + dz * wall, t: this.time });
     }
     return wall;
   }
@@ -2882,6 +2906,7 @@ export class Game {
 
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
+    this.impacts.update(dt);
     this.flyover.update(dt, time, cam, this.env, weather);
     this.graves.update(dt);
     const flashOn = this.localFlash && self.alive && !s.zombie;
@@ -3032,6 +3057,7 @@ export class Game {
     this.lights.update(dt, this.time, cam.position, false, this.staticFires, [], this.env.night);
     this.power.update(dt, this.time, cam.position, this.env.night); // (no floodlight is left lit from the game before)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
+    this.impacts.update(dt);
     this.atmosphere.update(dt, this.time, cam, this.env, false, this.world.heightAt, weather);
     this.weatherFx.update(dt, this.time, cam, weather, this.env, false, this.renderer.renderer.domElement.height);
     this.vm?.setVisible(false);
@@ -3214,7 +3240,10 @@ export class Game {
       else this.prompt = `${W.The} needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
     }
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
-    if (!this.prompt) this.prompt = harvestPrompt(this.world, s, this.stripped);
+    if (!this.prompt) {
+      this.prompt = harvestPrompt(this.world, s, this.stripped);
+      if (this.prompt) this.prompt = this.impacts.alarmPrompt(harvestTarget()) || this.prompt; // (a wreck whose alarm is going: how to stop it)
+    }
   }
 
   updateBuildGhost(s) {
