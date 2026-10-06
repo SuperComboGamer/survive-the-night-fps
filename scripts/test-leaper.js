@@ -9,7 +9,8 @@
 //     0.2-0.8 s of flight left), gets away from some of them and not all
 //   - a pinned survivor is let go when the pin runs out (5 s), when it is shoved off and when it has taken enough
 //     damage, and is not pinned again by the hop off (it used to be, 0.15 s after it let go)
-//   - one who presses Space throws it off: it is flung clear, reels for 1 s where it lands, and they get away
+//   - one who mashes Space shoves it off in about a second, one who holds it down in about two, and a single tap does
+//     not do it: shoved all the way, it is flung clear, reels for 1 s where it lands, and they get away
 // usage: node scripts/test-leaper.js [seed ...]   (VERBOSE=1 prints each scenario's numbers)
 import { Game } from '../server/game.js';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, qangle16, qpitch, writeInput } from '../shared/protocol.js';
@@ -216,8 +217,7 @@ let spots = 0;
 let pinChecks = 0;
 let letGo = 0;
 let pinnedAgain = 0;
-let throwChecks = 0;
-let thrown = 0;
+const shoves = { mash: { n: 0, ok: 0, t: [] }, hold: { n: 0, ok: 0, t: [] }, tap: { n: 0, ok: 0 } };
 for (const seed of seeds) {
   const env = setup(seed);
   const flat = findSpot(env.game, 0, 0.6);
@@ -250,29 +250,45 @@ for (const seed of seeds) {
     if (released >= 0 && released * DT < (how === 'time' ? 5.5 : 1)) letGo++;
     else if (process.env.VERBOSE) console.log(`      ${how}: let go after ${released < 0 ? 'never' : (released * DT).toFixed(2) + ' s'}`);
   }
-  // Space throws it off: let go at once, flung clear, and dazed (no attack, no leap) for a second on the ground while
-  // the survivor runs for it
-  for (let k = 0; k < 2; k++) {
+  // Space shoves it off: mashed (a press every 3 ticks, ~7 a second) or held, never by a single tap. Shoved all the
+  // way it is let go at once, flung clear, and dazed (no attack, no leap) for a second on the ground while the
+  // survivor runs for it
+  for (const how of ['mash', 'hold', 'tap']) {
     if (!trial(env, flat, 9, 'still', rng).pinned) continue;
-    throwChecks++;
     const z = env.game.zombies.find((q) => q.ztype === ZTYPE.LEAPER && !q.dead);
     const s = env.p.state;
+    const hp0 = env.p.hp;
     let released = -1;
     let landed = -1;
     let dazedFor = 0;
     let again = false;
+    let full = 0;
     for (let i = 0; i < 4 / DT; i++) {
-      // tap Space at i = 10, then run away from it
-      if (released >= 0) env.c.yaw = yawTo(z.x, z.z, s.x, s.z);
-      env.c.input(i === 10 ? BTN.JUMP : released >= 0 ? BTN.FWD | BTN.SPRINT : 0);
+      // from i = 10: tap Space once, mash it or hold it down, then run away from it
+      let btn = 0;
+      if (released >= 0) {
+        env.c.yaw = yawTo(z.x, z.z, s.x, s.z);
+        btn = BTN.FWD | BTN.SPRINT;
+      } else if (i >= 10) btn = how === 'tap' ? (i === 10 ? BTN.JUMP : 0) : how === 'mash' ? ((i - 10) % 3 === 0 ? BTN.JUMP : 0) : BTN.JUMP;
+      env.c.input(btn);
       env.game.update();
+      full = Math.max(full, s.shove);
       if (released < 0 && i >= 10 && !s.pinned) released = i;
       if (released >= 0 && landed < 0 && z.state !== 2) landed = i;
       if (landed >= 0 && z.dazedT > 0) dazedFor += DT;
       if (released >= 0 && (z.state === 3 || s.pinned)) again = true;
+      if (how === 'tap' && i * DT > 3) break;
     }
-    if (process.env.VERBOSE) console.log(`      throw: let go ${(((released - 10) * DT) | 0).toFixed(2)} s after Space, dazed ${dazedFor.toFixed(2)} s on the ground, ${Math.hypot(z.x - s.x, z.z - s.z).toFixed(1)} m apart at the end, pinned again: ${again}`);
-    if (released >= 10 && released - 10 <= 3 && dazedFor >= 0.9 && dazedFor <= 1.2 && !again) thrown++;
+    const took = (released - 10) * DT;
+    if (process.env.VERBOSE) console.log(`      ${how}: ${released < 0 ? `still pinned 2.5 s after, the meter got to ${full.toFixed(2)}` : `let go ${took.toFixed(2)} s after the first press, dazed ${dazedFor.toFixed(2)} s on the ground, ${Math.hypot(z.x - s.x, z.z - s.z).toFixed(1)} m apart at the end, ${Math.round(hp0 - env.p.hp)} hp lost, pinned again: ${again}`}`);
+    shoves[how].n++;
+    if (how === 'tap') {
+      if (released < 0 && full > 0 && full < 0.5) shoves.tap.ok++;
+      continue;
+    }
+    const [lo, hi] = how === 'mash' ? [0.6, 1.5] : [1.5, 2.3];
+    if (released >= 10 && took >= lo && took <= hi && dazedFor >= 0.9 && dazedFor <= 1.2 && !again) shoves[how].ok++;
+    shoves[how].t.push(took);
   }
   // the barricades stay up from here on
   if (ring(env, flat) === 4) for (let k = 0; k < TRIALS; k++) runs.ring.push(trial(env, flat, 7 + (k % 4) * 2, 'still', rng));
@@ -309,7 +325,10 @@ check('a survivor sprinting away is caught by most of them, and a miss is soon r
 check('one who strafes back and forth gets away from some of them, not all', S.strafe.share >= 0.15 && S.strafe.share <= 0.85, line('strafe'));
 check('one who sidesteps once it is in the air gets away from some of them, not all', [S.dodge, S.late].every((x) => x.share >= 0.25 && x.share <= 0.85), `as it leaves the ground: ${line('dodge')}; as it comes down: ${line('late')}`);
 check('a pinned survivor is let go (in 5 s, to a shove, to damage), and the hop off does not take them again', pinChecks >= seeds.length * 2 && letGo === pinChecks && pinnedAgain === 0, `${letGo} of ${pinChecks} let go in time, ${pinnedAgain} taken again within 1.5 s`);
-check('a pinned survivor throws it off with Space: let go at once, it reels for 1 s where it lands, and they get away', throwChecks >= seeds.length && thrown === throwChecks, `${thrown} of ${throwChecks}`);
+const secs = (t) => (t.length ? `${Math.min(...t).toFixed(2)}-${Math.max(...t).toFixed(2)} s` : 'none');
+check('a pinned survivor who mashes Space shoves it off in about a second: it reels for 1 s where it lands, and they get away', shoves.mash.n >= seeds.length && shoves.mash.ok === shoves.mash.n, `${shoves.mash.ok} of ${shoves.mash.n}, let go ${secs(shoves.mash.t)} after the first press`);
+check('...holding Space down does it too, in about two', shoves.hold.n >= seeds.length && shoves.hold.ok === shoves.hold.n, `${shoves.hold.ok} of ${shoves.hold.n}, let go ${secs(shoves.hold.t)} after the press`);
+check('...and a single tap does not', shoves.tap.n >= seeds.length && shoves.tap.ok === shoves.tap.n, `${shoves.tap.ok} of ${shoves.tap.n} still pinned`);
 
 if (fails.length) {
   console.log(`\n${fails.length} check(s) failed`);

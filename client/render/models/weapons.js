@@ -1960,6 +1960,8 @@ const HAND_POSES = {
   // the walkie-talkie: the grip, its thumb up the near edge on the push-to-talk key instead of over the face
   radio: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.3, -0.55, -0.78], [0, -0.75, -0.66]], center: [-0.034, -0.083, 0] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
+  // flat against a leaper that has them pinned, shoving it off (ViewModel._push): fingers splayed and nearly straight
+  shove: { curl: [[0.12, 0.18, 0.12], [0.08, 0.16, 0.1], [0.1, 0.18, 0.12], [0.16, 0.22, 0.15]], spread: 0.13, thumb: [[-0.45, -0.5, -0.74], [-0.15, -0.8, -0.58]], center: [-0.035, -0.095, 0] },
   claw: { curl: [[0.45, 0.55, 0.45], [0.4, 0.55, 0.45], [0.45, 0.6, 0.45], [0.55, 0.65, 0.5]], spread: 0.2, thumb: [[-0.55, -0.5, -0.67], [-0.35, -0.85, -0.3]], center: [-0.035, -0.11, 0] },
   // throwables, each closed round its own shape until the fingers touch (a fist made for a 3 cm handle buries its
   // fingers in anything thicker), with the palm seated on the surface: the center is as far out as the item's radius
@@ -2686,6 +2688,13 @@ function handQ(side, finger, palm) {
 // (fingers forward and a little up, palm to the right) so that the arm comes in from the lower left whatever the gun does
 const FG_RELOAD = { pitch: 0.1, roll: 0.75, yaw: 0.05, x: 0.07, y: 0.06, z: 0.02, open: 0.55 };
 FG_RELOAD.q = handQ(-1, [0.25, 0.12, -0.96], [1, -0.3, 0]);
+// pinned by a leaper (ViewModel._push), camera space: both hands flat against it, palms forward, fingers up and in
+// toward each other, the wrists bent back to shove with the heels of the hands. How long the weapon takes to go down
+// and the hands to come up (s), and to drop again once it lets go; how long a throw-off holds the arms out at full
+// stretch; the thrust of one press (a kick to a spring, m/s)
+const PUSH_Q_R = handQ(1, [-0.3, 0.92, 0.25], [-0.25, 0, -1]);
+const PUSH_Q_L = handQ(-1, [0.3, 0.92, 0.25], [0.25, 0, -1]);
+const PUSH_IN = 0.22, PUSH_OUT = 0.4, PUSH_FLING = 0.3, PUSH_KICK = 2.4;
 // left support under a handguard: hand X -> weapon Y (palm up), fingers (-Y) -> weapon +X, tunnel Z along barrel
 const supportGrip = (roll, yaw, pitch = 0) => {
   // mirrored left hand (palm = +X_hand): X_hand -> weapon +Y (palm up), -Y_hand (fingers) -> weapon +X, Z_hand -> weapon +Z
@@ -3085,6 +3094,15 @@ export class ViewModel {
     this.talkT = 0; // the walkie-talkie keyed: raised toward the mouth (cfg.talk)
     this.tuckT = 0; // pulled back off a wall, a car or a crate in front (update's s.wallDist)
     this.pryT = 0; // forcing a car's boot with what is in the hand (update's s.pry)
+    // pinned by a leaper (_push): 0-0.5 the weapon going down, 0.5-1 the hands coming up; the shove meter as the hands
+    // show it; the thrust of the last presses; a throw-off's last shove
+    this.pinT = 0;
+    this.pinOn = false;
+    this.pushing = false;
+    this.pushLvl = 0;
+    this.pushK = new Spring(260, 22);
+    this.flingT = 0;
+    this.flung = false;
     this.crouchT = 0;
     this.moveT = 0;
     this.bobPhase = 0;
@@ -3162,6 +3180,7 @@ export class ViewModel {
     }
     const lead = this._nkAway ? 0.45 : 0;
     this._nkAway = null;
+    this.pushing = false; // (hands on a leaper: _push puts the new item away and the arms on it again)
     const claws = !!(opts && opts.claws);
     if (this.cur) this.cur.root.visible = false;
     if (this.flameAnchor.parent) this.flameAnchor.parent.remove(this.flameAnchor);
@@ -3261,6 +3280,11 @@ export class ViewModel {
       this.sway.add(nk.meshes.trail);
     }
     return this.nk;
+  }
+
+  /** Pinned by a leaper: a press of the shove key (the simulation's 'shove'): both hands thrust at it. */
+  shove() {
+    this.pushK.v += PUSH_KICK;
   }
 
   melee(heavy = false) {
@@ -3398,6 +3422,7 @@ export class ViewModel {
       SWAY_PIVOT.z - _v1.z
     );
 
+    if (this._push(dt, s)) return;
     if (this.claws) {
       this._updateClaws(dt, t);
       return;
@@ -3566,6 +3591,12 @@ export class ViewModel {
         P6[3] -= up * 0.6;
         cur.root.visible = up < 0.6;
       }
+    }
+    // pinned by a leaper: down out of the way of the hands (_push), and back up once they have dropped
+    if (this.pinT > 0) {
+      const d = smoothstep(0, 0.5, this.pinT);
+      P6[1] -= d * 0.35;
+      P6[3] -= d * 0.6;
     }
     const rs = this._reloadState;
     this._reloadState = null;
@@ -4201,6 +4232,76 @@ export class ViewModel {
       const r = smoothstep(0.8, 1.0, u);
       P6[1] -= (1 - r) * 0.1;
     }
+  }
+
+  // Pinned by a leaper (s.pinned, s.shove): the weapon goes down, then both hands come up flat against it, further out
+  // the further it has been shoved off (the meter), thrusting at every press (shove()) and shaking with the struggle.
+  // Thrown off, they finish the shove at full stretch before they drop and the weapon comes back up. True while the
+  // hands have the view.
+  _push(dt, s) {
+    if (this.claws) {
+      // (turned: nothing to shove with, and setItem has put the arms back)
+      this.pinT = this.flingT = this.pushLvl = 0;
+      this.pinOn = this.flung = false;
+      return false;
+    }
+    const pinned = !!s.pinned;
+    if (pinned && !this.pinOn) {
+      this.pinOn = true;
+      this.flingT = 0;
+      this.flung = false;
+      if (this.act && this.act.type !== 'use') this.act = null; // (a reload, a swing, a throw: the hands are wanted)
+    } else if (!pinned && this.pinOn) {
+      this.pinOn = false;
+      // (let go with the meter all but full: they threw it. Shot off them, or let go in its time, the hands just drop)
+      if (this.pushLvl > 0.9 && this.pinT > 0.5) {
+        this.flingT = PUSH_FLING;
+        this.flung = true;
+      }
+    }
+    if (this.flingT > 0) this.flingT = Math.max(0, this.flingT - dt);
+    this.pinT = pinned || this.flingT > 0 ? Math.min(1, this.pinT + dt / PUSH_IN) : Math.max(0, this.pinT - dt / PUSH_OUT);
+    if (pinned) this.pushLvl += ((s.shove || 0) - this.pushLvl) * (1 - Math.exp(-dt * 18));
+    else if (this.pinT <= 0) this.pushLvl = 0;
+    this.pushK.step(dt);
+    if (this.pinT < 0.5) {
+      if (this.pushing) {
+        // the hands are down: back to the weapon
+        this.pushing = false;
+        this.flung = false;
+        this.armR.shoulder.position.copy(SHOULDER_R);
+        this.armL.shoulder.position.copy(SHOULDER_L);
+        if (this.cur) this.cur.root.visible = true;
+      }
+      return false;
+    }
+    if (!this.pushing) {
+      this.pushing = true;
+      if (this.cur) this.cur.root.visible = false;
+      if (this.nk) this.nk.meshes.trail.visible = false;
+      if (this.cur && this.cur.cfg.nunchaku) this._nkUse = true; // (they come out again as from a draw: _updateNunchaku)
+      this.kit.visible = false;
+      this.armR.shoulder.position.copy(FP_SHOULDER_R);
+      this.armL.shoulder.position.copy(FP_SHOULDER_L);
+    }
+    const up = smoothstep(0.5, 1, this.pinT);
+    const fl = this.flung ? smoothstep(0, 0.1, PUSH_FLING - this.flingT) : 0;
+    const m = this.pushLvl, k = this.pushK.x, t = this.time;
+    const shake = (1 - fl) * (0.6 + 0.4 * (1 - m)); // (it bears down hardest while it is still close)
+    for (let side = -1; side <= 1; side += 2) {
+      const arm = side < 0 ? this.armL : this.armR;
+      _v1.set(
+        side * (0.155 - 0.02 * m - 0.015 * fl) + Math.sin(t * 21 + side * 1.7) * 0.004 * shake,
+        -0.115 + 0.02 * m + 0.04 * fl + Math.sin(t * 27 + side) * 0.005 * shake - (1 - up) * 0.32,
+        -0.3 - 0.12 * m - k - 0.08 * fl,
+      );
+      _q1.copy(side < 0 ? PUSH_Q_L : PUSH_Q_R);
+      if (up < 1) _q1.premultiply(_q2.setFromAxisAngle(X_AXIS, -(1 - up) * 0.9)); // (coming up from below, fingers first)
+      arm.setVisible(true);
+      arm.setPose('shove');
+      this._solveArm(arm, _v1, _q1, side < 0 ? FP_SHOULDER_L : FP_SHOULDER_R, side < 0 ? POLE_L : POLE_R);
+    }
+    return true;
   }
 
   _animUse(u, t) {

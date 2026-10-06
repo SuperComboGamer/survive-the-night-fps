@@ -135,6 +135,13 @@ more than its bytes**, so put things into the packets that already flow.
   (`Prediction.startUse`), and the server raises `using` on that same command (`p.useItem.from`, the one after the
   newest that had come in). It is the one field of the simulated state in no `writeSelf` chunk: `readSelf` takes it
   from the status's item in use, which the server only names while `using` is up (`Game.endUse`).
+- **Pinned by a leaper** (`state.pinned`, set by the server; the shove meter `state.shove`, the simulation's): both
+  hands are on it, so `simulatePlayer` fires, swings and reloads nothing and puts an item in use away. Each press of
+  jump adds `SHOVE_PRESS` to the meter and pushes a `shove` event (which is what lets the input buffer pass a quick
+  tap straight through), holding it down adds `SHOVE_HOLD` a second, and letting go takes `SHOVE_SLIP` a second off.
+  The meter is predicted like any other field, so mashing needs no rebase; the server throws the leaper off on the
+  command that fills it (`Zombies.throwOff`). The client draws the meter (`ui/hud.js`) and both hands shoving
+  (`ViewModel._push`).
 - **Entities** (`server/snapshot.js` / `client/net/decode.js`, tables `FIELD_COUNT` + `BIT_SLOTS` in both):
   area of interest per kind, creates in full, updates only for changed fields, sorted by id behind a one-byte
   head (id step, position as a 1 / 2 / 3-byte delta or absolute, which fields follow), far entities every other

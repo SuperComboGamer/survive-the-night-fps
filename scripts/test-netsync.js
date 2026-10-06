@@ -8,6 +8,7 @@
 // Then lag compensation (runRewind): a shot aimed at a screen that is behind the server lands, as far back as MAX_REWIND.
 // Then the input buffer (runBuffer): early presses of fire, reload and jump are performed, and only those.
 // Then an item in the hands (runUse): nothing goes off while a medkit is being used, a click puts it away instead.
+// Then a leaper's pin (runPin): every press of the shove is predicted, quick taps too, and nothing goes off.
 // Last (runSteps), no server: the camera's step smoothing, which reads the prediction and must not be fooled by it.
 // usage: node scripts/test-netsync.js [lagMs=100] [jitterMs=30]
 import { Spring } from '../client/render/models/weapons.js';
@@ -713,6 +714,127 @@ function runUse(LAG) {
   return ok;
 }
 
+// Pinned by a leaper (Zombies.leapPin): the pin is news to the client, but shoving it off is the simulation's (the
+// meter s.shove, filled by presses of jump), so on a laggy link every press is predicted exactly. Quick taps count:
+// the input buffer used to hold a jump back while it could not act and drop it when the key came up first. Mash
+// with 33 ms taps, pulling the trigger in between, until the prediction's meter is full. Expected: one shove per
+// tap on both sides, no shot, no rebase until the throw (the server's, on the command that fills it), and then
+// the leaper flung off and the survivor free on both sides.
+function runPin(LAG) {
+  const game = new Game({ seed: 4243, godMode: true, log: () => {} });
+  let now = 0;
+  const toClient = [];
+  const toServer = [];
+  const push = (q, bytes) => q.push([now + LAG, bytes]);
+  const c = { net: { tick: 0, ack: 0 }, self: {}, global: null, ents: new Map(), id: 0, pred: null };
+  const store = { ents: c.ents, onCreate() {}, onRemove() {}, onUpdate() {} };
+  const handler = new Proxy({}, { get: () => () => {} });
+  const session = game.onOpen({ send: (bytes) => push(toClient, bytes.slice()) });
+  const conn = new Connection({});
+  conn.open = true;
+  conn.ws = { readyState: 1, send: (bytes) => push(toServer, bytes.slice()), close() {} };
+  const w = new Writer(64);
+  w.u8(C2S.JOIN);
+  w.u8(PROTOCOL_VERSION);
+  w.str('prey');
+  game.onMessage(session, w.bytes().slice());
+
+  let rebases = 0;
+  function onClientMessage(buf) {
+    const r = new Reader(buf);
+    const t = r.u8();
+    if (t === S2C.WELCOME) {
+      c.id = r.u16();
+      c.pred = new Prediction(createWorld(r.u32()));
+    } else if (t === S2C.SNAPSHOT) {
+      const flags = readHeader(r, c.net);
+      if (flags & SNAP.GLOBAL) c.global = readGlobal(r, c.global);
+      const sync = readSelf(r, c.self, flags);
+      readEntities(r, store, c.net.tick, flags);
+      if (sync) {
+        if (c.pred.hasServerState) rebases++;
+        c.pred.reconcile(c.net.ack, c.self);
+      } else c.pred.confirm(c.net.ack);
+      readEvents(r, handler, flags, c.ents);
+    }
+  }
+  const ran = []; // the server's simulation events on our commands
+  const handleSimEvent = game.handleSimEvent.bind(game);
+  game.handleSimEvent = (p, ev) => {
+    ran.push(ev.type);
+    handleSimEvent(p, ev);
+  };
+  const buffer = new InputBuffer();
+  const did = []; // the prediction's (each command's first run)
+  let frame = 0;
+  const send = (force) => {
+    for (let out; (out = c.pred.takeOutbox(1 / 60, force)); ) conn.sendInput(c.net.tick - 2, 0, out, c.pred.hash(out));
+  };
+  const advance = (n, held = 0, slot = 255) => {
+    for (; n > 0; n--) {
+      now = (frame * 1000) / 60;
+      while (toClient.length && toClient[0][0] <= now) onClientMessage(toClient.shift()[1]);
+      while (toServer.length && toServer[0][0] <= now) game.onMessage(session, toServer.shift()[1]);
+      if (c.pred && c.pred.hasServerState) {
+        if (slot !== 255) c.pred.requestSlot(slot);
+        slot = 255;
+        c.pred.step(1 / 60, held, 0, 0, (evs) => evs.forEach((ev) => did.push(ev.type)), buffer);
+        send(false);
+      }
+      if (++frame % (60 / SERVER_TICK_RATE)) continue;
+      game.update();
+    }
+  };
+  const p = () => game.players.get(c.id);
+  const since = (list, mark, type) => list.slice(mark).filter((t) => t === type).length;
+  const settle = Math.ceil((2 * LAG * 60) / 1000) + 30;
+
+  advance(settle + 30); // joined, first state in
+  // an AK-47 with rounds for it, and nothing else about
+  const pl = p();
+  for (const z of [...game.zombies]) {
+    game._listRemove(game.zombies, z);
+    game.removeEntity(z);
+  }
+  game.zm.maintainT = game.zm.herds.spawnT = 1e9;
+  pl.state.weapons[SLOT_PRIMARY] = ITEM.AK47;
+  pl.state.mags[0] = 30;
+  game.giveItem(pl, ITEM.AMMO_762, 90);
+  advance(settle);
+  advance(40, 0, SLOT_PRIMARY);
+  advance(40);
+
+  // a leaper comes down on them
+  const s = pl.state;
+  const z = game.zm.spawn(ZTYPE.LEAPER, s.x - Math.sin(s.yaw) * 0.55, s.z - Math.cos(s.yaw) * 0.55, { horde: true });
+  z.y = s.y;
+  const took = game.zm.leapPin(z, 2);
+  advance(settle);
+  const pinned = took && !!s.pinned && !!c.pred.state.pinned;
+  const r0 = rebases;
+  const d0 = did.length;
+  const s0 = ran.length;
+  let taps = 0;
+  let meter = 0;
+  while (taps < 40) {
+    advance(2, BTN.JUMP);
+    taps++;
+    meter = c.pred.state.shove;
+    if (meter >= 1 || !c.pred.state.pinned) break;
+    advance(3);
+    advance(2, BTN.ATTACK);
+    advance(2);
+  }
+  const thrownAt = rebases;
+  advance(settle);
+  const shoves = since(did, d0, 'shove');
+  const fired = since(did, d0, 'fire') + since(ran, s0, 'fire');
+  const free = !s.pinned && !c.pred.state.pinned && z.state !== 3 && z.dazedT > 0;
+  const pass = pinned && meter === 1 && shoves === taps && since(ran, s0, 'shove') === taps && fired === 0 && thrownAt === r0 && rebases - r0 >= 1 && free;
+  console.log(`${pass ? 'PASS' : 'FAIL'}  pinned by a leaper: ${taps} taps of 33 ms (${(((taps - 1) * 9 + 2) / 60).toFixed(2)} s) fill the shove meter: ${shoves} shoves predicted, ${since(ran, s0, 'shove')} on the server, ${fired} shots, ${thrownAt - r0} rebases before the throw; ${free ? 'thrown off and free on both sides' : `pinned ${s.pinned}/${c.pred.state.pinned}, leaper state ${z.state}`}`);
+  return pass;
+}
+
 // The camera's step smoothing (Prediction.viewLag) is presentation only, but it lives on the prediction and has to
 // keep out of its way. Walk a prediction onto a 0.3 m slab and back off it, at a steady 60 fps and at an uneven
 // frame rate (frames that run no command, or several). Expected: the feet take the step within one command while
@@ -850,5 +972,6 @@ if (!args.length) for (const hold of [300, 700, 1500]) ok = runStall(hold) && ok
 if (!args.length) ok = runRewind() && ok;
 if (!args.length) ok = runBuffer(100) && ok;
 if (!args.length) ok = runUse(100) && ok;
+if (!args.length) ok = runPin(100) && ok;
 if (!args.length) ok = runSteps() && ok;
 process.exit(ok ? 0 : 1);
