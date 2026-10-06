@@ -30,6 +30,7 @@ import { ServerSettings } from './serversettings.js';
 import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
 import { BestiaryStore } from './userbestiary.js';
+import { PublicStats, RANGES } from './publicstats.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
@@ -443,6 +444,29 @@ route(
   { body: true }
 );
 
+// The stats page (/stats, publicstats.js): the whole game's numbers for anyone, ?range=7d|30d|90d|all. Without a
+// database: { enabled: false, live } - only what is being played now.
+const liveNow = async () => {
+  if (cluster) {
+    const list = await db
+      .query(`SELECT info FROM cluster_games WHERE NOT invite_only AND server_id IN (SELECT id FROM cluster_servers WHERE seen_at > now() - interval '30 seconds')`)
+      .then((r) => r.rows.map((x) => x.info))
+      .catch(() => []);
+    return { games: cluster.servers.reduce((n, s) => n + s.games, 0), players: cluster.servers.reduce((n, s) => n + s.players, 0), list: liveList(list) };
+  }
+  return { games: lobby.rooms.size, players: lobby.players(), list: liveList(lobby.list()) };
+};
+const liveList = (list) => list.slice(0, 20).map((g) => ({ code: g.code, name: g.name, players: g.players, max: g.max, day: g.day, phase: g.phase, difficulty: g.difficulty }));
+const publicStats = db ? new PublicStats({ db, live: liveNow, log }) : null;
+const statsRange = (ctx) => (ctx.query.get('range') in RANGES ? ctx.query.get('range') : '30d');
+route('get', '/api/stats', async (ctx) => ({ body: publicStats ? await publicStats.publicView(statsRange(ctx)) : { enabled: false, live: await liveNow() } }));
+// ...and what only an admin sees: who comes back, how long they stay, the server's health, each deploy's matches
+route('get', '/api/stats/admin', async (ctx) => {
+  const me = await signedIn(ctx);
+  if (!me.isAdmin) throw new HttpError(403, 'Only an admin can see this.');
+  return { body: await publicStats.adminView(statsRange(ctx)) };
+});
+
 // your lifetime stats and your last matches: { stats: { kills, ..., ranks } | null, recent: [match] }
 route('get', '/api/me/stats', async (ctx) => {
   const me = await signedIn(ctx);
@@ -591,6 +615,7 @@ app.get('/status', (res) => {
 
 app.get('/*', (res, req) => {
   let url = req.getUrl();
+  if (url === '/stats' || url === '/stats/') url = '/stats.html';
   if (url === '/' || !files.has(url)) url = files.has(url) ? url : '/index.html';
   const f = files.get(url);
   if (!f) {
