@@ -468,6 +468,10 @@ act 2, where the same loop is played with a plane and flying out wins.
   walks, draws or maps a world reads `MAP_SIZE` any more (that constant is the island's 640 m): the nav grid, the
   zombies' spatial hash, the deer, the herd, the player simulation's edge, the terrain, the field map and the
   minimap follow the world. `worldFor(seed, act)` (`shared/worlds.js`) makes either from the run's one seed.
+  The one reader left is `ZombieManager.spread`, the world's ground against the island's (1, or 4 on the mainland):
+  the day's roaming dead, the dog packs and their top-ups come that many times over, and the herds (`Herds.want`)
+  its square root, so the mainland is not a thinner island. A city (`world.city`) has its streets stocked on top of
+  its guards (`CITY_STREET_DEAD`, `spawnStreet`), and a share of the day's top-ups go back there.
 - **The mainland** (`shared/mainland.js`) is 1280 m across, built with the island's kit (`shared/worldkit.js`: the
   Builder, the collider grids, the lists a world hands on): the Bridgehead, Port Calder, Kessler Ironworks,
   Eastgate, a truck stop, Calder Field, and twenty-eight places out on the plain (`shared/mainland-places.js`: one
