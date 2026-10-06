@@ -217,7 +217,15 @@ export class Impacts {
     else if (!h.prop && half > 0.1 && h.fit < half) h.fit = Math.max(h.fit, roomAt(this.worldRay, h.x, h.y, h.z, h.nx, h.ny, h.nz, half));
     const room = Math.max(0.04, h.fit) * 2 + 0.03;
     const k = Math.min(1, room / Math.max(m.w, m.h));
-    if (k < 0.3) return;
+    if (k < 0.3) {
+      // no room for it - the rail of a fence, the leg of a chair: a nick the size of a bullet's hole instead
+      if (m.w <= 0.14 || h.surf === SURF.GLASS) return;
+      const nick = shotMark(h.surf, 0, 1, r);
+      nick.w = nick.h = Math.min(nick.h, 0.11, Math.max(0.05, room));
+      nick.along = false;
+      h.fit = 9;
+      return this.mark(h, nick, dx, dy, dz, r, false, life);
+    }
     const w = m.w * k, hh = m.h * k;
     const c = !m.along ? markCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, null, 0, 0, r * 6.283) : stroke ? strokeCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, dx, dy, dz, r) : markCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, dx, dy, dz);
     // (cracks in glass catch the light: brighter than the pane they are in)

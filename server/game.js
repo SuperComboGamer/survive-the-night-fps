@@ -3135,7 +3135,10 @@ export class Game {
         { to },
       );
     }
-    for (const col of this.ringing) this.tellAlarm(col, ALARM_SAY.RING, this.gather.get(col), to);
+    for (const col of this.ringing) {
+      const g = this.gather.get(col);
+      if (g) this.tellAlarm(col, ALARM_SAY.RING, g, to);
+    }
   }
 
   // yaw: the way it falls (the game's yaw: toward -sin, -cos)

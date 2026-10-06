@@ -476,7 +476,7 @@ export class Combat {
           g.strike(p, ev.weapon, heavy, hx, hy, hz, fx, fy, fz);
           const had = wreck ? (g.gather.get(col)?.left ?? WRECK_SALVAGE) : 0;
           if (tree || wreck) g.gatherHit(p, col, hx, hy, hz, ev.weapon);
-          if (wreck) g.wreckHit(col, hx, hy, hz, fx, fy, fz, blowOf(ev.weapon), heavy, g.gather.get(col).left < had);
+          if (wreck) g.wreckHit(col, hx, hy, hz, fx, fy, fz, blowOf(ev.weapon), heavy, (g.gather.get(col)?.left ?? had) < had);
         }
       }
     }
