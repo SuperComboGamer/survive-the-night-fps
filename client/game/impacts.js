@@ -18,6 +18,7 @@ import { StrikeFx } from '../render/strikefx.js';
 import { Wrecks, strokeCorners, roomAt } from '../render/wrecks.js';
 import { TEX } from '../render/effects.js';
 
+const PANE_HALF = 0.022; // half the thickness a pane is drawn with (StaticWorld: 0.04), and a hair
 export const PANE_SHOTS = 4; // bullets a window pane takes before it falls out (a shotgun's pattern is that many)
 const _ray = { t: -1, col: null, terrain: false };
 const _tri = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
@@ -254,9 +255,10 @@ export class Impacts {
     if (!found) return null;
     const h = _hit, p = found;
     const s = dx * p.nx + dz * p.nz > 0 ? -1 : 1;
-    h.x = ox + dx * best;
+    // (on the face of the glass towards the shot: the pane is drawn 4 cm thick about the part's middle)
+    h.x = ox + dx * best + p.nx * s * PANE_HALF;
     h.y = oy + dy * best;
-    h.z = oz + dz * best;
+    h.z = oz + dz * best + p.nz * s * PANE_HALF;
     h.nx = p.nx * s;
     h.ny = 0;
     h.nz = p.nz * s;

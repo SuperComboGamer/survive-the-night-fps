@@ -573,6 +573,14 @@ const { Effects } = await import('../client/render/effects.js').catch(() => ({ E
     sounds.length = 0;
     for (let i = 0; i < PANE_SHOTS - 1; i++) im.shot(ITEM.PISTOL, ox + pane.nz * 0.1 * i, pane.y, oz - pane.nx * 0.1 * i, -pane.nx, 0, -pane.nz, -1, null, false, 60);
     const stars = P.owner.filter((o) => o === pane.part).length;
+    // (each star lies on the face of the glass towards the shot, proud of it: the pane is drawn 4 cm thick)
+    let proud = true;
+    for (let i = 0; i < MARK_RING; i++) {
+      if (P.owner[i] !== pane.part) continue;
+      const d = (P.pos[i * 12] - pane.x) * pane.nx + (P.pos[i * 12 + 2] - pane.z) * pane.nz;
+      if (!(d > 0.021 && d < 0.04)) proud = false;
+    }
+    check('a star on a window lies on the outer face of the glass, not inside the pane', stars > 0 && proud);
     im.shot(ITEM.PISTOL, ox, pane.y + 0.1, oz, -pane.nx, 0, -pane.nz, -1, null, false, 60);
     const runsAfter = total() + sw.single.reduce((n, s) => n + (s.mesh.geometry.groups.length ? s.mesh.geometry.groups.reduce((a2, g2) => a2 + g2.count, 0) : s.mesh.geometry.attributes.position.count), 0);
     check(`a shot through a window stars the pane; after ${PANE_SHOTS} it falls out, its stars with it, and is no longer drawn`, stars === PANE_SHOTS - 1 && pane.out && P.owner.filter((o) => o === pane.part).length === 0 && (runsBefore - runsAfter === 36 || runsBefore - runsAfter === 72) && sounds.includes('#' + 22), `${stars} stars, out ${pane.out}, ${runsBefore - runsAfter} vertices fewer`);
