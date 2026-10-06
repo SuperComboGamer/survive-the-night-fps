@@ -64,11 +64,30 @@ uniform vec4 uPs1;
 #endif
 `;
 
-// appended to three's project_vertex (vertices behind the eye are left alone: their triangles are clipped)
+// appended to three's project_vertex (vertices behind the eye are left alone: their triangles are clipped).
+// A lit material's vertex then takes the depth of its own face (the plane through it square to its normal) where
+// that face is seen at the snapped pixel: the snap moves where a face is drawn, never how far off it is. Snapped as
+// it was, a face took up to a pixel's worth of its own slope in depth, and a room's plaster, 6 mm in front of the
+// dark wall it lines, lost to that wall in wedges wherever it was seen edge on. Only the depth: w stays, so what is
+// painted on a face wobbles as it did. (Not for a face seen too nearly edge on to find that point, nor for an
+// orthographic camera.)
 const PS1_SNAP_VERTEX = /* glsl */ `
 #ifdef STN_PS1
   if (uPs1.x > 0.0 && gl_Position.w > 0.0) {
-    gl_Position.xy = floor(gl_Position.xy / gl_Position.w * uPs1.xy + 0.5) / uPs1.xy * gl_Position.w;
+    vec2 ps1Ndc = floor(gl_Position.xy / gl_Position.w * uPs1.xy + 0.5) / uPs1.xy;
+    gl_Position.xy = ps1Ndc * gl_Position.w;
+    #if defined( LAMBERT ) || defined( PHONG ) || defined( STANDARD ) || defined( TOON )
+    if (projectionMatrix[2][3] < -0.5) {
+      vec3 ps1N = normalize(transformedNormal);
+      vec3 ps1Ray = vec3((ps1Ndc.x + projectionMatrix[2][0]) / projectionMatrix[0][0], (ps1Ndc.y + projectionMatrix[2][1]) / projectionMatrix[1][1], -1.0);
+      float ps1Across = dot(ps1N, ps1Ray);
+      if (abs(ps1Across) > 0.03 * length(ps1Ray)) {
+        vec4 ps1At = projectionMatrix * vec4(ps1Ray * (dot(ps1N, mvPosition.xyz) / ps1Across), 1.0);
+        float ps1Z = ps1At.z / ps1At.w;
+        if (ps1At.w > 0.0 && abs(ps1Z) < 1.0) gl_Position.z = ps1Z * gl_Position.w;
+      }
+    }
+    #endif
   }
 #endif
 `;
