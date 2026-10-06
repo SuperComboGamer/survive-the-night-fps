@@ -68,6 +68,7 @@ export class MapScreen {
       ['mate', 'person', 'Survivor'],
       ['car', 'car', 'Your car'],
       ['hint', 'fuel', 'Rumoured supply'],
+      ['part', 'fuel', 'Dropped supply'],
       ['schem', itemIcon(ITEM.SCHEM_SHOTGUN), 'Rumoured schematic'],
       ['ping', 'ping', 'Ping'],
       ['crate', 'hazard', 'Supply drop'],
@@ -368,7 +369,7 @@ export class MapScreen {
   // d: { self:{x,z,yaw}, mates:[{x,z,name,status}], car:{x,z}, pings:[{x,z,kind,name}], crates:[{x,z}],
   //      benches:[{x,z}], discovered:Set, hints:[zone...], found:bits (a hint whose supply has been taken),
   //      schemHints:[zone per schematic], unlocked:bits (the schematics the team has),
-  //      supplies:[n...], carried:{item:n}, waypoint:{x,z,zone} | null,
+  //      supplies:[n...], carried:{item:n}, parts:[{item,x,z}] (car supplies lying loose), waypoint:{x,z,zone} | null,
   //      teamWays:[{x,z,zone,names:[...],mine (on the spot of your own)}] }
   update(d) {
     if (!this.open || !this.world) return;
@@ -443,6 +444,8 @@ export class MapScreen {
       put(z.x + n * 10, z.z + 26, 'schem', itemIcon(rm.item));
     }
     for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), 'bench');
+    // car supplies on the ground where someone dropped them or fell, named for what they are
+    for (const p of d.parts) put(p.x, p.z, 'part', itemIcon(p.item), ITEM_DEFS[p.item].name);
     for (const c of d.crates) put(c.x, c.z, 'crate', glyph('hazard'), 'drop');
     for (const p of d.pings) put(p.x, p.z, 'ping k' + p.kind, glyph('ping'), p.name);
     put(d.car.x, d.car.z, 'car', glyph(W.glyph), W.thing);
@@ -452,7 +455,8 @@ export class MapScreen {
     for (let i = n; i < this.pool.length; i++) if (!this.pool[i].e.hidden) this.pool[i].e.hidden = true;
     this.coords.textContent = `${Math.round(d.self.x)} E · ${Math.round(-d.self.z)} N`;
     // supply checklist
-    const key = JSON.stringify([d.supplies, d.hints, d.found, d.carried]);
+    const loose = new Set(d.parts.map((p) => p.item));
+    const key = JSON.stringify([d.supplies, d.hints, d.found, d.carried, [...loose]]);
     if (key !== this._supKey) {
       this._supKey = key;
       this.supList.textContent = '';
@@ -462,7 +466,8 @@ export class MapScreen {
         const t = el('div', 'ms-t', r);
         el('b', '', t, ITEM_DEFS[item].name + (SUPPLY_NEED[i] > 1 ? ` ${d.supplies[i]}/${SUPPLY_NEED[i]}` : ''));
         const rum = supplyRumours(i, d.hints, d.found);
-        el('span', '', t, d.supplies[i] >= SUPPLY_NEED[i] ? 'installed' : rum.zones.map((z) => ZONE_NAMES[z]).join(' · ') || (rum.found ? 'found' : 'unknown'));
+        const ground = loose.has(item) && !d.carried[item] ? 'on the ground' : '';
+        el('span', '', t, d.supplies[i] >= SUPPLY_NEED[i] ? 'installed' : [ground, ...rum.zones.map((z) => ZONE_NAMES[z])].filter(Boolean).join(' · ') || (rum.found ? 'found' : 'unknown'));
       });
     }
     // schematic checklist
