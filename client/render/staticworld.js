@@ -314,10 +314,11 @@ export class StaticWorld {
     // wreck that is taken apart, a window pane that can be shot out
     const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null, tier = 0, lift = null) => {
       let flat = null;
-      // (what is small inside a vehicle - the wheel, the mirror, what was left on a seat: its material's, from near)
+      // (what is inside a vehicle - its seats, the wheel, what was left on them: the lining's material, and from as
+      // near only as a room's furniture is. A street of several hundred cars is lined, not furnished)
       if (mat.userData.fineOf) {
         mat = getMaterial(mat.userData.fineOf);
-        tier = Math.max(tier, TIER.DETAIL);
+        tier = Math.max(tier, TIER.ROOM);
       }
       if (plain(mat)) {
         flat = mat.color;

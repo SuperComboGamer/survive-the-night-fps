@@ -158,8 +158,8 @@ function sedan(b, r, o) {
   {
     const zc = (BOOT.z0 + BOOT.z1) / 2, lw = W - 0.21, carpet = o.burnt ? CHAR : [0.14, 0.14, 0.15];
     deck(b, 0, BOOT.y + 0.012, zc, lw, BOOT.z1 - BOOT.z0 - 0.01, carpet);
-    for (const z of [BOOT.z0 + 0.006, BOOT.z1 - 0.006]) b.box('cabin', lw, 0.92 - BOOT.y - 0.03, 0.01, { p: [0, (0.9 + BOOT.y) / 2, z], c: carpet });
-    b.cyl('cabin', 0.27, 0.27, 0.1, 10, { p: [-0.38, BOOT.y + 0.064, zc + 0.06], c: o.burnt ? [0.16, 0.1, 0.07] : [0.07, 0.07, 0.07] });
+    for (const z of [BOOT.z0 + 0.006, BOOT.z1 - 0.006]) b.box('cabin_fine', lw, 0.92 - BOOT.y - 0.03, 0.01, { p: [0, (0.9 + BOOT.y) / 2, z], c: carpet });
+    b.cyl('cabin_fine', 0.27, 0.27, 0.1, 10, { p: [-0.38, BOOT.y + 0.064, zc + 0.06], c: o.burnt ? [0.16, 0.1, 0.07] : [0.07, 0.07, 0.07] });
     b.cyl('cabin_fine', 0.15, 0.15, 0.104, 8, { p: [-0.38, BOOT.y + 0.066, zc + 0.06], c: [0.26, 0.17, 0.12] });
     if (!o.burnt) {
       b.box('cabin_fine', 0.3, 0.07, 0.1, { p: [0.3, BOOT.y + 0.05, zc - 0.2], r: [0, 0.3, 0], c: [0.4, 0.14, 0.1] }); // the jack
@@ -282,14 +282,14 @@ function sedanCabin(b, o, hw) {
   const sc = burnt ? CHAR : SEATS[(o.seats ?? 0) % SEATS.length];
   // the floor, the scuttle and the back of the well; the shelf under the back window; the door cards
   deck(b, 0, fy, zc, iw, len - 0.02, burnt ? CHAR : undefined);
-  b.box('cabin', iw, 0.92 - fy, 0.02, { p: [0, (0.92 + fy) / 2, TUB.z0 + 0.012], c: trim });
-  b.box('cabin', iw, 0.92 - fy, 0.02, { p: [0, (0.92 + fy) / 2, TUB.z1 - 0.012], c: trim });
-  b.box('cabin', iw, 0.014, 1.24 - TUB.z1 - 0.02, { p: [0, 0.928, (TUB.z1 + 1.24) / 2 - 0.02], c: trim });
+  b.box('cabin_fine', iw, 0.92 - fy, 0.02, { p: [0, (0.92 + fy) / 2, TUB.z0 + 0.012], c: trim });
+  b.box('cabin_fine', iw, 0.92 - fy, 0.02, { p: [0, (0.92 + fy) / 2, TUB.z1 - 0.012], c: trim });
+  b.box('cabin_fine', iw, 0.014, 1.24 - TUB.z1 - 0.02, { p: [0, 0.928, (TUB.z1 + 1.24) / 2 - 0.02], c: trim });
   for (const sx of [-1, 1])
     for (const [k, z0, z1] of [[0, TUB.z0, 0.46], [1, 0.46, TUB.z1]]) {
       if ((o.doorsOff || []).some((d) => d[0] === sx && d[1] === k)) continue;
       const stripped = what === 4 && sx > 0 && k === 0;
-      if (!stripped) b.box('cabin', 0.012, 0.92 - fy - 0.02, z1 - z0 - 0.03, { p: [sx * (iw / 2 - 0.003), (0.92 + fy) / 2, (z0 + z1) / 2], c: mul(sc, 0.8) });
+      if (!stripped) b.box('cabin_fine', 0.012, 0.92 - fy - 0.02, z1 - z0 - 0.03, { p: [sx * (iw / 2 - 0.003), (0.92 + fy) / 2, (z0 + z1) / 2], c: mul(sc, 0.8) });
       if (!stripped && !burnt) b.box('cabin_fine', 0.05, 0.05, (z1 - z0) * 0.5, { p: [sx * (iw / 2 - 0.03), 0.72, (z0 + z1) / 2 + 0.05], c: trim }); // the armrest
     }
   // seats: where createDriveCar seats the survivors (DRIVE_CAR_SEATS)
@@ -297,7 +297,7 @@ function sedanCabin(b, o, hw) {
   if (burnt) {
     for (const sx of [-1, 1]) burntSeat(b, sx * 0.38, fy, fz, { h: fh });
     burntSeat(b, 0, fy, rz, { w: 1.3, h: rh });
-    b.box('cabin', iw, 0.2, 0.26, { p: [0, 0.83, -0.7], c: CHAR }); // what is left of the dash
+    b.box('cabin_fine', iw, 0.2, 0.26, { p: [0, 0.83, -0.7], c: CHAR }); // what is left of the dash
     b.cylBetween('cabin_fine', [-0.38, 0.86, -0.62], [-0.38, 1.0, -0.42], 0.02, 0.02, 4, { c: [0.2, 0.12, 0.08] });
     b.torus('cabin_fine', 0.17, 0.012, 3, 9, PI * 2, { p: [-0.38, 1.0, -0.42], r: [-(PI / 2 - 0.42), 0, 0], c: [0.2, 0.12, 0.08] });
     rubbish(b, [0, fy, 0.1], 1.2, 1.2, 4, 3);
@@ -2083,20 +2083,20 @@ BUILD.camper = (b, r, v) => {
   // the road side, a galley opposite; cupboards along the top
   const fy = 1.14, wood = [0.34, 0.26, 0.17];
   deck(b, 0, fy + 0.01, 0.82, W - 0.1, 4.7, [0.2, 0.17, 0.13]);
-  b.box('cabin', W - 0.14, 0.06, 1.0, { p: [0, 2.03, -2.02], c: wood }); // the overcab bunk
-  b.box('cabin', W - 0.3, 0.12, 0.9, { p: [0, 2.12, -2.0], c: [0.44, 0.42, 0.36] });
+  b.box('cabin_fine', W - 0.14, 0.06, 1.0, { p: [0, 2.03, -2.02], c: wood }); // the overcab bunk
+  b.box('cabin_fine', W - 0.3, 0.12, 0.9, { p: [0, 2.12, -2.0], c: [0.44, 0.42, 0.36] });
   b.box('cabin_fine', 0.5, 0.09, 0.3, { p: [-0.6, 2.22, -1.72], r: [0, 0.2, 0], c: [0.52, 0.5, 0.44] });
-  b.box('cabin', W - 0.14, 0.5, 0.9, { p: [0, fy + 0.25, 2.72], c: wood }); // the bed across the back
-  b.box('cabin', W - 0.2, 0.14, 0.86, { p: [0, fy + 0.57, 2.72], c: [0.42, 0.4, 0.35] });
+  b.box('cabin_fine', W - 0.14, 0.5, 0.9, { p: [0, fy + 0.25, 2.72], c: wood }); // the bed across the back
+  b.box('cabin_fine', W - 0.2, 0.14, 0.86, { p: [0, fy + 0.57, 2.72], c: [0.42, 0.4, 0.35] });
   b.box('cabin_fine', 1.3, 0.06, 0.8, { p: [0.25, fy + 0.66, 2.74], r: [0, 0.06, 0.02], c: curt });
   b.box('cabin_fine', 0.5, 0.1, 0.32, { p: [-0.75, fy + 0.69, 2.66], r: [0, -0.2, 0], c: [0.52, 0.5, 0.44] });
   seat(b, -0.74, fy, 0.42, { w: 0.76, h: 0.42, bh: 0.46, d: 0.36, heads: 0, back: -1, c: SEATS[v ? 2 : 1], rake: 0.06 });
   seat(b, -0.74, fy, 1.4, { w: 0.76, h: 0.42, bh: 0.46, d: 0.36, heads: 0, c: SEATS[v ? 2 : 1], rake: 0.06 });
-  b.box('cabin', 0.62, 0.04, 0.52, { p: [-0.8, fy + 0.7, 0.91], c: wood });
+  b.box('cabin_fine', 0.62, 0.04, 0.52, { p: [-0.8, fy + 0.7, 0.91], c: wood });
   b.box('cabin_fine', 0.05, 0.68, 0.05, { p: [-0.6, fy + 0.34, 0.91], c: [0.2, 0.2, 0.2] });
-  b.box('cabin', 0.5, 0.86, 1.2, { p: [0.88, fy + 0.43, -0.75], c: wood }); // the galley
+  b.box('cabin_fine', 0.5, 0.86, 1.2, { p: [0.88, fy + 0.43, -0.75], c: wood }); // the galley
   b.box('cabin_fine', 0.36, 0.02, 0.4, { p: [0.86, fy + 0.87, -0.5], c: [0.4, 0.42, 0.42] });
-  for (const sx of [-1, 1]) b.box('cabin', 0.3, 0.36, 3.6, { p: [sx * (hw - 0.2), 2.62, 0.9], c: mul(wood, 0.9) });
+  for (const sx of [-1, 1]) b.box('cabin_fine', 0.3, 0.36, 3.6, { p: [sx * (hw - 0.2), 2.62, 0.9], c: mul(wood, 0.9) });
   if (v) {
     luggage(b, [-0.74, fy + 0.42, 1.4], 1, { r: 1.5 });
     rubbish(b, [0.2, fy + 0.02, 0.6], 0.9, 2.0, 7, 4);
@@ -2201,10 +2201,10 @@ BUILD.ambulance = (b, r) => {
   // in it: a bench down the left for whoever rode with the patient, cupboards down the right, the oxygen, the
   // drip still hanging; and what was on the floor when they left
   const by = 0.675;
-  b.box('cabin', 0.42, 0.44, 2.5, { p: [-0.78, by + 0.22, 1.0], c: [0.2, 0.22, 0.24] });
-  b.box('cabin', 0.42, 0.06, 2.5, { p: [-0.78, by + 0.47, 1.0], c: [0.16, 0.2, 0.3] });
-  b.box('cabin', 0.34, 0.8, 1.3, { p: [0.83, by + 0.4, 0.05], c: [0.46, 0.46, 0.42] });
-  b.box('cabin', 0.3, 0.5, 2.9, { p: [0.85, 2.25, 1.05], c: [0.46, 0.46, 0.42] });
+  b.box('cabin_fine', 0.42, 0.44, 2.5, { p: [-0.78, by + 0.22, 1.0], c: [0.2, 0.22, 0.24] });
+  b.box('cabin_fine', 0.42, 0.06, 2.5, { p: [-0.78, by + 0.47, 1.0], c: [0.16, 0.2, 0.3] });
+  b.box('cabin_fine', 0.34, 0.8, 1.3, { p: [0.83, by + 0.4, 0.05], c: [0.46, 0.46, 0.42] });
+  b.box('cabin_fine', 0.3, 0.5, 2.9, { p: [0.85, 2.25, 1.05], c: [0.46, 0.46, 0.42] });
   for (let k = 0; k < 4; k++) b.box('cabin_fine', 0.012, 0.4, 0.02, { p: [0.695, 2.25, -0.1 + k * 0.72], c: [0.22, 0.22, 0.2] });
   b.cyl('cabin_fine', 0.07, 0.07, 0.6, 7, { p: [-0.86, by + 0.8, -0.45], c: [0.2, 0.34, 0.24] });
   b.cyl('cabin_fine', 0.03, 0.03, 0.08, 5, { p: [-0.86, by + 1.14, -0.45], c: [0.5, 0.5, 0.46] });
@@ -2280,7 +2280,7 @@ BUILD.school_bus = (b, r, v) => {
   const green = [0.17, 0.26, 0.19];
   busRows(b, [-0.72, 0.72], 1.71, -2.62, 0.667, 12, 0.88, { c: green, bh: 0.44, skip: (k, x) => (k * 7 + (x > 0 ? 3 : 0)) % 11 === 5 || (v === 1 && k === 4 && x < 0) });
   seat(b, -0.7, 1.71, -3.42, { w: 0.5, h: 0.12, bh: 0.44, d: 0.4, c: green, heads: 0 });
-  b.box('cabin', hw * 2 - 0.3, 0.16, 0.22, { p: [0, 1.8, -3.84], c: [0.1, 0.1, 0.1] });
+  b.box('cabin_fine', hw * 2 - 0.3, 0.16, 0.22, { p: [0, 1.8, -3.84], c: [0.1, 0.1, 0.1] });
   steering(b, [-0.7, 2.0, -3.66], { R: 0.22, tilt: 0.9 });
   b.cylBetween('cabin_fine', [0.3, 1.72, -3.2], [0.3, 2.44, -3.2], 0.018, 0.018, 4, { c: [0.5, 0.5, 0.46] }); // the pole by the steps
   if (v === 1) {
@@ -2317,7 +2317,7 @@ BUILD.school_bus = (b, r, v) => {
   for (const zz of [-3.72, -3.36]) {
     // (the door's leaves: their upper lights look into the bus; the lower ones are in the body, on the step well)
     b.box('dark', 0.02, 1.04, 0.34, { p: [hw + 0.002, 1.12, zz] });
-    b.box('cabin', 0.012, 0.6, 0.28, { p: [hw + 0.008, 1.12, zz], c: [0.2, 0.19, 0.17] });
+    b.box('cabin_fine', 0.012, 0.6, 0.28, { p: [hw + 0.008, 1.12, zz], c: [0.2, 0.19, 0.17] });
     glass(0.28, 0.72, { p: [hw + 0.014, 2.02, zz], r: [0, PI / 2, 0] });
     glass(0.28, 0.6, { p: [hw + 0.016, 1.12, zz], r: [0, PI / 2, 0] });
     b.box('carpaint', 0.04, 0.78, 0.04, { p: [hw - 0.012, 2.09, zz + 0.18], c: yel });
@@ -3285,12 +3285,12 @@ BUILD.semi_truck = (b, r, v) => {
     deck(b, 0, 1.96, -2.6, 2.28, 1.98, burnt ? CHAR : undefined);
     if (burnt) {
       for (const sx of [-1, 1]) burntSeat(b, sx * 0.62, 1.96, -3.0, { h: 0.3 });
-      b.box('cabin', 2.2, 0.3, 0.24, { p: [0, 2.3, -3.48], c: CHAR });
+      b.box('cabin_fine', 2.2, 0.3, 0.24, { p: [0, 2.3, -3.48], c: CHAR });
     } else {
       for (const sx of [-1, 1]) seat(b, sx * 0.62, 1.96, -3.0, { w: 0.56, h: 0.3, bh: 0.56, d: 0.46, c: SEATS[5] });
       dash(b, 2.42, -3.62, 2.26, { d: 0.26, h: 0.4, wheelX: -0.62 });
       steering(b, [-0.62, 2.5, -3.28], { R: 0.22, tilt: 0.8 });
-      b.box('cabin', 2.2, 0.4, 0.8, { p: [0, 2.16, -2.02], c: [0.24, 0.22, 0.2] }); // the bunk
+      b.box('cabin_fine', 2.2, 0.4, 0.8, { p: [0, 2.16, -2.02], c: [0.24, 0.22, 0.2] }); // the bunk
       b.box('cabin_fine', 1.6, 0.07, 0.7, { p: [0.2, 2.4, -2.02], r: [0, 0.04, 0.02], c: [0.34, 0.2, 0.16] });
       b.box('cabin_fine', 0.4, 0.1, 0.3, { p: [-0.8, 2.42, -2.02], c: [0.52, 0.5, 0.44] });
       rubbish(b, [0.62, 2.265, -3.0], 0.4, 0.3, 3, 9);

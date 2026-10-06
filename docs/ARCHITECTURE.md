@@ -1107,10 +1107,11 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   what it is like, not a colour: `[dirt, tint, blood]` (`paneLook`). It is see-through and **not sorted**
   (`userData.unsorted`): all of it in a world is one `MultiMesh`, drawn before every other see-through thing
   (`UNSORTED_ORDER`), where the static world's other see-through materials are a mesh a chunk - a pane is a thin
-  dark film, and two of them come out the same whichever is drawn first. `cabin` is every colour of an inside in one
-  material (the vertex's); `cabin_fine` is the same material to the static world (`userData.fineOf`), in the tier
-  that is drawn from 90 m and casts no shadow: the wheel, the mirror, the bones go at a distance, the seats do not.
-  The lining is what casts a shell's shadow from inside, so the sun comes in at the windows. What has no inside to
+  dark film, and two of them come out the same whichever is drawn first. `cabin` is a shell's lining, seen as far
+  as the vehicle is; `cabin_fine` is everything in it - every colour of it the vertex's - and to the static world
+  the same material (`userData.fineOf`), in the tier that is drawn from 55 m (a room's furniture's) and casts no shadow: a street of
+  several hundred cars is lined, not furnished. The lining is what casts a shell's shadow from inside, so the sun
+  comes in at the windows. What has no inside to
   give (an aircraft's fuselage and a helicopter's are closed skins, an APC has no glass) has `canopy`: the same
   glass, opaque. To the wreck system a pane is any of `GLASS_MATS`, an inside any of `CABIN_MATS` (`shared/
   surfaces.js`): a dent stops short of the lining as it does of an arch's black, a blow through an opening lands on

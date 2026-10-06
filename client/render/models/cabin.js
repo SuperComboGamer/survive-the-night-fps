@@ -4,8 +4,9 @@
 //
 // Three materials (materials.js):
 //   carglass    a pane. Its vertex colour is what it is like, not a colour: [how dirty, its tint, blood on it]
-//   cabin       the lining of a shell and whatever is big in it (seats, a dash, a load): seen as far as the vehicle is
-//   cabin_fine  what is small (a wheel, a mirror, bones, rubbish): the static world draws it from near only
+//   cabin       the lining of a shell: seen as far as the vehicle is, and what casts the body's shadow from inside
+//   cabin_fine  everything in it (seats, a dash, a wheel, a load, bones, rubbish): the static world draws that from
+//               near only (55 m), and it casts no shadow - a street of several hundred cars is lined, not furnished
 // A shell's lining is what casts the body's shadow from the inside, so the sun comes in at the windows.
 //
 // Everything is in the builder's current frame (front to -Z), and nothing here draws a random number that the
@@ -107,14 +108,21 @@ export function hullShell(b, mat, C, o = {}) {
     const holes = (o.holes && o.holes[name]) || [];
     const us = uniq([0, 1, ...holes.flatMap((h) => [h[0], h[1]])]), vs = uniq([0, 1, ...holes.flatMap((h) => [h[2], h[3]])]);
     const bare = o.bare && o.bare.includes(name), unlined = lining === false || (o.unlined && o.unlined.includes(name));
-    for (let i = 0; i < us.length - 1; i++)
-      for (let j = 0; j < vs.length - 1; j++) {
-        const um = (us[i] + us[i + 1]) / 2, vm = (vs[j] + vs[j + 1]) / 2;
-        if (holes.some((h) => um > h[0] && um < h[1] && vm > h[2] && vm < h[3])) continue;
-        const at = (R) => [bil(R, us[i], vs[j]), bil(R, us[i + 1], vs[j]), bil(R, us[i + 1], vs[j + 1]), bil(R, us[i], vs[j + 1])];
+    // (band by band up the face, each run of it between two openings one piece: a strip under the windows, one over
+    // them, the posts between - a jam in a street is several hundred of these shells)
+    for (let j = 0; j < vs.length - 1; j++) {
+      const vm = (vs[j] + vs[j + 1]) / 2;
+      const open = (i) => holes.some((h) => (us[i] + us[i + 1]) / 2 > h[0] && (us[i] + us[i + 1]) / 2 < h[1] && vm > h[2] && vm < h[3]);
+      for (let i = 0; i < us.length - 1; i++) {
+        if (open(i)) continue;
+        let k = i;
+        while (k + 1 < us.length - 1 && !open(k + 1)) k++;
+        const at = (R) => [bil(R, us[i], vs[j]), bil(R, us[k + 1], vs[j]), bil(R, us[k + 1], vs[j + 1]), bil(R, us[i], vs[j + 1])];
         if (!bare) skin.quad(...at(P), n);
         if (!unlined) line.quad(...at(Q), back);
+        i = k;
       }
+    }
     for (const h of holes) {
       const cn = (R) => [bil(R, h[0], h[2]), bil(R, h[1], h[2]), bil(R, h[1], h[3]), bil(R, h[0], h[3])];
       const a = cn(P), c = cn(Q);
@@ -273,20 +281,20 @@ export function leaf(b, mat, w, h, t, win, o = {}) {
 export function seat(b, x, y, z, o = {}) {
   const w = o.w ?? 0.5, d = o.d ?? 0.48, h = o.h ?? 0.1, bh = o.bh ?? 0.6, s = o.back ?? 1, c = o.c || SEATS[0];
   const rake = (o.rake ?? 0.17) * s;
-  b.box('cabin', w, Math.min(0.13, h), d, { p: [x, y + h - Math.min(0.13, h) / 2, z], c });
-  if (h > 0.16) b.box('cabin', w * 0.8, h - 0.13, d * 0.7, { p: [x, y + (h - 0.13) / 2, z], c: mul(c, 0.5) });
+  b.box('cabin_fine', w, Math.min(0.13, h), d, { p: [x, y + h - Math.min(0.13, h) / 2, z], c });
+  if (h > 0.16) b.box('cabin_fine', w * 0.8, h - 0.13, d * 0.7, { p: [x, y + (h - 0.13) / 2, z], c: mul(c, 0.5) });
   const zb = z + s * (d / 2 + 0.02);
   b.group({ p: [x, y + h - 0.03, zb], r: [rake, 0, 0] }, () => {
-    b.box('cabin', w, bh, 0.1, { p: [0, bh / 2, 0], c });
+    b.box('cabin_fine', w, bh, 0.1, { p: [0, bh / 2, 0], c });
     const n = o.heads ?? 1;
-    for (let k = 0; k < n; k++) b.box('cabin', Math.min(0.26, w * 0.5), 0.16, 0.08, { p: [n === 1 ? 0 : (k - 0.5) * w * 0.52, bh + 0.11, 0], c: mul(c, 0.9) });
+    for (let k = 0; k < n; k++) b.box('cabin_fine', Math.min(0.26, w * 0.5), 0.16, 0.08, { p: [n === 1 ? 0 : (k - 0.5) * w * 0.52, bh + 0.11, 0], c: mul(c, 0.9) });
   });
 }
 
 /** the dash across a cab: its top at y, its edge towards the screen at z (it comes back d from there), w across */
 export function dash(b, y, z, w, o = {}) {
   const d = o.d ?? 0.3, h = o.h ?? 0.26, c = o.c || DASH;
-  b.box('cabin', w, h, d, { p: [0, y - h / 2, z + d / 2], c });
+  b.box('cabin_fine', w, h, d, { p: [0, y - h / 2, z + d / 2], c });
   if (o.bare) return;
   const wx = o.wheelX ?? -w * 0.25;
   b.box('cabin_fine', 0.34, 0.07, d * 0.6, { p: [wx, y + 0.035, z + d * 0.5], c: mul(c, 0.8) }); // the binnacle
@@ -388,17 +396,17 @@ export function bloodPatch(b, p, w, d, ry = 0, tilt = 0) {
 export function burntSeat(b, x, y, z, o = {}) {
   const w = o.w ?? 0.5, h = o.h ?? 0.12, bh = o.bh ?? 0.56, c = [0.2, 0.12, 0.08], s = o.back ?? 1;
   for (const sx of [-1, 1]) {
-    b.box('cabin', 0.03, 0.03, 0.46, { p: [x + sx * (w / 2 - 0.015), y + h, z], c });
-    b.box('cabin', 0.03, bh, 0.03, { p: [x + sx * (w / 2 - 0.015), y + h + bh / 2, z + s * 0.24], r: [0.17 * s, 0, 0], c });
+    b.box('cabin_fine', 0.03, 0.03, 0.46, { p: [x + sx * (w / 2 - 0.015), y + h, z], c });
+    b.box('cabin_fine', 0.03, bh, 0.03, { p: [x + sx * (w / 2 - 0.015), y + h + bh / 2, z + s * 0.24], r: [0.17 * s, 0, 0], c });
   }
-  b.box('cabin', w, 0.03, 0.03, { p: [x, y + h + bh, z + s * (0.24 + bh * 0.085)], c });
+  b.box('cabin_fine', w, 0.03, 0.03, { p: [x, y + h + bh, z + s * (0.24 + bh * 0.085)], c });
   for (let k = 0; k < 4; k++) b.box('cabin_fine', w - 0.06, 0.012, 0.012, { p: [x, y + h + 0.01, z - 0.18 + k * 0.12], c: mul(c, 0.8) }); // springs
   for (let k = 0; k < 3; k++) b.box('cabin_fine', w - 0.06, 0.012, 0.012, { p: [x, y + h + 0.14 + k * 0.14, z + s * (0.25 + k * 0.024)], c: mul(c, 0.8) });
 }
 
 /** a floor (and nothing under it): w by d about (x, z), its top at y */
 export function deck(b, x, y, z, w, d, c = FLOOR) {
-  b.box('cabin', w, 0.02, d, { p: [x, y - 0.01, z], c });
+  b.box('cabin', w, 0.02, d, { p: [x, y - 0.01, z], c }); // (with the lining: a floor is seen as far as the vehicle is)
 }
 
 /**
@@ -411,8 +419,8 @@ export function busRows(b, xs, y, z0, pitch, rows, w, o = {}) {
     for (const x of xs) {
       if (skip(k, x)) continue;
       const z = z0 + k * pitch;
-      b.box('cabin', w, 0.1, 0.4, { p: [x, y + 0.05 + (o.h ?? 0), z], c });
-      b.box('cabin', w, bh, 0.07, { p: [x, y + (o.h ?? 0) + bh / 2, z + 0.23], r: [0.1, 0, 0], c: (k + (x > 0 ? 1 : 0)) % 4 === 0 ? mul(c, 0.7) : c });
+      b.box('cabin_fine', w, 0.1, 0.4, { p: [x, y + 0.05 + (o.h ?? 0), z], c });
+      b.box('cabin_fine', w, bh, 0.07, { p: [x, y + (o.h ?? 0) + bh / 2, z + 0.23], r: [0.1, 0, 0], c: (k + (x > 0 ? 1 : 0)) % 4 === 0 ? mul(c, 0.7) : c });
     }
 }
 

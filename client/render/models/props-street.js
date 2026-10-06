@@ -648,7 +648,7 @@ STREET_PROPS.city_bus = (b, r, v) => {
   const well = (z) => (z > -5.6 && z < -4.0) || (z > 0.1 && z < 1.75);
   busRows(b, [-0.8, 0.8], yw + 0.012, -3.9, 0.82, 11, 0.82, { c: blue, bh: 0.48, skip: (k, x) => (x > 0 && well(-3.9 + k * 0.82)) || (k * 5 + (x > 0 ? 2 : 0)) % 13 === 4 });
   seat(b, -0.78, yw + 0.012, -5.2, { w: 0.5, h: 0.14, bh: 0.5, d: 0.42, c: blue, heads: 0 });
-  b.box('cabin', 1.3, 0.24, 0.26, { p: [-0.55, yw + 0.13, -5.7], c: [0.1, 0.1, 0.1] });
+  b.box('cabin_fine', 1.3, 0.24, 0.26, { p: [-0.55, yw + 0.13, -5.7], c: [0.1, 0.1, 0.1] });
   steering(b, [-0.78, yw + 0.44, -5.52], { R: 0.23, tilt: 1.0 });
   b.box('cabin_fine', 0.2, 0.5, 0.2, { p: [0.2, yw + 0.26, -5.35], c: [0.3, 0.3, 0.3] });
   for (const sx of [-1, 1]) b.box('cabin_fine', 0.025, 0.025, 8.6, { p: [sx * 0.42, yt - 0.14, -0.2], c: [0.52, 0.44, 0.14] });
@@ -782,7 +782,7 @@ STREET_PROPS.box_truck = (b, r, v) => {
   // (a shell, open at the back under the door: the load space, and what is left of the load)
   boxShell(b, 'paint', bx * 2, by1 - by0, bzs - bz0, { p: [0, bym, (bz0 + bzs) / 2], c: body, cfn: worn(0.18), t: 0.05, lining: [0.25, 0.22, 0.18], holes: { zp: [[-1.14, 1.14, by0 + 0.08 - bym, 2.1 - bym, 'gone']] } });
   const cy = by0 + 0.06;
-  const crate = (x, z, sx, sy, sz, ry, y = 0, k = 1) => b.box('cabin', sx, sy, sz, { p: [x, cy + y + sy / 2, z], r: [0, ry, 0], c: [0.46 * k, 0.38 * k, 0.26 * k] });
+  const crate = (x, z, sx, sy, sz, ry, y = 0, k = 1) => b.box('cabin_fine', sx, sy, sz, { p: [x, cy + y + sy / 2, z], r: [0, ry, 0], c: [0.46 * k, 0.38 * k, 0.26 * k] });
   crate(-0.6, -0.6, 0.9, 0.9, 1.0, 0.05, 0, 0.9);
   crate(0.55, -0.7, 0.8, 0.6, 0.8, -0.1);
   crate(0.5, -0.66, 0.6, 0.5, 0.6, 0.2, 0.6, 1.1);
@@ -851,7 +851,7 @@ STREET_PROPS.van_wreck = (b, r, v) => {
   deck(b, 0, 0.95, -1.3, W - 0.1, 1.36, burnt ? CHAR : undefined);
   if (burnt) {
     for (const sx of [-1, 1]) burntSeat(b, sx * 0.45, 0.95, -1.0, { h: 0.3, bh: 0.46 });
-    b.box('cabin', W - 0.2, 0.26, 0.24, { p: [0, 1.16, -1.76], c: CHAR });
+    b.box('cabin_fine', W - 0.2, 0.26, 0.24, { p: [0, 1.16, -1.76], c: CHAR });
   } else {
     for (const sx of [-1, 1]) seat(b, sx * 0.45, 0.95, -1.0, { w: 0.5, h: 0.3, bh: 0.44, d: 0.44, c: SEATS[0] });
     dash(b, 1.3, -1.88, W - 0.16, { d: 0.26, h: 0.3, wheelX: -0.45 });
@@ -862,11 +862,11 @@ STREET_PROPS.van_wreck = (b, r, v) => {
   // the back of the load space, behind the doors: what nobody carried off
   deck(b, 0, 0.44, 1.5, W - 0.1, 1.84, burnt ? CHAR : [0.2, 0.2, 0.2]);
   if (!burnt) {
-    b.box('cabin', 0.7, 0.5, 0.6, { p: [-0.45, 0.99, 1.45], r: [0, 0.1, 0], c: [0.44, 0.36, 0.24] });
-    b.box('cabin', 0.5, 0.36, 0.5, { p: [-0.45, 1.42, 1.42], r: [0, -0.2, 0], c: [0.5, 0.42, 0.3] });
-    b.box('cabin', 0.6, 0.4, 0.5, { p: [0.4, 0.64, 2.1], r: [0, 0.3, 0], c: [0.4, 0.34, 0.24] });
+    b.box('cabin_fine', 0.7, 0.5, 0.6, { p: [-0.45, 0.99, 1.45], r: [0, 0.1, 0], c: [0.44, 0.36, 0.24] });
+    b.box('cabin_fine', 0.5, 0.36, 0.5, { p: [-0.45, 1.42, 1.42], r: [0, -0.2, 0], c: [0.5, 0.42, 0.3] });
+    b.box('cabin_fine', 0.6, 0.4, 0.5, { p: [0.4, 0.64, 2.1], r: [0, 0.3, 0], c: [0.4, 0.34, 0.24] });
     b.cyl('cabin_fine', 0.16, 0.16, 0.4, 8, { p: [0.5, 0.64, 1.0], c: [0.2, 0.3, 0.4] });
-  } else b.box('cabin', 1.2, 0.08, 1.2, { p: [0, 0.48, 1.5], c: CHAR });
+  } else b.box('cabin_fine', 1.2, 0.08, 1.2, { p: [0, 0.48, 1.5], c: CHAR });
   b.box('carpaint', 0.05, 1.68, 1.2, { p: [-hw + 0.025, 1.16, 0], ...o });
   b.box(burnt ? 'charred' : 'metal', W, 0.1, 1.2, { p: [0, 0.37, 0] });
   b.box('carpaint', W, 0.08, 1.2, { p: [0, 1.96, 0], ...o });
@@ -1032,7 +1032,7 @@ STREET_PROPS.army_truck = (b, r, v) => {
     deck(b, 0, 1.5, -1.65, 2.2, 1.0, burnt ? CHAR : [0.14, 0.15, 0.12]);
     if (burnt) {
       for (const sx of [-1, 1]) burntSeat(b, sx * 0.55, 1.5, -1.5, { h: 0.3, bh: 0.46 });
-      b.box('cabin', 2.1, 0.24, 0.2, { p: [0, 1.74, -2.02], c: CHAR });
+      b.box('cabin_fine', 2.1, 0.24, 0.2, { p: [0, 1.74, -2.02], c: CHAR });
     } else {
       seat(b, 0, 1.5, -1.5, { w: 1.9, h: 0.3, bh: 0.46, d: 0.44, heads: 0, c: [0.27, 0.3, 0.2], rake: 0.08 });
       dash(b, 1.86, -2.13, 2.16, { d: 0.2, h: 0.3, wheelX: -0.55, c: [0.16, 0.18, 0.13] });

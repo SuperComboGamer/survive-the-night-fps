@@ -43,7 +43,6 @@ const _in = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
 // what lies behind a panel, that a dent must not be pushed through: the black of an arch or an engine bay, and
 // whatever is inside the cabin (its lining, a seat)
 const BEHIND = new Set(['dark', ...CABIN_MATS]);
-const FURNITURE = new Set(['cabin']);
 const SKIN = new Set([...PANEL, 'dark']); // what a dent moves: the panels, and the seams drawn on them
 const _l = [0, 0, 0];
 
@@ -789,11 +788,24 @@ class Wreck extends Lifted {
       this.debrisOf(this.keep(MARK.REMNANT, g.fit, g.nx, g.ny, g.nz, null, 1.25, 0.95));
       // ...and the rest went in: on the seat or the floor inside, under the opening (a vehicle that has an inside)
       const ix = g.c.x - g.nx * 0.3, iy = g.c.y - g.ny * 0.3, iz = g.c.z - g.nz * 0.3;
-      // (on what is big in there - a cushion, the floor, a load: not balanced on the wheel or on whoever sits there)
-      rayPieces(this.pieces, (pi) => this.rest[pi], ix, iy, iz, 0, -1, 0, 1.6, _in, FURNITURE);
-      if (_in.t >= 0 && _in.ny > 0.6) {
+      // (on something level in there - a cushion, the floor, a load: not balanced on the wheel or on whoever sits
+      // there. Straight down from just inside the opening, or a hand's width to either side along it)
+      const ax = -g.nz, az = g.nx, al = Math.hypot(ax, az) || 1;
+      let sx = ix, sz = iz, best = null;
+      for (const k of [0, 0.22, -0.22]) {
+        const px = ix + (ax / al) * k, pz = iz + (az / al) * k;
+        rayPieces(this.pieces, (pi) => this.rest[pi], px, iy, pz, 0, -1, 0, 1.6, _in, CABIN_MATS);
+        if (_in.t < 0 || (best && _in.ny <= best.ny)) continue;
+        best = { t: _in.t, nx: _in.nx, ny: _in.ny, nz: _in.nz };
+        sx = px;
+        sz = pz;
+        if (best.ny > 0.6) break;
+      }
+      // (...or, with somebody sat under every one of them, in their lap)
+      if (best && best.ny > 0.25) {
+        Object.assign(_in, best);
         const ki = Math.min(0.7, 0.35 + p.size * 0.25);
-        this.debrisOf(this.keep(MARK.SHARDS, markCorners(ix, iy - _in.t, iz, _in.nx, _in.ny, _in.nz, ki, ki, null, 0, 0, s.mid[2] * 5 + s.mid[0]), _in.nx, _in.ny, _in.nz, null, 1.2, 0.95));
+        this.debrisOf(this.keep(MARK.SHARDS, markCorners(sx, iy - _in.t, sz, _in.nx, _in.ny, _in.nz, ki, ki, null, 0, 0, s.mid[2] * 5 + s.mid[0]), _in.nx, _in.ny, _in.nz, null, 1.2, 0.95));
       }
     }
     if (live) {
