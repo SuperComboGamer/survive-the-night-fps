@@ -220,6 +220,12 @@ export class Splash {
     svgEl('i', 'btn-ico', lb, glyph('skull'));
     el('span', '', lb, 'Leaderboard');
     lb.addEventListener('click', () => this._showLeaderboard());
+    // the whole game's numbers (/stats, client/stats/), in a tab of its own
+    const gs = el('button', 'btn btn-ghost', btns);
+    gs.type = 'button';
+    svgEl('i', 'btn-ico', gs, glyph('signal'));
+    el('span', '', gs, 'Stats');
+    gs.addEventListener('click', () => window.open('/stats', '_blank', 'noopener'));
     const cb = el('button', 'btn btn-ghost', btns);
     cb.type = 'button';
     svgEl('i', 'btn-ico', cb, glyph('keyboard'));

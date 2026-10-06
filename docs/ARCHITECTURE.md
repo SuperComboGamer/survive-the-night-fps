@@ -52,6 +52,7 @@ client/      three.js client (Vite root)
   ui/         DOM HUD (hud.js + hud2.js: compass, objective, world markers, downed, summary), field map
               (mapcanvas.js bakes it, mapscreen.js shows it), splash, inventory/crafting, build menu, chat,
               contextual key hints (keyhints.js: reads the game state once a frame, owns its one HUD line)
+  stats/      the public stats page (/stats, stats.html): main.js fills it, charts.js draws its SVG charts
   sandbox/    standalone dev pages for visually testing modules (not shipped)
 scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js),
              clip checking for models, held items, pickups and world props (scripts/clip/, docs/object-clipping.md)
@@ -283,6 +284,16 @@ JSON file (`server/stats.js`).
   `_server_health`, each a function of when to count from. `npm run report` (`scripts/analytics-report.js`:
   `--days`, `--since`, `--build <commit>`, `--only`, `--json`) prints them; each match carries the commit it was
   played on (`build`, from `RAILWAY_GIT_COMMIT_SHA`), so a balance change can be judged by the matches since.
+- **The stats page** (`/stats`: `client/stats.html`, `client/stats/`, its own Vite entry; `server/publicstats.js`):
+  the same records for anyone to watch the game grow. `GET /api/stats?range=7d|30d|90d|all` has the totals since the
+  first match (the zombies killed and the rest, added up over the stints), a row per UTC day of the range (and what
+  came before it, for the running totals), the last 24 hours, the hours of the week people play, the breakdowns the
+  `analytics_*` functions give, records, the range's top survivors, the latest runs and the public games running now.
+  `GET /api/stats/admin` (an admin account only, else 401 / 403) adds actives, retention by first day, session
+  lengths, signups, where players walk out, the server's health, each deploy's runs, difficulty votes and car part
+  pacing. Answers are kept 60 s (admin 30 s) and asked for once however many ask; nothing needs a migration. Names
+  are the names players play under, as on the leaderboard; no account ids, guest keys or invite-only codes.
+  `node scripts/seed-stats.js pglite:<folder>` fills a PGlite database with made-up history to look at it locally.
 
 ## Achievements
 
