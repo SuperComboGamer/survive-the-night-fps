@@ -152,8 +152,8 @@ export function buildPerson(mb, P, L, detail = 1) {
       const band = top.kind === 'jacket' ? 0.035 : 0.045;
       sheet(mb, T, open, TAU - open, y0, y0 + band, rs - (open ? 4 : 0), 2, pT + 0.0035, { color: mulC(topCol, 0.88), region: topReg, mottle: 0.1, tear: tearOf(top, 41) });
     }
-  } else if (!dead || !pants) {
-    // bare-chested (a dead body): the skin from the trousers up
+  } else if (!dead || !pants || FAR()) {
+    // bare-chested (a dead body): the skin from the trousers up (a dead body's near copy has it under its rags, above)
     sheet(mb, T, 0, TAU, pants ? rise - 0.01 : T.yLo, T.yHi, rs, nvT(rise, T.yHi), 0, { ...skinO, cap1: 0.004, ...holeO });
   }
   if (top && (top.hem ?? 0) > 0.15) {
