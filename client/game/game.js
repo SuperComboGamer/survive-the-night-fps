@@ -1913,14 +1913,19 @@ export class Game {
       if (this.state !== 'playing') return;
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
-      } else if (!locked && !this.ui.inventoryOpen && !this.ui.isTyping() && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.spawnOpen && !this.ui.rosterPinned) {
+      } else if (!locked && !this.ui.isTyping() && !this.screenUp()) {
         // (the browser kept the Esc for itself: back from the menu, the hammer is out with no piece up)
         this.dropBuildPick();
         this.ui.showPause(true);
         inp.enabled = false;
       } else if (locked) {
         this.ui.showPause(false);
-        inp.enabled = !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.spawnOpen && !this.ui.rosterPinned;
+        // A lock lands a moment after it is asked for, and a screen can open in that moment (I straight after the click
+        // that takes the mouse back, the pause menu's way back with the map up, a chat line sent from the inventory). Held
+        // over it the pointer can't click the screen and the input is off: the trigger is dead and, with Esc the page's
+        // under fullscreen's keyboard lock, only leaving fullscreen got out. The screen keeps the pointer.
+        inp.enabled = !this.screenUp();
+        if (!inp.enabled) inp.exitLock();
       }
     };
     inp.handlers.onKey = (code, acts) => this.onKey(code, acts);
@@ -1955,8 +1960,9 @@ export class Game {
       else if (ui.bestiaryOpen) this.toggleBestiary(false);
       else if (ui.spawnOpen) this.toggleSpawn(false);
       // (Esc only gets here with the mouse still taken under fullscreen's keyboard lock, keyguard.js: it shuts the ring,
-      // then puts the piece down, and only then lets go of the mouse for the menu)
-      else if (this.input.locked && this.input.enabled) {
+      // then puts the piece down, and only then lets go of the mouse for the menu - whatever the input is doing: the
+      // browser no longer lets go of the mouse on Esc itself, so this is the only way out short of leaving fullscreen)
+      else if (this.input.locked) {
         if (this.buildMenu) this.closeBuildMenu(true);
         else if (!this.dropBuildPick(true)) this.input.exitLock();
       }
@@ -2127,6 +2133,13 @@ export class Game {
     const cap = inventoryCap(this.inventory.backpack);
     for (let i = 0; i < cap; i++) if (!this.inventory.slots[i]) return 0;
     return held;
+  }
+
+  // A screen that takes clicks is up (the inventory, the map, the leaderboard, the bestiary, the spawn menu, the pinned
+  // player list): the pointer is free for it, and the game's keys and buttons are off
+  screenUp() {
+    const ui = this.ui;
+    return ui.inventoryOpen || ui.mapOpen || ui.boardOpen || ui.bestiaryOpen || ui.spawnOpen || ui.rosterPinned;
   }
 
   toggleInventory(open) {
@@ -2641,6 +2654,13 @@ export class Game {
           }
         }
       }
+    }
+    // The pointer held with nothing up is play, and a screen up has the pointer (onLockChange keeps both). Should any
+    // path still leave the input off under a held pointer, the trigger would be dead with Esc ignored: not past a frame.
+    // (Not on the way to the end screen or between two servers on a deploy: the input is off there on purpose.)
+    if (inp.locked && !this.moving && !this.overlay && !this.ui.pauseOpen && !this.ui.isTyping()) {
+      if (this.screenUp()) inp.exitLock();
+      else if (!inp.enabled) inp.enabled = true;
     }
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction

@@ -204,6 +204,10 @@ export class UI {
     this.pause.show(show);
   }
 
+  get pauseOpen() {
+    return !this.pause.root.hidden;
+  }
+
   // the game we are in ({ code, name, inviteOnly }, or null) and its invite link: on the pause menu and its invite panel
   setRoom(room, link = '') {
     this.pause.setRoom(room, link);

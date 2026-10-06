@@ -205,8 +205,9 @@ const callbacks = {
   onCloseInventory: () => game?.uiCallbacks().onCloseInventory(),
   onChatSend: (text) => {
     game?.uiCallbacks().onChatSend(text);
-    if (game && game.state === 'playing') {
-      game.input.enabled = !ui.inventoryOpen;
+    // (sent from the inventory: back to the inventory, with the pointer free for it)
+    if (game && game.state === 'playing' && !game.screenUp()) {
+      game.input.enabled = true;
       game.input.requestLock();
     }
   },
@@ -214,6 +215,7 @@ const callbacks = {
   onResume: () => {
     if (!game) return;
     ui.showPause(false);
+    if (game.screenUp()) return; // (the map or the bestiary opened over the menu keeps the pointer)
     game.input.enabled = true;
     game.input.requestLock();
   },

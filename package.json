@@ -24,6 +24,7 @@
     "bench:net": "node scripts/net-bench.js",
     "test:e2e": "node scripts/e2e-gameplay.js",
     "test:e2e:handoff": "node scripts/e2e-handoff.js",
+    "test:e2e:pointer": "node scripts/e2e-pointer.js",
     "test:cluster": "node scripts/test-cluster.js",
     "posttest": "node scripts/test-itemguide.js",
     "test:sim": "node scripts/sim-smoke.js",
