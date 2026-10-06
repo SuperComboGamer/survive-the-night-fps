@@ -1119,7 +1119,10 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   the client predicts in place) or dropped (`ACT.DROP_SLOT`): `p.invSort`, applied once in `sendTick` before the
   inventory goes out. A split (`p.splitKeep`) is left apart. There is no Sort button.
 - **The escape.** `SUPPLIES`/`SUPPLY_NEED` in defs; the server hides each supply at one of the candidate
-  places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). The schematics go
+  places' `world.partSpots` every game and replicates the rumoured zones (`global.hints`). A supply that has left
+  its hiding place and lies loose (dropped, or `dropAll` where its carrier died; it never despawns) goes out as an
+  item and position in `global.parts`, so the field map, the minimap's rim and the objective tracker can say where
+  it is wherever the team is: items themselves only replicate inside `AOI_ITEM_RADIUS`. The schematics go
   the same way (`placeSchematics`): each into a locker, ammo crate or toolbox (`CONT_DEFS[t].schem`) of its own
   random place far from the car, the place replicated as `global.schemHints` and drawn on the minimap and the
   field map (`schematicRumours`) until the team unlocks it; which container holds it is not told. (Each act's map

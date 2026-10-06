@@ -97,8 +97,10 @@ export function readGlobal(r, prev) {
     skips: r.u8(), // the crossing: how many have asked to skip it...
     skipNeed: r.u8(), // ...out of how many would have to
     benches: [],
+    parts: [], // car supplies lying loose: dropped, or where whoever carried one died
   };
   for (let n = r.u8(); n > 0; n--) g.benches.push({ x: dqpos(r.i16()), z: dqpos(r.i16()) });
+  for (let n = r.u8(); n > 0; n--) g.parts.push({ item: r.u8(), x: dqpos(r.i16()), z: dqpos(r.i16()) });
   g.finale = !!(g.flags & 1);
   g.suppliesDone = !!(g.flags & 2);
   g.escapeReady = !!(g.flags & 4);

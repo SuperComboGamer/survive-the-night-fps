@@ -307,6 +307,7 @@ if (q.get('minimap')) {
             pings: [{ x: self.x - 12, z: self.z - 30, kind: 2, name: 'Marlowe' }],
             crates: [{ x: self.x + 200, z: self.z + 40 }],
             benches: [],
+            parts: [],
             discovered: new Set(world.zones.map((z) => z.id)),
             hints: h.objective?.hints || [],
             found: 0,

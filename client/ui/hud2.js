@@ -360,10 +360,12 @@ export class Objective {
       done += Math.min(need, have);
       const row = this.rows[i];
       const carried = o.carried[item] | 0;
+      const loose = o.loose?.[item] | 0;
       const complete = have >= need;
       let where;
       if (complete) where = 'installed';
       else if (carried) where = 'in your pack';
+      else if (loose) where = 'on the ground';
       else {
         // the places it is still rumoured to be in (a rumour keeps its question mark, as on the map); none left
         // because every one has been picked up: it is in somebody's hands, or lying where they left it
@@ -379,6 +381,7 @@ export class Objective {
       let body;
       if (complete) body = `Installed in the ${W.thing}.`;
       else if (carried) body = `In your pack: take ${carried > 1 ? 'them' : 'it'} to the ${W.thing} and install ${carried > 1 ? 'them' : 'it'}.`;
+      else if (loose) body = 'Dropped on the ground, or left where a survivor fell: it is marked on the map.';
       else {
         const rum = supplyRumours(i, o.hints, o.found);
         if (rum.zones.length) body = `Rumoured to be at ${rum.zones.map((z) => ZONE_NAMES[z]).join(', ')}.`;
