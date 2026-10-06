@@ -251,26 +251,20 @@ try {
   game = await startGame(REPO, { seed: +args.seed, build: !args.nobuild });
   const p = chrome.page;
   await p.evaluateOnNewDocument(VIRTUAL_CLOCK);
-  await p.evaluateOnNewDocument((k) => {
-    try {
-      localStorage.setItem('stn.admin', k);
-    } catch {}
-  }, game.secret);
   t0 = Date.now(); // (the browser's life runs from here)
   await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
   await sleep(3500);
   await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click());
   for (let i = 0; i < 120 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
   await sleep(2500);
-  await p.evaluate((k) => {
+  await p.evaluate(() => {
     const g = window.__game;
     g.input.locked = true;
     g.input.enabled = true;
     g.input.requestLock = () => {};
     g.input.handlers.onLockChange = () => {};
     g.ui.showPause(false);
-    g.conn.chat(`/admin ${k}`);
-  }, game.secret);
+  });
   await p.addStyleTag({ content: '#ui { visibility: hidden !important; }' });
   await sleep(600);
   const chat = (t) => p.evaluate((t) => window.__game.conn.chat(t), t);

@@ -411,8 +411,8 @@ npm run clip:game -- my-game-shots.json --before <worktree of origin/main>
 
 At least: first-person shots of the items you changed (a throw's wind-up and release if you touched a throwable),
 an item held against a wall and a car, and a second client watching a first one for the third person. The game
-server runs with `NODE_ENV=production`, an admin secret (`/admin <secret>`, said for you, unlocks `/give`, `/tp` and
-the rest), godmode, a fixed seed and a long day.
+server runs with `NODE_ENV=test` and `DEV_ADMIN=1` (every client may use `/give`, `/tp` and the rest), godmode, a
+fixed seed and a long day.
 
 ### 7. Run the tests
 

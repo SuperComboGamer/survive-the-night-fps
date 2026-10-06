@@ -150,18 +150,17 @@ export async function startVite(root = REPO) {
 
 /**
  * The real game: node server/index.js serving the tree's dist/ (built first if there is none, or with build: true),
- * the admin chat commands (/give, /tp, ...) for every client (NODE_ENV=test with DEV_ADMIN=1; and an ADMIN_SECRET, for a
- * tree from before admin accounts), godmode, a fixed seed and a long day.
- * Returns { url, secret, stop }.
+ * the admin chat commands (/give, /tp, ...) for every client (NODE_ENV=test with DEV_ADMIN=1), godmode, a fixed seed and
+ * a long day.
+ * Returns { url, stop }.
  */
 export async function startGame(root = REPO, { seed = 1, build = false, env = {} } = {}) {
   oneServer('game server');
   if (build || !existsSync(join(root, 'dist', 'index.html'))) execFileSync(process.execPath, [join(root, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'], { cwd: root, stdio: 'ignore' });
   const port = await freePort(3500, 3599);
-  const secret = 'clip' + Math.random().toString(36).slice(2, 10);
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', DEV_ADMIN: '1', ADMIN_SECRET: secret, GODMODE: '1', SEED: String(seed), START_DAY: '1', DAY_SECONDS: '3000', DATABASE_URL: '', DEBUG_COMMANDS: '1', ...env },
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', DEV_ADMIN: '1', GODMODE: '1', SEED: String(seed), START_DAY: '1', DAY_SECONDS: '3000', DATABASE_URL: '', DEBUG_COMMANDS: '1', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server = child;
@@ -173,7 +172,7 @@ export async function startGame(root = REPO, { seed = 1, build = false, env = {}
     throw e;
   }
   await sleep(400);
-  return { url: `http://localhost:${port}`, secret, stop: () => freeServer(child) };
+  return { url: `http://localhost:${port}`, stop: () => freeServer(child) };
 }
 
 // ---------------------------------------------------------------- headless Chrome

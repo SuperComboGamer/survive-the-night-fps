@@ -1,14 +1,13 @@
-// Talking mouths e2e (server: GODMODE=1 ADMIN_SECRET=e2e, or the secret as the 3rd argument): two clients, each in a
+// Talking mouths e2e (server: GODMODE=1 NODE_ENV=test DEV_ADMIN=1, for /tp): two clients, each in a
 // browser of its own with a fake microphone (Chrome's fake device beeps). B stands in front of A. While A is not
 // talking, A's mouth stays shut and nothing runs for it; A holds V (push to talk) and B sees A's mouth open with the
 // beeps and close between them, the jaw dropping with it; A lets go and the mouth is gone within about 0.4 s. Then A
 // keys the walkie-talkie instead, and the mouth moves the same way.
-// usage: node scripts/e2e-mouth.js [url] [outdir] [admin secret]
+// usage: node scripts/e2e-mouth.js [url] [outdir]
 import puppeteer from 'puppeteer-core';
 import { mkdirSync } from 'node:fs';
 const url = process.argv[2] || 'http://localhost:5173';
 const out = process.argv[3] || '/tmp/e2e-mouth';
-const admin = process.argv[4] || 'e2e';
 mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const errors = [];
@@ -91,9 +90,6 @@ const B = await client();
 const idA = await A.evaluate(() => window.__game.myId);
 const idB = await B.evaluate(() => window.__game.myId);
 expect('both in one game', idA && idB && (await B.evaluate((id) => window.__game.players.has(id), idA)), { idA, idB });
-await A.evaluate((k) => window.__game.conn.chat(`/admin ${k}`), admin); // (/tp is an admin command)
-await sleep(300);
-
 // A stands 1.6 m in front of B, facing B
 const spot = await B.evaluate(() => {
   const g = window.__game;
