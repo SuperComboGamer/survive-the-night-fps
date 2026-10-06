@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { ITEM, ZTYPE, STRUCT, CONT, ZONE, AMMO, PROJ, AREA, KILLER } from '../shared/defs.js';
 import { PHASE } from '../shared/constants.js';
 import { ENT, PROTOCOL_VERSION, MOVED_CODE } from '../shared/protocol.js';
+import { DEAD_S } from './cluster.js';
 
 export const FORMAT = 1; // the envelope's own shape
 export const STATE_VERSION = +(process.env.HANDOFF_STATE_VERSION || 1); // (the env: the tests' mismatching build)
@@ -107,7 +108,8 @@ export function checkEnvelope(env) {
 // ---------------------------------------------------------------- the store
 // Both stores have one face:
 //   put(code, meta, body)  the game `code` saved: meta is the room's (rooms.js), body the gzipped envelope. Upserts.
-//   claim(code)            -> { meta, body, savedAt }, gone from the store, or null (none, or taken already)
+//   claim(code, me)        -> { meta, body, savedAt }, gone from the store, or null (none, taken already, or saved for
+//                             another server than `me`, behind the proxy: PgStore only)
 //   pending()              -> the codes waiting
 //   listen(fn)             fn(code) whenever a save is put (by any server, this one too)
 //   sweep(maxAgeS)         drops saves older than that: nobody came for them
@@ -192,8 +194,18 @@ export class PgStore {
     );
     await this.db.query(`SELECT pg_notify('game_handoff', $1)`, [code]);
   }
-  async claim(code) {
-    const r = await this.db.query(`DELETE FROM game_handoff WHERE code = $1 RETURNING meta, body, saved_at`, [code]);
+  // me: this server's id behind the proxy (cluster.js). A save made for another server (its meta's target) is that
+  // one's, unless it is gone or going down
+  async claim(code, me = null) {
+    const r = me
+      ? await this.db.query(
+          `DELETE FROM game_handoff h WHERE code = $1
+             AND (meta->>'target' IS NULL OR meta->>'target' = $2 OR NOT EXISTS (SELECT 1 FROM cluster_servers s
+                   WHERE s.id = h.meta->>'target' AND NOT s.draining AND s.seen_at > now() - make_interval(secs => $3)))
+           RETURNING meta, body, saved_at`,
+          [code, me, DEAD_S]
+        )
+      : await this.db.query(`DELETE FROM game_handoff WHERE code = $1 RETURNING meta, body, saved_at`, [code]);
     const row = r.rows[0];
     return row ? { meta: row.meta, body: row.body, savedAt: +new Date(row.saved_at) } : null;
   }

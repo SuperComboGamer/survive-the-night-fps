@@ -181,6 +181,12 @@ sockets (1011) and lets go of its records. `server/rooms.js` keeps them (`Lobby`
 - **Unlisted means unguessable.** Invite-only games are not in `/api/games` or `/status`. An address that asks for
   over 20 codes that do not exist (one more every 10 s) is told every code is missing for a while, the real ones
   included; an address may make 3 games in a row, then one a minute. `LOBBY_LIMITS=0` lifts both (load tests).
+- **One game each, and a total.** A player has one game they made going at a time (`Lobby.make`, `room.maker`: the
+  account signed in, else the guest's address; a quick join's game is nobody's): another is a 409 with the code of
+  theirs, until it ends. `server_settings.max_total_games` (012, `serversettings.js`, read every 5 s, so it changes
+  without a deploy: `npm run setting`) is the most games at once, quick joins' included; unset, only each server's
+  `MAX_GAMES`. In a cluster both hold over every server (`Cluster.reserve`, under one lock). `LOBBY_LIMITS=0` lifts
+  the one game each too.
 - **HTTP:** `GET /api/games` (the public games and what a new one can be), `GET /api/games/:code` (one game,
   invite-only too: the invite card), `POST /api/games` `{ name, host, inviteOnly, maxPlayers }`. `GET /status`
   has per-game tick timings and CPU (`load.cpuMs`: ms of CPU that game's thread used per second), the network
@@ -459,6 +465,22 @@ node, else the shell dies of it and the container stops with node never told (`s
   saved fails `npm test` instead of resetting on every deploy), `test-handoff` (two server processes and a third
   that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
   Chrome behind a stand-in for Railway's edge).
+
+## Several game servers: the cluster and the proxy
+
+Off unless `CLUSTER=1` with Postgres; docs/scaling.md has the design, the settings and how to run it.
+
+- **`server/cluster.js`** (one `Cluster` per server, `lobby.cluster`; null when off, and every call site is
+  `cluster?.`): the server's row in `cluster_servers` and its games' in `cluster_games` every 2 s (a game made is
+  written at once: `room.up`, which `POST /api/games` waits for), per account presence in `cluster_presence`, and a
+  bus on the `stn_cluster` notification channel. `pickTarget` is where `Lobby.handoffAll` sends each game on
+  SIGTERM; `PgStore.claim(code, me)` (handoff.js) lets only that server take it.
+- **`server/social.js`** asks `cluster.statusOf` for friends who are not on this server, and pushes (requests,
+  messages, presence) and sign-outs go over the bus as well as to the sockets here.
+- **`server/proxy/`**: `router.js` (the servers and games, read every second; where a code, a quick join or a new
+  game goes), `tunnel.js` (a WebSocket passed through as bytes, ended between two frames with `MOVED_CODE` when the
+  proxy goes down), `index.js` (the HTTP routes, the lobby and `/status` merged from every server).
+- **Tests:** `npm run test:cluster` (local Postgres), `scripts/verify-cluster.js` (a cluster that is up).
 
 ## The two acts: the island, the bridge, the mainland
 

@@ -26,12 +26,15 @@ import { Auth, COOKIE, publicUser } from './auth.js';
 import { Social } from './social.js';
 import { Feedback } from './feedback.js';
 import { UserSettings } from './usersettings.js';
+import { ServerSettings } from './serversettings.js';
 import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
 import { BestiaryStore } from './userbestiary.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
+import { Cluster } from './cluster.js';
+import { clientOf } from './netaddr.js';
 import { REJECT_REASON, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 
@@ -91,7 +94,12 @@ const HANDOFF_DIR = process.env.HANDOFF_DIR || (process.env.RAILWAY_VOLUME_MOUNT
 const store = process.env.HANDOFF === '0' ? null : db?.kind === 'postgres' ? new PgStore(db, { log }) : HANDOFF_DIR ? new FileStore(resolve(HANDOFF_DIR)) : null;
 if (store) log(`handoff: games are handed to the next server through ${store instanceof PgStore ? 'Postgres' : store.dir}`);
 
+// the settings changed in the database without a deploy (serversettings.js): the most games at once
+const settings = db ? new ServerSettings({ db, log }) : null;
+await settings?.start();
+
 const lobby = new Lobby({
+  settings,
   store,
   handoffMaxAge: HANDOFF_MAX_AGE,
   stats,
@@ -116,6 +124,12 @@ const lobby = new Lobby({
   },
 });
 
+// Several game servers behind the proxy (cluster.js, server/proxy/): CLUSTER=1, with Postgres for them to share.
+// Without it this server is the whole game, as it always was.
+const cluster = process.env.CLUSTER === '1' && db?.kind === 'postgres' ? new Cluster({ db, lobby, port: PORT, deployment: BUILD, log }) : null;
+if (process.env.CLUSTER === '1' && !cluster) log('CLUSTER=1 needs a Postgres DATABASE_URL: running as a server on its own');
+lobby.cluster = cluster;
+
 // The games the last server handed over: whatever is waiting already (a server that started after the last one went),
 // and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
 // stopping itself: it hears its own saves too.)
@@ -129,12 +143,19 @@ if (store) {
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, log }) : null;
-const social = db ? new Social({ db, auth, lobby, log }) : null;
+const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds
 if (auth) setInterval(() => auth.sweep().catch(() => {}), 3600_000).unref();
 // levels and perks: kept with the stats, database or file (a pick reaches the games the player is in at once)
-const progress = new Progress({ stats, changed: (key, perks) => lobby.progressChanged(key, perks) });
+const progress = new Progress({
+  stats,
+  changed: (key, perks) => {
+    lobby.progressChanged(key, perks);
+    cluster?.publish({ t: 'progress', key, perks });
+  },
+});
+cluster?.on('progress', (m) => lobby.progressChanged(m.key, m.perks));
 
 // ---------------------------------------------------------------- static files (prod build)
 const MIME = {
@@ -162,25 +183,13 @@ if (files.size) console.log(`[server] serving ${files.size} static files from di
 else console.log('[server] no dist/ build found - run `npm run build` (or use `npm run dev` for the Vite dev server)');
 
 // ---------------------------------------------------------------- who is connecting
-// The game counts joins per address (Game.admitJoin). Behind a reverse proxy - Railway's edge in production -
-// the socket's peer is the proxy, the same for every player, and the client is named in X-Forwarded-For (first
-// entry) or X-Real-IP. Those headers are only believed from a peer on a private network, i.e. a proxy of ours:
-// a client connecting directly could write anything into them. TRUST_PROXY=1 / 0 settles it either way.
-const TRUST_PROXY = process.env.TRUST_PROXY;
-// a header's address without its port, '' if it does not look like one
-const address = (text) => {
-  const a = text.trim().replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1');
-  return /^[0-9a-f:.]{2,45}$/i.test(a) ? a.toLowerCase() : '';
-};
+// The game counts joins per address (Game.admitJoin): the client's, not a proxy's in front (netaddr.js)
 function clientAddress(res, req) {
   // uWS spells the peer out as eight hex groups, an IPv4 one as 0000:0000:0000:0000:0000:ffff:hhhh:hhhh
   let peer = Buffer.from(res.getRemoteAddressAsText()).toString();
   const v4 = /^(?:0000:){5}ffff:(..)(..):(..)(..)$/i.exec(peer);
   if (v4) peer = v4.slice(1).map((h) => parseInt(h, 16)).join('.');
-  // loopback, 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier-grade NAT), link-local, IPv6 unique-local
-  const ours = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.|(0000:){7}0001$|f[cd]|fe[89ab])/i.test(peer);
-  if (TRUST_PROXY === '0' || !(ours || TRUST_PROXY === '1')) return peer;
-  return address(req.getHeader('x-forwarded-for').split(',')[0]) || address(req.getHeader('x-real-ip')) || peer;
+  return clientOf(peer, req.getHeader('x-forwarded-for'), req.getHeader('x-real-ip'));
 }
 
 // The session token a socket's handshake carries (auth.js), '' for none - or for one sent by a page on another site,
@@ -208,8 +217,9 @@ app.ws('/ws', {
     const proto = req.getHeader('sec-websocket-protocol');
     const ext = req.getHeader('sec-websocket-extensions');
     const go = (user) => res.cork(() => res.upgrade({ ip, code, user, room: null, slot: -1, counted: false, heard: false, at: 0 }, key, proto, ext, context));
-    // (a game the last server handed over that is still in the store: brought back first, so the socket finds it)
-    const restoring = code && store && !lobby.rooms.has(code) ? lobby.restore(code).catch((err) => log(`game ${code} not restored (${err.message})`)) : null;
+    // (a game the last server handed over that is still in the store: brought back first, so the socket finds it. A
+    // quick join with no game to go to, in a cluster: one is made first, as the other servers have to be asked)
+    const restoring = code && store && !lobby.rooms.has(code) ? lobby.restore(code).catch((err) => log(`game ${code} not restored (${err.message})`)) : !code && lobby.cluster && !lobby.quickPick() ? lobby.make({ quick: true }) : null;
     if (!token && !restoring) return go(null);
     let aborted = false;
     res.onAborted(() => {
@@ -276,13 +286,13 @@ app.ws('/ws', {
 });
 
 // ---------------------------------------------------------------- the lobby
-const STATUS_TEXT = { 200: '200 OK', 201: '201 Created', 400: '400 Bad Request', 404: '404 Not Found', 413: '413 Payload Too Large', 415: '415 Unsupported Media Type', 429: '429 Too Many Requests', 503: '503 Service Unavailable' };
+const STATUS_TEXT = { 200: '200 OK', 201: '201 Created', 400: '400 Bad Request', 404: '404 Not Found', 409: '409 Conflict', 413: '413 Payload Too Large', 415: '415 Unsupported Media Type', 429: '429 Too Many Requests', 503: '503 Service Unavailable' };
 function json(res, status, obj) {
   res.cork(() => {
     res.writeStatus(STATUS_TEXT[status] || String(status)).writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').end(JSON.stringify(obj));
   });
 }
-const lobbyInfo = () => ({ games: lobby.rooms.size, maxGames: lobby.maxGames, canCreate: lobby.rooms.size < lobby.maxGames, players: lobby.players(), defaultPlayers: lobby.maxPlayers, maxPlayers: lobby.roomMaxPlayers });
+const lobbyInfo = () => ({ games: lobby.rooms.size, maxGames: lobby.cluster || lobby.maxTotal === null ? lobby.maxGames : Math.min(lobby.maxGames, lobby.maxTotal), canCreate: lobby.canCreate, players: lobby.players(), defaultPlayers: lobby.maxPlayers, maxPlayers: lobby.roomMaxPlayers });
 
 // the public games, and what a new one can be
 app.get('/api/games', (res) => json(res, 200, { ...lobbyInfo(), list: lobby.list() }));
@@ -319,12 +329,14 @@ app.get('/api/version', (res) => json(res, 200, { protocol: PROTOCOL_VERSION, bu
 // difficulty is ember, nightfall or blackout (shared/difficulty.js). Left off, it is Nightfall, which plays as the valley always has.
 app.post('/api/games', (res, req) => {
   const ip = clientAddress(res, req);
+  const token = sessionToken(req);
   // (JSON only: a form on another site cannot post that without the browser asking this server first)
   if (!/^application\/json\b/i.test(req.getHeader('content-type'))) return json(res, 415, { error: 'Send JSON' });
   let body = Buffer.alloc(0);
   let done = false;
+  let aborted = false;
   res.onAborted(() => {
-    done = true;
+    done = aborted = true;
   });
   res.onData((chunk, last) => {
     if (done) return;
@@ -344,9 +356,20 @@ app.post('/api/games', (res, req) => {
     if (!o || typeof o !== 'object') return json(res, 400, { error: 'Bad request' });
     const difficulty = chosenDifficulty(o.difficulty);
     if (!difficulty) return json(res, 400, { error: 'Pick easy, standard, or hard.' });
-    const made = lobby.create({ name: o.name, host: o.host, inviteOnly: o.inviteOnly === true, maxPlayers: o.maxPlayers, difficulty }, ip);
-    if (made.error) return json(res, made.status, { error: made.error });
-    json(res, 201, made.room.info());
+    // who it is made by, for their one game at a time: the account signed in, else the address
+    const user = token ? auth.userForToken(token).catch(() => null) : null;
+    Promise.resolve(user)
+      .then((u) => lobby.make({ name: o.name, host: o.host, inviteOnly: o.inviteOnly === true, maxPlayers: o.maxPlayers, difficulty }, { ip, maker: u ? `u:${u.id}` : `ip:${ip}` }))
+      .then(async (made) => {
+        if (made.error) return aborted || json(res, made.status, made.code ? { error: made.error, code: made.code } : { error: made.error });
+        // (behind the proxy: listed before its maker hears the code, so the proxy can send them to it)
+        await made.room.up;
+        aborted || json(res, 201, made.room.info());
+      })
+      .catch((err) => {
+        log(`game not made (${err.message})`);
+        aborted || json(res, 503, { error: 'The game could not be made. Try again in a moment.' });
+      });
   });
 });
 
@@ -562,7 +585,7 @@ app.get('/status', (res) => {
   // tick: per game, the last 10 s window, the totals since it started and its last slow tick
   const mem = process.memoryUsage();
   const games = [...lobby.rooms.values()].map((r) => ({ players: r.st.players, max: r.maxPlayers, public: !r.inviteOnly, phase: r.st.phase, day: r.st.day, load: r.st.load, heapMb: r.st.heapMb, tick: r.st.tick }));
-  const body = JSON.stringify({ ...lobbyInfo(), db: db ? db.kind : null, net: { ...mainLoad, sockets: [...perIp.values()].reduce((a, b) => a + b, 0) }, rssMb: Math.round(mem.rss / 1e6), list: games });
+  const body = JSON.stringify({ ...lobbyInfo(), db: db ? db.kind : null, server: cluster ? { id: cluster.id, deployment: cluster.deployment, draining: cluster.draining } : undefined, net: { ...mainLoad, sockets: [...perIp.values()].reduce((a, b) => a + b, 0) }, rssMb: Math.round(mem.rss / 1e6), list: games });
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
@@ -586,6 +609,16 @@ app.listen(PORT, (token) => {
     process.exit(1);
   }
   console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
+  // (only once it can be reached: then the proxy may send it players)
+  if (cluster) {
+    const join = () =>
+      stopping ||
+      cluster.start({ build: CLIENT_BUILD }).catch((err) => {
+        log(`cluster: could not join the other servers (${err.message}): trying again`);
+        setTimeout(join, 2000).unref();
+      });
+    join();
+  }
 });
 
 // a file-kept leaderboard goes to disk every half minute if it changed, and once more on the way out
@@ -603,6 +636,8 @@ async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
   setTimeout(() => process.exit(0), HARD_EXIT_MS).unref();
+  // (behind the proxy: nothing new is sent here now, and the servers the games go to are known)
+  if (cluster) await Promise.race([cluster.drain(), new Promise((r) => setTimeout(r, 2000))]).catch((err) => log(`cluster: could not say this server is going (${err.message})`));
   if (store) {
     log(`${signal}: handing the games over to the next server`);
     const t0 = Date.now();
@@ -623,6 +658,8 @@ async function shutdown(signal) {
       await achievements.close();
       await bestiary.close();
       await store?.close();
+      await cluster?.stop().catch((err) => log(`cluster: rows of this server left for the others to sweep (${err.message})`));
+      settings?.stop();
       await db.close();
     } catch (err) {
       console.error('[server] shutting down:', err.message);

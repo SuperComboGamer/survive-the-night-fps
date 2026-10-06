@@ -31,8 +31,14 @@ async function server(env) {
     const res = await fetch(base + path);
     return { status: res.status, body: await res.json().catch(() => null) };
   };
-  s.post = async (body, type = 'application/json') => {
-    const res = await fetch(base + '/api/games', { method: 'POST', headers: { 'Content-Type': type }, body: typeof body === 'string' ? body : JSON.stringify(body) });
+  // (who: the address it comes from - the server believes X-Forwarded-For from this machine, as from a proxy of ours -
+  // or { ip, cookie }; a player may have one game going at a time)
+  s.post = async (body, type = 'application/json', who = '') => {
+    const { ip = '', cookie = '' } = typeof who === 'string' ? { ip: who } : who;
+    const headers = { 'Content-Type': type, Origin: base };
+    if (ip) headers['X-Forwarded-For'] = ip;
+    if (cookie) headers.Cookie = cookie;
+    const res = await fetch(base + '/api/games', { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) });
     return { status: res.status, body: await res.json().catch(() => null) };
   };
   // a client: joins (game code, or none for a quick join) and keeps what it is sent. Resolves once it is in or out
@@ -96,7 +102,7 @@ try {
   }
 
   // ---- an invite-only game
-  const made = await S.post({ name: 'The <b>Crypt</b>', host: 'Cat', inviteOnly: true, maxPlayers: 2 });
+  const made = await S.post({ name: 'The <b>Crypt</b>', host: 'Cat', inviteOnly: true, maxPlayers: 2 }, undefined, '203.0.113.1');
   const code = made.body?.code;
   check('an invite-only game gets a long code', made.status === 201 && /^[A-Z2-9]{10}$/.test(code) && made.body.inviteOnly && made.body.max === 2 && made.body.difficulty === 'nightfall', JSON.stringify(made));
   check('...and a clean name', made.body?.name === 'The bCryptb', made.body?.name);
@@ -158,11 +164,13 @@ try {
 
   // ---- making games: what is asked for, and what is refused
   {
-    const big = await S.post({ name: 'Big', maxPlayers: 99, difficulty: 'blackout' });
+    const big = await S.post({ name: 'Big', maxPlayers: 99, difficulty: 'blackout' }, undefined, '203.0.113.2');
     check('a game asked for with too many seats gets the most there may be', big.status === 201 && big.body.max === 16 && !big.body.inviteOnly && big.body.difficulty === 'blackout' && /^[A-Z2-9]{6}$/.test(big.body.code), JSON.stringify(big));
     check('a form post is refused', (await S.post('name=x', 'application/x-www-form-urlencoded')).status === 415);
     check('a difficulty the game does not have is refused', (await S.post({ name: 'Nope', difficulty: 'god' })).status === 400);
     check('so is bad JSON', (await S.post('{nope')).status === 400);
+    const again = await S.post({ name: 'Another' }, undefined, '203.0.113.2');
+    check('a guest with a game going cannot make another, and is told its code', again.status === 409 && again.body?.code === big.body.code && /already have a game/.test(again.body?.error), JSON.stringify(again));
     // a seat comes free for a new socket only once the old one's traffic is done with: nothing meant for the old
     // socket reaches the new one, so every newcomer hears of its game, then is welcomed, then gets snapshots
     const keep = await S.client(big.body.code, 'Hal');
@@ -179,9 +187,21 @@ try {
     }
     check('ten sockets in a row through the seats of one game each start clean', clean === 10, `${clean}/10 ${order}`);
     await keep.close();
-    const third = await S.post({ name: 'Third' });
-    const fourth = await S.post({ name: 'One too many' });
-    check('an address making game after game is told to wait', third.status === 201 && fourth.status === 429, JSON.stringify([third.status, fourth]));
+    // (one at a time: each made once the last has ended, empty for GAME_IDLE_SECONDS)
+    const ip = '203.0.113.3';
+    const statuses = [];
+    let after = null;
+    for (let i = 0; i < 4; i++) {
+      const g = await S.post({ name: `Turn ${i}` }, undefined, ip);
+      statuses.push(g.status);
+      if (g.status !== 201) {
+        after = g;
+        break;
+      }
+      for (let k = 0; k < 80 && (await S.get(`/api/games/${g.body.code}`)).status === 200; k++) await sleep(100);
+    }
+    check("a guest's game that ended lets them make the next", statuses.slice(0, 3).join() === '201,201,201', statuses.join());
+    check('...but an address making game after game is told to wait', after?.status === 429, JSON.stringify([statuses, after]));
   }
 
   // ---- empty games shut down
@@ -223,6 +243,31 @@ try {
     check('...but a quick join still finds a seat in a running game', qq.id && [a.body.code, b.body.code].includes(qq.room?.code), JSON.stringify(qq.room));
     await qa.close();
     await qq.close();
+  }
+
+  // ---- the most games over the whole game (server_settings, set in the database), and an account's one game
+  {
+    const DATABASE_URL = `pglite:${join(dir, 'capdb')}`;
+    const set = spawn(process.execPath, ['scripts/setting.js', 'max_total_games', '3', '--server-stopped'], { env: { ...process.env, DATABASE_URL }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let said = '';
+    set.stdout.on('data', (d) => (said += d));
+    set.stderr.on('data', (d) => (said += d));
+    const setOk = await new Promise((done) => set.on('exit', (code) => done(code === 0)));
+    check('npm run setting sets the most games at once', setOk && /max_total_games = 3/.test(said), said);
+    const V = await server({ DATABASE_URL, MAX_GAMES: '10' });
+    const info = (await V.get('/api/games')).body;
+    check('...which the lobby gives as the most games', info?.maxGames === 3 && info.canCreate === true, JSON.stringify(info));
+    const reg = await fetch(`http://localhost:${V.port}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: `http://localhost:${V.port}` }, body: JSON.stringify({ email: 'ida@test.example', username: 'Ida', password: 'password123' }) });
+    const cookie = (reg.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ');
+    const ip = '203.0.113.9';
+    const guest = await V.post({ name: 'Guest one' }, undefined, ip);
+    const ida = await V.post({ name: "Ida's" }, undefined, { ip, cookie });
+    const idaAgain = await V.post({ name: "Ida's second" }, undefined, { ip, cookie });
+    check('a signed-in player has one game going, apart from the guests at their address', reg.status === 201 && guest.status === 201 && ida.status === 201 && idaAgain.status === 409 && idaAgain.body?.code === ida.body?.code, JSON.stringify([reg.status, guest.status, ida.status, idaAgain]));
+    const third = await V.post({ name: 'Third' }, undefined, '203.0.113.10');
+    const fourth = await V.post({ name: 'Fourth' }, undefined, '203.0.113.11');
+    const full = (await V.get('/api/games')).body;
+    check('the total is a hard cap: a game past it is refused, and the lobby says so', third.status === 201 && fourth.status === 503 && full.canCreate === false && full.games === 3, JSON.stringify([third.status, fourth, full.games, full.canCreate]));
   }
 } catch (err) {
   failed++;

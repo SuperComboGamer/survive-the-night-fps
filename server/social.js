@@ -37,31 +37,55 @@ const checkId = (v) => {
 const msgOut = (r) => ({ id: r.id, from: r.sender_id, to: r.recipient_id, body: r.body, at: r.created_at, read: !!r.read_at });
 
 export class Social {
-  // lobby: where everyone is playing (rooms.js Lobby: playingRoom, onPresence)
-  constructor({ db, auth, lobby, log = () => {} }) {
+  // lobby: where everyone is playing (rooms.js Lobby: playingRoom, onPresence). cluster: the other servers behind the
+  // proxy (cluster.js), when there are any - then a friend may be online or playing on another one, and what is pushed
+  // to an account reaches its sockets there too
+  constructor({ db, auth, lobby, cluster = null, log = () => {} }) {
     this.db = db;
     this.auth = auth;
     this.lobby = lobby;
+    this.cluster = cluster;
     this.log = log;
     this.socks = new Map(); // user id -> Set of /social sockets
     this.friendCache = new Map(); // user id -> Set of friend ids, for the accounts online (dropped as they go)
     this.sends = new Allowance(20, 1.5); // per account: messages
     this.asks = new Allowance(10, 30); // per account: friend requests
     this.pending = new Map(); // user id -> timer: a presence change about to be told
+    this.writes = new Map(); // user id -> the last of its presence rows being written (cluster.js)
     lobby.onPresence = (userId) => this.presence(userId);
     auth.onSignOut = (userId, hash) => this.signedOut(userId, hash);
+    cluster?.on('push', (m) => this.heardPush(m));
+    cluster?.on('signout', (m) => this.closeSession(m.user, m.hash));
   }
 
   // ---------------------------------------------------------------- presence
+  // (a /social socket open on this server)
   online(userId) {
     return (this.socks.get(userId)?.size || 0) > 0;
   }
 
-  // 'playing' (and the game), 'online' or 'offline'
-  statusOf(userId) {
-    const room = this.lobby.playingRoom(userId);
-    if (room) return { status: 'playing', game: room.info() };
-    return { status: this.online(userId) ? 'online' : 'offline', game: null };
+  // Map(id -> { status: 'playing' (and the game) | 'online' | 'offline', game }) for these accounts: on this server, or
+  // on any other behind the proxy
+  async statuses(ids) {
+    const out = new Map();
+    const rest = [];
+    for (const id of ids) {
+      const room = this.lobby.playingRoom(id);
+      if (room) out.set(id, { status: 'playing', game: room.info() });
+      else rest.push(id);
+    }
+    const far =
+      this.cluster && rest.length
+        ? await this.cluster.statusOf(rest).catch((err) => {
+            this.log(`social: presence on the other servers not read (${err.message})`);
+            return new Map();
+          })
+        : new Map();
+    for (const id of rest) {
+      const f = far.get(id);
+      out.set(id, f?.status === 'playing' ? f : { status: this.online(id) || f?.status === 'online' ? 'online' : 'offline', game: null });
+    }
+    return out;
   }
 
   async friendIds(userId) {
@@ -72,16 +96,25 @@ export class Social {
     return ids;
   }
 
-  // Their presence changed: their friends who are online hear of it (once for a burst of changes)
+  // Their presence changed: the other servers know at once, and their friends who are online hear of it (once for a
+  // burst of changes)
   presence(userId) {
+    if (this.cluster) {
+      // (in order, one after the other: a quick in-and-out must not be written out-and-in)
+      const prev = this.writes.get(userId) || Promise.resolve();
+      const next = prev.then(() => this.cluster.presence(userId, this.online(userId), this.lobby.playingRoom(userId)?.code));
+      this.writes.set(userId, next);
+      next.then(() => this.writes.get(userId) === next && this.writes.delete(userId));
+    }
     if (this.pending.has(userId)) return;
     this.pending.set(
       userId,
       setTimeout(async () => {
         this.pending.delete(userId);
         try {
-          const st = this.statusOf(userId);
-          for (const fid of await this.friendIds(userId)) if (this.online(fid)) this.push(fid, { t: 'friends', why: 'presence', who: { id: userId }, status: st.status });
+          await this.writes.get(userId);
+          const st = (await this.statuses([userId])).get(userId);
+          this.pushAll([...(await this.friendIds(userId))], { t: 'friends', why: 'presence', who: { id: userId }, status: st.status });
           if (!this.online(userId) && !this.lobby.playingRoom(userId)) {
             this.friendCache.delete(userId);
             await this.db.query('UPDATE users SET last_seen_at = now() WHERE id = $1', [userId]);
@@ -94,6 +127,15 @@ export class Social {
   }
 
   push(userId, msg) {
+    this.pushAll([userId], msg);
+  }
+  // to these accounts' sockets, here and on the other servers
+  pushAll(ids, msg) {
+    for (const id of ids) this.pushHere(id, msg);
+    if (!this.cluster) return;
+    for (let i = 0; i < ids.length; i += 100) this.cluster.publish({ t: 'push', to: ids.slice(i, i + 100), msg });
+  }
+  pushHere(userId, msg) {
     const set = this.socks.get(userId);
     if (!set) return;
     const text = JSON.stringify(msg);
@@ -101,6 +143,17 @@ export class Social {
       try {
         ws.send(text, false);
       } catch {}
+    }
+  }
+  // a push from another server: what this one keeps of the friends lists changes with it
+  heardPush({ to, msg }) {
+    if (!Array.isArray(to) || !msg) return;
+    for (const id of to) {
+      if (msg.t === 'friends' && msg.who?.id) {
+        if (msg.why === 'accepted') this.friendCache.get(id)?.add(msg.who.id);
+        else if (msg.why === 'removed') this.friendCache.get(id)?.delete(msg.who.id);
+      }
+      this.pushHere(id, msg);
     }
   }
 
@@ -131,6 +184,12 @@ export class Social {
   }
 
   signedOut(userId, hash) {
+    this.closeSession(userId, hash);
+    this.cluster?.publish({ t: 'signout', user: userId, hash });
+  }
+  // that browser's sockets here, and what this server remembers of its session
+  closeSession(userId, hash) {
+    this.auth.cache?.delete(hash);
     for (const ws of [...(this.socks.get(userId) || [])]) {
       if (ws.getUserData().user.hash !== hash) continue;
       try {
@@ -151,8 +210,9 @@ export class Social {
     const unreadBy = new Map(unread.rows.map((r) => [r.sender_id, r.n]));
     const ids = new Set(friends.rows.map((r) => r.id));
     if (this.online(me.id) || this.lobby.playingRoom(me.id)) this.friendCache.set(me.id, ids);
+    const st = await this.statuses([...ids]);
     return {
-      friends: friends.rows.map((r) => ({ id: r.id, username: r.username, since: r.created_at, lastSeen: r.last_seen_at, unread: unreadBy.get(r.id) || 0, ...this.statusOf(r.id) })),
+      friends: friends.rows.map((r) => ({ id: r.id, username: r.username, since: r.created_at, lastSeen: r.last_seen_at, unread: unreadBy.get(r.id) || 0, ...st.get(r.id) })),
       incoming: incoming.rows.map((r) => ({ id: r.id, username: r.username, at: r.created_at })),
       outgoing: outgoing.rows.map((r) => ({ id: r.id, username: r.username, at: r.created_at })),
     };
@@ -237,9 +297,9 @@ export class Social {
   async findFriend(me, friendId) {
     friendId = checkId(friendId);
     if (!(await this.areFriends(me.id, friendId))) throw new HttpError(403, 'You can only join your friends.');
-    const room = this.lobby.playingRoom(friendId);
-    if (!room) throw new HttpError(404, 'They are not in a game right now.');
-    return room.info();
+    const st = (await this.statuses([friendId])).get(friendId);
+    if (st.status !== 'playing') throw new HttpError(404, 'They are not in a game right now.');
+    return st.game;
   }
 
   // ---------------------------------------------------------------- messages

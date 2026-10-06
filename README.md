@@ -64,10 +64,26 @@ Deploys (`server/handoff.js`): `HANDOFF=0` (a deploy ends every game, as it used
 through files in that folder when there is no Postgres: `npm run dev` uses `data/handoff`, so a restart on a change
 keeps the games), `HANDOFF_RESERVE_SECONDS` (180: how long a player brought over keeps their place),
 `HANDOFF_MAX_AGE_SECONDS` (300: an older save is not restored).
+Several servers behind the proxy (`npm run proxy`, docs/scaling.md): `CLUSTER=1` with a Postgres `DATABASE_URL`, and
+`CLUSTER_ID`, `CLUSTER_ADDR`, `CLUSTER_DEPLOYMENT`; unset, a server is on its own as always.
 Testing only: `HANDOFF_STATE_VERSION` and `CLIENT_BUILD` (a server of another build), `GAME_IDLE_SECONDS` (90: how long an empty game lasts), `JOIN_WAIT_SECONDS` (15: how long a socket
-may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes:
-load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage), `DEV_ADMIN=1`
+may hold a seat without joining), `LOBBY_LIMITS=0` (no per-address allowance on making games or asking for codes,
+and no one-game-each: load tests), `DAY_SECONDS`, `NIGHT_SECONDS`, `START_DAY`, `GODMODE=1` (survivors take no damage), `DEV_ADMIN=1`
 (every player may use admin commands when `NODE_ENV` is `development` or `test`; other environments ignore it).
+
+A player (a signed-in account, or a guest's address) may have one game they made going at a time. The most games at
+once over every server is a setting in the database, so it changes without a deploy or a restart (the servers read it
+every 5 s; unset, each server only has its own `MAX_GAMES`):
+
+```bash
+npm run setting                              # every setting
+npm run setting -- max_total_games 50        # at most 50 games at once
+npm run setting -- max_total_games unset     # no total
+```
+
+That is `DATABASE_URL` pointing at the game's Postgres (on Railway: the database's public URL, or `railway connect`
+for a psql shell and `UPDATE server_settings ...`). With PGlite (`pglite:...`) only one process may have the database
+open, so stop the server first and add `--server-stopped`.
 
 Admin access belongs to signed-in accounts. With `DATABASE_URL` set, grant or remove it by username or email; the
 command revokes that account's existing sign-ins, so sign in again and reconnect to the game afterwards:
@@ -144,6 +160,8 @@ stops it, `/fair wheel` / `/fair carousel` seats you on a ride, `/fair shed` to 
 | `node scripts/test-handoff.js` | a deploy between two real server processes sharing a `HANDOFF_DIR`: an invite-only game into its first night, SIGTERM, every socket closed with 4002, the old server exiting, the same code, players and night on the new one, seats kept and let go after the reserve, a bot with no browser id a newcomer; and a third server of another `STATE_VERSION` ending the game instead (part of `npm test`) |
 | `node scripts/test-start-signal.js` | the server started as Railway starts it (`npm start`, under a script shell that never `exec`s its last command): a SIGTERM sent to npm reaches the server, which hands its games over and exits 0 (part of `npm test`) |
 | `node scripts/test-handoff-store.js` | the two stores a game waits in between servers (files, and Postgres on PGlite): heard, listed, claimed once, swept; and the match a deploy splits, ended as `handoff` and carried on by `continues` (part of `npm test`) |
+| `npm run test:cluster` | two game servers with `CLUSTER=1` and the proxy on a local Postgres it wipes (`CLUSTER_TEST_DATABASE_URL`): games spread and found by code, quick joins, the lobby of both, friends on two servers, a deploy handing a game to a newer server and a restart of the proxy, the player back in their own body each time (docs/scaling.md) |
+| `node scripts/verify-cluster.js <proxy url> [--hold]` | the same against a cluster that is up, through its proxy only; `--hold` keeps a player in while you redeploy |
 | `npm run test:e2e:handoff` | a deploy in headless Chrome behind a stand-in for Railway's edge (needs `npm run build`): the game stays on screen with the "Server updating" banner and is back as the same player where they were within a few seconds; with another client build the page reloads and goes back in by itself |
 | `node scripts/test-itemguide.js` | holds the "Used in" / "Found in" lines of the inventory tooltips against the recipe and loot tables they are derived from, generated worlds and the server's gathering (runs after `npm test`, as its `posttest`) |
 | `node scripts/e2e-weapons.js` | fires + reloads every gun, swings melee weapons, throws a molotov and a pipe bomb |
@@ -185,8 +203,11 @@ https://www.survivethenightgame.com.
 - `railway.json` (config-as-code): Railpack builder, `npm run build`, `npm start`, health check
   `GET /status`, restart on failure, exactly **1 replica** and no app sleeping. Every game lives in the
   memory of that one process, so never scale it past one replica (a second would not know the first one's game
-  codes). More games means a bigger box for the one replica: see Capacity below. `drainingSeconds: 30` gives the
-  old deployment that long between SIGTERM and SIGKILL to hand its games over (below); its own hard exit is 20 s.
+  codes). More than one server takes the proxy in front and `CLUSTER=1`: docs/scaling.md, set up by
+  `scripts/railway-cluster.sh`. More games means a bigger box for the one replica: see Capacity
+  below. The service variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30` gives the old deployment that long between
+  SIGTERM and SIGKILL to hand its games over (below); its own hard exit is 20 s. (`drainingSeconds: 30` in
+  `railway.json` says the same, but Railway left it out of the deploy config.)
   The signal only reaches the server because `npm start` `exec`s node: npm forwards it to the `sh -c` it runs the
   script in, and a shell with node as its child dies of it, node never told and no game handed over.
 - **Postgres** is a second service in the project ("Postgres", Railway's template, on a volume of its own). The

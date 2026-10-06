@@ -28,6 +28,8 @@ const SEND_LIMIT = 256 * 1024; // a socket with this much unsent is backed up: i
 // Per address: making games (a few in a row, then one a minute) and asking for codes that turn out not to exist.
 const CREATE_BURST = 3;
 const CREATE_EVERY = 60;
+const BUSY = { error: 'Every game server is busy right now. Join a game that is already running, or try again in a minute.', status: 503 };
+const yours = (code) => ({ error: `You already have a game going (${code}). Join it, or wait for it to end before making another.`, status: 409, code });
 const MISS_BURST = 20;
 const MISS_EVERY = 10;
 
@@ -68,11 +70,12 @@ const forgetSpent = (map) => {
 export class Room {
   // restore: the game the last server saved under this code (handoff.js), with first / created / continues from what
   // that server knew of the room (Room.meta)
-  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, restore = null, first = '', created = Date.now(), continues = null }) {
+  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, maker = '', restore = null, first = '', created = Date.now(), continues = null }) {
     this.lobby = lobby;
     this.code = code;
     this.name = name; // as its maker called it ('' for one a quick join made)
     this.host = host; // who made it ('' for a quick join's: then whoever has been in it longest)
+    this.maker = maker; // ...as the lobby knows them, for their one game at a time: u:<account id> or ip:<address> ('' for a quick join's)
     this.first = first; // the name the first socket in it joined under (a quick join's game is theirs until it has a lead)
     this.inviteOnly = inviteOnly;
     this.quick = quick;
@@ -99,6 +102,8 @@ export class Room {
     this.recs = new Map(); // the game's record tokens -> records (RemoteRecords in room-worker.js)
     this.st = { players: 0, held: 0, lead: '', phase: PHASE.WAITING, day: 0, seed: 0, tick: null, load: { cpuMs: 0, elu: 0 }, heapMb: 0 };
     this.saved = null; // (handoff: waiting for the worker's save)
+    this.movingTo = null; // (handoff: the server it is being handed to, cluster.js)
+    this.up = null; // (cluster.js: its row being written, which a new game's maker waits for)
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
       // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
@@ -360,14 +365,15 @@ export class Room {
   // What the next server needs of this room besides the game (Lobby.restore). match: the one being played as it was
   // saved, which the next server's carries on.
   meta(match) {
-    return { name: this.name, host: this.host, first: this.first, inviteOnly: this.inviteOnly, quick: this.quick, maxPlayers: this.maxPlayers, difficulty: this.difficulty, created: this.created, match };
+    return { name: this.name, host: this.host, maker: this.maker, first: this.first, inviteOnly: this.inviteOnly, quick: this.quick, maxPlayers: this.maxPlayers, difficulty: this.difficulty, created: this.created, match };
   }
 
   // The server is going down and the next one takes this game over: the worker stops and saves it, the save goes into
   // the store, and only then is every socket closed with HANDOFF_CLOSE (a client that came back sooner would find
   // nothing to come back to). -> { bytes, ms } once it is handed over, or why it was not (a string): then nothing has
   // been closed, and the match is still the caller's to end.
-  handoff(store, ms = 8000) {
+  // target: the server it goes to (cluster.js pickTarget; null: whichever claims it first)
+  handoff(store, ms = 8000, target = null) {
     if (this.closed) return Promise.resolve('closed');
     if (!this.st.players) return Promise.resolve('nobody in it');
     const match = this.match;
@@ -381,11 +387,14 @@ export class Room {
         clearTimeout(timer);
         this.saved = null;
         if (m.t === 'saveFailed') return done(`the save failed (${m.error.split('\n')[0]})`);
+        if (target) this.movingTo = target; // (from here its row is the next server's: cluster.js beat leaves it be)
         try {
-          await store.put(this.code, this.meta(match), new Uint8Array(m.buf));
+          await store.put(this.code, target ? { ...this.meta(match), target } : this.meta(match), new Uint8Array(m.buf));
         } catch (err) {
+          this.movingTo = null;
           return done(`the store would not take it (${err.message})`);
         }
+        if (target) await this.lobby.cluster?.moved(this, target).catch((err) => this.lobby.log(`game ${this.code}: its row not moved to ${target} (${err.message})`));
         this.shut(HANDOFF_CLOSE, 'Server updating', { handedOff: true });
         done({ bytes: m.buf.byteLength, ms: Date.now() - t0 });
       };
@@ -399,6 +408,7 @@ export class Room {
     if (this.closed) return;
     this.closed = true;
     this.lobby.rooms.delete(this.code);
+    this.lobby.cluster?.roomDown(this);
     this.worker.terminate().catch(() => {});
     for (let i = 0; i < this.socks.length; i++) {
       const ws = this.socks[i];
@@ -430,8 +440,9 @@ export class Lobby {
   // limits: false lifts the per-address allowances (load tests make many games from one address). store: where games
   // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
   // be and still be restored (s)
-  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, log = console.log }) {
+  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, settings = null, log = console.log }) {
     this.stats = stats;
+    this.settings = settings; // the game's settings in the database (serversettings.js; none without one)
     this.matches = matches;
     this.achievements = achievements;
     this.bestiary = bestiary;
@@ -439,6 +450,7 @@ export class Lobby {
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)
     this.stopping = false; // going down: nothing more is restored here
+    this.cluster = null; // the other servers behind the proxy (cluster.js), when there are any
     this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
     this.onPresence = null; // (account id) => void: they came into a game or left one (social.js)
     this.gameOpts = gameOpts;
@@ -477,21 +489,61 @@ export class Lobby {
     }
   }
 
-  // A new game: { room } or { error, status } (HTTP status). ip: whoever asked, for the allowance (none: no limit)
-  create({ name = '', host = '', inviteOnly = false, maxPlayers = this.maxPlayers, difficulty, quick = false } = {}, ip = '') {
-    if (this.rooms.size >= this.maxGames) return { error: 'Every game server is busy right now. Join a game that is already running, or try again in a minute.', status: 503 };
+  // the most games at once over every server (server_settings.max_total_games: serversettings.js), null for no total
+  get maxTotal() {
+    return this.settings?.maxTotalGames ?? null;
+  }
+  // whether this server may make another game: its own MAX_GAMES, and (on its own) the total. (In a cluster the total
+  // is over every server, and Cluster.reserve keeps it.)
+  get canCreate() {
+    return this.rooms.size < this.maxGames && (!!this.cluster || this.maxTotal === null || this.rooms.size < this.maxTotal);
+  }
+  // the game going here that this maker made, or null
+  gameOf(maker) {
+    if (!maker) return null;
+    for (const room of this.rooms.values()) if (room.maker === maker && !room.closed) return room;
+    return null;
+  }
+
+  // A new game for whoever asked: ip, for the allowance of games made a minute, and maker (u:<account id>, or a
+  // guest's ip:<address>), who may have one game going at a time - on any server, in a cluster. Neither holds with
+  // limits off. -> { room } or { error, status (HTTP), code (of the maker's game, when that is why) }
+  async make(opts = {}, { ip = '', maker = '' } = {}) {
+    if (!this.limits) maker = '';
+    if (!this.canCreate) return BUSY;
+    const mine = this.gameOf(maker);
+    if (mine) return yours(mine.code);
     if (ip && this.limits && !allow(this.creates, ip, CREATE_BURST, CREATE_EVERY)) return { error: 'You have made several games just now. Wait a minute before making another.', status: 429 };
+    if (!this.cluster) return this.create({ ...opts, maker });
+    const code = this.newCode(opts.inviteOnly ? PRIVATE_CODE : PUBLIC_CODE);
+    let r;
+    try {
+      r = await this.cluster.reserve({ code, maker, max: this.maxTotal });
+    } catch (err) {
+      this.log(`game not made: the cluster could not be asked (${err.message})`);
+      return BUSY;
+    }
+    if (r.mine) return yours(r.mine);
+    if (r.full) return BUSY;
+    return this.create({ ...opts, code, maker });
+  }
+
+  // A new game, made here as it is (make asks first whether it may be): { room } or { error, status }
+  create({ name = '', host = '', inviteOnly = false, maxPlayers = this.maxPlayers, difficulty, quick = false, maker = '', code = null } = {}) {
+    if (!this.canCreate) return BUSY;
     const seats = Math.max(1, Math.min(this.roomMaxPlayers, Math.floor(+maxPlayers) || this.maxPlayers));
     const room = new Room(this, {
-      code: this.newCode(inviteOnly ? PRIVATE_CODE : PUBLIC_CODE),
+      code: code || this.newCode(inviteOnly ? PRIVATE_CODE : PUBLIC_CODE),
       name: cleanTitle(name, 28),
       host: cleanTitle(host, 16),
       inviteOnly: !!inviteOnly,
       maxPlayers: seats,
       difficulty,
       quick,
+      maker,
     });
     this.rooms.set(room.code, room);
+    room.up = this.cluster?.roomUp(room) ?? null;
     this.log(`game ${room.code} made: ${room.inviteOnly ? 'invite only' : 'public'}, ${seats} seats, ${room.difficulty}${room.quick ? ' (quick join)' : ''} (${this.rooms.size}/${this.maxGames} games)`);
     return { room };
   }
@@ -508,8 +560,12 @@ export class Lobby {
   }
 
   // Where a quick join goes: the public game with the most people in it that still has a seat (a game that is
-  // just ending comes last), or a new one.
+  // just ending comes last), or a new one. (In a cluster the new one is made before the socket opens, as it has to ask
+  // the others: index.js, make)
   quick() {
+    return this.quickPick() || (this.cluster ? null : this.create({ quick: true }).room) || null;
+  }
+  quickPick() {
     let best = null;
     let bestKey = -1;
     for (const room of this.rooms.values()) {
@@ -521,7 +577,7 @@ export class Lobby {
         bestKey = key;
       }
     }
-    return best || this.create({ quick: true }).room || null;
+    return best;
   }
 
   // the public games, the busiest first
@@ -601,9 +657,10 @@ export class Lobby {
     const done = await Promise.all(
       [...this.rooms.values()].map(async (room) => {
         const players = room.st.players;
-        const r = await room.handoff(store, ms);
+        const target = players ? (this.cluster?.pickTarget() ?? null) : null;
+        const r = await room.handoff(store, ms, target);
         if (typeof r === 'object') {
-          this.log(`handoff ${room.code}: ${players} players, ${(r.bytes / 1024).toFixed(0)} KB, ${r.ms} ms`);
+          this.log(`handoff ${room.code}: ${players} players, ${(r.bytes / 1024).toFixed(0)} KB, ${r.ms} ms${target ? `, to ${target}` : ''}`);
           return true;
         }
         if (players) this.log(`handoff ${room.code}: not handed over - ${r}`);
@@ -633,7 +690,7 @@ export class Lobby {
   async _restore(code) {
     let row;
     try {
-      row = await this.store.claim(code);
+      row = await this.store.claim(code, this.cluster?.id ?? null);
     } catch (err) {
       this.log(`game ${code} not restored: the store failed (${err.message})`);
       return null;
@@ -657,12 +714,14 @@ export class Lobby {
       maxPlayers: Math.max(1, Math.min(this.roomMaxPlayers, Math.floor(+m.maxPlayers) || this.maxPlayers)),
       difficulty: m.difficulty, // absent on a save from before difficulties: the room treats that as Nightfall
       quick: !!m.quick,
+      maker: typeof m.maker === 'string' ? m.maker.slice(0, 80) : '',
       first: cleanTitle(m.first, 16),
       created: Number.isFinite(m.created) ? m.created : Date.now(),
       continues: typeof m.match === 'string' ? m.match : null,
       restore: row.body,
     });
     this.rooms.set(code, room);
+    room.up = this.cluster?.roomUp(room) ?? null;
     this.log(`game ${code} restored from the last server (saved ${age.toFixed(1)} s ago, ${(row.body.byteLength / 1024).toFixed(0)} KB) (${this.rooms.size}/${this.maxGames} games)`);
     return room;
   }
