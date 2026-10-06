@@ -15,6 +15,7 @@ import { createPickup } from '../render/models/pickups.js';
 import { createStructure, setStructureDamage } from '../render/models/structures.js';
 import { createSupplyCrate, createProjectile } from '../render/models/misc.js';
 import { getTexture } from '../render/textures.js';
+import { nkSounds } from './nunchaku.js';
 
 const RING = 10;
 const TAU = Math.PI * 2;
@@ -243,6 +244,7 @@ function wrapAngle(a) {
 }
 
 const _v = new THREE.Vector3();
+const _nkAt = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _car = { x: 0, y: 0, z: 0 }; // where a player riding a handcar stands
 const _frustum = new THREE.Frustum();
@@ -1047,6 +1049,11 @@ export class Entities {
           v.object.rotation.x = -1.3 * e.downK;
           v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
           v.object.visible = !(dead && zombie);
+          // nunchucks: what their chain is doing is heard from where they stand (nothing of it is on the wire)
+          if (weapon === ITEM.NUNCHAKU) {
+            const nk = v.nk?.();
+            if (nk) nkSounds(g.audio, nk.core, _nkAt.set(e.rx, e.ry + 1.3, e.rz), e.nkSt || (e.nkSt = {}), time);
+          }
           // flashlight
           const flashOn = !!(flags & PFLAG.FLASHLIGHT) && !dead;
           e.cone.visible = flashOn;
