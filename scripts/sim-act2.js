@@ -754,6 +754,21 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   ticks(g3, 1);
   g3.handleChat(dee.p(), '/map2');
   check('/map2 during the crossing cuts it short', g3.phase === PHASE.DAY && g3.act === WORLD.MAINLAND && g3.world.kind === WORLD.MAINLAND && !g3.crossing, `phase ${g3.phase} act ${g3.act}`);
+  ticks(g3, 1);
+
+  g3.handleChat(dee.p(), '/cutscene');
+  check('/cutscene from the mainland: a new run on the island, and the crossing with its cutscene at its start', g3.phase === PHASE.CROSSING && g3.act === WORLD.ISLAND && g3.world.kind === WORLD.ISLAND && !!g3.crossing && g3.crossing.pending === 2 && g3.timeLeft === CROSSING.TIME && !g3.checkpoint, `phase ${g3.phase} act ${g3.act} pending ${g3.crossing?.pending}`);
+  g3.handleChat(dee.p(), '/cutscene');
+  check('...and again mid-crossing does not start it over', g3.phase === PHASE.CROSSING && g3.timeLeft === CROSSING.TIME);
+  ticks(g3, 1);
+
+  const g4 = new Game({ seed: SEED, log: quiet, themes: false, devAdmin: true });
+  const eve = client(g4, 'Eve', randomUUID());
+  ticks(g4, 1);
+  g4.killPlayer(eve.p(), { kind: 3 });
+  g4.checkAllDead();
+  g4.handleChat(eve.p(), '/cross');
+  check('/cross from the end screen: a new run, and the crossing to the mainland', g4.phase === PHASE.CROSSING && g4.act === WORLD.ISLAND && !!g4.crossing, `phase ${g4.phase} act ${g4.act}`);
 }
 
 // ================================================================ what a tick costs: a night's horde on each map
