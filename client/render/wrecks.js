@@ -753,9 +753,11 @@ class Wreck extends Lifted {
     }
     if (cs.length === 4) {
       fit = new Float32Array(12);
-      const um = (u0 + u1) / 2, wm = (w0 + w1) / 2;
-      const pick = (su, sw) => cs.reduce((best, k) => ((k[0] - um) * su + (k[1] - wm) * sw > (best[0] - um) * su + (best[1] - wm) * sw ? k : best));
-      [pick(-1, -1), pick(1, -1), pick(1, 1), pick(-1, 1)].forEach((k, i) => {
+      // (round it from the bottom corner on the left: by their bearing from the middle of the four, so a pane that
+      // leans a long way - a door's light along a raked pillar - still gives each corner once)
+      const um = (cs[0][0] + cs[1][0] + cs[2][0] + cs[3][0]) / 4, wm = (cs[0][1] + cs[1][1] + cs[2][1] + cs[3][1]) / 4;
+      cs.sort((a, k) => Math.atan2(a[1] - wm, a[0] - um) - Math.atan2(k[1] - wm, k[0] - um));
+      cs.forEach((k, i) => {
         fit[i * 3] = c.x + ux * k[0] + wx * k[1] + nx * 0.012;
         fit[i * 3 + 1] = c.y + uy * k[0] + wy * k[1] + ny * 0.012;
         fit[i * 3 + 2] = c.z + uz * k[0] + wz * k[1] + nz * 0.012;
@@ -770,7 +772,7 @@ class Wreck extends Lifted {
     const s = p.isles[0];
     const g = this.quad(p);
     if (p.kind === 'pane' && p.state === 1) {
-      p.crack = this.keep(MARK.CRACK_PANE, g.q, g.nx, g.ny, g.nz, s, 1, 0.95);
+      p.crack = this.keep(MARK.CRACK_PANE, g.fit, g.nx, g.ny, g.nz, s, 1, 0.95); // (to the opening, not its box: a leaning light's box lies over the pillar)
       if (live) this.sys.on.sound?.('glass_crack', g.c.x, g.c.y, g.c.z, 0.9);
       return;
     }
@@ -809,7 +811,7 @@ class Wreck extends Lifted {
       }
     }
     if (live) {
-      this.sys.on.shatter?.(g.q, g.nx, g.ny, g.nz, dx, dy, dz, p.kind === 'pane' ? 30 : 8);
+      this.sys.on.shatter?.(g.fit, g.nx, g.ny, g.nz, dx, dy, dz, p.kind === 'pane' ? 30 : 8);
       this.sys.on.sound?.(p.kind === 'pane' ? 'glass_break' : 'glass_crack', g.c.x, g.c.y, g.c.z, p.kind === 'pane' ? 1 : 0.8);
     }
     void was;
