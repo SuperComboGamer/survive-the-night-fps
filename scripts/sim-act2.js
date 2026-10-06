@@ -17,6 +17,7 @@ const { WORLD, MAINLAND_SIZE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, ARRIVA
 const { nightBoss, nightTheme, MAINLAND_BOSSES, NIGHT_THEMES } = await import('../shared/nights.js');
 const { readHeader, readGlobal, readSelf } = await import('../client/net/decode.js');
 const { envelope, encode, decode } = await import('../server/handoff.js');
+const { START_CLEAR } = await import('../server/zombies.js');
 const { countItem, sortInventory, invCap } = await import('../server/inventory.js');
 const { bit } = await import('../shared/bestiary.js');
 const { randomUUID } = await import('node:crypto');
@@ -121,6 +122,8 @@ const kitOf = (p) => JSON.stringify({ w: p.state.weapons, m: p.state.mags, a: p.
 const whoIs = (game, cs) => [...game.players.values()].map((p) => `${p.id}:${p.character}`).join() + ' | ' + cs.map((c) => [...c.chars].map(([id, ch]) => `${id}:${ch}`).join()).join(' | ');
 const isChar = (game, cs, id, ch) => game.players.get(id)?.character === ch && cs.every((c) => c.chars.get(id) === ch);
 const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
+// the dead standing in the clearing round where the run on this map began (zombies.js START_CLEAR)
+const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x - game.world.start.x, z.z - game.world.start.z) < START_CLEAR);
 
 // ================================================================ the run
 {
@@ -204,6 +207,7 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   ticks(game, 0.2);
   // ---- the arrival
   check('the team stands at the bridgehead', [a, b, c].every((p) => near(p, w.start, 16)) && w.zoneAt(a.state.x, a.state.z) === ZONE.BRIDGEHEAD, [a, b, c].map((p) => `${p.state.x | 0},${p.state.z | 0}`).join(' '));
+  check(`...with none of the dead within ${START_CLEAR} m of it`, !nearHead(game).length, nearHead(game).map((z) => `${z.x | 0},${z.z | 0}`).join(' '));
   check('what a survivor carried came over with them: weapons, rounds, backpack, armour, perks, kills', kitOf(a) === before && a.perks === 5 && a.kills === kills, `${kitOf(a)}\n      ${before}`);
   check('...and a well-stocked one gets nothing from the bridgehead cache', !notes.some((n) => n[0] === NOTIFY.CACHE && n[2] === a.id));
   const floor = (p) => p.state.weapons[SLOT_PISTOL] === BRIDGEHEAD.PISTOL && p.state.mags[1] === WEAPONS[ITEM.PISTOL].mag && p.state.ammo[AMMO.P9] === Math.min(BRIDGEHEAD.ROUNDS, BRIDGEHEAD.MAGS * WEAPONS[ITEM.PISTOL].mag) && countItem(p.inv, ITEM.BANDAGE) === BRIDGEHEAD.BANDAGES && p.state.weapons[SLOT_MELEE] === BRIDGEHEAD.MELEE && p.state.weapons[SLOT_BUILD] === BRIDGEHEAD.BUILD && !p.state.weapons[SLOT_PRIMARY];
@@ -329,6 +333,7 @@ const near = (p, at, r) => Math.hypot(p.state.x - at.x, p.state.z - at.z) <= r;
   ticks(game, GAME_OVER_DELAY + 0.5);
   check('...and the run starts again from the bridge, not from the island', game.phase === PHASE.DAY && game.act === WORLD.MAINLAND && game.world.kind === WORLD.MAINLAND && game.day === 4 && notes.some((n) => n[0] === NOTIFY.CHECKPOINT && n[1] === 4) && !ann.resets.some((r) => r.act === WORLD.ISLAND), `phase ${game.phase} act ${game.act} day ${game.day}`);
   check('...everybody alive at the bridgehead with what they crossed with', [a, b].every((p) => p.alive && !p.zombie && near(p, game.world.start, 16)) && kitOf(a) === kits[0] && kitOf(b) === kits[1] && game.unlocked === 0, `${kitOf(a)}\n      ${kits[0]}`);
+  check(`...and none of the dead within ${START_CLEAR} m of it`, !nearHead(game).length, nearHead(game).map((z) => `${z.x | 0},${z.z | 0}`).join(' '));
   ticks(game, 0.2);
   check('...and as the survivors they chose to be', isChar(game, [ann, ben], ann.id, 6) && isChar(game, [ann, ben], ben.id, benIs), whoIs(game, [ann, ben]));
   check('...on a mainland stocked afresh, the plane as they first found it', game.supplies.every((n) => n === 0) && game.items.filter((e) => PLANE_PARTS.includes(e.item)).length === 7 && game.zombies.length > 40);

@@ -97,6 +97,11 @@ const DAY_ROPER = 0.65;
 // go by how far across it is, and a city is a place a few hundred metres across, so they alone leave it near empty
 const CITY_STREET_DEAD = 64;
 const CITY_STREET_SHARE = 0.2; // of the roaming dead that turn up by day, the share that comes back into the city
+// Where a run on the map begins (world.start: the car on the island, the bridgehead on the mainland) is left clear: none
+// of the dead the day puts about - a place's guards, the roaming dead, the city's, a dog pack, a herd - turn up within
+// START_CLEAR m of it, so a team that has just come off the bridge is not in a fight before it has found its feet
+// (nearStart). By day the dead notice a survivor ~26 m off, so the ones beyond it leave them be.
+export const START_CLEAR = 60;
 const SPAWN_TRIES = 18; // candidates a horde spawn pick looks at before settling for the least exposed one
 const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes have a clear line to this far above its ground (m)
 const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
@@ -329,6 +334,12 @@ export class Zombies {
     return (this.g.world.size / MAP_SIZE) ** 2;
   }
 
+  // inside the clearing round where a run on this map begins (START_CLEAR), which the day spawns nothing in
+  nearStart(x, z, pad = 0) {
+    const st = this.g.world.start;
+    return Math.hypot(x - st.x, z - st.z) < START_CLEAR + pad;
+  }
+
   spawnInitial() {
     const g = this.g;
     const w = g.world;
@@ -336,7 +347,7 @@ export class Zombies {
     const spread = this.spread();
     // zone guards (bigger places, bigger crowds)
     for (const zn of w.zones) {
-      if (zn.id === 0) continue;
+      if (zn.id === 0 || this.nearStart(zn.x, zn.z)) continue; // (the place a run begins in has none)
       const n0 = Math.round(zn.flat / 12) + Math.floor(g.rng() * 3) + (zn.id === 6 ? 3 : 0);
       const n = Math.max(n0 > 0 ? 1 : 0, Math.round(n0 * pop));
       for (let i = 0; i < n; i++) {
@@ -344,6 +355,7 @@ export class Zombies {
         const r = 4 + g.rng() * (zn.flat * 0.8);
         const x = zn.x + Math.sin(a) * r;
         const z = zn.z + Math.cos(a) * r;
+        if (this.nearStart(x, z)) continue;
         const sp = this.daySpecial(x, z);
         this.spawn(sp >= 0 ? sp : g.rng() < 0.75 ? ZTYPE.WALKER : ZTYPE.RUNNER, x, z);
       }
@@ -430,7 +442,7 @@ export class Zombies {
     const car = g.world.car;
     for (let tries = 0; tries < 12; tries++) {
       const d = dens[Math.floor(g.rng() * dens.length)];
-      if (Math.hypot(d.x - car.x, d.z - car.z) < 80) continue;
+      if (Math.hypot(d.x - car.x, d.z - car.z) < 80 || this.nearStart(d.x, d.z, 20)) continue;
       let ok = true;
       for (const h of humans) if (Math.hypot(h.state.x - d.x, h.state.z - d.z) < 80) ok = false;
       if (!ok) continue;
@@ -505,7 +517,7 @@ export class Zombies {
       const northSouth = g.rng() < 0.5;
       const x = c.x + (northSouth ? o + side : t);
       const z = c.z + (northSouth ? t : o + side);
-      if (humans.some((h) => Math.hypot(h.state.x - x, h.state.z - z) < 75)) continue;
+      if (this.nearStart(x, z) || humans.some((h) => Math.hypot(h.state.x - x, h.state.z - z) < 75)) continue;
       const sp = this.daySpecial(x, z);
       return this.spawn(sp >= 0 ? sp : g.rng() < 0.25 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1 + 0.05 * g.day });
     }
@@ -529,16 +541,18 @@ export class Zombies {
         const r = 4 + g.rng() * zn.flat * 0.8;
         const x = zn.x + Math.sin(a) * r;
         const z = zn.z + Math.cos(a) * r;
-        const sp = this.daySpecial(x, z);
-        return this.spawn(sp >= 0 ? sp : g.rng() < 0.7 ? ZTYPE.WALKER : ZTYPE.RUNNER, x, z, { hpMul: 1 + 0.05 * g.day });
+        if (!this.nearStart(x, z)) {
+          const sp = this.daySpecial(x, z);
+          return this.spawn(sp >= 0 ? sp : g.rng() < 0.7 ? ZTYPE.WALKER : ZTYPE.RUNNER, x, z, { hpMul: 1 + 0.05 * g.day });
+        }
       }
     }
-    // wanderers along the roads and in the woods (never right on top of the start)
+    // wanderers along the roads and in the woods (never right on top of the start, nor of the car)
     const pts = g.rng() < 0.5 ? g.world.sites : g.world.resourceSpawns;
     const car = g.world.car;
     for (let tries = 0; tries < 10; tries++) {
       const p = pts[Math.floor(g.rng() * pts.length)];
-      if (!p || Math.hypot(p.x - car.x, p.z - car.z) < 55) continue;
+      if (!p || Math.hypot(p.x - car.x, p.z - car.z) < 55 || this.nearStart(p.x, p.z, 2)) continue;
       let ok = true;
       for (const h of humans) if (Math.hypot(h.state.x - p.x, h.state.z - p.z) < 75) ok = false;
       if (!ok) continue;

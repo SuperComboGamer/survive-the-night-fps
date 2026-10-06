@@ -23,8 +23,8 @@ const UNSEEN = 75; // ...and this far from where it turns up (m; as near as the 
 const ROUSE = 20; // s the whole herd stays on a survivor one of them noticed (then only those still sensing them)
 const SEARCH = 12; // s it mills about where the noise came from / where it lost its quarry
 const RESPAWN = 90; // s of daylight after the last of a herd is gone before another one turns up
-const CAR_CLEAR = 60; // the herd's route keeps this far from the survivors' car (m)
-const SPAWN_CLEAR = 110; // a herd turns up at least this far from the car and from every survivor (m)
+const CAR_CLEAR = 60; // the herd's route keeps this far from the survivors' car and from where the run began (m)
+const SPAWN_CLEAR = 110; // a herd turns up at least this far from the car, from where the run began and from every survivor (m)
 const EDGE = 20; // a herd keeps this far inside the edge of the map (m)
 const APART = 200; // a herd turns up at least this far from the middle of every other (m)
 
@@ -67,18 +67,18 @@ export class Herds {
   }
 
   // ---------------------------------------------------------------- spawning
-  // a herd on a road, far from the car and out of every survivor's sight
+  // a herd on a road, far from the car and the start (the bridgehead, on the mainland) and out of every survivor's sight
   spawn(humans) {
     const g = this.g;
     const roads = g.world.roads;
-    const car = g.world.car;
+    const { car, start } = g.world;
     for (let tries = 0; tries < 40; tries++) {
       const road = Math.floor(g.rng() * roads.length);
       const pts = roads[road].pts;
       const at = Math.floor(g.rng() * (pts.length / 2));
       const x = pts[at * 2];
       const z = pts[at * 2 + 1];
-      if (!this.routeOk(x, z) || Math.hypot(x - car.x, z - car.z) < SPAWN_CLEAR || g.nav.isBlocked(x, z)) continue;
+      if (!this.routeOk(x, z) || Math.hypot(x - car.x, z - car.z) < SPAWN_CLEAR || Math.hypot(x - start.x, z - start.z) < SPAWN_CLEAR || g.nav.isBlocked(x, z)) continue;
       let ok = true;
       for (const p of humans) if (Math.hypot(p.state.x - x, p.state.z - z) < SPAWN_CLEAR) ok = false;
       for (const o of this.list.values()) if (Math.hypot(o.cx - x, o.cz - z) < APART) ok = false;
@@ -127,10 +127,11 @@ export class Herds {
   }
 
   // ---------------------------------------------------------------- route
-  // may the herd walk here? Inside the map and clear of the car (a herd trampling the base every lap is no fun)
+  // may the herd walk here? Inside the map and clear of the car and the start (a herd trampling the base every lap,
+  // or the bridgehead as the team comes off the bridge, is no fun)
   routeOk(x, z) {
-    const car = this.g.world.car;
-    return Math.abs(x) < this.g.world.half - EDGE && Math.abs(z) < this.g.world.half - EDGE && Math.hypot(x - car.x, z - car.z) > CAR_CLEAR;
+    const { car, start, half } = this.g.world;
+    return Math.abs(x) < half - EDGE && Math.abs(z) < half - EDGE && Math.hypot(x - car.x, z - car.z) > CAR_CLEAR && Math.hypot(x - start.x, z - start.z) > CAR_CLEAR;
   }
 
   // road points the herd can walk from point `at` of a road in direction dir (counted up to max)
