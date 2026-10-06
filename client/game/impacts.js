@@ -230,7 +230,7 @@ export class Impacts {
     const w = m.w * k, hh = m.h * k;
     const c = !m.along ? markCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, null, 0, 0, r * 6.283) : stroke ? strokeCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, dx, dy, dz, r) : markCorners(h.x, h.y, h.z, h.nx, h.ny, h.nz, w, hh, dx, dy, dz);
     // (cracks in glass catch the light: brighter than the pane they are in)
-    const shade = h.surf === SURF.GLASS ? 2.2 : 0.85 + 0.15 * r;
+    const shade = h.surf === SURF.GLASS ? 1.6 : 0.85 + 0.15 * r;
     this.marks.pool.add(c, h.nx, h.ny, h.nz, m.cell, shade, shade, shade, 1, h.owner, this.g.time, life);
   }
 
