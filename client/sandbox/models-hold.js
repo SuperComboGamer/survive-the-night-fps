@@ -10,8 +10,13 @@
 //                       body vertex inside the worn pack, and (on its own: a fist is a block closed round a handle)
 //                       item vertex inside a fist
 //   &dots=1             with clip=1: mark them;  &xray=1  the item see-through
+//   &nk=SCRIPT          nunchucks (?hold=57): play their moves (nk-script.js), starting at t = 1 like the pulses, so
+//                       &t is the time into the script; &hit=flesh|... lands the blows.  &ts=a,b,c: a strip of frames
+//                       at those times (no clip check);  &slow=K: the clock run K times slower between frames (the
+//                       chain's own steps do not change: it is the same motion, looked at more often)
 import * as THREE from 'three';
 import * as CHARS from '../render/models/characters.js';
+import { nkScript } from './nk-script.js';
 const { createSurvivor } = CHARS;
 
 const q = new URLSearchParams(location.search);
@@ -63,19 +68,66 @@ if (pose === 'seated') o.position.y = 0.45;
 // (Entities puts the weapon away in the water)
 if (pose === 'swim') sv.setWeapon(0);
 const pulse = { fire: () => sv.fire(), melee: () => sv.melee(), throw: () => sv.throwAnim() }[pose];
+const nk = q.has('nk') ? nkScript(q.get('nk'), q.get('hit') || '') : null;
+if (nk && nk.crouch) st.crouch = true;
+const inst = sv._inst;
+if (nk && inst.nk) inst.nk.core.noIdle = q.get('nk') !== 'idle';
+const times = q.has('ts') ? q.get('ts').split(',').map(Number) : null;
 const DT = 1 / 60;
-const total = pulse ? 1 + T : T;
-let time = 0;
+const total = (pulse || nk ? 1 : 0) + (times ? Math.max(...times) : T);
+let time = 0, nkAt = 0, shot = 0;
+const handR = inst.bones[15]; // HAND_R (characters.js)
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 50);
+const aim = () => {
+  const c = (q.get('cam') || '0.5,0.15,0.75').split(',');
+  const body = c[0] === 'body';
+  const [yaw, pitch, dist, tx = 0, ty = 0, tz = 0] = (body ? c.slice(1) : c).map(Number);
+  const tgt = new THREE.Vector3();
+  if (body) tgt.set(0, pose === 'downed' ? 0.4 : 1.1, 0).applyMatrix4(o.matrixWorld);
+  else (inst.weapon || handR).getWorldPosition(tgt);
+  tgt.add(new THREE.Vector3(+tx, +ty, +tz));
+  // yaw 0 = in front of the survivor (it faces -Z)
+  camera.position.set(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(tgt);
+  camera.lookAt(tgt);
+};
+// &ts=: one tile a frame, drawn as the clock passes each time
+const cols = times ? Math.min(times.length, +(q.get('cols') || 6)) : 1, rows = times ? Math.ceil(times.length / cols) : 1;
+const tile = () => {
+  const tw = Math.floor(innerWidth / cols), th = Math.floor(innerHeight / rows);
+  const x = (shot % cols) * tw, y = innerHeight - (((shot / cols) | 0) + 1) * th;
+  camera.aspect = tw / th;
+  camera.updateProjectionMatrix();
+  scene.updateMatrixWorld(true);
+  aim();
+  renderer.setScissorTest(true);
+  renderer.setViewport(x, y, tw, th);
+  renderer.setScissor(x, y, tw, th);
+  renderer.render(scene, camera);
+  shot++;
+};
+if (times) renderer.autoClear = true;
 for (let i = 0, n = Math.round(total / DT); i < n; i++) {
   time += DT;
   if (pulse && Math.abs(time - 1) < DT / 2) pulse();
+  if (nk) {
+    for (; nkAt < nk.events.length && nk.events[nkAt].t <= time - 1 + 1e-6; nkAt++) {
+      const e = nk.events[nkAt];
+      if (e.swing !== undefined) sv.nkSwing(e.swing);
+      if (e.hit) sv.nkHit(e.hit.kind, e.hit.power);
+      if (e.flourish) sv.nkFlourish();
+      if (e.set) Object.assign(st, e.set);
+    }
+    st.wind = nk.wind(time - 1);
+  }
+  inst._seen = true; // (nothing is drawn between the steps: the pose is still wanted)
   sv.update(DT, { ...st, time });
+  scene.updateMatrixWorld(true);
+  while (times && shot < times.length && times[shot] <= time - (pulse || nk ? 1 : 0) + 1e-6) tile();
 }
 scene.updateMatrixWorld(true);
-
-const inst = sv._inst;
-const handR = inst.bones[15]; // HAND_R (characters.js)
-const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 50);
+if (times) {
+  info.textContent = `hold ${item} ${nk ? 'nk=' + q.get('nk') : 'pose ' + pose} ts=${times.join(',')}`;
+}
 {
   const c = (q.get('cam') || '0.5,0.15,0.75').split(',');
   const body = c[0] === 'body';
@@ -97,8 +149,10 @@ if (q.get('xray') === '1' && inst.weapon) {
     }
   });
 }
-renderer.render(scene, camera);
-info.textContent = `hold ${item} pose ${pose} t=${T}`;
+if (!times) {
+  renderer.render(scene, camera);
+  info.textContent = `hold ${item} ${nk ? 'nk=' + q.get('nk') : 'pose ' + pose} t=${T}`;
+}
 
 // ---------------------------------------------------------------- clip check
 // Same rule as the viewmodel's (models-vm.js): a vertex is inside a model when the first face three of four rays from
@@ -144,7 +198,7 @@ if (q.get('clip') === '1') {
   const bg = bodyM.geometry;
   bg.boundingBox.union(fistM.geometry.boundingBox);
   const parts = [];
-  if (inst.weapon) inst.weapon.traverse((m) => m.isMesh && m.visible && parts.push(m));
+  if (inst.weapon) inst.weapon.traverse((m) => m.isMesh && m.visible && m.name !== 'nunchakuTrail' && parts.push(m));
   if (inst.pack && inst.pack.visible) inst.pack.traverse((m) => m.isMesh && parts.push(m));
   const proxies = parts.map((m) => {
     const p = new THREE.Mesh(m.geometry, dbl);

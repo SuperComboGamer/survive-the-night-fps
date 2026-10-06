@@ -50,6 +50,7 @@ export const ITEM = {
   HAMMER: 54,
   PISTOL: 55,
   FLARE_GUN: 56, // a sidearm (the pistol's slot): one parachute flare at a time, up into the sky (shared/skyflare.js)
+  NUNCHAKU: 57, // melee with a moveset of its own: combos, a wound-up heavy, a simulated chain (shared/nunchaku.js)
   SHOTGUN: 60,
   AK47: 61,
   HUNTING_RIFLE: 62,
@@ -148,6 +149,7 @@ export const ITEM_DEFS = {
   [ITEM.SPIKED_BAT]: { name: 'Spiked Bat', cat: 'weapon', stack: 1, color: 0x8a5a3b, desc: 'A bat wrapped in nails and wire.' },
   [ITEM.MACHETE]: { name: 'Machete', cat: 'weapon', stack: 1, color: 0x9aa3a8, desc: 'Cleaves through the horde.' },
   [ITEM.HAMMER]: { name: 'Hammer', cat: 'weapon', stack: 1, color: 0x7a5c3a, desc: 'Build and repair structures.' },
+  [ITEM.NUNCHAKU]: { name: 'Nunchucks', cat: 'weapon', stack: 1, color: 0x7a4a2a, desc: 'Two hardwood handles on a chain. Keep swinging for a four-move combo whose last blow lands hardest; hold the heavy attack to spin it up. Short reach, one target, and every move costs stamina.' },
   [ITEM.PISTOL]: { name: 'Pistol', cat: 'weapon', stack: 1, color: 0x333333, desc: 'Reliable 9mm sidearm.' },
   [ITEM.SHOTGUN]: { name: 'Shotgun', cat: 'weapon', stack: 1, color: 0x4a3a2a, desc: 'Devastating up close.' },
   [ITEM.AK47]: { name: 'AK-47', cat: 'weapon', stack: 1, color: 0x5a4632, desc: 'Full-auto 7.62 rifle.' },
@@ -264,6 +266,14 @@ export const WEAPONS = {
   [ITEM.BAT]: { slot: 2, melee: true, damage: 60, rate: 0.72, range: 2.4, altDamage: 100, altRate: 1.3, headMul: 1.8, knock: 5, swing: 0.2 },
   [ITEM.SPIKED_BAT]: { slot: 2, melee: true, damage: 95, rate: 0.72, range: 2.4, altDamage: 155, altRate: 1.3, headMul: 1.8, knock: 5, swing: 0.2 },
   [ITEM.MACHETE]: { slot: 2, melee: true, damage: 75, rate: 0.55, range: 2.2, altDamage: 125, altRate: 1.0, headMul: 2.0, knock: 1.5, swing: 0.15 },
+  // Nunchucks: a moveset, not one swing (nunchaku: true; the moves, their timing and what each costs are NK_MOVES in
+  // shared/nunchaku.js). The numbers here are the opener's and the fully wound heavy's, for whatever reads a weapon's
+  // row. Against the others, on one target with the whole chain landed: 198 damage in 1.68 s, 118 a second - over the
+  // knife (90) and the bat (83), under the machete (136) and the spiked bat (132), which also strike two at once and
+  // cost nothing. The shortest reach there is, one target, and 27 stamina a combo: three and a half combos empty a
+  // full bar, and out of breath it is the opener alone at 0.7 of its damage (61 a second). The heavy: 70 on a tap,
+  // 165 after a full 0.95 s wind-up (87 a second either way, under the light chain as the rule above asks).
+  [ITEM.NUNCHAKU]: { slot: 2, melee: true, nunchaku: true, damage: 28, rate: 0.32, range: 1.9, altDamage: 165, altRate: 0.8, headMul: 1.7, knock: 0.6, swing: 0.1 },
   [ITEM.HAMMER]: { slot: 4, melee: true, damage: 25, rate: 0.6, range: 2.0, altDamage: 25, altRate: 0.6, headMul: 1.5, knock: 1, swing: 0.15, build: true },
   [ITEM.PISTOL]: { slot: 1, damage: 30, rate: 0.16, mag: 12, reload: 1.35, ammo: 0, pellets: 1, spread: 0.012, moveSpread: 0.02, recoil: 0.018, range: 120, headMul: 3.0, auto: false, noise: 45, sound: 'pistol' },
   [ITEM.SHOTGUN]: { slot: 0, damage: 17, rate: 0.85, mag: 6, reload: 0.55, reloadEach: true, ammo: 1, pellets: 9, spread: 0.075, moveSpread: 0.02, recoil: 0.07, range: 45, headMul: 2.0, auto: false, noise: 80, sound: 'shotgun' },
@@ -421,6 +431,8 @@ export const RECIPES = [
   // the flare gun is a pipe and a hammer; a shell is a road flare's makings with a little chute packed on top
   { id: 38, out: ITEM.FLARE_GUN, n: 1, cost: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 3, [ITEM.TAPE]: 1 }, station: 'bench' },
   { id: 39, out: ITEM.AMMO_FLARE, n: 1, cost: { [ITEM.POWDER]: 3, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 }, station: 'bench' },
+  // two turned handles, a chain cut out of scrap, tape for the grips
+  { id: 40, out: ITEM.NUNCHAKU, n: 1, cost: { [ITEM.WOOD]: 2, [ITEM.SCRAP]: 2, [ITEM.TAPE]: 1 }, station: 'bench' },
 ];
 
 // The order the backpack grid is sorted in after a pickup or a drop, by category: weapons, what is worn or carried for
@@ -450,6 +462,7 @@ export const SALVAGE = {
   [ITEM.SPIKED_BAT]: { [ITEM.WOOD]: 1, [ITEM.NAILS]: 4 },
   [ITEM.MACHETE]: { [ITEM.SCRAP]: 2, [ITEM.LEATHER]: 1 },
   [ITEM.HAMMER]: { [ITEM.SCRAP]: 1 },
+  [ITEM.NUNCHAKU]: { [ITEM.WOOD]: 1, [ITEM.SCRAP]: 1 },
   [ITEM.PISTOL]: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 1 },
   [ITEM.SHOTGUN]: { [ITEM.GUNPARTS]: 1, [ITEM.SCRAP]: 1, [ITEM.WOOD]: 1 },
   [ITEM.AK47]: { [ITEM.GUNPARTS]: 2, [ITEM.SCRAP]: 2, [ITEM.WOOD]: 1 },
@@ -975,7 +988,7 @@ export const LOOT_TABLES = {
   [ZONE.ROADSIDE]: [[ITEM.SCRAP, 6, 1, 2], [ITEM.CLOTH, 8, 2, 3], [ITEM.TAPE, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.AMMO_9MM, 4, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.BANDAGE, 3, 1, 1], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.NAILS, 3, 3, 8], [ITEM.FLARE, 2, 1, 1], [ITEM.CHEM, 2, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1]],
   [ZONE.FAIR]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.SCRAP, 4, 1, 3], [ITEM.ROPE, 3, 1, 2], [ITEM.FLARE, 3, 1, 2], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.PAINKILLERS, 2, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.ENERGY_DRINK, 4, 1, 2]],
   [ZONE.SCRAPYARD]: [[ITEM.SCRAP, 10, 2, 5], [ITEM.WIRE, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.CHEM, 3, 1, 2], [ITEM.PLATE, 1, 1, 1], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.ALCOHOL, 2, 1, 1], [ITEM.HAMMER, 1, 1, 1], [ITEM.BAT, 1, 1, 1]],
-  [ZONE.SUMMERCAMP]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.BANDAGE, 5, 1, 2], [ITEM.ROPE, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.STICK, 3, 2, 5], [ITEM.FLARE, 3, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_BOLTS, 4, 2, 5], [ITEM.TUNA, 5, 1, 2], [ITEM.KNIFE, 1, 1, 1], [ITEM.CROSSBOW, 1, 1, 1], [ITEM.MEDKIT, 1, 1, 1]],
+  [ZONE.SUMMERCAMP]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.BANDAGE, 5, 1, 2], [ITEM.ROPE, 4, 1, 2], [ITEM.HERB, 4, 1, 3], [ITEM.STICK, 3, 2, 5], [ITEM.FLARE, 3, 1, 2], [ITEM.BATTERY, 3, 1, 2], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_BOLTS, 4, 2, 5], [ITEM.TUNA, 5, 1, 2], [ITEM.KNIFE, 1, 1, 1], [ITEM.CROSSBOW, 1, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.NUNCHAKU, 1, 1, 1]],
   [ZONE.MINE]: [[ITEM.POWDER, 8, 3, 8], [ITEM.SCRAP, 6, 2, 4], [ITEM.WIRE, 5, 1, 3], [ITEM.NAILS, 4, 4, 10], [ITEM.BATTERY, 4, 1, 2], [ITEM.ROPE, 3, 1, 2], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 3, 1, 2], [ITEM.TORCH, 2, 1, 2], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
   [ZONE.LODGE]: [[ITEM.LEATHER, 6, 1, 3], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_SHELLS, 5, 4, 8], [ITEM.AMMO_BOLTS, 3, 2, 5], [ITEM.ALCOHOL, 4, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.GUNPARTS, 3, 1, 1], [ITEM.ROPE, 3, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.POWDER, 3, 2, 5], [ITEM.JACKET, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.CROSSBOW, 1, 1, 1]],
   [ZONE.DRIVEIN]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.TAPE, 4, 1, 2], [ITEM.SCRAP, 4, 1, 3], [ITEM.PAINKILLERS, 3, 1, 2], [ITEM.AMMO_9MM, 4, 8, 16], [ITEM.CHEM, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.BAT, 1, 1, 1], [ITEM.PISTOL, 1, 1, 1], [ITEM.ENERGY_DRINK, 4, 1, 2]],
@@ -1002,7 +1015,7 @@ export const LOOT_TABLES = {
   [ZONE.SALVAGE]: [[ITEM.SCRAP, 10, 2, 5], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.WIRE, 5, 1, 3], [ITEM.TAPE, 4, 1, 2], [ITEM.BATTERY, 4, 1, 2], [ITEM.NAILS, 4, 4, 10], [ITEM.PLATE, 2, 1, 1], [ITEM.AMMO_FUEL, 3, 20, 40], [ITEM.SPIKED_BAT, 1, 1, 1]],
   // a bit of everything, by the shelf
   [ZONE.MALL]: [[ITEM.TUNA, 7, 1, 3], [ITEM.ENERGY_DRINK, 6, 1, 3], [ITEM.CLOTH, 6, 2, 4], [ITEM.BATTERY, 6, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.NAILS, 5, 6, 14], [ITEM.ROPE, 3, 1, 2], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.POWDER, 4, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.MACHETE, 1, 1, 1], [ITEM.HUNTING_RIFLE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1]],
-  [ZONE.SCHOOL]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 6, 1, 2], [ITEM.TUNA, 6, 1, 2], [ITEM.ENERGY_DRINK, 4, 1, 2], [ITEM.BATTERY, 5, 1, 2], [ITEM.TAPE, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BAT, 1, 1, 1]],
+  [ZONE.SCHOOL]: [[ITEM.CLOTH, 6, 2, 4], [ITEM.BANDAGE, 6, 1, 2], [ITEM.TUNA, 6, 1, 2], [ITEM.ENERGY_DRINK, 4, 1, 2], [ITEM.BATTERY, 5, 1, 2], [ITEM.TAPE, 5, 1, 2], [ITEM.PAINKILLERS, 4, 1, 2], [ITEM.CHEM, 3, 1, 2], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BAT, 1, 1, 1], [ITEM.NUNCHAKU, 1, 1, 1]],
   [ZONE.MAST]: [[ITEM.BATTERY, 7, 1, 3], [ITEM.WIRE, 6, 1, 3], [ITEM.GUNPARTS, 4, 1, 2], [ITEM.AMMO_308, 5, 3, 6], [ITEM.AMMO_556, 3, 10, 20], [ITEM.TAPE, 4, 1, 2], [ITEM.FLARE, 3, 1, 2], [ITEM.AMMO_FLARE, 3, 1, 3], [ITEM.HUNTING_RIFLE, 1, 1, 1]],
   [ZONE.MOTORINN]: [[ITEM.CLOTH, 7, 2, 4], [ITEM.ALCOHOL, 6, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.BANDAGE, 5, 1, 2], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.BATTERY, 4, 1, 2], [ITEM.TUNA, 4, 1, 2], [ITEM.ENERGY_DRINK, 3, 1, 2], [ITEM.POWDER, 3, 2, 4], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.DECOY, 1, 1, 1]],
   [ZONE.GRAVEYARD]: [[ITEM.CLOTH, 6, 1, 3], [ITEM.TORCH, 5, 1, 2], [ITEM.HERB, 5, 1, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.ROPE, 3, 1, 1], [ITEM.AMMO_SHELLS, 3, 3, 6], [ITEM.MEDKIT, 1, 1, 1]],
@@ -1040,7 +1053,7 @@ CONT.DRUG_LOCKER = 17;
 export const CONT_TABLES = {
   military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 2, 2], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.GRENADE, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2], [ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 30, 60], [ITEM.FLAMETHROWER, 1, 1, 1], [ITEM.AMMO_ROCKET, 1, 1, 2], [ITEM.RPG, 1, 1, 1], [ITEM.AMMO_145, 2, 2, 4], [ITEM.AT_RIFLE, 1, 1, 1], [ITEM.AMMO_FLARE, 2, 1, 3], [ITEM.FLARE_GUN, 1, 1, 1]],
   trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2]],
-  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.TUNA, 3, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1]],
+  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.TUNA, 3, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.NUNCHAKU, 1, 1, 1]],
   locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2]],
   cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1], [ITEM.TUNA, 3, 1, 2]],
   toolbox: [[ITEM.NAILS, 8, 6, 14], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 3, 1, 2], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],

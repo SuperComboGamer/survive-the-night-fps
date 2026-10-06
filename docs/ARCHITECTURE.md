@@ -29,6 +29,8 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
                  it to the wave weights and the client announces it, each from the seed: nothing on the wire
   progress.js    XP, levels and perks: the rules both ends read (see Experience, levels and perks below)
+  nunchaku.js    the nunchucks: their moveset as rules (simNunchaku, NK_MOVES) and the simulation of their chain
+                 and free handle that both views draw (ChainSim) - see Nunchucks below
   achievements.js the achievement list (ids, wire numbers, tiers, groups) and the rules on a player's progress
                  (see Achievements below)
   bestiary.js    the bestiary: every kind of the dead, its vague line and its tip, and what seeing one is (see The
@@ -571,7 +573,8 @@ act 2, where the same loop is played with a plane and flying out wins.
   the player (sim-act2.js holds each).
 - **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
   the save's act.
-- **Debug**: `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
+- **Debug**: `/map2` (or `/mainland`: straight to the mainland's first day from anywhere on the island, the end
+  screen too, with no cutscene and no escape XP), `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
   `game.debugCam`, `debugCycle` and `debugFog` (a free camera, the hour, the haze: the shot scripts).
 - **Tests**: `scripts/test-mainland.js` (the map, on any seeds), `scripts/sim-act2.js` (the whole run in simulation,
   a wipe, late joiners, a drop and a deploy across the crossing, the nights, what a tick costs on each map);
@@ -1451,3 +1454,64 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.
   `scripts/test-itemguide.js` holds every line against the tables, generated worlds (which place tables are
   rolled at all) and the server's gathering. Supply-drop loot (`CRATE_TABLE`, private to the server) is not in it.
+## Nunchucks: a moveset, and a chain that is simulated
+
+Every other melee weapon is one swing that lands on the command that makes it. `ITEM.NUNCHAKU` is a moveset, and
+half of what is on screen is not animated at all.
+
+- **The rules** (`shared/nunchaku.js`: `NK_MOVES`, `simNunchaku`, called from `simulatePlayer`'s melee branch for
+  a weapon with `nunchaku: true`). A move is started by a command (`nk_swing`, with the move) and its blows land a
+  set time into it (`melee`, with the move and which of its hits: `Combat.melee` reads that move's damage, reach,
+  shove and how many it may strike). A press within `NK.window` of a move's end goes on to the move after it
+  (whip, backhand, figure-eight, smash, and round again); otherwise the opener, chosen by how the survivor is
+  moving (sprinting: lunge; crouched: sweep; backing away: retreat). The secondary button winds the heavy attack
+  up for as long as it is held and strikes when it is let go, at one of three tiers. Every move costs stamina; out
+  of breath it is the opener only, at `NK.tired` of its damage.
+- **No new state, nothing new on the wire.** Three fields of the simulated state that a melee weapon never used carry
+  it: `recoil` is the move under way or last made, + 1; `cooldown` runs on below zero after a move as the combo
+  window's clock; `reloadT` counts the heavy wind-up up. So `copyPlayerState`, the fingerprint, `writeSelf` and
+  the snapshot are untouched, and `PFLAG.RELOADING` (set from `reloadT > 0`) on a survivor holding nunchucks
+  means "winding up", which is how others see the whirl. A move counts once in `fireCount`; which move it was is
+  not sent - a watching client works it out the way the rules would (`NunchakuTP.swing`). `scripts/test-nunchucks.js`
+  holds all of it, a client predicting it over a laggy link included.
+- **The chain** (`ChainSim`). One handle is in a hand: its end of the chain goes where the hand takes it. The other
+  is a rigid rod on the chain: two point masses at its radius of gyration (so it turns like a stick, not a
+  dumbbell), a rope constraint from the chain's far eye to the hand's (never longer than the chain; slack when it
+  is nearer), capsules for the arms, the head and the trunk, the other handle. The links between are drawn, not simulated: an arc
+  from eye to eye, every link a chord of one circle (so every link is its length exactly, whatever the slack),
+  bowing the way gravity and its own lag take it. A heavy mass on a chain of light particles is what
+  position-based dynamics stretch on, and a chain solved link by link crumples and shakes itself straight when it
+  is thrown slack and snatched taut inside three frames. Fixed steps of 1/960 s whatever the frame, the hand and
+  the colliders moved across them. It decides nothing: a blow lands by the rules above, from the aim.
+- **The moves** (`client/render/models/nunchaku.js`: `NunchakuCore`, one for the first-person hands and one on
+  each survivor seen). A clip is where the driving hand goes and which way its handle points, where the other hand
+  goes, and when the free handle is let go and caught (by the other hand, under the arm, folded against the
+  first). The free handle is the simulation's until a catch draws it in. A hand's arm is worked out from its key:
+  the elbow swings out as far as brings the forearm square to the handle, and the wrist is not allowed to cock
+  further than a wrist does. Clips start from wherever the hands are, so a combo flows; with no clip the hands
+  settle to the stance's rest pose and the catch closes. A pass ends a clip with both hands on it and swaps which
+  hand drives; clips are written right-handed and played mirrored for the left. The heavy wind-up is no clip: the
+  hand leads the handle round (a phase lock on where the simulated handle is), which is the only way a whirl gets
+  up to speed. The rig works in pieces of at most 1/120 s of a frame, so a strike is the same at 30 fps as at 144.
+- **Nothing is put anywhere; everything follows.** A track's value is where a hand is going, and the hand follows
+  it critically damped (the clips are read that much ahead, so a blow stays on its beat): a clip begun in the
+  middle of another, a key where a track changes pace, a stance changing are all a target that moved, never a hand
+  that jumped. The elbow follows where it should be the same way, and which way it bends is carried from frame to
+  frame (a hand passing behind the back has no "toward the pole"); the fist is turned by where the forearm has
+  been heading, so wrist and forearm never chase each other; the wrist's limit is a soft one, and which side of
+  the forearm a handle leans to rolls round it instead of flipping across. A catch draws the handle into the hand
+  (the hand does not go after it) and closes the last of the gap before it counts as held; the give two hands on
+  one chain make for each other comes on with the catch and eases off after the release; a handle just let go is
+  eased out of the hand it is still inside rather than thrown out of it. `scripts/clip/nunchaku-jitter.js`
+  measures all of it - every move and every hand-off between two, both views, 30 to 240 frames a second and uneven
+  frames with hitches - and `scripts/test-nunchucks.js` fails on a shake, a pop or a snap.
+- **Third person** uses the first person's own hand tracks, carried from the eye's space to the chest's
+  (`tpBody`), plus what only an outside view needs: the trunk's twist and lean, the knees, a step (`TP_BODY`).
+- **What it looks and sounds like on the client only**: what a blow met (`nkStrike` in `client/game/nunchaku.js`,
+  the server's reach and arc on what this client has drawn) takes the free handle off it at once, with a hit-stop
+  and a jolt of the view; the sounds (`client/audio/synth-nunchaku.js`) are played off the chain's own motion - a
+  whoosh pitched by the free handle's speed, the chain's rattle when it is pulled taut, wood on wood, the slap of
+  a catch, and what was struck. Others' are heard from where they stand, off their own simulated chains.
+- **Filming it** (`scripts/clip/nunchaku-film.js`, `nunchaku-reel.js`): the page's clock and the game's (`/step`,
+  an admin command: the room worker runs a tick only when asked while it is held) are both stepped, a frame at a
+  time, and `Game.debugCam` with `body: true` draws our own survivor for a camera outside the eye.

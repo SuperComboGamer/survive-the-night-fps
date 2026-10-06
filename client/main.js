@@ -246,7 +246,7 @@ ui.setControls(() => [
   [keysOf('aim'), 'Aim / heavy attack (hold)'],
   [slotKeys(), 'Primary · Pistol · Melee · Throwable · Build · Walkie-talkie'],
   [[...keysOf('lastWeapon'), 'Wheel'], `Last weapon / cycle (build: ${bindPair('buildPrev')} / ${bindPair('buildNext')} cycle structure)`],
-  [keysOf('reload'), 'Reload'],
+  [keysOf('reload'), 'Reload · a flourish, with nunchucks in hand'],
   [keysOf('interact'), 'Interact · hold: search, revive, start the car'],
   ['Melee', 'Hit trees for wood, wrecks for scrap'],
   [keysOf('ping'), 'Ping (go · danger · loot)'],

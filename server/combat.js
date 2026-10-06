@@ -27,6 +27,7 @@ import {
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
 import { perkMods } from '../shared/progress.js';
+import { NK_MOVES, NK } from '../shared/nunchaku.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
 import { deerHitbox } from '../shared/deer.js';
@@ -397,7 +398,10 @@ export class Combat {
     const claws = p.zombie;
     const def = claws ? CLAWS : WEAPONS[ev.weapon];
     if (!def) return;
-    const range = claws ? def.range : def.range * g.diff.melee;
+    // nunchucks: the blow of one move of its moveset (ev.move, ev.hit: shared/nunchaku.js), with that move's numbers
+    const mv = !claws && def.nunchaku ? NK_MOVES[ev.move] : null;
+    if (def.nunchaku && !mv) return;
+    const range = claws ? def.range : (def.range + (mv ? mv.reach : 0)) * g.diff.melee;
     const ox = s.x;
     const oy = s.y + eyeHeight(s);
     const oz = s.z;
@@ -410,7 +414,7 @@ export class Combat {
     let best = null;
     let bestScore = Infinity;
     const heavy = ev.heavy;
-    const maxTargets = ev.weapon === ITEM.BAT || ev.weapon === ITEM.SPIKED_BAT || ev.weapon === ITEM.MACHETE ? 2 : 1;
+    const maxTargets = mv ? mv.targets : ev.weapon === ITEM.BAT || ev.weapon === ITEM.SPIKED_BAT || ev.weapon === ITEM.MACHETE ? 2 : 1;
     const cands = [];
     this.forTargets(p, (e, isPlayer) => {
       const pos = this.histPos(e, t, tmp);
@@ -436,7 +440,7 @@ export class Combat {
       const c = cands[i];
       if (!this.meleeClear(p, c, ox, oy, oz)) continue;
       n++;
-      let dmg = claws ? CLAWS.damage : heavy ? def.altDamage : def.damage;
+      let dmg = claws ? CLAWS.damage : mv ? mv.damage * (s.exhausted ? NK.tired : 1) : heavy ? def.altDamage : def.damage;
       if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : perkMods(p.perks).headshot);
       if (!c.isPlayer && !claws) dmg *= perkMods(p.perks).melee;
       hitAny = true;
@@ -446,7 +450,7 @@ export class Combat {
         g.damagePlayer(c.e, dmg, { kind: KILLER.PLAYER, id: p.id, weapon: claws ? 0 : ev.weapon, headshot: c.head, x: ox, z: oz });
         killed = !c.e.alive;
       } else {
-        killed = this.damageZombie(c.e, dmg, p, { weapon: ev.weapon, headshot: c.head, melee: true, dirX: fx, dirZ: fz, knock: def.knock || 0 });
+        killed = this.damageZombie(c.e, dmg, p, { weapon: ev.weapon, headshot: c.head, melee: true, dirX: fx, dirZ: fz, knock: mv ? mv.knock : def.knock || 0 });
       }
       hitFlags |= 8 | (c.head ? 1 : 0) | (killed ? 2 : 0);
     }
@@ -480,8 +484,9 @@ export class Combat {
         }
       }
     }
-    g.sound(claws ? SOUND.ZPLAYER_GROWL : SOUND.MELEE_SWING, ox, oy, oz, 20, p.id);
-    g.track?.swing(p, hitAny);
+    // (a move of the nunchucks was heard as it started, and is one swing however many blows it lands: Game.handleSimEvent)
+    if (!mv) g.sound(claws ? SOUND.ZPLAYER_GROWL : SOUND.MELEE_SWING, ox, oy, oz, 20, p.id);
+    if (!mv || ev.hit === 0) g.track?.swing(p, hitAny);
   }
 
   // Is a swing's line to a target (a candidate of Combat.melee) open? No swing goes through a wall.

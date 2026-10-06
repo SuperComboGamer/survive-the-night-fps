@@ -13,7 +13,7 @@ export const SURF_NAMES = ['earth', 'wood', 'stone', 'metal', 'glass', 'cloth', 
 // How a weapon strikes. A bullet and a blast are blows too: they leave marks by the same table.
 export const BLOW = { SLASH: 0, CHOP: 1, BLUNT: 2, HAMMER: 3, SHOT: 4, BLAST: 5 };
 export const BLOW_NAMES = ['slash', 'chop', 'blunt', 'hammer', 'shot', 'blast'];
-const BLOW_OF = { [ITEM.KNIFE]: BLOW.SLASH, [ITEM.MACHETE]: BLOW.CHOP, [ITEM.BAT]: BLOW.BLUNT, [ITEM.SPIKED_BAT]: BLOW.BLUNT, [ITEM.HAMMER]: BLOW.HAMMER };
+const BLOW_OF = { [ITEM.KNIFE]: BLOW.SLASH, [ITEM.MACHETE]: BLOW.CHOP, [ITEM.BAT]: BLOW.BLUNT, [ITEM.SPIKED_BAT]: BLOW.BLUNT, [ITEM.NUNCHAKU]: BLOW.BLUNT, [ITEM.HAMMER]: BLOW.HAMMER };
 export const blowOf = (weapon) => BLOW_OF[weapon] ?? BLOW.BLUNT;
 // How hard it lands, 0..1: what a car rocks by, what a crate is nudged by, how far the bits fly. heavy: the slow swing
 const FORCE = [0.16, 0.55, 0.8, 0.62, 0.1, 1];

@@ -25,6 +25,7 @@ import {
   INTERACT_REACH,
   CAR_REACH,
   STAMINA_MAX,
+  BTN,
 } from '../../shared/constants.js';
 import {
   ITEM,
@@ -115,6 +116,7 @@ import { Foliage } from '../render/foliage.js';
 import { Effects } from '../render/effects.js';
 import { Flyover } from '../render/flyover.js';
 import { FixtureUI } from './fixtures.js';
+import { nkSounds, nkStrike, nkRemoteHit } from './nunchaku.js';
 import { RadioClient } from './radio.js';
 import { Lights } from '../render/lights.js';
 import { Atmosphere } from '../render/atmosphere.js';
@@ -203,6 +205,8 @@ const _v2 = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _qv = new THREE.Quaternion();
 const _jetCol = new THREE.Color(0xff9440); // a flamethrower stream's light
+const _nkAcc = new THREE.Vector3();
+const _nkQ = new THREE.Quaternion();
 const _sunRay = { t: -1, col: null, terrain: false };
 const _near = [];
 const _sc = { x: 0, y: 0 };
@@ -302,6 +306,11 @@ export class Game {
     this.stripped = new Set(); // the trees and wrecks with nothing left to give today (harvest.js strippedKey)
     this.discoverT = 0;
     this.debugCam = null;
+    this.selfBody = null; // our own survivor, shown to a debug camera that asks for it (updateSelfBody)
+    this.nkVx = this.nkVz = 0; // (nunchucks: the eye's velocity last frame, and what their sounds remember)
+    this.nkBtn = 0;
+    this.nkSt = {};
+    this.nkSt2 = {};
     this.warm = null; // shader warm-up in progress (prewarm)
     this.warmKey = ''; // quality + map the programs were last warmed for
 
@@ -1130,6 +1139,7 @@ export class Game {
         }
         // (HORDE_HORN / DAWN / PLANE are always played 2D by the audio engine)
         g.audio.play(snd, { x, y, z });
+        if (snd === SOUND.MELEE_HIT) nkRemoteHit(g, x, y, z); // (a survivor's nunchucks come off what they struck)
       },
       shot(ev) {
         g.remoteShot(ev);
@@ -1815,8 +1825,25 @@ export class Game {
           break;
         }
         case 'melee':
+          if (ev.move !== undefined) {
+            // a blow of the nunchucks lands (the move began at 'nk_swing'): what it met here, for the free handle to
+            // come off and the hands to feel - the server says what it hurt
+            const hit = nkStrike(this, s, ev);
+            if (hit) {
+              this.vm.nkHit(hit.kind, hit.nx, hit.ny, hit.nz, hit.power);
+              this.selfBody?.nkHit(hit.kind, hit.power);
+              this.camShake = Math.min(1, (this.camShake || 0) + 0.1 * hit.power);
+            }
+            break;
+          }
           this.vm.melee(!!ev.heavy);
+          this.selfBody?.melee();
           a.playLocal(s.zombie ? 'claw' : ev.heavy ? 'swing_heavy' : 'swing');
+          break;
+        case 'nk_swing':
+          // a move of the nunchucks begins: the hands play it; its sounds are its own motion's (nkSounds)
+          this.vm.nkSwing(ev.move);
+          this.selfBody?.nkSwing(ev.move);
           break;
         case 'throw':
           this.vm.throwItem();
@@ -2470,6 +2497,38 @@ export class Game {
     this.conn.action(ACT.BUILD, this.buildType, gh.x, gh.z, this.buildRot);
   }
 
+  // Our own survivor, as the others see us, drawn from our own predicted state: only while a debug camera asks for it
+  // (debugCam.body) - a look at the third person from outside without a second client (scripts/clip/nunchaku-film.js).
+  // Everything else about a game with one player in it is as it always is: nobody has a body of their own.
+  updateSelfBody(dt, s, rp, time, hspeed) {
+    const want = !!(this.debugCam && this.debugCam.body && this.self.alive);
+    if (!want) {
+      if (this.selfBody) {
+        this.scene.remove(this.selfBody.object);
+        this.selfBody.dispose?.();
+        this.selfBody = null;
+      }
+      return;
+    }
+    let sv = this.selfBody;
+    if (!sv) {
+      sv = this.selfBody = createSurvivor(this.myId || 1, this.players.get(this.myId)?.character ?? -1);
+      sv.object.traverse((m) => m.isMesh && (m.castShadow = true));
+      this.scene.add(sv.object);
+      this.selfBodyItem = -1;
+    }
+    const item = s.zombie ? 0 : currentWeapon(s);
+    if (item !== this.selfBodyItem) {
+      this.selfBodyItem = item;
+      sv.setWeapon(item);
+    }
+    sv.object.position.set(rp.x, rp.y, rp.z);
+    sv.object.rotation.y = this.input.yaw;
+    sv.update(dt, { speed: hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
+    const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
+    if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
+  }
+
   // ---------------------------------------------------------------- UI callbacks
   uiCallbacks() {
     return {
@@ -2637,6 +2696,14 @@ export class Game {
       cam.position.set(rp.x, rp.y + this.eyeH + bobY, rp.z);
       const roll = (s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0) + this.swimK * Math.sin(time * 1.1) * 0.025;
       cam.rotation.set(inp.pitch + this.recoilKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
+      // nunchucks: the view goes with the strikes - a sprung nod, turn and roll from the moves and from what they hit
+      // (ViewModel's rig, as of last frame). "Weapon look sway" off leaves the view still
+      const nk = this.vm.itemId === ITEM.NUNCHAKU && this.settings.weaponSway !== false ? this.vm.nk?.core : null;
+      if (nk) {
+        cam.rotation.x += nk.kick.x;
+        cam.rotation.y += nk.kick.y;
+        cam.rotation.z += nk.kick.z;
+      }
     } else {
       // death cam: slumped on the ground looking up
       cam.position.set(rp.x, rp.y + 0.35, rp.z);
@@ -2645,7 +2712,7 @@ export class Game {
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
     const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !swim; // (hands on a handcar's lever, or swimming: no sights)
-    const baseFov = this.settings.fov || 75;
+    const baseFov = (this.debugCam && this.debugCam.fov) || this.settings.fov || 75; // (a debug camera may bring its own lens)
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
     if (!cine && Math.abs(cam.fov - this.fovCur) > 0.01) {
@@ -2672,13 +2739,35 @@ export class Game {
     if (weaponNow !== this.vmItem) {
       this.vmItem = weaponNow;
       if (weaponNow === -2) this.vm.setItem(0, { claws: true });
-      else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow);
+      else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow, { tuck: self.alive }); // (tuck: nunchucks are folded away first)
     }
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
-    this.vm.update(dt, { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist });
+    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist };
+    if (this.vm.itemId === ITEM.NUNCHAKU) {
+      // (asked of the view itself: for a moment after another weapon is asked for they are still in the hands, being
+      // folded away)
+      // nunchucks: their chain hangs in the world, not in the view - it needs which way the eye looks and how the
+      // eye is being carried (so it swings as the view turns and trails as the body starts and stops); and the
+      // heavy attack's wind-up clock, straight from the predicted state
+      const k = dt > 0 ? 1 / dt : 0;
+      _nkAcc.set((s.vx - this.nkVx) * k, 0, (s.vz - this.nkVz) * k).applyQuaternion(_nkQ.copy(cam.quaternion).invert());
+      this.nkVx = s.vx;
+      this.nkVz = s.vz;
+      vmState.camQ = cam.quaternion;
+      vmState.acc = _nkAcc;
+      vmState.nkWind = weaponNow === ITEM.NUNCHAKU ? s.reloadT : 0;
+      // (the reload key has nothing to reload: it asks for the flourish)
+      if (weaponNow === ITEM.NUNCHAKU && buttons & BTN.RELOAD && !(this.nkBtn & BTN.RELOAD) && self.alive) {
+        if (this.vm.nkFlourish()) this.selfBody?.nkFlourish();
+      }
+      this.nkBtn = buttons;
+    }
+    this.vm.update(dt, vmState);
+    if (this.vm.itemId === ITEM.NUNCHAKU && this.vm.nk) nkSounds(this.audio, this.vm.nk.core, null, this.nkSt, time);
+    this.updateSelfBody(dt, s, rp, time, hspeed);
     if (this.vmMuzzleT > 0) {
       this.vmMuzzleT -= dt;
       if (this.vmMuzzleT <= 0) this.renderer.vmMuzzle.intensity = 0;
