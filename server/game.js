@@ -1230,14 +1230,14 @@ export class Game {
   // The car is away with the team in it: the island is done. The crossing begins - every client plays the cutscene
   // off this phase's clock - and the mainland is built in the next tick (buildMainland), so that what tells the
   // clients has left this thread before a world is generated on it. by: who drove.
-  // night: it left in the night.
-  cross(by, night = false) {
+  // night: it left in the night. paid: the escape's XP is given (not for an admin's /map2: nobody escaped)
+  cross(by, night = false, paid = true) {
     if (this.act !== WORLD.ISLAND || this.phase === PHASE.CROSSING) return;
     this.log('crossing to the mainland');
     this.track.crossed(by, night); // (before the world is cleared: it reads who is alive, and at the car)
     // the escape from the island is paid as it always was: more to whoever was in the car than to those it left
     const car = this.world.car;
-    for (const p of this.players.values()) {
+    for (const p of paid ? this.players.values() : []) {
       const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
       this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
     }
@@ -3806,6 +3806,21 @@ export class Game {
           if (args[1] === 'skip') this.arrive();
           else if (args[1] === 'hold') this.crossing.hold = 2;
         }
+        break;
+      case 'map2':
+      case 'mainland':
+        // /map2: straight to the first day on the mainland, from anywhere on the island (the end screen too: a new
+        // run is begun first), with no cutscene and no XP for the escape. Mid-crossing, the crossing is cut short
+        if (this.act === WORLD.MAINLAND && this.phase !== PHASE.CROSSING) {
+          this.sendChat(p, 0, CHATF.SYSTEM, 'already on the mainland (map 2)');
+          break;
+        }
+        if (this.phase !== PHASE.CROSSING) {
+          if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) this.startGame();
+          this.cross(p, false, false);
+        }
+        this.arrive();
+        this.sendChat(p, 0, CHATF.SYSTEM, `on the mainland (map 2): day ${this.day}`);
         break;
       case 'takeoff':
         // /takeoff [hold | go]: the plane goes, now (the run's last shot, and the victory). hold: the clock that ends
