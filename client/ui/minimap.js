@@ -1,6 +1,6 @@
 // The minimap: the field map in a disc in the top-left corner,
 // turned with you so the way you face is always up, with the field map's markers on it. What matters wherever it is
-// (the car, waypoints, the team, pings, supply drops) waits on the rim, in its direction, while it is out of range;
+// (the car, waypoints, the team, pings, supply drops, a car supply lying loose) waits on the rim, in its direction, while it is out of range;
 // the places a car supply or a schematic is rumoured to be in only show once they are in range.
 // Enemies in range are red dots on a canvas of their own, redrawn every frame (a horde is too many to be DOM markers).
 // The car supplies shrink to a row of icons under it (Objective's slim mode).
@@ -170,6 +170,7 @@ export class Minimap {
       put(zn.x + 8 + n * 6, zn.z + 4, 'schem', itemIcon(rm.item), false);
     }
     for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), false);
+    for (const p of d.parts) put(p.x, p.z, 'part', itemIcon(p.item), true);
     for (const t of d.teamWays) put(t.x, t.z, 'teamway', glyph('flag'), true);
     if (d.waypoint) put(d.waypoint.x, d.waypoint.z, 'way', glyph('flag'), true);
     for (const cr of d.crates) put(cr.x, cr.z, 'crate', glyph('hazard'), true);

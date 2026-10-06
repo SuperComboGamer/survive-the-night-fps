@@ -295,6 +295,10 @@ const RETURN_KIT = { mag: WEAPONS[ITEM.PISTOL].mag, ammo: 0, items: [[ITEM.BANDA
 
 const randomSeed = () => (Math.random() * 0x7fffffff) | 0;
 
+// a car supply on the ground that is not in its hiding place (that one is only rumoured): dropped, or where its
+// carrier fell
+const looseSupply = (e) => e.permanent && e.hint < 0 && ITEM_DEFS[e.item]?.cat === 'part';
+
 export class Game {
   // opts.restore: a game the last server saved as it went down (handoff.js envelope), to carry on from where it was.
   // One this build cannot read throws a HandoffError, and nothing is made.
@@ -2030,6 +2034,7 @@ export class Game {
     };
     if (!this.spawnEntity(e)) return null;
     this.items.push(e);
+    if (looseSupply(e)) this.globalDirty = true; // (the field map marks it: writeGlobal)
     // the ceiling on loose drops (MAX_DROPS): the oldest one makes room
     if (e.drop && ++this.drops > this.maxDrops) {
       let oldest = e;
@@ -2051,6 +2056,7 @@ export class Game {
       this.supplyFound |= 1 << e.hint;
       this.globalDirty = true;
     }
+    if (looseSupply(e) && !e.removed) this.globalDirty = true;
     this._listRemove(this.items, e);
     this.removeEntity(e);
   }
@@ -4645,6 +4651,18 @@ export class Game {
       benches++;
     }
     w.patch8(at, benches);
+    // car supplies lying loose (dropped, or where whoever carried one died), for the field map: items only replicate
+    // inside AOI_ITEM_RADIUS, and one that never despawns must not be lost for want of knowing where it went down
+    const pat = w.reserve8();
+    let parts = 0;
+    for (const e of this.items) {
+      if (!looseSupply(e) || parts === 255) continue;
+      w.u8(e.item);
+      w.i16(qpos(e.x));
+      w.i16(qpos(e.z));
+      parts++;
+    }
+    w.patch8(pat, parts);
   }
 
   // Self state. The simulated part only goes out when the client has to rebase its prediction on it (SELF.SYNC):

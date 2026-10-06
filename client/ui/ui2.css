@@ -634,6 +634,16 @@
 .stn-ui .mmap-mk.schem {
   color: #234f7a;
 }
+/* a car supply lying loose: its icon in a ring, where a rumour's is bare */
+.stn-ui .mmap-mk.part {
+  --s: max(14px, calc(18 * var(--u)));
+  padding: max(2px, calc(2.5 * var(--u)));
+  border-radius: 50%;
+  color: #a34a00;
+  background: rgba(232, 220, 192, 0.92);
+  box-shadow: 0 0 0 max(1.5px, calc(2 * var(--u))) #a34a00;
+  filter: none;
+}
 .stn-ui .mmap-mk.ping {
   color: #3e6a14;
 }
@@ -1695,6 +1705,27 @@
 .stn-ui .mm.schem {
   color: #234f7a;
 }
+.stn-ui .mm.part {
+  color: #a34a00;
+  z-index: 2;
+}
+.stn-ui .mm.part .mm-ico {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: max(20px, calc(26 * var(--u)));
+  height: max(20px, calc(26 * var(--u)));
+  border-radius: 50%;
+  background: rgba(232, 220, 192, 0.92);
+  box-shadow: 0 0 0 max(1.5px, calc(2 * var(--u))) #a34a00;
+}
+.stn-ui .mm.part .mm-ico svg {
+  width: 72%;
+  height: 72%;
+  min-width: 0;
+  min-height: 0;
+  filter: none;
+}
 .stn-ui .mm.schem .mm-ico svg {
   width: auto;
   height: calc(14 * var(--u));
@@ -1862,6 +1893,21 @@
 }
 .stn-ui .lg.hint {
   color: var(--amber);
+}
+.stn-ui .lg.part {
+  color: var(--amber);
+}
+.stn-ui .lg.part .lg-ico {
+  display: flex;
+  padding: calc(1.5 * var(--u));
+  border-radius: 50%;
+  box-shadow: 0 0 0 max(1px, calc(1.5 * var(--u))) var(--amber);
+}
+.stn-ui .lg.part .lg-ico svg {
+  width: calc(12 * var(--u));
+  height: calc(12 * var(--u));
+  min-width: 9px;
+  min-height: 9px;
 }
 .stn-ui .lg.schem {
   color: #8fb4dc;
