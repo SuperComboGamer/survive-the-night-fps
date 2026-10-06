@@ -28,7 +28,7 @@ const MAT_SURF = {
   rock: SURF.STONE, roadpaint: SURF.STONE, gravel: SURF.STONE, lino: SURF.STONE, ceiling: SURF.STONE, roofing: SURF.STONE,
   tin: SURF.METAL, tin_rust: SURF.METAL, rust: SURF.METAL, metal: SURF.METAL, iron: SURF.METAL, steel: SURF.METAL, chrome: SURF.METAL,
   olive: SURF.METAL, paint: SURF.METAL, dark: SURF.METAL, taillight: SURF.METAL, emissive_red: SURF.METAL,
-  glass: SURF.GLASS,
+  glass: SURF.GLASS, carglass: SURF.GLASS, canopy: SURF.GLASS, cabin: SURF.CLOTH, cabin_fine: SURF.CLOTH,
   canvas: SURF.CLOTH, canvas_mil: SURF.CLOTH, cloth: SURF.CLOTH, burlap: SURF.CLOTH, rope: SURF.CLOTH,
   earth: SURF.EARTH, dirt: SURF.EARTH, ash: SURF.EARTH,
   // what a prop's own model is made of (a blow on a prop is judged by the triangle it struck: render/wrecks.js)
@@ -105,8 +105,13 @@ export const MARK = {
   SLASH_WOOD: 0, GOUGE_WOOD: 1, BRUISE_WOOD: 2, SCRATCH_STONE: 3, CHIP_STONE: 4, SCRAPE_METAL: 5, DENT_METAL: 6, CUT_EARTH: 7,
   DIVOT_EARTH: 8, TEAR_CLOTH: 9, CRACK_GLASS: 10, HOLE: 11, SCORCH: 12, STAB: 13, GASH_METAL: 14, SCUFF_RUBBER: 15,
   HOLE_WOOD: 16, HOLE_STONE: 17, HOLE_METAL: 18, HOLE_GLASS: 19, SHARDS: 20, CRACK_PANE: 21, HOLE_BIG: 22, PITS: 23,
+  REMNANT: 24, // what stays in a frame when its pane has gone: teeth of glass round the edge (laid over the whole opening)
 };
-export const MARK_COLS = 4, MARK_ROWS = 6;
+// the materials a pane is made of: a building's and a lamp's, a vehicle's (see-through), an aircraft's canopy
+export const GLASS_MATS = new Set(['glass', 'carglass', 'canopy']);
+// ...and what is inside a vehicle, behind its glass
+export const CABIN_MATS = new Set(['cabin', 'cabin_fine']);
+export const MARK_COLS = 4, MARK_ROWS = 7;
 const M = (cell, w, h, along = true) => ({ cell, w, h, along });
 // [surface][blow]: slash, chop, blunt, hammer, shot, blast
 const MARKS = [

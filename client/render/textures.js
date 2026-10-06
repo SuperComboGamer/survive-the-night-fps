@@ -24,7 +24,7 @@ let maxAniso = 4;
 // world size (meters) covered by one repeat of each surface texture (used by materials.js)
 export const TEXTURE_WORLD_SIZE = {
   planks: 2, barn: 2, clapboard: 2, logwall: 2, concrete: 3, brick: 2, shingles: 2, tin: 2, rust: 1.5, chrome: 1,
-  metal: 1.5, stone: 2, dockwood: 2, glass: 2, sash: 1, door: [1, 2.1], hay: 1, canvas: 2, olive: 2, wood: 1,
+  metal: 1.5, stone: 2, dockwood: 2, glass: 2, carglass: 2, cabin: 1, sash: 1, door: [1, 2.1], hay: 1, canvas: 2, olive: 2, wood: 1,
   bark: [1, 2], bark_birch: [1, 2], bark_dead: [1, 2], rock: 2, tire: 1, paint: 1.5, carpaint: 2, cloth: 0.6,
   burlap: 0.6, bone: 0.3, charred: 1, skin: 0.6, mattress: 1, plastic: 1, pumpkin: 1, ash: 1, cardboard: 0.6,
   ground_grass: 4, ground_dirt: 4, ground_forest: 4, ground_road: 4, ground_asphalt: 4, ground_mud: 4, ground_sand: 4,
@@ -1196,6 +1196,94 @@ GEN.glass = () => {
   ctx.fill();
   drawCracks(ctx, W, W, r, 3, { len: [120, 300], width: [0.6, 1], col: 'rgba(170,180,182,0.42)', branch: 0.4, wander: 0.22, step: 7 });
   return { canvas: c };
+};
+
+// A vehicle's window, 2 m (materials.js `carglass`: see-through, so this is only what lies ON the glass). RGB: the
+// film - road dust, and the pale lines of cracks; alpha: how much of it there is at that spot (0: clean glass).
+// The shader turns the film up or down by the pane's own dirt, so one tile is a clean screen and a filthy one; each
+// pane shows a different part of it (the builder shifts its UVs), and the starred impact falls on a few.
+GEN.carglass = () => {
+  const W = 512;
+  const r = rngf(1741);
+  const a = fbm(W, W, 4, 4, 5, 1741), b = fbm(W, W, 22, 22, 3, 1742), vs = fbm(W, W, 40, 2, 4, 1743), wipe = fbm(W, W, 3, 9, 3, 1744);
+  // cracks, drawn white on black and read back as a mask (under node there is no canvas: no cracks, which no tool needs)
+  const cc = mkCanvas(W, W);
+  const ctx = ctx2d(cc);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, W);
+  ctx.strokeStyle = '#fff';
+  ctx.lineCap = 'round';
+  const star = (cx, cy, rays, len, ring) => {
+    const pts = [];
+    for (let k = 0; k < rays; k++) {
+      let ang = (k / rays) * Math.PI * 2 + r() * 0.5, x = cx, y = cy;
+      const ray = [[x, y]];
+      const L = len * (0.4 + r() * 0.8);
+      for (let s = 0; s < L; s += 6) {
+        ang += (r() - 0.5) * 0.3;
+        x += Math.cos(ang) * 6;
+        y += Math.sin(ang) * 6;
+        ray.push([x, y]);
+      }
+      pts.push(ray);
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ray.forEach(([px, py], j) => (j ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
+      ctx.stroke();
+    }
+    ctx.lineWidth = 0.8;
+    for (const ri of ring) {
+      ctx.beginPath();
+      for (let k = 0; k <= rays; k++) {
+        const ray = pts[k % rays];
+        const q = ray[Math.min(ri, ray.length - 1)];
+        if (k === 0) ctx.moveTo(q[0], q[1]);
+        else ctx.lineTo(q[0] + (r() - 0.5) * 3, q[1] + (r() - 0.5) * 3);
+      }
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3, 0, 7);
+    ctx.fill();
+  };
+  star(130, 350, 12, 90, [2, 4, 7]);
+  star(400, 120, 8, 46, [2, 3]);
+  drawCracks(ctx, W, W, r, 2, { len: [140, 300], width: [0.9, 1.3], col: 'rgba(255,255,255,1)', branch: 0.5, wander: 0.2, step: 7 });
+  const mask = canvasToImg(cc).d;
+  const img = newImg(W, W);
+  eachPx(img, (x, y, i, d) => {
+    const p = i >> 2;
+    // dust in broad patches, run down in streaks by the rain, wiped thin in places
+    const patch = sstep(0.34, 0.86, a[p] * 0.62 + vs[p] * 0.38);
+    const thin = sstep(0.55, 0.8, wipe[p]);
+    const film = clamp(patch * (0.9 - 0.5 * thin) + (b[p] - 0.5) * 0.22 + 0.06);
+    const crack = mask[i] / 255;
+    const g = 70 + b[p] * 36;
+    d[i] = lerp(g * 1.08, 226, crack);
+    d[i + 1] = lerp(g, 234, crack);
+    d[i + 2] = lerp(g * 0.84, 236, crack);
+    d[i + 3] = Math.max(film * 0.86, crack) * 255;
+  });
+  return { ...img };
+};
+
+// What a vehicle is lined and upholstered with (materials.js `cabin`; the colour is the vertex's): a close weave,
+// worn in patches and stained, nothing in it loud enough to read as a pattern on a wall.
+GEN.cabin = () => {
+  const W = 256;
+  const a = fbm(W, W, 3, 3, 4, 1751), b = fbm(W, W, 64, 64, 2, 1752), c = fbm(W, W, 8, 2, 3, 1753);
+  const img = newImg(W, W);
+  eachPx(img, (x, y, i, d) => {
+    const p = i >> 2;
+    const weave = ((x + y) & 1 ? 1 : -1) * 3 + (b[p] - 0.5) * 16;
+    const worn = sstep(0.55, 0.85, a[p]) * 22 - sstep(0.6, 0.9, c[p]) * 18;
+    const v = clamp(206 + weave + worn + (a[p] - 0.5) * 20, 0, 255);
+    d[i] = v;
+    d[i + 1] = v * 0.985;
+    d[i + 2] = v * 0.96;
+    d[i + 3] = 255;
+  });
+  return { ...img };
 };
 
 GEN.door = () => {

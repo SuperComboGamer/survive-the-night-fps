@@ -15,7 +15,7 @@ import { getTexture, getNormalMap, TEXTURE_WORLD_SIZE, atlasUV } from './texture
 /** Legacy wind clock (vegetation now sways with the global uWind uniform, see globals.js). */
 export const vegetationTime = { value: 0 };
 
-export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'aircraft', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds', 'plaster', 'lino', 'ceiling', 'floorboards']);
+export const VERTEX_COLOR_MATERIALS = new Set(['wood', 'paint', 'carpaint', 'aircraft', 'cloth', 'pine', 'leaves', 'bush', 'fern', 'grass', 'weeds', 'plaster', 'lino', 'ceiling', 'floorboards', 'carglass', 'canopy', 'cabin', 'cabin_fine']);
 
 function tileTex(name, tile) {
   const t = tile ?? TEXTURE_WORLD_SIZE[name] ?? 1;
@@ -471,6 +471,64 @@ export function vegFarMaterial(mat) {
   return m;
 }
 
+// ================================================================== a vehicle's glass
+// Glass one can see through (the windows of every vehicle: models/cabin.js), and the same glass made opaque for a
+// canopy that has no cabin behind it (an aircraft's, built as a closed skin). The pane itself is a dark tint; what
+// lies on it - dust, the runs the rain left, cracks - is the `carglass` tile, turned up or down by the pane; the sky
+// is mirrored in it, most at a glancing angle. A pane's vertex colour is not a colour but what it is like:
+//   r: how dirty (0 wiped clean .. 1 caked), g: its tint (0 green-grey .. 1 bronze), b: blood smeared on it.
+// See-through, it is drawn without sorting, by one mesh, before everything else that is see-through (staticworld.js
+// `unsorted`): a pane is a thin dark film, and two of them come out the same whichever is drawn first.
+const GLASS_FRAG_PARS = /* glsl */ `
+uniform vec4 uGlass; // x: the bare pane's opacity, y: the film's, z: the sky's mirror, w: 1 a canopy (opaque)
+`;
+const GLASS_FRAG_COLOR = /* glsl */ `
+float glassSheen = 0.0;
+{
+  float film = sampledDiffuseColor.a;
+  float dirt = vColor.r, blood = vColor.b;
+  // (a crack - the tile's brightest, fullest alpha - shows on the cleanest pane)
+  // (blood: smeared where a hand or a head went down the glass - the film's own patches, and dark)
+  float smear = blood * smoothstep( 0.2, 0.6, film );
+  float cover = clamp( film * ( 0.1 + 1.2 * dirt ) + smoothstep( 0.9, 1.0, film ) + smear * 0.75, 0.0, 1.0 );
+  vec3 tint = mix( vec3( 0.022, 0.034, 0.036 ), vec3( 0.046, 0.036, 0.022 ), vColor.g );
+  vec3 grime = mix( sampledDiffuseColor.rgb, vec3( 0.2, 0.012, 0.01 ) * ( 0.5 + sampledDiffuseColor.g ), clamp( smear * 1.6, 0.0, 1.0 ) );
+  // (a canopy: there is nothing behind it to see, so what would be the cockpit is the tint, a shade lighter)
+  tint += uGlass.w * vec3( 0.02, 0.028, 0.032 );
+  diffuseColor.rgb = mix( tint, grime, cover );
+  diffuseColor.a = mix( mix( uGlass.x, uGlass.y, cover ), 1.0, uGlass.w );
+  glassSheen = 1.0 - cover * 0.8;
+}
+`;
+const GLASS_FRAG_SHEEN = /* glsl */ `
+#if NUM_HEMI_LIGHTS > 0
+{
+  vec3 vd = normalize( vViewPosition );
+  float fres = pow( 1.0 - saturate( abs( dot( nonPerturbedNormal, vd ) ) ), 3.0 );
+  vec3 sky = getHemisphereLightIrradiance( hemisphereLights[ 0 ], reflect( -vd, nonPerturbedNormal ) ) * RECIPROCAL_PI;
+  float k = uGlass.z * glassSheen * ( 0.1 + 0.9 * fres );
+  // (blended over what is behind it by its alpha: the mirrored sky is made up for that, and the pane more solid there)
+  outgoingLight += sky * k / max( diffuseColor.a, 0.25 );
+  diffuseColor.a = min( 1.0, diffuseColor.a + fres * 0.45 * glassSheen * ( 1.0 - uGlass.w ) );
+}
+#endif
+`;
+function glassPatch(mat, canopy) {
+  const uGlass = { value: new THREE.Vector4(0.42, 0.9, canopy ? 0.6 : 1.0, canopy ? 1 : 0) };
+  mat.userData.uGlass = uGlass;
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uGlass = uGlass;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+${GLASS_FRAG_PARS}`)
+      .replace('#include <color_fragment>', GLASS_FRAG_COLOR)
+      .replace('#include <opaque_fragment>', `${GLASS_FRAG_SHEEN}
+#include <opaque_fragment>`);
+  };
+  mat.customProgramCacheKey = () => 'carglass';
+  return mat;
+}
+
 const DEFS = {
   // ------------------------------------------------ building surfaces (no vertex colours, meter UVs)
   planks: () => surface('planks'),
@@ -487,6 +545,22 @@ const DEFS = {
   stone: () => surface('stone'),
   dockwood: () => surface('dockwood'),
   glass: () => surface('glass'),
+  // a vehicle's windows (see glassPatch above). unsorted: one mesh for all of it in the static world, never sorted
+  carglass: () => {
+    const m = noShadow(glassPatch(lambert({ map: tileTex('carglass'), vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }), false));
+    m.userData.unsorted = true;
+    return m;
+  },
+  canopy: () => glassPatch(lambert({ map: tileTex('carglass'), vertexColors: true }), true),
+  // what is inside a vehicle: seats, the dash, the lining, whatever was left in it - every colour of it the vertex's.
+  // cabin_fine is the same thing for what is small (the wheel, the mirror, the bones): the static world draws it as
+  // `cabin` but from near only, and without a shadow (staticworld.js)
+  cabin: () => lambert({ map: tileTex('cabin'), vertexColors: true }),
+  cabin_fine: () => {
+    const m = lambert({ map: tileTex('cabin'), vertexColors: true });
+    m.userData.fineOf = 'cabin';
+    return m;
+  },
   door: () => lambert({ map: tileTex('door') }),
   hay: () => lambert({ map: tileTex('hay') }),
   canvas: () => lambert({ map: tileTex('canvas'), side: THREE.DoubleSide }),

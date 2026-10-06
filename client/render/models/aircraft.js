@@ -27,6 +27,10 @@ const norm = (a) => {
 };
 const tint = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
 
+// An aircraft's panes are `canopy` (materials.js): glass with nothing to see behind it - the fuselage is a closed
+// skin - so it is the sky in it and the dust on it. Its vertex colour is its look: [how dirty, its tint, blood].
+const CANOPY = [0.42, 0.15, 0];
+
 // ------------------------------------------------------------------ geometry
 // Triangles into the builder. o.normals: one for each vertex (a patch takes its skin's); otherwise every corner
 // gets the mean of the faces round it that lie within o.crease degrees of its own, so that a skin is smooth and an
@@ -58,7 +62,7 @@ function emit(b, mat, verts, tris, o = {}) {
     });
   }
   const pos = [], nor = [], uv = [], col = [];
-  const base = o.c || [1, 1, 1];
+  const base = o.c || (mat === 'canopy' ? CANOPY : [1, 1, 1]);
   live.forEach((t, f) => {
     for (const i of t) {
       const p = verts[i];
@@ -528,16 +532,16 @@ function twinFuselage(b) {
   skinPatch(b, 'aircraft', FUS, onTh([[-5.25, PI - 0.42], [-3.93, PI - 0.6], [-3.93, PI + 0.6], [-5.25, PI + 0.42]]), 5, 6, { c: BLACK, out: 0.008 });
   skinPatch(b, 'aircraft', FUS, onTh([[-3.92, PI - 0.78], [-3.2, PI - 0.74], [-3.2, PI + 0.74], [-3.92, PI + 0.78]]), 3, 8, { c: DULL, out: 0.012 });
   for (const sx of [-1, 1]) {
-    skinPatch(b, 'glass', FUS, onTh([[-3.87, PI - sx * 0.05], [-3.87, PI - sx * 0.7], [-3.25, PI - sx * 0.66], [-3.25, PI - sx * 0.045]]), 3, 3, { out: 0.018 });
+    skinPatch(b, 'canopy', FUS, onTh([[-3.87, PI - sx * 0.05], [-3.87, PI - sx * 0.7], [-3.25, PI - sx * 0.66], [-3.25, PI - sx * 0.045]]), 3, 3, { out: 0.018 });
     b.cylBetween('rubber', FUS.at(-3.9, PI - sx * 0.2, 0.02), FUS.at(-3.52, PI - sx * 0.42, 0.028), 0.007, 0.007, 4); // its wiper
     // the cockpit's side window, its front edge raked with the windscreen's post
     const side = [[-3.6, 2.06], [-2.78, 2.06], [-2.78, 2.4], [-3.2, 2.4]];
     skinShape(b, 'aircraft', FUS, sx, [[-3.69, 2.02], [-2.73, 2.02], [-2.73, 2.44], [-3.19, 2.44]], { c: DULL, out: 0.01 });
-    skinShape(b, 'glass', FUS, sx, side);
+    skinShape(b, 'canopy', FUS, sx, side);
     for (const w of CABIN_WIN) {
       const mid = [(w[0][0] + w[6][0]) / 2, 2.2];
       skinShape(b, 'aircraft', FUS, sx, w.map(([z, y]) => [mid[0] + (z - mid[0]) * 1.14, mid[1] + (y - mid[1]) * 1.16]), { c: DULL, out: 0.01 });
-      skinShape(b, 'glass', FUS, sx, w);
+      skinShape(b, 'canopy', FUS, sx, w);
     }
     // the cheat line: from the nose's point back along under the windows to the tail, a thin line under it
     const line = [];
@@ -813,7 +817,7 @@ const PLANE_BITS = {
     outlineSide(b, 'aircraft', FUS, -1, DOOR.Z0, DOOR.Z1, DOOR.Y0, DOOR.Y1, 0.016, { c: DIRT, out: 0.007 });
     const w = roundRect(DOOR.Z0 + 0.13, DOOR.Z1 - 0.13, 2.02, 2.38, 0.08);
     skinShape(b, 'aircraft', FUS, -1, w.map(([z, y]) => [1.19 + (z - 1.19) * 1.16, 2.2 + (y - 2.2) * 1.16]), { c: DULL, out: 0.01 });
-    skinShape(b, 'glass', FUS, -1, w);
+    skinShape(b, 'canopy', FUS, -1, w);
     b.box('steel', 0.014, 0.03, 0.11, { p: [FUS.at(1.0, -FUS.thAt(1.0, 1.82), 0.008)[0], 1.82, 1.0] });
   },
   wheelFlat: (b) => twinFoot(b, -1, 0.085),
@@ -1013,15 +1017,15 @@ function lightPlane(b, r, v) {
   b.cylBetween('rust', [0.2, 0.84, -2.78], [0.22, 0.64, -2.64], 0.028, 0.028, 6); // the exhaust
   // the windscreen, broken: the dark of the cabin in its frame, what glass is left in the corners
   skinPatch(b, 'dark', LIGHT, onTh([[-2.42, PI - 1.0], [-1.8, PI - 0.86], [-1.8, PI + 0.86], [-2.42, PI + 1.0]]), 3, 8, { out: 0.01 });
-  skinPatch(b, 'glass', LIGHT, onTh([[-2.42, PI + 1.0], [-2.42, PI + 0.25], [-2.2, PI + 0.5], [-1.95, PI + 0.9]]), 2, 2, { out: 0.016 });
-  skinPatch(b, 'glass', LIGHT, onTh([[-2.42, PI - 1.0], [-2.42, PI - 0.62], [-2.3, PI - 0.72], [-2.15, PI - 0.96]]), 1, 1, { out: 0.016 });
-  skinPatch(b, 'glass', LIGHT, onTh([[-0.12, PI - 0.62], [0.46, PI - 0.6], [0.46, PI + 0.6], [-0.12, PI + 0.62]]), 2, 4, { out: 0.014 }); // the back window
+  skinPatch(b, 'canopy', LIGHT, onTh([[-2.42, PI + 1.0], [-2.42, PI + 0.25], [-2.2, PI + 0.5], [-1.95, PI + 0.9]]), 2, 2, { out: 0.016 });
+  skinPatch(b, 'canopy', LIGHT, onTh([[-2.42, PI - 1.0], [-2.42, PI - 0.62], [-2.3, PI - 0.72], [-2.15, PI - 0.96]]), 1, 1, { out: 0.016 });
+  skinPatch(b, 'canopy', LIGHT, onTh([[-0.12, PI - 0.62], [0.46, PI - 0.6], [0.46, PI + 0.6], [-0.12, PI + 0.62]]), 2, 4, { out: 0.014 }); // the back window
   for (const sx of [-1, 1]) {
     // the door's window, the one behind it, the door's outline and its handle
     for (const w of [[[-2.12, 1.56], [-1.05, 1.56], [-1.05, 1.9], [-1.74, 1.9]], [[-0.9, 1.56], [-0.2, 1.6], [-0.3, 1.9], [-0.9, 1.9]]]) {
       const c = [0, 1].map((a) => w.reduce((s, p) => s + p[a] / w.length, 0));
       skinShape(b, 'aircraft', LIGHT, sx, w.map(([z, y]) => [c[0] + (z - c[0]) * 1.1, c[1] + (y - c[1]) * 1.16]), { c: DULL, out: 0.008, fan: true });
-      skinShape(b, 'glass', LIGHT, sx, w, { out: 0.014, fan: true });
+      skinShape(b, 'canopy', LIGHT, sx, w, { out: 0.014, fan: true });
     }
     for (const z of [-2.3, -0.98]) skinPatch(b, 'aircraft', LIGHT, onSide(LIGHT, sx, [[z - 0.006, 0.78], [z + 0.006, 0.78], [z + 0.006, 1.5], [z - 0.006, 1.5]]), 1, 4, { c: DIRT, out: 0.006 });
     band(b, 'aircraft', LIGHT, sx, [[-2.3, 0.774, 0.786], [-1.6, 0.774, 0.786], [-0.98, 0.774, 0.786]], { c: DIRT, out: 0.006 });

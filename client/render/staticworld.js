@@ -28,6 +28,9 @@ export { TIER };
 const TIER_DIST = [0, 150, 90, 55];
 // A material that casts no shadow at all (userData.noShadow: stains and lettering laid on a wall).
 const NOSHADOW = 4;
+// A see-through material that is not sorted (userData.unsorted) is drawn before every other see-through thing: the
+// decals and the marks (render order 0 and 1), the mist, the smoke.
+export const UNSORTED_ORDER = -1;
 
 // Which faces of a material the depth pass draws into a shadow map (three's rule: the back faces of a
 // one-sided material, both of a two-sided one), or CUTOUT when its texture punches holes in the shadow (chain
@@ -311,6 +314,11 @@ export class StaticWorld {
     // wreck that is taken apart, a window pane that can be shot out
     const add = (x, z, mat, tpl, m, tint = null, wuv = null, uvo = null, tier = 0, lift = null) => {
       let flat = null;
+      // (what is small inside a vehicle - the wheel, the mirror, what was left on a seat: its material's, from near)
+      if (mat.userData.fineOf) {
+        mat = getMaterial(mat.userData.fineOf);
+        tier = Math.max(tier, TIER.DETAIL);
+      }
       if (plain(mat)) {
         flat = mat.color;
         mat = FLAT;
@@ -517,7 +525,9 @@ export class StaticWorld {
       // a see-through material is sorted by three among everything else that is see-through (smoke, water, the
       // other panes), each mesh by where it is: its lists stay meshes of their own, one per chunk, as before
       // (glass, chain link, blood and grime laid on a surface; there are few)
-      m.legacy = m.mat.transparent === true;
+      // ...but not one that asks for no sorting (userData.unsorted: the windows of the vehicles, which are a great
+      // many): that is one mesh like any other, drawn before everything else that is see-through
+      m.legacy = m.mat.transparent === true && !m.mat.userData.unsorted;
       if (m.legacy) continue;
       if (!page || (page.verts > 0 && page.verts + m.verts > PAGE_VERTS)) pages.push((page = { verts: 0, mats: [] }));
       m.base = page.verts;
@@ -655,6 +665,7 @@ export class StaticWorld {
       const mesh = new MultiMesh(g, mat, m.runs, { casts: (run) => run.side === CUTOUT });
       mesh.castShadow = m.runs.some((run) => run.side === CUTOUT);
       mesh.receiveShadow = true;
+      if (mat.userData.unsorted) mesh.renderOrder = UNSORTED_ORDER;
       this.group.add(mesh);
       this.multi.push(mesh);
       m.mesh = mesh;
@@ -735,6 +746,7 @@ export class StaticWorld {
     const push = (mat0, geo, gi, m) => {
       let mat = staticSurface(mat0);
       let flat = null;
+      if (mat.userData.fineOf) mat = getMaterial(mat.userData.fineOf);
       if (this.flat && plainMaterial(mat)) {
         flat = mat.color;
         mat = this.flat;

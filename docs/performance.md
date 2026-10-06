@@ -32,6 +32,11 @@ Measured on an RTX 3070 at 1920 x 1080, High, before the pass (`perf:profile`, `
   maps from a hundred eyes. See-through materials (glass, chain link, blood, grime) stay meshes of their own, a chunk
   each, because three sorts those among everything else that is see-through. The terrain and the railway are drawn
   the same way. Vertex data is let go of once it is on the card (the mainland's was 600 MB of typed arrays).
+- **The windows of the vehicles are one draw call, and their insides another** (ARCHITECTURE.md, "Glass one sees
+  through"). A see-through material that asks for no sorting (`userData.unsorted`: `carglass`) is a `MultiMesh` like
+  an opaque one, drawn first among what is see-through: the mainland has some seven hundred vehicles, and a mesh a
+  chunk for their glass would be a draw call a chunk in sight. Everything inside every vehicle is one material
+  (`cabin`), its small things in the tier drawn from 90 m and out of the shadow maps.
 - **The dead are a crowd** (`render/crowd.js`). Every zombie of one body (a type, a variant, the near or far copy) is
   one instanced draw call; the bones of all of them are rows of one float texture uploaded once a frame; their
   objects are out of the scene graph. A zombie keeps its own pose and the crowd asks for the bones of those it

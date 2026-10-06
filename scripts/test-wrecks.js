@@ -18,7 +18,7 @@ import { ITEM, EVT, WEAPONS, STRUCT } from '../shared/defs.js';
 import { PROPS } from '../shared/props.js';
 import { COL, makeBox, raycastWorld } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
-import { SURF, BLOW, MARK, SURF_NAMES, BLOW_NAMES, surfaceOfMat, surfaceOfProp, surfaceOf, markFor, shotMark, shotScale, soundFor, blowOf, blowForce, bitsFor, STRIKE_SOUNDS, LIGHT_PROPS, GRAZE_MAX } from '../shared/surfaces.js';
+import { SURF, BLOW, MARK, SURF_NAMES, BLOW_NAMES, surfaceOfMat, surfaceOfProp, surfaceOf, markFor, shotMark, shotScale, soundFor, blowOf, blowForce, bitsFor, STRIKE_SOUNDS, LIGHT_PROPS, GRAZE_MAX, MARK_COLS, MARK_ROWS, GLASS_MATS, CABIN_MATS } from '../shared/surfaces.js';
 import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckColAt } from '../shared/wrecks.js';
 import { saveGame } from '../server/gamestate.js';
 import { randomUUID } from 'node:crypto';
@@ -502,7 +502,7 @@ const { Effects } = await import('../client/render/effects.js').catch(() => ({ E
   sounds.length = 0;
   im.strike(2, BLOW.SLASH, false, wood.x, wood.oy, wood.z, wood.dx, 0, wood.dz);
   const i0 = (P.next + MARK_RING - 1) % MARK_RING;
-  const cellOf = (i) => Math.round(P.uv[i * 8] * 4) + Math.round((1 - P.uv[i * 8 + 5]) * 6) * 4;
+  const cellOf = (i) => Math.round(P.uv[i * 8] * MARK_COLS) + Math.round((1 - P.uv[i * 8 + 5]) * MARK_ROWS) * MARK_COLS;
   const nOf = (i) => [P.nrm[i * 12], P.nrm[i * 12 + 1], P.nrm[i * 12 + 2]];
   check('a knife on a wooden wall: one mark, a slash in wood, on the wall\'s face, and it sounds like it', P.count === 1 && cellOf(i0) === MARK.SLASH_WOOD && Math.abs(nOf(i0)[0] + wood.dx) < 1e-6 && Math.abs(nOf(i0)[2] + wood.dz) < 1e-6 && sounds.join() === 'wood_slash' && im.marks.mesh.visible === false, `${P.count} marks, cell ${cellOf(i0)}, ${sounds.join()}`);
   im.update(0.016);
@@ -703,6 +703,153 @@ const { Effects } = await import('../client/render/effects.js').catch(() => ({ E
   g.camera.position.set(pr.x + 20, 0, pr.z);
   for (let i = 0; i < 40; i++) im.update(1 / 60);
   check('a wreck on record far off costs nothing until the eye comes near', farBuilt === 0 && im.wrecks.live.size === 1 && im.wrecks.active.size === 0);
+
+  // ---- a vehicle's glass is seen through, and there is a cabin behind it
+  im.regrown();
+  P.clear();
+  const { getMaterial } = await import('../client/render/materials.js');
+  const { createProp } = await import('../client/render/models/props.js');
+  const { rayPieces } = await import('../client/render/wreckgeo.js');
+  const glassMat = getMaterial('carglass'), cabinMat = getMaterial('cabin');
+  const gm = sw.multi.find((m) => m.material === glassMat), cm = sw.multi.find((m) => m.material === cabinMat);
+  check('a vehicle\'s glass is see-through, and all of it in the valley is one mesh (not one a chunk), drawn before everything else that is see-through and casting no shadow', glassMat.transparent && !glassMat.depthWrite && glassMat.userData.unsorted && !!gm && gm.renderOrder < 0 && !gm.castShadow && !sw.single.some((s2) => s2.mesh.material === glassMat) && sw.multi.filter((m) => m.material === glassMat).length === 1);
+  check('what is inside the vehicles is one mesh too: the small things in it are the same material, drawn from near only and without a shadow', !!cm && sw.multi.filter((m) => m.material === cabinMat).length === 1 && !sw.multi.some((m) => m.material === getMaterial('cabin_fine')) && cm.runs.some((r) => r.maxDist === 90 && r.side === 4) && cm.runs.some((r) => r.maxDist > 90 && r.side !== 4), `${cm ? cm.runs.length : 0} runs: ${cm ? [...new Set(cm.runs.map((r) => Math.round(r.maxDist) + '/' + r.side))].join(' ') : ''}`);
+  // every vehicle that has windows: a cabin in every variant of it, its window panes the see-through glass, and no
+  // window of it left as a black panel (what is still `glass` on a vehicle is a lamp: small)
+  const VEHICLES = ['car', 'car_wreck', 'car_open', 'car_burnt', 'pickup_truck', 'camper', 'ambulance', 'school_bus', 'dump_truck', 'fuel_truck', 'fire_truck', 'semi_truck', 'city_bus', 'box_truck', 'van_wreck', 'army_truck'];
+  const lacking = [];
+  let fewest = Infinity, most = 0;
+  for (const type of VEHICLES)
+    for (let seed = 0; seed < 8; seed++) {
+      const tris = {};
+      let lampMax = 0;
+      createProp(type, seed).traverse((o) => {
+        if (!o.isMesh) return;
+        tris[o.name] = (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+        if (o.name !== 'glass') return;
+        // (the biggest piece of opaque glass on it: its triangles' own boxes)
+        const p = o.geometry.attributes.position, ix = o.geometry.index;
+        for (let f = 0; f < ix.count; f += 3) {
+          const a = [0, 1, 2].map((k) => ix.getX(f + k));
+          lampMax = Math.max(lampMax, Math.hypot(p.getX(a[0]) - p.getX(a[1]), p.getY(a[0]) - p.getY(a[1]), p.getZ(a[0]) - p.getZ(a[1])), Math.hypot(p.getX(a[0]) - p.getX(a[2]), p.getY(a[0]) - p.getY(a[2]), p.getZ(a[0]) - p.getZ(a[2])));
+        }
+      });
+      const inside = (tris.cabin || 0) + (tris.cabin_fine || 0);
+      fewest = Math.min(fewest, inside);
+      most = Math.max(most, inside);
+      if (!tris.cabin || lampMax > 0.5) lacking.push(`${type}:${seed}${tris.cabin ? '' : ' no cabin'}${lampMax > 0.5 ? ` opaque glass ${lampMax.toFixed(2)} m` : ''}`);
+    }
+  check(`every vehicle with windows has a cabin behind them, in every variant, and no window left opaque (${fewest} to ${most} triangles of interior a vehicle)`, !lacking.length && fewest > 100 && most < 1500, lacking.join());
+  check('the same body for the same seed as before: the new variants are what is in the cabin, not another car', ['car_wreck', 'pickup_truck', 'car_open'].every((type) => [0, 1, 2, 3].every((sd) => {
+    const col = (o) => { let c = null; o.traverse((q) => { if (q.isMesh && q.name === 'carpaint' && !c) c = q.geometry.attributes.color.array.slice(0, 3).join(); }); return c; };
+    const n = type === 'pickup_truck' ? 2 : 4;
+    return col(createProp(type, sd)) === col(createProp(type, sd + n));
+  })));
+  // a car wreck with a window in its side, whole
+  let carCol = null, win = null, w3 = null;
+  for (const c2 of wreckCols) {
+    if (c2.tag === pr || c2.tag.type !== 'car_wreck') continue;
+    const wk = im.wrecks.wreck(c2.tag);
+    const sidePanes = wk.parts.filter((q) => q.kind === 'pane' && Math.abs(q.mid[0]) > 0.5 && q.isles[0].name === 'carglass');
+    if (sidePanes.length && wk.parts.filter((q) => q.kind === 'pane').length >= 2) {
+      carCol = c2;
+      win = sidePanes[0];
+      w3 = wk;
+      break;
+    }
+    im.regrown();
+  }
+  if (carCol) {
+    const cp = carCol.tag, c3 = Math.cos(cp.ry), s3 = Math.sin(cp.ry);
+    const sd = Math.sign(win.mid[0]);
+    const toW = (lx, ly, lz) => [cp.x + c3 * lx + s3 * lz, cp.y + ly, cp.z - s3 * lx + c3 * lz];
+    const dirW = (lx, lz) => [c3 * lx + s3 * lz, -s3 * lx + c3 * lz];
+    const hitC = (lx, ly, lz, dlx, dlz, bits) => {
+      const [x, y, z] = toW(lx, ly, lz), [dx, dz] = dirW(dlx, dlz);
+      const yaw = Math.atan2(-dx, -dz);
+      return [qpos(x), qpos(y), qpos(z), Math.round((((yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI) * 256) & 255, 0, bits];
+    };
+    const hitOut = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
+    // (a ray in at the window from outside it: level, or `down` on to what is under it inside)
+    const through = (ly = win.mid[1], lz = win.mid[2], only = null, down = 0) => {
+      const k = Math.hypot(1, down);
+      const [ox, oy, oz] = toW(sd * 1.6, ly + 0.85 * down, lz), [dx, dz] = dirW(-sd / k, 0), dy = -down / k;
+      const wk = im.wrecks.get(cp);
+      if (only) rayPieces(wk.pieces, (pi) => wk.rest[pi], ox, oy, oz, dx, dy, dz, 3, hitOut, only);
+      else im.wrecks.ray(cp, ox, oy, oz, dx, dy, dz, 3, hitOut);
+      return { name: hitOut.name, t: hitOut.t };
+    };
+    const marksOf = () => {
+      const m = {};
+      for (let i = 0; i < P.cap; i++) if (P.live[i] && P.owner[i] === cp) m[cellOf(i)] = (m[cellOf(i)] || 0) + 1;
+      return m;
+    };
+    const settle = () => {
+      let n = 0;
+      while (im.wrecks.active.size && n++ < 3000) im.update(1 / 60);
+    };
+    g.camera.position.set(cp.x + 5, cp.y + 1.6, cp.z);
+    const [cx, cy, cz] = [qpos(carCol.x), qpos(carCol.y0), qpos(carCol.z)];
+    // whole: the glass is what a blow lands on; a seat or the lining is behind it, and no black panel before that
+    const g0 = through(undefined, undefined, null, 0.7), behind = through(undefined, undefined, CABIN_MATS, 0.7), black = through(undefined, undefined, new Set(['dark']), 0.7);
+    check('a window: a blow lands on its glass, and behind the glass is the cabin - nothing black between them', GLASS_MATS.has(g0.name) && behind.t > g0.t && behind.t < g0.t + 2 && (black.t < 0 || black.t > behind.t), `${g0.name} at ${g0.t.toFixed(2)}, cabin at ${behind.t.toFixed(2)}, dark at ${black.t.toFixed(2)}`);
+    const doorHit = through(0.55, win.mid[2]);
+    check('the door under the window is still the door: a blow there lands on its paint, not on what is inside', doorHit.name === 'carpaint' && doorHit.t < 0.8, `${doorHit.name} at ${doorHit.t.toFixed(2)}`);
+    const fit = Array.from(w3.quad(win).fit);
+    const atPane = hitC(sd * 1.2, win.mid[1], win.mid[2], -sd, 0, BLOW.SLASH);
+    // crazed: a knife once
+    im.wreck(0, cx, cy, cz, WRECK_SALVAGE, [atPane]);
+    settle();
+    let wk = im.wrecks.get(cp), pk = wk.parts.find((q) => q.kind === 'pane' && q.mid[0] === win.mid[0] && q.mid[2] === win.mid[2]);
+    const m1 = marksOf(), g1 = through();
+    check('crazed: the pane is still in its frame, cracked across (one mark over the whole of it), and still glass to a blow', pk.state === 1 && m1[MARK.CRACK_PANE] === 1 && !m1[MARK.REMNANT] && GLASS_MATS.has(g1.name));
+    // out: a second
+    im.wreck(0, cx, cy, cz, WRECK_SALVAGE, [atPane]);
+    settle();
+    wk = im.wrecks.get(cp);
+    pk = wk.parts.find((q) => q.kind === 'pane' && q.mid[0] === win.mid[0] && q.mid[2] === win.mid[2]);
+    const m2 = marksOf(), g2 = through(undefined, undefined, null, 0.7);
+    let rem = -1;
+    for (let i = 0; i < P.cap; i++) if (P.live[i] && P.owner[i] === cp && cellOf(i) === MARK.REMNANT) rem = i;
+    const remFit = rem >= 0 && fit.every((v, k) => Math.abs(P.rest[rem * 12 + k] - v) < 1e-4);
+    check('out: the opening shows the cabin (a blow goes through it onto a seat or the lining), teeth of glass are left round the frame - drawn to the opening\'s own corners - and shards lie on the ground and inside', pk.state === 2 && CABIN_MATS.has(g2.name) && m2[MARK.REMNANT] === 1 && remFit && m2[MARK.SHARDS] === 2 && !m2[MARK.CRACK_PANE], `state ${pk.state}, the ray lands on ${g2.name}, marks ${JSON.stringify(m2)}, fit ${remFit}`);
+    // a blow through the opening: a mark on what it lands on, and no panel bent
+    const paint = () => wk.pieces.map((pc, pi) => pc.names.filter((nm) => nm.name === 'carpaint').map((nm) => Array.from(wk.rest[pi].subarray(nm.first * 3, (nm.first + nm.count) * 3)).reduce((a, v, k) => a + v * ((k % 7) + 1), 0)).join()).join();
+    const before2 = paint(), marks2 = Object.values(m2).reduce((a, v) => a + v, 0);
+    im.wreck(0, cx, cy, cz, WRECK_SALVAGE, [hitC(sd * 1.2, win.mid[1], win.mid[2], -sd, 0, BLOW.BLUNT)]);
+    settle();
+    wk = im.wrecks.get(cp);
+    const m3 = marksOf();
+    check('a bat through the opening: it lands inside and leaves its mark there, and bends no panel', paint() === before2 && Object.values(m3).reduce((a, v) => a + v, 0) >= marks2 && m3[MARK.REMNANT] === 1, JSON.stringify(m3));
+    // the next pane to go leaves the first one's teeth where they are
+    const other3 = wk.parts.find((q) => q.kind === 'pane' && q.state === 0);
+    const oSide = Math.abs(other3.mid[0]) > 0.5 ? Math.sign(other3.mid[0]) : 0;
+    const atOther = oSide ? hitC(oSide * 1.2, other3.mid[1], other3.mid[2], -oSide, 0, BLOW.BLUNT | HITF.HEAVY) : hitC(0, other3.mid[1], other3.mid[2] + Math.sign(other3.mid[2]) * 0.9, 0, -Math.sign(other3.mid[2]), BLOW.BLUNT | HITF.HEAVY);
+    im.wreck(0, cx, cy, cz, WRECK_SALVAGE, [atOther]);
+    settle();
+    wk = im.wrecks.get(cp);
+    const m4 = marksOf();
+    check('a heavy bat takes a pane out in one, and the teeth in the first frame stay as the second goes', wk.parts.filter((q) => q.kind === 'pane' && q.state === 2).length === 2 && m4[MARK.REMNANT] === 2, `${wk.parts.filter((q) => q.kind === 'pane').map((q) => q.state).join('')}, ${JSON.stringify(m4)}`);
+    // who arrives afterwards
+    const rec3 = im.wrecks.records.get(carCol);
+    const seenRest = wk.rest.map((r) => r.slice()), seenMarks = JSON.stringify(m4);
+    im.wreck(WRECKF.REPLAY, cx, cy, cz, WRECK_SALVAGE, rec3.hits.slice());
+    const wr = im.wrecks.get(cp);
+    let d3 = 0;
+    wr.rest.forEach((r, i) => {
+      for (let k = 0; k < r.length; k++) d3 = Math.max(d3, Math.abs(r[k] - seenRest[i][k]));
+    });
+    check('who arrives afterwards sees the same glass out, the same teeth and the same shards', d3 === 0 && JSON.stringify(marksOf()) === seenMarks, `max difference ${d3}, ${JSON.stringify(marksOf())} vs ${seenMarks}`);
+    // picked clean: every pane out, and the cabin there to see through every opening
+    im.wreck(0, cx, cy, cz, 0, [hitC(sd * 1.2, 0.6, 1.5, -sd, 0, BLOW.BLUNT | HITF.TOOK)]);
+    settle();
+    wk = im.wrecks.get(cp);
+    const allOut = wk.parts.filter((q) => q.kind === 'pane').every((q) => q.state === 2);
+    const cabinLeft = wk.isles.filter((s2) => CABIN_MATS.has(s2.name) && !s2.gone && !s2.part).length;
+    check('picked clean, its glass is all out and its cabin is still in it: nothing of the inside is taken for trim', allOut && cabinLeft > 10 && !wk.parts.some((q) => q.isles.some((s2) => CABIN_MATS.has(s2.name))), `${cabinLeft} pieces of cabin`);
+    im.regrown();
+    check('...and at dawn it is whole again, the glass back in the static world', !sw.lifted.size && total() === whole && P.owner.filter((o) => o === cp).length === 0);
+  } else check('the valley has a car wreck with a window in its side', false);
 }
 
 console.log(fails.length ? `\n${fails.length} FAILED:\n  ${fails.join('\n  ')}` : '\nall ok');
