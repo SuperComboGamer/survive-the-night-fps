@@ -1430,6 +1430,26 @@ export class AudioEngine {
     this._playPos(buf, d.cat, +o.x, +(o.y ?? this._ly), +(o.z ?? 0), vol, rate, 0, 0, delay);
   }
 
+  /**
+   * A one-shot by its bank's name, for sounds that no SOUND id and no LOCAL name stand for: the nunchucks' own, played
+   * off their simulated chain at whatever pitch it is going (game/nunchaku.js). opts: { x, y, z: where in the world
+   * (none: the listener's own hands, not placed), cat: its positional category ('fx'), volume, rate, variant }.
+   */
+  playBank(bank, opts = EMPTY) {
+    if (!this._ready) return;
+    const o = opts || EMPTY;
+    const buf = this._pick(bank, o.variant);
+    if (!buf) {
+      this._need(bank);
+      return;
+    }
+    this._resume();
+    const vol = (o.volume ?? 1) * (0.94 + Math.random() * 0.12);
+    const rate = (o.rate ?? 1) * this._rateMul;
+    if (o.x === undefined || o.x === null) this._play2D(buf, vol, rate, this._sfxIn, 0.06, 0);
+    else this._playPos(buf, o.cat || 'fx', +o.x, +(o.y ?? this._ly), +(o.z ?? 0), vol, rate);
+  }
+
   playLocal(name, opts = EMPTY) {
     if (!this._ready) return;
     const d = LOCAL[name];

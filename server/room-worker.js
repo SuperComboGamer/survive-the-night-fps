@@ -266,6 +266,23 @@ let due = next; // when the timer that wakes the loop was due
 let timer = 0;
 function loop() {
   const now = performance.now();
+  if (game.stepMode) {
+    // the clock is held (the admin chat command /step on: Game.debugCommand): only the ticks asked for run, and the
+    // fixed-rate clock starts again from here when it is let go
+    const n = game.takeSteps(now, 8);
+    for (let i = 0; i < n; i++) {
+      try {
+        game.update();
+      } catch (err) {
+        console.error(tag, 'tick error', err);
+      }
+    }
+    if (n) flush();
+    next = now + TICK_MS;
+    due = next;
+    timer = setTimeout(loop, 1);
+    return;
+  }
   // a wake with a tick to run: how long after its timer was due did it come? That is the event loop or the host
   // holding the server up, not the cost of a tick (after a slow tick the timer is armed late, so it is not counted)
   if (now >= next) game.tickStats.late(now - due);

@@ -78,8 +78,10 @@ function weaponPickup(itemId) {
 }
 
 // Throwables that lie on the ground as the same model as the one in the hand (weapons.js), and how (Euler YXZ): the
-// frag grenade on its side, its spoon up; the noisemaker standing on its feet, its dial turned a little to one side
-const HELD_LAY = { [ITEM.GRENADE]: [0, 0.55, PI / 2 - 0.12], [ITEM.DECOY]: [0, PI + 0.6, 0] };
+// frag grenade on its side, its spoon up; the noisemaker standing on its feet, its dial turned a little to one side.
+// And the nunchucks: folded, the two handles side by side flat on the ground (on its side, as other weapons are
+// laid, one handle would stand on the other)
+const HELD_LAY = { [ITEM.GRENADE]: [0, 0.55, PI / 2 - 0.12], [ITEM.DECOY]: [0, PI + 0.6, 0], [ITEM.NUNCHAKU]: [0, PI / 2 - 0.35, 0] };
 
 // the backpack (backpack.js, the same model a survivor wears): stood on its base, leaning back a little against its
 // shoulder straps
