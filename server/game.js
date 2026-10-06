@@ -198,6 +198,7 @@ const LEFT_KITS_MAX = 64; // kits remembered for players who left this run (park
 // What a survivor starts with. Day 1's kit is the opening hand; someone who joins on a later day gets a little more
 // 9mm, bandages and light for each day gone by (first-pass numbers): enough to be of use that night, well short of
 // what those days of scavenging turn up - no primary, no armour, no medkit, nothing to throw.
+const STEP_IDLE = 20000; // ms: a clock held by /step is let go when nothing has been asked of it for this long
 const STARTER_TOOLS = [0, ITEM.PISTOL, ITEM.KNIFE, 0, ITEM.HAMMER]; // by weapon slot
 function starterKit(day = 1, diff = null) {
   const d = Math.max(0, day - 1);
@@ -379,6 +380,9 @@ export class Game {
     this.playersDirty = true;
     this.playersListT = 0;
     this.gather = new Map(); // collider -> {left, day}
+    this.stepMode = false; // the clock held by the admin /step (room-worker.js): ticks only as they are asked for
+    this.stepCredit = 0;
+    this.stepAsked = 0;
     this.leftKits = new Map(); // leaverKey -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
 
@@ -1230,14 +1234,14 @@ export class Game {
   // The car is away with the team in it: the island is done. The crossing begins - every client plays the cutscene
   // off this phase's clock - and the mainland is built in the next tick (buildMainland), so that what tells the
   // clients has left this thread before a world is generated on it. by: who drove.
-  // night: it left in the night.
-  cross(by, night = false) {
+  // night: it left in the night. paid: the escape's XP is given (not for an admin's /map2: nobody escaped)
+  cross(by, night = false, paid = true) {
     if (this.act !== WORLD.ISLAND || this.phase === PHASE.CROSSING) return;
     this.log('crossing to the mainland');
     this.track.crossed(by, night); // (before the world is cleared: it reads who is alive, and at the car)
     // the escape from the island is paid as it always was: more to whoever was in the car than to those it left
     const car = this.world.car;
-    for (const p of this.players.values()) {
+    for (const p of paid ? this.players.values() : []) {
       const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
       this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
     }
@@ -2316,6 +2320,14 @@ export class Game {
     }
   }
 
+  /** Held (the admin /step): how many ticks may run now. Takes them. */
+  takeSteps(now, max) {
+    if (now - this.stepAsked > STEP_IDLE) this.stepMode = false;
+    const n = Math.min(max, this.stepCredit);
+    this.stepCredit -= n;
+    return n;
+  }
+
   handleSimEvent(p, ev) {
     const s = p.state;
     switch (ev.type) {
@@ -2327,6 +2339,10 @@ export class Game {
         break;
       case 'melee':
         this.combat.melee(p, ev);
+        break;
+      case 'nk_swing':
+        // a move of the nunchucks begins: the others hear the swing now, its blows land later ('melee', with the move)
+        this.sound(SOUND.MELEE_SWING, s.x, s.y + eyeHeight(s), s.z, 20, p.id);
         break;
       case 'use_cancel':
         // a click or a weapon asked for put the item in the hands away unused (the simulation has let go of it). (Not
@@ -2949,7 +2965,7 @@ export class Game {
     if (more && r() < more) this.giveOrDrop(p, tree ? ITEM.STICK : ITEM.SCRAP, 1);
     if (tree) {
       const dead = col.tv === 3 || col.tv === 4 || col.tv === 6;
-      let sticks = weapon === ITEM.KNIFE ? 1 : 2;
+      let sticks = weapon === ITEM.KNIFE || weapon === ITEM.NUNCHAKU ? 1 : 2;
       if (dead) sticks++;
       this.giveOrDrop(p, ITEM.STICK, sticks);
       const plankChance = (weapon === ITEM.MACHETE ? 0.35 : weapon === ITEM.HAMMER ? 0.15 : 0.22) + (col.tv === 5 ? 0.15 : 0);
@@ -3667,6 +3683,16 @@ export class Game {
       case 'night':
         if (this.phase === PHASE.DAY) this.timeLeft = 0.05;
         break;
+      case 'step':
+        // /step on | off | <n>: hold this game's clock (room-worker.js runs a tick only when one is asked for), let
+        // it go, or run n ticks while it is held. For filming a client frame by frame (scripts/clip/nunchaku-film.js):
+        // a frame can take a second to draw and save, and the world must not run on meanwhile. Let go by itself
+        // after 20 s with nothing asked (STEP_IDLE), so a game is never left standing
+        if (args[1] === 'on') this.stepMode = true;
+        else if (args[1] === 'off') this.stepMode = false;
+        else if (this.stepMode) this.stepCredit = Math.min(200, this.stepCredit + Math.max(1, Math.floor(+args[1] || 1)));
+        this.stepAsked = performance.now();
+        break;
       case 'day':
         if (this.phase === PHASE.NIGHT) this.timeLeft = 0.05;
         break;
@@ -3735,6 +3761,12 @@ export class Game {
         // the names /spawn takes
         this.sendChat(p, 0, CHATF.SYSTEM, `zombies: ${ZOMBIE_NAMES.map((it) => it.name).join(' ')}`);
         break;
+      case 'clear': {
+        // /clear [m]: every one of the dead within that many metres (default 80) drops where it stands, to nobody's credit
+        const r = +args[1] || 80;
+        for (const z of [...this.zombies]) if (!z.dead && Math.hypot(z.x - s.x, z.z - s.z) <= r) this.combat.killZombie(z, null);
+        break;
+      }
       case 'legs': {
         // /legs [1|2]: shoot that many legs (default both) off every zombie within 30 m that has legs to lose
         const n = args[1] === '1' ? 1 : 2;
@@ -3806,6 +3838,21 @@ export class Game {
           if (args[1] === 'skip') this.arrive();
           else if (args[1] === 'hold') this.crossing.hold = 2;
         }
+        break;
+      case 'map2':
+      case 'mainland':
+        // /map2: straight to the first day on the mainland, from anywhere on the island (the end screen too: a new
+        // run is begun first), with no cutscene and no XP for the escape. Mid-crossing, the crossing is cut short
+        if (this.act === WORLD.MAINLAND && this.phase !== PHASE.CROSSING) {
+          this.sendChat(p, 0, CHATF.SYSTEM, 'already on the mainland (map 2)');
+          break;
+        }
+        if (this.phase !== PHASE.CROSSING) {
+          if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) this.startGame();
+          this.cross(p, false, false);
+        }
+        this.arrive();
+        this.sendChat(p, 0, CHATF.SYSTEM, `on the mainland (map 2): day ${this.day}`);
         break;
       case 'takeoff':
         // /takeoff [hold | go]: the plane goes, now (the run's last shot, and the victory). hold: the clock that ends

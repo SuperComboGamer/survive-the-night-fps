@@ -40,6 +40,23 @@ const { ITEM, WEAPONS, CONSUMABLES } = await import(pathToFileURL(join(REPO, 'sh
 const NAME = {};
 for (const k in ITEM) NAME[ITEM[k]] = k.toLowerCase();
 export const THRESH = [3, 8];
+// the nunchucks' moves, and the moments of each that are measured (s after the script starts; the draw's: before it ends)
+const NK_FRAMES = [
+  ['guard', [0.5]],
+  ['draw', [-0.5, -0.42, -0.36, -0.3, -0.2, -0.1]],
+  ['whip', [0.05, 0.1, 0.14, 0.2, 0.3, 0.45, 0.6]],
+  ['backhand', [0.05, 0.1, 0.14, 0.2, 0.3]],
+  ['eight', [0.05, 0.12, 0.16, 0.2, 0.26, 0.33, 0.45]],
+  ['smash', [0.11, 0.17, 0.21, 0.26, 0.5]],
+  ['lunge', [0.07, 0.13, 0.16, 0.22, 0.35]],
+  ['sweep', [0.06, 0.12, 0.16, 0.22, 0.35]],
+  ['retreat', [0.05, 0.1, 0.14, 0.2, 0.3]],
+  ['combo', [0.4, 0.5, 0.75, 0.9, 1.2, 1.3, 1.75, 1.9, 2.1]],
+  ['heavy3', [0.3, 0.6, 0.9, 1.2, 1.38, 1.46, 1.52, 1.56, 1.62, 1.8, 2.3]],
+  ['idle', [3.6, 3.9, 4.2, 4.5, 4.8, 5.2]],
+  ['flourish', [0.2, 0.4, 0.6, 0.8, 0.95, 1.1, 1.3, 1.5, 1.7, 1.9, 2.05, 2.2, 2.4, 2.6, 2.8, 3.0, 3.15, 3.3, 3.5, 3.7, 3.9, 4.1, 4.3, 4.6]],
+  ['carry', [0.3, 0.6, 1.0, 1.4, 1.7, 2.2]],
+];
 
 // ---------------------------------------------------------------- the frames
 // each: { section, name, item, state, path (sandbox URL path + query) }
@@ -65,6 +82,15 @@ function frames() {
       for (const [s, q] of [['idle', 't=1'], ['walk', 'act=walk&t=0.45'], ['sprint', 'act=sprint&t=1']]) fp(id, s, q);
       for (const f of [0.15, 0.28, 0.4, 0.55, 0.7, 0.85]) fp(id, `melee-${f}`, `act=melee&t=${(f * (swing[id] || 0.5)).toFixed(3)}`);
       if (id === ITEM.KNIFE) for (const f of [0.3, 0.48, 0.66]) fp(id, `heavy-${f}`, `act=heavy&t=${(f * 0.62).toFixed(3)}`);
+      // (the nunchucks' own frames are below: with &act=melee the sandbox plays their opener, the whip)
+    }
+    // the nunchucks: no one swing but a moveset (the sandbox's &nk= scripts, client/sandbox/nk-script.js), each move
+    // through its wind-up, its blows, its follow-through and the catch that ends it; the heavy wind-up's whirl and
+    // its strike; the draw; the flourish, with its passes from hand to hand; crouched, and carried at a sprint
+    if (ITEM.NUNCHAKU) {
+      for (const [script, times] of NK_FRAMES) for (const t of times) fp(ITEM.NUNCHAKU, `nk-${script}-${t}`, `nk=${script}&t=${t}`);
+      fp(ITEM.NUNCHAKU, 'nk-crouch', 'nk=guard&act=crouch&t=1');
+      for (const kind of ['bone', 'wood']) for (const t of [0.16, 0.2, 0.3]) fp(ITEM.NUNCHAKU, `nk-whip-hit-${kind}-${t}`, `nk=whip&hit=${kind}&t=${t}`);
     }
     for (const id of throws) {
       for (const [s, q] of [['idle', 't=1'], ['walk', 'act=walk&t=0.45'], ['sprint', 'act=sprint&t=1'], ['draw', 't=-0.45'], ['shove', 'act=melee&t=0.22']]) fp(id, s, q);
@@ -92,6 +118,15 @@ function frames() {
       }
       if (melee.includes(id)) for (const t of [0.1, 0.2, 0.3, 0.4]) tp(id, 'melee', t);
       if (throws.includes(id)) for (const t of [0.1, 0.24, 0.32, 0.45]) tp(id, 'throw', t);
+    }
+    // the nunchucks' moves on the body (the same scripts: ?hold=57&nk=...)
+    if (ITEM.NUNCHAKU) {
+      for (const [script, times] of NK_FRAMES) {
+        for (const t of times) {
+          if (t < 0) continue; // (the sandbox's survivor has it drawn already)
+          out.push({ section: 'tp', item: NAME[ITEM.NUNCHAKU], state: `3p-nk-${script}-${t}`, name: `${NAME[ITEM.NUNCHAKU]}-3p-nk-${script}-${t}`, path: `${sb}hold=${ITEM.NUNCHAKU}&nk=${script}&t=${t}&clip=1${args.seed !== undefined ? `&seed=${args.seed}` : ''}` });
+        }
+      }
     }
     // the worn backpack against the body, with a few holds and in every pose
     for (const id of [ITEM.AK47, ITEM.PISTOL, ITEM.BAT, 0]) for (const p of ['idle', 'walk', 'sprint', 'crouch', 'downed', 'seated', 'swim', 'lookup']) tp(id, p, 1, '&pack=1');

@@ -42,6 +42,7 @@ const WORLD = [
   { id: 'airdrop', name: 'Airdrop', glyph: 'flag', cmd: '/airdrop', sub: 'A supply plane drops a crate', alias: ['plane', 'drop'] },
   { id: 'deer', name: 'Deer', glyph: 'eye', cmd: '/deer spawn', sub: 'A group 20 m ahead', alias: ['animals', 'hunt', 'venison'] },
   { id: 'cat', name: 'Stray Cat', glyph: 'heart', cmd: '/cat', sub: 'Brings it over', alias: ['pet', 'kitty'] },
+  { id: 'map2', name: 'Skip to Map 2', glyph: 'map', cmd: '/map2', sub: 'Day 1 on the mainland, no cutscene', alias: ['mainland', 'act2', 'cross', 'bridge'] },
 ];
 
 const compact = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');

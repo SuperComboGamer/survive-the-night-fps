@@ -507,6 +507,13 @@ them off.
   shot drops most of the dead and carries on through the ones behind), plus knife, bats, machete and
   hammer. Knife, bats and machete have a heavy attack (RMB): a harder blow that can drop what a light swing
   only wounds, paid for with a longer recovery, so light swings still do more damage over time.
+  **Nunchucks** (workbench: 2 planks, 2 scrap, 1 tape; now and then in a duffel bag, at the summer camp, at the
+  school) are a moveset instead of a swing: keep attacking and the hits chain - whip, backhand, a figure-eight that
+  lands twice, an overhead smash that hits harder than a machete - each blow landing a beat after its move starts.
+  Hold the heavy attack to whirl them overhead (faster and harder the longer it is held, three tiers) and let go to
+  strike. A sprint, a crouch or a step back each open with a move of their own. The shortest reach there is, one
+  target at a time, and every move costs stamina: three combos and you are out of breath. The chain and the free
+  handle are simulated, in your hands and on every survivor you watch; [R] is a flourish.
   Guns turn up where you would expect them: double-barrels on farms and
   in cabins, MP5s at the police station and checkpoint, M4A1s and 5.56 at the army checkpoint and the crash site,
   and the AK-47 in the same ammo crates as its 7.62 (the checkpoint, the crash site, military stashes in the woods).
@@ -723,4 +730,4 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
   and the hit marker stay the server's. `scripts/test-netsync.js` checks the rewind.
 - Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
   when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a
-  late packet instead of freezing; their gaits pin planted feet to the ground in world space.
+  late packet instead of freezing; their gaits pin planted feet to the ground in world space..
