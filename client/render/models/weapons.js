@@ -1961,7 +1961,7 @@ const HAND_POSES = {
   radio: { curl: [[1.25, 1.45, 0.9], [1.3, 1.5, 0.9], [1.35, 1.5, 0.9], [1.4, 1.45, 0.9]], spread: 0.0, thumb: [[-0.3, -0.55, -0.78], [0, -0.75, -0.66]], center: [-0.034, -0.083, 0] },
   open: { curl: [[0.25, 0.3, 0.2], [0.2, 0.3, 0.2], [0.25, 0.3, 0.2], [0.3, 0.35, 0.25]], spread: 0.08, thumb: [[-0.4, -0.55, -0.73], [-0.1, -0.8, -0.6]], center: [-0.035, -0.095, 0] },
   // flat against a leaper that has them pinned, shoving it off (ViewModel._push): fingers splayed and nearly straight
-  shove: { curl: [[0.12, 0.18, 0.12], [0.08, 0.16, 0.1], [0.1, 0.18, 0.12], [0.16, 0.22, 0.15]], spread: 0.13, thumb: [[-0.45, -0.5, -0.74], [-0.15, -0.8, -0.58]], center: [-0.035, -0.095, 0] },
+  shove: { curl: [[0.14, 0.22, 0.16], [0.1, 0.2, 0.14], [0.12, 0.22, 0.16], [0.18, 0.26, 0.18]], spread: 0.1, thumb: [[-0.45, -0.5, -0.74], [-0.15, -0.8, -0.58]], center: [-0.035, -0.095, 0] },
   claw: { curl: [[0.45, 0.55, 0.45], [0.4, 0.55, 0.45], [0.45, 0.6, 0.45], [0.55, 0.65, 0.5]], spread: 0.2, thumb: [[-0.55, -0.5, -0.67], [-0.35, -0.85, -0.3]], center: [-0.035, -0.11, 0] },
   // throwables, each closed round its own shape until the fingers touch (a fist made for a 3 cm handle buries its
   // fingers in anything thicker), with the palm seated on the surface: the center is as far out as the item's radius
@@ -3100,6 +3100,7 @@ export class ViewModel {
     this.pinOn = false;
     this.pushing = false;
     this.pushLvl = 0;
+    this.pushFull = false; // the meter has been full in this pin: the server throws it off on that command
     this.pushK = new Spring(260, 22);
     this.flingT = 0;
     this.flung = false;
@@ -4250,15 +4251,19 @@ export class ViewModel {
       this.pinOn = true;
       this.flingT = 0;
       this.flung = false;
+      this.pushFull = false;
       if (this.act && this.act.type !== 'use') this.act = null; // (a reload, a swing, a throw: the hands are wanted)
     } else if (!pinned && this.pinOn) {
       this.pinOn = false;
-      // (let go with the meter all but full: they threw it. Shot off them, or let go in its time, the hands just drop)
-      if (this.pushLvl > 0.9 && this.pinT > 0.5) {
+      // (let go once the meter was full: they threw it, though it has slipped a little while the server's word came.
+      // Shot off them, or let go in its time, the hands just drop)
+      if (this.pushFull && this.pinT > 0.5) {
         this.flingT = PUSH_FLING;
         this.flung = true;
+        this.pushLvl = 1;
       }
     }
+    if (pinned && s.shove >= 1) this.pushFull = true;
     if (this.flingT > 0) this.flingT = Math.max(0, this.flingT - dt);
     this.pinT = pinned || this.flingT > 0 ? Math.min(1, this.pinT + dt / PUSH_IN) : Math.max(0, this.pinT - dt / PUSH_OUT);
     if (pinned) this.pushLvl += ((s.shove || 0) - this.pushLvl) * (1 - Math.exp(-dt * 18));
@@ -4291,8 +4296,8 @@ export class ViewModel {
     for (let side = -1; side <= 1; side += 2) {
       const arm = side < 0 ? this.armL : this.armR;
       _v1.set(
-        side * (0.155 - 0.02 * m - 0.015 * fl) + Math.sin(t * 21 + side * 1.7) * 0.004 * shake,
-        -0.115 + 0.02 * m + 0.04 * fl + Math.sin(t * 27 + side) * 0.005 * shake - (1 - up) * 0.32,
+        side * (0.125 - 0.015 * m - 0.01 * fl) + Math.sin(t * 21 + side * 1.7) * 0.004 * shake,
+        -0.175 + 0.05 * m + 0.03 * fl + Math.sin(t * 27 + side) * 0.005 * shake - (1 - up) * 0.32,
         -0.3 - 0.12 * m - k - 0.08 * fl,
       );
       _q1.copy(side < 0 ? PUSH_Q_L : PUSH_Q_R);
