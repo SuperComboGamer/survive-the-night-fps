@@ -731,3 +731,7 @@ client/     three.js client: net/, game/ (prediction, entities, input, voice), r
 - Remote entities are interpolated 100 ms in the past from per-entity sample rings (a little further back
   when snapshots arrive unevenly). Zombies follow a cubic curve through their samples and coast through a
   late packet instead of freezing; their gaits pin planted feet to the ground in world space..
+
+## License
+
+[MIT](LICENSE)
