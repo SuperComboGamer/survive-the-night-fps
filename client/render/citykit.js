@@ -1259,7 +1259,8 @@ function room(S, R) {
     // A plastered ceiling takes the sun as a wall does (its normal: PLASTER_CEIL_N), and what keeps the sun off it
     // is the shadow of the roof over it. Laid right under that roof (a hall with no ceiling hung in it: the picture
     // house, the nave) it is nearer the roof's underside than a shadow map can tell apart, the roof's shadow never
-    // falls on it, and it shines like an open sky over a dark room. There it hangs CEIL_HANG lower.
+    // falls on it, and it shines like an open sky over a dark room. There it hangs CEIL_HANG lower. A tiled ceiling
+    // stays right under its slab: its material takes the sun as the roof's shadow leaves it (materials.js underRoof).
     const hang = !tiles && !R.ceil ? CEIL_HANG : 0.004;
     sheet(tiles ? 'ceiling' : 'plaster', y1 - hang, -ix, -iz, ix, iz, false, (x, z) => (tiles ? [x, z] : [x + uo, z + vo]), (x, z) => mul(tiles ? WHITE : CEIL_WHITE, lit(x, y1, z) * 0.94), tiles ? CEIL_N : PLASTER_CEIL_N);
   }
