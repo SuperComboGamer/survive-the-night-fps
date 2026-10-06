@@ -153,7 +153,7 @@ export const NK_GEOM = {
   grip: 0.2, // from the wood's chain end to the middle of the hand that holds it
 };
 export const NK_CHAIN = NK_GEOM.links * NK_GEOM.link;
-export const NK_SIM = { hz: 960, maxSteps: 160, iters: 6, drag: 0.5, maxSpeed: 45, mu: 0.4, bounce: 0.25 };
+export const NK_SIM = { hz: 960, maxSteps: 160, iters: 6, drag: 0.5, maxSpeed: 45, mu: 0.4, bounce: 0.25, easeOut: 0.4 };
 
 const GYR = NK_GEOM.handle / (2 * Math.sqrt(3)); // a uniform rod's radius of gyration about its middle
 const X1 = NK_GEOM.eye + NK_GEOM.handle / 2 - GYR; // the two masses, measured from the eye down the rod
@@ -220,6 +220,11 @@ export class ChainSim {
     // the chain's joints for drawing (0: the anchor's eye .. NJ - 1: the rod's eye), and a step ago
     this.j = new Float64Array(NJ * 3);
     this.jh = new Float64Array(NJ * 3);
+    this.chord = new Float64Array([0, -1, 0]); // the line from eye to eye, as it last was
+    this.sag = new Float64Array([0, -1, 0]); // which way a slack chain bows (following gravity and its own lag)
+    this.bow = new Float64Array(3); // ...square to its line, as drawn
+    this.mid = new Float64Array(3);
+    this.midOn = false;
     this.grav = new Float64Array([0, -9.81, 0]);
     this.acc = new Float64Array(3); // an acceleration of the frame everything is in (the carrier speeding up: it lags)
     this.col = new Float64Array(maxColliders * STRIDE);
@@ -229,6 +234,8 @@ export class ChainSim {
     this.nCol0 = 0;
     this.maxCol = maxColliders;
     // the catch: pin.w 0 free .. 1 held. Its target: where the rod's eye and its direction (butt -> eye) are held
+    this.aw = new Float64Array(6);
+    this.grace = 0; // s left in which what it lies inside only eases it out
     this.pin = { w: 0, p: new Float64Array(6), p0: new Float64Array(6), ps: new Float64Array(6), pv: new Float64Array(6), had: false };
     this.left = 0; // time not yet stepped
     this.time = 0;
@@ -268,6 +275,12 @@ export class ChainSim {
       this.j[i * 3 + 2] = a[2] + dz * f;
     }
     this.jh.set(this.j);
+    this.aw.set(a);
+    this.midOn = false;
+    this.bow.fill(0);
+    this.sag[0] = dx;
+    this.sag[1] = dy;
+    this.sag[2] = dz;
     this.a0.set(a);
     this.left = 0;
     this.pin.w = 0;
@@ -307,6 +320,7 @@ export class ChainSim {
   /** The catch: w 0 lets the rod go, 0..1 draws it to the target, 1 holds it there (its eye at x,y,z, pointing d). */
   setPin(w, x = 0, y = 0, z = 0, dx = 0, dy = 1, dz = 0) {
     const p = this.pin.p;
+    if (w <= 0 && this.pin.w > 0.04) this.grace = 0.3; // (let go: see _collide)
     this.pin.w = w;
     if (w <= 0) return;
     const l = Math.hypot(dx, dy, dz) || 1;
@@ -324,16 +338,18 @@ export class ChainSim {
    */
   swap() {
     const a = this.a, a0 = this.a0, g = this.g, h = this.h, p = this.pin;
-    const n = Math.max(1, this._lastN || 1);
-    // the old anchor's handle, now and a step before now
+    // the old anchor's handle, now and a step before now (aw: where the hand had it a step before the last frame
+    // ended - a0 is where it had it AT the end, by now)
+    const aw = this.aw;
     for (let k = 0; k < 3; k++) {
       const now1 = a[k] - a[3 + k] * X1, now2 = a[k] - a[3 + k] * X2;
-      const was1 = a0[k] - a0[3 + k] * X1, was2 = a0[k] - a0[3 + k] * X2;
       g[k] = now1;
       g[3 + k] = now2;
-      h[k] = now1 - (now1 - was1) / n;
-      h[3 + k] = now2 - (now2 - was2) / n;
+      h[k] = aw[k] - aw[3 + k] * X1;
+      h[3 + k] = aw[k] - aw[3 + k] * X2;
     }
+    this.grace = 0.3;
+    this.nCol0 = -1; // (whoever gives the colliders gives them the other way round from here: none of them "moved" there)
     // the rod that was: the anchor from here on
     a.set(p.p);
     a0.set(p.had ? p.p0 : p.p);
@@ -399,11 +415,14 @@ export class ChainSim {
     this.knockAt = -1;
     if (n <= 0) {
       // a frame shorter than a step: nothing moves but the anchor, and the chain is drawn from where it is now
+      this._still = true;
       this._out(1 / hz, true);
+      this._still = false;
       return 0;
     }
     this.left -= n / hz;
     this._lastN = n;
+    if (this.grace > 0) this.grace -= n / hz;
     const a = this.a, a0 = this.a0, as = this.as, pin = this.pin;
     const same = this.nCol === this.nCol0;
     if (!pin.had && pin.w > 0) pin.p0.set(pin.p);
@@ -432,6 +451,8 @@ export class ChainSim {
       this._sub(1 / hz, same ? 1 / n : 0);
       this._rec((i - 1) * 6);
     }
+    // (where the anchor was one step before the end of this frame: the speed its handle is let go with at a pass)
+    for (let k = 0; k < 6; k++) this.aw[k] = a[k] - (a[k] - a0[k]) / n;
     a0.set(a);
     this.col0.set(this.col.subarray(0, this.nCol * STRIDE));
     this.nCol0 = this.nCol;
@@ -489,7 +510,10 @@ export class ChainSim {
       if (pin.w > 0) {
         // being caught: drawn to where the hand will hold it, harder the nearer the catch is
         const p = pin.ps, pv = pin.pv;
-        const k = 1 - Math.exp(-pin.w * pin.w * 120 * dt);
+        // (and over the last half of the catch whatever is still between them is closed: it is in the hand, to the
+        // hair, at the moment the hand has it - a catch never ends with the handle put there)
+        const near = pin.w <= 0.5 ? 0 : ((pin.w - 0.5) / 0.5) ** 4;
+        const k = 1 - Math.exp(-pin.w * pin.w * 120 * dt) * (1 - near);
         for (let c = 0; c < 3; c++) {
           const t1 = p[c] - p[3 + c] * X1, t2 = p[c] - p[3 + c] * X2;
           // its place goes to the hand's, and its speed to the hand's: it arrives with the hand, not through it
@@ -554,7 +578,6 @@ export class ChainSim {
       this.reset();
       return;
     }
-    this._chain(dt, ax, ay, az);
   }
 
   // the rod's two masses, their distance apart
@@ -671,14 +694,31 @@ export class ChainSim {
       const rvy = c1 * (g[1] - h[1]) + c2 * (g[4] - h[4]) - mvy;
       const rvz = c1 * (g[2] - h[2]) + c2 * (g[5] - h[5]) - mvz;
       const vn = rvx * nx + rvy * ny + rvz * nz;
-      // out of it
-      const k1 = depth * c1 * w, k2 = depth * c2 * w;
+      // Out of it: at once, all the way - except for a moment after a hand has let it go (grace). It is inside that
+      // hand then, without having gone in, and the hand is solid to it again: put out in one step it leaves at the
+      // speed of a blow, from nothing. So then it is eased out, at walking pace, unless it is really struck
+      // (and for a moment after a hand lets it go it is still in that hand, which is moving: only a real blow
+      // counts as one then)
+      // (...and the handle beside it, in the same pair of hands, is not one: the strike that follows the letting go
+      // swings the held handle through where the other still hangs, and it is the chain that takes it away)
+      const out = !(this.grace > 0) || vn < -(i < 0 ? 1e9 : 8) * dt ? depth : Math.min(depth, S.easeOut * dt);
+      const k1 = out * c1 * w, k2 = out * c2 * w;
       g[0] += nx * k1;
       g[1] += ny * k1;
       g[2] += nz * k1;
       g[3] += nx * k2;
       g[4] += ny * k2;
       g[5] += nz * k2;
+      if (out < depth) {
+        // (eased out: moved, not pushed - where it was a step ago goes with it, or every step of easing would be
+        // speed gained, and it would leave at a run after all)
+        h[0] += nx * k1;
+        h[1] += ny * k1;
+        h[2] += nz * k1;
+        h[3] += nx * k2;
+        h[4] += ny * k2;
+        h[5] += nz * k2;
+      }
       // it drags along the surface, and comes off it with a little of the speed it went in with
       if (!last) continue;
       const tx = rvx - vn * nx, ty = rvy - vn * ny, tz = rvz - vn * nz;
@@ -706,102 +746,123 @@ export class ChainSim {
     }
   }
 
-  // the joints between the two eyes: where gravity and their own lag leave them, every link its length
-  _chain(dt, ax, ay, az) {
-    const j = this.j, jh = this.jh, g = this.g, as = this.as;
-    const L = NK_GEOM.link, last = (NJ - 1) * 3;
-    const ex = TOP_A * g[0] + TOP_B * g[3], ey = TOP_A * g[1] + TOP_B * g[4], ez = TOP_A * g[2] + TOP_B * g[5];
-    const damp = Math.exp(-6 * dt);
-    for (let o = 3; o < last; o += 3) {
-      const vx = (j[o] - jh[o]) * damp, vy = (j[o + 1] - jh[o + 1]) * damp, vz = (j[o + 2] - jh[o + 2]) * damp;
-      jh[o] = j[o];
-      jh[o + 1] = j[o + 1];
-      jh[o + 2] = j[o + 2];
-      j[o] += vx + ax;
-      j[o + 1] += vy + ay;
-      j[o + 2] += vz + az;
+  // The joints between the two eyes, for drawing: an arc. Every link is a chord of one circle, so every link is its
+  // length exactly, whatever the slack - taut it is a straight line, slack it bows, with no slack at all between the
+  // eyes it closes into a ring. Which way it bows (sag) follows gravity and trails the way the chain is being moved,
+  // and comes round the chain's own line to there: it never flips from one side to the other.
+  // (It was a verlet chain made exact by FABRIK. Thrown slack and pulled taut again inside three frames, that
+  // crumpled into a zigzag and shook itself straight: the chain is 11 cm long and weighs nothing next to the handle
+  // on its end - what it does between two eyes is drawn, not simulated.)
+  _arc(sx, sy, sz, ex, ey, ez, dt) {
+    const j = this.j, L = NK_GEOM.link, n = NJ - 1;
+    let cx = ex - sx, cy = ey - sy, cz = ez - sz;
+    const c = Math.hypot(cx, cy, cz);
+    const ch = this.chord;
+    if (c > 1e-6) {
+      ch[0] = cx / c;
+      ch[1] = cy / c;
+      ch[2] = cz / c;
     }
-    // the chain round what it lies on
-    const n = this.nCol, c = this.cols;
-    for (let i = 0; i < n; i++) {
-      const co = i * STRIDE;
-      if (!(c[co + 7] & NK_COL.CHAIN)) continue;
-      const R = c[co + 6] + 0.005;
-      const bx = c[co + 3] - c[co], by = c[co + 4] - c[co + 1], bz = c[co + 5] - c[co + 2];
-      const bb = bx * bx + by * by + bz * bz;
-      for (let o = 3; o < last; o += 3) {
-        const px = j[o] - c[co], py = j[o + 1] - c[co + 1], pz = j[o + 2] - c[co + 2];
-        const t = bb > 1e-12 ? Math.min(1, Math.max(0, (px * bx + py * by + pz * bz) / bb)) : 0;
-        const dx = px - bx * t, dy = py - by * t, dz = pz - bz * t;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 >= R * R || d2 < 1e-14) continue;
-        const d = Math.sqrt(d2), k = (R - d) / d;
-        j[o] += dx * k;
-        j[o + 1] += dy * k;
-        j[o + 2] += dz * k;
+    cx = ch[0];
+    cy = ch[1];
+    cz = ch[2];
+    // which way it bows: toward where gravity (less the carrier's own acceleration) and its lag behind the motion
+    // of its middle would take it
+    const sag = this.sag, bow = this.bow, m0 = this.mid;
+    const mx = (sx + ex) / 2, my = (sy + ey) / 2, mz = (sz + ez) / 2;
+    if (dt > 0) {
+      let tx = this.grav[0] - this.acc[0], ty = this.grav[1] - this.acc[1], tz = this.grav[2] - this.acc[2];
+      const tl = Math.hypot(tx, ty, tz) || 1;
+      const vx = this.midOn ? (mx - m0[0]) / dt : 0, vy = this.midOn ? (my - m0[1]) / dt : 0, vz = this.midOn ? (mz - m0[2]) / dt : 0;
+      tx = tx / tl - vx * 0.03;
+      ty = ty / tl - vy * 0.03;
+      tz = tz / tl - vz * 0.03;
+      const k = 1 - Math.exp(-18 * dt);
+      sag[0] += (tx - sag[0]) * k;
+      sag[1] += (ty - sag[1]) * k;
+      sag[2] += (tz - sag[2]) * k;
+    }
+    m0[0] = mx;
+    m0[1] = my;
+    m0[2] = mz;
+    this.midOn = true;
+    // square to the chain's line: where it bowed last (carried to the line as it now is), turned toward the sag
+    let d = bow[0] * cx + bow[1] * cy + bow[2] * cz;
+    let bx = bow[0] - cx * d, by = bow[1] - cy * d, bz = bow[2] - cz * d;
+    let bl = Math.hypot(bx, by, bz);
+    d = sag[0] * cx + sag[1] * cy + sag[2] * cz;
+    let wx = sag[0] - cx * d, wy = sag[1] - cy * d, wz = sag[2] - cz * d;
+    const wl = Math.hypot(wx, wy, wz);
+    if (bl < 1e-6) {
+      // (never bowed yet, or last bowed straight along where the chain now lies: the sag's side, or any)
+      if (wl > 1e-6) {
+        bx = wx / wl;
+        by = wy / wl;
+        bz = wz / wl;
+      } else {
+        bx = Math.abs(cy) < 0.9 ? 0 : 1;
+        by = Math.abs(cy) < 0.9 ? 1 : 0;
+        bz = 0;
+        d = bx * cx + by * cy + bz * cz;
+        bx -= cx * d;
+        by -= cy * d;
+        bz -= cz * d;
+        bl = Math.hypot(bx, by, bz) || 1;
+        bx /= bl;
+        by /= bl;
+        bz /= bl;
+      }
+    } else {
+      bx /= bl;
+      by /= bl;
+      bz /= bl;
+      if (wl > 1e-4 && dt > 0) {
+        wx /= wl;
+        wy /= wl;
+        wz /= wl;
+        // round the line, by a part of the angle between them (less of it the less the sag says: wl)
+        const sn = (by * wz - bz * wy) * cx + (bz * wx - bx * wz) * cy + (bx * wy - by * wx) * cz, cs = bx * wx + by * wy + bz * wz;
+        // (and of that, less the tauter the chain: pulled straight there is no bow to see, only the links' roll,
+        // and a chain whose links spin on a straight line is all that turning it then would show)
+        const slack = Math.min(1, Math.max(0.03, (1 - c / (L * n)) / 0.12));
+        const ang = Math.atan2(sn, cs) * (1 - Math.exp(-14 * dt * Math.min(1, wl * 2) * slack));
+        const ca = Math.cos(ang), sa = Math.sin(ang);
+        // (Rodrigues, about the chain's line: b is square to it)
+        const rx = bx * ca + (cy * bz - cz * by) * sa, ry = by * ca + (cz * bx - cx * bz) * sa, rz = bz * ca + (cx * by - cy * bx) * sa;
+        bx = rx;
+        by = ry;
+        bz = rz;
       }
     }
-    this._fabrik(as[0], as[1], as[2], ex, ey, ez, 3);
+    bow[0] = bx;
+    bow[1] = by;
+    bow[2] = bz;
+    // the angle each link turns from the last: sin(n phi / 2) / sin(phi / 2) = c / L (n links of L between eyes c apart)
+    const want = Math.min(n, c / L);
+    let phi = 0;
+    if (want < n - 1e-7) {
+      let lo = 0, hi = (2 * Math.PI) / n;
+      for (let i = 0; i < 40; i++) {
+        phi = (lo + hi) / 2;
+        if (Math.sin((n * phi) / 2) / Math.sin(phi / 2) > want) lo = phi;
+        else hi = phi;
+      }
+    }
+    j[0] = sx;
+    j[1] = sy;
+    j[2] = sz;
+    for (let k = 0; k < n; k++) {
+      const th = ((n - 1) / 2 - k) * phi, co = Math.cos(th) * L, si = Math.sin(th) * L, o = k * 3;
+      j[o + 3] = j[o] + cx * co + bx * si;
+      j[o + 4] = j[o + 1] + cy * co + by * si;
+      j[o + 5] = j[o + 2] + cz * co + bz * si;
+    }
+    // (the last joint is the rod's eye to within rounding: put on it)
+    j[n * 3] = ex;
+    j[n * 3 + 1] = ey;
+    j[n * 3 + 2] = ez;
   }
 
-  // every link its length, between the two eyes (which are never further apart than the chain: the rope above)
-  _fabrik(sx, sy, sz, ex, ey, ez, passes) {
-    const j = this.j, L = NK_GEOM.link, last = (NJ - 1) * 3;
-    // nearly taut, it is nearly straight (and FABRIK is slowest there): the joints go to the straight line as the
-    // last 2% of slack goes, and are on it when there is none
-    const span = Math.hypot(ex - sx, ey - sy, ez - sz) / NK_CHAIN;
-    if (span > 0.98) {
-      const w = Math.min(1, (span - 0.98) / 0.0195);
-      const k = w * w * (3 - 2 * w);
-      for (let i = 1; i < NJ - 1; i++) {
-        const f = i / (NJ - 1), o = i * 3;
-        j[o] += (sx + (ex - sx) * f - j[o]) * k;
-        j[o + 1] += (sy + (ey - sy) * f - j[o + 1]) * k;
-        j[o + 2] += (sz + (ez - sz) * f - j[o + 2]) * k;
-      }
-      passes += 3;
-    }
-    for (let p = 0; p < passes + 12; p++) {
-      // (as many more as it takes to meet the rod's eye: slack and thrown about, a pass or two; nearly taut, more)
-      if (p >= passes && Math.hypot(j[last] - ex, j[last + 1] - ey, j[last + 2] - ez) < 2e-4) break;
-      // back from the rod's eye
-      j[last] = ex;
-      j[last + 1] = ey;
-      j[last + 2] = ez;
-      for (let o = last - 3; o >= 0; o -= 3) {
-        let dx = j[o] - j[o + 3], dy = j[o + 1] - j[o + 4], dz = j[o + 2] - j[o + 5];
-        let d = Math.hypot(dx, dy, dz);
-        if (d < 1e-9) {
-          dy = -1;
-          dx = dz = 0;
-          d = 1;
-        }
-        const k = L / d;
-        j[o] = j[o + 3] + dx * k;
-        j[o + 1] = j[o + 4] + dy * k;
-        j[o + 2] = j[o + 5] + dz * k;
-      }
-      // out from the anchor's
-      j[0] = sx;
-      j[1] = sy;
-      j[2] = sz;
-      for (let o = 3; o <= last; o += 3) {
-        let dx = j[o] - j[o - 3], dy = j[o + 1] - j[o - 2], dz = j[o + 2] - j[o - 1];
-        let d = Math.hypot(dx, dy, dz);
-        if (d < 1e-9) {
-          dy = -1;
-          dx = dz = 0;
-          d = 1;
-        }
-        const k = L / d;
-        j[o] = j[o - 3] + dx * k;
-        j[o + 1] = j[o - 2] + dy * k;
-        j[o + 2] = j[o - 1] + dz * k;
-      }
-    }
-    // (the last pass ran out from the anchor: what is left of the error is at the rod's eye, and the rod's eye is
-    // where the rod is drawn from, so the last link is the one that takes it - a fraction of a millimetre)
-  }
 
   // what the views read: the rod as an eye, a direction and a roll; the chain from the anchor as it is NOW
   _out(dt, snap) {
@@ -861,7 +922,7 @@ export class ChainSim {
     sd[0] = sx / sl;
     sd[1] = sy / sl;
     sd[2] = sz / sl;
-    if (snap) this._fabrik(a[0], a[1], a[2], top[0], top[1], top[2], 4);
+    if (snap) this._arc(a[0], a[1], a[2], top[0], top[1], top[2], this._lastN > 0 && !this._still ? this._lastN / NK_SIM.hz : 0);
   }
 
   /** The anchor handle's wood as a segment (out: 6 numbers, chain end then butt), for whoever draws or tests it. */

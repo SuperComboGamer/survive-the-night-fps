@@ -23,13 +23,16 @@ const PI = Math.PI;
 const EYE = NK_GEOM.grip + NK_GEOM.eye; // from a hand's grip to its handle's eye
 const HAND_Y = 0.083, HAND_X = 0.032; // from the wrist to the middle of the grip: along the hand, and into the palm
 const COCK = 0.62, COCK_SIN = Math.sin(COCK), COCK_COS = Math.cos(COCK); // how far a wrist cocks sideways (rad)
-const LOOSE_SIN = Math.sin(1.0); // ...and how far a handle tips in a hand that has loosened on it to let it turn (the whirl)
+const LOOSE_SIN = Math.sin(0.85); // ...and how far a handle tips in a hand that has loosened on it to let it turn (the whirl)
 const EL_MIN = -0.25, EL_MAX = 1.9;
-const ELBOW_COST = 0.11; // how far the elbow swings out and up from where it hangs (rad)
+const ELBOW_COST = 0.3; // how far the elbow swings out and up from where it hangs (rad)
 
 // ---------------------------------------------------------------- small maths
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3(), _e = new THREE.Vector3();
-const _g = new THREE.Vector3(), _h = new THREE.Vector3();
+const _g = new THREE.Vector3(), _h = new THREE.Vector3(), _f = new THREE.Vector3();
+const STIR = 1.6; // how much wider than its own the fist's circle is while the whirl is being started
+const TURN_MAX = 14; // rad/s: the fastest turn of the view or the body that the chain is swung by
+const FOREARM_FOLLOW = 30; // how closely the fist's turn follows the forearm (1/s)
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion(), _qi = new THREE.Quaternion();
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -58,15 +61,41 @@ function ease(u, e) {
 }
 
 /** Where the elbow of an arm is: shoulder S, wrist W, the arm's two lengths, bent toward `pole` swung `el` round. */
-function elbowOf(S, W, L1, L2, pole, el, out, poleOut) {
+function elbowOf(S, W, L1, L2, pole, el, out, poleOut, prev, baseOut, turn = 0) {
   _a.subVectors(W, S);
   let dist = _a.length();
   if (dist < 1e-5) _a.set(0, -1, 0);
   else _a.multiplyScalar(1 / dist);
-  dist = clamp(dist, Math.abs(L1 - L2) + 1e-3, L1 + L2 - 1e-4);
+  // (an arm at full stretch: the last of the reach is given up gradually, so the elbow never locks with a jolt)
+  const full = L1 + L2;
+  if (dist > full * 0.94) dist = full * (0.94 + 0.0595 * Math.tanh((dist / full - 0.94) / 0.0595));
+  dist = clamp(dist, Math.abs(L1 - L2) + 1e-3, full - 1e-4);
   _b.copy(pole).addScaledVector(_a, -pole.dot(_a));
+  // Which way the elbow bends: toward the pole, as near as it can square to the arm. With the arm pointing along the
+  // pole there is no such way - and just either side of it the answer is opposite ways: a hand passing behind the
+  // back threw its elbow from one side to the other and back, frame by frame, and a hand brought out from behind
+  // snapped it from above to below. So the bend is turned round the arm from the way it was last frame (prev) toward
+  // the pole, only so fast (turn: rad this frame) - and slower the nearer the arm is to the pole's line, where the
+  // pole says least.
+  const sn = _b.length();
+  if (prev) {
+    _c.copy(prev).addScaledVector(_a, -prev.dot(_a));
+    if (_c.lengthSq() > 1e-8) {
+      _c.normalize();
+      if (sn < 1e-6) _b.copy(_c);
+      else {
+        _b.multiplyScalar(1 / sn);
+        const ang = Math.acos(clamp(_b.dot(_c), -1, 1)), most = turn * smooth(clamp(sn / 0.5, 0, 1));
+        if (ang > most) {
+          const sg = _d.crossVectors(_c, _b).dot(_a) < 0 ? -1 : 1;
+          _b.copy(_c).applyAxisAngle(_a, sg * most);
+        }
+      }
+    }
+  }
   if (_b.lengthSq() < 1e-8) _b.set(0, 0, -1).addScaledVector(_a, _a.z);
   _b.normalize();
+  if (baseOut) baseOut.copy(_b);
   if (el) {
     // round the line from the shoulder to the wrist: out and up for a right arm
     _c.crossVectors(_a, _b);
@@ -320,6 +349,21 @@ export const FP = {
 class Hand {
   constructor() {
     this.k = [0, 0, 0, 0, 0, 1, 0, 0]; // its track's value now: [-, x, y, z, dx, dy, dz, -], in the clip's terms
+    this.s = this.k.slice(); // ...and where the hand is: it follows its track (follow(), below), it is never put on it
+    this.v = [0, 0, 0, 0, 0, 0, 0, 0];
+    this.d0 = new THREE.Vector3(0, 1, 0); // its handle's direction as its track has it (d: as the wrist allows it)
+    this.bend = new THREE.Vector3(0, -1, 0); // which way the elbow bent last (before its swing out: elbowOf)
+    this.bend1 = new THREE.Vector3(0, -1, 0);
+    this.bendOn = false;
+    this.dl = new THREE.Vector3(0, 1, 0); // its handle's direction as it was last frame
+    this.fl = new THREE.Vector3(0, 0, 1); // the forearm's direction as the fist has it (following fraw: where the arm has it)
+    this.fraw = new THREE.Vector3(0, 0, 1);
+    this.fv = new THREE.Vector3();
+    this.azV = 0; // how fast its handle is rolling round the forearm (rad/s)
+    this.azA = 0; // ...and how far round it is from where its track has it
+    this.hasD = false;
+    this.elT = 0; // where the elbow is going (el follows it)
+    this.elV = 0;
     this.start = this.k.slice();
     this.p = new THREE.Vector3(); // the grip, rig space
     this.d = new THREE.Vector3(0, 1, 0); // its handle's direction
@@ -330,7 +374,8 @@ class Hand {
     this.pole = new THREE.Vector3(); // which way its elbow points (for the view's own arm solve)
     this.el = 0; // how far the elbow is swung out
     this.elLock = null;
-    this.loose = false;
+    this.loose = 0;
+    this.tight = 0; // followed this much more tightly than usual (the whirl: 0..1)
     this.cock = 0; // the wrist's sideways cock (rad; + = the handle tipped away from the elbow)
     this.holds = false;
     this.pose = 'nkGrip';
@@ -366,19 +411,32 @@ export class NunchakuCore {
     this.spin = 0; // the heavy wind-up: how far the hand is into it, 0..1
     this.spinPh = 0; // ...where round its circle the fist is
     this.spinRate = 0; // ...how fast the free handle is going round (rad/s)
+    this.spinGo = 0; // ...and the fist, round its circle
+    this.spinR = body.spin ? body.spin.r : 0.03; // ...the radius of that circle
     this.spinAt = 0;
     this.spinC = [0, 0, 0];
     this.spinDir = 0;
     this.spinSeen = false;
     this.windT = 0;
     this.stop = 0; // hit-stop left (s of real time)
+    this.stopLen = 0.1;
     this.time = 0;
     this.qW = new THREE.Quaternion(); // rig -> the space gravity is down in
+    this.q0 = new THREE.Quaternion(); // (as the last frame left it, and as this one has it)
+    this.q1 = new THREE.Quaternion();
+    this.qSet = false;
     this.kick = new THREE.Vector3(); // the view's jolt: pitch, yaw, roll (rad), sprung
     this.kickV = new THREE.Vector3();
     this.give = new THREE.Vector3(); // the hands' give under a blow or a catch (m), sprung
     this.giveV = new THREE.Vector3();
     this.bodyK = [0, 0, 0, 0, 0, 0, 0]; // the trunk and legs' track value now: [-, twist, lean, bend, drop, step, -]
+    this.bodyS = this.bodyK.slice(); // ...and where they are (following it)
+    this.bodyV = this.bodyK.slice();
+    this.pull = new THREE.Vector3(); // what each hand gives to the other while both hold (the chain is only so long)
+    this.pullV = new THREE.Vector3();
+    this.rollA = 0; // a catch: how far round the free handle has still to roll to lie in the hand as a hand holds it
+    this.rollOn = false;
+    this.rollX = new THREE.Vector3(1, 0, 0);
     this.bodyStart = this.bodyK.slice();
     this.events = []; // what happened this frame, for the sounds: { type, v, kind }
     this.kicks = 0; // (how many of the clip's kicks have been given)
@@ -387,6 +445,7 @@ export class NunchakuCore {
     this.stickQ = [new THREE.Quaternion(), new THREE.Quaternion()];
     this.anchor = 0; // which handle the driver holds
     this.joints = new Float32Array(NK_JOINTS * 3);
+    this.chainN = new THREE.Vector3(1, 0, 0); // the normal of the plane the chain's arc lies in
     this.tipSpeed = 0;
     this.trail = new Float32Array(TRAIL_N * 6); // the free handle's two ends over the last steps (rig space), newest last
     this.trailN = 0;
@@ -430,6 +489,7 @@ export class NunchakuCore {
       this.spinC = [this.dr.k[1], this.dr.k[2], this.dr.k[3]];
       this.spinSeen = false;
       this.spinRate = 0;
+      this.spinGo = 0;
       this.spinDir = 0;
       this.release();
       this.event('wind', 0);
@@ -441,7 +501,7 @@ export class NunchakuCore {
     if (this.who) return;
     _a.set(nx, ny, nz).applyQuaternion(this.qW);
     this.sim.bounce(_a.x, _a.y, _a.z, kind === 'metal' ? 0.6 : kind === 'wood' ? 0.5 : 0.35, 2.5 * power);
-    this.stop = 0.045 + 0.03 * power;
+    this.stop = this.stopLen = 0.07 + 0.035 * power;
     this.kickV.x += 0.5 * power;
     this.kickV.z += this.side * 0.3 * power;
     this.giveV.z += 1.4 * power;
@@ -478,6 +538,14 @@ export class NunchakuCore {
 
   release() {
     if (this.who) this.event('release', 0);
+    if (this.who === 'o' && this.rollOn) {
+      // (let go half way into a catch: it turns on from the roll it had been brought round to, not back where it was)
+      _c.copy(this.rollX).applyQuaternion(this.qW);
+      this.sim.side[0] = _c.x;
+      this.sim.side[1] = _c.y;
+      this.sim.side[2] = _c.z;
+    }
+    this.rollOn = false;
     this.who = '';
     this.pinW = 0;
     this.catchT = 0;
@@ -492,8 +560,15 @@ export class NunchakuCore {
       this.dr.k[i + 1] = rest.d[i];
       this.ot.k[i + 1] = (rest.who === 'o' ? rest.oc : rest.o)[i];
     }
+    for (const h of [this.dr, this.ot]) {
+      h.s = h.k.slice();
+      h.v.fill(0);
+      h.hasD = h.bendOn = false;
+      h.azV = h.elV = h.azA = 0;
+    }
     this.who = rest.who;
     this.pinW = 1;
+    this.pull.set(0, 0, 0);
     this.ot.holds = rest.who === 'o';
     this.clip = null;
     this.clipName = '';
@@ -514,19 +589,36 @@ export class NunchakuCore {
     // own handle through its own forearm. So the hands are worked out along the frame, and the chain is given every
     // one of those hands - the same strike at 30 fps as at 144.
     const n = Math.max(1, Math.ceil(dt * 120 - 1e-6));
-    for (let i = 0; i < n; i++) this._tick(dt / n, env);
+    // (and the turn of the view or the body over the frame is spread over those pieces too: a long frame's whole
+    // turn given to its first piece is a wrench on the chain)
+    if (env.qW) {
+      if (!this.qSet) this.q0.copy(env.qW);
+      this.q1.copy(env.qW);
+      this.qSet = true;
+    }
+    for (let i = 0; i < n; i++) {
+      // (...and no faster than TURN_MAX: past that the chain is carried round with the view. A hitch followed by a
+      // short frame hands the rig a third of a turn in a few milliseconds - to the chain, a hand moved at 50 m/s)
+      if (env.qW) {
+        this.qW.copy(this.q0).rotateTowards(this.q1, Math.min((TURN_MAX * dt) / n, this.q0.angleTo(this.q1) / (n - i)));
+        this.q0.copy(this.qW);
+      }
+      this._tick(dt / n, env);
+    }
   }
   _tick(dt, env) {
     // hit-stop: for a moment after a blow lands everything all but stands still
+    // (time slowed along a smooth dip and let go again the same way: a clock that stops dead for a frame and starts
+    // dead the next is a judder at 30 frames a second, not a blow)
     let scale = 1;
     if (this.stop > 0) {
+      const u = 1 - this.stop / this.stopLen;
+      scale = 1 - 0.75 * Math.sin(Math.PI * clamp(u, 0, 1)) ** 2;
       this.stop -= dt;
-      scale = 0.06;
     }
     const d = dt * scale;
     this.time += d;
-    if (env.qW) this.qW.copy(env.qW);
-    else this.qW.identity();
+    if (!env.qW) this.qW.identity();
     this.stance = env.stance || 'guard';
     const B = this.body, rest = B.rest[this.stance] || B.rest.guard;
     const dr = this.dr, ot = this.ot;
@@ -550,32 +642,65 @@ export class NunchakuCore {
     else if (clip) this._clip(clip);
     else this._settle(d, rest);
     if (!(this.windT > 0)) this.spin = Math.max(0, this.spin - d * 6);
+    // the hands and the body follow what was just worked out for them (the whirl's fist ever more tightly as the whirl comes
+    // on: it is already a smooth circle, and a fist that trailed its own circle would lead the handle by less than it
+    // means to)
+    if (d > 0) {
+      for (const h of [dr, ot]) {
+        const w = FOLLOW * (1 + 9 * h.tight * h.tight);
+        for (let i = 1; i <= 6; i++) follow(h.s, h.v, h.k[i], i, w, d);
+        h.tight = 0;
+      }
+      for (let i = 1; i <= 5; i++) follow(this.bodyS, this.bodyV, this.bodyK[i], i, 40, d);
+    }
 
     // ---- the hands: from their tracks to grips, handles, forearms and elbows
     spring(this.give, this.giveV, 220, 22, dt);
     spring(this.kick, this.kickV, 150, 17, dt);
+    dr.loose = smooth(this.spin); // (the wrist rolls further than it cocks: let out as the whirl comes on, taken in as it goes)
     this._pose(dr, this.side);
     dr.p.add(this.give);
+    ot.loose = 0;
     this._pose(ot, -this.side);
     this._arm(dr, this.side, d);
     this._arm(ot, -this.side, d);
-    if (this.who === 'o' && this.pinW >= 1) {
-      // both hands on it: their handles' eyes are never further apart than the chain is long. Each hand gives half
-      // (and its arm is worked out again where it then is)
-      for (let i = 0; i < 2; i++) {
-        _c.copy(ot.p).addScaledVector(ot.d, EYE);
-        _d.copy(dr.p).addScaledVector(dr.d, EYE);
-        _e.subVectors(_c, _d);
-        const l = _e.length();
-        if (l <= NK_CHAIN * 0.999) break;
-        const k = (l - NK_CHAIN * 0.998) / l / 2;
-        ot.p.addScaledVector(_e, -k);
-        dr.p.addScaledVector(_e, k);
+    // Both hands on it: their handles' eyes are never further apart than the chain is long - each hand gives half.
+    // What they give comes on with the catch and goes off again after the handle is let go (followed down to
+    // nothing): hands that sprang apart the moment one let go were a twitch at the start of every move.
+    {
+      const both = this.who === 'o' ? smooth(this.pinW) : 0, pl = this.pull;
+      if (both > 0) {
+        // (a few passes: the wrists turn a little where the hands then are)
+        pl.set(0, 0, 0);
+        this.pullV.set(0, 0, 0);
+        for (let i = 0; i < 3; i++) {
+          _c.copy(ot.p).addScaledVector(ot.d, EYE);
+          _d.copy(dr.p).addScaledVector(dr.d, EYE);
+          _e.subVectors(_c, _d);
+          const l = _e.length();
+          if (l <= NK_CHAIN * 0.999) break;
+          _e.multiplyScalar(((l - NK_CHAIN * 0.998) / l / 2) * both);
+          pl.add(_e);
+          ot.p.sub(_e);
+          dr.p.add(_e);
+          this._arm(dr, this.side, 0);
+          this._arm(ot, -this.side, 0);
+        }
+      } else if (pl.lengthSq() > 1e-12) {
+        if (d > 0) {
+          const e = Math.exp(-40 * d);
+          for (const c of ['x', 'y', 'z']) {
+            const n = (this.pullV[c] + 40 * pl[c]) * d;
+            this.pullV[c] = (this.pullV[c] - 40 * n) * e;
+            pl[c] = (pl[c] + n) * e;
+          }
+        }
+        ot.p.sub(pl);
+        dr.p.add(pl);
         this._arm(dr, this.side, 0);
         this._arm(ot, -this.side, 0);
       }
     }
-
     // ---- the chain
     const sim = this.sim, qW = this.qW;
     _qi.copy(qW).invert();
@@ -596,17 +721,26 @@ export class NunchakuCore {
       _c.copy(ot.p).addScaledVector(ot.d, EYE).applyQuaternion(qW);
       _b.copy(ot.d).applyQuaternion(qW);
       sim.setPin(pw, _c.x, _c.y, _c.z, _b.x, _b.y, _b.z);
-    } else if (this.who === 'arm') {
-      const a = B.arm;
-      _c.set(a[0] * this.side, a[1], a[2]).applyQuaternion(qW);
-      _b.set(a[3] * this.side, a[4], a[5]).applyQuaternion(qW);
-      sim.setPin(pw, _c.x, _c.y, _c.z, _b.x, _b.y, _b.z);
-    } else if (this.who === 'fold') {
-      // against the driver's own handle, a finger's width off it on the thumb's side
-      holdQuat(dr.d, dr.f, _q);
-      _e.set(0.036 * this.side, 0, 0).applyQuaternion(_q);
-      _c.copy(dr.p).addScaledVector(dr.d, EYE).add(_e).applyQuaternion(qW);
-      _b.copy(dr.d).applyQuaternion(qW);
+    } else if (this.who === 'arm' || this.who === 'fold') {
+      if (this.who === 'arm') {
+        const a = B.arm;
+        _c.set(a[0] * this.side, a[1], a[2]);
+        _b.set(a[3] * this.side, a[4], a[5]);
+      } else {
+        // against the driver's own handle, a finger's width off it on the thumb's side
+        holdQuat(dr.d, dr.f, _q);
+        _e.set(0.05 * this.side, 0, 0).applyQuaternion(_q);
+        _c.copy(dr.p).addScaledVector(dr.d, EYE).add(_e);
+        _b.copy(dr.d);
+      }
+      // (no further from the driver's own handle than the chain reaches: held anywhere else it would be dragged
+      // back the moment it was "caught")
+      _d.copy(dr.p).addScaledVector(dr.d, EYE);
+      _e.subVectors(_c, _d);
+      const l = _e.length();
+      if (l > NK_CHAIN * 0.99) _c.copy(_d).addScaledVector(_e, (NK_CHAIN * 0.99) / l);
+      _c.applyQuaternion(qW);
+      _b.applyQuaternion(qW);
       sim.setPin(pw, _c.x, _c.y, _c.z, _b.x, _b.y, _b.z);
     } else sim.setPin(0);
     sim.clearColliders();
@@ -638,22 +772,53 @@ export class NunchakuCore {
     const fd = this.freeD.set(sim.u[0], sim.u[1], sim.u[2]).applyQuaternion(_qi);
     const ft = this.freeTop.set(sim.top[0], sim.top[1], sim.top[2]).applyQuaternion(_qi);
     const fg = this.freeGrip.copy(ft).addScaledVector(fd, -EYE);
-    if (this.who === 'o') {
-      // the other hand, reaching for or holding the free handle: on its grip, turned to it
-      const reach = pw >= 1 ? 1 : smooth(clamp(pw * 1.6, 0, 1));
-      ot.p.lerp(fg, reach);
-      ot.d.lerp(fd, reach).normalize();
-      this._arm(ot, -this.side, 0);
-      ot.pose = pw >= 1 ? 'nkGrip' : pw > 0.6 ? 'nkHalf' : 'open';
-    } else ot.pose = 'grip'; // (nothing in it: a loose fist)
+    // The other hand, catching: it goes where its track takes it and the free handle is drawn into it (the chain's
+    // own catch: ChainSim.setPin) - a hand that went after a handle still swinging flailed with it. It closes on it
+    // as it arrives.
+    if (this.who === 'o') ot.pose = pw >= 1 ? 'nkGrip' : pw > 0.7 ? 'nkHalf' : 'open';
+    else ot.pose = 'grip'; // (nothing in it: a loose fist)
     dr.pose = this.spin > 0.3 ? 'nkSpin' : 'nkGrip';
+    this._side.set(sim.side[0], sim.side[1], sim.side[2]).applyQuaternion(_qi);
     if (this.who === 'o' && pw >= 1) {
       this.stickQ[F].copy(ot.q);
       this.stickP[F].copy(ot.p);
+      // (its roll is the hand's while a hand has it: let go, it turns on from there)
+      _c.set(1, 0, 0).applyQuaternion(ot.q).applyQuaternion(qW);
+      sim.side[0] = _c.x;
+      sim.side[1] = _c.y;
+      sim.side[2] = _c.z;
+      this.rollOn = false;
     } else {
-      this._side.set(sim.side[0], sim.side[1], sim.side[2]).applyQuaternion(_qi);
+      if (this.who === 'o' && pw > 0) {
+        // on its way into the hand: rolled round, as it comes, to the way the hand will hold it (the angle still to
+        // go is followed round from frame to frame, so it never takes the other way round half way there)
+        _c.set(1, 0, 0).applyQuaternion(ot.q);
+        _c.addScaledVector(fd, -_c.dot(fd));
+        _d.copy(this._side).addScaledVector(fd, -this._side.dot(fd));
+        if (_c.lengthSq() > 1e-6 && _d.lengthSq() > 1e-6) {
+          _c.normalize();
+          _d.normalize();
+          let a = Math.atan2(_e.crossVectors(_d, _c).dot(fd), _d.dot(_c));
+          if (this.rollOn) a -= Math.round((a - this.rollA) / (PI * 2)) * PI * 2;
+          this.rollA = a;
+          this.rollOn = true;
+          this._side.copy(_d).applyAxisAngle(fd, a * smooth(pw));
+          this.rollX.copy(this._side);
+        }
+      } else this.rollOn = false;
       freeQuat(fd, this._side, this.stickQ[F]);
       this.stickP[F].copy(fg);
+    }
+    {
+      // the plane the chain is drawn in: its normal (rig space), kept pointing the way it did (the chain's line runs
+      // the other way after a pass: the plane is the same plane)
+      const ch = sim.chord, bw = sim.bow;
+      _c.set(ch[1] * bw[2] - ch[2] * bw[1], ch[2] * bw[0] - ch[0] * bw[2], ch[0] * bw[1] - ch[1] * bw[0]).applyQuaternion(_qi);
+      if (_c.lengthSq() > 1e-8) {
+        _c.normalize();
+        if (_c.dot(this.chainN) < 0) _c.negate();
+        this.chainN.copy(_c);
+      }
     }
     const J = this.joints, sj = sim.j;
     for (let i = 0; i < NK_JOINTS; i++) {
@@ -682,7 +847,8 @@ export class NunchakuCore {
   // a clip's frame: the hands along their tracks, the free handle let go and caught on the clip's clock
   _clip(clip) {
     const t = this.t, dr = this.dr, ot = this.ot;
-    evalTrack(clip.d, t, dr.start, dr.k);
+    const tl = Math.min(clip.dur, t + LEAD); // (the hands trail their tracks by this much: read that much ahead, a blow is on its beat)
+    evalTrack(clip.d, tl, dr.start, dr.k);
     if (clip.release > 0 && !this.released && t >= clip.release) {
       this.released = true;
       this.release();
@@ -699,9 +865,9 @@ export class NunchakuCore {
       if (w >= 1 && this.pinW < 1) this._caught();
       this.pinW = w;
     }
-    if (this.who === 'o' && clip.oc) evalTrack(clip.oc, t, ot.startC || ot.start, ot.k);
-    else if (clip.o) evalTrack(clip.o, t, ot.start, ot.k);
-    if (clip.body) evalBody(clip.body, t, this.bodyStart, this.bodyK);
+    if (this.who === 'o' && clip.oc) evalTrack(clip.oc, tl, ot.startC || ot.start, ot.k);
+    else if (clip.o) evalTrack(clip.o, tl, ot.start, ot.k);
+    if (clip.body) evalBody(clip.body, tl, this.bodyStart, this.bodyK);
     else for (let i = 1; i <= 5; i++) this.bodyK[i] *= 0.9;
     while (clip.kick && this.kicks < clip.kick.length && t >= clip.kick[this.kicks][0]) {
       const k = clip.kick[this.kicks++];
@@ -773,6 +939,7 @@ export class NunchakuCore {
     _a.y -= to[1] + n.y * EYE * ct;
     _a.z -= to[2] + n.z * EYE * ct;
     const x = _a.dot(e1), y = _a.dot(e2), r = Math.hypot(x, y);
+    let go = 6 * (this.spinDir || 1);
     if (r > 0.05 && d > 0) {
       const at = Math.atan2(y, x);
       let dp = at - this.spinAt;
@@ -790,15 +957,19 @@ export class NunchakuCore {
       let step = (at + lead * dir - this.spinPh) * dir;
       step -= Math.round(step / (PI * 2)) * PI * 2;
       // (the fist never stops going round, and never runs away from the handle it is leading)
-      this.spinPh += dir * clamp(step, d * Math.max(5, 0.5 * rate), d * (Math.max(0, rate) + 30));
+      go = dir * clamp(step / d, Math.max(5, 0.5 * rate), Math.max(0, rate) + 30);
     } else {
       // hanging in the middle: start it going, at about its own swing's pace
       this.spinSeen = false;
-      this.spinPh += d * 6;
+    }
+    // (how fast the fist goes round its circle is come to, not jumped to: finding the handle, or losing it, it
+    // changed pace in one frame - a hop of the hand)
+    if (d > 0) {
+      this.spinGo += (go - this.spinGo) * (1 - Math.exp(-d * 30));
+      this.spinPh += this.spinGo * d;
     }
     const c = Math.cos(this.spinPh), s = Math.sin(this.spinPh);
     dr.elLock = sp.el;
-    dr.loose = true;
     const ox = e1.x * c + e2.x * s, oy = e1.y * c + e2.y * s, oz = e1.z * c + e2.z * s; // out from the middle, toward the lead
     // the middle of the fist's circle comes up from wherever the hand was; round it the fist is where the lead is, now
     // (a hand that lagged its own circle would be leading by less than it means to)
@@ -806,10 +977,14 @@ export class NunchakuCore {
     C[0] += (to[0] - C[0]) * kc;
     C[1] += (to[1] - C[1]) * kc;
     C[2] += (to[2] - C[2]) * kc;
-    const w = this.spin;
-    dr.k[1] = C[0] + ox * sp.r * w;
-    dr.k[2] = C[1] + oy * sp.r * w;
-    dr.k[3] = C[2] + oz * sp.r * w;
+    // (a wide stir to get it going, drawn in to a tight one as it comes up to speed: from hanging still a tight
+    // circle only finds the handle's swing by luck, and some wind-ups took a second to start)
+    const up = clamp(Math.abs(this.spinRate) / (0.55 * want), 0, 1);
+    this.spinR += (sp.r * (1 + STIR * (1 - smooth(up))) - this.spinR) * (1 - Math.exp(-d * 10));
+    const w = this.spin, rr = this.spinR;
+    dr.k[1] = C[0] + ox * rr * w;
+    dr.k[2] = C[1] + oy * rr * w;
+    dr.k[3] = C[2] + oz * rr * w;
     const k = 1 - Math.exp(-d * (10 + 50 * w));
     const dx = n.x * ct + ox * st, dy = n.y * ct + oy * st, dz = n.z * ct + oz * st;
     dr.k[4] += (dx - dr.k[4]) * k;
@@ -817,6 +992,7 @@ export class NunchakuCore {
     dr.k[6] += (dz - dr.k[6]) * k;
     const ko = 1 - Math.exp(-d * 12);
     for (let i = 0; i < 6; i++) ot.k[i + 1] += (sp.o[i] - ot.k[i + 1]) * ko;
+    dr.tight = this.spin; // (as the whirl comes on: the hand comes into it like into anything else)
     if (sp.body) for (let i = 1; i <= 5; i++) this.bodyK[i] += (sp.body[i - 1] - this.bodyK[i]) * ko;
     if (this.who) this.release();
   }
@@ -845,17 +1021,34 @@ export class NunchakuCore {
       k[1] = -h.p.x * s;
       k[2] = h.p.y;
       k[3] = h.p.z;
-      k[4] = -h.d.x * s;
-      k[5] = h.d.y;
-      k[6] = h.d.z;
+      k[4] = -h.d0.x * s;
+      k[5] = h.d0.y;
+      k[6] = h.d0.z;
     }
+    // (the hand that drove keeps the give it had in it; the one that drives now has it taken off: it is added again)
+    b[1] -= -this.give.x * s;
+    b[2] -= this.give.y;
+    b[3] -= this.give.z;
     dr.k = b;
     ot.k = a;
-    const e = dr.el;
-    dr.el = ot.el;
-    ot.el = e;
+    // where each is, and how fast it was going, in the mirrored terms too
+    const va = dr.v.slice(), vb = ot.v.slice();
+    va[1] = -va[1];
+    va[4] = -va[4];
+    vb[1] = -vb[1];
+    vb[4] = -vb[4];
+    dr.s = b.slice();
+    ot.s = a.slice();
+    dr.v = vb;
+    ot.v = va;
+    for (const f of ['el', 'elT', 'elV', 'bend', 'bend1', 'bendOn', 'dl', 'fl', 'fraw', 'fv', 'f', 'hasD', 'azV', 'azA']) {
+      const e = dr[f];
+      dr[f] = ot[f];
+      ot[f] = e;
+    }
     this.who = '';
     this.pinW = 0;
+    this.pull.set(0, 0, 0); // (it is in where the hands were taken from)
     ot.holds = false;
     this.event('pass', 0);
   }
@@ -863,9 +1056,12 @@ export class NunchakuCore {
   // a hand's track value to its grip and its handle's direction, on the side it is really on (rig space). Tracks are
   // written for a right-handed driver: the driver's x to the right, the other hand's to the left
   _pose(h, side) {
-    const k = h.k, s = this.side;
+    const k = h.s, s = this.side;
     h.p.set(k[1] * s, k[2], k[3]);
     h.d.set(k[4] * s, k[5], k[6]).normalize();
+    h.d0.copy(h.d);
+    // (the handle as the wrist let it lie last frame is where this frame's answer starts from: _arm)
+    if (h.hasD) h.d.copy(h.dl);
     void side;
   }
 
@@ -878,47 +1074,123 @@ export class NunchakuCore {
     }
     // (a left arm's elbow swings the other way round)
     const sgn = side;
-    const cost = (el) => {
-      this._wrist(h, side);
-      elbowOf(S, h.wrist, B.L1, B.L2, P, el * sgn, h.elbow, h.pole);
-      h.f.subVectors(h.elbow, h.wrist).normalize();
-      const c = h.d.dot(h.f);
-      // (the wrist's cock, and how far the elbow is out: an elbow hangs unless the handle needs it out)
-      return c * c + ELBOW_COST * el * el;
-    };
-    // from where it was: a few steps downhill, so it never jumps from one way of holding to another
-    let el = h.el, step = 0.2, best = cost(el);
-    if (h.elLock !== null) {
-      // (a move that keeps the elbow where it is: the whirl)
-      el = h.elLock;
-      h.elLock = null;
-      step = 0;
-    }
-    for (let i = 0; i < 6 && step > 0; i++) {
-      const up = el + step <= EL_MAX ? cost(el + step) : Infinity;
-      const dn = el - step >= EL_MIN ? cost(el - step) : Infinity;
-      if (up < best && up <= dn) {
-        best = up;
-        el += step;
-      } else if (dn < best) {
-        best = dn;
-        el -= step;
-      } else step *= 0.5;
-    }
-    // (and no faster than an elbow goes)
-    if (d > 0) el = h.el + clamp(el - h.el, -d * 14, d * 14);
-    h.el = el;
-    // settle the wrist and the forearm on each other; and a wrist only cocks so far: past that the handle gives way
-    // (it leans back toward square to the forearm, which is what a real grip does at the end of its reach)
-    for (let i = 0; i < 3; i++) {
-      cost(el);
-      const c = -h.d.dot(h.f), lim = h.loose ? LOOSE_SIN : COCK_SIN;
-      if (Math.abs(c) > lim) {
-        _c.copy(h.d).addScaledVector(h.f, c);
-        if (_c.lengthSq() > 1e-8) h.d.copy(_c.normalize().multiplyScalar(Math.sqrt(1 - lim * lim))).addScaledVector(h.f, -lim * Math.sign(c));
+    // (The wrist is a hand's length up the forearm from the grip, and the forearm runs from the wrist to the elbow:
+    // each is worked out from the other. Settled on each other within a frame, a handle rolling round the forearm
+    // threw the wrist round the grip and the forearm after it, to and fro. So the fist is turned by where the forearm
+    // has been heading - h.f follows the forearm found last frame, as a forearm's own weight would have it - and
+    // the two never chase each other.)
+    if (d > 0 && h.hasD) {
+      for (const c of ['x', 'y', 'z']) {
+        const w = FOREARM_FOLLOW, e = Math.exp(-w * d), a = h.fl[c] - h.fraw[c], n = (h.fv[c] + w * a) * d;
+        h.fv[c] = (h.fv[c] - w * n) * e;
+        h.fl[c] = h.fraw[c] + (a + n) * e;
       }
     }
-    h.loose = false;
+    if (h.hasD) h.f.copy(h.fl).normalize();
+    const cost = (el) => {
+      this._wrist(h, side);
+      elbowOf(S, h.wrist, B.L1, B.L2, P, el * sgn, h.elbow, h.pole, h.bendOn ? h.bend : null, h.bend1, d * 12);
+      _f.subVectors(h.elbow, h.wrist).normalize();
+      const c = h.d0.dot(_f);
+      if (!h.hasD) h.f.copy(_f);
+      // (the wrist's cock, and how far the elbow is out: an elbow hangs unless the handle needs it out)
+      return c * c + (B.elbowCost || ELBOW_COST) * el * el;
+    };
+    if (d > 0) {
+      // Where the elbow should be: downhill from where it was last headed (so it never jumps from one way of holding
+      // to another), found finely - and the elbow then follows that, it is not put there: an elbow stepped from one
+      // trial value to the next shakes the whole forearm, and the fist with it
+      let el = h.elT, step = 0.1, best = cost(el);
+      if (h.elLock !== null) {
+        // (a move that keeps the elbow where it is: the whirl)
+        el = h.elLock;
+        h.elLock = null;
+        step = 0;
+      }
+      for (let i = 0; i < 16 && step > 0.0004; i++) {
+        const up = el + step <= EL_MAX ? cost(el + step) : Infinity;
+        const dn = el - step >= EL_MIN ? cost(el - step) : Infinity;
+        if (up < best && up <= dn) {
+          best = up;
+          el += step;
+        } else if (dn < best) {
+          best = dn;
+          el -= step;
+        } else step *= 0.5;
+      }
+      h.elT = el;
+      // critically damped, as the hands are (and no faster than an elbow goes: its speed is kept under 14 rad/s)
+      const w = 26, e = Math.exp(-w * d), a = h.el - el, n = (h.elV + w * a) * d;
+      h.elV = clamp((h.elV - w * n) * e, -14, 14);
+      h.el = el + (a + n) * e;
+    }
+    const el = h.el;
+    // settle the wrist and the forearm on each other; and a wrist only cocks so far: toward its limit the handle gives
+    // way, leaning back toward square to the forearm (what a real grip does at the end of its reach). The limit is a
+    // soft one - the nearer it, the more it gives - so the handle never stops dead against it; and each pass starts
+    // again from the direction the track asked for, so it comes to the same answer however many passes there are
+    const lim = COCK_SIN + (LOOSE_SIN - COCK_SIN) * (h.loose || 0);
+    // Asked to lie nearly along the forearm (a cock of a right angle: more than any wrist has), which way it leans
+    // off the forearm instead is barely said by the track at all - a hair either way and it is the other side: the
+    // handle threw itself from one side of the fist to the other in a frame. So which side it leans to follows the
+    // track round the forearm (the roll of a wrist: what a figure-eight is made of) - closely where the track is
+    // sure of it, loosely where it is not - with a speed that never jumps: it rolls over the fist, it does not flip.
+    // (The forearm it is measured against is this frame's and does not move with it - above - so this has one
+    // answer, the same however many times it is asked for in a frame.)
+    let azV = h.azV, azA = h.azA, azRem = h.azA;
+    for (let i = 0; i < 2; i++) {
+      cost(el);
+      const c = -h.d0.dot(h.f);
+      _c.copy(h.d0).addScaledVector(h.f, c); // (the track's direction, square to the forearm: its length says how sure)
+      const sure = _c.length();
+      if (h.hasD) {
+        _d.copy(h.dl).addScaledVector(h.f, -h.dl.dot(h.f));
+        if (_d.lengthSq() > 1e-8) {
+          _d.normalize();
+          if (sure < 1e-5) _c.copy(_d);
+          else {
+            _c.multiplyScalar(1 / sure);
+            // how far round the forearm it is from where the track has it (the shorter way), and what is left of
+            // that after this frame's following
+            let a = Math.atan2(_e.crossVectors(_c, _d).dot(h.f), _c.dot(_d));
+            // (followed round the same way it was going: half a turn behind is not suddenly half a turn ahead)
+            a -= Math.round((a - h.azA) / (PI * 2)) * PI * 2;
+            azA = a;
+            let rem = a;
+            if (d > 0) {
+              const w = 14 + 150 * smooth(clamp((sure - 0.05) / 0.6, 0, 1)), e = Math.exp(-w * d), n = (h.azV + w * a) * d;
+              azV = (h.azV - w * n) * e;
+              rem = (a + n) * e;
+            }
+            azRem = rem;
+            _c.applyAxisAngle(h.f, rem);
+          }
+        }
+      }
+      if (_c.lengthSq() > 1e-8) {
+        // (as asked up to seven tenths of the limit; past that it gives more and more, and never reaches it)
+        const ac = Math.abs(c), knee = 0.7 * lim;
+        const c2 = ac <= knee ? c : Math.sign(c) * (knee + (lim - knee) * Math.tanh((ac - knee) / (lim - knee)));
+        _c.normalize().multiplyScalar(Math.sqrt(1 - c2 * c2)).addScaledVector(h.f, -c2);
+        h.d.copy(_c).normalize();
+      }
+    }
+    h.dl.copy(h.d);
+    if (d > 0) {
+      h.azV = azV;
+      // (what is left of it after this frame: where the next frame's is measured from)
+      h.azA = azRem;
+    }
+    // (the forearm as the arm now has it: what the fist is turned toward from here)
+    cost(el);
+    h.fraw.copy(_f);
+    if (!h.hasD) {
+      h.fl.copy(_f);
+      h.fv.set(0, 0, 0);
+    }
+    h.hasD = true;
+    h.bend.copy(h.bend1);
+    h.bendOn = true;
     holdQuat(h.d, h.f, h.q);
     this._wrist(h, side);
     h.cock = Math.asin(clamp(-h.d.dot(h.f), -1, 1));
@@ -969,6 +1241,16 @@ function evalBody(keys, t, start, out) {
   const w = ease(k2[0] > t1 ? clamp((t - t1) / (k2[0] - t1), 0, 1) : 1, k2[6]);
   for (let c = 1; c <= 5; c++) out[c] = k1[c] + (k2[c] - k1[c]) * w;
   return out;
+}
+
+// A value following its target: critically damped (no overshoot), exact for any step - so what is drawn has a speed
+// that never jumps, whatever its target does: a clip beginning from the middle of another, a key where a track changes
+// pace, a catch, a stance changing. w: how tightly (1/s); it trails a steadily moving target by 2/w seconds.
+const FOLLOW = 64, LEAD = 2 / FOLLOW;
+function follow(x, v, to, i, w, dt) {
+  const e = Math.exp(-w * dt), a = x[i] - to, n = (v[i] + w * a) * dt;
+  v[i] = (v[i] - w * n) * e;
+  x[i] = to + (a + n) * e;
 }
 
 function spring(x, v, k, c, dt) {
@@ -1031,21 +1313,25 @@ export class ChainMeshes {
     handle0.quaternion.copy(core.stickQ[0]);
     this.handle.position.copy(core.stickP[1]);
     this.handle.quaternion.copy(core.stickQ[1]);
-    // each link lies a quarter turn round from the last; the first lies through the eye it hangs in (the eye's hole
-    // is across its handle's x). Carried along the chain link by link, so no link rolls about by itself
-    const J = core.joints;
-    _e.set(1, 0, 0).applyQuaternion(core.stickQ[core.anchor]);
-    for (let i = 0; i < this.links.length; i++) {
-      const m = this.links[i], o = i * 3;
+    // Each link lies a quarter turn round from the last. The chain is drawn as an arc in a plane (ChainSim._arc):
+    // every other link lies flat in that plane and the ones between stand square to it - how a chain does lie - so
+    // a link's roll is the plane's and nothing else's. (Rolled link by link from the handle it hangs from, every
+    // link spun whenever the chain folded back along that handle.) Always from handle 0's eye to handle 1's,
+    // whichever of them a hand has (the joints run from the held one): a link is the same link, lying the same way,
+    // before and after a pass from hand to hand.
+    const J = core.joints, n = this.links.length, rev = core.anchor === 1;
+    _g.copy(core.chainN);
+    for (let i = 0; i < n; i++) {
+      const m = this.links[i], o = (rev ? n - i : i) * 3, o2 = (rev ? n - i - 1 : i + 1) * 3;
       _a.set(J[o], J[o + 1], J[o + 2]);
-      _b.set(J[o + 3], J[o + 4], J[o + 5]);
+      _b.set(J[o2], J[o2 + 1], J[o2 + 2]);
       m.position.addVectors(_a, _b).multiplyScalar(0.5);
       _c.subVectors(_b, _a).normalize(); // z: along the link
-      _d.copy(_e).addScaledVector(_c, -_e.dot(_c)); // y: the link's flat
-      if (_d.lengthSq() < 1e-6) _d.set(0, 1, 0).addScaledVector(_c, -_c.y);
-      _d.normalize();
-      _e.crossVectors(_d, _c); // x; and the next link's flat
-      m.quaternion.setFromRotationMatrix(_m.makeBasis(_e, _d, _c));
+      _d.copy(_g).addScaledVector(_c, -_g.dot(_c)).normalize(); // square to the plane (and to the link)
+      _e.crossVectors(_d, _c); // in the plane, square to the link
+      // (a link is the same turned half round: which way the plane's normal points does not show)
+      if (i & 1) m.quaternion.setFromRotationMatrix(_m.makeBasis(_d.negate(), _e, _c));
+      else m.quaternion.setFromRotationMatrix(_m.makeBasis(_e, _d, _c));
     }
     if (this.trail) this._trail(core, gain);
   }
@@ -1136,11 +1422,24 @@ export function tpBody(P) {
     return r;
   };
   const keys = (ks) => ks && ks.map((key) => map(key, 1));
-  const rest = (r) => ({ d: map(r.d), o: map(r.o), oc: r.oc && map(r.oc), who: r.who });
+  // The hand with nothing in it. In the view it is kept out of the picture, low and wide; carried to the body that is
+  // an arm held straight out sideways through every strike. Seen from outside it is a guard instead: the fist in front
+  // of the ribs, the elbow down (a little of the view's motion is left in it, so it is not nailed there).
+  const guard = [-P.shoulderW * 0.72, cy - 0.25, -0.25, ...N3(0.25, 0.85, -0.45)];
+  const off = (v, o = 0) => {
+    const r = map(v, o);
+    for (let i = 0; i < 6; i++) r[o + i] += (guard[i] - r[o + i]) * 0.8;
+    const l = Math.hypot(r[o + 3], r[o + 4], r[o + 5]) || 1;
+    for (let i = 3; i < 6; i++) r[o + i] /= l;
+    return r;
+  };
+  const STRIKES = { whip: 1, backhand: 1, eight: 1, smash: 1, lunge: 1, sweep: 1, retreat: 1, heavy: 1, fig8: 1, rest1: 1 };
+  const rest = (r) => ({ d: map(r.d), o: off(r.o), oc: r.oc && map(r.oc), who: r.who });
   const clips = {};
   for (const name in FP.clips) {
     const c = FP.clips[name];
-    clips[name] = { ...c, d: keys(c.d), o: keys(c.o), oc: keys(c.oc), from: c.from && rest(c.from), body: TP_BODY[name] || c.body || null, kick: null };
+    const o = c.o && (STRIKES[name] ? c.o.map((key) => off(key, 1)) : keys(c.o));
+    clips[name] = { ...c, d: keys(c.d), o, oc: keys(c.oc), from: c.from && rest(c.from), body: TP_BODY[name] || c.body || null, kick: null };
   }
   const R = {};
   for (const name in FP.rest) R[name] = rest(FP.rest[name]);
@@ -1152,8 +1451,9 @@ export function tpBody(P) {
     L1: P.uarmLen, L2: P.farmLen,
     shoulder: [P.shoulderW, cy, 0],
     pole: [0.7, -1, 0.35],
+    elbowCost: 0.5, // (seen from outside, elbows up at the shoulders read as a scarecrow: they hang unless a strike needs them)
     rest: R, arm,
-    spin: { ...FP.spin, d: map(FP.spin.d), o: map(FP.spin.o), body: [-0.25, -0.05, -0.05, 0.03, -0.2] },
+    spin: { ...FP.spin, r: 0.04, d: map(FP.spin.d), o: off(FP.spin.o), body: [-0.25, -0.05, -0.05, 0.03, -0.2] },
     clips,
     cy,
   };
@@ -1223,8 +1523,8 @@ export class NunchakuTP {
       stance: s.sprint && (s.speed || 0) > 4 ? 'carry' : s.crouch ? 'low' : 'guard',
       colliders: (c) => {
         const cy = B.cy;
-        c.col(0, cy + 0.2, -0.02, 0, cy + 0.24, -0.02, 0.125); // the head
-        c.col(0, cy - 0.04, 0.01, 0, -0.22, 0.01, 0.155); // the trunk
+        c.col(0, cy + 0.2, -0.02, 0, cy + 0.24, -0.02, 0.135); // the head
+        c.col(0, cy - 0.04, 0.01, 0, -0.22, 0.01, 0.175); // the trunk
         c.col(0, -0.3, 0.01, 0, -0.42, 0.01, 0.16); // the hips
         for (const sd of [1, -1]) {
           const h = sd > 0 ? c.right : c.left;
@@ -1233,6 +1533,6 @@ export class NunchakuTP {
         }
       },
     });
-    this.meshes.place(core, this.handle0, 0.55);
+    this.meshes.place(core, this.handle0, 0.28);
   }
 }

@@ -20,6 +20,7 @@ import { Connection } from '../client/net/connection.js';
 import { Prediction } from '../client/game/prediction.js';
 import { playerFlags } from '../server/snapshot.js';
 import { NunchakuCore, FP, tpBody } from '../client/render/models/nunchaku.js';
+import { survey as jitterSurvey, jitterBad, JITTER_LIMIT } from './clip/nunchaku-jitter.js';
 
 const seed = +(process.argv[2] || 4242);
 const fails = [];
@@ -610,7 +611,7 @@ runNet(100);
         if (!nums.every(Number.isFinite)) bad = bad || `${name}: not a number at ${t.toFixed(2)} s`;
         const span = eyeOf(0).distanceTo(eyeOf(1)) / NK_CHAIN;
         worstSpan = Math.max(worstSpan, span);
-        if (t > 0) worstCock = Math.max(worstCock, Math.abs(core.dr.cock) * (core.windT > 0 ? 0 : 1), Math.abs(core.ot.cock) * (core.who === 'o' ? 1 : 0));
+        if (t > 0) worstCock = Math.max(worstCock, Math.abs(core.dr.cock) * (core.windT > 0 || core.spin > 0 ? 0 : 1), Math.abs(core.ot.cock) * (core.who === 'o' ? 1 : 0));
         const lastEv = events.length ? events[events.length - 1][0] : 0;
         if (settled < 0 && t > lastEv + 0.3 && !core.clip && core.who === 'o' && core.pinW >= 1 && !(core.windT > 0)) settled = t - lastEv;
       }
@@ -643,6 +644,25 @@ runNet(100);
     check(`the moves, ${label}: every one ends back in the guard, nothing torn or not a number`, !bad && worstSpan < 1.02, bad || `${runs} runs, back in the guard within ${slowest.toFixed(2)} s of the last move, the handles' eyes at most ${(worstSpan * 100).toFixed(1)}% of the chain apart`);
     check(`...and no wrist is cocked further than a wrist goes`, worstCock < 0.64, `${((worstCock * 180) / Math.PI).toFixed(0)} degrees at the most`);
   }
+}
+
+// ---------------------------------------------------------------- smooth
+// Nothing shakes, pops or snaps: every move, and every hand-off between two of them, in both views, at 30, 60 and 144
+// frames a second and on uneven frames with hitches - what is drawn (the hands, both handles, every link) looked at
+// 120 times a second and more (scripts/clip/nunchaku-jitter.js, which is the instrument and says what it measures).
+{
+  const rows = jitterSurvey(['fp', 'tp'], [30, 60, 144, 'uneven']);
+  const bad = rows.filter(jitterBad);
+  const worst = (k) => rows.reduce((m, r) => Math.max(m, r[k]), 0);
+  const held = Math.max(worst('shakeHeld'), worst('popHeld')), free = Math.max(worst('shakeFree'), worst('popFree'));
+  const f = bad[0];
+  check(
+    'the motion is smooth: no shake, pop or snap in any move or hand-off, in either view, at 30 / 60 / 144 fps and on uneven frames',
+    bad.length === 0,
+    bad.length
+      ? `${bad.length} of ${rows.length} runs over the marks, the first: ${f.view} ${f.name} @${f.rate} - held ${Math.max(f.shakeHeld, f.popHeld).toFixed(1)} mm${f.worst ? ` (${f.worst.kind}: ${f.worst.at} at ${f.worst.t.toFixed(3)} s)` : ''}, free ${Math.max(f.shakeFree, f.popFree).toFixed(1)} mm, a hand ${f.snap.toFixed(0)} m/s^2`
+      : `${rows.length} runs; at the worst ${held.toFixed(1)} mm on the hands and the held handle (mark ${JITTER_LIMIT.held}), ${free.toFixed(1)} mm on the free handle and the chain (${JITTER_LIMIT.free}), a hand ${worst('snap').toFixed(0)} m/s^2 (${JITTER_LIMIT.snap})`,
+  );
 }
 
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nall nunchucks checks passed');

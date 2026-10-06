@@ -230,6 +230,7 @@ through `launchChrome` too.
 | `props.js` | `clip:props` | World props, trees, boulders and walls inside each other, over many seeds, with the `/tp` to each. |
 | `pickups.js` | `clip:pickups` | Every ground item's lowest point: sunk or floating. |
 | `nunchaku-shots.js` | | Stills and strips of the nunchucks out of the sandbox, a list of them in one browser. |
+| `nunchaku-jitter.js` | | Is the nunchucks' motion smooth: every move and hand-off on a stepped clock at 30 to 240 fps and on uneven frames, measured for shakes, pops and snaps (no browser). `--trace "move@fps"` prints the frames round the worst. |
 | `nunchaku-film.js`, `nunchaku-reel.js` | | Footage of the nunchucks in the real game, a frame at a time with both clocks held, and the reel, contact sheets and strips cut from it (ffmpeg). |
 | `lib.js` | | The shared plumbing: arguments, servers, headless Chrome, image sheets, worktrees, lending the sandbox to an older tree. |
 

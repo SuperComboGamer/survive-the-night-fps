@@ -27,7 +27,7 @@ const REEL = [
   { shot: 'idle', title: 'At rest: the chain hangs in the world, not in the view' },
   { shot: 'combo', title: 'Light chain: whip, backhand, figure-eight, smash' },
   { shot: 'heavy', title: 'Heavy attack: wound up through three tiers, and let go' },
-  { shot: 'passes', title: 'The flourish: passes from hand to hand' },
+  { shot: 'passes', title: 'The flourish: passes from hand to hand', cut: [0, 2.4] },
   { shot: 'tp-front', title: 'What the others see' },
   { shot: 'tp-side', title: 'The wind-up, the crouched sweep' },
   { shot: 'tp-slow', title: 'Quarter speed: the chain and the free handle are simulated' },
@@ -45,6 +45,7 @@ const STRIPS = [
   ['light-chain-4-smash', 'combo', 'chain', 64, 30, 1],
   ['heavy-wind-up', 'heavy', 'wind', 0, 30, 3],
   ['heavy-release', 'heavy', 'release', 0, 24, 1],
+  ['finish', 'finish', 'release', 0, 36, 2],
   ['flourish-first-person', 'passes', 'flourish', 0, 36, 8],
   ['third-person-chain', 'tp-front', 'chain', 0, 36, 3],
   ['third-person-quarter-speed', 'tp-slow', 'chain', 0, 48, 8],
@@ -80,7 +81,12 @@ if (doing('shots') || doing('reel')) {
       writeFileSync(join(work, `${r.shot}.txt`), r.title);
       filters.push(`drawtext=fontfile=${process.platform === 'win32' ? "'C\\:/Windows/Fonts/segoeui.ttf'" : 'DejaVuSans.ttf'}:textfile=work/${r.shot}.txt:fontsize=26:fontcolor=white@0.92:shadowcolor=black@0.8:shadowx=1:shadowy=2:x=44:y=h-66:alpha='if(lt(t,0.25),t/0.25,if(lt(t,2.6),1,if(lt(t,3.1),(3.1-t)/0.5,0)))'`);
     }
-    ff(['-framerate', String(FPS), '-start_number', String(from), '-i', rel(join(frames, r.shot, '%05d.png')), '-frames:v', String(to - from), '-vf', filters.join(','), '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-movflags', '+faststart', `clips/${r.shot}.mp4`]);
+    // the piece the reel is cut from (near lossless), and the clip to show on its own: as good as fits under the size
+    // a pull request takes
+    const src = ['-framerate', String(FPS), '-start_number', String(from), '-i', rel(join(frames, r.shot, '%05d.png')), '-frames:v', String(to - from), '-vf', filters.join(','), '-c:v', 'libx264', '-preset', 'slow'];
+    ff([...src, '-crf', '12', `work/${r.shot}.mp4`]);
+    const cap = Math.min(9000, Math.floor((+args.mb * 0.85 * 8192) / ((to - from) / FPS)));
+    ff([...src, '-crf', '19', '-maxrate', `${cap}k`, '-bufsize', `${cap * 2}k`, '-movflags', '+faststart', `clips/${r.shot}.mp4`]);
     console.log(`  clips/${r.shot}.mp4  ${((to - from) / FPS).toFixed(1)} s  ${mb(join(out, 'clips', `${r.shot}.mp4`))}${meta(r.shot).slow > 1 ? `  (filmed at 1/${meta(r.shot).slow} speed)` : ''}`);
   }
 }
@@ -88,7 +94,7 @@ if (doing('shots') || doing('reel')) {
 // ---- the reel: the clips end to end, then squeezed to the size a pull request takes (two passes at the bit rate
 // that size allows)
 if (doing('reel')) {
-  writeFileSync(join(work, 'reel.txt'), have.map((r) => `file '../clips/${r.shot}.mp4'`).join('\n'));
+  writeFileSync(join(work, 'reel.txt'), have.map((r) => `file '${r.shot}.mp4'`).join('\n'));
   ff(['-f', 'concat', '-safe', '0', '-i', 'work/reel.txt', '-c', 'copy', 'work/reel-full.mp4']);
   const secs = have.reduce((s, r) => s + (Math.min(count(r.shot), Math.round((r.cut?.[1] ?? 1e9) * FPS)) - Math.round((r.cut?.[0] || 0) * FPS)) / FPS, 0);
   const kbps = Math.floor((+args.mb * 8192) / secs) - 8;
@@ -98,9 +104,9 @@ if (doing('reel')) {
   console.log(`nunchucks-reel.mp4  ${secs.toFixed(1)} s, 1280 x 720 @ ${FPS}, ${kbps} kb/s  ${mb(join(out, 'nunchucks-reel.mp4'))}  (and work/reel-full.mp4, uncompressed further: ${mb(join(work, 'reel-full.mp4'))})`);
 }
 
-// ---- a small one for showing inline: half size, 20 frames a second, the fights and the third person
+// ---- a small one for showing inline: 480 wide, 15 frames a second
 if (doing('webp') && existsSync(join(work, 'reel-full.mp4'))) {
-  ff(['-i', 'work/reel-full.mp4', '-vf', 'fps=20,scale=560:-2:flags=lanczos', '-c:v', 'libwebp_anim', '-lossless', '0', '-q:v', '52', '-compression_level', '5', '-loop', '0', '-an', 'nunchucks-reel.webp']);
+  ff(['-i', 'work/reel-full.mp4', '-vf', 'fps=15,scale=480:-2:flags=lanczos', '-c:v', 'libwebp_anim', '-lossless', '0', '-q:v', '45', '-compression_level', '5', '-loop', '0', '-an', 'nunchucks-reel.webp']);
   console.log(`nunchucks-reel.webp  ${mb(join(out, 'nunchucks-reel.webp'))}`);
 }
 

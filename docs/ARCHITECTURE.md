@@ -1399,9 +1399,11 @@ half of what is on screen is not animated at all.
 - **The chain** (`ChainSim`). One handle is in a hand: its end of the chain goes where the hand takes it. The other
   is a rigid rod on the chain: two point masses at its radius of gyration (so it turns like a stick, not a
   dumbbell), a rope constraint from the chain's far eye to the hand's (never longer than the chain; slack when it
-  is nearer), capsules for the arms, the head and the trunk, the other handle. The links between are drawn by a
-  second pass (verlet for the sag, FABRIK for exact lengths): a heavy mass on a chain of light particles is what
-  position-based dynamics stretch on, and this never does. Fixed steps of 1/960 s whatever the frame, the hand and
+  is nearer), capsules for the arms, the head and the trunk, the other handle. The links between are drawn, not simulated: an arc
+  from eye to eye, every link a chord of one circle (so every link is its length exactly, whatever the slack),
+  bowing the way gravity and its own lag take it. A heavy mass on a chain of light particles is what
+  position-based dynamics stretch on, and a chain solved link by link crumples and shakes itself straight when it
+  is thrown slack and snatched taut inside three frames. Fixed steps of 1/960 s whatever the frame, the hand and
   the colliders moved across them. It decides nothing: a blow lands by the rules above, from the aim.
 - **The moves** (`client/render/models/nunchaku.js`: `NunchakuCore`, one for the first-person hands and one on
   each survivor seen). A clip is where the driving hand goes and which way its handle points, where the other hand
@@ -1413,6 +1415,18 @@ half of what is on screen is not animated at all.
   hand drives; clips are written right-handed and played mirrored for the left. The heavy wind-up is no clip: the
   hand leads the handle round (a phase lock on where the simulated handle is), which is the only way a whirl gets
   up to speed. The rig works in pieces of at most 1/120 s of a frame, so a strike is the same at 30 fps as at 144.
+- **Nothing is put anywhere; everything follows.** A track's value is where a hand is going, and the hand follows
+  it critically damped (the clips are read that much ahead, so a blow stays on its beat): a clip begun in the
+  middle of another, a key where a track changes pace, a stance changing are all a target that moved, never a hand
+  that jumped. The elbow follows where it should be the same way, and which way it bends is carried from frame to
+  frame (a hand passing behind the back has no "toward the pole"); the fist is turned by where the forearm has
+  been heading, so wrist and forearm never chase each other; the wrist's limit is a soft one, and which side of
+  the forearm a handle leans to rolls round it instead of flipping across. A catch draws the handle into the hand
+  (the hand does not go after it) and closes the last of the gap before it counts as held; the give two hands on
+  one chain make for each other comes on with the catch and eases off after the release; a handle just let go is
+  eased out of the hand it is still inside rather than thrown out of it. `scripts/clip/nunchaku-jitter.js`
+  measures all of it - every move and every hand-off between two, both views, 30 to 240 frames a second and uneven
+  frames with hitches - and `scripts/test-nunchucks.js` fails on a shake, a pop or a snap.
 - **Third person** uses the first person's own hand tracks, carried from the eye's space to the chest's
   (`tpBody`), plus what only an outside view needs: the trunk's twist and lean, the knees, a step (`TP_BODY`).
 - **What it looks and sounds like on the client only**: what a blow met (`nkStrike` in `client/game/nunchaku.js`,

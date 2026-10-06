@@ -4532,7 +4532,7 @@ class SurvivorInstance {
     const baseT = lerp(cr * 0.95, 1.5, sit);
     const baseK = lerp(0.06 + cr * 1.5, 1.45, sit);
     // nunchucks: the trunk and the legs go with the move (the rig's body track: twist, lean, bend, knees, step)
-    const nb = this.nk && this.item === ITEM.NUNCHAKU && !this.zombie ? this.nk.core.bodyK : null;
+    const nb = this.nk && this.item === ITEM.NUNCHAKU && !this.zombie ? this.nk.core.bodyS : null;
     const nkDrop = nb ? clamp(nb[4] / 0.3, 0, 0.6) * (1 - cr) : 0;
     legCycle(z, p, ph, amp * (1 - sit), knee * (1 - sit), baseT + nkDrop * 0.95, baseK + nkDrop * 1.5, 0, 0.03 + 0.1 * sit);
     // air: tuck legs

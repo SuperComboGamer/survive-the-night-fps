@@ -21,6 +21,7 @@ import { REPO, parseArgs, sleep, list, startGame, launchChrome, LIFE_MAX } from 
 const args = parseArgs(process.argv.slice(2), { out: join(REPO, 'shots', 'pr', 'nunchucks', 'frames'), seed: '1', quality: 'high', every: '1' });
 const { BTN } = await import(pathToFileURL(join(REPO, 'shared', 'constants.js')).href);
 const { ITEM } = await import(pathToFileURL(join(REPO, 'shared', 'defs.js')).href);
+const { ACT } = await import(pathToFileURL(join(REPO, 'shared', 'protocol.js')).href);
 const FPS = 60;
 const EVERY = Math.max(1, +args.every || 1);
 
@@ -167,7 +168,7 @@ const SHOTS = [
     about: 'third person, quarter speed: the light chain, the chain and the free handle through every stroke',
     dt: 1 / (FPS * 4),
     async run(f) {
-      const cam = (i) => orbit(f, -0.6 + 0.0004 * i, 2.1, 0.9, 1.25, 44);
+      const cam = (i) => orbit(f, -0.55 + 0.0004 * i, 2.2, 1.0, 1.2, 44);
       await f.skip(6, { cam: cam(0) });
       await f.frames(24, (i) => ({ cam: cam(i) }));
       f.mark('chain');
@@ -191,12 +192,13 @@ const SHOTS = [
     about: 'a fight at night: four of the dead, first person, combos and a heavy',
     night: true,
     async setup(f) {
+      await f.flashlight(true);
       await f.chat('/spawn walker 3');
-      await f.spawn('runner', 1, 7);
+      await f.spawn('walker', 1, 4.6);
     },
     async run(f) {
       // back off them and strike as each comes into reach: the chain while one is in it, a wind-up while none is
-      await f.until(() => f.count() === 0 || f.n > 900, 900, () => {
+      await f.until(() => f.count() === 0 || f.n > 700, 700, () => {
         const d = f.nearest();
         const aim = f.aimNearest(1.45);
         if (d < 1.85) return { buttons: A | (d < 1.1 ? BTN.BACK : 0), ...aim };
@@ -208,13 +210,20 @@ const SHOTS = [
   },
   {
     name: 'finish',
-    about: 'the finish: third person, low, a last flourish and the guard',
+    about: 'the finish: third person, low, one of the dead walking in, a full wind-up let go, and the guard',
+    async setup(f) {
+      await f.spawn('walker', 1, 5.2);
+    },
     async run(f) {
-      const cam = (i) => orbit(f, 0.5 - 0.002 * i, 2.6 - 0.002 * i, 0.5, 1.2, 46);
+      const cam = (i) => orbit(f, 0.7 - 0.0016 * i, 2.5 - 0.0012 * i, 0.5, 1.15, 46);
+      let i = 0;
       await f.skip(6, { cam: cam(0) });
-      await f.frames(20, (i) => ({ cam: cam(i) }));
-      await f.frames(Math.round(COMBO * FPS), (i) => ({ buttons: A, cam: cam(i + 20) }));
-      await f.frames(150, (i) => ({ cam: cam(i + 20 + COMBO * FPS) }));
+      await f.frames(16, () => ({ cam: cam(i++), ...f.aimNearest(1.45) }));
+      f.mark('wind');
+      await f.until(() => f.nearest() < 1.9 && f.n > 110, 320, () => ({ buttons: ALT, cam: cam(i++), ...f.aimNearest(1.45) }));
+      await f.frames(6, () => ({ buttons: ALT, cam: cam(i++), ...f.aimNearest(1.45) }));
+      f.mark('release');
+      await f.frames(170, () => ({ cam: cam(i++) }));
     },
   },
 ];
@@ -223,7 +232,8 @@ if (args.list) {
   for (const s of SHOTS) console.log(`${s.name.padEnd(12)} ${s.about}`);
   process.exit(0);
 }
-const want = list(args.shots) || SHOTS.map((s) => s.name);
+// (the night's shot is taken last whatever the list's order: there is no morning after it)
+const want = (list(args.shots) || SHOTS.map((s) => s.name)).sort((a, b) => (a === 'night') - (b === 'night'));
 const shots = want.map((n) => {
   const s = SHOTS.find((x) => x.name === n);
   if (!s) throw new Error(`no shot '${n}' (--list)`);
@@ -357,6 +367,17 @@ try {
       await this.skip(6);
       for (let i = 0; i < 900 && this.nearest() > within; i++) await this.frame({ ...this.aimNearest(1.45) }, false);
     },
+    /** The flashlight on or off (as its key does it). */
+    async flashlight(on) {
+      await p.evaluate((on, act) => {
+        const g = window.__game;
+        if (!!g.localFlash === on) return;
+        g.localFlash = on;
+        g.localFlashT = 0.6;
+        g.conn.action(act, on ? 1 : 0);
+      }, on, ACT.FLASHLIGHT);
+      await this.skip(8);
+    },
     /** Another weapon in a slot and in hand (to draw the nunchucks from). */
     async put(item, slot) {
       void item;
@@ -393,6 +414,7 @@ try {
   await sleep(1500);
   film.at.y = await p.evaluate(() => window.__game.prediction.state.y);
   film.state.yaw = film.yaw0;
+  const yawFP = film.yaw0;
 
   let night = false;
   const done = [];
@@ -409,6 +431,9 @@ try {
     film.marks = {};
     film.dt = s.dt || 1 / FPS;
     film.tickAcc = 0;
+    // (seen from in front the survivor faces the other way: the light is behind them on the mark as the view has it.
+    // The flourish is filmed going round behind them, so it keeps the way the view faces.)
+    film.yaw0 = yawFP + (/^tp-(front|side|slow)|^finish/.test(s.name) ? Math.PI : 0);
     film.state = { buttons: 0, yaw: film.yaw0, pitch: 0, cam: null };
     if (s.night && !night) {
       night = true;
