@@ -3999,14 +3999,22 @@ export class Game {
         for (const it of SCHEMATICS) this.unlockSchematic(it, null);
         break;
       case 'cross':
-        // /cross [skip | hold | go]: the car is away - the crossing to the mainland, with its cutscene, or straight
-        // there. hold: the cutscene's clock stops (for looking at it) - first on the island, before the worlds
-        // change, then after /cross go short of its end, and after another it runs out
+      case 'cutscene':
+        // /cross (or /cutscene) [skip | hold | go]: the car is away, as if the final stand was won and somebody drove
+        // - the crossing to the mainland, with its cutscene, or straight there. From the end screen or the mainland
+        // a new run on the island is begun first. hold: the cutscene's clock stops (for looking at it) - first on
+        // the island, before the worlds change, then after /cross go short of its end, and after another it runs out
         if (args[1] === 'go' && this.crossing) this.crossing.hold = Math.max(0, (this.crossing.hold | 0) - 1);
-        else if (this.act === WORLD.ISLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
+        else if (this.phase === PHASE.CROSSING) this.sendChat(p, 0, CHATF.SYSTEM, 'the crossing is already on');
+        else {
+          if (this.act !== WORLD.ISLAND || (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT)) {
+            this.checkpoint = null; // (a wipe on the mainland would start again at the bridge, not on the island)
+            this.startGame();
+          }
           this.cross(p, this.phase === PHASE.NIGHT);
           if (args[1] === 'skip') this.arrive();
           else if (args[1] === 'hold') this.crossing.hold = 2;
+          this.sendChat(p, 0, CHATF.SYSTEM, args[1] === 'skip' ? `on the mainland (map 2): day ${this.day}` : 'the crossing to the mainland (map 2) has begun');
         }
         break;
       case 'map2':

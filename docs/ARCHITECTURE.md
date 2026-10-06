@@ -578,7 +578,9 @@ act 2, where the same loop is played with a plane and flying out wins.
 - **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
   the save's act.
 - **Debug**: `/map2` (or `/mainland`: straight to the mainland's first day from anywhere on the island, the end
-  screen too, with no cutscene and no escape XP), `/cross [skip | hold | go]`, `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
+  screen too, with no cutscene and no escape XP), `/cross` (or `/cutscene`) `[skip | hold | go]` (the car drives off
+  as if the final stand was won, and the crossing's cutscene plays; from the end screen or the mainland a new run on
+  the island is begun first), `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
   `game.debugCam`, `debugCycle` and `debugFog` (a free camera, the hour, the haze: the shot scripts).
 - **Tests**: `scripts/test-mainland.js` (the map, on any seeds), `scripts/sim-act2.js` (the whole run in simulation,
   a wipe, late joiners, a drop and a deploy across the crossing, the nights, what a tick costs on each map);
