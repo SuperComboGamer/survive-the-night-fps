@@ -38,6 +38,20 @@ function noShadow(mat) {
   return mat;
 }
 
+// A face that is always in its roof's shadow and lies too near that roof's underside for a shadow map to tell them
+// apart (a room's tiled ceiling, 4 mm under the slab: citykit.js room()): it takes the sun as the roof's shadow would
+// leave it, never the shadow map's guess, which lit it in patches that crawled as the cascades moved with the camera
+function underRoof(mat, key) {
+  const SHADOW = 'getSunShadow( sunShadowMap[ i ], sunLightShadow, UNROLLED_LOOP_INDEX )';
+  mat.onBeforeCompile = (sh) => {
+    const lights = THREE.ShaderChunk.lights_fragment_begin;
+    if (!lights.includes(SHADOW)) console.warn(`[materials] the light chunk changed: ${key} takes the sun through its roof`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_begin>', lights.replace(SHADOW, '( 1.0 - sunLightShadow.shadowIntensity )'));
+  };
+  mat.customProgramCacheKey = () => `under-roof-${key}`;
+  return mat;
+}
+
 // moss on upward-facing surfaces (object-space normal.y, robust for yaw-only instancing & merged world geometry)
 function mossPatch(mat, amount = 1) {
   mat.userData.moss = { value: amount };
@@ -539,7 +553,7 @@ const DEFS = {
   roadpaint: () => noShadow(lambert({ map: tileTex('roadpaint'), polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })),
   // every plain colour of the static city in one material: the colour is the vertex's (staticworld.js)
   flat: () => lambert({ vertexColors: true }),
-  ceiling: () => lambert({ map: tileTex('ceiling'), vertexColors: true }),
+  ceiling: () => underRoof(lambert({ map: tileTex('ceiling'), vertexColors: true }), 'ceiling'),
   roofing: () => lambert({ map: tileTex('roofing') }),
   citysign: () => noShadow(lambert({ map: getTexture('city'), alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })),
   citygrime: () => noShadow(lambert({ map: getTexture('city'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })),
