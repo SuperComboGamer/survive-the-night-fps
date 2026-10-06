@@ -22,6 +22,7 @@ export class Connection {
     this.pingNext = 0; // when the next one is due
     this.room = null; // the game we are in: { code, name, inviteOnly, difficulty } (S2C.ROOM)
     this.accounts = new Map(); // player id -> the account they are signed in to, for friend requests and the friend star (S2C.FRIENDS; '' = a guest)
+    this.held = null; // messages waiting for release() (hold)
   }
 
   // code: the game to join; none for a quick join (the server picks a public game, or makes one)
@@ -66,8 +67,11 @@ export class Connection {
         ws.send(w.copy());
       };
       ws.onmessage = (m) => {
-        const buf = m.data;
-        this.bytesIn += buf.byteLength;
+        this.bytesIn += m.data.byteLength;
+        if (this.held) this.held.push(() => handle(m.data));
+        else handle(m.data);
+      };
+      const handle = (buf) => {
         const r = this.r.set(buf);
         const type = r.u8();
         switch (type) {
@@ -146,6 +150,22 @@ export class Connection {
       };
       ws.onerror = () => {};
     });
+  }
+
+  // What the server sends from now on waits, in order, until release() (Game.onWorld: the loading card is drawn
+  // before the world swap holds the thread, and what follows the swap is in the new world's units)
+  hold() {
+    this.held ||= [];
+  }
+  release() {
+    const q = this.held;
+    if (!q) return;
+    this.held = null;
+    while (q.length) {
+      // (a message played back can hold again: the rest waits behind it)
+      if (this.held) return void (this.held = q.concat(this.held));
+      q.shift()();
+    }
   }
 
   // code: LEFT_CODE when the player chose to leave (the server lets their place go at once; any other close it holds)

@@ -455,7 +455,29 @@ export class Game {
   // The server says which world the game is on now (S2C.WORLD_RESET): a new run's island, or - CROSSING.SWAP seconds
   // into the crossing, as the cutscene cuts to black - the mainland. Entities that follow are that world's, and their
   // positions are in its units from this message on.
+  // Building the mainland holds the thread for seconds, and nothing is drawn until it is done: the crossing's loading
+  // card must be on screen first. If it has not been drawn yet (this clock a little behind the server's), it goes up
+  // now and the build waits a frame or two for it, with what the server sends after this held back until then.
   onWorld(seed, act) {
+    const card = this.cine?.card;
+    if (card && !card.painted && act !== this.act) {
+      card.set(true, true);
+      this.conn.hold();
+      let done = false;
+      const go = () => {
+        if (done) return;
+        done = true;
+        this.swapWorld(seed, act);
+        this.conn.release();
+      };
+      const wait = () => (card.painted ? go() : requestAnimationFrame(wait));
+      requestAnimationFrame(wait);
+      setTimeout(go, 1000); // (a hidden tab draws no frames)
+      return;
+    }
+    this.swapWorld(seed, act);
+  }
+  swapWorld(seed, act) {
     this.loadWorld(seed, act);
     this.stripped.clear();
     this.cine?.worldChanged();

@@ -117,7 +117,7 @@ a human to play.
 - **A cascade's casters by distance.** The near cascade draws every caster tree within 145 m; only those within its
   box matter. About a third of the tree shadow vertices.
 - **A third, lighter copy of the dead past 40 m.** The far copy (from 15 m) is 2,200 to 3,400 triangles.
-- **The world swap** (the crossing: 4 s with nothing drawn, behind the cutscene's black) and **the load**: world
+- **The world swap** (the crossing: 4 s with nothing drawn, behind the cutscene's loading card) and **the load**: world
   generation (1.2 s for the mainland), the static world's build (1.6 s), the terrain (0.7 s). They want slicing over
   frames or a worker; a worker cannot hand a world over (it is closures). Not done.
 - **The server.** A tick with a night-4 horde is 0.6 ms for 4 players and 1.2 ms for 8 on either map, of the 50 ms
