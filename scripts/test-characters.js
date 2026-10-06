@@ -168,16 +168,41 @@ try {
   const fallback = C.createSurvivor(13);
   check('a survivor made from a seed alone is the character the seed picks', fallback.character.id === 13 % CHARACTER_COUNT);
   fallback.dispose();
+  // how much of the trunk seen from the front (hips to shoulders, 2 cm squares across the middle 20 cm) a rig covers
+  const trunkCover = (rig) => {
+    const { P } = rig, p = rig.geometry.attributes.position.array, ix = rig.geometry.index.array;
+    const S = 0.02, x0 = -0.1, y0 = P.hipY + 0.05, nx = 10, ny = Math.floor((P.shoulderY - 0.05 - y0) / S);
+    const hit = new Uint8Array(nx * ny);
+    for (let t = 0; t < ix.length; t += 3) {
+      const [ax, ay, bx, by, cx, cy] = [ix[t], ix[t + 1], ix[t + 2]].flatMap((i) => [p[i * 3], p[i * 3 + 1]]);
+      const d = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+      if (Math.abs(d) < 1e-12) continue;
+      const cell = (v, o, n) => Math.min(n - 1, Math.max(0, Math.floor((v - o) / S)));
+      const i0 = cell(Math.min(ax, bx, cx), x0, nx), i1 = cell(Math.max(ax, bx, cx), x0, nx), j0 = cell(Math.min(ay, by, cy), y0, ny), j1 = cell(Math.max(ay, by, cy), y0, ny);
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const px = x0 + (i + 0.5) * S, py = y0 + (j + 0.5) * S;
+        const w0 = ((bx - px) * (cy - py) - (cx - px) * (by - py)) / d, w1 = ((cx - px) * (ay - py) - (ax - px) * (cy - py)) / d;
+        if (w0 >= 0 && w1 >= 0 && w0 + w1 <= 1) hit[j * nx + i] = 1;
+      }
+    }
+    return hit.reduce((a, h) => a + h, 0) / hit.length;
+  };
   let near = 0, far = 0;
+  const bare = [];
   for (const t of [0, 1, 3, 4, 5, 6, 11]) {
     const nv = C.zombieVariants(t);
     for (let v = 0; v < nv; v++) {
-      near = Math.max(near, C.debugRig(t, v).tris);
+      const n = C.debugRig(t, v);
+      near = Math.max(near, n.tris);
       const f = C.debugRig(t, v, true);
-      if (f) far = Math.max(far, f.tris);
+      if (f) {
+        far = Math.max(far, f.tris);
+        if (trunkCover(f) < trunkCover(n) - 0.02) bare.push(`${t}:${v}`);
+      }
     }
   }
   check(`the humanoid dead within budget: ${near} tris near (<= ${DEAD_NEAR}), ${far} far (<= ${DEAD_FAR})`, near <= DEAD_NEAR && far > 0 && far <= DEAD_FAR);
+  check('the far copy of every humanoid dead has its trunk (a shirtless one lost it past 15 m)', !bare.length, bare.join(' '));
   console.log(`  (survivors: up to ${worst} tris alive, ${worstZ} turned)`);
 
   // ---- the specials, the bosses and the animals: rebuilt to look better, on the rigs and at the sizes they had. What
