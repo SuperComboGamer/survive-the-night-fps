@@ -6,8 +6,7 @@
 //
 // While one plays, Game hides the HUD and the hands, takes no input but the skip key, and puts its camera where the
 // shot says (Game.update). The world behind it is the real one: the island for the first shots of the crossing, then
-// - behind a cut to black, when the server says so - the mainland, which is how the mainland gets loaded without a
-// loading screen. Every camera is worked out from the world it is in (the road, the bridge's plan, where the city
+// - behind a cut to black and a loading card (LoadingCard), when the server says so - the mainland. Every camera is worked out from the world it is in (the road, the bridge's plan, where the city
 // and the runway are), so a shot holds for any seed.
 import * as THREE from 'three';
 import { CROSSING, TAKEOFF_TIME, WORLD } from '../../shared/acts.js';
@@ -151,6 +150,48 @@ class Screen {
   }
 }
 
+// The card over the black between the crossing's two worlds: a blurred look at Port Calder and a spinner. Building
+// the mainland holds the main thread for seconds, so the card has to be on screen before that starts (Game.onWorld
+// waits for it), and its spinner turns on the compositor while the page is frozen.
+const LOADING_ART = new URL('../ui/art/loading-mainland.jpg', import.meta.url).href;
+class LoadingCard {
+  constructor(parent, before) {
+    const el = (tag, cls, p, text) => {
+      const d = document.createElement(tag);
+      d.className = cls;
+      if (text) d.textContent = text;
+      p.appendChild(d);
+      return d;
+    };
+    this.root = document.createElement('div');
+    this.root.className = 'cine-load';
+    parent.insertBefore(this.root, before); // (under the letterbox bars and the skip line)
+    const img = el('img', 'cine-load-art', this.root);
+    img.alt = '';
+    img.src = LOADING_ART;
+    img.decode?.().catch(() => {}); // (decoded now, not in the frame it first shows)
+    const mid = el('div', 'cine-load-mid', this.root);
+    el('div', 'cine-load-spin', mid);
+    el('div', 'cine-load-title', mid, 'Loading map 2');
+    el('div', 'cine-load-sub', mid, 'The mainland · Port Calder');
+    this.on = false;
+    this.painted = false; // it has been on screen for a frame (what the world swap waits for)
+    this.turn = 0;
+    this.forced = false; // put up by the world swap ahead of the cut: it stays up until the mainland's first shot
+  }
+  // now: at once, without fading in (the swap is waiting on it)
+  set(on, now = false) {
+    if (now) this.forced = true;
+    if (on === this.on) return;
+    this.on = on;
+    this.painted = false;
+    this.root.classList.toggle('now', now);
+    this.root.classList.toggle('on', on);
+    const turn = ++this.turn;
+    if (on) requestAnimationFrame(() => requestAnimationFrame(() => turn === this.turn && (this.painted = true)));
+  }
+}
+
 // a road as a path: its points from index i0 on in direction dir, with the length so far at each
 function roadPath(road, i0, dir) {
   const p = road.pts;
@@ -263,6 +304,7 @@ export class Crossing {
     this.g = game;
     this.t = 0;
     this.screen = new Screen();
+    this.card = new LoadingCard(this.screen.root, this.screen.top);
     this.fov = 50;
     this.cycle = DAWN[0]; // the time of day the shot asks for (null: whatever the phase says)
     this.fogMul = 1;
@@ -683,8 +725,10 @@ export class Crossing {
         gl.group.visible = fade < 1;
       });
     }
-    // between the two worlds: black, the engine still running
+    // between the two worlds: black, the engine still running, and the loading card over it from the cut until the
+    // mainland's first shot comes up
     if (w.kind === WORLD.ISLAND && t >= OUT) fade = 1;
+    this.card.set(w.kind === WORLD.ISLAND ? t >= OUT - OUT_FADE || this.card.forced : this.reveal === 0);
     if (Math.abs(cam.fov - this.fov) > 0.01) {
       cam.fov = this.fov;
       cam.updateProjectionMatrix();

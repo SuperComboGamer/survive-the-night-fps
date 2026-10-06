@@ -563,7 +563,10 @@ act 2, where the same loop is played with a plane and flying out wins.
   cleared, the phase is `CROSSING` with `CROSSING.TIME` on its clock, nobody's commands are run. `CROSSING.SWAP`
   seconds in - when the cutscene cuts to black - the server sends `S2C.WORLD_RESET` (seed, act 2), and in the next
   tick builds its own mainland (which holds that game's thread for a moment; the message has left by then),
-  populates it and puts the team down at the bridgehead. It can be skipped once everybody connected has asked
+  populates it and puts the team down at the bridgehead. The client's build holds its thread for seconds, so the
+  cutscene puts a "Loading map 2" card over its black first; if the message comes before the card has been drawn,
+  `Game.onWorld` puts it up at once and holds what the server sends (`Connection.hold`) until it has been drawn.
+  It can be skipped once everybody connected has asked
   (`ACT.SKIP`) and it is `CROSSING.SKIP_AFTER` seconds old.
 - **The checkpoint** (`Game.checkpointAt`): everybody arrives alive - whoever was dead or turned comes back - with
   what they carried, and at the least the bridgehead cache's floor (`Game.bridgehead`, `BRIDGEHEAD` in acts.js: a

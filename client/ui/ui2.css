@@ -4565,3 +4565,74 @@ body > .cine > .cine-title {
   letter-spacing: 0.12em;
   color: rgba(207, 200, 184, 0.7);
 }
+/* the crossing's loading card, over the black while the mainland is built. Only opacity and transform move on it,
+   so its fade and its spinner run on the compositor while the build holds the page */
+.cine-load {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+  transition: opacity 0.35s ease-out;
+  will-change: opacity;
+}
+.cine-load.on {
+  opacity: 1;
+}
+.cine-load.on.now {
+  transition: none;
+}
+.cine-load-art {
+  position: absolute;
+  inset: -4%;
+  width: 108%;
+  height: 108%;
+  object-fit: cover;
+}
+.cine-load::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0.6) 100%);
+}
+.cine-load-mid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: #e4ddcc;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+}
+.cine-load-spin {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 20px;
+  border-radius: 50%;
+  border: 3px solid rgba(228, 221, 204, 0.22);
+  border-top-color: #e4ddcc;
+  animation: cine-load-spin 0.9s linear infinite;
+  will-change: transform;
+}
+.cine-load-title {
+  font: 600 26px/1 'Oswald', 'Arial Narrow', sans-serif;
+  letter-spacing: 0.32em;
+  padding-left: 0.32em;
+  text-transform: uppercase;
+}
+.cine-load-sub {
+  margin-top: 12px;
+  font: 500 14px/1 'Oswald', 'Arial Narrow', sans-serif;
+  letter-spacing: 0.18em;
+  color: rgba(228, 221, 204, 0.72);
+}
+@keyframes cine-load-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
