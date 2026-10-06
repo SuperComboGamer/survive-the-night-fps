@@ -26,6 +26,7 @@ const RESPAWN = 90; // s of daylight after the last of a herd is gone before ano
 const CAR_CLEAR = 60; // the herd's route keeps this far from the survivors' car (m)
 const SPAWN_CLEAR = 110; // a herd turns up at least this far from the car and from every survivor (m)
 const EDGE = 20; // a herd keeps this far inside the edge of the map (m)
+const APART = 200; // a herd turns up at least this far from the middle of every other (m)
 
 export class Herds {
   constructor(game, zm) {
@@ -46,6 +47,12 @@ export class Herds {
   first() {
     for (const h of this.list.values()) return h;
     return null;
+  }
+
+  // how many herds the map has by day: one on the island, two on the mainland (four times the ground; each herd keeps
+  // a flow field of its own, so not four)
+  want() {
+    return Math.max(1, Math.round(Math.sqrt(this.zm.spread())));
   }
 
   // ---------------------------------------------------------------- handoff (gamestate.js)
@@ -74,6 +81,7 @@ export class Herds {
       if (!this.routeOk(x, z) || Math.hypot(x - car.x, z - car.z) < SPAWN_CLEAR || g.nav.isBlocked(x, z)) continue;
       let ok = true;
       for (const p of humans) if (Math.hypot(p.state.x - x, p.state.z - z) < SPAWN_CLEAR) ok = false;
+      for (const o of this.list.values()) if (Math.hypot(o.cx - x, o.cz - z) < APART) ok = false;
       if (!ok) continue;
       const id = ++this.seq;
       const h = {
@@ -231,7 +239,7 @@ export class Herds {
   // ---------------------------------------------------------------- update
   update(dt, humans) {
     const g = this.g;
-    if (g.phase === PHASE.DAY && !g.escape.active && !this.list.size) {
+    if (g.phase === PHASE.DAY && !g.escape.active && this.list.size < this.want()) {
       this.spawnT -= dt;
       if (this.spawnT <= 0) this.spawnT = this.spawn(humans) ? RESPAWN : 10;
     }

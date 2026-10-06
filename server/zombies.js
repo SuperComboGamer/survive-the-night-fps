@@ -2,7 +2,7 @@
 // (spitter acid, leaper pounce/pin, roper rope-pull, boomer explosion, bat swarms, tank charge, bosses,
 // zombie dog packs that den in the thick woods, flank and lunge, the shade that only moves in darkness).
 // The herd that wanders the roads by day is in herd.js.
-import { STEP_HEIGHT, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
+import { MAP_SIZE, STEP_HEIGHT, PHASE, PLAYER_RADIUS, EYE_HEIGHT, MAX_ENTITIES, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX, FLASHLIGHT_RANGE, FLASHLIGHT_CONE, FIRE_LIGHT_MARGIN, NOISE_RUSH, NOISE_SPEED_MIN, NOISE_MEMORY, NOISE_MEMORY_MAX } from '../shared/constants.js';
 import { HISTORY_TICKS, LEG_HP, STUMBLE_SPEED, HOBBLE_SPEED, CRAWL_SPEED, CRAWL_SPEED_MIN, CRAWL_SPEED_MAX, CRAWL_SLOW, CRAWL_HEIGHT, CRAWL_HEAD_Y } from '../shared/constants.js';
 import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM, STRUCT_DEFS, THROWABLES, ZONE, BURN } from '../shared/defs.js';
 import { ENT, qpos } from '../shared/protocol.js';
@@ -93,6 +93,10 @@ const DAY_SPECIAL_FAR = 320;
 const DAY_SPECIAL_MAX = 0.4;
 const DAY_LEAPER = 0.35;
 const DAY_ROPER = 0.65;
+// The dead in a city's streets (the mainland's Port Calder), on top of the guards every place gets: a place's guards
+// go by how far across it is, and a city is a place a few hundred metres across, so they alone leave it near empty
+const CITY_STREET_DEAD = 64;
+const CITY_STREET_SHARE = 0.2; // of the roaming dead that turn up by day, the share that comes back into the city
 const SPAWN_TRIES = 18; // candidates a horde spawn pick looks at before settling for the least exposed one
 const SPAWN_HEAD = 1.7; // a zombie at a spot is in view when a survivor's eyes have a clear line to this far above its ground (m)
 const SPAWN_SPREAD = 4; // a horde group is scattered this far round the spot picked for it (Game.spawnHordeGroup)
@@ -318,10 +322,18 @@ export class Zombies {
     return r < 1 ? ZTYPE.SPITTER : r < 2 ? ZTYPE.BOOMER : r < 3 ? ZTYPE.LEAPER : ZTYPE.ROPER;
   }
 
+  // The ground this map covers against the island's: 1 there, 4 on the mainland (twice as far across). What is
+  // scattered over the whole map - the roaming dead, the dog packs, the herds - comes that many times over, or a
+  // bigger map is only a thinner one
+  spread() {
+    return (this.g.world.size / MAP_SIZE) ** 2;
+  }
+
   spawnInitial() {
     const g = this.g;
     const w = g.world;
     const pop = g.diff.zombies;
+    const spread = this.spread();
     // zone guards (bigger places, bigger crowds)
     for (const zn of w.zones) {
       if (zn.id === 0) continue;
@@ -348,13 +360,15 @@ export class Zombies {
         this.spawn(t >= 0 ? t : i === guards - 1 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1.15 });
       }
     }
+    // the dead in a city's streets
+    if (w.city) for (let i = 0; i < Math.round(CITY_STREET_DEAD * pop); i++) this.spawnStreet([]);
     // roaming dead in the woods
-    for (let i = 0; i < Math.max(1, Math.round(22 * pop)); i++) this.spawnRoamer([]);
+    for (let i = 0; i < Math.max(1, Math.round(22 * pop * spread)); i++) this.spawnRoamer([]);
     // zombie dog packs in the thick woods
-    for (let i = 0; i < Math.max(1, Math.round(3 * pop)); i++) this.spawnForestPack([]);
-    // a herd wandering the roads
+    for (let i = 0; i < Math.max(1, Math.round(3 * pop * spread)); i++) this.spawnForestPack([]);
+    // herds wandering the roads
     this.herds.reset();
-    this.herds.spawn([]);
+    for (let i = 0; i < this.herds.want(); i++) this.herds.spawn([]);
     // ...and the ones that never came up out of the mine
     this.stockMine([]);
     // ...nor out of the wards of the clinic
@@ -478,8 +492,32 @@ export class Zombies {
     return out;
   }
 
+  // One of the dead somewhere along a city's streets (world.city: its grid of streets, pitch apart), out of the way of
+  // every survivor
+  spawnStreet(humans) {
+    const g = this.g;
+    const c = g.world.city;
+    const half = (c.grid * c.pitch) / 2;
+    for (let tries = 0; tries < 10; tries++) {
+      const o = -half + Math.floor(g.rng() * (c.grid + 1)) * c.pitch;
+      const t = (g.rng() * 2 - 1) * half;
+      const side = (g.rng() - 0.5) * 8;
+      const northSouth = g.rng() < 0.5;
+      const x = c.x + (northSouth ? o + side : t);
+      const z = c.z + (northSouth ? t : o + side);
+      if (humans.some((h) => Math.hypot(h.state.x - x, h.state.z - z) < 75)) continue;
+      const sp = this.daySpecial(x, z);
+      return this.spawn(sp >= 0 ? sp : g.rng() < 0.25 ? ZTYPE.RUNNER : ZTYPE.WALKER, x, z, { hpMul: 1 + 0.05 * g.day });
+    }
+    return null;
+  }
+
   spawnRoamer(humans) {
     const g = this.g;
+    if (g.world.city && g.rng() < CITY_STREET_SHARE) {
+      const z = this.spawnStreet(humans);
+      if (z) return z;
+    }
     // 35%: repopulate a named place (guards) if nobody is there
     if (g.rng() < 0.35) {
       const zones = g.world.zones.filter((z) => z.id !== 0);
@@ -779,7 +817,7 @@ export class Zombies {
           if (z.pack) dogs++;
           else if (!z.herd) alive++;
         }
-        const pop = g.diff.zombies;
+        const pop = g.diff.zombies * this.spread();
         const target = Math.min(Math.max(8, Math.round(62 * pop)), Math.round((22 + g.day * 4 + humans.length * 2) * pop));
         if (alive < target) this.spawnRoamer(humans);
         if (dogs < Math.min(Math.max(2, Math.round(18 * pop)), Math.round((4 + g.day * 2) * pop))) this.spawnForestPack(humans);
