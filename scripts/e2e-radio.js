@@ -1,13 +1,12 @@
-// Walkie-talkie e2e (server: GODMODE=1 ADMIN_SECRET=e2e, or the secret as the 3rd argument): two clients, each in a browser of its own with a fake
+// Walkie-talkie e2e (server: GODMODE=1 NODE_ENV=test DEV_ADMIN=1, for /tp): two clients, each in a browser of its own with a fake
 // microphone. [6] puts the walkie-talkie in A's hand (it hisses, the chat says Radio); chat typed then reaches B on the
 // far side of the valley; holding fire keys it: A's mic opens, B is told A is on the air, hears the static and A's
 // voice through the radio at any distance. Letting go takes A off the air again, and B sees A raise it to the mouth.
-// usage: node scripts/e2e-radio.js [url] [outdir] [admin secret]
+// usage: node scripts/e2e-radio.js [url] [outdir]
 import puppeteer from 'puppeteer-core';
 import { mkdirSync } from 'node:fs';
 const url = process.argv[2] || 'http://localhost:5173';
 const out = process.argv[3] || '/tmp/e2e-radio';
-const admin = process.argv[4] || 'e2e';
 mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const errors = [];
@@ -49,8 +48,6 @@ const idA = await A.evaluate(() => window.__game.myId);
 const idB = await B.evaluate(() => window.__game.myId);
 expect('both in one game', idA && idB && (await B.evaluate((id) => window.__game.players.has(id), idA)), { idA, idB });
 const chat = (p, t) => p.evaluate((t) => window.__game.conn.chat(t), t);
-await chat(A, `/admin ${admin}`); // (/tp is an admin command)
-await sleep(300);
 const radio = (p, other) =>
   p.evaluate((other) => {
     const g = window.__game;

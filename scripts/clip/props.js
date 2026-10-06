@@ -2,7 +2,7 @@
 // createWorld(seed) for each seed and finds every pair of solids that go into each other, seen from above with their
 // heights overlapping: props (their collider boxes and cylinders, shared/props.js), trees, boulders, and the upright
 // pieces a place builds (walls, posts, machines: world.parts). Prints the count per kind of pair and, with --show,
-// each one with the /tp to stand at it in the game (as an admin: say `/admin <ADMIN_SECRET>` first).
+// each one with the /tp to stand at it in the game (as an admin: an is_admin account, or DEV_ADMIN=1 on a test server).
 // scripts/test-world.js checks the same on its four valleys as part of npm test; this is the wide net.
 //
 // usage: node scripts/clip/props.js [--seeds 1-30] [--root <tree>] [--min 0.1] [--show car_wreck] [--all] [--world mainland]

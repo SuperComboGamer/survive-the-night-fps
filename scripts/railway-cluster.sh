@@ -57,9 +57,6 @@ echo "database: $DB"
 DBURL="DATABASE_URL=\${{$DB.DATABASE_URL}}"
 rw variable set "$DBURL" CLUSTER=1 PORT=3000 RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30 -s "$GAME" -e "$ENV" --skip-deploys >/dev/null
 rw variable set "$DBURL" PORT=8080 RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30 -s "$PROXY" -e "$ENV" --skip-deploys >/dev/null
-if [ -z "$(rw variable list -s "$GAME" -e "$ENV" --json 2>/dev/null | json 'j.ADMIN_SECRET')" ]; then
-  rw variable set "ADMIN_SECRET=$(openssl rand -hex 24)" -s "$GAME" -e "$ENV" --skip-deploys >/dev/null
-fi
 
 # how each service starts: set on the service itself (a `railway up` of a folder was not seen to apply its railway.json,
 # and the two services share one repo: a GitHub-linked proxy needs its config file set to /railway.proxy.json instead)

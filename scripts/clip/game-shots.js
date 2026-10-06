@@ -1,5 +1,5 @@
 // Shots in the real game (docs/object-clipping.md, "In the game"): starts the built game server of a tree on a free port
-// (node server/index.js, NODE_ENV=production, a fixed seed, an admin secret for the chat commands, godmode, a long
+// (node server/index.js, NODE_ENV=test, a fixed seed, DEV_ADMIN=1 for the chat commands, godmode, a long
 // day), joins one or two headless clients, and runs a list of shots: give an item and take it in hand, /tp somewhere,
 // look at a point, throw, and screenshot. A second client gives the third-person view of the first.
 // With --before it does the same in another checkout too and composes each pair (before | after).
@@ -49,25 +49,19 @@ async function run(root, dir) {
         clients.push(chrome);
         p = chrome.page;
       } else p = await chrome.newPage({ window: true });
-      await p.evaluateOnNewDocument((k) => {
-        try {
-          localStorage.setItem('stn.admin', k); // (the client says the admin secret on joining)
-        } catch {}
-      }, game.secret);
       await p.goto(game.url, { waitUntil: 'load', timeout: 60000 });
       await sleep(3500);
       await p.evaluate(() => [...document.querySelectorAll('button')].find((x) => /^\s*(quick )?join/i.test(x.textContent))?.click()); // (the way in: not the survivor card, whose text also says "join")
       for (let i = 0; i < 80 && !(await p.evaluate(() => !!(window.__game && window.__game.myId && window.__game.vm))); i++) await sleep(250);
       await sleep(2500);
-      await p.evaluate((k) => {
+      await p.evaluate(() => {
         const g = window.__game;
         g.input.locked = true;
         g.input.enabled = true;
         g.input.requestLock = () => {};
         g.input.handlers.onLockChange = () => {};
         g.ui.showPause(false);
-        g.conn.chat(`/admin ${k}`);
-      }, game.secret);
+      });
       await p.addStyleTag({ content: '.clip-nohud #ui { visibility: hidden !important; }' });
       return p;
     };

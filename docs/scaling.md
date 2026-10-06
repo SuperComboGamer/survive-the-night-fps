@@ -78,7 +78,7 @@ scripts/railway-cluster.sh <environment> [replicas=2] [region=us-east4-eqdc4a]
 ```
 
 It adds what is missing (a Postgres, a `game` service, a `proxy` service), sets their variables (`DATABASE_URL` as a
-reference, `CLUSTER=1`, ports, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`, an `ADMIN_SECRET` if there is none) and how
+reference, `CLUSTER=1`, ports, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`) and how
 each starts, uploads the working tree to both, scales `game` and gives `proxy` a Railway domain, which it prints. Run
 it again to deploy new code. It refuses `production` unless `YES_PRODUCTION=1`; moving a custom domain to the proxy
 is by hand (and the `game` service then has no public domain at all).
