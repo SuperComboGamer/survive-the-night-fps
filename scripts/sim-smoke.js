@@ -1483,6 +1483,8 @@ const standOff = (c, e, d) => {
   game.combat.damageZombie = (z) => (hits.push(z), false);
   game.damagePlayer = (h) => hits.push(h);
   game.impact = () => landed++;
+  const strike = game.strike;
+  game.strike = () => landed++; // (a survivor's swing on the world is EVT.STRIKE now: the claws' is still an impact)
   game.gatherHit = () => chopped++;
   const stand = (e, [x, y, z]) => {
     const t = e.kind === ENT.PLAYER ? e.state : e;
@@ -1540,6 +1542,7 @@ const standOff = (c, e, d) => {
   const behind = swing(p, tree.front, tree.back);
   check('a swing at a tree chops it, not the zombie behind the trunk', behind === 0 && chopped === 1, `${behind} hit, ${chopped} chop`);
   [game.combat.damageZombie, game.damagePlayer, game.impact, game.gatherHit] = [damageZombie, damagePlayer, impact, gatherHit];
+  game.strike = strike;
   z.dead = true;
   z.deadT = 2;
   [p, q].forEach((e, i) => ([e.state.x, e.state.y, e.state.z, e.state.yaw, e.state.pitch] = keep[i]));
