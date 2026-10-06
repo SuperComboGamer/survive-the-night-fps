@@ -14,7 +14,7 @@ const statsPage = {
 
 export default defineConfig({
   root: 'client',
-  publicDir: false,
+  publicDir: 'public',
   plugins: [statsPage],
   server: {
     port: 5173,
