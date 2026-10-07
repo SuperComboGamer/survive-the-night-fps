@@ -61,9 +61,9 @@ does; Linux, in Docker on the development PC; "the game runs again" from the ser
 
 | | before (main, ee173eb) | after |
 | --- | --- | --- |
-| socket closed to back in control (WELCOME), median / worst of 12 | 965 / 1090 ms | 49 / 98 ms |
-| socket closed to the first snapshot, median / worst | 1011 / 1133 ms | 81 / 129 ms |
-| the game stands still after the first player is back | 1051 ms | 302 ms |
+| socket closed to back in control (WELCOME), median / worst of 12 | 965 / 1090 ms | 79 / 85 ms |
+| socket closed to the first snapshot, median / worst | 1011 / 1133 ms | 83 / 88 ms |
+| the game stands still after the first player is back | 1051 ms | 301-351 ms |
 | reloads, a deploy of `server/` alone | 0 (the client build is a hash of the page) | 0 |
 | reloads, a deploy of `client/` alone | every playing page | 0 (loaded when the player leaves) |
 | reloads, a deploy that changes `shared/` or the protocol | every playing page | every playing page, once |
