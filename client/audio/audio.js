@@ -250,6 +250,7 @@ def(S.REVIVE, 'bandage', 'fx', 0.7, 0.05, 0.15, R_BANDAGE);
 def(S.DOWNED, 'hurt', 'fxfar', 1, 0.02, 0.15, R_P_HURT);
 def(S.FLARE_BURN, 'acid', 'fx', 0.45, 0.1);
 def(S.CAT_MEOW, 'cat_meow', 'fx', 0.55, 0.06, 0.15, R_CAT_MEOW);
+def(S.CAT_PURR, 'cat_purr', 'fx', 0.45, 0.03, 0.1); // (in somebody else's arms, stroked: heard from close by)
 def(S.DOG_BARK, 'dog_bark', 'zombie', 0.95, 0.08, 0.15, R_DOG_BARK);
 def(S.DOG_HOWL, 'dog_howl', 'big', 0.8, 0.06, 0.15, R_DOG_HOWL);
 def(S.DOG_SNARL, 'dog_snarl', 'zombie', 0.85, 0.1, 0.15, R_DOG_SNARL);
@@ -275,6 +276,7 @@ def(S.GUN_MAN, 'bolt', 'fxfar', 0.8, 0.04, 0.15, R_BOLT); // someone takes the g
 def(S.DEER_SNORT, 'deer_snort', 'fxfar', 1.3, 0.06); // (a breath of noise: this puts it level with the cat's meow)
 def(S.DEER_BLEAT, 'deer_bleat', 'fxfar', 0.7, 0.07);
 def(S.DEER_HOOF, 'step_hoof', 'fx', 0.8, 0.1, 0.08);
+def(S.DEER_SCREAM, 'deer_scream', 'zombie', 0.85, 0.08); // (the mainland's undead deer: a voice of the dead's)
 // the Tri-County Fair: its generator cranking up and clunking off, fuel going into the drum, a seat taking a rider
 def(S.FAIR_START, 'car_start', 'fxfar', 0.9, 0.03, 0.15, R_CAR_CRANK);
 def(S.FAIR_STOP, 'car_part', 'fxfar', 0.9, 0.04);
@@ -306,6 +308,7 @@ const LOCAL = {
   flare_open: { bank: 'flare_open', vol: 0.75 }, // the flare gun broken open, the spent case out, a shell in...
   flare_close: { bank: 'flare_close', vol: 0.65 }, // ...and snapped shut
   hmg: { bank: 'fp_hmg', vol: 1, jit: 0.025, send: 0.18 }, // the mounted gun, from behind its grips
+  purr: { bank: 'cat_purr', vol: 0.5, jit: 0.03, send: 0.05 }, // the stray cat in our own arms, as we stroke it
   rpg: { bank: 'fp_rpg', vol: 1, jit: 0.02, send: 0.22, rec: R_RPG.fp },
   reload_start: { bank: 'reload_start', vol: 0.55, rec: R_MAG_OUT },
   reload_end: { bank: 'reload_end', vol: 0.6, rec: R_MAG_IN },

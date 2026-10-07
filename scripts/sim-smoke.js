@@ -3558,7 +3558,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   // levelled yard and up a hillside, 777 the farm's field and the chapel's graveyard fence doing the same.
   {
     const { createWorld, TREE_TYPES } = await import('../shared/world.js');
-    const { PROPS } = await import('../shared/props.js');
+    const { planOf } = await import('../shared/props.js');
     let stood = 0;
     let off = 0;
     let buried = 0;
@@ -3570,7 +3570,7 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
       const down = (o) => !!w.mine?.under(o.x, o.y + 0.3, o.z); // (what stands down in the mine stands on its floor: scripts/test-mine.js)
       const decked = (o) => !!w.rail && w.rail.floorFor(o.x, o.z, o.y + 0.3) <= o.y + 0.01; // (...and in a boxcar on its floor: scripts/test-rail.js)
       for (const p of w.props) {
-        const def = PROPS[p.type];
+        const def = planOf(p.type); // (what a prop is seated by: props.js `plan`)
         if (def.boxes?.length !== 1 || def.cyls || !open(p.x, p.z) || down(p) || decked(p)) continue;
         const [lx, , lz, sx, , sz] = def.boxes[0];
         const c = Math.cos(p.ry);

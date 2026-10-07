@@ -3,10 +3,48 @@
 import { TREE_TYPES, ROCK_TYPES } from '../shared/world.js';
 import { gatePoint } from '../shared/layout.js';
 import { ZONE, CONT_DEFS } from '../shared/defs.js';
-import { PROPS } from '../shared/props.js';
+import { PROPS, collidersOf, planOf } from '../shared/props.js';
 import { COL, footprintContains, pushCircle, canReach, groundAt } from '../shared/collision.js';
 import { simulatePlayer, createPlayerState } from '../shared/playersim.js';
 import { BTN, CMD_RATE, GRID_STEP, PLAYER_RADIUS, PLAYER_HEIGHT, EYE_HEIGHT, STEP_HEIGHT, WATER_LEVEL } from '../shared/constants.js';
+import { readFileSync } from 'node:fs';
+import { WORLD } from '../shared/acts.js';
+import { worldPrint } from '../server/handoff.js';
+
+// ---------------------------------------------------------------- the maps on record (scripts/worldprints.json)
+// A deploy carries the games being played over to the new server only when that build makes the same map of a game's
+// seed (server/handoff.js: worldPrint's `shape` - the colliders, the loot, container, supply and spawn spots, the
+// places). A change to world generation that moves any of those ends every game in progress on that map when it is
+// deployed, and nothing used to say so before it was merged. So the shape of the maps the tests build anyway is on
+// record, and test-world.js and test-mainland.js fail when this tree makes another one - until the record is made
+// again on purpose (node scripts/worldprint.js --update), which is the author saying "yes, this ends running games".
+export const PRINTS_FILE = new URL('./worldprints.json', import.meta.url);
+export const PRINT_SEEDS = { island: [1, 2, 8, 9], mainland: [1, 2, 3, 4, 5, 6] }; // (test-world.js's valleys, test-mainland.js's mainlands)
+const mapOf = (world) => (world.kind === WORLD.MAINLAND ? 'mainland' : 'island');
+let onRecord = null;
+export const recordedPrints = () => (onRecord ||= JSON.parse(readFileSync(PRINTS_FILE, 'utf8')));
+// Sets a world a test has built against the record: into: { n: how many were on record, changed: [{ map, seed, was,
+// now }] } (a seed that is not on record is not counted)
+export function comparePrint(seed, world, into = { n: 0, changed: [] }, recorded = recordedPrints()) {
+  const map = mapOf(world);
+  const was = recorded[map]?.[seed];
+  if (!was) return into;
+  into.n++;
+  const now = worldPrint(world).shape;
+  if (now !== was) into.changed.push({ map, seed, was, now });
+  return into;
+}
+// the line a test prints of what comparePrint gathered, and whether it passed
+export function printsLine({ n, changed }) {
+  if (!changed.length) return { ok: true, text: `PASS  ${n} of these maps are on record, and are still the maps a running game was saved on (scripts/worldprints.json)` };
+  const maps = [...new Set(changed.map((c) => c.map))];
+  const which = maps.map((m) => `the ${m} of seed${changed.filter((c) => c.map === m).length > 1 ? 's' : ''} ${changed.filter((c) => c.map === m).map((c) => c.seed).join(', ')}`).join(' and ');
+  return {
+    ok: false,
+    text: `FAIL  this change makes another map of the same seed (${which}): deploying it ends every game being played on ${maps.length > 1 ? 'either map' : `the ${maps[0]}`}, because a save is only restored onto the map it was made on (server/handoff.js).
+        If the map is meant to change: node scripts/worldprint.js --update, commit scripts/worldprints.json, and say in the pull request's Risk section that the deploy ends running games.`,
+  };
+}
 
 const CELL = 0.2; // walk grid (m): finer than the 0.3 m of play a body has in the narrowest doorway (1 m wide)
 const GROUND_R = PLAYER_RADIUS * 0.7; // simulatePlayer feels for the ground under this much of the body
@@ -169,8 +207,8 @@ export function solidsAt(world, x, y, z) {
 // The prop a collider belongs to. Colliders carry no owner: matched by where world.js puts a prop's boxes and cylinders
 export function propOf(world, col) {
   for (const p of world.props) {
-    const def = PROPS[p.type];
-    if (!def || Math.hypot(p.x - col.x, p.z - col.z) > 8) continue;
+    const def = collidersOf(p.type, p.seed);
+    if (!def || Math.hypot(p.x - col.x, p.z - col.z) > 14) continue;
     const c = Math.cos(p.ry);
     const s = Math.sin(p.ry);
     for (const [lx, lz] of [...(def.boxes || []).map((b) => [b[0], b[2]]), ...(def.cyls || [])]) {
@@ -201,15 +239,17 @@ export function walksThrough(world, o, dir) {
 // ---------------------------------------------------------------- solids standing in each other
 // What stands on the ground as seen from above: a prop's collision boxes and cylinders, a tree's trunk, a boulder,
 // a place's upright pieces (walls, posts, machines). Each: { x, z, hx, hz, c, s, r, y0, y1, who }.
-export function solidsOf(world) {
+// plan: each prop by what the world was laid out by (props.js `plan`: what one is stood on another by), not by the
+// colliders of the variant that is drawn
+export function solidsOf(world, plan = false) {
   const out = [];
   for (const p of world.props) {
-    const def = PROPS[p.type];
+    const def = plan ? planOf(p.type) : collidersOf(p.type, p.seed);
     if (!def) continue;
     const c = Math.cos(p.ry);
     const s = Math.sin(p.ry);
     for (const [lx, ly, lz, sx, sy, sz] of def.boxes || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: sx / 2, hz: sz / 2, c, s, r: 0, y0: p.y + ly - sy / 2, y1: p.y + ly + sy / 2, who: p.type, id: p });
-    for (const [lx, lz, r, h] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y, y1: p.y + h, who: p.type, id: p });
+    for (const [lx, lz, r, h, base = 0] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y + base, y1: p.y + base + h, who: p.type, id: p });
   }
   const t = world.trees;
   for (let i = 0; i < t.length; i += 6) out.push({ x: t[i], z: t[i + 2], hx: 0, hz: 0, c: 1, s: 0, r: TREE_TYPES[t[i + 5]].r * t[i + 3], y0: t[i + 1], y1: t[i + 1] + 10, who: 'tree', id: 't' + i });

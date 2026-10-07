@@ -1,9 +1,11 @@
 // Procedural stray cat. ONE rigidly-skinned SkinnedMesh like the zombies (see skinning.js); geometry is
 // shared per coat, each instance owns its skeleton. Fully procedural walk / gallop / sit / idle animation
-// blended by smoothed state weights. Faces -Z, meters, feet at y = 0.
+// blended by smoothed state weights, and the two poses of a cat in somebody's arms (CANIM.HELD: limp, legs hanging,
+// looking about; CANIM.PET: being stroked - chin up into the hand, ears eased back, kneading the air, the tail slow).
+// Faces -Z, meters, feet at y = 0.
 import * as THREE from 'three';
 import { CANIM } from '../../../shared/defs.js';
-import { MeshBuilder, instantiateRig, setFx, getCharacterMaterial, fbm3, noise3, clamp, lerp } from './skinning.js';
+import { MeshBuilder, instantiateRig, setFx, getCharacterMaterial, getViewCharMaterial, fbm3, noise3, clamp, lerp } from './skinning.js';
 import { CR } from './charTextures.js';
 
 const TAU = Math.PI * 2;
@@ -186,10 +188,52 @@ const n1 = (t, seed) => noise3(t, seed * 1.7, 0.5, 11) * 2 - 1;
 const WALK_OFF = { LH: 0, LF: 0.25, RH: 0.5, RF: 0.75 };
 const RUN_OFF = { LH: 0, RH: 0.12, LF: 0.55, RF: 0.67 };
 
+// the held poses, blended over the rest by wHeld (and the stroked one over that by wPet). Rotations per bone (x, y, z)
+const HELD = {
+  hips: [0.06, 0, 0],
+  chest: [-0.1, 0, 0],
+  neck: [0.32, 0, 0], // (+x lifts the nose)
+  head: [-0.14, 0, 0],
+  fu: [-0.55, 0, 0], // curled up: the front paws tucked under its chest...
+  fl: [1.95, 0, 0],
+  fp: [0.35, 0, 0],
+  hu: [0.5, 0, 0], // ...and the hind legs folded under its hips, as it sits
+  hk: [-1.75, 0, 0],
+  hh: [0.45, 0, 0],
+  tail: [1.05, 0.25, 0.12, 0.05], // hanging down from the rump, the tip easing up
+};
+const PETTED = {
+  chest: [-0.16, 0, 0], // the back up into the hand
+  neck: [0.55, 0, 0],
+  head: [0.22, 0, 0.22], // chin up, the head tipped into the stroke
+  tail: [0.85, 0.2, -0.2, -0.45],
+};
+const KNEAD = 4.6; // rad/s: the front paws working where they are tucked while it is stroked
+// The top of its back along its length (z: metres along its spine, its head toward -Z) as the held pose has it,
+// measured off the posed mesh: what a hand stroking it rides on (the viewmodel's, a survivor's). The neck rises in front
+// of it and the rump falls away behind.
+const BACK_Y = [[-0.1, 0.3], [-0.075, 0.304], [-0.05, 0.302], [-0.025, 0.293], [0, 0.284], [0.025, 0.28], [0.05, 0.286], [0.075, 0.287], [0.1, 0.284], [0.125, 0.273], [0.15, 0.258]];
+/** The top of a held cat's back under a hand whose middle is at z along its spine, reaching lo..hi along it either side
+ *  (the highest point under it), in the cat's own space. */
+export function catBackY(z, lo = 0, hi = 0) {
+  let y = -1;
+  for (const dz of [lo, 0, hi]) {
+    const at = Math.min(BACK_Y[BACK_Y.length - 1][0], Math.max(BACK_Y[0][0], z + dz));
+    let i = 0;
+    while (i < BACK_Y.length - 2 && at > BACK_Y[i + 1][0]) i++;
+    const [z0, y0] = BACK_Y[i], [z1, y1] = BACK_Y[i + 1];
+    y = Math.max(y, y0 + ((y1 - y0) * (at - z0)) / (z1 - z0));
+  }
+  return y;
+}
+const HELD_TAIL_OFF = 0.22; // (yaw of each joint of its tail: curled off to its far side)
+
 class CatInstance {
-  constructor(coat, seed) {
+  constructor(coat, seed, view = false) {
     const rig = getRig(coat);
-    const inst = instantiateRig(rig, getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.2);
+    // (view: for the viewmodel scene, lit apart from the world and drawn without fog, never culled)
+    const inst = instantiateRig(rig, view ? getViewCharMaterial() : getCharacterMaterial(), rig.sphere.radius * 1.6 + 0.2);
+    if (view) inst.mesh.frustumCulled = false;
     this.mesh = inst.mesh;
     this.bones = inst.bones;
     this.skeleton = inst.skeleton;
@@ -205,6 +249,10 @@ class CatInstance {
     this.wSit = 1;
     this.wRun = 0;
     this.wMove = 0;
+    this.wHeld = 0;
+    this.wPet = 0;
+    this.lookBias = 0; // (yaw) where a held cat's looking about is centred: the viewmodel turns it to the one holding it
+    this.always = view; // (posed every update: the one in our own arms is never out of sight)
     this.earT = 1 + (seed % 5);
     this.earSide = 0;
     this.earK = 0;
@@ -223,6 +271,9 @@ class CatInstance {
     if (dt > 0.1) dt = 0.1;
     const k = Math.min(1, dt * 4);
     const moving = anim === CANIM.WALK || anim === CANIM.RUN;
+    const held = anim === CANIM.HELD || anim === CANIM.PET;
+    this.wHeld += ((held ? 1 : 0) - this.wHeld) * Math.min(1, dt * 6);
+    this.wPet += ((anim === CANIM.PET ? 1 : 0) - this.wPet) * Math.min(1, dt * 3);
     this.wSit += ((anim === CANIM.SIT ? 1 : 0) - this.wSit) * Math.min(1, dt * 2.5);
     this.wRun += ((anim === CANIM.RUN ? 1 : 0) - this.wRun) * k;
     this.wMove += ((moving ? clamp(speed / 0.5, 0, 1) : 0) - this.wMove) * Math.min(1, dt * 6);
@@ -237,7 +288,7 @@ class CatInstance {
     }
     this.earK = Math.max(0, this.earK - dt * 5);
     setFx(this.fx, 0, 1);
-    const seen = this._seen;
+    const seen = this._seen || this.always;
     this._seen = false;
     if (!seen) return;
     this.pose(time);
@@ -312,6 +363,48 @@ class CatInstance {
       const swish = Math.sin(t * (1.1 + idleK * 0.6) + i * 0.7 + sd) * (0.1 + 0.18 * idleK) * st + (i === TAIL_N - 1 ? Math.sin(t * 1.3 + sd) * 0.25 * S : 0);
       this.rot('tail' + i, x, swish + sitCurl[i] * S, 0);
     }
+    if (this.wHeld > 0.001) this.poseHeld(t, lookX, lookY);
+  }
+
+  // in somebody's arms, blended over whatever it was doing (wHeld), and stroked (wPet)
+  poseHeld(t, lookX, lookY) {
+    const H = this.wHeld;
+    const P = this.wPet;
+    const sd = this.seed * 0.37;
+    const mix = (name, r) => {
+      const b = this.bones[this.X[name]].rotation;
+      b.set(lerp(b.x, r[0], H), lerp(b.y, r[1], H), lerp(b.z, r[2], H));
+    };
+    const hipsB = this.bones[this.X.hips];
+    hipsB.position.set(B.hips[0], lerp(hipsB.position.y, B.hips[1], H), lerp(hipsB.position.z, B.hips[2], H));
+    mix('hips', HELD.hips);
+    mix('chest', [lerp(HELD.chest[0], PETTED.chest[0], P), 0, 0]);
+    // looking about (round to the one holding it, in the viewmodel), less of it while it is stroked: then the chin goes
+    // up into the hand and the head tips over into the stroke
+    const ly = lookY * 0.8 * (1 - P * 0.75) + this.lookBias * (1 - P * 0.3);
+    const lx = lookX * (1 - P);
+    mix('neck', [lerp(HELD.neck[0], PETTED.neck[0], P) + lx * 0.4, ly * 0.45, 0]);
+    mix('head', [lerp(HELD.head[0], PETTED.head[0], P) + lx * 0.6, ly * 0.55, lerp(n1(t * 0.15, sd + 7) * 0.12, PETTED.head[2] + Math.sin(t * 0.9 + sd) * 0.06, P)]);
+    // ears: forward and turning; eased back and out while stroked
+    const flick = this.earK * 0.7 * (1 - P);
+    this.rot('earL', lerp(this.bones[this.X.earL].rotation.x, -0.14 * P, H), 0, lerp(this.bones[this.X.earL].rotation.z, (this.earSide === 0 ? -flick : 0) - 0.32 * P, H));
+    this.rot('earR', lerp(this.bones[this.X.earR].rotation.x, -0.14 * P, H), 0, lerp(this.bones[this.X.earR].rotation.z, (this.earSide === 1 ? flick : 0) + 0.32 * P, H));
+    // legs tucked; stroked, the front paws knead where they are tucked, one then the other
+    for (const side of ['L', 'R']) {
+      const kn = Math.max(0, Math.sin(t * KNEAD + (side === 'L' ? 0 : Math.PI))) * P;
+      mix('fu' + side, HELD.fu);
+      mix('fl' + side, HELD.fl);
+      mix('fp' + side, [HELD.fp[0] - kn * 0.45, 0, 0]);
+      mix('hu' + side, [HELD.hu[0] + Math.sin(t * 0.7 + sd + (side === 'L' ? 0 : 1.3)) * 0.06, 0, 0]);
+      mix('hk' + side, HELD.hk);
+      mix('hh' + side, HELD.hh);
+    }
+    // tail: hanging, curled off to its far side (+X: away from the one holding it), its tip slowly swishing; stroked,
+    // the tip curls up and it sways slower
+    for (let i = 0; i < TAIL_N; i++) {
+      const sw = Math.sin(t * lerp(1.3, 0.7, P) + i * 0.6 + sd) * (0.06 + i * 0.04);
+      mix('tail' + i, [lerp(HELD.tail[i], PETTED.tail[i], P), HELD_TAIL_OFF + sw, 0]);
+    }
   }
 
   dispose() {
@@ -320,12 +413,14 @@ class CatInstance {
   }
 }
 
-/** A cat view: { object, update(dt, anim, speed, time), dispose() }. coat = server variant byte. */
-export function createCat(coat = 0, seed = 0) {
-  const c = new CatInstance((coat >>> 0) % COATS.length, seed >>> 0);
+/** A cat view: { object, update(dt, anim, speed, time), dispose() }. coat = server variant byte. view: one for the
+ *  viewmodel scene (the cat in our own arms: its material is lit like the hands and has no fog). */
+export function createCat(coat = 0, seed = 0, view = false) {
+  const c = new CatInstance((coat >>> 0) % COATS.length, seed >>> 0, view);
   return {
     object: c.object,
     update: (dt, anim, speed, time) => c.update(dt, anim, speed, time),
+    setLook: (yaw) => (c.lookBias = yaw),
     dispose: () => c.dispose(),
     _inst: c,
   };

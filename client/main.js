@@ -13,6 +13,7 @@ import { PROTOCOL_VERSION, REJECT_REASON } from '../shared/protocol.js';
 import { refreshAccount } from './net/account.js';
 import { startAchievementsSync } from './net/achievements.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
+import { comeBack, endedByUpdate, NO_GAME_TRIES } from './net/comeback.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
 
@@ -58,28 +59,32 @@ for (const type of GESTURES) addEventListener(type, onGesture, true);
 // and a JOIN from this browser in that time puts them back in it with everything they had. So a drop goes straight
 // back in, trying every few seconds for that minute; and a page reopened on the game it was playing (a crash, the tab
 // closed by accident) does the same. stn.playing: { code, t } of the game being played, renewed while playing.
+// A game that is over for good - the next server could not carry it over a deploy, or no server has it - is not
+// asked for again: the player is told why, once (net/comeback.js).
 const REJOIN_MS = 60_000;
 let lastName = '';
 let rejoining = false;
 async function rejoin(code, name = lastName) {
   if (rejoining || !code || !name) return;
   rejoining = true;
-  const until = performance.now() + REJOIN_MS;
   let moved = false; // (this page was loaded again for a deploy's new build: moveBack)
   try {
     moved = sessionStorage.getItem(MOVED_KEY) === '1';
     sessionStorage.removeItem(MOVED_KEY);
   } catch {}
   try {
-    while (game.state !== 'playing' && performance.now() < until) {
-      ui.setJoinError(`${moved ? 'The game was updated' : 'Connection lost'} - getting you back into game ${code} (${Math.ceil((until - performance.now()) / 1000)} s)...`);
-      await callbacks.onJoin(name, code);
-      if (game.state === 'playing') return;
-      await new Promise((done) => setTimeout(done, 3000));
-    }
-    if (game.state !== 'playing') {
+    const why = await comeBack({
+      code,
+      moved,
+      ms: REJOIN_MS,
+      join: async () => (game.state === 'playing' ? true : (await callbacks.onJoin(name, code, { quiet: true })) || game.state === 'playing'),
+      waiting: (s) => ui.setJoinError(`${moved ? 'The game was updated' : 'Connection lost'} - getting you back into game ${code} (${s} s)...`),
+    });
+    if (why && game.state !== 'playing') {
+      console.warn(`[net] not back in game ${code}: ${why}`);
+      forgetPlaying();
       ui.showSplash();
-      ui.setJoinError('Connection lost, and the game could not be reached in time: your place there is gone.');
+      ui.setJoinError(why);
     }
   } finally {
     ui.showUpdating(false);
@@ -95,7 +100,7 @@ async function rejoin(code, name = lastName) {
 // times over means it could not bring it back. If the next server runs another build, this page is loaded again
 // first (and then goes back in as a reopened page does, below).
 const MOVE_MS = 45_000;
-const MOVE_NO_GAME = 3;
+const MOVE_NO_GAME = NO_GAME_TRIES;
 const BUILD = fetch('/api/version')
   .then((r) => r.json())
   .catch(() => null); // what this page was loaded from
@@ -137,6 +142,11 @@ async function moveBack(code) {
       } catch (err) {
         // (another build: load it)
         if (err.reason === REJECT_REASON.VERSION) return reloadInto(code, name);
+        // (the next server could not carry the game over, and says why: it is over, and asking again will not change it)
+        if (endedByUpdate(err.reason)) {
+          forgetPlaying();
+          return game.onDisconnect(0, err.message);
+        }
         if (err.reason === REJECT_REASON.NO_GAME) noGame++;
       }
     }
@@ -158,8 +168,10 @@ function forgetPlaying() {
 }
 
 const callbacks = {
-  // code: the game to go into (an invite, a pick from the list, one just made); '' for a quick join
-  async onJoin(name, code = '') {
+  // code: the game to go into (an invite, a pick from the list, one just made); '' for a quick join. quiet: one try of
+  // several at getting back in (rejoin), whose failure is not shown: rejoin says how it ended. -> nothing once in the
+  // game (or when no join could be tried), else the Error
+  async onJoin(name, code = '', { quiet = false } = {}) {
     if (joining || !game) return;
     joining = true;
     lastName = name;
@@ -190,8 +202,10 @@ const callbacks = {
       }
     } catch (err) {
       joinCue = false;
+      if (quiet) return err;
       console.error(err);
       ui.setJoinError(err.message || 'Could not join');
+      return err;
     } finally {
       joining = false;
     }

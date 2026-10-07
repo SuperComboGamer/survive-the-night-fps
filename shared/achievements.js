@@ -111,12 +111,14 @@ export const ACHIEVEMENTS = [
   F(57, 'flawless', 'survival', 'platinum', 'Flawless', 'Escape in a run where no survivor died.', 'shield'),
   F(58, 'leaper_off', 'survival', 'bronze', 'Get Off Me!', 'Throw off a leaper that has you pinned.', 'hand'),
   F(59, 'tank_dodge', 'survival', 'silver', 'Olé!', 'A charging Tank comes for you, and misses.', 'bolt'),
+  F(71, 'cat_escape', 'survival', 'gold', 'Nobody Gets Left Behind', 'Have the stray cat in your arms when the car drives off the island.', 'paw'),
 
   // ---- with other people
   F(60, 'friend', 'social', 'bronze', 'Better Together', 'Play in a game with a friend.', 'people'),
   F(61, 'stranger', 'social', 'bronze', 'Kindness of Strangers', 'Revive a survivor who is not on your friends list.', 'personPlus'),
   F(62, 'invited', 'social', 'bronze', 'Plus One', 'Join an invite-only game.', 'link'),
   F(63, 'walkie', 'social', 'bronze', 'Breaker, Breaker', 'Talk over the walkie-talkie.', 'radio'),
+  F(70, 'cat_lift', 'social', 'bronze', 'Who Is a Good Kitty?', 'Pick up the stray cat.', 'paw'),
 
   // ---- secret: "???" until unlocked
   F(64, 'fall_death', 'secret', 'bronze', 'Gravity Wins', 'Die from a fall.', 'downed', { secret: true }),

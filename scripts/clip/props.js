@@ -20,7 +20,7 @@ const args = parseArgs(process.argv.slice(2), { seeds: '1-30', min: '0.1' });
 const root = resolve(args.root || REPO);
 const { createWorld: createIsland, TREE_TYPES, ROCK_TYPES } = await import(pathToFileURL(join(root, 'shared', 'world.js')).href);
 const createWorld = args.world === 'mainland' ? (await import(pathToFileURL(join(root, 'shared', 'mainland.js')).href)).createMainland : createIsland;
-const { PROPS } = await import(pathToFileURL(join(root, 'shared', 'props.js')).href);
+const { PROPS, collidersOf } = await import(pathToFileURL(join(root, 'shared', 'props.js')).href);
 const { ZONE_NAMES } = await import(pathToFileURL(join(root, 'shared', 'defs.js')).href);
 const seeds = String(args.seeds).includes('-') ? (([a, b]) => Array.from({ length: b - a + 1 }, (_, i) => a + i))(String(args.seeds).split('-').map(Number)) : String(args.seeds).split(',').map(Number);
 
@@ -28,11 +28,11 @@ const seeds = String(args.seeds).includes('-') ? (([a, b]) => Array.from({ lengt
 function solids(world) {
   const out = [];
   world.props.forEach((p, i) => {
-    const def = PROPS[p.type];
+    const def = collidersOf ? collidersOf(p.type, p.seed) : PROPS[p.type]; // (the variant's own colliders; an older tree has one set a type)
     if (!def) return;
     const c = Math.cos(p.ry), s = Math.sin(p.ry);
     for (const [lx, ly, lz, sx, sy, sz] of def.boxes || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: sx / 2, hz: sz / 2, c, s, r: 0, y0: p.y + ly - sy / 2, y1: p.y + ly + sy / 2, who: p.type, id: 'p' + i });
-    for (const [lx, lz, r, h] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y, y1: p.y + h, who: p.type, id: 'p' + i });
+    for (const [lx, lz, r, h, base = 0] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y + base, y1: p.y + base + h, who: p.type, id: 'p' + i });
   });
   const t = world.trees;
   for (let i = 0; i < t.length; i += 6) out.push({ x: t[i], z: t[i + 2], hx: 0, hz: 0, c: 1, s: 0, r: TREE_TYPES[t[i + 5]].r * t[i + 3], y0: t[i + 1] - 1, y1: t[i + 1] + 14 * t[i + 3], who: 'tree', id: 't' + i });

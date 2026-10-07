@@ -639,7 +639,7 @@ switch (screen) {
     const day = 86400_000;
     const now = Date.now();
     const unlocked = {};
-    ['kills_10', 'kills_100', 'nights_1', 'escapes_1', 'headshots_25', 'revives_1', 'crafted_10', 'salvaged_10', 'trees_1', 'distance_1k', 'kill_pistol', 'kill_shotgun', 'kill_knife', 'kill_boss', 'mine_enter', 'radio_call', 'flare', 'leaper_off', 'invited', 'walkie', 'fall_death'].forEach((id, i) => (unlocked[id] = now - i * day * 0.7 - 3600_000));
+    ['kills_10', 'kills_100', 'nights_1', 'escapes_1', 'headshots_25', 'revives_1', 'crafted_10', 'salvaged_10', 'trees_1', 'distance_1k', 'kill_pistol', 'kill_shotgun', 'kill_knife', 'kill_boss', 'mine_enter', 'radio_call', 'flare', 'leaper_off', 'invited', 'walkie', 'cat_lift', 'fall_death'].forEach((id, i) => (unlocked[id] = now - i * day * 0.7 - 3600_000));
     localStorage.setItem('stn.achievements', JSON.stringify({ v: 1, stats: { kills: 340, nights: 7, escapes: 1, headshots: 61, revives: 3, crafted: 41, salvaged: 12, trees: 4, distance: 6300, days: 2 }, unlocked }));
     buildScene(bg || 'night');
     ui.hideSplash();

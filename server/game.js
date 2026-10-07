@@ -119,7 +119,7 @@ import { worldFor } from '../shared/worlds.js';
 import { WORLD, nightRank, ARRIVAL_DAY, MAINLAND_DAY_MORE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, PLANE_REACH } from '../shared/acts.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
 import { blowOf, BLOW } from '../shared/surfaces.js';
-import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckLocal } from '../shared/wrecks.js';
+import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckLocal, wreckUnit, wreckHalf } from '../shared/wrecks.js';
 import { PRY, pryTime, pryWeapon, trunkCar, hasBootLid } from '../shared/trunk.js';
 import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME, radioKeyed } from '../shared/playersim.js';
@@ -149,7 +149,7 @@ import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
 import { BestiaryTracker } from './bestiary.js';
-import { checkEnvelope, worldHash, HandoffError } from './handoff.js';
+import { checkEnvelope, worldPrint, sameWorld, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
 import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -230,6 +230,18 @@ const GREET_EVERY = 10;
 // The client closes with LEFT_CODE when "Leave game" is pressed: that one goes at once. REJOIN_GRACE_SECONDS: tests.
 export const REJOIN_GRACE = +(process.env.REJOIN_GRACE_SECONDS || 60);
 const DEAD_CONN = { send() {}, close() {}, closed: true, slot: -1, user: null, ip: '' };
+// Back is not playing yet. A JOIN gives a held player their body back at once, but their browser then builds the
+// valley and its shaders before it draws a frame or sends a command (seconds; after a deploy's reload, up to half a
+// minute), and all that time the body stood there for the dead. So a player who is back stays as safe as a held one
+// (Game.safe) until their client is plainly running - commands in ARRIVE_TICKS ticks, or anything they do - or
+// ARRIVE_MAX seconds have passed; after a drop, never longer than what was left of the grace they had anyway, so
+// coming back is no more of a shelter than staying away was. ARRIVE_SECONDS: tests (0: none of this).
+const ARRIVE_MAX = +(process.env.ARRIVE_SECONDS ?? 45);
+const ARRIVE_TICKS = SERVER_TICK_RATE;
+// A game brought over from the last server does not run until one of its players is playing again (or somebody new
+// is), or this many seconds of the clock on the wall have passed: the day does not burn down and the dead do not
+// close in on a game whose every player is still on their way back. HANDOFF_FREEZE_SECONDS: tests (0: it runs on).
+const HANDOFF_FREEZE = +(process.env.HANDOFF_FREEZE_SECONDS ?? 45);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
@@ -332,8 +344,9 @@ export class Game {
     this.act = WORLD.ISLAND;
     this.checkpoint = null;
     this.crossing = null;
+    this.thawAt = 0; // a game brought over waits, still, for its players until then (ms on the wall's clock; 0: it runs)
     this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed(), restore?.game.act ?? WORLD.ISLAND);
-    if (restore && restore.worldHash !== this.worldHash) throw new HandoffError(`this build makes another valley of seed ${this.seed}`);
+    if (restore && !sameWorld(restore, this.worldPrint)) throw new HandoffError(`this build makes another valley of seed ${this.seed}`, { world: true });
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
     this.ents = new Array(MAX_ENTITIES).fill(null);
@@ -429,6 +442,7 @@ export class Game {
   // the old server ended its own as 'handoff').
   load(s) {
     loadGame(this, s);
+    this.thawAt = HANDOFF_FREEZE > 0 && this.players.size ? Date.now() + HANDOFF_FREEZE * 1000 : 0;
     if (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT) this.track.start();
   }
 
@@ -575,7 +589,9 @@ export class Game {
   // a held player is back (a JOIN from the same account or browser): this session takes over their body
   resume(session, p) {
     const moved = p.away?.handoff;
+    const left = p.away ? Math.max(0, p.away.grace - (this.time - p.away.since)) : 0;
     p.away = null;
+    p.arriving = ARRIVE_MAX > 0 ? { until: this.time + (moved ? ARRIVE_MAX : Math.min(ARRIVE_MAX, left)), n: 0, tick: -1 } : null;
     p.session = session;
     session.player = p;
     p.admin = !!session.conn.user?.isAdmin || this.devAdmin;
@@ -618,6 +634,33 @@ export class Game {
     this.globalDirty = true;
     this.log(`resume ${p.name}`);
   }
+  // Held, or back and not playing yet (ARRIVE_MAX): nothing hurts them, the dead do not go for them, a downed one does
+  // not bleed.
+  safe(p) {
+    if (p.away) return true;
+    if (!p.arriving) return false;
+    if (this.time < p.arriving.until) return true;
+    p.arriving = null;
+    return false;
+  }
+  // a command packet from one who is back: their client is running. A second of them, and they are playing
+  arrived(p) {
+    const a = p.arriving;
+    if (!a || a.tick === this.tick) return;
+    a.tick = this.tick;
+    if (++a.n >= ARRIVE_TICKS) p.arriving = null;
+  }
+  // A game brought over from the last server, with nobody playing in it yet (load, HANDOFF_FREEZE)
+  frozen() {
+    if (!this.thawAt) return false;
+    let playing = false;
+    for (const p of this.players.values()) if (!p.away && !p.arriving) playing = true;
+    if (!playing && this.players.size && Date.now() < this.thawAt) return true;
+    this.thawAt = 0;
+    this.log(playing ? 'the game runs on: a player is back' : 'the game runs on: nobody came back in time');
+    return false;
+  }
+
   onMessage(session, data) {
     usePos(this.world); // (positions in what this message says are in this world's units: protocol.js)
     // basic flood protection
@@ -866,6 +909,7 @@ export class Game {
       ts: null, // the stint analytics.js is counting for them (null: none)
       rejoinKey: '', // 'a:<account id>' or 'g:<sha-256 of the browser id>': whose JOIN may take this player back after a drop (resume)
       away: null, // dropped and held: { since, grace, handoff } (hold), until they come back or their grace runs out
+      arriving: null, // back, and not playing yet: { until, n, tick } (resume, safe), until their client is running
       get x() {
         return this.state.x;
       },
@@ -1094,7 +1138,9 @@ export class Game {
     this.act = act;
     this.world = worldFor(seed, act);
     usePos(this.world);
-    this.worldHash = worldHash(this.world); // (what a save made on this valley is checked against: handoff.js)
+    this.worldPrint = worldPrint(this.world); // (what a save made on this valley is checked against: handoff.js)
+    this.worldHash = this.worldPrint.hash;
+    this.worldShape = this.worldPrint.shape;
     this.nav = new Nav(this.world);
     this.mineNav = this.world.mine ? new MineNav(this.world, this.nav) : null; // (a valley without the workings has none)
     this.worldPlayed = false;
@@ -1254,16 +1300,19 @@ export class Game {
       const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
       this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
     }
+    // the stray cat goes too, if somebody has it in their arms (buildMainland sets it down beside them)
+    const cat = this.cats.find((c) => c.holder && this.players.get(c.holder)?.state.pet);
     this.clearWorld();
     this.phase = PHASE.CROSSING;
     this.timeLeft = CROSSING.TIME;
-    this.crossing = { pending: 2, skip: [], night, back: 0 };
+    this.crossing = { pending: 2, skip: [], night, back: 0, cat: cat ? { variant: cat.variant, by: cat.holder } : null };
     this.waves = [];
     this.wave = 0;
     for (const p of this.players.values()) {
       p.hold = null;
       this.endUse(p);
       this.releaseHolds(p);
+      p.state.pet = 0; // (the cat they had in their arms is in the car with them)
       p.cmdQueue.length = 0;
       p.waypoint = null; // (it pointed into the island)
     }
@@ -1295,6 +1344,12 @@ export class Game {
     if (c.night) this.day++;
     this.populate();
     c.back = this.checkpointAt();
+    // the cat that crossed in somebody's arms, beside them at the bridgehead (whoever is there, if they have gone)
+    if (c.cat) {
+      const by = this.players.get(c.cat.by) || this.players.values().next().value;
+      if (by) this.cm.spawnBeside(by.state, c.cat.variant);
+      c.cat = null;
+    }
     this.globalDirty = true;
     this.playersDirty = true;
   }
@@ -1329,7 +1384,7 @@ export class Game {
       p.revivedBy = 0;
       p.hp = Math.max(p.hp, REVIVE_HP);
     }
-    s.ride = s.cart = s.hmg = 0;
+    s.ride = s.cart = s.hmg = s.pet = 0;
     s.pinned = s.pulled = 0;
     s.vx = s.vy = s.vz = 0;
     this.putAtStart(s);
@@ -1935,6 +1990,7 @@ export class Game {
     this.log('drove off:', p.name);
     this.track.drove(p);
     this.ach.drove(p); // (the driver's feat is the car's, as it was)
+    this.ach.leftIsland(); // (whoever has the cat in their arms took it with them)
     this.cross(p, this.phase === PHASE.NIGHT);
   }
 
@@ -2207,6 +2263,7 @@ export class Game {
     const renderTick = r.u16();
     const renderFrac = r.u8() / 255;
     const { cmds, hash, ping, rttMs } = readInput(r);
+    if (cmds.length) this.arrived(p);
     if (ping) {
       p.pingAt = performance.now(); // answered in this player's next snapshot (sendSnapshots)
       if (rttMs > 0) {
@@ -2289,6 +2346,9 @@ export class Game {
       case 'gun_drop':
         this.gun.drop(p); // reached for a weapon with the mounted gun in their arms: it goes down where they stand
         break;
+      case 'cat_drop':
+        this.cm.put(p); // ...or with the cat in their arms: it is set down in front of them
+        break;
       case 'fire':
         this.combat.fire(p, ev);
         break;
@@ -2359,6 +2419,7 @@ export class Game {
     if (!p.alive) return;
     if (p.zombie && act !== ACT.FLASHLIGHT && act !== ACT.PING) return;
     if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.HOLD_END) return;
+    if (act !== ACT.FLASHLIGHT && act !== ACT.PING) p.arriving = null; // (whoever does something in the world is playing: resume)
     switch (act) {
       case ACT.INTERACT:
         return this.interact(p, r.u16());
@@ -2525,6 +2586,8 @@ export class Game {
         return this.gun.feed(p, r.u8());
       case ACT.GUN_PUT:
         return this.gun.put(p, r.u8());
+      case ACT.CAT_PUT:
+        return this.cm.put(p);
       case ACT.RIDE:
         return this.fair.board(p, r.u8());
       case ACT.HANDCAR:
@@ -2661,6 +2724,10 @@ export class Game {
       this.holdBegin(p, e.id);
       return;
     }
+    if (e.kind === ENT.CAT) {
+      this.cm.lift(p, e); // the stray cat, into their arms (cats.js)
+      return;
+    }
     if (e.kind === ENT.STRUCTURE) {
       if (e.stype === STRUCT.CAMPFIRE) return this.feedFire(p, e);
       if (this.power.interact(p, e)) return; // (a generator takes fuel)
@@ -2674,6 +2741,7 @@ export class Game {
     if (e.kind === ENT.CRATE) return e.y + 0.6;
     if (e.kind === ENT.STRUCTURE) return e.y + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
     if (e.kind === ENT.PLAYER) return e.y + 0.3;
+    if (e.kind === ENT.CAT) return e.y + 0.18;
     if (e.kind === ENT.GUN && e.mode === GUN_LYING) return e.y - GUN.pivotY + 0.3; // (on its side on the ground)
     return e.y;
   }
@@ -2683,7 +2751,7 @@ export class Game {
   // because our copy of the player trails the one that client looks out of. Never less: a refusal is silent, so
   // the player would be holding [E] on a prompt with nothing happening
   reachOf(e) {
-    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : PICK_RADIUS.DOWNED;
+    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : e.kind === ENT.CAT ? PICK_RADIUS.CAT : PICK_RADIUS.DOWNED;
     return Math.hypot(INTERACT_REACH, r) + INTERACT_SLACK;
   }
 
@@ -3015,8 +3083,11 @@ export class Game {
   // no scrap.
   blastWrecks(x, y, z, radius) {
     const near = this.world.staticGrid.query(x, z, radius + 6, []);
+    // (a wreck is several boxes: the blow lands once, on the nearest point of the nearest of them)
+    const blows = new Map(); // the wreck's unit -> [d, px, py, pz]
     for (const col of near) {
-      if (!wreckOf(col) || this.gather.get(col)?.hits?.length >= WRECK_HITS_MAX) continue;
+      const unit = wreckUnit(col);
+      if (!wreckOf(col) || this.gather.get(unit)?.hits?.length >= WRECK_HITS_MAX) continue;
       // the nearest point of its box
       const lx = col.c * (x - col.x) - col.s * (z - col.z);
       const lz = col.s * (x - col.x) + col.c * (z - col.z);
@@ -3024,17 +3095,20 @@ export class Game {
       const cz = Math.max(-col.hz, Math.min(col.hz, lz));
       const px = col.x + col.c * cx + col.s * cz;
       const pz = col.z - col.s * cx + col.c * cz;
-      const py = Math.max(col.y0 + 0.3, Math.min(col.y1 - 0.2, y));
+      const py = Math.max(Math.min(col.y0 + 0.3, col.y1), Math.min(col.y1 - 0.2, y));
       const d = Math.hypot(px - x, py - y, pz - z);
-      if (d > radius) continue;
+      if (d > radius || blows.get(unit)?.[0] <= d) continue;
+      blows.set(unit, [d, px, py, pz]);
+    }
+    for (const [unit, [d, px, py, pz]] of blows) {
       // (a blast right on top of it: from above its middle)
-      if (d > 0.05) this.wreckHit(col, px, py, pz, (px - x) / d, (py - y) / d, (pz - z) / d, BLOW.BLAST);
-      else this.wreckHit(col, px, py, pz, 0, -1, 0, BLOW.BLAST);
+      if (d > 0.05) this.wreckHit(unit, px, py, pz, (px - x) / d, (py - y) / d, (pz - z) / d, BLOW.BLAST);
+      else this.wreckHit(unit, px, py, pz, 0, -1, 0, BLOW.BLAST);
     }
   }
 
   alarmHit(col, g, prop, blow, x, z) {
-    const front = wreckLocal(prop, x, 0, z)[2] / Math.max(0.5, col.hz);
+    const front = wreckLocal(prop, x, 0, z)[2] / wreckHalf(prop, col);
     const [state, say] = alarmStep(g.alarm || ALARM.UNKNOWN, prop.type, blow, front, this.rng);
     g.alarm = state;
     if (say < 0) return;
@@ -3271,6 +3345,7 @@ export class Game {
     if (def.cat === 'cons') {
       const c = CONSUMABLES[it.item];
       if (!c || useWasted(it.item, { hp: p.hp, maxHp: p.maxHp, battery: p.battery, downed: p.downed, stamina: s.stamina, exhausted: s.exhausted })) return;
+      if (s.pet) this.cm.put(p); // (the hands go to it: the cat in them is set down first)
       // The hands go onto it (s.using: no weapon goes off until it is used up or put away, simulatePlayer) from the
       // client's next command on, which is where its prediction has them go: it sends every command it has made
       // before it asks (Game.useConsumable), so that is the one after the newest that has come in. Those still
@@ -3585,7 +3660,7 @@ export class Game {
 
   // ---------------------------------------------------------------- damage (players)
   damagePlayer(p, amount, src) {
-    if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
+    if (!p.alive || amount <= 0 || this.safe(p)) return; // (dropped and held, or back and not playing yet: nothing hurts them)
     if (this.godMode && !p.zombie) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
@@ -3702,7 +3777,7 @@ export class Game {
         if (p.zombie) this.credit([k], 'kills'); // a turned player put down. (A survivor killed by one is on nobody's record)
       }
     }
-    this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0) | (src.drown ? 4 : 0));
+    this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0) | (src.drown ? 4 : 0) | (src.deer ? 8 : 0));
     if (!p.zombie) {
       this.nightStats.deaths++;
       this.dropAll(p);
@@ -3711,7 +3786,7 @@ export class Game {
       p.armorItem = 0;
       p.armorMax = 0;
       p.flashlight = false;
-      this.notify(NOTIFY.YOU_DIED, src.kind === KILLER.ZOMBIE ? src.ztype : 255, p.id);
+      this.notify(NOTIFY.YOU_DIED, src.kind === KILLER.ZOMBIE ? src.ztype : src.deer ? 254 : 255, p.id); // (254: an undead deer's antlers)
       this.notify(NOTIFY.PLAYER_DIED, p.id);
       this.sound(SOUND.PLAYER_DEATH, s.x, s.y + 1, s.z, 60);
       p.respawnT = 6;
@@ -4094,8 +4169,8 @@ export class Game {
         else this.systemChat('this valley has no Army Checkpoint, so no mounted gun (a new game deals a new valley)');
         break;
       case 'cat': {
-        // bring the cat over (2 m in front)
-        const c = this.cats[0];
+        // bring the cat over (2 m in front: one nobody has in their arms)
+        const c = this.cats.find((k) => !k.holder);
         if (c) {
           c.x = s.x - Math.sin(s.yaw) * 2;
           c.z = s.z - Math.cos(s.yaw) * 2;
@@ -4105,12 +4180,14 @@ export class Game {
         break;
       }
       case 'deer': {
-        // /deer: to 34 m from the nearest group of deer (out of what startles them). /deer spawn [m]: a group 20 m
-        // ahead (or that many), which lets you stand there for ten seconds before it notices you
+        // /deer: to 34 m from the nearest group of deer (out of what startles them). /deer spawn [m] [undead | living]:
+        // a group 20 m ahead (or that many), which lets you stand there for ten seconds before it notices you; undead
+        // or living whatever the map (the mainland's are undead, the island's living)
         if (args[1] === 'spawn') {
           const d = Math.max(4, Math.min(60, +args[2] || 20));
-          const gr = this.dm.spawnAhead(s.x, s.z, s.yaw, d);
-          this.sendChat(p, 0, CHATF.SYSTEM, gr ? `${gr.members.length} deer ${d} m ahead` : 'no room for deer there');
+          const kind = args.includes('undead') ? true : args.includes('living') ? false : undefined;
+          const gr = this.dm.spawnAhead(s.x, s.z, s.yaw, d, 10, kind);
+          this.sendChat(p, 0, CHATF.SYSTEM, gr ? `${gr.members.length} ${gr.undead ? 'undead ' : ''}deer ${d} m ahead` : 'no room for deer there');
           break;
         }
         const gr = this.dm.nearest(s.x, s.z);
@@ -4153,6 +4230,7 @@ export class Game {
           if (!best || Math.hypot(col.x - s.x, col.z - s.z) < Math.hypot(best.x - s.x, best.z - s.z)) best = col;
         }
         if (!best) break;
+        best = wreckUnit(best);
         let g = this.gather.get(best);
         if (!g) this.gather.set(best, (g = { left: WRECK_SALVAGE }));
         g.alarm = ALARM.LIVE;
@@ -4209,6 +4287,16 @@ export class Game {
     ts.begin();
     usePos(this.world); // (positions in everything this tick sends are in this world's units: protocol.js)
     this.tick++;
+    // brought over from the last server, and nobody is playing yet: nothing moves and no clock runs. Whoever is back
+    // is sent the game as it stands, and their commands are taken and not run
+    if (this.frozen()) {
+      for (const p of this.players.values()) this.drainInputs(p);
+      ts.mark(T_INPUTS);
+      this.sendSnapshots();
+      ts.mark(T_SNAPSHOTS);
+      this.endTick();
+      return;
+    }
     const dt = SERVER_DT;
     this.time += dt;
     // release quarantined ids
@@ -4619,7 +4707,7 @@ export class Game {
         }
       } else p.drownT = 0;
       if (p.downed) {
-        if (!p.revivedBy && !p.away) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
+        if (!p.revivedBy && !this.safe(p)) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
         if (p.bleed <= 0) this.killPlayer(p, p.lastSrc || { kind: KILLER.WORLD });
         if (p.revivedBy) {
           const rv = this.players.get(p.revivedBy);
@@ -4891,8 +4979,8 @@ export class Game {
         }
         if (put(chunk)) mask |= 1 << chunk;
       }
-      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js; the mounted gun in their
-      // arms: mountedgun.js; the perks they picked: progress.js)
+      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js; the mounted gun or the cat
+      // in their arms: mountedgun.js, cats.js; the perks they picked: progress.js)
       c.reset();
       c.u8(s.ride);
       c.u8(s.rideGo);
@@ -4900,7 +4988,7 @@ export class Game {
       c.u8(s.cart);
       c.f32(s.cartS);
       c.f32(s.cartV);
-      c.u8(s.hmg);
+      c.u8(s.hmg | (s.pet << 1));
       c.u32(s.perks);
       if (put(12)) mask |= SELF.RIDE;
     }
@@ -5116,7 +5204,7 @@ export class Game {
       global = gw.bytes();
     }
     this.globalDirty = false;
-    if (this.players.size) stageEntities(this.all); // once for all clients: each sendTick's writeEntities reads the staged copy
+    if (this.players.size) stageEntities(this.all, this.tick); // once for all clients: each sendTick's writeEntities reads the staged copy
     for (const p of this.players.values()) {
       const conn = p.session.conn;
       if (p.pingAt) {

@@ -23,6 +23,7 @@ import {
 import { mouthAnchor, surfPoint, headPoint, sheet, headSurface, torsoSurf, bodyBuild } from './humans.js';
 import { LOOKS, deadLook, frameOf } from './looks.js';
 import { NunchakuTP } from './nunchaku.js';
+import { catBackY } from './cat.js';
 import { CHARACTERS, CHARACTER_COUNT } from '../../../shared/characters.js';
 
 const PI = Math.PI;
@@ -4134,6 +4135,27 @@ const _lh = new THREE.Vector3();
 const _off = new THREE.Vector3();
 const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
 const MOUNT_POS_L = new THREE.Vector3(0.025, -0.08, 0); // (the left fist's, for what a left hand holds: nunchucks)
+// the stray cat in their arms (s.cradle, s.pet): the forearms across in front of them under it (arm()'s pitch, abduction,
+// twist, elbow), and where the cat lies (cradleAt): its feet from the left wrist, in the survivor's frame. Stroking it
+// (solvePet), the right fist is put on its back by IK, the elbow out to the side and up so the forearm comes down onto
+// it: along its spine from PET_Z[0] to PET_Z[1] (the cat's own z) in the first PET_ALONG of each stroke, then lifted
+// PET_UP clear of it on the way back, at the viewmodel's pace (PET_TIME). Measured against the posed cat like a held
+// item (models-hold.js &cat=1&clip=1)
+const CRADLE = [0.22, 0.18, 0.75, 1.42];
+const PET_ARM = [0.95, 0.3, 1.0, 1.6]; // (arm()'s, under the IK: where the elbow starts from)
+const PET_Z = [-0.03, 0.07];
+const PET_ALONG = 0.6;
+const PET_UP = 0.05;
+const PET_TIME = 1.15;
+const PET_FIST = 0.04; // the fist's middle over the fur (its half-height, and a few mm)
+const PET_TILT = 1.35; // the fist turned forward and down onto it from hanging (chest space)
+const PET_REACH = 0.08; // the fist's middle from the wrist, along the hand
+const PET_POLE = new THREE.Vector3(1, 0.1, 0.5); // (the elbow out to the side and back, over the fist: the forearm comes down onto it)
+const _qPet = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), PET_TILT);
+const PET_WRIST = new THREE.Vector3(0, PET_REACH * Math.cos(PET_TILT), PET_REACH * Math.sin(PET_TILT)); // the wrist from the fist's middle
+const _cat = new THREE.Vector3();
+const CRADLE_CAT = new THREE.Vector3(-0.005, -0.065, -0.05);
+const _cr = new THREE.Vector3();
 let STOCK_POCKET = -0.14; // (chest-bone space, z) where a shouldered butt ends: the front of the shoulder, in its clothes (the lofted bodies' shoulders are 4 cm further out than the old boxes': measured on four of them, scripts/clip/survey.js)
 let RPG_LIFT = 0.14; // the RPG's grip raised so the tube clears the top of the shoulder instead of running through it
 // the throwables' radius across the palm (m), and where the survivor's fist's palm face is (x, hand-bone space; less a
@@ -4364,6 +4386,39 @@ class SurvivorInstance {
     return this.bones[HAND_R].getWorldPosition(out);
   }
 
+  /** Where the stray cat lies in their arms (s.cradle): its feet, in the world, across the forearms. Its head is to
+   *  their left (its yaw is theirs + PI / 2). After update. */
+  cradleAt(out) {
+    this.bones[HAND_L].getWorldPosition(out);
+    return out.add(_cr.copy(CRADLE_CAT).applyQuaternion(this.object.quaternion));
+  }
+
+  /** The right fist stroking the cat in their arms (s.cradle, s.pet): two-bone IK, in chest space as solveArms does */
+  solvePet(time) {
+    const P = this.P;
+    const b = this.bones;
+    this.object.updateMatrixWorld(true);
+    this.cradleAt(_cat);
+    // where along it this moment of the stroke is (its z), and how far up off it on the way back
+    const u = (time / PET_TIME) % 1;
+    const along = u < PET_ALONG;
+    const k = along ? smooth(u / PET_ALONG) : 1 - smooth((u - PET_ALONG) / (1 - PET_ALONG));
+    const z = PET_Z[0] + (PET_Z[1] - PET_Z[0]) * k;
+    const up = along ? 0 : Math.sin((PI * (u - PET_ALONG)) / (1 - PET_ALONG)) * PET_UP;
+    // the fist's middle over its back: in the survivor's frame its spine runs along x (its head to their left)
+    _T.set(z, catBackY(z, -0.04, 0.04) + PET_FIST + up, 0).applyQuaternion(this.object.quaternion).add(_cat);
+    b[CHEST].worldToLocal(_T);
+    _T.add(PET_WRIST);
+    _S.set(P.shoulderW, P.shoulderY - P.chestY, 0);
+    ikTwoBone(_S, _T, P.uarmLen, P.farmLen, PET_POLE, _qU, _qL);
+    const clavR = b[CLAV_R].quaternion;
+    _qTmp.copy(clavR).invert().multiply(_qU);
+    b[UARM_R].quaternion.copy(_qTmp);
+    b[FARM_R].quaternion.copy(_qL);
+    _qTmp.copy(clavR).multiply(b[UARM_R].quaternion).multiply(_qL).invert().multiply(_qPet);
+    b[HAND_R].quaternion.copy(_qTmp);
+  }
+
   update(dt, s) {
     if (dt > 0.1) dt = 0.1;
     this.s = s;
@@ -4452,6 +4507,7 @@ class SurvivorInstance {
     } else o.set(p);
     this.applyPose(o);
     if (ik) this.solveArms(s, time);
+    else if (s.cradle && s.pet && !this.zombie && !s.dead) this.solvePet(time);
     if (this.packOn) this.hangPack();
     // flashlight follows the full aim pitch (chest only carries part of it)
     const fl = this.flashlightAnchor;
@@ -4589,6 +4645,12 @@ class SurvivorInstance {
     else if (s.carry) {
       arm(p, 0, 0.45, 0.02, 0, 1.15, 0);
       arm(p, 1, 0.45, 0.02, 0, 1.15, 0);
+    }
+    // ...or the stray cat across both forearms (s.cradle, the cat drawn at cradleAt), the right hand stroking it (s.pet)
+    else if (s.cradle) {
+      arm(p, 0, CRADLE[0], CRADLE[1], CRADLE[2], CRADLE[3], 0);
+      if (s.pet) arm(p, 1, PET_ARM[0], PET_ARM[1], PET_ARM[2], PET_ARM[3], 0); // (solvePet puts the hand on it)
+      else arm(p, 1, CRADLE[0], CRADLE[1], CRADLE[2], CRADLE[3], 0);
     }
     // throw pulse without IK hold
     if (this.hold === HOLD_NONE && this.pulseMelee < 0.4) {
@@ -4850,6 +4912,7 @@ export function createSurvivor(seed = 0, character = -1) {
     setZombie: (v) => sv.setZombie(v),
     setBackpack: (on) => sv.setBackpack(on),
     getMuzzleWorld: (out) => sv.getMuzzleWorld(out),
+    cradleAt: (out) => sv.cradleAt(out),
     flashlightAnchor: sv.flashlightAnchor,
     flash: (a) => sv.flash(a),
     dispose: () => sv.dispose(),
@@ -4858,6 +4921,12 @@ export function createSurvivor(seed = 0, character = -1) {
 }
 
 export { SURVIVOR_LOOKS };
+/** Debug (models sandbox, &cradle= / &petarm= / &catat=): the cat-in-arms pose and where the cat lies. */
+export function setCradle(cradle, pet, at) {
+  if (cradle) CRADLE.splice(0, 4, ...cradle);
+  if (pet) PET_ARM.splice(0, 4, ...pet);
+  if (at) CRADLE_CAT.set(...at);
+}
 /** Debug (models sandbox): where a shouldered butt ends. */
 export function setStockPocket(z, rpgLift = RPG_LIFT) {
   STOCK_POCKET = z;

@@ -15,7 +15,7 @@ import { createWorld } from '../shared/world.js';
 import { createMainland } from '../shared/mainland.js';
 import { PLACES } from '../shared/layout.js';
 import { ZONE_NAMES } from '../shared/defs.js';
-import { checkWorld } from './worldcheck.js';
+import { checkWorld, comparePrint, printsLine } from './worldcheck.js';
 
 // Between them these four valleys have every place (the test fails if one is missing).
 const SEEDS = process.argv.length > 2 ? process.argv.slice(2).map(Number) : [1, 2, 8, 9];
@@ -34,8 +34,15 @@ const mapsWith = {}; // place -> how many of the maps have it
 const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0, schem: 0 };
 
 const round = (v) => Math.round(v * 10) / 10 + 0;
-for (const seed of SEEDS) checkWorld(createWorld(seed), seed, { found, mapsWith, counts });
-for (const seed of MAINLANDS) checkWorld(createMainland(seed), seed, { found, mapsWith, counts });
+// (and each is still the map on record for its seed: one that is not ends the games being played on it at the deploy)
+const onRecord = { n: 0, changed: [] };
+const look = (seed, world) => {
+  comparePrint(seed, world, onRecord);
+  checkWorld(world, seed, { found, mapsWith, counts });
+};
+for (const seed of SEEDS) look(seed, createWorld(seed));
+for (const seed of MAINLANDS) look(seed, createMainland(seed));
+const prints = printsLine(onRecord);
 
 // ---------------------------------------------------------------- report
 const missing = Object.keys(PLACES).filter((id) => !mapsWith[id]).map((id) => ZONE_NAMES[id]);
@@ -58,11 +65,12 @@ for (const [check, what] of [
   for (const f of bad) console.log(`        ${line(f)}`);
 }
 if (missing.length) console.log(`FAIL  every place is on one of the maps: not ${missing.join(', ')} (pick more seeds)`);
+console.log(prints.text);
 for (const k of KNOWN) {
   const f = all.find((x) => known(x) === k);
   if (f) console.log(`known   ${line(f)}: ${k.why}`);
   else console.log(`note    the known failure at ${ZONE_NAMES[k.place]} (${k.at.join(', ')}) no longer fails: delete its entry from KNOWN in scripts/test-world.js`);
 }
-const ok = !fresh.length && !missing.length;
+const ok = !fresh.length && !missing.length && prints.ok;
 console.log(`${ok ? 'world layout OK' : 'world layout FAILED'}  (${((performance.now() - t0) / 1000).toFixed(1)} s)`);
 process.exit(ok ? 0 : 1);

@@ -97,6 +97,9 @@ export function createPlayerState() {
     cartV: 0,
     // carrying the mounted gun (mountedgun.js): both arms full, half pace, and a weapon switch drops it
     hmg: 0,
+    // the stray cat in their arms (server/cats.js): no weapon in the hands, the fire button strokes it, nobody swims
+    // with it, and a weapon switch sets it down
+    pet: 0,
     // the perks they picked (progress.js: a bitmask of perk ids), set by the server. What they do here is perkMods
     perks: 0,
   };
@@ -148,6 +151,7 @@ export function copyPlayerState(dst, src) {
   dst.cartS = src.cartS;
   dst.cartV = src.cartV;
   dst.hmg = src.hmg;
+  dst.pet = src.pet;
   dst.perks = src.perks;
   return dst;
 }
@@ -163,7 +167,7 @@ export function samePlayerState(a, b) {
   if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT || a.shove !== b.shove) return false;
-  if (a.hmg !== b.hmg || a.perks !== b.perks) return false;
+  if (a.hmg !== b.hmg || a.pet !== b.pet || a.perks !== b.perks) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
   return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
@@ -242,6 +246,7 @@ export function hashPlayerState(s) {
     mix(Math.round(s.cartV * 128));
   }
   if (s.hmg) mix(0x686d67);
+  if (s.pet) mix(0x636174);
   if (s.perks) mix(s.perks);
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
@@ -270,19 +275,53 @@ export function canSelectSlot(s, slot) {
 // with an item being used in the hands). Voice then goes out to every survivor at any distance (the server lists
 // who is on the air, PLF.ON_AIR), and they hear the static of it.
 export function radioKeyed(s) {
-  return !s.zombie && !s.hmg && !s.using && s.slot === SLOT_RADIO && (s.lastBtn & BTN.ATTACK) !== 0;
+  return !s.zombie && !s.hmg && !s.pet && !s.using && s.slot === SLOT_RADIO && (s.lastBtn & BTN.ATTACK) !== 0;
 }
 
 const _pos = { x: 0, y: 0, z: 0 };
 
-// spread for the next shot (radians)
+// ---------------------------------------------------------------- where a round goes
+// s.recoil is the gun's heat: a round adds one (0.8 with Steady Grip), up to HEAT_MAX, and it cools HEAT_COOL a
+// second from the moment the trigger is let go - so a burst of three is settled a third of a second later, and a
+// whole magazine in just over one. Two things come of it, both worked out here for the server and for the client's
+// prediction, view and crosshair alike:
+//   - the cone (shotSpread): the gun's own spread, more of it for moving, and a bloom of up to BLOOM x the gun's
+//     spread that the first rounds of a burst hardly have (it grows as heat ^ 1.5). Crouching and the sights tighten
+//     all of it.
+//   - the climb (shotClimb): how far over the aim the round goes. It grows the same way for CLIMB_FULL rounds and
+//     stays there; the sights halve it. The client lifts the view by exactly this (Game.viewClimb), so a round goes
+//     where the sights or the crosshair are when it is fired, and pulling the view down holds a burst on its mark.
+export const HEAT_MAX = 10;
+export const HEAT_COOL = 9;
+export const BLOOM = 2.5;
+export const CLIMB = 0.3; // x the gun's recoil a round, at full climb
+export const CLIMB_FULL = 8;
+export const AIM_SPREAD = 0.35; // the sights: x the cone
+export const AIM_CLIMB = 0.5; // ...and x the climb
+export const CROUCH_SPREAD = 0.7;
+export const AIR_SPREAD = 0.05;
+
+// is the survivor behind the sights with these buttons held (as simulatePlayer judges it)
+export function aimingWith(s, buttons) {
+  const def = WEAPONS[currentWeapon(s)];
+  return !s.hmg && !s.pet && !!(buttons & BTN.ALT) && !!def && !def.melee && s.reloadT <= 0 && s.switchT <= 0; // (not with the cat in their arms)
+}
+
+// the cone of the next shot: its half-angle (radians)
 export function shotSpread(s, def, aiming) {
   const sp = Math.hypot(s.vx, s.vz);
-  let spread = def.spread + def.moveSpread * Math.min(1, sp / WALK_SPEED) + Math.min(s.recoil, 10) * def.spread * 0.35;
-  if (!s.onGround) spread += 0.05;
-  if (s.crouch) spread *= 0.7;
-  if (aiming) spread *= 0.35;
+  const heat = Math.min(s.recoil, HEAT_MAX) / HEAT_MAX;
+  let spread = def.spread * (1 + BLOOM * heat * Math.sqrt(heat)) + def.moveSpread * Math.min(1, sp / WALK_SPEED);
+  if (!s.onGround) spread += AIR_SPREAD;
+  if (s.crouch) spread *= CROUCH_SPREAD;
+  if (aiming) spread *= AIM_SPREAD;
   return spread;
+}
+
+// how far above the aim the next shot goes (radians)
+export function shotClimb(s, def, aiming) {
+  const r = Math.min(s.recoil, CLIMB_FULL);
+  return def.recoil * CLIMB * r * Math.sqrt(r / CLIMB_FULL) * (aiming ? AIM_CLIMB : 1);
 }
 
 // Deterministic pellet directions. Writes [dx,dy,dz,...] into out, returns pellet count.
@@ -334,6 +373,11 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   if (s.hmg && cmd.slot !== 255 && cmd.slot < NUM_SLOTS) {
     s.hmg = 0;
     if (events) events.push({ type: 'gun_drop' });
+  }
+  // ...and so does the cat in their arms, which is set down at their feet (the server: 'cat_drop')
+  if (s.pet && cmd.slot !== 255 && cmd.slot < NUM_SLOTS) {
+    s.pet = 0;
+    if (events) events.push({ type: 'cat_drop' });
   }
   if (s.zombie) s.slot = SLOT_MELEE;
   if (s.downed && s.slot !== SLOT_PISTOL && s.slot !== SLOT_RADIO && s.weapons[SLOT_PISTOL]) {
@@ -387,7 +431,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.crouch = !s.zombie && (s.downed || (b & BTN.CROUCH && !disabled && !swim && wade < CROUCH_WADE)) ? 1 : 0; // (never ducking the eyes under the water)
   const weapon = currentWeapon(s);
   const wdef = WEAPONS[weapon];
-  const aiming = !s.hmg && !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
+  const aiming = aimingWith(s, b);
   const moving = wl > 0;
   const pm = perkMods(s.zombie ? 0 : s.perks);
   let sprint = 0;
@@ -510,8 +554,9 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   const human = !s.zombie;
   const hit = resolveBody(world, _pos, PLAYER_RADIUS, height, human);
   // a survivor swims where the water is deep (below); a turned one, like the rest of the dead, stops at its edge, and
-  // so does one carrying the mounted gun, which nobody swims with (they wade as far as their feet keep the bottom)
-  if ((!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) || (s.hmg && waterFloor(world, s, _pos.x, _pos.z) > groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human))) {
+  // so does one carrying the mounted gun or the cat, which nobody swims with (they wade as far as their feet keep the
+  // bottom)
+  if ((!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) || ((s.hmg || s.pet) && waterFloor(world, s, _pos.x, _pos.z) > groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human))) {
     _pos.x = ox;
     _pos.z = oz;
     s.vx = 0;
@@ -559,9 +604,10 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     s.reloadT = 0;
     s.recoil = 0;
   }
-  // both arms round the mounted gun, or both hands shoving a leaper off: no weapon goes off, reloads, throws or swings
-  // (the clocks run on)
-  if (s.hmg || pinned) {
+  // both arms round the mounted gun or the cat, or both hands shoving a leaper off: no weapon goes off, reloads, throws
+  // or swings (the clocks run on). The fire button with the cat in their arms strokes it, which is the server's
+  // business (Cats.update), not this
+  if (s.hmg || s.pet || pinned) {
     if (s.switchT > 0) s.switchT -= dt;
     if (s.cooldown > 0) s.cooldown -= dt;
     s.lastBtn = cmd.buttons;
@@ -652,8 +698,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
         s.mags[mi]--;
         s.cooldown = wdef.rate;
         const spread = shotSpread(s, wdef, aiming);
-        const recoilPitch = Math.min(s.recoil, 8) * wdef.recoil * 0.45;
-        s.recoil += pm.recoil;
+        const recoilPitch = shotClimb(s, wdef, aiming);
+        s.recoil = Math.min(HEAT_MAX, s.recoil + pm.recoil);
         s.fireCount = (s.fireCount + 1) & 255;
         if (events) {
           events.push({
@@ -675,7 +721,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
         if (events) events.push({ type: 'dry' });
       }
     }
-    if (!attack && s.recoil > 0) s.recoil = Math.max(0, s.recoil - dt * 9);
+    if (!attack && s.recoil > 0) s.recoil = Math.max(0, s.recoil - dt * HEAT_COOL);
   }
 
   s.lastBtn = cmd.buttons; // (as held: hands that come off the lever onto a trigger held down have not clicked it)
