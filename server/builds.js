@@ -327,24 +327,29 @@ const alive = (pid) => {
 // (or containers: another hostname, another PID namespace) sharing a temp folder from sweeping each other's; the boot
 // and the process's start tell a folder of a process that is gone from one of a live process of the same PID - a
 // restarted container's PID 1, say. (boot: Linux's boot id; elsewhere none)
+// (worked out the first time a build is unpacked, not as the server starts: asking the host's name costs a megabyte of
+// memory on Windows)
 const tag = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').slice(0, 24) || 'x';
-const HOST = tag(hostname());
-let BOOT = 'x';
-try {
-  BOOT = tag(readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()).slice(0, 12);
-} catch {}
-const STARTED = tag(Math.round(Date.now() - process.uptime() * 1000).toString(36));
+let me = null;
+function owner() {
+  if (me) return me;
+  let boot = 'x';
+  try {
+    boot = tag(readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()).slice(0, 12);
+  } catch {}
+  return (me = { host: tag(hostname()), boot, started: tag(Math.round(Date.now() - process.uptime() * 1000).toString(36)) });
+}
 const DIR_RE = /^stn-builds-([A-Za-z0-9]+)-([A-Za-z0-9]+)-(\d+)-([A-Za-z0-9]+)-/;
 // (a folder of this user's left by a process that is gone: one of this host, of another boot, or of a process not
 // running, or of this PID started at another time; the one folder all servers shared before this)
 function leftBehind(name) {
   if (name === 'stn-builds') return true;
   const m = DIR_RE.exec(name);
-  if (!m || m[1] !== HOST) return false;
-  const [, , boot, pid, started] = m;
-  if (boot !== BOOT) return true;
-  if (+pid === process.pid) return started !== STARTED;
-  return !alive(+pid);
+  const { host, boot, started } = owner();
+  if (!m || m[1] !== host) return false;
+  if (m[2] !== boot) return true;
+  if (+m[3] === process.pid) return m[4] !== started;
+  return !alive(+m[3]);
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ABSENT = Symbol('not in the store'); // (_fetch: a build not there, which fetch does not remember)
@@ -553,7 +558,8 @@ export class Builds {
         if (isPrivate(full)) removeTree(full);
       } catch {}
     }
-    const dir = mkdtempSync(join(this.tmpBase, `stn-builds-${HOST}-${BOOT}-${process.pid}-${STARTED}-`));
+    const { host, boot, started } = owner();
+    const dir = mkdtempSync(join(this.tmpBase, `stn-builds-${host}-${boot}-${process.pid}-${started}-`));
     if (!isPrivate(dir)) throw new Error(`${dir} is not this server's alone (its owner or mode): nothing is unpacked there`);
     process.once('exit', () => {
       try {
