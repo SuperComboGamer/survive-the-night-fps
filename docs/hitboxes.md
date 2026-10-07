@@ -133,6 +133,7 @@ wrong for a wall.
 ## What it costs
 
 More boxes are more work for a ray and a step near a vehicle. Measured with `bench.js` (200,000 of each on the same
-spots within 6.5 m of a prop, each build in its own process): flat on the island; on the mainland, where a street
-is a row of cars, 7 to 20% more per call beside them, and the nav grid 11% longer to build. A tick of the server
-with a night-4 horde: `npm run perf:server`.
+spots within 6.5 m of a prop, each build in its own process), against the build before the pass: a bullet, a look
+and a body's step within 8% on both maps, an arm's reach 19% on the mainland (0.74 to 0.88 microseconds), the nav
+grid 2 to 13% longer to build. A tick of the server with a night-4 horde (`npm run perf:server`): 1.16 to 1.14 ms
+and 2.17 to 2.17 ms on the island for 4 and 8 players, 1.42 to 1.46 ms and 2.57 to 2.67 ms on the mainland.
