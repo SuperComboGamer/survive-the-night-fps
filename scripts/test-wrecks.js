@@ -15,11 +15,11 @@ import './clip/dom-stub.js';
 import { Game } from '../server/game.js';
 import { C2S, S2C, SNAP, PROTOCOL_VERSION, Writer, Reader, qpos, dqpos, usePos } from '../shared/protocol.js';
 import { ITEM, EVT, WEAPONS, STRUCT } from '../shared/defs.js';
-import { PROPS } from '../shared/props.js';
+import { PROPS, planOf } from '../shared/props.js';
 import { COL, makeBox, raycastWorld } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
 import { SURF, BLOW, MARK, SURF_NAMES, BLOW_NAMES, surfaceOfMat, surfaceOfProp, surfaceOf, markFor, shotMark, shotScale, soundFor, blowOf, blowForce, bitsFor, STRIKE_SOUNDS, LIGHT_PROPS, GRAZE_MAX, MARK_COLS, MARK_ROWS, GLASS_MATS, CABIN_MATS } from '../shared/surfaces.js';
-import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckColAt } from '../shared/wrecks.js';
+import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckColAt, wreckUnit } from '../shared/wrecks.js';
 import { saveGame } from '../server/gamestate.js';
 import { randomUUID } from 'node:crypto';
 
@@ -89,16 +89,22 @@ usePos(world);
 const wreckCols = [];
 for (const pr of world.props) {
   if (pr.type !== 'car_wreck') continue;
-  const col = world.staticGrid.query(pr.x, pr.z, 3, []).find((c) => c.tag === pr);
+  // (a wreck is several boxes, and one thing: the collider it is named by - shared/wrecks.js wreckUnit)
+  const col = wreckUnit(world.staticGrid.query(pr.x, pr.z, 3, []).find((c) => c.tag === pr));
   if (col) wreckCols.push(col);
 }
+// half the wreck's width and length (its plan: the box it is laid out by)
+const half = (col) => {
+  const b = planOf(col.tag.type).boxes[0];
+  return [b[3] / 2, b[5] / 2];
+};
 check('the world tags a wreck\'s collider with its prop', wreckCols.length > 5 && wreckCols.every((c) => wreckOf(c) === c.tag && c.flags & COL.SALVAGE), `${wreckCols.length} car wrecks`);
 
 // stand a player beside a wreck's side, looking at it, and swing. frac: where along it (-1 its nose .. 1 its tail)
 function standAt(p, col, frac = 0, height = 0.75) {
   const pr = col.tag;
   const c = Math.cos(pr.ry), s = Math.sin(pr.ry);
-  const lx = col.hx + 1.0, lz = frac * col.hz * 0.85;
+  const lx = half(col)[0] + 1.0, lz = frac * half(col)[1] * 0.85;
   const st = p.state;
   st.x = pr.x + c * lx + s * lz;
   st.z = pr.z - s * lx + c * lz;
@@ -125,7 +131,7 @@ function swing(p, col, weapon = ITEM.BAT, frac = 0, heavy = false) {
       standAt(a, col, frac);
       const cp = Math.cos(st.pitch);
       const r = raycastWorld(world, st.x, st.y + eyeHeight(st), st.z, -Math.sin(st.yaw) * cp, Math.sin(st.pitch), -Math.cos(st.yaw) * cp, 2.6, { t: -1 });
-      return r.col === col;
+      return wreckUnit(r.col) === col;
     }),
   );
   wreckCols.length = 0;
@@ -659,7 +665,7 @@ const { Effects } = await import('../client/render/effects.js').catch(() => ({ E
         mz += l[2] / s.verts.length;
         top = Math.max(top, R[v * 3 + 1] - world.heightAt(R[v * 3], R[v * 3 + 2]));
       }
-      if (Math.abs(mx) < wcol.hx && Math.abs(mz) < wcol.hz) clear = false;
+      if (Math.abs(mx) < half(wcol)[0] && Math.abs(mz) < half(wcol)[1]) clear = false;
       if (top > 0.5) low = false;
     }
   }

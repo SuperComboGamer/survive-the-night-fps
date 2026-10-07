@@ -14,6 +14,10 @@ import { STRUCT_DEFS } from '../shared/defs.js';
 const N = +(process.argv[2] || 2);
 const SECONDS = +(process.argv[3] || 20);
 const URL = process.argv[4] || 'ws://localhost:3000/ws';
+// BOT_NAMES=a,b,c: what the bots are called (else bot0, bot1, ...). BOT_PING=1: each measures its round trip every 2 s
+// (C2S.PING) and reports it with its commands as a client does, so the server knows a ping for it (the admin panel's shots)
+const NAMES = (process.env.BOT_NAMES || '').split(',').filter(Boolean);
+const PING = process.env.BOT_PING === '1';
 
 function runBot(idx) {
   return new Promise((resolve) => {
@@ -73,17 +77,30 @@ function runBot(idx) {
       const w = new Writer(64);
       w.u8(C2S.JOIN);
       w.u8(PROTOCOL_VERSION);
-      w.str(`bot${idx}`);
+      w.str(NAMES[idx] || `bot${idx}`);
       ws.send(w.bytes());
     };
     let interval;
+    let rtt = 0; // the last round trip measured (BOT_PING), and whether it has been reported yet
+    let rttDue = false;
+    if (PING)
+      setInterval(() => {
+        if (ws.readyState !== 1) return;
+        const w = new Writer(16);
+        w.u8(C2S.PING);
+        w.f64(performance.now());
+        ws.send(w.bytes());
+      }, 2000).unref();
     ws.onmessage = (m) => {
       const buf = m.data;
       st.bytes += buf.byteLength;
       st.msgs++;
       const r = new Reader(buf);
       const type = r.u8();
-      if (type === S2C.WELCOME) {
+      if (type === S2C.PONG) {
+        rtt = Math.max(1, performance.now() - r.f64());
+        rttDue = true;
+      } else if (type === S2C.WELCOME) {
         st.id = r.u16();
         const seed = r.u32();
         r.u32(); // (the tick)
@@ -199,7 +216,8 @@ function runBot(idx) {
         if (pending.length > 120) pending.shift();
         cmds.push({ seq, buttons, qyaw: qy, qpitch: qp, slot });
       }
-      writeInput(w, cmds, hashPlayerState(pred));
+      writeInput(w, cmds, hashPlayerState(pred), rttDue, rtt);
+      rttDue = false;
       st.up += w.o;
       st.upMsgs++;
       ws.send(w.bytes());

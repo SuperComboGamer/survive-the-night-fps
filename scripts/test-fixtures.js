@@ -261,6 +261,9 @@ check('the dead can walk to where the bell ringer and the radio operator stand',
   check('the wandering herd heard it too: the lot of them run for the chapel', herd.hot && near({ x: herd.ax, z: herd.az }, bell, 7.1), `herd ${herd.hot ? 'roused' : 'wandering'}, heading ${Math.hypot(herd.ax - bell.x, herd.az - bell.z).toFixed(1)} m from the belfry`);
 
   // not again yet
+  // (the dead that came have done what they were here for: left to it they reach the ringer in the two minutes the
+  // rope takes to be ready again - sooner or later by the road they find - and a roper among them hauls him off it)
+  clear();
   notesOff();
   A.hold(BELL_ID);
   run(2);

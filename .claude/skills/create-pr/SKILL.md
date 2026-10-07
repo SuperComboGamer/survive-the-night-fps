@@ -125,6 +125,11 @@ what a run measured where one exists: `node scripts/daytime.js` (time to loot a 
 **Risk.** Go through the diff for each of these and name the ones that apply:
 
 - `PROTOCOL_VERSION` changed (`shared/protocol.js`): open tabs cannot rejoin until they reload.
+- World generation changed (`shared/world.js`, `mainland.js`, `rail.js`, `worldkit.js`, the places): if
+  `node scripts/test-world.js` or `test-mainland.js` says "this change makes another map of the same seed", the
+  deploy cannot carry over the games being played on that map. Say so under **Deploy**, with which map (island,
+  mainland or both), and record the new maps (`node scripts/worldprint.js --update`). Never update the record just
+  to make the test pass without saying it here.
 - A new migration in `server/db/migrations/`: it runs on start, and a revert does not undo it.
 - Saved data changes shape (accounts, stats, settings): old records must still load.
 - New per-tick work (zombies, pathfinding, snapshots): server CPU. One worker thread runs each game, so a slow tick

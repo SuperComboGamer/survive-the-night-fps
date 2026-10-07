@@ -2,7 +2,7 @@
 // Positions are quantized in int16: to 1/64 m on the island (range +-512 m) and to 1/32 m on the mainland, which is
 // twice as far across (range +-1024 m). See usePos below.
 
-export const PROTOCOL_VERSION = 38; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk)
+export const PROTOCOL_VERSION = 40; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk); 39: a torch's or a campfire's burn-out tick (SF.BURN); 40: the mainland's undead deer (DEER_UNDEAD in a deer's variant, DANIM.ATTACK / CHARGE, SOUND.DEER_SCREAM, killfeed flag 8 and YOU_DIED 254 for a death by one)
 
 // client -> server
 export const C2S = {
@@ -109,14 +109,21 @@ export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
 export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, GUN_LIFT: 7, FAIR_START: 9, FAIR_STOP: 10 };
 
-// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
-export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
+// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for.
+// ENDED_UPDATE, ENDED_MAP: the game that went by that code was ended by a deploy - the new server could not carry it
+// over (server/handoff.js), ENDED_MAP because the update makes another map of its seed. It does not come back: the
+// client says so once and stops asking (client/net/comeback.js). A client from before these shows 'Rejected'.
+export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4, ENDED_UPDATE: 5, ENDED_MAP: 6 };
 // The close code a client's socket goes with when the player pressed "Leave game". Any other close is a drop, and the
 // game holds the player's place for REJOIN_GRACE seconds (server/game.js hold).
 export const LEFT_CODE = 4001;
 // ...and the one the server closes every socket of a game with when that game moves to the next server on a deploy
 // (server/handoff.js): the client keeps the game on screen and joins the same code again (client/main.js moveBack).
 export const MOVED_CODE = 4002;
+// ...and the one an admin's panel closes a socket with (server/adminpanel.js): the game was closed, or the player was
+// removed from it. The close frame's reason is what the player is told, and the client does not try to come back in.
+// (A client from before this code takes it for a drop and tries to rejoin, as it does after any other close.)
+export const ENDED_CODE = 4003;
 
 // S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
 // speaker (TALK_RANGE), or anywhere when it was said with the walkie-talkie in hand, so the flags differ per recipient.
@@ -528,7 +535,8 @@ export const ZSTATUS = { BURNING: 1 };
 // ITEM fields
 export const IF = { POS: 0, COUNT: 1 };
 // STRUCTURE fields
-export const SF = { POS: 0, HP: 1, STATE: 2 };
+// BURN (u16): a torch's or a campfire's flame, the server tick it burns out at (low 16 bits), 0 when it is out
+export const SF = { POS: 0, HP: 1, STATE: 2, BURN: 3 };
 // PROJECTILE fields
 export const JF = { POS: 0 };
 // CRATE fields
