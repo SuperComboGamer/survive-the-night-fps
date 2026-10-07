@@ -1,17 +1,17 @@
 {
   "about": "The maps a deploy can carry a running game over: see scripts/worldprint.js. Do not edit by hand. A test that fails against this file means the change ends running games when it is deployed; 'node scripts/worldprint.js --update' records the new maps once that is meant, and the pull request's Risk section says so.",
   "island": {
-    "1": "1647e624",
-    "2": "915304b2",
-    "8": "82814d0d",
-    "9": "52a553b3"
+    "1": "b65dcc40",
+    "2": "816d5a96",
+    "8": "1a719fa6",
+    "9": "c7806376"
   },
   "mainland": {
-    "1": "48a1edf",
-    "2": "d548c84c",
-    "3": "184758f1",
-    "4": "83f45c83",
-    "5": "9a5eb30d",
-    "6": "98c4be83"
+    "1": "304bcf62",
+    "2": "ed18ed51",
+    "3": "72462d97",
+    "4": "360bb077",
+    "5": "bb99457a",
+    "6": "a0171e88"
   }
 }
