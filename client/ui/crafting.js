@@ -595,12 +595,13 @@ export class Crafting {
         const s = !on && sections.find((x) => x.g === g);
         const n = s ? s.recs.length : 0;
         g.head.hidden = g.box.hidden = !n;
+        // (replaced, not appended to: a row the last layout put here and this one does not show has to leave)
+        g.box.replaceChildren(...(n ? s.recs.map((rec) => rec.b) : []));
         if (!n) continue;
         // (a group of recipes for one station says which)
         const st = g.id === 'station' ? new Set(s.recs.map((r) => r.r.station)) : null;
         const label = st && st.size === 1 ? `Needs a ${STATION_NAMES[[...st][0]].toLowerCase()}` : g.label;
         g.t.textContent = `${label} · ${n}`;
-        for (const rec of s.recs) g.box.appendChild(rec.b);
       }
       if (on) {
         for (const s of sections) {
