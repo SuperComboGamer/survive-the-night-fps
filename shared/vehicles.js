@@ -37,8 +37,9 @@ const G = 9.8;
 // top: m/s on asphalt with the throttle open. accel: m/s/s from a standstill. brake: m/s/s. rev: m/s backwards.
 // wb: wheelbase. lock / lockTop: the most the front wheel turns, standing and at top speed (rad). steerRate: rad/s.
 // grip: the sideways pull the tyres hold on asphalt (m/s/s); hb: what is left of it with the back wheels locked.
-// roll / drag: rolling resistance (m/s/s) and air ((m/s)^-1 s^-1, on v^2). off: how much worse soft ground is for it
-// (rolling resistance x this off the road). step: what it rides up onto (m); h: how tall it is (for what it fits
+// roll / drag: rolling resistance (m/s/s) and air ((m/s)^-1 s^-1, on v^2). coast: what the engine holds it back by
+// with the throttle shut (m/s/s). off: how much worse soft ground is for it
+// (rolling resistance x this off the road; offTop: how much of the ground's cut in top speed it feels). step: what it rides up onto (m); h: how tall it is (for what it fits
 // under). wade: the water that stops it (m). circles: its body against the world, [z along it (- is ahead), radius].
 // half / halfW / tall: its box (the collider it is while it stands empty, and what the dead and survivors are kept
 // out of). tank: Fuel units; burn: per second with the throttle open (idle: a twentieth of it). hp. seats: where
@@ -48,17 +49,17 @@ const G = 9.8;
 // faster than this (m/s into the thing) throws the rider. shell: its riders are behind doors and glass.
 export const VEHICLES = {
   [VEH.MOPED]: {
-    name: 'Moped', top: 15, accel: 5.2, brake: 9.5, rev: 1.6, wb: 1.2, lock: 0.62, lockTop: 0.085, steerRate: 2.6, grip: 9, hb: 0.42, roll: 0.35, drag: 0.004, off: 1,
+    name: 'Moped', top: 16.5, accel: 5.4, brake: 9.5, rev: 1.6, wb: 1.2, lock: 0.62, lockTop: 0.085, steerRate: 2.6, grip: 9, hb: 0.42, roll: 0.35, coast: 1.2, drag: 0.004, off: 1, offTop: 0.75,
     step: 0.3, h: 1.5, wade: 0.4, circles: [[-0.48, 0.34], [0.42, 0.34]], half: 0.9, halfW: 0.3, tall: 1.05,
     tank: 60, burn: 0.5, hp: 300, seats: [[0, 0.78, 0.12], [0, 0.82, 0.58]], eye: 0.68, noise: 55, idle: 28, throwAt: 6.5, shell: false, two: true,
   },
   [VEH.CAR]: {
-    name: 'Car', top: 24, accel: 4.2, brake: 10.5, rev: 6, wb: 2.62, lock: 0.6, lockTop: 0.06, steerRate: 2.1, grip: 9.5, hb: 0.32, roll: 0.3, drag: 0.0028, off: 2.6,
+    name: 'Car', top: 25, accel: 4.4, brake: 10.5, rev: 6, wb: 2.62, lock: 0.6, lockTop: 0.06, steerRate: 2.1, grip: 9.5, hb: 0.32, roll: 0.3, coast: 1.1, drag: 0.0028, off: 2.6, offTop: 1,
     step: 0.26, h: 1.45, wade: 0.55, circles: [[-1.32, 0.88], [0, 0.9], [1.32, 0.88]], half: 2.2, halfW: 0.9, tall: 1.4,
     tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.44, -0.13], [0.38, 0.44, -0.13], [-0.38, 0.46, 0.59], [0.38, 0.46, 0.59]], eye: 0.8, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
   },
   [VEH.BIKE]: {
-    name: 'Bicycle', top: 8, hardTop: 11, accel: 2.6, hardAccel: 3.6, brake: 7, rev: 1.2, wb: 1.05, lock: 0.7, lockTop: 0.12, steerRate: 3, grip: 7.5, hb: 0.5, roll: 0.22, drag: 0.006, off: 1.5,
+    name: 'Bicycle', top: 8.5, hardTop: 12, accel: 3.4, hardAccel: 4.2, brake: 7, rev: 1.2, wb: 1.05, lock: 0.7, lockTop: 0.12, steerRate: 3, grip: 7.5, hb: 0.5, roll: 0.22, coast: 0, drag: 0.005, off: 1.2, offTop: 0.6,
     step: 0.22, h: 1.6, wade: 0.35, circles: [[-0.42, 0.3], [0.38, 0.3]], half: 0.85, halfW: 0.25, tall: 1.0,
     tank: 0, burn: 0, hp: 150, seats: [[0, 0.92, 0.16]], eye: 0.66, noise: 0, idle: 0, throwAt: 6, shell: false, two: true, pedal: true,
   },
@@ -76,6 +77,8 @@ export const fixMask = (kind) => (1 << FIX[kind].length) - 1;
 export const REPAIR = { [ITEM.SCRAP]: 2, [ITEM.TAPE]: 1 };
 export const REPAIR_HP = 0.35;
 export const FIX_TIME = 2.5; // s of [E] held per part fitted...
+export const STARTER_TIME = 4; // ...to get one of the bridgehead's going (it wants no part: FIX_FREE)
+export const FIX_FREE = 7; // the slot of a fix that takes nothing but the time
 export const REPAIR_TIME = 3; // ...per patch...
 export const FUEL_TIME = 1.2; // ...and per pour
 export const FUEL_POUR = 20; // Fuel a pour takes out of the reserve
@@ -117,6 +120,8 @@ const SURFS = [SURF_ROAD, SURF_DIRT, SURF_TRAIL, SURF_GRASS, SURF_MUD];
 // what kind of ground (x, z) is at height y: asphalt, a dirt road or a yard, a trail, grass, the mud by the water
 export function surfaceKind(world, x, z, y) {
   if (y < WATER_LEVEL + 0.3 && world.heightAt(x, z) < WATER_LEVEL + 0.3) return SURF_KIND.MUD;
+  const rw = world.runway; // (the airfield's strip is as good as any road)
+  if (rw && Math.abs(x - rw.x) < rw.half && z > rw.z0 && z < rw.z1) return SURF_KIND.ROAD;
   const k = world.roadKindAt(x, z);
   if (k === ROAD.ASPHALT) return world.roadDistAt(x, z) < 6.5 ? SURF_KIND.ROAD : SURF_KIND.GRASS;
   if (k === ROAD.DIRT || k === ROAD.RAIL) return SURF_KIND.DIRT;
@@ -173,6 +178,7 @@ const _push = { x: 0, z: 0, nx: 0, nz: 0 };
 export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   const P = VEHICLES[v.vk];
   const grid = vehicleGrid(world);
+  const yaw0 = v.yaw;
   let sy = Math.sin(v.yaw);
   let cy = Math.cos(v.yaw);
   let vf = -v.vx * sy - v.vz * cy;
@@ -209,7 +215,7 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   // ---- along it: the engine (or the legs), the brakes, the hill, what the ground and the air take
   const engine = P.pedal ? true : v.run && v.fuel > 0;
   const off = 1 + (surf[1] - 1) * P.off * 0.4; // (soft ground: how much harder it rolls)
-  let top = (hard && P.hardTop ? P.hardTop : P.top) * (1 - (1 - surf[2]) * Math.min(1.6, 0.6 + P.off * 0.4));
+  let top = (hard && P.hardTop ? P.hardTop : P.top) * (1 - (1 - surf[2]) * P.offTop);
   if (wade > 0) top *= Math.max(0.15, 1 - wade / P.wade);
   let a = 0;
   let load = 0; // how hard the engine works, 0..1 (what it burns)
@@ -240,7 +246,7 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   if (slope > 0.7) slope = 0.7;
   else if (slope < -0.7) slope = -0.7;
   const grade = -G * slope * 0.85;
-  const resist = P.roll * off + P.drag * vf * vf + wade * 9 + (hb ? P.brake * 0.75 : 0);
+  const resist = P.roll * off + P.drag * vf * vf + wade * 9 + (hb ? P.brake * 0.75 : 0) + (thr === 0 ? P.coast : 0);
   if (vf === 0 && thr === 0 && Math.abs(grade) < resist + 1.2) {
     // standing, and it stays standing
   } else {
@@ -260,12 +266,14 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   // ---- move, and whatever is solid stops it
   const ox = v.x;
   const oz = v.z;
+  const oyaw = yaw0;
   v.x += v.vx * dt;
   v.z += v.vz * dt;
   let impact = 0;
   let struck = null;
   const lim = world.half - 5;
-  for (let iter = 0; iter < 2; iter++) {
+  let wedged = false;
+  for (let iter = 0; iter < 4; iter++) {
     let moved = false;
     for (let ci = 0; ci < P.circles.length; ci++) {
       const o = P.circles[ci][0];
@@ -323,9 +331,19 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
       }
     }
     if (!moved) break;
+    wedged = iter === 3;
   }
   if (v.yaw > Math.PI) v.yaw -= Math.PI * 2;
   else if (v.yaw < -Math.PI) v.yaw += Math.PI * 2;
+  // between two things that each push it into the other: it stays where it was, as it was
+  if (wedged) {
+    const sp2 = Math.hypot(v.vx, v.vz);
+    if (sp2 > impact) impact = sp2;
+    v.x = ox;
+    v.z = oz;
+    v.yaw = oyaw;
+    v.vx = v.vz = 0;
+  }
   // water too deep for it, and the mouth of the mine: it does not go in
   let y = groundAt(world, v.x, v.z, v.y, 0.25, false);
   const deep = y < WATER_LEVEL - P.wade && world.heightAt(v.x, v.z) < WATER_LEVEL - P.wade;

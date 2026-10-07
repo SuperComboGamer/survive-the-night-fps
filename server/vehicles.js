@@ -9,7 +9,7 @@ import { SERVER_DT, CMD_DT, INTERACT_REACH, INTERACT_SLACK, PLAYER_RADIUS, PLAYE
 import { SOUND, NOTIFY, ITEM, AMMO, AMMO_MAX, KILLER, VEH_NO, VEH_OFFS, IMPACT } from '../shared/defs.js';
 import { ENT, HOLD, VACT, VFLAG, SIPHON_ID, qpos, dqpos, qangle16, dqangle16 } from '../shared/protocol.js';
 import { WORLD } from '../shared/acts.js';
-import { VEH, VSTATE, VEHICLES, VEH_NAMES, FIX, fixMask, REPAIR, REPAIR_HP, FIX_TIME, REPAIR_TIME, FUEL_TIME, FUEL_POUR, SIPHON_TIME, STARTERS, QUEST_FUEL, QUEST_HP, COL_VEHICLE, HORN, stepVehicle, seatAt, seatFeet, vehicleSpots, starterSpots, questCar, vehicleGrid, parkedCollider, siphonOf } from '../shared/vehicles.js';
+import { VEH, VSTATE, VEHICLES, VEH_NAMES, FIX, fixMask, REPAIR, REPAIR_HP, FIX_TIME, STARTER_TIME, FIX_FREE, REPAIR_TIME, FUEL_TIME, FUEL_POUR, SIPHON_TIME, STARTERS, QUEST_FUEL, QUEST_HP, COL_VEHICLE, HORN, stepVehicle, seatAt, seatFeet, vehicleSpots, starterSpots, questCar, vehicleGrid, parkedCollider, siphonOf } from '../shared/vehicles.js';
 import { resolveBody, groundAt } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { countItem, removeItem } from './inventory.js';
@@ -65,7 +65,7 @@ export class Vehicles {
   // A map is being stocked (Game.populate, last of all, so that nothing else's ids or random draws move). The island
   // has none. The mainland: the car the team crossed in, running; the broken ones about the map; and near the
   // bridgehead what the team needs beyond that car's seats (provide).
-  spawn() {
+  spawn(team) {
     const g = this.g;
     const w = g.world;
     vehicleGrid(w);
@@ -77,13 +77,13 @@ export class Vehicles {
       this.make(VEH.CAR, q.x, q.z, q.yaw, { state: VSTATE.OK, need: 0, fuel: P.tank * QUEST_FUEL, hp: P.hp * QUEST_HP, tint: 7, quest: true });
     }
     for (const s of vehicleSpots(w)) this.make(s.kind, s.x, s.z, s.yaw, { tint: s.tint });
-    this.provide();
+    this.provide(team);
   }
 
   // Seats for everybody near where the team is put down: the car it came in has four, and for every survivor past
-  // that the next of the bridgehead's vehicles is stood out - found cheap to fix (one handful of scrap, which lies
-  // beside it with a can of fuel), so that nobody walks the mainland. Always the first of them, as a spare. Called
-  // as the map is stocked and again whenever somebody joins.
+  // that the next of the bridgehead's vehicles is stood out. Those want no parts, only a few seconds' work ([E] held:
+  // nothing a passing teammate can walk off with stands between a survivor and a seat), and a can of fuel lies
+  // beside each. Always the first of them, as a spare. Called as the map is stocked and again whenever somebody joins.
   provide(team = this.g.players.size) {
     const g = this.g;
     const w = g.world;
@@ -94,17 +94,15 @@ export class Vehicles {
     while (this.starters < spots.length && (this.starters < 1 || seats < team)) {
       const s = spots[this.starters++];
       const P = VEHICLES[s.kind];
-      const e = this.make(s.kind, s.x, s.z, s.yaw, { tint: s.tint, need: 1, fuel: P.tank * STARTER_FUEL, starter: true });
+      const e = this.make(s.kind, s.x, s.z, s.yaw, { tint: s.tint, need: 0, fuel: P.tank * STARTER_FUEL, hp: P.hp * 0.8, starter: true });
       if (!e) break;
       seats += P.seats.length;
-      // what it wants lies beside it, and fuel
+      // fuel beside it
       const sx = s.x + Math.cos(s.yaw) * (P.halfW + 0.7);
       const sz = s.z - Math.sin(s.yaw) * (P.halfW + 0.7);
       const swap = g.rng;
       g.rng = this.rng;
-      const [item, n] = FIX[s.kind][0];
-      g.spawnItem(item, n, sx, groundAt(w, sx, sz, s.y + 1, 0.2), sz, { life: 1e6 });
-      if (P.tank) g.spawnItem(ITEM.AMMO_FUEL, STARTER_CAN, sx + 0.4, groundAt(w, sx + 0.4, sz + 0.3, s.y + 1, 0.2), sz + 0.3, { life: 1e6 });
+      if (P.tank) g.spawnItem(ITEM.AMMO_FUEL, STARTER_CAN, sx, groundAt(w, sx, sz, s.y + 1, 0.2), sz, { life: 1e6 });
       g.rng = swap;
     }
   }
@@ -471,7 +469,9 @@ export class Vehicles {
     const end = P.half + PLAYER_RADIUS + 0.3;
     // (the driver's side first; for whoever sat on the right, the right)
     const first = s.passN === 1 || s.passN === 3 ? 1 : -1;
-    const tries = [[first * side, 0], [-first * side, 0], [first * side, 1], [-first * side, 1], [first * side, -1], [-first * side, -1], [0, end], [0, -end], [first * (side + 0.8), 0], [-first * (side + 0.8), 0]];
+    // (whoever sat in the back, beside the back door)
+    const back = s.passN >= 2 ? 0.9 : P.shell ? -0.3 : 0;
+    const tries = [[first * side, back], [-first * side, back], [first * side, back + 1], [-first * side, back + 1], [first * side, back - 1], [-first * side, back - 1], [0, end], [0, -end], [first * (side + 0.8), 0], [-first * (side + 0.8), 0], [first * (side + 0.8), 1.2], [-first * (side + 0.8), 1.2]];
     let best = null;
     for (const [lx, lz] of tries) {
       const x = e.x + lx * c + lz * sn;
@@ -484,6 +484,10 @@ export class Vehicles {
       resolveBody(w, _pos, PLAYER_RADIUS, PLAYER_HEIGHT, true);
       if (Math.hypot(_pos.x - x, _pos.z - z) > 0.05) continue;
       if (!g.zm.clearLine(e.x, e.y + 1.2, e.z, x, y + 1.2, z)) continue;
+      // (not where somebody stands already: four out of a car are four places)
+      let taken = false;
+      for (const q of g.players.values()) if (q !== p && q.alive && !q.state.drive && !q.state.pass && Math.hypot(q.state.x - x, q.state.z - z) < 0.75) taken = true;
+      if (taken) continue;
       best = { x, y, z };
       break;
     }
@@ -582,6 +586,7 @@ export class Vehicles {
     if (e.state === VSTATE.WRECK) return VEH_NO.WRECK;
     if (e.state === VSTATE.BROKEN) {
       const fix = FIX[e.vk];
+      if (!e.need) return { kind: HOLD.VEH_FIX, slot: FIX_FREE, need: STARTER_TIME }; // (one of the bridgehead's: it wants only the work)
       for (let i = 0; i < fix.length; i++) if (e.need & (1 << i) && countItem(p.inv, fix[i][0]) >= fix[i][1]) return { kind: HOLD.VEH_FIX, slot: i, need: FIX_TIME };
       return VEH_NO.NO_PARTS;
     }
@@ -618,11 +623,13 @@ export class Vehicles {
     const s = p.state;
     const d = this.driver(e);
     if (h.kind === HOLD.VEH_FIX) {
-      const [item, n] = FIX[e.vk][h.slot];
-      if (countItem(p.inv, item) < n) return;
-      removeItem(p.inv, item, n);
-      p.invDirty = true;
-      e.need &= ~(1 << h.slot);
+      if (h.slot !== FIX_FREE) {
+        const [item, n] = FIX[e.vk][h.slot];
+        if (countItem(p.inv, item) < n) return;
+        removeItem(p.inv, item, n);
+        p.invDirty = true;
+        e.need &= ~(1 << h.slot);
+      }
       g.sound(SOUND.VEH_FIX, e.x, e.y + 0.7, e.z, 30);
       if (!e.need) {
         e.state = VSTATE.OK;

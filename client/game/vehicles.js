@@ -584,6 +584,12 @@ export class VehicleClient {
         parts.push(`${ITEM_DEFS[fix[i][0]].name} ${Math.min(have, fix[i][1])}/${fix[i][1]}`);
         if (!can && have >= fix[i][1]) can = fix[i];
       }
+      if (!parts.length) {
+        // one of the bridgehead's: it wants no part, only a few seconds' work
+        g.prompt = `${E} Hold to get ${name} running`;
+        T.dead = false;
+        return true;
+      }
       g.prompt = can ? `${E} Hold to fit ${ITEM_DEFS[can[0]].name} ×${can[1]} · ${cap(name)} needs ${parts.join(', ')}` : `${cap(name)} does not run. It needs ${parts.join(', ')}`;
       if (!can) T.dead = true;
       else T.dead = false;
@@ -655,7 +661,7 @@ export class VehicleClient {
 
   // what a hold on one is called on the progress ring
   holdLabel(kind) {
-    return kind === HOLD.VEH_FIX ? 'Fitting the part…' : kind === HOLD.VEH_FUEL ? 'Pouring fuel in…' : kind === HOLD.VEH_REPAIR ? 'Patching it up…' : kind === HOLD.SIPHON ? 'Siphoning the tank…' : '';
+    return kind === HOLD.VEH_FIX ? 'Working on it…' : kind === HOLD.VEH_FUEL ? 'Pouring fuel in…' : kind === HOLD.VEH_REPAIR ? 'Patching it up…' : kind === HOLD.SIPHON ? 'Siphoning the tank…' : '';
   }
 
   // a notice of the server's about one (Game.onNotify): true when it was ours
