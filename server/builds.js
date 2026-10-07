@@ -26,7 +26,7 @@
 // that, or when its run ends, it closes and its players are told why.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { gzipSync, gunzipSync, gzip, gunzip } from 'node:zlib';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { dirname, join, resolve, relative, sep } from 'node:path';
@@ -465,36 +465,36 @@ export class Builds {
   // The build on disk, as it is: every file the same as the build that was checked, nothing else there, no link but the
   // one to this server's node_modules, in this process's own folder. A copy that is not (a crash halfway) is written
   // again. Checked each time a worker is to be started from it (Lobby.afterFailed starts it at once). -> got, or null
+  // (written in place: the folder is this process's own, so nobody else sees it half written, and a copy left half
+  // written by a crash is not believed - sameOnDisk. Windows may hold a file just written for a moment - its indexer,
+  // its virus scan - so taking the old copy away is tried a few times)
   async verified(got) {
-    let part = '';
     try {
       if (!isPrivate(dirname(got.dir))) throw new Error(`${dirname(got.dir)} is not this server's alone`);
       if (!this.sameOnDisk(got)) {
-        part = `${got.dir}.${Date.now()}.part`;
-        removeTree(part);
-        mkdirSync(part, { mode: 0o700 });
-        for (const [path, buf] of Object.entries(got.files)) {
-          mkdirSync(dirname(join(part, path)), { recursive: true, mode: 0o700 });
-          writeFileSync(join(part, path), buf, { mode: 0o600, flag: 'wx' });
+        for (let i = 0; ; i++) {
+          try {
+            removeTree(got.dir);
+            break;
+          } catch (err) {
+            if (i >= 20 || !['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES'].includes(err.code)) throw err;
+            await new Promise((r) => setTimeout(r, 50));
+          }
         }
-        writeFileSync(join(part, 'package.json'), '{ "type": "module" }\n', { mode: 0o600, flag: 'wx' });
+        mkdirSync(got.dir, { mode: 0o700 });
+        for (const [path, buf] of Object.entries(got.files)) {
+          mkdirSync(dirname(join(got.dir, path)), { recursive: true, mode: 0o700 });
+          writeFileSync(join(got.dir, path), buf, { mode: 0o600, flag: 'wx' });
+        }
+        writeFileSync(join(got.dir, 'package.json'), '{ "type": "module" }\n', { mode: 0o600, flag: 'wx' });
         // (its packages are this server's, checked to be the same versions: found from its folder through a link)
-        if (got.deps) symlinkSync(join(this.root, 'node_modules'), join(part, 'node_modules'), 'junction');
-        removeTree(got.dir);
-        renameSync(part, got.dir);
-        part = '';
+        if (got.deps) symlinkSync(join(this.root, 'node_modules'), join(got.dir, 'node_modules'), 'junction');
         if (!this.sameOnDisk(got)) throw new Error('what was written is not what was checked');
       }
       return got;
     } catch (err) {
       this.log(`handoff: build ${got.id} could not be unpacked (${err.message})`);
       return null;
-    } finally {
-      if (part) {
-        try {
-          removeTree(part);
-        } catch {}
-      }
     }
   }
   sameOnDisk(got) {

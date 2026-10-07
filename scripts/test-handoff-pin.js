@@ -490,6 +490,7 @@ console.warn = warn;
 for (const s of procs) if (!s.exit) s.proc.kill('SIGKILL');
 await until(() => procs.every((s) => s.exit), 5000);
 check('every server is stopped', procs.every((s) => s.exit));
-if (failed) for (const s of procs) console.log(`\n--- ${s.name} ---\n${s.log.split('\n').slice(-30).join('\n')}`);
+// (every line about the games the test follows, and the last ones)
+if (failed) for (const s of procs) console.log(`\n--- ${s.name} ---\n${s.log.split('\n').filter((l, i, all) => i >= all.length - 30 || /PIN|NOBUILD|BUILDGONE|NOTOURS|build/.test(l)).join('\n')}`);
 console.log(failed ? `\n${failed} FAILED` : '\nall ok');
 process.exit(failed ? 1 : 0);
