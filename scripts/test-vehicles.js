@@ -386,6 +386,19 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
     for (let i = 0; i < 5 * 60; i++) stepVehicle(c, 1, 0, false, false, w, CMD_DT, null);
     const y0 = c.yaw;
     for (let i = 0; i < 90; i++) stepVehicle(c, 0, 1, true, false, w, CMD_DT, ev);
+    // ...and held, with the wheel over, it turns the car right round
+    const h = newV(w, VEH.CAR, gx, gz, 0);
+    for (let i = 0; i < 4.5 * 60; i++) stepVehicle(h, 1, 0, false, false, w, CMD_DT, null);
+    const hv = speedOf(h);
+    let hm = 0;
+    for (let i = 0; i < 2.3 * 60; i++) {
+      stepVehicle(h, 0, i < 9 ? 0 : -1, i >= 9, false, w, CMD_DT, null);
+      let d = h.yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      hm = Math.max(hm, Math.abs(d));
+    }
+    check('a handbrake turn: at speed, the wheel over and the handbrake held, the car comes right round', hm > 2.6 && hv > 12, `from ${f1(hv)} m/s it turned ${Math.round((hm * 180) / Math.PI)} degrees in 2.3 s`);
     check('the steering has less lock the faster it goes, and the handbrake lets the tyres go', slowTurn > Math.abs(b.steer) * 1.8 && ev.some((e) => e.type === 'veh_skid') && Math.abs(c.yaw - y0) > 0.3, `lock ${slowTurn.toFixed(2)} rad from a standstill, ${Math.abs(b.steer).toFixed(2)} at ${f1(speedOf(b))} m/s`);
   }
 }

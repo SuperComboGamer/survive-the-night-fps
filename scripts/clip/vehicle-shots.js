@@ -56,8 +56,10 @@ function VIRTUAL_CLOCK() {
       queue = [];
       for (const cb of cbs) realRAF(cb);
     },
+    n: 0, // frames stepped
     step(ms) {
       now += ms;
+      window.__vt.n++;
       const cbs = queue;
       queue = [];
       for (const cb of cbs) cb(now);

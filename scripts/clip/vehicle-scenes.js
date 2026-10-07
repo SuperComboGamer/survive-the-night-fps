@@ -66,6 +66,11 @@ async function begin(c, { cycle = DAY, two = false, how = '/map2' } = {}) {
     await c.hold();
     say('held');
   }
+  // (out of whatever an earlier scene of the session left us in)
+  if (c.held && (c.info?.s.drive || c.info?.s.pass)) {
+    await c.ev(c.A, () => window.__game.conn.action(37, 1, 0));
+    await c.run(10, { A: { cam: null } });
+  }
   await light(c, cycle);
 }
 const light = async (c, cycle) => {
@@ -311,12 +316,35 @@ export async function shots(c) {
     await c.chat(c.B, `/veh car at ${(m.x + 10).toFixed(1)} ${(m.z - 0.5).toFixed(1)} 0 broken 2`);
     await c.run(6);
   }
-  await c.rec('passenger-shoots-eye', c.fps * 2, (i) => ({ A: { cam: null, yaw: -Math.PI / 2, pitch: -0.12, buttons: i % 5 < 2 ? BTN.ATTACK : 0 }, B: { yaw: 0 } }), { hud: true });
+  // (the driver's client says when it drew a flash and where each round's line began: the frames with one are the strip)
+  await c.ev(c.B, () => {
+    const g = window.__game;
+    g.__mz = [];
+    g.__tr = [];
+    const m0 = g.effects.worldMuzzle.bind(g.effects), t0 = g.effects.tracer.bind(g.effects);
+    g.effects.worldMuzzle = (...a) => (g.__mz.push([window.__vt.n, +a[0].x.toFixed(2), +a[0].y.toFixed(2), +a[0].z.toFixed(2)]), m0(...a));
+    g.effects.tracer = (...a) => (g.__tr.push([window.__vt.n, +a[0].toFixed(2), +a[1].toFixed(2), +a[2].toFixed(2), +a[6].toFixed(1)]), t0(...a));
+  });
+  const fire = (i) => (i % 10 < 2 ? BTN.ATTACK : 0);
+  const aim = { cam: null, yaw: -Math.PI / 2, pitch: -0.1 };
+  await c.rec('passenger-shoots-eye', c.fps * 2, (i) => ({ A: { ...aim, buttons: fire(i) }, B: { yaw: 0 } }), { hud: true });
   c.video('passenger-shoots-eye', 8, 'the passenger shoots out of the side window (their own view)');
-  await c.rec('passenger-shoots-out', c.fps * 2, (i) => ({ A: { cam: null, yaw: -Math.PI / 2, pitch: -0.12, buttons: i % 5 < 2 ? BTN.ATTACK : 0 }, B: { yaw: 0, cam: cam3(-0.75, 0.12, 4.6, 40) } }), { p: c.B });
-  c.video('passenger-shoots-out', 8, 'the passenger shoots out of the side window (seen from outside, by the driver\u2019s client)');
-  await c.rec('passenger-shoots-far', c.fps * 2, (i) => ({ A: { cam: null, yaw: -Math.PI / 2, pitch: -0.12, buttons: i % 5 < 2 ? BTN.ATTACK : 0 }, B: { yaw: 0, cam: cam3(2.25, 0.3, 10, 50) } }), { p: c.B });
-  c.video('passenger-shoots-far', 8, 'the same from behind: the rounds go from the passenger\u2019s window to the wreck');
+  const seen = async (name, cam, title) => {
+    const n0 = await c.ev(c.B, () => ((window.__game.__mz.length = 0), (window.__game.__tr.length = 0), window.__vt.n));
+    const dir = await c.rec(name, c.fps * 2, (i) => ({ A: { ...aim, buttons: fire(i) }, B: { yaw: 0, cam } }), { p: c.B });
+    const got = await c.ev(c.B, () => ({ mz: window.__game.__mz, tr: window.__game.__tr }));
+    const m = vehId(c, car.id);
+    const frames = [...new Set(got.mz.map((q) => q[0] - n0 - 1))].filter((k) => k >= 0 && k < c.fps * 2);
+    console.log(`  ${name}: ${got.mz.length} flashes drawn (frames ${frames.join(', ')}), ${got.tr.length} lines; the car's middle ${m.x.toFixed(2)}, ${m.z.toFixed(2)}; the passenger's seat ${(m.x + 0.38).toFixed(2)}; a flash at ${JSON.stringify(got.mz[0]?.slice(1))}, a line from ${JSON.stringify(got.tr[0]?.slice(1, 4))} for ${got.tr[0]?.[4]} m`);
+    c.video(name, 4, title);
+    if (frames.length) c.strip(`${name}-flash`, frames.slice(0, 4).map((k) => `${dir}/${String(k).padStart(5, '0')}.png`), 2, `${title}: the frames with a flash`, [960, 540]);
+  };
+  {
+    const m = vehId(c, car.id);
+    const at = (dx, dy, dz, fov) => ({ x: m.x + dx, y: m.y + dy, z: m.z + dz, yaw: faceTo(m.x + dx, m.z + dz, m.x + 0.6, m.z - 0.1), pitch: -0.12, fov, body: true });
+    await seen('passenger-shoots-out', at(3.6, 1.5, -3.4, 46), 'the passenger shoots out of the side window (seen by the driver’s client, from their side)');
+    await seen('passenger-shoots-far', at(3, 3.2, 8.5, 52), 'the same from behind: the rounds go from the passenger’s window to the wreck');
+  }
   await c.run(2, { B: { cam: null } });
   await leave(c, c.A);
   await leave(c, c.B);
@@ -829,7 +857,7 @@ async function clip(c, name, place, mode, { at = 0, secs = 15, bold = 1.1, lead 
   console.log(`\n  ${tag}: ${far.toFixed(0)} m in ${secs} s, top ${top.toFixed(1)} m/s, fuel ${c.info.s.dfuel.toFixed(1)}, hp ${vehId(c, v.id)?.hp}, backed off ${backs} times, arrived: ${done}`);
 }
 export const film_car_seat = (c) => clip(c, 'car', 'Port Calder', 'seat', { lead: 3 });
-export const film_car_behind = (c) => clip(c, 'car', 'Port Calder', 'behind', { lead: 4.5 });
+export const film_car_behind = (c) => clip(c, 'car', 'Calder Field Hangars', 'behind', { at: 0.6, lead: 4, bold: 1.35 }); // (the fastest stretch of road of the main routes: scripts/vehicle-routes.js)
 export const film_moped_seat = (c) => clip(c, 'moped', 'Port Calder', 'seat', { lead: 2 });
 export const film_moped_behind = (c) => clip(c, 'moped', 'Mile 9 Truck Stop', 'behind', { at: 0.25, lead: 3 });
 export const film_bike_seat = (c) => clip(c, 'bike', 'Port Calder', 'seat', { lead: 2 });
@@ -903,20 +931,26 @@ export async function handbrake(c) {
     await enter(c, c.A, v.id, 8, { A: { yaw: 0 } });
     const P0 = await c.ev(c.A, () => window.__game.input.pitch);
     const cam = chase(c, 2, { pitch: 0.5, dist: 11, ease: 0.06 });
-    let top = 0, yaw0 = 0;
+    let top = 0, yaw0 = 0, turned = 0;
     const at = (i) => i / c.fps;
-    await c.rec(`handbrake-car-${mode}`, Math.round(c.fps * 9.5), (i) => {
+    await c.rec(`handbrake-car-${mode}`, Math.round(c.fps * 10), (i) => {
       const t = at(i);
       top = Math.max(top, speedOf(c));
-      if (t < 3.8) yaw0 = c.info.s.dyaw;
-      const b = t < 3.8 ? BTN.FWD : t < 4.0 ? BTN.LEFT : t < 5.5 ? BTN.LEFT | BTN.JUMP : t < 6.1 ? BTN.FWD | BTN.RIGHT : BTN.FWD;
+      if (t < 4.5) yaw0 = c.info.s.dyaw;
+      else {
+        let d = c.info.s.dyaw - yaw0;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        turned = Math.max(turned, Math.abs(d));
+      }
+      const b = t < 4.5 ? BTN.FWD : t < 4.65 ? BTN.LEFT : t < 6.85 ? BTN.LEFT | BTN.JUMP : t < 7.25 ? BTN.FWD | BTN.RIGHT : BTN.FWD;
       return { A: { buttons: b, yaw: c.info.s.dyaw, pitch: P0, cam: mode === 'seat' ? null : cam(mine(c)) } };
     }, { hud: mode === 'seat' });
     c.video(`handbrake-car-${mode}`, 12, `car: a handbrake turn at ${Math.round(top * 3.6)} km/h (${mode === 'seat' ? 'from the seat' : 'from behind and above'})`);
     let d = c.info.s.dyaw - yaw0;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    console.log(`\n  handbrake (${mode}): in at ${top.toFixed(1)} m/s, turned ${Math.round((Math.abs(d) * 180) / Math.PI)} degrees, out at ${speedOf(c).toFixed(1)} m/s, hp ${vehId(c, v.id).hp}`);
+    console.log(`\n  handbrake (${mode}): in at ${top.toFixed(1)} m/s, turned ${Math.round((turned * 180) / Math.PI)} degrees, out at ${speedOf(c).toFixed(1)} m/s, hp ${vehId(c, v.id).hp}`);
     await c.run(c.fps * 2, { A: { buttons: BTN.BACK, cam: null } });
     await leave(c, c.A);
     await sweep(c, c.info.s.x, c.info.s.z, 8);

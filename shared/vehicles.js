@@ -55,7 +55,7 @@ export const VEHICLES = {
     tank: 60, burn: 0.5, hp: 300, seats: [[0, 0.86, 0.3], [0, 0.885, 0.62]], eye: 0.62, noise: 55, idle: 28, throwAt: 6.5, shell: false, two: true,
   },
   [VEH.CAR]: {
-    name: 'Car', top: 25, accel: 4.4, brake: 10.5, rev: 6, wb: 2.62, lock: 0.6, lockTop: 0.06, steerRate: 2.1, grip: 9.5, hb: 0.32, roll: 0.3, coast: 1.1, drag: 0.0028, off: 2.6, offTop: 1,
+    name: 'Car', top: 25, accel: 4.4, brake: 10.5, rev: 6, wb: 2.62, lock: 0.6, lockTop: 0.06, steerRate: 2.1, grip: 9.5, hb: 0.32, hbSpin: 2.6, roll: 0.3, coast: 1.1, drag: 0.0028, off: 2.6, offTop: 1,
     step: 0.26, h: 1.45, wade: 0.55, circles: [[-1.32, 0.88], [0, 0.9], [1.32, 0.88]], half: 2.2, halfW: 0.9, tall: 1.4,
     tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.42, -0.15], [0.38, 0.42, -0.15], [-0.38, 0.415, 0.66], [0.38, 0.415, 0.66]], eye: 0.78, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
   },
@@ -231,7 +231,11 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   const rate = P.steerRate * (turn === 0 || want * v.steer < 0 ? 1.8 : 1) * dt; // (it centres itself quicker than it is turned)
   v.steer += ds > rate ? rate : ds < -rate ? -rate : ds;
   // (a right turn takes the yaw down: forward is (-sin yaw, -cos yaw))
-  v.yaw -= (vf / P.wb) * Math.tan(v.steer) * dt;
+  // (the handbrake locks the back wheels: the tail lets go and comes round, faster than the front alone would turn it)
+  // (by all of its speed, not only what is still along it: sliding sideways it keeps coming round)
+  const vAll = hb && P.hbSpin ? Math.hypot(v.vx, v.vz) : 0;
+  const spin = vAll > 3 ? (vf >= -0.5 ? 1 : -1) * vAll * P.hbSpin : vf;
+  v.yaw -= (spin / P.wb) * Math.tan(v.steer) * dt;
   if (v.yaw > Math.PI) v.yaw -= Math.PI * 2;
   else if (v.yaw < -Math.PI) v.yaw += Math.PI * 2;
   sy = Math.sin(v.yaw);
