@@ -5,6 +5,7 @@ import { ITEM, ITEM_DEFS, WEAPONS, RECIPES, LOOT_TABLES, CONT_TABLES } from '../
 import { raycastWorld, COL } from '../../shared/collision.js';
 import { eyeHeight } from '../../shared/playersim.js';
 import { qpos } from '../../shared/protocol.js';
+import { wreckUnit } from '../../shared/wrecks.js';
 import { bindTag, onBindsChange } from './binds.js';
 
 // Mirrors Game.gatherHit (server/game.js), tree first as there. `gives`: what a hit is for - the first item comes
@@ -44,7 +45,7 @@ export function harvestAt(world, s) {
 }
 
 // the collider harvestAt last found (what the prompt is about)
-export const harvestTarget = () => _ray.col;
+export const harvestTarget = () => wreckUnit(_ray.col);
 
 const itemName = (item) => ITEM_DEFS[item]?.name || 'materials';
 const list = (words) => (words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0] || '');
@@ -58,7 +59,7 @@ onBindsChange(() => _prompts.clear()); // (they name keys)
 export function harvestPrompt(world, s, stripped) {
   const h = harvestAt(world, s);
   if (!h) return null;
-  const col = _ray.col; // (the one harvestAt found)
+  const col = wreckUnit(_ray.col); // (the one harvestAt found: a wreck by the collider it is named by)
   if (stripped?.has(strippedKey(qpos(col.x), qpos(col.y0), qpos(col.z)))) return h.spent;
   const weapon = s.weapons[SLOT_MELEE];
   const inHand = weapon && s.slot === SLOT_MELEE;

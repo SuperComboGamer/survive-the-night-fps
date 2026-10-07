@@ -1,11 +1,14 @@
 // Procedural white-tailed deer. ONE rigidly-skinned SkinnedMesh like the zombies, the dog and the cat (see
 // skinning.js): geometry is shared per coat, each instance owns its skeleton. Does in two coats and a buck with
-// antlers. Procedural stand / walk / bound, head down to graze, and the fall when it is killed, blended by smoothed
-// state weights (DANIM, shared/deer.js). Faces -Z, meters, hooves at y = 0.
+// antlers; and the mainland's undead (DEER_UNDEAD) in three more: the coat greyed and falling out in scabbed patches,
+// one flank torn open to the ribs, eyes that glow, the jaw hanging, a torn ear, a snapped antler, a stump of a tail.
+// Procedural stand / walk / bound, head down to graze, and the fall when it is killed; the undead also lower their
+// antlers to charge (pawing the ground first) and toss them up in a ram. Blended by smoothed state weights (DANIM,
+// shared/deer.js). Faces -Z, meters, hooves at y = 0.
 // The head is where the server's hitbox has it (DEER_HEAD: up on the neck, or down in the grass while it grazes);
 // `/sandbox/models-test.html?deer=grid&hit=1` draws the two over each other and prints where the skull ends up.
 import * as THREE from 'three';
-import { DANIM } from '../../../shared/deer.js';
+import { DANIM, DEER_UNDEAD } from '../../../shared/deer.js';
 import { MeshBuilder, instantiateRig, setFx, getCharacterMaterial, fbm3, noise3, clamp, lerp, smooth } from './skinning.js';
 import { CR } from './charTextures.js';
 
@@ -39,16 +42,32 @@ const COATS = [
   { name: 'doe', fur: 0x94663c, back: 0x5e3f24, white: 0xd9d2c2 },
   { name: 'grey doe', fur: 0x80684e, back: 0x4e3d2c, white: 0xd4cfc4 },
   { name: 'buck', fur: 0x86592f, back: 0x4a3018, white: 0xd6cdb8, antlers: true, neck: 1.22 },
+  // the undead (ribs: the flank torn open; tornEar, snapped: that side's ear, that side's antler beam)
+  { name: 'undead doe', fur: 0x66574a, back: 0x342a22, white: 0x9a9286, undead: true, ribs: 1 },
+  { name: 'undead grey doe', fur: 0x5b5650, back: 0x2e2a27, white: 0x8c8880, undead: true, ribs: -1, tornEar: 1 },
+  { name: 'undead buck', fur: 0x5c4834, back: 0x2a1f17, white: 0x8e8574, antlers: true, neck: 1.22, undead: true, ribs: -1, tornEar: -1, snapped: 1 },
 ];
 export const DEER_COATS = COATS.length;
 const C_HOOF = 0x17120e;
 const C_NOSE = 0x100c0a;
+const C_ROT = new THREE.Color(0x6c605c); // the hide bare: grey, bruised skin
+const C_SCAB = new THREE.Color(0x3a1410);
+const C_RAW = new THREE.Color(0x5e1612); // the wound round the ribs
+const C_GORE = new THREE.Color(0x2c0806);
+// the torn flank (coat.ribs): its middle and half its length and height, on the chest's shell behind the shoulder
+const RIP = { z: -0.11, y: 0.77, hz: 0.15, hy: 0.12 };
+// [z, horizontal radius] of the chest's shell at its widest stations (its lathe profile below), for the ribs to lie on
+const CHEST_R = [[-0.31, 0.15], [-0.2, 0.17], [-0.08, 0.172], [0.06, 0.16]];
+const CHEST_Y = 0.775; // ...the middle of its section
+const CHEST_H = 1.27; // ...and how much taller than wide it is
 
 // per-part coat colouring; P/N are bind-pose model-space position/normal
 function coatTint(coat, part) {
   const back = new THREE.Color(coat.back);
   const white = new THREE.Color(coat.white);
+  const rot = coat.undead ? rotTint(coat, part) : null;
   return (P, N, C) => {
+    if (rot) rot(P, N, C);
     const n = fbm3(P.x * 11, P.y * 11, P.z * 11, 2, 3) - 0.5;
     if (part === 'body') {
       // dark down the spine, pale under the belly, a white rump round the tail
@@ -74,6 +93,39 @@ function coatTint(coat, part) {
       C.lerp(back, 0.2);
     }
   };
+}
+
+// (undead) how far into the torn flank a point is: > 0 inside it, 1 at its middle
+function inRip(coat, P) {
+  if (!coat.ribs || P.x * coat.ribs < 0.04) return -1;
+  return 1 - Math.hypot((P.z - RIP.z) / RIP.hz, (P.y - RIP.y) / RIP.hy) - (fbm3(P.z * 13, P.y * 13, 1.7, 2, 5) - 0.5) * 0.45;
+}
+
+// the undead's hide, under the coat's colouring: patches of it fallen out to the grey skin, scabbed; the torn flank raw
+function rotTint(coat, part) {
+  return (P, N, C) => {
+    const m = fbm3(P.x * 9 + 3.1, P.y * 9, P.z * 9, 3, 31);
+    if (m > 0.55) C.lerp(C_ROT, clamp((m - 0.55) * 9, 0, 0.9));
+    if (m > 0.65) C.lerp(C_SCAB, clamp((m - 0.65) * 10, 0, 0.75));
+    if (part === 'body') {
+      const k = inRip(coat, P);
+      if (k > -0.35) C.lerp(C_RAW, clamp((k + 0.35) * 2.4, 0, 0.92));
+      if (k > 0.25) C.lerp(C_GORE, clamp((k - 0.25) * 2, 0, 0.8));
+    }
+  };
+}
+
+// (undead) the horizontal radius of the chest's shell at z, and where its surface is at height y on that side
+function chestR(z) {
+  const R = CHEST_R;
+  if (z <= R[0][0]) return R[0][1];
+  for (let i = 1; i < R.length; i++) if (z <= R[i][0]) return lerp(R[i - 1][1], R[i][1], (z - R[i - 1][0]) / (R[i][0] - R[i - 1][0]));
+  return R[R.length - 1][1];
+}
+function chestX(z, y) {
+  const r = chestR(z);
+  const v = (y - CHEST_Y) / (r * CHEST_H);
+  return r * Math.sqrt(Math.max(0, 1 - v * v));
 }
 
 function buildDeer(coatIdx) {
@@ -135,30 +187,47 @@ function buildDeer(coatIdx) {
   mb.ellip('head', rel('head', [0, 1.182, -0.925]), [0.023, 0.019, 0.017], plain(C_NOSE, { mottle: 0.05 }));
   ellip('head', 'jaw', [0, 1.16, -0.82], [0.03, 0.019, 0.088], { ws: 8, hs: 5 });
   for (const s of [-1, 1]) {
-    // large dark eyes set on the sides of the skull
-    mb.ellip('head', rel('head', [s * 0.069, 1.262, -0.755]), [0.012, 0.018, 0.02], plain(0x0c0806, { mottle: 0 }));
-    // ears: big flattened four-sided cones, pale inside, held out to the sides
+    // large dark eyes set on the sides of the skull (the undead's clouded over, and glowing)
+    mb.ellip('head', rel('head', [s * 0.069, 1.262, -0.755]), [0.012, 0.018, 0.02], coat.undead ? plain(0xff5a26, { region: CR.GLOW, glow: 0.9, mottle: 0 }) : plain(0x0c0806, { mottle: 0 }));
+    // ears: big flattened four-sided cones, pale inside, held out to the sides (one torn short on some of the undead)
     const n = s < 0 ? 'L' : 'R';
+    const torn = coat.tornEar === s ? 0.55 : 1;
     for (const inner of [false, true]) {
-      const len = inner ? 0.12 : 0.155;
+      const len = (inner ? 0.12 : 0.155) * torn;
       const g = new THREE.ConeGeometry(inner ? 0.036 : 0.052, len, 4, 1);
       g.rotateY(Math.PI / 4);
       g.scale(1, 1, 0.3);
       g.translate(0, len * 0.5 - 0.008, inner ? -0.007 : 0);
-      mb.geom('ear' + n, g, { rot: [0.1, 0, -s * 0.85], ...(inner ? plain(0xcdb9a6) : fur('ear')) });
+      mb.geom('ear' + n, g, { rot: [0.1, 0, -s * 0.85], ...(inner ? plain(coat.undead ? 0x7a4a44 : 0xcdb9a6) : fur('ear')) });
     }
     if (coat.antlers) {
-      // a main beam sweeping out, up and forward, with three tines standing off it
-      const bone = plain(0xb7a27e, { region: CR.BONE, mottle: 0.25, rs: 5 });
+      // a main beam sweeping out, up and forward, with three tines standing off it (on the undead, stained, and one
+      // beam snapped off short above the first tine)
+      const bone = plain(coat.undead ? 0x8c7a5c : 0xb7a27e, { region: CR.BONE, mottle: 0.25, rs: 5 });
+      const snapped = coat.snapped === s;
       const beam = [[s * 0.035, 1.3, -0.69], [s * 0.085, 1.39, -0.655], [s * 0.165, 1.5, -0.68], [s * 0.19, 1.555, -0.775], [s * 0.15, 1.565, -0.86]];
-      mb.tube('head', beam.map((p) => rel('head', p)), 0.017, 0.007, { ...bone, ts: 10 });
+      mb.tube('head', (snapped ? beam.slice(0, 3) : beam).map((p) => rel('head', p)), 0.017, snapped ? 0.013 : 0.007, { ...bone, ts: snapped ? 6 : 10 });
       mb.spike('head', rel('head', [s * 0.07, 1.36, -0.665]), rel('head', [s * 0.05, 1.445, -0.72]), 0.009, bone); // brow tine
-      mb.spike('head', rel('head', [s * 0.15, 1.48, -0.67]), rel('head', [s * 0.17, 1.62, -0.66]), 0.01, bone);
-      mb.spike('head', rel('head', [s * 0.188, 1.55, -0.76]), rel('head', [s * 0.215, 1.66, -0.79]), 0.009, bone);
+      if (!snapped) {
+        mb.spike('head', rel('head', [s * 0.15, 1.48, -0.67]), rel('head', [s * 0.17, 1.62, -0.66]), 0.01, bone);
+        mb.spike('head', rel('head', [s * 0.188, 1.55, -0.76]), rel('head', [s * 0.215, 1.66, -0.79]), 0.009, bone);
+      }
     }
   }
-  // tail: a short flat flag, white underneath
-  seg('tail', 'tail', B.tail, [0, 0.77, 0.635], 0.048, 0.022, { rs: 8, sx: 1.35, sz: 0.55 });
+  // tail: a short flat flag, white underneath (the undead's a stump)
+  if (coat.undead) seg('tail', 'tail', B.tail, [0, 0.885, 0.6], 0.042, 0.03, { rs: 8, sx: 1.35, sz: 0.55 });
+  else seg('tail', 'tail', B.tail, [0, 0.77, 0.635], 0.048, 0.022, { rs: 8, sx: 1.35, sz: 0.55 });
+  // (undead) the ribs in the torn flank: bars of bone curving down the side, lying in the raw wound on the shell. A
+  // tube's start is open, so each comes out of the body (buried 2 cm in at the top) and ends capped on the surface
+  if (coat.ribs) {
+    const rib = plain(0xd2c6a8, { region: CR.BONE, mottle: 0.2, rs: 5 });
+    for (let i = 0; i < 4; i++) {
+      const z = RIP.z - 0.1 + i * 0.06;
+      const pts = [[chestX(z, 0.9) - 0.02, 0.9, z - 0.006]];
+      for (const [k, y] of [0.86, 0.8, 0.74, 0.68].entries()) pts.push([chestX(z, y) + 0.002, y, z + k * 0.008]);
+      mb.tube('chest', pts.map((p) => rel('chest', [coat.ribs * p[0], p[1], p[2]])), 0.0085, 0.007, { ...rib, ts: 8 });
+    }
+  }
   // legs: long and fine under a muscled shoulder and haunch, black cloven hooves
   for (const s of [-1, 1]) {
     const n = s < 0 ? 'L' : 'R';
@@ -200,6 +269,10 @@ const n1 = (t, seed) => noise3(t, seed * 1.7, 0.5, 17) * 2 - 1;
 // feet, then both fore
 const WALK_OFF = { LH: 0, LF: 0.25, RH: 0.5, RF: 0.75 };
 const RUN_OFF = { LH: 0, RH: 0.07, LF: 0.5, RF: 0.58 };
+// (undead) the head and neck charging: down level with the back, the face turned to the ground so the antlers lead
+// (the skull ends up where DEER_HEAD.charge has it); and the ram: tossed up and back over RAM_T s
+const CHARGE_POSE = { neck: -0.62, neck2: -0.12, head: 0.62 };
+const RAM_T = 0.45;
 // each leg: its phase offsets and the three bones it bends (built once: posing builds no strings or arrays)
 const LEGS = ['LF', 'RF', 'LH', 'RH'].map((key) => {
   const s = key[0];
@@ -231,10 +304,13 @@ class DeerInstance {
     this.state = DANIM.GRAZE;
     this.stateT = 0;
     this.phase = r(3) * TAU;
+    this.undead = !!COATS[coat].undead;
     this.wGraze = 1;
     this.wDead = 0;
     this.wRun = 0;
     this.wMove = 0;
+    this.wCharge = 0;
+    this.wRam = 0;
     this.speed = 0;
     this.earT = 1 + r(4) * 4;
     this.earSide = 0;
@@ -262,11 +338,13 @@ class DeerInstance {
     this.stateT += dt;
     this.speed = speed;
     const dead = anim === DANIM.DEAD;
-    const moving = anim === DANIM.WALK || anim === DANIM.RUN;
+    const moving = anim === DANIM.WALK || anim === DANIM.RUN || ((anim === DANIM.CHARGE || anim === DANIM.ATTACK) && speed > 0.3);
     this.wGraze += ((anim === DANIM.GRAZE ? 1 : 0) - this.wGraze) * Math.min(1, dt * (anim === DANIM.GRAZE ? 3.5 : 7)); // down in under a second, up at once: the head sphere a shot is judged by moves with the state
     this.wDead += ((dead ? 1 : 0) - this.wDead) * Math.min(1, dt * 14);
     this.wRun += (clamp((speed - 2.6) / 3, 0, 1) - this.wRun) * Math.min(1, dt * 6);
     this.wMove += ((moving ? clamp(speed / 0.7, 0, 1) : 0) - this.wMove) * Math.min(1, dt * 7);
+    this.wCharge += ((anim === DANIM.CHARGE || anim === DANIM.ATTACK ? 1 : 0) - this.wCharge) * Math.min(1, dt * 9); // (as quick as the head sphere a shot is judged by; the ram hooks up out of the charge)
+    this.wRam += ((anim === DANIM.ATTACK ? 1 : 0) - this.wRam) * Math.min(1, dt * 14);
     if (!dead) {
       const stride = lerp(1.25, 4.6, this.wRun); // ground covered per gait cycle
       this.phase = (this.phase + (dt * speed * TAU) / stride) % (TAU * 1000);
@@ -285,7 +363,7 @@ class DeerInstance {
       this.tailK = 1;
     }
     this.tailK = Math.max(0, this.tailK - dt * 1.6);
-    setFx(this.fx, 0, 1);
+    setFx(this.fx, 0, this.undead && dead ? Math.max(0.1, 1 - this.stateT * 0.5) : 1); // (an undead one's eyes go out)
     const seen = this._seen;
     this._seen = false;
     if (!seen && !inView) return;
@@ -348,9 +426,13 @@ class DeerInstance {
     const lookY = n1(t * 0.22, sd) * 0.5 * idle;
     const lookX = n1(t * 0.17, sd + 3) * 0.12 * idle;
     const nod = Math.sin(ph * 2) * 0.05 * walk * M;
-    this.add('neck', W, -0.34 * R * M - 0.1 * walk * M + nod + lookX, lookY * 0.4);
-    this.add('neck2', W, -0.22 * R * M + lookX, lookY * 0.3);
-    this.add('head', W, 0.5 * R * M + 0.08 * walk * M - nod * 0.6, lookY * 0.4, n1(t * 0.13, sd + 7) * 0.1 * idle);
+    // (undead) charging, the head and neck go to CHARGE_POSE whatever the gait
+    const C = this.wCharge;
+    const free = 1 - C;
+    this.add('neck', W, lerp(-0.34 * R * M - 0.1 * walk * M + nod + lookX, CHARGE_POSE.neck, C), lookY * 0.4 * free);
+    this.add('neck2', W, lerp(-0.22 * R * M + lookX, CHARGE_POSE.neck2, C), lookY * 0.3 * free);
+    this.add('head', W, lerp(0.5 * R * M + 0.08 * walk * M - nod * 0.6, CHARGE_POSE.head, C), lookY * 0.4 * free, n1(t * 0.13, sd + 7) * 0.1 * idle * free);
+    if (this.undead) this.poseUndead(t, W, st, C, M);
     // grazing: the neck arcs down to the grass, the muzzle works along it, one foreleg set ahead
     if (G > 0.001) {
       const nib = Math.sin(t * 2.4 + sd) * 0.035 + Math.sin(t * 0.9 + sd * 2) * 0.04;
@@ -369,6 +451,40 @@ class DeerInstance {
     this.add('earR', W, 0.75 * R * M, this.earSide === 1 ? -turn : 0, 0.25 * R * M - n1(t * 0.5, sd + 13) * 0.12 * idle);
     // tail: down, a flick now and then; up and flagging white at a run
     this.add('tail', W, lerp(0.12 - this.tailK * 0.5, -2.2, R * M), Math.sin(t * 9) * 0.5 * this.tailK * (1 - R * M) + Math.sin(ph) * 0.35 * R * M);
+  }
+
+  // (undead) what the dead do on top of the living deer's poses: the jaw hangs, the head jerks now and then; standing
+  // with its antlers down it paws the ground; the ram tosses them up and back
+  poseUndead(t, W, st, C, M) {
+    const sd = this.sd;
+    const twitch = Math.max(0, n1(t * 1.3, sd + 21) - 0.55) * 1.1 * (1 - C);
+    this.add('neck2', W, twitch * 0.3 * Math.sin(t * 19), 0, twitch * Math.sin(t * 23));
+    this.add('jaw', W, -(0.12 + 0.22 * C + 0.1 * this.wRun * M));
+    // pawing: the lead foreleg lifts and scrapes back, the body sits back on its haunches
+    const paw = C * (1 - M);
+    if (paw > 0.001) {
+      const s = Math.sin(t * 9 + sd);
+      const up = Math.max(0, s);
+      const f = this.lead > 0 ? 'R' : 'L';
+      this.add('fu' + f, W * paw, -0.25 + s * 0.3);
+      this.add('fl' + f, W * paw, up * 0.7);
+      this.add('fp' + f, W * paw, -up * 1.2);
+      this.add('hips', W * paw, 0.06);
+      this.add('chest', W * paw, -0.08);
+      st.hy -= 0.035 * paw * W;
+    }
+    // the ram: the lowered antlers hooked up through whoever they hit, to the head held high, and down again, over
+    // RAM_T s from when it got home
+    const K = this.wRam;
+    if (K > 0.001) {
+      const u = this.state === DANIM.ATTACK ? clamp(this.stateT / RAM_T, 0, 1) : 1;
+      const toss = Math.sin(Math.PI * Math.sqrt(u)) * K; // (up fast, down slower)
+      this.add('neck', W, 0.7 * toss);
+      this.add('neck2', W, 0.15 * toss);
+      this.add('head', W, -0.6 * toss);
+      this.add('chest', W, 0.1 * toss);
+      this.add('jaw', W, -0.2 * toss);
+    }
   }
 
   // DEAD: the legs go from under it, it rolls onto its side, a few kicks, then still
@@ -434,11 +550,11 @@ export function deerStats() {
 
 /**
  * A deer view: { object, update(dt, anim, speed, time, inView), footfalls(), settle(), anchorWorld, dispose }. anim is a
- * DANIM state. variant is the server's byte: bit 0 a buck, the rest its coat and build.
+ * DANIM state. variant is the server's byte: bit 0 a buck, bit 7 (DEER_UNDEAD) undead, the rest its coat and build.
  */
 export function createDeer(variant = 0, seed = 0) {
   const buck = variant & 1;
-  const d = new DeerInstance(buck ? 2 : (variant >> 1) & 1, (seed >>> 0) + variant * 131);
+  const d = new DeerInstance((buck ? 2 : (variant >> 1) & 1) + (variant & DEER_UNDEAD ? 3 : 0), (seed >>> 0) + (variant & 0x7f) * 131);
   // bucks stand a little taller; no two are quite the same size
   d.object.scale.setScalar((buck ? 1.06 : 0.97) + (((variant >> 2) & 15) / 15 - 0.5) * 0.07);
   return {

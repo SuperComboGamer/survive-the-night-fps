@@ -9,6 +9,7 @@
 // survivor each player chose to be (shared/characters.js) is the same one through all of it.
 // It ends with what a tick costs with a night's horde up on each of the two maps.
 process.env.REJOIN_GRACE_SECONDS = '600';
+process.env.HANDOFF_FREEZE_SECONDS = '0'; // (a game brought over runs on at once here: its waiting for its players is scripts/test-handoff-safe.js)
 const { Game } = await import('../server/game.js');
 const { C2S, S2C, ACT, CAR_ID, HOLD, SNAP, PLF, UNDO_NO, PROTOCOL_VERSION, Writer, Reader, qpos, dqpos, usePos, POS_SCALE, POS_SCALE_WIDE } = await import('../shared/protocol.js');
 const { PHASE, ESCAPE_DRIVE_TIME, ENGINE_START_TIME, GAME_OVER_DELAY, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE, SLOT_BUILD, INVENTORY_MAX, dayLength, MAP_SIZE } = await import('../shared/constants.js');

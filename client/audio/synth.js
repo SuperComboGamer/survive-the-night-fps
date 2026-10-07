@@ -918,6 +918,25 @@ export function deerBleat(sr, rng, i) {
     env: dying ? [[0, 0], [0.06, 1], [0.45, 0.75], [0.8, 0.3], [1, 0]] : [[0, 0], [0.08, 1], [0.6, 0.8], [1, 0]],
   });
 }
+// an undead deer (the mainland's): the bleat dragged down through a throat that has rotted - lower, longer, rattling
+// and overdriven, rising to a strangled shriek as it lowers its antlers; the last variant is the gurgle it dies with
+export function deerScream(sr, rng, i) {
+  const dying = i === 2;
+  const b = rrange(rng, 240, 300) * (dying ? 0.8 : 1);
+  const dur = dying ? rrange(rng, 1.0, 1.2) : rrange(rng, 0.75, 0.95);
+  const out = alloc(sr, dur + 0.5);
+  const v = voice(sr, rng, {
+    dur,
+    pitch: dying ? [[0, b * 1.1], [0.2, b * 1.25], [0.6, b * 0.8], [1, b * 0.45]] : [[0, b * 0.75], [0.3, b * 1.35], [0.65, b * 1.55], [0.85, b * 1.2], [1, b * 0.7]],
+    vowels: vowelPath(dying ? ['ae', 'a', 'uh', 'er'] : i ? ['er', 'ae', 'a', 'e'] : ['uh', 'a', 'ae', 'a'], rng), fscale: 1.2, bw: 2,
+    jitter: 0.09, jitterHz: 38, shimmer: 0.5, sub: 0.45, gurgle: dying ? 0.8 : 0.5, gurgleHz: 22, rasp: 0.95, raspHz: 85, vib: 0.03, vibHz: 7,
+    breath: 0.5, drive: 4.5, chest: 0.35, bubbles: dying ? 6 : 3, hp: 140,
+    env: dying ? [[0, 0], [0.06, 1], [0.45, 0.7], [0.8, 0.3], [1, 0]] : [[0, 0], [0.12, 0.6], [0.45, 0.9], [0.75, 1], [0.92, 0.5], [1, 0]],
+  });
+  addNorm(out, v, sr, 0, 0.9);
+  addNorm(out, v, sr, 0.3 + rng() * 0.15, 0.15); // (off the trees)
+  return finish(out, sr);
+}
 // a hoof coming down on the forest floor at a run: a hard little knock on packed earth, leaf litter thrown up
 export function hoofbeat(sr, rng) {
   const out = alloc(sr, 0.3);
@@ -2030,6 +2049,7 @@ export const SFX_DEFS = [
   { bank: 'dog_yelp', n: 3, sr: MID, gen: dogYelp },
   { bank: 'deer_snort', n: 3, sr: MID, gen: deerSnort },
   { bank: 'deer_bleat', n: 3, sr: MID, gen: deerBleat },
+  { bank: 'deer_scream', n: 3, sr: MID, gen: deerScream },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },

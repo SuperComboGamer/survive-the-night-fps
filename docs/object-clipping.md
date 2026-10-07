@@ -123,7 +123,8 @@ their side by `weaponPickup` (`HELD_LAY`), placed by their own vertices.
 - `occupy` and `occupied`: the room vegetation keeps from props.
 - `partBlocked`: a tree or a boulder that would stand in a wall is left out after its random draws, so the rest of the
   forest stays put.
-- `shared/props.js`: every prop's collider boxes and cylinders, which are its solid shape for these checks.
+- `shared/props.js`: every prop's collider boxes and cylinders, which are its solid shape for these checks. They
+  follow the model ([hitboxes.md](hitboxes.md)); what the world is laid out by is a prop's `plan` where it has one.
 
 **The sandboxes: `client/sandbox/`.** `models-test.html` loads `models-vm.js` (`?vm=`, `?ww=`), `models-hold.js`
 (`?hold=`), `models-film.js` (`?film=`) or `models-lineup.js` (the rest). `props-test.html` loads `props-test.js`.
@@ -232,6 +233,7 @@ through `launchChrome` too.
 | `nunchaku-shots.js` | | Stills and strips of the nunchucks out of the sandbox, a list of them in one browser. |
 | `nunchaku-jitter.js` | | Is the nunchucks' motion smooth: every move and hand-off on a stepped clock at 30 to 240 fps and on uneven frames, measured for shakes, pops and snaps (no browser). `--trace "move@fps"` prints the frames round the worst. |
 | `nunchaku-film.js`, `nunchaku-reel.js` | | Footage of the nunchucks in the real game, a frame at a time with both clocks held, and the reel, contact sheets and strips cut from it (ffmpeg). |
+| `aim-shots.js`, `aim-sheets.js` | | A gun's sights and groups in the real game, frame by frame with both clocks held: the sights up on a walker 10, 25 and 50 m out, by day and by flashlight, the crosshair at the hip, a held magazine's climb, and the holes in a barn wall; then the before / after sheets of two trees' pictures. |
 | `lib.js` | | The shared plumbing: arguments, servers, headless Chrome, image sheets, worktrees, lending the sandbox to an older tree. |
 
 Examples:

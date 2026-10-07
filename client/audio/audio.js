@@ -276,6 +276,7 @@ def(S.GUN_MAN, 'bolt', 'fxfar', 0.8, 0.04, 0.15, R_BOLT); // someone takes the g
 def(S.DEER_SNORT, 'deer_snort', 'fxfar', 1.3, 0.06); // (a breath of noise: this puts it level with the cat's meow)
 def(S.DEER_BLEAT, 'deer_bleat', 'fxfar', 0.7, 0.07);
 def(S.DEER_HOOF, 'step_hoof', 'fx', 0.8, 0.1, 0.08);
+def(S.DEER_SCREAM, 'deer_scream', 'zombie', 0.85, 0.08); // (the mainland's undead deer: a voice of the dead's)
 // the Tri-County Fair: its generator cranking up and clunking off, fuel going into the drum, a seat taking a rider
 def(S.FAIR_START, 'car_start', 'fxfar', 0.9, 0.03, 0.15, R_CAR_CRANK);
 def(S.FAIR_STOP, 'car_part', 'fxfar', 0.9, 0.04);

@@ -8,7 +8,8 @@
 //   ?cats=1      the stray cat in every coat (cycles CANIM states);  ?cats=grid -> one per CANIM state
 //   ?deer=1      the deer in every coat (cycles DANIM states);  ?deer=grid -> one per DANIM state (&coat=N);
 //                ?deer=film&anim=2 -> six of them a sixth of a bound apart (&anim=1: of a walking stride);
-//                &hit=1 draws the server's hitbox on each and prints where the middle of the skull is
+//                &hit=1 draws the server's hitbox on each and prints where the middle of the skull is;
+//                coats 3-5 are the mainland's undead (&coat=5: the undead buck), &charge=run: CHARGE at a charge's pace
 //   ?pack=poses  survivors wearing the backpack: idle, walk, sprint, crouch, downed, seated (&cam=back|q|front, &yaw=deg)
 //   ?pack=ground the backpack as it lies on the ground, from four sides
 //   ?voice=L     survivors talking on voice chat at loudness L (0.02 shut .. 0.14 wide open); ?voice=talk -> a sentence
@@ -17,7 +18,7 @@ import { ZTYPE, ZOMBIE_DEFS, ZANIM, CANIM, ITEM } from '../../shared/defs.js';
 import { createZombie, createSurvivor, modelStats, zombieVariants } from '../render/models/characters.js';
 import { createCat, CAT_COATS } from '../render/models/cat.js';
 import { createDeer, DEER_COATS } from '../render/models/deer.js';
-import { DANIM, DEER, deerHitbox } from '../../shared/deer.js';
+import { DANIM, DEER, DEER_UNDEAD, UNDEAD, deerHitbox } from '../../shared/deer.js';
 import { MeshBuilder } from '../render/models/skinning.js';
 import { createPickup } from '../render/models/pickups.js';
 MeshBuilder.debugNaN = true;
@@ -135,10 +136,10 @@ function addCat(coat, x, z, fixed) {
   return c;
 }
 
-// a deer: coat 0-1 a doe, 2 the buck. fixed: a DANIM state it holds (else they all cycle)
-const DEER_STATES = [DANIM.IDLE, DANIM.WALK, DANIM.RUN, DANIM.GRAZE, DANIM.DEAD];
+// a deer: coat 0-1 a doe, 2 the buck; 3-5 the same undead. fixed: a DANIM state it holds (else they all cycle)
+const DEER_STATES = [DANIM.IDLE, DANIM.WALK, DANIM.RUN, DANIM.GRAZE, DANIM.DEAD, DANIM.CHARGE, DANIM.ATTACK];
 function addDeer(coat, x, z, fixed) {
-  const d = createDeer(coat === 2 ? 1 : coat << 1, coat * 7 + 1);
+  const d = createDeer((coat % 3 === 2 ? 1 : (coat % 3) << 1) | (coat >= 3 ? DEER_UNDEAD : 0), coat * 7 + 1);
   d.object.scale.setScalar(1); // (the hitbox is drawn for one of average size)
   d.object.position.set(x, 0, z);
   d.object.traverse((o) => {
@@ -311,7 +312,7 @@ function frame() {
     const anim = a.fixed !== undefined ? a.fixed : q.has('stress') ? (a.x > 0 ? 1 : 2) : cycleIdx;
     if (a.kind === 'd') {
       const da = a.fixed !== undefined ? a.fixed : DEER_STATES[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 3) % DEER_STATES.length];
-      const speed = da === DANIM.WALK ? DEER.walk : da === DANIM.RUN ? DEER.run : 0;
+      const speed = da === DANIM.WALK ? DEER.walk : da === DANIM.RUN ? DEER.run : da === DANIM.CHARGE && q.get('charge') === 'run' ? UNDEAD.charge : da === DANIM.ATTACK ? 6 : 0;
       if (a.lead && !a.led) {
         a.led = true;
         const cycle = (da === DANIM.RUN ? 4.6 : 1.25) / speed; // (the strides of DeerInstance.update)
@@ -320,6 +321,7 @@ function frame() {
       if (fixedT >= 0) {
         if (!a.warm) {
           a.warm = true;
+          if (da === DANIM.ATTACK) for (let i = 0; i < 90; i++) a.obj.update(1 / 60, DANIM.CHARGE, 0, i / 60, true); // (a ram comes out of a charge: &t= is how far into it)
           for (let i = 0; i < Math.round(fixedT * 60); i++) a.obj.update(1 / 60, da, speed, i / 60, true);
         }
         a.obj.update(0, da, speed, fixedT, true);
@@ -387,7 +389,7 @@ function frame() {
       } else s.update(dt, st);
     }
   }
-  info.textContent = q.has('deer') ? 'deer: ' + (q.get('deer') === 'grid' ? 'IDLE WALK RUN GRAZE DEAD (left to right)' : q.get('deer') === 'film' ? 'a gait cycle in sixths' : 'doe, grey doe, buck') + '   skull [height, ahead]: ' + actors.map((a) => a.skull.map((v) => v.toFixed(2)).join(' ')).join(' | ') : q.has('cats') ? `cat: ${q.get('cats') === 'grid' ? 'IDLE WALK RUN SIT (left to right)' : Object.keys(CANIM)[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4]}   t=${T.toFixed(2)}` : (q.has('grid') ? 'IDLE WALK RUN ATTACK SPECIAL AIRBORNE STAGGER DEAD EAT (left to right)' : `anim: ${stateNames[cycleIdx]} (${cycleIdx})`) + `   t=${T.toFixed(2)}` + (q.get('stats') === '1' ? '\n' + statTxt : '');
+  info.textContent = q.has('deer') ? 'deer: ' + (q.get('deer') === 'grid' ? 'IDLE WALK RUN GRAZE DEAD CHARGE RAM (left to right)' : q.get('deer') === 'film' ? 'a gait cycle in sixths' : 'doe, grey doe, buck, and the three undead') + '   skull [height, ahead]: ' + actors.map((a) => a.skull.map((v) => v.toFixed(2)).join(' ')).join(' | ') : q.has('cats') ? `cat: ${q.get('cats') === 'grid' ? 'IDLE WALK RUN SIT (left to right)' : Object.keys(CANIM)[fixedAnim >= 0 ? fixedAnim : Math.floor(time / 2) % 4]}   t=${T.toFixed(2)}` : (q.has('grid') ? 'IDLE WALK RUN ATTACK SPECIAL AIRBORNE STAGGER DEAD EAT (left to right)' : `anim: ${stateNames[cycleIdx]} (${cycleIdx})`) + `   t=${T.toFixed(2)}` + (q.get('stats') === '1' ? '\n' + statTxt : '');
   const tu1 = performance.now();
   renderer.render(scene, camera);
   if (q.has('stress')) {

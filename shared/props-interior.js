@@ -1,13 +1,15 @@
 // Footprints of what is in the rooms of Port Calder (as shared/props.js: size, boxes, cyls, desc).
 // Where a thing stands against a wall with the floor in front of it for what was pulled out of it (the bookcase, the
 // chest of drawers, the filing cabinet), its body is at the back (+Z) of the size box and only the body is solid.
+import { B, W } from './propbox.js';
+
 export const INTERIOR_PROP_DEFS = {
   // ---- homes
-  sofa: { size: [2.0, 0.85, 0.9], boxes: [[0, 0.4, 0, 2.0, 0.8, 0.9]], desc: 'a three-seat sofa: loose seat and back cushions, one slashed open with the stuffing out, stains. Variant 2 lies thrown onto its back, its feet to -Z' },
+  sofa: { size: [2.0, 0.85, 0.9], boxes: [[0, 0.4, 0, 2.0, 0.8, 0.9]], vary: { n: 3, 2: { boxes: [W(0.99, 0, 0.84, -0.42, 0.02), W(0.9, 0, 0.5, 0.02, 0.42)] } }, plan: { boxes: [[0, 0.4, 0, 2.0, 0.8, 0.9]] }, desc: 'a three-seat sofa: loose seat and back cushions, one slashed open with the stuffing out, stains. Variant 2 lies thrown onto its back, its feet to -Z' },
   armchair: { size: [0.9, 0.9, 0.9], boxes: [[0, 0.4, 0, 0.9, 0.8, 0.9]], desc: 'an upholstered armchair, its cushion slashed (0) or pulled up against the back (1)' },
   kitchen_counter: { size: [2.0, 0.92, 0.62], boxes: [[0, 0.46, 0, 2.0, 0.92, 0.62]], desc: 'kitchen base units under a worktop, a steel sink and tap at the -X end: a door gone on a shelf of tins, a door ajar, a drawer pulled, a drawer missing' },
   stove: { size: [0.7, 0.95, 0.65], boxes: [[0, 0.475, 0, 0.7, 0.95, 0.65]], desc: 'an enamel cooker: four rings, knobs, a splash panel, a pan left on it, rust; the oven door ajar (0) or torn off (1)' },
-  kitchen_table: { size: [1.4, 0.85, 0.85], boxes: [[0, 0.39, 0, 1.4, 0.78, 0.85]], desc: 'a laminate kitchen table on tube legs with a last meal on it (0), or thrown on its side with its top to -Z (1: it stands 0.81 high)' },
+  kitchen_table: { size: [1.4, 0.85, 0.85], boxes: [[0, 0.39, 0, 1.4, 0.78, 0.85]], vary: { n: 2, 1: { boxes: [W(0.69, 0, 0.81, -0.36, -0.1)] } }, plan: { boxes: [[0, 0.39, 0, 1.4, 0.78, 0.85]] }, desc: 'a laminate kitchen table on tube legs with a last meal on it (0), or thrown on its side with its top to -Z (1: it stands 0.81 high)' },
   tv_set: { size: [1.0, 1.15, 0.5], boxes: [[0, 0.575, 0, 1.0, 1.15, 0.5]], desc: 'a television on a low stand: a wood-grain case, a bulged tube (smashed in variant 1), knobs, a rabbit-ear aerial, a video recorder on the shelf under it' },
   bookshelf: { size: [0.95, 1.95, 0.9], boxes: [[0, 0.975, 0.275, 0.95, 1.95, 0.35]], desc: 'a tall bookcase (at the back of its footprint): rows of books with gaps, some leaning, a few on the floor in front (0); or nearly emptied onto a heap at its foot (1)' },
   wardrobe: { size: [1.1, 2.0, 0.6], boxes: [[0, 1.0, 0, 1.1, 2.0, 0.6]], desc: 'a wardrobe with two sliding doors: one slid across on clothes on hangers and a heap at the bottom (0), or both doors gone and the track hanging (1)' },
@@ -26,11 +28,11 @@ export const INTERIOR_PROP_DEFS = {
   vending_machine: { size: [0.95, 1.85, 0.85], boxes: [[0, 0.925, 0, 0.95, 1.85, 0.85]], desc: 'a snack machine, its glass smashed and its coils empty; in variant 1 the whole front is prised open on its hinges' },
   stock_spill: { size: [2.0, 0.3, 2.0], desc: 'stock swept to the floor in a patch: tins, boxes, packets, a bottle, crushed cartons, a burst sack' },
   // ---- offices, the police station
-  office_desk: { size: [1.6, 1.15, 0.8], boxes: [[0, 0.38, 0, 1.6, 0.76, 0.8]], desc: 'a steel-and-laminate desk (the sitter at -Z) with a drawer pedestal, drawers pulled: a dead monitor, keyboard, a phone off the hook and papers (0); swept clean with the monitor on its side (1); thrown on its side as a barricade, top to -Z (2)' },
+  office_desk: { size: [1.6, 1.15, 0.8], boxes: [[0, 0.38, 0, 1.6, 0.76, 0.8]], vary: { n: 3, 2: { boxes: [W(0.79, 0, 0.78, -0.37, 0.37)] } }, plan: { boxes: [[0, 0.38, 0, 1.6, 0.76, 0.8]] }, desc: 'a steel-and-laminate desk (the sitter at -Z) with a drawer pedestal, drawers pulled: a dead monitor, keyboard, a phone off the hook and papers (0); swept clean with the monitor on its side (1); thrown on its side as a barricade, top to -Z (2)' },
   office_chair: { size: [1.05, 1.0, 0.7], desc: 'a swivel chair on a five-star base with castors; variant 1 lies on its side along X' },
   filing_cabinet: { size: [0.5, 1.35, 1.2], boxes: [[0, 0.675, 0.275, 0.5, 1.35, 0.65]], desc: 'a four-drawer filing cabinet (at the back of its footprint): two drawers pulled out with hanging files, papers on the floor in front; variant 1 has a drawer gone' },
   paper_scatter: { size: [2.2, 0.02, 2.2], desc: 'loose sheets of paper and a few folders over a floor' },
-  reception_desk: { size: [3.4, 1.65, 1.0], boxes: [[0, 0.55, 0, 3.4, 1.1, 1.0]], desc: 'a front desk: a raised public counter along -Z with a lower work surface and drawers behind (+Z), a screen on the counter up to 1.63 m (glass, one pane smashed), a bell, a plaque, a ledger; variant 1 is the police front desk: steel, a mesh grille with a hatch, a dead radio' },
+  reception_desk: { size: [3.4, 1.65, 1.0], boxes: [W(1.7, 0, 1.1, -0.49, 0), W(1.7, 0, 0.8, 0, 0.48), W(1.7, 1.1, 1.6, -0.49, -0.33)], plan: { boxes: [[0, 0.55, 0, 3.4, 1.1, 1.0]] }, desc: 'a front desk: a raised public counter along -Z with a lower work surface and drawers behind (+Z), a screen on the counter up to 1.63 m (glass, one pane smashed), a bell, a plaque, a ledger; variant 1 is the police front desk: steel, a mesh grille with a hatch, a dead radio' },
   waiting_chairs: { size: [1.8, 0.85, 0.6], boxes: [[0, 0.22, 0, 1.8, 0.45, 0.6]], desc: 'a beam-mounted row of three moulded seats, one broken off its bracket (variant 1: lying under the row)' },
   cell_bars: {
     size: [3.0, 2.4, 0.1],
@@ -41,7 +43,7 @@ export const INTERIOR_PROP_DEFS = {
   // ---- the hospital
   hospital_bed: { size: [0.95, 1.15, 2.15], boxes: [[0, 0.35, 0, 0.95, 0.7, 2.15]], desc: 'a wheeled hospital bed, head to +Z: tube frame, castors, head and foot boards, one side rail up and one down, a stained sheet dragged half off; the head section raised (1); somebody under the sheet (2)' },
   privacy_curtain: { size: [2.2, 2.0, 0.5], desc: 'a hospital screen along X: a pleated curtain on a wheeled tube frame, torn and off half its hooks (0), or a three-panel folding screen (1)' },
-  gurney: { size: [0.7, 0.95, 1.95], boxes: [[0, 0.4, 0, 0.7, 0.8, 1.95]], desc: 'an ambulance stretcher on scissor legs, head to +Z, straps hanging; variant 1 is folded flat and lies on its side' },
+  gurney: { size: [0.7, 0.95, 1.95], boxes: [[0, 0.4, 0, 0.7, 0.8, 1.95]], vary: { n: 2, 1: { boxes: [W(0.21, 0, 0.61, -0.94, 0.94)] } }, plan: { boxes: [[0, 0.4, 0, 0.7, 0.8, 1.95]] }, desc: 'an ambulance stretcher on scissor legs, head to +Z, straps hanging; variant 1 is folded flat and lies on its side' },
   medical_cart: { size: [0.6, 1.0, 0.45], boxes: [[0, 0.5, 0, 0.6, 1.0, 0.45]], desc: 'a red crash cart on castors: drawers pulled, one gone, bottles and a dish on top, a push handle at +X' },
   // ---- the picture house, the subway
   cinema_seats: { size: [2.2, 0.95, 0.7], boxes: [[0, 0.4, 0.1, 2.2, 0.8, 0.5]], desc: 'a row of four tip-up cinema seats on a floor rail, facing -Z: red velour, wooden arm rests, some seats down, one slashed, one back ripped off' },
@@ -50,5 +52,5 @@ export const INTERIOR_PROP_DEFS = {
     boxes: [[-1.1, 0.5, 0, 0.35, 1.0, 1.2], [0, 0.5, 0, 0.35, 1.0, 1.2], [1.1, 0.5, 0, 0.35, 1.0, 1.2]],
     desc: 'three stainless subway turnstile housings with coin units (the way in from -Z), the two lanes between them passable: one tripod arm hangs, the rest are broken off',
   },
-  door_barricade: { size: [1.6, 1.7, 0.8], boxes: [[0, 0.8, 0, 1.6, 1.6, 0.8]], desc: 'a doorway (behind it, at +Z) blocked from this side: a table on its side, a cupboard, chairs, planks nailed across (0); a mattress stood against it, a bookcase on its side, chairs, a brace (1)' },
+  door_barricade: { size: [1.6, 1.7, 0.8], boxes: [W(0.79, 0, 0.85, -0.38, 0.4), B(-0.6, 0.45, 0.3, 1.6, -0.1, 0.4)], plan: { boxes: [[0, 0.8, 0, 1.6, 1.6, 0.8]] }, desc: 'a doorway (behind it, at +Z) blocked from this side: a table on its side, a cupboard, chairs, planks nailed across (0); a mattress stood against it, a bookcase on its side, chairs, a brace (1)' },
 };

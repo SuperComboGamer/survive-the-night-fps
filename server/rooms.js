@@ -39,6 +39,9 @@ const BUSY = { error: 'Every game server is busy right now. Join a game that is 
 const yours = (code) => ({ error: `You already have a game going (${code}). Join it, or wait for it to end before making another.`, status: 409, code });
 const MISS_BURST = 20;
 const MISS_EVERY = 10;
+// How long, and of how many games at most, it is remembered that a deploy ended them (Lobby.ended)
+const LOST_MS = 30 * 60_000;
+const LOST_MAX = 2000;
 
 // Games this box runs at once, unless MAX_GAMES says otherwise. Measured with scripts/stress.js (2 Oct 2026): an
 // 8-player game at night uses ~17 ms of CPU a second (45 at worst; plan on 50, so ~14 games a core with 30% to
@@ -310,6 +313,7 @@ export class Room {
       case 'restoreFailed':
         this.lobby.log(`game ${this.code} not restored: ${m.why}`);
         this.lobby.onIncident?.({ code: this.code, kind: 'not restored', text: String(m.why).slice(0, 200) });
+        this.lobby.ended(this.code, m.world ? REJECT_REASON.ENDED_MAP : REJECT_REASON.ENDED_UPDATE);
         return;
     }
   }
@@ -502,6 +506,7 @@ export class Lobby {
     this.store = store;
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)
+    this.lost = new Map(); // code -> { reason, at }: games a deploy handed over that could not be carried on here (ended)
     this.stopping = false; // going down: nothing more is restored here
     this.cluster = null; // the other servers behind the proxy (cluster.js), when there are any
     this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
@@ -653,6 +658,7 @@ export class Lobby {
     }
     forgetSpent(this.creates);
     forgetSpent(this.misses);
+    for (const [code, l] of this.lost) if (now - l.at > LOST_MS) this.lost.delete(code);
   }
 
   players() {
@@ -724,6 +730,21 @@ export class Lobby {
       })
     );
     return done.filter(Boolean).length;
+  }
+
+  // A game the last server handed over could not be carried on here (its room's worker said so: 'restoreFailed'), so
+  // it is over. Its code is remembered for a while with why (a REJECT_REASON: ENDED_MAP, ENDED_UPDATE), and whoever
+  // comes for it - its players, sent back here by the deploy, or anyone with its link - is told that instead of
+  // "no such game" (wasLost; index.js seat). Those already on a socket waiting for it are told now.
+  ended(code, reason) {
+    if (this.lost.size >= LOST_MAX) this.lost.delete(this.lost.keys().next().value);
+    this.lost.set(code, { reason, at: Date.now() });
+    const room = this.rooms.get(code);
+    for (const ws of room?.socks || []) ws?.send(rejectBytes(reason), true, false);
+  }
+  // why the game that went by this code is gone (a REJECT_REASON), or 0: it is not one a deploy ended
+  wasLost(code) {
+    return this.lost.get(String(code || '').toUpperCase())?.reason || 0;
   }
 
   // The game the last server saved under this code, if one is waiting in the store: claimed (so no other server takes

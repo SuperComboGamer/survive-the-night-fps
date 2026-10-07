@@ -23,7 +23,7 @@ import { usePos, qpos, dqpos, POS_SCALE_WIDE } from '../shared/protocol.js';
 import { COL, footprintContains } from '../shared/collision.js';
 import { GRID_STEP, WATER_LEVEL } from '../shared/constants.js';
 import { Nav } from '../server/nav.js';
-import { checkWorld, walksThrough, solidsOf } from './worldcheck.js';
+import { checkWorld, walksThrough, solidsOf, comparePrint, printsLine } from './worldcheck.js';
 
 const arg = process.argv.indexOf('--seeds');
 const spec = arg > 0 ? process.argv[arg + 1] : '1-6';
@@ -118,6 +118,7 @@ const found = new Map();
 const mapsWith = {};
 const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0, schem: 0 };
 const prints = new Map();
+const onRecord = { n: 0, changed: [] }; // these mainlands against the ones on record (scripts/worldprints.json)
 const REACH = 2.5; // m from a thing to a cell the dead can stand in (a container is inside its own prop's cells)
 
 for (const seed of SEEDS) {
@@ -126,6 +127,8 @@ for (const seed of SEEDS) {
   const genMs = performance.now() - tg;
   const fp = fingerprint(w);
   prints.set(seed, fp.hash);
+  // (what a deploy needs of it: the map a game being played on this seed was saved on, as on record)
+  comparePrint(seed, w, onRecord);
   if (seed === SEEDS[0]) {
     check('the same seed builds the same mainland twice', fingerprint(createMainland(seed)).hash === fp.hash, fp.hash);
     const viaActs = worldFor(seed, WORLD.MAINLAND);
@@ -211,7 +214,7 @@ for (const seed of SEEDS) {
   each('the doorways out in the country can be walked through too', seed, !stuck.length, stuck.slice(0, 3).map((o) => `/tp ${o.x.toFixed(1)} ${o.z.toFixed(1)}`).join('; '));
 
   // ---- nothing floats, nothing is sunk: every solid prop stands on the ground, a floor or another prop
-  const solids = solidsOf(w);
+  const solids = solidsOf(w, true); // (as it was laid out: a wreck is stood on another by its plan, props.js)
   const slabs = w.parts.filter((p) => p.shape === 'box' && !p.rx && !p.rz);
   const adrift = [];
   for (const p of w.props) {
@@ -270,6 +273,9 @@ for (const seed of SEEDS) {
 }
 
 check(`${SEEDS.length} seeds build ${SEEDS.length} different mainlands`, new Set(prints.values()).size === SEEDS.length);
+const recordLine = printsLine(onRecord);
+if (!recordLine.ok) failed++;
+console.log(recordLine.text);
 for (const [name, bad] of perSeed) check(name, !bad.length, bad.length ? `(${bad.length} of ${SEEDS.length} seeds) ${bad.slice(0, 3).join(' | ')}` : '');
 const round = (v) => Math.round(v * 10) / 10 + 0;
 for (const [key, what] of [

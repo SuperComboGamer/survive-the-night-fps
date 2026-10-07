@@ -2,8 +2,8 @@
 // supply spots, doorways, roofs...) and the Builder that fills them in a place's own frame. world.js builds the island
 // with one, mainland.js the mainland: the same walls, rooms, roofs, props and placement rules in both.
 import { ZONE, CONT } from './defs.js';
-import { PROPS } from './props.js';
-import { ColliderGrid, makeBox, makeCyl, COL } from './collision.js';
+import { PROPS, collidersOf, planOf, unitOf } from './props.js';
+import { ColliderGrid, makeBox, makeCyl, footprintContains, COL } from './collision.js';
 
 const PI = Math.PI;
 
@@ -12,6 +12,8 @@ const PI = Math.PI;
 export function createKit({ rng, heightAt, half }) {
   const staticGrid = new ColliderGrid(half + 20, 8);
   const structGrid = new ColliderGrid(half + 20, 8);
+  const planGrid = new ColliderGrid(half + 20, 8); // what the world is laid out by, of the props that have a `plan` (laid)
+  const unplanned = new Set(); // ...and the colliders of those props, which planning does not look at
   const parts = []; // visual primitives {shape, x,y,z, sx,sy,sz, rx,ry,rz, mat, sides}
   const props = []; // {type, x,y,z, ry, seed}
   const lootSpawns = []; // floor items {x,y,z, zone}
@@ -33,26 +35,43 @@ export function createKit({ rng, heightAt, half }) {
     const c = Math.cos(ry);
     const s = Math.sin(ry);
     const flags = COL.STATIC | (def.salvage ? COL.SALVAGE : 0);
-    if (def.boxes) {
-      for (const b of def.boxes) {
-        const [lx, ly, lz, sx, sy, sz] = b;
-        const wx = x + c * lx + s * lz;
-        const wz = z - s * lx + c * lz;
-        const col = makeBox(wx, wz, y + ly - sy / 2, y + ly + sy / 2, sx, sz, ry, flags);
-        col.tag = tag;
-        staticGrid.add(col);
+    // (the colliders of the variant that is drawn: props.js `vary`)
+    const cols = collidersOf(type, prop ? prop.seed : 0);
+    // a wreck is stripped as one thing, or as its few units, whichever of its boxes is struck: every collider of a
+    // unit names the first of them (col.main: shared/wrecks.js wreckUnit)
+    const mains = [];
+    let k = 0;
+    const put = (col) => {
+      col.tag = tag;
+      if (def.salvage) {
+        const u = unitOf(type, k);
+        col.main = mains[u] ||= col;
       }
+      k++;
+      staticGrid.add(col);
+      // (where the world is laid out by something else than these: the grid that planning asks - `laid`)
+      if (def.plan) unplanned.add(col);
+    };
+    for (const b of cols.boxes || []) {
+      const [lx, ly, lz, sx, sy, sz, more = 0] = b;
+      put(makeBox(x + c * lx + s * lz, z - s * lx + c * lz, y + ly - sy / 2, y + ly + sy / 2, sx, sz, ry, flags | more));
     }
-    if (def.cyls) {
-      for (const cy of def.cyls) {
-        const [lx, lz, r, h] = cy;
-        const wx = x + c * lx + s * lz;
-        const wz = z - s * lx + c * lz;
-        const col = makeCyl(wx, wz, y, y + h, r, flags);
-        col.tag = tag;
-        staticGrid.add(col);
-      }
+    for (const cy of cols.cyls || []) {
+      const [lx, lz, r, h, base = 0, more = 0] = cy;
+      put(makeCyl(x + c * lx + s * lz, z - s * lx + c * lz, y + base, y + base + h, r, flags | more));
     }
+    if (def.plan) {
+      for (const [lx, ly, lz, sx, sy, sz] of def.plan.boxes || []) planGrid.add(makeBox(x + c * lx + s * lz, z - s * lx + c * lz, y + ly - sy / 2, y + ly + sy / 2, sx, sz, ry, flags));
+      for (const [lx, lz, r, h] of def.plan.cyls || []) planGrid.add(makeCyl(x + c * lx + s * lz, z - s * lx + c * lz, y, y + h, r, flags));
+    }
+  };
+  // Is there a collider's footprint within r of (x, z), as the world is laid out (a prop by its plan)? For what world
+  // generation decides by where things stand: it gives the same answer whatever shape the colliders are given later.
+  const _lq = [];
+  const laid = (x, z, r) => {
+    for (const c of staticGrid.query(x, z, r, _lq)) if (!unplanned.has(c) && footprintContains(c, x, z, r)) return true;
+    for (const c of planGrid.query(x, z, r, _lq)) if (footprintContains(c, x, z, r)) return true;
+    return false;
   };
 
   // Where a prop touches the ground, [x0, x1, z0, z1] in its own frame: the collision boxes that reach down to its
@@ -60,7 +79,7 @@ export function createKit({ rng, heightAt, half }) {
   const FOOT = {};
   const footprint = (type) => {
     if (type in FOOT) return FOOT[type];
-    const def = PROPS[type] || {};
+    const def = planOf(type) || {};
     let f = null;
     const grow = (x0, x1, z0, z1) => {
       f = f ? [Math.min(f[0], x0), Math.max(f[1], x1), Math.min(f[2], z0), Math.max(f[3], z1)] : [x0, x1, z0, z1];
@@ -85,7 +104,7 @@ export function createKit({ rng, heightAt, half }) {
   // For what is scattered along the roads after the places and the sites are built: a power pole or a sign that
   // would come up through a wreck, a crate or a shed is left out.
   const solidsOf = (type, x, z, ry) => {
-    const def = PROPS[type];
+    const def = planOf(type);
     if (!def) return [];
     const c = Math.cos(ry);
     const s = Math.sin(ry);
@@ -328,7 +347,7 @@ export function createKit({ rng, heightAt, half }) {
   const win = (at, w = 1.2, y0 = 1.05, y1 = 2.0) => ({ at, w, y0, y1, glass: true });
   const gap = (at, w, y1) => ({ at, w, y0: 0, y1 });
 
-  return { staticGrid, structGrid, parts, props, lootSpawns, containers, partSpots, openings, extraTrees, lights, roofs, clears, addPropColliders, footprint, seatY, solidsOf, solidsMeet, propBlocked, Builder, door, win, gap };
+  return { staticGrid, structGrid, parts, props, lootSpawns, containers, partSpots, openings, extraTrees, lights, roofs, clears, addPropColliders, laid, footprint, seatY, solidsOf, solidsMeet, propBlocked, Builder, door, win, gap };
 }
 
 // interaction point height of each container kind (above its base)

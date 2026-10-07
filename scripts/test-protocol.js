@@ -7,8 +7,8 @@ import { Game } from '../server/game.js';
 import { ClientView, writeEntities, stageEntities, playerFlags } from '../server/snapshot.js';
 import { readEntities } from '../client/net/decode.js';
 import { createPlayerState, snapPlayerState } from '../shared/playersim.js';
-import { LOD_NEAR } from '../shared/constants.js';
-import { PROJ } from '../shared/defs.js';
+import { LOD_NEAR, SERVER_TICK_RATE } from '../shared/constants.js';
+import { PROJ, STRUCT } from '../shared/defs.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const irnd = (a, b) => Math.floor(rnd(a, b + 1));
@@ -67,6 +67,7 @@ function spawn(kind) {
       e.hp = 500;
       e.maxHp = 500;
       e.state = 1;
+      e.burnLeft = Math.random() < 0.5 ? rnd(0, 600) : 0; // (a torch's or a campfire's: SF.BURN)
       break;
     case ENT.PROJECTILE:
       e.ptype = irnd(1, 9);
@@ -108,6 +109,7 @@ function spawn(kind) {
   return e;
 }
 
+let stagedTick = 0; // the tick the entities were last staged at (a fire's burn-out tick is counted from it)
 function expectQ(e) {
   const q = [qpos(e.x), qpos(e.y), qpos(e.z)];
   switch (e.kind) {
@@ -121,7 +123,7 @@ function expectQ(e) {
       q.push(e.count);
       break;
     case ENT.STRUCTURE:
-      q.push(Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255))), e.state);
+      q.push(Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255))), e.state, (e.stype === STRUCT.TORCH || e.stype === STRUCT.CAMPFIRE) && e.burnLeft > 0 ? (stagedTick + Math.round(e.burnLeft * SERVER_TICK_RATE)) & 0xffff || 1 : 0);
       break;
     case ENT.CRATE:
     case ENT.CACHE:
@@ -190,6 +192,7 @@ for (let tick = 1; tick <= TICKS; tick++) {
     if (e.kind === ENT.STRUCTURE && Math.random() < 0.1) {
       e.hp = rnd(0, 500);
       e.state = irnd(0, 1);
+      e.burnLeft = Math.random() < 0.5 ? rnd(0, 600) : 0; // (fed, relit or burnt out)
     }
     if (e.kind === ENT.CRATE && Math.random() < 0.05) e.state = irnd(0, 3);
     if (e.kind === ENT.CACHE && Math.random() < 0.05) e.state = irnd(0, 1);
@@ -226,7 +229,8 @@ for (let tick = 1; tick <= TICKS; tick++) {
   while (ents.size < 90) spawn(kinds[irnd(0, kinds.length - 1)]);
   // encode + decode: staged once, then one client after the other, as Game.sendSnapshots does
   const all = [...ents.values()];
-  stageEntities(all);
+  stageEntities(all, tick);
+  stagedTick = tick;
   for (const { p: viewer, view, store } of viewers) {
     // a client that is not draining its socket gets nothing this tick; its next snapshot has to cover the gap
     if (Math.random() < 0.1) {

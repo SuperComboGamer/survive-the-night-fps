@@ -22,6 +22,9 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   clinic.js      Mercy Clinic and the rule that its wards are dark at noon (see Dark interiors below)
   rail.js        the railway: its heights, the cut and fill, Whitlock Depot, the stalled train (see The railway)
   collision.js   static/dynamic collider grids, ray casts
+  props.js       every prop's size and its colliders: boxes and cylinders that follow its model, a variant's own
+                 where it stands differently, what the world is laid out by (`plan`), a wreck's units
+                 (docs/hitboxes.md; scripts/test-hitbox.js holds them to the models)
   surfaces.js    what a blow or a bullet lands on (wood, stone, metal, glass, earth, cloth, rubber) and the mark,
                  the bits and the sound each kind of blow makes on it (see Blows on the world below)
   wrecks.js      a wreck's record of the blows it took, and its alarm (see Blows on the world below)
@@ -57,6 +60,7 @@ client/      three.js client (Vite root)
   sandbox/    standalone dev pages for visually testing modules (not shipped)
 scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js),
              clip checking for models, held items, pickups and world props (scripts/clip/, docs/object-clipping.md)
+             colliders against what is drawn: every prop, and both maps swept (scripts/hitbox/, docs/hitboxes.md)
 ```
 
 ## Conventions
@@ -452,8 +456,10 @@ node, else the shell dies of it and the container stops with node never told (`s
   its `workerData`) as soon as the store says one is there (`listen`), for any already waiting when it starts, and
   for a socket or an invite card asking for a code it does not have yet (the socket's seat waits for it, as it does
   for a session: index.js `open`; the card's answer waits). The worker
-  makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes (its players
-  get `NO_GAME`, as every deploy used to end).
+  makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes. The lobby
+  remembers that code for half an hour with why (`Lobby.ended`, `wasLost`), and whoever comes for it is turned away
+  with `REJECT_REASON.ENDED_MAP` (the update makes another map of its seed) or `ENDED_UPDATE` (anything else)
+  instead of `NO_GAME`: the client says so once and stops asking (`client/net/comeback.js`).
 - **What is saved** (`saveGame` / `loadGame`): the clock, phase, waves and the boss, the car's supplies, the
   schematics, who left with what kit and who left dead, the trees felled and what is used up of the trees and
   wrecks, the loot points' timers, the registry, the players, what was built (colliders and nav put back), the
@@ -478,12 +484,31 @@ node, else the shell dies of it and the container stops with node never told (`s
   browser id (`rejoinKey`), never the id: it is saved. Whoever has not come back within `HANDOFF_RESERVE_SECONDS`
   (180) has left, as after any drop (`parkKit`, `dropAll`). Held places count towards the seats (`Room.noRoom`, the
   worker's `held`), so a quick join does not fill them.
+- **Nobody is hurt while they cannot be playing** (`Game.safe`, `arrived`, `frozen`; `test-handoff-safe`). A JOIN
+  gives a held player their body back at once, but their browser then builds the valley and its shaders before it
+  draws a frame (after a deploy's reload, up to half a minute). So a player who is back stays as safe as a held one
+  (`p.arriving`) until their client has sent commands in a second's worth of ticks, or does something in the world,
+  or `ARRIVE_SECONDS` (45) have passed - after an ordinary drop never longer than what was left of the grace they
+  had, so coming back is no more of a shelter than staying away was. And a game brought over does not run at all -
+  no clock, nothing moves; snapshots still go out - until one of its players is playing again or somebody new
+  joins, or `HANDOFF_FREEZE_SECONDS` (45, on the wall's clock) have passed (`Game.thawAt`). A deploy on top of a
+  deploy starts both again: every player is held anew, the game stands still again.
 - **Would the save mean the same here?** (`checkEnvelope`, the `worldHash` check in the `Game` constructor.)
   `STATE_VERSION` (handoff.js) must match: bump it when a saved field is renamed or removed or changes meaning or
   units, not when one is added. Every name -> number pair of the enums the save was made with (`ITEM`, `ZTYPE`,
   `STRUCT`, ...) must hold: an entry appended since is fine, one renumbered is not. And the valley must be the one
-  this build makes of the seed (`worldHash`: colliders, loot spots, containers, places): positions and indices point
-  into it. Any of these failing drops the save; that game ends as before.
+  this build makes of the seed: positions and indices point into it. `worldPrint` takes two fingerprints of a
+  world. `shape` is what a save points into: the colliders, the loot, container, supply and spawn spots, the
+  places. `hash` is that and the zone each spot is filed under, which a save does not depend on (a container is
+  saved with its own zone, a hidden schematic with the place it is rumoured in). A save carries both
+  (`worldShape`, `worldHash`) and is checked by its shape (`sameWorld`); one from before saves carried a shape has
+  only the hash to go by, and builds from before read only the hash. So a build that only files a spot under
+  another place carries every game over; one that moves anything does not.
+- **Will this change end running games?** The shape of the maps the tests build anyway (four islands, six mainlands)
+  is on record in `scripts/worldprints.json`. `test-world` and `test-mainland` fail when this tree makes another
+  map of one of those seeds, saying that deploying it ends the games being played on that map;
+  `node scripts/worldprint.js --update` records the new maps once that is meant, and the pull request's Risk section
+  says so (`.claude/skills/create-pr/SKILL.md`).
 - **The client** (`connection.js`, `Game.onMoving`, `moveBack` in `main.js`): a socket closed with `MOVED_CODE`
   keeps the game on screen, input off and the pointer kept, under "Server updating" (`ui.setConnectionStatus`), and
   joins the same code again at once, then every 0.5-2 s for 45 s (`join(..., { resume: true })` keeps the places
@@ -491,7 +516,9 @@ node, else the shell dies of it and the container stops with node never told (`s
   client build (a hash of `dist/index.html`, which names the bundles by content) or the protocol differs from what
   the page was loaded from, it reloads, and the reloaded page goes back in as a reopened one does (`stn.playing`).
   `index.html` is served `no-cache` so the reload gets the new build.
-- **Tests:** `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
+- **Tests:** `test-handoff-world` (a save of a build that filed a container elsewhere is restored, one of other
+  ground is refused; a real server and the client's own `Connection` and `comeBack`: told once, and why),
+  `test-handoff-safe` (above), `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
   whole, and a field that came back different and is not on its `TRANSIENT` list fails it - a field added and not
   saved fails `npm test` instead of resetting on every deploy), `test-handoff` (two server processes and a third
   that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
@@ -946,6 +973,22 @@ a few hooks into code that already exists:
   past `LOD_NEAR`. `npm run bench:net` (seed 4242, 4 players): +81 B/s of payload per client in the half-minute standing at
   the car, where two groups in range were being moved about by the dead (+5% on the wire), +37 B/s roaming, +4 B/s
   in the night's fight; no new messages or packets. The server spends about 0.01 ms a tick on them.
+- **The mainland's are undead** (`gr.undead`, from `world.kind`; the numbers in `UNDEAD`, shared/deer.js). The same
+  entity, flagged by `DEER_UNDEAD` (bit 7 of the variant in the create: the client builds one of three rotten coats),
+  so hunting, history, hit registration and death carry over; what differs is the group's mind. A pack (3-5) roams
+  (`roamT`: on to new ground every 20-60 s, 30-70 m off) and fears nothing: no bolt from a survivor, a noise or the dead.
+  `Deer.watch` (four times a second) sets it on the nearest survivor inside `notice` (crouch and sprint as for the
+  living; nobody downed, away or down the mine), `damage` on whoever hit one of it, `heard` on whoever made a noise it
+  hears (a survivor within 3 m of where the noise was made) - each only inside `leash`. Hunting (`MODE.HUNT`,
+  `Deer.hunting`, one of `HS` a member): in at `run` by the prey's own flow field (the one `Zombies` keeps for every
+  survivor), or round them at a charge's distance while it waits its turn (`cd`, and `gap` between two of a pack);
+  then it stands with its antlers down for `windup` s (`DANIM.CHARGE` at a standstill: the telegraph), charges along a
+  line it bends `steer` rad/s at most, and `ram`s whoever stands in it - `damagePlayer` with
+  `{ kind: KILLER.WORLD, deer: true }` (killfeed flag 8, `YOU_DIED` 254, cause `undead_deer`), and a shove that does not
+  add up while the survivor is still off their feet - shown as `DANIM.ATTACK`; then on past by `overrun` m. The pack
+  gives up (`giveUp`) on prey out of the leash or out of its reach for `lose` s. `DEER_HEAD.charge` is where the model
+  carries the skull with its antlers down. `scripts/test-undead-deer.js` holds all of it, and ten minutes of hunts across
+  the plain (none in the water, inside anything solid, off the map, or held up pushing).
 
 ## The fair: a ride in the player simulation
 
@@ -1578,6 +1621,35 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.
   `scripts/test-itemguide.js` holds every line against the tables, generated worlds (which place tables are
   rolled at all) and the server's gathering. Supply-drop loot (`CRATE_TABLE`, private to the server) is not in it.
+## Where a round goes: the cone, the climb, and the view
+
+A gun's row in `WEAPONS` gives three numbers: `spread` (the cone's half-angle at the hip, standing still),
+`moveSpread` (added at a walk) and `recoil`. What becomes of them is in one place, `shared/playersim.js`, and runs
+the same on the server and in the client's prediction:
+
+- **The heat** is `s.recoil`: a round adds one (0.8 with Steady Grip) up to `HEAT_MAX`, and it cools `HEAT_COOL` a
+  second while the trigger is up. Capped, so a gun is itself again just over a second after any burst. (The
+  nunchucks keep their combo step in the same field.)
+- **The cone**, `shotSpread`: `spread x (1 + BLOOM x heat^1.5) + moveSpread x speed`, plus `AIR_SPREAD` off the ground,
+  x `CROUCH_SPREAD` crouched, x `AIM_SPREAD` behind the sights. The power keeps the first rounds of a burst nearly as
+  tight as the first.
+- **The climb**, `shotClimb`: how far over the aim the round goes, `recoil x CLIMB x r x sqrt(r / CLIMB_FULL)` for
+  the first `CLIMB_FULL` rounds and level after, x `AIM_CLIMB` behind the sights. It is the `recoilPitch` of the
+  fire event and of `EVT.SHOT`.
+- **The view** (`client/game/aimview.js`, `Game.viewClimb`): the camera is lifted by `shotClimb` of the predicted
+  state, eased, so the sights or the crosshair are on what the next round strikes and pulling the view down holds a
+  burst on its mark; a round's punch on top of it is over before the gun can fire again. The crosshair's ticks
+  stand on the edge of `shotSpread`'s cone at the camera's field of view (`crosshairGap`). A climb the view does
+  not show is a round that goes somewhere the player was never shown: change the two together.
+- **The aimed viewmodel**: `VM[item].adsZ` puts the gun's `meta.sight` point on the view axis with the bore level,
+  and `adsFov` narrows the viewmodel camera onto iron sights (the AK-47's rear notch and hooded post, whose tip is
+  at the sight point's height, so the round goes to the post's tip).
+
+`node scripts/gun-groups.js` prints every gun's group sizes at 10 to 100 m and its time to kill a Walker, aimed
+and from the hip, still and walking, out of the simulation itself (`--tree` for another checkout: the before of a
+tuning PR). `scripts/test-spread.js` holds the rule, the AK-47's groups, the server against the prediction and the
+view against the rounds; `scripts/clip/aim-shots.js` takes the pictures in the real game, frame by frame.
+
 ## Nunchucks: a moveset, and a chain that is simulated
 
 Every other melee weapon is one swing that lands on the command that makes it. `ITEM.NUNCHAKU` is a moveset, and
