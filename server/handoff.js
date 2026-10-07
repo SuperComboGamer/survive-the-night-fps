@@ -72,9 +72,13 @@ export function enumMismatch(saved) {
 //     place (as when the stalled train's toolbox stopped counting as Whitlock Depot) makes the same ground, so a game
 //     is carried over it. This is the fingerprint builds from before `shape` wrote (envelope.worldHash) and the only
 //     one they read, so it is still written, and still what a save without a shape is checked against.
+//   ground: the lie of the land - the terrain's height on a grid of 33 x 33 points across the map, to the centimetre. A
+//     build that only raised or lowered the ground would make the same shape, and a save's positions would be in the
+//     hills or over them. Saves carry it from this build on (worldGround); one from before is not checked against it.
 export function worldPrint(world) {
   let hash = 0x811c9dc5;
   let shape = 0x811c9dc5;
+  let ground = 0x811c9dc5;
   // label: a spot's zone, which only `hash` takes in
   const mix = (v, label = false) => {
     v = Math.round(v * 100) | 0;
@@ -105,7 +109,14 @@ export function worldPrint(world) {
   }
   for (const z of world.zones) for (const v of [z.id, z.x, z.z]) mix(v);
   for (const v of [world.mine ? 1 : 0, world.rail ? world.rail.main.n : 0, world.fair ? 1 : 0]) mix(v);
-  return { hash: (hash >>> 0).toString(16), shape: (shape >>> 0).toString(16) };
+  const half = world.half || 0;
+  for (let j = 0; j <= 32; j++) {
+    for (let i = 0; i <= 32; i++) {
+      const v = Math.round(world.heightAt(-half + (i * 2 * half) / 32, -half + (j * 2 * half) / 32) * 100) | 0;
+      for (let k = 0; k < 4; k++) ground = Math.imul(ground ^ ((v >>> (k * 8)) & 0xff), 0x01000193);
+    }
+  }
+  return { hash: (hash >>> 0).toString(16), shape: (shape >>> 0).toString(16), ground: (ground >>> 0).toString(16) };
 }
 export const worldHash = (world) => worldPrint(world).hash;
 
@@ -120,11 +131,12 @@ export class HandoffError extends Error {
 }
 // Whether a save's valley is the one this build made of its seed (prints: worldPrint of it). A save from before
 // `worldShape` has only the stricter fingerprint to go by.
-export const sameWorld = (env, prints) => (typeof env.worldShape === 'string' ? env.worldShape === prints.shape : env.worldHash === prints.hash);
+// (a save's ground is checked when it carries one: builds from before it did not write it)
+export const sameWorld = (env, prints) => (typeof env.worldShape === 'string' ? env.worldShape === prints.shape : env.worldHash === prints.hash) && (typeof env.worldGround !== 'string' || env.worldGround === prints.ground);
 
 // The envelope round a game's save: what is checked before any of it is believed (checkEnvelope)
 export function envelope(game) {
-  return { format: FORMAT, stateVersion: STATE_VERSION, protocol: PROTOCOL_VERSION, build: BUILD, savedAt: Date.now(), enums: enums(), worldHash: game.worldHash, worldShape: game.worldShape, game: game.save() };
+  return { format: FORMAT, stateVersion: STATE_VERSION, protocol: PROTOCOL_VERSION, build: BUILD, savedAt: Date.now(), enums: enums(), worldHash: game.worldHash, worldShape: game.worldShape, worldGround: game.worldGround, game: game.save() };
 }
 export function checkEnvelope(env) {
   if (!env || env.format !== FORMAT) throw new HandoffError(`envelope format ${env?.format} (this build reads ${FORMAT})`);

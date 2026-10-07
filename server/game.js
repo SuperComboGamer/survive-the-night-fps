@@ -1160,6 +1160,7 @@ export class Game {
     this.worldPrint = v.print; // (what a save made on this valley is checked against: handoff.js)
     this.worldHash = this.worldPrint.hash;
     this.worldShape = this.worldPrint.shape;
+    this.worldGround = this.worldPrint.ground;
     this.nav = v.nav;
     this.mineNav = v.mineNav; // (a valley without the workings has none)
     this.worldPlayed = false;

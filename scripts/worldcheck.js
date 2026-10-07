@@ -19,19 +19,24 @@ import { worldPrint } from '../server/handoff.js';
 // record, and test-world.js and test-mainland.js fail when this tree makes another one - until the record is made
 // again on purpose (node scripts/worldprint.js --update), which is the author saying "yes, this ends running games".
 export const PRINTS_FILE = new URL('./worldprints.json', import.meta.url);
+// ...and the lie of their land (worldPrint's `ground`: the terrain's heights), which a save is held to as well
+export const GROUND_FILE = new URL('./groundprints.json', import.meta.url);
 export const PRINT_SEEDS = { island: [1, 2, 8, 9], mainland: [1, 2, 3, 4, 5, 6] }; // (test-world.js's valleys, test-mainland.js's mainlands)
 const mapOf = (world) => (world.kind === WORLD.MAINLAND ? 'mainland' : 'island');
 let onRecord = null;
+let groundOnRecord = null;
 export const recordedPrints = () => (onRecord ||= JSON.parse(readFileSync(PRINTS_FILE, 'utf8')));
+export const recordedGround = () => (groundOnRecord ||= JSON.parse(readFileSync(GROUND_FILE, 'utf8')));
 // Sets a world a test has built against the record: into: { n: how many were on record, changed: [{ map, seed, was,
 // now }] } (a seed that is not on record is not counted)
-export function comparePrint(seed, world, into = { n: 0, changed: [] }, recorded = recordedPrints()) {
+export function comparePrint(seed, world, into = { n: 0, changed: [] }, recorded = recordedPrints(), ground = recordedGround()) {
   const map = mapOf(world);
   const was = recorded[map]?.[seed];
   if (!was) return into;
   into.n++;
-  const now = worldPrint(world).shape;
-  if (now !== was) into.changed.push({ map, seed, was, now });
+  const print = worldPrint(world);
+  if (print.shape !== was) into.changed.push({ map, seed, was, now: print.shape });
+  else if (ground[map]?.[seed] && print.ground !== ground[map][seed]) into.changed.push({ map, seed, was: `ground ${ground[map][seed]}`, now: `ground ${print.ground}` });
   return into;
 }
 // the line a test prints of what comparePrint gathered, and whether it passed
@@ -42,7 +47,7 @@ export function printsLine({ n, changed }) {
   return {
     ok: false,
     text: `FAIL  this change makes another map of the same seed (${which}): deploying it ends every game being played on ${maps.length > 1 ? 'either map' : `the ${maps[0]}`}, because a save is only restored onto the map it was made on (server/handoff.js).
-        If the map is meant to change: node scripts/worldprint.js --update, commit scripts/worldprints.json, and say in the pull request's Risk section that the deploy ends running games.`,
+        If the map is meant to change: node scripts/worldprint.js --update, commit scripts/worldprints.json and groundprints.json, and say in the pull request's Risk section that the games on that map will be carried on by the build before it (docs/deploys.md).`,
   };
 }
 

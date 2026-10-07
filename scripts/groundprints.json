@@ -1,0 +1,17 @@
+{
+  "about": "The lie of the land of the maps on record in worldprints.json (server/handoff.js worldPrint ground): see scripts/worldprint.js. Do not edit by hand.",
+  "island": {
+    "1": "42c9c7d6",
+    "2": "e04301cf",
+    "8": "52996ca5",
+    "9": "d60a2506"
+  },
+  "mainland": {
+    "1": "17dab5b1",
+    "2": "b1d519bc",
+    "3": "57e87c4d",
+    "4": "eb36bd3",
+    "5": "7c6ada51",
+    "6": "95ceb96"
+  }
+}
