@@ -4,8 +4,8 @@
 //     their arms, replicated with its holder; nobody takes it out of them; the "Who Is a Good Kitty?" feat
 //   - in their arms: no weapon goes off, swings or reloads; the fire button strokes it (CANIM.PET); they run as fast
 //     as ever and do not swim with it
-//   - setting it down: [E] / [G] (ACT.CAT_PUT) in front of them, a weapon key where they stand, using a medkit; and it
-//     leaps clear when they go down, die, drop off the game or leave
+//   - setting it down: [E] / [G] (ACT.CAT_PUT) in front of them, a weapon key where they stand, using a medkit; back
+//     in sight in the holder's own game once it is down (client/game/catcarry.js); and it leaps clear when they go down, die, drop off the game or leave
 //   - the island's car driving off with it in somebody's arms: "Nobody Gets Left Behind" for them (and only them),
 //     and the cat sits beside them at the bridgehead on the mainland
 // usage: node scripts/test-cat.js [seed = 1]
@@ -20,6 +20,8 @@ import { groundAt } from '../shared/collision.js';
 import { swimming } from '../shared/swim.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { CAT_MODE } from '../server/cats.js';
+import * as THREE from 'three';
+import { CatClient } from '../client/game/catcarry.js';
 
 const seed = +(process.argv[2] || 1);
 const fails = [];
@@ -225,6 +227,20 @@ check('a new game has the stray cat near the car, in nobody\'s arms', !!cat() &&
   check('[E] / [G]: it is set down in front of them, on the ground, sitting', !held() && !s.pet && cat().holder === 0 && Math.hypot(cat().x - ahead.x, cat().z - ahead.z) < 0.15 && Math.abs(cat().y - groundAt(game.world, cat().x, cat().z, s.y + 0.6, 0.16)) < 0.05 && cat().anim === CANIM.SIT && seen(B)?.q[5] === 0, `${Math.hypot(cat().x - ahead.x, cat().z - ahead.z).toFixed(2)} m from the spot, anim ${cat().anim}`);
   run(secs(0.5));
   check('...and Ann is told her arms are empty', A.self.pet === 0);
+
+  // in Ann's own game: the cat in her arms is the viewmodel's, the one in the world hidden; set down, it is back
+  lift(A);
+  const e = seen(A);
+  e.view = { object: { visible: true, position: new THREE.Vector3(), rotation: { y: 0 } }, update() {} };
+  const cc = new CatClient({ myId: A.id, debugCam: false, entities: { ents: new Map() }, audio: { play() {} } });
+  cc.attach(e);
+  cc.placeHeld(1 / 60, 0, new THREE.Vector3());
+  const hidden = !e.view.object.visible;
+  A.act(ACT.CAT_PUT);
+  run(1);
+  cc.placeHeld(1 / 60, 0, new THREE.Vector3());
+  check('in her own game it is hidden in her arms and back in sight on the ground once set down', hidden && seen(A).q[5] === 0 && e.view.object.visible, `hidden in her arms ${hidden}, holder ${seen(A).q[5]}, visible after ${e.view.object.visible}`);
+  run(secs(0.5));
 
   lift(A);
   const at = { x: s.x, z: s.z };

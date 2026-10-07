@@ -523,6 +523,9 @@ export class Crafting {
       const stationOk = !r.station || o.near[r.station];
       const unlocked = !r.schem || o.schemOk(r.schem);
       const group = !unlocked ? 'locked' : short ? 'missing' : !stationOk ? 'station' : 'ready';
+      // (r.hide - a vehicle, which is the mainland's: not in the list at all until the team has found its manual there)
+      const hidden = !!r.hide && !unlocked;
+      if (rec.hidden !== hidden) rec.b.hidden = rec.hidden = hidden;
       rec.group = group;
       rec.max = group === 'ready' ? craftRun(r, copyInv(model), CRAFT_MAX, ctx) : 0;
       if (group === 'ready') {

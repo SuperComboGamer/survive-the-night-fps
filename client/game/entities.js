@@ -243,6 +243,8 @@ function wrapAngle(a) {
   return a;
 }
 
+const _vq = new THREE.Quaternion();
+const _vUp = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3();
 const _nkAt = new THREE.Vector3();
 const _catPose = { cradle: false, pet: false };
@@ -350,6 +352,10 @@ export class Entities {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
     } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT || e.kind === ENT.DEER) yaw = dqangle8(q[3]);
+    else if (e.kind === ENT.VEHICLE) {
+      yaw = dqangle16(q[3]);
+      pitch = (((q[4] >> 8) << 24) >> 24) / 100; // (its steering, interpolated with the rest: game/vehicles.js)
+    }
     else if (e.kind === ENT.HANDCAR) pitch = q[3] / HCAR_AT; // (a handcar's place on the line, interpolated as a pitch is: game/handcar.js)
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
@@ -421,6 +427,9 @@ export class Entities {
         }
         case ENT.GUN:
           g.gun.attach(e); // the mounted gun: client/game/mountedgun.js draws and turns it
+          break;
+        case ENT.VEHICLE:
+          g.vehicles.attach(e); // a moped, a car, a bicycle: client/game/vehicles.js draws it
           break;
         case ENT.HANDCAR:
           g.handcar.attach(e); // a handcar on the railway: client/game/handcar.js draws it on the line
@@ -616,8 +625,19 @@ export class Entities {
         }
         break;
       case ENT.CAT:
+        if (initial) break;
+        if (mask & 0b1000 && !e.q[5]) {
+          // set down: drawn on the ground where it was put from the first frame, not slid down out of the arms it was in
+          e.samples = new Samples();
+          this.pushSample(e, t);
+        } else if (mask & 0b11) this.pushSample(e, t);
+        break;
       case ENT.HANDCAR:
         if (!initial && mask & 0b11) this.pushSample(e, t);
+        break;
+      case ENT.VEHICLE:
+        if (!initial && mask & 0b11) this.pushSample(e, t);
+        if (!initial) this.g.vehicles.changed(e);
         break;
       case ENT.DEER:
         if (!initial && mask & 0b11) this.pushSample(e, t);
@@ -712,6 +732,7 @@ export class Entities {
   }
 
   destroyView(e) {
+    if (e.kind === ENT.VEHICLE) this.g.vehicles.detach(e);
     const g = this.g;
     if (e.kind === ENT.CACHE || e.kind === ENT.ITEM) this.caches.delete(e);
     if (e.kind === ENT.ITEM) this.loose.delete(e);
@@ -994,6 +1015,7 @@ export class Entities {
           e.seatK = Math.max(0, Math.min(1, (e.seatK || 0) + (ride ? dt : -dt) * 5));
           if (e.seatK > 0) g.fair.seatBlend(e.seat - 1, tmp, e.seatK);
           // on a handcar they stand on its deck where the car is drawn (game/handcar.js), stepping onto it over a moment
+          const seat = g.vehicles.seatOf(e.id); // in a vehicle: drawn in their seat of it, as it is drawn (game/vehicles.js)
           const carted = g.handcar.riderAt(e.id, _car);
           e.cartK = carted ? Math.min(1, (e.cartK || 0) + dt * 5) : 0;
           if (carted) {
@@ -1007,7 +1029,7 @@ export class Entities {
           const dz = tmp.z - e.rz;
           const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 10);
-          if (e.seatK > 0 || carted) e.speed = 0; // (carried, not walking)
+          if (e.seatK > 0 || carted || seat) e.speed = 0; // (carried, not walking)
           const fallVy = e.vy || 0; // (how fast they came down before this frame: a jump into the water splashes)
           e.vy = e.seatK > 0 || carted ? 0 : dy / Math.max(dt, 1e-3);
           e.rx = tmp.x;
@@ -1041,7 +1063,7 @@ export class Entities {
           e.afloat = afloat;
           const carry = !grips && g.gun.carrier === e.id; // ...or carrying it off in both arms (mountedgun.js draws it there)
           const cat = g.cat.poseOf(e.id, _catPose); // ...or the stray cat (catcarry.js draws it there)
-          const weapon = zombie || grips || afloat || carry || cat.cradle ? 0 : e.q[6];
+          const weapon = zombie || grips || afloat || carry || cat.cradle || (seat && seat.k === 0) ? 0 : e.q[6]; // (the cat in their arms; at the wheel: both hands on it)
           if (weapon !== e.weapon) {
             e.weapon = weapon;
             v.setWeapon(weapon);
@@ -1054,7 +1076,24 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, cradle: cat.cradle, pet: cat.pet, sit: e.seatK > 0.5, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
+          // a vehicle's seat: the body goes over from where it stood beside it, folding as it goes (and back out)
+          const vride = seat ? g.vehicles.place(seat, v) : null;
+          e.vK = seat && !e.vFoot ? 1 : Math.max(0, Math.min(1, (e.vK || 0) + (seat ? dt : -dt) / 0.3)); // (first seen in a seat: in it)
+          if (seat) (e.vSeat || (e.vSeat = new THREE.Vector3())).copy(v.object.position), (e.vQuat || (e.vQuat = new THREE.Quaternion())).copy(v.object.quaternion);
+          else if (e.vK <= 0 || !e.vFoot) (e.vFoot || (e.vFoot = new THREE.Vector3())).set(e.rx, e.ry, e.rz), (e.vYaw = e.ryaw);
+          const vU = e.vK * e.vK * (3 - 2 * e.vK);
+          if (e.vK > 0 && e.vK < 1 && e.vSeat && e.vFoot) {
+            if (seat) {
+              _vq.setFromAxisAngle(_vUp, e.vYaw || 0);
+              v.object.position.lerpVectors(e.vFoot, e.vSeat, vU);
+              v.object.quaternion.copy(_vq).slerp(e.vQuat, vU);
+            } else {
+              _vq.setFromAxisAngle(_vUp, e.ryaw);
+              v.object.position.set(e.rx, e.ry, e.rz).lerp(e.vSeat, vU);
+              v.object.quaternion.copy(_vq).slerp(e.vQuat, vU);
+            }
+          }
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, cradle: cat.cradle, pet: cat.pet, sit: e.seatK > 0.5 || !!seat || e.vK > 0, reach: vride?.reach, sitT: vride?.sitT, sitK: vride?.sitK, sitSplay: vride?.sitSplay, sitLean: vride?.sitLean, sitTwist: vride?.sitTwist, feet: vride?.feet, sitNow: seat || e.vK > 0 ? vU : undefined, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
           v.object.visible = !(dead && zombie);
           // nunchucks: what their chain is doing is heard from where they stand (nothing of it is on the wire)
           if (weapon === ITEM.NUNCHAKU) {
@@ -1196,6 +1235,7 @@ export class Entities {
       }
     }
     g.cat.placeHeld(dt, time, camPos);
+    g.vehicles.lampCands(flashCands, camPos); // (a lit headlamp is a light like a survivor's torch)
     flashCands.sort((a, b) => a.d - b.d);
     for (let i = 0; i < Math.min(2, flashCands.length); i++) this.remoteFlash.push(flashCands[i]);
     // corpses

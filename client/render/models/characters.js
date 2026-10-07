@@ -4133,6 +4133,8 @@ const _e = new THREE.Euler();
 const _grip = new THREE.Vector3();
 const _lh = new THREE.Vector3();
 const _off = new THREE.Vector3();
+const _reachM = new THREE.Matrix4();
+const REACH_FIST = 0.075; // the middle of a closed fist, out from the wrist
 const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
 const MOUNT_POS_L = new THREE.Vector3(0.025, -0.08, 0); // (the left fist's, for what a left hand holds: nunchucks)
 // the stray cat in their arms (s.cradle, s.pet): the forearms across in front of them under it (arm()'s pitch, abduction,
@@ -4444,7 +4446,10 @@ class SurvivorInstance {
     this.fadeT += dt;
     const k = 1 - Math.exp(-dt * 10);
     this.crouchW += ((s.crouch && !s.sit ? 1 : 0) - this.crouchW) * k;
-    this.sitW += ((s.sit ? 1 : 0) - this.sitW) * k;
+    // (s.sitNow: how far into the seat they are, said outright - a vehicle's seat, where the body is moved in from
+    // beside it as it folds: game/vehicles.js)
+    if (s.sitNow !== undefined) this.sitW = s.sit ? s.sitNow : 0;
+    else this.sitW += ((s.sit ? 1 : 0) - this.sitW) * k;
     this.airW += ((s.onGround === false ? 1 : 0) - this.airW) * (1 - Math.exp(-dt * 12));
     this.runW += ((s.sprint && speed > 4 ? 1 : 0) - this.runW) * k;
     this.reloadW += ((s.reloading ? 1 : 0) - this.reloadW) * k;
@@ -4497,6 +4502,21 @@ class SurvivorInstance {
       }
     } else {
       this.poseHuman(p, s, speed, time);
+      if (s.sitLean && this.sitW > 0) {
+        // over the bars: the trunk forward, the head still up
+        const l = s.sitLean * this.sitW;
+        p[SPINE * 4] -= l * 0.5;
+        p[CHEST * 4] -= l * 0.5;
+        p[NECK * 4] += l * 0.45;
+        p[HEAD * 4] += l * 0.35;
+      }
+      if (s.sitTwist && this.sitW > 0) {
+        // carried, and aiming out of the side: the trunk comes round to it
+        const t = s.sitTwist * this.sitW;
+        p[SPINE * 4 + 1] += t * 0.4;
+        p[CHEST * 4 + 1] += t * 0.45;
+        p[HEAD * 4 + 1] += t * 0.15;
+      }
       ik = this.hold !== HOLD_NONE;
     }
     const o = this.out;
@@ -4508,6 +4528,16 @@ class SurvivorInstance {
     this.applyPose(o);
     if (ik) this.solveArms(s, time);
     else if (s.cradle && s.pet && !this.zombie && !s.dead) this.solvePet(time);
+    if (s.reach && !this.zombie && !s.dead) this.solveReach(s.reach);
+    if (s.feet && !this.zombie && !s.dead && this.sitW > 0.02) this.solveFeet(s.feet, this.sitW);
+    if (this.hide) {
+      // seen from our own eyes (in a vehicle's seat): no head in the way, and no arms where the view's own are
+      this.bones[HEAD].scale.setScalar(0.001);
+      if (this.hide > 1) {
+        this.bones[UARM_L].scale.setScalar(0.001);
+        this.bones[UARM_R].scale.setScalar(0.001);
+      }
+    }
     if (this.packOn) this.hangPack();
     // flashlight follows the full aim pitch (chest only carries part of it)
     const fl = this.flashlightAnchor;
@@ -4585,12 +4615,16 @@ class SurvivorInstance {
     const amp = mv * lerp(lerp(0.45, 0.75, run), 0.4, cr);
     const knee = mv * lerp(lerp(0.75, 1.3, run), 0.6, cr);
     const sit = this.sitW;
-    const baseT = lerp(cr * 0.95, 1.5, sit);
-    const baseK = lerp(0.06 + cr * 1.5, 1.45, sit);
+    // (seated: thighs level and shins hanging, unless the seat says how its legs go - s.sitT / sitK / sitSplay: the
+    // thigh's and the knee's angles and how far the knees are apart, in a car or on a saddle: game/vehicles.js)
+    const baseT = lerp(cr * 0.95, s.sitT ?? 1.5, sit);
+    const baseK = lerp(0.06 + cr * 1.5, s.sitK ?? 1.45, sit);
     // nunchucks: the trunk and the legs go with the move (the rig's body track: twist, lean, bend, knees, step)
     const nb = this.nk && this.item === ITEM.NUNCHAKU && !this.zombie ? this.nk.core.bodyS : null;
     const nkDrop = nb ? clamp(nb[4] / 0.3, 0, 0.6) * (1 - cr) : 0;
-    legCycle(z, p, ph, amp * (1 - sit), knee * (1 - sit), baseT + nkDrop * 0.95, baseK + nkDrop * 1.5, 0, 0.03 + 0.1 * sit);
+    // (s.pedal: on a bicycle the legs go round with its cranks - their angle)
+    const ped = s.pedal !== undefined && sit > 0.5;
+    legCycle(z, p, ped ? s.pedal : ph, ped ? 0.3 : amp * (1 - sit), ped ? 0.55 : knee * (1 - sit), baseT + nkDrop * 0.95, baseK + nkDrop * 1.5, 0, 0.03 + (s.sitSplay ?? 0.1) * sit);
     // air: tuck legs
     if (air > 0.01) {
       for (let side = 0; side < 2; side++) {
@@ -4886,10 +4920,102 @@ class SurvivorInstance {
     }
   }
 
+  // Both hands out to two points of the world (s.reach: { l, r }, Vector3s or null): the grips of a moped's bars,
+  // the rim of a steering wheel. The wrist stops a fist short of the point, so that the fist closes on it.
+  solveReach(reach) {
+    const P = this.P;
+    const b = this.bones;
+    const chest = b[CHEST];
+    chest.updateWorldMatrix(true, false);
+    _reachM.copy(chest.matrixWorld).invert();
+    const cy = P.shoulderY - P.chestY;
+    for (const side of [1, -1]) {
+      const t = side > 0 ? reach.r : reach.l;
+      if (!t) continue;
+      _T.copy(t).applyMatrix4(_reachM);
+      _S.set(side * P.shoulderW, cy, 0);
+      _pole.set(side * 0.7, -1, 0.45);
+      // (the wrist stops a fist short of the point, back along the forearm: where the forearm lies is found by
+      // solving for the point itself first, then twice for the wrist)
+      _lh.copy(_T);
+      for (let it = 0; it < 3; it++) {
+        ikTwoBone(_S, _T, P.uarmLen, P.farmLen, _pole, _qU, _qL, _off);
+        if (it === 2) break;
+        _off.sub(_lh).normalize(); // from the point back towards the elbow
+        _T.copy(_lh).addScaledVector(_off, REACH_FIST);
+      }
+      const clav = b[side > 0 ? CLAV_R : CLAV_L].quaternion;
+      b[side > 0 ? UARM_R : UARM_L].quaternion.copy(_qTmp.copy(clav).invert().multiply(_qU));
+      b[side > 0 ? FARM_R : FARM_L].quaternion.copy(_qL);
+      b[side > 0 ? HAND_R : HAND_L].quaternion.identity();
+    }
+  }
+
+  // Both feet to two points of the world (s.feet: { l, r, pitch }: where the ankles go - a pedal, a footboard, the
+  // floor of a car; pitch: the toes down by this much), by weight w of the pose's own legs.
+  solveFeet(feet, w = 1) {
+    const P = this.P;
+    const b = this.bones;
+    for (const side of [1, -1]) {
+      const t = side > 0 ? feet.r : feet.l;
+      if (!t) continue;
+      const th = b[side > 0 ? THIGH_R : THIGH_L];
+      const sh = b[side > 0 ? SHIN_R : SHIN_L];
+      const ft = b[side > 0 ? FOOT_R : FOOT_L];
+      th.parent.updateWorldMatrix(true, false);
+      _reachM.copy(th.parent.matrixWorld).invert();
+      _T.copy(t).applyMatrix4(_reachM);
+      _S.copy(th.position);
+      _pole.set(side * (feet.splay ?? 0.22), 0.45, -1); // the knee: forward and up, a little out
+      ikLeg(_S, _T, P.thighLen, P.shinLen, _pole, _qU, _qL);
+      _qTmp.copy(_qU).multiply(_qL).invert(); // (the sole level with the hips)
+      if (feet.pitch) _qTmp.multiply(_qFoot.setFromAxisAngle(_XAX, feet.pitch));
+      if (w >= 1) {
+        th.quaternion.copy(_qU);
+        sh.quaternion.copy(_qL);
+        ft.quaternion.copy(_qTmp);
+      } else {
+        th.quaternion.slerp(_qU, w);
+        sh.quaternion.slerp(_qL, w);
+        ft.quaternion.slerp(_qTmp, w);
+      }
+    }
+  }
+
   dispose() {
     this.skeleton.dispose();
     if (this.object.parent) this.object.parent.remove(this.object);
   }
+}
+
+const _qFoot = new THREE.Quaternion();
+const _XAX = new THREE.Vector3(1, 0, 0);
+const _kld = new THREE.Vector3(), _klp = new THREE.Vector3(), _klu = new THREE.Vector3(), _kle = new THREE.Vector3(), _klf = new THREE.Vector3(), _klw = new THREE.Vector3(), _klh = new THREE.Vector3();
+const _klbm = new THREE.Matrix4();
+// Two-bone IK for a leg (skinning.js ikTwoBone is an arm's: its hinge bends the other way): the bones' bind direction
+// is -Y, the knee's hinge local +X, and a NEGATIVE turn of the shin about it folds it back. All in the thigh's
+// parent's space: S the hip joint, T where the ankle goes, pole the way the knee points.
+function ikLeg(S, T, L1, L2, pole, qUpper, qLower) {
+  _kld.subVectors(T, S);
+  let dist = _kld.length();
+  if (dist < 1e-5) _kld.set(0, -1, 0);
+  _kld.normalize();
+  dist = Math.min(L1 + L2 - 1e-4, Math.max(Math.abs(L1 - L2) + 1e-3, dist));
+  _klp.copy(pole).addScaledVector(_kld, -pole.dot(_kld));
+  if (_klp.lengthSq() < 1e-8) _klp.set(0, 0, -1).addScaledVector(_kld, _kld.z);
+  _klp.normalize();
+  const a = Math.acos(Math.min(1, Math.max(-1, (L1 * L1 + dist * dist - L2 * L2) / (2 * L1 * dist))));
+  _klu.copy(_kld).multiplyScalar(Math.cos(a)).addScaledVector(_klp, Math.sin(a)).normalize();
+  _kle.copy(S).addScaledVector(_klu, L1);
+  _klf.copy(S).addScaledVector(_kld, dist).sub(_kle).normalize();
+  _klw.copy(_klf).addScaledVector(_klu, -_klf.dot(_klu));
+  if (_klw.lengthSq() < 1e-8) _klw.copy(_klp).multiplyScalar(-1);
+  _klw.normalize();
+  _klh.crossVectors(_klu, _klw).normalize();
+  // the thigh's basis: X = -h, Y = -u, Z = w (so that the shin, turned by -beta about X, lies along f)
+  _klbm.makeBasis(_klh.negate(), _kle.copy(_klu).negate(), _klw);
+  qUpper.setFromRotationMatrix(_klbm);
+  qLower.setFromAxisAngle(_XAX, -Math.acos(Math.min(1, Math.max(-1, _klu.dot(_klf)))));
 }
 
 const SURV_STYLE = Object.assign({}, ZS[ZTYPE.WALKER], { idleLean: 0, walkLean: -0.05, runLean: -0.2, limp: 0, headTilt: 0, jaw: 0 });
@@ -4911,6 +5037,9 @@ export function createSurvivor(seed = 0, character = -1) {
     throwAnim: () => sv.throwAnim(),
     setZombie: (v) => sv.setZombie(v),
     setBackpack: (on) => sv.setBackpack(on),
+    setHide: (m) => (sv.hide = m), // 0: all of them; 1: no head; 2: no head, no arms (our own body under our own eyes)
+    headWorld: (out) => sv.bones[HEAD].getWorldPosition(out),
+    shoulderWorld: (side, out) => sv.bones[side > 0 ? UARM_R : UARM_L].getWorldPosition(out),
     getMuzzleWorld: (out) => sv.getMuzzleWorld(out),
     cradleAt: (out) => sv.cradleAt(out),
     flashlightAnchor: sv.flashlightAnchor,

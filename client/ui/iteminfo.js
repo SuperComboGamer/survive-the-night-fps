@@ -77,6 +77,7 @@ const SHORT = {
   [ITEM.FAN_BELT]: 'Fan belt',
   [ITEM.SCHEM_EXPLOSIVES]: 'Explosive',
   [ITEM.SCHEM_METAL]: 'Fortify',
+  [ITEM.SCHEM_VEHICLES]: 'Manual',
 };
 export function shortName(id) {
   const name = ITEM_DEFS[id]?.name || '';

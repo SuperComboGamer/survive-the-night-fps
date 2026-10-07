@@ -229,6 +229,19 @@ export class Hud {
     this.flLvl = el('i', 'batt-lvl', batt);
     el('i', 'batt-nub', batt);
     this.flTxt = el('span', 'fl-txt', fl, '100%');
+    // in a vehicle (game/vehicles.js): what it is, how fast it goes, its tank and how sound it is
+    const vr = (this.vehRow = el('div', 'v-veh', vit));
+    vr.hidden = true;
+    this.vehName = el('span', 'veh-name', vr, '');
+    this.vehKmh = el('span', 'veh-kmh', vr, '0');
+    el('span', 'veh-unit', vr, 'km/h');
+    const vf = (this.vehFuelG = el('span', 'veh-g', vr));
+    el('span', 'veh-l', vf, 'FUEL');
+    this.vehFuel = el('i', '', el('span', 'veh-bar', vf));
+    const vb = (this.vehHpG = el('span', 'veh-g', vr));
+    el('span', 'veh-l', vb, 'BODY');
+    this.vehHp = el('i', '', el('span', 'veh-bar', vb));
+    this.vehLamp = el('span', 'veh-lamp', vr, 'LAMP');
 
     // ---- bottom-right weapons
     const wp = (this.weap = el('div', 'weap', layer));
@@ -422,6 +435,34 @@ export class Hud {
 
   _vitals(h, zombie) {
     const c = this.c;
+    // the vehicle we are in
+    const veh = h.veh && h.veh.on ? h.veh : null;
+    if (!!veh !== !!c.veh) {
+      c.veh = !!veh;
+      this.vehRow.hidden = !veh;
+    }
+    if (veh) {
+      if (c.vehName !== veh.name) this.vehName.textContent = c.vehName = veh.name;
+      if (c.vehKmh !== veh.kmh) this.vehKmh.textContent = String((c.vehKmh = veh.kmh));
+      const fq = veh.tank ? Math.round(clamp(veh.fuel, 0, 1) * 100) : -1;
+      if (c.vehFuel !== fq) {
+        c.vehFuel = fq;
+        this.vehFuelG.hidden = fq < 0;
+        this.vehFuel.style.transform = `scaleX(${Math.max(0, fq) / 100})`;
+        this.vehFuelG.classList.toggle('low', fq >= 0 && fq <= 15);
+      }
+      const hq = veh.state === 2 ? 0 : Math.round(clamp(veh.hp, 0, 1) * 100);
+      if (c.vehHp !== hq) {
+        c.vehHp = hq;
+        this.vehHp.style.transform = `scaleX(${hq / 100})`;
+        this.vehHpG.classList.toggle('low', hq <= 25);
+      }
+      const lamp = veh.tank && veh.lights ? 1 : 0;
+      if (c.vehLamp !== lamp) {
+        c.vehLamp = lamp;
+        this.vehLamp.hidden = !lamp;
+      }
+    }
     const maxHp = h.maxHp || 100;
     const hp = Math.max(0, Math.ceil(h.hp || 0));
     if (c.hp !== hp) {

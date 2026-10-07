@@ -149,7 +149,10 @@ export class Lights {
       if (r) {
         L.position.copy(r.pos);
         L.target.position.set(r.pos.x + r.dir.x * 10, r.pos.y + r.dir.y * 10, r.pos.z + r.dir.z * 10);
-        L.intensity = 11;
+        // (a vehicle's headlamp - game/vehicles.js lampCands - is no hand torch: it lights the road and what is on it)
+        L.intensity = r.lamp ? r.power || 46 : 11;
+        L.distance = r.lamp ? 110 : 45;
+        L.angle = r.lamp ? r.wide || 0.6 : 0.45;
       } else L.intensity = 0;
     }
     if (this.muzzleT > 0) {

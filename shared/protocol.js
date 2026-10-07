@@ -91,9 +91,13 @@ export const ACT = {
   UNDO_DROP: 35, // (nothing): the last thing this survivor dropped picked up again, a few seconds after (the inventory's Undo)
   SKIP: 36, // (nothing): skip the crossing's cutscene, once everyone connected has asked (PHASE.CROSSING, shared/acts.js)
   CAT_PUT: 37, // (nothing): the stray cat in this survivor's arms is set down (picking it up is ACT.INTERACT on it)
+  VEHICLE: 38, // u8 what (VACT), u16 entity id: get into a vehicle (shared/vehicles.js), out of the one they are in, or work its lights
+  SIPHON: 39, // i16 x, i16 z (1/64 m: the wreck's prop): start drawing the fuel out of that wreck's tank (a hold: HOLD.SIPHON)
 };
 // NOTIFY.UNDO_GONE: why an undo brought nothing back
 export const UNDO_NO = { GONE: 0, LATE: 1, FAR: 2 };
+// ACT.VEHICLE: into the nearest free seat (the wheel first), out of it, the headlamp on or off
+export const VACT = { ENTER: 0, EXIT: 1, LIGHTS: 2 };
 // ACT.WORN: which piece of worn gear, and what is done with it
 export const WORN = { ARMOR: 0, BACKPACK: 1 };
 export const WORN_DO = { OFF: 0, DROP: 1, SALVAGE: 2 };
@@ -108,7 +112,8 @@ export const FAIR_GEN_ID = 0xffe0; // the fair's generator (HOLD_BEGIN: start it
 export const FAIR_TANK_ID = 0xffe1; // ...and its fuel drum (INTERACT: pour a portion in)
 export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
-export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, GUN_LIFT: 7, FAIR_START: 9, FAIR_STOP: 10 };
+export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, GUN_LIFT: 7, FAIR_START: 9, FAIR_STOP: 10, VEH_FIX: 11, VEH_FUEL: 12, VEH_REPAIR: 13, SIPHON: 14 };
+export const SIPHON_ID = 0xffdf; // the target of a HOLD.SIPHON (the wreck is named by ACT.SIPHON)
 
 // FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for.
 // ENDED_UPDATE, ENDED_MAP: the game that went by that code was ended by a deploy - the new server could not carry it
@@ -152,6 +157,7 @@ export const ENT = {
   GUN: 12, // the mounted gun (position: the pintle, or under it; state = belt, gunner or carrier, where it was left pointing, the way its tripod faces, GUN_STANDS / CARRIED / LYING)
   FAIR: 11, // the fair's generator: whether it runs, the ride clock, the fuel left (FRF)
   HANDCAR: 13, // a handcar on the railway (shared/handcar.js): where it is on the line, who rides it (HCF)
+  VEHICLE: 14, // a moped, a car or a bicycle (shared/vehicles.js): where it is and points, how it moves, its state, who is in it (VF)
 };
 
 // ---------------------------------------------------------------- quantization
@@ -558,3 +564,9 @@ export const FRF = { POS: 0, STATE: 1, CLOCK: 2, FUEL: 3 };
 // position is drawn from that, not from POS). RIDER: the player on it, 0 nobody
 export const HCF = { POS: 0, AT: 1, RIDER: 2 };
 export const HCAR_AT = 32;
+// VEHICLE fields. YAW: u16 (qangle16). MOVE: u16 - its speed along itself in 1/4 m/s (i8) and its steering in 1/100
+// rad (i8) above it. FLAGS: u16 (VFLAG). TANK: u16 - the fuel (0-255 of a tank) and its health (0-255) above it.
+// SEATS: 2 x u32 - who sits in seats 0-1 and 2-3, 14 bits each (0: nobody). The create record: u8 kind, u8 tint
+export const VF = { POS: 0, YAW: 1, MOVE: 2, FLAGS: 3, TANK: 4, SEATS: 5 };
+// vehicle flag bits: the low two its VSTATE, the next four the parts it still wants (a bit per FIX slot)
+export const VFLAG = { STATE: 3, NEED_SHIFT: 2, NEED: 15 << 2, LIGHTS: 64, HORN: 128, BRAKE: 256, THROTTLE: 512, SKID: 1024, STARTER: 2048, QUEST: 4096 };

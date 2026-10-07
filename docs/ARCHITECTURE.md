@@ -492,7 +492,7 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   schematics, who left with what kit and who left dead, the trees felled and what is used up of the trees and
   wrecks, the loot points' timers, the registry, the players, what was built (colliders and nav put back), the
   containers, the items on the ground (car parts for good), the crates and planes, the zombies with their herds,
-  the mounted gun, the fair, the handcars, the bell and the cemetery, the achievements' progress (each player's
+  the mounted gun, the fair, the handcars, the vehicles, the bell and the cemetery, the achievements' progress (each player's
   `p.ach`, the run's own in `AchievementTracker.save`) and each player's experience and perks (`xpBase`, `xpRun`: their
   record's XP, looked up again when they come back, already holds this run's, so `setProgress` keeps what was saved).
   Not saved, started again: bullets and rockets
@@ -1137,6 +1137,73 @@ A single track across the valley from a tunnel in one rim to a tunnel in the oth
   riding one is drawn on its deck. While we work the lever our hands on its bar replace the weapon in the view.
 - `scripts/test-handcar.js` holds the placement on ten valleys, the rules against the server, and a rider's
   prediction on a laggy link.
+
+## Vehicles: a moped, a car and a bicycle on the mainland
+
+Transport exists on the mainland (map 2) only: `vehicleSpots` and `starterSpots` return nothing for any other
+world, the island's generation and its quest car are untouched, and `scripts/test-vehicles.js` holds both.
+
+- **The rules** (`shared/vehicles.js`): `VEHICLES` has each kind's numbers (top speed, grip, tank, seats, body);
+  `stepVehicle` is the whole of the driving - a bicycle-model turn with a lock that closes with speed, grip by the
+  surface under it (`surfaceKind`: road, dirt, trail, grass, mud), the engine's pull, the brakes and the handbrake,
+  slopes from the ground under each axle (`wheelGround`), water it will not wade, and its circles against the
+  world's colliders, the parked vehicles and the doorways (`vehicleGrid(world)`: a third collider grid, made on
+  first use and pushed onto `world.colliderGrids`). Nothing in it reads a clock or a random stream.
+- **A vehicle in the player simulation**, as the handcar is: while somebody drives, the vehicle *is* their
+  simulated state (`s.drive`, `s.driveK`, `s.dyaw`, `s.dsteer`, `s.dfuel`, `s.ddead`; `s.x`, `s.z`, `s.vx`, `s.vz`
+  are the vehicle's) and `simulatePlayer` hands the command to `driveStep`. The client predicts with the same code,
+  so a driver is corrected only for what the server alone knows: a zombie struck, damage, fuel poured in, a
+  breakdown. A passenger (`s.pass`, `s.passN`) is put in their seat by the server each tick and predicts nothing.
+- **The server** (`server/vehicles.js`, `Game.vehicles`) keeps one `ENT.VEHICLE` each (`VF`, `VFLAG`): parks an
+  empty one as a box (snapped to what the wire carries, so both ends have the same box) with a cost in the nav
+  field, rolls a driverless one to a stop, carries the passengers, lets the dead strike the body before whoever
+  is inside (`shield`), runs the dead over (`strike`), makes the engine's and the horn's noise, and holds the
+  work done with [E] held: fitting the parts (`FIX`), pouring fuel (the Flamethrower Fuel reserve), patching the
+  body, siphoning a wreck (`siphonOf`: by the wreck's place, so every client agrees). `ACT.VEHICLE` (`VACT`) gets
+  in, gets out and switches the lamps; `ACT.SIPHON` draws from a wreck. A broken-down one (`VSTATE.DEAD`) can be
+  patched; a wreck is lost.
+- **Enough seats, at once**: the island's quest car arrives as the team's car (`questCar`: the bridgehead's car
+  prop, its collider taken out of the grid when the game starts), and `Vehicles.provide(team)` puts out the
+  bridgehead's starters (`STARTERS`, within `STARTER_REACH` of the arrival) until there is a seat for every player.
+  A starter needs no parts, only `STARTER_TIME` seconds. `scripts/vehicle-seats.js` plays a scripted team of 1 to
+  16 on two dozen seeds and the test holds the time.
+- **Against each other and against shots** (server only: what a driver's prediction cannot know rewrites their
+  state, as a zombie struck does). `Vehicles.collide` puts two that are not standing empty apart by their weights
+  (`MASS`), shares out what they were closing at, damages each as a crash at its share of it and throws a rider off
+  two wheels (never for more than 45 hp: it may be a teammate's doing). A survivor on foot in the way of one is put
+  aside unhurt (`shove`). `Vehicles.rayHit` is in every hitscan and every projectile's flight: a vehicle with
+  somebody in it stops a round as its parked box does - a car's body up to its sills and its roof (`SHOT_BOX`);
+  between them its windows are open, so who sits there shoots out and can be hit; a moped's or a bicycle's frame, low.
+  The dead reach whoever sits in one by its body (`reachTo`), not its middle.
+- **A crowd on its nose** holds a slow vehicle: the server only counts them (`s.dhold`, 0..3, two bits of the self
+  state's vehicle byte) and `driveStep` takes the speed off, so the driver's own prediction creeps as the server's
+  does and is rebased only when the count changes.
+- **Built as well as found**: `RECIPES` 41 and 42 (`vehicle`, `hide`) make a bicycle and a moped at a workbench
+  (`Game.craft` -> `Vehicles.build`: it stands on the nearest clear ground, nothing goes into the pack). They want
+  the Workshop Manual (`ITEM.SCHEM_VEHICLES`, bit 5 of the unlock mask and not one of `SCHEMATICS`, so nothing hides
+  it on the island): two lie beside the mainland's first broken mopeds (`Vehicles.spawn`). Until the team has it the
+  recipes are not listed anywhere (`hide`).
+- **The client** (`client/game/vehicles.js`, `VehicleClient`) draws each where the prediction (ours) or the
+  interpolation (the others) has it, leans and pitches it, turns the wheels, lights the lamps (a lit headlamp is one
+  of the scene's two pooled spots, wider and brighter than a torch - `lampCands`, `Lights.update`; the pools on the
+  road under its lamps are meshes of its own), and puts whoever sits in one in their seat (`seatBody`): hips on the
+  seat, hands solved onto the bars or the wheel (`solveReach`) and feet onto the pedals, the footboard or the floor
+  (`solveFeet`, `model.feet`; a bicycle's pedals stay level as its cranks turn, so the legs follow them). A body goes
+  into its seat from where it stood, folding as it goes (`sitNow`): it is never upright inside. In a seat ourselves,
+  our own body is drawn too (`Game.updateSelfBody`: without the head the eye is in, and without arms - the view's
+  own are on the controls, from its shoulders), so looking down or round shows a trunk and legs, and the eye is our
+  own head's. The team's vehicles are on the field map and the minimap (`marks`). The models are
+  `client/render/models/vehicles.js` (as found, running, broken down - bonnet up, a corner down, hazards blinking -
+  and burnt out), the driven car's cabin is `props.js`'s sedan with `slim` (thin pillars, a deeper well, lower seats:
+  legs fit), the sounds `client/audio/synth-vehicle.js`.
+- **Saved** with the game (`Vehicles.save` / `load` in `server/gamestate.js`): every vehicle with its state, fuel,
+  body and who sat where; the players' own fields ride in their saved state.
+- `scripts/test-vehicles.js` holds the rules against the server, prediction on laggy links (a crowd on the nose
+  too), the island without vehicles, recipes or manual and with its fingerprint, the seats for every team size, shots
+  and collisions, what a bench builds, and the save. `scripts/vehicle-routes.js` times the trips,
+  `scripts/vehicle-bench.js` the tick and the bytes, `scripts/clip/vehicle-clip.js` the clipping of every survivor in
+  every seat, `scripts/clip/vehicle-look.js` a look at any of it in the models sandbox (`?veh=`, the `fp` views are
+  the driver's own eyes), `scripts/clip/vehicle-shots.js` the pictures and the film. `/veh` is the admin command.
 
 ## Blows on the world: marks, bullet holes, wrecks taken apart
 
