@@ -133,6 +133,8 @@ function chase(c, vk, o = {}) {
   };
 }
 const mine = (c) => ({ x: c.info.s.x, y: c.info.s.y, z: c.info.s.z, yaw: c.info.s.dyaw, vx: c.info.s.vx, vz: c.info.s.vz, steer: c.info.s.dsteer });
+// (where it is drawn this frame: what a following camera follows)
+const drawn = (c) => (c.info.draw ? { ...mine(c), x: c.info.draw.x, y: c.info.draw.y, z: c.info.draw.z, yaw: c.info.draw.yaw } : mine(c));
 const speedOf = (c) => Math.hypot(c.info.s.vx, c.info.s.vz);
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -850,9 +852,9 @@ async function clip(c, name, place, mode, { at = 0, secs = 15, bold = 1.1, lead 
   };
   const cam = chase(c, vk, { pitch: 0.34, dist: vk === 2 ? 6.5 : 4.2, ease: 0.12 });
   const tag = `film-${name}-${mode}`;
-  if (lead) await c.run(Math.round(c.fps * lead), () => (done ? {} : { A: { buttons: hold(), yaw: c.info.s.dyaw, pitch: -0.14, cam: null } }));
+  if (lead) await c.run(Math.round(c.fps * lead), () => (done ? {} : { A: { buttons: hold(), pitch: -0.14, cam: null } }));
   const P0 = vk === 2 ? -0.04 : -0.2;
-  await c.rec(tag, c.fps * secs, () => (done ? null : { A: { buttons: hold(), yaw: c.info.s.dyaw, pitch: P0, cam: mode === 'seat' ? null : cam(mine(c)) } }), { hud: mode === 'seat' });
+  await c.rec(tag, c.fps * secs, () => (done ? null : { A: { buttons: hold(), pitch: P0, cam: mode === 'seat' ? null : cam(drawn(c)) } }), { hud: mode === 'seat' });
   c.video(tag, 8, `${name}: ${mode === 'seat' ? 'from the seat' : 'from behind'}, on the way from the bridgehead to ${place} (a scripted rider)`);
   console.log(`\n  ${tag}: ${far.toFixed(0)} m in ${secs} s, top ${top.toFixed(1)} m/s, fuel ${c.info.s.dfuel.toFixed(1)}, hp ${vehId(c, v.id)?.hp}, backed off ${backs} times, arrived: ${done}`);
 }

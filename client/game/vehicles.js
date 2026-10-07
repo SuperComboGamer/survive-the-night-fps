@@ -230,13 +230,17 @@ export class VehicleClient {
         const p0 = pred.prev;
         const yaw = p0.drive === e.id ? p0.dyaw + wrap(s.dyaw - p0.dyaw) * a : s.dyaw;
         const steer = p0.drive === e.id ? p0.dsteer + (s.dsteer - p0.dsteer) * a : s.dsteer;
-        const vf = -s.vx * Math.sin(s.dyaw) - s.vz * Math.cos(s.dyaw);
+        // (its speed between the two commands too: the state's alone changes only on the frames a command ran, and
+        // the body's dive and squat would twitch with it at any frame rate above the commands')
+        const vfOf = (q) => -q.vx * Math.sin(q.dyaw) - q.vz * Math.cos(q.dyaw);
+        const vf = p0.drive === e.id ? vfOf(p0) + (vfOf(s) - vfOf(p0)) * a : vfOf(s);
         this.pose(e, dt, rp.x, rp.y, rp.z, yaw, vf, steer, false);
       } else {
+        // (somebody else's: its steering interpolated as its place is - it rides in the samples' pitch slot,
+        // Entities.pushSample - and its speed, coarse on the wire, smoothed in pose)
         const t = e.samples.sample(g.renderTick, g.entities.tmp);
         const sp = ((q[4] << 24) >> 24) / 4;
-        const st = (((q[4] >> 8) << 24) >> 24) / 100;
-        this.pose(e, dt, t.x, t.y, t.z, t.yaw, sp, st, false);
+        this.pose(e, dt, t.x, t.y, t.z, t.yaw, sp, t.pitch, false, true);
       }
       this.dress(e, dt, e === mine);
     }
@@ -256,12 +260,18 @@ export class VehicleClient {
   }
 
   // e drawn at (x, y, z) facing yaw, going vf along itself with its steering at steer
-  pose(e, dt, x, y, z, yaw, vf, steer, snap) {
+  pose(e, dt, x, y, z, yaw, vf, steer, snap, remote = false) {
     const g = this.g;
     const v = e.veh;
     const P = VEHICLES[e.vk];
     const world = g.world;
     const m = v.model;
+    // (somebody else's speed comes in steps of half a metre a second, twenty times a second: smoothed, or the body
+    // would dive and squat at every step and the lean jump)
+    if (remote) {
+      v.vfS = v.vfS === undefined || snap ? vf : v.vfS + (vf - v.vfS) * Math.min(1, dt * 6);
+      vf = v.vfS;
+    }
     v.x = x;
     v.z = z;
     v.yaw = yaw;
@@ -281,28 +291,47 @@ export class VehicleClient {
       roll = Math.atan2(world.heightAt(x - cy * w, z + sy * w) - world.heightAt(x + cy * w, z - sy * w), w * 2);
     }
     // its springs: the body follows the ground a moment late, and dives and squats as it slows and gathers speed
-    const acc = dt > 0 ? (vf - v.lastVf) / dt : 0;
+    const acc = dt > 1e-4 ? (vf - v.lastVf) / dt : 0;
     v.lastVf = vf;
-    v.acc += (Math.max(-12, Math.min(12, acc)) - v.acc) * Math.min(1, dt * 8);
     if (snap || dt <= 0 || Math.abs(y - v.y) > 1.5) {
       v.y = y;
       v.vy = 0;
       v.pitch = pitch;
       v.roll = roll;
     } else {
-      const k = 90, c = 13;
-      v.vy += ((y - v.y) * k - v.vy * c) * dt;
-      v.y += v.vy * dt;
+      // (in steps of at most 1/120 s: the same at 30 frames a second as at 144, and on a hitch)
+      const ac = Math.max(-12, Math.min(12, acc));
+      for (let left = Math.min(dt, 0.1); left > 1e-6; ) {
+        const h = Math.min(left, 1 / 120);
+        v.acc += (ac - v.acc) * Math.min(1, h * 8);
+        const k = 90, c = 13;
+        v.vy += ((y - v.y) * k - v.vy * c) * h;
+        v.y += v.vy * h;
+        const e2 = Math.min(1, h * 9);
+        v.pitch += (pitch - v.pitch) * e2;
+        v.roll += (roll - v.roll) * e2;
+        left -= h;
+      }
       if (v.y < y - 0.12) v.y = y - 0.12;
-      const e2 = Math.min(1, dt * 9);
-      v.pitch += (pitch - v.pitch) * e2;
-      v.roll += (roll - v.roll) * e2;
     }
     // into its turns: on two wheels it leans in, a car rolls out
     const turn = (vf / P.wb) * Math.tan(steer); // rad/s, + to the right
     const lat = (vf * turn) / 9.8;
     const lean = P.two ? Math.max(-0.62, Math.min(0.62, Math.atan(lat))) : Math.max(-0.07, Math.min(0.07, -lat * 0.05));
-    v.lean += (lean - v.lean) * Math.min(1, dt * (P.two ? 7 : 5));
+    // ...on a spring, critically damped: it takes a moment to go over and settles without a wobble or a corner, whatever
+    // the frame rate (in steps of at most 1/120 s)
+    if (snap || dt <= 0) {
+      v.lean = lean;
+      v.leanV = 0;
+    } else {
+      const w = P.two ? 8 : 6;
+      for (let left = Math.min(dt, 0.1); left > 1e-6; ) {
+        const h = Math.min(left, 1 / 120);
+        v.leanV = (v.leanV || 0) + ((lean - v.lean) * w * w - 2 * w * (v.leanV || 0)) * h;
+        v.lean += v.leanV * h;
+        left -= h;
+      }
+    }
     // standing with nobody on it, a two-wheeler rests on its stand
     const prop = P.two && !v.seats[0] && Math.abs(vf) < 0.3 ? (e.vk === VEH.BIKE ? 0.2 : 0.14) : 0;
     v.tilt += (prop - v.tilt) * Math.min(1, dt * 6);
@@ -422,10 +451,10 @@ export class VehicleClient {
       eye.x = this.mountFrom.x + (_v.x - this.mountFrom.x) * k;
       eye.y = this.mountFrom.y + (_v.y - this.mountFrom.y) * k;
       eye.z = this.mountFrom.z + (_v.z - this.mountFrom.z) * k;
-      eye.roll = -(v.lean + v.roll) * 0.7 * k;
+      eye.roll = -(v.lean + v.roll) * 0.4 * k; // (the eye goes over with the lean, but only partly: the head keeps itself level)
       // (the engine through the seat)
       const run = v.idle || 0;
-      eye.y += Math.sin(g.time * 47) * 0.0025 * run + Math.sin(g.time * 9.1) * 0.004 * Math.min(1, Math.abs(v.vf) / 8) * (g.world?.roadKindAt?.(v.x, v.z) === 2 ? 0.3 : 1);
+      eye.y += Math.sin(g.time * 47) * 0.001 * run * (1 - Math.min(1, Math.abs(v.vf) / 4)) + Math.sin(g.time * 9.1) * 0.004 * Math.min(1, Math.abs(v.vf) / 8) * (g.world?.roadKindAt?.(v.x, v.z) === 2 ? 0.3 : 1); // (an idling engine's buzz, a millimetre, gone once it moves; the road's slow rock)
       if (s.pass) {
         // carried: our own copy of where we are is the seat's (the server's is; nothing checks ours)
         _v2.set(st[0], st[1], st[2]).applyMatrix4(v.model.body.matrixWorld);

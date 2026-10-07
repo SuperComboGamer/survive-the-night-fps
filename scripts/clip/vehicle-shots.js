@@ -182,7 +182,10 @@ try {
         for (const e of g.vehicles.list.values()) veh.push({ id: e.id, vk: e.vk, x: e.veh.x, y: e.veh.y, z: e.veh.z, yaw: e.veh.yaw, sp: e.veh.vf, vf: e.q[5], state: e.veh.state, seats: e.veh.seats, fuel: e.veh.fuel, hp: e.veh.hp });
         const dead = [];
         for (const e of g.entities.ents.values()) if (e.kind === 2 && !e.dead && e.view) dead.push({ x: e.rx, y: e.ry, z: e.rz });
-        return { s: { x: s.x, y: s.y, z: s.z, vx: s.vx, vz: s.vz, yaw: g.input.yaw, drive: s.drive, pass: s.pass, dyaw: s.dyaw, dsteer: s.dsteer, dfuel: s.dfuel }, veh, dead, hp: g.self.hp, prompt: g.prompt || '', tick: g.net.tick };
+        // (the vehicle we are in, as it is drawn this frame: a camera that follows it follows what is on screen)
+        const mv = g.vehicles.mine?.veh?.model?.group;
+        const draw = mv ? { x: mv.position.x, y: mv.position.y, z: mv.position.z, yaw: mv.rotation.y } : null;
+        return { draw, s: { x: s.x, y: s.y, z: s.z, vx: s.vx, vz: s.vz, yaw: g.input.yaw, drive: s.drive, pass: s.pass, dyaw: s.dyaw, dsteer: s.dsteer, dfuel: s.dfuel }, veh, dead, hp: g.self.hp, prompt: g.prompt || '', tick: g.net.tick };
       }, ticks);
       if (save) await (save.p || c.A).screenshot({ path: save.file, optimizeForSpeed: true });
     },

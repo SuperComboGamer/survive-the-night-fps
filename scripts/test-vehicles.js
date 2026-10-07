@@ -1469,5 +1469,24 @@ laggy(200, 120, VEH.CAR);
 laggy(100, 40, VEH.MOPED);
 laggy(100, 40, VEH.BIKE);
 
+// ================================================================ smooth on screen (scripts/clip/vehicle-jitter.js)
+// The code that draws a vehicle - the prediction, VehicleClient's pose and seat-eye view, the rider - run on stepped
+// clocks (30, 60, 144 frames a second, and uneven with hitches) through keyboard turns held, tapped and weaved and a
+// rider on a real route, for the driver and for a teammate watching. Before the steering eased and the lean went on
+// a spring the bicycle's steering and lean reversed some 30 times a second (a 13 and an 8 degree wobble) and the
+// first-person eye shook by a quarter of a metre; these bounds hold it to what it is now, with room.
+{
+  const J = await import('./clip/vehicle-jitter.js');
+  const rows = J.survey({ vehs: ['bike', 'moped', 'car'], rates: [30, 60, 144, 'uneven'] });
+  const LIM = { steer: [10, 3], lean: [3, 0.6], camRoll: [3, 0.3], camYaw: [5, 1], camPos: [25, 15], oSteer: [8, 5], oLean: [3, 1], oHead: [15, 25] };
+  const bad = [];
+  for (const v of ['bike', 'moped', 'car']) {
+    const w = J.worstBy(rows, v);
+    for (const [k, [flips, shake]] of Object.entries(LIM)) if (w[k].flips > flips || w[k].shake > shake) bad.push(`${v} ${k}: ${w[k].flips.toFixed(1)}/s, ${w[k].shake.toFixed(2)} ${w[k].unit} (${w[k].at})`);
+  }
+  const wb = J.worstBy(rows, 'bike');
+  check('turning is smooth on screen: the steering, the lean, the first-person eye and a watcher\'s view of the rider never wobble, at any frame rate', !bad.length, bad.length ? bad.join('; ') : `the bicycle's worst: steering ${wb.steer.flips.toFixed(1)} reversals a second of ${wb.steer.shake.toFixed(2)} deg, lean ${wb.lean.flips.toFixed(1)}/s of ${wb.lean.shake.toFixed(2)} deg, the eye ${wb.camPos.shake.toFixed(1)} mm, a watcher's view of the rider's head ${wb.oHead.shake.toFixed(1)} mm`);
+}
+
 console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(' | ')}` : '\nall vehicle checks passed');
 process.exit(fails.length ? 1 : 0);

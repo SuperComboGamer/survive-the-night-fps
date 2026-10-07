@@ -213,6 +213,7 @@ function inSolid(v, P, world, grid) {
   }
   return false;
 }
+const STEER_EASE = 11; // 1/s: the share of the way to where the keys want the wheel that it goes in a second's worth of commands
 export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   const P = VEHICLES[v.vk];
   const grid = vehicleGrid(world);
@@ -228,8 +229,15 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   const lock = P.lock + (P.lockTop - P.lock) * Math.sqrt(k);
   const want = turn * lock;
   const ds = want - v.steer;
-  const rate = P.steerRate * (turn === 0 || want * v.steer < 0 ? 1.8 : 1) * dt; // (it centres itself quicker than it is turned)
-  v.steer += ds > rate ? rate : ds < -rate ? -rate : ds;
+  // the wheel eases toward where the keys want it - a share of what is left each command, so a turn starts and ends
+  // without a corner and a key tapped or held in short bursts makes a smooth swing, not a saw - and never faster than
+  // its rate (it centres itself quicker than it is turned). (A share, not an exponential: dt is always CMD_DT, and
+  // the driver's prediction must come out the same to the last bit on every browser)
+  const rate = P.steerRate * (turn === 0 || want * v.steer < 0 ? 1.8 : 1) * dt;
+  let step = ds * (STEER_EASE * dt < 1 ? STEER_EASE * dt : 1);
+  if (step > rate) step = rate;
+  else if (step < -rate) step = -rate;
+  v.steer = Math.abs(ds) < 1e-4 ? want : v.steer + step;
   // (a right turn takes the yaw down: forward is (-sin yaw, -cos yaw))
   // (the handbrake locks the back wheels: the tail lets go and comes round, faster than the front alone would turn it)
   // (by all of its speed, not only what is still along it: sliding sideways it keeps coming round)

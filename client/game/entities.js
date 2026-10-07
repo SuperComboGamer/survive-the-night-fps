@@ -352,7 +352,10 @@ export class Entities {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
     } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT || e.kind === ENT.DEER) yaw = dqangle8(q[3]);
-    else if (e.kind === ENT.VEHICLE) yaw = dqangle16(q[3]);
+    else if (e.kind === ENT.VEHICLE) {
+      yaw = dqangle16(q[3]);
+      pitch = (((q[4] >> 8) << 24) >> 24) / 100; // (its steering, interpolated with the rest: game/vehicles.js)
+    }
     else if (e.kind === ENT.HANDCAR) pitch = q[3] / HCAR_AT; // (a handcar's place on the line, interpolated as a pitch is: game/handcar.js)
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
