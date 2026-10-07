@@ -11,8 +11,9 @@
 // A deploy does not end the games (handoff.js): on SIGTERM each is saved into the store and its players are sent
 // HANDOFF_CLOSE, and the new server - up by then - restores it under the same code for them to reconnect to.
 import { createHash } from 'node:crypto';
-import { gzipSync, brotliCompress, constants as zlibConstants } from 'node:zlib';
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'node:zlib';
+import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
@@ -168,12 +169,23 @@ const MIME = {
   '.ogg': 'audio/ogg',
 };
 const files = new Map();
+// A file the build also wrote compressed (vite.config.js precompress: name.gz, name.br beside it) is sent that way to a
+// browser that takes it: those are not read now, only noted (gzFile, brFile), and read the first time one is asked for
+// (sendStatic). Nothing is compressed here.
 function loadDir(dir, prefix = '') {
   if (!existsSync(dir)) return;
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) loadDir(full, `${prefix}/${name}`);
-    else files.set(`${prefix}/${name}`, { body: readFileSync(full), type: MIME[extname(name)] || 'application/octet-stream' });
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const names = new Set(entries.map((e) => e.name));
+  for (const e of entries) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) loadDir(full, `${prefix}/${e.name}`);
+    else if (/\.(gz|br)$/.test(e.name) && names.has(e.name.slice(0, -3))) continue; // (noted with the file it is of)
+    else {
+      const f = { body: readFileSync(full), type: MIME[extname(e.name)] || 'application/octet-stream' };
+      if (names.has(`${e.name}.gz`)) f.gzFile = `${full}.gz`;
+      if (names.has(`${e.name}.br`)) f.brFile = `${full}.br`;
+      files.set(`${prefix}/${e.name}`, f);
+    }
   }
 }
 loadDir(DIST);
@@ -190,11 +202,22 @@ const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? cre
 const COMPAT = process.env.CLIENT_COMPAT || compatOf(resolve(__dirname, '../shared'));
 function compatOf(dir) {
   const h = createHash('sha256').update(`protocol ${PROTOCOL_VERSION}\n`);
+  // (each file through one small buffer: 1 MB of files read whole would stay in the process's memory as it starts)
+  const chunk = Buffer.allocUnsafe(64 * 1024);
   const walk = (d, rel) => {
-    for (const name of readdirSync(d).sort()) {
-      const full = join(d, name);
-      if (statSync(full).isDirectory()) walk(full, `${rel}${name}/`);
-      else if (name.endsWith('.js')) h.update(`${rel}${name}\0`).update(readFileSync(full)).update('\n');
+    for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const full = join(d, e.name);
+      if (e.isDirectory()) walk(full, `${rel}${e.name}/`);
+      else if (e.name.endsWith('.js')) {
+        h.update(`${rel}${e.name}\0`);
+        const fd = openSync(full, 'r');
+        try {
+          for (let n; (n = readSync(fd, chunk, 0, chunk.length, null)) > 0; ) h.update(chunk.subarray(0, n));
+        } finally {
+          closeSync(fd);
+        }
+        h.update('\n');
+      }
     }
   };
   walk(dir, '');
@@ -212,6 +235,10 @@ if (files.get('/index.html')) {
   const f = files.get('/index.html');
   f.raw = f.body; // (as built: what is kept for a server after this one to serve, builds.js)
   f.body = stamp(f.body, { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION });
+  // (the page built compressed is the page before its stamp: this one is compressed here, the first time it is asked
+  // for - 3 KB, a few ms)
+  f.gzFile = f.brFile = '';
+  f.stamped = f.body.length >= 1024;
 }
 
 // A game whose save this build cannot read is carried on by the build that saved it (builds.js, docs/deploys.md): this
@@ -225,6 +252,7 @@ const builds = store && PIN !== '0' && (BUILD_KEY || PIN === 'unsigned') ? new B
 lobby.builds = builds;
 if (store && PIN !== '0' && !builds) log('handoff: HANDOFF_BUILD_KEY is not set, so no build is kept for the servers after this one or started from the store: a game a later build cannot read (another map, save format or enums) will end at that deploy, its players told why. docs/deploys.md says what to set.');
 else if (builds && builds.unsigned) log('handoff: HANDOFF_PIN=unsigned - builds in the store are started here unsigned: anyone who can write to the store can run code on this server');
+const PACK_AFTER_MS = +(process.env.HANDOFF_PACK_AFTER_MS ?? 2000); // (see app.listen)
 
 // The games the last server handed over: whatever is waiting already (a server that started after the last one went),
 // and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
@@ -238,16 +266,6 @@ if (store) {
   setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
 }
 
-
-// The client's code and pages go out compressed to a browser that takes it (the bundle: 3 MB, 1 MB gzipped, 0.8 MB
-// with brotli) - what a page loaded again for a deploy's new client waits for. Gzip now (a fraction of a second);
-// brotli in the background (seconds), served once it is done. Sound and images are compressed already.
-const COMPRESS = /\.(js|css|html|json|svg)$/;
-for (const [url, f] of files) {
-  if (!COMPRESS.test(url) || f.body.length < 1024) continue;
-  f.gz = gzipSync(f.body, { level: 9 });
-  brotliCompress(f.body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: f.body.length } }, (err, out) => err || (f.br = out));
-}
 
 // ---------------------------------------------------------------- who is connecting
 // The game counts joins per address (Game.admitJoin): the client's, not a proxy's in front (netaddr.js)
@@ -750,8 +768,8 @@ const ADMIN_PAGE_HEADERS = [
   ['Referrer-Policy', 'same-origin'],
   ['X-Content-Type-Options', 'nosniff'],
 ];
-// enc: what the browser takes ('br', 'gzip' or ''), read from the request before anything else
-function sendFile(res, url, f, enc = '') {
+// copy: which of the file goes ('br', 'gz' - in memory by now - or '' for the file as it is)
+function sendFile(res, url, f, copy = '') {
   res.cork(() => {
     res.writeHeader('Content-Type', f.type);
     // (the admin panel is never shown inside another site's page, where a click could be steered onto its buttons, and
@@ -759,16 +777,45 @@ function sendFile(res, url, f, enc = '') {
     if (url === '/admin.html') for (const [k, v] of ADMIN_PAGE_HEADERS) res.writeHeader(k, v);
     // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
     res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
-    const body = enc === 'br' && f.br ? f.br : enc && f.gz ? f.gz : f.body;
-    if (f.gz) res.writeHeader('Vary', 'Accept-Encoding');
-    if (body !== f.body) res.writeHeader('Content-Encoding', body === f.br ? 'br' : 'gzip');
+    const body = (copy && f[copy]) || f.body;
+    if (f.gzFile || f.brFile || f.gz || f.br || f.stamped) res.writeHeader('Vary', 'Accept-Encoding');
+    if (body !== f.body) res.writeHeader('Content-Encoding', copy === 'br' ? 'br' : 'gzip');
     res.end(body);
   });
 }
-const encodingOf = (req) => {
-  const a = req.getHeader('accept-encoding');
-  return /\bbr\b/.test(a) ? 'br' : /\bgzip\b/.test(a) ? 'gzip' : '';
-};
+// The copy of a file for a browser that takes `accepts` (its Accept-Encoding): 'br' or 'gz' when there is one (written
+// by the build; the stamped page's made here, once), else ''
+function encodingFor(f, accepts) {
+  const br = /\bbr\b/.test(accepts);
+  const gz = /\bgzip\b/.test(accepts);
+  if (f.stamped && (br || gz) && !f.gz) {
+    f.gz = gzipSync(f.body, { level: 9 });
+    f.br = brotliCompressSync(f.body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: f.body.length } });
+  }
+  return br && (f.br || f.brFile) ? 'br' : gz && (f.gz || f.gzFile) ? 'gz' : '';
+}
+// (a copy the build wrote is read from disk the first time it is wanted, and kept: only the encodings browsers ask for
+// are held. One that cannot be read is not tried again - the file goes as it is)
+const readCopy = (f, k) =>
+  (f[`${k}Read`] ||= readFile(f[`${k}File`]).then(
+    (body) => (f[k] = body),
+    (err) => {
+      log(`${f[`${k}File`]} could not be read (${err.message}): sent as it is`);
+      f[`${k}File`] = '';
+    }
+  ));
+// A client file, as the browser takes it. aborted: () => whether the request is gone, for one already waited on (else
+// it is watched here, if the copy has to be read first)
+function sendStatic(res, url, f, accepts, aborted = null) {
+  const k = encodingFor(f, accepts);
+  if (!k || f[k]) return sendFile(res, url, f, k);
+  if (!aborted) {
+    let gone = false;
+    res.onAborted(() => (gone = true));
+    aborted = () => gone;
+  }
+  readCopy(f, k).then(() => aborted() || sendFile(res, url, f, f[k] ? k : ''));
+}
 // The page, and the client's files. A game an older build carries on here (builds.js) is played with that build's
 // client: the page asked for with its code (/?game=CODE: where its players' pages are, and its invite link) is that
 // build's, once it is known what became of the game's restore; and that build's files are served under their own names,
@@ -779,7 +826,7 @@ app.get('/*', (res, req) => {
   let url = req.getUrl();
   if (url === '/stats' || url === '/stats/') url = '/stats.html';
   if (url === '/admin' || url === '/admin/') url = '/admin.html';
-  const enc = encodingOf(req);
+  const accepts = req.getHeader('accept-encoding');
   if (!files.has(url) && url.startsWith('/assets/')) {
     if (!builds?.has(url)) return NOT_FOUND(res);
     let aborted = false;
@@ -794,7 +841,7 @@ app.get('/*', (res, req) => {
     return;
   }
   const code = url === '/index.html' && builds ? String(req.getQuery('game') || '').trim().toUpperCase() : '';
-  if (!code || stopping) return sendFile(res, url, f, enc);
+  if (!code || stopping) return sendStatic(res, url, f, accepts);
   let aborted = false;
   res.onAborted(() => (aborted = true));
   lobby
@@ -804,7 +851,7 @@ app.get('/*', (res, req) => {
       const page = room?.pin ? await builds.asset('/index.html', room.pin.id) : null;
       if (aborted) return;
       if (page) sendFile(res, url, { body: stamp(page, room.pin.client), type: MIME['.html'] });
-      else sendFile(res, url, f, enc);
+      else sendStatic(res, url, f, accepts, () => aborted);
     });
 });
 
@@ -813,8 +860,10 @@ app.listen(PORT, (token) => {
     console.error(`[server] failed to listen on port ${PORT}`);
     process.exit(1);
   }
-  // (this build into the store for the servers after it: once it can be reached, so its health check is not held up)
-  builds?.pack();
+  // (this build into the store for the servers after it - only where it can be used (builds: a key, or
+  // HANDOFF_PIN=unsigned), and not on the way up: PACK_AFTER_MS after it listens, when its health check has been
+  // answered. Its games' saves name it, so a server told to stop before then packs it first: Lobby.handoffAll)
+  if (builds) setTimeout(() => stopping || builds.pack(), PACK_AFTER_MS).unref();
   console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
   // (only once it can be reached: then the proxy may send it players)
   if (cluster) {

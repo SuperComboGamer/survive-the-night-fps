@@ -1,5 +1,8 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { gzip, brotliCompress, constants as zlib } from 'node:zlib';
 
 // /stats is the stats page (client/stats.html) and /admin the control room (client/admin.html), as the game server serves them
 const statsPage = {
@@ -13,10 +16,44 @@ const statsPage = {
   },
 };
 
+// The client's code and pages are also written compressed, next to each file (name.gz and name.br): the server sends
+// those to a browser that takes them (server/index.js), so nothing is compressed as it starts. What a page loaded again
+// for a deploy waits for is mostly the bundle: 3 MB, 1 MB gzipped, 0.8 MB with brotli. Sound and images are compressed
+// already; a file under 1 KB, or one that would not get smaller, is left as it is.
+const COMPRESS = /\.(js|css|html|json|svg)$/;
+const precompress = () => {
+  let outDir = '';
+  const gz = promisify(gzip);
+  const br = promisify(brotliCompress);
+  return {
+    name: 'precompress',
+    apply: 'build',
+    configResolved: (c) => (outDir = c.build.outDir),
+    async closeBundle() {
+      const jobs = [];
+      for (const e of await readdir(outDir, { recursive: true, withFileTypes: true })) {
+        if (!e.isFile() || !COMPRESS.test(e.name)) continue;
+        const file = join(e.parentPath, e.name);
+        jobs.push(
+          readFile(file).then((body) =>
+            body.length < 1024
+              ? null
+              : Promise.all([
+                  gz(body, { level: 9 }).then((out) => out.length < body.length && writeFile(`${file}.gz`, out)),
+                  br(body, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_SIZE_HINT]: body.length } }).then((out) => out.length < body.length && writeFile(`${file}.br`, out)),
+                ])
+          )
+        );
+      }
+      await Promise.all(jobs);
+    },
+  };
+};
+
 export default defineConfig({
   root: 'client',
   publicDir: 'public',
-  plugins: [statsPage],
+  plugins: [statsPage, precompress()],
   server: {
     port: 5173,
     host: true,

@@ -23,8 +23,10 @@
 // A game carried on this way is kept to it for HANDOFF_PIN_MAX_HOURS at most (Room.pinCap): at the first dawn after
 // that, or when its run ends, it closes and its players are told why.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { gzipSync, gunzipSync } from 'node:zlib';
+import { gzipSync, gunzipSync, gzip } from 'node:zlib';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { readFile as readFileAsync } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { dirname, join, resolve, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -43,6 +45,7 @@ const MAX_CODE_BYTES = 32 * 1024 * 1024;
 const ASSET_CACHE_BYTES = 96 * 1024 * 1024; // the old builds' files kept in memory to serve
 export const buildId = (b) => idOf(b); // (the tests make builds of their own)
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+const gzipAsync = promisify(gzip);
 
 // the build's name: a hash of everything that makes it what it is
 function idOf({ api, epoch, client, deps, files, dist }) {
@@ -60,13 +63,16 @@ function signedBy(id, sig, key) {
 
 // The packages a game's worker imports, at the versions installed: { name: version }. The worker's module graph is
 // walked from server/room-worker.js; a bare import (not ./, not node:) is a package from node_modules.
-export function workerDeps(root) {
+// (files: the code's files by their paths from the root, already read - packBuild's)
+export function workerDeps(root, files = null) {
   const seen = new Set();
   const deps = {};
   const walk = (file) => {
-    if (seen.has(file) || !existsSync(file)) return;
+    if (seen.has(file)) return;
     seen.add(file);
-    const src = readFileSync(file, 'utf8');
+    const had = files?.[relative(root, file).split(sep).join('/')];
+    if (!had && !existsSync(file)) return;
+    const src = had ? had.toString('utf8') : readFileSync(file, 'utf8');
     for (const m of src.matchAll(/(?:^|[\n;])\s*(?:import|export)\s[^'"`;]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|(?:^|[\n;])\s*import\s*['"]([^'"]+)['"]/g)) {
       const s = m[1] || m[2] || m[3];
       if (s.startsWith('.')) walk(resolve(dirname(file), s));
@@ -87,35 +93,66 @@ export function workerDeps(root) {
 // The build in `root` (the repository as deployed), with its client `dist` (url -> { body }, as index.js serves it) and
 // what that client is ({ build, compat, protocol }). -> { id, sig, body, assets: Map(hash -> Buffer), bytes, files }
 // (null when it is too big: something else than code is in server/ or shared/)
-export function packBuild(root, { client, dist = new Map(), key = '' }) {
+export function packBuild(root, opts) {
   const files = {};
-  let bytes = 0;
+  for (const path of codePaths(root)) files[path] = readFileSync(join(root, path));
+  return assemble(root, files, opts, gzipSync);
+}
+// ...the same, the way a running server does it (Builds.pack): the files read and the build gzipped off the event loop,
+// which is let go between the client's files as they are hashed (no stretch of it longer than a few ms)
+export async function packBuildAsync(root, opts) {
+  const paths = codePaths(root);
+  const bufs = await Promise.all(paths.map((path) => readFileAsync(join(root, path))));
+  const files = Object.fromEntries(paths.map((path, i) => [path, bufs[i]]));
+  return assemble(root, files, opts, gzipAsync, true);
+}
+// (the code's files: every file under server/ and shared/, by its path from the root)
+function codePaths(root) {
+  const paths = [];
   const walk = (rel) => {
-    for (const name of readdirSync(join(root, rel)).sort()) {
-      const path = `${rel}/${name}`;
-      const full = join(root, path);
-      if (statSync(full).isDirectory()) walk(path);
-      else if (goodPath(path)) {
-        files[path] = readFileSync(full);
-        bytes += files[path].length;
-      }
+    for (const e of readdirSync(join(root, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const path = `${rel}/${e.name}`;
+      if (e.isDirectory()) walk(path);
+      else if (goodPath(path)) paths.push(path);
     }
   };
   for (const r of CODE_ROOTS) if (existsSync(join(root, r))) walk(r);
+  return paths;
+}
+function assemble(root, files, { client, dist = new Map(), key = '' }, gz, yields = false) {
+  let bytes = 0;
+  for (const buf of Object.values(files)) bytes += buf.length;
   if (bytes > MAX_CODE_BYTES) return null;
   const assets = new Map();
   const manifest = {};
-  for (const [url, f] of dist) {
-    if (!goodUrl(url)) continue;
-    const hash = sha256(f.raw || f.body);
-    manifest[url] = hash;
-    assets.set(hash, f.raw || f.body);
+  const hashAll = function* () {
+    let since = 0;
+    for (const [url, f] of dist) {
+      if (!goodUrl(url)) continue;
+      const body = f.raw || f.body;
+      const hash = sha256(body);
+      manifest[url] = hash;
+      assets.set(hash, body);
+      if ((since += body.length) > 4 * 1024 * 1024) (since = 0), yield;
+    }
+  };
+  const rest = () => {
+    const b = { api: WORKER_API, epoch: SECURITY_EPOCH, client: { build: String(client.build), compat: String(client.compat), protocol: +client.protocol }, deps: workerDeps(root, files), files, dist: manifest };
+    const id = idOf(b);
+    const packed = {};
+    for (const [path, buf] of Object.entries(files)) packed[path] = buf.toString('base64');
+    const done = (body) => ({ id, sig: key ? signOf(id, key) : '', bytes, files: Object.keys(files).length, assets, body });
+    const body = gz(JSON.stringify({ ...b, files: packed }));
+    return body instanceof Promise ? body.then(done) : done(body);
+  };
+  if (!yields) {
+    for (const _ of hashAll());
+    return rest();
   }
-  const b = { api: WORKER_API, epoch: SECURITY_EPOCH, client: { build: String(client.build), compat: String(client.compat), protocol: +client.protocol }, deps: workerDeps(root), files, dist: manifest };
-  const id = idOf(b);
-  const packed = {};
-  for (const [path, buf] of Object.entries(files)) packed[path] = buf.toString('base64');
-  return { id, sig: key ? signOf(id, key) : '', bytes, files: Object.keys(files).length, assets, body: gzipSync(JSON.stringify({ ...b, files: packed })) };
+  return (async () => {
+    for (const _ of hashAll()) await new Promise((r) => setImmediate(r));
+    return rest();
+  })();
 }
 
 // ...and back: the build `id` names, or why not ({ error }). Its name is checked against its contents; its signature
@@ -160,7 +197,9 @@ export class Builds {
     this.tmp = tmp;
     this.id = ''; // this build's own ('' until packed: nothing can name it yet)
     this.packed = null;
+    this.packing = null;
     this.kept = null;
+    this.swept = false;
     this.deps = null;
     this.got = new Map(); // id -> { id, dir, client, dist: { url: hash } } | null: the builds fetched (fetch)
     this.fetching = new Map();
@@ -172,26 +211,36 @@ export class Builds {
     return !!this.key || this.unsigned;
   }
 
-  // Packs this build and puts it in the store, as the server starts (after it listens: a few hundred ms), so it is
-  // there for the next server even if this one is killed instead of stopped. Never throws.
+  // Packs this build and puts it in the store for the servers after it, and sweeps the builds nobody uses. Not as the
+  // server starts (index.js: a moment after it listens), and never twice. Never throws.
   async pack() {
-    try {
-      const t0 = Date.now();
-      const b = packBuild(this.root, { client: this.client, dist: this.dist, key: this.key });
-      if (!b) return void this.log('handoff: this build is too big to keep for the next server (is anything but code in server/ and shared/?)');
-      this.id = b.id;
-      this.packed = b;
-      this.log(`handoff: this build is ${b.id} (${b.files} files of code, ${b.assets.size} client files; ${(b.body.length / 1024).toFixed(0)} KB packed in ${Date.now() - t0} ms${b.sig ? ', signed' : ', not signed: HANDOFF_BUILD_KEY is not set'})`);
-      await this.keep();
-      const n = await this.store.sweepBuilds(BUILD_KEEP_DAYS * 86400);
+    await this.keep();
+    if (this.packed && !this.swept) {
+      this.swept = true;
+      const n = await this.store.sweepBuilds(BUILD_KEEP_DAYS * 86400).catch(() => 0);
       if (n) this.log(`handoff: ${n} build(s) nobody used for ${BUILD_KEEP_DAYS} days dropped from the store`);
-    } catch (err) {
-      this.log(`handoff: this build could not be packed for the next server (${err.message})`);
     }
   }
-  // (this build in the store - once; again marks it as in use. Never throws)
-  keep() {
-    if (!this.packed) return Promise.resolve();
+  // This build packed: its name (id) known from then on - the saves of its games carry it. Once; never throws.
+  packOnce() {
+    return (this.packing ||= (async () => {
+      try {
+        const t0 = Date.now();
+        const b = await packBuildAsync(this.root, { client: this.client, dist: this.dist, key: this.key });
+        if (!b) return void this.log('handoff: this build is too big to keep for the next server (is anything but code in server/ and shared/?)');
+        this.id = b.id;
+        this.packed = b;
+        this.log(`handoff: this build is ${b.id} (${b.files} files of code, ${b.assets.size} client files; ${(b.body.length / 1024).toFixed(0)} KB packed in ${Date.now() - t0} ms${b.sig ? ', signed' : ', not signed: HANDOFF_BUILD_KEY is not set'})`);
+      } catch (err) {
+        this.log(`handoff: this build could not be packed for the next server (${err.message})`);
+      }
+    })());
+  }
+  // This build in the store, packed first if it is not yet (a server told to stop before it got to it: Lobby.handoffAll
+  // waits for this before its games are saved) - once. Never throws.
+  async keep() {
+    await this.packOnce();
+    if (!this.packed) return;
     const b = this.packed;
     return (this.kept ||= this.store
       .putBuild(b.id, b.body, b.sig, b.assets)

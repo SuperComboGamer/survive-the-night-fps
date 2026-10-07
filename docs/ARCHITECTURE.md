@@ -475,8 +475,11 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   update makes another map of its seed) or `ENDED_UPDATE` (anything else) instead of `NO_GAME`: the client says so once
   and stops asking (`client/net/comeback.js`).
 - **A game carried on by the build that saved it** (`server/builds.js`). Every server packs its own code (`server/`,
-  `shared/`) and its client (`dist/`, each file once by its content) as it starts, signed with `HANDOFF_BUILD_KEY`, and
-  puts it in the store; a save names the build its game runs on (`meta.build`). A server whose code cannot read a save
+  `shared/`) and its client (`dist/`, each file once by its content), signed with `HANDOFF_BUILD_KEY`, and puts it in
+  the store - only when pinning can run (the key, or `HANDOFF_PIN=unsigned`), and not on the way up: 2 s after it listens
+  (`HANDOFF_PACK_AFTER_MS`; about 75 ms, off the event loop but for a few ms at a time), or at once when it is told to
+  stop before then (`Lobby.handoffAll` waits for it while the next server builds the valleys); a save names the build
+  its game runs on (`meta.build`). A server whose code cannot read a save
   starts that game's worker from the build in the store, unpacked in its temp folder (`Room` with `pin`): the old
   simulation, the old map, inside the new server, speaking the same `WORKER_API` to the network thread. It is only
   started when it is signed with this deploy's key (or `HANDOFF_PIN=unsigned`), is what its name says (a hash of all of
@@ -546,8 +549,10 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   differs alone is loaded when the player leaves the game (they are told). Another compat or protocol: the page reloads
   (`reloadInto`), and the reloaded page goes back in as a reopened one does (`stn.playing`, `comeBack` with `moved`).
   Joining a game in the page asks the same first (`canJoinHere`): a game run by other code is joined from its own page.
-  `index.html` is served `no-cache` so a reload gets the build that runs the game; the client's files go out gzipped
-  (brotli once compressed).
+  `index.html` is served `no-cache` so a reload gets the build that runs the game; the client's files go out compressed
+  as the build wrote them (`vite.config.js` precompress: `name.br` and `name.gz` beside each script, style and page;
+  brotli to a browser that takes it, else gzip, else the file as it is), read from disk the first time each is asked
+  for - nothing is compressed as the server starts (the stamped page alone, 3 KB, at its first request).
 - **Tests:** `test-handoff-world` (a save of a build that filed a container elsewhere is restored, one of other
   ground is refused; a real server and the client's own `Connection` and `comeBack`: told once, and why),
   `test-handoff-safe` (above), `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
@@ -557,7 +562,8 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   `test-handoff-prepare` (valleys built ahead: back in tens of ms), `test-deploys` (moveback.js's rules, and deploys one
   after another through a stand-in edge: server only, client only, shared code, back to back, mid-restore),
   `test-handoff-pin` (carried on by the build that saved it: signing, security epoch, packages, the copy on disk, the cap,
-  the page and files, deploys after), `npm run test:e2e:handoff` (headless Chrome behind a stand-in for the edge), and
+  the page and files, deploys after), `test-static-start` (the compressed files served as built; no build packed with
+  pinning off, nor on the way up with it on; packed before the saves of a server told to stop at once), `npm run test:e2e:handoff` (headless Chrome behind a stand-in for the edge), and
   `node scripts/deploy-gap.js` measures the gap.
 
 ## Several game servers: the cluster and the proxy

@@ -15,7 +15,8 @@
 // a fresh one and copying what was saved over it). A save whose version differs is dropped: that game ends as before.
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fsp from 'node:fs/promises';
 import { join } from 'node:path';
 import { ITEM, ZTYPE, STRUCT, CONT, ZONE, AMMO, PROJ, AREA, KILLER } from '../shared/defs.js';
 import { PHASE } from '../shared/constants.js';
@@ -170,7 +171,12 @@ export function checkEnvelope(env) {
 const COMING_RE = /^([A-Z2-9]+)\.coming$/;
 const BUILD_FILE_RE = /^([0-9a-f]{24})\.json$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
-const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+// (a file's, read through a small buffer: a server checking the client files it keeps does not hold them all at once)
+const fileHash = (file) =>
+  new Promise((done, fail) => {
+    const h = createHash('sha256');
+    createReadStream(file).on('error', fail).on('data', (d) => h.update(d)).on('end', () => done(h.digest('hex')));
+  });
 
 // Files in a folder: CODE.json, written as CODE.json.tmp and renamed (there whole or not at all). Claimed by renaming
 // it to a name of this process's: of two servers claiming at once, one rename fails. A game announced is CODE.coming,
@@ -297,22 +303,24 @@ export class FileStore {
     mkdirSync(dir, { recursive: true });
     return dir;
   }
+  // (read and written off the event loop: a running server puts its build here - 24 MB of client files the first time)
   async putBuild(id, body, sig, assets = new Map()) {
+    const assetDir = this.assetDir;
     for (const [hash, buf] of assets) {
       if (!HASH_RE.test(hash)) continue;
-      const file = join(this.assetDir, hash);
+      const file = join(assetDir, hash);
       try {
-        if (sha256(readFileSync(file)) === hash) {
+        if ((await fileHash(file)) === hash) {
           touch(file);
           continue;
         }
       } catch {}
-      writeFileSync(`${file}.${process.pid}.tmp`, buf);
-      renameSync(`${file}.${process.pid}.tmp`, file);
+      await fsp.writeFile(`${file}.${process.pid}.tmp`, buf);
+      await fsp.rename(`${file}.${process.pid}.tmp`, file);
     }
     const file = join(this.buildDir, `${id}.json`);
-    writeFileSync(`${file}.${process.pid}.tmp`, JSON.stringify({ sig: sig || '', assets: [...assets.keys()], body: Buffer.from(body).toString('base64') }));
-    renameSync(`${file}.${process.pid}.tmp`, file);
+    await fsp.writeFile(`${file}.${process.pid}.tmp`, JSON.stringify({ sig: sig || '', assets: [...assets.keys()], body: Buffer.from(body).toString('base64') }));
+    await fsp.rename(`${file}.${process.pid}.tmp`, file);
   }
   readBuild(id) {
     try {

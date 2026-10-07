@@ -804,12 +804,13 @@ export class Lobby {
     // are gone through - restore puts back what it claims from now on)
     await Promise.race([Promise.allSettled([...this.restoring.values()]), new Promise((done) => setTimeout(done, 3000))]);
     const rooms = [...this.rooms.values()];
-    // (the code these games run on, for a next server that cannot read their saves: builds.js - in the store since this
-    // server started, marked as in use now, as is every older build a game here is carried on by)
-    if (rooms.some((room) => room.st.players && !room.pin)) await this.builds?.keep();
+    // (the code these games run on, for a next server that cannot read their saves: builds.js - in the store since a
+    // moment after this server started, or packed and put there now, while the next server builds the valleys: the
+    // saves name it. As is every older build a game here is carried on by, marked as in use)
+    const keeping = rooms.some((room) => room.st.players && !room.pin) ? this.builds?.keep() : null;
     for (const room of rooms) if (room.pin) this.builds?.touch(room.pin.id);
     const targets = new Map(rooms.map((room) => [room, room.st.players ? (this.cluster?.pickTarget() ?? null) : null]));
-    await this.announce(store, rooms, targets);
+    await Promise.all([keeping, this.announce(store, rooms, targets)]);
     const done = await Promise.all(
       rooms.map(async (room) => {
         const players = room.st.players;
