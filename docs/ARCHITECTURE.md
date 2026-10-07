@@ -1477,12 +1477,11 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   `/sandbox/models-test.html?turn=s:3,z:0:1,zv:0:5` draws turnaround sheets (front, side, back, the face) of
   survivors, the turned and zombie variants, and `scripts/test-characters.js` holds the wire rule and the models'
   budgets.
-- **Talking.** Chat and voice reach `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it the walkie-talkie carries
-  them. Every survivor has one in weapon slot 6 (`SLOT_RADIO`), which holds no item of its own: `state.weapons`
-  stays five long, `currentWeapon` answers `ITEM.WALKIE` for it (the viewmodel, the snapshot's held item), and
-  `canSelectSlot` allows it even when down. Text is gated on the server: `handleChat` sends each recipient its
-  own `S2C.CHAT` flags (`CHATF`: radio / faint / unheard), radio when the speaker had it in hand
-  (`radioInHand`). Voice is a peer-to-peer WebRTC mesh the server cannot gate, so the receiving client does it:
+- **Talking.** Text chat reaches everyone in the game: `handleChat` broadcasts one `S2C.CHAT` to every player.
+  The voice reaches `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it the walkie-talkie carries it. Every survivor
+  has one in weapon slot 6 (`SLOT_RADIO`), which holds no item of its own: `state.weapons` stays five long,
+  `currentWeapon` answers `ITEM.WALKIE` for it (the viewmodel, the snapshot's held item), and `canSelectSlot`
+  allows it even when down. Voice is a peer-to-peer WebRTC mesh the server cannot gate, so the receiving client does it:
   fire held with it in hand keys it (`radioKeyed` in playersim.js, on the simulated `lastBtn`), the server's
   `checkOnAir` puts the change in the player list the same tick (`PLF.ON_AIR`), and `game/radio.js` on each
   client routes that peer through the radio (`Voice.setRadio`, held open 400 ms past the key coming up), plays

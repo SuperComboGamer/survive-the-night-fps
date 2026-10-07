@@ -180,9 +180,9 @@ export const CRATE_FREEFALL = 1.2; // seconds before the parachute opens
 export const CRATE_FALL_SPEED = 5.5; // descent under the canopy (m/s)
 export const CRATE_DRAG = 1.5; // 1/s: the crate sheds the plane's forward speed (drifts PLANE_SPEED / CRATE_DRAG m)
 
-// Talking: voice and text chat only carry so far, so you hear the survivors around you and nobody else. Every
-// survivor carries a walkie-talkie in weapon slot 6 (SLOT_RADIO): with it in hand, chat goes out to every other
-// survivor, and holding the fire button keys it so the voice does too (radioKeyed in playersim.js)
+// Talking: text chat reaches everyone in the game, but the voice only carries so far, so you hear the survivors
+// around you and nobody else. Every survivor carries a walkie-talkie in weapon slot 6 (SLOT_RADIO): holding the fire
+// button with it in hand keys it so the voice goes out to every other survivor (radioKeyed in playersim.js)
 export const TALK_CLEAR = 25; // heard at full strength out to here (m)...
 export const TALK_RANGE = 35; // ...fading to nothing by here
 

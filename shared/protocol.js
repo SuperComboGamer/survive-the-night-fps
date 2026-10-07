@@ -122,14 +122,11 @@ export const MOVED_CODE = 4002;
 // (A client from before this code takes it for a drop and tries to rejoin, as it does after any other close.)
 export const ENDED_CODE = 4003;
 
-// S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
-// speaker (TALK_RANGE), or anywhere when it was said with the walkie-talkie in hand, so the flags differ per recipient.
+// S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Text chat reaches every player in the game.
+// (4, 8 and 16 were radio / faint / unheard while chat only carried as far as a voice does)
 export const CHATF = {
   SYSTEM: 1,
   ZOMBIE: 2, // the speaker is a player-zombie
-  RADIO: 4, // out of earshot: it came over the walkie-talkie
-  FAINT: 8, // only just in earshot
-  UNHEARD: 16, // (to the speaker) nobody was close enough to hear it
 };
 // S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, u8 level
 // (progress.js), and with PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none);

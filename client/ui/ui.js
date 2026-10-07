@@ -310,12 +310,11 @@ export class UI {
     this.chat.open();
   }
 
-  // the walkie-talkie in hand: chat reaches every survivor; keyed (fire held), the voice does too (game/radio.js)
+  // the walkie-talkie in hand; keyed (fire held), the voice reaches every survivor (game/radio.js)
   setRadio(inHand, keyed) {
     const k = (inHand ? 1 : 0) | (keyed ? 2 : 0);
     if (k === this._radioK) return;
     this._radioK = k;
-    this.chat.setRadio(!!inHand);
     this.hud.radio.hidden = !inHand;
     this.hud.radio.classList.toggle('tx', !!keyed);
   }

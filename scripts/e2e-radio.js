@@ -1,6 +1,6 @@
 // Walkie-talkie e2e (server: GODMODE=1 NODE_ENV=test DEV_ADMIN=1, for /tp): two clients, each in a browser of its own with a fake
-// microphone. [6] puts the walkie-talkie in A's hand (it hisses, the chat says Radio); chat typed then reaches B on the
-// far side of the valley; holding fire keys it: A's mic opens, B is told A is on the air, hears the static and A's
+// microphone. [6] puts the walkie-talkie in A's hand (it hisses); chat typed reaches B on the far side of the valley
+// with it in hand or not; holding fire keys it: A's mic opens, B is told A is on the air, hears the static and A's
 // voice through the radio at any distance. Letting go takes A off the air again, and B sees A raise it to the mouth.
 // usage: node scripts/e2e-radio.js [url] [outdir]
 import puppeteer from 'puppeteer-core';
@@ -78,7 +78,7 @@ await A.keyboard.press('Digit6');
 await sleep(900);
 const held = await radio(A, idB);
 expect('[6] takes out the walkie-talkie', held.slot === 5 && held.vm === 45 && held.inHand, held);
-expect('...the chat goes out over the radio, the HUD says how to talk', held.say === 'Radio' && held.hudRadio && /hold fire/i.test(held.label), held);
+expect('...the HUD says how to talk', held.say === 'Say' && held.hudRadio && /hold fire/i.test(held.label), held);
 expect('...and it hisses quietly', held.hiss > 0 && held.hiss < 1, held);
 await A.screenshot({ path: `${out}/a-held.png` });
 
@@ -98,8 +98,8 @@ const dist = await B.evaluate((id) => {
 expect('A is out of earshot', dist === 'out of sight' || dist > 60, { dist });
 await chat(A, 'radio check');
 await sleep(800);
-const line = await B.evaluate(() => [...document.querySelectorAll('.chat-line')].map((l) => ({ radio: l.classList.contains('radio'), text: l.textContent })).filter((l) => /radio check/.test(l.text)));
-expect('chat with the walkie-talkie in hand reaches B across the valley, over the radio', line.length === 1 && line[0].radio, line);
+const line = await B.evaluate(() => [...document.querySelectorAll('.chat-line')].filter((l) => /radio check/.test(l.textContent)).length);
+expect('chat reaches B across the valley', line === 1, { line });
 
 // holding fire keys it
 await A.mouse.down({ button: 'left' });
@@ -122,7 +122,7 @@ const offB = await radio(B, idA);
 expect('letting go takes A off the air, mic closed', !offA.keyed && !offA.tx && offA.inHand, offA);
 expect('...and B hears the radio go quiet', !offB.listed && offB.onAir.length === 0 && offB.hiss === 0 && !offB.peerRadio, offB);
 
-// out of the hand: chat back to earshot only
+// out of the hand: chat still reaches B across the valley
 await A.bringToFront();
 await A.keyboard.press('Digit3');
 await sleep(800);
@@ -130,7 +130,7 @@ await chat(A, 'just me');
 await sleep(800);
 const quiet = await B.evaluate(() => [...document.querySelectorAll('.chat-line')].filter((l) => /just me/.test(l.textContent)).length);
 const away = await radio(A, idB);
-expect('put away: chat stays in earshot, no hiss', quiet === 0 && !away.inHand && away.hiss === 0 && away.say === 'Say', { quiet, away });
+expect('put away: chat still reaches B, no hiss', quiet === 1 && !away.inHand && away.hiss === 0 && away.say === 'Say', { quiet, away });
 
 // B sees A with it: back beside B, A keys it and it comes up to the mouth
 const spot = await B.evaluate(() => {

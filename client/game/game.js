@@ -1076,16 +1076,15 @@ export class Game {
   }
 
   onChat(id, flags, text) {
-    const radio = !!(flags & CHATF.RADIO);
     if (flags & CHATF.SYSTEM) {
       this.ui.addChat('', text, { system: true });
       this.ui.spawn.serverSays(text);
     } else {
       const p = this.players.get(id);
       const zombie = !!(flags & CHATF.ZOMBIE);
-      this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined, radio, faint: !!(flags & CHATF.FAINT), unheard: !!(flags & CHATF.UNHEARD) });
+      this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined });
     }
-    this.audio.playLocal?.(radio ? 'radio' : 'chat', { volume: 0.5 });
+    this.audio.playLocal?.('chat', { volume: 0.5 });
   }
 
   onPlayers(r) {

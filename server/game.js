@@ -111,7 +111,6 @@ import {
   ZONE,
   THROW_ITEMS,
   isFirearm,
-  radioLinked,
   salvageOf,
 } from '../shared/defs.js';
 import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, UNDO_NO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, dqpos, usePos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
@@ -3751,25 +3750,14 @@ export class Game {
       p.chatCount = 0;
     }
     if (++p.chatCount > 6) return;
-    // only those in earshot hear it, and everyone else too when it was said with the walkie-talkie in hand
-    const base = p.zombie ? CHATF.ZOMBIE : 0;
-    const radio = this.radioInHand(p);
-    if (radio) this.ach.onAir(p);
-    const s = p.state;
-    let heard = 0;
-    for (const q of this.players.values()) {
-      if (q === p) continue;
-      const d = Math.hypot(q.state.x - s.x, q.state.y - s.y, q.state.z - s.z);
-      let flags = base;
-      if (d > TALK_CLEAR) {
-        if (radioLinked(radio, this.hasWalkie(q))) flags |= CHATF.RADIO;
-        else if (d <= TALK_RANGE) flags |= CHATF.FAINT;
-        else continue;
-      }
-      this.sendChat(q, p.id, flags, text);
-      heard++;
-    }
-    this.sendChat(p, p.id, heard || this.players.size < 2 ? base : base | CHATF.UNHEARD, text);
+    // text chat reaches everyone in the game, wherever they are (the voice still carries only so far: TALK_RANGE)
+    if (this.radioInHand(p)) this.ach.onAir(p);
+    const w = new Writer(text.length * 3 + 8);
+    w.u8(S2C.CHAT);
+    w.u16(p.id);
+    w.u8(p.zombie ? CHATF.ZOMBIE : 0);
+    w.str(text);
+    this.broadcast(w.bytes());
   }
   sendChat(to, id, flags, text) {
     const w = new Writer(text.length * 3 + 8);
@@ -3783,7 +3771,7 @@ export class Game {
   hasWalkie(p) {
     return p.alive && !p.zombie;
   }
-  // ...chat said with it in hand goes out over it...
+  // ...chat said with it in hand counts towards its achievement...
   radioInHand(p) {
     return this.hasWalkie(p) && p.state.slot === SLOT_RADIO;
   }
