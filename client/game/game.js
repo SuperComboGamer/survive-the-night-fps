@@ -56,7 +56,7 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, MOVED_CODE, ENDED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
 import { trackedRecipe, trackedNeed } from './tracked.js';
 import { mayHold } from './itemguide.js';
 import { worldFor } from '../../shared/worlds.js';
@@ -138,7 +138,7 @@ import { KeyHints } from '../ui/keyhints.js';
 import { radialIndex } from '../ui/build.js';
 import { MenuTour } from './menutour.js';
 import { KeyGuard } from './keyguard.js';
-import { bearing, nextNightText, nightBossText, PING_LABEL } from '../ui/hud2.js';
+import { bearing, nextNightText, nightBossText, tonightBrief, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
   fog: 'Fog is rolling in',
@@ -188,6 +188,11 @@ const CRAFT_RATE = 40; // per second
 const BUILD_MENU_REACH = 120;
 const BUILD_MENU_DEAD = 26;
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
+// m:ss, for the time a torch or a campfire has left to burn (Game.burnLeft)
+const mmss = (t) => {
+  const n = Math.ceil(t);
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+};
 const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
 const BOARD_EVERY = 4000; // ms between two requests for the leaderboard while it is open
 // Turning while aimed is slowed by the gun's zoom, tan(aimed fov / 2) / tan(hip fov / 2) (the ratio of the two
@@ -335,7 +340,8 @@ export class Game {
       progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
       voice: (from, payload) => this.voice.onSignal(from, payload),
-      close: (code) => this.onDisconnect(code),
+      // (ENDED_CODE: an admin closed the game or removed this player - the reason is said, and nothing rejoins)
+      close: (code, reason) => this.onDisconnect(code, code === ENDED_CODE ? reason || 'This game was ended by an admin.' : ''),
     });
     this.voice = new Voice(this.conn, audio);
     this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.speakers() });
@@ -1293,10 +1299,18 @@ export class Game {
       },
       summary(s) {
         // after the "DAY N" title card has faded
-        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1), nightTheme(g.seed, s.night + 1), nightBossText(g.seed, s.night + 1)), 4300);
+        setTimeout(() => g.state === 'playing' && g.ui.showSummary(s, nextNightText(s.night + 1, g.act), nightTheme(g.seed, s.night + 1, g.act), nightBossText(g.seed, s.night + 1, g.act)), 4300);
       },
     };
     return this._eh;
+  }
+
+  // seconds a torch or a campfire has left to burn: the server sends the tick it burns out at (SF.BURN, low 16 bits),
+  // and it is counted down here from the latest tick, so nothing more is sent while it burns
+  burnLeft(e) {
+    if (!e.q[5]) return 0;
+    const left = (e.q[5] - this.net.tick) & 0xffff;
+    return left > 0xf000 ? 0 : left / SERVER_TICK_RATE;
   }
 
   onNotify(msg, arg) {
@@ -1307,7 +1321,7 @@ export class Game {
     switch (msg) {
       case NOTIFY.NIGHT_FALLS: {
         // a themed night says so (the same theme the server drew: both work it out from the seed)
-        const th = nightTheme(this.seed, arg);
+        const th = nightTheme(this.seed, arg, this.act);
         ui.notify(th ? `NIGHT ${arg}: ${th.name.toUpperCase()}` : `NIGHT ${arg}`, 'big', th ? 6 : 4);
         ui.notify(th ? th.warn : arg <= 1 ? 'The horde is coming to wherever you are. Hold your shelter.' : `Horde ${arg}: more of them than last night.`, 'sub', th ? 6 : 4);
         a.stinger?.('night');
@@ -1322,19 +1336,11 @@ export class Game {
         ui.notify('You made it. The sun burns the horde - go find those supplies.', 'sub', 4);
         a.stinger?.('dawn');
         break;
-      case NOTIFY.HORDE_SOON: {
+      case NOTIFY.HORDE_SOON:
+        // one line. What tonight brings (its theme, the new kind, its boss) is on the card under the clock from now to
+        // dark (hud2.js Tonight, from Game.tonight), and the objective says where to board up
         ui.notify('THE HORDE IS COMING', 'danger', 5);
-        ui.notify('Board up where you stand: door boards, barricades, a campfire.', 'toast', 6);
-        // the dawn card said it first; this is the reminder with DUSK_WARNING left (arg = the coming night)
-        const th = nightTheme(this.seed, arg);
-        if (th) ui.notify(`${th.name} tonight. ${th.warn}`, 'warning', 9);
-        // ...and the one new kind of the dead tonight brings (the dawn card said so too)
-        for (const d of Object.values(ZOMBIE_DEFS)) if (d.minNight === arg && !d.boss && d.intro) ui.notify(d.intro, 'warning', 9);
-        // ...and tonight's boss (on night 1, with no dawn card before it, this is the first word of The Brute)
-        const boss = nightBossText(this.seed, arg);
-        ui.notify(`${boss.name} tonight, with the second wave. ${boss.tip}`, 'warning', 9);
         break;
-      }
       case NOTIFY.BOSS: {
         const zd = ZOMBIE_DEFS[arg];
         ui.notify(zd ? (zd.boss ? '' : 'A ') + zd.name.toUpperCase() : 'SOMETHING', 'big', 4);
@@ -1543,6 +1549,16 @@ export class Game {
         ui.notify('Part of the horde is coming up out of St. Agnes Cemetery. Watch the ground behind you.', 'toast', 7);
         break;
     }
+  }
+
+  // The card under the clock from the dusk horn to nightfall (hud2.js Tonight): what the coming night brings, worked
+  // out from the seed as the server does. The same object while it holds (the card rebuilds when the key changes);
+  // null by night, before the horn and in the final stand
+  tonight(g) {
+    if (g.phase !== PHASE.DAY || g.finale || !g.day || g.timeLeft > DUSK_WARNING) return null;
+    const key = `${this.seed}:${this.act}:${g.day}`;
+    if (this._tonight?.key !== key) this._tonight = { key, rows: tonightBrief(this.seed, g.day, this.act) };
+    return this._tonight;
   }
 
   // Joined a run that is already under way. NEW_GAME, the card that says what the game is, went out before we were
@@ -3296,9 +3312,10 @@ export class Game {
           const w = counts[ITEM.WOOD] || 0;
           const st = counts[ITEM.STICK] || 0;
           this.prompt = w || st ? `${bindTag('interact')} ${lit ? 'Feed' : 'Relight'} the fire (${w ? `${w} Planks` : `${st} Sticks`})` : lit ? 'Campfire · feed it Planks or Sticks' : 'The fire is out · needs Planks or Sticks';
-          if (s.slot === SLOT_BUILD) this.prompt += ` · ${bindTag('demolish')} Remove`;
+          // (how long it has left: with the hammer out only, so nothing more is on the screen in a fight)
+          if (s.slot === SLOT_BUILD) this.prompt += `${lit ? ` · burns ${mmss(this.burnLeft(e))}` : ''} · ${bindTag('demolish')} Remove`;
         } else if (s.slot === SLOT_BUILD) {
-          if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? `${bindTag('interact')} Relight torch (1 Cloth) · ${bindTag('demolish')} Remove` : `${bindTag('demolish')} Remove torch`;
+          if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? `${bindTag('interact')} Relight torch (1 Cloth) · ${bindTag('demolish')} Remove` : `Burns ${mmss(this.burnLeft(e))} · ${bindTag('demolish')} Remove torch`;
           else this.prompt = hp < 0.99 ? `${bindTag('interact')} Repair ${def.name} (1 Planks, 1 Nails) · ${bindTag('demolish')} Demolish` : `${bindTag('demolish')} Demolish ${def.name}`;
         } else if (def.station === 'bench') this.prompt = `Workbench · craft here ${bindTag('inventory')}`;
         this.contextStructure = { name: def.name, hp };
@@ -3505,6 +3522,7 @@ export class Game {
     h.standWarm = g.standWarm; // (the plane's stand: the truck is done, the engines are warming)
     h.runwayBlocked = g.runwayBlocked;
     h.escapeLeaving = g.escapeLeaving;
+    h.tonight = this.tonight(g);
     const boss = g.bossId ? this.entities.ents.get(g.bossId) : null;
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
     h.prompt = h.shove >= 0 ? null : this.prompt; // (pinned: nothing in reach can be used, and the meter is there)

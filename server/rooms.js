@@ -17,6 +17,13 @@ import { PHASE, MAX_PLAYERS } from '../shared/constants.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { HANDOFF_CLOSE } from './handoff.js';
 
+// A WebSocket close frame's reason is at most 123 bytes of UTF-8: what fits of `text`, cut between two characters
+export function closeReason(text, max = 120) {
+  let out = String(text || '');
+  while (Buffer.byteLength(out) > max) out = out.slice(0, -1);
+  return out;
+}
+
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // (no 0 / O, 1 / I: a code gets read out loud)
 const PUBLIC_CODE = 6;
 const PRIVATE_CODE = 10; // 32^10: about 10^15 codes
@@ -107,6 +114,8 @@ export class Room {
     this.saved = null; // (handoff: waiting for the worker's save)
     this.movingTo = null; // (handoff: the server it is being handed to, cluster.js)
     this.up = null; // (cluster.js: its row being written, which a new game's maker waits for)
+    this.asks = new Map(); // the admin panel's questions the worker has not answered yet: id -> { done, fail, timer } (ask)
+    this.askN = 0;
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
       // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
@@ -115,9 +124,15 @@ export class Room {
       resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
     });
     this.worker.on('message', (m) => this.fromWorker(m));
-    this.worker.on('error', (err) => lobby.log(`game ${code} crashed:`, err));
+    this.worker.on('error', (err) => {
+      lobby.log(`game ${code} crashed:`, err);
+      lobby.onIncident?.({ code, kind: 'crashed', text: String(err?.message || err).slice(0, 200) });
+    });
     this.worker.on('exit', (exitCode) => {
-      if (!this.closed) lobby.log(`game ${code} stopped (exit ${exitCode})`);
+      if (!this.closed) {
+        lobby.log(`game ${code} stopped (exit ${exitCode})`);
+        lobby.onIncident?.({ code, kind: 'stopped', text: `its thread ended by itself (exit ${exitCode}) with ${this.open} connected` });
+      }
       this.shut(1011, 'Game ended');
     });
   }
@@ -257,8 +272,18 @@ export class Room {
         this.draining[m.slot] = 0;
         return;
       case 'kick':
-        this.socks[m.slot]?.end(4000, 'Never joined');
+        // (with a code: an admin removed its player - gameadmin.js)
+        this.socks[m.slot]?.end(m.code || 4000, closeReason(m.why || 'Never joined'));
         return;
+      case 'admin': {
+        const a = this.asks.get(m.id);
+        if (!a) return; // (answered too late: ask gave up on it)
+        this.asks.delete(m.id);
+        clearTimeout(a.timer);
+        const { t, id, ...answer } = m;
+        a.done(answer);
+        return;
+      }
       case 'status': {
         const { t, ...st } = m;
         this.st = st;
@@ -287,9 +312,32 @@ export class Room {
         return;
       case 'restoreFailed':
         this.lobby.log(`game ${this.code} not restored: ${m.why}`);
+        this.lobby.onIncident?.({ code: this.code, kind: 'not restored', text: String(m.why).slice(0, 200) });
         this.lobby.ended(this.code, m.world ? REJECT_REASON.ENDED_MAP : REJECT_REASON.ENDED_UPDATE);
         return;
     }
+  }
+
+  // The admin panel asks something of the game (gameadmin.js: op and what it needs, already checked by adminpanel.js).
+  // -> its answer, { ok, ... } or { ok: false, error }; a game that does not answer in `ms` (a thread that hangs) is an
+  // answer too. Never throws, never waits longer.
+  ask(op, args = {}, ms = 3000) {
+    if (this.closed) return Promise.resolve({ ok: false, error: 'That game has ended.' });
+    return new Promise((done) => {
+      const id = ++this.askN;
+      const timer = setTimeout(() => {
+        this.asks.delete(id);
+        done({ ok: false, error: 'The game did not answer in time.', timeout: true });
+      }, ms);
+      this.asks.set(id, { done, timer });
+      try {
+        this.worker.postMessage({ ...args, t: 'admin', id, op });
+      } catch (err) {
+        clearTimeout(timer);
+        this.asks.delete(id);
+        done({ ok: false, error: `The game could not be asked (${err.message}).` });
+      }
+    });
   }
 
   // an account's achievements unlocked (userachievements.js): the game tells its player
@@ -414,13 +462,18 @@ export class Room {
     this.lobby.rooms.delete(this.code);
     this.lobby.cluster?.roomDown(this);
     this.worker.terminate().catch(() => {});
+    for (const a of this.asks.values()) {
+      clearTimeout(a.timer);
+      a.done({ ok: false, error: 'That game has ended.' });
+    }
+    this.asks.clear();
     for (let i = 0; i < this.socks.length; i++) {
       const ws = this.socks[i];
       if (!ws) continue;
       this.socks[i] = null;
       ws.getUserData().room = null;
       try {
-        ws.end(code, why);
+        ws.end(code, closeReason(why));
       } catch {}
     }
     this.open = 0;
@@ -458,6 +511,8 @@ export class Lobby {
     this.cluster = null; // the other servers behind the proxy (cluster.js), when there are any
     this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
     this.onPresence = null; // (account id) => void: they came into a game or left one (social.js)
+    this.onIncident = null; // ({ code, kind, text }) => void: a game crashed, stopped or could not be restored (adminpanel.js)
+    this.closedToNew = false; // an admin stopped new games being made here (adminpanel.js): those running carry on, and can be joined
     this.gameOpts = gameOpts;
     this.maxGames = maxGames;
     this.maxPlayers = maxPlayers; // seats in a game nobody chose the size of (a quick join's)
@@ -501,7 +556,7 @@ export class Lobby {
   // whether this server may make another game: its own MAX_GAMES, and (on its own) the total. (In a cluster the total
   // is over every server, and Cluster.reserve keeps it.)
   get canCreate() {
-    return this.rooms.size < this.maxGames && (!!this.cluster || this.maxTotal === null || this.rooms.size < this.maxTotal);
+    return !this.closedToNew && this.rooms.size < this.maxGames && (!!this.cluster || this.maxTotal === null || this.rooms.size < this.maxTotal);
   }
   // the game going here that this maker made, or null
   gameOf(maker) {

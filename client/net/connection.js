@@ -132,7 +132,7 @@ export class Connection {
         const opened = this.open;
         if (this.ws === ws) this.open = false;
         // (a join turned away - REJECT - is the caller's error already; the game only hears of the one it is in)
-        if (settled) return joined && this.ws === ws && this.h.close?.(e.code);
+        if (settled) return joined && this.ws === ws && this.h.close?.(e.code, e.reason);
         // (1006 without having opened: the handshake or the connection failed, here or on the way)
         const err = new Error('Could not connect to server');
         err.unanswered = true;
