@@ -9,6 +9,7 @@ import { buildNestLitter } from './mountedgun.js';
 import { STREET_PROPS, STREET_VARIANTS } from './props-street.js';
 import { INTERIOR_PROPS, INTERIOR_VARIANTS } from './props-interior.js';
 import { AIRCRAFT_PROPS } from './aircraft.js';
+import { hullShell, boxShell, profShell, leaf, seat, dash, steering, mirror, sitter, luggage, childSeat, rubbish, bloodPatch, burntSeat, deck, busRows, paneLook, LINING, CHAR, SEATS, mul } from './cabin.js';
 
 export { createQuestPlane, createFlightPlane } from './aircraft.js';
 
@@ -17,7 +18,7 @@ const cache = new Map();
 
 // number of cached visual variants per prop (seed % n)
 const VARIANTS = {
-  car: 1, car_wreck: 4, pickup_truck: 2, gravestone: 4, grave_cross: 3, barrel: 4, crate: 3, crate_small: 3, chair: 3, fence: 3,
+  car: 1, car_wreck: 8, pickup_truck: 4, gravestone: 4, grave_cross: 3, barrel: 4, crate: 3, crate_small: 3, chair: 3, fence: 3,
   campfire: 1, heli_wreck: 1, watchtower: 1, water_tower: 1, radio_mast: 1, tent: 2, corpse: 3, bones: 2, pumpkin: 3,
   power_pole: 2, road_sign: 2, tire_pile: 2, sandbags: 2, woodpile: 2, scarecrow: 1, boat: 2,
   // iteration 2
@@ -121,7 +122,17 @@ function sedan(b, r, o) {
   s.lineTo(2.3, 0.42);
   s.lineTo(2.3, 0.8);
   s.lineTo(2.22, 0.9);
+  // (the boot: a well under its lid, as deep as the back wheels' arches let it be)
+  s.lineTo(BOOT.z1, 0.9);
+  s.lineTo(BOOT.z1, BOOT.y);
+  s.lineTo(BOOT.z0, BOOT.y);
+  s.lineTo(BOOT.z0, 0.92);
   s.lineTo(1.25, 0.92);
+  // (the cabin: a well down to the floor between the scuttle and the back seat, the doors closing its two sides)
+  s.lineTo(TUB.z1, 0.92);
+  s.lineTo(TUB.z1, TUB.y);
+  s.lineTo(TUB.z0, TUB.y);
+  s.lineTo(TUB.z0, 0.92);
   s.lineTo(-0.88, 0.92);
   if (o.hoodOpen) {
     s.lineTo(-0.88, 0.73);
@@ -133,6 +144,30 @@ function sedan(b, r, o) {
   s.lineTo(-2.31, 0.4);
   s.lineTo(-2.25, 0.27);
   b.extrude('carpaint', s, W, { r: [0, -PI / 2, 0], p: [hw, 0, 0], c: col });
+  // the doors, front and back each side (o.doorsOff: [[side, 0 front | 1 back]]: standing open, built by the caller)
+  for (const sx of [-1, 1])
+    for (const [k, z0, z1] of [[0, TUB.z0, 0.46], [1, 0.46, TUB.z1]]) {
+      if ((o.doorsOff || []).some((d) => d[0] === sx && d[1] === k)) continue;
+      b.box('carpaint', TUB.door, 0.92 - TUB.y, z1 - z0, { p: [sx * (hw - TUB.door / 2), (0.92 + TUB.y) / 2, (z0 + z1) / 2], c: col });
+    }
+  // the boot's two sides, its lid (a part of its own: the wreck system finds it and hinges it at its front edge -
+  // forced with a blade or a bat, client/render/wrecks.js `pry`; o.bootOpen: the caller builds it standing up), and
+  // what is in it: carpet, the spare wheel lying flat, a jack, what nobody wanted
+  for (const sx of [-1, 1]) b.box('carpaint', 0.1, 0.92 - BOOT.y, BOOT.z1 - BOOT.z0, { p: [sx * (hw - 0.05), (0.92 + BOOT.y) / 2, (BOOT.z0 + BOOT.z1) / 2], c: col });
+  if (!o.bootOpen) b.box('carpaint', W - 0.16, 0.03, BOOT.z1 - BOOT.z0 + 0.06, { p: [0, 0.932, (BOOT.z0 + BOOT.z1) / 2 + 0.01], c: col });
+  {
+    const zc = (BOOT.z0 + BOOT.z1) / 2, lw = W - 0.21, carpet = o.burnt ? CHAR : [0.14, 0.14, 0.15];
+    deck(b, 0, BOOT.y + 0.012, zc, lw, BOOT.z1 - BOOT.z0 - 0.01, carpet);
+    for (const z of [BOOT.z0 + 0.006, BOOT.z1 - 0.006]) b.box('cabin_fine', lw, 0.92 - BOOT.y - 0.03, 0.01, { p: [0, (0.9 + BOOT.y) / 2, z], c: carpet });
+    b.cyl('cabin_fine', 0.27, 0.27, 0.1, 10, { p: [-0.38, BOOT.y + 0.064, zc + 0.06], c: o.burnt ? [0.16, 0.1, 0.07] : [0.07, 0.07, 0.07] });
+    b.cyl('cabin_fine', 0.15, 0.15, 0.104, 8, { p: [-0.38, BOOT.y + 0.066, zc + 0.06], c: [0.26, 0.17, 0.12] });
+    if (!o.burnt) {
+      b.box('cabin_fine', 0.3, 0.07, 0.1, { p: [0.3, BOOT.y + 0.05, zc - 0.2], r: [0, 0.3, 0], c: [0.4, 0.14, 0.1] }); // the jack
+      b.box('cabin_fine', 0.04, 0.03, 0.4, { p: [0.36, BOOT.y + 0.03, zc + 0.16], r: [0, -0.5, 0], c: [0.2, 0.2, 0.2] });
+      b.box('cabin_fine', 0.34, 0.012, 0.26, { p: [0.5, BOOT.y + 0.02, zc + 0.22], r: [0, 0.8, 0], c: [0.44, 0.4, 0.3] }); // a rag
+      b.box('cabin_fine', 0.3, 0.13, 0.22, { p: [0.12, BOOT.y + 0.08, zc + 0.24], r: [0, -0.2, 0], c: [0.42, 0.34, 0.2] }); // an empty box
+    }
+  }
   // wheel wells (dark chassis block filling the arch tunnel)
   for (const z of [fa, ra]) b.box('dark', W - 0.03, 0.44, 0.82, { p: [0, 0.49, z] });
   if (o.hoodOpen) {
@@ -164,33 +199,24 @@ function sedan(b, r, o) {
     const q = top ? T : B;
     C.push([X * q.x, top ? gt : gb, Z ? q.zr : q.zf]);
   }
-  if (!o.openCabin) b.hull('dark', C); // (createDriveCar: the cabin is left open, to seat survivors in)
+  // (a shell: the pillars and the rails are what is left of its faces round the openings; open underneath into the
+  // well, and its roof is the lid laid on it below)
   const lerp3 = (a, c, t) => [a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t, a[2] + (c[2] - a[2]) * t];
-  const pane = (p0, p1, p2, p3, broken) => {
-    // p0,p1 bottom; p3,p2 top (ccw from outside)
-    if (broken === 'gone') return;
-    b.poly('glass', [p0, p1, p2, p3], [[0, 1, 2], [0, 2, 3]]);
-  };
   const out = (p, n, d = 0.006) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2] + n[2] * d];
   const glass = o.glass || ['ok', 'ok', 'ok', 'ok', 'ok', 'ok'];
-  // windshield (front, facing -z)
-  const wsN = [0, 0.55, -0.83];
-  pane(out(lerp3(C[1], C[0], 0.04), wsN), out(lerp3(C[0], C[1], 0.04), wsN), out(lerp3(C[2], C[3], 0.04), wsN), out(lerp3(C[3], C[2], 0.04), wsN), glass[0]);
-  // rear window (facing +z)
-  const rwN = [0, 0.5, 0.86];
-  pane(out(lerp3(C[4], C[5], 0.05), rwN), out(lerp3(C[5], C[4], 0.05), rwN), out(lerp3(C[7], C[6], 0.05), rwN), out(lerp3(C[6], C[7], 0.05), rwN), glass[1]);
-  // side windows (front / rear per side)
+  const dirt = o.dirt ?? 0.45;
+  // (a pane: 'ok', 'gone', 'shard' (a tooth of it left in a corner), 'blood' (smeared from inside), or its own look)
+  const gl = (k) => (glass[k] === 'ok' ? paneLook(dirt, k) : glass[k] === 'blood' ? [Math.min(1, dirt + 0.2), 0.2, 0.9] : glass[k]);
+  const sideHoles = (k0) => [[0.075, 0.47, 0.08, 0.93, gl(k0)], [0.53, 0.965, 0.08, 0.93, gl(k0 + 1)]];
+  hullShell(b, 'carpaint', C, {
+    c: col, t: 0.03, lining: o.burnt ? CHAR : LINING, skip: ['yn'], bare: ['yp'],
+    holes: { zn: [[0.045, 0.955, 0.08, 0.93, gl(0)]], zp: [[0.05, 0.95, 0.09, 0.92, gl(1)]], xp: sideHoles(2), xn: sideHoles(4) },
+  });
+  sedanCabin(b, o, hw);
   for (const sx of [-1, 1]) {
     const bf = sx > 0 ? C[1] : C[0], br = sx > 0 ? C[5] : C[4], tf = sx > 0 ? C[3] : C[2], tr = sx > 0 ? C[7] : C[6];
     const n = [sx, 0.22, 0];
     const bottomAt = (t) => lerp3(bf, br, t), topAt = (t) => lerp3(tf, tr, t);
-    const segs = [[0.02, 0.47, 0.05, 0.47], [0.53, 0.97, 0.53, 0.96]];
-    segs.forEach(([b0, b1, t0, t1], k) => {
-      const q = [out(bottomAt(b0 + 0.06), n), out(bottomAt(b1), n), out(topAt(t1), n), out(topAt(t0 + 0.02), n)];
-      const g = glass[2 + (sx > 0 ? 0 : 2) + k];
-      if (sx > 0) pane(q[1], q[0], q[3], q[2], g);
-      else pane(q[0], q[1], q[2], q[3], g);
-    });
     // pillars
     b.beam('carpaint', out(bf, n, 0.01), out(tf, n, 0.01), 0.07, 0.05, { c: col, side: [0, 0, 1] });
     b.beam('carpaint', out(br, n, 0.01), out(tr, n, 0.01), 0.1, 0.05, { c: col, side: [0, 0, 1] });
@@ -241,6 +267,68 @@ function sedan(b, r, o) {
   }
 }
 
+// The sedan's cabin: the well in its body (see `sedan`), its floor at TUB.y, from the scuttle at z0 to the back
+// seat's back at z1; door: how thick its doors are.
+const TUB = { z0: -0.84, z1: 0.9, y: 0.33, door: 0.1 };
+// ...and its boot: a well from z0 to z1 behind the back window, its floor at y (just over the arches of the back wheels)
+const BOOT = { z0: 1.36, z1: 2.14, y: 0.72 };
+// What is in it. o.cabin: what was left there - 0 nothing but rubbish, 1 the driver still at the wheel, 2 cases and a
+// child's seat in the back, 3 somebody dead in the passenger seat, 4 stripped (the back seat gone, a door card off);
+// o.burnt: a fire's leavings. o.seats: the upholstery (an index of cabin.js SEATS).
+function sedanCabin(b, o, hw) {
+  const fy = TUB.y + 0.02, iw = (hw - TUB.door) * 2 - 0.01, len = TUB.z1 - TUB.z0, zc = (TUB.z0 + TUB.z1) / 2;
+  const burnt = !!o.burnt, what = o.cabin || 0;
+  const trim = burnt ? CHAR : [0.15, 0.14, 0.13];
+  const sc = burnt ? CHAR : SEATS[(o.seats ?? 0) % SEATS.length];
+  // the floor, the scuttle and the back of the well; the shelf under the back window; the door cards
+  deck(b, 0, fy, zc, iw, len - 0.02, burnt ? CHAR : undefined);
+  b.box('cabin_fine', iw, 0.92 - fy, 0.02, { p: [0, (0.92 + fy) / 2, TUB.z0 + 0.012], c: trim });
+  b.box('cabin_fine', iw, 0.92 - fy, 0.02, { p: [0, (0.92 + fy) / 2, TUB.z1 - 0.012], c: trim });
+  b.box('cabin_fine', iw, 0.014, 1.24 - TUB.z1 - 0.02, { p: [0, 0.928, (TUB.z1 + 1.24) / 2 - 0.02], c: trim });
+  for (const sx of [-1, 1])
+    for (const [k, z0, z1] of [[0, TUB.z0, 0.46], [1, 0.46, TUB.z1]]) {
+      if ((o.doorsOff || []).some((d) => d[0] === sx && d[1] === k)) continue;
+      const stripped = what === 4 && sx > 0 && k === 0;
+      if (!stripped) b.box('cabin_fine', 0.012, 0.92 - fy - 0.02, z1 - z0 - 0.03, { p: [sx * (iw / 2 - 0.003), (0.92 + fy) / 2, (z0 + z1) / 2], c: mul(sc, 0.8) });
+      if (!stripped && !burnt) b.box('cabin_fine', 0.05, 0.05, (z1 - z0) * 0.5, { p: [sx * (iw / 2 - 0.03), 0.72, (z0 + z1) / 2 + 0.05], c: trim }); // the armrest
+    }
+  // seats: where createDriveCar seats the survivors (DRIVE_CAR_SEATS)
+  const fz = -0.147, rz = 0.64, fh = 0.44 - fy, rh = 0.46 - fy;
+  if (burnt) {
+    for (const sx of [-1, 1]) burntSeat(b, sx * 0.38, fy, fz, { h: fh });
+    burntSeat(b, 0, fy, rz, { w: 1.3, h: rh });
+    b.box('cabin_fine', iw, 0.2, 0.26, { p: [0, 0.83, -0.7], c: CHAR }); // what is left of the dash
+    b.cylBetween('cabin_fine', [-0.38, 0.86, -0.62], [-0.38, 1.0, -0.42], 0.02, 0.02, 4, { c: [0.2, 0.12, 0.08] });
+    b.torus('cabin_fine', 0.17, 0.012, 3, 9, PI * 2, { p: [-0.38, 1.0, -0.42], r: [-(PI / 2 - 0.42), 0, 0], c: [0.2, 0.12, 0.08] });
+    rubbish(b, [0, fy, 0.1], 1.2, 1.2, 4, 3);
+    return;
+  }
+  for (const sx of [-1, 1]) seat(b, sx * 0.38, fy, fz, { h: fh, c: sc, bh: 0.58, d: 0.46 });
+  if (what !== 4) seat(b, 0, fy, rz, { w: 1.32, h: rh, c: sc, bh: 0.56, d: 0.42, heads: 2, rake: 0.2 });
+  dash(b, 0.955, -0.85, iw, { d: 0.3, wheelX: -0.38, gloveOpen: what === 4 || what === 0 });
+  steering(b, [-0.38, 1.0, -0.42]);
+  mirror(b, [0, 1.3, -0.24]);
+  b.box('cabin_fine', 0.2, 0.2, 0.74, { p: [0, fy + 0.1, -0.2], c: trim }); // the tunnel between the seats, and the lever on it
+  b.cylBetween('cabin_fine', [0, fy + 0.2, -0.34], [0.01, fy + 0.4, -0.38], 0.012, 0.018, 4, { c: [0.08, 0.08, 0.08] });
+  if (what === 1) {
+    sitter(b, [-0.38, 0.44, fz], { wheel: true, lean: 0.15, shirt: [0.3, 0.27, 0.2], side: -1 });
+    rubbish(b, [0.38, 0.445, fz], 0.3, 0.3, 2, 1);
+  } else if (what === 2) {
+    luggage(b, [-0.2, 0.46, rz], 0, { r: 0.1 });
+    childSeat(b, [0.4, 0.46, rz - 0.02]);
+    rubbish(b, [0.3, fy, 0.2], 0.5, 0.3, 3, 2);
+  } else if (what === 3) {
+    // (on the side away from the open door: o.bodySide)
+    const sd = o.bodySide ?? 1;
+    sitter(b, [sd * 0.38, 0.44, fz], { lean: 0.8, side: sd, flesh: true, shirt: [0.36, 0.33, 0.3], legs: [0.2, 0.18, 0.15] });
+    bloodPatch(b, [sd * 0.38, 0.446, fz - 0.05], 0.4, 0.36, 0.3);
+    bloodPatch(b, [sd * 0.42, 0.8, fz + 0.3], 0.3, 0.3, 0, PI / 2 + 0.17);
+  } else if (what === 4) {
+    rubbish(b, [0, fy, 0.6], 1.2, 0.5, 6, 5);
+    b.box('cabin_fine', 0.5, 0.012, 0.6, { p: [0.3, fy + 0.01, 0.6], r: [0, 0.4, 0], c: mul(sc, 0.7) }); // the door card, on the floor
+  } else if (what === 0) rubbish(b, [0.1, fy, 0.25], 1.1, 0.4, 5, 0);
+}
+
 function cinderBlocks(b, x, z, h) {
   b.box('concrete', 0.4, 0.2, 0.2, { p: [x, 0.1, z], r: [0, 0.15, 0] });
   b.box('concrete', 0.4, 0.2, 0.2, { p: [x, 0.3, z - 0.02], r: [0, -0.1, 0] });
@@ -257,15 +345,24 @@ BUILD.car = (b, r) => {
     smashed: true,
     wheels: { fl: 'gone', fr: 'ok', rl: 'ok', rr: 'flat' },
     glass: ['ok', 'ok', 'ok', 'gone', 'gone', 'ok'],
+    dirt: 0.5,
   });
   cinderBlocks(b, -0.62, -1.4, 0.3);
   b.box('rust', 0.12, 0.2, 0.3, { p: [-0.72, 0.1, 0.6] }); // jack under the sill
   b.pop();
 };
 
-BUILD.car_wreck = (b, r, v) => {
+// (eight of them: four bodies as there always were (v % 4: the colour, the wheels, which door stands open), and what
+// is in the cabin and on its glass by the rest of v)
+BUILD.car_wreck = (b, r, v0) => {
+  const v = v0 % 4, w = v0 >> 2;
   b.push([0, 0, 0], [0, 0, 0], [1, 1, 4.42 / 4.66]);
   const col = CAR_COLORS[(v + 1) % CAR_COLORS.length].map((c) => c * 0.85);
+  const hx = v % 2 ? 0.9 : -0.9, sg = Math.sign(hx);
+  // glass: screen, back window, right front, right back, left front, left back. The one over the open door is out
+  const glass = [['gone', 'ok', 'gone', 'gone', 'gone', 'ok'], ['ok', 'shard', 'gone', 'ok', 'ok', 'gone'], ['shard2', 'ok', 'ok', 'gone', 'gone', 'ok'], ['gone', 'gone', 'gone', 'shard', 'ok', 'ok']][v];
+  const cabin = [[0, 3], [1, 4], [2, 0], [4, 1]][v][w];
+  if (cabin === 3) glass[sg > 0 ? 4 : 2] = 'blood';
   sedan(b, r, {
     color: col,
     sink: 0.12,
@@ -273,11 +370,14 @@ BUILD.car_wreck = (b, r, v) => {
     noPlates: v % 2 === 1,
     noMirrorR: true,
     wheels: v % 2 ? { fl: 'rim', fr: 'flat', rl: 'rim', rr: 'rim' } : { fl: 'flat', fr: 'rim', rl: 'flat', rr: 'rim' },
-    glass: ['gone', 'ok', 'gone', 'gone', 'ok', 'gone'],
+    glass,
+    cabin,
+    bodySide: -sg,
+    seats: v0 + 1,
+    dirt: [0.4, 0.75, 0.2, 0.6][v] + w * 0.12,
+    doorsOff: [[sg, 0]],
   });
-  // an open door (driver side) and the doorway
-  const hx = v % 2 ? 0.9 : -0.9, sg = Math.sign(hx);
-  b.box('dark', 0.02, 0.5, 1.2, { p: [hx + sg * 0.003, 0.52, -0.25] });
+  // an open door (driver side): the doorway is the cabin's own
   b.group({ p: [hx, 0.52, -0.84], r: [0, sg * -0.9, 0] }, () => {
     b.box('carpaint', 0.06, 0.52, 1.25, { p: [sg * 0.03, 0, 0.62], c: col });
     b.beam('carpaint', [sg * 0.03, 0.26, 0.05], [sg * 0.08, 0.72, 0.62], 0.04, 0.04, { c: col });
@@ -286,7 +386,9 @@ BUILD.car_wreck = (b, r, v) => {
   weeds(b, r, [[0.75, -1.6], [-0.75, 1.2], [0.7, 1.9], [-0.7, -0.6], [0.2, 1.95]], 0.55);
 };
 
-BUILD.pickup_truck = (b, r, v) => {
+// (four of them: the two there always were (v % 2), and what is in the cab by the rest of v)
+BUILD.pickup_truck = (b, r, v0) => {
+  const v = v0 % 2, w = v0 >> 1;
   const col = v ? [0.52, 0.2, 0.16] : [0.33, 0.44, 0.42];
   const W = 1.96, hw = W / 2;
   const fa = -1.62, ra = 1.62, wr = 0.38;
@@ -303,24 +405,37 @@ BUILD.pickup_truck = (b, r, v) => {
   s.lineTo(-2.62, 0.4);
   b.extrude('carpaint', s, W, { r: [0, -PI / 2, 0], p: [hw, 0, 0], c: col });
   b.box('dark', W - 0.03, 0.5, 0.95, { p: [0, 0.62, fa] });
-  // cab lower
-  b.box('carpaint', W, 0.76, 1.42, { p: [0, 0.78, -0.2], c: col });
-  // cab greenhouse
+  // cab lower: a tub, open at the top into the greenhouse
+  boxShell(b, 'carpaint', W, 0.76, 1.42, { p: [0, 0.78, -0.2], c: col, t: 0.1, skip: ['yp'], lining: [0.15, 0.14, 0.13] });
+  // cab greenhouse: a shell on it - the screen, a window each side (one gone on the second truck), one in the back
   const C = [];
   for (let k = 0; k < 8; k++) {
     const X = k & 1 ? 1 : -1, top = k & 2, Z = k & 4;
     C.push([X * (top ? hw - 0.16 : hw - 0.05), top ? 1.86 : 1.16, Z ? (top ? 0.42 : 0.48) : top ? -0.5 : -0.88]);
   }
-  b.hull('dark', C);
+  hullShell(b, 'carpaint', C, {
+    c: col, t: 0.03, skip: ['yn'], bare: ['yp'], look: (k) => paneLook(v ? 0.72 : 0.38, k + w),
+    holes: { zn: [[0.04, 0.96, 0.07, 0.93]], zp: [[0.14, 0.86, 0.22, 0.86, w ? 'shard' : undefined]], xn: [[0.07, 0.93, 0.08, 0.93, v === 1 ? 'gone' : undefined]], xp: [[0.07, 0.93, 0.08, 0.93]] },
+  });
+  // in it: a bench, the dash and the wheel, a rack across the back window - a gun still in it, or the driver still
+  // at the wheel and the rack empty
+  seat(b, 0, 0.5, -0.12, { w: 1.56, h: 0.4, bh: 0.6, d: 0.5, heads: 0, c: SEATS[v ? 1 : 3], rake: 0.12 });
+  dash(b, 1.2, -0.8, 1.74, { d: 0.26, h: 0.3, wheelX: -0.45 });
+  steering(b, [-0.45, 1.28, -0.4], { R: 0.19 });
+  mirror(b, [0, 1.72, -0.5]);
+  for (const x of [-0.52, 0.52]) b.box('cabin_fine', 0.03, 0.32, 0.05, { p: [x, 1.55, 0.385], c: [0.1, 0.1, 0.1] });
+  if (!w) {
+    b.box('cabin_fine', 1.02, 0.03, 0.03, { p: [0.06, 1.64, 0.375], c: [0.08, 0.08, 0.09] });
+    b.box('cabin_fine', 0.34, 0.085, 0.034, { p: [-0.56, 1.625, 0.375], r: [0, 0, 0.1], c: [0.3, 0.2, 0.12] });
+    rubbish(b, [0.35, 0.905, -0.12], 0.6, 0.3, 4, v + 4);
+  } else {
+    sitter(b, [-0.45, 0.9, -0.12], { wheel: true, lean: 0.2, side: -1, shirt: [0.34, 0.2, 0.16] });
+    b.cyl('cabin_fine', 0.04, 0.045, 0.24, 6, { p: [0.3, 1.02, -0.1], c: [0.2, 0.3, 0.24] }); // a flask on the bench
+  }
   const n = (p, v2, d = 0.008) => [p[0] + v2[0] * d, p[1] + v2[1] * d, p[2] + v2[2] * d];
-  // windshield + side windows
-  const wsN = [0, 0.45, -0.9];
-  b.poly('glass', [n(C[0], wsN), n(C[1], wsN), n(C[3], wsN), n(C[2], wsN)].map((p, i) => [p[0] * 0.94, p[1] + (i < 2 ? 0.03 : -0.03), p[2]]), [[1, 0, 2], [0, 3, 2]]);
   for (const sx of [-1, 1]) {
     const q = sx > 0 ? [C[1], C[5], C[7], C[3]] : [C[0], C[4], C[6], C[2]];
     const nn = [sx, 0.15, 0];
-    const qq = q.map((p) => n(p, nn, 0.01)).map((p, i) => [p[0], p[1] + (i < 2 ? 0.05 : -0.04), p[2] + (i === 0 || i === 3 ? 0.08 : -0.08)]);
-    if (!(v === 1 && sx < 0)) b.poly('glass', qq, sx > 0 ? [[0, 1, 2], [0, 2, 3]] : [[1, 0, 3], [1, 3, 2]]);
     b.beam('carpaint', n(q[0], nn, 0.012), n(q[3], nn, 0.012), 0.08, 0.05, { c: col });
     b.beam('carpaint', n(q[1], nn, 0.012), n(q[2], nn, 0.012), 0.1, 0.05, { c: col });
     b.box('dark', 0.01, 0.66, 0.012, { p: [sx * (hw + 0.002), 0.8, -0.88] });
@@ -628,20 +743,20 @@ BUILD.heli_wreck = (b, r) => {
   const panel = (mat, z0, z1, t0, t1, out = 1.012) => {
     const zm = (z0 + z1) / 2;
     const c = fus(zm, (t0 + t1) / 2, 0);
-    b.quadOut(mat, [fus(z0, t0, out), fus(z1, t0, out), fus(z1, t1, out), fus(z0, t1, out)], [0, c[1], zm]);
+    b.quadOut(mat, [fus(z0, t0, out), fus(z1, t0, out), fus(z1, t1, out), fus(z0, t1, out)], [0, c[1], zm], mat === 'canopy' ? { c: paneLook(0.6, t0 * 9) } : {});
   };
   // ---- fuselage, rolled onto its side (local +y now faces +X/up, local -x faces up-left)
   b.push([0.15, 1.28, 0], [0, 0, -0.95]);
   b.loft('olive', secs, prof, 14);
   b.sphere('olive', 0.26, 6, 4, { p: [0, -0.35, -5.2], s: [1, 1, 0.6] });
   b.cyl('charred', 0.47, 0.47, 0.04, 10, { p: [0, 0.55, 2.3], r: [PI / 2, 0, 0] });
-  // cockpit glass (windshields, chin windows, doors)
-  panel('glass', -4.95, -4.05, 0.03, 0.21);
-  panel('glass', -4.95, -4.05, 0.29, 0.47);
-  panel('glass', -5.1, -4.45, 0.55, 0.7);
-  panel('glass', -5.1, -4.45, 0.8, 0.95);
-  panel('glass', -3.9, -3.2, 0.44, 0.56);
-  panel('glass', -3.9, -3.2, -0.06, 0.06);
+  // cockpit glass (windshields, chin windows, doors): `canopy` - the hull is a closed skin, with nothing behind them
+  panel('canopy', -4.95, -4.05, 0.03, 0.21);
+  panel('canopy', -4.95, -4.05, 0.29, 0.47);
+  panel('canopy', -5.1, -4.45, 0.55, 0.7);
+  panel('canopy', -5.1, -4.45, 0.8, 0.95);
+  panel('canopy', -3.9, -3.2, 0.44, 0.56);
+  panel('canopy', -3.9, -3.2, -0.06, 0.06);
   // open cabin doors (dark holes) + scorch patches
   panel('dark', -2.7, -0.7, 0.42, 0.6, 1.01);
   panel('dark', -2.7, -1.2, -0.08, 0.1, 1.01);
@@ -1863,19 +1978,18 @@ BUILD.jersey_barrier = (b, r, v) => {
   weeds(b, r, [[-1.2, 0.36], [0.9, -0.36], [1.5, 0.3]], 0.4);
 };
 
+// (the frame round a window of the coach, and the curtain hung inside it: the opening and its pane are the wall's)
 function rvWindow(b, x, z0, z1, y0, y1, side, o = {}) {
   const zc = (z0 + z1) / 2, yc = (y0 + y1) / 2, w = z1 - z0, h = y1 - y0;
   const R = [0, side * PI / 2, 0];
-  b.box('dark', 0.02, h + 0.06, w + 0.06, { p: [x + side * 0.004, yc, zc] });
   b.box('chrome', 0.012, h + 0.08, 0.03, { p: [x + side * 0.012, yc, z0 - 0.03] });
   b.box('chrome', 0.012, h + 0.08, 0.03, { p: [x + side * 0.012, yc, z1 + 0.03] });
   b.box('chrome', 0.012, 0.03, w + 0.08, { p: [x + side * 0.012, y1 + 0.03, zc] });
   b.box('chrome', 0.012, 0.03, w + 0.08, { p: [x + side * 0.012, y0 - 0.03, zc] });
-  if (!o.broken) b.plane('glass', w, h, { p: [x + side * 0.016, yc, zc], r: R });
   if (o.curtain) {
     const cw = w * o.curtain;
     const cz = o.broken ? zc - w / 2 + cw / 2 : zc + w / 2 - cw / 2;
-    b.plane('cloth', cw, h * 0.98, { p: [x + side * (o.broken ? 0.03 : 0.018), yc - (o.broken ? 0.05 : 0), cz], r: [o.broken ? side * 0.15 : 0, side * PI / 2, 0], c: o.cc });
+    b.plane('cloth', cw, h * 0.98, { p: [x - side * (o.broken ? 0.02 : 0.06), yc - (o.broken ? 0.05 : 0), cz], r: [o.broken ? side * 0.15 : 0, side * PI / 2, 0], c: o.cc });
   }
 }
 
@@ -1911,17 +2025,21 @@ BUILD.camper = (b, r, v) => {
     const X = k & 1 ? 1 : -1, top = k & 2, Z = k & 4;
     C.push([X * (top ? chw - 0.1 : chw - 0.03), top ? 1.94 : 1.2, Z ? -1.5 : top ? -1.98 : -2.32]);
   }
-  b.hull('dark', C);
+  // (a shell, standing on the cab's floor and open behind onto the coach's front wall)
+  const dirty = v ? 0.75 : 0.45;
+  hullShell(b, 'carpaint', C, {
+    c: cab, t: 0.03, skip: ['yn', 'zp'], look: (k) => paneLook(dirty, k),
+    holes: { zn: [[0.035, 0.965, 0.06, 0.95]], xn: [[0.12, 0.93, 0.07, 0.94, v === 1 ? 'gone' : undefined]], xp: [[0.12, 0.93, 0.07, 0.94]] },
+  });
+  deck(b, 0, 1.215, -1.9, CW - 0.1, 0.8);
+  for (const sx of [-1, 1]) seat(b, sx * 0.52, 1.2, -1.78, { w: 0.5, h: 0.09, bh: 0.4, d: 0.4, c: SEATS[v ? 2 : 1] });
+  dash(b, 1.34, -2.29, CW - 0.14, { d: 0.22, h: 0.14, wheelX: -0.52 });
+  steering(b, [-0.52, 1.52, -2.0], { R: 0.18, tilt: 0.6 });
+  mirror(b, [0, 1.82, -1.99]);
   const nn = (p, d, k = 0.008) => [p[0] + d[0] * k, p[1] + d[1] * k, p[2] + d[2] * k];
-  const wsN = [0, 0.5, -0.86];
-  b.poly('glass', [nn(C[0], wsN), nn(C[1], wsN), nn(C[3], wsN), nn(C[2], wsN)].map((p, i) => [p[0] * 0.93, p[1] + (i < 2 ? 0.03 : -0.02), p[2]]), [[1, 0, 2], [0, 3, 2]]);
   b.beam('carpaint', nn(C[0], [-1, 0.2, 0], 0.012), nn(C[2], [-1, 0.2, 0], 0.012), 0.07, 0.05, { c: cab });
   b.beam('carpaint', nn(C[1], [1, 0.2, 0], 0.012), nn(C[3], [1, 0.2, 0], 0.012), 0.07, 0.05, { c: cab });
   for (const sx of [-1, 1]) {
-    const q = sx > 0 ? [C[1], C[5], C[7], C[3]] : [C[0], C[4], C[6], C[2]];
-    const n = [sx, 0.1, 0];
-    const qq = q.map((p) => nn(p, n, 0.01)).map((p, i) => [p[0], p[1] + (i < 2 ? 0.05 : -0.04), p[2] + (i === 0 || i === 3 ? 0.1 : -0.06)]);
-    if (!(v === 1 && sx < 0)) b.poly('glass', qq, sx > 0 ? [[0, 1, 2], [0, 2, 3]] : [[1, 0, 3], [1, 3, 2]]);
     b.box('dark', 0.01, 0.74, 0.012, { p: [sx * (chw + 0.002), 0.8, -2.0] });
     b.box('chrome', 0.03, 0.03, 0.12, { p: [sx * (chw + 0.012), 1.05, -1.7] });
     b.cylBetween('steel', [sx * (chw + 0.01), 1.5, -2.2], [sx * (chw + 0.2), 1.62, -2.3], 0.012, 0.012, 4);
@@ -1951,8 +2069,45 @@ BUILD.camper = (b, r, v) => {
   s.lineTo(ra + 0.5, 0.62);
   s.absarc(ra, 0.62, 0.5, 0, PI, false);
   s.lineTo(-1.5, 0.62);
-  b.extrude('carpaint', s, W, { r: [0, -PI / 2, 0], p: [hw, 0, 0], c: body, curveSegments: 5 });
-  b.box('dark', W - 0.04, 0.5, 1.0, { p: [0, 0.8, ra] }); // rear wheel well
+  // (a shell: its windows are openings in its two sides, in the overcab's nose and in the back; the door on the kerb
+  // side shut, with a light in it - or, on the second one, hanging open on the way in)
+  const dz0 = 0.15, dz1 = 0.78;
+  const wl = [[-1.0, -0.3, 1.66, 2.3, v === 0 ? 'shard' : undefined], [2.2, 2.9, 1.66, 2.3], [0.5, 1.3, 1.66, 2.3], [-2.3, -1.75, 2.28, 2.62]];
+  const wr2 = [[-1.0, -0.3, 1.66, 2.3], [2.2, 2.9, 1.66, 2.3, v === 1 ? 'gone' : undefined], [-2.3, -1.75, 2.28, 2.62], v === 1 ? [dz0, dz1, 1.16, 2.48, 'gone'] : [0.275, 0.655, 1.9, 2.26]];
+  profShell(b, 'carpaint', s.getPoints(5).map((p) => [p.x, p.y]), W, {
+    c: body, t: 0.04, lining: [0.3, 0.27, 0.21], sides: { L: wl, R: wr2 }, look: (k) => paneLook(dirty, k + 5),
+    edges: [{ at: [[-2.6, 2.1], [-2.64, 2.62]], holes: [[-0.72, 0.72, 0.27, 0.73]] }, { at: [[3.24, 2.82], [3.24, 0.72]], holes: [[-0.52, 0.52, 0.552, 0.762]] }, { at: [[-2.36, 2.9], [3.16, 2.9]], holes: [[-0.67, -0.33, 0.741, 0.803, 'gone']] }],
+  });
+  b.box('dark', W - 0.1, 0.5, 1.0, { p: [0, 0.8, ra] }); // rear wheel well
+  // inside: a floor over the wheels; the bunk over the cab and one across the back; a dinette under the window on
+  // the road side, a galley opposite; cupboards along the top
+  const fy = 1.14, wood = [0.34, 0.26, 0.17];
+  deck(b, 0, fy + 0.01, 0.82, W - 0.1, 4.7, [0.2, 0.17, 0.13]);
+  b.box('cabin_fine', W - 0.14, 0.06, 1.0, { p: [0, 2.03, -2.02], c: wood }); // the overcab bunk
+  b.box('cabin_fine', W - 0.3, 0.12, 0.9, { p: [0, 2.12, -2.0], c: [0.44, 0.42, 0.36] });
+  b.box('cabin_fine', 0.5, 0.09, 0.3, { p: [-0.6, 2.22, -1.72], r: [0, 0.2, 0], c: [0.52, 0.5, 0.44] });
+  b.box('cabin_fine', W - 0.14, 0.5, 0.9, { p: [0, fy + 0.25, 2.72], c: wood }); // the bed across the back
+  b.box('cabin_fine', W - 0.2, 0.14, 0.86, { p: [0, fy + 0.57, 2.72], c: [0.42, 0.4, 0.35] });
+  b.box('cabin_fine', 1.3, 0.06, 0.8, { p: [0.25, fy + 0.66, 2.74], r: [0, 0.06, 0.02], c: curt });
+  b.box('cabin_fine', 0.5, 0.1, 0.32, { p: [-0.75, fy + 0.69, 2.66], r: [0, -0.2, 0], c: [0.52, 0.5, 0.44] });
+  seat(b, -0.74, fy, 0.42, { w: 0.76, h: 0.42, bh: 0.46, d: 0.36, heads: 0, back: -1, c: SEATS[v ? 2 : 1], rake: 0.06 });
+  seat(b, -0.74, fy, 1.4, { w: 0.76, h: 0.42, bh: 0.46, d: 0.36, heads: 0, c: SEATS[v ? 2 : 1], rake: 0.06 });
+  b.box('cabin_fine', 0.62, 0.04, 0.52, { p: [-0.8, fy + 0.7, 0.91], c: wood });
+  b.box('cabin_fine', 0.05, 0.68, 0.05, { p: [-0.6, fy + 0.34, 0.91], c: [0.2, 0.2, 0.2] });
+  b.box('cabin_fine', 0.5, 0.86, 1.2, { p: [0.88, fy + 0.43, -0.75], c: wood }); // the galley
+  b.box('cabin_fine', 0.36, 0.02, 0.4, { p: [0.86, fy + 0.87, -0.5], c: [0.4, 0.42, 0.42] });
+  for (const sx of [-1, 1]) b.box('cabin_fine', 0.3, 0.36, 3.6, { p: [sx * (hw - 0.2), 2.62, 0.9], c: mul(wood, 0.9) });
+  if (v) {
+    luggage(b, [-0.74, fy + 0.42, 1.4], 1, { r: 1.5 });
+    rubbish(b, [0.2, fy + 0.02, 0.6], 0.9, 2.0, 7, 4);
+  } else {
+    // somebody under the blanket on the back bed, and the table still laid
+    b.box('cabin_fine', 0.5, 0.2, 1.5, { p: [0.3, fy + 0.72, 2.72], r: [0, PI / 2 + 0.08, 0], c: mul(curt, 0.8) });
+    b.sphere('cabin_fine', 0.095, 6, 4, { p: [-0.62, fy + 0.8, 2.66], s: [0.9, 1, 1.05], c: [0.7, 0.66, 0.54] });
+    b.cyl('cabin_fine', 0.035, 0.04, 0.22, 5, { p: [-0.74, fy + 0.83, 0.86], c: [0.16, 0.26, 0.14] });
+    b.cyl('cabin_fine', 0.09, 0.09, 0.012, 7, { p: [-0.9, fy + 0.726, 1.0], c: [0.66, 0.64, 0.58] });
+    rubbish(b, [0.2, fy + 0.02, 0.8], 0.8, 1.6, 4, 6);
+  }
   // stripes: straight bands along the coach + a sweep up onto the overcab
   for (const sx of [-1, 1]) {
     const x = sx * (hw + 0.004);
@@ -1971,29 +2126,21 @@ BUILD.camper = (b, r, v) => {
     b.box('carpaint', 0.012, 0.32, 0.46, { p: [x + sx * 0.006, 0.95, -0.9], c: body.map((q) => q * 0.9) });
   }
   // entry door (curb side +X) with window + step; hanging open on the second variant
-  const dz0 = 0.15, dz1 = 0.78;
-  b.box('dark', 0.02, 1.84, dz1 - dz0, { p: [hw - 0.006, 1.58, (dz0 + dz1) / 2] });
   const doorLeaf = () => {
-    b.box('carpaint', 0.035, 1.8, dz1 - dz0 - 0.03, { p: [0, 0, 0], c: body.map((q) => q * 0.97) });
+    // (shut, its light is the pane in the wall behind it; open, its own)
+    leaf(b, 'carpaint', dz1 - dz0 - 0.03, 1.8, 0.035, [-0.19, 0.19, 0.32, 0.68], { axis: 'x', c: body.map((q) => q * 0.97), pane: v === 1 ? undefined : false, look: paneLook(dirty, 9) });
     b.box('carpaint', 0.004, 0.18, dz1 - dz0 - 0.03, { p: [0.02, -0.18, 0], c: s1 });
-    b.box('glass', 0.004, 0.36, 0.38, { p: [0.02, 0.5, 0] });
     b.box('chrome', 0.04, 0.05, 0.1, { p: [0.03, 0.0, -0.2] });
   };
-  if (v === 1) {
-    b.group({ p: [hw + 0.02, 1.58, dz1], r: [0, -1.2, 0] }, () => b.group({ p: [0, 0, -(dz1 - dz0) / 2] }, doorLeaf));
-    b.box('dark', 0.9, 0.01, 0.6, { p: [hw - 0.5, 0.7, (dz0 + dz1) / 2] });
-  } else b.group({ p: [hw + 0.02, 1.58, (dz0 + dz1) / 2] }, doorLeaf);
+  if (v === 1) b.group({ p: [hw + 0.02, 1.58, dz1], r: [0, -1.2, 0] }, () => b.group({ p: [0, 0, -(dz1 - dz0) / 2] }, doorLeaf));
+  else b.group({ p: [hw + 0.02, 1.58, (dz0 + dz1) / 2] }, doorLeaf);
   b.box('rust', 0.3, 0.05, 0.56, { p: [hw + 0.05, 0.42, (dz0 + dz1) / 2] });
   // overcab front window, rear window, roof gear, ladder, spare tyre, lights, bumper
-  b.box('dark', 1.5, 0.3, 0.02, { p: [0, 2.36, -2.645] });
-  b.box('glass', 1.44, 0.24, 0.01, { p: [0, 2.36, -2.66] });
   b.quadOut('carpaint', [[-hw + 0.02, 2.02, -2.62], [hw - 0.02, 2.02, -2.62], [hw - 0.02, 2.14, -2.645], [-hw + 0.02, 2.14, -2.645]], [0, 2.1, -2.2], { c: s1 });
-  b.box('dark', 1.1, 0.5, 0.02, { p: [0, 2.1, 3.25] });
-  b.box('glass', 1.04, 0.44, 0.01, { p: [0, 2.1, 3.262] });
   b.box('paint', 0.72, 0.18, 0.86, { p: [0.2, 2.99, 0.4], c: [0.78, 0.76, 0.7] });
   for (let k = 0; k < 5; k++) b.box('dark', 0.6, 0.01, 0.02, { p: [0.2, 3.0, 0.08 + k * 0.16] });
   b.box('dark', 0.44, 0.08, 0.44, { p: [-0.5, 2.94, -1.4] });
-  b.box('glass', 0.38, 0.04, 0.38, { p: [-0.5, 2.98, 1.9], r: [0.15, 0, 0] });
+  b.plane('carglass', 0.38, 0.38, { p: [-0.5, 2.98, 1.9], r: [-PI / 2 + 0.15, 0, 0], c: paneLook(dirty, 12) }); // the roof light, propped open over its hole
   for (const x of [0.62, 1.0]) b.box('steel', 0.03, 2.3, 0.03, { p: [x, 1.8, 3.29] });
   for (let y = 0.9; y < 2.9; y += 0.3) b.box('steel', 0.4, 0.025, 0.025, { p: [0.81, y, 3.29] });
   b.group({ p: [-0.5, 1.1, 3.4] }, () => {
@@ -2025,10 +2172,20 @@ BUILD.ambulance = (b, r) => {
   // cab: nose, cabin, windscreen and side glass
   b.box('carpaint', CW, 0.62, 1.05, { p: [0, 0.83, -2.32], c: white });
   b.box('dark', CW - 0.04, 0.5, 0.9, { p: [0, 0.62, fa] }); // front wheel well
-  b.frustum('carpaint', CW, 1.3, CW - 0.16, 1.0, 1.14, 1.9, { p: [0, 0, -1.3], topOff: [0, 0.15], c: white });
-  b.box('glass', CW - 0.3, 0.56, 0.02, { p: [0, 1.52, -1.812], r: [0.376, 0, 0] });
+  // (the cab: a shell - the screen and a window each side; two seats, the dash, a clipboard left on it)
+  const cabC = [];
+  for (let k = 0; k < 8; k++) {
+    const X = k & 1 ? 1 : -1, top = k & 2, Z = k & 4 ? 1 : -1;
+    cabC.push(top ? [(X * (CW - 0.16)) / 2, 1.9, -1.15 + Z * 0.5] : [(X * CW) / 2, 1.14, -1.3 + Z * 0.65]);
+  }
+  hullShell(b, 'carpaint', cabC, { c: white, t: 0.04, look: (k) => paneLook(0.5, k), holes: { zn: [[0.077, 0.923, 0.157, 0.843]], xn: [[0.2, 0.74, 0.2, 0.8]], xp: [[0.2, 0.74, 0.2, 0.8, 'blood']] } });
+  for (const sx of [-1, 1]) seat(b, sx * 0.48, 1.18, -1.05, { w: 0.5, h: 0.1, bh: 0.36, d: 0.4, c: SEATS[2] });
+  dash(b, 1.36, -1.84, CW - 0.2, { d: 0.22, h: 0.16, wheelX: -0.48 });
+  steering(b, [-0.48, 1.52, -1.5], { R: 0.18, tilt: 0.55 });
+  mirror(b, [0, 1.78, -1.52]);
+  b.box('cabin_fine', 0.22, 0.012, 0.3, { p: [0.4, 1.368, -1.72], r: [0, 0.3, 0], c: [0.6, 0.58, 0.5] });
+  bloodPatch(b, [0.48, 1.285, -1.05], 0.36, 0.3, 0.2);
   for (const sx of [-1, 1]) {
-    b.box('glass', 0.02, 0.44, 0.62, { p: [sx * (chw - 0.045), 1.52, -1.3] });
     b.box('carpaint', 0.012, 0.2, 2.2, { p: [sx * (chw + 0.004), 1.02, -1.75], c: orange });
     b.box('chrome', 0.06, 0.24, 0.14, { p: [sx * (chw + 0.16), 1.5, -1.86] }); // mirror
     b.box('chrome', 0.03, 0.03, 0.12, { p: [sx * (chw + 0.012), 1.08, -1.0] });
@@ -2038,14 +2195,30 @@ BUILD.ambulance = (b, r) => {
   for (const sx of [-1, 1]) b.box(sx < 0 ? 'dark' : 'glass', 0.26, 0.18, 0.02, { p: [sx * 0.78, 0.88, -2.855] });
   b.box('chrome', CW + 0.1, 0.18, 0.12, { p: [0, 0.5, -2.86] });
   label(b, 'labels', 'plate', 0.32, 0.16, [0, 0.5, -2.922], 'z-');
-  // the box: patient compartment from behind the cab to the rear doors
-  b.box('carpaint', W, 1.95, 3.55, { p: [0, 1.6, 1.07], c: white });
+  // the box: patient compartment from behind the cab to the rear doors - a shell, a small window high in each side,
+  // the whole of the back the doorway
+  boxShell(b, 'carpaint', W, 1.95, 3.55, { p: [0, 1.6, 1.07], c: white, t: 0.05, lining: [0.36, 0.36, 0.33], look: (k) => paneLook(0.55, k + 4), holes: { xn: [[-1.22, -0.72, 0.45, 0.75]], xp: [[-1.22, -0.72, 0.45, 0.75]], zp: [[-0.93, 0.93, -0.85, 0.85, 'gone']] } });
+  // in it: a bench down the left for whoever rode with the patient, cupboards down the right, the oxygen, the
+  // drip still hanging; and what was on the floor when they left
+  const by = 0.675;
+  b.box('cabin_fine', 0.42, 0.44, 2.5, { p: [-0.78, by + 0.22, 1.0], c: [0.2, 0.22, 0.24] });
+  b.box('cabin_fine', 0.42, 0.06, 2.5, { p: [-0.78, by + 0.47, 1.0], c: [0.16, 0.2, 0.3] });
+  b.box('cabin_fine', 0.34, 0.8, 1.3, { p: [0.83, by + 0.4, 0.05], c: [0.46, 0.46, 0.42] });
+  b.box('cabin_fine', 0.3, 0.5, 2.9, { p: [0.85, 2.25, 1.05], c: [0.46, 0.46, 0.42] });
+  for (let k = 0; k < 4; k++) b.box('cabin_fine', 0.012, 0.4, 0.02, { p: [0.695, 2.25, -0.1 + k * 0.72], c: [0.22, 0.22, 0.2] });
+  b.cyl('cabin_fine', 0.07, 0.07, 0.6, 7, { p: [-0.86, by + 0.8, -0.45], c: [0.2, 0.34, 0.24] });
+  b.cyl('cabin_fine', 0.03, 0.03, 0.08, 5, { p: [-0.86, by + 1.14, -0.45], c: [0.5, 0.5, 0.46] });
+  b.cylBetween('cabin_fine', [-0.5, 2.5, 1.5], [-0.5, 2.0, 1.5], 0.008, 0.008, 3, { c: [0.5, 0.5, 0.46] });
+  b.box('cabin_fine', 0.1, 0.16, 0.03, { p: [-0.5, 1.92, 1.5], c: [0.6, 0.62, 0.56] });
+  b.box('cabin_fine', 0.36, 0.2, 1.5, { p: [-0.78, by + 0.6, 0.9], r: [0, 0.03, 0], c: [0.12, 0.13, 0.14] }); // somebody they did not get to the clinic, bagged
+  bloodPatch(b, [0.1, by + 0.008, 1.9], 0.7, 0.5, 0.4);
+  bloodPatch(b, [-0.2, by + 0.008, 0.8], 0.3, 0.9, -0.2);
+  rubbish(b, [0.1, by, 0.9], 0.8, 2.0, 6, 8);
   b.box('dark', W - 0.04, 0.5, 1.0, { p: [0, 0.66, ra] }); // rear wheel well
   for (const sx of [-1, 1]) {
     const x = sx * (hw + 0.005);
     b.box('carpaint', 0.012, 0.24, 3.55, { p: [x, 1.2, 1.07], c: orange });
     label(b, 'labels', 'cross_mark', 0.66, 0.66, [sx * (hw + 0.008), 1.92, 1.4], sx < 0 ? 'x-' : 'x+');
-    b.box('glass', 0.012, 0.3, 0.5, { p: [x, 2.2, 0.1] });
     b.box('rust', 0.006, 0.3 + r() * 0.3, 0.4, { p: [sx * (hw + 0.012), 0.82, 0.3 + r()] });
   }
   // light bar and beacons, all dead
@@ -2053,14 +2226,10 @@ BUILD.ambulance = (b, r) => {
   for (const sx of [-1, 1]) b.box('taillight', 0.5, 0.13, 0.24, { p: [sx * 0.46, 2.69, -0.45] });
   for (const sx of [-1, 1]) b.box('taillight', 0.16, 0.08, 0.1, { p: [sx * 0.8, 2.61, 2.72] });
   // the rear: the left door shut, the right one swung wide; a stretcher half out of the dark
-  b.box('dark', 1.86, 1.7, 0.02, { p: [0, 1.6, 2.85] });
-  const leaf = () => {
-    b.box('carpaint', 0.93, 1.7, 0.04, { p: [0, 0, 0], c: white.map((q) => q * 0.97) });
-    b.box('glass', 0.5, 0.4, 0.045, { p: [0, 0.4, 0] });
-  };
-  b.group({ p: [-0.47, 1.6, 2.87] }, leaf);
+  const door = () => leaf(b, 'carpaint', 0.93, 1.7, 0.04, [-0.25, 0.25, 0.2, 0.6], { c: white.map((q) => q * 0.97), look: paneLook(0.6, 2) });
+  b.group({ p: [-0.47, 1.6, 2.87] }, door);
   label(b, 'labels', 'cross_mark', 0.36, 0.36, [-0.47, 1.35, 2.893], 'z+');
-  b.group({ p: [0.95, 1.6, 2.87], r: [0, 1.95, 0] }, () => b.group({ p: [-0.465, 0, 0] }, leaf));
+  b.group({ p: [0.95, 1.6, 2.87], r: [0, 1.95, 0] }, () => b.group({ p: [-0.465, 0, 0] }, door));
   b.box('steel', 0.56, 0.04, 1.5, { p: [0.4, 0.98, 2.6], r: [-0.08, 0, 0] });
   b.box('mattress', 0.52, 0.07, 1.4, { p: [0.4, 1.03, 2.6], r: [-0.08, 0, 0] });
   b.box('chrome', W, 0.12, 0.26, { p: [0, 0.58, 2.96] }); // step bumper
@@ -2102,7 +2271,25 @@ BUILD.school_bus = (b, r, v) => {
   // ---- body: lower box + window band + rounded roof
   const L = z1 - z0, zc = (z0 + z1) / 2;
   b.box('carpaint', hw * 2, 1.15, L, { p: [0, 0.55 + 0.575, zc], c: yel });
-  b.box('dark', hw * 2 - 0.06, 0.78, L - 0.06, { p: [0, 2.09, zc] });
+  // (the window band is open from side to side: a floor on the body, the ceiling, and what is in between)
+  const look = (k) => paneLook(v ? 0.7 : 0.5, k);
+  let np = 0;
+  const glass = (w2, h2, o) => b.plane('carglass', w2, h2, { ...o, c: look(np++) });
+  deck(b, 0, 1.712, zc, hw * 2 - 0.08, L - 0.08, [0.1, 0.1, 0.1]);
+  b.box('cabin', hw * 2 - 0.1, 0.012, L - 0.1, { p: [0, 2.452, zc], c: LINING });
+  const green = [0.17, 0.26, 0.19];
+  busRows(b, [-0.72, 0.72], 1.71, -2.62, 0.667, 12, 0.88, { c: green, bh: 0.44, skip: (k, x) => (k * 7 + (x > 0 ? 3 : 0)) % 11 === 5 || (v === 1 && k === 4 && x < 0) });
+  seat(b, -0.7, 1.71, -3.42, { w: 0.5, h: 0.12, bh: 0.44, d: 0.4, c: green, heads: 0 });
+  b.box('cabin_fine', hw * 2 - 0.3, 0.16, 0.22, { p: [0, 1.8, -3.84], c: [0.1, 0.1, 0.1] });
+  steering(b, [-0.7, 2.0, -3.66], { R: 0.22, tilt: 0.9 });
+  b.cylBetween('cabin_fine', [0.3, 1.72, -3.2], [0.3, 2.44, -3.2], 0.018, 0.018, 4, { c: [0.5, 0.5, 0.46] }); // the pole by the steps
+  if (v === 1) {
+    sitter(b, [-0.7, 1.83, -3.42], { wheel: true, lean: 0.1, side: -1, shirt: [0.24, 0.26, 0.3] });
+    for (const [x, z] of [[0.6, 0.72], [-0.8, 2.72]]) b.box('cabin_fine', 0.3, 0.26, 0.14, { p: [x, 1.94, z - 0.04], r: [0.2, 0.3, 0], c: [0.5, 0.2, 0.16] }); // satchels left on the seats
+  } else {
+    for (const [x, z, c] of [[0.5, 1.39, [0.2, 0.3, 0.46]], [-0.6, 4.72, [0.5, 0.36, 0.16]], [0.8, 3.39, [0.44, 0.18, 0.2]]]) b.box('cabin_fine', 0.3, 0.26, 0.14, { p: [x, 1.94, z - 0.04], r: [0.2, -0.4, 0], c });
+    rubbish(b, [0, 1.712, 1.5], 0.4, 6, 8, 2);
+  }
   const roof = new THREE.Shape();
   roof.moveTo(-hw, 2.46);
   roof.lineTo(hw, 2.46);
@@ -2123,14 +2310,19 @@ BUILD.school_bus = (b, r, v) => {
     }
   }
   // windscreen (2 panes, one smashed), entry door on the curb side (+X)
-  b.plane('glass', 1.05, 0.64, { p: [-0.58, 2.08, z0 - 0.035], r: [0, PI, 0] });
-  if (v !== 1) b.plane('glass', 1.05, 0.64, { p: [0.58, 2.08, z0 - 0.035], r: [0, PI, 0] });
+  glass(1.05, 0.64, { p: [-0.58, 2.08, z0 - 0.035], r: [0, PI, 0] });
+  if (v !== 1) glass(1.05, 0.64, { p: [0.58, 2.08, z0 - 0.035], r: [0, PI, 0] });
   b.box('carpaint', 0.08, 0.72, 0.05, { p: [0, 2.08, z0 - 0.02], c: yel });
+  for (const sx of [-1, 1]) b.box('carpaint', 0.14, 0.72, 0.05, { p: [sx * (hw - 0.07), 2.08, z0 - 0.02], c: yel }); // the screen's corner posts
   for (const zz of [-3.72, -3.36]) {
-    b.box('dark', 0.02, 1.8, 0.34, { p: [hw + 0.002, 1.5, zz] });
-    b.plane('glass', 0.28, 0.72, { p: [hw + 0.014, 2.02, zz], r: [0, PI / 2, 0] });
-    b.plane('glass', 0.28, 0.6, { p: [hw + 0.014, 1.12, zz], r: [0, PI / 2, 0] });
+    // (the door's leaves: their upper lights look into the bus; the lower ones are in the body, on the step well)
+    b.box('dark', 0.02, 1.04, 0.34, { p: [hw + 0.002, 1.12, zz] });
+    b.box('cabin_fine', 0.012, 0.6, 0.28, { p: [hw + 0.008, 1.12, zz], c: [0.2, 0.19, 0.17] });
+    glass(0.28, 0.72, { p: [hw + 0.014, 2.02, zz], r: [0, PI / 2, 0] });
+    glass(0.28, 0.6, { p: [hw + 0.016, 1.12, zz], r: [0, PI / 2, 0] });
+    b.box('carpaint', 0.04, 0.78, 0.04, { p: [hw - 0.012, 2.09, zz + 0.18], c: yel });
   }
+  b.box('carpaint', 0.04, 0.78, 0.04, { p: [hw - 0.012, 2.09, -3.9], c: yel });
   // side windows: pillars + split sash, some panes gone
   const nWin = 12, wz0 = -3.05, wz1 = 4.95, step = (wz1 - wz0) / nWin;
   for (const sx of [-1, 1]) {
@@ -2141,8 +2333,8 @@ BUILD.school_bus = (b, r, v) => {
     for (let k = 0; k < nWin; k++) {
       const zz = wz0 + (k + 0.5) * step;
       const R = [0, sx * PI / 2, 0];
-      if (r() > 0.25) b.plane('glass', step - 0.1, 0.34, { p: [x + sx * 0.016, 1.9, zz], r: R });
-      if (r() > 0.5) b.plane('glass', step - 0.1, 0.3, { p: [x + sx * 0.016, 2.29, zz], r: R });
+      if (r() > 0.25) glass(step - 0.1, 0.34, { p: [x + sx * 0.016, 1.9, zz], r: R });
+      if (r() > 0.5) glass(step - 0.1, 0.3, { p: [x + sx * 0.016, 2.29, zz], r: R });
     }
     // black rub rails + rust along the skirt
     for (const y of [0.95, 1.3, 1.62]) b.box('dark', 0.02, 0.05, L - 0.1, { p: [sx * (hw + 0.006), y, zc] });
@@ -2153,11 +2345,16 @@ BUILD.school_bus = (b, r, v) => {
   }
   // stop arm (driver side), rear emergency door, bumper
   b.cyl('paint', 0.22, 0.22, 0.02, 8, { p: [-hw - 0.03, 1.85, -3.3], r: [0, 0, PI / 2], c: [0.62, 0.08, 0.06] });
-  b.box('dark', 0.02, 1.8, 0.9, { p: [0, 1.5, z1 + 0.012], r: [0, PI / 2, 0] });
-  b.plane('glass', 0.7, 0.62, { p: [0, 2.08, z1 + 0.03] });
+  // (the emergency door: its panel below the sill, its light and the two beside it looking down the bus)
+  b.box('dark', 0.02, 1.1, 0.9, { p: [0, 1.15, z1 + 0.012], r: [0, PI / 2, 0] });
+  b.group({ p: [0, 2.08, z1 + 0.005] }, () => leaf(b, 'carpaint', 1.0, 0.76, 0.03, [-0.35, 0.35, -0.31, 0.31], { c: yel, pane: false }));
+  glass(0.7, 0.62, { p: [0, 2.08, z1 + 0.012] });
   b.box('chrome', 0.14, 0.04, 0.05, { p: [0.3, 1.5, z1 + 0.03] });
   for (const sx of [-1, 1]) {
-    b.plane('glass', 0.55, 0.6, { p: [sx * 0.85, 2.08, z1 + 0.02] });
+    b.box('carpaint', 0.14, 0.76, 0.03, { p: [sx * (hw - 0.07), 2.08, z1 + 0.005], c: yel });
+    b.box('carpaint', 0.62, 0.08, 0.03, { p: [sx * 0.86, 1.74, z1 + 0.005], c: yel });
+    b.box('carpaint', 0.62, 0.07, 0.03, { p: [sx * 0.86, 2.425, z1 + 0.005], c: yel });
+    glass(0.6, 0.62, { p: [sx * 0.86, 2.08, z1 + 0.012] });
     b.box('taillight', 0.18, 0.18, 0.04, { p: [sx * 1.0, 1.0, z1 + 0.02] });
   }
   b.box('dark', 2.44, 0.26, 0.16, { p: [0, 0.55, z1 + 0.08] });
@@ -2225,13 +2422,18 @@ BUILD.dump_truck = (b, r, v) => {
   b.cylBetween('rust', [-1.1, 0.3, -1.3], [-1.1, 1.6, -1.45], 0.02, 0.02, 4);
   // ---- cab
   const cabCol = yel.map((c) => c * 0.95);
-  b.box('carpaint', 2.0, 1.2, 1.1, { p: [0, 2.23, -1.5], c: cabCol });
-  b.box('dark', 1.7, 0.6, 0.02, { p: [0, 2.43, -2.056] });
-  b.box('glass', 1.62, 0.54, 0.01, { p: [0, 2.43, -2.066] });
-  b.box('carpaint', 0.06, 0.6, 0.03, { p: [0, 2.43, -2.07], c: cabCol });
+  // (a shell: the screen in two lights, a window each side - one gone on the second truck)
+  boxShell(b, 'carpaint', 2.0, 1.2, 1.1, {
+    p: [0, 2.23, -1.5], c: cabCol, t: 0.05, look: (k) => paneLook(0.62, k + v),
+    holes: { zn: [[-0.81, -0.03, -0.07, 0.47], [0.03, 0.81, -0.07, 0.47, v ? 'shard' : undefined]], xn: [[-0.42, 0.42, -0.03, 0.47]], xp: [[-0.42, 0.42, -0.03, 0.47, v === 1 ? 'gone' : undefined]] },
+  });
+  seat(b, -0.42, 1.68, -1.36, { w: 0.6, h: 0.36, bh: 0.5, d: 0.44, c: SEATS[4], heads: 0 });
+  seat(b, 0.5, 1.68, -1.36, { w: 0.5, h: 0.36, bh: 0.5, d: 0.44, c: SEATS[4], heads: 0 });
+  dash(b, 2.14, -2.0, 1.86, { d: 0.22, h: 0.3, wheelX: -0.42 });
+  steering(b, [-0.42, 2.22, -1.72], { R: 0.2, tilt: 0.75 });
+  b.box('cabin_fine', 0.26, 0.14, 0.2, { p: [0.5, 2.11, -1.36], r: [0, 0.3, 0], c: [0.6, 0.5, 0.12] }); // a hard hat on the seat
+  b.cyl('cabin_fine', 0.04, 0.045, 0.22, 6, { p: [0.1, 2.25, -1.9], c: [0.24, 0.3, 0.34] });
   for (const sx of [-1, 1]) {
-    b.box('dark', 0.02, 0.55, 0.9, { p: [sx * 1.001, 2.45, -1.5] });
-    if (!(sx > 0 && v === 1)) b.box('glass', 0.01, 0.5, 0.84, { p: [sx * 1.012, 2.45, -1.5] });
     b.box('dark', 0.012, 1.1, 0.012, { p: [sx * 1.004, 2.2, -1.0] });
     b.box('chrome', 0.03, 0.04, 0.14, { p: [sx * 1.02, 2.0, -1.12] });
     b.cylBetween('steel', [sx * 1.0, 2.6, -2.0], [sx * 1.35, 2.5, -2.2], 0.015, 0.015, 4);
@@ -2663,7 +2865,7 @@ const roundProf = (t) => [Math.cos(t * PI * 2), Math.sin(t * PI * 2)];
 // (the plane at Calder Field, the wreck and the one that flies, and the light aircraft round it: aircraft.js)
 
 // The quest car repaired and running, for the crossing: the same sedan as the 'car' prop (its colour, its rust),
-// hood shut, all four wheels on, nothing under it, and no dark hull in the cabin, so survivors can be seated in it.
+// hood shut, all four wheels on, nothing under it, and its cabin cleared out, so survivors can be seated in it.
 // wheels: the four of them (front left, front right, rear left, rear right), each a child with its origin on its
 // axle and its axis along X (spin rotation.x). DRIVE_CAR_SEATS: where the seat cushions are, in the car's frame.
 const CAR_Z = 0.952; // (the 'car' prop's sedan is this much shorter than the builder's)
@@ -2677,7 +2879,7 @@ export function createDriveCar(seed = 7) {
   const h = hash('car');
   const b = new MeshBuilder(h);
   b.push([0, 0, 0], [0, 0, 0], [1, 1, CAR_Z]);
-  sedan(b, makeRng(h * 31 + 5), { color: [0.34, 0.42, 0.52], noWheels: true, openCabin: true, glass: ['ok', 'ok', 'ok', 'gone', 'gone', 'ok'] });
+  sedan(b, makeRng(h * 31 + 5), { color: [0.34, 0.42, 0.52], noWheels: true, glass: ['ok', 'ok', 'ok', 'gone', 'gone', 'ok'], dirt: 0.5, cabin: -1 }); // (nothing left lying in it: the survivors sit there)
   b.pop();
   const group = partsToGroup(b.build(), 'drive_car');
   const wb = new MeshBuilder(h + 1);
@@ -2700,16 +2902,21 @@ BUILD.fuel_truck = (b, r) => {
   const wr = 0.5;
   for (const sx of [-1, 1]) b.box('rust', 0.16, 0.3, 7.2, { p: [sx * 0.48, 0.92, 0] }); // chassis rails
   // cab
-  b.box('carpaint', 2.4, 1.5, 1.7, { p: [0, 1.85, -2.9], c: yel });
+  // (a shell: the screen, and a window each side - the one on the left gone)
+  boxShell(b, 'carpaint', 2.4, 1.5, 1.7, {
+    p: [0, 1.85, -2.9], c: yel, t: 0.05, look: (k) => paneLook(0.5, k),
+    holes: { zn: [[-1.0, 1.0, 0, 0.54]], xn: [[-0.42, 0.42, 0.04, 0.54, 'gone']], xp: [[-0.42, 0.42, 0.04, 0.54]] },
+  });
+  for (const sx of [-1, 1]) seat(b, sx * 0.6, 1.15, -2.7, { w: 0.56, h: 0.5, bh: 0.5, d: 0.46, c: SEATS[4] });
+  dash(b, 1.82, -3.7, 2.26, { d: 0.26, h: 0.4, wheelX: -0.6 });
+  steering(b, [-0.6, 1.92, -3.34], { R: 0.21, tilt: 0.8 });
+  mirror(b, [0, 2.3, -3.6]);
+  b.box('cabin_fine', 0.24, 0.3, 0.012, { p: [0.5, 1.98, -3.5], r: [-0.5, 0.2, 0], c: [0.62, 0.6, 0.5] }); // the day's sheet, on its board
   b.box('carpaint', 2.4, 0.36, 0.3, { p: [0, 0.92, -3.6], c: grey }); // bumper
-  b.box('dark', 2.1, 0.62, 0.02, { p: [0, 2.12, -3.76] });
-  b.box('glass', 2.0, 0.54, 0.012, { p: [0, 2.12, -3.772] });
   b.box('dark', 1.3, 0.36, 0.02, { p: [0, 1.42, -3.76] }); // grille
   for (let k = 0; k < 4; k++) b.box('steel', 1.3, 0.025, 0.03, { p: [0, 1.29 + k * 0.09, -3.765] });
   for (const sx of [-1, 1]) {
     b.box(sx < 0 ? 'dark' : 'glass', 0.24, 0.16, 0.02, { p: [sx * 0.95, 1.4, -3.762] });
-    b.box('dark', 0.02, 0.56, 0.9, { p: [sx * 1.201, 2.14, -2.9] });
-    if (sx > 0) b.box('glass', 0.012, 0.5, 0.84, { p: [sx * 1.212, 2.14, -2.9] });
     b.box('dark', 0.012, 1.3, 0.012, { p: [sx * 1.204, 1.8, -2.3] });
     b.box('rust', 0.3, 0.05, 0.6, { p: [sx * 1.08, 0.72, -2.7] }); // step
   }
@@ -2786,6 +2993,7 @@ BUILD.car_burnt = (b, r, v) => {
     noMirrorR: true,
     wheels: { fl: 'rim', fr: 'rim', rl: 'rim', rr: v ? 'gone' : 'rim' },
     glass: ['gone', 'gone', 'gone', 'gone', 'gone', 'gone'],
+    burnt: true,
   });
   b.pop();
   for (let k = 0; k < 4; k++) b.box('charred', rr(r, 0.2, 0.5), 0.03, rr(r, 0.15, 0.4), { p: [rr(r, -0.7, 0.7), 0.02, rr(r, -1.9, 1.9)], r: [0, r() * 3, 0] });
@@ -2814,9 +3022,10 @@ BUILD.bus_shelter = (b, r, v) => {
   for (const sx of [-1, 1]) for (const z of [-0.5, 0.68]) b.box('metal', 0.08, 2.4, 0.08, { p: [sx * 1.75, 1.2, z] });
   b.box('metal', 3.6, 0.1, 1.4, { p: [0, 2.45, 0.05] });
   b.box('metal', 3.5, 0.08, 0.06, { p: [0, 0.3, 0.68] });
-  b.box('glass', 3.42, 1.9, 0.02, { p: [0, 1.3, 0.68] });
-  b.box('glass', 0.02, 1.9, 1.1, { p: [-1.75, 1.3, 0.09] });
-  if (!v) b.box('glass', 0.02, 1.9, 1.1, { p: [1.75, 1.3, 0.09] });
+  // (panes one sees through: `carglass`, as a vehicle's)
+  b.plane('carglass', 3.42, 1.9, { p: [0, 1.3, 0.68], c: paneLook(0.55, 1) });
+  b.plane('carglass', 1.1, 1.9, { p: [-1.75, 1.3, 0.09], r: [0, PI / 2, 0], c: paneLook(0.55, 2) });
+  if (!v) b.plane('carglass', 1.1, 1.9, { p: [1.75, 1.3, 0.09], r: [0, PI / 2, 0], c: paneLook(0.55, 3) });
   else for (let k = 0; k < 5; k++) b.box('glass', 0.14, 0.01, 0.1, { p: [1.5 - r() * 0.5, 0.01, -0.3 + r() * 0.8], r: [0, r() * 3, 0] });
   plank(b, 'wood', 2.8, 0.06, 0.36, { p: [0, 0.48, 0.42], c: WOODS[2] });
   for (const sx of [-1, 1]) b.box('metal', 0.06, 0.45, 0.3, { p: [sx * 1.2, 0.225, 0.42] });
@@ -3066,10 +3275,27 @@ BUILD.semi_truck = (b, r, v) => {
   b.group({ p: [0, 0, -4.2], r: [0, 0.6, 0] }, () => {
     for (const sx of [-1, 1]) b.box('rust', 0.14, 0.26, 5.4, { p: [sx * 0.45, 0.92, -1.6] });
     b.cyl('rust', 0.5, 0.5, 0.08, 10, { p: [0, 1.12, 0] }); // the fifth wheel
-    b.box('carpaint', 2.4, 2.3, 2.1, { p: [0, 2.2, -2.6], c: cabc }); // cab
+    // the cab: a shell - the screen and a window in each door; the seats, and the bunk behind them. Burnt: no
+    // glass, and what the fire left
+    const gw = burnt ? 'gone' : undefined;
+    boxShell(b, 'carpaint', 2.4, 2.3, 2.1, {
+      p: [0, 2.2, -2.6], c: cabc, t: 0.05, lining: burnt ? CHAR : LINING, look: (k) => paneLook(0.55, k),
+      holes: { zn: [[-1.0, 1.0, 0.19, 0.91, gw]], xn: [[-0.75, -0.05, 0.2, 0.86, gw]], xp: [[-0.75, -0.05, 0.2, 0.86, burnt ? 'gone' : 'shard']] },
+    });
+    deck(b, 0, 1.96, -2.6, 2.28, 1.98, burnt ? CHAR : undefined);
+    if (burnt) {
+      for (const sx of [-1, 1]) burntSeat(b, sx * 0.62, 1.96, -3.0, { h: 0.3 });
+      b.box('cabin_fine', 2.2, 0.3, 0.24, { p: [0, 2.3, -3.48], c: CHAR });
+    } else {
+      for (const sx of [-1, 1]) seat(b, sx * 0.62, 1.96, -3.0, { w: 0.56, h: 0.3, bh: 0.56, d: 0.46, c: SEATS[5] });
+      dash(b, 2.42, -3.62, 2.26, { d: 0.26, h: 0.4, wheelX: -0.62 });
+      steering(b, [-0.62, 2.5, -3.28], { R: 0.22, tilt: 0.8 });
+      b.box('cabin_fine', 2.2, 0.4, 0.8, { p: [0, 2.16, -2.02], c: [0.24, 0.22, 0.2] }); // the bunk
+      b.box('cabin_fine', 1.6, 0.07, 0.7, { p: [0.2, 2.4, -2.02], r: [0, 0.04, 0.02], c: [0.34, 0.2, 0.16] });
+      b.box('cabin_fine', 0.4, 0.1, 0.3, { p: [-0.8, 2.42, -2.02], c: [0.52, 0.5, 0.44] });
+      rubbish(b, [0.62, 2.265, -3.0], 0.4, 0.3, 3, 9);
+    }
     b.box('carpaint', 2.2, 1.2, 1.5, { p: [0, 1.65, -4.3], c: cabc }); // bonnet
-    b.box('dark', 2.1, 0.8, 0.02, { p: [0, 2.75, -3.66] });
-    if (!burnt) b.box('glass', 2.0, 0.72, 0.012, { p: [0, 2.75, -3.672] });
     b.box(burnt ? 'charred' : 'chrome', 1.6, 0.9, 0.04, { p: [0, 1.62, -5.07] }); // grille
     b.box(burnt ? 'rust' : 'chrome', 2.4, 0.3, 0.2, { p: [0, 0.82, -5.1] });
     for (const sx of [-1, 1]) {
@@ -3216,15 +3442,22 @@ BUILD.fire_truck = (b, r) => {
   const red = [0.5, 0.14, 0.1], yel = [0.66, 0.56, 0.16];
   const wr = 0.62;
   b.box('rust', 1.1, 0.3, 7.6, { p: [0, 1.0, 0] });
-  b.box('carpaint', 2.5, 2.1, 2.3, { p: [0, 2.2, -2.85], c: red }); // cab
+  // the cab: a shell - a deep screen, a long window each side; the crew's seats in two rows, their helmets on the dash
+  boxShell(b, 'carpaint', 2.5, 2.1, 2.3, {
+    p: [0, 2.2, -2.85], c: red, t: 0.05, look: (k) => paneLook(0.45, k),
+    holes: { zn: [[-1.05, 1.05, -0.01, 0.81]], xn: [[-0.7, 0.4, 0.04, 0.76]], xp: [[-0.7, 0.4, 0.04, 0.76]] },
+  });
+  deck(b, 0, 1.9, -2.85, 2.38, 2.18);
+  for (const sx of [-1, 1]) seat(b, sx * 0.7, 1.9, -3.3, { w: 0.56, h: 0.34, bh: 0.56, d: 0.46, c: SEATS[0] });
+  seat(b, 0, 1.9, -2.4, { w: 2.0, h: 0.34, bh: 0.56, d: 0.44, c: SEATS[0], heads: 0 });
+  dash(b, 2.42, -3.94, 2.36, { d: 0.26, h: 0.44, wheelX: -0.7 });
+  steering(b, [-0.7, 2.5, -3.6], { R: 0.22, tilt: 0.8 });
+  for (const [x, c] of [[0.3, [0.66, 0.56, 0.16]], [0.74, [0.6, 0.5, 0.14]]]) b.sphere('cabin_fine', 0.13, 7, 4, { p: [x, 2.43, -3.8], thetaLen: PI / 2, c });
+  b.box('cabin_fine', 0.5, 0.36, 0.2, { p: [0.5, 2.44, -2.36], r: [0.2, 0.2, 0], c: [0.3, 0.26, 0.14] }); // a coat left on the back seat
   b.box('carpaint', 2.5, 1.0, 5.4, { p: [0, 1.65, 1.2], c: yel }); // lockers
   b.box('carpaint', 2.5, 1.0, 5.4, { p: [0, 2.65, 1.2], c: red }); // tank
   b.box('carpaint', 2.5, 0.4, 0.3, { p: [0, 1.0, -4.0], c: yel }); // bumper
-  b.box('dark', 2.2, 0.9, 0.02, { p: [0, 2.6, -4.006] });
-  b.box('glass', 2.1, 0.82, 0.012, { p: [0, 2.6, -4.018] });
   for (const sx of [-1, 1]) {
-    b.box('dark', 0.02, 0.8, 1.2, { p: [sx * 1.256, 2.6, -3.0] });
-    b.box('glass', 0.012, 0.72, 1.1, { p: [sx * 1.266, 2.6, -3.0] });
     for (let k = 0; k < 4; k++) b.box('steel', 0.012, 0.8, 1.1, { p: [sx * 1.256, 1.65, -0.8 + k * 1.3] }); // roller shutters
     b.box('rust', 0.012, rr(r, 0.3, 0.7), rr(r, 1, 2), { p: [sx * 1.257, 2.5, rr(r, 0, 2.6)] });
     b.box('taillight', 0.22, 0.14, 0.02, { p: [sx * 0.95, 1.4, 3.906] });
@@ -3287,7 +3520,7 @@ BUILD.airliner_wreck = (b, r) => {
   tube([{ z: -14.0, w: 0.3, h: 0.3, y: Y - 0.3 }, { z: -13.3, w: 1.5, h: 1.4, y: Y - 0.2 }, { z: -12.0, w: 2.4, h: 2.3, y: Y - 0.06 }, { z: -10.4, w: D, h: D, y: Y }, { z: 0.6, w: D, h: D, y: Y }, { z: 1.5, w: D - 0.1, h: D - 0.1, y: Y }], white, [-9.6, 0.4]);
   b.sphere('aircraft', 0.16, 6, 4, { p: [0, Y - 0.3, -14.0], c: soot });
   // the cockpit's glass, the door ahead of the wing open with what is left of its slide on the ground
-  for (const sx of [-1, 1]) b.box('glass', 0.9, 0.42, 0.03, { p: [sx * 0.5, Y + 0.62, -12.25], r: [-0.62, sx * -0.5, 0], order: 'YXZ' });
+  for (const sx of [-1, 1]) b.box('canopy', 0.9, 0.42, 0.03, { p: [sx * 0.5, Y + 0.62, -12.25], r: [-0.62, sx * -0.5, 0], order: 'YXZ', c: paneLook(0.55, sx) });
   b.box('dark', 0.03, 1.7, 0.86, { p: [-(R - 0.01), Y + 0.1, -9.9] });
   b.box('aircraft', 0.06, 1.7, 0.86, { p: [-R - 0.3, Y + 0.1, -10.9], r: [0, 0.35, 0], c: white });
   b.box('plastic', 0.9, 0.06, 0.8, { p: [-1.75, 0.38, -9.9], r: [0, 0, -0.5] }); // (a box of the fuselage's covers it)

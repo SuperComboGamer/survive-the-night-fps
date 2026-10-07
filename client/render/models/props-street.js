@@ -3,6 +3,7 @@
 // MeshBuilder, r a seeded rng, v the variant; origin at ground centre of the footprint, front to -Z.
 import * as THREE from 'three';
 import { rr, pick, WOODS, wheel, label, weeds, plank, CAR_COLORS, sedan } from './props.js';
+import { boxShell, profShell, leaf, seat, dash, steering, mirror, sitter, luggage, rubbish, bloodPatch, burntSeat, deck, busRows, paneLook, LINING, CHAR, SEATS } from './cabin.js';
 
 const PI = Math.PI;
 
@@ -277,14 +278,14 @@ STREET_PROPS.phone_booth = (b, r) => {
   // the back, then the two sides: a kick panel, a rail, the pane (the right side's is out)
   b.box('steel', 0.88, 0.5, 0.02, { p: [0, 0.3, q] });
   b.box('steel', 0.88, 0.04, 0.04, { p: [0, 0.57, q] });
-  b.box('glass', 0.88, 1.45, 0.012, { p: [0, 1.315, q] });
+  pane(b, 'carglass', 0.88, 1.45, [0, 1.315, q], 'z+', { c: paneLook(0.6, 1) });
   for (const sx of [-1, 1]) {
     b.box('steel', 0.02, 0.5, 0.88, { p: [sx * q, 0.3, 0] });
     b.box('steel', 0.04, 0.04, 0.88, { p: [sx * q, 0.57, 0] });
-    if (sx < 0) b.box('glass', 0.012, 1.45, 0.88, { p: [sx * q, 1.315, 0] });
+    if (sx < 0) pane(b, 'carglass', 0.88, 1.45, [sx * q, 1.315, 0], 'x-', { c: paneLook(0.6, 2) });
   }
-  sheet(b, 'glass', [[q, 0.59, -0.44], [q, 0.59, -0.1], [q, 0.84, -0.44]], [1, 0, 0], {}, true);
-  sheet(b, 'glass', [[q, 2.04, 0.44], [q, 2.04, 0.2], [q, 1.7, 0.44]], [1, 0, 0], {}, true);
+  sheet(b, 'carglass', [[q, 0.59, -0.44], [q, 0.59, -0.1], [q, 0.84, -0.44]], [1, 0, 0], { c: paneLook(0.6, 3) });
+  sheet(b, 'carglass', [[q, 2.04, 0.44], [q, 2.04, 0.2], [q, 1.7, 0.44]], [1, 0, 0], { c: paneLook(0.6, 4) });
   for (let k = 0; k < 4; k++) {
     const x = rr(r, 0.05, 0.36), z = rr(r, -0.38, 0.3), s = rr(r, 0.05, 0.1);
     sheet(b, 'glass', [[x - s, 0.044, z], [x + s * 0.6, 0.046, z + s * 0.5], [x, 0.045, z + s]], [0, 1, 0]);
@@ -524,8 +525,10 @@ STREET_PROPS.skeleton = (b, r, v) => {
 // ------------------------------------------------------------------ the traffic that never left
 // A sedan somebody got out of and ran: doors standing open, down on its tyres. A civilian car with bags roped to the
 // roof; a taxi; a police car; a civilian car with the boot up and its cases out on the road behind.
-STREET_VARIANTS.car_open = 4;
-STREET_PROPS.car_open = (b, r, v) => {
+// (eight: the four kinds (v % 4), and what is in the cabin by the rest of v)
+STREET_VARIANTS.car_open = 8;
+STREET_PROPS.car_open = (b, r, v0) => {
+  const v = v0 % 4, w = v0 >> 2;
   const taxi = v === 1, police = v === 2, boot = v === 3;
   const white = [0.72, 0.72, 0.68];
   const col = taxi ? [0.7, 0.54, 0.12] : police ? [0.09, 0.09, 0.1] : mul(CAR_COLORS[boot ? 4 : 0], 0.85);
@@ -534,13 +537,25 @@ STREET_PROPS.car_open = (b, r, v) => {
   const doors = taxi ? [[-1, 0, 0.7], [1, 1, 0.95]] : police ? [[-1, 0, 0.72], [1, 0, 0.55]] : boot ? [[-1, 0, 0.45], [-1, 1, 0.9]] : [[-1, 0, 0.72], [1, 0, 0.66]];
   const glass = boot ? ['ok', 'gone', 'ok', 'ok', 'ok', 'ok'] : taxi ? ['gone', 'ok', 'ok', 'ok', 'ok', 'gone'] : ['ok', 'ok', 'ok', 'gone', 'ok', 'ok'];
   for (const [sx, k] of doors) glass[2 + (sx > 0 ? 0 : 2) + k] = 'gone';
+  // what is in it: cases and a child's seat, or the driver; the fare, dead in the taxi's front seat; the police car's
+  // cage; the car with its boot up stripped
+  const cabin = [[2, 1], [0, 3], [5, 5], [2, 4]][v][w];
+  if (cabin === 3) glass[2] = 'blood';
   const wheels = [{ fl: 'flat', fr: 'flat', rl: 'flat', rr: 'rim' }, { fl: 'rim', fr: 'flat', rl: 'flat', rr: 'flat' }, { fl: 'flat', fr: 'flat', rl: 'flat', rr: 'flat' }, { fl: 'flat', fr: 'rim', rl: 'rim', rr: 'flat' }][v];
   b.push([0, 0, police ? 0.03 : 0], [0, 0, 0], [0.975, 1, 0.92]); // (inside its collider, mirrors and bumpers too)
-  sedan(b, r, { color: col, sink, smashed: !police, noPlates: v === 0, wheels, glass });
+  sedan(b, r, { color: col, sink, smashed: !police, noPlates: v === 0, wheels, glass, cabin, bootOpen: boot, bodySide: 1, seats: v * 2 + w, dirt: [0.35, 0.6, 0.3, 0.5][v] + w * 0.15, doorsOff: doors.map((d) => [d[0], d[1]]) });
   b.push([0, -sink, 0]);
+  if (police) {
+    // the cage between the front seats and the back, and the gun that stood in its clip
+    for (let k = 0; k < 7; k++) b.box('cabin_fine', 0.014, 0.46, 0.014, { p: [-0.63 + k * 0.21, 1.14, 0.26], c: [0.1, 0.1, 0.1] });
+    for (const y of [0.92, 1.36]) b.box('cabin_fine', 1.4, 0.02, 0.02, { p: [0, y, 0.26], c: [0.1, 0.1, 0.1] });
+    if (!w) b.box('cabin_fine', 0.03, 0.62, 0.035, { p: [0.04, 0.82, -0.3], r: [0.2, 0, 0.06], c: [0.09, 0.09, 0.1] });
+    else sitter(b, [0.34, 0.46, 0.64], { lean: 0.7, side: 1, shirt: [0.5, 0.3, 0.12], legs: [0.5, 0.3, 0.12] }); // somebody they had picked up, still in the back
+  }
+  if (taxi) b.box('cabin_fine', 0.12, 0.08, 0.06, { p: [0.1, 0.99, -0.6], c: [0.1, 0.1, 0.1] }); // the meter
   for (const [sx, k, ang] of doors) {
     const hinge = k ? 0.47 : -0.85, L = k ? 0.74 : 1.3, top = k ? 0.42 : L, dc = police ? white : col;
-    b.box('dark', 0.05, 0.6, L - 0.04, { p: [sx * (hw + 0.005), 0.6, hinge + L / 2] }); // the doorway
+    if (k) b.box('dark', 0.012, 0.56, 0.3, { p: [sx * (hw + 0.002), 0.62, 1.06] }); // (the back door's shut line runs on over the arch)
     b.group({ p: [sx * hw, 0.6, hinge], r: [0, sx * ang, 0] }, () => {
       b.box('carpaint', 0.05, 0.6, L, { p: [sx * 0.02, 0, L / 2], c: dc });
       b.box('dark', 0.02, 0.5, L - 0.12, { p: [-sx * 0.012, -0.02, L / 2] });
@@ -578,9 +593,8 @@ STREET_PROPS.car_open = (b, r, v) => {
     for (const y of [0.42, 0.74]) b.box('dark', 1.0, 0.05, 0.04, { p: [0, y, -2.45] });
   }
   if (boot) {
-    b.box('dark', 1.5, 0.012, 0.8, { p: [0, 0.922, 1.72], r: [0.02, 0, 0] });
     b.group({ p: [0, 0.93, 1.27], r: [-0.68, 0, 0] }, () => b.box('carpaint', 1.56, 0.04, 0.95, { p: [0, 0, 0.475], c: col }));
-    b.box('plastic', 0.5, 0.3, 0.2, { p: [0.3, 0.98, 1.75], r: [0.3, 0.2, 0] }); // a case still in it
+    b.box('plastic', 0.5, 0.3, 0.2, { p: [0.3, 0.9, 1.75], r: [0.3, 0.2, 0] }); // a case still in it
   }
   b.pop();
   b.pop();
@@ -601,20 +615,23 @@ STREET_PROPS.city_bus = (b, r, v) => {
   const W = 2.5, hw = W / 2, z0 = -5.9, z1 = 5.9, yb = 0.38, yw = 1.43, yt = 2.43, sink = 0.12; // skirt, sill, window head
   const fa = -3.4, ra = 3.3, wr = 0.5, ym = (yw + yt) / 2;
   const w = worn(0.22, 0.9);
+  const look = (k) => paneLook(v ? 0.72 : 0.5, k), FLOORC = [0.11, 0.11, 0.11];
+  let np = 0;
   b.push([0, -sink, 0]);
   // the body in lengths along it: plain ones, the two over the axles (with their arches), the two with a door well
   for (const [za, zb, what] of [[z0, -5.45], [-5.45, -4.25, 'door'], [-4.25, 0.3, fa], [0.3, 1.5, 'door'], [1.5, z1, ra]]) {
     const L = zb - za, zc = (za + zb) / 2;
     if (what === 'door') {
       b.box('carpaint', W - 0.5, yw - yb, L, { p: [-0.25, (yb + yw) / 2, zc], c: base, cfn: w });
-      b.box('dark', W - 0.53, yt - yw, L, { p: [-0.235, ym, zc] });
+      deck(b, -0.25, yw + 0.012, zc, W - 0.56, L, FLOORC);
       b.box('dark', 0.01, yw - yb - 0.22, L, { p: [hw - 0.495, (yb + 0.22 + yw) / 2, zc] });
       b.box('metal', 0.5, 0.22, L, { p: [hw - 0.25, yb + 0.11, zc] }); // the step, its edge, the pole
       b.box('paint', 0.03, 0.026, L, { p: [hw - 0.015, yb + 0.222, zc], c: yel });
       b.cyl('paint', 0.02, 0.02, yt - yb - 0.22, 5, { p: [hw - 0.3, (yb + 0.22 + yt) / 2, zc + 0.02], c: yel });
       for (const z of [za + 0.03, zb - 0.03]) {
-        b.box('carpaint', 0.46, yt - yb - 0.26, 0.04, { p: [hw - 0.25, (yb + 0.24 + yt) / 2, z], c: trim }); // a leaf, folded back
-        if (r() < 0.6) b.box('glass', 0.34, 0.9, 0.046, { p: [hw - 0.25, 1.78, z] });
+        // a leaf, folded back: its light still in it, or not
+        const lit = r() < 0.6;
+        b.group({ p: [hw - 0.25, (yb + 0.24 + yt) / 2, z] }, () => leaf(b, 'carpaint', 0.46, yt - yb - 0.26, 0.04, [-0.17, 0.17, 1.33 - (yb + 0.24 + yt) / 2, 2.23 - (yb + 0.24 + yt) / 2], { c: trim, pane: lit ? undefined : 'gone', look: look(np++) }));
       }
       continue;
     }
@@ -622,8 +639,29 @@ STREET_PROPS.city_bus = (b, r, v) => {
       sideProf(b, 'carpaint', [[za, yb], ...arch(what, yb, 0.66, 8), [zb, yb], [zb, yw], [za, yw]], W, { c: base, cfn: w });
       b.box('dark', W - 0.04, 0.64, 1.3, { p: [0, yb + 0.32, what] });
     } else b.box('carpaint', W, yw - yb, L, { p: [0, (yb + yw) / 2, zc], c: base, cfn: w });
-    const ia = za === z0 ? 0.03 : 0, ib = zb === z1 ? 0.03 : 0;
-    b.box('dark', W - 0.06, yt - yw, L - ia - ib, { p: [0, ym, zc + (ia - ib) / 2] });
+    deck(b, 0, yw + 0.012, zc, W - 0.06, L, FLOORC);
+  }
+  // (the window band is open from side to side: the floor above, a ceiling, and what is in between) seats in pairs
+  // each side of the aisle, none where a door's well is; the driver's, the wheel, the fare box; rails overhead
+  b.box('cabin', W - 0.1, 0.012, z1 - z0 - 0.1, { p: [0, yt - 0.008, 0], c: LINING });
+  const blue = v ? [0.34, 0.2, 0.14] : [0.16, 0.24, 0.34];
+  const well = (z) => (z > -5.6 && z < -4.0) || (z > 0.1 && z < 1.75);
+  busRows(b, [-0.8, 0.8], yw + 0.012, -3.9, 0.82, 11, 0.82, { c: blue, bh: 0.48, skip: (k, x) => (x > 0 && well(-3.9 + k * 0.82)) || (k * 5 + (x > 0 ? 2 : 0)) % 13 === 4 });
+  seat(b, -0.78, yw + 0.012, -5.2, { w: 0.5, h: 0.14, bh: 0.5, d: 0.42, c: blue, heads: 0 });
+  b.box('cabin_fine', 1.3, 0.24, 0.26, { p: [-0.55, yw + 0.13, -5.7], c: [0.1, 0.1, 0.1] });
+  steering(b, [-0.78, yw + 0.44, -5.52], { R: 0.23, tilt: 1.0 });
+  b.box('cabin_fine', 0.2, 0.5, 0.2, { p: [0.2, yw + 0.26, -5.35], c: [0.3, 0.3, 0.3] });
+  for (const sx of [-1, 1]) b.box('cabin_fine', 0.025, 0.025, 8.6, { p: [sx * 0.42, yt - 0.14, -0.2], c: [0.52, 0.44, 0.14] });
+  for (const z of [-3.2, -1.2, 2.6, 4.4]) b.cylBetween('cabin_fine', [-0.42, yw + 0.02, z], [-0.42, yt - 0.14, z], 0.016, 0.016, 4, { c: [0.52, 0.44, 0.14] });
+  if (v) {
+    sitter(b, [-0.78, yw + 0.15, -5.2], { wheel: true, lean: 0.25, side: -1, flesh: true, shirt: [0.2, 0.24, 0.3] });
+    bloodPatch(b, [-0.6, yw + 0.02, -4.6], 0.5, 0.9, 0.3);
+    luggage(b, [0.8, yw + 0.12, 2.66], 2, { r: 1.5 });
+  } else {
+    sitter(b, [-0.76, yw + 0.115, 1.02], { lean: 0.8, side: -1, shirt: [0.36, 0.3, 0.24] });
+    sitter(b, [0.6, yw + 0.115, 3.48], { lean: 0.5, side: 1, shirt: [0.24, 0.3, 0.26], legs: [0.3, 0.26, 0.2] });
+    luggage(b, [-0.8, yw + 0.12, -2.26], 0, { r: 1.6 });
+    rubbish(b, [0, yw + 0.014, 0.5], 0.4, 7, 9, 3);
   }
   crossProf(b, 'carpaint', [[-hw, yt], [hw, yt], [hw, 2.72], [hw - 0.09, 2.92], [hw - 0.35, 2.99], [-hw + 0.35, 2.99], [-hw + 0.09, 2.92], [-hw, 2.72]], z0, z1 - z0, { c: mul(base, 0.96), cfn: worn(0.15) });
   // a side: the solid lengths of the window band, then bay by bay a pillar each end, the sash bar, what glass is left
@@ -639,9 +677,9 @@ STREET_PROPS.city_bus = (b, r, v) => {
       const L = zb - za - 0.1, zc = (za + zb) / 2;
       b.box('steel', 0.02, 0.03, L, { p: [gx, yw + 0.645, zc] });
       const q = r();
-      if (q < 0.3) pane(b, 'glass', L, 0.58, [gx, yw + 0.33, zc], dir);
-      else if (q < 0.65) sheet(b, 'glass', [[gx, yw + 0.04, zc - L / 2], [gx, yw + 0.04, zc - L / 2 + rr(r, 0.25, 0.6)], [gx, yw + rr(r, 0.2, 0.5), zc - L / 2]], [sx, 0, 0]);
-      if (r() < 0.5) pane(b, 'glass', L, 0.3, [gx, yw + 0.82, zc], dir);
+      if (q < 0.3) pane(b, 'carglass', L, 0.58, [gx, yw + 0.33, zc], dir, { c: look(np++) });
+      else if (q < 0.65) sheet(b, 'carglass', [[gx, yw + 0.04, zc - L / 2], [gx, yw + 0.04, zc - L / 2 + rr(r, 0.25, 0.6)], [gx, yw + rr(r, 0.2, 0.5), zc - L / 2]], [sx, 0, 0], { c: look(np++) });
+      if (r() < 0.5) pane(b, 'carglass', L, 0.3, [gx, yw + 0.82, zc], dir, { c: look(np++) });
     }
     b.box('carpaint', 0.1, yt - yw, 0.1, { p: [sx * (hw - 0.05), ym, z0 + 0.05], c: base });
   };
@@ -659,9 +697,9 @@ STREET_PROPS.city_bus = (b, r, v) => {
   for (let k = 0; k < 4; k++) b.box('steel', 0.014, 0.03, 1.3, { p: [-hw - 0.006, 0.78 + k * 0.12, 4.75] });
   // the front: the windscreen in two panes (one out), its pillar and wipers, the destination box, lamps, bumper
   b.box('dark', 2.3, 0.22, 0.02, { p: [0, 1.33, z0 - 0.006] });
-  pane(b, 'glass', 1.1, 1.12, [-0.58, 1.82, z0 - 0.02], 'z-');
-  if (v) pane(b, 'glass', 1.1, 1.12, [0.58, 1.82, z0 - 0.02], 'z-');
-  else sheet(b, 'glass', [[0.04, 1.26, z0 - 0.02], [0.7, 1.26, z0 - 0.02], [0.04, 1.9, z0 - 0.02]], [0, 0, -1]);
+  pane(b, 'carglass', 1.1, 1.17, [-0.58, 1.845, z0 - 0.02], 'z-', { c: v ? [0.6, 0.2, 0.85] : look(40) });
+  if (v) pane(b, 'carglass', 1.1, 1.17, [0.58, 1.845, z0 - 0.02], 'z-', { c: look(41) });
+  else sheet(b, 'carglass', [[0.04, 1.26, z0 - 0.02], [0.7, 1.26, z0 - 0.02], [0.04, 1.9, z0 - 0.02]], [0, 0, -1], { c: look(41) });
   b.box('carpaint', 0.07, 1.22, 0.05, { p: [0, 1.83, z0], c: trim });
   b.box('dark', 1.5, 0.24, 0.02, { p: [0, 2.6, z0 - 0.008] });
   b.box('paint', 1.3, 0.14, 0.01, { p: [0, 2.6, z0 - 0.02], c: [0.42, 0.36, 0.14] });
@@ -677,9 +715,7 @@ STREET_PROPS.city_bus = (b, r, v) => {
   b.box('dark', 2.52, 0.24, 0.14, { p: [0, 0.5, z0 + 0.04] });
   label(b, 'labels', 'plate', 0.32, 0.16, [0, 0.5, z0 - 0.032], 'z-');
   // the back: closed in but for a small window, the engine door and its grille, lamps, bumper
-  b.box('carpaint', W, yt - yw, 0.05, { p: [0, ym, z1 - 0.025], c: base, cfn: w });
-  b.box('dark', 1.4, 0.5, 0.02, { p: [0, 2.05, z1 + 0.004] });
-  if (!v) pane(b, 'glass', 1.34, 0.44, [0, 2.05, z1 + 0.018], 'z+');
+  b.group({ p: [0, ym, z1 - 0.025] }, () => leaf(b, 'carpaint', W, yt - yw, 0.05, [-0.67, 0.67, 2.05 - ym - 0.22, 2.05 - ym + 0.22], { c: base, cfn: w, pane: v ? 'gone' : undefined, look: look(42) }));
   b.box('dark', 1.6, 0.6, 0.02, { p: [0, 0.95, z1 + 0.004] });
   for (let k = 0; k < 5; k++) b.box('steel', 1.6, 0.03, 0.03, { p: [0, 0.72 + k * 0.115, z1 + 0.012] });
   for (const sx of [-1, 1]) b.box('taillight', 0.14, 0.36, 0.03, { p: [sx * 1.05, 1.1, z1 + 0.01] });
@@ -709,16 +745,25 @@ STREET_PROPS.box_truck = (b, r, v) => {
   for (const sx of [-1, 1]) b.box('rust', 0.12, 0.2, 5.4, { p: [sx * 0.42, 0.82, 1.0] });
   for (const z of [fa, ra]) b.box('dark', 2.0, 0.14, 0.14, { p: [0, wr, z] });
   // the cab: a short nose, a raked screen
-  sideProf(b, 'carpaint', [[-3.6, 0.6], ...arch(fa, 0.6, 0.58), [-1.62, 0.6], [-1.62, 2.4], [-2.72, 2.4], [-3.2, 1.62], [-3.56, 1.52], [-3.6, 1.3]], hw * 2, { c: cab, cfn: w });
-  b.box('dark', hw * 2 - 0.04, 0.56, 1.14, { p: [0, 0.88, fa] });
-  const ws = (x, t, d) => [x, 1.62 + 0.78 * t + 0.524 * d, -3.2 + 0.48 * t - 0.852 * d]; // a point of the windscreen, d off it
-  const wsN = [0, 0.524, -0.852];
-  sheet(b, 'dark', [ws(-0.98, 0.08, 0.004), ws(0.98, 0.08, 0.004), ws(0.98, 0.92, 0.004), ws(-0.98, 0.92, 0.004)], wsN);
-  if (!v) sheet(b, 'glass', [ws(-0.98, 0.08, 0.012), ws(0.98, 0.08, 0.012), ws(0.98, 0.92, 0.012), ws(-0.98, 0.92, 0.012)], wsN);
-  else sheet(b, 'glass', [ws(-0.98, 0.08, 0.012), ws(0.1, 0.08, 0.012), ws(-0.98, 0.7, 0.012)], wsN);
+  // (a shell: the raked screen - what is left of it on the second truck - and a window in each door, the kerb side's gone)
+  profShell(b, 'carpaint', [[-3.6, 0.6], ...arch(fa, 0.6, 0.58), [-1.62, 0.6], [-1.62, 2.4], [-2.72, 2.4], [-3.2, 1.62], [-3.56, 1.52], [-3.6, 1.3]], hw * 2, {
+    c: cab, cfn: w, look: (k) => paneLook(v ? 0.7 : 0.4, k),
+    edges: [{ at: [[-2.72, 2.4], [-3.2, 1.62]], holes: [[-0.98, 0.98, 0.08, 0.92, v ? 'shard' : undefined]] }],
+    sides: { L: [[-2.6, -1.8, 1.675, 2.225, v ? 'gone' : undefined]], R: [[-2.6, -1.8, 1.675, 2.225, 'gone']] },
+  });
+  b.box('dark', hw * 2 - 0.1, 0.56, 1.14, { p: [0, 0.88, fa] });
+  // in the cab: a floor over the engine, two seats, the dash - and on the second one the driver
+  deck(b, 0, 1.3, -2.36, hw * 2 - 0.1, 1.4);
+  for (const sx of [-1, 1]) seat(b, sx * 0.55, 1.3, -2.1, { w: 0.54, h: 0.3, bh: 0.5, d: 0.44, c: SEATS[v ? 5 : 0] });
+  dash(b, 1.66, -3.12, hw * 2 - 0.14, { d: 0.3, h: 0.3, wheelX: -0.55 });
+  steering(b, [-0.55, 1.8, -2.62], { R: 0.2, tilt: 0.75 });
+  mirror(b, [0, 2.26, -2.74]);
+  if (v) sitter(b, [-0.55, 1.6, -2.1], { wheel: true, lean: 0.3, side: -1, shirt: [0.42, 0.16, 0.12] });
+  else {
+    b.box('cabin_fine', 0.24, 0.012, 0.32, { p: [0.5, 1.61, -2.1], r: [0, 0.4, 0], c: [0.62, 0.6, 0.5] }); // the round's sheet, on the other seat
+    b.cyl('cabin_fine', 0.04, 0.035, 0.12, 6, { p: [0.2, 1.72, -3.0], c: [0.6, 0.58, 0.5] });
+  }
   for (const sx of [-1, 1]) {
-    b.box('dark', 0.012, 0.6, 0.85, { p: [sx * (hw + 0.001), 1.95, -2.2] });
-    if (sx < 0 && !v) pane(b, 'glass', 0.8, 0.55, [sx * (hw + 0.012), 1.95, -2.2], 'x-');
     for (const z of [-2.66, -1.72]) b.box('dark', 0.008, 1.1, 0.012, { p: [sx * (hw + 0.002), 1.75, z] });
     b.box('chrome', 0.03, 0.03, 0.12, { p: [sx * (hw + 0.012), 1.5, -1.85] });
     b.box('metal', 0.2, 0.14, 0.5, { p: [sx * 1.0, 0.54, -1.9] }); // the step
@@ -734,10 +779,20 @@ STREET_PROPS.box_truck = (b, r, v) => {
   for (const x of [-0.4, 0, 0.4]) b.box('paint', 0.08, 0.04, 0.06, { p: [x, 2.42, -2.66], c: [0.66, 0.4, 0.08] });
   // the box: closed along its length, open at the back behind the door
   const bx = 1.22, by0 = 0.98, by1 = 3.18, bz0 = -1.5, bz1 = 3.6, bzs = 3.3, bym = (by0 + by1) / 2;
-  b.box('paint', bx * 2, by1 - by0, bzs - bz0, { p: [0, bym, (bz0 + bzs) / 2], c: body, cfn: worn(0.18) });
+  // (a shell, open at the back under the door: the load space, and what is left of the load)
+  boxShell(b, 'paint', bx * 2, by1 - by0, bzs - bz0, { p: [0, bym, (bz0 + bzs) / 2], c: body, cfn: worn(0.18), t: 0.05, lining: [0.25, 0.22, 0.18], holes: { zp: [[-1.14, 1.14, by0 + 0.08 - bym, 2.1 - bym, 'gone']] } });
+  const cy = by0 + 0.06;
+  const crate = (x, z, sx, sy, sz, ry, y = 0, k = 1) => b.box('cabin_fine', sx, sy, sz, { p: [x, cy + y + sy / 2, z], r: [0, ry, 0], c: [0.46 * k, 0.38 * k, 0.26 * k] });
+  crate(-0.6, -0.6, 0.9, 0.9, 1.0, 0.05, 0, 0.9);
+  crate(0.55, -0.7, 0.8, 0.6, 0.8, -0.1);
+  crate(0.5, -0.66, 0.6, 0.5, 0.6, 0.2, 0.6, 1.1);
+  crate(-0.5, 0.9, 1.0, 0.5, 0.8, 0.1, 0, 1.05);
+  crate(0.6, 1.2, 0.7, 0.7, 0.7, -0.2, 0, 0.85);
+  crate(-0.2, 2.3, 0.6, 0.4, 0.5, 0.5);
+  b.box('cabin_fine', 1.1, 0.12, 0.9, { p: [0.5, cy + 0.06, 2.4], r: [0, 0.3, 0], c: [0.36, 0.28, 0.18] }); // a pallet
+  rubbish(b, [0, cy, 1.8], 1.6, 2.0, 6, 11);
   b.box('paint', bx * 2, 0.08, bz1 - bzs, { p: [0, by0 + 0.04, (bzs + bz1) / 2], c: body });
   b.box('paint', bx * 2, 0.1, bz1 - bzs, { p: [0, by1 - 0.05, (bzs + bz1) / 2], c: body });
-  b.box('dark', bx * 2 - 0.16, by1 - by0 - 0.18, 0.02, { p: [0, bym - 0.01, bzs + 0.011] });
   for (const sx of [-1, 1]) {
     b.box('paint', 0.08, by1 - by0 - 0.18, bz1 - bzs, { p: [sx * (bx - 0.04), bym - 0.01, (bzs + bz1) / 2], c: body });
     b.box('paint', 0.008, 0.95, 2.7, { p: [sx * (bx + 0.003), 2.3, 0.8], c: logo, cfn: worn(0.4, 0, body) }); // where the name was
@@ -779,14 +834,44 @@ STREET_PROPS.van_wreck = (b, r, v) => {
   const o = { c: col, cfn: w };
   b.push([0, -sink, 0]);
   // the body in three lengths: the cab, the load space open at the door, the back
-  sideProf(b, 'carpaint', [[-2.4, 0.32], ...arch(fa, 0.32, 0.42), [-0.6, 0.32], [-0.6, 2.0], [-1.25, 2.0], [-1.95, 1.28], [-2.36, 1.14], [-2.44, 0.95], [-2.44, 0.42]], W, o);
-  sideProf(b, 'carpaint', [[0.6, 0.32], ...arch(ra, 0.32, 0.42), [2.42, 0.32], [2.45, 0.5], [2.45, 1.9], [2.38, 2.0], [0.6, 2.0]], W, o);
-  for (const z of [fa, ra]) b.box('dark', W - 0.04, 0.4, 0.82, { p: [0, 0.52, z] });
+  // (the cab a shell: the screen, a window in the driver's door, the other gone; the back a shell open to the load
+  // space, a light in each of its doors, one gone. Burnt: no glass anywhere)
+  const lin = burnt ? CHAR : LINING, look = (k) => paneLook(0.55, k), gw = burnt ? 'gone' : undefined;
+  profShell(b, 'carpaint', [[-2.4, 0.32], ...arch(fa, 0.32, 0.42), [-0.6, 0.32], [-0.6, 2.0], [-1.25, 2.0], [-1.95, 1.28], [-2.36, 1.14], [-2.44, 0.95], [-2.44, 0.42]], W, {
+    ...o, lining: lin, look,
+    edges: [{ at: [[-1.25, 2.0], [-1.95, 1.28]], holes: [[-0.8, 0.8, 0.08, 0.92, gw]] }],
+    sides: { L: [[-1.29, -0.71, 1.39, 1.85, gw]], R: [[-1.29, -0.71, 1.39, 1.85, 'gone']] },
+  });
+  profShell(b, 'carpaint', [[0.6, 0.32], ...arch(ra, 0.32, 0.42), [2.42, 0.32], [2.45, 0.5], [2.45, 1.9], [2.38, 2.0], [0.6, 2.0]], W, {
+    ...o, lining: burnt ? CHAR : [0.2, 0.2, 0.19], look, pane0: 4, open: [[[0.6, 2.0], [0.6, 0.32]]],
+    edges: [{ at: [[2.45, 0.5], [2.45, 1.9]], holes: [[-0.65, -0.19, 0.657, 0.914, 'gone'], [0.19, 0.65, 0.657, 0.914, gw]] }],
+  });
+  for (const z of [fa, ra]) b.box('dark', W - 0.1, 0.4, 0.82, { p: [0, 0.52, z] });
+  // the cab: a floor, two seats, the dash; what a fire left of them
+  deck(b, 0, 0.95, -1.3, W - 0.1, 1.36, burnt ? CHAR : undefined);
+  if (burnt) {
+    for (const sx of [-1, 1]) burntSeat(b, sx * 0.45, 0.95, -1.0, { h: 0.3, bh: 0.46 });
+    b.box('cabin_fine', W - 0.2, 0.26, 0.24, { p: [0, 1.16, -1.76], c: CHAR });
+  } else {
+    for (const sx of [-1, 1]) seat(b, sx * 0.45, 0.95, -1.0, { w: 0.5, h: 0.3, bh: 0.44, d: 0.44, c: SEATS[0] });
+    dash(b, 1.3, -1.88, W - 0.16, { d: 0.26, h: 0.3, wheelX: -0.45 });
+    steering(b, [-0.45, 1.42, -1.48], { R: 0.19, tilt: 0.6 });
+    mirror(b, [0, 1.84, -1.44]);
+    rubbish(b, [0.45, 1.255, -1.0], 0.3, 0.3, 3, 2);
+  }
+  // the back of the load space, behind the doors: what nobody carried off
+  deck(b, 0, 0.44, 1.5, W - 0.1, 1.84, burnt ? CHAR : [0.2, 0.2, 0.2]);
+  if (!burnt) {
+    b.box('cabin_fine', 0.7, 0.5, 0.6, { p: [-0.45, 0.99, 1.45], r: [0, 0.1, 0], c: [0.44, 0.36, 0.24] });
+    b.box('cabin_fine', 0.5, 0.36, 0.5, { p: [-0.45, 1.42, 1.42], r: [0, -0.2, 0], c: [0.5, 0.42, 0.3] });
+    b.box('cabin_fine', 0.6, 0.4, 0.5, { p: [0.4, 0.64, 2.1], r: [0, 0.3, 0], c: [0.4, 0.34, 0.24] });
+    b.cyl('cabin_fine', 0.16, 0.16, 0.4, 8, { p: [0.5, 0.64, 1.0], c: [0.2, 0.3, 0.4] });
+  } else b.box('cabin_fine', 1.2, 0.08, 1.2, { p: [0, 0.48, 1.5], c: CHAR });
   b.box('carpaint', 0.05, 1.68, 1.2, { p: [-hw + 0.025, 1.16, 0], ...o });
   b.box(burnt ? 'charred' : 'metal', W, 0.1, 1.2, { p: [0, 0.37, 0] });
   b.box('carpaint', W, 0.08, 1.2, { p: [0, 1.96, 0], ...o });
   b.box('dark', 0.012, 1.5, 1.2, { p: [-hw + 0.056, 1.17, 0] });
-  for (const sz of [-1, 1]) b.box('dark', W - 0.12, 1.5, 0.012, { p: [0.01, 1.17, sz * 0.593] });
+  b.box('dark', W - 0.12, 1.5, 0.012, { p: [0.01, 1.17, -0.593] }); // (the bulkhead behind the cab; the other end runs on into the back)
   if (burnt) {
     b.box('ash', 1.3, 0.1, 0.9, { p: [0.1, 0.46, 0] });
     b.box('charred', 0.5, 0.3, 0.4, { p: [0.25, 0.56, -0.2], r: [0, 0.4, 0.1] });
@@ -799,18 +884,9 @@ STREET_PROPS.van_wreck = (b, r, v) => {
   b.box('carpaint', 0.04, 1.5, 1.16, { p: [hw + 0.04, 1.17, 1.24], ...o });
   b.box('dark', 0.02, 0.03, 1.9, { p: [hw + 0.01, 1.55, 1.3] });
   b.box(burnt ? 'rust' : 'chrome', 0.02, 0.04, 0.14, { p: [hw + 0.066, 1.1, 0.8] });
-  // glass: the screen, the cab's side windows, the two in the back doors
-  const ws = (x, t, d) => [x, 1.28 + 0.72 * t + 0.697 * d, -1.95 + 0.7 * t - 0.717 * d];
-  const wsN = [0, 0.697, -0.717];
-  sheet(b, 'dark', [ws(-0.8, 0.08, 0.004), ws(0.8, 0.08, 0.004), ws(0.8, 0.92, 0.004), ws(-0.8, 0.92, 0.004)], wsN);
-  if (!burnt) sheet(b, 'glass', [ws(-0.8, 0.08, 0.012), ws(0.8, 0.08, 0.012), ws(0.8, 0.92, 0.012), ws(-0.8, 0.92, 0.012)], wsN);
   for (const sx of [-1, 1]) {
-    b.box('dark', 0.012, 0.5, 0.62, { p: [sx * (hw + 0.001), 1.62, -1.0] });
-    if (!burnt && sx < 0) pane(b, 'glass', 0.58, 0.46, [sx * (hw + 0.012), 1.62, -1.0], 'x-');
     for (const z of [-1.38, -0.64]) b.box('dark', 0.008, 1.3, 0.012, { p: [sx * (hw + 0.002), 1.25, z] });
     if (!burnt) b.box('dark', 0.05, 0.2, 0.12, { p: [sx * (hw + 0.045), 1.5, -1.55] }); // mirrors
-    b.box('dark', 0.5, 0.4, 0.012, { p: [sx * 0.42, 1.6, 2.452] });
-    if (!burnt && sx > 0) pane(b, 'glass', 0.46, 0.36, [sx * 0.42, 1.6, 2.462], 'z+');
     b.box('taillight', 0.1, 0.34, 0.02, { p: [sx * 0.84, 1.0, 2.455] });
     b.box(burnt ? 'rust' : 'chrome', 0.26, 0.18, 0.03, { p: [sx * 0.66, 0.84, -2.44] });
     b.box(burnt || sx > 0 ? 'dark' : 'glass', 0.2, 0.13, 0.02, { p: [sx * 0.66, 0.84, -2.458] });
@@ -945,14 +1021,26 @@ STREET_PROPS.army_truck = (b, r, v) => {
       b.cyl(burnt || sx > 0 ? 'dark' : 'glass', 0.07, 0.07, 0.02, 8, { p: [sx * 0.52, 1.46, -3.605], r: [PI / 2, 0, 0] });
     }
     // the cab
-    sideProf(b, cabMat, [[-2.2, 0.95], [-1.1, 0.95], [-1.1, 2.5], [-2.02, 2.5], [-2.2, 1.84]], 2.3);
-    const ws = (x, t, d) => [x, 1.84 + 0.66 * t + 0.263 * d, -2.2 + 0.18 * t - 0.965 * d];
+    // (a shell: the split screen - the driver's light whole, a tooth of the other - and a window in each door, one
+    // gone. Burnt: no glass, and what the fire left inside)
+    const gw = burnt ? 'gone' : undefined;
+    profShell(b, cabMat, [[-2.2, 0.95], [-1.1, 0.95], [-1.1, 2.5], [-2.02, 2.5], [-2.2, 1.84]], 2.3, {
+      lining: burnt ? CHAR : [0.2, 0.22, 0.16], look: (k) => paneLook(0.6, k),
+      edges: [{ at: [[-2.02, 2.5], [-2.2, 1.84]], holes: [[-1.0, -0.08, 0.12, 0.9, gw], [0.08, 1.0, 0.12, 0.9, burnt ? 'gone' : 'shard']] }],
+      sides: { L: [[-2.0, -1.3, 1.895, 2.345, gw]], R: [[-2.0, -1.3, 1.895, 2.345, 'gone']] },
+    });
+    deck(b, 0, 1.5, -1.65, 2.2, 1.0, burnt ? CHAR : [0.14, 0.15, 0.12]);
+    if (burnt) {
+      for (const sx of [-1, 1]) burntSeat(b, sx * 0.55, 1.5, -1.5, { h: 0.3, bh: 0.46 });
+      b.box('cabin_fine', 2.1, 0.24, 0.2, { p: [0, 1.74, -2.02], c: CHAR });
+    } else {
+      seat(b, 0, 1.5, -1.5, { w: 1.9, h: 0.3, bh: 0.46, d: 0.44, heads: 0, c: [0.27, 0.3, 0.2], rake: 0.08 });
+      dash(b, 1.86, -2.13, 2.16, { d: 0.2, h: 0.3, wheelX: -0.55, c: [0.16, 0.18, 0.13] });
+      steering(b, [-0.55, 1.98, -1.82], { R: 0.22, tilt: 0.85 });
+      b.sphere('cabin_fine', 0.13, 7, 4, { p: [0.4, 1.8, -1.5], thetaLen: PI / 2, c: [0.24, 0.27, 0.18] }); // a helmet on the bench
+      b.box('cabin_fine', 0.05, 0.9, 0.06, { p: [0.8, 1.9, -1.34], r: [0.25, 0, -0.1], c: [0.1, 0.1, 0.1] }); // a rifle stood against the door
+    }
     for (const sx of [-1, 1]) {
-      const q = (d) => [ws(sx * 0.08, 0.12, d), ws(sx * 1.0, 0.12, d), ws(sx * 1.0, 0.9, d), ws(sx * 0.08, 0.9, d)];
-      sheet(b, 'dark', q(0.004), [0, 0.263, -0.965]);
-      if (!burnt && sx < 0) sheet(b, 'glass', q(0.012), [0, 0.263, -0.965]);
-      b.box('dark', 0.012, 0.5, 0.75, { p: [sx * 1.151, 2.12, -1.65] });
-      if (!burnt && sx < 0) pane(b, 'glass', 0.7, 0.45, [sx * 1.162, 2.12, -1.65], 'x-');
       for (const z of [-2.1, -1.2]) b.box('dark', 0.008, 0.9, 0.012, { p: [sx * 1.152, 1.4, z] });
       b.box('rust', 0.3, 0.04, 0.5, { p: [sx * 1.02, 0.76, -1.65] }); // the step, on its hangers
       for (const z of [-1.86, -1.44]) b.box('rust', 0.03, 0.2, 0.03, { p: [sx * 1.02, 0.86, z] });
@@ -961,7 +1049,6 @@ STREET_PROPS.army_truck = (b, r, v) => {
         b.box('dark', 0.03, 0.26, 0.14, { p: [sx * 1.22, 2.1, -2.24] });
       }
     }
-    if (!burnt) sheet(b, 'glass', [ws(0.08, 0.12, 0.012), ws(0.6, 0.12, 0.012), ws(0.08, 0.6, 0.012)], [0, 0.263, -0.965]);
     b.cyl('rust', 0.05, 0.05, 1.9, 6, { p: [1.0, 1.95, -1.02] }); // the exhaust stack
     b.cyl('olive', 0.26, 0.26, 0.9, 8, { p: [-0.92, 0.88, -0.35], r: [PI / 2, 0, 0] }); // tank, locker
     b.box('olive', 0.4, 0.4, 0.8, { p: [0.92, 0.88, -0.3] });

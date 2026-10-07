@@ -9,10 +9,12 @@
 // a client that joins later sees a clean wall.
 import * as THREE from 'three';
 import { raycastWorld, COL, BOX } from '../../shared/collision.js';
-import { SOUND } from '../../shared/defs.js';
+import { SOUND, CONT } from '../../shared/defs.js';
 import { PROPS } from '../../shared/props.js';
 import { SURF, BLOW, MARK, LIGHT_PROPS, surfaceOf, surfaceOfMat, surfaceOfProp, markFor, shotMark, shotScale, soundFor, blowForce, PIT_MARK } from '../../shared/surfaces.js';
 import { WRECKF, WRECK_HITS_MAX, wreckOf, wreckColAt } from '../../shared/wrecks.js';
+import { trunkCar, hasBootLid } from '../../shared/trunk.js';
+import { dqpos } from '../../shared/protocol.js';
 import { Marks, markCorners } from '../render/marks.js';
 import { StrikeFx } from '../render/strikefx.js';
 import { Wrecks, strokeCorners, roomAt } from '../render/wrecks.js';
@@ -47,6 +49,7 @@ export class Impacts {
       },
     });
     this.panes = [];
+    this.trunkT = 0;
     // a ray against the world for roomAt: how far, and (near enough for a flat face) the normal it was asked along
     this.worldRay = (ox, oy, oz, dx, dy, dz, maxT, out) => {
       raycastWorld(g.world, ox, oy, oz, dx, dy, dz, maxT, _ray);
@@ -92,8 +95,37 @@ export class Impacts {
   update(dt) {
     const g = this.g;
     this.wrecks.update(dt, g.time, g.camera.position);
+    if ((this.trunkT -= dt) <= 0) this.trunks();
     this.fx.update(dt);
     this.marks.update(g.time);
+  }
+
+  // ---------------------------------------------------------------- boots forced open
+  // The car a boot's container belongs to, when that car has a lid to force (shared/trunk.js), or null. e: the
+  // container's entity.
+  bootOf(e) {
+    if (e.car === undefined) {
+      const car = trunkCar(this.g.world, { ctype: e.ctype, x: dqpos(e.q[0]), z: dqpos(e.q[2]) });
+      e.car = hasBootLid(car) && this.g.staticWorld.lifts.has(car) ? car : null;
+    }
+    return e.car;
+  }
+  // Every boot we know of: its lid up while its container is searched, a few times a second. One that is searched
+  // as we watch (it was not, the last time we looked) is seen and heard going up; one that comes into view already
+  // searched just stands open - so who joins late, or walks up later, finds it as the others left it.
+  trunks() {
+    this.trunkT = 0.2;
+    const g = this.g;
+    const eye = g.camera.position;
+    for (const e of g.entities?.caches || []) {
+      if (e.ctype !== CONT.TRUNK || !e.q) continue;
+      const car = this.bootOf(e);
+      if (!car || Math.hypot(car.x - eye.x, car.z - eye.z) > 170) continue;
+      const open = e.q[3] !== 0;
+      const live = open && e.bootSeen === false;
+      e.bootSeen = open;
+      this.wrecks.pry(car, open, live);
+    }
   }
 
   sound(name, x, y, z, vol = 1) {

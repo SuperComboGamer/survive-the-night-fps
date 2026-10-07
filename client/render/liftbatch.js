@@ -44,6 +44,7 @@ class Slot {
       const m = (this.mesh = new MultiMesh(g, this.mat, this.runs, { casts: (run) => this.shadowOnly || run.side === CUTOUT, shadowOnly: this.shadowOnly }));
       m.name = this.shadowOnly ? 'lifted-shadow-caster' : 'lifted';
       m.receiveShadow = !this.shadowOnly;
+      if (this.mat.userData.unsorted) m.renderOrder = -1; // (StaticWorld's UNSORTED_ORDER: a vehicle's glass)
       m.castShadow = this.shadowOnly;
       this.batch.group.add(m);
     }

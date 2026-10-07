@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { MARK, MARK_COLS, MARK_ROWS } from '../../shared/surfaces.js';
 
 export const MARK_RING = 400; // marks that fade (the newest overwrite the oldest)
-export const MARK_KEPT = 320; // marks that stay while their owner keeps them
+export const MARK_KEPT = 448; // marks that stay while their owner keeps them
 export const MARK_LIFE = 150; // s a fading mark lasts...
 export const MARK_FADE = 10; // ...and then takes to go
 const LIFT = 0.006; // m a mark sits off its surface (the material's polygon offset does the rest)
@@ -105,12 +105,12 @@ export class MarkPool {
     return n;
   }
   // the marks of `owner` within r of a point (a pane that has fallen out, a bumper that has come off); fading: only
-  // the ones that fade (what the owner keeps it moves itself)
-  removeNear(owner, x, y, z, r, fading = false) {
+  // the ones that fade (what the owner keeps it moves itself); spare: slots left alone whatever (a Set)
+  removeNear(owner, x, y, z, r, fading = false, spare = null) {
     const P = this.rest;
     let n = 0;
     for (let i = 0, end = fading ? this.ring : this.cap; i < end; i++) {
-      if (!this.live[i] || this.owner[i] !== owner) continue;
+      if (!this.live[i] || this.owner[i] !== owner || (spare && spare.has(i))) continue;
       const o = i * 12;
       if (Math.hypot((P[o] + P[o + 6]) / 2 - x, (P[o + 1] + P[o + 7]) / 2 - y, (P[o + 2] + P[o + 8]) / 2 - z) > r) continue;
       this.kill(i);
@@ -619,7 +619,8 @@ const PAINT = {
   },
   [MARK.CRACK_PANE](c, r) {
     // the whole pane crazed: several stars, their legs running to the edges
-    c.fillStyle = 'rgba(214,226,232,0.16)';
+    // (a vehicle's glass is seen through: crazed, it is milky, and what is behind it only shapes)
+    c.fillStyle = 'rgba(206,220,224,0.34)';
     c.fillRect(0, 0, 128, 128);
     for (const [x, y, n, len] of [[44, 54, 12, 110], [92, 82, 9, 80], [84, 28, 7, 60]]) {
       cracks(c, r, x, y, n, 3, len, 'rgba(238,246,252,0.9)', 1.2);
@@ -633,6 +634,38 @@ const PAINT = {
           c.arc(x, y, rad, a, a + 0.5 + r() * 0.8);
           c.stroke();
         }
+      }
+    }
+  },
+  [MARK.REMNANT](c, r) {
+    // teeth of glass standing in the frame all the way round, the middle of it clear: long ones in the corners
+    // and along the bottom, where a pane holds on longest
+    const tooth = (x, y, ax, ay, bx, by, w, len) => {
+      // its foot on the frame at (x, y) running along a, its point `len` in along b, leaning
+      const lean = (r() - 0.5) * w * 0.9;
+      c.beginPath();
+      c.moveTo(x - ax * w * 0.5, y - ay * w * 0.5);
+      c.lineTo(x + ax * w * 0.5, y + ay * w * 0.5);
+      c.lineTo(x + ax * lean + bx * len, y + ay * lean + by * len);
+      c.closePath();
+      const g = 150 + r() * 50;
+      c.fillStyle = rgba(g * 0.8, g * 0.98, g, 0.5 + r() * 0.3);
+      c.fill();
+      c.strokeStyle = 'rgba(240,248,250,0.85)';
+      c.lineWidth = 0.9;
+      c.beginPath();
+      c.moveTo(x - ax * w * 0.5, y - ay * w * 0.5);
+      c.lineTo(x + ax * lean + bx * len, y + ay * lean + by * len);
+      c.stroke();
+    };
+    for (const [x0, y0, ax, ay, bx, by, deep] of [[2, 126, 1, 0, 0, -1, 1.5], [2, 2, 1, 0, 0, 1, 0.8], [2, 2, 0, 1, 1, 0, 1], [126, 2, 0, 1, -1, 0, 1]]) {
+      let s = 0;
+      while (s < 124) {
+        const w = 5 + r() * 15;
+        const edge = Math.min(s, 124 - s) / 62; // 0 at a corner .. 1 in the middle of the side
+        const len = (5 + r() * 16 + (1 - edge) ** 2 * 22) * deep * (r() < 0.16 ? 0.2 : 1);
+        tooth(x0 + ax * (s + w / 2), y0 + ay * (s + w / 2), ax, ay, bx, by, w, len);
+        s += w * (0.75 + r() * 0.7);
       }
     }
   },

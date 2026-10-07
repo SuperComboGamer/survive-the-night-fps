@@ -23,6 +23,7 @@ import {
 } from './skinning.js';
 
 const PI = Math.PI;
+const PRY_BEAT = 0.4; // s a heave on a boot's lid (shared/trunk.js PRY.lever: the blows the server sends are that far apart)
 
 // ================================================================== geometry helpers
 function projUV(geo) {
@@ -3083,6 +3084,7 @@ export class ViewModel {
     this.sprintT = 0;
     this.talkT = 0; // the walkie-talkie keyed: raised toward the mouth (cfg.talk)
     this.tuckT = 0; // pulled back off a wall, a car or a crate in front (update's s.wallDist)
+    this.pryT = 0; // forcing a car's boot with what is in the hand (update's s.pry)
     this.crouchT = 0;
     this.moveT = 0;
     this.bobPhase = 0;
@@ -3600,6 +3602,23 @@ export class ViewModel {
       return;
     }
 
+    // ---- forcing a car's boot (s.pry, while the hold runs: shared/trunk.js). The whole weapon, hands and all, is put
+    // forward and tipped down to the gap under the lid, and heaved on once every PRY_BEAT: a blade is worked in and
+    // twisted, a bat or the nunchucks' handle is jammed in and leant on, the hammer's claw is hooked under and pulled.
+    // (The hands stay as they hold the weapon: nothing of the grip changes, so nothing of it clips.)
+    this.pryT += ((s.pry && kind === 'melee' ? 1 : 0) - this.pryT) * (1 - Math.exp(-dt * 9));
+    if (this.pryT > 0.002) {
+      const w = ease(this.pryT, 0), id = this.itemId;
+      const ph = (t / PRY_BEAT) * PI * 2;
+      const heave = Math.max(0, Math.sin(ph)) ** 2, back = Math.max(0, -Math.sin(ph));
+      const blade = id === ITEM.KNIFE || id === ITEM.MACHETE, hammer = id === ITEM.HAMMER;
+      P6[0] += w * -0.05;
+      P6[1] += w * (-0.07 + 0.035 * heave);
+      P6[2] += w * (-0.13 - (blade ? 0.02 : 0.06) * back);
+      P6[3] += w * ((blade ? -0.5 : hammer ? -0.75 : -0.34) + (blade ? 0.3 : hammer ? 0.42 : 0.22) * heave);
+      P6[4] += w * (blade ? 0.14 * Math.sin(ph * 0.5) : 0.05);
+      P6[5] += w * (blade ? 0.5 * heave - 0.2 : hammer ? 0.12 * heave : -0.1 * heave);
+    }
     // ---- tucked back off what is in front: the viewmodel is drawn over the world (its own pass, depth cleared), so
     // nothing cuts into it; but a muzzle or a blade reaching further than the wall the player stands at reads as gone
     // into it. s.wallDist (m, along the view; Game.weaponClearance) against how far the item reaches at the hip: the

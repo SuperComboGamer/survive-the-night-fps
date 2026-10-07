@@ -39,6 +39,7 @@ import {
   ZOMBIE_DEFS,
   SCHEM_BIT,
   THROW_ITEMS,
+  CONT,
   CONT_DEFS,
   SOUND,
   NOTIFY,
@@ -68,6 +69,7 @@ import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
 import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { pryWeapon } from '../../shared/trunk.js';
 import { perkMods, levelOf, picksEarned, XP_SRC } from '../../shared/progress.js';
 import { swimming } from '../../shared/swim.js';
 import { raycastWorld, makeBox, overlapBoxes, COL } from '../../shared/collision.js';
@@ -1039,6 +1041,14 @@ export class Game {
   }
 
   // what we carry, by item: the backpack, and the ammunition carried apart from it (the reserves we predict)
+  // The car whose boot a container is, when that car has a lid to force (shared/trunk.js): { car, shut } - shut:
+  // the lid is still down on it (not forced, not lifted by a blow, not off). null: any other container.
+  bootOf(e) {
+    if (!e || e.kind !== ENT.CACHE || e.ctype !== CONT.TRUNK) return null;
+    const car = this.impacts.bootOf(e);
+    return car ? { car, shut: this.impacts.wrecks.bootShut(car) } : null;
+  }
+
   invCounts() {
     const m = {};
     for (const it of this.inventory.slots) if (it) m[it.item] = (m[it.item] || 0) + it.count;
@@ -2807,6 +2817,9 @@ export class Game {
       }
       this.nkBtn = buttons;
     }
+    // (forcing a car's boot: the weapon in the hand is the lever)
+    const prying = self.holdKind === HOLD.SEARCH && this.entities.ents.get(this.holding);
+    vmState.pry = !!(prying && this.bootOf(prying)?.shut && pryWeapon(weaponNow));
     this.vm.update(dt, vmState);
     if (this.vm.itemId === ITEM.NUNCHAKU && this.vm.nk) nkSounds(this.audio, this.vm.nk.core, null, this.nkSt, time);
     this.updateSelfBody(dt, s, rp, time, hspeed);
@@ -3228,6 +3241,12 @@ export class Game {
         this.lookTarget = e;
         const name = CONT_DEFS[e.ctype]?.name || 'Container';
         this.prompt = e.q[3] === 0 ? `${bindTag('interact')} Hold to search ${name}` : `${name} · searched`;
+        // (a car's boot is forced open - with what is in the hand, or slowly without: shared/trunk.js)
+        const boot = this.bootOf(e);
+        if (boot && e.q[3] === 0) {
+          const w = pryWeapon(currentWeapon(s));
+          this.prompt = boot.shut ? (w ? `${bindTag('interact')} Hold to pry the trunk open with the ${ITEM_DEFS[w].name}` : `${bindTag('interact')} Hold to force the trunk open by hand (slow: a blade or a bat is quicker)`) : `${bindTag('interact')} Hold to search the open trunk`;
+        } else if (boot) this.prompt = 'Car Trunk · forced open, searched';
         const r = e.q[3] === 0 && trackedRecipe();
         const want = r && Object.keys(r.cost).find((k) => trackedNeed(+k, counts) && mayHold(e.ctype, +k));
         if (want) this.prompt += ` · may hold ${ITEM_DEFS[want].name} (tracked)`;
@@ -3478,6 +3497,7 @@ export class Game {
       h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : self.holdKind === HOLD.FAIR_START ? 'Starting the generator…' : self.holdKind === HOLD.FAIR_STOP ? 'Shutting it off…' : 'Starting the engine…';
       h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
       if (self.holdKind === HOLD.GUN_LIFT) h.useLabel = 'Lifting the gun…';
+      if (self.holdKind === HOLD.SEARCH && t && this.bootOf(t)?.shut) h.useLabel = pryWeapon(currentWeapon(this.prediction.state)) ? 'Prying the trunk open…' : 'Forcing the trunk open…';
     } else {
       // (put away by a click, it is gone at once: the server's word on it is a round trip off)
       h.useProgress = self.useItem && this.prediction.state.using ? self.useProgress : -1;

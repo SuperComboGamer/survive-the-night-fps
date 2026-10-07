@@ -21,7 +21,7 @@ import * as THREE from 'three';
 import { PROPS } from '../../shared/props.js';
 import { COL, footprintContains } from '../../shared/collision.js';
 import { dqpos } from '../../shared/protocol.js';
-import { SURF, BLOW, MARK, LIGHT_PROPS, surfaceOfMat, markFor, blowForce, NO_SURFACE } from '../../shared/surfaces.js';
+import { SURF, BLOW, MARK, LIGHT_PROPS, surfaceOfMat, markFor, blowForce, NO_SURFACE, GLASS_MATS, CABIN_MATS } from '../../shared/surfaces.js';
 import { HITF, WRECK_SALVAGE, wreckOf, wreckLocal } from '../../shared/wrecks.js';
 import { LiftBatch } from './liftbatch.js';
 import { markCorners } from './marks.js';
@@ -33,13 +33,16 @@ const FINE = 0.27; // m: no edge of a panel is longer (a dent has vertices to mo
 const LOOSE_MAX = 14;
 const SIM_DT = 1 / 60;
 const BUILD_NEAR = 170; // m: a wreck on record is built when the eye is this near
+const PRY_UP = 1.08; // rad: how far a boot's lid stands open once it has been forced (shared/trunk.js)
 
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1);
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
 const _ray = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
 const _in = { t: -1, piece: 0, vert: 0, name: '', nx: 0, ny: 0, nz: 0 };
-const BEHIND = new Set(['dark']);
+// what lies behind a panel, that a dent must not be pushed through: the black of an arch or an engine bay, and
+// whatever is inside the cabin (its lining, a seat)
+const BEHIND = new Set(['dark', ...CABIN_MATS]);
 const SKIN = new Set([...PANEL, 'dark']); // what a dent moves: the panels, and the seams drawn on them
 const _l = [0, 0, 0];
 
@@ -233,6 +236,7 @@ class Wreck extends Lifted {
     this.left = WRECK_SALVAGE;
     this.hits = [];
     this.kept = []; // its marks: { i (the pool's slot), isle, c (corners as made, before the island moved) }
+    this.debris = new Set(); // ...the slots of what a pane left when it went (the next pane to go does not sweep those away)
     this.clean = false;
     this.rnd = seeded((prop.seed + 1) * 7919 + Math.round(prop.x * 13 + prop.z * 7));
     this.sort();
@@ -282,7 +286,7 @@ class Wreck extends Lifted {
       if (s === body || s.part) continue;
       const ext = [s.max[0] - s.min[0], s.max[1] - s.min[1], s.max[2] - s.min[2]];
       if (NO_SURFACE.has(s.name) || s.min[1] < 0.035) ground(s);
-      else if (s.name === 'glass') part(s.size >= 0.35 ? 'pane' : 'lamp', [s]);
+      else if (GLASS_MATS.has(s.name)) part(s.size >= 0.35 ? 'pane' : 'lamp', [s]);
       else if (PAINTED.has(s.name) && ext[1] <= 0.1 && ext[0] >= hx * 1.2 && s.min[1] > 0.5 && Math.abs(s.mid[2]) > hz * 0.42) {
         // a lid: hinged along the edge nearer the middle of the car
         const front = s.mid[2] < 0;
@@ -444,6 +448,10 @@ class Wreck extends Lifted {
     this.kept.push(k);
     return k;
   }
+  // (a mark that is what a pane left behind it: see `debris`)
+  debrisOf(k) {
+    if (k && k.i >= this.sys.marks.pool.ring) this.debris.add(k.i);
+  }
   unkeep(k) {
     const i = this.kept.indexOf(k);
     if (i < 0) return;
@@ -467,6 +475,11 @@ class Wreck extends Lifted {
     // wreck a client that was not watching has: so whatever is in the air is put where it lands for the judging, and
     // back where it was for the eye (probe: without a sound)
     for (const a of this.anims) a.step(1, a.dur, true);
+    // (...and a boot that was forced open is not on the record at all - it is the container's state, which a client
+    // may learn before or after any blow: the lid is put where the record has it for the judging)
+    const boot = this.pried ? this.bootLid() : null;
+    this.judging = true; // (...and whatever moves it meanwhile moves it from there: lidShown)
+    if (boot && boot.state < 3) this.setOp(boot, this.hingeM(boot.hinge, boot.axis, boot.angle || 0, _m2));
     const r = seeded(hit[0] * 31 + hit[1] * 131 + hit[2] * 17 + n * 977);
     // what the blow landed on: the triangle, the island it is of, the part that is of
     this.ray(px - dx * 0.7, py - dy * 0.7, pz - dz * 0.7, dx, dy, dz, 2.2, _ray);
@@ -503,12 +516,14 @@ class Wreck extends Lifted {
           }
         }
       }
-      const glass = isle && isle.name === 'glass';
+      const glass = isle && GLASS_MATS.has(isle.name);
       const tyre = isle && (isle.name === 'tire' || isle.name === 'rubber');
+      // (through an opening and onto a seat: a mark on it, and nothing bent - the panels round it are not what was hit)
+      const inside = isle && CABIN_MATS.has(isle.name);
       if (struck && !glass) {
         // a bat stoves a panel in a hand's depth across half a metre; a machete leaves a crease, a hammer a deep small pit
         const radius = blow === BLOW.BLUNT ? 0.36 : blow === BLOW.CHOP ? 0.24 : 0.2;
-        const depth = tyre || blow === BLOW.SLASH ? 0 : (blow === BLOW.BLUNT ? 0.085 : blow === BLOW.CHOP ? 0.05 : 0.06) * (heavy ? 1.35 : 1);
+        const depth = tyre || inside || blow === BLOW.SLASH ? 0 : (blow === BLOW.BLUNT ? 0.085 : blow === BLOW.CHOP ? 0.05 : 0.06) * (heavy ? 1.35 : 1);
         // (the mark first, on the panel while it is still flat; then the hollow, and the mark let down into it)
         this.markAt(blow, isle, hx, hy, hz, nx, ny, nz, dx, dy, dz, r, radius, depth);
         if (depth) this.dent(hx, hy, hz, dx, dy, dz, radius, depth);
@@ -530,7 +545,50 @@ class Wreck extends Lifted {
       if (pick) this.strip(pick, live, dx, dy, dz, r, 0.25 + n * 0.05);
       if (live) sys.on.scrap?.(hx, hy, hz, nx, ny, nz);
     }
+    this.judging = false;
+    if (boot && boot.state < 3) this.setOp(boot, this.hingeM(boot.hinge, boot.axis, this.lidShown(boot, boot.angle || 0), _m2));
     for (const a of this.anims) a.step(Math.min(1, a.t / a.dur), a.t, true);
+  }
+
+  // ---- the boot, forced open (shared/trunk.js: the container behind the car has been searched)
+  // its lid: the one behind the cabin (a bonnet is the other), or null - a pickup, a van
+  bootLid() {
+    if (this._boot === undefined) this._boot = this.parts.find((p) => p.kind === 'lid' && p.mid[2] > 0) || null;
+    return this._boot;
+  }
+  // the angle a lid is drawn at: a forced boot's stands up at least PRY_UP, whatever blows have done to it
+  lidShown(p, a) {
+    return this.pried && !this.judging && p === this.bootLid() ? p.open * Math.max(Math.abs(a), PRY_UP) : a;
+  }
+  // on: it stands open (off: the container was filled again - shut). live: it is being forced now - the lid
+  // strains, lets go with a bang and swings up; otherwise it is simply there
+  pry(on, live) {
+    const p = this.bootLid();
+    const was = !!this.pried;
+    const from = p ? this.lidShown(p, p.angle || 0) : 0;
+    this.pried = !!on;
+    if (!p || p.state >= 3 || was === !!on) return;
+    this.settle(p);
+    const to = this.lidShown(p, p.angle || 0);
+    const set = (a) => this.setOp(p, this.hingeM(p.hinge, p.axis, a, _m2));
+    if (!live || !on) return set(to);
+    const c = this.worldOf(p.mid, _v);
+    const [cx, cy, cz] = [c.x, c.y, c.z];
+    let banged = false;
+    this.anim(p, 1.25, (k, t, probe) => {
+      // a moment of it lifting a finger's width against its catch, then free
+      if (t < 0.22) return set(from + p.open * 0.035 * Math.abs(Math.sin(t * 40)));
+      if (!banged && !probe) {
+        banged = true;
+        this.sys.on.sound?.('metal_bang', cx, cy, cz, 0.9);
+        this.sys.on.sound?.('hinge_creak', cx, cy, cz, 1);
+        this.sys.on.puff?.(cx, cy, cz);
+      }
+      // (to where it is shown now: a blow that lands meanwhile is judged with it where the record has it)
+      const up = this.lidShown(p, p.angle || 0);
+      set(from + (up - from) * swing((t - 0.22) / 1.03));
+    });
+    this.push(cx, cy, cz, 0, 1, 0, 0.5);
   }
 
   spent(p) {
@@ -543,7 +601,11 @@ class Wreck extends Lifted {
     // model a finger's width inside it, and a panel pushed through one shows as a black patch)
     // (a solid of black: not the hair's breadth of a seam drawn on the panel)
     const thin = (s) => Math.min(s.max[0] - s.min[0], s.max[1] - s.min[1], s.max[2] - s.min[2]) < 0.06;
-    const solid = (pi, v) => !thin(this.isles[this.isleOf[pi][v]]);
+    // (...and the cabin's lining, which is a sheet and still what is behind the panel)
+    const solid = (pi, v) => {
+      const s = this.isles[this.isleOf[pi][v]];
+      return CABIN_MATS.has(s.name) || !thin(s);
+    };
     // (...asked at the vertex and a triangle's reach to each side of it: a triangle with one corner held back by
     // the wheel arch behind it and the others pushed in would cut through the arch's corner)
     let ax = -dz, ay = 0, az = dx;
@@ -678,7 +740,30 @@ class Wreck extends Lifted {
     at(u1, w0, 3);
     at(u1, w1, 6);
     at(u0, w1, 9);
-    return { q, nx, ny, nz, c: c.clone() };
+    // `fit`: the opening itself, where the pane is a plain four-sided one that is not square to its box (a screen
+    // narrower at the top, a quarter light): its own corners, in the same order - what is left in the frame is
+    // drawn to those, not to the box
+    let fit = q;
+    const cs = [];
+    for (const v of s.verts) {
+      const x = P[v * 3] - c.x, y = P[v * 3 + 1] - c.y, z = P[v * 3 + 2] - c.z;
+      const u = x * ux + y * uy + z * uz, w = x * wx + y * wy + z * wz;
+      if (!cs.some((k) => Math.abs(k[0] - u) < 1e-3 && Math.abs(k[1] - w) < 1e-3)) cs.push([u, w]);
+      if (cs.length > 4) break;
+    }
+    if (cs.length === 4) {
+      fit = new Float32Array(12);
+      // (round it from the bottom corner on the left: by their bearing from the middle of the four, so a pane that
+      // leans a long way - a door's light along a raked pillar - still gives each corner once)
+      const um = (cs[0][0] + cs[1][0] + cs[2][0] + cs[3][0]) / 4, wm = (cs[0][1] + cs[1][1] + cs[2][1] + cs[3][1]) / 4;
+      cs.sort((a, k) => Math.atan2(a[1] - wm, a[0] - um) - Math.atan2(k[1] - wm, k[0] - um));
+      cs.forEach((k, i) => {
+        fit[i * 3] = c.x + ux * k[0] + wx * k[1] + nx * 0.012;
+        fit[i * 3 + 1] = c.y + uy * k[0] + wy * k[1] + ny * 0.012;
+        fit[i * 3 + 2] = c.z + uz * k[0] + wz * k[1] + nz * 0.012;
+      });
+    }
+    return { q, fit, nx, ny, nz, c: c.clone() };
   }
   breakGlass(p, steps, live, dx, dy, dz) {
     if (p.state >= 2) return;
@@ -687,23 +772,46 @@ class Wreck extends Lifted {
     const s = p.isles[0];
     const g = this.quad(p);
     if (p.kind === 'pane' && p.state === 1) {
-      p.crack = this.keep(MARK.CRACK_PANE, g.q, g.nx, g.ny, g.nz, s, 1, 0.95);
+      p.crack = this.keep(MARK.CRACK_PANE, g.fit, g.nx, g.ny, g.nz, s, 1, 0.95); // (to the opening, not its box: a leaning light's box lies over the pillar)
       if (live) this.sys.on.sound?.('glass_crack', g.c.x, g.c.y, g.c.z, 0.9);
       return;
     }
     if (p.crack) this.unkeep(p.crack);
     p.crack = null;
-    this.sys.marks?.pool.removeNear?.(this.prop, g.c.x, g.c.y, g.c.z, p.size * 0.55);
+    this.sys.marks?.pool.removeNear?.(this.prop, g.c.x, g.c.y, g.c.z, p.size * 0.55, false, this.debris);
     this.vanish(s);
     if (p.kind === 'pane') {
       // what is left of it lies under where it was, on the outside
       const ox = g.c.x + g.nx * 0.45, oz = g.c.z + g.nz * 0.45;
       const gy = this.sys.world.heightAt(ox, oz);
       const k = Math.min(1.5, 0.6 + p.size * 0.5);
-      this.keep(MARK.SHARDS, markCorners(ox, gy, oz, 0, 1, 0, k, k, null, 0, 0, s.mid[0] * 3 + s.mid[2]), 0, 1, 0, null, 1, 0.9);
+      this.debrisOf(this.keep(MARK.SHARDS, markCorners(ox, gy, oz, 0, 1, 0, k, k, null, 0, 0, s.mid[0] * 3 + s.mid[2]), 0, 1, 0, null, 1, 0.9));
+      // ...teeth of it stand in the frame all round the opening
+      this.debrisOf(this.keep(MARK.REMNANT, g.fit, g.nx, g.ny, g.nz, null, 1.25, 0.95));
+      // ...and the rest went in: on the seat or the floor inside, under the opening (a vehicle that has an inside)
+      const ix = g.c.x - g.nx * 0.3, iy = g.c.y - g.ny * 0.3, iz = g.c.z - g.nz * 0.3;
+      // (on something level in there - a cushion, the floor, a load: not balanced on the wheel or on whoever sits
+      // there. Straight down from just inside the opening, or a hand's width to either side along it)
+      const ax = -g.nz, az = g.nx, al = Math.hypot(ax, az) || 1;
+      let sx = ix, sz = iz, best = null;
+      for (const k of [0, 0.22, -0.22]) {
+        const px = ix + (ax / al) * k, pz = iz + (az / al) * k;
+        rayPieces(this.pieces, (pi) => this.rest[pi], px, iy, pz, 0, -1, 0, 1.6, _in, CABIN_MATS);
+        if (_in.t < 0 || (best && _in.ny <= best.ny)) continue;
+        best = { t: _in.t, nx: _in.nx, ny: _in.ny, nz: _in.nz };
+        sx = px;
+        sz = pz;
+        if (best.ny > 0.6) break;
+      }
+      // (...or, with somebody sat under every one of them, in their lap)
+      if (best && best.ny > 0.25) {
+        Object.assign(_in, best);
+        const ki = Math.min(0.7, 0.35 + p.size * 0.25);
+        this.debrisOf(this.keep(MARK.SHARDS, markCorners(sx, iy - _in.t, sz, _in.nx, _in.ny, _in.nz, ki, ki, null, 0, 0, s.mid[2] * 5 + s.mid[0]), _in.nx, _in.ny, _in.nz, null, 1.2, 0.95));
+      }
     }
     if (live) {
-      this.sys.on.shatter?.(g.q, g.nx, g.ny, g.nz, dx, dy, dz, p.kind === 'pane' ? 30 : 8);
+      this.sys.on.shatter?.(g.fit, g.nx, g.ny, g.nz, dx, dy, dz, p.kind === 'pane' ? 30 : 8);
       this.sys.on.sound?.(p.kind === 'pane' ? 'glass_break' : 'glass_crack', g.c.x, g.c.y, g.c.z, p.kind === 'pane' ? 1 : 0.8);
     }
     void was;
@@ -781,7 +889,7 @@ class Wreck extends Lifted {
   swingTo(p, to, live) {
     const from = p.angle || 0;
     p.angle = to;
-    const set = (a) => this.setOp(p, this.hingeM(p.hinge, p.axis, a, _m2));
+    const set = (a) => this.setOp(p, this.hingeM(p.hinge, p.axis, this.lidShown(p, a), _m2));
     if (!live) return set(to);
     const c = this.worldOf(p.mid, _v);
     this.sys.on.sound?.('hinge_creak', c.x, c.y, c.z, 0.9);
@@ -1008,7 +1116,7 @@ class Wreck extends Lifted {
   lamps() {
     if (this._lamps) return this._lamps;
     const out = [];
-    for (const s of this.isles) if ((s.name === 'taillight' || (s.name === 'glass' && s.size < 0.35)) && !s.ground) out.push(this.worldOf(s.mid, new THREE.Vector3()));
+    for (const s of this.isles) if ((s.name === 'taillight' || (GLASS_MATS.has(s.name) && s.size < 0.35)) && !s.ground) out.push(this.worldOf(s.mid, new THREE.Vector3()));
     if (!out.length) for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push(this.worldOf([sx * this.half[0] * 0.8, this.half[1] * 0.45, sz * this.half[2]], new THREE.Vector3()));
     return (this._lamps = out);
   }
@@ -1078,6 +1186,7 @@ export class Wrecks {
     this.alarms = new Map(); // prop -> { until, blink, chirp }
     this.cache = []; // the last few props a ray was cast at: [prop, pieces]
     this.scanT = 0;
+    this.pried = new Set(); // the cars whose boot stands open (Wrecks.pry)
   }
   setWorld(world, staticWorld, marks) {
     this.clear();
@@ -1096,6 +1205,7 @@ export class Wrecks {
     this.active.clear();
     this.alarms.clear();
     this.cache.length = 0;
+    this.pried.clear();
   }
   // dawn (EVT.REGROWN): every wreck is whole again, as the trees stand again
   reset() {
@@ -1125,8 +1235,30 @@ export class Wrecks {
       w = new Wreck(this, prop);
       this.live.set(prop, w);
       w.lift();
+      if (this.pried.has(prop)) w.pry(true, false);
     }
     return w;
+  }
+  // A car's boot has been forced (its container is searched), or is shut again (the container was refilled). The
+  // car leaves the static world for it, as one that is hit does. live: it is happening now, in front of us.
+  // Returns whether there was a lid to move.
+  pry(prop, on, live = false) {
+    if (this.pried.has(prop) === on && (!on || this.live.get(prop)?.wreck)) return false;
+    const w = on ? this.wreck(prop) : this.live.get(prop);
+    if (on) this.pried.add(prop);
+    else this.pried.delete(prop);
+    if (!w || !w.wreck) return false;
+    w.pry(on, live);
+    if (live) this.active.add(w);
+    else w.flush();
+    return !!w.bootLid();
+  }
+  // whether a car's boot is shut by its lid still: false once it is forced, lifted by a blow or off
+  bootShut(prop) {
+    const w = this.live.get(prop);
+    if (!w || !w.wreck) return !this.pried.has(prop);
+    const p = w.bootLid();
+    return !!p && p.state === 0 && !w.pried;
   }
 
   // EVT.WRECK: what is left in a wreck and the blows on its record. replay: `hits` is the whole record (and nothing

@@ -123,6 +123,7 @@ import { WORLD, nightRank, ARRIVAL_DAY, MAINLAND_DAY_MORE, CROSSING, TAKEOFF_TIM
 import { fellTree, regrowTrees } from '../shared/felling.js';
 import { blowOf, BLOW } from '../shared/surfaces.js';
 import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckLocal } from '../shared/wrecks.js';
+import { PRY, pryTime, pryWeapon, trunkCar, hasBootLid } from '../shared/trunk.js';
 import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME, radioKeyed } from '../shared/playersim.js';
 import { makeBox, COL, footprintContains, groundAt, resolveBody, overlapBoxes, canReach } from '../shared/collision.js';
@@ -2796,7 +2797,9 @@ export class Game {
         if (e.state !== 0) this.notify(NOTIFY.SEARCH_EMPTY, 0, p.id);
         return;
       }
-      p.hold = { kind: HOLD.SEARCH, target: id, t: 0, need: SEARCH_TIME * perkMods(p.perks).search };
+      // (a car's boot is forced: longer, by what is in the hand - shared/trunk.js)
+      const pry = this.pryOf(p, e);
+      p.hold = { kind: HOLD.SEARCH, target: id, t: 0, need: (pry ? pryTime(pry.weapon) : SEARCH_TIME) * perkMods(p.perks).search, pry };
       this.sound(SOUND.SEARCH, e.x, e.y, e.z, 18);
       return;
     }
@@ -2837,6 +2840,10 @@ export class Game {
     }
     h.t += dt;
     if (h.kind === HOLD.REVIVE && tgt) tgt.revivedBy = p.id;
+    if (h.pry && h.t >= h.pry.next && h.t < h.need) {
+      h.pry.next += PRY.lever;
+      this.pryHeave(p, tgt, h.pry);
+    }
     if (h.t < h.need) return;
     p.hold = null;
     if (h.kind === HOLD.SEARCH) this.searchCache(p, tgt);
@@ -2846,6 +2853,27 @@ export class Game {
     else if (h.kind === HOLD.GUN_LIFT) this.gun.lift(p);
     else if (this.fixtures.owns(h.target)) this.fixtures.holdDone(p, h);
     else if (h.target === FAIR_GEN_ID) this.fair.holdDone(p, h);
+  }
+
+  // Forcing a car's boot (shared/trunk.js). What the hold is to be, when this container is the boot of a car with a
+  // lid on it: the weapon that levers it (0: bare hands) and where. null: searched as any container - not a boot,
+  // its lid up already, or the wreck picked clean (every part of it is off then, the lid too: Wreck.pickClean).
+  pryOf(p, c) {
+    if (c.ctype !== CONT.TRUNK) return null;
+    if (c.car === undefined) c.car = trunkCar(this.world, c);
+    const car = c.car;
+    if (!hasBootLid(car)) return null;
+    for (const col of this.world.staticGrid.query(car.x, car.z, 1, [])) if (col.tag === car && this.gather.get(col)?.left <= 0) return null;
+    // the lid's edge, over the bumper; the lever goes in and down
+    const ax = Math.sin(car.ry), az = Math.cos(car.ry);
+    return { weapon: pryWeapon(currentWeapon(p.state)), next: PRY.lever, x: car.x + ax * 2.12, y: car.y + 0.84, z: car.z + az * 2.12, dx: -ax * 0.8, dy: -0.6, dz: -az * 0.8 };
+  }
+  // one heave on the lever: a blow on the lid's edge that those near see and hear (as a swing that lands on a wreck
+  // does: nothing is put on the wreck's record, and it gives nothing), and a little noise for the dead
+  pryHeave(p, c, pry) {
+    if (pry.weapon) this.strike(p, pry.weapon, false, pry.x, pry.y, pry.z, pry.dx, pry.dy, pry.dz);
+    else this.sound(SOUND.SEARCH, c.x, c.y, c.z, 18);
+    this.zm.noise(c.x, c.z, PRY.noise);
   }
 
   searchCache(p, c) {

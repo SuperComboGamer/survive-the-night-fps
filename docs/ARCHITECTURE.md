@@ -25,6 +25,7 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   surfaces.js    what a blow or a bullet lands on (wood, stone, metal, glass, earth, cloth, rubber) and the mark,
                  the bits and the sound each kind of blow makes on it (see Blows on the world below)
   wrecks.js      a wreck's record of the blows it took, and its alarm (see Blows on the world below)
+  trunk.js       a car's boot is forced open, not just searched: the times by weapon, the heaves, which cars (see Blows)
   playersim.js   deterministic player movement + weapon simulation (prediction on client, authority on server)
   nights.js      night themes: nightTheme(seed, night) picks what a night's horde is made of. The server applies
                  it to the wave weights and the client announces it, each from the seed: nothing on the wire
@@ -1095,6 +1096,41 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   watched and replayed wrecks equal to the vertex. The rocking on the springs, the sparks and the sounds are not on
   record: each client's own, from `EVT.STRIKE`. A wreck on record is not built until the eye is within `BUILD_NEAR`.
   A new vehicle needs nothing: the parts are found in its model (a new *kind* of part wants a rule in `Wreck.sort`).
+- **Glass one sees through, and a cabin behind it** (`client/render/models/cabin.js`, `carglass` / `cabin` in
+  `materials.js`). A vehicle's body is a shell with openings in it, not a solid with a black panel where a window
+  would be: `hullShell` (six-sided: a greenhouse, a cab), `boxShell`, `profShell` (a side profile across the body: a
+  van, a coach) build the skin, a lining a wall's thickness inside it and the reveal round each opening, and stand
+  the pane in it. Inside: seats, a dash and a wheel, a load, and what was left there (`sitter`, `luggage`,
+  `childSeat`, `rubbish`...), by the prop's variant - so by its seed, the same for everybody; the variants of the
+  sedans and the pickup were doubled for it (the body is the old variant's, `v % 4`). `carglass` is a dark tint with a
+  film on it (the `carglass` tile: dust, rain runs, cracks) and the sky mirrored in it; a pane's vertex colour is
+  what it is like, not a colour: `[dirt, tint, blood]` (`paneLook`). It is see-through and **not sorted**
+  (`userData.unsorted`): all of it in a world is one `MultiMesh`, drawn before every other see-through thing
+  (`UNSORTED_ORDER`), where the static world's other see-through materials are a mesh a chunk - a pane is a thin
+  dark film, and two of them come out the same whichever is drawn first. `cabin` is a shell's lining, seen as far
+  as the vehicle is; `cabin_fine` is everything in it - every colour of it the vertex's - and to the static world
+  the same material (`userData.fineOf`), in the tier that is drawn from 55 m (a room's furniture's) and casts no shadow: a street of
+  several hundred cars is lined, not furnished. The lining is what casts a shell's shadow from inside, so the sun
+  comes in at the windows. What has no inside to
+  give (an aircraft's fuselage and a helicopter's are closed skins, an APC has no glass) has `canopy`: the same
+  glass, opaque. To the wreck system a pane is any of `GLASS_MATS`, an inside any of `CABIN_MATS` (`shared/
+  surfaces.js`): a dent stops short of the lining as it does of an arch's black, a blow through an opening lands on
+  a seat and bends nothing, and nothing of a cabin is taken for trim. A pane that goes leaves teeth of itself in the
+  frame (`MARK.REMNANT`, laid over the opening's own corners: `Wreck.quad().fit`), shards on the ground and shards
+  on the seat inside; the next pane to go does not sweep those away (`Wreck.debris`).
+- **A car's boot is forced** (`shared/trunk.js`: every number of it; `Game.pryOf` / `pryHeave`; `Wreck.pry`). The
+  container behind a sedan is the same container, the same hold (`HOLD.SEARCH`), the same loot and the same
+  one-in-ten alarm (`Game.searchCache`, unchanged). What differs: the hold takes the time of the melee weapon in
+  the hand (`PRY.time`; bare hands `PRY.hand`), and every `PRY.lever` seconds of it is a blow on the lid's edge
+  (`EVT.STRIKE`, as any swing that lands on a wreck: seen and heard by who is near, on nobody's record) and a
+  little noise (`PRY.noise`). Nothing new is on the wire. The lid is a part of the model (`Wreck.bootLid`: the lid
+  behind the cabin), over a well with what a boot has in it; each client stands it open while the container reads
+  searched (`Impacts.trunks`, a few times a second: going up with a bang if it was shut the last time we looked,
+  simply up for who comes later) and shuts it if the container is filled again. It is not a blow on the wreck's
+  record, so a blow is judged with the lid where the record has it (`Wreck.judging`): forced before the blows or
+  after, every client has the same wreck. A sedan picked clean has no lid (the server knows that much: `left`
+  0), nor has the one left with its boot up (`hasBootLid`): those are searched as before, as are a pickup's bed
+  and a camper's locker.
 - **The alarm** (`WRECK_ALARM` in `shared/wrecks.js`: every number in one place; `alarmStep` is the whole rule).
   About a fifth of the cars and vans still have a live battery (drawn at a wreck's first hard blow of the day).
   That blow makes it chirp and blink (`EVT.WRECK_ALARM`), which is the warning: from then on a hard blow sets it
