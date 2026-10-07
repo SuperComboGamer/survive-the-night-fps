@@ -3311,13 +3311,12 @@ export class Game {
           const w = counts[ITEM.WOOD] || 0;
           const st = counts[ITEM.STICK] || 0;
           this.prompt = w || st ? `${bindTag('interact')} ${lit ? 'Feed' : 'Relight'} the fire (${w ? `${w} Planks` : `${st} Sticks`})` : lit ? 'Campfire · feed it Planks or Sticks' : 'The fire is out · needs Planks or Sticks';
-          if (lit) this.prompt += ` · burns ${mmss(this.burnLeft(e))}`;
-          if (s.slot === SLOT_BUILD) this.prompt += ` · ${bindTag('demolish')} Remove`;
+          // (how long it has left: with the hammer out only, so nothing more is on the screen in a fight)
+          if (s.slot === SLOT_BUILD) this.prompt += `${lit ? ` · burns ${mmss(this.burnLeft(e))}` : ''} · ${bindTag('demolish')} Remove`;
         } else if (s.slot === SLOT_BUILD) {
           if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? `${bindTag('interact')} Relight torch (1 Cloth) · ${bindTag('demolish')} Remove` : `Burns ${mmss(this.burnLeft(e))} · ${bindTag('demolish')} Remove torch`;
           else this.prompt = hp < 0.99 ? `${bindTag('interact')} Repair ${def.name} (1 Planks, 1 Nails) · ${bindTag('demolish')} Demolish` : `${bindTag('demolish')} Demolish ${def.name}`;
-        } else if (e.stype === STRUCT.TORCH) this.prompt = e.q[4] === 1 ? `Standing Torch · burns ${mmss(this.burnLeft(e))}` : 'Standing Torch · burnt out';
-        else if (def.station === 'bench') this.prompt = `Workbench · craft here ${bindTag('inventory')}`;
+        } else if (def.station === 'bench') this.prompt = `Workbench · craft here ${bindTag('inventory')}`;
         this.contextStructure = { name: def.name, hp };
         return;
       }
