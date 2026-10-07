@@ -951,7 +951,7 @@ export class Zombies {
       if (z.pack && z.target && !had) this.alertPack(z);
     }
     const tp = z.target ? g.players.get(z.target) : null;
-    const target = tp && tp.alive && !tp.zombie && !tp.away ? tp : null;
+    const target = tp && tp.alive && !tp.zombie && !g.safe(tp) ? tp : null;
     if (!target) z.target = 0;
     let tx = 0;
     let ty = 0;
@@ -1327,7 +1327,7 @@ export class Zombies {
     let bd = Infinity;
     const mn = g.mineNav;
     for (const h of humans) {
-      if (h.away) continue; // (dropped and held: game.js hold)
+      if (g.safe(h)) continue; // (dropped and held, or back and not playing yet: game.js hold, resume)
       const s = h.state;
       let d = Math.hypot(s.x - z.x, s.z - z.z);
       // a survivor on the other level is as far off as the walk round by a portal; one down the same drifts as far

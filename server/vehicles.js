@@ -715,6 +715,7 @@ export class Vehicles {
     const k = this.freeSeat(e);
     if (k < 0) return g.notify(NOTIFY.VEH_NEED, VEH_NO.SEATS, p.id);
     if (g.gun.ent && g.gun.ent.gunner === p.id) g.gun.ent.gunner = 0;
+    if (s.pet) g.cm.put(p); // (the stray cat in their arms is set down first: server/cats.js)
     this.sit(p, e, k);
     g.sound(VEHICLES[e.vk].shell ? SOUND.VEH_DOOR : SOUND.VEH_MOUNT, e.x, e.y + 0.8, e.z, 25);
   }

@@ -795,6 +795,40 @@ export function catMeow(sr, rng, i) {
   });
 }
 
+// the stray cat purring while it is stroked: one breath out and in (~2 s; played again for as long as it is stroked).
+// A purr is the larynx snapping shut ~25 times a second on the way out and on the way in: each snap a short buzz of
+// noise rung through the throat (a low body and a nasal ring), the way in quieter and breathier
+export function catPurr(sr, rng, i) {
+  const out = rrange(rng, 1.0, 1.2);
+  const gap = rrange(rng, 0.08, 0.14);
+  const inn = rrange(rng, 0.7, 0.85);
+  const n = Math.floor((out + gap + inn + 0.05) * sr);
+  const x = new Float32Array(n);
+  const body = new Biquad().bp(sr, rrange(rng, 150, 190), 1.2);
+  const ring = new Biquad().bp(sr, rrange(rng, 650, 820), 2.2);
+  const lp = new Biquad().lp(sr, 2400, 0.7);
+  const hp = new Biquad().hp(sr, 45, 0.7);
+  const snap = Math.exp(-1 / (0.006 * sr)); // (each snap dies away in ~6 ms)
+  let ph = 0;
+  let exc = 0;
+  for (let k = 0; k < n; k++) {
+    const t = k / sr;
+    const exhale = t < out;
+    const inhale = t > out + gap && t < out + gap + inn;
+    const u = exhale ? t / out : inhale ? (t - out - gap) / inn : 0;
+    const env = exhale ? Math.pow(Math.sin(Math.PI * Math.min(1, u * 1.1)), 0.6) : inhale ? 0.6 * Math.pow(Math.sin(Math.PI * u), 0.7) : 0;
+    ph += ((exhale ? 26 : 23.5) * (1 + 0.04 * Math.sin(TAU * t * 0.7 + i))) / sr;
+    if (ph >= 1) {
+      ph -= 1 + (rng() - 0.5) * 0.06;
+      exc = 1;
+    }
+    exc *= snap;
+    const v = (rng() * 2 - 1) * (exc * 0.9 + (inhale ? 0.13 : 0.08));
+    x[k] = hp.run(lp.run(body.run(v) * 1.6 + ring.run(v) * 0.5)) * env;
+  }
+  return finish(x, sr);
+}
+
 // zombie dogs: a dog-sized vocal tract (formants ~15% up on a human's) run ragged - rasp, gurgle, overdrive
 // "rrowf!" x2-3: short harsh barks, pitch jumping up then dropping
 export function dogBark(sr, rng, i) {
@@ -883,6 +917,25 @@ export function deerBleat(sr, rng, i) {
     shimmer: 0.25, sub: 0.1, rasp: 0.5, raspHz: 55, vib: 0.03, vibHz: 11, breath: 0.25, drive: 2.2, chest: 0.1, a3: 0.6, hp: 280,
     env: dying ? [[0, 0], [0.06, 1], [0.45, 0.75], [0.8, 0.3], [1, 0]] : [[0, 0], [0.08, 1], [0.6, 0.8], [1, 0]],
   });
+}
+// an undead deer (the mainland's): the bleat dragged down through a throat that has rotted - lower, longer, rattling
+// and overdriven, rising to a strangled shriek as it lowers its antlers; the last variant is the gurgle it dies with
+export function deerScream(sr, rng, i) {
+  const dying = i === 2;
+  const b = rrange(rng, 240, 300) * (dying ? 0.8 : 1);
+  const dur = dying ? rrange(rng, 1.0, 1.2) : rrange(rng, 0.75, 0.95);
+  const out = alloc(sr, dur + 0.5);
+  const v = voice(sr, rng, {
+    dur,
+    pitch: dying ? [[0, b * 1.1], [0.2, b * 1.25], [0.6, b * 0.8], [1, b * 0.45]] : [[0, b * 0.75], [0.3, b * 1.35], [0.65, b * 1.55], [0.85, b * 1.2], [1, b * 0.7]],
+    vowels: vowelPath(dying ? ['ae', 'a', 'uh', 'er'] : i ? ['er', 'ae', 'a', 'e'] : ['uh', 'a', 'ae', 'a'], rng), fscale: 1.2, bw: 2,
+    jitter: 0.09, jitterHz: 38, shimmer: 0.5, sub: 0.45, gurgle: dying ? 0.8 : 0.5, gurgleHz: 22, rasp: 0.95, raspHz: 85, vib: 0.03, vibHz: 7,
+    breath: 0.5, drive: 4.5, chest: 0.35, bubbles: dying ? 6 : 3, hp: 140,
+    env: dying ? [[0, 0], [0.06, 1], [0.45, 0.7], [0.8, 0.3], [1, 0]] : [[0, 0], [0.12, 0.6], [0.45, 0.9], [0.75, 1], [0.92, 0.5], [1, 0]],
+  });
+  addNorm(out, v, sr, 0, 0.9);
+  addNorm(out, v, sr, 0.3 + rng() * 0.15, 0.15); // (off the trees)
+  return finish(out, sr);
 }
 // a hoof coming down on the forest floor at a run: a hard little knock on packed earth, leaf litter thrown up
 export function hoofbeat(sr, rng) {
@@ -1989,12 +2042,14 @@ export const SFX_DEFS = [
   { bank: 'z_shade_shriek', n: 2, sr: MID, gen: shadeShriek },
   { bank: 'zp_growl', n: 3, sr: MID, gen: zpGrowl },
   { bank: 'cat_meow', n: 3, sr: HI, gen: catMeow },
+  { bank: 'cat_purr', n: 3, sr: MID, gen: catPurr },
   { bank: 'dog_bark', n: 3, sr: MID, gen: dogBark },
   { bank: 'dog_howl', n: 2, sr: MID, gen: dogHowl },
   { bank: 'dog_snarl', n: 3, sr: MID, gen: dogSnarl },
   { bank: 'dog_yelp', n: 3, sr: MID, gen: dogYelp },
   { bank: 'deer_snort', n: 3, sr: MID, gen: deerSnort },
   { bank: 'deer_bleat', n: 3, sr: MID, gen: deerBleat },
+  { bank: 'deer_scream', n: 3, sr: MID, gen: deerScream },
   // players
   { bank: 'hurt', n: 4, sr: MID, gen: humanHurt },
   { bank: 'pdeath', n: 1, sr: MID, gen: humanDeath },

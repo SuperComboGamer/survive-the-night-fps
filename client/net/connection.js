@@ -1,7 +1,8 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, ROOMF, WELCOMEF, PROTOCOL_VERSION, REJECT_REASON, Writer, Reader, writeInput, readBoard, qpos } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, ROOMF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, writeInput, readBoard, qpos } from '../../shared/protocol.js';
 import { NIGHTFALL } from '../../shared/difficulty.js';
 import { CHARACTER_NONE } from '../../shared/characters.js';
+import { rejectText } from './comeback.js';
 
 // A join whose socket closes before the server has answered it (no WELCOME, no REJECT) is tried again after these
 // waits (ms) before it fails. Seen in production (Oct 2026): now and then the socket is gone ~20 ms after the server
@@ -93,17 +94,7 @@ export class Connection {
           case S2C.REJECT: {
             const reason = r.u8();
             settled = true;
-            const text =
-              reason === REJECT_REASON.FULL
-                ? code
-                  ? 'That game is full.'
-                  : 'Every game is full right now. Try again in a minute.'
-                : reason === REJECT_REASON.NO_GAME
-                  ? 'That game has ended, or the link is wrong.'
-                  : reason === REJECT_REASON.VERSION
-                    ? 'Version mismatch - refresh the page'
-                    : 'Rejected';
-            const err = new Error(text);
+            const err = new Error(rejectText(reason, code));
             err.reason = reason;
             reject(err);
             break;

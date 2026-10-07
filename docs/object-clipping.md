@@ -123,7 +123,8 @@ their side by `weaponPickup` (`HELD_LAY`), placed by their own vertices.
 - `occupy` and `occupied`: the room vegetation keeps from props.
 - `partBlocked`: a tree or a boulder that would stand in a wall is left out after its random draws, so the rest of the
   forest stays put.
-- `shared/props.js`: every prop's collider boxes and cylinders, which are its solid shape for these checks.
+- `shared/props.js`: every prop's collider boxes and cylinders, which are its solid shape for these checks. They
+  follow the model ([hitboxes.md](hitboxes.md)); what the world is laid out by is a prop's `plan` where it has one.
 
 **The sandboxes: `client/sandbox/`.** `models-test.html` loads `models-vm.js` (`?vm=`, `?ww=`), `models-hold.js`
 (`?hold=`), `models-film.js` (`?film=`) or `models-lineup.js` (the rest). `props-test.html` loads `props-test.js`.
@@ -232,6 +233,7 @@ through `launchChrome` too.
 | `nunchaku-shots.js` | | Stills and strips of the nunchucks out of the sandbox, a list of them in one browser. |
 | `nunchaku-jitter.js` | | Is the nunchucks' motion smooth: every move and hand-off on a stepped clock at 30 to 240 fps and on uneven frames, measured for shakes, pops and snaps (no browser). `--trace "move@fps"` prints the frames round the worst. |
 | `nunchaku-film.js`, `nunchaku-reel.js` | | Footage of the nunchucks in the real game, a frame at a time with both clocks held, and the reel, contact sheets and strips cut from it (ffmpeg). |
+| `aim-shots.js`, `aim-sheets.js` | | A gun's sights and groups in the real game, frame by frame with both clocks held: the sights up on a walker 10, 25 and 50 m out, by day and by flashlight, the crosshair at the hip, a held magazine's climb, and the holes in a barn wall; then the before / after sheets of two trees' pictures. |
 | `lib.js` | | The shared plumbing: arguments, servers, headless Chrome, image sheets, worktrees, lending the sandbox to an older tree. |
 
 Examples:
@@ -285,7 +287,7 @@ by hand.
 
 | Parameter | What it does |
 | --- | --- |
-| `?vm=ID` | the item (an `ITEM` id). `?vm=claws` is a zombie's claws, `?vm=all` a grid of every item, `?vm=0` empty hands (for `act=use`) |
+| `?vm=ID` | the item (an `ITEM` id). `?vm=claws` is a zombie's claws, `?vm=all` a grid of every item, `?vm=0` empty hands (for `act=use`), `?vm=cat` the stray cat in both arms (`&act=pet` strokes it, `&coat=N`; the clip check counts the posed cat as the item) |
 | `&act=` | `fire`, `reload`, `melee`, `heavy` (knife stab), `throw`, `use`, `ads`, `sprint`, `walk`, `crouch`, `jump`, `look`, `talk` (the walkie keyed) |
 | `&use=ID` | with `act=use`: the consumable (food shows the tin, venison the meat, the drink its can) |
 | `&t=S` | freeze the clock S seconds after the action starts (it starts after a 0.6 s draw; `t=-0.45` is mid-draw). Makes the frame deterministic. |
@@ -347,6 +349,7 @@ Examples:
 | `&dots=1`, `&xray=1` | as in `?vm=` |
 | `&nk=SCRIPT`, `&hit=` | with `?hold=57`: the nunchucks' moves on the body (the same scripts as `?vm=`), starting at t = 1 like the pulses |
 | `&ts=a,b,c`, `&cols=N` | a strip: one tile at each of those times (no clip check). With `&nk=` it is a move frame by frame |
+| `&cat=1` | the stray cat in their arms (`&pet=1` the right fist stroking it, `&coat=N`); the clip check counts the posed cat as the item. `&cradle=`, `&petarm=`, `&catat=` override the pose while tuning |
 
 ### Other sandboxes
 

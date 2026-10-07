@@ -405,4 +405,19 @@ export class AchievementTracker {
   onAir(p) {
     this.feat(p, 'walkie');
   }
+
+  // ---------------------------------------------------------------- the stray cat (server/cats.js)
+  // picked up
+  catLift(p) {
+    this.feat(p, 'cat_lift');
+  }
+
+  // Game.driveOff on the island, before the world is cleared: whoever has the cat in their arms takes it with them
+  leftIsland() {
+    for (const p of this.g.players.values()) {
+      if (!p.alive || p.zombie || !p.state.pet) continue;
+      this.feat(p, 'cat_escape');
+      if (!p.away) this.send(p); // (now, not after the crossing's world has come and gone)
+    }
+  }
 }

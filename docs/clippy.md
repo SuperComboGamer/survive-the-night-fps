@@ -104,6 +104,12 @@ their faces pointing out. An open or inside-out part makes its numbers meaningle
 
 ## 6. Props and where the world puts them
 
+- **A prop's colliders follow its model** ([hitboxes.md](hitboxes.md)): several boxes along its silhouette, not one
+  box round all of it. `npm run hitbox:measure -- --only <type>` and `npm run hitbox:overlay -- <type>` show how far
+  off they are; `scripts/test-hitbox.js` fails a prop whose colliders hold more than 0.7 m of solid air at eye
+  height. A prop that is already in the world keeps the box it was laid out by as its `plan`, so that giving it
+  better colliders moves nothing.
+
 - **A place's own props** (`Builder.prop`, `Builder.wreck`, `Builder.cont` in `shared/world.js`, `shared/rail.js`,
   `clinic.js`, `cemetery.js`, `fair.js` and `mine.js`): leave room for the whole collider footprint at the prop's
   rotation, not just its centre.

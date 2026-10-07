@@ -36,7 +36,8 @@
 //                         left         they left mid-match (stats.state says what they were then)
 //   causes                a zombie type (walker, runner, tank, spitter, boss_brute...), turned_player (a survivor
 //                         hurt or killed by a player-zombie), survivor (a player-zombie hurt by a survivor), fall,
-//                         drowned (out of stamina in deep water), world (anything else without a source)
+//                         drowned (out of stamina in deep water), undead_deer (the mainland's deer: a charge),
+//                         world (anything else without a source)
 //   names                 zombie types, items/weapons, structures, containers, zones: the lowercased keys of ZTYPE,
 //                         ITEM, STRUCT, CONT, ZONE in shared/defs.js (pistol, ak47, db_shotgun, car_battery,
 //                         metal_wall...); the mounted gun is mounted_gun; a kill without a weapon is fire,
@@ -169,7 +170,7 @@ export class MatchTracker {
       const a = this.g.players.get(src.id);
       return a && !a.zombie ? 'survivor' : 'turned_player';
     }
-    return src.fall ? 'fall' : src.drown ? 'drowned' : 'world';
+    return src.fall ? 'fall' : src.drown ? 'drowned' : src.deer ? 'undead_deer' : 'world';
   }
   // the dead within NEAR of p, and the nearest teammate on their feet (m, null: none)
   surroundings(p) {

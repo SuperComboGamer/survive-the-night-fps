@@ -27,7 +27,7 @@ const base = 41000 + Math.floor(Math.random() * 800);
 const procs = [];
 function server(name, port, env = {}) {
   const proc = spawn(process.execPath, ['server/index.js'], {
-    env: { ...process.env, DATABASE_URL: '', PORT: String(port), STATS_FILE: join(dir, `stats-${name}.json`), HANDOFF_DIR, HANDOFF_RESERVE_SECONDS: String(RESERVE), DAY_SECONDS: '6', GODMODE: '1', GAME_IDLE_SECONDS: '60', ...env },
+    env: { ...process.env, DATABASE_URL: '', PORT: String(port), STATS_FILE: join(dir, `stats-${name}.json`), HANDOFF_DIR, HANDOFF_RESERVE_SECONDS: String(RESERVE), HANDOFF_FREEZE_SECONDS: '0', DAY_SECONDS: '6', GODMODE: '1', GAME_IDLE_SECONDS: '60', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const s = { name, port, proc, log: '', exit: null };
@@ -161,7 +161,7 @@ try {
   await sleep(1500);
   check('C will not restore a save of another state version', /not restored: state version 1 \(this build reads 99\)/.test(C.log), C.log.split('\n').slice(-12).join('\n'));
   const ann3 = await client(C, code, 'Ann', pids.ann);
-  check('...so the game is over, as a deploy used to end it', ann3.reject === REJECT_REASON.NO_GAME, JSON.stringify({ reject: ann3.reject, id: ann3.id }));
+  check('...so the game is over, and its player is told an update ended it', ann3.reject === REJECT_REASON.ENDED_UPDATE, JSON.stringify({ reject: ann3.reject, id: ann3.id }));
   check('...and C carries on regardless', (await api(C, '/status')).status === 200 && C.exit === null);
   check('the junk save is not restored and does not stop anything', !/JUNKJUNK restored/.test(C.log) && readdirSync(HANDOFF_DIR).filter((f) => f.startsWith('JUNKJUNK')).length <= 1);
   C.proc.kill('SIGTERM');

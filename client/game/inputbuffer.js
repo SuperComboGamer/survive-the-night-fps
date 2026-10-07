@@ -80,6 +80,11 @@ export class InputBuffer {
     let open = 0; // the buttons to decide on in this command
     for (let i = 0; i < BUFFERED.length; i++) {
       const bit = BUFFERED[i];
+      // (the cat in their arms: the fire button strokes it for as long as it is held, and nothing is waited for)
+      if (bit === BTN.ATTACK && s.pet) {
+        this.left[i] = 0;
+        continue;
+      }
       // (a second early press takes the place of the first: one action comes of the two)
       if (fresh & bit) this.left[i] = HOLD[i] + 1;
       else if (this.left[i] > 0 && context(s, bit) !== this.ctx[i]) this.left[i] = -1;

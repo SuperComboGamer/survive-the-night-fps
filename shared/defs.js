@@ -147,7 +147,7 @@ export const ITEM_DEFS = {
 
   [ITEM.BACKPACK]: { name: 'Backpack', cat: 'pack', stack: 1, color: 0x4a4430, desc: 'Canvas and leather, made at the workbench. Wear it for more room in the backpack grid.' },
 
-  [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Everyone carries one in slot [6]. With it in hand your chat reaches every survivor, however far apart you are; hold fire to talk over it.' },
+  [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Everyone carries one in slot [6]. Take it out and hold fire to talk to every survivor over it, however far apart you are.' },
 
   [ITEM.KNIFE]: { name: 'Knife', cat: 'weapon', stack: 1, color: 0xaaaaaa, desc: 'Fast. Quiet.' },
   [ITEM.BAT]: { name: 'Baseball Bat', cat: 'weapon', stack: 1, color: 0x9c7a4b, desc: 'Heavy swings, knockback.' },
@@ -206,9 +206,9 @@ export const ITEM_DEFS = {
 };
 
 // ---------------------------------------------------------------- talking
-// Voice and text chat reach TALK_RANGE (constants.js). Past that, the walkie-talkie carries them: the speaker has to
-// be using theirs (in hand for chat, keyed for the voice), and the listener has to be a survivor (everybody alive
-// carries one; the dead and the turned do not).
+// The voice reaches TALK_RANGE (constants.js); text chat reaches everyone. Past that range, the walkie-talkie carries
+// the voice: the speaker has to have theirs keyed, and the listener has to be a survivor (everybody alive carries
+// one; the dead and the turned do not).
 export const radioLinked = (speakerOnRadio, listenerHasWalkie) => speakerOnRadio && listenerHasWalkie;
 
 // ---------------------------------------------------------------- the escape
@@ -256,7 +256,8 @@ export function schematicRumours(hints, unlocked = 0) {
 
 // ---------------------------------------------------------------- weapons
 // slot: 0 primary, 1 pistol, 2 melee, 4 build (hammer)
-// Firearms: damage per pellet, rate = seconds between shots, spread (radians) hip / moving penalty,
+// Firearms: damage per pellet, rate = seconds between shots, spread (radians) hip / moving penalty, recoil (what a
+// burst's bloom and climb come to is playersim.js's shotSpread / shotClimb; node scripts/gun-groups.js prints the groups),
 // noise = radius (m) in which the shot draws zombies (default NOISE.GUNSHOT in constants.js): the louder, the more come
 // autoReload: reloads by itself once the magazine is empty; quiet: no muzzle blast (no flash, the shot is a bolt)
 // rocket: no bullet - each shot is a grenade that flies at `speed` (m/s), falls at `grav` (m/s^2) and bursts on the
@@ -285,7 +286,9 @@ export const WEAPONS = {
   [ITEM.HAMMER]: { slot: 4, melee: true, damage: 25, rate: 0.6, range: 2.0, altDamage: 25, altRate: 0.6, headMul: 1.5, knock: 1, swing: 0.15, build: true },
   [ITEM.PISTOL]: { slot: 1, damage: 30, rate: 0.16, mag: 12, reload: 1.35, ammo: 0, pellets: 1, spread: 0.012, moveSpread: 0.02, recoil: 0.018, range: 120, headMul: 3.0, auto: false, noise: 45, sound: 'pistol' },
   [ITEM.SHOTGUN]: { slot: 0, damage: 17, rate: 0.85, mag: 6, reload: 0.55, reloadEach: true, ammo: 1, pellets: 9, spread: 0.075, moveSpread: 0.02, recoil: 0.07, range: 45, headMul: 2.0, auto: false, noise: 80, sound: 'shotgun' },
-  [ITEM.AK47]: { slot: 0, damage: 36, rate: 0.1, mag: 30, reload: 2.3, ammo: 2, pellets: 1, spread: 0.02, moveSpread: 0.04, recoil: 0.022, range: 150, headMul: 2.6, auto: true, sound: 'ak47' },
+  // the AK-47: the hardest hitting automatic and the least accurate - a wider cone than the M4A1 in every stance and
+  // half again its climb, tight for a first aimed round or a short burst (scripts/test-spread.js holds its groups)
+  [ITEM.AK47]: { slot: 0, damage: 36, rate: 0.1, mag: 30, reload: 2.3, ammo: 2, pellets: 1, spread: 0.016, moveSpread: 0.034, recoil: 0.022, range: 150, headMul: 2.6, auto: true, sound: 'ak47' },
   [ITEM.HUNTING_RIFLE]: { slot: 0, damage: 180, rate: 1.0, mag: 5, reload: 2.6, ammo: 3, pellets: 1, spread: 0.002, moveSpread: 0.03, recoil: 0.09, range: 220, headMul: 3.0, auto: false, noise: 100, pierce: 3, sound: 'rifle' },
   [ITEM.M4A1]: { slot: 0, damage: 30, rate: 0.085, mag: 30, reload: 2.1, ammo: 4, pellets: 1, spread: 0.013, moveSpread: 0.032, recoil: 0.015, range: 170, headMul: 2.6, auto: true, sound: 'm4a1' },
   [ITEM.MP5]: { slot: 0, damage: 25, rate: 0.075, mag: 30, reload: 1.9, ammo: 0, pellets: 1, spread: 0.017, moveSpread: 0.016, recoil: 0.011, range: 90, headMul: 2.4, auto: true, noise: 35, sound: 'mp5' },
@@ -597,6 +600,8 @@ export const CANIM = {
   WALK: 1,
   RUN: 2,
   SIT: 3,
+  HELD: 4, // in a survivor's arms (its HOLDER field says whose)
+  PET: 5, // ...and being stroked: it purrs
 };
 
 // ---------------------------------------------------------------- projectiles / areas
@@ -721,6 +726,8 @@ export const SOUND = {
   DRINK: 121, // a can cracked open and gulped down (an energy drink)
   FLARE_GUN: 122, // a flare gun's shot (client-side, from EVT.SHOT)
   FLARE_POP: 123, // a parachute flare bursting alight at the top of its climb (client-side, from its flight)
+  DEER_SCREAM: 124, // an undead deer (the mainland's): a rotten-throated bellow as it lowers its antlers, is hit, or dies
+  CAT_PURR: 125, // the stray cat purring while it is stroked (client-side, from its CANIM.PET)
   // vehicles (shared/vehicles.js)
   VEH_START: 130, // an engine turned over and caught (somebody at the wheel of one that runs)
   VEH_STOP: 131, // ...and switched off, or run dry

@@ -35,7 +35,7 @@ import { deerHitbox } from '../shared/deer.js';
 import { rocketStrikesWorld } from '../shared/rocket.js';
 import { SKYFLARE, launchFlare, flareStep } from '../shared/skyflare.js';
 import { blowOf } from '../shared/surfaces.js';
-import { WRECK_SALVAGE } from '../shared/wrecks.js';
+import { WRECK_SALVAGE, wreckUnit } from '../shared/wrecks.js';
 
 // the projectile each throwable flies as
 const THROW_PROJ = Object.fromEntries(Object.entries(PROJ_ITEM).map(([ptype, item]) => [item, +ptype]));
@@ -478,7 +478,7 @@ export class Combat {
       // hit a structure/world surface? trees give sticks & planks, wrecks give scrap
       raycastWorld(g.world, ox, oy, oz, fx, fy, fz, range + 0.3, _ray);
       if (_ray.t >= 0) {
-        const col = _ray.col;
+        const col = wreckUnit(_ray.col); // (whichever box of a wreck was struck, it is the one wreck)
         const hx = ox + fx * _ray.t;
         const hy = oy + fy * _ray.t;
         const hz = oz + fz * _ray.t;

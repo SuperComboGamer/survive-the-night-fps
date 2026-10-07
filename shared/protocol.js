@@ -2,7 +2,7 @@
 // Positions are quantized in int16: to 1/64 m on the island (range +-512 m) and to 1/32 m on the mainland, which is
 // twice as far across (range +-1024 m). See usePos below.
 
-export const PROTOCOL_VERSION = 38; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk)
+export const PROTOCOL_VERSION = 41; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk); 39: a torch's or a campfire's burn-out tick (SF.BURN); 40: the mainland's undead deer (DEER_UNDEAD in a deer's variant, DANIM.ATTACK / CHARGE, SOUND.DEER_SCREAM, killfeed flag 8 and YOU_DIED 254 for a death by one); 41: the stray cat in a survivor's arms (ACT.CAT_PUT, ENT.CAT field HOLDER, CANIM.HELD / PET, s.pet in SELF.RIDE)
 
 // client -> server
 export const C2S = {
@@ -90,8 +90,9 @@ export const ACT = {
   UNEQUIP: 34, // u8 weapon slot, u8 backpack index (255 = the first free one): that weapon out of its slot into the backpack
   UNDO_DROP: 35, // (nothing): the last thing this survivor dropped picked up again, a few seconds after (the inventory's Undo)
   SKIP: 36, // (nothing): skip the crossing's cutscene, once everyone connected has asked (PHASE.CROSSING, shared/acts.js)
-  VEHICLE: 37, // u8 what (VACT), u16 entity id: get into a vehicle (shared/vehicles.js), out of the one they are in, or work its lights
-  SIPHON: 38, // i16 x, i16 z (1/64 m: the wreck's prop): start drawing the fuel out of that wreck's tank (a hold: HOLD.SIPHON)
+  CAT_PUT: 37, // (nothing): the stray cat in this survivor's arms is set down (picking it up is ACT.INTERACT on it)
+  VEHICLE: 38, // u8 what (VACT), u16 entity id: get into a vehicle (shared/vehicles.js), out of the one they are in, or work its lights
+  SIPHON: 39, // i16 x, i16 z (1/64 m: the wreck's prop): start drawing the fuel out of that wreck's tank (a hold: HOLD.SIPHON)
 };
 // NOTIFY.UNDO_GONE: why an undo brought nothing back
 export const UNDO_NO = { GONE: 0, LATE: 1, FAR: 2 };
@@ -114,8 +115,11 @@ export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, GUN_LIFT: 7, FAIR_START: 9, FAIR_STOP: 10, VEH_FIX: 11, VEH_FUEL: 12, VEH_REPAIR: 13, SIPHON: 14 };
 export const SIPHON_ID = 0xffdf; // the target of a HOLD.SIPHON (the wreck is named by ACT.SIPHON)
 
-// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
-export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
+// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for.
+// ENDED_UPDATE, ENDED_MAP: the game that went by that code was ended by a deploy - the new server could not carry it
+// over (server/handoff.js), ENDED_MAP because the update makes another map of its seed. It does not come back: the
+// client says so once and stops asking (client/net/comeback.js). A client from before these shows 'Rejected'.
+export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4, ENDED_UPDATE: 5, ENDED_MAP: 6 };
 // The close code a client's socket goes with when the player pressed "Leave game". Any other close is a drop, and the
 // game holds the player's place for REJOIN_GRACE seconds (server/game.js hold).
 export const LEFT_CODE = 4001;
@@ -127,14 +131,11 @@ export const MOVED_CODE = 4002;
 // (A client from before this code takes it for a drop and tries to rejoin, as it does after any other close.)
 export const ENDED_CODE = 4003;
 
-// S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Chat only reaches the players in earshot of the
-// speaker (TALK_RANGE), or anywhere when it was said with the walkie-talkie in hand, so the flags differ per recipient.
+// S2C.CHAT: u16 speaker id (0 = the server), u8 flags, str text. Text chat reaches every player in the game.
+// (4, 8 and 16 were radio / faint / unheard while chat only carried as far as a voice does)
 export const CHATF = {
   SYSTEM: 1,
   ZOMBIE: 2, // the speaker is a player-zombie
-  RADIO: 4, // out of earshot: it came over the walkie-talkie
-  FAINT: 8, // only just in earshot
-  UNHEARD: 16, // (to the speaker) nobody was close enough to hear it
 };
 // S2C.PLAYERS: u8 count, then per player u16 id, str name, u8 status, u8 flags (PLF), u16 kills, u16 ping, u8 level
 // (progress.js), and with PLF.WAYPOINT their field-map waypoint: i16 x, i16 z (1/64 m), u8 place (zone id, 255 = none);
@@ -151,7 +152,7 @@ export const ENT = {
   CRATE: 6,
   AREA: 7,
   CACHE: 8, // searchable container (static position from world gen, state = searched)
-  CAT: 9, // the stray cat (ambient, can't be hurt)
+  CAT: 9, // the stray cat (ambient, can't be hurt; a survivor can pick it up: server/cats.js)
   DEER: 10, // a deer (shared/deer.js): can be hunted, is no zombie
   GUN: 12, // the mounted gun (position: the pintle, or under it; state = belt, gunner or carrier, where it was left pointing, the way its tripod faces, GUN_STANDS / CARRIED / LYING)
   FAIR: 11, // the fair's generator: whether it runs, the ride clock, the fuel left (FRF)
@@ -538,7 +539,8 @@ export const ZSTATUS = { BURNING: 1 };
 // ITEM fields
 export const IF = { POS: 0, COUNT: 1 };
 // STRUCTURE fields
-export const SF = { POS: 0, HP: 1, STATE: 2 };
+// BURN (u16): a torch's or a campfire's flame, the server tick it burns out at (low 16 bits), 0 when it is out
+export const SF = { POS: 0, HP: 1, STATE: 2, BURN: 3 };
 // PROJECTILE fields
 export const JF = { POS: 0 };
 // CRATE fields
@@ -547,8 +549,8 @@ export const CF = { POS: 0, STATE: 1 };
 export const AF = { POS: 0 };
 // CACHE fields
 export const KF = { POS: 0, STATE: 1 };
-// CAT fields
-export const TF = { POS: 0, YAW: 1, ANIM: 2 };
+// CAT fields. HOLDER: the survivor it is in the arms of, 0 nobody (u16; its ANIM is then CANIM.HELD or PET)
+export const TF = { POS: 0, YAW: 1, ANIM: 2, HOLDER: 3 };
 // GUN fields (u16 each). BELT: rounds left. GUNNER: the player who mans it, 0 nobody. AIM: where it was left
 // pointing, packed like a player's view (packLook) - while it is manned it follows the gunner's replicated view
 export const GF = { POS: 0, BELT: 1, GUNNER: 2, AIM: 3 };

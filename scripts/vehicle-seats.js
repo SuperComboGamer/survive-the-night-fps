@@ -83,6 +83,12 @@ export function quiet(game) {
   for (const z of [...game.zombies]) game.removeEntity(z);
   game.zombies.length = 0;
   game.zm.maintainT = 1e9;
+  // ...and the mainland's undead deer, which charge whoever they find and knock them flat (server/deer.js)
+  if (game.deer) {
+    for (const d of [...game.deer]) game.removeEntity(d);
+    game.deer.length = 0;
+    game.dm?.reset();
+  }
 }
 
 // The scripted team (see the head). Returns { first: s until somebody sits in one that runs, all: s until everybody

@@ -95,7 +95,7 @@ export function updateDeer(ents, e, dt, renderTick, time, camPos, frustum) {
     v.update(distC < 60 * 60 ? dt : dt * 2, anim, e.speed, time, frustum.intersectsSphere(_sph));
   }
   // hoofbeats when it runs close by: the hind pair, then the fore, of every bound (client-side, no bandwidth)
-  if (anim === DANIM.RUN && e.speed > DEER.run * 0.4 && distC < HOOF_RANGE * HOOF_RANGE) {
+  if ((anim === DANIM.RUN || anim === DANIM.CHARGE) && e.speed > DEER.run * 0.4 && distC < HOOF_RANGE * HOOF_RANGE) {
     const falls = v.footfalls();
     if (e.falls >= 0 && falls !== e.falls) g.audio.play(SOUND.DEER_HOOF, { x: e.rx, y: e.ry + 0.1, z: e.rz, volume: falls & 1 ? 0.85 : 1 });
     e.falls = falls;

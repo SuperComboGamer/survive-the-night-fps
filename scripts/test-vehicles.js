@@ -589,7 +589,7 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   A.act(ACT.VEHICLE, VACT.EXIT, 0);
   run1(3);
   const offBy = Math.hypot(a.state.x - mop.x, a.state.z - mop.z);
-  check('[E] gets the driver off, beside it, and the passenger keeps their seat', !a.state.drive && offBy > 0.5 && offBy < 2 && mop.seats[0] === 0 && mop.seats[1] === b.id && sunk(w, a.state.x, a.state.y, a.state.z, 0.34, 0.45, 1.8) < 0.01, `${f1(offBy)} m from it`);
+  check('[E] gets the driver off, beside it, and the passenger keeps their seat', !a.state.drive && offBy > 0.5 && offBy < 2 && mop.seats[0] === 0 && mop.seats[1] === b.id && sunk(w, a.state.x, a.state.y, a.state.z, 0.34, 0.45, 1.8) < 0.01, `${f1(offBy)} m from it; drive ${a.state.drive}, seats ${mop.seats.join('/')} (still listed ${V.list.includes(mop)}, removed ${!!mop.removed}; b pass ${b.state.pass}/${b.state.passN}, b alive ${b.alive}, b away ${!!b.away}), sunk ${sunk(w, a.state.x, a.state.y, a.state.z, 0.34, 0.45, 1.8).toFixed(3)} m`);
   B.act(ACT.VEHICLE, VACT.EXIT, 0);
   run1(4);
   check('empty and standing, it is a box in the world again, where the wire says it is', !!mop.col && mop.col.x === mop.x && Math.abs(mop.x - qpos(mop.x) / w.posScale) < 1e-9 && vehicleGrid(w).parked.count >= 1 && sunk(w, mop.x, mop.y, mop.z, 0.2, 0.3, 1.5) > 0);
@@ -1186,12 +1186,13 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   const c2 = g2.players.get(c.id), a2 = g2.players.get(a.id);
   for (let i = 0; i < 2 * SEC; i++) g2.update();
   check('a deploy in the middle of a ride: every vehicle comes back as it was, where it was', !!same, car2 ? `${g2.vehicles.list.length} vehicles, the car at ${f1(car2.x)}, ${f1(car2.z)} with ${f1(car2.fuel)} Fuel` : 'the car is gone');
-  check('...the held driver is moved off the wheel as any dropped one is, everybody still in it, and it rolls to a stop', c2.away && !c2.state.drive && car2.seats[0] === 0 && c2.state.pass === car2.id && a2.state.pass === car2.id && [c2, a2].every((p) => Math.hypot(p.state.x - car2.x, p.state.z - car2.z) < 1.3), `seats ${car2.seats.join(' ')}`);
-  for (let i = 0; i < 20 * SEC && (car2.vx || car2.vz); i++) g2.update();
+  // (a game brought over waits, frozen, until somebody is back: server/game.js frozen, HANDOFF_FREEZE)
+  const x2 = car2.x, z2 = car2.z;
+  check('...frozen until somebody is back: the car stands where the save had it, everybody in their seat of it', g2.frozen() && car2.x === x2 && car2.z === z2 && car2.seats[0] === c2.id && c2.state.drive === car2.id && a2.state.pass === car2.id, `seats ${car2.seats.join(' ')}`);
   const sess = g2.onOpen({ send() {} });
   g2.resume(sess, c2);
-  g2.update();
-  check('...and whoever comes back finds themselves in their seat of it', !c2.away && c2.state.pass === car2.id && car2.vx === 0 && bodySunk(g2.world, { ...car2 }) < 0.05);
+  for (let i = 0; i < 3; i++) g2.update();
+  check('...and the driver who comes back finds themselves at its wheel, the one still away carried in their seat', !c2.away && c2.state.drive === car2.id && car2.seats[0] === c2.id && a2.away && a2.state.pass === car2.id && car2.seats.includes(a2.id) && Math.hypot(car2.x - x2, car2.z - z2) < 2 && bodySunk(g2.world, { ...car2 }) < 0.05, `seats ${car2.seats.join(' ')}, ${f1(Math.hypot(car2.x - x2, car2.z - z2))} m from where it was saved`);
   // ---- somebody leaves for good from a seat
   game.removePlayer(c);
   run1(3);

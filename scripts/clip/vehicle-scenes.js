@@ -68,7 +68,7 @@ async function begin(c, { cycle = DAY, two = false, how = '/map2' } = {}) {
   }
   // (out of whatever an earlier scene of the session left us in)
   if (c.held && (c.info?.s.drive || c.info?.s.pass)) {
-    await c.ev(c.A, () => window.__game.conn.action(37, 1, 0));
+    await c.ev(c.A, () => window.__game.conn.action(38, 1, 0));
     await c.run(10, { A: { cam: null } });
   }
   await light(c, cycle);
@@ -100,11 +100,11 @@ async function put(c, name, x, z, yaw = 0, { broken = false, tint = 0, p = c.A }
   return v;
 }
 const enter = async (c, p, id, n = 10, o) => {
-  await c.ev(p, (id) => window.__game.conn.action(37, 0, id), id);
+  await c.ev(p, (id) => window.__game.conn.action(38, 0, id), id);
   await c.run(n, o);
 };
 const leave = async (c, p, n = 10, o) => {
-  await c.ev(p, () => window.__game.conn.action(37, 1, 0));
+  await c.ev(p, () => window.__game.conn.action(38, 1, 0));
   await c.run(n, o);
 };
 const key = (c, p, down) => c.ev(p, (down) => (down ? window.__game.input.handlers.onKey('KeyE', ['interact']) : window.__game.input.handlers.onKeyUp('KeyE', ['interact'], false)), down);
@@ -183,7 +183,7 @@ async function seat(c, name) {
   // getting on, from the eye
   const pick = (dir, n) => Array.from({ length: n }, (_, i) => `${dir}/${String(i).padStart(5, '0')}.png`);
   const dir = await c.rec(`mount-${name}-eye`, 2, { A: { cam: null, yaw: yawIn, pitch: -0.3 } });
-  await c.ev(c.A, (id) => window.__game.conn.action(37, 0, id), v.id);
+  await c.ev(c.A, (id) => window.__game.conn.action(38, 0, id), v.id);
   await c.rec(`mount-${name}-eye`, 10, { A: { cam: null } }, { append: true });
   c.strip(`mount-${name}-eye`, pick(dir, 12), 4, `${name}: getting on, from the eye (1/15 s a frame)`, [640, 360]);
   const look = await c.ev(c.A, () => ({ pitch: window.__game.input.pitch, yaw: window.__game.input.yaw }));
@@ -237,12 +237,12 @@ export async function others(c) {
     const cam = c.orbit([gx - 0.3, v.y + 0.95, gz], 0.95, 0.16, vk === 2 ? 5.2 : 3.3, { fov: 42, body: false });
     await c.run(6, { B: { cam } });
     let dir = await c.rec(`mount-${name}-out`, 2, { B: { cam } }, { p: c.B });
-    await c.ev(c.A, (id) => window.__game.conn.action(37, 0, id), v.id);
+    await c.ev(c.A, (id) => window.__game.conn.action(38, 0, id), v.id);
     await c.rec(`mount-${name}-out`, 10, { B: { cam }, A: { yaw: 0 } }, { p: c.B, append: true });
     c.strip(`mount-${name}-out`, pick(dir, 12), 4, `${name}: getting on, seen by another player (1/15 s a frame)`, [640, 360]);
     await c.run(8, { B: { cam } });
     dir = await c.rec(`dismount-${name}-out`, 2, { B: { cam } }, { p: c.B });
-    await c.ev(c.A, () => window.__game.conn.action(37, 1, 0));
+    await c.ev(c.A, () => window.__game.conn.action(38, 1, 0));
     await c.rec(`dismount-${name}-out`, 10, { B: { cam } }, { p: c.B, append: true });
     c.strip(`dismount-${name}-out`, pick(dir, 12), 4, `${name}: getting off, seen by another player`, [640, 360]);
     await c.run(2, { B: { cam: null } });
@@ -888,7 +888,7 @@ export async function night(c) {
     const P0 = await c.ev(c.A, () => window.__game.input.pitch);
     await c.shot(c.A, `gpu-${name}-day-seat`, { hud: true, settle: 6, hold: { A: { yaw: pilot.yaw0, pitch: P0 } } });
     await light(c, NIGHT);
-    if (vk !== 3) await c.ev(c.A, () => window.__game.conn.action(37, 2, 0));
+    if (vk !== 3) await c.ev(c.A, () => window.__game.conn.action(38, 2, 0));
     else await c.ev(c.A, () => window.__game.toggleFlashlight?.());
     let done = false;
     const drive = () => {
@@ -1038,7 +1038,7 @@ export async function night_car(c) {
   await enter(c, c.A, v.id, 12, { A: { yaw: pilot.yaw0 } });
   await c.chat(c.A, '/spawn walker 3');
   await light(c, NIGHT);
-  await c.ev(c.A, () => window.__game.conn.action(37, 2, 0));
+  await c.ev(c.A, () => window.__game.conn.action(38, 2, 0));
   const P0 = -0.04;
   let done = false;
   const drive = () => {

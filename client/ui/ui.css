@@ -2200,46 +2200,6 @@ body {
   height: 1em;
 }
 
-/* over the walkie-talkie */
-.stn-ui .chat-line.radio {
-  font-family: var(--f-mono);
-  color: #d5e6bd;
-}
-
-.stn-ui .chat-line.radio .chat-name {
-  color: var(--good);
-}
-
-.stn-ui .chat-r {
-  display: inline-block;
-  vertical-align: -0.15em;
-  margin-right: 0.35em;
-  color: var(--good);
-}
-
-.stn-ui .chat-r svg {
-  width: 1em;
-  height: 1em;
-}
-
-/* from the edge of earshot / heard by nobody */
-.stn-ui .chat-line.faint .chat-text {
-  font-style: italic;
-  opacity: 0.55;
-}
-
-.stn-ui .chat-line.unheard .chat-text {
-  opacity: 0.55;
-}
-
-.stn-ui .chat-note {
-  margin-left: 0.7em;
-  font: max(9px, calc(11 * var(--u))) / 1 var(--f-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--bone-dim);
-}
-
 .stn-ui .chat-input {
   display: none;
 }
@@ -2271,14 +2231,6 @@ body {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--blood-lite);
-}
-
-.stn-ui .chat.on-radio .chat-say {
-  color: var(--good);
-}
-
-.stn-ui .chat.on-radio.open .chat-input {
-  border-left-color: var(--good);
 }
 
 .stn-ui .chat-field {

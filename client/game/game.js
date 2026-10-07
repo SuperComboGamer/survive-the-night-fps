@@ -68,7 +68,8 @@ import { chosenCharacter } from '../ui/picker.js';
 import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
-import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { shotDirections, shotSpread, shotClimb, aimingWith, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { stepClimb, punchOf, punchAt, crosshairGap } from './aimview.js';
 import { pryWeapon } from '../../shared/trunk.js';
 import { perkMods, levelOf, picksEarned, XP_SRC } from '../../shared/progress.js';
 import { swimming } from '../../shared/swim.js';
@@ -78,7 +79,7 @@ const _wcHit = { t: -1, col: null, terrain: false };
 const WC_RAYS = [[0, 0], [0.3, -0.25]]; // (right, up) of the view: straight on, and out past the right hand
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
 import { difficultyOf } from '../../shared/difficulty.js';
-import { deerHitbox } from '../../shared/deer.js';
+import { deerHitbox, DEER_UNDEAD } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { playerId } from '../net/identity.js';
@@ -91,6 +92,7 @@ import { harvestPrompt, harvestTarget, strippedKey, needLines } from './harvest.
 import { Impacts } from './impacts.js';
 import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
+import { CatClient } from './catcarry.js';
 import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { smallestStack } from '../../shared/stacks.js';
@@ -189,6 +191,11 @@ const CRAFT_RATE = 40; // per second
 const BUILD_MENU_REACH = 120;
 const BUILD_MENU_DEAD = 26;
 const LAND_SPRING = 16; // rad/s of the camera's landing dip: lowest ~60 ms after touchdown, level again in ~0.35 s
+// m:ss, for the time a torch or a campfire has left to burn (Game.burnLeft)
+const mmss = (t) => {
+  const n = Math.ceil(t);
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+};
 const RUN_JOIN_GRACE = 60; // seconds into day one by which a player must have joined for the run to go on their record
 const BOARD_EVERY = 4000; // ms between two requests for the leaderboard while it is open
 // Turning while aimed is slowed by the gun's zoom, tan(aimed fov / 2) / tan(hip fov / 2) (the ratio of the two
@@ -248,7 +255,10 @@ export class Game {
     this.renderTick = 0;
     this.damageFx = 0;
     this.hitFx = 0;
-    this.recoilKick = 0;
+    this.viewClimb = 0; // the gun's climb as the view has it (rad): eased onto shotClimb of the predicted state
+    this.punch = 0; // the last round's punch (rad at its top), punchT s ago, over punchLen s
+    this.punchT = 0;
+    this.punchLen = 0.1;
     this.camBob = 0;
     this.landDip = 0; // how far a landing has pushed the view down, a spring (landVel) kicked on touchdown
     this.landVel = 0;
@@ -353,6 +363,7 @@ export class Game {
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.radio = new RadioClient(this); // the walkie-talkie in slot 6: keyed, on the air, its static
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
+    this.cat = new CatClient(this); // the stray cat, in somebody's arms
     this.rockets = new RocketsClient(this); // our own RPG grenades in flight
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
     this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
@@ -693,6 +704,7 @@ export class Game {
     });
     steps.push(() => set.add(createCat(0, 1).object));
     for (const v of [0, 2, 1]) steps.push(() => set.add(createDeer(v, 1).object)); // a doe of each coat, the buck
+    for (const v of [0, 2, 1]) steps.push(() => set.add(createDeer(v | DEER_UNDEAD, 1).object)); // ...and the mainland's undead
     steps.push(() => set.add(createSupplyCrate()));
     for (const p of Object.values(PROJ)) steps.push(() => set.add(createProjectile(p)));
     const items = Object.values(ITEM).filter((it) => it);
@@ -1082,16 +1094,15 @@ export class Game {
   }
 
   onChat(id, flags, text) {
-    const radio = !!(flags & CHATF.RADIO);
     if (flags & CHATF.SYSTEM) {
       this.ui.addChat('', text, { system: true });
       this.ui.spawn.serverSays(text);
     } else {
       const p = this.players.get(id);
       const zombie = !!(flags & CHATF.ZOMBIE);
-      this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined, radio, faint: !!(flags & CHATF.FAINT), unheard: !!(flags & CHATF.UNHEARD) });
+      this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined });
     }
-    this.audio.playLocal?.(radio ? 'radio' : 'chat', { volume: 0.5 });
+    this.audio.playLocal?.('chat', { volume: 0.5 });
   }
 
   onPlayers(r) {
@@ -1228,9 +1239,9 @@ export class Game {
       killfeed(kk, killerId, victimId, weapon, flags) {
         // a zombie the world killed is a boss that outlived the night: the dawn sun burnt it, and its loot with it
         const sunKill = kk === KILLER.WORLD && !!(victimId & 0x8000);
-        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : flags & 4 ? 'The water' : 'The world'; // (flags 4: drowned)
+        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : flags & 4 ? 'The water' : flags & 8 ? 'Undead Deer' : 'The world'; // (flags 4: drowned; 8: an undead deer's charge)
         const victim = victimId & 0x8000 ? ZOMBIE_DEFS[victimId & 0xff]?.name || 'Zombie' : g.name(victimId);
-        g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
+        g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || !!(flags & 8) || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
         if (sunKill) g.ui.notify(`${victim.startsWith('The ') ? victim : 'The ' + victim} burned in the sun, and what it carried with it. Kill a boss before sunrise to loot it.`, 'toast', 7);
       },
       notify(msg, arg) {
@@ -1304,6 +1315,14 @@ export class Game {
       },
     };
     return this._eh;
+  }
+
+  // seconds a torch or a campfire has left to burn: the server sends the tick it burns out at (SF.BURN, low 16 bits),
+  // and it is counted down here from the latest tick, so nothing more is sent while it burns
+  burnLeft(e) {
+    if (!e.q[5]) return 0;
+    const left = (e.q[5] - this.net.tick) & 0xffff;
+    return left > 0xf000 ? 0 : left / SERVER_TICK_RATE;
   }
 
   onNotify(msg, arg) {
@@ -1408,7 +1427,7 @@ export class Game {
         ui.notify(arg === this.myId ? "You're back on your feet." : `${this.name(arg)} is back up.`, 'good', 3);
         break;
       case NOTIFY.YOU_DIED:
-        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
+        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : arg === 254 ? 'an undead deer' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
         ui.showDeath(this.deathInfo);
         a.stinger?.('death');
         this.deathShown = true;
@@ -1828,7 +1847,7 @@ export class Game {
             const rz = -Math.sin(ev.yaw) * 0.16;
             this.rockets.fire(def, ev.x, ev.y, ev.z, _dirs[0], _dirs[1], _dirs[2], ev.x + rx + fx * 0.8, ev.y - 0.1 + fy * 0.8, ev.z + rz + fz * 0.8);
             this.effects.backblast(ev.x + rx - fx * 0.5, ev.y - 0.1 - fy * 0.5, ev.z + rz - fz * 0.5, -fx, -fy, -fz);
-            this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+            this.punchView(def, ev.aiming);
             this.camShake = Math.min(1, (this.camShake || 0) + kick[1]);
             break;
           }
@@ -1840,7 +1859,7 @@ export class Game {
             const mx = ev.x + Math.cos(ev.yaw) * 0.12 - Math.sin(ev.yaw) * cp * 0.5;
             const mz = ev.z - Math.sin(ev.yaw) * 0.12 - Math.cos(ev.yaw) * cp * 0.5;
             this.skyflares.fire(ev, _dirs[0], _dirs[1], _dirs[2], mx, ev.y - 0.12 + Math.sin(ev.pitch) * 0.5, mz);
-            this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+            this.punchView(def, ev.aiming);
             this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
             break;
           }
@@ -1862,7 +1881,7 @@ export class Game {
             if (def.quiet) this.effects.boltTrail(sx, sy, sz, dx, dy, dz, dist);
             else if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
           }
-          this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+          this.punchView(def, ev.aiming);
           this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
           break;
         }
@@ -2169,6 +2188,7 @@ export class Game {
   pressDrop() {
     const s = this.prediction.state;
     if (s.hmg) return void this.gun.drop(); // the mounted gun in their arms goes down first, at a press (carrying it is all they do)
+    if (s.pet) return void this.cat.put(); // ...and so does the cat
     if (s.zombie || s.slot === SLOT_THROW || !s.weapons[s.slot]) return;
     if (this.settings.holdToDrop === false) this.conn.action(ACT.DROP_WEAPON, s.slot);
     else this.dropHold.start(s.slot);
@@ -2509,6 +2529,7 @@ export class Game {
     const g = this.global;
     if (!t) return;
     if (t === 'gun') return this.gun.use();
+    if (t === 'cat') return this.cat.put(); // (the cat in our arms)
     if (t.fair) return this.fair.interact(t);
     if (t.handcar) return this.handcar.interact(t);
     if (t.vehicle !== undefined) return this.vehicles.interact(t);
@@ -2619,9 +2640,10 @@ export class Game {
       this.scene.add(sv.object);
       this.selfBodyItem = -1;
     }
+    const cat = this.cat.poseOf(this.myId, this.selfCat || (this.selfCat = {})); // (the stray cat in our arms)
     sv.setHide(fp ? 2 : 0);
     sv.object.visible = !fp || veh.mountK > 0.75;
-    const item = s.zombie || (seat && (seat.k === 0 || fp)) ? 0 : currentWeapon(s); // (at the wheel both hands are on it; under our own eyes the view holds the weapon)
+    const item = s.zombie || cat.cradle || (seat && (seat.k === 0 || fp)) ? 0 : currentWeapon(s); // (at the wheel both hands are on it; under our own eyes the view holds the weapon)
     if (item !== this.selfBodyItem) {
       this.selfBodyItem = item;
       sv.setWeapon(item);
@@ -2629,7 +2651,7 @@ export class Game {
     sv.object.position.set(rp.x, rp.y, rp.z);
     sv.object.rotation.set(0, this.input.yaw, 0);
     const ride = seat ? veh.place(seat, sv) : null;
-    sv.update(dt, { sit: !!seat, sitNow: seat ? 1 : undefined, reach: ride?.reach, feet: ride?.feet, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, sitLean: ride?.sitLean, sitTwist: ride?.sitTwist, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: seat && seat.k === 0 ? 0 : this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
+    sv.update(dt, { sit: !!seat, sitNow: seat ? 1 : undefined, reach: ride?.reach, feet: ride?.feet, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, sitLean: ride?.sitLean, sitTwist: ride?.sitTwist, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: seat && seat.k === 0 ? 0 : this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time, cradle: cat.cradle, pet: cat.pet });
     const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
     if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
   }
@@ -2795,7 +2817,12 @@ export class Game {
     // tremor that lasts as long as the jolt of one landing beside you
     this.quake *= Math.exp(-dt * 6);
     const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag - this.quake * 0.03 + this.swimK * (Math.sin(time * 1.7) * 0.035 + Math.sin(time * 0.63) * 0.02);
-    this.recoilKick *= Math.exp(-dt * 10);
+    // the gun's climb and the last round's punch (aimview.js): the view is lifted by both, so the sights or the
+    // crosshair are where the next round goes
+    const gdef = self.alive && !s.zombie && !this.gun.manning ? WEAPONS[currentWeapon(s)] : null;
+    this.viewClimb = stepClimb(this.viewClimb, gdef && !gdef.melee ? shotClimb(s, gdef, aimingWith(s, buttons)) : 0, dt);
+    this.punchT += dt;
+    const viewKick = this.viewClimb + this.punch * punchAt(this.punchT / this.punchLen);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
     const shake = this.camShake * 0.02 + this.effects.shake * 0.03 + this.quake * 0.02;
     const cam = this.camera;
@@ -2810,7 +2837,7 @@ export class Game {
       if (inVeh) cam.position.set(this.vehicles.eye.x, this.vehicles.eye.y - this.quake * 0.03, this.vehicles.eye.z); // (carried: the seat's eye)
       else cam.position.set(rp.x, rp.y + this.eyeH + bobY, rp.z);
       const roll = (inVeh ? this.vehicles.eye.roll : 0) + (s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0) + this.swimK * Math.sin(time * 1.1) * 0.025;
-      cam.rotation.set(inp.pitch + this.recoilKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
+      cam.rotation.set(inp.pitch + viewKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
       // nunchucks: the view goes with the strikes - a sprung nod, turn and roll from the moves and from what they hit
       // (ViewModel's rig, as of last frame). "Weapon look sway" off leaves the view still
       const nk = this.vm.itemId === ITEM.NUNCHAKU && this.settings.weaponSway !== false ? this.vm.nk?.core : null;
@@ -2826,7 +2853,7 @@ export class Game {
     }
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
-    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !this.vehicles.handsOn && !swim; // (hands on a handcar's lever, or swimming: no sights)
+    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !this.vehicles.handsOn && !swim && !s.pet; // (hands on a handcar's lever or a vehicle's controls, swimming, or the cat in our arms: no sights)
     const baseFov = (this.debugCam && this.debugCam.fov) || this.settings.fov || 75; // (a debug camera may bring its own lens)
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
@@ -2856,11 +2883,18 @@ export class Game {
       if (weaponNow === -2) this.vm.setItem(0, { claws: true });
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow, { tuck: self.alive }); // (tuck: nunchucks are folded away first)
     }
+    const stroking = this.cat.holding && !!(buttons & BTN.ATTACK) && !this.ui.inventoryOpen && !this.ui.mapOpen; // (the cat in our arms, the fire button held)
+    this.cat.update(dt, stroking);
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !this.vehicles.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
-    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove };
+    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove, pet: stroking };
+    const vmCam = this.renderer.vmCamera;
+    if (Math.abs(vmCam.fov - this.vm.fov) > 0.01) {
+      vmCam.fov = this.vm.fov; // (as of last frame: the aimed view of iron sights is narrowed onto them, cfg.adsFov)
+      vmCam.updateProjectionMatrix();
+    }
     if (this.vm.itemId === ITEM.NUNCHAKU) {
       // (asked of the view itself: for a moment after another weapon is asked for they are still in the hands, being
       // folded away)
@@ -3020,7 +3054,13 @@ export class Game {
     }
     // viewmodel lighting follows the world
     this.updateViewmodelLight(dt, cam, Math.max(nearFire, this.power.eyeLit), this.flames.get(-1)?.light.intensity || 0); // (in a floodlight's cone the hands are lit too)
-    this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
+    // The flashlight's spill on the hands and the gun. At the hip it comes from beside the head; behind the sights that
+    // would shine square on whatever faces the eye (a rear sight lit up like a wall, the front one lost beyond it),
+    // so as the gun comes up the spill moves out to the torch's side and ahead of the rear sight: the notch stays a
+    // dark edge and the front sight is lit
+    const vf = this.renderer.vmFlash;
+    vf.intensity = this.localFlash && self.alive ? 0.35 + 0.25 * this.aimT : 0;
+    vf.position.set(-0.05 + 0.25 * this.aimT, 0.12 - 0.09 * this.aimT, 0.15 - 0.45 * this.aimT);
 
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
@@ -3284,6 +3324,13 @@ export class Game {
     if (s.cart) return this.handcar.rideLook(s);
     if (s.drive || s.pass) return this.vehicles.rideLook(s);
     if (this.gun.look(true)) return; // hands on the mounted gun (at its grips, or carrying it): [E] is the gun's
+    // ...or the cat in our arms: [E] puts it down. Except at the car, which is still started and driven with it in our
+    // arms (taking it off the island is what its achievement is for): there [G] puts it down
+    if (this.cat.holding) {
+      if (this.lookAtCar(this.invCounts())) this.prompt += ` · ${bindTag('drop')} Put the cat down`;
+      else this.cat.look();
+      return;
+    }
     cam.getWorldDirection(_v);
     const ox = cam.position.x;
     const oy = cam.position.y;
@@ -3323,6 +3370,11 @@ export class Game {
         this.prompt = `${bindTag('interact')} Hold to revive ${this.name(e.id)}`;
         return;
       }
+      if (e.kind === ENT.CAT) {
+        this.lookTarget = e;
+        this.prompt = `${bindTag('interact')} Pick up the cat`;
+        return;
+      }
       if (e.kind === ENT.CRATE) {
         this.lookTarget = e;
         this.prompt = `${bindTag('interact')} Open supply crate`;
@@ -3339,9 +3391,10 @@ export class Game {
           const w = counts[ITEM.WOOD] || 0;
           const st = counts[ITEM.STICK] || 0;
           this.prompt = w || st ? `${bindTag('interact')} ${lit ? 'Feed' : 'Relight'} the fire (${w ? `${w} Planks` : `${st} Sticks`})` : lit ? 'Campfire · feed it Planks or Sticks' : 'The fire is out · needs Planks or Sticks';
-          if (s.slot === SLOT_BUILD) this.prompt += ` · ${bindTag('demolish')} Remove`;
+          // (how long it has left: with the hammer out only, so nothing more is on the screen in a fight)
+          if (s.slot === SLOT_BUILD) this.prompt += `${lit ? ` · burns ${mmss(this.burnLeft(e))}` : ''} · ${bindTag('demolish')} Remove`;
         } else if (s.slot === SLOT_BUILD) {
-          if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? `${bindTag('interact')} Relight torch (1 Cloth) · ${bindTag('demolish')} Remove` : `${bindTag('demolish')} Remove torch`;
+          if (e.stype === STRUCT.TORCH) this.prompt = hp < 1 || e.q[4] === 0 ? `${bindTag('interact')} Relight torch (1 Cloth) · ${bindTag('demolish')} Remove` : `Burns ${mmss(this.burnLeft(e))} · ${bindTag('demolish')} Remove torch`;
           else this.prompt = hp < 0.99 ? `${bindTag('interact')} Repair ${def.name} (1 Planks, 1 Nails) · ${bindTag('demolish')} Demolish` : `${bindTag('demolish')} Demolish ${def.name}`;
         } else if (def.station === 'bench') this.prompt = `Workbench · craft here ${bindTag('inventory')}`;
         this.contextStructure = { name: def.name, hp };
@@ -3354,25 +3407,30 @@ export class Game {
     if (this.fair.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
     if (this.handcar.look(ox, oy, oz, _v.x, _v.y, _v.z)) return;
     if (this.vehicles.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
-    // the car
-    const car = this.world.car;
-    const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
-    if (dcar < CAR_REACH + (car.plane ? PLANE_REACH : 0)) {
-      this.lookTarget = 'car';
-      const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
-      const carrying = missing.filter((p) => counts[p]);
-      if (g.finale && car.plane) this.prompt = g.escapeReady ? (g.runwayBlocked ? 'The dead are on the runway: clear it' : `${bindTag('interact')} Hold to get in and take off`) : g.standWarm ? 'Defend the plane until the engines are warm' : 'Hold the fuel truck until the tanks are full';
-      else if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
-      else if (!missing.length) this.prompt = car.plane ? `${bindTag('interact')} Hold to start fuelling (the runway stand)` : `${bindTag('interact')} Hold to start the engine (final stand)`;
-      else if (carrying.length) this.prompt = `${bindTag('interact')} Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
-      else this.prompt = `${W.The} needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
-    }
+    this.lookAtCar(counts);
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
     if (!this.prompt) {
       this.prompt = harvestPrompt(this.world, s, this.stripped);
       if (this.prompt) this.prompt = this.impacts.alarmPrompt(harvestTarget()) || this.prompt; // (a wreck whose alarm is going: how to stop it)
       this.vehicles.siphonLook(cam); // (a wreck with fuel still in its tank)
     }
+  }
+
+  // the car (the plane on the mainland), when we are close enough to it: its prompt. True when it is the look target
+  lookAtCar(counts) {
+    const g = this.global;
+    const car = this.world.car;
+    const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
+    if (dcar >= CAR_REACH + (car.plane ? PLANE_REACH : 0)) return false;
+    this.lookTarget = 'car';
+    const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
+    const carrying = missing.filter((p) => counts[p]);
+    if (g.finale && car.plane) this.prompt = g.escapeReady ? (g.runwayBlocked ? 'The dead are on the runway: clear it' : `${bindTag('interact')} Hold to get in and take off`) : g.standWarm ? 'Defend the plane until the engines are warm' : 'Hold the fuel truck until the tanks are full';
+    else if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
+    else if (!missing.length) this.prompt = car.plane ? `${bindTag('interact')} Hold to start fuelling (the runway stand)` : `${bindTag('interact')} Hold to start the engine (final stand)`;
+    else if (carrying.length) this.prompt = `${bindTag('interact')} Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
+    else this.prompt = `${W.The} needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
+    return true;
   }
 
   updateBuildGhost(s) {
@@ -3493,6 +3551,14 @@ export class Game {
     return true;
   }
 
+  // a round of ours punches the view (aimview.js)
+  punchView(def, aiming) {
+    const p = punchOf(def, aiming);
+    this.punch = p.amp;
+    this.punchLen = p.len;
+    this.punchT = 0;
+  }
+
   updateHud(dt, s, aiming, wdef) {
     const self = this.self;
     const g = this.global;
@@ -3537,6 +3603,11 @@ export class Game {
       h.reloading = -1;
     }
     this.gun.hud(h); // (manning the mounted gun: its belt)
+    h.cat = !!s.pet; // (the stray cat in their arms: no weapon, no rounds)
+    if (h.cat) {
+      h.mag = h.reserve = null;
+      h.reloading = -1;
+    }
     h.phase = g.phase;
     h.day = g.day;
     h.timeLeft = g.timeLeft;
@@ -3556,13 +3627,11 @@ export class Game {
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
     h.prompt = h.shove >= 0 ? null : this.prompt; // (pinned: nothing in reach can be used, and the meter is there)
     // dynamic crosshair
+    // the ticks stand on the edge of the cone the next round is drawn from (shotSpread, as the server draws it), at
+    // this field of view: what is inside them can be struck, what is outside cannot
     let spread = 10;
-    if (def && !def.melee) {
-      const sp = Math.hypot(s.vx, s.vz);
-      const ang = def.spread + def.moveSpread * Math.min(1, sp / 4.6) + Math.min(s.recoil, 10) * def.spread * 0.35 + (s.onGround ? 0 : 0.05);
-      spread = 6 + (ang * (s.crouch ? 0.7 : 1) * window.innerHeight) / ((this.camera.fov * Math.PI) / 180);
-    }
-    h.crosshair.spread = Math.min(80, spread);
+    if (def && !def.melee) spread = crosshairGap(shotSpread(s, def, false), this.camera.fov, window.innerHeight);
+    h.crosshair.spread = spread;
     h.crosshair.visible = !aiming && self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen;
     // progress ring: consumables or hold-to-interact
     if (self.holdKind) {
@@ -3753,6 +3822,8 @@ export class Game {
         else mates.push({ x: e.rx, z: e.rz, name: this.name(e.id), status: e.downed ? 'downed' : 'alive' });
       } else if (e.kind === ENT.ZOMBIE) {
         if (!e.dead) enemies.push({ x: e.rx, z: e.rz, big: e.ztype === ZTYPE.TANK || !!ZOMBIE_DEFS[e.ztype]?.boss });
+      } else if (e.kind === ENT.DEER) {
+        if (!e.dead && e.variant & DEER_UNDEAD) enemies.push({ x: e.rx, z: e.rz, big: false }); // (the mainland's: they hunt you)
       } else if (e.kind === ENT.CRATE && e.q[3] !== 2) crates.push({ x: e.rx, z: e.rz });
     }
     const carried = {};
