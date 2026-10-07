@@ -2992,7 +2992,13 @@ export class Game {
     }
     // viewmodel lighting follows the world
     this.updateViewmodelLight(dt, cam, Math.max(nearFire, this.power.eyeLit), this.flames.get(-1)?.light.intensity || 0); // (in a floodlight's cone the hands are lit too)
-    this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
+    // The flashlight's spill on the hands and the gun. At the hip it comes from beside the head; behind the sights that
+    // would shine square on whatever faces the eye (a rear sight lit up like a wall, the front one lost beyond it),
+    // so as the gun comes up the spill moves out to the torch's side and ahead of the rear sight: the notch stays a
+    // dark edge and the front sight is lit
+    const vf = this.renderer.vmFlash;
+    vf.intensity = this.localFlash && self.alive ? 0.35 + 0.25 * this.aimT : 0;
+    vf.position.set(-0.05 + 0.25 * this.aimT, 0.12 - 0.09 * this.aimT, 0.15 - 0.45 * this.aimT);
 
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);

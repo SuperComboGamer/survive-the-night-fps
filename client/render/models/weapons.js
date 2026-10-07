@@ -240,7 +240,9 @@ const R = (hi, a, b) => (hi ? a : b);
 // ------------------------------------------------------------------ AK-47
 // its sights: the line of sight's height over the grip, how far ahead of the grip the rear notch stands, the notch
 // (width, depth) and the hood's inner radius. The post is at f = 0.57: a sight radius of 41 cm
-const AK_SIGHT_Y = 0.131, AK_REAR_F = 0.16, AK_NOTCH = 0.0034, AK_NOTCH_DEEP = 0.0028, AK_HOOD_R = 0.0125;
+const AK_SIGHT_Y = 0.131, AK_REAR_F = 0.16, AK_NOTCH = 0.0026, AK_NOTCH_DEEP = 0.0026, AK_PLATE = 0.005, AK_HOOD_R = 0.0125;
+// the sights' steel: the hood parkerised grey, lighter than the gun, and the edges that are handled worn bright
+const AK_HOOD = { ...M.steel, color: [0.62, 0.62, 0.6] }, AK_WORN = { ...M.steel, color: [1.3, 1.3, 1.25] };
 function buildAK(P) {
   const hi = P.hi;
   const B = P.get('body');
@@ -259,11 +261,22 @@ function buildAK(P) {
   // the leaf's rear end, nearest the eye: a flat-topped plate with a square notch AK_NOTCH wide, its top on the line of
   // sight (y = AK_SIGHT_Y). Nothing else on the gun reaches that line but the front post, so the notch shows the
   // post and what it is on, and no handguard or gas block
-  profile(B, [[0.158, 0.074], [0.215, 0.074], [0.215, 0.118], [0.2, 0.121], [0.158, 0.1]], 0.026, { ...M.gun, bevel: 0.001 });
-  profile(B, [[AK_REAR_F, 0.106], [0.213, 0.116], [0.213, 0.1225], [AK_REAR_F, 0.1225]], 0.0095, { ...M.gunDark, bevel: 0.0008 }); // the leaf
-  boxR(B, -0.0062, 0.0062, 0.1215, 0.1245, -0.176, -0.184, M.gun); // its slider
-  for (const s of [-1, 1]) boxR(B, s * AK_NOTCH * 0.5, s * 0.0052, 0.1215, AK_SIGHT_Y, -AK_REAR_F, -AK_REAR_F + 0.003, M.gunDark); // the notch's walls
-  boxR(B, -AK_NOTCH * 0.5, AK_NOTCH * 0.5, 0.1215, AK_SIGHT_Y - AK_NOTCH_DEEP, -AK_REAR_F, -AK_REAR_F + 0.003, M.gunDark); // the notch's floor
+  // The block is narrow and low and the leaf rises to the plate, which is no wider than the leaf: from behind the
+  // sights there is open view either side of the plate. The plate's top edge and the notch's edges are worn to bare
+  // steel (AK_WORN), so the notch reads against a dark target and against the dark plate itself
+  profile(B, [[0.158, 0.074], [0.215, 0.074], [0.215, 0.112], [0.2, 0.114], [0.158, 0.098]], 0.02, { ...M.gun, bevel: 0.001 });
+  profile(B, [[AK_REAR_F, 0.1195], [0.213, 0.11], [0.213, 0.1165], [AK_REAR_F, 0.125]], 0.0095, { ...M.gunDark, bevel: 0.0008 }); // the leaf
+  boxR(B, -0.0056, 0.0056, 0.118, 0.1236, -0.176, -0.184, M.gun); // its slider
+  const pz0 = -AK_REAR_F, pz1 = -AK_REAR_F + 0.003, floor = AK_SIGHT_Y - AK_NOTCH_DEEP;
+  for (const s of [-1, 1]) boxR(B, s * AK_NOTCH * 0.5, s * AK_PLATE, 0.1215, AK_SIGHT_Y - 0.0001, pz0, pz1, M.gunDark); // the notch's walls
+  boxR(B, -AK_NOTCH * 0.5, AK_NOTCH * 0.5, 0.1215, floor, pz0, pz1, M.gunDark); // the notch's floor
+  if (hi) {
+    for (const s of [-1, 1]) {
+      boxR(B, s * AK_NOTCH * 0.5, s * AK_PLATE, AK_SIGHT_Y - 0.0006, AK_SIGHT_Y, pz0, pz1 + 0.0002, AK_WORN); // the top edge
+      boxR(B, s * AK_NOTCH * 0.5, s * (AK_NOTCH * 0.5 + 0.0005), floor, AK_SIGHT_Y - 0.0006, pz1, pz1 + 0.0002, AK_WORN); // the notch's sides
+    }
+    boxR(B, -AK_NOTCH * 0.5 - 0.0005, AK_NOTCH * 0.5 + 0.0005, floor - 0.0005, floor, pz1, pz1 + 0.0002, AK_WORN); // ...and its floor
+  }
   // front trunnion
   boxR(B, -0.019, 0.019, 0.03, 0.09, -0.2, -0.228, M.gun);
   // barrel
@@ -274,9 +287,9 @@ function buildAK(P) {
   // front sight: the block, a hood round the post (a ring, the post's tip at its middle and on the line of sight)
   // and the post, its tip worn to bare steel so it shows against a dark target
   profile(B, [[0.552, 0.064], [0.584, 0.064], [0.584, 0.112], [0.575, 0.118], [0.56, 0.118], [0.552, 0.108]], 0.022, { ...M.gun, bevel: 0.001 });
-  latheZ(B, [[AK_HOOD_R, 0.563], [AK_HOOD_R + 0.0022, 0.563], [AK_HOOD_R + 0.0022, 0.577], [AK_HOOD_R, 0.577], [AK_HOOD_R, 0.563]], 0, AK_SIGHT_Y, { ...M.gun, rs: R(hi, 20, 10), sharp: true });
-  B.seg(0, [0, 0.116, -0.57], [0, AK_SIGHT_Y - 0.0025, -0.57], 0.0018, 0.0017, { ...M.gunDark, rs: 6, hs: 1 });
-  B.seg(0, [0, AK_SIGHT_Y - 0.0027, -0.57], [0, AK_SIGHT_Y, -0.57], 0.0017, 0.0016, { ...M.steel, color: [1.5, 1.5, 1.45], rs: 6, hs: 1 });
+  latheZ(B, [[AK_HOOD_R, 0.563], [AK_HOOD_R + 0.0026, 0.563], [AK_HOOD_R + 0.0026, 0.577], [AK_HOOD_R, 0.577], [AK_HOOD_R, 0.563]], 0, AK_SIGHT_Y, { ...AK_HOOD, rs: R(hi, 24, 10), sharp: true });
+  B.seg(0, [0, 0.116, -0.57], [0, AK_SIGHT_Y - 0.0038, -0.57], 0.0015, 0.0014, { ...M.gun, rs: 6, hs: 1 });
+  B.seg(0, [0, AK_SIGHT_Y - 0.004, -0.57], [0, AK_SIGHT_Y, -0.57], 0.0012, 0.0011, { ...AK_WORN, color: [1.5, 1.5, 1.45], rs: 6, hs: 1 });
   // bayonet lug + cleaning rod
   boxR(B, -0.006, 0.006, 0.052, 0.066, -0.545, -0.585, M.gun);
   cylZ(B, 0, 0.06, -0.4, -0.59, 0.003, { ...M.gun, rs: 5 });
@@ -2716,15 +2729,15 @@ const supportGrip = (roll, yaw, pitch = 0) => {
 // chargeTravel: how far the handle is pulled on reload (0 = the hand just slaps meta.chargeKnob, e.g. a bolt catch);
 // breakAction: break-open shotgun (barrels part hinges down to reload)
 // crossbow: limbs and string follow the cocked state (update() is told whether a bolt is loaded)
-// adsFov: the viewmodel's field of view when aimed (VM_FOV at the hip): iron sights a quarter of a metre from the eye
-// are a few pixels of a 68 degree view, so the aimed view of a gun that has them is narrowed onto them.
+// adsFov: the viewmodel's field of view when aimed (VM_FOV at the hip): iron sights are a few pixels of a 68 degree
+// view, so the aimed view of a gun that has them is narrowed onto them a little (not much: the gun grows with them).
 // adsZ: how far down the view axis the sight point sits when aimed. The three guns that pivot on a front bead
 // (shotgun, double-barrel, crossbow) carry their grip a whole gun length behind it, so adsZ is set to bring that
 // grip back to the eye plane: any further out and the right fist rises into the frame under the point of aim.
 export const VM_FOV = 68; // the viewmodel camera's field of view (renderer.js vmCamera), degrees
 const VM = {
   [ITEM.AK47]: {
-    kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.26, adsFov: 28,
+    kind: 'rifle', hip: [0.19, -0.19, -0.28, 0.03, 0.17, 0.0], ads: 0.2, adsZ: -0.17, adsFov: 50,
     rPose: 'akGrip', rGrip: { p: [0, 0, 0], q: gunGrip(0.15) }, lGrip: { q: supportGrip(-0.4, 0.6, 0.0), pose: 'akSupport' },
     magPose: 'akMag', recoil: { z: 0.028, rx: 0.045, ry: 0.01 }, sprint: [-0.03, -0.015, 0.0, -0.22, 0.5, 0.35],
   },

@@ -14,6 +14,9 @@
 //   aim       the sights up on a walker 10, 25 and 50 m out, by day
 //   night     the same at 10 m at night, the flashlight on
 //   other     another rifle's sights on a walker 25 m out, to compare
+//   othernight  the other rifle's sights at night by the flashlight, a walker 10 m out
+//   transition  the sights coming up and going down again, a walker 10 m out: frames 2, 5, 9 and 14 after the aim
+//             button goes down, the sights settled, and frames 3 and 8 after it is let go
 //   climb     the sights on a barn wall 25 m out, the trigger held for a magazine: the frame after the first round,
 //             after the middle one and after the last (the aim is never corrected)
 //   groups10, groups25
@@ -79,7 +82,7 @@ function VIRTUAL_CLOCK() {
   };
 }
 
-const SCENES = ['hip', 'aim', 'night', 'other', 'climb', 'groups10', 'groups25'];
+const SCENES = ['hip', 'aim', 'night', 'other', 'othernight', 'transition', 'climb', 'groups10', 'groups25'];
 if (args.list) {
   console.log(SCENES.join('\n'));
   process.exit(0);
@@ -377,7 +380,8 @@ try {
       const wipe = () => p.evaluate(() => window.__game.impacts?.marks?.pool?.clear());
       const tag = `${D}m-${aimed ? 'aimed' : 'hip'}`;
       const said = `${String(args.gun).toUpperCase()} from ${D} m, ${aimed ? 'aimed' : 'from the hip'}`;
-      await frames(40, { buttons: hold, pitch });
+      await frames(90, { buttons: hold, pitch });
+      await wipe(); // (the server's word of the last scene's rounds can come after stand() has wiped the wall)
       // six first shots, the gun settled between them
       for (let i = 0; i < 6; i++) {
         await frames(2, { buttons: hold | A, pitch });
@@ -443,6 +447,36 @@ try {
       await sights(`other-${String(args.other).toLowerCase()}-aim-25m`, 25);
       await freeClocks();
       await arm(GUN);
+    },
+    async othernight() {
+      await arm(OTHER);
+      await stand(RANGE.x, RANGE.z, RANGE.yaw, NIGHT);
+      await flashlight(true);
+      await sleep(1500);
+      await holdClocks();
+      await sights(`other-${String(args.other).toLowerCase()}-aim-night-10m`, 10);
+      await freeClocks();
+      await flashlight(false);
+      await sleep(600);
+      await arm(GUN);
+    },
+    async transition() {
+      await stand(RANGE.x, RANGE.z, RANGE.yaw);
+      await holdClocks();
+      const d = await walkerAt(10);
+      await frames(20, () => ({ ...onTarget() }));
+      let n = 0;
+      const upTo = async (k, buttons, name) => {
+        // (the last frame of the run is the picture's: drawn, and the exposure metered on it)
+        for (; n < k - 1; n++) await frame({ buttons, ...onTarget() });
+        n = k;
+        await shot(name, { d, frame: k }, () => ({ buttons, ...onTarget() }), 1);
+      };
+      for (const k of [2, 5, 9, 14, 40]) await upTo(k, ALT, `transition-in-${String(k).padStart(2, '0')}`);
+      n = 0;
+      for (const k of [3, 8]) await upTo(k, 0, `transition-out-${String(k).padStart(2, '0')}`);
+      await thaw();
+      await freeClocks();
     },
     async climb() {
       const D = 25;
