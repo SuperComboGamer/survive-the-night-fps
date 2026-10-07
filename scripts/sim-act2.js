@@ -776,6 +776,53 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   check('/cross from the end screen: a new run, and the crossing to the mainland', g4.phase === PHASE.CROSSING && g4.act === WORLD.ISLAND && !!g4.crossing, `phase ${g4.phase} act ${g4.act}`);
 }
 
+// ================================================================ the admin's /map1: back to the island
+{
+  const game = new Game({ seed: SEED, log: quiet, themes: false });
+  const ann = client(game, 'Ann', randomUUID());
+  const ben = client(game, 'Ben', randomUUID());
+  ticks(game, 1);
+  const a = ann.p();
+  const b = ben.p();
+  a.admin = true;
+  const island = game.world;
+  game.handleChat(a, '/map1');
+  check('/map1 on the island changes nothing', game.world === island && game.act === WORLD.ISLAND && game.phase === PHASE.DAY);
+  game.handleChat(a, '/map2');
+  ticks(game, 1);
+  game.day = 3;
+  a.admin = false;
+  game.handleChat(a, '/map1');
+  check('/map1 from somebody who is not an admin does nothing', game.act === WORLD.MAINLAND && game.world.kind === WORLD.MAINLAND && game.day === 3);
+  a.admin = true;
+  const resets = ann.resets.length;
+  game.handleChat(a, '/map1');
+  check('an admin\'s /map1 on the mainland: a new run on the island\'s first day, everybody at its start', game.act === WORLD.ISLAND && game.world.kind === WORLD.ISLAND && game.phase === PHASE.DAY && game.day === game.startDayNum && !game.checkpoint && !game.crossing && [a, b].every((p) => p.alive && !p.zombie && near(p, game.world.start, 16)) && ann.resets.slice(resets).some((r) => r.act === WORLD.ISLAND), `act ${game.act} phase ${game.phase} day ${game.day}`);
+  ticks(game, 1);
+
+  const g2 = new Game({ seed: SEED, log: quiet, themes: false, devAdmin: true });
+  const cy = client(g2, 'Cy', randomUUID());
+  ticks(g2, 1);
+  const c = cy.p();
+  g2.handleChat(c, '/map2');
+  ticks(g2, 1);
+  g2.killPlayer(c, { kind: 3 });
+  g2.checkAllDead();
+  check('(a wipe on the mainland: the end screen, with the bridge to go back to)', g2.phase === PHASE.GAMEOVER && g2.act === WORLD.MAINLAND && !!g2.checkpoint);
+  g2.handleChat(c, '/island');
+  check('/island from the mainland\'s end screen: the island, not the bridge', g2.phase === PHASE.DAY && g2.act === WORLD.ISLAND && g2.world.kind === WORLD.ISLAND && !g2.checkpoint && c.alive && near(c, g2.world.start, 16), `phase ${g2.phase} act ${g2.act}`);
+  ticks(g2, 1);
+
+  const g3 = new Game({ seed: SEED, log: quiet, themes: false, devAdmin: true });
+  const dee = client(g3, 'Dee', randomUUID());
+  ticks(g3, 1);
+  g3.cross(dee.p());
+  g3.buildMainland(true);
+  g3.handleChat(dee.p(), '/map1');
+  check('/map1 during the crossing (the mainland already built): back on the island, the crossing called off', g3.phase === PHASE.DAY && g3.act === WORLD.ISLAND && g3.world.kind === WORLD.ISLAND && !g3.crossing, `phase ${g3.phase} act ${g3.act}`);
+  ticks(g3, 1);
+}
+
 // ================================================================ what a tick costs: a night's horde on each map
 {
   const run = (act) => {
