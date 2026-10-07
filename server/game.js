@@ -3751,7 +3751,7 @@ export class Game {
         if (p.zombie) this.credit([k], 'kills'); // a turned player put down. (A survivor killed by one is on nobody's record)
       }
     }
-    this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0) | (src.drown ? 4 : 0));
+    this.killfeed(src.kind || KILLER.WORLD, src.kind === KILLER.PLAYER ? src.id : src.ztype ?? 0, p.id, src.weapon || 0, (src.headshot ? 1 : 0) | (p.zombie ? 2 : 0) | (src.drown ? 4 : 0) | (src.deer ? 8 : 0));
     if (!p.zombie) {
       this.nightStats.deaths++;
       this.dropAll(p);
@@ -3760,7 +3760,7 @@ export class Game {
       p.armorItem = 0;
       p.armorMax = 0;
       p.flashlight = false;
-      this.notify(NOTIFY.YOU_DIED, src.kind === KILLER.ZOMBIE ? src.ztype : 255, p.id);
+      this.notify(NOTIFY.YOU_DIED, src.kind === KILLER.ZOMBIE ? src.ztype : src.deer ? 254 : 255, p.id); // (254: an undead deer's antlers)
       this.notify(NOTIFY.PLAYER_DIED, p.id);
       this.sound(SOUND.PLAYER_DEATH, s.x, s.y + 1, s.z, 60);
       p.respawnT = 6;
@@ -4165,12 +4165,14 @@ export class Game {
         break;
       }
       case 'deer': {
-        // /deer: to 34 m from the nearest group of deer (out of what startles them). /deer spawn [m]: a group 20 m
-        // ahead (or that many), which lets you stand there for ten seconds before it notices you
+        // /deer: to 34 m from the nearest group of deer (out of what startles them). /deer spawn [m] [undead | living]:
+        // a group 20 m ahead (or that many), which lets you stand there for ten seconds before it notices you; undead
+        // or living whatever the map (the mainland's are undead, the island's living)
         if (args[1] === 'spawn') {
           const d = Math.max(4, Math.min(60, +args[2] || 20));
-          const gr = this.dm.spawnAhead(s.x, s.z, s.yaw, d);
-          this.sendChat(p, 0, CHATF.SYSTEM, gr ? `${gr.members.length} deer ${d} m ahead` : 'no room for deer there');
+          const kind = args.includes('undead') ? true : args.includes('living') ? false : undefined;
+          const gr = this.dm.spawnAhead(s.x, s.z, s.yaw, d, 10, kind);
+          this.sendChat(p, 0, CHATF.SYSTEM, gr ? `${gr.members.length} ${gr.undead ? 'undead ' : ''}deer ${d} m ahead` : 'no room for deer there');
           break;
         }
         const gr = this.dm.nearest(s.x, s.z);
