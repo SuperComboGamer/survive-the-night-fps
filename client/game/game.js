@@ -1402,12 +1402,12 @@ export class Game {
         break;
       case NOTIFY.ENGINE_START:
         ui.notify('THE FINAL STAND', 'big', 5);
-        ui.notify('The engine is warming up. Every corpse in the valley heard it. Stay at the car: it stalls if nobody is there.', 'sub', 6);
+        ui.notify(W.thing === 'plane' ? 'The pump is loud and the mainland heard it. Hold the fuel truck, then guard the plane.' : 'The engine is warming up. Every corpse in the valley heard it. Stay at the car: it stalls if nobody is there.', 'sub', 6);
         a.stinger?.('boss');
         break;
       case NOTIFY.ESCAPE_READY:
-        ui.notify('GET IN THE CAR!', 'big', 5);
-        ui.notify(`Hold ${bindTag('interact')} at the car to drive away. Whoever is not at the car is left behind.`, 'sub', 7);
+        ui.notify(W.getIn.toUpperCase(), 'big', 5);
+        ui.notify(`Hold ${bindTag('interact')} at the ${W.thing} to ${W.go}. Whoever is not at the ${W.thing} is left behind.`, 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.SCHEMATIC:
