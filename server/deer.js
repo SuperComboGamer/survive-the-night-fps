@@ -579,9 +579,10 @@ export class Deer {
   }
 
   // ---------------------------------------------------------------- the undead: what a pack goes for
-  // may a pack hunt p? A survivor on their feet, here (not dropped and held), not down the mine
+  // may a pack hunt p? A survivor on their feet, here and playing (not dropped and held, nor back with their page
+  // still loading: Game.safe), not down the mine
   huntable(p) {
-    return !!p && p.alive && !p.zombie && !p.downed && !p.away && !p.under;
+    return !!p && p.alive && !p.zombie && !p.downed && !this.g.safe(p) && !p.under;
   }
 
   // how near p is to the nearest of the pack (m)
