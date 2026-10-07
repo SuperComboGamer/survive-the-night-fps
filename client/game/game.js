@@ -932,6 +932,24 @@ export class Game {
     this.onMove(this.room.code);
   }
 
+  // The page is about to be loaded again for a deploy's new client (main.js reloadInto), and Edge has crashed instead of
+  // reloading a page still in the middle of a game. What the game holds of the browser - the mouse, fullscreen with the
+  // keyboard locked, the microphone - is given back first, and the mouse and the screen are waited for (the browser
+  // says when they are back, or a moment passes).
+  async letGo() {
+    this.input.enabled = false;
+    this.input.handlers.onLockChange = null; // (the mouse let go is not Esc: no pause menu under the "Game updated" card)
+    const back = (type, ms) => new Promise((done) => (document.addEventListener(type, done, { once: true }), setTimeout(done, ms)));
+    const mouse = document.pointerLockElement ? back('pointerlockchange', 300) : null;
+    this.input.exitLock();
+    await mouse;
+    const screen = document.fullscreenElement ? back('fullscreenchange', 600) : null;
+    this.keyGuard.release(); // (the keyboard lock, and the fullscreen it took)
+    await screen;
+    this.voice.closeAll();
+    this.voice.stopMic();
+  }
+
   leave() {
     if (this.state !== 'playing') return;
     this.leaving = true;

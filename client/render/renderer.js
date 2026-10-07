@@ -350,6 +350,13 @@ export class GameRenderer {
     this.resize();
   }
 
+  // the page is about to be loaded again (main.js reloadInto): every texture and target of the valley leaves the GPU
+  // now, before the next page asks it for its own (nothing is drawn after this)
+  dispose() {
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+  }
+
   // Can the scene target use packed-float HDR (R11G11B10F) at this MSAA sample count? Probed once per
   // count; renderers without float render targets or multisampled packed floats keep RGBA16F.
   _packedHdr(samples) {

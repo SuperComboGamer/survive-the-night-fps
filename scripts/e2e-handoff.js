@@ -122,6 +122,16 @@ try {
   const C = server('C', base + 3, { CLIENT_BUILD: 'another-build' });
   check('server C (another client build) is up', await up(C));
   live = C.port;
+  // what the page still held as it went (Edge has crashed instead of reloading a page still in a game): written down
+  // as the reload starts (beforeunload) and as the page goes (pagehide), and read back from the page that replaces it
+  await page.evaluate(() => {
+    const held = () => {
+      const g = window.__game;
+      return { gl: !g.renderer.renderer.getContext().isContextLost(), workers: g.audio._queue?.workers.filter((r) => !r.dead).length ?? 0, sound: g.audio.context?.state || 'none', mic: !!g.voice.localStream };
+    };
+    addEventListener('beforeunload', () => sessionStorage.setItem('e2e.held', JSON.stringify(held())));
+    addEventListener('pagehide', () => sessionStorage.setItem('e2e.heldGone', JSON.stringify(held())));
+  });
   const loaded = page.waitForNavigation({ timeout: 20000 }).catch(() => null);
   B.proc.kill('SIGTERM');
   await loaded;
@@ -153,6 +163,9 @@ try {
   }
   check('another build: the page loads again and goes back into the same game, as the same player', again && again.code === before.code && again.id === before.id, JSON.stringify(again));
   check('...under the "Game updated" modal, never the splash', sawUpdating && !sawSplash, JSON.stringify({ sawUpdating, sawSplash }));
+  const held = await page.evaluate(() => ({ reload: JSON.parse(sessionStorage.getItem('e2e.held') || 'null'), gone: JSON.parse(sessionStorage.getItem('e2e.heldGone') || 'null') })).catch(() => null);
+  check('...having let go of the GPU, the synth workers and the microphone before it reloaded', held?.reload && !held.reload.gl && held.reload.workers === 0 && !held.reload.mic, JSON.stringify(held));
+  check('...and with its sound card closed by the time it went', held?.gone?.sound === 'closed', JSON.stringify(held));
   await page.screenshot({ path: join(out, '5-reloaded.png') });
 
   // ---------------------------------------------------------------- a server that cannot read the save: the splash, and why

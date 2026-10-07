@@ -246,4 +246,11 @@ export class Voice {
   closeAll() {
     for (const id of [...this.peers.keys()]) this._closePeer(id);
   }
+
+  // the page is going (Game.letGo): the microphone goes off with it
+  stopMic() {
+    for (const t of this.localStream?.getTracks() || []) t.stop();
+    this.localStream = this.localTrack = null;
+    this.enabled = this.transmitting = false;
+  }
 }
