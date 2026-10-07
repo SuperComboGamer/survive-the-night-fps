@@ -7,6 +7,44 @@ import { PROPS, collidersOf, planOf } from '../shared/props.js';
 import { COL, footprintContains, pushCircle, canReach, groundAt } from '../shared/collision.js';
 import { simulatePlayer, createPlayerState } from '../shared/playersim.js';
 import { BTN, CMD_RATE, GRID_STEP, PLAYER_RADIUS, PLAYER_HEIGHT, EYE_HEIGHT, STEP_HEIGHT, WATER_LEVEL } from '../shared/constants.js';
+import { readFileSync } from 'node:fs';
+import { WORLD } from '../shared/acts.js';
+import { worldPrint } from '../server/handoff.js';
+
+// ---------------------------------------------------------------- the maps on record (scripts/worldprints.json)
+// A deploy carries the games being played over to the new server only when that build makes the same map of a game's
+// seed (server/handoff.js: worldPrint's `shape` - the colliders, the loot, container, supply and spawn spots, the
+// places). A change to world generation that moves any of those ends every game in progress on that map when it is
+// deployed, and nothing used to say so before it was merged. So the shape of the maps the tests build anyway is on
+// record, and test-world.js and test-mainland.js fail when this tree makes another one - until the record is made
+// again on purpose (node scripts/worldprint.js --update), which is the author saying "yes, this ends running games".
+export const PRINTS_FILE = new URL('./worldprints.json', import.meta.url);
+export const PRINT_SEEDS = { island: [1, 2, 8, 9], mainland: [1, 2, 3, 4, 5, 6] }; // (test-world.js's valleys, test-mainland.js's mainlands)
+const mapOf = (world) => (world.kind === WORLD.MAINLAND ? 'mainland' : 'island');
+let onRecord = null;
+export const recordedPrints = () => (onRecord ||= JSON.parse(readFileSync(PRINTS_FILE, 'utf8')));
+// Sets a world a test has built against the record: into: { n: how many were on record, changed: [{ map, seed, was,
+// now }] } (a seed that is not on record is not counted)
+export function comparePrint(seed, world, into = { n: 0, changed: [] }, recorded = recordedPrints()) {
+  const map = mapOf(world);
+  const was = recorded[map]?.[seed];
+  if (!was) return into;
+  into.n++;
+  const now = worldPrint(world).shape;
+  if (now !== was) into.changed.push({ map, seed, was, now });
+  return into;
+}
+// the line a test prints of what comparePrint gathered, and whether it passed
+export function printsLine({ n, changed }) {
+  if (!changed.length) return { ok: true, text: `PASS  ${n} of these maps are on record, and are still the maps a running game was saved on (scripts/worldprints.json)` };
+  const maps = [...new Set(changed.map((c) => c.map))];
+  const which = maps.map((m) => `the ${m} of seed${changed.filter((c) => c.map === m).length > 1 ? 's' : ''} ${changed.filter((c) => c.map === m).map((c) => c.seed).join(', ')}`).join(' and ');
+  return {
+    ok: false,
+    text: `FAIL  this change makes another map of the same seed (${which}): deploying it ends every game being played on ${maps.length > 1 ? 'either map' : `the ${maps[0]}`}, because a save is only restored onto the map it was made on (server/handoff.js).
+        If the map is meant to change: node scripts/worldprint.js --update, commit scripts/worldprints.json, and say in the pull request's Risk section that the deploy ends running games.`,
+  };
+}
 
 const CELL = 0.2; // walk grid (m): finer than the 0.3 m of play a body has in the narrowest doorway (1 m wide)
 const GROUND_R = PLAYER_RADIUS * 0.7; // simulatePlayer feels for the ground under this much of the body

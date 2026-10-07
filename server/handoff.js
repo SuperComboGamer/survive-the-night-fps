@@ -59,17 +59,28 @@ export function enumMismatch(saved) {
   return '';
 }
 
-// A fingerprint of what world generation made of a seed and what a save points into by index or position: the
-// colliders (to the centimetre), loot and resource spots, containers, supply spots, spawn points, places. Taken as
-// the world is made (Game.setWorld), before anything is felled; about 5 ms. A save made on a valley this build
-// generates differently is not restored: its positions could be inside a wall now, its indices name other spots.
-export function worldHash(world) {
-  let h = 0x811c9dc5;
-  const mix = (v) => {
+// Two fingerprints of what world generation made of a seed, taken as the world is made (Game.setWorld), before
+// anything is felled; about 5 ms.
+//   shape: what a save points into by position or index - the colliders (to the centimetre), the loot and resource
+//     spots, the containers (where, and of what kind), the supply spots, the spawn points, the places. A save made on
+//     a valley whose shape this build makes differently is not restored: its positions could be inside a wall now,
+//     its indices name other spots.
+//   hash: all of that and the place each spot is filed under (its zone). A save does not point into those: a searched
+//     or unsearched container is saved with its own zone, a hidden schematic or supply with the place it is rumoured
+//     in, and a loot spot only rolls its next find from its zone's table. A build that files a spot under another
+//     place (as when the stalled train's toolbox stopped counting as Whitlock Depot) makes the same ground, so a game
+//     is carried over it. This is the fingerprint builds from before `shape` wrote (envelope.worldHash) and the only
+//     one they read, so it is still written, and still what a save without a shape is checked against.
+export function worldPrint(world) {
+  let hash = 0x811c9dc5;
+  let shape = 0x811c9dc5;
+  // label: a spot's zone, which only `hash` takes in
+  const mix = (v, label = false) => {
     v = Math.round(v * 100) | 0;
     for (let i = 0; i < 4; i++) {
-      h ^= (v >>> (i * 8)) & 0xff;
-      h = Math.imul(h, 0x01000193);
+      const b = (v >>> (i * 8)) & 0xff;
+      hash = Math.imul(hash ^ b, 0x01000193);
+      if (!label) shape = Math.imul(shape ^ b, 0x01000193);
     }
   };
   const seen = new Set();
@@ -83,20 +94,36 @@ export function worldHash(world) {
   mix(seen.size);
   for (const list of [world.lootSpawns, world.resourceSpawns, world.containers, world.partSpots, world.spawnPoints]) {
     mix(list.length);
-    for (const p of list) for (const v of [p.x, p.y ?? 0, p.z, p.zone ?? 0, p.ctype ?? 0]) mix(v);
+    for (const p of list) {
+      mix(p.x);
+      mix(p.y ?? 0);
+      mix(p.z);
+      mix(p.zone ?? 0, true);
+      mix(p.ctype ?? 0);
+    }
   }
   for (const z of world.zones) for (const v of [z.id, z.x, z.z]) mix(v);
   for (const v of [world.mine ? 1 : 0, world.rail ? world.rail.main.n : 0, world.fair ? 1 : 0]) mix(v);
-  return (h >>> 0).toString(16);
+  return { hash: (hash >>> 0).toString(16), shape: (shape >>> 0).toString(16) };
 }
+export const worldHash = (world) => worldPrint(world).hash;
 
 // Why a save cannot be used here (the Game constructor given one throws it): the save is dropped, and the game it
-// held ends as it would have without any of this.
-export class HandoffError extends Error {}
+// held ends as it would have without any of this. world: because this build makes another valley of its seed (what
+// its players are then told: REJECT_REASON.ENDED_MAP).
+export class HandoffError extends Error {
+  constructor(message, { world = false } = {}) {
+    super(message);
+    this.world = world;
+  }
+}
+// Whether a save's valley is the one this build made of its seed (prints: worldPrint of it). A save from before
+// `worldShape` has only the stricter fingerprint to go by.
+export const sameWorld = (env, prints) => (typeof env.worldShape === 'string' ? env.worldShape === prints.shape : env.worldHash === prints.hash);
 
 // The envelope round a game's save: what is checked before any of it is believed (checkEnvelope)
 export function envelope(game) {
-  return { format: FORMAT, stateVersion: STATE_VERSION, protocol: PROTOCOL_VERSION, build: BUILD, savedAt: Date.now(), enums: enums(), worldHash: game.worldHash, game: game.save() };
+  return { format: FORMAT, stateVersion: STATE_VERSION, protocol: PROTOCOL_VERSION, build: BUILD, savedAt: Date.now(), enums: enums(), worldHash: game.worldHash, worldShape: game.worldShape, game: game.save() };
 }
 export function checkEnvelope(env) {
   if (!env || env.format !== FORMAT) throw new HandoffError(`envelope format ${env?.format} (this build reads ${FORMAT})`);

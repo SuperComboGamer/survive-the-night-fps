@@ -1436,6 +1436,123 @@
   color: var(--amber);
 }
 
+/* ------------------------------------------------------------------ dusk card (hud2.js Tonight) */
+/* a field note under the clock from the horn to nightfall: what tonight brings, one row a thing. Up in full (.open)
+   for its first seconds, a row at a time; then the names alone */
+.stn-ui .tonight {
+  position: relative;
+  width: calc(340 * var(--u)); /* the clock's: its few words wrap rather than push the clock aside */
+  min-width: 250px;
+  margin-top: calc(2 * var(--u));
+  padding: calc(9 * var(--u)) calc(14 * var(--u)) calc(9 * var(--u) + 6px) calc(13 * var(--u));
+  border-left: 2px solid var(--blood-hi);
+  color: var(--bone);
+  animation: stn-slideInR 0.35s ease-out;
+  transition: opacity 0.5s;
+}
+
+.stn-ui .tonight.out {
+  opacity: 0;
+}
+
+.stn-ui.inv-open .tonight,
+.stn-ui.map-open .tonight {
+  display: none;
+}
+
+.stn-ui .tn-head {
+  margin-bottom: calc(7 * var(--u));
+  font: 400 max(11px, calc(13 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.32em;
+  color: #ff8f7d;
+}
+
+.stn-ui .tn-row + .tn-row {
+  margin-top: calc(6 * var(--u));
+}
+
+.stn-ui .tonight.open .tn-row {
+  animation: stn-slideInR 0.35s ease-out both;
+  animation-delay: calc(0.2s + var(--i) * 0.3s);
+}
+
+.stn-ui .tn-top {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .tn-ico svg {
+  display: block;
+  width: calc(16 * var(--u));
+  height: calc(16 * var(--u));
+  min-width: 12px;
+  min-height: 12px;
+  color: var(--amber);
+}
+
+.stn-ui .tn-boss .tn-ico svg {
+  color: var(--blood-lite);
+}
+
+.stn-ui .tn-name {
+  flex: 1;
+  font: 400 max(13px, calc(17 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stn-ui .tn-tag {
+  padding: max(2px, calc(2 * var(--u))) calc(6 * var(--u));
+  border: 1px solid rgba(230, 223, 207, 0.25);
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--bone-2);
+}
+
+.stn-ui .tn-new .tn-tag {
+  border-color: rgba(232, 163, 61, 0.55);
+  color: var(--amber);
+}
+
+.stn-ui .tn-boss .tn-tag {
+  border-color: rgba(212, 42, 42, 0.7);
+  color: #ffb3a6;
+}
+
+/* the few words under a name fold away once the card has had its time */
+.stn-ui .tn-brief {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.45s ease, opacity 0.3s;
+}
+
+.stn-ui .tonight.open .tn-brief {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.stn-ui .tn-text {
+  min-height: 0;
+  overflow: hidden;
+  padding-left: calc(max(12px, calc(16 * var(--u))) + 8 * var(--u));
+  font: max(11px, calc(13 * var(--u))) / 1.35 var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .tonight.open .tn-text {
+  padding-top: calc(3 * var(--u));
+}
+
+/* the killfeed and the achievement banner under the clock step down out of its way */
+.stn-ui.tonight-on .killfeed,
+.stn-ui.tonight-on .ach-toasts {
+  translate: 0 calc(var(--tonight-h, 0px) + 8 * var(--u));
+}
+
 /* ------------------------------------------------------------------ field map */
 .stn-ui .mapscr {
   position: absolute;
@@ -4013,8 +4130,9 @@
   z-index: 5;
 }
 
-.stn-ui .killfeed {
-  transition: transform 0.3s ease-out;
+.stn-ui .killfeed,
+.stn-ui .ach-toasts {
+  transition: transform 0.3s ease-out, translate 0.3s ease-out;
 }
 
 .stn-ui.ach-on .killfeed {

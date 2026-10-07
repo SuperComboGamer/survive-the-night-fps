@@ -29,6 +29,7 @@ const OTHER_LABEL = {
   survivor: 'Another survivor',
   fall: 'Falling',
   drowned: 'Drowning',
+  undead_deer: 'Undead deer',
   world: 'The world',
   mounted_gun: 'Mounted gun',
   fire: 'Fire',

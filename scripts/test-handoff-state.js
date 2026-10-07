@@ -6,6 +6,7 @@
 // instead of resetting on every deploy. And: players come back into their own bodies with their browser id, one
 // who does not is let go after HANDOFF_RESERVE as a leaver, and a save this build cannot read is refused.
 process.env.HANDOFF_RESERVE_SECONDS = '6';
+process.env.HANDOFF_FREEZE_SECONDS = '0'; // (the restored game runs on at once: its waiting for its players is scripts/test-handoff-safe.js)
 const { Game } = await import('../server/game.js');
 const { envelope, encode, decode, HandoffError } = await import('../server/handoff.js');
 const { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, ENT } = await import('../shared/protocol.js');
@@ -157,7 +158,7 @@ const TRANSIENT = [
   /^game\.(rng|sessions|joins|greets|log|records|w|ew|events|stats|tickStats|track|globalDirty|playersDirty|playersListT|cw|gw|listBytes|listVer|world|nav|mineNav|lootPoints\.\*\.ent)\b/,
   /^game\.(ents|all|freeIds|gens|deer|cats|projectiles|areas)\b/, // (the registry is checked above; the deer, the cat and what was in flight start afresh)
   // a player: their connection, and what resume starts afresh for the client that comes back
-  /^players\.\*\.(session|rec|view|shadow|cmdQueue|cmdBudget|hx|hy|hz|selfSync|away|ts|invDirty|selfCache|globalCache|listVer|snapTick|ackSent|greeted)\b/,
+  /^players\.\*\.(session|rec|view|shadow|cmdQueue|cmdBudget|hx|hy|hz|selfSync|away|arriving|ts|invDirty|selfCache|globalCache|listVer|snapTick|ackSent|greeted)\b/,
   // a zombie: its position history (filled again), and what its spatial hash is
   /^zombies\.\*\.(hx|hy|hz)\b/,
   /^zm\.(head|next|humansCache|crowdList|lights|lightTick|treeGrid|dens|spawnPicks|spawnsScreened|spawnsInView|fieldRR)\b/,
@@ -259,7 +260,7 @@ const refused = (why, mutate) => {
 };
 refused('a save of another state version is refused', (e) => e.stateVersion++);
 refused('...and one where an item has been renumbered since', (e) => (e.enums.ITEM.SHOTGUN += 100));
-refused('...and one of a valley this build makes differently', (e) => (e.worldHash = 'nope'));
+refused('...and one of a valley this build makes differently', (e) => (e.worldShape = 'nope'));
 check('...but an entry that is only new in this build is fine', (() => {
   const e = decode(buf);
   delete e.enums.ITEM.SHOTGUN; // (as if the save's build had not had it: this one adds it)

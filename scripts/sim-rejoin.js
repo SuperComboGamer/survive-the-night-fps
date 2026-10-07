@@ -94,6 +94,20 @@ const back = join('Ann', annId);
 check('the same browser comes back as the same player', back.id === ann.id && game.players.get(ann.id) === p && !p.away, `${back.id} vs ${ann.id}`);
 check('...where they were, as hurt as they were, with what they had', Math.abs(p.state.x - spot.x) < 0.01 && Math.abs(p.state.z - spot.z) < 0.01 && p.hp === 63 && JSON.stringify(p.inv) === inv, JSON.stringify({ x: p.state.x, z: p.state.z, spot, hp: p.hp }));
 check('...and nobody new took a seat', game.players.size === 2, String(game.players.size));
+// (back is not playing yet: until their client has sent a second of commands they are as safe as while they were held)
+game.damagePlayer(p, 10, { kind: 0 });
+check('...still safe until their client is running', p.hp === 63 && game.safe(p), String(p.hp));
+const { writeInput } = await import('../shared/protocol.js');
+for (let i = 1; i <= 20; i++) {
+  const w = new Writer(32);
+  w.u8(C2S.INPUT);
+  w.u16(game.tick & 0xffff);
+  w.u8(0);
+  writeInput(w, [{ seq: i, buttons: 0, qyaw: 0, qpitch: 0, slot: 255 }]);
+  game.onMessage(back.session, w.bytes());
+  game.update();
+}
+p.hp = 63;
 if (z) {
   game.players.get(ben.id).state.x += 200;
   game.zm.chooseTarget(z, game.humans());
