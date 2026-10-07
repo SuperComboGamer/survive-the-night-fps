@@ -42,6 +42,9 @@ const MISS_EVERY = 10;
 // How long, and of how many games at most, it is remembered that a deploy ended them (Lobby.ended)
 const LOST_MS = 30 * 60_000;
 const LOST_MAX = 2000;
+const WORKER_LIMITS = { maxOldGenerationSizeMb: 512 }; // a game that runs away with memory ends, not the server
+// A worker prepared for a game the last server announced (Lobby.prepare) that no save came for in this long goes
+const PREPARED_MS = 30_000;
 
 // Games this box runs at once, unless MAX_GAMES says otherwise. Measured with scripts/stress.js (2 Oct 2026): an
 // 8-player game at night uses ~17 ms of CPU a second (45 at worst; plan on 50, so ~14 games a core with 30% to
@@ -79,8 +82,9 @@ const forgetSpent = (map) => {
 
 export class Room {
   // restore: the game the last server saved under this code (handoff.js), with first / created / continues from what
-  // that server knew of the room (Room.meta)
-  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, maker = '', restore = null, first = '', created = Date.now(), continues = null }) {
+  // that server knew of the room (Room.meta). prepared: a worker that has built the game's valley already, waiting for
+  // the save (Lobby.prepare)
+  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, maker = '', restore = null, first = '', created = Date.now(), continues = null, prepared = null }) {
     this.lobby = lobby;
     this.code = code;
     this.name = name; // as its maker called it ('' for one a quick join made)
@@ -107,7 +111,8 @@ export class Room {
     this.match = null; // the id of the match being played in it, while one is (matchstore.js)
     this.open = 0; // live sockets (a seat each, joined or about to)
     this.inbox = new FramePacker();
-    this.congestion = new SharedArrayBuffer(4 * this.socks.length);
+    // (a prepared worker's was made for the most seats a game can have: at least as many slots as this one's)
+    this.congestion = prepared && prepared.congestion.byteLength >= 4 * this.socks.length ? prepared.congestion : new SharedArrayBuffer(4 * this.socks.length);
     this.congested = new Int32Array(this.congestion);
     this.recs = new Map(); // the game's record tokens -> records (RemoteRecords in room-worker.js)
     this.st = { players: 0, held: 0, lead: '', phase: PHASE.WAITING, day: 0, seed: 0, tick: null, load: { cpuMs: 0, elu: 0 }, heapMb: 0 };
@@ -118,12 +123,17 @@ export class Room {
     this.askN = 0;
     this.restored = restore ? Date.now() : 0; // (when its save was claimed, for the log)
 
-    this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
-      // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
-      // bestiary: an account's go to the database too, and a guest's to their browser either way)
-      workerData: { code, opts: { ...lobby.gameOpts, maxPlayers, inviteOnly, difficulty: this.difficulty, analytics: !!lobby.matches, achievements: !!lobby.achievements, bestiary: !!lobby.bestiary }, congestion: this.congestion, restore },
-      resourceLimits: { maxOldGenerationSizeMb: 512 }, // a game that runs away with memory ends, not the server
-    });
+    // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
+    // bestiary: an account's go to the database too, and a guest's to their browser either way)
+    const opts = { ...lobby.gameOpts, maxPlayers, inviteOnly, difficulty: this.difficulty, analytics: !!lobby.matches, achievements: !!lobby.achievements, bestiary: !!lobby.bestiary };
+    this.builtAhead = !!prepared && this.congestion === prepared.congestion;
+    if (this.builtAhead) {
+      this.worker = prepared.worker;
+      this.worker.postMessage({ t: 'start', opts, restore });
+    } else {
+      prepared?.worker.terminate().catch(() => {});
+      this.worker = new Worker(new URL('./room-worker.js', import.meta.url), { workerData: { code, opts, congestion: this.congestion, restore }, resourceLimits: WORKER_LIMITS });
+    }
     this.worker.on('message', (m) => this.fromWorker(m));
     this.worker.on('error', (err) => {
       lobby.log(`game ${code} crashed:`, err);
@@ -499,7 +509,8 @@ export class Lobby {
   // limits: false lifts the per-address allowances (load tests make many games from one address). store: where games
   // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
   // be and still be restored (s)
-  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, settings = null, log = console.log }) {
+  // prepareMs: how long a server going down waits for the next one to have its games' valleys built (announce)
+  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, settings = null, log = console.log }) {
     this.stats = stats;
     this.settings = settings; // the game's settings in the database (serversettings.js; none without one)
     this.matches = matches;
@@ -508,6 +519,8 @@ export class Lobby {
     this.store = store;
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)
+    this.prepareMs = prepareMs;
+    this.prepared = new Map(); // code -> { worker, congestion, info, timer, ready }: valleys built for games on their way here (prepare)
     this.lost = new Map(); // code -> { reason, at }: games a deploy handed over that could not be carried on here (ended)
     this.stopping = false; // going down: nothing more is restored here
     this.cluster = null; // the other servers behind the proxy (cluster.js), when there are any
@@ -717,10 +730,14 @@ export class Lobby {
   // ended as before (Room.finish) and stays here to go down with the process. -> how many were handed over
   async handoffAll(store, ms = 8000) {
     this.stopping = true;
+    for (const code of [...this.prepared.keys()]) this.dropPrepared(code, 'this server is going down itself');
+    const rooms = [...this.rooms.values()];
+    const targets = new Map(rooms.map((room) => [room, room.st.players ? (this.cluster?.pickTarget() ?? null) : null]));
+    await this.announce(store, rooms, targets);
     const done = await Promise.all(
-      [...this.rooms.values()].map(async (room) => {
+      rooms.map(async (room) => {
         const players = room.st.players;
-        const target = players ? (this.cluster?.pickTarget() ?? null) : null;
+        const target = targets.get(room);
         const r = await room.handoff(store, ms, target);
         if (typeof r === 'object') {
           this.log(`handoff ${room.code}: ${players} players, ${(r.bytes / 1024).toFixed(0)} KB, ${r.ms} ms${target ? `, to ${target}` : ''}`);
@@ -732,6 +749,74 @@ export class Lobby {
       })
     );
     return done.filter(Boolean).length;
+  }
+
+  // Before the games are saved, the next server is told which are coming (seed, act, the valley's fingerprint) and
+  // builds each one's valley in a worker of its own (prepare); it says when each is ready, and only then is the game
+  // saved and its players sent over - so they wait for the save to be loaded, not for a valley to be generated. The
+  // games go on being played meanwhile. A next server that says nothing (one from before this, or none) costs at most
+  // prepareMs, and its games are handed over as before.
+  async announce(store, rooms, targets) {
+    const list = rooms.filter((r) => r.st.players && r.ready && !r.closed).map((r) => ({ code: r.code, info: { seed: r.st.seed >>> 0, act: r.st.act || 1, shape: r.st.shape || '', target: targets.get(r) || undefined } }));
+    if (!list.length || !store.announceAndWait || !(this.prepareMs > 0)) return;
+    const t0 = Date.now();
+    try {
+      const ready = await store.announceAndWait(list, this.prepareMs);
+      this.log(`handoff: the next server had ${ready.size} of ${list.length} game(s) ready for their saves after ${Date.now() - t0} ms`);
+    } catch (err) {
+      this.log(`handoff: the next server could not be told what is coming (${err.message})`);
+    }
+  }
+
+  // The last server is about to hand this game over (announce): its valley is built here now, in the worker that will
+  // run it, which then waits for the save (Room's `prepared`, room-worker.js). Once built, the store is told this server
+  // is ready for it. Nothing is listed or joinable until the save comes; a worker no save comes for goes after a while.
+  prepare(code, info = {}) {
+    code = String(code || '').toUpperCase();
+    if (!this.store?.ready || this.stopping || !CODE_RE.test(code) || this.rooms.has(code) || this.prepared.has(code)) return;
+    if (info.target && this.cluster && info.target !== this.cluster.id) return; // (behind the proxy: another server's)
+    if (this.rooms.size + this.prepared.size >= this.maxGames || !Number.isFinite(+info.seed)) return;
+    const congestion = new SharedArrayBuffer(4 * (this.roomMaxPlayers * 2 + 2));
+    let worker;
+    try {
+      worker = new Worker(new URL('./room-worker.js', import.meta.url), { workerData: { code, congestion, prepare: { seed: +info.seed >>> 0, act: info.act === 2 ? 2 : 1 } }, resourceLimits: WORKER_LIMITS });
+    } catch (err) {
+      return void this.log(`game ${code}: its valley could not be built ahead (${err.message})`);
+    }
+    const p = { worker, congestion, info, ready: false, timer: setTimeout(() => this.dropPrepared(code, 'no save came for it'), PREPARED_MS) };
+    p.timer.unref?.();
+    p.on = {
+      message: (m) => {
+        if (m.t === 'prepared' && this.prepared.get(code) === p) this.onPrepared(code, p, m);
+      },
+      error: (err) => this.dropPrepared(code, err.message),
+      exit: () => this.prepared.get(code) === p && this.prepared.delete(code),
+    };
+    for (const [ev, fn] of Object.entries(p.on)) worker.on(ev, fn);
+    this.prepared.set(code, p);
+  }
+  // a prepared worker has built its valley: the store is told this server is ready for the save
+  onPrepared(code, p, m) {
+    // (the valley this build makes of that seed is not the one the game is played on: its save takes the long way)
+    if (m.error || (p.info.shape && m.shape !== p.info.shape)) return this.dropPrepared(code, m.error || 'this build makes another valley of its seed');
+    p.ready = true;
+    this.store.ready(code).catch((err) => this.log(`game ${code}: could not say it is ready for its save (${err.message})`));
+    this.log(`game ${code}: its valley built ahead in ${m.ms} ms, ready for its save`);
+  }
+  // the worker prepared for this code, now the save is here (it is the room's from now on), or null
+  takePrepared(code) {
+    const p = this.prepared.get(code);
+    if (!p) return null;
+    this.prepared.delete(code);
+    clearTimeout(p.timer);
+    for (const [ev, fn] of Object.entries(p.on)) p.worker.off(ev, fn); // (only ours: a Worker has listeners of its own)
+    return p;
+  }
+  dropPrepared(code, why) {
+    const p = this.takePrepared(code);
+    if (!p) return;
+    p.worker.terminate().catch(() => {});
+    this.log(`game ${code}: the valley built ahead is let go (${why})`);
   }
 
   // A game the last server handed over could not be carried on here (its room's worker said so: 'restoreFailed'), so
@@ -797,10 +882,11 @@ export class Lobby {
       created: Number.isFinite(m.created) ? m.created : Date.now(),
       continues: typeof m.match === 'string' ? m.match : null,
       restore: row.body,
+      prepared: this.takePrepared(code),
     });
     this.rooms.set(code, room);
     room.up = this.cluster?.roomUp(room) ?? null;
-    this.log(`game ${code} restored from the last server (saved ${age.toFixed(1)} s ago, ${(row.body.byteLength / 1024).toFixed(0)} KB) (${this.rooms.size}/${this.maxGames} games)`);
+    this.log(`game ${code} restored from the last server (saved ${age.toFixed(1)} s ago, ${(row.body.byteLength / 1024).toFixed(0)} KB${room.builtAhead ? ', its valley built ahead' : ''}) (${this.rooms.size}/${this.maxGames} games)`);
     return room;
   }
 }

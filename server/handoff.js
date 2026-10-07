@@ -14,7 +14,7 @@
 // added needs no bump, as long as loading a save without it leaves the default (every entity is restored by building
 // a fresh one and copying what was saved over it). A save whose version differs is dropped: that game ends as before.
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ITEM, ZTYPE, STRUCT, CONT, ZONE, AMMO, PROJ, AREA, KILLER } from '../shared/defs.js';
 import { PHASE } from '../shared/constants.js';
@@ -141,15 +141,74 @@ export function checkEnvelope(env) {
 //   listen(fn)             fn(code) whenever a save is put (by any server, this one too)
 //   sweep(maxAgeS)         drops saves older than that: nobody came for them
 //   close()
+// ...and the word between the two servers before the saves are made, so the next one can build each game's valley
+// while the last one is still playing it (Lobby.announce / prepare):
+//   announceAndWait(list, ms)  list: [{ code, info: { seed, act, shape, target } }], the games about to be saved ->
+//                          the Set of codes the next server said it is ready for, within ms
+//   listenComing(fn)       fn(code, info) for each game a server going down announces (that server hears its own too)
+//   ready(code)            this server has built the valley of `code` and is waiting for its save
+const COMING_RE = /^([A-Z2-9]+)\.coming$/;
 
 // Files in a folder: CODE.json, written as CODE.json.tmp and renamed (there whole or not at all). Claimed by renaming
-// it to a name of this process's: of two servers claiming at once, one rename fails.
+// it to a name of this process's: of two servers claiming at once, one rename fails. A game announced is CODE.coming,
+// and the next server's answer CODE.ready.
 export class FileStore {
-  constructor(dir, { pollMs = 500 } = {}) {
+  constructor(dir, { pollMs = 500, comingMs = 100 } = {}) {
     this.dir = dir;
     this.pollMs = pollMs;
+    this.comingMs = comingMs;
     this.timer = null;
+    this.comingTimer = null;
     mkdirSync(dir, { recursive: true });
+  }
+  async announceAndWait(list, ms) {
+    const file = (code, ext) => join(this.dir, `${code}.${ext}`);
+    for (const { code, info } of list) {
+      try {
+        unlinkSync(file(code, 'ready'));
+      } catch {}
+      writeFileSync(file(code, 'coming.tmp'), JSON.stringify(info));
+      renameSync(file(code, 'coming.tmp'), file(code, 'coming'));
+    }
+    const got = new Set();
+    for (const until = Date.now() + ms; got.size < list.length && Date.now() < until; await new Promise((r) => setTimeout(r, 25))) {
+      for (const { code } of list) if (!got.has(code) && existsSync(file(code, 'ready'))) got.add(code);
+    }
+    for (const { code } of list) {
+      for (const ext of ['coming', 'ready']) {
+        try {
+          unlinkSync(file(code, ext));
+        } catch {}
+      }
+    }
+    return got;
+  }
+  listenComing(fn) {
+    const seen = new Map(); // code -> the announcement's mtime: each heard once
+    this.comingTimer = setInterval(() => {
+      let names;
+      try {
+        names = readdirSync(this.dir);
+      } catch {
+        return;
+      }
+      for (const name of names) {
+        const code = COMING_RE.exec(name)?.[1];
+        if (!code) continue;
+        try {
+          const full = join(this.dir, name);
+          const t = statSync(full).mtimeMs;
+          if (seen.get(code) === t) continue;
+          seen.set(code, t);
+          fn(code, JSON.parse(readFileSync(full, 'utf8')));
+        } catch {}
+      }
+      if (seen.size > 1000) seen.clear();
+    }, this.comingMs);
+    this.comingTimer.unref?.();
+  }
+  async ready(code) {
+    writeFileSync(join(this.dir, `${code}.ready`), '1');
   }
   async put(code, meta, body) {
     const file = join(this.dir, `${code}.json`);
@@ -202,6 +261,7 @@ export class FileStore {
   }
   async close() {
     clearInterval(this.timer);
+    clearInterval(this.comingTimer);
   }
 }
 
@@ -249,7 +309,43 @@ export class PgStore {
   async sweep(maxAgeS) {
     return (await this.db.query(`DELETE FROM game_handoff WHERE saved_at < now() - make_interval(secs => $1)`, [maxAgeS])).rowCount;
   }
+  // (the word before the saves: notifications only, nothing stored - game_handoff_coming carries { code, ...info },
+  // game_handoff_ready the code)
+  async announceAndWait(list, ms) {
+    if (!this.db.listen) return new Set();
+    const want = new Set(list.map((x) => x.code));
+    const got = new Set();
+    let wake = null;
+    const stop = await this.db.listen('game_handoff_ready', (code) => {
+      if (!want.has(code)) return;
+      got.add(code);
+      if (got.size >= want.size) wake?.();
+    });
+    try {
+      for (const { code, info } of list) await this.db.query(`SELECT pg_notify('game_handoff_coming', $1)`, [JSON.stringify({ ...info, code })]);
+      if (got.size < want.size) await new Promise((done) => ((wake = done), setTimeout(done, ms)));
+    } finally {
+      await stop?.();
+    }
+    return got;
+  }
+  listenComing(fn) {
+    if (!this.db.listen) return;
+    this.db
+      .listen('game_handoff_coming', (payload) => {
+        try {
+          const m = JSON.parse(payload);
+          if (typeof m?.code === 'string') fn(m.code, m);
+        } catch {}
+      })
+      .then((stop) => (this.unlistenComing = stop))
+      .catch((err) => this.log(`handoff: cannot listen for games coming (${err.message}): their valleys are built when their saves come`));
+  }
+  async ready(code) {
+    await this.db.query(`SELECT pg_notify('game_handoff_ready', $1)`, [code]);
+  }
   async close() {
     await this.unlisten?.();
+    await this.unlistenComing?.();
   }
 }

@@ -104,6 +104,8 @@ const lobby = new Lobby({
   settings,
   store,
   handoffMaxAge: HANDOFF_MAX_AGE,
+  // how long a server going down waits for the next one to build its games' valleys before saving them (0: it does not)
+  prepareMs: +(process.env.HANDOFF_PREPARE_MS ?? 3000),
   stats,
   matches,
   achievements,
@@ -139,6 +141,8 @@ let stopping = false;
 if (store) {
   await store.sweep(HANDOFF_MAX_AGE).catch((err) => log(`handoff: could not sweep old saves (${err.message})`));
   store.listen((code) => stopping || lobby.restore(code));
+  // (and the games a server going down is about to hand over: their valleys are built here while it still plays them)
+  store.listenComing?.((code, info) => stopping || lobby.prepare(code, info));
   for (const code of await store.pending().catch(() => [])) lobby.restore(code);
   setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
 }
