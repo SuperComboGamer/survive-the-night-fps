@@ -110,7 +110,11 @@ export class CatClient {
         if (holder && v) g.audio.play(SOUND.CAT_MEOW, { x: e.rx, y: e.ry, z: e.rz }); // (picked up)
         e.holder = holder;
       }
-      if (!holder || !v) continue;
+      if (!v) continue;
+      if (!holder) {
+        v.object.visible = true; // (set down: on the ground again, where Entities.update draws it. In our own arms it was hidden)
+        continue;
+      }
       const me = holder === g.myId;
       const by = me ? (g.debugCam ? g.selfBody : null) : g.entities.ents.get(holder)?.view;
       v.object.visible = !!by && by.object.visible;
