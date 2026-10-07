@@ -243,6 +243,8 @@ function wrapAngle(a) {
   return a;
 }
 
+const _vq = new THREE.Quaternion();
+const _vUp = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3();
 const _nkAt = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -1060,8 +1062,24 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
+          // a vehicle's seat: the body goes over from where it stood beside it, folding as it goes (and back out)
           const vride = seat ? g.vehicles.place(seat, v) : null;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5 || !!seat, reach: vride?.reach, sitT: vride?.sitT, sitK: vride?.sitK, sitSplay: vride?.sitSplay, pedal: vride?.pedal, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
+          e.vK = seat && !e.vFoot ? 1 : Math.max(0, Math.min(1, (e.vK || 0) + (seat ? dt : -dt) / 0.3)); // (first seen in a seat: in it)
+          if (seat) (e.vSeat || (e.vSeat = new THREE.Vector3())).copy(v.object.position), (e.vQuat || (e.vQuat = new THREE.Quaternion())).copy(v.object.quaternion);
+          else if (e.vK <= 0 || !e.vFoot) (e.vFoot || (e.vFoot = new THREE.Vector3())).set(e.rx, e.ry, e.rz), (e.vYaw = e.ryaw);
+          const vU = e.vK * e.vK * (3 - 2 * e.vK);
+          if (e.vK > 0 && e.vK < 1 && e.vSeat && e.vFoot) {
+            if (seat) {
+              _vq.setFromAxisAngle(_vUp, e.vYaw || 0);
+              v.object.position.lerpVectors(e.vFoot, e.vSeat, vU);
+              v.object.quaternion.copy(_vq).slerp(e.vQuat, vU);
+            } else {
+              _vq.setFromAxisAngle(_vUp, e.ryaw);
+              v.object.position.set(e.rx, e.ry, e.rz).lerp(e.vSeat, vU);
+              v.object.quaternion.copy(_vq).slerp(e.vQuat, vU);
+            }
+          }
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5 || !!seat || e.vK > 0, reach: vride?.reach, sitT: vride?.sitT, sitK: vride?.sitK, sitSplay: vride?.sitSplay, sitLean: vride?.sitLean, feet: vride?.feet, sitNow: seat || e.vK > 0 ? vU : undefined, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
           v.object.visible = !(dead && zombie);
           // nunchucks: what their chain is doing is heard from where they stand (nothing of it is on the wire)
           if (weapon === ITEM.NUNCHAKU) {

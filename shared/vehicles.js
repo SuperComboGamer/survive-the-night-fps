@@ -52,17 +52,17 @@ export const VEHICLES = {
   [VEH.MOPED]: {
     name: 'Moped', top: 16.5, accel: 5.4, brake: 9.5, rev: 1.6, wb: 1.2, lock: 0.62, lockTop: 0.085, steerRate: 2.6, grip: 9, hb: 0.42, roll: 0.35, coast: 1.2, drag: 0.004, off: 1, offTop: 0.75,
     step: 0.3, h: 1.5, wade: 0.4, circles: [[-0.5, 0.33], [-0.03, 0.31], [0.44, 0.33]], half: 0.9, halfW: 0.3, tall: 1.05,
-    tank: 60, burn: 0.5, hp: 300, seats: [[0, 0.86, 0.16], [0, 0.87, 0.64]], eye: 0.62, noise: 55, idle: 28, throwAt: 6.5, shell: false, two: true,
+    tank: 60, burn: 0.5, hp: 300, seats: [[0, 0.86, 0.3], [0, 0.885, 0.62]], eye: 0.62, noise: 55, idle: 28, throwAt: 6.5, shell: false, two: true,
   },
   [VEH.CAR]: {
     name: 'Car', top: 25, accel: 4.4, brake: 10.5, rev: 6, wb: 2.62, lock: 0.6, lockTop: 0.06, steerRate: 2.1, grip: 9.5, hb: 0.32, roll: 0.3, coast: 1.1, drag: 0.0028, off: 2.6, offTop: 1,
     step: 0.26, h: 1.45, wade: 0.55, circles: [[-1.32, 0.88], [0, 0.9], [1.32, 0.88]], half: 2.2, halfW: 0.9, tall: 1.4,
-    tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.47, -0.03], [0.38, 0.47, -0.03], [-0.38, 0.49, 0.59], [0.38, 0.49, 0.59]], eye: 0.78, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
+    tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.42, -0.15], [0.38, 0.42, -0.15], [-0.38, 0.415, 0.66], [0.38, 0.415, 0.66]], eye: 0.78, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
   },
   [VEH.BIKE]: {
     name: 'Bicycle', top: 8.5, hardTop: 12, accel: 3.4, hardAccel: 4.2, brake: 7, rev: 1.2, wb: 1.05, lock: 0.7, lockTop: 0.12, steerRate: 3, grip: 7.5, hb: 0.5, roll: 0.22, coast: 0, drag: 0.005, off: 1.2, offTop: 0.6,
     step: 0.22, h: 1.6, wade: 0.35, circles: [[-0.44, 0.29], [-0.02, 0.27], [0.4, 0.29]], half: 0.85, halfW: 0.25, tall: 1.0,
-    tank: 0, burn: 0, hp: 150, seats: [[0, 1.12, 0.14]], eye: 0.58, noise: 0, idle: 0, throwAt: 6, shell: false, two: true, pedal: true,
+    tank: 0, burn: 0, hp: 150, seats: [[0, 0.99, 0.3]], eye: 0.58, noise: 0, idle: 0, throwAt: 6, shell: false, two: true, pedal: true,
   },
 };
 export const VEH_NAMES = { [VEH.MOPED]: 'moped', [VEH.CAR]: 'car', [VEH.BIKE]: 'bicycle' };

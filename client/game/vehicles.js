@@ -18,11 +18,12 @@ import { ACT, VACT, VFLAG, HOLD, qpos, dqangle16 } from '../../shared/protocol.j
 import { WORLD } from '../../shared/acts.js';
 import { VEH, VSTATE, VEHICLES, VEH_NAMES, FIX, REPAIR, HORN, vehicleGrid, parkedCollider, questCar, siphonOf, seatFeet } from '../../shared/vehicles.js';
 import { raycastWorld } from '../../shared/collision.js';
-import { VehicleModel, GRIP_HOLD, SEAT_POSE, SIT_T, SIT_K, SEAT_HIP } from '../render/models/vehicles.js';
+import { VehicleModel, GRIP_HOLD, SEAT_POSE, SIT_T, SIT_K, SEAT_HIP, ANKLE } from '../render/models/vehicles.js';
 import { VMArm, handQ, ARM_L1, ARM_L2 } from '../render/models/weapons.js';
 import { ikTwoBone, getPropMaterial } from '../render/models/skinning.js';
 import { bindTag } from './binds.js';
 
+const SAG0 = [0, 0, 0];
 const HOLD_AFTER = 0.28; // s: [E] held this long on a vehicle that runs is not getting in, it is working on it
 const PROMPT_TIME = 7; // seconds the list of what the keys do stays up after getting in
 const MOUNT_T = 0.38; // s the eye takes into the seat, and out of it
@@ -238,6 +239,8 @@ export class VehicleClient {
       }
       this.dress(e, dt, e === mine);
     }
+    // our own body in its seat (under our own eyes: no head, no arms - Game.updateSelfBody), where the model is now
+    if (mine) g.updateSelfBody(dt, s, rp, g.time, 0, true);
     this.view(dt, rp, mine, s);
     this.arm(mine && s.drive === mine.id ? mine : null);
     // [E] still down on one that runs: past a tap it is work on it
@@ -304,7 +307,9 @@ export class VehicleClient {
     v.tilt += (prop - v.tilt) * Math.min(1, dt * 6);
     m.group.position.set(x, v.y, z);
     m.group.rotation.set(v.pitch, yaw, 0);
-    m.body.rotation.set(-v.acc * (P.two ? 0.004 : 0.006), 0, -(v.lean + v.roll + v.tilt));
+    const sag = m.sag || SAG0; // (a car as found or broken down: down at the corner with the flat tyre)
+    m.body.rotation.set(-v.acc * (P.two ? 0.004 : 0.006) + sag[0], 0, -(v.lean + v.roll + v.tilt) + sag[2]);
+    m.body.position.y = sag[1];
     v.rollD = (v.rollD || 0) + vf * dt;
     m.setWheels(v.rollD, steer);
     const eye = g.camera.position;
@@ -331,6 +336,9 @@ export class VehicleClient {
     const state = flags & VFLAG.STATE;
     const running = !P.pedal && !!v.seats[0] && state === VSTATE.OK && fuel > 0;
     const thr = driving ? !!(s.lastBtn & BTN.FWD) : !!(flags & VFLAG.THROTTLE);
+    v.thrK = (v.thrK || 0) + ((thr && running ? 1 : 0) - (v.thrK || 0)) * Math.min(1, dt * 12);
+    v.model.setThrottle(v.thrK);
+    v.model.setHazard(state === VSTATE.DEAD && g.time % 0.9 < 0.45);
     // the engine: its note follows the road speed through three gears, harder with the throttle open
     if (v.loop) {
       const k = Math.min(1, sp / P.top);
@@ -368,10 +376,18 @@ export class VehicleClient {
     if (state === VSTATE.DEAD && v.model.group.visible) {
       v.smokeT -= dt;
       if (v.smokeT <= 0) {
-        v.smokeT = 0.22;
-        const fx = v.x - Math.sin(v.yaw) * P.half * 0.6;
-        const fz = v.z - Math.cos(v.yaw) * P.half * 0.6;
-        g.effects.mist?.(fx, v.y + (P.two ? 0.5 : 1), fz, 0, 0.9, 0, 1.6, 0.35, 1.3, false);
+        v.smokeT = 0.12;
+        const fx = v.x - Math.sin(v.yaw) * P.half * 0.6 + (Math.random() - 0.5) * 0.4;
+        const fz = v.z - Math.cos(v.yaw) * P.half * 0.6 + (Math.random() - 0.5) * 0.4;
+        g.effects.mist?.(fx, v.y + (P.two ? 0.5 : 1), fz, (Math.random() - 0.5) * 0.3, 1.2, (Math.random() - 0.5) * 0.3, 2.2, 0.5, 1.9, false);
+      }
+    }
+    // burnt out: a thread of smoke for as long as it lies there
+    if (state === VSTATE.WRECK && v.model.group.visible) {
+      v.smokeT -= dt;
+      if (v.smokeT <= 0) {
+        v.smokeT = 0.5;
+        g.effects.mist?.(v.x + (Math.random() - 0.5) * 0.6, v.y + (P.two ? 0.3 : 1.1), v.z + (Math.random() - 0.5) * 0.6, 0.1, 0.7, 0, 3, 0.3, 1.1, false);
       }
     }
   }
@@ -388,7 +404,15 @@ export class VehicleClient {
       const P = VEHICLES[mine.vk];
       const st = P.seats[this.myK] || P.seats[0];
       v.model.group.updateMatrixWorld(true);
-      _v.set(st[0], st[1] + P.eye, st[2] + (P.eyeZ || 0)).applyMatrix4(v.model.body.matrixWorld);
+      const sv = g.selfBody;
+      if (sv && sv.headWorld) {
+        // where our own head is in the seat: a little up and forward of its joint, by the vehicle's own up and forward
+        sv.headWorld(_v);
+        const m = v.model.body.matrixWorld.elements;
+        _v.x += m[4] * 0.085 - m[8] * 0.07;
+        _v.y += m[5] * 0.085 - m[9] * 0.07;
+        _v.z += m[6] * 0.085 - m[10] * 0.07;
+      } else _v.set(st[0], st[1] + P.eye, st[2] + (P.eyeZ || 0)).applyMatrix4(v.model.body.matrixWorld);
       // the view goes round with it
       const d = wrap(v.yaw - this.lastYaw);
       this.lastYaw = v.yaw;
@@ -445,7 +469,7 @@ export class VehicleClient {
   }
   arm(e) {
     const rig = this.rig;
-    const show = !!e && !this.g.debugCam && !this.g.cine && this.mountK > 0.5;
+    const show = !!e && !this.g.debugCam && !this.g.cine && this.mountK > 0.75;
     rig.visible = show;
     if (!show) return;
     const v = e.veh;
@@ -465,7 +489,9 @@ export class VehicleClient {
       const grip = m.grips[k];
       grip.updateWorldMatrix(true, false);
       // the shoulder under the eye, a hand's breadth out; the grip and the hand's lie in the body's frame
-      _S.set(st[0] + side * 0.19, st[1] + P.eye - 0.25, st[2] + (P.eyeZ || 0) + 0.06);
+      // the shoulder: our own body's (it is drawn without its arms: these are them)
+      if (this.g.selfBody?.shoulderWorld) this.g.selfBody.shoulderWorld(side, _S).applyMatrix4(_m);
+      else _S.set(st[0] + side * 0.19, st[1] + P.eye - 0.25, st[2] + (P.eyeZ || 0) + 0.06);
       arm.shoulder.position.copy(_S);
       _v.setFromMatrixPosition(grip.matrixWorld).applyMatrix4(_m);
       grip.getWorldQuaternion(_q2).premultiply(_q).multiply(hq[k]);
@@ -492,7 +518,7 @@ export class VehicleClient {
       const pos = new THREE.Vector3();
       const dir = new THREE.Vector3();
       v.model.lampWorld(pos, dir);
-      out.push({ pos, dir, d: e === this.mine ? -1 : (v.x - camPos.x) ** 2 + (v.z - camPos.z) ** 2, lamp: true });
+      out.push({ pos, dir, d: e === this.mine ? -1 : (v.x - camPos.x) ** 2 + (v.z - camPos.z) ** 2, lamp: true, wide: e.vk === VEH.CAR ? 0.72 : 0.5 });
     }
   }
 
@@ -709,7 +735,25 @@ export function seatBody(model, vk, k, sv, out = {}) {
   out.sitT = pose[0];
   out.sitK = pose[1];
   out.sitSplay = pose[2];
-  out.pedal = model.crank ? model.crank.rotation.x + Math.PI / 2 : undefined; // (the left foot down with the left pedal)
+  out.sitLean = pose[3] || 0;
+  out.pedal = undefined;
+  // the feet: on the pedals, the footboard, the floor - where the model has them this frame (characters.js solveFeet)
+  const feet = model.feet[k];
+  if (!feet) out.feet = null;
+  else {
+    const f = out.feet || (out.feet = { l: new THREE.Vector3(), r: new THREE.Vector3(), splay: 0, pitch: 0 });
+    const m = body.matrixWorld.elements;
+    for (let i = 0; i < 2; i++) {
+      const t = i ? f.r : f.l;
+      feet[i].getWorldPosition(t);
+      // (the ankle: over the ball of the foot and behind it, by the vehicle's own up and back)
+      t.x += m[4] * ANKLE[0] + m[8] * ANKLE[1];
+      t.y += m[5] * ANKLE[0] + m[9] * ANKLE[1];
+      t.z += m[6] * ANKLE[0] + m[10] * ANKLE[1];
+    }
+    f.splay = pose[2];
+    f.pitch = pose[4] || 0;
+  }
   if (k !== 0) out.reach = null;
   else {
     const r = out.reach || (out.reach = { l: new THREE.Vector3(), r: new THREE.Vector3() });

@@ -2584,8 +2584,25 @@ export class Game {
   // Our own survivor, as the others see us, drawn from our own predicted state: only while a debug camera asks for it
   // (debugCam.body) - a look at the third person from outside without a second client (scripts/clip/nunchaku-film.js).
   // Everything else about a game with one player in it is as it always is: nobody has a body of their own.
-  updateSelfBody(dt, s, rp, time, hspeed) {
-    const want = !!(this.debugCam && this.debugCam.body && this.self.alive);
+  updateSelfBody(dt, s, rp, time, hspeed, early = false) {
+    // (in a vehicle VehicleClient.update has us placed already this frame, before it took the eye from our head)
+    if (!early && this.selfBodyDone) {
+      this.selfBodyDone = false;
+      return;
+    }
+    this.selfBodyDone = early;
+    // our seat in a vehicle, by our own prediction (the entity's record says the same a moment later)
+    const veh = this.vehicles;
+    const seat = veh.mine && veh.myK >= 0 ? (this.selfSeat ||= { e: null, k: 0, pose: {} }) : null;
+    if (seat) {
+      if (seat.e !== veh.mine || seat.k !== veh.myK) seat.pose = {};
+      seat.e = veh.mine;
+      seat.k = veh.myK;
+    }
+    // under our own eyes (no debug camera): only in a seat, and without the head the eye is in or the arms the view
+    // has its own of
+    const fp = !this.debugCam && !this.cine && !!seat;
+    const want = !!this.self.alive && (fp || !!(this.debugCam && this.debugCam.body));
     if (!want) {
       if (this.selfBody) {
         this.scene.remove(this.selfBody.object);
@@ -2601,16 +2618,17 @@ export class Game {
       this.scene.add(sv.object);
       this.selfBodyItem = -1;
     }
-    const seat = this.vehicles.seatOf(this.myId); // (in a vehicle: in our seat of it, as the others see us)
-    const item = s.zombie || (seat && seat.k === 0) ? 0 : currentWeapon(s);
+    sv.setHide(fp ? 2 : 0);
+    sv.object.visible = !fp || veh.mountK > 0.75;
+    const item = s.zombie || (seat && (seat.k === 0 || fp)) ? 0 : currentWeapon(s); // (at the wheel both hands are on it; under our own eyes the view holds the weapon)
     if (item !== this.selfBodyItem) {
       this.selfBodyItem = item;
       sv.setWeapon(item);
     }
     sv.object.position.set(rp.x, rp.y, rp.z);
-    sv.object.rotation.y = this.input.yaw;
-    const ride = seat ? this.vehicles.place(seat, sv) : null;
-    sv.update(dt, { sit: !!seat, reach: ride?.reach, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, pedal: ride?.pedal, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
+    sv.object.rotation.set(0, this.input.yaw, 0);
+    const ride = seat ? veh.place(seat, sv) : null;
+    sv.update(dt, { sit: !!seat, sitNow: seat ? 1 : undefined, reach: ride?.reach, feet: ride?.feet, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, sitLean: ride?.sitLean, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: seat && seat.k === 0 ? 0 : this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
     const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
     if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
   }

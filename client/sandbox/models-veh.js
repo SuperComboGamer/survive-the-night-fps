@@ -88,6 +88,8 @@ if (seed0 >= 0) {
     riders.push({ sv, k, pose: {} });
   }
 }
+// (from the driver's own eyes - the fp views - their head is not drawn, as in the game)
+if (views.every((v) => /^fp/.test(v)) && riders[0]) riders[0].sv.setHide(+(q.get('hide') || 1));
 const DT = 1 / 60;
 let time = 0;
 for (let i = 0; i < 90; i++) {
@@ -95,7 +97,7 @@ for (let i = 0; i < 90; i++) {
   for (const r of riders) {
     r.sv._inst._seen = true;
     const ride = seatBody(model, vk, r.k, r.sv, r.pose);
-    r.sv.update(DT, { speed: 0, sprint: false, crouch: false, pitch: 0, onGround: true, reloading: false, dead: false, sit: true, sitT: ride.sitT, sitK: ride.sitK, sitSplay: ride.sitSplay, pedal: ride.pedal, reach: ride.reach, time });
+    r.sv.update(DT, { speed: 0, sprint: false, crouch: false, pitch: 0, onGround: true, reloading: false, dead: false, sit: true, sitT: ride.sitT, sitK: ride.sitK, sitSplay: ride.sitSplay, sitLean: ride.sitLean, feet: ride.feet, sitNow: 1, reach: ride.reach, time });
   }
   scene.updateMatrixWorld(true);
 }
@@ -128,10 +130,25 @@ if (q.get('xray') === '1') {
     }
   });
 }
+// from the driver's own eyes, as the game has them (game/vehicles.js view): fp ahead, fpd down at the clocks, fpl / fpr
+// to the sides, fpf down at the feet
+const FP = { fp: [0, 0], fpd: [0, -0.45], fpl: [1.1, -0.2], fpr: [-1.1, -0.2], fpf: [0, -1.15], fpu: [0, -0.15] };
+const fpCam = new THREE.PerspectiveCamera(75, CW / CH, 0.05, 200);
+fpCam.rotation.order = 'YXZ';
 function draw() {
   views.forEach((name, i) => {
-    const [yaw, pitch, dist, t] = VIEW[name] || VIEW.q;
     const x = (i % cols) * CW, y = H - (((i / cols) | 0) + 1) * CH;
+    if (FP[name] && riders[0]) {
+      riders[0].sv.headWorld(fpCam.position);
+      fpCam.position.y += 0.085;
+      fpCam.position.z -= 0.07;
+      fpCam.rotation.set(FP[name][1] + +(q.get('pitch') || 0), FP[name][0], 0);
+      renderer.setViewport(x, y, CW, CH);
+      renderer.setScissor(x, y, CW, CH);
+      renderer.render(scene, fpCam);
+      return;
+    }
+    const [yaw, pitch, dist, t] = VIEW[name] || VIEW.q;
     persp.aspect = CW / CH;
     persp.updateProjectionMatrix();
     persp.position.set(t[0] - Math.sin(yaw) * Math.cos(pitch) * dist, t[1] + Math.sin(pitch) * dist, t[2] - Math.cos(yaw) * Math.cos(pitch) * dist);
@@ -150,7 +167,8 @@ const flagged = [];
 if (q.get('clip') === '1') {
   const dbl = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const vparts = [];
-  model.group.traverse((m) => m.isMesh && m.visible && visibleUp(m) && vparts.push(m));
+  // (a pane of glass is one sheet: nothing is inside it, and a point behind it would count as inside)
+  model.group.traverse((m) => m.isMesh && m.visible && visibleUp(m) && !/glass/.test(m.name || m.material?.name || '') && vparts.push(m));
   const vprox = vparts.map((m) => {
     const p = new THREE.Mesh(m.geometry, dbl);
     p.matrixWorld.copy(m.matrixWorld);
@@ -215,7 +233,7 @@ if (q.get('clip') === '1') {
       if (!hit) continue;
       res.bodyInVeh.n++;
       flagged.push(v.x, v.y, v.z);
-      if (hit[0] > res.bodyInVeh.d) Object.assign(res.bodyInVeh, { d: hit[0], what: `${bone} in ${hit[1]}` });
+      if (hit[0] > res.bodyInVeh.d) Object.assign(res.bodyInVeh, { d: hit[0], what: `${bone} in ${hit[1]} at ${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)}` });
     }
     // the vehicle's vertices inside the body
     const geo = new THREE.BufferGeometry();
@@ -236,7 +254,7 @@ if (q.get('clip') === '1') {
         if (!hit) continue;
         res.vehInBody.n++;
         flagged.push(v.x, v.y, v.z);
-        if (hit[0] > res.vehInBody.d) Object.assign(res.vehInBody, { d: hit[0], what: p.userData.name });
+        if (hit[0] > res.vehInBody.d) Object.assign(res.vehInBody, { d: hit[0], what: `${p.userData.name} at ${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)}` });
       }
     }
     // the driver's fists on the grips: how far the middle of each is from where it should close
