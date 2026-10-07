@@ -179,6 +179,7 @@ const AT_ROUND_IN = 0.62;
 // what [H] reaches for when not badly hurt, in that order; the HUD counts these as the healing left
 const HEAL_ITEMS = [ITEM.BANDAGE, ITEM.TUNA, ITEM.VENISON, ITEM.PAINKILLERS, ITEM.MEDKIT];
 const PING_LIFE = 12;
+const MOVING_NOTE_MS = 400; // a deploy that takes longer than this to bring us back says so (onMoving)
 const WAYPOINT_REACH = 10; // metres: this close to a waypoint that is not on a named place and it is reached
 // two waypoints on one spot: on the same place, or bare spots a few steps apart
 const sameSpot = (a, b) => (a.zone >= 0 || b.zone >= 0 ? a.zone === b.zone : Math.hypot(a.x - b.x, a.z - b.z) < WAYPOINT_REACH);
@@ -947,7 +948,10 @@ export class Game {
     this.inputBuffer.clear();
     this.voice.closeAll(); // (the peers find each other again through the next server)
     this.radio.reset();
-    this.ui.setConnectionStatus('Server updating - bringing you back');
+    // (the move is usually done in well under a tenth of a second - the next server has the game ready, net/moveback.js:
+    // the banner only comes up for one that takes long enough to be noticed, rather than flashing every deploy)
+    clearTimeout(this.movingNote);
+    this.movingNote = setTimeout(() => this.moving && this.ui.setConnectionStatus('Server updating - bringing you back'), MOVING_NOTE_MS);
     this.onMove(this.room.code);
   }
 

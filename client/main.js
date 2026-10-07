@@ -9,11 +9,12 @@ import { loadBinds, askLayout, bindPair } from './game/binds.js';
 import { startBindsSync } from './net/accountbinds.js';
 import { keysOf, moveKeys, slotKeys } from './ui/menus.js';
 import { playerId } from './net/identity.js';
-import { PROTOCOL_VERSION, REJECT_REASON } from '../shared/protocol.js';
+import { PROTOCOL_VERSION } from '../shared/protocol.js';
 import { refreshAccount } from './net/account.js';
 import { startAchievementsSync } from './net/achievements.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
-import { comeBack, endedByUpdate, NO_GAME_TRIES } from './net/comeback.js';
+import { comeBack } from './net/comeback.js';
+import { moveBack as movedBack, joinVerdict, pageBuild, mayReload, reloadedInto, RELOAD_LOOP_TEXT } from './net/moveback.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
 
@@ -94,19 +95,44 @@ async function rejoin(code, name = lastName) {
 
 // ---------------------------------------------------------------- back in after a deploy
 // A deploy hands every game to the next server (server/handoff.js) and closes its sockets with MOVED_CODE. The game
-// stays on screen (Game.onMoving) while this joins the same code on the next server, where our body is waiting: at
-// once and then a little less often, for a while (the old server may still be taking connections that the edge sends
-// it). The game is in the store before our socket is closed, so a next server that says it has no such game three
-// times over means it could not bring it back. If the next server runs another build, this page is loaded again
-// first (and then goes back in as a reopened page does, below).
-const MOVE_MS = 45_000;
-const MOVE_NO_GAME = NO_GAME_TRIES;
-const BUILD = fetch('/api/version')
-  .then((r) => r.json())
-  .catch(() => null); // what this page was loaded from
+// stays on screen (Game.onMoving) while this joins the same code on the next server, where our body is waiting
+// (net/moveback.js decides how: in place, which is a few tens of ms, or loading the page again first when the code both
+// ends run changed; a change to the client alone waits for the player to leave the game).
+// What this page was loaded with: written into it by the server (pageBuild); the Vite dev server writes nothing, and
+// then the server is asked.
+const BUILD = Promise.resolve(pageBuild()).then(
+  (b) =>
+    b ||
+    fetch('/api/version')
+      .then((r) => r.json())
+      .catch(() => null)
+);
+// (what runs the game now: a server going down says 503, and one that does not answer in a moment is asked again)
+const version = (code = '') => fetch(`/api/version${code ? `?game=${encodeURIComponent(code)}` : ''}`, { cache: 'no-store', signal: AbortSignal.timeout?.(2000) }).then((r) => (r.ok ? r.json() : null));
+let updateReady = false; // the server runs a newer client than this page, which can still play: loaded once the player leaves
 const MOVED_KEY = 'stn.moved';
-const UPDATING_READ_MS = 1500; // the "Game updated" modal is up this long over the game before the page reloads
+const UPDATING_READ_MS = 250; // the "Game updated" card is painted over the game before the page reloads (the new page shows it at once too)
+// (sessionStorage, or null where the browser will not have it: then reloads are not counted)
+const tabStore = () => {
+  try {
+    return sessionStorage;
+  } catch {
+    return null;
+  }
+};
+// the server's "try again" pages (a server going down, an older build's page not to be had) count their tries here:
+// this page is up, so the count starts again
+try {
+  for (const k of Object.keys(sessionStorage)) if (k.startsWith('stn.retry.')) sessionStorage.removeItem(k);
+} catch {}
 async function reloadInto(code, name) {
+  // (a server that keeps asking for the page to be loaded again for this game: told so, not reloaded for ever)
+  if (!mayReload(tabStore(), code)) {
+    forgetPlaying();
+    if (game.moving) game.onDisconnect(0, RELOAD_LOOP_TEXT);
+    else ui.setJoinError(RELOAD_LOOP_TEXT);
+    return;
+  }
   try {
     sessionStorage.setItem(MOVED_KEY, '1');
     localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() })); // (the reloaded page goes back in by it)
@@ -127,32 +153,52 @@ async function reloadInto(code, name) {
 }
 async function moveBack(code) {
   const name = lastName;
-  const until = performance.now() + MOVE_MS;
-  const loadedFrom = await BUILD;
-  let noGame = 0;
-  for (let wait = 250; game.moving && performance.now() < until && noGame < MOVE_NO_GAME; wait = Math.min(wait * 2, 2000)) {
-    const now = await fetch('/api/version', { cache: 'no-store' })
-      .then((r) => r.json())
-      .catch(() => null);
-    if (now && (now.protocol !== PROTOCOL_VERSION || (loadedFrom?.build && now.build !== loadedFrom.build))) return reloadInto(code, name);
-    if (now) {
-      try {
-        await game.join(name, code, { resume: true });
-        return;
-      } catch (err) {
-        // (another build: load it)
-        if (err.reason === REJECT_REASON.VERSION) return reloadInto(code, name);
-        // (the next server could not carry the game over, and says why: it is over, and asking again will not change it)
-        if (endedByUpdate(err.reason)) {
-          forgetPlaying();
-          return game.onDisconnect(0, err.message);
-        }
-        if (err.reason === REJECT_REASON.NO_GAME) noGame++;
-      }
+  const t0 = performance.now();
+  const r = await movedBack({
+    code,
+    loadedFrom: (await BUILD) || { protocol: PROTOCOL_VERSION },
+    version,
+    still: () => game.moving,
+    join: () => game.join(name, code, { resume: true }).then(
+      () => true,
+      (err) => err
+    ),
+  });
+  console.log(`[net] after the deploy: ${r.verdict}${r.update ? ' (a newer client is ready)' : ''} in ${Math.round(performance.now() - t0)} ms`);
+  if (r.verdict === 'reload') return reloadInto(code, name);
+  if (r.verdict === 'in place') {
+    reloadedInto(tabStore(), code);
+    if (r.update && !updateReady) {
+      updateReady = true;
+      ui.addChat('', 'The game was updated. The new version loads the next time you leave the game.', { system: true });
     }
-    await new Promise((done) => setTimeout(done, wait));
+    return;
   }
-  if (game.moving) game.onDisconnect(0, 'The server was updated, but your game could not be brought back.');
+  if (r.verdict === 'ended') forgetPlaying(); // (the next server could not carry the game over, and says why: asking again will not change it)
+  if (r.verdict !== 'left' && game.moving) game.onDisconnect(0, r.message);
+}
+
+// Before going into a game in this page (a pick from the list, a friend's game, a quick join): can this page play it?
+// The game may be run by other code than this page was loaded with - a deploy came while the page sat on the splash,
+// or an older build carries that game on (server/builds.js). Then that game's page is loaded instead, and goes in by
+// itself as a reopened one does - a newer client of the same compat too (joinVerdict: this page's own files may be
+// gone from the server). -> true when this page may join
+async function canJoinHere(code, name) {
+  // (a server going down says nothing - 503 - and this page may be its: asked until one that will run the game answers)
+  let v = null;
+  for (let i = 0; i < 20 && !v; i++) if (!(v = await version(code).catch(() => null))) await new Promise((done) => setTimeout(done, 250));
+  if (joinVerdict((await BUILD) || { protocol: PROTOCOL_VERSION }, v) !== 'reload') return true;
+  // (loaded again for this game too often already: its server keeps sending us round - told so instead)
+  if (!mayReload(tabStore(), code)) {
+    forgetPlaying();
+    throw new Error(RELOAD_LOOP_TEXT);
+  }
+  try {
+    if (code) localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() }));
+  } catch {}
+  if (code) location.href = `/?game=${encodeURIComponent(code)}`;
+  else location.reload();
+  return false;
 }
 
 const PLAYING_KEY = 'stn.playing';
@@ -188,7 +234,9 @@ const callbacks = {
         } catch {}
       }
       joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
+      if (!(await canJoinHere(code, name))) return;
       await game.join(name, code);
+      reloadedInto(tabStore(), game.room?.code || code);
       ui.hideSplash();
       document.activeElement?.blur?.(); // the name field must not keep eating gameplay keys
       // the game's link: in the address bar (a reload comes back here, and it can be copied from there), on the
@@ -248,6 +296,8 @@ const callbacks = {
     showCodeInAddress(''); // (back on the splash for any game, not this one's invitation)
     ui.setRoom(null);
     game?.leave();
+    // a deploy brought a newer client this page could do without while it played (moveBack): it is loaded now
+    if (updateReady) setTimeout(() => location.reload(), 300);
   },
   onUiSound: (name) => audio.ready && audio.playLocal(name, { volume: 0.5 }),
   // the friends panel: who is in this game with us, and the accounts they are signed in to (S2C.FRIENDS)

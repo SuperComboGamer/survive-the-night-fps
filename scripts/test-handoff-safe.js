@@ -8,7 +8,7 @@
 // Here: a night with the dead on top of two survivors is handed over.
 //   - the restored game stands still until one of its players is playing again: no clock, nothing moves, nobody hurt
 //   - a player who is back but whose client has sent nothing yet is as safe as a held one, for ARRIVE_SECONDS at most
-//   - a second of commands (or anything they do) and they are playing: the dead go for them again
+//   - a quarter of a second of commands (or anything they do) and they are playing: the dead go for them again
 //   - after an ordinary drop, coming back is safe for no longer than was left of the grace: no new way out of a fight
 //   - a deploy straight after a deploy: the same again, however far each player had got
 //   - a game nobody comes back to runs on after HANDOFF_FREEZE_SECONDS, and lets its players go as before
@@ -115,10 +115,10 @@ check('...and is sent the game as it stands meanwhile', ann2.snaps > 100, String
 bite(B, qa);
 check('...nothing can hurt them', qa.hp === HP, String(qa.hp));
 // her client runs: commands with every tick
-tick(B, 0.5, [ann2]);
-check('half a second of commands is not yet playing', still(B, was) && B.safe(qa));
+tick(B, 0.15, [ann2]);
+check('a few frames of commands are not yet playing', still(B, was) && B.safe(qa));
 tick(B, 2.5, [ann2]);
-check('a second of commands, and the game runs on with her in it', B.time > was.time && !B.safe(qa) && B.zombies.some((z, i) => z.x !== was.at[i]?.[0]), `time ${was.time} -> ${B.time}`);
+check('a quarter of a second of commands, and the game runs on with her in it', B.time > was.time && !B.safe(qa) && B.zombies.some((z, i) => z.x !== was.at[i]?.[0]), `time ${was.time} -> ${B.time}`);
 hurt = tick(B, 4, [ann2]);
 check('...where the dead go for her again', hurt.has(ann.id) && after(B, qa) > 0, `hurt ${[...hurt]}, after her ${after(B, qa)}`);
 check('...and not for Ben, who is still on his way: held, unhurt, where he was', qb.away && !hurt.has(ben.id) && after(B, qb) === 0 && Math.abs(qb.state.x - pb.state.x) < 0.01, `hp ${qb.hp}, after him ${after(B, qb)}`);

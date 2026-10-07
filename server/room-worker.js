@@ -29,15 +29,41 @@
 //                                  because this build makes another valley of its seed)
 //
 // workerData.restore: a game the last server saved (the gzipped envelope), to carry on with instead of a new one.
+//
+// workerData.prepare { seed, act }: a game the last server is about to hand over (a deploy: Lobby.prepare). Its valley is
+// built now, while that server is still playing it, and the worker says so - { t: 'prepared', shape, ms } - then
+// waits for { t: 'start', opts, restore } (the save, once it is in the store), which it goes on from as above.
 import { parentPort, workerData } from 'node:worker_threads';
-import { Game } from './game.js';
+import { Game, prepareWorld } from './game.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { SERVER_TICK_RATE } from '../shared/constants.js';
-import { envelope, encode, decode } from './handoff.js';
+import { envelope, encode, decode, HandoffError } from './handoff.js';
 import { adminOp } from './gameadmin.js';
 import { ENDED_CODE, LEFT_CODE } from '../shared/protocol.js';
 
-const { code, opts, congestion, restore } = workerData;
+const { code, congestion } = workerData;
+let { opts, restore } = workerData;
+let prepared = null; // (the valley built ahead)
+const early = []; // (what came before the save did: played once the game is up)
+if (workerData.prepare) {
+  try {
+    prepared = prepareWorld(workerData.prepare.seed >>> 0, workerData.prepare.act);
+    parentPort.postMessage({ t: 'prepared', shape: prepared.print.shape, ms: prepared.ms });
+  } catch (err) {
+    parentPort.postMessage({ t: 'prepared', shape: '', error: String(err?.message || err) });
+  }
+  const start = await new Promise((done) => {
+    const wait = (m) => {
+      if (m.t === 'start') {
+        parentPort.off('message', wait);
+        done(m);
+      } else if (m.t === 'stop') process.exit(0);
+      else early.push(m);
+    };
+    parentPort.on('message', wait);
+  });
+  ({ opts, restore } = start);
+}
 // ms a socket may hold a seat without joining (a client sends its JOIN as soon as it is open). JOIN_WAIT_SECONDS: tests
 const JOIN_WAIT = (+process.env.JOIN_WAIT_SECONDS || 15) * 1000;
 const tag = `[game ${code}]`;
@@ -84,6 +110,7 @@ try {
   game = new Game({
     ...opts,
     restore: restore ? decode(Buffer.from(restore)) : null,
+    prepared,
     rollWhenEmpty: false,
     stats: new RemoteRecords(),
     analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined,
@@ -93,8 +120,12 @@ try {
   });
 } catch (err) {
   if (!restore) throw err;
+  // The network thread is told why, and ends this worker when it has heard (Room 'restoreFailed'): a worker that threw
+  // here could be gone before its message was read. Nothing below runs.
   post({ t: 'restoreFailed', why: err.message, world: err.world === true });
-  throw err;
+  if (!(err instanceof HandoffError)) console.error(tag, 'the save could not be loaded', err);
+  parentPort.on('message', () => {});
+  await new Promise(() => {});
 }
 
 // ---------------------------------------------------------------- sockets
@@ -149,7 +180,7 @@ function drop(slot, why) {
   post({ t: 'kick', slot, code: ENDED_CODE, why: why ? `An admin removed you from the game: ${why}` : 'An admin removed you from the game.' });
 }
 
-parentPort.on('message', (m) => {
+function onMessage(m) {
   switch (m.t) {
     case 'open': {
       const conn = makeConn(m.slot, m.ip, m.user || null);
@@ -236,7 +267,8 @@ parentPort.on('message', (m) => {
       return;
   }
   if (game.players.size !== lastPlayers) status();
-});
+}
+parentPort.on('message', onMessage);
 
 // ---------------------------------------------------------------- what the lobby shows, and how hard this room works
 let lastPlayers = -1;
@@ -260,7 +292,7 @@ function status() {
     lead ||= p.name; // (the one who has been in longest: the map keeps join order)
     if (p.away) held++;
   }
-  post({ t: 'status', players: game.players.size, held, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10, act: game.act, zombies: game.zombies.length, errs, lastErr });
+  post({ t: 'status', players: game.players.size, held, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, shape: game.worldShape, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10, act: game.act, zombies: game.zombies.length, errs, lastErr });
 }
 setInterval(() => {
   const now = performance.now();
@@ -345,5 +377,6 @@ function loop() {
 }
 
 post({ t: 'ready', seed: game.seed >>> 0 });
+for (const m of early.splice(0)) onMessage(m); // (a prepared worker: whatever came with its save)
 status();
 loop();

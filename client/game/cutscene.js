@@ -154,6 +154,18 @@ class Screen {
 // the mainland holds the main thread for seconds, so the card has to be on screen before that starts (Game.onWorld
 // waits for it), and its spinner turns on the compositor while the page is frozen.
 const LOADING_ART = new URL('../ui/art/loading-mainland.jpg', import.meta.url).href;
+// (into the browser's cache once the page is idle, long before the crossing: a deploy that changes only the client
+// leaves a page that is playing on as it is, and the next server does not have this page's own files - the card would
+// have no picture. Its sounds and the synth worker fall back to the procedural ones; this has nothing to fall back to)
+if (typeof Image === 'function' && typeof setTimeout === 'function') {
+  const fetchArt = () => {
+    const img = new Image();
+    img.src = LOADING_ART;
+  };
+  // (within 10 s even on a page that is never idle)
+  if (typeof globalThis.requestIdleCallback === 'function') globalThis.requestIdleCallback(fetchArt, { timeout: 10_000 });
+  else setTimeout(fetchArt, 5000);
+}
 class LoadingCard {
   constructor(parent, before) {
     const el = (tag, cls, p, text) => {

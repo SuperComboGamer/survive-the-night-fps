@@ -11,7 +11,9 @@
 // A deploy does not end the games (handoff.js): on SIGTERM each is saved into the store and its players are sent
 // HANDOFF_CLOSE, and the new server - up by then - restores it under the same code for them to reconnect to.
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'node:zlib';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import uWS from 'uWebSockets.js';
@@ -34,6 +36,8 @@ import { PublicStats, RANGES } from './publicstats.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
+import { Builds } from './builds.js';
+import { compatOf } from './compat.js';
 import { Cluster } from './cluster.js';
 import { AdminPanel } from './adminpanel.js';
 import { clientOf } from './netaddr.js';
@@ -95,6 +99,7 @@ const HANDOFF_MAX_AGE = +(process.env.HANDOFF_MAX_AGE_SECONDS || 300); // a save
 const HANDOFF_DIR = process.env.HANDOFF_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'handoff') : '');
 const store = process.env.HANDOFF === '0' ? null : db?.kind === 'postgres' ? new PgStore(db, { log }) : HANDOFF_DIR ? new FileStore(resolve(HANDOFF_DIR)) : null;
 if (store) log(`handoff: games are handed to the next server through ${store instanceof PgStore ? 'Postgres' : store.dir}`);
+else log(process.env.HANDOFF === '0' ? 'handoff: off (HANDOFF=0): a deploy ends every game' : 'handoff: no store to hand games over through (a Postgres DATABASE_URL, HANDOFF_DIR or a volume): a deploy ends every game. docs/deploys.md says what to set.');
 
 // the settings changed in the database without a deploy (serversettings.js): the most games at once
 const settings = db ? new ServerSettings({ db, log }) : null;
@@ -104,6 +109,8 @@ const lobby = new Lobby({
   settings,
   store,
   handoffMaxAge: HANDOFF_MAX_AGE,
+  // how long a server going down waits for the next one to build its games' valleys before saving them (0: it does not)
+  prepareMs: +(process.env.HANDOFF_PREPARE_MS ?? 3000),
   stats,
   matches,
   achievements,
@@ -132,16 +139,7 @@ const cluster = process.env.CLUSTER === '1' && db?.kind === 'postgres' ? new Clu
 if (process.env.CLUSTER === '1' && !cluster) log('CLUSTER=1 needs a Postgres DATABASE_URL: running as a server on its own');
 lobby.cluster = cluster;
 
-// The games the last server handed over: whatever is waiting already (a server that started after the last one went),
-// and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
-// stopping itself: it hears its own saves too.)
 let stopping = false;
-if (store) {
-  await store.sweep(HANDOFF_MAX_AGE).catch((err) => log(`handoff: could not sweep old saves (${err.message})`));
-  store.listen((code) => stopping || lobby.restore(code));
-  for (const code of await store.pending().catch(() => [])) lobby.restore(code);
-  setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
-}
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, log }) : null;
@@ -172,17 +170,81 @@ const MIME = {
   '.ogg': 'audio/ogg',
 };
 const files = new Map();
+// A file the build also wrote compressed (vite.config.js precompress: name.gz, name.br beside it) is sent that way to a
+// browser that takes it: those are not read now, only noted (gzFile, brFile), and read the first time one is asked for
+// (sendStatic). Nothing is compressed here.
 function loadDir(dir, prefix = '') {
   if (!existsSync(dir)) return;
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) loadDir(full, `${prefix}/${name}`);
-    else files.set(`${prefix}/${name}`, { body: readFileSync(full), type: MIME[extname(name)] || 'application/octet-stream' });
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const names = new Set(entries.map((e) => e.name));
+  for (const e of entries) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) loadDir(full, `${prefix}/${e.name}`);
+    else if (/\.(gz|br)$/.test(e.name) && names.has(e.name.slice(0, -3))) continue; // (noted with the file it is of)
+    else {
+      const f = { body: readFileSync(full), type: MIME[extname(e.name)] || 'application/octet-stream' };
+      if (names.has(`${e.name}.gz`)) f.gzFile = `${full}.gz`;
+      if (names.has(`${e.name}.br`)) f.brFile = `${full}.br`;
+      files.set(`${prefix}/${e.name}`, f);
+    }
   }
 }
 loadDir(DIST);
 if (files.size) console.log(`[server] serving ${files.size} static files from dist/`);
 else console.log('[server] no dist/ build found - run `npm run build` (or use `npm run dev` for the Vite dev server)');
+
+// What is deployed, as a page knows it (/api/version, and written into the page itself):
+//   build   the client: a hash of the page, which names its bundles by their content, so it changes when the client does
+//           and only then. (CLIENT_BUILD: a build of another name, for the tests)
+//   compat  the code the client and the server both run - shared/, and the protocol. A page of another compat cannot
+//           play a game here: it would build another valley, predict other moves (client/net/moveback.js).
+//           (CLIENT_COMPAT: another, for the tests)
+const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
+//           (compat.js: shared/, the protocol, and the wire codec outside shared/)
+const COMPAT = process.env.CLIENT_COMPAT || compatOf(resolve(__dirname, '..'), PROTOCOL_VERSION);
+// The page carries what it was built as (client/net/moveback.js pageBuild): read from the page, not asked of the server
+// later, when a deploy may already have put another build behind the same address.
+const stamp = (html, { build, compat, protocol }) => {
+  const meta = `<meta name="stn-build" content="${build} ${compat} ${protocol}">`;
+  const s = html.toString('utf8');
+  const at = s.search(/<head[^>]*>/i);
+  return Buffer.from(at < 0 ? meta + s : s.replace(/<head[^>]*>/i, (h) => h + meta));
+};
+if (files.get('/index.html')) {
+  const f = files.get('/index.html');
+  f.raw = f.body; // (as built: what is kept for a server after this one to serve, builds.js)
+  f.body = stamp(f.body, { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION });
+  // (the page built compressed is the page before its stamp: this one is compressed here, the first time it is asked
+  // for - 3 KB, a few ms)
+  f.gzFile = f.brFile = '';
+  f.stamped = f.body.length >= 1024;
+}
+
+// A game whose save this build cannot read is carried on by the build that saved it (builds.js, docs/deploys.md): this
+// build's code goes into the store for the servers after it, and a save names the build its game runs on. Only signed
+// builds are started (HANDOFF_BUILD_KEY, the deploy's secret): without the key, none is kept or started, and a game a
+// later build cannot read ends at that deploy. HANDOFF_PIN=0: none of it. HANDOFF_PIN=unsigned: the store is trusted
+// to hand this server code (a development server, the tests).
+const PIN = process.env.HANDOFF_PIN ?? '1';
+const BUILD_KEY = process.env.HANDOFF_BUILD_KEY || '';
+const builds = store && PIN !== '0' && (BUILD_KEY || PIN === 'unsigned') ? new Builds({ store, root: resolve(__dirname, '..'), client: { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION }, dist: files, key: BUILD_KEY, unsigned: !BUILD_KEY && PIN === 'unsigned', log }) : null;
+lobby.builds = builds;
+if (store && PIN !== '0' && !builds) log('handoff: HANDOFF_BUILD_KEY is not set, so no build is kept for the servers after this one or started from the store: a game a later build cannot read (another map, save format or enums) will end at that deploy, its players told why. docs/deploys.md says what to set.');
+else if (builds && builds.unsigned) log('handoff: HANDOFF_PIN=unsigned - builds in the store are started here unsigned: anyone who can write to the store can run code on this server');
+const PACK_AFTER_MS = +(process.env.HANDOFF_PACK_AFTER_MS ?? 0); // (see app.listen; the tests put it off)
+
+// The games the last server handed over: whatever is waiting already (a server that started after the last one went),
+// and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
+// stopping itself: it hears its own saves too.)
+if (store) {
+  await store.sweep(HANDOFF_MAX_AGE).catch((err) => log(`handoff: could not sweep old saves (${err.message})`));
+  store.listen((code) => stopping || lobby.restore(code));
+  // (and the games a server going down is about to hand over: their valleys are built here while it still plays them)
+  store.listenComing?.((code, info) => stopping || lobby.prepare(code, info));
+  for (const code of await store.pending().catch(() => [])) lobby.restore(code);
+  setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
+}
+
 
 // ---------------------------------------------------------------- who is connecting
 // The game counts joins per address (Game.admitJoin): the client's, not a proxy's in front (netaddr.js)
@@ -209,10 +271,11 @@ const EARLY_MAX = 8; // messages kept for a socket that is still waiting for its
 function seat(ws) {
   const d = ws.getUserData();
   let reason = 0;
+  let room = null;
   if (stopping) reason = REJECT_REASON.FULL; // (going down: new sockets belong on the next server)
   else if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
   else {
-    const room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
+    room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
     const slot = room ? room.attach(ws) : -1;
     if (slot >= 0) {
       d.room = room;
@@ -220,8 +283,9 @@ function seat(ws) {
     } else reason = room || !d.code ? REJECT_REASON.FULL : lobby.wasLost(d.code) || REJECT_REASON.NO_GAME; // (wasLost: a deploy ended it, and why)
   }
   if (reason) {
-    // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway)
-    ws.send(rejectBytes(reason), true, false);
+    // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway) - in the
+    // codec of the game's own client, for one an older build carries on (or carried on, when a deploy ended it)
+    ws.send(rejectBytes(reason, room?.proto || (d.code ? lobby.lostProto(d.code) : undefined)), true, false);
     ws.end(1000, 'rejected');
     return;
   }
@@ -253,7 +317,9 @@ app.ws('/ws', {
     const ext = req.getHeader('sec-websocket-extensions');
     // (a game the last server handed over that is still in the store: brought back first, so the socket finds it. A
     // quick join with no game to go to, in a cluster: one is made first, as the other servers have to be asked)
-    const restoring = code && store && !lobby.rooms.has(code) ? lobby.restore(code).catch((err) => log(`game ${code} not restored (${err.message})`)) : !code && lobby.cluster && !lobby.quickPick() ? lobby.make({ quick: true }) : null;
+    // (one whose save this build could not read, being carried on by an older build instead: waited for too - settle)
+    const pending = code && store && (!lobby.rooms.has(code) || (lobby.rooms.get(code).from && !lobby.rooms.get(code).ready));
+    const restoring = pending ? (builds ? lobby.settle(code) : lobby.restore(code)).catch((err) => log(`game ${code} not restored (${err.message})`)) : !code && lobby.cluster && !lobby.quickPick() ? lobby.make({ quick: true }) : null;
     // Always re-read a game connection: admin role changes and revoked sessions must not come from the minute cache.
     const user = token
       ? auth.userForToken(token, true).catch((err) => {
@@ -347,12 +413,30 @@ app.get('/api/games/:code', (res, req) => {
     .then(() => aborted || answer());
 });
 
-// What is deployed: the protocol and the client's build. A client dropped by a deploy (handoff.js) asks before
-// reconnecting: another build means the page has to be loaded again first (client/main.js). The build is the page
-// itself, which names the bundles by their content: it changes when the client does, not on every commit.
-// (CLIENT_BUILD: a build of another name, for the tests)
-const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
-app.get('/api/version', (res) => json(res, 200, { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD }));
+// What runs here: { protocol, build, compat } (see CLIENT_BUILD above). A client moved by a deploy (handoff.js) asks
+// before going back in, with its game's code (?game=CODE): whether it can go back in as it is, or has to be loaded
+// again first, is client/net/moveback.js's to decide. (A page from before compat compares the build alone.)
+// A server going down answers 503: its answer is not what the page will be playing on (the edge may send the page's
+// next request to the new server, or this one, until this one is gone), so the page asks again. (The body is the same,
+// for a page from before this, which reads it whatever the status and joins, and is turned away here as before.)
+// With ?game=CODE it is what runs that game: an older build's client for a game that build carries on here (builds.js),
+// once it is known what became of the game's restore.
+const ownVersion = { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD, compat: COMPAT };
+const versionOf = (room) => (room?.pin ? { protocol: room.pin.client.protocol, build: room.pin.client.build, compat: room.pin.client.compat, pinned: true } : ownVersion);
+app.get('/api/version', (res, req) => {
+  if (stopping) return json(res, 503, { ...ownVersion, stopping: true });
+  const code = String(req.getQuery('game') || '')
+    .trim()
+    .toUpperCase();
+  const room = code ? lobby.rooms.get(code) : null;
+  if (!code || !builds || (room && room.ready && !room.closed)) return json(res, 200, versionOf(room));
+  let aborted = false;
+  res.onAborted(() => (aborted = true));
+  lobby
+    .settle(code)
+    .catch(() => null)
+    .then((r) => aborted || json(res, stopping ? 503 : 200, versionOf(r)));
+});
 
 // makes a game: { name, host, inviteOnly, maxPlayers, difficulty } -> its info, code included.
 // difficulty is ember, nightfall or blackout (shared/difficulty.js). Left off, it is Nightfall, which plays as the valley always has.
@@ -665,23 +749,102 @@ const ADMIN_PAGE_HEADERS = [
   ['Referrer-Policy', 'same-origin'],
   ['X-Content-Type-Options', 'nosniff'],
 ];
+// copy: which of the file goes ('br', 'gz' - in memory by now - or '' for the file as it is)
+function sendFile(res, url, f, copy = '') {
+  res.cork(() => {
+    res.writeHeader('Content-Type', f.type);
+    // (the admin panel is never shown inside another site's page, where a click could be steered onto its buttons, and
+    // runs no script and sends nothing anywhere but here)
+    if (url === '/admin.html') for (const [k, v] of ADMIN_PAGE_HEADERS) res.writeHeader(k, v);
+    // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
+    res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+    const body = (copy && f[copy]) || f.body;
+    if (f.gzFile || f.brFile || f.gz || f.br || f.stamped) res.writeHeader('Vary', 'Accept-Encoding');
+    if (body !== f.body) res.writeHeader('Content-Encoding', copy === 'br' ? 'br' : 'gzip');
+    res.end(body);
+  });
+}
+// The copy of a file for a browser that takes `accepts` (its Accept-Encoding): 'br' or 'gz' when there is one (written
+// by the build; the stamped page's made here, once), else ''
+function encodingFor(f, accepts) {
+  const br = /\bbr\b/.test(accepts);
+  const gz = /\bgzip\b/.test(accepts);
+  if (f.stamped && (br || gz) && !f.gz) {
+    f.gz = gzipSync(f.body, { level: 9 });
+    f.br = brotliCompressSync(f.body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: f.body.length } });
+  }
+  return br && (f.br || f.brFile) ? 'br' : gz && (f.gz || f.gzFile) ? 'gz' : '';
+}
+// (a copy the build wrote is read from disk the first time it is wanted, and kept: only the encodings browsers ask for
+// are held. One that cannot be read is not tried again - the file goes as it is)
+const readCopy = (f, k) =>
+  (f[`${k}Read`] ||= readFile(f[`${k}File`]).then(
+    (body) => (f[k] = body),
+    (err) => {
+      log(`${f[`${k}File`]} could not be read (${err.message}): sent as it is`);
+      f[`${k}File`] = '';
+    }
+  ));
+// A client file, as the browser takes it. aborted: () => whether the request is gone, for one already waited on (else
+// it is watched here, if the copy has to be read first)
+function sendStatic(res, url, f, accepts, aborted = null) {
+  const k = encodingFor(f, accepts);
+  if (!k || f[k]) return sendFile(res, url, f, k);
+  if (!aborted) {
+    let gone = false;
+    res.onAborted(() => (gone = true));
+    aborted = () => gone;
+  }
+  readCopy(f, k).then(() => aborted() || sendFile(res, url, f, f[k] ? k : ''));
+}
+// The page, and the client's files. A game an older build carries on here (builds.js) is played with that build's
+// client: the page asked for with its code (/?game=CODE: where its players' pages are, and its invite link) is that
+// build's, once it is known what became of the game's restore; and that build's files are served under their own names,
+// which no file of this build has (they are named by their content) - for those players, and for any page of an older
+// client still playing after a deploy that only changed the client.
+const NOT_FOUND = (res) => res.cork(() => res.writeStatus('404 Not Found').end('Not found'));
+// A page that cannot be served just now - this server is going down (the next one has it), or the page of the older
+// build that runs this game could not be had from the store: 503, and a page that asks again by itself a few times
+// (client/main.js forgets the count once a page is up), then says so. Never the page of another build in its place: a
+// page of this build for a game an older build runs would be sent to that game's page again, and again.
+const retryPage = (why) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Survive the Night</title></head><body style="background:#0b0d12;color:#ddd;font:16px system-ui,sans-serif;padding:2em"><p id="why">${why}</p><script>(function(){var k='stn.retry.'+location.pathname+location.search,n=0;try{n=+sessionStorage.getItem(k)||0;sessionStorage.setItem(k,n+1)}catch(e){}if(n<5)setTimeout(function(){location.reload()},1000*(n+1));else{try{sessionStorage.removeItem(k)}catch(e){}document.getElementById('why').innerHTML='${why} It still is: try again in a minute, or <a href="/" style="color:#9cf">start or join another game</a>.'}})()</script></body></html>`;
+const UNAVAILABLE = (res, why) =>
+  res.cork(() => res.writeStatus('503 Service Unavailable').writeHeader('Retry-After', '2').writeHeader('Cache-Control', 'no-store').writeHeader('Content-Type', MIME['.html']).end(retryPage(why)));
 app.get('/*', (res, req) => {
   let url = req.getUrl();
   if (url === '/stats' || url === '/stats/') url = '/stats.html';
   if (url === '/admin' || url === '/admin/') url = '/admin.html';
+  const accepts = req.getHeader('accept-encoding');
+  if (!files.has(url) && url.startsWith('/assets/')) {
+    if (!builds?.has(url)) return NOT_FOUND(res);
+    let aborted = false;
+    res.onAborted(() => (aborted = true));
+    builds.asset(url).then((body) => aborted || (body ? sendFile(res, url, { body, type: MIME[extname(url)] || 'application/octet-stream' }) : NOT_FOUND(res)));
+    return;
+  }
   if (url === '/' || !files.has(url)) url = files.has(url) ? url : '/index.html';
   const f = files.get(url);
   if (!f) {
     res.writeStatus('404 Not Found').end('Not found - build the client with `npm run build`');
     return;
   }
-  res.writeHeader('Content-Type', f.type);
-  // (the admin panel is never shown inside another site's page, where a click could be steered onto its buttons, and
-  // runs no script and sends nothing anywhere but here)
-  if (url === '/admin.html') for (const [k, v] of ADMIN_PAGE_HEADERS) res.writeHeader(k, v);
-  // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
-  res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
-  res.end(f.body);
+  // (a server going down: its pages are the next server's to give - as /api/version, it answers 503 for them)
+  if (stopping && f.type === MIME['.html']) return UNAVAILABLE(res, 'The game is being updated. One moment...');
+  const code = url === '/index.html' && builds ? String(req.getQuery('game') || '').trim().toUpperCase() : '';
+  if (!code) return sendStatic(res, url, f, accepts);
+  let aborted = false;
+  res.onAborted(() => (aborted = true));
+  lobby
+    .settle(code)
+    .catch(() => null)
+    .then(async (room) => {
+      if (!room?.pin) return aborted || sendStatic(res, url, f, accepts, () => aborted);
+      const page = await builds.asset('/index.html', room.pin.id);
+      if (aborted) return;
+      if (page) sendFile(res, url, { body: stamp(page, room.pin.client), type: MIME['.html'] });
+      else UNAVAILABLE(res, "This game is played on an older version of the game, whose page could not be loaded just now. Trying again...");
+    });
 });
 
 app.listen(PORT, (token) => {
@@ -689,6 +852,11 @@ app.listen(PORT, (token) => {
     console.error(`[server] failed to listen on port ${PORT}`);
     process.exit(1);
   }
+  // (this build into the store for the servers after it - only where it can be used (builds: a key, or
+  // HANDOFF_PIN=unsigned), and not on the way up: once it listens, off the event loop but for a few ms at a time (about
+  // 75 ms in all), so it is ready long before this server can be told to stop. Its games' saves name it, so a server
+  // told to stop before it is done waits for it: Lobby.handoffAll)
+  if (builds) setTimeout(() => stopping || builds.pack(), PACK_AFTER_MS).unref();
   console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
   // (only once it can be reached: then the proxy may send it players)
   if (cluster) {
@@ -752,3 +920,7 @@ async function shutdown(signal, exitCode = 0) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// A Windows process cannot be sent SIGTERM (it is killed outright), so a process manager there - pm2 - asks a server
+// with an IPC channel to stop with the message 'shutdown' instead; the tests stop a server that way on Windows too.
+// (Only a parent that spawned this server with an IPC channel can send it.)
+process.on('message', (m) => (m === 'shutdown' || m?.t === 'shutdown') && shutdown('shutdown message'));

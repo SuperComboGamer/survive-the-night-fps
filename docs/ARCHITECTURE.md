@@ -233,7 +233,8 @@ JSON file (`server/stats.js`).
   sessions, `player_stats`, friends, messages. 002: the match tables. 003: the `analytics_*` functions. 006: the
   accounts' achievements. 007: XP, perks and respecs on `player_stats` (see Experience, levels and perks below). 008:
   `game_handoff` and `matches.continues` (Deploys below). 009: the account admin flag. 010: the accounts' bestiaries
-  (`user_bestiary`, The bestiary below). A migration has to be additive: on a deploy the old server
+  (`user_bestiary`, The bestiary below). 013: the admin audit log. 014: `handoff_build` and `handoff_asset`, the builds a
+  game the next build cannot read is carried on by (Deploys below). A migration has to be additive: on a deploy the old server
   is still running on the schema while the new one migrates it.
 - **Accounts** (`server/auth.js`): email + a name to play under (3-16 of letters, digits, `._-`, unique whatever
   the case) + a password (scrypt, node's crypto). Signing in is a random 32-byte token in an `HttpOnly`,
@@ -435,31 +436,64 @@ does (`perkMods(mask)`: one frozen object per mask; no ordinary stat past `PERK_
 
 ## Deploys: handing the games to the next server
 
-A deploy does not end the games (`server/handoff.js`, `server/gamestate.js`). Railway starts the new deployment,
-sends new connections to it once its health check passes, then sends the old one SIGTERM (`drainingSeconds` in
-`railway.json` is how long it has before SIGKILL). On that signal the old server saves every game with players in
-it, and the new one carries each on under the same code; its players are away for a second or two. The signal goes to
-npm (`npm start`), which forwards it to the `sh -c` running the script: the script `exec`s node so that shell is
-node, else the shell dies of it and the container stops with node never told (`scripts/test-start-signal.js`).
+A deploy does not end the games, and reloads a page only when it cannot play on (`server/handoff.js`,
+`server/gamestate.js`, `server/builds.js`, `client/net/moveback.js`; what it needs from the host, what it costs a player
+and what can still go wrong: [docs/deploys.md](deploys.md)). The host starts the new deployment, sends new connections to
+it once its health check passes, then sends the old one SIGTERM (`drainingSeconds` in `railway.json` is how long it has
+before SIGKILL). On that signal the old server saves every game with players in it, and the new one carries each on
+under the same code; its players are away for a few tens of milliseconds. The signal goes to npm (`npm start`), which
+forwards it to the `sh -c` running the script: the script `exec`s node so that shell is node, else the shell dies of it
+and the container stops with node never told (`scripts/test-start-signal.js`). On Windows, where there is no SIGTERM, a
+server spawned with an IPC channel stops the same way on the message `'shutdown'` (pm2's; the tests use it).
 
-- **The old server** (`shutdown` in `index.js` -> `Lobby.handoffAll` -> `Room.handoff`): new sockets are turned away;
-  each room's worker is sent `save`, stops its tick loop, ends the match as `handoff` and posts the game saved
-  (`envelope(game)`: gzipped JSON). The network thread puts it into the store with the room's meta (name, host,
-  invite only, seats, when it was made, the match id) and only then closes every socket of the room with
-  `MOVED_CODE` (4002) - a client that came back before the save was in would find nothing. A room that does not
-  answer within 8 s, or whose save fails, ends as before (`interrupted`). All of it within a 20 s hard exit.
+- **The old server** (`shutdown` in `index.js` -> `Lobby.handoffAll` -> `Room.handoff`): new sockets are turned away and
+  `/api/version` answers 503. It waits for restores under way (a deploy on the heels of a deploy), then announces the
+  games it is about to hand over to the next server (`Lobby.announce`, the store's `announceAndWait`: seed, act, the
+  valley's shape) and waits up to `HANDOFF_PREPARE_MS` (3000) for it to say it has built each valley - the games play on
+  meanwhile. Then each room's worker is sent `save`, stops its tick loop, ends the match as `handoff` and posts the game
+  saved (`envelope(game)`: gzipped JSON). The network thread puts it into the store with the room's meta (name, host,
+  invite only, seats, when it was made, the match id, the build it runs on) and only then closes every socket of the
+  room with `MOVED_CODE` (4002) - a client that came back before the save was in would find nothing. A room whose game
+  it was still bringing back (claimed, not up yet) puts that save back as it came. A room that does not answer within
+  8 s, or whose save fails, ends as before (`interrupted`). All of it within a 20 s hard exit.
 - **The store.** Postgres in production (`PgStore`: a row per game in `game_handoff`, then `pg_notify('game_handoff',
-  code)`); files without it (`FileStore`: `HANDOFF_DIR`, which `npm run dev` sets so a restart on a change keeps
-  the games). A save is only ever claimed (`DELETE ... RETURNING` / a rename): one server gets it. Saves nobody
-  claims are swept after `HANDOFF_MAX_AGE_SECONDS`.
-- **The new server** restores a game (`Lobby.restore`: claim, then a `Room` under the same code with the save in
-  its `workerData`) as soon as the store says one is there (`listen`), for any already waiting when it starts, and
-  for a socket or an invite card asking for a code it does not have yet (the socket's seat waits for it, as it does
-  for a session: index.js `open`; the card's answer waits). The worker
-  makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes. The lobby
-  remembers that code for half an hour with why (`Lobby.ended`, `wasLost`), and whoever comes for it is turned away
-  with `REJECT_REASON.ENDED_MAP` (the update makes another map of its seed) or `ENDED_UPDATE` (anything else)
-  instead of `NO_GAME`: the client says so once and stops asking (`client/net/comeback.js`).
+  code)`; the announcements are notifications on `game_handoff_coming` / `game_handoff_ready`); files without it
+  (`FileStore`: `HANDOFF_DIR`, which `npm run dev` sets so a restart on a change keeps the games; `CODE.coming` /
+  `CODE.ready` beside the saves). A save is only ever claimed (`DELETE ... RETURNING` / a rename): one server gets it.
+  Saves nobody claims are swept after `HANDOFF_MAX_AGE_SECONDS`. The builds (below) are kept there too: `handoff_build`
+  and `handoff_asset` (014), or the `-builds` / `-assets` folders beside the saves.
+- **The new server** builds the valley of each game announced in the worker that will run it (`Lobby.prepare`,
+  room-worker.js `prepare`: `prepareWorld`, which `Game.setWorld` takes instead of generating it) and tells the store it is
+  ready; nothing is listed or joinable until the save comes, and a worker no save comes for goes after 30 s. It restores a
+  game (`Lobby.restore`: claim, then a `Room` under the same code, given that worker or a new one with the save in its
+  `workerData`) as soon as the store says one is there (`listen`), for any already waiting when it starts, and for a
+  socket, an invite card, a page or `/api/version` asking for a code it does not have yet (they wait for it, as a socket
+  waits for a session: index.js `open`, `Lobby.settle`). The worker makes its `Game` from the save; a save it cannot use
+  is reported (`restoreFailed`) and the room closes. Then, if the save names a build and this server may start it, the
+  game is started again by that build (`Lobby.afterFailed`, below); failing that, the lobby remembers that code for half an
+  hour with why (`Lobby.ended`, `wasLost`), and whoever comes for it is turned away with `REJECT_REASON.ENDED_MAP` (the
+  update makes another map of its seed) or `ENDED_UPDATE` (anything else) instead of `NO_GAME`: the client says so once
+  and stops asking (`client/net/comeback.js`).
+- **A game carried on by the build that saved it** (`server/builds.js`). Every server packs its own code (`server/`,
+  `shared/`) and its client (`dist/`, each file once by its content), signed with `HANDOFF_BUILD_KEY`, and puts it in
+  the store - only when pinning can run (the key, or `HANDOFF_PIN=unsigned`), and not on the way up: once it listens
+  (about 75 ms, off the event loop but for a few ms at a time); a server told to stop before it is done waits for it
+  (`Lobby.handoffAll`, while the next server builds the valleys); a save names the build its game runs on
+  (`meta.build`). A server whose code cannot read a save
+  starts that game's worker from the build in the store, unpacked in a folder of the process's own (`mkdtemp`, mode
+  0700) in its temp folder (`Room` with `pin`): the old simulation, the old map, inside the new server, speaking the same
+  `WORKER_API` to the network thread. It is only started when its signature (an HMAC of its whole SHA-256, made with
+  this deploy's key; or `HANDOFF_PIN=unsigned`) holds, it is what its name says (checked on every fetch, and the copy on
+  disk - no links, nothing beside it - every time a worker is started from it), is of this `WORKER_API`, of no lower
+  `SECURITY_EPOCH`, and imports no package at another version than is installed here. What the network thread writes to
+  its players itself (ROOM, BOARD, REJECT, close codes) is in that build's codec (`Room.proto`, `protocolOf`: its
+  `shared/protocol.js`, loaded from memory). Its players keep its client: the page for its code and
+  `/api/version?game=CODE` are that build's (a page that cannot be had from the store is a 503, never this build's
+  page), and its files are served by their names. A build holds only the `.js` files under `server/` and `shared/`, nothing of a
+  dotted name. Its own build is marked as in use twice a day and put back at the handover if swept; no build a waiting
+  save names is swept. It is not in
+  the list or quick joins, is handed on naming the same build at the next deploy, and closes when its run is over or at
+  the first dawn after `HANDOFF_PIN_MAX_HOURS` (`Room.pinCheck`).
 - **What is saved** (`saveGame` / `loadGame`): the clock, phase, waves and the boss, the car's supplies, the
   schematics, who left with what kit and who left dead, the trees felled and what is used up of the trees and
   wrecks, the loot points' timers, the registry, the players, what was built (colliders and nav put back), the
@@ -487,42 +521,60 @@ node, else the shell dies of it and the container stops with node never told (`s
 - **Nobody is hurt while they cannot be playing** (`Game.safe`, `arrived`, `frozen`; `test-handoff-safe`). A JOIN
   gives a held player their body back at once, but their browser then builds the valley and its shaders before it
   draws a frame (after a deploy's reload, up to half a minute). So a player who is back stays as safe as a held one
-  (`p.arriving`) until their client has sent commands in a second's worth of ticks, or does something in the world,
-  or `ARRIVE_SECONDS` (45) have passed - after an ordinary drop never longer than what was left of the grace they
-  had, so coming back is no more of a shelter than staying away was. And a game brought over does not run at all -
-  no clock, nothing moves; snapshots still go out - until one of its players is playing again or somebody new
-  joins, or `HANDOFF_FREEZE_SECONDS` (45, on the wall's clock) have passed (`Game.thawAt`). A deploy on top of a
-  deploy starts both again: every player is held anew, the game stands still again.
-- **Would the save mean the same here?** (`checkEnvelope`, the `worldHash` check in the `Game` constructor.)
+  (`p.arriving`) until their client has sent commands in a quarter of a second's worth of ticks (`ARRIVE_TICKS`; a page
+  still building its valley or shaders sends none: the client finishes its shader warm-up before the first command of a
+  game it joins), or does something in the world, or `ARRIVE_SECONDS` (45) have passed - after an ordinary drop never
+  longer than what was left of the grace they had, so coming back is no more of a shelter than staying away was. And a
+  game brought over does not run at all - no clock, nothing moves; snapshots still go out - until one of its players is
+  playing again or somebody new joins, or `HANDOFF_FREEZE_SECONDS` (45, on the wall's clock) have passed
+  (`Game.thawAt`; the log says how long it stood still). A deploy on top of a deploy starts both again: every player is
+  held anew, the game stands still again.
+- **Would the save mean the same here?** (`checkEnvelope`, the `sameWorld` check in the `Game` constructor.)
   `STATE_VERSION` (handoff.js) must match: bump it when a saved field is renamed or removed or changes meaning or
   units, not when one is added. Every name -> number pair of the enums the save was made with (`ITEM`, `ZTYPE`,
   `STRUCT`, ...) must hold: an entry appended since is fine, one renumbered is not. And the valley must be the one
-  this build makes of the seed: positions and indices point into it. `worldPrint` takes two fingerprints of a
+  this build makes of the seed: positions and indices point into it. `worldPrint` takes three fingerprints of a
   world. `shape` is what a save points into: the colliders, the loot, container, supply and spawn spots, the
   places. `hash` is that and the zone each spot is filed under, which a save does not depend on (a container is
-  saved with its own zone, a hidden schematic with the place it is rumoured in). A save carries both
-  (`worldShape`, `worldHash`) and is checked by its shape (`sameWorld`); one from before saves carried a shape has
-  only the hash to go by, and builds from before read only the hash. So a build that only files a spot under
-  another place carries every game over; one that moves anything does not.
-- **Will this change end running games?** The shape of the maps the tests build anyway (four islands, six mainlands)
-  is on record in `scripts/worldprints.json`. `test-world` and `test-mainland` fail when this tree makes another
-  map of one of those seeds, saying that deploying it ends the games being played on that map;
-  `node scripts/worldprint.js --update` records the new maps once that is meant, and the pull request's Risk section
-  says so (`.claude/skills/create-pr/SKILL.md`).
-- **The client** (`connection.js`, `Game.onMoving`, `moveBack` in `main.js`): a socket closed with `MOVED_CODE`
-  keeps the game on screen, input off and the pointer kept, under "Server updating" (`ui.setConnectionStatus`), and
-  joins the same code again at once, then every 0.5-2 s for 45 s (`join(..., { resume: true })` keeps the places
-  found, the waypoint and the run being recorded, and plays no intro). First it asks `GET /api/version`: when the
-  client build (a hash of `dist/index.html`, which names the bundles by content) or the protocol differs from what
-  the page was loaded from, it reloads, and the reloaded page goes back in as a reopened one does (`stn.playing`).
-  `index.html` is served `no-cache` so the reload gets the new build.
+  saved with its own zone, a hidden schematic with the place it is rumoured in). `ground` is the lie of the land (the
+  terrain's height on a 33 x 33 grid). A save carries all three (`worldShape`, `worldHash`, `worldGround`) and is checked
+  by its shape and its ground (`sameWorld`); one from before saves carried a shape has only the hash to go by, one from
+  before they carried the ground is not checked against it. A save that fails any of it is carried on by its build.
+- **Will this change end running games?** The shape and the ground of the maps the tests build anyway (four islands, six
+  mainlands) are on record in `scripts/worldprints.json` and `scripts/groundprints.json`. `test-world` and
+  `test-mainland` fail when this tree makes another map of one of those seeds, saying that the games being played on
+  that map will be carried on by the build before it; `node scripts/worldprint.js --update` records the new maps once
+  that is meant, and the pull request's Risk section says so (`.claude/skills/create-pr/SKILL.md`).
+- **The client** (`connection.js`, `Game.onMoving`, `client/net/moveback.js`, `moveBack` in `main.js`): a socket closed
+  with `MOVED_CODE` keeps the game on screen, input off and the pointer kept (a "Server updating" banner only after
+  400 ms: `ui.setConnectionStatus`), and goes back to the same code at once. First it asks `GET /api/version?game=CODE`
+  (a stopping server's 503 is asked again) and compares it with what the page was built as - the server writes
+  `<meta name="stn-build" content="build compat protocol">` into the page it serves (`pageBuild`). The same protocol and
+  compat (`server/compat.js`: a hash of `shared/`, the protocol and the wire codec outside it - `server/snapshot.js`,
+  `client/net/decode.js`, `client/net/connection.js`): it joins in place (`join(..., { resume: true })`
+  keeps the world, the places found, the waypoint and the run being recorded, and plays no intro); a client build that
+  differs alone is loaded when the player leaves the game (they are told). Another compat or protocol: the page reloads
+  (`reloadInto`), and the reloaded page goes back in as a reopened one does (`stn.playing`, `comeBack` with `moved`).
+  Joining a game in the page asks the same first (`canJoinHere`, `joinVerdict`): a game run by other code - or a newer
+  client of the same compat - is joined from its own page; a page is loaded again for one game at most 3 times in two
+  minutes (`mayReload`), then says it could not be. A stopping server answers its pages with 503 and a page that asks
+  again by itself.
+  `index.html` is served `no-cache` so a reload gets the build that runs the game; the client's files go out compressed
+  as the build wrote them (`vite.config.js` precompress: `name.br` and `name.gz` beside each script, style and page;
+  brotli to a browser that takes it, else gzip, else the file as it is), read from disk the first time each is asked
+  for - nothing is compressed as the server starts (the stamped page alone, 3 KB, at its first request).
 - **Tests:** `test-handoff-world` (a save of a build that filed a container elsewhere is restored, one of other
   ground is refused; a real server and the client's own `Connection` and `comeBack`: told once, and why),
   `test-handoff-safe` (above), `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
   whole, and a field that came back different and is not on its `TRANSIENT` list fails it - a field added and not
   saved fails `npm test` instead of resetting on every deploy), `test-handoff` (two server processes and a third
-  that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
-  Chrome behind a stand-in for Railway's edge).
+  that cannot read the save), `test-handoff-store` (both stores, `continues`, the builds and the announcements),
+  `test-handoff-prepare` (valleys built ahead: back in tens of ms), `test-deploys` (moveback.js's rules, and deploys one
+  after another through a stand-in edge: server only, client only, shared code, back to back, mid-restore),
+  `test-handoff-pin` (carried on by the build that saved it: signing, security epoch, packages, the copy on disk, the cap,
+  the page and files, deploys after), `test-static-start` (the compressed files served as built; no build packed with
+  pinning off, nor on the way up with it on; packed before the saves of a server told to stop at once), `npm run test:e2e:handoff` (headless Chrome behind a stand-in for the edge), and
+  `node scripts/deploy-gap.js` measures the gap.
 
 ## Several game servers: the cluster and the proxy
 

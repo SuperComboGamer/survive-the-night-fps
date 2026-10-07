@@ -14,7 +14,9 @@
 // added needs no bump, as long as loading a save without it leaves the default (every entity is restored by building
 // a fresh one and copying what was saved over it). A save whose version differs is dropped: that game ends as before.
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fsp from 'node:fs/promises';
 import { join } from 'node:path';
 import { ITEM, ZTYPE, STRUCT, CONT, ZONE, AMMO, PROJ, AREA, KILLER } from '../shared/defs.js';
 import { PHASE } from '../shared/constants.js';
@@ -71,9 +73,13 @@ export function enumMismatch(saved) {
 //     place (as when the stalled train's toolbox stopped counting as Whitlock Depot) makes the same ground, so a game
 //     is carried over it. This is the fingerprint builds from before `shape` wrote (envelope.worldHash) and the only
 //     one they read, so it is still written, and still what a save without a shape is checked against.
+//   ground: the lie of the land - the terrain's height on a grid of 33 x 33 points across the map, to the centimetre. A
+//     build that only raised or lowered the ground would make the same shape, and a save's positions would be in the
+//     hills or over them. Saves carry it from this build on (worldGround); one from before is not checked against it.
 export function worldPrint(world) {
   let hash = 0x811c9dc5;
   let shape = 0x811c9dc5;
+  let ground = 0x811c9dc5;
   // label: a spot's zone, which only `hash` takes in
   const mix = (v, label = false) => {
     v = Math.round(v * 100) | 0;
@@ -104,7 +110,14 @@ export function worldPrint(world) {
   }
   for (const z of world.zones) for (const v of [z.id, z.x, z.z]) mix(v);
   for (const v of [world.mine ? 1 : 0, world.rail ? world.rail.main.n : 0, world.fair ? 1 : 0]) mix(v);
-  return { hash: (hash >>> 0).toString(16), shape: (shape >>> 0).toString(16) };
+  const half = world.half || 0;
+  for (let j = 0; j <= 32; j++) {
+    for (let i = 0; i <= 32; i++) {
+      const v = Math.round(world.heightAt(-half + (i * 2 * half) / 32, -half + (j * 2 * half) / 32) * 100) | 0;
+      for (let k = 0; k < 4; k++) ground = Math.imul(ground ^ ((v >>> (k * 8)) & 0xff), 0x01000193);
+    }
+  }
+  return { hash: (hash >>> 0).toString(16), shape: (shape >>> 0).toString(16), ground: (ground >>> 0).toString(16) };
 }
 export const worldHash = (world) => worldPrint(world).hash;
 
@@ -119,11 +132,12 @@ export class HandoffError extends Error {
 }
 // Whether a save's valley is the one this build made of its seed (prints: worldPrint of it). A save from before
 // `worldShape` has only the stricter fingerprint to go by.
-export const sameWorld = (env, prints) => (typeof env.worldShape === 'string' ? env.worldShape === prints.shape : env.worldHash === prints.hash);
+// (a save's ground is checked when it carries one: builds from before it did not write it)
+export const sameWorld = (env, prints) => (typeof env.worldShape === 'string' ? env.worldShape === prints.shape : env.worldHash === prints.hash) && (typeof env.worldGround !== 'string' || env.worldGround === prints.ground);
 
 // The envelope round a game's save: what is checked before any of it is believed (checkEnvelope)
 export function envelope(game) {
-  return { format: FORMAT, stateVersion: STATE_VERSION, protocol: PROTOCOL_VERSION, build: BUILD, savedAt: Date.now(), enums: enums(), worldHash: game.worldHash, worldShape: game.worldShape, game: game.save() };
+  return { format: FORMAT, stateVersion: STATE_VERSION, protocol: PROTOCOL_VERSION, build: BUILD, savedAt: Date.now(), enums: enums(), worldHash: game.worldHash, worldShape: game.worldShape, worldGround: game.worldGround, game: game.save() };
 }
 export function checkEnvelope(env) {
   if (!env || env.format !== FORMAT) throw new HandoffError(`envelope format ${env?.format} (this build reads ${FORMAT})`);
@@ -138,18 +152,108 @@ export function checkEnvelope(env) {
 //   claim(code, me)        -> { meta, body, savedAt }, gone from the store, or null (none, taken already, or saved for
 //                             another server than `me`, behind the proxy: PgStore only)
 //   pending()              -> the codes waiting
-//   listen(fn)             fn(code) whenever a save is put (by any server, this one too)
+//   listen(fn)             fn(code) whenever a save is put (by any server, this one too). -> a promise, done once it
+//                          is listening
 //   sweep(maxAgeS)         drops saves older than that: nobody came for them
 //   close()
+// ...and the word between the two servers before the saves are made, so the next one can build each game's valley
+// while the last one is still playing it (Lobby.announce / prepare):
+//   announceAndWait(list, ms)  list: [{ code, info: { seed, act, shape, target } }], the games about to be saved ->
+//                          the Set of codes the next server said it is ready for, within ms (counted from the call:
+//                          setting up to hear the answers is in it), or as soon as it has answered for every one
+//   listenComing(fn)       fn(code, info) for each game a server going down announces (that server hears its own too).
+//                          -> a promise, done once it is listening
+//   ready(code, ok = true) this server has built the valley of `code` and is waiting for its save - or (ok false) it
+//                          will not have it built (another valley of that seed here): the server going down need not wait
+// ...and the builds that games are carried on by when the next build cannot read their save (builds.js):
+//   putBuild(id, body, sig, assets)  the build `id` (gzipped), its signature, and its client's files (Map hash -> bytes):
+//                          kept (written over whatever is there under that name), and marked as in use
+//   getBuild(id)           -> { body, sig }, or null; marks it (and its files) as in use
+//   touchBuild(id)         marks it as in use -> whether it is there
+//   getAsset(hash)         -> a client file, or null
+//   sweepBuilds(maxAgeS)   drops the builds nobody has used in that long - never one a save waiting in the store names -
+//                          and the files no build kept names
+const COMING_RE = /^([A-Z2-9]+)\.coming$/;
+const BUILD_FILE_RE = /^([0-9a-f]{24})\.json$/;
+const HASH_RE = /^[0-9a-f]{64}$/;
+// (a file's, read through a small buffer: a server checking the client files it keeps does not hold them all at once)
+const fileHash = (file) =>
+  new Promise((done, fail) => {
+    const h = createHash('sha256');
+    createReadStream(file).on('error', fail).on('data', (d) => h.update(d)).on('end', () => done(h.digest('hex')));
+  });
 
 // Files in a folder: CODE.json, written as CODE.json.tmp and renamed (there whole or not at all). Claimed by renaming
-// it to a name of this process's: of two servers claiming at once, one rename fails.
+// it to a name of this process's: of two servers claiming at once, one rename fails. A game announced is CODE.coming,
+// and the next server's answer CODE.ready.
 export class FileStore {
-  constructor(dir, { pollMs = 500 } = {}) {
+  constructor(dir, { pollMs = 500, comingMs = 100 } = {}) {
     this.dir = dir;
     this.pollMs = pollMs;
+    this.comingMs = comingMs;
     this.timer = null;
+    this.comingTimer = null;
     mkdirSync(dir, { recursive: true });
+  }
+  async announceAndWait(list, ms) {
+    const file = (code, ext) => join(this.dir, `${code}.${ext}`);
+    for (const { code, info } of list) {
+      try {
+        unlinkSync(file(code, 'ready'));
+      } catch {}
+      writeFileSync(file(code, 'coming.tmp'), JSON.stringify(info));
+      renameSync(file(code, 'coming.tmp'), file(code, 'coming'));
+    }
+    const got = new Set();
+    const answered = new Set();
+    for (const until = Date.now() + ms; answered.size < list.length && Date.now() < until; await new Promise((r) => setTimeout(r, 25))) {
+      for (const { code } of list) {
+        if (answered.has(code)) continue;
+        let said;
+        try {
+          said = readFileSync(file(code, 'ready'), 'utf8');
+        } catch {
+          continue;
+        }
+        answered.add(code);
+        if (said !== '0') got.add(code);
+      }
+    }
+    for (const { code } of list) {
+      for (const ext of ['coming', 'ready']) {
+        try {
+          unlinkSync(file(code, ext));
+        } catch {}
+      }
+    }
+    return got;
+  }
+  async listenComing(fn) {
+    const seen = new Map(); // code -> the announcement's mtime: each heard once
+    this.comingTimer = setInterval(() => {
+      let names;
+      try {
+        names = readdirSync(this.dir);
+      } catch {
+        return;
+      }
+      for (const name of names) {
+        const code = COMING_RE.exec(name)?.[1];
+        if (!code) continue;
+        try {
+          const full = join(this.dir, name);
+          const t = statSync(full).mtimeMs;
+          if (seen.get(code) === t) continue;
+          seen.set(code, t);
+          fn(code, JSON.parse(readFileSync(full, 'utf8')));
+        } catch {}
+      }
+      if (seen.size > 1000) seen.clear();
+    }, this.comingMs);
+    this.comingTimer.unref?.();
+  }
+  async ready(code, ok = true) {
+    writeFileSync(join(this.dir, `${code}.ready`), ok ? '1' : '0');
   }
   async put(code, meta, body) {
     const file = join(this.dir, `${code}.json`);
@@ -167,9 +271,12 @@ export class FileStore {
       const o = JSON.parse(readFileSync(mine, 'utf8'));
       return { meta: o.meta, body: Buffer.from(o.body, 'base64'), savedAt: o.savedAt };
     } finally {
-      try {
-        unlinkSync(mine);
-      } catch {}
+      // (and the word about it between the two servers, which a server that gave up waiting leaves behind)
+      for (const f of [mine, join(this.dir, `${code}.ready`), join(this.dir, `${code}.coming`)]) {
+        try {
+          unlinkSync(f);
+        } catch {}
+      }
     }
   }
   async pending() {
@@ -177,7 +284,7 @@ export class FileStore {
       .map((f) => /^([A-Z2-9]+)\.json$/.exec(f)?.[1])
       .filter(Boolean);
   }
-  listen(fn) {
+  async listen(fn) {
     let known = new Set();
     this.timer = setInterval(async () => {
       const now = new Set(await this.pending());
@@ -202,6 +309,118 @@ export class FileStore {
   }
   async close() {
     clearInterval(this.timer);
+    clearInterval(this.comingTimer);
+  }
+  // (the builds and their files: in folders beside the saves', which sweep leaves alone)
+  get buildDir() {
+    const dir = `${this.dir}-builds`;
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  get assetDir() {
+    const dir = `${this.dir}-assets`;
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  // (read and written off the event loop: a running server puts its build here - 24 MB of client files the first time)
+  async putBuild(id, body, sig, assets = new Map()) {
+    const assetDir = this.assetDir;
+    for (const [hash, buf] of assets) {
+      if (!HASH_RE.test(hash)) continue;
+      const file = join(assetDir, hash);
+      try {
+        if ((await fileHash(file)) === hash) {
+          touch(file);
+          continue;
+        }
+      } catch {}
+      await fsp.writeFile(`${file}.${process.pid}.tmp`, buf);
+      await fsp.rename(`${file}.${process.pid}.tmp`, file);
+    }
+    const file = join(this.buildDir, `${id}.json`);
+    await fsp.writeFile(`${file}.${process.pid}.tmp`, JSON.stringify({ sig: sig || '', assets: [...assets.keys()], body: Buffer.from(body).toString('base64') }));
+    await fsp.rename(`${file}.${process.pid}.tmp`, file);
+  }
+  readBuild(id) {
+    try {
+      return JSON.parse(readFileSync(join(this.buildDir, `${id}.json`), 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+  async getBuild(id) {
+    const o = this.readBuild(id);
+    if (!o) return null;
+    await this.touchBuild(id);
+    return { body: Buffer.from(o.body, 'base64'), sig: o.sig || '' };
+  }
+  async touchBuild(id) {
+    const o = this.readBuild(id);
+    if (!o) return false;
+    touch(join(this.buildDir, `${id}.json`));
+    for (const hash of o.assets || []) if (HASH_RE.test(hash)) touch(join(this.assetDir, hash));
+    return true;
+  }
+  async getAsset(hash) {
+    if (!HASH_RE.test(hash)) return null;
+    try {
+      return readFileSync(join(this.assetDir, hash));
+    } catch {
+      return null;
+    }
+  }
+  async sweepBuilds(maxAgeS) {
+    const cut = Date.now() - maxAgeS * 1000;
+    let n = 0;
+    const named = new Set();
+    // (the builds the saves waiting here name: kept, however long since anybody used them)
+    const saved = new Set();
+    for (const code of await this.pending()) {
+      const build = await savedBuild(join(this.dir, `${code}.json`));
+      if (build) saved.add(build);
+    }
+    for (const f of readdirSync(this.buildDir)) {
+      const full = join(this.buildDir, f);
+      try {
+        if (statSync(full).mtimeMs < cut && !saved.has(BUILD_FILE_RE.exec(f)?.[1])) {
+          unlinkSync(full);
+          if (BUILD_FILE_RE.test(f)) n++;
+        } else for (const hash of this.readBuild(BUILD_FILE_RE.exec(f)?.[1])?.assets || []) named.add(hash);
+      } catch {}
+    }
+    for (const f of readdirSync(this.assetDir)) {
+      const full = join(this.assetDir, f);
+      try {
+        if (!named.has(f) && statSync(full).mtimeMs < cut) unlinkSync(full);
+      } catch {}
+    }
+    return n;
+  }
+}
+const touch = (file) => {
+  try {
+    const now = new Date();
+    utimesSync(file, now, now);
+  } catch {}
+};
+// The build a save in a file names ('' for none), read off the event loop and only as far as it needs: put writes
+// {"meta":{...},"savedAt":...,"body":"..."}, so the room's meta - its build among it - is the first few hundred bytes
+// (a quote inside a string is written \", so the key cannot be faked by a name). A longer meta is read whole.
+async function savedBuild(file) {
+  let fh;
+  try {
+    fh = await fsp.open(file, 'r');
+    const head = Buffer.alloc(16 * 1024);
+    const { bytesRead } = await fh.read(head, 0, head.length, 0);
+    const text = head.subarray(0, bytesRead).toString('utf8');
+    const end = text.indexOf(',"savedAt":');
+    if (end >= 0) return /"build":"([0-9a-f]{24})"/.exec(text.slice(0, end))?.[1] || '';
+    const build = JSON.parse(await fsp.readFile(file, 'utf8')).meta?.build;
+    return typeof build === 'string' ? build : '';
+  } catch {
+    return '';
+  } finally {
+    await fh?.close().catch(() => {});
   }
 }
 
@@ -240,16 +459,101 @@ export class PgStore {
     return (await this.db.query(`SELECT code FROM game_handoff`)).rows.map((r) => r.code);
   }
   listen(fn) {
-    if (!this.db.listen) return;
-    this.db
+    if (!this.db.listen) return Promise.resolve();
+    return this.db
       .listen('game_handoff', fn)
-      .then((stop) => (this.unlisten = stop))
+      .then((stop) => void (this.unlisten = stop))
       .catch((err) => this.log(`handoff: cannot listen for saves (${err.message}): they are restored when a player asks for one`));
   }
   async sweep(maxAgeS) {
     return (await this.db.query(`DELETE FROM game_handoff WHERE saved_at < now() - make_interval(secs => $1)`, [maxAgeS])).rowCount;
   }
+  // (the word before the saves: notifications only, nothing stored - game_handoff_coming carries { code, ...info },
+  // game_handoff_ready the code)
+  // (the answers: game_handoff_ready carries the code, or "CODE no" for one the next server will not have built. The
+  // time counts from the call, the listening set up included - a slow database does not stretch it)
+  async announceAndWait(list, ms) {
+    if (!this.db.listen) return new Set();
+    const want = new Set(list.map((x) => x.code));
+    const got = new Set();
+    const answered = new Set();
+    let wake = null;
+    let timer = null;
+    const over = new Promise((done) => (timer = setTimeout(done, ms)));
+    const listening = this.db.listen('game_handoff_ready', (payload) => {
+      const [code, no] = String(payload).split(' ');
+      if (!want.has(code) || answered.has(code)) return;
+      answered.add(code);
+      if (no !== 'no') got.add(code);
+      if (answered.size >= want.size) wake?.();
+    });
+    try {
+      const stop = await Promise.race([listening, over.then(() => null)]);
+      if (!stop) return got; // (not listening yet when the time was up: nothing heard)
+      for (const { code, info } of list) await Promise.race([this.db.query(`SELECT pg_notify('game_handoff_coming', $1)`, [JSON.stringify({ ...info, code })]), over]);
+      if (answered.size < want.size) await Promise.race([new Promise((done) => (wake = done)), over]);
+      return got;
+    } finally {
+      clearTimeout(timer);
+      listening.then((stop) => stop?.()).catch(() => {});
+    }
+  }
+  listenComing(fn) {
+    if (!this.db.listen) return Promise.resolve();
+    return this.db
+      .listen('game_handoff_coming', (payload) => {
+        try {
+          const m = JSON.parse(payload);
+          if (typeof m?.code === 'string') fn(m.code, m);
+        } catch {}
+      })
+      .then((stop) => void (this.unlistenComing = stop))
+      .catch((err) => this.log(`handoff: cannot listen for games coming (${err.message}): their valleys are built when their saves come`));
+  }
+  async ready(code, ok = true) {
+    await this.db.query(`SELECT pg_notify('game_handoff_ready', $1)`, [ok ? code : `${code} no`]);
+  }
   async close() {
     await this.unlisten?.();
+    await this.unlistenComing?.();
+  }
+  // (the builds: handoff_build and handoff_asset, migration 014. What is there under a name is written over: a row put
+  // there by anyone else is replaced by this server's own, which it knows to be right)
+  async putBuild(id, body, sig, assets = new Map()) {
+    const hashes = [...assets.keys()].filter((h) => HASH_RE.test(h));
+    const good = new Set((await this.db.query(`SELECT hash FROM handoff_asset WHERE hash = ANY($1) AND encode(sha256(body), 'hex') = hash`, [hashes])).rows.map((r) => r.hash));
+    for (const hash of hashes) {
+      if (good.has(hash)) continue;
+      const buf = assets.get(hash);
+      await this.db.query(`INSERT INTO handoff_asset (hash, bytes, body) VALUES ($1, $2, $3) ON CONFLICT (hash) DO UPDATE SET body = EXCLUDED.body, bytes = EXCLUDED.bytes, used_at = now()`, [hash, buf.length, Buffer.from(buf)]);
+    }
+    if (good.size) await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [[...good]]);
+    await this.db.query(
+      `INSERT INTO handoff_build (id, bytes, sig, assets, body) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, bytes = EXCLUDED.bytes, sig = EXCLUDED.sig, assets = EXCLUDED.assets, used_at = now()`,
+      [id, body.byteLength, sig || '', hashes, Buffer.from(body)]
+    );
+  }
+  async getBuild(id) {
+    const r = await this.db.query(`UPDATE handoff_build SET used_at = now() WHERE id = $1 RETURNING body, sig, assets`, [id]);
+    const row = r.rows[0];
+    if (!row) return null;
+    await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [row.assets || []]);
+    return { body: Buffer.from(row.body), sig: row.sig || '' };
+  }
+  async touchBuild(id) {
+    const r = await this.db.query(`UPDATE handoff_build SET used_at = now() WHERE id = $1 RETURNING assets`, [id]);
+    if (r.rows[0]) await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [r.rows[0].assets || []]);
+    return !!r.rows[0];
+  }
+  async getAsset(hash) {
+    const r = await this.db.query(`SELECT body FROM handoff_asset WHERE hash = $1`, [hash]);
+    return r.rows[0] ? Buffer.from(r.rows[0].body) : null;
+  }
+  async sweepBuilds(maxAgeS) {
+    // (never a build a save waiting in the store names)
+    const n = (await this.db.query(`DELETE FROM handoff_build WHERE used_at < now() - make_interval(secs => $1) AND id NOT IN (SELECT meta->>'build' FROM game_handoff WHERE meta->>'build' IS NOT NULL)`, [maxAgeS])).rowCount;
+    await this.db.query(`DELETE FROM handoff_asset a WHERE used_at < now() - make_interval(secs => $1) AND NOT EXISTS (SELECT 1 FROM handoff_build b WHERE a.hash = ANY(b.assets))`, [maxAgeS]);
+    return n;
   }
 }

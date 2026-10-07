@@ -234,11 +234,13 @@ const DEAD_CONN = { send() {}, close() {}, closed: true, slot: -1, user: null, i
 // Back is not playing yet. A JOIN gives a held player their body back at once, but their browser then builds the
 // valley and its shaders before it draws a frame or sends a command (seconds; after a deploy's reload, up to half a
 // minute), and all that time the body stood there for the dead. So a player who is back stays as safe as a held one
-// (Game.safe) until their client is plainly running - commands in ARRIVE_TICKS ticks, or anything they do - or
-// ARRIVE_MAX seconds have passed; after a drop, never longer than what was left of the grace they had anyway, so
-// coming back is no more of a shelter than staying away was. ARRIVE_SECONDS: tests (0: none of this).
+// (Game.safe) until their client is plainly running - commands in ARRIVE_TICKS ticks (a quarter of a second of frames:
+// a page still building its valley or its shaders sends none, as its frame loop is held; the client finishes its
+// shader warm-up before the first command of a game it joins, Game.update), or anything they do - or ARRIVE_MAX seconds
+// have passed; after a drop, never longer than what was left of the grace they had anyway, so coming back is no more
+// of a shelter than staying away was. ARRIVE_SECONDS: tests (0: none of this).
 const ARRIVE_MAX = +(process.env.ARRIVE_SECONDS ?? 45);
-const ARRIVE_TICKS = SERVER_TICK_RATE;
+const ARRIVE_TICKS = Math.ceil(SERVER_TICK_RATE / 4);
 // A game brought over from the last server does not run until one of its players is playing again (or somebody new
 // is), or this many seconds of the clock on the wall have passed: the day does not burn down and the dead do not
 // close in on a game whose every player is still on their way back. HANDOFF_FREEZE_SECONDS: tests (0: it runs on).
@@ -312,6 +314,18 @@ const randomSeed = () => (Math.random() * 0x7fffffff) | 0;
 // carrier fell
 const looseSupply = (e) => e.permanent && e.hint < 0 && ITEM_DEFS[e.item]?.cat === 'part';
 
+// The valley of a seed and act, with what is derived from it alone: its fingerprints and the dead's ways across it.
+// The costly part of making a game (a few hundred ms). A deploy builds it in the next server's worker for a game the
+// last server is about to hand over, while that game is still being played there (room-worker.js `prepare`), so its
+// players only wait for the save to be loaded into it.
+export function prepareWorld(seed, act = WORLD.ISLAND) {
+  const t0 = Date.now();
+  const world = worldFor(seed, act);
+  usePos(world);
+  const nav = new Nav(world);
+  return { seed, act, world, print: worldPrint(world), nav, mineNav: world.mine ? new MineNav(world, nav) : null, ms: Date.now() - t0 };
+}
+
 export class Game {
   // opts.restore: a game the last server saved as it went down (handoff.js envelope), to carry on from where it was.
   // One this build cannot read throws a HandoffError, and nothing is made.
@@ -346,7 +360,9 @@ export class Game {
     this.checkpoint = null;
     this.crossing = null;
     this.thawAt = 0; // a game brought over waits, still, for its players until then (ms on the wall's clock; 0: it runs)
-    this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed(), restore?.game.act ?? WORLD.ISLAND);
+    this.frozenAt = 0; // ...since then (ms on the wall's clock)
+    // (opts.prepared: the valley built ahead, while the last server was still playing the game: prepareWorld)
+    this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed(), restore?.game.act ?? WORLD.ISLAND, opts.prepared);
     if (restore && !sameWorld(restore, this.worldPrint)) throw new HandoffError(`this build makes another valley of seed ${this.seed}`, { world: true });
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
@@ -445,6 +461,7 @@ export class Game {
   load(s) {
     loadGame(this, s);
     this.thawAt = HANDOFF_FREEZE > 0 && this.players.size ? Date.now() + HANDOFF_FREEZE * 1000 : 0;
+    this.frozenAt = Date.now(); // (how long it stood still is said when it runs again: frozen)
     if (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT) this.track.start();
   }
 
@@ -645,7 +662,7 @@ export class Game {
     p.arriving = null;
     return false;
   }
-  // a command packet from one who is back: their client is running. A second of them, and they are playing
+  // a command packet from one who is back: their client is running. ARRIVE_TICKS ticks with one, and they are playing
   arrived(p) {
     const a = p.arriving;
     if (!a || a.tick === this.tick) return;
@@ -659,7 +676,7 @@ export class Game {
     for (const p of this.players.values()) if (!p.away && !p.arriving) playing = true;
     if (!playing && this.players.size && Date.now() < this.thawAt) return true;
     this.thawAt = 0;
-    this.log(playing ? 'the game runs on: a player is back' : 'the game runs on: nobody came back in time');
+    this.log(`${playing ? 'the game runs on: a player is back' : 'the game runs on: nobody came back in time'} (runs again: stood still ${Date.now() - this.frozenAt} ms)`);
     return false;
   }
 
@@ -1135,22 +1152,25 @@ export class Game {
 
   // ---------------------------------------------------------------- world
   // act: which of the run's two maps to make of the seed (shared/acts.js): the island, or the mainland
-  setWorld(seed, act = WORLD.ISLAND) {
+  // pre: that valley built already (prepareWorld), when it is the one asked for
+  setWorld(seed, act = WORLD.ISLAND, pre = null) {
     const t0 = Date.now();
+    const v = pre && pre.seed === seed && pre.act === act ? pre : prepareWorld(seed, act);
     this.seed = seed;
     this.act = act;
-    this.world = worldFor(seed, act);
+    this.world = v.world;
     usePos(this.world);
-    this.worldPrint = worldPrint(this.world); // (what a save made on this valley is checked against: handoff.js)
+    this.worldPrint = v.print; // (what a save made on this valley is checked against: handoff.js)
     this.worldHash = this.worldPrint.hash;
     this.worldShape = this.worldPrint.shape;
-    this.nav = new Nav(this.world);
-    this.mineNav = this.world.mine ? new MineNav(this.world, this.nav) : null; // (a valley without the workings has none)
+    this.worldGround = this.worldPrint.ground;
+    this.nav = v.nav;
+    this.mineNav = v.mineNav; // (a valley without the workings has none)
     this.worldPlayed = false;
     this.gather?.clear(); // (what was used up was of the world before this one)
     this.ringing?.clear();
     this.zm?.setWorld(); // (its grids and per-world caches)
-    this.log(`world seed ${seed}${act === WORLD.MAINLAND ? ' (the mainland)' : ''} generated in ${Date.now() - t0}ms`);
+    this.log(`world seed ${seed}${act === WORLD.MAINLAND ? ' (the mainland)' : ''} ${v === pre ? `built ahead (${pre.ms}ms)` : `generated in ${Date.now() - t0}ms`}`);
   }
 
   // Every playthrough gets a valley of its own: once a game has been played on this one, generate the next

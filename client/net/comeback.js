@@ -6,10 +6,14 @@
 // code is asked for again every few seconds. But a game can also be over for good, and then asking again only repeats
 // the same refusal: the next server could not carry it over (it says so: REJECT_REASON.ENDED_MAP / ENDED_UPDATE, and
 // that is final at once), or no server has it (NO_GAME: final once it has been said NO_GAME_TRIES times, as the game
-// may still be on its way between two servers the first time).
+// may still be on its way between two servers the first time; after a deploy, three answers over NO_GAME_MS).
 import { REJECT_REASON } from '../../shared/protocol.js';
 
 export const NO_GAME_TRIES = 3;
+// ...and after a deploy, not before this long since the first: the game may still be on its way between two servers, a
+// deploy on the heels of a deploy (client/net/moveback.js)
+export const NO_GAME_MS = 20_000;
+const MOVED_EVERY = 500; // a page loaded again for a deploy asks this often (the game is there in tens of ms)
 
 // the game that went by the code was ended by a deploy: the server that says so will not have it later either
 export const endedByUpdate = (reason) => reason === REJECT_REASON.ENDED_MAP || reason === REJECT_REASON.ENDED_UPDATE;
@@ -41,13 +45,17 @@ export function rejectText(reason, code = '') {
 export async function comeBack({ join, code, moved = false, ms = 60_000, every = 3000, waiting = () => {}, now = () => performance.now(), sleep = (t) => new Promise((done) => setTimeout(done, t)) }) {
   const until = now() + ms;
   let noGame = 0;
+  let firstNoGame = 0;
   while (now() < until) {
     waiting(Math.ceil((until - now()) / 1000));
     const r = await join();
     if (r === true) return '';
     if (endedByUpdate(r?.reason)) return r.message;
-    if (r?.reason === REJECT_REASON.NO_GAME && ++noGame >= NO_GAME_TRIES) return moved ? 'The game was updated, but your game could not be brought back.' : `Game ${code} has ended: your place there is gone.`;
-    await sleep(every);
+    if (r?.reason === REJECT_REASON.NO_GAME) {
+      if (!noGame++) firstNoGame = now();
+      if (noGame >= NO_GAME_TRIES && (!moved || now() - firstNoGame >= NO_GAME_MS)) return moved ? 'The game was updated, but your game could not be brought back.' : `Game ${code} has ended: your place there is gone.`;
+    }
+    await sleep(moved ? Math.min(every, MOVED_EVERY) : every);
   }
   return 'Connection lost, and the game could not be reached in time: your place there is gone.';
 }

@@ -125,11 +125,20 @@ what a run measured where one exists: `node scripts/daytime.js` (time to loot a 
 **Risk.** Go through the diff for each of these and name the ones that apply:
 
 - `PROTOCOL_VERSION` changed (`shared/protocol.js`): open tabs cannot rejoin until they reload.
+- What a deploy costs the players ([docs/deploys.md](../../../docs/deploys.md)): a change to `shared/` reloads every
+  playing page once (protected throughout); a change to `client/` alone is loaded the next time each player leaves
+  their game; `server/` alone reloads nobody. Say which under **Deploy**.
 - World generation changed (`shared/world.js`, `mainland.js`, `rail.js`, `worldkit.js`, the places): if
-  `node scripts/test-world.js` or `test-mainland.js` says "this change makes another map of the same seed", the
-  deploy cannot carry over the games being played on that map. Say so under **Deploy**, with which map (island,
-  mainland or both), and record the new maps (`node scripts/worldprint.js --update`). Never update the record just
-  to make the test pass without saying it here.
+  `node scripts/test-world.js` or `test-mainland.js` says "this change makes another map of the same seed", the new
+  build cannot carry on the games being played on that map: they go on by the build that saved them, inside the new
+  server (old map, old client, out of the lobby's list) until their run ends or 12 hours pass - or end at the deploy
+  if the host has no `HANDOFF_BUILD_KEY`. Say so under **Deploy**, with which map (island, mainland or both), and
+  record the new maps (`node scripts/worldprint.js --update`). Never update the record just to make the test pass
+  without saying it here.
+- `STATE_VERSION` bumped or an enum entry renumbered or removed (`server/handoff.js`): the same, for every game.
+  `WORKER_API` bumped (`server/builds.js`, what the network thread and a game's worker say to each other): games on
+  older builds can no longer be carried on, and end at the deploy. `SECURITY_EPOCH` bumped (a fix that must reach every
+  game at once): the same, on purpose - say why.
 - A new migration in `server/db/migrations/`: it runs on start, and a revert does not undo it.
 - Saved data changes shape (accounts, stats, settings): old records must still load.
 - New per-tick work (zombies, pathfinding, snapshots): server CPU. One worker thread runs each game, so a slow tick
