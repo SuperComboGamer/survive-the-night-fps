@@ -106,6 +106,7 @@ export function createPlayerState() {
     dsteer: 0,
     dfuel: 0,
     ddead: 0,
+    dhold: 0, // how many of the dead press on the nose of what they drive (0..3: the server's count; shared/vehicles.js driveStep)
     pass: 0,
     passN: 0,
     // the perks they picked (progress.js: a bitmask of perk ids), set by the server. What they do here is perkMods
@@ -165,6 +166,7 @@ export function copyPlayerState(dst, src) {
   dst.dsteer = src.dsteer;
   dst.dfuel = src.dfuel;
   dst.ddead = src.ddead;
+  dst.dhold = src.dhold;
   dst.pass = src.pass;
   dst.passN = src.passN;
   dst.perks = src.perks;
@@ -185,7 +187,7 @@ export function samePlayerState(a, b) {
   if (a.hmg !== b.hmg || a.perks !== b.perks) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
-  if (a.drive !== b.drive || a.driveK !== b.driveK || a.dyaw !== b.dyaw || a.dsteer !== b.dsteer || a.dfuel !== b.dfuel || a.ddead !== b.ddead || a.pass !== b.pass || a.passN !== b.passN) return false;
+  if (a.drive !== b.drive || a.driveK !== b.driveK || a.dyaw !== b.dyaw || a.dsteer !== b.dsteer || a.dfuel !== b.dfuel || a.ddead !== b.ddead || a.dhold !== b.dhold || a.pass !== b.pass || a.passN !== b.passN) return false;
   return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
 }
 
@@ -268,7 +270,7 @@ export function hashPlayerState(s) {
     mix(Math.round(s.cartV * 128));
   }
   if (s.drive) {
-    mix(s.drive | (s.driveK << 16) | (s.ddead << 20));
+    mix(s.drive | (s.driveK << 16) | (s.ddead << 20) | (s.dhold << 21));
     mix(Math.round(s.dyaw * 2048));
     mix(Math.round(s.dsteer * 2048));
     mix(Math.round(s.dfuel * 64));

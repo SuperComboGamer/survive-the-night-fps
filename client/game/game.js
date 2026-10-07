@@ -3765,6 +3765,7 @@ export class Game {
       pings: this.pings,
       crates,
       benches: g.benches,
+      vehicles: this.vehicles.marks(), // (the team's: what runs or ran, and the bridgehead's)
       discovered: this.discovered,
       hints: g.hints,
       found: g.found,

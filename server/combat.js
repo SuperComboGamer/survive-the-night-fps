@@ -149,6 +149,15 @@ export class Combat {
       const dy = _dirs[i * 3 + 1];
       const dz = _dirs[i * 3 + 2];
       raycastWorld(g.world, ox, oy, oz, dx, dy, dz, def.range, _ray);
+      if (g.vehicles.list.length) {
+        // a vehicle with somebody in it is in the way as one standing empty is (which is a box in the world)
+        const vh = g.vehicles.rayHit(ox, oy, oz, dx, dy, dz, _ray.t >= 0 ? _ray.t : def.range, g.vehicles.of(p));
+        if (vh) {
+          _ray.t = vh.t;
+          _ray.col = vh.col;
+          _ray.terrain = false;
+        }
+      }
       const wallT = _ray.t >= 0 ? _ray.t : def.range;
       const wallCol = _ray.col;
       const wallTerrain = _ray.terrain;
@@ -797,6 +806,15 @@ export class Combat {
       dy /= len;
       dz /= len;
       raycastWorld(g.world, ox, oy, oz, dx, dy, dz, len, _ray, COL.NOBLOCK | COL.NOBULLET);
+      if (g.vehicles.list.length && e.ptype !== PROJ.ROPE) {
+        const own = e.ownerRef && e.ownerRef.kind === ENT.PLAYER ? g.vehicles.of(e.ownerRef) : null;
+        const vh = g.vehicles.rayHit(ox, oy, oz, dx, dy, dz, _ray.t >= 0 ? _ray.t : len, own);
+        if (vh) {
+          _ray.t = vh.t;
+          _ray.col = vh.col;
+          _ray.terrain = false;
+        }
+      }
       let hitWorld = _ray.t >= 0;
       const hx = hitWorld ? ox + dx * _ray.t : nx;
       const hy = hitWorld ? oy + dy * _ray.t : ny;

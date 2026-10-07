@@ -43,7 +43,7 @@ const wrap = (a) => {
   a %= Math.PI * 2;
   return a > Math.PI ? a - Math.PI * 2 : a < -Math.PI ? a + Math.PI * 2 : a;
 };
-const NEED_TEXT = { [VEH_NO.FULL]: 'The tank is full and it needs nothing', [VEH_NO.NO_FUEL]: 'You carry no Fuel', [VEH_NO.NO_PARTS]: 'You lack the parts for it', [VEH_NO.FINE]: 'It needs nothing', [VEH_NO.SEATS]: 'Every seat is taken', [VEH_NO.BROKEN]: 'It does not run yet: fit its parts', [VEH_NO.WRECK]: 'Burnt out: nothing to be done with it' };
+const NEED_TEXT = { [VEH_NO.FULL]: 'The tank is full and it needs nothing', [VEH_NO.NO_FUEL]: 'You carry no Fuel', [VEH_NO.NO_PARTS]: 'You lack the parts for it', [VEH_NO.FINE]: 'It needs nothing', [VEH_NO.SEATS]: 'Every seat is taken', [VEH_NO.BROKEN]: 'It does not run yet: fit its parts', [VEH_NO.WRECK]: 'Burnt out: nothing to be done with it', [VEH_NO.NO_ROOM]: 'No room beside the bench to stand it', [VEH_NO.NOT_HERE]: 'Nothing to build it from here' };
 
 export class VehicleClient {
   constructor(game) {
@@ -508,6 +508,21 @@ export class VehicleClient {
   // driver's hands go; null for whoever is carried).
   place(seat, sv) {
     return seatBody(seat.e.veh.model, seat.e.vk, seat.k, sv, seat.pose || (seat.pose = {}));
+  }
+
+  // The team's vehicles, for the map: every one that runs or has broken down (somebody got it going), and the
+  // bridgehead's own, still to be started. What stands broken where it was found is found by looking; a wreck is
+  // nobody's any more. [{ x, z, kind, down }]
+  marks() {
+    const out = this._marks || (this._marks = []);
+    out.length = 0;
+    for (const e of this.list.values()) {
+      const f = e.q[5];
+      const st = f & VFLAG.STATE;
+      if (st === VSTATE.WRECK || (st === VSTATE.BROKEN && !(f & VFLAG.STARTER))) continue;
+      out.push({ x: e.veh.x, z: e.veh.z, kind: e.vk, down: st !== VSTATE.OK, mine: e === this.mine });
+    }
+    return out;
   }
 
   // the headlamps that are lit, among the lights the scene has to give (Entities: the nearest get one)

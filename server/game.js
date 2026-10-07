@@ -3201,6 +3201,19 @@ export class Game {
       this.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
       return;
     }
+    if (rec.vehicle) {
+      // a vehicle: it stands beside the bench when it is made (server/vehicles.js); nothing goes into the pack
+      const no = this.vehicles.build(p, rec.vehicle, true);
+      if (no) return this.notify(NOTIFY.VEH_NEED, no, p.id);
+      payCost(p.inv, plan.take);
+      this.madeExtra(p, plan);
+      this.vehicles.build(p, rec.vehicle);
+      this.track.craft(p, rec);
+      this.ach.crafted(p);
+      p.invDirty = true;
+      this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
+      return;
+    }
     const def = ITEM_DEFS[rec.out];
     // capacity check
     if (def.cat === 'ammo') {
@@ -4956,7 +4969,7 @@ export class Game {
       c.u8(s.hmg);
       c.u32(s.perks);
       c.u16(s.drive);
-      c.u8(s.driveK | (s.ddead ? 128 : 0));
+      c.u8(s.driveK | (s.dhold << 4) | (s.ddead ? 128 : 0));
       c.f32(s.dyaw);
       c.f32(s.dsteer);
       c.f32(s.dfuel);

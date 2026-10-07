@@ -453,6 +453,24 @@ const ITEM_ICONS = {
   [ITEM.SCHEM_KEVLAR]: [40, 32, scroll(SCHEM_MARKS.vest)],
   [ITEM.SCHEM_EXPLOSIVES]: [40, 32, scroll(SCHEM_MARKS.bomb)],
   [ITEM.SCHEM_METAL]: [40, 32, scroll(SCHEM_MARKS.wall)],
+  [ITEM.SCHEM_VEHICLES]: [40, 32, scroll(circ(22.2, 16, 6.2) + circ(22.2, 16, 4.9) + circ(22.2, 16, 1.2) + rct(21.8, 11.2, 0.8, 9.6) + rct(17.4, 15.6, 9.6, 0.8))],
+  // ---------------- vehicles built at a bench (shared/vehicles.js): two wheels, a frame, a seat
+  [ITEM.MOPED_KIT]: [
+    40,
+    28,
+    E(circ(9, 20, 6) + circ(9, 20, 4.2) + circ(31, 20, 6) + circ(31, 20, 4.2)) +
+      P(circ(9, 20, 1.2) + circ(31, 20, 1.2)) +
+      P('M12 8.5H24Q26 8.5 26.6 10.4L27.2 12.6H13Q11.6 12.6 11.6 11Z') +
+      P('M14 13.4H26.4L29.6 19H20.5L16.5 21.6H9.6Z') +
+      S('M31 20L27.2 7.6M24.6 5.6H29.6M27 7.4L24.4 3.8', 1.8),
+  ],
+  [ITEM.BIKE_KIT]: [
+    40,
+    28,
+    E(circ(9, 19, 7) + circ(9, 19, 5.6) + circ(31, 19, 7) + circ(31, 19, 5.6)) +
+      P(circ(9, 19, 1.1) + circ(31, 19, 1.1) + circ(19, 19, 1.6)) +
+      S('M9 19L15.4 8.6H27.4L19 19ZM15.4 8.6L19 19M31 19L26.6 6.4M24.4 5.2H29M13.2 7H17.8', 1.7),
+  ],
   // ---------------- armor
   [ITEM.JACKET]: [
     40,

@@ -90,6 +90,11 @@ export const ITEM = {
   SCHEM_KEVLAR: 92,
   SCHEM_EXPLOSIVES: 93,
   SCHEM_METAL: 94,
+  // the mainland's (shared/vehicles.js): a manual found beside its broken mopeds, and what a workbench makes with it.
+  // Nothing of these is on the island: the manual is not among SCHEMATICS (which the island hides in its lockers)
+  SCHEM_VEHICLES: 95,
+  MOPED_KIT: 96,
+  BIKE_KIT: 97,
   // consumables: what a hunted deer gives (shared/deer.js)
   VENISON_RAW: 26,
   VENISON: 27,
@@ -191,6 +196,9 @@ export const ITEM_DEFS = {
   [ITEM.SCHEM_KEVLAR]: { name: 'Armor Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks the Kevlar Vest at the workbench for the whole team.' },
   [ITEM.SCHEM_EXPLOSIVES]: { name: 'Explosives Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks Pipe Bombs, Frag Grenades and the Flamethrower at the workbench for the whole team.' },
   [ITEM.SCHEM_METAL]: { name: 'Fortification Schematic', cat: 'schem', stack: 1, color: 0x6c8fb5, desc: 'Unlocks Metal Walls for the whole team.' },
+  [ITEM.SCHEM_VEHICLES]: { name: 'Workshop Manual', cat: 'schem', stack: 1, color: 0xb0863a, desc: 'Unlocks building a Moped and a Bicycle at a workbench, for the whole team.' },
+  [ITEM.MOPED_KIT]: { name: 'Moped', cat: 'gear', stack: 1, color: 0x9c3a2a, desc: 'Built at a workbench: it stands beside the bench when it is done, with a splash of fuel in it. Two seats.' },
+  [ITEM.BIKE_KIT]: { name: 'Bicycle', cat: 'gear', stack: 1, color: 0x4a6a8a, desc: 'Built at a workbench: it stands beside the bench when it is done. Needs no fuel and makes no noise.' },
 
   [ITEM.VENISON_RAW]: { name: 'Raw Venison', cat: 'cons', stack: 6, color: 0x8e2f2a, desc: 'A cut off a deer. Cook it at a campfire: raw, it heals 8 HP.' },
   [ITEM.VENISON]: { name: 'Cooked Venison', cat: 'cons', stack: 6, color: 0x7a4a2c, desc: 'Venison off the fire. Heals 45 HP, restores stamina.' },
@@ -232,7 +240,7 @@ export function supplyRumours(i, hints, found = 0) {
 
 // schematics: bit index into the team's unlock mask
 export const SCHEMATICS = [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL];
-export const SCHEM_BIT = { [ITEM.SCHEM_SHOTGUN]: 0, [ITEM.SCHEM_RIFLE]: 1, [ITEM.SCHEM_KEVLAR]: 2, [ITEM.SCHEM_EXPLOSIVES]: 3, [ITEM.SCHEM_METAL]: 4 };
+export const SCHEM_BIT = { [ITEM.SCHEM_SHOTGUN]: 0, [ITEM.SCHEM_RIFLE]: 1, [ITEM.SCHEM_KEVLAR]: 2, [ITEM.SCHEM_EXPLOSIVES]: 3, [ITEM.SCHEM_METAL]: 4, [ITEM.SCHEM_VEHICLES]: 5 }; // (the last: a bit of the mask, not one of SCHEMATICS)
 
 // Where the schematics the team still lacks are rumoured to be. hints: the place each SCHEMATICS entry is hidden
 // in (255: none); unlocked: the team's mask. -> [{ item, zone }]
@@ -433,6 +441,10 @@ export const RECIPES = [
   { id: 39, out: ITEM.AMMO_FLARE, n: 1, cost: { [ITEM.POWDER]: 3, [ITEM.CHEM]: 1, [ITEM.CLOTH]: 1 }, station: 'bench' },
   // two turned handles, a chain cut out of scrap, tape for the grips
   { id: 40, out: ITEM.NUNCHAKU, n: 1, cost: { [ITEM.WOOD]: 2, [ITEM.SCRAP]: 2, [ITEM.TAPE]: 1 }, station: 'bench' },
+  // vehicles, built (shared/vehicles.js; `vehicle`: the kind that stands beside the bench when it is made - nothing goes
+  // into the pack). Mainland only, and not listed anywhere until the team has the manual (`hide`)
+  { id: 41, out: ITEM.BIKE_KIT, n: 1, cost: { [ITEM.SCRAP]: 6, [ITEM.WIRE]: 2, [ITEM.TAPE]: 2, [ITEM.LEATHER]: 1 }, station: 'bench', schem: ITEM.SCHEM_VEHICLES, vehicle: 3, hide: true },
+  { id: 42, out: ITEM.MOPED_KIT, n: 1, cost: { [ITEM.SCRAP]: 14, [ITEM.GUNPARTS]: 2, [ITEM.WIRE]: 3, [ITEM.TAPE]: 2, [ITEM.BATTERY]: 2 }, station: 'bench', schem: ITEM.SCHEM_VEHICLES, vehicle: 1, hide: true },
 ];
 
 // The order the backpack grid is sorted in after a pickup or a drop, by category: weapons, what is worn or carried for
@@ -841,7 +853,7 @@ export const NOTIFY = {
 };
 
 // NOTIFY.VEH_NEED / VEH_OFF: why
-export const VEH_NO = { FULL: 1, NO_FUEL: 2, NO_PARTS: 3, FINE: 4, SEATS: 5, BROKEN: 6, WRECK: 7 };
+export const VEH_NO = { FULL: 1, NO_FUEL: 2, NO_PARTS: 3, FINE: 4, SEATS: 5, BROKEN: 6, WRECK: 7, NO_ROOM: 8, NOT_HERE: 9 };
 export const VEH_OFFS = { THROWN: 1, PULLED: 2, KNOCKED: 3 };
 
 // killer kinds for killfeed

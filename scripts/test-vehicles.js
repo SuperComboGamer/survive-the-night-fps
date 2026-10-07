@@ -16,7 +16,8 @@
 import { Game } from '../server/game.js';
 import { C2S, S2C, ACT, VACT, SNAP, ENT, HOLD, VFLAG, PROTOCOL_VERSION, Writer, Reader, qpos } from '../shared/protocol.js';
 import { BTN, SERVER_TICK_RATE, SPRINT_SPEED, WATER_LEVEL, PHASE, CMD_DT } from '../shared/constants.js';
-import { ITEM, ZTYPE, AMMO, NOTIFY } from '../shared/defs.js';
+import { ITEM, ZTYPE, AMMO, NOTIFY, RECIPES, SCHEMATICS, SCHEM_BIT } from '../shared/defs.js';
+import { countItem } from '../server/inventory.js';
 import { WORLD } from '../shared/acts.js';
 import { VEH, VSTATE, VEHICLES, FIX, REPAIR, STARTERS, STARTER_REACH, stepVehicle, vehicleSpots, starterSpots, questCar, vehicleGrid, parkedCollider, siphonOf, seatAt, surfaceKind, SURF_KIND } from '../shared/vehicles.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../client/net/decode.js';
@@ -401,6 +402,19 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   A.act(ACT.SIPHON, 0, 0);
   game.update();
   check('on the island there is no vehicle, and asking for one does nothing', game.vehicles.list.length === 0 && game.all.every((e) => e.kind !== ENT.VEHICLE) && !a.state.drive && !a.hold);
+  // (nor is one built there: the recipes are the mainland's, behind a manual that lies only there)
+  {
+    const recs = RECIPES.filter((r) => r.vehicle);
+    const bench = game.nearStation;
+    game.nearStation = () => true;
+    for (const r of recs) for (const k in r.cost) game.giveItem(a, +k, r.cost[k]);
+    const scrap0 = countItem(a.inv, ITEM.SCRAP);
+    for (const r of recs) A.act(ACT.CRAFT, r.id);
+    game.update();
+    game.nearStation = bench;
+    check('on the island no vehicle is built at a bench either: the recipes are locked, their manual is not in its lockers nor on its ground', recs.length === 2 && recs.every((r) => r.hide && r.schem === ITEM.SCHEM_VEHICLES) && !SCHEMATICS.includes(ITEM.SCHEM_VEHICLES) && game.vehicles.list.length === 0 && countItem(a.inv, ITEM.SCRAP) === scrap0 && game.all.every((e) => e.item !== ITEM.SCHEM_VEHICLES && e.schem !== ITEM.SCHEM_VEHICLES), `${recs.length} recipes; ${game.vehicles.list.length} vehicles; scrap ${scrap0} -> ${countItem(a.inv, ITEM.SCRAP)}`);
+    for (let i = 0; i < a.inv.length; i++) a.inv[i] = null;
+  }
   game.debugCommand(a, ['map2']);
   game.update();
   quiet(game);
@@ -422,6 +436,57 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   const kinds = [VEH.MOPED, VEH.CAR, VEH.BIKE].map((k) => V.list.filter((e) => e.vk === k && !e.quest && !e.starter).length);
   check('...and about the map stand the broken ones, and one of the bridgehead\'s for a team this small', kinds[0] >= 5 && kinds[1] >= 4 && kinds[2] >= 4 && V.list.filter((e) => e.starter).length === 1 && V.list.every((e) => e.quest || e.state === VSTATE.BROKEN), `${kinds[0]} mopeds, ${kinds[1]} cars, ${kinds[2]} bicycles, ${V.list.filter((e) => e.starter).length} at the bridgehead`);
   check('...which everybody is sent, wherever they stand', V.list.every((e) => A.ent(e.id) && B.ent(e.id)) && (A.ent(car.id).q[5] & VFLAG.QUEST) !== 0);
+
+  // ---- built, not only found: the manual lies by the map's broken mopeds; with it a bench makes a bicycle and a moped
+  {
+    const manuals = game.all.filter((e) => e.kind === ENT.ITEM && e.item === ITEM.SCHEM_VEHICLES);
+    const nearMoped = manuals.every((m) => V.list.some((e) => e.vk === VEH.MOPED && !e.starter && Math.hypot(e.x - m.x, e.z - m.z) < 2));
+    const locked = () => {
+      const n = V.list.length;
+      A.act(ACT.CRAFT, RECIPES.find((r) => r.vehicle === VEH.MOPED).id);
+      run1(1);
+      return V.list.length === n;
+    };
+    const bench = game.nearStation;
+    game.nearStation = () => true;
+    for (const r of RECIPES.filter((x) => x.vehicle)) for (const k in r.cost) game.giveItem(a, +k, r.cost[k]);
+    const before = locked();
+    const m0 = manuals[0];
+    const home = [a.state.x, a.state.z];
+    a.state.x = m0.x;
+    a.state.z = m0.z;
+    a.state.y = groundAt(w, m0.x, m0.z, 200, 0.3);
+    run1(SEC);
+    const got = (game.unlocked & (1 << SCHEM_BIT[ITEM.SCHEM_VEHICLES])) !== 0;
+    const n0 = V.list.length;
+    const made = [];
+    for (const vk of [VEH.BIKE, VEH.MOPED]) {
+      A.act(ACT.CRAFT, RECIPES.find((r) => r.vehicle === vk).id);
+      run1(2);
+      const e = V.list.find((x) => x.built && x.vk === vk);
+      made.push(e);
+    }
+    game.nearStation = bench;
+    const [bk, mp] = made;
+    const close = made.every((e) => e && Math.hypot(e.x - a.state.x, e.z - a.state.z) < 7 && !bodySunk(w, e));
+    check('the workshop manual lies beside two of the broken mopeds of the mainland, and without it a bench builds nothing', manuals.length === 2 && nearMoped && before, `${manuals.length} manuals, each by a moped: ${nearMoped}; refused without it: ${before}`);
+    check('...picked up, it belongs to the whole team, and the bench builds a bicycle and a moped beside whoever made them: running, clear of everything, a splash of fuel in the moped, the materials spent and nothing in the pack', got && V.list.length === n0 + 2 && close && bk.state === VSTATE.OK && mp.state === VSTATE.OK && mp.fuel > 3 && mp.fuel < VEHICLES[VEH.MOPED].tank * 0.5 && countItem(a.inv, ITEM.SCRAP) === 0 && countItem(a.inv, ITEM.MOPED_KIT) + countItem(a.inv, ITEM.BIKE_KIT) === 0, `unlocked ${got}; ${V.list.length - n0} built, ${made.map((e) => (e ? `${VEHICLES[e.vk].name} ${Math.hypot(e.x - a.state.x, e.z - a.state.z).toFixed(1)} m off` : 'none')).join(', ')}; the moped's tank ${mp ? f1(mp.fuel) : '-'}; scrap left ${countItem(a.inv, ITEM.SCRAP)}`);
+    A.act(ACT.VEHICLE, VACT.ENTER, mp.id);
+    run1(3);
+    check('...and what was built is ridden away', a.state.drive === mp.id, `drive ${a.state.drive}`);
+    A.act(ACT.VEHICLE, VACT.EXIT, 0);
+    run1(3);
+    for (const e of made) {
+      if (!e) continue;
+      V.unpark(e);
+      game.removeEntity(e);
+    }
+    a.state.x = home[0];
+    a.state.z = home[1];
+    a.state.y = groundAt(w, home[0], home[1], 200, 0.3);
+    for (let i = 0; i < a.inv.length; i++) a.inv[i] = null;
+    run1(2);
+  }
 
   // ---- the bridgehead's: no parts, a few seconds' work
   const st = V.list.find((e) => e.starter);
@@ -613,7 +678,7 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   const easy = speedOf(a.state);
   const st0 = a.state.stamina;
   run1(4 * SEC, () => [BTN.FWD | BTN.SPRINT, 0]);
-  check('a bicycle needs no fuel: pedalled it beats a sprint, and Shift stands on the pedals, on stamina', bike.vk === VEH.BIKE && easy > SPRINT_SPEED && speedOf(a.state) > easy + 1.5 && a.state.stamina < st0 - 30 && !bike.running, `${f1(easy)} m/s easy, ${f1(speedOf(a.state))} hard, stamina ${Math.round(st0)} -> ${Math.round(a.state.stamina)}`);
+  check('a bicycle needs no fuel: pedalled it beats a sprint, and Shift stands on the pedals, on stamina', bike.vk === VEH.BIKE && easy > SPRINT_SPEED && speedOf(a.state) > easy + 1.5 && a.state.stamina < st0 - 25 && !bike.running, `${f1(easy)} m/s easy, ${f1(speedOf(a.state))} hard, stamina ${Math.round(st0)} -> ${Math.round(a.state.stamina)}`);
   A.act(ACT.VEHICLE, VACT.EXIT, 0);
   run1(3);
   function put(p, x, z) {
@@ -804,6 +869,74 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
     game.zombies.length = 0;
     V.unpark(e2);
     game.removeEntity(e2);
+  }
+  // ---- with somebody in it, it still stops a round - and through its open windows one goes
+  {
+    const e = fresh(VEH.CAR);
+    const P = VEHICLES[VEH.CAR];
+    const sb = b.state;
+    sb.drive = sb.pass = 0;
+    sb.x = e.x - 7;
+    sb.z = e.z;
+    sb.y = groundAt(w, sb.x, sb.z, 200, 0.3);
+    sb.vx = sb.vy = sb.vz = 0;
+    game.fillHistory(b);
+    sb.weapons[1] = ITEM.PISTOL;
+    sb.slot = 1;
+    sb.switchT = 0;
+    const far = spawnAt(ZTYPE.TANK, e.x + 5, e.z); // (beyond it, in line: tall and wide, and it takes more than a magazine)
+    const fire = (pitch) => {
+      sb.mags[1] = 12;
+      const hp0 = [e.hp, far.hp];
+      for (let i = 0; i < SEC; i++) {
+        A.input(0, 0);
+        B.input(i % 4 < 2 ? BTN.ATTACK : 0, yawAlong(1, 0), pitch);
+        game.update();
+        far.x = e.x + 5;
+        far.z = e.z;
+        far.target = 0;
+      }
+      return [hp0[0] - e.hp, hp0[1] - far.hp];
+    };
+    e.hp = P.hp;
+    const low = fire(-0.17); // into its door
+    e.hp = P.hp;
+    const mid = fire(-0.07); // through its windows
+    check('a car with somebody in it stops a round as one standing empty does: into its door, the car is hurt and what is beyond it is not', low[0] > 5 && low[1] === 0 && !!a.state.drive, `the car -${Math.round(low[0])}, a Tank beyond it -${Math.round(low[1])}`);
+    check('...and through its open windows a round goes: the car is not touched, what is beyond it is', mid[0] === 0 && mid[1] > 5, `the car -${Math.round(mid[0])}, the Tank -${Math.round(mid[1])}`);
+    for (const z of [...game.zombies]) game.removeEntity(z);
+    game.zombies.length = 0;
+  }
+  // ---- two that are driven come together: they do not pass through each other, both are damaged, the lighter gives way
+  {
+    const e = fresh(VEH.CAR);
+    const P = VEHICLES[VEH.CAR];
+    const m = V.make(VEH.MOPED, e.x, e.z - 70, Math.PI, { state: VSTATE.OK, need: 0, fuel: 60, hp: VEHICLES[VEH.MOPED].hp });
+    beside(game, b, m);
+    run1(2);
+    B.act(ACT.VEHICLE, VACT.ENTER, m.id);
+    run1(3);
+    const both = !!a.state.drive && b.state.drive === m.id;
+    let nearest = 1e9, closing = 0, hit = -1;
+    const hp0 = [e.hp, m.hp], bhp0 = b.hp;
+    for (let i = 0; i < 12 * SEC; i++) {
+      const d0 = Math.abs(e.z - m.z);
+      const c0 = speedOf(a.state) + (b.state.drive ? speedOf(b.state) : 0);
+      run1(1, () => [hit < 0 ? BTN.FWD : 0, 0], () => [hit < 0 ? BTN.FWD : 0, Math.PI]);
+      if (hit < 0 && (e.hp < hp0[0] || m.hp < hp0[1])) {
+        hit = i;
+        closing = c0;
+      }
+      if (hit < 0 || i - hit < SEC) nearest = Math.min(nearest, Math.abs(e.z - m.z), d0);
+      if (hit >= 0 && i - hit > 2 * SEC) break;
+    }
+    const carMoved = speedOf(a.state);
+    check('a car and a moped driven at each other meet: neither goes through the other', both && hit >= 0 && nearest > P.half * 0.6, `they met after ${f1(hit / SEC)} s closing at ${f1(closing)} m/s; their middles came no nearer than ${nearest.toFixed(2)} m (a car's half length ${P.half})`);
+    check('...both are damaged by it, the moped by far the more, and its rider is thrown', hp0[0] - e.hp > 0 && (hp0[1] - m.hp) / VEHICLES[VEH.MOPED].hp > ((hp0[0] - e.hp) / P.hp) * 3 && !b.state.drive && b.hp < bhp0 && !!a.state.drive, `the car -${Math.round(hp0[0] - e.hp)} of ${P.hp}, the moped -${Math.round(hp0[1] - m.hp)} of ${VEHICLES[VEH.MOPED].hp}; the rider ${b.state.drive ? 'still on it' : 'off it'}, -${Math.round(bhp0 - b.hp)} hp; the car going on at ${f1(carMoved)} m/s`);
+    b.hp = b.maxHp;
+    b.state.stunT = 0;
+    V.unpark(m);
+    game.removeEntity(m);
   }
   // ---- noise: an engine is heard, a bicycle is not
   {
@@ -1186,11 +1319,11 @@ function laggy(LAG, JIT, vk) {
     }
   };
   const P = VEHICLES[vk];
-  const WHEN = { map: SEC, board: 5 * SEC, drive: 6 * SEC, off: 30 * SEC, dead: 36 * SEC, end: 46 * SEC };
+  const WHEN = { map: SEC, board: 5 * SEC, drive: 6 * SEC, off: 30 * SEC, dead: 36 * SEC, crowd: 46 * SEC, end: (vk === VEH.CAR ? 60 : 46) * SEC };
   const rtt = Math.ceil(((2 * LAG + JIT) / 1000) * SEC);
   const window = 2 * rtt + 5;
   let frame = 0, checks = 0, late = 0, lateRebases = 0, top = 0, veh = null, drove = 0, struck = 0, worstErr = 0;
-  let spot = null;
+  let spot = null, crowd = null;
   for (let tick = 0; tick < WHEN.end; tick++) {
     const p = game.players.get(c.id);
     for (let fr = 0; fr < 60 / SEC; fr++) {
@@ -1243,12 +1376,30 @@ function laggy(LAG, JIT, vk) {
         z.vehT = 0;
       }
     }
+    if (tick === WHEN.crowd && vk === VEH.CAR) {
+      // stopped, and a crowd of the dead against its nose: it pushes at them for twelve seconds
+      for (const z of [...game.zombies]) game.removeEntity(z);
+      game.zombies.length = 0;
+      const s = p.state;
+      s.vx = s.vz = 0;
+      const fx = -Math.sin(s.dyaw), fz = -Math.cos(s.dyaw);
+      for (let k = 0; k < 6; k++) {
+        const ahead = P.half + 0.6 + (k >> 1) * 0.7, side = (k & 1 ? 0.45 : -0.45);
+        const x = s.x + fx * ahead + fz * side, zz = s.z + fz * ahead - fx * side;
+        const z = game.zm.spawn(ZTYPE.WALKER, x, zz, { horde: true });
+        z.x = x;
+        z.z = zz;
+        z.y = groundAt(game.world, x, zz, 200, 0.2, false);
+      }
+    }
+    if (tick > WHEN.crowd && veh) veh.hp = P.hp; // (this is about the push, not what they do to it)
+    if (tick === WHEN.crowd + 2 * SEC) crowd = { rebases: c.rebases, jumps: jumps.length, x: p.state.x, z: p.state.z };
     const rebasesBefore = c.rebases;
     const seqBefore = p.lastSeq;
     const hp0 = veh ? veh.hp : 0;
     game.update();
     if (veh && veh.hp < hp0 && tick >= WHEN.dead) struck++;
-    if (tick >= WHEN.dead) for (const z of game.zombies) z.target = 0; // (they stand where they were put)
+    if (tick >= WHEN.dead && tick < WHEN.crowd) for (const z of game.zombies) z.target = 0; // (they stand where they were put)
     const near = (t) => tick >= t && tick <= t + window;
     const settled = tick > WHEN.drive + window && tick < WHEN.dead && !near(WHEN.off) && !near(WHEN.off + 3 * SEC);
     if (settled && c.rebases !== rebasesBefore) lateRebases++;
@@ -1272,6 +1423,14 @@ function laggy(LAG, JIT, vk) {
   check(`a ${P.name} driven at ${LAG} ms each way (+${JIT} jitter): the prediction of every command is the server's result, and it only rebases getting in and out`, ok, `${checks} commands checked (${drove} at the wheel), ${late} disagreed (worst ${worstErr.toExponential(1)}), ${lateRebases} rebases while driving of ${c.rebases} in all, top ${f1(top)} m/s`);
   const fine = vk === VEH.CAR ? struck >= 1 && jump < 2.5 : true;
   check(`...and running the dead down, which only the server knows of, moves the driver's view by no more than a body's length`, fine, `${struck} struck; the corrections ${jumps.length ? jumps.map((j) => j.toFixed(2)).join(', ') : 'none'} m (worst ${jump.toFixed(2)} m)`);
+  if (crowd) {
+    const p = game.players.get(c.id);
+    const n = c.rebases - crowd.rebases, ticks = WHEN.end - WHEN.crowd - 2 * SEC;
+    const js = jumps.slice(crowd.jumps);
+    const worst = js.length ? Math.max(...js) : 0;
+    const moved = Math.hypot(p.state.x - crowd.x, p.state.z - crowd.z);
+    check(`...and pushing through a crowd on its nose is the driver's own prediction too (the server says how many press on it, not where it is): few rebases, small ones`, n <= ticks * 0.2 && worst < 0.35, `${n} rebases in ${ticks} ticks (${f1((n / ticks) * 100)}% of them), the worst moving the view ${worst.toFixed(3)} m; it crept ${f1(moved)} m in ${f1(ticks / SEC)} s with ${game.zombies.filter((z) => !z.dead).length} of the dead on it`);
+  }
   return { LAG, JIT, jump, jumps, late, lateRebases };
 }
 laggy(0, 0, VEH.MOPED);

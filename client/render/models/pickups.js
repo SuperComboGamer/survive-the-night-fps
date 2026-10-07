@@ -421,6 +421,7 @@ const SCHEM_LOOK = {
   [ITEM.SCHEM_KEVLAR]: { tag: [0.42, 0.44, 0.3], rot: 0.9 },
   [ITEM.SCHEM_EXPLOSIVES]: { tag: [0.8, 0.46, 0.08], rot: -0.7 },
   [ITEM.SCHEM_METAL]: { tag: [0.5, 0.52, 0.55], rot: 0.1 },
+  [ITEM.SCHEM_VEHICLES]: { tag: [0.62, 0.2, 0.12], rot: 0.55 },
 };
 function schematic(b, r, id) {
   const look = SCHEM_LOOK[id];
@@ -446,7 +447,7 @@ function schematic(b, r, id) {
     });
   });
 }
-for (const id of [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL]) BUILD[id] = (b, r) => schematic(b, r, id);
+for (const id of [ITEM.SCHEM_SHOTGUN, ITEM.SCHEM_RIFLE, ITEM.SCHEM_KEVLAR, ITEM.SCHEM_EXPLOSIVES, ITEM.SCHEM_METAL, ITEM.SCHEM_VEHICLES]) BUILD[id] = (b, r) => schematic(b, r, id);
 
 BUILD[ITEM.JACKET] = (b) => {
   // folded padded jacket: quilted body, sleeves folded in toward the collar (in a V: crossed, the two straight

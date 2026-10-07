@@ -60,7 +60,7 @@ export const VEHICLES = {
     tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.42, -0.15], [0.38, 0.42, -0.15], [-0.38, 0.415, 0.66], [0.38, 0.415, 0.66]], eye: 0.78, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
   },
   [VEH.BIKE]: {
-    name: 'Bicycle', top: 8.5, hardTop: 12, accel: 3.4, hardAccel: 4.2, brake: 7, rev: 1.2, wb: 1.05, lock: 0.7, lockTop: 0.12, steerRate: 3, grip: 7.5, hb: 0.5, roll: 0.22, coast: 0, drag: 0.005, off: 1.2, offTop: 0.6,
+    name: 'Bicycle', top: 10.5, hardTop: 13.5, accel: 3.8, hardAccel: 4.6, brake: 7, rev: 1.2, wb: 1.05, lock: 0.7, lockTop: 0.12, steerRate: 3, grip: 7.5, hb: 0.5, roll: 0.22, coast: 0, drag: 0.005, off: 1.2, offTop: 0.45,
     step: 0.22, h: 1.6, wade: 0.35, circles: [[-0.44, 0.29], [-0.02, 0.27], [0.4, 0.29]], half: 0.85, halfW: 0.25, tall: 1.0,
     tank: 0, burn: 0, hp: 150, seats: [[0, 0.99, 0.3]], eye: 0.58, noise: 0, idle: 0, throwAt: 6, shell: false, two: true, pedal: true,
   },
@@ -413,6 +413,10 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
 // having moved it on with them; false once they are off it as of this command (thrown by a crash, pulled off, down).
 // A 'veh_off' event says where it was left: { x, y, z, yaw, vx, vz, steer, fuel, id }.
 const _v = { vk: 0, id: 0, x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, steer: 0, fuel: 0, run: true };
+const PEDAL_COST = 0.6; // standing on the pedals costs this share of what a sprint does: a bicycle never tires its rider faster than running would
+export const CROWD_SLOW = 3.2; // m/s: slower than this a vehicle pushes at the dead in its way (faster, it knocks them down)
+// (what is left of its speed after a command with 1, 2, 3 or more of them on its nose: 0.75, 0.5, 0.3 a server tick)
+const CROWD_KEEP = [1, Math.cbrt(0.75), Math.cbrt(0.5), Math.cbrt(0.3)];
 export function driveStep(s, b, world, events, dt) {
   const P = VEHICLES[s.driveK];
   if (!P || s.zombie || s.downed || s.pulled || s.pinned) return leave(s, events, 0, 0);
@@ -434,7 +438,7 @@ export function driveStep(s, b, world, events, dt) {
     // standing on the pedals costs what sprinting does; easing along, the breath comes back
     if (thr > 0 && b & BTN.SPRINT && !s.exhausted && s.stamina > 0) {
       hard = true;
-      s.stamina -= STAMINA_DRAIN * dt;
+      s.stamina -= STAMINA_DRAIN * PEDAL_COST * dt;
       s.staminaDelay = STAMINA_REGEN_DELAY;
       if (s.stamina <= 0) {
         s.stamina = 0;
@@ -449,6 +453,13 @@ export function driveStep(s, b, world, events, dt) {
     if (s.exhausted && s.stamina >= STAMINA_UNLOCK) s.exhausted = 0;
   }
   const impact = stepVehicle(_v, thr, turn, !!(b & BTN.JUMP), hard, world, dt, events);
+  // a crowd of the dead against its nose holds it (s.dhold: how many, by the server's count - Vehicles.strike): going
+  // slowly it loses this share of its speed each command, in the driver's own prediction as on the server
+  if (s.dhold && _v.vx * _v.vx + _v.vz * _v.vz < CROWD_SLOW * CROWD_SLOW) {
+    const k = CROWD_KEEP[s.dhold > 3 ? 3 : s.dhold];
+    _v.vx *= k;
+    _v.vz *= k;
+  }
   s.x = _v.x;
   s.y = _v.y;
   s.z = _v.z;
@@ -467,6 +478,7 @@ export function driveStep(s, b, world, events, dt) {
 }
 // off it, as of now. thrown: over the bars, with some of the speed it struck at
 function leave(s, events, impact, thrown) {
+  s.dhold = 0;
   if (events) events.push({ type: 'veh_off', id: s.drive, x: s.x, y: s.y, z: s.z, yaw: s.dyaw, vx: thrown ? 0 : s.vx, vz: thrown ? 0 : s.vz, steer: s.dsteer, fuel: s.dfuel, thrown, v: impact });
   if (thrown) {
     const k = Math.min(7, impact * 0.55);

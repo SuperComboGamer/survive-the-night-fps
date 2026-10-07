@@ -6,17 +6,17 @@
 // What a driver's prediction cannot know of is settled here and written into their state, which rebases their
 // client: the dead in its way (strike), a blow on it (damage), fuel poured in, a breakdown.
 import { SERVER_DT, CMD_DT, INTERACT_REACH, INTERACT_SLACK, PLAYER_RADIUS, PLAYER_HEIGHT, NOISE, PHASE, BTN, WATER_LEVEL } from '../shared/constants.js';
-import { SOUND, NOTIFY, ITEM, AMMO, AMMO_MAX, KILLER, VEH_NO, VEH_OFFS, IMPACT } from '../shared/defs.js';
+import { SOUND, NOTIFY, ITEM, AMMO, AMMO_MAX, KILLER, VEH_NO, VEH_OFFS, IMPACT, SCHEM_BIT } from '../shared/defs.js';
 import { ENT, HOLD, VACT, VFLAG, SIPHON_ID, qpos, dqpos, qangle16, dqangle16 } from '../shared/protocol.js';
 import { WORLD } from '../shared/acts.js';
-import { VEH, VSTATE, VEHICLES, VEH_NAMES, FIX, fixMask, REPAIR, REPAIR_HP, FIX_TIME, STARTER_TIME, FIX_FREE, REPAIR_TIME, FUEL_TIME, FUEL_POUR, SIPHON_TIME, STARTERS, QUEST_FUEL, QUEST_HP, COL_VEHICLE, HORN, stepVehicle, seatAt, seatFeet, vehicleSpots, starterSpots, questCar, vehicleGrid, parkedCollider, siphonOf } from '../shared/vehicles.js';
-import { resolveBody, groundAt } from '../shared/collision.js';
+import { CROWD_SLOW, VEH, VSTATE, VEHICLES, VEH_NAMES, FIX, fixMask, REPAIR, REPAIR_HP, FIX_TIME, STARTER_TIME, FIX_FREE, REPAIR_TIME, FUEL_TIME, FUEL_POUR, SIPHON_TIME, STARTERS, QUEST_FUEL, QUEST_HP, COL_VEHICLE, HORN, stepVehicle, seatAt, seatFeet, vehicleSpots, starterSpots, questCar, vehicleGrid, parkedCollider, siphonOf } from '../shared/vehicles.js';
+import { COL, resolveBody, groundAt, pushCircle } from '../shared/collision.js';
 import { mulberry32 } from '../shared/rng.js';
 import { countItem, removeItem } from './inventory.js';
 
 const SEATS = 4;
 const QUEST_SEATS = VEHICLES[VEH.CAR].seats.length;
-const STRIKE = 3.2; // m/s: one going this fast knocks the dead down instead of pushing at them
+const STRIKE = CROWD_SLOW; // m/s: one going this fast knocks the dead down instead of pushing at them
 const STRIKE_AGAIN = 0.7; // s before the same vehicle strikes the same body again
 // what running one of the dead over does, by kind: damage to it per m/s, what is left of the vehicle's speed, the
 // damage the vehicle takes (flat + per m/s), and from what speed it throws a rider on two wheels
@@ -41,6 +41,28 @@ const JUMP_HURT = 4; // ...this per m/s over
 const _seat = { x: 0, y: 0, z: 0 };
 const _pos = { x: 0, y: 0, z: 0 };
 const _ev = [];
+const _push = { x: 0, z: 0, nx: 0, nz: 0 };
+const MASS = { [VEH.CAR]: 1200, [VEH.MOPED]: 170, [VEH.BIKE]: 95 }; // kg, with somebody on it: who gives way to whom
+// what of each stops a round, as slabs of its height (m over its wheels' ground): [from, to]
+const SHOT_BOX = { [VEH.CAR]: [[0.22, 0.93], [1.36, 1.47]], [VEH.MOPED]: [[0.15, 0.8]], [VEH.BIKE]: [[0.15, 0.75]] };
+// a ray against the box |x| <= hx, y0 <= y <= y1, |z| <= hz: where it enters (0: from inside), or -1
+function rayBox(ox, oy, oz, dx, dy, dz, hx, y0, y1, hz, maxT) {
+  let t0 = 0, t1 = maxT;
+  for (let k = 0; k < 3; k++) {
+    const o = k === 0 ? ox : k === 1 ? oy : oz, d = k === 0 ? dx : k === 1 ? dy : dz;
+    const lo = k === 0 ? -hx : k === 1 ? y0 : -hz, hi = k === 0 ? hx : k === 1 ? y1 : hz;
+    if (Math.abs(d) < 1e-9) {
+      if (o < lo || o > hi) return -1;
+      continue;
+    }
+    let a = (lo - o) / d, b = (hi - o) / d;
+    if (a > b) [a, b] = [b, a];
+    if (a > t0) t0 = a;
+    if (b < t1) t1 = b;
+    if (t0 > t1) return -1;
+  }
+  return t0;
+}
 
 export class Vehicles {
   constructor(game) {
@@ -76,8 +98,63 @@ export class Vehicles {
       const P = VEHICLES[VEH.CAR];
       this.make(VEH.CAR, q.x, q.z, q.yaw, { state: VSTATE.OK, need: 0, fuel: P.tank * QUEST_FUEL, hp: P.hp * QUEST_HP, tint: 7, quest: true });
     }
-    for (const s of vehicleSpots(w)) this.make(s.kind, s.x, s.z, s.yaw, { tint: s.tint });
+    let manuals = 0;
+    for (const s of vehicleSpots(w)) {
+      const e = this.make(s.kind, s.x, s.z, s.yaw, { tint: s.tint });
+      // the workshop manual (a moped and a bicycle built at a bench: defs.js RECIPES) lies by the first two broken
+      // mopeds of the map - it is the mainland's, and found where what it is about stands
+      if (e && s.kind === VEH.MOPED && manuals < 2 && !(g.unlocked & (1 << SCHEM_BIT[ITEM.SCHEM_VEHICLES]))) {
+        manuals++;
+        const P = VEHICLES[s.kind];
+        const mx = s.x - Math.cos(s.yaw) * (P.halfW + 0.6), mz = s.z + Math.sin(s.yaw) * (P.halfW + 0.6);
+        const swap = g.rng;
+        g.rng = this.rng;
+        g.spawnItem(ITEM.SCHEM_VEHICLES, 1, mx, groundAt(w, mx, mz, s.y + 1, 0.2), mz, { permanent: true });
+        g.rng = swap;
+      }
+    }
     this.provide(team);
+  }
+
+  // A vehicle made at a workbench (Game.craft): stood on the nearest clear ground round whoever made it, running,
+  // with a splash of fuel in it. dry: only say whether it can be (0), or why not (a VEH_NO).
+  build(p, kind, dry = false) {
+    const g = this.g;
+    const w = g.world;
+    if (w.kind !== WORLD.MAINLAND) return VEH_NO.NOT_HERE;
+    const P = VEHICLES[kind];
+    const s = p.state;
+    const grid = vehicleGrid(w);
+    const clear = (x, z, yaw) => {
+      const y = groundAt(w, x, z, s.y + 1.2, 0.3, false);
+      if (Math.abs(y - s.y) > 1.2 || y < WATER_LEVEL + 0.05) return false;
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      for (const c of P.circles) {
+        const px = x - fx * c[0], pz = z - fz * c[0];
+        for (const gr of [w.staticGrid, w.structGrid, grid.parked]) {
+          for (const col of gr.query(px, pz, c[1] + 0.25, [])) {
+            if (col.flags & COL.NOBLOCK || col.y1 <= y + P.step || col.y0 >= y + P.h) continue;
+            if (pushCircle(col, px, pz, c[1] + 0.15, _push)) return false;
+          }
+        }
+        for (const q of g.players.values()) if (q.alive && Math.hypot(q.state.x - px, q.state.z - pz) < c[1] + 0.45) return false;
+      }
+      for (const e of this.list) if (!e.removed && Math.hypot(e.x - x, e.z - z) < P.half + VEHICLES[e.vk].half + 0.2) return false;
+      return true;
+    };
+    for (const d of [P.half + 1.3, P.half + 2.4, P.half + 3.6]) {
+      for (let k = 0; k < 12; k++) {
+        const a = s.yaw + (k % 2 ? -1 : 1) * Math.ceil(k / 2) * (Math.PI / 6);
+        const x = s.x - Math.sin(a) * d, z = s.z - Math.cos(a) * d;
+        const yaw = a + Math.PI / 2;
+        if (!clear(x, z, yaw)) continue;
+        if (dry) return 0;
+        const e = this.make(kind, x, z, yaw, { state: VSTATE.OK, need: 0, fuel: P.tank * START_FUEL[0], hp: P.hp, tint: (g.tick + p.id) % 6, built: true });
+        if (e) g.notify(NOTIFY.VEH_FIXED, p.id);
+        return e ? 0 : VEH_NO.NO_ROOM;
+      }
+    }
+    return VEH_NO.NO_ROOM;
   }
 
   // Seats for everybody near where the team is put down: the car it came in has four, and for every survivor past
@@ -136,6 +213,7 @@ export class Vehicles {
       seats: [0, 0, 0, 0],
       starter: !!opts.starter,
       quest: !!opts.quest,
+      built: !!opts.built, // made at a workbench (Game.craft)
       noiseT: 0,
       hornT: 0,
       run: false, // (stepVehicle's: its engine can turn. Rolling on empty it cannot)
@@ -153,7 +231,7 @@ export class Vehicles {
 
   // ---------------------------------------------------------------- the handoff (gamestate.js)
   save() {
-    return { list: this.list.filter((e) => !e.removed).map((e) => ({ ...e, seats: [...e.seats], col: null })), siphoned: [...this.siphoned], starters: this.starters };
+    return { list: this.list.filter((e) => !e.removed).map((e) => ({ ...e, seats: [...e.seats], col: null, shotCol: null })), siphoned: [...this.siphoned], starters: this.starters };
   }
   load(s) {
     const g = this.g;
@@ -234,6 +312,7 @@ export class Vehicles {
     const g = this.g;
     if (!this.list.length) return;
     const world = g.world;
+    this.collide(); // (as they stood after the last tick's commands)
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (e.removed) {
@@ -315,6 +394,117 @@ export class Vehicles {
     g.rng = this.rng;
     g.zm.noise(e.x, e.z, loud, e.y);
     g.rng = swap;
+  }
+
+  // Two of them that are not standing empty (those are boxes: stepVehicle), come together: put apart by their weights,
+  // what they were closing at shared out the same way, and each damaged as by a crash at its share of it. A rider on
+  // two wheels is thrown by a share over their vehicle's throwAt. Nothing of this is in a driver's prediction (the
+  // other is somebody else's): their state is rewritten, as when they strike the dead.
+  collide() {
+    const g = this.g;
+    const L = this.list;
+    for (let i = 0; i < L.length; i++) {
+      const a = L[i];
+      if (a.removed || a.col) continue;
+      const PA = VEHICLES[a.vk];
+      for (let j = i + 1; j < L.length; j++) {
+        const b = L[j];
+        if (b.removed || b.col) continue;
+        const PB = VEHICLES[b.vk];
+        const far = PA.half + PB.half + 0.4;
+        if (Math.abs(a.x - b.x) > far || Math.abs(a.z - b.z) > far || Math.abs(a.y - b.y) > 1.6) continue;
+        // the deepest of their circles into each other
+        let deep = 0, nx = 0, nz = 0;
+        const fax = -Math.sin(a.yaw), faz = -Math.cos(a.yaw), fbx = -Math.sin(b.yaw), fbz = -Math.cos(b.yaw);
+        for (const ca of PA.circles) {
+          const ax = a.x - fax * ca[0], az = a.z - faz * ca[0];
+          for (const cb of PB.circles) {
+            const dx = ax - (b.x - fbx * cb[0]), dz = az - (b.z - fbz * cb[0]);
+            const d = Math.hypot(dx, dz);
+            const o = ca[1] + cb[1] - d;
+            if (o > deep) {
+              deep = o;
+              nx = d > 1e-4 ? dx / d : 1;
+              nz = d > 1e-4 ? dz / d : 0;
+            }
+          }
+        }
+        if (deep <= 0) continue;
+        const ma = MASS[a.vk], mb = MASS[b.vk];
+        const sa = mb / (ma + mb), sb = ma / (ma + mb); // (the lighter one gives way)
+        const pa = this.driver(a), pb = this.driver(b);
+        const A = pa ? pa.state : a, B = pb ? pb.state : b;
+        A.x += nx * deep * sa;
+        A.z += nz * deep * sa;
+        B.x -= nx * deep * sb;
+        B.z -= nz * deep * sb;
+        const closing = -((A.vx - B.vx) * nx + (A.vz - B.vz) * nz);
+        if (closing > 0) {
+          const jn = closing * 1.15; // (a little bounce)
+          A.vx += nx * jn * sa;
+          A.vz += nz * jn * sa;
+          B.vx -= nx * jn * sb;
+          B.vz -= nz * jn * sb;
+          if (closing > 1.5 && g.time - (a.hitT || 0) > 0.4) {
+            a.hitT = b.hitT = g.time;
+            for (const [e, p, share, dir] of [[a, pa, sa, 1], [b, pb, sb, -1]]) {
+              const v = closing * (0.25 + 0.75 * share); // (the heavier one feels it too)
+              this.crash(e, v, null);
+              const P = VEHICLES[e.vk];
+              if (!e.removed && p && P.throwAt && v > P.throwAt) {
+                // off it, the way it was knocked
+                const st = p.state;
+                e.seats[0] = 0;
+                this.leaveWheel(p, e);
+                st.vx = nx * dir * Math.min(6, v * 0.5);
+                st.vz = nz * dir * Math.min(6, v * 0.5);
+                st.vy = 3.2;
+                st.y += 0.5;
+                st.onGround = 0;
+                st.stunT = 0.7;
+                g.damagePlayer(p, Math.min(45, 6 + (v - P.throwAt) * THROWN_HURT), { kind: KILLER.WORLD, x: e.x, z: e.z }); // (never the whole of a life: it may be a teammate's doing)
+                g.notify(NOTIFY.VEH_OFF, VEH_OFFS.THROWN, p.id);
+              }
+            }
+          }
+        }
+        for (const [e, p] of [[a, pa], [b, pb]]) {
+          if (e.removed) continue;
+          const st = p && p.state.drive === e.id ? p.state : null;
+          if (st) {
+            e.x = st.x;
+            e.z = st.z;
+            e.vx = st.vx;
+            e.vz = st.vz;
+          } else if (e.vx !== 0 || e.vz !== 0) e.run = false;
+        }
+      }
+    }
+  }
+
+  // A shot along (dx, dy, dz) from (ox, oy, oz), no further than max: the nearest vehicle with somebody in it that it
+  // meets ({ t, col }: col stands for it as a parked one's box does), or null. (One standing empty is a box in the
+  // world already.) What stops a round: a car's body up to its window sills and its roof - between them it is open,
+  // and who sits there shoots out and can be hit; of a moped or a bicycle the frame, low - its rider is in the open.
+  // skip: the vehicle of whoever fired is not in their own way.
+  rayHit(ox, oy, oz, dx, dy, dz, max, skip) {
+    let best = null;
+    for (const e of this.list) {
+      if (e.removed || e.col || e === skip) continue;
+      const P = VEHICLES[e.vk];
+      const rx = e.x - ox, rz = e.z - oz;
+      const along = rx * dx + rz * dz;
+      if (along < -P.half - 1 || along > max + P.half + 1) continue;
+      const c = Math.cos(e.yaw), sn = Math.sin(e.yaw);
+      // into its own frame: x across, z along it
+      const lox = -rx * c + rz * sn, loz = -rx * sn - rz * c, loy = oy - e.y;
+      const ldx = dx * c - dz * sn, ldz = dx * sn + dz * c;
+      for (const [y0, y1] of SHOT_BOX[e.vk]) {
+        const t = rayBox(lox, loy, loz, ldx, dy, ldz, P.halfW, y0, y1, P.half, max);
+        if (t >= 0 && (!best || t < best.t)) best = { t, col: e.shotCol || (e.shotCol = { flags: COL_VEHICLE, id: e.id, x: 0, z: 0 }) };
+      }
+    }
+    return best;
   }
 
   // Every seat's holder is still somebody who can sit there: alive, a survivor, on their feet, and in this vehicle
@@ -922,7 +1112,10 @@ export class Vehicles {
     const ram = RAM[e.vk];
     const s = p ? p.state : e;
     const sp = Math.hypot(s.vx, s.vz);
-    if (sp < 0.3 && !(p && p.state.lastBtn & (BTN.FWD | BTN.BACK))) return;
+    if (sp < 0.3 && !(p && p.state.lastBtn & (BTN.FWD | BTN.BACK))) {
+      if (p) p.state.dhold = 0;
+      return;
+    }
     const c = Math.cos(e.yaw);
     const sn = Math.sin(e.yaw);
     // (which end leads)
@@ -961,7 +1154,10 @@ export class Vehicles {
       else keep *= ram.keep;
       if (ram.throwAt && sp > ram.throwAt) thrown = true;
     });
-    if (crowd) keep *= Math.max(0.3, 1 - 0.25 * crowd);
+    // a crowd on its nose holds it: for a driver, by the count in their own state (their prediction slows with it:
+    // driveStep); one that rolls with nobody at the wheel is slowed here
+    if (p) p.state.dhold = Math.min(3, crowd);
+    else if (crowd) keep *= Math.max(0.3, 1 - 0.25 * crowd);
     if (stop) keep = 0;
     if (keep < 1) {
       s.vx *= keep;

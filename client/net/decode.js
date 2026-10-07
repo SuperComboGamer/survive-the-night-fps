@@ -123,7 +123,7 @@ export function readSelf(r, out, flags) {
   if (out.ride === undefined) out.ride = out.rideGo = out.rideT = 0;
   if (out.cart === undefined) out.cart = out.cartS = out.cartV = 0;
   if (out.hmg === undefined) out.hmg = 0;
-  if (out.drive === undefined) out.drive = out.driveK = out.dyaw = out.dsteer = out.dfuel = out.ddead = out.pass = out.passN = 0;
+  if (out.drive === undefined) out.drive = out.driveK = out.dyaw = out.dsteer = out.dfuel = out.ddead = out.dhold = out.pass = out.passN = 0;
   if (out.perks === undefined) out.perks = 0;
   if (out.shove === undefined) out.shove = 0;
   if (!(flags & SNAP.SELF)) return false;
@@ -188,6 +188,7 @@ export function readSelf(r, out, flags) {
     out.drive = r.u16();
     const dk = r.u8();
     out.driveK = dk & 15;
+    out.dhold = (dk >> 4) & 3;
     out.ddead = dk >> 7;
     out.dyaw = r.f32();
     out.dsteer = r.f32();

@@ -656,6 +656,9 @@
 .stn-ui .mmap-mk.bench {
   color: #2f5a4a;
 }
+.stn-ui .mmap-mk.veh {
+  color: #1f4f8a;
+}
 .stn-ui .mmap-mk.way {
   color: #5b2a9d;
 }
@@ -1863,6 +1866,14 @@
   color: #2f5a4a;
   z-index: 1;
 }
+/* a vehicle of the team's, where it was left (the mainland) */
+.stn-ui .mm.veh {
+  color: #1f4f8a;
+  z-index: 2;
+}
+.stn-ui .mm.veh.down {
+  color: #8a5a1f;
+}
 /* a flag in a ring around the spot; the ring is also what a click takes it back by */
 .stn-ui .mm.way {
   color: #5b2a9d;
@@ -2037,6 +2048,9 @@
 }
 .stn-ui .lg.bench {
   color: #7fc4a8;
+}
+.stn-ui .lg.veh {
+  color: #7fb0e8;
 }
 .stn-ui .lg.way {
   color: var(--way);

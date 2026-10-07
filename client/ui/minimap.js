@@ -4,7 +4,7 @@
 // the places a car supply or a schematic is rumoured to be in only show once they are in range.
 // Enemies in range are red dots on a canvas of their own, redrawn every frame (a horde is too many to be DOM markers).
 // The car supplies shrink to a row of icons under it (Objective's slim mode).
-import { ZONE_NAMES, schematicRumours } from '../../shared/defs.js';
+import { ZONE_NAMES, ITEM, schematicRumours } from '../../shared/defs.js';
 import { SUPPLIES, SUPPLY_NEED, W } from '../game/act.js'; // (this act's)
 import { el, svgEl } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
@@ -170,6 +170,7 @@ export class Minimap {
       put(zn.x + 8 + n * 6, zn.z + 4, 'schem', itemIcon(rm.item), false);
     }
     for (const b of d.benches) put(b.x, b.z, 'bench', glyph('wrench'), false);
+    for (const v of d.vehicles || []) if (!v.mine) put(v.x, v.z, 'veh', v.kind === 2 ? glyph('car') : itemIcon(v.kind === 1 ? ITEM.MOPED_KIT : ITEM.BIKE_KIT), true);
     for (const p of d.parts) put(p.x, p.z, 'part', itemIcon(p.item), true);
     for (const t of d.teamWays) put(t.x, t.z, 'teamway', glyph('flag'), true);
     if (d.waypoint) put(d.waypoint.x, d.waypoint.z, 'way', glyph('flag'), true);
