@@ -11,7 +11,7 @@
 // (Linux: a server is stopped with SIGTERM, as the host does. Windows: with the 'shutdown' message, as pm2 does.)
 import { spawn } from 'node:child_process';
 import { get as httpGet } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -77,6 +77,7 @@ check('from the splash, a newer client of the same compat is loaded before joini
   check('compat changes with shared/, with the protocol, and with each codec file outside shared/ (snapshot.js, decode.js, connection.js)', changed('shared/a.js') && compatOf(tree, P + 1) !== was && CODEC_FILES.every(changed), CODEC_FILES.join(' '));
   check("...and not with the rest of the server's code or the client's (those deploys go back in place)", !changed('server/game.js') && !changed('client/game/game.js') && compatOf(tree, P) === was);
   check('...the real codec files are where compat looks for them', CODEC_FILES.every((f) => existsSync(new URL(`../${f}`, import.meta.url))));
+  rmSync(tree, { recursive: true, force: true }); // (plain files only: no links in it)
 }
 
 // a clock that runs as fast as it is slept
