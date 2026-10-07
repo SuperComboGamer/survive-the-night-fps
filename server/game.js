@@ -150,7 +150,7 @@ import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
 import { BestiaryTracker } from './bestiary.js';
-import { checkEnvelope, worldHash, HandoffError } from './handoff.js';
+import { checkEnvelope, worldPrint, sameWorld, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
 import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -231,6 +231,18 @@ const GREET_EVERY = 10;
 // The client closes with LEFT_CODE when "Leave game" is pressed: that one goes at once. REJOIN_GRACE_SECONDS: tests.
 export const REJOIN_GRACE = +(process.env.REJOIN_GRACE_SECONDS || 60);
 const DEAD_CONN = { send() {}, close() {}, closed: true, slot: -1, user: null, ip: '' };
+// Back is not playing yet. A JOIN gives a held player their body back at once, but their browser then builds the
+// valley and its shaders before it draws a frame or sends a command (seconds; after a deploy's reload, up to half a
+// minute), and all that time the body stood there for the dead. So a player who is back stays as safe as a held one
+// (Game.safe) until their client is plainly running - commands in ARRIVE_TICKS ticks, or anything they do - or
+// ARRIVE_MAX seconds have passed; after a drop, never longer than what was left of the grace they had anyway, so
+// coming back is no more of a shelter than staying away was. ARRIVE_SECONDS: tests (0: none of this).
+const ARRIVE_MAX = +(process.env.ARRIVE_SECONDS ?? 45);
+const ARRIVE_TICKS = SERVER_TICK_RATE;
+// A game brought over from the last server does not run until one of its players is playing again (or somebody new
+// is), or this many seconds of the clock on the wall have passed: the day does not burn down and the dead do not
+// close in on a game whose every player is still on their way back. HANDOFF_FREEZE_SECONDS: tests (0: it runs on).
+const HANDOFF_FREEZE = +(process.env.HANDOFF_FREEZE_SECONDS ?? 45);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Debug commands take an item by id or by name: its ITEM key (`ammo_fuel`) or what the inventory calls it
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
@@ -333,8 +345,9 @@ export class Game {
     this.act = WORLD.ISLAND;
     this.checkpoint = null;
     this.crossing = null;
+    this.thawAt = 0; // a game brought over waits, still, for its players until then (ms on the wall's clock; 0: it runs)
     this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed(), restore?.game.act ?? WORLD.ISLAND);
-    if (restore && restore.worldHash !== this.worldHash) throw new HandoffError(`this build makes another valley of seed ${this.seed}`);
+    if (restore && !sameWorld(restore, this.worldPrint)) throw new HandoffError(`this build makes another valley of seed ${this.seed}`, { world: true });
     this.rng = mulberry32(this.seed ^ 0xabcdef);
 
     this.ents = new Array(MAX_ENTITIES).fill(null);
@@ -430,6 +443,7 @@ export class Game {
   // the old server ended its own as 'handoff').
   load(s) {
     loadGame(this, s);
+    this.thawAt = HANDOFF_FREEZE > 0 && this.players.size ? Date.now() + HANDOFF_FREEZE * 1000 : 0;
     if (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT) this.track.start();
   }
 
@@ -576,7 +590,9 @@ export class Game {
   // a held player is back (a JOIN from the same account or browser): this session takes over their body
   resume(session, p) {
     const moved = p.away?.handoff;
+    const left = p.away ? Math.max(0, p.away.grace - (this.time - p.away.since)) : 0;
     p.away = null;
+    p.arriving = ARRIVE_MAX > 0 ? { until: this.time + (moved ? ARRIVE_MAX : Math.min(ARRIVE_MAX, left)), n: 0, tick: -1 } : null;
     p.session = session;
     session.player = p;
     p.admin = !!session.conn.user?.isAdmin || this.devAdmin;
@@ -619,6 +635,33 @@ export class Game {
     this.globalDirty = true;
     this.log(`resume ${p.name}`);
   }
+  // Held, or back and not playing yet (ARRIVE_MAX): nothing hurts them, the dead do not go for them, a downed one does
+  // not bleed.
+  safe(p) {
+    if (p.away) return true;
+    if (!p.arriving) return false;
+    if (this.time < p.arriving.until) return true;
+    p.arriving = null;
+    return false;
+  }
+  // a command packet from one who is back: their client is running. A second of them, and they are playing
+  arrived(p) {
+    const a = p.arriving;
+    if (!a || a.tick === this.tick) return;
+    a.tick = this.tick;
+    if (++a.n >= ARRIVE_TICKS) p.arriving = null;
+  }
+  // A game brought over from the last server, with nobody playing in it yet (load, HANDOFF_FREEZE)
+  frozen() {
+    if (!this.thawAt) return false;
+    let playing = false;
+    for (const p of this.players.values()) if (!p.away && !p.arriving) playing = true;
+    if (!playing && this.players.size && Date.now() < this.thawAt) return true;
+    this.thawAt = 0;
+    this.log(playing ? 'the game runs on: a player is back' : 'the game runs on: nobody came back in time');
+    return false;
+  }
+
   onMessage(session, data) {
     usePos(this.world); // (positions in what this message says are in this world's units: protocol.js)
     // basic flood protection
@@ -867,6 +910,7 @@ export class Game {
       ts: null, // the stint analytics.js is counting for them (null: none)
       rejoinKey: '', // 'a:<account id>' or 'g:<sha-256 of the browser id>': whose JOIN may take this player back after a drop (resume)
       away: null, // dropped and held: { since, grace, handoff } (hold), until they come back or their grace runs out
+      arriving: null, // back, and not playing yet: { until, n, tick } (resume, safe), until their client is running
       get x() {
         return this.state.x;
       },
@@ -1095,7 +1139,9 @@ export class Game {
     this.act = act;
     this.world = worldFor(seed, act);
     usePos(this.world);
-    this.worldHash = worldHash(this.world); // (what a save made on this valley is checked against: handoff.js)
+    this.worldPrint = worldPrint(this.world); // (what a save made on this valley is checked against: handoff.js)
+    this.worldHash = this.worldPrint.hash;
+    this.worldShape = this.worldPrint.shape;
     this.nav = new Nav(this.world);
     this.mineNav = this.world.mine ? new MineNav(this.world, this.nav) : null; // (a valley without the workings has none)
     this.worldPlayed = false;
@@ -2208,6 +2254,7 @@ export class Game {
     const renderTick = r.u16();
     const renderFrac = r.u8() / 255;
     const { cmds, hash, ping, rttMs } = readInput(r);
+    if (cmds.length) this.arrived(p);
     if (ping) {
       p.pingAt = performance.now(); // answered in this player's next snapshot (sendSnapshots)
       if (rttMs > 0) {
@@ -2360,6 +2407,7 @@ export class Game {
     if (!p.alive) return;
     if (p.zombie && act !== ACT.FLASHLIGHT && act !== ACT.PING) return;
     if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.HOLD_END) return;
+    if (act !== ACT.FLASHLIGHT && act !== ACT.PING) p.arriving = null; // (whoever does something in the world is playing: resume)
     switch (act) {
       case ACT.INTERACT:
         return this.interact(p, r.u16());
@@ -3586,7 +3634,7 @@ export class Game {
 
   // ---------------------------------------------------------------- damage (players)
   damagePlayer(p, amount, src) {
-    if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
+    if (!p.alive || amount <= 0 || this.safe(p)) return; // (dropped and held, or back and not playing yet: nothing hurts them)
     if (this.godMode && !p.zombie) return;
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
@@ -4221,6 +4269,16 @@ export class Game {
     ts.begin();
     usePos(this.world); // (positions in everything this tick sends are in this world's units: protocol.js)
     this.tick++;
+    // brought over from the last server, and nobody is playing yet: nothing moves and no clock runs. Whoever is back
+    // is sent the game as it stands, and their commands are taken and not run
+    if (this.frozen()) {
+      for (const p of this.players.values()) this.drainInputs(p);
+      ts.mark(T_INPUTS);
+      this.sendSnapshots();
+      ts.mark(T_SNAPSHOTS);
+      this.endTick();
+      return;
+    }
     const dt = SERVER_DT;
     this.time += dt;
     // release quarantined ids
@@ -4631,7 +4689,7 @@ export class Game {
         }
       } else p.drownT = 0;
       if (p.downed) {
-        if (!p.revivedBy && !p.away) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
+        if (!p.revivedBy && !this.safe(p)) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
         if (p.bleed <= 0) this.killPlayer(p, p.lastSrc || { kind: KILLER.WORLD });
         if (p.revivedBy) {
           const rv = this.players.get(p.revivedBy);

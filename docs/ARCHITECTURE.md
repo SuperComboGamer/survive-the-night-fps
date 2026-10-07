@@ -452,8 +452,10 @@ node, else the shell dies of it and the container stops with node never told (`s
   its `workerData`) as soon as the store says one is there (`listen`), for any already waiting when it starts, and
   for a socket or an invite card asking for a code it does not have yet (the socket's seat waits for it, as it does
   for a session: index.js `open`; the card's answer waits). The worker
-  makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes (its players
-  get `NO_GAME`, as every deploy used to end).
+  makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes. The lobby
+  remembers that code for half an hour with why (`Lobby.ended`, `wasLost`), and whoever comes for it is turned away
+  with `REJECT_REASON.ENDED_MAP` (the update makes another map of its seed) or `ENDED_UPDATE` (anything else)
+  instead of `NO_GAME`: the client says so once and stops asking (`client/net/comeback.js`).
 - **What is saved** (`saveGame` / `loadGame`): the clock, phase, waves and the boss, the car's supplies, the
   schematics, who left with what kit and who left dead, the trees felled and what is used up of the trees and
   wrecks, the loot points' timers, the registry, the players, what was built (colliders and nav put back), the
@@ -478,12 +480,31 @@ node, else the shell dies of it and the container stops with node never told (`s
   browser id (`rejoinKey`), never the id: it is saved. Whoever has not come back within `HANDOFF_RESERVE_SECONDS`
   (180) has left, as after any drop (`parkKit`, `dropAll`). Held places count towards the seats (`Room.noRoom`, the
   worker's `held`), so a quick join does not fill them.
+- **Nobody is hurt while they cannot be playing** (`Game.safe`, `arrived`, `frozen`; `test-handoff-safe`). A JOIN
+  gives a held player their body back at once, but their browser then builds the valley and its shaders before it
+  draws a frame (after a deploy's reload, up to half a minute). So a player who is back stays as safe as a held one
+  (`p.arriving`) until their client has sent commands in a second's worth of ticks, or does something in the world,
+  or `ARRIVE_SECONDS` (45) have passed - after an ordinary drop never longer than what was left of the grace they
+  had, so coming back is no more of a shelter than staying away was. And a game brought over does not run at all -
+  no clock, nothing moves; snapshots still go out - until one of its players is playing again or somebody new
+  joins, or `HANDOFF_FREEZE_SECONDS` (45, on the wall's clock) have passed (`Game.thawAt`). A deploy on top of a
+  deploy starts both again: every player is held anew, the game stands still again.
 - **Would the save mean the same here?** (`checkEnvelope`, the `worldHash` check in the `Game` constructor.)
   `STATE_VERSION` (handoff.js) must match: bump it when a saved field is renamed or removed or changes meaning or
   units, not when one is added. Every name -> number pair of the enums the save was made with (`ITEM`, `ZTYPE`,
   `STRUCT`, ...) must hold: an entry appended since is fine, one renumbered is not. And the valley must be the one
-  this build makes of the seed (`worldHash`: colliders, loot spots, containers, places): positions and indices point
-  into it. Any of these failing drops the save; that game ends as before.
+  this build makes of the seed: positions and indices point into it. `worldPrint` takes two fingerprints of a
+  world. `shape` is what a save points into: the colliders, the loot, container, supply and spawn spots, the
+  places. `hash` is that and the zone each spot is filed under, which a save does not depend on (a container is
+  saved with its own zone, a hidden schematic with the place it is rumoured in). A save carries both
+  (`worldShape`, `worldHash`) and is checked by its shape (`sameWorld`); one from before saves carried a shape has
+  only the hash to go by, and builds from before read only the hash. So a build that only files a spot under
+  another place carries every game over; one that moves anything does not.
+- **Will this change end running games?** The shape of the maps the tests build anyway (four islands, six mainlands)
+  is on record in `scripts/worldprints.json`. `test-world` and `test-mainland` fail when this tree makes another
+  map of one of those seeds, saying that deploying it ends the games being played on that map;
+  `node scripts/worldprint.js --update` records the new maps once that is meant, and the pull request's Risk section
+  says so (`.claude/skills/create-pr/SKILL.md`).
 - **The client** (`connection.js`, `Game.onMoving`, `moveBack` in `main.js`): a socket closed with `MOVED_CODE`
   keeps the game on screen, input off and the pointer kept, under "Server updating" (`ui.setConnectionStatus`), and
   joins the same code again at once, then every 0.5-2 s for 45 s (`join(..., { resume: true })` keeps the places
@@ -491,7 +512,9 @@ node, else the shell dies of it and the container stops with node never told (`s
   client build (a hash of `dist/index.html`, which names the bundles by content) or the protocol differs from what
   the page was loaded from, it reloads, and the reloaded page goes back in as a reopened one does (`stn.playing`).
   `index.html` is served `no-cache` so the reload gets the new build.
-- **Tests:** `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
+- **Tests:** `test-handoff-world` (a save of a build that filed a container elsewhere is restored, one of other
+  ground is refused; a real server and the client's own `Connection` and `comeBack`: told once, and why),
+  `test-handoff-safe` (above), `test-handoff-state` (the round trip in-process, and the unsaved-field check: both games are walked
   whole, and a field that came back different and is not on its `TRANSIENT` list fails it - a field added and not
   saved fails `npm test` instead of resetting on every deploy), `test-handoff` (two server processes and a third
   that cannot read the save), `test-handoff-store` (both stores, `continues`), `npm run test:e2e:handoff` (headless
