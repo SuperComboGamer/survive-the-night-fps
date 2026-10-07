@@ -937,6 +937,22 @@ a few hooks into code that already exists:
   past `LOD_NEAR`. `npm run bench:net` (seed 4242, 4 players): +81 B/s of payload per client in the half-minute standing at
   the car, where two groups in range were being moved about by the dead (+5% on the wire), +37 B/s roaming, +4 B/s
   in the night's fight; no new messages or packets. The server spends about 0.01 ms a tick on them.
+- **The mainland's are undead** (`gr.undead`, from `world.kind`; the numbers in `UNDEAD`, shared/deer.js). The same
+  entity, flagged by `DEER_UNDEAD` (bit 7 of the variant in the create: the client builds one of three rotten coats),
+  so hunting, history, hit registration and death carry over; what differs is the group's mind. A pack (3-5) roams
+  (`roamT`: on to new ground every 20-60 s, 30-70 m off) and fears nothing: no bolt from a survivor, a noise or the dead.
+  `Deer.watch` (four times a second) sets it on the nearest survivor inside `notice` (crouch and sprint as for the
+  living; nobody downed, away or down the mine), `damage` on whoever hit one of it, `heard` on whoever made a noise it
+  hears (a survivor within 3 m of where the noise was made) - each only inside `leash`. Hunting (`MODE.HUNT`,
+  `Deer.hunting`, one of `HS` a member): in at `run` by the prey's own flow field (the one `Zombies` keeps for every
+  survivor), or round them at a charge's distance while it waits its turn (`cd`, and `gap` between two of a pack);
+  then it stands with its antlers down for `windup` s (`DANIM.CHARGE` at a standstill: the telegraph), charges along a
+  line it bends `steer` rad/s at most, and `ram`s whoever stands in it - `damagePlayer` with
+  `{ kind: KILLER.WORLD, deer: true }` (killfeed flag 8, `YOU_DIED` 254, cause `undead_deer`), and a shove that does not
+  add up while the survivor is still off their feet - shown as `DANIM.ATTACK`; then on past by `overrun` m. The pack
+  gives up (`giveUp`) on prey out of the leash or out of its reach for `lose` s. `DEER_HEAD.charge` is where the model
+  carries the skull with its antlers down. `scripts/test-undead-deer.js` holds all of it, and ten minutes of hunts across
+  the plain (none in the water, inside anything solid, off the map, or held up pushing).
 
 ## The fair: a ride in the player simulation
 

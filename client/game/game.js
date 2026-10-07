@@ -78,7 +78,7 @@ const _wcHit = { t: -1, col: null, terrain: false };
 const WC_RAYS = [[0, 0], [0.3, -0.25]]; // (right, up) of the view: straight on, and out past the right hand
 import { zombieHitbox, playerHitbox, rayHitbox } from '../../shared/hitbox.js';
 import { difficultyOf } from '../../shared/difficulty.js';
-import { deerHitbox } from '../../shared/deer.js';
+import { deerHitbox, DEER_UNDEAD } from '../../shared/deer.js';
 import { readHeader, readGlobal, readSelf, readEntities, readEvents } from '../net/decode.js';
 import { Connection } from '../net/connection.js';
 import { playerId } from '../net/identity.js';
@@ -687,6 +687,7 @@ export class Game {
     });
     steps.push(() => set.add(createCat(0, 1).object));
     for (const v of [0, 2, 1]) steps.push(() => set.add(createDeer(v, 1).object)); // a doe of each coat, the buck
+    for (const v of [0, 2, 1]) steps.push(() => set.add(createDeer(v | DEER_UNDEAD, 1).object)); // ...and the mainland's undead
     steps.push(() => set.add(createSupplyCrate()));
     for (const p of Object.values(PROJ)) steps.push(() => set.add(createProjectile(p)));
     const items = Object.values(ITEM).filter((it) => it);
@@ -1221,9 +1222,9 @@ export class Game {
       killfeed(kk, killerId, victimId, weapon, flags) {
         // a zombie the world killed is a boss that outlived the night: the dawn sun burnt it, and its loot with it
         const sunKill = kk === KILLER.WORLD && !!(victimId & 0x8000);
-        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : flags & 4 ? 'The water' : 'The world'; // (flags 4: drowned)
+        const killer = kk === KILLER.PLAYER ? g.name(killerId) : kk === KILLER.ZOMBIE ? ZOMBIE_DEFS[killerId]?.name || 'Zombie' : sunKill ? 'The sun' : flags & 4 ? 'The water' : flags & 8 ? 'Undead Deer' : 'The world'; // (flags 4: drowned; 8: an undead deer's charge)
         const victim = victimId & 0x8000 ? ZOMBIE_DEFS[victimId & 0xff]?.name || 'Zombie' : g.name(victimId);
-        g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
+        g.ui.killfeed({ killer, victim, weaponItem: weapon, headshot: !!(flags & 1), killerZombie: kk === KILLER.ZOMBIE || !!(flags & 8) || (kk === KILLER.PLAYER && g.players.get(killerId)?.status === 1), victimPlayer: !(victimId & 0x8000) });
         if (sunKill) g.ui.notify(`${victim.startsWith('The ') ? victim : 'The ' + victim} burned in the sun, and what it carried with it. Kill a boss before sunrise to loot it.`, 'toast', 7);
       },
       notify(msg, arg) {
@@ -1408,7 +1409,7 @@ export class Game {
         ui.notify(arg === this.myId ? "You're back on your feet." : `${this.name(arg)} is back up.`, 'good', 3);
         break;
       case NOTIFY.YOU_DIED:
-        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
+        this.deathInfo = { killer: arg === 255 ? 'the wilderness' : arg === 254 ? 'an undead deer' : ZOMBIE_DEFS[arg]?.name || 'the dead', day: this.global.day, night: this.global.phase === PHASE.NIGHT, dawn: this.dawnAhead() };
         ui.showDeath(this.deathInfo);
         a.stinger?.('death');
         this.deathShown = true;
@@ -3708,6 +3709,8 @@ export class Game {
         else mates.push({ x: e.rx, z: e.rz, name: this.name(e.id), status: e.downed ? 'downed' : 'alive' });
       } else if (e.kind === ENT.ZOMBIE) {
         if (!e.dead) enemies.push({ x: e.rx, z: e.rz, big: e.ztype === ZTYPE.TANK || !!ZOMBIE_DEFS[e.ztype]?.boss });
+      } else if (e.kind === ENT.DEER) {
+        if (!e.dead && e.variant & DEER_UNDEAD) enemies.push({ x: e.rx, z: e.rz, big: false }); // (the mainland's: they hunt you)
       } else if (e.kind === ENT.CRATE && e.q[3] !== 2) crates.push({ x: e.rx, z: e.rz });
     }
     const carried = {};
