@@ -2,6 +2,7 @@
   "name": "survive-the-night-fps",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Co-op horror survival FPS - scavenge by day, board up wherever you stand by night, fix the car and escape. three.js client, authoritative Node uWebSockets.js server",
   "engines": {
