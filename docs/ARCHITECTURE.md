@@ -305,6 +305,14 @@ JSON file (`server/stats.js`).
   pacing. Answers are kept 60 s (admin 30 s) and asked for once however many ask; nothing needs a migration. Names
   are the names players play under, as on the leaderboard; no account ids, guest keys or invite-only codes.
   `node scripts/seed-stats.js pglite:<folder>` fills a PGlite database with made-up history to look at it locally.
+- **The control room** (`/admin`: `client/admin.html`, `client/admin/`, its own Vite entry; `server/adminpanel.js`):
+  the server, its games and players, the settings, the accounts and an audit log (`admin_audit`, 013), for admin
+  accounts only. Every `/api/admin/*` route goes through `AdminPanel.guard` (same origin, the panel's header, the
+  admin flag read from the database on that request); everything that changes something is audited. A game is asked
+  through its worker (`Room.ask` -> `{ t: 'admin' }` -> `server/gameadmin.js`), which runs the admin chat commands
+  through `Game.debugCommand` and never lets a bad request end the game. A game closed or a player removed from here
+  has its socket closed with `ENDED_CODE` (4003) and the reason, which the client shows instead of rejoining.
+  [docs/admin-panel.md](admin-panel.md) says what each action does and what the restart relies on.
 
 ## Achievements
 
@@ -594,8 +602,9 @@ act 2, where the same loop is played with a plane and flying out wins.
 - **The checkpoint** (`Game.checkpointAt`): everybody arrives alive - whoever was dead or turned comes back - with
   what they carried, and at the least the bridgehead cache's floor (`Game.bridgehead`, `BRIDGEHEAD` in acts.js: a
   pistol and magazine for whoever has no gun, two magazines in reserve per gun carried, a bandage, a knife, a
-  hammer; nothing for whoever has them). What each has then is kept (`game.checkpoint`), and a wipe on the mainland
-  starts the mainland again from it (`restartFromBridge`), not the island. A late joiner joins the act being played:
+  hammer; nothing for whoever has them). It is no save point: a wipe on the mainland is a game over like one on the
+  island, and the next run begins on the island (`startGame` -> `rollWorld`). `game.checkpoint` keeps only the day the
+  team arrived (that day is `ARRIVAL_DAY` long). A late joiner joins the act being played:
   beside the team, or at the act's start, with `starterKit(day)`.
 - **Difficulty** (shared/difficulty.js) is the game's, so it holds on both maps: the mainland's days (`dayLen`: the
   arrival day and the longer days after it, times `diff.day`), its hordes and the runway stand (`hordeSize`), the dead
@@ -621,12 +630,13 @@ act 2, where the same loop is played with a plane and flying out wins.
   (shared/characters.js), seated, this client's own at the wheel - and the dead behind the car and on the runway
   are the game's own models, near or far copy by the shot's camera (`setZombieViewer`).
 - **Who a player is** does not change with the map: `p.character` is set once, from the JOIN, and the crossing, the
-  checkpoint's revival, a wipe's restart from the bridge, a rejoin into a held body and a deploy's handoff all keep
+  checkpoint's revival, a wipe's new run on the island, a rejoin into a held body and a deploy's handoff all keep
   the player (sim-act2.js holds each).
 - **Saved across a deploy**: `act`, `checkpoint` and `crossing` (gamestate.js `GAME_FIELDS`); the constructor builds
   the save's act.
 - **Debug**: `/map2` (or `/mainland`: straight to the mainland's first day from anywhere on the island, the end
-  screen too, with no cutscene and no escape XP), `/cross` (or `/cutscene`) `[skip | hold | go]` (the car drives off
+  screen too, with no cutscene and no escape XP), `/map1` (or `/island`: back to the island, a new run from its first
+  day, from the mainland, the crossing or the end screen), `/cross` (or `/cutscene`) `[skip | hold | go]` (the car drives off
   as if the final stand was won, and the crossing's cutscene plays; from the end screen or the mainland a new run on
   the island is begun first), `/place <zone>`, `/plane`, `/takeoff [hold | go]`, `/wipe`; on the client
   `game.debugCam`, `debugCycle` and `debugFog` (a free camera, the hour, the haze: the shot scripts).

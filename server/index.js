@@ -35,6 +35,7 @@ import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
 import { Cluster } from './cluster.js';
+import { AdminPanel } from './adminpanel.js';
 import { clientOf } from './netaddr.js';
 import { REJECT_REASON, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
@@ -619,6 +620,24 @@ app.ws('/social', {
   close: (ws) => social.socketClosed(ws),
 });
 
+// ---------------------------------------------------------------- the admin panel
+// /admin (client/admin.html) and its API, /api/admin/* (adminpanel.js): an admin account only, checked on every request.
+// Registered without a database too, where every route says there are no accounts.
+new AdminPanel({
+  auth,
+  db,
+  lobby,
+  cluster,
+  settings,
+  social,
+  store,
+  info: { build: BUILD, clientBuild: CLIENT_BUILD, port: PORT },
+  net: () => ({ ...mainLoad, sockets: [...perIp.values()].reduce((a, b) => a + b, 0) }),
+  stopping: () => stopping,
+  restart: (code) => shutdown('admin restart', code),
+  log,
+}).routes(route);
+
 // ---------------------------------------------------------------- how the box is doing
 let mainCpuAt = process.threadCpuUsage();
 let mainElu = performance.eventLoopUtilization();
@@ -640,9 +659,16 @@ app.get('/status', (res) => {
   res.writeHeader('Content-Type', 'application/json').writeHeader('Cache-Control', 'no-store').writeHeader('Access-Control-Allow-Origin', '*').end(body);
 });
 
+const ADMIN_PAGE_HEADERS = [
+  ['X-Frame-Options', 'DENY'],
+  ['Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"],
+  ['Referrer-Policy', 'same-origin'],
+  ['X-Content-Type-Options', 'nosniff'],
+];
 app.get('/*', (res, req) => {
   let url = req.getUrl();
   if (url === '/stats' || url === '/stats/') url = '/stats.html';
+  if (url === '/admin' || url === '/admin/') url = '/admin.html';
   if (url === '/' || !files.has(url)) url = files.has(url) ? url : '/index.html';
   const f = files.get(url);
   if (!f) {
@@ -650,6 +676,9 @@ app.get('/*', (res, req) => {
     return;
   }
   res.writeHeader('Content-Type', f.type);
+  // (the admin panel is never shown inside another site's page, where a click could be steered onto its buttons, and
+  // runs no script and sends nothing anywhere but here)
+  if (url === '/admin.html') for (const [k, v] of ADMIN_PAGE_HEADERS) res.writeHeader(k, v);
   // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
   res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
   res.end(f.body);
@@ -684,10 +713,12 @@ process.on('exit', () => stats.saveSync?.());
 // deployment to stop before it kills it (drainingSeconds in railway.json).
 const HARD_EXIT_MS = 20_000;
 const HANDOFF_WAIT_MS = 8000; // the most a game's worker may take to save it
-async function shutdown(signal) {
+// exitCode: 0 for a signal; an admin's restart (adminpanel.js) exits with another, for a host that starts the server
+// again only after a failure
+async function shutdown(signal, exitCode = 0) {
   if (stopping) return;
   stopping = true;
-  setTimeout(() => process.exit(0), HARD_EXIT_MS).unref();
+  setTimeout(() => process.exit(exitCode), HARD_EXIT_MS).unref();
   // (behind the proxy: nothing new is sent here now, and the servers the games go to are known)
   if (cluster) await Promise.race([cluster.drain(), new Promise((r) => setTimeout(r, 2000))]).catch((err) => log(`cluster: could not say this server is going (${err.message})`));
   if (store) {
@@ -717,7 +748,7 @@ async function shutdown(signal) {
       console.error('[server] shutting down:', err.message);
     }
   } else await store?.close();
-  process.exit(0);
+  process.exit(exitCode);
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

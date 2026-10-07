@@ -9,9 +9,10 @@
 //     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
 const REFRESH_MS = 5000;
 
-// key -> what a stored value means: the value, or undefined for one that is not valid (then the default holds)
+// key -> what a stored value means: the value, or undefined for one that is not valid (then the default holds).
+// max: the most the admin panel lets it be set to (adminpanel.js)
 export const SETTINGS = {
-  max_total_games: { default: null, parse: (v) => (Number.isInteger(v) && v >= 0 ? v : undefined), about: 'the most games at once over every server (a whole number; unset: each server only has its own MAX_GAMES)' },
+  max_total_games: { default: null, max: 100000, parse: (v) => (Number.isInteger(v) && v >= 0 ? v : undefined), about: 'the most games at once over every server (a whole number; unset: each server only has its own MAX_GAMES)' },
 };
 
 export class ServerSettings {

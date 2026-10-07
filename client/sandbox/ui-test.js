@@ -426,7 +426,7 @@ switch (screen) {
     const h = { ...baseHud, hp: 30, phase: PHASE.NIGHT, timeLeft: 88, night: 1, hordeLeft: 21, prompt: null, context: null, crosshair: { spread: 7, visible: false } };
     ui.hideSplash();
     feedSome();
-    loop((t) => ({ ...h, downed: { bleed: Math.max(0, 22 - t), reviving, medkit: !!q.get('medkit') } }));
+    loop((t) => ({ ...h, downed: { bleed: Math.max(0, 22 - t), reviving } }));
     break;
   }
   case 'hud-dawn': {

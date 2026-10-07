@@ -89,7 +89,8 @@ export class Cluster {
        ON CONFLICT (id) DO UPDATE SET addr = EXCLUDED.addr, port = EXCLUDED.port, deployment = EXCLUDED.deployment, build = EXCLUDED.build,
          started_at = EXCLUDED.started_at, seen_at = now(), draining = EXCLUDED.draining, games = EXCLUDED.games,
          players = EXCLUDED.players, max_games = EXCLUDED.max_games, info = EXCLUDED.info`,
-      [this.id, this.addr, this.port, this.deployment, this.build, this.started, this.draining, rooms.length, players, this.lobby.maxGames, JSON.stringify(info)]
+      // (an admin stopped new games here - adminpanel.js: no room for more, so the lobby's total does not count on it)
+      [this.id, this.addr, this.port, this.deployment, this.build, this.started, this.draining, rooms.length, players, this.lobby.closedToNew ? 0 : this.lobby.maxGames, JSON.stringify(info)]
     );
     if (rooms.length) {
       await this.db.query(

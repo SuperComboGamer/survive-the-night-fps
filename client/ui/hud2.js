@@ -3,10 +3,10 @@
 // Same conventions as hud.js: update() is called every frame and only touches the DOM on change.
 import { ITEM_DEFS, ZONE_NAMES, ITEM, ZOMBIE_DEFS, supplyRumours } from '../../shared/defs.js';
 import { SUPPLIES, SUPPLY_NEED, W, ACT_NOW } from '../game/act.js'; // (this act's: the car's supplies, or the plane's parts)
-import { WORLD, RUNWAY } from '../../shared/acts.js';
-import { PHASE, DUSK_WARNING } from '../../shared/constants.js';
-import { nightBoss } from '../../shared/nights.js';
-import { el, svgEl, fmtTime, clamp } from './dom.js';
+import { WORLD, RUNWAY, nightRank } from '../../shared/acts.js';
+import { PHASE, DUSK_WARNING, BOSS_WAVE } from '../../shared/constants.js';
+import { nightBoss, nightTheme } from '../../shared/nights.js';
+import { el, svgEl, fmtTime, clamp, replay } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
 import { bindTag } from '../game/binds.js';
 import { trackStatus } from '../game/tracked.js';
@@ -571,12 +571,12 @@ export class Downed {
     const show = !!d;
     if (this.root.hidden === show) this.root.hidden = !show;
     if (!d) return;
-    const key = Math.ceil(d.bleed) + '|' + d.reviving + '|' + d.medkit;
+    const key = Math.ceil(d.bleed) + '|' + d.reviving;
     if (key === this.key) return;
     this.key = key;
     this.fill.style.transform = `scaleX(${clamp(d.bleed / 30, 0, 1).toFixed(3)})`;
     this.time.textContent = d.reviving ? 'Being revived…' : `Bleeding out · ${fmtTime(d.bleed)}`;
-    this.sub.textContent = d.reviving ? 'Hold on. A teammate has you.' : d.medkit ? `Use a medkit ${bindTag('heal')} to get back up, or wait for a teammate` : `Crawl to cover. A teammate can revive you with ${bindTag('interact')}`;
+    this.sub.textContent = d.reviving ? 'Hold on. A teammate has you.' : `Crawl to cover. A teammate can revive you with ${bindTag('interact')}`;
     this.root.classList.toggle('reviving', !!d.reviving);
   }
 }
@@ -652,20 +652,97 @@ export class Summary {
   }
 }
 
-// what the next night brings (shown on the dawn card): its one new kind of the dead (ZOMBIE_DEFS minNight). Its boss
-// has a line of its own on the card (nightBossText)
-export function nextNightText(night) {
-  const n = night;
-  const more = n <= 1 ? 'The next horde will be bigger.' : `Horde ${n}: bigger and hungrier.`;
-  const fresh = Object.values(ZOMBIE_DEFS).filter((d) => d.minNight === n && !d.boss && d.intro);
-  return [more, ...fresh.map((d) => d.intro)].join(' ');
+// the kinds of the dead that join the horde on night n: those whose minNight comes after last night's rank and by
+// tonight's (shared/acts.js nightRank: on the mainland every night ranks the fourth at the least, so nothing joins
+// there before the fifth)
+function newKinds(night, act) {
+  const rank = nightRank(act, night);
+  const prev = nightRank(act, night - 1);
+  return Object.values(ZOMBIE_DEFS).filter((d) => !d.boss && d.intro && d.minNight > prev && d.minNight <= rank);
 }
 
-// the boss that comes with night n, named on the dawn card and at the dusk horn so the team can get ready for it. The
+// what the next night brings (shown on the dawn card): its one new kind of the dead (ZOMBIE_DEFS minNight). Its boss
+// has a line of its own on the card (nightBossText)
+export function nextNightText(night, act) {
+  const n = night;
+  const more = n <= 1 ? 'The next horde will be bigger.' : `Horde ${n}: bigger and hungrier.`;
+  return [more, ...newKinds(n, act).map((d) => d.intro)].join(' ');
+}
+
+// the boss that comes with night n, named on the dawn card and on the dusk card so the team can get ready for it. The
 // server draws the same one from the seed (shared/nights.js nightBoss): nothing crosses the wire
-export function nightBossText(seed, night) {
-  const zd = ZOMBIE_DEFS[nightBoss(seed, night)];
+export function nightBossText(seed, night, act) {
+  const zd = ZOMBIE_DEFS[nightBoss(seed, night, act)];
   return { name: (zd.boss ? '' : 'A ') + zd.name, tip: zd.tip || '' };
+}
+
+// ---------------------------------------------------------------- the dusk card
+// What tonight brings, one row a thing: its theme, the kinds that join the horde, its boss. A name and a few words on
+// what to do about it (the dawn card had the long version). Worked out from the seed like the dawn card's
+export function tonightBrief(seed, night, act) {
+  const rows = [];
+  const th = nightTheme(seed, night, act);
+  if (th) rows.push({ kind: 'theme', ico: 'horde', name: th.name, tag: '', text: th.brief || th.warn });
+  for (const d of newKinds(night, act)) rows.push({ kind: 'new', ico: 'claw', name: d.name + 's', tag: 'New', text: d.introBrief || d.intro });
+  const zd = ZOMBIE_DEFS[nightBoss(seed, night, act)];
+  rows.push({ kind: 'boss', ico: 'skull', name: zd.name, tag: `Boss · wave ${BOSS_WAVE + 1}`, text: zd.tipBrief || zd.tip || '' });
+  return rows;
+}
+
+const TONIGHT_OPEN = 12; // s the card shows its rows in full when it comes up; after that, their names alone until dark
+
+// Under the clock from the dusk horn until nightfall (the clock says "The horde is coming"; this says what with). It
+// comes up in full, a row at a time, then folds down to the names; a survivor who joins in the dusk gets it the same.
+// It replaces the four lines the horn used to put across the bottom of the screen
+export class Tonight {
+  // uiRoot: the HUD's root, which it tells how tall it is (--tonight-h): the killfeed and the achievement banner
+  // under the clock step down out of its way (ui2.css)
+  constructor(parent, uiRoot) {
+    this.uiRoot = uiRoot;
+    this.root = el('div', 'tonight scrap', parent);
+    this.root.hidden = true;
+    el('div', 'tn-head', this.root, 'Tonight');
+    this.list = el('div', 'tn-list', this.root);
+    this.key = '';
+    this.h = -1;
+    if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => this._room()).observe(this.root);
+  }
+
+  // brief: { key, rows } (Game.tonight, the same object every frame while it holds), or null: no card
+  update(brief) {
+    const key = brief ? brief.key : '';
+    if (key === this.key) return;
+    this.key = key;
+    clearTimeout(this._t);
+    if (!brief) {
+      if (this.root.hidden) return;
+      this.root.classList.add('out');
+      this._t = setTimeout(() => (this.root.hidden = true), 500);
+      return;
+    }
+    this.list.textContent = '';
+    brief.rows.forEach((r, i) => {
+      const row = el('div', 'tn-row tn-' + r.kind, this.list);
+      row.style.setProperty('--i', i);
+      const top = el('div', 'tn-top', row);
+      svgEl('i', 'tn-ico', top, glyph(r.ico));
+      el('span', 'tn-name', top, r.name);
+      if (r.tag) el('span', 'tn-tag', top, r.tag);
+      el('div', 'tn-text', el('div', 'tn-brief', row), r.text);
+    });
+    this.root.classList.remove('out');
+    this.root.hidden = false;
+    replay(this.root, 'open');
+    this._t = setTimeout(() => this.root.classList.remove('open'), TONIGHT_OPEN * 1000);
+  }
+
+  _room() {
+    const h = this.root.offsetHeight;
+    if (h === this.h) return;
+    this.h = h;
+    this.uiRoot.style.setProperty('--tonight-h', h + 'px');
+    this.uiRoot.classList.toggle('tonight-on', h > 0);
+  }
 }
 
 export { PING_LABEL, ITEM };

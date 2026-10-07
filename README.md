@@ -300,7 +300,7 @@ hints and controls lists name whatever the keys are now.
 | M | Field map. Click to set your own waypoint (on a place's name or yard: that place); click it again, right-click or X to clear it. It shows on the compass and in the world with its distance until you get there, and your team sees it too: everyone's waypoint is a teal flag with their name on the compass, in the world and on the map |
 | F | Flashlight (battery drains, recharges when off; a beam held on a Shade keeps it frozen) |
 | G (hold) | Drop current weapon: held a moment, so a stray press in a fight keeps your gun (Settings -> Hold to drop weapon off: a press drops it) |
-| H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; a medkit gets you up when downed). Nothing fires while an item is in your hands: a click (or a weapon key) puts it away unused and brings the weapon back out |
+| H | Quick heal (bandage / canned tuna / cooked venison / painkillers / medkit; nothing heals you while you are down). Nothing fires while an item is in your hands: a click (or a weapon key) puts it away unused and brings the weapon back out |
 | B | Quick drink: an energy drink from the backpack refills your stamina in 0.8 s, on the run (not at full stamina) |
 | I | Inventory + crafting (Q / E switch crafting tabs while it is open; Shift+click a recipe crafts 5, Ctrl+click - Cmd on a Mac - as many as the materials allow, up to 20). In the backpack: right-click drops a stack, Shift+right-click one of it, and Shift+click a stack to pick how much of it to split off into a slot of its own or drop - or to salvage. In Equipment: click a weapon (or drag it onto the backpack) to put it in the backpack, right-click to drop it; drag a weapon, vest or throwable from the backpack onto Equipment to equip it, and drag anything out of the screen to drop it. Shift+click anything that can be torn down (a weapon, in the backpack or in its slot, armor, medicine, throwables) to salvage it for materials. On the armor and backpack you wear: click takes it off, right-click drops it, Shift+click salvages it. The backpack sorts itself by kind, merging part stacks, whenever something is picked up or dropped |
 | Tab (hold) | Player list: who is in the game, with their health, kills and ping, and who is down, dead or turned |
@@ -593,8 +593,8 @@ them off.
   equipment slot of its own, under the armor, and opens 10 more in the same grid - shown locked until then. It
   only comes off (or is dropped, or salvaged for about half its materials) once those 10 slots are empty, it goes
   down with everything else when you die, and the others see it on your back.
-- **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). A teammate holds [E] on you
-  to revive you, or you use a medkit. When nobody is left standing, the game is over. Pings, teammate
+- **Co-op:** at 0 HP you go **down** (crawl, pistol only, 30 s to bleed out). Only a teammate can get you
+  up, by holding [E] on you: your own medkit does nothing while you are down. When nobody is left standing, the game is over. Pings, teammate
   nameplates, a compass with markers (the car, teammates, rumoured supplies, supply drops, discovered
   places, everyone's waypoints) and a field map [M] keep the team together. A nameplate carries its owner's health bar while they
   are hurt, within 12 m or in your crosshair (amber below 60%, red below 30%), a downed teammate's turns into
