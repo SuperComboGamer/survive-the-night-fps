@@ -5128,7 +5128,7 @@ export class Game {
       global = gw.bytes();
     }
     this.globalDirty = false;
-    if (this.players.size) stageEntities(this.all); // once for all clients: each sendTick's writeEntities reads the staged copy
+    if (this.players.size) stageEntities(this.all, this.tick); // once for all clients: each sendTick's writeEntities reads the staged copy
     for (const p of this.players.values()) {
       const conn = p.session.conn;
       if (p.pingAt) {
