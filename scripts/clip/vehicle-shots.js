@@ -184,7 +184,9 @@ try {
         for (const e of g.entities.ents.values()) if (e.kind === 2 && !e.dead && e.view) dead.push({ x: e.rx, y: e.ry, z: e.rz });
         // (the vehicle we are in, as it is drawn this frame: a camera that follows it follows what is on screen)
         const mv = g.vehicles.mine?.veh?.model?.group;
-        const draw = mv ? { x: mv.position.x, y: mv.position.y, z: mv.position.z, yaw: mv.rotation.y } : null;
+        const vm = g.vehicles.mine?.veh;
+        const sb = g.selfBody?.object;
+        const draw = mv ? { x: mv.position.x, y: mv.position.y, z: mv.position.z, yaw: mv.rotation.y, lean: vm.model.body.rotation.z, steer: vm.steer, camX: g.camera.position.x, camY: g.camera.position.y, camZ: g.camera.position.z, camYaw: g.camera.rotation.y, camRoll: g.camera.rotation.z, bodyX: sb?.position.x, bodyZ: sb?.position.z } : null;
         return { draw, s: { x: s.x, y: s.y, z: s.z, vx: s.vx, vz: s.vz, yaw: g.input.yaw, drive: s.drive, pass: s.pass, dyaw: s.dyaw, dsteer: s.dsteer, dfuel: s.dfuel }, veh, dead, hp: g.self.hp, prompt: g.prompt || '', tick: g.net.tick };
       }, ticks);
       if (save) await (save.p || c.A).screenshot({ path: save.file, optimizeForSpeed: true });

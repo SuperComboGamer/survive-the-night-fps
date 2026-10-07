@@ -4009,6 +4009,7 @@ export class Game {
         // /clear [m]: every one of the dead within that many metres (default 80) drops where it stands, to nobody's credit
         const r = +args[1] || 80;
         for (const z of [...this.zombies]) if (!z.dead && Math.hypot(z.x - s.x, z.z - s.z) <= r) this.combat.killZombie(z, null);
+        for (const d of [...this.deer]) if (!d.dead && d.group?.undead && Math.hypot(d.x - s.x, d.z - s.z) <= r) this.dm.kill(d); // (the mainland's undead deer are the dead too)
         break;
       }
       case 'legs': {

@@ -854,7 +854,24 @@ async function clip(c, name, place, mode, { at = 0, secs = 15, bold = 1.1, lead 
   const tag = `film-${name}-${mode}`;
   if (lead) await c.run(Math.round(c.fps * lead), () => (done ? {} : { A: { buttons: hold(), pitch: -0.14, cam: null } }));
   const P0 = vk === 2 ? -0.04 : -0.2;
-  await c.rec(tag, c.fps * secs, () => (done ? null : { A: { buttons: hold(), pitch: P0, cam: mode === 'seat' ? null : cam(drawn(c)) } }), { hud: mode === 'seat' });
+  const trace = [];
+  const step = () => {
+    if (c.info.draw) trace.push({ ...c.info.draw });
+    return done ? null : { A: { buttons: hold(), pitch: P0, cam: mode === 'seat' ? null : cam(drawn(c)) } };
+  };
+  if (process.env.NOSHOT) await c.run(c.fps * secs, () => step() || {});
+  else await c.rec(tag, c.fps * secs, step, { hud: mode === 'seat' });
+  // (in the game itself: how often what is drawn turns back on itself - see scripts/clip/vehicle-jitter.js)
+  const flips = (k, eps) => {
+    let n = 0, worst = 0;
+    for (let i = 4; i < trace.length; i++) {
+      const a = [1, 2, 3].map((j) => trace[i - j + 1][k] - 2 * trace[i - j][k] + trace[i - j - 1][k]);
+      if (a.every((x) => Math.abs(x) > eps) && Math.sign(a[0]) !== Math.sign(a[1]) && Math.sign(a[1]) !== Math.sign(a[2])) (n++, (worst = Math.max(worst, Math.min(...a.map(Math.abs)))));
+    }
+    return `${k} ${((n / trace.length) * c.fps).toFixed(1)}/s (${(k.startsWith('cam') && !k.endsWith('Yaw') && !k.endsWith('Roll') ? worst * 1000 : (worst * 180) / Math.PI).toFixed(2)})`;
+  };
+  console.log(`  in-game ${tag} (${trace.length} frames): ${['lean', 'steer', 'yaw', 'camYaw', 'camRoll'].map((k) => flips(k, 0.0002)).join(', ')}, ${['camX', 'camY', 'camZ'].map((k) => flips(k, 0.0005)).join(', ')}`);
+  if (process.env.NOSHOT) return;
   c.video(tag, 8, `${name}: ${mode === 'seat' ? 'from the seat' : 'from behind'}, on the way from the bridgehead to ${place} (a scripted rider)`);
   console.log(`\n  ${tag}: ${far.toFixed(0)} m in ${secs} s, top ${top.toFixed(1)} m/s, fuel ${c.info.s.dfuel.toFixed(1)}, hp ${vehId(c, v.id)?.hp}, backed off ${backs} times, arrived: ${done}`);
 }
