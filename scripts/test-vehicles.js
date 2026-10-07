@@ -876,6 +876,26 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
     V.unpark(e2);
     game.removeEntity(e2);
   }
+  // ---- noise: an engine is heard, a bicycle is not
+  {
+    const heard = {};
+    for (const vk of [VEH.CAR, VEH.MOPED, VEH.BIKE]) {
+      const e = fresh(vk);
+      const zs = [];
+      for (const d of [36, 58, 100]) zs.push(spawnAt(ZTYPE.WALKER, e.x + d, e.z - 6));
+      for (const z of zs) (z.horde = false), (z.target = 0), (z.alertT = 0);
+      // (round in a tight ring, the throttle open, far from their sight by day: 26 m)
+      run1(4 * SEC, () => [BTN.FWD | BTN.LEFT, 0]);
+      heard[vk] = zs.map((z) => (z.alertT > 0 || z.target ? 1 : 0));
+      for (const z of [...game.zombies]) game.removeEntity(z);
+      game.zombies.length = 0;
+      A.act(ACT.VEHICLE, VACT.EXIT, 0);
+      run1(3);
+      V.unpark(e);
+      game.removeEntity(e);
+    }
+    check('an engine draws the dead from as far as it carries - a car from further than a moped - and a bicycle draws none', heard[VEH.CAR].join() === '1,1,0' && heard[VEH.MOPED].join() === '1,0,0' && heard[VEH.BIKE].join() === '0,0,0', `at 36 / 58 / 100 m: car ${heard[VEH.CAR].join('')}, moped ${heard[VEH.MOPED].join('')}, bicycle ${heard[VEH.BIKE].join('')}`);
+  }
   // ---- with somebody in it, it still stops a round - and through its open windows one goes
   {
     const e = fresh(VEH.CAR);
@@ -912,6 +932,10 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
     check('...and through its open windows a round goes: the car is not touched, what is beyond it is', mid[0] === 0 && mid[1] > 5, `the car -${Math.round(mid[0])}, the Tank -${Math.round(mid[1])}`);
     for (const z of [...game.zombies]) game.removeEntity(z);
     game.zombies.length = 0;
+    for (const p of [a, b]) V.drop(p);
+    run1(2);
+    V.unpark(e);
+    game.removeEntity(e);
   }
   // ---- two that are driven come together: they do not pass through each other, both are damaged, the lighter gives way
   {
@@ -943,26 +967,11 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
     b.state.stunT = 0;
     V.unpark(m);
     game.removeEntity(m);
-  }
-  // ---- noise: an engine is heard, a bicycle is not
-  {
-    const heard = {};
-    for (const vk of [VEH.CAR, VEH.MOPED, VEH.BIKE]) {
-      const e = fresh(vk);
-      const zs = [];
-      for (const d of [36, 58, 100]) zs.push(spawnAt(ZTYPE.WALKER, e.x + d, e.z - 6));
-      for (const z of zs) (z.horde = false), (z.target = 0), (z.alertT = 0);
-      // (round in a tight ring, the throttle open, far from their sight by day: 26 m)
-      run1(4 * SEC, () => [BTN.FWD | BTN.LEFT, 0]);
-      heard[vk] = zs.map((z) => (z.alertT > 0 || z.target ? 1 : 0));
-      for (const z of [...game.zombies]) game.removeEntity(z);
-      game.zombies.length = 0;
-      A.act(ACT.VEHICLE, VACT.EXIT, 0);
-      run1(3);
-      V.unpark(e);
-      game.removeEntity(e);
-    }
-    check('an engine draws the dead from as far as it carries - a car from further than a moped - and a bicycle draws none', heard[VEH.CAR].join() === '1,1,0' && heard[VEH.MOPED].join() === '1,0,0' && heard[VEH.BIKE].join() === '0,0,0', `at 36 / 58 / 100 m: car ${heard[VEH.CAR].join('')}, moped ${heard[VEH.MOPED].join('')}, bicycle ${heard[VEH.BIKE].join('')}`);
+    // (nothing of this left standing on the runway for what comes after)
+    for (const p of [a, b]) V.drop(p);
+    run1(2);
+    V.unpark(e);
+    game.removeEntity(e);
   }
   // ---- a crash: damage by how hard, the rider of a moped over the bars; breakdown, the patch, the wreck
   {
