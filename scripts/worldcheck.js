@@ -355,6 +355,21 @@ export function checkWorld(world, seed, { found, mapsWith, counts }) {
       }
     }
 
+    // ---- schematics
+    // A container a schematic can be hidden in (CONT_DEFS[t].schem) that carries this place stands in it: the place
+    // is what the survivors are told a schematic is in (Game.placeSchematics), so one that carries a place it is not
+    // in is searched for where it is not. In it: as far out as the checks above go, anywhere in the city's square, or
+    // down in the mine's workings.
+    for (const c of world.containers) {
+      if (c.zone !== zn.id || !CONT_DEFS[c.ctype].schem) continue;
+      counts.schem++;
+      const d = Math.hypot(c.x - zn.x, c.z - zn.z);
+      const city = zn.id === ZONE.CITY && Math.max(Math.abs(c.x - zn.x), Math.abs(c.z - zn.z)) <= zn.flat;
+      if (d < zn.flat + 32 || city || (zn.id === ZONE.MINE && world.mine?.under(c.x, c.y, c.z))) continue;
+      const name = CONT_DEFS[c.ctype].name.toLowerCase();
+      fail('schem', c.x, c.z, `${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name} that can hide a schematic is ${Math.round(d)} m from the place it would be rumoured in`);
+    }
+
     // ---- roads against buildings
     // A body walked down the middle of every road nearby must not touch the upright pieces of what the place built
     // (walls, posts, machines: world.parts; props are not in it. The timbering of a drift that runs under the road
