@@ -97,6 +97,9 @@ export function createPlayerState() {
     cartV: 0,
     // carrying the mounted gun (mountedgun.js): both arms full, half pace, and a weapon switch drops it
     hmg: 0,
+    // the stray cat in their arms (server/cats.js): no weapon in the hands, the fire button strokes it, nobody swims
+    // with it, and a weapon switch sets it down
+    pet: 0,
     // the perks they picked (progress.js: a bitmask of perk ids), set by the server. What they do here is perkMods
     perks: 0,
   };
@@ -148,6 +151,7 @@ export function copyPlayerState(dst, src) {
   dst.cartS = src.cartS;
   dst.cartV = src.cartV;
   dst.hmg = src.hmg;
+  dst.pet = src.pet;
   dst.perks = src.perks;
   return dst;
 }
@@ -163,7 +167,7 @@ export function samePlayerState(a, b) {
   if (a.switchT !== b.switchT || a.cooldown !== b.cooldown || a.reloadT !== b.reloadT || a.recoil !== b.recoil) return false;
   if (a.zombie !== b.zombie || a.leapCd !== b.leapCd || a.pulled !== b.pulled || a.pinned !== b.pinned) return false;
   if (a.pullX !== b.pullX || a.pullY !== b.pullY || a.pullZ !== b.pullZ || a.stunT !== b.stunT || a.shove !== b.shove) return false;
-  if (a.hmg !== b.hmg || a.perks !== b.perks) return false;
+  if (a.hmg !== b.hmg || a.pet !== b.pet || a.perks !== b.perks) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
   return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
@@ -242,6 +246,7 @@ export function hashPlayerState(s) {
     mix(Math.round(s.cartV * 128));
   }
   if (s.hmg) mix(0x686d67);
+  if (s.pet) mix(0x636174);
   if (s.perks) mix(s.perks);
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
 }
@@ -270,7 +275,7 @@ export function canSelectSlot(s, slot) {
 // with an item being used in the hands). Voice then goes out to every survivor at any distance (the server lists
 // who is on the air, PLF.ON_AIR), and they hear the static of it.
 export function radioKeyed(s) {
-  return !s.zombie && !s.hmg && !s.using && s.slot === SLOT_RADIO && (s.lastBtn & BTN.ATTACK) !== 0;
+  return !s.zombie && !s.hmg && !s.pet && !s.using && s.slot === SLOT_RADIO && (s.lastBtn & BTN.ATTACK) !== 0;
 }
 
 const _pos = { x: 0, y: 0, z: 0 };
@@ -335,6 +340,11 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     s.hmg = 0;
     if (events) events.push({ type: 'gun_drop' });
   }
+  // ...and so does the cat in their arms, which is set down at their feet (the server: 'cat_drop')
+  if (s.pet && cmd.slot !== 255 && cmd.slot < NUM_SLOTS) {
+    s.pet = 0;
+    if (events) events.push({ type: 'cat_drop' });
+  }
   if (s.zombie) s.slot = SLOT_MELEE;
   if (s.downed && s.slot !== SLOT_PISTOL && s.slot !== SLOT_RADIO && s.weapons[SLOT_PISTOL]) {
     s.slot = SLOT_PISTOL;
@@ -387,7 +397,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.crouch = !s.zombie && (s.downed || (b & BTN.CROUCH && !disabled && !swim && wade < CROUCH_WADE)) ? 1 : 0; // (never ducking the eyes under the water)
   const weapon = currentWeapon(s);
   const wdef = WEAPONS[weapon];
-  const aiming = !s.hmg && !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
+  const aiming = !s.hmg && !s.pet && !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
   const moving = wl > 0;
   const pm = perkMods(s.zombie ? 0 : s.perks);
   let sprint = 0;
@@ -510,8 +520,9 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   const human = !s.zombie;
   const hit = resolveBody(world, _pos, PLAYER_RADIUS, height, human);
   // a survivor swims where the water is deep (below); a turned one, like the rest of the dead, stops at its edge, and
-  // so does one carrying the mounted gun, which nobody swims with (they wade as far as their feet keep the bottom)
-  if ((!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) || (s.hmg && waterFloor(world, s, _pos.x, _pos.z) > groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human))) {
+  // so does one carrying the mounted gun or the cat, which nobody swims with (they wade as far as their feet keep the
+  // bottom)
+  if ((!human && deepWaterAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human)) || ((s.hmg || s.pet) && waterFloor(world, s, _pos.x, _pos.z) > groundAt(world, _pos.x, _pos.z, s.y, PLAYER_RADIUS * 0.7, human))) {
     _pos.x = ox;
     _pos.z = oz;
     s.vx = 0;
@@ -559,9 +570,10 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     s.reloadT = 0;
     s.recoil = 0;
   }
-  // both arms round the mounted gun, or both hands shoving a leaper off: no weapon goes off, reloads, throws or swings
-  // (the clocks run on)
-  if (s.hmg || pinned) {
+  // both arms round the mounted gun or the cat, or both hands shoving a leaper off: no weapon goes off, reloads, throws
+  // or swings (the clocks run on). The fire button with the cat in their arms strokes it, which is the server's
+  // business (Cats.update), not this
+  if (s.hmg || s.pet || pinned) {
     if (s.switchT > 0) s.switchT -= dt;
     if (s.cooldown > 0) s.cooldown -= dt;
     s.lastBtn = cmd.buttons;

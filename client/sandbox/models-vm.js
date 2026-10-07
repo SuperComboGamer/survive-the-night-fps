@@ -25,12 +25,15 @@
 //   &oh=R|L,yaw,pitch,dist  an outside camera orbiting that hand
 //   window.__hands  { R, L }: each hand's grip center (view space) once posed, for a camera fixed on a hand
 //   &hp=pose:{json}  override (part of) a hand pose, or add one (several allowed); with &rpose= / &lpose= to use it
+// the stray cat (?vm=cat): in both arms (ViewModel.holdCat); &act=pet strokes it, &coat=N its coat. The clip check
+//   counts the cat (as its skinned mesh is posed) as the item
 // nunchucks (?vm=57): &nk=SCRIPT plays their moves instead of &act (nk-script.js: guard, draw, idle, whip, backhand,
 //   eight, smash, lunge, sweep, retreat, heavy1..3, combo, combo2, flourish, carry); &hit=flesh|bone|wood|metal|dirt
 //   lands every blow on that (default: they miss). &t / &ts are seconds after the script starts, as for an &act.
 import * as THREE from 'three';
 import { ITEM, ITEM_DEFS, WEAPONS } from '../../shared/defs.js';
 import { ViewModel, createWorldWeapon, worldWeaponTris, viewModelTris, handTris, VM_DEBUG } from '../render/models/weapons.js';
+import { createCat } from '../render/models/cat.js';
 import { nkScript } from './nk-script.js';
 // tuning overrides: &hip=x,y,z,rx,ry,rz (current item hip pose) / &claw=x,y,z,rx,ry,rz / &cq=rx,ry,rz
 const params = new URLSearchParams(location.search);
@@ -243,7 +246,7 @@ if (params.get('vm') === 'hands') {
   const times = params.has('ts') ? params.get('ts').split(',').map(Number) : null;
   const freezeT = times ? 0 : params.has('t') ? parseFloat(params.get('t')) : null;
   const all = vmParam === 'all';
-  const single = vmParam === 'claws' ? 'claws' : parseInt(vmParam, 10) || 0;
+  const single = vmParam === 'claws' || vmParam === 'cat' ? vmParam : parseInt(vmParam, 10) || 0;
   const list = all
     ? [ITEM.AK47, ITEM.M4A1, ITEM.MP5, ITEM.SHOTGUN, ITEM.DB_SHOTGUN, ITEM.HUNTING_RIFLE, ITEM.CROSSBOW, ITEM.FLAMETHROWER, ITEM.AT_RIFLE, ITEM.RPG, ITEM.PISTOL, ITEM.FLARE_GUN, ITEM.KNIFE, ITEM.BAT, ITEM.SPIKED_BAT, ITEM.MACHETE, ITEM.HAMMER, ITEM.NUNCHAKU, ITEM.MOLOTOV, ITEM.PIPEBOMB, ITEM.FLARE, ITEM.GRENADE, ITEM.DECOY, 'claws']
     : times
@@ -271,11 +274,14 @@ if (params.get('vm') === 'hands') {
       cam.lookAt(tx, ty, tz);
     }
     if (id === 'claws') vm.setItem(0, { claws: true });
-    else vm.setItem(id);
+    else if (id === 'cat') {
+      vm.setItem(ITEM.PISTOL); // (what is put away under it)
+      vm.holdCat(createCat(+(params.get('coat') || 0), 3, true));
+    } else vm.setItem(id);
     if (params.get('xray') === '1') {
       // &xray=1: the item (and the use prop) see-through, drawn over the hands, so a finger inside it shows
       const glass = new THREE.MeshLambertMaterial({ color: 0x88aaff, transparent: true, opacity: 0.38, depthWrite: false });
-      for (const o of [...(vm.cur ? vm.cur.root.children : []), vm.kit]) {
+      for (const o of [...(vm.cur ? vm.cur.root.children : []), vm.kit, ...(vm.cat ? [vm.cat._inst.mesh] : [])]) {
         o.material = glass;
         o.renderOrder = 5;
       }
@@ -291,6 +297,7 @@ if (params.get('vm') === 'hands') {
   }
   if (act === 'ads') state.aiming = true;
   if (act === 'talk') state.talk = true; // (the walkie-talkie keyed)
+  if (act === 'pet') state.pet = true; // (the cat in our arms, stroked)
   if (params.has('wall')) state.wallDist = +params.get('wall'); // &wall=m: a wall that far ahead (the tuck)
   if (act === 'crouch') {
     state.crouch = true;
@@ -451,7 +458,7 @@ if (params.get('vm') === 'hands') {
   }
 
   const mz = new THREE.Vector3();
-  const lines = views.map((v) => `${v.id === 'claws' ? 'CLAWS' : NAMES[v.id] || v.id}: vm ${v.id === 'claws' ? 0 : viewModelTris(v.id)} tris`);
+  const lines = views.map((v) => `${v.id === 'claws' ? 'CLAWS' : NAMES[v.id] || v.id}: vm ${v.id === 'claws' || v.id === 'cat' ? 0 : viewModelTris(v.id)} tris`);
   lines.push(`hand ${handTris()} tris (per hand pose)`);
   info.textContent = `act=${act || 'idle'} ${times ? 'ts=' + times.join(',') : freezeT !== null ? 't=' + freezeT : ''}\n` + (times ? lines[0] : lines.join('\n'));
 
@@ -523,6 +530,21 @@ function clipReport(v) {
   const items = [];
   if (v.vm.cur) for (const m of v.vm.cur.root.children) if (m.isMesh && shown(m)) items.push({ name: 'item.' + (Object.keys(v.vm.cur.parts).find((k) => v.vm.cur.parts[k] === m) || '?'), m });
   if (shown(v.vm.kit)) items.push({ name: 'kit', m: v.vm.kit });
+  if (v.vm.cat && shown(v.vm.cat.object)) {
+    // the cat in our arms: its skinned mesh as it is posed now, baked into a plain one
+    const sk = v.vm.cat._inst.mesh;
+    sk.skeleton.update();
+    const src = sk.geometry.attributes.position;
+    const out = new Float32Array(src.count * 3);
+    const t = new THREE.Vector3();
+    for (let i = 0; i < src.count; i++) sk.getVertexPosition(i, t).toArray(out, i * 3);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+    g.setIndex(sk.geometry.index);
+    const m = new THREE.Mesh(g);
+    m.matrixWorld.copy(sk.matrixWorld);
+    items.push({ name: 'cat', m });
+  }
   const dbl = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const proxy = (e) => {
     const p = new THREE.Mesh(e.m.geometry, dbl);

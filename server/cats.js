@@ -1,9 +1,16 @@
 // The stray cat: ambient wildlife that pads around the broken-down car, naps in the sun, wanders over
 // to survivors who stand still and bolts from anything dead. Zombies ignore it and nothing can hurt it.
-import { PLAYER_RADIUS } from '../shared/constants.js';
+// A survivor can pick it up ([E] on it: Game.interact -> lift). While it is in their arms it is theirs (s.pet in
+// their simulated state, which empties their hands of their weapon), the entity rides along with them (its HOLDER on
+// the wire, CANIM.HELD), and the fire button held strokes it (CANIM.PET: it purrs). It is set down in front of them
+// ([E] or [G]: ACT.CAT_PUT, or a weapon key: the simulation's 'cat_drop') and leaps clear on its own when they go
+// down, die, turn, are grabbed, get on a ride or a handcar, swim, or drop off the game. Whoever has it in their arms
+// when the car leaves the island takes it over the bridge with them (Game.cross, buildMainland: spawnBeside).
+import { PLAYER_RADIUS, BTN, SLOT_BUILD, SLOT_THROW, SLOT_RADIO, SLOT_PRIMARY, SLOT_PISTOL, SLOT_MELEE } from '../shared/constants.js';
 import { CANIM } from '../shared/defs.js';
 import { ENT } from '../shared/protocol.js';
 import { resolveBody, groundAt } from '../shared/collision.js';
+import { swimming } from '../shared/swim.js';
 
 const GRAV = 16;
 const RADIUS = 0.16;
@@ -16,11 +23,14 @@ const SCARE_RADIUS = 7; // the dead (or a zombie player) this close sends it run
 const NOTICE_RADIUS = 13; // survivors this close may get a visit
 const VISIT_COOLDOWN = 25; // seconds between visits
 const COAT_COUNT = 5; // client coat patterns (variant % COAT_COUNT)
+const HELD_Y = 1.05; // a cat in somebody's arms is this high over their feet (for who sees it; where it is let go from)
+const SET_OUT = 0.65; // set down this far in front of them (clear of their feet: the cat steps round anyone closer)
 const TAU = Math.PI * 2;
 const _pos = { x: 0, y: 0, z: 0 };
 
 // mode: what it is doing; anim (CANIM) is what clients see
-const MODE = { IDLE: 0, SIT: 1, WANDER: 2, VISIT: 3, FLEE: 4 };
+export const CAT_MODE = { IDLE: 0, SIT: 1, WANDER: 2, VISIT: 3, FLEE: 4, HELD: 5 };
+const MODE = CAT_MODE;
 
 function turn(a, b, max) {
   let d = (b - a) % TAU;
@@ -34,11 +44,11 @@ export class Cats {
     this.g = game;
   }
 
-  spawn(x, z, homeX = x, homeZ = z) {
+  spawn(x, z, homeX = x, homeZ = z, variant = -1) {
     const g = this.g;
     const e = {
       kind: ENT.CAT,
-      variant: Math.floor(g.rng() * COAT_COUNT),
+      variant: variant >= 0 ? variant : Math.floor(g.rng() * COAT_COUNT),
       x,
       y: groundAt(g.world, x, z, 200, RADIUS),
       z,
@@ -62,6 +72,7 @@ export class Cats {
       threatX: 0,
       threatZ: 0,
       stuckT: 0,
+      holder: 0, // the survivor it is in the arms of (mode HELD)
     };
     if (!g.spawnEntity(e)) return null;
     g.cats.push(e);
@@ -86,12 +97,142 @@ export class Cats {
 
   update(dt) {
     const g = this.g;
+    // nobody has a cat in their arms but whoever one is held by (a state left over from a rejoin, a respawn, a handoff)
+    for (const p of g.players.values()) if (p.state.pet && !this.heldBy(p)) p.state.pet = 0;
     if (!g.cats.length) return;
     const humans = g.humans();
-    for (const c of g.cats) this.updateOne(c, dt, humans);
+    for (const c of g.cats) {
+      if (c.mode === MODE.HELD) this.updateHeld(c);
+      else this.updateOne(c, dt, humans);
+    }
   }
 
-  // nearest thing it's afraid of: a zombie, or a survivor who has turned
+  // ---------------------------------------------------------------- in somebody's arms
+  // the cat in this survivor's arms, if they have one
+  heldBy(p) {
+    for (const c of this.g.cats) if (c.mode === MODE.HELD && c.holder === p.id) return c;
+    return null;
+  }
+
+  // can this survivor pick it up from where they stand? (Game.interact has checked the reach.) On their feet, their
+  // hands free of anything else that holds them, and nobody else has it
+  canLift(p, c) {
+    const s = p.state;
+    if (c.removed || c.mode === MODE.HELD) return false;
+    return p.alive && !p.zombie && !p.downed && !p.away && !p.useItem && !p.hold && !s.pet && !s.hmg && !s.ride && !s.cart && !s.pinned && !s.pulled && !swimming(this.g.world, s);
+  }
+
+  // [E] on it: it is in their arms, and whatever was in their hands is put away
+  lift(p, c) {
+    if (!this.canLift(p, c)) return false;
+    const s = p.state;
+    c.mode = MODE.HELD;
+    c.holder = p.id;
+    c.visit = 0;
+    c.vx = c.vy = c.vz = 0;
+    c.stuckT = 0;
+    s.pet = 1;
+    s.reloadT = 0;
+    s.recoil = 0;
+    // (a hammer, a throwable or the walkie-talkie in the hand would still have the mouse: the hand goes back to a weapon)
+    if (s.slot === SLOT_BUILD || s.slot === SLOT_THROW || s.slot === SLOT_RADIO) s.slot = s.weapons[SLOT_PRIMARY] ? SLOT_PRIMARY : s.weapons[SLOT_PISTOL] ? SLOT_PISTOL : SLOT_MELEE;
+    this.follow(c, p);
+    this.g.ach.catLift(p);
+    return true;
+  }
+
+  // ACT.CAT_PUT ([E] or [G] with it in their arms), or a weapon key (the simulation's 'cat_drop', s.pet already
+  // cleared): it is set down in front of them
+  put(p) {
+    p.state.pet = 0;
+    const c = this.heldBy(p);
+    if (c) this.release(c, p.state, false);
+  }
+
+  // Out of the arms of the survivor whose state is `s` (null: they are gone): set down in front of them, where it
+  // sits a while, or (startled: they went down, were grabbed...) dropped where it is, and it bolts from them.
+  release(c, s, startled) {
+    const g = this.g;
+    c.mode = MODE.SIT;
+    c.holder = 0;
+    c.visit = 0;
+    c.visitCd = VISIT_COOLDOWN;
+    c.stuckT = 0;
+    c.vx = c.vy = c.vz = 0;
+    const fx = s ? s.x : c.x;
+    const fz = s ? s.z : c.z;
+    const fy = s ? s.y : c.y - HELD_Y;
+    _pos.x = fx;
+    _pos.z = fz;
+    if (!startled && s) {
+      _pos.x -= Math.sin(s.yaw) * SET_OUT;
+      _pos.z -= Math.cos(s.yaw) * SET_OUT;
+    }
+    _pos.y = groundAt(g.world, _pos.x, _pos.z, fy + 0.6, RADIUS); // (the ground they stand on: not up onto what is over their head)
+    resolveBody(g.world, _pos, RADIUS, HEIGHT);
+    if (g.world.isDeepWater(_pos.x, _pos.z)) {
+      _pos.x = fx;
+      _pos.z = fz;
+    }
+    c.x = _pos.x;
+    c.z = _pos.z;
+    c.y = groundAt(g.world, c.x, c.z, fy + 0.6, RADIUS);
+    if (startled) {
+      c.mode = MODE.FLEE;
+      c.modeT = 1.2 + g.rng() * 0.8;
+      // away from where it was held (a little to one side, so it does not run straight through them)
+      const a = (s ? s.yaw : c.yaw) + (g.rng() < 0.5 ? 2.2 : -2.2);
+      c.threatX = c.x + Math.sin(a) * 2;
+      c.threatZ = c.z + Math.cos(a) * 2;
+      c.anim = CANIM.RUN;
+    } else {
+      c.modeT = 3 + g.rng() * 4;
+      if (s) c.yaw = s.yaw;
+      c.anim = CANIM.SIT;
+    }
+  }
+
+  // once a tick: it goes where its holder does, purring while they stroke it, until they can no longer hold it
+  updateHeld(c) {
+    const g = this.g;
+    const p = g.players.get(c.holder);
+    const s = p?.state;
+    if (!p || p.away || !s.pet) {
+      if (s) s.pet = 0;
+      return this.release(c, s, false);
+    }
+    if (!p.alive || p.zombie || p.downed || s.pinned || s.pulled || s.ride || s.cart || swimming(g.world, s)) {
+      s.pet = 0;
+      return this.release(c, s, true);
+    }
+    this.follow(c, p);
+  }
+
+  follow(c, p) {
+    const s = p.state;
+    c.x = s.x;
+    c.y = s.y + HELD_Y;
+    c.z = s.z;
+    c.yaw = s.yaw;
+    c.anim = s.lastBtn & BTN.ATTACK ? CANIM.PET : CANIM.HELD;
+  }
+
+  // The cat that crossed the bridge in somebody's arms (Game.buildMainland): set down beside them at the bridgehead,
+  // where it makes its home from then on. variant: its coat, as it was on the island
+  spawnBeside(s, variant) {
+    const g = this.g;
+    const w = g.world;
+    for (let k = 0; k < 8; k++) {
+      const a = s.yaw + Math.PI / 2 + k * (Math.PI / 4);
+      const x = s.x - Math.sin(a) * 1.2;
+      const z = s.z - Math.cos(a) * 1.2;
+      if (w.isDeepWater(x, z) || g.nav.isBlocked(x, z)) continue;
+      return this.spawn(x, z, x, z, variant);
+    }
+    return this.spawn(s.x, s.z, s.x, s.z, variant);
+  }
+
+  // nearest thing it's afraid of: a zombie, or a survivor who has turned (in somebody's arms it is afraid of nothing)
   nearestThreat(c) {
     const g = this.g;
     const r = c.mode === MODE.FLEE ? SCARE_RADIUS * 1.6 : SCARE_RADIUS;

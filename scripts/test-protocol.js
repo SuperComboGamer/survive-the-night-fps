@@ -90,7 +90,8 @@ function spawn(kind) {
     case ENT.CAT:
       e.variant = irnd(0, 4);
       e.yaw = rnd(0, 6.28);
-      e.anim = irnd(0, 3);
+      e.anim = irnd(0, 5);
+      e.holder = Math.random() < 0.5 ? 0 : irnd(1, 0xffff); // (in somebody's arms: a player id, u16)
       break;
     case ENT.DEER:
       e.variant = irnd(0, 255);
@@ -127,6 +128,8 @@ function expectQ(e) {
       q.push(e.state);
       break;
     case ENT.CAT:
+      q.push(qangle8(e.yaw), e.anim, e.holder);
+      break;
     case ENT.DEER:
       q.push(qangle8(e.yaw), e.anim);
       break;
@@ -192,7 +195,8 @@ for (let tick = 1; tick <= TICKS; tick++) {
     if (e.kind === ENT.CACHE && Math.random() < 0.05) e.state = irnd(0, 1);
     if (e.kind === ENT.CAT && Math.random() < 0.2) {
       e.yaw = rnd(0, 6.28);
-      e.anim = irnd(0, 3);
+      e.anim = irnd(0, 5);
+      if (Math.random() < 0.3) e.holder = Math.random() < 0.5 ? 0 : irnd(1, 0xffff);
     }
     if (e.kind === ENT.DEER && Math.random() < 0.2) {
       e.yaw = rnd(0, 6.28);

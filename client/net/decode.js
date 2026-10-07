@@ -4,7 +4,7 @@ import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED, SERV
 import { EVT, AMMO_ITEMS, PROJ } from '../../shared/defs.js';
 import { ACH_STATS } from '../../shared/achievements.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 6, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -14,7 +14,7 @@ const BIT_SLOTS = {
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
-  [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.CAT]: [[0, 3], [3, 4], [4, 5], [5, 6]],
   [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 8]],
   [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
   [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
@@ -34,6 +34,7 @@ function readFields(r, kind, q, s0, s1) {
       } else if (s === 5) q[s] = r.u16();
       else if (s > 5) q[s] = r.u8();
     } else if (kind === ENT.ZOMBIE) q[s] = s === 6 ? r.u16() : r.u8();
+    else if (kind === ENT.CAT) q[s] = s === 5 ? r.u16() : r.u8(); // (its holder)
     else if (kind === ENT.ITEM || kind === ENT.GUN || kind === ENT.HANDCAR) q[s] = r.u16();
     else q[s] = r.u8();
   }
@@ -120,7 +121,7 @@ export function readSelf(r, out, flags) {
   if (!out.ammo) out.ammo = AMMO_ITEMS.map(() => 0);
   if (out.ride === undefined) out.ride = out.rideGo = out.rideT = 0;
   if (out.cart === undefined) out.cart = out.cartS = out.cartV = 0;
-  if (out.hmg === undefined) out.hmg = 0;
+  if (out.hmg === undefined) out.hmg = out.pet = 0;
   if (out.perks === undefined) out.perks = 0;
   if (out.shove === undefined) out.shove = 0;
   if (!(flags & SNAP.SELF)) return false;
@@ -179,7 +180,9 @@ export function readSelf(r, out, flags) {
     out.cart = r.u8();
     out.cartS = r.f32();
     out.cartV = r.f32();
-    out.hmg = r.u8();
+    const arms = r.u8(); // (the mounted gun in them, the cat in them)
+    out.hmg = arms & 1;
+    out.pet = (arms >> 1) & 1;
     out.perks = r.u32();
   }
   if (mask & SELF.STATUS) {

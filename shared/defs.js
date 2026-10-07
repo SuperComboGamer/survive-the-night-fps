@@ -585,6 +585,8 @@ export const CANIM = {
   WALK: 1,
   RUN: 2,
   SIT: 3,
+  HELD: 4, // in a survivor's arms (its HOLDER field says whose)
+  PET: 5, // ...and being stroked: it purrs
 };
 
 // ---------------------------------------------------------------- projectiles / areas
@@ -709,6 +711,7 @@ export const SOUND = {
   DRINK: 121, // a can cracked open and gulped down (an energy drink)
   FLARE_GUN: 122, // a flare gun's shot (client-side, from EVT.SHOT)
   FLARE_POP: 123, // a parachute flare bursting alight at the top of its climb (client-side, from its flight)
+  CAT_PURR: 125, // the stray cat purring while it is stroked (client-side, from its CANIM.PET)
 };
 
 export const EVT = {

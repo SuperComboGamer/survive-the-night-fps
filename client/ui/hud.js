@@ -13,6 +13,7 @@ import { bindLabel, bindTag, onBindsChange } from '../game/binds.js';
 
 const SLOT_LABELS = ['Primary', 'Pistol', 'Melee', 'Throw', 'Build', 'Radio'];
 const RADIO = 5; // the walkie-talkie's slot (SLOT_RADIO)
+const HUD_CAT = -1; // (the weapon block's id while the stray cat is in their arms: no item has it)
 const ARC = { cx: 120, cy: 70, rx: 100, ry: 56 };
 
 // deterministic treeline for the clock horizon
@@ -536,14 +537,15 @@ export class Hud {
     }
 
     // active weapon block
-    // (manning the mounted gun: it stands in for the weapon in the hands, its belt for the magazine)
-    const id = h.mounted ? MOUNTED_GUN : slot === 3 ? h.throwItem || weapons[3] || 0 : weapons[slot] || 0;
+    // (manning the mounted gun: it stands in for the weapon in the hands, its belt for the magazine; the stray cat in
+    // their arms stands in for it with no rounds at all)
+    const id = h.mounted ? MOUNTED_GUN : h.cat ? HUD_CAT : slot === 3 ? h.throwItem || weapons[3] || 0 : weapons[slot] || 0;
     if (c.wId !== id) {
       const wasId = c.wId;
       c.wId = id;
-      this.wName.textContent = h.mounted ? GUN.name : id ? ITEM_DEFS[id]?.name || '' : 'Unarmed';
-      this.wIco.innerHTML = id ? itemIcon(id) : '';
-      const w = h.mounted ? GUN : WEAPONS[id];
+      this.wName.textContent = h.mounted ? GUN.name : h.cat ? 'Stray Cat' : id ? ITEM_DEFS[id]?.name || '' : 'Unarmed';
+      this.wIco.innerHTML = h.cat ? glyph('paw') : id ? itemIcon(id) : '';
+      const w = h.mounted ? GUN : h.cat ? null : WEAPONS[id];
       c.aTypeStr = w && !w.melee ? AMMO_NAMES[w.ammo] : '';
       c.magMax = w && w.mag ? w.mag : 0;
       c.magEach = !!(w && w.reloadEach);
@@ -551,8 +553,8 @@ export class Hud {
       if (wasId !== undefined) this.ammo.animate([{ opacity: 0.3, transform: 'translateX(8px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' });
     }
     let mode;
-    if (slot === 3 && id && !h.mounted) mode = 'throw';
-    else if (slot === RADIO && id && !h.mounted) mode = 'radio'; // (no rounds: how to use it, under its name)
+    if (slot === 3 && id && !h.mounted && !h.cat) mode = 'throw';
+    else if (slot === RADIO && id && !h.mounted && !h.cat) mode = 'radio'; // (no rounds: how to use it, under its name)
     else if (h.mag == null) mode = 'none';
     else mode = 'gun';
     if (c.ammoMode !== mode) {

@@ -285,7 +285,7 @@ by hand.
 
 | Parameter | What it does |
 | --- | --- |
-| `?vm=ID` | the item (an `ITEM` id). `?vm=claws` is a zombie's claws, `?vm=all` a grid of every item, `?vm=0` empty hands (for `act=use`) |
+| `?vm=ID` | the item (an `ITEM` id). `?vm=claws` is a zombie's claws, `?vm=all` a grid of every item, `?vm=0` empty hands (for `act=use`), `?vm=cat` the stray cat in both arms (`&act=pet` strokes it, `&coat=N`; the clip check counts the posed cat as the item) |
 | `&act=` | `fire`, `reload`, `melee`, `heavy` (knife stab), `throw`, `use`, `ads`, `sprint`, `walk`, `crouch`, `jump`, `look`, `talk` (the walkie keyed) |
 | `&use=ID` | with `act=use`: the consumable (food shows the tin, venison the meat, the drink its can) |
 | `&t=S` | freeze the clock S seconds after the action starts (it starts after a 0.6 s draw; `t=-0.45` is mid-draw). Makes the frame deterministic. |
@@ -347,6 +347,7 @@ Examples:
 | `&dots=1`, `&xray=1` | as in `?vm=` |
 | `&nk=SCRIPT`, `&hit=` | with `?hold=57`: the nunchucks' moves on the body (the same scripts as `?vm=`), starting at t = 1 like the pulses |
 | `&ts=a,b,c`, `&cols=N` | a strip: one tile at each of those times (no clip check). With `&nk=` it is a move frame by frame |
+| `&cat=1` | the stray cat in their arms (`&pet=1` the right fist stroking it, `&coat=N`); the clip check counts the posed cat as the item. `&cradle=`, `&petarm=`, `&catat=` override the pose while tuning |
 
 ### Other sandboxes
 

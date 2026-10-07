@@ -7,9 +7,10 @@
 //   Melee: the handle runs along Z through the fist, blade/bat toward -Z, cutting edge / hammer face toward -Y.
 //   Throwables (molotov, pipebomb, road flare, frag grenade, noisemaker): long axis along +Y (held like a bottle).
 import * as THREE from 'three';
-import { ITEM, CONSUMABLES } from '../../../shared/defs.js';
+import { ITEM, CONSUMABLES, CANIM } from '../../../shared/defs.js';
 import { NK_GEOM, NK_CHAIN } from '../../../shared/nunchaku.js';
 import { NunchakuFP, FP_SHOULDER_L, FP_SHOULDER_R } from './nunchaku.js';
+import { catBackY } from './cat.js';
 import { WR, CR } from './charTextures.js';
 import {
   MeshBuilder,
@@ -2025,6 +2026,10 @@ const HAND_POSES = {
   pistolMag: { curl: [[0.91, 1.04, 0.72], [0.3, 1.48, 1.03], [0.21, 1.34, 0.93], [0.73, 0.84, 1.2]], spread: 0.02, thumb: [[-0.77, -0.61, -0.21], [0.03, -0.97, -0.26]], center: [-0.0135, -0.088, 0] }, // the pistol's new magazine
   xbowString: { curl: [[0.6, 0.56, 0.39], [0.56, 0.6, 0.42], [0.48, 0.6, 0.42], [1.08, 0.88, 0.62]], spread: 0, thumb: [[0.1, -0.97, -0.24], [-0.1, -0.92, 0.37]], center: [-0.0268, -0.1, -0.02] }, // the crossbow's string, hauled back to the latch
   rpgWarhead: { curl: [[0.42, 0.48, 0.34], [0.51, 0.59, 0.41], [0.56, 0.64, 0.45], [0.54, 0.62, 0.43]], spread: 0.02, thumb: [[-0.61, -0.71, -0.35], [0, -0.61, -0.79]], center: [-0.0418, -0.088, 0] },
+  // the stray cat in both arms (ViewModel.holdCat): the right palm laid on its back, the fingers eased along the fur,
+  // and the left cupped under its belly, the fingers round its far side. center: the middle of the palm's face
+  catBack: { curl: [[0.48, 0.55, 0.38], [0.49, 0.56, 0.39], [0.47, 0.54, 0.38], [0.4, 0.46, 0.32]], spread: 0.04, thumb: [[0.45, -0.8, -0.4], [0.55, -0.8, -0.25]], center: [-0.0168, -0.06, 0.005] }, // (fitted against the posed cat over a whole stroke: each joint as open as its widest point needs, the thumb up off the neck)
+  catCup: { curl: [[0.37, 0.86, 0.6], [0.52, 0.89, 0.62], [0.61, 0.7, 0.48], [0.38, 0.44, 0.3]], spread: 0.03, thumb: [[-0.16, -0.79, -0.59], [-0.07, -0.87, -0.5]], center: [-0.0405, -0.06, 0.005] }, // (fitted the same way: under its tucked legs, as it arches into a stroke)
 };
 // Knuckles sit on an arc (middle finger furthest out, pinky set back). r = proximal phalanx radius.
 const FINGERS = [
@@ -2900,6 +2905,23 @@ const PISTOL_RACK_POLE = new THREE.Vector3(-1, -0.3, 0.3);
 const PISTOL_RACK_ARC = new THREE.Vector3(-0.07, 0.02, 0.03);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const SWAY_PIVOT = new THREE.Vector3(0.1, -0.14, -0.32); // roughly between the hands
+// The stray cat in both arms (ViewModel.holdCat). Where it lies in the view: its model's origin (its feet), turned
+// across the arms with its head to the left, and tipped toward the eye so its back shows; it looks round at the one
+// holding it now and then (CAT_LOOK: its head's yaw toward the eye). Then, in the cat's own space (models/cat.js:
+// metres, its head toward -Z, its feet at y = 0, the side nearest the eye -X): the left palm cupped under its belly
+// under its tucked legs, the right palm on its back, both hands' fingers round its far side (+X). A stroke takes the
+// right palm along its back from behind its neck toward its hips, riding on the top of it (catBackY, models/cat.js),
+// and back clear of it. The hand poses were fitted against the posed cat over the whole stroke (scripts/clip/grip-lib.js).
+const CAT_AT = new THREE.Vector3(-0.015, -0.4, -0.5);
+const CAT_YAW = PI / 2 + 0.3;
+const CAT_TIP = 0.3;
+const CAT_LOOK = 1.25;
+const CAT_RAISE = 0.35; // s: up into the view as it is picked up
+const CAT_CUP = { p: new THREE.Vector3(-0.005, 0.1388, -0.004), q: handQ(-1, [1, 0.05, 0], [0, 1, 0]) };
+const CAT_BACK = { x: -0.012, z: 0.045, q: handQ(1, [1, -0.05, 0], [0, -1, 0]) };
+const CAT_PALM = [-0.026, 0.04]; // how far the palm reaches along the cat either side of its middle
+const CAT_STROKE = { z0: -0.045, z1: 0.09, lift: 0.035, dur: 1.15, along: 0.6, clear: 0.0028 };
+const CAT_POLE_R = new THREE.Vector3(1, -0.7, 0.3);
 const IDLE_RATE = 1.35; // breathing, rad/s (~4.7 s per breath)
 const softClamp = (x, m) => m * Math.tanh(x / m);
 
@@ -3077,6 +3099,10 @@ export class ViewModel {
     this.kit.visible = false;
     this.kit.frustumCulled = false;
     this.sway.add(this.kit);
+    this.cat = null; // the stray cat in our arms (holdCat)
+    this.catT = 0; // ...up into the view (0..1)
+    this.petU = -1; // ...a stroke under way (0..1 through it; -1 none)
+    this.petW = 0; // ...the right hand on its way from resting on its back to the stroke
     this.flameAnchor = new THREE.Object3D();
     this.flameAnchor.name = 'flameAnchor';
     this.group.userData.flameAnchor = this.flameAnchor;
@@ -3230,6 +3256,7 @@ export class ViewModel {
     this.armL.setVisible(claws || !!(this.cur && this.cur.lGrip));
     this.armR.setPose(claws ? 'claw' : (this.cur && this.cur.cfg.rPose) || 'grip'); // (builds an item's own hand pose now, not mid-update)
     this.armL.setPose(claws ? 'claw' : this.cur && this.cur.lGrip ? this.cur.lGrip.pose : 'grip');
+    if (this.cat) this._catHands(); // (the weapon changed under the cat in our arms: it stays put away)
   }
 
   setVisible(v) {
@@ -3320,6 +3347,38 @@ export class ViewModel {
     // the hand poses fitted to each prop's sides (left, right)
     this.usePose = meat ? ['meatL', 'meatR'] : food ? ['tinHold', 'tinHold'] : this.drinking ? ['drinkHold', 'drinkHold'] : ['kitHold', 'kitHold'];
     this.act = { type: 'use', t: 0, dur: Math.max(0.6, duration) + 0.35 };
+  }
+
+  /** The stray cat in both arms: a view of it for this scene (createCat(coat, seed, true)), drawn across the arms in
+   *  place of the weapon; or null, and it is put down and the weapon comes back up. While it is held, update's s.pet
+   *  (the fire button held) strokes it. */
+  holdCat(view) {
+    if ((view || null) === this.cat) return;
+    if (this.cat) this.sway.remove(this.cat.object);
+    this.cat = view || null;
+    if (!this.cat) return void this.setItem(this.itemId, { claws: this.claws });
+    this.sway.add(this.cat.object);
+    this.cat.setLook(CAT_LOOK);
+    this.catT = 0;
+    this.petU = -1;
+    this.petW = 0;
+    this._catHands();
+  }
+  _catHands() {
+    this.act = null;
+    this.kit.visible = false;
+    if (this.cur) this.cur.root.visible = false;
+    this.scoped = false;
+    this.scopeOverlay.visible = false;
+    this.group.userData.scoped = false;
+    this.armR.setStyle('normal');
+    this.armL.setStyle('normal');
+    this.armR.shoulder.position.copy(SHOULDER_R);
+    this.armL.shoulder.position.copy(SHOULDER_L);
+    this.armR.setVisible(true);
+    this.armL.setVisible(true);
+    this.armR.setPose('catBack');
+    this.armL.setPose('catCup');
   }
 
   /** the item is put away before it is used up: the weapon is drawn again straight away */
@@ -3423,7 +3482,16 @@ export class ViewModel {
       SWAY_PIVOT.z - _v1.z
     );
 
-    if (this._push(dt, s)) return;
+    if (this._push(dt, s)) {
+      if (this.cat) this.cat.object.visible = false; // (pinned: the server sets the cat down, and it is gone a moment on)
+      return;
+    }
+    if (this.cat) {
+      // the cat in our arms, unless an item is being used (the server sets the cat down for it: it is gone a moment on)
+      const using = !!this.act && this.act.type === 'use';
+      this.cat.object.visible = !using;
+      if (!using) return this._animCat(dt, s, t);
+    }
     if (this.claws) {
       this._updateClaws(dt, t);
       return;
@@ -4328,6 +4396,44 @@ export class ViewModel {
       arm.setPose(this.usePose[side < 0 ? 0 : 1]);
       this._solveArm(arm, _v1, _q1, side < 0 ? SHOULDER_L : SHOULDER_R, side < 0 ? POLE_L : POLE_R);
     }
+  }
+
+  // the stray cat across our arms (holdCat): the left hand under it, the right on its back or stroking it
+  _animCat(dt, s, t) {
+    const view = this.cat;
+    const o = view.object;
+    if (this.cur) this.cur.root.visible = false;
+    this.catT = Math.min(1, this.catT + dt / CAT_RAISE);
+    const up = ease(this.catT, 2);
+    // a stroke, once begun, runs to its end (a click is one whole stroke), and goes round again while it is held
+    if (this.petU >= 0) {
+      this.petU += dt / CAT_STROKE.dur;
+      if (this.petU >= 1) this.petU = s.pet ? this.petU - 1 : -1;
+    } else if (s.pet) this.petU = 0;
+    const stroking = this.petU >= 0;
+    this.petW += ((stroking ? 1 : 0) - this.petW) * (1 - Math.exp(-dt * 12));
+    o.position.set(CAT_AT.x, CAT_AT.y - (1 - up) * 0.32, CAT_AT.z);
+    o.rotation.set(CAT_TIP - (1 - up) * 0.5, CAT_YAW, 0, 'XYZ');
+    view.update(dt, stroking ? CANIM.PET : CANIM.HELD, 0, t);
+    o.updateMatrix();
+    // the left hand under its belly
+    _v1.copy(CAT_CUP.p).applyMatrix4(o.matrix);
+    _q1.copy(o.quaternion).multiply(CAT_CUP.q);
+    this._solveArm(this.armL, _v1, _q1, SHOULDER_L, POLE_L);
+    // the right on its back: resting, or along it from behind the neck to the hips, then back clear of it
+    const st = CAT_STROKE;
+    let z = CAT_BACK.z;
+    let lift = 0;
+    if (this.petW > 0.001) {
+      const u = Math.max(0, this.petU);
+      const along = u < st.along;
+      const k = along ? smoothstep(0, st.along, u) : 1 - smoothstep(st.along, 1, u);
+      z += (st.z0 + (st.z1 - st.z0) * k - z) * this.petW;
+      lift = along ? 0 : Math.sin((PI * (u - st.along)) / (1 - st.along)) * st.lift * this.petW;
+    }
+    _v1.set(CAT_BACK.x, catBackY(z, CAT_PALM[0], CAT_PALM[1]) + st.clear + lift, z).applyMatrix4(o.matrix);
+    _q1.copy(o.quaternion).multiply(CAT_BACK.q);
+    this._solveArm(this.armR, _v1, _q1, SHOULDER_R, CAT_POLE_R);
   }
 
   _updateClaws(dt, t) {

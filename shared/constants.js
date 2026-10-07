@@ -103,7 +103,7 @@ export const ENGINE_START_TIME = 2.2; // start the car once every supply is inst
 // action the moment it arrives, while the commands that moved the player there are still batched on the client or
 // queued for the next tick - up to about 0.1 s of movement. A prompt on screen must never be refused for distance.
 export const INTERACT_REACH = 3.3;
-export const PICK_RADIUS = { ITEM: 0.5, CACHE: 0.75, CRATE: 1.1, DOWNED: 1.1 }; // structures: structPickRadius in defs.js
+export const PICK_RADIUS = { ITEM: 0.5, CACHE: 0.75, CRATE: 1.1, DOWNED: 1.1, CAT: 0.45 }; // structures: structPickRadius in defs.js
 export const INTERACT_SLACK = SPRINT_SPEED * 0.1;
 export const HOLD_SLACK = 0.4; // a hold under way is only broken off this much further out than it can start
 export const CAR_REACH = 3.9; // [E] at the car is offered this close to it (the server allows 5 m: Game.nearCar)
