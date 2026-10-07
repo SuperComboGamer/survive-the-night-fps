@@ -11,10 +11,12 @@
 //   { t: 'progress', tok, ... }    a player's progress (progress.js): { first, xp, perks, best } as they join, { perks } on a pick
 //   { t: 'achieved', user, ids }   an account's achievements unlocked (userachievements.js): tell the player
 //   { t: 'bestiary', tok, mask }   the kinds of the dead an account has seen (userbestiary.js), as they join
+//   { t: 'admin', id, op, ... }    the admin panel asks something of this game (gameadmin.js): answered { t: 'admin', id, ok, ... }
 // To it:
 //   { t: 'ready', seed }           the game is built and ticking        { t: 'out', buf }      messages for sockets
 //   { t: 'closed', slot }          done with that slot's socket: nothing more will go out for it
 //   { t: 'kick', slot }            close that socket: it took a seat and never joined (JOIN_WAIT)
+//   { t: 'kick', slot, code, why } ...or an admin removed its player (gameadmin.js): closed with that code and reason
 //   { t: 'status', ... }           once a second, and when the number of players changes
 //   { t: 'rec', op, ... }          the leaderboard and XP (RemoteRecords) { t: 'board', ... }  a player asked for it
 //   { t: 'an', rec }               a record of the match being played (analytics.js), for the database (matchstore.js)
@@ -23,7 +25,8 @@
 //   { t: 'finished' }              ...the match is ended and its records posted
 //   { t: 'saved', buf }            the game, saved (gzipped: handoff.js), and its match ended as 'handoff'
 //   { t: 'saveFailed', error }     ...or it could not be, and its match ended as 'interrupted'
-//   { t: 'restoreFailed', why }    the save this game was to be made from cannot be used here: it ends
+//   { t: 'restoreFailed', why, world }  the save this game was to be made from cannot be used here: it ends (world:
+//                                  because this build makes another valley of its seed)
 //
 // workerData.restore: a game the last server saved (the gzipped envelope), to carry on with instead of a new one.
 import { parentPort, workerData } from 'node:worker_threads';
@@ -31,6 +34,8 @@ import { Game } from './game.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { SERVER_TICK_RATE } from '../shared/constants.js';
 import { envelope, encode, decode } from './handoff.js';
+import { adminOp } from './gameadmin.js';
+import { ENDED_CODE, LEFT_CODE } from '../shared/protocol.js';
 
 const { code, opts, congestion, restore } = workerData;
 // ms a socket may hold a seat without joining (a client sends its JOIN as soon as it is open). JOIN_WAIT_SECONDS: tests
@@ -88,7 +93,7 @@ try {
   });
 } catch (err) {
   if (!restore) throw err;
-  post({ t: 'restoreFailed', why: err.message });
+  post({ t: 'restoreFailed', why: err.message, world: err.world === true });
   throw err;
 }
 
@@ -131,6 +136,19 @@ function makeConn(slot, ip, user) {
   };
 }
 
+// An admin removed the player on this socket (gameadmin.js kick): the game lets go of them now, as of a player who
+// left on purpose (no place is held for them), and the network thread closes the socket with the reason. What the
+// socket still sends is for nobody; its slot is given back when its close comes (case 'close').
+function drop(slot, why) {
+  const s = sessions[slot];
+  if (!s) return;
+  conns[slot].closed = true;
+  sessions[slot] = conns[slot] = null;
+  openedAt[slot] = 0;
+  game.onClose(s, LEFT_CODE);
+  post({ t: 'kick', slot, code: ENDED_CODE, why: why ? `An admin removed you from the game: ${why}` : 'An admin removed you from the game.' });
+}
+
 parentPort.on('message', (m) => {
   switch (m.t) {
     case 'open': {
@@ -166,6 +184,17 @@ parentPort.on('message', (m) => {
     case 'bestiary':
       game.onBestiary(m.tok, m.mask);
       break;
+    case 'admin': {
+      // (whatever goes wrong in it is the panel's answer, never this game's end)
+      let reply;
+      try {
+        reply = adminOp(game, m, { drop });
+      } catch (err) {
+        reply = { ok: false, error: String(err?.message || err).slice(0, 200) };
+      }
+      post({ t: 'admin', id: m.id, ...reply });
+      break;
+    }
     case 'finish':
       try {
         game.track?.finish('interrupted');
@@ -215,6 +244,14 @@ let cpuAt = process.threadCpuUsage();
 let cpuT = performance.now();
 let elu = performance.eventLoopUtilization();
 let load = { cpuMs: 0, elu: 0 }; // over the last second: CPU ms this thread used per second, share of time busy
+// ticks that threw (the loop carries on): how many, and the last one - what the admin panel shows of a game going wrong
+let errs = 0;
+let lastErr = '';
+function tickError(err) {
+  errs++;
+  lastErr = String(err?.message || err).slice(0, 160);
+  console.error(tag, 'tick error', err);
+}
 function status() {
   lastPlayers = game.players.size;
   let lead = '';
@@ -223,7 +260,7 @@ function status() {
     lead ||= p.name; // (the one who has been in longest: the map keeps join order)
     if (p.away) held++;
   }
-  post({ t: 'status', players: game.players.size, held, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10 });
+  post({ t: 'status', players: game.players.size, held, lead, phase: game.phase, day: game.day, seed: game.seed >>> 0, tick: game.tickStats.status(performance.now()), load, heapMb: Math.round(process.memoryUsage().heapUsed / 1e5) / 10, act: game.act, zombies: game.zombies.length, errs, lastErr });
 }
 setInterval(() => {
   const now = performance.now();
@@ -274,7 +311,7 @@ function loop() {
       try {
         game.update();
       } catch (err) {
-        console.error(tag, 'tick error', err);
+        tickError(err);
       }
     }
     if (n) flush();
@@ -291,7 +328,7 @@ function loop() {
     try {
       game.update();
     } catch (err) {
-      console.error(tag, 'tick error', err);
+      tickError(err);
     }
     next += TICK_MS;
     steps++;

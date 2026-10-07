@@ -1,0 +1,1036 @@
+/* The control room (/admin): the stats page's colours, type and cards (stats.css, loaded before this), with the
+   moon blue the stats page already gives its admin part, and the game's menu buttons (client/ui/ui.css .btn). */
+@import "../stats/stats.css";
+
+[hidden] {
+  display: none !important;
+}
+#admin {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 18px 24px 64px;
+}
+.ad-mono {
+  font-family: var(--f-mono);
+  letter-spacing: 0.04em;
+}
+.ad-dim {
+  color: rgba(230, 223, 207, 0.45);
+}
+
+/* ---------------------------------------------------------------- the top bar */
+.ad-top {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+.ad-title {
+  font-family: var(--f-head);
+  font-size: 30px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: var(--moon);
+  padding-left: 18px;
+  border-left: 1px solid var(--bone-faint);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+.ad-who {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ad-who-n {
+  font-family: var(--f-num);
+  font-size: 17px;
+}
+
+/* ---------------------------------------------------------------- tabs */
+.ad-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  margin: 0 -24px 18px;
+  padding: 10px 24px 0;
+  background: linear-gradient(#050404 78%, rgba(5, 4, 4, 0));
+  border-bottom: 1px solid var(--bone-faint);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ad-tabs::-webkit-scrollbar {
+  display: none;
+}
+.ad-tab {
+  flex: none;
+  padding: 10px 18px 9px;
+  font: 500 14px / 1 var(--f-num);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--bone-dim);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.ad-tab:hover {
+  color: var(--bone);
+}
+.ad-tab.on {
+  color: var(--bone);
+  border-bottom-color: var(--blood-hi);
+  background: linear-gradient(rgba(212, 42, 42, 0), rgba(212, 42, 42, 0.1));
+}
+
+/* ---------------------------------------------------------------- buttons (the game's .btn) */
+.ad-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px 9px;
+  font: 500 13px / 1 var(--f-num);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  color: var(--bone);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(230, 223, 207, 0.28);
+  border-radius: 0;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.ad-btn:hover {
+  border-color: var(--bone);
+  background: rgba(230, 223, 207, 0.08);
+}
+.ad-btn:focus-visible,
+.ad-input:focus-visible,
+.ad-tab:focus-visible {
+  outline: 2px solid var(--moon);
+  outline-offset: 2px;
+}
+.ad-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+  border-color: rgba(230, 223, 207, 0.16);
+  background: transparent;
+}
+.ad-btn-s {
+  padding: 7px 12px 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+}
+.ad-btn-blood {
+  color: #f7ede2;
+  background: linear-gradient(180deg, #a8161d, #6c0a0f 70%, #520709);
+  border-color: #c42a2a;
+  box-shadow: 0 0 22px rgba(170, 20, 20, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.ad-btn-blood:hover:not(:disabled) {
+  background: linear-gradient(180deg, #c21d24, #800d12 70%, #5e080b);
+  border-color: #ff5446;
+}
+.ad-btn-danger {
+  color: #ffb3a8;
+  border-color: rgba(212, 42, 42, 0.6);
+  background: rgba(157, 17, 23, 0.14);
+}
+.ad-btn-danger:hover:not(:disabled) {
+  color: #fff;
+  border-color: #ff5446;
+  background: rgba(157, 17, 23, 0.5);
+}
+
+/* ---------------------------------------------------------------- inputs */
+.ad-input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px 9px;
+  font: 400 15px / 1.2 var(--f-type);
+  color: var(--bone);
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(230, 223, 207, 0.22);
+  border-radius: 0;
+  appearance: none;
+}
+select.ad-input {
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--bone-dim) 50%), linear-gradient(135deg, var(--bone-dim) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+.ad-input::placeholder {
+  color: rgba(230, 223, 207, 0.28);
+}
+.ad-input:hover {
+  border-color: rgba(230, 223, 207, 0.4);
+}
+.ad-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.ad-field-l {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--bone-dim);
+}
+.ad-field-h {
+  font-size: 12px;
+  color: rgba(230, 223, 207, 0.4);
+}
+.ad-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+.ad-form > .ad-btn {
+  align-self: flex-start;
+}
+.ad-two {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+}
+.ad-inline {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.ad-inline-w {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(230, 223, 207, 0.07);
+}
+.ad-inline-w .ad-field {
+  flex: 1 1 0;
+}
+.ad-inline-w .ad-field:nth-child(2) {
+  flex: 0 0 84px;
+}
+.ad-btnrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ad-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: rgba(230, 223, 207, 0.45);
+  max-width: 78ch;
+}
+
+/* ---------------------------------------------------------------- chips */
+.ad-chip {
+  display: inline-block;
+  padding: 3px 7px 2px;
+  font: 400 11px / 1.2 var(--f-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  color: var(--bone-dim);
+  border: 1px solid rgba(230, 223, 207, 0.2);
+  vertical-align: 1px;
+}
+.ad-chip.good {
+  color: var(--sick);
+  border-color: rgba(163, 214, 78, 0.4);
+}
+.ad-chip.warn,
+.ad-chip.day {
+  color: var(--amber);
+  border-color: rgba(232, 163, 61, 0.42);
+}
+.ad-chip.bad {
+  color: #ff8d80;
+  border-color: rgba(212, 42, 42, 0.6);
+  background: rgba(157, 17, 23, 0.16);
+}
+.ad-chip.moon,
+.ad-chip.night {
+  color: var(--moon);
+  border-color: rgba(143, 180, 224, 0.42);
+}
+.ad-chip.dim {
+  color: rgba(230, 223, 207, 0.42);
+  border-color: rgba(230, 223, 207, 0.12);
+}
+
+/* ---------------------------------------------------------------- banners */
+.ad-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px 10px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(232, 163, 61, 0.45);
+  border-left-width: 3px;
+  background: rgba(232, 163, 61, 0.08);
+  color: #f1c98a;
+}
+.ad-banner.bad {
+  border-color: var(--blood-hi);
+  background: rgba(157, 17, 23, 0.16);
+  color: #ffb3a8;
+}
+.ad-banner .ad-btn {
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- overview */
+.ad-status {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 16px;
+  align-items: center;
+  padding: 6px 0 20px;
+}
+.ad-status .st-dot {
+  grid-row: 1 / 3;
+  width: 14px;
+  height: 14px;
+}
+.ad-status .st-dot.warn {
+  background: var(--amber);
+  animation: none;
+}
+.ad-status-t {
+  font-family: var(--f-head);
+  font-size: clamp(38px, 6vw, 60px);
+  line-height: 0.95;
+  letter-spacing: 0.03em;
+}
+.ad-status-s {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+}
+.ad-tiles {
+  grid-template-columns: repeat(4, 1fr);
+}
+.ad-tiles .st-tile-s {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ad-tiles .st-tile.warn {
+  border-top-color: var(--amber);
+}
+.ad-tiles .st-tile.warn .st-tile-n {
+  color: var(--amber);
+}
+.ad-tiles .st-tile.bad {
+  border-top-color: var(--blood-hi);
+}
+.ad-tiles .st-tile.bad .st-tile-n {
+  color: #ff6b5c;
+}
+.ad-bar-t {
+  height: 3px;
+  margin-top: 7px;
+  background: rgba(230, 223, 207, 0.08);
+}
+.ad-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--moon);
+  transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.st-tile.warn .ad-bar,
+.ad-bar.warn {
+  background: var(--amber);
+}
+.st-tile.bad .ad-bar,
+.ad-bar.bad {
+  background: var(--blood-hi);
+}
+.ad-bar.good {
+  background: var(--sick);
+}
+.ad-card {
+  grid-column: span 6;
+}
+.ad-card.st-half {
+  grid-column: span 3;
+}
+.ad-glist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ad-gcard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  text-decoration: none;
+  border: 1px solid rgba(230, 223, 207, 0.09);
+  background: rgba(0, 0, 0, 0.25);
+  transition: border-color 0.15s, background 0.15s;
+}
+.ad-gcard:hover {
+  border-color: var(--moon);
+  background: rgba(143, 180, 224, 0.06);
+}
+.ad-gcard-l {
+  min-width: 0;
+  flex: 1;
+}
+.ad-gcard-n {
+  font-family: var(--f-num);
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ad-gcard-m {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--bone-dim);
+}
+.ad-gcard-r {
+  text-align: right;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--bone-dim);
+  white-space: nowrap;
+}
+.ad-gcard-r b {
+  display: block;
+  font: 500 22px / 1 var(--f-num);
+  color: var(--bone);
+}
+.ad-more {
+  display: inline-block;
+  margin-top: 10px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--moon);
+}
+.ad-trouble {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ad-inc {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  text-decoration: none;
+  font-size: 14px;
+  border-left: 2px solid rgba(212, 42, 42, 0.5);
+  background: rgba(157, 17, 23, 0.07);
+}
+.ad-inc-t {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ad-inc-w {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: rgba(230, 223, 207, 0.4);
+  white-space: nowrap;
+}
+.ad-empty {
+  padding: 26px 12px;
+  text-align: center;
+  font-family: var(--f-mono);
+  font-size: 13px;
+  color: rgba(230, 223, 207, 0.4);
+}
+.ad-empty.good {
+  color: rgba(163, 214, 78, 0.75);
+}
+.ad-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 7px 22px;
+  margin: 0;
+  font-size: 14px;
+}
+.ad-facts dt {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--bone-dim);
+  padding-top: 3px;
+}
+.ad-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ad-settings + .ad-facts {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(230, 223, 207, 0.07);
+}
+
+/* ---------------------------------------------------------------- tables */
+.ad-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ad-toolbar .ad-input {
+  max-width: 340px;
+}
+.ad-toolbar-n {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--bone-dim);
+}
+.ad-t td {
+  padding: 10px 14px 10px 0;
+  vertical-align: middle;
+}
+.ad-t th {
+  padding-right: 14px;
+}
+.ad-t .ad-num {
+  text-align: right;
+  font-family: var(--f-num);
+}
+.ad-t th.ad-num {
+  font-family: var(--f-mono);
+}
+.ad-t .ad-act {
+  text-align: right;
+  padding-right: 0;
+  white-space: nowrap;
+}
+.ad-t .ad-act .ad-btn + .ad-btn {
+  margin-left: 6px;
+}
+.ad-t .ad-wrap {
+  white-space: normal;
+  min-width: 180px;
+}
+.ad-t .ad-chip {
+  margin-left: 6px;
+}
+.ad-t td > .ad-chip:first-child,
+.ad-gsub .ad-chip {
+  margin-left: 0;
+}
+.ad-row-link {
+  cursor: pointer;
+}
+.ad-gname {
+  font-family: var(--f-num);
+  font-size: 17px;
+  text-decoration: none;
+}
+.ad-row-link:hover .ad-gname {
+  color: var(--moon);
+}
+.ad-gsub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--bone-dim);
+}
+.ad-pname {
+  font: 500 16px / 1.2 var(--f-num);
+}
+.ad-link {
+  color: var(--moon);
+  text-underline-offset: 3px;
+}
+.ad-tick {
+  font-family: var(--f-num);
+}
+.ad-tick.warn {
+  color: var(--amber);
+}
+.ad-tick.bad {
+  color: #ff6b5c;
+}
+.ad-t .ad-bar-t {
+  width: 72px;
+  margin-top: 4px;
+}
+.ad-out {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ad-out .ad-chip {
+  flex: none;
+  margin-left: 0;
+}
+.ad-outcome {
+  color: var(--bone-dim);
+}
+.ad-older {
+  margin-top: 12px;
+}
+
+/* ---------------------------------------------------------------- one game */
+.ad-back {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  text-decoration: none;
+  color: var(--bone-dim);
+}
+.ad-back::before {
+  content: '\2190\00a0';
+}
+.ad-back:hover {
+  color: var(--bone);
+}
+.ad-ghead {
+  padding-bottom: 18px;
+}
+.ad-ghead-t {
+  margin: 0;
+  font-family: var(--f-head);
+  font-weight: 400;
+  font-size: clamp(38px, 6vw, 60px);
+  line-height: 1;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+.ad-ghead-s {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ad-code {
+  font-size: 17px;
+  color: var(--bone);
+  letter-spacing: 0.16em;
+  margin-right: 4px;
+}
+.st-tile.night {
+  border-top-color: var(--moon);
+}
+
+/* ---------------------------------------------------------------- what cannot be taken back */
+.ad-danger {
+  border-color: rgba(212, 42, 42, 0.35);
+  background: linear-gradient(160deg, rgba(157, 17, 23, 0.1), rgba(20, 16, 14, 0.82) 55%);
+}
+.ad-danger h3 {
+  color: #ff8d80;
+}
+.ad-dz-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 13px 0;
+  border-top: 1px solid rgba(230, 223, 207, 0.07);
+}
+.ad-dz-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.ad-dz-row:last-child {
+  padding-bottom: 0;
+}
+.ad-dz-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.ad-dz-row b {
+  font: 500 17px / 1.2 var(--f-num);
+}
+.ad-dz-row p {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  color: var(--bone-dim);
+  max-width: 82ch;
+}
+.ad-dz-row .ad-btn {
+  min-width: 190px;
+}
+
+/* ---------------------------------------------------------------- settings */
+.ad-setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 24px;
+  align-items: center;
+}
+.ad-setting-l b {
+  font-size: 16px;
+  color: var(--bone);
+}
+.ad-setting-l p {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  color: var(--bone-dim);
+  max-width: 70ch;
+}
+.ad-setting-l p.ad-dim {
+  color: rgba(230, 223, 207, 0.4);
+}
+.ad-warn-t {
+  color: var(--amber) !important;
+}
+.ad-setting-c {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ad-setting-c .ad-input {
+  width: 120px;
+  font-family: var(--f-num);
+  font-size: 18px;
+}
+.ad-setting .ad-gate-e {
+  grid-column: 1 / -1;
+}
+
+/* ---------------------------------------------------------------- the dialog that asks twice */
+.ad-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(3, 2, 2, 0.78);
+  backdrop-filter: blur(3px);
+  overflow-y: auto;
+}
+.ad-dialog {
+  width: min(540px, 100%);
+  padding: 24px 26px 22px;
+  background: #100c0b;
+  border: 1px solid rgba(212, 42, 42, 0.55);
+  border-top: 3px solid var(--blood-hi);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 0 0 60px rgba(157, 17, 23, 0.18);
+}
+.ad-dialog-k {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: #ff8d80;
+}
+.ad-dialog-t {
+  margin: 6px 0 0;
+  font: 400 38px / 1 var(--f-head);
+  letter-spacing: 0.04em;
+}
+.ad-dialog-target {
+  margin-top: 12px;
+  padding: 10px 12px 9px;
+  font: 500 17px / 1.25 var(--f-num);
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+  background: rgba(230, 223, 207, 0.05);
+  border-left: 3px solid var(--bone);
+}
+.ad-dialog-l {
+  margin: 14px 0 4px;
+  padding: 0 0 0 18px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--bone-dim);
+}
+.ad-dialog-l li + li {
+  margin-top: 4px;
+}
+.ad-dialog .ad-field {
+  margin-top: 14px;
+}
+.ad-dialog-f {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+/* ---------------------------------------------------------------- before the server has said yes */
+.ad-gated .ad-top {
+  border-bottom-color: transparent;
+}
+.ad-gate {
+  width: min(480px, 100%);
+  margin: 9vh auto 0;
+  padding: 26px 28px 26px;
+  background: var(--card);
+  border: 1px solid var(--bone-faint);
+  border-top: 2px solid var(--moon);
+}
+.ad-gate .ad-dialog-k {
+  color: var(--moon);
+}
+.ad-gate-t {
+  margin: 6px 0 10px;
+  font: 400 42px / 1 var(--f-head);
+  letter-spacing: 0.04em;
+}
+.ad-gate-p {
+  margin: 0 0 14px;
+  line-height: 1.5;
+  color: var(--bone-dim);
+}
+.ad-gate-f {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+}
+.ad-gate-f .ad-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.ad-gate-row {
+  display: flex;
+  gap: 10px;
+}
+.ad-gate-e {
+  min-height: 1em;
+  font-size: 13.5px;
+  color: #ff8d80;
+}
+.ad-gate-e:empty {
+  display: none;
+}
+.ad-loading {
+  margin-top: 16vh;
+  text-align: center;
+  font-family: var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 13px;
+  color: var(--bone-dim);
+}
+
+/* ---------------------------------------------------------------- what was done */
+.ad-toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(440px, calc(100vw - 36px));
+  pointer-events: none;
+}
+.ad-toast {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 11px 14px 10px;
+  background: #110d0c;
+  border: 1px solid rgba(163, 214, 78, 0.45);
+  border-left: 3px solid var(--sick);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  font-size: 14px;
+  transition: opacity 0.35s, transform 0.35s;
+}
+.ad-toast b {
+  font: 400 11px / 1 var(--f-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--sick);
+  white-space: nowrap;
+}
+.ad-toast.bad {
+  border-color: rgba(212, 42, 42, 0.6);
+  border-left-color: var(--blood-hi);
+}
+.ad-toast.bad b {
+  color: #ff8d80;
+}
+.ad-toast.out {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+/* ---------------------------------------------------------------- narrower */
+@media (max-width: 1000px) {
+  .ad-tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+  .ad-card.st-half {
+    grid-column: span 6;
+  }
+}
+@media (max-width: 760px) {
+  #admin {
+    padding: 12px 14px 56px;
+  }
+  .ad-top {
+    gap: 12px;
+  }
+  .ad-title {
+    font-size: 24px;
+    padding-left: 12px;
+  }
+  .ad-who-n,
+  .ad-who .ad-chip {
+    display: none;
+  }
+  .ad-tabs {
+    margin: 0 -14px 14px;
+    padding: 8px 14px 0;
+  }
+  .ad-tab {
+    padding: 10px 8px 9px;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+  }
+  .ad-tiles {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .ad-tiles .st-tile-n {
+    font-size: 24px;
+  }
+  .ad-tiles .st-tile-s {
+    white-space: normal;
+  }
+  .ad-status {
+    padding-bottom: 14px;
+  }
+  /* a table is a stack of cards: each cell says what it is */
+  .ad-tw {
+    overflow: visible;
+  }
+  .ad-t,
+  .ad-t tbody,
+  .ad-t tr,
+  .ad-t td {
+    display: block;
+  }
+  .ad-t thead {
+    display: none;
+  }
+  .ad-t tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--bone-faint);
+  }
+  .ad-t tr:first-child {
+    padding-top: 0;
+  }
+  .ad-t tr:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .ad-t td,
+  .ad-t .ad-num,
+  .ad-t .ad-act {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 3px 0;
+    border: 0;
+    text-align: right;
+    white-space: normal;
+  }
+  .ad-t td:first-child {
+    display: block;
+    text-align: left;
+    padding-bottom: 6px;
+  }
+  .ad-t td:not(:first-child)[data-l]:not([data-l=''])::before {
+    content: attr(data-l);
+    flex: none;
+    font: 400 11px / 1.4 var(--f-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(230, 223, 207, 0.45);
+  }
+  .ad-t .ad-act {
+    justify-content: flex-end;
+    padding-top: 8px;
+  }
+  .ad-t .ad-bar-t {
+    display: none;
+  }
+  .ad-t .ad-wrap {
+    min-width: 0;
+  }
+  .ad-toolbar {
+    flex-wrap: wrap;
+  }
+  .ad-toolbar .ad-input {
+    max-width: none;
+    flex: 1 1 200px;
+  }
+  .ad-inline-w {
+    flex-wrap: wrap;
+  }
+  .ad-inline-w .ad-field {
+    flex: 1 1 100%;
+  }
+  .ad-inline-w .ad-field:nth-child(2) {
+    flex: 1 1 100%;
+  }
+  .ad-btnrow .ad-btn {
+    flex: 1 1 calc(50% - 4px);
+    white-space: normal;
+  }
+  .ad-dz-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .ad-setting {
+    grid-template-columns: 1fr;
+  }
+  .ad-facts {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .ad-facts dd {
+    margin-bottom: 8px;
+  }
+  .ad-dialog {
+    padding: 20px 18px 18px;
+  }
+  .ad-dialog-t {
+    font-size: 32px;
+  }
+  .ad-dialog-f {
+    flex-direction: column-reverse;
+  }
+  .ad-gate {
+    margin-top: 4vh;
+    padding: 22px 18px;
+  }
+  .ad-banner {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ad-bar,
+  .ad-toast {
+    transition: none;
+  }
+}

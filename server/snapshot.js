@@ -5,7 +5,7 @@
 // half rate, and irrelevant/destroyed entities get a remove. Sections with nothing in them are not written at all.
 import { SERVER_TICK_RATE, MAX_ENTITIES, LOD_NEAR, AOI_RADIUS, AOI_ITEM_RADIUS, AOI_STRUCTURE_RADIUS, AOI_CACHE_RADIUS } from '../shared/constants.js';
 import { ENT, SNAP, UPOS, UEXT, UEXT_ABS, qpos, qangle8, qangle16, qlookYaw, qlookPitch, packLook, PFLAG, PRIDE_SHIFT, ZSTATUS, HCAR_AT } from '../shared/protocol.js';
-import { ZOMBIE_DEFS, PROJ } from '../shared/defs.js';
+import { ZOMBIE_DEFS, PROJ, STRUCT } from '../shared/defs.js';
 import { GUN_CARRIED } from '../shared/mountedgun.js';
 import { currentWeapon } from '../shared/playersim.js';
 
@@ -42,13 +42,13 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 6, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ITEM]: [[0, 3], [3, 4]],
-  [ENT.STRUCTURE]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.STRUCTURE]: [[0, 3], [3, 4], [4, 5], [5, 6]],
   [ENT.PROJECTILE]: [[0, 3]],
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
@@ -106,6 +106,9 @@ function quant(e) {
     case ENT.STRUCTURE:
       q[3] = Math.max(0, Math.min(255, Math.ceil((e.hp / e.maxHp) * 255)));
       q[4] = e.state | 0;
+      // a torch's or a campfire's flame: the server tick it burns out at (16 bits; 0: out), as the fair's fuel is
+      // sent, so the clients count it down themselves and it is sent again only when the fire is fed or relit
+      q[5] = (e.stype === STRUCT.TORCH || e.stype === STRUCT.CAMPFIRE) && e.burnLeft > 0 ? (stageTick + Math.round(e.burnLeft * SERVER_TICK_RATE)) & 0xffff || 1 : 0;
       break;
     case ENT.CRATE:
     case ENT.CACHE:
@@ -161,6 +164,10 @@ function writeFields(w, kind, q, o, fromSlot, toSlot) {
       case ENT.GUN:
       case ENT.HANDCAR:
         w.u16(v);
+        break;
+      case ENT.STRUCTURE:
+        if (s === 5) w.u16(v);
+        else w.u8(v);
         break;
       default:
         w.u8(v);
@@ -223,9 +230,11 @@ const SZ = new Float64Array(MAX_ENTITIES);
 const SQ = new Int32Array(MAX_ENTITIES * SLOTS); // quantized state by id (same offsets as ClientView.base)
 const SQT = new Uint32Array(MAX_ENTITIES); // the stageStamp SQ was filled at, per id
 let stageStamp = 0;
-// all: the live entities, as writeEntities then gets them
-export function stageEntities(all) {
+let stageTick = 0; // the server tick being staged (a fire's burn-out tick is counted from it)
+// all: the live entities, as writeEntities then gets them; tick: the server's
+export function stageEntities(all, tick = 0) {
   stageStamp = (stageStamp + 1) >>> 0 || 1; // never 0: that is "not staged"
+  stageTick = tick;
   for (let i = 0; i < all.length; i++) {
     const e = all[i];
     SX[e.id] = e.x;

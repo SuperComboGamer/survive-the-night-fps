@@ -122,7 +122,10 @@ const server = http.createServer(
     const card = req.method === 'GET' && /^\/api\/games\/([^/]+)$/.exec(path);
     if (card) return forward(req, res, (await router.gameServer(decodeURIComponent(card[1]))) || router.any());
     if (req.method === 'POST' && path === '/api/games') return forward(req, res, router.leastLoaded({ made: true }));
-    forward(req, res, router.any(req.headers['x-stn-via']));
+    // (the admin panel names the server it is managing - x-stn-via - and has to reach it even while it is going down)
+    const via = req.headers['x-stn-via'];
+    if (via && path.startsWith('/api/admin/') && router.live(via)) return forward(req, res, router.live(via));
+    forward(req, res, router.any(via));
   })
 );
 
