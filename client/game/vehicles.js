@@ -276,6 +276,21 @@ export class VehicleClient {
     v.z = z;
     v.yaw = yaw;
     v.vf = vf;
+    // the bars or the wheel as drawn: after the steering on a stiff spring - the simulation's wheel goes where the keys
+    // send it a share at a time, and a key let go and pressed again is a corner in that; on screen it is a swing
+    if (snap || dt <= 0 || v.steerV === undefined) {
+      v.steerS = steer;
+      v.steerV = 0;
+    } else {
+      const w = 16;
+      for (let left = Math.min(dt, 0.1); left > 1e-6; ) {
+        const h = Math.min(left, 1 / 120);
+        v.steerV += ((steer - v.steerS) * w * w - 2 * w * v.steerV) * h;
+        v.steerS += v.steerV * h;
+        left -= h;
+      }
+    }
+    steer = v.steerS;
     v.steer = steer;
     // the ground under it: its nose and its tail, its two sides (on a bridge's deck the terrain is not what it stands on)
     let pitch = 0;

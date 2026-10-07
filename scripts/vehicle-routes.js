@@ -297,11 +297,15 @@ export function makePilot(world, kind, raw, cl = null, bold = 1) {
       while (err < -Math.PI) err += Math.PI * 2;
       // (a right turn takes the yaw down). The wheel is turned as far as the turn asks, not always to the lock
       const lock = P.lock + (P.lockTop - P.lock) * Math.sqrt(Math.min(1, sp / P.top));
-      const wantSteer = Math.max(-1, Math.min(1, (-err * 1.3) / lock));
+      // the wheel that puts it on the arc through the point looked at (pure pursuit: the angle of the front wheels for a
+      // circle through it), and a little more when well off the heading (round a corner taken late)
+      const d = Math.max(0.5, Math.hypot(dx, dz));
+      const arc = Math.atan((2 * P.wb * Math.sin(-err)) / d) * (1 + 0.6 * Math.max(0, Math.abs(err) - 0.6));
+      const wantSteer = Math.max(-1, Math.min(1, arc / lock));
       // a key is pressed when the wheel is well short of where it should be, and held until it gets there (not let go
       // and pressed again every command: a hand on a keyboard does not, and the wheel would saw back and forth)
       const off = wantSteer - v.steer / lock;
-      if (key > 0 ? off <= 0 : key < 0 ? off >= 0 : true) key = off > 0.18 ? 1 : off < -0.18 ? -1 : 0;
+      if (key > 0 ? off <= 0 : key < 0 ? off >= 0 : true) key = off > 0.12 ? 1 : off < -0.12 ? -1 : 0;
       const turn = key;
       const want = Math.abs(err) > 1.2 ? 3 : vmax[Math.min(N - 1, at + 1)];
       return { thr: sp < want - 0.3 ? 1 : sp > want + 1 ? -1 : 0, turn, done: false, err, want };

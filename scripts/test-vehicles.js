@@ -1478,7 +1478,7 @@ laggy(100, 40, VEH.BIKE);
 {
   const J = await import('./clip/vehicle-jitter.js');
   const rows = J.survey({ vehs: ['bike', 'moped', 'car'], rates: [30, 60, 144, 'uneven'] });
-  const LIM = { steer: [10, 3], lean: [3, 0.6], camRoll: [3, 0.3], camYaw: [5, 1], camPos: [25, 15], oSteer: [8, 5], oLean: [3, 1], oHead: [15, 25] };
+  const LIM = { steer: [10, 0.6], lean: [2, 0.3], camRoll: [2, 0.2], camYaw: [12, 1], camPos: [30, 15], oSteer: [5, 0.6], oLean: [2, 0.3], oHead: [15, 25] };
   const bad = [];
   for (const v of ['bike', 'moped', 'car']) {
     const w = J.worstBy(rows, v);
