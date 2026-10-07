@@ -937,6 +937,24 @@ export class Game {
     this.onMove(this.room.code);
   }
 
+  // The page is about to be loaded again for a deploy's new client (main.js reloadInto), and Edge has crashed instead of
+  // reloading a page still in the middle of a game. What the game holds of the browser - the mouse, fullscreen with the
+  // keyboard locked, the microphone - is given back first, and the mouse and the screen are waited for (the browser
+  // says when they are back, or a moment passes).
+  async letGo() {
+    this.input.enabled = false;
+    this.input.handlers.onLockChange = null; // (the mouse let go is not Esc: no pause menu under the "Game updated" card)
+    const back = (type, ms) => new Promise((done) => (document.addEventListener(type, done, { once: true }), setTimeout(done, ms)));
+    const mouse = document.pointerLockElement ? back('pointerlockchange', 300) : null;
+    this.input.exitLock();
+    await mouse;
+    const screen = document.fullscreenElement ? back('fullscreenchange', 600) : null;
+    this.keyGuard.release(); // (the keyboard lock, and the fullscreen it took)
+    await screen;
+    this.voice.closeAll();
+    this.voice.stopMic();
+  }
+
   leave() {
     if (this.state !== 'playing') return;
     this.leaving = true;
@@ -1905,6 +1923,13 @@ export class Game {
         case 'jump':
           a.playLocal('jump', { volume: 0.5 });
           break;
+        case 'shove':
+          // a shove at the leaper on us: the hands thrust (the viewmodel), the palms thump into it, the HUD's key jolts
+          this.vm.shove(ev.v);
+          this.shoves = (this.shoves | 0) + 1;
+          a.playLocal('hit', { volume: 0.3 + 0.25 * ev.v, rate: 0.75 });
+          this.camShake = Math.min(1, (this.camShake || 0) + 0.05);
+          break;
         case 'land':
           a.playLocal('land'); // the view's dip comes with every landing, see the camera in update()
           break;
@@ -2810,7 +2835,7 @@ export class Game {
     this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
-    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist };
+    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove };
     if (this.vm.itemId === ITEM.NUNCHAKU) {
       // (asked of the view itself: for a moment after another weapon is asked for they are still in the hands, being
       // folded away)
@@ -3463,6 +3488,10 @@ export class Game {
     h.throwCount = s.throwCount;
     h.dropHold = this.dropHold.progress; // the drop key's hold, 0..1 (-1: not held)
     h.dropHint = this.dropHold.hint > 0 ? bindLabel('drop') : ''; // (let go too soon: "Hold G to drop")
+    // pinned by a leaper: the shove meter (-1: not pinned), the key to mash, and the presses so far (each jolts it)
+    h.shove = self.alive && s.pinned && !s.zombie ? s.shove : -1;
+    h.shoveKey = h.shove >= 0 ? bindLabel('jump') : '';
+    h.shoves = this.shoves | 0;
     const w = currentWeapon(s);
     const def = WEAPONS[w];
     if (def && !def.melee) {
@@ -3495,7 +3524,7 @@ export class Game {
     h.escapeLeaving = g.escapeLeaving;
     const boss = g.bossId ? this.entities.ents.get(g.bossId) : null;
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
-    h.prompt = this.prompt;
+    h.prompt = h.shove >= 0 ? null : this.prompt; // (pinned: nothing in reach can be used, and the meter is there)
     // dynamic crosshair
     let spread = 10;
     if (def && !def.melee) {

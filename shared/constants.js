@@ -49,6 +49,13 @@ export const STAMINA_REGEN_DELAY = 0.9;
 export const STAMINA_JUMP_COST = 9;
 export const STAMINA_UNLOCK = 30; // exhausted until this much regained
 
+// Pinned by a leaper: both hands on it, shoving it off. The meter (s.shove, 0-1) fills by each press of jump and,
+// slower, while it is held, and sinks back while it is not; full, the server throws the leaper off (Zombies.throwOff).
+// Mashing gets out in about a second, holding in about two
+export const SHOVE_PRESS = 0.2; // each press
+export const SHOVE_HOLD = 0.45; // a second, held down
+export const SHOVE_SLIP = 0.6; // a second, let go: it bears down again
+
 export const PLAYER_MAX_HP = 100;
 export const ZOMBIE_PLAYER_MAX_HP = 260;
 export const HEAL_DELAY = 8; // seconds since last damage before regen

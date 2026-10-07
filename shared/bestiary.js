@@ -23,7 +23,7 @@ export const BESTIARY = Object.freeze([
   B(ZTYPE.BAT, 'horde', 'Leathery wings, somewhere over the walls.', 'Flies straight over every wall you build. Quick but frail: a shotgun or a melee swing brings it down.'),
   B(ZTYPE.SPITTER, 'special', 'A wet hiss from somewhere out of reach.', 'Spits acid from about 20 m. The acid eats barricades, not walls. Shoot it first, before it melts your defences.'),
   B(ZTYPE.BOOMER, 'special', 'Bloated, and in no hurry at all.', 'Waddles up to your walls and bursts against them. Shoot it far off: it still bursts when it dies, so never next to you or what you built.'),
-  B(ZTYPE.LEAPER, 'special', 'It stays low, and not on the ground for long.', 'Pounces from up to 14 m and pins you down. Press jump to throw it off, or stay close to a teammate who can shoot it off you.'),
+  B(ZTYPE.LEAPER, 'special', 'It stays low, and not on the ground for long.', 'Pounces from up to 14 m and pins you down. Mash jump to shove it off, or stay close to a teammate who can shoot it off you.'),
   B(ZTYPE.SHADE, 'special', 'Something tall that keeps to the dark.', 'It only moves in the dark, fast, and it hits hard. Any light on it - a flashlight, a torch, a campfire - freezes it where it stands, though it shrugs off most damage while lit. Keep a light on it and keep your distance.'),
   B(ZTYPE.ROPER, 'special', 'Something that reaches further than it should.', 'Lashes a rope at you from up to 24 m and drags you in. The rope needs line of sight: keep to cover, and shoot the roper to break it.'),
   B(ZTYPE.TANK, 'special', 'Heavy footsteps that shake the ground.'),

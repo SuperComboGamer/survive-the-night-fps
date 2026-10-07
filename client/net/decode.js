@@ -122,6 +122,7 @@ export function readSelf(r, out, flags) {
   if (out.cart === undefined) out.cart = out.cartS = out.cartV = 0;
   if (out.hmg === undefined) out.hmg = 0;
   if (out.perks === undefined) out.perks = 0;
+  if (out.shove === undefined) out.shove = 0;
   if (!(flags & SNAP.SELF)) return false;
   const mask = r.u8();
   if (mask & 1) {
@@ -164,6 +165,7 @@ export function readSelf(r, out, flags) {
   if (mask & 16) {
     out.leapCd = r.f32();
     out.stunT = r.f32();
+    out.shove = r.f32();
     if (r.u8()) {
       out.pullX = r.f32();
       out.pullY = r.f32();

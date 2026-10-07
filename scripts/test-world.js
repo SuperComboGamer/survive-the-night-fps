@@ -31,7 +31,7 @@ const KNOWN = [];
 const t0 = performance.now();
 const found = new Map(); // failures by place, check and spot: the same authored mistake is one entry however many maps have it
 const mapsWith = {}; // place -> how many of the maps have it
-const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0 };
+const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0, schem: 0 };
 
 const round = (v) => Math.round(v * 10) / 10 + 0;
 for (const seed of SEEDS) checkWorld(createWorld(seed), seed, { found, mapsWith, counts });
@@ -50,6 +50,7 @@ for (const [check, what] of [
   ['solid', 'of them are clear of anything solid'],
   ['road', 'walls and posts stand clear of the middle of every road'],
   ['props', 'pairs of solids that could meet (props, trees, boulders, walls) stand clear of each other'],
+  ['schem', 'containers a schematic can be hidden in stand in the place it would be rumoured in'],
 ]) {
   const bad = fresh.filter((f) => f.check === check);
   const old = all.filter((f) => f.check === check && known(f));

@@ -116,7 +116,7 @@ const t0 = performance.now();
 const stats = [];
 const found = new Map();
 const mapsWith = {};
-const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0 };
+const counts = { door: 0, reach: 0, solid: 0, road: 0, props: 0, schem: 0 };
 const prints = new Map();
 const REACH = 2.5; // m from a thing to a cell the dead can stand in (a container is inside its own prop's cells)
 
@@ -278,6 +278,7 @@ for (const [key, what] of [
   ['solid', 'of them are clear of anything solid'],
   ['road', 'walls and posts stand clear of the middle of every road'],
   ['props', 'pairs of solids that could meet (props, trees, boulders, walls) stand clear of each other'],
+  ['schem', 'containers a schematic can be hidden in stand in the place it would be rumoured in'],
 ]) {
   const bad = [...found.values()].filter((f) => f.check === key);
   check(`${counts[key]} ${what}`, !bad.length);

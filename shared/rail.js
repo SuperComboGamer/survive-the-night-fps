@@ -464,7 +464,9 @@ export function planRail(plan, { seed, depot, rawH, edgeRise }) {
     P(b, 'pallet', far * 0.8, 4.9, 0.2, { ly: F }); // (turned, it is wider than a crate: in from the wall a little more)
     if (k % 2) {
       C(b, CONT.FREIGHT, far * 0.8, 4.9, { prop: 'crate', ly: F + 0.15, ry: -0.2 });
-      C(b, CONT.TOOLBOX, ds * 0.7, 5.2, { prop: 'toolbox', ly: F, ry: 0.9, nocollide: true });
+      // (the train stands out on the line, not at the depot: a schematic hidden in its toolbox would be rumoured to
+      // be at Whitlock Depot, hundreds of metres from it - a container's zone is the place it is rumoured to be in)
+      C(b, CONT.TOOLBOX, ds * 0.7, 5.2, { prop: 'toolbox', ly: F, ry: 0.9, nocollide: true, zone: ZONE.ROADSIDE });
       P(b, 'bones', far + ds * 0.3, 2.3, 1.2, { ly: F, nocollide: true });
     } else {
       C(b, CONT.CRATE, far, 4.9, { prop: 'crate', ly: F + 0.15, ry: 0.3 });

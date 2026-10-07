@@ -108,6 +108,16 @@ async function reloadInto(code, name) {
   } catch {}
   ui.showUpdating(true);
   await new Promise((done) => setTimeout(done, UPDATING_READ_MS));
+  // Everything the game holds goes before the page does (Edge has crashed instead of reloading a page still in a game):
+  // the mouse, the screen, the keyboard and the microphone (Game.letGo), then the frames, the sound and the GPU.
+  try {
+    await game.letGo();
+    stopped = true;
+    audio.close();
+    renderer.dispose();
+  } catch (err) {
+    console.error(err); // (the reload goes ahead: it is what this is for)
+  }
   location.reload();
 }
 async function moveBack(code) {
@@ -367,7 +377,9 @@ function keepStill() {
 let last = performance.now();
 let fpsAcc = 0;
 let fpsFrames = 0;
+let stopped = false; // the page is about to be loaded again (reloadInto): nothing more is drawn
 function frame(now) {
+  if (stopped) return;
   requestAnimationFrame(frame);
   let dt = (now - last) / 1000;
   last = now;

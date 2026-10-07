@@ -135,6 +135,13 @@ more than its bytes**, so put things into the packets that already flow.
   (`Prediction.startUse`), and the server raises `using` on that same command (`p.useItem.from`, the one after the
   newest that had come in). It is the one field of the simulated state in no `writeSelf` chunk: `readSelf` takes it
   from the status's item in use, which the server only names while `using` is up (`Game.endUse`).
+- **Pinned by a leaper** (`state.pinned`, set by the server; the shove meter `state.shove`, the simulation's): both
+  hands are on it, so `simulatePlayer` fires, swings and reloads nothing and puts an item in use away. Each press of
+  jump adds `SHOVE_PRESS` to the meter and pushes a `shove` event (which is what lets the input buffer pass a quick
+  tap straight through), holding it down adds `SHOVE_HOLD` a second, and letting go takes `SHOVE_SLIP` a second off.
+  The meter is predicted like any other field, so mashing needs no rebase; the server throws the leaper off on the
+  command that fills it (`Zombies.throwOff`). The client draws the meter (`ui/hud.js`) and both hands shoving
+  (`ViewModel._push`).
 - **Entities** (`server/snapshot.js` / `client/net/decode.js`, tables `FIELD_COUNT` + `BIT_SLOTS` in both):
   area of interest per kind, creates in full, updates only for changed fields, sorted by id behind a one-byte
   head (id step, position as a 1 / 2 / 3-byte delta or absolute, which fields follow), far entities every other
@@ -235,7 +242,10 @@ JSON file (`server/stats.js`).
   response whose client went away. A POST must be JSON and, if it has an Origin, from this host - a page on another
   site cannot post with the player's cookie. The same Origin rule decides whether a WebSocket handshake's cookie is
   believed (`sessionToken` in index.js).
-- **Playing signed in.** `/ws`'s upgrade looks the cookie up (async: the upgrade waits for it) and the socket's
+- **Playing signed in.** `/ws`'s upgrade starts looking the cookie up and answers the handshake at once; the socket
+  gets its seat when the lookup is back (`open`, `seat` in index.js), and what it sent meanwhile - its JOIN - is kept
+  for then. (Never `res.upgrade` later from `res.cork`: uWebSockets.js v20.52 closes most sockets upgraded that way
+  as they open, close code 1006 at 0 ms, uNetworking/uWebSockets#1929; `scripts/test-session-socket.js`.) The socket's
   user data carries `{ id, name, isAdmin }`; `Room.attach` passes it to the worker (`{ t: 'open', user }`), `conn.user`, and
   `Game.handleJoin` makes the player's name the account's whatever the JOIN says, sets `p.account` (and
   `p.guestKey`, the SHA-256 of a guest's browser id) and tells everyone in the game who is signed in as what
@@ -432,7 +442,8 @@ node, else the shell dies of it and the container stops with node never told (`s
   claims are swept after `HANDOFF_MAX_AGE_SECONDS`.
 - **The new server** restores a game (`Lobby.restore`: claim, then a `Room` under the same code with the save in
   its `workerData`) as soon as the store says one is there (`listen`), for any already waiting when it starts, and
-  for a socket or an invite card asking for a code it does not have yet (the upgrade waits for it). The worker
+  for a socket or an invite card asking for a code it does not have yet (the socket's seat waits for it, as it does
+  for a session: index.js `open`; the card's answer waits). The worker
   makes its `Game` from the save; a save it cannot use throws in the constructor and the room closes (its players
   get `NO_GAME`, as every deploy used to end).
 - **What is saved** (`saveGame` / `loadGame`): the clock, phase, waves and the boss, the car's supplies, the
