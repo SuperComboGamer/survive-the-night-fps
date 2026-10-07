@@ -334,7 +334,7 @@ export async function shots(c) {
     const dir = await c.rec(name, c.fps * 2, (i) => ({ A: { ...aim, buttons: fire(i) }, B: { yaw: 0, cam } }), { p: c.B });
     const got = await c.ev(c.B, () => ({ mz: window.__game.__mz, tr: window.__game.__tr }));
     const m = vehId(c, car.id);
-    const frames = [...new Set(got.mz.map((q) => q[0] - n0 - 1))].filter((k) => k >= 0 && k < c.fps * 2);
+    const frames = [...new Set(got.mz.map((q) => q[0] - n0))].filter((k) => k >= 0 && k < c.fps * 2);
     console.log(`  ${name}: ${got.mz.length} flashes drawn (frames ${frames.join(', ')}), ${got.tr.length} lines; the car's middle ${m.x.toFixed(2)}, ${m.z.toFixed(2)}; the passenger's seat ${(m.x + 0.38).toFixed(2)}; a flash at ${JSON.stringify(got.mz[0]?.slice(1))}, a line from ${JSON.stringify(got.tr[0]?.slice(1, 4))} for ${got.tr[0]?.[4]} m`);
     c.video(name, 4, title);
     if (frames.length) c.strip(`${name}-flash`, frames.slice(0, 4).map((k) => `${dir}/${String(k).padStart(5, '0')}.png`), 2, `${title}: the frames with a flash`, [960, 540]);
@@ -981,7 +981,20 @@ export async function build(c) {
   const unlocked = await c.ev(c.A, () => window.__game.global.unlocked);
   console.log(`  the team's schematics now: ${unlocked.toString(2)} (bit 5: the manual)`);
   await c.shot(c.A, 'build-2-picked-up', { hud: true, settle: 4 });
-  const bench = man.benches && man.benches[0];
+  // a workbench of our own, built as anybody builds one (the hammer's slot, its materials): ahead of us on the road
+  let bench = man.benches && man.benches[0];
+  if (!bench) {
+    for (const g of ['wood 5', 'nails 6', 'scrap 2']) await c.chat(c.A, `/give ${g}`);
+    await c.run(6, { A: { slot: 4 } });
+    const s0 = c.info.s, yw = c.info.s.yaw;
+    bench = { x: s0.x - Math.sin(yw) * 2.6, z: s0.z - Math.cos(yw) * 2.6 };
+    await c.ev(c.A, (b) => window.__game.conn.action(6, 9, b.x, b.z, 0), bench);
+    await c.run(10, { A: { slot: 4 } });
+    const got = await c.ev(c.A, () => window.__game.global.benches);
+    console.log(`  a bench built: ${JSON.stringify(got)}`);
+    if (got && got[0]) bench = got[0];
+    await c.run(4, { A: { slot: 0 } });
+  }
   if (bench) {
     await tp(c, c.A, bench.x + 1.4, bench.z + 0.4, faceTo(bench.x + 1.4, bench.z + 0.4, bench.x, bench.z), -0.3);
     for (const g of ['scrap 20', 'gun parts 2', 'wire 5', 'duct tape 4', 'batteries 2', 'leather 1']) await c.chat(c.A, `/give ${g}`);
