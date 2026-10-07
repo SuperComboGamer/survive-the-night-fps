@@ -330,12 +330,12 @@ export const CONSUMABLES = {
 };
 
 // Whether using consumable `item` now would be for nothing, so it is not done (Game.useItem; the client does not even
-// ask): anything but a medkit while down, healing at full health unless it restores stamina too, an energy drink at
-// full stamina, a battery for a flashlight that is (all but) full.
+// ask): anything at all while down (only a teammate gets you up), healing at full health unless it restores stamina
+// too, an energy drink at full stamina, a battery for a flashlight that is (all but) full.
 // p: { hp, maxHp, battery, downed, stamina, exhausted }
 export function useWasted(item, p) {
   const c = CONSUMABLES[item];
-  if (p.downed) return item !== ITEM.MEDKIT;
+  if (p.downed) return true;
   if (c.heal && !c.stamina && p.hp >= p.maxHp) return true;
   if (c.stamina && !c.heal && p.stamina >= STAMINA_MAX - 0.5 && !p.exhausted) return true;
   return !!c.flashlight && p.battery >= FLASHLIGHT_MAX - 1;
