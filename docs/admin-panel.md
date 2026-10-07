@@ -111,7 +111,7 @@ Reset, close, close every game and restart also need the target named again in t
 - What an admin is sent: names, account ids, game codes (invite-only too), timings. Not emails, password hashes,
   session tokens or guests' browser ids. Addresses are never sent: players on one address share a 6-character tag
   made from a salt that changes at every start.
-- The audit log (`admin_audit`, migration 014) gets a row for every action an admin attempted, done or refused, before
+- The audit log (`admin_audit`, migration 013) gets a row for every action an admin attempted, done or refused, before
   the answer goes out. If the row cannot be written the action stands, the server log says so, and the panel shows it.
 
 Threat model, in short: someone who is not an admin (a guest, a player, another site's page in an admin's browser)

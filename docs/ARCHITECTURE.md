@@ -306,7 +306,7 @@ JSON file (`server/stats.js`).
   are the names players play under, as on the leaderboard; no account ids, guest keys or invite-only codes.
   `node scripts/seed-stats.js pglite:<folder>` fills a PGlite database with made-up history to look at it locally.
 - **The control room** (`/admin`: `client/admin.html`, `client/admin/`, its own Vite entry; `server/adminpanel.js`):
-  the server, its games and players, the settings, the accounts and an audit log (`admin_audit`, 014), for admin
+  the server, its games and players, the settings, the accounts and an audit log (`admin_audit`, 013), for admin
   accounts only. Every `/api/admin/*` route goes through `AdminPanel.guard` (same origin, the panel's header, the
   admin flag read from the database on that request); everything that changes something is audited. A game is asked
   through its worker (`Room.ask` -> `{ t: 'admin' }` -> `server/gameadmin.js`), which runs the admin chat commands
