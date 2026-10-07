@@ -4,12 +4,12 @@ import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED, SERV
 import { EVT, AMMO_ITEMS, PROJ } from '../../shared/defs.js';
 import { ACH_STATS } from '../../shared/achievements.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 6, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ITEM]: [[0, 3], [3, 4]],
-  [ENT.STRUCTURE]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.STRUCTURE]: [[0, 3], [3, 4], [4, 5], [5, 6]],
   [ENT.PROJECTILE]: [[0, 3]],
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
@@ -34,7 +34,7 @@ function readFields(r, kind, q, s0, s1) {
       } else if (s === 5) q[s] = r.u16();
       else if (s > 5) q[s] = r.u8();
     } else if (kind === ENT.ZOMBIE) q[s] = s === 6 ? r.u16() : r.u8();
-    else if (kind === ENT.ITEM || kind === ENT.GUN || kind === ENT.HANDCAR) q[s] = r.u16();
+    else if (kind === ENT.ITEM || kind === ENT.GUN || kind === ENT.HANDCAR || (kind === ENT.STRUCTURE && s === 5)) q[s] = r.u16();
     else q[s] = r.u8();
   }
 }
