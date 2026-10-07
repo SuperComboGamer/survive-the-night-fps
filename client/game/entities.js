@@ -616,6 +616,13 @@ export class Entities {
         }
         break;
       case ENT.CAT:
+        if (initial) break;
+        if (mask & 0b1000 && !e.q[5]) {
+          // set down: drawn on the ground where it was put from the first frame, not slid down out of the arms it was in
+          e.samples = new Samples();
+          this.pushSample(e, t);
+        } else if (mask & 0b11) this.pushSample(e, t);
+        break;
       case ENT.HANDCAR:
         if (!initial && mask & 0b11) this.pushSample(e, t);
         break;
