@@ -11,6 +11,7 @@
 // A deploy does not end the games (handoff.js): on SIGTERM each is saved into the store and its players are sent
 // HANDOFF_CLOSE, and the new server - up by then - restores it under the same code for them to reconnect to.
 import { createHash } from 'node:crypto';
+import { gzipSync, brotliCompress, constants as zlibConstants } from 'node:zlib';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,6 +189,46 @@ loadDir(DIST);
 if (files.size) console.log(`[server] serving ${files.size} static files from dist/`);
 else console.log('[server] no dist/ build found - run `npm run build` (or use `npm run dev` for the Vite dev server)');
 
+// What is deployed, as a page knows it (/api/version, and written into the page itself):
+//   build   the client: a hash of the page, which names its bundles by their content, so it changes when the client does
+//           and only then. (CLIENT_BUILD: a build of another name, for the tests)
+//   compat  the code the client and the server both run - shared/, and the protocol. A page of another compat cannot
+//           play a game here: it would build another valley, predict other moves (client/net/moveback.js).
+//           (CLIENT_COMPAT: another, for the tests)
+const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
+const COMPAT = process.env.CLIENT_COMPAT || compatOf(resolve(__dirname, '../shared'));
+function compatOf(dir) {
+  const h = createHash('sha256').update(`protocol ${PROTOCOL_VERSION}\n`);
+  const walk = (d, rel) => {
+    for (const name of readdirSync(d).sort()) {
+      const full = join(d, name);
+      if (statSync(full).isDirectory()) walk(full, `${rel}${name}/`);
+      else if (name.endsWith('.js')) h.update(`${rel}${name}\0`).update(readFileSync(full)).update('\n');
+    }
+  };
+  walk(dir, '');
+  return h.digest('hex').slice(0, 12);
+}
+// The page carries what it was built as (client/net/moveback.js pageBuild): read from the page, not asked of the server
+// later, when a deploy may already have put another build behind the same address.
+const stamp = (html, { build, compat, protocol }) => {
+  const meta = `<meta name="stn-build" content="${build} ${compat} ${protocol}">`;
+  const s = html.toString('utf8');
+  const at = s.search(/<head[^>]*>/i);
+  return Buffer.from(at < 0 ? meta + s : s.replace(/<head[^>]*>/i, (h) => h + meta));
+};
+if (files.get('/index.html')) files.get('/index.html').body = stamp(files.get('/index.html').body, { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION });
+
+// The client's code and pages go out compressed to a browser that takes it (the bundle: 3 MB, 1 MB gzipped, 0.8 MB
+// with brotli) - what a page loaded again for a deploy's new client waits for. Gzip now (a fraction of a second);
+// brotli in the background (seconds), served once it is done. Sound and images are compressed already.
+const COMPRESS = /\.(js|css|html|json|svg)$/;
+for (const [url, f] of files) {
+  if (!COMPRESS.test(url) || f.body.length < 1024) continue;
+  f.gz = gzipSync(f.body, { level: 9 });
+  brotliCompress(f.body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: f.body.length } }, (err, out) => err || (f.br = out));
+}
+
 // ---------------------------------------------------------------- who is connecting
 // The game counts joins per address (Game.admitJoin): the client's, not a proxy's in front (netaddr.js)
 function clientAddress(res, req) {
@@ -351,12 +392,14 @@ app.get('/api/games/:code', (res, req) => {
     .then(() => aborted || answer());
 });
 
-// What is deployed: the protocol and the client's build. A client dropped by a deploy (handoff.js) asks before
-// reconnecting: another build means the page has to be loaded again first (client/main.js). The build is the page
-// itself, which names the bundles by their content: it changes when the client does, not on every commit.
-// (CLIENT_BUILD: a build of another name, for the tests)
-const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
-app.get('/api/version', (res) => json(res, 200, { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD }));
+// What runs here: { protocol, build, compat } (see CLIENT_BUILD above). A client moved by a deploy (handoff.js) asks
+// before going back in, with its game's code (?game=CODE): whether it can go back in as it is, or has to be loaded
+// again first, is client/net/moveback.js's to decide. (A page from before compat compares the build alone.)
+// A server going down answers 503: its answer is not what the page will be playing on (the edge may send the page's
+// next request to the new server, or this one, until this one is gone), so the page asks again. (The body is the same,
+// for a page from before this, which reads it whatever the status and joins, and is turned away here as before.)
+const ownVersion = { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD, compat: COMPAT };
+app.get('/api/version', (res) => json(res, stopping ? 503 : 200, stopping ? { ...ownVersion, stopping: true } : ownVersion));
 
 // makes a game: { name, host, inviteOnly, maxPlayers, difficulty } -> its info, code included.
 // difficulty is ember, nightfall or blackout (shared/difficulty.js). Left off, it is Nightfall, which plays as the valley always has.
@@ -669,6 +712,25 @@ const ADMIN_PAGE_HEADERS = [
   ['Referrer-Policy', 'same-origin'],
   ['X-Content-Type-Options', 'nosniff'],
 ];
+// enc: what the browser takes ('br', 'gzip' or ''), read from the request before anything else
+function sendFile(res, url, f, enc = '') {
+  res.cork(() => {
+    res.writeHeader('Content-Type', f.type);
+    // (the admin panel is never shown inside another site's page, where a click could be steered onto its buttons, and
+    // runs no script and sends nothing anywhere but here)
+    if (url === '/admin.html') for (const [k, v] of ADMIN_PAGE_HEADERS) res.writeHeader(k, v);
+    // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
+    res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+    const body = enc === 'br' && f.br ? f.br : enc && f.gz ? f.gz : f.body;
+    if (f.gz) res.writeHeader('Vary', 'Accept-Encoding');
+    if (body !== f.body) res.writeHeader('Content-Encoding', body === f.br ? 'br' : 'gzip');
+    res.end(body);
+  });
+}
+const encodingOf = (req) => {
+  const a = req.getHeader('accept-encoding');
+  return /\bbr\b/.test(a) ? 'br' : /\bgzip\b/.test(a) ? 'gzip' : '';
+};
 app.get('/*', (res, req) => {
   let url = req.getUrl();
   if (url === '/stats' || url === '/stats/') url = '/stats.html';
@@ -679,13 +741,7 @@ app.get('/*', (res, req) => {
     res.writeStatus('404 Not Found').end('Not found - build the client with `npm run build`');
     return;
   }
-  res.writeHeader('Content-Type', f.type);
-  // (the admin panel is never shown inside another site's page, where a click could be steered onto its buttons, and
-  // runs no script and sends nothing anywhere but here)
-  if (url === '/admin.html') for (const [k, v] of ADMIN_PAGE_HEADERS) res.writeHeader(k, v);
-  // (the page itself is asked for again every time: after a deploy a reload has to get the new build's)
-  res.writeHeader('Cache-Control', url.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
-  res.end(f.body);
+  sendFile(res, url, f, encodingOf(req));
 });
 
 app.listen(PORT, (token) => {

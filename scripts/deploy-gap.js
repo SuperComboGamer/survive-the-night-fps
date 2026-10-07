@@ -9,6 +9,7 @@
 // usage: node scripts/deploy-gap.js [--deploys 3] [--bots 3] [--client-changes 0] [--json]
 // (Linux: a server is stopped with SIGTERM, as the host does. Windows: with the 'shutdown' message, as pm2 does.)
 import { spawn } from 'node:child_process';
+import { get as httpGet } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -34,9 +35,11 @@ let live = base + 1;
 const edge = createServer((sock) => {
   const up = connect(live, '127.0.0.1');
   sock.pipe(up).pipe(sock);
+  // (an end is passed on by the pipes once what was in flight has gone: a close frame is not cut off. Only an
+  // error tears both down)
   const end = () => (sock.destroy(), up.destroy());
-  sock.on('error', end).on('close', end);
-  up.on('error', end).on('close', end);
+  sock.on('error', end);
+  up.on('error', end);
 });
 await new Promise((r) => edge.listen(base, r));
 const EDGE = `localhost:${base}`;
@@ -124,7 +127,7 @@ function bot(name) {
       verdict = await mb.moveBack({
         code: b.code,
         loadedFrom: { protocol: PROTOCOL_VERSION, build: b.from.build, compat: b.from.compat },
-        version: (code) => fetch(`http://${EDGE}/api/version${code ? `?game=${code}` : ''}`, { cache: 'no-store' }).then((r) => r.json()),
+        version: (code) => getJson(`http://${EDGE}/api/version${code ? `?game=${code}` : ""}`),
         join: () => b.connect(t0),
         still: () => true,
       });
@@ -133,9 +136,7 @@ function bot(name) {
       verdict = 'gave up';
       const until = performance.now() + 45000;
       for (let wait = 250; performance.now() < until; wait = Math.min(wait * 2, 2000)) {
-        const now = await fetch(`http://${EDGE}/api/version`, { cache: 'no-store' })
-          .then((r) => r.json())
-          .catch(() => null);
+        const now = await getJson(`http://${EDGE}/api/version`);
         if (now && (now.protocol !== PROTOCOL_VERSION || now.build !== b.from.build)) {
           verdict = 'reload';
           break;
@@ -151,7 +152,7 @@ function bot(name) {
     b.cur.verdict = verdict;
     if (verdict === 'reload') {
       // what a reloaded page does: it loads (not timed here), then joins the game again
-      b.from = await (await fetch(`http://${EDGE}/api/version`)).json();
+      for (let i = 0; i < 20 && !(b.from = await getJson(`http://${EDGE}/api/version`)); i++) await sleep(100);
       for (let i = 0; i < 40 && (await b.connect(t0)) !== true; i++) await sleep(250);
     }
     b.times.push(b.cur);
@@ -159,6 +160,25 @@ function bot(name) {
   return b;
 }
 
+// (no keep-alive: Node's fetch would pool the connection, and the stand-in edge binds a connection to the server that
+// was live when it opened - a WebSocket sent down it would reach the old server. A browser opens a new connection for
+// a WebSocket, and a real edge routes each request.)
+const getJson = (url) =>
+  new Promise((done) => {
+    const req = httpGet(url, { agent: false, timeout: 2000 }, (res) => {
+      let body = '';
+      res.on('data', (d) => (body += d));
+      res.on('end', () => {
+        try {
+          done(res.statusCode === 200 ? JSON.parse(body) : null);
+        } catch {
+          done(null);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => done(null));
+  });
 // ---------------------------------------------------------------- the deploys
 const result = { deploys: [], bots: BOTS };
 try {
