@@ -117,6 +117,8 @@ export function api(app, method, path, fn, { body = false, max = 4096, address =
       proto: req.getHeader('x-forwarded-proto'),
       ua: req.getHeader('user-agent').slice(0, 300),
       contentType: req.getHeader('content-type'),
+      site: req.getHeader('sec-fetch-site'), // what the browser says of where the request came from ('' : not a browser, or an old one)
+      panel: req.getHeader('x-stn-admin'), // the admin panel's own header (adminpanel.js guard)
       ip: address(res, req),
     };
     res.aborted = false;
