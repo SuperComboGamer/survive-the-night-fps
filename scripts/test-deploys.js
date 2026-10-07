@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { C2S, PROTOCOL_VERSION, REJECT_REASON, MOVED_CODE, Writer, writeInput } from '../shared/protocol.js';
 import { moveBack, verdictFor, pageBuild, NO_GAME_MS } from '../client/net/moveback.js';
 import { Connection } from '../client/net/connection.js';
+import { comeBack } from '../client/net/comeback.js';
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -149,6 +150,7 @@ function player(name) {
     return conn.connect(name, p.pid, code).then(
       (info) => {
         p.id = info.id;
+        p.welcomed = conn; // (in the game: WELCOME on this socket - open and ROOM come before the game answers)
         p.seed = info.seed;
         clearInterval(p.timer);
         p.timer = setInterval(() => conn.sendInput(0, 0, [{ seq: (p.seq = (p.seq + 1) & 0xffff), buttons: 0, qyaw: 0, qpitch: 0, slot: 255 }], -1), 50);
@@ -163,12 +165,35 @@ function player(name) {
     const r = await moveBack({ code, loadedFrom: p.from, version, join: () => p.join(code) });
     const m = { ...r, ms: Math.round(performance.now() - t0), id: p.id };
     if (r.verdict === 'reload') {
-      // the page loads again (not timed here): it was built as the server now serving it, and goes back in
-      for (let i = 0; i < 20 && !(p.from = pageOf(await getText(`http://${EDGE}/?game=${code}`))); i++) await sleep(100);
-      for (let i = 0; i < 40 && (await p.join(code)) !== true; i++) await sleep(100);
+      m.reload = await p.reload(code);
       m.idAfter = p.id;
     }
     p.moves.push(m);
+  };
+  // a page loaded again for a deploy, as main.js has it: it loads (reloadMs), it was built as whichever server served it,
+  // and goes back in as a reopened page does (comeBack, moved), asking before each try whether it can play the game
+  // (canJoinHere) - a page a server going down served is loaded again
+  p.reloadMs = 0;
+  p.reload = async (code) => {
+    let loads = 0;
+    const load = async () => {
+      loads++;
+      await sleep(p.reloadMs);
+      for (let i = 0; i < 40 && !(p.from = pageOf(await getText(`http://${EDGE}/?game=${code}`))); i++) await sleep(100);
+    };
+    await load();
+    const why = await comeBack({
+      code,
+      moved: true,
+      ms: 60_000,
+      join: async () => {
+        let v = null;
+        for (let i = 0; i < 20 && !v; i++) if (!(v = await version(code))) await sleep(250);
+        if (verdictFor(p.from, v) === 'reload') return void (await load());
+        return p.join(code);
+      },
+    });
+    return { loads, why };
   };
   return p;
 }
@@ -232,6 +257,42 @@ try {
   await deploy('S4', { CLIENT_BUILD: 'newclient2', CLIENT_COMPAT: 'othercompat1' }, 'and the server alone again');
   const m4 = players.map((p) => p.moves[0]);
   check('...the reloaded pages go back in place', m4.every((m, i) => m?.verdict === 'in place' && m.id === ids[i]), JSON.stringify(m4));
+
+  // ---------------------------------------------------------------- deploys back to back
+  const inGame = () => players.every((p, i) => p.welcomed === p.conn && p.conn.open && p.id === ids[i] && p.conn.room?.code === code);
+  const near = (s) => server(s, base + 1 + +s.slice(1), { CLIENT_BUILD: 'newclient3', CLIENT_COMPAT: 'othercompat3' });
+  // shared code changes again: every page reloads, slowly (3 s each)...
+  for (const p of players) p.reloadMs = 3000;
+  const S5 = near('S5');
+  check('back to back: S5 (shared code changed again) is up', await up(S5), S5.log);
+  live = S5.port;
+  for (const p of players) p.moves.length = 0;
+  stop(cur);
+  await until(() => /restored from the last server/.test(S5.log), 15000);
+  // ...and while they are still loading, the next deploy: S6, with S5 told to stop
+  const S6 = server('S6', base + 7, { CLIENT_BUILD: 'newclient3', CLIENT_COMPAT: 'othercompat3', HANDOFF_PREPARE_MS: '0' });
+  check('...S6 is up while the pages are still loading for S5', (await up(S6)) && players.every((p) => !p.moves.length), JSON.stringify(players.map((p) => p.moves)));
+  live = S6.port;
+  stop(S5);
+  check('...every page is back in its own body on S6, having reloaded', (await until(inGame, 30000)) && players.every((p) => p.moves[0]?.verdict === 'reload' && p.moves[0].reload.why === ''), JSON.stringify(players.map((p) => p.moves)) + errs());
+  check('...and the game went through S5 to S6 with nobody lost', /restored from the last server/.test(S6.log) && players.every((p, i) => p.id === ids[i]), S6.log.split('\n').slice(-8).join('\n'));
+  await until(() => S5.exit, 15000);
+  for (const p of players) p.moves.length = 0;
+  // S6 goes with nothing up after it (a host that stops the old one first): the save waits in the store. S7 comes up,
+  // finds it and starts bringing it back, and is told to stop before the game is up there
+  stop(S6);
+  await until(() => S6.exit, 15000);
+  const S7 = near('S7');
+  live = S7.port;
+  await until(() => /restored from the last server/.test(S7.log), 20000);
+  stop(S7);
+  await until(() => S7.exit, 15000);
+  check('a server told to stop while it is still bringing a game back puts the save back in the store, as it came', /its save is back in the store for the next server/.test(S7.log) && S7.exit?.code === 0, S7.log.split('\n').slice(-10).join('\n'));
+  const S8 = near('S8');
+  check('...S8 is up', await up(S8), S8.log);
+  live = S8.port;
+  check('...and the game goes on there: every page back in its own body, in place', (await until(inGame, 40000)) && players.every((p) => p.moves.at(-1)?.verdict === 'in place'), JSON.stringify(players.map((p) => p.moves)) + errs());
+  cur = S8;
   check('the run is the same run throughout: the same valley', players.every((p) => p.seed === players[0].seed));
   stop(cur);
   await until(() => cur.exit, 15000);

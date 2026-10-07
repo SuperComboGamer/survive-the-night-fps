@@ -162,7 +162,9 @@ async function moveBack(code) {
 // or an older build carries that game on (server/builds.js). Then that game's page is loaded instead, and goes in by
 // itself as a reopened one does. -> true when this page may join
 async function canJoinHere(code, name) {
-  const v = await version(code).catch(() => null);
+  // (a server going down says nothing - 503 - and this page may be its: asked until one that will run the game answers)
+  let v = null;
+  for (let i = 0; i < 20 && !v; i++) if (!(v = await version(code).catch(() => null))) await new Promise((done) => setTimeout(done, 250));
   if (verdictFor((await BUILD) || { protocol: PROTOCOL_VERSION }, v) !== 'reload') return true;
   try {
     if (code) localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() }));

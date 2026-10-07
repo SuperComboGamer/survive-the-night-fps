@@ -84,7 +84,7 @@ export class Room {
   // restore: the game the last server saved under this code (handoff.js), with first / created / continues from what
   // that server knew of the room (Room.meta). prepared: a worker that has built the game's valley already, waiting for
   // the save (Lobby.prepare)
-  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, maker = '', restore = null, first = '', created = Date.now(), continues = null, prepared = null }) {
+  constructor(lobby, { code, name, host, inviteOnly, maxPlayers, quick, difficulty, maker = '', restore = null, first = '', created = Date.now(), continues = null, prepared = null, from = null }) {
     this.lobby = lobby;
     this.code = code;
     this.name = name; // as its maker called it ('' for one a quick join made)
@@ -122,6 +122,7 @@ export class Room {
     this.asks = new Map(); // the admin panel's questions the worker has not answered yet: id -> { done, fail, timer } (ask)
     this.askN = 0;
     this.restored = restore ? Date.now() : 0; // (when its save was claimed, for the log)
+    this.from = from; // the save as it was claimed ({ meta, body }), kept until the game is up (handoff)
 
     // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
     // bestiary: an account's go to the database too, and a guest's to their browser either way)
@@ -302,6 +303,7 @@ export class Room {
       }
       case 'ready':
         this.ready = true;
+        this.from = null; // (the game runs here now: its save is this server's to make)
         this.st.seed = m.seed;
         if (this.restored) this.lobby.log(`game ${this.code} up in ${Date.now() - this.restored} ms`); // (since its save was claimed: what a deploy's players wait for, docs/deploys.md)
         return;
@@ -439,7 +441,14 @@ export class Room {
   // target: the server it goes to (cluster.js pickTarget; null: whichever claims it first)
   handoff(store, ms = 8000, target = null) {
     if (this.closed) return Promise.resolve('closed');
-    if (!this.st.players) return Promise.resolve('nobody in it');
+    // A game this server was still bringing back when it was told to stop (a deploy on the heels of a deploy): its save
+    // goes back into the store as it came, for the next server - the game did not run here.
+    if (this.from && !this.ready) {
+      const from = this.from;
+      return this.lobby.putBack(this.code, from, target).then((ok) => (ok ? (this.shut(HANDOFF_CLOSE, 'Server updating', { handedOff: true }), { bytes: from.body.byteLength, ms: 0, back: true }) : 'its save could not be put back'));
+    }
+    // (a game brought back and up, whose first word on who is in it is not heard yet: saved all the same)
+    if (!this.st.players && (this.st.tick !== null || !this.restored)) return Promise.resolve('nobody in it');
     const match = this.match;
     const t0 = Date.now();
     return new Promise((done) => {
@@ -731,6 +740,9 @@ export class Lobby {
   async handoffAll(store, ms = 8000) {
     this.stopping = true;
     for (const code of [...this.prepared.keys()]) this.dropPrepared(code, 'this server is going down itself');
+    // (a game being brought back this very moment: its room is there, or its save back in the store, before the rooms
+    // are gone through - restore puts back what it claims from now on)
+    await Promise.race([Promise.allSettled([...this.restoring.values()]), new Promise((done) => setTimeout(done, 3000))]);
     const rooms = [...this.rooms.values()];
     const targets = new Map(rooms.map((room) => [room, room.st.players ? (this.cluster?.pickTarget() ?? null) : null]));
     await this.announce(store, rooms, targets);
@@ -829,6 +841,21 @@ export class Lobby {
     const room = this.rooms.get(code);
     for (const ws of room?.socks || []) ws?.send(rejectBytes(reason), true, false);
   }
+  // A save this server claimed and will not run (it is going down itself): back into the store as it was, for the
+  // next server (target: the one it goes to, behind the proxy)
+  async putBack(code, from, target = null) {
+    try {
+      const meta = { ...(from.meta || {}) };
+      if (target) meta.target = target;
+      else delete meta.target;
+      await this.store.put(code, meta, from.body);
+      this.log(`game ${code}: its save is back in the store for the next server`);
+      return true;
+    } catch (err) {
+      this.log(`game ${code}: its save could not be put back in the store (${err.message})`);
+      return false;
+    }
+  }
   // why the game that went by this code is gone (a REJECT_REASON), or 0: it is not one a deploy ended
   wasLost(code) {
     return this.lost.get(String(code || '').toUpperCase())?.reason || 0;
@@ -859,6 +886,8 @@ export class Lobby {
       return null;
     }
     if (!row) return null;
+    // (told to stop while the store was asked: this server will not run it - the next one gets it, as it came)
+    if (this.stopping) return void (await this.putBack(code, { meta: row.meta || {}, body: row.body })) || null;
     const age = (Date.now() - row.savedAt) / 1000;
     if (age > this.handoffMaxAge) {
       this.log(`game ${code} not restored: saved ${Math.round(age)} s ago`);
@@ -883,6 +912,7 @@ export class Lobby {
       continues: typeof m.match === 'string' ? m.match : null,
       restore: row.body,
       prepared: this.takePrepared(code),
+      from: { meta: m, body: row.body },
     });
     this.rooms.set(code, room);
     room.up = this.cluster?.roomUp(room) ?? null;
