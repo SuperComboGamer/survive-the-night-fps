@@ -37,7 +37,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { Game, prepareWorld } from './game.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { SERVER_TICK_RATE } from '../shared/constants.js';
-import { envelope, encode, decode } from './handoff.js';
+import { envelope, encode, decode, HandoffError } from './handoff.js';
 import { adminOp } from './gameadmin.js';
 import { ENDED_CODE, LEFT_CODE } from '../shared/protocol.js';
 
@@ -120,8 +120,12 @@ try {
   });
 } catch (err) {
   if (!restore) throw err;
+  // The network thread is told why, and ends this worker when it has heard (Room 'restoreFailed'): a worker that threw
+  // here could be gone before its message was read. Nothing below runs.
   post({ t: 'restoreFailed', why: err.message, world: err.world === true });
-  throw err;
+  if (!(err instanceof HandoffError)) console.error(tag, 'the save could not be loaded', err);
+  parentPort.on('message', () => {});
+  await new Promise(() => {});
 }
 
 // ---------------------------------------------------------------- sockets

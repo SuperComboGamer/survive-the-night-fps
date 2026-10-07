@@ -35,6 +35,7 @@ import { PublicStats, RANGES } from './publicstats.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
+import { Builds } from './builds.js';
 import { Cluster } from './cluster.js';
 import { AdminPanel } from './adminpanel.js';
 import { clientOf } from './netaddr.js';
@@ -96,6 +97,7 @@ const HANDOFF_MAX_AGE = +(process.env.HANDOFF_MAX_AGE_SECONDS || 300); // a save
 const HANDOFF_DIR = process.env.HANDOFF_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'handoff') : '');
 const store = process.env.HANDOFF === '0' ? null : db?.kind === 'postgres' ? new PgStore(db, { log }) : HANDOFF_DIR ? new FileStore(resolve(HANDOFF_DIR)) : null;
 if (store) log(`handoff: games are handed to the next server through ${store instanceof PgStore ? 'Postgres' : store.dir}`);
+else log(process.env.HANDOFF === '0' ? 'handoff: off (HANDOFF=0): a deploy ends every game' : 'handoff: no store to hand games over through (a Postgres DATABASE_URL, HANDOFF_DIR or a volume): a deploy ends every game. docs/deploys.md says what to set.');
 
 // the settings changed in the database without a deploy (serversettings.js): the most games at once
 const settings = db ? new ServerSettings({ db, log }) : null;
@@ -135,18 +137,7 @@ const cluster = process.env.CLUSTER === '1' && db?.kind === 'postgres' ? new Clu
 if (process.env.CLUSTER === '1' && !cluster) log('CLUSTER=1 needs a Postgres DATABASE_URL: running as a server on its own');
 lobby.cluster = cluster;
 
-// The games the last server handed over: whatever is waiting already (a server that started after the last one went),
-// and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
-// stopping itself: it hears its own saves too.)
 let stopping = false;
-if (store) {
-  await store.sweep(HANDOFF_MAX_AGE).catch((err) => log(`handoff: could not sweep old saves (${err.message})`));
-  store.listen((code) => stopping || lobby.restore(code));
-  // (and the games a server going down is about to hand over: their valleys are built here while it still plays them)
-  store.listenComing?.((code, info) => stopping || lobby.prepare(code, info));
-  for (const code of await store.pending().catch(() => [])) lobby.restore(code);
-  setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
-}
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, log }) : null;
@@ -217,7 +208,36 @@ const stamp = (html, { build, compat, protocol }) => {
   const at = s.search(/<head[^>]*>/i);
   return Buffer.from(at < 0 ? meta + s : s.replace(/<head[^>]*>/i, (h) => h + meta));
 };
-if (files.get('/index.html')) files.get('/index.html').body = stamp(files.get('/index.html').body, { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION });
+if (files.get('/index.html')) {
+  const f = files.get('/index.html');
+  f.raw = f.body; // (as built: what is kept for a server after this one to serve, builds.js)
+  f.body = stamp(f.body, { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION });
+}
+
+// A game whose save this build cannot read is carried on by the build that saved it (builds.js, docs/deploys.md): this
+// build's code goes into the store for the servers after it, and a save names the build its game runs on. Only signed
+// builds are started (HANDOFF_BUILD_KEY, the deploy's secret): without the key, none is kept or started, and a game a
+// later build cannot read ends at that deploy. HANDOFF_PIN=0: none of it. HANDOFF_PIN=unsigned: the store is trusted
+// to hand this server code (a development server, the tests).
+const PIN = process.env.HANDOFF_PIN ?? '1';
+const BUILD_KEY = process.env.HANDOFF_BUILD_KEY || '';
+const builds = store && PIN !== '0' && (BUILD_KEY || PIN === 'unsigned') ? new Builds({ store, root: resolve(__dirname, '..'), client: { build: CLIENT_BUILD, compat: COMPAT, protocol: PROTOCOL_VERSION }, dist: files, key: BUILD_KEY, unsigned: !BUILD_KEY && PIN === 'unsigned', log }) : null;
+lobby.builds = builds;
+if (store && PIN !== '0' && !builds) log('handoff: HANDOFF_BUILD_KEY is not set, so no build is kept for the servers after this one or started from the store: a game a later build cannot read (another map, save format or enums) will end at that deploy, its players told why. docs/deploys.md says what to set.');
+else if (builds && builds.unsigned) log('handoff: HANDOFF_PIN=unsigned - builds in the store are started here unsigned: anyone who can write to the store can run code on this server');
+
+// The games the last server handed over: whatever is waiting already (a server that started after the last one went),
+// and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
+// stopping itself: it hears its own saves too.)
+if (store) {
+  await store.sweep(HANDOFF_MAX_AGE).catch((err) => log(`handoff: could not sweep old saves (${err.message})`));
+  store.listen((code) => stopping || lobby.restore(code));
+  // (and the games a server going down is about to hand over: their valleys are built here while it still plays them)
+  store.listenComing?.((code, info) => stopping || lobby.prepare(code, info));
+  for (const code of await store.pending().catch(() => [])) lobby.restore(code);
+  setInterval(() => store.sweep(HANDOFF_MAX_AGE).catch(() => {}), 60_000).unref();
+}
+
 
 // The client's code and pages go out compressed to a browser that takes it (the bundle: 3 MB, 1 MB gzipped, 0.8 MB
 // with brotli) - what a page loaded again for a deploy's new client waits for. Gzip now (a fraction of a second);
@@ -298,7 +318,9 @@ app.ws('/ws', {
     const ext = req.getHeader('sec-websocket-extensions');
     // (a game the last server handed over that is still in the store: brought back first, so the socket finds it. A
     // quick join with no game to go to, in a cluster: one is made first, as the other servers have to be asked)
-    const restoring = code && store && !lobby.rooms.has(code) ? lobby.restore(code).catch((err) => log(`game ${code} not restored (${err.message})`)) : !code && lobby.cluster && !lobby.quickPick() ? lobby.make({ quick: true }) : null;
+    // (one whose save this build could not read, being carried on by an older build instead: waited for too - settle)
+    const pending = code && store && (!lobby.rooms.has(code) || (lobby.rooms.get(code).from && !lobby.rooms.get(code).ready));
+    const restoring = pending ? (builds ? lobby.settle(code) : lobby.restore(code)).catch((err) => log(`game ${code} not restored (${err.message})`)) : !code && lobby.cluster && !lobby.quickPick() ? lobby.make({ quick: true }) : null;
     // Always re-read a game connection: admin role changes and revoked sessions must not come from the minute cache.
     const user = token
       ? auth.userForToken(token, true).catch((err) => {
@@ -398,8 +420,24 @@ app.get('/api/games/:code', (res, req) => {
 // A server going down answers 503: its answer is not what the page will be playing on (the edge may send the page's
 // next request to the new server, or this one, until this one is gone), so the page asks again. (The body is the same,
 // for a page from before this, which reads it whatever the status and joins, and is turned away here as before.)
+// With ?game=CODE it is what runs that game: an older build's client for a game that build carries on here (builds.js),
+// once it is known what became of the game's restore.
 const ownVersion = { protocol: PROTOCOL_VERSION, build: CLIENT_BUILD, compat: COMPAT };
-app.get('/api/version', (res) => json(res, stopping ? 503 : 200, stopping ? { ...ownVersion, stopping: true } : ownVersion));
+const versionOf = (room) => (room?.pin ? { protocol: room.pin.client.protocol, build: room.pin.client.build, compat: room.pin.client.compat, pinned: true } : ownVersion);
+app.get('/api/version', (res, req) => {
+  if (stopping) return json(res, 503, { ...ownVersion, stopping: true });
+  const code = String(req.getQuery('game') || '')
+    .trim()
+    .toUpperCase();
+  const room = code ? lobby.rooms.get(code) : null;
+  if (!code || !builds || (room && room.ready && !room.closed)) return json(res, 200, versionOf(room));
+  let aborted = false;
+  res.onAborted(() => (aborted = true));
+  lobby
+    .settle(code)
+    .catch(() => null)
+    .then((r) => aborted || json(res, stopping ? 503 : 200, versionOf(r)));
+});
 
 // makes a game: { name, host, inviteOnly, maxPlayers, difficulty } -> its info, code included.
 // difficulty is ember, nightfall or blackout (shared/difficulty.js). Left off, it is Nightfall, which plays as the valley always has.
@@ -731,17 +769,43 @@ const encodingOf = (req) => {
   const a = req.getHeader('accept-encoding');
   return /\bbr\b/.test(a) ? 'br' : /\bgzip\b/.test(a) ? 'gzip' : '';
 };
+// The page, and the client's files. A game an older build carries on here (builds.js) is played with that build's
+// client: the page asked for with its code (/?game=CODE: where its players' pages are, and its invite link) is that
+// build's, once it is known what became of the game's restore; and that build's files are served under their own names,
+// which no file of this build has (they are named by their content) - for those players, and for any page of an older
+// client still playing after a deploy that only changed the client.
+const NOT_FOUND = (res) => res.cork(() => res.writeStatus('404 Not Found').end('Not found'));
 app.get('/*', (res, req) => {
   let url = req.getUrl();
   if (url === '/stats' || url === '/stats/') url = '/stats.html';
   if (url === '/admin' || url === '/admin/') url = '/admin.html';
+  const enc = encodingOf(req);
+  if (!files.has(url) && url.startsWith('/assets/')) {
+    if (!builds?.has(url)) return NOT_FOUND(res);
+    let aborted = false;
+    res.onAborted(() => (aborted = true));
+    builds.asset(url).then((body) => aborted || (body ? sendFile(res, url, { body, type: MIME[extname(url)] || 'application/octet-stream' }) : NOT_FOUND(res)));
+    return;
+  }
   if (url === '/' || !files.has(url)) url = files.has(url) ? url : '/index.html';
   const f = files.get(url);
   if (!f) {
     res.writeStatus('404 Not Found').end('Not found - build the client with `npm run build`');
     return;
   }
-  sendFile(res, url, f, encodingOf(req));
+  const code = url === '/index.html' && builds ? String(req.getQuery('game') || '').trim().toUpperCase() : '';
+  if (!code || stopping) return sendFile(res, url, f, enc);
+  let aborted = false;
+  res.onAborted(() => (aborted = true));
+  lobby
+    .settle(code)
+    .catch(() => null)
+    .then(async (room) => {
+      const page = room?.pin ? await builds.asset('/index.html', room.pin.id) : null;
+      if (aborted) return;
+      if (page) sendFile(res, url, { body: stamp(page, room.pin.client), type: MIME['.html'] });
+      else sendFile(res, url, f, enc);
+    });
 });
 
 app.listen(PORT, (token) => {
@@ -749,6 +813,8 @@ app.listen(PORT, (token) => {
     console.error(`[server] failed to listen on port ${PORT}`);
     process.exit(1);
   }
+  // (this build into the store for the servers after it: once it can be reached, so its health check is not held up)
+  builds?.pack();
   console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
   // (only once it can be reached: then the proxy may send it players)
   if (cluster) {

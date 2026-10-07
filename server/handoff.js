@@ -14,7 +14,8 @@
 // added needs no bump, as long as loading a save without it leaves the default (every entity is restored by building
 // a fresh one and copying what was saved over it). A save whose version differs is dropped: that game ends as before.
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ITEM, ZTYPE, STRUCT, CONT, ZONE, AMMO, PROJ, AREA, KILLER } from '../shared/defs.js';
 import { PHASE } from '../shared/constants.js';
@@ -147,7 +148,17 @@ export function checkEnvelope(env) {
 //                          the Set of codes the next server said it is ready for, within ms
 //   listenComing(fn)       fn(code, info) for each game a server going down announces (that server hears its own too)
 //   ready(code)            this server has built the valley of `code` and is waiting for its save
+// ...and the builds that games are carried on by when the next build cannot read their save (builds.js):
+//   putBuild(id, body, sig, assets)  the build `id` (gzipped), its signature, and its client's files (Map hash -> bytes):
+//                          kept (written over whatever is there under that name), and marked as in use
+//   getBuild(id)           -> { body, sig }, or null; marks it (and its files) as in use
+//   touchBuild(id)         marks it as in use
+//   getAsset(hash)         -> a client file, or null
+//   sweepBuilds(maxAgeS)   drops the builds nobody has used in that long, and the files no build kept names
 const COMING_RE = /^([A-Z2-9]+)\.coming$/;
+const BUILD_FILE_RE = /^([0-9a-f]{24})\.json$/;
+const HASH_RE = /^[0-9a-f]{64}$/;
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 // Files in a folder: CODE.json, written as CODE.json.tmp and renamed (there whole or not at all). Claimed by renaming
 // it to a name of this process's: of two servers claiming at once, one rename fails. A game announced is CODE.coming,
@@ -263,7 +274,89 @@ export class FileStore {
     clearInterval(this.timer);
     clearInterval(this.comingTimer);
   }
+  // (the builds and their files: in folders beside the saves', which sweep leaves alone)
+  get buildDir() {
+    const dir = `${this.dir}-builds`;
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  get assetDir() {
+    const dir = `${this.dir}-assets`;
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  async putBuild(id, body, sig, assets = new Map()) {
+    for (const [hash, buf] of assets) {
+      if (!HASH_RE.test(hash)) continue;
+      const file = join(this.assetDir, hash);
+      try {
+        if (sha256(readFileSync(file)) === hash) {
+          touch(file);
+          continue;
+        }
+      } catch {}
+      writeFileSync(`${file}.${process.pid}.tmp`, buf);
+      renameSync(`${file}.${process.pid}.tmp`, file);
+    }
+    const file = join(this.buildDir, `${id}.json`);
+    writeFileSync(`${file}.${process.pid}.tmp`, JSON.stringify({ sig: sig || '', assets: [...assets.keys()], body: Buffer.from(body).toString('base64') }));
+    renameSync(`${file}.${process.pid}.tmp`, file);
+  }
+  readBuild(id) {
+    try {
+      return JSON.parse(readFileSync(join(this.buildDir, `${id}.json`), 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+  async getBuild(id) {
+    const o = this.readBuild(id);
+    if (!o) return null;
+    await this.touchBuild(id);
+    return { body: Buffer.from(o.body, 'base64'), sig: o.sig || '' };
+  }
+  async touchBuild(id) {
+    const o = this.readBuild(id);
+    if (!o) return;
+    touch(join(this.buildDir, `${id}.json`));
+    for (const hash of o.assets || []) if (HASH_RE.test(hash)) touch(join(this.assetDir, hash));
+  }
+  async getAsset(hash) {
+    if (!HASH_RE.test(hash)) return null;
+    try {
+      return readFileSync(join(this.assetDir, hash));
+    } catch {
+      return null;
+    }
+  }
+  async sweepBuilds(maxAgeS) {
+    const cut = Date.now() - maxAgeS * 1000;
+    let n = 0;
+    const named = new Set();
+    for (const f of readdirSync(this.buildDir)) {
+      const full = join(this.buildDir, f);
+      try {
+        if (statSync(full).mtimeMs < cut) {
+          unlinkSync(full);
+          if (BUILD_FILE_RE.test(f)) n++;
+        } else for (const hash of this.readBuild(BUILD_FILE_RE.exec(f)?.[1])?.assets || []) named.add(hash);
+      } catch {}
+    }
+    for (const f of readdirSync(this.assetDir)) {
+      const full = join(this.assetDir, f);
+      try {
+        if (!named.has(f) && statSync(full).mtimeMs < cut) unlinkSync(full);
+      } catch {}
+    }
+    return n;
+  }
 }
+const touch = (file) => {
+  try {
+    const now = new Date();
+    utimesSync(file, now, now);
+  } catch {}
+};
 
 // Rows of game_handoff in Postgres (migration 008): the body as bytea, the room's meta as jsonb
 export class PgStore {
@@ -347,5 +440,42 @@ export class PgStore {
   async close() {
     await this.unlisten?.();
     await this.unlistenComing?.();
+  }
+  // (the builds: handoff_build and handoff_asset, migration 014. What is there under a name is written over: a row put
+  // there by anyone else is replaced by this server's own, which it knows to be right)
+  async putBuild(id, body, sig, assets = new Map()) {
+    const hashes = [...assets.keys()].filter((h) => HASH_RE.test(h));
+    const good = new Set((await this.db.query(`SELECT hash FROM handoff_asset WHERE hash = ANY($1) AND encode(sha256(body), 'hex') = hash`, [hashes])).rows.map((r) => r.hash));
+    for (const hash of hashes) {
+      if (good.has(hash)) continue;
+      const buf = assets.get(hash);
+      await this.db.query(`INSERT INTO handoff_asset (hash, bytes, body) VALUES ($1, $2, $3) ON CONFLICT (hash) DO UPDATE SET body = EXCLUDED.body, bytes = EXCLUDED.bytes, used_at = now()`, [hash, buf.length, Buffer.from(buf)]);
+    }
+    if (good.size) await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [[...good]]);
+    await this.db.query(
+      `INSERT INTO handoff_build (id, bytes, sig, assets, body) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, bytes = EXCLUDED.bytes, sig = EXCLUDED.sig, assets = EXCLUDED.assets, used_at = now()`,
+      [id, body.byteLength, sig || '', hashes, Buffer.from(body)]
+    );
+  }
+  async getBuild(id) {
+    const r = await this.db.query(`UPDATE handoff_build SET used_at = now() WHERE id = $1 RETURNING body, sig, assets`, [id]);
+    const row = r.rows[0];
+    if (!row) return null;
+    await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [row.assets || []]);
+    return { body: Buffer.from(row.body), sig: row.sig || '' };
+  }
+  async touchBuild(id) {
+    const r = await this.db.query(`UPDATE handoff_build SET used_at = now() WHERE id = $1 RETURNING assets`, [id]);
+    if (r.rows[0]) await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [r.rows[0].assets || []]);
+  }
+  async getAsset(hash) {
+    const r = await this.db.query(`SELECT body FROM handoff_asset WHERE hash = $1`, [hash]);
+    return r.rows[0] ? Buffer.from(r.rows[0].body) : null;
+  }
+  async sweepBuilds(maxAgeS) {
+    const n = (await this.db.query(`DELETE FROM handoff_build WHERE used_at < now() - make_interval(secs => $1)`, [maxAgeS])).rowCount;
+    await this.db.query(`DELETE FROM handoff_asset a WHERE used_at < now() - make_interval(secs => $1) AND NOT EXISTS (SELECT 1 FROM handoff_build b WHERE a.hash = ANY(b.assets))`, [maxAgeS]);
+    return n;
   }
 }

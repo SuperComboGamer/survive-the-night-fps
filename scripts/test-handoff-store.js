@@ -5,7 +5,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { FileStore, PgStore, encode, decode } from '../server/handoff.js';
 import { openDb } from '../server/db/index.js';
 import { migrate } from '../server/db/migrate.js';
@@ -45,14 +45,54 @@ async function exercise(label, store) {
   await store.put('YYYYYY', meta, body);
   await sleep(1100);
   check(`${label}: one nobody came for is swept`, (await store.sweep(1)) >= 1 && !(await store.pending()).includes('YYYYYY'));
+
+  // the builds games are carried on by (builds.js), and their clients' files
+  const A = 'a'.repeat(24);
+  const B = 'b'.repeat(24);
+  const file = (s) => [sha(s), Buffer.from(s)];
+  await store.putBuild(A, Buffer.from('build one'), 'sig-of-one', new Map([file('only in one'), file('in both')]));
+  await store.putBuild(B, Buffer.from('build two'), '', new Map([file('in both')]));
+  const first = await store.getBuild(A);
+  check(`${label}: a build is kept with its signature, and given back`, first?.body.toString() === 'build one' && first.sig === 'sig-of-one' && (await store.getBuild('c'.repeat(24))) === null);
+  check(`${label}: ...and its client's files, by their hashes`, (await store.getAsset(sha('in both')))?.toString() === 'in both' && (await store.getAsset(sha('nope'))) === null);
+  if (label === 'postgres') {
+    // (a file put there by anyone else is written over by a server that puts its own build: it knows what is right)
+    await db.query(`UPDATE handoff_asset SET body = 'tampered' WHERE hash = $1`, [sha('in both')]);
+    await store.putBuild(B, Buffer.from('build two'), '', new Map([file('in both')]));
+    check(`${label}: ...a file somebody else changed is put right by the next server that keeps it`, (await store.getAsset(sha('in both')))?.toString() === 'in both');
+  }
+  await sleep(1100);
+  await store.touchBuild(A);
+  const swept = await store.sweepBuilds(1);
+  check(`${label}: a build nobody used is swept, one in use is not, nor the files it names`, swept === 1 && (await store.getBuild(B)) === null && !!(await store.getBuild(A)) && !!(await store.getAsset(sha('in both'))) && !!(await store.getAsset(sha('only in one'))), String(swept));
+  check(`${label}: ...and sweeping the saves leaves the builds be`, (await store.sweep(0)) >= 0 && !!(await store.getBuild(A)));
+
+  // the word between the servers before the saves (rooms.js announce / prepare)
+  const coming = [];
+  store.listenComing((code, info) => {
+    coming.push([code, info.seed]);
+    if (code !== 'COMEZZ') store.ready(code);
+  });
+  await sleep(300);
+  const t0 = Date.now();
+  const ready = await store.announceAndWait(
+    [
+      { code: 'COMEAA', info: { seed: 5, act: 1, shape: 'x' } },
+      { code: 'COMEZZ', info: { seed: 6, act: 1, shape: 'y' } },
+    ],
+    1500
+  );
+  check(`${label}: a server going down tells the next which games are coming, and hears which it is ready for`, coming.some(([c, s]) => c === 'COMEAA' && s === 5) && coming.some(([c]) => c === 'COMEZZ') && ready.has('COMEAA') && !ready.has('COMEZZ') && Date.now() - t0 < 3000, JSON.stringify({ coming, ready: [...ready] }));
   await store.close();
 }
+const sha = (s) => createHash('sha256').update(s).digest('hex');
 
+var db = null;
 await exercise('files', new FileStore(join(mkdtempSync(join(tmpdir(), 'stn-store-')), 'handoff'), { pollMs: 200 }));
 
-const db = await openDb('pglite:memory');
+db = await openDb('pglite:memory');
 const { applied } = await migrate(db);
-check('008_game_handoff applies', applied.includes('008_game_handoff.sql'), applied.join());
+check('008_game_handoff and 014_handoff_builds apply', applied.includes('008_game_handoff.sql') && applied.includes('014_handoff_builds.sql'), applied.join());
 await exercise('postgres', new PgStore(db));
 
 // the two halves of a match a deploy split
