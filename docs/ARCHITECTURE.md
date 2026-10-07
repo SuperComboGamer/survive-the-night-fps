@@ -305,6 +305,14 @@ JSON file (`server/stats.js`).
   pacing. Answers are kept 60 s (admin 30 s) and asked for once however many ask; nothing needs a migration. Names
   are the names players play under, as on the leaderboard; no account ids, guest keys or invite-only codes.
   `node scripts/seed-stats.js pglite:<folder>` fills a PGlite database with made-up history to look at it locally.
+- **The control room** (`/admin`: `client/admin.html`, `client/admin/`, its own Vite entry; `server/adminpanel.js`):
+  the server, its games and players, the settings, the accounts and an audit log (`admin_audit`, 013), for admin
+  accounts only. Every `/api/admin/*` route goes through `AdminPanel.guard` (same origin, the panel's header, the
+  admin flag read from the database on that request); everything that changes something is audited. A game is asked
+  through its worker (`Room.ask` -> `{ t: 'admin' }` -> `server/gameadmin.js`), which runs the admin chat commands
+  through `Game.debugCommand` and never lets a bad request end the game. A game closed or a player removed from here
+  has its socket closed with `ENDED_CODE` (4003) and the reason, which the client shows instead of rejoining.
+  [docs/admin-panel.md](admin-panel.md) says what each action does and what the restart relies on.
 
 ## Achievements
 

@@ -56,7 +56,7 @@ import {
   useWasted,
   PROJ,
 } from '../../shared/defs.js';
-import { LEFT_CODE, MOVED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
+import { LEFT_CODE, MOVED_CODE, ENDED_CODE, ACT, ENT, SNAP, HOLD, CAR_ID, PING_KIND, PFLAG, CHATF, PLF, PROGF, UNDO_NO, dqpos } from '../../shared/protocol.js';
 import { trackedRecipe, trackedNeed } from './tracked.js';
 import { mayHold } from './itemguide.js';
 import { worldFor } from '../../shared/worlds.js';
@@ -335,7 +335,8 @@ export class Game {
       progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
       voice: (from, payload) => this.voice.onSignal(from, payload),
-      close: (code) => this.onDisconnect(code),
+      // (ENDED_CODE: an admin closed the game or removed this player - the reason is said, and nothing rejoins)
+      close: (code, reason) => this.onDisconnect(code, code === ENDED_CODE ? reason || 'This game was ended by an admin.' : ''),
     });
     this.voice = new Voice(this.conn, audio);
     this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.speakers() });
