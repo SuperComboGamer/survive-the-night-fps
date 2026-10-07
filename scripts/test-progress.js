@@ -71,9 +71,19 @@ const idOf = (name) => PERKS.find((p) => p.name === name).id;
   check('sets that could not be had are refused, in any order', perksValid([T('Field Medic'), T('Thick Skin')], at(6)) && !perksValid([T('Field Medic')], 1e9) && !perksValid([0], 0) && !perksValid([0, 0], 1e9) && !perksValid([99], 1e9) && !perksValid([...path3, T('Last Stand')], at(20) - 1) && perksValid([...path3, T('Last Stand')], at(20)) && !perksValid([...path3, T('Last Stand'), T('Adrenaline')], 1e9) && !perksValid([0, 1, 4, 5, 9, 10, 11, 13, 14, 15, 3], 1e9));
   check('a stored set is fitted to the tree: what it cannot have dropped, the rest kept', fitPerks([T('Hardened'), T('Field Medic'), T('Thick Skin'), 99, 0], at(12)).join() === [T('Thick Skin'), T('Field Medic'), T('Hardened')].join() && fitPerks([T('Field Medic'), T('Deep Lungs')], 1e9).join() === String(T('Deep Lungs')) && fitPerks([0, 1, 4, 5, 9, 10, 11, 13, 14, 15, 3, 2], 1e9).length === PERK_POINTS && fitPerks('x', 1e9).length === 0);
 
-  const all = perkMods(perkMask(PERKS.filter((p) => !p.keystone).map((p) => p.id)));
+  const all = perkMods(perkMask(PERKS.filter((p) => p.tier < TIER.COMBO).map((p) => p.id)));
   const over = Object.entries(all).filter(([key, v]) => (key === 'hp' ? v > 100 * PERK_CAP : !['extraFind', 'gather', 'reviveHp', 'reviveXp', 'xp', 'killStamina', 'killHeal', 'reviveSelf', 'secondChance'].includes(key) && Math.abs(v - 1) > PERK_CAP + 1e-9));
-  check('no stat moves more than the cap through the ordinary perks', !over.length, JSON.stringify(over));
+  check("no stat moves more than the cap through the branches' perks", !over.length, JSON.stringify(over));
+  // a combination does all it says on top of what it needs, even with every branch perk taken (Combat Medic and Pack
+  // Rat used to do nothing: what they need had already reached the cap)
+  const branches = PERKS.filter((p) => p.tier < TIER.COMBO).map((p) => p.id);
+  const flat = [];
+  for (const c of PERKS.filter((p) => p.tier === TIER.COMBO)) {
+    const without = perkMods(perkMask(branches)), withIt = perkMods(perkMask([...branches, c.id]));
+    for (const [k, v] of Object.entries(c.mods)) if (Math.abs(withIt[k] / without[k] - v) > 1e-9) flat.push(`${c.name} ${k}`);
+  }
+  check('every combination does all it says on top of the cap', !flat.length, flat.join(', '));
+  check('Combat Medic: healing and reviving 15% faster again past Field Medic and Guardian Angel', Math.abs(perkMods(perkMask([...medic, T('Combat Medic')])).useTime - 0.75 * 0.85) < 1e-9 && Math.abs(perkMods(perkMask([...medic, T('Combat Medic')])).revive - 0.75 * 0.85) < 1e-9);
   check('multipliers multiply: Last Stand halves the bleeding, Mentor is half as much XP again', perkMods(perkMask([idOf('Last Stand')])).bleed === 0.5 && perkMods(perkMask([idOf('Mentor')])).reviveXp === 1.5 && perkMods(perkMask([idOf('Quick Hands')])).reload === 0.85);
   check('Treasure Hunter makes the extra find one in two', perkMods(perkMask([T('Keen Eye'), T('Treasure Hunter')])).extraFind === 0.5);
   check('no perks: every number its base', perkMods(0).reload === 1 && perkMods(0).hp === 0 && perkMods(0).xp === 1 && Object.isFrozen(perkMods(0)));

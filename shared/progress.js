@@ -128,8 +128,10 @@ for (const p of PERKS) {
   PERK_BY_ID[p.id] = p;
 }
 
-// No stat moves more than this far from its base through the ordinary perks (keystones may: they are the late,
-// stronger picks, one per player)
+// No stat moves more than this far from its base through the branches' perks. A combination's bonus goes on top of
+// it: the perks a combination needs already take the stats it touches to the cap (Field Medic and Guardian Angel
+// healing and reviving, Scrounger and Light Fingers drops and searching), so under the cap Combat Medic and Pack Rat
+// did nothing at all. The keystones may pass it too: they are the late, stronger picks, one per player.
 export const PERK_CAP = 0.25;
 const BASE = { hp: 0, staminaDrain: 1, swim: 1, swimDrain: 1, useTime: 1, reload: 1, recoil: 1, headshot: 1, drops: 1, extraFind: 0, search: 1, gather: 0, revive: 1, reviveHp: 0, reviveXp: 1, sprint: 1, notice: 1, stun: 1, bleed: 1, killStamina: 0, secondChance: 0, hurt: 1, melee: 1, xp: 1, killHeal: 0, reviveSelf: 0 };
 const MULS = ['staminaDrain', 'swim', 'swimDrain', 'useTime', 'reload', 'recoil', 'headshot', 'drops', 'search', 'revive', 'sprint', 'notice', 'stun', 'bleed', 'reviveXp', 'hurt', 'melee', 'xp'];
@@ -145,15 +147,19 @@ export function perkMods(mask) {
   let m = cache.get(mask);
   if (m) return m;
   m = { ...BASE };
-  for (const p of PERKS) {
-    if (!(mask & (1 << p.id))) continue;
-    for (const [k, v] of Object.entries(p.mods)) {
-      if (MULS.includes(k)) m[k] *= v;
-      else m[k] += v;
+  const add = (combos) => {
+    for (const p of PERKS) {
+      if (!(mask & (1 << p.id)) || (p.tier === TIER.COMBO) !== combos) continue;
+      for (const [k, v] of Object.entries(p.mods)) {
+        if (MULS.includes(k)) m[k] *= v;
+        else m[k] += v;
+      }
     }
-  }
+  };
+  add(false);
   for (const k of CAPPED) m[k] = Math.max(1 - PERK_CAP, Math.min(1 + PERK_CAP, m[k]));
   m.hp = Math.min(m.hp, Math.round(100 * PERK_CAP));
+  add(true); // the combinations, on top of the cap
   cache.set(mask, Object.freeze(m));
   return m;
 }
