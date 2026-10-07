@@ -23,7 +23,6 @@ const EVERY = 0.2; // seconds between looks at the situation
 // most urgent first: only the first one that applies is shown. action: the keybind it names (game/binds.js) - a hint
 // for an action the player has left without a key is never shown
 const HINTS = [
-  { id: 'throwoff', action: 'jump', text: 'Throw it off', always: true }, // pinned by a leaper (Zombies.throwOff)
   { id: 'flashlight', action: 'flashlight', text: 'Flashlight' },
   { id: 'heal', action: 'heal', text: 'Heal' },
   { id: 'drink', action: 'drink', text: 'Energy drink' },
@@ -95,7 +94,7 @@ export class KeyHints {
     let pick = null;
     if (active && g.settings.keyHints !== false) {
       for (const h of HINTS) {
-        if ((!h.always && (this.counts[h.id] | 0) >= RETIRE) || !hasBind(h.action) || !this.applies(h, day)) continue;
+        if ((this.counts[h.id] | 0) >= RETIRE || !hasBind(h.action) || !this.applies(h, day)) continue;
         pick = h;
         break;
       }
@@ -107,8 +106,6 @@ export class KeyHints {
     const g = this.game;
     const self = g.self;
     switch (h.id) {
-      case 'throwoff':
-        return !!g.prediction.state.pinned;
       case 'flashlight':
         // (it needs no battery item: it runs down while on and recharges by itself while off)
         return g.env.night > DARK && !g.localFlash && self.battery > LOW_BATTERY;

@@ -46,6 +46,8 @@ const LEAP_PIN = 1.5;
 const LEAP_LAND = 1.7;
 const LEAP_MISS_CD = 2.5;
 const THROW_OFF_DAZE = 1; // s a leaper reels for once the survivor it pinned throws it off (throwOff)
+const PIN_NEAR = 0.55; // m in front of the survivor it has pinned...
+const PIN_SHOVED = 0.3; // ...and this much further at the end of their shove (s.shove: SHOVE_* in constants.js)
 const WEDGE_MOVE = 1.5; // m a zombie after a survivor has to get from where it was to count as getting anywhere (z.wedgeT)
 const _leap = { x: 0, y: 0, z: 0 };
 // The zombie dog's hunt (def.hitRun). It runs in, bites once (a snap or a lunge), and breaks off (special state 7,
@@ -1846,8 +1848,9 @@ export class Zombies {
     z.specialCd = 6 + this.g.rng() * 3;
   }
 
-  // A pinned survivor throws the leaper off (Space, Game.applyInputs): it is flung back the way it faces, away
-  // from them, and is dazed for THROW_OFF_DAZE s once it lands, long enough to get away
+  // A pinned survivor who has shoved the leaper all the way off (the simulation's s.shove, Game.processInputs) throws
+  // it: it is flung back the way it faces, away from them, and is dazed for THROW_OFF_DAZE s once it lands, long
+  // enough to get away
   throwOff(p) {
     const z = this.g.zombies.find((o) => o.id === p.pinnedBy && !o.dead);
     if (!z || z.state !== 3 || z.link !== p.id) return false;
@@ -1958,8 +1961,10 @@ export class Zombies {
       }
       const s = p.state;
       z.linkT += dt;
-      z.x = s.x - Math.sin(s.yaw) * 0.55;
-      z.z = s.z - Math.cos(s.yaw) * 0.55;
+      // on them, face to face: further off the further they have shoved it (s.shove, the simulation's)
+      const off = PIN_NEAR + PIN_SHOVED * s.shove;
+      z.x = s.x - Math.sin(s.yaw) * off;
+      z.z = s.z - Math.cos(s.yaw) * off;
       z.y = s.y;
       z.yaw = s.yaw + Math.PI;
       z.anim = ZANIM.ATTACK;

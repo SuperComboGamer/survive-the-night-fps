@@ -116,8 +116,6 @@ import {
 } from '../shared/defs.js';
 import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, UNDO_NO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, dqpos, usePos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
 import { XP, XPS, XP_SRC, levelOf, perkMods, perkMask } from '../shared/progress.js';
-import { BTN } from '../shared/constants.js';
-const BTN_JUMP = BTN.JUMP;
 import { worldFor } from '../shared/worlds.js';
 import { WORLD, nightRank, ARRIVAL_DAY, MAINLAND_DAY_MORE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, PLANE_REACH } from '../shared/acts.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
@@ -2323,12 +2321,12 @@ export class Game {
         if (!samePlayerState(p.state, p.shadow)) p.selfSync = true;
         // an item asked for is in the hands from the client's first command after asking on (useItem)
         if (p.useItem && !p.state.using && ((cmd.seq - p.useItem.from) & 0xffff) < 0x8000) p.state.using = 1;
-        // pinned by a leaper: Space throws it off (Zombies.throwOff)
-        if (p.state.pinned && cmd.buttons & BTN_JUMP & ~p.state.lastBtn && this.zm.throwOff(p)) {
+        simulatePlayer(p.state, cmd, this.world, events);
+        // pinned by a leaper: shoved all the way (the simulation's meter, s.shove), they throw it off (Zombies.throwOff)
+        if (p.state.pinned && p.state.shove >= 1 && this.zm.throwOff(p)) {
           p.selfSync = true;
           this.ach.threwOff(p);
         }
-        simulatePlayer(p.state, cmd, this.world, events);
         copyPlayerState(p.shadow, p.state);
         if (cmd.hash === NO_HASH || (cmd.hash >= 0 && cmd.hash !== hashPlayerState(p.state))) p.selfSync = true;
         for (const ev of events) this.handleSimEvent(p, ev);
@@ -4953,6 +4951,7 @@ export class Game {
           case 4:
             c.f32(s.leapCd);
             c.f32(s.stunT);
+            c.f32(s.shove);
             c.u8(s.pulled ? 1 : 0);
             if (s.pulled) {
               c.f32(s.pullX);

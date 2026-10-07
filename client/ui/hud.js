@@ -3,7 +3,7 @@
 import { ITEM, ITEM_DEFS, WEAPONS, AMMO_NAMES } from '../../shared/defs.js';
 import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/constants.js';
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
-import { el, svgEl, fmtTime, parsePrompt, clamp } from './dom.js';
+import { el, svgEl, fmtTime, parsePrompt, clamp, replay } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
 import { Compass, Objective, Tracked, Markers, Downed, DamageDir } from './hud2.js';
 import { Minimap } from './minimap.js';
@@ -155,6 +155,14 @@ export class Hud {
     this.useLabel = el('div', 'use-label', this.useWrap, '');
     this.useWrap.hidden = true;
     this.dmgDir = new DamageDir(center);
+
+    // pinned by a leaper: the key to mash, which jolts with every press, over how far it has been shoved off
+    this.shove = el('div', 'shove', center);
+    const shoveRow = el('div', 'shove-row', this.shove);
+    this.shoveKey = el('span', 'kbd', shoveRow, '');
+    el('span', 'shove-t', shoveRow, 'Mash to shove it off');
+    this.shoveFill = el('i', '', el('div', 'shove-bar', this.shove));
+    this.shove.hidden = true;
 
     this.prompt = el('div', 'prompt', center);
     this.promptKey = el('span', 'kbd', this.prompt, 'E');
@@ -670,6 +678,22 @@ export class Hud {
     }
     const ul = up >= 0 ? h.useLabel || '' : '';
     if (c.useL !== ul) this.useLabel.textContent = c.useL = ul;
+
+    // shove meter (pinned by a leaper)
+    const sv = h.shove >= 0 ? Math.round(clamp(h.shove, 0, 1) * 100) / 100 : -1;
+    if (c.shove !== sv) {
+      if ((sv >= 0) !== (c.shove >= 0)) {
+        this.shove.hidden = sv < 0;
+        if (sv >= 0) replay(this.shove, 'in');
+      }
+      c.shove = sv;
+      if (sv >= 0) this.shoveFill.style.transform = `scaleX(${sv})`;
+    }
+    if (c.shoveKey !== h.shoveKey) this.shoveKey.textContent = c.shoveKey = h.shoveKey;
+    if (c.shoves !== h.shoves) {
+      c.shoves = h.shoves;
+      if (sv >= 0) replay(this.shoveKey, 'hit');
+    }
 
     this._context(h.context);
   }
