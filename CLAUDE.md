@@ -7,6 +7,8 @@ On 2026-10-04 an agent locked a user out of their Windows account: 40 seconds af
 `launchChrome` writes the answer into the profile's `Local State` first, refuses to launch when the account's failed sign-in counter is 4 or more, and stops everything if the counter rises while a browser is up (then stop too, and tell the user).
 One browser at a time, software rendering by default, nothing that takes the screen, the keyboard or the mouse: see docs/object-clipping.md, "The headless browser's rules".
 
+Before you add a prop, change a prop's model or its colliders, or build a place out of walls, read and follow [docs/hitboxes.md](docs/hitboxes.md): the colliders follow what is drawn, and `scripts/test-hitbox.js` holds them to it.
+
 The codebase is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 To open a pull request, follow [.claude/skills/create-pr/SKILL.md](.claude/skills/create-pr/SKILL.md): a short overview for a

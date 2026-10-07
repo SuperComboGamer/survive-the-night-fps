@@ -11,7 +11,7 @@ import { MAP_HALF, MAP_SIZE, GRID_N, GRID_STEP, WATER_LEVEL } from './constants.
 import { ZONE, CONT } from './defs.js';
 import { PROPS } from './props.js';
 import { mulberry32, createNoise2D, fbm, smoothstep, lerp, clamp } from './rng.js';
-import { makeBox, makeCyl, footprintContains, COL } from './collision.js';
+import { makeBox, makeCyl, COL } from './collision.js';
 import { ROAD, planLayout, gatePoint } from './layout.js';
 import { planMine, MINE_R, MINE_H, PORTAL } from './mine.js';
 import { buildClinic, darkAt } from './clinic.js';
@@ -1649,9 +1649,8 @@ export function createWorld(seed) {
         things.get(key).push(t);
       }
     }
-    const q = [];
     const taken = (x, z, r) => {
-      for (const c of staticGrid.query(x, z, r, q)) if (footprintContains(c, x, z, r)) return true;
+      if (kit.laid(x, z, r)) return true; // (a prop by its plan: worldkit.js)
       for (let i = Math.floor((x - r - 1) / 4); i <= Math.floor((x + r + 1) / 4); i++) {
         for (let j = Math.floor((z - r - 1) / 4); j <= Math.floor((z + r + 1) / 4); j++) {
           for (const t of things.get(i * 4096 + j) || []) if (Math.hypot(t.x - x, t.z - z) < r + 1) return true;

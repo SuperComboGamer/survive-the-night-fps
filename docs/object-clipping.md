@@ -123,7 +123,8 @@ their side by `weaponPickup` (`HELD_LAY`), placed by their own vertices.
 - `occupy` and `occupied`: the room vegetation keeps from props.
 - `partBlocked`: a tree or a boulder that would stand in a wall is left out after its random draws, so the rest of the
   forest stays put.
-- `shared/props.js`: every prop's collider boxes and cylinders, which are its solid shape for these checks.
+- `shared/props.js`: every prop's collider boxes and cylinders, which are its solid shape for these checks. They
+  follow the model ([hitboxes.md](hitboxes.md)); what the world is laid out by is a prop's `plan` where it has one.
 
 **The sandboxes: `client/sandbox/`.** `models-test.html` loads `models-vm.js` (`?vm=`, `?ww=`), `models-hold.js`
 (`?hold=`), `models-film.js` (`?film=`) or `models-lineup.js` (the rest). `props-test.html` loads `props-test.js`.

@@ -214,7 +214,7 @@ for (const seed of SEEDS) {
   each('the doorways out in the country can be walked through too', seed, !stuck.length, stuck.slice(0, 3).map((o) => `/tp ${o.x.toFixed(1)} ${o.z.toFixed(1)}`).join('; '));
 
   // ---- nothing floats, nothing is sunk: every solid prop stands on the ground, a floor or another prop
-  const solids = solidsOf(w);
+  const solids = solidsOf(w, true); // (as it was laid out: a wreck is stood on another by its plan, props.js)
   const slabs = w.parts.filter((p) => p.shape === 'box' && !p.rx && !p.rz);
   const adrift = [];
   for (const p of w.props) {

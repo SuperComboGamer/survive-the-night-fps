@@ -22,6 +22,9 @@ shared/      code used by BOTH server and client (pure JS, no DOM, no three.js)
   clinic.js      Mercy Clinic and the rule that its wards are dark at noon (see Dark interiors below)
   rail.js        the railway: its heights, the cut and fill, Whitlock Depot, the stalled train (see The railway)
   collision.js   static/dynamic collider grids, ray casts
+  props.js       every prop's size and its colliders: boxes and cylinders that follow its model, a variant's own
+                 where it stands differently, what the world is laid out by (`plan`), a wreck's units
+                 (docs/hitboxes.md; scripts/test-hitbox.js holds them to the models)
   surfaces.js    what a blow or a bullet lands on (wood, stone, metal, glass, earth, cloth, rubber) and the mark,
                  the bits and the sound each kind of blow makes on it (see Blows on the world below)
   wrecks.js      a wreck's record of the blows it took, and its alarm (see Blows on the world below)
@@ -57,6 +60,7 @@ client/      three.js client (Vite root)
   sandbox/    standalone dev pages for visually testing modules (not shipped)
 scripts/     dev runner, headless screenshot helper (scripts/shot.js), look-dev harness (scripts/lookdev.js),
              clip checking for models, held items, pickups and world props (scripts/clip/, docs/object-clipping.md)
+             colliders against what is drawn: every prop, and both maps swept (scripts/hitbox/, docs/hitboxes.md)
 ```
 
 ## Conventions

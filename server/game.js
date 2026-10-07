@@ -120,7 +120,7 @@ import { worldFor } from '../shared/worlds.js';
 import { WORLD, nightRank, ARRIVAL_DAY, MAINLAND_DAY_MORE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, PLANE_REACH } from '../shared/acts.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
 import { blowOf, BLOW } from '../shared/surfaces.js';
-import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckLocal } from '../shared/wrecks.js';
+import { WRECK_SALVAGE, WRECK_HITS_MAX, HITF, WRECKF, WRECK_ALARM, ALARM, ALARM_SAY, alarmStep, wreckOf, wreckLocal, wreckUnit, wreckHalf } from '../shared/wrecks.js';
 import { PRY, pryTime, pryWeapon, trunkCar, hasBootLid } from '../shared/trunk.js';
 import { MineNav } from './minenav.js';
 import { createPlayerState, copyPlayerState, samePlayerState, snapPlayerState, hashPlayerState, simulatePlayer, eyeHeight, currentWeapon, DRAW_TIME, radioKeyed } from '../shared/playersim.js';
@@ -3064,8 +3064,11 @@ export class Game {
   // no scrap.
   blastWrecks(x, y, z, radius) {
     const near = this.world.staticGrid.query(x, z, radius + 6, []);
+    // (a wreck is several boxes: the blow lands once, on the nearest point of the nearest of them)
+    const blows = new Map(); // the wreck's unit -> [d, px, py, pz]
     for (const col of near) {
-      if (!wreckOf(col) || this.gather.get(col)?.hits?.length >= WRECK_HITS_MAX) continue;
+      const unit = wreckUnit(col);
+      if (!wreckOf(col) || this.gather.get(unit)?.hits?.length >= WRECK_HITS_MAX) continue;
       // the nearest point of its box
       const lx = col.c * (x - col.x) - col.s * (z - col.z);
       const lz = col.s * (x - col.x) + col.c * (z - col.z);
@@ -3073,17 +3076,20 @@ export class Game {
       const cz = Math.max(-col.hz, Math.min(col.hz, lz));
       const px = col.x + col.c * cx + col.s * cz;
       const pz = col.z - col.s * cx + col.c * cz;
-      const py = Math.max(col.y0 + 0.3, Math.min(col.y1 - 0.2, y));
+      const py = Math.max(Math.min(col.y0 + 0.3, col.y1), Math.min(col.y1 - 0.2, y));
       const d = Math.hypot(px - x, py - y, pz - z);
-      if (d > radius) continue;
+      if (d > radius || blows.get(unit)?.[0] <= d) continue;
+      blows.set(unit, [d, px, py, pz]);
+    }
+    for (const [unit, [d, px, py, pz]] of blows) {
       // (a blast right on top of it: from above its middle)
-      if (d > 0.05) this.wreckHit(col, px, py, pz, (px - x) / d, (py - y) / d, (pz - z) / d, BLOW.BLAST);
-      else this.wreckHit(col, px, py, pz, 0, -1, 0, BLOW.BLAST);
+      if (d > 0.05) this.wreckHit(unit, px, py, pz, (px - x) / d, (py - y) / d, (pz - z) / d, BLOW.BLAST);
+      else this.wreckHit(unit, px, py, pz, 0, -1, 0, BLOW.BLAST);
     }
   }
 
   alarmHit(col, g, prop, blow, x, z) {
-    const front = wreckLocal(prop, x, 0, z)[2] / Math.max(0.5, col.hz);
+    const front = wreckLocal(prop, x, 0, z)[2] / wreckHalf(prop, col);
     const [state, say] = alarmStep(g.alarm || ALARM.UNKNOWN, prop.type, blow, front, this.rng);
     g.alarm = state;
     if (say < 0) return;
@@ -4215,6 +4221,7 @@ export class Game {
           if (!best || Math.hypot(col.x - s.x, col.z - s.z) < Math.hypot(best.x - s.x, best.z - s.z)) best = col;
         }
         if (!best) break;
+        best = wreckUnit(best);
         let g = this.gather.get(best);
         if (!g) this.gather.set(best, (g = { left: WRECK_SALVAGE }));
         g.alarm = ALARM.LIVE;
