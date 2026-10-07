@@ -1921,13 +1921,7 @@ export class Game {
   checkAllDead() {
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     if (this.players.size === 0) return;
-    let downedWithMedkit = false;
-    for (const p of this.players.values()) {
-      if (p.zombie || !p.alive) continue;
-      if (!p.downed) return;
-      if (countItem(p.inv, ITEM.MEDKIT) > 0) downedWithMedkit = true;
-    }
-    if (downedWithMedkit) return;
+    for (const p of this.players.values()) if (p.alive && !p.zombie && !p.downed) return;
     // nobody left standing to revive the fallen
     for (const p of this.players.values()) if (p.alive && !p.zombie && p.downed) this.killPlayer(p, p.lastSrc || { kind: KILLER.WORLD }, true);
     this.gameOver();
@@ -2418,7 +2412,7 @@ export class Game {
     if (this.phase === PHASE.CROSSING) return; // (nobody acts while the cutscene plays)
     if (!p.alive) return;
     if (p.zombie && act !== ACT.FLASHLIGHT && act !== ACT.PING) return;
-    if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.USE_ITEM && act !== ACT.HOLD_END) return;
+    if (p.downed && act !== ACT.FLASHLIGHT && act !== ACT.PING && act !== ACT.HOLD_END) return;
     switch (act) {
       case ACT.INTERACT:
         return this.interact(p, r.u16());
@@ -3327,7 +3321,7 @@ export class Game {
     const s = p.state;
     const def = ITEM_DEFS[it.item];
     if (!def) return;
-    if (p.downed && it.item !== ITEM.MEDKIT) return;
+    if (p.downed) return; // (only a teammate gets a downed survivor back up: nothing in their own pack does)
     if (def.cat === 'cons') {
       const c = CONSUMABLES[it.item];
       if (!c || useWasted(it.item, { hp: p.hp, maxHp: p.maxHp, battery: p.battery, downed: p.downed, stamina: s.stamina, exhausted: s.exhausted })) return;
@@ -3457,11 +3451,6 @@ export class Game {
     else removeItem(p.inv, u.item, 1);
     this.track.used(p, u.item);
     p.invDirty = true;
-    if (p.downed) {
-      // a medkit gets you back on your feet
-      this.revive(p, null, 50);
-      return;
-    }
     if (c.heal) p.hp = Math.min(p.maxHp, p.hp + c.heal);
     if (c.stamina) {
       p.state.stamina = 100;
@@ -3700,7 +3689,7 @@ export class Game {
     );
     if (this.rng() < 0.5) this.sound(p.zombie ? SOUND.ZOMBIE_PAIN : SOUND.PLAYER_HURT, s.x, s.y + 1.5, s.z, 30, p.id);
     if (p.hp <= 0) {
-      if (!p.zombie && (this.standing() > 1 || countItem(p.inv, ITEM.MEDKIT) > 0)) this.goDown(p);
+      if (!p.zombie && this.standing() > 1) this.goDown(p);
       else this.killPlayer(p, src);
     }
   }
@@ -4700,11 +4689,7 @@ export class Game {
       } else p.drownT = 0;
       if (p.downed) {
         if (!p.revivedBy && !p.away) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
-        if (p.useItem && s.using) {
-          p.useItem.t += dt;
-          if (p.useItem.t >= p.useItem.total) this.finishUse(p);
-        }
-        if (p.downed && p.bleed <= 0) this.killPlayer(p, p.lastSrc || { kind: KILLER.WORLD });
+        if (p.bleed <= 0) this.killPlayer(p, p.lastSrc || { kind: KILLER.WORLD });
         if (p.revivedBy) {
           const rv = this.players.get(p.revivedBy);
           if (!rv || !rv.hold || rv.hold.target !== p.id) p.revivedBy = 0;

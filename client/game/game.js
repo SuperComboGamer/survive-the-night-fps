@@ -2417,8 +2417,8 @@ export class Game {
   quickHeal() {
     const inv = this.inventory.slots;
     const hp = this.self.hp;
-    const down = !!this.prediction.state.downed;
-    const order = down ? [ITEM.MEDKIT] : hp < 45 ? [ITEM.MEDKIT, ITEM.VENISON, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : HEAL_ITEMS;
+    if (this.prediction.state.downed) return void this.ui.notify('Only a teammate can get you up', 'warning', 1.5);
+    const order = hp < 45 ? [ITEM.MEDKIT, ITEM.VENISON, ITEM.BANDAGE, ITEM.TUNA, ITEM.PAINKILLERS] : HEAL_ITEMS;
     for (const item of order) {
       const idx = smallestStack(inv, item); // (the stack the server would take from: removeItem)
       if (idx >= 0) {
@@ -2426,7 +2426,7 @@ export class Game {
         return;
       }
     }
-    this.ui.notify(down ? 'No medkit' : 'No healing items', 'warning', 1.5);
+    this.ui.notify('No healing items', 'warning', 1.5);
   }
 
   // The drink key ([B]): an energy drink from the backpack, stamina back in one go (the server turns one down at full stamina).
@@ -2457,7 +2457,7 @@ export class Game {
     if (!c) return false;
     const s = this.prediction.state;
     if (useWasted(item, { hp: this.self.hp, maxHp: this.self.maxHp, battery: this.self.battery, downed: s.downed, stamina: s.stamina, exhausted: s.exhausted })) {
-      this.ui.notify(c.flashlight ? 'Flashlight battery is full' : s.downed ? 'Only a medkit gets you up' : c.heal ? 'Health is full' : 'Stamina is already full', 'toast', 1.5);
+      this.ui.notify(c.flashlight ? 'Flashlight battery is full' : s.downed ? 'Only a teammate can get you up' : c.heal ? 'Health is full' : 'Stamina is already full', 'toast', 1.5);
       return false;
     }
     this.sendCommands(0, true);
@@ -3561,7 +3561,7 @@ export class Game {
     for (const p of this.looseParts()) loose[p.item] = (loose[p.item] || 0) + 1;
     h.objective = { supplies: g.supplies, hints: g.hints, found: g.found, carried, loose, anyCarried, phase: g.phase, timeLeft: Math.ceil(g.timeLeft), finale: g.finale, escapeT: Math.ceil(g.escapeT), escapeReady: g.escapeReady, escapeStalled: g.escapeStalled, escapeLeaving: g.escapeLeaving, standWarm: g.standWarm, runwayBlocked: g.runwayBlocked, suppliesDone: g.suppliesDone, wave: g.wave, waves: g.waves };
     // downed overlay
-    h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived, medkit: (counts[ITEM.MEDKIT] || 0) > 0 } : null;
+    h.downed = self.alive && s.downed ? { bleed: self.bleed || 0, reviving: !!self.beingRevived } : null;
     // compass + world markers
     h.yaw = this.input.yaw;
     this.buildMarkers(h, rp);

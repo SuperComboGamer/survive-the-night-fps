@@ -571,12 +571,12 @@ export class Downed {
     const show = !!d;
     if (this.root.hidden === show) this.root.hidden = !show;
     if (!d) return;
-    const key = Math.ceil(d.bleed) + '|' + d.reviving + '|' + d.medkit;
+    const key = Math.ceil(d.bleed) + '|' + d.reviving;
     if (key === this.key) return;
     this.key = key;
     this.fill.style.transform = `scaleX(${clamp(d.bleed / 30, 0, 1).toFixed(3)})`;
     this.time.textContent = d.reviving ? 'Being revived…' : `Bleeding out · ${fmtTime(d.bleed)}`;
-    this.sub.textContent = d.reviving ? 'Hold on. A teammate has you.' : d.medkit ? `Use a medkit ${bindTag('heal')} to get back up, or wait for a teammate` : `Crawl to cover. A teammate can revive you with ${bindTag('interact')}`;
+    this.sub.textContent = d.reviving ? 'Hold on. A teammate has you.' : `Crawl to cover. A teammate can revive you with ${bindTag('interact')}`;
     this.root.classList.toggle('reviving', !!d.reviving);
   }
 }
