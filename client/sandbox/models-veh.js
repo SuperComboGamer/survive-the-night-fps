@@ -97,7 +97,7 @@ for (let i = 0; i < 90; i++) {
   for (const r of riders) {
     r.sv._inst._seen = true;
     const ride = seatBody(model, vk, r.k, r.sv, r.pose);
-    r.sv.update(DT, { speed: 0, sprint: false, crouch: false, pitch: 0, onGround: true, reloading: false, dead: false, sit: true, sitT: ride.sitT, sitK: ride.sitK, sitSplay: ride.sitSplay, sitLean: ride.sitLean, feet: ride.feet, sitNow: 1, reach: ride.reach, time });
+    r.sv.update(DT, { speed: 0, sprint: false, crouch: false, pitch: 0, onGround: true, reloading: false, dead: false, sit: true, sitT: ride.sitT, sitK: ride.sitK, sitSplay: ride.sitSplay, sitLean: ride.sitLean, sitTwist: ride.sitTwist, feet: ride.feet, sitNow: 1, reach: ride.reach, time });
   }
   scene.updateMatrixWorld(true);
 }

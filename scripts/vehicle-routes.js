@@ -263,7 +263,9 @@ export function makePilot(world, kind, raw, cl = null, bold = 1) {
     const curv = Math.abs(turn) / len;
     let v = curv > 1e-4 ? Math.sqrt((P.grip * 0.55 * bold) / curv) : 99;
     const room = roomAt(m[0], m[1]) - need;
-    v = Math.min(v, room < 0.15 ? 5 : room < 0.5 ? 10 : room < 1.0 ? 16 : room < 1.8 ? 21 : 99);
+    // (little room, less speed - two wheels, half as wide, need less of it)
+    const slim = P.two ? 1.5 : 1;
+    v = Math.min(v, room < 0.15 ? 5 * slim : room < 0.5 ? 10 * slim : room < 1.0 ? 16 : room < 1.8 ? 21 : 99);
     vmax[i] = Math.max(3, Math.min(vmax[i], v));
   }
   const dec = P.brake * 0.55;
@@ -283,7 +285,9 @@ export function makePilot(world, kind, raw, cl = null, bold = 1) {
     step(v) {
       const sp = Math.hypot(v.vx, v.vz);
       while (at < N - 1 && Math.hypot(path[at + 1][0] - v.x, path[at + 1][1] - v.z) <= Math.hypot(path[at][0] - v.x, path[at][1] - v.z)) at++;
-      const ahead = 1.8 + sp * 0.32;
+      // (how far up the way they look: less where there is little room - round the end of a fence the far side of
+      // it is not where to point yet)
+      const ahead = (roomAt(v.x, v.z) - need < 0.7 ? 0.8 : 1.8) + sp * 0.32;
       if (k < at) k = at;
       while (k < N - 1 && Math.hypot(path[k][0] - v.x, path[k][1] - v.z) < ahead) k++;
       const dx = path[k][0] - v.x, dz = path[k][1] - v.z;

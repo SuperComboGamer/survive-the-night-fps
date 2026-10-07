@@ -711,6 +711,7 @@ export class Game {
     steps.push(() => set.add(...this.power.warm())); // a floodlight's lens, glow and beam
     steps.push(() => set.add(...this.foliage.falling.warmViews())); // a felled tree coming down, in its fading twins
     steps.push(() => set.add(this.skyflares.warm())); // a flare gun flare's glow
+    for (const vk of [1, 2, 3]) steps.push(() => set.add(this.vehicles.warm(vk))); // the mainland's vehicles: lamps lit, clocks, the pools of light on the road
     steps.push(() => {
       // the supply plane, in the materials Flyover gives it
       this.flyover.start(0, 0, 0, 0, 0, this.time, null);
@@ -2628,7 +2629,7 @@ export class Game {
     sv.object.position.set(rp.x, rp.y, rp.z);
     sv.object.rotation.set(0, this.input.yaw, 0);
     const ride = seat ? veh.place(seat, sv) : null;
-    sv.update(dt, { sit: !!seat, sitNow: seat ? 1 : undefined, reach: ride?.reach, feet: ride?.feet, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, sitLean: ride?.sitLean, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: seat && seat.k === 0 ? 0 : this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
+    sv.update(dt, { sit: !!seat, sitNow: seat ? 1 : undefined, reach: ride?.reach, feet: ride?.feet, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, sitLean: ride?.sitLean, sitTwist: ride?.sitTwist, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: seat && seat.k === 0 ? 0 : this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
     const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
     if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
   }

@@ -211,6 +211,7 @@ export class VehicleClient {
         this.mountFrom.set(rp.x, rp.y + g.eyeH, rp.z);
         if (!was) this.mountK = 0;
         this.lastYaw = mine.veh.yaw;
+        if (!was) g.input.pitch = VEHICLES[mine.vk].two ? -0.2 : -0.04;
       } else if (was) this.mountFrom.set(this.eye.x, this.eye.y, this.eye.z);
       this.mine = mine;
     }
@@ -510,6 +511,14 @@ export class VehicleClient {
     return seatBody(seat.e.veh.model, seat.e.vk, seat.k, sv, seat.pose || (seat.pose = {}));
   }
 
+  // Game.warmViews: one of a kind with everything it can show showing (its lamps lit and unlit, its clocks, the pools
+  // its lamps throw), so that none of its programs is built the first time a headlamp is switched on
+  warm(vk) {
+    const m = new VehicleModel(vk, 0);
+    m.group.traverse((o) => (o.visible = true));
+    return m.group;
+  }
+
   // The team's vehicles, for the map: every one that runs or has broken down (somebody got it going), and the
   // bridgehead's own, still to be started. What stands broken where it was found is found by looking; a wreck is
   // nobody's any more. [{ x, z, kind, down }]
@@ -533,7 +542,7 @@ export class VehicleClient {
       const pos = new THREE.Vector3();
       const dir = new THREE.Vector3();
       v.model.lampWorld(pos, dir);
-      out.push({ pos, dir, d: e === this.mine ? -1 : (v.x - camPos.x) ** 2 + (v.z - camPos.z) ** 2, lamp: true, wide: e.vk === VEH.CAR ? 0.72 : 0.5 });
+      out.push({ pos, dir, d: e === this.mine ? -1 : (v.x - camPos.x) ** 2 + (v.z - camPos.z) ** 2, lamp: true, wide: e.vk === VEH.CAR ? 0.72 : 0.5, power: e.vk === VEH.CAR ? 260 : 80 });
     }
   }
 
@@ -739,6 +748,7 @@ export function seatBody(model, vk, k, sv, out = {}) {
   const st = P.seats[k] || P.seats[0];
   const pose = SEAT_POSE[vk][k] || SEAT_POSE[vk][0];
   const body = model.body;
+  const aimYaw = sv.object.rotation.y; // (their own turn, as set before this: where they aim)
   model.group.updateMatrixWorld(true);
   // the hips over the model's own origin: by how the legs are folded (characters.js legCycle)
   const L = sv._inst?.P;
@@ -751,6 +761,8 @@ export function seatBody(model, vk, k, sv, out = {}) {
   out.sitK = pose[1];
   out.sitSplay = pose[2];
   out.sitLean = pose[3] || 0;
+  // whoever is carried turns in their seat to where they aim 
+  out.sitTwist = k === 0 ? 0 : Math.max(-1.45, Math.min(1.45, wrap(aimYaw - model.group.rotation.y)));
   out.pedal = undefined;
   // the feet: on the pedals, the footboard, the floor - where the model has them this frame (characters.js solveFeet)
   const feet = model.feet[k];

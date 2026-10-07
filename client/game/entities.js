@@ -1079,7 +1079,7 @@ export class Entities {
               v.object.quaternion.copy(_vq).slerp(e.vQuat, vU);
             }
           }
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5 || !!seat || e.vK > 0, reach: vride?.reach, sitT: vride?.sitT, sitK: vride?.sitK, sitSplay: vride?.sitSplay, sitLean: vride?.sitLean, feet: vride?.feet, sitNow: seat || e.vK > 0 ? vU : undefined, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5 || !!seat || e.vK > 0, reach: vride?.reach, sitT: vride?.sitT, sitK: vride?.sitK, sitSplay: vride?.sitSplay, sitLean: vride?.sitLean, sitTwist: vride?.sitTwist, feet: vride?.feet, sitNow: seat || e.vK > 0 ? vU : undefined, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
           v.object.visible = !(dead && zombie);
           // nunchucks: what their chain is doing is heard from where they stand (nothing of it is on the wire)
           if (weapon === ITEM.NUNCHAKU) {

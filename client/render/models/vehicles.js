@@ -743,10 +743,10 @@ export class VehicleModel {
   lampWorld(pos, dir) {
     const m = this.vk === VEH.CAR ? this.body : this.fork || this.body;
     m.updateWorldMatrix(true, false);
-    if (this.vk === VEH.CAR) pos.set(0, 0.72, -2.36);
+    if (this.vk === VEH.CAR) pos.set(0, 1.0, -2.36); // (between its two lamps and over them: the one light the scene gives it must not graze the road)
     else pos.set(0, 0.07, -0.16);
     pos.applyMatrix4(m.matrixWorld);
-    dir.set(0, this.vk === VEH.CAR ? -0.085 : -0.34, -1).transformDirection(m.matrixWorld);
+    dir.set(0, this.vk === VEH.CAR ? -0.12 : -0.3, -1).transformDirection(m.matrixWorld);
   }
 }
 

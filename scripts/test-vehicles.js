@@ -679,6 +679,12 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   const st0 = a.state.stamina;
   run1(4 * SEC, () => [BTN.FWD | BTN.SPRINT, 0]);
   check('a bicycle needs no fuel: pedalled it beats a sprint, and Shift stands on the pedals, on stamina', bike.vk === VEH.BIKE && easy > SPRINT_SPEED && speedOf(a.state) > easy + 1.5 && a.state.stamina < st0 - 25 && !bike.running, `${f1(easy)} m/s easy, ${f1(speedOf(a.state))} hard, stamina ${Math.round(st0)} -> ${Math.round(a.state.stamina)}`);
+  {
+    // (on every kind of ground, without standing on the pedals: the share of its top speed each leaves - vehicles.js)
+    const PB = VEHICLES[VEH.BIKE];
+    const tops = [1, 0.86, 0.76, 0.66, 0.42].map((share) => PB.top * (1 - (1 - share) * PB.offTop));
+    check('...and on every ground - road, dirt, a trail, grass, mud - a bicycle pedalled easily is faster than a sprint', tops.every((t) => t > SPRINT_SPEED), `road ${f1(tops[0])}, dirt ${f1(tops[1])}, trail ${f1(tops[2])}, grass ${f1(tops[3])}, mud ${f1(tops[4])} m/s against a sprint's ${SPRINT_SPEED}`);
+  }
   A.act(ACT.VEHICLE, VACT.EXIT, 0);
   run1(3);
   function put(p, x, z) {

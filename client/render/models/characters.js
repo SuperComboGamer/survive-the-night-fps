@@ -4455,6 +4455,13 @@ class SurvivorInstance {
         p[NECK * 4] += l * 0.45;
         p[HEAD * 4] += l * 0.35;
       }
+      if (s.sitTwist && this.sitW > 0) {
+        // carried, and aiming out of the side: the trunk comes round to it
+        const t = s.sitTwist * this.sitW;
+        p[SPINE * 4 + 1] += t * 0.4;
+        p[CHEST * 4 + 1] += t * 0.45;
+        p[HEAD * 4 + 1] += t * 0.15;
+      }
       ik = this.hold !== HOLD_NONE;
     }
     const o = this.out;
