@@ -216,7 +216,7 @@ function seat(ws) {
     if (slot >= 0) {
       d.room = room;
       d.slot = slot;
-    } else reason = room || !d.code ? REJECT_REASON.FULL : REJECT_REASON.NO_GAME;
+    } else reason = room || !d.code ? REJECT_REASON.FULL : lobby.wasLost(d.code) || REJECT_REASON.NO_GAME; // (wasLost: a deploy ended it, and why)
   }
   if (reason) {
     // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway)

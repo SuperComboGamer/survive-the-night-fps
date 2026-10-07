@@ -23,7 +23,8 @@
 //   { t: 'finished' }              ...the match is ended and its records posted
 //   { t: 'saved', buf }            the game, saved (gzipped: handoff.js), and its match ended as 'handoff'
 //   { t: 'saveFailed', error }     ...or it could not be, and its match ended as 'interrupted'
-//   { t: 'restoreFailed', why }    the save this game was to be made from cannot be used here: it ends
+//   { t: 'restoreFailed', why, world }  the save this game was to be made from cannot be used here: it ends (world:
+//                                  because this build makes another valley of its seed)
 //
 // workerData.restore: a game the last server saved (the gzipped envelope), to carry on with instead of a new one.
 import { parentPort, workerData } from 'node:worker_threads';
@@ -88,7 +89,7 @@ try {
   });
 } catch (err) {
   if (!restore) throw err;
-  post({ t: 'restoreFailed', why: err.message });
+  post({ t: 'restoreFailed', why: err.message, world: err.world === true });
   throw err;
 }
 

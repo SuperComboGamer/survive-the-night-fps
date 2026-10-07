@@ -109,8 +109,11 @@ export const PING_KIND = { GO: 0, DANGER: 1, LOOT: 2 };
 // hold-to-interact kinds (sent back in the self state for the progress ring)
 export const HOLD = { NONE: 0, SEARCH: 1, REVIVE: 2, ENGINE: 3, DRIVE: 4, BELL: 5, RADIO: 6, GUN_LIFT: 7, FAIR_START: 9, FAIR_STOP: 10 };
 
-// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for
-export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4 };
+// FULL: that game (or, for a quick join, every game) has no room; NO_GAME: no game goes by the code asked for.
+// ENDED_UPDATE, ENDED_MAP: the game that went by that code was ended by a deploy - the new server could not carry it
+// over (server/handoff.js), ENDED_MAP because the update makes another map of its seed. It does not come back: the
+// client says so once and stops asking (client/net/comeback.js). A client from before these shows 'Rejected'.
+export const REJECT_REASON = { FULL: 1, VERSION: 2, BAD_NAME: 3, NO_GAME: 4, ENDED_UPDATE: 5, ENDED_MAP: 6 };
 // The close code a client's socket goes with when the player pressed "Leave game". Any other close is a drop, and the
 // game holds the player's place for REJOIN_GRACE seconds (server/game.js hold).
 export const LEFT_CODE = 4001;
