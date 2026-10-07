@@ -7,9 +7,9 @@ a player (measured), and where it still falls short. The code is described in [A
 
 ## What a deploy does
 
-1. **The new server starts beside the old one** and passes its health check (`/status`). Two seconds after it listens
-   it puts its own build in the handoff store (`server/builds.js`: its code and its client, signed - see below), when
-   pinning is on; a server told to stop before then does it first, while the next server builds the valleys.
+1. **The new server starts beside the old one** and passes its health check (`/status`). Once it listens it puts its
+   own build in the handoff store (`server/builds.js`: its code and its client, signed - see below), when pinning is
+   on; a server told to stop before that is done finishes it first, while the next server builds the valleys.
 2. **The old server is told to stop** (SIGTERM). It takes no new sockets, and says which games it is about to hand over
    (seed, act, the valley's fingerprint: `Lobby.announce`). The new server builds each of those valleys in the worker
    that will run the game (`Lobby.prepare`, `prepareWorld`) and says when each is ready. **The games go on being played
@@ -118,9 +118,9 @@ All of it is load-bearing; the server says in its log when something is missing.
 new build cannot read ends its game, and its players are told); `HANDOFF_PIN=unsigned` builds are started without a
 signature (a development server, the tests: the store is then trusted with code); `HANDOFF_BUILD_KEY` above;
 `HANDOFF_PIN_MAX_HOURS` (12); `HANDOFF_PREPARE_MS` (3000; 0: the next server is not asked to build ahead);
-`HANDOFF_PACK_AFTER_MS` (2000: how long after it listens a server packs its build; it is packed before the saves
-of a server told to stop sooner); `HANDOFF_FREEZE_SECONDS`, `ARRIVE_SECONDS`, `HANDOFF_RESERVE_SECONDS`, `HANDOFF_MAX_AGE_SECONDS` (300: a save nobody
-claimed in that long is dropped); `CLIENT_BUILD`, `CLIENT_COMPAT` (tests only: another client or compat).
+`HANDOFF_FREEZE_SECONDS`, `ARRIVE_SECONDS`, `HANDOFF_RESERVE_SECONDS`, `HANDOFF_MAX_AGE_SECONDS` (300: a save nobody
+claimed in that long is dropped); `CLIENT_BUILD`, `CLIENT_COMPAT` (tests only: another client or compat); `HANDOFF_PACK_AFTER_MS` (tests only: how long
+after it listens a server packs its build, 0).
 
 ## Who can run code on the server
 

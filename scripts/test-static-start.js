@@ -2,8 +2,8 @@
 //   - the client's files go out compressed as the build wrote them (vite.config.js precompress: name.br, name.gz beside
 //     each), brotli or gzip as the browser takes it, the file as it is otherwise - nothing compressed as it starts
 //   - no build is packed when nothing could use it (pinning off: no HANDOFF_BUILD_KEY), and when pinning is on, not on
-//     the way up: a moment after it listens (HANDOFF_PACK_AFTER_MS), or at once when it is told to stop before then -
-//     the saves of its games name it, and it is in the store for the next server
+//     the way up: once it listens, or - told to stop before it got to it (HANDOFF_PACK_AFTER_MS puts it off here) - before
+//     the saves of its games, which name it, so that it is in the store for the next server
 // Needs a built client (npm run build). (Linux: a server is stopped with SIGTERM. Windows: with the 'shutdown' message.)
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
@@ -85,7 +85,7 @@ try {
     check('an image (compressed already, nothing written beside it) goes as it is', img.status === 200 && img.enc === '' && img.body.equals(readFileSync(new URL(png, DIST))));
   }
   check('the compressed copies are not files of their own', (await get(A.port, `${bundle}.br`, 'identity')).status === 404);
-  await sleep(2600); // (past HANDOFF_PACK_AFTER_MS, 2 s)
+  await sleep(1000);
   check('...and it packs no build: nothing could use it', !/this build is|is in the store/.test(A.log) && builds(A).length === 0, A.log.split('\n').filter((l) => /build/.test(l)).join('\n'));
   stop(A);
   await until(() => A.exit);
@@ -113,9 +113,9 @@ try {
   check('told to stop before it packed its build, it packs it then, before the save', B.exit?.code === 0 && own && at(/listening/) < at(/this build is/) && at(/is in the store/) < at(/handed over in/) && /1 game\(s\) handed over/.test(B.log), B.log.split('\n').slice(-12).join('\n'));
   check("...and the game's save names it, and it is in the store for the next server", save?.meta?.build === own && builds(B).includes(`${own}.json`), JSON.stringify({ own, meta: save?.meta?.build, builds: builds(B) }));
 
-  const C = server('C', base + 2, { HANDOFF_PIN: 'unsigned' });
-  check('a server that keeps its build, left alone, is up before it packs it', (await up(C)) && !/this build is/.test(C.log), C.log);
-  check('...and puts it in the store a moment after (HANDOFF_PACK_AFTER_MS)', (await until(() => /is in the store/.test(C.log), 15000)) && builds(C).length === 1, C.log.split('\n').slice(-6).join('\n'));
+  const C = server('C', base + 2, { HANDOFF_PIN: 'unsigned', HANDOFF_PACK_AFTER_MS: '' });
+  check('a server that keeps its build, left alone, is up first', await up(C), C.log);
+  check('...and packs it and puts it in the store once it listens', (await until(() => /is in the store/.test(C.log), 15000)) && C.log.indexOf('listening') < C.log.indexOf('this build is') && builds(C).length === 1, C.log.split('\n').slice(-6).join('\n'));
   stop(C);
   await until(() => C.exit);
 } catch (e) {

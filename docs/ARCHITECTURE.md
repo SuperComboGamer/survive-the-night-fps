@@ -476,10 +476,10 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   and stops asking (`client/net/comeback.js`).
 - **A game carried on by the build that saved it** (`server/builds.js`). Every server packs its own code (`server/`,
   `shared/`) and its client (`dist/`, each file once by its content), signed with `HANDOFF_BUILD_KEY`, and puts it in
-  the store - only when pinning can run (the key, or `HANDOFF_PIN=unsigned`), and not on the way up: 2 s after it listens
-  (`HANDOFF_PACK_AFTER_MS`; about 75 ms, off the event loop but for a few ms at a time), or at once when it is told to
-  stop before then (`Lobby.handoffAll` waits for it while the next server builds the valleys); a save names the build
-  its game runs on (`meta.build`). A server whose code cannot read a save
+  the store - only when pinning can run (the key, or `HANDOFF_PIN=unsigned`), and not on the way up: once it listens
+  (about 75 ms, off the event loop but for a few ms at a time); a server told to stop before it is done waits for it
+  (`Lobby.handoffAll`, while the next server builds the valleys); a save names the build its game runs on
+  (`meta.build`). A server whose code cannot read a save
   starts that game's worker from the build in the store, unpacked in its temp folder (`Room` with `pin`): the old
   simulation, the old map, inside the new server, speaking the same `WORKER_API` to the network thread. It is only
   started when it is signed with this deploy's key (or `HANDOFF_PIN=unsigned`), is what its name says (a hash of all of

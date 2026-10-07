@@ -252,7 +252,7 @@ const builds = store && PIN !== '0' && (BUILD_KEY || PIN === 'unsigned') ? new B
 lobby.builds = builds;
 if (store && PIN !== '0' && !builds) log('handoff: HANDOFF_BUILD_KEY is not set, so no build is kept for the servers after this one or started from the store: a game a later build cannot read (another map, save format or enums) will end at that deploy, its players told why. docs/deploys.md says what to set.');
 else if (builds && builds.unsigned) log('handoff: HANDOFF_PIN=unsigned - builds in the store are started here unsigned: anyone who can write to the store can run code on this server');
-const PACK_AFTER_MS = +(process.env.HANDOFF_PACK_AFTER_MS ?? 2000); // (see app.listen)
+const PACK_AFTER_MS = +(process.env.HANDOFF_PACK_AFTER_MS ?? 0); // (see app.listen; the tests put it off)
 
 // The games the last server handed over: whatever is waiting already (a server that started after the last one went),
 // and each one as it is saved - this server is up before the old one is told to stop. (Not while this one is
@@ -861,8 +861,9 @@ app.listen(PORT, (token) => {
     process.exit(1);
   }
   // (this build into the store for the servers after it - only where it can be used (builds: a key, or
-  // HANDOFF_PIN=unsigned), and not on the way up: PACK_AFTER_MS after it listens, when its health check has been
-  // answered. Its games' saves name it, so a server told to stop before then packs it first: Lobby.handoffAll)
+  // HANDOFF_PIN=unsigned), and not on the way up: once it listens, off the event loop but for a few ms at a time (about
+  // 75 ms in all), so it is ready long before this server can be told to stop. Its games' saves name it, so a server
+  // told to stop before it is done waits for it: Lobby.handoffAll)
   if (builds) setTimeout(() => stopping || builds.pack(), PACK_AFTER_MS).unref();
   console.log(`[server] listening on http://localhost:${PORT} (ws /ws) up to ${MAX_GAMES} games of ${MAX} players (${ROOM_MAX} at most)`);
   // (only once it can be reached: then the proxy may send it players)

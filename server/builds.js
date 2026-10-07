@@ -244,7 +244,8 @@ export class Builds {
     const b = this.packed;
     return (this.kept ||= this.store
       .putBuild(b.id, b.body, b.sig, b.assets)
-      .then(() => this.log(`handoff: build ${b.id} is in the store`))
+      // (in the store: what was put there is not needed here again - only its name)
+      .then(() => ((this.packed = { id: b.id, sig: b.sig }), this.log(`handoff: build ${b.id} is in the store`)))
       .catch((err) => ((this.kept = null), this.log(`handoff: this build could not be kept in the store (${err.message})`))));
   }
   // a build a game here runs on (pinned) is in use: marked so, so it is not swept while that game lasts
