@@ -202,6 +202,39 @@ function sessionToken(req) {
 
 const app = uWS.App();
 const perIp = new Map(); // address -> sockets it has open
+const EARLY_MAX = 8; // messages kept for a socket that is still waiting for its seat (/ws open)
+
+// A game socket's seat in its game (d.code), or in whichever a quick join picks - or it is told why not, and closed
+function seat(ws) {
+  const d = ws.getUserData();
+  let reason = 0;
+  if (stopping) reason = REJECT_REASON.FULL; // (going down: new sockets belong on the next server)
+  else if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
+  else {
+    const room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
+    const slot = room ? room.attach(ws) : -1;
+    if (slot >= 0) {
+      d.room = room;
+      d.slot = slot;
+    } else reason = room || !d.code ? REJECT_REASON.FULL : REJECT_REASON.NO_GAME;
+  }
+  if (reason) {
+    // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway)
+    ws.send(rejectBytes(reason), true, false);
+    ws.end(1000, 'rejected');
+    return;
+  }
+  perIp.set(d.ip, (perIp.get(d.ip) || 0) + 1);
+  d.counted = true;
+  d.at = Date.now();
+}
+// a message from a game socket, for its game
+function hear(ws, bytes) {
+  const d = ws.getUserData();
+  if (!d.room) return;
+  d.room.deliver(d.slot, bytes, !d.heard);
+  d.heard = true;
+}
 
 app.ws('/ws', {
   compression: uWS.DISABLED, // payloads are already tightly packed binary (measured: deflate only takes ~10% more off)
@@ -217,15 +250,9 @@ app.ws('/ws', {
     const key = req.getHeader('sec-websocket-key');
     const proto = req.getHeader('sec-websocket-protocol');
     const ext = req.getHeader('sec-websocket-extensions');
-    const go = (user) => res.cork(() => res.upgrade({ ip, code, user, room: null, slot: -1, counted: false, heard: false, at: 0 }, key, proto, ext, context));
     // (a game the last server handed over that is still in the store: brought back first, so the socket finds it. A
     // quick join with no game to go to, in a cluster: one is made first, as the other servers have to be asked)
     const restoring = code && store && !lobby.rooms.has(code) ? lobby.restore(code).catch((err) => log(`game ${code} not restored (${err.message})`)) : !code && lobby.cluster && !lobby.quickPick() ? lobby.make({ quick: true }) : null;
-    if (!token && !restoring) return go(null);
-    let aborted = false;
-    res.onAborted(() => {
-      aborted = true;
-    });
     // Always re-read a game connection: admin role changes and revoked sessions must not come from the minute cache.
     const user = token
       ? auth.userForToken(token, true).catch((err) => {
@@ -233,37 +260,36 @@ app.ws('/ws', {
           return null;
         })
       : null;
-    Promise.all([user, restoring]).then(([u]) => aborted || go(u));
+    // The handshake is answered here and now, whatever has to be waited for: the socket gets its seat once that is
+    // known (open). Upgrading later, from res.cork() once the promise settles, is what uWebSockets documents, and in
+    // v20.52 it drops sockets (seen on Linux: most of them): after the callback, cork() still takes the socket for the
+    // HTTP response it was, and reads that response's flags from where they used to be, which the upgrade has given
+    // up; when what is there reads as "Connection: close, all sent" it closes the socket, straight after open (close
+    // code 1006, 0 ms). Fixed upstream in uNetworking/uWebSockets#1929. (scripts/test-session-socket.js)
+    const wait = user || restoring ? Promise.all([user, restoring]).then(([u]) => u, () => null) : null;
+    res.upgrade({ ip, code, user: null, wait, early: null, room: null, slot: -1, counted: false, heard: false, at: 0 }, key, proto, ext, context);
   },
   open: (ws) => {
     const d = ws.getUserData();
-    let reason = 0;
-    if (stopping) reason = REJECT_REASON.FULL; // (going down: new sockets belong on the next server)
-    else if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
-    else {
-      const room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
-      const slot = room ? room.attach(ws) : -1;
-      if (slot >= 0) {
-        d.room = room;
-        d.slot = slot;
-      } else reason = room || !d.code ? REJECT_REASON.FULL : REJECT_REASON.NO_GAME;
-    }
-    if (reason) {
-      // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway)
-      ws.send(rejectBytes(reason), true, false);
-      ws.end(1000, 'rejected');
-      return;
-    }
-    perIp.set(d.ip, (perIp.get(d.ip) || 0) + 1);
-    d.counted = true;
-    d.at = Date.now();
+    if (!d.wait) return seat(ws);
+    // who they are, or the game being brought back, is not known yet: what they send meanwhile (their JOIN) is kept
+    d.early = [];
+    d.wait.then((user) => {
+      const early = d.early;
+      d.wait = d.early = null;
+      if (!early) return; // (closed while it waited)
+      d.user = user;
+      seat(ws);
+      for (const bytes of early) if (d.room) hear(ws, bytes); // (no room: turned away, and closed by now)
+    });
   },
   message: (ws, message, isBinary) => {
     if (!isBinary) return;
     const d = ws.getUserData();
-    if (!d.room) return;
-    d.room.deliver(d.slot, new Uint8Array(message), !d.heard); // (copied there: the buffer is only valid during this callback)
-    d.heard = true;
+    if (!d.early) return hear(ws, new Uint8Array(message)); // (copied in the room: the buffer is only valid during this callback)
+    // (a client sends its JOIN and then waits for the answer: more than a few messages before it is not one of ours)
+    if (d.early.length >= EARLY_MAX) return ws.end(1008, 'Too much before joining');
+    d.early.push(new Uint8Array(message.slice(0)));
   },
   drain: (ws) => {
     const d = ws.getUserData();
@@ -271,6 +297,7 @@ app.ws('/ws', {
   },
   close: (ws, closeCode) => {
     const d = ws.getUserData();
+    d.early = null;
     // a seat taken by a socket that went before its JOIN came: how, and how soon (a browser that gave up on the
     // handshake shows as 1006 a round trip in; the client tries again, connection.js)
     if (d.room && !d.heard) log(`socket in game ${d.room.code} closed before it joined (code ${closeCode}, ${Date.now() - d.at} ms)`);
