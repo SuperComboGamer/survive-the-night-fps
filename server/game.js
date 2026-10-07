@@ -3616,7 +3616,11 @@ export class Game {
   // ---------------------------------------------------------------- damage (players)
   damagePlayer(p, amount, src) {
     if (!p.alive || amount <= 0 || p.away) return; // (dropped and held: nothing hurts them until they are back)
-    if (this.godMode && !p.zombie) return;
+    if (this.godMode && !p.zombie) {
+      // (testing: the survivor takes nothing - the car they sit in still takes what was meant for them)
+      if (src && src.kind === KILLER.ZOMBIE && (p.state.drive || p.state.pass) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) this.vehicles.shield(p, amount * this.diff.hurt);
+      return;
+    }
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
     if (!p.zombie && src && (src.kind === KILLER.ZOMBIE || src.kind === KILLER.WORLD)) amount *= this.diff.hurt;

@@ -231,7 +231,7 @@ function buildCar(tint, variant) {
     noSteer: true,
     hoodOpen: variant === 1,
     burnt,
-    glass: burnt ? ['gone', 'gone', 'gone', 'gone', 'gone', 'gone'] : tint === 7 ? ['ok', 'ok', 'ok', 'gone', 'gone', 'ok'] : ['ok', 'ok', 'ok', 'ok', 'ok', 'ok'],
+    glass: burnt ? ['gone', 'gone', 'gone', 'gone', 'gone', 'gone'] : tint === 7 ? ['ok', 'ok', 'ok', 'gone', 'gone', 'ok'] : ['ok', 'ok', 'gone', 'gone', 'gone', 'gone'], // (a car that is driven: its side windows wound down, to be seen in and shot out of. The quest car is as the island has it)
     dirt: 0.5,
     cabin: -1,
     seats: tint,

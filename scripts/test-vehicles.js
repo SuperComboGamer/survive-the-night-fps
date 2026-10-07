@@ -744,6 +744,12 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
       for (const z of game.zombies) if (!z.dead && z.hp < z.maxHp) z.hp = z.maxHp;
     }
     check('a crowd pressed against its nose holds it: it does not pull away through them', best < 3.2, `${f1(best)} m/s at the most in 3 s of full throttle`);
+    // (they cannot get into it, and whoever drives sits in the middle of it: their reach is measured to its body)
+    for (const z of game.zombies) (z.x = e.x - Math.sin(e.yaw) * (P.half + 0.7 + Math.random() * 0.6) + (Math.random() - 0.5) * 1.2), (z.z = e.z - Math.cos(e.yaw) * (P.half + 0.7 + Math.random() * 0.6));
+    e.hp = P.hp;
+    for (let i = 0; i < 8 * SEC; i++) run1(1);
+    const sides = game.zombies.filter((z) => !z.dead && Math.abs((z.x - e.x) * Math.sin(e.yaw) + (z.z - e.z) * Math.cos(e.yaw)) < P.half).length;
+    check('...and from its nose alone they beat on it all the same', e.hp < P.hp - 30, `${Math.round(e.hp)} of ${P.hp} hp after 8 s, ${sides} of ${game.zombies.length} of them beside it`);
     for (const z of [...game.zombies]) game.removeEntity(z);
     game.zombies.length = 0;
     A.act(ACT.VEHICLE, VACT.EXIT, 0);

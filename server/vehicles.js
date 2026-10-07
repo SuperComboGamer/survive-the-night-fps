@@ -777,10 +777,10 @@ export class Vehicles {
     const P = VEHICLES[e.vk];
     if (P.shell) {
       if (e.state !== VSTATE.WRECK && e.hp > P.hp * SHELL) {
-        this.damage(e, amount * 1.5);
+        this.damage(e, amount * 0.6);
         return 0;
       }
-      this.damage(e, amount * 0.75);
+      this.damage(e, amount * 0.4);
       return amount * 0.5;
     }
     if (p.state.drive === e.id) {
@@ -866,6 +866,24 @@ export class Vehicles {
     out.x = dx * c - dz * sn;
     out.z = -(dx * sn + dz * c);
     return out;
+  }
+
+  // How far the dead are from survivor p for a blow (Zombies: what their reach is measured against): p's own
+  // distance d, or - in a vehicle - the distance to its body, as if p stood at its nearest side. The dead cannot get
+  // into it (keepOff), so from its nose or its tail whoever sits in the middle of it would be out of every reach.
+  reachTo(p, x, z, d) {
+    const s = p.state;
+    if (!s.drive && !s.pass) return d;
+    const e = this.of(p);
+    if (!e) return d;
+    const P = VEHICLES[e.vk];
+    const dx = x - e.x;
+    const dz = z - e.z;
+    const c = Math.cos(e.yaw);
+    const sn = Math.sin(e.yaw);
+    const ox = Math.max(0, Math.abs(dx * c - dz * sn) - P.halfW);
+    const oz = Math.max(0, Math.abs(dx * sn + dz * c) - P.half);
+    return Math.min(d, Math.hypot(ox, oz) + PLAYER_RADIUS);
   }
 
   // One of the dead moving to pos (radius r, feet at y) is kept out of every vehicle that is not a box of the world
@@ -1028,7 +1046,11 @@ export class Vehicles {
       const fx = -Math.sin(s.yaw);
       const fz = -Math.cos(s.yaw);
       const P = VEHICLES[kind];
-      const e = this.make(kind, s.x + fx * (P.half + 1.6), s.z + fz * (P.half + 1.6), s.yaw + Math.PI / 2, { state: args[2] === 'broken' ? VSTATE.BROKEN : VSTATE.OK, need: args[2] === 'broken' ? fixMask(kind) : 0, fuel: P.tank, hp: P.hp, tint: +args[3] || 0 });
+      // (/veh car at <x> <z> <yaw in degrees> [broken] [tint]: exactly there)
+      const at = args[2] === 'at';
+      const broken = args[at ? 6 : 2] === 'broken';
+      const [x, z, yaw] = at ? [+args[3], +args[4], ((+args[5] || 0) * Math.PI) / 180] : [s.x + fx * (P.half + 1.6), s.z + fz * (P.half + 1.6), s.yaw + Math.PI / 2];
+      const e = this.make(kind, x, z, yaw, { state: broken ? VSTATE.BROKEN : VSTATE.OK, need: broken ? fixMask(kind) : 0, fuel: P.tank, hp: P.hp, tint: +args[at ? 7 : 3] || 0 });
       return say(e ? `a ${VEH_NAMES[kind]} (${e.id})` : 'no entity id left for it');
     }
     if (what === 'list') return say(this.list.map((e, i) => `${i}:${VEH_NAMES[e.vk]}${e.quest ? '*' : e.starter ? '+' : ''}@${Math.round(e.x)},${Math.round(e.z)} ${['broken', 'ok', 'dead', 'wreck'][e.state]}`).join('  ') || 'this map has no vehicles (only the mainland has)');

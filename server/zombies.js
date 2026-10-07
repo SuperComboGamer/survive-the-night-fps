@@ -1136,7 +1136,7 @@ export class Zombies {
 
     // stop to attack
     let attacking = false;
-    if (target && z.state !== 7 && dist <= def.range + PLAYER_RADIUS && ((Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) || this.canReachUp(z, target))) {
+    if (target && z.state !== 7 && g.vehicles.reachTo(target, z.x, z.z, dist) <= def.range + PLAYER_RADIUS && ((Math.abs(ty - z.y) < 2.3 && this.canReach(z, target)) || this.canReachUp(z, target))) {
       attacking = true;
       dx = tx - z.x;
       dz = tz - z.z;
@@ -1669,7 +1669,7 @@ export class Zombies {
       const p = g.players.get(z.pendingTarget);
       if (!p || !p.alive || p.zombie) return;
       const s = p.state;
-      const d = Math.hypot(s.x - z.x, s.z - z.z);
+      const d = g.vehicles.reachTo(p, z.x, z.z, Math.hypot(s.x - z.x, s.z - z.z)); // (in a vehicle: to its body)
       if (d > def.range + PLAYER_RADIUS + 0.9 || ((Math.abs(s.y - z.y) > 2.5 || !this.canReach(z, p)) && !this.canReachUp(z, p, 0.9))) return;
       g.damagePlayer(p, def.dmg * dmgMul, { kind: KILLER.ZOMBIE, ztype: z.ztype, x: z.x, z: z.z });
       g.impact(IMPACT.BLOOD, s.x, s.y + 1.2, s.z);
