@@ -43,8 +43,8 @@
 //                         explosion or unknown
 //
 // The two acts (shared/acts.js): a run that drives off the island goes on across the bridge as the same match, and
-// its victory is the plane's. A wipe on the mainland ends the match, and the run from the checkpoint at the bridge
-// is a new one that begins on the mainland (summary.startAct 2). In the match_end record suppliesInstalled /
+// its victory is the plane's. A wipe on the mainland ends the match and the run: the next begins on the island
+// (summary.startAct 2 is only a match picked up on the mainland after a deploy). In the match_end record suppliesInstalled /
 // suppliesNeeded and engineStartedS are of the act the match ended in (the engine: the last one started);
 // summary.supplies is always the car's, summary.planeParts the plane's (the same shape; null for a match that never
 // saw the mainland), every supplyLog entry names its act, summary.act is the act it ended in, and summary.crossing
@@ -193,7 +193,7 @@ export class MatchTracker {
     if (!this.sink) return;
     if (this.m) this.finish('abandoned');
     const g = this.g;
-    const act = g.act === 2 ? 2 : 1; // (2: a run from the checkpoint at the bridge)
+    const act = g.act === 2 ? 2 : 1; // (2: a match picked up on the mainland after a deploy: Game.load)
     const m = (this.m = {
       id: randomUUID(),
       t0: g.time,
