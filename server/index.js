@@ -752,3 +752,7 @@ async function shutdown(signal, exitCode = 0) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// A Windows process cannot be sent SIGTERM (it is killed outright), so a process manager there - pm2 - asks a server
+// with an IPC channel to stop with the message 'shutdown' instead; the tests stop a server that way on Windows too.
+// (Only a parent that spawned this server with an IPC channel can send it.)
+process.on('message', (m) => (m === 'shutdown' || m?.t === 'shutdown') && shutdown('shutdown message'));

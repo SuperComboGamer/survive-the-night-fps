@@ -116,6 +116,7 @@ export class Room {
     this.up = null; // (cluster.js: its row being written, which a new game's maker waits for)
     this.asks = new Map(); // the admin panel's questions the worker has not answered yet: id -> { done, fail, timer } (ask)
     this.askN = 0;
+    this.restored = restore ? Date.now() : 0; // (when its save was claimed, for the log)
 
     this.worker = new Worker(new URL('./room-worker.js', import.meta.url), {
       // (analytics: the game records its matches - only worth it with a database to write them to. achievements and the
@@ -292,6 +293,7 @@ export class Room {
       case 'ready':
         this.ready = true;
         this.st.seed = m.seed;
+        if (this.restored) this.lobby.log(`game ${this.code} up in ${Date.now() - this.restored} ms`); // (since its save was claimed: what a deploy's players wait for, docs/deploys.md)
         return;
       case 'rec':
         return this.record(m);

@@ -345,6 +345,7 @@ export class Game {
     this.checkpoint = null;
     this.crossing = null;
     this.thawAt = 0; // a game brought over waits, still, for its players until then (ms on the wall's clock; 0: it runs)
+    this.frozenAt = 0; // ...since then (ms on the wall's clock)
     this.setWorld(restore ? restore.game.seed : opts.seed ?? randomSeed(), restore?.game.act ?? WORLD.ISLAND);
     if (restore && !sameWorld(restore, this.worldPrint)) throw new HandoffError(`this build makes another valley of seed ${this.seed}`, { world: true });
     this.rng = mulberry32(this.seed ^ 0xabcdef);
@@ -443,6 +444,7 @@ export class Game {
   load(s) {
     loadGame(this, s);
     this.thawAt = HANDOFF_FREEZE > 0 && this.players.size ? Date.now() + HANDOFF_FREEZE * 1000 : 0;
+    this.frozenAt = Date.now(); // (how long it stood still is said when it runs again: frozen)
     if (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT) this.track.start();
   }
 
@@ -657,7 +659,7 @@ export class Game {
     for (const p of this.players.values()) if (!p.away && !p.arriving) playing = true;
     if (!playing && this.players.size && Date.now() < this.thawAt) return true;
     this.thawAt = 0;
-    this.log(playing ? 'the game runs on: a player is back' : 'the game runs on: nobody came back in time');
+    this.log(`${playing ? 'the game runs on: a player is back' : 'the game runs on: nobody came back in time'} (runs again: stood still ${Date.now() - this.frozenAt} ms)`);
     return false;
   }
 
