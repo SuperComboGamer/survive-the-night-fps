@@ -53,7 +53,7 @@ const J = (v) => JSON.stringify(v);
   await db.query(`INSERT INTO users (email, username, password_hash) VALUES ('a@x.io', 'Ada', 'x'), ('b@x.io', 'Bo', 'x'), ('c@x.io', 'Cy', 'x')`);
   const up = await migrate(db);
   const cols = (await db.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'admin_audit'`)).rows.map((r) => r.column_name);
-  check('an older database migrates: only the audit log is added, and the accounts are still there', up.applied.join() === '014_admin_audit.sql' && cols.includes('admin_name') && cols.includes('result') && (await db.query('SELECT 1 FROM users')).rowCount === 3, J([up, cols]));
+  check('an older database migrates: only the audit log is added, and the accounts are still there', up.applied.join() === '013_admin_audit.sql' && cols.includes('admin_name') && cols.includes('result') && (await db.query('SELECT 1 FROM users')).rowCount === 3, J([up, cols]));
 
   const id = async (n) => (await db.query('SELECT id FROM users WHERE username = $1', [n])).rows[0].id;
   const [ada, bo, cy] = [await id('Ada'), await id('Bo'), await id('Cy')];
