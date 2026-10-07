@@ -795,6 +795,40 @@ export function catMeow(sr, rng, i) {
   });
 }
 
+// the stray cat purring while it is stroked: one breath out and in (~2 s; played again for as long as it is stroked).
+// A purr is the larynx snapping shut ~25 times a second on the way out and on the way in: each snap a short buzz of
+// noise rung through the throat (a low body and a nasal ring), the way in quieter and breathier
+export function catPurr(sr, rng, i) {
+  const out = rrange(rng, 1.0, 1.2);
+  const gap = rrange(rng, 0.08, 0.14);
+  const inn = rrange(rng, 0.7, 0.85);
+  const n = Math.floor((out + gap + inn + 0.05) * sr);
+  const x = new Float32Array(n);
+  const body = new Biquad().bp(sr, rrange(rng, 150, 190), 1.2);
+  const ring = new Biquad().bp(sr, rrange(rng, 650, 820), 2.2);
+  const lp = new Biquad().lp(sr, 2400, 0.7);
+  const hp = new Biquad().hp(sr, 45, 0.7);
+  const snap = Math.exp(-1 / (0.006 * sr)); // (each snap dies away in ~6 ms)
+  let ph = 0;
+  let exc = 0;
+  for (let k = 0; k < n; k++) {
+    const t = k / sr;
+    const exhale = t < out;
+    const inhale = t > out + gap && t < out + gap + inn;
+    const u = exhale ? t / out : inhale ? (t - out - gap) / inn : 0;
+    const env = exhale ? Math.pow(Math.sin(Math.PI * Math.min(1, u * 1.1)), 0.6) : inhale ? 0.6 * Math.pow(Math.sin(Math.PI * u), 0.7) : 0;
+    ph += ((exhale ? 26 : 23.5) * (1 + 0.04 * Math.sin(TAU * t * 0.7 + i))) / sr;
+    if (ph >= 1) {
+      ph -= 1 + (rng() - 0.5) * 0.06;
+      exc = 1;
+    }
+    exc *= snap;
+    const v = (rng() * 2 - 1) * (exc * 0.9 + (inhale ? 0.13 : 0.08));
+    x[k] = hp.run(lp.run(body.run(v) * 1.6 + ring.run(v) * 0.5)) * env;
+  }
+  return finish(x, sr);
+}
+
 // zombie dogs: a dog-sized vocal tract (formants ~15% up on a human's) run ragged - rasp, gurgle, overdrive
 // "rrowf!" x2-3: short harsh barks, pitch jumping up then dropping
 export function dogBark(sr, rng, i) {
@@ -2008,6 +2042,7 @@ export const SFX_DEFS = [
   { bank: 'z_shade_shriek', n: 2, sr: MID, gen: shadeShriek },
   { bank: 'zp_growl', n: 3, sr: MID, gen: zpGrowl },
   { bank: 'cat_meow', n: 3, sr: HI, gen: catMeow },
+  { bank: 'cat_purr', n: 3, sr: MID, gen: catPurr },
   { bank: 'dog_bark', n: 3, sr: MID, gen: dogBark },
   { bank: 'dog_howl', n: 2, sr: MID, gen: dogHowl },
   { bank: 'dog_snarl', n: 3, sr: MID, gen: dogSnarl },

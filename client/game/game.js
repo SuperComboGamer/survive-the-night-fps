@@ -92,6 +92,7 @@ import { harvestPrompt, harvestTarget, strippedKey, needLines } from './harvest.
 import { Impacts } from './impacts.js';
 import { Entities } from './entities.js';
 import { GunClient } from './mountedgun.js';
+import { CatClient } from './catcarry.js';
 import { RocketsClient } from './rockets.js';
 import { MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { smallestStack } from '../../shared/stacks.js';
@@ -361,6 +362,7 @@ export class Game {
     this.fixtures = new FixtureUI(this); // the chapel bell and the Relay Station's radio: prompts and notices
     this.radio = new RadioClient(this); // the walkie-talkie in slot 6: keyed, on the air, its static
     this.gun = new GunClient(this); // the mounted gun at the Army Checkpoint
+    this.cat = new CatClient(this); // the stray cat, in somebody's arms
     this.rockets = new RocketsClient(this); // our own RPG grenades in flight
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
     this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
@@ -2172,6 +2174,7 @@ export class Game {
   pressDrop() {
     const s = this.prediction.state;
     if (s.hmg) return void this.gun.drop(); // the mounted gun in their arms goes down first, at a press (carrying it is all they do)
+    if (s.pet) return void this.cat.put(); // ...and so does the cat
     if (s.zombie || s.slot === SLOT_THROW || !s.weapons[s.slot]) return;
     if (this.settings.holdToDrop === false) this.conn.action(ACT.DROP_WEAPON, s.slot);
     else this.dropHold.start(s.slot);
@@ -2512,6 +2515,7 @@ export class Game {
     const g = this.global;
     if (!t) return;
     if (t === 'gun') return this.gun.use();
+    if (t === 'cat') return this.cat.put(); // (the cat in our arms)
     if (t.fair) return this.fair.interact(t);
     if (t.handcar) return this.handcar.interact(t);
     if (t === 'car') {
@@ -2604,14 +2608,15 @@ export class Game {
       this.scene.add(sv.object);
       this.selfBodyItem = -1;
     }
-    const item = s.zombie ? 0 : currentWeapon(s);
+    const cat = this.cat.poseOf(this.myId, this.selfCat || (this.selfCat = {})); // (the stray cat in our arms)
+    const item = s.zombie || cat.cradle ? 0 : currentWeapon(s);
     if (item !== this.selfBodyItem) {
       this.selfBodyItem = item;
       sv.setWeapon(item);
     }
     sv.object.position.set(rp.x, rp.y, rp.z);
     sv.object.rotation.y = this.input.yaw;
-    sv.update(dt, { speed: hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
+    sv.update(dt, { speed: hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time, cradle: cat.cradle, pet: cat.pet });
     const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
     if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
   }
@@ -2810,7 +2815,7 @@ export class Game {
     }
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
-    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !swim; // (hands on a handcar's lever, or swimming: no sights)
+    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !swim && !s.pet; // (hands on a handcar's lever, swimming, or the cat in our arms: no sights)
     const baseFov = (this.debugCam && this.debugCam.fov) || this.settings.fov || 75; // (a debug camera may bring its own lens)
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
@@ -2840,11 +2845,13 @@ export class Game {
       if (weaponNow === -2) this.vm.setItem(0, { claws: true });
       else this.vm.setItem(s.slot === SLOT_BUILD && !weaponNow ? 0 : weaponNow, { tuck: self.alive }); // (tuck: nunchucks are folded away first)
     }
+    const stroking = this.cat.holding && !!(buttons & BTN.ATTACK) && !this.ui.inventoryOpen && !this.ui.mapOpen; // (the cat in our arms, the fire button held)
+    this.cat.update(dt, stroking);
     const [ldx, ldy] = inp.consumeLook();
     this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
-    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove };
+    const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove, pet: stroking };
     const vmCam = this.renderer.vmCamera;
     if (Math.abs(vmCam.fov - this.vm.fov) > 0.01) {
       vmCam.fov = this.vm.fov; // (as of last frame: the aimed view of iron sights is narrowed onto them, cfg.adsFov)
@@ -3278,6 +3285,13 @@ export class Game {
     if (s.ride) return this.fair.rideLook(s);
     if (s.cart) return this.handcar.rideLook(s);
     if (this.gun.look(true)) return; // hands on the mounted gun (at its grips, or carrying it): [E] is the gun's
+    // ...or the cat in our arms: [E] puts it down. Except at the car, which is still started and driven with it in our
+    // arms (taking it off the island is what its achievement is for): there [G] puts it down
+    if (this.cat.holding) {
+      if (this.lookAtCar(this.invCounts())) this.prompt += ` · ${bindTag('drop')} Put the cat down`;
+      else this.cat.look();
+      return;
+    }
     cam.getWorldDirection(_v);
     const ox = cam.position.x;
     const oy = cam.position.y;
@@ -3317,6 +3331,11 @@ export class Game {
         this.prompt = `${bindTag('interact')} Hold to revive ${this.name(e.id)}`;
         return;
       }
+      if (e.kind === ENT.CAT) {
+        this.lookTarget = e;
+        this.prompt = `${bindTag('interact')} Pick up the cat`;
+        return;
+      }
       if (e.kind === ENT.CRATE) {
         this.lookTarget = e;
         this.prompt = `${bindTag('interact')} Open supply crate`;
@@ -3348,24 +3367,29 @@ export class Game {
     if (this.fixtures.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT, counts)) return;
     if (this.fair.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
     if (this.handcar.look(ox, oy, oz, _v.x, _v.y, _v.z)) return;
-    // the car
-    const car = this.world.car;
-    const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
-    if (dcar < CAR_REACH + (car.plane ? PLANE_REACH : 0)) {
-      this.lookTarget = 'car';
-      const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
-      const carrying = missing.filter((p) => counts[p]);
-      if (g.finale && car.plane) this.prompt = g.escapeReady ? (g.runwayBlocked ? 'The dead are on the runway: clear it' : `${bindTag('interact')} Hold to get in and take off`) : g.standWarm ? 'Defend the plane until the engines are warm' : 'Hold the fuel truck until the tanks are full';
-      else if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
-      else if (!missing.length) this.prompt = car.plane ? `${bindTag('interact')} Hold to start fuelling (the runway stand)` : `${bindTag('interact')} Hold to start the engine (final stand)`;
-      else if (carrying.length) this.prompt = `${bindTag('interact')} Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
-      else this.prompt = `${W.The} needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
-    }
+    this.lookAtCar(counts);
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
     if (!this.prompt) {
       this.prompt = harvestPrompt(this.world, s, this.stripped);
       if (this.prompt) this.prompt = this.impacts.alarmPrompt(harvestTarget()) || this.prompt; // (a wreck whose alarm is going: how to stop it)
     }
+  }
+
+  // the car (the plane on the mainland), when we are close enough to it: its prompt. True when it is the look target
+  lookAtCar(counts) {
+    const g = this.global;
+    const car = this.world.car;
+    const dcar = Math.hypot(this.renderPos.x - car.x, this.renderPos.z - car.z);
+    if (dcar >= CAR_REACH + (car.plane ? PLANE_REACH : 0)) return false;
+    this.lookTarget = 'car';
+    const missing = SUPPLIES.filter((p, i) => g.supplies[i] < SUPPLY_NEED[i]);
+    const carrying = missing.filter((p) => counts[p]);
+    if (g.finale && car.plane) this.prompt = g.escapeReady ? (g.runwayBlocked ? 'The dead are on the runway: clear it' : `${bindTag('interact')} Hold to get in and take off`) : g.standWarm ? 'Defend the plane until the engines are warm' : 'Hold the fuel truck until the tanks are full';
+    else if (g.finale) this.prompt = g.escapeReady ? `${bindTag('interact')} Hold to get in and drive away` : 'Defend the car until the engine is warm';
+    else if (!missing.length) this.prompt = car.plane ? `${bindTag('interact')} Hold to start fuelling (the runway stand)` : `${bindTag('interact')} Hold to start the engine (final stand)`;
+    else if (carrying.length) this.prompt = `${bindTag('interact')} Install ${carrying.map((p) => ITEM_DEFS[p].name).join(', ')}`;
+    else this.prompt = `${W.The} needs: ${missing.map((p) => ITEM_DEFS[p].name).join(', ')}`;
+    return true;
   }
 
   updateBuildGhost(s) {
@@ -3537,6 +3561,11 @@ export class Game {
       h.reloading = -1;
     }
     this.gun.hud(h); // (manning the mounted gun: its belt)
+    h.cat = !!s.pet; // (the stray cat in their arms: no weapon, no rounds)
+    if (h.cat) {
+      h.mag = h.reserve = null;
+      h.reloading = -1;
+    }
     h.phase = g.phase;
     h.day = g.day;
     h.timeLeft = g.timeLeft;

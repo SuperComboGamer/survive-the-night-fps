@@ -42,7 +42,7 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 6, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 6, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 6, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -53,7 +53,7 @@ const BIT_SLOTS = {
   [ENT.CRATE]: [[0, 3], [3, 4]],
   [ENT.AREA]: [[0, 3]],
   [ENT.CACHE]: [[0, 3], [3, 4]],
-  [ENT.CAT]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.CAT]: [[0, 3], [3, 4], [4, 5], [5, 6]],
   [ENT.GUN]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 8]],
   [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
   [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
@@ -115,6 +115,10 @@ function quant(e) {
       q[3] = e.state | 0;
       break;
     case ENT.CAT:
+      q[3] = qangle8(e.yaw);
+      q[4] = e.anim;
+      q[5] = e.holder; // (in somebody's arms: whose)
+      break;
     case ENT.DEER:
       q[3] = qangle8(e.yaw);
       q[4] = e.anim;
@@ -158,6 +162,10 @@ function writeFields(w, kind, q, o, fromSlot, toSlot) {
         break;
       case ENT.ZOMBIE:
         if (s === 6) w.u16(v);
+        else w.u8(v);
+        break;
+      case ENT.CAT:
+        if (s === 5) w.u16(v); // (its holder)
         else w.u8(v);
         break;
       case ENT.ITEM:

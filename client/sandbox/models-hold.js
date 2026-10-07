@@ -14,8 +14,12 @@
 //                       &t is the time into the script; &hit=flesh|... lands the blows.  &ts=a,b,c: a strip of frames
 //                       at those times (no clip check);  &slow=K: the clock run K times slower between frames (the
 //                       chain's own steps do not change: it is the same motion, looked at more often)
+//   &cat=1              the stray cat in their arms (s.cradle; &pet=1 stroking it, &coat=N its coat). The clip check
+//                       counts the cat, as its skinned mesh is posed, as the item
 import * as THREE from 'three';
 import * as CHARS from '../render/models/characters.js';
+import { createCat } from '../render/models/cat.js';
+import { CANIM } from '../../shared/defs.js';
 import { nkScript } from './nk-script.js';
 const { createSurvivor } = CHARS;
 
@@ -39,6 +43,9 @@ ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
 if (q.has('pocket')) CHARS.setStockPocket?.(...q.get('pocket').split(',').map(Number)); // &pocket=z[,rpgLift]: where a shouldered butt ends (tuning)
+// &cradle=pitch,abd,twist,elbow / &petarm=... / &catat=x,y,z: the cat-in-arms pose and where the cat lies (tuning)
+const nums = (k) => (q.has(k) ? q.get(k).split(',').map(Number) : null);
+if (q.has('cradle') || q.has('petarm') || q.has('catat')) CHARS.setCradle(nums('cradle'), nums('petarm'), nums('catat'));
 const item = +(q.get('hold') || 0);
 const pose = q.get('pose') || 'idle';
 const T = +(q.get('t') ?? 1);
@@ -60,6 +67,22 @@ if (pose === 'downed') Object.assign(st, { crouch: true, speed: 0.4, pitch: 0.9 
 if (pose === 'seated') st.sit = true;
 if (pose === 'swim') Object.assign(st, { swim: true, speed: 1.5 });
 if (pose === 'air') st.onGround = false;
+// &cat=1: the stray cat in their arms (Entities: the weapon put away, the cat drawn at cradleAt, its head to their left)
+const cat = q.get('cat') === '1' ? createCat(+(q.get('coat') || 0), 5) : null;
+if (cat) {
+  sv.setWeapon(0);
+  st.cradle = true;
+  st.pet = q.get('pet') === '1';
+  scene.add(cat.object);
+}
+const placeCat = (time) => {
+  if (!cat) return;
+  sv.object.updateMatrixWorld(true);
+  sv.cradleAt(cat.object.position);
+  cat.object.rotation.y = sv.object.rotation.y + Math.PI / 2;
+  cat._inst._seen = true;
+  cat.update(DT, st.pet ? CANIM.PET : CANIM.HELD, 0, time);
+};
 if (pose === 'downed') {
   o.rotation.x = -1.3;
   o.position.y = 0.18;
@@ -121,6 +144,7 @@ for (let i = 0, n = Math.round(total / DT); i < n; i++) {
   }
   inst._seen = true; // (nothing is drawn between the steps: the pose is still wanted)
   sv.update(DT, { ...st, time });
+  placeCat(time);
   scene.updateMatrixWorld(true);
   while (times && shot < times.length && times[shot] <= time - (pulse || nk ? 1 : 0) + 1e-6) tile();
 }
@@ -199,6 +223,20 @@ if (q.get('clip') === '1') {
   bg.boundingBox.union(fistM.geometry.boundingBox);
   const parts = [];
   if (inst.weapon) inst.weapon.traverse((m) => m.isMesh && m.visible && m.name !== 'nunchakuTrail' && parts.push(m));
+  if (cat) {
+    // the cat: its skinned mesh as it is posed now, baked into a plain one
+    const ck = cat._inst.mesh;
+    ck.skeleton.update();
+    const src = ck.geometry.attributes.position;
+    const out = new Float32Array(src.count * 3);
+    for (let i = 0; i < src.count; i++) ck.getVertexPosition(i, v).toArray(out, i * 3);
+    const cg = new THREE.BufferGeometry();
+    cg.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+    cg.setIndex(ck.geometry.index);
+    const m = new THREE.Mesh(cg);
+    m.matrixWorld.copy(ck.matrixWorld);
+    parts.push(m);
+  }
   if (inst.pack && inst.pack.visible) inst.pack.traverse((m) => m.isMesh && parts.push(m));
   const proxies = parts.map((m) => {
     const p = new THREE.Mesh(m.geometry, dbl);

@@ -1301,16 +1301,19 @@ export class Game {
       const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
       this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
     }
+    // the stray cat goes too, if somebody has it in their arms (buildMainland sets it down beside them)
+    const cat = this.cats.find((c) => c.holder && this.players.get(c.holder)?.state.pet);
     this.clearWorld();
     this.phase = PHASE.CROSSING;
     this.timeLeft = CROSSING.TIME;
-    this.crossing = { pending: 2, skip: [], night, back: 0 };
+    this.crossing = { pending: 2, skip: [], night, back: 0, cat: cat ? { variant: cat.variant, by: cat.holder } : null };
     this.waves = [];
     this.wave = 0;
     for (const p of this.players.values()) {
       p.hold = null;
       this.endUse(p);
       this.releaseHolds(p);
+      p.state.pet = 0; // (the cat they had in their arms is in the car with them)
       p.cmdQueue.length = 0;
       p.waypoint = null; // (it pointed into the island)
     }
@@ -1342,6 +1345,12 @@ export class Game {
     if (c.night) this.day++;
     this.populate();
     c.back = this.checkpointAt();
+    // the cat that crossed in somebody's arms, beside them at the bridgehead (whoever is there, if they have gone)
+    if (c.cat) {
+      const by = this.players.get(c.cat.by) || this.players.values().next().value;
+      if (by) this.cm.spawnBeside(by.state, c.cat.variant);
+      c.cat = null;
+    }
     this.globalDirty = true;
     this.playersDirty = true;
   }
@@ -1376,7 +1385,7 @@ export class Game {
       p.revivedBy = 0;
       p.hp = Math.max(p.hp, REVIVE_HP);
     }
-    s.ride = s.cart = s.hmg = 0;
+    s.ride = s.cart = s.hmg = s.pet = 0;
     s.pinned = s.pulled = 0;
     s.vx = s.vy = s.vz = 0;
     this.putAtStart(s);
@@ -1982,6 +1991,7 @@ export class Game {
     this.log('drove off:', p.name);
     this.track.drove(p);
     this.ach.drove(p); // (the driver's feat is the car's, as it was)
+    this.ach.leftIsland(); // (whoever has the cat in their arms took it with them)
     this.cross(p, this.phase === PHASE.NIGHT);
   }
 
@@ -2337,6 +2347,9 @@ export class Game {
       case 'gun_drop':
         this.gun.drop(p); // reached for a weapon with the mounted gun in their arms: it goes down where they stand
         break;
+      case 'cat_drop':
+        this.cm.put(p); // ...or with the cat in their arms: it is set down in front of them
+        break;
       case 'fire':
         this.combat.fire(p, ev);
         break;
@@ -2574,6 +2587,8 @@ export class Game {
         return this.gun.feed(p, r.u8());
       case ACT.GUN_PUT:
         return this.gun.put(p, r.u8());
+      case ACT.CAT_PUT:
+        return this.cm.put(p);
       case ACT.RIDE:
         return this.fair.board(p, r.u8());
       case ACT.HANDCAR:
@@ -2710,6 +2725,10 @@ export class Game {
       this.holdBegin(p, e.id);
       return;
     }
+    if (e.kind === ENT.CAT) {
+      this.cm.lift(p, e); // the stray cat, into their arms (cats.js)
+      return;
+    }
     if (e.kind === ENT.STRUCTURE) {
       if (e.stype === STRUCT.CAMPFIRE) return this.feedFire(p, e);
       if (this.power.interact(p, e)) return; // (a generator takes fuel)
@@ -2723,6 +2742,7 @@ export class Game {
     if (e.kind === ENT.CRATE) return e.y + 0.6;
     if (e.kind === ENT.STRUCTURE) return e.y + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
     if (e.kind === ENT.PLAYER) return e.y + 0.3;
+    if (e.kind === ENT.CAT) return e.y + 0.18;
     if (e.kind === ENT.GUN && e.mode === GUN_LYING) return e.y - GUN.pivotY + 0.3; // (on its side on the ground)
     return e.y;
   }
@@ -2732,7 +2752,7 @@ export class Game {
   // because our copy of the player trails the one that client looks out of. Never less: a refusal is silent, so
   // the player would be holding [E] on a prompt with nothing happening
   reachOf(e) {
-    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : PICK_RADIUS.DOWNED;
+    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : e.kind === ENT.CAT ? PICK_RADIUS.CAT : PICK_RADIUS.DOWNED;
     return Math.hypot(INTERACT_REACH, r) + INTERACT_SLACK;
   }
 
@@ -3326,6 +3346,7 @@ export class Game {
     if (def.cat === 'cons') {
       const c = CONSUMABLES[it.item];
       if (!c || useWasted(it.item, { hp: p.hp, maxHp: p.maxHp, battery: p.battery, downed: p.downed, stamina: s.stamina, exhausted: s.exhausted })) return;
+      if (s.pet) this.cm.put(p); // (the hands go to it: the cat in them is set down first)
       // The hands go onto it (s.using: no weapon goes off until it is used up or put away, simulatePlayer) from the
       // client's next command on, which is where its prediction has them go: it sends every command it has made
       // before it asks (Game.useConsumable), so that is the one after the newest that has come in. Those still
@@ -4160,8 +4181,8 @@ export class Game {
         else this.systemChat('this valley has no Army Checkpoint, so no mounted gun (a new game deals a new valley)');
         break;
       case 'cat': {
-        // bring the cat over (2 m in front)
-        const c = this.cats[0];
+        // bring the cat over (2 m in front: one nobody has in their arms)
+        const c = this.cats.find((k) => !k.holder);
         if (c) {
           c.x = s.x - Math.sin(s.yaw) * 2;
           c.z = s.z - Math.cos(s.yaw) * 2;
@@ -4970,8 +4991,8 @@ export class Game {
         }
         if (put(chunk)) mask |= 1 << chunk;
       }
-      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js; the mounted gun in their
-      // arms: mountedgun.js; the perks they picked: progress.js)
+      // (the seat of a ride at the fair: fair.js; the handcar on the railway: handcar.js; the mounted gun or the cat
+      // in their arms: mountedgun.js, cats.js; the perks they picked: progress.js)
       c.reset();
       c.u8(s.ride);
       c.u8(s.rideGo);
@@ -4979,7 +5000,7 @@ export class Game {
       c.u8(s.cart);
       c.f32(s.cartS);
       c.f32(s.cartV);
-      c.u8(s.hmg);
+      c.u8(s.hmg | (s.pet << 1));
       c.u32(s.perks);
       if (put(12)) mask |= SELF.RIDE;
     }

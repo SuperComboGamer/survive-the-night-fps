@@ -588,6 +588,8 @@ export const CANIM = {
   WALK: 1,
   RUN: 2,
   SIT: 3,
+  HELD: 4, // in a survivor's arms (its HOLDER field says whose)
+  PET: 5, // ...and being stroked: it purrs
 };
 
 // ---------------------------------------------------------------- projectiles / areas
@@ -713,6 +715,7 @@ export const SOUND = {
   FLARE_GUN: 122, // a flare gun's shot (client-side, from EVT.SHOT)
   FLARE_POP: 123, // a parachute flare bursting alight at the top of its climb (client-side, from its flight)
   DEER_SCREAM: 124, // an undead deer (the mainland's): a rotten-throated bellow as it lowers its antlers, is hit, or dies
+  CAT_PURR: 125, // the stray cat purring while it is stroked (client-side, from its CANIM.PET)
 };
 
 export const EVT = {

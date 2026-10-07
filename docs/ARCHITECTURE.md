@@ -1418,6 +1418,28 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   commands, so the carrier's client gets a rebase (it rides in the `SELF.RIDE` chunk). `MountedGun.update` drops
   it for a carrier who is down, dead, turned, pinned, roped, away or gone, and clears a stray `s.hmg` on anyone
   else.
+- **The stray cat in a survivor's arms** (`server/cats.js`, `client/game/catcarry.js`, the poses in
+  `client/render/models/cat.js`, `weapons.js` (`ViewModel.holdCat`) and `characters.js` (`s.cradle`, `cradleAt`,
+  `solvePet`)). `[E]` on the cat is `ACT.INTERACT` on its entity (reach and walls as for an item: `PICK_RADIUS.CAT`);
+  `Cats.lift` takes it out of its wandering (`CAT_MODE.HELD`) and sets `s.pet`, the one field of the player
+  simulation it touches: no weapon goes off, swings or reloads (the hands skip the weapon block, as with `s.hmg`), the
+  sights are off, nobody swims with it (`waterFloor`), every pace is as ever, and a slot request sets it down
+  (`cat_drop`, as `gun_drop`). It rides in the `SELF.RIDE` chunk's arms byte beside `s.hmg`. The entity follows its
+  holder at their chest; its `HOLDER` field (u16) and `CANIM.HELD` / `CANIM.PET` tell everyone whose arms it is in and
+  whether they are stroking it - the fire button held, read off the holder's commands (`s.lastBtn`), so stroking
+  costs no traffic of its own (the input buffer lets the fire button through unshaped while `s.pet` is up). It is set
+  down in front of them (`ACT.CAT_PUT`: `[E]`, or `[G]`), where they stand (a weapon key, using an item), or leaps
+  clear and runs (down, dead, turned, pinned, roped, on a ride or a handcar, swimming, gone). The car is still
+  started and driven with it in your arms (the prompt is the car's there, `[G]` puts it down), and whoever has it in
+  their arms as the car drives off the island (`Game.driveOff`) has "Nobody Gets Left Behind"; it crosses with them
+  (`crossing.cat`, saved with the crossing) and `buildMainland` sets it down beside them at the bridgehead. Picking it
+  up is "Who Is a Good Kitty?". On screen: the holder's viewmodel draws a cat of its coat across their arms (left
+  palm under its tucked legs, right palm on its back, a stroke along it from behind the neck while the button is held;
+  both hand poses fitted against the posed cat over the whole stroke with `scripts/clip/grip-lib.js`), with a purr
+  (`SOUND.CAT_PURR`, procedural) every breath; everyone else sees it across the holder's forearms (`cradleAt`, its
+  legs tucked, its tail curled away from them) and their right fist stroking it by IK, measured against all ten
+  survivor builds in every pose (`models-hold.js &cat=1&clip=1`). The HUD's weapon block says "Stray Cat".
+  `scripts/test-cat.js` holds the rules; the sandboxes show it (`?vm=cat&act=pet`, `?hold=0&cat=1&pet=1`).
 - **Reach.** Nothing at arm's length goes through a wall. A survivor's hands (search, revive, pick up) and blade
   (`Combat.meleeClear`) use `canReach` in collision.js: over cover no taller than eye height (barricades, sills,
   fences), through what survivors walk through (gates, door boards). The AI dead (`Zombies.canReach`) and a
