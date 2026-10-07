@@ -18,12 +18,11 @@ import { ACT, VACT, VFLAG, HOLD, qpos, dqangle16 } from '../../shared/protocol.j
 import { WORLD } from '../../shared/acts.js';
 import { VEH, VSTATE, VEHICLES, VEH_NAMES, FIX, REPAIR, HORN, vehicleGrid, parkedCollider, questCar, siphonOf, seatFeet } from '../../shared/vehicles.js';
 import { raycastWorld } from '../../shared/collision.js';
-import { VehicleModel, GRIP_HOLD } from '../render/models/vehicles.js';
+import { VehicleModel, GRIP_HOLD, SEAT_POSE, SIT_T, SIT_K, SEAT_HIP } from '../render/models/vehicles.js';
 import { VMArm, handQ, ARM_L1, ARM_L2 } from '../render/models/weapons.js';
 import { ikTwoBone, getPropMaterial } from '../render/models/skinning.js';
 import { bindTag } from './binds.js';
 
-const SEAT_HIP = 0.42; // a seated survivor's hips over the origin of their model (characters.js, the sitting pose)
 const HOLD_AFTER = 0.28; // s: [E] held this long on a vehicle that runs is not getting in, it is working on it
 const PROMPT_TIME = 7; // seconds the list of what the keys do stays up after getting in
 const MOUNT_T = 0.38; // s the eye takes into the seat, and out of it
@@ -108,9 +107,9 @@ export class VehicleClient {
     g.scene.add(model.group);
     const P = VEHICLES[e.vk];
     e.veh = { model, x: e.rx, y: e.ry, z: e.rz, yaw: dqangle16(e.q[3]), vf: 0, steer: 0, roll: 0, pitch: 0, lean: 0, tilt: 0, dy: 0, vy: 0, acc: 0, lastVf: 0, col: null, loop: null, state: -1, seats: [0, 0, 0, 0], skidT: 0, smokeT: 0, hornOn: false, idle: 0 };
-    e.veh.loop = P.pedal ? null : g.audio.createLoop?.(e.vk === VEH.CAR ? 'car' : 'moped', e.rx, e.ry, e.rz) || null;
+    e.veh.loop = P.pedal ? null : g.audio.createLoop?.(e.vk === VEH.CAR ? 'veh_car' : 'veh_moped', e.rx, e.ry, e.rz) || null;
     if (e.veh.loop) e.veh.loop.setVolume(0);
-    e.veh.horn = P.pedal ? null : g.audio.createLoop?.('horn', e.rx, e.ry, e.rz) || null;
+    e.veh.horn = P.pedal ? null : g.audio.createLoop?.('veh_horn', e.rx, e.ry, e.rz) || null;
     if (e.veh.horn) e.veh.horn.setVolume(0);
     this.list.set(e.id, e);
     this.changed(e, 0xffff);
@@ -479,22 +478,10 @@ export class VehicleClient {
   }
 
   // A survivor's body put in its seat of the vehicle as drawn (Entities, for whoever seatOf names): sv is their
-  // model. Returns what their pose is to be given: { sit, reach } (reach: where a driver's hands go).
-  place(seat, obj) {
-    const e = seat.e;
-    const v = e.veh;
-    const P = VEHICLES[e.vk];
-    const st = P.seats[seat.k] || P.seats[0];
-    const body = v.model.body;
-    v.model.group.updateMatrixWorld(true);
-    _v.set(st[0], st[1] - SEAT_HIP, st[2]).applyMatrix4(body.matrixWorld);
-    obj.position.copy(_v);
-    body.getWorldQuaternion(obj.quaternion);
-    if (seat.k !== 0) return null;
-    const r = seat.reach || (seat.reach = { l: new THREE.Vector3(), r: new THREE.Vector3() });
-    v.model.grips[0].getWorldPosition(r.l);
-    v.model.grips[1].getWorldPosition(r.r);
-    return r;
+  // model (createSurvivor). Returns what their pose is to be given: { sitT, sitK, sitSplay, reach } (reach: where a
+  // driver's hands go; null for whoever is carried).
+  place(seat, sv) {
+    return seatBody(seat.e.veh.model, seat.e.vk, seat.k, sv, seat.pose || (seat.pose = {}));
   }
 
   // the headlamps that are lit, among the lights the scene has to give (Entities: the nearest get one)
@@ -701,6 +688,35 @@ export class VehicleClient {
   skid() {
     this.g.skidT = this.g.time + 0.15;
   }
+}
+
+// A survivor's model sv put in seat k of a vehicle's model as it stands: its hips on the seat, facing the way the
+// vehicle does, leaning with it. out: { sitT, sitK, sitSplay, reach } for the survivor's own pose (characters.js).
+// (Also the models sandbox's, so that what is measured there is what the game draws.)
+export function seatBody(model, vk, k, sv, out = {}) {
+  const P = VEHICLES[vk];
+  const st = P.seats[k] || P.seats[0];
+  const pose = SEAT_POSE[vk][k] || SEAT_POSE[vk][0];
+  const body = model.body;
+  model.group.updateMatrixWorld(true);
+  // the hips over the model's own origin: by how the legs are folded (characters.js legCycle)
+  const L = sv._inst?.P;
+  const ext = (t, kn) => (L ? L.thighLen * Math.cos(t) + L.shinLen * Math.cos(t - kn) : 0);
+  const hip = SEAT_HIP + ext(pose[0], pose[1]) - ext(SIT_T, SIT_K);
+  const obj = sv.object;
+  obj.position.set(st[0], st[1] - hip, st[2]).applyMatrix4(body.matrixWorld);
+  body.getWorldQuaternion(obj.quaternion);
+  out.sitT = pose[0];
+  out.sitK = pose[1];
+  out.sitSplay = pose[2];
+  out.pedal = model.crank ? model.crank.rotation.x + Math.PI / 2 : undefined; // (the left foot down with the left pedal)
+  if (k !== 0) out.reach = null;
+  else {
+    const r = out.reach || (out.reach = { l: new THREE.Vector3(), r: new THREE.Vector3() });
+    model.grips[0].getWorldPosition(r.l);
+    model.grips[1].getWorldPosition(r.r);
+  }
+  return out;
 }
 
 const cap = (s) => s[0].toUpperCase() + s.slice(1);

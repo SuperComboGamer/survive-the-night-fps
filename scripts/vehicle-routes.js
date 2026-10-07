@@ -227,7 +227,12 @@ export function walk(world, path, limit = 900) {
 
 // A vehicle driven along the path by somebody who knows the road: seconds, the fuel burnt, the hardest it struck
 // anything; -1 when it does not get there.
-export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
+// Somebody who knows the road, at the wheel of a vehicle of this kind along a way found by flood(): pilot.step(v)
+// says what they hold this moment - { thr: -1 / 0 / 1, turn: -1 / 0 / 1, done } - for a vehicle that is at v (x, z,
+// yaw, vx, vz, steer). The way has the grid's corners taken out of it; every point of it has the speed it can be
+// passed at (by how sharply the way turns there and how much room it has, and no faster than can be braked from for
+// what comes after).
+export function makePilot(world, kind, raw, cl = null, bold = 1) {
   const P = VEHICLES[kind];
   const need = P.halfW + 0.2;
   const N = raw.length;
@@ -236,8 +241,6 @@ export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
     const ci = Math.floor((x + cl.half) / CELL), cj = Math.floor((z + cl.half) / CELL);
     return cl.d[cj * cl.n + ci] * CELL * 0.5;
   };
-  // the way, with the grid's corners taken out of it: each point the mean of those round it, where that leaves it
-  // as much room as it had (in a gap the grid's own line is kept)
   const path = raw.map((p) => [p[0], p[1]]);
   for (let pass = 0; pass < 3; pass++) {
     for (let i = 1; i < N - 1; i++) {
@@ -249,10 +252,8 @@ export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
       if (roomAt(x, z) >= Math.min(roomAt(raw[i][0], raw[i][1]), need + 1.2)) (path[i][0] = x), (path[i][1] = z);
     }
   }
-  // the speed each point can be passed at: by how sharply the way turns there and by how much room it has; and then
-  // no faster than it can be braked from for what comes after
   const vmax = new Float32Array(N).fill(P.hardTop || P.top);
-  const span = Math.max(4, Math.round(P.wb * 2.4 / CELL));
+  const span = Math.max(4, Math.round((P.wb * 2.4) / CELL));
   for (let i = 0; i < N; i++) {
     const a = path[Math.max(0, i - span)], m = path[i], c = path[Math.min(N - 1, i + span)];
     let turn = Math.atan2(c[0] - m[0], c[1] - m[1]) - Math.atan2(m[0] - a[0], m[1] - a[1]);
@@ -260,7 +261,7 @@ export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
     while (turn < -Math.PI) turn += Math.PI * 2;
     const len = Math.hypot(c[0] - m[0], c[1] - m[1]) + 1e-3;
     const curv = Math.abs(turn) / len;
-    let v = curv > 1e-4 ? Math.sqrt((P.grip * 0.55) / curv) : 99;
+    let v = curv > 1e-4 ? Math.sqrt((P.grip * 0.55 * bold) / curv) : 99;
     const room = roomAt(m[0], m[1]) - need;
     v = Math.min(v, room < 0.15 ? 5 : room < 0.5 ? 10 : room < 1.0 ? 16 : room < 1.8 ? 21 : 99);
     vmax[i] = Math.max(3, Math.min(vmax[i], v));
@@ -270,11 +271,45 @@ export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
     const ds = Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]);
     vmax[i] = Math.min(vmax[i], Math.sqrt(vmax[i + 1] * vmax[i + 1] + 2 * dec * ds));
   }
-  const v = { vk: kind, id: 1, x: path[0][0], y: 0, z: path[0][1], vx: 0, vz: 0, yaw: 0, steer: 0, fuel: P.tank || 1, run: true };
+  let k = 1, at = 0;
+  return {
+    path,
+    vmax,
+    get at() {
+      return at;
+    },
+    // the heading to set out on
+    yaw0: Math.atan2(-(path[Math.min(N - 1, 8)][0] - path[0][0]), -(path[Math.min(N - 1, 8)][1] - path[0][1])),
+    step(v) {
+      const sp = Math.hypot(v.vx, v.vz);
+      while (at < N - 1 && Math.hypot(path[at + 1][0] - v.x, path[at + 1][1] - v.z) <= Math.hypot(path[at][0] - v.x, path[at][1] - v.z)) at++;
+      const ahead = 1.8 + sp * 0.32;
+      if (k < at) k = at;
+      while (k < N - 1 && Math.hypot(path[k][0] - v.x, path[k][1] - v.z) < ahead) k++;
+      const dx = path[k][0] - v.x, dz = path[k][1] - v.z;
+      if (k === N - 1 && Math.hypot(dx, dz) < 3) return { thr: -1, turn: 0, done: true, err: 0, want: 0 };
+      let err = Math.atan2(-dx, -dz) - v.yaw;
+      while (err > Math.PI) err -= Math.PI * 2;
+      while (err < -Math.PI) err += Math.PI * 2;
+      // (a right turn takes the yaw down). The wheel is turned as far as the turn asks, not always to the lock
+      const lock = P.lock + (P.lockTop - P.lock) * Math.sqrt(Math.min(1, sp / P.top));
+      const wantSteer = Math.max(-1, Math.min(1, (-err * 1.6) / lock));
+      const turn = v.steer / lock < wantSteer - 0.12 ? 1 : v.steer / lock > wantSteer + 0.12 ? -1 : 0;
+      const want = Math.abs(err) > 1.2 ? 3 : vmax[Math.min(N - 1, at + 1)];
+      return { thr: sp < want - 0.3 ? 1 : sp > want + 1 ? -1 : 0, turn, done: false, err, want };
+    },
+  };
+}
+
+// A vehicle driven along the path by that pilot: seconds, the fuel burnt, the hardest it struck anything; -1 when
+// it does not get there.
+export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
+  const P = VEHICLES[kind];
+  const pilot = makePilot(world, kind, raw, cl);
+  const path = pilot.path;
+  const v = { vk: kind, id: 1, x: path[0][0], y: 0, z: path[0][1], vx: 0, vz: 0, yaw: pilot.yaw0, steer: 0, fuel: P.tank || 1, run: true };
   v.y = groundAt(world, v.x, v.z, 200, 0.25, false);
-  const look = Math.min(N - 1, 8);
-  v.yaw = Math.atan2(-(path[look][0] - v.x), -(path[look][1] - v.z));
-  let k = 1, at = 0, t = 0, burnt = 0, worst = 0, stuck = 0, top = 0, wedged = 0;
+  let t = 0, burnt = 0, worst = 0, stuck = 0, top = 0, wedged = 0;
   // (a bicycle: stood on the pedals while the breath lasts, as a survivor sprints - constants.js STAMINA_*)
   let stamina = 100, tired = false, rest = 0, hard = false;
   while (t < limit) {
@@ -290,25 +325,11 @@ export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
       }
     }
     const sp = Math.hypot(v.vx, v.vz);
-    // where on the way it is, and the point it steers for: nearer when it is going slowly
-    while (at < N - 1 && Math.hypot(path[at + 1][0] - v.x, path[at + 1][1] - v.z) <= Math.hypot(path[at][0] - v.x, path[at][1] - v.z)) at++;
-    const ahead = 1.8 + sp * 0.32;
-    if (k < at) k = at;
-    while (k < N - 1 && Math.hypot(path[k][0] - v.x, path[k][1] - v.z) < ahead) k++;
-    const dx = path[k][0] - v.x, dz = path[k][1] - v.z;
-    if (k === N - 1 && Math.hypot(dx, dz) < 3) break;
-    let err = Math.atan2(-dx, -dz) - v.yaw;
-    while (err > Math.PI) err -= Math.PI * 2;
-    while (err < -Math.PI) err += Math.PI * 2;
-    // (a right turn takes the yaw down). The wheel is turned as far as the turn asks, not always to the lock
-    const lock = P.lock + (P.lockTop - P.lock) * Math.sqrt(Math.min(1, sp / P.top));
-    const wantSteer = Math.max(-1, Math.min(1, (-err * 1.6) / lock));
-    const turn = v.steer / lock < wantSteer - 0.12 ? 1 : v.steer / lock > wantSteer + 0.12 ? -1 : 0;
-    const want = Math.abs(err) > 1.2 ? 3 : vmax[Math.min(N - 1, at + 1)];
-    const thr = sp < want - 0.3 ? 1 : sp > want + 1 ? -1 : 0;
-    if (trace) trace.push([at, sp, want, err, v.x, v.z]);
+    const c = pilot.step(v);
+    if (c.done) break;
+    if (trace) trace.push([pilot.at, sp, c.want, c.err, v.x, v.z]);
     const f0 = v.fuel;
-    const hit = stepVehicle(v, thr, turn, false, hard, world, CMD_DT, null);
+    const hit = stepVehicle(v, c.thr, c.turn, false, hard, world, CMD_DT, null);
     burnt += f0 - v.fuel;
     if (P.tank) v.fuel = P.tank;
     worst = Math.max(worst, hit);
@@ -316,7 +337,7 @@ export function drive(world, kind, raw, limit = 600, cl = null, trace = null) {
     stuck = sp < 0.4 ? stuck + CMD_DT : 0;
     if (stuck > 2.5) {
       // wedged: back off a little and go again (what a driver does)
-      for (let i = 0; i < 80; i++) stepVehicle(v, -1, -turn, false, false, world, CMD_DT, null);
+      for (let i = 0; i < 80; i++) stepVehicle(v, -1, -c.turn, false, false, world, CMD_DT, null);
       t += 80 * CMD_DT;
       stuck = 0;
       if (++wedged > 12) return { t: -1, burnt, worst, top, at: [v.x, v.z], wedged };

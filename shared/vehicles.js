@@ -19,7 +19,7 @@
 // server puts them in the seat every tick. Their hands are free.
 import { BTN, WATER_LEVEL, STAMINA_DRAIN, STAMINA_REGEN, STAMINA_REGEN_DELAY, STAMINA_MAX, STAMINA_UNLOCK, EYE_HEIGHT, GRID_STEP } from './constants.js';
 import { ITEM } from './defs.js';
-import { ColliderGrid, makeBox, pushCircle, groundAt, COL } from './collision.js';
+import { ColliderGrid, makeBox, pushCircle, footprintContains, COL } from './collision.js';
 import { ROAD } from './layout.js';
 import { mulberry32 } from './rng.js';
 
@@ -40,7 +40,8 @@ const G = 9.8;
 // roll / drag: rolling resistance (m/s/s) and air ((m/s)^-1 s^-1, on v^2). coast: what the engine holds it back by
 // with the throttle shut (m/s/s). off: how much worse soft ground is for it
 // (rolling resistance x this off the road; offTop: how much of the ground's cut in top speed it feels). step: what it rides up onto (m); h: how tall it is (for what it fits
-// under). wade: the water that stops it (m). circles: its body against the world, [z along it (- is ahead), radius].
+// under). wade: the water that stops it (m). circles: its body against the world, [z along it (- is ahead), radius]
+// (they overlap: nothing thin gets in between two of them).
 // half / halfW / tall: its box (the collider it is while it stands empty, and what the dead and survivors are kept
 // out of). tank: Fuel units; burn: per second with the throttle open (idle: a twentieth of it). hp. seats: where
 // each sits [x (+ right), y (the hips over the ground), z (- ahead)], the driver first; eye: the eyes over the hips
@@ -50,18 +51,18 @@ const G = 9.8;
 export const VEHICLES = {
   [VEH.MOPED]: {
     name: 'Moped', top: 16.5, accel: 5.4, brake: 9.5, rev: 1.6, wb: 1.2, lock: 0.62, lockTop: 0.085, steerRate: 2.6, grip: 9, hb: 0.42, roll: 0.35, coast: 1.2, drag: 0.004, off: 1, offTop: 0.75,
-    step: 0.3, h: 1.5, wade: 0.4, circles: [[-0.48, 0.34], [0.42, 0.34]], half: 0.9, halfW: 0.3, tall: 1.05,
-    tank: 60, burn: 0.5, hp: 300, seats: [[0, 0.78, 0.12], [0, 0.82, 0.58]], eye: 0.68, noise: 55, idle: 28, throwAt: 6.5, shell: false, two: true,
+    step: 0.3, h: 1.5, wade: 0.4, circles: [[-0.5, 0.33], [-0.03, 0.31], [0.44, 0.33]], half: 0.9, halfW: 0.3, tall: 1.05,
+    tank: 60, burn: 0.5, hp: 300, seats: [[0, 0.86, 0.16], [0, 0.87, 0.64]], eye: 0.62, noise: 55, idle: 28, throwAt: 6.5, shell: false, two: true,
   },
   [VEH.CAR]: {
     name: 'Car', top: 25, accel: 4.4, brake: 10.5, rev: 6, wb: 2.62, lock: 0.6, lockTop: 0.06, steerRate: 2.1, grip: 9.5, hb: 0.32, roll: 0.3, coast: 1.1, drag: 0.0028, off: 2.6, offTop: 1,
     step: 0.26, h: 1.45, wade: 0.55, circles: [[-1.32, 0.88], [0, 0.9], [1.32, 0.88]], half: 2.2, halfW: 0.9, tall: 1.4,
-    tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.44, -0.13], [0.38, 0.44, -0.13], [-0.38, 0.46, 0.59], [0.38, 0.46, 0.59]], eye: 0.8, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
+    tank: 150, burn: 1.6, hp: 900, seats: [[-0.38, 0.47, -0.03], [0.38, 0.47, -0.03], [-0.38, 0.49, 0.59], [0.38, 0.49, 0.59]], eye: 0.78, eyeZ: 0.1, noise: 85, idle: 42, throwAt: 0, shell: true, two: false,
   },
   [VEH.BIKE]: {
     name: 'Bicycle', top: 8.5, hardTop: 12, accel: 3.4, hardAccel: 4.2, brake: 7, rev: 1.2, wb: 1.05, lock: 0.7, lockTop: 0.12, steerRate: 3, grip: 7.5, hb: 0.5, roll: 0.22, coast: 0, drag: 0.005, off: 1.2, offTop: 0.6,
-    step: 0.22, h: 1.6, wade: 0.35, circles: [[-0.42, 0.3], [0.38, 0.3]], half: 0.85, halfW: 0.25, tall: 1.0,
-    tank: 0, burn: 0, hp: 150, seats: [[0, 0.92, 0.16]], eye: 0.66, noise: 0, idle: 0, throwAt: 6, shell: false, two: true, pedal: true,
+    step: 0.22, h: 1.6, wade: 0.35, circles: [[-0.44, 0.29], [-0.02, 0.27], [0.4, 0.29]], half: 0.85, halfW: 0.25, tall: 1.0,
+    tank: 0, burn: 0, hp: 150, seats: [[0, 1.12, 0.14]], eye: 0.58, noise: 0, idle: 0, throwAt: 6, shell: false, two: true, pedal: true,
   },
 };
 export const VEH_NAMES = { [VEH.MOPED]: 'moped', [VEH.CAR]: 'car', [VEH.BIKE]: 'bicycle' };
@@ -175,6 +176,43 @@ export function parkedCollider(kind, id, x, y, z, yaw) {
 // { type: 'veh_skid' }. Returns the speed it struck something at this step (0: nothing).
 const _q = [];
 const _push = { x: 0, z: 0, nx: 0, nz: 0 };
+// The ground under a wheel at (x, z) of a vehicle standing at height y: the terrain, or the top of what it rides up
+// onto - no higher than its own step (collision.js groundAt is a survivor's, who steps higher than a wheel does: a
+// kerb a car cannot mount is a wall to it, not a floor).
+const _gq = [];
+function wheelGround(world, x, z, y, step) {
+  let h = world.floorAt ? world.floorAt(x, z, y) : world.heightAt(x, z);
+  const grids = world.colliderGrids;
+  for (let g = 0; g < grids.length; g++) {
+    const list = grids[g].query(x, z, 0.25, _gq);
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c.flags & (COL.NOBLOCK | COL.TREE | COL_VEHICLE)) continue;
+      if (c.y1 > h && c.y1 <= y + step + 0.02 && footprintContains(c, x, z, 0.25)) h = c.y1;
+    }
+  }
+  return h;
+}
+// is any of v's circles (a little shrunk) in something solid, as it stands?
+function inSolid(v, P, world, grid) {
+  const fx = -Math.sin(v.yaw);
+  const fz = -Math.cos(v.yaw);
+  for (let ci = 0; ci < P.circles.length; ci++) {
+    const px = v.x - fx * P.circles[ci][0];
+    const pz = v.z - fz * P.circles[ci][0];
+    const r = P.circles[ci][1] - 0.04;
+    for (let gi = 0; gi < 4; gi++) {
+      const cg = gi === 0 ? world.staticGrid : gi === 1 ? world.structGrid : gi === 2 ? grid.parked : grid.doors;
+      const list = cg.query(px, pz, r + 0.1, _q);
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if ((gi < 3 && c.flags & COL.NOBLOCK) || (gi === 2 && c.id === v.id) || c.y1 <= v.y + P.step || c.y0 >= v.y + P.h) continue;
+        if (pushCircle(c, px, pz, r, _push)) return true;
+      }
+    }
+  }
+  return false;
+}
 export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   const P = VEHICLES[v.vk];
   const grid = vehicleGrid(world);
@@ -240,8 +278,8 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   else if (a < -trac) a = -trac;
   // the hill, by the ground under the two axles
   const hl = P.wb * 0.5;
-  const gF = groundAt(world, v.x + fx * hl, v.z + fz * hl, v.y, 0.25, false);
-  const gB = groundAt(world, v.x - fx * hl, v.z - fz * hl, v.y, 0.25, false);
+  const gF = wheelGround(world, v.x + fx * hl, v.z + fz * hl, v.y, P.step);
+  const gB = wheelGround(world, v.x - fx * hl, v.z - fz * hl, v.y, P.step);
   let slope = (gF - gB) / P.wb;
   if (slope > 0.7) slope = 0.7;
   else if (slope < -0.7) slope = -0.7;
@@ -273,6 +311,7 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
   let struck = null;
   const lim = world.half - 5;
   let wedged = false;
+  let turned = 0; // how far what it struck has turned it
   for (let iter = 0; iter < 4; iter++) {
     let moved = false;
     for (let ci = 0; ci < P.circles.length; ci++) {
@@ -309,7 +348,7 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
           }
           // pushed at one end, it comes round: the nose shoved to its right turns it right
           const side = dx * cy - dz * sy;
-          v.yaw += (side * o) / (P.half * P.half) * 0.6;
+          turned += ((side * o) / (P.half * P.half)) * 0.6;
         }
       }
       // the edge of the map
@@ -333,19 +372,25 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
     if (!moved) break;
     wedged = iter === 3;
   }
-  if (v.yaw > Math.PI) v.yaw -= Math.PI * 2;
-  else if (v.yaw < -Math.PI) v.yaw += Math.PI * 2;
-  // between two things that each push it into the other: it stays where it was, as it was
-  if (wedged) {
+  // still in something after all that: it is between two things that each push it into the other, and stays where it
+  // was, as it was. (Sliding along one thing into the corner of another settles in a pass or two and is let be.)
+  if (wedged && inSolid(v, P, world, grid)) {
     const sp2 = Math.hypot(v.vx, v.vz);
     if (sp2 > impact) impact = sp2;
     v.x = ox;
     v.z = oz;
     v.yaw = oyaw;
     v.vx = v.vz = 0;
+  } else if (turned !== 0) {
+    // pushed at one end, it comes round - unless coming round would put the other end into something
+    const y1 = v.yaw;
+    v.yaw += turned > 0.2 ? 0.2 : turned < -0.2 ? -0.2 : turned;
+    if (v.yaw > Math.PI) v.yaw -= Math.PI * 2;
+    else if (v.yaw < -Math.PI) v.yaw += Math.PI * 2;
+    if (inSolid(v, P, world, grid)) v.yaw = y1;
   }
   // water too deep for it, and the mouth of the mine: it does not go in
-  let y = groundAt(world, v.x, v.z, v.y, 0.25, false);
+  let y = wheelGround(world, v.x, v.z, v.y, P.step);
   const deep = y < WATER_LEVEL - P.wade && world.heightAt(v.x, v.z) < WATER_LEVEL - P.wade;
   if (deep || (world.mine && world.mine.inHole(v.x, v.z))) {
     const sp2 = Math.hypot(v.vx, v.vz);
@@ -356,7 +401,7 @@ export function stepVehicle(v, thr, turn, hb, hard, world, dt, events) {
     v.x = ox;
     v.z = oz;
     v.vx = v.vz = 0;
-    y = groundAt(world, v.x, v.z, v.y, 0.25, false);
+    y = wheelGround(world, v.x, v.z, v.y, P.step);
   }
   v.y = y;
   if (impact > 2.2 && events) events.push({ type: 'veh_crash', id: v.id, v: impact, col: struck });

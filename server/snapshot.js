@@ -140,8 +140,10 @@ function quant(e) {
     case ENT.VEHICLE: {
       // (server/vehicles.js keeps `flags`, `seats` and the speed along itself up to date: wire())
       q[3] = qangle16(e.yaw);
-      const sp = Math.max(-127, Math.min(127, Math.round(e.vf * 4)));
-      const st = Math.max(-127, Math.min(127, Math.round(e.steer * 100)));
+      // (in the wire's units of 1/4 m/s and 1/100 rad, but stepped twice and four times as coarsely: what turns the
+      // wheels and tunes the engine of somebody else's vehicle need not change with every tick)
+      const sp = Math.max(-126, Math.min(126, Math.round(e.vf * 2) * 2));
+      const st = Math.max(-124, Math.min(124, Math.round(e.steer * 25) * 4));
       q[4] = (sp & 255) | ((st & 255) << 8);
       q[5] = e.flags;
       q[6] = Math.max(0, Math.min(255, Math.ceil(e.fuelQ * 255))) | (Math.max(0, Math.min(255, Math.ceil(e.hpQ * 255))) << 8);

@@ -68,14 +68,14 @@ function buildMoped(tint) {
   const M = MOPED;
   const body = new MeshBuilder(4101 + tint, { ao: false });
   // the pressed-steel backbone: headstock down to the floor, along under the feet, up to the seat and back to the tail
-  body.cylBetween('paint', M.head, [0, 0.36, -0.2], 0.036, 0.04, 8, { c: col });
-  body.cylBetween('paint', [0, 0.36, -0.2], [0, 0.34, 0.26], 0.04, 0.04, 8, { c: col });
-  body.cylBetween('paint', [0, 0.34, 0.26], [0, 0.66, 0.34], 0.036, 0.036, 8, { c: col });
+  body.cylBetween('paint', M.head, [0, 0.27, -0.3], 0.036, 0.04, 8, { c: col });
+  body.cylBetween('paint', [0, 0.27, -0.3], [0, 0.26, 0.26], 0.036, 0.036, 8, { c: col });
+  body.cylBetween('paint', [0, 0.26, 0.26], [0, 0.66, 0.34], 0.036, 0.036, 8, { c: col });
   body.cylBetween('steel', [0, 0.64, 0.3], [0, 0.72, 0.9], 0.02, 0.02, 6);
   // the leg shield, and the floorboard behind it
-  body.box('paint', 0.42, 0.52, 0.03, { p: [0, 0.57, -0.335], r: [-0.2, 0, 0], c: col });
-  for (const sx of [-1, 1]) body.box('paint', 0.03, 0.5, 0.1, { p: [sx * 0.205, 0.56, -0.3], r: [-0.2, 0, 0], c: col });
-  body.box('flat', 0.36, 0.028, 0.42, { p: [0, 0.305, -0.02], c: BLACK });
+  body.box('paint', 0.42, 0.52, 0.03, { p: [0, 0.57, -0.395], r: [-0.2, 0, 0], c: col });
+  for (const sx of [-1, 1]) body.box('paint', 0.03, 0.5, 0.1, { p: [sx * 0.205, 0.56, -0.36], r: [-0.2, 0, 0], c: col });
+  body.box('flat', 0.36, 0.028, 0.5, { p: [0, 0.305, -0.06], c: BLACK });
   // the engine, laid flat under the frame, its barrel forward, the chain case back to the wheel
   body.box('steel', 0.2, 0.17, 0.26, { p: [0, 0.36, 0.33] });
   body.cyl('steel', 0.06, 0.06, 0.2, 8, { p: [0, 0.3, 0.18], r: [PI / 2, 0, 0] });
@@ -137,9 +137,9 @@ function buildMoped(tint) {
   f.cylBetween('chrome', [0, 0.03, 0], [0, 0.17, 0.03], 0.016, 0.016, 6);
   f.cylBetween('chrome', [-0.2, 0.2, 0.05], [0.2, 0.2, 0.05], 0.011, 0.011, 6);
   for (const sx of [-1, 1]) {
-    f.cylBetween('chrome', [sx * 0.2, 0.2, 0.05], [sx * 0.25, 0.2, 0.09], 0.011, 0.011, 6);
-    f.cylBetween('flat', [sx * 0.24, 0.2, 0.082], [sx * 0.37, 0.2, 0.1], 0.0155, 0.0155, 8, { c: RUBBER });
-    f.cylBetween('steel', [sx * 0.23, 0.205, 0.06], [sx * 0.34, 0.19, 0.045], 0.005, 0.004, 4);
+    f.cylBetween('chrome', [sx * 0.2, 0.2, 0.05], [sx * 0.24, 0.2, 0.15], 0.011, 0.011, 6);
+    f.cylBetween('flat', [sx * 0.235, 0.2, 0.14], [sx * 0.36, 0.2, 0.17], 0.0155, 0.0155, 8, { c: RUBBER });
+    f.cylBetween('steel', [sx * 0.23, 0.205, 0.11], [sx * 0.34, 0.19, 0.115], 0.005, 0.004, 4);
   }
   f.cylBetween('steel', [-0.19, 0.2, 0.05], [-0.3, 0.34, 0.03], 0.004, 0.004, 4);
   f.cyl('chrome', 0.04, 0.04, 0.012, 10, { p: [-0.31, 0.37, 0.03], r: [PI / 2, 0, 0] });
@@ -172,8 +172,7 @@ function buildBike(tint) {
     body.cylBetween('paint', [sx * 0.02, 0.84, 0.18], [sx * 0.06, B.wr, B.ax], 0.009, 0.009, 5, { c: col }); // seat stays
   }
   body.cylBetween('steel', st, [0, 0.96, 0.21], 0.012, 0.012, 6);
-  body.box('flat', 0.14, 0.04, 0.26, { p: [0, 0.975, 0.2], c: SEAT });
-  body.box('flat', 0.06, 0.035, 0.1, { p: [0, 0.97, 0.05], c: SEAT });
+  body.box('flat', 0.13, 0.03, 0.17, { p: [0, 0.972, 0.2], c: SEAT });
   // the back mudguard and a rack
   for (let k = 0; k < 4; k++) {
     const a0 = -0.35 + k * 0.42, a1 = a0 + 0.42, R = B.wr + 0.03;
@@ -195,18 +194,18 @@ function buildBike(tint) {
   const f = new MeshBuilder(4901 + tint, { ao: false });
   for (const sx of [-1, 1]) f.cylBetween('paint', [sx * 0.05, -0.12, 0], [sx * 0.05, -B.fork, 0], 0.011, 0.011, 5, { c: col });
   f.box('paint', 0.12, 0.025, 0.035, { p: [0, -0.125, 0], c: col });
-  f.cylBetween('steel', [0, -0.12, 0], [0, 0.1, 0.0], 0.013, 0.013, 6);
-  f.cylBetween('steel', [0, 0.1, 0], [0, 0.11, -0.07], 0.012, 0.012, 6); // the stem forward
-  f.cylBetween('chrome', [-0.22, 0.11, -0.07], [0.22, 0.11, -0.07], 0.011, 0.011, 6);
+  f.cylBetween('steel', [0, -0.12, 0], [0, 0.24, 0.0], 0.013, 0.013, 6);
+  f.cylBetween('steel', [0, 0.24, 0], [0, 0.26, -0.05], 0.012, 0.012, 6); // the stem forward
+  f.cylBetween('chrome', [-0.2, 0.26, -0.05], [0.2, 0.26, -0.05], 0.011, 0.011, 6);
   for (const sx of [-1, 1]) {
-    f.cylBetween('chrome', [sx * 0.22, 0.11, -0.07], [sx * 0.25, 0.11, 0.0], 0.011, 0.011, 6);
-    f.cylBetween('flat', [sx * 0.245, 0.11, -0.01], [sx * 0.27, 0.11, 0.1], 0.0155, 0.0155, 8, { c: RUBBER });
+    f.cylBetween('chrome', [sx * 0.2, 0.26, -0.05], [sx * 0.25, 0.26, 0.06], 0.011, 0.011, 6);
+    f.cylBetween('flat', [sx * 0.248, 0.26, 0.055], [sx * 0.275, 0.26, 0.175], 0.0155, 0.0155, 8, { c: RUBBER });
   }
   for (let k = 0; k < 3; k++) {
     const a0 = -0.6 + k * 0.42, a1 = a0 + 0.42, R = B.wr + 0.03;
     f.beam('steel', [0, -B.fork + Math.cos(a0) * R, Math.sin(a0) * R], [0, -B.fork + Math.cos(a1) * R, Math.sin(a1) * R], 0.06, 0.006);
   }
-  f.cyl('chrome', 0.028, 0.03, 0.03, 8, { p: [-0.12, 0.14, -0.07] }); // the bell
+  f.cyl('chrome', 0.028, 0.03, 0.03, 8, { p: [-0.12, 0.29, -0.05] }); // the bell
   const forkParts = f.build();
   const wb = new MeshBuilder(4902, { ao: false });
   spoked(wb, B.wr, 0.045, 12);
@@ -327,7 +326,7 @@ export class VehicleModel {
     body.add(rw);
     this.wheels.push(this.fwOk, rw);
     // the grips (the middle of each, on the bars)
-    const gx = moped ? 0.305 : 0.258, gy = moped ? 0.2 : 0.11, gz = moped ? 0.091 : 0.045;
+    const gx = moped ? 0.298 : 0.262, gy = moped ? 0.2 : 0.26, gz = moped ? 0.155 : 0.115;
     this.grips[0].position.set(-gx, gy, gz);
     this.grips[1].position.set(gx, gy, gz);
     fork.add(this.grips[0], this.grips[1]);
@@ -520,6 +519,18 @@ export class VehicleModel {
 // which survivors' hands hold on where: the grip of each hand in the frame of grips[k] - the fingers' way and the
 // palm's (render/models/weapons.js handQ). On bars the fist closes over the grip from above and behind; on a wheel's
 // rim from the outside.
+// How a survivor sits in each seat: [the thigh's angle forward of straight down, the knee's bend, how far the knees
+// are apart, the trunk's lean forward] (characters.js: s.sitT / sitK / sitSplay). A moped's rider has their feet on its
+// footboard and whoever rides behind has their knees round them; in a car the legs go out under the dash, and in the
+// back the knees are up behind the front seats; on a bicycle the feet are down at the pedals.
+export const SEAT_POSE = {
+  [VEH.MOPED]: [[1.35, 1.75, 0.1], [1.35, 1.75, 0.36]],
+  [VEH.CAR]: [[1.62, 0.35, 0.1], [1.62, 0.35, 0.1], [2.1, 1.9, 0.12], [2.1, 1.9, 0.12]],
+  [VEH.BIKE]: [[0.32, 0.3, 0.04]],
+};
+// (the sitting pose every seat is measured from: thighs level, shins hanging)
+export const SIT_T = 1.5, SIT_K = 1.45, SEAT_HIP = 0.42;
+
 export const GRIP_HOLD = {
   [VEH.MOPED]: { finger: [0, -0.35, -1], palm: [0, -1, 0.3] },
   [VEH.BIKE]: { finger: [0, -0.35, -1], palm: [0, -1, 0.3] },

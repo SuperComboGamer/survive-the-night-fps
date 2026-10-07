@@ -195,7 +195,7 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
   // ---- random driving from a hundred spots: never into anything, never off the map, never into deep water
   let rs = 4242;
   const rnd = () => ((rs = (Math.imul(rs, 1103515245) + 12345) | 0) >>> 0) / 4294967296;
-  let deepest = 0, where = '', off = 0, wet = 0, fast = 0, steps = 0, crashes = 0, nan = 0;
+  let deepest = 0, once = 0, where = '', off = 0, wet = 0, fast = 0, steps = 0, crashes = 0, nan = 0;
   const spots = [...vehicleSpots(w), ...starterSpots(w)];
   for (let run = 0; run < 120; run++) {
     const vk = [VEH.CAR, VEH.MOPED, VEH.BIKE][run % 3];
@@ -204,7 +204,7 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
     const v = newV(w, vk, s.x, s.z, rnd() * 6.28 - 3.14);
     // (a vehicle of another kind in this spot may be standing in something: start it clear)
     if (bodySunk(w, v) > 0.01) continue;
-    let thr = 1, turn = 0, hb = false;
+    let thr = 1, turn = 0, hb = false, was = 0;
     const ev = [];
     for (let i = 0; i < 25 * 60; i++) {
       if (i % 40 === 0) {
@@ -217,9 +217,14 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
       steps++;
       crashes += ev.filter((e) => e.type === 'veh_crash').length;
       if (!(v.x === v.x && v.z === v.z && v.y === v.y && v.yaw === v.yaw && v.vx === v.vx)) nan++;
+      // (for one step it may be in something low that it was riding over, as the ground falls away under it and that
+      // becomes a thing in its way: the next step has it out. In anything for two steps running is what counts)
       const d = bodySunk(w, v);
-      if (d > deepest) {
-        deepest = d;
+      const held = Math.min(d, was);
+      was = d;
+      once = Math.max(once, d);
+      if (held > deepest) {
+        deepest = held;
         where = `a ${P.name} at ${f1(v.x)}, ${f1(v.z)}`;
       }
       if (Math.abs(v.x) > w.half - 4 || Math.abs(v.z) > w.half - 4) off++;
@@ -227,7 +232,7 @@ const beside = (game, p, e, side = -1, off = 0.9) => {
       if (speedOf(v) > (P.hardTop || P.top) * 1.25) fast++;
     }
   }
-  check('driven at random from every spot it stands at, a vehicle is never inside anything solid, off the map or under water', deepest < 0.12 && off === 0 && wet === 0 && nan === 0 && fast === 0, `${steps} steps, ${crashes} crashes; deepest ${f1(deepest * 100)} cm (${where}), ${off} off the map, ${wet} too deep, ${fast} too fast`);
+  check('driven at random from every spot it stands at, a vehicle is never inside anything solid, off the map or under water', deepest < 0.06 && once < 0.3 && off === 0 && wet === 0 && nan === 0 && fast === 0, `${steps} steps, ${crashes} crashes; deepest ${f1(deepest * 100)} cm for two steps running${where ? ` (${where})` : ''}, ${f1(once * 100)} cm for one, ${off} off the map, ${wet} too deep, ${fast} too fast`);
   // ---- the edge of the map: from the nearest clear, dry ground to each side of it, straight out
   {
     let maxOut = -1e9, tried = 0;

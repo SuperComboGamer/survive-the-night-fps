@@ -4532,12 +4532,16 @@ class SurvivorInstance {
     const amp = mv * lerp(lerp(0.45, 0.75, run), 0.4, cr);
     const knee = mv * lerp(lerp(0.75, 1.3, run), 0.6, cr);
     const sit = this.sitW;
-    const baseT = lerp(cr * 0.95, 1.5, sit);
-    const baseK = lerp(0.06 + cr * 1.5, 1.45, sit);
+    // (seated: thighs level and shins hanging, unless the seat says how its legs go - s.sitT / sitK / sitSplay: the
+    // thigh's and the knee's angles and how far the knees are apart, in a car or on a saddle: game/vehicles.js)
+    const baseT = lerp(cr * 0.95, s.sitT ?? 1.5, sit);
+    const baseK = lerp(0.06 + cr * 1.5, s.sitK ?? 1.45, sit);
     // nunchucks: the trunk and the legs go with the move (the rig's body track: twist, lean, bend, knees, step)
     const nb = this.nk && this.item === ITEM.NUNCHAKU && !this.zombie ? this.nk.core.bodyS : null;
     const nkDrop = nb ? clamp(nb[4] / 0.3, 0, 0.6) * (1 - cr) : 0;
-    legCycle(z, p, ph, amp * (1 - sit), knee * (1 - sit), baseT + nkDrop * 0.95, baseK + nkDrop * 1.5, 0, 0.03 + 0.1 * sit);
+    // (s.pedal: on a bicycle the legs go round with its cranks - their angle)
+    const ped = s.pedal !== undefined && sit > 0.5;
+    legCycle(z, p, ped ? s.pedal : ph, ped ? 0.3 : amp * (1 - sit), ped ? 0.55 : knee * (1 - sit), baseT + nkDrop * 0.95, baseK + nkDrop * 1.5, 0, 0.03 + (s.sitSplay ?? 0.1) * sit);
     // air: tuck legs
     if (air > 0.01) {
       for (let side = 0; side < 2; side++) {
@@ -4841,11 +4845,16 @@ class SurvivorInstance {
       if (!t) continue;
       _T.copy(t).applyMatrix4(_reachM);
       _S.set(side * P.shoulderW, cy, 0);
-      _off.copy(_T).sub(_S);
-      const d = _off.length();
-      if (d > 1e-4) _T.addScaledVector(_off, -Math.min(REACH_FIST, d * 0.5) / d);
       _pole.set(side * 0.7, -1, 0.45);
-      ikTwoBone(_S, _T, P.uarmLen, P.farmLen, _pole, _qU, _qL);
+      // (the wrist stops a fist short of the point, back along the forearm: where the forearm lies is found by
+      // solving for the point itself first, then twice for the wrist)
+      _lh.copy(_T);
+      for (let it = 0; it < 3; it++) {
+        ikTwoBone(_S, _T, P.uarmLen, P.farmLen, _pole, _qU, _qL, _off);
+        if (it === 2) break;
+        _off.sub(_lh).normalize(); // from the point back towards the elbow
+        _T.copy(_lh).addScaledVector(_off, REACH_FIST);
+      }
       const clav = b[side > 0 ? CLAV_R : CLAV_L].quaternion;
       b[side > 0 ? UARM_R : UARM_L].quaternion.copy(_qTmp.copy(clav).invert().multiply(_qU));
       b[side > 0 ? FARM_R : FARM_L].quaternion.copy(_qL);

@@ -2609,8 +2609,8 @@ export class Game {
     }
     sv.object.position.set(rp.x, rp.y, rp.z);
     sv.object.rotation.y = this.input.yaw;
-    const reach = seat ? this.vehicles.place(seat, sv.object) : null;
-    sv.update(dt, { sit: !!seat, reach, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
+    const ride = seat ? this.vehicles.place(seat, sv) : null;
+    sv.update(dt, { sit: !!seat, reach: ride?.reach, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, pedal: ride?.pedal, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time });
     const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
     if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
   }

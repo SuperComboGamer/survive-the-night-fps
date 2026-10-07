@@ -282,6 +282,21 @@ def(S.FAIR_FUEL, 'install_part', 'fx', 0.7, 0.05);
 def(S.RIDE_BOARD, 'metal_hit', 'fx', 0.5, 0.08, 0.15, R_METAL);
 // the built generator and its floodlights (synth-power.js; its drone is the 'genset' loop). Measured on the effects
 // bus 3 m off: the drone -16 LUFS; the start, the stop and a pour each under the player's own pistol shot
+// the vehicles of the mainland (synth-vehicle.js): procedural only. The starter and what a spanner does are the
+// quest car's own sounds
+def(S.VEH_START, 'car_start', 'fxfar', 0.7, 0.04, 0.15, R_CAR_CRANK);
+def(S.VEH_STOP, 'gen_stop', 'fxfar', 0.5, 0.04);
+def(S.VEH_FIX, 'car_part', 'fx', 0.8, 0.06);
+def(S.VEH_FUEL, 'gen_fuel', 'fx', 0.5, 0.05);
+def(S.SIPHON, 'gen_fuel', 'fx', 0.45, 0.08);
+def(S.VEH_CRASH, 'veh_crash', 'fxfar', 1, 0.06, 0.2);
+def(S.VEH_THUMP, 'land', 'fx', 1, 0.1, 0.15, R_BODY);
+def(S.VEH_BREAK, 'veh_break', 'fxfar', 0.9, 0.04, 0.2);
+def(S.VEH_DOOR, 'veh_door', 'fx', 0.7, 0.06);
+def(S.VEH_MOUNT, 'veh_mount', 'fx', 0.55, 0.08);
+def(S.VEH_GLASS, 'glass', 'fx', 0.9, 0.08, 0.15, R_GLASS);
+def(S.VEH_SKID, 'veh_skid', 'fx', 0.6, 0.08);
+def(S.BIKE_BELL, 'bike_bell', 'fx', 0.6, 0.03);
 def(S.GEN_START, 'gen_start', 'fxfar', 0.5, 0.03);
 def(S.GEN_STOP, 'gen_stop', 'fxfar', 0.5, 0.03);
 def(S.GEN_FUEL, 'gen_fuel', 'fx', 0.5, 0.05);
@@ -396,6 +411,11 @@ const LOOPS = {
   handcar: { bank: 'loop_handcar', ref: 3, max: 70, roll: 1.1, vol: 0.7, wet: 0.12, cap: 2, jit: 0 },
   // the car on the crossing (synth-bridge.js): played at its speed, heard from every camera the cutscene cuts to
   car: { bank: 'loop_car', ref: 9, max: 220, roll: 1.0, vol: 0.75, wet: 0.14, always: true, jit: 0 },
+  // the vehicles of the mainland (synth-vehicle.js; game/vehicles.js plays each by its revs): a car's engine is the
+  // crossing's, a moped's a two-stroke buzz; a horn held down
+  veh_car: { bank: 'loop_car', ref: 5, max: 110, roll: 1.0, vol: 0.7, wet: 0.12, cap: 3, jit: 0 },
+  veh_moped: { bank: 'loop_moped', ref: 4, max: 90, roll: 1.0, vol: 0.6, wet: 0.1, cap: 3, jit: 0 },
+  veh_horn: { bank: 'loop_horn', ref: 6, max: 150, roll: 1.0, vol: 0.8, wet: 0.16, cap: 2, jit: 0 },
   // a building burning in Port Calder (the mainland's world.lights 'fire'): a fire's roar, carrying down the street
   blaze: { bank: 'loop_fire', ref: 8, max: 110, roll: 1.0, vol: 1, wet: 0.2, cap: 2, rec: [{ key: 'fire_roar', vol: 3 }, { key: 'fire_loop', vol: 2 }] },
   // supply plane: heard from far off, duller with distance (air), never dropped by the loop cap
