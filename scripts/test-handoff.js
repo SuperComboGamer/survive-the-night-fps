@@ -28,7 +28,7 @@ const procs = [];
 function server(name, port, env = {}) {
   const proc = spawn(process.execPath, ['server/index.js'], {
     env: { ...process.env, DATABASE_URL: '', PORT: String(port), STATS_FILE: join(dir, `stats-${name}.json`), HANDOFF_DIR, HANDOFF_RESERVE_SECONDS: String(RESERVE), HANDOFF_FREEZE_SECONDS: '0', DAY_SECONDS: '6', GODMODE: '1', GAME_IDLE_SECONDS: '60', ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   const s = { name, port, proc, log: '', exit: null };
   proc.stdout.on('data', (d) => (s.log += d));
@@ -37,6 +37,8 @@ function server(name, port, env = {}) {
   procs.push(s);
   return s;
 }
+// told to stop as the host does: SIGTERM (Windows has none: the 'shutdown' message, as pm2 sends)
+const stop = (s) => (process.platform === 'win32' ? s.proc.send({ t: 'shutdown' }) : s.proc.kill('SIGTERM'));
 const up = async (s) => {
   for (let i = 0; i < 300 && !s.log.includes('listening'); i++) await sleep(50);
   return s.log.includes('listening');
@@ -121,7 +123,7 @@ try {
   const B = server('B', base + 1);
   check('server B is up, with nothing to restore yet', (await up(B)) && !/restored/.test(B.log), B.log);
   const t0 = Date.now();
-  A.proc.kill('SIGTERM');
+  stop(A);
   const closes = await Promise.all([ann, ben, cy, bot].map((c) => Promise.race([c.gone, sleep(10000).then(() => null)])));
   check('every socket of the game is closed as moved (MOVED_CODE), not dropped', closes.every((c) => c?.code === MOVED_CODE), JSON.stringify(closes));
   for (let i = 0; i < 100 && !A.exit; i++) await sleep(50);
@@ -154,7 +156,7 @@ try {
   const C = server('C', base + 2, { HANDOFF_STATE_VERSION: '99' });
   check('server C (another state version) is up, junk in the folder and all', await up(C));
   await sleep(800);
-  B.proc.kill('SIGTERM');
+  stop(B);
   await Promise.all([ann2, ben2, bot2].map((c) => Promise.race([c.gone, sleep(10000)])));
   for (let i = 0; i < 100 && !B.exit; i++) await sleep(50);
   check('B hands it over and exits', B.exit?.code === 0, JSON.stringify(B.exit));
@@ -164,7 +166,7 @@ try {
   check('...so the game is over, and its player is told an update ended it', ann3.reject === REJECT_REASON.ENDED_UPDATE, JSON.stringify({ reject: ann3.reject, id: ann3.id }));
   check('...and C carries on regardless', (await api(C, '/status')).status === 200 && C.exit === null);
   check('the junk save is not restored and does not stop anything', !/JUNKJUNK restored/.test(C.log) && readdirSync(HANDOFF_DIR).filter((f) => f.startsWith('JUNKJUNK')).length <= 1);
-  C.proc.kill('SIGTERM');
+  stop(C);
   for (let i = 0; i < 100 && !C.exit; i++) await sleep(50);
 } catch (e) {
   check('no error', false, String(e && e.stack));

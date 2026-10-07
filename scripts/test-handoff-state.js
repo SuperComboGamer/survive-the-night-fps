@@ -11,7 +11,7 @@ const { Game } = await import('../server/game.js');
 const { envelope, encode, decode, HandoffError } = await import('../server/handoff.js');
 const { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, ENT } = await import('../shared/protocol.js');
 const { PHASE, SLOT_BUILD } = await import('../shared/constants.js');
-const { ITEM, STRUCT, COL } = { ...(await import('../shared/defs.js')), ...(await import('../shared/collision.js')) };
+const { ITEM, STRUCT, ZTYPE, COL } = { ...(await import('../shared/defs.js')), ...(await import('../shared/collision.js')) };
 const { randomUUID } = await import('node:crypto');
 
 let failed = 0;
@@ -108,6 +108,20 @@ A.ach.of(pa).places.add(A.world.zones[1].id);
 pa.xpBase = 1200;
 pa.best = 3;
 A.award(pa, 0, 75);
+// ...a boss mid-fight, a survivor down and bleeding, one dead, and a wreck that took blows and is ringing
+const boss = A.zm.spawn(ZTYPE.BOSS_BRUTE, pa.state.x + 25, pa.state.z + 5, { horde: true });
+if (boss) {
+  boss.hp = Math.round(boss.maxHp * 0.4);
+  A.bossId = boss.id;
+}
+pb.downed = true;
+pb.bleed = 17.5;
+const pc = A.players.get(cy.id);
+pc.alive = false;
+if (wreck) {
+  A.gather.set(wreck, { left: 2, hits: [[3, 1, 2, 0, 4, 1]], alarm: 4 });
+  A.ringing.add(wreck); // (ALARM.RINGING, as the game has it)
+}
 
 // ---------------------------------------------------------------- saved, encoded, restored
 const t0 = performance.now();
@@ -139,6 +153,9 @@ check('...the tree is out of the world on the new valley too', !B.world.staticGr
 const zs = (g) => g.zombies.map((z) => [z.id, z.ztype, z.x, z.y, z.z, z.hp, z.maxHp, z.horde, z.boss, z.legs, z.herd]);
 same('the dead: each one where it was, as hurt, of the same kind, the horde still the horde', zs(A), zs(B));
 same('the boss is still the boss', A.bossId, B.bossId);
+check('...mid-fight: as hurt as it was', !!boss && B.zombies.find((z) => z.id === boss.id)?.hp === boss.hp && B.bossId === boss.id, `${boss?.hp} -> ${B.zombies.find((z) => z.id === boss?.id)?.hp}`);
+same('a survivor down and bleeding is still down, bleeding as much; one dead is still dead', [pb.downed, pb.bleed, pc.alive], [B.players.get(ben.id).downed, B.players.get(ben.id).bleed, B.players.get(cy.id).alive]);
+check('a wreck keeps the blows it took, and its alarm rings on', !wreck || (JSON.stringify(B.gather.get([...B.gather.keys()].find((c) => c.x === wreck.x && c.z === wreck.z))) === JSON.stringify(A.gather.get(wreck)) && [...B.ringing].some((c) => c.x === wreck.x && c.z === wreck.z)));
 if (herd) same('the wandering herd', herd.id, [...B.zm.herds.list.values()][0]?.id);
 same('the mounted gun, the fair, the handcars', [A.gun.save(), A.fair.save(), A.handcars.save()], [B.gun.save(), B.fair.save(), B.handcars.save()]);
 same('the bell and the cemetery', [A.fixtures.save(), A.cemetery.save()], [B.fixtures.save(), B.cemetery.save()]);
