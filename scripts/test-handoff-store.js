@@ -23,7 +23,7 @@ check('the codec keeps what JSON does not: Infinity, typed arrays as arrays', ((
   return o.a === Infinity && o.b === -Infinity && Array.isArray(o.c) && o.c[0] === 1.5 && o.d === 'x' && o.n === null;
 })());
 
-async function exercise(label, store) {
+async function exercise(label, store, db = null) {
   const heard = [];
   store.listen((code) => heard.push(code));
   await sleep(100);
@@ -55,7 +55,7 @@ async function exercise(label, store) {
   const first = await store.getBuild(A);
   check(`${label}: a build is kept with its signature, and given back`, first?.body.toString() === 'build one' && first.sig === 'sig-of-one' && (await store.getBuild('c'.repeat(24))) === null);
   check(`${label}: ...and its client's files, by their hashes`, (await store.getAsset(sha('in both')))?.toString() === 'in both' && (await store.getAsset(sha('nope'))) === null);
-  if (label === 'postgres') {
+  if (db) {
     // (a file put there by anyone else is written over by a server that puts its own build: it knows what is right)
     await db.query(`UPDATE handoff_asset SET body = 'tampered' WHERE hash = $1`, [sha('in both')]);
     await store.putBuild(B, Buffer.from('build two'), '', new Map([file('in both')]));
@@ -93,7 +93,7 @@ await exercise('files', new FileStore(join(mkdtempSync(join(tmpdir(), 'stn-store
 db = await openDb('pglite:memory');
 const { applied } = await migrate(db);
 check('008_game_handoff and 014_handoff_builds apply', applied.includes('008_game_handoff.sql') && applied.includes('014_handoff_builds.sql'), applied.join());
-await exercise('postgres', new PgStore(db));
+await exercise('postgres', new PgStore(db), db);
 
 // the two halves of a match a deploy split
 const matches = new MatchStore({ db });
@@ -112,6 +112,19 @@ check("...and the new server's first match carries it on (continues)", rows.find
 check('...only the first: the next run in that game is a match of its own', rows.filter((r) => r.continues).length === 1, JSON.stringify(rows));
 await matches.close();
 await db.close();
+
+// ...and on a real Postgres, when there is one this test may use (STORE_TEST_DATABASE_URL, on this machine: its
+// handoff tables are emptied). PGlite is Postgres compiled to WebAssembly, but the server runs on the real thing.
+const REAL = process.env.STORE_TEST_DATABASE_URL;
+if (REAL && /^postgres(ql)?:\/\/[^@]*@(localhost|127\.0\.0\.1)[:/]/.test(REAL)) {
+  const pg = await openDb(REAL);
+  await migrate(pg);
+  await pg.query('DELETE FROM game_handoff');
+  await pg.query('DELETE FROM handoff_build');
+  await pg.query('DELETE FROM handoff_asset');
+  await exercise('real postgres', new PgStore(pg), pg);
+  await pg.close();
+} else console.log('note  STORE_TEST_DATABASE_URL not set (a Postgres on this machine): the store was run on PGlite only');
 
 console.log(failed ? `\n${failed} FAILED` : '\nall ok');
 process.exit(failed ? 1 : 0);
