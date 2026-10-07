@@ -5,7 +5,7 @@ import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/const
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp, replay } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
-import { Compass, Objective, Tracked, Markers, Downed, DamageDir } from './hud2.js';
+import { Compass, Objective, Tracked, Markers, Downed, DamageDir, Tonight } from './hud2.js';
 import { Minimap } from './minimap.js';
 import { W, ACT_NOW } from '../game/act.js'; // (this act, and the words for what its parts go into)
 import { WORLD } from '../../shared/acts.js';
@@ -120,6 +120,8 @@ export class Hud {
     this.clkRemainN = el('b', '', this.clkRemain, '0');
     el('span', '', this.clkRemain, 'remain');
     this.clkRemain.hidden = true;
+    // ---- under it from the dusk horn to nightfall: what tonight brings
+    this.tonight = new Tonight(clockLayer, ui.root);
 
     // ---- boss bar
     const boss = (this.boss = el('div', 'boss', topLayer));
@@ -304,6 +306,7 @@ export class Hud {
     }
 
     this._clock(h);
+    this.tonight.update(zombie || h.finale ? null : h.tonight || null);
     this._boss(h.boss);
     this._vitals(h, zombie);
     if (zombie) this._zombie(h);
