@@ -3,7 +3,7 @@
 import { TREE_TYPES, ROCK_TYPES } from '../shared/world.js';
 import { gatePoint } from '../shared/layout.js';
 import { ZONE, CONT_DEFS } from '../shared/defs.js';
-import { PROPS } from '../shared/props.js';
+import { PROPS, collidersOf, planOf } from '../shared/props.js';
 import { COL, footprintContains, pushCircle, canReach, groundAt } from '../shared/collision.js';
 import { simulatePlayer, createPlayerState } from '../shared/playersim.js';
 import { BTN, CMD_RATE, GRID_STEP, PLAYER_RADIUS, PLAYER_HEIGHT, EYE_HEIGHT, STEP_HEIGHT, WATER_LEVEL } from '../shared/constants.js';
@@ -169,8 +169,8 @@ export function solidsAt(world, x, y, z) {
 // The prop a collider belongs to. Colliders carry no owner: matched by where world.js puts a prop's boxes and cylinders
 export function propOf(world, col) {
   for (const p of world.props) {
-    const def = PROPS[p.type];
-    if (!def || Math.hypot(p.x - col.x, p.z - col.z) > 8) continue;
+    const def = collidersOf(p.type, p.seed);
+    if (!def || Math.hypot(p.x - col.x, p.z - col.z) > 14) continue;
     const c = Math.cos(p.ry);
     const s = Math.sin(p.ry);
     for (const [lx, lz] of [...(def.boxes || []).map((b) => [b[0], b[2]]), ...(def.cyls || [])]) {
@@ -201,15 +201,17 @@ export function walksThrough(world, o, dir) {
 // ---------------------------------------------------------------- solids standing in each other
 // What stands on the ground as seen from above: a prop's collision boxes and cylinders, a tree's trunk, a boulder,
 // a place's upright pieces (walls, posts, machines). Each: { x, z, hx, hz, c, s, r, y0, y1, who }.
-export function solidsOf(world) {
+// plan: each prop by what the world was laid out by (props.js `plan`: what one is stood on another by), not by the
+// colliders of the variant that is drawn
+export function solidsOf(world, plan = false) {
   const out = [];
   for (const p of world.props) {
-    const def = PROPS[p.type];
+    const def = plan ? planOf(p.type) : collidersOf(p.type, p.seed);
     if (!def) continue;
     const c = Math.cos(p.ry);
     const s = Math.sin(p.ry);
     for (const [lx, ly, lz, sx, sy, sz] of def.boxes || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: sx / 2, hz: sz / 2, c, s, r: 0, y0: p.y + ly - sy / 2, y1: p.y + ly + sy / 2, who: p.type, id: p });
-    for (const [lx, lz, r, h] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y, y1: p.y + h, who: p.type, id: p });
+    for (const [lx, lz, r, h, base = 0] of def.cyls || []) out.push({ x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz, hx: 0, hz: 0, c: 1, s: 0, r, y0: p.y + base, y1: p.y + base + h, who: p.type, id: p });
   }
   const t = world.trees;
   for (let i = 0; i < t.length; i += 6) out.push({ x: t[i], z: t[i + 2], hx: 0, hz: 0, c: 1, s: 0, r: TREE_TYPES[t[i + 5]].r * t[i + 3], y0: t[i + 1], y1: t[i + 1] + 10, who: 'tree', id: 't' + i });

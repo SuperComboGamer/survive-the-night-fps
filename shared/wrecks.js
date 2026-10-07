@@ -7,6 +7,7 @@
 import { COL } from './collision.js';
 import { qpos, dqpos } from './protocol.js';
 import { BLOW } from './surfaces.js';
+import { planOf } from './props.js';
 
 export const WRECK_SALVAGE = 5; // hits a wreck gives scrap for in a day (Game.gatherHit)
 export const WRECK_HITS_MAX = 12; // blows a wreck remembers: later ones still rock it and spark, and leave it as it is
@@ -50,6 +51,15 @@ export function alarmStep(state, type, blow, front, rng) {
   return rng() < WRECK_ALARM.trip ? [ALARM.RINGING, ALARM_SAY.RING] : [state, -1];
 }
 
+// A wreck is several colliders now that they follow its model (shared/props.js), and it is still one thing to strip,
+// to dent and to ring: every collider of it names the first of them (col.main, set in worldkit.js), and that one is
+// what its record is kept under and what it is called on the wire. (A lorry is two units: tractor and trailer.)
+export const wreckUnit = (col) => (col && col.main) || col;
+
+// Half the length of a wreck, nose to tail, for saying where along it a blow landed (the alarm: alarmStep's `front`).
+// Its plan's box, which is the one box it always had - not the box of it that happened to be struck.
+export const wreckHalf = (prop, col) => Math.max(0.5, (planOf(prop.type)?.boxes?.[0]?.[5] ?? col.hz * 2) / 2);
+
 // The wreck a collider is a solid of: the prop the world put down (worldkit.js tags its colliders), or null - a
 // tree, a wall, a wreck the game draws for itself (the plane that is mended).
 export const wreckOf = (col) => (col && col.flags & COL.SALVAGE && col.tag && typeof col.tag === 'object' && !col.tag.bare && !col.tag.live ? col.tag : null);
@@ -69,6 +79,6 @@ export function wreckLocal(prop, x, y, z, out = [0, 0, 0]) {
 // The salvage collider the server names by its quantized x, y0, z (as EVT.STRIPPED does), or null.
 const _near = [];
 export function wreckColAt(world, qx, qy, qz) {
-  for (const c of world.staticGrid.query(dqpos(qx), dqpos(qz), 0.5, _near)) if (c.flags & COL.SALVAGE && qpos(c.x) === qx && qpos(c.y0) === qy && qpos(c.z) === qz) return c;
+  for (const c of world.staticGrid.query(dqpos(qx), dqpos(qz), 0.5, _near)) if (c.flags & COL.SALVAGE && qpos(c.x) === qx && qpos(c.y0) === qy && qpos(c.z) === qz) return wreckUnit(c);
   return null;
 }
