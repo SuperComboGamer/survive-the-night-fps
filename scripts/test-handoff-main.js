@@ -45,6 +45,7 @@ proc.on('exit', () => (exited = true));
 globalThis.location = { protocol: 'http:', host: `localhost:${port}` };
 const warn = console.warn;
 console.warn = () => {};
+const conns = [];
 try {
   check('a server of this tree is up, with the save waiting', await until(() => log.includes('listening')), log);
   await until(() => /up in \d+ ms|not restored/.test(log));
@@ -59,6 +60,7 @@ try {
       join: () => {
         const conn = new Connection({});
         into.conn = conn;
+        conns.push(conn);
         return conn.connect(['Ann', 'Ben', 'Cy'][i], pid, fx.code).then(
           (info) => ((into.info = info), true),
           (e) => e
@@ -73,6 +75,9 @@ try {
   check('no error', false, e.stack);
 }
 console.warn = warn;
+// (every socket closed before the process goes: Node on Windows can trip over a WebSocket still closing at exit)
+for (const c of conns) c.close(4001);
+await sleep(300);
 proc.kill('SIGKILL');
 await until(() => exited, 5000);
 check('the server is stopped', exited);
