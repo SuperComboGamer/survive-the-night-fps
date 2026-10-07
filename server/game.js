@@ -326,8 +326,9 @@ export class Game {
     this.log = opts.log ?? ((...a) => console.log('[game]', ...a));
     this.records = opts.stats ?? new PlayerStats(); // the leaderboard (stats.js): the server's is kept in a file, this one goes with the game
     // (a restored game's valley is the one it was played on: built from its seed, which pins nothing)
-    // The run's act (shared/acts.js): 1 on the island, 2 on the mainland. checkpoint: what the team crossed the
-    // bridge with (arrive), which a wipe on the mainland starts again from. crossing: the cutscene between the two,
+    // The run's act (shared/acts.js): 1 on the island, 2 on the mainland. checkpoint: the day the team came off the
+    // bridge (arrive: that day is the long one). A wipe on the mainland ends the run like one on the island: the next
+    // begins on the island. crossing: the cutscene between the two,
     // while it plays ({ pending: the mainland is still to be built, skip: who has asked to skip it }).
     this.act = WORLD.ISLAND;
     this.checkpoint = null;
@@ -1173,9 +1174,6 @@ export class Game {
   }
 
   startGame() {
-    // a wipe on the mainland costs the mainland, not the hour before it: the run starts again where the team came
-    // off the bridge, with what each of them crossed with (the checkpoint, arrive)
-    if (this.phase === PHASE.GAMEOVER && this.act === WORLD.MAINLAND && this.checkpoint) return this.restartFromBridge();
     this.track.finish('abandoned'); // (a run still being played as a new one begins: debug, tests)
     this.clearWorld();
     this.checkpoint = null;
@@ -1304,8 +1302,8 @@ export class Game {
 
   // The checkpoint at the bridge. Everybody is alive on the mainland - whoever was dead or turned at the end of the
   // island comes back - with what they carried over and, at the least, the bridgehead cache's floor (bridgehead).
-  // What each of them has now is kept: a wipe on the mainland starts again from it (restartFromBridge). Returns how
-  // many it brought back from the dead.
+  // It is no second chance: a wipe on the mainland is the end of the run (gameOver), and the next begins on the
+  // island. Returns how many it brought back from the dead.
   checkpointAt() {
     let back = 0;
     for (const p of this.players.values()) {
@@ -1317,9 +1315,7 @@ export class Game {
       } else this.landOn(p);
       this.bridgehead(p);
     }
-    const kits = [];
-    for (const p of this.players.values()) kits.push([this.leaverKey(p), this.kitOf(p)]);
-    this.checkpoint = { day: this.day, unlocked: this.unlocked, kits };
+    this.checkpoint = { day: this.day };
     return back;
   }
 
@@ -1393,26 +1389,6 @@ export class Game {
     return gave;
   }
 
-  // what a survivor carries, as plain data (the checkpoint), and back
-  kitOf(p) {
-    const s = p.state;
-    return { weapons: s.weapons.slice(), mags: s.mags.slice(), ammo: s.ammo.slice(), inv: p.inv.map((it) => (it ? { ...it } : null)), armor: p.armor, armorMax: p.armorMax, armorItem: p.armorItem, backpackItem: p.backpackItem, kit: p.kit };
-  }
-  wear(p, k) {
-    const s = p.state;
-    s.weapons = k.weapons.slice();
-    s.mags = k.mags.slice();
-    s.ammo = k.ammo.slice();
-    p.inv = k.inv.map((it) => (it ? { ...it } : null));
-    p.armor = k.armor;
-    p.armorMax = k.armorMax;
-    p.armorItem = k.armorItem;
-    p.backpackItem = k.backpackItem;
-    p.kit = k.kit;
-    p.invDirty = true;
-    this.syncThrow(p);
-  }
-
   // The crossing is over (its clock ran out, or everybody asked to skip it): the first day on the mainland begins.
   arrive() {
     this.buildMainland(true); // (a crossing cut short before its mainland was up)
@@ -1446,35 +1422,6 @@ export class Game {
       if (c && c.skip.includes(p.id)) got++;
     }
     return [got, need];
-  }
-
-  // A wipe on the mainland: the same mainland again, as the team found it coming off the bridge, on the day they
-  // did, each with what they crossed with. Whoever joined since has a late joiner's kit for that day.
-  restartFromBridge() {
-    const cp = this.checkpoint;
-    this.track.finish('abandoned');
-    this.clearWorld();
-    this.phase = PHASE.DAY;
-    this.day = cp.day;
-    this.unlocked = cp.unlocked;
-    this.timeLeft = this.dayLen;
-    this.populate();
-    const kits = new Map(cp.kits);
-    for (const p of this.players.values()) {
-      p.nightKills = p.nightRevives = 0;
-      p.lastChance = false;
-      if (p.perksNext >= 0) p.perks = p.perksNext;
-      p.perksNext = -1;
-      p.waypoint = null;
-      const k = kits.get(this.leaverKey(p));
-      this.spawnHuman(p, k ? k.kit || { mag: 0, ammo: 0, items: [], tools: [] } : starterKit(this.day, this.diff));
-      if (k) this.wear(p, k);
-    }
-    this.notify(NOTIFY.CHECKPOINT, this.day);
-    this.globalDirty = true;
-    this.playersDirty = true;
-    this.track.start();
-    this.log(`wiped on the mainland: back at the bridgehead, day ${this.day}`);
   }
 
   shuffle(a) {
@@ -4022,10 +3969,7 @@ export class Game {
         if (args[1] === 'go' && this.crossing) this.crossing.hold = Math.max(0, (this.crossing.hold | 0) - 1);
         else if (this.phase === PHASE.CROSSING) this.sendChat(p, 0, CHATF.SYSTEM, 'the crossing is already on');
         else {
-          if (this.act !== WORLD.ISLAND || (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT)) {
-            this.checkpoint = null; // (a wipe on the mainland would start again at the bridge, not on the island)
-            this.startGame();
-          }
+          if (this.act !== WORLD.ISLAND || (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT)) this.startGame();
           this.cross(p, this.phase === PHASE.NIGHT);
           if (args[1] === 'skip') this.arrive();
           else if (args[1] === 'hold') this.crossing.hold = 2;
@@ -4050,12 +3994,11 @@ export class Game {
       case 'map1':
       case 'island':
         // /map1 (or /island): back to the island - a new run from its first day, from the mainland, the crossing or
-        // the end screen. Not the bridge a wipe on the mainland goes back to: the checkpoint is dropped first
+        // the end screen
         if (this.act === WORLD.ISLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
           this.sendChat(p, 0, CHATF.SYSTEM, 'already on the island (map 1)');
           break;
         }
-        this.checkpoint = null;
         this.takeoffHold = 0; // (a /takeoff hold would otherwise freeze the next run's end screen)
         this.startGame();
         this.sendChat(p, 0, CHATF.SYSTEM, `on the island (map 1): day ${this.day}`);
@@ -4096,7 +4039,7 @@ export class Game {
         this.sup.items.forEach((it, i) => this.giveItem(p, it, this.sup.need[i] - this.supplies[i]));
         break;
       case 'wipe':
-        // /wipe: every survivor dies (the checkpoint at the bridge is what a wipe on the mainland goes back to)
+        // /wipe: every survivor dies (on either map the run is over: the next begins on the island)
         for (const q of [...this.players.values()]) if (q.alive && !q.zombie) this.killPlayer(q, { kind: KILLER.WORLD }, true);
         this.checkAllDead();
         break;

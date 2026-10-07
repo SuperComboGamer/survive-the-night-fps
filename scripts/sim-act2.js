@@ -4,7 +4,7 @@
 //   cutscene -> everybody arrives with what they carried -> the dead come back at the checkpoint -> the bridgehead
 //   cache makes up the floor and nothing more -> the plane's parts are at their set places, are found and fitted ->
 //   the runway stand: the fuel truck, then the plane, then a runway to keep clear -> the take-off is the victory
-// and round it: a wipe on the mainland starts again from the bridge, a late joiner lands in the act being played,
+// and round it: a wipe on the mainland ends the run (the next begins on the island), a late joiner lands in the act being played,
 // a dropped player and a deploy both get across the crossing, and the mainland's nights have the late bosses. The
 // survivor each player chose to be (shared/characters.js) is the same one through all of it.
 // It ends with what a tick costs with a night's horde up on each of the two maps.
@@ -319,25 +319,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   game.cross(a, true);
   game.arrive();
   check('a car that left in the night comes off the bridge the next morning', game.phase === PHASE.DAY && game.day === 4 && game.act === WORLD.MAINLAND, `day ${game.day}`);
-  const kits = [kitOf(a), kitOf(b)];
-  // days later, with other things in their hands, they are wiped out
-  ticks(game, 2);
-  game.giveItem(a, ITEM.MEDKIT, 3);
-  a.state.ammo[AMMO.SHELL] = 1;
-  game.day = 6;
-  game.unlocked = 3;
-  put(game, a, 100, 100);
-  for (const p of [a, b]) game.killPlayer(p, { kind: 3 });
-  game.checkAllDead();
-  check('everybody dead on the mainland is a game over', game.phase === PHASE.GAMEOVER);
-  ticks(game, GAME_OVER_DELAY + 0.5);
-  check('...and the run starts again from the bridge, not from the island', game.phase === PHASE.DAY && game.act === WORLD.MAINLAND && game.world.kind === WORLD.MAINLAND && game.day === 4 && notes.some((n) => n[0] === NOTIFY.CHECKPOINT && n[1] === 4) && !ann.resets.some((r) => r.act === WORLD.ISLAND), `phase ${game.phase} act ${game.act} day ${game.day}`);
-  check('...everybody alive at the bridgehead with what they crossed with', [a, b].every((p) => p.alive && !p.zombie && near(p, game.world.start, 16)) && kitOf(a) === kits[0] && kitOf(b) === kits[1] && game.unlocked === 0, `${kitOf(a)}\n      ${kits[0]}`);
-  check(`...and none of the dead within ${START_CLEAR} m of it`, !nearHead(game).length, nearHead(game).map((z) => `${z.x | 0},${z.z | 0}`).join(' '));
-  ticks(game, 0.2);
-  check('...and as the survivors they chose to be', isChar(game, [ann, ben], ann.id, 6) && isChar(game, [ann, ben], ben.id, benIs), whoIs(game, [ann, ben]));
-  check('...on a mainland stocked afresh, the plane as they first found it', game.supplies.every((n) => n === 0) && game.items.filter((e) => PLANE_PARTS.includes(e.item)).length === 7 && game.zombies.length > 40);
-  check('...and its first day is the long one again', Math.abs(game.timeLeft - ARRIVAL_DAY) < 2 && game.checkpoint?.day === 4);
+  check('...and its first day is the long one', Math.abs(game.timeLeft - ARRIVAL_DAY) < 2 && game.checkpoint?.day === 4);
   game.day = 5;
   check('the days after are a minute longer than the island\'s', game.dayLen === dayLength(5) + MAINLAND_DAY_MORE, String(game.dayLen));
   game.day = 4;
@@ -355,12 +337,22 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   const eve = client(game, 'Eve', randomUUID());
   ticks(game, 0.5);
   check('...or beside the team, once it has left the bridgehead', near(eve.p(), a.state, 26), `${eve.p().state.x | 0},${eve.p().state.z | 0} vs ${a.state.x | 0},${a.state.z | 0}`);
+  // days later, with other things in their hands, they are wiped out
+  game.giveItem(a, ITEM.MEDKIT, 3);
+  game.day = 6;
+  game.unlocked = 3;
+  const resets = ann.resets.length;
   for (const p of [a, b, d, eve.p()]) game.killPlayer(p, { kind: 3 });
   game.checkAllDead();
-  ticks(game, GAME_OVER_DELAY + 0.5);
+  check('everybody dead on the mainland is a game over', game.phase === PHASE.GAMEOVER && game.act === WORLD.MAINLAND && notes.some((n) => n[0] === NOTIFY.GAME_OVER && n[1] === 6), `phase ${game.phase}`);
+  ticks(game, GAME_OVER_DELAY - 1);
+  check('...with the end screen up for as long as one on the island', game.phase === PHASE.GAMEOVER, `phase ${game.phase}`);
+  ticks(game, 1.5);
+  check('...and then the run is over: the next begins on the island, on its first day, not back at the bridge', game.phase === PHASE.DAY && game.act === WORLD.ISLAND && game.world.kind === WORLD.ISLAND && game.day === 1 && !game.checkpoint && ann.resets.length === resets + 1 && ann.resets.at(-1).act === WORLD.ISLAND && dee.resets.at(-1).act === WORLD.ISLAND, `phase ${game.phase} act ${game.act} day ${game.day} resets ${JSON.stringify(ann.resets)}`);
+  check('...everybody alive at the island\'s start with a new starting kit, not what they had on the mainland', [a, b, d, eve.p()].every((p) => p.alive && !p.zombie && near(p, game.world.start, 30)) && a.state.weapons[SLOT_PRIMARY] !== ITEM.SHOTGUN && countItem(a.inv, ITEM.MEDKIT) === 0 && game.unlocked === 0, `${kitOf(a)}`);
+  check('...with the car to fix again, its supplies all to find', game.sup.items === SUPPLIES && game.supplies.every((n) => n === 0) && !game.world.car.plane, JSON.stringify(game.supplies));
   ticks(game, 0.2);
   check('...everybody still who they chose to be', isChar(game, [ann, ben, dee], ann.id, 6) && isChar(game, [ann, ben, dee], ben.id, benIs) && isChar(game, [ann, ben, dee], dee.id, 1), whoIs(game, [ann, ben, dee]));
-  check('a second wipe goes back to the bridge again; whoever joined since has a late joiner\'s kit', game.phase === PHASE.DAY && game.act === WORLD.MAINLAND && kitOf(a) === kits[0] && d.alive && d.state.weapons[SLOT_PISTOL] === ITEM.PISTOL && near(d, game.world.start, 16));
 }
 
 // ================================================================ a drop, and a deploy, across the crossing
@@ -392,12 +384,12 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   ticks(B, CROSSING.TIME);
   check('...and is still that survivor off the bridge', isChar(B, [back], ann.id, 2) && isChar(B, [back], ben.id, 7), whoIs(B, [back]));
   check('...and it arrives on the mainland with what was carried', B.phase === PHASE.DAY && B.act === WORLD.MAINLAND && back.resets.some((r) => r.act === WORLD.MAINLAND) && kitOf(a2) === kit && near(a2, B.world.start, 16), `phase ${B.phase} act ${B.act}`);
-  // ...and a deploy on the mainland: the act, the mainland and the checkpoint survive it
+  // ...and a deploy on the mainland: the act, the mainland and the day they arrived survive it
   ticks(B, 2);
   put(B, a2, B.world.start.x + 60, B.world.start.z);
   B.giveItem(a2, ITEM.MEDKIT, 1);
   const C = new Game({ log: quiet, themes: false, restore: decode(encode(envelope(B))) });
-  check('a deploy on the mainland: act 2, the mainland of the same seed, the checkpoint', C.act === WORLD.MAINLAND && C.world.kind === WORLD.MAINLAND && C.world.size === MAINLAND_SIZE && C.worldHash === B.worldHash && C.checkpoint?.kits.length === 2 && C.checkpoint.day === B.checkpoint.day && C.items.length === B.items.length && C.zombies.length === B.zombies.length, `act ${C.act} hash ${C.worldHash}/${B.worldHash} cp ${JSON.stringify(C.checkpoint)?.length}`);
+  check('a deploy on the mainland: act 2, the mainland of the same seed, the checkpoint', C.act === WORLD.MAINLAND && C.world.kind === WORLD.MAINLAND && C.world.size === MAINLAND_SIZE && C.worldHash === B.worldHash && C.checkpoint?.day === B.checkpoint.day && C.items.length === B.items.length && C.zombies.length === B.zombies.length, `act ${C.act} hash ${C.worldHash}/${B.worldHash} cp ${JSON.stringify(C.checkpoint)?.length}`);
   const again = client(C, 'Ann', annId);
   const a3 = again.p();
   ticks(C, 0.2);
@@ -411,7 +403,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   ticks(C, GAME_OVER_DELAY + 0.5);
   ticks(C, 0.2);
   check('...as the same survivors', isChar(C, [again], ann.id, 2) && isChar(C, [again], ben.id, 7), whoIs(C, [again]));
-  check('...and a wipe after it still goes back to the bridge, with what was carried over it', C.phase === PHASE.DAY && C.act === WORLD.MAINLAND && kitOf(a3) === kit && near(a3, C.world.start, 16), `phase ${C.phase} ${kitOf(a3)}`);
+  check('...and a wipe after it is the end of the run: the next begins on the island', C.phase === PHASE.DAY && C.act === WORLD.ISLAND && C.world.kind === WORLD.ISLAND && !C.checkpoint && kitOf(a3) !== kit && near(a3, C.world.start, 30), `phase ${C.phase} act ${C.act} ${kitOf(a3)}`);
 }
 
 // ================================================================ the mainland's nights
@@ -451,7 +443,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
 // ================================================================ what the island has learnt since, on the mainland
 // Difficulty levels, the schematics' rumours, a backpack that sorts itself and takes a drop back, the bestiary, the
 // dead fanning out of a crowd and dogs that bite and run were each written for the island. Here each is held on the
-// mainland: across the crossing, at the checkpoint, after a wipe, and out where the island's 640 m have long ended.
+// mainland: across the crossing, at the checkpoint, and out where the island's 640 m have long ended.
 {
   // a game of that difficulty with its team on the mainland: Ann with what she started with, Ben with nothing
   const land = (difficulty, before) => {
@@ -502,9 +494,6 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
     const got = (g) => [g.b.state.ammo[AMMO.P9], countItem(g.b.inv, ITEM.BANDAGE)];
     const tools = (g) => g.b.state.weapons[SLOT_PISTOL] === BRIDGEHEAD.PISTOL && g.b.state.mags[1] === mag && g.b.state.weapons[SLOT_MELEE] === BRIDGEHEAD.MELEE && g.b.state.weapons[SLOT_BUILD] === BRIDGEHEAD.BUILD;
     check("the bridgehead's floor follows the difficulty: 48 rounds and 2 bandages on Ember, 24 and 1 on Nightfall, 16 and 1 on Blackout; the pistol, the knife and the hammer on all three", three.every((g) => String(got(g)) === String(want(g)) && tools(g)) && String(got(E)) === '48,2' && String(got(N)) === '24,1' && String(got(B)) === '16,1', three.map((g) => got(g).join('/')).join(' '));
-    const floors = three.map(got).map(String);
-    for (const g of three) wipe(g);
-    check('...and a wipe gives each the same floor again at the bridge', three.every((g, i) => g.game.phase === PHASE.DAY && g.game.act === WORLD.MAINLAND && String(got(g)) === floors[i] && tools(g)), three.map((g) => got(g).join('/')).join(' '));
   }
   {
     const cys = three.map((g) => client(g.game, 'Cy', randomUUID()));
@@ -562,8 +551,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
     ticks(game, 0.2);
     check('one searched out of its container is unlocked, and its rumour gone', !!(game.unlocked & (1 << SCHEM_BIT[SCHEMATICS[1]])) && rumours().length === 3 && !rumours().some((rm) => rm.item === SCHEMATICS[1]), JSON.stringify(rumours()));
     wipe(g);
-    const again = SCHEMATICS.map((it) => game.caches.filter((c) => c.schem === it));
-    check('a wipe hides the four the team crossed without again, and tells the team where', game.unlocked === got && game.schemHints[0] === 255 && again[0].length === 0 && rest.every((it, k) => again[k + 1].length === 1 && again[k + 1][0].zone === game.schemHints[k + 1]) && JSON.stringify(ann.global.schemHints) === JSON.stringify(game.schemHints) && rumours().length === 4, game.schemHints.join());
+    check('a wipe ends the run: on the next island all five are lost again, each rumoured to a place of the island', game.act === WORLD.ISLAND && game.unlocked === 0 && game.schemHints.every((z) => z !== 255 && z < ZONE.BRIDGEHEAD) && JSON.stringify(ann.global.schemHints) === JSON.stringify(game.schemHints) && rumours().length === 5, game.schemHints.join());
   }
 
   // ---- the backpack (it sorts itself after a pickup or a drop; the last drop can be taken back: ACT.UNDO_DROP)
@@ -622,10 +610,8 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
     game.giveItem(a, ITEM.NAILS, 7);
     ticks(game, 0.2);
     check('...and what is picked up there is sorted in', countItem(a.inv, ITEM.NAILS) === nails + 7 && sorted(a) && onWire(ann), `${nails} then ${countItem(a.inv, ITEM.NAILS)}`);
-    const then = kitOf(a);
-    // (the checkpoint's kit is the one she came off the bridge with: before the nails)
     wipe(g);
-    check('a wipe puts back what each came off the bridge with, slot for slot, and tells their clients', kitOf(a) === carried && then !== carried && countItem(b.inv, ITEM.BANDAGE) === BRIDGEHEAD.BANDAGES && onWire(ann) && onWire(g.ben), `${kitOf(a)}\n      ${carried}`);
+    check('a wipe ends the run: on the next island each has a new starting kit, and their clients are told', game.act === WORLD.ISLAND && kitOf(a) !== carried && countItem(a.inv, ITEM.SCRAP) === 0 && !a.backpackItem && onWire(ann) && onWire(g.ben), `${kitOf(a)}`);
   }
 
   // ---- the bestiary: what is met on the mainland goes onto the record the island began
@@ -808,7 +794,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   ticks(g2, 1);
   g2.killPlayer(c, { kind: 3 });
   g2.checkAllDead();
-  check('(a wipe on the mainland: the end screen, with the bridge to go back to)', g2.phase === PHASE.GAMEOVER && g2.act === WORLD.MAINLAND && !!g2.checkpoint);
+  check('(a wipe on the mainland: the end screen)', g2.phase === PHASE.GAMEOVER && g2.act === WORLD.MAINLAND && !!g2.checkpoint);
   g2.handleChat(c, '/island');
   check('/island from the mainland\'s end screen: the island, not the bridge', g2.phase === PHASE.DAY && g2.act === WORLD.ISLAND && g2.world.kind === WORLD.ISLAND && !g2.checkpoint && c.alive && near(c, g2.world.start, 16), `phase ${g2.phase} act ${g2.act}`);
   ticks(g2, 1);

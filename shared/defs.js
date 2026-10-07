@@ -814,7 +814,7 @@ export const NOTIFY = {
   CACHE: 67, // (to one survivor) what the bridgehead cache gave them. arg = a CACHE_GAVE bitmask
   STAND_STAGE: 68, // the runway stand moves on. arg = 1: the tanks are full, the engines are warming; 2: warm, get in
   RUNWAY_BLOCKED: 69, // (to whoever tried to take off) the dead are on the runway. arg = how many
-  CHECKPOINT: 70, // a wipe on the mainland: the run starts again from the bridgehead. arg = the day it starts on
+  // (70 was CHECKPOINT: a wipe on the mainland used to start again from the bridgehead; now it ends the run)
 };
 
 // killer kinds for killfeed

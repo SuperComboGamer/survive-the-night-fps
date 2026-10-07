@@ -1432,7 +1432,8 @@ export class Game {
       case NOTIFY.ARRIVED:
         ui.notify('THE MAINLAND', 'big', 6);
         ui.notify('The bridge is gone behind you. There is an airfield past the city: find the plane, find its parts, fly out.', 'sub', 9);
-        if (arg) ui.notify(`${arg === 1 ? 'One of the dead is' : `${arg} of the dead are`} a survivor again: the crossing is a checkpoint.`, 'good', 7);
+        if (arg) ui.notify(`${arg === 1 ? 'One of the dead is' : `${arg} of the dead are`} a survivor again: the crossing brought them back.`, 'good', 7);
+        ui.notify('There is no second chance here: if everyone falls, the run starts over on the island.', 'toast', 9);
         this.discovered = new Set([ZONE.BRIDGEHEAD]);
         break;
       case NOTIFY.CACHE: {
@@ -1448,11 +1449,6 @@ export class Game {
       case NOTIFY.RUNWAY_BLOCKED:
         ui.notify(`${arg} of the dead are on the runway. Clear it before you go.`, 'warning', 3);
         a.playLocal('build_fail');
-        break;
-      case NOTIFY.CHECKPOINT:
-        ui.notify('BACK AT THE BRIDGEHEAD', 'big', 5);
-        ui.notify(`Day ${arg}, as you came off the bridge, with what you carried over it.`, 'sub', 7);
-        this.discovered = new Set([ZONE.BRIDGEHEAD]);
         break;
       case NOTIFY.GAME_OVER:
         a.stinger?.('gameover');
@@ -3176,7 +3172,9 @@ export class Game {
       this.ui.setBestiaryOpen(false);
       this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
-      this.ui.showGameOver({ days: g.day, kills, reason: 'Every survivor has fallen.', restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
+      // (on the mainland a wipe is the end of the whole run: the next one begins on the island)
+      const reason = this.world.car.plane ? 'Every survivor has fallen on the mainland. The run starts over on the island.' : 'Every survivor has fallen.';
+      this.ui.showGameOver({ days: g.day, kills, reason, restartIn: Math.ceil(g.restartT), record: this.runReport, progress: this.progress });
       this.freePointerForEnd();
     } else if (g.phase === PHASE.VICTORY && this.overlay !== 'victory' && !this.cine) {
       this.overlay = 'victory';
