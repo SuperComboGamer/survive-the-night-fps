@@ -34,6 +34,15 @@ import { ViewModel, createWorldWeapon, worldWeaponTris, viewModelTris, handTris,
 import { nkScript } from './nk-script.js';
 // tuning overrides: &hip=x,y,z,rx,ry,rz (current item hip pose) / &claw=x,y,z,rx,ry,rz / &cq=rx,ry,rz
 const params = new URLSearchParams(location.search);
+if (params.has('ads')) {
+  // &ads=fov,z: the aimed view's field of view and how far down the view axis the sight sits (adsFov, adsZ)
+  const [fov, z] = params.get('ads').split(',').map(Number);
+  const id = parseInt(params.get('vm'), 10);
+  if (VM_DEBUG.VM[id]) {
+    if (fov) VM_DEBUG.VM[id].adsFov = fov;
+    if (z) VM_DEBUG.VM[id].adsZ = z;
+  }
+}
 if (params.has('hip')) {
   const v = params.get('hip').split(',').map(Number);
   const id = parseInt(params.get('vm'), 10);
@@ -381,6 +390,7 @@ if (params.get('vm') === 'hands') {
         v.cam.left = -hh * v.cam.aspect;
         v.cam.right = hh * v.cam.aspect;
       }
+      if (v.vm.fov && !params.has('orbit') && !params.has('zoom') && !wcam && !v.cam.isOrthographicCamera) v.cam.fov = v.vm.fov; // (the aimed view narrows: ViewModel.fov)
       if (crop) {
         // the frame as a 16:9 screen would show it, magnified to the region (x, y, height; units of screen height)
         const tileAspect = v.cam.aspect;
