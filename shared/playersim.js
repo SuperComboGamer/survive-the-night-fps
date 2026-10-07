@@ -275,14 +275,48 @@ export function radioKeyed(s) {
 
 const _pos = { x: 0, y: 0, z: 0 };
 
-// spread for the next shot (radians)
+// ---------------------------------------------------------------- where a round goes
+// s.recoil is the gun's heat: a round adds one (0.8 with Steady Grip), up to HEAT_MAX, and it cools HEAT_COOL a
+// second from the moment the trigger is let go - so a burst of three is settled a third of a second later, and a
+// whole magazine in just over one. Two things come of it, both worked out here for the server and for the client's
+// prediction, view and crosshair alike:
+//   - the cone (shotSpread): the gun's own spread, more of it for moving, and a bloom of up to BLOOM x the gun's
+//     spread that the first rounds of a burst hardly have (it grows as heat ^ 1.5). Crouching and the sights tighten
+//     all of it.
+//   - the climb (shotClimb): how far over the aim the round goes. It grows the same way for CLIMB_FULL rounds and
+//     stays there; the sights halve it. The client lifts the view by exactly this (Game.viewClimb), so a round goes
+//     where the sights or the crosshair are when it is fired, and pulling the view down holds a burst on its mark.
+export const HEAT_MAX = 10;
+export const HEAT_COOL = 9;
+export const BLOOM = 2.5;
+export const CLIMB = 0.3; // x the gun's recoil a round, at full climb
+export const CLIMB_FULL = 8;
+export const AIM_SPREAD = 0.35; // the sights: x the cone
+export const AIM_CLIMB = 0.5; // ...and x the climb
+export const CROUCH_SPREAD = 0.7;
+export const AIR_SPREAD = 0.05;
+
+// is the survivor behind the sights with these buttons held (as simulatePlayer judges it)
+export function aimingWith(s, buttons) {
+  const def = WEAPONS[currentWeapon(s)];
+  return !s.hmg && !!(buttons & BTN.ALT) && !!def && !def.melee && s.reloadT <= 0 && s.switchT <= 0;
+}
+
+// the cone of the next shot: its half-angle (radians)
 export function shotSpread(s, def, aiming) {
   const sp = Math.hypot(s.vx, s.vz);
-  let spread = def.spread + def.moveSpread * Math.min(1, sp / WALK_SPEED) + Math.min(s.recoil, 10) * def.spread * 0.35;
-  if (!s.onGround) spread += 0.05;
-  if (s.crouch) spread *= 0.7;
-  if (aiming) spread *= 0.35;
+  const heat = Math.min(s.recoil, HEAT_MAX) / HEAT_MAX;
+  let spread = def.spread * (1 + BLOOM * heat * Math.sqrt(heat)) + def.moveSpread * Math.min(1, sp / WALK_SPEED);
+  if (!s.onGround) spread += AIR_SPREAD;
+  if (s.crouch) spread *= CROUCH_SPREAD;
+  if (aiming) spread *= AIM_SPREAD;
   return spread;
+}
+
+// how far above the aim the next shot goes (radians)
+export function shotClimb(s, def, aiming) {
+  const r = Math.min(s.recoil, CLIMB_FULL);
+  return def.recoil * CLIMB * r * Math.sqrt(r / CLIMB_FULL) * (aiming ? AIM_CLIMB : 1);
 }
 
 // Deterministic pellet directions. Writes [dx,dy,dz,...] into out, returns pellet count.
@@ -387,7 +421,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.crouch = !s.zombie && (s.downed || (b & BTN.CROUCH && !disabled && !swim && wade < CROUCH_WADE)) ? 1 : 0; // (never ducking the eyes under the water)
   const weapon = currentWeapon(s);
   const wdef = WEAPONS[weapon];
-  const aiming = !s.hmg && !!(b & BTN.ALT) && wdef && !wdef.melee && s.reloadT <= 0 && s.switchT <= 0;
+  const aiming = aimingWith(s, b);
   const moving = wl > 0;
   const pm = perkMods(s.zombie ? 0 : s.perks);
   let sprint = 0;
@@ -652,8 +686,8 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
         s.mags[mi]--;
         s.cooldown = wdef.rate;
         const spread = shotSpread(s, wdef, aiming);
-        const recoilPitch = Math.min(s.recoil, 8) * wdef.recoil * 0.45;
-        s.recoil += pm.recoil;
+        const recoilPitch = shotClimb(s, wdef, aiming);
+        s.recoil = Math.min(HEAT_MAX, s.recoil + pm.recoil);
         s.fireCount = (s.fireCount + 1) & 255;
         if (events) {
           events.push({
@@ -675,7 +709,7 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
         if (events) events.push({ type: 'dry' });
       }
     }
-    if (!attack && s.recoil > 0) s.recoil = Math.max(0, s.recoil - dt * 9);
+    if (!attack && s.recoil > 0) s.recoil = Math.max(0, s.recoil - dt * HEAT_COOL);
   }
 
   s.lastBtn = cmd.buttons; // (as held: hands that come off the lever onto a trigger held down have not clicked it)

@@ -68,7 +68,8 @@ import { chosenCharacter } from '../ui/picker.js';
 import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
-import { shotDirections, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { shotDirections, shotSpread, shotClimb, aimingWith, currentWeapon, eyeHeight } from '../../shared/playersim.js';
+import { stepClimb, punchOf, punchAt, crosshairGap } from './aimview.js';
 import { pryWeapon } from '../../shared/trunk.js';
 import { perkMods, levelOf, picksEarned, XP_SRC } from '../../shared/progress.js';
 import { swimming } from '../../shared/swim.js';
@@ -252,7 +253,10 @@ export class Game {
     this.renderTick = 0;
     this.damageFx = 0;
     this.hitFx = 0;
-    this.recoilKick = 0;
+    this.viewClimb = 0; // the gun's climb as the view has it (rad): eased onto shotClimb of the predicted state
+    this.punch = 0; // the last round's punch (rad at its top), punchT s ago, over punchLen s
+    this.punchT = 0;
+    this.punchLen = 0.1;
     this.camBob = 0;
     this.landDip = 0; // how far a landing has pushed the view down, a spring (landVel) kicked on touchdown
     this.landVel = 0;
@@ -1835,7 +1839,7 @@ export class Game {
             const rz = -Math.sin(ev.yaw) * 0.16;
             this.rockets.fire(def, ev.x, ev.y, ev.z, _dirs[0], _dirs[1], _dirs[2], ev.x + rx + fx * 0.8, ev.y - 0.1 + fy * 0.8, ev.z + rz + fz * 0.8);
             this.effects.backblast(ev.x + rx - fx * 0.5, ev.y - 0.1 - fy * 0.5, ev.z + rz - fz * 0.5, -fx, -fy, -fz);
-            this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+            this.punchView(def, ev.aiming);
             this.camShake = Math.min(1, (this.camShake || 0) + kick[1]);
             break;
           }
@@ -1847,7 +1851,7 @@ export class Game {
             const mx = ev.x + Math.cos(ev.yaw) * 0.12 - Math.sin(ev.yaw) * cp * 0.5;
             const mz = ev.z - Math.sin(ev.yaw) * 0.12 - Math.cos(ev.yaw) * cp * 0.5;
             this.skyflares.fire(ev, _dirs[0], _dirs[1], _dirs[2], mx, ev.y - 0.12 + Math.sin(ev.pitch) * 0.5, mz);
-            this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+            this.punchView(def, ev.aiming);
             this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
             break;
           }
@@ -1869,7 +1873,7 @@ export class Game {
             if (def.quiet) this.effects.boltTrail(sx, sy, sz, dx, dy, dz, dist);
             else if (Math.random() < (def.pellets > 1 ? 1 : 0.6)) this.effects.tracer(sx, sy, sz, dx, dy, dz, dist, 1);
           }
-          this.recoilKick += def.recoil * (ev.aiming ? 0.5 : 1) * 1.4;
+          this.punchView(def, ev.aiming);
           this.camShake = Math.min(1, (this.camShake || 0) + (kick ? kick[1] : 0.06));
           break;
         }
@@ -2771,7 +2775,12 @@ export class Game {
     // tremor that lasts as long as the jolt of one landing beside you
     this.quake *= Math.exp(-dt * 6);
     const bobY = Math.sin(this.camBob * 2) * (s.downed ? 0.06 : 0.035) * Math.min(1, hspeed / 5) - this.landDip - stepLag - this.quake * 0.03 + this.swimK * (Math.sin(time * 1.7) * 0.035 + Math.sin(time * 0.63) * 0.02);
-    this.recoilKick *= Math.exp(-dt * 10);
+    // the gun's climb and the last round's punch (aimview.js): the view is lifted by both, so the sights or the
+    // crosshair are where the next round goes
+    const gdef = self.alive && !s.zombie && !this.gun.manning ? WEAPONS[currentWeapon(s)] : null;
+    this.viewClimb = stepClimb(this.viewClimb, gdef && !gdef.melee ? shotClimb(s, gdef, aimingWith(s, buttons)) : 0, dt);
+    this.punchT += dt;
+    const viewKick = this.viewClimb + this.punch * punchAt(this.punchT / this.punchLen);
     this.camShake = Math.max(0, (this.camShake || 0) - dt * 2.5);
     const shake = this.camShake * 0.02 + this.effects.shake * 0.03 + this.quake * 0.02;
     const cam = this.camera;
@@ -2785,7 +2794,7 @@ export class Game {
     } else if (self.alive) {
       cam.position.set(rp.x, rp.y + this.eyeH + bobY, rp.z);
       const roll = (s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0) + this.swimK * Math.sin(time * 1.1) * 0.025;
-      cam.rotation.set(inp.pitch + this.recoilKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
+      cam.rotation.set(inp.pitch + viewKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
       // nunchucks: the view goes with the strikes - a sprung nod, turn and roll from the moves and from what they hit
       // (ViewModel's rig, as of last frame). "Weapon look sway" off leaves the view still
       const nk = this.vm.itemId === ITEM.NUNCHAKU && this.settings.weaponSway !== false ? this.vm.nk?.core : null;
@@ -2836,6 +2845,11 @@ export class Game {
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove };
+    const vmCam = this.renderer.vmCamera;
+    if (Math.abs(vmCam.fov - this.vm.fov) > 0.01) {
+      vmCam.fov = this.vm.fov; // (as of last frame: the aimed view of iron sights is narrowed onto them, cfg.adsFov)
+      vmCam.updateProjectionMatrix();
+    }
     if (this.vm.itemId === ITEM.NUNCHAKU) {
       // (asked of the view itself: for a moment after another weapon is asked for they are still in the hands, being
       // folded away)
@@ -2995,7 +3009,13 @@ export class Game {
     }
     // viewmodel lighting follows the world
     this.updateViewmodelLight(dt, cam, Math.max(nearFire, this.power.eyeLit), this.flames.get(-1)?.light.intensity || 0); // (in a floodlight's cone the hands are lit too)
-    this.renderer.vmFlash.intensity = this.localFlash && self.alive ? 0.35 : 0;
+    // The flashlight's spill on the hands and the gun. At the hip it comes from beside the head; behind the sights that
+    // would shine square on whatever faces the eye (a rear sight lit up like a wall, the front one lost beyond it),
+    // so as the gun comes up the spill moves out to the torch's side and ahead of the rear sight: the notch stays a
+    // dark edge and the front sight is lit
+    const vf = this.renderer.vmFlash;
+    vf.intensity = this.localFlash && self.alive ? 0.35 + 0.25 * this.aimT : 0;
+    vf.position.set(-0.05 + 0.25 * this.aimT, 0.12 - 0.09 * this.aimT, 0.15 - 0.45 * this.aimT);
 
     this.effects.setAmbient(Math.max(this.env.night, this.under)); // (down the mine it is night at noon)
     this.effects.update(dt, cam, this.renderer.renderer.domElement.height);
@@ -3466,6 +3486,14 @@ export class Game {
     return true;
   }
 
+  // a round of ours punches the view (aimview.js)
+  punchView(def, aiming) {
+    const p = punchOf(def, aiming);
+    this.punch = p.amp;
+    this.punchLen = p.len;
+    this.punchT = 0;
+  }
+
   updateHud(dt, s, aiming, wdef) {
     const self = this.self;
     const g = this.global;
@@ -3528,13 +3556,11 @@ export class Game {
     h.boss = boss ? { name: ZOMBIE_DEFS[boss.ztype].name, hp: boss.q[5] / 255 } : null;
     h.prompt = h.shove >= 0 ? null : this.prompt; // (pinned: nothing in reach can be used, and the meter is there)
     // dynamic crosshair
+    // the ticks stand on the edge of the cone the next round is drawn from (shotSpread, as the server draws it), at
+    // this field of view: what is inside them can be struck, what is outside cannot
     let spread = 10;
-    if (def && !def.melee) {
-      const sp = Math.hypot(s.vx, s.vz);
-      const ang = def.spread + def.moveSpread * Math.min(1, sp / 4.6) + Math.min(s.recoil, 10) * def.spread * 0.35 + (s.onGround ? 0 : 0.05);
-      spread = 6 + (ang * (s.crouch ? 0.7 : 1) * window.innerHeight) / ((this.camera.fov * Math.PI) / 180);
-    }
-    h.crosshair.spread = Math.min(80, spread);
+    if (def && !def.melee) spread = crosshairGap(shotSpread(s, def, false), this.camera.fov, window.innerHeight);
+    h.crosshair.spread = spread;
     h.crosshair.visible = !aiming && self.alive && !this.ui.inventoryOpen && !this.ui.mapOpen;
     // progress ring: consumables or hold-to-interact
     if (self.holdKind) {

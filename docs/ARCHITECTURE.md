@@ -1599,6 +1599,35 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   repeats by hand is `GATHER`, what a hit on a tree or a wreck gives (`Game.gatherHit`): change the two together.
   `scripts/test-itemguide.js` holds every line against the tables, generated worlds (which place tables are
   rolled at all) and the server's gathering. Supply-drop loot (`CRATE_TABLE`, private to the server) is not in it.
+## Where a round goes: the cone, the climb, and the view
+
+A gun's row in `WEAPONS` gives three numbers: `spread` (the cone's half-angle at the hip, standing still),
+`moveSpread` (added at a walk) and `recoil`. What becomes of them is in one place, `shared/playersim.js`, and runs
+the same on the server and in the client's prediction:
+
+- **The heat** is `s.recoil`: a round adds one (0.8 with Steady Grip) up to `HEAT_MAX`, and it cools `HEAT_COOL` a
+  second while the trigger is up. Capped, so a gun is itself again just over a second after any burst. (The
+  nunchucks keep their combo step in the same field.)
+- **The cone**, `shotSpread`: `spread x (1 + BLOOM x heat^1.5) + moveSpread x speed`, plus `AIR_SPREAD` off the ground,
+  x `CROUCH_SPREAD` crouched, x `AIM_SPREAD` behind the sights. The power keeps the first rounds of a burst nearly as
+  tight as the first.
+- **The climb**, `shotClimb`: how far over the aim the round goes, `recoil x CLIMB x r x sqrt(r / CLIMB_FULL)` for
+  the first `CLIMB_FULL` rounds and level after, x `AIM_CLIMB` behind the sights. It is the `recoilPitch` of the
+  fire event and of `EVT.SHOT`.
+- **The view** (`client/game/aimview.js`, `Game.viewClimb`): the camera is lifted by `shotClimb` of the predicted
+  state, eased, so the sights or the crosshair are on what the next round strikes and pulling the view down holds a
+  burst on its mark; a round's punch on top of it is over before the gun can fire again. The crosshair's ticks
+  stand on the edge of `shotSpread`'s cone at the camera's field of view (`crosshairGap`). A climb the view does
+  not show is a round that goes somewhere the player was never shown: change the two together.
+- **The aimed viewmodel**: `VM[item].adsZ` puts the gun's `meta.sight` point on the view axis with the bore level,
+  and `adsFov` narrows the viewmodel camera onto iron sights (the AK-47's rear notch and hooded post, whose tip is
+  at the sight point's height, so the round goes to the post's tip).
+
+`node scripts/gun-groups.js` prints every gun's group sizes at 10 to 100 m and its time to kill a Walker, aimed
+and from the hip, still and walking, out of the simulation itself (`--tree` for another checkout: the before of a
+tuning PR). `scripts/test-spread.js` holds the rule, the AK-47's groups, the server against the prediction and the
+view against the rounds; `scripts/clip/aim-shots.js` takes the pictures in the real game, frame by frame.
+
 ## Nunchucks: a moveset, and a chain that is simulated
 
 Every other melee weapon is one swing that lands on the command that makes it. `ITEM.NUNCHAKU` is a moveset, and
