@@ -548,7 +548,10 @@ switch (screen) {
     p.show();
     p.view = view();
     p.render();
-    if (q.get('sel')) p.tree.select(+q.get('sel'));
+    // &view=tree: the whole tree even with a point waiting (it opens on the quick pick then); &sel=<id> picks one out
+    if (q.get('view') === 'tree') p.setMode('tree');
+    if (q.get('sel') && p.mode === 'tree') p.tree.select(+q.get('sel'));
+    else if (q.get('sel')) p.quick.root.querySelector(`[data-id="${+q.get('sel')}"]`)?.click();
     break;
   }
   case 'inventory': {
