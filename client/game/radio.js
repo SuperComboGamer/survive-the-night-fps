@@ -1,5 +1,5 @@
-// The walkie-talkie on the client: every survivor's, in weapon slot 6 (SLOT_RADIO). In hand it hisses quietly, and
-// chat typed then goes out to every survivor (the server's handleChat). Holding fire keys it (radioKeyed): that opens
+// The walkie-talkie on the client: every survivor's, in weapon slot 6 (SLOT_RADIO). In hand it hisses quietly
+// (text chat reaches everyone anyway: the server's handleChat). Holding fire keys it (radioKeyed): that opens
 // the microphone as [V] does, and the server lists us as on the air (PLF.ON_AIR), so every other survivor hears our
 // voice at any distance through their radio (Voice.setRadio), over its static, with a squelch as the key goes down
 // and as it comes up. Theirs come in the same way.
@@ -53,7 +53,7 @@ export class RadioClient {
       this.inHand = inHand;
       if (inHand && !this.told) {
         this.told = true;
-        g.ui.addChat('', 'Walkie-talkie: hold fire to talk to every survivor, however far. Chat typed with it in hand reaches them all too.', { system: true });
+        g.ui.addChat('', 'Walkie-talkie: hold fire to talk to every survivor, however far.', { system: true });
       }
     }
     if (keyed !== this.keyed) {

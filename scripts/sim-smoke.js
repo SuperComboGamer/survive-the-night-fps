@@ -8,7 +8,7 @@ import { spawnCatalog } from '../client/ui/spawnmenu.js';
 import { RECIPES, AMMO_MAX } from '../shared/defs.js';
 import { Game } from '../server/game.js';
 import { C2S, ACT, ENT, HOLD, CAR_ID, CHATF, PLF, WELCOMEF, REJECT_REASON, PROTOCOL_VERSION, Writer, Reader, S2C, qangle16, qpitch, ZSTATUS, writeInput } from '../shared/protocol.js';
-import { PHASE, BTN, NOISE, TALK_CLEAR, TALK_RANGE, SLOT_RADIO, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
+import { PHASE, BTN, NOISE, TALK_RANGE, SLOT_RADIO, INTERACT_REACH, PICK_RADIUS, CAR_REACH, BUILD_REACH, SPRINT_SPEED, EYE_HEIGHT, HORDE_SPAWN_MIN, HORDE_SPAWN_MAX } from '../shared/constants.js';
 import { STRUCT, ITEM, WEAPONS, AMMO, SUPPLIES, SUPPLY_NEED, NOTIFY, ZTYPE, CANIM, ZANIM, ZONE, SOUND, CONT, CONSUMABLES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, PROJ, ZOMBIE_DEFS, STRUCT_DEFS, THROWABLES, BURN, EVT, KILLER, structPickRadius } from '../shared/defs.js';
 import { readSnapshot } from '../client/net/decode.js';
 import { createPlayerState, copyPlayerState, simulatePlayer, radioKeyed } from '../shared/playersim.js';
@@ -1878,7 +1878,7 @@ const standOff = (c, e, d) => {
   check('door boards snap into doorway', game.structures.length === n1 + 1 && door && Math.hypot(door.x - o.x, door.z - o.z) < 0.01);
 }
 
-// talking: chat only carries to those in earshot; the walkie-talkie everyone has in slot 6 bridges any distance
+// talking: text chat reaches everyone in the game; the walkie-talkie everyone has in slot 6 carries the voice
 // (no ticks and no game rng in here, so the rest of the run plays out as before)
 {
   const a = A.p();
@@ -1902,22 +1902,15 @@ const standOff = (c, e, d) => {
   };
   at(10);
   say(A, 'near');
-  check('chat reaches a survivor in earshot', B.chats.length === 1 && B.chats[0].text === 'near' && B.chats[0].id === A.id && B.chats[0].flags === 0 && A.chats[0]?.flags === 0);
-  at((TALK_CLEAR + TALK_RANGE) / 2);
-  say(A, 'edge');
-  check('chat from the edge of earshot is faint', B.chats[0]?.flags === CHATF.FAINT && A.chats[0]?.flags === 0);
-  at(TALK_RANGE + 40);
+  check('chat reaches a survivor nearby', B.chats.length === 1 && B.chats[0].text === 'near' && B.chats[0].id === A.id && B.chats[0].flags === 0 && A.chats.length === 1 && A.chats[0].flags === 0);
+  at(TALK_RANGE + 400);
   say(A, 'far');
-  check('chat does not carry out of earshot', B.chats.length === 0 && A.chats[0]?.flags === CHATF.UNHEARD);
+  check('...and one across the valley, with no walkie-talkie in hand', B.chats.length === 1 && B.chats[0].text === 'far' && B.chats[0].flags === 0 && A.chats[0]?.flags === 0);
+  say(B, 'copy');
+  check('...and back the other way', A.chats.length === 1 && A.chats[0].text === 'copy' && A.chats[0].id === B.id && A.chats[0].flags === 0);
   check('nobody has to find a walkie-talkie: none is hidden in any container', game.caches.every((c) => !c.stash));
   sa.slot = SLOT_RADIO;
-  say(A, 'come in');
-  check('chat said with the walkie-talkie in hand carries any distance', B.chats[0]?.flags === CHATF.RADIO && B.chats[0].text === 'come in' && A.chats[0]?.flags === 0);
-  say(B, 'copy');
-  check('...but not back without theirs in hand', A.chats.length === 0 && B.chats[0]?.flags === CHATF.UNHEARD);
   sb.slot = SLOT_RADIO;
-  say(B, 'copy');
-  check('...and back with it', A.chats[0]?.flags === CHATF.RADIO && A.chats[0].id === B.id);
   // keying it (fire held with it in hand) puts you on the air: the player list tells everyone at once
   game.sendPlayers();
   check('in hand is not on the air', A.roster.get(A.id)?.onAir === false && A.roster.get(B.id)?.onAir === false);
@@ -1938,8 +1931,6 @@ const standOff = (c, e, d) => {
   check('fire held with a weapon in hand is not the radio', !game.onAir(a));
   sa.lastBtn = btn;
   sb.slot = slots[1];
-  say(B, 'hello?');
-  check('...and out of reach again once it is put away', A.chats.length === 0 && B.chats[0]?.flags === CHATF.UNHEARD);
   // slot 6 is everyone's, and a survivor who is down can still reach it to call for help
   const ps = createPlayerState();
   const cmd = { seq: 1, buttons: 0, yaw: 0, pitch: 0, slot: SLOT_RADIO };

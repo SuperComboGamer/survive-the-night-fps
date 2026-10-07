@@ -142,7 +142,7 @@ export const ITEM_DEFS = {
 
   [ITEM.BACKPACK]: { name: 'Backpack', cat: 'pack', stack: 1, color: 0x4a4430, desc: 'Canvas and leather, made at the workbench. Wear it for more room in the backpack grid.' },
 
-  [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Everyone carries one in slot [6]. With it in hand your chat reaches every survivor, however far apart you are; hold fire to talk over it.' },
+  [ITEM.WALKIE]: { name: 'Walkie-Talkie', cat: 'gear', stack: 1, color: 0x3d4a3a, desc: 'Everyone carries one in slot [6]. Take it out and hold fire to talk to every survivor over it, however far apart you are.' },
 
   [ITEM.KNIFE]: { name: 'Knife', cat: 'weapon', stack: 1, color: 0xaaaaaa, desc: 'Fast. Quiet.' },
   [ITEM.BAT]: { name: 'Baseball Bat', cat: 'weapon', stack: 1, color: 0x9c7a4b, desc: 'Heavy swings, knockback.' },
@@ -198,9 +198,9 @@ export const ITEM_DEFS = {
 };
 
 // ---------------------------------------------------------------- talking
-// Voice and text chat reach TALK_RANGE (constants.js). Past that, the walkie-talkie carries them: the speaker has to
-// be using theirs (in hand for chat, keyed for the voice), and the listener has to be a survivor (everybody alive
-// carries one; the dead and the turned do not).
+// The voice reaches TALK_RANGE (constants.js); text chat reaches everyone. Past that range, the walkie-talkie carries
+// the voice: the speaker has to have theirs keyed, and the listener has to be a survivor (everybody alive carries
+// one; the dead and the turned do not).
 export const radioLinked = (speakerOnRadio, listenerHasWalkie) => speakerOnRadio && listenerHasWalkie;
 
 // ---------------------------------------------------------------- the escape
