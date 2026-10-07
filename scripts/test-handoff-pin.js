@@ -98,8 +98,19 @@ async function savedBy(root, pids) {
 const oldmap = oldBuild('oldmap', [['shared/rail.js', 'C(b, CONT.TOOLBOX, ds * 0.7, 5.2,', 'C(b, CONT.TOOLBOX, ds * 0.7, 4.2,']]);
 const oldver = oldBuild('oldver', [['server/handoff.js', 'process.env.HANDOFF_STATE_VERSION || 1', 'process.env.HANDOFF_STATE_VERSION || 7']]);
 const oldenum = oldBuild('oldenum', [['shared/defs.js', '  NONE: 0,\n  // resources\n', '  NONE: 0,\n  OLD_TEST_ITEM: 990, // (an item this build no longer has)\n  // resources\n']]);
+// ...and one that also speaks another codec to its own client: the ids of ROOM and REJECT, a reject's reason, the close
+// codes (what this server's network thread writes to that game's players must be in it)
+const oldproto = oldBuild('oldproto', [
+  ['shared/rail.js', 'C(b, CONT.TOOLBOX, ds * 0.7, 5.2,', 'C(b, CONT.TOOLBOX, ds * 0.7, 4.2,'],
+  ['shared/protocol.js', '  ROOM: 11,', '  ROOM: 41,'],
+  ['shared/protocol.js', '  REJECT: 7,', '  REJECT: 47,'],
+  ['shared/protocol.js', 'REJECT_REASON = { FULL: 1,', 'REJECT_REASON = { FULL: 21,'],
+  ['shared/protocol.js', 'export const MOVED_CODE = 4002', 'export const MOVED_CODE = 4012'],
+  ['shared/protocol.js', 'export const ENDED_CODE = 4003', 'export const ENDED_CODE = 4013'],
+]);
 const pids = [randomUUID(), randomUUID()];
 const onMap = await savedBy(oldmap.root, pids);
+const onProto = await savedBy(oldproto.root, pids);
 const onVer = await savedBy(oldver.root, pids);
 const onEnum = await savedBy(oldenum.root, pids);
 check('the first build before this one makes another map of the seed', onMap.shape !== worldPrint(worldFor(SEED, 1)).shape, onMap.shape);
@@ -155,9 +166,9 @@ check("a build's signature is of its whole SHA-256: one of its name alone is ref
 // where builds are unpacked: a folder of this process's own, nobody else's to write in, no links in it
 {
   const home = pathJoin(dir, 'tmp-variant');
-  const own = readdirSync(home).find((n) => n.startsWith(`stn-builds-${process.pid}-`));
+  const own = readdirSync(home).find((n) => new RegExp(`^stn-builds-[A-Za-z0-9]+-[A-Za-z0-9]+-${process.pid}-`).test(n));
   const mode = statSync(pathJoin(home, own)).mode & 0o777;
-  check("builds are unpacked in a folder of this process's own (stn-builds-<pid>-...), only its user's to write", !!own && got.dir.startsWith(pathJoin(home, own)) && (process.platform === 'win32' || mode === 0o700), `${own} ${mode.toString(8)}`);
+  check("builds are unpacked in a folder of this process's own (stn-builds-<host>-<boot>-<pid>-<start>-...), only its user's to write", !!own && got.dir.startsWith(pathJoin(home, own)) && (process.platform === 'win32' || mode === 0o700), `${own} ${mode.toString(8)}`);
   // a link planted in the copy (to a file of anybody's choosing): written again without it
   const evil = pathJoin(dir, 'evil.js');
   writeFileSync(evil, 'process.exit(5)');
@@ -188,12 +199,20 @@ check("a build's signature is of its whole SHA-256: one of its name alone is ref
   const outside = pathJoin(dir, 'not-ours');
   mkdirSync(outside, { recursive: true });
   writeFileSync(pathJoin(outside, 'keep.txt'), 'a file somebody else needs');
-  const dead = pathJoin(home, 'stn-builds-999999-dead00');
+  // (a folder's name says whose it is: stn-builds-<host>-<boot>-<pid>-<start>-...)
+  const [, HOST, BOOT, , START] = /^stn-builds-([A-Za-z0-9]+)-([A-Za-z0-9]+)-(\d+)-([A-Za-z0-9]+)-/.exec(own) || [];
+  const dead = pathJoin(home, `stn-builds-${HOST}-${BOOT}-999999-${START}-dead00`);
   mkdirSync(pathJoin(dead, 'x'), { recursive: true, mode: 0o700 });
   symlinkSync(outside, pathJoin(dead, 'x', 'node_modules'), 'junction');
+  const restarted = pathJoin(home, `stn-builds-${HOST}-${BOOT}-${process.pid}-zz0-old000`); // (this PID, another start: a restarted container's PID 1)
+  const rebooted = pathJoin(home, `stn-builds-${HOST}-otherboot-${process.pid}-${START}-old111`);
+  const elsewhere = pathJoin(home, `stn-builds-otherhost-${BOOT}-999999-${START}-their00`); // (another machine's, or another container's)
+  for (const d of [restarted, rebooted, elsewhere]) mkdirSync(d, { mode: 0o700 });
   const swept = new Builds({ store: { getBuild: async () => ({ body: mapBuild.body, sig: mapBuild.sig }) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: home });
   await swept.fetch(mapBuild.id);
-  check('...the folders of processes that are gone are swept, and a link in one is taken away without what it points to', !existsSync(dead) && existsSync(pathJoin(outside, 'keep.txt')), readdirSync(home).join(' '));
+  check('...the folders of processes that are gone are swept, and a link in one is taken away without what it points to', !!HOST && !existsSync(dead) && existsSync(pathJoin(outside, 'keep.txt')), readdirSync(home).join(' '));
+  check("...a folder of this PID started at another time (a restarted container's PID 1), or of another boot, is swept too; this process's own is not", !existsSync(restarted) && !existsSync(rebooted) && existsSync(pathJoin(home, own)), readdirSync(home).join(' '));
+  check("...and another host's (a machine or container sharing the temp folder, in a PID namespace of its own) is left alone", existsSync(elsewhere), readdirSync(home).join(' '));
   const tree = pathJoin(dir, 'tree');
   mkdirSync(tree);
   symlinkSync(outside, pathJoin(tree, 'node_modules'), 'junction');
@@ -208,11 +227,71 @@ check("a build's signature is of its whole SHA-256: one of its name alone is ref
   const first = await flaky.fetch(mapBuild.id);
   const second = await flaky.fetch(mapBuild.id);
   check('a build the store failed to give is asked for again, not taken to be gone for good', first === null && !!second && asks === 2, `${first} ${!!second} ${asks}`);
+  // a build a save names that is not in the store yet (the old server's put still on its way: its handover does not
+  // wait past 2 s for it): asked for again for waitMs, and not remembered as missing
   let missing = 0;
-  const absent = new Builds({ store: { getBuild: async () => (missing++, null) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: pathJoin(dir, 'tmp-absent') });
-  await absent.fetch(mapBuild.id);
-  await absent.fetch(mapBuild.id);
-  check('...while one that is not in the store is remembered as not there', missing === 1, String(missing));
+  let lands = Infinity;
+  const late = new Builds({ store: { getBuild: async () => (missing++, Date.now() >= lands ? { body: mapBuild.body, sig: mapBuild.sig } : null) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: pathJoin(dir, 'tmp-late'), waitMs: 1500 });
+  lands = Date.now() + 500;
+  const waited = await late.fetch(mapBuild.id);
+  check('a build that lands in the store a moment after it is first asked for is waited for, and its game carried on', !!waited && missing > 1, `${!!waited} ${missing}`);
+  const asksBefore = missing;
+  lands = Infinity;
+  const never = new Builds({ store: { getBuild: async () => (missing++, Date.now() >= lands ? { body: mapBuild.body, sig: mapBuild.sig } : null) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: pathJoin(dir, 'tmp-late2'), waitMs: 300 });
+  const t0 = Date.now();
+  const gone = await never.fetch(mapBuild.id);
+  const took = Date.now() - t0;
+  lands = 0;
+  const later = await never.fetch(mapBuild.id);
+  check('...one that does not come is given up on after waitMs, and not remembered as missing: it is found when it is there', gone === null && took >= 250 && took < 1500 && !!later && missing > asksBefore + 2, `${gone} ${took} ${!!later}`);
+}
+
+// a deploy that brings back games of an older build: their client's files (know) and the build itself (fetch) come from
+// one read of the store and one opening of it
+{
+  let asks = 0;
+  const both = new Builds({ store: { getBuild: async () => (asks++, { body: mapBuild.body, sig: mapBuild.sig }) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: pathJoin(dir, 'tmp-both') });
+  await both.know(mapBuild.id);
+  const fetched = await both.fetch(mapBuild.id);
+  check('know and then fetch: the build is read from the store and opened once', !!fetched && both.has('/index.html') && asks === 1, String(asks));
+}
+
+// the build's own codec, only when it has everything the network thread writes with, and not waited for for ever
+{
+  const files = JSON.parse(gunzipSync(mapBuild.body).toString()).files;
+  const src = Buffer.from(files['shared/protocol.js'], 'base64').toString();
+  if (!src.includes('export function writeBoard(')) throw new Error('shared/protocol.js no longer has writeBoard: change the test');
+  const noBoard = await protocolOf({ 'shared/protocol.js': Buffer.from(src.replace('export function writeBoard(', 'function writeBoard(')) });
+  check('a build whose protocol.js lacks something the network thread writes with (writeBoard) is not used', noBoard === null);
+  const t0 = Date.now();
+  const hangs = await protocolOf({ 'shared/protocol.js': Buffer.from(`${src}\nawait new Promise(() => {});\n`) }, 300);
+  check('...nor one that never finishes loading: given up on in time', hangs === null && Date.now() - t0 < 1500, String(Date.now() - t0));
+  const bad = { ...(await protocolOf({ 'shared/protocol.js': Buffer.from(src) })) };
+  bad.Writer = class {
+    constructor() {
+      throw new Error('a codec that throws');
+    }
+  };
+  const sent = [];
+  const notes2 = [];
+  const fakeRoom = { proto: bad, code: 'BADPRO', title: 'Bad', inviteOnly: false, difficulty: 'nightfall', first: '', users: [null], names: [''], socks: [{ send: (b) => sent.push(Buffer.from(b)) }], lobby: { log: (t) => notes2.push(t) }, greetIn: Room.prototype.greetIn };
+  let threw = null;
+  try {
+    Room.prototype.greet.call(fakeRoom, 0, Uint8Array.of(C2S.JOIN, PROTOCOL_VERSION));
+  } catch (e) {
+    threw = e;
+  }
+  check("...and a codec that throws as the thread writes with it does not take the thread down: this build's is used", !threw && sent[0]?.[0] === S2C.ROOM && notes2.some((t) => /codec failed/.test(t)), String(threw));
+  check('...(REJECT too)', rejectBytes(REJECT_REASON.FULL, { S2C: null })[0] === S2C.REJECT);
+}
+
+// a game a deploy ended that an older build ran (or was to): whoever comes for it later is told in that build's codec
+{
+  const lobby = new Lobby({ stats: { board: () => ({ total: 0, rows: [] }) }, log: () => {} });
+  const theirs = { S2C: { ...S2C, REJECT: 97 }, REJECT_REASON: { ...REJECT_REASON, ENDED_UPDATE: 15 } };
+  lobby.ended('GONEPIN', REJECT_REASON.ENDED_UPDATE, { proto: theirs });
+  const told = rejectBytes(lobby.wasLost('GONEPIN'), lobby.lostProto('GONEPIN'));
+  check("a lost game of an older build: its players are told so later in that build's codec", told[0] === 97 && told[1] === 15 && lobby.lostProto('OTHER') === undefined, JSON.stringify([...told]));
 }
 
 // many games of one older build coming back at once: its client's files are learnt once, off the event loop
@@ -242,7 +321,7 @@ check("a build's signature is of its whole SHA-256: one of its name alone is ref
   }
   const proto = await protocolOf({ 'shared/protocol.js': Buffer.from(src) });
   const sent = [];
-  const fakeRoom = { proto, code: 'OLDPRO', title: 'Old', inviteOnly: false, difficulty: 'nightfall', first: '', users: [null], names: [''], socks: [{ send: (b) => sent.push(Buffer.from(b)) }] };
+  const fakeRoom = { proto, code: 'OLDPRO', title: 'Old', inviteOnly: false, difficulty: 'nightfall', first: '', users: [null], names: [''], socks: [{ send: (b) => sent.push(Buffer.from(b)) }], lobby: { log: () => {} }, greetIn: Room.prototype.greetIn };
   const w = new Writer(32);
   w.u8(C2S.JOIN);
   w.u8(PROTOCOL_VERSION);
@@ -281,6 +360,18 @@ check('...and sweeping the saves does not take the builds', (await store.sweep(0
   unlinkSync(pathJoin(dir, 'handoff-own-builds', `${b.id}.json`)); // (another server's sweep took it)
   await b.ensure();
   check("a server's own build, swept from the store while it ran, is put back before its games are saved", there && !!(await own.getBuild(b.id)) && (await own.getBuild(b.id)).sig === b.packed.sig);
+  // ...but not in its name when this server's files changed since it started (that is another build, not the code its
+  // games run)
+  const said = [];
+  const moved = oldBuild('oldmoved', []);
+  const m2 = new Builds({ store: own, root: moved.root, client: moved.client, dist: moved.dist, key: KEY, log: (t) => said.push(t) });
+  await m2.pack();
+  clearInterval(m2.keepTimer);
+  const runs = m2.id;
+  unlinkSync(pathJoin(dir, 'handoff-own-builds', `${runs}.json`));
+  appendFileSync(pathJoin(moved.root, 'server', 'wire.js'), '\n// changed on disk while the server ran\n');
+  await m2.ensure();
+  check('...and when its files changed on disk since it started, it says so and keeps its name: nothing else is put there in it', m2.id === runs && !(await own.getBuild(runs)) && said.some((t) => /files changed since it started/.test(t)), said.slice(-1).join(''));
 }
 
 // the handover does not wait past keepMs for this build to be in the store (a database that hangs): the games are saved
@@ -306,6 +397,18 @@ check('...and sweeping the saves does not take the builds', (await store.sweep(0
   const t0 = Date.now();
   await lobby.handoffAll(lobby.store, 1000);
   check('a server told to stop while it fetches an older build puts the save back at once, before it goes on', puts.includes('LATEPB') && Date.now() - t0 < 1000, `${JSON.stringify(puts)} in ${Date.now() - t0} ms`);
+}
+// ...and so does one told to stop while it loads that build's codec
+{
+  const lobby = new Lobby({ stats: { board: () => ({ total: 0, rows: [] }) }, log: () => {} });
+  const puts = [];
+  lobby.store = { put: async (code) => puts.push(code) };
+  lobby.builds = { canStart: true, id: 'cd'.repeat(12), fetch: async () => ({ id: 'ab'.repeat(12), dir: '', client: { protocol: PROTOCOL_VERSION + 1 }, files: {} }), protocol: () => new Promise(() => {}), touch: () => {} };
+  lobby.afterFailed({ code: 'MIDPRO', after: false, pin: null, failed: REJECT_REASON.ENDED_MAP, from: { meta: { build: 'ab'.repeat(12) }, body: Buffer.from('a save') } });
+  await sleep(50);
+  const t0 = Date.now();
+  await lobby.handoffAll(lobby.store, 1000);
+  check("...and so does one told to stop while it loads that build's codec", puts.includes('MIDPRO') && Date.now() - t0 < 1000, `${JSON.stringify(puts)} in ${Date.now() - t0} ms`);
 }
 
 // how long a game is kept on an older build
@@ -334,6 +437,13 @@ await store.put('NOBUILD', meta({}), onMap.body); // (as a build from before bui
 await store.put('BUILDGONE', meta({ build: 'ab'.repeat(12) }), onMap.body);
 const stranger = packBuild(oldmap.root, { client: { ...oldmap.client, build: 'client-stranger' }, dist: oldmap.dist, key: 'somebody else key' });
 await store.put('NOTOURS', meta({ build: stranger.id }), onMap.body);
+const protoBuild = pack(oldproto);
+await store.putBuild(protoBuild.id, protoBuild.body, protoBuild.sig, protoBuild.assets);
+await store.put('PROTOPIN', meta({ build: protoBuild.id, maxPlayers: 1 }), onProto.body); // (one seat: a second socket is turned away)
+// a save naming a build that is not in the store yet when the next server first asks for it (the old server's put
+// still on its way - its handover does not wait past 2 s for it): it lands a moment later
+const lateBuild = packBuild(oldmap.root, { client: { ...oldmap.client, build: 'client-late' }, dist: oldmap.dist, key: KEY });
+await store.put('LATEPIN', meta({ build: lateBuild.id }), onMap.body);
 await store.putBuild(stranger.id, stranger.body, stranger.sig, stranger.assets); // (in the store, signed by another key)
 
 const base = 43000 + Math.floor(Math.random() * 800);
@@ -385,10 +495,14 @@ try {
   unlinkSync(pathJoin(`${HANDOFF_DIR}-assets`, enumPage));
   const A = server('A', base);
   check('the next server is up', await until(() => A.log.includes('listening')), A.log);
+  await until(() => /game LATEPIN cannot be carried on by this build/.test(A.log), 30000);
+  await sleep(1000);
+  await store.putBuild(lateBuild.id, lateBuild.body, lateBuild.sig, lateBuild.assets); // (lands now)
   await until(() => /build [0-9a-f]{24} is in the store/.test(A.log));
   check('...and has put its own build in the store, signed, for the servers after it', /this build is [0-9a-f]{24} \(\d+ files of code, \d+ client files; .*, signed\)/.test(A.log) && /is in the store/.test(A.log), A.log.split('\n').slice(0, 8).join('\n'));
   const ownId = /this build is ([0-9a-f]{24})/.exec(A.log)?.[1];
-  await until(() => ['MAPPIN', 'VERPIN', 'ENUMPIN'].every((c) => new RegExp(`game ${c} carried on by build`).test(A.log)) && /NOBUILD not restored/.test(A.log) && /BUILDGONE not restored/.test(A.log) && /NOTOURS not restored/.test(A.log), 30000);
+  await until(() => ['MAPPIN', 'VERPIN', 'ENUMPIN', 'PROTOPIN', 'LATEPIN'].every((c) => new RegExp(`game ${c} carried on by build`).test(A.log)) && /NOBUILD not restored/.test(A.log) && /BUILDGONE not restored/.test(A.log) && /NOTOURS not restored/.test(A.log), 30000);
+  check('a game whose build lands in the store a moment after the next server first asked for it is carried on by it', new RegExp(`game LATEPIN carried on by build ${lateBuild.id}`).test(A.log) && !/LATEPIN not restored/.test(A.log), A.log.split('\n').filter((l) => /LATEPIN|${lateBuild.id}/.test(l)).join('\n'));
   check('it cannot read the save of another map, and says the build that saved it will carry it on', new RegExp(`game MAPPIN cannot be carried on by this build \\(this build makes another valley of seed ${SEED}\\): build ${mapBuild.id} will`).test(A.log) && /game MAPPIN carried on by build/.test(A.log), A.log.split('\n').slice(-14).join('\n'));
   check('...nor of another state version: the same', /game VERPIN cannot be carried on by this build \(state version 7/.test(A.log) && /game VERPIN carried on by build/.test(A.log));
   check('...nor with an enum entry it does not have: the same', /game ENUMPIN cannot be carried on by this build \(renumbered since the save: ITEM\.OLD_TEST_ITEM/.test(A.log) && /game ENUMPIN carried on by build/.test(A.log), A.log.split('\n').filter((l) => /ENUMPIN/.test(l)).join('\n'));
@@ -422,7 +536,7 @@ try {
   check("the page without a code, or with another, is this build's own", !plain.body.includes('oldmap') && !(await text(A, '/?game=NOSUCH22')).body.includes('oldmap'), plain.body.slice(0, 60));
   const list = await (await fetch(`http://localhost:${A.port}/api/games`)).json();
   const card = await fetch(`http://localhost:${A.port}/api/games/MAPPIN`);
-  check("those games are not in the lobby's list (this build's client cannot play them), and their links still work", list.games === 3 && !list.list.some((g) => /PIN$/.test(g.code)) && card.status === 200, JSON.stringify(list.list.map((g) => g.code)));
+  check("those games are not in the lobby's list (this build's client cannot play them), and their links still work", list.games === 5 && !list.list.some((g) => /PIN$/.test(g.code)) && card.status === 200, JSON.stringify(list.list.map((g) => g.code)));
   const quick = {};
   await tryJoin(A, '', randomUUID(), quick);
   check('...and a quick join does not land in one', quick.id > 0 && quick.conn.room && !/PIN$/.test(quick.conn.room.code), JSON.stringify(quick.conn.room));
@@ -435,6 +549,32 @@ try {
   check('...and so does one whose build is not in the store', /update to the game changed the map/.test(gone.why) && /build abababababababababababab is not started here: it is not in the store/.test(A.log), gone.why);
   const theirs = await back(A, 'NOTOURS', pids[0]);
   check('...and one whose build was not signed with this deploy key: nothing from the store runs here without it', /update to the game changed the map/.test(theirs.why) && new RegExp(`build ${stranger.id} is not started here: its signature is not this deploy key`).test(A.log), A.log.split('\n').filter((l) => /NOTOURS|signature/.test(l)).join('\n'));
+
+  // what the network thread writes to the players of a game an older build carries on, as a socket of that build's
+  // client gets it: ROOM, a REJECT (the one seat taken) and, below, the close code - each in that build's codec
+  const raw = (code, join) =>
+    new Promise((done) => {
+      const got = { msgs: [], close: null, ws: null };
+      const ws = new WebSocket(`ws://localhost:${A.port}/ws?game=${code}`);
+      got.ws = ws;
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => {
+        if (!join) return;
+        const w = new Writer(64);
+        w.u8(C2S.JOIN);
+        w.u8(PROTOCOL_VERSION);
+        w.str('Ann');
+        w.str(pids[0]);
+        ws.send(w.bytes());
+      };
+      ws.onmessage = (e) => got.msgs.push([...new Uint8Array(e.data).slice(0, 2)]);
+      ws.onclose = (e) => (got.close = e.code);
+      setTimeout(() => done(got), 1500);
+    });
+  const inProto = await raw('PROTOPIN', true);
+  check("a socket of a game whose build speaks another codec is told which game it is in (ROOM) in that build's codec", inProto.msgs[0]?.[0] === 41 && S2C.ROOM !== 41, JSON.stringify(inProto.msgs.slice(0, 3)));
+  const turned = await raw('PROTOPIN', false);
+  check("...and a second socket, the one seat taken, is turned away (REJECT, FULL) in it", turned.msgs[0]?.[0] === 47 && turned.msgs[0]?.[1] === 21, JSON.stringify(turned.msgs));
 
   // ---------------------------------------------------------------- the next deploy, and the one after
   const ann = await back(A, 'MAPPIN', pids[0]);
@@ -451,6 +591,7 @@ try {
     stop(from);
     await until(() => from.exit, 20000);
     check(`...${from.name} hands its games on and goes: the sockets are closed as moved`, from.exit?.code === 0 && closed.ann === 4002 && /handed over/.test(from.log), JSON.stringify({ exit: from.exit, closed }));
+    if (from === A) check("...the one in the game of the other codec with that build's close code for it", inProto.close === 4012, String(inProto.close));
     const again = await back(next, 'MAPPIN', pids[0]);
     check(`...and ${name} carries the game of the other map on by the same build: the player is back in their own body`, again.why === '' && again.id === annId && new RegExp(`game MAPPIN carried on by build ${mapBuild.id}`).test(next.log), JSON.stringify({ why: again.why, id: again.id, log: next.log.split('\n').slice(-8) }));
     check('...still played with that build own client', (await text(next, '/?game=MAPPIN')).body.includes('<title>oldmap</title>'));

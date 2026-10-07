@@ -115,7 +115,8 @@ All of it is load-bearing; the server says in its log when something is missing.
   different containers during a deploy, which is why a stopping server answers 503. Any edge works; one that pins a
   page's connections to the container it first reached is fine too (it is what the tests' stand-in does).
 - The server can write to its temp folder (a fetched build is unpacked there, in a folder of its own,
-  `stn-builds-<pid>-XXXXXX`: about 1.5 MB each, taken away when the process exits).
+  `stn-builds-<host>-<boot>-<pid>-<start>-XXXXXX`: about 1.5 MB each, taken away when the process exits; one left by a
+  process of this host that is gone - crashed, or a restarted container's PID 1 - is swept by the next.)
 - The store's size: a build is about 1 MB of code (gzipped) plus its client's files, each kept once by content (the first
   build puts about 24 MB, later ones only what changed: usually the 3 MB bundle). Builds nobody used for 3 days are
   swept - never one a save waiting in the store names. A running server marks its own build as in use twice a day, and
@@ -148,8 +149,11 @@ The boundary is the deploy's key:
   user could change the files between the check and the worker loading them - and could change the server itself just
   as well. On Windows the temp folder is the user's own.
 - **What the network thread writes to the players of a carried-on game itself** (which game they are in, the
-  leaderboard, why they are turned away, the close codes) is written with that build's own `shared/protocol.js`, loaded
-  from the build in memory - its client reads them. The rest comes from that build's own worker.
+  leaderboard, why they are turned away - then, and later if a deploy ends the game - and the close codes) is written
+  with that build's own `shared/protocol.js`, loaded from the build in memory - its client reads them. It is only used
+  when it has everything the thread writes with and loads within 2 s; otherwise the game is carried on only if its
+  protocol is this build's. Should it throw as it is used, this build's is used for that message: never a thread that
+  throws. The rest comes from that build's own worker.
 - **Without the key**, nothing from the store is started or served (pinning is off), unless `HANDOFF_PIN=unsigned` says
   to trust the store: then anyone who can write to the store can run code on the server.
 - `HANDOFF_PIN=0` turns all of it off.
@@ -168,7 +172,8 @@ The boundary is the deploy's key:
 - A game the new build cannot read, when it cannot be carried on by its build either: no `HANDOFF_BUILD_KEY` on the
   host (today's production); the save names no build (saved by a build from before this change - so the first deploy of
   this change cannot pin, but it does not need to: it reads every save of the build before it); the build is not in the
-  store (swept after 3 unused days, or the old server could not put it there); it is of another `WORKER_API` (the
+  store (the old server could not put it there: it is asked for again for 5 s, as the old server's put may still be on
+  its way); it is of another `WORKER_API` (the
   contract between the network thread and a game's worker changed), of a lower `SECURITY_EPOCH` (on purpose), or uses
   other package versions. Its players are told an update ended it.
 - Nobody comes back: a restored game with nobody in it closes once its players' places are given up

@@ -158,10 +158,13 @@ const LOADING_ART = new URL('../ui/art/loading-mainland.jpg', import.meta.url).h
 // leaves a page that is playing on as it is, and the next server does not have this page's own files - the card would
 // have no picture. Its sounds and the synth worker fall back to the procedural ones; this has nothing to fall back to)
 if (typeof Image === 'function' && typeof setTimeout === 'function') {
-  (globalThis.requestIdleCallback || ((fn) => setTimeout(fn, 5000)))(() => {
+  const fetchArt = () => {
     const img = new Image();
     img.src = LOADING_ART;
-  });
+  };
+  // (within 10 s even on a page that is never idle)
+  if (typeof globalThis.requestIdleCallback === 'function') globalThis.requestIdleCallback(fetchArt, { timeout: 10_000 });
+  else setTimeout(fetchArt, 5000);
 }
 class LoadingCard {
   constructor(parent, before) {

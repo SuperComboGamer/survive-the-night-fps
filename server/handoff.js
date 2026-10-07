@@ -376,10 +376,8 @@ export class FileStore {
     // (the builds the saves waiting here name: kept, however long since anybody used them)
     const saved = new Set();
     for (const code of await this.pending()) {
-      try {
-        const build = JSON.parse(readFileSync(join(this.dir, `${code}.json`), 'utf8')).meta?.build;
-        if (typeof build === 'string') saved.add(build);
-      } catch {}
+      const build = await savedBuild(join(this.dir, `${code}.json`));
+      if (build) saved.add(build);
     }
     for (const f of readdirSync(this.buildDir)) {
       const full = join(this.buildDir, f);
@@ -405,6 +403,26 @@ const touch = (file) => {
     utimesSync(file, now, now);
   } catch {}
 };
+// The build a save in a file names ('' for none), read off the event loop and only as far as it needs: put writes
+// {"meta":{...},"savedAt":...,"body":"..."}, so the room's meta - its build among it - is the first few hundred bytes
+// (a quote inside a string is written \", so the key cannot be faked by a name). A longer meta is read whole.
+async function savedBuild(file) {
+  let fh;
+  try {
+    fh = await fsp.open(file, 'r');
+    const head = Buffer.alloc(16 * 1024);
+    const { bytesRead } = await fh.read(head, 0, head.length, 0);
+    const text = head.subarray(0, bytesRead).toString('utf8');
+    const end = text.indexOf(',"savedAt":');
+    if (end >= 0) return /"build":"([0-9a-f]{24})"/.exec(text.slice(0, end))?.[1] || '';
+    const build = JSON.parse(await fsp.readFile(file, 'utf8')).meta?.build;
+    return typeof build === 'string' ? build : '';
+  } catch {
+    return '';
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
 
 // Rows of game_handoff in Postgres (migration 008): the body as bytea, the room's meta as jsonb
 export class PgStore {

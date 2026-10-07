@@ -284,8 +284,8 @@ function seat(ws) {
   }
   if (reason) {
     // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway) - in the
-    // codec of the game's own client, for one an older build carries on
-    ws.send(rejectBytes(reason, room?.proto), true, false);
+    // codec of the game's own client, for one an older build carries on (or carried on, when a deploy ended it)
+    ws.send(rejectBytes(reason, room?.proto || (d.code ? lobby.lostProto(d.code) : undefined)), true, false);
     ws.end(1000, 'rejected');
     return;
   }

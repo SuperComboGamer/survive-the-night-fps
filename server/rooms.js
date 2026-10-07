@@ -242,8 +242,19 @@ export class Room {
   // Tells a socket which game it is in, before the game answers its first message (its JOIN): a quick join learns
   // its code here, for its invite link. The game's first player names a quick join's game. (A signed-in player
   // plays under their account's name, as Game.handleJoin has it.)
+  // (in the players' own codec, this.proto; should an older build's codec throw on it after all, in this build's - a
+  // message the page may misread, never a network thread that throws)
   greet(slot, bytes) {
-    const { C2S, S2C, ROOMF, Writer, Reader } = this.proto;
+    try {
+      this.greetIn(this.proto, slot, bytes);
+    } catch (err) {
+      if (this.proto === OWN_PROTOCOL) throw err;
+      this.lobby.log(`game ${this.code}: its build's codec failed to write ROOM (${err.message}): written in this build's`);
+      this.greetIn(OWN_PROTOCOL, slot, bytes);
+    }
+  }
+  greetIn(proto, slot, bytes) {
+    const { C2S, S2C, ROOMF, Writer, Reader } = proto;
     if (bytes[0] === C2S.JOIN) {
       try {
         const r = new Reader(bytes);
@@ -438,13 +449,24 @@ export class Room {
       const r = this.recs.get(tok);
       if (r) here.add(r);
     }
-    const send = ({ total, rows }) => {
-      if (this.socks[m.slot] !== ws) return; // (gone while the database was asked)
-      const { Writer, S2C, writeBoard } = this.proto;
+    const write = (proto, total, rows) => {
+      const { Writer, S2C, writeBoard } = proto;
       const w = new Writer(1024);
       w.u8(S2C.BOARD);
       writeBoard(w, total, rows);
-      if (ws.getBufferedAmount() <= SEND_LIMIT) ws.send(w.bytes(), true, false);
+      return w.bytes();
+    };
+    const send = ({ total, rows }) => {
+      if (this.socks[m.slot] !== ws) return; // (gone while the database was asked)
+      let bytes;
+      try {
+        bytes = write(this.proto, total, rows);
+      } catch (err) {
+        if (this.proto === OWN_PROTOCOL) throw err;
+        this.lobby.log(`game ${this.code}: its build's codec failed to write BOARD (${err.message}): written in this build's`);
+        bytes = write(OWN_PROTOCOL, total, rows);
+      }
+      if (ws.getBufferedAmount() <= SEND_LIMIT) ws.send(bytes, true, false);
     };
     // the file-kept board answers at once, the database's (dbstats.js) in a moment
     const board = this.lobby.stats.board(this.recs.get(m.me) ?? null, here);
@@ -935,11 +957,18 @@ export class Lobby {
   // comes for it - its players, sent back here by the deploy, or anyone with its link - is told that instead of
   // "no such game" (wasLost; index.js seat). Those already on a socket waiting for it are told now.
   // tell: false: whoever is on a socket in it is told otherwise (Room.pinClose)
-  ended(code, reason, { tell = true } = {}) {
+  // proto: the codec of its players' client when it is known (an older build's: the one that ran it, or was to) - what
+  // whoever comes for it later is told in (lostProto)
+  ended(code, reason, { tell = true, proto = null } = {}) {
     if (this.lost.size >= LOST_MAX) this.lost.delete(this.lost.keys().next().value);
-    this.lost.set(code, { reason, at: Date.now() });
     const room = this.rooms.get(code);
+    proto ||= room?.proto || null;
+    this.lost.set(code, { reason, at: Date.now(), proto: proto === OWN_PROTOCOL ? null : proto });
     if (tell) for (const ws of room?.socks || []) ws?.send(rejectBytes(reason, room.proto), true, false);
+  }
+  // the codec of the players of a game a deploy ended, when it was not this build's (else undefined)
+  lostProto(code) {
+    return this.lost.get(String(code || '').toUpperCase())?.proto || undefined;
   }
   // Whether the game of a room whose save this build could not read can be carried on by the build that saved it: the
   // save names one, it is not this one, and it has not been tried already.
@@ -955,8 +984,9 @@ export class Lobby {
     room.after = true;
     const { code, from } = room;
     const m = from.meta;
-    // (told to stop meanwhile, the fetch is not waited for: the save goes back at once, for the next server, and the
-    // server going down waits for that - handoffAll)
+    // (told to stop meanwhile, the fetch - and the loading of its codec - is not waited for: the save goes back at once,
+    // for the next server, and the server going down waits for that - handoffAll)
+    let proto = null; // (its players' codec, once known: also what they are told in if it ends here after all)
     const p = (this.stopping ? Promise.resolve(null) : Promise.race([this.builds.fetch(m.build), this.stopped.then(() => null)]))
       .then(async (b) => {
         // (told to stop meanwhile: the next server gets the save, and tries the same)
@@ -964,8 +994,9 @@ export class Lobby {
         if (!b || this.rooms.has(code)) return null;
         // (its players' client reads what this thread writes to them in its own codec: that build's protocol.js. One
         // that cannot be loaded here is only used if it is this build's protocol)
-        const proto = await this.builds.protocol(b);
-        if (!proto && b.client.protocol !== PROTOCOL_VERSION) throw new Error(`its client speaks protocol ${b.client.protocol}, and its protocol.js could not be loaded here`);
+        proto = await Promise.race([this.builds.protocol(b), this.stopped.then(() => null)]);
+        if (this.stopping) return (await this.putBack(code, from)) ? 'back' : null;
+        if (!proto && b.client.protocol !== PROTOCOL_VERSION) throw new Error(`its client speaks protocol ${b.client.protocol}, and its protocol.js could not be used here`);
         if (this.stopping) return (await this.putBack(code, from)) ? 'back' : null;
         if (this.rooms.has(code)) return null;
         const next = new Room(this, {
@@ -994,7 +1025,7 @@ export class Lobby {
         if (!next) {
           this.log(`game ${code} not restored: build ${m.build} could not be started here`);
           this.onIncident?.({ code, kind: 'not restored', text: `its build ${m.build} could not be started here` });
-          this.ended(code, room.failed);
+          this.ended(code, room.failed, { proto });
         }
         if (this.restoring.get(code) === p) this.restoring.delete(code);
         return next === 'back' ? null : next;
@@ -1097,9 +1128,13 @@ export class Lobby {
 // What a socket that cannot have a seat is sent before it is closed: the REJECT the client shows (connection.js). proto:
 // the codec of the client it goes to (a game an older build carries on: that build's - the reason by its name)
 export function rejectBytes(reason = REJECT_REASON.FULL, proto = OWN_PROTOCOL) {
-  if (proto !== OWN_PROTOCOL) {
-    const name = Object.keys(REJECT_REASON).find((k) => REJECT_REASON[k] === reason);
-    reason = proto.REJECT_REASON?.[name] ?? reason;
+  if (proto && proto !== OWN_PROTOCOL) {
+    try {
+      const name = Object.keys(REJECT_REASON).find((k) => REJECT_REASON[k] === reason);
+      const theirs = proto.REJECT_REASON?.[name];
+      const id = proto.S2C?.REJECT;
+      if (Number.isInteger(id) && id >= 0 && id < 256) return Uint8Array.of(id, Number.isInteger(theirs) && theirs >= 0 && theirs < 256 ? theirs : reason);
+    } catch {}
   }
-  return Uint8Array.of(proto.S2C?.REJECT ?? S2C.REJECT, reason);
+  return Uint8Array.of(S2C.REJECT, reason);
 }

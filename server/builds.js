@@ -30,7 +30,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { dirname, join, resolve, relative, sep } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, hostname } from 'node:os';
 
 export const WORKER_API = 1; // bump when a message between the network thread and a worker changes meaning or is newly required (room-worker.js)
 export const SECURITY_EPOCH = 1; // bump in a change that must reach every running game at once: older builds are not carried on
@@ -246,16 +246,40 @@ function parsed(m) {
 
 // The messages a build's own client reads, from that build's shared/protocol.js (Writer, Reader, S2C, C2S, ROOMF,
 // REJECT_REASON, writeBoard...): what the network thread writes to the players of a game an older build carries on
-// (rooms.js Room proto). Loaded from the build in memory, not from disk; one that imports another file of its build
-// cannot be loaded so (null).
-export async function protocolOf(files) {
+// (rooms.js Room proto). Loaded from the build in memory, not from disk. null when it cannot be used here: it imports
+// another file of its build, it lacks any of what the thread uses (usable), or it does not load within ms (a module
+// that never finishes loading).
+export const PROTOCOL_LOAD_MS = 2000;
+export async function protocolOf(files, ms = PROTOCOL_LOAD_MS) {
   const src = files?.['shared/protocol.js'];
   if (!src) return null;
+  let timer;
   try {
-    const mod = await import(`data:text/javascript;base64,${src.toString('base64')}`);
-    return mod.Writer && mod.Reader && mod.S2C && mod.C2S ? mod : null;
+    const late = new Promise((done) => (timer = setTimeout(() => done(null), ms)));
+    const mod = await Promise.race([import(`data:text/javascript;base64,${src.toString('base64')}`), late]);
+    return mod && usable(mod) ? mod : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+// (everything the network thread writes with: rooms.js greet, board, rejectBytes, shut)
+const num = (v) => Number.isInteger(v) && v >= 0;
+function usable(m) {
+  try {
+    if (typeof m.Writer !== 'function' || typeof m.Reader !== 'function' || typeof m.writeBoard !== 'function') return false;
+    if (!m.S2C || !num(m.S2C.ROOM) || !num(m.S2C.BOARD) || !num(m.S2C.REJECT) || !m.C2S || !num(m.C2S.JOIN)) return false;
+    if (!m.ROOMF || !num(m.ROOMF.INVITE_ONLY) || !m.REJECT_REASON || typeof m.REJECT_REASON !== 'object') return false;
+    if (!Object.values(m.REJECT_REASON).every(num)) return false;
+    if (m.ENDED_CODE !== undefined && !num(m.ENDED_CODE)) return false;
+    if (m.MOVED_CODE !== undefined && !num(m.MOVED_CODE)) return false;
+    const w = new m.Writer(16);
+    w.u8(1);
+    w.str('x');
+    return typeof w.bytes === 'function' && w.bytes() instanceof Uint8Array;
+  } catch {
+    return false;
   }
 }
 
@@ -299,14 +323,43 @@ const alive = (pid) => {
     return err.code === 'EPERM';
   }
 };
+// Whose an unpack folder is: stn-builds-<host>-<boot>-<pid>-<start>-XXXXXX. The host keeps servers of other machines
+// (or containers: another hostname, another PID namespace) sharing a temp folder from sweeping each other's; the boot
+// and the process's start tell a folder of a process that is gone from one of a live process of the same PID - a
+// restarted container's PID 1, say. (boot: Linux's boot id; elsewhere none)
+const tag = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').slice(0, 24) || 'x';
+const HOST = tag(hostname());
+let BOOT = 'x';
+try {
+  BOOT = tag(readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()).slice(0, 12);
+} catch {}
+const STARTED = tag(Math.round(Date.now() - process.uptime() * 1000).toString(36));
+const DIR_RE = /^stn-builds-([A-Za-z0-9]+)-([A-Za-z0-9]+)-(\d+)-([A-Za-z0-9]+)-/;
+// (a folder of this user's left by a process that is gone: one of this host, of another boot, or of a process not
+// running, or of this PID started at another time; the one folder all servers shared before this)
+function leftBehind(name) {
+  if (name === 'stn-builds') return true;
+  const m = DIR_RE.exec(name);
+  if (!m || m[1] !== HOST) return false;
+  const [, , boot, pid, started] = m;
+  if (boot !== BOOT) return true;
+  if (+pid === process.pid) return started !== STARTED;
+  return !alive(+pid);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const ABSENT = Symbol('not in the store'); // (_fetch: a build not there, which fetch does not remember)
+const OPEN_KEEP_MS = 60_000; // a build opened from the store is kept this long for whichever asks next (know, fetch)
+export const BUILD_WAIT_MS = 5000; // a build a save names that is not in the store yet is asked for again this long
 
 export class Builds {
   // store: the handoff store (putBuild / getBuild / getAsset / touchBuild / sweepBuilds). root: this build's files.
   // client: what this build's client is ({ build, compat, protocol }), dist: its files (index.js's). key:
   // HANDOFF_BUILD_KEY ('' for none). unsigned: builds without a signature may be started (HANDOFF_PIN=unsigned)
-  // tmp: where this process makes its own folder to unpack builds in (stn-builds-<pid>-XXXXXX: made fresh, mode 0700,
-  // taken away when the process exits; those of processes that are gone are swept when it is made)
-  constructor({ store, root, client, dist = new Map(), key = '', unsigned = false, log = () => {}, tmp = tmpdir() }) {
+  // tmp: where this process makes its own folder to unpack builds in (stn-builds-<host>-<boot>-<pid>-<start>-XXXXXX:
+  // made fresh, mode 0700, taken away when the process exits; those of processes that are gone are swept when it is
+  // made). waitMs: how long a build a save names is waited for when it is not in the store yet (BUILD_WAIT_MS: the old
+  // server may still be putting it there - its handover waits for that 2 s at most). protocolMs: PROTOCOL_LOAD_MS
+  constructor({ store, root, client, dist = new Map(), key = '', unsigned = false, log = () => {}, tmp = tmpdir(), waitMs = BUILD_WAIT_MS, protocolMs = PROTOCOL_LOAD_MS }) {
     this.store = store;
     this.root = root;
     this.client = client;
@@ -315,6 +368,9 @@ export class Builds {
     this.unsigned = unsigned;
     this.log = log;
     this.tmpBase = tmp;
+    this.waitMs = waitMs;
+    this.protocolMs = protocolMs;
+    this.opens = new Map(); // id -> { p, at }: the build being read from the store and opened, or opened lately (openOnce)
     this.dir = null; // (this process's own folder for unpacked builds: privateDir)
     this.id = ''; // this build's own ('' until packed: nothing can name it yet)
     this.packed = null;
@@ -322,7 +378,7 @@ export class Builds {
     this.kept = null;
     this.swept = false;
     this.deps = null;
-    this.got = new Map(); // id -> { id, dir, client, dist: { url: hash } } | null: the builds fetched (fetch; null: it is not to be had)
+    this.got = new Map(); // id -> { id, dir, client, dist: { url: hash } } | null: the builds fetched (fetch; null: refused here)
     this.fetching = new Map();
     this.knowing = new Map(); // id -> the store being asked for a build's client files (know), once at a time
     this.keepTimer = null;
@@ -350,15 +406,27 @@ export class Builds {
   }
   // This build in the store as it goes down (Lobby.handoffAll), or twice a day: marked as in use, and put back if it is
   // not there any more (swept by another server). Never throws.
+  // (packed again from disk: if its files changed since the server started, that is another build - not the code its
+  // games run - and it is not put there in this one's name: this one stays what its saves name, missing from the store)
   async ensure() {
     await this.keep();
     if (!this.id || !this.kept) return;
     const there = await this.store.touchBuild(this.id).catch(() => true);
     if (there !== false) return;
+    const was = this.packed;
+    const id = this.id;
+    this.packing = null;
+    this.packed = null;
+    await this.packOnce();
+    if (this.id !== id) {
+      this.log(`handoff: build ${id} was not in the store any more, and cannot be put back: this server's files changed since it started (they are build ${this.id || 'none'} now). Its games' saves still name ${id}`);
+      this.id = id;
+      this.packed = was;
+      this.packing = Promise.resolve();
+      return;
+    }
     this.log(`handoff: build ${this.id} was not in the store any more: put back`);
     this.kept = null;
-    this.packed = null;
-    this.packing = null;
     await this.keep();
   }
   // This build packed: its name (id) known from then on - the saves of its games carry it. Once; never throws.
@@ -398,8 +466,9 @@ export class Builds {
   }
 
   // The build `id`, unpacked where a worker can be started from it: { id, dir, client, dist, files }, or null (logged
-  // why). What it is not (not in the store, not signed, of another worker API...) is remembered; a store that failed, or
-  // an unpacking that did, is tried again the next time.
+  // why). What it is (refused: not signed, of another worker API...) is remembered; a build not in the store is waited
+  // for a few seconds (waitMs: the server that saved its game may still be putting it there) and not remembered as
+  // missing, nor is a store that failed, or an unpacking that did: tried again the next time.
   fetch(id) {
     if (!ID_RE.test(String(id))) return Promise.resolve(null);
     const had = this.got.get(id);
@@ -409,7 +478,7 @@ export class Builds {
     if (!p) {
       p = this._fetch(id)
         .then(
-          (b) => (this.got.set(id, b), b),
+          (b) => (b === ABSENT ? null : (this.got.set(id, b), b)),
           (err) => (this.log(`handoff: build ${id} could not be fetched (${err.message})`), null)
         )
         .finally(() => this.fetching.delete(id));
@@ -421,11 +490,43 @@ export class Builds {
     this.log(`handoff: build ${id} is not started here: ${text}`);
     return null;
   }
+  // The build `id` read from the store and opened (checked: its name, its signature): the build, { error } (refused),
+  // or null (not in the store). Once at a time for an id, and a build opened is kept a minute for whichever asks next -
+  // know and fetch both want it as a deploy brings its games back. A store that fails throws.
+  openOnce(id) {
+    const had = this.opens.get(id);
+    if (had && (!had.at || Date.now() - had.at < OPEN_KEEP_MS)) return had.p;
+    const entry = { p: null, at: 0 };
+    entry.p = (async () => {
+      const row = await this.store.getBuild(id);
+      return row ? openBuildAsync(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned }) : null;
+    })().then(
+      (b) => {
+        if (b && !b.error) {
+          entry.at = Date.now();
+          setTimeout(() => this.opens.get(id) === entry && this.opens.delete(id), OPEN_KEEP_MS).unref?.();
+        } else if (this.opens.get(id) === entry) this.opens.delete(id);
+        return b;
+      },
+      (err) => {
+        if (this.opens.get(id) === entry) this.opens.delete(id);
+        throw err;
+      }
+    );
+    this.opens.set(id, entry);
+    return entry.p;
+  }
   async _fetch(id) {
     if (!this.canStart) return this.why(id, 'HANDOFF_BUILD_KEY is not set, so nothing from the store is trusted to run here');
-    const row = await this.store.getBuild(id);
-    if (!row) return this.why(id, 'it is not in the store');
-    const b = await openBuildAsync(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned });
+    let b = await this.openOnce(id);
+    for (const until = Date.now() + this.waitMs; b === null && Date.now() < until; ) {
+      await sleep(Math.min(250, Math.max(10, until - Date.now())));
+      b = await this.openOnce(id);
+    }
+    if (b === null) {
+      this.why(id, `it is not in the store (asked for ${this.waitMs / 1000} s)`);
+      return ABSENT; // (not remembered: it may be there the next time)
+    }
     if (b.error) return this.why(id, b.error);
     if (b.api !== WORKER_API) return this.why(id, `it speaks worker API ${b.api} (this server: ${WORKER_API})`);
     if (!(b.epoch >= SECURITY_EPOCH)) return this.why(id, `it is from before a security fix (epoch ${b.epoch}; this server: ${SECURITY_EPOCH})`);
@@ -446,14 +547,13 @@ export class Builds {
     // (the folders of processes that are gone, this user's: a crash leaves its builds behind; and the one folder all
     // servers shared before)
     for (const name of readdirSync(this.tmpBase)) {
-      const pid = /^stn-builds-(\d+)-/.exec(name)?.[1];
-      if (name !== 'stn-builds' && !(pid && +pid !== process.pid && !alive(+pid))) continue;
+      if (!leftBehind(name)) continue;
       try {
         const full = join(this.tmpBase, name);
         if (isPrivate(full)) removeTree(full);
       } catch {}
     }
-    const dir = mkdtempSync(join(this.tmpBase, `stn-builds-${process.pid}-`));
+    const dir = mkdtempSync(join(this.tmpBase, `stn-builds-${HOST}-${BOOT}-${process.pid}-${STARTED}-`));
     if (!isPrivate(dir)) throw new Error(`${dir} is not this server's alone (its owner or mode): nothing is unpacked there`);
     process.once('exit', () => {
       try {
@@ -529,7 +629,7 @@ export class Builds {
   }
   // The messages the players of a game build `got` carries on read (protocolOf), loaded once
   protocol(got) {
-    return (got.proto ||= protocolOf(got.files));
+    return (got.proto ||= protocolOf(got.files, this.protocolMs));
   }
 
   // Learns a build's client files without starting anything (a save named a build this server does not run: a page of
@@ -543,8 +643,7 @@ export class Builds {
     if (!p) {
       p = (async () => {
         try {
-          const row = await this.store.getBuild(id);
-          const b = row && (await openBuildAsync(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned }));
+          const b = await this.openOnce(id);
           if (b && !b.error && !this.got.get(id)) this.got.set(id, { id, dir: '', client: b.client, dist: b.dist, files: null, filesOnly: true });
         } catch {}
       })().finally(() => this.knowing.delete(id));
