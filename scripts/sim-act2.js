@@ -794,7 +794,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   ticks(g2, 1);
   g2.killPlayer(c, { kind: 3 });
   g2.checkAllDead();
-  check('(a wipe on the mainland: the end screen, with the bridge to go back to)', g2.phase === PHASE.GAMEOVER && g2.act === WORLD.MAINLAND && !!g2.checkpoint);
+  check('(a wipe on the mainland: the end screen)', g2.phase === PHASE.GAMEOVER && g2.act === WORLD.MAINLAND && !!g2.checkpoint);
   g2.handleChat(c, '/island');
   check('/island from the mainland\'s end screen: the island, not the bridge', g2.phase === PHASE.DAY && g2.act === WORLD.ISLAND && g2.world.kind === WORLD.ISLAND && !g2.checkpoint && c.alive && near(c, g2.world.start, 16), `phase ${g2.phase} act ${g2.act}`);
   ticks(g2, 1);

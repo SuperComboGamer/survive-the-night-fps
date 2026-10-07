@@ -4005,12 +4005,11 @@ export class Game {
       case 'map1':
       case 'island':
         // /map1 (or /island): back to the island - a new run from its first day, from the mainland, the crossing or
-        // the end screen. Not the bridge a wipe on the mainland goes back to: the checkpoint is dropped first
+        // the end screen
         if (this.act === WORLD.ISLAND && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) {
           this.sendChat(p, 0, CHATF.SYSTEM, 'already on the island (map 1)');
           break;
         }
-        this.checkpoint = null;
         this.takeoffHold = 0; // (a /takeoff hold would otherwise freeze the next run's end screen)
         this.startGame();
         this.sendChat(p, 0, CHATF.SYSTEM, `on the island (map 1): day ${this.day}`);
