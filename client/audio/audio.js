@@ -996,6 +996,20 @@ export class AudioEngine {
     return this._initPromise;
   }
 
+  // the page is about to be loaded again (main.js reloadInto): the sound card and the synth workers are let go now,
+  // not whenever the browser gets round to the old page
+  close() {
+    clearInterval(this._timer);
+    clearInterval(this._duck?.timer);
+    if (this._queue) {
+      this._queue.jobs.length = 0; // (nothing more is rendered, on the main thread either)
+      this._queue.late.length = 0;
+      this._finishWorkers();
+    }
+    this._ready = false;
+    this._ctx?.close().catch(() => {});
+  }
+
   async _init() {
     // --- synchronous part: must run inside the user gesture
     const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
