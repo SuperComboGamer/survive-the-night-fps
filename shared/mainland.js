@@ -2362,8 +2362,9 @@ export function createMainland(seed) {
                 signAt(b, qx, 2.3 + (onPave(5.6).ly ?? 0), qz, faceAlong(-d), 2.0, 1.0, 'quarantine', { far: true, back: 0.05 });
               }
             }
+            // (its crate is the city's: a container's zone is the place a schematic in it is rumoured to be in)
             const [cx, cz] = at(s0 + d * 4.6, 3.6);
-            if (fits(b, 'military_crate', cx, cz, yaw)) b.cont(CONT.AMMO_BOX, cx, cz, { prop: 'military_crate', ry: yaw, zone: ZONE.ROADBLOCK });
+            if (fits(b, 'military_crate', cx, cz, yaw)) b.cont(CONT.AMMO_BOX, cx, cz, { prop: 'military_crate', ry: yaw });
             put('field_cot', s0 + d * 7, 5.4, yaw + PI / 2);
             put('barrel', s0 + d * 6.2, -3.2, 0);
             // those who held it, and those who came at it
@@ -3148,7 +3149,7 @@ export function createMainland(seed) {
       b.prop('mg_tripod', 0, 0.8, PI, { nocollide: true });
       extra(b, 'concertina', 0.4, -3.6, rng.range(-0.1, 0.1));
       extra(b, 'checkpoint_sign', -3.6, -2, PI + rng.range(-0.3, 0.3));
-      b.cont(CONT.AMMO_BOX, 3.4, 1.2, { prop: 'military_crate', ry: 0.3, zone: ZONE.ROADBLOCK });
+      b.cont(CONT.AMMO_BOX, 3.4, 1.2, { prop: 'military_crate', ry: 0.3, zone: ZONE.ROADSIDE }); // (no place's: see placeSchematics)
       for (let k = 0; k < 3; k++) b.prop(['skeleton', 'corpse', 'blood_pool'][k], rng.range(-3.6, 3.6), rng.range(-2.6, 3.4), rng.range(0, 6), { nocollide: true, seed: k });
       b.clear(0, 0, 5);
     } else if (st.type === 'stop') {
