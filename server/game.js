@@ -145,7 +145,8 @@ import { MountedGun } from './mountedgun.js';
 import { GUN, GUN_LYING } from '../shared/mountedgun.js';
 import { Fair } from './fair.js';
 import { Handcars } from './handcar.js';
-import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
+import { Vehicles } from './vehicles.js';
+import { FAIR_GEN_ID, FAIR_TANK_ID, SIPHON_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
@@ -409,6 +410,7 @@ export class Game {
     this.gun = new MountedGun(this); // the mounted gun at the Army Checkpoint, on the maps that have one
     this.fair = new Fair(this); // the Tri-County Fair: its generator and who is on its rides
     this.handcars = new Handcars(this); // the handcars on the railway: where they are on the line, who rides them
+    this.vehicles = new Vehicles(this); // the mopeds, cars and bicycles of the mainland (vehicles.js)
     this.power = new Power(this); // the buildable generator and its floodlights
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
@@ -770,6 +772,7 @@ export class Game {
       this.spawnHuman(p, left || starterKit(this.day, this.diff), true);
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
+    this.vehicles.provide(); // (a seat for them too: the next of the bridgehead's vehicles, if the team has outgrown the rest)
     this.track.join(p);
     this.ach.join(p);
     this.bestiary.join(p);
@@ -1139,6 +1142,8 @@ export class Game {
   }
 
   clearWorld() {
+    this.vehicles.clear(); // (their boxes out of the world, and nobody in one)
+    for (const p of this.players.values()) p.state.drive = p.state.driveK = p.state.pass = p.state.passN = 0;
     for (const e of [...this.all]) if (e.kind !== ENT.PLAYER) this.removeEntity(e);
     for (const s of this.structures) {
       this.world.structGrid.remove(s.collider);
@@ -1233,6 +1238,7 @@ export class Game {
     this.zm.spawnInitial();
     this.cm.spawnInitial();
     this.dm.spawnInitial();
+    this.vehicles.spawn(); // (last: the ids and the random draws of everything above are as they were without them)
   }
 
   // ---------------------------------------------------------------- the two acts (shared/acts.js)
@@ -1331,6 +1337,7 @@ export class Game {
       p.hp = Math.max(p.hp, REVIVE_HP);
     }
     s.ride = s.cart = s.hmg = 0;
+    s.drive = s.driveK = s.pass = s.passN = 0;
     s.pinned = s.pulled = 0;
     s.vx = s.vy = s.vz = 0;
     this.putAtStart(s);
@@ -2325,6 +2332,15 @@ export class Game {
         break;
       case 'splash': // into the lake (shared/swim.js): the others hear it from what they see (client entities)
         break;
+      case 'veh_crash':
+        this.vehicles.crashEvent(p, ev);
+        break;
+      case 'veh_off':
+        this.vehicles.left(p, ev);
+        break;
+      case 'veh_skid':
+        this.vehicles.skid(p);
+        break;
       case 'cart_bump':
         // a handcar run into the end of its stretch of line (shared/handcar.js)
         this.sound(SOUND.METAL_HIT, s.x, s.y, s.z, 40, p.id);
@@ -2532,6 +2548,14 @@ export class Game {
         return this.handcars.board(p, r.u8());
       case ACT.GEN_SWITCH:
         return this.power.flip(p, r.u16());
+      case ACT.VEHICLE: {
+        const what = r.u8();
+        return this.vehicles.act(p, what, r.u16());
+      }
+      case ACT.SIPHON: {
+        const qx = r.i16();
+        return this.vehicles.siphonBegin(p, qx, r.i16());
+      }
     }
   }
 
@@ -2730,6 +2754,7 @@ export class Game {
     const e = this.ents[id];
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     if (e.kind === ENT.GUN) return this.gun.holdBegin(p); // lifting the mounted gun
+    if (e.kind === ENT.VEHICLE) return this.vehicles.holdBegin(p, e); // fitting a part, pouring fuel in, patching it up
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
       if (d > this.reachOf(e) || e.state !== 0) {
@@ -2759,6 +2784,8 @@ export class Game {
       if (h.target === CAR_ID) ok = this.nearCar(p, 6) && (h.kind === HOLD.DRIVE ? this.escape.active && this.escape.ready : !this.escape.active);
       else if (this.fixtures.owns(h.target)) ok = this.fixtures.holdOk(p, h);
       else if (h.target === FAIR_GEN_ID) ok = this.fair.holdOk(p, h);
+      else if (h.target === SIPHON_ID) ok = this.vehicles.siphonOk(p, h);
+      else if (h.kind >= HOLD.VEH_FIX && h.kind <= HOLD.VEH_REPAIR) ok = this.vehicles.holdOk(p, h);
       else {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
@@ -2792,6 +2819,8 @@ export class Game {
     else if (h.kind === HOLD.GUN_LIFT) this.gun.lift(p);
     else if (this.fixtures.owns(h.target)) this.fixtures.holdDone(p, h);
     else if (h.target === FAIR_GEN_ID) this.fair.holdDone(p, h);
+    else if (h.target === SIPHON_ID) this.vehicles.siphonDone(p, h);
+    else if (h.kind >= HOLD.VEH_FIX && h.kind <= HOLD.VEH_REPAIR) this.vehicles.holdDone(p, h);
   }
 
   // Forcing a car's boot (shared/trunk.js). What the hold is to be, when this container is the boot of a car with a
@@ -3592,6 +3621,8 @@ export class Game {
     // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
     if (!p.zombie && src && (src.kind === KILLER.ZOMBIE || src.kind === KILLER.WORLD)) amount *= this.diff.hurt;
     if (!p.zombie) amount *= perkMods(p.perks).hurt;
+    // in a vehicle (vehicles.js): a car takes what the dead meant for who is in it, while it still has its glass
+    if (!p.zombie && src && src.kind === KILLER.ZOMBIE && (p.state.drive || p.state.pass) && !((amount = this.vehicles.shield(p, amount)) > 0)) return;
     if (p.downed) {
       // hits on a downed survivor drain what's left of their blood
       p.bleed -= amount * 0.12;
@@ -3686,6 +3717,7 @@ export class Game {
   killPlayer(p, src, silent = false) {
     this.track.death(p, src, silent); // (first: what they were when it came)
     this.ach.death(p, src);
+    this.vehicles.drop(p); // (out of whatever they were in: it rolls on without them)
     p.hp = 0;
     p.alive = false;
     p.deaths++;
@@ -4190,6 +4222,10 @@ export class Game {
         // the materials for one generator and two floodlights, and a full tank of fuel
         this.power.give(p);
         break;
+      case 'veh':
+      case 'vehicle':
+        this.vehicles.debug(p, args);
+        break;
       case 'handcar':
         // /handcar [n]: onto handcar n on the railway (1, 2), or the first one nobody is on
         this.handcars.debug(p, args[1]);
@@ -4267,6 +4303,7 @@ export class Game {
     this.processInputs();
     this.fair.update();
     this.handcars.update();
+    this.vehicles.update();
     ts.mark(T_INPUTS);
     this.updatePhase(dt);
     this.cemetery.update(dt);
@@ -4914,6 +4951,13 @@ export class Game {
       c.f32(s.cartV);
       c.u8(s.hmg);
       c.u32(s.perks);
+      c.u16(s.drive);
+      c.u8(s.driveK | (s.ddead ? 128 : 0));
+      c.f32(s.dyaw);
+      c.f32(s.dsteer);
+      c.f32(s.dfuel);
+      c.u16(s.pass);
+      c.u8(s.passN);
       if (put(12)) mask |= SELF.RIDE;
     }
     // status: 7 field groups behind their own mask

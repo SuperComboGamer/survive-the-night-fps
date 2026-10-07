@@ -43,6 +43,7 @@ import { groundAt, resolveBody, deepWaterAt } from './collision.js';
 import { mulberry32 } from './rng.js';
 import { rideStep, rideCarry } from './fair.js';
 import { cartStep, cartCarry, CART_PUMP, LEVER_HANDS } from './handcar.js';
+import { driveStep, DRIVE_HANDS } from './vehicles.js';
 import { swimming, waterFloor, wadeDepth, SWIM_HANDS, SWIM_SPEED, SWIM_FAST, SWIM_DOWNED, SWIM_ACCEL, SWIM_DRAG, SWIM_TREAD, SWIM_DRAIN, WADE_FROM, WADE_SLOW, CROUCH_WADE, SWIM_DEPTH } from './swim.js';
 import { perkMods } from './progress.js';
 import { simNunchaku } from './nunchaku.js';
@@ -97,6 +98,16 @@ export function createPlayerState() {
     cartV: 0,
     // carrying the mounted gun (mountedgun.js): both arms full, half pace, and a weapon switch drops it
     hmg: 0,
+    // at the wheel of a vehicle (vehicles.js): its entity id and kind, where it points, its steering, its tank, whether
+    // it has broken down. Then x / y / z and vx / vz are the vehicle's. Or carried in one: its id and the seat
+    drive: 0,
+    driveK: 0,
+    dyaw: 0,
+    dsteer: 0,
+    dfuel: 0,
+    ddead: 0,
+    pass: 0,
+    passN: 0,
     // the perks they picked (progress.js: a bitmask of perk ids), set by the server. What they do here is perkMods
     perks: 0,
   };
@@ -148,6 +159,14 @@ export function copyPlayerState(dst, src) {
   dst.cartS = src.cartS;
   dst.cartV = src.cartV;
   dst.hmg = src.hmg;
+  dst.drive = src.drive;
+  dst.driveK = src.driveK;
+  dst.dyaw = src.dyaw;
+  dst.dsteer = src.dsteer;
+  dst.dfuel = src.dfuel;
+  dst.ddead = src.ddead;
+  dst.pass = src.pass;
+  dst.passN = src.passN;
   dst.perks = src.perks;
   return dst;
 }
@@ -166,6 +185,7 @@ export function samePlayerState(a, b) {
   if (a.hmg !== b.hmg || a.perks !== b.perks) return false;
   if (a.ride !== b.ride || a.rideT !== b.rideT || a.rideGo !== b.rideGo) return false;
   if (a.cart !== b.cart || a.cartS !== b.cartS || a.cartV !== b.cartV) return false;
+  if (a.drive !== b.drive || a.driveK !== b.driveK || a.dyaw !== b.dyaw || a.dsteer !== b.dsteer || a.dfuel !== b.dfuel || a.ddead !== b.ddead || a.pass !== b.pass || a.passN !== b.passN) return false;
   return a.downed === b.downed && a.using === b.using && a.lastBtn === b.lastBtn && a.fireCount === b.fireCount;
 }
 
@@ -193,6 +213,9 @@ export function snapPlayerState(s) {
   s.pullZ = fr(s.pullZ);
   s.cartS = fr(s.cartS);
   s.cartV = fr(s.cartV);
+  s.dyaw = fr(s.dyaw);
+  s.dsteer = fr(s.dsteer);
+  s.dfuel = fr(s.dfuel);
   return s;
 }
 
@@ -207,9 +230,12 @@ export function hashPlayerState(s) {
     h = Math.imul(h ^ v, 0x01000193);
     h ^= h >>> 15;
   };
-  mix(Math.round(s.x * 512));
-  mix(Math.round(s.y * 512));
-  mix(Math.round(s.z * 512));
+  // (carried in a vehicle, where they are is the seat's: the server puts them there, and their own copy stands still)
+  if (!s.pass) {
+    mix(Math.round(s.x * 512));
+    mix(Math.round(s.y * 512));
+    mix(Math.round(s.z * 512));
+  }
   mix(Math.round(s.vx * 128));
   mix(Math.round(s.vy * 128));
   mix(Math.round(s.vz * 128));
@@ -241,6 +267,13 @@ export function hashPlayerState(s) {
     mix(Math.round(s.cartS * 512));
     mix(Math.round(s.cartV * 128));
   }
+  if (s.drive) {
+    mix(s.drive | (s.driveK << 16) | (s.ddead << 20));
+    mix(Math.round(s.dyaw * 2048));
+    mix(Math.round(s.dsteer * 2048));
+    mix(Math.round(s.dfuel * 64));
+  }
+  if (s.pass) mix(s.pass | (s.passN << 16) | 0x70000000);
   if (s.hmg) mix(0x686d67);
   if (s.perks) mix(s.perks);
   return (h ^ (h >>> 8) ^ (h >>> 16) ^ (h >>> 24)) & 255;
@@ -359,14 +392,34 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
     b &= ~LEVER_HANDS;
     pressed &= ~LEVER_HANDS;
   }
+  // at the wheel of a vehicle (vehicles.js): the command drives it, and the body is where it is. Both hands are on
+  // the bars or the wheel
+  if (s.drive !== 0 && driveStep(s, b, world, events, dt)) {
+    if (s.using) putAwayItem(s, events);
+    s.reloadT = 0;
+    s.recoil = 0;
+    if (s.stunT > 0) s.stunT -= dt;
+    if (s.leapCd > 0) s.leapCd -= dt;
+    if (s.switchT > 0) s.switchT -= dt;
+    if (s.cooldown > 0) s.cooldown -= dt;
+    s.shove = 0;
+    s.lastBtn = cmd.buttons & ~DRIVE_HANDS;
+    return s;
+  }
+  // carried in one: the seat has them (the server puts them in it, wherever it goes). Their hands are their own
+  const seated = s.pass !== 0 && !s.zombie && !s.downed && !s.pulled && !s.pinned;
+  if (s.pass !== 0 && !seated) s.pass = s.passN = 0; // (pulled out of it, or down: the server puts the body beside it)
+  const sx0 = s.x;
+  const sy0 = s.y;
+  const sz0 = s.z;
   // afloat in the lake or a pond (swim.js): both hands are swimming, and nothing in them works
-  const swim = !riding && !carted && swimming(world, s);
+  const swim = !riding && !carted && !seated && swimming(world, s);
   if (swim) {
     b &= ~SWIM_HANDS;
     pressed &= ~SWIM_HANDS;
   }
   const wade = swim || s.zombie ? 0 : wadeDepth(world, s.x, s.y, s.z);
-  const disabled = s.pinned || s.stunT > 0 || riding || carted;
+  const disabled = s.pinned || s.stunT > 0 || riding || carted || seated;
   let fwd = 0;
   let right = 0;
   if (!disabled) {
@@ -552,6 +605,13 @@ export function simulatePlayer(s, cmd, world, events, dt = CMD_DT) {
   s.z = _pos.z;
   if (riding) rideCarry(s, world);
   else if (carted) cartCarry(s, world);
+  else if (seated) {
+    s.x = sx0;
+    s.y = sy0;
+    s.z = sz0;
+    s.vx = s.vy = s.vz = 0;
+    s.onGround = 1;
+  }
 
   // both hands on the leaper (pinned): an item in them is put away and a reload let go of
   if (pinned) {

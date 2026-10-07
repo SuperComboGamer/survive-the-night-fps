@@ -306,7 +306,7 @@ function sedanCabin(b, o, hw) {
   for (const sx of [-1, 1]) seat(b, sx * 0.38, fy, fz, { h: fh, c: sc, bh: 0.58, d: 0.46 });
   if (what !== 4) seat(b, 0, fy, rz, { w: 1.32, h: rh, c: sc, bh: 0.56, d: 0.42, heads: 2, rake: 0.2 });
   dash(b, 0.955, -0.85, iw, { d: 0.3, wheelX: -0.38, gloveOpen: what === 4 || what === 0 });
-  steering(b, [-0.38, 1.0, -0.42]);
+  if (!o.noSteer) steering(b, [-0.38, 1.0, -0.42]); // (noSteer: a car that is driven has a wheel of its own, which turns)
   mirror(b, [0, 1.3, -0.24]);
   b.box('cabin_fine', 0.2, 0.2, 0.74, { p: [0, fy + 0.1, -0.2], c: trim }); // the tunnel between the seats, and the lever on it
   b.cylBetween('cabin_fine', [0, fy + 0.2, -0.34], [0.01, fy + 0.4, -0.38], 0.012, 0.018, 4, { c: [0.08, 0.08, 0.08] });

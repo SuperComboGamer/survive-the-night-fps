@@ -4132,6 +4132,8 @@ const _e = new THREE.Euler();
 const _grip = new THREE.Vector3();
 const _lh = new THREE.Vector3();
 const _off = new THREE.Vector3();
+const _reachM = new THREE.Matrix4();
+const REACH_FIST = 0.075; // the middle of a closed fist, out from the wrist
 const MOUNT_POS = new THREE.Vector3(-0.025, -0.08, 0);
 const MOUNT_POS_L = new THREE.Vector3(0.025, -0.08, 0); // (the left fist's, for what a left hand holds: nunchucks)
 let STOCK_POCKET = -0.14; // (chest-bone space, z) where a shouldered butt ends: the front of the shoulder, in its clothes (the lofted bodies' shoulders are 4 cm further out than the old boxes': measured on four of them, scripts/clip/survey.js)
@@ -4452,6 +4454,7 @@ class SurvivorInstance {
     } else o.set(p);
     this.applyPose(o);
     if (ik) this.solveArms(s, time);
+    if (s.reach && !this.zombie && !s.dead) this.solveReach(s.reach);
     if (this.packOn) this.hangPack();
     // flashlight follows the full aim pitch (chest only carries part of it)
     const fl = this.flashlightAnchor;
@@ -4821,6 +4824,32 @@ class SurvivorInstance {
       // guard: left fist up near the chest
       b[UARM_L].rotation.set(0.5 - b[SPINE].rotation.x - b[CHEST].rotation.x, 0, -0.25);
       b[FARM_L].rotation.set(1.6, 0, 0);
+    }
+  }
+
+  // Both hands out to two points of the world (s.reach: { l, r }, Vector3s or null): the grips of a moped's bars,
+  // the rim of a steering wheel. The wrist stops a fist short of the point, so that the fist closes on it.
+  solveReach(reach) {
+    const P = this.P;
+    const b = this.bones;
+    const chest = b[CHEST];
+    chest.updateWorldMatrix(true, false);
+    _reachM.copy(chest.matrixWorld).invert();
+    const cy = P.shoulderY - P.chestY;
+    for (const side of [1, -1]) {
+      const t = side > 0 ? reach.r : reach.l;
+      if (!t) continue;
+      _T.copy(t).applyMatrix4(_reachM);
+      _S.set(side * P.shoulderW, cy, 0);
+      _off.copy(_T).sub(_S);
+      const d = _off.length();
+      if (d > 1e-4) _T.addScaledVector(_off, -Math.min(REACH_FIST, d * 0.5) / d);
+      _pole.set(side * 0.7, -1, 0.45);
+      ikTwoBone(_S, _T, P.uarmLen, P.farmLen, _pole, _qU, _qL);
+      const clav = b[side > 0 ? CLAV_R : CLAV_L].quaternion;
+      b[side > 0 ? UARM_R : UARM_L].quaternion.copy(_qTmp.copy(clav).invert().multiply(_qU));
+      b[side > 0 ? FARM_R : FARM_L].quaternion.copy(_qL);
+      b[side > 0 ? HAND_R : HAND_L].quaternion.identity();
     }
   }
 

@@ -229,6 +229,14 @@ export class Connection {
         w.u8(args[0]);
         w.u16(args[1]);
         break;
+      case ACT.VEHICLE: // (what: VACT, the vehicle's entity)
+        w.u8(args[0]);
+        w.u16(args[1] || 0);
+        break;
+      case ACT.SIPHON: // (the wreck's prop, as it is quantized)
+        w.i16(args[0]);
+        w.i16(args[1]);
+        break;
       case ACT.SWAP_INV:
       case ACT.UNEQUIP:
       case ACT.WORN:

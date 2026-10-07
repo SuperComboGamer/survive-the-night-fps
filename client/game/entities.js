@@ -349,6 +349,7 @@ export class Entities {
       yaw = dqangle16(q[3]);
       pitch = dqpitch(q[4]);
     } else if (e.kind === ENT.ZOMBIE || e.kind === ENT.CAT || e.kind === ENT.DEER) yaw = dqangle8(q[3]);
+    else if (e.kind === ENT.VEHICLE) yaw = dqangle16(q[3]);
     else if (e.kind === ENT.HANDCAR) pitch = q[3] / HCAR_AT; // (a handcar's place on the line, interpolated as a pitch is: game/handcar.js)
     e.samples.push(t, dqpos(q[0]), dqpos(q[1]), dqpos(q[2]), yaw, pitch);
   }
@@ -419,6 +420,9 @@ export class Entities {
         }
         case ENT.GUN:
           g.gun.attach(e); // the mounted gun: client/game/mountedgun.js draws and turns it
+          break;
+        case ENT.VEHICLE:
+          g.vehicles.attach(e); // a moped, a car, a bicycle: client/game/vehicles.js draws it
           break;
         case ENT.HANDCAR:
           g.handcar.attach(e); // a handcar on the railway: client/game/handcar.js draws it on the line
@@ -617,6 +621,10 @@ export class Entities {
       case ENT.HANDCAR:
         if (!initial && mask & 0b11) this.pushSample(e, t);
         break;
+      case ENT.VEHICLE:
+        if (!initial && mask & 0b11) this.pushSample(e, t);
+        if (!initial) this.g.vehicles.changed(e);
+        break;
       case ENT.DEER:
         if (!initial && mask & 0b11) this.pushSample(e, t);
         if (mask & 0b100) deerAnimChanged(this, e, initial);
@@ -710,6 +718,7 @@ export class Entities {
   }
 
   destroyView(e) {
+    if (e.kind === ENT.VEHICLE) this.g.vehicles.detach(e);
     const g = this.g;
     if (e.kind === ENT.CACHE || e.kind === ENT.ITEM) this.caches.delete(e);
     if (e.kind === ENT.ITEM) this.loose.delete(e);
@@ -991,6 +1000,7 @@ export class Entities {
           e.seatK = Math.max(0, Math.min(1, (e.seatK || 0) + (ride ? dt : -dt) * 5));
           if (e.seatK > 0) g.fair.seatBlend(e.seat - 1, tmp, e.seatK);
           // on a handcar they stand on its deck where the car is drawn (game/handcar.js), stepping onto it over a moment
+          const seat = g.vehicles.seatOf(e.id); // in a vehicle: drawn in their seat of it, as it is drawn (game/vehicles.js)
           const carted = g.handcar.riderAt(e.id, _car);
           e.cartK = carted ? Math.min(1, (e.cartK || 0) + dt * 5) : 0;
           if (carted) {
@@ -1004,7 +1014,7 @@ export class Entities {
           const dz = tmp.z - e.rz;
           const sp = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
           e.speed += (Math.min(sp, 14) - e.speed) * Math.min(1, dt * 10);
-          if (e.seatK > 0 || carted) e.speed = 0; // (carried, not walking)
+          if (e.seatK > 0 || carted || seat) e.speed = 0; // (carried, not walking)
           const fallVy = e.vy || 0; // (how fast they came down before this frame: a jump into the water splashes)
           e.vy = e.seatK > 0 || carted ? 0 : dy / Math.max(dt, 1e-3);
           e.rx = tmp.x;
@@ -1037,7 +1047,7 @@ export class Entities {
           }
           e.afloat = afloat;
           const carry = !grips && g.gun.carrier === e.id; // ...or carrying it off in both arms (mountedgun.js draws it there)
-          const weapon = zombie || grips || afloat || carry ? 0 : e.q[6];
+          const weapon = zombie || grips || afloat || carry || (seat && seat.k === 0) ? 0 : e.q[6]; // (at the wheel: both hands on it)
           if (weapon !== e.weapon) {
             e.weapon = weapon;
             v.setWeapon(weapon);
@@ -1050,7 +1060,8 @@ export class Entities {
           v.object.rotation.order = 'YXZ';
           v.object.rotation.y = e.ryaw;
           v.object.rotation.x = -1.3 * e.downK;
-          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
+          const reach = seat ? g.vehicles.place(seat, v.object) : null;
+          v.update(dt, { speed: downed ? e.speed * 0.4 : e.speed, sprint: !!(flags & PFLAG.SPRINT), crouch: !!(flags & PFLAG.CROUCH) || downed, pitch: downed ? 0.9 : e.rpitch, onGround: Math.abs(e.vy) < 1.5, reloading: !!(flags & PFLAG.RELOADING), dead, time, grips, carry, sit: e.seatK > 0.5 || !!seat, reach, swim: afloat && !downed, talk: !!g.players.get(e.id)?.onAir, voice: g.voice?.mouthLevel(e.id) || 0 }); // (talk: on the walkie-talkie; voice: how loud they are talking, for the mouth)
           v.object.visible = !(dead && zombie);
           // nunchucks: what their chain is doing is heard from where they stand (nothing of it is on the wire)
           if (weapon === ITEM.NUNCHAKU) {
@@ -1190,6 +1201,7 @@ export class Entities {
           break;
       }
     }
+    g.vehicles.lampCands(flashCands, camPos); // (a lit headlamp is a light like a survivor's torch)
     flashCands.sort((a, b) => a.d - b.d);
     for (let i = 0; i < Math.min(2, flashCands.length); i++) this.remoteFlash.push(flashCands[i]);
     // corpses

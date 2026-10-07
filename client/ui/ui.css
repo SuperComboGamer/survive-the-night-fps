@@ -1565,6 +1565,89 @@ body {
   text-shadow: var(--shadow-s);
 }
 
+/* in a vehicle: its name, its speed, its tank and its body (game/vehicles.js) */
+.stn-ui .v-veh {
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+  margin-top: calc(4 * var(--u));
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-2);
+  text-shadow: var(--shadow-s);
+}
+
+.stn-ui .v-veh[hidden],
+.stn-ui .v-veh [hidden] {
+  display: none;
+}
+
+.stn-ui .veh-name {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.8;
+}
+
+.stn-ui .veh-kmh {
+  min-width: 2.2ch;
+  text-align: right;
+  font-size: max(15px, calc(20 * var(--u)));
+  color: var(--hud);
+}
+
+.stn-ui .veh-unit {
+  margin-left: calc(-6 * var(--u));
+  opacity: 0.6;
+}
+
+.stn-ui .veh-g {
+  display: flex;
+  align-items: center;
+  gap: calc(5 * var(--u));
+}
+
+.stn-ui .veh-l {
+  font-size: max(8px, calc(9 * var(--u)));
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+}
+
+.stn-ui .veh-bar {
+  display: block;
+  box-sizing: content-box;
+  width: calc(54 * var(--u));
+  min-width: 36px;
+  height: calc(6 * var(--u));
+  min-height: 4px;
+  padding: 1px;
+  border: 1.5px solid rgba(230, 223, 207, 0.55);
+  border-radius: 2px;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+}
+
+.stn-ui .veh-bar i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--bone-2);
+  transform-origin: left center;
+  transition: transform 0.25s;
+}
+
+.stn-ui .veh-g.low .veh-bar i {
+  background: var(--bad, #d8463a);
+}
+
+.stn-ui .veh-g.low .veh-l {
+  color: var(--bad, #d8463a);
+  opacity: 1;
+}
+
+.stn-ui .veh-lamp {
+  font-size: max(8px, calc(9 * var(--u)));
+  letter-spacing: 0.1em;
+  color: #f4e3a6;
+}
+
 .stn-ui .batt {
   position: relative;
   width: calc(28 * var(--u));

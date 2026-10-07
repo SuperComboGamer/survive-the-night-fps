@@ -709,6 +709,20 @@ export const SOUND = {
   DRINK: 121, // a can cracked open and gulped down (an energy drink)
   FLARE_GUN: 122, // a flare gun's shot (client-side, from EVT.SHOT)
   FLARE_POP: 123, // a parachute flare bursting alight at the top of its climb (client-side, from its flight)
+  // vehicles (shared/vehicles.js)
+  VEH_START: 130, // an engine turned over and caught (somebody at the wheel of one that runs)
+  VEH_STOP: 131, // ...and switched off, or run dry
+  VEH_FIX: 132, // a part fitted: a ratchet, a clank
+  VEH_FUEL: 133, // fuel glugging into a tank
+  VEH_CRASH: 134, // sheet metal into something solid
+  VEH_THUMP: 135, // a body struck by one
+  VEH_BREAK: 136, // one breaking down: a bang under the bonnet, steam
+  VEH_DOOR: 137, // a car door shut (somebody getting in or out)
+  SIPHON: 138, // fuel drawn out of a wreck's tank
+  VEH_GLASS: 139, // a car's windows going in (the dead getting at who is inside)
+  BIKE_BELL: 140, // a bicycle's bell
+  VEH_MOUNT: 141, // somebody swinging a leg over a moped or a bicycle
+  VEH_SKID: 142, // tyres letting go (client-side, from the vehicle's replicated state)
 };
 
 export const EVT = {
@@ -817,7 +831,18 @@ export const NOTIFY = {
   STAND_STAGE: 68, // the runway stand moves on. arg = 1: the tanks are full, the engines are warming; 2: warm, get in
   RUNWAY_BLOCKED: 69, // (to whoever tried to take off) the dead are on the runway. arg = how many
   // (70 was CHECKPOINT: a wipe on the mainland used to start again from the bridgehead; now it ends the run)
+  // vehicles (shared/vehicles.js)
+  VEH_FIXED: 71, // a vehicle runs. arg = the player who fitted the last part
+  VEH_BROKE: 72, // (to who is in it) it has broken down
+  VEH_WRECKED: 73, // (to who is in it) it is burnt out
+  SIPHONED: 74, // (to whoever drew it) arg = the Fuel that came out of the wreck's tank; 0: it was dry
+  VEH_NEED: 75, // (to whoever tried) arg = VEH_NO: why nothing could be done to it
+  VEH_OFF: 76, // (to the rider) arg = VEH_OFF: what took them off it
 };
+
+// NOTIFY.VEH_NEED / VEH_OFF: why
+export const VEH_NO = { FULL: 1, NO_FUEL: 2, NO_PARTS: 3, FINE: 4, SEATS: 5, BROKEN: 6, WRECK: 7 };
+export const VEH_OFFS = { THROWN: 1, PULLED: 2, KNOCKED: 3 };
 
 // killer kinds for killfeed
 export const KILLER = { PLAYER: 1, ZOMBIE: 2, WORLD: 3 };

@@ -132,6 +132,7 @@ const SPREAD_OPEN = Math.cos(1.2);
 const SPREAD_PROBE = 1.6;
 const _spr = { x: 0, z: 0 };
 
+const _lamps = [];
 export class Zombies {
   constructor(game) {
     this.g = game;
@@ -1338,6 +1339,7 @@ export class Zombies {
       if (night && h.flashlight) range *= 1.5;
       if (s.sprinting) range *= 1.3;
       range *= perkMods(s.perks).notice;
+      if (s.drive || s.pass) range *= g.vehicles.notice(h); // (an engine is heard, a headlamp seen)
       if (!z.horde && z.def.sense) range *= z.def.sense; // dogs catch the scent from further off
       if (z.aggroId === h.id && z.aggroT > 0) range = 600;
       if (z.target === h.id) range *= 1.6; // hysteresis
@@ -1454,6 +1456,18 @@ export class Zombies {
     }
     if (g.fair.lit(z, h)) return true; // the lights of the fair, while its generator runs
     if (g.power.floodLit(this, z, h)) return true; // the cone of a powered floodlight (power.js)
+    // a vehicle's headlamp (vehicles.js): a beam along the ground ahead of it
+    if (g.vehicles.list.length) {
+      const lamps = g.vehicles.lamps(_lamps);
+      for (let i = 0; i < lamps.length; i += 6) {
+        const dx = z.x - lamps[i];
+        const dz = z.z - lamps[i + 2];
+        const along = dx * lamps[i + 3] + dz * lamps[i + 4];
+        if (along <= 0 || along > lamps[i + 5] || Math.abs(z.y - lamps[i + 1]) > 4) continue;
+        if (Math.abs(dz * lamps[i + 3] - dx * lamps[i + 4]) > along * 0.42 + z.def.radius) continue;
+        if (this.clearLine(lamps[i], lamps[i + 1], lamps[i + 2], z.x, z.y + h * 0.5, z.z)) return true;
+      }
+    }
     for (const p of this.humansCache) {
       if (!p.flashlight) continue;
       const s = p.state;
@@ -1601,6 +1615,8 @@ export class Zombies {
         _pos.z = h.state.z + (ddz / d) * min;
       }
     }
+    // ...and out of a vehicle that is moving or has somebody in it (one standing empty is a box of the world)
+    if (g.vehicles.list.length) g.vehicles.keepOff(_pos, rad, z.y);
     const moveR = def.moveR ?? Math.min(rad, 0.65);
     const moveH = def.moveH ?? def.height;
     const hit = resolveBody(g.world, _pos, moveR, moveH, false);
@@ -1808,6 +1824,8 @@ export class Zombies {
 
   knock(p, fromX, fromZ, power, up, stun) {
     const s = p.state;
+    // (in a car the blow shoves the car; on two wheels it has them off first)
+    if ((s.drive || s.pass) && this.g.vehicles.onKnock(p, fromX, fromZ, power)) return;
     let dx = s.x - fromX;
     let dz = s.z - fromZ;
     const l = Math.hypot(dx, dz) || 1;

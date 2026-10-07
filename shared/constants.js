@@ -161,6 +161,8 @@ export const NOISE = {
   BELL: 220, // each toll of the chapel bell
   RADIO: 90, // the Relay Station's radio calling for a supply drop
   FAIR: 150, // the calliope of the Tri-County Fair, for as long as its generator runs
+  HORN: 110, // a vehicle's horn (the engine's own reach is the vehicle's: shared/vehicles.js)
+  CRASH: 60, // a vehicle driven into something solid
 };
 export const NOISE_RUSH = 50; // a zombie this far (m) inside a noise's radius comes at a full run; nearer the edge it ambles
 export const NOISE_SPEED_MIN = 0.55; // speed multiplier towards the faintest noise it still hears
@@ -225,6 +227,7 @@ export const BTN = {
   ALT: 256,
   RELOAD: 512,
   GUN: 1024, // the trigger of the mounted gun, from the survivor who mans it (shared/mountedgun.js). The simulation ignores it
+  HORN: 2048, // the horn of the vehicle they drive (shared/vehicles.js). The simulation ignores it: the server sounds it
 };
 
 export const PHASE = {

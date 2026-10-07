@@ -28,6 +28,7 @@ import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
 import { perkMods } from '../shared/progress.js';
 import { NK_MOVES, NK } from '../shared/nunchaku.js';
+import { COL_VEHICLE } from '../shared/vehicles.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
 import { playerHitbox, zombieHitbox, rayHitbox, headHit } from '../shared/hitbox.js';
 import { deerHitbox } from '../shared/deer.js';
@@ -221,6 +222,7 @@ export class Combat {
             if (wallCol.flags & COL.TREE) kind = IMPACT.WOOD;
             else if (wallCol.flags & COL.STRUCT) kind = STRUCT_DEFS[this.g.ents[wallCol.id]?.stype]?.metal ? IMPACT.METAL : IMPACT.WOOD;
             else kind = IMPACT.SPARK;
+            if (wallCol.flags & COL_VEHICLE) g.vehicles.shot(wallCol, def.damage); // a vehicle standing empty takes the round
           }
           // only a few impacts for shotgun spreads to save bandwidth
           if (def.pellets === 1 || i % 3 === 0) g.impact(kind, hx, hy, hz, -dx, -dy, -dz);
@@ -642,6 +644,7 @@ export class Combat {
     );
     g.sound(SOUND.EXPLOSION, x, y, z, 260);
     g.blastWrecks(x, y, z, radius);
+    if (g.vehicles.list.length) g.vehicles.blast(x, y, z, radius, opts.structures || opts.zombies || 0);
     if (opts.humans) {
       for (const h of g.players.values()) {
         if (!h.alive || h.zombie) continue;

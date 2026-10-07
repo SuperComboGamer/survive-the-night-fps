@@ -42,7 +42,7 @@ export class ClientView {
 }
 
 const q = new Int32Array(SLOTS);
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5, [ENT.VEHICLE]: 9 };
 // mask bit -> slot ranges (first bit is always pos = slots 0..2)
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -58,6 +58,7 @@ const BIT_SLOTS = {
   [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
   [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
   [ENT.HANDCAR]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.VEHICLE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 9]],
 };
 
 export function playerFlags(p) {
@@ -136,6 +137,18 @@ function quant(e) {
       q[3] = Math.round(e.s * HCAR_AT) & 0xffff;
       q[4] = e.rider;
       break;
+    case ENT.VEHICLE: {
+      // (server/vehicles.js keeps `flags`, `seats` and the speed along itself up to date: wire())
+      q[3] = qangle16(e.yaw);
+      const sp = Math.max(-127, Math.min(127, Math.round(e.vf * 4)));
+      const st = Math.max(-127, Math.min(127, Math.round(e.steer * 100)));
+      q[4] = (sp & 255) | ((st & 255) << 8);
+      q[5] = e.flags;
+      q[6] = Math.max(0, Math.min(255, Math.ceil(e.fuelQ * 255))) | (Math.max(0, Math.min(255, Math.ceil(e.hpQ * 255))) << 8);
+      q[7] = e.seats[0] | (e.seats[1] << 14);
+      q[8] = e.seats[2] | (e.seats[3] << 14);
+      break;
+    }
   }
 }
 
@@ -161,6 +174,10 @@ function writeFields(w, kind, q, o, fromSlot, toSlot) {
       case ENT.GUN:
       case ENT.HANDCAR:
         w.u16(v);
+        break;
+      case ENT.VEHICLE:
+        if (s >= 7) w.u32(v);
+        else w.u16(v);
         break;
       default:
         w.u8(v);
@@ -207,6 +224,10 @@ function writeCreate(w, e) {
     case ENT.HANDCAR:
       w.u8(e.k);
       break;
+    case ENT.VEHICLE:
+      w.u8(e.vk);
+      w.u8(e.tint);
+      break;
   }
   writeFields(w, e.kind, SQ, e.id * SLOTS, 0, FIELD_COUNT[e.kind]);
 }
@@ -250,6 +271,7 @@ AOI2[ENT.PLAYER] = 0;
 AOI2[ENT.CRATE] = 0;
 AOI2[ENT.FAIR] = 0; // (its lights and its music carry further than anything else in the valley)
 AOI2[ENT.HANDCAR] = 0; // (two of them, seen coming down the line from a long way off)
+AOI2[ENT.VEHICLE] = 0; // (a couple of dozen at most, and the team's own are on its map wherever they were left)
 AOI2[ENT.GUN] = 0; // (one, heard from further off than anything: wherever it is carried, it is somewhere)
 AOI2[ENT.ITEM] = AOI_ITEM_RADIUS * AOI_ITEM_RADIUS;
 AOI2[ENT.STRUCTURE] = AOI_STRUCTURE_RADIUS * AOI_STRUCTURE_RADIUS;

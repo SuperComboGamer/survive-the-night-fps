@@ -4,7 +4,7 @@ import { CMDS_PER_PACKET, EYE_HEIGHT, EYE_HEIGHT_CROUCH, EYE_HEIGHT_DOWNED, SERV
 import { EVT, AMMO_ITEMS, PROJ } from '../../shared/defs.js';
 import { ACH_STATS } from '../../shared/achievements.js';
 
-const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5 };
+const FIELD_COUNT = { [ENT.PLAYER]: 9, [ENT.ZOMBIE]: 9, [ENT.ITEM]: 4, [ENT.STRUCTURE]: 5, [ENT.PROJECTILE]: 3, [ENT.CRATE]: 4, [ENT.AREA]: 3, [ENT.CACHE]: 4, [ENT.CAT]: 5, [ENT.DEER]: 5, [ENT.FAIR]: 9, [ENT.GUN]: 8, [ENT.HANDCAR]: 5, [ENT.VEHICLE]: 9 };
 const BIT_SLOTS = {
   [ENT.PLAYER]: [[0, 3], [3, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
   [ENT.ZOMBIE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9]],
@@ -19,6 +19,7 @@ const BIT_SLOTS = {
   [ENT.DEER]: [[0, 3], [3, 4], [4, 5]],
   [ENT.FAIR]: [[0, 3], [3, 4], [4, 7], [7, 9]],
   [ENT.HANDCAR]: [[0, 3], [3, 4], [4, 5]],
+  [ENT.VEHICLE]: [[0, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 9]],
 };
 
 // reads slots [s0, s1) of an entity record with kind-specific widths
@@ -35,6 +36,7 @@ function readFields(r, kind, q, s0, s1) {
       else if (s > 5) q[s] = r.u8();
     } else if (kind === ENT.ZOMBIE) q[s] = s === 6 ? r.u16() : r.u8();
     else if (kind === ENT.ITEM || kind === ENT.GUN || kind === ENT.HANDCAR) q[s] = r.u16();
+    else if (kind === ENT.VEHICLE) q[s] = s >= 7 ? r.u32() : r.u16();
     else q[s] = r.u8();
   }
 }
@@ -121,6 +123,7 @@ export function readSelf(r, out, flags) {
   if (out.ride === undefined) out.ride = out.rideGo = out.rideT = 0;
   if (out.cart === undefined) out.cart = out.cartS = out.cartV = 0;
   if (out.hmg === undefined) out.hmg = 0;
+  if (out.drive === undefined) out.drive = out.driveK = out.dyaw = out.dsteer = out.dfuel = out.ddead = out.pass = out.passN = 0;
   if (out.perks === undefined) out.perks = 0;
   if (out.shove === undefined) out.shove = 0;
   if (!(flags & SNAP.SELF)) return false;
@@ -181,6 +184,16 @@ export function readSelf(r, out, flags) {
     out.cartV = r.f32();
     out.hmg = r.u8();
     out.perks = r.u32();
+    // (at the wheel of a vehicle, or carried in one: shared/vehicles.js)
+    out.drive = r.u16();
+    const dk = r.u8();
+    out.driveK = dk & 15;
+    out.ddead = dk >> 7;
+    out.dyaw = r.f32();
+    out.dsteer = r.f32();
+    out.dfuel = r.f32();
+    out.pass = r.u16();
+    out.passN = r.u8();
   }
   if (mask & SELF.STATUS) {
     const m = r.u8();
@@ -268,6 +281,10 @@ export function readEntities(r, store, tick, flags) {
           break;
         case ENT.HANDCAR:
           e.k = r.u8(); // (which of the valley's cars: shared/handcar.js)
+          break;
+        case ENT.VEHICLE:
+          e.vk = r.u8(); // (its kind and its paint: shared/vehicles.js)
+          e.tint = r.u8();
           break;
       }
       readFields(r, kind, e.q, 0, FIELD_COUNT[kind]);
