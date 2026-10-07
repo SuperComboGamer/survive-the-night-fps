@@ -14,7 +14,7 @@ import { refreshAccount } from './net/account.js';
 import { startAchievementsSync } from './net/achievements.js';
 import { linkedCode, inviteLink, showCodeInAddress, gameInfo, listGames } from './net/lobby.js';
 import { comeBack } from './net/comeback.js';
-import { moveBack as movedBack, verdictFor, pageBuild } from './net/moveback.js';
+import { moveBack as movedBack, joinVerdict, pageBuild, mayReload, reloadedInto, RELOAD_LOOP_TEXT } from './net/moveback.js';
 import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
 
@@ -112,7 +112,27 @@ const version = (code = '') => fetch(`/api/version${code ? `?game=${encodeURICom
 let updateReady = false; // the server runs a newer client than this page, which can still play: loaded once the player leaves
 const MOVED_KEY = 'stn.moved';
 const UPDATING_READ_MS = 250; // the "Game updated" card is painted over the game before the page reloads (the new page shows it at once too)
+// (sessionStorage, or null where the browser will not have it: then reloads are not counted)
+const tabStore = () => {
+  try {
+    return sessionStorage;
+  } catch {
+    return null;
+  }
+};
+// the server's "try again" pages (a server going down, an older build's page not to be had) count their tries here:
+// this page is up, so the count starts again
+try {
+  for (const k of Object.keys(sessionStorage)) if (k.startsWith('stn.retry.')) sessionStorage.removeItem(k);
+} catch {}
 async function reloadInto(code, name) {
+  // (a server that keeps asking for the page to be loaded again for this game: told so, not reloaded for ever)
+  if (!mayReload(tabStore(), code)) {
+    forgetPlaying();
+    if (game.moving) game.onDisconnect(0, RELOAD_LOOP_TEXT);
+    else ui.setJoinError(RELOAD_LOOP_TEXT);
+    return;
+  }
   try {
     sessionStorage.setItem(MOVED_KEY, '1');
     localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() })); // (the reloaded page goes back in by it)
@@ -147,6 +167,7 @@ async function moveBack(code) {
   console.log(`[net] after the deploy: ${r.verdict}${r.update ? ' (a newer client is ready)' : ''} in ${Math.round(performance.now() - t0)} ms`);
   if (r.verdict === 'reload') return reloadInto(code, name);
   if (r.verdict === 'in place') {
+    reloadedInto(tabStore(), code);
     if (r.update && !updateReady) {
       updateReady = true;
       ui.addChat('', 'The game was updated. The new version loads the next time you leave the game.', { system: true });
@@ -160,12 +181,18 @@ async function moveBack(code) {
 // Before going into a game in this page (a pick from the list, a friend's game, a quick join): can this page play it?
 // The game may be run by other code than this page was loaded with - a deploy came while the page sat on the splash,
 // or an older build carries that game on (server/builds.js). Then that game's page is loaded instead, and goes in by
-// itself as a reopened one does. -> true when this page may join
+// itself as a reopened one does - a newer client of the same compat too (joinVerdict: this page's own files may be
+// gone from the server). -> true when this page may join
 async function canJoinHere(code, name) {
   // (a server going down says nothing - 503 - and this page may be its: asked until one that will run the game answers)
   let v = null;
   for (let i = 0; i < 20 && !v; i++) if (!(v = await version(code).catch(() => null))) await new Promise((done) => setTimeout(done, 250));
-  if (verdictFor((await BUILD) || { protocol: PROTOCOL_VERSION }, v) !== 'reload') return true;
+  if (joinVerdict((await BUILD) || { protocol: PROTOCOL_VERSION }, v) !== 'reload') return true;
+  // (loaded again for this game too often already: its server keeps sending us round - told so instead)
+  if (!mayReload(tabStore(), code)) {
+    forgetPlaying();
+    throw new Error(RELOAD_LOOP_TEXT);
+  }
   try {
     if (code) localStorage.setItem(PLAYING_KEY, JSON.stringify({ code, name, t: Date.now() }));
   } catch {}
@@ -209,6 +236,7 @@ const callbacks = {
       joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
       if (!(await canJoinHere(code, name))) return;
       await game.join(name, code);
+      reloadedInto(tabStore(), game.room?.code || code);
       ui.hideSplash();
       document.activeElement?.blur?.(); // the name field must not keep eating gameplay keys
       // the game's link: in the address bar (a reload comes back here, and it can be copied from there), on the

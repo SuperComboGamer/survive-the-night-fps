@@ -13,8 +13,10 @@
 //   - it is signed: the store is not trusted to hand this server code. A build carries an HMAC of its name made with
 //     HANDOFF_BUILD_KEY, a secret only the deploy has; without the key nothing is started from the store (unless
 //     HANDOFF_PIN=unsigned says to trust the store, as a development server may)
-//   - it is what its name says: the name is a hash of every file in it (checked on every fetch, and the copy unpacked on
-//     disk is checked against it every time it is used)
+//   - it is what its name says: the name is a hash of every file in it, and the signature is of that whole hash
+//     (checked on every fetch). It is unpacked into a folder of this process's own that only this server's user can
+//     write (made fresh by this process: mkdtemp, mode 0700 - checked), with no links in it but the one to this
+//     server's node_modules, and checked against the build every time a worker is started from it
 //   - it speaks this server's WORKER_API: what the network thread and a game's worker say to each other
 //   - it is not from before a security fix: SECURITY_EPOCH is bumped by a change that must reach every game at once,
 //     and a build of a lower epoch is not started - its games end at that deploy, saying an update ended them
@@ -23,8 +25,8 @@
 // A game carried on this way is kept to it for HANDOFF_PIN_MAX_HOURS at most (Room.pinCap): at the first dawn after
 // that, or when its run ends, it closes and its players are told why.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { gzipSync, gunzipSync, gzip } from 'node:zlib';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { gzipSync, gunzipSync, gzip, gunzip } from 'node:zlib';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { dirname, join, resolve, relative, sep } from 'node:path';
@@ -43,22 +45,28 @@ const goodPath = (path) => PATH_RE.test(path) && !DOTS.test(path);
 const goodUrl = (url) => URL_RE.test(url) && !DOTS.test(url);
 const MAX_CODE_BYTES = 32 * 1024 * 1024;
 const ASSET_CACHE_BYTES = 96 * 1024 * 1024; // the old builds' files kept in memory to serve
-export const buildId = (b) => idOf(b); // (the tests make builds of their own)
+const KEEP_EVERY_MS = 12 * 3600e3; // a server marks its own build as in use this often (and puts it back if it was swept)
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
+const breathe = () => new Promise((r) => setImmediate(r));
 
-// the build's name: a hash of everything that makes it what it is
-function idOf({ api, epoch, client, deps, files, dist }) {
+// The build's hash: of everything that makes it what it is (64 hex). Its name (id) is the first 24 of it; its signature
+// is of the whole hash.
+function hashOf({ api, epoch, client, deps, files, dist }) {
   const h = createHash('sha256').update(`stn-build api ${api} epoch ${epoch}\nclient ${client.build} ${client.compat} ${client.protocol}\n`);
   for (const [name, v] of Object.entries(deps).sort()) h.update(`dep ${name} ${v}\n`);
   for (const path of Object.keys(files).sort()) h.update(`file ${path} ${sha256(files[path])}\n`);
   for (const url of Object.keys(dist).sort()) h.update(`dist ${url} ${dist[url]}\n`);
-  return h.digest('hex').slice(0, 24);
+  return h.digest('hex');
 }
-export const signOf = (id, key) => createHmac('sha256', key).update(`stn-build ${id}`).digest('hex');
-function signedBy(id, sig, key) {
+export const buildHash = (b) => hashOf(b); // (the tests make builds of their own)
+export const buildId = (b) => hashOf(b).slice(0, 24);
+// hash: the build's whole hash (buildHash), not its name
+export const signOf = (hash, key) => createHmac('sha256', key).update(`stn-build ${hash}`).digest('hex');
+function signedBy(hash, sig, key) {
   if (typeof sig !== 'string' || !HASH_RE.test(sig)) return false;
-  return timingSafeEqual(Buffer.from(signOf(id, key), 'hex'), Buffer.from(sig, 'hex'));
+  return timingSafeEqual(Buffer.from(signOf(hash, key), 'hex'), Buffer.from(sig, 'hex'));
 }
 
 // The packages a game's worker imports, at the versions installed: { name: version }. The worker's module graph is
@@ -106,14 +114,16 @@ export async function packBuildAsync(root, opts) {
   const files = Object.fromEntries(paths.map((path, i) => [path, bufs[i]]));
   return assemble(root, files, opts, gzipAsync, true);
 }
-// (the code's files: every file under server/ and shared/, by its path from the root)
+// (the code's files: the .js files under server/ and shared/, by their paths from the root - nothing else that may lie
+// there, such as a .env, and nothing in a folder or of a name that starts with a dot)
 function codePaths(root) {
   const paths = [];
   const walk = (rel) => {
     for (const e of readdirSync(join(root, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       const path = `${rel}/${e.name}`;
+      if (e.name.startsWith('.')) continue;
       if (e.isDirectory()) walk(path);
-      else if (goodPath(path)) paths.push(path);
+      else if (e.isFile() && e.name.endsWith('.js') && goodPath(path)) paths.push(path);
     }
   };
   for (const r of CODE_ROOTS) if (existsSync(join(root, r))) walk(r);
@@ -138,10 +148,11 @@ function assemble(root, files, { client, dist = new Map(), key = '' }, gz, yield
   };
   const rest = () => {
     const b = { api: WORKER_API, epoch: SECURITY_EPOCH, client: { build: String(client.build), compat: String(client.compat), protocol: +client.protocol }, deps: workerDeps(root, files), files, dist: manifest };
-    const id = idOf(b);
+    const hash = hashOf(b);
+    const id = hash.slice(0, 24);
     const packed = {};
     for (const [path, buf] of Object.entries(files)) packed[path] = buf.toString('base64');
-    const done = (body) => ({ id, sig: key ? signOf(id, key) : '', bytes, files: Object.keys(files).length, assets, body });
+    const done = (body) => ({ id, sig: key ? signOf(hash, key) : '', bytes, files: Object.keys(files).length, assets, body });
     const body = gz(JSON.stringify({ ...b, files: packed }));
     return body instanceof Promise ? body.then(done) : done(body);
   };
@@ -155,18 +166,71 @@ function assemble(root, files, { client, dist = new Map(), key = '' }, gz, yield
   })();
 }
 
-// ...and back: the build `id` names, or why not ({ error }). Its name is checked against its contents; its signature
-// against the key (key: '' with requireSig false: not checked).
-export function openBuild(id, body, sig, { key = '', requireSig = true } = {}) {
-  if (!ID_RE.test(String(id))) return { error: 'not a build name' };
-  if (requireSig && !key) return { error: 'no key to check its signature with (HANDOFF_BUILD_KEY)' };
-  if (key && !signedBy(id, sig, key)) return { error: requireSig ? 'its signature is not this deploy key' : 'its signature does not match the key' };
-  let m;
+// ...and back: the build `id` names, or why not ({ error }). Its name is checked against its contents; its signature,
+// of its whole hash, against the key (key: '' with requireSig false: not checked).
+export function openBuild(id, body, sig, opts = {}) {
+  const no = refuse(id, sig, opts);
+  if (no) return no;
+  let raw;
   try {
-    m = JSON.parse(gunzipSync(body).toString('utf8'));
+    raw = gunzipSync(body);
   } catch {
     return { error: 'not a build' };
   }
+  return opened(id, raw, sig, opts);
+}
+// ...the same off the event loop, as a running server does it (fetch, know): the gunzip in the thread pool, and the
+// thread let go between parsing it, decoding its files and hashing them (a few ms each)
+export async function openBuildAsync(id, body, sig, opts = {}) {
+  const no = refuse(id, sig, opts);
+  if (no) return no;
+  let raw;
+  try {
+    raw = await gunzipAsync(body);
+  } catch {
+    return { error: 'not a build' };
+  }
+  return opened(id, raw, sig, opts, true);
+}
+function refuse(id, sig, { key = '', requireSig = true }) {
+  if (!ID_RE.test(String(id))) return { error: 'not a build name' };
+  if (requireSig && !key) return { error: 'no key to check its signature with (HANDOFF_BUILD_KEY)' };
+  if (requireSig && (typeof sig !== 'string' || !HASH_RE.test(sig))) return { error: 'its signature is not this deploy key' };
+  return null;
+}
+function opened(id, raw, sig, { key = '', requireSig = true }, yields = false) {
+  const steps = (function* () {
+    let m;
+    try {
+      m = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return { error: 'not a build' };
+    }
+    yield;
+    const b = parsed(m);
+    if (b.error) return b;
+    yield;
+    const hash = hashOf(b);
+    if (hash.slice(0, 24) !== id) return { error: 'it is not what its name says' };
+    if (key && !signedBy(hash, sig, key)) return { error: requireSig ? 'its signature is not this deploy key' : 'its signature does not match the key' };
+    return b;
+  })();
+  if (!yields) {
+    for (;;) {
+      const r = steps.next();
+      if (r.done) return r.value;
+    }
+  }
+  return (async () => {
+    for (;;) {
+      const r = steps.next();
+      if (r.done) return r.value;
+      await breathe();
+    }
+  })();
+}
+function parsed(m) {
+  if (!m || typeof m !== 'object') return { error: 'not a build' };
   const files = {};
   for (const [path, b64] of Object.entries(m.files || {})) {
     if (!goodPath(path) || typeof b64 !== 'string') return { error: `a file outside its folders: ${String(path).slice(0, 60)}` };
@@ -177,16 +241,72 @@ export function openBuild(id, body, sig, { key = '', requireSig = true } = {}) {
     if (!goodUrl(url) || !HASH_RE.test(hash)) return { error: 'a client file of no proper name' };
     dist[url] = hash;
   }
-  const b = { api: m.api, epoch: m.epoch, client: { build: String(m.client?.build || ''), compat: String(m.client?.compat || ''), protocol: +m.client?.protocol || 0 }, deps: m.deps && typeof m.deps === 'object' ? m.deps : {}, files, dist };
-  if (idOf(b) !== id) return { error: 'it is not what its name says' };
-  return b;
+  return { api: m.api, epoch: m.epoch, client: { build: String(m.client?.build || ''), compat: String(m.client?.compat || ''), protocol: +m.client?.protocol || 0 }, deps: m.deps && typeof m.deps === 'object' ? m.deps : {}, files, dist };
 }
+
+// The messages a build's own client reads, from that build's shared/protocol.js (Writer, Reader, S2C, C2S, ROOMF,
+// REJECT_REASON, writeBoard...): what the network thread writes to the players of a game an older build carries on
+// (rooms.js Room proto). Loaded from the build in memory, not from disk; one that imports another file of its build
+// cannot be loaded so (null).
+export async function protocolOf(files) {
+  const src = files?.['shared/protocol.js'];
+  if (!src) return null;
+  try {
+    const mod = await import(`data:text/javascript;base64,${src.toString('base64')}`);
+    return mod.Writer && mod.Reader && mod.S2C && mod.C2S ? mod : null;
+  } catch {
+    return null;
+  }
+}
+
+// A folder and everything in it, a link never followed: a link (node_modules' to this server's packages, a junction
+// on Windows) is taken away itself, what it points to left as it is
+export function removeTree(path) {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch {
+    return;
+  }
+  if (st.isSymbolicLink()) {
+    try {
+      unlinkSync(path);
+    } catch {
+      rmdirSync(path); // (a junction on Windows)
+    }
+    return;
+  }
+  if (st.isDirectory()) {
+    for (const name of readdirSync(path)) removeTree(join(path, name));
+    rmdirSync(path);
+    return;
+  }
+  unlinkSync(path);
+}
+// A folder only this user can write: a folder (not a link), this user's, and nobody else's to write in. (Windows: its
+// temp folder is the user's own already; owner and mode bits say nothing there)
+function isPrivate(dir) {
+  const st = lstatSync(dir);
+  if (!st.isDirectory() || st.isSymbolicLink()) return false;
+  if (process.platform === 'win32' || typeof process.getuid !== 'function') return true;
+  return st.uid === process.getuid() && (st.mode & 0o077) === 0;
+}
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+};
 
 export class Builds {
   // store: the handoff store (putBuild / getBuild / getAsset / touchBuild / sweepBuilds). root: this build's files.
   // client: what this build's client is ({ build, compat, protocol }), dist: its files (index.js's). key:
   // HANDOFF_BUILD_KEY ('' for none). unsigned: builds without a signature may be started (HANDOFF_PIN=unsigned)
-  constructor({ store, root, client, dist = new Map(), key = '', unsigned = false, log = () => {}, tmp = join(tmpdir(), 'stn-builds') }) {
+  // tmp: where this process makes its own folder to unpack builds in (stn-builds-<pid>-XXXXXX: made fresh, mode 0700,
+  // taken away when the process exits; those of processes that are gone are swept when it is made)
+  constructor({ store, root, client, dist = new Map(), key = '', unsigned = false, log = () => {}, tmp = tmpdir() }) {
     this.store = store;
     this.root = root;
     this.client = client;
@@ -194,15 +314,18 @@ export class Builds {
     this.key = key;
     this.unsigned = unsigned;
     this.log = log;
-    this.tmp = tmp;
+    this.tmpBase = tmp;
+    this.dir = null; // (this process's own folder for unpacked builds: privateDir)
     this.id = ''; // this build's own ('' until packed: nothing can name it yet)
     this.packed = null;
     this.packing = null;
     this.kept = null;
     this.swept = false;
     this.deps = null;
-    this.got = new Map(); // id -> { id, dir, client, dist: { url: hash } } | null: the builds fetched (fetch)
+    this.got = new Map(); // id -> { id, dir, client, dist: { url: hash } } | null: the builds fetched (fetch; null: it is not to be had)
     this.fetching = new Map();
+    this.knowing = new Map(); // id -> the store being asked for a build's client files (know), once at a time
+    this.keepTimer = null;
     this.cache = new Map(); // hash -> Buffer: old builds' client files, the last asked for kept (asset)
     this.cacheBytes = 0;
   }
@@ -219,7 +342,24 @@ export class Builds {
       this.swept = true;
       const n = await this.store.sweepBuilds(BUILD_KEEP_DAYS * 86400).catch(() => 0);
       if (n) this.log(`handoff: ${n} build(s) nobody used for ${BUILD_KEEP_DAYS} days dropped from the store`);
+      // (a server that runs for days without a deploy: its build is marked as in use twice a day, so the next server's
+      // sweep does not take it while its games still name it)
+      this.keepTimer ||= setInterval(() => this.ensure(), KEEP_EVERY_MS);
+      this.keepTimer.unref?.();
     }
+  }
+  // This build in the store as it goes down (Lobby.handoffAll), or twice a day: marked as in use, and put back if it is
+  // not there any more (swept by another server). Never throws.
+  async ensure() {
+    await this.keep();
+    if (!this.id || !this.kept) return;
+    const there = await this.store.touchBuild(this.id).catch(() => true);
+    if (there !== false) return;
+    this.log(`handoff: build ${this.id} was not in the store any more: put back`);
+    this.kept = null;
+    this.packed = null;
+    this.packing = null;
+    await this.keep();
   }
   // This build packed: its name (id) known from then on - the saves of its games carry it. Once; never throws.
   packOnce() {
@@ -242,18 +382,24 @@ export class Builds {
     await this.packOnce();
     if (!this.packed) return;
     const b = this.packed;
-    return (this.kept ||= this.store
-      .putBuild(b.id, b.body, b.sig, b.assets)
-      // (in the store: what was put there is not needed here again - only its name)
-      .then(() => ((this.packed = { id: b.id, sig: b.sig }), this.log(`handoff: build ${b.id} is in the store`)))
-      .catch((err) => ((this.kept = null), this.log(`handoff: this build could not be kept in the store (${err.message})`))));
+    if (!this.kept) {
+      const p = this.store
+        .putBuild(b.id, b.body, b.sig, b.assets)
+        // (in the store: what was put there is not needed here again - only its name)
+        .then(() => ((this.packed = { id: b.id, sig: b.sig }), this.log(`handoff: build ${b.id} is in the store`)))
+        .catch((err) => (this.kept === p && (this.kept = null), this.log(`handoff: this build could not be kept in the store (${err.message})`)));
+      this.kept = p;
+    }
+    return this.kept;
   }
   // a build a game here runs on (pinned) is in use: marked so, so it is not swept while that game lasts
   touch(id) {
     if (ID_RE.test(String(id))) this.store.touchBuild(id).catch(() => {});
   }
 
-  // The build `id`, unpacked where a worker can be started from it: { id, dir, client, dist }, or null (logged why)
+  // The build `id`, unpacked where a worker can be started from it: { id, dir, client, dist, files }, or null (logged
+  // why). What it is not (not in the store, not signed, of another worker API...) is remembered; a store that failed, or
+  // an unpacking that did, is tried again the next time.
   fetch(id) {
     if (!ID_RE.test(String(id))) return Promise.resolve(null);
     const had = this.got.get(id);
@@ -262,8 +408,11 @@ export class Builds {
     let p = this.fetching.get(id);
     if (!p) {
       p = this._fetch(id)
-        .catch((err) => (this.log(`handoff: build ${id} could not be fetched (${err.message})`), null))
-        .then((b) => (this.got.set(id, b), this.fetching.delete(id), b));
+        .then(
+          (b) => (this.got.set(id, b), b),
+          (err) => (this.log(`handoff: build ${id} could not be fetched (${err.message})`), null)
+        )
+        .finally(() => this.fetching.delete(id));
       this.fetching.set(id, p);
     }
     return p;
@@ -276,7 +425,7 @@ export class Builds {
     if (!this.canStart) return this.why(id, 'HANDOFF_BUILD_KEY is not set, so nothing from the store is trusted to run here');
     const row = await this.store.getBuild(id);
     if (!row) return this.why(id, 'it is not in the store');
-    const b = openBuild(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned });
+    const b = await openBuildAsync(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned });
     if (b.error) return this.why(id, b.error);
     if (b.api !== WORKER_API) return this.why(id, `it speaks worker API ${b.api} (this server: ${WORKER_API})`);
     if (!(b.epoch >= SECURITY_EPOCH)) return this.why(id, `it is from before a security fix (epoch ${b.epoch}; this server: ${SECURITY_EPOCH})`);
@@ -285,66 +434,123 @@ export class Builds {
       if (b.deps[name] !== this.deps[name] && name in b.deps) return this.why(id, `its game code uses ${name} ${b.deps[name]}, and this server has ${this.deps[name] || 'none'}`);
     }
     if (!b.files['server/room-worker.js']) return this.why(id, 'it has no game worker');
-    const got = { id, dir: join(this.tmp, id), client: b.client, dist: b.dist, files: b.files, deps: Object.keys(b.deps).length > 0 };
-    return this.verified(got);
+    const got = { id, dir: join(this.privateDir(), id), client: b.client, dist: b.dist, files: b.files, deps: Object.keys(b.deps).length > 0 };
+    const ok = await this.verified(got);
+    if (!ok) throw new Error('it could not be unpacked'); // (not remembered: tried again)
+    return ok;
   }
-  // The build on disk, as it is: every file the same as the build that was checked, nothing else there. A copy that is
-  // not (a crash halfway, anyone else who can write the temp folder) is written again. -> got, or null
+  // This process's own folder for unpacked builds (see the constructor). Throws when it cannot be made private.
+  privateDir() {
+    if (this.dir) return this.dir;
+    mkdirSync(this.tmpBase, { recursive: true });
+    // (the folders of processes that are gone, this user's: a crash leaves its builds behind; and the one folder all
+    // servers shared before)
+    for (const name of readdirSync(this.tmpBase)) {
+      const pid = /^stn-builds-(\d+)-/.exec(name)?.[1];
+      if (name !== 'stn-builds' && !(pid && +pid !== process.pid && !alive(+pid))) continue;
+      try {
+        const full = join(this.tmpBase, name);
+        if (isPrivate(full)) removeTree(full);
+      } catch {}
+    }
+    const dir = mkdtempSync(join(this.tmpBase, `stn-builds-${process.pid}-`));
+    if (!isPrivate(dir)) throw new Error(`${dir} is not this server's alone (its owner or mode): nothing is unpacked there`);
+    process.once('exit', () => {
+      try {
+        removeTree(dir);
+      } catch {}
+    });
+    return (this.dir = dir);
+  }
+  // The build on disk, as it is: every file the same as the build that was checked, nothing else there, no link but the
+  // one to this server's node_modules, in this process's own folder. A copy that is not (a crash halfway) is written
+  // again. Checked each time a worker is to be started from it (Lobby.afterFailed starts it at once). -> got, or null
   async verified(got) {
+    let part = '';
     try {
+      if (!isPrivate(dirname(got.dir))) throw new Error(`${dirname(got.dir)} is not this server's alone`);
       if (!this.sameOnDisk(got)) {
-        const part = `${got.dir}.${process.pid}.${Date.now()}.part`;
-        rmSync(part, { recursive: true, force: true });
-        mkdirSync(part, { recursive: true, mode: 0o700 });
+        part = `${got.dir}.${Date.now()}.part`;
+        removeTree(part);
+        mkdirSync(part, { mode: 0o700 });
         for (const [path, buf] of Object.entries(got.files)) {
           mkdirSync(dirname(join(part, path)), { recursive: true, mode: 0o700 });
-          writeFileSync(join(part, path), buf, { mode: 0o600 });
+          writeFileSync(join(part, path), buf, { mode: 0o600, flag: 'wx' });
         }
-        writeFileSync(join(part, 'package.json'), '{ "type": "module" }\n', { mode: 0o600 });
+        writeFileSync(join(part, 'package.json'), '{ "type": "module" }\n', { mode: 0o600, flag: 'wx' });
         // (its packages are this server's, checked to be the same versions: found from its folder through a link)
         if (got.deps) symlinkSync(join(this.root, 'node_modules'), join(part, 'node_modules'), 'junction');
-        rmSync(got.dir, { recursive: true, force: true });
+        removeTree(got.dir);
         renameSync(part, got.dir);
+        part = '';
         if (!this.sameOnDisk(got)) throw new Error('what was written is not what was checked');
       }
       return got;
     } catch (err) {
       this.log(`handoff: build ${got.id} could not be unpacked (${err.message})`);
       return null;
+    } finally {
+      if (part) {
+        try {
+          removeTree(part);
+        } catch {}
+      }
     }
   }
   sameOnDisk(got) {
-    if (!existsSync(join(got.dir, 'package.json'))) return false;
     const want = new Set(Object.keys(got.files));
     let ok = true;
+    let modules = false;
     const walk = (rel) => {
       for (const name of readdirSync(join(got.dir, rel))) {
         const path = rel ? `${rel}/${name}` : name;
-        if (!rel && (name === 'package.json' || name === 'node_modules')) continue;
         const full = join(got.dir, path);
-        if (statSync(full).isDirectory()) walk(path);
-        else if (!want.delete(path) || !readFileSync(full).equals(got.files[path])) ok = false;
+        const st = lstatSync(full);
+        if (!rel && name === 'node_modules') {
+          // (the link to this server's packages, and only that, and only for a build whose code imports any)
+          modules = true;
+          if (!got.deps || !st.isSymbolicLink() || realpathSync(full) !== realpathSync(join(this.root, 'node_modules'))) ok = false;
+        } else if (st.isSymbolicLink()) ok = false;
+        else if (!rel && name === 'package.json') ok &&= st.isFile() && readFileSync(full, 'utf8') === '{ "type": "module" }\n';
+        else if (st.isDirectory()) walk(path);
+        else if (!st.isFile() || !want.delete(path) || !readFileSync(full).equals(got.files[path])) ok = false;
+        if (!ok) return;
       }
     };
     try {
+      const top = lstatSync(got.dir);
+      if (!top.isDirectory() || top.isSymbolicLink() || !existsSync(join(got.dir, 'package.json'))) return false;
       walk('');
     } catch {
       return false;
     }
-    if (relative(this.tmp, got.dir).includes(`..${sep}`)) return false;
-    return ok && !want.size && readFileSync(join(got.dir, 'package.json'), 'utf8') === '{ "type": "module" }\n';
+    if (!this.dir || relative(this.dir, got.dir).includes('..')) return false;
+    return ok && !want.size && modules === !!got.deps;
+  }
+  // The messages the players of a game build `got` carries on read (protocolOf), loaded once
+  protocol(got) {
+    return (got.proto ||= protocolOf(got.files));
   }
 
   // Learns a build's client files without starting anything (a save named a build this server does not run: a page of
   // that client may still ask for its files, which this build does not have). Files served from here are script on this
   // site, so they are held to the same signature as code started here.
-  async know(id) {
-    if (!this.canStart || !ID_RE.test(String(id)) || id === this.id || this.got.get(id)) return;
-    try {
-      const row = await this.store.getBuild(id);
-      const b = row && openBuild(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned });
-      if (b && !b.error && !this.got.get(id)) this.got.set(id, { id, dir: '', client: b.client, dist: b.dist, files: null, filesOnly: true });
-    } catch {}
+  // (once at a time for a build, however many of its games come back at once; opened off the event loop. Nothing is
+  // asked of the store without the key - or HANDOFF_PIN=unsigned: nothing from it could be served)
+  know(id) {
+    if (!this.canStart || !ID_RE.test(String(id)) || id === this.id || this.got.get(id)) return Promise.resolve();
+    let p = this.knowing.get(id);
+    if (!p) {
+      p = (async () => {
+        try {
+          const row = await this.store.getBuild(id);
+          const b = row && (await openBuildAsync(id, row.body, row.sig, { key: this.key, requireSig: !this.unsigned }));
+          if (b && !b.error && !this.got.get(id)) this.got.set(id, { id, dir: '', client: b.client, dist: b.dist, files: null, filesOnly: true });
+        } catch {}
+      })().finally(() => this.knowing.delete(id));
+      this.knowing.set(id, p);
+    }
+    return p;
   }
   // A file of an older build's client by its address ('/assets/index-abc.js', named by its content: whichever build has
   // it), or of build `id` only (its page, '/index.html'), from the store, checked against its hash; or null

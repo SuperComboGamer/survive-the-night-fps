@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomInt } from 'node:crypto';
 import { availableParallelism, totalmem } from 'node:os';
-import { C2S, S2C, ROOMF, REJECT_REASON, ENDED_CODE, Writer, Reader, writeBoard } from '../shared/protocol.js';
+import * as OWN_PROTOCOL from '../shared/protocol.js';
+import { S2C, REJECT_REASON, ENDED_CODE, MOVED_CODE, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { difficultyOf } from '../shared/difficulty.js';
 import { PHASE, MAX_PLAYERS } from '../shared/constants.js';
 import { FramePacker, eachFrame } from './wire.js';
@@ -52,6 +53,9 @@ const HELD_MS = +(process.env.HANDOFF_RESERVE_SECONDS || 180) * 1000; // (gamest
 const PIN_RUN_OVER_MS = 90_000; // (a run over on an older build: its end screen stays up this long, then the game closes)
 // A worker prepared for a game the last server announced (Lobby.prepare) that no save came for in this long goes
 const PREPARED_MS = 30_000;
+// A server going down waits this long at most for its own build to be packed and in the store (Lobby.handoffAll):
+// past it the games are saved anyway (naming the build if it is packed by then), well inside HARD_EXIT_MS
+const KEEP_MS = 2000;
 
 // Games this box runs at once, unless MAX_GAMES says otherwise. Measured with scripts/stress.js (2 Oct 2026): an
 // 8-player game at night uses ~17 ms of CPU a second (45 at worst; plan on 50, so ~14 games a core with 30% to
@@ -133,6 +137,9 @@ export class Room {
     this.restored = restore ? Date.now() : 0; // (when its save was claimed, for the log)
     this.from = from; // the save as it was claimed ({ meta, body }), kept until the game is up (handoff)
     this.pin = pin;
+    // What this thread writes to the players itself (ROOM, BOARD, REJECT, the close codes) is in their client's codec:
+    // an older build's, from that build's own shared/protocol.js, for a game it carries on (builds.js protocolOf)
+    this.proto = pin?.proto || OWN_PROTOCOL;
     this.failed = 0; // why its save could not be used here (a REJECT_REASON), once the worker has said so
     this.after = false; // (Lobby.afterFailed has been through it)
     this.pinEnd = 0; // (a game on an older build: when it closes - pinCheck)
@@ -236,6 +243,7 @@ export class Room {
   // its code here, for its invite link. The game's first player names a quick join's game. (A signed-in player
   // plays under their account's name, as Game.handleJoin has it.)
   greet(slot, bytes) {
+    const { C2S, S2C, ROOMF, Writer, Reader } = this.proto;
     if (bytes[0] === C2S.JOIN) {
       try {
         const r = new Reader(bytes);
@@ -432,6 +440,7 @@ export class Room {
     }
     const send = ({ total, rows }) => {
       if (this.socks[m.slot] !== ws) return; // (gone while the database was asked)
+      const { Writer, S2C, writeBoard } = this.proto;
       const w = new Writer(1024);
       w.u8(S2C.BOARD);
       writeBoard(w, total, rows);
@@ -536,6 +545,9 @@ export class Room {
   shut(code = 1001, why = 'Game closed', { handedOff = false } = {}) {
     if (this.closed) return;
     this.closed = true;
+    // (the game's close codes as its players' client has them: an older build's, for a game it carries on)
+    if (code === ENDED_CODE) code = this.proto.ENDED_CODE ?? code;
+    else if (code === MOVED_CODE) code = this.proto.MOVED_CODE ?? code;
     this.lobby.rooms.delete(this.code);
     this.lobby.cluster?.roomDown(this);
     this.worker.terminate().catch(() => {});
@@ -575,7 +587,8 @@ export class Lobby {
   // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
   // be and still be restored (s)
   // prepareMs: how long a server going down waits for the next one to have its games' valleys built (announce)
-  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, settings = null, log = console.log }) {
+  // keepMs: how long a server going down waits at most for its own build to be in the store before it saves (KEEP_MS)
+  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, keepMs = KEEP_MS, settings = null, log = console.log }) {
     this.stats = stats;
     this.settings = settings; // the game's settings in the database (serversettings.js; none without one)
     this.matches = matches;
@@ -585,10 +598,12 @@ export class Lobby {
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)
     this.prepareMs = prepareMs;
+    this.keepMs = keepMs;
     this.prepared = new Map(); // code -> { worker, congestion, info, timer, ready }: valleys built for games on their way here (prepare)
     this.builds = null; // the builds games are carried on by when this one cannot read their saves (builds.js; none: they end)
     this.lost = new Map(); // code -> { reason, at }: games a deploy handed over that could not be carried on here (ended)
     this.stopping = false; // going down: nothing more is restored here
+    this.stopped = new Promise((done) => (this.onStopping = done)); // (done once it is going down: handoffAll)
     this.cluster = null; // the other servers behind the proxy (cluster.js), when there are any
     this.playing = new Map(); // account id -> Map(room -> its sockets in it): where the signed-in are playing
     this.onPresence = null; // (account id) => void: they came into a game or left one (social.js)
@@ -799,15 +814,17 @@ export class Lobby {
   // ended as before (Room.finish) and stays here to go down with the process. -> how many were handed over
   async handoffAll(store, ms = 8000) {
     this.stopping = true;
+    this.onStopping();
     for (const code of [...this.prepared.keys()]) this.dropPrepared(code, 'this server is going down itself');
     // (a game being brought back this very moment: its room is there, or its save back in the store, before the rooms
     // are gone through - restore puts back what it claims from now on)
     await Promise.race([Promise.allSettled([...this.restoring.values()]), new Promise((done) => setTimeout(done, 3000))]);
     const rooms = [...this.rooms.values()];
     // (the code these games run on, for a next server that cannot read their saves: builds.js - in the store since a
-    // moment after this server started, or packed and put there now, while the next server builds the valleys: the
-    // saves name it. As is every older build a game here is carried on by, marked as in use)
-    const keeping = rooms.some((room) => room.st.players && !room.pin) ? this.builds?.keep() : null;
+    // moment after this server started, marked as in use now and put back if it was swept meanwhile, or packed and put
+    // there now, while the next server builds the valleys: the saves name it. As is every older build a game here is
+    // carried on by, marked as in use. Not waited for past keepMs: the games are saved anyway)
+    const keeping = rooms.some((room) => room.st.players && !room.pin) && this.builds ? this.keepOwn() : null;
     for (const room of rooms) if (room.pin) this.builds?.touch(room.pin.id);
     const targets = new Map(rooms.map((room) => [room, room.st.players ? (this.cluster?.pickTarget() ?? null) : null]));
     await Promise.all([keeping, this.announce(store, rooms, targets)]);
@@ -826,6 +843,18 @@ export class Lobby {
       })
     );
     return done.filter(Boolean).length;
+  }
+
+  // (this build in the store before the saves name it: keepMs at most. -> whether it is there)
+  keepOwn() {
+    let timer;
+    const late = new Promise((done) => (timer = setTimeout(() => done(false), this.keepMs)));
+    const kept = Promise.resolve(this.builds.ensure()).then(() => true);
+    return Promise.race([kept, late]).then((ok) => {
+      clearTimeout(timer);
+      if (!ok) this.log(`handoff: this build was not in the store after ${this.keepMs} ms: the games are saved anyway${this.builds.id ? ` (naming build ${this.builds.id})` : ', naming no build'}`);
+      return ok;
+    });
   }
 
   // Before the games are saved, the next server is told which are coming (seed, act, the valley's fingerprint) and
@@ -875,8 +904,12 @@ export class Lobby {
   }
   // a prepared worker has built its valley: the store is told this server is ready for the save
   onPrepared(code, p, m) {
-    // (the valley this build makes of that seed is not the one the game is played on: its save takes the long way)
-    if (m.error || (p.info.shape && m.shape !== p.info.shape)) return this.dropPrepared(code, m.error || 'this build makes another valley of its seed');
+    // (the valley this build makes of that seed is not the one the game is played on: its save takes the long way - and
+    // the server going down is told so, not to wait for it)
+    if (m.error || (p.info.shape && m.shape !== p.info.shape)) {
+      this.store.ready(code, false).catch(() => {});
+      return this.dropPrepared(code, m.error || 'this build makes another valley of its seed');
+    }
     p.ready = true;
     this.store.ready(code).catch((err) => this.log(`game ${code}: could not say it is ready for its save (${err.message})`));
     this.log(`game ${code}: its valley built ahead in ${m.ms} ms, ready for its save`);
@@ -906,7 +939,7 @@ export class Lobby {
     if (this.lost.size >= LOST_MAX) this.lost.delete(this.lost.keys().next().value);
     this.lost.set(code, { reason, at: Date.now() });
     const room = this.rooms.get(code);
-    if (tell) for (const ws of room?.socks || []) ws?.send(rejectBytes(reason), true, false);
+    if (tell) for (const ws of room?.socks || []) ws?.send(rejectBytes(reason, room.proto), true, false);
   }
   // Whether the game of a room whose save this build could not read can be carried on by the build that saved it: the
   // save names one, it is not this one, and it has not been tried already.
@@ -922,11 +955,19 @@ export class Lobby {
     room.after = true;
     const { code, from } = room;
     const m = from.meta;
-    const p = (this.stopping ? Promise.resolve(null) : this.builds.fetch(m.build))
+    // (told to stop meanwhile, the fetch is not waited for: the save goes back at once, for the next server, and the
+    // server going down waits for that - handoffAll)
+    const p = (this.stopping ? Promise.resolve(null) : Promise.race([this.builds.fetch(m.build), this.stopped.then(() => null)]))
       .then(async (b) => {
         // (told to stop meanwhile: the next server gets the save, and tries the same)
         if (this.stopping) return (await this.putBack(code, from)) ? 'back' : null;
         if (!b || this.rooms.has(code)) return null;
+        // (its players' client reads what this thread writes to them in its own codec: that build's protocol.js. One
+        // that cannot be loaded here is only used if it is this build's protocol)
+        const proto = await this.builds.protocol(b);
+        if (!proto && b.client.protocol !== PROTOCOL_VERSION) throw new Error(`its client speaks protocol ${b.client.protocol}, and its protocol.js could not be loaded here`);
+        if (this.stopping) return (await this.putBack(code, from)) ? 'back' : null;
+        if (this.rooms.has(code)) return null;
         const next = new Room(this, {
           code,
           name: room.name,
@@ -941,7 +982,7 @@ export class Lobby {
           continues: room.continues,
           restore: from.body,
           from,
-          pin: { id: m.build, dir: b.dir, client: b.client, since: Number.isFinite(m.pinnedAt) ? m.pinnedAt : Date.now() },
+          pin: { id: m.build, dir: b.dir, client: b.client, proto, since: Number.isFinite(m.pinnedAt) ? m.pinnedAt : Date.now() },
         });
         this.rooms.set(code, next);
         next.up = this.cluster?.roomUp(next) ?? null;
@@ -1053,7 +1094,12 @@ export class Lobby {
   }
 }
 
-// What a socket that cannot have a seat is sent before it is closed: the REJECT the client shows (connection.js)
-export function rejectBytes(reason = REJECT_REASON.FULL) {
-  return Uint8Array.of(S2C.REJECT, reason);
+// What a socket that cannot have a seat is sent before it is closed: the REJECT the client shows (connection.js). proto:
+// the codec of the client it goes to (a game an older build carries on: that build's - the reason by its name)
+export function rejectBytes(reason = REJECT_REASON.FULL, proto = OWN_PROTOCOL) {
+  if (proto !== OWN_PROTOCOL) {
+    const name = Object.keys(REJECT_REASON).find((k) => REJECT_REASON[k] === reason);
+    reason = proto.REJECT_REASON?.[name] ?? reason;
+  }
+  return Uint8Array.of(proto.S2C?.REJECT ?? S2C.REJECT, reason);
 }

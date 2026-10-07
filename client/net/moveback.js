@@ -66,6 +66,45 @@ export async function moveBack({ code, loadedFrom, version, join, still = () => 
   return { verdict: 'gave up', update, message: 'The server was updated, but your game could not be brought back.' };
 }
 
+// Before going into a game from this page when it is not in one (the splash: a pick from the list, a friend's game, a
+// quick join): whether to load the game's page first. Not only for another protocol or compat: a newer client of the
+// same compat too - the server has that client's files, and may not have this page's any more (a file this page asks
+// for later, an image or a sound, would not be found), and nothing is being played that a reload would interrupt.
+// -> 'reload' or ''
+export function joinVerdict(loadedFrom, v) {
+  const say = verdictFor(loadedFrom, v);
+  return say === 'reload' || say === 'update' ? 'reload' : '';
+}
+
+// A page is loaded again for a game at most RELOAD_MAX times in RELOAD_MS (counted in sessionStorage, by the game's
+// code): one whose server keeps saying it has to be - the page of the build that runs the game cannot be had, say - is
+// told so instead of reloading for ever. storage: sessionStorage (or a stand-in). -> true when it may reload now (and
+// it is counted), false when it has been reloaded too often for this game
+export const RELOAD_MAX = 3;
+export const RELOAD_MS = 120_000;
+export function mayReload(storage, code, now = Date.now()) {
+  if (!storage) return true;
+  const key = `stn.reloads.${code || '-'}`;
+  let r = null;
+  try {
+    r = JSON.parse(storage.getItem(key) || 'null');
+  } catch {}
+  if (!r || !(now - r.t < RELOAD_MS)) r = { n: 0, t: now };
+  if (r.n >= RELOAD_MAX) return false;
+  r.n++;
+  try {
+    storage.setItem(key, JSON.stringify(r));
+  } catch {}
+  return true;
+}
+// ...and once the page is in that game, the count starts again
+export function reloadedInto(storage, code) {
+  try {
+    storage.removeItem(`stn.reloads.${code || '-'}`);
+  } catch {}
+}
+export const RELOAD_LOOP_TEXT = 'This game could not be loaded: its server keeps asking for this page to be loaded again. Try again in a minute, or start or join another game.';
+
 // What this page was loaded with: the server writes it into the page it serves (<meta name="stn-build"
 // content="build compat protocol">). Without it (the Vite dev server) the server is asked, as the page used to.
 export function pageBuild(doc = globalThis.document) {

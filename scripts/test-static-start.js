@@ -118,6 +118,29 @@ try {
   check('...and packs it and puts it in the store once it listens', (await until(() => /is in the store/.test(C.log), 15000)) && C.log.indexOf('listening') < C.log.indexOf('this build is') && builds(C).length === 1, C.log.split('\n').slice(-6).join('\n'));
   stop(C);
   await until(() => C.exit);
+
+  // ---------------------------------------------------------------- a server going down gives no page
+  // (it waits for the next server to build the valley of the game in it: HANDOFF_PREPARE_MS, here with no next server)
+  const D = server('D', base + 3, { HANDOFF_PREPARE_MS: '3000' });
+  check('a server with a game is up', await up(D), D.log);
+  globalThis.location = { protocol: 'http:', host: `localhost:${D.port}` };
+  const game = await (await fetch(`http://localhost:${D.port}/api/games`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Going', inviteOnly: true }) })).json();
+  const ann = new Connection({});
+  const warnD = console.warn;
+  console.warn = () => {};
+  await ann.connect('Ann', randomUUID(), game.code).catch(() => {});
+  const before = await get(D.port, '/', 'identity');
+  stop(D);
+  let down = null;
+  for (let i = 0; i < 100 && !(down && down.status === 503); i++) {
+    await sleep(20);
+    down = await get(D.port, "/", "identity").catch(() => null);
+  }
+  const version = await fetch(`http://localhost:${D.port}/api/version`).catch(() => null);
+  check('told to stop, it answers its page with 503 and a page that tries again - as /api/version - not a page of the build going away', before.status === 200 && down?.status === 503 && /try|moment/i.test(down.body.toString()) && !down.body.toString().includes("stn-build") && version?.status === 503, `${before.status} ${down?.status} ${version?.status}`);
+  await until(() => D.exit, 20000);
+  console.warn = warnD;
+  ann.close(4001);
 } catch (e) {
   check('no error', false, String(e && e.stack));
 }

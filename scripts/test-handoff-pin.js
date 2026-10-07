@@ -19,17 +19,18 @@
 //   - (Linux and Windows) the next deploy hands such a game on with the same build named, and the one after carries it on
 //     the same way; a server told to stop while it is bringing one back puts the save back
 import { spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync, symlinkSync, statSync, chmodSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pathJoin, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { FileStore, worldPrint } from '../server/handoff.js';
-import { packBuild, openBuild, signOf, buildId, Builds, WORKER_API, SECURITY_EPOCH } from '../server/builds.js';
-import { Room } from '../server/rooms.js';
+import { packBuild, openBuild, signOf, buildId, buildHash, protocolOf, removeTree, Builds, WORKER_API, SECURITY_EPOCH } from '../server/builds.js';
+import { Room, Lobby, rejectBytes } from '../server/rooms.js';
 import { worldFor } from '../shared/worlds.js';
-import { PROTOCOL_VERSION, ENDED_CODE, REJECT_REASON } from '../shared/protocol.js';
+import { PROTOCOL_VERSION, ENDED_CODE, REJECT_REASON, S2C, C2S, Writer } from '../shared/protocol.js';
 import { PHASE } from '../shared/constants.js';
 import { Connection } from '../client/net/connection.js';
 import { comeBack } from '../client/net/comeback.js';
@@ -125,8 +126,8 @@ const variant = (change) => {
   const m = JSON.parse(gunzipSync(mapBuild.body).toString());
   change(m);
   const files = Object.fromEntries(Object.entries(m.files).map(([p, b]) => [p, Buffer.from(b, 'base64')]));
-  const id = buildId({ ...m, files });
-  return { id, body: gzipSync(JSON.stringify(m)), sig: signOf(id, KEY) };
+  const hash = buildHash({ ...m, files });
+  return { id: hash.slice(0, 24), body: gzipSync(JSON.stringify(m)), sig: signOf(hash, KEY) };
 };
 const notes = [];
 const one = (b) => new Builds({ store: { getBuild: async (id) => (id === b.id ? { body: b.body, sig: b.sig } : null), getAsset: async () => null }, root: REPO, client: {}, key: KEY, log: (t) => notes.push(t), tmp: pathJoin(dir, 'tmp-variant') });
@@ -148,6 +149,118 @@ writeFileSync(pathJoin(got.dir, 'server', 'extra.js'), 'export {}');
 const again = await disk.fetch(mapBuild.id);
 check('...and checked every time it is used: a copy that was changed is written again as the build has it', again && readFileSync(worker).equals(un.files['server/room-worker.js']) && !existsSync(pathJoin(got.dir, 'server', 'extra.js')));
 
+// the signature is of the build's whole hash, not of its 96-bit name
+check("a build's signature is of its whole SHA-256: one of its name alone is refused", mapBuild.sig === signOf(buildHash(un), KEY) && /signature/.test(openBuild(mapBuild.id, mapBuild.body, signOf(mapBuild.id, KEY), { key: KEY }).error || ''));
+
+// where builds are unpacked: a folder of this process's own, nobody else's to write in, no links in it
+{
+  const home = pathJoin(dir, 'tmp-variant');
+  const own = readdirSync(home).find((n) => n.startsWith(`stn-builds-${process.pid}-`));
+  const mode = statSync(pathJoin(home, own)).mode & 0o777;
+  check("builds are unpacked in a folder of this process's own (stn-builds-<pid>-...), only its user's to write", !!own && got.dir.startsWith(pathJoin(home, own)) && (process.platform === 'win32' || mode === 0o700), `${own} ${mode.toString(8)}`);
+  // a link planted in the copy (to a file of anybody's choosing): written again without it
+  const evil = pathJoin(dir, 'evil.js');
+  writeFileSync(evil, 'process.exit(5)');
+  let linked = true;
+  try {
+    unlinkSync(pathJoin(got.dir, 'server', 'wire.js'));
+    symlinkSync(evil, pathJoin(got.dir, 'server', 'wire.js'), 'file');
+  } catch {
+    linked = false; // (Windows without the right to make links: nobody else there can either)
+  }
+  if (linked) {
+    const relinked = await disk.fetch(mapBuild.id);
+    check('...a file in it replaced by a link (to anything) is not believed: the copy is written again', relinked && !statSync(pathJoin(got.dir, 'server', 'wire.js'), { throwIfNoEntry: false })?.isSymbolicLink?.() && readFileSync(pathJoin(got.dir, 'server', 'wire.js')).equals(un.files['server/wire.js']));
+  }
+  // a node_modules of anybody's making beside a build that imports no package: taken away
+  mkdirSync(pathJoin(got.dir, 'node_modules', 'evil'), { recursive: true });
+  writeFileSync(pathJoin(got.dir, 'node_modules', 'evil', 'index.js'), 'process.exit(6)');
+  const cleaned = await disk.fetch(mapBuild.id);
+  check('...and so is a node_modules folder put beside a build that imports no package', cleaned && !existsSync(pathJoin(got.dir, 'node_modules')));
+  if (process.platform !== 'win32') {
+    chmodSync(pathJoin(home, own), 0o777);
+    const open = await disk.fetch(mapBuild.id);
+    chmodSync(pathJoin(home, own), 0o700);
+    check('...and nothing is started from it once others may write in its folder', open === null && notes.some((t) => /is not this server's alone/.test(t)), notes.slice(-2).join(' | '));
+  }
+  // the folders of processes that are gone are swept (a crash leaves its builds behind), and a link in them is taken
+  // away without what it points to
+  const outside = pathJoin(dir, 'not-ours');
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(pathJoin(outside, 'keep.txt'), 'a file somebody else needs');
+  const dead = pathJoin(home, 'stn-builds-999999-dead00');
+  mkdirSync(pathJoin(dead, 'x'), { recursive: true, mode: 0o700 });
+  symlinkSync(outside, pathJoin(dead, 'x', 'node_modules'), 'junction');
+  const swept = new Builds({ store: { getBuild: async () => ({ body: mapBuild.body, sig: mapBuild.sig }) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: home });
+  await swept.fetch(mapBuild.id);
+  check('...the folders of processes that are gone are swept, and a link in one is taken away without what it points to', !existsSync(dead) && existsSync(pathJoin(outside, 'keep.txt')), readdirSync(home).join(' '));
+  const tree = pathJoin(dir, 'tree');
+  mkdirSync(tree);
+  symlinkSync(outside, pathJoin(tree, 'node_modules'), 'junction');
+  removeTree(tree);
+  check('...(removeTree never follows a link: a junction to a folder leaves the folder whole)', !existsSync(tree) && existsSync(pathJoin(outside, 'keep.txt')));
+}
+
+// a store that failed is asked again the next time; what a build is not is remembered
+{
+  let asks = 0;
+  const flaky = new Builds({ store: { getBuild: async () => (asks++ === 0 ? Promise.reject(new Error('the database is down')) : { body: mapBuild.body, sig: mapBuild.sig }) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: pathJoin(dir, 'tmp-flaky') });
+  const first = await flaky.fetch(mapBuild.id);
+  const second = await flaky.fetch(mapBuild.id);
+  check('a build the store failed to give is asked for again, not taken to be gone for good', first === null && !!second && asks === 2, `${first} ${!!second} ${asks}`);
+  let missing = 0;
+  const absent = new Builds({ store: { getBuild: async () => (missing++, null) }, root: REPO, client: {}, key: KEY, log: () => {}, tmp: pathJoin(dir, 'tmp-absent') });
+  await absent.fetch(mapBuild.id);
+  await absent.fetch(mapBuild.id);
+  check('...while one that is not in the store is remembered as not there', missing === 1, String(missing));
+}
+
+// many games of one older build coming back at once: its client's files are learnt once, off the event loop
+{
+  let asks = 0;
+  const many = new Builds({ store: { getBuild: async () => (asks++, { body: mapBuild.body, sig: mapBuild.sig }) }, root: REPO, client: {}, key: KEY, log: () => {} });
+  const h = monitorEventLoopDelay({ resolution: 1 });
+  h.enable();
+  const t0 = performance.now();
+  await Promise.all(Array.from({ length: 20 }, () => many.know(mapBuild.id)));
+  h.disable();
+  const worst = h.max / 1e6;
+  console.log(`note  20 games of one older build restored at once: its build opened ${asks} time(s) in ${Math.round(performance.now() - t0)} ms, the event loop held at most ${worst.toFixed(1)} ms`);
+  check('twenty games of one older build coming back at once: the store is asked for it once', asks === 1 && many.has('/index.html'), String(asks));
+  const nokey = new Builds({ store: { getBuild: async () => (asks++, null) }, root: REPO, client: {}, log: () => {} });
+  await nokey.know(mapBuild.id);
+  check('...and not at all without the key', asks === 1);
+}
+
+// what this thread writes to the players of a game an older build carries on is in that build's codec
+{
+  const files = JSON.parse(gunzipSync(mapBuild.body).toString()).files;
+  let src = Buffer.from(files['shared/protocol.js'], 'base64').toString();
+  for (const [from, to] of [['  ROOM: 11,', '  ROOM: 99,'], ['ENDED_MAP: 6', 'ENDED_MAP: 16'], ['export const ENDED_CODE = 4003', 'export const ENDED_CODE = 4013']]) {
+    if (!src.includes(from)) throw new Error(`shared/protocol.js no longer has "${from}": pick another line for the test to change`);
+    src = src.replace(from, to);
+  }
+  const proto = await protocolOf({ 'shared/protocol.js': Buffer.from(src) });
+  const sent = [];
+  const fakeRoom = { proto, code: 'OLDPRO', title: 'Old', inviteOnly: false, difficulty: 'nightfall', first: '', users: [null], names: [''], socks: [{ send: (b) => sent.push(Buffer.from(b)) }] };
+  const w = new Writer(32);
+  w.u8(C2S.JOIN);
+  w.u8(PROTOCOL_VERSION);
+  w.str('Ann');
+  w.str('x');
+  Room.prototype.greet.call(fakeRoom, 0, w.bytes());
+  check("a game an older build carries on: its players are told which game they are in (ROOM) in their client's codec", sent[0]?.[0] === 99 && S2C.ROOM !== 99, String(sent[0]?.[0]));
+  const no = rejectBytes(REJECT_REASON.ENDED_MAP, proto);
+  check('...and turned away (REJECT) in it, the reason by its name', no[0] === S2C.REJECT && no[1] === 16, JSON.stringify([...no]));
+  let closed = null;
+  const shutRoom = { proto, closed: false, code: 'OLDPRO', lobby: { rooms: new Map(), log: () => {}, stats: { leave: () => {} }, matches: null, userOut: () => {} }, socks: [{ getUserData: () => ({}), end: (c) => (closed = c) }], users: [null], recs: new Map(), worker: { postMessage: () => {}, terminate: () => Promise.resolve() }, asks: new Map(), match: null };
+  try {
+    Room.prototype.shut.call(shutRoom, ENDED_CODE, 'closed');
+  } catch {}
+  check('...and closed with its close codes', closed === 4013, String(closed));
+  check("...and a build whose protocol.js imports another of its files cannot be loaded into this thread", (await protocolOf({ 'shared/protocol.js': Buffer.from("import x from './y.js';\nexport const S2C = {};") })) === null);
+}
+
 // the store
 const HANDOFF_DIR = pathJoin(dir, 'handoff');
 const store = new FileStore(HANDOFF_DIR);
@@ -156,6 +269,44 @@ check('the store keeps a build with its signature, and gives it back', (await st
 const assetFiles = readdirSync(`${HANDOFF_DIR}-assets`);
 check("...and a client's files once each, however many builds have them (the same sound in three builds: one file)", assetFiles.length === 7, String(assetFiles.length));
 check('...and sweeping the saves does not take the builds', (await store.sweep(0)) === 0 && (await store.sweepBuilds(3600)) === 0 && !!(await store.getBuild(verBuild.id)));
+
+// a server that runs for days: its own build is put back in the store if it was swept meanwhile (ensure, at the
+// handover and twice a day)
+{
+  const own = new FileStore(pathJoin(dir, 'handoff-own'));
+  const b = new Builds({ store: own, root: oldmap.root, client: oldmap.client, dist: oldmap.dist, key: KEY, log: () => {} });
+  await b.pack();
+  clearInterval(b.keepTimer);
+  const there = !!(await own.getBuild(b.id));
+  unlinkSync(pathJoin(dir, 'handoff-own-builds', `${b.id}.json`)); // (another server's sweep took it)
+  await b.ensure();
+  check("a server's own build, swept from the store while it ran, is put back before its games are saved", there && !!(await own.getBuild(b.id)) && (await own.getBuild(b.id)).sig === b.packed.sig);
+}
+
+// the handover does not wait past keepMs for this build to be in the store (a database that hangs): the games are saved
+// anyway, within HARD_EXIT_MS
+{
+  const lobby = new Lobby({ stats: { board: () => ({ total: 0, rows: [] }) }, log: () => {}, keepMs: 300 });
+  lobby.builds = { ensure: () => new Promise(() => {}), touch: () => {}, id: 'ab'.repeat(12) };
+  let saved = 0;
+  lobby.rooms.set('HANGUP', { code: 'HANGUP', st: { players: 1 }, ready: true, closed: false, pin: null, handoff: async () => (saved++, { bytes: 1, ms: 1 }), finish: async () => {} });
+  const t0 = Date.now();
+  const n = await Promise.race([lobby.handoffAll({}, 1000), sleep(5000).then(() => 'hung')]);
+  check('a server going down whose build cannot be put in the store (it hangs) saves its games anyway, in keepMs', n === 1 && saved === 1 && Date.now() - t0 < 2000, `${n} in ${Date.now() - t0} ms`);
+}
+
+// a server told to stop while it fetches the build a game needs puts that game's save back at once: the handover
+// does not wait for the fetch, nor is the save put back after it has moved on
+{
+  const lobby = new Lobby({ stats: { board: () => ({ total: 0, rows: [] }) }, log: () => {} });
+  const puts = [];
+  lobby.store = { put: async (code) => puts.push(code) };
+  lobby.builds = { canStart: true, id: 'cd'.repeat(12), fetch: () => new Promise(() => {}), touch: () => {} };
+  lobby.afterFailed({ code: 'LATEPB', after: false, pin: null, failed: REJECT_REASON.ENDED_MAP, from: { meta: { build: 'ab'.repeat(12) }, body: Buffer.from('a save') } });
+  const t0 = Date.now();
+  await lobby.handoffAll(lobby.store, 1000);
+  check('a server told to stop while it fetches an older build puts the save back at once, before it goes on', puts.includes('LATEPB') && Date.now() - t0 < 1000, `${JSON.stringify(puts)} in ${Date.now() - t0} ms`);
+}
 
 // how long a game is kept on an older build
 {
@@ -229,6 +380,9 @@ const warn = console.warn;
 console.warn = () => {};
 
 try {
+  // (the page of the build that runs ENUMPIN is not in the store any more: swept, or a store that fails)
+  const enumPage = createHash('sha256').update(oldenum.dist.get('/index.html').body).digest('hex');
+  unlinkSync(pathJoin(`${HANDOFF_DIR}-assets`, enumPage));
   const A = server('A', base);
   check('the next server is up', await until(() => A.log.includes('listening')), A.log);
   await until(() => /build [0-9a-f]{24} is in the store/.test(A.log));
@@ -261,6 +415,9 @@ try {
   check('...whose files are served under their own names, from the store', asset.status === 200 && asset.body.includes('the client of oldmap'), asset.body.slice(0, 80));
   check('...and a file no build has is not there (not the page in its place)', (await text(A, '/assets/index-nosuchfile.js')).status === 404);
   check('...each game its own build', (await text(A, '/?game=VERPIN')).body.includes('<title>oldver</title>'));
+  const unavailable = await fetch(`http://localhost:${A.port}/?game=ENUMPIN`, { headers: { 'accept-encoding': 'identity' } });
+  const unavailableBody = await unavailable.text();
+  check("a game whose build's page cannot be had: 503, try again - never this build's page, which that game's version answer would send round and round", unavailable.status === 503 && +unavailable.headers.get('retry-after') > 0 && !unavailableBody.includes('stn-build') && /older version/.test(unavailableBody), `${unavailable.status} ${unavailableBody.slice(0, 120)}`);
   const plain = await text(A, '/');
   check("the page without a code, or with another, is this build's own", !plain.body.includes('oldmap') && !(await text(A, '/?game=NOSUCH22')).body.includes('oldmap'), plain.body.slice(0, 60));
   const list = await (await fetch(`http://localhost:${A.port}/api/games`)).json();

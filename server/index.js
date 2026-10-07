@@ -12,7 +12,7 @@
 // HANDOFF_CLOSE, and the new server - up by then - restores it under the same code for them to reconnect to.
 import { createHash } from 'node:crypto';
 import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'node:zlib';
-import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +37,7 @@ import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
 import { FileStore, PgStore, BUILD } from './handoff.js';
 import { Builds } from './builds.js';
+import { compatOf } from './compat.js';
 import { Cluster } from './cluster.js';
 import { AdminPanel } from './adminpanel.js';
 import { clientOf } from './netaddr.js';
@@ -199,30 +200,8 @@ else console.log('[server] no dist/ build found - run `npm run build` (or use `n
 //           play a game here: it would build another valley, predict other moves (client/net/moveback.js).
 //           (CLIENT_COMPAT: another, for the tests)
 const CLIENT_BUILD = process.env.CLIENT_BUILD || (files.get('/index.html') ? createHash('sha256').update(files.get('/index.html').body).digest('hex').slice(0, 12) : BUILD);
-const COMPAT = process.env.CLIENT_COMPAT || compatOf(resolve(__dirname, '../shared'));
-function compatOf(dir) {
-  const h = createHash('sha256').update(`protocol ${PROTOCOL_VERSION}\n`);
-  // (each file through one small buffer: 1 MB of files read whole would stay in the process's memory as it starts)
-  const chunk = Buffer.allocUnsafe(64 * 1024);
-  const walk = (d, rel) => {
-    for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-      const full = join(d, e.name);
-      if (e.isDirectory()) walk(full, `${rel}${e.name}/`);
-      else if (e.name.endsWith('.js')) {
-        h.update(`${rel}${e.name}\0`);
-        const fd = openSync(full, 'r');
-        try {
-          for (let n; (n = readSync(fd, chunk, 0, chunk.length, null)) > 0; ) h.update(chunk.subarray(0, n));
-        } finally {
-          closeSync(fd);
-        }
-        h.update('\n');
-      }
-    }
-  };
-  walk(dir, '');
-  return h.digest('hex').slice(0, 12);
-}
+//           (compat.js: shared/, the protocol, and the wire codec outside shared/)
+const COMPAT = process.env.CLIENT_COMPAT || compatOf(resolve(__dirname, '..'), PROTOCOL_VERSION);
 // The page carries what it was built as (client/net/moveback.js pageBuild): read from the page, not asked of the server
 // later, when a deploy may already have put another build behind the same address.
 const stamp = (html, { build, compat, protocol }) => {
@@ -292,10 +271,11 @@ const EARLY_MAX = 8; // messages kept for a socket that is still waiting for its
 function seat(ws) {
   const d = ws.getUserData();
   let reason = 0;
+  let room = null;
   if (stopping) reason = REJECT_REASON.FULL; // (going down: new sockets belong on the next server)
   else if (CONN_PER_IP && (perIp.get(d.ip) || 0) >= CONN_PER_IP) reason = REJECT_REASON.FULL;
   else {
-    const room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
+    room = d.code ? lobby.find(d.code, d.ip) : lobby.quick();
     const slot = room ? room.attach(ws) : -1;
     if (slot >= 0) {
       d.room = room;
@@ -303,8 +283,9 @@ function seat(ws) {
     } else reason = room || !d.code ? REJECT_REASON.FULL : lobby.wasLost(d.code) || REJECT_REASON.NO_GAME; // (wasLost: a deploy ended it, and why)
   }
   if (reason) {
-    // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway)
-    ws.send(rejectBytes(reason), true, false);
+    // told why, the way the game tells a join it turns away (the client closes on it; this closes it anyway) - in the
+    // codec of the game's own client, for one an older build carries on
+    ws.send(rejectBytes(reason, room?.proto), true, false);
     ws.end(1000, 'rejected');
     return;
   }
@@ -822,6 +803,14 @@ function sendStatic(res, url, f, accepts, aborted = null) {
 // which no file of this build has (they are named by their content) - for those players, and for any page of an older
 // client still playing after a deploy that only changed the client.
 const NOT_FOUND = (res) => res.cork(() => res.writeStatus('404 Not Found').end('Not found'));
+// A page that cannot be served just now - this server is going down (the next one has it), or the page of the older
+// build that runs this game could not be had from the store: 503, and a page that asks again by itself a few times
+// (client/main.js forgets the count once a page is up), then says so. Never the page of another build in its place: a
+// page of this build for a game an older build runs would be sent to that game's page again, and again.
+const retryPage = (why) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Survive the Night</title></head><body style="background:#0b0d12;color:#ddd;font:16px system-ui,sans-serif;padding:2em"><p id="why">${why}</p><script>(function(){var k='stn.retry.'+location.pathname+location.search,n=0;try{n=+sessionStorage.getItem(k)||0;sessionStorage.setItem(k,n+1)}catch(e){}if(n<5)setTimeout(function(){location.reload()},1000*(n+1));else{try{sessionStorage.removeItem(k)}catch(e){}document.getElementById('why').innerHTML='${why} It still is: try again in a minute, or <a href="/" style="color:#9cf">start or join another game</a>.'}})()</script></body></html>`;
+const UNAVAILABLE = (res, why) =>
+  res.cork(() => res.writeStatus('503 Service Unavailable').writeHeader('Retry-After', '2').writeHeader('Cache-Control', 'no-store').writeHeader('Content-Type', MIME['.html']).end(retryPage(why)));
 app.get('/*', (res, req) => {
   let url = req.getUrl();
   if (url === '/stats' || url === '/stats/') url = '/stats.html';
@@ -840,18 +829,21 @@ app.get('/*', (res, req) => {
     res.writeStatus('404 Not Found').end('Not found - build the client with `npm run build`');
     return;
   }
+  // (a server going down: its pages are the next server's to give - as /api/version, it answers 503 for them)
+  if (stopping && f.type === MIME['.html']) return UNAVAILABLE(res, 'The game is being updated. One moment...');
   const code = url === '/index.html' && builds ? String(req.getQuery('game') || '').trim().toUpperCase() : '';
-  if (!code || stopping) return sendStatic(res, url, f, accepts);
+  if (!code) return sendStatic(res, url, f, accepts);
   let aborted = false;
   res.onAborted(() => (aborted = true));
   lobby
     .settle(code)
     .catch(() => null)
     .then(async (room) => {
-      const page = room?.pin ? await builds.asset('/index.html', room.pin.id) : null;
+      if (!room?.pin) return aborted || sendStatic(res, url, f, accepts, () => aborted);
+      const page = await builds.asset('/index.html', room.pin.id);
       if (aborted) return;
       if (page) sendFile(res, url, { body: stamp(page, room.pin.client), type: MIME['.html'] });
-      else sendStatic(res, url, f, accepts, () => aborted);
+      else UNAVAILABLE(res, "This game is played on an older version of the game, whose page could not be loaded just now. Trying again...");
     });
 });
 

@@ -480,12 +480,18 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   (about 75 ms, off the event loop but for a few ms at a time); a server told to stop before it is done waits for it
   (`Lobby.handoffAll`, while the next server builds the valleys); a save names the build its game runs on
   (`meta.build`). A server whose code cannot read a save
-  starts that game's worker from the build in the store, unpacked in its temp folder (`Room` with `pin`): the old
-  simulation, the old map, inside the new server, speaking the same `WORKER_API` to the network thread. It is only
-  started when it is signed with this deploy's key (or `HANDOFF_PIN=unsigned`), is what its name says (a hash of all of
-  it, checked on every fetch, and the copy on disk against it every time it is used), is of this `WORKER_API`, of no lower
-  `SECURITY_EPOCH`, and imports no package at another version than is installed here. Its players keep its client: the
-  page for its code and `/api/version?game=CODE` are that build's, and its files are served by their names. It is not in
+  starts that game's worker from the build in the store, unpacked in a folder of the process's own (`mkdtemp`, mode
+  0700) in its temp folder (`Room` with `pin`): the old simulation, the old map, inside the new server, speaking the same
+  `WORKER_API` to the network thread. It is only started when its signature (an HMAC of its whole SHA-256, made with
+  this deploy's key; or `HANDOFF_PIN=unsigned`) holds, it is what its name says (checked on every fetch, and the copy on
+  disk - no links, nothing beside it - every time a worker is started from it), is of this `WORKER_API`, of no lower
+  `SECURITY_EPOCH`, and imports no package at another version than is installed here. What the network thread writes to
+  its players itself (ROOM, BOARD, REJECT, close codes) is in that build's codec (`Room.proto`, `protocolOf`: its
+  `shared/protocol.js`, loaded from memory). Its players keep its client: the page for its code and
+  `/api/version?game=CODE` are that build's (a page that cannot be had from the store is a 503, never this build's
+  page), and its files are served by their names. A build holds only the `.js` files under `server/` and `shared/`, nothing of a
+  dotted name. Its own build is marked as in use twice a day and put back at the handover if swept; no build a waiting
+  save names is swept. It is not in
   the list or quick joins, is handed on naming the same build at the next deploy, and closes when its run is over or at
   the first dawn after `HANDOFF_PIN_MAX_HOURS` (`Room.pinCheck`).
 - **What is saved** (`saveGame` / `loadGame`): the clock, phase, waves and the boss, the car's supplies, the
@@ -544,11 +550,15 @@ server spawned with an IPC channel stops the same way on the message `'shutdown'
   400 ms: `ui.setConnectionStatus`), and goes back to the same code at once. First it asks `GET /api/version?game=CODE`
   (a stopping server's 503 is asked again) and compares it with what the page was built as - the server writes
   `<meta name="stn-build" content="build compat protocol">` into the page it serves (`pageBuild`). The same protocol and
-  compat (a hash of `shared/` and the protocol: what both ends run): it joins in place (`join(..., { resume: true })`
+  compat (`server/compat.js`: a hash of `shared/`, the protocol and the wire codec outside it - `server/snapshot.js`,
+  `client/net/decode.js`, `client/net/connection.js`): it joins in place (`join(..., { resume: true })`
   keeps the world, the places found, the waypoint and the run being recorded, and plays no intro); a client build that
   differs alone is loaded when the player leaves the game (they are told). Another compat or protocol: the page reloads
   (`reloadInto`), and the reloaded page goes back in as a reopened one does (`stn.playing`, `comeBack` with `moved`).
-  Joining a game in the page asks the same first (`canJoinHere`): a game run by other code is joined from its own page.
+  Joining a game in the page asks the same first (`canJoinHere`, `joinVerdict`): a game run by other code - or a newer
+  client of the same compat - is joined from its own page; a page is loaded again for one game at most 3 times in two
+  minutes (`mayReload`), then says it could not be. A stopping server answers its pages with 503 and a page that asks
+  again by itself.
   `index.html` is served `no-cache` so a reload gets the build that runs the game; the client's files go out compressed
   as the build wrote them (`vite.config.js` precompress: `name.br` and `name.gz` beside each script, style and page;
   brotli to a browser that takes it, else gzip, else the file as it is), read from disk the first time each is asked

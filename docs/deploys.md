@@ -35,15 +35,20 @@ a player (measured), and where it still falls short. The code is described in [A
      `ENDED_UPDATE`).
 5. **Each page comes back by itself** (`client/net/moveback.js`). It asks `/api/version?game=CODE` and compares it with
    what the page was built as (written into the page by the server: `<meta name="stn-build">`):
-   - the same protocol and the same **compat** (a hash of `shared/` and the protocol: the code both ends run - the
-     valley, the movement, the rules): it goes back in place, with the world it already has. **No reload.** A deploy
-     that changed `server/` alone is this.
-   - the same compat but another client build (`client/` changed and `shared/` did not): back in place as well, and the
-     player is told the new version loads the next time they leave the game.
+   - the same protocol and the same **compat** (`server/compat.js`: a hash of `shared/`, the protocol, and the wire codec
+     that lives outside `shared/` - `server/snapshot.js`, `client/net/decode.js`, `client/net/connection.js`: the code
+     both ends run, the valley, the movement, the rules, and how they talk): it goes back in place, with the world it
+     already has. **No reload.** A deploy that changed `server/` alone (but not `snapshot.js`) is this.
+   - the same compat but another client build (`client/` changed, and neither `shared/` nor the codec): back in place as
+     well, and the player is told the new version loads the next time they leave the game. (A page on the splash, not in
+     a game, loads the new client before it joins one: the server may not have its files any more. The one file a page
+     in a game asks for long after it loaded and cannot do without - the picture behind the crossing's loading card - is
+     fetched into the browser's cache once the page is idle; sounds and the synth worker fall back to the procedural ones.)
    - another compat or protocol: the page is loaded again first (the "Game updated" card stays up through it), and goes
-     back in as a reopened page does.
-   A server that is going down answers `/api/version` with 503, so a page never decides on the old server's word while
-   its socket goes to the new one. Retries come every 150 ms for 5 s, then every second; "no such game" is believed only
+     back in as a reopened page does. A page is loaded again for one game at most 3 times in two minutes; after that it
+     says the game could not be loaded, rather than reloading for ever.
+   A server that is going down answers `/api/version` - and its pages - with 503 (the page asks again by itself), so a
+   page never decides on, or is loaded from, the old server's word while its socket goes to the new one. Retries come every 150 ms for 5 s, then every second; "no such game" is believed only
    after three answers over 20 s (the newest server may be asked while the game is still on the one before).
 6. **Until a player is really playing again they cannot be hurt, and a game with nobody playing yet does not run:**
    - a game brought over stands still (no clock, nothing moves) until one of its players has sent a quarter of a second
@@ -109,10 +114,13 @@ All of it is load-bearing; the server says in its log when something is missing.
 - **An edge that routes each request on its own** (Railway's, Traefik's): `/api/version` and the game socket may go to
   different containers during a deploy, which is why a stopping server answers 503. Any edge works; one that pins a
   page's connections to the container it first reached is fine too (it is what the tests' stand-in does).
-- The server can write to its temp folder (a fetched build is unpacked there: about 1.5 MB each, in `stn-builds/`).
+- The server can write to its temp folder (a fetched build is unpacked there, in a folder of its own,
+  `stn-builds-<pid>-XXXXXX`: about 1.5 MB each, taken away when the process exits).
 - The store's size: a build is about 1 MB of code (gzipped) plus its client's files, each kept once by content (the first
   build puts about 24 MB, later ones only what changed: usually the 3 MB bundle). Builds nobody used for 3 days are
-  swept.
+  swept - never one a save waiting in the store names. A running server marks its own build as in use twice a day, and
+  as it goes down puts it back if another server swept it meanwhile (waiting 2 s for that at most: its games are saved
+  regardless).
 
 **Switches** (environment): `HANDOFF=0` no handoff at all; `HANDOFF_PIN=0` no carrying on by older builds (a save the
 new build cannot read ends its game, and its players are told); `HANDOFF_PIN=unsigned` builds are started without a
@@ -127,11 +135,21 @@ after it listens a server packs its build, 0).
 A server now starts code that came out of the handoff store, and serves client files from it as script on this site.
 The boundary is the deploy's key:
 
-- **With `HANDOFF_BUILD_KEY` set**, a build is only started (or its files served) when it carries an HMAC of its name
-  made with that key, and its name is the hash of everything in it (checked on every fetch; the copy unpacked on disk
-  is checked against it every time it is used, and written again if anything in it changed). Writing to the database
-  or the volume is not enough to run code here: it takes the key, which only the deploy has. Whoever has the key (and
-  write access to the store) can run code on the servers - as whoever can deploy can.
+- **With `HANDOFF_BUILD_KEY` set**, a build is only started (or its files served) when it carries an HMAC made with
+  that key of its whole SHA-256 - the hash of everything in it, of which its name is the first 96 bits - checked on
+  every fetch. Writing to the database or the volume is not enough to run code here: it takes the key, which only the
+  deploy has. Whoever has the key (and write access to the store) can run code on the servers - as whoever can deploy
+  can.
+- **On the server's own disk**, a build is unpacked into a folder this process makes for itself in the temp folder
+  (`mkdtemp`: a new name nobody else can have made, mode 0700; it is checked to be a folder, not a link, this user's,
+  and not group- or world-writable, or nothing is unpacked there). Before a game's worker is started from it, every file
+  is checked against the build (`lstat`: no links, but the one `node_modules` link to this server's own packages, for a
+  build that imports any; nothing else beside them). What is left is the server's own user: a process running as that
+  user could change the files between the check and the worker loading them - and could change the server itself just
+  as well. On Windows the temp folder is the user's own.
+- **What the network thread writes to the players of a carried-on game itself** (which game they are in, the
+  leaderboard, why they are turned away, the close codes) is written with that build's own `shared/protocol.js`, loaded
+  from the build in memory - its client reads them. The rest comes from that build's own worker.
 - **Without the key**, nothing from the store is started or served (pinning is off), unless `HANDOFF_PIN=unsigned` says
   to trust the store: then anyone who can write to the store can run code on the server.
 - `HANDOFF_PIN=0` turns all of it off.
@@ -171,7 +189,12 @@ back.
   `scripts/groundprints.json`). Games being played on that map then go on by the old build until they end. If that is
   meant, `node scripts/worldprint.js --update`, commit both records, and say so in the pull request's Risk section.
 - Bumping `STATE_VERSION`, renumbering or removing an enum entry: say so in the Risk section; those games are carried on
-  by their build. Changing what the network thread and a worker say to each other (`room-worker.js`'s header): bump
+  by their build. Reverting such a change in the next deploy does not bring them back at once: a game carried on by an
+  older build stays on it until its run ends, or for up to `HANDOFF_PIN_MAX_HOURS` (12), whichever comes first.
+- Changing how a message is written or read: the codec files (`shared/`, `server/snapshot.js`, `client/net/decode.js`,
+  `client/net/connection.js`) change the compat, and every playing page reloads once. A message written in
+  `server/game.js` and read in `client/game/game.js` (which compat does not hash: most client deploys change it) needs a
+  `PROTOCOL_VERSION` bump, as any change to the protocol always has. Changing what the network thread and a worker say to each other (`room-worker.js`'s header): bump
   `WORKER_API`, and say that games on older builds end at that deploy. A change to `shared/`: every playing page reloads
   once (say so); a change that must reach the players' pages at once has to touch `shared/` (or the protocol).
 

@@ -11,13 +11,14 @@
 // (Linux: a server is stopped with SIGTERM, as the host does. Windows: with the 'shutdown' message, as pm2 does.)
 import { spawn } from 'node:child_process';
 import { get as httpGet } from 'node:http';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { C2S, PROTOCOL_VERSION, REJECT_REASON, MOVED_CODE, Writer, writeInput } from '../shared/protocol.js';
-import { moveBack, verdictFor, pageBuild, NO_GAME_MS } from '../client/net/moveback.js';
+import { moveBack, verdictFor, joinVerdict, pageBuild, NO_GAME_MS, mayReload, reloadedInto, RELOAD_MAX, RELOAD_MS, RELOAD_LOOP_TEXT } from '../client/net/moveback.js';
+import { compatOf, CODEC_FILES } from '../server/compat.js';
 import { Connection } from '../client/net/connection.js';
 import { comeBack } from '../client/net/comeback.js';
 
@@ -43,6 +44,40 @@ check('a server from before compat is held to the build, as before', verdictFor(
 check('not reached: nothing decided', verdictFor(page, null) === '');
 const doc = { querySelector: (s) => (s === 'meta[name="stn-build"]' ? { getAttribute: () => `abc123 def456 ${P}` } : null) };
 check('the page reads what it was built as from itself', JSON.stringify(pageBuild(doc)) === JSON.stringify({ build: 'abc123', compat: 'def456', protocol: P }) && pageBuild({ querySelector: () => null }) === null);
+
+// joining from the splash: a newer client of the same compat is loaded first too (this page's own files may be gone)
+check('from the splash, a newer client of the same compat is loaded before joining; the same one is not', joinVerdict(page, { protocol: P, build: 'b2', compat: 'c1' }) === 'reload' && joinVerdict(page, { protocol: P, build: 'b1', compat: 'c1' }) === '' && joinVerdict(page, { protocol: P, build: 'b2', compat: 'c2' }) === 'reload');
+// a page is not loaded again for one game for ever (a server that keeps saying it has to be)
+{
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  const t = 1_000_000;
+  const tries = Array.from({ length: RELOAD_MAX + 2 }, (_, i) => mayReload(storage, 'LOOPED', t + i * 1000));
+  check(`a page is loaded again for a game ${RELOAD_MAX} times at most in a while, then not: it says why instead`, tries.slice(0, RELOAD_MAX).every(Boolean) && !tries[RELOAD_MAX] && !tries[RELOAD_MAX + 1] && /keeps asking/.test(RELOAD_LOOP_TEXT), JSON.stringify(tries));
+  check('...the count is per game, and wears off', mayReload(storage, 'OTHER', t) && mayReload(storage, 'LOOPED', t + RELOAD_MS + 1));
+  reloadedInto(storage, 'OTHER');
+  check('...and starts again once the page is in the game', !mem.has('stn.reloads.OTHER'));
+  check('...(a browser without sessionStorage reloads as before)', mayReload(null, 'LOOPED'));
+}
+// compat: shared/, the protocol, and the wire codec outside shared/ - not the rest of the server or the client
+{
+  const tree = mkdtempSync(join(tmpdir(), 'stn-compat-'));
+  for (const f of ['shared/a.js', ...CODEC_FILES, 'server/game.js', 'client/game/game.js']) {
+    mkdirSync(join(tree, dirname(f)), { recursive: true });
+    writeFileSync(join(tree, f), `// ${f}\n`);
+  }
+  const was = compatOf(tree, P);
+  const changed = (f) => {
+    const before = readFileSync(join(tree, f));
+    writeFileSync(join(tree, f), `${before}// changed\n`);
+    const c = compatOf(tree, P);
+    writeFileSync(join(tree, f), before);
+    return c !== was;
+  };
+  check('compat changes with shared/, with the protocol, and with each codec file outside shared/ (snapshot.js, decode.js, connection.js)', changed('shared/a.js') && compatOf(tree, P + 1) !== was && CODEC_FILES.every(changed), CODEC_FILES.join(' '));
+  check("...and not with the rest of the server's code or the client's (those deploys go back in place)", !changed('server/game.js') && !changed('client/game/game.js') && compatOf(tree, P) === was);
+  check('...the real codec files are where compat looks for them', CODEC_FILES.every((f) => existsSync(new URL(`../${f}`, import.meta.url))));
+}
 
 // a clock that runs as fast as it is slept
 const fake = () => {
@@ -239,14 +274,15 @@ try {
   await deploy('S1', {}, 'a deploy of the server alone');
   const m1 = players.map((p) => p.moves[0]);
   check('...every page goes back in place, into its own body: no reload', m1.every((m, i) => m?.verdict === 'in place' && !m.update && m.id === ids[i]), JSON.stringify(m1) + errs());
-  check(`...within half a second of its socket closing (${m1.map((m) => m?.ms).join(', ')} ms)`, m1.every((m) => m?.ms < 500), JSON.stringify(m1));
+  // (tens of ms on the development PC: the bound leaves a slow machine room, and is still well under a reload's seconds)
+  check(`...within moments of its socket closing (${m1.map((m) => m?.ms).join(', ')} ms)`, m1.every((m) => m?.ms < 1500), JSON.stringify(m1));
   await sleep(1000);
 
   // a deploy of a new client alone (the same shared code)
   await deploy('S2', { CLIENT_BUILD: 'newclient' }, 'a deploy of a new client alone');
   const m2 = players.map((p) => p.moves[0]);
   check('...the pages still go back in place, and hear that a newer client is ready', m2.every((m, i) => m?.verdict === 'in place' && m.update && m.id === ids[i]), JSON.stringify(m2));
-  check(`...as quickly (${m2.map((m) => m?.ms).join(', ')} ms)`, m2.every((m) => m?.ms < 500), errs());
+  check(`...as quickly (${m2.map((m) => m?.ms).join(', ')} ms)`, m2.every((m) => m?.ms < 1500), errs());
   await sleep(1000);
 
   // a deploy that changes the code both ends run

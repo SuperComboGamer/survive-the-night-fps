@@ -152,22 +152,27 @@ export function checkEnvelope(env) {
 //   claim(code, me)        -> { meta, body, savedAt }, gone from the store, or null (none, taken already, or saved for
 //                             another server than `me`, behind the proxy: PgStore only)
 //   pending()              -> the codes waiting
-//   listen(fn)             fn(code) whenever a save is put (by any server, this one too)
+//   listen(fn)             fn(code) whenever a save is put (by any server, this one too). -> a promise, done once it
+//                          is listening
 //   sweep(maxAgeS)         drops saves older than that: nobody came for them
 //   close()
 // ...and the word between the two servers before the saves are made, so the next one can build each game's valley
 // while the last one is still playing it (Lobby.announce / prepare):
 //   announceAndWait(list, ms)  list: [{ code, info: { seed, act, shape, target } }], the games about to be saved ->
-//                          the Set of codes the next server said it is ready for, within ms
-//   listenComing(fn)       fn(code, info) for each game a server going down announces (that server hears its own too)
-//   ready(code)            this server has built the valley of `code` and is waiting for its save
+//                          the Set of codes the next server said it is ready for, within ms (counted from the call:
+//                          setting up to hear the answers is in it), or as soon as it has answered for every one
+//   listenComing(fn)       fn(code, info) for each game a server going down announces (that server hears its own too).
+//                          -> a promise, done once it is listening
+//   ready(code, ok = true) this server has built the valley of `code` and is waiting for its save - or (ok false) it
+//                          will not have it built (another valley of that seed here): the server going down need not wait
 // ...and the builds that games are carried on by when the next build cannot read their save (builds.js):
 //   putBuild(id, body, sig, assets)  the build `id` (gzipped), its signature, and its client's files (Map hash -> bytes):
 //                          kept (written over whatever is there under that name), and marked as in use
 //   getBuild(id)           -> { body, sig }, or null; marks it (and its files) as in use
-//   touchBuild(id)         marks it as in use
+//   touchBuild(id)         marks it as in use -> whether it is there
 //   getAsset(hash)         -> a client file, or null
-//   sweepBuilds(maxAgeS)   drops the builds nobody has used in that long, and the files no build kept names
+//   sweepBuilds(maxAgeS)   drops the builds nobody has used in that long - never one a save waiting in the store names -
+//                          and the files no build kept names
 const COMING_RE = /^([A-Z2-9]+)\.coming$/;
 const BUILD_FILE_RE = /^([0-9a-f]{24})\.json$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -200,8 +205,19 @@ export class FileStore {
       renameSync(file(code, 'coming.tmp'), file(code, 'coming'));
     }
     const got = new Set();
-    for (const until = Date.now() + ms; got.size < list.length && Date.now() < until; await new Promise((r) => setTimeout(r, 25))) {
-      for (const { code } of list) if (!got.has(code) && existsSync(file(code, 'ready'))) got.add(code);
+    const answered = new Set();
+    for (const until = Date.now() + ms; answered.size < list.length && Date.now() < until; await new Promise((r) => setTimeout(r, 25))) {
+      for (const { code } of list) {
+        if (answered.has(code)) continue;
+        let said;
+        try {
+          said = readFileSync(file(code, 'ready'), 'utf8');
+        } catch {
+          continue;
+        }
+        answered.add(code);
+        if (said !== '0') got.add(code);
+      }
     }
     for (const { code } of list) {
       for (const ext of ['coming', 'ready']) {
@@ -212,7 +228,7 @@ export class FileStore {
     }
     return got;
   }
-  listenComing(fn) {
+  async listenComing(fn) {
     const seen = new Map(); // code -> the announcement's mtime: each heard once
     this.comingTimer = setInterval(() => {
       let names;
@@ -236,8 +252,8 @@ export class FileStore {
     }, this.comingMs);
     this.comingTimer.unref?.();
   }
-  async ready(code) {
-    writeFileSync(join(this.dir, `${code}.ready`), '1');
+  async ready(code, ok = true) {
+    writeFileSync(join(this.dir, `${code}.ready`), ok ? '1' : '0');
   }
   async put(code, meta, body) {
     const file = join(this.dir, `${code}.json`);
@@ -255,9 +271,12 @@ export class FileStore {
       const o = JSON.parse(readFileSync(mine, 'utf8'));
       return { meta: o.meta, body: Buffer.from(o.body, 'base64'), savedAt: o.savedAt };
     } finally {
-      try {
-        unlinkSync(mine);
-      } catch {}
+      // (and the word about it between the two servers, which a server that gave up waiting leaves behind)
+      for (const f of [mine, join(this.dir, `${code}.ready`), join(this.dir, `${code}.coming`)]) {
+        try {
+          unlinkSync(f);
+        } catch {}
+      }
     }
   }
   async pending() {
@@ -265,7 +284,7 @@ export class FileStore {
       .map((f) => /^([A-Z2-9]+)\.json$/.exec(f)?.[1])
       .filter(Boolean);
   }
-  listen(fn) {
+  async listen(fn) {
     let known = new Set();
     this.timer = setInterval(async () => {
       const now = new Set(await this.pending());
@@ -337,9 +356,10 @@ export class FileStore {
   }
   async touchBuild(id) {
     const o = this.readBuild(id);
-    if (!o) return;
+    if (!o) return false;
     touch(join(this.buildDir, `${id}.json`));
     for (const hash of o.assets || []) if (HASH_RE.test(hash)) touch(join(this.assetDir, hash));
+    return true;
   }
   async getAsset(hash) {
     if (!HASH_RE.test(hash)) return null;
@@ -353,10 +373,18 @@ export class FileStore {
     const cut = Date.now() - maxAgeS * 1000;
     let n = 0;
     const named = new Set();
+    // (the builds the saves waiting here name: kept, however long since anybody used them)
+    const saved = new Set();
+    for (const code of await this.pending()) {
+      try {
+        const build = JSON.parse(readFileSync(join(this.dir, `${code}.json`), 'utf8')).meta?.build;
+        if (typeof build === 'string') saved.add(build);
+      } catch {}
+    }
     for (const f of readdirSync(this.buildDir)) {
       const full = join(this.buildDir, f);
       try {
-        if (statSync(full).mtimeMs < cut) {
+        if (statSync(full).mtimeMs < cut && !saved.has(BUILD_FILE_RE.exec(f)?.[1])) {
           unlinkSync(full);
           if (BUILD_FILE_RE.test(f)) n++;
         } else for (const hash of this.readBuild(BUILD_FILE_RE.exec(f)?.[1])?.assets || []) named.add(hash);
@@ -413,10 +441,10 @@ export class PgStore {
     return (await this.db.query(`SELECT code FROM game_handoff`)).rows.map((r) => r.code);
   }
   listen(fn) {
-    if (!this.db.listen) return;
-    this.db
+    if (!this.db.listen) return Promise.resolve();
+    return this.db
       .listen('game_handoff', fn)
-      .then((stop) => (this.unlisten = stop))
+      .then((stop) => void (this.unlisten = stop))
       .catch((err) => this.log(`handoff: cannot listen for saves (${err.message}): they are restored when a player asks for one`));
   }
   async sweep(maxAgeS) {
@@ -424,38 +452,48 @@ export class PgStore {
   }
   // (the word before the saves: notifications only, nothing stored - game_handoff_coming carries { code, ...info },
   // game_handoff_ready the code)
+  // (the answers: game_handoff_ready carries the code, or "CODE no" for one the next server will not have built. The
+  // time counts from the call, the listening set up included - a slow database does not stretch it)
   async announceAndWait(list, ms) {
     if (!this.db.listen) return new Set();
     const want = new Set(list.map((x) => x.code));
     const got = new Set();
+    const answered = new Set();
     let wake = null;
-    const stop = await this.db.listen('game_handoff_ready', (code) => {
-      if (!want.has(code)) return;
-      got.add(code);
-      if (got.size >= want.size) wake?.();
+    let timer = null;
+    const over = new Promise((done) => (timer = setTimeout(done, ms)));
+    const listening = this.db.listen('game_handoff_ready', (payload) => {
+      const [code, no] = String(payload).split(' ');
+      if (!want.has(code) || answered.has(code)) return;
+      answered.add(code);
+      if (no !== 'no') got.add(code);
+      if (answered.size >= want.size) wake?.();
     });
     try {
-      for (const { code, info } of list) await this.db.query(`SELECT pg_notify('game_handoff_coming', $1)`, [JSON.stringify({ ...info, code })]);
-      if (got.size < want.size) await new Promise((done) => ((wake = done), setTimeout(done, ms)));
+      const stop = await Promise.race([listening, over.then(() => null)]);
+      if (!stop) return got; // (not listening yet when the time was up: nothing heard)
+      for (const { code, info } of list) await Promise.race([this.db.query(`SELECT pg_notify('game_handoff_coming', $1)`, [JSON.stringify({ ...info, code })]), over]);
+      if (answered.size < want.size) await Promise.race([new Promise((done) => (wake = done)), over]);
+      return got;
     } finally {
-      await stop?.();
+      clearTimeout(timer);
+      listening.then((stop) => stop?.()).catch(() => {});
     }
-    return got;
   }
   listenComing(fn) {
-    if (!this.db.listen) return;
-    this.db
+    if (!this.db.listen) return Promise.resolve();
+    return this.db
       .listen('game_handoff_coming', (payload) => {
         try {
           const m = JSON.parse(payload);
           if (typeof m?.code === 'string') fn(m.code, m);
         } catch {}
       })
-      .then((stop) => (this.unlistenComing = stop))
+      .then((stop) => void (this.unlistenComing = stop))
       .catch((err) => this.log(`handoff: cannot listen for games coming (${err.message}): their valleys are built when their saves come`));
   }
-  async ready(code) {
-    await this.db.query(`SELECT pg_notify('game_handoff_ready', $1)`, [code]);
+  async ready(code, ok = true) {
+    await this.db.query(`SELECT pg_notify('game_handoff_ready', $1)`, [ok ? code : `${code} no`]);
   }
   async close() {
     await this.unlisten?.();
@@ -488,13 +526,15 @@ export class PgStore {
   async touchBuild(id) {
     const r = await this.db.query(`UPDATE handoff_build SET used_at = now() WHERE id = $1 RETURNING assets`, [id]);
     if (r.rows[0]) await this.db.query(`UPDATE handoff_asset SET used_at = now() WHERE hash = ANY($1)`, [r.rows[0].assets || []]);
+    return !!r.rows[0];
   }
   async getAsset(hash) {
     const r = await this.db.query(`SELECT body FROM handoff_asset WHERE hash = $1`, [hash]);
     return r.rows[0] ? Buffer.from(r.rows[0].body) : null;
   }
   async sweepBuilds(maxAgeS) {
-    const n = (await this.db.query(`DELETE FROM handoff_build WHERE used_at < now() - make_interval(secs => $1)`, [maxAgeS])).rowCount;
+    // (never a build a save waiting in the store names)
+    const n = (await this.db.query(`DELETE FROM handoff_build WHERE used_at < now() - make_interval(secs => $1) AND id NOT IN (SELECT meta->>'build' FROM game_handoff WHERE meta->>'build' IS NOT NULL)`, [maxAgeS])).rowCount;
     await this.db.query(`DELETE FROM handoff_asset a WHERE used_at < now() - make_interval(secs => $1) AND NOT EXISTS (SELECT 1 FROM handoff_build b WHERE a.hash = ANY(b.assets))`, [maxAgeS]);
     return n;
   }
