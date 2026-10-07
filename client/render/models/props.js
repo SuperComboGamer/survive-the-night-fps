@@ -116,6 +116,15 @@ function sedan(b, r, o) {
   s.moveTo(-2.25, 0.27);
   s.lineTo(fa - 0.4, 0.27);
   s.absarc(fa, 0.3, 0.4, PI, 0, true);
+  // (o.slim - a car that is driven: the floor pan hangs lower between the axles, and the well in it is as deep. Legs
+  // as long as a survivor's go in it: sedanCabin)
+  const tubY = o.slim ? 0.22 : TUB.y;
+  if (o.slim) {
+    s.lineTo(TUB.z0 - 0.05, 0.27);
+    s.lineTo(TUB.z0 - 0.01, 0.2);
+    s.lineTo(TUB.z1 + 0.01, 0.2);
+    s.lineTo(TUB.z1 + 0.04, 0.27);
+  }
   s.lineTo(ra - 0.4, 0.27);
   s.absarc(ra, 0.3, 0.4, PI, 0, true);
   s.lineTo(2.25, 0.27);
@@ -130,8 +139,8 @@ function sedan(b, r, o) {
   s.lineTo(1.25, 0.92);
   // (the cabin: a well down to the floor between the scuttle and the back seat, the doors closing its two sides)
   s.lineTo(TUB.z1, 0.92);
-  s.lineTo(TUB.z1, TUB.y);
-  s.lineTo(TUB.z0, TUB.y);
+  s.lineTo(TUB.z1, tubY);
+  s.lineTo(TUB.z0, tubY);
   s.lineTo(TUB.z0, 0.92);
   s.lineTo(-0.88, 0.92);
   if (o.hoodOpen) {
@@ -207,10 +216,12 @@ function sedan(b, r, o) {
   const dirt = o.dirt ?? 0.45;
   // (a pane: 'ok', 'gone', 'shard' (a tooth of it left in a corner), 'blood' (smeared from inside), or its own look)
   const gl = (k) => (glass[k] === 'ok' ? paneLook(dirt, k) : glass[k] === 'blood' ? [Math.min(1, dirt + 0.2), 0.2, 0.9] : glass[k]);
-  const sideHoles = (k0) => [[0.075, 0.47, 0.08, 0.93, gl(k0)], [0.53, 0.965, 0.08, 0.93, gl(k0 + 1)]];
+  // (o.slim: a car that is driven - game/vehicles.js - has thin pillars: whoever sits in it looks out past them)
+  const sl = !!o.slim;
+  const sideHoles = (k0) => [[sl ? 0.03 : 0.075, sl ? 0.485 : 0.47, sl ? 0.05 : 0.08, sl ? 0.96 : 0.93, gl(k0)], [sl ? 0.515 : 0.53, sl ? 0.975 : 0.965, sl ? 0.05 : 0.08, sl ? 0.96 : 0.93, gl(k0 + 1)]];
   hullShell(b, 'carpaint', C, {
     c: col, t: 0.03, lining: o.burnt ? CHAR : LINING, skip: ['yn'], bare: ['yp'],
-    holes: { zn: [[0.045, 0.955, 0.08, 0.93, gl(0)]], zp: [[0.05, 0.95, 0.09, 0.92, gl(1)]], xp: sideHoles(2), xn: sideHoles(4) },
+    holes: { zn: [sl ? [0.018, 0.982, 0.04, 0.965, gl(0)] : [0.045, 0.955, 0.08, 0.93, gl(0)]], zp: [[0.05, 0.95, 0.09, 0.92, gl(1)]], xp: sideHoles(2), xn: sideHoles(4) },
   });
   sedanCabin(b, o, hw);
   for (const sx of [-1, 1]) {
@@ -218,9 +229,9 @@ function sedan(b, r, o) {
     const n = [sx, 0.22, 0];
     const bottomAt = (t) => lerp3(bf, br, t), topAt = (t) => lerp3(tf, tr, t);
     // pillars
-    b.beam('carpaint', out(bf, n, 0.01), out(tf, n, 0.01), 0.07, 0.05, { c: col, side: [0, 0, 1] });
+    b.beam('carpaint', out(bf, n, 0.01), out(tf, n, 0.01), sl ? 0.04 : 0.07, sl ? 0.035 : 0.05, { c: col, side: [0, 0, 1] });
     b.beam('carpaint', out(br, n, 0.01), out(tr, n, 0.01), 0.1, 0.05, { c: col, side: [0, 0, 1] });
-    b.beam('carpaint', out(bottomAt(0.5), n, 0.01), out(topAt(0.5), n, 0.01), 0.07, 0.05, { c: col, side: [0, 0, 1] });
+    b.beam('carpaint', out(bottomAt(0.5), n, 0.01), out(topAt(0.5), n, 0.01), sl ? 0.05 : 0.07, 0.05, { c: col, side: [0, 0, 1] });
     // door seams + handles on lower body
     for (const z of [-0.86, 0.46, 1.22]) b.box('dark', 0.01, 0.56, 0.012, { p: [sx * (hw + 0.002), 0.6, z] });
     for (const z of [0.3, 1.05]) b.box('chrome', 0.03, 0.03, 0.12, { p: [sx * (hw + 0.012), 0.8, z] });
@@ -276,7 +287,10 @@ const BOOT = { z0: 1.36, z1: 2.14, y: 0.72 };
 // child's seat in the back, 3 somebody dead in the passenger seat, 4 stripped (the back seat gone, a door card off);
 // o.burnt: a fire's leavings. o.seats: the upholstery (an index of cabin.js SEATS).
 function sedanCabin(b, o, hw) {
-  const fy = TUB.y + 0.02, iw = (hw - TUB.door) * 2 - 0.01, len = TUB.z1 - TUB.z0, zc = (TUB.z0 + TUB.z1) / 2;
+  // (o.slim: a car that is driven - render/models/vehicles.js. Its well is deeper and its dash shallower: a survivor's
+  // legs are as long as anybody's, and they go under it; its back cushion a little lower, under the roof's fall)
+  const sl = !!o.slim;
+  const fy = sl ? 0.24 : TUB.y + 0.02, iw = (hw - TUB.door) * 2 - 0.01, len = TUB.z1 - TUB.z0, zc = (TUB.z0 + TUB.z1) / 2;
   const burnt = !!o.burnt, what = o.cabin || 0;
   const trim = burnt ? CHAR : [0.15, 0.14, 0.13];
   const sc = burnt ? CHAR : SEATS[(o.seats ?? 0) % SEATS.length];
@@ -290,10 +304,11 @@ function sedanCabin(b, o, hw) {
       if ((o.doorsOff || []).some((d) => d[0] === sx && d[1] === k)) continue;
       const stripped = what === 4 && sx > 0 && k === 0;
       if (!stripped) b.box('cabin_fine', 0.012, 0.92 - fy - 0.02, z1 - z0 - 0.03, { p: [sx * (iw / 2 - 0.003), (0.92 + fy) / 2, (z0 + z1) / 2], c: mul(sc, 0.8) });
-      if (!stripped && !burnt) b.box('cabin_fine', 0.05, 0.05, (z1 - z0) * 0.5, { p: [sx * (iw / 2 - 0.03), 0.72, (z0 + z1) / 2 + 0.05], c: trim }); // the armrest
+      if (!stripped && !burnt && !o.slim) b.box('cabin_fine', 0.05, 0.05, (z1 - z0) * 0.5, { p: [sx * (iw / 2 - 0.03), 0.72, (z0 + z1) / 2 + 0.05], c: trim }); // the armrest (o.slim: none - an elbow is there)
     }
   // seats: where createDriveCar seats the survivors (DRIVE_CAR_SEATS)
-  const fz = -0.147, rz = 0.64, fh = 0.44 - fy, rh = 0.46 - fy;
+  const fz = -0.147, rz = 0.64, fh = (sl ? 0.358 : 0.44) - fy, rh = (sl ? 0.354 : 0.46) - fy;
+  if (sl) for (const sx of [-1, 1]) b.box('dark', 0.02, TUB.y + 0.03 - fy, len, { p: [sx * (iw / 2 + 0.005), (TUB.y + 0.03 + fy) / 2, zc] }); // the well's sides, down from the sills
   if (burnt) {
     for (const sx of [-1, 1]) burntSeat(b, sx * 0.38, fy, fz, { h: fh });
     burntSeat(b, 0, fy, rz, { w: 1.3, h: rh });
@@ -304,12 +319,12 @@ function sedanCabin(b, o, hw) {
     return;
   }
   for (const sx of [-1, 1]) seat(b, sx * 0.38, fy, fz, { h: fh, c: sc, bh: 0.58, d: 0.46 });
-  if (what !== 4) seat(b, 0, fy, rz, { w: 1.32, h: rh, c: sc, bh: 0.56, d: 0.42, heads: 2, rake: 0.2 });
-  dash(b, 0.955, -0.85, iw, { d: 0.3, wheelX: -0.38, gloveOpen: what === 4 || what === 0 });
-  steering(b, [-0.38, 1.0, -0.42]);
+  if (what !== 4) seat(b, 0, fy, sl ? rz + 0.035 : rz, { w: 1.32, h: rh, c: sc, bh: 0.56, d: sl ? 0.35 : 0.42, heads: 2, rake: 0.2 });
+  dash(b, 0.955, -0.85, iw, sl ? { d: 0.19, h: 0.2, wheelX: -0.38, noGlove: true } : { d: 0.3, wheelX: -0.38, gloveOpen: what === 4 || what === 0 });
+  if (!o.noSteer) steering(b, [-0.38, 1.0, -0.42]); // (noSteer: a car that is driven has a wheel of its own, which turns)
   mirror(b, [0, 1.3, -0.24]);
   b.box('cabin_fine', 0.2, 0.2, 0.74, { p: [0, fy + 0.1, -0.2], c: trim }); // the tunnel between the seats, and the lever on it
-  b.cylBetween('cabin_fine', [0, fy + 0.2, -0.34], [0.01, fy + 0.4, -0.38], 0.012, 0.018, 4, { c: [0.08, 0.08, 0.08] });
+  if (!sl) b.cylBetween('cabin_fine', [0, fy + 0.2, -0.34], [0.01, fy + 0.4, -0.38], 0.012, 0.018, 4, { c: [0.08, 0.08, 0.08] });
   if (what === 1) {
     sitter(b, [-0.38, 0.44, fz], { wheel: true, lean: 0.15, shirt: [0.3, 0.27, 0.2], side: -1 });
     rubbish(b, [0.38, 0.445, fz], 0.3, 0.3, 2, 1);

@@ -144,7 +144,8 @@ import { MountedGun } from './mountedgun.js';
 import { GUN, GUN_LYING } from '../shared/mountedgun.js';
 import { Fair } from './fair.js';
 import { Handcars } from './handcar.js';
-import { FAIR_GEN_ID, FAIR_TANK_ID } from '../shared/protocol.js';
+import { Vehicles } from './vehicles.js';
+import { FAIR_GEN_ID, FAIR_TANK_ID, SIPHON_ID } from '../shared/protocol.js';
 import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
@@ -421,6 +422,7 @@ export class Game {
     this.gun = new MountedGun(this); // the mounted gun at the Army Checkpoint, on the maps that have one
     this.fair = new Fair(this); // the Tri-County Fair: its generator and who is on its rides
     this.handcars = new Handcars(this); // the handcars on the railway: where they are on the line, who rides them
+    this.vehicles = new Vehicles(this); // the mopeds, cars and bicycles of the mainland (vehicles.js)
     this.power = new Power(this); // the buildable generator and its floodlights
     this.stats = { bytesOut: 0, msgsOut: 0, lastReport: Date.now(), tickMs: 0 };
     this.tickStats = new TickStats(1000 / SERVER_TICK_RATE); // how long ticks take and where a slow one went (update)
@@ -812,6 +814,7 @@ export class Game {
       this.spawnHuman(p, left || starterKit(this.day, this.diff), true);
       if (left) this.sendChat(p, 0, CHATF.SYSTEM, 'Back in the same run: you have what you left with.');
     }
+    this.vehicles.provide(); // (a seat for them too: the next of the bridgehead's vehicles, if the team has outgrown the rest)
     this.track.join(p);
     this.ach.join(p);
     this.bestiary.join(p);
@@ -1184,6 +1187,8 @@ export class Game {
   }
 
   clearWorld() {
+    this.vehicles.clear(); // (their boxes out of the world, and nobody in one)
+    for (const p of this.players.values()) p.state.drive = p.state.driveK = p.state.pass = p.state.passN = 0;
     for (const e of [...this.all]) if (e.kind !== ENT.PLAYER) this.removeEntity(e);
     for (const s of this.structures) {
       this.world.structGrid.remove(s.collider);
@@ -1278,6 +1283,7 @@ export class Game {
     this.zm.spawnInitial();
     this.cm.spawnInitial();
     this.dm.spawnInitial();
+    this.vehicles.spawn(); // (last: the ids and the random draws of everything above are as they were without them)
   }
 
   // ---------------------------------------------------------------- the two acts (shared/acts.js)
@@ -1385,6 +1391,7 @@ export class Game {
       p.hp = Math.max(p.hp, REVIVE_HP);
     }
     s.ride = s.cart = s.hmg = s.pet = 0;
+    s.drive = s.driveK = s.pass = s.passN = 0;
     s.pinned = s.pulled = 0;
     s.vx = s.vy = s.vz = 0;
     this.putAtStart(s);
@@ -2384,6 +2391,15 @@ export class Game {
         break;
       case 'splash': // into the lake (shared/swim.js): the others hear it from what they see (client entities)
         break;
+      case 'veh_crash':
+        this.vehicles.crashEvent(p, ev);
+        break;
+      case 'veh_off':
+        this.vehicles.left(p, ev);
+        break;
+      case 'veh_skid':
+        this.vehicles.skid(p);
+        break;
       case 'cart_bump':
         // a handcar run into the end of its stretch of line (shared/handcar.js)
         this.sound(SOUND.METAL_HIT, s.x, s.y, s.z, 40, p.id);
@@ -2594,6 +2610,14 @@ export class Game {
         return this.handcars.board(p, r.u8());
       case ACT.GEN_SWITCH:
         return this.power.flip(p, r.u16());
+      case ACT.VEHICLE: {
+        const what = r.u8();
+        return this.vehicles.act(p, what, r.u16());
+      }
+      case ACT.SIPHON: {
+        const qx = r.i16();
+        return this.vehicles.siphonBegin(p, qx, r.i16());
+      }
     }
   }
 
@@ -2797,6 +2821,7 @@ export class Game {
     const e = this.ents[id];
     if (!e || e.removed || !this.canReachEnt(p, e)) return;
     if (e.kind === ENT.GUN) return this.gun.holdBegin(p); // lifting the mounted gun
+    if (e.kind === ENT.VEHICLE) return this.vehicles.holdBegin(p, e); // fitting a part, pouring fuel in, patching it up
     const d = Math.hypot(e.x - s.x, e.z - s.z);
     if (e.kind === ENT.CACHE) {
       if (d > this.reachOf(e) || e.state !== 0) {
@@ -2826,6 +2851,8 @@ export class Game {
       if (h.target === CAR_ID) ok = this.nearCar(p, 6) && (h.kind === HOLD.DRIVE ? this.escape.active && this.escape.ready : !this.escape.active);
       else if (this.fixtures.owns(h.target)) ok = this.fixtures.holdOk(p, h);
       else if (h.target === FAIR_GEN_ID) ok = this.fair.holdOk(p, h);
+      else if (h.target === SIPHON_ID) ok = this.vehicles.siphonOk(p, h);
+      else if (h.kind >= HOLD.VEH_FIX && h.kind <= HOLD.VEH_REPAIR) ok = this.vehicles.holdOk(p, h);
       else {
         tgt = this.ents[h.target];
         if (!tgt || tgt.removed) ok = false;
@@ -2859,6 +2886,8 @@ export class Game {
     else if (h.kind === HOLD.GUN_LIFT) this.gun.lift(p);
     else if (this.fixtures.owns(h.target)) this.fixtures.holdDone(p, h);
     else if (h.target === FAIR_GEN_ID) this.fair.holdDone(p, h);
+    else if (h.target === SIPHON_ID) this.vehicles.siphonDone(p, h);
+    else if (h.kind >= HOLD.VEH_FIX && h.kind <= HOLD.VEH_REPAIR) this.vehicles.holdDone(p, h);
   }
 
   // Forcing a car's boot (shared/trunk.js). What the hold is to be, when this container is the boot of a car with a
@@ -3243,6 +3272,19 @@ export class Game {
     const plan = this.planFor(p, rec.cost);
     if (!plan) {
       this.notify(NOTIFY.NOT_ENOUGH, 0, p.id);
+      return;
+    }
+    if (rec.vehicle) {
+      // a vehicle: it stands beside the bench when it is made (server/vehicles.js); nothing goes into the pack
+      const no = this.vehicles.build(p, rec.vehicle, true);
+      if (no) return this.notify(NOTIFY.VEH_NEED, no, p.id);
+      payCost(p.inv, plan.take);
+      this.madeExtra(p, plan);
+      this.vehicles.build(p, rec.vehicle);
+      this.track.craft(p, rec);
+      this.ach.crafted(p);
+      p.invDirty = true;
+      this.sound(SOUND.CRAFT, p.state.x, p.state.y + 1, p.state.z, 15);
       return;
     }
     const def = ITEM_DEFS[rec.out];
@@ -3661,11 +3703,17 @@ export class Game {
   // ---------------------------------------------------------------- damage (players)
   damagePlayer(p, amount, src) {
     if (!p.alive || amount <= 0 || this.safe(p)) return; // (dropped and held, or back and not playing yet: nothing hurts them)
-    if (this.godMode && !p.zombie) return;
+    if (this.godMode && !p.zombie) {
+      // (testing: the survivor takes nothing - the car they sit in still takes what was meant for them)
+      if (src && src.kind === KILLER.ZOMBIE && (p.state.drive || p.state.pass) && (this.phase === PHASE.DAY || this.phase === PHASE.NIGHT)) this.vehicles.shield(p, amount * this.diff.hurt);
+      return;
+    }
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
     if (!p.zombie && src && (src.kind === KILLER.ZOMBIE || src.kind === KILLER.WORLD)) amount *= this.diff.hurt;
     if (!p.zombie) amount *= perkMods(p.perks).hurt;
+    // in a vehicle (vehicles.js): a car takes what the dead meant for who is in it, while it still has its glass
+    if (!p.zombie && src && src.kind === KILLER.ZOMBIE && (p.state.drive || p.state.pass) && !((amount = this.vehicles.shield(p, amount)) > 0)) return;
     if (p.downed) {
       // hits on a downed survivor drain what's left of their blood
       p.bleed -= amount * 0.12;
@@ -3760,6 +3808,7 @@ export class Game {
   killPlayer(p, src, silent = false) {
     this.track.death(p, src, silent); // (first: what they were when it came)
     this.ach.death(p, src);
+    this.vehicles.drop(p); // (out of whatever they were in: it rolls on without them)
     p.hp = 0;
     p.alive = false;
     p.deaths++;
@@ -3960,6 +4009,7 @@ export class Game {
         // /clear [m]: every one of the dead within that many metres (default 80) drops where it stands, to nobody's credit
         const r = +args[1] || 80;
         for (const z of [...this.zombies]) if (!z.dead && Math.hypot(z.x - s.x, z.z - s.z) <= r) this.combat.killZombie(z, null);
+        for (const d of [...this.deer]) if (!d.dead && d.group?.undead && Math.hypot(d.x - s.x, d.z - s.z) <= r) this.dm.kill(d); // (the mainland's undead deer are the dead too)
         break;
       }
       case 'legs': {
@@ -4256,6 +4306,10 @@ export class Game {
         // the materials for one generator and two floodlights, and a full tank of fuel
         this.power.give(p);
         break;
+      case 'veh':
+      case 'vehicle':
+        this.vehicles.debug(p, args);
+        break;
       case 'handcar':
         // /handcar [n]: onto handcar n on the railway (1, 2), or the first one nobody is on
         this.handcars.debug(p, args[1]);
@@ -4343,6 +4397,7 @@ export class Game {
     this.processInputs();
     this.fair.update();
     this.handcars.update();
+    this.vehicles.update();
     ts.mark(T_INPUTS);
     this.updatePhase(dt);
     this.cemetery.update(dt);
@@ -4990,6 +5045,13 @@ export class Game {
       c.f32(s.cartV);
       c.u8(s.hmg | (s.pet << 1));
       c.u32(s.perks);
+      c.u16(s.drive);
+      c.u8(s.driveK | (s.dhold << 4) | (s.ddead ? 128 : 0));
+      c.f32(s.dyaw);
+      c.f32(s.dsteer);
+      c.f32(s.dfuel);
+      c.u16(s.pass);
+      c.u8(s.passN);
       if (put(12)) mask |= SELF.RIDE;
     }
     // status: 7 field groups behind their own mask

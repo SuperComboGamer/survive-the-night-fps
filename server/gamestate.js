@@ -115,6 +115,7 @@ export function saveGame(g) {
   s.gun = g.gun.save();
   s.fair = g.fair.save();
   s.handcars = g.handcars.save();
+  s.vehicles = g.vehicles.save();
   s.ach = g.ach.save();
   return s;
 }
@@ -205,6 +206,7 @@ export function loadGame(g, s) {
   g.gun.load(s.gun);
   g.fair.load(s.fair);
   g.handcars.load(s.handcars);
+  g.vehicles.load(s.vehicles); // (a save from before there were any: none)
   if (s.ach) g.ach.load(s.ach);
 
   // what was alive and is not coming back (a bullet in flight, a deer) gives its id back

@@ -99,6 +99,7 @@ import { smallestStack } from '../../shared/stacks.js';
 import { planCost } from '../../shared/autocraft.js';
 import { FairClient } from './fair.js';
 import { HandcarClient } from './handcar.js';
+import { VehicleClient } from './vehicles.js';
 import { Highlight } from './highlight.js';
 import { Input } from './input.js';
 import { actionsOf, bindTag, bindPair, bindLabel } from './binds.js';
@@ -366,6 +367,8 @@ export class Game {
     this.rockets = new RocketsClient(this); // our own RPG grenades in flight
     this.fair = new FairClient(this); // the Tri-County Fair: its rides, its lights, who sits where
     this.handcar = new HandcarClient(this); // the handcars on the railway: where they are drawn, who rides them
+    this.vehicles = new VehicleClient(this); // the mopeds, cars and bicycles of the mainland: drawn, ridden, driven
+    this.skidT = 0;
     this.highlight = new Highlight(this); // the faint outline on what [E] would act on
     this.power = new PowerViews(this); // the generator and its floodlights: their lights, sound and [E]
     this.skyflares = new SkyFlares(this); // flare gun flares: drawn, flown (our own), and their light on the world
@@ -521,6 +524,7 @@ export class Game {
     if (this.clinic) this.scene.add(this.clinic);
     this.fair.setWorld(this.world);
     this.handcar.setWorld(this.world);
+    this.vehicles.setWorld(this.world);
     this.railway = buildRailway(this.world); // (the ballast, sleepers and rails of the line)
     if (this.railway) this.scene.add(this.railway);
     this.bridge = this.world.bridge ? new BridgeView(this.scene, this.world) : null; // (the mainland: the bridge the car came over)
@@ -600,6 +604,7 @@ export class Game {
     this.foliage?.dispose();
     this.fair.setWorld(null);
     this.handcar.setWorld(null);
+    this.vehicles.setWorld(null);
     for (const em of this.staticEmitters) this.effects.removeEmitter(em);
     this.flyover?.clear();
     this.highlight.reset();
@@ -718,6 +723,7 @@ export class Game {
     steps.push(() => set.add(...this.power.warm())); // a floodlight's lens, glow and beam
     steps.push(() => set.add(...this.foliage.falling.warmViews())); // a felled tree coming down, in its fading twins
     steps.push(() => set.add(this.skyflares.warm())); // a flare gun flare's glow
+    for (const vk of [1, 2, 3]) steps.push(() => set.add(this.vehicles.warm(vk))); // the mainland's vehicles: lamps lit, clocks, the pools of light on the road
     steps.push(() => {
       // the supply plane, in the materials Flyover gives it
       this.flyover.start(0, 0, 0, 0, 0, this.time, null);
@@ -1323,6 +1329,7 @@ export class Game {
     const ui = this.ui;
     const a = this.audio;
     if (this.fixtures.notify(msg, arg)) return;
+    if (this.vehicles.notify(msg, arg)) return;
     if (this.fair.onNotify(msg, arg)) return;
     switch (msg) {
       case NOTIFY.NIGHT_FALLS: {
@@ -1948,6 +1955,12 @@ export class Game {
         case 'cart_bump':
           this.handcar.bump(); // our handcar run into the end of the line
           break;
+        case 'veh_crash':
+          this.vehicles.crash(ev.v); // what we drive struck something
+          break;
+        case 'veh_skid':
+          this.vehicles.skid();
+          break;
         case 'leap':
           a.playLocal('zombie_player_growl');
           break;
@@ -1991,6 +2004,7 @@ export class Game {
         } else if (a === 'interact') {
           this.endHold();
           this.power.release();
+          this.vehicles.release();
           this.gun.keyUp();
         } else if (a === 'players' && !this.ui.rosterPinned) this.showRoster(false);
         else if (a === 'drop') this.dropHold.release(cancelled); // (let go too soon: the HUD says to hold it)
@@ -2135,6 +2149,7 @@ export class Game {
           break;
         }
         case 'flashlight': {
+          if (this.vehicles.lightsKey()) break; // (in a vehicle the key is its headlamp)
           if (s.zombie) break;
           this.localFlash = !this.localFlash;
           if (this.localFlash && this.self.battery <= 1) this.localFlash = false;
@@ -2517,6 +2532,7 @@ export class Game {
     if (t === 'cat') return this.cat.put(); // (the cat in our arms)
     if (t.fair) return this.fair.interact(t);
     if (t.handcar) return this.handcar.interact(t);
+    if (t.vehicle !== undefined) return this.vehicles.interact(t);
     if (t === 'car') {
       if (g.suppliesDone && (!g.finale || g.escapeReady)) this.beginHold(CAR_ID); // start the engine; once it is warm, get in and drive
       else this.conn.action(ACT.INTERACT, CAR_ID);
@@ -2590,8 +2606,25 @@ export class Game {
   // Our own survivor, as the others see us, drawn from our own predicted state: only while a debug camera asks for it
   // (debugCam.body) - a look at the third person from outside without a second client (scripts/clip/nunchaku-film.js).
   // Everything else about a game with one player in it is as it always is: nobody has a body of their own.
-  updateSelfBody(dt, s, rp, time, hspeed) {
-    const want = !!(this.debugCam && this.debugCam.body && this.self.alive);
+  updateSelfBody(dt, s, rp, time, hspeed, early = false) {
+    // (in a vehicle VehicleClient.update has us placed already this frame, before it took the eye from our head)
+    if (!early && this.selfBodyDone) {
+      this.selfBodyDone = false;
+      return;
+    }
+    this.selfBodyDone = early;
+    // our seat in a vehicle, by our own prediction (the entity's record says the same a moment later)
+    const veh = this.vehicles;
+    const seat = veh.mine && veh.myK >= 0 ? (this.selfSeat ||= { e: null, k: 0, pose: {} }) : null;
+    if (seat) {
+      if (seat.e !== veh.mine || seat.k !== veh.myK) seat.pose = {};
+      seat.e = veh.mine;
+      seat.k = veh.myK;
+    }
+    // under our own eyes (no debug camera): only in a seat, and without the head the eye is in or the arms the view
+    // has its own of
+    const fp = !this.debugCam && !this.cine && !!seat;
+    const want = !!this.self.alive && (fp || !!(this.debugCam && this.debugCam.body));
     if (!want) {
       if (this.selfBody) {
         this.scene.remove(this.selfBody.object);
@@ -2608,14 +2641,17 @@ export class Game {
       this.selfBodyItem = -1;
     }
     const cat = this.cat.poseOf(this.myId, this.selfCat || (this.selfCat = {})); // (the stray cat in our arms)
-    const item = s.zombie || cat.cradle ? 0 : currentWeapon(s);
+    sv.setHide(fp ? 2 : 0);
+    sv.object.visible = !fp || veh.mountK > 0.75;
+    const item = s.zombie || cat.cradle || (seat && (seat.k === 0 || fp)) ? 0 : currentWeapon(s); // (at the wheel both hands are on it; under our own eyes the view holds the weapon)
     if (item !== this.selfBodyItem) {
       this.selfBodyItem = item;
       sv.setWeapon(item);
     }
     sv.object.position.set(rp.x, rp.y, rp.z);
-    sv.object.rotation.y = this.input.yaw;
-    sv.update(dt, { speed: hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time, cradle: cat.cradle, pet: cat.pet });
+    sv.object.rotation.set(0, this.input.yaw, 0);
+    const ride = seat ? veh.place(seat, sv) : null;
+    sv.update(dt, { sit: !!seat, sitNow: seat ? 1 : undefined, reach: ride?.reach, feet: ride?.feet, sitT: ride?.sitT, sitK: ride?.sitK, sitSplay: ride?.sitSplay, sitLean: ride?.sitLean, sitTwist: ride?.sitTwist, speed: seat ? 0 : hspeed, sprint: !!s.sprinting, crouch: !!s.crouch, pitch: seat && seat.k === 0 ? 0 : this.input.pitch, onGround: !!s.onGround, reloading: item !== ITEM.NUNCHAKU && s.reloadT > 0, wind: item === ITEM.NUNCHAKU ? s.reloadT : undefined, dead: false, time, cradle: cat.cradle, pet: cat.pet });
     const nk = item === ITEM.NUNCHAKU ? sv.nk() : null;
     if (nk) nkSounds(this.audio, nk.core, this.vm.visible ? null : { x: rp.x, y: rp.y + 1.3, z: rp.z }, this.nkSt2, time);
   }
@@ -2720,7 +2756,7 @@ export class Game {
     }
     inp.buildMode = s.slot === SLOT_BUILD && !s.zombie;
     // prediction
-    const buttons = cine ? 0 : this.gun.shape(self.alive ? inp.sample() | this.fair.press | this.handcar.press : 0); // (manning the mounted gun: its trigger, not the weapon's. fair.press, handcar.press: [E] getting out of a seat, off a handcar)
+    const buttons = cine ? 0 : this.vehicles.shape(this.gun.shape(self.alive ? inp.sample() | this.fair.press | this.handcar.press : 0)); // (manning the mounted gun: its trigger, not the weapon's. fair.press, handcar.press: [E] getting out of a seat, off a handcar)
     if (!self.alive || !inp.enabled) this.inputBuffer.clear(); // an early press must not outlive a death or a menu
     let attacked = false;
     const onEvents = (evs, st) => {
@@ -2750,6 +2786,8 @@ export class Game {
     this.prediction.renderPos(dt, this.renderPos);
     const rp = this.renderPos;
     this.fair.carry(rp);
+    this.vehicles.update(dt, rp); // (each vehicle where it is drawn this frame; in one, the eye is its seat's)
+    const inVeh = this.vehicles.eye.on;
     const targetEye = eyeHeight(s);
     this.eyeH += (targetEye - this.eyeH) * Math.min(1, dt * (s.downed ? 5 : 12));
     const hspeed = Math.hypot(s.vx, s.vz);
@@ -2757,7 +2795,7 @@ export class Game {
     const swim = !!self.alive && swimming(this.world, s);
     this.swimK += ((swim ? 1 : 0) - this.swimK) * Math.min(1, dt * 3);
     if (swim !== this.swimming) this.onSwim(swim);
-    if (s.onGround && hspeed > 0.5) this.camBob += dt * hspeed * (s.downed ? 3.2 : swim ? 1.3 : 1.9);
+    if (s.onGround && hspeed > 0.5 && !s.drive) this.camBob += dt * hspeed * (s.downed ? 3.2 : swim ? 1.3 : 1.9);
     // Every landing dips the view, by how hard it was: with the square of the fall speed (so with the height
     // fallen) from 4 cm after a jump up to the 12 cm of a hard landing, the one the simulation calls `land`
     // (9 m/s and up), which is this same dip and not another on top. "Weapon look sway" off is the one way a
@@ -2796,8 +2834,9 @@ export class Game {
       cam.position.set(d.x, d.y, d.z);
       cam.rotation.set(d.pitch, d.yaw, 0);
     } else if (self.alive) {
-      cam.position.set(rp.x, rp.y + this.eyeH + bobY, rp.z);
-      const roll = (s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0) + this.swimK * Math.sin(time * 1.1) * 0.025;
+      if (inVeh) cam.position.set(this.vehicles.eye.x, this.vehicles.eye.y - this.quake * 0.03, this.vehicles.eye.z); // (carried: the seat's eye)
+      else cam.position.set(rp.x, rp.y + this.eyeH + bobY, rp.z);
+      const roll = (inVeh ? this.vehicles.eye.roll : 0) + (s.downed ? 0.18 + Math.sin(time * 1.3) * 0.03 : 0) + this.swimK * Math.sin(time * 1.1) * 0.025;
       cam.rotation.set(inp.pitch + viewKick + (Math.random() - 0.5) * shake, inp.yaw + (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake * 0.5 + roll);
       // nunchucks: the view goes with the strikes - a sprung nod, turn and roll from the moves and from what they hit
       // (ViewModel's rig, as of last frame). "Weapon look sway" off leaves the view still
@@ -2814,7 +2853,7 @@ export class Game {
     }
     // ADS zoom
     const wdef = WEAPONS[currentWeapon(s)];
-    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !swim && !s.pet; // (hands on a handcar's lever, swimming, or the cat in our arms: no sights)
+    const aiming = self.alive && !!(buttons & 256) && wdef && !wdef.melee && s.reloadT <= 0 && !this.handcar.handsOn && !this.vehicles.handsOn && !swim && !s.pet; // (hands on a handcar's lever or a vehicle's controls, swimming, or the cat in our arms: no sights)
     const baseFov = (this.debugCam && this.debugCam.fov) || this.settings.fov || 75; // (a debug camera may bring its own lens)
     const targetFov = aiming ? baseFov * (currentWeapon(s) === ITEM.HUNTING_RIFLE ? 0.45 : currentWeapon(s) === ITEM.AT_RIFLE ? 0.6 : 0.78) : s.sprinting ? baseFov * 1.06 : baseFov;
     this.fovCur += (targetFov - this.fovCur) * Math.min(1, dt * 12);
@@ -2847,7 +2886,7 @@ export class Game {
     const stroking = this.cat.holding && !!(buttons & BTN.ATTACK) && !this.ui.inventoryOpen && !this.ui.mapOpen; // (the cat in our arms, the fire button held)
     this.cat.update(dt, stroking);
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !swim);
+    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !this.vehicles.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove, pet: stroking };
@@ -2907,7 +2946,7 @@ export class Game {
     }
 
     // local footsteps (afloat: strokes, and a slow paddle treading water)
-    if (self.alive && s.onGround && hspeed > 1) {
+    if (self.alive && s.onGround && hspeed > 1 && !s.drive) {
       this.stepAcc += hspeed * dt;
       const stride = swim ? (s.sprinting ? 2.4 : 1.9) : s.sprinting ? 2.6 : s.crouch ? 1.4 : 2.1;
       if (this.stepAcc > stride) {
@@ -3283,6 +3322,7 @@ export class Game {
     if (!this.self.alive || s.zombie || s.downed) return;
     if (s.ride) return this.fair.rideLook(s);
     if (s.cart) return this.handcar.rideLook(s);
+    if (s.drive || s.pass) return this.vehicles.rideLook(s);
     if (this.gun.look(true)) return; // hands on the mounted gun (at its grips, or carrying it): [E] is the gun's
     // ...or the cat in our arms: [E] puts it down. Except at the car, which is still started and driven with it in our
     // arms (taking it off the island is what its achievement is for): there [G] puts it down
@@ -3366,11 +3406,13 @@ export class Game {
     if (this.fixtures.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT, counts)) return;
     if (this.fair.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
     if (this.handcar.look(ox, oy, oz, _v.x, _v.y, _v.z)) return;
+    if (this.vehicles.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
     this.lookAtCar(counts);
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
     if (!this.prompt) {
       this.prompt = harvestPrompt(this.world, s, this.stripped);
       if (this.prompt) this.prompt = this.impacts.alarmPrompt(harvestTarget()) || this.prompt; // (a wreck whose alarm is going: how to stop it)
+      this.vehicles.siphonLook(cam); // (a wreck with fuel still in its tank)
     }
   }
 
@@ -3528,6 +3570,7 @@ export class Game {
     h.armorMax = self.armorMax;
     h.stamina = s.stamina;
     h.exhausted = !!s.exhausted;
+    h.veh = this.vehicles.hud; // (in a vehicle: its speed, its tank, how sound it is)
     h.flashlight = self.battery;
     h.flashlightOn = this.localFlash;
     h.zombie = !!s.zombie;
@@ -3595,7 +3638,7 @@ export class Game {
       h.useProgress = self.holdProgress;
       const t = this.entities.ents.get(this.holding);
       h.useLabel = self.holdKind === HOLD.SEARCH ? `Searching${t ? ' ' + (CONT_DEFS[t.ctype]?.name || '').toLowerCase() : ''}…` : self.holdKind === HOLD.REVIVE ? `Reviving ${t ? this.name(t.id) : ''}…` : self.holdKind === HOLD.DRIVE ? 'Getting in…' : self.holdKind === HOLD.FAIR_START ? 'Starting the generator…' : self.holdKind === HOLD.FAIR_STOP ? 'Shutting it off…' : 'Starting the engine…';
-      h.useLabel = this.fixtures.holdLabel(self.holdKind) || h.useLabel;
+      h.useLabel = this.fixtures.holdLabel(self.holdKind) || this.vehicles.holdLabel(self.holdKind) || h.useLabel;
       if (self.holdKind === HOLD.GUN_LIFT) h.useLabel = 'Lifting the gun…';
       if (self.holdKind === HOLD.SEARCH && t && this.bootOf(t)?.shut) h.useLabel = pryWeapon(currentWeapon(this.prediction.state)) ? 'Prying the trunk open…' : 'Forcing the trunk open…';
     } else {
@@ -3794,6 +3837,7 @@ export class Game {
       pings: this.pings,
       crates,
       benches: g.benches,
+      vehicles: this.vehicles.marks(), // (the team's: what runs or ran, and the bridgehead's)
       discovered: this.discovered,
       hints: g.hints,
       found: g.found,

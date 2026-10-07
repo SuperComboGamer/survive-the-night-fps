@@ -22,7 +22,7 @@ function addUse(name, cost, schem) {
     USES.get(+k).push({ name, schem: schem || 0, share: cost[k] / total });
   }
 }
-for (const r of RECIPES) addUse(ITEM_DEFS[r.out].name, r.cost, r.schem);
+for (const r of RECIPES) if (!r.hide) addUse(ITEM_DEFS[r.out].name, r.cost, r.schem); // (r.hide: a vehicle - not spoken of where there are none)
 for (const type of STRUCT_ORDER) addUse(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
 for (const f of FIXTURE_USES) addUse(f.name, f.cost); // ...and what is spent at a fixture (the Relay Station's radio)
 // ...and what a structure burns once it stands (a generator's fuel) is used in it too, all of it

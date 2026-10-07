@@ -268,6 +268,7 @@ export class Highlight {
     }
     if (t === 'bell') return this.bellRope();
     if (t === 'gun') return g.gun.manning ? null : g.gun.model; // (not the gun in our own hands)
+    if (t.vehicle !== undefined) return t.e && !t.exit ? t.e.obj : null;
     if (t.handcar) return t.handcar === 'board' ? g.handcar.cars[t.k]?.model || null : null;
     if (t.fair) {
       const f = g.world.fair;
