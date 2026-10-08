@@ -1,6 +1,6 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
 // hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|bestiary|cards|
-// hud-cards|chat|icons|picker|creator
+// hud-cards|chat|icons|picker|creator|auction
 // &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
@@ -19,6 +19,27 @@ const q = new URLSearchParams(location.search);
 const screen = q.get('screen') || 'hud';
 const statusMode = q.get('status') || 'ok';
 let buildState = null; // screen=build: what the build menu is showing
+const demoLoadout = {
+  catalog: [],
+  slotCount: 3,
+  balance: 240,
+  items: [
+    { id: '11111111-1111-4111-8111-111111111111', catalog: 1, source: { kind: 'demo' }, acquiredAt: Date.now() - 7200_000 },
+    { id: '22222222-2222-4222-8222-222222222222', catalog: 6, source: { kind: 'demo' }, acquiredAt: Date.now() - 3600_000 },
+    { id: '33333333-3333-4333-8333-333333333333', catalog: 9, source: { kind: 'demo' }, acquiredAt: Date.now() - 1200_000 },
+  ],
+  slots: ['11111111-1111-4111-8111-111111111111', null, null],
+};
+const demoAuction = {
+  balance: 240,
+  canTrade: true,
+  listings: [
+    { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', itemId: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', sellerName: 'Marlowe', catalog: 3, price: 65, status: 'active', createdAt: Date.now() - 1200_000, expiresAt: Date.now() + 41 * 3600_000 },
+    { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', itemId: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', sellerName: 'OldHank', catalog: 8, price: 220, status: 'active', createdAt: Date.now() - 2400_000, expiresAt: Date.now() + 12 * 3600_000 },
+    { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', itemId: 'cccccccc-3333-4333-8333-cccccccccccc', sellerName: 'Birdie', catalog: 5, price: 35, status: 'active', createdAt: Date.now() - 900_000, expiresAt: Date.now() + 67 * 3600_000 },
+  ],
+  mine: [{ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', itemId: 'dddddddd-4444-4444-8444-dddddddddddd', sellerName: 'You', catalog: 2, price: 90, status: 'active', createdAt: Date.now() - 1800_000, expiresAt: Date.now() + 55 * 3600_000 }],
+};
 
 // ---------------------------------------------------------------- fake 3D scene background
 function pines(seed, h, color, count) {
@@ -85,11 +106,20 @@ function buildScene(kind) {
 // ---------------------------------------------------------------- mock /status
 const realFetch = window.fetch.bind(window);
 window.fetch = async (url, opts) => {
-  if (String(url).endsWith('/status')) {
+  const path = String(url);
+  if (path.endsWith('/status')) {
     await new Promise((r) => setTimeout(r, 120));
     if (statusMode === 'offline') throw new TypeError('Failed to fetch');
     const body = statusMode === 'full' ? { players: 8, max: 8, phase: PHASE.NIGHT, day: 4 } : { players: 3, max: 8, phase: PHASE.NIGHT, day: 2 };
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (path.includes('/api/loadout/auction')) {
+    await new Promise((r) => setTimeout(r, 80));
+    return new Response(JSON.stringify({ ...demoAuction }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (path.includes('/api/loadout')) {
+    await new Promise((r) => setTimeout(r, 80));
+    return new Response(JSON.stringify({ ...demoLoadout }), { status: 200, headers: { 'content-type': 'application/json' } });
   }
   return realFetch(url, opts);
 };
@@ -352,6 +382,12 @@ switch (screen) {
     buildScene(bg || 'fire');
     ui.showSplash();
     if (q.get('settings')) setTimeout(() => ui.settingsPanel.show(), 50);
+    break;
+  }
+  case 'auction': {
+    buildScene(bg || 'fire');
+    ui.showSplash();
+    setTimeout(() => ui.auction.show(), 100);
     break;
   }
   // who to play as: the picker (&customs=N, &choice=...), and the character creator (&section=body|face|hair|clothes|
