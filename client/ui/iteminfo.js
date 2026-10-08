@@ -5,7 +5,7 @@ import { BACKPACK_SLOTS } from '../../shared/constants.js';
 import { SKYFLARE } from '../../shared/skyflare.js';
 import { NK_MOVES, NK_MOVE } from '../../shared/nunchaku.js';
 
-export const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic' };
+export const CAT_LABEL = { res: 'Material', cons: 'Consumable', throw: 'Throwable', armor: 'Armor', pack: 'Backpack', gear: 'Gear', weapon: 'Weapon', ammo: 'Ammunition', part: 'Car supply', schem: 'Schematic', card: 'Card pack' };
 
 export function statLines(id) {
   const d = ITEM_DEFS[id];

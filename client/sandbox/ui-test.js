@@ -1,5 +1,6 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
-// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|bestiary|chat|icons
+// hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|bestiary|cards|
+// hud-cards|chat|icons
 // &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
@@ -8,6 +9,11 @@ import { PHASE, INVENTORY_MAX } from '../../shared/constants.js';
 import { itemIcon, structIcon, glyph, GLYPH_NAMES } from '../ui/icons.js';
 import { ACH_BY_ID } from '../../shared/achievements.js';
 import { perkMask, progressView, perkLock, perkDependents, levelOf, xpForLevel } from '../../shared/progress.js';
+import { CardsClient } from '../game/cards.js';
+import { CARDMSG } from '../../shared/protocol.js';
+import { F } from '../../shared/cards.js';
+import { legalMoves } from '../../shared/cardgame.js';
+import { chooseMove } from '../../shared/cardai.js';
 
 const q = new URLSearchParams(location.search);
 const screen = q.get('screen') || 'hud';
@@ -665,6 +671,17 @@ switch (screen) {
     }
     break;
   }
+  case 'cards':
+  case 'hud-cards': {
+    // Dead Hand (ui/cards.js). The table: a practice match dealt from &seed= and played &moves= moves in (the player's
+    // own by the computer's hand too, so the table is mid-game), &tab=deck|trade|reveal|chooser|asks|practice for the
+    // other views, &still=1: the computer does not move on by itself (stills). hud-cards: the HUD's line, &kind=
+    // match|mine|ask|trade
+    buildScene(bg || 'night');
+    ui.hideSplash();
+    cardsSandbox();
+    break;
+  }
   case 'pause':
   case 'invite':
   case 'settings': {
@@ -707,4 +724,85 @@ switch (screen) {
   default:
     buildScene('night');
     ui.showSplash();
+}
+
+// ---------------------------------------------------------------- Dead Hand (?screen=cards, hud-cards)
+// The real client store (game/cards.js) over a stand-in for the game: messages are fed to it as the server would send
+// them, and what it would send is logged.
+function cardsSandbox() {
+  const names = { 1: 'You', 2: 'Sam', 3: 'Rosa', 4: 'Old Hank' };
+  const game = {
+    ui,
+    myId: 1,
+    name: (id) => names[id] || 'Someone',
+    conn: { cards: (op, data) => log('cards', op, JSON.stringify(data)) },
+    audio: { playLocal() {} },
+    prediction: { state: {} },
+    self: { alive: 1 },
+    inventory: inv,
+    entities: { pickMate: () => null },
+    toggleCards: (open, relock, view) => ui.setCardsOpen(open, view),
+  };
+  const c = new CardsClient(game);
+  window.cards = c;
+  const msg = (op, data) => c.onMessage({ op, data });
+  // a collection with some finds, two decks kept (one of them not legal yet)
+  msg(CARDMSG.COLL, { loaded: true, kept: true, found: { 105: 1, 112: 2, 113: 1, 125: 1, 9: 1, 10: 1, 12: 1, 205: 1, 207: 1, 216: 1, 401: 1, 453: 1 } });
+  msg(CARDMSG.DECKS, {
+    decks: [
+      { slot: 0, name: 'Long guns', leader: 407, cards: { 1: 1, 2: 1, 4: 1, 5: 1, 6: 1, 100: 2, 101: 2, 104: 3, 105: 1, 108: 3, 109: 1, 110: 2, 111: 2, 112: 2, 113: 1, 114: 1, 116: 2, 117: 1, 121: 1, 125: 1 } },
+      { slot: 2, name: '', leader: 453, cards: { 200: 3, 201: 2, 202: 3, 216: 1 } },
+    ],
+  });
+  const tab = q.get('tab') || 'table';
+  const seed = +(q.get('seed') ?? 7);
+  if (screen === 'hud-cards') {
+    const kind = q.get('kind') || 'mine';
+    const h = { ...baseHud, prompt: '[E] Dead Hand · trade with Sam' };
+    h.cards = kind === 'ask' ? { kind: 'ask', name: 'Sam', mine: false, secs: -1, what: 'match' } : kind === 'trade' ? { kind: 'trade', name: 'Rosa', mine: false, secs: -1, what: '' } : { kind: 'match', name: 'Sam', mine: kind === 'mine', secs: kind === 'mine' ? 23 : -1, what: '' };
+    ui.updateHud(h);
+    return;
+  }
+  ui.updateHud(baseHud);
+  if (tab === 'table' || tab === 'end') {
+    // a practice match dealt from the seed, played some moves in by the computer for both sides
+    c.practice(-1, F.DEAD, 'normal', seed);
+    const L = c.local;
+    let rand = seed;
+    const r01 = () => ((rand = (rand * 16807) % 2147483647) / 2147483647);
+    const moves = +(q.get('moves') ?? (tab === 'end' ? 999 : 9));
+    for (let i = 0, g = 0; i < moves && !L.over && g < 4000; g++) {
+      if (L.cpuToAct()) {
+        L.cpuMove();
+        continue;
+      }
+      const v = L.view();
+      if (!legalMoves(v).length) break;
+      L.move(chooseMove(v, { rand: r01, level: 'normal' }));
+      i++;
+    }
+    if (q.get('still')) L.tick = () => {};
+  } else if (tab === 'trade') {
+    msg(CARDMSG.TRADE, { with: 3, mine: { cards: { 112: 1 }, items: [[ITEM.NAILS, 10]] }, theirs: { cards: { 205: 1, 207: 1 }, items: [[ITEM.MEDKIT, 1]] }, ready: [false, true], ok: [false, false], committing: false });
+  } else if (tab === 'reveal') {
+    msg(CARDMSG.REVEAL, { item: ITEM.SEALED_PACK, cards: [104, 213, 125], kept: true });
+  } else if (tab === 'asks' || tab === 'chooser') {
+    msg(CARDMSG.ASKS, {
+      asks: [
+        { from: 2, to: 1, kind: 'match', bet: 207, left: 24 },
+        { from: 4, to: 1, kind: 'trade', bet: 0, left: 12 },
+        { from: 1, to: 3, kind: 'match', bet: 0, left: 18 },
+      ],
+    });
+    ui.cards.target = 2;
+  }
+  ui.setCardsOpen(true, tab === 'end' ? 'table' : tab);
+  // the store's clocks and the computer's moves, as the game runs them each frame
+  let t0 = performance.now();
+  const step = (t) => {
+    c.update(Math.min(0.1, (t - t0) / 1000));
+    t0 = t;
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }

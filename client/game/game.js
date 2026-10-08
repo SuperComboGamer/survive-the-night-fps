@@ -141,6 +141,7 @@ import { KeyHints } from '../ui/keyhints.js';
 import { radialIndex } from '../ui/build.js';
 import { MenuTour } from './menutour.js';
 import { KeyGuard } from './keyguard.js';
+import { CardsClient } from './cards.js';
 import { bearing, nextNightText, nightBossText, tonightBrief, PING_LABEL } from '../ui/hud2.js';
 
 const WEATHER_TOAST = {
@@ -312,6 +313,7 @@ export class Game {
     ui.map.onClose = () => this.toggleMap(false);
     ui.board.onClose = () => this.toggleBoard(false);
     ui.bestiary.onClose = () => this.toggleBestiary(false);
+    ui.cards.onClose = () => this.toggleCards(false);
     ui.spawn.onClose = () => this.toggleSpawn(false);
     ui.spawn.onSpawn = (cmd) => this.conn.chat(cmd);
     ui.roster.onClose = () => this.pinRoster(false);
@@ -346,11 +348,13 @@ export class Game {
       players: (r) => this.onPlayers(r),
       progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
+      cards: (m) => this.cards.onMessage(m), // (Dead Hand: game/cards.js)
       voice: (from, payload) => this.voice.onSignal(from, payload),
       // (ENDED_CODE: an admin closed the game or removed this player - the reason is said, and nothing rejoins)
       close: (code, reason) => this.onDisconnect(code, code === ENDED_CODE ? reason || 'This game was ended by an admin.' : ''),
     });
     this.voice = new Voice(this.conn, audio);
+    this.cards = new CardsClient(this); // Dead Hand, the card game: the collection, decks, asks, a match or a trade
     this.voice.onState = (s) => this.ui.setVoiceState({ ...s, speakers: this.speakers() });
     this.env = new Environment(this.scene);
     this.weather = new Weather();
@@ -920,6 +924,8 @@ export class Game {
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
     this.ui.setBestiaryOpen(false);
+    this.ui.setCardsOpen(false);
+    this.cards.reset(); // (the asks, the match and the trade were that game's; the collection comes again on joining)
     this.ui.setBoard(null); // (what it showed was that server's, as of then)
     this.ui.setSpawnOpen(false);
     this.ui.setRosterOpen(false);
@@ -1237,6 +1243,7 @@ export class Game {
         const dz = fz - g.renderPos.z;
         const angle = Math.hypot(dx, dz) > 0.3 ? bearing(dx, dz) + g.input.yaw : null;
         g.ui.damage(amount, angle);
+        if (g.ui.cardsOpen) g.ui.cards.hurt(amount); // (a red edge round the cards: something is hitting you)
         g.camShake = Math.min(1, (g.camShake || 0) + amount / 60);
         g.audio.playLocal(g.self.zombie ? 'zombie_player_growl' : 'hurt', { volume: Math.min(1, 0.4 + amount / 40) });
       },
@@ -2029,7 +2036,9 @@ export class Game {
       else if (ui.mapOpen) this.toggleMap(false);
       else if (ui.boardOpen) this.toggleBoard(false);
       else if (ui.bestiaryOpen) this.toggleBestiary(false);
-      else if (ui.spawnOpen) this.toggleSpawn(false);
+      else if (ui.cardsOpen) {
+        if (!ui.cards.back()) this.toggleCards(false); // (a view inside it first: a card picked, the chooser, a deck)
+      } else if (ui.spawnOpen) this.toggleSpawn(false);
       // (Esc only gets here with the mouse still taken under fullscreen's keyboard lock, keyguard.js: it shuts the ring,
       // then puts the piece down, and only then lets go of the mouse for the menu - whatever the input is doing: the
       // browser no longer lets go of the mouse on Esc itself, so this is the only way out short of leaving fullscreen)
@@ -2045,6 +2054,7 @@ export class Game {
       return;
     }
     if (has('players')) {
+      if (ui.cardsOpen) return; // (Tab is no key of the card table: the list would only sit under it)
       if (ui.rosterPinned) this.pinRoster(false);
       else this.showRoster(true);
       return;
@@ -2055,7 +2065,7 @@ export class Game {
       return;
     }
     // (whatever else takes the screen or the keys lets go of a pinned list first)
-    if (ui.rosterPinned && ['inventory', 'map', 'board', 'bestiary', 'chat'].some(has)) this.pinRoster(false, false);
+    if (ui.rosterPinned && ['inventory', 'map', 'board', 'bestiary', 'cards', 'chat'].some(has)) this.pinRoster(false, false);
     if (has('inventory')) {
       this.toggleInventory(!ui.inventoryOpen);
       return;
@@ -2075,11 +2085,16 @@ export class Game {
       this.toggleBestiary(!ui.bestiaryOpen);
       return;
     }
+    if (has('cards')) {
+      if (ui.inventoryOpen || ui.isTyping()) return;
+      this.toggleCards(!ui.cardsOpen);
+      return;
+    }
     // Y as in Half-Life. Input only passes it on while in play; Enter also gets through from the inventory.
     if (has('chat')) {
       // (not from the map: the chat box is hidden under it and could never take the focus, which left
       // every key dead until a reload)
-      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen) {
+      if (!ui.isTyping() && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen && !ui.cardsOpen) {
         ui.openChat();
         this.input.releaseAll();
         this.inputBuffer.clear();
@@ -2208,11 +2223,11 @@ export class Game {
     return held;
   }
 
-  // A screen that takes clicks is up (the inventory, the map, the leaderboard, the bestiary, the spawn menu, the pinned
-  // player list): the pointer is free for it, and the game's keys and buttons are off
+  // A screen that takes clicks is up (the inventory, the map, the leaderboard, the bestiary, Dead Hand, the spawn menu,
+  // the pinned player list): the pointer is free for it, and the game's keys and buttons are off
   screenUp() {
     const ui = this.ui;
-    return ui.inventoryOpen || ui.mapOpen || ui.boardOpen || ui.bestiaryOpen || ui.spawnOpen || ui.rosterPinned;
+    return ui.inventoryOpen || ui.mapOpen || ui.boardOpen || ui.bestiaryOpen || ui.cardsOpen || ui.spawnOpen || ui.rosterPinned;
   }
 
   toggleInventory(open) {
@@ -2221,6 +2236,7 @@ export class Game {
     if (ui.mapOpen) this.toggleMap(false, false); // the inventory wants the pointer free as well
     if (ui.boardOpen) this.toggleBoard(false, false);
     if (ui.bestiaryOpen) this.toggleBestiary(false, false);
+    if (ui.cardsOpen) this.toggleCards(false, false);
     ui.setCraftContext(this.craftContext());
     ui.setInventoryOpen(open);
     this.input.enabled = !open;
@@ -2247,6 +2263,7 @@ export class Game {
     this.inputBuffer.clear();
     this.endHold();
     if (pin) {
+      if (ui.cardsOpen) this.toggleCards(false, false);
       this.pushRoster();
       ui.setRosterOpen(true);
       ui.setRosterPinned(true);
@@ -2254,7 +2271,7 @@ export class Game {
       this.input.exitLock();
     } else {
       ui.setRosterOpen(false);
-      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen;
+      this.input.enabled = !ui.inventoryOpen && !ui.mapOpen && !ui.boardOpen && !ui.bestiaryOpen && !ui.cardsOpen;
       if (this.input.enabled && relock) this.input.requestLock();
     }
     this.audio.playLocal('ui_click', { volume: 0.4 });
@@ -2266,6 +2283,7 @@ export class Game {
     if (open === ui.mapOpen) return;
     if (open && ui.boardOpen) this.toggleBoard(false, false);
     if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
+    if (open && ui.cardsOpen) this.toggleCards(false, false);
     ui.setMapOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -2284,6 +2302,7 @@ export class Game {
     if (open === ui.boardOpen) return;
     if (open && ui.mapOpen) this.toggleMap(false, false);
     if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
+    if (open && ui.cardsOpen) this.toggleCards(false, false);
     ui.setBoardOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -2304,6 +2323,7 @@ export class Game {
     if (open && ui.boardOpen) this.toggleBoard(false, false);
     if (open && ui.rosterPinned) this.pinRoster(false, false);
     if (open && ui.spawnOpen) this.toggleSpawn(false, false);
+    if (open && ui.cardsOpen) this.toggleCards(false, false);
     ui.setBestiaryOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -2323,6 +2343,7 @@ export class Game {
     if (open && ui.boardOpen) this.toggleBoard(false, false);
     if (open && ui.rosterPinned) this.pinRoster(false, false);
     if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
+    if (open && ui.cardsOpen) this.toggleCards(false, false);
     ui.setSpawnOpen(open);
     this.input.enabled = !open && !ui.inventoryOpen;
     this.input.releaseAll();
@@ -2331,6 +2352,32 @@ export class Game {
     if (open) this.input.exitLock();
     else if (relock) this.input.requestLock();
     this.audio.playLocal('ui_click', { volume: 0.5 });
+  }
+
+  // Dead Hand [K] (and the pause menu's row, a teammate's [E]): the card game's screen (ui/cards.js), over a world that
+  // goes on. It takes clicks and keys of its own, so it frees the pointer as the bestiary does. Not in a cutscene or
+  // under the end screen. view: the one to open it on ('table', 'deck', 'chooser', ...; null: the one it would pick).
+  // relock: false when something else that needs the cursor is taking over
+  toggleCards(open, relock = true, view = null) {
+    const ui = this.ui;
+    if (open && (this.state !== 'playing' || this.cine || this.overlay)) return;
+    if (open === ui.cardsOpen) {
+      if (open && view) ui.cards.show(view);
+      return;
+    }
+    if (open && ui.mapOpen) this.toggleMap(false, false);
+    if (open && ui.boardOpen) this.toggleBoard(false, false);
+    if (open && ui.bestiaryOpen) this.toggleBestiary(false, false);
+    if (open && ui.rosterPinned) this.pinRoster(false, false);
+    if (open && ui.spawnOpen) this.toggleSpawn(false, false);
+    ui.setCardsOpen(open, view);
+    this.input.enabled = !open && !ui.inventoryOpen;
+    this.input.releaseAll();
+    this.inputBuffer.clear();
+    this.endHold();
+    if (open) this.input.exitLock();
+    else if (relock && !this.overlay) this.input.requestLock();
+    this.audio.playLocal(open ? 'card_shuffle' : 'ui_click', { volume: open ? 0.35 : 0.5 });
   }
 
   // at: { x, z, zone } from a click on the field map (zone: the place it snapped to, or -1), null to clear
@@ -2547,6 +2594,7 @@ export class Game {
       this.beginHold(t.id);
       return;
     }
+    if (t.kind === ENT.PLAYER) return this.cards.chooser(t.id); // a teammate on their feet: a match or a trade (nothing is sent until one is picked)
     if (t.kind === ENT.STRUCTURE && this.power.press(t)) return; // (a generator: a tap pours fuel, held it is the switch)
     if (t.kind === ENT.STRUCTURE) this.askedCost = REPAIR_COST;
     this.conn.action(ACT.INTERACT, t.id);
@@ -2890,7 +2938,7 @@ export class Game {
     const stroking = this.cat.holding && !!(buttons & BTN.ATTACK) && !this.ui.inventoryOpen && !this.ui.mapOpen; // (the cat in our arms, the fire button held)
     this.cat.update(dt, stroking);
     const [ldx, ldy] = inp.consumeLook();
-    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !this.vehicles.handsOn && !swim);
+    this.vm.setVisible(self.alive && !cine && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.cardsOpen && !this.debugCam && !this.gun.manning && !s.hmg && !this.handcar.handsOn && !this.vehicles.handsOn && !swim);
     const lk = this.settings.weaponSway === false ? 0 : 0.0022 * inp.sensitivity;
     const wallDist = self.alive ? this.weaponClearance(cam) : 99; // (the viewmodel tucks back off a wall in front)
     const vmState = { speed: hspeed, sprint: !!s.sprinting, onGround: !!s.onGround, crouch: !!s.crouch, aiming, lookDX: ldx * lk, lookDY: ldy * lk, time, loaded: s.mags[0] > 0, talk: this.radio.keyed, wallDist, pinned: !!s.pinned && !!self.alive, shove: s.shove, pet: stroking };
@@ -3110,6 +3158,7 @@ export class Game {
     // overlays by phase
     this.updateOverlays();
     this.radio.update(s);
+    this.cards.update(dt); // (Dead Hand: the practice table's clock and the computer's moves, the screen shut on a fall)
     // HUD
     this.updateHud(dt, s, aiming, wdef);
     this.keyHints.update(dt);
@@ -3182,6 +3231,7 @@ export class Game {
     this.ui.setMapOpen(false);
     this.ui.setBoardOpen(false);
     this.ui.setBestiaryOpen(false);
+    this.ui.setCardsOpen(false);
     this.ui.setSpawnOpen(false);
     this.closeBuildMenu();
     this.ui.setRosterOpen(false);
@@ -3256,6 +3306,7 @@ export class Game {
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
       this.ui.setBestiaryOpen(false);
+      this.ui.setCardsOpen(false);
       this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       // (on the mainland a wipe is the end of the whole run: the next one begins on the island)
@@ -3267,6 +3318,7 @@ export class Game {
       this.ui.setMapOpen(false);
       this.ui.setBoardOpen(false);
       this.ui.setBestiaryOpen(false);
+      this.ui.setCardsOpen(false);
       this.ui.setSpawnOpen(false);
       const kills = [...this.players.values()].map((p) => ({ name: p.name, kills: p.kills }));
       // The run is won for everyone, but the car took whoever was at it: a survivor further off than ESCAPE_RADIUS
@@ -3412,6 +3464,8 @@ export class Game {
     if (this.handcar.look(ox, oy, oz, _v.x, _v.y, _v.z)) return;
     if (this.vehicles.look(ox, oy, oz, _v.x, _v.y, _v.z, counts)) return;
     this.lookAtCar(counts);
+    // a teammate on their feet, when nothing else is in the crosshair: Dead Hand (a match or a trade)
+    if (!this.prompt && this.cards.look(ox, oy, oz, _v.x, _v.y, _v.z, this.renderPos.y + EYE_HEIGHT)) return;
     // nothing to interact with: a tree or a wreck within a swing's reach says what hitting it gives
     if (!this.prompt) {
       this.prompt = harvestPrompt(this.world, s, this.stripped);
@@ -3684,7 +3738,8 @@ export class Game {
     h.yaw = this.input.yaw;
     this.buildMarkers(h, rp);
     // the minimap: only while it is on screen
-    h.minimap = !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen ? this.mapData(counts) : null;
+    h.minimap = !h.zombie && !this.ui.inventoryOpen && !this.ui.mapOpen && !this.ui.boardOpen && !this.ui.bestiaryOpen && !this.ui.cardsOpen ? this.mapData(counts) : null;
+    h.cards = this.cards.hud(); // (Dead Hand under way with its screen shut, or a teammate's ask)
     this.ui.updateHud(h);
     this.pushInventoryToUI(false);
     if (this.ui.inventoryOpen && this.frame % 20 === 0) this.ui.setCraftContext(this.craftContext());

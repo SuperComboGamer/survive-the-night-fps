@@ -2,7 +2,7 @@
 // Positions are quantized in int16: to 1/64 m on the island (range +-512 m) and to 1/32 m on the mainland, which is
 // twice as far across (range +-1024 m). See usePos below.
 
-export const PROTOCOL_VERSION = 41; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk); 39: a torch's or a campfire's burn-out tick (SF.BURN); 40: the mainland's undead deer (DEER_UNDEAD in a deer's variant, DANIM.ATTACK / CHARGE, SOUND.DEER_SCREAM, killfeed flag 8 and YOU_DIED 254 for a death by one); 41: the stray cat in a survivor's arms (ACT.CAT_PUT, ENT.CAT field HOLDER, CANIM.HELD / PET, s.pet in SELF.RIDE)
+export const PROTOCOL_VERSION = 42; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk); 39: a torch's or a campfire's burn-out tick (SF.BURN); 40: the mainland's undead deer (DEER_UNDEAD in a deer's variant, DANIM.ATTACK / CHARGE, SOUND.DEER_SCREAM, killfeed flag 8 and YOU_DIED 254 for a death by one); 41: the stray cat in a survivor's arms (ACT.CAT_PUT, ENT.CAT field HOLDER, CANIM.HELD / PET, s.pet in SELF.RIDE); 42: Dead Hand, the card game (C2S.CARDS, S2C.CARDS, card packs: items 98-99)
 
 // client -> server
 export const C2S = {
@@ -14,6 +14,7 @@ export const C2S = {
   VOICE: 5, // u16 targetId, str payload(json)
   PING: 6, // f64 clientTime (answered at once with S2C.PONG; the game client pings inside its INPUT packets instead)
   BOARD: 7, // (nothing): asks for the leaderboard, answered with S2C.BOARD
+  CARDS: 8, // Dead Hand: u8 CARDOP, str json (see writeCards)
 };
 
 // server -> client
@@ -34,6 +35,7 @@ export const S2C = {
   //          reader treats a packet that ends there as Nightfall. Not a protocol bump: the join check is equality.
   FRIENDS: 12, // u8 count, then per player u16 id, str account name ('' = a guest, not signed in): everyone's on joining, a newcomer's to the rest
   PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
+  CARDS: 14, // Dead Hand, to this player alone: u8 CARDMSG, str json (see writeCards)
 };
 export const ROOMF = { INVITE_ONLY: 1 };
 // S2C.WELCOME flags. ADMIN: this player may run the admin commands (the client offers the spawn menu); the server
@@ -499,6 +501,88 @@ export function readBoard(r) {
     rows.push(row);
   }
   return { total, rows };
+}
+
+// ---------------------------------------------------------------- Dead Hand (the card game)
+// The card game's messages both ways: a u8 op, then its data as one JSON string. They are few (a move, a deck saved, a
+// trade offer changed) and go to one player at a time, and what they carry is nested (the table a player sees:
+// shared/cardgame.js viewFor), so they are not packed field by field. The server reads what a client sends as it
+// would any other input: CARD_JSON_MAX bytes at most, every field checked (server/cards.js).
+//
+// C2S.CARDS (CARDOP):
+//   ASK      { to, kind: 'match' | 'trade', slot, bet }  a teammate in reach ([E]): a match with deck slot, betting a
+//                                                       found card (0: no bet), or a trade. to: their entity id. slot:
+//                                                       0-3 a kept deck, -1 (or none) the Survivors' starter deck, -2
+//                                                       the Dead's (shared/cards.js defaultDeck)
+//   ANSWER   { from, kind, yes, slot, bet }              to a teammate's ask (a match: the deck, and a bet if theirs has
+//                                                       one - both bet or neither)
+//   WITHDRAW { }                                         my own ask, unanswered
+//   MOVE     { v, move }                                 a move in my match (shared/cardgame.js), v: the MATCH it answers
+//   FORFEIT  { }                                         give up my match
+//   DECK     { slot, name, leader, cards: { id: n } }    keep a deck (leader 0: the slot is emptied)
+//   OFFER    { cards: { id: n }, items: [[item, n]] }    what I put on my side of the trade (all of it, every time)
+//   READY    { on }   CONFIRM { }   CLOSE { }            the trade: ready, struck (both ready), called off
+//   SYNC     { }                                         send me everything again
+// S2C.CARDS (CARDMSG):
+//   COLL      { loaded, kept, found: { id: n } }         my found cards (the starter set is everyone's: not sent).
+//                                                        kept: they outlive the game (an account, or a browser id)
+//   DECKS     { decks: [{ slot, name, leader, cards }] }
+//   ASKS      { asks: [{ from, to, kind, bet, left }] }  the asks to me and from me, left: seconds
+//   MATCH     { me, opp, v, bet: [a, b], view, events }  my match: viewFor(state, me), eventsFor(...) since the last.
+//                                                        me: my side (0 / 1), bet: each side's bet card (0: none) by
+//                                                        side. view null (v 0) while the bets go in: it has not begun
+//   MATCH_END { opp, outcome, reason, bet: { mine, theirs, paid } }  outcome: 'win' | 'loss' | 'draw' | 'void'; sent
+//                                                        once the bets are where it sends them (paid; false: they could
+//                                                        not be moved). reason: the rules' ('lives', 'forfeit',
+//                                                        'timeout') or why it was void ('left', 'run_over', 'forfeit',
+//                                                        'not_owned', 'store')
+//   TRADE     { with, mine, theirs, ready: [me, them], ok: [me, them], committing }  mine/theirs: { cards, items }
+//   TRADE_END { with, why }                              why: 'done', 'cancelled', 'too_far', 'left', 'no_room',
+//                                                        'not_owned', 'changed', 'store', 'run_over'
+//   REVEAL    { item, cards: [id], kept }               a pack I picked up, opened
+//   NOTE      { code, arg }                              a refusal or a word about something (CARDNOTE)
+export const CARDOP = { ASK: 1, ANSWER: 2, WITHDRAW: 3, MOVE: 4, FORFEIT: 5, DECK: 6, OFFER: 7, READY: 8, CONFIRM: 9, CLOSE: 10, SYNC: 11 };
+export const CARDMSG = { COLL: 1, DECKS: 2, ASKS: 3, MATCH: 4, MATCH_END: 5, TRADE: 6, TRADE_END: 7, REVEAL: 8, NOTE: 9 };
+// NOTE's code: what was refused and why (arg: a detail - a player's id, a card, an item, the rules' word)
+export const CARDNOTE = {
+  CANT: 'cant', // not now: down, dead, one of the dead, away, or the run is not on
+  GONE: 'gone', // they are not here (or that ask is not there any more)
+  FAR: 'far', // not in reach
+  OWNER: 'owner', // that is you (the same account or browser, in another tab)
+  BUSY: 'busy', // one of you is in a match or a trade already
+  ASKED: 'asked', // there is an ask between you two already
+  LIMIT: 'limit', // too many asks out, or too soon after the last
+  DECK: 'deck', // that deck cannot be played or kept (arg: why - shared/cards.js validateDeck's word, 'slot', 'empty', 'shape')
+  BET: 'bet', // that card is not yours to bet (or it is bet or offered already)
+  NOBET: 'nobet', // both bet, or neither does
+  NOKEY: 'nokey', // nothing of yours is kept (no account, no browser id): no bets, no cards traded, no decks kept
+  LOADING: 'loading', // your collection is not in yet
+  DECLINED: 'declined', // arg: who said no
+  EXPIRED: 'expired', // my ask lapsed (arg: who it was to)
+  STALE: 'stale', // a move for a table that has moved on: the table is sent again
+  MOVE: 'move', // a move the rules refuse (arg: why)
+  NOMATCH: 'nomatch', // no match of mine to move in
+  NOTRADE: 'notrade', // no trade of mine being haggled over
+  NOTREADY: 'notready', // a trade is struck once both are ready
+  CARDS: 'cards', // a card offered that is not mine to give (arg: the card)
+  ITEMS: 'items', // an item offered that is not in my backpack (arg: the item), or an offer that is no offer
+  CROSSING: 'crossing', // not during the crossing
+  STORE: 'store', // the collections could not be reached: try again
+};
+export const CARD_JSON_MAX = 4096; // bytes of JSON a client may send in one C2S.CARDS
+
+export function writeCards(w, op, data = {}) {
+  w.u8(op);
+  w.str(JSON.stringify(data));
+}
+
+// -> { op, data } (data: {} when it is not an object); throws on a broken message, as every reader here does
+export function readCards(r, max = 65535) {
+  const op = r.u8();
+  const n = r.view.getUint16(r.o, true);
+  if (n > max) throw new Error('cards: too long');
+  const data = JSON.parse(r.str());
+  return { op, data: data && typeof data === 'object' && !Array.isArray(data) ? data : {} };
 }
 
 // ---------------------------------------------------------------- entity field layouts

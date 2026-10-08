@@ -13,6 +13,7 @@ import { SettingsPanel, loadSettings, saveSettings, sanitizeSettings, DEFAULT_SE
 import { MapScreen } from './mapscreen.js';
 import { Leaderboard } from './leaderboard.js';
 import { Bestiary } from './bestiary.js';
+import { CardsScreen } from './cards.js';
 import { SpawnMenu } from './spawnmenu.js';
 import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
@@ -54,6 +55,7 @@ const CALLBACKS = [
   'onPeers', // () -> { room, players: [{ id, name, account, self }] } while in a game, else null (the friends panel)
   'onAccountName', // (player id) -> the account they are signed in to, '' for a guest
   'onBestiary', // the pause menu's Bestiary button: the game opens it (it frees the pointer)
+  'onCards', // the pause menu's Dead Hand row: the game opens the card game's screen (it frees the pointer)
 ];
 
 const SVG_DEFS = `<svg class="stn-defs" width="0" height="0" aria-hidden="true" focusable="false">
@@ -109,6 +111,7 @@ export class UI {
     // A modal layer lets the same board sit over both the in-game/end overlays and the splash screen.
     this.board = new Leaderboard(this, modalL);
     this.bestiary = new Bestiary(this, modalL);
+    this.cards = new CardsScreen(this, modalL); // Dead Hand, the card game (Game.toggleCards)
     this.spawn = new SpawnMenu(this, modalL); // (admins only: Game.toggleSpawn)
     this.roster = new Roster(this, ovL);
     this.splash = new Splash(this, menuL);
@@ -269,6 +272,15 @@ export class UI {
 
   get bestiaryOpen() {
     return this.bestiary.open;
+  }
+
+  // view: the one to open it on (ui/cards.js CardsScreen.show), null: the one it picks
+  setCardsOpen(open, view = null) {
+    this.cards.setOpen(open, view);
+  }
+
+  get cardsOpen() {
+    return this.cards.open;
   }
 
   setSpawnOpen(open) {

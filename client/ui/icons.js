@@ -42,6 +42,27 @@ function raysPath(cx, cy, r0, r1, n, rot = 0) {
   }
   return d;
 }
+// a star of n points (an explosion), the points at r0 and the notches between them at r1
+function burstPath(cx, cy, r0, r1, n, rot = 0) {
+  let d = '';
+  for (let i = 0; i < 2 * n; i++) {
+    const t = rot + (i * Math.PI) / n;
+    const r = i % 2 ? r1 : r0;
+    d += `${i ? 'L' : 'M'}${f(cx + Math.cos(t) * r)} ${f(cy + Math.sin(t) * r)}`;
+  }
+  return d + 'Z';
+}
+// a rectangle with rounded corners
+const rrect = (x, y, w, h, r) => `M${f(x + r)} ${f(y)}H${f(x + w - r)}Q${f(x + w)} ${f(y)} ${f(x + w)} ${f(y + r)}V${f(y + h - r)}Q${f(x + w)} ${f(y + h)} ${f(x + w - r)} ${f(y + h)}H${f(x + r)}Q${f(x)} ${f(y + h)} ${f(x)} ${f(y + h - r)}V${f(y + r)}Q${f(x)} ${f(y)} ${f(x + r)} ${f(y)}Z`;
+// a drop of blood, its tip at (cx, top), r wide either side of the middle
+const dropPath = (cx, top, r) => `M${f(cx)} ${f(top)}C${f(cx)} ${f(top)} ${f(cx - r)} ${f(top + r * 1.5)} ${f(cx - r)} ${f(top + r * 2.3)}A${f(r)} ${f(r)} 0 0 0 ${f(cx + r)} ${f(top + r * 2.3)}C${f(cx + r)} ${f(top + r * 1.5)} ${f(cx)} ${f(top)} ${f(cx)} ${f(top)}Z`;
+// a foil pack's crimped edge: n teeth from x0 to x1 along y, pointing up (dir -1) or down (dir 1), as path steps
+function crimpPath(x0, x1, y, h, n, dir) {
+  let d = '';
+  const w = (x1 - x0) / n;
+  for (let i = 1; i <= n; i++) d += `L${f(x0 + (i - 0.5) * w)} ${f(y + dir * h)}L${f(x0 + i * w)} ${f(y)}`;
+  return d;
+}
 
 // ---------------------------------------------------------------- item silhouettes
 // Each entry: [viewBox width, viewBox height, inner markup]
@@ -800,6 +821,14 @@ const ITEM_ICONS = {
     38,
     E('M5 5.4Q15 2.4 25 5.4V32.6Q15 35.6 5 32.6Z' + rct(5, 12.4, 20, 1.3) + rct(5, 24.6, 20, 1.3) + 'M15 15.2Q19.4 19.8 18.6 22.2Q17.9 24.2 15 24.2Q12.1 24.2 11.4 22.2Q10.6 19.8 15 15.2Z') + P(rct(9, 1.6, 4.4, 3)),
   ],
+  // Dead Hand's card packs (shared/cards.js): a card box held shut by a rubber band, a blood drop on its face; and a
+  // sealed pack, crimped shut at both ends
+  [ITEM.CARD_PACK]: [32, 40, E(rrect(5, 3.6, 22, 33.4, 1.8) + rct(5.9, 9, 20.2, 0.9) + rct(5.9, 22.8, 20.2, 0.8) + rct(5.9, 28.2, 20.2, 0.8) + dropPath(16, 12, 3.4)) + P(rct(3.4, 23.6, 25.2, 4.6))],
+  [ITEM.SEALED_PACK]: [
+    32,
+    40,
+    E(`M6 7.2${crimpPath(6, 26, 7.2, 2.6, 7, -1)}V32.8${crimpPath(26, 6, 32.8, 2.6, 7, 1)}Z` + rct(6.8, 10.2, 18.4, 0.9) + rct(6.8, 29, 18.4, 0.9) + dropPath(16, 13.2, 3.6) + 'M24 13.6L25.2 12.4V14.8Z'),
+  ],
   // the mounted gun (not an item: the weapon of its kills in the killfeed, MOUNTED_GUN in shared/mountedgun.js)
   16: [
     128,
@@ -1042,6 +1071,17 @@ const GLYPHS = {
   // achievements: the cup, and an achievement still hidden
   trophy: P('M6.4 2.6H17.6V7.8Q17.6 12.6 13.2 13.6V16.6H16.2V19.4H7.8V16.6H10.8V13.6Q6.4 12.6 6.4 7.8Z') + S('M6.4 4.6H3.2V6.8Q3.2 10 6.8 10.8M17.6 4.6H20.8V6.8Q20.8 10 17.2 10.8', 1.6) + P(rct(6, 20, 12, 2)),
   question: S('M8.4 8.6Q8.4 4.6 12 4.6Q15.6 4.6 15.6 8Q15.6 10.2 13.4 11.4Q12 12.2 12 14.2', 2.4) + P(circ(12, 18.6, 1.6)),
+  // Dead Hand (ui/cards.js): the game itself (two cards, a drop of blood on the top one), the horn, the weather, a
+  // life, the rows (close: a blade; ranged: the crosshair, headshot; heavy: a blast), a leader's crown, Agile
+  cards: P(rrect(3.2, 3.6, 10.4, 15, 1.6), ' transform="rotate(-16 8.4 11.1)" opacity=".5"') + E(rrect(8.6, 4.6, 11.6, 16.4, 1.8) + dropPath(14.4, 8.4, 2.6)),
+  horn: P(rct(2, 10.4, 2.4, 3.2)) + P('M4.4 10.8L13.4 9.4Q17.8 6.6 22 3.6V20.4Q17.8 17.4 13.4 14.6L4.4 13.2Z') + S('M8 13.4Q8 18.4 12.6 18.4H15', 1.5),
+  rain: P('M6.6 13.6Q2.4 13.6 2.4 10Q2.4 6.8 5.8 6.6Q7 2.8 11.4 2.8Q15.6 2.8 16.8 6.6Q21.6 6.6 21.6 10.2Q21.6 13.6 17.6 13.6Z') + S('M7 16.4L5.6 20.4M12 16.4L10.6 20.4M17 16.4L15.6 20.4', 1.8),
+  fog: S('M3 6.6Q7.5 4.8 12 6.6Q16.5 8.4 21 6.6', 1.9) + S('M3 11.8Q7.5 10 12 11.8Q16.5 13.6 21 11.8', 1.9, ' opacity=".75"') + S('M3 17Q7.5 15.2 12 17Q16.5 18.8 21 17', 1.9, ' opacity=".5"'),
+  drop: P(dropPath(12, 2.4, 6.6)),
+  blade: P('M2.6 19.8L4.2 21.4L8 17.6L6.4 16Z') + P('M6.8 15.2L8.8 17.2L20.4 5.6Q21.8 3.6 21.6 2.4Q20.4 2.2 18.4 3.6Z') + P('M4.6 14.6L9.4 19.4L10.4 18.4L5.6 13.6Z'),
+  blast: E(burstPath(12, 12, 10.6, 5.4, 9, -Math.PI / 2) + circ(12, 12, 2.4)),
+  crown: P('M3 17.6L2 6.8L7.4 11L12 3.8L16.6 11L22 6.8L21 17.6Z') + P(rct(3, 19, 18, 2.2)),
+  agile: S('M3 12H21M7 7.6L3 12L7 16.4M17 7.6L21 12L17 16.4', 2),
 };
 
 // ---------------------------------------------------------------- public api

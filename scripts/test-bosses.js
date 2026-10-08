@@ -10,7 +10,7 @@
 // usage: node scripts/test-bosses.js [seed = 1]
 import { Game } from '../server/game.js';
 import { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, ENT } from '../shared/protocol.js';
-import { ZTYPE, ZOMBIE_DEFS, PROJ, STRUCT, STRUCT_DEFS } from '../shared/defs.js';
+import { ITEM, ZTYPE, ZOMBIE_DEFS, PROJ, STRUCT, STRUCT_DEFS } from '../shared/defs.js';
 import { PHASE, SERVER_TICK_RATE } from '../shared/constants.js';
 
 const seed = +(process.argv[2] || 1);
@@ -113,7 +113,7 @@ clear();
   check('The Brute plods, and once badly hurt roars and comes on at a run', roared && z.enraged && calm > 1 && angry > calm * 1.6, `${calm.toFixed(1)} m/s, then ${angry.toFixed(1)} m/s (roared: ${roared})`);
   const before = game.items.length;
   game.combat.damageZombie(z, z.hp + 1, p, {});
-  const loot = game.items.length - before;
+  const loot = game.items.slice(before).filter((e) => e.item !== ITEM.SEALED_PACK).length; // (a sealed pack of cards is on top, now and then: Cards.bossDrop)
   check('...and drops its bossLoot, not a full boss\'s', z.dead && loot === def.bossLoot, `${loot} items`);
   clear();
 }

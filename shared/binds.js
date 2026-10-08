@@ -63,6 +63,7 @@ export const ACTIONS = [
   { id: 'map', label: 'Field map', group: 'Interface', keys: ['KeyM', null], menu: true },
   { id: 'board', label: 'Leaderboard', group: 'Interface', keys: ['KeyL', null], menu: true },
   { id: 'bestiary', label: 'Bestiary', group: 'Interface', keys: ['KeyJ', null], menu: true },
+  { id: 'cards', label: 'Dead Hand (cards)', group: 'Interface', keys: ['KeyK', null], menu: true },
   { id: 'players', label: 'Player list (hold)', group: 'Interface', keys: ['Tab', null], menu: true },
 ].map((a) => Object.freeze({ ctx: CTX_ANY, hold: false, menu: false, ...a, keys: Object.freeze(a.keys) }));
 
@@ -188,15 +189,28 @@ export const MAX_BIND_ACTIONS = ACTIONS.length;
 
 // A full set of binds from stored overrides: anything unknown or malformed is dropped (that action keeps its
 // defaults), never trusted. Never throws.
+// A player's own bind beats a default: an action they never rebound gives up a default key that one they did rebind
+// is on now. (A new action's default - Dead Hand's K - must not land on a key a player already chose for something
+// else, and quietly make it do two things at once; the new action is left without that key, to be bound in the
+// settings.)
 export function fromOverrides(over) {
   const out = {};
   for (const a of ACTIONS) out[a.id] = [...a.keys];
   if (!over || typeof over !== 'object' || Array.isArray(over)) return out;
+  const own = new Set(); // the actions the overrides set
   for (const a of ACTIONS) {
     const v = over[a.id];
     if (!Array.isArray(v) || v.length !== 2) continue;
     if (!v.every((c) => c === null || isBindCode(c))) continue;
     out[a.id] = v[0] === v[1] && v[0] !== null ? [v[0], null] : [v[0], v[1]];
+    own.add(a.id);
+  }
+  if (!own.size) return out;
+  for (const a of ACTIONS) {
+    if (own.has(a.id)) continue;
+    const ks = out[a.id];
+    for (let s = 0; s < 2; s++) if (ks[s] && ACTIONS.some((b) => own.has(b.id) && !sharesOk(a.id, b.id) && out[b.id].includes(ks[s]))) ks[s] = null;
+    if (ks[0] === null && ks[1] !== null) [ks[0], ks[1]] = [ks[1], null]; // (a lone bind is the primary)
   }
   return out;
 }

@@ -2,7 +2,9 @@
 // one (handoff.js). The valley is not in it - createWorld(seed) makes the same one again - only what play changed:
 // the clock, the run's progress, the players, what was built, searched, dropped, felled and stripped, the dead
 // walking about (zombies and their herds), the mounted gun, the fair, the handcars, the bell, the cemetery, crates,
-// what each player has earned towards their achievements.
+// what each player has earned towards their achievements, and Dead Hand's matches, asks and trades being struck
+// (Cards.save: kept by the card module under each player's id, never on the player - an engine state is deeper than
+// data() goes).
 // Bullets and rockets in flight, burning ground, the deer and the cat are not: they are started afresh (the deer and
 // the cat walk the valley as at a new run).
 //
@@ -117,6 +119,7 @@ export function saveGame(g) {
   s.handcars = g.handcars.save();
   s.vehicles = g.vehicles.save();
   s.ach = g.ach.save();
+  s.cards = g.cards.save();
   return s;
 }
 
@@ -208,6 +211,7 @@ export function loadGame(g, s) {
   g.handcars.load(s.handcars);
   g.vehicles.load(s.vehicles); // (a save from before there were any: none)
   if (s.ach) g.ach.load(s.ach);
+  g.cards.load(s.cards || null); // (with the players in: who is here is told to the network thread, and what was under way sent again)
 
   // what was alive and is not coming back (a bullet in flight, a deer) gives its id back
   const taken = new Set(g.freeIds);

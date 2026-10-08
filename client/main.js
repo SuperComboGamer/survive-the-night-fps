@@ -308,6 +308,7 @@ const callbacks = {
   },
   onAccountName: (id) => game?.conn.accounts.get(id) || '',
   onBestiary: () => game?.toggleBestiary(true),
+  onCards: () => game?.toggleCards(true),
 };
 
 const ui = new UI(document.getElementById('ui'), callbacks);
@@ -329,6 +330,7 @@ ui.setControls(() => [
   [keysOf('map'), 'Field map'],
   [keysOf('board'), 'Leaderboard'],
   [keysOf('bestiary'), 'Bestiary: the monsters you have seen'],
+  [keysOf('cards'), `Dead Hand: the card game (${bindPair('interact')} on a teammate: a match or a trade)`],
   [keysOf('flashlight'), 'Flashlight'],
   [keysOf('heal'), 'Quick heal'],
   [keysOf('drink'), 'Energy drink (refills stamina)'],

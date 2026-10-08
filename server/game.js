@@ -59,6 +59,7 @@ import {
   ENGINE_START_TIME,
   INTERACT_REACH,
   PICK_RADIUS,
+  MATE_PICK_Y,
   INTERACT_SLACK,
   HOLD_SLACK,
   EYE_HEIGHT,
@@ -150,6 +151,7 @@ import { Power } from './power.js';
 import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
 import { BestiaryTracker } from './bestiary.js';
+import { Cards } from './cards.js';
 import { checkEnvelope, worldPrint, sameWorld, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
 import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
@@ -185,7 +187,7 @@ const UNDO_DROP_TIME = 6;
 const UNDO_DROP_REACH = 5;
 // seconds between two "no room for that" notices to a survivor whose full backpack keeps leaving things on the ground
 const FULL_NOTICE_EVERY = 6;
-const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1 };
+const AUTO_PICKUP = { res: 1, ammo: 1, cons: 1, throw: 1, part: 1, schem: 1, card: 1 }; // (a card pack is opened as it is picked up: Cards.openPack)
 // Someone who joins a run in progress is put down beside the team (pickJoinSpawn): JOIN_NEAR_MIN..MAX metres from a
 // teammate, at whichever of JOIN_TRIES spots around them is furthest from the dead (nothing within JOIN_CLEAR is
 // as good as it gets). If even that one has a zombie within JOIN_LAP, the ring out to JOIN_FAR_MAX is tried too.
@@ -250,7 +252,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // (`flamethrower fuel`). Case, spaces, underscores and dashes don't matter, and the start of a name will do as long
 // as it fits one item only. A zombie type goes the same way: its ZTYPE key (`boss_hivequeen`) or its name
 // (`hive queen`).
-const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', pack: 'backpacks', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics' };
+const ITEM_CAT_LABELS = { res: 'resources', cons: 'consumables', throw: 'throwables', armor: 'armor', pack: 'backpacks', gear: 'gear', weapon: 'weapons', ammo: 'ammo', part: 'car parts', schem: 'schematics', card: 'card packs' };
 const itemKey = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
 const ITEM_NAMES = Object.entries(ITEM)
   .filter(([, id]) => ITEM_DEFS[id])
@@ -448,6 +450,9 @@ export class Game {
     this.ach = new AchievementTracker(this, opts.achieve);
     // the kinds of the dead each player has seen (bestiary.js). opts.bestiary: where an account's go (the network thread)
     this.bestiary = new BestiaryTracker(this, opts.bestiary);
+    // Dead Hand, the card game: matches, trades, bets and packs (cards.js). opts.cards: where the collections are kept
+    // (the network thread: room-worker.js RemoteCards); none, in this thread (LocalCards)
+    this.cards = new Cards(this, opts.cards);
     if (restore) this.load(restore.game);
   }
 
@@ -600,6 +605,7 @@ export class Game {
     p.hold = null;
     this.endUse(p);
     this.releaseHolds(p); // (a leaper or a roper on them lets go)
+    this.cards.hold(p); // (their trade and their asks are called off; a match waits for them, its clock stopped)
     this.playersDirty = true;
     if (!quiet) this.systemChat(`${p.name} lost connection - holding their place for ${grace} seconds.`);
     this.log(`hold ${p.name}: ${handoff ? 'from the last server' : 'dropped'}, ${grace} s to come back`);
@@ -647,6 +653,7 @@ export class Game {
     this.tellWrecks(p.id);
     this.tellFriendCodes(p);
     this.bestiary.join(p);
+    this.cards.join(p); // (their collection, decks, asks and a match or trade of theirs: sent again)
     this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated while you played: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
     if (!moved) this.systemChat(`${p.name} reconnected.`);
     this.playersDirty = true;
@@ -713,6 +720,8 @@ export class Game {
           return this.handleChat(p, r.str());
         case C2S.BOARD:
           return this.sendBoard(p);
+        case C2S.CARDS:
+          return this.cards.onMessage(p, r);
         case C2S.VOICE: {
           const target = r.u16();
           const payload = r.str();
@@ -835,6 +844,7 @@ export class Game {
     this.track.join(p);
     this.ach.join(p);
     this.bestiary.join(p);
+    this.cards.join(p);
     // what the team has used up before they came (a run this join started has cleared it: NEW_GAME says so)
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -1117,6 +1127,7 @@ export class Game {
     this.track.leave(p); // (before anything of theirs is touched)
     this.ach.leave(p);
     this.releaseHolds(p);
+    this.cards.leave(p); // (a match they were playing is lost, asks and a trade being haggled over called off)
     this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
     this.dropAll(p);
     this.players.delete(p.id);
@@ -1198,6 +1209,7 @@ export class Game {
   // or the next join if that comes first (handleJoin).
   resetToWaiting() {
     this.track.finish('abandoned'); // (a run still on: everybody left it)
+    this.cards.runEnded();
     this.clearWorld();
     this.checkpoint = null;
     this.crossing = null;
@@ -1245,6 +1257,7 @@ export class Game {
 
   startGame() {
     this.track.finish('abandoned'); // (a run still being played as a new one begins: debug, tests)
+    this.cards.runEnded();
     this.clearWorld();
     this.checkpoint = null;
     this.crossing = null;
@@ -1328,6 +1341,7 @@ export class Game {
     }
     // the stray cat goes too, if somebody has it in their arms (buildMainland sets it down beside them)
     const cat = this.cats.find((c) => c.holder && this.players.get(c.holder)?.state.pet);
+    this.cards.crossing(); // (trades being haggled over are called off; a match waits out the cutscene)
     this.clearWorld();
     this.phase = PHASE.CROSSING;
     this.timeLeft = CROSSING.TIME;
@@ -1919,6 +1933,7 @@ export class Game {
   victory() {
     this.track.finish('victory'); // (first: who is where as the car leaves)
     this.ach.victory();
+    this.cards.runEnded(); // (the matches being played are void: the bets go back)
     this.phase = PHASE.VICTORY;
     this.restartT = GAME_OVER_DELAY + 6 + (this.act === WORLD.MAINLAND ? TAKEOFF_TIME : 0); // (the take-off is watched first)
     this.checkpoint = null;
@@ -1938,6 +1953,7 @@ export class Game {
 
   gameOver() {
     this.track.finish('wipe');
+    this.cards.runEnded();
     this.phase = PHASE.GAMEOVER;
     this.restartT = GAME_OVER_DELAY;
     this.escape.active = false;
@@ -2194,6 +2210,8 @@ export class Game {
       this.unlockSchematic(item, p);
       return count;
     }
+    // a pack of cards is opened there and then: its cards go into their collection, and it takes no slot
+    if (def.cat === 'card') return this.cards.openPack(p, item, count);
     // ammunition is carried apart from the backpack, up to AMMO_MAX of a calibre: what a full reserve has no room for
     // is left where it is
     if (def.cat === 'ammo') {
@@ -2784,7 +2802,7 @@ export class Game {
     if (e.kind === ENT.ITEM) return e.y + 0.15;
     if (e.kind === ENT.CRATE) return e.y + 0.6;
     if (e.kind === ENT.STRUCTURE) return e.y + Math.min(1, STRUCT_DEFS[e.stype].sy * 0.5);
-    if (e.kind === ENT.PLAYER) return e.y + 0.3;
+    if (e.kind === ENT.PLAYER) return e.y + (e.downed ? 0.3 : MATE_PICK_Y); // (one down is lying there; a teammate on their feet is aimed at chest high: Dead Hand's [E])
     if (e.kind === ENT.CAT) return e.y + 0.18;
     if (e.kind === ENT.GUN && e.mode === GUN_LYING) return e.y - GUN.pivotY + 0.3; // (on its side on the ground)
     return e.y;
@@ -2795,7 +2813,7 @@ export class Game {
   // because our copy of the player trails the one that client looks out of. Never less: a refusal is silent, so
   // the player would be holding [E] on a prompt with nothing happening
   reachOf(e) {
-    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : e.kind === ENT.CAT ? PICK_RADIUS.CAT : PICK_RADIUS.DOWNED;
+    const r = e.kind === ENT.ITEM ? PICK_RADIUS.ITEM : e.kind === ENT.CACHE ? PICK_RADIUS.CACHE : e.kind === ENT.CRATE ? PICK_RADIUS.CRATE : e.kind === ENT.STRUCTURE ? structPickRadius(e.stype) : e.kind === ENT.CAT ? PICK_RADIUS.CAT : e.kind === ENT.PLAYER && !e.downed ? PICK_RADIUS.MATE : PICK_RADIUS.DOWNED;
     return Math.hypot(INTERACT_REACH, r) + INTERACT_SLACK;
   }
 
@@ -4442,6 +4460,7 @@ export class Game {
     this.track.tick();
     this.ach.tick();
     this.bestiary.tick();
+    this.cards.tick(SERVER_DT);
     ts.mark(T_UPKEEP);
     this.sendSnapshots();
     ts.mark(T_SNAPSHOTS);
@@ -5316,6 +5335,7 @@ export class Game {
     const conn = p.session.conn;
     this.sendList(p);
     this.sendProgress(p);
+    this.cards.send(p);
     if (p.invDirty) {
       // picked up or dropped this tick: sorted (sortInventory), a split left apart. Else the safety net, for any path
       // that left two part stacks of a thing

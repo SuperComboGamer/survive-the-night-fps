@@ -12,6 +12,9 @@
 //   { t: 'achieved', user, ids }   an account's achievements unlocked (userachievements.js): tell the player
 //   { t: 'bestiary', tok, mask }   the kinds of the dead an account has seen (userbestiary.js), as they join
 //   { t: 'admin', id, op, ... }    the admin panel asks something of this game (gameadmin.js): answered { t: 'admin', id, ok, ... }
+//   { t: 'cards', op: 'coll', owner, ok, found: [[card, n]], decks }  what a card owner in this game has (usercards.js):
+//                                  as they come in and after every change. ok false: it could not be read (yet)
+//   { t: 'cards', op: 'xfered', id, ok, why }  a move of cards this game asked for went through, or not (cards.js)
 // To it:
 //   { t: 'ready', seed }           the game is built and ticking        { t: 'out', buf }      messages for sockets
 //   { t: 'closed', slot }          done with that slot's socket: nothing more will go out for it
@@ -22,6 +25,11 @@
 //   { t: 'an', rec }               a record of the match being played (analytics.js), for the database (matchstore.js)
 //   { t: 'ach', user, add, feats, strangers }  what an account earned towards its achievements (achievements.js)
 //   { t: 'seen', user, mask }      kinds of the dead an account saw for the first time (bestiary.js), to be written
+//   { t: 'cards', op, ... }        Dead Hand (cards.js -> usercards.js CardService): 'enter' / 'leave' { owner } (a card
+//                                  owner came into the game or left it, counted), 'find' { owner, cards } (a pack
+//                                  opened), 'deck' { owner, deck }, 'xfer' { id, kind, moves } (cards moved: a trade, a
+//                                  bet put up, paid or given back), 'escrows' { ids } (a game carried on from the last
+//                                  server: the bets it holds). Additive: an older build's game simply never sends them
 //   { t: 'finished' }              ...the match is ended and its records posted
 //   { t: 'saved', buf }            the game, saved (gzipped: handoff.js), and its match ended as 'handoff'
 //   { t: 'saveFailed', error }     ...or it could not be, and its match ended as 'interrupted'
@@ -70,6 +78,18 @@ const tag = `[game ${code}]`;
 const congested = new Int32Array(congestion); // per slot: the network thread is holding that socket's sends back
 const post = (m, transfer) => parentPort.postMessage(m, transfer);
 
+// ---------------------------------------------------------------- the card collections, kept by the network thread
+// What Cards (cards.js) says to the collections (usercards.js CardService), posted on; the answers come back as
+// { t: 'cards' } (onMessage below). Owner keys go to the network thread and nowhere else.
+class RemoteCards {
+  attach(cards) {
+    this.cards = cards;
+  }
+  post(m) {
+    post({ t: 'cards', ...m });
+  }
+}
+
 // ---------------------------------------------------------------- the leaderboard, kept by the network thread
 // What Game asks of PlayerStats (stats.js), posted on. A record here is a token the other side files the real one
 // under. The id is a bearer secret: it goes to the network thread for PlayerStats.enter and nowhere else.
@@ -116,6 +136,7 @@ try {
     analytics: opts.analytics ? (rec) => post({ t: 'an', rec }) : undefined,
     achieve: opts.achievements ? (m) => post({ t: 'ach', ...m }) : undefined,
     bestiary: opts.bestiary ? (m) => post({ t: 'seen', ...m }) : undefined,
+    cards: new RemoteCards(),
     log: (...a) => console.log(tag, ...a),
   });
 } catch (err) {
@@ -215,6 +236,9 @@ function onMessage(m) {
     case 'bestiary':
       game.onBestiary(m.tok, m.mask);
       break;
+    case 'cards':
+      game.cards.fromStore(m);
+      break;
     case 'admin': {
       // (whatever goes wrong in it is the panel's answer, never this game's end)
       let reply;
@@ -256,6 +280,9 @@ function onMessage(m) {
         post({ t: 'saveFailed', error });
         break;
       }
+      // (the game is the next server's now: what its players still send here is not acted on, and cards - which the
+      // network thread would keep - least of all: cards.js freeze)
+      game.cards?.freeze();
       const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       post({ t: 'saved', buf: ab, ms: Math.round(performance.now() - t0) }, [ab]);
       break;

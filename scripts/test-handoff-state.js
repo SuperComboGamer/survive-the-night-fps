@@ -4,7 +4,9 @@
 // dead walking about. Then the unsaved-field check: both games are walked whole, and every field that came back
 // different is a failure unless it is on TRANSIENT below - so a field added later that nobody saves fails here,
 // instead of resetting on every deploy. And: players come back into their own bodies with their browser id, one
-// who does not is let go after HANDOFF_RESERVE as a leaver, and a save this build cannot read is refused.
+// who does not is let go after HANDOFF_RESERVE as a leaver, and a save this build cannot read is refused. Dead Hand
+// (server/cards.js) is saved in the middle of it all: a bet match being played, an ask out and a trade being struck,
+// whose cards go through once, on the next server (both games' collections are one CardService, as one database).
 process.env.HANDOFF_RESERVE_SECONDS = '6';
 process.env.HANDOFF_FREEZE_SECONDS = '0'; // (the restored game runs on at once: its waiting for its players is scripts/test-handoff-safe.js)
 const { Game } = await import('../server/game.js');
@@ -13,6 +15,16 @@ const { C2S, S2C, PROTOCOL_VERSION, Writer, Reader, ENT } = await import('../sha
 const { PHASE, SLOT_BUILD } = await import('../shared/constants.js');
 const { ITEM, STRUCT, ZTYPE, COL } = { ...(await import('../shared/defs.js')), ...(await import('../shared/collision.js')) };
 const { randomUUID } = await import('node:crypto');
+const { LocalCards } = await import('../server/cards.js');
+const { CardService, MemoryCardStore } = await import('../server/usercards.js');
+const { idKey } = await import('../server/stats.js');
+const { CARDS, K, F, defaultDeck } = await import('../shared/cards.js');
+const CG = await import('../shared/cardgame.js');
+const cardStore = new MemoryCardStore();
+const cardService = new CardService({ store: cardStore });
+const settle = async () => {
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+};
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -50,12 +62,13 @@ const tick = (game, sec) => {
 };
 
 // ---------------------------------------------------------------- a run, into its first night
-const A = new Game({ seed: 4242, dayLength: 3600, godMode: true, log: process.env.DEBUG ? console.log : quiet }); // (nobody dies: a wipe would start another run)
-const ids = { ann: randomUUID(), ben: randomUUID(), cy: randomUUID(), dee: randomUUID() };
+const A = new Game({ seed: 4242, dayLength: 3600, godMode: true, log: process.env.DEBUG ? console.log : quiet, cards: new LocalCards(cardService) }); // (nobody dies: a wipe would start another run)
+const ids = { ann: randomUUID(), ben: randomUUID(), cy: randomUUID(), dee: randomUUID(), eve: randomUUID() };
 const ann = join(A, 'Ann', ids.ann);
 const ben = join(A, 'Ben', ids.ben);
 const cy = join(A, 'Cy', ids.cy);
 const bot = join(A, 'Bot', ''); // (no browser id: nobody can take this one back)
+const eve = join(A, 'Eve', ids.eve);
 tick(A, 2);
 const pa = A.players.get(ann.id);
 const pb = A.players.get(ben.id);
@@ -123,14 +136,39 @@ if (wreck) {
   A.ringing.add(wreck); // (ALARM.RINGING, as the game has it)
 }
 
+// Dead Hand: a bet match being played (its bets in escrow), an ask out, and a trade being struck: Eve's card for Ann's
+// planks, the card on its way through the store as the game is saved
+const ownerOf = (pid) => `g:${idKey(pid)}`;
+const [CA, CB] = CARDS.filter((c) => c.k === K.UNIT).map((c) => c.id);
+await cardStore.addFinds([[ownerOf(ids.ann), CA, 3], [ownerOf(ids.ben), CB, 2], [ownerOf(ids.eve), CB, 1]]);
+cardService.reload([ownerOf(ids.ann), ownerOf(ids.ben), ownerOf(ids.eve)]);
+await settle();
+A.cards.startMatch([pa, pb], [defaultDeck(F.SURVIVORS), defaultDeck(F.DEAD)], [CA, CB]);
+await settle();
+const match = [...A.cards.matches.values()][0];
+for (const side of [0, 1]) {
+  const r = CG.applyMove(match.state, side, { t: 'keep' });
+  if (r.ok) A.cards.changed(match, r.events);
+}
+const pe = A.players.get(eve.id);
+A.cards.asks.push({ from: pe.id, to: pc.id, kind: 'match', slot: -1, bet: 0, until: A.time + 25 });
+Object.assign(pe.state, { x: pa.state.x + 1.5, y: pa.state.y, z: pa.state.z });
+A.cards.openTrade(pa, pe);
+const trade = A.cards.tradeOf(pe.id);
+trade.sides[0].offer = { cards: {}, items: [[ITEM.WOOD, 5]] };
+trade.sides[1].offer = { cards: { [CB]: 1 }, items: [] };
+A.cards.commit(trade);
+check('Dead Hand: a bet match being played, an ask out and a trade being struck, to save', match?.phase === 'live' && match.state.phase === 'play' && trade.phase === 'committing' && A.cards.pending.size === 1 && A.cards.asks.length === 1, JSON.stringify({ m: match?.phase, t: trade?.phase, x: A.cards.pending.size }));
+
 // ---------------------------------------------------------------- saved, encoded, restored
 const t0 = performance.now();
 const env = envelope(A);
 const buf = encode(env);
+A.cards.link.gone(true); // (the old server's room, handed over: its escrows are the next server's to claim)
 const saveMs = performance.now() - t0;
 check(`the save is small: ${(buf.length / 1024).toFixed(0)} KB gzipped, ${saveMs.toFixed(0)} ms`, buf.length < 600 * 1024 && saveMs < 250);
 const t1 = performance.now();
-const B = new Game({ dayLength: 3600, log: quiet, restore: decode(buf) });
+const B = new Game({ dayLength: 3600, log: quiet, restore: decode(buf), cards: new LocalCards(cardService) });
 console.log(`      (restored in ${(performance.now() - t1).toFixed(0)} ms, the valley included)`);
 
 const same = (name, a, b) => check(name, JSON.stringify(a) === JSON.stringify(b), `\n   was ${JSON.stringify(a)?.slice(0, 300)}\n   now ${JSON.stringify(b)?.slice(0, 300)}`);
@@ -165,6 +203,7 @@ const xp = (g) => [...g.players.values()].map((p) => [g.xpOf(p), p.xpRun, p.best
 same('experience: on the record before this run, this run by source, the best day, the perks', xp(A), xp(B));
 check('no entity has an id another has, and every one is in the registry', B.all.every((e) => B.ents[e.id] === e) && new Set(B.all.map((e) => e.id)).size === B.all.length);
 check('the deer and the cat are out again', B.deer.length > 0 && B.cats.length > 0);
+same("Dead Hand: the bet match and its table, the ask, the trade being struck with what it holds, the transfer on its way", A.cards.save(), B.cards.save());
 
 // ---------------------------------------------------------------- the unsaved-field check
 // Paths (ids and indices as *) that may come back different: derived, rebuilt, the connection's, or started afresh
@@ -175,7 +214,7 @@ const TRANSIENT = [
   /^game\.(rng|sessions|joins|greets|log|records|w|ew|events|stats|tickStats|track|globalDirty|playersDirty|playersListT|cw|gw|listBytes|listVer|world|nav|mineNav|lootPoints\.\*\.ent|thawAt|frozenAt)\b/,
   /^game\.(ents|all|freeIds|gens|deer|cats|projectiles|areas)\b/, // (the registry is checked above; the deer, the cat and what was in flight start afresh)
   // a player: their connection, and what resume starts afresh for the client that comes back
-  /^players\.\*\.(session|rec|view|shadow|cmdQueue|cmdBudget|hx|hy|hz|selfSync|away|arriving|ts|invDirty|selfCache|globalCache|listVer|snapTick|ackSent|greeted)\b/,
+  /^players\.\*\.(session|rec|view|shadow|cmdQueue|cmdBudget|hx|hy|hz|selfSync|away|arriving|ts|invDirty|invSort|selfCache|globalCache|listVer|snapTick|ackSent|greeted)\b/,
   // a zombie: its position history (filled again), and what its spatial hash is
   /^zombies\.\*\.(hx|hy|hz)\b/,
   /^zm\.(head|next|humansCache|crowdList|lights|lightTick|treeGrid|dens|spawnPicks|spawnsScreened|spawnsInView|fieldRR)\b/,
@@ -185,6 +224,7 @@ const TRANSIENT = [
   /^cemetery\.rng\b/,
   /^game\.ach\.(world|village|deep)\b/, // (the achievements' spots in the valley: found again from the valley)
   /^power\.(rng|running|cones)\b/,
+  /^game\.cards\.(game|link|own|ofP|packT|rng|cw)\b/, // (Dead Hand: the collections' copies and who was sent what are read and sent again; its stream reseeded)
   /^dm\b/,
   /^cm\b/,
 ];
@@ -241,6 +281,13 @@ for (const k of LISTS) {
 check('every field of every entity and system came back as it was (or is listed as transient)', !diffs.length, `\n   ${[...new Set(diffs)].slice(0, 40).join('\n   ')}`);
 
 // ---------------------------------------------------------------- coming back
+// the trade being struck goes through once - on the next server, which sent it again under the same id - and the
+// bets stay in the escrow the next server now holds
+await settle();
+const cardsOf = async (pid) => (await cardStore.load(ownerOf(pid))).found;
+const wood = (p) => p.inv.reduce((n, s) => n + (s?.item === ITEM.WOOD ? s.count : 0), 0);
+check('Dead Hand: the trade struck as the game was saved goes through once, on the next server', !B.cards.trades.size && (await cardsOf(ids.ann))[CB] === 1 && !(await cardsOf(ids.eve))[CB] && wood(B.players.get(eve.id)) >= 5, JSON.stringify([await cardsOf(ids.ann), await cardsOf(ids.eve)]));
+check('...and the bet match plays on there, its bets in the escrow it claimed', B.cards.matches.get(match.id)?.phase === 'live' && cardService.escrowAt.get(`m:${match.id}`) === B.cards.link.room && (await cardStore.load(`m:${match.id}`)).found[CA] === 1);
 tick(B, 0.5);
 const ann2 = join(B, 'Ann', ids.ann);
 const pa2 = B.players.get(ann.id);
