@@ -2416,6 +2416,10 @@ export class Game {
   toggleCards(open, relock = true, view = null) {
     const ui = this.ui;
     if (open && (this.state !== 'playing' || this.cine || this.overlay)) return;
+    if (open) {
+      ui.cards.bind(this.cards);
+      ui.cards.onClose = () => this.toggleCards(false);
+    }
     if (open === ui.cardsOpen) {
       if (open && view) ui.cards.show(view);
       return;

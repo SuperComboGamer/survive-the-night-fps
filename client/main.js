@@ -5,6 +5,7 @@ import { UI } from './ui/ui.js';
 import { DEFAULT_SETTINGS } from './ui/settings.js';
 import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
+import { LobbyCardsClient } from './game/cardlobby.js';
 import { loadBinds, askLayout, bindPair } from './game/binds.js';
 import { startBindsSync } from './net/accountbinds.js';
 import { startCustomsSync } from './net/accountcustoms.js';
@@ -20,6 +21,7 @@ import { setMaxAnisotropy } from './render/textures.js';
 import { setMaxAnisotropy as setCharAnisotropy } from './render/models/charTextures.js';
 
 let game = null;
+let lobbyCards = null;
 let joining = false;
 loadBinds(); // the player's keybinds, as this browser keeps them (game/binds.js): before anything names a key
 askLayout(); // (and what this keyboard prints on its keys, when the browser says)
@@ -224,6 +226,10 @@ const callbacks = {
     joining = true;
     lastName = name;
     try {
+      if (lobbyCards) {
+        lobbyCards.closeSocket();
+        ui.setCardsOpen(false);
+      }
       // The click on Join is a gesture too, so the engine starts here at the latest - but the join does not wait
       // for it. The socket opens at once, and if the banks are still rendering the game is silent until they are
       // done (a sound asked for before that is dropped; ambience and music come in from the state of the moment).
@@ -315,6 +321,7 @@ const callbacks = {
   onAccountName: (id) => game?.conn.accounts.get(id) || '',
   onBestiary: () => game?.toggleBestiary(true),
   onCards: () => game?.toggleCards(true),
+  onLobbyCards: () => lobbyCards?.open('lobby'),
 };
 
 const ui = new UI(document.getElementById('ui'), callbacks);
@@ -353,6 +360,7 @@ const renderer = new GameRenderer(document.getElementById('game'), settings.qual
 setMaxAnisotropy(Math.min(8, renderer.renderer.capabilities.getMaxAnisotropy()));
 setCharAnisotropy(Math.min(8, renderer.renderer.capabilities.getMaxAnisotropy()));
 game = new Game({ renderer, ui, audio, settings });
+lobbyCards = new LobbyCardsClient({ ui, audio, name: () => ui.splash.playerName() });
 applySettings(settings);
 ui.showSplash();
 
@@ -474,6 +482,7 @@ function frame(now) {
   const t0 = performance.now();
   try {
     game.update(dt);
+    if (game.state === 'menu') lobbyCards?.update(dt);
   } catch (err) {
     console.error('update error', err);
   }

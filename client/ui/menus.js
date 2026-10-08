@@ -174,6 +174,7 @@ export class Splash {
     this.quickAlt = altBtn('bolt', 'Quick join', () => this.join(''));
     altBtn('search', 'Browse games', () => this.browser.show());
     altBtn('plus', 'Create game', () => this.creator.show());
+    altBtn('cards', 'Dead Hand', () => this.ui.cb.onLobbyCards());
     this.friendsBtn = altBtn('people', 'Friends', () => this.ui.friends.show());
     this.friendsTxt = this.friendsBtn.lastChild;
     this.friendsBadge = el('b', 'sp-badge', this.friendsBtn, '');
