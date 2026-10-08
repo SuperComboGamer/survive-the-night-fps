@@ -2,7 +2,7 @@
 // Positions are quantized in int16: to 1/64 m on the island (range +-512 m) and to 1/32 m on the mainland, which is
 // twice as far across (range +-1024 m). See usePos below.
 
-export const PROTOCOL_VERSION = 43; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk); 39: a torch's or a campfire's burn-out tick (SF.BURN); 40: the mainland's undead deer (DEER_UNDEAD in a deer's variant, DANIM.ATTACK / CHARGE, SOUND.DEER_SCREAM, killfeed flag 8 and YOU_DIED 254 for a death by one); 41: the stray cat in a survivor's arms (ACT.CAT_PUT, ENT.CAT field HOLDER, CANIM.HELD / PET, s.pet in SELF.RIDE); 42: Dead Hand, the card game (C2S.CARDS, S2C.CARDS, card packs: items 98-99); 43: lobby Dead Hand tables
+export const PROTOCOL_VERSION = 44; // 26: the frag grenade and the noisemaker (items 33-34, PROJ 7-8); 28: salvage, ammo reserve, unequip, RPG (PROJ 9); 29: carrying the mounted gun (ACT.GUN_PUT, HOLD.GUN_LIFT, ENT.GUN fields 6-7, s.hmg); 30: the flare gun (items 56, 79; ammo 9; PROJ 10); 31: the walkie-talkie in weapon slot 6 (SLOT_RADIO), PLF.ON_AIR; 32: achievements (EVT.ACHIEVE); 33: XP, levels and perks (S2C.PROGRESS, s.perks in SELF.RIDE, a level in S2C.PLAYERS and S2C.BOARD rows); 34: IN_PING carries u16 last measured RTT (ms) for the player list; 35: the bestiary (EVT.BESTIARY); 36: schematic rumours (a zone per schematic in the global state); 37: car supplies lying loose (item, x, z) in the global state; 38: the leaper shove meter (s.shove in the self state's fifth chunk); 39: a torch's or a campfire's burn-out tick (SF.BURN); 40: the mainland's undead deer (DEER_UNDEAD in a deer's variant, DANIM.ATTACK / CHARGE, SOUND.DEER_SCREAM, killfeed flag 8 and YOU_DIED 254 for a death by one); 41: the stray cat in a survivor's arms (ACT.CAT_PUT, ENT.CAT field HOLDER, CANIM.HELD / PET, s.pet in SELF.RIDE); 42: Dead Hand, the card game (C2S.CARDS, S2C.CARDS, card packs: items 98-99); 43: lobby Dead Hand tables; 44: Dead Hand loadout item wagers
 
 // client -> server
 export const C2S = {
@@ -530,7 +530,10 @@ export function readBoard(r) {
 //                                                       (all of it, every time; loadout items are profile instances)
 //   READY    { on }   CONFIRM { }   CLOSE { }            the trade: ready, struck (both ready), called off
 //   SYNC     { }                                         send me everything again
-//   TABLE_OPEN { slot }                                  lobby only: open a no-bet public Dead Hand table
+//   STAKE    { items: [loadout item id] }                lobby/match setup only: my loadout item wager; changing it
+//                                                        clears both sides' confirmations
+//   STAKE_CONFIRM { on }                                 lobby/match setup only: agree to the shown stakes
+//   TABLE_OPEN { slot }                                  lobby only: open a public Dead Hand table
 //   TABLE_JOIN { id, slot }                              lobby only: join an open table with a deck
 //   TABLE_LEAVE { }                                      lobby only: cancel my open table or give up my lobby match
 // S2C.CARDS (CARDMSG):
@@ -538,10 +541,10 @@ export function readBoard(r) {
 //                                                        kept: they outlive the game (an account, or a browser id)
 //   DECKS     { decks: [{ slot, name, leader, cards }] }
 //   ASKS      { asks: [{ from, to, kind, bet, left }] }  the asks to me and from me, left: seconds
-//   MATCH     { me, opp, v, bet: [a, b], view, events }  my match: viewFor(state, me), eventsFor(...) since the last.
+//   MATCH     { me, opp, v, bet: [a, b], stake, view, events }  my match: viewFor(state, me), eventsFor(...) since the last.
 //                                                        me: my side (0 / 1), bet: each side's bet card (0: none) by
 //                                                        side. view null (v 0) while the bets go in: it has not begun
-//   MATCH_END { opp, outcome, reason, bet: { mine, theirs, paid } }  outcome: 'win' | 'loss' | 'draw' | 'void'; sent
+//   MATCH_END { opp, outcome, reason, bet: { mine, theirs, paid }, stake }  outcome: 'win' | 'loss' | 'draw' | 'void'; sent
 //                                                        once the bets are where it sends them (paid; false: they could
 //                                                        not be moved). reason: the rules' ('lives', 'forfeit',
 //                                                        'timeout') or why it was void ('left', 'run_over', 'forfeit',
@@ -553,7 +556,7 @@ export function readBoard(r) {
 //   REVEAL    { item, cards: [id], kept }               a pack I picked up, opened
 //   NOTE      { code, arg }                              a refusal or a word about something (CARDNOTE)
 //   TABLES    { me, tables: [{ id, host, name, slot, ageS }], names: [[id, name]] }  lobby only: open tables
-export const CARDOP = { ASK: 1, ANSWER: 2, WITHDRAW: 3, MOVE: 4, FORFEIT: 5, DECK: 6, OFFER: 7, READY: 8, CONFIRM: 9, CLOSE: 10, SYNC: 11, TABLE_OPEN: 12, TABLE_JOIN: 13, TABLE_LEAVE: 14 };
+export const CARDOP = { ASK: 1, ANSWER: 2, WITHDRAW: 3, MOVE: 4, FORFEIT: 5, DECK: 6, OFFER: 7, READY: 8, CONFIRM: 9, CLOSE: 10, SYNC: 11, TABLE_OPEN: 12, TABLE_JOIN: 13, TABLE_LEAVE: 14, STAKE: 15, STAKE_CONFIRM: 16 };
 export const CARDMSG = { COLL: 1, DECKS: 2, ASKS: 3, MATCH: 4, MATCH_END: 5, TRADE: 6, TRADE_END: 7, REVEAL: 8, NOTE: 9, TABLES: 10 };
 // NOTE's code: what was refused and why (arg: a detail - a player's id, a card, an item, the rules' word)
 export const CARDNOTE = {

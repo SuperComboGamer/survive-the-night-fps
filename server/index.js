@@ -165,7 +165,7 @@ let stopping = false;
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, cards, loadouts, log }) : null;
-const lobbyCards = new LobbyCards({ service: cards, log });
+const lobbyCards = new LobbyCards({ service: cards, loadouts, log });
 const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds, their survivors

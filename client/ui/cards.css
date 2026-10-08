@@ -1443,6 +1443,11 @@
   color: var(--bone-dim);
 }
 
+.stn-ui .cd-lobby-stake {
+  flex: 1.4;
+  min-width: max(180px, calc(240 * var(--u)));
+}
+
 /* ------------------------------------------------------------------ the deck builder */
 .stn-ui .cd-deck {
   display: grid;
@@ -1860,6 +1865,11 @@
 
 .stn-ui div.cd-loadout {
   cursor: default;
+}
+
+.stn-ui button.cd-loadout.sel {
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(177, 38, 38, 0.55);
 }
 
 .stn-ui .cd-loadout.r2 {

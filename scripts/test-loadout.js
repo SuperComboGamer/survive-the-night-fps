@@ -10,6 +10,7 @@ import { AMMO, ITEM, ZTYPE } from '../shared/defs.js';
 import { ACT, C2S, PROTOCOL_VERSION, SALVAGE_FROM, WORN, WORN_DO, Writer } from '../shared/protocol.js';
 import { PHASE } from '../shared/constants.js';
 import { LOADOUT_CATALOG, LOADOUT_RARITY, LOADOUT_SLOTS, loadoutDef, loadoutEffects, loadoutMods } from '../shared/loadout.js';
+import { F, defaultDeck } from '../shared/cards.js';
 
 const fails = [];
 const check = (name, ok, info = '') => {
@@ -72,6 +73,47 @@ async function persistence() {
   await tstore.transfer({ id, kind: 'trade', moves: [[ta, tb, first.granted.id]] });
   await tstore.transfer({ id, kind: 'trade', moves: [[ta, tb, first.granted.id]] });
   check('loadout transfer moves one instance and unequips it once', once.items.length === 1 && back.items.length === 1 && (await tstore.load(ta)).items.length === 0 && (await tstore.load(tb)).items.length === 1 && !(await tstore.load(ta)).slots.some(Boolean));
+
+  const wstore = new MemoryLoadoutStore();
+  const wa = guest();
+  const wb = guest();
+  const wi = (await wstore.grant({ id: 'wager:grant:a', owner: wa, catalog: 1 })).granted;
+  const wj = (await wstore.grant({ id: 'wager:grant:b', owner: wb, catalog: 2 })).granted;
+  await wstore.saveSlots(wa, [wi.id, null, null]);
+  await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-a', stakes: [{ owner: wa, items: [wi.id] }] });
+  check('wager lock hides an item from collection and slots', !(await wstore.load(wa)).items.some((it) => it.id === wi.id) && !(await wstore.load(wa)).slots.some(Boolean));
+  let blocked = false;
+  try {
+    await wstore.transfer({ id: `${randomUUID()}:loadout_trade`, kind: 'trade', moves: [[wa, wb, wi.id]] });
+  } catch {
+    blocked = true;
+  }
+  check('wager lock blocks trading the same loadout item', blocked);
+  blocked = false;
+  try {
+    await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-b', stakes: [{ owner: wa, items: [wi.id] }] });
+  } catch {
+    blocked = true;
+  }
+  check('wager lock blocks a second table using the same item', blocked);
+  await wstore.settleWager({ id: `${randomUUID()}:loadout_wager_back`, kind: 'wager_back', match: 'match-a', moves: [[wa, wa, wi.id]] });
+  check('wager refund returns the locked item to its owner and slot', (await wstore.load(wa)).items.some((it) => it.id === wi.id) && (await wstore.load(wa)).slots[0] === wi.id);
+  await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-c', stakes: [{ owner: wa, items: [wi.id] }, { owner: wb, items: [wj.id] }] });
+  const payId = `${randomUUID()}:loadout_wager_pay`;
+  await wstore.settleWager({ id: payId, kind: 'wager_pay', match: 'match-c', moves: [[wa, wb, wi.id], [wb, wb, wj.id]] });
+  await wstore.settleWager({ id: payId, kind: 'wager_pay', match: 'match-c', moves: [[wa, wb, wi.id], [wb, wb, wj.id]] });
+  check('wager payout transfers once and unequips the loser', !(await wstore.load(wa)).items.length && (await wstore.load(wb)).items.some((it) => it.id === wi.id) && !(await wstore.load(wa)).slots.some(Boolean));
+  const acctOwner = `a:${randomUUID()}`;
+  wstore.accounts = new Set([acctOwner.slice(2)]);
+  const listed = (await wstore.grant({ id: 'wager:listed', owner: acctOwner, catalog: 3 })).granted;
+  await wstore.listItem(acctOwner, listed.id, 10);
+  blocked = false;
+  try {
+    await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-listed', stakes: [{ owner: acctOwner, items: [listed.id] }] });
+  } catch {
+    blocked = true;
+  }
+  check('active auction listing cannot be wagered', blocked);
 }
 
 function catalogRules() {
@@ -287,11 +329,66 @@ async function handoffTradeReplay() {
   check('replayed pending loadout trade applies exactly once', (await service.collection(aOwner)).items.length === 0 && (await service.collection(bOwner)).items.filter((it) => it.id === item.id).length === 1);
 }
 
+async function handoffWagerReplay() {
+  console.log('\n-- loadout wager handoff replay');
+  const service = new LoadoutService({ store: new MemoryLoadoutStore() });
+  const link1 = new LocalLoadouts(service);
+  const game1 = new Game({ seed: 10, loadouts: link1, dayLength: 999, nightLength: 999, godMode: true });
+  game1.code = 'WGR1';
+  game1.phase = PHASE.DAY;
+  const aPid = randomUUID();
+  const bPid = randomUUID();
+  const aOwner = `g:${createHash('sha256').update(aPid).digest('hex')}`;
+  const bOwner = `g:${createHash('sha256').update(bPid).digest('hex')}`;
+  await service.grant(aOwner, 1, {}, 'wager:a');
+  await service.grant(bOwner, 2, {}, 'wager:b');
+  const aItem = (await service.collection(aOwner)).items[0];
+  const bItem = (await service.collection(bOwner)).items[0];
+  await service.equip(aOwner, [aItem.id, null, null]);
+  const a1 = join(game1, 'A', aPid);
+  const b1 = join(game1, 'B', bPid);
+  await settle();
+  game1.cards.startMatch([a1, b1], [defaultDeck(F.SURVIVORS), defaultDeck(F.DEAD)], [0, 0], [[aItem.id], [bItem.id]]);
+  let m1 = game1.cards.matchOf(a1.id);
+  game1.cards.stakeConfirm(a1, { on: true });
+  game1.cards.stakeConfirm(b1, { on: true });
+  const saved = game1.cards.save();
+  check('pending loadout wager lock is saved for handoff', saved.pending.some((x) => x.kind === 'loadout_wager_lock') && m1.phase === 'locking');
+  link1.gone();
+
+  const link2 = new LocalLoadouts(service);
+  const game2 = new Game({ seed: 10, loadouts: link2, dayLength: 999, nightLength: 999, godMode: true });
+  game2.code = 'WGR2';
+  game2.phase = PHASE.DAY;
+  const a2 = join(game2, 'A', aPid);
+  const b2 = join(game2, 'B', bPid);
+  await settle();
+  game2.cards.load(saved);
+  await settle();
+  const m2 = game2.cards.matchOf(a2.id);
+  check('replayed wager lock deals the match once after handoff', m2?.phase === 'live' && !(await service.collection(aOwner)).items.some((it) => it.id === aItem.id));
+  game2.cards.forfeit(a2);
+  await settle();
+  check('forfeit pays wagered loadout items to the opponent', !(await service.collection(aOwner)).items.some((it) => it.id === aItem.id) && (await service.collection(bOwner)).items.some((it) => it.id === aItem.id) && a2.state.weapons[0] === 0);
+
+  await service.grant(aOwner, 3, {}, 'wager:refund');
+  const refund = (await service.collection(aOwner)).items[0];
+  game2.cards.startMatch([a2, b2], [defaultDeck(F.SURVIVORS), defaultDeck(F.DEAD)], [0, 0], [[refund.id], []]);
+  game2.cards.stakeConfirm(a2, { on: true });
+  game2.cards.stakeConfirm(b2, { on: true });
+  await settle();
+  const rm = game2.cards.matchOf(a2.id);
+  game2.cards.void(rm, 'run_over');
+  await settle();
+  check('server-side abort refunds wagered loadout items', (await service.collection(aOwner)).items.some((it) => it.id === refund.id));
+}
+
 catalogRules();
 await persistence();
 await inRunRules();
 await inRunTrade();
 await handoffTradeReplay();
+await handoffWagerReplay();
 
 if (fails.length) {
   console.error(`\n${fails.length} loadout test(s) failed: ${fails.join(', ')}`);

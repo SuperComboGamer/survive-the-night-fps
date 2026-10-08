@@ -86,7 +86,7 @@ export class CardsClient {
 
   // a new game, or none: nothing of the last one's asks, match or trade (the collection comes again with the next join)
   reset() {
-    this.s = { loaded: false, kept: false, found: {}, decks: [], asks: [], match: null, lastEnd: null, trade: null, reveals: [], at: 0 };
+    this.s = { loaded: false, kept: false, found: {}, loadouts: [], decks: [], asks: [], match: null, lastEnd: null, trade: null, reveals: [], at: 0 };
     this.local = null;
     this.seen = 0; // the last match event this player has been shown (its seq)
     this.matchKey = '';
@@ -119,13 +119,14 @@ export class CardsClient {
         s.loaded = !!data.loaded;
         s.kept = !!data.kept;
         s.found = cleanFound(data.found);
+        s.loadouts = loadoutsOf(data.loadouts);
         return this.changed('coll');
       case CARDMSG.DECKS:
         s.decks = Array.isArray(data.decks) ? data.decks.filter((d) => d && Number.isInteger(d.slot) && d.slot >= 0 && d.slot < DECK_SLOTS).map((d) => ({ slot: d.slot, name: String(d.name || ''), leader: d.leader | 0, cards: d.cards && typeof d.cards === 'object' ? d.cards : {} })) : [];
         return this.changed('decks');
       case CARDMSG.ASKS: {
         const before = new Set(s.asks.filter((a) => a.to === this.myId).map((a) => `${a.from}:${a.kind}`));
-        s.asks = (Array.isArray(data.asks) ? data.asks : []).filter((a) => a && typeof a === 'object').map((a) => ({ from: a.from | 0, to: a.to | 0, kind: a.kind === 'trade' ? 'trade' : 'match', bet: a.bet | 0, left: +a.left || 0, at: now }));
+        s.asks = (Array.isArray(data.asks) ? data.asks : []).filter((a) => a && typeof a === 'object').map((a) => ({ from: a.from | 0, to: a.to | 0, kind: a.kind === 'trade' ? 'trade' : 'match', bet: a.bet | 0, stake: loadoutsOf(a.stake), left: +a.left || 0, at: now }));
         for (const a of s.asks) {
           if (a.to !== this.myId || before.has(`${a.from}:${a.kind}`)) continue;
           const who = this.name(a.from);
@@ -149,13 +150,13 @@ export class CardsClient {
           if (!this.screen.open) this.g.ui.notify(`Dead Hand vs ${this.name(data.opp)}: the cards are dealt. ${this.keyText()}`, 'good', 6);
           this.g.audio.playLocal('card_shuffle', { volume: 0.4 });
         }
-        s.match = { opp: data.opp | 0, me: data.me === 1 ? 1 : 0, v: data.v | 0, bet: Array.isArray(data.bet) ? data.bet.map((x) => x | 0) : [0, 0], view, local: false, at: now };
+        s.match = { opp: data.opp | 0, me: data.me === 1 ? 1 : 0, v: data.v | 0, bet: Array.isArray(data.bet) ? data.bet.map((x) => x | 0) : [0, 0], stake: stakeOf(data.stake), view, local: false, at: now };
         this.events(Array.isArray(data.events) ? data.events : []);
         return this.changed(fresh ? 'match-new' : 'match');
       }
       case CARDMSG.MATCH_END: {
         const outcome = ['win', 'loss', 'draw', 'void'].includes(data.outcome) ? data.outcome : 'void';
-        s.lastEnd = { opp: data.opp | 0, outcome, reason: String(data.reason || ''), bet: data.bet && typeof data.bet === 'object' ? data.bet : null, view: s.match?.view || null, local: false };
+        s.lastEnd = { opp: data.opp | 0, outcome, reason: String(data.reason || ''), bet: data.bet && typeof data.bet === 'object' ? data.bet : null, stake: stakeOf(data.stake), view: s.match?.view || null, local: false };
         s.match = null;
         this.matchKey = '';
         if (!this.screen.open) this.g.ui.notify(this.endText(s.lastEnd), outcome === 'win' ? 'good' : outcome === 'loss' ? 'warning' : 'toast', 6);
@@ -202,6 +203,9 @@ export class CardsClient {
     if (e.outcome === 'void') return `The match with ${who} is off${VOID_TEXT[e.reason] ? `: ${VOID_TEXT[e.reason]}` : ''}`;
     const head = e.outcome === 'win' ? `You beat ${who} at Dead Hand` : e.outcome === 'loss' ? `${who} beat you at Dead Hand` : `Dead Hand with ${who}: a draw`;
     const b = e.bet;
+    const st = e.stake;
+    if (st?.paid && e.outcome === 'win' && st.theirs?.length) return `${head}, and won ${st.theirs.length} loadout item${st.theirs.length === 1 ? '' : 's'}`;
+    if (st?.paid && e.outcome === 'loss' && st.mine?.length) return `${head}, and lost ${st.mine.length} loadout item${st.mine.length === 1 ? '' : 's'}`;
     if (!b || e.local) return head;
     const won = b.paid && e.outcome === 'win' && cardDef(b.theirs);
     const lost = b.paid && e.outcome === 'loss' && cardDef(b.mine);
@@ -230,14 +234,14 @@ export class CardsClient {
 
   // ------------------------------------------------------------ to the server
   // a teammate, from the chooser: a match (deck slot, a found card bet or 0) or a trade
-  ask(to, kind, slot = 0, bet = 0) {
+  ask(to, kind, slot = 0, bet = 0, stake = []) {
     if (kind === 'match') this.rememberSlot(slot);
-    this.send(CARDOP.ASK, kind === 'trade' ? { to, kind } : { to, kind, slot, bet });
+    this.send(CARDOP.ASK, kind === 'trade' ? { to, kind } : { to, kind, slot, bet, stake });
   }
 
-  answer(from, kind, yes, slot = 0, bet = 0) {
+  answer(from, kind, yes, slot = 0, bet = 0, stake = []) {
     if (yes && kind === 'match') this.rememberSlot(slot);
-    this.send(CARDOP.ANSWER, { from, kind, yes: !!yes, slot, bet });
+    this.send(CARDOP.ANSWER, { from, kind, yes: !!yes, slot, bet, stake });
   }
 
   withdraw() {
@@ -279,6 +283,12 @@ export class CardsClient {
   }
   closeTrade() {
     this.send(CARDOP.CLOSE, {});
+  }
+  stake(items) {
+    this.send(CARDOP.STAKE, { items });
+  }
+  stakeConfirm(on) {
+    this.send(CARDOP.STAKE_CONFIRM, { on: !!on });
   }
   sync() {
     this.send(CARDOP.SYNC, {});
@@ -466,4 +476,15 @@ function loadoutsOf(rows) {
         .map((x) => ({ id: x.id, catalog: loadoutDef(x.catalog)?.id || 0 }))
         .filter((x) => x.catalog)
     : [];
+}
+function stakeOf(s) {
+  s = s && typeof s === 'object' ? s : {};
+  return {
+    phase: s.phase === 'staking' || s.phase === 'locking' ? s.phase : '',
+    mine: loadoutsOf(s.mine),
+    theirs: loadoutsOf(s.theirs),
+    loadouts: loadoutsOf(s.loadouts),
+    ok: pair(s.ok),
+    paid: !!s.paid,
+  };
 }

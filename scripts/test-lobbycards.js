@@ -1,7 +1,8 @@
 // Dead Hand lobby tables (server/lobbycards.js): open, join, play a full no-bet match, cancel, and leave.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { LobbyCards } from '../server/lobbycards.js';
 import { CardService, MemoryCardStore } from '../server/usercards.js';
+import { LoadoutService, MemoryLoadoutStore } from '../server/userloadout.js';
 import { C2S, S2C, CARDOP, CARDMSG, PROTOCOL_VERSION, Writer, Reader, writeCards, readCards } from '../shared/protocol.js';
 import { chooseMove } from '../shared/cardai.js';
 import { mulberry32 } from '../shared/rng.js';
@@ -16,8 +17,10 @@ const settle = async () => {
 };
 
 const service = new CardService({ store: new MemoryCardStore() });
+const loadouts = new LoadoutService({ store: new MemoryLoadoutStore() });
 const rng = mulberry32(33);
-const lobby = new LobbyCards({ service, rng, log: () => {} });
+const lobby = new LobbyCards({ service, loadouts, rng, log: () => {} });
+const ownerOf = (pid) => `g:${createHash('sha256').update(pid).digest('hex')}`;
 
 function client(name) {
   const c = { name, pid: randomUUID(), msgs: [], last: {}, notes: [], ended: null, sentV: -1 };
@@ -125,8 +128,37 @@ C.ws.close();
 await settle();
 check('leaving a live lobby match forfeits it for the remaining player', D.ended?.outcome === 'win' && D.ended.reason === 'forfeit', JSON.stringify(D.ended));
 
+const E = client('Eve');
+const Fp = client('Fox');
+await settle();
+await loadouts.grant(ownerOf(E.pid), 1, {}, 'lobby:wager:e1');
+await loadouts.grant(ownerOf(E.pid), 3, {}, 'lobby:wager:e2');
+await loadouts.grant(ownerOf(Fp.pid), 2, {}, 'lobby:wager:f1');
+await settle();
+const eItems = E.last[CARDMSG.COLL]?.loadouts || [];
+const fItems = Fp.last[CARDMSG.COLL]?.loadouts || [];
+E.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [eItems[0].id] });
+await settle();
+const staked = Fp.last[CARDMSG.TABLES].tables.find((x) => x.host === E.me());
+check('lobby table advertises host loadout item stake', staked?.stake?.[0]?.catalog === eItems[0].catalog, JSON.stringify(staked));
+Fp.send(CARDOP.TABLE_JOIN, { id: staked.id, slot: -2, stake: [fItems[0].id] });
+await settle();
+check('staked lobby table waits for both stake confirmations', E.last[CARDMSG.MATCH]?.stake?.phase === 'staking' && Fp.last[CARDMSG.MATCH]?.stake?.phase === 'staking');
+E.send(CARDOP.STAKE_CONFIRM, { on: true });
+E.send(CARDOP.STAKE, { items: [eItems[1].id] });
+await settle();
+check('changing a lobby stake resets both confirmations', E.last[CARDMSG.MATCH]?.stake?.ok?.every((x) => x === false) && Fp.last[CARDMSG.MATCH]?.stake?.theirs?.[0]?.id === eItems[1].id, JSON.stringify(E.last[CARDMSG.MATCH]?.stake));
+E.send(CARDOP.STAKE_CONFIRM, { on: true });
+Fp.send(CARDOP.STAKE_CONFIRM, { on: true });
+await settle();
+check('confirmed lobby stakes are escrowed before the match deals', E.last[CARDMSG.MATCH]?.view?.phase === 'redraw' && !(await loadouts.collection(ownerOf(E.pid))).items.some((it) => it.id === eItems[1].id));
+E.ws.close();
+await settle();
+check('forfeit transfers lobby wagered loadout items to the opponent', Fp.ended?.outcome === 'win' && (await loadouts.collection(ownerOf(Fp.pid))).items.some((it) => it.id === eItems[1].id), JSON.stringify(Fp.ended));
+
 lobby.closeAll();
 await service.close();
+await loadouts.close();
 if (fails.length) {
   console.log(`\n${fails.length} failure(s): ${fails.join(', ')}`);
   process.exit(1);

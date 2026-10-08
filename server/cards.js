@@ -83,6 +83,7 @@ const CROSSING_OK = new Set([CARDOP.WITHDRAW, CARDOP.FORFEIT, CARDOP.DECK, CARDO
 const MOVE_T = new Set(['redraw', 'keep', 'play', 'leader', 'choose', 'pass', 'forfeit']);
 const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 const LOADOUT_ITEM_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const STAKE_MAX = 12;
 const tradeCount = (inv, item) => inv.reduce((n, s) => n + (s && !isLoadoutStack(s) && s.item === item ? s.count : 0), 0);
 function removeTradeItem(inv, item, count) {
   let left = count;
@@ -151,6 +152,19 @@ function cleanOffer(d) {
   return { cards, items: [...items], loadouts };
 }
 
+function cleanStakeItems(d) {
+  const raw = Array.isArray(d?.stake) ? d.stake : Array.isArray(d?.items) ? d.items : [];
+  if (raw.length > STAKE_MAX) return null;
+  const out = [];
+  const seen = new Set();
+  for (const id of raw) {
+    if (typeof id !== 'string' || !LOADOUT_ITEM_RE.test(id) || seen.has(id)) return null;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- the link to the collections
 // A game in a worker posts to the network thread (room-worker.js RemoteCards). One made in this thread (the tests,
 // the sims, a plain `new Game()`) keeps them here: LocalCards, a CardService of its own on a store in memory - or one
@@ -208,6 +222,9 @@ export class Cards {
   }
   dirtyOwner(owner, bits) {
     for (const p of this.game.players.values()) if (p.rejoinKey === owner) this.dirty(p.id, bits);
+  }
+  loadoutsChanged(owner) {
+    this.dirtyOwner(owner, D.COLL | D.MATCH | D.TRADE);
   }
   out(p, op, data) {
     const st = p && this.ofP.get(p.id);
@@ -292,7 +309,7 @@ export class Cards {
         if (r.ok) this.changed(m, r.events);
         if (m.state.phase === 'over') this.end(m);
         else this.void(m, 'left');
-      } else if (m.phase === 'locking') this.void(m, 'left');
+      } else if (m.phase === 'locking' || m.phase === 'staking') this.void(m, 'left');
     }
     if (st?.entered) this.unuse(p.rejoinKey);
     this.ofP.delete(p.id);
@@ -343,6 +360,10 @@ export class Cards {
         return this.ready(p, d);
       case CARDOP.CONFIRM:
         return this.confirm(p);
+      case CARDOP.STAKE:
+        return this.stake(p, d);
+      case CARDOP.STAKE_CONFIRM:
+        return this.stakeConfirm(p, d);
       case CARDOP.CLOSE: {
         const t = this.tradeOf(p.id);
         if (t && t.phase === 'open') this.endTrade(t, 'cancelled');
@@ -368,7 +389,7 @@ export class Cards {
     this.asks = keep;
   }
   busy(pid) {
-    for (const m of this.matches.values()) if ((m.phase === 'live' || m.phase === 'locking') && !m.voided && m.sides.some((s) => s.pid === pid)) return true;
+    for (const m of this.matches.values()) if ((m.phase === 'staking' || m.phase === 'live' || m.phase === 'locking') && !m.voided && m.sides.some((s) => s.pid === pid)) return true;
     for (const t of this.trades.values()) if (t.sides.some((s) => s.pid === pid)) return true;
     return false;
   }
@@ -401,6 +422,11 @@ export class Cards {
   }
   reservedLoadouts(owner, except = null) {
     const r = new Set();
+    for (const m of this.matches.values()) {
+      if (m === except) continue;
+      if (!['staking', 'locking'].includes(m.phase) || m.voided) continue;
+      for (const s of m.sides) if (s.owner === owner) for (const id of s.stake || []) r.add(id);
+    }
     for (const t of this.trades.values()) {
       if (t === except) continue;
       for (const s of t.sides) if (s.owner === owner) for (const id of s.offer.loadouts || []) r.add(id);
@@ -428,6 +454,15 @@ export class Cards {
     if (!this.own.get(p.rejoinKey)?.loaded) return { error: CARDNOTE.LOADING };
     return this.spare(p.rejoinKey, bet) >= 1 ? { bet } : { error: CARDNOTE.BET };
   }
+  stakeFor(p, raw, except = null) {
+    const items = cleanStakeItems({ items: raw });
+    if (!items) return { error: CARDNOTE.LOADOUT };
+    if (!items.length) return { items };
+    if (!p.rejoinKey) return { error: CARDNOTE.NOKEY };
+    if (!this.loadoutColl(p.rejoinKey)?.loaded) return { error: CARDNOTE.LOADING };
+    for (const id of items) if (!this.hasLoadout(p.rejoinKey, id, except)) return { error: CARDNOTE.LOADOUT };
+    return { items };
+  }
 
   ask(p, d) {
     const g = this.game;
@@ -445,6 +480,7 @@ export class Cards {
     if (this.asks.filter((a) => a.from === p.id).length >= ASK_MAX || g.time - st.askT < ASK_EVERY) return this.note(p, CARDNOTE.LIMIT);
     let slot = -1;
     let bet = 0;
+    let stake = [];
     if (kind === 'match') {
       slot = d.slot ?? -1;
       const dk = this.deckFor(p, slot);
@@ -452,9 +488,12 @@ export class Cards {
       const b = this.betFor(p, d.bet);
       if (b.error) return this.note(p, b.error);
       bet = b.bet;
+      const st = this.stakeFor(p, d.stake || d.items || []);
+      if (st.error) return this.note(p, st.error);
+      stake = st.items;
     }
     st.askT = g.time;
-    this.asks.push({ from: p.id, to: q.id, kind, slot, bet, until: g.time + CARD_ASK_TTL });
+    this.asks.push({ from: p.id, to: q.id, kind, slot, bet, stake, until: g.time + CARD_ASK_TTL });
     this.dirty(p.id, D.ASKS);
     this.dirty(q.id, D.ASKS);
   }
@@ -494,21 +533,56 @@ export class Cards {
     const myBet = this.betFor(p, d.bet);
     if (myBet.error) return this.note(p, myBet.error);
     if (!!a.bet !== !!myBet.bet) return this.note(p, CARDNOTE.NOBET);
+    const myStake = this.stakeFor(p, d.stake || d.items || []);
+    if (myStake.error) return this.note(p, myStake.error);
+    const theirStake = this.stakeFor(q, a.stake || []);
+    if (theirStake.error) {
+      drop();
+      this.note(q, theirStake.error);
+      return this.note(p, CARDNOTE.GONE);
+    }
     this.dropAsks((x) => x.from === p.id || x.to === p.id || x.from === q.id || x.to === q.id);
-    this.startMatch([q, p], [theirs.deck, mine.deck], [a.bet, myBet.bet]);
+    this.startMatch([q, p], [theirs.deck, mine.deck], [a.bet, myBet.bet], [theirStake.items, myStake.items]);
   }
 
   // ---------------------------------------------------------------- matches
-  side(p, bet = 0) {
-    return { pid: p.id, owner: p.rejoinKey || '', name: p.name, bet };
+  side(p, bet = 0, stake = []) {
+    const owner = p.rejoinKey || '';
+    return { pid: p.id, owner, name: p.name, bet, stake: [...(stake || [])], stakeInfo: this.stakeView(stake || [], owner), ok: false };
   }
-  startMatch(players, decks, bets) {
+  startMatch(players, decks, bets, stakes = [[], []]) {
     const id = randomUUID();
-    const m = { id, sides: players.map((p, i) => this.side(p, bets[i])), state: null, phase: 'locking', ver: 0, seed: Math.floor(this.rng() * 0x100000000) >>> 0, decks, voided: '', reason: '' };
+    const hasStake = stakes.some((s) => s?.length);
+    const m = { id, sides: players.map((p, i) => this.side(p, bets[i], stakes[i])), state: null, phase: hasStake ? 'staking' : 'locking', ver: 0, seed: Math.floor(this.rng() * 0x100000000) >>> 0, decks, locks: null, pays: null, voided: '', reason: '' };
     this.matches.set(id, m);
     for (const s of m.sides) this.dirty(s.pid, D.MATCH);
-    if (bets[0] || bets[1]) this.xfer(`${id}:lock`, 'lock', m.sides.map((s) => [s.owner, `m:${id}`, s.bet, 1]), id);
-    else this.go(m);
+    if (hasStake) return;
+    this.lockMatch(m);
+  }
+  lockMatch(m) {
+    if (m.phase !== 'locking') m.phase = 'locking';
+    const cardMoves = m.sides.filter((s) => s.bet).map((s) => [s.owner, `m:${m.id}`, s.bet, 1]);
+    const loadoutMoves = m.sides.flatMap((s) => (s.stake || []).map((id) => [s.owner, id]));
+    m.locks = { cards: !cardMoves.length, loadouts: !loadoutMoves.length };
+    for (const s of m.sides) this.dirty(s.pid, D.MATCH);
+    if (!cardMoves.length && !loadoutMoves.length) return this.go(m);
+    if (cardMoves.length) this.xfer(`${m.id}:lock`, 'lock', cardMoves, m.id);
+    if (loadoutMoves.length) this.xfer(`${m.id}:loadout_wager_lock`, 'loadout_wager_lock', loadoutMoves, m.id);
+  }
+  finishLock(m, part) {
+    if (!m || m.phase !== 'locking') return;
+    m.locks ||= { cards: true, loadouts: true };
+    m.locks[part] = true;
+    if (!m.locks.cards || !m.locks.loadouts) return;
+    if (m.forfeitWinner === 0 || m.forfeitWinner === 1) {
+      m.phase = 'paying';
+      return this.settleMatch(m, 'pay', m.forfeitWinner);
+    }
+    if (m.voided) {
+      m.phase = 'paying';
+      return this.settleMatch(m, 'back', -1);
+    }
+    this.go(m);
   }
   // the bets are in (or there were none): it is played
   go(m) {
@@ -520,15 +594,22 @@ export class Cards {
   }
   // the match a player is playing (or whose bets are going in), or null
   matchOf(pid) {
-    for (const m of this.matches.values()) if ((m.phase === 'live' || m.phase === 'locking') && !m.voided && m.sides.some((s) => s.pid === pid)) return m;
+    for (const m of this.matches.values()) if ((m.phase === 'staking' || m.phase === 'live' || m.phase === 'locking') && !m.voided && m.sides.some((s) => s.pid === pid)) return m;
     return null;
+  }
+  stakeView(ids, owner = '') {
+    const byId = new Map((this.loadoutColl(owner)?.items || []).map((it) => [it.id, it]));
+    return (ids || []).map((id) => {
+      const it = byId.get(id);
+      return it ? { id: it.id, catalog: it.catalog } : { id, catalog: 0 };
+    });
   }
   // ...or the one they finished, still being paid out (what MATCH shows them)
   matchFor(pid) {
     let last = null;
     for (const m of this.matches.values()) {
       if (!m.sides.some((s) => s.pid === pid)) continue;
-      if ((m.phase === 'live' || m.phase === 'locking') && !m.voided) return m;
+      if ((m.phase === 'staking' || m.phase === 'live' || m.phase === 'locking') && !m.voided) return m;
       last = m;
     }
     return last;
@@ -566,31 +647,88 @@ export class Cards {
   forfeit(p) {
     const m = this.matchOf(p.id);
     if (!m) return this.note(p, CARDNOTE.NOMATCH);
-    if (m.phase === 'locking') return this.void(m, 'forfeit');
+    if (m.phase === 'staking') return this.void(m, 'forfeit');
+    if (m.phase === 'locking') {
+      const side = m.sides.findIndex((s) => s.pid === p.id);
+      m.forfeitWinner = side === 0 ? 1 : 0;
+      m.reason = 'forfeit';
+      return;
+    }
     const r = CG.applyMove(m.state, m.sides.findIndex((s) => s.pid === p.id), { t: 'forfeit' });
     if (r.ok) this.changed(m, r.events);
     if (m.state.phase === 'over') this.end(m);
+  }
+  stake(p, d) {
+    const m = this.matchOf(p.id);
+    if (!m || m.phase !== 'staking') return this.note(p, CARDNOTE.NOMATCH);
+    const side = m.sides.findIndex((s) => s.pid === p.id);
+    const st = this.stakeFor(p, d.items || d.stake || [], m);
+    if (st.error) return this.note(p, st.error);
+    m.sides[side].stake = st.items;
+    m.sides[side].stakeInfo = this.stakeView(st.items, m.sides[side].owner);
+    for (const s of m.sides) {
+      s.ok = false;
+      this.dirty(s.pid, D.MATCH);
+    }
+  }
+  stakeConfirm(p, d) {
+    const m = this.matchOf(p.id);
+    if (!m || m.phase !== 'staking') return this.note(p, CARDNOTE.NOMATCH);
+    const side = m.sides.findIndex((s) => s.pid === p.id);
+    const st = this.stakeFor(p, m.sides[side].stake || [], m);
+    if (st.error) return this.note(p, st.error);
+    m.sides[side].ok = d.on !== false;
+    for (const s of m.sides) this.dirty(s.pid, D.MATCH);
+    if (!m.sides.every((s) => s.ok)) return;
+    for (const s of m.sides) {
+      const pl = this.present(s);
+      const chk = pl ? this.stakeFor(pl, s.stake || [], m) : { error: CARDNOTE.GONE };
+      if (chk.error) return this.void(m, 'not_owned');
+    }
+    this.lockMatch(m);
   }
   // the rules ended it: the bets to the winner, or back on a draw
   end(m) {
     if (m.phase !== 'live') return;
     const res = m.state.result || { winner: -1, reason: 'lives' };
     m.reason = res.reason || '';
-    if (!m.sides[0].bet && !m.sides[1].bet) return this.finish(m, true);
     m.phase = 'paying';
-    const esc = `m:${m.id}`;
-    if (res.winner === 0 || res.winner === 1) this.xfer(`${m.id}:pay`, 'pay', m.sides.map((s) => [esc, m.sides[res.winner].owner, s.bet, 1]), m.id);
-    else this.xfer(`${m.id}:back`, 'back', m.sides.map((s) => [esc, s.owner, s.bet, 1]), m.id);
+    this.settleMatch(m, res.winner === 0 || res.winner === 1 ? 'pay' : 'back', res.winner);
   }
   // called off: nobody wins; bets back (once they are in: a lock still under way is waited for, onXfered)
   void(m, reason) {
     if (m.voided || m.phase === 'paying') return;
     m.voided = reason;
     m.reason = reason;
+    if (m.phase === 'staking') return this.finish(m, true);
     if (m.phase === 'locking') return;
-    if (!m.sides[0].bet && !m.sides[1].bet) return this.finish(m, true);
     m.phase = 'paying';
-    this.xfer(`${m.id}:back`, 'back', m.sides.map((s) => [`m:${m.id}`, s.owner, s.bet, 1]), m.id);
+    this.settleMatch(m, 'back', -1);
+  }
+  settleMatch(m, how, winner = -1) {
+    const hasCards = m.sides.some((s) => s.bet);
+    const hasLoadouts = m.sides.some((s) => (s.stake || []).length);
+    m.pays = { cards: !hasCards, loadouts: !hasLoadouts };
+    if (!hasCards && !hasLoadouts) return this.finish(m, true);
+    const esc = `m:${m.id}`;
+    if (hasCards) {
+      const moves = how === 'pay' && (winner === 0 || winner === 1) ? m.sides.map((s) => [esc, m.sides[winner].owner, s.bet, 1]) : m.sides.map((s) => [esc, s.owner, s.bet, 1]);
+      this.xfer(`${m.id}:${how}`, how, moves, m.id);
+    }
+    if (hasLoadouts) {
+      const moves = [];
+      for (let i = 0; i < 2; i++) {
+        const to = how === 'pay' && (winner === 0 || winner === 1) ? m.sides[winner].owner : m.sides[i].owner;
+        for (const item of m.sides[i].stake || []) moves.push([m.sides[i].owner, to, item]);
+      }
+      this.xfer(`${m.id}:loadout_wager_${how}`, `loadout_wager_${how}`, moves, m.id);
+    }
+  }
+  finishPay(m, part) {
+    if (!m || m.phase !== 'paying') return;
+    m.pays ||= { cards: true, loadouts: true };
+    m.pays[part] = true;
+    if (m.pays.cards && m.pays.loadouts) this.finish(m, true);
   }
   // Over and settled (paid: the bets are where the outcome sends them): the last table, then MATCH_END, to whoever of
   // the two is still here
@@ -606,11 +744,27 @@ export class Cards {
         this.out(p, CARDMSG.MATCH, this.matchMsg(m, side, st));
       }
       const outcome = m.voided ? 'void' : winner === side ? 'win' : winner === 1 - side ? 'loss' : 'draw';
-      this.out(p, CARDMSG.MATCH_END, { opp: m.sides[1 - side].pid, outcome, reason: m.reason, bet: { mine: s.bet, theirs: m.sides[1 - side].bet, paid } });
+      this.out(p, CARDMSG.MATCH_END, { opp: m.sides[1 - side].pid, outcome, reason: m.reason, bet: { mine: s.bet, theirs: m.sides[1 - side].bet, paid }, stake: this.stakeEnd(m, side, paid) });
     });
   }
   matchMsg(m, side, st) {
-    return { me: side, opp: m.sides[1 - side].pid, v: m.ver, bet: m.sides.map((s) => s.bet), view: m.state ? CG.viewFor(m.state, side) : null, events: st.events.splice(0) };
+    return { me: side, opp: m.sides[1 - side].pid, v: m.ver, bet: m.sides.map((s) => s.bet), stake: this.stakeMsg(m, side), view: m.state ? CG.viewFor(m.state, side) : null, events: st.events.splice(0) };
+  }
+  stakeMsg(m, side) {
+    const me = m.sides[side];
+    const them = m.sides[1 - side];
+    return {
+      phase: m.phase === 'staking' ? 'staking' : m.phase === 'locking' ? 'locking' : '',
+      mine: me.stakeInfo || this.stakeView(me.stake || [], me.owner),
+      theirs: them.stakeInfo || this.stakeView(them.stake || [], them.owner),
+      loadouts: this.stakeView((this.loadoutColl(me.owner)?.items || []).map((it) => it.id), me.owner),
+      ok: [!!me.ok, !!them.ok],
+    };
+  }
+  stakeEnd(m, side, paid) {
+    const mine = m.sides[side];
+    const theirs = m.sides[1 - side];
+    return { mine: mine.stakeInfo || this.stakeView(mine.stake || [], mine.owner), theirs: theirs.stakeInfo || this.stakeView(theirs.stake || [], theirs.owner), paid };
   }
 
   // ---------------------------------------------------------------- trades
@@ -921,7 +1075,7 @@ export class Cards {
     for (const x of this.pending.values()) {
       if (!x.retryAt || g.time < x.retryAt) continue;
       x.retryAt = 0;
-      if (x.kind === 'loadout_trade') this.game.loadouts?.xfer(x.id, x.moves);
+      if (x.kind.startsWith('loadout_')) this.game.loadouts?.xfer(x.id, x.kind.replace(/^loadout_/, ''), x.moves, x.ref);
       else this.link.post({ op: 'xfer', id: x.id, kind: x.kind, moves: x.moves });
     }
   }
@@ -929,7 +1083,7 @@ export class Cards {
   // ---------------------------------------------------------------- the network thread
   xfer(id, kind, moves, ref) {
     this.pending.set(id, { id, kind, moves, ref, retryAt: 0, tries: 0 });
-    if (kind === 'loadout_trade') this.game.loadouts?.xfer(id, moves);
+    if (kind.startsWith('loadout_')) this.game.loadouts?.xfer(id, kind.replace(/^loadout_/, ''), moves, ref);
     else this.link.post({ op: 'xfer', id, kind, moves });
   }
   // what it says (room-worker.js 'cards'): an owner's collection, or how a transfer went
@@ -971,33 +1125,57 @@ export class Cards {
     if (!match) return;
     if (x.kind === 'lock') {
       if (!m.ok && this.retry(x, m)) return;
-      if (m.ok && !match.voided) return this.go(match);
-      if (m.ok) {
-        // (called off while its bets went in: they come straight back)
-        match.phase = 'paying';
-        return this.xfer(`${match.id}:back`, 'back', match.sides.map((s) => [`m:${match.id}`, s.owner, s.bet, 1]), match.id);
-      }
+      if (m.ok && !match.voided) return this.finishLock(match, 'cards');
+      if (m.ok) return this.finishLock(match, 'cards'); // (called off while its bets went in: wait for every lock, then back)
       match.voided ||= m.why === 'not_owned' ? 'not_owned' : 'store';
       match.reason = match.voided;
       for (const s of match.sides) this.note(this.present(s), m.why === 'not_owned' ? CARDNOTE.BET : CARDNOTE.STORE);
       return this.finish(match, true);
     }
     // a payout, or the bets back
-    if (m.ok) return this.finish(match, true);
+    if (m.ok) return this.finishPay(match, 'cards');
     if (this.retry(x, m)) return;
     g.log(`cards: the bets of a match could not be ${x.kind === 'pay' ? 'paid out' : 'given back'} (${m.why})`);
     this.finish(match, false);
   }
   fromLoadoutStore(m) {
     const x = this.pending.get(m.id);
-    if (!x || x.kind !== 'loadout_trade' || x.retryAt) return;
+    if (!x || !x.kind.startsWith('loadout_') || x.retryAt) return;
     this.pending.delete(m.id);
-    const t = this.trades.get(x.ref);
-    if (!t) return;
-    if (m.ok) return this.finishTradeXfer(t, 'loadouts');
+    if (x.kind === 'loadout_trade') {
+      const t = this.trades.get(x.ref);
+      if (!t) return;
+      if (m.ok) return this.finishTradeXfer(t, 'loadouts');
+      if (this.retry(x, m)) return;
+      this.game.log(`trade ${t.sides[0].name} - ${t.sides[1].name}: loadout items not moved (${m.why})`);
+      return this.closeTrade(t, false, m.why === 'not_owned' ? 'not_owned' : 'store');
+    }
+    const match = this.matches.get(x.ref);
+    if (!match) return;
+    if (x.kind === 'loadout_wager_lock') {
+      if (!m.ok && this.retry(x, m)) return;
+      if (m.ok && !match.voided) return this.finishLock(match, 'loadouts');
+      if (m.ok) return this.finishLock(match, 'loadouts');
+      match.voided ||= m.why === 'not_owned' ? 'not_owned' : 'store';
+      match.reason = match.voided;
+      for (const s of match.sides) this.note(this.present(s), m.why === 'not_owned' ? CARDNOTE.LOADOUT : CARDNOTE.STORE);
+      return this.finish(match, true);
+    }
+    if (m.ok) {
+      if (x.kind === 'loadout_wager_pay') this.applyLoadoutWager(match, x.moves);
+      return this.finishPay(match, 'loadouts');
+    }
     if (this.retry(x, m)) return;
-    this.game.log(`trade ${t.sides[0].name} - ${t.sides[1].name}: loadout items not moved (${m.why})`);
-    this.closeTrade(t, false, m.why === 'not_owned' ? 'not_owned' : 'store');
+    this.game.log(`cards: the loadout wagers of a match could not be ${x.kind.endsWith('_pay') ? 'paid out' : 'given back'} (${m.why})`);
+    this.finish(match, false);
+  }
+  applyLoadoutWager(match, moves) {
+    for (const s of match.sides) {
+      const lost = moves.filter(([from, to]) => from === s.owner && to !== s.owner).map(([, , item]) => item);
+      if (!lost.length) continue;
+      const p = this.present(s);
+      if (p) this.game.loadouts?.removeRunCopies(p, lost);
+    }
   }
 
   // A transfer the store could not answer for ('store': it failed; 'busy': too many of this game's under way) is sent
@@ -1019,11 +1197,12 @@ export class Cards {
   collFor(p) {
     const key = p.rejoinKey;
     const o = key ? this.own.get(key) : null;
-    return { loaded: key ? !!o?.loaded : true, kept: !!key, found: o ? { ...o.found } : {} };
+    const lo = key ? this.loadoutColl(key) : null;
+    return { loaded: key ? !!o?.loaded : true, kept: !!key, found: o ? { ...o.found } : {}, loadouts: lo?.loaded ? this.stakeView(lo.items.map((it) => it.id), key) : [] };
   }
   asksFor(p) {
     const g = this.game;
-    return this.asks.filter((a) => a.from === p.id || a.to === p.id).map((a) => ({ from: a.from, to: a.to, kind: a.kind, bet: a.bet, left: Math.max(0, Math.ceil(a.until - g.time)) }));
+    return this.asks.filter((a) => a.from === p.id || a.to === p.id).map((a) => ({ from: a.from, to: a.to, kind: a.kind, bet: a.bet, stake: this.stakeView(a.stake || [], p.rejoinKey), left: Math.max(0, Math.ceil(a.until - g.time)) }));
   }
   write(conn, op, data) {
     const w = this.cw.reset();
@@ -1088,7 +1267,7 @@ export class Cards {
     if (escrows.length) this.link.post({ op: 'escrows', ids: escrows });
     for (const x of this.pending.values())
       if (!x.retryAt) {
-        if (x.kind === 'loadout_trade') this.game.loadouts?.xfer(x.id, x.moves);
+        if (x.kind.startsWith('loadout_')) this.game.loadouts?.xfer(x.id, x.kind.replace(/^loadout_/, ''), x.moves, x.ref);
         else this.link.post({ op: 'xfer', id: x.id, kind: x.kind, moves: x.moves });
       }
   }
