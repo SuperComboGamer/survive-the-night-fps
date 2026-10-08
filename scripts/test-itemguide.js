@@ -127,7 +127,7 @@ expected.get(ITEM.SEALED_PACK).set('bosses', BOSS_PACK_CHANCE);
   for (const type of STRUCT_ORDER) for (const k in STRUCT_DEFS[type].cost) asked.add(+k);
   const silent = [...asked].filter((item) => !foundIn(item, 0));
   check('every ingredient of a recipe or a structure has a source line', asked.size > 10 && silent.length === 0, silent.map(nameOf).join(', ') || `${asked.size} ingredients`);
-  const unmade = RECIPES.filter((r) => !foundIn(r.out, ALL)).map((r) => nameOf(r.out));
+  const unmade = RECIPES.filter((r) => !r.hide && !foundIn(r.out, ALL)).map((r) => nameOf(r.out));
   check('...and so has everything a recipe makes', unmade.length === 0, unmade.join(', '));
   const quiet = [...SUPPLIES, ...SCHEMATICS, ITEM.WALKIE];
   check('what no table yields says nothing (car supplies, schematics, the walkie-talkie)', quiet.every((item) => foundIn(item, ALL) === '' && sourcesOf(item).length === 0));
@@ -153,7 +153,7 @@ expected.get(ITEM.SEALED_PACK).set('bosses', BOSS_PACK_CHANCE);
     const total = Object.values(cost).reduce((a, b) => a + b, 0);
     for (const k in cost) users.get(+k).push({ name, schem: schem || 0, share: cost[k] / total });
   };
-  for (const r of RECIPES) use(nameOf(r.out), r.cost, r.schem);
+  for (const r of RECIPES) if (!r.hide) use(nameOf(r.out), r.cost, r.schem);
   for (const type of STRUCT_ORDER) use(STRUCT_DEFS[type].name, STRUCT_DEFS[type].cost, STRUCT_DEFS[type].schem);
   for (const f of FIXTURE_USES) use(f.name, f.cost); // (what is spent at a fixture: the Relay Station's radio)
   // (what a structure burns once built is a use of that fuel: the generator's)

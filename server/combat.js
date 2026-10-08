@@ -26,7 +26,7 @@ import {
 } from '../shared/defs.js';
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
-import { perkMods } from '../shared/progress.js';
+import { playerMods } from './loadouts.js';
 import { NK_MOVES, NK } from '../shared/nunchaku.js';
 import { COL_VEHICLE } from '../shared/vehicles.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
@@ -141,7 +141,7 @@ export class Combat {
     if (def.rocket) return this.launch(p, ev, def);
     if (def.skyflare) return this.skyflare(p, ev);
     const t = this.rewindTime(p);
-    const deadeye = perkMods(p.perks).headshot; // (on the dead only: a turned player is not what the perk is for)
+    const deadeye = playerMods(p).headshot; // (on the dead only: a turned player is not what the perk is for)
     let hitFlags = 0;
     const tmp = { x: 0, y: 0, z: 0 };
     for (let i = 0; i < n; i++) {
@@ -452,8 +452,8 @@ export class Combat {
       if (!this.meleeClear(p, c, ox, oy, oz)) continue;
       n++;
       let dmg = claws ? CLAWS.damage : mv ? mv.damage * (s.exhausted ? NK.tired : 1) : heavy ? def.altDamage : def.damage;
-      if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : perkMods(p.perks).headshot);
-      if (!c.isPlayer && !claws) dmg *= perkMods(p.perks).melee;
+      if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : playerMods(p).headshot);
+      if (!c.isPlayer && !claws) dmg *= playerMods(p).melee;
       hitAny = true;
       g.impact(c.e.lit ? IMPACT.DIRT : IMPACT.BLOOD, c.x, c.y, c.z, -fx, 0, -fz);
       let killed;
@@ -624,7 +624,8 @@ export class Combat {
           g.dropItem(item, n, z.x, z.y, z.z, { spread: 2 + g.rng() * 2, life: 400 });
         }
         g.cards?.bossDrop(z); // (and maybe a sealed pack of Dead Hand cards: its own stream, server/cards.js)
-      } else if (g.rng() < z.def.loot * (attacker && attacker.kind === ENT.PLAYER ? perkMods(attacker.perks).drops : 1)) {
+        g.loadouts?.bossDrop(z, attacker && attacker.kind === ENT.PLAYER ? attacker : null);
+      } else if (g.rng() < z.def.loot * (attacker && attacker.kind === ENT.PLAYER ? playerMods(attacker).drops : 1)) {
         const [item, n] = g.rollTable(z.def.common ? ZOMBIE_LOOT : SPECIAL_LOOT);
         g.dropItem(item, n, z.x, z.y, z.z, { spread: 0.5, life: 150 });
       }

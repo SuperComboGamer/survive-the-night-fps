@@ -115,7 +115,7 @@ import {
   salvageOf,
 } from '../shared/defs.js';
 import { C2S, S2C, SNAP, SELF, ACT, SALVAGE_FROM, WORN, WORN_DO, UNDO_NO, ENT, HOLD, CAR_ID, REJECT_REASON, LEFT_CODE, CHATF, PLF, PROGF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, readInput, writeBoard, qpos, dqpos, usePos, qangle8, qangle16, dqangle16, dqpitch } from '../shared/protocol.js';
-import { XP, XPS, XP_SRC, levelOf, perkMods, perkMask } from '../shared/progress.js';
+import { XP, XPS, XP_SRC, levelOf, perkMask } from '../shared/progress.js';
 import { worldFor } from '../shared/worlds.js';
 import { WORLD, nightRank, ARRIVAL_DAY, MAINLAND_DAY_MORE, CROSSING, TAKEOFF_TIME, RUNWAY, BRIDGEHEAD, PLANE_REACH } from '../shared/acts.js';
 import { fellTree, regrowTrees } from '../shared/felling.js';
@@ -152,6 +152,7 @@ import { MatchTracker } from './analytics.js';
 import { AchievementTracker } from './achievements.js';
 import { BestiaryTracker } from './bestiary.js';
 import { Cards } from './cards.js';
+import { Loadouts, clearLoadoutRun, isLoadoutArmor, isLoadoutBackpack, isLoadoutStack, isLoadoutWeapon, playerMods } from './loadouts.js';
 import { checkEnvelope, worldPrint, sameWorld, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
 import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
@@ -454,6 +455,7 @@ export class Game {
     // Dead Hand, the card game: matches, trades, bets and packs (cards.js). opts.cards: where the collections are kept
     // (the network thread: room-worker.js RemoteCards); none, in this thread (LocalCards)
     this.cards = new Cards(this, opts.cards);
+    this.loadouts = new Loadouts(this, opts.loadouts);
     if (restore) this.load(restore.game);
   }
 
@@ -656,6 +658,7 @@ export class Game {
     this.tellLooks(p);
     this.bestiary.join(p);
     this.cards.join(p); // (their collection, decks, asks and a match or trade of theirs: sent again)
+    this.loadouts.join(p);
     this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated while you played: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
     if (!moved) this.systemChat(`${p.name} reconnected.`);
     this.playersDirty = true;
@@ -859,6 +862,7 @@ export class Game {
     this.ach.join(p);
     this.bestiary.join(p);
     this.cards.join(p);
+    this.loadouts.join(p);
     // what the team has used up before they came (a run this join started has cleared it: NEW_GAME says so)
     const spent = [];
     for (const [col, g] of this.gather) if (g.left <= 0) spent.push(col);
@@ -909,6 +913,13 @@ export class Game {
       zkills: 0,
       deaths: 0,
       rec: null, // their record on the leaderboard (stats.js); null for a player who joined without an id
+      loadoutEntered: false,
+      loadoutApplied: false,
+      loadoutItems: [],
+      loadoutMods: null,
+      loadoutWeapons: [null, null, null, null, null],
+      loadoutArmor: null,
+      loadoutBackpack: null,
       // experience and perks (shared/progress.js, setProgress). Their XP is xpBase + this run's, by source
       xpBase: 0, // on their record before this run, once the stats have said (xpLoaded)
       xpRun: new Array(XP_SRC.length).fill(0),
@@ -1024,7 +1035,7 @@ export class Game {
     p.state.perks = p.perks;
     this.playersDirty = true; // (the player list carries everyone's perks, for their profile)
     if (!p.alive || p.zombie) return;
-    const max = PLAYER_MAX_HP + perkMods(p.perks).hp;
+    const max = PLAYER_MAX_HP + playerMods(p).hp;
     if (!p.downed) p.hp = Math.max(1, Math.min(max, p.hp + Math.max(0, max - p.maxHp)));
     p.maxHp = max;
   }
@@ -1040,7 +1051,7 @@ export class Game {
   // leaderboard's stats
   award(p, src, n) {
     if (!p) return;
-    n = Math.round(n * perkMods(p.perks).xp * this.diff.xp);
+    n = Math.round(n * playerMods(p).xp * this.diff.xp);
     if (n <= 0) return;
     const was = this.levelOf(p);
     p.xpRun[src] += n;
@@ -1052,7 +1063,7 @@ export class Game {
   // for one that had been stuck for a while (z.wedgeT) - the dead piled up at a wall they will never get round
   killXp(p, z, headshot) {
     if (p.zombie) return;
-    const pm = perkMods(p.perks);
+    const pm = playerMods(p);
     if (pm.killStamina && p.alive && !p.downed) p.state.stamina = Math.min(STAMINA_MAX, p.state.stamina + pm.killStamina);
     if (pm.killHeal && p.alive && !p.downed) p.hp = Math.min(p.maxHp, p.hp + pm.killHeal);
     if (z.wedgeT > WEDGED_FOR) return;
@@ -1143,6 +1154,7 @@ export class Game {
     this.ach.leave(p);
     this.releaseHolds(p);
     this.cards.leave(p); // (a match they were playing is lost, asks and a trade being haggled over called off)
+    this.loadouts.leave(p);
     this.parkKit(p); // (they take their starting kit along: only what they found beyond it is dropped)
     this.dropAll(p);
     this.players.delete(p.id);
@@ -1293,6 +1305,7 @@ export class Game {
       p.perksNext = -1;
       p.progDirty = true;
       p.waypoint = null; // (it pointed into the old valley; the client drops its own on NEW_GAME)
+      clearLoadoutRun(p);
       this.spawnHuman(p);
     }
     this.notify(NOTIFY.NEW_GAME, this.day);
@@ -1675,7 +1688,7 @@ export class Game {
     this.putAtStart(s);
     if (beside) Object.assign(s, this.pickJoinSpawn(p)); // (x, y, z, yaw - or nothing: the car it is)
     s.perks = p.perks;
-    p.maxHp = PLAYER_MAX_HP + perkMods(p.perks).hp;
+    p.maxHp = PLAYER_MAX_HP + playerMods(p).hp;
     p.hp = p.maxHp;
     p.armor = 0;
     p.armorMax = 0;
@@ -1694,9 +1707,13 @@ export class Game {
     p.hold = null;
     p.inv = createInventory();
     p.splitKeep.clear();
+    p.loadoutWeapons = [null, null, null, null, null];
+    p.loadoutArmor = null;
+    p.loadoutBackpack = null;
     for (const [item, n] of kit.items) addItem(p.inv, item, n);
     s.ammo = AMMO_ITEMS.map((_, i) => (i === AMMO.P9 ? kit.ammo : 0));
     p.kit = kit; // what they were handed: it goes with them if they leave the game (parkKit)
+    this.loadouts.apply(p);
     p.invDirty = true;
     this.fillHistory(p);
     this.playersDirty = true;
@@ -2197,19 +2214,20 @@ export class Game {
     const z = s.z;
     for (let i = 0; i < p.inv.length; i++) {
       const it = p.inv[i];
-      if (it) this.dropItem(it.item, it.count, x, y, z, { spread: 1.5 + this.rng() * 1.5, mag: it.mag, noAuto: 2 });
+      if (it && !isLoadoutStack(it)) this.dropItem(it.item, it.count, x, y, z, { spread: 1.5 + this.rng() * 1.5, mag: it.mag, noAuto: 2 });
       p.inv[i] = null;
     }
     if (!p.zombie) {
       for (let slot = 0; slot < 5; slot++) {
         const wpn = s.weapons[slot];
         if (!wpn || slot === SLOT_THROW) continue;
+        if (isLoadoutWeapon(p, slot)) continue;
         this.dropItem(wpn, 1, x, y, z, { spread: 1.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 });
       }
       for (let i = 0; i < AMMO_ITEMS.length; i++) if (s.ammo[i] > 0) this.dropItem(AMMO_ITEMS[i], s.ammo[i], x, y, z, { spread: 1.5, noAuto: 2 });
-      if (p.armorItem && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
+      if (p.armorItem && !isLoadoutArmor(p) && p.armor > p.armorMax * 0.3) this.dropItem(p.armorItem, 1, x, y, z);
       // the backpack goes down with what was in it (its pockets were emptied with the rest above)
-      if (p.backpackItem) this.dropItem(p.backpackItem, 1, x, y, z, { spread: 1.2 });
+      if (p.backpackItem && !isLoadoutBackpack(p)) this.dropItem(p.backpackItem, 1, x, y, z, { spread: 1.2 });
     }
     p.backpackItem = 0;
     s.ammo = AMMO_ITEMS.map(() => 0);
@@ -2518,7 +2536,7 @@ export class Game {
         const idx = r.u8();
         const cnt = r.u16();
         const it = p.inv[idx];
-        if (!it) return;
+        if (!it || isLoadoutStack(it)) return;
         this.dropper = p.id; // the stack remembers who put it down, so it does not hop back into their backpack
         const n = cnt === 0 ? it.count : Math.min(cnt, it.count);
         const ex = s.x - Math.sin(s.yaw) * 1.1;
@@ -2537,7 +2555,7 @@ export class Game {
         const slot = r.u8();
         if (slot > 4 || slot === SLOT_THROW) return;
         const wpn = s.weapons[slot];
-        if (!wpn) return;
+        if (!wpn || isLoadoutWeapon(p, slot)) return;
         const ex = s.x - Math.sin(s.yaw) * 1.1;
         const ez = s.z - Math.cos(s.yaw) * 1.1;
         const dropped = this.dropItem(wpn, 1, ex, s.y, ez, { spread: 0.2, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, from: s });
@@ -2628,7 +2646,7 @@ export class Game {
         // part of a stack into a slot of its own: to drop for a teammate, or to keep apart
         const it = p.inv[r.u8()];
         const n = r.u16();
-        if (!it || n < 1 || n >= it.count) return;
+        if (!it || isLoadoutStack(it) || n < 1 || n >= it.count) return;
         const to = freeSlot(p.inv, invCap(p));
         if (to < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
         it.count -= n;
@@ -2883,13 +2901,13 @@ export class Game {
       }
       // (a car's boot is forced: longer, by what is in the hand - shared/trunk.js)
       const pry = this.pryOf(p, e);
-      p.hold = { kind: HOLD.SEARCH, target: id, t: 0, need: (pry ? pryTime(pry.weapon) : SEARCH_TIME) * perkMods(p.perks).search, pry };
+      p.hold = { kind: HOLD.SEARCH, target: id, t: 0, need: (pry ? pryTime(pry.weapon) : SEARCH_TIME) * playerMods(p).search, pry };
       this.sound(SOUND.SEARCH, e.x, e.y, e.z, 18);
       return;
     }
     if (e.kind === ENT.PLAYER && e !== p && e.alive && e.downed && !e.zombie) {
       if (d > this.reachOf(e)) return;
-      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME * this.diff.revive * perkMods(p.perks).revive };
+      p.hold = { kind: HOLD.REVIVE, target: id, t: 0, need: REVIVE_TIME * this.diff.revive * playerMods(p).revive };
       e.revivedBy = p.id;
     }
   }
@@ -2972,7 +2990,7 @@ export class Game {
     const table = (def.table && CONT_TABLES[def.table]) || LOOT_TABLES[c.zone] || LOOT_TABLES[ZONE.ROADSIDE];
     let rolls = def.rolls[0] + Math.floor(this.rng() * (def.rolls[1] - def.rolls[0] + 1));
     if (this.diff.loot > 1) rolls++; // Ember: the first cupboard still pays even if you do not know what you are looking for
-    const extra = perkMods(p.perks).extraFind;
+    const extra = playerMods(p).extraFind;
     if (extra && this.rng() < extra) rolls++;
     for (let i = 0; i < rolls; i++) {
       const [item, n] = this.rollTable(table);
@@ -2982,6 +3000,7 @@ export class Game {
       if (ammo) this.giveOrDrop(p, ammo[0], ammo[1]);
     }
     for (const [item, n] of def.also || []) this.giveOrDrop(p, item, n);
+    if (c.ctype === CONT.STRONGBOX) this.loadouts.containerDrop(p, c.ctype);
     if (c.schem) {
       this.unlockSchematic(c.schem, p);
       this.pickupEvent(p, c.schem, 1);
@@ -3093,7 +3112,7 @@ export class Game {
     }
     g.left--;
     const r = this.rng;
-    const more = perkMods(p.perks).gather;
+    const more = playerMods(p).gather;
     if (more && r() < more) this.giveOrDrop(p, tree ? ITEM.STICK : ITEM.SCRAP, 1);
     if (tree) {
       const dead = col.tv === 3 || col.tv === 4 || col.tv === 6;
@@ -3378,12 +3397,12 @@ export class Game {
     let mag = 0; // rounds in a gun's magazine: they go back into the pack
     if (from < INVENTORY_MAX) {
       const it = from < invCap(p) ? p.inv[from] : null;
-      if (!it || !SALVAGE[it.item] || n < 1) return;
+      if (!it || isLoadoutStack(it) || !SALVAGE[it.item] || n < 1) return;
       item = it.item;
       mag = it.mag || 0; // (a weapon is a stack of one)
       n = takeFrom(p.inv, from, n); // (what is left of that item consolidated)
     } else if (from === SALVAGE_FROM.ARMOR) {
-      if (!SALVAGE[p.armorItem]) return;
+      if (isLoadoutArmor(p) || !SALVAGE[p.armorItem]) return;
       item = p.armorItem;
       n = 1;
       p.armorItem = 0;
@@ -3392,7 +3411,7 @@ export class Game {
     } else {
       // (the throwable slot only points at a stack in the backpack: that is torn down from there)
       const slot = from - SALVAGE_FROM.WEAPON;
-      if (slot < 0 || slot > SLOT_BUILD || slot === SLOT_THROW || !SALVAGE[s.weapons[slot]]) return;
+      if (slot < 0 || slot > SLOT_BUILD || slot === SLOT_THROW || isLoadoutWeapon(p, slot) || !SALVAGE[s.weapons[slot]]) return;
       item = s.weapons[slot];
       n = 1;
       mag = slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0;
@@ -3422,7 +3441,8 @@ export class Game {
     const i = to < cap && !there ? to : freeSlot(p.inv, cap);
     if (i < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
     // (it keeps its magazine, as a weapon stored in the backpack does)
-    p.inv[i] = { item: wpn, count: 1, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0 };
+    p.inv[i] = { item: wpn, count: 1, mag: slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0, ...(p.loadoutWeapons[slot] ? { loadout: p.loadoutWeapons[slot] } : {}) };
+    p.loadoutWeapons[slot] = null;
     s.weapons[slot] = 0;
     if (slot === SLOT_PRIMARY) s.mags[0] = 0;
     if (slot === SLOT_PISTOL) s.mags[1] = 0;
@@ -3445,7 +3465,7 @@ export class Game {
       // client's next command on, which is where its prediction has them go: it sends every command it has made
       // before it asks (Game.useConsumable), so that is the one after the newest that has come in. Those still
       // waiting to be run are run without it (processInputs); with none waiting, that is now.
-      p.useItem = { item: it.item, t: 0, total: c.time * perkMods(p.perks).useTime, from: (p.recvSeq + 1) & 0xffff, idx };
+      p.useItem = { item: it.item, t: 0, total: c.time * playerMods(p).useTime, from: (p.recvSeq + 1) & 0xffff, idx };
       if (!p.cmdQueue.length) {
         s.using = 1;
         p.shadow.using = 1; // (the client did the same after the same command: nothing to rebase it on)
@@ -3458,17 +3478,19 @@ export class Game {
     if (def.cat === 'armor') {
       // the vest taken off goes into the backpack with the points it has left (`mag`, as a stored weapon keeps its
       // magazine), whatever its condition: it is neither made new nor thrown away. No `mag` is a new vest
-      p.inv[idx] = p.armorItem && p.armor > 0 ? { item: p.armorItem, count: 1, mag: p.armor } : null;
+      p.inv[idx] = p.armorItem && p.armor > 0 ? { item: p.armorItem, count: 1, mag: p.armor, ...(p.loadoutArmor ? { loadout: p.loadoutArmor } : {}) } : null;
       p.armorItem = it.item;
       p.armor = it.mag || def.armor;
       p.armorMax = def.armor;
+      p.loadoutArmor = it.loadout || null;
       p.invDirty = true;
       return;
     }
     if (def.cat === 'pack') {
       // on it goes; one worn till now takes its place in the grid (one for another: the capacity stays as it was)
-      p.inv[idx] = p.backpackItem ? { item: p.backpackItem, count: 1 } : null;
+      p.inv[idx] = p.backpackItem ? { item: p.backpackItem, count: 1, ...(p.loadoutBackpack ? { loadout: p.loadoutBackpack } : {}) } : null;
       p.backpackItem = it.item;
+      p.loadoutBackpack = it.loadout || null;
       p.invDirty = true;
       return;
     }
@@ -3476,10 +3498,12 @@ export class Game {
       const slot = WEAPONS[it.item].slot;
       const cur = s.weapons[slot];
       const curMag = slot === SLOT_PRIMARY ? s.mags[0] : slot === SLOT_PISTOL ? s.mags[1] : 0;
+      const curLoadout = p.loadoutWeapons[slot] || null;
       s.weapons[slot] = it.item;
+      p.loadoutWeapons[slot] = it.loadout || null;
       if (slot === SLOT_PRIMARY) s.mags[0] = it.mag || 0;
       if (slot === SLOT_PISTOL) s.mags[1] = it.mag || 0;
-      p.inv[idx] = cur ? { item: cur, count: 1, mag: curMag } : null;
+      p.inv[idx] = cur ? { item: cur, count: 1, mag: curMag, ...(curLoadout ? { loadout: curLoadout } : {}) } : null;
       s.slot = slot;
       s.switchT = 0.42;
       s.reloadT = 0;
@@ -3504,21 +3528,25 @@ export class Game {
     if (pack && p.inv.some((x, i) => x && i >= INVENTORY_SIZE)) return this.notify(NOTIFY.POCKETS, 0, p.id);
     const s = p.state;
     const mag = pack ? 0 : Math.ceil(p.armor); // (a vest keeps its points, as one taken off for another does)
+    const marker = pack ? p.loadoutBackpack : p.loadoutArmor;
     if (what === WORN_DO.OFF) {
       // into a slot it can stay in: with the backpack off, one past INVENTORY_SIZE is a locked one
       const i = freeSlot(p.inv, pack ? INVENTORY_SIZE : invCap(p));
       if (i < 0) return this.notify(NOTIFY.INVENTORY_FULL, 0, p.id);
-      p.inv[i] = pack ? { item, count: 1 } : { item, count: 1, mag };
+      p.inv[i] = pack ? { item, count: 1, ...(marker ? { loadout: marker } : {}) } : { item, count: 1, mag, ...(marker ? { loadout: marker } : {}) };
     } else if (what === WORN_DO.DROP) {
+      if (marker) return;
       const ex = s.x - Math.sin(s.yaw) * 1.1;
       const ez = s.z - Math.cos(s.yaw) * 1.1;
       // (no entity id left for it on the ground: it stays on)
       const dropped = this.dropItem(item, 1, ex, s.y, ez, { spread: 0.2, mag: mag || undefined, from: s });
       if (!dropped) return;
       p.lastDrop = { e: dropped, t: this.time };
-    } else if (what !== WORN_DO.SALVAGE || !salvageOf(item)) return;
+    } else if (what !== WORN_DO.SALVAGE || marker || !salvageOf(item)) return;
     if (pack) p.backpackItem = 0;
     else p.armorItem = p.armor = p.armorMax = 0;
+    if (pack) p.loadoutBackpack = null;
+    else p.loadoutArmor = null;
     // (taken off before what it gives back is handed over: none of it may land in pockets that are gone)
     if (what === WORN_DO.SALVAGE) {
       const back = salvageOf(item);
@@ -3764,7 +3792,7 @@ export class Game {
     if (this.phase !== PHASE.DAY && this.phase !== PHASE.NIGHT) return;
     // The dead, a fall, the lake. Not a player's own bomb: that should do what the player threw it to do.
     if (!p.zombie && src && (src.kind === KILLER.ZOMBIE || src.kind === KILLER.WORLD)) amount *= this.diff.hurt;
-    if (!p.zombie) amount *= perkMods(p.perks).hurt;
+    if (!p.zombie) amount *= playerMods(p).hurt;
     // in a vehicle (vehicles.js): a car takes what the dead meant for who is in it, while it still has its glass
     if (!p.zombie && src && src.kind === KILLER.ZOMBIE && (p.state.drive || p.state.pass) && !((amount = this.vehicles.shield(p, amount)) > 0)) return;
     if (p.downed) {
@@ -3792,7 +3820,7 @@ export class Game {
     p.lastDamageT = this.time;
     p.lastSrc = src;
     // Second Chance (a keystone perk): once a night the blow that would have put them down leaves them standing
-    if (p.hp <= 0 && !p.zombie && !p.lastChance && perkMods(p.perks).secondChance) {
+    if (p.hp <= 0 && !p.zombie && !p.lastChance && playerMods(p).secondChance) {
       p.lastChance = true;
       p.hp = 1;
       this.sendChat(p, 0, CHATF.SYSTEM, 'Second Chance: you are still standing. Get clear.');
@@ -3845,9 +3873,9 @@ export class Game {
     this.ach.revive(p, by);
     p.downed = false;
     p.state.downed = 0;
-    p.hp = Math.min(p.maxHp, hp + (by ? perkMods(by.perks).reviveHp : 0));
-    if (by && by !== p && ++by.nightRevives <= XP.revivesFull) this.award(by, XPS.revives, XP.revive * perkMods(by.perks).reviveXp);
-    if (by && by !== p && by.alive && !by.downed && !by.zombie) by.hp = Math.min(by.maxHp, by.hp + perkMods(by.perks).reviveSelf);
+    p.hp = Math.min(p.maxHp, hp + (by ? playerMods(by).reviveHp : 0));
+    if (by && by !== p && ++by.nightRevives <= XP.revivesFull) this.award(by, XPS.revives, XP.revive * playerMods(by).reviveXp);
+    if (by && by !== p && by.alive && !by.downed && !by.zombie) by.hp = Math.min(by.maxHp, by.hp + playerMods(by).reviveSelf);
     p.bleed = 0;
     p.revivedBy = 0;
     p.lastDamageT = this.time;
@@ -4816,7 +4844,7 @@ export class Game {
         }
       } else p.drownT = 0;
       if (p.downed) {
-        if (!p.revivedBy && !this.safe(p)) p.bleed -= dt * perkMods(p.perks).bleed; // (a held player's clock stops)
+        if (!p.revivedBy && !this.safe(p)) p.bleed -= dt * playerMods(p).bleed; // (a held player's clock stops)
         if (p.bleed <= 0) this.killPlayer(p, p.lastSrc || { kind: KILLER.WORLD });
         if (p.revivedBy) {
           const rv = this.players.get(p.revivedBy);

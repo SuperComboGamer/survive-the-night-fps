@@ -90,6 +90,16 @@ class RemoteCards {
   }
 }
 
+// ---------------------------------------------------------------- the loadout collections, kept by the network thread
+class RemoteLoadouts {
+  attach(loadouts) {
+    this.loadouts = loadouts;
+  }
+  post(m) {
+    post({ t: 'loadout', ...m });
+  }
+}
+
 // ---------------------------------------------------------------- the leaderboard, kept by the network thread
 // What Game asks of PlayerStats (stats.js), posted on. A record here is a token the other side files the real one
 // under. The id is a bearer secret: it goes to the network thread for PlayerStats.enter and nowhere else.
@@ -137,6 +147,7 @@ try {
     achieve: opts.achievements ? (m) => post({ t: 'ach', ...m }) : undefined,
     bestiary: opts.bestiary ? (m) => post({ t: 'seen', ...m }) : undefined,
     cards: new RemoteCards(),
+    loadouts: new RemoteLoadouts(),
     log: (...a) => console.log(tag, ...a),
   });
 } catch (err) {
@@ -238,6 +249,9 @@ function onMessage(m) {
       break;
     case 'cards':
       game.cards.fromStore(m);
+      break;
+    case 'loadout':
+      game.loadouts.fromStore(m);
       break;
     case 'admin': {
       // (whatever goes wrong in it is the panel's answer, never this game's end)
