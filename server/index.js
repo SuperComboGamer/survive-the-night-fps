@@ -46,6 +46,7 @@ import { clientOf } from './netaddr.js';
 import { REJECT_REASON, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
 import { LOADOUT_CATALOG, LOADOUT_SLOTS, cleanLoadoutSlots } from '../shared/loadout.js';
+import { AUCTION, SKULLS, SKULL_EARN } from '../shared/economy.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PORT = +(process.env.PORT || DEFAULT_PORT);
@@ -154,7 +155,9 @@ cluster?.on('loadout', (m) => loadouts.reload(m.owners));
 // bets left in escrow by games that never settled them (usercards.js ESCROW_MAX_AGE) go back, now and every hour
 if (db) {
   cards.sweep();
+  loadouts.sweep();
   setInterval(() => cards.sweep(), 3600_000).unref();
+  setInterval(() => loadouts.sweep(), 3600_000).unref();
 }
 
 let stopping = false;
@@ -583,14 +586,72 @@ const loadoutOwner = async (ctx, body = null) => {
 };
 route('get', '/api/loadout', async (ctx) => {
   const owner = await loadoutOwner(ctx);
-  return { body: { catalog: LOADOUT_CATALOG, slotCount: LOADOUT_SLOTS, ...(await loadouts.collection(owner)) } };
+  return { body: { catalog: LOADOUT_CATALOG, slotCount: LOADOUT_SLOTS, currency: SKULLS, ...(await loadouts.profile(owner)) } };
 });
 const saveLoadout = async (ctx, b) => {
   const owner = await loadoutOwner(ctx, b);
-  return { body: { catalog: LOADOUT_CATALOG, slotCount: LOADOUT_SLOTS, ...(await loadouts.equip(owner, cleanLoadoutSlots(b.slots))) } };
+  const got = await loadouts.equip(owner, cleanLoadoutSlots(b.slots));
+  return { body: { catalog: LOADOUT_CATALOG, slotCount: LOADOUT_SLOTS, currency: SKULLS, balance: await loadouts.balance(owner), ...got } };
 };
 route('put', '/api/loadout', saveLoadout, { body: true, max: 4096 });
 route('post', '/api/loadout', saveLoadout, { body: true, max: 4096 });
+
+const marketError = (err) => {
+  if (err instanceof HttpError) throw err;
+  const msg = err?.message || 'That auction action did not work.';
+  const code = err?.code || '';
+  if (code === 'guest_market') throw new HttpError(401, msg);
+  if (code === 'bad_listing' || code === 'bad_price') throw new HttpError(400, msg);
+  if (code === 'insufficient_skulls' || code === 'not_owned' || code === 'listed' || code === 'not_listing_owner' || code === 'sold' || code === 'expired' || code === 'own_listing') throw new HttpError(409, msg);
+  throw err;
+};
+const loadoutAccountOwner = async (ctx) => {
+  const u = auth ? await auth.need(ctx) : noAccounts();
+  return `a:${u.id}`;
+};
+route('get', '/api/loadout/auction', async (ctx) => {
+  const owner = await loadoutOwner(ctx);
+  return { body: { catalog: LOADOUT_CATALOG, currency: SKULLS, auction: AUCTION, earn: SKULL_EARN, ...(await loadouts.auction(owner)) } };
+});
+route(
+  'post',
+  '/api/loadout/auction/list',
+  async (ctx, b) => {
+    try {
+      const owner = await loadoutAccountOwner(ctx);
+      return { status: 201, body: { listing: await loadouts.listItem(owner, b.itemId, b.price), ...(await loadouts.auction(owner)) } };
+    } catch (err) {
+      marketError(err);
+    }
+  },
+  { body: true, max: 2048 }
+);
+route(
+  'post',
+  '/api/loadout/auction/buy',
+  async (ctx, b) => {
+    try {
+      const owner = await loadoutAccountOwner(ctx);
+      return { body: { result: await loadouts.buyListing(owner, b.listingId), ...(await loadouts.auction(owner)) } };
+    } catch (err) {
+      marketError(err);
+    }
+  },
+  { body: true, max: 2048 }
+);
+route(
+  'post',
+  '/api/loadout/auction/cancel',
+  async (ctx, b) => {
+    try {
+      const owner = await loadoutAccountOwner(ctx);
+      return { body: { listing: await loadouts.cancelListing(owner, b.listingId), ...(await loadouts.auction(owner)) } };
+    } catch (err) {
+      marketError(err);
+    }
+  },
+  { body: true, max: 2048 }
+);
 
 // The stats page (/stats, publicstats.js): the whole game's numbers for anyone, ?range=7d|30d|90d|all. Without a
 // database: { enabled: false, live } - only what is being played now.
