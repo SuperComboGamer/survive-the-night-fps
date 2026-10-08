@@ -14,7 +14,7 @@ import { randomLook, lookKey, lookCode, fromLookCode, mulberry } from '../../sha
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { glyph } from './icons.js';
 import { Panel } from './games.js';
-import { customs, getCustom, MAX_CUSTOMS, takeNote } from './customs.js';
+import { customs, getCustom, MAX_CUSTOMS, takeNote, onCustomsChange } from './customs.js';
 import { getStage, looksModule, releaseStage } from './stage.js';
 import { CreatorPanel } from './creator.js';
 
@@ -224,6 +224,13 @@ export class CharacterPanel extends Panel {
     this.fillMine();
     this.shown = storedChoice();
     this.raf = 0;
+    // (merged with the account's: survivors made in another browser come in, ones deleted there go)
+    onCustomsChange((why) => {
+      if (why !== 'sync') return;
+      this.fillMine();
+      if (!this.root.hidden) this.sync();
+      this.card.sync();
+    });
   }
 
   cell(parent, v, label, role, cls = '') {

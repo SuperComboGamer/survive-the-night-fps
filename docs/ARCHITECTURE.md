@@ -1679,9 +1679,17 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
     (`lookCode`) and one model key (`lookKey`: `'a:<code>'`). `fromNames` reads a kept look against today's
     wardrobe: a part or field since removed falls back to the default (else the first option), and the rules run
     again.
-  - *Kept in the browser* (`client/ui/customs.js`): `localStorage['stn.customs']`, by name; a look repaired on reading
-    is saved at once and the card says so once. `stn.character` is then also `stranger` or `c:<id>`. The name a
-    player gives one stays in the browser.
+  - *Kept in the browser, and on the account* (`client/ui/customs.js`, `shared/customs.js`):
+    `localStorage['stn.customs']`, `{ v: 2, list: [{ id, name, fields, made, updatedAt }], gone: [{ id, at }] }`, the
+    look by name; a look repaired on reading is saved at once and the card says so once. The browser is asked to keep
+    its storage (`navigator.storage.persist`) the first time one is saved. A signed-in player's are also kept on their
+    account (`user_settings` kind `customs`, `/api/me/customs`, `client/net/accountcustoms.js`), so they follow them to
+    any browser and outlive one clearing its storage (Safari does after 7 days without a visit). The copies are merged
+    survivor by survivor (`mergeCustoms`: of each the copy changed last; a deletion stays unless changed after), not
+    "the newer whole copy wins" as the keybinds are, so survivors made in two browsers both live on: up to 4 are made
+    in one browser, up to 8 kept. The server merges a save into what it keeps in one transaction and answers with the
+    merged copy. `stn.character` is then also `stranger` or `c:<id>`. The name a player gives one goes no further than
+    their own account.
   - *On the wire.* `C2S.JOIN` carries the look after the character byte (u8 length, then its bytes), with the
     character byte set to the roster survivor most like it (`looks.js nearestRoster`: what an older server makes
     them, what an older client draws). `Game.handleJoin` keeps the canonical bytes as `p.look`, a plain array (it
