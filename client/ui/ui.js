@@ -19,6 +19,7 @@ import { Roster } from './roster.js';
 import { FriendsPanel } from './friends.js';
 import { AccountPanel } from './account.js';
 import { ProgressPanel } from './progress.js';
+import { LoadoutPanel } from './loadout.js';
 import { ProfilePanel } from './profile.js';
 import { AchievementsPanel, AchievementToasts } from './achievements.js';
 import { isFriendName } from '../net/friends.js';
@@ -121,6 +122,7 @@ export class UI {
     this.friends = new FriendsPanel(this, modalL);
     this.accountPanel = new AccountPanel(this, modalL);
     this.progress = new ProgressPanel(this, modalL);
+    this.loadout = new LoadoutPanel(this, modalL);
     this.profile = new ProfilePanel(this, modalL);
     this.achPanel = new AchievementsPanel(this, modalL);
     this.updating = new UpdatingModal(modalL);
@@ -194,6 +196,7 @@ export class UI {
     if (this.friends.visible) this.friends.hide();
     if (this.accountPanel.visible) this.accountPanel.hide();
     if (this.progress.visible) this.progress.hide();
+    if (this.loadout.visible) this.loadout.hide();
     if (this.profile.visible) this.profile.hide();
     if (this.achPanel.visible) this.achPanel.hide();
     this._menuState();

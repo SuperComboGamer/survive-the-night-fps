@@ -210,6 +210,11 @@ export class Splash {
     this.perksBadge.hidden = true;
     pb.addEventListener('click', () => this.ui.progress.show());
     onProgress((v) => this._syncPerks(v));
+    const lob = el('button', 'btn btn-ghost', btns);
+    lob.type = 'button';
+    svgEl('i', 'btn-ico', lob, glyph('star'));
+    el('span', '', lob, 'Loadout');
+    lob.addEventListener('click', () => this.ui.loadout.show());
     const ab = el('button', 'btn btn-ghost', btns);
     ab.type = 'button';
     svgEl('i', 'btn-ico', ab, glyph('trophy'));

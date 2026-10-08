@@ -54,8 +54,9 @@ import { ITEM, ITEM_DEFS, WEAPONS, BOSS_PACK_CHANCE } from '../shared/defs.js';
 import { cardDef, validateDeck, defaultDeck, rollPack, cleanDeck, cleanFound, F, DECK_SLOTS } from '../shared/cards.js';
 import * as CG from '../shared/cardgame.js';
 import { eyeHeight } from '../shared/playersim.js';
-import { countItem, invCap, addItem, removeItem, freeSlot } from './inventory.js';
+import { invCap, addItem, freeSlot } from './inventory.js';
 import { CardService, MemoryCardStore, PACK_CAP } from './usercards.js';
+import { isLoadoutStack } from './loadouts.js';
 
 const cryptoRand = () => randomBytes(4).readUInt32LE(0) / 0x100000000;
 const ALLOW_BURST = 20; // C2S.CARDS a player may send in a row...
@@ -80,6 +81,19 @@ const DECK_EVERY = 1; // s: a player's decks go to the database at most this oft
 const CROSSING_OK = new Set([CARDOP.WITHDRAW, CARDOP.FORFEIT, CARDOP.DECK, CARDOP.CLOSE, CARDOP.SYNC]);
 const MOVE_T = new Set(['redraw', 'keep', 'play', 'leader', 'choose', 'pass', 'forfeit']);
 const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+const tradeCount = (inv, item) => inv.reduce((n, s) => n + (s && !isLoadoutStack(s) && s.item === item ? s.count : 0), 0);
+function removeTradeItem(inv, item, count) {
+  let left = count;
+  for (let i = inv.length - 1; i >= 0 && left > 0; i--) {
+    const s = inv[i];
+    if (!s || isLoadoutStack(s) || s.item !== item) continue;
+    const take = Math.min(s.count, left);
+    s.count -= take;
+    left -= take;
+    if (s.count <= 0) inv[i] = null;
+  }
+  return count - left;
+}
 
 // A move as the engine takes it, built only of what a move has (shared/cardgame.js): null when it is not one
 export function cleanMove(m) {
@@ -606,7 +620,7 @@ export class Cards {
       if (!this.own.get(p.rejoinKey)?.loaded) return this.note(p, CARDNOTE.LOADING);
       for (const id of ids) if (this.spare(p.rejoinKey, +id, t) < o.cards[id]) return this.note(p, CARDNOTE.CARDS, +id);
     }
-    for (const [item, n] of o.items) if (countItem(p.inv, item) < n) return this.note(p, CARDNOTE.ITEMS, item);
+    for (const [item, n] of o.items) if (tradeCount(p.inv, item) < n) return this.note(p, CARDNOTE.ITEMS, item);
     t.sides.find((s) => s.pid === p.id).offer = o;
     this.unready(t);
   }
@@ -630,7 +644,7 @@ export class Cards {
   fits(p, outgoing, incoming) {
     const inv = p.inv.map((s) => s && { ...s });
     const weapons = [...p.state.weapons];
-    for (const [item, n] of outgoing) removeItem(inv, item, n);
+    for (const [item, n] of outgoing) removeTradeItem(inv, item, n);
     const cap = invCap(p);
     for (const [item, n] of incoming) {
       if (ITEM_DEFS[item].cat === 'weapon') {
@@ -655,13 +669,13 @@ export class Cards {
     const out = [];
     for (const [item, n] of items) {
       if ((ITEM_DEFS[item].stack || 1) > 1) {
-        out.push([item, removeItem(p.inv, item, n), null]);
+        out.push([item, removeTradeItem(p.inv, item, n), null]);
         continue;
       }
       let left = n;
       for (let i = p.inv.length - 1; i >= 0 && left > 0; i--) {
         const s = p.inv[i];
-        if (!s || s.item !== item) continue;
+        if (!s || isLoadoutStack(s) || s.item !== item) continue;
         p.inv[i] = null;
         out.push([item, s.count, s.mag ?? null]);
         left -= s.count;
@@ -693,7 +707,7 @@ export class Cards {
     for (let i = 0; i < 2; i++) {
       const s = t.sides[i];
       for (const [card, n] of Object.entries(s.offer.cards)) if (this.spare(s.owner, +card, t) < n) return this.endTrade(t, 'not_owned');
-      for (const [item, n] of s.offer.items) if (countItem([a, b][i].inv, item) < n) return this.endTrade(t, 'changed');
+      for (const [item, n] of s.offer.items) if (tradeCount([a, b][i].inv, item) < n) return this.endTrade(t, 'changed');
     }
     if (!this.fits(a, t.sides[0].offer.items, t.sides[1].offer.items) || !this.fits(b, t.sides[1].offer.items, t.sides[0].offer.items)) return this.endTrade(t, 'no_room');
     t.escrow = [this.takeItems(a, t.sides[0].offer.items), this.takeItems(b, t.sides[1].offer.items)];

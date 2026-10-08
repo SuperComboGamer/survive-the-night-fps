@@ -9,8 +9,8 @@
 //
 // What the browser had before it signed in - the id it made up for the leaderboard (client/net/identity.js) - can
 // come along with a register or a sign-in (guestId): the stats it earned as a guest move onto the account
-// (DbStats.claimGuest), and so do the Dead Hand cards and decks it found (CardService.mergeGuest), and the id goes no
-// further than that.
+// (DbStats.claimGuest), and so do the Dead Hand cards/decks and loadout items it found, and the id goes no further
+// than that.
 import { scrypt, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { HttpError } from './http.js';
 import { Allowance } from './allowance.js';
@@ -68,12 +68,13 @@ function checkPassword(v) {
 export const publicUser = (u) => ({ id: u.id, username: u.username, email: u.email, createdAt: u.created_at });
 
 export class Auth {
-  // db: server/db. stats: the DbStats a guest's record moves onto their account from (optional). cards: the card
-  // collections a guest's moves onto their account from (usercards.js CardService, optional)
-  constructor({ db, stats = null, cards = null, log = () => {} }) {
+  // db: server/db. stats: the DbStats a guest's record moves onto their account from (optional). cards/loadouts:
+  // persistent guest collections that move onto their account too.
+  constructor({ db, stats = null, cards = null, loadouts = null, log = () => {} }) {
     this.db = db;
     this.stats = stats;
     this.cards = cards;
+    this.loadouts = loadouts;
     this.log = log;
     this.cache = new Map(); // token hash -> { user: { id, name, isAdmin } | null, until }
     this.registers = new Allowance(10, 300); // per address (a household, a LAN party): 10 accounts, then one every 5 minutes
@@ -158,6 +159,13 @@ export class Auth {
         await this.cards.mergeGuest(user.id, guestId);
       } catch (err) {
         this.log(`account ${user.username}: guest cards not moved over (${err.message})`);
+      }
+    }
+    if (this.loadouts) {
+      try {
+        await this.loadouts.mergeGuest(user.id, guestId);
+      } catch (err) {
+        this.log(`account ${user.username}: guest loadout items not moved over (${err.message})`);
       }
     }
   }

@@ -8525,3 +8525,127 @@ body {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+/* Loadout collection */
+.stn-ui .lo-panel .set-card {
+  width: min(72rem, calc(100vw - 2rem));
+}
+.stn-ui .lo-panel .set-body {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.85fr) minmax(22rem, 1.15fr);
+  gap: 1rem;
+}
+.stn-ui .lo-slots {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+.stn-ui .lo-slot,
+.stn-ui .lo-card {
+  position: relative;
+  text-align: left;
+  border: 1px solid rgba(216, 196, 146, 0.28);
+  background: rgba(18, 14, 12, 0.84);
+  color: #eadfcb;
+  border-radius: 0.55rem;
+}
+.stn-ui .lo-slot {
+  min-height: 4.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 2.4rem 0.65rem 0.75rem;
+}
+.stn-ui .lo-slot.on,
+.stn-ui .lo-card.on {
+  border-color: #c9a45b;
+  box-shadow: 0 0 0 1px rgba(201, 164, 91, 0.35), 0 0 1.2rem rgba(128, 26, 20, 0.24);
+}
+.stn-ui .lo-slot-ico {
+  width: 1.6rem;
+  height: 1.6rem;
+  color: #c9a45b;
+  flex: 0 0 auto;
+}
+.stn-ui .lo-slot-t {
+  display: grid;
+  gap: 0.15rem;
+}
+.stn-ui .lo-slot small,
+.stn-ui .lo-card small,
+.stn-ui .lo-meta {
+  color: #bba98a;
+  text-transform: capitalize;
+}
+.stn-ui .lo-slot-x {
+  position: absolute;
+  right: 0.4rem;
+  top: 0.4rem;
+}
+.stn-ui .lo-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.stn-ui .lo-grid {
+  min-height: 18rem;
+  max-height: min(52vh, 32rem);
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.65rem;
+  align-content: start;
+  padding-right: 0.25rem;
+}
+.stn-ui .lo-card {
+  min-height: 7.4rem;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.35rem;
+}
+.stn-ui .lo-card-r {
+  font: 0.72rem/1 var(--f-mono);
+  color: #c9a45b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.stn-ui .lo-card.r3,
+.stn-ui .lo-card.r4 {
+  background: linear-gradient(145deg, rgba(34, 22, 20, 0.95), rgba(18, 14, 12, 0.86));
+}
+.stn-ui .lo-detail {
+  border: 1px solid rgba(216, 196, 146, 0.18);
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 0.55rem;
+  padding: 1rem;
+  min-height: 18rem;
+}
+.stn-ui .lo-detail h3 {
+  margin: 0;
+  font-family: var(--f-title);
+  font-size: 1.45rem;
+}
+.stn-ui .lo-flavor {
+  color: #d8c492;
+  font-style: italic;
+}
+.stn-ui .lo-line {
+  color: #eadfcb;
+}
+.stn-ui .lo-line.good {
+  color: #9fd08f;
+}
+.stn-ui .lo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+@media (max-width: 760px) {
+  .stn-ui .lo-panel .set-body {
+    grid-template-columns: 1fr;
+  }
+  .stn-ui .lo-slots {
+    grid-template-columns: 1fr;
+  }
+}

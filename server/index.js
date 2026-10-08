@@ -33,6 +33,7 @@ import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
 import { BestiaryStore } from './userbestiary.js';
 import { CardService, PgCardStore, MemoryCardStore } from './usercards.js';
+import { LoadoutService, PgLoadoutStore, MemoryLoadoutStore, ownerKey as loadoutOwnerKey } from './userloadout.js';
 import { PublicStats, RANGES } from './publicstats.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
@@ -44,6 +45,7 @@ import { AdminPanel } from './adminpanel.js';
 import { clientOf } from './netaddr.js';
 import { REJECT_REASON, PROTOCOL_VERSION } from '../shared/protocol.js';
 import { DEFAULT_PORT, MAX_PLAYERS } from '../shared/constants.js';
+import { LOADOUT_CATALOG, LOADOUT_SLOTS, cleanLoadoutSlots } from '../shared/loadout.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PORT = +(process.env.PORT || DEFAULT_PORT);
@@ -96,6 +98,8 @@ const bestiary = db ? new BestiaryStore({ db, log }) : null;
 // process's memory - kept for as long as it runs. What changes here, the other servers of a cluster read again.
 const cards = new CardService({ store: db ? new PgCardStore(db) : new MemoryCardStore(), log, changed: (owners) => lobby.cluster?.publish({ t: 'cards', owners }) });
 if (!db) log('cards: no database - the card collections found are kept only as long as this server runs');
+const loadouts = new LoadoutService({ store: db ? new PgLoadoutStore(db) : new MemoryLoadoutStore(), log, changed: (owners) => lobby.cluster?.publish({ t: 'loadout', owners }) });
+if (!db) log('loadout: no database - loadout items found are kept only as long as this server runs');
 
 // Where a game waits between the server going down and the next one (handoff.js): Postgres when there is one (it is
 // what both servers of a deploy can reach), else files in HANDOFF_DIR or on the Railway volume (a restart on the
@@ -121,6 +125,7 @@ const lobby = new Lobby({
   achievements,
   bestiary,
   cards,
+  loadouts,
   maxGames: MAX_GAMES,
   maxPlayers: MAX,
   roomMaxPlayers: ROOM_MAX,
@@ -145,6 +150,7 @@ const cluster = process.env.CLUSTER === '1' && db?.kind === 'postgres' ? new Clu
 if (process.env.CLUSTER === '1' && !cluster) log('CLUSTER=1 needs a Postgres DATABASE_URL: running as a server on its own');
 lobby.cluster = cluster;
 cluster?.on('cards', (m) => cards.reload(m.owners));
+cluster?.on('loadout', (m) => loadouts.reload(m.owners));
 // bets left in escrow by games that never settled them (usercards.js ESCROW_MAX_AGE) go back, now and every hour
 if (db) {
   cards.sweep();
@@ -154,7 +160,7 @@ if (db) {
 let stopping = false;
 
 // accounts, friends and messages: only with a database
-const auth = db ? new Auth({ db, stats, cards, log }) : null;
+const auth = db ? new Auth({ db, stats, cards, loadouts, log }) : null;
 const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds, their survivors
@@ -568,6 +574,24 @@ route(
   { body: true }
 );
 
+const loadoutOwner = async (ctx, body = null) => {
+  const u = auth ? await auth.me(ctx) : null;
+  if (u) return `a:${u.id}`;
+  const key = loadoutOwnerKey('', body?.guestId || ctx.query.get('guestId') || '');
+  if (!key) throw new HttpError(400, 'This browser has no player id yet.');
+  return key;
+};
+route('get', '/api/loadout', async (ctx) => {
+  const owner = await loadoutOwner(ctx);
+  return { body: { catalog: LOADOUT_CATALOG, slotCount: LOADOUT_SLOTS, ...(await loadouts.collection(owner)) } };
+});
+const saveLoadout = async (ctx, b) => {
+  const owner = await loadoutOwner(ctx, b);
+  return { body: { catalog: LOADOUT_CATALOG, slotCount: LOADOUT_SLOTS, ...(await loadouts.equip(owner, cleanLoadoutSlots(b.slots))) } };
+};
+route('put', '/api/loadout', saveLoadout, { body: true, max: 4096 });
+route('post', '/api/loadout', saveLoadout, { body: true, max: 4096 });
+
 // The stats page (/stats, publicstats.js): the whole game's numbers for anyone, ?range=7d|30d|90d|all. Without a
 // database: { enabled: false, live } - only what is being played now.
 const liveNow = async () => {
@@ -936,6 +960,7 @@ async function shutdown(signal, exitCode = 0) {
       await achievements.close();
       await bestiary.close();
       await cards.close([...lobby.rooms.values()]); // (the bets of the games not handed over go back; the finds are written)
+      await loadouts.close();
       await store?.close();
       await cluster?.stop().catch((err) => log(`cluster: rows of this server left for the others to sweep (${err.message})`));
       settings?.stop();
