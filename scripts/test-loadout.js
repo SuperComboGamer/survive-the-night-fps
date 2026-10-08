@@ -87,21 +87,21 @@ async function inRunRules() {
   game.code = 'LOAD';
   const pid = randomUUID();
   const owner = `g:${createHash('sha256').update(pid).digest('hex')}`;
-  await service.grant(owner, 10, {}, 'bat');
+  await service.grant(owner, 1, {}, 'carbine');
   const coll = await service.collection(owner);
   await service.equip(owner, [coll.items[0].id, null, null]);
   const p = join(game, 'Tester', pid);
   await settle();
-  check('equipped loadout item spawns into the run with a marker', p.state.weapons[2] === ITEM.SPIKED_BAT && !!p.loadoutWeapons[2]);
-  action(game, p, ACT.DROP_WEAPON, (w) => w.u8(2));
-  check('loadout weapon cannot be dropped by action', p.state.weapons[2] === ITEM.SPIKED_BAT && game.items.every((it) => it.item !== ITEM.SPIKED_BAT));
+  check('equipped loadout item spawns into the run with a marker', p.state.weapons[0] === ITEM.M4A1 && !!p.loadoutWeapons[0]);
+  action(game, p, ACT.DROP_WEAPON, (w) => w.u8(0));
+  check('loadout weapon cannot be dropped by action', p.state.weapons[0] === ITEM.M4A1 && game.items.every((it) => it.item !== ITEM.M4A1));
   action(game, p, ACT.SALVAGE, (w) => {
-    w.u8(SALVAGE_FROM.WEAPON + 2);
+    w.u8(SALVAGE_FROM.WEAPON + 0);
     w.u16(1);
   });
-  check('loadout weapon cannot be salvaged', p.state.weapons[2] === ITEM.SPIKED_BAT);
+  check('loadout weapon cannot be salvaged', p.state.weapons[0] === ITEM.M4A1);
   game.dropAll(p);
-  check('loadout weapon does not drop on death/wipe inventory spill', game.items.every((it) => it.item !== ITEM.SPIKED_BAT));
+  check('loadout weapon does not drop on death/wipe inventory spill', game.items.every((it) => it.item !== ITEM.M4A1));
 
   clearLoadoutRun(p);
   const armorPid = randomUUID();
