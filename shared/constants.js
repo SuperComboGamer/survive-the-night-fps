@@ -103,7 +103,14 @@ export const ENGINE_START_TIME = 2.2; // start the car once every supply is inst
 // action the moment it arrives, while the commands that moved the player there are still batched on the client or
 // queued for the next tick - up to about 0.1 s of movement. A prompt on screen must never be refused for distance.
 export const INTERACT_REACH = 3.3;
-export const PICK_RADIUS = { ITEM: 0.5, CACHE: 0.75, CRATE: 1.1, DOWNED: 1.1, CAT: 0.45 }; // structures: structPickRadius in defs.js
+export const PICK_RADIUS = { ITEM: 0.5, CACHE: 0.75, CRATE: 1.1, DOWNED: 1.1, CAT: 0.45, MATE: 0.5 }; // structures: structPickRadius in defs.js
+// a standing teammate is aimed at around their chest (Dead Hand's [E]: a match or a trade, server/cards.js)
+export const MATE_PICK_Y = 1.2;
+// Dead Hand (shared/cards.js, server/cards.js): a trade is struck within TRADE_REACH metres and called off past
+// TRADE_BREAK; a challenge or a trade asked for lapses after CARD_ASK_TTL seconds unanswered
+export const TRADE_REACH = 6;
+export const TRADE_BREAK = 8;
+export const CARD_ASK_TTL = 30;
 export const INTERACT_SLACK = SPRINT_SPEED * 0.1;
 export const HOLD_SLACK = 0.4; // a hold under way is only broken off this much further out than it can start
 export const CAR_REACH = 3.9; // [E] at the car is offered this close to it (the server allows 5 m: Game.nearCar)

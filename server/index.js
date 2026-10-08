@@ -32,6 +32,7 @@ import { ServerSettings } from './serversettings.js';
 import { Progress } from './progress.js';
 import { AchievementStore } from './userachievements.js';
 import { BestiaryStore } from './userbestiary.js';
+import { CardService, PgCardStore, MemoryCardStore } from './usercards.js';
 import { PublicStats, RANGES } from './publicstats.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
@@ -91,6 +92,10 @@ await matches?.closeStale().catch((err) => log(`matches: could not close the las
 const achievements = db ? new AchievementStore({ db, log }) : null;
 // ...and their bestiaries (the same: a guest's is their browser's)
 const bestiary = db ? new BestiaryStore({ db, log }) : null;
+// Dead Hand's collections, accounts' and guests' alike (usercards.js): in the database, or without one in this
+// process's memory - kept for as long as it runs. What changes here, the other servers of a cluster read again.
+const cards = new CardService({ store: db ? new PgCardStore(db) : new MemoryCardStore(), log, changed: (owners) => lobby.cluster?.publish({ t: 'cards', owners }) });
+if (!db) log('cards: no database - the card collections found are kept only as long as this server runs');
 
 // Where a game waits between the server going down and the next one (handoff.js): Postgres when there is one (it is
 // what both servers of a deploy can reach), else files in HANDOFF_DIR or on the Railway volume (a restart on the
@@ -115,6 +120,7 @@ const lobby = new Lobby({
   matches,
   achievements,
   bestiary,
+  cards,
   maxGames: MAX_GAMES,
   maxPlayers: MAX,
   roomMaxPlayers: ROOM_MAX,
@@ -138,11 +144,17 @@ const lobby = new Lobby({
 const cluster = process.env.CLUSTER === '1' && db?.kind === 'postgres' ? new Cluster({ db, lobby, port: PORT, deployment: BUILD, log }) : null;
 if (process.env.CLUSTER === '1' && !cluster) log('CLUSTER=1 needs a Postgres DATABASE_URL: running as a server on its own');
 lobby.cluster = cluster;
+cluster?.on('cards', (m) => cards.reload(m.owners));
+// bets left in escrow by games that never settled them (usercards.js ESCROW_MAX_AGE) go back, now and every hour
+if (db) {
+  cards.sweep();
+  setInterval(() => cards.sweep(), 3600_000).unref();
+}
 
 let stopping = false;
 
 // accounts, friends and messages: only with a database
-const auth = db ? new Auth({ db, stats, log }) : null;
+const auth = db ? new Auth({ db, stats, cards, log }) : null;
 const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds, their survivors
@@ -923,6 +935,7 @@ async function shutdown(signal, exitCode = 0) {
       await stats.close();
       await achievements.close();
       await bestiary.close();
+      await cards.close([...lobby.rooms.values()]); // (the bets of the games not handed over go back; the finds are written)
       await store?.close();
       await cluster?.stop().catch((err) => log(`cluster: rows of this server left for the others to sweep (${err.message})`));
       settings?.stop();

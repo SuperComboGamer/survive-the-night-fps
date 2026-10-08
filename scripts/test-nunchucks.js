@@ -36,7 +36,8 @@ const near = (a, b, tol = CMD_DT * 1.01) => Math.abs(a - b) <= tol;
 {
   check('the item: id 57, a melee weapon in the melee slot, with a moveset', ITEM.NUNCHAKU === 57 && ITEM_DEFS[57]?.cat === 'weapon' && ITEM_DEFS[57].stack === 1 && DEF.melee && DEF.nunchaku && DEF.slot === SLOT_MELEE);
   check('no id was renumbered for it', ITEM.MACHETE === 53 && ITEM.HAMMER === 54 && ITEM.PISTOL === 55 && ITEM.FLARE_GUN === 56 && ITEM.SHOTGUN === 60 && ITEM.AMMO_9MM === 70 && ITEM.ENERGY_DRINK === 28);
-  check('the protocol version is as it was', PROTOCOL_VERSION === 41, `${PROTOCOL_VERSION}`);
+  // (they came in at 41 and needed no bump of their own; later features bump it: 42 was Dead Hand's)
+  check('the protocol version is as it was', PROTOCOL_VERSION >= 41, `${PROTOCOL_VERSION}`);
   const rec = RECIPES.find((r) => r.out === ITEM.NUNCHAKU);
   check('made at the workbench from planks, scrap and tape: its id its place in the list (the recipes of the vehicles come after it)', !!rec && rec.station === 'bench' && !rec.schem && rec === RECIPES[40] && RECIPES.every((r, i) => r.id === i) && rec.id === 40 && Object.keys(rec.cost).every((it) => ITEM_DEFS[it]?.cat === 'res'), JSON.stringify(rec?.cost));
   const sal = SALVAGE[ITEM.NUNCHAKU];

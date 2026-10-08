@@ -1,8 +1,9 @@
 // Fuzz test: server delta encoder vs client decoder for every entity kind, including removals,
 // id reuse with new generations, LOD skipping and large/small position deltas, for several clients a tick off
 // one staging of the entities (each must get what quantizing for it alone would give; one that is skipped for a
-// tick catches up); then the varints and the command packets (writeInput / readInput).
-import { Writer, Reader, ENT, MAX_CMDS, POS_SCALE, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput, C2S, PROTOCOL_VERSION } from '../shared/protocol.js';
+// tick catches up); then the varints, the command packets (writeInput / readInput) and Dead Hand's messages
+// (writeCards / readCards).
+import { Writer, Reader, ENT, MAX_CMDS, POS_SCALE, qpos, qangle8, qlookYaw, qlookPitch, writeInput, readInput, C2S, S2C, PROTOCOL_VERSION, CARDOP, CARDMSG, CARDNOTE, CARD_JSON_MAX, writeCards, readCards } from '../shared/protocol.js';
 import { Game } from '../server/game.js';
 import { ClientView, writeEntities, stageEntities, playerFlags } from '../server/snapshot.js';
 import { readEntities } from '../client/net/decode.js';
@@ -334,6 +335,73 @@ console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one stagin
     }
   }
   console.log(`input codec OK: ${PACKETS} packets, avg ${(inBytes / PACKETS).toFixed(1)} B`);
+}
+
+// Dead Hand: every op both ways through writeCards / readCards, as JSON; one past its limit is refused
+{
+  const SAMPLE = {
+    [CARDOP.ASK]: { to: 12, kind: 'match', slot: -2, bet: 105 },
+    [CARDOP.ANSWER]: { from: 12, kind: 'trade', yes: true, slot: 0, bet: 0 },
+    [CARDOP.WITHDRAW]: {},
+    [CARDOP.MOVE]: { v: 7, move: { t: 'leader', pick: 3, discard: [4, 9] } },
+    [CARDOP.FORFEIT]: {},
+    [CARDOP.DECK]: { slot: 3, name: 'Grave é Diggers', leader: 451, cards: { 200: 3, 1: 1 } },
+    [CARDOP.OFFER]: { cards: { 105: 1 }, items: [[1, 5], [40, 1]] },
+    [CARDOP.READY]: { on: false },
+    [CARDOP.CONFIRM]: {},
+    [CARDOP.CLOSE]: {},
+    [CARDOP.SYNC]: {},
+  };
+  const SAMPLE_S2C = {
+    [CARDMSG.COLL]: { loaded: true, kept: false, found: { 105: 2 } },
+    [CARDMSG.DECKS]: { decks: [{ slot: 0, name: 'x', leader: 407, cards: { 100: 2 } }] },
+    [CARDMSG.ASKS]: { asks: [{ from: 3, to: 4, kind: 'match', bet: 0, left: 29 }] },
+    [CARDMSG.MATCH]: { me: 1, opp: 3, v: 2, bet: [0, 0], view: { phase: 'redraw', sides: [{ hand: [{ uid: 1, card: 100 }] }, { hand: [] }] }, events: [{ seq: 1, t: 'start' }] },
+    [CARDMSG.MATCH_END]: { opp: 3, outcome: 'void', reason: 'run_over', bet: { mine: 105, theirs: 205, paid: true } },
+    [CARDMSG.TRADE]: { with: 3, mine: { cards: {}, items: [] }, theirs: { cards: { 105: 1 }, items: [[1, 2]] }, ready: [true, false], ok: [false, false], committing: false },
+    [CARDMSG.TRADE_END]: { with: 3, why: 'too_far' },
+    [CARDMSG.REVEAL]: { item: 99, cards: [1, 105, 124], kept: true },
+    [CARDMSG.NOTE]: { code: CARDNOTE.FAR, arg: '' },
+  };
+  const codes = Object.values(CARDNOTE);
+  if (new Set(codes).size !== codes.length || !codes.every((c) => typeof c === 'string' && c)) throw new Error('CARDNOTE codes are not distinct words');
+  for (const [table, samples] of [[CARDOP, SAMPLE], [CARDMSG, SAMPLE_S2C]]) {
+    const ops = Object.values(table);
+    if (new Set(ops).size !== ops.length || ops.some((op) => !(op in samples))) throw new Error('a card op without a sample, or two ops of one number');
+    for (const op of ops) {
+      const cw = new Writer(64);
+      cw.u8(table === CARDOP ? C2S.CARDS : S2C.CARDS);
+      writeCards(cw, op, samples[op]);
+      const cr = new Reader(cw.copy());
+      cr.u8();
+      const got = readCards(cr, CARD_JSON_MAX);
+      if (cr.left !== 0 || got.op !== op || JSON.stringify(got.data) !== JSON.stringify(samples[op])) throw new Error(`card op ${op}: ${JSON.stringify(got)}`);
+    }
+  }
+  const one = (data) => {
+    const cw = new Writer(64);
+    writeCards(cw, CARDOP.OFFER, data);
+    return new Reader(cw.copy());
+  };
+  let threw = false;
+  try {
+    readCards(one({ pad: 'x'.repeat(CARD_JSON_MAX) }), CARD_JSON_MAX);
+  } catch {
+    threw = true;
+  }
+  if (!threw) throw new Error(`a card message past ${CARD_JSON_MAX} bytes was read`);
+  if (JSON.stringify(readCards(one([1, 2])).data) !== '{}' || JSON.stringify(readCards(one(null)).data) !== '{}') throw new Error('a card message that is not an object came back as one');
+  const bw = new Writer(16);
+  bw.u8(CARDOP.SYNC);
+  bw.str('{broken');
+  threw = false;
+  try {
+    readCards(new Reader(bw.copy()));
+  } catch {
+    threw = true;
+  }
+  if (!threw) throw new Error('a broken card message was read');
+  console.log(`card codec OK: ${Object.keys(SAMPLE).length} ops up, ${Object.keys(SAMPLE_S2C).length} down`);
 }
 
 {

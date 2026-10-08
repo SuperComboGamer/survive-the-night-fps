@@ -5,7 +5,7 @@
 import { Game } from '../server/game.js';
 import { createWorld } from '../shared/world.js';
 import { COL } from '../shared/collision.js';
-import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, WEAPONS, AMMO_ITEMS } from '../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEMATICS, SCHEM_BIT, SUPPLIES, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, WEAPONS, AMMO_ITEMS, ZTYPE, BOSS_PACK_CHANCE } from '../shared/defs.js';
 import { usedIn, foundIn, sourcesOf, GATHER } from '../client/game/itemguide.js';
 import { FIXTURE_USES, RADIO_COST } from '../shared/fixtures.js';
 import { DEER_LOOT } from '../shared/deer.js';
@@ -74,6 +74,8 @@ for (const name in drops) for (const row of drops[name]) expected.get(row[0]).se
 for (const g of GATHER) for (const [item, n] of g.gives) expected.get(item).set(g.name, n * g.hits);
 // a deer leaves all of its table, every time
 for (const [item, min, max] of DEER_LOOT) expected.get(item).set('hunt deer', (min + max) / 2);
+// and a boss, besides its loot, a sealed pack of Dead Hand cards now and then (server/cards.js bossDrop)
+expected.get(ITEM.SEALED_PACK).set('bosses', BOSS_PACK_CHANCE);
 
 {
   const wrong = [];
@@ -235,6 +237,24 @@ for (const [item, min, max] of DEER_LOOT) expected.get(item).set('hunt deer', (m
   const drift = Object.keys(got).map(Number).filter((item) => !stated.has(item));
   for (const [item, per] of stated) if (Math.abs((got[item] || 0) / N - per) > 0.08) drift.push(item);
   check(`"hunt deer" gives what the server gives: ${DEER_LOOT.map(([item]) => nameOf(item)).join(', ')}, every kill`, only && drift.length === 0, drift.length ? `out of step for ${drift.map(nameOf).join(', ')}` : `per kill: ${DEER_LOOT.map(([item]) => ((got[item] || 0) / N).toFixed(2)).join(' / ')}`);
+}
+
+// ---------------------------------------------------------------- bosses: 'bosses' is what a boss leaves beside its loot
+// Bring bosses down on a real server and count the sealed packs Cards.bossDrop puts on the ground.
+{
+  const game = new Game({ seed: 4242, log: () => {} });
+  game.startGame();
+  let packs = 0;
+  game.dropItem = (item, n) => (item === ITEM.SEALED_PACK && (packs += n), null);
+  const at = game.world.spawnPoints[0];
+  const N = 600;
+  let killed = 0;
+  for (let n = 0; n < N; n++) {
+    const z = game.zm.spawn(ZTYPE.BOSS_BRUTE, at.x + 20, at.z, { horde: true, boss: true });
+    game.combat.damageZombie(z, z.hp + 1, null, {});
+    if (z.dead) killed++;
+  }
+  check(`"bosses" gives what the server gives: a sealed pack ${BOSS_PACK_CHANCE * 100}% of the time`, killed === N && Math.abs(packs / N - BOSS_PACK_CHANCE) < 0.07, `${packs} packs off ${killed} bosses`);
 }
 
 console.log(`\n${fails.length ? 'FAILED: ' + fails.join(', ') : 'all checks passed'}`);

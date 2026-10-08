@@ -5,7 +5,7 @@ import { PHASE, dayLength, NIGHT_LENGTH, DUSK_WARNING } from '../../shared/const
 import { GUN, MOUNTED_GUN } from '../../shared/mountedgun.js';
 import { el, svgEl, fmtTime, parsePrompt, clamp, replay } from './dom.js';
 import { itemIcon, glyph, splatSvg } from './icons.js';
-import { Compass, Objective, Tracked, Markers, Downed, DamageDir, Tonight } from './hud2.js';
+import { Compass, Objective, Tracked, CardsLine, Markers, Downed, DamageDir, Tonight } from './hud2.js';
 import { Minimap } from './minimap.js';
 import { W, ACT_NOW } from '../game/act.js'; // (this act, and the words for what its parts go into)
 import { WORLD } from '../../shared/acts.js';
@@ -81,6 +81,7 @@ export class Hud {
     this.objective = new Objective(leftLayer);
     this.objective.setSlim(true);
     this.tracked = new Tracked(leftLayer, this.objective.root); // (the recipe tracked from the crafting panel, under it)
+    this.cardsLine = new CardsLine(leftLayer, [this.objective.root, this.tracked.root]); // (Dead Hand under way, under both)
     // ---- top-centre compass
     this.compass = new Compass(topLayer);
     // ---- top-right day / night clock
@@ -338,6 +339,7 @@ export class Hud {
     }
     this.objective.syncTip();
     this.tracked.update(zombie ? null : h.tracked || null);
+    this.cardsLine.update(h.cards || null);
     this.markers.update(h.worldMarks || []);
     this.downed.update(h.downed || null);
   }

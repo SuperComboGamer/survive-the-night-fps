@@ -5,7 +5,7 @@ import { POSE_NEAR, POSE_HZ } from '../render/rates.js';
 import { ENT, PFLAG, ZSTATUS, HCAR_AT, playerRide, dqpos, dqangle16, dqangle8, dqpitch } from '../../shared/protocol.js';
 import { ZTYPE, ZANIM, CANIM, ZOMBIE_DEFS, STRUCT, STRUCT_DEFS, PROJ, AREA, SOUND, WEAPONS, ITEM, ITEM_DEFS, structPickRadius } from '../../shared/defs.js';
 import { makeBox, COL, canReach, groundAt } from '../../shared/collision.js';
-import { SERVER_TICK_RATE, PICK_RADIUS, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, WATER_LEVEL, GRAVITY } from '../../shared/constants.js';
+import { SERVER_TICK_RATE, PICK_RADIUS, MATE_PICK_Y, CRAWL_HEIGHT, CRAWL_HEAD_Y, CRAWL_HEAD_FWD, WATER_LEVEL, GRAVITY } from '../../shared/constants.js';
 import { afloatAt } from '../../shared/swim.js';
 import { createZombie, createSurvivor, setZombieViewer } from '../render/models/characters.js';
 import { defaultCharacter } from '../../shared/characters.js';
@@ -1434,6 +1434,39 @@ export class Entities {
       const adj = e.kind === ENT.STRUCTURE ? t + 0.6 : e.kind === ENT.CACHE ? t + 0.15 : t; // prefer items over containers over structures
       if (adj < bestT && (reachTop === undefined || canReach(this.g.world, ox, oy, oz, cx, cy, cz, reachTop))) {
         bestT = adj;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  // A teammate in the crosshair to deal cards with (Dead Hand, game/cards.js): a survivor on their feet - alive, not
+  // turned, not downed or held by the dead, not on a ride, a handcar or in a vehicle - and not us, aimed at round the
+  // chest (MATE_PICK_Y up, PICK_RADIUS.MATE), within max of the eye and in its reach (the server's own check: reachOf,
+  // a standing mate)
+  pickMate(ox, oy, oz, dx, dy, dz, max, reachTop) {
+    const g = this.g;
+    const r = PICK_RADIUS.MATE;
+    let best = null;
+    let bestT = max;
+    for (const e of this.ents.values()) {
+      if (e.kind !== ENT.PLAYER || e.id === g.myId || !e.view) continue;
+      const flags = e.q[5];
+      if (flags & (PFLAG.DEAD | PFLAG.ZOMBIE | PFLAG.DOWNED | PFLAG.PINNED | PFLAG.ROPED) || e.seatK > 0 || e.cartK > 0 || e.vK > 0) continue;
+      const cx = e.rx;
+      const cy = e.ry + MATE_PICK_Y;
+      const cz = e.rz;
+      const rx = cx - ox;
+      const ry = cy - oy;
+      const rz = cz - oz;
+      const t = rx * dx + ry * dy + rz * dz;
+      if (t < 0 || t > bestT + r) continue;
+      const px = rx - dx * t;
+      const py = ry - dy * t;
+      const pz = rz - dz * t;
+      if (px * px + py * py + pz * pz > r * r) continue;
+      if (t < bestT && (reachTop === undefined || canReach(g.world, ox, oy, oz, cx, cy, cz, reachTop))) {
+        bestT = t;
         best = e;
       }
     }

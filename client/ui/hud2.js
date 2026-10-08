@@ -8,7 +8,7 @@ import { PHASE, DUSK_WARNING, BOSS_WAVE } from '../../shared/constants.js';
 import { nightBoss, nightTheme } from '../../shared/nights.js';
 import { el, svgEl, fmtTime, clamp, replay } from './dom.js';
 import { itemIcon, glyph } from './icons.js';
-import { bindTag } from '../game/binds.js';
+import { bindTag, bindLabel } from '../game/binds.js';
 import { trackStatus } from '../game/tracked.js';
 
 const TAU = Math.PI * 2;
@@ -501,6 +501,59 @@ export class Tracked {
     else foot = 'Find the schematic in lockers, crates or toolboxes';
     this.foot.textContent = foot;
     this.foot.className = 'trk-foot' + (tone ? ' ' + tone : '');
+    this.root.hidden = false;
+    this._place();
+  }
+}
+
+// ---------------------------------------------------------------- Dead Hand, with its screen shut
+// One line on the left, under the field notes and the tracked recipe: the match under way (whose turn, and the
+// seconds left on mine, pulsing while it is mine), the trade open, or a teammate's ask waiting for an answer, with the
+// key that opens the screen. c (game/cards.js CardsClient.hud): { kind: 'match' | 'trade' | 'ask', name, mine, secs,
+// what } or null. Only touches the page when something on it changed.
+export class CardsLine {
+  constructor(parent, above) {
+    this.root = el('div', 'cdl scrap', parent);
+    this.root.hidden = true;
+    svgEl('i', 'cdl-ico', this.root, glyph('cards'));
+    this.text = el('span', 'cdl-t', this.root);
+    this.key = el('span', 'kbd sm cdl-k', this.root);
+    this.above = above; // (what it sits under, the first of them on screen from the bottom up)
+    this.c = { kind: '', name: '', mine: false, secs: -1, what: '', label: '' };
+    const ro = new ResizeObserver(() => this._place());
+    for (const a of above) ro.observe(a);
+  }
+
+  _place() {
+    let top = 0;
+    for (const a of this.above) if (!a.hidden && a.offsetHeight) top = Math.max(top, a.offsetTop + a.offsetHeight + 8);
+    this.root.style.top = (top || this.above[0].offsetTop) + 'px';
+  }
+
+  update(h) {
+    const c = this.c;
+    if (!h) {
+      if (!this.root.hidden) this.root.hidden = true;
+      c.kind = '';
+      return;
+    }
+    const label = bindLabel('cards');
+    const secs = h.secs >= 0 ? Math.ceil(h.secs) : -1;
+    if (c.kind === h.kind && c.name === h.name && c.mine === !!h.mine && c.secs === secs && c.what === (h.what || '') && c.label === label && !this.root.hidden) return;
+    c.kind = h.kind;
+    c.name = h.name;
+    c.mine = !!h.mine;
+    c.secs = secs;
+    c.what = h.what || '';
+    c.label = label;
+    let t;
+    if (h.kind === 'match') t = `Dead Hand vs ${h.name} · ${h.what || (h.mine ? 'your turn' : 'their turn')}${secs >= 0 ? ` ${secs} s` : ''}`;
+    else if (h.kind === 'trade') t = `Trading with ${h.name}`;
+    else t = h.what === 'trade' ? `${h.name} wants to trade` : `${h.name} wants to play Dead Hand`;
+    this.text.textContent = t;
+    this.key.textContent = label === 'unbound' ? 'Menu' : label;
+    this.root.classList.toggle('mine', c.mine);
+    this.root.classList.toggle('ask', h.kind === 'ask');
     this.root.hidden = false;
     this._place();
   }

@@ -1428,6 +1428,80 @@ export function uiHover(sr) {
   }
   return finish(out, sr, 0.9, 0.0005, 0.005);
 }
+// ------------------------------------------------------------------ Dead Hand, the card game (ui/cards.js)
+// a card put down on the table: the slap of its face on the felt and the snap of the card itself
+export function cardPlay(sr, rng) {
+  const out = alloc(sr, 0.22);
+  addNorm(out, noise(sr, rng, 0.05, { lp: 900, a: 0.0006, d: 0.012 }), sr, 0, 1);
+  addNorm(out, thump(sr, 170, 110, 0.008, 0.018, 0.08), sr, 0, 0.55);
+  addNorm(out, noise(sr, rng, 0.02, { bp: [4200, 1.1], a: 0.0003, d: 0.004 }), sr, 0.002, 0.45);
+  return finish(out, sr, 0.9, 0.0002, 0.02);
+}
+// one drawn off the deck: a short slide of card on card
+export function cardDraw(sr, rng) {
+  const out = alloc(sr, 0.18);
+  addNorm(out, whoosh(sr, rng, 0.14, 1500, 3800, 2600, 1.4, 0.35), sr, 0, 0.8);
+  addNorm(out, noise(sr, rng, 0.012, { bp: [3600, 1.4], a: 0.0003, d: 0.003 }), sr, 0.12, 0.35);
+  return finish(out, sr, 0.85, 0.001, 0.02);
+}
+// one turned over: a flick of the edge and the air it moves
+export function cardFlip(sr, rng) {
+  const out = alloc(sr, 0.14);
+  addNorm(out, noise(sr, rng, 0.008, { bp: [3000, 1.6], a: 0.0002, d: 0.002 }), sr, 0, 0.9);
+  addNorm(out, whoosh(sr, rng, 0.08, 900, 2400, 1400, 1.2, 0.5), sr, 0.006, 0.45);
+  addNorm(out, noise(sr, rng, 0.01, { bp: [2400, 1.4], a: 0.0002, d: 0.003 }), sr, 0.07, 0.5);
+  return finish(out, sr, 0.85, 0.0002, 0.02);
+}
+// the deck riffled: two halves let go of card by card, faster and faster, then knocked square
+export function cardShuffle(sr, rng) {
+  const out = alloc(sr, 0.75);
+  for (let k = 0; k < 2; k++) addNorm(out, crackles(sr, rng, 0.42, 150, { hp: 1800, bp: 3400 + k * 500, len: 0.0009, pow: 1.4, skew: 0.8, env: (u) => 0.4 + 0.6 * u }), sr, 0.02 + k * 0.012, 0.7);
+  addNorm(out, rustle(sr, rng, 0.42, 2800), sr, 0.02, 0.35);
+  addNorm(out, noise(sr, rng, 0.04, { lp: 1100, a: 0.0005, d: 0.01 }), sr, 0.52, 0.6);
+  addNorm(out, noise(sr, rng, 0.03, { lp: 1300, a: 0.0005, d: 0.008 }), sr, 0.6, 0.4);
+  return finish(out, sr, 0.85);
+}
+// cards burnt off the table (a Molotov, a scorch): a catch of flame and the paper crackling away
+export function cardBurn(sr, rng) {
+  const out = alloc(sr, 0.9);
+  const n = Math.floor(0.8 * sr);
+  const w = new Float32Array(n);
+  const lp = new Biquad();
+  const pk = new Pink(rng);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    if ((i & 15) === 0) lp.lp(sr, 300 + 2600 * (1 - Math.exp(-t / 0.05)) * Math.exp(-t / 0.4), 0.8);
+    w[i] = lp.run(pk.next()) * Math.min(1, t / 0.04) * Math.exp(-t / 0.3);
+  }
+  addNorm(out, w, sr, 0, 1);
+  addNorm(out, crackles(sr, rng, 0.7, 70, { hp: 1500, bp: 3000, env: (u) => 1 - u }), sr, 0.05, 0.6);
+  return finish(out, sr, 0.85);
+}
+// a round of Dead Hand won: two bell notes up a fifth; lost: a low fall of two, muffled, over a dull knock
+function cardBells(sr, notes, len, decay, step) {
+  const out = alloc(sr, len);
+  for (let k = 0; k < notes.length; k++) {
+    const f = notes[k];
+    const c = new Float32Array(Math.floor((len - k * step) * sr));
+    for (let i = 0; i < c.length; i++) {
+      const t = i / sr;
+      c[i] = (Math.sin(TAU * f * t) + 0.3 * Math.sin(TAU * f * 2.01 * t) * Math.exp(-t / 0.2)) * Math.min(1, t / 0.004) * Math.exp(-t / decay);
+    }
+    addNorm(out, c, sr, k * step, 0.5 - k * 0.05);
+  }
+  return out;
+}
+export function cardRoundWin(sr) {
+  return finish(cardBells(sr, [392, 587.33], 1.1, 0.42, 0.12), sr, 0.8);
+}
+export function cardRoundLose(sr, rng) {
+  const out = cardBells(sr, [220, 174.61], 1.2, 0.45, 0.2);
+  const lp = new Biquad().lp(sr, 900, 0.7);
+  for (let i = 0; i < out.length; i++) out[i] = lp.run(out[i]);
+  addNorm(out, thump(sr, 90, 55, 0.03, 0.08), sr, 0, 0.5);
+  addNorm(out, noise(sr, rng, 0.06, { lp: 400, a: 0.001, d: 0.02 }), sr, 0, 0.3);
+  return finish(out, sr, 0.8);
+}
 export function heartbeat(sr, rng) {
   const out = alloc(sr, 0.65);
   addNorm(out, thump(sr, 62, 42, 0.04, 0.07), sr, 0, 1);
@@ -2096,6 +2170,13 @@ export const SFX_DEFS = [
   { bank: 'heal', n: 1, sr: HI, gen: healChime },
   { bank: 'ui_click', n: 1, sr: HI, gen: uiClick },
   { bank: 'ui_hover', n: 1, sr: HI, gen: uiHover },
+  { bank: 'card_play', n: 3, sr: HI, gen: cardPlay },
+  { bank: 'card_draw', n: 2, sr: HI, gen: cardDraw },
+  { bank: 'card_flip', n: 2, sr: HI, gen: cardFlip },
+  { bank: 'card_shuffle', n: 1, sr: HI, gen: cardShuffle },
+  { bank: 'card_burn', n: 1, sr: MID, gen: cardBurn },
+  { bank: 'card_round_win', n: 1, sr: HI, gen: cardRoundWin },
+  { bank: 'card_round_lose', n: 1, sr: HI, gen: cardRoundLose },
   { bank: 'heartbeat', n: 1, sr: LO, gen: heartbeat },
   { bank: 'jump', n: 1, sr: HI, gen: jumpSnd },
   { bank: 'land', n: 2, sr: HI, gen: landSnd },

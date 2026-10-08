@@ -358,6 +358,8 @@ export class Room {
         return this.lobby.achievements?.add(m.user, m.add, m.feats, m.strangers, this);
       case 'seen':
         return this.lobby.bestiary?.add(m.user, m.mask);
+      case 'cards':
+        return this.lobby.cards?.fromRoom(this, m); // (Dead Hand's collections: usercards.js, which never throws)
       case 'finished':
         this.finished?.();
         return;
@@ -597,6 +599,8 @@ export class Room {
     // a match it was in the middle of stops where it was
     if (this.match && !handedOff) this.lobby.matches?.interrupt(this.match);
     this.match = null;
+    // its card owners are let go, and the bets its matches held go back - unless the next server carries it on
+    this.lobby.cards?.roomGone(this, handedOff);
   }
 }
 
@@ -604,18 +608,20 @@ export class Lobby {
   // stats: the leaderboard (PlayerStats, or DbStats with a database). matches: where the matches played go
   // (MatchStore; none without a database). achievements: the accounts' (AchievementStore; none without a database).
   // bestiary: the kinds of the dead each account has seen (BestiaryStore; none without a database).
+  // cards: Dead Hand's collections (usercards.js CardService: in the database, or in memory without one)
   // gameOpts: what every Game is made with (the env's test switches)
   // limits: false lifts the per-address allowances (load tests make many games from one address). store: where games
   // are handed from one server to the next on a deploy (handoff.js; none: a deploy ends them), and how old a save may
   // be and still be restored (s)
   // prepareMs: how long a server going down waits for the next one to have its games' valleys built (announce)
   // keepMs: how long a server going down waits at most for its own build to be in the store before it saves (KEEP_MS)
-  constructor({ stats, matches = null, achievements = null, bestiary = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, keepMs = KEEP_MS, settings = null, log = console.log }) {
+  constructor({ stats, matches = null, achievements = null, bestiary = null, cards = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, keepMs = KEEP_MS, settings = null, log = console.log }) {
     this.stats = stats;
     this.settings = settings; // the game's settings in the database (serversettings.js; none without one)
     this.matches = matches;
     this.achievements = achievements;
     this.bestiary = bestiary;
+    this.cards = cards;
     this.store = store;
     this.handoffMaxAge = handoffMaxAge;
     this.restoring = new Map(); // code -> the restore under way (restore)

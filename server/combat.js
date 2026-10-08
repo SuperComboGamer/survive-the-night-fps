@@ -623,6 +623,7 @@ export class Combat {
           const [item, n] = g.rollTable(SPECIAL_LOOT);
           g.dropItem(item, n, z.x, z.y, z.z, { spread: 2 + g.rng() * 2, life: 400 });
         }
+        g.cards?.bossDrop(z); // (and maybe a sealed pack of Dead Hand cards: its own stream, server/cards.js)
       } else if (g.rng() < z.def.loot * (attacker && attacker.kind === ENT.PLAYER ? perkMods(attacker.perks).drops : 1)) {
         const [item, n] = g.rollTable(z.def.common ? ZOMBIE_LOOT : SPECIAL_LOOT);
         g.dropItem(item, n, z.x, z.y, z.z, { spread: 0.5, life: 150 });

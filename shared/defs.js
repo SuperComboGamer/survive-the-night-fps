@@ -100,6 +100,10 @@ export const ITEM = {
   VENISON: 27,
   // consumables: refills stamina, with a key of its own (ACTION_KEYS.drink in client/game/input.js)
   ENERGY_DRINK: 28,
+  // card packs (Dead Hand, shared/cards.js): opened as they are picked up - the cards go into the finder's collection,
+  // which they keep across runs (server/cards.js), and the pack takes no room in the backpack
+  CARD_PACK: 98,
+  SEALED_PACK: 99,
 };
 
 // ammo reserve indices: the rounds of a calibre a survivor carries (state.ammo). Ammunition is not kept in the
@@ -111,7 +115,7 @@ export const AMMO_MAX = [150, 48, 240, 40, 180, 30, 300, 8, 10, 12];
 // the item of each reserve index (same order as AMMO)
 export const AMMO_ITEMS = [ITEM.AMMO_9MM, ITEM.AMMO_SHELLS, ITEM.AMMO_762, ITEM.AMMO_308, ITEM.AMMO_556, ITEM.AMMO_BOLTS, ITEM.AMMO_FUEL, ITEM.AMMO_ROCKET, ITEM.AMMO_145, ITEM.AMMO_FLARE];
 
-// category: res | cons | throw | armor | pack | gear | weapon | ammo | part | schem
+// category: res | cons | throw | armor | pack | gear | weapon | ammo | part | schem | card
 export const ITEM_DEFS = {
   [ITEM.WOOD]: { name: 'Planks', cat: 'res', stack: 20, color: 0x8a6a45, desc: 'Weathered wooden planks.' },
   [ITEM.STICK]: { name: 'Sticks', cat: 'res', stack: 20, color: 0x6b5236, desc: 'Dry branches.' },
@@ -202,6 +206,8 @@ export const ITEM_DEFS = {
 
   [ITEM.VENISON_RAW]: { name: 'Raw Venison', cat: 'cons', stack: 6, color: 0x8e2f2a, desc: 'A cut off a deer. Cook it at a campfire: raw, it heals 8 HP.' },
   [ITEM.VENISON]: { name: 'Cooked Venison', cat: 'cons', stack: 6, color: 0x7a4a2c, desc: 'Venison off the fire. Heals 45 HP, restores stamina.' },
+  [ITEM.CARD_PACK]: { name: 'Card Pack', cat: 'card', stack: 1, color: 0x8e2a24, desc: 'A pack of Dead Hand cards. Opened as you pick it up: three cards for your collection, which you keep from run to run [K].' },
+  [ITEM.SEALED_PACK]: { name: 'Sealed Pack', cat: 'card', stack: 1, color: 0xb0863a, desc: 'A sealed pack of Dead Hand cards, still in its foil: three cards, at least one of them rare, for your collection [K].' },
   [ITEM.ENERGY_DRINK]: { name: 'Energy Drink', cat: 'cons', stack: 5, color: 0x6fc23a, desc: 'A can of something fizzy and very sweet. Refills your stamina in one go, even on the run. Quick drink [B].' },
 };
 
@@ -1095,13 +1101,16 @@ CONT.DRUG_LOCKER = 17;
 // A place's own table only reaches its floor loot, crates and shelves, so whatever a recipe or an ammo type depends on
 // needs a container table too: ammo crates hold the AK-47 next to the 7.62 they are full of (as rare as the M4A1) and
 // kevlar plates by the pair (a vest takes two), trunks and duffels hold leather. A new entry thins every other one in
-// its table, so these went in at weight 1 and the plates grew in count, not in weight. First-pass numbers.
+// its table, so these went in at weight 1 and the plates grew in count, not in weight. First-pass numbers. A pack of
+// Dead Hand cards (ITEM.CARD_PACK: shared/cards.js) is in the bags, lockers, trunks and cabinets people kept their
+// things in, at weight 1; a sealed pack is always in the mine's strongbox (its `also`) and on a boss half the time
+// (BOSS_PACK_CHANCE).
 export const CONT_TABLES = {
   military: [[ITEM.AMMO_762, 6, 15, 30], [ITEM.AMMO_556, 5, 15, 30], [ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.POWDER, 4, 3, 6], [ITEM.PLATE, 2, 2, 2], [ITEM.GUNPARTS, 3, 1, 2], [ITEM.MEDKIT, 2, 1, 1], [ITEM.PIPEBOMB, 1, 1, 1], [ITEM.GRENADE, 1, 1, 1], [ITEM.FLARE, 3, 1, 2], [ITEM.WIRE, 2, 1, 2], [ITEM.M4A1, 1, 1, 1], [ITEM.AK47, 1, 1, 1], [ITEM.AMMO_FUEL, 2, 30, 60], [ITEM.FLAMETHROWER, 1, 1, 1], [ITEM.AMMO_ROCKET, 1, 1, 2], [ITEM.RPG, 1, 1, 1], [ITEM.AMMO_145, 2, 2, 4], [ITEM.AT_RIFLE, 1, 1, 1], [ITEM.AMMO_FLARE, 2, 1, 3], [ITEM.FLARE_GUN, 1, 1, 1]],
-  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2]],
-  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.TUNA, 3, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.NUNCHAKU, 1, 1, 1]],
-  locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2]],
-  cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1], [ITEM.TUNA, 3, 1, 2]],
+  trunk: [[ITEM.SCRAP, 5, 1, 2], [ITEM.TAPE, 4, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.CLOTH, 7, 2, 3], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.FLARE, 4, 1, 2], [ITEM.AMMO_9MM, 3, 6, 12], [ITEM.AMMO_SHELLS, 2, 3, 6], [ITEM.ROPE, 2, 1, 1], [ITEM.NAILS, 2, 3, 6], [ITEM.BAT, 1, 1, 1], [ITEM.TUNA, 2, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2], [ITEM.CARD_PACK, 1, 1, 1]],
+  duffel: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.CLOTH, 7, 2, 3], [ITEM.AMMO_9MM, 5, 8, 16], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.PAINKILLERS, 3, 1, 1], [ITEM.BATTERY, 3, 1, 1], [ITEM.MOLOTOV, 2, 1, 1], [ITEM.FLARE, 2, 1, 1], [ITEM.MEDKIT, 1, 1, 1], [ITEM.KNIFE, 1, 1, 1], [ITEM.JACKET, 1, 1, 1], [ITEM.TUNA, 3, 1, 1], [ITEM.LEATHER, 1, 1, 2], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.NUNCHAKU, 1, 1, 1], [ITEM.CARD_PACK, 1, 1, 1]],
+  locker: [[ITEM.AMMO_9MM, 4, 10, 20], [ITEM.AMMO_308, 3, 3, 6], [ITEM.AMMO_SHELLS, 3, 4, 8], [ITEM.GUNPARTS, 4, 1, 1], [ITEM.JACKET, 2, 1, 1], [ITEM.BATTERY, 3, 1, 2], [ITEM.BANDAGE, 3, 1, 2], [ITEM.FLARE, 2, 1, 2], [ITEM.PISTOL, 1, 1, 1], [ITEM.MP5, 1, 1, 1], [ITEM.ENERGY_DRINK, 2, 1, 1], [ITEM.AMMO_FLARE, 1, 1, 2], [ITEM.CARD_PACK, 1, 1, 1]],
+  cabinet: [[ITEM.BANDAGE, 5, 1, 2], [ITEM.PAINKILLERS, 5, 1, 2], [ITEM.ALCOHOL, 5, 1, 2], [ITEM.CHEM, 4, 1, 2], [ITEM.HERB, 3, 1, 2], [ITEM.CLOTH, 4, 1, 3], [ITEM.MEDKIT, 1, 1, 1], [ITEM.BATTERY, 2, 1, 1], [ITEM.TUNA, 3, 1, 2], [ITEM.CARD_PACK, 1, 1, 1]],
   toolbox: [[ITEM.NAILS, 8, 6, 14], [ITEM.SCRAP, 5, 1, 3], [ITEM.TAPE, 5, 1, 2], [ITEM.WIRE, 3, 1, 2], [ITEM.GUNPARTS, 1, 1, 1], [ITEM.HAMMER, 1, 1, 1]],
   dumpster: [[ITEM.CLOTH, 8, 2, 4], [ITEM.SCRAP, 5, 1, 2], [ITEM.CHEM, 3, 1, 1], [ITEM.ALCOHOL, 3, 1, 1], [ITEM.STICK, 3, 2, 4], [ITEM.TAPE, 2, 1, 1], [ITEM.BATTERY, 1, 1, 1]],
   logpile: [[ITEM.WOOD, 8, 3, 6], [ITEM.STICK, 5, 3, 6], [ITEM.NAILS, 2, 3, 6]],
@@ -1131,7 +1140,7 @@ export const CONT_DEFS = {
   // also: what is always in it besides the rolls, [item, count]. loaded: a weapon rolled from it comes with this many
   // magazines of its ammunition (loadedAmmo). once: it is not refilled at sunrise. guide: what the item tooltips call
   // it as a place to find things (there is one to a map, so not "strongboxes").
-  [CONT.STRONGBOX]: { name: 'Strongbox', table: 'strongbox', rolls: [1, 1], also: [[ITEM.PIPEBOMB, 2]], loaded: 2, once: true, guide: "the mine's strongbox" },
+  [CONT.STRONGBOX]: { name: 'Strongbox', table: 'strongbox', rolls: [1, 1], also: [[ITEM.PIPEBOMB, 2], [ITEM.SEALED_PACK, 1]], loaded: 2, once: true, guide: "the mine's strongbox" },
   [CONT.CASKET]: { name: 'Casket', table: 'crypt', rolls: [3, 4], guide: 'the casket in the crypt' },
   [CONT.FREIGHT]: { name: 'Freight Crate', table: 'freight', rolls: [2, 4] },
 };
@@ -1149,6 +1158,8 @@ export function loadedAmmo(item, mags) {
 // zombie loot drops: [item, weight, min, max]
 export const ZOMBIE_LOOT = [[ITEM.CLOTH, 8, 1, 2], [ITEM.AMMO_9MM, 5, 4, 10], [ITEM.SCRAP, 3, 1, 1], [ITEM.AMMO_SHELLS, 2, 2, 4], [ITEM.AMMO_762, 2, 6, 15], [ITEM.AMMO_556, 2, 6, 15], [ITEM.HERB, 2, 1, 1], [ITEM.NAILS, 3, 2, 6], [ITEM.BANDAGE, 1, 1, 1], [ITEM.POWDER, 4, 1, 3], [ITEM.BATTERY, 1, 1, 1]];
 export const SPECIAL_LOOT = [[ITEM.AMMO_762, 4, 15, 30], [ITEM.AMMO_556, 4, 15, 30], [ITEM.AMMO_SHELLS, 4, 4, 8], [ITEM.MEDKIT, 2, 1, 1], [ITEM.POWDER, 3, 3, 6], [ITEM.GUNPARTS, 2, 1, 1], [ITEM.PLATE, 1, 1, 1], [ITEM.TAPE, 3, 1, 2], [ITEM.CHEM, 2, 1, 2], [ITEM.AMMO_145, 1, 1, 3], [ITEM.GRENADE, 1, 1, 1]];
+// a boss brought down leaves a sealed pack of Dead Hand cards this often, besides its loot (Cards.bossDrop, server/cards.js)
+export const BOSS_PACK_CHANCE = 0.5;
 
 // Gunpowder where an ordinary day's looting goes (issue #89). It used to be kept only by the mine, the quarry, the
 // military places, the hunters' (lookout, cabins, lodge), ammo crates and freight crates: a day of seven searches in

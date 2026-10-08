@@ -3,7 +3,7 @@
 // Both are derived once, at load, from the tables in shared/defs.js (and DEER_LOOT in shared/deer.js), so the text
 // follows a change to a recipe or a loot table by itself. Pure - no DOM, no three.js - so scripts/test-itemguide.js can hold it against the tables,
 // generated worlds and the server.
-import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, loadedAmmo } from '../../shared/defs.js';
+import { ITEM, ITEM_DEFS, RECIPES, STRUCT_DEFS, STRUCT_ORDER, SCHEM_BIT, ZONE, ZONE_NAMES, LOOT_TABLES, CONT_TABLES, CONT_DEFS, ZOMBIE_DEFS, ZOMBIE_LOOT, SPECIAL_LOOT, BOSS_PACK_CHANCE, loadedAmmo } from '../../shared/defs.js';
 import { PLACES } from '../../shared/layout.js';
 import { FIXTURE_USES } from '../../shared/fixtures.js';
 import { DEER_LOOT } from '../../shared/deer.js';
@@ -94,6 +94,8 @@ addSource(false, 'zombies', perRoll(ZOMBIE_LOOT), odds(true));
 addSource(false, 'special zombies', perRoll(SPECIAL_LOOT), odds(false));
 // what a deer leaves when it is brought down (server/deer.js): all of DEER_LOOT, every time
 addSource(false, 'hunt deer', DEER_LOOT.map(([item, min, max]) => [item, (min + max) / 2]));
+// ...and what a boss leaves besides its loot (server/cards.js bossDrop): a sealed pack of Dead Hand cards, often
+addSource(false, 'bosses', [[ITEM.SEALED_PACK, BOSS_PACK_CHANCE]]);
 // A place's table is rolled for the loot lying around it (one roll a find) and for its crates and shelves, the
 // containers with no table of their own. Only the tables that are ever rolled count: the places a map can have and
 // the woods between them. (ZONE.ROADSIDE's never is: every roadside container has a table of its own.)

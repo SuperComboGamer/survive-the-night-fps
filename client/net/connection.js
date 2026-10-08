@@ -1,5 +1,5 @@
 // WebSocket connection + binary message framing.
-import { C2S, S2C, ACT, ROOMF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, writeInput, readBoard, qpos } from '../../shared/protocol.js';
+import { C2S, S2C, ACT, ROOMF, WELCOMEF, PROTOCOL_VERSION, Writer, Reader, writeInput, readBoard, writeCards, readCards, qpos } from '../../shared/protocol.js';
 import { NIGHTFALL } from '../../shared/difficulty.js';
 import { CHARACTER_NONE } from '../../shared/characters.js';
 import { writeLook, readLook } from '../../shared/appearance.js';
@@ -125,6 +125,17 @@ export class Connection {
           case S2C.BOARD:
             this.h.board?.(readBoard(r));
             break;
+          case S2C.CARDS: {
+            // (Dead Hand: one broken message is dropped, not the socket - the card game is never the game's to lose)
+            let m = null;
+            try {
+              m = readCards(r);
+            } catch (err) {
+              console.warn('[net] a card game message could not be read', err);
+            }
+            if (m) this.h.cards?.(m);
+            break;
+          }
           case S2C.FRIENDS:
             for (let n = r.u8(); n > 0; n--) this.accounts.set(r.u16(), r.str());
             break;
@@ -276,6 +287,15 @@ export class Connection {
   board() {
     const w = this.w.reset();
     w.u8(C2S.BOARD);
+    this.sendRaw(w);
+  }
+
+  // Dead Hand (the card game): op is a CARDOP, data its JSON (shared/protocol.js writeCards documents each). The answer,
+  // if any, comes back as S2C.CARDS (Game -> CardsClient.onMessage)
+  cards(op, data = {}) {
+    const w = this.w.reset();
+    w.u8(C2S.CARDS);
+    writeCards(w, op, data);
     this.sendRaw(w);
   }
 

@@ -382,6 +382,53 @@ has never seen is a blurred smudge, "???" and a vague line; once seen, its portr
   made-up record. `scripts/test-bestiary.js` holds the book, the tracker in a running game, the browser's record, the
   store on PGlite, and an account's record surviving a restart of a real server.
 
+## Dead Hand: the card game
+
+A Gwent-like card game survivors play against each other in the middle of a run, with a collection they keep from run to
+run, decks they build, trades and bets. K opens it (`cards` in shared/binds.js, a menu action), or the pause menu; [E]
+on a teammate standing in reach offers a match or a trade. The world does not stop: the screen frees the mouse like the
+map does, and can be shut to fight and opened again.
+
+- **The cards** are `shared/cards.js`: 76 of them, ids for good (they are in the database; append only). Survivors,
+  the Dead and neutral cards; the leaders are the ten survivors (`shared/characters.js`) and the five bosses. Everyone
+  owns `STARTER` from the first game (never stored, never traded or bet); what a player finds is on top of it
+  (`owned`). A deck is a leader (it says the faction) and 22+ units, at most 10 specials and 40 cards, copies capped
+  by rarity and by what is owned (`validateDeck`). Packs: `rollPack`, three cards, the third rare or better.
+- **The rules** are `shared/cardgame.js`, pure and deterministic: the state is plain JSON with its random stream in it,
+  so a match is saved with the game and played the same in the client's practice match. Best of three rounds, two
+  lives, rows Close / Ranged / Heavy, weather, horns, horde, Bitten (a spy), medics, scorch; the Dead keep a unit after
+  each round, Survivors who take one draw a card. `viewFor(state, side)` is all a player is sent: never the random
+  stream, the deck's order or the other hand (beyond cards made known). The top of the file has the state, view, move
+  and event shapes. `shared/cardai.js` plays a view (practice, the tests, the e2e bot).
+- **In a game** (`server/cards.js`, `Game.cards`): asks, matches, trades and bets; its header has the whole flow. Every
+  message is `C2S.CARDS` / `S2C.CARDS` (a u8 op and a JSON string: `writeCards`/`readCards` in shared/protocol.js,
+  every field checked on the way in), private, sent with the tick's snapshot and only when it changed. A side's turn
+  clock stops while that player is away or down; the run ending voids a match and gives the bets back. Packs
+  (`ITEM.CARD_PACK`, `SEALED_PACK`, category `card`) are opened as they are picked up and take no room in the
+  backpack. Its random stream is the OS's, never the map's seed or the tick (every client is told those, and a stream
+  seeded by them would give away the other hand), and never `game.rng`. Saved with the game on a deploy
+  (`save`/`load`): asks, matches, trades being committed and transfers under way; once saved (`freeze`) nothing more
+  is acted on in the old game.
+- **Collections** are kept on the network thread (`server/usercards.js`, `CardService`) under the player's `rejoinKey`
+  (`a:<account>` or `g:<sha-256 of the browser id>`), in Postgres (015: `user_cards`, `user_decks`, `card_ledger`) or,
+  with no database, in memory for the life of the process. Games post finds, decks and transfers and hear back what
+  an owner has (`coll`). A transfer (a trade, a bet put up into its escrow `m:<match>`, paid or given back) is one
+  transaction, all or nothing, applied once by its ledger id, so a game carried to the next server can send it again;
+  the worker hands items over only once the cards have moved. Signing in brings a guest's cards onto the account
+  (`Auth.claimGuest` -> `mergeGuest`). Escrows a game never settled go back to their owners (`roomGone`, and a sweep
+  after a day).
+- **On screen** (`client/game/cards.js` the store and the glue, `client/ui/cards.js` the screen; `carddeck.js`,
+  `cardtrade.js`, `cardreveal.js`, `cardface.js`; `cards.css`): the table, the deck builder, trades, challenges,
+  practice against the computer (`client/game/cardlocal.js`, no rewards) and a pack's reveal. Card art is the game's
+  own models drawn once by a short-lived WebGL renderer and kept as images (`cardart.js`, sharing the bestiary's
+  portraits through `portrait.js`). A HUD line says when it is your turn or someone wants to play while the screen is
+  shut. `/sandbox/ui-test.html?screen=cards` (`&seed&moves=N&still=1&tab=deck|trade|reveal|chooser|asks|practice|end`)
+  and `?screen=hud-cards` show it without a server.
+- **Tests**: `scripts/test-cardgame.js` (the set, every rule, hidden information, replays, AI-vs-AI fuzz and the
+  starter decks' balance; `--long` for 2000 matches), `scripts/test-cards.js` (a game: asks, matches, trades, bets,
+  packs, the clocks, a deploy), `scripts/test-usercards.js` (the stores on PGlite and in memory), and
+  `npm run test:e2e:cards` (the screens in a browser, then a match against `scripts/lib/cardbot.js` on a real server).
+
 ## Experience, levels and perks
 
 A player earns XP over every game they play, and perk points with it to spend on a perk tree. The rules are

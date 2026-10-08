@@ -29,12 +29,13 @@ export const SPAWN_CATS = [
   { id: 'res', label: 'Materials', words: ['materials', 'resources', 'crafting'] },
   { id: 'part', label: 'Car parts', words: ['car', 'parts', 'supplies'] },
   { id: 'schem', label: 'Schematics', words: ['schematics', 'blueprints', 'unlock'] },
+  { id: 'card', label: 'Card packs', words: ['cards', 'packs', 'dead', 'hand'] },
   { id: 'zombie', label: 'Zombies', words: ['zombies', 'enemies', 'undead', 'infected'] },
   { id: 'boss', label: 'Bosses', words: ['bosses', 'enemies'] },
   { id: 'world', label: 'World', words: ['world', 'events'] },
 ];
 const CAT = Object.fromEntries(SPAWN_CATS.map((c) => [c.id, c]));
-const ITEM_CAT = { weapon: 'weapon', ammo: 'ammo', throw: 'throw', cons: 'cons', armor: 'gear', pack: 'gear', gear: 'gear', res: 'res', part: 'part', schem: 'schem' };
+const ITEM_CAT = { weapon: 'weapon', ammo: 'ammo', throw: 'throw', cons: 'cons', armor: 'gear', pack: 'gear', gear: 'gear', res: 'res', part: 'part', schem: 'schem', card: 'card' };
 
 // the admin commands that put something into the world that is not an item or a zombie
 const WORLD = [

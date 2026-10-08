@@ -672,6 +672,50 @@ BUILD[ITEM.AVGAS] = (b) => {
   b.cyl('steel', 0.025, 0.025, 0.02, 6, { p: [0.11, 0.61, 0] });
 };
 
+// Dead Hand's card packs (shared/cards.js), at their real size. A deck box (68 x 95 x 24 mm) lying on its back, a
+// rubber band round its middle, the face printed like a card's back: a bone panel with the blood drop on it. Every
+// part a closed box or a whole ellipsoid; the band, 1.2 mm thick, sits 0.1 mm into the box where it wraps it (hidden),
+// and the box rests on the band's strip underneath.
+const DROP_RED = [0.5, 0.05, 0.05];
+function cardDrop(b, x, y, z, s) {
+  // a drop of blood printed on a face (+Y), its point toward -Z: a flat ellipsoid, and a flat wedge for its point
+  const zc = z + s * 0.35, yb = y - s * 0.05, yt = y + s * 0.05, zt = zc - s * 1.9, w = s * 0.72, zw = zc - s * 0.6, t = 0.0003;
+  b.sphere('paint', s, 10, 6, { p: [x, y, zc], s: [1, 0.06, 1], c: DROP_RED });
+  // (hull corners: bit 0 +x, bit 1 +y, bit 2 +z)
+  b.hull('paint', [[x - t, yb, zt], [x + t, yb, zt], [x - t, yt, zt], [x + t, yt, zt], [x - w, yb, zw], [x + w, yb, zw], [x - w, yt, zw], [x + w, yt, zw]], { c: DROP_RED });
+}
+BUILD[ITEM.CARD_PACK] = (b) => {
+  const W = 0.068, L = 0.095, H = 0.024, T = 0.0012, BAND = 0.006;
+  const y0 = T - 0.0001; // (the box sits on the band's strip under it)
+  b.box('paint', W, H, L, { p: [0, y0 + H / 2, 0], c: [0.36, 0.07, 0.06] });
+  // the lid's flap, tucked in at the -Z end: its edge a fine dark line across the face
+  b.box('paint', W - 0.004, 0.0004, 0.0008, { p: [0, y0 + H + 0.0001, -L / 2 + 0.014], c: [0.12, 0.03, 0.03] });
+  // the face: a card's back, a bone panel with the drop
+  b.box('paint', W - 0.012, 0.0005, L - 0.03, { p: [0, y0 + H + 0.00015, 0.006], c: [0.82, 0.77, 0.66] });
+  cardDrop(b, 0, y0 + H + 0.0004, 0.006, 0.008);
+  // the rubber band across the middle: over the top, down both sides and under it
+  const band = [0.66, 0.42, 0.22];
+  const zb = 0.018;
+  b.box('paint', W + 2 * T, T, BAND, { p: [0, y0 + H + T / 2 - 0.0001, zb], c: band });
+  b.box('paint', W + 2 * T, T, BAND, { p: [0, T / 2, zb], c: band });
+  for (const s of [-1, 1]) b.box('paint', T, H + 2 * T - 0.0002, BAND, { p: [s * (W / 2 + T / 2 - 0.0001), y0 + H / 2, zb], c: band });
+};
+// A sealed pack (64 x 100 mm): a foil pillow, crimped shut at both ends, a red seal across it with the drop
+BUILD[ITEM.SEALED_PACK] = (b) => {
+  const W = 0.064, L = 0.084, H = 0.0055, CR = 0.008;
+  const foil = [0.72, 0.56, 0.26];
+  b.frustum('paint', W, L, W - 0.006, L - 0.008, 0, H, { c: foil });
+  // the crimped ends: a flat seam each, pressed in teeth (ridges a millimetre high), in the middle of the pillow's height
+  for (const s of [-1, 1]) {
+    b.box('paint', W, 0.0012, CR + 0.004, { p: [0, 0.0024, s * (L / 2 + CR / 2 - 0.002)], c: foil }); // (from where the pillow is full height)
+    for (let k = 0; k < 12; k++) b.box('paint', 0.0014, 0.0011, CR - 0.0015, { p: [-W / 2 + 0.003 + k * ((W - 0.006) / 11), 0.0034, s * (L / 2 + CR / 2 - 0.0005)], c: [0.62, 0.47, 0.2] });
+  }
+  // the seal across it: a red strip over the top and down the sides, and the drop on it
+  b.frustum('paint', W + 0.0004, 0.014, W - 0.0056, 0.014, 0, H + 0.0003, { c: [0.45, 0.07, 0.06] });
+  b.box('paint', 0.022, 0.0005, 0.03, { p: [0, H + 0.0004, 0], c: [0.84, 0.79, 0.66] });
+  cardDrop(b, 0, H + 0.0007, 0, 0.0065);
+};
+
 // fallback weapon shapes (used only for a weapon weapons.js has no model for)
 function FALLBACK_WEAPON(b, id) {
   const gun = (L, stock) => {

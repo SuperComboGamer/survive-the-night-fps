@@ -9,7 +9,8 @@
 //
 // What the browser had before it signed in - the id it made up for the leaderboard (client/net/identity.js) - can
 // come along with a register or a sign-in (guestId): the stats it earned as a guest move onto the account
-// (DbStats.claimGuest), and the id goes no further than that.
+// (DbStats.claimGuest), and so do the Dead Hand cards and decks it found (CardService.mergeGuest), and the id goes no
+// further than that.
 import { scrypt, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { HttpError } from './http.js';
 import { Allowance } from './allowance.js';
@@ -67,10 +68,12 @@ function checkPassword(v) {
 export const publicUser = (u) => ({ id: u.id, username: u.username, email: u.email, createdAt: u.created_at });
 
 export class Auth {
-  // db: server/db. stats: the DbStats a guest's record moves onto their account from (optional)
-  constructor({ db, stats = null, log = () => {} }) {
+  // db: server/db. stats: the DbStats a guest's record moves onto their account from (optional). cards: the card
+  // collections a guest's moves onto their account from (usercards.js CardService, optional)
+  constructor({ db, stats = null, cards = null, log = () => {} }) {
     this.db = db;
     this.stats = stats;
+    this.cards = cards;
     this.log = log;
     this.cache = new Map(); // token hash -> { user: { id, name, isAdmin } | null, until }
     this.registers = new Allowance(10, 300); // per address (a household, a LAN party): 10 accounts, then one every 5 minutes
@@ -141,11 +144,21 @@ export class Auth {
   }
 
   async claimGuest(user, guestId) {
-    if (!this.stats || typeof guestId !== 'string' || !guestId) return;
-    try {
-      await this.stats.claimGuest(user.id, user.username, guestId);
-    } catch (err) {
-      this.log(`account ${user.username}: guest stats not moved over (${err.message})`); // (the account is made all the same)
+    if (typeof guestId !== 'string' || !guestId) return;
+    if (this.stats) {
+      try {
+        await this.stats.claimGuest(user.id, user.username, guestId);
+      } catch (err) {
+        this.log(`account ${user.username}: guest stats not moved over (${err.message})`); // (the account is made all the same)
+      }
+    }
+    // (on its own: claimGuest above has nothing to do for a guest with no stats, who may well have found cards)
+    if (this.cards) {
+      try {
+        await this.cards.mergeGuest(user.id, guestId);
+      } catch (err) {
+        this.log(`account ${user.username}: guest cards not moved over (${err.message})`);
+      }
     }
   }
 
