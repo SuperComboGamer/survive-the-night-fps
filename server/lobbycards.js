@@ -14,6 +14,8 @@ const ALLOW_EVERY = 0.2;
 const EVENTS_MAX = 200;
 const NAME_MAX = 16;
 const TABLE_MAX = 64;
+const XFER_RETRY_MAX = 5;
+const XFER_RETRY_BASE = 500;
 const STARTER_SLOTS = new Map([
   [-1, F.SURVIVORS],
   [-2, F.DEAD],
@@ -402,7 +404,7 @@ export class LobbyCards {
     if (m.phase === 'locking') {
       const side = m.sides.findIndex((s) => s.pid === p.id);
       m.reason = reason || 'forfeit';
-      m.forfeitWinner = side === 0 ? 1 : 0;
+      if (m.forfeitWinner !== 0 && m.forfeitWinner !== 1) m.forfeitWinner = side === 0 ? 1 : 0;
       return;
     }
     const side = m.sides.findIndex((s) => s.pid === p.id);
@@ -430,7 +432,7 @@ export class LobbyCards {
     const moves = [];
     for (let i = 0; i < 2; i++) for (const item of m.sides[i].stake || []) moves.push([m.sides[i].owner, m.sides[winner].owner, item]);
     if (!moves.length) return this.finishPaid(m, true);
-    this.xfer(`${m.id}:loadout_wager_pay`, 'wager_pay', moves, m.id);
+    return this.xfer(`${m.id}:loadout_wager_pay`, 'wager_pay', moves, m.id);
   }
 
   refund(m, reason = 'server') {
@@ -440,7 +442,7 @@ export class LobbyCards {
     for (let i = 0; i < 2; i++) for (const item of m.sides[i].stake || []) moves.push([m.sides[i].owner, m.sides[i].owner, item]);
     if (!moves.length || m.phase === 'staking') return this.finishPaid(m, true);
     m.phase = 'paying';
-    this.xfer(`${m.id}:loadout_wager_back`, 'wager_back', moves, m.id);
+    return this.xfer(`${m.id}:loadout_wager_back`, 'wager_back', moves, m.id);
   }
 
   finishPaid(m, paid) {
@@ -476,11 +478,32 @@ export class LobbyCards {
       if (ev?.length) this.changed(m, ev);
       if (m.state.phase === 'over') this.finish(m);
     }
+    for (const x of this.pending.values()) {
+      if (!x.retryAt || x.retryAt > now) continue;
+      x.retryAt = 0;
+      this.sendXfer(x);
+    }
   }
 
   xfer(id, kind, moves, ref) {
-    this.pending.set(id, { id, kind, moves, ref });
-    this.loadouts?.fromRoom(this.room, { t: 'loadout', op: 'xfer', id, kind, match: ref, moves });
+    let resolve = null;
+    const done = new Promise((r) => (resolve = r));
+    const x = { id, kind, moves, ref, tries: 0, retryAt: 0, resolve };
+    this.pending.set(id, x);
+    this.sendXfer(x);
+    return done;
+  }
+
+  sendXfer(x) {
+    this.loadouts?.fromRoom(this.room, { t: 'loadout', op: 'xfer', id: x.id, kind: x.kind, match: x.ref, moves: x.moves });
+  }
+
+  retryXfer(x, m) {
+    if (!['store', 'busy'].includes(m.why) || x.tries >= XFER_RETRY_MAX) return false;
+    x.tries++;
+    x.retryAt = Date.now() + XFER_RETRY_BASE * 2 ** (x.tries - 1);
+    this.pending.set(x.id, x);
+    return true;
   }
 
   fromStore(m) {
@@ -522,18 +545,23 @@ export class LobbyCards {
     if (!match) return;
     if (x.kind === 'wager_lock') {
       if (m.ok) {
+        x.resolve?.(true);
         if (match.forfeitWinner === 0 || match.forfeitWinner === 1) return this.pay(match, match.forfeitWinner);
         return match.phase === 'locking' ? this.go(match) : null;
       }
+      x.resolve?.(false);
       match.reason = m.why === 'not_owned' ? 'not_owned' : 'store';
       for (const s of match.sides) this.note(this.present(s), m.why === 'not_owned' ? CARDNOTE.LOADOUT : CARDNOTE.STORE);
       return this.finish(match);
     }
     if (m.ok) {
       if (x.kind === 'wager_pay') this.applyLoadoutWager(match, x.moves);
+      x.resolve?.(true);
       return this.finishPaid(match, true);
     }
-    this.finishPaid(match, false);
+    if (this.retryXfer(x, m)) return;
+    this.log(`lobby cards: wager ${x.kind === 'wager_pay' ? 'payout' : 'refund'} failed after retries (${m.why}); leaving match unsettled for sweep`);
+    x.resolve?.(false);
   }
 
   collFor(p) {
@@ -598,9 +626,10 @@ export class LobbyCards {
     p.ws.send(w.bytes(), true, false);
   }
 
-  closeAll() {
+  async closeAll() {
     clearInterval(this.timer);
-    for (const m of [...this.matches.values()]) this.refund(m, 'server');
+    await Promise.all([...this.matches.values()].map((m) => this.refund(m, 'server'))).catch((err) => this.log(`lobby cards: shutdown refunds failed (${err.message})`));
+    await this.loadouts?.releaseRoom?.(this.room.code || '').catch((err) => this.log(`lobby cards: shutdown wager release failed (${err.message})`));
     for (const p of [...this.players.values()]) {
       if (p.owner) {
         this.service.fromRoom(this.room, { t: 'cards', op: 'leave', owner: p.owner });

@@ -1068,7 +1068,7 @@ async function shutdown(signal, exitCode = 0) {
       await stats.close();
       await achievements.close();
       await bestiary.close();
-      lobbyCards.closeAll();
+      await lobbyCards.closeAll();
       await cards.close([...lobby.rooms.values()]); // (the bets of the games not handed over go back; the finds are written)
       await loadouts.close();
       await store?.close();

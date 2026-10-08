@@ -22,7 +22,7 @@ const rng = mulberry32(33);
 const lobby = new LobbyCards({ service, loadouts, rng, log: () => {} });
 const ownerOf = (pid) => `g:${createHash('sha256').update(pid).digest('hex')}`;
 
-function client(name) {
+function clientFor(host, name) {
   const c = { name, pid: randomUUID(), msgs: [], last: {}, notes: [], ended: null, sentV: -1 };
   c.ws = {
     data: { user: null },
@@ -45,24 +45,24 @@ function client(name) {
       if (m.op === CARDMSG.MATCH_END) c.ended = m.data;
     },
     end() {
-      lobby.close(c.ws);
+      host.close(c.ws);
     },
     close() {
-      lobby.close(c.ws);
+      host.close(c.ws);
     },
   };
-  lobby.open(c.ws);
+  host.open(c.ws);
   const w = new Writer(128);
   w.u8(C2S.JOIN);
   w.u8(PROTOCOL_VERSION);
   w.str(name);
   w.str(c.pid);
-  lobby.message(c.ws, w.bytes());
+  host.message(c.ws, w.bytes());
   c.send = (op, data = {}) => {
     const w2 = new Writer(512);
     w2.u8(C2S.CARDS);
     writeCards(w2, op, data);
-    lobby.message(c.ws, w2.bytes());
+    host.message(c.ws, w2.bytes());
   };
   c.clear = () => {
     c.msgs.length = 0;
@@ -72,6 +72,7 @@ function client(name) {
   c.me = () => c.last[CARDMSG.TABLES]?.me || 0;
   return c;
 }
+const client = (name) => clientFor(lobby, name);
 
 const A = client('Ann');
 const B = client('Ben');
@@ -156,7 +157,107 @@ E.ws.close();
 await settle();
 check('forfeit transfers lobby wagered loadout items to the opponent', Fp.ended?.outcome === 'win' && (await loadouts.collection(ownerOf(Fp.pid))).items.some((it) => it.id === eItems[1].id), JSON.stringify(Fp.ended));
 
-lobby.closeAll();
+class SlowLockStore extends MemoryLoadoutStore {
+  async lockWager(args) {
+    await new Promise((resolve) => (this.releaseLock = resolve));
+    return super.lockWager(args);
+  }
+}
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new SlowLockStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(44), log: () => {} });
+  const G = clientFor(L, 'Gail');
+  const H = clientFor(L, 'Hal');
+  await settle();
+  await loadSvc.grant(ownerOf(G.pid), 1, {}, 'lobby:slow:g');
+  await loadSvc.grant(ownerOf(H.pid), 2, {}, 'lobby:slow:h');
+  await settle();
+  const gi = G.last[CARDMSG.COLL].loadouts[0];
+  const hi = H.last[CARDMSG.COLL].loadouts[0];
+  G.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [gi.id] });
+  await settle();
+  H.send(CARDOP.TABLE_JOIN, { id: H.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [hi.id] });
+  await settle();
+  G.send(CARDOP.STAKE_CONFIRM, { on: true });
+  H.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  G.ws.close();
+  store.releaseLock();
+  await settle();
+  check('lobby leave while wager lock is in flight pays the recorded winner and clears locks', store.wagerLocks.size === 0 && (await loadSvc.collection(ownerOf(H.pid))).items.some((it) => it.id === gi.id));
+  await L.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+class FlakyPayoutStore extends MemoryLoadoutStore {
+  async settleWager(args) {
+    if (args.kind === 'wager_pay' && !this.failedOnce) {
+      this.failedOnce = true;
+      throw new Error('temporary db failure');
+    }
+    return super.settleWager(args);
+  }
+}
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new FlakyPayoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(45), log: () => {} });
+  const I = clientFor(L, 'Ivy');
+  const J = clientFor(L, 'Joss');
+  await settle();
+  await loadSvc.grant(ownerOf(I.pid), 1, {}, 'lobby:retry:i');
+  await loadSvc.grant(ownerOf(J.pid), 2, {}, 'lobby:retry:j');
+  await settle();
+  const ii = I.last[CARDMSG.COLL].loadouts[0];
+  const ji = J.last[CARDMSG.COLL].loadouts[0];
+  I.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [ii.id] });
+  await settle();
+  J.send(CARDOP.TABLE_JOIN, { id: J.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [ji.id] });
+  await settle();
+  I.send(CARDOP.STAKE_CONFIRM, { on: true });
+  J.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  I.ws.close();
+  await new Promise((r) => setTimeout(r, 700));
+  L.tick();
+  await settle();
+  check('lobby payout retries after a transient store failure', store.failedOnce && store.wagerLocks.size === 0 && (await loadSvc.collection(ownerOf(J.pid))).items.some((it) => it.id === ii.id));
+  await L.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new MemoryLoadoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(46), log: () => {} });
+  const K = clientFor(L, 'Kit');
+  const M = clientFor(L, 'Moe');
+  await settle();
+  await loadSvc.grant(ownerOf(K.pid), 1, {}, 'lobby:shutdown:k');
+  await loadSvc.grant(ownerOf(M.pid), 2, {}, 'lobby:shutdown:m');
+  await settle();
+  const ki = K.last[CARDMSG.COLL].loadouts[0];
+  const mi = M.last[CARDMSG.COLL].loadouts[0];
+  K.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [ki.id] });
+  await settle();
+  M.send(CARDOP.TABLE_JOIN, { id: M.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [mi.id] });
+  await settle();
+  K.send(CARDOP.STAKE_CONFIRM, { on: true });
+  M.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  await L.closeAll();
+  check('lobby shutdown refunds active wager locks', store.wagerLocks.size === 0 && (await loadSvc.collection(ownerOf(K.pid))).items.some((it) => it.id === ki.id) && (await loadSvc.collection(ownerOf(M.pid))).items.some((it) => it.id === mi.id));
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+await lobby.closeAll();
 await service.close();
 await loadouts.close();
 if (fails.length) {

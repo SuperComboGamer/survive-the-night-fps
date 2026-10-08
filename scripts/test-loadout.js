@@ -98,6 +98,22 @@ async function persistence() {
   check('wager lock blocks a second table using the same item', blocked);
   await wstore.settleWager({ id: `${randomUUID()}:loadout_wager_back`, kind: 'wager_back', match: 'match-a', moves: [[wa, wa, wi.id]] });
   check('wager refund returns the locked item to its owner and slot', (await wstore.load(wa)).items.some((it) => it.id === wi.id) && (await wstore.load(wa)).slots[0] === wi.id);
+  await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'gone-room', match: 'match-release', stakes: [{ owner: wa, items: [wi.id] }] });
+  await wstore.releaseRoom('gone-room');
+  check('room release refunds held wager locks', wstore.wagerLocks.size === 0 && (await wstore.load(wa)).items.some((it) => it.id === wi.id));
+  await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'orphan-room', match: 'match-orphan', stakes: [{ owner: wa, items: [wi.id] }] });
+  wstore.wagerLocks.get(wi.id).at = Date.now() - 25 * 3600_000;
+  await wstore.sweepWagers(24 * 3600);
+  check('orphan sweep refunds old wager locks', wstore.wagerLocks.size === 0 && (await wstore.load(wa)).items.some((it) => it.id === wi.id));
+  await wstore.lockTradeItems({ room: 'trade-room', trade: '1', owner: wa, items: [wi.id] });
+  blocked = false;
+  try {
+    await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-trade-lock', stakes: [{ owner: wa, items: [wi.id] }] });
+  } catch {
+    blocked = true;
+  }
+  check('store blocks wagering an item in an active loadout trade', blocked);
+  await wstore.releaseTrade({ room: 'trade-room', trade: '1' });
   await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-c', stakes: [{ owner: wa, items: [wi.id] }, { owner: wb, items: [wj.id] }] });
   const payId = `${randomUUID()}:loadout_wager_pay`;
   await wstore.settleWager({ id: payId, kind: 'wager_pay', match: 'match-c', moves: [[wa, wb, wi.id], [wb, wb, wj.id]] });
@@ -314,7 +330,7 @@ async function handoffTradeReplay() {
   game1.cards.confirm(b1);
   const saved = game1.cards.save();
   check('pending loadout trade is saved for handoff', saved.pending.some((x) => x.kind === 'loadout_trade'));
-  link1.gone();
+  link1.gone(true);
 
   const link2 = new LocalLoadouts(service);
   const game2 = new Game({ seed: 9, loadouts: link2, dayLength: 999, nightLength: 999, godMode: true });
@@ -354,7 +370,7 @@ async function handoffWagerReplay() {
   game1.cards.stakeConfirm(b1, { on: true });
   const saved = game1.cards.save();
   check('pending loadout wager lock is saved for handoff', saved.pending.some((x) => x.kind === 'loadout_wager_lock') && m1.phase === 'locking');
-  link1.gone();
+  link1.gone(true);
 
   const link2 = new LocalLoadouts(service);
   const game2 = new Game({ seed: 10, loadouts: link2, dayLength: 999, nightLength: 999, godMode: true });
@@ -383,12 +399,48 @@ async function handoffWagerReplay() {
   check('server-side abort refunds wagered loadout items', (await service.collection(aOwner)).items.some((it) => it.id === refund.id));
 }
 
+async function leaveDuringWagerLock() {
+  console.log('\n-- loadout wager leave during lock');
+  class SlowLockStore extends MemoryLoadoutStore {
+    async lockWager(args) {
+      await new Promise((resolve) => (this.releaseLock = resolve));
+      return super.lockWager(args);
+    }
+  }
+  const store = new SlowLockStore();
+  const service = new LoadoutService({ store });
+  const link = new LocalLoadouts(service);
+  const game = new Game({ seed: 11, loadouts: link, dayLength: 999, nightLength: 999, godMode: true });
+  game.code = 'WGLK';
+  game.phase = PHASE.DAY;
+  const aPid = randomUUID();
+  const bPid = randomUUID();
+  const aOwner = `g:${createHash('sha256').update(aPid).digest('hex')}`;
+  const bOwner = `g:${createHash('sha256').update(bPid).digest('hex')}`;
+  await service.grant(aOwner, 1, {}, 'leave-lock:a');
+  await service.grant(bOwner, 2, {}, 'leave-lock:b');
+  const aItem = (await service.collection(aOwner)).items[0];
+  const bItem = (await service.collection(bOwner)).items[0];
+  const a = join(game, 'A', aPid);
+  const b = join(game, 'B', bPid);
+  await settle();
+  game.cards.startMatch([a, b], [defaultDeck(F.SURVIVORS), defaultDeck(F.DEAD)], [0, 0], [[aItem.id], [bItem.id]]);
+  game.cards.stakeConfirm(a, { on: true });
+  game.cards.stakeConfirm(b, { on: true });
+  await settle();
+  game.cards.leave(a);
+  store.releaseLock();
+  await settle();
+  check('in-run leave while wager lock is in flight refunds both items', store.wagerLocks.size === 0 && (await service.collection(aOwner)).items.some((it) => it.id === aItem.id) && (await service.collection(bOwner)).items.some((it) => it.id === bItem.id));
+}
+
 catalogRules();
 await persistence();
 await inRunRules();
 await inRunTrade();
 await handoffTradeReplay();
 await handoffWagerReplay();
+await leaveDuringWagerLock();
 
 if (fails.length) {
   console.error(`\n${fails.length} loadout test(s) failed: ${fails.join(', ')}`);

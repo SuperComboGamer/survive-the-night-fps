@@ -74,9 +74,9 @@ export class LocalLoadouts {
   post(m) {
     this.service.fromRoom(this.room, { t: 'loadout', ...m });
   }
-  gone() {
+  gone(handedOff = false) {
     this.room.closed = true;
-    this.service.roomGone(this.room);
+    this.service.roomGone(this.room, handedOff);
   }
 }
 
@@ -130,6 +130,12 @@ export class Loadouts {
       kind = 'trade';
     }
     this.link.post({ op: 'xfer', id, kind, moves, match });
+  }
+  tradeLock(trade, owner, items) {
+    this.link.post({ op: 'trade_lock', trade: String(trade), owner, items });
+  }
+  tradeUnlock(trade) {
+    this.link.post({ op: 'trade_unlock', trade: String(trade) });
   }
   equipped(owner) {
     const o = this.own.get(owner);

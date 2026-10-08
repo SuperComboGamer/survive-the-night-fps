@@ -650,7 +650,7 @@ export class Cards {
     if (m.phase === 'staking') return this.void(m, 'forfeit');
     if (m.phase === 'locking') {
       const side = m.sides.findIndex((s) => s.pid === p.id);
-      m.forfeitWinner = side === 0 ? 1 : 0;
+      if (m.forfeitWinner !== 0 && m.forfeitWinner !== 1) m.forfeitWinner = side === 0 ? 1 : 0;
       m.reason = 'forfeit';
       return;
     }
@@ -829,6 +829,7 @@ export class Cards {
     }
     for (const [item, n] of o.items) if (tradeCount(p.inv, item) < n) return this.note(p, CARDNOTE.ITEMS, item);
     t.sides.find((s) => s.pid === p.id).offer = o;
+    this.game.loadouts?.tradeLock(t.id, p.rejoinKey, o.loadouts || []);
     this.unready(t);
   }
   ready(p, d) {
@@ -927,6 +928,7 @@ export class Cards {
     for (let i = 0; i < 2; i++) for (const id of t.sides[i].offer.loadouts || []) loadoutMoves.push([t.sides[i].owner, t.sides[1 - i].owner, id]);
     if (!moves.length && !loadoutMoves.length) return this.closeTrade(t, true);
     t.phase = 'committing';
+    this.game.loadouts?.tradeUnlock(t.id);
     t.xfers = { cards: !moves.length, loadouts: !loadoutMoves.length, loadoutApplied: false };
     for (const s of t.sides) {
       this.use(s.owner);
@@ -963,6 +965,7 @@ export class Cards {
   // struck (done: the items change hands) or not (back to whoever put them in)
   closeTrade(t, done, why = 'done') {
     this.trades.delete(t.id);
+    this.game.loadouts?.tradeUnlock(t.id);
     if (t.escrow) {
       this.handOver(t.sides[0], t.escrow[done ? 1 : 0]);
       this.handOver(t.sides[1], t.escrow[done ? 0 : 1]);
