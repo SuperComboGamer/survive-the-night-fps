@@ -22,6 +22,12 @@ const fmtMods = (mods = {}) =>
       return `+${Math.round((v - 1) * 100)}% ${k}`;
     })
     .join(' · ');
+const cleanData = (v) => ({
+  catalog: Array.isArray(v?.catalog) ? v.catalog : [],
+  slotCount: v?.slotCount || LOADOUT_SLOTS,
+  items: Array.isArray(v?.items) ? v.items : [],
+  slots: Array.isArray(v?.slots) ? v.slots.slice(0, LOADOUT_SLOTS) : Array(LOADOUT_SLOTS).fill(null),
+});
 
 export class LoadoutPanel extends Panel {
   constructor(ui, parent) {
@@ -57,7 +63,7 @@ export class LoadoutPanel extends Panel {
     this.err = '';
     this.render();
     try {
-      this.data = await fetchLoadout();
+      this.data = cleanData(await fetchLoadout());
       if (!this.selected || !this.data.items.some((it) => it.id === this.selected)) this.selected = this.data.items[0]?.id || '';
     } catch (err) {
       this.err = err.message || 'Could not load your collection';
@@ -71,7 +77,7 @@ export class LoadoutPanel extends Panel {
     this.err = '';
     this.render();
     try {
-      this.data = await saveLoadout(slots);
+      this.data = cleanData(await saveLoadout(slots));
     } catch (err) {
       this.err = err.message || 'That did not save';
       await this.refresh();
