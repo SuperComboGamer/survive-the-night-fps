@@ -97,6 +97,7 @@ export function saveGame(g) {
   const s = {};
   for (const k of GAME_FIELDS) s[k] = data(g[k], 0) ?? null;
   s.waves = g.waves.map((wv) => data(wv, 0));
+  s.skullAwards = [...(g.skullAwards || [])];
   s.fallen = [...g.fallen];
   s.leftKits = [...g.leftKits]; // (oldest first: the cap lets the oldest go)
   s.gather = [...g.gather].map(([col, v]) => [colKey(col), data(v, 0)]);
@@ -132,6 +133,7 @@ export function loadGame(g, s) {
     g[k] = now && s[k] && typeof now === 'object' && !Array.isArray(now) ? { ...now, ...s[k] } : s[k];
   }
   g.waves = s.waves;
+  g.skullAwards = new Set(s.skullAwards || []);
   g.fallen = new Set(s.fallen);
   g.leftKits = new Map(s.leftKits);
   // every random stream starts again, somewhere new: none can be read back (shared/rng.js), and the server decides

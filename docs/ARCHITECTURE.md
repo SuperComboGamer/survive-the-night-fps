@@ -429,6 +429,22 @@ map does, and can be shut to fight and opened again.
   packs, the clocks, a deploy), `scripts/test-usercards.js` (the stores on PGlite and in memory), and
   `npm run test:e2e:cards` (the screens in a browser, then a match against `scripts/lib/cardbot.js` on a real server).
 
+## Loadout items, Zombie Skulls and the auction house
+
+Permanent loadout items are profile-owned copies, not backpack items. Each owner is the same key shape as cards and
+stats (`a:<account>` or `g:<guest hash>`), and each copy has its own UUID so duplicates can be moved one at a time.
+`server/userloadout.js` keeps the collection in Postgres (`016_loadout_items.sql`) or memory, with `loadout_ledger`
+making grants and marketplace item moves idempotent. Equipped slots are cleaned against the copies the owner currently
+has; an active auction listing hides its item from the collection and deletes any slot using it until the listing is
+cancelled, bought or expired.
+
+Zombie Skulls are the endgame currency (`017_loadout_auction_house.sql`). Balances live beside loadout items, guests
+can earn them, and signing in moves guest skulls onto the account with the guest's loadout items. Every credit/debit
+has a `loadout_skull_ledger` row and normalized entries; earn events from a game use stable ledger ids and an hourly
+cap, while auction buys debit buyer and credit seller minus the fee in the same transaction that moves the item. Guests
+may browse and earn but must sign in to buy or sell. The main menu's Loadout and Auction House panels read the same
+service (`client/net/loadout.js`, `client/ui/loadout.js`).
+
 ## Experience, levels and perks
 
 A player earns XP over every game they play, and perk points with it to spend on a perk tree. The rules are

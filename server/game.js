@@ -426,6 +426,7 @@ export class Game {
     this.stepAsked = 0;
     this.leftKits = new Map(); // leaverKey -> what is left of the starting kit of a player who left this run (parkKit)
     this.nightStats = { kills: 0, structLost: 0, downs: 0, deaths: 0, revives: 0 };
+    this.skullAwards = new Set(); // loadout economy ledger ids already emitted by this run
 
     this.lootPoints = [];
     this.dropper = 0; // the survivor putting a stack down right now (ACT.DROP_SLOT), for spawnItem to note on the item
@@ -1371,6 +1372,7 @@ export class Game {
     for (const p of paid ? this.players.values() : []) {
       const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
       this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
+      this.loadouts.escapeReward(p, aboard, `cross:${this.worldPlayed || 0}:${p.id}`);
     }
     // the stray cat goes too, if somebody has it in their arms (buildMainland sets it down beside them)
     const cat = this.cats.find((c) => c.holder && this.players.get(c.holder)?.state.pet);
@@ -1941,7 +1943,9 @@ export class Game {
     this.notify(NOTIFY.DAWN, this.day);
     this.sound(SOUND.DAWN, 0, 0, 0, 0);
     // the night goes on the record of everyone who saw it through (the dead come back below: it was not theirs)
-    this.credit(this.humans(), 'nights');
+    const survivors = this.humans();
+    this.credit(survivors, 'nights');
+    for (const p of survivors) this.loadouts.nightReward(p, night);
     this.phaseXp(true, night); // (...and so does its XP)
     this.track.dawn(night);
     this.ach.dawn();
@@ -1984,6 +1988,7 @@ export class Game {
     for (const p of this.players.values()) {
       const aboard = p.alive && !p.zombie && Math.hypot(p.state.x - car.x, p.state.z - car.z) <= ESCAPE_RADIUS;
       this.award(p, XPS.escape, aboard ? XP.escape : XP.team);
+      this.loadouts.escapeReward(p, aboard, `victory:${this.worldPlayed || 0}:${p.id}`);
     }
     this.notify(NOTIFY.VICTORY, this.day);
     this.sound(SOUND.CAR_START, this.world.car.x, 0.5, this.world.car.z, 0);

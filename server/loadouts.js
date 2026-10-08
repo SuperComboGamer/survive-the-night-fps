@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { CHATF } from '../shared/protocol.js';
 import { ITEM_DEFS, WEAPONS, isFirearm } from '../shared/defs.js';
 import { LOADOUT_CATALOG, combineLoadoutCombatEffects, loadoutDef, loadoutEffects, loadoutMods, loadoutName, loadoutWeaponEffect } from '../shared/loadout.js';
+import { SKULL_EARN, nightSkulls } from '../shared/economy.js';
 import { NO_PERKS, perkMods } from '../shared/progress.js';
 import { STAMINA_MAX } from '../shared/constants.js';
 import { freeSlot, invCap, INVENTORY_SIZE } from './inventory.js';
@@ -276,6 +277,27 @@ export class Loadouts {
     const id = `${this.game.code || 'game'}:${this.game.tick}:${p.id}:${catalog}:${randomUUID()}`;
     this.link.post({ op: 'grant', id, owner: p.rejoinKey, catalog, source });
     this.game.sendChat(p, 0, CHATF.SYSTEM, `Loadout item found: ${loadoutName(catalog)}. It is in your Loadout collection.`);
+  }
+  skullId(kind, owner, key) {
+    return `${this.game.code || 'game'}:${this.game.seed}:${kind}:${key}:${owner.replace(':', '_')}`;
+  }
+  skulls(p, amount, source, key) {
+    if (!p?.rejoinKey || amount <= 0) return;
+    const id = this.skullId(source.kind || 'play', p.rejoinKey, key);
+    this.game.skullAwards ||= new Set();
+    if (this.game.skullAwards.has(id)) return;
+    this.game.skullAwards.add(id);
+    this.link.post({ op: 'skulls', id, owner: p.rejoinKey, amount, source });
+    this.game.sendChat(p, 0, CHATF.SYSTEM, `+${amount} Zombie Skulls`);
+  }
+  nightReward(p, night) {
+    this.skulls(p, nightSkulls(night), { kind: 'night', night }, `night:${night}`);
+  }
+  bossReward(z, killer) {
+    this.skulls(killer, SKULL_EARN.BOSS_KILL, { kind: 'boss', boss: z.ztype }, `boss:${z.id}`);
+  }
+  escapeReward(p, aboard, key) {
+    this.skulls(p, aboard ? SKULL_EARN.ESCAPE_ABOARD : SKULL_EARN.ESCAPE_TEAM, { kind: 'escape', aboard: !!aboard, act: this.game.act }, key);
   }
   bossDrop(z, killer) {
     if (!killer?.rejoinKey || this.game.rng() >= LOADOUT_BOSS_CHANCE) return;

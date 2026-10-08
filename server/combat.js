@@ -630,6 +630,7 @@ export class Combat {
           g.dropItem(item, n, z.x, z.y, z.z, { spread: 2 + g.rng() * 2, life: 400 });
         }
         g.cards?.bossDrop(z); // (and maybe a sealed pack of Dead Hand cards: its own stream, server/cards.js)
+        g.loadouts?.bossReward(z, attacker && attacker.kind === ENT.PLAYER ? attacker : null);
         g.loadouts?.bossDrop(z, attacker && attacker.kind === ENT.PLAYER ? attacker : null);
       } else if (g.rng() < z.def.loot * (attacker && attacker.kind === ENT.PLAYER ? playerMods(attacker).drops : 1)) {
         const [item, n] = g.rollTable(z.def.common ? ZOMBIE_LOOT : SPECIAL_LOOT);

@@ -216,6 +216,11 @@ export class Splash {
     svgEl('i', 'btn-ico', lob, glyph('star'));
     el('span', '', lob, 'Loadout');
     lob.addEventListener('click', () => this.ui.loadout.show());
+    const ah = el('button', 'btn btn-ghost', btns);
+    ah.type = 'button';
+    svgEl('i', 'btn-ico', ah, glyph('skull'));
+    el('span', '', ah, 'Auction');
+    ah.addEventListener('click', () => this.ui.auction.show());
     const ab = el('button', 'btn btn-ghost', btns);
     ab.type = 'button';
     svgEl('i', 'btn-ico', ab, glyph('trophy'));
