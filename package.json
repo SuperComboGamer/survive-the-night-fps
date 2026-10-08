@@ -26,6 +26,7 @@
     "test:e2e": "node scripts/e2e-gameplay.js",
     "test:e2e:handoff": "node scripts/e2e-handoff.js",
     "test:e2e:pointer": "node scripts/e2e-pointer.js",
+    "test:e2e:joinlock": "node scripts/e2e-joinlock.js",
     "test:cluster": "node scripts/test-cluster.js",
     "posttest": "node scripts/test-itemguide.js",
     "test:sim": "node scripts/sim-smoke.js",

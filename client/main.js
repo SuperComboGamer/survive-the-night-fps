@@ -234,6 +234,9 @@ const callbacks = {
         } catch {}
       }
       joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
+      // the mouse and fullscreen: asked for on this click, before anything is waited for (Game.holdForJoin). A rejoin
+      // has no click of the player's to ask with: there the click on the game takes them.
+      if (!quiet) game.holdForJoin();
       if (!(await canJoinHere(code, name))) return;
       await game.join(name, code);
       reloadedInto(tabStore(), game.room?.code || code);
@@ -256,6 +259,7 @@ const callbacks = {
       return err;
     } finally {
       joining = false;
+      game.dropJoinHold(); // (not in the game: the mouse and the screen go back to the splash)
     }
   },
   onCraft: (id) => game?.uiCallbacks().onCraft(id),
