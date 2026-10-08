@@ -9,9 +9,15 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const OWNER_RE = new RegExp(`^(a:${UUID}|g:[0-9a-f]{64})$`);
 const USER_RE = new RegExp(`^${UUID}$`);
 const GRANT_RE = /^[0-9a-zA-Z:_.-]{1,96}$/;
+const XFER_RE = new RegExp(`^${UUID}:loadout_trade$`);
+const ITEM_RE = new RegExp(`^${UUID}$`);
+const MOVES_MAX = 24;
+const INFLIGHT_MAX = 8;
 const isOwner = (o) => typeof o === 'string' && OWNER_RE.test(o);
+const isItemId = (id) => typeof id === 'string' && ITEM_RE.test(id);
 const userOf = (owner) => (owner.startsWith('a:') ? owner.slice(2) : null);
 const asJson = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
+const notOwned = (owner, item) => Object.assign(new Error(`${owner} does not own loadout item ${item}`), { code: 'not_owned' });
 
 export const ownerKey = (accountId, guestId) => {
   if (typeof accountId === 'string' && USER_RE.test(accountId)) return `a:${accountId}`;
@@ -66,6 +72,33 @@ export class PgLoadoutStore {
       return { fresh, granted };
     });
     return { ...res, ...(await this.load(owner)) };
+  }
+
+  async transfer({ id, kind, moves }) {
+    const owners = [...new Set(moves.flatMap((m) => [m[0], m[1]]))];
+    const res = await this.db.tx(async (t) => {
+      const fresh = (await t.query('INSERT INTO loadout_ledger (id, kind, entries) VALUES ($1, $2, $3::jsonb) ON CONFLICT (id) DO NOTHING RETURNING id', [id, kind, JSON.stringify(moves)])).rows.length > 0;
+      const moved = [];
+      if (fresh) {
+        for (const [from, to, item] of moves) {
+          const r = await t.query(
+            `UPDATE loadout_items
+                SET owner = $2, user_id = $3::uuid, updated_at = now()
+              WHERE id = $1 AND owner = $4
+                AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM users WHERE id = $3::uuid))
+              RETURNING id`,
+            [item, to, userOf(to), from]
+          );
+          if (!r.rowCount) throw notOwned(from, item);
+          moved.push(item);
+        }
+        if (moved.length) await t.query('DELETE FROM loadout_slots WHERE item_id = ANY($1::uuid[])', [moved]);
+      }
+      return { fresh };
+    });
+    const colls = {};
+    for (const owner of owners) colls[owner] = await this.load(owner);
+    return { ...res, colls };
   }
 
   async saveSlots(owner, slots) {
@@ -130,6 +163,26 @@ export class MemoryLoadoutStore {
     }
     return { fresh, granted: granted && { id: granted.id, catalog, source: { ...granted.source }, acquiredAt: granted.acquiredAt }, ...(await this.load(owner)) };
   }
+  async transfer({ id, kind, moves }) {
+    const owners = [...new Set(moves.flatMap((m) => [m[0], m[1]]))];
+    const fresh = !this.ledger.has(id);
+    if (fresh) {
+      for (const [from, , item] of moves) {
+        const it = this.items.get(item);
+        if (!it || it.owner !== from) throw notOwned(from, item);
+      }
+      this.ledger.add(id);
+      for (const [, to, item] of moves) {
+        const it = this.items.get(item);
+        it.owner = to;
+      }
+      const moved = new Set(moves.map((m) => m[2]));
+      for (const [owner, slots] of this.slots) this.slots.set(owner, slots.map((item) => (moved.has(item) ? null : item)));
+    }
+    const colls = {};
+    for (const owner of owners) colls[owner] = await this.load(owner);
+    return { fresh, colls };
+  }
   async saveSlots(owner, slots) {
     const owned = new Set([...this.items.values()].filter((it) => it.owner === owner).map((it) => it.id));
     this.slots.set(owner, cleanLoadoutSlots(slots, owned));
@@ -170,6 +223,7 @@ export class LoadoutService {
     this.queue = Promise.resolve();
     this.cache = new Map(); // owner -> { items, slots, state, rooms }
     this.rooms = new Map(); // room -> Map(owner -> count)
+    this.inflight = new WeakMap(); // room -> count of loadout transfers under way
     this.closed = false;
   }
   run(job) {
@@ -225,6 +279,7 @@ export class LoadoutService {
       if (m.op === 'enter') return this.enter(room, m.owner);
       if (m.op === 'leave') return this.leave(room, m.owner);
       if (m.op === 'grant') return this.grantFromRoom(room, m);
+      if (m.op === 'xfer') return this.xfer(room, m);
     } catch (err) {
       this.log(`loadout: a game's ${String(m?.op).slice(0, 12)} failed (${err.message})`);
     }
@@ -276,6 +331,42 @@ export class LoadoutService {
     const rs = this.rooms.get(room);
     if (!isOwner(m.owner) || !rs?.has(m.owner) || !loadoutDef(m.catalog) || !GRANT_RE.test(String(m.id || ''))) return;
     this.grant(m.owner, m.catalog, m.source || {}, m.id).catch((err) => this.log(`loadout: grant failed (${err.message})`));
+  }
+  xfer(room, m) {
+    const id = typeof m.id === 'string' ? m.id : '';
+    const rs = this.rooms.get(room);
+    const refuse = (why) => {
+      this.log(`loadout: a trade refused (${why})`);
+      if (id.length <= 64) this.tell(room, { t: 'loadout', op: 'xfered', id, ok: false, why: 'refused' });
+    };
+    if (!XFER_RE.test(id) || m.kind !== 'trade' || !rs) return refuse('its id');
+    const moves = m.moves;
+    if (!Array.isArray(moves) || !moves.length || moves.length > MOVES_MAX) return refuse('its moves');
+    const seen = new Set();
+    for (const mv of moves) {
+      if (!Array.isArray(mv) || mv.length !== 3) return refuse('a move');
+      const [from, to, item] = mv;
+      if (from === to || !isOwner(from) || !isOwner(to) || !rs.has(from) || !rs.has(to) || !isItemId(item) || seen.has(item)) return refuse('a move');
+      seen.add(item);
+    }
+    const n = this.inflight.get(room) || 0;
+    if (n >= INFLIGHT_MAX) return this.tell(room, { t: 'loadout', op: 'xfered', id, ok: false, why: 'busy' });
+    const clean = moves.map((mv) => [...mv]);
+    this.inflight.set(room, n + 1);
+    this.run(() => this.store.transfer({ id, kind: 'trade', moves: clean })).then(
+      (res) => {
+        for (const [owner, got] of Object.entries(res.colls || {})) {
+          this.update(owner, got);
+          this.changed?.([owner]);
+        }
+        this.tell(room, { t: 'loadout', op: 'xfered', id, ok: true });
+      },
+      (err) => {
+        const why = err.code === 'not_owned' ? 'not_owned' : 'store';
+        if (why === 'store') this.log(`loadout: a trade failed (${err.message})`);
+        this.tell(room, { t: 'loadout', op: 'xfered', id, ok: false, why });
+      }
+    ).finally(() => this.inflight.set(room, Math.max(0, (this.inflight.get(room) || 1) - 1)));
   }
   reload(owners) {
     for (const o of Array.isArray(owners) ? owners.slice(0, 64) : []) if (isOwner(o) && this.cache.has(o)) this.fetch(o);
