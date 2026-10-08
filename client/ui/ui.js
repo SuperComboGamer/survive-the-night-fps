@@ -56,6 +56,7 @@ const CALLBACKS = [
   'onAccountName', // (player id) -> the account they are signed in to, '' for a guest
   'onBestiary', // the pause menu's Bestiary button: the game opens it (it frees the pointer)
   'onCards', // the pause menu's Dead Hand row: the game opens the card game's screen (it frees the pointer)
+  'onLobbyCards', // the splash's Dead Hand button: lobby tables outside a run
 ];
 
 const SVG_DEFS = `<svg class="stn-defs" width="0" height="0" aria-hidden="true" focusable="false">
