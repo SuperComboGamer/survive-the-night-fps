@@ -298,10 +298,7 @@ const callbacks = {
   onSettings: (s) => applySettings(s),
   onResume: () => {
     if (!game) return;
-    ui.showPause(false);
-    if (game.screenUp()) return; // (the map or the bestiary opened over the menu keeps the pointer)
-    game.input.enabled = true;
-    game.input.requestLock();
+    game.resumeFromPause();
   },
   onLeave: () => {
     forgetPlaying();

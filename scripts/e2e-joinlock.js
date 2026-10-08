@@ -30,7 +30,7 @@ try {
   const state = () =>
     p.evaluate(() => {
       const g = window.__game, lk = window.__lk;
-      return { state: g.state, held: lk.held, granted: lk.granted, refused: lk.refused, fs: lk.fs, wanted: g.keyGuard.wanted, hold: g.joinHold, input: g.input.enabled, pause: !g.ui.pause.root.hidden, joining: !!g.ui.splash.joining };
+      return { state: g.state, held: lk.held, granted: lk.granted, refused: lk.refused, fs: lk.fs, wanted: g.keyGuard.wanted, hold: g.joinHold, input: g.input.enabled, pause: !g.ui.pause.root.hidden, hint: document.querySelector('.toasts')?.textContent.includes('Click the game to resume looking around.') || false, joining: !!g.ui.splash.joining };
     });
   const until = async (fn, ms) => {
     for (const t = Date.now(); Date.now() - t < ms && !(await p.evaluate(fn)); ) await sleep(200);
@@ -108,7 +108,12 @@ try {
       await sleep(300);
       s = await state();
       check(`${rule}: the mouse let go of opens the menu`, !s.held && s.pause, s);
-      await p.mouse.click(900, 400); // (off the rail: back to the game)
+      const refused = s.refused;
+      await p.keyboard.press('Escape');
+      await until(() => window.__game.ui.pause.root.hidden && document.querySelector('.toasts')?.textContent.includes('Click the game to resume looking around.'), 2000);
+      s = await state();
+      check(`${rule}: Esc closes the menu even when Chrome refuses an immediate re-lock`, !s.held && !s.pause && s.input && s.refused > refused && s.hint, s);
+      await p.mouse.click(900, 400); // (the menu is gone; one click takes the mouse back)
       await sleep(600);
       s = await state();
       check(`${rule}: one click takes it back, out of fullscreen too`, s.held && s.input && !s.pause, s);
