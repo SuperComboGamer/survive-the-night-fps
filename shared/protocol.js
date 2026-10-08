@@ -7,7 +7,10 @@ export const PROTOCOL_VERSION = 41; // 26: the frag grenade and the noisemaker (
 // client -> server
 export const C2S = {
   JOIN: 1, // u8 version, str name, str player id (the browser's own, see client/net/identity.js; '' or absent: nothing is kept for them),
-  //          u8 character (shared/characters.js; absent or out of range: the server picks one from the player's id)
+  //          u8 character (shared/characters.js; absent or out of range: the server picks one from the player's id),
+  //          [look] (a custom survivor, the character creator: u8 length, then shared/appearance.js's bytes; absent or
+  //          0: the character is who they are. With a look, the character is the roster survivor most like it - who an
+  //          older server makes them, and who an older client draws)
   INPUT: 2, // u16 renderTick, u8 renderFrac, u8 head, u16 seq, [u8 hash], cmds... (see writeInput)
   ACTION: 3, // u8 action, ...
   CHAT: 4, // str
@@ -34,6 +37,9 @@ export const S2C = {
   //          reader treats a packet that ends there as Nightfall. Not a protocol bump: the join check is equality.
   FRIENDS: 12, // u8 count, then per player u16 id, str account name ('' = a guest, not signed in): everyone's on joining, a newcomer's to the rest
   PROGRESS: 13, // your XP (shared/progress.js): varu XP on record with this run's in it, u8 PROGF, then XP_SRC.length x varu: this run's XP by source
+  LOOKS: 14, // u8 count, then per player u16 id, u8 length, a custom survivor's look (shared/appearance.js; length 0: none, the player
+  //           list's character): everyone's on joining, a newcomer's to the rest. Not in S2C.PLAYERS, which goes out
+  //           again whenever a ping changes; a game of roster survivors sends none. An older client ignores it.
 };
 export const ROOMF = { INVITE_ONLY: 1 };
 // S2C.WELCOME flags. ADMIN: this player may run the admin commands (the client offers the spawn menu); the server

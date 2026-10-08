@@ -173,6 +173,8 @@ const TRANSIENT = [
   // the game: the connection, the clocks of the network side, things rebuilt from the valley
   /^game\.(godMode|fixedSeed|dayLenOverride|nightLen|startDayNum|dawnReturn|themes|maxDrops|adminHash|rollWhenEmpty)\b/, // (the new server's own options)
   /^game\.(rng|sessions|joins|greets|log|records|w|ew|events|stats|tickStats|track|globalDirty|playersDirty|playersListT|cw|gw|listBytes|listVer|world|nav|mineNav|lootPoints\.\*\.ent|thawAt|frozenAt)\b/,
+  // (the ids that had a custom look, told to the clients: every one is back through resume, which tells them again)
+  /^game\.lookIds\b/,
   /^game\.(ents|all|freeIds|gens|deer|cats|projectiles|areas)\b/, // (the registry is checked above; the deer, the cat and what was in flight start afresh)
   // a player: their connection, and what resume starts afresh for the client that comes back
   /^players\.\*\.(session|rec|view|shadow|cmdQueue|cmdBudget|hx|hy|hz|selfSync|away|arriving|ts|invDirty|selfCache|globalCache|listVer|snapTick|ackSent|greeted)\b/,

@@ -23,6 +23,7 @@ const { countItem, sortInventory, invCap } = await import('../server/inventory.j
 const { bit } = await import('../shared/bestiary.js');
 const { randomUUID } = await import('node:crypto');
 const { CHARACTER_COUNT, CHARACTER_NONE, defaultCharacter } = await import('../shared/characters.js');
+const AP = await import('../shared/appearance.js');
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -33,9 +34,10 @@ const quiet = () => {};
 const SEED = 4242;
 
 // a client: what it is told, read as the client reads it (global state, own state, the notices among its events)
-// (character: the survivor chosen on the splash, the JOIN's last byte; none: the byte is left off, as an older client does)
-function client(game, name, pid = '', character = CHARACTER_NONE) {
-  const c = { id: 0, name, net: {}, global: null, notes: [], resets: [], welcome: null, chars: new Map(), self: { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) } };
+// (character: the survivor chosen on the splash, the JOIN's last byte; none: the byte is left off, as an older client does.
+// look: a custom survivor's, after it - the character creator)
+function client(game, name, pid = '', character = CHARACTER_NONE, look = null) {
+  const c = { id: 0, name, net: {}, global: null, notes: [], resets: [], welcome: null, chars: new Map(), looks: new Map(), self: { alive: 1, hp: 100, maxHp: 100, armor: 0, armorMax: 0, battery: 100, weapons: [0, 0, 0, 0, 0], mags: [0, 0], ammo: AMMO_ITEMS.map(() => 0) } };
   c.conn = {
     ip: name,
     send(bytes) {
@@ -68,6 +70,12 @@ function client(game, name, pid = '', character = CHARACTER_NONE) {
           }
         }
         c.chars = new Map(ids.map((id) => [id, r.left > 0 ? r.u8() : -1]));
+      } else if (t === S2C.LOOKS) {
+        for (let n = r.u8(); n > 0; n--) {
+          const id = r.u16();
+          const b = AP.readLook(r);
+          c.looks.set(id, b ? [...b] : null);
+        }
       } else if (t === S2C.SNAPSHOT) {
         const flags = readHeader(r, c.net);
         if (flags & SNAP.GLOBAL) c.global = readGlobal(r, c.global);
@@ -85,6 +93,7 @@ function client(game, name, pid = '', character = CHARACTER_NONE) {
   w.str(name);
   w.str(pid);
   if (character !== CHARACTER_NONE) w.u8(character);
+  if (look) AP.writeLook(w, look);
   game.onMessage(c.session, w.bytes());
   c.p = () => game.players.get(c.id);
   c.act = (a, ...args) => {
@@ -361,7 +370,10 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   const game = new Game({ seed: SEED, log: quiet, themes: false });
   const annId = randomUUID();
   const ann = client(game, 'Ann', annId, 2);
-  const ben = client(game, 'Ben', randomUUID(), 7);
+  // (Ben made his own survivor: the character creator; 7 is the roster survivor most like him)
+  const benLook = AP.randomLook(AP.mulberry(7));
+  const benBytes = [...AP.encode(AP.canonical(benLook))];
+  const ben = client(game, 'Ben', randomUUID(), 7, benLook);
   ticks(game, 1);
   const a = ann.p();
   game.giveItem(a, ITEM.MP5, 1);
@@ -375,12 +387,15 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   const B = new Game({ log: quiet, themes: false, restore: decode(encode(envelope(game))) });
   check('a deploy in the middle of the crossing: the next server carries it on, the island still up', B.phase === PHASE.CROSSING && B.act === WORLD.ISLAND && B.crossing?.pending === 2 && Math.abs(B.timeLeft - game.timeLeft) < 0.1 && B.players.size === 2, `phase ${B.phase} act ${B.act} ${JSON.stringify(B.crossing)}`);
   check('...each held player the survivor they chose', B.players.get(ann.id)?.character === 2 && B.players.get(ben.id)?.character === 7, whoIs(B, []));
+  const sameBytes = (x) => JSON.stringify(x) === JSON.stringify(benBytes);
+  check('...and the one who made their own still their look (kept as plain bytes in the saved game)', sameBytes(B.players.get(ben.id)?.look) && !B.players.get(ann.id)?.look && ann.looks.get(ben.id) && sameBytes(ann.looks.get(ben.id)), JSON.stringify(B.players.get(ben.id)?.look)?.slice(0, 40));
   // (she comes back asking to be somebody else - a client that picked another on its splash: the body held for her is
   // the one she left, so she is who she was)
   const back = client(B, 'Ann', annId, 5);
   const a2 = back.p();
   ticks(B, 0.2);
   check('...a player who comes back into a held body is the survivor that body is, whatever the rejoin asks for', isChar(B, [back], ann.id, 2) && back.chars.get(ben.id) === 7, whoIs(B, [back]));
+  check("...and is told the others' looks again as they come back (S2C.LOOKS)", sameBytes(back.looks.get(ben.id)) && !back.looks.has(ann.id));
   check('...its players come back into their own bodies, and are told which map', back.id === ann.id && back.welcome.act === WORLD.ISLAND && kitOf(a2) === kit, `${back.id} vs ${ann.id}`);
   ticks(B, CROSSING.TIME);
   check('...and is still that survivor off the bridge', isChar(B, [back], ann.id, 2) && isChar(B, [back], ben.id, 7), whoIs(B, [back]));
@@ -395,6 +410,7 @@ const nearHead = (game) => game.zombies.filter((z) => !z.dead && Math.hypot(z.x 
   const a3 = again.p();
   ticks(C, 0.2);
   check('...and who they chose to be (a rejoin that names nobody keeps it too)', isChar(C, [again], ann.id, 2) && isChar(C, [again], ben.id, 7), whoIs(C, [again]));
+  check('...their own looks too, a second deploy on', sameBytes(C.players.get(ben.id)?.look) && sameBytes(again.looks.get(ben.id)));
   check('...the players where they stood, told it is the mainland', again.welcome.act === WORLD.MAINLAND && Math.abs(a3.state.x - a2.state.x) < 0.01 && kitOf(a3) === kitOf(a2));
   for (const p of C.players.values()) {
     p.away = null;

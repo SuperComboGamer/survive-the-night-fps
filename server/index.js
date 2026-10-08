@@ -145,7 +145,7 @@ let stopping = false;
 const auth = db ? new Auth({ db, stats, log }) : null;
 const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
-const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds
+const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds, their survivors
 if (auth) setInterval(() => auth.sweep().catch(() => {}), 3600_000).unref();
 // levels and perks: kept with the stats, database or file (a pick reaches the games the player is in at once)
 const progress = new Progress({
@@ -619,6 +619,21 @@ const saveBinds = async (ctx, b) => {
 };
 route('put', '/api/me/binds', saveBinds, { body: true });
 route('post', '/api/me/binds', saveBinds, { body: true });
+
+// your own survivors (the character creator), as your account keeps them: { customs: { v: 2, list, gone } | null }
+// (shared/customs.js). Without accounts on this server: { accounts: false } and none - the browser keeps its own.
+route('get', '/api/me/customs', async (ctx) => {
+  if (!auth) return { body: { accounts: false, customs: null } };
+  return { body: await userSettings.customs((await signedIn(ctx)).id) };
+});
+// { customs } -> what the account keeps afterwards: yours merged with what it had, survivor by survivor
+// (usersettings.js). Junk - not a list, too many, a survivor without a good id - is a 400; at most 32 KB.
+const saveCustoms = async (ctx, b) => {
+  const me = await signedIn(ctx);
+  return { body: await userSettings.saveCustoms(me.id, b) };
+};
+route('put', '/api/me/customs', saveCustoms, { body: true, max: 32768 });
+route('post', '/api/me/customs', saveCustoms, { body: true, max: 32768 });
 
 // How hard the run that just ended was, from its end screen: { rating: 1 too easy .. 5 too hard, guestId? } ->
 // { mine, counts: [votes for 1..5], total }. Signed in, the vote is the account's; else guestId, the browser's

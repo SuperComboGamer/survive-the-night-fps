@@ -133,6 +133,28 @@ The numbers find candidates and your eyes decide. Open the worst frames in the s
 `/sandbox/models-test.html?vm=<id>&clip=1&dots=1&xray=1`, or `?hold=<id>&pose=...&clip=1`) and look from an outside
 camera. A shared pose, grip, pole, reload branch or hold category changes other items too, so re-survey all of them.
 
+## 8. A wardrobe part (the character creator)
+
+A hairstyle, beard, hat, top, vest, pair of shoes or piece of kit is worn by every survivor the creator can make, not
+only by the roster survivor it was made for. So it has to sit right with everything else the wardrobe offers.
+
+1. Build it in `client/render/models/people.js` like the parts already there. Put it on the body's own surfaces
+   (`sheet`, `pillow`, `surfPoint`, `headSurface`) at the layer it is worn at (`pP`, `pT`, a vest's `pV`), so it
+   follows every body shape.
+2. Add one line for it to its field in `shared/wardrobe.js`. Give it the next unused `id`, never one in `retired`.
+   If it cannot be worn with something, say so in the line itself (`excludes`, `allow`). Don't make it smaller.
+3. Measure it on every body and with every other part:
+
+   ```sh
+   npm run clip:outfits -- --looks <field>:<name>           # clothes against clothes, e.g. hat:stetson
+   npm run clip:survey -- --sections tp --looks <field>:<name>  # held items and the pack, on those looks
+   npm test                                                 # test-characters.js: it builds, it changes the model,
+                                                            # it fits the budget, the wardrobe and people.js agree
+   ```
+
+   `--looks cover` runs every part, and `--save-baseline` / `--baseline` work as the survey's do. Look at the worst
+   ones with `?turn=l:<code>` (the code is printed beside each look).
+
 ## The rules
 
 - Never shrink, scale or hide an item to hide a clip.
