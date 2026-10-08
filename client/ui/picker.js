@@ -1,194 +1,99 @@
-// Choosing who to play as (the splash, under "Playing as"): the roster of shared/characters.js. A card on the splash
-// shows the one chosen - a portrait, the name and what they did - with arrows through the roster; a click on it opens
-// the picker, a grid of them all (and Random) beside a turntable of the one picked. The choice is kept in
-// localStorage (stn.character: an id, or 'random') and goes to the server with the next JOIN (Game.join ->
-// Connection.connect); Random draws one afresh at every join.
+// Choosing who to play as (the splash, under "Playing as"): one of the roster of shared/characters.js, Random (one of
+// them drawn at every join), Random stranger (a survivor made up: shared/appearance.js randomLook - a new one at every
+// click of its dice, and after every join), or one of the player's own (the character creator: client/ui/creator.js,
+// kept by client/ui/customs.js).
+// A card on the splash shows the one chosen - a portrait, the name and what they did - with arrows through them all; a
+// click on it opens the picker, a grid of them beside a turntable of the one picked, from which the creator is opened.
+// The choice is kept in localStorage (stn.character: an id, 'random', 'stranger' or 'c:<custom id>'; the stranger
+// made up last in stn.stranger, its lookCode) and goes to the server with the next JOIN (Game.join ->
+// Connection.connect).
 //
-// The portraits and the turntable are drawn by a small WebGL renderer of their own (CharacterStage), made the first
-// time the splash wants one and let go of when the game starts: it draws the real survivor models, the same ones the
-// game does (models/characters.js createSurvivor).
-import * as THREE from 'three';
+// The portraits and the turntable are drawn by a small WebGL renderer of their own (client/ui/stage.js).
 import { CHARACTERS, CHARACTER_COUNT } from '../../shared/characters.js';
+import { randomLook, lookKey, lookCode, fromLookCode, mulberry } from '../../shared/appearance.js';
 import { el, svgEl, lsGet, lsSet } from './dom.js';
 import { glyph } from './icons.js';
 import { Panel } from './games.js';
+import { customs, getCustom, MAX_CUSTOMS, takeNote, onCustomsChange } from './customs.js';
+import { getStage, looksModule, releaseStage } from './stage.js';
+import { CreatorPanel } from './creator.js';
 
+export { releaseStage };
 export const CHARACTER_KEY = 'stn.character';
 export const RANDOM = 'random';
+export const STRANGER = 'stranger';
+const isCustom = (v) => typeof v === 'string' && v.startsWith('c:');
+const customOf = (v) => (isCustom(v) ? getCustom(v.slice(2)) : null);
 
-/** What the player chose: a character id, or RANDOM (the default). */
+/** What the player chose: a character id, RANDOM (the default), STRANGER, or 'c:<id>' (a saved survivor of theirs). */
 export function storedChoice() {
   const v = lsGet(CHARACTER_KEY, RANDOM);
+  if (v === STRANGER) return STRANGER;
+  if (isCustom(v)) return customOf(v) ? v : RANDOM;
   const n = Number(v);
   return v !== RANDOM && Number.isInteger(n) && n >= 0 && n < CHARACTER_COUNT ? n : RANDOM;
 }
 export function storeChoice(v) {
-  lsSet(CHARACTER_KEY, v === RANDOM ? RANDOM : String(v | 0));
+  lsSet(CHARACTER_KEY, typeof v === 'number' ? String(v | 0) : v);
 }
-/** The character to join as: the one chosen, or (Random) one drawn now. */
+
+// The stranger: the one on the turntable is the one the next join is (made up when there is none, kept until then)
+export const STRANGER_KEY = 'stn.stranger';
+let strangerNow = null; // { code, values }
+function stranger() {
+  if (strangerNow) return strangerNow.values;
+  const code = lsGet(STRANGER_KEY, '');
+  const values = code ? fromLookCode(code) : null;
+  if (!values) return rollStranger();
+  strangerNow = { code, values };
+  return values;
+}
+/** Another stranger, made up now (a click of the Stranger's dice; every join, for the next). */
+export function rollStranger() {
+  const values = randomLook(mulberry((Math.random() * 2 ** 32) >>> 0));
+  strangerNow = { code: lookCode(values), values };
+  lsSet(STRANGER_KEY, strangerNow.code);
+  return values;
+}
+
+/**
+ * Who to join as: { character, look }. A roster survivor (the one chosen, or Random's draw now) has a character and no
+ * look; a custom one (a saved survivor, or the stranger shown) a look (shared/appearance.js values) and no character.
+ * Joining as the stranger makes up the next one.
+ */
 export function chosenCharacter() {
   const c = storedChoice();
-  return c === RANDOM ? (Math.random() * CHARACTER_COUNT) | 0 : c;
+  if (c === RANDOM) return { character: (Math.random() * CHARACTER_COUNT) | 0, look: null };
+  if (c === STRANGER) {
+    const look = stranger();
+    rollStranger();
+    return { character: null, look };
+  }
+  if (isCustom(c)) return { character: null, look: customOf(c).values };
+  return { character: c, look: null };
 }
-
-// ---------------------------------------------------------------- the renderer
-let models = null; // models/characters.js, loaded with the stage (it pulls in every model builder)
-
-/** A renderer of its own for the picker: portraits (cached as images) and the turntable. */
-class CharacterStage {
-  constructor() {
-    this.canvas = document.createElement('canvas');
-    this.canvas.className = 'cp-stage';
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true, preserveDrawingBuffer: false });
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
-    this.renderer.setClearColor(0x000000, 0);
-    this.scene = new THREE.Scene();
-    this.scene.add(new THREE.HemisphereLight(0xcfd6e0, 0x3a3024, 1.6));
-    const key = new THREE.DirectionalLight(0xfff0dc, 2.6);
-    key.position.set(-2.5, 4, -4);
-    const rim = new THREE.DirectionalLight(0xa8b8ff, 1.6);
-    rim.position.set(3, 3, 4);
-    const fill = new THREE.DirectionalLight(0xffd8b0, 0.6);
-    fill.position.set(3, 1, -2);
-    this.scene.add(key, rim, fill);
-    this.camera = new THREE.PerspectiveCamera(26, 0.7, 0.05, 30);
-    this.people = new Map(); // id -> survivor (createSurvivor)
-    this.portraits = new Map(); // id -> the picture's URL
-    this.time = 0;
-  }
-
-  person(id) {
-    let s = this.people.get(id);
-    if (!s) {
-      s = models.createSurvivor(id, id);
-      s.object.visible = false;
-      this.scene.add(s.object);
-      this.people.set(id, s);
-    }
-    return s;
-  }
-
-  // pose one at its clock (standing easy) and show only it
-  pose(id, yaw) {
-    for (const [k, s] of this.people) s.object.visible = k === id;
-    const s = this.person(id);
-    s.object.visible = true;
-    s.object.rotation.y = yaw;
-    s.update(1 / 60, { speed: 0, sprint: false, crouch: false, pitch: 0, onGround: true, reloading: false, dead: false, time: this.time });
-    return s;
-  }
-
-  /** A head-and-shoulders portrait, as an image (made once). */
-  portrait(id) {
-    let url = this.portraits.get(id);
-    if (url) return url;
-    this.shoot(id);
-    url = this.canvas.toDataURL('image/png');
-    this.portraits.set(id, url);
-    return url;
-  }
-
-  /**
-   * The portraits of several at once, for the picker's grid: all of them drawn side by side into the one canvas and
-   * read back from the graphics card ONCE. (Reading a picture back waits for the card to finish everything it has
-   * been sent, the game's own frames included: ten portraits read one after another were ten such waits, and they
-   * were most of the freeze as the picker opened.) Returns a sheet to cut the pictures from: sheet.cut(id) is that
-   * one's URL, encoded then, from memory.
-   */
-  sheet(ids) {
-    const W = 160, H = 200;
-    ids = ids.filter((id) => !this.portraits.has(id));
-    const r = this.renderer;
-    const pr = r.getPixelRatio();
-    r.setSize(W * Math.max(1, ids.length), H, false);
-    r.setScissorTest(true);
-    ids.forEach((id, k) => {
-      r.setViewport(k * W, 0, W, H);
-      r.setScissor(k * W, 0, W, H);
-      this.shoot(id, false);
-    });
-    r.setScissorTest(false);
-    r.setViewport(0, 0, W * Math.max(1, ids.length), H);
-    // (a canvas kept in memory, not on the card: cutting from it and encoding its pieces waits for nothing)
-    const all = document.createElement('canvas');
-    all.width = this.canvas.width;
-    all.height = this.canvas.height;
-    const ax = all.getContext('2d', { willReadFrequently: true });
-    if (ids.length) ax.drawImage(this.canvas, 0, 0);
-    const one = document.createElement('canvas');
-    one.width = Math.round(W * pr);
-    one.height = Math.round(H * pr);
-    const ox = one.getContext('2d', { willReadFrequently: true });
-    return {
-      cut: (id) => {
-        const k = ids.indexOf(id);
-        if (k >= 0 && !this.portraits.has(id)) {
-          ox.clearRect(0, 0, one.width, one.height);
-          ox.drawImage(all, Math.round(k * W * pr), 0, one.width, one.height, 0, 0, one.width, one.height);
-          this.portraits.set(id, one.toDataURL('image/png'));
-        }
-        return this.portrait(id);
-      },
-    };
-  }
-
-  // draws the portrait of one into the canvas (sized: the canvas made its size first; the sheet sizes its own)
-  shoot(id, sized = true) {
-    const W = 160, H = 200;
-    if (sized) this.renderer.setSize(W, H, false);
-    this.time = 1.3;
-    const s = this.pose(id, -0.35); // (they face -Z: toward the camera, turned a little)
-    s.object.updateMatrixWorld(true);
-    const head = s.object.userData.head.getWorldPosition(new THREE.Vector3());
-    this.camera.aspect = W / H;
-    this.camera.fov = 24;
-    this.camera.updateProjectionMatrix();
-    this.camera.position.set(head.x + 0.12, head.y + 0.03, head.z - 0.95);
-    this.camera.lookAt(head.x, head.y - 0.07, head.z);
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  /** The turntable: the whole figure, turning, into this.canvas at w x h (css px). */
-  turn(id, w, h, dt) {
-    if (this.canvas.width !== Math.round(w * this.renderer.getPixelRatio())) this.renderer.setSize(w, h, false);
-    this.time += dt;
-    const s = this.pose(id, Math.PI + 0.5 * Math.sin(this.time * 0.6) + this.time * 0.35);
-    this.camera.aspect = w / h;
-    this.camera.fov = 24;
-    this.camera.updateProjectionMatrix();
-    this.camera.position.set(0, 1.0, 4.2);
-    this.camera.lookAt(0, 0.92, 0);
-    void s;
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  dispose() {
-    for (const s of this.people.values()) s.dispose();
-    this.people.clear();
-    this.renderer.dispose();
-    this.renderer.forceContextLoss?.();
-  }
+// the stage's reference for a choice: a roster id, a saved survivor's look key; null for Random and Random stranger
+// (a key is worked out once per look: the turntable asks every frame)
+const keys = new WeakMap();
+function refOf(c) {
+  if (typeof c === 'number') return c;
+  const cu = customOf(c);
+  if (!cu) return null;
+  let k = keys.get(cu.values);
+  if (!k) keys.set(cu.values, (k = lookKey(cu.values)));
+  return k;
 }
+// every choice, in the order the card's arrows go through them
+const order = () => [RANDOM, STRANGER, ...CHARACTERS.map((ch) => ch.id), ...customs().map((c) => 'c:' + c.id)];
 
-let stage = null;
-let stageWait = null;
-async function getStage() {
-  if (stage) return stage;
-  if (!stageWait)
-    stageWait = (async () => {
-      models = models || (await import('../render/models/characters.js'));
-      stage = new CharacterStage();
-      return stage;
-    })();
-  return stageWait;
-}
-/** Let go of the picker's renderer (the game starting: its context and models are not needed in play). */
-export function releaseStage() {
-  if (stage) stage.dispose();
-  stage = null;
-  stageWait = null;
+// what the card and the side of the picker say about a choice
+function describe(c) {
+  if (c === RANDOM) return { name: 'Random', full: 'Random', role: 'A different survivor every time', line: 'Who you are is drawn from the ten when you join.' };
+  if (c === STRANGER) return { name: 'Stranger', full: 'Random stranger', role: 'A brand-new face every time', line: 'Someone the valley has never seen. Click the dice for another; each time you join, a new one.' };
+  const cu = customOf(c);
+  if (cu) return { name: cu.name, full: cu.name, role: 'Your survivor', line: 'Made by you. Everyone sees how they look; the name stays with you.' };
+  const ch = CHARACTERS[c];
+  return { name: ch.name, full: ch.full, role: ch.role, line: ch.line };
 }
 
 // ---------------------------------------------------------------- the splash's card
@@ -213,6 +118,7 @@ export class CharacterCard {
     this.img = el('img', 'cp-img', this.face);
     this.img.alt = '';
     this.q = el('span', 'cp-q', this.face, '?');
+    this.dice = svgEl('span', 'cp-q cp-dice', this.face, glyph('dice'));
     const txt = el('button', 'cp-txt', row);
     txt.type = 'button';
     txt.title = 'Choose who to play as';
@@ -223,6 +129,8 @@ export class CharacterCard {
     this.next.type = 'button';
     this.next.title = 'Next survivor';
     this.next.setAttribute('aria-label', 'Next survivor');
+    this.note = el('p', 'cp-note', this.root, '');
+    this.note.hidden = true;
     this.panel = new CharacterPanel(ui, panelParent, this);
     this.prev.addEventListener('click', () => this.step(-1));
     this.next.addEventListener('click', () => this.step(1));
@@ -231,12 +139,12 @@ export class CharacterCard {
     this.sync();
   }
 
-  // through the roster, Random as the one before the first
+  // through them all, Random first
   step(d) {
     const c = storedChoice();
-    const order = [RANDOM, ...CHARACTERS.map((ch) => ch.id)];
-    const i = order.indexOf(c);
-    this.choose(order[(i + d + order.length) % order.length]);
+    const o = order();
+    const i = o.indexOf(c);
+    this.choose(o[(i + d + o.length) % o.length]);
   }
 
   choose(v) {
@@ -247,16 +155,24 @@ export class CharacterCard {
 
   async sync() {
     const c = storedChoice();
-    const ch = c === RANDOM ? null : CHARACTERS[c];
-    this.name.textContent = ch ? ch.name : 'Random';
-    this.role.textContent = ch ? ch.role : 'A different survivor every time';
-    this.line.textContent = ch ? ch.line : 'Who you are is drawn from the ten when you join.';
-    this.root.classList.toggle('random', !ch);
-    this.q.hidden = !!ch;
-    this.img.hidden = !ch;
-    if (ch) {
+    const d = describe(c);
+    this.name.textContent = d.name;
+    this.role.textContent = d.role;
+    this.line.textContent = d.line;
+    const ref = refOf(c);
+    this.root.classList.toggle('random', ref === null);
+    this.q.hidden = c !== RANDOM;
+    this.dice.hidden = c !== STRANGER;
+    this.img.hidden = ref === null;
+    // a saved survivor of theirs with parts no longer in the game: said once, here
+    const note = isCustom(c) ? takeNote(c.slice(2)) : '';
+    if (note) {
+      this.note.textContent = note;
+      this.note.hidden = false;
+    }
+    if (ref !== null) {
       const st = await getStage();
-      if (storedChoice() === c) this.img.src = st.portrait(c);
+      if (storedChoice() === c) this.img.src = st.portrait(ref);
     }
   }
 
@@ -272,40 +188,88 @@ export class CharacterPanel extends Panel {
     this.card = card;
     this.sub.textContent = 'Who you play as. Others see them too; two of you may pick the same one.';
     const wrap = el('div', 'cp-wrap', this.body);
-    this.grid = el('div', 'cp-grid', wrap);
+    const lists = el('div', 'cp-lists', wrap);
+    el('h4', 'cp-group', lists, 'The ten');
+    this.grid = el('div', 'cp-grid', lists);
+    el('h4', 'cp-group', lists, 'Yours');
+    this.mine = el('div', 'cp-grid cp-mine', lists);
     const side = el('div', 'cp-side', wrap);
     this.view = el('div', 'cp-view', side);
     this.vName = el('div', 'cp-vname', side, '');
     this.vRole = el('div', 'cp-vrole', side, '');
     this.vLine = el('p', 'cp-vline', side, '');
+    this.acts = el('div', 'cp-acts', side);
     this.cells = new Map();
-    const cell = (v, label, role) => {
-      const b = el('button', 'cp-cell', this.grid);
-      b.type = 'button';
-      const f = el('span', 'cp-cface', b);
-      if (v === RANDOM) el('span', 'cp-q', f, '?');
-      else {
-        const img = el('img', 'cp-img', f);
-        img.alt = '';
-        b.img = img;
-      }
-      el('span', 'cp-cname', b, label);
-      el('span', 'cp-crole', b, role);
-      b.addEventListener('click', () => this.pick(v));
+    for (const ch of CHARACTERS) this.cell(this.grid, ch.id, ch.name, ch.role);
+    this.cell(this.grid, RANDOM, 'Random', 'Any of the ten');
+    this.cell(this.grid, STRANGER, 'Stranger', 'Made up each time');
+    const done = el('button', 'btn btn-blood cp-done', this.foot);
+    done.type = 'button';
+    el('span', '', done, 'Done');
+    done.addEventListener('click', () => this.hide());
+    this.creator = new CreatorPanel(ui, parent, {
+      saved: (id) => {
+        this.fillMine();
+        this.card.choose('c:' + id);
+        this.show();
+      },
+      deleted: (id) => {
+        if (storedChoice() === 'c:' + id || lsGet(CHARACTER_KEY, '') === 'c:' + id) storeChoice(RANDOM);
+        this.fillMine();
+        this.card.sync();
+        this.show();
+      },
+      closed: () => this.show(),
+    });
+    this.fillMine();
+    this.shown = storedChoice();
+    this.raf = 0;
+    // (merged with the account's: survivors made in another browser come in, ones deleted there go)
+    onCustomsChange((why) => {
+      if (why !== 'sync') return;
+      this.fillMine();
+      if (!this.root.hidden) this.sync();
+      this.card.sync();
+    });
+  }
+
+  cell(parent, v, label, role, cls = '') {
+    const b = el('button', 'cp-cell' + (cls ? ' ' + cls : ''), parent);
+    b.type = 'button';
+    const f = el('span', 'cp-cface', b);
+    if (v === RANDOM) el('span', 'cp-q', f, '?');
+    else if (v === STRANGER) svgEl('span', 'cp-q cp-dice', f, glyph('dice'));
+    else if (v === 'create') svgEl('span', 'cp-q cp-plus', f, glyph('plus'));
+    else {
+      const img = el('img', 'cp-img', f);
+      img.alt = '';
+      b.img = img;
+    }
+    el('span', 'cp-cname', b, label);
+    el('span', 'cp-crole', b, role);
+    if (v === 'create') b.addEventListener('click', () => this.create());
+    else {
+      // (the Stranger's dice: every click, another one)
+      b.addEventListener('click', () => {
+        if (v === STRANGER) rollStranger();
+        this.pick(v);
+      });
       b.addEventListener('dblclick', () => {
         this.pick(v);
         this.hide();
       });
       this.cells.set(v, b);
-    };
-    for (const ch of CHARACTERS) cell(ch.id, ch.name, ch.role);
-    cell(RANDOM, 'Random', 'Any of them');
-    const done = el('button', 'btn btn-blood cp-done', this.foot);
-    done.type = 'button';
-    el('span', '', done, 'Done');
-    done.addEventListener('click', () => this.hide());
-    this.shown = storedChoice();
-    this.raf = 0;
+    }
+    return b;
+  }
+
+  // the player's own: one cell each, and "Create" while there is room
+  fillMine() {
+    for (const v of [...this.cells.keys()]) if (isCustom(v)) this.cells.delete(v);
+    this.mine.textContent = '';
+    for (const c of customs()) this.cell(this.mine, 'c:' + c.id, c.name, 'Your survivor');
+    if (customs().length < MAX_CUSTOMS) this.cell(this.mine, 'create', 'Create', 'Make your own');
+    if (!this.root.hidden) this.portraits();
   }
 
   pick(v) {
@@ -317,11 +281,70 @@ export class CharacterPanel extends Panel {
     const c = storedChoice();
     this.shown = c;
     for (const [v, b] of this.cells) b.classList.toggle('on', v === c);
-    const ch = c === RANDOM ? null : CHARACTERS[c];
-    this.vName.textContent = ch ? ch.full : 'Random';
-    this.vRole.textContent = ch ? ch.role : 'Any of the ten';
-    this.vLine.textContent = ch ? ch.line : 'A different survivor is drawn for you every time you join.';
-    this.root.classList.toggle('random', !ch);
+    const d = describe(c);
+    this.vName.textContent = d.full;
+    this.vRole.textContent = d.role;
+    this.vLine.textContent = d.line;
+    this.root.classList.toggle('random', refOf(c) === null);
+    // what can be done from here: make one like a roster survivor, change or copy one's own
+    this.acts.textContent = '';
+    const act = (label, fn, title = '') => {
+      const b = el('button', 'btn btn-ghost cp-act', this.acts, label);
+      b.type = 'button';
+      if (title) b.title = title;
+      b.addEventListener('click', fn);
+    };
+    const room = customs().length < MAX_CUSTOMS;
+    if (typeof c === 'number' && room) act(`Make one like ${CHARACTERS[c].name}`, () => this.create(c), 'Open the creator with them to start from');
+    const cu = customOf(c);
+    if (cu) {
+      act('Edit', () => this.edit({ id: cu.id, name: cu.name, values: cu.values }));
+      if (room) act('Copy', () => this.edit({ name: cu.name.slice(0, 13) + ' 2', values: cu.values }));
+    }
+    if (c === STRANGER) act('Roll another', () => rollStranger(), 'Another stranger, made up now');
+    if (c === STRANGER && room) act('Keep one', () => this.create('stranger'), 'Open the creator with the stranger on the turntable');
+  }
+
+  /** Opens the creator: from a roster survivor's id, the stranger being shown, or (nothing) a stranger of its own. */
+  async create(from = null) {
+    // (a new one closed unsaved: "Create" goes back to it)
+    if (from === null && this.creator.draft && !this.creator.draft.id) return this.edit(this.creator.draft);
+    await getStage();
+    let values;
+    if (typeof from === 'number') values = looksModule().appearanceOfRoster(from);
+    else if (from === 'stranger') values = stranger();
+    else values = randomLook();
+    this.edit({ name: '', values });
+  }
+
+  // the creator in the picker's place (back to the picker when it closes)
+  edit(o) {
+    this.hide();
+    this.creator.open(o);
+  }
+
+  // the portraits, a step a frame, so that no frame of the panel's opening is held long: first a survivor's model a
+  // frame, then all their pictures drawn in one go and read back once (CharacterStage.sheet), then a picture cut and
+  // put in its cell a frame
+  async portraits() {
+    const st = await getStage();
+    if (this.root.hidden) return;
+    const todo = [...this.cells].filter(([v, b]) => b.img && !b.img.src && refOf(v) !== null).map(([v]) => v);
+    let sheet = null;
+    const next = () => {
+      if (this.root.hidden || !todo.length) return;
+      const need = todo.find((v) => !st.people.has(refOf(v)) && !st.portraits.has(refOf(v)));
+      if (need !== undefined) st.person(refOf(need));
+      else if (!sheet) sheet = st.sheet(todo.map(refOf));
+      else {
+        const v = todo.shift();
+        const b = this.cells.get(v);
+        if (b && refOf(v) !== null) b.img.src = sheet.cut(refOf(v));
+      }
+      requestAnimationFrame(next);
+    };
+    requestAnimationFrame(next);
+    this.loading = todo;
   }
 
   async show() {
@@ -330,32 +353,18 @@ export class CharacterPanel extends Panel {
     const st = await getStage();
     if (this.root.hidden) return;
     this.view.appendChild(st.canvas);
-    // The portraits, a step a frame, so that no frame of the panel's opening is held long: first a survivor's model
-    // a frame, then all their pictures drawn in one go and read back once (CharacterStage.sheet), then a picture cut
-    // and put in its cell a frame.
-    const ids = CHARACTERS.map((c) => c.id).filter((id) => this.cells.get(id) && !this.cells.get(id).img.src);
-    let sheet = null;
-    const next = () => {
-      if (this.root.hidden || !ids.length) return;
-      const need = ids.find((id) => !st.people.has(id) && !st.portraits.has(id));
-      if (need !== undefined) st.person(need);
-      else if (!sheet) sheet = st.sheet(ids);
-      else {
-        const id = ids.shift();
-        this.cells.get(id).img.src = sheet.cut(id);
-      }
-      requestAnimationFrame(next);
-    };
-    requestAnimationFrame(next);
+    this.portraits();
     let last = performance.now();
     const frame = (now) => {
       if (this.root.hidden) return;
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      if (!ids.length) {
+      if (!this.loading?.length) {
         const r = this.view.getBoundingClientRect();
-        const id = this.shown === RANDOM ? Math.floor(now / 2500) % CHARACTER_COUNT : this.shown;
-        if (r.width > 10) st.turn(id, r.width, r.height, dt);
+        let who = refOf(this.shown);
+        if (this.shown === RANDOM) who = Math.floor(now / 2500) % CHARACTER_COUNT;
+        else if (this.shown === STRANGER) who = st.previewOf(stranger()); // (the one the next join is)
+        if (r.width > 10 && who !== null) st.turn(who, r.width, r.height, dt);
       }
       this.raf = requestAnimationFrame(frame);
     };

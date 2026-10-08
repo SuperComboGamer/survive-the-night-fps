@@ -65,6 +65,9 @@ import { SUPPLIES, SUPPLY_NEED, W, setAct } from './act.js'; // (this act's supp
 import { usePos } from '../../shared/protocol.js';
 import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
 import { chosenCharacter } from '../ui/picker.js';
+import { decode, lookKey } from '../../shared/appearance.js';
+import { nearestRoster } from '../render/models/looks.js';
+import { LookWarmer } from './lookwarm.js';
 import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
@@ -130,7 +133,7 @@ import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
 import { createGhost, createStructure } from '../render/models/structures.js';
 import { PowerViews } from './power.js';
-import { createZombie, createSurvivor, zombieVariants, warmSurvivor } from '../render/models/characters.js';
+import { createZombie, createSurvivor, zombieVariants, warmSurvivor, lookWarm } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createDeer } from '../render/models/deer.js';
 import { createPickup } from '../render/models/pickups.js';
@@ -245,6 +248,8 @@ export class Game {
     this.craftBudget = CRAFT_BURST;
     this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
     this.players = new Map(); // id -> {name, status, walkie, kills, ping, way: their waypoint {x, z, zone} | null}
+    this.looks = new Map(); // id -> a custom survivor's model key (S2C.LOOKS: onLooks; drawn once built: lookOf)
+    this.lookWarmer = new LookWarmer();
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
     this.clockInit = false;
@@ -338,7 +343,8 @@ export class Game {
     // (not between two servers on a deploy: the place is kept there, and a new build reloads the page itself: moveBack)
     this.keyGuard = new KeyGuard(() => this.state === 'playing' && !this.moving);
     this.keyGuard.fullscreen = settings.fullscreen !== false;
-    this.input.onRequestLock = () => this.keyGuard.engage();
+    this.joinHold = false; // the mouse and the screen were asked for on the click on Join, and the join is not done (holdForJoin)
+    this.input.onRequestLock = () => this.keyGuard.engage(this.joinHold);
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
@@ -346,6 +352,7 @@ export class Game {
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
+      looks: (ids) => this.onLooks(ids),
       progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
       cards: (m) => this.cards.onMessage(m), // (Dead Hand: game/cards.js)
@@ -843,13 +850,33 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- connection
+  // The click on Join is the user's gesture the browser wants before it gives the page the mouse and fullscreen, and
+  // it no longer counts once the game is joined (the socket, the valley built: a second or more): Firefox and Safari
+  // only take a request made while the click is handled, Chrome one within 5 s of it. So both are asked for on the
+  // click itself (main.js onJoin), join() asks again for any not given, and a join that fails gives them back.
+  holdForJoin() {
+    this.joinHold = true;
+    this.input.requestLock();
+  }
+  dropJoinHold() {
+    if (!this.joinHold) return;
+    this.joinHold = false;
+    this.input.exitLock();
+    this.keyGuard.release();
+  }
+
   // code: the game to join (an invite, a pick from the list, one just made); none for a quick join. resume: back into
   // the game we were playing a moment ago on the server before a deploy (onMoving): the same run on the same valley,
   // so what this client knows of it - the places found, its waypoint, the run being recorded - stays, and there is no
   // stinger or introduction
   async join(name, code = '', { resume = false } = {}) {
     if (!resume) this.audio.stinger?.('join');
-    const info = await this.conn.connect(name, playerId(), code, chosenCharacter());
+    // who to be (the splash's picker): a roster survivor, or a custom one - its models built now, under the load, and
+    // the roster survivor most like it sent beside it (who an older server makes us)
+    const pick = chosenCharacter();
+    if (pick.look) warmSurvivor(lookKey(pick.look));
+    this.looks = new Map();
+    const info = await this.conn.connect(name, playerId(), code, pick.look ? nearestRoster(pick.look) : pick.character, pick.look);
     this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
     this.admin = info.admin;
@@ -871,6 +898,7 @@ export class Game {
     this.moving = false;
     this.ui.setConnectionStatus('');
     this.state = 'playing';
+    this.joinHold = false; // (what it asked for is the game's now)
     this.input.enabled = true;
     this.inputBuffer.clear();
     this.input.requestLock();
@@ -1113,6 +1141,30 @@ export class Game {
       this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined });
     }
     this.audio.playLocal?.('chat', { volume: 0.5 });
+  }
+
+  // custom survivors' looks (S2C.LOOKS): each one's model key, its models queued to be built
+  onLooks(ids) {
+    for (const id of ids) {
+      const v = decode(this.conn.looks.get(id));
+      if (!v) {
+        this.looks.delete(id);
+        continue;
+      }
+      const key = lookKey(v);
+      this.looks.set(id, key);
+      this.lookWarmer.want(key);
+    }
+  }
+  /**
+   * Who a player is drawn as: their custom survivor's model key once its models are built, else the player list's
+   * character (the roster survivor most like them, for a custom one); undefined until the list has said.
+   */
+  lookOf(id) {
+    const key = this.looks.get(id);
+    if (key && lookWarm(key)) return key;
+    if (key) this.lookWarmer.want(key); // (built again if it was let go: evictLooks)
+    return this.players.get(id)?.character;
   }
 
   onPlayers(r) {
@@ -1413,12 +1465,12 @@ export class Game {
         break;
       case NOTIFY.ENGINE_START:
         ui.notify('THE FINAL STAND', 'big', 5);
-        ui.notify('The engine is warming up. Every corpse in the valley heard it. Stay at the car: it stalls if nobody is there.', 'sub', 6);
+        ui.notify(W.thing === 'plane' ? 'The pump is loud and the mainland heard it. Hold the fuel truck, then guard the plane.' : 'The engine is warming up. Every corpse in the valley heard it. Stay at the car: it stalls if nobody is there.', 'sub', 6);
         a.stinger?.('boss');
         break;
       case NOTIFY.ESCAPE_READY:
-        ui.notify('GET IN THE CAR!', 'big', 5);
-        ui.notify(`Hold ${bindTag('interact')} at the car to drive away. Whoever is not at the car is left behind.`, 'sub', 7);
+        ui.notify(W.getIn.toUpperCase(), 'big', 5);
+        ui.notify(`Hold ${bindTag('interact')} at the ${W.thing} to ${W.go}. Whoever is not at the ${W.thing} is left behind.`, 'sub', 7);
         a.stinger?.('car_part');
         break;
       case NOTIFY.SCHEMATIC:
@@ -1987,7 +2039,10 @@ export class Game {
     const inp = this.input;
     inp.handlers.isTyping = () => this.ui.isTyping();
     inp.handlers.onLockChange = (locked) => {
-      if (this.state !== 'playing') return;
+      if (this.state !== 'playing') {
+        if (locked && !this.joinHold) inp.exitLock(); // (asked for on the click on Join, landing after the join failed)
+        return;
+      }
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
       } else if (!locked && !this.ui.isTyping() && !this.screenUp()) {
@@ -2686,8 +2741,16 @@ export class Game {
       return;
     }
     let sv = this.selfBody;
+    const who = this.lookOf(this.myId) ?? -1;
+    if (sv && this.selfBodyWho !== who) {
+      // (the player list, or our custom survivor's models, came after the body was made: made again as them)
+      this.scene.remove(sv.object);
+      sv.dispose?.();
+      sv = this.selfBody = null;
+    }
     if (!sv) {
-      sv = this.selfBody = createSurvivor(this.myId || 1, this.players.get(this.myId)?.character ?? -1);
+      sv = this.selfBody = createSurvivor(this.myId || 1, who);
+      this.selfBodyWho = who;
       sv.object.traverse((m) => m.isMesh && (m.castShadow = true));
       this.scene.add(sv.object);
       this.selfBodyItem = -1;
@@ -2769,6 +2832,7 @@ export class Game {
     this.frame++;
     this.time += dt;
     const time = this.time;
+    this.lookWarmer.tick(dt);
     // a warm-up ends here, ahead of this frame's draw: when its programs are built, or now if play has begun
     if (this.warm && (this.warm.ready || this.state === 'playing')) this.finishPrewarm();
     const menu = this.state === 'menu' || !this.world;

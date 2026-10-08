@@ -145,7 +145,7 @@ export class MeshBuilder {
       }
     }
     if (!o.keepNormals) geo.computeVertexNormals();
-    this.parts.push({ bone: this.bi(bone), geo, o });
+    this.parts.push({ bone: this.bi(bone), geo, o, tag: this.tag });
     return geo;
   }
 
@@ -280,8 +280,12 @@ export class MeshBuilder {
     }
     const P = new THREE.Vector3(), N = new THREE.Vector3(), C = new THREE.Color();
     let vbase = 0;
+    // (MeshBuilder.debugParts: which vertices and triangles each tagged part became - mb.tag as it was added; the clip
+    // tools measure one part against another with it: scripts/clip/outfits.js)
+    const tags = MeshBuilder.debugParts ? [] : null;
     for (const part of this.parts) {
       const { geo, o } = part;
+      const v0 = vbase, t0 = idx.length;
       const bw = world[part.bone];
       const reg = regionUV(o.region ?? 15, this.atlas === 'char');
       const wts = this.skinned ? o.wts : null; // per vertex [bone a, weight a, bone b, weight b] (else all on part.bone)
@@ -381,6 +385,7 @@ export class MeshBuilder {
       } else {
         vbase += p.count;
       }
+      if (tags && part.tag) tags.push({ tag: part.tag, v0, v1: vbase, t0, t1: idx.length });
       geo.dispose();
     }
     const nv = pos.length / 3;
@@ -424,6 +429,7 @@ export class MeshBuilder {
       names: this.names,
       sphere: g.boundingSphere.clone(),
       tris: idx.length / 3,
+      tags,
     };
   }
 }

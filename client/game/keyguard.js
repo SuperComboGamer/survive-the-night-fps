@@ -28,6 +28,7 @@ export class KeyGuard {
     this.isPlaying = isPlaying; // () => true while a game is on (the guard is idle on the splash)
     this.fullscreen = true; // the setting
     this.ours = false; // the fullscreen we are in is one we asked for
+    this.wanted = false; // asked for and not given back since (release)
     addEventListener('beforeunload', (e) => {
       if (!this.isPlaying()) return;
       e.preventDefault();
@@ -56,9 +57,11 @@ export class KeyGuard {
     return !!(navigator.keyboard?.lock && document.documentElement.requestFullscreen);
   }
 
-  // from a click (it needs the user's gesture): fullscreen with the game's keys locked
-  engage() {
-    if (!this.fullscreen || !this.supported || !this.isPlaying()) return;
+  // from a click (it needs the user's gesture): fullscreen with the game's keys locked. joining: the click on Join, before
+  // the game is on (Game.holdForJoin)
+  engage(joining = false) {
+    if (!this.fullscreen || !this.supported || !(joining || this.isPlaying())) return;
+    this.wanted = true;
     const lock = () => navigator.keyboard.lock(lockKeys).catch(() => {});
     if (document.fullscreenElement) {
       lock();
@@ -68,13 +71,14 @@ export class KeyGuard {
       .requestFullscreen({ navigationUI: 'hide' })
       .then(() => {
         this.ours = true;
-        return lock();
+        return this.wanted ? lock() : this.release(); // (given back while it was on its way: a join that failed)
       })
       .catch(() => {}); // (no gesture, or the user refused: the "Leave site?" prompt still guards the tab)
   }
 
   // back on the splash: leave the fullscreen we took
   release() {
+    this.wanted = false;
     navigator.keyboard?.unlock?.();
     if (this.ours && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     this.ours = false;

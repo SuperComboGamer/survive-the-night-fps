@@ -230,6 +230,7 @@ through `launchChrome` too.
 | `fit-grip.js` | `clip:fit` | Fits a hand pose to an item's mesh and prints the pose to paste into `HAND_POSES`. |
 | `props.js` | `clip:props` | World props, trees, boulders and walls inside each other, over many seeds, with the `/tp` to each. |
 | `pickups.js` | `clip:pickups` | Every ground item's lowest point: sunk or floating. |
+| `outfits.js` | `clip:outfits` | Clothes against clothes on the survivors the character creator can make (no browser): a shirt through a vest, pockets through a bib, hair through a hat, a collar through a beard or a ponytail, a hem through the kit on the belt. Each part of a look is tagged as it is built (`MeshBuilder.debugParts`, `people.js` `mb.tag`), and from every vertex of the inner one a ray goes back in along its normal: the outer one crossed within 3 cm is how far it is through. `--looks roster,cover,random:N,hat:` picks the looks; `--save-baseline` / `--baseline` as the survey's. The survey's own `--looks` measures held items and the pack on the same looks (`&look=` in `?hold=`). |
 | `nunchaku-shots.js` | | Stills and strips of the nunchucks out of the sandbox, a list of them in one browser. |
 | `nunchaku-jitter.js` | | Is the nunchucks' motion smooth: every move and hand-off on a stepped clock at 30 to 240 fps and on uneven frames, measured for shakes, pops and snaps (no browser). `--trace "move@fps"` prints the frames round the worst. |
 | `nunchaku-film.js`, `nunchaku-reel.js` | | Footage of the nunchucks in the real game, a frame at a time with both clocks held, and the reel, contact sheets and strips cut from it (ffmpeg). |
@@ -532,6 +533,26 @@ are about 4 cm further out than the old boxes', so `STOCK_POCKET` moved from -0.
 walking and looking down went from 30-67 mm to 0-25 mm on Walt, Earl, Maya and Dale. Still deeper than on
 origin/main: long guns carried at a sprint (shotguns and the crossbow 64-66 mm, were 57), the anti-tank rifle downed
 (36 mm, was 22) and the pack at a sprint (62 mm with a pistol, was 46).
+
+**Clothes against clothes** (`npm run clip:outfits`, the character creator's branch): the ten roster survivors, every
+part the wardrobe offers on the smallest and biggest of both bodies, and 60 made-up survivors - 490 looks.
+
+| | before | after |
+| --- | --- | --- |
+| roster (10): over 8 mm | 8 | 1 |
+| all 490 looks: over 8 mm | 246 | 31 |
+| all 490 looks: clean (under 3 mm) | 122 | 316 |
+
+What changed: what hangs at the hips (holster, knife, tool pouches, a badge on the belt) sits on what is outermost
+there (a top hanging over the belt and its hem band, a vest), and the radio on a vest's front (`people.js` `pHip` /
+`pChest`; Luis's pouches went from 20 mm through his vest to 5, Hank's knife and Marcus's holster to under 4). The
+worn pack was tried on a vest the same way and left fitted to the top: its straps went 2-47 mm further into Walt,
+Hank and Luis in the clip survey's -pack frames (the backlog's "worn pack, every pose" below). The hair under a felt hat stops
+nearer its band (Dale and Walt, 9 mm through it); a bandana stands over the hair it is tied on, its knot on it and
+its tails out over a ponytail or braid (Rosa: 28 mm); and the wardrobe keeps a hood from a ponytail or braid, a
+jacket's turned-out collar from a braid, a bun from every hat and chest pockets from a bib. Left: the overalls'
+straps dip into the top of the shoulder between their points (Walt, 22 mm, 2 vertices), and the lanyard's ribbon
+and a name patch are tucked into the top at their edges as made (2-9 vertices; they read as on the cloth).
 
 Fixed: every throwable's hand; every gun's support hand and right hand; every melee handle; the used items; every
 reload's hand holds and pose switches; the pistol rack; the bat swing; the double-barrel reload; the rifle reload

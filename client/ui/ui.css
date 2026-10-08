@@ -8200,3 +8200,328 @@ body {
     gap: calc(8 * var(--u));
   }
 }
+
+/* the picker's groups (the ten and the player's own), what can be done with the one picked, a repaired survivor's note */
+.stn-ui .cp-lists {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--u));
+  min-width: 0;
+  max-height: min(calc(600 * var(--u)), 62vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.stn-ui .cp-lists .cp-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.stn-ui .cp-group {
+  margin: calc(4 * var(--u)) 0 0;
+  font: max(9.5px, calc(11 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+}
+
+.stn-ui .cp-dice svg,
+.stn-ui .cp-plus svg {
+  width: 42%;
+  height: auto;
+  fill: var(--bone-dim);
+}
+
+.stn-ui .cp-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6 * var(--u));
+  margin-top: calc(6 * var(--u));
+}
+
+.stn-ui .cp-note {
+  margin: 0;
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.3 var(--f-type);
+  color: var(--blood-lite);
+}
+
+/* ---------- the character creator (creator.js) */
+.stn-ui .cr-panel .set-card {
+  width: calc(1120 * var(--u));
+  min-width: min(780px, 96vw);
+}
+
+/* (the picker and the creator are tall: clear of the splash's bar of buttons along the bottom, their bodies scrolled) */
+.stn-ui .cp-panel .set-card,
+.stn-ui .cr-panel .set-card {
+  max-height: min(88vh, calc(100vh - 170px));
+}
+
+.stn-ui .cp-panel .set-body,
+.stn-ui .cr-panel .set-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.stn-ui .cr-wrap {
+  display: grid;
+  grid-template-columns: minmax(230px, calc(340 * var(--u))) 1fr;
+  gap: calc(22 * var(--u));
+  padding: calc(10 * var(--u)) 0;
+  min-height: 0;
+}
+
+.stn-ui .cr-left {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--u));
+  min-width: 0;
+}
+
+.stn-ui .cr-view {
+  height: min(calc(480 * var(--u)), 50vh);
+  cursor: grab;
+  touch-action: none;
+}
+
+.stn-ui .cr-view:active {
+  cursor: grabbing;
+}
+
+.stn-ui .cr-name {
+  width: 100%;
+  height: calc(46 * var(--u));
+  min-height: 34px;
+  padding: 0 calc(12 * var(--u));
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(230, 223, 207, 0.12);
+  border-bottom: 2px solid var(--blood-lite);
+  outline: none;
+  font: 500 max(14px, calc(20 * var(--u))) / 1 var(--f-num);
+  letter-spacing: 0.05em;
+  color: var(--bone);
+  caret-color: var(--blood-lite);
+}
+
+.stn-ui .cr-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .cr-roll {
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .cr-roll svg {
+  width: 1.15em;
+  height: 1.15em;
+  fill: currentColor;
+}
+
+.stn-ui .cr-from {
+  min-width: 0;
+  height: calc(38 * var(--u));
+  min-height: 30px;
+  padding: 0 calc(8 * var(--u));
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(230, 223, 207, 0.16);
+  font: max(11px, calc(13 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone);
+  cursor: pointer;
+}
+
+.stn-ui .cr-from option {
+  background: #121010;
+}
+
+.stn-ui .cr-note {
+  margin: 0;
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.3 var(--f-type);
+  color: var(--blood-lite);
+}
+
+.stn-ui .cr-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stn-ui .cr-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(10 * var(--u));
+  border-bottom: 1px solid rgba(230, 223, 207, 0.12);
+}
+
+.stn-ui .cr-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1;
+  gap: calc(2 * var(--u));
+}
+
+.stn-ui .cr-tab {
+  padding: calc(9 * var(--u)) calc(14 * var(--u));
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  font: 400 max(13px, calc(18 * var(--u))) / 1 var(--f-head);
+  letter-spacing: 0.1em;
+  color: var(--bone-dim);
+  cursor: pointer;
+}
+
+.stn-ui .cr-tab:hover {
+  color: var(--bone);
+  background: rgba(230, 223, 207, 0.05);
+}
+
+.stn-ui .cr-tab.on {
+  color: #fff;
+  border-bottom-color: var(--blood-lite);
+  background: linear-gradient(0deg, rgba(150, 16, 22, 0.6), rgba(105, 10, 14, 0.15));
+}
+
+.stn-ui .cr-roll-sec {
+  margin-bottom: calc(5 * var(--u));
+}
+
+.stn-ui .cr-fields {
+  max-height: min(calc(560 * var(--u)), 56vh);
+  overflow-y: auto;
+  padding: calc(4 * var(--u)) calc(8 * var(--u)) calc(8 * var(--u)) 0;
+  scrollbar-width: thin;
+}
+
+.stn-ui .cr-row {
+  display: grid;
+  grid-template-columns: minmax(96px, calc(150 * var(--u))) 1fr;
+  align-items: center;
+  gap: calc(12 * var(--u));
+  min-height: calc(38 * var(--u));
+  padding: calc(5 * var(--u)) 0;
+  border-bottom: 1px dashed rgba(230, 223, 207, 0.08);
+}
+
+.stn-ui .cr-label {
+  font: 400 max(12px, calc(15 * var(--u))) / 1.2 var(--f-num);
+  letter-spacing: 0.04em;
+}
+
+.stn-ui .cr-opts,
+.stn-ui .cr-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(6 * var(--u));
+}
+
+.stn-ui .cr-opt {
+  padding: calc(6 * var(--u)) calc(11 * var(--u));
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(230, 223, 207, 0.14);
+  font: max(10.5px, calc(13 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--bone-2);
+  cursor: pointer;
+}
+
+.stn-ui .cr-opt:hover {
+  border-color: rgba(230, 223, 207, 0.34);
+  color: var(--bone);
+}
+
+.stn-ui .cr-opt.on {
+  border-color: var(--blood-lite);
+  background: rgba(150, 16, 22, 0.55);
+  box-shadow: 0 0 0 1px var(--blood-lite);
+  color: #fff;
+}
+
+.stn-ui .cr-swatch {
+  width: calc(28 * var(--u));
+  min-width: 20px;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+}
+
+.stn-ui .cr-swatch:hover {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.stn-ui .cr-swatch.on {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+
+.stn-ui .cr-swatch-none {
+  width: auto;
+  aspect-ratio: auto;
+  padding: 0 calc(9 * var(--u));
+  background: rgba(0, 0, 0, 0.45);
+  border-color: rgba(230, 223, 207, 0.14);
+  font: max(10px, calc(12 * var(--u))) / 1 var(--f-mono);
+  color: var(--bone-2);
+}
+
+.stn-ui .cr-range {
+  width: 100%;
+  min-width: 0;
+}
+
+.stn-ui .cr-panel .set-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+}
+
+.stn-ui .cr-gap {
+  flex: 1;
+}
+
+.stn-ui .cr-msg {
+  font: max(10.5px, calc(12.5 * var(--u))) / 1.2 var(--f-type);
+  color: var(--blood-lite);
+}
+
+/* (a short screen: smaller turntables, so what is under them - the dice, Edit, Copy - stays in sight) */
+@media (max-height: 780px) {
+  .stn-ui .cr-view {
+    height: 38vh;
+    min-height: 200px;
+  }
+  .stn-ui .cp-view {
+    height: 34vh;
+    min-height: 200px;
+  }
+  .stn-ui .cr-fields {
+    max-height: 50vh;
+  }
+}
+
+/* (narrow: the turntable over the choices, the two scrolled together in the card's body) */
+@media (max-width: 860px) {
+  .stn-ui .cr-panel .set-card {
+    height: min(88vh, calc(100vh - 170px)); /* (clear of the splash's bar of buttons along the bottom) */
+  }
+  .stn-ui .cr-panel .set-body {
+    flex: 1;
+    min-height: 0;
+  }
+  .stn-ui .cr-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stn-ui .cr-view {
+    height: 30vh;
+  }
+  .stn-ui .cr-fields {
+    max-height: none;
+    overflow: visible;
+  }
+  .stn-ui .cp-lists .cp-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

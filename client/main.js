@@ -7,6 +7,7 @@ import { AudioEngine } from './audio/audio.js';
 import { Game } from './game/game.js';
 import { loadBinds, askLayout, bindPair } from './game/binds.js';
 import { startBindsSync } from './net/accountbinds.js';
+import { startCustomsSync } from './net/accountcustoms.js';
 import { keysOf, moveKeys, slotKeys } from './ui/menus.js';
 import { playerId } from './net/identity.js';
 import { PROTOCOL_VERSION } from '../shared/protocol.js';
@@ -23,6 +24,7 @@ let joining = false;
 loadBinds(); // the player's keybinds, as this browser keeps them (game/binds.js): before anything names a key
 askLayout(); // (and what this keyboard prints on its keys, when the browser says)
 startBindsSync(); // ...and kept on their account while they are signed in (net/accountbinds.js)
+startCustomsSync(); // their own survivors too (the character creator: net/accountcustoms.js)
 playerId(); // who this browser is to the leaderboard: made up and stored on the first launch, sent with every join
 refreshAccount(); // ...and the account it is signed in to, if any (the cookie goes with every join: the server plays them as it)
 startAchievementsSync(); // ...whose achievements this browser's guest ones are merged into on signing in (net/achievements.js)
@@ -234,6 +236,9 @@ const callbacks = {
         } catch {}
       }
       joinCue = !audio.ready; // game.join asks for the join stinger; if the engine cannot play it yet, it is owed
+      // the mouse and fullscreen: asked for on this click, before anything is waited for (Game.holdForJoin). A rejoin
+      // has no click of the player's to ask with: there the click on the game takes them.
+      if (!quiet) game.holdForJoin();
       if (!(await canJoinHere(code, name))) return;
       await game.join(name, code);
       reloadedInto(tabStore(), game.room?.code || code);
@@ -256,6 +261,7 @@ const callbacks = {
       return err;
     } finally {
       joining = false;
+      game.dropJoinHold(); // (not in the game: the mouse and the screen go back to the splash)
     }
   },
   onCraft: (id) => game?.uiCallbacks().onCraft(id),

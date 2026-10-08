@@ -197,8 +197,14 @@ export class Input {
 
   requestLock() {
     if (this.locked) return;
-    this.onRequestLock?.(); // (game.js: the same click takes fullscreen + keyboard lock - keyguard.js)
     this.rawActive = false;
+    this.lockPointer();
+    // (game.js: the same click takes fullscreen + keyboard lock - keyguard.js). After the pointer, not before: Chrome
+    // only gives the pointer to a request made while the click still counts as the user's, and a fullscreen request
+    // that is granted uses that up - asked the other way round, the click took the screen and a second one the mouse.
+    this.onRequestLock?.();
+  }
+  lockPointer() {
     if (!this.rawInput) {
       this.canvas.requestPointerLock?.();
       return;

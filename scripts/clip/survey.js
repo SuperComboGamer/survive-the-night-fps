@@ -21,6 +21,10 @@
 //                     ours for the run and put back after.
 //   --shots           keep a screenshot of every frame (in --out/<tree>/)
 //   --seed            the survivor the third-person frames are measured on (?hold=&seed=: the character seed % 10)
+//   --looks           custom survivors (the character creator) instead, on a shorter round of third-person frames
+//                     each: 'cover' (every part the wardrobe offers, each on the smallest and biggest of both bodies:
+//                     shared/appearance.js coveringLooks), 'hat:,layer:overalls' (only the covering looks whose label
+//                     starts so), or 'random:N' (N made up). A new part in the wardrobe is in 'cover' by itself
 //   --save-baseline   write each frame's worst clip (mm) to a file, to be compared against later
 //   --baseline        compare against such a file: exits 1 when a frame that was clean enough gets worse
 //                     (more than --tolerance mm, default 1, and over 3 mm), so a PR can be gated on it
@@ -60,7 +64,7 @@ const NK_FRAMES = [
 
 // ---------------------------------------------------------------- the frames
 // each: { section, name, item, state, path (sandbox URL path + query) }
-function frames() {
+async function frames() {
   const out = [];
   const sb = 'sandbox/models-test.html?';
   const fp = (item, state, q) => out.push({ section: 'fp', item: NAME[item] || 'hands', state, name: `${NAME[item] || 'hands'}-${state}`, path: `${sb}vm=${item}&${q}&clip=1` });
@@ -104,7 +108,27 @@ function frames() {
       fp(ITEM.AK47, `use-${NAME[id]}`, `act=use&use=${id}&t=1.3`);
     }
   }
-  if (sections.includes('tp')) {
+  if (sections.includes('tp') && args.looks) {
+    // custom survivors (the character creator): a shorter round of frames on each look - four holds in the poses that
+    // move the arms and the chest most, and the worn pack in every pose that moves it
+    const { coveringLooks, randomLook, mulberry, lookCode } = await import(pathToFileURL(join(REPO, 'shared', 'appearance.js')).href);
+    const sel = String(args.looks);
+    let looks;
+    if (sel.startsWith('random:')) looks = Array.from({ length: +sel.slice(7) || 10 }, (_, i) => ({ label: `random:${i + 1}`, values: randomLook(mulberry(i + 1)) }));
+    else {
+      looks = coveringLooks({ bodies: 'extremes' });
+      if (sel !== 'cover') looks = looks.filter((l) => list(sel).some((s) => l.label.startsWith(s)));
+    }
+    for (const { label, values } of looks) {
+      const code = lookCode(values);
+      const tp = (item, pose, extra = '') => {
+        const state = `3p-${pose}${extra ? '-pack' : ''}@${label}`;
+        out.push({ section: 'tp', item: NAME[item] || 'none', state, name: `${NAME[item] || 'none'}-${state}`, path: `${sb}hold=${item}&pose=${pose}&t=${pose === 'sprint' ? 1.15 : 1}&clip=1${extra}&look=${code}` });
+      };
+      for (const id of [ITEM.AK47, ITEM.PISTOL, ITEM.BAT, ITEM.GRENADE]) for (const p of ['idle', 'sprint', 'crouch', 'lookdown', 'downed', 'seated']) tp(id, p);
+      for (const id of [ITEM.AK47, 0]) for (const p of ['idle', 'sprint', 'crouch', 'downed', 'swim', 'lookup']) tp(id, p, '&pack=1');
+    }
+  } else if (sections.includes('tp')) {
     const tp = (item, pose, t = 1, extra = '') => {
       const state = `3p-${pose}${t !== 1 ? '-' + t : ''}${extra ? '-pack' : ''}`;
       out.push({ section: 'tp', item: NAME[item] || 'none', state, name: `${NAME[item] || 'none'}-${state}`, path: `${sb}hold=${item}&pose=${pose}&t=${t}&clip=1${extra}${args.seed !== undefined ? `&seed=${args.seed}` : ''}` });
@@ -200,7 +224,7 @@ function save(rows, label) {
 }
 
 // ---------------------------------------------------------------- run
-const fr = frames();
+const fr = await frames();
 console.log(`clip survey: ${fr.length} frames (${sections.join(', ')})${args.against ? `, here and in ${args.against}` : ''}`);
 const here = await measure(REPO, fr, 'here');
 save(here, 'here');

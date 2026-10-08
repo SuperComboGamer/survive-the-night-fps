@@ -542,7 +542,7 @@ export class Entities {
   // has said, the one their id picks. A new one if the list says another (the list can come after the entity's create).
   // What it held, whether it had turned and its backpack are put on it again by the next update.
   survivorView(e) {
-    const ch = this.g.players.get(e.id)?.character ?? defaultCharacter(e.id);
+    const ch = this.g.lookOf(e.id) ?? defaultCharacter(e.id); // (a custom survivor: their own model once it is built)
     if (e.view && e.char === ch) return;
     if (e.view) e.view.dispose();
     const v = createSurvivor(e.id * 31 + 7, ch);
@@ -1037,7 +1037,7 @@ export class Entities {
           e.rz = tmp.z;
           e.ryaw = tmp.yaw;
           e.rpitch = tmp.pitch;
-          if (e.view && e.char !== (g.players.get(e.id)?.character ?? e.char)) this.survivorView(e);
+          if (e.view && e.char !== (g.lookOf(e.id) ?? e.char)) this.survivorView(e);
           const v = e.view;
           if (!v) break;
           const flags = e.q[5];

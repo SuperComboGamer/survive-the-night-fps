@@ -1,6 +1,6 @@
 // UI sandbox: drives the UI with fake data. ?screen=splash|hud|hud-night|hud-horde|hud-zombie|hud-downed|hud-dawn|
 // hud-finale|hud-live|inventory|players|build|death|gameover|victory|pause|settings|achievements|bestiary|cards|
-// hud-cards|chat|icons
+// hud-cards|chat|icons|picker|creator
 // &bg=night|day|fire
 // &status=ok|full|offline   hud: &weapon=<item id>&mag=&reserve=&reload=&heals=&drinks=
 import { UI } from '../ui/ui.js';
@@ -93,6 +93,18 @@ window.fetch = async (url, opts) => {
   }
   return realFetch(url, opts);
 };
+
+// ---------------------------------------------------------------- the character creator's saved survivors
+// (&customs=N: N of them made up, kept in this browser as the creator keeps them; &repair=1: the first one wearing a
+// part no longer in the game - the picker's card says it was replaced; &choice=stranger|random|c:demo0|<id>: chosen)
+if (q.has('customs')) {
+  const { randomLook, mulberry } = await import('../../shared/appearance.js');
+  const names = ['Ash', 'Birdie', 'Cole', 'Dot'];
+  const list = Array.from({ length: Math.min(4, +q.get('customs') || 0) }, (_, i) => ({ id: 'demo' + i, name: names[i], fields: randomLook(mulberry(40 + i)) }));
+  if (q.get('repair') && list[0]) list[0].fields = { ...list[0].fields, hat: 'stetson', hair: 'mohawk' };
+  localStorage.setItem('stn.customs', JSON.stringify({ v: 1, list }));
+}
+if (q.has('choice')) localStorage.setItem('stn.character', q.get('choice'));
 
 // ---------------------------------------------------------------- UI instance
 const log = (...a) => console.log('[cb]', ...a);
@@ -342,6 +354,27 @@ switch (screen) {
     if (q.get('settings')) setTimeout(() => ui.settingsPanel.show(), 50);
     break;
   }
+  // who to play as: the picker (&customs=N, &choice=...), and the character creator (&section=body|face|hair|clothes|
+  // gear; &from=N: made like roster survivor N; &edit=demo0: one of the saved; else a stranger)
+  case 'picker': {
+    buildScene(bg || 'fire');
+    ui.showSplash();
+    setTimeout(() => ui.splash.character.panel.show(), 50);
+    break;
+  }
+  case 'creator': {
+    buildScene(bg || 'fire');
+    ui.showSplash();
+    setTimeout(async () => {
+      const panel = ui.splash.character.panel;
+      if (q.get('section')) panel.creator.section = q.get('section');
+      const { getCustom } = await import('../ui/customs.js');
+      const saved = q.has('edit') && getCustom(q.get('edit'));
+      if (saved) panel.edit({ id: saved.id, name: saved.name, values: saved.values });
+      else await panel.create(q.has('from') ? +q.get('from') : null);
+    }, 50);
+    break;
+  }
   case 'hud': {
     buildScene(bg || 'day');
     const h = { ...baseHud };
@@ -554,7 +587,10 @@ switch (screen) {
     p.show();
     p.view = view();
     p.render();
-    if (q.get('sel')) p.tree.select(+q.get('sel'));
+    // &view=tree: the whole tree even with a point waiting (it opens on the quick pick then); &sel=<id> picks one out
+    if (q.get('view') === 'tree') p.setMode('tree');
+    if (q.get('sel') && p.mode === 'tree') p.tree.select(+q.get('sel'));
+    else if (q.get('sel')) p.quick.root.querySelector(`[data-id="${+q.get('sel')}"]`)?.click();
     break;
   }
   case 'inventory': {

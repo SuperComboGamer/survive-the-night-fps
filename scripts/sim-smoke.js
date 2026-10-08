@@ -3428,11 +3428,12 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
     for (let i = 0; i < 5 && !game.bossId; i++) game.spawnBosses([type]);
     return game.ents[game.bossId];
   };
-  const killedBy = (z, p) => {
+  const killedItemsBy = (z, p) => {
     const n = game.items.length;
     game.combat.damageZombie(z, z.hp, p, {});
-    return game.items.length - n;
+    return game.items.slice(n);
   };
+  const killedBy = (z, p) => killedItemsBy(z, p).length;
   pending(3);
   const team = game.humanCount();
   const abom = spawn(ZTYPE.BOSS_ABOMINATION);
@@ -3442,9 +3443,18 @@ import { ESCAPE_TIME, ESCAPE_RADIUS, ESCAPE_DRIVE_TIME } from '../shared/constan
   const bosses = [abom, tank, queen];
   check('boss health follows the size of the team', bosses.every((z) => z && z.boss && Math.abs(z.maxHp - hpOf(z)) < 1), `${bosses.map((z) => z?.maxHp.toFixed(0)).join('/')} hp for ${team}`);
   // killed in the night: its loot is on the ground and the feed names who did it
-  const loot = killedBy(abom, A.p());
+  const cardRng = game.cards.rng;
+  game.cards.rng = () => 0; // force the optional sealed Dead Hand pack so this stays deterministic.
+  let loot;
+  try {
+    loot = killedItemsBy(abom, A.p());
+  } finally {
+    game.cards.rng = cardRng;
+  }
+  const sealedPacks = loot.filter((e) => e.item === ITEM.SEALED_PACK).length;
+  const regularLoot = loot.length - sealedPacks;
   run(2);
-  check('a boss killed before sunrise drops its loot', abom.dead && loot === 8 && fed(KILLER.PLAYER, ZTYPE.BOSS_ABOMINATION) && !fed(KILLER.WORLD, ZTYPE.BOSS_ABOMINATION), `${loot} items`);
+  check('a boss killed before sunrise drops its loot', abom.dead && regularLoot === 8 && sealedPacks === 1 && fed(KILLER.PLAYER, ZTYPE.BOSS_ABOMINATION) && !fed(KILLER.WORLD, ZTYPE.BOSS_ABOMINATION), `${regularLoot} loot + ${sealedPacks} sealed pack`);
   // dawn finds the other two still standing. One is left to the sun, one finished off by a survivor while it burns
   game.startDay();
   run(20 * 6);
