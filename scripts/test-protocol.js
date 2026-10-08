@@ -351,6 +351,9 @@ console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one stagin
     [CARDOP.CONFIRM]: {},
     [CARDOP.CLOSE]: {},
     [CARDOP.SYNC]: {},
+    [CARDOP.TABLE_OPEN]: { slot: -1 },
+    [CARDOP.TABLE_JOIN]: { id: 'e6d4d0ef-3172-4239-98a3-385898c473d1', slot: -2 },
+    [CARDOP.TABLE_LEAVE]: {},
   };
   const SAMPLE_S2C = {
     [CARDMSG.COLL]: { loaded: true, kept: false, found: { 105: 2 } },
@@ -362,6 +365,7 @@ console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one stagin
     [CARDMSG.TRADE_END]: { with: 3, why: 'too_far' },
     [CARDMSG.REVEAL]: { item: 99, cards: [1, 105, 124], kept: true },
     [CARDMSG.NOTE]: { code: CARDNOTE.FAR, arg: '' },
+    [CARDMSG.TABLES]: { me: 2, tables: [{ id: 'e6d4d0ef-3172-4239-98a3-385898c473d1', host: 1, name: 'Ann', slot: -1, ageS: 4 }], names: [[1, 'Ann'], [2, 'Ben']] },
   };
   const codes = Object.values(CARDNOTE);
   if (new Set(codes).size !== codes.length || !codes.every((c) => typeof c === 'string' && c)) throw new Error('CARDNOTE codes are not distinct words');
