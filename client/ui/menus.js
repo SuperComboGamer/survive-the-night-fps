@@ -506,6 +506,7 @@ export class Splash {
     this.browser.hide();
     this.creator.hide();
     this.character.panel.hide();
+    this.character.panel.creator.close(); // (an edit not saved is kept for the next time it opens)
     releaseStage(); // (the picker's renderer: not needed in play)
   }
 }

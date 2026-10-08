@@ -3,9 +3,11 @@
 // createSurvivor(seed) / createZombie(type, seed), so the same page works on an older tree (scripts/clip/turnaround.js
 // lends it there).
 //   ?turn=LIST       subjects, comma separated: s:N a survivor (seed N), sz:N the same survivor turned, z:T[:SEED] a
-//                    zombie of ZTYPE T (the seed picks its variant)
+//                    zombie of ZTYPE T (the seed picks its variant); l:CODE a custom survivor (the character creator:
+//                    shared/appearance.js lookCode), lz:CODE turned; lr:N a made-up one (randomLook, seed N), lrz:N turned
 //   &views=LIST      columns: front, q (three-quarter), side, back, head (a close-up of the face), headside (of the
-//                    profile), top. Default front,side,back,head
+//                    profile), hips, hipsL / hipsR (close-ups of the left / right hip: what hangs on the belt), top.
+//                    Default front,side,back,head
 //   &cell=W,H        each cell's size in px (default 300,440)
 //   &anim=N          the zombies' ZANIM state (default IDLE); &walk=1 survivors mid-stride
 //   &t=S             the clock (default 1.3 s)
@@ -65,14 +67,18 @@ function makeScene() {
 
 const DT = 1 / 60;
 const rows = [];
+// (custom survivors: through characters.js, which has what this needs of shared/appearance.js - so that the page still
+// works lent to a tree from before them, where only the roster's subjects are asked for)
+const AP = CHARS;
 for (const spec of subjects) {
   const [kind, a, b] = spec.split(':');
   const scene = makeScene();
   let obj, height, width, head, label, tris = 0, update;
-  if (kind === 's' || kind === 'sz') {
-    const seed = +a;
-    const sv = CHARS.createSurvivor(seed);
-    if (kind === 'sz') sv.setZombie(true);
+  if (kind === 's' || kind === 'sz' || kind[0] === 'l') {
+    const seed = kind[0] === 'l' ? 1 : +a;
+    const ref = kind === 'l' || kind === 'lz' ? 'a:' + a : kind === 'lr' || kind === 'lrz' ? AP.lookKey(AP.randomLook(AP.mulberry(+a))) : seed;
+    const sv = CHARS.createSurvivor(seed, ref);
+    if (kind === 'sz' || kind === 'lz' || kind === 'lrz') sv.setZombie(true);
     if (q.has('item')) sv.setWeapon(+q.get('item'));
     obj = sv.object;
     const walk = q.get('walk') === '1';
@@ -80,7 +86,7 @@ for (const spec of subjects) {
     height = 1.85;
     width = 0.9;
     head = () => sv.object.userData.head.getWorldPosition(new THREE.Vector3());
-    label = (kind === 'sz' ? 'turned ' : '') + (sv.character?.name || `survivor ${seed}`);
+    label = (kind.endsWith('z') ? 'turned ' : '') + (kind === 'lr' || kind === 'lrz' ? `made up ${a}` : kind[0] === 'l' ? 'custom' : sv.character?.name || `survivor ${seed}`);
   } else {
     const type = +a;
     const def = ZOMBIE_DEFS[type];
@@ -111,7 +117,7 @@ for (const spec of subjects) {
     update(DT, time);
   }
   scene.updateMatrixWorld(true);
-  rows.push({ scene, obj, height, width, head: head(), label, tris, headR: kind === 's' || kind === 'sz' ? 0 : ZOMBIE_DEFS[+a].headR });
+  rows.push({ scene, obj, height, width, head: head(), label, tris, headR: kind === 's' || kind === 'sz' || kind[0] === 'l' ? 0 : ZOMBIE_DEFS[+a].headR });
 }
 
 const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 60);
@@ -123,13 +129,14 @@ rows.forEach((r, ri) => {
     renderer.setViewport(x, y, CW, CH);
     renderer.setScissor(x, y, CW, CH);
     let cam;
-    if (v === 'head' || v === 'headside' || v === 'hips' || v === 'hand') {
-      // yaw 0 = in front (the models face -Z). hips: a close look at the waist and the crotch; hand: at the right hand
-      const yaw = v === 'head' ? -0.35 : v === 'headside' ? -Math.PI / 2 : v === 'hand' ? 0.9 : -0.25;
-      const d = v === 'hips' ? 1.4 : v === 'hand' ? 0.6 : Math.max(0.7, r.height * 0.42, (r.headR || 0) * 5); // (far enough for a boss's head, or a big dog's)
+    if (v === 'head' || v === 'headside' || v === 'hips' || v === 'hipsL' || v === 'hipsR' || v === 'hand') {
+      // yaw 0 = in front (the models face -Z). hips: a close look at the waist and the crotch; hipsL / hipsR: at the
+      // left / right hip from a little in front (what hangs on the belt); hand: at the right hand
+      const yaw = v === 'head' ? -0.35 : v === 'headside' ? -Math.PI / 2 : v === 'hand' ? 0.9 : v === 'hipsR' ? -Math.PI / 2 + 0.35 : v === 'hipsL' ? Math.PI / 2 - 0.35 : -0.25;
+      const d = v === 'hips' ? 1.4 : v === 'hipsL' || v === 'hipsR' ? 1.0 : v === 'hand' ? 0.6 : Math.max(0.7, r.height * 0.42, (r.headR || 0) * 5); // (far enough for a boss's head, or a big dog's)
       const t = r.head.clone();
       t.y -= r.height * 0.02;
-      if (v === 'hips') t.set(0, r.height * 0.5, 0);
+      if (v === 'hips' || v === 'hipsL' || v === 'hipsR') t.set(0, r.height * 0.5, 0);
       if (v === 'hand') t.set(0.2, r.height * 0.47, 0);
       persp.aspect = CW / CH;
       persp.updateProjectionMatrix();

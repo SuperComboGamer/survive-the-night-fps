@@ -36,6 +36,7 @@
     "clip:fit": "node scripts/clip/fit-grip.js",
     "clip:props": "node scripts/clip/props.js",
     "clip:pickups": "node scripts/clip/pickups.js",
+    "clip:outfits": "node scripts/clip/outfits.js",
     "hitbox:measure": "node scripts/hitbox/measure.js",
     "hitbox:overlay": "node scripts/hitbox/overlay.js",
     "hitbox:sweep": "node --max-old-space-size=8000 scripts/hitbox/sweep.js",

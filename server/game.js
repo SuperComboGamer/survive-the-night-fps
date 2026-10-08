@@ -153,6 +153,7 @@ import { BestiaryTracker } from './bestiary.js';
 import { checkEnvelope, worldPrint, sameWorld, HandoffError } from './handoff.js';
 import { saveGame, loadGame } from './gamestate.js';
 import { CHARACTER_NONE, characterFor, defaultCharacter } from '../shared/characters.js';
+import { readLook, canonicalBytes } from '../shared/appearance.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const MAX_ZOMBIES_ALIVE = 120;
@@ -646,6 +647,7 @@ export class Game {
     this.tellStripped(spent, p.id);
     this.tellWrecks(p.id);
     this.tellFriendCodes(p);
+    this.tellLooks(p);
     this.bestiary.join(p);
     this.sendChat(p, 0, CHATF.SYSTEM, moved ? 'The server was updated while you played: you are back where you were, with what you had.' : 'Reconnected: you are back where you were, with what you had.');
     if (!moved) this.systemChat(`${p.name} reconnected.`);
@@ -761,6 +763,17 @@ export class Game {
     // the survivor they chose to be (shared/characters.js): a trailing byte an older client leaves off, which gets the
     // look picked from their id as before; a value out of range is treated the same (characterFor)
     const choice = r.left > 0 ? r.u8() : CHARACTER_NONE;
+    // ...and a custom survivor's look after it (the character creator: shared/appearance.js), kept as its canonical
+    // bytes, a plain array (it goes into the saved game on a deploy). Anything that is not a look: none, the character
+    let look = null;
+    if (r.left > 0) {
+      try {
+        const b = readLook(r);
+        look = b ? canonicalBytes(b) : null;
+      } catch {
+        look = null;
+      }
+    }
     // signed in to an account (server/auth.js: the network thread knew them by their session cookie, and says so
     // on the socket: room-worker.js), they play under its name whatever the JOIN says
     const account = session.conn.user || null;
@@ -800,6 +813,7 @@ export class Game {
     session.player = p;
     p.admin = !!account?.isAdmin || this.devAdmin;
     p.character = characterFor(choice, p.id);
+    p.look = look;
     p.rejoinKey = key; // who can take this body back after a drop ('' : nobody - no account and no browser id)
     p.rec = this.records.enter(pid, base, account);
     p.account = account ? account.id : ''; // their account's id, '' for a guest
@@ -842,6 +856,7 @@ export class Game {
     this.tellWrecks(p.id);
     this.notify(NOTIFY.PLAYER_JOINED, p.id);
     this.tellFriendCodes(p);
+    this.tellLooks(p);
     p.greeted =this.allow(this.greets, 2 * this.maxPlayers, GREET_EVERY);
     if (p.greeted) this.systemChat(p.zombie ? `${p.name} is back among the dead.` : `${p.name} joined the survivors.`);
     this.playersDirty = true;
@@ -5173,6 +5188,34 @@ export class Game {
     one.str(p.friend || '');
     const bytes = one.bytes();
     for (const q of this.players.values()) if (q !== p) q.session.conn.send(bytes);
+  }
+
+  // Custom survivors' looks (S2C.LOOKS, the character creator): a player joining or coming back is told everyone's
+  // (theirs too); the rest are told the newcomer's - or, when the newcomer has none but somebody earlier in this game
+  // with the same id had one, that the id's look is gone. A game of roster survivors sends nothing.
+  tellLooks(p) {
+    const own = (w, q) => {
+      w.u16(q.id);
+      w.u8(q.look ? q.look.length : 0);
+      if (q.look) for (const b of q.look) w.u8(b);
+    };
+    const withLook = [...this.players.values()].filter((q) => q.look);
+    if (withLook.length && p.session) {
+      const w = new Writer(8 + 72 * withLook.length);
+      w.u8(S2C.LOOKS);
+      w.u8(withLook.length);
+      for (const q of withLook) own(w, q);
+      p.session.conn.send(w.bytes());
+    }
+    this.lookIds ||= new Set();
+    if (!p.look && !this.lookIds.has(p.id)) return;
+    if (p.look) this.lookIds.add(p.id);
+    const one = new Writer(80);
+    one.u8(S2C.LOOKS);
+    one.u8(1);
+    own(one, p);
+    const bytes = one.bytes();
+    for (const q of this.players.values()) if (q !== p && q.session) q.session.conn.send(bytes);
   }
 
   // The leaderboard for the player who asked (C2S.BOARD), once a second at most

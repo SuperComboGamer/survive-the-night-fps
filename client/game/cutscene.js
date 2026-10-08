@@ -354,7 +354,7 @@ export class Crossing {
   // a survivor in seat k of the car: player `id` as the character the player list says they are (the one their id
   // picks until it has said)
   seat(id, k) {
-    const ch = this.g.players.get(id)?.character ?? defaultCharacter(id);
+    const ch = this.g.lookOf(id) ?? defaultCharacter(id);
     const sv = createSurvivor(id * 31 + 7, ch);
     sv.setWeapon(0);
     const [x, y, z] = SEATS[k];
@@ -757,7 +757,7 @@ export class Crossing {
     for (const wl of this.car.wheels) wl.rotation.x = -this.roll;
     this.riders.forEach((r, k) => {
       // (the player list can say who somebody is after the cutscene began: a list that came late, a rejoin)
-      const ch = g.players.get(r.id)?.character ?? r.ch;
+      const ch = g.lookOf(r.id) ?? r.ch;
       if (ch !== r.ch) {
         this.car.group.remove(r.sv.object);
         r.sv.dispose();

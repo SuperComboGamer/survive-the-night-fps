@@ -92,16 +92,27 @@ export function buildPerson(mb, P, L, detail = 1) {
   const pP = pants ? 0.006 + (pants.loose || 0) : 0;
   const thick = top ? (top.kind === 'jacket' || top.kind === 'coat' ? 0.014 : top.kind === 'hoodie' || top.kind === 'fleece' ? 0.012 : top.kind === 'flannel' || top.kind === 'shirt' ? 0.007 : 0.004) + (top.loose || 0) : 0;
   const pT = pP + thick; // the top over the trousers
+  // what is outermost where kit is hung on the body: at the hips (the belt's holster, knife, tool pouches: on a top
+  // that hangs over the belt, on a vest that comes down to it) and on the chest (a radio clipped on: a vest's front).
+  // Any part a survivor can now wear with any other (the character creator): kit put on what is under it went through
+  // what is over it. (Not the worn pack: put on a vest the same way, its straps went further into the body - the clip
+  // survey's -pack frames on Walt, Hank and Luis - so it stays fitted to the top: characters.js packDZ, strapFit)
+  const pV = L.vest ? pT + (L.vest.kind === 'down' ? 0.024 : 0.009) : 0;
+  const pHip = Math.max(top && !top.tucked && !cover && hem < rise - 0.05 ? pT + 0.004 : pP, pV); // (+ a hem band's)
+  const pChest = Math.max(pT, pV);
   const nvT = (y0, y1) => Math.max(2, Math.round(((y1 - y0) / 0.034) * Math.min(1, detail * 1.2)));
   const nvL = (y0, y1) => Math.max(2, Math.round(((y1 - y0) / 0.048) * Math.min(1, detail * 1.2))); // (the limbs: long straight runs)
   // (L.hole(x, y, z): a wound cut through the trunk's skin and whatever is worn over it: monsters.js tornOpen)
   const holeO = L.hole && !FAR() ? { tear: { amt: 0, fn: L.hole } } : null;
+  // (mb.tag: which part what follows is, for the clip tools: scripts/clip/outfits.js, MeshBuilder.debugParts)
+  mb.tag = 'skin';
   // the skin under torn clothes: a dead body's torso is drawn under its rags
   if (dead && !FAR() && ((top && top.tear) || (pants && pants.tear) || !top)) {
     const y1 = top ? collarY : T.yHi;
     sheet(mb, T, 0, TAU, T.yLo, y1, Math.max(8, rs - 4), holeO ? nvT(T.yLo, y1) : nvL(T.yLo, y1), 0, { ...skinO, cap0: 0.02, ...holeO });
   }
   // ---- trousers (and a coverall's legs)
+  mb.tag = 'pants';
   const pantsCol = pants ? color(pants.color) : skin;
   const pantsO = pants ? { color: pantsCol, region: pants.region ?? CR.DENIM, mottle: 0.12, tint: pants.tint, tear: tearOf(pants, 71) } : skinO;
   if (pants && !(dead && !top && !pants)) {
@@ -109,6 +120,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     sheet(mb, T, 0, TAU, T.yLo, yTop, rs, nvT(T.yLo, yTop), pP, { ...pantsO, cap0: 0.02, cap1: 0, normY: (y) => clamp(0.15 + (y - yH + 0.09) * 12, 0.15, 1) });
   }
   // the top over the trousers' waist
+  mb.tag = 'top';
   const topCol = top ? color(top.color) : null;
   const topReg = top ? top.region ?? CR.COTTON : 0;
   const open = top && top.open ? top.open : 0;
@@ -154,6 +166,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     }
   } else if (!dead || !pants || FAR()) {
     // bare-chested (a dead body): the skin from the trousers up (a dead body's near copy has it under its rags, above)
+    mb.tag = 'skin';
     sheet(mb, T, 0, TAU, pants ? rise - 0.01 : T.yLo, T.yHi, rs, nvT(rise, T.yHi), 0, { ...skinO, cap1: 0.004, ...holeO });
   }
   if (top && (top.hem ?? 0) > 0.15) {
@@ -197,9 +210,12 @@ export function buildPerson(mb, P, L, detail = 1) {
     sheet(mb, T, 0, TAU, yH + 0.05, yH + 0.075, rs, 1, pT + 0.003, { color: mulC(topCol, 0.85), region: topReg });
   }
   // ---- neck (skin), and a collar round it
+  mb.tag = 'skin';
   sheet(mb, N, 0, TAU, N.yLo, N.yHi, Math.max(8, rs - 8), 4, 0, { ...skinO, cap0: 0.004, cap1: 0.004 });
+  mb.tag = 'collar';
   if (top) collar(mb, P, T, top, topCol, topReg, collarY, pT, open);
   // ---- arms
+  mb.tag = 'arms';
   for (let i = 0; i < 2; i++) {
     const A = arms[i];
     const side = i ? 1 : -1;
@@ -230,6 +246,7 @@ export function buildPerson(mb, P, L, detail = 1) {
     if (!L.noHands) hand(mb, P, L, side, skin, dead, detail);
   }
   // ---- legs
+  mb.tag = 'legs';
   for (let i = 0; i < 2; i++) {
     const Lg = legs[i];
     const side = i ? 1 : -1;
@@ -256,20 +273,32 @@ export function buildPerson(mb, P, L, detail = 1) {
     else if (!L.noFeet) bareFoot(mb, P, L, side, skin);
   }
   // ---- overalls: the bib and its straps over the top, buttons
+  mb.tag = 'overalls';
   if (L.overalls) overalls(mb, P, T, L, pT);
+  mb.tag = 'vest';
   if (L.vest) vest(mb, P, T, L.vest, pT, rs);
+  mb.tag = 'pouch';
   if (top && top.kind === 'hoodie') hoodPouch(mb, T, top, topCol, topReg, pT, yH, yS);
+  mb.tag = 'pockets';
   if (top && top.pockets) chestPockets(mb, T, top, topCol, topReg, pT, yC, open);
+  mb.tag = 'belt';
   if (pants && pants.belt !== false && !cover && !L.overalls) belt(mb, T, L, rise, pT, open, top);
   // ---- head, hair, beard, hat
+  mb.tag = 'head';
   const H = buildHumanHead(mb, P, L, detail);
   // (the dead's hair and beards: fewer, coarser clumps)
   const hd = detail * (dead ? 0.6 : 1);
+  mb.tag = 'beard';
   if (L.beard) beard(mb, P, H, L.beard, L, hd);
+  mb.tag = 'hair';
   hair(mb, P, H, L, hd);
+  mb.tag = 'hat';
   if (L.hat) hat(mb, P, H, L.hat, L);
-  if (L.gear) gear(mb, P, T, L.gear, L, { pT, pP, rise, open, arms, legs, H });
+  mb.tag = 'gear';
+  if (L.gear) gear(mb, P, T, L.gear, L, { pT, pP, pHip, pChest, rise, open, arms, legs, H });
+  mb.tag = 'dead';
   if (dead) deadExtras(mb, P, H, L, T);
+  mb.tag = null;
   return { H, T, N, arms, legs, B, pT, pP };
 }
 
@@ -632,6 +661,11 @@ function hairDepth(style, phi, lam, len = 0) {
   return d;
 }
 
+// how far a style's hair stands off the scalp (on top: more, up to half as much again - hair())
+const hairVol = (style) => (style === 'short' ? 0.006 : style === 'crop' || style === 'fade' ? 0.005 : style === 'balding' ? 0.005 : style === 'bob' ? 0.012 : 0.009);
+// ...and how thick it is round the band of a bandana (an elevation of about 0.4: hair()'s push there, and a bob's fall)
+const hairThick = (style) => (!style || style === 'buzz' ? 0 : hairVol(style) * 1.2 + (style === 'bob' || style === 'long' ? 0.003 : 0));
+
 function hair(mb, P, H, L, detail = 1) {
   const h = L.hair;
   const head = mb.bi('head'), jaw = mb.bi('jaw');
@@ -642,7 +676,7 @@ function hair(mb, P, H, L, detail = 1) {
   if (style === 'buzz') return; // painted onto the scalp (headTint, see looks.js)
   const patchy = style === 'patchy' ? h.patchy ?? 0.5 : 0; // the dead's: torn out in clumps
   const nu = Math.max(16, Math.round(52 * detail)), nv = Math.max(10, Math.round(30 * detail));
-  const vol = style === 'short' ? 0.006 : style === 'crop' || style === 'fade' ? 0.005 : style === 'balding' ? 0.005 : style === 'bob' ? 0.012 : 0.009;
+  const vol = hairVol(style);
   const fade = style === 'crop' || style === 'fade' ? 0.1 : 0.16; // how far in from its edge the hair reaches its full depth
   const push = (phi, lam) => {
     // (the distance in from the hairline across it, not straight up: a steep hairline thins out as soon as a flat one)
@@ -651,7 +685,10 @@ function hair(mb, P, H, L, detail = 1) {
     const full = vol * (1 + 0.5 * clamp(lam, 0, 1)) + (style === 'bob' || style === 'long' ? 0.005 * sstep(0.4, -0.4, lam) : 0);
     return 0.0012 + (full - 0.0012) * sstep(0, fade, d);
   };
-  const mask = { depth: (phi, lam) => Math.min(hairDepth(style, phi, lam, h.length), hatLow + 0.08 - lam, patchy ? (fbm3(Math.sin(phi) * 2.5, lam * 2.5, Math.cos(phi) * 2.5, 3, 7) - patchy * 0.85) * 3 : 1) };
+  // (under a felt hat the hair stops nearer its band: the band is a lathe round the head, not over the hair, and on a
+  // wide or deep head the hair came out through it)
+  const under = L.hat && (L.hat.kind === 'ranger' || L.hat.kind === 'cowboy') ? 0.02 : 0.08;
+  const mask = { depth: (phi, lam) => Math.min(hairDepth(style, phi, lam, h.length), hatLow + under - lam, patchy ? (fbm3(Math.sin(phi) * 2.5, lam * 2.5, Math.cos(phi) * 2.5, 3, 7) - patchy * 0.85) * 3 : 1) };
   const { geo, wts } = headSurface(H, nu, nv, head, jaw, mask, push, true);
   // the hair's own layout: v runs down it (the strands)
   const uv = geo.attributes.uv;
@@ -858,7 +895,12 @@ function hat(mb, P, H, h, L) {
     const roll = kind === 'cowboy';
     brimFlat(mb, base, H, kind === 'ranger' ? 0.1 : 0.095, roll, col);
   } else if (kind === 'bandana') {
-    const { geo, wts } = headSurface(H, 26, 18, head, jaw, { depth: (phi, lam) => Math.min(lam - 0.28, 0.5 - lam) }, L.hair ? 0.0125 : 0.006); // (over the hair)
+    // over the hair: as thick as it is there and a little (12.5 mm at the least, as it always was); the knot and its
+    // tails as far out again, and the tails out over a ponytail or braid that hangs below the knot
+    const lift = L.hair ? Math.max(0.0125, hairThick(L.hair.style) + 0.004) : 0.006;
+    const out = L.hair ? lift - 0.0125 : 0;
+    const overTail = L.hair && (L.hair.style === 'ponytail' || L.hair.style === 'braid') ? 0.02 : 0;
+    const { geo, wts } = headSurface(H, 26, 18, head, jaw, { depth: (phi, lam) => Math.min(lam - 0.28, 0.5 - lam) }, lift); // (over the hair)
     for (let i = 0; i < wts.length; i += 4) {
       wts[i + 1] = 1;
       wts[i + 3] = 0;
@@ -866,8 +908,9 @@ function hat(mb, P, H, h, L) {
     mb.geom('head', geo, on({ keepNormals: true, wts, color: col, region: CR.COTTON, tint: h.tint }));
     // the knot at the back and its two tails
     headPoint(H, PI, 0.38, p);
-    mb.ellip('head', [p.x, p.y, p.z + 0.008], [0.014, 0.012, 0.01], { ws: 6, hs: 4, color: col, region: CR.COTTON });
-    for (const sd of [-1, 1]) mb.box('head', [p.x + sd * 0.012, p.y - 0.035, p.z + 0.014], [0.018, 0.06, 0.004], { color: mulC(col, 0.9), region: CR.COTTON, rot: [0.25, 0, sd * 0.3] });
+    mb.ellip('head', [p.x, p.y, p.z + (L.hair ? lift + 0.006 : 0.008)], [0.014, 0.012, 0.01], { ws: 6, hs: 4, color: col, region: CR.COTTON }); // (on the band, not in the hair)
+    // (the tails lean in to the nape, or, over a tail of hair, out over it)
+    for (const sd of [-1, 1]) mb.box('head', [p.x + sd * 0.012, p.y - 0.035, p.z + 0.014 + out + overTail], [0.018, 0.06, 0.004], { color: mulC(col, 0.9), region: CR.COTTON, rot: [overTail ? -0.2 : 0.25, 0, sd * 0.3] });
   }
 }
 
@@ -917,32 +960,33 @@ function brimFlat(mb, y, H, w, roll, col) {
 function gear(mb, P, T, g, L, k) {
   const chest = mb.bonePos('chest'), hips = mb.bonePos('hips');
   const yC = P.chestY, yH = P.hipY;
+  const pHip = k.pHip ?? k.pP; // (what is hung at the hips sits on what is outermost there: buildPerson)
   if (g.badge) {
     // a star or shield over the heart (or on the belt: badge 'belt')
-    const at = g.badge === 'belt' ? surfPoint(T, -0.35, k.rise - 0.025, k.pP + 0.016) : surfPoint(T, -0.48, yC + 0.07, k.pT + 0.003);
+    const at = g.badge === 'belt' ? surfPoint(T, -0.35, k.rise - 0.025, pHip + 0.016) : surfPoint(T, -0.48, yC + 0.07, k.pT + 0.003);
     const bone = g.badge === 'belt' ? 'hips' : 'chest';
     const bp = bone === 'hips' ? hips : chest;
     mb.ellip(bone, [at[0] - bp[0], at[1] - bp[1], at[2] - bp[2] - 0.002], [0.017, 0.02, 0.004], { ws: 6, hs: 4, color: 0xc8a848, region: CR.PLAIN, glow: 0.05, mottle: 0.15, blood: false, rot: [0.15, -0.4, 0] });
   }
   if (g.radio) {
     // a radio clipped high on the chest, its aerial up
-    const at = surfPoint(T, 0.6, yC + 0.1, k.pT + 0.012);
+    const at = surfPoint(T, 0.6, yC + 0.1, (k.pChest ?? k.pT) + 0.012);
     mb.box('chest', [at[0] - chest[0], at[1] - chest[1], at[2] - chest[2]], [0.032, 0.06, 0.02], { color: 0x1c1c1c, region: CR.LEATHER, rot: [0.1, 0.5, 0], round: 0.25 });
     mb.seg('chest', [at[0] - chest[0] + 0.008, at[1] - chest[1] + 0.03, at[2] - chest[2]], [at[0] - chest[0] + 0.01, at[1] - chest[1] + 0.085, at[2] - chest[2] + 0.004], 0.0035, 0.003, { rs: 5, color: 0x141414, region: CR.PLAIN });
   }
   if (g.holster) {
     // a pistol in a holster on the right hip
-    const at = surfPoint(T, PI * 0.56, k.rise - 0.06, k.pP + 0.022);
+    const at = surfPoint(T, PI * 0.56, k.rise - 0.06, pHip + 0.022);
     mb.box('hips', [at[0] - hips[0], at[1] - hips[1] - 0.03, at[2] - hips[2]], [0.03, 0.13, 0.05], { color: 0x1a1612, region: CR.LEATHER, round: 0.3, rot: [0.1, 0, 0] });
     mb.box('hips', [at[0] - hips[0], at[1] - hips[1] + 0.05, at[2] - hips[2] + 0.012], [0.026, 0.05, 0.03], { color: 0x202020, region: CR.PLAIN, round: 0.3, rot: [-0.3, 0, 0] });
   }
   if (g.toolbelt) {
     // pouches round the hips, a hammer through a loop
     for (const sd of [-1, 1]) {
-      const at = surfPoint(T, sd * 1.2, k.rise - 0.07, k.pP + 0.026);
+      const at = surfPoint(T, sd * 1.2, k.rise - 0.07, pHip + 0.026);
       mb.box('hips', [at[0] - hips[0], at[1] - hips[1], at[2] - hips[2]], [0.06, 0.09, 0.05], { color: 0x6a4a2a, region: CR.LEATHER, round: 0.35, rot: [0, sd * 1.2, 0] });
     }
-    const at = surfPoint(T, PI * 0.62, k.rise - 0.05, k.pP + 0.03);
+    const at = surfPoint(T, PI * 0.62, k.rise - 0.05, pHip + 0.03);
     mb.seg('hips', [at[0] - hips[0], at[1] - hips[1] + 0.03, at[2] - hips[2]], [at[0] - hips[0], at[1] - hips[1] - 0.14, at[2] - hips[2]], 0.009, 0.009, { rs: 6, color: 0x8a6a40, region: CR.CANVAS });
     mb.box('hips', [at[0] - hips[0], at[1] - hips[1] + 0.035, at[2] - hips[2] - 0.01], [0.022, 0.022, 0.08], { color: 0x3a3a3a, region: CR.PLAIN });
   }
@@ -1018,7 +1062,7 @@ function gear(mb, P, T, g, L, k) {
     sheet(mb, A, 0, TAU, A.yW + 0.025, A.yW + 0.045, 10, 1, 0.003, { color: 0xd8dcd4, region: CR.PLAIN, blood: false });
   }
   if (g.knife) {
-    const at = surfPoint(T, -PI * 0.55, k.rise - 0.05, k.pP + 0.02);
+    const at = surfPoint(T, -PI * 0.55, k.rise - 0.05, pHip + 0.02);
     mb.box('hips', [at[0] - hips[0], at[1] - hips[1] - 0.05, at[2] - hips[2]], [0.022, 0.15, 0.04], { color: 0x3a2a1c, region: CR.LEATHER, round: 0.3 });
   }
   void yH;

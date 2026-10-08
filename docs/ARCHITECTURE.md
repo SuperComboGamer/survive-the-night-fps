@@ -1661,6 +1661,51 @@ nobody's state; the one thing the server keeps is each wreck's short record of t
   `/sandbox/models-test.html?turn=s:3,z:0:1,zv:0:5` draws turnaround sheets (front, side, back, the face) of
   survivors, the turned and zombie variants, and `scripts/test-characters.js` holds the wire rule and the models'
   budgets.
+- **Custom survivors: the character creator.** Besides the ten and Random, a player can be a "Random stranger" (made
+  up: another at every click of its dice in the picker, and after every join; the one on the turntable, kept in
+  `localStorage['stn.stranger']`, is the one the next join is) or one of up to four survivors of their own, made in
+  the creator (`client/ui/creator.js`, opened from the picker).
+  - *The wardrobe* (`shared/wardrobe.js`) is the one list of every part and colour: fields by section (body and face
+    sliders inside the roster's range, since the hitbox is one shape for everyone; hair, beard, hat, top and its
+    sleeves, collar, front and hem, what is worn over it, trousers, shoes, kit), each option with a wire id (append,
+    never reuse: a removed one goes on its field's `retired` list), a storage name, and the rules it declares
+    (`allow`, `excludes`, `defaults`, the look fragment it adds, dice weights). The creator's controls, both dice,
+    the server's check and the tests' sweeps all come from it, so a part added there (and built in `people.js`) is
+    offered with no other change; `scripts/test-characters.js` fails when the two disagree, either way.
+  - *A look* (`shared/appearance.js`) is held by names (`{ hair: 'bun', height: 0.99, ... }`) and sent by ids:
+    `u8 format, u8 n, n x varu`, about 66 bytes, growth-safe (an unknown or retired id, or a field missing at the
+    end, is the field's default). `normalize` applies the rules until nothing moves (the field just set wins);
+    `canonical` also puts back what does not matter (a hat colour without a hat), so that one look has one code
+    (`lookCode`) and one model key (`lookKey`: `'a:<code>'`). `fromNames` reads a kept look against today's
+    wardrobe: a part or field since removed falls back to the default (else the first option), and the rules run
+    again.
+  - *Kept in the browser* (`client/ui/customs.js`): `localStorage['stn.customs']`, by name; a look repaired on reading
+    is saved at once and the card says so once. `stn.character` is then also `stranger` or `c:<id>`. The name a
+    player gives one stays in the browser.
+  - *On the wire.* `C2S.JOIN` carries the look after the character byte (u8 length, then its bytes), with the
+    character byte set to the roster survivor most like it (`looks.js nearestRoster`: what an older server makes
+    them, what an older client draws). `Game.handleJoin` keeps the canonical bytes as `p.look`, a plain array (it
+    goes into a deploy's saved game). The looks go out in their own message, `S2C.LOOKS`, as `S2C.FRIENDS` does:
+    everyone's to a player who joins or comes back, a newcomer's to the rest (and an empty one for an id that had a
+    look earlier in the game). Not in `S2C.PLAYERS`, which goes out again whenever a rounded ping changes; a game of
+    roster survivors sends no `S2C.LOOKS` at all. No protocol bump: it is all trailing bytes and a message an
+    older client ignores.
+  - *Drawn.* A model is a reference: a roster id, or a look's key (`characters.js getSurvivorRig`, cached as
+    `${ref}|h` / `${ref}|z`; a custom one about 1.5 MB with both, counted by the instances holding it and let go
+    past the eight last used: `evictLooks`). Your own is built at join, under the load. Another player's is built by
+    `client/game/lookwarm.js` one model at a time between frames (6-20 ms each), and until both are built they are
+    drawn as the roster survivor most like them (`Game.lookOf`); `Entities.survivorView`, the cutscene and
+    `selfBody` make the body again when that changes. The creator's turntable is a model of its own, made again at
+    every change (`createSurvivor(seed, ref, { transient: true })`, `client/ui/stage.js`).
+  - *Clipping.* The rules keep combinations that poke through apart (a bun and a hat, a hood and a ponytail or
+    braid, a jacket's turned-out collar and a braid, chest pockets and a bib). Kit hangs on what is outermost where
+    it is worn (`people.js` `pHip`, `pChest`: the belt's holster, knife and pouches on a top or vest over it, a
+    radio on a vest), as a bandana stands over the hair it is tied on. (The worn pack is still fitted to the top,
+    not a vest over it: moved onto the vest, its straps went further into the body.) `npm run clip:outfits` measures clothes against clothes on every covering look
+    (`coveringLooks`: each offered part on the smallest and biggest of both bodies), and
+    `npm run clip:survey -- --sections tp --looks cover` held items and the pack on them. `&look=<code>`
+    (`?hold=`) and `l:<code>` / `lr:<seed>` (`?turn=`) show one in the sandboxes; `?screen=creator` and
+    `?screen=picker&customs=3` in the UI sandbox.
 - **Talking.** Text chat reaches everyone in the game: `handleChat` broadcasts one `S2C.CHAT` to every player.
   The voice reaches `TALK_RANGE` (clear to `TALK_CLEAR`); beyond it the walkie-talkie carries it. Every survivor
   has one in weapon slot 6 (`SLOT_RADIO`), which holds no item of its own: `state.weapons` stays five long,

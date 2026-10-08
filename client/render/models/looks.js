@@ -1,6 +1,8 @@
-// The survivors' looks (the roster: shared/characters.js) and what turns one into a corpse. people.js builds them.
-import { color, fbm3, clamp } from './skinning.js';
+// The survivors' looks (the roster: shared/characters.js), the look of a custom survivor (the character creator:
+// shared/wardrobe.js, shared/appearance.js), and what turns one into a corpse. people.js builds them.
+import { color, fbm3, clamp, lerp } from './skinning.js';
 import { CR } from './charTextures.js';
+import { APPEARANCE } from '../../../shared/appearance.js';
 
 const G = (x) => Math.exp(-x * x);
 
@@ -8,7 +10,7 @@ const G = (x) => Math.exp(-x * x);
 function headPaint(o) {
   const hair = o.hair ? color(o.hair) : null;
   const stub = o.stubble ? color(o.stubble) : null;
-  return (lx, ly, lz, c) => {
+  const fn = (lx, ly, lz, c) => {
     const r = Math.hypot(lx, ly, lz) || 1;
     const lam = Math.asin(clamp(ly / r, -1, 1));
     const phi = Math.atan2(lx, -lz);
@@ -34,12 +36,18 @@ function headPaint(o) {
       if (ap > 0.5 && ap < 0.7 && lam > 0.02 && lam < 0.16 && Math.abs(Math.sin(lam * 120)) > 0.8) c.multiplyScalar(1 - 0.1 * o.age);
     }
   };
+  fn.paint = o; // (what it paints: appearanceOfRoster reads it back)
+  return fn;
 }
 
 // grease and dirt on work clothes
-const grimy = (k, seed) => (p, n, c) => {
-  const m = fbm3(p.x * 14, p.y * 14, p.z * 14, 2, seed);
-  if (m > 0.62) c.multiplyScalar(1 - k * (m - 0.62) * 3);
+const grimy = (k, seed) => {
+  const fn = (p, n, c) => {
+    const m = fbm3(p.x * 14, p.y * 14, p.z * 14, 2, seed);
+    if (m > 0.62) c.multiplyScalar(1 - k * (m - 0.62) * 3);
+  };
+  fn.grimy = k;
+  return fn;
 };
 
 /**
@@ -194,6 +202,185 @@ export function frameOf(L) {
     headR: 0.105 * hk, shoulderW: 0.19 * (L.sex === 'f' ? 0.93 : 1) * (L.build?.sh ?? 1), uarmLen: 0.29 * k, farmLen: 0.26 * k, handLen: 0.17, depth: 0.13,
     hipW: 0.095 * (L.sex === 'f' ? 1.05 : 1) * (L.build?.hips ?? 1) * (L.build?.w ?? 1) ** 0.5,
   };
+}
+
+// ---------------------------------------------------------------- a custom survivor (the character creator)
+const getPath = (o, path) => path.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o);
+function setPath(o, path, x) {
+  const ks = path.split('.');
+  let a = o;
+  for (let i = 0; i < ks.length - 1; i++) a = a[ks[i]] && typeof a[ks[i]] === 'object' ? a[ks[i]] : (a[ks[i]] = {});
+  a[ks[ks.length - 1]] = x;
+}
+function merge(dst, src) {
+  for (const [k, x] of Object.entries(src)) {
+    if (x && typeof x === 'object' && !Array.isArray(x)) merge(dst[k] && typeof dst[k] === 'object' ? dst[k] : (dst[k] = {}), x);
+    else dst[k] = x;
+  }
+  return dst;
+}
+// a fabric named in the wardrobe ('DENIM') is an atlas region here (CR.DENIM)
+function regions(o) {
+  for (const [k, x] of Object.entries(o)) {
+    if (k === 'region' && typeof x === 'string') o[k] = CR[x] ?? CR.COTTON;
+    else if (x && typeof x === 'object' && typeof x !== 'function') regions(x);
+  }
+  return o;
+}
+const hexMix = (a, b, t) => color(a).lerp(color(b), t).getHex();
+
+/**
+ * The look of a custom survivor (values: shared/appearance.js, by name): the roster's kind of look object, made from
+ * the wardrobe's fields. A field goes where its `path` says (a pick's name, a swatch's colour, a slider's value; an
+ * option's `look` is merged in), so a new part needs nothing here; what follows the loop are the few things worked
+ * out from more than one field.
+ */
+export function lookFromAppearance(values) {
+  const A = APPEARANCE;
+  const v = A.canonical(values);
+  const hexOf = (key) => {
+    const f = A.byKey.get(key);
+    const x = v[key];
+    if (x === 'same') return hexOf(f.same.field);
+    return A.choice(f, x)?.hex;
+  };
+  const opt = (key) => A.choice(A.byKey.get(key), v[key]) || {};
+  const L = { sex: v.body, frame: {}, build: {}, face: {}, gear: {} };
+  for (const f of A.fields) {
+    if (!A.relevant(v, f)) continue;
+    const x = v[f.key];
+    if (f.kind === 'slider') {
+      if (f.path) setPath(L, f.path, x);
+      continue;
+    }
+    const o = A.choice(f, x);
+    if (f.kind === 'swatch') {
+      if (f.path && x !== 'none') setPath(L, f.path, hexOf(f.key));
+      continue;
+    }
+    if (f.path && x !== 'none') setPath(L, f.path, o.region ? o.region : x === 'on' ? true : x);
+    if (o.look) merge(L, structuredClone(o.look));
+  }
+  // the trunk deepens with its width (Earl: 1.2 wide, 1.14 deep)
+  L.build.d = 1 + (L.build.w - 1) * 0.7;
+  L.top ||= {};
+  L.pants ||= {};
+  // hair: none at all, how long or big, its brows
+  const hair = opt('hair');
+  if (v.hair === 'none') delete L.hair;
+  else if (hair.size) setPath(L, hair.size.path, lerp(hair.size.range[0], hair.size.range[1], v.hairSize));
+  L.brows = opt('hairColor').brow ?? hexOf('hairColor');
+  // what is painted on the head: a buzz cut, stubble, freckles, lines
+  const paint = {};
+  if (hair.paint?.buzz) Object.assign(paint, { hair: hexMix(hexOf('hairColor'), 0x000000, 0.28), buzz: hair.paint.buzz });
+  const stub = opt('stubble').paint;
+  if (stub) Object.assign(paint, { stubble: hexMix(L.skin, v.beard !== 'none' ? hexOf('beardColor') : hexOf('hairColor'), 0.5), stubbleK: stub.stubbleK });
+  if (v.freckles === 'on') paint.freckles = true;
+  if (v.age > 0.02) paint.age = v.age;
+  if (Object.keys(paint).length) L.headTint = headPaint(paint);
+  // the hat's trim: its band, its front panel or its bill
+  const trim = opt('hat').trim;
+  if (L.hat && trim && v.hatTrim !== 'none') L.hat[trim] = hexOf('hatTrim');
+  // what is worn over the top takes its own colour; overalls and a coverall are the trousers too
+  if (L.vest) L.vest.color = hexOf('layerColor');
+  if (L.overalls) {
+    L.overalls.color = hexOf('layerColor');
+    L.pants.color = L.overalls.color;
+  }
+  if (L.coverall) {
+    L.pants.color = L.top.color;
+    L.pants.region = L.top.region;
+  }
+  if (L.top?.under) L.top.under.region = 'COTTON';
+  if (v.grime === 'grimy') {
+    L.top.tint = grimy(0.5, 3);
+    L.pants.tint = grimy(0.5, 5);
+  }
+  // no belt: the trousers' own goes too
+  if (v.belt === 'none') L.pants.belt = false;
+  return regions(L);
+}
+
+// how a roster look reads back as the wardrobe's values: the fields that are not simply at a path
+const READ = {
+  body: (L) => L.sex || 'm',
+  front: (L) => (L.top?.open ? 'open' : L.top?.zip ? 'zip' : L.top?.buttons ? 'buttons' : 'closed'),
+  fit: (L) => (L.top?.tucked ? 'tucked' : (L.top?.hem ?? 0) >= 0.07 ? 'long' : 'regular'),
+  grime: (L) => (L.top?.tint?.grimy ? 'grimy' : 'clean'),
+  layer: (L) => (L.coverall ? 'coverall' : L.overalls ? 'overalls' : L.vest ? L.vest.kind : 'none'),
+  layerColor: (L) => L.vest?.color ?? L.overalls?.color,
+  trousers: (L) => (L.pants?.cargo ? 'cargo' : L.pants?.shorts ? 'shorts' : L.pants?.belt === false && L.pants?.loose ? 'scrub' : 'plain'),
+  stubble: (L) => (!L.headTint?.paint?.stubble ? 'none' : L.headTint.paint.stubbleK <= 0.2 ? 'light' : 'heavy'),
+  freckles: (L) => (L.headTint?.paint?.freckles ? 'on' : 'none'),
+  age: (L) => L.headTint?.paint?.age ?? 0,
+  belt: (L) => (L.pants?.belt === false ? 'none' : L.gear?.belt?.color ?? 0x2a1f16),
+  beardColor: (L) => (L.beard && L.beard.color !== undefined && L.beard.color !== L.hair?.color ? L.beard.color : 'same'),
+  hatTrim: (L) => {
+    const t = A_().choice(A_().byKey.get('hat'), L.hat?.kind)?.trim;
+    return (t && L.hat?.[t]) ?? 'none';
+  },
+  hairSize: (L) => {
+    const s = A_().choice(A_().byKey.get('hair'), L.hair?.style)?.size;
+    const x = s ? getPath(L, s.path) : undefined;
+    return s && x !== undefined ? (x - s.range[0]) / (s.range[1] - s.range[0]) : 0.5;
+  },
+  hair: (L) => L.hair?.style ?? 'none',
+};
+const A_ = () => APPEARANCE;
+// the nearest swatch to a colour
+function nearestSwatch(f, hex) {
+  const A = APPEARANCE;
+  const c = color(hex);
+  let best = null, bd = Infinity;
+  for (const o of A.offered(f)) {
+    if (o.hex === undefined) continue;
+    const s = color(o.hex);
+    const dd = (s.r - c.r) ** 2 + (s.g - c.g) ** 2 + (s.b - c.b) ** 2;
+    if (dd < bd) (bd = dd), (best = o.name);
+  }
+  return best ?? f.default;
+}
+
+/** A roster survivor as the wardrobe's values: where the creator's "Make one like Dale" starts. */
+export function appearanceOfRoster(id) {
+  const A = APPEARANCE;
+  const L = LOOKS[((id | 0) % LOOKS.length + LOOKS.length) % LOOKS.length];
+  const v = {};
+  for (const f of A.fields) {
+    let x = READ[f.key] ? READ[f.key](L) : f.path ? getPath(L, f.path) : undefined;
+    if (f.kind === 'slider') {
+      if (x === undefined && f.key === 'bust') x = L.sex === 'f' ? 0.6 : 0;
+      if (x === undefined && f.key === 'features') x = L.face?.fem ?? 0;
+      v[f.key] = typeof x === 'number' ? x : f.default;
+    } else if (f.kind === 'swatch') {
+      if (x === 'none' || x === 'same') v[f.key] = x;
+      else if (typeof x === 'number') v[f.key] = A.offered(f).find((o) => o.hex === x)?.name ?? nearestSwatch(f, x);
+    } else if (x !== undefined) {
+      // a pick: its name, or the option whose fabric it is, or on / none
+      const o = A.choices.get(f.key).find((c) => c.name === x || (c.region !== undefined && CR[c.region] === x));
+      v[f.key] = o ? o.name : x === true ? 'on' : x === false || x === null ? 'none' : f.default;
+    } else v[f.key] = A.choices.get(f.key).some((c) => c.name === 'none') ? 'none' : f.default;
+  }
+  if (v.trouserFabric === undefined || !L.pants?.region) v.trouserFabric = 'denim';
+  return A.normalize(v);
+}
+
+let rosterLooks = null;
+// how much a difference in each field counts toward "looks like": the shape of them first
+const LIKE = { body: 3, top: 2, layer: 2, hat: 2, hair: 1.5, beard: 1.5, skin: 1.5, topColor: 1, hairColor: 1, trousers: 0.5, shoes: 0.5 };
+/** The roster survivor most like a custom one: who an older client (or this one, until the model is built) draws. */
+export function nearestRoster(values) {
+  const A = APPEARANCE;
+  rosterLooks ||= LOOKS.map((_, i) => appearanceOfRoster(i));
+  const v = A.clean(values);
+  let best = 0, bd = Infinity;
+  rosterLooks.forEach((r, i) => {
+    let d = 0;
+    for (const [k, w] of Object.entries(LIKE)) if (r[k] !== v[k]) d += w;
+    d += Math.abs(r.height - v.height) * 10 + Math.abs(r.build - v.build) * 5;
+    if (d < bd) (bd = d), (best = i);
+  });
+  return best;
 }
 
 void G;

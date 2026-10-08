@@ -65,6 +65,9 @@ import { SUPPLIES, SUPPLY_NEED, W, setAct } from './act.js'; // (this act's supp
 import { usePos } from '../../shared/protocol.js';
 import { characterFor, defaultCharacter, CHARACTER_COUNT } from '../../shared/characters.js';
 import { chosenCharacter } from '../ui/picker.js';
+import { decode, lookKey } from '../../shared/appearance.js';
+import { nearestRoster } from '../render/models/looks.js';
+import { LookWarmer } from './lookwarm.js';
 import { SPAWN_KEY } from '../ui/spawnmenu.js';
 import { treeAt, fellTree, regrowTrees } from '../../shared/felling.js';
 import { nightTheme } from '../../shared/nights.js';
@@ -130,7 +133,7 @@ import { Weather } from './weather.js';
 import { ViewModel } from '../render/models/weapons.js';
 import { createGhost, createStructure } from '../render/models/structures.js';
 import { PowerViews } from './power.js';
-import { createZombie, createSurvivor, zombieVariants, warmSurvivor } from '../render/models/characters.js';
+import { createZombie, createSurvivor, zombieVariants, warmSurvivor, lookWarm } from '../render/models/characters.js';
 import { createCat } from '../render/models/cat.js';
 import { createDeer } from '../render/models/deer.js';
 import { createPickup } from '../render/models/pickups.js';
@@ -244,6 +247,8 @@ export class Game {
     this.craftBudget = CRAFT_BURST;
     this.craftSoundT = -1; // when a craft was last heard (eventHandler.sound)
     this.players = new Map(); // id -> {name, status, walkie, kills, ping, way: their waypoint {x, z, zone} | null}
+    this.looks = new Map(); // id -> a custom survivor's model key (S2C.LOOKS: onLooks; drawn once built: lookOf)
+    this.lookWarmer = new LookWarmer();
     this.renderPos = new THREE.Vector3();
     this.clientTick = 0;
     this.clockInit = false;
@@ -344,6 +349,7 @@ export class Game {
       inventory: (r) => this.onInventory(r),
       chat: (id, flags, text) => this.onChat(id, flags, text),
       players: (r) => this.onPlayers(r),
+      looks: (ids) => this.onLooks(ids),
       progress: (r) => this.onProgress(r),
       board: (b) => this.ui.setBoard(b),
       voice: (from, payload) => this.voice.onSignal(from, payload),
@@ -845,7 +851,12 @@ export class Game {
   // stinger or introduction
   async join(name, code = '', { resume = false } = {}) {
     if (!resume) this.audio.stinger?.('join');
-    const info = await this.conn.connect(name, playerId(), code, chosenCharacter());
+    // who to be (the splash's picker): a roster survivor, or a custom one - its models built now, under the load, and
+    // the roster survivor most like it sent beside it (who an older server makes us)
+    const pick = chosenCharacter();
+    if (pick.look) warmSurvivor(lookKey(pick.look));
+    this.looks = new Map();
+    const info = await this.conn.connect(name, playerId(), code, pick.look ? nearestRoster(pick.look) : pick.character, pick.look);
     this.room = info.room; // { code, name, inviteOnly }: what the invite link points at
     this.myId = info.id;
     this.admin = info.admin;
@@ -1107,6 +1118,30 @@ export class Game {
       this.ui.addChat(p ? p.name : '???', text, { zombie, color: zombie ? '#7fae5a' : undefined });
     }
     this.audio.playLocal?.('chat', { volume: 0.5 });
+  }
+
+  // custom survivors' looks (S2C.LOOKS): each one's model key, its models queued to be built
+  onLooks(ids) {
+    for (const id of ids) {
+      const v = decode(this.conn.looks.get(id));
+      if (!v) {
+        this.looks.delete(id);
+        continue;
+      }
+      const key = lookKey(v);
+      this.looks.set(id, key);
+      this.lookWarmer.want(key);
+    }
+  }
+  /**
+   * Who a player is drawn as: their custom survivor's model key once its models are built, else the player list's
+   * character (the roster survivor most like them, for a custom one); undefined until the list has said.
+   */
+  lookOf(id) {
+    const key = this.looks.get(id);
+    if (key && lookWarm(key)) return key;
+    if (key) this.lookWarmer.want(key); // (built again if it was let go: evictLooks)
+    return this.players.get(id)?.character;
   }
 
   onPlayers(r) {
@@ -2638,8 +2673,16 @@ export class Game {
       return;
     }
     let sv = this.selfBody;
+    const who = this.lookOf(this.myId) ?? -1;
+    if (sv && this.selfBodyWho !== who) {
+      // (the player list, or our custom survivor's models, came after the body was made: made again as them)
+      this.scene.remove(sv.object);
+      sv.dispose?.();
+      sv = this.selfBody = null;
+    }
     if (!sv) {
-      sv = this.selfBody = createSurvivor(this.myId || 1, this.players.get(this.myId)?.character ?? -1);
+      sv = this.selfBody = createSurvivor(this.myId || 1, who);
+      this.selfBodyWho = who;
       sv.object.traverse((m) => m.isMesh && (m.castShadow = true));
       this.scene.add(sv.object);
       this.selfBodyItem = -1;
@@ -2721,6 +2764,7 @@ export class Game {
     this.frame++;
     this.time += dt;
     const time = this.time;
+    this.lookWarmer.tick(dt);
     // a warm-up ends here, ahead of this frame's draw: when its programs are built, or now if play has begun
     if (this.warm && (this.warm.ready || this.state === 'playing')) this.finishPrewarm();
     const menu = this.state === 'menu' || !this.world;
