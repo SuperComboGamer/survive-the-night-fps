@@ -27,7 +27,7 @@ import { mulberry32 } from '../shared/rng.js';
 export const HANDOFF_RESERVE = +(process.env.HANDOFF_RESERVE_SECONDS || 180); // s a restored player's place is kept
 
 // the run's own numbers (Game constructor and startGame), as they are
-const GAME_FIELDS = ['seed', 'worldPlayed', 'tick', 'time', 'phase', 'day', 'timeLeft', 'restartT', 'supplies', 'supplyHints', 'supplyFound', 'unlocked', 'schemHints', 'wave', 'bossPending', 'bossId', 'warned', 'shadeWarned', 'escape', 'supplyAt', 'nightStats', 'skullAwards', 'dropSeq', 'hordeHpMul', 'act', 'checkpoint', 'crossing'];
+const GAME_FIELDS = ['seed', 'worldPlayed', 'tick', 'time', 'phase', 'day', 'timeLeft', 'restartT', 'supplies', 'supplyHints', 'supplyFound', 'unlocked', 'schemHints', 'wave', 'bossPending', 'bossId', 'warned', 'shadeWarned', 'escape', 'supplyAt', 'nightStats', 'dropSeq', 'hordeHpMul', 'act', 'checkpoint', 'crossing'];
 // what of a player is the connection's or the leaderboard's, or is worked out again (resume starts a client afresh)
 const PLAYER_SKIP = new Set(['session', 'rec', 'view', 'shadow', 'cmdQueue', 'cmdBudget', 'lastSeq', 'hasSeq', 'recvSeq', 'renderTick', 'renderFrac', 'hx', 'hy', 'hz', 'selfSync', 'snapTick', 'ackSent', 'pingAt', 'ping', 'chatT', 'chatCount', 'onAir', 'pingT', 'boardT', 'ts', 'admin', 'adminT', 'adminFails', 'greeted', 'selfCache', 'globalCache', 'listVer', 'away', 'arriving', 'useItem', 'hold', 'invDirty', 'invSort', 'splitKeep', 'lastDrop', 'state']);
 const ZOMBIE_SKIP = new Set(['def', 'hx', 'hy', 'hz', 'hitStruct']);
@@ -97,6 +97,7 @@ export function saveGame(g) {
   const s = {};
   for (const k of GAME_FIELDS) s[k] = data(g[k], 0) ?? null;
   s.waves = g.waves.map((wv) => data(wv, 0));
+  s.skullAwards = [...(g.skullAwards || [])];
   s.fallen = [...g.fallen];
   s.leftKits = [...g.leftKits]; // (oldest first: the cap lets the oldest go)
   s.gather = [...g.gather].map(([col, v]) => [colKey(col), data(v, 0)]);
@@ -132,6 +133,7 @@ export function loadGame(g, s) {
     g[k] = now && s[k] && typeof now === 'object' && !Array.isArray(now) ? { ...now, ...s[k] } : s[k];
   }
   g.waves = s.waves;
+  g.skullAwards = new Set(s.skullAwards || []);
   g.fallen = new Set(s.fallen);
   g.leftKits = new Map(s.leftKits);
   // every random stream starts again, somewhere new: none can be read back (shared/rng.js), and the server decides
