@@ -3,8 +3,9 @@
 import { randomUUID } from 'node:crypto';
 import { CHATF } from '../shared/protocol.js';
 import { ITEM_DEFS, WEAPONS, isFirearm } from '../shared/defs.js';
-import { LOADOUT_CATALOG, loadoutDef, loadoutMods, loadoutName } from '../shared/loadout.js';
+import { LOADOUT_CATALOG, combineLoadoutCombatEffects, loadoutDef, loadoutEffects, loadoutMods, loadoutName, loadoutWeaponEffect } from '../shared/loadout.js';
 import { NO_PERKS, perkMods } from '../shared/progress.js';
+import { STAMINA_MAX } from '../shared/constants.js';
 import { freeSlot, invCap } from './inventory.js';
 import { LoadoutService, MemoryLoadoutStore } from './userloadout.js';
 
@@ -42,9 +43,22 @@ export function clearLoadoutRun(p) {
   p.loadoutApplied = false;
   p.loadoutItems = [];
   p.loadoutMods = NO_PERKS;
+  p.loadoutEffects = null;
+  p.loadoutWeaponEffects = {};
+  p.loadoutNight = {};
   p.loadoutWeapons = [null, null, null, null, null];
   p.loadoutArmor = null;
   p.loadoutBackpack = null;
+}
+
+export function loadoutCombatEffect(p, weapon, ammo = -1) {
+  const effects = [];
+  const slot = WEAPONS[weapon]?.slot;
+  const marker = slot != null ? p?.loadoutWeapons?.[slot] : null;
+  const w = marker ? p?.loadoutWeaponEffects?.[marker] : null;
+  if (w && (!w.item || w.item === weapon)) effects.push(w);
+  for (const e of p?.loadoutEffects?.ammo || []) if (e.ammo === ammo) effects.push(e);
+  return combineLoadoutCombatEffects(effects);
 }
 
 export class LocalLoadouts {
@@ -117,10 +131,19 @@ export class Loadouts {
     if (p.loadoutApplied || !p.rejoinKey || !p.alive || p.zombie) return false;
     const equipped = this.equipped(p.rejoinKey);
     if (!equipped.length && !this.own.get(p.rejoinKey)?.loaded) return false;
+    const defs = equipped.map((it) => loadoutDef(it.catalog)).filter(Boolean);
     p.loadoutApplied = true;
     p.loadoutItems = equipped.map((it) => it.id);
-    p.loadoutMods = loadoutMods(equipped.map((it) => loadoutDef(it.catalog)).filter(Boolean));
-    for (const owned of equipped) this.grantRunCopy(p, owned, loadoutDef(owned.catalog));
+    p.loadoutMods = loadoutMods(defs);
+    p.loadoutEffects = loadoutEffects(defs);
+    p.loadoutWeaponEffects = {};
+    p.loadoutNight = {};
+    for (const owned of equipped) {
+      const def = loadoutDef(owned.catalog);
+      const weaponEffect = loadoutWeaponEffect(def);
+      if (weaponEffect) p.loadoutWeaponEffects[owned.id] = weaponEffect;
+      this.grantRunCopy(p, owned, def);
+    }
     if (p.loadoutMods.hp) {
       p.maxHp += p.loadoutMods.hp;
       p.hp += p.loadoutMods.hp;
@@ -131,36 +154,60 @@ export class Loadouts {
   grantRunCopy(p, owned, def) {
     const grant = def?.grant || {};
     const marker = owned.id;
-    const item = grant.item | 0;
-    const count = Math.max(1, grant.count | 0 || 1);
     for (const [cal, n] of grant.ammo || []) if (Number.isInteger(cal) && cal >= 0 && cal < p.state.ammo.length) p.state.ammo[cal] += Math.max(0, n | 0);
-    if (!item || !ITEM_DEFS[item]) return;
-    const cat = ITEM_DEFS[item].cat;
-    if (cat === 'weapon') {
-      const slot = WEAPONS[item].slot;
-      if (!p.state.weapons[slot]) {
-        p.state.weapons[slot] = item;
-        p.loadoutWeapons[slot] = marker;
-        if (slot === 0) p.state.mags[0] = grant.mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0);
-        if (slot === 1) p.state.mags[1] = grant.mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0);
-        return;
+    const grantItem = (item, count = 1, mag = grant.mag) => {
+      item |= 0;
+      if (!item || !ITEM_DEFS[item]) return false;
+      const cat = ITEM_DEFS[item].cat;
+      if (cat === 'weapon') {
+        const slot = WEAPONS[item].slot;
+        if (!p.state.weapons[slot]) {
+          p.state.weapons[slot] = item;
+          p.loadoutWeapons[slot] = marker;
+          if (slot === 0) p.state.mags[0] = mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0);
+          if (slot === 1) p.state.mags[1] = mag ?? (isFirearm(item) ? WEAPONS[item].mag : 0);
+          return true;
+        }
+      } else if (cat === 'armor' && !p.armorItem) {
+        p.armorItem = item;
+        p.armor = ITEM_DEFS[item].armor;
+        p.armorMax = ITEM_DEFS[item].armor;
+        p.loadoutArmor = marker;
+        return true;
+      } else if (cat === 'pack' && !p.backpackItem) {
+        p.backpackItem = item;
+        p.loadoutBackpack = marker;
+        return true;
       }
-    } else if (cat === 'armor' && !p.armorItem) {
-      p.armorItem = item;
-      p.armor = ITEM_DEFS[item].armor;
-      p.armorMax = ITEM_DEFS[item].armor;
-      p.loadoutArmor = marker;
-      return;
-    } else if (cat === 'pack' && !p.backpackItem) {
-      p.backpackItem = item;
-      p.loadoutBackpack = marker;
-      return;
-    }
-    const cap = invCap(p);
-    for (let i = 0; i < count; i++) {
-      const at = freeSlot(p.inv, cap);
-      if (at < 0) return;
-      p.inv[at] = { item, count: 1, mag: grant.mag ?? (cat === 'weapon' && isFirearm(item) ? WEAPONS[item].mag : 0), loadout: marker };
+      const cap = invCap(p);
+      let left = Math.max(1, count | 0 || 1);
+      while (left > 0) {
+        const at = freeSlot(p.inv, cap);
+        if (at < 0) return false;
+        const n = Math.min(left, ITEM_DEFS[item].stack || 1);
+        p.inv[at] = { item, count: n, mag: mag ?? (cat === 'weapon' && isFirearm(item) ? WEAPONS[item].mag : 0), loadout: marker };
+        left -= n;
+      }
+      return true;
+    };
+    if (grant.item) grantItem(grant.item, grant.count, grant.mag);
+    for (const [item, count, mag] of grant.items || []) grantItem(item, count, mag);
+  }
+  resetNight(p) {
+    if (p) p.loadoutNight = {};
+  }
+  onKill(p) {
+    if (!p?.alive || p.downed || p.zombie) return;
+    const apply = (eff) => {
+      if (!eff) return;
+      if (eff.heal) p.hp = Math.min(p.maxHp, p.hp + eff.heal);
+      if (eff.stamina) p.state.stamina = Math.min(STAMINA_MAX, p.state.stamina + eff.stamina);
+      for (const [cal, n] of eff.ammo || []) if (Number.isInteger(cal) && cal >= 0 && cal < p.state.ammo.length) p.state.ammo[cal] += Math.max(0, n | 0);
+    };
+    apply(p.loadoutEffects?.kill);
+    if (p.loadoutEffects?.firstKill && !p.loadoutNight?.firstKill) {
+      p.loadoutNight = { ...(p.loadoutNight || {}), firstKill: true };
+      apply(p.loadoutEffects.firstKill);
     }
   }
   grant(p, catalog, source) {

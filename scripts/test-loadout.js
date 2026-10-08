@@ -4,11 +4,11 @@
 // - in-run loadout copies cannot be dropped/salvaged/traded and do not drop on death
 import { createHash, randomUUID } from 'node:crypto';
 import { LoadoutService, MemoryLoadoutStore } from '../server/userloadout.js';
-import { Loadouts, LocalLoadouts, clearLoadoutRun } from '../server/loadouts.js';
+import { Loadouts, LocalLoadouts, clearLoadoutRun, loadoutCombatEffect } from '../server/loadouts.js';
 import { Game } from '../server/game.js';
-import { ITEM } from '../shared/defs.js';
+import { AMMO, ITEM, ZTYPE } from '../shared/defs.js';
 import { ACT, C2S, PROTOCOL_VERSION, SALVAGE_FROM, WORN, WORN_DO, Writer } from '../shared/protocol.js';
-import { LOADOUT_SLOTS } from '../shared/loadout.js';
+import { LOADOUT_CATALOG, LOADOUT_RARITY, LOADOUT_SLOTS, loadoutDef, loadoutEffects, loadoutMods } from '../shared/loadout.js';
 
 const fails = [];
 const check = (name, ok, info = '') => {
@@ -58,6 +58,30 @@ async function persistence() {
   check('guest items and slots move onto the account', (await svc.collection(gkey)).items.length === 0 && (await svc.collection(acct)).items.some((it) => it.catalog === 3) && (await svc.collection(acct)).slots.some(Boolean));
 }
 
+function catalogRules() {
+  console.log('\n-- loadout catalog rules');
+  const ids = new Set();
+  const keys = new Set();
+  for (const def of LOADOUT_CATALOG) {
+    check(`catalog item ${def.id} has a stable unique id`, Number.isInteger(def.id) && !ids.has(def.id), def.key);
+    check(`catalog item ${def.id} has a stable unique key`, typeof def.key === 'string' && !!def.key && !keys.has(def.key), def.name);
+    ids.add(def.id);
+    keys.add(def.key);
+    check(`catalog item ${def.id} has display data`, !!def.name && !!def.flavor && !!def.type && !!def.rarity && !!def.source?.kind);
+    check(`catalog item ${def.id} rarity is known`, !!LOADOUT_RARITY[Object.keys(LOADOUT_RARITY).find((k) => LOADOUT_RARITY[k] === def.rarity)]);
+  }
+  check('catalog has the requested large item range', LOADOUT_CATALOG.length >= 50 && LOADOUT_CATALOG.length <= 80, `${LOADOUT_CATALOG.length} items`);
+  for (const z of [ZTYPE.BOSS_BRUTE, ZTYPE.BOSS_ALPHA, ZTYPE.BOSS_BLOATER, ZTYPE.BOSS_ABOMINATION, ZTYPE.BOSS_HIVEQUEEN]) {
+    check(`boss ${z} has multiple signature items`, LOADOUT_CATALOG.filter((def) => def.source?.kind === 'boss' && def.source.boss === z).length >= 3);
+  }
+  const capped = loadoutMods([3, 67, 73].map(loadoutDef));
+  check('stacked max health is capped below perk-tree power', capped.hp === 15, JSON.stringify(capped));
+  const tanky = loadoutMods([8, 25, 71].map(loadoutDef));
+  check('stacked damage reduction is capped', tanky.hurt >= 0.85, JSON.stringify(tanky));
+  const ammo = loadoutEffects([46, 46, 46].map(loadoutDef)).ammo.find((e) => e.ammo === AMMO.P9);
+  check('stacked special ammo damage is capped', ammo.damage <= 1.1 && ammo.headshot <= 1.08, JSON.stringify(ammo));
+}
+
 function fakeSession() {
   return { send() {}, cork(fn) { fn(); }, closed: false, slot: 0, user: null, ip: '127.0.0.1', congested: () => false };
 }
@@ -93,6 +117,8 @@ async function inRunRules() {
   const p = join(game, 'Tester', pid);
   await settle();
   check('equipped loadout item spawns into the run with a marker', p.state.weapons[0] === ITEM.M4A1 && !!p.loadoutWeapons[0]);
+  const carbineEffect = loadoutCombatEffect(p, ITEM.M4A1, AMMO.R556);
+  check('signature weapon effect is active only for the marked equipped copy', carbineEffect.damage > 1 && loadoutCombatEffect(p, ITEM.PISTOL, AMMO.P9).damage === 1, JSON.stringify(carbineEffect));
   action(game, p, ACT.DROP_WEAPON, (w) => w.u8(0));
   check('loadout weapon cannot be dropped by action', p.state.weapons[0] === ITEM.M4A1 && game.items.every((it) => it.item !== ITEM.M4A1));
   action(game, p, ACT.SALVAGE, (w) => {
@@ -116,8 +142,44 @@ async function inRunRules() {
     w.u8(WORN_DO.DROP);
   });
   check('loadout armor cannot be dropped while worn', q.armorItem !== 0 && game.items.every((it) => it.item !== q.armorItem));
+
+  const ammoPid = randomUUID();
+  const ammoOwner = `g:${createHash('sha256').update(ammoPid).digest('hex')}`;
+  await service.grant(ammoOwner, 46, {}, 'ammo');
+  const mcoll = await service.collection(ammoOwner);
+  await service.equip(ammoOwner, [mcoll.items[0].id, null, null]);
+  const m = join(game, 'Ammo', ammoPid);
+  await settle();
+  const ammoEffect = loadoutCombatEffect(m, ITEM.PISTOL, AMMO.P9);
+  check('special ammo effect applies by caliber in-run', ammoEffect.damage > 1 && ammoEffect.headshot > 1, JSON.stringify(ammoEffect));
+
+  const kitPid = randomUUID();
+  const kitOwner = `g:${createHash('sha256').update(kitPid).digest('hex')}`;
+  await service.grant(kitOwner, 58, {}, 'kit');
+  const kcoll = await service.collection(kitOwner);
+  await service.equip(kitOwner, [kcoll.items[0].id, null, null]);
+  const k = join(game, 'Kit', kitPid);
+  await settle();
+  check('starter kit grants multiple run-start items', k.inv.some((it) => it?.item === ITEM.BANDAGE && it.count === 2) && k.inv.some((it) => it?.item === ITEM.MEDKIT));
+
+  const killPid = randomUUID();
+  const killOwner = `g:${createHash('sha256').update(killPid).digest('hex')}`;
+  await service.grant(killOwner, 34, {}, 'kill');
+  const ocoll = await service.collection(killOwner);
+  await service.equip(killOwner, [ocoll.items[0].id, null, null]);
+  const o = join(game, 'Trigger', killPid);
+  await settle();
+  o.state.stamina = 10;
+  game.loadouts.onKill(o);
+  const afterFirst = o.state.stamina;
+  game.loadouts.onKill(o);
+  check('once-per-night loadout trigger fires only once', afterFirst === 18 && o.state.stamina === afterFirst, `${afterFirst} -> ${o.state.stamina}`);
+  game.loadouts.resetNight(o);
+  game.loadouts.onKill(o);
+  check('once-per-night trigger resets with the night', o.state.stamina === 26, `${o.state.stamina}`);
 }
 
+catalogRules();
 await persistence();
 await inRunRules();
 
