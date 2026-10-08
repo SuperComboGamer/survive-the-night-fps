@@ -2094,6 +2094,7 @@ export class Game {
       else if (ui.cardsOpen) {
         if (!ui.cards.back()) this.toggleCards(false); // (a view inside it first: a card picked, the chooser, a deck)
       } else if (ui.spawnOpen) this.toggleSpawn(false);
+      else if (ui.pauseOpen) this.resumeFromPause();
       // (Esc only gets here with the mouse still taken under fullscreen's keyboard lock, keyguard.js: it shuts the ring,
       // then puts the piece down, and only then lets go of the mouse for the menu - whatever the input is doing: the
       // browser no longer lets go of the mouse on Esc itself, so this is the only way out short of leaving fullscreen)
@@ -2283,6 +2284,18 @@ export class Game {
   screenUp() {
     const ui = this.ui;
     return ui.inventoryOpen || ui.mapOpen || ui.boardOpen || ui.bestiaryOpen || ui.cardsOpen || ui.spawnOpen || ui.rosterPinned;
+  }
+
+  resumeFromPause() {
+    this.ui.showPause(false);
+    if (this.screenUp()) return; // (the map or the bestiary opened over the menu keeps the pointer)
+    this.input.enabled = true;
+    const lock = this.input.requestLock();
+    lock?.then?.((ok) => {
+      // Esc closes the menu, but browsers can refuse to re-lock immediately after Esc released it.
+      if (ok !== false || this.state !== 'playing' || this.input.locked || this.screenUp() || this.ui.pauseOpen || this.ui.isTyping()) return;
+      this.ui.notify('Click the game to resume looking around.', 'warning', 4);
+    });
   }
 
   toggleInventory(open) {
