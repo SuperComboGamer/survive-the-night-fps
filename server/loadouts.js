@@ -6,7 +6,7 @@ import { ITEM_DEFS, WEAPONS, isFirearm } from '../shared/defs.js';
 import { LOADOUT_CATALOG, combineLoadoutCombatEffects, loadoutDef, loadoutEffects, loadoutMods, loadoutName, loadoutWeaponEffect } from '../shared/loadout.js';
 import { NO_PERKS, perkMods } from '../shared/progress.js';
 import { STAMINA_MAX } from '../shared/constants.js';
-import { freeSlot, invCap } from './inventory.js';
+import { freeSlot, invCap, INVENTORY_SIZE } from './inventory.js';
 import { LoadoutService, MemoryLoadoutStore } from './userloadout.js';
 
 const BOSS_POOL = new Map();
@@ -113,6 +113,7 @@ export class Loadouts {
     p.loadoutEntered = false;
   }
   fromStore(m) {
+    if (m.op === 'xfered') return this.game.cards?.fromLoadoutStore(m);
     if (m.op !== 'coll') return;
     const o = this.own.get(m.owner);
     if (!o) return;
@@ -120,6 +121,9 @@ export class Loadouts {
     o.items = Array.isArray(m.items) ? m.items : [];
     o.slots = Array.isArray(m.slots) ? m.slots : [null, null, null];
     for (const p of this.game.players.values()) if (p.rejoinKey === m.owner) this.apply(p);
+  }
+  xfer(id, moves) {
+    this.link.post({ op: 'xfer', id, kind: 'trade', moves });
   }
   equipped(owner) {
     const o = this.own.get(owner);
@@ -150,6 +154,63 @@ export class Loadouts {
     }
     if (equipped.length) p.invDirty = true;
     return true;
+  }
+  removeRunCopies(p, ids) {
+    const moved = new Set(ids);
+    if (!p || !moved.size) return false;
+    const oldMods = p.loadoutMods || NO_PERKS;
+    let changed = false;
+    p.loadoutItems = (p.loadoutItems || []).filter((id) => {
+      const keep = !moved.has(id);
+      if (!keep) changed = true;
+      return keep;
+    });
+    for (let i = 0; i < p.inv.length; i++) {
+      if (p.inv[i]?.loadout && moved.has(p.inv[i].loadout)) {
+        p.inv[i] = null;
+        changed = true;
+      }
+    }
+    for (let slot = 0; slot < p.loadoutWeapons.length; slot++) {
+      if (!p.loadoutWeapons[slot] || !moved.has(p.loadoutWeapons[slot])) continue;
+      p.loadoutWeapons[slot] = null;
+      p.state.weapons[slot] = 0;
+      if (slot === 0) p.state.mags[0] = 0;
+      if (slot === 1) p.state.mags[1] = 0;
+      if (p.state.slot === slot) p.state.reloadT = 0;
+      changed = true;
+    }
+    if (p.loadoutArmor && moved.has(p.loadoutArmor)) {
+      p.loadoutArmor = null;
+      p.armorItem = 0;
+      p.armor = 0;
+      p.armorMax = 0;
+      changed = true;
+    }
+    if (p.loadoutBackpack && moved.has(p.loadoutBackpack)) {
+      const s = p.state;
+      for (let i = INVENTORY_SIZE; i < p.inv.length; i++) {
+        const it = p.inv[i];
+        if (!it) continue;
+        this.game.dropItem(it.item, it.count, s.x, s.y, s.z, { spread: 0.8, mag: it.mag, noAuto: 2 });
+        p.inv[i] = null;
+      }
+      p.loadoutBackpack = null;
+      p.backpackItem = 0;
+      changed = true;
+    }
+    if (changed) {
+      const byId = new Map((this.own.get(p.rejoinKey)?.items || []).map((it) => [it.id, it]));
+      p.loadoutMods = loadoutMods(p.loadoutItems.map((id) => loadoutDef(byId.get(id)?.catalog)).filter(Boolean));
+      const hpDelta = (p.loadoutMods.hp || 0) - (oldMods.hp || 0);
+      if (hpDelta) {
+        p.maxHp += hpDelta;
+        p.hp = Math.min(p.hp, p.maxHp);
+      }
+      p.invDirty = p.invSort = true;
+      this.game.syncThrow(p);
+    }
+    return changed;
   }
   grantRunCopy(p, owned, def) {
     const grant = def?.grant || {};

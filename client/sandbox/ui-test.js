@@ -819,7 +819,19 @@ function cardsSandbox() {
     }
     if (q.get('still')) L.tick = () => {};
   } else if (tab === 'trade') {
-    msg(CARDMSG.TRADE, { with: 3, mine: { cards: { 112: 1 }, items: [[ITEM.NAILS, 10]] }, theirs: { cards: { 205: 1, 207: 1 }, items: [[ITEM.MEDKIT, 1]] }, ready: [false, true], ok: [false, false], committing: false });
+    msg(CARDMSG.TRADE, {
+      with: 3,
+      mine: { cards: {}, items: [], loadouts: [{ id: '11111111-1111-4111-8111-111111111111', catalog: 1 }] },
+      theirs: { cards: {}, items: [], loadouts: [{ id: '22222222-2222-4222-8222-222222222222', catalog: 2 }] },
+      loadouts: [
+        { id: '11111111-1111-4111-8111-111111111111', catalog: 1 },
+        { id: '33333333-3333-4333-8333-333333333333', catalog: 3 },
+        { id: '44444444-4444-4444-8444-444444444444', catalog: 5 },
+      ],
+      ready: [false, true],
+      ok: [false, false],
+      committing: false,
+    });
   } else if (tab === 'reveal') {
     msg(CARDMSG.REVEAL, { item: ITEM.SEALED_PACK, cards: [104, 213, 125], kept: true });
   } else if (tab === 'asks' || tab === 'chooser') {

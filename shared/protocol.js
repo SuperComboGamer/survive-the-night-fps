@@ -526,7 +526,8 @@ export function readBoard(r) {
 //   MOVE     { v, move }                                 a move in my match (shared/cardgame.js), v: the MATCH it answers
 //   FORFEIT  { }                                         give up my match
 //   DECK     { slot, name, leader, cards: { id: n } }    keep a deck (leader 0: the slot is emptied)
-//   OFFER    { cards: { id: n }, items: [[item, n]] }    what I put on my side of the trade (all of it, every time)
+//   OFFER    { cards: { id: n }, items: [[item, n]], loadouts: [id] }  what I put on my side of the trade
+//                                                       (all of it, every time; loadout items are profile instances)
 //   READY    { on }   CONFIRM { }   CLOSE { }            the trade: ready, struck (both ready), called off
 //   SYNC     { }                                         send me everything again
 //   TABLE_OPEN { slot }                                  lobby only: open a no-bet public Dead Hand table
@@ -545,7 +546,8 @@ export function readBoard(r) {
 //                                                        not be moved). reason: the rules' ('lives', 'forfeit',
 //                                                        'timeout') or why it was void ('left', 'run_over', 'forfeit',
 //                                                        'not_owned', 'store')
-//   TRADE     { with, mine, theirs, ready: [me, them], ok: [me, them], committing }  mine/theirs: { cards, items }
+//   TRADE     { with, mine, theirs, loadouts, ready: [me, them], ok: [me, them], committing }
+//                                                        mine/theirs: { cards, items, loadouts }; loadouts: mine to offer
 //   TRADE_END { with, why }                              why: 'done', 'cancelled', 'too_far', 'left', 'no_room',
 //                                                        'not_owned', 'changed', 'store', 'run_over'
 //   REVEAL    { item, cards: [id], kept }               a pack I picked up, opened
@@ -576,6 +578,8 @@ export const CARDNOTE = {
   NOTREADY: 'notready', // a trade is struck once both are ready
   CARDS: 'cards', // a card offered that is not mine to give (arg: the card)
   ITEMS: 'items', // an item offered that is not in my backpack (arg: the item), or an offer that is no offer
+  LOADOUT: 'loadout', // a permanent loadout item offered that is not mine to give
+  MIXED: 'mixed', // loadout item trades are not mixed with cards or backpack goods
   CROSSING: 'crossing', // not during the crossing
   STORE: 'store', // the collections could not be reached: try again
 };
