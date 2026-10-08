@@ -29,6 +29,7 @@ import { ACTION } from '../../shared/binds.js';
 
 const TABS = [
   ['table', 'Table'],
+  ['lobby', 'Lobby'],
   ['deck', 'Decks'],
   ['trade', 'Trade'],
   ['asks', 'Challenges'],
@@ -155,6 +156,7 @@ export class CardsScreen {
       deck: new DeckBuilder(this, body),
       trade: new TradeView(this, body),
       asks: new AsksView(this, body),
+      lobby: new LobbyTablesView(this, body),
       practice: new PracticeView(this, body),
       chooser: new ChooserView(this, body),
       reveal: new RevealView(this, body),
@@ -225,12 +227,14 @@ export class CardsScreen {
     if (s.reveals.length) return 'reveal';
     if (s.trade) return 'trade';
     if (s.match) return 'table';
+    if (this.c?.isLobby) return 'lobby';
     if (s.asks.some((a) => a.to === this.c.myId)) return 'asks';
     return this.view === 'chooser' || this.view === 'reveal' || this.view === 'trade' ? 'table' : this.view;
   }
 
   show(view, force = false) {
     if (!this.views[view]) view = 'table';
+    if (view === 'lobby' && !this.c?.isLobby) view = 'table';
     if (view === 'trade' && !this.c?.s.trade) view = 'table';
     if (view === this.view && !force && !this.dirty) return this.render('view');
     if (this.view !== view) this.views[this.view]?.leave?.();
@@ -258,12 +262,16 @@ export class CardsScreen {
     this.dirty = false;
     const mine = s.asks.filter((a) => a.to === this.c.myId).length;
     this.tabs.get('trade').b.hidden = !s.trade;
+    this.tabs.get('lobby').b.hidden = !this.c.isLobby;
     const asks = this.tabs.get('asks');
     asks.n.hidden = !mine;
     asks.n.textContent = String(mine);
     const tb = this.tabs.get('table');
     tb.n.hidden = !s.match;
     tb.n.textContent = s.match ? (s.match.local ? 'practice' : 'live') : '';
+    const lb = this.tabs.get('lobby');
+    lb.n.hidden = !this.c.isLobby || !s.tables?.length;
+    lb.n.textContent = String(s.tables?.length || 0);
     for (const [id, t] of this.tabs) t.b.classList.toggle('on', id === this.view);
     const found = Object.values(s.found).reduce((a, n) => a + n, 0);
     const all = Object.values(STARTER).reduce((a, n) => a + n, 0) + found;
@@ -1377,6 +1385,89 @@ class ChooserView {
     if (!this.out || !this.left) return;
     const t = `${Math.max(0, Math.ceil(this.out.left - (performance.now() - this.out.at) / 1000))} s`;
     if (this.left.textContent !== t) this.left.textContent = t;
+  }
+}
+
+// ================================================================ lobby tables: no-bet matches from the splash
+class LobbyTablesView {
+  constructor(screen, parent) {
+    this.sc = screen;
+    this.root = el('div', 'cd-view cd-lobby', parent);
+    this.slot = 0;
+  }
+
+  get c() {
+    return this.sc.c;
+  }
+
+  render() {
+    const c = this.c;
+    const s = c.s;
+    const mine = s.tables?.find((t) => t.host === c.myId) || null;
+    const key = JSON.stringify([s.tables || [], s.decks, s.found, s.loaded, s.kept, !!s.match, c.myId]);
+    if (this.root.dataset.key === key) return;
+    this.root.dataset.key = key;
+    const r = this.root;
+    r.textContent = '';
+    const box = el('div', 'cd-lobby-box paper', r);
+    el('div', 'cd-choose-h', box, 'Lobby tables');
+    el('p', 'cd-hint', box, 'Open a no-bet table from the title screen, or join one that another player is waiting at. Found cards never change hands here.');
+
+    if (s.match && !s.match.local) {
+      const live = el('div', 'cd-lobby-live', box);
+      el('b', '', live, `You are playing ${c.name(s.match.opp)}`);
+      const back = el('button', 'btn btn-blood', live, 'Back to table');
+      back.type = 'button';
+      back.addEventListener('click', () => this.sc.show('table'));
+      const leave = el('button', 'btn btn-ghost', live, 'Give up');
+      leave.type = 'button';
+      leave.addEventListener('click', () => c.leaveTable());
+      return;
+    }
+
+    const mineBox = el('div', 'cd-lobby-open', box);
+    el('div', 'fr-h', mineBox, mine ? 'Your open table' : 'Open a table');
+    if (mine) {
+      el('p', 'cd-hint', mineBox, `Waiting for someone to join with ${deckLabel(c, mine.slot)}.`);
+      const cancel = el('button', 'btn btn-ghost', mineBox, 'Cancel table');
+      cancel.type = 'button';
+      cancel.addEventListener('click', () => c.leaveTable());
+    } else {
+      this.slot = c.lastSlot();
+      const f = el('label', 'cd-field', mineBox);
+      el('span', '', f, 'Your deck');
+      deckSelect(f, c, (v) => (this.slot = v));
+      const open = el('button', 'btn btn-blood', mineBox, 'Open table');
+      open.type = 'button';
+      open.disabled = !s.loaded;
+      open.addEventListener('click', () => c.openTable(this.slot));
+      if (!s.loaded) el('p', 'cd-hint warn', mineBox, 'Your collection is still loading.');
+    }
+
+    const list = el('div', 'cd-lobby-list', box);
+    el('div', 'fr-h', list, 'Open tables');
+    const others = (s.tables || []).filter((t) => t.host !== c.myId);
+    if (!others.length) el('p', 'cd-none', list, mine ? 'Nobody else is waiting at a table.' : 'No open tables yet. Start one and other lobby players can join.');
+    for (const t of others) {
+      const row = el('div', 'cd-lobby-row', list);
+      const who = el('div', 'cd-lobby-who', row);
+      el('b', '', who, t.name || c.name(t.host));
+      el('span', '', who, `waiting with ${this.tableDeck(t)}`);
+      const join = el('button', 'btn btn-ghost', row, 'Join');
+      join.type = 'button';
+      join.disabled = !s.loaded || !!mine;
+      join.addEventListener('click', () => {
+        const slot = c.lastSlot();
+        c.joinTable(t.id, slot);
+      });
+    }
+  }
+
+  tableDeck(t) {
+    if (t.host === this.c.myId) return deckLabel(this.c, t.slot);
+    if (t.slot === -1) return 'the Survivors starter deck';
+    if (t.slot === -2) return 'the Dead starter deck';
+    return 'a saved deck';
   }
 }
 

@@ -174,6 +174,7 @@ export class Splash {
     this.quickAlt = altBtn('bolt', 'Quick join', () => this.join(''));
     altBtn('search', 'Browse games', () => this.browser.show());
     altBtn('plus', 'Create game', () => this.creator.show());
+    altBtn('cards', 'Dead Hand', () => this.ui.cb.onLobbyCards());
     this.friendsBtn = altBtn('people', 'Friends', () => this.ui.friends.show());
     this.friendsTxt = this.friendsBtn.lastChild;
     this.friendsBadge = el('b', 'sp-badge', this.friendsBtn, '');
@@ -521,9 +522,8 @@ export class Splash {
 const LEAVE_HOLD_MS = 900;
 
 // The Esc menu: a rail down the left edge, the rest of the screen left almost clear, because the game never stops for
-// it (no "paused" or "resume" anywhere on it). The arrow keys move through the rows and Enter opens one. Esc is not a
-// way back: the browser counts no Esc as a gesture (the mouse can't be taken back on one), and in fullscreen holding
-// Esc leaves fullscreen.
+// it (no "paused" or "resume" anywhere on it). The arrow keys move through the rows and Enter opens one. Esc toggles it
+// away; if the browser refuses to take the mouse back on that Esc, the game asks for a click.
 export class Pause {
   constructor(ui, parent) {
     this.ui = ui;
@@ -590,6 +590,7 @@ export class Pause {
     };
     key(['↑', '↓'], 'Select');
     key(['Enter'], 'Open');
+    key(['Esc'], 'Back');
     el('span', 'pk pk-t', keys, 'Click away to go back');
 
     // the hints on the right of the rows, kept as what they stand for changes
