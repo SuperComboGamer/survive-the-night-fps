@@ -1404,7 +1404,7 @@ class LobbyTablesView {
     const c = this.c;
     const s = c.s;
     const mine = s.tables?.find((t) => t.host === c.myId) || null;
-    const key = JSON.stringify([s.tables || [], s.decks, s.found, !!s.match, c.myId]);
+    const key = JSON.stringify([s.tables || [], s.decks, s.found, s.loaded, s.kept, !!s.match, c.myId]);
     if (this.root.dataset.key === key) return;
     this.root.dataset.key = key;
     const r = this.root;
