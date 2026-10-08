@@ -336,7 +336,8 @@ export class Game {
     // (not between two servers on a deploy: the place is kept there, and a new build reloads the page itself: moveBack)
     this.keyGuard = new KeyGuard(() => this.state === 'playing' && !this.moving);
     this.keyGuard.fullscreen = settings.fullscreen !== false;
-    this.input.onRequestLock = () => this.keyGuard.engage();
+    this.joinHold = false; // the mouse and the screen were asked for on the click on Join, and the join is not done (holdForJoin)
+    this.input.onRequestLock = () => this.keyGuard.engage(this.joinHold);
     this.keyHints = new KeyHints(this); // names the key on the HUD at the moment it would help
     this.conn = new Connection({
       snapshot: (r) => this.onSnapshot(r),
@@ -839,6 +840,21 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- connection
+  // The click on Join is the user's gesture the browser wants before it gives the page the mouse and fullscreen, and
+  // it no longer counts once the game is joined (the socket, the valley built: a second or more): Firefox and Safari
+  // only take a request made while the click is handled, Chrome one within 5 s of it. So both are asked for on the
+  // click itself (main.js onJoin), join() asks again for any not given, and a join that fails gives them back.
+  holdForJoin() {
+    this.joinHold = true;
+    this.input.requestLock();
+  }
+  dropJoinHold() {
+    if (!this.joinHold) return;
+    this.joinHold = false;
+    this.input.exitLock();
+    this.keyGuard.release();
+  }
+
   // code: the game to join (an invite, a pick from the list, one just made); none for a quick join. resume: back into
   // the game we were playing a moment ago on the server before a deploy (onMoving): the same run on the same valley,
   // so what this client knows of it - the places found, its waypoint, the run being recorded - stays, and there is no
@@ -867,6 +883,7 @@ export class Game {
     this.moving = false;
     this.ui.setConnectionStatus('');
     this.state = 'playing';
+    this.joinHold = false; // (what it asked for is the game's now)
     this.input.enabled = true;
     this.inputBuffer.clear();
     this.input.requestLock();
@@ -1980,7 +1997,10 @@ export class Game {
     const inp = this.input;
     inp.handlers.isTyping = () => this.ui.isTyping();
     inp.handlers.onLockChange = (locked) => {
-      if (this.state !== 'playing') return;
+      if (this.state !== 'playing') {
+        if (locked && !this.joinHold) inp.exitLock(); // (asked for on the click on Join, landing after the join failed)
+        return;
+      }
       if (!locked && (this.overlay === 'gameover' || this.overlay === 'victory')) {
         inp.enabled = false; // (the run's end screen let the pointer go, for its poll: no pause menu over it)
       } else if (!locked && !this.ui.isTyping() && !this.screenUp()) {
