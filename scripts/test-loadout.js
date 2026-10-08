@@ -4,11 +4,12 @@
 // - in-run loadout copies cannot be dropped/salvaged/traded and do not drop on death
 import { createHash, randomUUID } from 'node:crypto';
 import { LoadoutService, MemoryLoadoutStore } from '../server/userloadout.js';
-import { Loadouts, LocalLoadouts, clearLoadoutRun } from '../server/loadouts.js';
+import { Loadouts, LocalLoadouts, clearLoadoutRun, loadoutCombatEffect } from '../server/loadouts.js';
 import { Game } from '../server/game.js';
-import { ITEM } from '../shared/defs.js';
+import { AMMO, ITEM, ZTYPE } from '../shared/defs.js';
 import { ACT, C2S, PROTOCOL_VERSION, SALVAGE_FROM, WORN, WORN_DO, Writer } from '../shared/protocol.js';
-import { LOADOUT_SLOTS } from '../shared/loadout.js';
+import { PHASE } from '../shared/constants.js';
+import { LOADOUT_CATALOG, LOADOUT_RARITY, LOADOUT_SLOTS, loadoutDef, loadoutEffects, loadoutMods } from '../shared/loadout.js';
 
 const fails = [];
 const check = (name, ok, info = '') => {
@@ -56,6 +57,45 @@ async function persistence() {
   await svc.equip(gkey, [gcoll.items[0].id, null, null]);
   await svc.mergeGuest(acct.slice(2), rawGuest);
   check('guest items and slots move onto the account', (await svc.collection(gkey)).items.length === 0 && (await svc.collection(acct)).items.some((it) => it.catalog === 3) && (await svc.collection(acct)).slots.some(Boolean));
+
+  const tstore = new MemoryLoadoutStore();
+  const ta = guest();
+  const tb = guest();
+  const first = await tstore.grant({ id: 'trade:grant', owner: ta, catalog: 1 });
+  await tstore.saveSlots(ta, [first.granted.id, null, null]);
+  const move = [[ta, tb, first.granted.id]];
+  await tstore.transfer({ id: `${randomUUID()}:loadout_trade`, kind: 'trade', moves: move });
+  const once = await tstore.load(tb);
+  await tstore.transfer({ id: `${randomUUID()}:loadout_trade`, kind: 'trade', moves: [[tb, ta, first.granted.id]] });
+  const back = await tstore.load(ta);
+  const id = `${randomUUID()}:loadout_trade`;
+  await tstore.transfer({ id, kind: 'trade', moves: [[ta, tb, first.granted.id]] });
+  await tstore.transfer({ id, kind: 'trade', moves: [[ta, tb, first.granted.id]] });
+  check('loadout transfer moves one instance and unequips it once', once.items.length === 1 && back.items.length === 1 && (await tstore.load(ta)).items.length === 0 && (await tstore.load(tb)).items.length === 1 && !(await tstore.load(ta)).slots.some(Boolean));
+}
+
+function catalogRules() {
+  console.log('\n-- loadout catalog rules');
+  const ids = new Set();
+  const keys = new Set();
+  for (const def of LOADOUT_CATALOG) {
+    check(`catalog item ${def.id} has a stable unique id`, Number.isInteger(def.id) && !ids.has(def.id), def.key);
+    check(`catalog item ${def.id} has a stable unique key`, typeof def.key === 'string' && !!def.key && !keys.has(def.key), def.name);
+    ids.add(def.id);
+    keys.add(def.key);
+    check(`catalog item ${def.id} has display data`, !!def.name && !!def.flavor && !!def.type && !!def.rarity && !!def.source?.kind);
+    check(`catalog item ${def.id} rarity is known`, !!LOADOUT_RARITY[Object.keys(LOADOUT_RARITY).find((k) => LOADOUT_RARITY[k] === def.rarity)]);
+  }
+  check('catalog has the requested large item range', LOADOUT_CATALOG.length >= 50 && LOADOUT_CATALOG.length <= 80, `${LOADOUT_CATALOG.length} items`);
+  for (const z of [ZTYPE.BOSS_BRUTE, ZTYPE.BOSS_ALPHA, ZTYPE.BOSS_BLOATER, ZTYPE.BOSS_ABOMINATION, ZTYPE.BOSS_HIVEQUEEN]) {
+    check(`boss ${z} has multiple signature items`, LOADOUT_CATALOG.filter((def) => def.source?.kind === 'boss' && def.source.boss === z).length >= 3);
+  }
+  const capped = loadoutMods([3, 67, 73].map(loadoutDef));
+  check('stacked max health is capped below perk-tree power', capped.hp === 15, JSON.stringify(capped));
+  const tanky = loadoutMods([8, 25, 71].map(loadoutDef));
+  check('stacked damage reduction is capped', tanky.hurt >= 0.85, JSON.stringify(tanky));
+  const ammo = loadoutEffects([46, 46, 46].map(loadoutDef)).ammo.find((e) => e.ammo === AMMO.P9);
+  check('stacked special ammo damage is capped', ammo.damage <= 1.1 && ammo.headshot <= 1.08, JSON.stringify(ammo));
 }
 
 function fakeSession() {
@@ -93,6 +133,8 @@ async function inRunRules() {
   const p = join(game, 'Tester', pid);
   await settle();
   check('equipped loadout item spawns into the run with a marker', p.state.weapons[0] === ITEM.M4A1 && !!p.loadoutWeapons[0]);
+  const carbineEffect = loadoutCombatEffect(p, ITEM.M4A1, AMMO.R556);
+  check('signature weapon effect is active only for the marked equipped copy', carbineEffect.damage > 1 && loadoutCombatEffect(p, ITEM.PISTOL, AMMO.P9).damage === 1, JSON.stringify(carbineEffect));
   action(game, p, ACT.DROP_WEAPON, (w) => w.u8(0));
   check('loadout weapon cannot be dropped by action', p.state.weapons[0] === ITEM.M4A1 && game.items.every((it) => it.item !== ITEM.M4A1));
   action(game, p, ACT.SALVAGE, (w) => {
@@ -116,10 +158,140 @@ async function inRunRules() {
     w.u8(WORN_DO.DROP);
   });
   check('loadout armor cannot be dropped while worn', q.armorItem !== 0 && game.items.every((it) => it.item !== q.armorItem));
+
+  const ammoPid = randomUUID();
+  const ammoOwner = `g:${createHash('sha256').update(ammoPid).digest('hex')}`;
+  await service.grant(ammoOwner, 46, {}, 'ammo');
+  const mcoll = await service.collection(ammoOwner);
+  await service.equip(ammoOwner, [mcoll.items[0].id, null, null]);
+  const m = join(game, 'Ammo', ammoPid);
+  await settle();
+  const ammoEffect = loadoutCombatEffect(m, ITEM.PISTOL, AMMO.P9);
+  check('special ammo effect applies by caliber in-run', ammoEffect.damage > 1 && ammoEffect.headshot > 1, JSON.stringify(ammoEffect));
+
+  const kitPid = randomUUID();
+  const kitOwner = `g:${createHash('sha256').update(kitPid).digest('hex')}`;
+  await service.grant(kitOwner, 58, {}, 'kit');
+  const kcoll = await service.collection(kitOwner);
+  await service.equip(kitOwner, [kcoll.items[0].id, null, null]);
+  const k = join(game, 'Kit', kitPid);
+  await settle();
+  check('starter kit grants multiple run-start items', k.inv.some((it) => it?.item === ITEM.BANDAGE && it.count === 2) && k.inv.some((it) => it?.item === ITEM.MEDKIT));
+
+  const killPid = randomUUID();
+  const killOwner = `g:${createHash('sha256').update(killPid).digest('hex')}`;
+  await service.grant(killOwner, 34, {}, 'kill');
+  const ocoll = await service.collection(killOwner);
+  await service.equip(killOwner, [ocoll.items[0].id, null, null]);
+  const o = join(game, 'Trigger', killPid);
+  await settle();
+  o.state.stamina = 10;
+  game.loadouts.onKill(o);
+  const afterFirst = o.state.stamina;
+  game.loadouts.onKill(o);
+  check('once-per-night loadout trigger fires only once', afterFirst === 18 && o.state.stamina === afterFirst, `${afterFirst} -> ${o.state.stamina}`);
+  game.loadouts.resetNight(o);
+  game.loadouts.onKill(o);
+  check('once-per-night trigger resets with the night', o.state.stamina === 26, `${o.state.stamina}`);
 }
 
+async function inRunTrade() {
+  console.log('\n-- in-run loadout trading');
+  const service = new LoadoutService({ store: new MemoryLoadoutStore() });
+  const link = new LocalLoadouts(service);
+  const game = new Game({ seed: 8, loadouts: link, dayLength: 999, nightLength: 999, godMode: true });
+  game.code = 'TRAD';
+  game.phase = PHASE.DAY;
+  const aPid = randomUUID();
+  const bPid = randomUUID();
+  const aOwner = `g:${createHash('sha256').update(aPid).digest('hex')}`;
+  const bOwner = `g:${createHash('sha256').update(bPid).digest('hex')}`;
+  await service.grant(aOwner, 1, {}, 'trade:carbine');
+  await service.grant(bOwner, 2, {}, 'trade:kevlar');
+  const aItem = (await service.collection(aOwner)).items[0];
+  const bItem = (await service.collection(bOwner)).items[0];
+  await service.equip(aOwner, [aItem.id, null, null]);
+  const a = join(game, 'Giver', aPid);
+  const b = join(game, 'Friend', bPid);
+  b.state.x = a.state.x;
+  b.state.y = a.state.y;
+  b.state.z = a.state.z;
+  await settle();
+  game.cards.openTrade(a, b);
+  let t = game.cards.tradeOf(a.id);
+  game.cards.offer(a, { loadouts: [aItem.id, aItem.id] });
+  check('duplicate loadout instance cannot be offered twice', t.sides[0].offer.loadouts.length === 0);
+  game.cards.offer(a, { loadouts: [aItem.id] });
+  game.cards.offer(b, { loadouts: [bItem.id] });
+  game.cards.ready(a, { on: true });
+  game.cards.ready(b, { on: true });
+  game.cards.confirm(a);
+  game.cards.confirm(b);
+  await settle();
+  const ac = await service.collection(aOwner);
+  const bc = await service.collection(bOwner);
+  check('confirmed loadout trade swaps owned instances', ac.items.some((it) => it.id === bItem.id) && !ac.items.some((it) => it.id === aItem.id) && bc.items.some((it) => it.id === aItem.id));
+  check('traded equipped loadout is removed from giver run without dropping', a.state.weapons[0] === 0 && !a.loadoutWeapons[0] && game.items.every((it) => it.item !== ITEM.M4A1));
+
+  await service.grant(aOwner, 3, {}, 'trade:medal');
+  await settle();
+  const gift = (await service.collection(aOwner)).items.find((it) => it.catalog === 3);
+  game.cards.openTrade(a, b);
+  t = game.cards.tradeOf(a.id);
+  game.cards.offer(a, { loadouts: [gift.id] });
+  game.cards.ready(a, { on: true });
+  game.cards.ready(b, { on: true });
+  game.cards.confirm(a);
+  game.cards.confirm(b);
+  await settle();
+  check('one-sided loadout gift is accepted by both-confirm trade', !(await service.collection(aOwner)).items.some((it) => it.id === gift.id) && (await service.collection(bOwner)).items.some((it) => it.id === gift.id));
+}
+
+async function handoffTradeReplay() {
+  console.log('\n-- loadout trade handoff replay');
+  const service = new LoadoutService({ store: new MemoryLoadoutStore() });
+  const link1 = new LocalLoadouts(service);
+  const game1 = new Game({ seed: 9, loadouts: link1, dayLength: 999, nightLength: 999, godMode: true });
+  game1.code = 'HND1';
+  game1.phase = PHASE.DAY;
+  const aPid = randomUUID();
+  const bPid = randomUUID();
+  const aOwner = `g:${createHash('sha256').update(aPid).digest('hex')}`;
+  const bOwner = `g:${createHash('sha256').update(bPid).digest('hex')}`;
+  await service.grant(aOwner, 1, {}, 'handoff:item');
+  const item = (await service.collection(aOwner)).items[0];
+  const a1 = join(game1, 'A', aPid);
+  const b1 = join(game1, 'B', bPid);
+  Object.assign(b1.state, { x: a1.state.x, y: a1.state.y, z: a1.state.z });
+  await settle();
+  game1.cards.openTrade(a1, b1);
+  game1.cards.offer(a1, { loadouts: [item.id] });
+  game1.cards.ready(a1, { on: true });
+  game1.cards.ready(b1, { on: true });
+  game1.cards.confirm(a1);
+  game1.cards.confirm(b1);
+  const saved = game1.cards.save();
+  check('pending loadout trade is saved for handoff', saved.pending.some((x) => x.kind === 'loadout_trade'));
+  link1.gone();
+
+  const link2 = new LocalLoadouts(service);
+  const game2 = new Game({ seed: 9, loadouts: link2, dayLength: 999, nightLength: 999, godMode: true });
+  game2.code = 'HND2';
+  game2.phase = PHASE.DAY;
+  const a2 = join(game2, 'A', aPid);
+  const b2 = join(game2, 'B', bPid);
+  Object.assign(b2.state, { x: a2.state.x, y: a2.state.y, z: a2.state.z });
+  await settle();
+  game2.cards.load(saved);
+  await settle();
+  check('replayed pending loadout trade applies exactly once', (await service.collection(aOwner)).items.length === 0 && (await service.collection(bOwner)).items.filter((it) => it.id === item.id).length === 1);
+}
+
+catalogRules();
 await persistence();
 await inRunRules();
+await inRunTrade();
+await handoffTradeReplay();
 
 if (fails.length) {
   console.error(`\n${fails.length} loadout test(s) failed: ${fails.join(', ')}`);

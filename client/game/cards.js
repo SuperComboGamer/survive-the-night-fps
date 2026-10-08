@@ -17,6 +17,7 @@ import { CARDOP, CARDMSG, CARDNOTE } from '../../shared/protocol.js';
 import { INTERACT_REACH } from '../../shared/constants.js';
 import { ITEM_DEFS } from '../../shared/defs.js';
 import { cardDef, cleanFound, DECK_SLOTS, F, defaultDeck, validateDeck } from '../../shared/cards.js';
+import { loadoutDef } from '../../shared/loadout.js';
 import { bindTag, bindLabel } from './binds.js';
 import { lsGet, lsSet } from '../ui/dom.js';
 import { LocalMatch } from './cardlocal.js';
@@ -52,6 +53,8 @@ const NOTE_TEXT = {
   [CARDNOTE.NOTREADY]: () => 'Both of you have to be ready first',
   [CARDNOTE.CARDS]: (a) => `${cardDef(a)?.name || 'That card'} is not yours to give`,
   [CARDNOTE.ITEMS]: (a) => `${ITEM_DEFS[a]?.name || 'That'} is not in your backpack`,
+  [CARDNOTE.LOADOUT]: () => 'That loadout item is not yours to give',
+  [CARDNOTE.MIXED]: () => 'Trade loadout items by themselves, without cards or backpack items',
   [CARDNOTE.CROSSING]: () => 'Not on the road',
   [CARDNOTE.STORE]: () => 'The cards could not be reached: try again',
 };
@@ -161,7 +164,7 @@ export class CardsClient {
       }
       case CARDMSG.TRADE: {
         const fresh = !s.trade || s.trade.with !== data.with;
-        s.trade = { with: data.with | 0, mine: offerOf(data.mine), theirs: offerOf(data.theirs), ready: pair(data.ready), ok: pair(data.ok), committing: !!data.committing };
+        s.trade = { with: data.with | 0, mine: offerOf(data.mine), theirs: offerOf(data.theirs), loadouts: loadoutsOf(data.loadouts), ready: pair(data.ready), ok: pair(data.ok), committing: !!data.committing };
         if (fresh && !this.screen.open) this.g.ui.notify(`Trading with ${this.name(s.trade.with)}. ${this.keyText()}`, 'good', 5);
         return this.changed(fresh ? 'trade-new' : 'trade');
       }
@@ -265,8 +268,8 @@ export class CardsClient {
     this.changed('decks');
   }
 
-  offer(cards, items) {
-    this.send(CARDOP.OFFER, { cards, items });
+  offer(cards, items, loadouts = []) {
+    this.send(CARDOP.OFFER, { cards, items, loadouts });
   }
   ready(on) {
     this.send(CARDOP.READY, { on: !!on });
@@ -454,5 +457,13 @@ const pair = (a) => (Array.isArray(a) ? [!!a[0], !!a[1]] : [false, false]);
 function offerOf(o) {
   const cards = o && typeof o.cards === 'object' && o.cards ? cleanFound(o.cards) : {};
   const items = o && Array.isArray(o.items) ? o.items.filter((x) => Array.isArray(x) && ITEM_DEFS[x[0]] && x[1] > 0).map((x) => [x[0] | 0, x[1] | 0]) : [];
-  return { cards, items };
+  return { cards, items, loadouts: loadoutsOf(o?.loadouts) };
+}
+function loadoutsOf(rows) {
+  return Array.isArray(rows)
+    ? rows
+        .filter((x) => x && typeof x.id === 'string')
+        .map((x) => ({ id: x.id, catalog: loadoutDef(x.catalog)?.id || 0 }))
+        .filter((x) => x.catalog)
+    : [];
 }

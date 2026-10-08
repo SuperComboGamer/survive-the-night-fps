@@ -8602,6 +8602,38 @@ body {
   letter-spacing: 0.03em;
   padding: 0.45rem 0.7rem;
 }
+.stn-ui .lo-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.65rem;
+  padding: 0.65rem;
+  border: 1px solid rgba(216, 196, 146, 0.18);
+  border-radius: 0.55rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+.stn-ui .lo-filter {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 8.5rem;
+  color: #bba98a;
+  font: 0.72rem/1 var(--f-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.stn-ui .lo-filter select {
+  min-height: 2rem;
+  border: 1px solid rgba(216, 196, 146, 0.28);
+  border-radius: 0.35rem;
+  background: rgba(18, 14, 12, 0.92);
+  color: #eadfcb;
+}
+.stn-ui .lo-count {
+  margin-left: auto;
+  color: #bba98a;
+  font: 0.78rem/1.2 var(--f-mono);
+}
 .stn-ui .lo-grid {
   min-height: 18rem;
   max-height: min(52vh, 32rem);
@@ -8618,6 +8650,38 @@ body {
   display: grid;
   gap: 0.35rem;
 }
+.stn-ui .lo-card::before,
+.stn-ui .lo-slot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border-left: 0.28rem solid rgba(174, 161, 132, 0.8);
+  pointer-events: none;
+}
+.stn-ui .lo-card.r2::before,
+.stn-ui .lo-slot:has(.lo-slot-ico.r2)::before {
+  border-left-color: #78a7d8;
+}
+.stn-ui .lo-card.r3::before,
+.stn-ui .lo-slot:has(.lo-slot-ico.r3)::before {
+  border-left-color: #b987ff;
+}
+.stn-ui .lo-card.r4::before,
+.stn-ui .lo-slot:has(.lo-slot-ico.r4)::before {
+  border-left-color: #d9a441;
+}
+.stn-ui .lo-card-top {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.stn-ui .lo-card-ico {
+  width: 1.05rem;
+  height: 1.05rem;
+  color: #c9a45b;
+  flex: 0 0 auto;
+}
 .stn-ui .lo-card-r {
   font: 0.72rem/1 var(--f-mono);
   color: #c9a45b;
@@ -8627,6 +8691,18 @@ body {
 .stn-ui .lo-card.r3,
 .stn-ui .lo-card.r4 {
   background: linear-gradient(145deg, rgba(34, 22, 20, 0.95), rgba(18, 14, 12, 0.86));
+}
+.stn-ui .lo-card.r2 .lo-card-r,
+.stn-ui .lo-meta.r2 {
+  color: #8bb8df;
+}
+.stn-ui .lo-card.r3 .lo-card-r,
+.stn-ui .lo-meta.r3 {
+  color: #c6a0ff;
+}
+.stn-ui .lo-card.r4 .lo-card-r,
+.stn-ui .lo-meta.r4 {
+  color: #e2b75d;
 }
 .stn-ui .lo-detail {
   border: 1px solid rgba(216, 196, 146, 0.18);

@@ -85,9 +85,29 @@ async function buyingAndRaces() {
   check('purchase debits buyer and credits seller minus fee', (await svc.balance(seller)) === 100 - fee && ((await svc.balance(buyer)) === 20 || (await svc.balance(other)) === 20));
 }
 
+async function tradeListingEdges() {
+  console.log('\n-- auction and in-run trade edges');
+  const store = new MemoryLoadoutStore();
+  const svc = new LoadoutService({ store });
+  const seller = acct();
+  const buyer = acct();
+  await svc.grant(seller, 3, {}, 'edge:listed');
+  const listed = (await svc.collection(seller)).items[0];
+  await svc.listItem(seller, listed.id, 50);
+  const blocked = await errCode(() => store.transfer({ id: `${randomUUID()}:loadout_trade`, kind: 'trade', moves: [[seller, buyer, listed.id]] }));
+  check('active auction listing cannot be moved by an in-run trade transfer', blocked === 'not_owned' && !(await svc.collection(buyer)).items.some((it) => it.id === listed.id));
+
+  await svc.grant(seller, 4, {}, 'edge:trade-first');
+  const traded = (await svc.collection(seller)).items.find((it) => it.catalog === 4);
+  await store.transfer({ id: `${randomUUID()}:loadout_trade`, kind: 'trade', moves: [[seller, buyer, traded.id]] });
+  check('a traded item cannot still be listed by the old owner', (await errCode(() => svc.listItem(seller, traded.id, 70))) === 'not_owned');
+  check('the new owner can list the traded item', !!(await svc.listItem(buyer, traded.id, 70)).id);
+}
+
 await earningAndMerge();
 await escrowCancelAndExpiry();
 await buyingAndRaces();
+await tradeListingEdges();
 
 if (fails.length) {
   console.error(`\n${fails.length} auction test(s) failed: ${fails.join(', ')}`);

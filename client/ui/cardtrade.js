@@ -5,6 +5,7 @@
 // Walking off calls it off (the server's TRADE_BREAK).
 import { ITEM_DEFS } from '../../shared/defs.js';
 import { cardDef } from '../../shared/cards.js';
+import { LOADOUT_RARITY_NAMES, loadoutDef } from '../../shared/loadout.js';
 import { el, svgEl } from './dom.js';
 import { itemIcon } from './icons.js';
 import { cardFace } from './cardface.js';
@@ -25,6 +26,8 @@ export class TradeView {
     this.cardsBox = el('div', 'cd-trade-pool', mine);
     el('div', 'cd-label', mine, 'Your backpack');
     this.itemsBox = el('div', 'cd-trade-items', mine);
+    el('div', 'cd-label', mine, 'Your loadout collection');
+    this.loadoutsBox = el('div', 'cd-trade-loadouts', mine);
     const theirs = el('div', 'cd-trade-side theirs paper', cols);
     this.theirsH = el('div', 'cd-trade-h', theirs, '');
     this.theirsList = el('div', 'cd-offer', theirs);
@@ -58,17 +61,25 @@ export class TradeView {
     if (!t) return;
     if (t.with !== this.with || !this.offer) {
       this.with = t.with;
-      this.offer = { cards: { ...t.mine.cards }, items: Object.fromEntries(t.mine.items) };
+      this.offer = { cards: { ...t.mine.cards }, items: Object.fromEntries(t.mine.items), loadouts: t.mine.loadouts.map((it) => it.id) };
     }
     const who = this.c.name(t.with);
     this.theirsH.textContent = `${who} gives`;
+    const loadoutById = new Map([...(t.loadouts || []), ...(t.mine.loadouts || [])].map((it) => [it.id, it]));
     // my side
-    this.renderOffer(this.mineList, this.offer.cards, Object.entries(this.offer.items).map(([i, n]) => [+i, n]), true);
+    this.renderOffer(
+      this.mineList,
+      this.offer.cards,
+      Object.entries(this.offer.items).map(([i, n]) => [+i, n]),
+      this.offer.loadouts.map((id) => loadoutById.get(id)).filter(Boolean),
+      true
+    );
+    const permanentOnly = this.offer.loadouts.length > 0;
     const found = this.c.s.found;
     this.cardsBox.textContent = '';
     const ids = Object.keys(found)
       .map(Number)
-      .filter((id) => found[id] - (this.offer.cards[id] || 0) > 0 && cardDef(id));
+      .filter((id) => !permanentOnly && found[id] - (this.offer.cards[id] || 0) > 0 && cardDef(id));
     for (const id of ids) {
       const f = cardFace(id, { mini: true });
       f.classList.add('pickable');
@@ -77,12 +88,12 @@ export class TradeView {
       f.addEventListener('click', () => this.change('cards', id, 1));
       this.cardsBox.appendChild(f);
     }
-    if (!ids.length) el('p', 'cd-none', this.cardsBox, Object.keys(found).length ? 'All of them are in.' : 'No found cards yet: the starter set is not traded.');
+    if (!ids.length) el('p', 'cd-none', this.cardsBox, permanentOnly ? 'Leave cards out of permanent item trades.' : Object.keys(found).length ? 'All of them are in.' : 'No found cards yet: the starter set is not traded.');
     const pack = this.backpack();
     this.itemsBox.textContent = '';
     const items = Object.keys(pack)
       .map(Number)
-      .filter((i) => pack[i] - (this.offer.items[i] || 0) > 0);
+      .filter((i) => !permanentOnly && pack[i] - (this.offer.items[i] || 0) > 0);
     for (const i of items) {
       const b = svgEl('button', 'cd-item', this.itemsBox, itemIcon(i));
       b.type = 'button';
@@ -90,9 +101,20 @@ export class TradeView {
       b.title = `${ITEM_DEFS[i].name}: click for one, shift-click for all`;
       b.addEventListener('click', (e) => this.change('items', i, e.shiftKey ? pack[i] - (this.offer.items[i] || 0) : 1));
     }
-    if (!items.length) el('p', 'cd-none', this.itemsBox, 'Nothing left in your backpack.');
+    if (!items.length) el('p', 'cd-none', this.itemsBox, permanentOnly ? 'Leave backpack items out of permanent item trades.' : 'Nothing left in your backpack.');
+    this.loadoutsBox.textContent = '';
+    const offered = new Set(this.offer.loadouts);
+    const loadouts = (t.loadouts || []).filter((it) => !offered.has(it.id) && loadoutDef(it.catalog));
+    const ordinaryOffer = Object.keys(this.offer.cards).length || Object.keys(this.offer.items).length;
+    for (const it of ordinaryOffer ? [] : loadouts) {
+      const b = this.loadoutButton(it, true);
+      b.addEventListener('click', () => this.change('loadouts', it.id, 1));
+      this.loadoutsBox.appendChild(b);
+    }
+    if (ordinaryOffer) el('p', 'cd-none', this.loadoutsBox, 'Clear cards and backpack items to offer permanent loadout items.');
+    else if (!loadouts.length) el('p', 'cd-none', this.loadoutsBox, (t.loadouts || []).length ? 'All selected permanent items are in.' : 'No permanent loadout items in your collection.');
     // theirs
-    this.renderOffer(this.theirsList, t.theirs.cards, t.theirs.items, false);
+    this.renderOffer(this.theirsList, t.theirs.cards, t.theirs.items, t.theirs.loadouts, false);
     this.theirsNote.textContent = t.ready[1] ? `${who} is ready.` : `${who} is still choosing.`;
     // where it stands
     const both = t.ready[0] && t.ready[1];
@@ -104,7 +126,7 @@ export class TradeView {
     this.status.classList.toggle('good', both);
   }
 
-  renderOffer(box, cards, items, mine) {
+  renderOffer(box, cards, items, loadouts, mine) {
     box.textContent = '';
     let any = false;
     for (const [id, n] of Object.entries(cards)) {
@@ -128,10 +150,27 @@ export class TradeView {
       b.title = ITEM_DEFS[i].name + (mine ? ': click to take one back' : '');
       if (mine) b.addEventListener('click', () => this.change('items', i, -1));
     }
-    if (!any) el('p', 'cd-none', box, mine ? 'Nothing yet: click cards and items below.' : 'Nothing yet.');
+    for (const it of loadouts || []) {
+      const def = loadoutDef(it.catalog);
+      if (!def) continue;
+      any = true;
+      const b = this.loadoutButton(it, mine);
+      if (mine) b.addEventListener('click', () => this.change('loadouts', it.id, -1));
+      box.appendChild(b);
+    }
+    if (!any) el('p', 'cd-none', box, mine ? 'Nothing yet: click something below.' : 'Nothing yet.');
   }
 
   change(kind, id, d) {
+    if (kind === 'loadouts') {
+      const at = this.offer.loadouts.indexOf(id);
+      if (d > 0 && at < 0) this.offer.loadouts.push(id);
+      else if (d < 0 && at >= 0) this.offer.loadouts.splice(at, 1);
+      this.render();
+      clearTimeout(this.sendT);
+      this.sendT = setTimeout(() => this.send(), SEND_AFTER);
+      return;
+    }
     const o = this.offer[kind];
     const n = Math.max(0, (o[id] || 0) + d);
     if (n) o[id] = n;
@@ -143,7 +182,17 @@ export class TradeView {
 
   send() {
     const items = Object.entries(this.offer.items).map(([i, n]) => [+i, n]);
-    this.c.offer({ ...this.offer.cards }, items);
+    this.c.offer({ ...this.offer.cards }, items, [...this.offer.loadouts]);
+  }
+
+  loadoutButton(owned, mine) {
+    const def = loadoutDef(owned.catalog);
+    const b = el(mine ? 'button' : 'div', `cd-loadout r${def?.rarity || 1}`);
+    if (mine) b.type = 'button';
+    el('b', '', b, def?.name || 'Loadout item');
+    el('small', '', b, `${LOADOUT_RARITY_NAMES[def?.rarity] || 'Unknown'} · ${def?.type || 'item'}`);
+    b.title = (def?.flavor || 'Permanent loadout item') + (mine ? ': click to move' : '');
+    return b;
   }
 
   leave() {

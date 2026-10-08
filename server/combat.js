@@ -26,7 +26,7 @@ import {
 } from '../shared/defs.js';
 import { ENT, qpos, qangle16, qpitch } from '../shared/protocol.js';
 import { shotDirections, eyeHeight } from '../shared/playersim.js';
-import { playerMods } from './loadouts.js';
+import { loadoutCombatEffect, playerMods } from './loadouts.js';
 import { NK_MOVES, NK } from '../shared/nunchaku.js';
 import { COL_VEHICLE } from '../shared/vehicles.js';
 import { raycastWorld, raySphere, groundAt, footprintContains, canReach, COL } from '../shared/collision.js';
@@ -140,6 +140,7 @@ export class Combat {
     if (def.flame) return this.flame(p, ev, def);
     if (def.rocket) return this.launch(p, ev, def);
     if (def.skyflare) return this.skyflare(p, ev);
+    const le = loadoutCombatEffect(p, ev.weapon, def.ammo);
     const t = this.rewindTime(p);
     const deadeye = playerMods(p).headshot; // (on the dead only: a turned player is not what the perk is for)
     let hitFlags = 0;
@@ -184,17 +185,18 @@ export class Combat {
         _hits.push({ e, isPlayer, t: tt, head: headHit, leg });
       });
       _hits.sort((a, b) => a.t - b.t);
-      const maxPierce = def.pierce || 1;
+      const maxPierce = Math.max(1, (def.pierce || 1) + (le.pierce || 0));
       let pierced = 0;
-      let dmg = def.damage;
+      let dmg = def.damage * le.damage;
       for (const h of _hits) {
         if (pierced >= maxPierce) break;
         let d = dmg;
         if (def.pellets > 1) d *= pelletFalloff(h.t);
-        const headMul = h.head ? (h.isPlayer ? 2 : (h.e.boss ? 1.6 : def.headMul) * deadeye) : 1;
+        const headMul = h.head ? (h.isPlayer ? 2 : (h.e.boss ? 1.6 : def.headMul) * deadeye * le.headshot) : 1;
         d *= headMul;
         // the anti-tank rifle: made for the big ones
         if (def.bossMul && !h.isPlayer && h.e.kind === ENT.ZOMBIE && (h.e.boss || h.e.ztype === ZTYPE.TANK)) d *= def.bossMul;
+        if (!h.isPlayer && h.e.kind === ENT.ZOMBIE && (h.e.boss || h.e.ztype === ZTYPE.TANK)) d *= le.boss;
         const hx = ox + dx * h.t;
         const hy = oy + dy * h.t;
         const hz = oz + dz * h.t;
@@ -216,6 +218,7 @@ export class Combat {
           const blow = lethal ? this.blastDamage(h.e, t, def, 0, n, ox, oy, oz) : d;
           const rest = lethal ? this.blastDamage(h.e, t, def, i + 1, n, ox, oy, oz) : 0;
           killed = this.damageZombie(h.e, d, p, { weapon: ev.weapon, headshot: h.head, leg: !!h.leg, dirX: dx, dirZ: dz, blow, rest });
+          if (!killed && le.ignite && this.g.rng() < le.ignite) this.ignite(h.e, p, ev.weapon);
         }
         hitFlags |= 8 | (h.head ? 1 : 0) | (killed ? 2 : 0);
         pierced++;
@@ -329,6 +332,7 @@ export class Combat {
   // One puff of the stream: everything in a cone ahead of the nozzle that no wall shields is scorched and set alight.
   flame(p, ev, def) {
     const g = this.g;
+    const le = loadoutCombatEffect(p, ev.weapon, def.ammo);
     const ox = ev.x;
     const oy = ev.y;
     const oz = ev.z;
@@ -366,7 +370,7 @@ export class Combat {
     let hitFlags = 0;
     for (const h of _hits) {
       // the far third of the stream is thinner
-      const d = def.damage * (1 - 0.6 * Math.max(0, Math.min(1, (h.t / def.range - 0.65) / 0.35)));
+      const d = def.damage * le.damage * (1 - 0.6 * Math.max(0, Math.min(1, (h.t / def.range - 0.65) / 0.35)));
       let killed;
       if (h.isPlayer) {
         g.damagePlayer(h.e, d, { kind: KILLER.PLAYER, id: p.id, weapon: ev.weapon, x: ox, z: oz });
@@ -425,6 +429,7 @@ export class Combat {
     let best = null;
     let bestScore = Infinity;
     const heavy = ev.heavy;
+    const le = loadoutCombatEffect(p, ev.weapon);
     const maxTargets = mv ? mv.targets : ev.weapon === ITEM.BAT || ev.weapon === ITEM.SPIKED_BAT || ev.weapon === ITEM.MACHETE ? 2 : 1;
     const cands = [];
     this.forTargets(p, (e, isPlayer) => {
@@ -452,8 +457,8 @@ export class Combat {
       if (!this.meleeClear(p, c, ox, oy, oz)) continue;
       n++;
       let dmg = claws ? CLAWS.damage : mv ? mv.damage * (s.exhausted ? NK.tired : 1) : heavy ? def.altDamage : def.damage;
-      if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : playerMods(p).headshot);
-      if (!c.isPlayer && !claws) dmg *= playerMods(p).melee;
+      if (c.head) dmg *= def.headMul * (c.isPlayer ? 1 : playerMods(p).headshot * le.headshot);
+      if (!c.isPlayer && !claws) dmg *= playerMods(p).melee * le.melee * le.damage;
       hitAny = true;
       g.impact(c.e.lit ? IMPACT.DIRT : IMPACT.BLOOD, c.x, c.y, c.z, -fx, 0, -fz);
       let killed;
@@ -461,7 +466,8 @@ export class Combat {
         g.damagePlayer(c.e, dmg, { kind: KILLER.PLAYER, id: p.id, weapon: claws ? 0 : ev.weapon, headshot: c.head, x: ox, z: oz });
         killed = !c.e.alive;
       } else {
-        killed = this.damageZombie(c.e, dmg, p, { weapon: ev.weapon, headshot: c.head, melee: true, dirX: fx, dirZ: fz, knock: mv ? mv.knock : def.knock || 0 });
+        killed = this.damageZombie(c.e, dmg, p, { weapon: ev.weapon, headshot: c.head, melee: true, dirX: fx, dirZ: fz, knock: (mv ? mv.knock : def.knock || 0) * le.knock });
+        if (!killed && le.ignite && this.g.rng() < le.ignite) this.ignite(c.e, p, ev.weapon);
       }
       hitFlags |= 8 | (c.head ? 1 : 0) | (killed ? 2 : 0);
     }

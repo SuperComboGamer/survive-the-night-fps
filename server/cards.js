@@ -65,6 +65,7 @@ const ASK_MAX = 3; // asks a player may have out at once
 const ASK_EVERY = 3; // s between two asks of theirs
 const OFFER_CARDS_MAX = 16; // kinds of card on one side of a trade (both sides' moves stay within usercards.js MOVES_MAX)
 const OFFER_ITEMS_MAX = 12; // kinds of item
+const OFFER_LOADOUT_MAX = 12; // permanent loadout item instances
 const OFFER_N_MAX = 99;
 const OUT_MAX = 24; // one-off messages held for a player (a client away gets them when it is back)
 const EVENTS_MAX = 200; // a match's events held for a player between two MATCHes (more: the table alone says it)
@@ -81,6 +82,7 @@ const DECK_EVERY = 1; // s: a player's decks go to the database at most this oft
 const CROSSING_OK = new Set([CARDOP.WITHDRAW, CARDOP.FORFEIT, CARDOP.DECK, CARDOP.CLOSE, CARDOP.SYNC]);
 const MOVE_T = new Set(['redraw', 'keep', 'play', 'leader', 'choose', 'pass', 'forfeit']);
 const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+const LOADOUT_ITEM_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const tradeCount = (inv, item) => inv.reduce((n, s) => n + (s && !isLoadoutStack(s) && s.item === item ? s.count : 0), 0);
 function removeTradeItem(inv, item, count) {
   let left = count;
@@ -115,6 +117,8 @@ export function cleanMove(m) {
 function cleanOffer(d) {
   const cards = {};
   const items = new Map();
+  const loadouts = [];
+  const loadoutSeen = new Set();
   if (d.cards !== undefined) {
     if (!d.cards || typeof d.cards !== 'object' || Array.isArray(d.cards)) return null;
     const keys = Object.keys(d.cards);
@@ -136,7 +140,15 @@ function cleanOffer(d) {
       items.set(item, (items.get(item) || 0) + n);
     }
   }
-  return { cards, items: [...items] };
+  if (d.loadouts !== undefined) {
+    if (!Array.isArray(d.loadouts) || d.loadouts.length > OFFER_LOADOUT_MAX) return null;
+    for (const id of d.loadouts) {
+      if (typeof id !== 'string' || !LOADOUT_ITEM_RE.test(id) || loadoutSeen.has(id)) return null;
+      loadoutSeen.add(id);
+      loadouts.push(id);
+    }
+  }
+  return { cards, items: [...items], loadouts };
 }
 
 // ---------------------------------------------------------------- the link to the collections
@@ -387,10 +399,26 @@ export class Cards {
     }
     return r;
   }
+  reservedLoadouts(owner, except = null) {
+    const r = new Set();
+    for (const t of this.trades.values()) {
+      if (t === except) continue;
+      for (const s of t.sides) if (s.owner === owner) for (const id of s.offer.loadouts || []) r.add(id);
+    }
+    return r;
+  }
   // copies of a found card that are theirs to give (the starter set never is)
   spare(owner, card, except = null) {
     const o = this.own.get(owner);
     return o ? (o.found[card] || 0) - (this.reserved(owner, except)[card] || 0) : 0;
+  }
+  loadoutColl(owner) {
+    return this.game.loadouts?.own?.get(owner) || null;
+  }
+  hasLoadout(owner, id, except = null) {
+    const o = this.loadoutColl(owner);
+    if (!o?.loaded || this.reservedLoadouts(owner, except).has(id)) return false;
+    return o.items.some((it) => it.id === id);
   }
   // a bet: 0 (none) or a found card of theirs -> { bet } or { error }
   betFor(p, bet) {
@@ -591,15 +619,30 @@ export class Cards {
     return null;
   }
   openTrade(a, b) {
-    const t = { id: ++this.seq, sides: [a, b].map((p) => ({ ...this.side(p), offer: { cards: {}, items: [] }, ready: false, ok: false, x: p.state.x, y: p.state.y, z: p.state.z })), phase: 'open', escrow: null, xfer: '' };
+    const t = { id: ++this.seq, sides: [a, b].map((p) => ({ ...this.side(p), offer: { cards: {}, items: [], loadouts: [] }, ready: false, ok: false, x: p.state.x, y: p.state.y, z: p.state.z })), phase: 'open', escrow: null, xfer: '' };
     this.trades.set(t.id, t);
     for (const s of t.sides) this.dirty(s.pid, D.TRADE);
   }
   tradeMsg(t, i) {
     const me = t.sides[i];
     const them = t.sides[1 - i];
-    const offer = (s) => ({ cards: { ...s.offer.cards }, items: s.offer.items.map((it) => [...it]) });
-    return { with: them.pid, mine: offer(me), theirs: offer(them), ready: [me.ready, them.ready], ok: [me.ok, them.ok], committing: t.phase === 'committing' };
+    const byOwner = (owner) => new Map((this.loadoutColl(owner)?.items || []).map((it) => [it.id, it]));
+    const mineLoadouts = byOwner(me.owner);
+    const theirLoadouts = byOwner(them.owner);
+    const oneLoadout = (m, id) => {
+      const it = m.get(id);
+      return it ? { id: it.id, catalog: it.catalog } : { id, catalog: 0 };
+    };
+    const offer = (s, m) => ({ cards: { ...s.offer.cards }, items: s.offer.items.map((it) => [...it]), loadouts: (s.offer.loadouts || []).map((id) => oneLoadout(m, id)) });
+    return {
+      with: them.pid,
+      mine: offer(me, mineLoadouts),
+      theirs: offer(them, theirLoadouts),
+      loadouts: [...mineLoadouts.values()].map((it) => ({ id: it.id, catalog: it.catalog })),
+      ready: [me.ready, them.ready],
+      ok: [me.ok, them.ok],
+      committing: t.phase === 'committing',
+    };
   }
   unready(t) {
     for (const s of t.sides) {
@@ -615,10 +658,20 @@ export class Cards {
     const o = cleanOffer(d);
     if (!o) return this.note(p, CARDNOTE.ITEMS);
     const ids = Object.keys(o.cards);
+    const other = t.sides.find((s) => s.pid !== p.id);
+    const hasCards = ids.length || Object.keys(other.offer.cards || {}).length;
+    const hasBackpackItems = o.items.length || (other.offer.items || []).length;
+    const hasLoadouts = o.loadouts.length || (other.offer.loadouts || []).length;
+    if (hasLoadouts && (hasCards || hasBackpackItems)) return this.note(p, CARDNOTE.MIXED);
     if (ids.length) {
       if (!p.rejoinKey) return this.note(p, CARDNOTE.NOKEY);
       if (!this.own.get(p.rejoinKey)?.loaded) return this.note(p, CARDNOTE.LOADING);
       for (const id of ids) if (this.spare(p.rejoinKey, +id, t) < o.cards[id]) return this.note(p, CARDNOTE.CARDS, +id);
+    }
+    if (o.loadouts.length) {
+      if (!p.rejoinKey) return this.note(p, CARDNOTE.NOKEY);
+      if (!this.loadoutColl(p.rejoinKey)?.loaded) return this.note(p, CARDNOTE.LOADING);
+      for (const id of o.loadouts) if (!this.hasLoadout(p.rejoinKey, id, t)) return this.note(p, CARDNOTE.LOADOUT);
     }
     for (const [item, n] of o.items) if (tradeCount(p.inv, item) < n) return this.note(p, CARDNOTE.ITEMS, item);
     t.sides.find((s) => s.pid === p.id).offer = o;
@@ -707,22 +760,51 @@ export class Cards {
     for (let i = 0; i < 2; i++) {
       const s = t.sides[i];
       for (const [card, n] of Object.entries(s.offer.cards)) if (this.spare(s.owner, +card, t) < n) return this.endTrade(t, 'not_owned');
+      for (const id of s.offer.loadouts || []) if (!this.hasLoadout(s.owner, id, t)) return this.endTrade(t, 'not_owned');
       for (const [item, n] of s.offer.items) if (tradeCount([a, b][i].inv, item) < n) return this.endTrade(t, 'changed');
     }
+    if (t.sides.some((s) => (s.offer.loadouts || []).length) && t.sides.some((s) => Object.keys(s.offer.cards).length || s.offer.items.length)) return this.endTrade(t, 'changed');
     if (!this.fits(a, t.sides[0].offer.items, t.sides[1].offer.items) || !this.fits(b, t.sides[1].offer.items, t.sides[0].offer.items)) return this.endTrade(t, 'no_room');
     t.escrow = [this.takeItems(a, t.sides[0].offer.items), this.takeItems(b, t.sides[1].offer.items)];
     [a, b].forEach((p, i) => Object.assign(t.sides[i], { x: p.state.x, y: p.state.y, z: p.state.z }));
     const moves = [];
     for (let i = 0; i < 2; i++) for (const [card, n] of Object.entries(t.sides[i].offer.cards)) moves.push([t.sides[i].owner, t.sides[1 - i].owner, +card, n]);
-    if (!moves.length) return this.closeTrade(t, true);
+    const loadoutMoves = [];
+    for (let i = 0; i < 2; i++) for (const id of t.sides[i].offer.loadouts || []) loadoutMoves.push([t.sides[i].owner, t.sides[1 - i].owner, id]);
+    if (!moves.length && !loadoutMoves.length) return this.closeTrade(t, true);
     t.phase = 'committing';
-    t.xfer = `${randomUUID()}:trade`;
+    t.xfers = { cards: !moves.length, loadouts: !loadoutMoves.length, loadoutApplied: false };
     for (const s of t.sides) {
       this.use(s.owner);
       this.dirty(s.pid, D.TRADE);
     }
-    this.xfer(t.xfer, 'trade', moves, t.id);
-    g.log(`trade ${t.sides[0].name} - ${t.sides[1].name}: ${moves.length} card move(s) going through`);
+    if (moves.length) {
+      t.xfer = `${randomUUID()}:trade`;
+      this.xfer(t.xfer, 'trade', moves, t.id);
+    }
+    if (loadoutMoves.length) {
+      t.loadoutXfer = `${randomUUID()}:loadout_trade`;
+      this.xfer(t.loadoutXfer, 'loadout_trade', loadoutMoves, t.id);
+    }
+    g.log(`trade ${t.sides[0].name} - ${t.sides[1].name}: ${moves.length} card move(s), ${loadoutMoves.length} loadout item(s) going through`);
+  }
+  applyLoadoutTrade(t) {
+    if (t.xfers?.loadoutApplied) return;
+    t.xfers.loadoutApplied = true;
+    for (const s of t.sides) {
+      const ids = s.offer.loadouts || [];
+      if (!ids.length) continue;
+      const p = this.present(s);
+      if (p) this.game.loadouts?.removeRunCopies(p, ids);
+    }
+  }
+  finishTradeXfer(t, part) {
+    if (!t || t.phase !== 'committing') return;
+    t.xfers ||= { cards: true, loadouts: true, loadoutApplied: false };
+    t.xfers[part] = true;
+    if (!t.xfers.cards || !t.xfers.loadouts) return;
+    this.applyLoadoutTrade(t);
+    this.closeTrade(t, true);
   }
   // struck (done: the items change hands) or not (back to whoever put them in)
   closeTrade(t, done, why = 'done') {
@@ -839,14 +921,16 @@ export class Cards {
     for (const x of this.pending.values()) {
       if (!x.retryAt || g.time < x.retryAt) continue;
       x.retryAt = 0;
-      this.link.post({ op: 'xfer', id: x.id, kind: x.kind, moves: x.moves });
+      if (x.kind === 'loadout_trade') this.game.loadouts?.xfer(x.id, x.moves);
+      else this.link.post({ op: 'xfer', id: x.id, kind: x.kind, moves: x.moves });
     }
   }
 
   // ---------------------------------------------------------------- the network thread
   xfer(id, kind, moves, ref) {
     this.pending.set(id, { id, kind, moves, ref, retryAt: 0, tries: 0 });
-    this.link.post({ op: 'xfer', id, kind, moves });
+    if (kind === 'loadout_trade') this.game.loadouts?.xfer(id, moves);
+    else this.link.post({ op: 'xfer', id, kind, moves });
   }
   // what it says (room-worker.js 'cards'): an owner's collection, or how a transfer went
   fromStore(m) {
@@ -875,7 +959,7 @@ export class Cards {
     if (x.kind === 'trade') {
       const t = this.trades.get(x.ref);
       if (!t) return;
-      if (m.ok) return this.closeTrade(t, true);
+      if (m.ok) return this.finishTradeXfer(t, 'cards');
       // (the store failed, or this game had too many under way: the cards may have moved all the same - a commit
       // that failed as it was answered, or the last server's that went through. Sent again under the same id, which
       // the ledger applies once; only a refusal says for certain that nothing moved)
@@ -903,6 +987,17 @@ export class Cards {
     if (this.retry(x, m)) return;
     g.log(`cards: the bets of a match could not be ${x.kind === 'pay' ? 'paid out' : 'given back'} (${m.why})`);
     this.finish(match, false);
+  }
+  fromLoadoutStore(m) {
+    const x = this.pending.get(m.id);
+    if (!x || x.kind !== 'loadout_trade' || x.retryAt) return;
+    this.pending.delete(m.id);
+    const t = this.trades.get(x.ref);
+    if (!t) return;
+    if (m.ok) return this.finishTradeXfer(t, 'loadouts');
+    if (this.retry(x, m)) return;
+    this.game.log(`trade ${t.sides[0].name} - ${t.sides[1].name}: loadout items not moved (${m.why})`);
+    this.closeTrade(t, false, m.why === 'not_owned' ? 'not_owned' : 'store');
   }
 
   // A transfer the store could not answer for ('store': it failed; 'busy': too many of this game's under way) is sent
@@ -991,6 +1086,10 @@ export class Cards {
     for (const t of this.trades.values()) for (const sd of t.sides) if (sd.owner) this.use(sd.owner);
     const escrows = [...this.matches.values()].filter((m) => m.sides.some((sd) => sd.bet)).map((m) => `m:${m.id}`);
     if (escrows.length) this.link.post({ op: 'escrows', ids: escrows });
-    for (const x of this.pending.values()) if (!x.retryAt) this.link.post({ op: 'xfer', id: x.id, kind: x.kind, moves: x.moves });
+    for (const x of this.pending.values())
+      if (!x.retryAt) {
+        if (x.kind === 'loadout_trade') this.game.loadouts?.xfer(x.id, x.moves);
+        else this.link.post({ op: 'xfer', id: x.id, kind: x.kind, moves: x.moves });
+      }
   }
 }
