@@ -34,6 +34,7 @@ import { AchievementStore } from './userachievements.js';
 import { BestiaryStore } from './userbestiary.js';
 import { CardService, PgCardStore, MemoryCardStore } from './usercards.js';
 import { LoadoutService, PgLoadoutStore, MemoryLoadoutStore, ownerKey as loadoutOwnerKey } from './userloadout.js';
+import { LobbyCards } from './lobbycards.js';
 import { PublicStats, RANGES } from './publicstats.js';
 import { idKey } from './stats.js';
 import { api, HttpError, parseCookies, sameOrigin } from './http.js';
@@ -161,6 +162,7 @@ let stopping = false;
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, cards, loadouts, log }) : null;
+const lobbyCards = new LobbyCards({ service: cards, log });
 const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds, their survivors
@@ -395,6 +397,52 @@ app.ws('/ws', {
     const room = d.room;
     d.room = null;
     room?.detach(d.slot, closeCode);
+  },
+});
+
+app.ws('/cards', {
+  compression: uWS.DISABLED,
+  maxPayloadLength: 16 * 1024,
+  maxBackpressure: 256 * 1024,
+  idleTimeout: 120,
+  sendPingsAutomatically: true,
+  upgrade: (res, req, context) => {
+    const token = sessionToken(req);
+    const key = req.getHeader('sec-websocket-key');
+    const proto = req.getHeader('sec-websocket-protocol');
+    const ext = req.getHeader('sec-websocket-extensions');
+    const wait = token
+      ? auth.userForToken(token, true).catch((err) => {
+          log(`session lookup failed (${err.message}): playing lobby cards as a guest`);
+          return null;
+        })
+      : null;
+    res.upgrade({ ip: clientAddress(res, req), user: null, wait, early: null, cardsJoined: false }, key, proto, ext, context);
+  },
+  open: (ws) => {
+    const d = ws.getUserData();
+    if (!d.wait) return lobbyCards.open(ws);
+    d.early = [];
+    d.wait.then((user) => {
+      const early = d.early;
+      d.wait = d.early = null;
+      if (!early) return;
+      d.user = user;
+      lobbyCards.open(ws);
+      for (const bytes of early) lobbyCards.message(ws, bytes);
+    });
+  },
+  message: (ws, message, isBinary) => {
+    if (!isBinary) return;
+    const d = ws.getUserData();
+    const bytes = new Uint8Array(message.slice(0));
+    if (!d.early) return lobbyCards.message(ws, bytes);
+    if (d.early.length >= EARLY_MAX) return ws.end(1008, 'Too much before joining');
+    d.early.push(bytes);
+  },
+  close: (ws) => {
+    ws.getUserData().early = null;
+    lobbyCards.close(ws);
   },
 });
 
@@ -959,6 +1007,7 @@ async function shutdown(signal, exitCode = 0) {
       await stats.close();
       await achievements.close();
       await bestiary.close();
+      lobbyCards.closeAll();
       await cards.close([...lobby.rooms.values()]); // (the bets of the games not handed over go back; the finds are written)
       await loadouts.close();
       await store?.close();

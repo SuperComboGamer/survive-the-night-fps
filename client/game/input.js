@@ -196,29 +196,47 @@ export class Input {
   }
 
   requestLock() {
-    if (this.locked) return;
+    if (this.locked) return Promise.resolve(true);
     this.rawActive = false;
-    this.lockPointer();
+    const lock = this.lockPointer();
     // (game.js: the same click takes fullscreen + keyboard lock - keyguard.js). After the pointer, not before: Chrome
     // only gives the pointer to a request made while the click still counts as the user's, and a fullscreen request
     // that is granted uses that up - asked the other way round, the click took the screen and a second one the mouse.
     this.onRequestLock?.();
+    return lock;
   }
   lockPointer() {
+    const request = (opts, raw, onReject = (err) => {
+      this.handlers.onLockError?.(err);
+      return false;
+    }) => {
+      let p;
+      try {
+        p = opts === undefined ? this.canvas.requestPointerLock?.() : this.canvas.requestPointerLock?.(opts);
+      } catch (err) {
+        return Promise.resolve(onReject(err));
+      }
+      if (!p || !p.then) return p; // no promise: the request was made and the pointerlockchange event will say whether it worked
+      return p.then(
+        () => {
+          if (raw) this.rawActive = true;
+          return true;
+        },
+        onReject,
+      );
+    };
     if (!this.rawInput) {
-      this.canvas.requestPointerLock?.();
-      return;
+      return request();
     }
-    const p = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
+    const p = request({ unadjustedMovement: true }, true, (err) => {
+      // only retry without raw input when the browser can't do it; other rejections
+      // (e.g. re-locking too soon after Esc) would silently downgrade the session
+      if (err?.name === 'NotSupportedError') return request();
+      this.handlers.onLockError?.(err);
+      return false;
+    });
     if (!p || !p.then) return; // no promise: the option was ignored, movement is OS-adjusted
-    p.then(
-      () => (this.rawActive = true),
-      (err) => {
-        // only retry without raw input when the browser can't do it; other rejections
-        // (e.g. re-locking too soon after Esc) would silently downgrade the session
-        if (err?.name === 'NotSupportedError') this.canvas.requestPointerLock?.();
-      },
-    );
+    return p.then((ok) => (ok === false ? false : ok));
   }
   exitLock() {
     if (document.pointerLockElement) document.exitPointerLock();

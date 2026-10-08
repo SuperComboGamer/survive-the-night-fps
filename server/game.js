@@ -917,6 +917,9 @@ export class Game {
       loadoutApplied: false,
       loadoutItems: [],
       loadoutMods: null,
+      loadoutEffects: null,
+      loadoutWeaponEffects: {},
+      loadoutNight: {},
       loadoutWeapons: [null, null, null, null, null],
       loadoutArmor: null,
       loadoutBackpack: null,
@@ -1066,6 +1069,7 @@ export class Game {
     const pm = playerMods(p);
     if (pm.killStamina && p.alive && !p.downed) p.state.stamina = Math.min(STAMINA_MAX, p.state.stamina + pm.killStamina);
     if (pm.killHeal && p.alive && !p.downed) p.hp = Math.min(p.maxHp, p.hp + pm.killHeal);
+    this.loadouts.onKill(p);
     if (z.wedgeT > WEDGED_FOR) return;
     if (z.boss) return this.award(p, XPS.bosses, XP.boss);
     const half = ++p.nightKills > XP.killsFull;
@@ -1079,6 +1083,7 @@ export class Game {
     for (const p of this.players.values()) {
       p.nightKills = p.nightRevives = 0;
       p.lastChance = false;
+      this.loadouts.resetNight(p);
       if (!dawn) continue;
       if (p.alive && !p.zombie) {
         this.award(p, XPS.nights, Math.min(XP.nightCap, XP.night * night));
@@ -1708,6 +1713,9 @@ export class Game {
     p.inv = createInventory();
     p.splitKeep.clear();
     p.loadoutWeapons = [null, null, null, null, null];
+    p.loadoutWeaponEffects = {};
+    p.loadoutEffects = null;
+    p.loadoutNight = {};
     p.loadoutArmor = null;
     p.loadoutBackpack = null;
     for (const [item, n] of kit.items) addItem(p.inv, item, n);

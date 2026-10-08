@@ -8,8 +8,8 @@ import { ZTYPE, ZOMBIE_DEFS, ZANIM, SOUND, KILLER, PROJ, AREA, EVT, IMPACT, ITEM
 import { ENT, qpos } from '../shared/protocol.js';
 import { resolveBody, groundAt, deepWaterAt, raycastWorld, footprintContains, COL } from '../shared/collision.js';
 import { eyeHeight } from '../shared/playersim.js';
-import { perkMods } from '../shared/progress.js';
 import { flareReach } from '../shared/skyflare.js';
+import { playerMods } from './loadouts.js';
 import { Herds, HERD_RUSH } from './herd.js';
 import { Wards, WARD_DARK } from './clinic.js';
 import { ColliderGrid, makeBox, rayCollider, CYL } from '../shared/collision.js'; // (bat flight: flyCollide, roofBoxes)
@@ -1338,7 +1338,7 @@ export class Zombies {
       else if (s.crouch) range *= 0.6;
       if (night && h.flashlight) range *= 1.5;
       if (s.sprinting) range *= 1.3;
-      range *= perkMods(s.perks).notice;
+      range *= playerMods(h).notice;
       if (s.drive || s.pass) range *= g.vehicles.notice(h); // (an engine is heard, a headlamp seen)
       if (!z.horde && z.def.sense) range *= z.def.sense; // dogs catch the scent from further off
       if (z.aggroId === h.id && z.aggroT > 0) range = 600;
@@ -1835,7 +1835,7 @@ export class Zombies {
     s.vz += dz * power;
     s.vy = Math.max(s.vy, up);
     s.onGround = 0;
-    s.stunT = Math.max(s.stunT, (stun || 0) * perkMods(s.perks).stun);
+    s.stunT = Math.max(s.stunT, (stun || 0) * playerMods(p).stun);
   }
 
   releaseLink(z) {
