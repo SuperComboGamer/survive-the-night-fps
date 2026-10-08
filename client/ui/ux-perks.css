@@ -1,0 +1,1200 @@
+/* The Perks panel (progress.js): the level timeline (perktree.js), the bar under it with the before and after, the
+   list it gives way to in a narrow window, and the quick pick (perkpick.js) it opens on while a point is waiting.
+   Sized in rem with nothing under 12px, so it follows browser zoom: at 1280x720 and 150% (854x480) the list shows and
+   only the list scrolls. Everything here is under the panel's root, .prk-panel. */
+
+.stn-ui .prk-panel {
+  --prk-line: rgba(230, 223, 207, 0.16);
+  --prk-amber-soft: rgba(232, 163, 61, 0.55);
+}
+
+.stn-ui .prk-panel .set-card {
+  width: min(80rem, 96vw);
+  max-height: 94vh;
+}
+
+.stn-ui .prk-panel.prk-quick .set-card {
+  width: min(62rem, 96vw);
+}
+
+.stn-ui .prk-panel .set-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 0;
+}
+
+/* ---------------------------------------------------------------- the head: title, level, points */
+.stn-ui .prk-panel .set-head {
+  gap: clamp(0.75rem, 1.6vw, 1.4rem);
+  padding: 0.75rem 1.25rem 0.65rem;
+}
+
+.stn-ui .prk-panel .set-title {
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+}
+
+.stn-ui .prk-panel .set-sub:empty {
+  display: none;
+}
+
+.stn-ui .prk-panel .pg-top {
+  flex: 1;
+  min-width: 0;
+  gap: clamp(0.75rem, 1.6vw, 1.4rem);
+  padding: 0;
+}
+
+.stn-ui .prk-panel .xpb-t {
+  font-size: 0.75rem;
+}
+
+.stn-ui .prk-panel .xpb-lv small {
+  font-size: 0.75rem;
+}
+
+.stn-ui .prk-panel .pg-pts {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--prk-line);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--bone);
+  text-align: left;
+  cursor: default;
+}
+
+.stn-ui .prk-panel .pg-pts.lit {
+  border-color: var(--amber);
+  background: rgba(232, 163, 61, 0.1);
+}
+
+.stn-ui .prk-panel .pg-pts.lit:not(:disabled) {
+  cursor: pointer;
+}
+
+.stn-ui .prk-panel .pg-pts.lit:not(:disabled):hover {
+  background: rgba(232, 163, 61, 0.2);
+}
+
+.stn-ui .prk-panel .pg-pts-big {
+  font: 400 2.3rem / 0.9 var(--f-head);
+  color: var(--amber);
+}
+
+.stn-ui .prk-panel .pg-pts-big:empty {
+  display: none;
+}
+
+.stn-ui .prk-panel .pg-pts-r {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stn-ui .prk-panel .pg-pts-h {
+  font: 400 1.1rem / 1 var(--f-head);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+}
+
+.stn-ui .prk-panel .pg-pts.lit .pg-pts-h {
+  color: var(--amber);
+}
+
+.stn-ui .prk-panel .pg-pts-n {
+  font: 0.75rem / 1.2 var(--f-mono);
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-panel .pg-pips i {
+  width: 0.8rem;
+  height: 0.45rem;
+}
+
+.stn-ui .prk-panel .pg-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+}
+
+/* ---------------------------------------------------------------- the timeline */
+.stn-ui .prk {
+  position: relative;
+}
+
+.stn-ui .prk.narrow .prk-tl,
+.stn-ui .prk:not(.narrow) .prk-ls {
+  display: none;
+}
+
+.stn-ui .prk-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.7fr) repeat(4, minmax(9rem, 1fr)) minmax(8.5rem, 0.95fr);
+  column-gap: 1.2rem;
+  row-gap: 0.35rem;
+  padding-bottom: 0.6rem;
+}
+
+.stn-ui .prk-wires {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.stn-ui .prk-wire {
+  fill: none;
+  stroke: rgba(230, 223, 207, 0.3);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.stn-ui .prk-wire.lit {
+  stroke: var(--amber);
+  stroke-dasharray: none;
+}
+
+/* the column heads: the level each tier opens at, sticky over the scrolling tree */
+.stn-ui .prk-colh {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.45rem;
+  padding: 0.45rem 0 0.35rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 2px solid var(--prk-line);
+  background: #15110e;
+  font: 0.75rem / 1.1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-colh b {
+  font: 400 1.35rem / 1 var(--f-head);
+  letter-spacing: 0.06em;
+  color: var(--bone);
+}
+
+.stn-ui .prk-colh em {
+  flex-basis: 100%;
+  font-style: normal;
+  color: var(--amber);
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+
+.stn-ui .prk-colh em:empty {
+  display: none;
+}
+
+.stn-ui .prk-colh.shut b {
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-colh-br {
+  align-self: end;
+}
+
+/* a branch: a line across over its two rows, its name and what it is for down the left */
+.stn-ui .prk-band {
+  margin-top: -0.2rem;
+  border-top: 1px solid rgba(230, 223, 207, 0.1);
+}
+
+.stn-ui .prk-brh {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.4rem 0.3rem 0.55rem;
+  border-left: 2px solid var(--prk-line);
+}
+
+.stn-ui .prk-brh-n {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: 400 1.3rem / 1 var(--f-head);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone);
+}
+
+.stn-ui .prk-brh-ico {
+  flex: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--bone-2);
+}
+
+.stn-ui .prk-brh-line {
+  font: 0.75rem / 1.2 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-brh-c {
+  align-self: flex-start;
+  padding: 0.05rem 0.35rem;
+  background: var(--amber);
+  color: var(--ink);
+  font: 600 0.75rem / 1.3 var(--f-mono);
+}
+
+.stn-ui .prk-brh-c:empty {
+  display: none;
+}
+
+/* a perk's card */
+.stn-ui .prk-card {
+  position: relative;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.28rem 0.4rem 0.28rem 0.28rem;
+  border: 1px solid var(--prk-line);
+  background: rgba(0, 0, 0, 0.42);
+  color: var(--bone-2);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.stn-ui .prk-ico,
+.stn-ui .prk-st,
+.stn-ui .prk-brh-ico,
+.stn-ui .prk-keys-ico,
+.stn-ui .prk-bar-ico,
+.stn-ui .prk-tab-ico,
+.stn-ui .prk-chip-ico,
+.stn-ui .prk-chip-x,
+.stn-ui .prk-qc-tick,
+.stn-ui .prk-qc-path i,
+.stn-ui .prk-q-tree i {
+  display: block;
+}
+
+.stn-ui .prk-panel i svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stn-ui .prk-ico {
+  flex: none;
+  width: 1.95rem;
+  height: 1.95rem;
+  padding: 0.38rem;
+  border: 1px solid rgba(230, 223, 207, 0.22);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.stn-ui .prk-t {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.stn-ui .prk-name {
+  font: 500 0.95rem / 1.1 var(--f-num);
+  letter-spacing: 0.02em;
+  color: var(--bone);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stn-ui .prk-fx {
+  font: 0.75rem / 1.2 var(--f-mono);
+  color: var(--bone-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the state, as a shape: a tick, a +, a padlock (in the card's corner, so the effect line has the whole width) */
+.stn-ui .prk-card .prk-st {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.35rem;
+}
+
+.stn-ui .prk-card .prk-name {
+  padding-right: 1.15rem;
+}
+
+.stn-ui .prk-st {
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0.12rem;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-card.open .prk-st,
+.stn-ui .prk-card.full .prk-st {
+  border: 1px solid var(--prk-amber-soft);
+  color: var(--amber);
+}
+
+.stn-ui .prk-card.own .prk-st {
+  color: var(--amber);
+}
+
+/* the arrow in from the perk before it */
+.stn-ui .prk-in {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  width: calc(1.2rem + 1px);
+  height: 2px;
+  margin-top: -1px;
+  background: rgba(230, 223, 207, 0.18);
+}
+
+.stn-ui .prk-in::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -4px;
+  border: 5px solid transparent;
+  border-right: 0;
+  border-left: 6px solid rgba(230, 223, 207, 0.3);
+}
+
+.stn-ui .prk-in.lit {
+  background: var(--amber);
+}
+
+.stn-ui .prk-in.lit::after {
+  border-left-color: var(--amber);
+}
+
+.stn-ui .prk-card.own {
+  border-color: var(--prk-amber-soft);
+  background: linear-gradient(90deg, rgba(201, 138, 43, 0.22), rgba(0, 0, 0, 0.4) 70%);
+}
+
+.stn-ui .prk-card.own .prk-ico {
+  border-color: #f0b55a;
+  background: linear-gradient(160deg, #c98a2b, #7a4a12);
+  color: #1a0f05;
+}
+
+.stn-ui .prk-card.own .prk-name {
+  color: var(--amber);
+}
+
+.stn-ui .prk-card.open {
+  border-color: var(--prk-amber-soft);
+}
+
+.stn-ui .prk-card.open .prk-ico {
+  border-color: var(--prk-amber-soft);
+  color: var(--bone);
+}
+
+.stn-ui .prk-card.lock {
+  border-style: dashed;
+  border-color: rgba(230, 223, 207, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.stn-ui .prk-card.lock .prk-ico {
+  border-color: rgba(230, 223, 207, 0.1);
+  color: rgba(230, 223, 207, 0.35);
+}
+
+.stn-ui .prk-card.lock .prk-name {
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-card.lock .prk-fx {
+  color: rgba(230, 223, 207, 0.42);
+}
+
+.stn-ui .prk-card.key .prk-ico {
+  border-radius: 50%;
+}
+
+.stn-ui .prk-card.key.own .prk-ico {
+  border-color: var(--blood-lite);
+  background: linear-gradient(160deg, #b3262b, #4a0508);
+  color: #fff;
+}
+
+.stn-ui .prk-card:hover,
+.stn-ui .prk-card:focus-visible {
+  border-color: var(--bone-2);
+}
+
+.stn-ui .prk-card.sel {
+  border: 1px solid var(--bone);
+  box-shadow: 0 0 0 1px var(--bone), 0 0 16px rgba(232, 163, 61, 0.25);
+  background: rgba(232, 163, 61, 0.1);
+}
+
+.stn-ui .prk-combo {
+  z-index: 1;
+}
+
+/* the keystones: a column of their own */
+.stn-ui .prk-keys {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.5rem;
+  padding-left: 0.8rem;
+  border-left: 1px dashed rgba(230, 223, 207, 0.22);
+}
+
+.stn-ui .prk-keys-n {
+  display: flex;
+  gap: 0.45rem;
+  margin: 0 0 0.3rem;
+  font: 0.8rem / 1.35 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-keys-ico {
+  flex: none;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-top: 0.15rem;
+}
+
+/* ---------------------------------------------------------------- the bar: the perk picked out */
+.stn-ui .prk-panel .set-foot {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.75rem 1.25rem 0.9rem;
+}
+
+.stn-ui .prk-panel .set-foot .gb-gap {
+  display: none;
+}
+
+.stn-ui .prk-panel .set-foot > .btn {
+  font-size: 0.85rem;
+}
+
+.stn-ui .prk-bar {
+  flex: 1 1 40rem;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(12rem, 1fr) minmax(13rem, 1.1fr) auto;
+  align-items: center;
+  gap: 0.5rem 1.1rem;
+}
+
+.stn-ui .prk-bar-ico {
+  width: 2.8rem;
+  height: 2.8rem;
+  padding: 0.55rem;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+}
+
+.stn-ui .prk-bar.key .prk-bar-ico {
+  border-radius: 50%;
+  border-color: var(--blood-lite);
+}
+
+.stn-ui .prk-bar.lock .prk-bar-ico,
+.stn-ui .prk-bar.empty .prk-bar-ico {
+  border-color: var(--prk-line);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-bar-t {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.stn-ui .prk-bar-name {
+  font: 400 1.6rem / 1 var(--f-head);
+  letter-spacing: 0.08em;
+  color: var(--bone);
+}
+
+.stn-ui .prk-bar-kind {
+  font: 0.75rem / 1.2 var(--f-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-bar-text {
+  font: 0.9rem / 1.3 var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .prk-bar-then {
+  font: 0.75rem / 1.3 var(--f-mono);
+  color: var(--amber);
+}
+
+.stn-ui .prk-bar-then.bad {
+  color: var(--blood-lite);
+}
+
+.stn-ui .prk-bar-then:empty {
+  display: none;
+}
+
+.stn-ui .prk-bar-acts {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.stn-ui .prk-bar-acts .btn-blood {
+  font-size: clamp(1.15rem, 2vw, 1.6rem);
+  padding: 0.55rem 1.6rem 0.45rem;
+  white-space: nowrap;
+}
+
+.stn-ui .prk-bar-acts .prk-back {
+  font-size: 0.85rem;
+  padding: 0.5rem 1rem;
+}
+
+.stn-ui .prk-bar-why,
+.stn-ui .prk-row-why,
+.stn-ui .prk-q-why {
+  max-width: 15rem;
+  font: 0.75rem / 1.3 var(--f-mono);
+  color: var(--bone-dim);
+  text-align: center;
+}
+
+.stn-ui .prk-bar-why.bad {
+  color: var(--blood-lite);
+}
+
+.stn-ui .prk-bar-why:empty,
+.stn-ui .prk-q-why:empty {
+  display: none;
+}
+
+/* before and after: what a perk moves in your numbers */
+.stn-ui .prk-fxbox {
+  min-width: 0;
+  padding: 0.45rem 0.65rem 0.5rem;
+  border: 1px solid var(--prk-line);
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.stn-ui .prk-fxbox.warn {
+  border-color: rgba(255, 84, 70, 0.55);
+  background: rgba(120, 10, 12, 0.18);
+}
+
+.stn-ui .prk-fx-h {
+  margin-bottom: 0.3rem;
+  font: 0.75rem / 1 var(--f-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-fx-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: baseline;
+  gap: 0.15rem 0.5rem;
+  font: 0.8rem / 1.3 var(--f-mono);
+}
+
+.stn-ui .prk-fx-row {
+  display: contents;
+}
+
+.stn-ui .prk-fx-l {
+  color: var(--bone-2);
+}
+
+.stn-ui .prk-fx-a,
+.stn-ui .prk-fx-ar {
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-fx-b {
+  font-weight: 400;
+  color: #9fd88a;
+  text-align: right;
+}
+
+.stn-ui .prk-fx-row.same .prk-fx-b {
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-fxbox.back .prk-fx-b {
+  color: var(--bone);
+}
+
+.stn-ui .prk-fx-note {
+  margin-top: 0.35rem;
+  font: 0.75rem / 1.3 var(--f-mono);
+  color: var(--blood-lite);
+}
+
+/* ---------------------------------------------------------------- the list, for a narrow window */
+.stn-ui .prk-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  padding: 0.5rem 0;
+  margin-bottom: 0.2rem;
+  border-bottom: 1px solid var(--prk-line);
+  background: #15110e;
+  scrollbar-width: thin;
+}
+
+.stn-ui .prk-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid transparent;
+  background: none;
+  font: 500 0.9rem / 1 var(--f-num);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone-2);
+  cursor: pointer;
+}
+
+.stn-ui .prk-tab:hover {
+  border-color: var(--prk-line);
+}
+
+.stn-ui .prk-tab.on {
+  border-color: var(--amber);
+  background: rgba(232, 163, 61, 0.1);
+  color: var(--amber);
+}
+
+.stn-ui .prk-tab-ico {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.stn-ui .prk-tab-b {
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--prk-line);
+  font: 0.75rem / 1.2 var(--f-mono);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-tab-b.lit {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.stn-ui .prk-tab-b:empty {
+  display: none;
+}
+
+.stn-ui .prk-rows-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  margin: 0.7rem 0 0.35rem;
+  font: 0.75rem / 1.2 var(--f-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-rows-h b {
+  font: 400 1.15rem / 1 var(--f-head);
+  letter-spacing: 0.12em;
+  color: var(--blood-lite);
+}
+
+.stn-ui .prk-rows-hr {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.stn-ui .prk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin-bottom: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--prk-line);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.stn-ui .prk-row.own {
+  border-color: var(--prk-amber-soft);
+}
+
+.stn-ui .prk-row.lock {
+  border-style: dashed;
+}
+
+.stn-ui .prk-row.sel {
+  border-color: var(--bone);
+  box-shadow: 0 0 0 1px var(--bone);
+}
+
+.stn-ui .prk-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stn-ui .prk-row .prk-name {
+  font-size: 1.05rem;
+  white-space: normal;
+}
+
+.stn-ui .prk-row.own .prk-name {
+  color: var(--amber);
+}
+
+.stn-ui .prk-row.own .prk-ico {
+  border-color: #f0b55a;
+  background: linear-gradient(160deg, #c98a2b, #7a4a12);
+  color: #1a0f05;
+}
+
+.stn-ui .prk-row.lock .prk-ico,
+.stn-ui .prk-row.lock .prk-name,
+.stn-ui .prk-row.lock .prk-row-text {
+  opacity: 0.6;
+}
+
+.stn-ui .prk-row.key .prk-ico {
+  border-radius: 50%;
+}
+
+.stn-ui .prk-row-text {
+  font: 0.88rem / 1.3 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .prk-row-sub {
+  font: 0.75rem / 1.3 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-row-act {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.stn-ui .prk-row-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font: 0.75rem / 1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-row-st .prk-st {
+  align-self: center;
+}
+
+.stn-ui .prk-row.own .prk-row-st {
+  color: var(--amber);
+}
+
+.stn-ui .prk-row .prk-row-btn {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.14em;
+}
+
+.stn-ui .prk-row .prk-row-take {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.stn-ui .prk-row .prk-row-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stn-ui .prk-row-why {
+  text-align: right;
+}
+
+.stn-ui .prk-row-fx {
+  grid-column: 1 / -1;
+}
+
+/* ---------------------------------------------------------------- the quick pick, while a point is waiting */
+.stn-ui .prk-q-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.8rem;
+  margin: 0.85rem 0 0.5rem;
+}
+
+.stn-ui .prk-q-h b {
+  font: 400 1.45rem / 1 var(--f-head);
+  letter-spacing: 0.14em;
+  color: var(--bone);
+}
+
+.stn-ui .prk-q-h span {
+  font: 0.85rem / 1.2 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-q-going {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.6rem;
+}
+
+.stn-ui .prk-q-new {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.5rem;
+}
+
+.stn-ui .prk-q-none {
+  margin: 0;
+  font: 0.85rem / 1.3 var(--f-type);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-qc {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--prk-amber-soft);
+  background: rgba(0, 0, 0, 0.4);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.stn-ui .prk-qc:hover {
+  border-color: var(--bone-2);
+}
+
+.stn-ui .prk-qc-small {
+  border-color: var(--prk-line);
+  padding: 0.5rem 0.6rem;
+}
+
+.stn-ui .prk-qc.sel {
+  border-color: var(--bone);
+  box-shadow: 0 0 0 1px var(--bone), 0 0 18px rgba(232, 163, 61, 0.25);
+  background: rgba(232, 163, 61, 0.09);
+}
+
+.stn-ui .prk-qc .prk-ico {
+  border-color: var(--prk-amber-soft);
+  color: var(--bone);
+}
+
+.stn-ui .prk-qc-big .prk-ico {
+  width: 2.6rem;
+  height: 2.6rem;
+  padding: 0.5rem;
+}
+
+.stn-ui .prk-qc.key .prk-ico {
+  border-radius: 50%;
+  border-color: var(--blood-lite);
+}
+
+.stn-ui .prk-qc-big .prk-name {
+  font: 400 1.5rem / 1 var(--f-head);
+  letter-spacing: 0.06em;
+  white-space: normal;
+}
+
+.stn-ui .prk-qc-small .prk-name {
+  font-size: 1rem;
+}
+
+.stn-ui .prk-qc-kind {
+  font: 0.75rem / 1.25 var(--f-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-qc-text {
+  font: 0.88rem / 1.3 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .prk-qc-small .prk-qc-text {
+  font: 0.8rem / 1.25 var(--f-mono);
+}
+
+.stn-ui .prk-qc-then {
+  margin-top: 0.2rem;
+  font: 0.75rem / 1.3 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-qc-then.lit {
+  color: var(--amber);
+}
+
+.stn-ui .prk-qc-then:empty {
+  display: none;
+}
+
+.stn-ui .prk-qc-path {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+  margin-top: 0.15rem;
+  font: 0.75rem / 1.3 var(--f-mono);
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-qc-path i {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.15rem;
+}
+
+.stn-ui .prk-qc-tick {
+  position: absolute;
+  top: -0.6rem;
+  right: -0.6rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0.25rem;
+  border-radius: 50%;
+  background: var(--bone);
+  color: var(--ink);
+}
+
+/* your perks, as chips you can take back */
+.stn-ui .prk-q-mine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.6rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0 0.25rem;
+  border-top: 1px solid var(--prk-line);
+}
+
+.stn-ui .prk-q-mine-h {
+  font: 0.75rem / 1 var(--f-mono);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--blood-lite);
+}
+
+.stn-ui .prk-q-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.stn-ui .prk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
+  border: 1px solid var(--prk-amber-soft);
+  background: rgba(232, 163, 61, 0.1);
+  font: 500 0.9rem / 1 var(--f-num);
+  color: var(--amber);
+  cursor: pointer;
+}
+
+.stn-ui .prk-chip:hover {
+  border-color: var(--amber);
+}
+
+.stn-ui .prk-chip.key {
+  border-color: rgba(255, 84, 70, 0.6);
+  color: #ff9d90;
+}
+
+.stn-ui .prk-chip-ico {
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0.18rem;
+  background: linear-gradient(160deg, #c98a2b, #7a4a12);
+  color: #1a0f05;
+}
+
+.stn-ui .prk-chip-x {
+  width: 0.8rem;
+  height: 0.8rem;
+  color: var(--bone-2);
+}
+
+.stn-ui .prk-chip.held .prk-chip-x {
+  color: var(--bone-dim);
+}
+
+.stn-ui .prk-q-why {
+  text-align: left;
+  color: var(--blood-lite);
+}
+
+.stn-ui .prk-q-tree {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  padding: 0.3rem 0.1rem;
+  border: 0;
+  border-bottom: 1px solid var(--bone-2);
+  background: none;
+  font: 500 0.85rem / 1 var(--f-num);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--bone);
+  cursor: pointer;
+}
+
+.stn-ui .prk-q-tree:hover {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
+.stn-ui .prk-q-tree i {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+/* the take button, in the foot */
+.stn-ui .prk-q-take {
+  flex: 1 1 26rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.stn-ui .prk-q-take .btn-blood {
+  flex: none;
+  font-size: clamp(1.15rem, 2vw, 1.6rem);
+  padding: 0.55rem 1.6rem 0.45rem;
+  white-space: nowrap;
+}
+
+.stn-ui .prk-q-take-note {
+  font: 0.8rem / 1.3 var(--f-type);
+  color: var(--bone-dim);
+}
+
+/* narrow: the bar's parts stack, the quick pick's note goes */
+@media (max-width: 760px) {
+  .stn-ui .prk-q-take-note {
+    display: none;
+  }
+
+  .stn-ui .prk-panel .set-head {
+    flex-wrap: wrap;
+  }
+
+  .stn-ui .prk-panel .pg-top {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+/* a small window (1280x720 at 150%): everything a size down so the quick pick's cards fit more to a screen */
+@media (max-width: 900px), (max-height: 560px) {
+  .stn-ui .prk-panel .set-head {
+    padding: 0.5rem 1rem 0.45rem;
+  }
+
+  .stn-ui .prk-panel .pg-pts-big {
+    font-size: 1.9rem;
+  }
+
+  .stn-ui .prk-q-h {
+    margin: 0.55rem 0 0.4rem;
+  }
+
+  .stn-ui .prk-q-h b {
+    font-size: 1.2rem;
+  }
+
+  .stn-ui .prk-qc {
+    padding: 0.5rem 0.6rem;
+  }
+
+  .stn-ui .prk-qc-big .prk-ico {
+    width: 2.1rem;
+    height: 2.1rem;
+  }
+
+  .stn-ui .prk-qc-big .prk-name {
+    font-size: 1.2rem;
+  }
+
+  .stn-ui .prk-qc-text {
+    font-size: 0.8rem;
+  }
+
+  .stn-ui .prk-q-going {
+    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  }
+
+  .stn-ui .prk-q-new {
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  }
+
+  .stn-ui .prk-qc-small .prk-qc-path {
+    display: none;
+  }
+
+  .stn-ui .prk-panel .set-foot {
+    padding: 0.5rem 1rem 0.6rem;
+  }
+}
