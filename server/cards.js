@@ -442,6 +442,7 @@ export class Cards {
     return this.game.loadouts?.own?.get(owner) || null;
   }
   hasLoadout(owner, id, except = null) {
+    if (except?.sides?.some((s) => s.owner === owner && (s.offer?.loadouts || []).includes(id))) return true;
     const o = this.loadoutColl(owner);
     if (!o?.loaded || this.reservedLoadouts(owner, except).has(id)) return false;
     return o.items.some((it) => it.id === id);
@@ -928,7 +929,6 @@ export class Cards {
     for (let i = 0; i < 2; i++) for (const id of t.sides[i].offer.loadouts || []) loadoutMoves.push([t.sides[i].owner, t.sides[1 - i].owner, id]);
     if (!moves.length && !loadoutMoves.length) return this.closeTrade(t, true);
     t.phase = 'committing';
-    this.game.loadouts?.tradeUnlock(t.id);
     t.xfers = { cards: !moves.length, loadouts: !loadoutMoves.length, loadoutApplied: false };
     for (const s of t.sides) {
       this.use(s.owner);

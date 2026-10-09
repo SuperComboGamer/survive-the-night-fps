@@ -15,6 +15,7 @@ const ITEM_RE = new RegExp(`^${UUID}$`);
 const MOVES_MAX = 24;
 const INFLIGHT_MAX = 8;
 export const WAGER_MAX_AGE = 24 * 3600; // s: a wager lock this old is orphaned and refunded
+export const TRADE_LOCK_MAX_AGE = 15 * 60; // s: active in-run trade offers do not survive restarts
 const isOwner = (o) => typeof o === 'string' && OWNER_RE.test(o);
 const ACCOUNT_OWNER_RE = new RegExp(`^a:${UUID}$`);
 const isAccountOwner = (o) => typeof o === 'string' && ACCOUNT_OWNER_RE.test(o);
@@ -110,7 +111,7 @@ export class PgLoadoutStore {
     return { ...res, ...(await this.load(owner)) };
   }
 
-  async transfer({ id, kind, moves }) {
+  async transfer({ id, kind, moves, room = '', trade = '' }) {
     const owners = [...new Set(moves.flatMap((m) => [m[0], m[1]]))];
     const res = await this.db.tx(async (t) => {
       const fresh = (await t.query('INSERT INTO loadout_ledger (id, kind, entries) VALUES ($1, $2, $3::jsonb) ON CONFLICT (id) DO NOTHING RETURNING id', [id, kind, JSON.stringify(moves)])).rows.length > 0;
@@ -124,14 +125,17 @@ export class PgLoadoutStore {
                 AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM users WHERE id = $3::uuid))
                 AND NOT EXISTS (SELECT 1 FROM loadout_auction_listings al WHERE al.item_id = loadout_items.id AND al.status = 'active')
                 AND NOT EXISTS (SELECT 1 FROM loadout_wager_locks wl WHERE wl.item_id = loadout_items.id)
-                AND NOT EXISTS (SELECT 1 FROM loadout_trade_locks tl WHERE tl.item_id = loadout_items.id)
+                  AND NOT EXISTS (SELECT 1 FROM loadout_trade_locks tl WHERE tl.item_id = loadout_items.id AND NOT (tl.room = $5 AND tl.trade_id = $6))
               RETURNING id`,
-            [item, to, userOf(to), from]
+            [item, to, userOf(to), from, room, String(trade)]
           );
           if (!r.rowCount) throw notOwned(from, item);
           moved.push(item);
         }
-        if (moved.length) await t.query('DELETE FROM loadout_slots WHERE item_id = ANY($1::uuid[])', [moved]);
+        if (moved.length) {
+          await t.query('DELETE FROM loadout_slots WHERE item_id = ANY($1::uuid[])', [moved]);
+          await t.query('DELETE FROM loadout_trade_locks WHERE item_id = ANY($1::uuid[]) AND room = $2 AND trade_id = $3', [moved, room, String(trade)]);
+        }
       }
       return { fresh };
     });
@@ -209,12 +213,15 @@ export class PgLoadoutStore {
     return { locks: rows.length, owners, colls };
   }
 
-  async sweepWagers(ageS = WAGER_MAX_AGE) {
+  async sweepWagers(ageS = WAGER_MAX_AGE, tradeAgeS = TRADE_LOCK_MAX_AGE, allTrade = false) {
     const rows = await this.db.tx(async (t) => {
       const rows = (
         await t.query('DELETE FROM loadout_wager_locks WHERE updated_at < now() - make_interval(secs => $1) RETURNING owner', [ageS])
       ).rows;
-      return rows;
+      const trades = allTrade
+        ? (await t.query('DELETE FROM loadout_trade_locks RETURNING owner')).rows
+        : (await t.query('DELETE FROM loadout_trade_locks WHERE updated_at < now() - make_interval(secs => $1) RETURNING owner', [tradeAgeS])).rows;
+      return [...rows, ...trades];
     });
     const owners = [...new Set(rows.map((r) => r.owner))];
     const colls = {};
@@ -517,14 +524,15 @@ export class MemoryLoadoutStore {
     }
     return { fresh, granted: granted && { id: granted.id, catalog, source: { ...granted.source }, acquiredAt: granted.acquiredAt }, ...(await this.load(owner)) };
   }
-  async transfer({ id, kind, moves }) {
+  async transfer({ id, kind, moves, room = '', trade = '' }) {
     const owners = [...new Set(moves.flatMap((m) => [m[0], m[1]]))];
     const fresh = !this.ledger.has(id);
     if (fresh) {
       const listed = new Set([...this.listings.values()].filter((l) => l.status === 'active').map((l) => l.itemId));
       for (const [from, , item] of moves) {
         const it = this.items.get(item);
-        if (!it || it.owner !== from || listed.has(item) || this.wagerLocks.has(item) || this.tradeLocks.has(item)) throw notOwned(from, item);
+        const tl = this.tradeLocks.get(item);
+        if (!it || it.owner !== from || listed.has(item) || this.wagerLocks.has(item) || (tl && (tl.room !== room || tl.trade !== String(trade)))) throw notOwned(from, item);
       }
       this.ledger.add(id);
       for (const [, to, item] of moves) {
@@ -533,6 +541,10 @@ export class MemoryLoadoutStore {
       }
       const moved = new Set(moves.map((m) => m[2]));
       for (const [owner, slots] of this.slots) this.slots.set(owner, slots.map((item) => (moved.has(item) ? null : item)));
+      for (const item of moved) {
+        const tl = this.tradeLocks.get(item);
+        if (tl && tl.room === room && tl.trade === String(trade)) this.tradeLocks.delete(item);
+      }
     }
     const colls = {};
     for (const owner of owners) colls[owner] = await this.load(owner);
@@ -600,13 +612,20 @@ export class MemoryLoadoutStore {
     for (const owner of owners) colls[owner] = await this.load(owner);
     return { locks, owners: [...owners], colls };
   }
-  async sweepWagers(ageS = WAGER_MAX_AGE) {
+  async sweepWagers(ageS = WAGER_MAX_AGE, tradeAgeS = TRADE_LOCK_MAX_AGE, allTrade = false) {
     const before = Date.now() - ageS * 1000;
+    const tradeBefore = Date.now() - tradeAgeS * 1000;
     const owners = new Set();
     let locks = 0;
     for (const [item, lock] of [...this.wagerLocks]) {
       if ((lock.at || 0) >= before) continue;
       this.wagerLocks.delete(item);
+      owners.add(lock.owner);
+      locks++;
+    }
+    for (const [item, lock] of [...this.tradeLocks]) {
+      if (!allTrade && (lock.at || 0) >= tradeBefore) continue;
+      this.tradeLocks.delete(item);
       owners.add(lock.owner);
       locks++;
     }
@@ -621,7 +640,8 @@ export class MemoryLoadoutStore {
       const it = this.items.get(item);
       if (!it || it.owner !== owner || listed.has(item) || this.wagerLocks.has(item) || !loadoutDef(it.catalog)) throw notOwned(owner, item);
     }
-    for (const item of items) this.tradeLocks.set(item, { room, trade, owner });
+    const at = Date.now();
+    for (const item of items) this.tradeLocks.set(item, { room, trade, owner, at });
     return { owners: [owner], colls: { [owner]: await this.load(owner) } };
   }
   async releaseTrade({ room, trade }) {
@@ -892,11 +912,11 @@ export class LoadoutService {
     if (owners.length) this.changed?.(owners);
     return got;
   }
-  async sweep() {
+  async sweep({ startup = false } = {}) {
     let n = 0;
     await this.run(() => this.store.expireListings()).catch((err) => this.log(`loadout: auction expiry failed (${err.message})`));
     if (this.store.sweepWagers) {
-      const got = await this.run(() => this.store.sweepWagers(WAGER_MAX_AGE)).catch((err) => {
+      const got = await this.run(() => this.store.sweepWagers(WAGER_MAX_AGE, TRADE_LOCK_MAX_AGE, startup)).catch((err) => {
         this.log(`loadout: wager sweep failed (${err.message})`);
         return null;
       });
@@ -904,7 +924,7 @@ export class LoadoutService {
         n = got.locks || 0;
         for (const [owner, coll] of Object.entries(got.colls || {})) this.update(owner, coll);
         if (got.owners?.length) this.changed?.(got.owners);
-        if (n) this.log(`loadout: ${n} wager lock(s) older than ${Math.round(WAGER_MAX_AGE / 3600)} h refunded`);
+        if (n) this.log(`loadout: ${n} stale loadout lock(s) released`);
       }
     }
     return n;
@@ -1063,7 +1083,7 @@ export class LoadoutService {
         return this.store.lockWager({ id, room: room.code || '', match, stakes: [...byOwner.values()] });
       }
       if (kind === 'wager_pay' || kind === 'wager_back') return this.store.settleWager({ id, kind, match, moves: clean });
-      return this.store.transfer({ id, kind: 'trade', moves: clean });
+      return this.store.transfer({ id, kind: 'trade', moves: clean, room: room.code || '', trade: match });
     };
     this.run(job).then(
       (res) => {

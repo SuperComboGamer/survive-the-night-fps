@@ -156,7 +156,7 @@ cluster?.on('loadout', (m) => loadouts.reload(m.owners));
 // bets left in escrow by games that never settled them (usercards.js ESCROW_MAX_AGE) go back, now and every hour
 if (db) {
   cards.sweep();
-  loadouts.sweep();
+  loadouts.sweep({ startup: true });
   setInterval(() => cards.sweep(), 3600_000).unref();
   setInterval(() => loadouts.sweep(), 3600_000).unref();
 }

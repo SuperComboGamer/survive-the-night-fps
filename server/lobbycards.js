@@ -65,7 +65,7 @@ export class LobbyCards {
     this.tables = new Map(); // id -> { id, host, slot, deck, at }
     this.matches = new Map(); // id -> match
     this.pending = new Map();
-    this.room = { closed: false, code: 'lobby-cards', worker: { postMessage: (m) => queueMicrotask(() => !this.room.closed && this.fromStore(m)) } };
+    this.room = { closed: false, code: `lobby-cards:${randomUUID()}`, worker: { postMessage: (m) => queueMicrotask(() => !this.room.closed && this.fromStore(m)) } };
     this.lastTick = Date.now();
     this.timer = setInterval(() => this.tick(), 250);
     this.timer.unref?.();
@@ -448,7 +448,7 @@ export class LobbyCards {
   finishPaid(m, paid) {
     if (!this.matches.has(m.id)) return;
     this.matches.delete(m.id);
-    const winner = m.state?.result?.winner ?? -1;
+    const winner = m.state?.result?.winner ?? (m.forfeitWinner === 0 || m.forfeitWinner === 1 ? m.forfeitWinner : -1);
     const reason = m.reason || m.state?.result?.reason || '';
     m.sides.forEach((s, side) => {
       const p = this.present(s);
@@ -561,7 +561,18 @@ export class LobbyCards {
     }
     if (this.retryXfer(x, m)) return;
     this.log(`lobby cards: wager ${x.kind === 'wager_pay' ? 'payout' : 'refund'} failed after retries (${m.why}); leaving match unsettled for sweep`);
+    this.evictUnsettled(match, m.why || 'store');
     x.resolve?.(false);
+  }
+
+  evictUnsettled(m, reason = 'store') {
+    if (!this.matches.has(m.id)) return;
+    this.matches.delete(m.id);
+    m.reason ||= reason;
+    m.sides.forEach((s, side) => {
+      const p = this.present(s);
+      if (p) this.write(p, CARDMSG.MATCH_END, { opp: m.sides[1 - side].pid, oppName: m.sides[1 - side].name, outcome: 'void', reason: m.reason, bet: null, stake: this.stakeEnd(m, side, false) });
+    });
   }
 
   collFor(p) {

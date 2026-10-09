@@ -114,6 +114,13 @@ async function persistence() {
   }
   check('store blocks wagering an item in an active loadout trade', blocked);
   await wstore.releaseTrade({ room: 'trade-room', trade: '1' });
+  await wstore.lockTradeItems({ room: 'trade-room', trade: '2', owner: wa, items: [wi.id] });
+  wstore.tradeLocks.get(wi.id).at = Date.now() - 20 * 60_000;
+  await wstore.sweepWagers(24 * 3600, 15 * 60);
+  check('periodic sweep clears stale trade locks', wstore.tradeLocks.size === 0 && (await wstore.load(wa)).items.some((it) => it.id === wi.id));
+  await wstore.lockTradeItems({ room: 'trade-room', trade: '3', owner: wa, items: [wi.id] });
+  await wstore.sweepWagers(24 * 3600, 15 * 60, true);
+  check('startup sweep clears all active trade locks', wstore.tradeLocks.size === 0 && (await wstore.load(wa)).items.some((it) => it.id === wi.id));
   await wstore.lockWager({ id: `${randomUUID()}:loadout_wager_lock`, room: 'cards', match: 'match-c', stakes: [{ owner: wa, items: [wi.id] }, { owner: wb, items: [wj.id] }] });
   const payId = `${randomUUID()}:loadout_wager_pay`;
   await wstore.settleWager({ id: payId, kind: 'wager_pay', match: 'match-c', moves: [[wa, wb, wi.id], [wb, wb, wj.id]] });
@@ -303,6 +310,41 @@ async function inRunTrade() {
   game.cards.confirm(b);
   await settle();
   check('one-sided loadout gift is accepted by both-confirm trade', !(await service.collection(aOwner)).items.some((it) => it.id === gift.id) && (await service.collection(bOwner)).items.some((it) => it.id === gift.id));
+
+  await service.grant(aOwner, 4, {}, 'trade:delayed-a');
+  await service.grant(bOwner, 5, {}, 'trade:delayed-b');
+  await settle();
+  const delayedA = (await service.collection(aOwner)).items.find((it) => it.catalog === 4);
+  const delayedB = (await service.collection(bOwner)).items.find((it) => it.catalog === 5);
+  game.cards.openTrade(a, b);
+  t = game.cards.tradeOf(a.id);
+  game.cards.offer(a, { loadouts: [delayedA.id] });
+  game.cards.offer(b, { loadouts: [delayedB.id] });
+  await settle();
+  game.cards.ready(a, { on: true });
+  game.cards.ready(b, { on: true });
+  game.cards.confirm(a);
+  game.cards.confirm(b);
+  await settle();
+  check('loadout trade still commits after offer locks hide the items', (await service.collection(aOwner)).items.some((it) => it.id === delayedB.id) && (await service.collection(bOwner)).items.some((it) => it.id === delayedA.id));
+
+  await service.grant(aOwner, 6, {}, 'trade:change-old');
+  await service.grant(aOwner, 7, {}, 'trade:change-new');
+  await settle();
+  const oldOffer = (await service.collection(aOwner)).items.find((it) => it.catalog === 6);
+  const newOffer = (await service.collection(aOwner)).items.find((it) => it.catalog === 7);
+  game.cards.openTrade(a, b);
+  t = game.cards.tradeOf(a.id);
+  game.cards.offer(a, { loadouts: [oldOffer.id] });
+  await settle();
+  game.cards.offer(a, { loadouts: [newOffer.id] });
+  await settle();
+  game.cards.ready(a, { on: true });
+  game.cards.ready(b, { on: true });
+  game.cards.confirm(a);
+  game.cards.confirm(b);
+  await settle();
+  check('changing a loadout trade offer after locking releases the old item and moves the new one', (await service.collection(aOwner)).items.some((it) => it.id === oldOffer.id) && !(await service.collection(aOwner)).items.some((it) => it.id === newOffer.id) && (await service.collection(bOwner)).items.some((it) => it.id === newOffer.id));
 }
 
 async function handoffTradeReplay() {

@@ -257,6 +257,73 @@ class FlakyPayoutStore extends MemoryLoadoutStore {
   await loadSvc.close();
 }
 
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new MemoryLoadoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L1 = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(47), log: () => {} });
+  const L2 = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(48), log: () => {} });
+  const N = clientFor(L1, 'Nia');
+  const O = clientFor(L1, 'Oli');
+  await settle();
+  await loadSvc.grant(ownerOf(N.pid), 1, {}, 'lobby:scope:n');
+  await loadSvc.grant(ownerOf(O.pid), 2, {}, 'lobby:scope:o');
+  await settle();
+  const ni = N.last[CARDMSG.COLL].loadouts[0];
+  const oi = O.last[CARDMSG.COLL].loadouts[0];
+  N.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [ni.id] });
+  await settle();
+  O.send(CARDOP.TABLE_JOIN, { id: O.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [oi.id] });
+  await settle();
+  N.send(CARDOP.STAKE_CONFIRM, { on: true });
+  O.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  await L2.closeAll();
+  check('lobby shutdown only releases locks for its own room code', store.wagerLocks.size === 2 && !(await loadSvc.collection(ownerOf(N.pid))).items.some((it) => it.id === ni.id));
+  await L1.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+class AlwaysFailPayoutStore extends MemoryLoadoutStore {
+  async settleWager(args) {
+    if (args.kind === 'wager_pay') throw new Error('persistent db failure');
+    return super.settleWager(args);
+  }
+}
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new AlwaysFailPayoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(49), log: () => {} });
+  const P = clientFor(L, 'Pia');
+  const Q = clientFor(L, 'Quin');
+  await settle();
+  await loadSvc.grant(ownerOf(P.pid), 1, {}, 'lobby:evict:p');
+  await loadSvc.grant(ownerOf(Q.pid), 2, {}, 'lobby:evict:q');
+  await settle();
+  const pi = P.last[CARDMSG.COLL].loadouts[0];
+  const qi = Q.last[CARDMSG.COLL].loadouts[0];
+  P.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [pi.id] });
+  await settle();
+  Q.send(CARDOP.TABLE_JOIN, { id: Q.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [qi.id] });
+  await settle();
+  P.send(CARDOP.STAKE_CONFIRM, { on: true });
+  Q.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  P.ws.close();
+  await settle();
+  const pending = [...L.pending.values()][0];
+  pending.tries = 5;
+  pending.retryAt = Date.now() - 1;
+  L.tick();
+  await settle();
+  check('lobby evicts a match after exhausted payout retries while locks await sweep', L.matches.size === 0 && store.wagerLocks.size === 2);
+  await L.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
 await lobby.closeAll();
 await service.close();
 await loadouts.close();

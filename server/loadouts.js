@@ -129,7 +129,7 @@ export class Loadouts {
       moves = kind;
       kind = 'trade';
     }
-    this.link.post({ op: 'xfer', id, kind, moves, match });
+    this.link.post({ op: 'xfer', id, kind, moves, match: String(match || '') });
   }
   tradeLock(trade, owner, items) {
     this.link.post({ op: 'trade_lock', trade: String(trade), owner, items });
