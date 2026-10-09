@@ -156,7 +156,7 @@ cluster?.on('loadout', (m) => loadouts.reload(m.owners));
 // bets left in escrow by games that never settled them (usercards.js ESCROW_MAX_AGE) go back, now and every hour
 if (db) {
   cards.sweep();
-  loadouts.sweep();
+  loadouts.sweep({ startup: true });
   setInterval(() => cards.sweep(), 3600_000).unref();
   setInterval(() => loadouts.sweep(), 3600_000).unref();
 }
@@ -165,7 +165,7 @@ let stopping = false;
 
 // accounts, friends and messages: only with a database
 const auth = db ? new Auth({ db, stats, cards, loadouts, log }) : null;
-const lobbyCards = new LobbyCards({ service: cards, log });
+const lobbyCards = new LobbyCards({ service: cards, loadouts, log });
 const social = db ? new Social({ db, auth, lobby, cluster, log }) : null;
 const feedback = db ? new Feedback({ db, matches, log }) : null; // what players think of the game: the end screen's poll
 const userSettings = db ? new UserSettings({ db }) : null; // a player's own settings on their account: their keybinds, their survivors
@@ -1068,7 +1068,7 @@ async function shutdown(signal, exitCode = 0) {
       await stats.close();
       await achievements.close();
       await bestiary.close();
-      lobbyCards.closeAll();
+      await lobbyCards.closeAll();
       await cards.close([...lobby.rooms.values()]); // (the bets of the games not handed over go back; the finds are written)
       await loadouts.close();
       await store?.close();

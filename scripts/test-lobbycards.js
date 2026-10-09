@@ -1,7 +1,8 @@
 // Dead Hand lobby tables (server/lobbycards.js): open, join, play a full no-bet match, cancel, and leave.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { LobbyCards } from '../server/lobbycards.js';
 import { CardService, MemoryCardStore } from '../server/usercards.js';
+import { LoadoutService, MemoryLoadoutStore } from '../server/userloadout.js';
 import { C2S, S2C, CARDOP, CARDMSG, PROTOCOL_VERSION, Writer, Reader, writeCards, readCards } from '../shared/protocol.js';
 import { chooseMove } from '../shared/cardai.js';
 import { mulberry32 } from '../shared/rng.js';
@@ -16,10 +17,12 @@ const settle = async () => {
 };
 
 const service = new CardService({ store: new MemoryCardStore() });
+const loadouts = new LoadoutService({ store: new MemoryLoadoutStore() });
 const rng = mulberry32(33);
-const lobby = new LobbyCards({ service, rng, log: () => {} });
+const lobby = new LobbyCards({ service, loadouts, rng, log: () => {} });
+const ownerOf = (pid) => `g:${createHash('sha256').update(pid).digest('hex')}`;
 
-function client(name) {
+function clientFor(host, name) {
   const c = { name, pid: randomUUID(), msgs: [], last: {}, notes: [], ended: null, sentV: -1 };
   c.ws = {
     data: { user: null },
@@ -42,24 +45,24 @@ function client(name) {
       if (m.op === CARDMSG.MATCH_END) c.ended = m.data;
     },
     end() {
-      lobby.close(c.ws);
+      host.close(c.ws);
     },
     close() {
-      lobby.close(c.ws);
+      host.close(c.ws);
     },
   };
-  lobby.open(c.ws);
+  host.open(c.ws);
   const w = new Writer(128);
   w.u8(C2S.JOIN);
   w.u8(PROTOCOL_VERSION);
   w.str(name);
   w.str(c.pid);
-  lobby.message(c.ws, w.bytes());
+  host.message(c.ws, w.bytes());
   c.send = (op, data = {}) => {
     const w2 = new Writer(512);
     w2.u8(C2S.CARDS);
     writeCards(w2, op, data);
-    lobby.message(c.ws, w2.bytes());
+    host.message(c.ws, w2.bytes());
   };
   c.clear = () => {
     c.msgs.length = 0;
@@ -69,6 +72,7 @@ function client(name) {
   c.me = () => c.last[CARDMSG.TABLES]?.me || 0;
   return c;
 }
+const client = (name) => clientFor(lobby, name);
 
 const A = client('Ann');
 const B = client('Ben');
@@ -125,8 +129,204 @@ C.ws.close();
 await settle();
 check('leaving a live lobby match forfeits it for the remaining player', D.ended?.outcome === 'win' && D.ended.reason === 'forfeit', JSON.stringify(D.ended));
 
-lobby.closeAll();
+const E = client('Eve');
+const Fp = client('Fox');
+await settle();
+await loadouts.grant(ownerOf(E.pid), 1, {}, 'lobby:wager:e1');
+await loadouts.grant(ownerOf(E.pid), 3, {}, 'lobby:wager:e2');
+await loadouts.grant(ownerOf(Fp.pid), 2, {}, 'lobby:wager:f1');
+await settle();
+const eItems = E.last[CARDMSG.COLL]?.loadouts || [];
+const fItems = Fp.last[CARDMSG.COLL]?.loadouts || [];
+E.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [eItems[0].id] });
+await settle();
+const staked = Fp.last[CARDMSG.TABLES].tables.find((x) => x.host === E.me());
+check('lobby table advertises host loadout item stake', staked?.stake?.[0]?.catalog === eItems[0].catalog, JSON.stringify(staked));
+Fp.send(CARDOP.TABLE_JOIN, { id: staked.id, slot: -2, stake: [fItems[0].id] });
+await settle();
+check('staked lobby table waits for both stake confirmations', E.last[CARDMSG.MATCH]?.stake?.phase === 'staking' && Fp.last[CARDMSG.MATCH]?.stake?.phase === 'staking');
+E.send(CARDOP.STAKE_CONFIRM, { on: true });
+E.send(CARDOP.STAKE, { items: [eItems[1].id] });
+await settle();
+check('changing a lobby stake resets both confirmations', E.last[CARDMSG.MATCH]?.stake?.ok?.every((x) => x === false) && Fp.last[CARDMSG.MATCH]?.stake?.theirs?.[0]?.id === eItems[1].id, JSON.stringify(E.last[CARDMSG.MATCH]?.stake));
+E.send(CARDOP.STAKE_CONFIRM, { on: true });
+Fp.send(CARDOP.STAKE_CONFIRM, { on: true });
+await settle();
+check('confirmed lobby stakes are escrowed before the match deals', E.last[CARDMSG.MATCH]?.view?.phase === 'redraw' && !(await loadouts.collection(ownerOf(E.pid))).items.some((it) => it.id === eItems[1].id));
+E.ws.close();
+await settle();
+check('forfeit transfers lobby wagered loadout items to the opponent', Fp.ended?.outcome === 'win' && (await loadouts.collection(ownerOf(Fp.pid))).items.some((it) => it.id === eItems[1].id), JSON.stringify(Fp.ended));
+
+class SlowLockStore extends MemoryLoadoutStore {
+  async lockWager(args) {
+    await new Promise((resolve) => (this.releaseLock = resolve));
+    return super.lockWager(args);
+  }
+}
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new SlowLockStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(44), log: () => {} });
+  const G = clientFor(L, 'Gail');
+  const H = clientFor(L, 'Hal');
+  await settle();
+  await loadSvc.grant(ownerOf(G.pid), 1, {}, 'lobby:slow:g');
+  await loadSvc.grant(ownerOf(H.pid), 2, {}, 'lobby:slow:h');
+  await settle();
+  const gi = G.last[CARDMSG.COLL].loadouts[0];
+  const hi = H.last[CARDMSG.COLL].loadouts[0];
+  G.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [gi.id] });
+  await settle();
+  H.send(CARDOP.TABLE_JOIN, { id: H.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [hi.id] });
+  await settle();
+  G.send(CARDOP.STAKE_CONFIRM, { on: true });
+  H.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  G.ws.close();
+  store.releaseLock();
+  await settle();
+  check('lobby leave while wager lock is in flight pays the recorded winner and clears locks', store.wagerLocks.size === 0 && (await loadSvc.collection(ownerOf(H.pid))).items.some((it) => it.id === gi.id));
+  await L.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+class FlakyPayoutStore extends MemoryLoadoutStore {
+  async settleWager(args) {
+    if (args.kind === 'wager_pay' && !this.failedOnce) {
+      this.failedOnce = true;
+      throw new Error('temporary db failure');
+    }
+    return super.settleWager(args);
+  }
+}
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new FlakyPayoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(45), log: () => {} });
+  const I = clientFor(L, 'Ivy');
+  const J = clientFor(L, 'Joss');
+  await settle();
+  await loadSvc.grant(ownerOf(I.pid), 1, {}, 'lobby:retry:i');
+  await loadSvc.grant(ownerOf(J.pid), 2, {}, 'lobby:retry:j');
+  await settle();
+  const ii = I.last[CARDMSG.COLL].loadouts[0];
+  const ji = J.last[CARDMSG.COLL].loadouts[0];
+  I.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [ii.id] });
+  await settle();
+  J.send(CARDOP.TABLE_JOIN, { id: J.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [ji.id] });
+  await settle();
+  I.send(CARDOP.STAKE_CONFIRM, { on: true });
+  J.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  I.ws.close();
+  await new Promise((r) => setTimeout(r, 700));
+  L.tick();
+  await settle();
+  check('lobby payout retries after a transient store failure', store.failedOnce && store.wagerLocks.size === 0 && (await loadSvc.collection(ownerOf(J.pid))).items.some((it) => it.id === ii.id));
+  await L.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new MemoryLoadoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(46), log: () => {} });
+  const K = clientFor(L, 'Kit');
+  const M = clientFor(L, 'Moe');
+  await settle();
+  await loadSvc.grant(ownerOf(K.pid), 1, {}, 'lobby:shutdown:k');
+  await loadSvc.grant(ownerOf(M.pid), 2, {}, 'lobby:shutdown:m');
+  await settle();
+  const ki = K.last[CARDMSG.COLL].loadouts[0];
+  const mi = M.last[CARDMSG.COLL].loadouts[0];
+  K.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [ki.id] });
+  await settle();
+  M.send(CARDOP.TABLE_JOIN, { id: M.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [mi.id] });
+  await settle();
+  K.send(CARDOP.STAKE_CONFIRM, { on: true });
+  M.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  await L.closeAll();
+  check('lobby shutdown refunds active wager locks', store.wagerLocks.size === 0 && (await loadSvc.collection(ownerOf(K.pid))).items.some((it) => it.id === ki.id) && (await loadSvc.collection(ownerOf(M.pid))).items.some((it) => it.id === mi.id));
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new MemoryLoadoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L1 = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(47), log: () => {} });
+  const L2 = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(48), log: () => {} });
+  const N = clientFor(L1, 'Nia');
+  const O = clientFor(L1, 'Oli');
+  await settle();
+  await loadSvc.grant(ownerOf(N.pid), 1, {}, 'lobby:scope:n');
+  await loadSvc.grant(ownerOf(O.pid), 2, {}, 'lobby:scope:o');
+  await settle();
+  const ni = N.last[CARDMSG.COLL].loadouts[0];
+  const oi = O.last[CARDMSG.COLL].loadouts[0];
+  N.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [ni.id] });
+  await settle();
+  O.send(CARDOP.TABLE_JOIN, { id: O.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [oi.id] });
+  await settle();
+  N.send(CARDOP.STAKE_CONFIRM, { on: true });
+  O.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  await L2.closeAll();
+  check('lobby shutdown only releases locks for its own room code', store.wagerLocks.size === 2 && !(await loadSvc.collection(ownerOf(N.pid))).items.some((it) => it.id === ni.id));
+  await L1.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+class AlwaysFailPayoutStore extends MemoryLoadoutStore {
+  async settleWager(args) {
+    if (args.kind === 'wager_pay') throw new Error('persistent db failure');
+    return super.settleWager(args);
+  }
+}
+{
+  const cardSvc = new CardService({ store: new MemoryCardStore() });
+  const store = new AlwaysFailPayoutStore();
+  const loadSvc = new LoadoutService({ store });
+  const L = new LobbyCards({ service: cardSvc, loadouts: loadSvc, rng: mulberry32(49), log: () => {} });
+  const P = clientFor(L, 'Pia');
+  const Q = clientFor(L, 'Quin');
+  await settle();
+  await loadSvc.grant(ownerOf(P.pid), 1, {}, 'lobby:evict:p');
+  await loadSvc.grant(ownerOf(Q.pid), 2, {}, 'lobby:evict:q');
+  await settle();
+  const pi = P.last[CARDMSG.COLL].loadouts[0];
+  const qi = Q.last[CARDMSG.COLL].loadouts[0];
+  P.send(CARDOP.TABLE_OPEN, { slot: -1, stake: [pi.id] });
+  await settle();
+  Q.send(CARDOP.TABLE_JOIN, { id: Q.last[CARDMSG.TABLES].tables[0].id, slot: -2, stake: [qi.id] });
+  await settle();
+  P.send(CARDOP.STAKE_CONFIRM, { on: true });
+  Q.send(CARDOP.STAKE_CONFIRM, { on: true });
+  await settle();
+  P.ws.close();
+  await settle();
+  const pending = [...L.pending.values()][0];
+  pending.tries = 5;
+  pending.retryAt = Date.now() - 1;
+  L.tick();
+  await settle();
+  check('lobby evicts a match after exhausted payout retries while locks await sweep', L.matches.size === 0 && store.wagerLocks.size === 2);
+  await L.closeAll();
+  await cardSvc.close();
+  await loadSvc.close();
+}
+
+await lobby.closeAll();
 await service.close();
+await loadouts.close();
 if (fails.length) {
   console.log(`\n${fails.length} failure(s): ${fails.join(', ')}`);
   process.exit(1);

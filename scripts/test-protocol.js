@@ -354,6 +354,8 @@ console.log(`protocol fuzz OK: ${TICKS} ticks, ${VIEWERS} clients off one stagin
     [CARDOP.TABLE_OPEN]: { slot: -1 },
     [CARDOP.TABLE_JOIN]: { id: 'e6d4d0ef-3172-4239-98a3-385898c473d1', slot: -2 },
     [CARDOP.TABLE_LEAVE]: {},
+    [CARDOP.STAKE]: { items: ['11111111-1111-4111-8111-111111111111'] },
+    [CARDOP.STAKE_CONFIRM]: { on: true },
   };
   const SAMPLE_S2C = {
     [CARDMSG.COLL]: { loaded: true, kept: false, found: { 105: 2 } },

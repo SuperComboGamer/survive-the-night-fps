@@ -1,5 +1,6 @@
 // Dead Hand from the splash: reuses CardsClient's collection/deck/table handling over a /cards lobby socket.
 import { CARDOP, CARDMSG } from '../../shared/protocol.js';
+import { loadoutDef } from '../../shared/loadout.js';
 import { CardsClient } from './cards.js';
 import { LobbyCardsConnection } from '../net/lobbycards.js';
 
@@ -57,7 +58,14 @@ export class LobbyCardsClient extends CardsClient {
       const d = msg.data || {};
       if (Number.isInteger(d.me) && d.me > 0) this.g.myId = d.me;
       this.names = new Map((Array.isArray(d.names) ? d.names : []).filter((r) => Array.isArray(r) && Number.isInteger(r[0])).map(([id, name]) => [id, String(name || '')]));
-      this.s.tables = (Array.isArray(d.tables) ? d.tables : []).filter((t) => t && typeof t.id === 'string').map((t) => ({ id: t.id, host: t.host | 0, name: String(t.name || ''), slot: t.slot | 0, ageS: Math.max(0, t.ageS | 0) }));
+      const loadoutsOf = (rows) =>
+        Array.isArray(rows)
+          ? rows
+              .filter((x) => x && typeof x.id === 'string')
+              .map((x) => ({ id: x.id, catalog: loadoutDef(x.catalog)?.id || 0 }))
+              .filter((x) => x.catalog)
+          : [];
+      this.s.tables = (Array.isArray(d.tables) ? d.tables : []).filter((t) => t && typeof t.id === 'string').map((t) => ({ id: t.id, host: t.host | 0, name: String(t.name || ''), slot: t.slot | 0, stake: loadoutsOf(t.stake), ageS: Math.max(0, t.ageS | 0) }));
       return this.changed('tables');
     }
     if (msg.op === CARDMSG.MATCH && msg.data?.oppName) this.names.set(msg.data.opp | 0, String(msg.data.oppName));
@@ -65,14 +73,14 @@ export class LobbyCardsClient extends CardsClient {
     return super.onMessage(msg);
   }
 
-  openTable(slot = this.lastSlot()) {
+  openTable(slot = this.lastSlot(), stake = []) {
     this.rememberSlot(slot);
-    this.send(CARDOP.TABLE_OPEN, { slot });
+    this.send(CARDOP.TABLE_OPEN, { slot, stake });
   }
 
-  joinTable(id, slot = this.lastSlot()) {
+  joinTable(id, slot = this.lastSlot(), stake = []) {
     this.rememberSlot(slot);
-    this.send(CARDOP.TABLE_JOIN, { id, slot });
+    this.send(CARDOP.TABLE_JOIN, { id, slot, stake });
   }
 
   leaveTable() {

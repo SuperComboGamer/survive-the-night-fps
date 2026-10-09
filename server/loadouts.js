@@ -74,9 +74,9 @@ export class LocalLoadouts {
   post(m) {
     this.service.fromRoom(this.room, { t: 'loadout', ...m });
   }
-  gone() {
+  gone(handedOff = false) {
     this.room.closed = true;
-    this.service.roomGone(this.room);
+    this.service.roomGone(this.room, handedOff);
   }
 }
 
@@ -122,9 +122,20 @@ export class Loadouts {
     o.items = Array.isArray(m.items) ? m.items : [];
     o.slots = Array.isArray(m.slots) ? m.slots : [null, null, null];
     for (const p of this.game.players.values()) if (p.rejoinKey === m.owner) this.apply(p);
+    this.game.cards?.loadoutsChanged?.(m.owner);
   }
-  xfer(id, moves) {
-    this.link.post({ op: 'xfer', id, kind: 'trade', moves });
+  xfer(id, kind, moves, match = '') {
+    if (Array.isArray(kind)) {
+      moves = kind;
+      kind = 'trade';
+    }
+    this.link.post({ op: 'xfer', id, kind, moves, match: String(match || '') });
+  }
+  tradeLock(trade, owner, items) {
+    this.link.post({ op: 'trade_lock', trade: String(trade), owner, items });
+  }
+  tradeUnlock(trade) {
+    this.link.post({ op: 'trade_unlock', trade: String(trade) });
   }
   equipped(owner) {
     const o = this.own.get(owner);

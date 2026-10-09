@@ -819,7 +819,16 @@ function cardsSandbox() {
   window.cards = c;
   const msg = (op, data) => c.onMessage({ op, data });
   // a collection with some finds, two decks kept (one of them not legal yet)
-  msg(CARDMSG.COLL, { loaded: true, kept: true, found: { 105: 1, 112: 2, 113: 1, 125: 1, 9: 1, 10: 1, 12: 1, 205: 1, 207: 1, 216: 1, 401: 1, 453: 1 } });
+  msg(CARDMSG.COLL, {
+    loaded: true,
+    kept: true,
+    found: { 105: 1, 112: 2, 113: 1, 125: 1, 9: 1, 10: 1, 12: 1, 205: 1, 207: 1, 216: 1, 401: 1, 453: 1 },
+    loadouts: [
+      { id: '11111111-1111-4111-8111-111111111111', catalog: 1 },
+      { id: '33333333-3333-4333-8333-333333333333', catalog: 3 },
+      { id: '44444444-4444-4444-8444-444444444444', catalog: 5 },
+    ],
+  });
   msg(CARDMSG.DECKS, {
     decks: [
       { slot: 0, name: 'Long guns', leader: 407, cards: { 1: 1, 2: 1, 4: 1, 5: 1, 6: 1, 100: 2, 101: 2, 104: 3, 105: 1, 108: 3, 109: 1, 110: 2, 111: 2, 112: 2, 113: 1, 114: 1, 116: 2, 117: 1, 121: 1, 125: 1 } },
@@ -854,6 +863,27 @@ function cardsSandbox() {
       i++;
     }
     if (q.get('still')) L.tick = () => {};
+  } else if (tab === 'stake') {
+    msg(CARDMSG.MATCH, {
+      me: 0,
+      opp: 2,
+      oppName: 'Sam',
+      v: 0,
+      bet: [0, 0],
+      stake: {
+        phase: 'staking',
+        mine: [{ id: '11111111-1111-4111-8111-111111111111', catalog: 1 }],
+        theirs: [{ id: '22222222-2222-4222-8222-222222222222', catalog: 2 }],
+        loadouts: [
+          { id: '11111111-1111-4111-8111-111111111111', catalog: 1 },
+          { id: '33333333-3333-4333-8333-333333333333', catalog: 3 },
+          { id: '44444444-4444-4444-8444-444444444444', catalog: 5 },
+        ],
+        ok: [false, true],
+      },
+      view: null,
+      events: [],
+    });
   } else if (tab === 'trade') {
     msg(CARDMSG.TRADE, {
       with: 3,

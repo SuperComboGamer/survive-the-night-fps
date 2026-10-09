@@ -603,7 +603,7 @@ export class Room {
     this.match = null;
     // its card owners are let go, and the bets its matches held go back - unless the next server carries it on
     this.lobby.cards?.roomGone(this, handedOff);
-    this.lobby.loadouts?.roomGone(this);
+    this.lobby.loadouts?.roomGone(this, handedOff);
   }
 }
 
