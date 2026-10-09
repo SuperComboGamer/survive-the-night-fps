@@ -747,7 +747,8 @@ switch (screen) {
   case 'hud-cards': {
     // Dead Hand (ui/cards.js). The table: a practice match dealt from &seed= and played &moves= moves in (the player's
     // own by the computer's hand too, so the table is mid-game), &tab=deck|trade|reveal|chooser|asks|practice for the
-    // other views, &still=1: the computer does not move on by itself (stills). hud-cards: the HUD's line, &kind=
+    // other views, &tab=guide&page=0..2 the guide to how it plays, &tab=first the first opening (the guide offered),
+    // &still=1: the computer does not move on by itself (stills). hud-cards: the HUD's line, &kind=
     // match|mine|ask|trade
     buildScene(bg || 'night');
     ui.hideSplash();
@@ -837,6 +838,10 @@ function cardsSandbox() {
   });
   const tab = q.get('tab') || 'table';
   const seed = +(q.get('seed') ?? 7);
+  // the guide to how it plays (ui/cardguide.js) is offered the first time the cards open: tab=first shows that, the
+  // rest of the screens are drawn as a player who has seen it (tab=guide&page=0..2: its pages)
+  if (tab === 'first') localStorage.removeItem('stn.cards.guide');
+  else localStorage.setItem('stn.cards.guide', 'seen');
   if (screen === 'hud-cards') {
     const kind = q.get('kind') || 'mine';
     const h = { ...baseHud, prompt: '[E] Dead Hand · trade with Sam' };
@@ -910,7 +915,11 @@ function cardsSandbox() {
     });
     ui.cards.target = 2;
   }
-  ui.setCardsOpen(true, tab === 'end' ? 'table' : tab);
+  ui.setCardsOpen(true, tab === 'end' || tab === 'first' || tab === 'guide' ? 'table' : tab);
+  if (tab === 'guide') {
+    ui.cards.openGuide();
+    ui.cards.views.guide.go(+(q.get('page') ?? 0));
+  }
   // the store's clocks and the computer's moves, as the game runs them each frame
   let t0 = performance.now();
   const step = (t) => {
