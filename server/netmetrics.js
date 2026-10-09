@@ -4,6 +4,7 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 const MINUTE_BUCKETS = 1440;
 const HOUR_BUCKETS = 24;
+const WINDOW_SECONDS = { lastMinute: 60, lastHour: 3600, lastDay: 86400 };
 
 const CHANNEL_LABELS = {
   game_join: 'Game joins',
@@ -216,15 +217,11 @@ export class NetworkMetrics {
 
   snapshot({ players = 0, sockets = 0 } = {}) {
     const now = this.now();
-    const seconds = {
-      lastMinute: Math.max(1, Math.min(60, (now - this.startedAt) / 1000)),
-      lastHour: Math.max(1, Math.min(3600, (now - this.startedAt) / 1000)),
-      lastDay: Math.max(1, Math.min(86400, (now - this.startedAt) / 1000)),
-    };
+    const uptimeS = Math.max(0, (now - this.startedAt) / 1000);
     const windows = {
-      lastMinute: withRates(sumWindow(this.minutes, MINUTE_MS, now, MINUTE_MS), seconds.lastMinute),
-      lastHour: withRates(sumWindow(this.minutes, MINUTE_MS, now, HOUR_MS), seconds.lastHour),
-      lastDay: withRates(sumWindow(this.hours, HOUR_MS, now, 24 * HOUR_MS), seconds.lastDay),
+      lastMinute: withRates(sumWindow(this.minutes, MINUTE_MS, now, MINUTE_MS), WINDOW_SECONDS.lastMinute),
+      lastHour: withRates(sumWindow(this.minutes, MINUTE_MS, now, HOUR_MS), WINDOW_SECONDS.lastHour),
+      lastDay: withRates(sumWindow(this.hours, HOUR_MS, now, 24 * HOUR_MS), WINDOW_SECONDS.lastDay),
     };
     const byMinute = sumWindowByChannel(this.minutes, MINUTE_MS, now, HOUR_MS);
     const byHour = sumWindowByChannel(this.hours, HOUR_MS, now, 24 * HOUR_MS);
@@ -244,9 +241,9 @@ export class NetworkMetrics {
       total: withRates(this.total, Math.max(1, (now - this.startedAt) / 1000)),
       windows,
       perPlayer: {
-        lastMinute: perPlayer(windows.lastMinute, seconds.lastMinute),
-        lastHour: perPlayer(windows.lastHour, seconds.lastHour),
-        lastDay: perPlayer(windows.lastDay, seconds.lastDay),
+        lastMinute: perPlayer(windows.lastMinute, WINDOW_SECONDS.lastMinute),
+        lastHour: perPlayer(windows.lastHour, WINDOW_SECONDS.lastHour),
+        lastDay: perPlayer(windows.lastDay, WINDOW_SECONDS.lastDay),
       },
       channels: [...names]
         .map((name) => ({
@@ -261,7 +258,7 @@ export class NetworkMetrics {
         .sort((a, b) => b.lastHour.bytesIn + b.lastHour.bytesOut - (a.lastHour.bytesIn + a.lastHour.bytesOut) || a.label.localeCompare(b.label)),
       perMinute: series(this.minutes, MINUTE_MS, now, 60),
       perHour: series(this.hours, HOUR_MS, now, 24),
-      note: 'WebSocket counters are counted at send/receive points. No uWS publish fan-out is used by this server; cluster database notifications are not included.',
+      note: `WebSocket counters are counted at send/receive points. Window averages always divide by the full window (60 s, 1 h, 1 d)${uptimeS < 86400 ? `, even though this server has been up ${Math.round(uptimeS)} s` : ''}. No uWS publish fan-out is used by this server; cluster database notifications are not included.`,
     };
   }
 }

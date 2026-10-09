@@ -16,6 +16,7 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} ${ok ? '' : detail}`);
 }
 const J = (v) => JSON.stringify(v);
+const near = (a, b, e = 1e-9) => Math.abs(a - b) <= e;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const freePort = () =>
   new Promise((resolve, reject) => {
@@ -45,6 +46,7 @@ async function stop(proc) {
   let s = m.snapshot({ players: 2, sockets: 2 });
   check('totals and the current minute count bytes and messages in both directions', s.windows.lastMinute.bytesIn === 100 && s.windows.lastMinute.bytesOut === 300 && s.windows.lastMinute.messagesIn === 1 && s.windows.lastMinute.messagesOut === 2, J(s.windows.lastMinute));
   check('per-connected-player averages are included', s.perPlayer.lastMinute.bytesIn === 50 && s.perPlayer.lastMinute.bytesOut === 150, J(s.perPlayer.lastMinute));
+  check('window averages divide by the whole window even right after start', near(s.windows.lastMinute.avgBytesPerSecond, 400 / 60) && near(s.windows.lastHour.avgBytesPerSecond, 400 / 3600) && near(s.windows.lastDay.avgBytesPerSecond, 400 / 86400) && near(s.perPlayer.lastMinute.avgBytesPerSecond, 400 / 60 / 2) && /full window/.test(s.note), J(s.windows));
   check('per-channel breakdown separates input from snapshots', s.channels.some((c) => c.name === 'game_input' && c.lastHour.bytesIn === 100) && s.channels.some((c) => c.name === 'game_snapshots' && c.lastHour.bytesOut === 300), J(s.channels));
 
   now = 60_000;
