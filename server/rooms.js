@@ -19,6 +19,7 @@ import { difficultyOf } from '../shared/difficulty.js';
 import { PHASE, MAX_PLAYERS } from '../shared/constants.js';
 import { FramePacker, eachFrame } from './wire.js';
 import { HANDOFF_CLOSE } from './handoff.js';
+import { gameOutChannel } from './netmetrics.js';
 
 // A WebSocket close frame's reason is at most 123 bytes of UTF-8: what fits of `text`, cut between two characters
 export function closeReason(text, max = 120) {
@@ -271,7 +272,11 @@ export class Room {
     w.str(this.title);
     w.u8(this.inviteOnly ? ROOMF.INVITE_ONLY : 0);
     w.str(this.difficulty); // after the flags, so a client from before difficulties never reads it
-    this.socks[slot]?.send(w.bytes(), true, false);
+    const out = w.bytes();
+    if (this.socks[slot]) {
+      this.lobby.netMetrics?.wsOut('game_room', out);
+      this.socks[slot].send(out, true, false);
+    }
   }
   flushInbox() {
     if (this.inbox.empty || this.closed) return;
@@ -301,6 +306,7 @@ export class Room {
           // a badly backed-up client loses messages rather than the server's memory growing without end (the game
           // holds its snapshots back meanwhile: congested)
           if (sock.getBufferedAmount() > SEND_LIMIT) break;
+          this.lobby.netMetrics?.wsOut(gameOutChannel(bytes), bytes);
           sock.send(bytes, true, false);
         }
       });
@@ -470,7 +476,10 @@ export class Room {
         this.lobby.log(`game ${this.code}: its build's codec failed to write BOARD (${err.message}): written in this build's`);
         bytes = write(OWN_PROTOCOL, total, rows);
       }
-      if (ws.getBufferedAmount() <= SEND_LIMIT) ws.send(bytes, true, false);
+      if (ws.getBufferedAmount() <= SEND_LIMIT) {
+        this.lobby.netMetrics?.wsOut('game_board', bytes);
+        ws.send(bytes, true, false);
+      }
     };
     // the file-kept board answers at once, the database's (dbstats.js) in a moment
     const board = this.lobby.stats.board(this.recs.get(m.me) ?? null, here);
@@ -619,9 +628,10 @@ export class Lobby {
   // be and still be restored (s)
   // prepareMs: how long a server going down waits for the next one to have its games' valleys built (announce)
   // keepMs: how long a server going down waits at most for its own build to be in the store before it saves (KEEP_MS)
-  constructor({ stats, matches = null, achievements = null, bestiary = null, cards = null, loadouts = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, keepMs = KEEP_MS, settings = null, log = console.log }) {
+  constructor({ stats, matches = null, achievements = null, bestiary = null, cards = null, loadouts = null, gameOpts = {}, maxGames = defaultMaxGames(), maxPlayers = MAX_PLAYERS, roomMaxPlayers = MAX_PLAYERS, limits = true, idleMs = IDLE_MS, store = null, handoffMaxAge = 300, prepareMs = 3000, keepMs = KEEP_MS, settings = null, netMetrics = null, log = console.log }) {
     this.stats = stats;
     this.settings = settings; // the game's settings in the database (serversettings.js; none without one)
+    this.netMetrics = netMetrics;
     this.matches = matches;
     this.achievements = achievements;
     this.bestiary = bestiary;
@@ -975,7 +985,14 @@ export class Lobby {
     const room = this.rooms.get(code);
     proto ||= room?.proto || null;
     this.lost.set(code, { reason, at: Date.now(), proto: proto === OWN_PROTOCOL ? null : proto });
-    if (tell) for (const ws of room?.socks || []) ws?.send(rejectBytes(reason, room.proto), true, false);
+    if (tell && room) {
+      const bytes = rejectBytes(reason, room.proto);
+      for (const ws of room?.socks || []) {
+        if (!ws) continue;
+        this.netMetrics?.wsOut('game_rejects', bytes);
+        ws.send(bytes, true, false);
+      }
+    }
   }
   // the codec of the players of a game a deploy ended, when it was not this build's (else undefined)
   lostProto(code) {

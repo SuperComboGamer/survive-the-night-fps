@@ -47,9 +47,10 @@ const bad = (message, extra) => new HttpError(400, message, extra);
 export class AdminPanel {
   // auth, db, settings, social: null without a database. cluster: null on a server on its own. store: where games are
   // handed to the next server (handoff.js), null when a restart would end them. info: { build, clientBuild, port }.
-  // net(): { cpuMs, elu, sockets } of the network thread. stopping(): the server is going down.
+  // net(): { cpuMs, elu, sockets } of the network thread. bandwidth(): recent network byte/message counters.
+  // stopping(): the server is going down.
   // restart(code): hands the games over and exits with that code (index.js shutdown).
-  constructor({ auth, db, lobby, cluster = null, settings = null, social = null, store = null, info = {}, net = () => ({}), stopping = () => false, restart = null, log = () => {} }) {
+  constructor({ auth, db, lobby, cluster = null, settings = null, social = null, store = null, info = {}, net = () => ({}), bandwidth = null, stopping = () => false, restart = null, log = () => {} }) {
     this.auth = auth;
     this.db = db;
     this.lobby = lobby;
@@ -59,6 +60,7 @@ export class AdminPanel {
     this.store = store;
     this.info = info;
     this.net = net;
+    this.bandwidth = bandwidth;
     this.stopping = stopping;
     this.restart = restart;
     this.log = log;
@@ -413,6 +415,7 @@ export class AdminPanel {
     const w = s.tick?.window;
     const budget = s.tick?.budgetMs || 50;
     const p99 = w?.p99Ms || 0;
+    const net = this.net();
     return {
       code: room.code,
       name: room.title,
@@ -463,6 +466,7 @@ export class AdminPanel {
     const mem = process.memoryUsage();
     const games = [...lobby.rooms.values()].filter((r) => !r.closed).map((r) => this.gameRow(r));
     games.sort((a, b) => b.sockets - a.sockets || a.ageS - b.ageS);
+    const net = this.net();
     let servers = null;
     if (this.cluster) {
       servers = await this.db
@@ -488,7 +492,8 @@ export class AdminPanel {
         handoff: !this.store ? null : this.store.dir ? 'files' : 'postgres',
         rssMb: Math.round(mem.rss / 1e6),
         heapMb: Math.round(mem.heapUsed / 1e6),
-        net: this.net(),
+        net,
+        bandwidth: this.bandwidth ? this.bandwidth({ players: lobby.players(), sockets: net.sockets || 0 }) : null,
         games: games.length,
         maxGames: lobby.maxGames,
         maxTotal: lobby.maxTotal,
