@@ -299,12 +299,15 @@ function bareTree(opts, lod) {
   const rng = makeRng(seed);
   const b = new MeshBuilder(seed, { ao: false });
   const tips = [];
-  // far LOD: same skeleton (tree rng untouched), fewer sides, the finest twigs dropped
+  // far LOD: same skeleton (tree rng untouched), fewer sides, the finest twigs dropped - and a tip's leaves then hang
+  // from the last of its branch that is drawn (anchor), not out at the end of a twig that is not: in the far copy the
+  // birch's leaf cards floated in the air round its crown, clusters of autumn leaves with nothing under them
   const cyl = (a, c, rt, rb, sides) => {
-    if (lod && rb < 0.03) return;
+    if (lod && rb < 0.03) return false;
     b.cylBetween(mat, a, c, rt, rb, lod ? Math.max(3, sides - 2) : sides, { open: true });
+    return true;
   };
-  const grow = (p, dir, len, rad, depth) => {
+  const grow = (p, dir, len, rad, depth, anchor = p) => {
     const n = depth === 0 ? 5 : depth === 1 ? 3 : 2;
     let cur = p.clone();
     let r = rad;
@@ -319,26 +322,29 @@ function bareTree(opts, lod) {
       d.normalize();
       const nxt = cur.clone().addScaledVector(d, len / n);
       const r2 = r * (depth === 0 ? 0.86 : 0.74);
-      cyl(cur.toArray(), nxt.toArray(), r2, r, depth === 0 ? 7 : depth === 1 ? 5 : 3);
+      if (cyl(cur.toArray(), nxt.toArray(), r2, r, depth === 0 ? 7 : depth === 1 ? 5 : 3)) anchor = nxt;
       if (k < n - 1 && depth < depthMax && rng() < (depth === 0 ? (k >= 2 ? 0.7 : 0) : 0.35)) {
         const a = rng() * Math.PI * 2;
         const sd = new V3(Math.cos(a), depth === 0 ? 0.25 + rng() * 0.5 : (rng() - 0.4) * 0.8, Math.sin(a)).normalize();
-        grow(nxt.clone(), sd, len * (depth === 0 ? 0.45 + rng() * 0.3 : 0.5), r2 * 0.62, depth + 1);
+        grow(nxt.clone(), sd, len * (depth === 0 ? 0.45 + rng() * 0.3 : 0.5), r2 * 0.62, depth + 1, anchor);
       }
       cur = nxt;
       r = r2;
     }
+    // (where its leaves hang: the tip, or in the far copy the drawn wood nearest it - a card's half-width out along
+    // the gap at the most, so the card still reaches back over the wood)
+    const leafAt = () => (anchor === cur ? cur : anchor.clone().addScaledVector(cur.clone().sub(anchor), Math.min(1, 0.8 / Math.max(1e-3, cur.distanceTo(anchor)))));
     if (depth >= depthMax || r < 0.012 || (depth > 0 && rng() < broken * 0.5)) {
-      tips.push({ p: cur, d, r });
+      tips.push({ p: leafAt(), d, r });
       return;
     }
     const nc = depth >= 2 ? 2 : children[0] + Math.floor(rng() * (children[1] - children[0] + 1));
     for (let c = 0; c < nc; c++) {
       const a = (c / nc) * Math.PI * 2 + rng() * 1.5;
       const nd = d.clone().add(new V3(Math.cos(a) * spread, (rng() - 0.3) * spread * 0.6, Math.sin(a) * spread)).normalize();
-      grow(cur.clone(), nd, len * (0.62 + rng() * 0.2), r * (depth === 0 ? 0.8 : 0.72), depth + 1);
+      grow(cur.clone(), nd, len * (0.62 + rng() * 0.2), r * (depth === 0 ? 0.8 : 0.72), depth + 1, anchor);
     }
-    if (depth >= 1) tips.push({ p: cur, d, r });
+    if (depth >= 1) tips.push({ p: leafAt(), d, r });
   };
   grow(new V3(0, 0, 0), new V3((rng() - 0.5) * 0.1, 1, (rng() - 0.5) * 0.1).normalize(), H * 0.55, r0, 0);
   b.cyl(mat, r0 * 0.95, r0 * 1.5, 0.5, lod ? 5 : 7, { p: [0, 0.2, 0], open: true });
