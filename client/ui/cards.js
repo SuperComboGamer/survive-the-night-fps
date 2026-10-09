@@ -5,8 +5,9 @@
 //   Trade      a trade with a teammate, while one is open (ui/cardtrade.js)
 //   Challenges the asks to you and from you
 //   Practice   a match against the computer: no cards won or lost
-// and two without a tab: the chooser ([E] on a teammate: a match, with a deck and maybe a card bet, or a trade) and a
-// pack opened (ui/cardreveal.js).
+// and three without a tab: the chooser ([E] on a teammate: a match, with a deck and maybe a card bet, or a trade), a
+// pack opened (ui/cardreveal.js) and the guide to how it plays (ui/cardguide.js: the head's "How to play", and
+// offered once, the first time the cards are opened).
 //
 // What it shows comes from game/cards.js (CardsClient: bind, render), which also takes what the player does here.
 // The game opens and shuts it (Game.toggleCards: the key, the pause menu's row, [E] on a teammate) and sets onClose
@@ -25,6 +26,7 @@ import { cardFace, cardBack, setPow, ROW_GLYPH } from './cardface.js';
 import { DeckBuilder } from './carddeck.js';
 import { TradeView } from './cardtrade.js';
 import { RevealView } from './cardreveal.js';
+import { GuideView, guideOffered } from './cardguide.js';
 import { bindLabel, liveText, actionsOf } from '../game/binds.js';
 import { ACTION } from '../../shared/binds.js';
 
@@ -144,6 +146,11 @@ export class CardsScreen {
       b.addEventListener('click', () => this.show(id));
       this.tabs.set(id, { b, n });
     }
+    const help = svgEl('button', 'btn btn-ghost cd-help', head, glyph('question'));
+    help.type = 'button';
+    el('span', '', help, 'How to play');
+    help.setAttribute('aria-label', 'How to play Dead Hand');
+    help.addEventListener('click', () => this.openGuide());
     this.count = el('span', 'map-coords cd-count', head, '');
     const close = (this.close = svgEl('button', 'set-close btn-icon map-close', head, glyph('xmark')));
     close.type = 'button';
@@ -161,6 +168,7 @@ export class CardsScreen {
       practice: new PracticeView(this, body),
       chooser: new ChooserView(this, body),
       reveal: new RevealView(this, body),
+      guide: new GuideView(this, body),
     };
     for (const v of Object.values(this.views)) v.root.hidden = true;
 
@@ -209,7 +217,13 @@ export class CardsScreen {
       window.addEventListener('keydown', this.onKeyDown);
       window.addEventListener('keyup', this.onKeyUp);
       this.returnFocus = document.activeElement;
-      this.show(view || this.pickView(), true);
+      const to = view || this.pickView();
+      // the first time: "New to Dead Hand?" over what it opens on (not with a match under way against somebody:
+      // their clock is running, and it is asked the next time)
+      if (!guideOffered() && !(this.c?.s.match && !this.c.s.match.local)) {
+        this.views.guide.start(true, to);
+        this.show('guide', true);
+      } else this.show(to, true);
       this.close.focus({ preventScroll: true });
     } else {
       window.removeEventListener('keydown', this.onKeyDown);
@@ -221,6 +235,13 @@ export class CardsScreen {
     }
   }
 
+  // How to play: the guide's first page, over the view that was up
+  openGuide() {
+    if (this.view !== 'guide') this.views.guide.start(false, this.view);
+    else this.views.guide.start(false, this.views.guide.from);
+    this.show('guide', true);
+  }
+
   // the view to open on: a pack to open, the trade, the match, an ask waiting, else the table
   pickView() {
     const s = this.c?.s;
@@ -230,7 +251,7 @@ export class CardsScreen {
     if (s.match) return 'table';
     if (this.c?.isLobby) return 'lobby';
     if (s.asks.some((a) => a.to === this.c.myId)) return 'asks';
-    return this.view === 'chooser' || this.view === 'reveal' || this.view === 'trade' ? 'table' : this.view;
+    return this.view === 'chooser' || this.view === 'reveal' || this.view === 'trade' || this.view === 'guide' ? 'table' : this.view;
   }
 
   show(view, force = false) {
@@ -259,7 +280,7 @@ export class CardsScreen {
     if (what === 'match-new' && this.view !== 'deck') return this.show('table');
     if (what === 'trade-new' && this.view !== 'table') return this.show('trade');
     if (what === 'trade-end' && this.view === 'trade') return this.show('table');
-    if (what === 'reveal' && !s.match && this.view !== 'deck' && this.view !== 'trade') return this.show('reveal');
+    if (what === 'reveal' && !s.match && this.view !== 'deck' && this.view !== 'trade' && this.view !== 'guide') return this.show('reveal');
     this.dirty = false;
     const mine = s.asks.filter((a) => a.to === this.c.myId).length;
     this.tabs.get('trade').b.hidden = !s.trade;
@@ -299,6 +320,9 @@ export class CardsScreen {
       add(['Enter'], 'play');
       add(['Space'], 'hold to pass');
       add(['Backspace'], 'put back');
+    } else if (this.view === 'guide') {
+      add(['←', '→'], 'page');
+      add(['Enter'], 'next');
     }
     add([bindLabel('cards')], 'close');
     add(['Esc'], this.view === 'table' && this.views.table.sel ? 'put back' : 'close');
@@ -323,6 +347,7 @@ export class CardsScreen {
   back() {
     if (this.view === 'table') return this.views.table.back();
     if (this.view === 'deck') return this.views.deck.back();
+    if (this.view === 'guide') return this.views.guide.back();
     return false;
   }
 
@@ -333,6 +358,7 @@ export class CardsScreen {
     if (tag === 'SELECT' || tag === 'INPUT') return;
     if (actionsOf(e.code).some((a) => ACTION[a]?.menu)) return; // (the player's menu keys are the game's: they shut it)
     if (this.view === 'table') this.views.table.key(e, down);
+    else if (this.view === 'guide') this.views.guide.key(e, down);
     else if (this.view === 'reveal' && down && (e.code === 'Enter' || e.code === 'Space')) {
       e.preventDefault();
       this.views.reveal.next();

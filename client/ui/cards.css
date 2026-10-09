@@ -2059,6 +2059,252 @@
 }
 
 /* ------------------------------------------------------------------ small screens */
+/* ------------------------------------------------------------------ how to play (ui/cardguide.js) */
+.stn-ui .cd-help {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--u));
+  padding: calc(5 * var(--u)) calc(10 * var(--u));
+  font-size: max(10px, calc(11.5 * var(--u)));
+}
+
+.stn-ui .cd-help svg {
+  display: block;
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.stn-ui .cd-guide {
+  display: grid;
+  place-items: center;
+  overflow: auto;
+}
+
+.stn-ui .cdg-box {
+  width: min(100%, max(340px, calc(860 * var(--u))));
+  max-height: 100%;
+  overflow: auto;
+  padding: calc(18 * var(--u)) calc(26 * var(--u));
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+}
+
+.stn-ui .cdg-box.ask {
+  width: min(100%, max(320px, calc(520 * var(--u))));
+  text-align: center;
+}
+
+.stn-ui .cdg-ask-ico svg {
+  display: block;
+  width: max(34px, calc(48 * var(--u)));
+  height: max(34px, calc(48 * var(--u)));
+  margin: 0 auto calc(8 * var(--u));
+  color: var(--blood-hi);
+}
+
+.stn-ui .cdg-step {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  margin-bottom: calc(6 * var(--u));
+}
+
+.stn-ui .cdg-lead {
+  margin: 0 0 calc(12 * var(--u));
+  font: max(12px, calc(14.5 * var(--u))) / 1.45 var(--f-type);
+  color: var(--bone);
+}
+
+.stn-ui .cdg-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  margin-left: 0.3em;
+  white-space: nowrap;
+}
+
+.stn-ui .cdg-row-ico svg {
+  display: block;
+  width: 1.05em;
+  height: 1.05em;
+  color: var(--amber);
+}
+
+.stn-ui .cdg-body {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+  gap: calc(18 * var(--u));
+  align-items: center;
+}
+
+.stn-ui .cdg-art {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(12 * var(--u));
+}
+
+.stn-ui .cdg-points {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: calc(9 * var(--u));
+}
+
+.stn-ui .cdg-points li {
+  padding-left: calc(12 * var(--u));
+  border-left: 2px solid rgba(178, 34, 34, 0.55);
+  font: max(11px, calc(13 * var(--u))) / 1.45 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .cdg-points b {
+  font-weight: 700;
+  color: var(--bone);
+}
+
+/* page 1: the score and the lives */
+.stn-ui .cdg-score {
+  display: flex;
+  align-items: center;
+  gap: calc(14 * var(--u));
+  padding: calc(12 * var(--u)) calc(16 * var(--u));
+  background: rgba(10, 8, 7, 0.55);
+}
+
+.stn-ui .cdg-side {
+  display: grid;
+  justify-items: center;
+  gap: calc(4 * var(--u));
+  opacity: 0.75;
+}
+
+.stn-ui .cdg-side.lead {
+  opacity: 1;
+}
+
+.stn-ui .cdg-who {
+  font: max(9px, calc(10.5 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+.stn-ui .cdg-total {
+  font: 500 max(26px, calc(40 * var(--u))) / 1 var(--f-num);
+  color: var(--bone);
+}
+
+.stn-ui .cdg-side.lead .cdg-total {
+  color: var(--amber);
+}
+
+.stn-ui .cdg-lives {
+  display: flex;
+  gap: 3px;
+}
+
+.stn-ui .cdg-drop svg {
+  display: block;
+  width: max(12px, calc(16 * var(--u)));
+  height: max(12px, calc(16 * var(--u)));
+  color: var(--blood-hi);
+}
+
+.stn-ui .cdg-drop.gone svg {
+  color: rgba(230, 223, 207, 0.22);
+}
+
+.stn-ui .cdg-vs {
+  font: max(9px, calc(10 * var(--u))) / 1 var(--f-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+
+/* page 2: a few cards */
+.stn-ui .cdg-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(8 * var(--u));
+  width: min(100%, max(200px, calc(300 * var(--u))));
+}
+
+.stn-ui .cdg-cards > .cdf {
+  width: 100%;
+}
+
+/* page 3: the packs and the keys */
+.stn-ui .cdg-packs {
+  display: flex;
+  gap: calc(18 * var(--u));
+}
+
+.stn-ui .cdg-pack svg {
+  display: block;
+  width: max(44px, calc(64 * var(--u)));
+  height: max(55px, calc(80 * var(--u)));
+  color: var(--bone);
+}
+
+.stn-ui .cdg-keys {
+  display: grid;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .cdg-key {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  font: max(10.5px, calc(12 * var(--u))) / 1.3 var(--f-type);
+  color: var(--bone-2);
+}
+
+.stn-ui .cdg-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(12 * var(--u));
+  margin-top: calc(16 * var(--u));
+}
+
+.stn-ui .cdg-dots {
+  display: flex;
+  gap: calc(8 * var(--u));
+}
+
+.stn-ui .cdg-dot {
+  width: max(9px, calc(11 * var(--u)));
+  height: max(9px, calc(11 * var(--u)));
+  padding: 0;
+  border: 1px solid rgba(230, 223, 207, 0.5);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.stn-ui .cdg-dot.on {
+  background: var(--blood-hi);
+  border-color: var(--blood-hi);
+}
+
+.stn-ui .cdg-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(10 * var(--u));
+  justify-content: flex-end;
+}
+
+.stn-ui .cdg-box.ask .cdg-acts {
+  justify-content: center;
+  margin-top: calc(12 * var(--u));
+}
+
+.stn-ui .cdg-next {
+  min-width: max(90px, calc(120 * var(--u)));
+}
+
 @media (max-width: 860px), (max-height: 600px) {
   .stn-ui .cd-frame {
     width: 100vw;
@@ -2068,6 +2314,33 @@
 
   .stn-ui .cd-head {
     gap: 6px;
+  }
+
+  /* how to play: one column, the pictures smaller, the button's word gone (its ? stays) */
+  .stn-ui .cd-help span {
+    display: none;
+  }
+
+  .stn-ui .cdg-box {
+    padding: 10px 12px;
+  }
+
+  .stn-ui .cdg-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .stn-ui .cdg-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: min(100%, 300px);
+  }
+
+  .stn-ui .cdg-lead {
+    margin-bottom: 8px;
+  }
+
+  .stn-ui .cdg-nav {
+    margin-top: 10px;
   }
 
   .stn-ui .cd-count {

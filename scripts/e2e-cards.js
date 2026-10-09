@@ -84,6 +84,10 @@ const SCREENS = [
   ['chooser', 'screen=cards&tab=chooser'],
   ['asks', 'screen=cards&tab=asks'],
   ['practice', 'screen=cards&tab=practice'],
+  ['first', 'screen=cards&tab=first'],
+  ['guide-1', 'screen=cards&tab=guide&page=0'],
+  ['guide-2', 'screen=cards&tab=guide&page=1'],
+  ['guide-3', 'screen=cards&tab=guide&page=2'],
   ['hud', 'screen=hud-cards&kind=mine'],
   ['hud-ask', 'screen=hud-cards&kind=ask'],
 ];
@@ -202,6 +206,14 @@ async function phaseB() {
       g.cards.chooser(id);
     }, botId);
     await sleep(500);
+    // the first time the cards open in this browser: the guide to how it plays is offered, over the chooser
+    const asked = await p.evaluate(() => !!document.querySelector('.cdscr:not([hidden]) .cd-guide:not([hidden]) .cdg-box.ask'));
+    check('the first time the cards open, the guide to how it plays is offered', asked);
+    await p.screenshot({ path: join(OUT, 'live-guide-ask.png') });
+    await p.evaluate(() => [...document.querySelectorAll('.cdg-box.ask button')].find((b) => /not now/i.test(b.textContent))?.click());
+    await sleep(400);
+    const after = await p.evaluate(() => ({ view: document.querySelector('.cdscr')?.dataset.view, kept: localStorage.getItem('stn.cards.guide') }));
+    check('"Not now" goes on to the chooser, and the offer is not made again', after.view === 'chooser' && after.kept === 'skipped', after);
     await p.screenshot({ path: join(OUT, 'live-chooser.png') });
     await p.evaluate((id) => window.__game.cards.ask(id, 'match', -1, 0), botId);
     let dealt = false;
@@ -212,6 +224,8 @@ async function phaseB() {
     check('the bot took the challenge: the cards are dealt', dealt, botLog.slice(-600));
     if (dealt) {
       await p.evaluate(() => window.__game.toggleCards(true, false, 'table'));
+      await sleep(300);
+      check('...and the next time the cards open it is not offered again', await p.evaluate(() => document.querySelector('.cdscr')?.dataset.view !== 'guide'));
       // the browser plays its own moves with the computer's choice, a few, then a still mid-match
       const play = async (n) => {
         for (let i = 0; i < n; i++) {

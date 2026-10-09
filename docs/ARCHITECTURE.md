@@ -419,10 +419,12 @@ map does, and can be shut to fight and opened again.
   after a day).
 - **On screen** (`client/game/cards.js` the store and the glue, `client/ui/cards.js` the screen; `carddeck.js`,
   `cardtrade.js`, `cardreveal.js`, `cardface.js`; `cards.css`): the table, the deck builder, trades, challenges,
-  practice against the computer (`client/game/cardlocal.js`, no rewards) and a pack's reveal. Card art is the game's
+  practice against the computer (`client/game/cardlocal.js`, no rewards), a pack's reveal and a three-page guide to how
+  it plays (`cardguide.js`: offered once, the first time the cards open in a browser, `stn.cards.guide`; "How to play"
+  in the head ever after). Card art is the game's
   own models drawn once by a short-lived WebGL renderer and kept as images (`cardart.js`, sharing the bestiary's
   portraits through `portrait.js`). A HUD line says when it is your turn or someone wants to play while the screen is
-  shut. `/sandbox/ui-test.html?screen=cards` (`&seed&moves=N&still=1&tab=deck|trade|reveal|chooser|asks|practice|end`)
+  shut. `/sandbox/ui-test.html?screen=cards` (`&seed&moves=N&still=1&tab=deck|trade|reveal|chooser|asks|practice|end|guide|first`)
   and `?screen=hud-cards` show it without a server.
 - **Tests**: `scripts/test-cardgame.js` (the set, every rule, hidden information, replays, AI-vs-AI fuzz and the
   starter decks' balance; `--long` for 2000 matches), `scripts/test-cards.js` (a game: asks, matches, trades, bets,
