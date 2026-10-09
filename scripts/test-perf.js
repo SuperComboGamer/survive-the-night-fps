@@ -328,5 +328,39 @@ for (const [name, act, eyes] of [['island', WORLD.ISLAND, 60], ['mainland', WORL
   check('...and so does one in which a light that casts has no map yet', rate.due(1 / 1000, cam, [light]) === true && rate.due(1 / 1000, cam, [{ castShadow: true, shadow: { map: {} } }]) === false);
 }
 
+// ---------------------------------------------------------------- no leaves in the air
+// A tree with leaves on its branches (the birch) hangs each card of them from wood that is drawn, in both its copies:
+// the far one drops the finest twigs, and its leaves had stayed out where those twigs ended - clusters floating round
+// every birch past the near copy's distance, on both maps
+{
+  const { getTreeVariants } = await import('../client/render/models/vegetation.js');
+  const bad = [];
+  for (const v of getTreeVariants()) {
+    for (const [copy, parts] of [['near', v.parts], ['far', v.far]]) {
+      if (!(parts || []).some((p) => p.name === 'leaves')) continue;
+      const wood = [];
+      const cards = [];
+      for (const p of parts) {
+        const pos = p.geometry.attributes.position;
+        const veg = p.geometry.attributes.aVeg;
+        const leaf = p.name === 'leaves';
+        const quad = [];
+        for (let i = 0; i < pos.count; i++) {
+          const pt = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+          if (!leaf || (veg && veg.getW(i) === -1)) wood.push(pt);
+          else if (quad.push(pt) === 4) {
+            cards.push([0, 1, 2].map((k) => quad.reduce((sum, q) => sum + q[k], 0) / 4));
+            quad.length = 0;
+          }
+        }
+      }
+      let worst = 0;
+      for (const c of cards) worst = Math.max(worst, Math.min(...wood.map((w) => Math.hypot(w[0] - c[0], w[1] - c[1], w[2] - c[2]))));
+      if (worst > 1.5) bad.push(`${v.name} (${copy}): a card of leaves ${worst.toFixed(2)} m from any wood`);
+    }
+  }
+  check('every card of leaves on a leafy tree hangs within 1.5 m of drawn wood, in its near and far copies', !bad.length, bad.join('; '));
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nall ok');
 process.exit(failed ? 1 : 0);
