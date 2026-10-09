@@ -53,11 +53,12 @@ function cleanStakeItems(d) {
 }
 
 export class LobbyCards {
-  constructor({ service, loadouts = null, log = () => {}, rng = cryptoRand } = {}) {
+  constructor({ service, loadouts = null, log = () => {}, rng = cryptoRand, netMetrics = null } = {}) {
     this.service = service;
     this.loadouts = loadouts;
     this.log = log;
     this.rng = rng;
+    this.netMetrics = netMetrics;
     this.w = new Writer(4096);
     this.nextId = 1;
     this.players = new Map(); // id -> player
@@ -634,7 +635,9 @@ export class LobbyCards {
     const w = this.w.reset();
     w.u8(S2C.CARDS);
     writeCards(w, op, data);
-    p.ws.send(w.bytes(), true, false);
+    const bytes = w.bytes();
+    this.netMetrics?.wsOut('lobby_cards', bytes);
+    p.ws.send(bytes, true, false);
   }
 
   async closeAll() {

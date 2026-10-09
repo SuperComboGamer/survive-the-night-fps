@@ -40,12 +40,13 @@ export class Social {
   // lobby: where everyone is playing (rooms.js Lobby: playingRoom, onPresence). cluster: the other servers behind the
   // proxy (cluster.js), when there are any - then a friend may be online or playing on another one, and what is pushed
   // to an account reaches its sockets there too
-  constructor({ db, auth, lobby, cluster = null, log = () => {} }) {
+  constructor({ db, auth, lobby, cluster = null, log = () => {}, netMetrics = null }) {
     this.db = db;
     this.auth = auth;
     this.lobby = lobby;
     this.cluster = cluster;
     this.log = log;
+    this.netMetrics = netMetrics;
     this.socks = new Map(); // user id -> Set of /social sockets
     this.friendCache = new Map(); // user id -> Set of friend ids, for the accounts online (dropped as they go)
     this.sends = new Allowance(20, 1.5); // per account: messages
@@ -141,6 +142,7 @@ export class Social {
     const text = JSON.stringify(msg);
     for (const ws of set) {
       try {
+        this.netMetrics?.wsOut('social', text);
         ws.send(text, false);
       } catch {}
     }
@@ -167,7 +169,11 @@ export class Social {
     if (first) this.presence(user.id);
     try {
       const unread = (await this.db.query('SELECT count(*)::int AS n FROM direct_messages WHERE recipient_id = $1 AND read_at IS NULL', [user.id])).rows[0].n;
-      if (set.has(ws)) ws.send(JSON.stringify({ t: 'hello', user: { id: user.id, username: user.name }, unread }), false);
+      if (set.has(ws)) {
+        const text = JSON.stringify({ t: 'hello', user: { id: user.id, username: user.name }, unread });
+        this.netMetrics?.wsOut('social', text);
+        ws.send(text, false);
+      }
     } catch (err) {
       this.log(`social: hello failed (${err.message})`);
     }

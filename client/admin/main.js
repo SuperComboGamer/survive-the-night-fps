@@ -49,6 +49,17 @@ const clear = (n) => {
   return n;
 };
 const int = (v) => Math.round(v || 0).toLocaleString('en-US');
+const bytes = (v) => {
+  v = Math.max(0, v || 0);
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${i ? v.toFixed(v < 10 ? 1 : 0) : Math.round(v)} ${u[i]}`;
+};
+const bps = (v) => `${bytes(v)}/s`;
 const plural = (n, one, many = `${one}s`) => `${int(n)} ${n === 1 ? one : many}`;
 const span = (s) => {
   s = Math.max(0, Math.round(s));
@@ -73,6 +84,35 @@ const clock = (iso) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 };
 const chip = (parent, text, cls = '') => h('span', `ad-chip ${cls}`, parent, text);
+function spark(parent, title) {
+  const box = h('div', 'ad-spark', parent);
+  h('div', 'ad-spark-t', box, title);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 120 36');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  box.appendChild(svg);
+  const out = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  const inn = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  out.setAttribute('class', 'out');
+  inn.setAttribute('class', 'in');
+  svg.append(out, inn);
+  const cap = h('div', 'ad-spark-c', box);
+  return (points = []) => {
+    const max = Math.max(1, ...points.map((p) => Math.max(p.bytesIn || 0, p.bytesOut || 0)));
+    const draw = (key) =>
+      points
+        .map((p, i) => {
+          const x = points.length <= 1 ? 0 : (i / (points.length - 1)) * 120;
+          const y = 34 - ((p[key] || 0) / max) * 32;
+          return `${x.toFixed(1)},${y.toFixed(1)}`;
+        })
+        .join(' ');
+    inn.setAttribute('points', draw('bytesIn'));
+    out.setAttribute('points', draw('bytesOut'));
+    const last = points[points.length - 1] || {};
+    cap.textContent = `In ${bytes(last.bytesIn || 0)} / Out ${bytes(last.bytesOut || 0)}`;
+  };
+}
 const button = (parent, text, cls, onClick) => {
   const b = h('button', `ad-btn ${cls || ''}`, parent, text);
   b.type = 'button';
@@ -493,6 +533,30 @@ VIEWS.overview = (el) => {
 
   const buildCard = card(grid, 'This server', '', 'st-wide');
   const facts = h('dl', 'ad-facts', buildCard);
+  const netCard = card(grid, 'Network bandwidth', 'Bytes and messages counted on this server at WebSocket and JSON API send/receive points.', 'st-wide');
+  const netSummary = h('div', 'ad-net-summary', netCard);
+  const netWindows = ['lastMinute', 'lastHour', 'lastDay'].map((key) => {
+    const row = h('div', 'ad-net-window', netSummary);
+    h('b', '', row, key === 'lastMinute' ? 'Last minute' : key === 'lastHour' ? 'Last hour' : 'Last day');
+    return {
+      key,
+      inOut: h('span', '', row),
+      msg: h('span', '', row),
+      rate: h('span', '', row),
+      player: h('span', '', row),
+    };
+  });
+  const charts = h('div', 'ad-sparks', netCard);
+  const minuteSpark = spark(charts, 'Per minute, last hour');
+  const hourSpark = spark(charts, 'Per hour, last day');
+  const netNote = h('p', 'ad-note', netCard);
+  const channelsTable = table(netCard, [
+    { name: 'Channel', cell: (c) => c.label },
+    { name: 'Last hour in', cls: 'ad-num', cell: (c) => bytes(c.lastHour.bytesIn) },
+    { name: 'Last hour out', cls: 'ad-num', cell: (c) => bytes(c.lastHour.bytesOut) },
+    { name: 'Msgs in/out', cls: 'ad-num', cell: (c) => `${int(c.lastHour.messagesIn)} / ${int(c.lastHour.messagesOut)}` },
+    { name: 'Day total', cls: 'ad-num', cell: (c) => bytes(c.lastDay.bytesIn + c.lastDay.bytesOut) },
+  ]);
   let gamesSig = '';
   let troubleSig = '';
 
@@ -506,11 +570,12 @@ VIEWS.overview = (el) => {
       const cap = sv.maxTotal === null ? sv.maxGames : Math.min(sv.maxGames, sv.maxTotal);
       const p99 = worstTick(s.games);
       const budget = s.games[0]?.tick?.budgetMs || 50;
+      const bw = sv.bandwidth;
       setTiles([
         { l: 'Games', n: `${sv.games} / ${cap}`, s: sv.canCreate ? 'room for more' : sv.draining ? 'new games stopped' : 'no room for more', bar: cap ? sv.games / cap : 0, cls: !sv.canCreate && !sv.draining ? 'warn' : '' },
         { l: 'Players', n: int(sv.players), s: sv.seats ? `of ${int(sv.seats)} seats in those games` : 'nobody is playing', bar: sv.seats ? sv.players / sv.seats : 0 },
         { l: 'Slowest tick', n: s.games.length ? `${p99.toFixed(1)} ms` : '-', s: s.games.length ? `99th percentile, of a ${budget} ms budget` : 'no game is running', bar: s.games.length ? p99 / budget : undefined, cls: p99 > budget ? 'bad' : p99 > budget / 2 ? 'warn' : '' },
-        { l: 'Network thread', n: `${(sv.net.cpuMs ?? 0).toFixed(0)} ms/s`, s: `${plural(sv.net.sockets || 0, 'socket')} open`, bar: (sv.net.cpuMs || 0) / 1000, cls: sv.net.cpuMs > 500 ? 'warn' : '' },
+        { l: 'Network thread', n: `${(sv.net.cpuMs ?? 0).toFixed(0)} ms/s`, s: `${plural(sv.net.sockets || 0, 'socket')} open${bw ? `, ${bps(bw.windows.lastMinute.avgBytesPerSecondOut)} out` : ''}`, bar: (sv.net.cpuMs || 0) / 1000, cls: sv.net.cpuMs > 500 ? 'warn' : '' },
         { l: 'Memory', n: `${int(sv.rssMb)} MB`, s: `${int(sv.heapMb)} MB of it this thread's heap` },
         { l: 'Database', n: sv.db.ok ? 'Answering' : sv.db.ok === false ? 'Not answering' : '-', s: `${sv.db.kind === 'pglite' ? 'PGlite (local)' : 'Postgres'} · ${sv.db.ms} ms`, cls: sv.db.ok === false ? 'bad' : '' },
         { l: 'Uptime', n: span(sv.uptimeS), s: `since ${clock(sv.startedAt)}` },
@@ -519,6 +584,24 @@ VIEWS.overview = (el) => {
 
       serversCard.parentNode.hidden = !s.servers;
       if (s.servers) serversTable(s.servers, { key: (x) => [x.id, x.me, x.draining, x.games, x.players, x.seenS > 10, age((Date.now() - x.startedAt) / 1000)] });
+
+      netCard.parentNode.hidden = !bw;
+      if (bw) {
+        for (const row of netWindows) {
+          const w = bw.windows[row.key];
+          row.inOut.textContent = `${bytes(w.bytesIn)} in / ${bytes(w.bytesOut)} out`;
+          row.msg.textContent = `${int(w.messagesIn)} in / ${int(w.messagesOut)} out messages`;
+          row.rate.textContent = `${bps(w.avgBytesPerSecond)} average`;
+          row.player.textContent = bw.players ? `${bps(bw.perPlayer[row.key].avgBytesPerSecond)} per connected player` : 'no connected players';
+        }
+        minuteSpark(bw.perMinute);
+        hourSpark(bw.perHour);
+        netNote.textContent = bw.note || '';
+        channelsTable(bw.channels.slice(0, 10), {
+          emptyText: 'No network traffic has been counted yet.',
+          key: (c) => [c.name, c.lastHour.bytesIn, c.lastHour.bytesOut, c.lastHour.messagesIn, c.lastHour.messagesOut, c.lastDay.bytesIn, c.lastDay.bytesOut],
+        });
+      }
 
       const topGames = s.games.slice(0, 6);
       const sig = JSON.stringify(topGames.map((g) => [g.code, g.name, g.players, g.max, g.phase, g.day, g.act, g.health, g.zombies, g.inviteOnly]));

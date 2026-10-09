@@ -363,6 +363,63 @@ select.ad-input {
 .ad-card.st-half {
   grid-column: span 3;
 }
+.ad-net-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.ad-net-window {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(230, 223, 207, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+}
+.ad-net-window b {
+  font-family: var(--f-num);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--moon);
+}
+.ad-net-window span {
+  color: rgba(230, 223, 207, 0.68);
+}
+.ad-sparks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.ad-spark {
+  padding: 12px;
+  border: 1px solid rgba(230, 223, 207, 0.1);
+  background: rgba(0, 0, 0, 0.18);
+}
+.ad-spark-t,
+.ad-spark-c {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+}
+.ad-spark svg {
+  width: 100%;
+  height: 52px;
+  margin: 8px 0;
+  overflow: visible;
+}
+.ad-spark polyline {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.ad-spark .in {
+  stroke: var(--moon);
+}
+.ad-spark .out {
+  stroke: var(--blood-hi);
+}
 .ad-glist {
   display: flex;
   flex-direction: column;
@@ -879,6 +936,9 @@ select.ad-input {
   .ad-card.st-half {
     grid-column: span 6;
   }
+  .ad-net-summary {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 760px) {
   #admin {
@@ -898,6 +958,9 @@ select.ad-input {
   .ad-tabs {
     margin: 0 -14px 14px;
     padding: 8px 14px 0;
+  }
+  .ad-sparks {
+    grid-template-columns: 1fr;
   }
   .ad-tab {
     padding: 10px 8px 9px;
