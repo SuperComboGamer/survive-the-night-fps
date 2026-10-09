@@ -4,7 +4,7 @@ import { STRUCT_DEFS, STRUCT_ORDER, ITEM_DEFS, SCHEM_BIT } from '../../shared/de
 import { planCost } from '../../shared/autocraft.js';
 import { el, svgEl } from './dom.js';
 import { structIcon, itemIcon, glyph } from './icons.js';
-import { liveText, bindLabel, bindPair } from '../game/binds.js';
+import { liveText, bindLabel, bindPair, hasBind } from '../game/binds.js';
 
 // the segment of the ring a pointer offset (screen px from the centre, y down) points at: 0 straight up, clockwise
 export function radialIndex(x, y, n = STRUCT_ORDER.length) {
@@ -73,6 +73,12 @@ export class BuildMenu {
       [() => bindPair('demolish'), 'demolish'],
       [() => 'Esc', 'cancel'],
     ]);
+    // held, the piece turns in small steps: the wheel turns it, a right click 15° (Game: buildFine)
+    this.hintFine = el('div', 'build-hint', this.root);
+    const fine = el('span', 'bh', this.hintFine);
+    el('span', '', fine, 'Hold');
+    liveText(el('span', 'kbd sm', fine), () => bindLabel('buildFine'));
+    el('span', '', fine, 'fine rotate (turn with the wheel)');
 
     // ---- the ring, in the middle of the screen
     this.radial = el('div', 'bradial', parent);
@@ -139,12 +145,15 @@ export class BuildMenu {
     const menu = state.menu || null;
     this.setRadial(menu, counts, unlocked, ctx);
     const picked = !!state.picked;
-    const key = [picked ? 1 : 0, state.selected, state.rotate | 0, state.valid ? 1 : 0, state.reason || '', unlocked, JSON.stringify(counts), ctx?.fire ? 1 : 0, ctx?.bench ? 1 : 0].join('|');
+    const fineOn = picked && !!state.fine;
+    const key = [picked ? 1 : 0, state.selected, state.rotate | 0, fineOn ? 1 : 0, bindLabel('buildFine'), state.valid ? 1 : 0, state.reason || '', unlocked, JSON.stringify(counts), ctx?.fire ? 1 : 0, ctx?.bench ? 1 : 0].join('|');
     if (key === this.key) return;
     this.key = key;
     this.root.classList.toggle('idle', !picked);
     this.hintIdle.hidden = picked;
     this.hintPlace.hidden = !picked;
+    this.hintFine.hidden = !picked || !hasBind('buildFine'); // (no key for it: nothing to tell)
+    this.root.classList.toggle('fine', fineOn);
     const d = picked ? STRUCT_DEFS[state.selected] : null;
     this.hName.textContent = d ? d.name : '';
     this.hDesc.textContent = d ? d.desc : '';

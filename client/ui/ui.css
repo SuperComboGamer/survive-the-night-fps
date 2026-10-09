@@ -2615,6 +2615,11 @@ body {
   color: var(--bone-dim);
 }
 
+/* the fine-rotate key held: the angle it is turning is the thing to watch */
+.stn-ui .build.fine .bh-rot {
+  color: var(--amber);
+}
+
 .stn-ui .bh-step {
   opacity: 0.6;
 }

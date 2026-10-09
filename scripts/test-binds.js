@@ -46,6 +46,7 @@ const memStore = () => {
   for (const a of ACTIONS) for (const b of ACTIONS) if (a.id < b.id && !sharesOk(a.id, b.id)) for (const k of a.keys) if (k && b.keys.includes(k)) clash.push(`${a.id}/${b.id}:${k}`);
   check('no two default binds collide', !clash.length, clash.join(' '));
   check('...but Q, R and E do double duty with the hammer out (last weapon / back, reload / on, interact / on)', DEFAULT_BINDS.buildPrev[0] === 'KeyQ' && DEFAULT_BINDS.buildNext.includes('KeyR') && DEFAULT_BINDS.buildNext.includes('KeyE') && sharesOk('lastWeapon', 'buildPrev') && sharesOk('interact', 'buildNext') && !sharesOk('fire', 'demolish') && !sharesOk('reload', 'interact'));
+  check('fine rotate is held on T, under Building, a build key (shares with what the hands do, not with the other build keys)', eq(DEFAULT_BINDS.buildFine, ['KeyT', null]) && ACTION.buildFine.group === 'Building' && ACTION.buildFine.hold && ACTION.buildFine.ctx === 'build' && !ACTION.buildFine.menu && ACTIONS.filter((a) => a.keys.includes('KeyT')).map((a) => a.id).join() === 'buildFine' && ['reload', 'lastWeapon', 'interact', 'drop'].every((h) => sharesOk('buildFine', h)) && !['demolish', 'buildNext', 'buildPrev', 'fire', 'aim', 'slot5', 'chat'].some((o) => sharesOk('buildFine', o)));
   check('labels: Z for KeyZ, 5 for Digit5, Left Ctrl, LMB / RMB / MMB / Mouse 4 / Mouse 5, Option on a Mac', codeLabel('KeyZ') === 'Z' && codeLabel('Digit5') === '5' && codeLabel('ControlLeft') === 'Left Ctrl' && ['Mouse0', 'Mouse2', 'Mouse1', 'Mouse3', 'Mouse4'].map((c) => codeLabel(c)).join() === 'LMB,RMB,MMB,Mouse 4,Mouse 5' && codeLabel('AltLeft', { mac: true }) === 'Left Option');
   check("...and the keyboard's own label where the browser has one (AZERTY: KeyQ is A)", codeLabel('KeyQ', { layout: new Map([['KeyQ', 'a']]) }) === 'A' && codeLabel('ArrowUp', { layout: new Map([['ArrowUp', 'x']]) }) === '↑');
 }
@@ -71,6 +72,7 @@ const memStore = () => {
   // collisions
   check('Z is taken by ping: putting it on drop says so', eq(B.conflictsFor('drop', 'KeyZ'), [{ action: 'ping', slot: 0 }]));
   check('...a hands key on a build action is no collision (R on demolish shares with reload)', eq(B.conflictsFor('demolish', 'KeyR'), [{ action: 'buildNext', slot: 0 }]) && !B.conflictsFor('demolish', 'KeyR').some((c) => c.action === 'reload'));
+  check('...fine rotate onto X collides with demolish, onto Q with previous structure only (not last weapon), onto G with nothing (drop is of the hands)', eq(B.conflictsFor('buildFine', 'KeyX'), [{ action: 'demolish', slot: 0 }]) && eq(B.conflictsFor('buildFine', 'KeyQ'), [{ action: 'buildPrev', slot: 0 }]) && eq(B.conflictsFor('buildFine', 'KeyG'), []) && eq(B.conflictsFor('drop', 'KeyT'), []) && eq(B.conflictsFor('chat', 'KeyT'), [{ action: 'buildFine', slot: 0 }]));
   const moved = B.setBind('drop', 0, 'KeyZ', { mode: 'swap', storage: store });
   check('swap: drop gets Z, ping gets G (what drop had)', eq(B.bindsOf('drop'), ['KeyZ', null]) && eq(B.bindsOf('ping'), ['KeyG', 'Mouse1']) && eq(moved, [{ action: 'ping', slot: 0, code: 'KeyG' }]), JSON.stringify([B.bindsOf('drop'), B.bindsOf('ping'), moved]));
   const plan = B.planBind(B.allBinds(), 'interact', 0, 'KeyF', 'swap');
@@ -178,6 +180,11 @@ const memStore = () => {
   fire('win', 'keydown', { code: 'ArrowUp' });
   check('...and Up moves', inp.sample() === BTN.FWD);
   fire('win', 'keyup', { code: 'ArrowUp' });
+  inp.clearLatch();
+  fire('win', 'keydown', { code: 'KeyT' });
+  check('T held: fine rotate is held, and it sends no button to the server (the client turns the piece)', inp.held('buildFine') && inp.sample() === 0);
+  fire('win', 'keyup', { code: 'KeyT' });
+  check('...and let go of', !inp.held('buildFine'));
   fire('win', 'keydown', { code: 'KeyV' });
   B.setBind('talk', 0, 'KeyB', { storage: memStore() });
   fire('win', 'keyup', { code: 'KeyV' });

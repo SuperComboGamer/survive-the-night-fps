@@ -351,6 +351,7 @@ ui.setControls(() => [
   [keysOf('slot6'), 'Walkie-talkie: hold fire to talk to everyone'],
   [keysOf('drop'), 'Drop weapon (hold)'],
   [keysOf('demolish'), 'Demolish (build mode)'],
+  [keysOf('buildFine'), 'Build mode, hold: fine rotate (the wheel turns the piece, a right click 15°)'],
 ]);
 const settings = ui.getSettings();
 const renderer = new GameRenderer(document.getElementById('game'), settings.quality || 'medium');

@@ -54,6 +54,8 @@ export const ACTIONS = [
   { id: 'buildNext', label: 'Next structure', group: 'Building', keys: ['KeyR', 'KeyE'], ctx: CTX_BUILD },
   { id: 'buildPrev', label: 'Previous structure', group: 'Building', keys: ['KeyQ', null], ctx: CTX_BUILD },
   { id: 'demolish', label: 'Demolish · remove', group: 'Building', keys: ['KeyX', null], ctx: CTX_BUILD },
+  // held: the piece turns in small steps (the wheel turns it, a right click 15°) instead of the 45° clicks
+  { id: 'buildFine', label: 'Fine rotate (hold)', group: 'Building', keys: ['KeyT', null], hold: true, ctx: CTX_BUILD },
 
   { id: 'chat', label: 'Chat', group: 'Communication', keys: ['KeyY', 'Enter'] },
   { id: 'talk', label: 'Push to talk', group: 'Communication', keys: ['KeyV', null] },
