@@ -985,7 +985,7 @@ export class Lobby {
     const room = this.rooms.get(code);
     proto ||= room?.proto || null;
     this.lost.set(code, { reason, at: Date.now(), proto: proto === OWN_PROTOCOL ? null : proto });
-    if (tell) {
+    if (tell && room) {
       const bytes = rejectBytes(reason, room.proto);
       for (const ws of room?.socks || []) {
         if (!ws) continue;
